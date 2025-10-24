@@ -138,9 +138,8 @@ TODO
 - 2D Builder
 - Inhabitant Management
 
-### Castle Story
-- 3D Voxel
-- Base defense
+### Foundation 
+TODO
 
 ### Minecraft
 - Infinite procedurally generated world
@@ -158,3 +157,5 @@ TODO
 ### Hurtworld
 
 ### Icarus
+
+### Manor Lords

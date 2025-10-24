@@ -28,23 +28,29 @@ World-sim is a C++20 game project built as a monorepo of independent libraries. 
 
 ### Core Systems
 - [Monorepo Structure](./monorepo-structure.md) - Library organization and dependencies
-- [UI Testability Strategy](./ui-testability-strategy.md) - Making C++ UI inspectable like web apps
 - [Vector Asset Pipeline](./vector-asset-pipeline.md) - SVG-based assets with procedural variation
 - [Build System](./build-system.md) - CMake + vcpkg configuration
 - [C++ Coding Standards](./cpp-coding-standards.md) - Style guide and best practices
 - [Technical Notes](./technical-notes.md) - Research notes, open questions, and technical references
 
+### Observability & Developer Tools
+- [Observability Overview](./observability/INDEX.md) - Complete system overview
+- [Developer Server](./observability/developer-server.md) - HTTP/SSE streaming from applications
+- [Developer Client](./observability/developer-client.md) - External TypeScript/Vite web app
+- [UI Inspection](./observability/ui-inspection.md) - UI hierarchy and hover inspection
+- [Logging System](./logging-system.md) - Structured logging with HTTP streaming
+- [Diagnostic Drawing](./diagnostic-drawing.md) - In-viewport debug visualization
+
 ### Networking & Multiplayer
 - [Multiplayer Architecture](./multiplayer-architecture.md) - Client/server design for colony sim
 - [Process Management](./process-management.md) - Client spawns/monitors server process
-- [HTTP Debug Server](./http-debug-server.md) - Real-time metrics and debugging via SSE
 
 ### Engine Patterns (Implement These!)
 - [String Hashing](./string-hashing.md) - Fast string→int conversion for lookups (Implement Now)
 - [Logging System](./logging-system.md) - Structured logging with categories (Implement Now)
 - [Memory Arenas](./memory-arenas.md) - Fast temporary allocations (Implement Soon)
 - [Resource Handles](./resource-handles.md) - Safe resource references (Implement Soon)
-- [Debug Rendering](./debug-rendering.md) - Immediate mode debug draw (Implement Later)
+- [Diagnostic Drawing](./diagnostic-drawing.md) - Immediate mode debug draw (Implement Later)
 
 ### World & Game
 - [World Generation Architecture](./world-generation-architecture.md) - Pluggable world generators
@@ -61,9 +67,121 @@ World-sim is a C++20 game project built as a monorepo of independent libraries. 
 - [Configuration System](./config-system.md) - JSON-based game configuration
 - [Application Lifecycle](./application-lifecycle.md) - Fast splash screen, lazy loading
 
-## System Diagrams
+## System Architecture Diagram
 
-*To be added as architecture evolves*
+### Applications & Services Overview
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                          WORLD-SIM PROJECT                                  │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  ┌──────────────────────────┐              ┌──────────────────────────┐   │
+│  │   Game Server Process    │              │  Game Client Process     │   │
+│  │   (world-sim-server)     │              │  (world-sim)             │   │
+│  │                          │              │                          │   │
+│  │  - ECS (game state)      │   WebSocket  │  - Renderer              │   │
+│  │  - World generation      │◄────────────►│  - UI layer              │   │
+│  │  - Game logic (60 TPS)   │   Port 9000  │  - Input handling        │   │
+│  │  - Chunk management      │   60 Hz      │  - Audio                 │   │
+│  │                          │              │                          │   │
+│  │  Developer Server:       │              │  Developer Server:       │   │
+│  │  Port 8080 (HTTP/SSE)    │              │  Port 8082 (HTTP/SSE)    │   │
+│  └──────────┬───────────────┘              └──────────┬───────────────┘   │
+│             │                                         │                    │
+│             │                                         │                    │
+│  ┌──────────▼─────────────────────────────────────────▼──────────────┐    │
+│  │              Developer Client (Browser)                           │    │
+│  │              External TypeScript/Vite Web App                     │    │
+│  │                                                                    │    │
+│  │  Connects via HTTP/SSE to observe running applications:           │    │
+│  │                                                                    │    │
+│  │  - Metrics charts (FPS, memory, performance)                      │    │
+│  │  - Log viewer (real-time log streaming)                           │    │
+│  │  - Profiler (function timing, flame graphs)                       │    │
+│  │  - UI inspector (hierarchy, hover data)                           │    │
+│  │                                                                    │    │
+│  │  http://localhost:8080 → Game Server                              │    │
+│  │  http://localhost:8081 → UI-Sandbox                               │    │
+│  │  http://localhost:8082 → Game Client                              │    │
+│  └────────────────────────────┬───────────────────────────────────────┘   │
+│                               │                                            │
+│                               │ Also connects to:                          │
+│                               │                                            │
+│  ┌────────────────────────────▼──────────────────────────┐                │
+│  │   UI-Sandbox Process                                  │                │
+│  │   (ui-sandbox)                                        │                │
+│  │                                                        │                │
+│  │   Library development & testing sandbox               │                │
+│  │                                                        │                │
+│  │   - Develop atomic UI components (buttons, text)      │                │
+│  │   - Test OpenGL drawing code in isolation             │                │
+│  │   - Develop vector asset rendering (SVG)              │                │
+│  │   - Test graphics primitives & base rendering         │                │
+│  │   - Develop drawing libraries outside game context    │                │
+│  │                                                        │                │
+│  │   Developer Server: Port 8081 (HTTP/SSE)              │                │
+│  └────────────────────────────────────────────────────────┘                │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+KEY DISTINCTIONS:
+
+Gameplay Network (Production):
+  Game Server ←──WebSocket (port 9000, 60 Hz)──→ Game Client
+  Purpose: Real-time game state synchronization
+  Available in: All builds (Development + Release)
+
+Observability Network (Development Only):
+  Applications ──→ HTTP/SSE (ports 8080/8081/8082, 10-20 Hz) ──→ Developer Client
+  Purpose: Monitoring, debugging, inspection
+  Available in: Development builds only (compiled out in Release)
+
+Applications:
+  1. Game Server    - Backend game logic (headless, no rendering)
+  2. Game Client    - Player-facing game (rendering, UI, audio)
+  3. UI-Sandbox     - Library development sandbox (UI components, OpenGL, SVG)
+  4. Developer Client - External browser-based monitoring dashboard
+```
+
+### Port Assignments
+
+| Port | Service | Protocol | Purpose | Availability |
+|------|---------|----------|---------|--------------|
+| 9000 | Game Server ↔ Client | WebSocket | Gameplay sync (60 Hz) | All builds |
+| 8080 | Game Server Developer Server | HTTP/SSE | Observability (10-20 Hz) | Development only |
+| 8081 | UI-Sandbox Developer Server | HTTP/SSE | Observability (10-20 Hz) | Development only |
+| 8082 | Game Client Developer Server | HTTP/SSE | Observability (10-20 Hz) | Development only |
+
+### Process Communication
+
+**Game Client ↔ Game Server (Gameplay):**
+- Protocol: WebSocket (bidirectional)
+- Rate: 60 Hz (real-time)
+- Purpose: Game state synchronization
+- Managed by: Game client spawns/monitors server process
+- See: [Multiplayer Architecture](./multiplayer-architecture.md), [Process Management](./process-management.md)
+
+**Applications → Developer Client (Observability):**
+- Protocol: HTTP with Server-Sent Events (SSE) (server→client streaming)
+- Rate: 10-20 Hz (throttled, non-critical)
+- Purpose: Monitoring, debugging, inspection
+- Data: Metrics, logs, profiler data, UI hierarchy
+- See: [Observability Overview](./observability/INDEX.md)
+
+### Build Configurations
+
+**Development Build:**
+- Game Server: WebSocket server (9000) + Developer Server (8080)
+- Game Client: WebSocket client (9000) + Developer Server (8082)
+- UI-Sandbox: Developer Server (8081) only
+- Developer Client: Web app served from developer servers
+
+**Release Build:**
+- Game Server: WebSocket server only (9000)
+- Game Client: WebSocket client only (9000)
+- Developer servers: Compiled out completely
+- Developer Client: Not bundled
 
 ## Related Documentation
 
