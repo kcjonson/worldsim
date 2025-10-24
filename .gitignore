@@ -1,0 +1,44 @@
+# Build directories
+build/
+install/
+out/
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+*.cmake
+!CMakeLists.txt
+
+# Compile commands
+compile_commands.json
+
+# IDE
+.vscode/
+!.vscode/settings.json
+!.vscode/launch.json
+!.vscode/tasks.json
+.idea/
+*.swp
+*.swo
+*~
+
+# clang-tidy / clangd
+.clangd/
+.cache/
+
+# vcpkg
+vcpkg_installed/
+
+# macOS
+.DS_Store
+*.dSYM/
+
+# Test outputs
+*.png
+*.jpg
+tests/golden/*.actual.png
+tests/diffs/
+
+# Logs
+*.log

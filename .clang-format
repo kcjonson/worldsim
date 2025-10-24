@@ -1,0 +1,35 @@
+---
+BasedOnStyle: LLVM
+IndentWidth: 4
+TabWidth: 4
+UseTab: Always
+BreakBeforeBraces: Attach
+AllowShortBlocksOnASingleLine: Empty
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortIfStatementsOnASingleLine: false
+AllowShortLoopsOnASingleLine: false
+AlwaysBreakTemplateDeclarations: Yes
+NamespaceIndentation: All
+AlignConsecutiveDeclarations: true
+ColumnLimit: 140
+BinPackArguments: false
+BinPackParameters: false
+BreakBeforeBinaryOperators: None
+AlignOperands: true
+AllowAllParametersOfDeclarationOnNextLine: false
+AlignAfterOpenBracket: BlockIndent
+ContinuationIndentWidth: 4
+AllowShortLambdasOnASingleLine: Inline
+SpaceAfterCStyleCast: false
+SpaceBeforeParens: ControlStatements
+AlignConsecutiveAssignments: false
+IndentCaseLabels: true
+SpacesInParentheses: false
+BreakConstructorInitializers: BeforeColon
+ConstructorInitializerAllOnOneLineOrOnePerLine: true
+ConstructorInitializerIndentWidth: 4
+AllowAllConstructorInitializersOnNextLine: false
+PackConstructorInitializers: Never
+PointerAlignment: Left
+ReferenceAlignment: Left
+---

@@ -1,0 +1,15 @@
+{
+  "name": "world-sim",
+  "version": "0.1.0",
+  "dependencies": [
+    "opengl",
+    "glfw3",
+    "glew",
+    "glm",
+    "nlohmann-json",
+    "stb",
+    "cpp-httplib",
+    "nanosvg"
+  ],
+  "builtin-baseline": "latest"
+}
