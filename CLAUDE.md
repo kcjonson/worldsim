@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 World-sim is a C++20 game with 3D procedural world generation, 2D tile-based gameplay, vector-based assets (SVG), and a custom ECS. Built as a monorepo of modular libraries. For full details, see [README.md](README.md).
 
 **Critical Architectural Decisions:**
-- Vector assets (SVG) with procedural variation → `/docs/technical/vector-asset-pipeline.md`
+- Vector assets (SVG) with procedural variation → `/docs/technical/vector-graphics/INDEX.md`
 - Custom ECS in engine → `/docs/technical/cpp-coding-standards.md#ecs`
 - Roll our own core systems (not external libraries)
 

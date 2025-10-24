@@ -40,6 +40,11 @@ Documents can be organized in subdirectories (`features/`, `requirements/`) or a
 
 *Note: Many of these are planned but not yet written. Add them as needed when designing features.*
 
+### Vector Graphics & Animation
+- [Vector Graphics Overview](./features/vector-graphics/README.md) - Asset creation workflow, artist guidelines, procedural variation
+- [Animated Vegetation](./features/vector-graphics/animated-vegetation.md) - Grass swaying, tree movement, environmental response
+- [Environmental Interactions](./features/vector-graphics/environmental-interactions.md) - Trampling, harvesting, wind effects
+
 ### Core Application
 - [Application Flow](./features/application-flow/README.md) - Splash screen, main menu, scene transitions *(planned)*
 - [Main Menu](./features/main-menu/README.md) - Menu options and navigation *(planned)*

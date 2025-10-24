@@ -20,4 +20,7 @@ Key characteristics:
 
 ## Implementation Notes
 
-For technical implementation details, see `/docs/technical/vector-asset-pipeline.md` for SVG-based UI rendering.
+For technical implementation details, see:
+- `/docs/technical/vector-graphics/INDEX.md` - Complete vector graphics documentation
+- `/docs/technical/vector-graphics/asset-pipeline.md` - SVG asset pipeline overview
+- `/docs/design/features/vector-graphics/README.md` - Artist guidelines and asset creation workflow

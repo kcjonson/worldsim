@@ -1,8 +1,10 @@
 # Vector Asset Pipeline
 
 Created: 2025-10-12
-Last Updated: 2025-10-12
+Last Updated: 2025-10-24
 Status: Active
+
+**Note**: This document provides a high-level overview of the vector asset pipeline. For comprehensive analysis and design details, see the [complete vector graphics documentation](./INDEX.md) including comparative analysis of libraries, rendering strategies, and system design.
 
 ## Context
 
@@ -411,11 +413,39 @@ struct DirtyRegion {
 
 ## Related Documentation
 
-- Design Doc: [Vector Assets Feature](/docs/design/features/vector-assets/README.md)
-- Tech: [Renderer Architecture](./renderer-architecture.md)
-- Tech: [Resource Management](./resource-management.md)
-- Code: `libs/renderer/resources/svg/` (once implemented)
-- Code: `libs/game-systems/tiles/` (once implemented)
+### Comprehensive Vector Graphics Documentation
+
+**Start Here**: [Vector Graphics System Index](./INDEX.md) - Complete navigation to all documentation
+
+**Core Architecture**:
+- [architecture.md](./architecture.md) - Four-tier rendering system, integration with ECS/renderer
+- [performance-targets.md](./performance-targets.md) - Performance budgets and profiling
+- [memory-management.md](./memory-management.md) - Memory architecture across all tiers
+
+**Comparative Analysis** (evaluate options before choosing libraries):
+- [svg-parsing-options.md](./svg-parsing-options.md) - NanoSVG vs LunaSVG vs PlutoVG vs custom parser
+- [tessellation-options.md](./tessellation-options.md) - libtess2 vs Earcut vs Poly2Tri vs custom ear clipping
+- [rendering-backend-options.md](./rendering-backend-options.md) - NanoVG vs Blend2D vs Custom batched renderer vs Vello
+- [batching-strategies.md](./batching-strategies.md) - GPU batching, streaming VBOs, texture atlasing
+
+**System Design**:
+- [animation-system.md](./animation-system.md) - Spline-based deformation, wind simulation, trampling
+- [collision-shapes.md](./collision-shapes.md) - Dual representation (render vs physics geometry)
+- [lod-system.md](./lod-system.md) - Level of detail strategies for performance
+
+**Game Design**:
+- [/docs/design/features/vector-graphics/README.md](../../../design/features/vector-graphics/README.md) - Asset creation workflow, artist guidelines
+- [/docs/design/features/vector-graphics/animated-vegetation.md](../../../design/features/vector-graphics/animated-vegetation.md) - Grass and tree animation design
+- [/docs/design/features/vector-graphics/environmental-interactions.md](../../../design/features/vector-graphics/environmental-interactions.md) - Trampling, harvesting, wind
+
+**Other Technical Documentation**:
+- [/docs/technical/renderer-architecture.md](../renderer-architecture.md) - OpenGL renderer design
+- [/docs/technical/resource-management.md](../resource-management.md) - Resource handle system
+
+**Code** (once implemented):
+- `libs/renderer/resources/svg/` - SVG parsing and rasterization
+- `libs/renderer/vector/` - Vector batch renderer
+- `libs/game-systems/tiles/` - Tile variation and blending
 
 ## Notes
 

@@ -60,7 +60,21 @@ World-sim is a C++20 game project built as a monorepo of independent libraries. 
 ### Graphics & Rendering
 - [Renderer Architecture](./renderer-architecture.md) - OpenGL abstraction, 2D/3D rendering
 - [Resource Management](./resource-management.md) - Textures, shaders, fonts
-- [Vector Asset Pipeline](./vector-asset-pipeline.md) - SVG loading, rasterization, caching
+
+#### Vector Graphics System
+**Complete documentation**: [Vector Graphics Index](./vector-graphics/INDEX.md)
+
+- [Vector Asset Pipeline](./vector-graphics/asset-pipeline.md) - High-level overview of SVG asset workflow
+- [Architecture](./vector-graphics/architecture.md) - Four-tier rendering system, integration design
+- [Tessellation Options](./vector-graphics/tessellation-options.md) - Comparative analysis: libtess2, Earcut, custom
+- [SVG Parsing Options](./vector-graphics/svg-parsing-options.md) - Comparative analysis: NanoSVG, LunaSVG, PlutoVG, custom
+- [Rendering Backend Options](./vector-graphics/rendering-backend-options.md) - Comparative analysis: NanoVG, Blend2D, custom batched, Vello
+- [Batching Strategies](./vector-graphics/batching-strategies.md) - GPU batching, streaming VBOs, atlasing
+- [Animation System](./vector-graphics/animation-system.md) - Spline deformation, wind, trampling
+- [Collision Shapes](./vector-graphics/collision-shapes.md) - Dual representation design
+- [LOD System](./vector-graphics/lod-system.md) - Level of detail strategies
+- [Memory Management](./vector-graphics/memory-management.md) - Memory architecture, budgets, arenas
+- [Performance Targets](./vector-graphics/performance-targets.md) - Performance budgets, profiling
 
 ### Engine & Application
 - [Scene Management](./scene-management.md) - Scene lifecycle and transitions
