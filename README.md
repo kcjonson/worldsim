@@ -91,7 +91,7 @@ For full details, see [docs/technical/monorepo-structure.md](docs/technical/mono
 - **[Workflows](docs/workflows.md)** - Common development tasks and how-tos
 - **[Technical Docs](docs/technical/INDEX.md)** - Architecture and design decisions
 - **[C++ Coding Standards](docs/technical/cpp-coding-standards.md)** - Style guide and best practices
-- **[Product Specifications](docs/specs/INDEX.md)** - Feature requirements and specs
+- **[Game Design Documents](docs/design/INDEX.md)** - Feature requirements and game design
 
 ## Development Workflow
 

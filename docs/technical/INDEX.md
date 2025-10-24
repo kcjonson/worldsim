@@ -4,6 +4,19 @@
 
 World-sim is a C++20 game project built as a monorepo of independent libraries. The architecture emphasizes modularity, testability (especially for UI), and clean dependency hierarchies. Libraries are designed to potentially become standalone open-source projects in the future.
 
+**What belongs here:**
+- Architecture and system design (client/server, ECS, rendering)
+- Implementation details (algorithms, data structures, protocols)
+- Tools and infrastructure (debug server, asset pipeline, build system)
+- Performance optimization and profiling
+- Technical patterns and conventions (logging, memory management, etc.)
+
+**What belongs in design/:**
+- Player-facing game features and mechanics
+- UI/UX from the player's perspective
+- Game systems from a design perspective (not implementation)
+- Player-facing requirements
+
 ## Core Architecture Principles
 
 - **Clear dependency layers**: Foundation → Renderer → UI/World → Game Systems → Engine
@@ -19,6 +32,7 @@ World-sim is a C++20 game project built as a monorepo of independent libraries. 
 - [Vector Asset Pipeline](./vector-asset-pipeline.md) - SVG-based assets with procedural variation
 - [Build System](./build-system.md) - CMake + vcpkg configuration
 - [C++ Coding Standards](./cpp-coding-standards.md) - Style guide and best practices
+- [Technical Notes](./technical-notes.md) - Research notes, open questions, and technical references
 
 ### Networking & Multiplayer
 - [Multiplayer Architecture](./multiplayer-architecture.md) - Client/server design for colony sim
@@ -54,4 +68,4 @@ World-sim is a C++20 game project built as a monorepo of independent libraries. 
 ## Related Documentation
 
 - [Development Status](/docs/status.md) - Current work and decisions
-- [Product Specifications](/docs/specs/INDEX.md) - Feature requirements
+- [Game Design Documents](/docs/design/INDEX.md) - Feature requirements and player experience

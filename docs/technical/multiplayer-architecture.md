@@ -969,7 +969,7 @@ target_link_libraries(engine-server PRIVATE httplib::httplib)
 
 ## Related Documentation
 
-- [Product Spec: Multiplayer Architecture](/docs/specs/features/multiplayer/README.md)
+- [Game Design Doc: Multiplayer Architecture](/docs/design/features/multiplayer/README.md)
 - [Process Management](./process-management.md) - Client spawns/monitors server
 - [HTTP Debug Server](./http-debug-server.md) - Separate debugging protocol (port 8080)
 - [ECS Design](./cpp-coding-standards.md#ecs) - Entity component system

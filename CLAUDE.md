@@ -67,8 +67,8 @@ World-sim is a C++20 game with 3D procedural world generation, 2D tile-based gam
 ### For Technical Implementation Details
 → Check `/docs/technical/INDEX.md` for list of design documents
 
-### For Feature Requirements
-→ Check `/docs/specs/INDEX.md` for product specifications
+### For Game Design & Feature Requirements
+→ Check `/docs/design/INDEX.md` for game design documents
 
 ### For Common Tasks (adding files, creating scenes, etc.)
 → Check `/docs/workflows.md`
@@ -108,6 +108,7 @@ World-sim is a C++20 game with 3D procedural world generation, 2D tile-based gam
 | When You Need... | Check... |
 |------------------|----------|
 | Current project status | `/docs/status.md` |
+| Game design & requirements | `/docs/design/INDEX.md` |
 | How to add a new library | `/docs/workflows.md` |
 | Project structure | `/docs/technical/monorepo-structure.md` |
 | Build commands | `README.md` |

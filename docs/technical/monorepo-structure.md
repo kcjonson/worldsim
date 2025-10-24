@@ -136,6 +136,6 @@ libs/renderer/
 
 ## Related Documentation
 
-- Spec: [Project Requirements](/docs/specs/requirements/functional.md)
+- Design Doc: [Project Requirements](/docs/design/requirements/functional.md)
 - Tech: [Build System](./build-system.md)
 - Code: *To be added once implemented*

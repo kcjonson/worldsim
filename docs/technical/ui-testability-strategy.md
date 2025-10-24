@@ -216,7 +216,7 @@ The `ui-sandbox` application serves as the primary testing ground:
 
 ## Related Documentation
 
-- Spec: [UI Sandbox Application](/docs/specs/features/ui-framework/ui-sandbox.md)
+- Design Doc: [UI Sandbox Application](/docs/design/features/ui-framework/ui-sandbox.md)
 - Tech: [Monorepo Structure](./monorepo-structure.md)
 - Code: `libs/ui/include/ui/inspector/` (once implemented)
 

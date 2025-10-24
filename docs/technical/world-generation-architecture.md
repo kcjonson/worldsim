@@ -183,7 +183,7 @@ Each would implement `IWorldGenerator` with its own parameters and algorithms.
 
 ## Related Documentation
 
-- Spec: [World Generation Feature](/docs/specs/features/world-creation/generation.md)
+- Design Doc: [World Generation Feature](/docs/design/features/world-creation/generation.md)
 - Tech: [3D to 2D Sampling](./3d-to-2d-sampling.md)
 - Code: `libs/world/include/world/` (once implemented)
 

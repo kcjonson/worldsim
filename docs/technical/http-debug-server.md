@@ -690,6 +690,6 @@ res.set_header("Access-Control-Allow-Origin", "*");
 
 ## Related Documentation
 
-- [Product Spec: HTTP Debug Server](/docs/specs/features/debug-server/README.md)
+- [Game Design Doc: HTTP Debug Server](/docs/design/features/debug-server/README.md)
 - [Logging System](./logging-system.md)
 - [Multiplayer Architecture](./multiplayer-architecture.md) - Separate game server protocol

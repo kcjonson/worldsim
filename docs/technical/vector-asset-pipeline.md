@@ -411,7 +411,7 @@ struct DirtyRegion {
 
 ## Related Documentation
 
-- Spec: [Vector Assets Feature](/docs/specs/features/vector-assets/README.md)
+- Design Doc: [Vector Assets Feature](/docs/design/features/vector-assets/README.md)
 - Tech: [Renderer Architecture](./renderer-architecture.md)
 - Tech: [Resource Management](./resource-management.md)
 - Code: `libs/renderer/resources/svg/` (once implemented)

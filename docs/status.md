@@ -92,8 +92,8 @@ None currently
 - Rate-limited streams prevent bandwidth issues: metrics 10 Hz, logs 20 Hz throttled, profiler 5 Hz
 
 **Technical Documentation Created:**
-- `/docs/specs/features/debug-server/README.md` - Debug server product spec
-- `/docs/specs/features/multiplayer/README.md` - Multiplayer architecture product spec
+- `/docs/design/features/debug-server/README.md` - Debug server game design doc
+- `/docs/design/features/multiplayer/README.md` - Multiplayer architecture game design doc
 - `/docs/technical/http-debug-server.md` - Debug server implementation design
 - `/docs/technical/multiplayer-architecture.md` - Client/server protocol and synchronization
 - `/docs/technical/process-management.md` - Cross-platform process lifecycle management
@@ -121,7 +121,7 @@ None currently
 ### 2025-10-12 - Initial Planning Session
 
 **Documentation System Created:**
-- Established three-tier docs: status.md, technical/, specs/
+- Established three-tier docs: status.md, technical/, design/
 - Created workflows.md for common development tasks
 - Streamlined CLAUDE.md from 312→124 lines (navigation only, no duplication)
 - Technical docs use topic-based organization (no ADR numbering)
