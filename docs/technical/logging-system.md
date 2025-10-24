@@ -1,9 +1,24 @@
 # Structured Logging System
 
 Created: 2025-10-12
-Last Updated: 2025-10-12
+Last Updated: 2025-10-24
 Status: Active
 Priority: **Implement Immediately**
+
+## Application Scope
+
+**Runs in:**
+- All applications (main game, game server, ui-sandbox, tools)
+- All build types (Development and Release)
+
+**Build Behavior:**
+- **Development builds**: All log levels available (Debug, Info, Warning, Error)
+- **Release builds**: Only Error logging compiled in (all others removed)
+
+**Output Destinations:**
+- Console/stdout (always)
+- File (optional, configurable)
+- HTTP debug server (Development builds only, see [HTTP Integration](#http-debug-server-integration))
 
 ## What Is Structured Logging?
 
@@ -148,10 +163,18 @@ const char* LevelToString(LogLevel level);
 		__FILE__, __LINE__, \
 		format, ##__VA_ARGS__)
 
-// Compile out debug logs in release
-#ifdef NDEBUG
+// Compile out Debug, Info, and Warning logs in Release builds
+#ifndef DEVELOPMENT_BUILD
 	#undef LOG_DEBUG
 	#define LOG_DEBUG(category, format, ...) ((void)0)
+
+	#undef LOG_INFO
+	#define LOG_INFO(category, format, ...) ((void)0)
+
+	#undef LOG_WARNING
+	#define LOG_WARNING(category, format, ...) ((void)0)
+
+	// Only LOG_ERROR remains in Release builds
 #endif
 ```
 
@@ -338,6 +361,117 @@ void LoadLogConfig(const json& config) {
 }
 ```
 
+## HTTP Debug Server Integration
+
+In Development builds, logs are also streamed to the external debug web app via HTTP Server-Sent Events (SSE). See [observability/developer-server.md](./observability/developer-server.md) for full architecture details.
+
+### Architecture
+
+```
+┌─────────────────────────────────────┐
+│ Application (any process)           │
+│                                      │
+│  Game/UI Thread (60 FPS)            │
+│    LOG_INFO(Renderer, "...")        │
+│         ↓                            │
+│    Logger::Log()                    │
+│         ↓                            │
+│    Write to lock-free ring buffer   │ ← Fast, never blocks
+│                                      │
+│  HTTP Server Thread (10 Hz)         │
+│    Read from ring buffer            │
+│         ↓                            │
+│    Stream via SSE /stream/logs      │
+└──────────────┬──────────────────────┘
+               │
+    ┌──────────▼──────────┐
+    │ External Debug App  │
+    │ (Browser)           │
+    │ - Log viewer        │
+    │ - Filtering         │
+    │ - Search            │
+    └─────────────────────┘
+```
+
+### Implementation
+
+**Ring Buffer for Logs:**
+```cpp
+// Lock-free ring buffer (same pattern as observability/developer-server.md)
+struct LogEntry {
+    LogLevel level;
+    LogCategory category;
+    char message[256];
+    uint64_t timestamp;
+    const char* file;
+    int line;
+};
+
+inline LockFreeRingBuffer<LogEntry, 1000> g_logBuffer;
+```
+
+**Logger writes to both console and ring buffer:**
+```cpp
+void Logger::Log(LogCategory category, LogLevel level, const char* file, int line, const char* format, ...) {
+    // Filter by level
+    if (level < GetLevel(category)) return;
+
+    // Format message
+    char message[256];
+    va_list args;
+    va_start(args, format);
+    vsnprintf(message, sizeof(message), format, args);
+    va_end(args);
+
+    // Output to console
+    printf("[%s][%s][%s] %s\n",
+        GetTimestamp(), CategoryToString(category), LevelToString(level), message);
+
+    #ifdef DEVELOPMENT_BUILD
+    // Also write to ring buffer for HTTP streaming
+    LogEntry entry = {level, category, {}, GetTimestamp(), file, line};
+    strncpy(entry.message, message, sizeof(entry.message) - 1);
+    g_logBuffer.Write(entry);  // Lock-free, never blocks!
+    #endif
+}
+```
+
+**HTTP Server streams logs:**
+```cpp
+// In HTTP server thread (see observability/developer-server.md)
+svr.Get("/stream/logs", [](const httplib::Request& req, httplib::Response& res) {
+    res.set_header("Content-Type", "text/event-stream");
+    res.set_chunked_content_provider("text/event-stream", [](size_t, httplib::DataSink& sink) {
+        StreamLogsWithThrottling(sink);  // 20 Hz, rate-limited
+        return true;
+    });
+});
+```
+
+**SSE Event Format:**
+```
+event: log
+data: {"level": "INFO", "category": "Renderer", "message": "Loaded texture grass.svg", "timestamp": 1729800000, "file": "renderer.cpp", "line": 123}
+
+event: log
+data: {"level": "ERROR", "category": "Network", "message": "Failed to connect", "timestamp": 1729800001}
+```
+
+### Benefits
+
+- **Real-time log viewing**: See logs in external debug app without switching windows
+- **No blocking**: Logging never blocks game thread (ring buffer is lock-free)
+- **Filtering**: External app can filter by category, level, search text
+- **Persistence**: External app can save log history, export to file
+- **Multi-process**: Debug app can connect to multiple processes (game client + server)
+
+### Performance
+
+- Writing to ring buffer: ~0.01ms per log (negligible)
+- HTTP thread reads at 20 Hz (throttled to prevent spam)
+- Game thread never waits for network I/O
+- Release builds: HTTP integration compiled out completely
+
 ## Integration Points
 
 ### All Libraries
@@ -360,7 +494,8 @@ Every library uses logging for diagnostics:
 		"Network": "Error"
 	},
 	"logToFile": true,
-	"logFilePath": "logs/world-sim.log"
+	"logFilePath": "logs/world-sim.log",
+	"httpStreaming": true
 }
 ```
 
@@ -485,20 +620,47 @@ LOG_INFO(Renderer, "Texture: %s", GetTextureName());
 // If filtered: GetTextureName() never called
 ```
 
+## Build Configuration
+
+**Development Build** (`-DCMAKE_BUILD_TYPE=Development`):
+- `DEVELOPMENT_BUILD` flag set
+- All log levels available: Debug, Info, Warning, Error
+- Console output
+- File output (configurable)
+- HTTP streaming to external debug app
+- ~256 KB memory for ring buffer
+
+**Release Build** (`-DCMAKE_BUILD_TYPE=Release`):
+- `DEVELOPMENT_BUILD` not defined
+- Only Error logging compiled in
+- Debug, Info, Warning logs compiled out (((void)0))
+- No HTTP streaming
+- Console/file output only for errors
+- Minimal overhead
+
+**CMake Integration:**
+```cmake
+if(CMAKE_BUILD_TYPE STREQUAL "Development")
+    target_compile_definitions(foundation PRIVATE DEVELOPMENT_BUILD)
+endif()
+```
+
 ## Trade-offs
 
 **Pros:**
 - Organized, filterable output
-- Zero cost debug logs in release
+- Zero cost Debug/Info/Warning logs in Release
 - Easy to use throughout codebase
 - Helps debugging immensely
+- HTTP streaming integrates with external debug app
 
 **Cons:**
 - Slight boilerplate (macros)
 - Must choose appropriate categories
 - Can't filter by multiple criteria (e.g., "Renderer AND Physics")
+- Ring buffer memory in Development builds (~256 KB)
 
-**Decision:** Essential tool for development, worth minor complexity.
+**Decision:** Essential tool for development, worth minor complexity. HTTP integration provides additional value with minimal overhead.
 
 ## Alternatives Considered
 
@@ -541,10 +703,40 @@ LOG_INFO(Renderer, "Texture: %s", GetTextureName());
    - Add logging throughout codebase
    - Establish conventions
 
+## Cross-Reference: Observability Systems
+
+| System | Purpose | Access Method | In-Game UI | Availability |
+|--------|---------|---------------|------------|--------------|
+| **Logging** (this doc) | Diagnostic messages | Console/file + SSE `/stream/logs` | No | All builds (Error only in Release) |
+| [UI Inspection](./observability/ui-inspection.md) | Inspect UI hierarchy, hover data | SSE `/stream/ui`, `/stream/hover` | No (external) | Development builds |
+| [Diagnostic Drawing](./diagnostic-drawing.md) | Manual visual debugging | `DebugDraw::*()` in code | Yes (viewport) | Development builds |
+| [Developer Server](./observability/developer-server.md) | Application monitoring | SSE (metrics, profiler) | No (external) | Development builds |
+
+**Key Distinctions:**
+- **Logging** (this doc): Text diagnostic output (console, file, HTTP stream)
+- **UI Inspection**: Stream UI state to external app, inspect element hierarchy
+- **Diagnostic Drawing**: Temporary lines/boxes drawn IN viewport during manual debugging
+- **Developer Server**: Monitor application performance and state
+
+**When to Use Logging:**
+- Recording events and state changes
+- Diagnosing errors and unexpected behavior
+- Performance timing with Debug level
+- Monitoring application flow
+
+**When to Use Other Systems:**
+- Visual debugging → [Diagnostic Drawing](./diagnostic-drawing.md)
+- UI inspection → [UI Inspection](./observability/ui-inspection.md)
+- Performance monitoring → [Developer Server](./observability/developer-server.md)
+
 ## Related Documentation
 
-- Code: `libs/foundation/utils/log.h` (once implemented)
-- Code: `libs/foundation/utils/log.cpp` (once implemented)
+- **Architecture**: [Developer Server](./observability/developer-server.md) - Streams logs via SSE
+- **Related Systems**: [UI Inspection](./observability/ui-inspection.md) - UI inspection
+- **Related Systems**: [Diagnostic Drawing](./diagnostic-drawing.md) - Visual debugging
+- [Observability Overview](./observability/INDEX.md) - Full observability system overview
+- **Code**: `libs/foundation/utils/log.h` (once implemented)
+- **Code**: `libs/foundation/utils/log.cpp` (once implemented)
 
 ## Notes
 

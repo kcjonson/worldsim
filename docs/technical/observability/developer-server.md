@@ -1,10 +1,14 @@
-# HTTP Debug Server - Technical Design
+# Developer Server - Technical Design
+
+Created: 2025-10-12
+Last Updated: 2025-10-24
+Status: Active
 
 ## Overview
 
-The HTTP Debug Server is an embedded web server that runs within the game server process (debug builds only) and streams real-time metrics, logs, and debug information to a standalone web application. This design eliminates the performance overhead of in-game debug overlays.
+The developer server is an embedded HTTP server that runs within application processes (Development builds only) and streams real-time metrics, logs, and debug information to an external [developer client](./developer-client.md) web application. This design eliminates the performance overhead of in-game debug overlays.
 
-**Critical**: The debug server is completely separate from the game client/server architecture. It observes the game server but doesn't affect gameplay.
+**Critical**: The developer server is completely separate from the game client/server architecture. It observes the application but doesn't affect gameplay or functionality.
 
 ## Architecture
 
@@ -305,162 +309,17 @@ void DebugServer::StreamLogs(httplib::DataSink& sink) {
 - Server thread reads sequentially (don't skip logs)
 - Rate limit: max 20 logs/second to prevent UI spam
 
-## Web Debug Application (TypeScript)
+## Developer Client (Web Application)
 
-### Technology Stack
+The external web application that connects to the developer server is documented separately. See [developer-client.md](./developer-client.md) for:
 
-- **Build Tool**: Vite (fast HMR, TypeScript support)
-- **UI**: React or Vanilla TypeScript (TBD based on complexity)
-- **Charts**: Custom Canvas rendering (no external library)
-- **Styling**: Plain CSS (no framework)
-- **SSE Client**: Native browser `EventSource` API
+- Technology stack (TypeScript/Vite)
+- SSE connection management
+- Custom chart rendering
+- UI components
+- Build integration with CMake
 
-### Project Structure
-
-```
-debug-app/
-  src/
-    main.ts              ← Entry point
-    components/
-      MetricsChart.ts    ← FPS/memory line chart (Canvas)
-      LogViewer.ts       ← Real-time log display
-      ProfilerView.ts    ← Flame graph rendering
-      SceneInspector.ts  ← Entity hierarchy tree
-    services/
-      EventSource.ts     ← SSE connection management
-      DataStore.ts       ← Client-side data buffering
-    styles/
-      main.css           ← Dark theme
-  index.html
-  vite.config.ts
-  package.json
-```
-
-### SSE Connection (TypeScript)
-
-```typescript
-class DebugClient {
-    private metricsSource: EventSource;
-    private logsSource: EventSource;
-
-    connect(serverUrl: string) {
-        // Connect to metrics stream (10 Hz updates)
-        this.metricsSource = new EventSource(`${serverUrl}/stream/metrics`);
-
-        this.metricsSource.addEventListener('metric', (event) => {
-            const data = JSON.parse(event.data);
-            this.updateMetricsChart(data);
-        });
-
-        this.metricsSource.onerror = () => {
-            console.log('Disconnected, will auto-reconnect...');
-            // EventSource automatically reconnects!
-        };
-
-        // Connect to log stream (20 Hz updates)
-        this.logsSource = new EventSource(`${serverUrl}/stream/logs`);
-        this.logsSource.addEventListener('log', (event) => {
-            const log = JSON.parse(event.data);
-            this.appendLogEntry(log);
-        });
-    }
-
-    disconnect() {
-        this.metricsSource?.close();
-        this.logsSource?.close();
-    }
-}
-```
-
-### Custom Chart Rendering (Canvas)
-
-No external charting library - draw directly to Canvas:
-
-```typescript
-class MetricsChart {
-    private ctx: CanvasRenderingContext2D;
-    private dataPoints: number[] = [];
-    private maxPoints = 300; // 30 seconds at 10 Hz
-
-    addDataPoint(value: number) {
-        this.dataPoints.push(value);
-        if (this.dataPoints.length > this.maxPoints) {
-            this.dataPoints.shift(); // Keep last 300 points
-        }
-        this.render();
-    }
-
-    render() {
-        const width = this.canvas.width;
-        const height = this.canvas.height;
-
-        // Clear canvas
-        this.ctx.fillStyle = '#1a1a1a';
-        this.ctx.fillRect(0, 0, width, height);
-
-        // Draw grid
-        this.ctx.strokeStyle = '#333';
-        this.ctx.lineWidth = 1;
-        for (let i = 0; i < 10; i++) {
-            const y = (i / 10) * height;
-            this.ctx.beginPath();
-            this.ctx.moveTo(0, y);
-            this.ctx.lineTo(width, y);
-            this.ctx.stroke();
-        }
-
-        // Draw line chart
-        this.ctx.beginPath();
-        this.ctx.strokeStyle = '#00ff00';
-        this.ctx.lineWidth = 2;
-
-        this.dataPoints.forEach((value, i) => {
-            const x = (i / this.dataPoints.length) * width;
-            const y = height - (value / 100) * height; // Scale to 0-100
-            if (i === 0) this.ctx.moveTo(x, y);
-            else this.ctx.lineTo(x, y);
-        });
-        this.ctx.stroke();
-    }
-}
-```
-
-### Build Integration
-
-**Development mode** (hot reload):
-```bash
-cd debug-app
-npm run dev
-# Opens at http://localhost:5173
-# Connects to game server debug endpoint at localhost:8080
-```
-
-**Production build** (bundled with game):
-```bash
-npm run build
-# Outputs to debug-app/dist/
-# Game server serves these static files from / endpoint
-```
-
-**CMake integration:**
-```cmake
-# Build web app during game build (debug only)
-if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-    add_custom_target(debug-app ALL
-        COMMAND npm install
-        COMMAND npm run build
-        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/debug-app
-        COMMENT "Building debug web app"
-    )
-
-    # Copy built files to output directory
-    add_custom_command(TARGET debug-app POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_directory
-        ${CMAKE_SOURCE_DIR}/debug-app/dist/
-        ${CMAKE_BINARY_DIR}/debug-app/
-    )
-endif()
-```
+The developer client connects to the developer server via SSE streams and displays real-time data in a browser window.
 
 ## HTTP Server Implementation (cpp-httplib)
 
@@ -488,7 +347,7 @@ target_link_libraries(foundation PRIVATE httplib::httplib)
 ### Server Initialization
 
 ```cpp
-class DebugServer {
+class DeveloperServer {
     httplib::Server m_server;
     std::thread m_serverThread;
     std::atomic<bool> m_running{false};
@@ -498,8 +357,8 @@ public:
     void Start(int port = 8080) {
         m_port = port;
 
-        // Serve static files (web app)
-        m_server.set_mount_point("/", "./debug-app");
+        // Serve static files (developer client web app)
+        m_server.set_mount_point("/", "./developer-client");
 
         // SSE streams with rate limiting
         m_server.Get("/stream/metrics", HandleMetricsStream);
@@ -523,7 +382,7 @@ public:
         // Start server on background thread (localhost only!)
         m_running = true;
         m_serverThread = std::thread([this]() {
-            LOG_INFO("Debug", "Debug server starting on http://127.0.0.1:%d", m_port);
+            LOG_INFO("Observability", "Developer server starting on http://127.0.0.1:%d", m_port);
             m_server.listen("127.0.0.1", m_port);
         });
     }
@@ -534,7 +393,7 @@ public:
         if (m_serverThread.joinable()) {
             m_serverThread.join();
         }
-        LOG_INFO("Debug", "Debug server stopped");
+        LOG_INFO("Observability", "Developer server stopped");
     }
 };
 ```
@@ -542,16 +401,16 @@ public:
 ### Compile-Time Exclusion (Release Builds)
 
 ```cpp
-// foundation/DebugServer.h
-#ifdef DEBUG_BUILD
-class DebugServer {
+// foundation/DeveloperServer.h
+#ifdef DEVELOPMENT_BUILD
+class DeveloperServer {
     // ... full implementation ...
     void Start(int port);
     void Stop();
 };
 #else
-// No-op stub for release builds (entire class compiled out)
-class DebugServer {
+// No-op stub for Release builds (entire class compiled out)
+class DeveloperServer {
 public:
     void Start(int port) {} // Empty, inlined
     void Stop() {}          // Empty, inlined
@@ -561,12 +420,12 @@ public:
 
 **CMake configuration:**
 ```cmake
-if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-    target_compile_definitions(foundation PRIVATE DEBUG_BUILD)
+if(CMAKE_BUILD_TYPE STREQUAL "Development")
+    target_compile_definitions(foundation PRIVATE DEVELOPMENT_BUILD)
 endif()
 ```
 
-**Result**: Zero code footprint in release builds. Debug server doesn't exist in shipped binaries.
+**Result**: Zero code footprint in Release builds. Developer server doesn't exist in shipped binaries.
 
 ## Configuration
 
@@ -574,7 +433,7 @@ endif()
 
 ```json
 {
-  "debugServer": {
+  "developerServer": {
     "enabled": true,
     "port": 8080,
     "streamRates": {
@@ -595,14 +454,14 @@ endif()
 ### Runtime Toggle
 
 ```cpp
-// Can be toggled via console command (debug builds)
-void ConsoleCommand_ToggleDebugServer(const char* args) {
-    if (g_debugServer.IsRunning()) {
-        g_debugServer.Stop();
-        LOG_INFO("Console", "Debug server stopped");
+// Can be toggled via console command (Development builds)
+void ConsoleCommand_ToggleDeveloperServer(const char* args) {
+    if (g_developerServer.IsRunning()) {
+        g_developerServer.Stop();
+        LOG_INFO("Console", "Developer server stopped");
     } else {
-        g_debugServer.Start(8080);
-        LOG_INFO("Console", "Debug server started on http://localhost:8080");
+        g_developerServer.Start(8080);
+        LOG_INFO("Console", "Developer server started on http://localhost:8080");
     }
 }
 ```
@@ -648,13 +507,13 @@ void ConsoleCommand_ToggleDebugServer(const char* args) {
 | System | Purpose | Port | Protocol | Rate |
 |--------|---------|------|----------|------|
 | Game Server → Game Client | Gameplay | 9000 | WebSocket | 60 Hz |
-| Debug Server → Debug Web App | Monitoring | 8080 | SSE | 10 Hz |
+| Developer Server → Developer Client | Monitoring | 8080 | SSE | 10 Hz |
 
 **They are completely independent:**
-- Debug server observes game server (reads metrics)
-- Debug server doesn't affect gameplay
-- Can disable debug server with zero impact on game
-- Debug server crash doesn't affect game
+- Developer server observes the application (reads metrics)
+- Developer server doesn't affect gameplay or functionality
+- Can disable developer server with zero impact on application
+- Developer server crash doesn't affect application
 - Different threads, different ports, different protocols
 
 ## Security Considerations
@@ -675,7 +534,7 @@ res.set_header("Access-Control-Allow-Origin", "*");
 ```
 
 **Production safety:**
-- Entire debug server compiled out in release builds
+- Entire developer server compiled out in Release builds
 - Zero code footprint in shipped binaries
 - No accidental exposure
 
@@ -690,6 +549,9 @@ res.set_header("Access-Control-Allow-Origin", "*");
 
 ## Related Documentation
 
-- [Game Design Doc: HTTP Debug Server](/docs/design/features/debug-server/README.md)
-- [Logging System](./logging-system.md)
-- [Multiplayer Architecture](./multiplayer-architecture.md) - Separate game server protocol
+- [Developer Client](./developer-client.md) - External web application
+- [UI Inspection](./ui-inspection.md) - UI hierarchy and hover inspection
+- [INDEX](./INDEX.md) - Observability system overview
+- [Logging System](../logging-system.md) - Log streaming integration
+- [Diagnostic Drawing](../diagnostic-drawing.md) - In-viewport debugging
+- [Multiplayer Architecture](../multiplayer-architecture.md) - Separate game server protocol (if exists)

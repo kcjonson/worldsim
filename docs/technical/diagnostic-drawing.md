@@ -1,9 +1,40 @@
-# Immediate Mode Debug Rendering
+# Diagnostic Drawing (Immediate Mode)
 
 Created: 2025-10-12
-Last Updated: 2025-10-12
+Last Updated: 2025-10-24
 Status: Active
 Priority: **Implement Later** (after basic rendering works)
+
+## Scope & Purpose
+
+**What this is:** Manual developer debugging tool for temporary diagnostic visualization in the game viewport.
+
+**What this is NOT:**
+- NOT part of the HTTP debug server UI (see [observability/developer-server.md](./observability/developer-server.md))
+- NOT for automated inspection (use [UI Testability](./observability/ui-inspection.md) instead)
+- NOT a persistent visualization system
+
+**Use Case:** Developer temporarily adds `DebugDraw::Line(...)` calls while debugging a specific issue (e.g., visualizing chunk boundaries, collision boxes, camera frustum). Removes these calls when done debugging.
+
+**No Conflict with External Debug UI:** The external debug web app (from [observability/developer-server.md](./observability/developer-server.md)) doesn't mirror the game viewport, so debug rendering doesn't interfere with it. They serve different purposes:
+- **Debug Rendering** (this doc): Visual overlays IN the game viewport
+- **HTTP Debug UI**: Separate browser window showing metrics/logs/profiler
+
+## Application Scope
+
+**Runs in:**
+- Main game (Development builds only)
+- `ui-sandbox` (Development builds only)
+- Any application with rendering
+
+**Build Requirement:**
+- Compiled in: `DEVELOPMENT_BUILD` flag set
+- Compiled out: Release builds (zero code footprint)
+
+**Runtime Control:**
+- No dedicated toggle key (F3 is for UI hover inspection)
+- Always available in Development builds
+- Developer adds/removes calls in code as needed
 
 ## What Is Immediate Mode Debug Rendering?
 
@@ -375,11 +406,11 @@ void RenderFrame() {
 ## Configuration
 
 ```cpp
-// Runtime enable/disable
-bool g_enableDebugDraw = true;
+// Runtime enable/disable (no dedicated key - developer controls in code)
+bool g_enableDebugDraw = false;  // Disabled by default
 
-void ToggleDebugDraw() {
-	g_enableDebugDraw = !g_enableDebugDraw;
+void EnableDebugDraw(bool enable) {
+	g_enableDebugDraw = enable;
 }
 
 // Only render if enabled
@@ -387,10 +418,8 @@ if (g_enableDebugDraw) {
 	DebugDraw::Render(viewProj);
 }
 
-// Keyboard shortcut
-if (Input::KeyPressed(Key::F3)) {
-	ToggleDebugDraw();
-}
+// Developer can enable via console command or code
+// (No keyboard shortcut - F3 is reserved for UI hover inspection)
 ```
 
 ## Performance Considerations
@@ -406,21 +435,62 @@ if (Input::KeyPressed(Key::F3)) {
 - Use simple primitives (lines are cheapest)
 - Don't draw every frame if not needed
 
+## Build Configuration
+
+**Development Build** (`-DCMAKE_BUILD_TYPE=Development`):
+- `DEVELOPMENT_BUILD` flag set
+- Debug rendering compiled in
+- `DebugDraw::*()` functions available
+- Minimal overhead when not used (~0.01ms idle)
+- ~300 KB memory for implementation
+
+**Release Build** (`-DCMAKE_BUILD_TYPE=Release`):
+- `DEVELOPMENT_BUILD` not defined
+- Entire system compiled out via `#ifdef`
+- Zero code footprint in binary
+- Zero runtime overhead
+
+**CMake Integration:**
+```cmake
+if(CMAKE_BUILD_TYPE STREQUAL "Development")
+    target_compile_definitions(renderer PRIVATE DEVELOPMENT_BUILD)
+    # DebugDraw implementation included
+endif()
+```
+
 ## Trade-offs
 
 **Pros:**
-- Essential development tool
-- Fast iteration
-- Easy to use
+- Essential development tool for manual debugging
+- Fast iteration (add/remove calls quickly)
+- Easy to use (simple function calls)
 - No state management
+- Visual debugging more intuitive than print statements
 
 **Cons:**
-- Extra rendering pass
-- Memory for debug data
+- Extra rendering pass (but only when used)
+- Memory for debug data (~1 MB for line buffers)
 - ~300 lines of code to implement
 - Need simple shader
+- Renders IN game viewport (can obscure view)
 
-**Decision:** Invaluable for development, worth the implementation effort.
+**Decision:** Invaluable for development, worth the implementation effort. Complements (doesn't replace) external debug UI.
+
+## Distinction from Other Debug Systems
+
+**When to use Debug Rendering:**
+- Visualizing chunk boundaries during world generation debugging
+- Drawing collision boxes during physics debugging
+- Showing camera frustum during camera system work
+- Displaying AI paths during pathfinding implementation
+- Temporary diagnostic overlays during active development
+
+**When to use HTTP Debug Server instead:**
+- Monitoring real-time metrics (FPS, memory, frame time)
+- Viewing log output in organized interface
+- Profiling function execution times
+- Inspecting UI element hierarchy
+- Automated testing and inspection
 
 ## Implementation Status
 
@@ -432,10 +502,29 @@ if (Input::KeyPressed(Key::F3)) {
 - [ ] Runtime toggle
 - [ ] Example usage
 
+## Cross-Reference: Observability Systems
+
+| System | Purpose | Access Method | In-Game UI | Availability |
+|--------|---------|---------------|------------|--------------|
+| **Diagnostic Drawing** (this doc) | Manual visual debugging | `DebugDraw::*()` in code | Yes (viewport) | Development builds |
+| [UI Inspection](./observability/ui-inspection.md) | Inspect UI hierarchy, hover data | SSE `/stream/ui`, `/stream/hover` | No (external) | Development builds |
+| [Logging](./logging-system.md) | Diagnostic messages | Console/file + SSE `/stream/logs` | No | All builds (Error only in Release) |
+| [Developer Server](./observability/developer-server.md) | Application monitoring | SSE (metrics, profiler) | No (external) | Development builds |
+
+**Key Distinctions:**
+- **Diagnostic Drawing** (this doc): Temporary lines/boxes drawn IN viewport during manual debugging
+- **UI Inspection**: Stream UI state to external app, inspect element hierarchy
+- **Logging**: Text diagnostic output
+- **Developer Server**: Monitor application performance and state
+
 ## Related Documentation
 
-- Tech: [Renderer Architecture](./renderer-architecture.md)
-- Code: `libs/renderer/debug/debug_draw.h` (once implemented)
+- **Related Systems**: [Developer Server](./observability/developer-server.md) - External monitoring (doesn't mirror viewport)
+- **Related Systems**: [UI Inspection](./observability/ui-inspection.md) - UI inspection (external app)
+- **Related Systems**: [Logging System](./logging-system.md) - Text diagnostics
+- [Observability Overview](./observability/INDEX.md) - Full observability system overview
+- **Tech**: [Renderer Architecture](./renderer-architecture.md) (if exists)
+- **Code**: `libs/renderer/debug/debug_draw.h` (once implemented)
 
 ## Notes
 
@@ -443,4 +532,6 @@ if (Input::KeyPressed(Key::F3)) {
 
 **Thread Safety:** If debug drawing from multiple threads, need to synchronize access to static vectors.
 
-**Release Builds:** Compile out entirely with #ifdef to ensure zero cost in shipping game.
+**Release Builds:** Compile out entirely with `#ifdef DEVELOPMENT_BUILD` to ensure zero cost in shipping game.
+
+**No Keyboard Toggle:** F3 is reserved for UI hover inspection. Debug rendering has no dedicated toggle - developer controls it in code.

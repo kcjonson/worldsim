@@ -126,6 +126,9 @@ TODO
 - 2D top down world
 - Resource production based
 
+### Rise to Ruins
+TODO
+
 ### Settlers (All million of them)
 - Supply chain management, heavily focuses on how to move goods around
 - Resource management
@@ -153,3 +156,5 @@ TODO
 ### Miscreated
 
 ### Hurtworld
+
+### Icarus
