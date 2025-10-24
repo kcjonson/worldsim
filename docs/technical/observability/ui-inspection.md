@@ -271,7 +271,7 @@ The `ui-sandbox` application runs HTTP debug server on port 8081:
 # Run ui-sandbox (HTTP server auto-starts in Development builds)
 ./ui-sandbox --component button
 
-# Open external debug app in browser
+# Open developer client in browser
 open http://localhost:8081
 
 # Press F3 in ui-sandbox to enable hover inspection
@@ -289,9 +289,20 @@ curl -X POST http://localhost:8081/api/ui/click -d '{"id":"test_button"}'
 curl http://localhost:8081/api/ui/screenshot > test.png
 ```
 
-### External Web Debug App
+**For main game client:**
+```bash
+# Run main game (HTTP server auto-starts in Development builds)
+./world-sim
 
-Same architecture as debug server - TypeScript/Vite app served by HTTP server:
+# Open developer client in browser
+open http://localhost:8082
+
+# Press F3 in game to enable hover inspection
+```
+
+### Developer Client (External Web App)
+
+Same architecture as developer server - TypeScript/Vite app served by HTTP server:
 
 **Features:**
 - Live UI hierarchy tree view (updates at 10 Hz via SSE)

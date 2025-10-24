@@ -14,14 +14,16 @@ The developer server is an embedded HTTP server that runs within application pro
 
 ### Component Structure
 
+This pattern applies to all three C++ applications that embed a developer server:
+
 ```
 ┌─────────────────────────────────────────────────────┐
-│ Game Server Process (world-sim-server)              │
+│ Application Process                                  │
+│ (world-sim-server, world-sim, or ui-sandbox)        │
 │                                                      │
 │  ┌────────────────────────────────────────────┐    │
-│  │ Main Thread (Game Logic) - 60 TPS          │    │
-│  │  - Update ECS                               │    │
-│  │  - Broadcast to game clients (60 Hz)       │    │
+│  │ Main Thread - 60 FPS/TPS                   │    │
+│  │  - Application logic                       │    │
 │  │  - Collect metrics → Ring Buffer           │    │
 │  │  - Write logs → Ring Buffer                │    │
 │  └────────────────┬───────────────────────────┘    │
@@ -35,14 +37,19 @@ The developer server is an embedded HTTP server that runs within application pro
 │                                                      │
 └──────────────────────────────────────────────────────┘
                     │
-    ┌───────────────┴────────────────┐
-    │                                 │
-    │  Browser (localhost:8080)      │  ← Separate from game!
-    │  Debug Web App (TypeScript)    │
-    │  - Metrics charts (Canvas)     │
-    │  - Log viewer                  │
-    │  - Profiler visualization      │
-    └────────────────────────────────┘
+    ┌───────────────┴──────────────────┐
+    │                                   │
+    │  Browser (localhost:8080/8081/8082)
+    │  Developer Client (TypeScript)    │
+    │  - Metrics charts (Canvas)       │
+    │  - Log viewer                    │
+    │  - Profiler visualization        │
+    └──────────────────────────────────┘
+
+Port Assignments:
+- 8080: Game Server (world-sim-server)
+- 8081: UI-Sandbox (ui-sandbox)
+- 8082: Game Client (world-sim)
 ```
 
 ### Threading Model
@@ -504,15 +511,15 @@ void ConsoleCommand_ToggleDeveloperServer(const char* args) {
 
 **Critical distinction:**
 
-| System | Purpose | Port | Protocol | Rate |
-|--------|---------|------|----------|------|
+| System | Purpose | Port(s) | Protocol | Rate |
+|--------|---------|---------|----------|------|
 | Game Server → Game Client | Gameplay | 9000 | WebSocket | 60 Hz |
-| Developer Server → Developer Client | Monitoring | 8080 | SSE | 10 Hz |
+| Developer Servers → Developer Client | Monitoring | 8080 (game server)<br>8081 (ui-sandbox)<br>8082 (game client) | HTTP/SSE | 10-20 Hz |
 
 **They are completely independent:**
-- Developer server observes the application (reads metrics)
-- Developer server doesn't affect gameplay or functionality
-- Can disable developer server with zero impact on application
+- Developer servers observe the applications (read metrics)
+- Developer servers don't affect gameplay or functionality
+- Can disable developer servers with zero impact on applications
 - Developer server crash doesn't affect application
 - Different threads, different ports, different protocols
 
