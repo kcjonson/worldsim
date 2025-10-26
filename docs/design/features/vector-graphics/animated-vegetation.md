@@ -53,7 +53,7 @@ Vegetation in world-sim (grass, trees, bushes) is dynamically animated, creating
 
 **Trunk Sway**:
 - Entire tree sways gently in wind
-- Pivot point at base of trunk
+- Pivot point at base of trunk or pull point at top of spline?
 - Stronger wind = more sway
 
 **Branch Movement**:

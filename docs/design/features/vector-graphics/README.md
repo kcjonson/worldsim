@@ -1,249 +1,241 @@
-# Vector Graphics Assets - Game Design Overview
+# Vector Graphics (SVG) Assets - Overview
 
 Created: 2025-10-24
+Updated: 2025-10-26
 Status: Design
 
 ## Overview
 
-All visual assets in world-sim are created using vector graphics (SVG format) rather than traditional bitmap images. This design decision enables procedural variation, real-time animation, and scalable visuals at any zoom level.
+SVG (Scalable Vector Graphics) assets are used throughout World-Sim in multiple distinct ways. This document provides an overview of all SVG use cases and directs to specific documentation for each.
 
-## Player-Facing Benefits
+**Why SVGs?**:
+- Scalable: Crisp visuals at any zoom level
+- Flexible: Can be animated, recolored, transformed
+- Hand-Crafted Quality: Artists create unique assets
+- Performance: Efficient when tessellated and batched
 
-**Visual Variety**:
-- Every grass blade, tree, and rock looks slightly different
-- No repetitive tiling patterns
-- Organic, hand-crafted aesthetic
+## SVG Use Cases
 
-**Smooth Zooming**:
-- Crisp, clear visuals at any zoom level
-- No pixelation when zooming in
-- Seamless transitions between zoom levels
+World-Sim uses SVG assets in three primary ways:
 
-**Dynamic Animation**:
-- Grass sways in the wind
-- Trees bend and flex
-- Vegetation responds to player movement (trampling, pushing through)
+### 1. Decorations and Entities (Placed Objects)
 
-**Responsive Environment**:
-- Visual feedback when entities interact with world
-- Grass bends as colonists walk through it
-- Trees shake when harvested
-- Water ripples when disturbed
-
-## Asset Creation Workflow
-
-### For Artists
-
-**Tools**: Any SVG editor (Adobe Illustrator, Inkscape, Figma, etc.)
-
-**Guidelines**:
-1. **Keep It Simple**: Fewer points = better performance
-   - Target: 10-50 points per shape
-   - Avoid complex filters, effects
-
-2. **Use Basic Shapes**: Paths, circles, rectangles
-   - Convert text to paths
-   - Flatten layers before export
-
-3. **Optimize Curves**: Clean up unnecessary control points
-   - Use smooth Bezier curves
-   - Avoid self-intersecting paths
-
-4. **Color Palette**: Solid colors preferred
-   - Gradients supported but heavier
-   - Transparency is fine
-
-5. **Naming Convention**: Descriptive filenames
-   - `grass_blade_01.svg`
-   - `tree_oak_small.svg`
-   - `rock_boulder_03.svg`
-
-6. **Size Guide**: Design at intended game size
-   - Grass blade: ~32px tall
-   - Small tree: ~128px tall
-   - Building: ~256px wide
-
-### Asset Categories
-
-**Static Backgrounds** (Tier 1):
-- Tile textures (grass, dirt, stone, water)
-- Ground decoration
-- Simple, repeating patterns
-
-**Structures** (Tier 2):
-- Buildings
-- Walls, fences
-- Large rocks, boulders
-- Non-animated trees
-
-**Animated Entities** (Tier 3):
-- Grass blades (individual)
-- Swaying trees
-- Flags, banners
-- Water effects
-
-### Adding Animation Data
-
-For animated assets, add custom metadata to SVG:
-
-```xml
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 100">
-    <metadata>
-        <game:animation xmlns:game="http://worldsim.game">
-            <type>grass_blade</type>
-            <pivot x="16" y="100"/>      <!-- Bottom center -->
-            <frequency>2.5</frequency>    <!-- Sway speed -->
-            <amplitude>15</amplitude>     <!-- Max bend angle (degrees) -->
-            <stiffness>0.8</stiffness>    <!-- How rigid -->
-        </game:animation>
-    </metadata>
-
-    <!-- Your SVG paths here -->
-    <path d="M 16 100 Q 16 50, 18 0" fill="#3a7" stroke="#2a5"/>
-</svg>
-```
-
-**Animation Types**:
-- `grass_blade`: Single-pivot bending
-- `tree_sway`: Multi-point deformation (trunk + branches)
-- `flag_wave`: Sine wave ripple
-- `water_ripple`: Radial distortion
-
-### Adding Collision Shapes
-
-Define simplified collision geometry for physics:
-
-```xml
-<metadata>
-    <collision>
-        <shape type="aabb">
-            <min x="12" y="90"/>
-            <max x="20" y="100"/>
-        </shape>
-    </collision>
-</metadata>
-```
-
-**Shape Types**:
-- `aabb`: Axis-aligned bounding box (fastest)
-- `circle`: Round objects
-- `polygon`: Custom convex shape
-- `compound`: Multiple shapes combined
-
-## Procedural Variation
-
-**Automatic Variation** (no artist work required):
-
-Each instance of an asset is slightly modified:
-- **Rotation**: ±5-15 degrees randomness
-- **Scale**: 90-110% size variation
-- **Color**: Hue shift, saturation, brightness tweaks
-- **Position**: Micro-offsets to break grid alignment
-
-**Configuration** (per asset type):
-
-```json
-{
-    "assetID": "grass_blade_01",
-    "variation": {
-        "rotation": {"min": -10, "max": 10},
-        "scale": {"min": 0.9, "max": 1.1},
-        "colorHueShift": {"min": -0.05, "max": 0.05},
-        "saturation": {"min": 0.9, "max": 1.1}
-    }
-}
-```
-
-## Performance Considerations for Artists
-
-**Good Practices**:
-- Fewer paths = better performance
-- Simple shapes over complex
-- Avoid gradients for high-count objects (grass)
-- Use solid colors when possible
-
-**Complexity Budget** (rough guidelines):
-- Grass blade: ~10 points, 1 path
-- Small tree: ~50 points, 3-5 paths
-- Building: ~100 points, 5-10 paths
-- Complex structure: ~200 points max
-
-**Testing**:
-- Import to game, spawn 1,000 instances
-- Check frame rate (should be 60 FPS)
-- If slow, simplify asset
-
-## Integration with Game
-
-### Asset Import Process
-
-1. **Create SVG** in art tool
-2. **Export** to `/assets/tiles/` or `/assets/entities/`
-3. **Game Auto-Detects** new assets on launch
-4. **First Use**: Asset is parsed, tessellated, cached
-5. **Subsequent Uses**: Loaded from cache
-
-### Asset Hot-Reloading (Development)
-
-1. Edit SVG in external tool, save
-2. Game detects file change
-3. Asset reloads automatically
-4. See changes immediately in-game
-
-## Visual Style Guide
-
-See: [UI Art Style](../../ui-art-style.md) for overall aesthetic ("High tech cowboy")
-
-**Vector Assets Should**:
-- Complement the retro-futuristic theme
-- Use clean, bold lines
-- Limited color palettes per asset
-- Avoid photo-realistic detail (stylized instead)
+**What**: SVG assets placed as discrete objects in the world
 
 **Examples**:
-- Grass: Simple blade shapes, vibrant greens
-- Trees: Geometric trunk + stylized foliage
-- Buildings: Clean lines, visible structure, industrial feel
-- UI Elements: Crisp icons, no gradients
+- Small decorations: Flowers, pebbles, grass tufts, mushrooms
+- Large entities: Trees, bushes, boulders
+- Interactive objects: Harvestable resources
+- Animated elements: Swaying trees, grass blades
 
-## Related Documentation
+**Characteristics**:
+- Each SVG has position, rotation, scale
+- Placed on top of procedural tile ground covers
+- Can be animated (spline deformation)
+- Biome-appropriate placement (meadow flowers, desert cacti)
 
-**Technical Implementation**:
-- [/docs/technical/vector-graphics/INDEX.md](../../../technical/vector-graphics/INDEX.md) - Complete technical documentation
-- [/docs/technical/vector-graphics/asset-pipeline.md](../../../technical/vector-graphics/asset-pipeline.md) - Asset pipeline overview
-- [/docs/technical/vector-graphics/svg-parsing-options.md](../../../technical/vector-graphics/svg-parsing-options.md) - SVG parser analysis
+**See**: [svg-decorations.md](./svg-decorations.md) - Complete documentation
 
-**Game Design**:
-- [animated-vegetation.md](./animated-vegetation.md) - Grass and tree animation behavior
-- [environmental-interactions.md](./environmental-interactions.md) - Player interaction with vegetation
+### 2. Texture Patterns (Fills for Code-Drawn Shapes)
 
-## Asset Library Organization
+**What**: SVG patterns used as repeating fills for procedurally-drawn polygons
 
+**Examples**:
+- Building materials: Brick, wood planks, concrete, thatch
+- Terrain features: Cobblestone paths, rock formations
+- UI backgrounds: Parchment, wood grain, metal
+
+**Characteristics**:
+- Seamlessly tiling patterns
+- Fill any shape/size polygon
+- Hand-crafted texture quality
+- Flexible (same pattern for any foundation size)
+
+**See**: [svg-texture-patterns.md](./svg-texture-patterns.md) - Complete documentation
+
+### 3. Animated Vegetation and Environmental Effects
+
+**What**: Dynamic SVG assets with real-time spline-based animation
+
+**Examples**:
+- Grass blades swaying in wind
+- Trees bending and flexing
+- Vegetation responding to player movement (trampling)
+- Environmental effects (ripples, particles)
+
+**Characteristics**:
+- Real-time deformation (Bezier curve manipulation)
+- Physics-influenced (wind, player interaction)
+- Performance-critical (thousands animating simultaneously)
+
+**See**: [animated-vegetation.md](./animated-vegetation.md) - Grass and tree animation design
+
+## Integration with Procedural Tile System
+
+### Rendering Layers
+
+**Complete Visual Stack** (bottom to top):
+1. **Procedural Ground Covers** (grass, sand, rock, etc.) - Code-generated, biome-blended
+2. **SVG Texture Pattern Fills** (building foundations, paths) - Code-drawn shapes with SVG fills
+3. **Ground SVG Decorations** (flowers, pebbles) - Placed flat on ground
+4. **Standing SVG Entities** (trees, structures) - Vertical objects
+5. **Animated SVG Elements** (swaying grass, trees) - Dynamic layer
+
+**Result**: Rich, layered world combining procedural efficiency with hand-crafted quality
+
+### Biome-Aware SVG Placement
+
+**Decorations and Entities Follow Biome Percentages**:
+```
+Tile with { meadow: 70%, forest: 30% }:
+- Meadow decorations (flowers): 70% spawn probability
+- Forest decorations (mushrooms): 30% spawn probability
+- Mixed ecosystem appearance
+```
+
+**Natural Ecotones**: Gradual species mixing matches biome transitions
+
+### Performance Architecture
+
+**From Vector Graphics System** [see technical docs]:
+- **Tier 1**: Pre-rasterized SVG patterns (texture atlas)
+- **Tier 2**: Semi-static SVG entities (cached meshes) - buildings, rocks
+- **Tier 3**: Dynamic SVG entities (real-time tessellation) - animated grass, trees
+
+**Target**: 10,000+ visible SVG entities @ 60 FPS
+
+## Artist Workflow (High-Level)
+
+### Creating SVG Assets
+
+**Tools**: Adobe Illustrator, Inkscape, Figma, etc.
+
+**General Guidelines**:
+- Keep shapes simple (fewer points = better performance)
+- Use solid colors or simple gradients
+- Design at intended in-game scale
+- Test patterns tile seamlessly (for texture patterns)
+
+**Asset Organization**:
 ```
 /assets/
-├── tiles/
-│   ├── terrain/
-│   │   ├── grass_01.svg
-│   │   ├── dirt_01.svg
-│   │   └── stone_01.svg
-│   ├── vegetation/
-│   │   ├── grass_blade_01.svg
-│   │   ├── tree_oak_small.svg
-│   │   └── bush_01.svg
+├── decorations/          → Small placed objects
+│   ├── flowers/
+│   ├── rocks/
+│   └── vegetation/
+├── entities/             → Large placed objects
+│   ├── trees/
+│   ├── bushes/
 │   └── structures/
-│       ├── wall_wood_01.svg
-│       ├── fence_01.svg
-│       └── rock_boulder_01.svg
-├── ui/
-│   ├── icons/
-│   └── buttons/
+├── patterns/             → Texture fills
+│   ├── building_materials/
+│   ├── terrain/
+│   └── ui/
 └── metadata/
-    └── asset_config.json  (variation parameters, etc.)
+    └── asset_config.json
 ```
 
-## Future Enhancements
+**Detailed Workflow**: See individual documents for asset-specific guidelines
 
-- **In-Game Asset Editor**: Simple SVG editing within game
-- **Procedural Generation**: Generate assets from parameters
-- **Asset Marketplace**: Share/download community assets
-- **Animation Editor**: Visual tool for defining animation data
+### SVG Requirements by Use Case
+
+**Decorations/Entities**:
+- Arbitrary shapes OK
+- Optimize point count
+- Consider animation metadata if needed
+
+**Texture Patterns**:
+- MUST tile seamlessly (edges match)
+- Square or rectangular pattern unit
+- Consistent scale across all patterns
+
+**Animated Assets**:
+- Define pivot points (animation metadata)
+- Consider deformation behavior
+- Simpler shapes for performance
+
+## Visual Style Consistency
+
+**All SVG Assets Must**:
+- Match overall game visual style [see: visual-style.md](../../visual-style.md)
+- Use consistent line weights and detail levels
+- Coordinate with biome color palettes
+- Feel hand-crafted, not generic
+
+**Cohesion Across Use Cases**:
+- Flower decorations + brick patterns + tree entities = unified aesthetic
+- Color palettes harmonize
+- Detail level consistent
+
+## Document Index
+
+### Game Design Documentation
+
+**This Folder** (`/docs/design/features/vector-graphics/`):
+- **[README.md](./README.md)** (this document) - Overview of all SVG uses
+- **[svg-decorations.md](./svg-decorations.md)** - SVG as placed objects (decorations, entities)
+- **[svg-texture-patterns.md](./svg-texture-patterns.md)** - SVG as fills for code-drawn shapes
+- **[animated-vegetation.md](./animated-vegetation.md)** - Animated grass, trees, environmental interactions
+- **[environmental-interactions.md](./environmental-interactions.md)** - Player interaction with SVG vegetation
+
+### Related Game Design
+
+**Procedural Tile System** (`/docs/design/`):
+- [visual-style.md](../../visual-style.md) - Overall aesthetic direction
+- [biome-ground-covers.md](../../biome-ground-covers.md) - Ground layers SVGs sit on
+- [biome-influence-system.md](../../biome-influence-system.md) - SVG placement probability system
+- [tile-transitions.md](../../tile-transitions.md) - Visual blending (ground layer)
+- [procedural-variation.md](../../procedural-variation.md) - SVG placement variation
+
+### Technical Documentation
+
+**Vector Graphics System** (`/docs/technical/vector-graphics/`):
+- [INDEX.md](../../../technical/vector-graphics/INDEX.md) - Technical architecture overview
+- [architecture.md](../../../technical/vector-graphics/architecture.md) - Four-tier rendering system
+- [svg-parsing-options.md](../../../technical/vector-graphics/svg-parsing-options.md) - SVG parser analysis
+- [asset-pipeline.md](../../../technical/vector-graphics/asset-pipeline.md) - Asset import and processing
+- [animation-system.md](../../../technical/vector-graphics/animation-system.md) - Spline deformation implementation
+
+## Open Questions
+
+### Cross-Document Questions
+
+**1. SVG vs Procedural Balance**:
+- What percentage of visual world is SVG vs procedural?
+- Where is the dividing line?
+- Performance implications?
+
+**2. Asset Creation Workload**:
+- How many SVG assets needed total?
+- Decorations: 50+? 100+?
+- Patterns: 20+? 50+?
+- Entities: 100+? 500+?
+
+**3. Style Convergence**:
+- Can artists create cohesive library across all use cases?
+- Tools/processes to ensure consistency?
+- Style guide documentation needed?
+
+**4. Performance Validation**:
+- Can we actually render 10k SVG entities @ 60 FPS?
+- Needs prototyping
+- May need to reduce decoration density
+
+## Next Steps
+
+**For Further Documentation**:
+1. Read specific use case documents for details
+2. Review technical docs for implementation approach
+3. Prototype SVG rendering in ui-sandbox
+4. Create style guide for SVG asset creation
+
+**For Development**:
+1. Choose SVG parser (technical decision)
+2. Implement basic SVG → tessellation pipeline
+3. Build pattern fill system for buildings
+4. Test decoration placement with biome system
+
+## Revision History
+
+- 2025-10-26: Complete rewrite as index/overview document for multiple SVG use cases
+- 2025-10-24: Initial artist workflow document

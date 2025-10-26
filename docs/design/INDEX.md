@@ -30,6 +30,13 @@ Documents can be organized in subdirectories (`features/`, `requirements/`) or a
 - [Game Overview](./game-overview.md) - Core concept, backstory options, world mechanics, and similar games
 - [UI Art Style](./ui-art-style.md) - Visual style guide ("High tech cowboy")
 
+### Visual Design & Procedural Tile System
+- [Visual Style](./visual-style.md) - Overall visual art direction, color philosophy, aesthetic goals
+- [Biome Ground Covers](./biome-ground-covers.md) - Physical ground surface types (grass, sand, rock, water)
+- [Biome Influence System](./biome-influence-system.md) - Percentage-based biome blending, natural ecotones
+- [Tile Transitions](./tile-transitions.md) - Visual appearance of biome transition zones
+- [Procedural Variation](./procedural-variation.md) - Creating unique tiles while maintaining recognizability
+
 ### Game Mechanics
 - [Colonist Attributes](./mechanics/colonists.md) - Character stats, needs, and personality traits
 - [Skills and Talents](./mechanics/skills.md) - Skill system, learning mechanics, and task priorities
@@ -40,8 +47,10 @@ Documents can be organized in subdirectories (`features/`, `requirements/`) or a
 
 *Note: Many of these are planned but not yet written. Add them as needed when designing features.*
 
-### Vector Graphics & Animation
-- [Vector Graphics Overview](./features/vector-graphics/README.md) - Asset creation workflow, artist guidelines, procedural variation
+### Vector Graphics & SVG Assets
+- [Vector Graphics Overview](./features/vector-graphics/README.md) - All SVG use cases: decorations, texture patterns, animation
+- [SVG Decorations](./features/vector-graphics/svg-decorations.md) - Placed objects (flowers, trees, entities)
+- [SVG Texture Patterns](./features/vector-graphics/svg-texture-patterns.md) - Fill patterns for code-drawn shapes (brick, concrete, wood)
 - [Animated Vegetation](./features/vector-graphics/animated-vegetation.md) - Grass swaying, tree movement, environmental response
 - [Environmental Interactions](./features/vector-graphics/environmental-interactions.md) - Trampling, harvesting, wind effects
 
