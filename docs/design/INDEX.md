@@ -58,11 +58,14 @@ Documents can be organized in subdirectories (`features/`, `requirements/`) or a
 - [Application Flow](./features/application-flow/README.md) - Splash screen, main menu, scene transitions *(planned)*
 - [Main Menu](./features/main-menu/README.md) - Menu options and navigation *(planned)*
 
-### World Creation
-- [World Creation Flow](./features/world-creation/README.md) - Create world scene overview *(planned)*
-- [3D Planet Rendering](./features/world-creation/planet-rendering.md) - Interactive 3D planet preview *(planned)*
-- [World Parameters](./features/world-creation/parameters.md) - Generation controls and UI *(planned)*
-- [World Generation](./features/world-creation/generation.md) - Generation process and progress display *(planned)*
+### World Generation (3D Spherical Planets)
+- [World Generation Overview](./features/world-generation/README.md) - Complete overview of spherical world generation system
+- [Concept](./features/world-generation/concept.md) - Core concept, why spherical worlds, design philosophy
+- [Planet Parameters](./features/world-generation/planet-parameters.md) - Star, planet, orbital, and generator settings
+- [Generation Phases](./features/world-generation/generation-phases.md) - Eight phases from plates to biomes
+- [Biome Types](./features/world-generation/biomes.md) - Detailed terrestrial biome classification
+- [User Experience](./features/world-generation/user-experience.md) - Two-phase game flow, UI/UX, visualization modes
+- [Data Model](./features/world-generation/data-model.md) - Spherical world structure and 2D sampling architecture
 
 ### 2D Game
 - [Game Scene](./features/game/README.md) - Top-down 2D tile-based gameplay *(planned)*
