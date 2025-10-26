@@ -37,14 +37,14 @@ This document describes **what data is produced** (conceptually) and **how the 2
 - Higher resolution = more tiles = finer detail
 
 **Example Resolutions**:
-- Low: 10,000 tiles (~100km per tile on Earth-sized planet)
-- Medium: 100,000 tiles (~30km per tile)
-- High: 1,000,000 tiles (~10km per tile)
+- Low: 500,000 tiles (~50km per tile on Earth-sized planet)
+- Medium: 21,000,000 tiles (~5km per tile)
+- High: 84,000,000 tiles (~2.5km per tile)
 
 **Scale Perspective**:
-- Medium resolution spherical tile: ~30km across
-- 2D gameplay tile: ~10m across
-- **One spherical tile contains ~9 million 2D tiles!**
+- Medium resolution spherical tile: ~5km across
+- 2D gameplay tile: ~1m across
+- **One spherical tile contains ~25 million 2D tiles!**
 
 **Technical Note**: Actual implementation may use geodesic subdivision (icosahedron → subdivide → project to sphere) or other methods. From game design perspective, what matters is: "The sphere is divided into many tiles."
 
@@ -225,34 +225,64 @@ Query position (x, y):
 
 ### Chunk Loading and Optimization
 
-**2D Game View**: Player sees a limited area (viewport)
+**Chunks as Loading Units**:
 
-**Chunks**: Divide 2D space into manageable regions (e.g., 1km × 1km chunks)
+The 2D game world is divided into **chunks** - fixed-size square regions that serve as the basic unit for loading, rendering, and simulation.
+
+**Chunk Size**: **512 × 512 tiles** (512m × 512m)
+- Each tile is ~1m across
+- Large enough to contain settlements and meaningful gameplay
+- Small enough to load/unload efficiently
+- Covers 2-4 screens at high resolution (5K display)
+
+**Why Chunks Matter**:
+- **Infinite world**: Load chunks on-demand as player explores
+- **Memory efficiency**: Only keep nearby chunks in memory
+- **Simulation granularity**: Distant chunks simulate less frequently
+- **Multiplayer**: Fixed chunk size ensures consistency across all players
 
 **Chunk Classification**:
 
-**Pure Chunks** (99% of chunks):
-- Entire chunk is >1km from any spherical tile boundary
-- All 2D tiles in chunk: 100% same biome
-- **Optimization**: Render entire chunk with single biome, no per-tile blend calculations
+When a chunk is loaded, it's classified based on proximity to spherical tile boundaries:
 
-**Boundary Chunks** (1% of chunks):
-- Chunk crosses a spherical tile boundary
-- Some tiles pure, some blended
-- **Requires**: Per-tile blend calculation for tiles near boundary
+**Pure Chunks** (~64% of chunks):
+- Entire chunk is >500m from any spherical tile boundary
+- All 262,144 tiles have identical biome (100% same type)
+- **Major optimization**: Single biome for entire chunk, no per-tile blend calculations
+- **Tiny memory footprint**: ~200 bytes (just chunk-level data)
+
+**Boundary Chunks** (~36% of chunks):
+- Chunk crosses or is near a spherical tile boundary
+- Tiles have varying biome percentages (blending occurs)
+- **Requires**: Interpolation grid for biome blending
+- **Larger memory**: ~2-4 KB for biome interpolation data
 
 **Loading Strategy**:
-1. Calculate which spherical tiles are visible in current view
-2. Load data for those tiles (typically 1-4 tiles for normal viewport)
-3. Classify chunks as pure or boundary
-4. Generate 2D terrain using fast path for pure chunks, slow path for boundary chunks
-5. As player moves, load new chunks, unload distant chunks
+1. Player moves → calculate current chunk position
+2. Load 5×5 grid of chunks around player (2 chunks in each direction)
+3. Query 3D spherical world for each chunk position
+4. Classify chunks as pure or boundary based on distance to spherical boundaries
+5. Generate chunk data (fast for pure chunks, slower for boundary chunks)
+6. Unload chunks farther than 3-4 chunks away (with predictive loading in movement direction)
 
-**Infinite World**:
+**Terrain Modification and Sparse Storage**:
+
+Players can terraform (flatten ground, build foundations, construct roads). The chunk system supports this through **sparse tile storage**:
+
+- **Unmodified tiles**: Generated procedurally from 3D world + seed (deterministic, never saved)
+- **Modified tiles**: Only store the delta (what changed), not full tile data
+- **Save files**: Only contain modified chunks with sparse modification data
+- **Pristine chunks**: Can be evicted from memory and perfectly regenerated later
+
+**Result**: Tiny save files (only player changes), massive world (entire planet), deterministic generation (multiplayer compatibility)
+
+**Infinite World Experience**:
 - Chunks load on-demand from spherical data
 - Walking east/west: Eventually wrap around planet (return to start)
 - Walking north/south: Reach poles and can't go farther
-- World is finite (planet has limited surface area) but feels infinite
+- World is finite (planet has limited surface area) but feels infinite due to scale
+
+**Technical Implementation**: See [Chunk Management System](/docs/technical/chunk-management-system.md) and [3D to 2D Sampling](/docs/technical/3d-to-2d-sampling.md) for complete technical design.
 
 ### Biome Blending at Boundaries
 
@@ -396,7 +426,7 @@ Position 600m from boundary (inside Tile B):
 ## Performance Considerations
 
 **Data Size**:
-- 100,000 tiles × ~150 bytes per tile = ~15MB world data (simplified vs. transition data)
+- 21,000,000 tiles × ~150 bytes per tile = ~3.15GB world data (simplified vs. transition data)
 - Reasonable for modern systems
 - Higher resolution = more data (linear growth)
 
@@ -407,20 +437,17 @@ Position 600m from boundary (inside Tile B):
 - **Slow path** (1% of queries): Tile lookup + neighbor queries + blend calculation
 
 **Chunk Generation**:
-- Convert tile data → 2D terrain representation
-- Pure chunks: Very fast (single biome for entire chunk)
-- Boundary chunks: Moderate (per-tile blend for edge tiles only)
-- Target: < 100ms per chunk
-- Can pre-generate nearby chunks (prediction)
+- Sample 3D spherical world at chunk position (5-8 queries per chunk)
+- Pure chunks: Very fast (~0.05ms - single biome, minimal sampling)
+- Boundary chunks: Moderate (~0.18ms - corner sampling + interpolation)
+- Typical 5×5 chunk grid: ~2ms total load time
+- Can pre-generate nearby chunks (predictive loading in movement direction)
 
-**Caching Opportunities**:
-```
-Cached chunk metadata:
-- Source spherical tile ID
-- isPure flag (true if >1km from boundaries)
-- If pure: render entire chunk with single biome (fast)
-- If boundary: perform per-tile blending (slower but rare)
-```
+**Chunk Caching**:
+- Pristine chunks can be evicted from memory anytime (regenerate perfectly from seed)
+- Modified chunks must be serialized to save game before eviction
+- Typical memory: 5×5 grid = 5-100 KB (mostly pure chunks)
+- Efficient: Only player-modified data persists in save files
 
 ## Procedural Detail Generation
 
@@ -500,7 +527,7 @@ Player moves to new area:
 
 **Player Journey**: Walk from coast → mountain → desert (200km)
 
-**Spherical Tiles Crossed**: ~7 tiles (at 30km resolution)
+**Spherical Tiles Crossed**: ~40 tiles (at 5km resolution)
 
 **Tile Sequence** (sharp boundaries in world data):
 1. Tile #1001: Coastal, temperate rainforest, 50m elevation, high precipitation
@@ -544,7 +571,7 @@ Player moves to new area:
 - Faster generation
 
 ✅ **Smaller Data Footprint**:
-- ~15MB vs. ~20MB (no transition data stored)
+- ~3.15GB vs. ~4.2GB (no transition data stored)
 - Simpler data structure
 - Easier serialization
 
@@ -634,7 +661,7 @@ Player moves to new area:
 3. **Most queries are trivial (99%+)** - Fast path returns pure biome instantly
 4. **Boundary queries blend neighbors** - Slow path for <1% of queries
 5. **Large pure regions** - Realistic (forests are mostly forest, not constantly transitioning)
-6. **Scale-appropriate transitions** - ~500m ecotones at ~30km tile boundaries
+6. **Scale-appropriate transitions** - ~500m ecotones at ~5km tile boundaries
 7. **Simpler, faster, more flexible** - Than storing transitions in world data
 
 **This architecture enables**:

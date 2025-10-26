@@ -20,17 +20,17 @@ This document defines the **ground cover types** that form the visual and gamepl
 **The Flow**:
 ```
 3D World Generation
-  ↓ (assigns biomes to spherical tiles)
-2D Sampling
-  ↓ (queries biome at coordinates, calculates biome percentages)
+  ↓ (assigns biomes to spherical tiles ~5km across)
+Chunk Loading
+  ↓ (loads 512×512 tile regions (512m) by sampling 3D world)
 Biome Influence System
-  ↓ (tiles get biome percentages)
+  ↓ (tiles get biome percentages from their chunk)
 Ground Cover Rendering (this document)
   ↓ (biomes map to ground covers, percentages determine blend)
 Visual Display
 ```
 
-**Key Point**: Ground covers are determined by biome percentages, which come from sampling the [3D World Generation System](../world-generation/README.md). This document describes how those biomes translate into visual ground surfaces.
+**Key Point**: Ground covers are determined by biome percentages, which come from the [3D World Generation System](../world-generation/README.md) via chunk-level sampling. Chunks are fixed-size regions (512×512 tiles) that load on-demand as players explore. This document describes how those biomes translate into visual ground surfaces.
 
 See [biome-influence-system.md](./biome-influence-system.md) for complete details on how tiles get biome percentages.
 

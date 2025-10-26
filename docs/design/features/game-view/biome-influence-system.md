@@ -18,15 +18,17 @@ The biome influence system is a **rendering technique** for 2D tiles. The actual
 **Data Flow**:
 ```
 3D Spherical World
-  ↓ (spherical tiles ~30km across, each with single definitive biome)
-Sampling at 2D position
-  ↓ (query: "what biomes are near coordinates X, Y?")
-Biome Influence Calculation
-  ↓ (result: biome percentages for this 2D tile)
+  ↓ (spherical tiles ~5km across, each with single definitive biome)
+Chunk Loading
+  ↓ (load 512×512 tile regions (512m) by sampling 3D world)
+Tile Biome Lookup
+  ↓ (each tile gets biome percentages from its chunk)
 2D Tile Rendering
 ```
 
-**Key Architectural Point**: The 3D world stores sharp biome boundaries (Forest tile next to Grassland tile). The 2D rendering system creates smooth transitions by **blending** those sharp boundaries.
+**Key Architectural Point**: The 3D world stores sharp biome boundaries (Forest tile next to Grassland tile). The 2D rendering system loads **chunks** (fixed-size regions of 512×512 tiles) by sampling the 3D world, then creates smooth transitions by **blending** those sharp boundaries for tiles near spherical boundaries.
+
+**Chunk-Level Efficiency**: Most chunks (~64%) are "pure" - entirely within one spherical biome, so all 262,144 tiles in the chunk have identical biome data. Only chunks near spherical boundaries (~36%) need per-tile blending calculations.
 
 ### Hybrid Approach: Two-Scale Transitions
 

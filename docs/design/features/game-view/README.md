@@ -21,17 +21,57 @@ This folder contains game design documentation for the **2D game view** - how th
   ↓ (spherical tiles with definitive biomes)
 Sampling Layer
   ↓ (converts 3D coordinates to 2D position data)
+Chunk Loading
+  ↓ (loads chunks containing 512×512 tiles each)
 2D Game View (this folder)
   ↓ (renders ground covers, entities, decorations)
 Visual Display
 ```
+
+### Chunk-Based Streaming
+
+The 2D world is divided into **chunks** - fixed-size regions that enable infinite world exploration:
+
+**What is a Chunk?**
+- Square region of **512 × 512 tiles** (512m × 512m)
+- Basic unit for loading, rendering, and simulation
+- Each tile is 1 meter across
+- Covers 2-4 screens at high resolution (comfortable for players)
+- Contains 262,144 individual tiles
+
+**Why Chunks?**
+- **Infinite world**: Only load nearby chunks, unload distant ones
+- **Seamless exploration**: New chunks stream in as player moves
+- **Memory efficiency**: Typical 5×5 loaded area uses only 5-100 KB
+- **Terraforming support**: Save only player modifications, regenerate pristine terrain from seed
+
+**Pure vs Boundary Chunks**:
+
+Most chunks (~64%) are **pure chunks**:
+- Entire chunk has single biome (all 262k tiles identical)
+- Minimal memory (just chunk metadata)
+- Very fast to generate and render
+
+Some chunks (~36%) are **boundary chunks**:
+- Cross spherical tile boundaries
+- Tiles have blended biome percentages
+- Slightly more memory for interpolation data
+- Generate smooth transitions between biomes
+
+**Player Experience**:
+- World feels infinite (chunks load on-demand from planet data)
+- Smooth exploration (no loading screens or visible boundaries)
+- Consistent world (revisiting locations shows identical terrain)
+- Small save files (only player modifications saved, pristine chunks regenerate)
+
+See [Data Model - Chunk Loading](/docs/design/features/world-generation/data-model.md#chunk-loading-and-optimization) for complete details.
 
 ### Hybrid Approach to Biome Transitions
 
 The game uses a **two-scale system** for natural-looking biome transitions:
 
 **Major Zones (from 3D World)**:
-- Spherical tiles (~30km across) each have a single definitive biome
+- Spherical tiles (~5km across) each have a single definitive biome
 - At spherical tile boundaries, the 2D game blends neighboring biomes
 - Primary transition width: ~500m at boundaries
 - Creates coherent large-scale biome regions
@@ -95,7 +135,7 @@ This creates **ecotones** - natural transition zones where ecosystems blend grad
 ### Two-Scale Transitions
 
 **Scale 1: 3D World Boundaries**
-- Where spherical tiles meet (~every 30km)
+- Where spherical tiles meet (~every 5km)
 - Sharp boundary in 3D data
 - Smooth ~500m blend in 2D rendering
 - Creates major biome zones
@@ -213,15 +253,16 @@ Overall aesthetic direction:
 - [Visual Style](/docs/design/visual-style.md) - Color philosophy, aesthetic goals
 - [UI Art Style](/docs/design/ui-art-style.md) - "High tech cowboy" theme
 
-### Technical Implementation (Future)
+### Technical Implementation
 
-Technical design documents will cover:
-- Sampling algorithms (3D → 2D conversion)
+Technical design documents:
+- [Chunk Management System](/docs/technical/chunk-management-system.md) - Chunk structure, loading, caching, sparse storage
+- [3D to 2D Sampling](/docs/technical/3d-to-2d-sampling.md) - Coordinate transformation, biome sampling, procedural generation
+
+Future technical docs will cover:
 - Tile rendering pipeline
-- Biome blending techniques
 - Entity placement systems
-- Performance optimization
-- Chunk loading and caching
+- Performance optimization strategies
 
 ## Success Criteria
 

@@ -45,32 +45,32 @@ Transitions occur at **two different scales**, creating the combined ecotone eff
 
 **Primary Scale: 3D World Boundaries** (~500m):
 - The [3D World Generation System](../world-generation/README.md) creates spherical tiles with definitive biomes
-- Where spherical tiles meet (every ~30km), there's a boundary between two biomes
+- Where spherical tiles meet (every ~5km), there's a boundary between two biomes
 - The 2D game blends these boundaries over ~500m
 - Example: At Forest/Grassland spherical boundary → 250m of blending on each side
 
-**Secondary Scale: 2D Micro-Variation** (2-10km total):
+**Secondary Scale: 2D Micro-Variation** (extends transitions to 1-3km total):
 - Within and around 3D boundaries, procedural noise adds natural irregularity
-- Extends the visual transition beyond the immediate 3D boundary
+- Extends the visual transition beyond the immediate 3D boundary (500m core)
 - Creates organic, hand-crafted appearance
 - Prevents harsh "pure biome → transition → pure biome" edges
 
 **Combined Result**:
 - Major biome zones determined by 3D world geography (realistic, coherent)
 - Visual transitions extended by 2D procedural detail (beautiful, natural)
-- Total ecotone depth: 2-10km depending on biome pair
+- Total ecotone depth: 500m-3km depending on biome pair
 - Most of world is pure biome (from 3D), transitions are the exception
 
 **Example Journey**:
 ```
 Starting in pure Grassland region (3D spherical tile A):
-  - 0-14km: Pure grassland (100%) - deep in spherical tile A
-  - 14-15km: Start of 2D micro-variation zone
-  - 15-20km: Gradual blend toward boundary (2D variation increasing)
-  - 20km: Actual 3D spherical boundary (Grassland tile A meets Forest tile B)
-  - 20-25km: Gradual blend away from boundary (2D variation decreasing)
-  - 25-26km: End of 2D micro-variation zone
-  - 26-44km: Pure forest (100%) - deep in spherical tile B
+  - 0-1.5km: Pure grassland (100%) - deep in spherical tile A
+  - 1.5-2.0km: Start of 2D micro-variation zone (subtle mixing begins)
+  - 2.0-2.5km: Gradual blend toward boundary (2D variation increasing)
+  - 2.5km: Actual 3D spherical boundary (Grassland tile A meets Forest tile B)
+  - 2.5-3.0km: Gradual blend away from boundary (2D variation decreasing)
+  - 3.0-3.5km: End of 2D micro-variation zone
+  - 3.5-5.0km: Pure forest (100%) - deep in spherical tile B
 ```
 
 **Design Philosophy**: The 3D world provides the "what" (which biomes where), the 2D rendering provides the "how" (beautiful natural transitions).

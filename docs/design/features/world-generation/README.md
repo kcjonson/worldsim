@@ -106,7 +106,7 @@ Each phase builds on the previous, creating a scientifically plausible world.
 
 ### World Sampling
 **Q**: How does the 2D game sample the 3D sphere?
-**A**: The sphere is subdivided into tiles (like a geodesic dome). When the player views a location, the game queries tiles at those spherical coordinates and renders them in 2D. See [data-model.md](./data-model.md) for details.
+**A**: The sphere is subdivided into spherical tiles (~5km across). The 2D game loads *chunks* (512×512 gameplay tiles, 512m square) by sampling the spherical data at specific coordinates. Chunks load on-demand as the player explores, creating an infinite-feeling world. See [data-model.md](./data-model.md) for complete sampling details.
 
 **Q**: What happens at the poles?
 **A**: Tile projection handles polar distortion. Players can land and play at the poles (arctic/antarctic biomes), but tiles may be smaller/denser. The spherical model remains accurate.
