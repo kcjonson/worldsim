@@ -584,9 +584,10 @@ Tile #52341:
 ## Related Documentation
 
 **Visual Appearance in 2D Game**:
-- [biome-ground-covers.md](../../biome-ground-covers.md) - How biomes appear visually
-- [biome-influence-system.md](../../biome-influence-system.md) - Blending biomes in tiles
-- [tile-transitions.md](../../tile-transitions.md) - Visual transitions
+- [Game View Overview](../game-view/README.md) - How 2D rendering works
+- [biome-ground-covers.md](../game-view/biome-ground-covers.md) - How biomes appear visually
+- [biome-influence-system.md](../game-view/biome-influence-system.md) - Blending biomes in tiles
+- [tile-transitions.md](../game-view/tile-transitions.md) - Visual transitions
 
 ## Revision History
 

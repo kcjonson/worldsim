@@ -654,8 +654,9 @@ Player moves to new area:
 - [user-experience.md](./user-experience.md) - How players interact with world generation
 
 **Visual Appearance in 2D**:
-- [biome-ground-covers.md](../../biome-ground-covers.md) - How biomes appear in 2D
-- [biome-influence-system.md](../../biome-influence-system.md) - Blending biomes at boundaries
+- [Game View Overview](../game-view/README.md) - How 2D rendering works
+- [biome-ground-covers.md](../game-view/biome-ground-covers.md) - How biomes appear in 2D
+- [biome-influence-system.md](../game-view/biome-influence-system.md) - Blending biomes at boundaries
 
 ## Revision History
 

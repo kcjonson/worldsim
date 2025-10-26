@@ -30,12 +30,8 @@ Documents can be organized in subdirectories (`features/`, `requirements/`) or a
 - [Game Overview](./game-overview.md) - Core concept, backstory options, world mechanics, and similar games
 - [UI Art Style](./ui-art-style.md) - Visual style guide ("High tech cowboy")
 
-### Visual Design & Procedural Tile System
+### Visual Design
 - [Visual Style](./visual-style.md) - Overall visual art direction, color philosophy, aesthetic goals
-- [Biome Ground Covers](./biome-ground-covers.md) - Physical ground surface types (grass, sand, rock, water)
-- [Biome Influence System](./biome-influence-system.md) - Percentage-based biome blending, natural ecotones
-- [Tile Transitions](./tile-transitions.md) - Visual appearance of biome transition zones
-- [Procedural Variation](./procedural-variation.md) - Creating unique tiles while maintaining recognizability
 
 ### Game Mechanics
 - [Colonist Attributes](./mechanics/colonists.md) - Character stats, needs, and personality traits
@@ -67,7 +63,14 @@ Documents can be organized in subdirectories (`features/`, `requirements/`) or a
 - [User Experience](./features/world-generation/user-experience.md) - Two-phase game flow, UI/UX, visualization modes
 - [Data Model](./features/world-generation/data-model.md) - Spherical world structure and 2D sampling architecture
 
-### 2D Game
+### 2D Game View & Tile Rendering
+- [Game View Overview](./features/game-view/README.md) - How the 2D game view renders data from the 3D world
+- [Biome Influence System](./features/game-view/biome-influence-system.md) - Percentage-based biome blending, natural ecotones
+- [Biome Ground Covers](./features/game-view/biome-ground-covers.md) - Physical ground surface types (grass, sand, rock, water)
+- [Tile Transitions](./features/game-view/tile-transitions.md) - Visual appearance of biome transition zones
+- [Procedural Variation](./features/game-view/procedural-variation.md) - Creating unique tiles while maintaining recognizability
+
+### 2D Gameplay
 - [Game Scene](./features/game/README.md) - Top-down 2D tile-based gameplay *(planned)*
 - [Camera Controls](./features/game/camera-controls.md) - Pan, zoom, edge scrolling *(planned)*
 - [Infinite World](./features/game/infinite-world.md) - Chunk loading from spherical world *(planned)*

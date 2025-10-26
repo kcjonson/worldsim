@@ -180,12 +180,13 @@ Tile with { meadow: 70%, forest: 30% }:
 
 ### Related Game Design
 
-**Procedural Tile System** (`/docs/design/`):
+**2D Game View & Tile Rendering** (`/docs/design/features/game-view/`):
 - [visual-style.md](../../visual-style.md) - Overall aesthetic direction
-- [biome-ground-covers.md](../../biome-ground-covers.md) - Ground layers SVGs sit on
-- [biome-influence-system.md](../../biome-influence-system.md) - SVG placement probability system
-- [tile-transitions.md](../../tile-transitions.md) - Visual blending (ground layer)
-- [procedural-variation.md](../../procedural-variation.md) - SVG placement variation
+- [Game View Overview](../game-view/README.md) - How 2D rendering works
+- [biome-ground-covers.md](../game-view/biome-ground-covers.md) - Ground layers SVGs sit on
+- [biome-influence-system.md](../game-view/biome-influence-system.md) - SVG placement probability system
+- [tile-transitions.md](../game-view/tile-transitions.md) - Visual blending (ground layer)
+- [procedural-variation.md](../game-view/procedural-variation.md) - SVG placement variation
 
 ### Technical Documentation
 

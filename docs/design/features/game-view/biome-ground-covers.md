@@ -15,10 +15,29 @@ This document defines the **ground cover types** that form the visual and gamepl
 
 ## Architecture Concept
 
+### Data Source: From 3D World to Ground Covers
+
+**The Flow**:
+```
+3D World Generation
+  ↓ (assigns biomes to spherical tiles)
+2D Sampling
+  ↓ (queries biome at coordinates, calculates biome percentages)
+Biome Influence System
+  ↓ (tiles get biome percentages)
+Ground Cover Rendering (this document)
+  ↓ (biomes map to ground covers, percentages determine blend)
+Visual Display
+```
+
+**Key Point**: Ground covers are determined by biome percentages, which come from sampling the [3D World Generation System](../world-generation/README.md). This document describes how those biomes translate into visual ground surfaces.
+
+See [biome-influence-system.md](./biome-influence-system.md) for complete details on how tiles get biome percentages.
+
 ### How Ground Covers Work
 
 **Tiles Don't Have Single Types**:
-- Each tile has percentage influences from nearby biomes
+- Each tile has percentage influences from nearby biomes (from 3D world sampling)
 - Example: `{ meadow: 80%, borealForest: 20% }`
 - Biomes define which ground covers they use
 - Tile ground appearance = blend of biome ground covers weighted by percentages
@@ -47,10 +66,11 @@ Same tile:
 - Doesn't change with seasons
 - Rendered appearance base layer
 
-**Biome**: Ecological zone using ground covers
+**Biome**: Ecological zone using ground covers (from 3D world)
 - Meadow biome → uses grass ground cover
 - Boreal forest biome → uses forest floor ground cover
 - Desert biome → uses sand ground cover
+- See [3D World Biomes](../world-generation/biomes.md) for complete biome catalog
 
 **Seasonal Overlay**: Temporary coverage (separate system)
 - Snow coverage: 0-100% in winter
@@ -479,19 +499,30 @@ Spring: Snow melts, grass visible again
 
 ## Related Documentation
 
-**Game Design**:
-- [biome-influence-system.md](./biome-influence-system.md) - How tiles get biome percentages
-- [visual-style.md](./visual-style.md) - Overall visual aesthetic
-- [tile-transitions.md](./tile-transitions.md) - How ground covers transition (WILL NEED REWRITE)
-- [procedural-variation.md](./procedural-variation.md) - Ground cover variation
-- [seasonal-systems.md](./seasonal-systems.md) - Snow and seasonal overlays (future doc)
+**3D World Generation** (data source):
+- [World Generation Overview](../world-generation/README.md) - Complete 3D system
+- [Biome Types](../world-generation/biomes.md) - Biome catalog and which ground covers they use
+- [Data Model](../world-generation/data-model.md) - How 2D samples biome data from 3D world
 
-**Technical**:
-- [/docs/technical/tiles/architecture.md](../technical/tiles/architecture.md) - Rendering implementation
-- [/docs/technical/tiles/terrain-layers.md](../technical/tiles/terrain-layers.md) - Layer blending system
-- [/docs/technical/world-generation-architecture.md](../technical/world-generation-architecture.md) - 3D world → biome mapping
+**2D Game View** (this folder):
+- [Game View Overview](./README.md) - How 2D rendering works
+- [biome-influence-system.md](./biome-influence-system.md) - How tiles get biome percentages
+- [tile-transitions.md](./tile-transitions.md) - How ground covers transition visually
+- [procedural-variation.md](./procedural-variation.md) - Ground cover variation
+
+**Visual Style**:
+- [visual-style.md](../../visual-style.md) - Overall visual aesthetic
+
+**Future Documentation**:
+- [seasonal-systems.md](./seasonal-systems.md) - Snow and seasonal overlays (planned)
+
+**Technical** (future):
+- Tile rendering implementation
+- Ground cover blending techniques
+- Texture and decoration systems
 
 ## Revision History
 
+- 2025-10-26: Moved to game-view folder, added 3D world context, fixed outdated references
 - 2025-10-26: Removed snow as ground cover type, now treated as seasonal overlay
 - 2025-10-26: Complete rewrite from tile-types to ground covers with biome percentage blend system

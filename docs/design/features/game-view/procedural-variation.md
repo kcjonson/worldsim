@@ -9,6 +9,8 @@ Procedural variation is the system that ensures no two tiles, coastlines, or for
 
 **Core Philosophy**: Use code to achieve hand-crafted uniqueness at massive scale. Every tile should feel intentionally placed, not obviously generated.
 
+**Context**: Procedural variation adds micro-detail to tiles that already have biome data from the [3D World Generation System](../world-generation/README.md). The 3D world determines "what" (meadow, forest, desert), variation determines "how it looks" (this specific meadow tile's unique appearance).
+
 ## Why Procedural Variation Matters
 
 ### The Problem We're Solving
@@ -190,11 +192,11 @@ But visually different:
 
 ### Per-Biome Variation
 
-**Regional Character**:
-- Northern forest: color palette shifts toward cooler tones
-- Southern meadow: warmer, yellower grass
-- Coastal grass: windswept, sparse
-- Altitude effects: alpine meadow different from lowland
+**Regional Character** (from 3D world context):
+- Northern forest: color palette shifts toward cooler tones (influenced by 3D climate data)
+- Southern meadow: warmer, yellower grass (influenced by 3D temperature)
+- Coastal grass: windswept, sparse (influenced by 3D proximity to ocean)
+- Altitude effects: alpine meadow different from lowland (influenced by 3D elevation)
 
 **Macro-Variation**:
 - Entire regions have character
@@ -364,11 +366,18 @@ But visually different:
 
 ## Related Documentation
 
-**Game Design**:
-- [visual-style.md](./visual-style.md) - Overall aesthetic goals
+**3D World Generation** (provides context):
+- [World Generation Overview](../world-generation/README.md) - Creates base biome data that variation enhances
+- [Data Model](../world-generation/data-model.md) - Environmental data (temperature, climate) that influences regional variation
+
+**2D Game View** (this folder):
+- [Game View Overview](./README.md) - How 2D rendering works
 - [biome-influence-system.md](./biome-influence-system.md) - Biome blending creates variation
 - [biome-ground-covers.md](./biome-ground-covers.md) - What ground covers vary
 - [tile-transitions.md](./tile-transitions.md) - Transition appearance variation
+
+**Visual Style**:
+- [visual-style.md](../../visual-style.md) - Overall aesthetic goals
 
 **Technical** (future):
 - Seed generation algorithms
@@ -378,4 +387,5 @@ But visually different:
 
 ## Revision History
 
+- 2025-10-26: Moved to game-view folder, added 3D world context for regional variation
 - 2025-10-26: Initial procedural variation philosophy document

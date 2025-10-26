@@ -79,11 +79,12 @@ Each phase builds on the previous, creating a scientifically plausible world.
 **Game Overview**:
 - [game-overview.md](../../game-overview.md) - Overall game concept and backstory
 
-**Visual & Tile System** (how the 2D game displays the world):
-- [biome-ground-covers.md](../../biome-ground-covers.md) - How biomes appear visually in 2D
-- [biome-influence-system.md](../../biome-influence-system.md) - Biome blending in tiles
-- [tile-transitions.md](../../tile-transitions.md) - Visual transitions between biomes
-- [procedural-variation.md](../../procedural-variation.md) - Variation within biomes
+**2D Game View & Rendering** (how 3D world data is rendered in 2D gameplay):
+- [Game View Overview](../game-view/README.md) - Complete 2D rendering system
+- [biome-influence-system.md](../game-view/biome-influence-system.md) - Biome blending in tiles
+- [biome-ground-covers.md](../game-view/biome-ground-covers.md) - How biomes appear visually in 2D
+- [tile-transitions.md](../game-view/tile-transitions.md) - Visual transitions between biomes
+- [procedural-variation.md](../game-view/procedural-variation.md) - Variation within biomes
 
 ### Technical Documentation
 

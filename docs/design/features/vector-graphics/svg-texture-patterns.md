@@ -344,7 +344,7 @@ Result: Foundation with realistic concrete appearance
 - [README.md](./README.md) - Overview of all SVG asset uses
 - [svg-decorations.md](./svg-decorations.md) - SVG assets as placed objects
 - [/docs/design/visual-style.md](../../visual-style.md) - Overall art direction
-- [/docs/design/biome-ground-covers.md](../../biome-ground-covers.md) - Ground covers that patterns sit on top of
+- [biome-ground-covers.md](../game-view/biome-ground-covers.md) - Ground covers that patterns sit on top of
 
 **Technical** (future):
 - SVG pattern rasterization

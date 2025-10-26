@@ -319,9 +319,9 @@ SVG assets serve as decorations and entities placed on top of procedurally-gener
 **Game Design**:
 - [README.md](./README.md) - Overview of all SVG asset uses
 - [svg-texture-patterns.md](./svg-texture-patterns.md) - SVG patterns as fills
-- [/docs/design/biome-influence-system.md](../../biome-influence-system.md) - Decoration placement probability
-- [/docs/design/biome-ground-covers.md](../../biome-ground-covers.md) - Ground layers decorations sit on
-- [/docs/design/procedural-variation.md](../../procedural-variation.md) - Decoration placement variation
+- [biome-influence-system.md](../game-view/biome-influence-system.md) - Decoration placement probability
+- [biome-ground-covers.md](../game-view/biome-ground-covers.md) - Ground layers decorations sit on
+- [procedural-variation.md](../game-view/procedural-variation.md) - Decoration placement variation
 - [animated-vegetation.md](./animated-vegetation.md) - Animated tree entities
 
 **Technical** (future):

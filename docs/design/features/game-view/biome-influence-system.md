@@ -9,6 +9,48 @@ The biome influence system is the core innovation that creates natural, realisti
 
 **Key Innovation**: Tiles at biome boundaries aren't "forest" or "meadow" - they're "80% meadow, 20% forest" with properties blending naturally.
 
+## Data Source: 3D World Generation
+
+### Where Biome Influences Come From
+
+The biome influence system is a **rendering technique** for 2D tiles. The actual biome data comes from the [3D World Generation System](../world-generation/README.md).
+
+**Data Flow**:
+```
+3D Spherical World
+  ↓ (spherical tiles ~30km across, each with single definitive biome)
+Sampling at 2D position
+  ↓ (query: "what biomes are near coordinates X, Y?")
+Biome Influence Calculation
+  ↓ (result: biome percentages for this 2D tile)
+2D Tile Rendering
+```
+
+**Key Architectural Point**: The 3D world stores sharp biome boundaries (Forest tile next to Grassland tile). The 2D rendering system creates smooth transitions by **blending** those sharp boundaries.
+
+### Hybrid Approach: Two-Scale Transitions
+
+The game uses a **two-scale system** for natural transitions:
+
+**Primary: 3D Spherical Boundaries** (~500m transitions):
+- Spherical tiles have single definitive biomes (sharp boundaries in 3D data)
+- When 2D position is near a spherical tile boundary, blend the two biomes
+- Distance to boundary determines blend percentage
+- Example: 200m from Forest/Grassland boundary → 60% Grassland, 40% Forest
+
+**Secondary: 2D Micro-Variation** (extends to 2-10km total):
+- Within pure biome regions, add procedural noise for natural irregularity
+- Extends visual transitions beyond immediate 3D boundaries
+- Creates organic ecotone feel without overwhelming 3D structure
+- Prevents vast uniform regions, adds hand-crafted appearance
+
+**Result**:
+- Major biome zones from realistic 3D world geography (coherent climate/geology)
+- Enhanced with 2D detail for beautiful, natural-looking transitions
+- Ecotone depth is the COMBINED effect of both scales
+
+See [World Generation Data Model](../world-generation/data-model.md) for complete details on 3D→2D sampling.
+
 ## The Problem with Discrete Tile Types
 
 ### Traditional Approach (What We're NOT Doing)
@@ -134,24 +176,27 @@ Deep Forest: { meadow: 0%, forest: 100% }
 
 ### Ecotone Depth
 
-**Transition Width** [OPEN QUESTION - tunable parameter]:
+**Transition Width** - Combined effect of two-scale system:
 
-**Narrow** (50-100 tiles):
-- Faster biome changes
-- More distinct zones
-- Less transition exploration
+**At 3D Spherical Boundaries** (~50 tiles / 500m):
+- Where spherical world tiles meet
+- Core transition driven by distance to 3D boundary
+- Sharp in 3D data, smooth in 2D rendering
 
-**Medium** (200-400 tiles):
-- Balanced, realistic
-- Noticeable gradual change
-- Good exploration depth
+**With 2D Micro-Variation** (200-1000 tiles / 2-10km total):
+- Procedural noise extends transitions
+- Creates natural irregularity and organic patterns
+- Prevents abrupt pure→transition edges
+- Final ecotone depth is this combined width
 
-**Wide** (500-1000 tiles):
-- Very gradual
-- Huge transition zones
-- Might feel like biomes never pure?
+**Tunable Parameters**:
+- 3D blend distance: Fixed at ~500m
+- 2D variation range: Tunable (determines total ecotone depth)
+- Different biome pairs can have different 2D variation ranges
+  - Forest ↔ Meadow: Wide 2D variation (10km ecotone)
+  - Ocean ↔ Beach: Minimal 2D variation (stays near 500m)
 
-**Design Goal**: Wide enough to feel natural, not so wide that biomes lose identity
+**Design Goal**: Wide enough for realistic ecotones, preserving distinct pure biome regions from 3D world
 
 ### Variable Transition Width
 
@@ -255,7 +300,7 @@ Simplified: { meadow: 81%, forest: 19% } (desert removed, renormalized)
 - Desert immediately next to swamp
 - Ocean in middle of desert
 
-**World Generation Ensures**: Only plausible biome combinations neighbor each other
+**3D World Generation Ensures**: Only plausible biome combinations neighbor each other (see [Biome Types](../world-generation/biomes.md))
 
 ### Sharp vs Gradual Transitions
 
@@ -357,18 +402,27 @@ Simplified: { meadow: 81%, forest: 19% } (desert removed, renormalized)
 
 ## Related Documentation
 
-**Game Design**:
+**3D World Generation** (data source):
+- [World Generation Overview](../world-generation/README.md) - Complete 3D system
+- [Data Model](../world-generation/data-model.md) - How 2D samples 3D world (critical reference)
+- [Biome Types](../world-generation/biomes.md) - Biome catalog and classification
+
+**2D Game View** (this folder):
+- [Game View Overview](./README.md) - How 2D rendering works
 - [biome-ground-covers.md](./biome-ground-covers.md) - Ground cover types used by biomes
-- [visual-style.md](./visual-style.md) - Overall visual aesthetic
-- [procedural-variation.md](./procedural-variation.md) - How biome blends vary per tile
 - [tile-transitions.md](./tile-transitions.md) - Visual appearance of transitions
+- [procedural-variation.md](./procedural-variation.md) - How biome blends vary per tile
+
+**Visual Style**:
+- [visual-style.md](../../visual-style.md) - Overall visual aesthetic
 
 **Technical** (future):
-- How biome influences are calculated from world data
+- How biome influences are calculated from 3D world data
 - Rendering biome-blended tiles
 - Entity placement algorithms
 - Performance optimization
 
 ## Revision History
 
+- 2025-10-26: Moved to game-view folder, added 3D world context, documented hybrid approach
 - 2025-10-26: Initial biome influence system design - removed technical details, focused on player experience and game design

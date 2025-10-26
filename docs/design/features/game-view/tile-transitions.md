@@ -37,6 +37,46 @@ Tile E: { meadow: 50%, forest: 50% }   Balanced ecotone
 
 **Player Sees**: Smooth ecosystem transition, not tile-by-tile changes
 
+### Two-Scale Transition System
+
+**Where Transitions Come From**:
+
+Transitions occur at **two different scales**, creating the combined ecotone effect:
+
+**Primary Scale: 3D World Boundaries** (~500m):
+- The [3D World Generation System](../world-generation/README.md) creates spherical tiles with definitive biomes
+- Where spherical tiles meet (every ~30km), there's a boundary between two biomes
+- The 2D game blends these boundaries over ~500m
+- Example: At Forest/Grassland spherical boundary → 250m of blending on each side
+
+**Secondary Scale: 2D Micro-Variation** (2-10km total):
+- Within and around 3D boundaries, procedural noise adds natural irregularity
+- Extends the visual transition beyond the immediate 3D boundary
+- Creates organic, hand-crafted appearance
+- Prevents harsh "pure biome → transition → pure biome" edges
+
+**Combined Result**:
+- Major biome zones determined by 3D world geography (realistic, coherent)
+- Visual transitions extended by 2D procedural detail (beautiful, natural)
+- Total ecotone depth: 2-10km depending on biome pair
+- Most of world is pure biome (from 3D), transitions are the exception
+
+**Example Journey**:
+```
+Starting in pure Grassland region (3D spherical tile A):
+  - 0-14km: Pure grassland (100%) - deep in spherical tile A
+  - 14-15km: Start of 2D micro-variation zone
+  - 15-20km: Gradual blend toward boundary (2D variation increasing)
+  - 20km: Actual 3D spherical boundary (Grassland tile A meets Forest tile B)
+  - 20-25km: Gradual blend away from boundary (2D variation decreasing)
+  - 25-26km: End of 2D micro-variation zone
+  - 26-44km: Pure forest (100%) - deep in spherical tile B
+```
+
+**Design Philosophy**: The 3D world provides the "what" (which biomes where), the 2D rendering provides the "how" (beautiful natural transitions).
+
+See [World Generation Data Model](../world-generation/data-model.md) and [Biome Influence System](./biome-influence-system.md) for complete details.
+
 ## Visual Components of Transitions
 
 ### Ground Cover Blending
@@ -349,11 +389,19 @@ Simplified: { meadow: 77%, forest: 23% } (desert dropped)
 
 ## Related Documentation
 
-**Game Design**:
+**3D World Generation** (data source):
+- [World Generation Overview](../world-generation/README.md) - Complete 3D system
+- [Data Model](../world-generation/data-model.md) - How 2D samples 3D world, where boundaries are
+- [Biome Types](../world-generation/biomes.md) - Biome catalog
+
+**2D Game View** (this folder):
+- [Game View Overview](./README.md) - How 2D rendering works
 - [biome-influence-system.md](./biome-influence-system.md) - How tiles get biome percentages
 - [biome-ground-covers.md](./biome-ground-covers.md) - Ground cover types that blend
-- [visual-style.md](./visual-style.md) - Overall aesthetic goals
 - [procedural-variation.md](./procedural-variation.md) - How each tile varies
+
+**Visual Style**:
+- [visual-style.md](../../visual-style.md) - Overall aesthetic goals
 
 **Technical** (future):
 - Ground cover blending techniques
@@ -363,4 +411,5 @@ Simplified: { meadow: 77%, forest: 23% } (desert dropped)
 
 ## Revision History
 
+- 2025-10-26: Moved to game-view folder, added two-scale transition system explanation
 - 2025-10-26: Complete rewrite for biome influence system - transitions are now percentage blends, not tile type edges
