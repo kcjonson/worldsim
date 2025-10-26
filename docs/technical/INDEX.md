@@ -76,6 +76,15 @@ World-sim is a C++20 game project built as a monorepo of independent libraries. 
 - [Memory Management](./vector-graphics/memory-management.md) - Memory architecture, budgets, arenas
 - [Performance Targets](./vector-graphics/performance-targets.md) - Performance budgets, profiling
 
+#### UI Framework
+**Complete documentation**: [UI Framework Index](./ui-framework/INDEX.md)
+
+- [Library Options](./ui-framework/library-options.md) - Comparative analysis: Dear ImGui, Nuklear, RmlUI, NanoGUI, MyGUI, custom implementation
+- [Architecture](./ui-framework/architecture.md) - Scene graph, event system, component lifecycle *(planned)*
+- [Scrolling Containers](./ui-framework/scrolling-containers.md) - OpenGL clipping, culling, performance *(planned)*
+- [Text Rendering](./ui-framework/text-rendering.md) - SDF fonts for crisp vector text *(planned)*
+- [Renderer Integration](./ui-framework/renderer-integration.md) - Batching, render passes, clipping stack *(planned)*
+
 ### Engine & Application
 - [Scene Management](./scene-management.md) - Scene lifecycle and transitions
 - [Configuration System](./config-system.md) - JSON-based game configuration

@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2025-10-26
+Last Updated: 2025-10-26 (OpenGL + RmlUI Implementation Guide)
 
 ## Current Sprint/Phase
 Initial project setup and architecture
@@ -69,6 +69,370 @@ None currently
 6. Begin splash screen implementation for world-sim app
 
 ## Development Log
+
+### 2025-10-26 - UI Framework Architecture - Complete Design
+
+**Critical Gap Addressed:**
+
+Comprehensive planning exists for vector graphics rendering and procedural tile systems, but **no technical design for UI framework** - a foundational requirement for ui-sandbox and complex game UI (inventory grids, skill trees, resource management).
+
+**Production game context established:** This is not a learning project - need production-quality UI for complex management game with thousands of dynamic UI elements.
+
+**User Context:**
+- Web/React developer background (familiar with declarative UI)
+- Previous C++ project used modern designated initializer syntax (`.position = value`)
+- Hit scrolling container issues (performance/clipping in OpenGL)
+- Wants crisp text rendering matching vector aesthetic
+
+**Documentation Created** (`/docs/technical/ui-framework/`):
+
+**Seven comprehensive design documents:**
+
+1. **INDEX.md** - Navigation hub for UI framework documentation
+   - Desired API style examples (CSS-like `.Args{}` syntax)
+   - Integration with observability system
+   - Common UI patterns (menus, forms, HUD)
+
+2. **ui-architecture-fundamentals.md** - Foundational concepts for production games
+   - Immediate vs retained mode explained in React/web terms
+   - Scene graphs = React's virtual DOM
+   - What production games actually use (Unity, Unreal, indies)
+   - RmlUI as HTML/CSS for C++ games
+   - Clear recommendation: Retained mode for complex game UI
+
+3. **library-options.md** - Initial comparative analysis (6 libraries)
+   - Later superseded by fundamentals doc with production focus
+
+4. **integration-analysis.md** - Technical integration deep dive
+   - Immediate vs retained mode in React terms
+   - OpenGL rendering models (who draws what)
+   - Transitive dependencies for each library
+   - Rendering conflict analysis (NanoVG issues)
+   - Backend implementation examples
+   - Dependency table (RmlUI: FreeType, NanoGUI: NanoVG+Eigen)
+
+5. **library-isolation-strategy.md** - Risk mitigation and architecture isolation
+   - Interface pattern to isolate RmlUI from game code
+   - What CAN be isolated (game logic, event handlers)
+   - What CANNOT be isolated (.rml files, data binding syntax)
+   - Hidden constraints (threading, memory management, font rendering)
+   - Conflicts with project goals analysis
+   - Migration cost assessment (1-2 weeks simple, 4-8 weeks complex)
+   - Prototype-first recommendation
+
+6. **rendering-boundaries.md** - Critical architectural boundaries
+   - **The "two different APIs" problem identified**
+   - RmlUI for screen-space panels only (menus, inventory, skill trees)
+   - Custom rendering for game world (tiles, entities)
+   - Custom rendering for world-space UI (health bars, tooltips)
+   - **Solution: Unified Primitive Rendering API**
+   - Complete render loop architecture
+   - Real-world examples (RimWorld, Factorio, Unity, Unreal)
+
+7. **primitive-rendering-api.md** - Foundation layer design
+   - Unified API for all 2D drawing (DrawRect, DrawText, DrawTexture)
+   - Used by RmlUI backend, game rendering, world-space UI
+   - Immediate mode API, retained mode implementation (batching)
+   - Scissor/clipping stack for scrollable containers
+   - Transform stack for world-space rendering
+   - Integration with existing renderer and vector graphics
+   - Performance targets (<1ms per frame for all primitives)
+   - Complete code examples (health bars, tooltips, minimap)
+
+8. **rmlui-integration-architecture.md** - Complete integration design
+   - Multi-layer architecture (game → interface → adapter → RmlUI → primitives)
+   - IUISystem, IDocument, IElement abstract interfaces
+   - RmlUI adapter hidden in .cpp files (game never sees RmlUI headers)
+   - Renderer backend (RmlUI geometry → Primitives API)
+   - Three usage patterns: XML, programmatic, hybrid
+   - Complete game loop integration example
+   - CMake configuration with private RmlUI linking
+   - Testing strategy (unit tests with mock, integration tests with real)
+   - Migration strategy (game code unchanged, rewrite adapter only)
+
+**Key Architectural Decisions:**
+
+**1. RmlUI for Screen-Space Complex UI**
+- HTML/CSS-like markup for complex layouts (inventory grids, skill trees)
+- Flexbox layout engine (handles nested containers automatically)
+- Can be used programmatically (NO .rml files required)
+- Isolated via interface layer (game code never depends on RmlUI)
+
+**2. Unified Primitive Rendering API**
+- **Solves "two different APIs for rectangles" problem**
+- One DrawRect/DrawText/DrawTexture API used by everything:
+  - RmlUI backend
+  - Game world rendering
+  - World-space UI (health bars)
+  - Custom UI components
+- Batching implementation (minimize draw calls)
+- Integration with existing renderer
+
+**3. Clear Rendering Boundaries**
+- **RmlUI**: Screen-space panels only (menus, inventory, dialogs)
+- **Custom/Primitives**: Game world + world-space UI + simple HUD
+- **Vector Graphics**: Complex SVG entities (trees, decorations)
+- No overlap or confusion about which system to use
+
+**4. Isolation Strategy**
+- Game code depends on IUISystem/IDocument/IElement interfaces
+- RmlUI adapter hidden in private .cpp files
+- CMake links RmlUI privately (not exposed to game)
+- Migration cost: Rewrite adapter (~500 lines), game code unchanged
+
+**Critical Insights:**
+
+**Production Game Requirements Clarified:**
+- Not a learning project or toy
+- Complex management game UI (thousands of elements)
+- Inventory grids, skill trees, resource management panels
+- Performance critical (60 FPS with dynamic updates)
+
+**RmlUI Programmatic API Discovery:**
+- Can create all UI from C++ (NO .rml files required)
+- Avoids markup file lock-in
+- Enables `.Args{}` wrapper pattern
+- Still get flexbox layout engine benefits
+
+**Text Rendering:**
+- RmlUI requires FreeType (can't avoid)
+- Can write custom font backend using msdfgen for SDF fonts
+- Integration point with vector graphics system
+
+**Scrolling Containers:**
+- OpenGL scissor test (hardware clipping)
+- RmlUI handles automatically
+- Primitives API exposes PushScissor/PopScissor for custom usage
+
+**Next Steps:**
+
+1. ✅ **Complete architecture documentation** (DONE)
+2. **Prototype RmlUI integration** (1-2 weeks)
+   - Implement primitive rendering API
+   - Build RmlUI backend + isolation layer
+   - Create one complex UI panel (inventory or skill tree)
+   - Validate performance and integration
+3. **Evaluate prototype results**
+   - Does flexbox handle layouts?
+   - Is performance acceptable?
+   - Are constraints manageable?
+4. **Make final decision**
+   - Commit to RmlUI if prototype succeeds
+   - Build custom if critical issues found
+
+**Documentation Organization:**
+- Created `/docs/technical/ui-framework/` subdirectory
+- Updated `/docs/technical/INDEX.md` with UI Framework section
+- All documents cross-referenced and navigable
+
+### 2025-10-26 - OpenGL + RmlUI Implementation Guide - Production-Ready Rendering Layer
+
+**Critical Missing Piece:**
+
+Architecture was complete, but **no implementation guidance** for actually building the OpenGL rendering layer with RmlUI integration. User asked: "How should we set up our rendering layer according to RmlUI best practices? Do they have a guide for a production ready game for the OpenGL setup?"
+
+**Research Conducted:**
+
+Comprehensive research of RmlUI's official documentation, reference implementations, and production best practices:
+
+1. **RmlUI Official Documentation** (mikke89.github.io/RmlUiDoc)
+   - RenderInterface specification (`<RmlUi/Core/RenderInterface.h>`)
+   - Integration guide and main loop patterns
+   - Troubleshooting and common mistakes
+   - Rendering conventions and coordinate system requirements
+
+2. **GL3 Reference Backend Analysis** (`RmlUi_Renderer_GL3.cpp`)
+   - Complete class structure and implementation patterns
+   - Vertex buffer management (VAO/VBO/IBO)
+   - Shader architecture (9 programs for various effects)
+   - State backup/restore implementation
+   - Scissor region handling with Y-flip
+   - Transform dirty flag pattern
+
+3. **Production Integration Patterns**
+   - Main loop order (Input → Update → Render)
+   - Initialization sequence (interfaces → initialize → context → fonts → documents)
+   - State management requirements
+   - Performance profiling approaches
+
+**Documentation Created:**
+
+**opengl-rmlui-implementation-guide.md** - Comprehensive production-ready implementation guide (~2000 lines)
+
+**10 Major Sections:**
+
+1. **OpenGL Rendering Architecture**
+   - Complete render pipeline (world → world UI → screen UI)
+   - Three-layer architecture (RmlUI → Backend → Primitives → OpenGL)
+   - Batching strategy decision (where to batch, how it works)
+
+2. **Coordinate System Conventions**
+   - RmlUI vs OpenGL origin mismatch (top-left vs bottom-left)
+   - Y-axis flipping for projection matrix
+   - Scissor region Y-coordinate transformation
+   - Color space (sRGB with premultiplied alpha)
+   - Blend function: `glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA)`
+   - Face culling (CCW winding)
+
+3. **RmlUI Backend Implementation**
+   - Complete `RmlUIBackend` class implementing `Rml::RenderInterface`
+   - Geometry compilation strategy (immediate GPU upload with VAO/VBO/IBO)
+   - `CompileGeometry()` implementation with vertex attributes
+   - `RenderGeometry()` options (direct OpenGL vs Primitive API)
+   - Texture management (`LoadTexture()` and `GenerateTexture()`)
+   - Scissor implementation with Y-flip
+   - Transform support with dirty flags
+
+4. **Primitive API OpenGL Implementation**
+   - `BatchAccumulator` class design
+   - Batching by texture/state/transform/scissor
+   - Flush triggers (state changes, max batch size, frame end)
+   - Vertex buffer strategy (dynamic upload, capacity management)
+   - Draw call accumulation and rendering
+
+5. **Integration Patterns**
+   - **Critical main loop order** (violations cause crashes/glitches)
+   - Initialization sequence (order matters!)
+   - Shutdown sequence (backend must outlive RmlUI)
+   - Input injection (RmlUI doesn't convert keys to text!)
+   - Viewport handling on resize
+
+6. **State Management** - **CRITICAL**
+   - Why state backup/restore is mandatory
+   - Complete `GLState` structure (20+ state variables)
+   - `BackupGLState()` implementation
+   - `RestoreGLState()` implementation
+   - `BeginFrame()` / `EndFrame()` lifecycle
+
+7. **Production Best Practices**
+   - Always backup/restore state (non-negotiable)
+   - Preserve render order (never batch/reorder RmlUI calls)
+   - Handle viewport changes correctly
+   - Use visual testing suite
+   - Integrate RmlUI debugger
+   - Profile early and often
+   - Load fonts before documents
+   - Handle interface lifetimes correctly
+   - Implement high-resolution timer
+   - Copy reference backend, don't link it
+
+8. **Common Pitfalls** (10 documented issues)
+   - Face culling blank screen (DirectX vs OpenGL winding)
+   - Upside-down UI (forgot Y-flip)
+   - Scissor regions incorrect (forgot Y-flip)
+   - Crash on shutdown (destroyed backend too early)
+   - Text not rendering (fonts not loaded)
+   - Slow animations (low-resolution timer)
+   - State corruption (no backup/restore)
+   - Modifying elements after Update (causes crashes)
+   - Incorrect initialization order
+   - Premultiplied alpha confusion
+
+9. **Performance Considerations**
+   - Expected performance (reference vs batched)
+   - Profiling strategy (separate Update vs Render time)
+   - Optimization targets (< 2ms for complex UI)
+   - Batching effectiveness measurement
+   - Memory usage expectations
+
+10. **Testing and Validation**
+    - RmlUI visual test suite usage
+    - Integration testing examples
+    - Debug visualization
+    - Logging and diagnostics
+
+**Key Technical Discoveries:**
+
+**RmlUI Reference Backend Does NOT Batch:**
+- Each `RenderGeometry()` call = one draw call
+- Prioritizes correctness and transform flexibility
+- Simple, battle-tested approach
+- **Our architecture batches at Primitive API layer below**
+
+**Critical Coordinate System Details:**
+```cpp
+// Projection matrix MUST flip Y-axis
+glm::ortho(0, width, height, 0, -1, 1);  // Note: bottom/top swapped
+
+// Scissor regions need Y-flip
+int flippedY = viewportHeight - region.p1.y;
+glScissor(region.p0.x, flippedY, width, height);
+```
+
+**State Management is Non-Negotiable:**
+- Must backup/restore 20+ OpenGL state variables
+- Reference backend does comprehensive state preservation
+- Failure causes subtle rendering corruption bugs
+- `BeginFrame()` → backup + setup, `EndFrame()` → restore
+
+**Main Loop Order is Critical:**
+```cpp
+// CORRECT order (violations cause crashes/glitches):
+ProcessInput();           // 1. Input BEFORE update
+UpdateUIDataBindings();   // 2. Modify elements
+context->Update();        // 3. Update (resolves layout)
+// 4. NEVER modify elements here!
+context->Render();        // 5. Render
+```
+
+**Initialization Order Matters:**
+```cpp
+// CORRECT sequence:
+Rml::SetRenderInterface(backend);   // 1. Set interfaces
+Rml::SetSystemInterface(&system);
+Rml::Initialise();                  // 2. Initialize
+CreateContext();                    // 3. Create context
+Rml::LoadFontFace("font.ttf");      // 4. Load fonts
+context->LoadDocument("menu.rml");  // 5. Load documents
+```
+
+**Batching Strategy Decision:**
+- **Reference backend**: No batching (immediate rendering)
+- **Our architecture**: Batch at Primitive API layer
+- RmlUI backend uploads geometry to GPU (like reference)
+- But calls Primitive API instead of raw OpenGL
+- Primitive API accumulates and batches draw calls
+- **Result**: Battle-tested geometry compilation + performance batching
+
+**Performance Targets:**
+- Simple UI: < 0.5ms per frame
+- Complex UI (inventory grid): < 2ms per frame
+- Expected batching ratio: 5-10x (1000 calls → 100 draw calls)
+
+**Production Patterns from Reference Backend:**
+- `GL_STATIC_DRAW` for vertex/index data (RmlUI guarantees immutability)
+- Comprehensive state backup (blend, depth, stencil, culling, scissor, viewport, bindings)
+- Y-flip transformation for scissor regions
+- Clamping scissor to viewport (prevents WebGL validation errors)
+- Dirty flag pattern for transform matrices
+- Per-program uniform location caching
+
+**Documentation Updated:**
+- Updated `INDEX.md` status to "Implementation Phase: Architecture complete"
+- Added implementation guide to "Implementation Guides" section
+- Updated "Next Steps" with concrete implementation tasks
+- Added revision history entry
+
+**Next Steps:**
+
+Architecture and implementation guide complete. Ready to begin coding:
+
+1. **Implement Primitive Rendering API** (`libs/renderer/`)
+   - BatchAccumulator for geometry batching
+   - OpenGL shader setup (vertex + fragment shaders)
+   - State management and batching triggers
+
+2. **Implement RmlUI Backend** (`libs/ui/src/rmlui/`)
+   - RmlUIBackend class implementing Rml::RenderInterface
+   - Geometry compilation (VAO/VBO/IBO)
+   - Texture loading and management
+   - State backup/restore (critical!)
+
+3. **Integration Testing**
+   - Load simple RML document (colored rectangles)
+   - Test scissor regions (scrolling containers)
+   - Test transforms (CSS transforms)
+   - Validate against RmlUI visual test suite
 
 ### 2025-10-26 - Procedural Tile System Game Design Documentation
 
