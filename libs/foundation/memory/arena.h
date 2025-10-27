@@ -29,7 +29,7 @@ public:
 		, m_used(0)
 	{
 		m_buffer = static_cast<uint8_t*>(malloc(size));
-		assert(m_buffer && "Arena allocation failed");
+		assert(m_buffer && "Arena allocation failed: out of memory");
 	}
 
 	~Arena() {
