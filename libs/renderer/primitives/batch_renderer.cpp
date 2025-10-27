@@ -152,8 +152,9 @@ void BatchRenderer::Flush() {
 	glUseProgram(m_shader);
 	glBindVertexArray(m_vao);
 
-	// Set uniforms (for now, use identity matrices - will be set by window/camera)
-	Foundation::Mat4 projection = glm::ortho(0.0f, 800.0f, 600.0f, 0.0f, -1.0f, 1.0f); // TODO: Get from viewport
+	// Set uniforms with 1:1 pixel mapping (framebuffer dimensions)
+	// Coordinates map directly to pixels - Rect(0, 0, 200, 100) is exactly 200x100 pixels
+	Foundation::Mat4 projection = glm::ortho(0.0f, static_cast<float>(m_viewportWidth), static_cast<float>(m_viewportHeight), 0.0f, -1.0f, 1.0f);
 	Foundation::Mat4 transform = Foundation::Mat4(1.0f);
 
 	glUniformMatrix4fv(m_projectionLoc, 1, GL_FALSE, glm::value_ptr(projection));
@@ -177,6 +178,11 @@ void BatchRenderer::BeginFrame() {
 
 void BatchRenderer::EndFrame() {
 	Flush();
+}
+
+void BatchRenderer::SetViewport(int width, int height) {
+	m_viewportWidth = width;
+	m_viewportHeight = height;
 }
 
 BatchRenderer::RenderStats BatchRenderer::GetStats() const {

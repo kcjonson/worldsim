@@ -32,6 +32,9 @@ void Shutdown();
 void BeginFrame();
 void EndFrame(); // Flushes all batches
 
+// Set viewport dimensions for projection matrix
+void SetViewport(int width, int height);
+
 // --- Drawing Functions ---
 
 // Filled rectangles

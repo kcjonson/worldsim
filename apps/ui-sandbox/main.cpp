@@ -9,6 +9,7 @@
 // - RmlUI integration testing (future)
 // - HTTP debug server for UI inspection (future)
 
+#include "demos/demo.h"
 #include "primitives/primitives.h"
 #include "primitives/batch_renderer.h"
 #include "metrics/metrics_collector.h"
@@ -24,10 +25,6 @@
 #include <string>
 #include <cstring>
 
-// Window dimensions
-static constexpr int kWindowWidth = 800;
-static constexpr int kWindowHeight = 600;
-
 // GLFW callbacks
 void ErrorCallback(int error, const char* description) {
 	std::cerr << "GLFW Error (" << error << "): " << description << std::endl;
@@ -35,6 +32,7 @@ void ErrorCallback(int error, const char* description) {
 
 void FramebufferSizeCallback(GLFWwindow* window, int width, int height) {
 	glViewport(0, 0, width, height);
+	Renderer::Primitives::SetViewport(width, height);
 }
 
 // Initialize GLFW and create window
@@ -48,6 +46,15 @@ GLFWwindow* InitializeWindow() {
 		return nullptr;
 	}
 
+	// Get primary monitor to calculate window size (80% of screen)
+	GLFWmonitor* primaryMonitor = glfwGetPrimaryMonitor();
+	const GLFWvidmode* videoMode = glfwGetVideoMode(primaryMonitor);
+	int windowWidth = static_cast<int>(videoMode->width * 0.8f);
+	int windowHeight = static_cast<int>(videoMode->height * 0.8f);
+
+	std::cout << "Screen: " << videoMode->width << "x" << videoMode->height << std::endl;
+	std::cout << "Window: " << windowWidth << "x" << windowHeight << " (80% of screen)" << std::endl;
+
 	// Configure GLFW
 	glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
 	glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
@@ -55,7 +62,7 @@ GLFWwindow* InitializeWindow() {
 	glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE); // Required on macOS
 
 	// Create window
-	GLFWwindow* window = glfwCreateWindow(kWindowWidth, kWindowHeight, "UI Sandbox", nullptr, nullptr);
+	GLFWwindow* window = glfwCreateWindow(windowWidth, windowHeight, "UI Sandbox", nullptr, nullptr);
 
 	if (!window) {
 		std::cerr << "Failed to create GLFW window" << std::endl;
@@ -84,39 +91,6 @@ GLFWwindow* InitializeWindow() {
 	std::cout << "GLSL Version: " << glGetString(GL_SHADING_LANGUAGE_VERSION) << std::endl;
 
 	return window;
-}
-
-// Render test content using Primitive API
-void RenderTestScene() {
-	using namespace Foundation;
-
-	// Clear background
-	glClearColor(0.1f, 0.1f, 0.15f, 1.0f);
-	glClear(GL_COLOR_BUFFER_BIT);
-
-	// Begin primitive rendering
-	Renderer::Primitives::BeginFrame();
-
-	// Draw test rectangles
-	Renderer::Primitives::DrawRect(Rect(50, 50, 200, 100), Color::Red());
-	Renderer::Primitives::DrawRect(Rect(300, 50, 200, 100), Color::Green());
-	Renderer::Primitives::DrawRect(Rect(550, 50, 200, 100), Color::Blue());
-
-	// Draw some bordered rectangles
-	Renderer::Primitives::DrawRectBorder(Rect(50, 200, 200, 100), Color::Yellow(), 3.0f);
-	Renderer::Primitives::DrawRectBorder(Rect(300, 200, 200, 100), Color::Cyan(), 3.0f);
-
-	// Draw a grid of small rectangles (batching test)
-	for (int y = 0; y < 10; y++) {
-		for (int x = 0; x < 10; x++) {
-			float hue = (x * 10 + y) / 100.0f;
-			Color color(hue, 1.0f - hue, 0.5f, 1.0f);
-			Renderer::Primitives::DrawRect(Rect(50 + x * 25, 350 + y * 20, 20, 15), color);
-		}
-	}
-
-	// End primitive rendering (flushes batches)
-	Renderer::Primitives::EndFrame();
 }
 
 int main(int argc, char* argv[]) {
@@ -149,8 +123,16 @@ int main(int argc, char* argv[]) {
 		return 1;
 	}
 
+	// Get actual window size
+	int windowWidth, windowHeight;
+	glfwGetFramebufferSize(window, &windowWidth, &windowHeight);
+
 	// Initialize primitive rendering system
 	Renderer::Primitives::Init(nullptr); // TODO: Pass renderer instance
+	Renderer::Primitives::SetViewport(windowWidth, windowHeight);
+
+	// Initialize demo
+	Demo::Init();
 
 	// Initialize metrics collection
 	Renderer::MetricsCollector metrics;
@@ -173,7 +155,7 @@ int main(int argc, char* argv[]) {
 		glfwPollEvents();
 
 		// Render frame
-		RenderTestScene();
+		Demo::Render();
 
 		// Get rendering stats
 		auto renderStats = Renderer::Primitives::GetStats();
@@ -196,6 +178,7 @@ int main(int argc, char* argv[]) {
 		debugServer.Stop();
 	}
 
+	Demo::Shutdown();
 	Renderer::Primitives::Shutdown();
 	glfwDestroyWindow(window);
 	glfwTerminate();

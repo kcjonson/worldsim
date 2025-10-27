@@ -48,6 +48,12 @@ void EndFrame() {
 	}
 }
 
+void SetViewport(int width, int height) {
+	if (s_batchRenderer) {
+		s_batchRenderer->SetViewport(width, height);
+	}
+}
+
 // --- Drawing Functions ---
 
 void DrawRect(const Foundation::Rect& bounds, const Foundation::Color& color) {

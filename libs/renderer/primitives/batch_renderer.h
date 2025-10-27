@@ -42,6 +42,9 @@ public:
 	void BeginFrame();
 	void EndFrame();
 
+	// Set viewport dimensions for projection matrix
+	void SetViewport(int width, int height);
+
 	// Rendering statistics structure
 	struct RenderStats {
 		uint32_t drawCalls;
@@ -69,6 +72,10 @@ private:
 	// Uniform locations
 	GLint m_projectionLoc = -1;
 	GLint m_transformLoc = -1;
+
+	// Viewport dimensions
+	int m_viewportWidth = 800;
+	int m_viewportHeight = 600;
 
 	// Statistics
 	size_t m_drawCallCount = 0;

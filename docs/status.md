@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2025-10-27 (UI Sandbox + Performance Monitoring)
+Last Updated: 2025-10-26 (Pixel-Perfect UI Rendering)
 
 ## Current Sprint/Phase
 Initial project setup and architecture
@@ -45,6 +45,7 @@ Initial project setup and architecture
 - 2025-10-26 - **Deterministic Procedural Variation**: Same world position always generates same appearance (seed-based), ensuring consistency and multiplayer compatibility
 - 2025-10-26 - **Ground Covers vs Biomes**: Ground covers are physical surface types (permanent), biomes determine which covers appear and spawn decorations
 - 2025-10-26 - **Seasonal Overlays**: Snow is not a ground cover but a seasonal overlay system (0-100% coverage on top of existing ground)
+- 2025-10-26 - **1:1 Pixel Mapping for UI**: Primitive rendering uses framebuffer dimensions for pixel-perfect rendering - `Rect(50, 50, 200, 100)` is always exactly 200×100 pixels, matching RmlUI/ImGui industry standards
 
 ### Engine Patterns to Implement
 - 2025-10-12 - **String hashing** (FNV-1a, compile-time) - Implement Now
@@ -69,6 +70,52 @@ None currently
 6. Begin splash screen implementation for world-sim app
 
 ## Development Log
+
+### 2025-10-26 - Pixel-Perfect UI Rendering & Window Sizing
+
+**Fixed Critical Rendering Bug:**
+
+The primitive rendering system was using a hardcoded 800x600 virtual coordinate system, causing shapes to physically change pixel dimensions when the window was resized. This violated the design specification for 1:1 pixel mapping.
+
+**Root Cause:**
+- Projection matrix was `ortho(0, 800, 600, 0)` regardless of actual framebuffer size
+- `Rect(50, 50, 200, 100)` would be 320px wide in an 1280x720 window, but 640px wide in a 2560x1440 window
+- Shapes scaled with window resize, breaking pixel-perfect rendering
+
+**Fix Applied:**
+- Changed projection matrix to use actual framebuffer dimensions: `ortho(0, m_viewportWidth, m_viewportHeight, 0)`
+- Added `SetViewport(width, height)` to BatchRenderer and Primitives API
+- Called `SetViewport()` on window creation and framebuffer resize callback
+- Now `Rect(50, 50, 200, 100)` is **always exactly 200×100 pixels**, regardless of window size
+
+**UI Sandbox Improvements:**
+- Window now launches at 80% of screen size (was hardcoded 800x600)
+- Queries primary monitor via GLFW to calculate appropriate initial size
+- Created demo system structure (`demos/demo.h`, `demos/shapes_demo.cpp`)
+- Moved rendering code from `main.cpp` to proper demo implementation
+- Console output shows screen and window dimensions on startup
+
+**Industry Standard Alignment:**
+- RmlUI uses pixel coordinates with 1:1 mapping (per our documentation)
+- ImGui uses pixel coordinates with 1:1 mapping
+- Unity UI default is "Constant Pixel Size" mode
+- Our implementation now matches these standards
+
+**Files Modified:**
+- `libs/renderer/primitives/batch_renderer.{h,cpp}` - Added viewport tracking, fixed projection matrix
+- `libs/renderer/primitives/primitives.{h,cpp}` - Exposed SetViewport() API
+- `apps/ui-sandbox/main.cpp` - Added monitor querying, demo system integration, viewport updates
+- `apps/ui-sandbox/demos/demo.h` - Created demo interface (NEW)
+- `apps/ui-sandbox/demos/shapes_demo.cpp` - Implemented shapes demo (NEW)
+- `apps/ui-sandbox/CMakeLists.txt` - Added shapes_demo.cpp to build
+
+**Test Results:**
+```
+Screen: 3200x1800
+Window: 2560x1440 (80% of screen)
+```
+
+Shapes now maintain constant pixel dimensions when window is resized. ✅
 
 ### 2025-10-27 - UI Sandbox Implementation + Lock-Free Performance Monitoring
 
