@@ -1,17 +1,22 @@
 #pragma once
 
-// HTTP Debug Server - Serves performance metrics via HTTP/SSE.
+// HTTP Debug Server - Serves performance metrics and logs via HTTP/SSE.
 //
 // This server runs on a separate thread and provides:
 // - REST endpoints for current metrics snapshots
 // - Server-Sent Events for real-time metric streaming
+// - Real-time log streaming
 //
 // Lock-free design: Game thread writes to ring buffer (never blocks),
 // HTTP thread reads latest sample. Zero mutex contention.
+//
+// CRITICAL: If ring buffer is full, oldest entries are dropped.
+// Performance > Complete Logs. Never blocks game thread.
 
 #include "metrics/performance_metrics.h"
 #include "debug/lock_free_ring_buffer.h"
 #include <atomic>
+#include <cstdint>
 #include <memory>
 #include <thread>
 
@@ -21,6 +26,35 @@ class Server;
 }
 
 namespace Foundation {
+
+// Log levels (must match foundation::LogLevel enum)
+enum class LogLevel { Debug, Info, Warning, Error };
+
+// Log categories (must match foundation::LogCategory enum)
+enum class LogCategory {
+	Renderer,
+	Physics,
+	Audio,
+	Network,
+	Game,
+	World,
+	UI,
+	Engine,
+	Foundation
+};
+
+// Log entry for HTTP streaming
+struct LogEntry {
+	LogLevel level;
+	LogCategory category;
+	char message[256];
+	uint64_t timestamp;  // Unix timestamp in milliseconds
+	const char* file;    // Pointer to static string (filename)
+	int line;
+
+	// Serialize to JSON
+	const char* ToJSON() const;
+};
 
 class DebugServer {
 public:
@@ -36,6 +70,10 @@ public:
 	// Update metrics (called from game thread)
 	void UpdateMetrics(const PerformanceMetrics& metrics);
 
+	// Update logs (called from game thread) - NEVER BLOCKS
+	// If buffer is full, oldest logs are dropped silently
+	void UpdateLog(LogLevel level, LogCategory category, const char* message, const char* file, int line);
+
 	// Check if server is running
 	bool IsRunning() const { return m_running.load(); }
 
@@ -46,6 +84,10 @@ private:
 
 	// Lock-free metrics buffer (game thread writes, HTTP thread reads)
 	LockFreeRingBuffer<PerformanceMetrics, 64> m_metricsBuffer;
+
+	// Lock-free log buffer (game thread writes, HTTP thread reads)
+	// Size: 1000 entries. If full, oldest logs dropped (circular buffer)
+	LockFreeRingBuffer<LogEntry, 1000> m_logBuffer;
 
 	// Server thread entry point
 	void ServerThreadFunc(int port);

@@ -17,17 +17,17 @@
 #include "graphics/color.h"
 #include "graphics/rect.h"
 #include "math/types.h"
+#include "utils/log.h"
 
 #include <GL/glew.h>
 #include <GLFW/glfw3.h>
 
-#include <iostream>
 #include <string>
 #include <cstring>
 
 // GLFW callbacks
 void ErrorCallback(int error, const char* description) {
-	std::cerr << "GLFW Error (" << error << "): " << description << std::endl;
+	LOG_ERROR(UI, "GLFW Error (%d): %s", error, description);
 }
 
 void FramebufferSizeCallback(GLFWwindow* window, int width, int height) {
@@ -42,7 +42,7 @@ GLFWwindow* InitializeWindow() {
 
 	// Initialize GLFW
 	if (!glfwInit()) {
-		std::cerr << "Failed to initialize GLFW" << std::endl;
+		LOG_ERROR(UI, "Failed to initialize GLFW");
 		return nullptr;
 	}
 
@@ -52,8 +52,8 @@ GLFWwindow* InitializeWindow() {
 	int windowWidth = static_cast<int>(videoMode->width * 0.8f);
 	int windowHeight = static_cast<int>(videoMode->height * 0.8f);
 
-	std::cout << "Screen: " << videoMode->width << "x" << videoMode->height << std::endl;
-	std::cout << "Window: " << windowWidth << "x" << windowHeight << " (80% of screen)" << std::endl;
+	LOG_INFO(UI, "Screen: %dx%d", videoMode->width, videoMode->height);
+	LOG_INFO(UI, "Window: %dx%d (80%% of screen)", windowWidth, windowHeight);
 
 	// Configure GLFW
 	glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
@@ -65,7 +65,7 @@ GLFWwindow* InitializeWindow() {
 	GLFWwindow* window = glfwCreateWindow(windowWidth, windowHeight, "UI Sandbox", nullptr, nullptr);
 
 	if (!window) {
-		std::cerr << "Failed to create GLFW window" << std::endl;
+		LOG_ERROR(UI, "Failed to create GLFW window");
 		glfwTerminate();
 		return nullptr;
 	}
@@ -75,26 +75,30 @@ GLFWwindow* InitializeWindow() {
 
 	// Enable vsync
 	glfwSwapInterval(1);
+	LOG_DEBUG(UI, "VSync enabled");
 
 	// Initialize GLEW
 	glewExperimental = GL_TRUE; // Required for core profile
 	GLenum err = glewInit();
 	if (err != GLEW_OK) {
-		std::cerr << "Failed to initialize GLEW: " << glewGetErrorString(err) << std::endl;
+		LOG_ERROR(UI, "Failed to initialize GLEW: %s", glewGetErrorString(err));
 		glfwDestroyWindow(window);
 		glfwTerminate();
 		return nullptr;
 	}
 
 	// Print OpenGL version
-	std::cout << "OpenGL Version: " << glGetString(GL_VERSION) << std::endl;
-	std::cout << "GLSL Version: " << glGetString(GL_SHADING_LANGUAGE_VERSION) << std::endl;
+	LOG_INFO(Renderer, "OpenGL Version: %s", glGetString(GL_VERSION));
+	LOG_INFO(Renderer, "GLSL Version: %s", glGetString(GL_SHADING_LANGUAGE_VERSION));
 
 	return window;
 }
 
 int main(int argc, char* argv[]) {
-	std::cout << "UI Sandbox - Component Testing & Demo Environment" << std::endl;
+	// Initialize logging system
+	foundation::Logger::Initialize();
+
+	LOG_INFO(UI, "UI Sandbox - Component Testing & Demo Environment");
 
 	// Parse command line arguments
 	std::string demo = "primitives";
@@ -106,16 +110,16 @@ int main(int argc, char* argv[]) {
 		} else if (std::strcmp(argv[i], "--http-port") == 0 && i + 1 < argc) {
 			httpPort = std::stoi(argv[++i]);
 		} else if (std::strcmp(argv[i], "--help") == 0) {
-			std::cout << "Usage: ui-sandbox [options]" << std::endl;
-			std::cout << "Options:" << std::endl;
-			std::cout << "  --component <name>   Show specific component demo" << std::endl;
-			std::cout << "  --http-port <port>   Enable HTTP debug server on port" << std::endl;
-			std::cout << "  --help               Show this help message" << std::endl;
+			LOG_INFO(UI, "Usage: ui-sandbox [options]");
+			LOG_INFO(UI, "Options:");
+			LOG_INFO(UI, "  --component <name>   Show specific component demo");
+			LOG_INFO(UI, "  --http-port <port>   Enable HTTP debug server on port");
+			LOG_INFO(UI, "  --help               Show this help message");
 			return 0;
 		}
 	}
 
-	std::cout << "Demo: " << demo << std::endl;
+	LOG_INFO(UI, "Demo: %s", demo.c_str());
 
 	// Initialize window and OpenGL
 	GLFWwindow* window = InitializeWindow();
@@ -128,10 +132,12 @@ int main(int argc, char* argv[]) {
 	glfwGetFramebufferSize(window, &windowWidth, &windowHeight);
 
 	// Initialize primitive rendering system
+	LOG_INFO(Renderer, "Initializing primitive rendering system");
 	Renderer::Primitives::Init(nullptr); // TODO: Pass renderer instance
 	Renderer::Primitives::SetViewport(windowWidth, windowHeight);
 
 	// Initialize demo
+	LOG_INFO(UI, "Initializing demo");
 	Demo::Init();
 
 	// Initialize metrics collection
@@ -141,11 +147,15 @@ int main(int argc, char* argv[]) {
 	Foundation::DebugServer debugServer;
 	if (httpPort > 0) {
 		debugServer.Start(httpPort);
-		std::cout << "Debug server: http://localhost:" << httpPort << std::endl;
+		LOG_INFO(Foundation, "Debug server: http://localhost:%d", httpPort);
+
+		// Connect logger to debug server for HTTP log streaming
+		foundation::Logger::SetDebugServer(&debugServer);
+		LOG_INFO(Foundation, "Logger connected to debug server");
 	}
 
 	// Main loop
-	std::cout << "Entering main loop..." << std::endl;
+	LOG_INFO(UI, "Entering main loop...");
 
 	while (!glfwWindowShouldClose(window)) {
 		// Begin frame timing
@@ -174,7 +184,11 @@ int main(int argc, char* argv[]) {
 	}
 
 	// Cleanup
+	LOG_INFO(UI, "Shutting down...");
+
 	if (httpPort > 0) {
+		// Disconnect logger from debug server before stopping it
+		foundation::Logger::SetDebugServer(nullptr);
 		debugServer.Stop();
 	}
 
@@ -183,6 +197,7 @@ int main(int argc, char* argv[]) {
 	glfwDestroyWindow(window);
 	glfwTerminate();
 
-	std::cout << "Shutdown complete" << std::endl;
+	foundation::Logger::Shutdown();
+
 	return 0;
 }

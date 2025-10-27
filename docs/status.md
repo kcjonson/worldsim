@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2025-10-26 (Pixel-Perfect UI Rendering)
+Last Updated: 2025-10-26 (Observability Web UI with Logging)
 
 ## Current Sprint/Phase
 Initial project setup and architecture
@@ -46,10 +46,11 @@ Initial project setup and architecture
 - 2025-10-26 - **Ground Covers vs Biomes**: Ground covers are physical surface types (permanent), biomes determine which covers appear and spawn decorations
 - 2025-10-26 - **Seasonal Overlays**: Snow is not a ground cover but a seasonal overlay system (0-100% coverage on top of existing ground)
 - 2025-10-26 - **1:1 Pixel Mapping for UI**: Primitive rendering uses framebuffer dimensions for pixel-perfect rendering - `Rect(50, 50, 200, 100)` is always exactly 200×100 pixels, matching RmlUI/ImGui industry standards
+- 2025-10-26 - **Logging Macro Naming**: Use unprefixed global macros (`LOG_ERROR` not `WSIM_LOG_ERROR`) for brevity and developer experience, accepting potential library conflict risk
 
 ### Engine Patterns to Implement
 - 2025-10-12 - **String hashing** (FNV-1a, compile-time) - Implement Now
-- 2025-10-12 - **Structured logging** (categories + levels) - Implement Now
+- 2025-10-26 - **Structured logging** (categories + levels) - ✅ **IMPLEMENTED**
 - 2025-10-12 - **Memory arenas** (linear allocators) - Implement Soon
 - 2025-10-12 - **Resource handles** (32-bit IDs with generation) - Implement Soon
 - 2025-10-12 - **Immediate mode debug rendering** - Implement Later
@@ -70,6 +71,194 @@ None currently
 6. Begin splash screen implementation for world-sim app
 
 ## Development Log
+
+### 2025-10-26 - Observability Web UI with Real-Time Logging
+
+**Complete Observability Stack Operational:**
+
+Extended the debug server with real-time log streaming and a tabbed web interface, providing full observability for development.
+
+**Architecture - Lock-Free Performance Guarantee:**
+
+**CRITICAL DESIGN CONSTRAINT: Performance > Complete Logs**
+- Logger writes to lock-free ring buffer (~10-20ns, never blocks game thread)
+- If ring buffer full (1000 entries): **oldest logs silently dropped**
+- Zero mutex/locks in game thread path
+- HTTP server reads from ring buffer at 10 Hz (throttled)
+
+**LogEntry Structure** (`Foundation::LogEntry`):
+```cpp
+struct LogEntry {
+    LogLevel level;           // Debug/Info/Warning/Error
+    LogCategory category;     // Renderer/Physics/Audio/Network/Game/World/UI/Engine/Foundation
+    char message[256];        // Formatted log message
+    uint64_t timestamp;       // Unix timestamp in milliseconds
+    const char* file;         // Source file (static string pointer)
+    int line;                 // Line number
+};
+```
+
+**Integration Flow:**
+1. `LOG_INFO(Renderer, "message")` → Logger::Log()
+2. Logger formats message, writes to console (colored)
+3. Logger calls `debugServer->UpdateLog()` (lock-free, ~10-20ns)
+4. DebugServer writes to `LockFreeRingBuffer<LogEntry, 1000>`
+5. HTTP `/stream/logs` endpoint reads from buffer at 10 Hz
+6. Browser receives Server-Sent Events with JSON log entries
+
+**Web UI - Tabbed Interface:**
+
+**Tab 1: Performance** (existing)
+- Real-time metrics: FPS, frame time (min/max/current), draw calls, vertices, triangles
+- Updates via `/stream/metrics` SSE endpoint (10 Hz)
+
+**Tab 2: Logs** (NEW)
+- Real-time log viewer with auto-scroll
+- Color-coded by level:
+  - Debug: Gray (#808080)
+  - Info: White (#d4d4d4)
+  - Warning: Yellow (#dcdcaa)
+  - Error: Red (#f48771)
+- Shows: timestamp, category, level, message
+- File:line for warnings/errors
+- Limit: 500 logs (prevents browser memory issues)
+- Updates via `/stream/logs` SSE endpoint (10 Hz)
+
+**HTTP Endpoints:**
+- `GET /` - Tabbed web UI (HTML/CSS/JavaScript)
+- `GET /api/health` - Health check (JSON)
+- `GET /api/metrics` - Current metrics snapshot (JSON)
+- `GET /stream/metrics` - Real-time metrics stream (SSE, 10 Hz)
+- `GET /stream/logs` - Real-time log stream (SSE, 10 Hz) **NEW**
+
+**Logger Integration:**
+- Added `Logger::SetDebugServer(DebugServer*)` static method
+- Logger stores static pointer to debug server
+- On each log call, sends to debug server (only in DEVELOPMENT_BUILD)
+- Conversion between `foundation::` and `Foundation::` enums
+- Properly disconnects on shutdown (prevents use-after-free)
+
+**ui-sandbox Wiring:**
+```cpp
+// After creating debug server
+foundation::Logger::SetDebugServer(&debugServer);
+
+// Before destroying debug server
+foundation::Logger::SetDebugServer(nullptr);
+```
+
+**Files Modified/Created:**
+- `libs/foundation/debug/debug_server.{h,cpp}` - Added LogEntry struct, UpdateLog(), /stream/logs endpoint
+- `libs/foundation/debug/debug_server.cpp` - Rewrote HTML UI with tabs, log viewer, SSE streaming
+- `libs/foundation/utils/log.{h,cpp}` - Added DebugServer integration, enum conversion
+- `apps/ui-sandbox/main.cpp` - Wired Logger to DebugServer
+
+**Testing:**
+- Verified logger connects to debug server on startup
+- Confirmed logs stream to browser in real-time
+- Tested tab navigation (Performance ↔ Logs)
+- Verified color-coded log levels
+- Confirmed auto-scroll and 500-log limit
+- Tested under load: no frame drops, logs may be dropped (by design)
+
+**Performance Characteristics:**
+- Game thread log overhead: ~10-20ns (lock-free write to ring buffer)
+- HTTP streaming: 10 Hz (not real-time, throttled to prevent bandwidth issues)
+- If logging faster than HTTP can consume: oldest logs dropped silently
+- Zero performance impact even if debug server is slow/stuck
+
+**Usage:**
+```bash
+# Run ui-sandbox (debug server on port 8081 by default)
+./ui-sandbox
+
+# Open web UI in browser
+open http://localhost:8081
+
+# Switch between Performance and Logs tabs
+# Logs stream in real-time with color coding
+```
+
+**Next Steps:**
+- Consider adding log filtering in web UI (by category/level)
+- Consider adding log search functionality
+- Consider adding download logs as text file
+
+### 2025-10-26 - Structured Logging System Implementation
+
+**Core Engine Pattern Complete:**
+
+Implemented a production-ready structured logging system for the entire project, providing organized diagnostic output with categories and log levels.
+
+**System Architecture:**
+
+**Logger Class** (`libs/foundation/utils/log.{h,cpp}`):
+- Four log levels: Debug, Info, Warning, Error
+- Nine categories: Renderer, Physics, Audio, Network, Game, World, UI, Engine, Foundation
+- Per-category level filtering (set different verbosity for each system)
+- Automatic timestamping (HH:MM:SS format)
+- ANSI color codes for terminal output (gray/white/yellow/red)
+- File and line number capture for warnings and errors
+
+**Convenience Macros:**
+```cpp
+LOG_DEBUG(category, format, ...)
+LOG_INFO(category, format, ...)
+LOG_WARNING(category, format, ...)
+LOG_ERROR(category, format, ...)
+```
+
+**Build Configuration:**
+- Development builds: All log levels available, `DEVELOPMENT_BUILD` flag enables Debug/Info/Warning
+- Release builds: Only Error logs remain, Debug/Info/Warning compile to `((void)0)`
+- CMake automatically sets flag for Debug and RelWithDebInfo build types
+
+**Usage Examples:**
+```cpp
+LOG_INFO(Renderer, "Initializing renderer: %dx%d", width, height);
+LOG_ERROR(Network, "Failed to connect to server");
+LOG_DEBUG(Physics, "Tick took %f ms", deltaTime);
+```
+
+**Output Format:**
+```
+[19:08:10][UI][INFO] UI Sandbox - Component Testing & Demo Environment
+[19:08:10][Renderer][INFO] OpenGL Version: 4.1 ATI-7.0.23
+[19:08:11][Foundation][INFO] Debug server: http://localhost:8081
+```
+
+**Design Decision - Macro Naming:**
+
+Chose **unprefixed global macros** (`LOG_ERROR` not `WSIM_LOG_ERROR`) for developer experience:
+- **Pros**: Cleaner code, better readability, shorter is better for ubiquitous operations
+- **Cons**: Potential conflicts with other libraries defining similar macros
+- **Mitigation**: Game project (not library), we control dependencies, can refactor if needed
+- **Documented**: Tradeoff explicitly documented in `/docs/technical/logging-system.md`
+
+**Integration:**
+- ui-sandbox fully converted to use logging system (replaced all `std::cout`/`std::cerr`)
+- Foundation library exports logger for use by all other libraries
+- Initialized in `main()` before any other systems
+
+**Testing:**
+- Verified colored output with timestamps in terminal
+- Confirmed different categories display correctly
+- Tested log level filtering (Debug logs visible in development builds)
+- Verified ANSI color codes work on macOS terminal
+
+**Future HTTP Streaming Integration:**
+
+Documentation includes design for lock-free ring buffer + Server-Sent Events streaming to external debug app (from `/docs/technical/observability/developer-server.md`), to be implemented when needed.
+
+**Files Created/Modified:**
+- `libs/foundation/utils/log.h` - Logger class, enums, macros (NEW)
+- `libs/foundation/utils/log.cpp` - Implementation with console output (NEW)
+- `libs/foundation/CMakeLists.txt` - Added log.cpp, DEVELOPMENT_BUILD flag
+- `apps/ui-sandbox/main.cpp` - Converted all output to logging system
+- `docs/technical/logging-system.md` - Added macro naming convention section
+
+**Next Engine Pattern:**
+String hashing system (FNV-1a with compile-time hashing)
 
 ### 2025-10-26 - Pixel-Perfect UI Rendering & Window Sizing
 

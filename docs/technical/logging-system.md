@@ -266,6 +266,31 @@ const char* LevelToString(LogLevel level) {
 } // namespace foundation
 ```
 
+## Macro Naming Convention
+
+### Design Decision: Global `LOG_*` Macros
+
+We use **unprefixed global macros** (`LOG_ERROR`, `LOG_INFO`, etc.) rather than prefixed versions like `WSIM_LOG_ERROR` or `FOUNDATION_LOG_ERROR`.
+
+**Rationale:**
+- **Brevity**: `LOG_ERROR(Renderer, "...")` is cleaner than `WSIM_LOG_ERROR(Renderer, "...")`
+- **Readability**: Code reads more naturally without repetitive prefixes
+- **Ubiquity**: Logging is used everywhere - shorter is better for such a common operation
+- **Industry precedent**: Many engines (Unreal, Unity internals) use short macro names
+
+**Tradeoff:**
+- **Risk**: Potential conflicts if another library defines `LOG_ERROR` or similar macros
+- **Mitigation**: This is a game project, not a library - we control all dependencies
+- **Fallback**: If conflicts occur, we can add prefixes later (one-time search/replace)
+
+**Comparison with Other Libraries:**
+- **spdlog**: `SPDLOG_INFO()` - prefixed for safety (it's a library)
+- **Google glog**: `LOG(INFO)` - shorter but different syntax
+- **Unreal Engine**: `UE_LOG(LogTemp, Warning, ...)` - prefixed but verbose
+- **Our choice**: `LOG_INFO(category, ...)` - clean middle ground
+
+This is a **conscious design choice** favoring developer experience over maximum safety. The risk is acceptable for our use case.
+
 ## Usage Examples
 
 ### Basic Logging
