@@ -9,9 +9,11 @@
 // - Custom UI components
 //
 // Implementation uses batching to minimize draw calls while maintaining a simple API.
+// Uses C++20 designated initializers (.Args{} pattern) for clean, readable code.
 
 #include "graphics/color.h"
 #include "graphics/rect.h"
+#include "graphics/primitive_styles.h"
 #include "math/types.h"
 #include <string>
 
@@ -37,14 +39,28 @@ void SetViewport(int width, int height);
 
 // --- Drawing Functions ---
 
-// Filled rectangles
-void DrawRect(const Foundation::Rect& bounds, const Foundation::Color& color);
+// Arguments for DrawRect
+struct RectArgs {
+	Foundation::Rect bounds;
+	Foundation::RectStyle style;
+	const char* id = nullptr; // Optional: for inspection/debugging
+	int zIndex = 0;           // Optional: explicit draw order
+};
 
-// Rectangle borders (outline only)
-void DrawRectBorder(const Foundation::Rect& bounds, const Foundation::Color& color, float borderWidth, float cornerRadius = 0.0f);
+// Arguments for DrawLine
+struct LineArgs {
+	Foundation::Vec2 start;
+	Foundation::Vec2 end;
+	Foundation::LineStyle style;
+	const char* id = nullptr;
+	int zIndex = 0;
+};
 
-// Lines
-void DrawLine(const Foundation::Vec2& start, const Foundation::Vec2& end, const Foundation::Color& color, float width = 1.0f);
+// Draw a rectangle with optional fill and border
+void DrawRect(const RectArgs& args);
+
+// Draw a line
+void DrawLine(const LineArgs& args);
 
 // --- State Management ---
 

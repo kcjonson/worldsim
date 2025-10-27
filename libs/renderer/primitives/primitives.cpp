@@ -56,38 +56,63 @@ void SetViewport(int width, int height) {
 
 // --- Drawing Functions ---
 
-void DrawRect(const Foundation::Rect& bounds, const Foundation::Color& color) {
-	if (s_batchRenderer) {
-		s_batchRenderer->AddQuad(bounds, color);
+void DrawRect(const RectArgs& args) {
+	if (!s_batchRenderer)
+		return;
+
+	// Draw fill if specified
+	if (args.style.fill.a > 0.0f) {
+		s_batchRenderer->AddQuad(args.bounds, args.style.fill);
+	}
+
+	// Draw border if specified
+	if (args.style.border.has_value()) {
+		const auto& border = args.style.border.value();
+
+		// For now, draw 4 lines (no corner radius support yet)
+		// TODO: Add corner radius support with tessellation
+		DrawLine({
+			.start = args.bounds.TopLeft(),
+			.end = args.bounds.TopRight(),
+			.style = {.color = border.color, .width = border.width}
+		});
+		DrawLine({
+			.start = args.bounds.TopRight(),
+			.end = args.bounds.BottomRight(),
+			.style = {.color = border.color, .width = border.width}
+		});
+		DrawLine({
+			.start = args.bounds.BottomRight(),
+			.end = args.bounds.BottomLeft(),
+			.style = {.color = border.color, .width = border.width}
+		});
+		DrawLine({
+			.start = args.bounds.BottomLeft(),
+			.end = args.bounds.TopLeft(),
+			.style = {.color = border.color, .width = border.width}
+		});
 	}
 }
 
-void DrawRectBorder(const Foundation::Rect& bounds, const Foundation::Color& color, float borderWidth, float cornerRadius) {
-	// For now, draw 4 lines (no corner radius support yet)
-	// TODO: Add corner radius support with tessellation
+void DrawLine(const LineArgs& args) {
+	if (!s_batchRenderer)
+		return;
 
-	DrawLine(bounds.TopLeft(), bounds.TopRight(), color, borderWidth);
-	DrawLine(bounds.TopRight(), bounds.BottomRight(), color, borderWidth);
-	DrawLine(bounds.BottomRight(), bounds.BottomLeft(), color, borderWidth);
-	DrawLine(bounds.BottomLeft(), bounds.TopLeft(), color, borderWidth);
-}
-
-void DrawLine(const Foundation::Vec2& start, const Foundation::Vec2& end, const Foundation::Color& color, float width) {
 	// Draw line as thin rectangle
-	Foundation::Vec2 dir = end - start;
+	Foundation::Vec2 dir = args.end - args.start;
 	float length = glm::length(dir);
 
 	if (length < 0.001f)
 		return; // Too short to draw
 
 	Foundation::Vec2 normal = Foundation::Vec2(-dir.y, dir.x) / length;
-	Foundation::Vec2 offset = normal * (width * 0.5f);
+	Foundation::Vec2 offset = normal * (args.style.width * 0.5f);
 
 	// Create quad for line
-	Foundation::Vec2 p0 = start - offset;
-	Foundation::Vec2 p1 = start + offset;
-	Foundation::Vec2 p2 = end + offset;
-	Foundation::Vec2 p3 = end - offset;
+	Foundation::Vec2 p0 = args.start - offset;
+	Foundation::Vec2 p1 = args.start + offset;
+	Foundation::Vec2 p2 = args.end + offset;
+	Foundation::Vec2 p3 = args.end - offset;
 
 	// Calculate bounding box
 	float minX = glm::min(glm::min(p0.x, p1.x), glm::min(p2.x, p3.x));
@@ -96,7 +121,7 @@ void DrawLine(const Foundation::Vec2& start, const Foundation::Vec2& end, const 
 	float maxY = glm::max(glm::max(p0.y, p1.y), glm::max(p2.y, p3.y));
 
 	Foundation::Rect bounds(minX, minY, maxX - minX, maxY - minY);
-	DrawRect(bounds, color);
+	s_batchRenderer->AddQuad(bounds, args.style.color);
 }
 
 // --- Scissor Stack ---
