@@ -186,7 +186,7 @@ void TestScoped() {
 
 	Arena arena(1024);
 
-	// Allocate BEFORE scope (this is the key test case!)
+	// Allocate before scope to verify pre-scope allocations remain valid after checkpoint restoration
 	int* data1 = arena.Allocate<int>();
 	*data1 = 42;
 	size_t usedBefore = arena.GetUsed();
