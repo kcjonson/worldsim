@@ -255,202 +255,59 @@ void DebugServer::ServerThreadFunc(int port) {
 		);
 	});
 
-	// Simple HTML page for manual browser testing
+	// Serve static developer client from build directory
+	// NOTE: The developer-client is a React SPA built by Vite and copied to
+	// build/developer-client/ by CMake. The files use relative paths and can
+	// be opened directly in a browser, or served here for convenience.
+	//
+	// To open directly: open build/developer-client/index.html
+	// To access via server: http://localhost:<port>/
+
+	// TODO: Implement static file serving when developer-client is built
+	// For now, return a simple placeholder that explains how to access the app
 	m_server->Get("/", [](const httplib::Request&, httplib::Response& res) {
-		const char* html = R"HTML(
-<!DOCTYPE html>
+		const char* html = R"HTML(<!DOCTYPE html>
 <html>
 <head>
-    <title>ui-sandbox Debug</title>
+    <title>Developer Server</title>
     <style>
-        * { box-sizing: border-box; margin: 0; padding: 0; }
-        body { font-family: 'Consolas', 'Monaco', monospace; background: #1e1e1e; color: #d4d4d4; }
-
-        header { background: #252526; padding: 20px; border-bottom: 1px solid #007acc; }
-        h1 { color: #4ec9b0; margin-bottom: 15px; }
-
-        /* Tab Navigation */
-        .tabs { display: flex; gap: 5px; }
-        .tab {
-            padding: 8px 20px;
-            background: #333333;
-            border: none;
-            color: #d4d4d4;
-            cursor: pointer;
-            font-family: inherit;
-            font-size: 14px;
-            border-radius: 4px 4px 0 0;
-        }
-        .tab:hover { background: #3e3e3e; }
-        .tab.active { background: #007acc; color: #ffffff; }
-
-        /* Tab Content */
-        .tab-content { display: none; padding: 20px; height: calc(100vh - 140px); overflow-y: auto; }
-        .tab-content.active { display: block; }
-
-        /* Performance Metrics */
-        .metric {
-            margin: 10px 0;
-            padding: 15px;
-            background: #252526;
-            border-left: 3px solid #007acc;
-            display: flex;
-            justify-content: space-between;
-        }
-        .metric-name { color: #9cdcfe; }
-        .metric-value { color: #ce9178; font-size: 1.2em; font-weight: bold; }
-
-        /* Logs */
-        .log-container {
+        body {
+            font-family: 'Consolas', 'Monaco', monospace;
             background: #1e1e1e;
-            height: 100%;
-            overflow-y: auto;
-            font-size: 13px;
-            line-height: 1.5;
+            color: #d4d4d4;
+            padding: 40px;
+            max-width: 800px;
+            margin: 0 auto;
         }
-        .log-entry {
-            padding: 4px 10px;
-            border-left: 3px solid transparent;
-            white-space: pre-wrap;
-            word-break: break-word;
-        }
-        .log-entry:hover { background: #2d2d30; }
-
-        /* Log Level Colors */
-        .log-DEBUG { border-left-color: #808080; color: #808080; }
-        .log-INFO { border-left-color: #d4d4d4; color: #d4d4d4; }
-        .log-WARN { border-left-color: #dcdcaa; color: #dcdcaa; }
-        .log-ERROR { border-left-color: #f48771; color: #f48771; }
-
-        .log-timestamp { color: #858585; margin-right: 8px; }
-        .log-category { color: #9cdcfe; margin-right: 8px; font-weight: bold; }
-        .log-level { margin-right: 8px; font-weight: bold; }
-        .log-file { color: #858585; font-size: 11px; margin-left: 8px; }
+        h1 { color: #4ec9b0; }
+        .info { background: #252526; padding: 20px; margin: 20px 0; border-left: 3px solid #007acc; }
+        code { background: #1e1e1e; padding: 2px 6px; color: #ce9178; }
+        a { color: #4ec9b0; }
     </style>
 </head>
 <body>
-    <header>
-        <h1>ui-sandbox Debug</h1>
-        <div class="tabs">
-            <button class="tab active" onclick="switchTab('performance')">Performance</button>
-            <button class="tab" onclick="switchTab('logs')">Logs</button>
-        </div>
-    </header>
+    <h1>Developer Server Running</h1>
 
-    <!-- Performance Tab -->
-    <div id="performance-tab" class="tab-content active">
-        <div class="metric">
-            <span class="metric-name">FPS:</span>
-            <span class="metric-value" id="fps">--</span>
-        </div>
-        <div class="metric">
-            <span class="metric-name">Frame Time:</span>
-            <span class="metric-value"><span id="frameTime">--</span> ms</span>
-        </div>
-        <div class="metric">
-            <span class="metric-name">Frame Range:</span>
-            <span class="metric-value" id="frameRange">--</span>
-        </div>
-        <div class="metric">
-            <span class="metric-name">Draw Calls:</span>
-            <span class="metric-value" id="drawCalls">--</span>
-        </div>
-        <div class="metric">
-            <span class="metric-name">Vertices:</span>
-            <span class="metric-value" id="vertices">--</span>
-        </div>
-        <div class="metric">
-            <span class="metric-name">Triangles:</span>
-            <span class="metric-value" id="triangles">--</span>
-        </div>
+    <div class="info">
+        <h2>API Endpoints Available:</h2>
+        <ul>
+            <li><a href="/api/health">/api/health</a> - Server health check</li>
+            <li><a href="/api/metrics">/api/metrics</a> - Current performance metrics</li>
+            <li><a href="/stream/metrics">/stream/metrics</a> - Real-time metrics (SSE)</li>
+            <li><a href="/stream/logs">/stream/logs</a> - Real-time logs (SSE)</li>
+        </ul>
     </div>
 
-    <!-- Logs Tab -->
-    <div id="logs-tab" class="tab-content">
-        <div id="logs" class="log-container"></div>
+    <div class="info">
+        <h2>Developer Client (React SPA):</h2>
+        <p>The developer client is a React application that connects to this server.</p>
+        <p><strong>To launch:</strong></p>
+        <ul>
+            <li>Build the project: <code>make</code></li>
+            <li>Open: <code>open build/developer-client/index.html</code></li>
+        </ul>
+        <p>The app will connect to this server and display real-time metrics and logs.</p>
     </div>
-
-    <script>
-        // Tab switching
-        function switchTab(tabName) {
-            // Update tab buttons
-            document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
-            event.target.classList.add('active');
-
-            // Update tab content
-            document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
-            document.getElementById(tabName + '-tab').classList.add('active');
-        }
-
-        // Performance Metrics Streaming
-        const metricsSource = new EventSource('/stream/metrics');
-        metricsSource.addEventListener('metric', (e) => {
-            const data = JSON.parse(e.data);
-            document.getElementById('fps').textContent = data.fps.toFixed(1);
-            document.getElementById('frameTime').textContent = data.frameTimeMs.toFixed(2);
-            document.getElementById('frameRange').textContent =
-                data.frameTimeMinMs.toFixed(2) + ' - ' + data.frameTimeMaxMs.toFixed(2);
-            document.getElementById('drawCalls').textContent = data.drawCalls;
-            document.getElementById('vertices').textContent = data.vertexCount;
-            document.getElementById('triangles').textContent = data.triangleCount;
-        });
-        metricsSource.addEventListener('error', () => {
-            console.error('Metrics SSE connection error');
-        });
-
-        // Log Streaming
-        const logsContainer = document.getElementById('logs');
-        const maxLogs = 500; // Limit to prevent memory issues
-        let logCount = 0;
-
-        const logsSource = new EventSource('/stream/logs');
-        logsSource.addEventListener('log', (e) => {
-            const log = JSON.parse(e.data);
-
-            // Create log entry element
-            const entry = document.createElement('div');
-            entry.className = 'log-entry log-' + log.level;
-
-            // Format timestamp (convert from ms to readable time)
-            const date = new Date(log.timestamp);
-            const time = date.toLocaleTimeString('en-US', { hour12: false });
-
-            // Build log line
-            let logLine = '';
-            logLine += '<span class="log-timestamp">[' + time + ']</span>';
-            logLine += '<span class="log-category">[' + log.category + ']</span>';
-            logLine += '<span class="log-level">[' + log.level + ']</span>';
-            logLine += '<span class="log-message">' + escapeHtml(log.message) + '</span>';
-
-            // Add file:line for warnings and errors
-            if (log.level === 'WARN' || log.level === 'ERROR') {
-                logLine += '<span class="log-file">(' + log.file + ':' + log.line + ')</span>';
-            }
-
-            entry.innerHTML = logLine;
-            logsContainer.appendChild(entry);
-            logCount++;
-
-            // Remove old logs if we exceed the limit
-            if (logCount > maxLogs) {
-                logsContainer.removeChild(logsContainer.firstChild);
-                logCount--;
-            }
-
-            // Auto-scroll to bottom
-            logsContainer.scrollTop = logsContainer.scrollHeight;
-        });
-        logsSource.addEventListener('error', () => {
-            console.error('Logs SSE connection error');
-        });
-
-        // Helper: Escape HTML to prevent XSS
-        function escapeHtml(text) {
-            const div = document.createElement('div');
-            div.textContent = text;
-            return div.innerHTML;
-        }
-    </script>
 </body>
 </html>
 )HTML";

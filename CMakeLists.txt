@@ -36,5 +36,37 @@ add_subdirectory(libs/engine)
 add_subdirectory(apps/world-sim)
 add_subdirectory(apps/ui-sandbox)
 
+# Developer client (web app)
+# Only build in Development mode (builds React app with npm)
+if(CMAKE_BUILD_TYPE STREQUAL "Development" OR CMAKE_BUILD_TYPE STREQUAL "Debug")
+    # Check if npm is available
+    find_program(NPM_EXECUTABLE npm)
+    if(NPM_EXECUTABLE)
+        message(STATUS "Building developer-client web app...")
+
+        # Build web app during make
+        add_custom_target(developer-client ALL
+            COMMAND ${NPM_EXECUTABLE} install
+            COMMAND ${NPM_EXECUTABLE} run build
+            WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/apps/developer-client
+            COMMENT "Building developer client web app with Vite"
+        )
+
+        # Copy built files to output directory
+        add_custom_command(TARGET developer-client POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                ${CMAKE_SOURCE_DIR}/apps/developer-client/dist/
+                ${CMAKE_BINARY_DIR}/developer-client/
+            COMMENT "Copying developer client to build/developer-client/"
+        )
+
+        # Make applications depend on developer-client so it's always built first
+        add_dependencies(world-sim developer-client)
+        add_dependencies(ui-sandbox developer-client)
+    else()
+        message(WARNING "npm not found - skipping developer-client build. Install Node.js to enable developer tools.")
+    endif()
+endif()
+
 # Enable testing
 enable_testing()
