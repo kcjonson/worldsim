@@ -100,6 +100,31 @@ curl http://localhost:8080/ui/tree
 ### 4. Once Working, Use in Main Game
 Add component to `libs/ui/components/` and use in game scenes.
 
+## Verifying Visual Output (Screenshots)
+
+**When user reports visual issues** ("things aren't in the right place", "X doesn't appear", "layout looks wrong"):
+
+```bash
+# Run ui-sandbox with specific scene
+./build/apps/ui-sandbox/ui-sandbox --scene=shapes &
+
+# Capture screenshot to see actual output
+sleep 3
+curl http://localhost:8081/api/ui/screenshot -o /tmp/screenshot.png
+
+# View the screenshot
+open /tmp/screenshot.png
+
+# Clean up
+pkill -f ui-sandbox
+```
+
+**Notes:**
+- Default port: 8081 (ui-sandbox), 8082 (main game client)
+- Takes ~5 seconds to capture (PNG encoding is slow)
+- Use `--scene=<name>` to test specific scenes
+- Works in browser too: `open http://localhost:8081/api/ui/screenshot`
+
 ## Running Tests
 
 ### All Tests

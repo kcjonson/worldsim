@@ -351,6 +351,10 @@ int main(int argc, char* argv[]) {
 		// Update debug server with latest metrics
 		if (httpPort > 0) {
 			debugServer.UpdateMetrics(metrics.GetCurrentMetrics());
+
+			// Check if screenshot was requested and capture if so
+			// This must happen BEFORE glfwSwapBuffers() to capture the current frame
+			debugServer.CaptureScreenshotIfRequested();
 		}
 
 		// Swap buffers

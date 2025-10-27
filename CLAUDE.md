@@ -113,6 +113,11 @@ World-sim is a C++20 game with 3D procedural world generation, 2D tile-based gam
 - `LOG_DEBUG`, `LOG_INFO`, `LOG_WARNING`, `LOG_ERROR`
 - Debug logs compile out in release builds
 
+**Visual Verification:**
+- When user reports visual issues ("X doesn't appear", "layout is wrong")
+- Capture screenshot via HTTP endpoint to see actual output
+- See `/docs/workflows.md` → "Verifying Visual Output"
+
 ## Quick Reference
 
 | When You Need... | Check... |
