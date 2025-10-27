@@ -181,12 +181,17 @@ void TestCapacity() {
 
 void TestScoped() {
 	LOG_INFO(UI, "");
-	LOG_INFO(UI, "Scoped Test: RAII arena with automatic reset");
-	LOG_INFO(UI, "---------------------------------------------");
+	LOG_INFO(UI, "Scoped Test: RAII arena with checkpoint restoration");
+	LOG_INFO(UI, "----------------------------------------------------");
 
 	Arena arena(1024);
 
-	LOG_INFO(UI, "Arena used before scope: %zu bytes", arena.GetUsed());
+	// Allocate BEFORE scope (this is the key test case!)
+	int* data1 = arena.Allocate<int>();
+	*data1 = 42;
+	size_t usedBefore = arena.GetUsed();
+
+	LOG_INFO(UI, "Arena used before scope: %zu bytes (allocated int with value 42)", usedBefore);
 
 	{
 		ScopedArena scoped(arena);
@@ -199,9 +204,15 @@ void TestScoped() {
 		LOG_INFO(UI, "Arena used inside scope: %zu bytes", arena.GetUsed());
 	}
 
-	LOG_INFO(UI, "Arena used after scope: %zu bytes (should be 0)", arena.GetUsed());
+	// Should restore to usedBefore, NOT 0
+	LOG_INFO(UI, "Arena used after scope: %zu bytes (should be %zu)", arena.GetUsed(), usedBefore);
 
-	assert(arena.GetUsed() == 0 && "ScopedArena did not reset");
+	assert(arena.GetUsed() == usedBefore && "ScopedArena did not restore checkpoint");
+
+	// Verify data1 is still valid and has correct value
+	assert(*data1 == 42 && "Pre-scope allocation was invalidated!");
+
+	LOG_INFO(UI, "Pre-scope allocation still valid with correct value (42)");
 	LOG_INFO(UI, "Scoped arena test passed!");
 }
 

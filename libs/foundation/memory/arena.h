@@ -69,6 +69,12 @@ public:
 		m_used = 0;
 	}
 
+	// Restore arena to a previous checkpoint
+	void RestoreCheckpoint(size_t checkpoint) {
+		assert(checkpoint <= m_used && "Invalid checkpoint");
+		m_used = checkpoint;
+	}
+
 	// Get current usage
 	size_t GetUsed() const { return m_used; }
 	size_t GetSize() const { return m_size; }
@@ -128,8 +134,8 @@ public:
 	{}
 
 	~ScopedArena() {
-		// Reset to checkpoint (undo all allocations made within this scope)
-		m_arena.Reset();
+		// Restore to checkpoint (undo all allocations made within this scope)
+		m_arena.RestoreCheckpoint(m_checkpoint);
 	}
 
 	template<typename T>
