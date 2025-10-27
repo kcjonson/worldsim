@@ -1,0 +1,25 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug world-sim",
+      "type": "cppdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/build/apps/world-sim/world-sim",
+      "cwd": "${workspaceFolder}/build/apps/world-sim",
+      "MIMode": "lldb",
+      "externalConsole": false,
+      "preLaunchTask": "build world-sim"
+    },
+    {
+      "name": "Debug ui-sandbox",
+      "type": "cppdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/build/apps/ui-sandbox/ui-sandbox",
+      "cwd": "${workspaceFolder}/build/apps/ui-sandbox",
+      "MIMode": "lldb",
+      "externalConsole": false,
+      "preLaunchTask": "build ui-sandbox"
+    }
+  ]
+}

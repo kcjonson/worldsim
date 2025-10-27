@@ -24,10 +24,15 @@ target_link_libraries(world-sim
         foundation
 )
 
-# Copy assets to build directory
-add_custom_command(TARGET world-sim POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        ${CMAKE_CURRENT_SOURCE_DIR}/assets
-        $<TARGET_FILE_DIR:world-sim>/assets
-    COMMENT "Copying assets to build directory"
-)
+# Copy assets to build directory when available
+set(WORLD_SIM_ASSETS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/assets")
+if(EXISTS "${WORLD_SIM_ASSETS_DIR}")
+    add_custom_command(TARGET world-sim POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${WORLD_SIM_ASSETS_DIR}"
+            "$<TARGET_FILE_DIR:world-sim>/assets"
+        COMMENT "Copying assets to build directory"
+    )
+else()
+    message(WARNING "world-sim assets directory not found; skipping asset copy")
+endif()

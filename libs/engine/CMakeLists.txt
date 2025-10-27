@@ -1,5 +1,6 @@
 add_library(engine
     application/placeholder.cpp
+    scene/scene_manager.cpp
 )
 
 target_include_directories(engine
