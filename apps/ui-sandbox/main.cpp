@@ -18,6 +18,7 @@
 #include "graphics/rect.h"
 #include "math/types.h"
 #include "utils/log.h"
+#include "utils/string_hash.h"
 
 #include <GL/glew.h>
 #include <GLFW/glfw3.h>
@@ -99,6 +100,31 @@ int main(int argc, char* argv[]) {
 	foundation::Logger::Initialize();
 
 	LOG_INFO(UI, "UI Sandbox - Component Testing & Demo Environment");
+
+	// Demonstrate string hashing system
+	LOG_INFO(Foundation, "String Hashing System Demo:");
+
+	// Compile-time hashing (happens at compile-time, zero runtime cost)
+	constexpr foundation::StringHash kTransformHash = HASH("Transform");
+	constexpr foundation::StringHash kPositionHash = foundation::hashes::kPosition;
+
+	LOG_INFO(Foundation, "  Compile-time: 'Transform' -> 0x%llx", kTransformHash);
+	LOG_INFO(Foundation, "  Compile-time: 'Position' -> 0x%llx", kPositionHash);
+
+	// Runtime hashing (computed at runtime)
+	const char* runtimeString = "DynamicComponent";
+	foundation::StringHash runtimeHash = foundation::HashString(runtimeString);
+	LOG_INFO(Foundation, "  Runtime: '%s' -> 0x%llx", runtimeString, runtimeHash);
+
+#ifdef DEBUG
+	// Debug collision detection (only in debug builds)
+	foundation::HashStringDebug("Transform");
+	foundation::HashStringDebug("Position");
+	foundation::HashStringDebug("TestComponent");
+
+	LOG_INFO(Foundation, "  Debug lookup: 0x%llx -> '%s'",
+		kTransformHash, foundation::GetStringForHash(kTransformHash));
+#endif
 
 	// Parse command line arguments
 	std::string demo = "primitives";
