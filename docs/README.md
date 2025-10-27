@@ -55,6 +55,8 @@ docs/
 - Active decisions
 - Known blockers
 - Development log
+- use checkboxes
+- do not put code or decisions here, this is purely a task list
 
 **Update this after significant work.**
 

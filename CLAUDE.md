@@ -21,6 +21,8 @@ World-sim is a C++20 game with 3D procedural world generation, 2D tile-based gam
 
 1. **Read documentation first**
    - `/docs/status.md` - Current project state
+   - Keep explicit todos and work items in this list, with checkboxes
+   - Update this document before and after doing any work
    - Relevant technical design documents
    - Product specifications if implementing features
 
@@ -38,6 +40,8 @@ World-sim is a C++20 game with 3D procedural world generation, 2D tile-based gam
    - Consider architecture implications
    - Think about performance impact
    - Plan for maintainability
+
+
 
 ### Code Quality
 
@@ -58,6 +62,7 @@ World-sim is a C++20 game with 3D procedural world generation, 2D tile-based gam
 - Write quick hacks or temporary code
 - Ignore established patterns
 - Create technical debt
+- Cost things / estimate time to complete
 
 ## Documentation System
 

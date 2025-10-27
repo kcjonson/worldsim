@@ -1,5 +1,7 @@
 add_library(renderer
-    gl/placeholder.cpp
+    primitives/primitives.cpp
+    primitives/batch_renderer.cpp
+    metrics/metrics_collector.cpp
 )
 
 target_include_directories(renderer

@@ -1,5 +1,6 @@
 add_library(foundation
-    math/placeholder.cpp
+    metrics/performance_metrics.cpp
+    debug/debug_server.cpp
 )
 
 target_include_directories(foundation
@@ -14,6 +15,7 @@ target_compile_features(foundation PUBLIC cxx_std_20)
 target_link_libraries(foundation
     PUBLIC
         glm::glm
+        httplib::httplib
 )
 
 # Tests
