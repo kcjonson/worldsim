@@ -96,9 +96,41 @@ GLFWwindow* InitializeWindow() {
 }
 
 int main(int argc, char* argv[]) {
+	// Parse command line arguments FIRST (before any logging)
+	std::string demo = "primitives";
+	int httpPort = 8081; // Default port for ui-sandbox
+
+	for (int i = 1; i < argc; i++) {
+		if (std::strcmp(argv[i], "--component") == 0 && i + 1 < argc) {
+			demo = argv[++i];
+		} else if (std::strcmp(argv[i], "--http-port") == 0 && i + 1 < argc) {
+			httpPort = std::stoi(argv[++i]);
+		} else if (std::strcmp(argv[i], "--help") == 0) {
+			// Can't log yet, just print to stdout
+			printf("Usage: ui-sandbox [options]\n");
+			printf("Options:\n");
+			printf("  --component <name>   Show specific component demo\n");
+			printf("  --http-port <port>   Enable HTTP debug server on port\n");
+			printf("  --help               Show this help message\n");
+			return 0;
+		}
+	}
+
 	// Initialize logging system
 	foundation::Logger::Initialize();
 
+	// Start debug server IMMEDIATELY (before any logs)
+	// This ensures ALL logs go to the ring buffer
+	Foundation::DebugServer debugServer;
+	foundation::Logger::SetDebugServer(&debugServer);
+	if (httpPort > 0) {
+		debugServer.Start(httpPort);
+		LOG_INFO(Foundation, "Debug server: http://localhost:%d", httpPort);
+		LOG_INFO(Foundation, "Logger connected to debug server");
+		LOG_DEBUG(Foundation, "Debug server connection test - this DEBUG log should appear in browser");
+	}
+
+	// NOW all subsequent logs go to the ring buffer
 	LOG_INFO(UI, "UI Sandbox - Component Testing & Demo Environment");
 
 	// Demonstrate string hashing system
@@ -126,25 +158,6 @@ int main(int argc, char* argv[]) {
 		kTransformHash, foundation::GetStringForHash(kTransformHash));
 #endif
 
-	// Parse command line arguments
-	std::string demo = "primitives";
-	int httpPort = 8081; // Default port for ui-sandbox
-
-	for (int i = 1; i < argc; i++) {
-		if (std::strcmp(argv[i], "--component") == 0 && i + 1 < argc) {
-			demo = argv[++i];
-		} else if (std::strcmp(argv[i], "--http-port") == 0 && i + 1 < argc) {
-			httpPort = std::stoi(argv[++i]);
-		} else if (std::strcmp(argv[i], "--help") == 0) {
-			LOG_INFO(UI, "Usage: ui-sandbox [options]");
-			LOG_INFO(UI, "Options:");
-			LOG_INFO(UI, "  --component <name>   Show specific component demo");
-			LOG_INFO(UI, "  --http-port <port>   Enable HTTP debug server on port");
-			LOG_INFO(UI, "  --help               Show this help message");
-			return 0;
-		}
-	}
-
 	LOG_INFO(UI, "Demo: %s", demo.c_str());
 
 	// Initialize window and OpenGL
@@ -159,33 +172,33 @@ int main(int argc, char* argv[]) {
 
 	// Initialize primitive rendering system
 	LOG_INFO(Renderer, "Initializing primitive rendering system");
+	LOG_DEBUG(Renderer, "Viewport size: %dx%d", windowWidth, windowHeight);
 	Renderer::Primitives::Init(nullptr); // TODO: Pass renderer instance
 	Renderer::Primitives::SetViewport(windowWidth, windowHeight);
+	LOG_DEBUG(Renderer, "Primitive rendering system initialized");
 
 	// Initialize demo
 	LOG_INFO(UI, "Initializing demo");
+	LOG_DEBUG(UI, "Loading demo: %s", demo.c_str());
 	Demo::Init();
+	LOG_DEBUG(UI, "Demo initialization complete");
 
 	// Initialize metrics collection
 	Renderer::MetricsCollector metrics;
 
-	// Start debug server
-	Foundation::DebugServer debugServer;
-	if (httpPort > 0) {
-		debugServer.Start(httpPort);
-		LOG_INFO(Foundation, "Debug server: http://localhost:%d", httpPort);
-
-		// Connect logger to debug server for HTTP log streaming
-		foundation::Logger::SetDebugServer(&debugServer);
-		LOG_INFO(Foundation, "Logger connected to debug server");
-	}
-
 	// Main loop
 	LOG_INFO(UI, "Entering main loop...");
+	LOG_DEBUG(UI, "Main loop started - rendering at 60 FPS (vsync)");
 
+	int frameCount = 0;
 	while (!glfwWindowShouldClose(window)) {
 		// Begin frame timing
 		metrics.BeginFrame();
+
+		// Log every 60 frames (once per second at 60 FPS)
+		if (frameCount++ % 60 == 0) {
+			LOG_DEBUG(UI, "Frame %d - main loop running", frameCount);
+		}
 
 		// Poll events
 		glfwPollEvents();

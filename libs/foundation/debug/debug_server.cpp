@@ -229,7 +229,8 @@ void DebugServer::ServerThreadFunc(int port) {
 						LogEntry entry;
 						while (m_logBuffer.Read(entry)) {
 							// Only send logs we haven't sent yet
-							if (entry.timestamp > lastSentTimestamp) {
+							// Use >= to handle multiple logs with same timestamp
+							if (entry.timestamp >= lastSentTimestamp) {
 								std::ostringstream event;
 								event << "event: log\n";
 								event << "data: " << entry.ToJSON() << "\n\n";

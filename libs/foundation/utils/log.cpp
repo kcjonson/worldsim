@@ -91,17 +91,32 @@ LogLevel Logger::GetLevel(LogCategory category) {
 }
 
 void Logger::Log(LogCategory category, LogLevel level, const char* file, int line, const char* format, ...) {
-	// Filter by level
-	if (level < GetLevel(category)) {
-		return;  // Too verbose, skip
-	}
-
 	// Format message first (needed for both console and debug server)
 	char message[256];
 	va_list args;
 	va_start(args, format);
 	vsnprintf(message, sizeof(message), format, args);
 	va_end(args);
+
+#ifdef DEVELOPMENT_BUILD
+	// ALWAYS send to debug server (regardless of console filter)
+	// Lock-free write, never blocks (~10-20 nanoseconds)
+	// Developer client has its own filtering UI
+	if (s_debugServer) {
+		s_debugServer->UpdateLog(
+			ConvertLogLevel(level),
+			ConvertLogCategory(category),
+			message,
+			file,
+			line
+		);
+	}
+#endif
+
+	// Filter by level for console output
+	if (level < GetLevel(category)) {
+		return;  // Too verbose for console, skip console output
+	}
 
 	// Get timestamp
 	time_t now = time(nullptr);
@@ -134,20 +149,6 @@ void Logger::Log(LogCategory category, LogLevel level, const char* file, int lin
 
 	printf("\n");
 	fflush(stdout);
-
-#ifdef DEVELOPMENT_BUILD
-	// Also send to debug server (if configured)
-	// Lock-free write, never blocks (~10-20 nanoseconds)
-	if (s_debugServer) {
-		s_debugServer->UpdateLog(
-			ConvertLogLevel(level),
-			ConvertLogCategory(category),
-			message,
-			file,
-			line
-		);
-	}
-#endif
 }
 
 const char* CategoryToString(LogCategory cat) {
