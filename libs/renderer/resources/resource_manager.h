@@ -37,9 +37,9 @@ public:
 			index = m_freeIndices.back();
 			m_freeIndices.pop_back();
 		} else {
-			// Allocate new slot
+			// Allocate new slot - check BEFORE cast to prevent wraparound
+			assert(m_resources.size() < 65536 && "ResourceManager out of slots");
 			index = static_cast<uint16_t>(m_resources.size());
-			assert(index < 65535 && "ResourceManager out of slots");
 			m_resources.emplace_back();
 			m_generations.push_back(0);
 		}

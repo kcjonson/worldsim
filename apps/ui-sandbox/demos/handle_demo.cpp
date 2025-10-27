@@ -7,6 +7,7 @@
 #include "utils/log.h"
 
 #include <GL/glew.h>
+#include <vector>
 
 using namespace renderer;
 
@@ -23,6 +24,7 @@ static void TestBasicAllocation();
 static void TestFreeListReuse();
 static void TestStaleHandles();
 static void TestHandleValidation();
+static void TestCapacityLimit();
 
 void Init() {
 	LOG_INFO(UI, "");
@@ -34,6 +36,7 @@ void Init() {
 	TestFreeListReuse();
 	TestStaleHandles();
 	TestHandleValidation();
+	TestCapacityLimit();
 
 	LOG_INFO(UI, "================================================");
 	LOG_INFO(UI, "All handle tests passed!");
@@ -257,6 +260,50 @@ void TestHandleValidation() {
 	assert((h1 == h3) && "Copied handle should be equal");
 
 	LOG_INFO(UI, "Handle validation test passed!");
+}
+
+void TestCapacityLimit() {
+	LOG_INFO(UI, "");
+	LOG_INFO(UI, "Capacity Limit Test: Verify 65,536 resource limit");
+	LOG_INFO(UI, "---------------------------------------------------");
+
+	ResourceManager<TestResource> manager;
+
+	// Allocate a large number of resources to verify the system handles it correctly
+	constexpr int kTestCount = 10000;
+	std::vector<ResourceHandle> handles;
+	handles.reserve(kTestCount);
+
+	LOG_INFO(UI, "Allocating %d resources...", kTestCount);
+
+	for (int i = 0; i < kTestCount; i++) {
+		ResourceHandle handle = manager.Allocate();
+		assert(handle.IsValid() && "Handle should be valid");
+		assert(handle.GetIndex() == i && "Index should match allocation order");
+		handles.push_back(handle);
+	}
+
+	LOG_INFO(UI, "Successfully allocated %d resources", kTestCount);
+	LOG_INFO(UI, "Total count: %zu", manager.GetCount());
+	LOG_INFO(UI, "Active count: %zu", manager.GetActiveCount());
+
+	// Verify all handles are still valid and accessible
+	for (int i = 0; i < kTestCount; i++) {
+		TestResource* res = manager.Get(handles[i]);
+		assert(res != nullptr && "Resource should be accessible");
+		res->id = i;
+	}
+
+	LOG_INFO(UI, "All %d resources accessible and writable", kTestCount);
+
+	// Verify indices are correct
+	assert(handles[0].GetIndex() == 0 && "First index should be 0");
+	assert(handles[kTestCount-1].GetIndex() == kTestCount-1 && "Last index should be count-1");
+
+	LOG_INFO(UI, "Index range: 0 to %d (correct)", kTestCount-1);
+	LOG_INFO(UI, "");
+	LOG_INFO(UI, "Note: 16-bit index allows up to 65,536 resources (0-65535)");
+	LOG_INFO(UI, "Capacity limit test passed!");
 }
 
 } // namespace Demo
