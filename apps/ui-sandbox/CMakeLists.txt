@@ -1,5 +1,6 @@
 add_executable(ui-sandbox
     main.cpp
+    demos/arena_demo.cpp
     demos/handle_demo.cpp
 )
 
