@@ -110,6 +110,11 @@ Location: `technical/`
 
 **When to write**: After making architectural decisions or implementing new systems
 
+**Best Practices**: 
+- Code in technical docs should describe or demonstrate HOW something complex should be done, not have actual production code that is meant to be used. There should only be code to explain to the reader something unique or novel to the approach such as algorithms, data structures or best practices. There might also be code in a technical docs that shows multiple ways of doing the same thing for debate. The technical document might show a tree of where the files will be created and in human language what those files are responsible for. The actual codebase will contain the final code of record.
+- Should reference and link the design documents where relevant
+- Should not link to code in the codebase that was written as a result or output of this document. This document is the starting point for code that is to be generated, and logically can not link to that code since it has not been written. Do not update these documents after the code has been written. 
+
 ## Game Design Documents
 
 Location: `design/`

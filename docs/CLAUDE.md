@@ -1,0 +1,1 @@
+When working with documents in the `/docs` directory always open `/docs/README.md` and follow the instructions there
