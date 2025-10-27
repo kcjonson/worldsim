@@ -1,7 +1,7 @@
 # C++ Coding Standards
 
 Created: 2025-10-12
-Last Updated: 2025-10-12
+Last Updated: 2025-10-26
 Status: Active
 
 ## Philosophy
@@ -200,6 +200,105 @@ ShaderType type = ShaderType::Vertex;
 Match the class name, use snake_case:
 - `shader.h` / `shader.cpp`
 - `texture_manager.h` / `texture_manager.cpp`
+
+## Function Arguments and API Design
+
+### Designated Initializers for Multiple Parameters
+
+For functions/methods with more than 2-3 parameters, use **C++20 designated initializers** with an Args struct.
+
+**Pattern:**
+
+```cpp
+struct FunctionNameArgs {
+    // Required parameters first
+    Type requiredParam;
+
+    // Optional parameters with defaults
+    Type optionalParam = defaultValue;
+
+    // For inspection/debugging (optional)
+    const char* id = nullptr;
+};
+
+void FunctionName(const FunctionNameArgs& args);
+```
+
+**Usage:**
+
+```cpp
+FunctionName({
+    .requiredParam = value,
+    .optionalParam = value,  // Can omit if using default
+    .id = "debug_name"
+});
+```
+
+**Real example from primitives API:**
+
+```cpp
+struct RectArgs {
+    Rect bounds;
+    RectStyle style;
+    const char* id = nullptr;
+};
+
+void DrawRect(const RectArgs& args);
+
+// Usage
+DrawRect({
+    .bounds = {50, 50, 200, 100},
+    .style = {
+        .fill = Color::Red(),
+        .border = {.color = Color::Yellow(), .width = 3.0f}
+    },
+    .id = "test_rect"
+});
+```
+
+**Benefits:**
+
+- **Clarity** - Obvious what each argument means (no positional confusion)
+- **Extensibility** - Easy to add new optional parameters without breaking existing code
+- **Self-documenting** - API reads like configuration
+- **Debuggable** - Optional `.id` field enables inspection tools
+
+**Rules:**
+
+1. **Field order matters** - Fields must appear in same order as struct definition (C++20 requirement)
+2. **Naming convention** - Use `FunctionNameArgs` or `ClassNameArgs` for argument structs
+3. **Placement** - Define Args struct near the function that uses it (same header file)
+4. **Defaults** - Mark optional parameters with `= defaultValue`
+5. **Required vs optional** - Put required parameters first, optional ones last
+
+**When to use:**
+
+✅ Functions with 3+ parameters
+✅ Functions where parameter meaning isn't obvious
+✅ Public APIs that may evolve over time
+✅ Any API that benefits from named parameters
+
+**When NOT to use:**
+
+❌ Simple functions with 1-2 obvious parameters (e.g., `Add(int a, int b)`)
+❌ Performance-critical inner loops (though compiler usually optimizes it away)
+❌ Standard callbacks/lambdas with fixed signatures
+
+**Comparison to other languages:**
+
+This pattern is similar to:
+- **JavaScript**: Object destructuring in function parameters
+- **Python**: Keyword arguments
+- **Kotlin**: Named parameters
+- **Swift**: Named parameters
+
+C++'s version requires parameters in declaration order but provides compile-time type safety.
+
+**Industry adoption:**
+
+- **Google (Abseil)**: Official recommendation (Tip of the Week #172)
+- **Chromium**: Approved for C++20 codebases
+- **C++ Standard**: Active proposals to expand the feature (P2287R3, P3405R0)
 
 ## Memory Management
 
