@@ -19,6 +19,9 @@ World-sim is a C++20 game with 3D procedural world generation, 2D tile-based gam
 
 **ALWAYS follow this process:**
 
+0. **Determine git status**
+   - Are you on the correct branch? You most likely need to be on main
+
 1. **Read documentation first**
    - `/docs/status.md` - Current project state
    - Keep explicit todos and work items in this list, with checkboxes
@@ -41,6 +44,8 @@ World-sim is a C++20 game with 3D procedural world generation, 2D tile-based gam
    - Think about performance impact
    - Plan for maintainability
 
+5. **Prepare for Coding**
+   - Create a new branch to do work in
 
 
 ### Code Quality
@@ -127,3 +132,10 @@ Update `/docs/status.md` with:
 - New decisions made
 - Blockers encountered
 - Development log entry
+
+
+### Workflow: After Writing Code
+
+1. **Open a PR**
+
+2. **Switch back to the main branch**
