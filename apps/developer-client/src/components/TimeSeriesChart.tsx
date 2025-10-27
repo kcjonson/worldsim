@@ -16,6 +16,11 @@ const TimeSeriesChart: React.FC<TimeSeriesChartProps> = ({
   // Get current value (last in array)
   const currentValue = values.length > 0 ? values[values.length - 1] : 0;
 
+  // Calculate average value
+  const averageValue = values.length > 0
+    ? values.reduce((sum, val) => sum + val, 0) / values.length
+    : 0;
+
   // Calculate Y-axis range with padding
   const minValue = values.length > 0 ? Math.min(...values) : 0;
   const maxValue = values.length > 0 ? Math.max(...values) : 100;
@@ -45,6 +50,9 @@ const TimeSeriesChart: React.FC<TimeSeriesChartProps> = ({
         <span className={styles.label}>{label}</span>
         <span className={styles.value}>
           {currentValue.toLocaleString(undefined, { maximumFractionDigits: 1 })}{unit}
+          <span className={styles.average}>
+            {' '}(avg: {averageValue.toLocaleString(undefined, { maximumFractionDigits: 1 })}{unit})
+          </span>
         </span>
       </div>
       <svg className={styles.svg} viewBox="0 0 1 1" preserveAspectRatio="none">

@@ -197,7 +197,7 @@ int main(int argc, char* argv[]) {
 
 		// Log every 60 frames (once per second at 60 FPS)
 		if (frameCount++ % 60 == 0) {
-			LOG_DEBUG(UI, "Frame %d - main loop running", frameCount);
+			//LOG_DEBUG(UI, "Frame %d - main loop running", frameCount);
 		}
 
 		// Poll events

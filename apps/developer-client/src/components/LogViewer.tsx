@@ -32,11 +32,15 @@ const LogViewer: React.FC<LogViewerProps> = ({
     const container = containerRef.current;
     if (!container) return;
 
-    const isScrolledToBottom =
-      container.scrollHeight - container.clientHeight <= container.scrollTop + 1;
+    // Check if user is scrolled near the bottom (within 50px threshold)
+    const isNearBottom =
+      container.scrollHeight - container.clientHeight - container.scrollTop <= 50;
 
-    if (isScrolledToBottom) {
-      container.scrollTop = container.scrollHeight;
+    if (isNearBottom) {
+      // Use requestAnimationFrame to ensure DOM has updated before scrolling
+      requestAnimationFrame(() => {
+        container.scrollTop = container.scrollHeight;
+      });
     }
   }, [logs]);
 
