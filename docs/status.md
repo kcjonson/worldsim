@@ -47,6 +47,7 @@ Initial project setup and architecture
 - 2025-10-26 - **Seasonal Overlays**: Snow is not a ground cover but a seasonal overlay system (0-100% coverage on top of existing ground)
 - 2025-10-26 - **1:1 Pixel Mapping for UI**: Primitive rendering uses framebuffer dimensions for pixel-perfect rendering - `Rect(50, 50, 200, 100)` is always exactly 200×100 pixels, matching RmlUI/ImGui industry standards
 - 2025-10-26 - **Logging Macro Naming**: Use unprefixed global macros (`LOG_ERROR` not `WSIM_LOG_ERROR`) for brevity and developer experience, accepting potential library conflict risk
+- 2025-10-27 - **Client-Side History Aggregation (Developer Client)**: Server streams current values only (stateless), client maintains all history with configurable retention (metrics: time-based, logs: count-based), localStorage persistence with automatic cleanup
 
 ### Engine Patterns to Implement
 - 2025-10-12 - **String hashing** (FNV-1a, compile-time) - Implement Now
@@ -71,6 +72,153 @@ None currently
 6. Begin splash screen implementation for world-sim app
 
 ## Development Log
+
+### 2025-10-27 - Developer Client Implementation - Complete Feature Set
+
+**Client-Side History, localStorage Persistence, and SVG Charting:**
+
+Implemented all features designed in the technical documentation with clean separation of concerns and proper styling architecture.
+
+**Core Infrastructure:**
+- **CircularBuffer utility class**: Generic fixed-size rolling window with O(1) insert, properly handles capacity changes
+- **LocalStorageService**: State persistence with automatic cleanup, quota management, error handling, graceful degradation
+
+**TimeSeriesChart Component (Generic, SVG-based):**
+- **Generic reusable component** - no hardcoded metric types
+- Real-time time-series visualization using SVG with normalized viewBox (0-1 coordinates)
+- Auto-scaling Y-axis based on data range with 10% padding
+- Compact 60px height (less than 100px requirement)
+- Current value displayed from last item in array
+- **All styling in CSS** - no inline styles, colors, or sizes in React code
+- CSS class variants for different metric colors (fps, frameTime, drawCalls, vertices, triangles)
+
+**Multiple Metrics Display:**
+- **5 separate charts** displayed simultaneously in column layout:
+  - FPS (green)
+  - Frame Time (yellow)
+  - Draw Calls (blue)
+  - Vertices (magenta)
+  - Triangles (cyan)
+- Min/Max frame time stats row
+- All charts share single circular buffer for history
+- Each chart extracts its metric values from shared history
+
+**LogViewer Component:**
+- Array-based log storage with count limits (500 / 1000 / 2000 / 5000)
+- Filter by log level (Debug+ / Info+ / Warning+ / Error)
+- Text search (case-insensitive)
+- Auto-scroll detection (preserves manual scroll position)
+- Color-coded by level (DEBUG gray, INFO white, WARN yellow, ERROR red)
+- File:line display for warnings/errors
+- Count limit dropdown integrated into component header
+- localStorage integration (restore logs on mount)
+
+**App.tsx Integration:**
+- **Single circular buffer** for all metrics (not per-chart)
+- localStorage persistence on mount/unmount (not continuous)
+- State restoration from localStorage on page load
+- **Proper retention window handling**: Recreates buffer when window changes, preserves existing history
+- "Clear History" button in header (affects both metrics and logs)
+- **Retention window control with metrics** (30s/1min/5min/10min) - doesn't affect logs
+- System log entries for connection events
+
+**UI Layout:**
+- Time window selector moved to Metrics section (only affects metrics)
+- Clear History button in header (affects both metrics and logs)
+- Connection status indicator in header
+- Two-column layout: Metrics (left) | Logs (right)
+
+**Design Changes:**
+- **Canvas → SVG**: Per user preference, using declarative SVG rendering
+- **Generic chart component**: TimeSeriesChart takes `values` array, no metric-specific logic
+- **CSS-only styling**: All colors, sizes, spacing controlled via CSS modules and variables
+- Updated documentation throughout to reflect SVG approach
+
+**Build Output:**
+- Single HTML file: 671 KB (gzip: 201 KB)
+- All JavaScript and CSS inlined
+- Works with `file://` protocol
+
+**Files Created:**
+- `apps/developer-client/src/utils/CircularBuffer.ts` - Generic circular buffer utility
+- `apps/developer-client/src/services/LocalStorageService.ts` - Persistence service
+- `apps/developer-client/src/components/TimeSeriesChart.tsx` - Generic SVG chart component
+- `apps/developer-client/src/components/TimeSeriesChart.module.css` - Chart styles with color variants
+- `apps/developer-client/src/components/LogViewer.tsx` - Log display with filtering
+- `apps/developer-client/src/components/LogViewer.module.css` - Log viewer styles
+
+**Files Modified:**
+- `apps/developer-client/src/App.tsx` - Circular buffer integration, localStorage, 5 metric charts
+- `apps/developer-client/src/App.module.css` - Layout for charts column, metrics header
+- `apps/developer-client/src/styles/globals.css` - Added --accent-blue variable
+- `/docs/technical/observability/developer-client.md` - Canvas → SVG throughout
+
+**Build System:**
+- Integrated with CMake (make developer-client)
+- Auto-builds in Development/Debug mode
+- Output copied to build/developer-client/
+
+### 2025-10-27 - Developer Client Documentation - Architecture & Design Refinement
+
+**Documentation Quality Improvement:**
+
+Refactored and expanded the developer client technical documentation to follow project best practices for design documents.
+
+**Phase 1: Refactoring (920 → 359 lines)**
+
+Removed production-ready code implementations and replaced with architectural design:
+- Removed complete React component implementations (MetricsChart, LogViewer, HoverInspector with full code)
+- Removed complete CSS modules with every style property
+- Removed line-by-line tutorial code
+- Replaced with component responsibilities described conceptually
+- Replaced with architectural patterns and design decisions
+- Focused on WHY decisions were made, not HOW to implement
+
+**Phase 2: Expansion (359 → 681 lines)**
+
+Added comprehensive design for client-side data management:
+
+**Client-Side History Aggregation:**
+- Server does NOT aggregate or store history (streams current values only)
+- Client maintains rolling history buffer for visualization
+- Rationale: Server stays stateless, client controls retention, browser has sufficient memory
+
+**Configurable Retention Policies:**
+- Metrics: Time-based (30s / 60s / 5min / 10min)
+- Logs: Count-based (500 / 1000 / 2000 / 5000 entries)
+- Different strategies because metrics are dense time-series, logs are sparse events
+
+**localStorage Persistence Strategy:**
+- Preserves history and preferences across page reloads
+- Persistence lifecycle: Read on mount, write on unmount (not continuous)
+- Automatic cleanup: Age-based trimming, size monitoring, quota management
+- Error handling: Graceful degradation if disabled, automatic recovery on quota exceeded
+
+**Time-Series Graphing:**
+- Canvas 2D rendering for performance
+- Rolling time window with auto-scrolling X-axis
+- Auto-scaling Y-axis based on data range
+- Multi-series support (multiple metrics on one chart)
+- Grid rendering and current value overlay
+
+**Performance & Storage Considerations:**
+- Memory calculations: < 400 KB metrics, < 1.5 MB logs, < 2 MB total typical
+- localStorage performance: 10-50ms read/write on mount/unmount only
+- Canvas rendering: 2-12ms per frame (well within 16ms budget)
+- Circular buffer for metrics (O(1) insert, fixed memory)
+- Array for logs (simpler, order matters for historical record)
+- Storage quota: < 5 MB target (works on all browsers)
+
+**Files Modified:**
+- `/docs/technical/observability/developer-client.md` - Refactored and expanded (920 → 359 → 681 lines)
+
+**Documentation Standard Achieved:**
+- Focuses on architecture and design decisions (WHY/WHAT)
+- Explains rationale and tradeoffs for key decisions
+- Includes small conceptual code snippets only where helpful (circular buffer example, quota management pattern)
+- No production-ready copy-paste implementations
+- Actual codebase remains source of truth for implementation
+- Follows project standard: "Code in technical docs should describe or demonstrate HOW something complex should be done, not have actual production code"
 
 ### 2025-10-27 - Developer Client - TypeScript Web UI for Debug Server
 

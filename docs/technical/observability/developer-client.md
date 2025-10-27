@@ -1,918 +1,687 @@
-# Developer Client (Web Application)
+# Developer Client - Technical Design
 
 Created: 2025-10-24
+Last Updated: 2025-10-27
 Status: Active
 
 ## Overview
 
 The developer client is an external TypeScript/Vite web application that connects to the [developer server](./developer-server.md) via HTTP Server-Sent Events (SSE). It provides real-time visualization of metrics, logs, UI state, and profiler data.
 
-**Key Principle:** Runs in a separate browser window. Cannot crash or interfere with the running application.
+**Key Principles:**
+- **External**: Runs in a separate browser window - cannot crash or interfere with the application
+- **Zero server required**: Built as a single self-contained HTML file that works with `file://` protocol
+- **Auto-reconnecting**: Gracefully handles application restarts during development
+- **Development-only**: Only built in Development/Debug builds, skipped in Release
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────┐
+│  Developer Client (Browser - Single File)   │
+│                                              │
+│  ┌────────────────────────────────────────┐ │
+│  │  App Component (Root)                  │ │
+│  │  - Connection state management         │ │
+│  │  - Multiple SSE stream coordination    │ │
+│  └───────────┬────────────────────────────┘ │
+│              │                                │
+│  ┌───────────▼──────────┐  ┌──────────────┐ │
+│  │ MetricsChart         │  │ LogViewer    │ │
+│  │ - SVG rendering      │  │ - Filtering  │ │
+│  │ - Time series data   │  │ - Auto-scroll│ │
+│  └──────────────────────┘  └──────────────┘ │
+│                                              │
+│  ┌────────────────────────────────────────┐ │
+│  │  ServerConnection Service              │ │
+│  │  - EventSource wrapper                 │ │
+│  │  - Per-stream state tracking           │ │
+│  │  - Auto-reconnect on disconnect        │ │
+│  └──────────────┬─────────────────────────┘ │
+└─────────────────┼──────────────────────────┘
+                  │ SSE Streams (EventSource)
+                  │
+┌─────────────────▼──────────────────────────┐
+│  Developer Server (C++ - Port 8080/8081)  │
+│  /stream/metrics, /stream/logs, etc.      │
+└───────────────────────────────────────────┘
+```
+
+**Data Flow:**
+1. Developer server streams JSON events via SSE at 10-20 Hz
+2. ServerConnection service manages EventSource connections
+3. React components subscribe to data streams via callbacks
+4. State updates trigger React re-renders for live visualization
+5. On disconnect, EventSource auto-reconnects (built-in browser behavior)
+
+## Data Buffering & History Management
+
+### Design Decision: Client-Side Aggregation
+
+**The server does NOT aggregate or store history** - it only streams current values.
+
+**The client maintains all history** for visualization and analysis.
+
+**Rationale:**
+- **Server stays lightweight**: No memory overhead, no buffer management, purely stateless streaming
+- **Client controls retention**: Change history window without restarting application
+- **Multiple clients can differ**: ui-sandbox can show 30s, game server can show 10 minutes
+- **Browser has memory**: Development machines have plenty of RAM for tooling
+- **Flexibility**: Can add derived metrics (moving averages, percentiles) client-side without C++ changes
+
+**Tradeoffs:**
+- Client memory usage increases with retention window (acceptable for dev tool)
+- History lost if browser crashes (acceptable - not production monitoring)
+- Each client maintains own history (no shared view - acceptable for single developer)
+
+### Configurable Retention Policies
+
+**Metrics (Time-Based):**
+- Retention window options: 30s, 60s, 5min, 10min
+- At 10 Hz sampling: 300 / 600 / 3000 / 6000 data points respectively
+- User selects via dropdown in UI
+- Setting persisted in localStorage
+
+**Logs (Count-Based):**
+- Entry count options: 500, 1000, 2000, 5000
+- Oldest entries discarded when limit exceeded
+- User selects via dropdown in UI
+- Setting persisted in localStorage
+
+**Why different strategies:**
+- Metrics are dense time-series (10 Hz continuous) - time windows make sense
+- Logs are sparse events (bursty) - count-based prevents unbounded growth during log spam
+
+### localStorage Persistence Strategy
+
+**Purpose:** Preserve history and configuration across page reloads during development workflow.
+
+**What's persisted:**
+```typescript
+interface PersistedState {
+  metrics: {
+    history: Array<{timestamp: number, fps: number, frameTimeMs: number, ...}>,
+    retentionWindow: 30 | 60 | 300 | 600  // seconds
+  },
+  logs: {
+    entries: LogEntry[],
+    maxEntries: 500 | 1000 | 2000 | 5000
+  },
+  preferences: {
+    logLevelFilter: 'DEBUG' | 'INFO' | 'WARNING' | 'ERROR',
+    serverUrl: string
+  }
+}
+```
+
+**Persistence lifecycle:**
+1. **On mount**: Read from localStorage, restore history and preferences
+2. **During operation**: History maintained in React state (not synced continuously to localStorage)
+3. **On unmount/unload**: Write current state to localStorage
+4. **On new data**: Old data beyond retention window discarded before persisting
+
+**Cache management and cleanup:**
+
+**Automatic cleanup:**
+- **Age-based trimming**: On restore, discard metric samples older than retention window
+- **Count-based trimming**: On restore, discard log entries beyond max count
+- **Size monitoring**: If serialized JSON exceeds ~5 MB, trim to 50% of limits
+
+**Manual cleanup:**
+- UI "Clear History" button: Wipes all persisted data, resets to defaults
+- Triggered automatically if localStorage.setItem() throws QuotaExceededError
+
+**Error handling:**
+- localStorage disabled (privacy mode): Graceful degradation - app works, just doesn't persist
+- localStorage full: Log warning, clear old data, retry
+- Corrupt data: JSON.parse fails → clear localStorage, start fresh
+
+**Storage quota:**
+- Typical browser limit: 5-10 MB per origin
+- Expected usage: 0.5-2 MB typical, < 5 MB maximum
+- Well within limits for development tool
+
+### Time-Series Graphing
+
+**Metrics to visualize:**
+- **FPS (primary)**: Line graph, target zone highlighting (e.g., 55-65 FPS = green)
+- **Frame time**: Line graph with min/max band showing variance
+- **Memory**: Line graph with units (MB)
+- **Draw calls**: Line graph, lower is better
+- **Vertices/Triangles**: Dual-axis or separate graphs
+
+**Graph design:**
+- **Rolling time window**: X-axis shows last N seconds (e.g., "60s ago" to "now")
+- **Auto-scrolling**: New data appears on right, old data scrolls off left
+- **Auto-scaling Y-axis**: Dynamically adjusts to data range with padding
+- **Grid lines**: Horizontal lines for Y-axis values, vertical lines for time intervals
+- **Legend**: Color-coded labels for each metric series
+- **Current value overlay**: Large text showing latest value
+
+**Multi-series support:**
+- Can display multiple metrics on one chart (e.g., FPS + frame time)
+- Each series has distinct color
+- Toggle visibility per series
+
+**SVG rendering approach:**
+- Declarative rendering with React
+- Grid lines as SVG `<line>` elements
+- Metric data as SVG `<polyline>` or `<path>`
+- Text overlays as SVG `<text>` elements
+- Re-render on data updates (React handles DOM updates)
 
 ## Technology Stack
 
-- **Build Tool**: Vite (static bundle generation, TypeScript support)
-- **Language**: TypeScript (type safety, modern features)
-- **UI Framework**: React (component reusability, strong ecosystem)
-- **Styling**: CSS Modules (co-located with components, scoped styles)
-- **Charts**: Custom Canvas rendering or React-based visualization
-- **SSE Client**: Native browser `EventSource` API (built-in, no library needed)
+### Core Decisions
 
-**Why this stack:**
-- **Vite**: Fast build tool that outputs static files with relative paths - can be opened directly in browser
-- **React**: Component model fits well with real-time data visualization and updates
-- **CSS Modules**: Scoped styling prevents conflicts, co-located with components for maintainability
-- **EventSource**: Built into all browsers, handles reconnection automatically
+**TypeScript + React + Vite:**
+- **React**: Component model maps well to real-time data visualization with state updates
+- **TypeScript**: Type safety for SSE message contracts (metrics/logs match C++ structs)
+- **Vite**: Fast build, outputs static files that work without a web server
 
-**Build Output:** Static HTML/JS/CSS bundle in `build/developer-client/` that can be opened by clicking `index.html` - no server required.
+**CSS Modules:**
+- Component-scoped styling prevents global namespace pollution
+- Co-location (Component.tsx + Component.module.css) keeps styles near usage
+- No runtime overhead (resolved at build time)
+
+**EventSource API (Native Browser):**
+- Server-Sent Events built into all modern browsers
+- **Automatic reconnection** - critical for development workflow (restart app → client reconnects)
+- No library dependencies needed
+- Simpler than WebSocket for one-way streaming
+
+**Custom SVG Rendering:**
+- Metrics charts use SVG elements directly (not a charting library)
+- Lightweight, declarative, React-friendly
+- Scalable without pixelation, inspectable in DevTools
+- Sufficient performance for 10 Hz data updates
+
+### Why Single-File Build?
+
+**Problem:** ES modules (`type="module"`) don't work with `file://` protocol due to CORS restrictions.
+
+**Solution:** `vite-plugin-singlefile` inlines all JavaScript and CSS into a single HTML file.
+
+**Benefits:**
+- Double-click `index.html` to open - no `python -m http.server` needed
+- No external dependencies - completely self-contained
+- Works offline, no CORS issues
+- Still get all Vite optimizations (minification, tree-shaking)
+
+**Tradeoff:** Larger file size (~150-600 KB) but negligible for development tooling.
 
 ## Project Structure
 
 ```
-apps/developer-client/               # Root folder for app
-  index.html                         # HTML entry point (Vite requires this at root)
-
+apps/developer-client/
   src/
-    main.tsx                         # Entry point, React root render
-    App.tsx                          # Root React component
-    App.module.css                   # Root component styles
-    vite-env.d.ts                    # Vite type declarations (CSS Modules)
+    main.tsx                         # Entry point - ReactDOM.render()
+    App.tsx                          # Root component - manages all SSE connections
+    App.module.css                   # Root layout and theme
 
-    components/
-      MetricsChart.tsx               # FPS/memory line chart component
-      MetricsChart.module.css        # MetricsChart styles (co-located)
-
-      LogViewer.tsx                  # Real-time log display with filtering
-      LogViewer.module.css           # LogViewer styles (co-located)
-
-      ProfilerView.tsx               # Flame graph rendering
-      ProfilerView.module.css        # ProfilerView styles (co-located)
-
-      UIHierarchyTree.tsx            # UI element tree view
-      UIHierarchyTree.module.css     # UIHierarchyTree styles (co-located)
-
-      HoverInspector.tsx             # Visual stack + component hierarchy
-      HoverInspector.module.css      # HoverInspector styles (co-located)
+    components/                      # (Planned) Future components
+      MetricsChart.tsx               # SVG-based time-series chart
+      LogViewer.tsx                  # Log display with level/category filtering
+      ProfilerView.tsx               # Flame graph for profiler data
+      UIHierarchyTree.tsx            # Tree view of UI scene graph
+      HoverInspector.tsx             # Visual layer stack + component hierarchy
 
     services/
-      ServerConnection.ts            # SSE connection management
-      DataStore.ts                   # Client-side data buffering
+      ServerConnection.ts            # EventSource wrapper with state tracking
+      DataStore.ts                   # (Planned) Client-side buffering
 
     styles/
-      globals.css                    # Global styles, CSS variables, dark theme
+      globals.css                    # CSS variables, dark theme, reset
 
-  public/                            # Static assets (copied as-is to dist/)
-
-  vite.config.ts                     # Vite configuration (with base: "./")
-  package.json                       # Dependencies (includes React)
-  tsconfig.json                      # TypeScript configuration
+  vite.config.ts                     # Build config with vite-plugin-singlefile
+  package.json                       # React 18, TypeScript, Vite dependencies
+  tsconfig.json                      # Strict mode, React JSX
+  index.html                         # Vite entry point
 ```
 
-**CSS Modules Naming:** Each component has a co-located `.module.css` file with the same base name. Vite automatically scopes these styles to prevent conflicts.
+**Key Files:**
+- **ServerConnection.ts**: Wraps browser EventSource API, manages multiple stream types, tracks connection state per stream
+- **App.tsx**: Coordinates all SSE streams, manages global state (metrics, logs, etc.), provides data to child components
+- **vite.config.ts**: Configures single-file build with `viteSingleFile()` plugin
+- **CSS Modules**: Each component has co-located `.module.css` for scoped styles
 
-## SSE Connection Management
+## Key Design Patterns
 
-### Server Connection Service
+### SSE Connection Management
 
+The ServerConnection service wraps the browser's EventSource API to manage multiple concurrent SSE streams with state tracking:
+
+**Core pattern:**
 ```typescript
-// src/services/ServerConnection.ts
-
-type StreamType = 'metrics' | 'logs' | 'ui' | 'hover' | 'events' | 'profiler';
-
-interface StreamConfig {
-    endpoint: string;
-    eventType: string;
-    handler: (data: any) => void;
-}
-
+// EventSource wrapper manages per-stream state
 class ServerConnection {
-    private serverUrl: string;
-    private streams: Map<StreamType, EventSource> = new Map();
-    private reconnectAttempts: Map<StreamType, number> = new Map();
+  private streams: Map<StreamType, EventSource>;
 
-    constructor(serverUrl: string) {
-        this.serverUrl = serverUrl;
-    }
-
-    connect(streamType: StreamType, config: StreamConfig): void {
-        const url = `${this.serverUrl}${config.endpoint}`;
-        const source = new EventSource(url);
-
-        source.addEventListener(config.eventType, (event) => {
-            const data = JSON.parse(event.data);
-            config.handler(data);
-        });
-
-        source.addEventListener('open', () => {
-            console.log(`[${streamType}] Connected`);
-            this.reconnectAttempts.set(streamType, 0);
-        });
-
-        source.addEventListener('error', () => {
-            const attempts = this.reconnectAttempts.get(streamType) || 0;
-            console.log(`[${streamType}] Disconnected (attempt ${attempts + 1})`);
-            this.reconnectAttempts.set(streamType, attempts + 1);
-            // EventSource automatically reconnects!
-        });
-
-        this.streams.set(streamType, source);
-    }
-
-    disconnect(streamType: StreamType): void {
-        const source = this.streams.get(streamType);
-        if (source) {
-            source.close();
-            this.streams.delete(streamType);
-        }
-    }
-
-    disconnectAll(): void {
-        this.streams.forEach(source => source.close());
-        this.streams.clear();
-    }
+  connect(streamType: 'metrics' | 'logs' | 'ui', config: {
+    endpoint: string,
+    eventType: string,
+    handler: (data: any) => void,
+    onConnect?: () => void,
+    onDisconnect?: () => void
+  })
 }
 ```
 
-### Usage in Main Application
+**Key behaviors:**
+- One EventSource per stream type (metrics, logs, UI, hover, etc.)
+- Track connection state per stream (for UI indicators)
+- EventSource **auto-reconnects** on error - no manual retry logic needed
+- JSON parsing happens in the service, components get typed data
+- Cleanup on unmount prevents memory leaks
 
+### React State Management
+
+App component coordinates all streams and distributes data to child components:
+
+**Pattern:**
 ```typescript
-// src/main.tsx
-import React from 'react';
-import ReactDOM from 'react-dom/client';
-import App from './App';
-import './styles/globals.css';
-
-ReactDOM.createRoot(document.getElementById('root')!).render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>
-);
-```
-
-```typescript
-// src/App.tsx
-import { useEffect, useState } from 'react';
-import { ServerConnection } from './services/ServerConnection';
-import MetricsChart from './components/MetricsChart';
-import LogViewer from './components/LogViewer';
-import UIHierarchyTree from './components/UIHierarchyTree';
-import HoverInspector from './components/HoverInspector';
-import styles from './App.module.css';
-
-const serverUrl = 'http://localhost:8081'; // Or 8080, 8082 for other apps
-
 function App() {
-  const [metrics, setMetrics] = useState({ fps: 0, frameTimeMs: 0, memoryMB: 0 });
+  const [metrics, setMetrics] = useState(initialMetrics);
   const [logs, setLogs] = useState<LogEntry[]>([]);
-  const [uiHierarchy, setUiHierarchy] = useState(null);
-  const [hoverData, setHoverData] = useState(null);
 
   useEffect(() => {
     const connection = new ServerConnection(serverUrl);
 
-    // Connect to metrics stream
+    // Subscribe to metrics stream
     connection.connect('metrics', {
       endpoint: '/stream/metrics',
-      eventType: 'metric',
-      handler: (data) => setMetrics(data),
+      handler: (data) => setMetrics(data)  // React re-render
     });
 
-    // Connect to logs stream
+    // Subscribe to logs stream with buffering
     connection.connect('logs', {
       endpoint: '/stream/logs',
-      eventType: 'log',
-      handler: (data) => setLogs(prev => [...prev, data].slice(-1000)),
+      handler: (log) => setLogs(prev => [...prev, log].slice(-1000))
     });
 
-    // Connect to UI hierarchy stream
-    connection.connect('ui', {
-      endpoint: '/stream/ui',
-      eventType: 'ui_update',
-      handler: (data) => setUiHierarchy(data.root),
-    });
-
-    // Connect to hover inspection (when F3 is enabled in app)
-    connection.connect('hover', {
-      endpoint: '/stream/hover',
-      eventType: 'hover',
-      handler: (data) => setHoverData(data),
-    });
-
-    return () => connection.disconnectAll();
+    return () => connection.disconnectAll();  // Cleanup
   }, []);
 
-  return (
-    <div className={styles.appContainer}>
-      <header className={styles.header}>
-        <h1>Developer Client - {serverUrl}</h1>
-      </header>
-      <div className={styles.leftPanel}>
-        <MetricsChart metrics={metrics} />
-        <UIHierarchyTree hierarchy={uiHierarchy} />
-      </div>
-      <div className={styles.rightPanel}>
-        <LogViewer logs={logs} />
-        {hoverData && <HoverInspector data={hoverData} />}
-      </div>
-    </div>
-  );
-}
-
-export default App;
-```
-
-## React Components
-
-### Metrics Line Chart
-
-```typescript
-// src/components/MetricsChart.tsx
-import { useEffect, useRef, useState } from 'react';
-import styles from './MetricsChart.module.css';
-
-interface MetricsChartProps {
-  metrics: {
-    fps: number;
-    frameTimeMs: number;
-    memoryMB: number;
-  };
-}
-
-interface DataPoint {
-  timestamp: number;
-  value: number;
-}
-
-const MetricsChart: React.FC<MetricsChartProps> = ({ metrics }) => {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [dataPoints, setDataPoints] = useState<DataPoint[]>([]);
-  const maxPoints = 300; // 30 seconds at 10 Hz
-
-  // Add new data points when metrics change
-  useEffect(() => {
-    setDataPoints(prev => {
-      const newPoint = { timestamp: Date.now(), value: metrics.fps };
-      const updated = [...prev, newPoint];
-      return updated.slice(-maxPoints); // Keep only last N points
-    });
-  }, [metrics]);
-
-  // Render chart when data changes
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    const width = canvas.width;
-    const height = canvas.height;
-    const min = 0;
-    const max = 100;
-
-    // Clear canvas
-    ctx.fillStyle = '#1a1a1a';
-    ctx.fillRect(0, 0, width, height);
-
-    // Draw grid
-    ctx.strokeStyle = '#333';
-    ctx.lineWidth = 1;
-    for (let i = 0; i <= 10; i++) {
-      const y = (i / 10) * height;
-      ctx.beginPath();
-      ctx.moveTo(0, y);
-      ctx.lineTo(width, y);
-      ctx.stroke();
-    }
-
-    // Draw data line
-    if (dataPoints.length > 1) {
-      ctx.beginPath();
-      ctx.strokeStyle = '#00ff00';
-      ctx.lineWidth = 2;
-
-      dataPoints.forEach((point, i) => {
-        const x = (i / dataPoints.length) * width;
-        const normalizedValue = (point.value - min) / (max - min);
-        const y = height - (normalizedValue * height);
-
-        if (i === 0) {
-          ctx.moveTo(x, y);
-        } else {
-          ctx.lineTo(x, y);
-        }
-      });
-
-      ctx.stroke();
-    }
-
-    // Draw current value
-    if (dataPoints.length > 0) {
-      const latest = dataPoints[dataPoints.length - 1];
-      ctx.fillStyle = '#fff';
-      ctx.font = '16px monospace';
-      ctx.fillText(latest.value.toFixed(1), 10, 20);
-    }
-  }, [dataPoints]);
-
-  return (
-    <div className={styles.container}>
-      <h2 className={styles.title}>FPS</h2>
-      <canvas ref={canvasRef} width={600} height={300} className={styles.canvas} />
-      <div className={styles.stats}>
-        <span>Frame Time: {metrics.frameTimeMs.toFixed(2)}ms</span>
-        <span>Memory: {metrics.memoryMB.toFixed(1)}MB</span>
-      </div>
-    </div>
-  );
-};
-
-export default MetricsChart;
-```
-
-```css
-/* src/components/MetricsChart.module.css */
-.container {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-}
-
-.title {
-  font-size: 1.2rem;
-  font-weight: bold;
-  margin: 0;
-}
-
-.canvas {
-  display: block;
-  width: 100%;
-  border: 1px solid var(--border);
-  background: #1a1a1a;
-}
-
-.stats {
-  display: flex;
-  gap: 1rem;
-  font-size: 0.9rem;
-  color: var(--text-secondary);
+  return <MetricsChart metrics={metrics} />;  // Props down
 }
 ```
 
-### Log Viewer Component
+**Design decisions:**
+- State lives in App component (single source of truth)
+- Children receive data via props (unidirectional data flow)
+- Log buffer limited to 1000 entries (prevents browser memory issues)
+- useEffect cleanup prevents EventSource leaks on unmount
 
-```typescript
-// src/components/LogViewer.tsx
-import { useEffect, useRef, useState } from 'react';
-import styles from './LogViewer.module.css';
+## Component Responsibilities
 
-interface LogEntry {
-  level: 'DEBUG' | 'INFO' | 'WARNING' | 'ERROR';
-  category: string;
-  message: string;
-  timestamp: number;
-  file?: string;
-  line?: number;
-}
+### MetricsChart
+**Purpose:** Real-time visualization of performance metrics with configurable history and localStorage persistence
 
-interface LogViewerProps {
-  logs: LogEntry[];
-}
+**Data Management:**
+- **Circular buffer**: Fixed-size rolling window of metric samples
+- **Configurable retention**: 30s / 60s / 5min / 10min (300 / 600 / 3000 / 6000 samples at 10 Hz)
+- **localStorage integration**:
+  - On mount: Restore history from localStorage, discard stale samples
+  - During operation: Maintain in React state
+  - On unmount: Persist current history to localStorage
+- **Efficient updates**: Circular buffer avoids array shifting (O(1) insert)
 
-const LogViewer: React.FC<LogViewerProps> = ({ logs }) => {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const [filters, setFilters] = useState({
-    level: 'DEBUG' as LogEntry['level'],
-    category: 'All',
-    search: '',
-  });
+**Visualization:**
+- SVG elements for declarative rendering (no charting library)
+- Rolling time-series graph (X-axis = time, auto-scrolling)
+- Auto-scaling Y-axis based on min/max values in current window
+- Grid lines as SVG elements for readability
+- Current value overlay (text showing latest metric)
+- Multi-series support (can show FPS + frame time on same graph)
 
-  // Auto-scroll to bottom when new logs arrive
-  useEffect(() => {
-    const container = containerRef.current;
-    if (!container) return;
+**Implementation approach:**
+- useEffect for data buffering (handles SSE updates, maintains circular buffer)
+- React re-render triggers SVG updates
+- Dropdown UI to change retention window
+- "Clear History" button to reset buffer
 
-    const isScrolledToBottom =
-      container.scrollHeight - container.clientHeight <= container.scrollTop + 1;
+**Key decisions:**
+- SVG over Canvas: Declarative, React-friendly, inspectable, scalable, sufficient for 10 Hz updates
+- Circular buffer over array: O(1) insert, fixed memory
+- localStorage on mount/unmount only: Avoid blocking I/O during operation
+- Auto-scaling: Graph adapts to data range (e.g., FPS 30-60 vs 0-100)
 
-    if (isScrolledToBottom) {
-      container.scrollTop = container.scrollHeight;
-    }
-  }, [logs]);
+### LogViewer
+**Purpose:** Display real-time log stream with filtering, search, and localStorage persistence
 
-  const shouldShowLog = (log: LogEntry): boolean => {
-    const levels = ['DEBUG', 'INFO', 'WARNING', 'ERROR'];
-    const minLevel = levels.indexOf(filters.level);
-    const logLevel = levels.indexOf(log.level);
+**Data Management:**
+- **Array-based storage**: Logs are sequential events (not circular - order matters)
+- **Configurable count limit**: 500 / 1000 / 2000 / 5000 entries
+- **localStorage integration**:
+  - On mount: Restore log entries from localStorage
+  - During operation: Append new logs to array
+  - On unmount: Persist entries to localStorage (trimmed to limit)
+- **Automatic trimming**: When limit exceeded, discard oldest entries
 
-    if (logLevel < minLevel) return false;
-    if (filters.category !== 'All' && log.category !== filters.category) return false;
-    if (filters.search && !log.message.toLowerCase().includes(filters.search.toLowerCase())) {
-      return false;
-    }
+**Display Features:**
+- Filter by log level (Debug+ / Info+ / Warning+ / Error only)
+- Text search across messages (case-insensitive)
+- Auto-scroll when scrolled to bottom (preserves position otherwise)
+- Color-coded by level (DEBUG gray, INFO white, WARNING yellow, ERROR red)
+- Shows file:line for warnings/errors
+- Entry count display in header
 
-    return true;
-  };
+**Implementation approach:**
+- Single useEffect for auto-scroll detection
+- Filter on render (Array.filter - fast enough for < 10k logs)
+- Dropdown UI to change count limit
+- Search input with debounced filtering
 
-  const filteredLogs = logs.filter(shouldShowLog);
+**Key decisions:**
+- Array (not circular buffer): Logs are historical record, order crucial
+- Count-based limit: Prevents unbounded growth during log spam
+- Filter on render: Simple, no premature optimization
+- Auto-scroll detection: Only scroll if user is at bottom (preserves manual scrolling)
+- localStorage persistence: Survive page reload during long debugging sessions
 
-  return (
-    <div className={styles.container}>
-      <div className={styles.filters}>
-        <select
-          value={filters.level}
-          onChange={e => setFilters(prev => ({ ...prev, level: e.target.value as LogEntry['level'] }))}
-          className={styles.select}
-        >
-          <option value="DEBUG">Debug+</option>
-          <option value="INFO">Info+</option>
-          <option value="WARNING">Warning+</option>
-          <option value="ERROR">Error</option>
-        </select>
-        <input
-          type="text"
-          placeholder="Search..."
-          value={filters.search}
-          onChange={e => setFilters(prev => ({ ...prev, search: e.target.value }))}
-          className={styles.searchInput}
-        />
-      </div>
-      <div ref={containerRef} className={styles.logContainer}>
-        {filteredLogs.map((log, i) => {
-          const timestamp = new Date(log.timestamp).toLocaleTimeString();
-          const location = log.file ? ` (${log.file}:${log.line})` : '';
+### UIHierarchyTree (Planned)
+**Purpose:** Display scene graph structure from UI inspection stream
 
-          return (
-            <div key={i} className={`${styles.logEntry} ${styles[`log${log.level}`]}`}>
-              [{timestamp}][{log.category}][{log.level}] {log.message}{location}
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-};
+**Approach:**
+- Recursive tree component with expand/collapse
+- Indent by depth, color-code by component type
+- Click to highlight in application (future: bidirectional)
 
-export default LogViewer;
-```
+### HoverInspector (Planned)
+**Purpose:** Show visual stack and component hierarchy for hovered element
 
-```css
-/* src/components/LogViewer.module.css */
-.container {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-}
+**Two views:**
+1. **Visual Stack**: Z-index ordered list of rendered layers
+2. **Component Hierarchy**: Parent → child component chain from root
 
-.filters {
-  display: flex;
-  gap: 0.5rem;
-  padding: 0.5rem;
-  background: var(--bg-secondary);
-  border-bottom: 1px solid var(--border);
-}
-
-.select,
-.searchInput {
-  padding: 0.25rem 0.5rem;
-  background: var(--bg-tertiary);
-  color: var(--text-primary);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  font-family: monospace;
-}
-
-.searchInput {
-  flex: 1;
-}
-
-.logContainer {
-  flex: 1;
-  overflow-y: auto;
-  padding: 0.5rem;
-  font-family: monospace;
-  font-size: 12px;
-}
-
-.logEntry {
-  padding: 0.25rem 0;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-.logDEBUG {
-  color: var(--text-secondary);
-}
-
-.logINFO {
-  color: var(--text-primary);
-}
-
-.logWARNING {
-  color: var(--accent-yellow);
-}
-
-.logERROR {
-  color: var(--accent-red);
-  font-weight: bold;
-}
-```
+**Activated:** When F3 is pressed in application, `/stream/hover` becomes active
 
 ## Build Integration
 
-### Building the Application
+**CMake integration:**
+- Developer client builds automatically during `make` in Development/Debug builds
+- CMake custom target runs `npm install` && `npm run build`
+- Output copied from `apps/developer-client/dist/` to `build/developer-client/`
+- Applications (`world-sim-server`, `ui-sandbox`) depend on `developer-client` target
+- Skipped entirely in Release builds
 
-The developer client is built as a static web application using Vite. The build is **fully integrated into CMake** and happens automatically when you run `make`.
+**Build output:**
+- Single self-contained HTML file (~150-600 KB depending on features)
+- All JavaScript and CSS inlined via `vite-plugin-singlefile`
+- Works with `file://` protocol - no server needed
+- Inline source maps for debugging (optional)
 
-**Build process:**
-```bash
-# From project root
-make
-```
-
-CMake will automatically:
-1. Check if npm is available
-2. Run `npm install` to install dependencies
-3. Run `npm run build` to build the React app with Vite
-4. Copy the output from `apps/developer-client/dist/` to `build/developer-client/`
-
-**No manual npm commands are needed!** Everything is managed through the standard build process.
-
-**Output:**
-```
-dist/
-  index.html                       # Single self-contained HTML file (~150 KB)
-                                   # All JS and CSS inlined - no external files!
-```
-
-**Single-file architecture:**
-- Uses `vite-plugin-singlefile` to inline all JavaScript and CSS into `index.html`
-- **No external assets** - everything in one file that works with `file://` protocol
-- Solves CORS issues that prevent ES modules from loading via `file://`
-- The built `index.html` can be opened directly by double-clicking - no server needed
-- CMake copies the built file to `build/developer-client/` during the build process
-
-**Launching the application:**
-- Navigate to `build/developer-client/` and double-click `index.html`
-- Or use: `open build/developer-client/index.html` (macOS) or equivalent on other platforms
-- The app will open in your default browser and connect to the developer server at the configured URL
-
-### CMake Integration
-
-```cmake
-# CMakeLists.txt (root)
-
-if(CMAKE_BUILD_TYPE STREQUAL "Development")
-    # Build web app during game build
-    add_custom_target(developer-client ALL
-        COMMAND npm install
-        COMMAND npm run build
-        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/apps/developer-client
-        COMMENT "Building developer client web app"
-    )
-
-    # Copy built files to output directory
-    add_custom_command(TARGET developer-client POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_directory
-            ${CMAKE_SOURCE_DIR}/apps/developer-client/dist/
-            ${CMAKE_BINARY_DIR}/developer-client/
-        COMMENT "Copying developer client to build directory"
-    )
-
-    # Make applications depend on developer-client
-    add_dependencies(world-sim-server developer-client)
-    add_dependencies(ui-sandbox developer-client)
-endif()
-```
-
-### package.json
-
-```json
-{
-  "name": "developer-client",
-  "version": "1.0.0",
-  "type": "module",
-  "scripts": {
-    "build": "tsc && vite build"
-  },
-  "dependencies": {
-    "react": "^18.2.0",
-    "react-dom": "^18.2.0"
-  },
-  "devDependencies": {
-    "@types/react": "^18.2.0",
-    "@types/react-dom": "^18.2.0",
-    "@vitejs/plugin-react": "^4.2.0",
-    "typescript": "^5.3.0",
-    "vite": "^5.0.0",
-    "vite-plugin-singlefile": "^2.0.0"
-  }
-}
-```
-
-**Note:** Only the `build` script is included. No dev server or preview scripts. The `vite-plugin-singlefile` dependency enables single-file HTML output.
-
-### vite.config.ts
-
+**Vite configuration highlights:**
 ```typescript
-import { defineConfig } from 'vite';
-import react from '@vitejs/plugin-react';
-import { viteSingleFile } from 'vite-plugin-singlefile';
-
+// vite.config.ts
 export default defineConfig({
-  plugins: [
-    react(),
-    viteSingleFile()  // Inline all JS/CSS into a single HTML file (works with file://)
-  ],
+  plugins: [react(), viteSingleFile()],  // Inline everything
   build: {
-    outDir: 'dist',
-    minify: 'esbuild',
-    sourcemap: false,
-    cssCodeSplit: false,  // Required for vite-plugin-singlefile
-    assetsInlineLimit: 100000000  // Inline everything
+    cssCodeSplit: false,              // Required for single-file
+    assetsInlineLimit: 100000000,     // Inline all assets
+    sourcemap: 'inline'               // Debugging without .map files
   }
 });
 ```
 
-**Key configuration:**
-- `plugins: [react(), viteSingleFile()]` - Enables React and inlines all assets into HTML
-- `viteSingleFile()` - **Critical plugin** - Inlines all JavaScript and CSS into a single HTML file
-- `cssCodeSplit: false` - Required for single-file build
-- `assetsInlineLimit: 100000000` - Inline everything (no external files)
-- **Solves file:// CORS issues** - ES modules don't work with `file://` protocol unless inlined
-
-### Hover Inspector
-
-Displays two views when F3 is enabled in application:
-
-```typescript
-// src/components/HoverInspector.tsx
-import styles from './HoverInspector.module.css';
-
-interface VisualLayer {
-  type: string;
-  id: string;
-  zIndex: number;
-  bounds: { x: number; y: number; width: number; height: number };
-}
-
-interface ComponentNode {
-  type: string;
-  id: string;
-  depth: number;
-}
-
-interface HoverInspectorProps {
-  data: {
-    visualStack: VisualLayer[];
-    componentHierarchy: ComponentNode[];
-  };
-}
-
-const HoverInspector: React.FC<HoverInspectorProps> = ({ data }) => {
-  const { visualStack, componentHierarchy } = data;
-
-  // Sort visual stack by z-index (highest first)
-  const sortedStack = [...visualStack].sort((a, b) => b.zIndex - a.zIndex);
-
-  return (
-    <div className={styles.container}>
-      <div className={styles.section}>
-        <h3>Visual Stack (z-index order)</h3>
-        <div className={styles.stackList}>
-          {sortedStack.map((layer, i) => (
-            <div key={i} className={styles.visualLayer}>
-              <span className={styles.layerType}>{layer.type}</span>
-              <span className={styles.layerId}>{layer.id}</span>
-              <span className={styles.layerZ}>z: {layer.zIndex}</span>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      <div className={styles.section}>
-        <h3>Component Hierarchy</h3>
-        <div className={styles.hierarchyList}>
-          {componentHierarchy.map((node, i) => (
-            <div
-              key={i}
-              className={styles.componentNode}
-              style={{ paddingLeft: `${node.depth * 20}px` }}
-            >
-              <span className={styles.nodeType}>{node.type}</span>
-              <span className={styles.nodeId}>{node.id}</span>
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-};
-
-export default HoverInspector;
-```
-
-```css
-/* src/components/HoverInspector.module.css */
-.container {
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-  padding: 1rem;
-  background: var(--bg-secondary);
-  border: 1px solid var(--border);
-}
-
-.section h3 {
-  font-size: 1rem;
-  margin-bottom: 0.5rem;
-  color: var(--text-primary);
-}
-
-.stackList,
-.hierarchyList {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-}
-
-.visualLayer,
-.componentNode {
-  display: flex;
-  gap: 0.5rem;
-  padding: 0.25rem;
-  background: var(--bg-tertiary);
-  border-radius: 4px;
-  font-family: monospace;
-  font-size: 0.85rem;
-}
-
-.layerType,
-.nodeType {
-  color: var(--accent-green);
-  font-weight: bold;
-}
-
-.layerId,
-.nodeId {
-  color: var(--text-secondary);
-}
-
-.layerZ {
-  margin-left: auto;
-  color: var(--accent-yellow);
-}
-```
-
-## Styling
-
-### Global Styles
-
-Global styles define CSS variables and base styles, imported in `main.tsx`:
-
-```css
-/* src/styles/globals.css */
-:root {
-  --bg-primary: #1a1a1a;
-  --bg-secondary: #2a2a2a;
-  --bg-tertiary: #3a3a3a;
-  --text-primary: #ffffff;
-  --text-secondary: #aaaaaa;
-  --border: #444444;
-  --accent-green: #00ff00;
-  --accent-yellow: #ffff00;
-  --accent-red: #ff0000;
-}
-
-* {
-  box-sizing: border-box;
-  margin: 0;
-  padding: 0;
-}
-
-body {
-  font-family: 'Consolas', 'Monaco', monospace;
-  background: var(--bg-primary);
-  color: var(--text-primary);
-  overflow: hidden;
-}
-
-#root {
-  height: 100vh;
-}
-```
-
-### CSS Modules
-
-Each component has a co-located `.module.css` file. Vite automatically scopes class names to prevent conflicts:
-
-```typescript
-// Component imports its styles
-import styles from './MyComponent.module.css';
-
-// Use scoped class names
-<div className={styles.container}>
-  <h2 className={styles.title}>Hello</h2>
-</div>
-```
-
-**CSS Modules naming convention:**
-- Component file: `MetricsChart.tsx`
-- CSS Module file: `MetricsChart.module.css` (must use `.module.css` extension)
-- Import in component: `import styles from './MetricsChart.module.css';`
-- Usage: `className={styles.someClass}`
-
-**Why CSS Modules:**
-- Scoped styles prevent naming conflicts
-- Co-location makes components self-contained
-- Type-safe with TypeScript (when using `typescript-plugin-css-modules`)
-- No runtime overhead - CSS Modules are resolved at build time
-
-## Static Build Architecture
-
-The developer client uses Vite with `vite-plugin-singlefile` to create a completely self-contained single HTML file:
-
-1. **Build process:** CMake runs `npm install` and `npm run build` automatically
-2. **Single-file output:** Everything (HTML + JavaScript + CSS) inlined into one 150 KB file
-3. **No external dependencies:** No assets folder, no external scripts - just `index.html`
-4. **Works with file:// protocol:** Solves CORS restrictions that prevent ES modules from loading
-5. **CMake integration:** Everything triggered by `make` - no manual npm commands
-6. **Output location:** Single file copied to `build/developer-client/index.html`
-
-**Why single-file:**
-- ES modules (`type="module"`) don't work with `file://` protocol due to CORS
-- Browser blocks loading external scripts from local files
-- `vite-plugin-singlefile` inlines everything to bypass this restriction
-- Result: Double-click `index.html` and it just works!
-
-**How it works:**
-1. Vite builds React app with all optimizations
-2. `vite-plugin-singlefile` inlines all JavaScript and CSS into HTML
-3. CMake copies single `index.html` to `build/developer-client/`
-4. User opens file in browser - everything loads instantly
-5. Only builds in Development/Debug mode (skipped in Release builds)
-
-**Workflow:**
+**Usage:**
 ```bash
-# Build everything (C++ code + developer client)
-make
+# Build (automatic with make)
+cd build && make
 
-# Open the developer client (just double-click or use open)
-open build/developer-client/index.html  # macOS
-# or double-click index.html in file explorer
+# Run application (developer server starts)
+./apps/ui-sandbox/ui-sandbox
+
+# Open developer client (no server needed)
+open build/developer-client/index.html
 ```
 
-**Requirements:**
-- Node.js and npm must be installed
-- If npm is not found, CMake will skip the developer-client build with a warning
+## Styling Approach
 
-## Performance Considerations
+**CSS Variables for theming:**
+- Dark theme with monospace font (developer tool aesthetic)
+- Global variables in `globals.css`: `--bg-primary`, `--text-primary`, `--accent-green`, etc.
+- Consistent color palette across all components
 
-**Client-side performance:**
-- Canvas rendering: ~2ms per chart update
-- React re-renders: Optimized with proper state management and memoization
-- Memory: ~10 MB for chart data buffers
-- SSE overhead: Minimal (browser handles everything)
+**CSS Modules for component styles:**
+- Each component has co-located `.module.css` file
+- Vite scopes class names automatically (prevents conflicts)
+- Pattern: `import styles from './Component.module.css'`
+- Usage: `className={styles.container}`
 
-**Best practices:**
-- Use `useRef` for canvas operations to avoid re-renders
-- Use `useMemo` and `useCallback` to prevent unnecessary re-renders
-- Throttle state updates (don't update on every SSE event)
-- Limit log history (keep last 1000 entries)
-- Use CSS for animations (hardware accelerated)
+**Why this approach:**
+- Global theme variables provide consistency
+- CSS Modules prevent class name collisions
+- Co-location keeps component code together
+- No runtime overhead (build-time scoping)
 
-## Related Documentation
+## Performance & Storage Considerations
 
-- [Developer Server](./developer-server.md) - C++ server implementation
-- [UI Inspection](./ui-inspection.md) - UI hierarchy and hover inspection
-- [INDEX](./INDEX.md) - Observability system overview
+### Memory Usage Calculations
+
+**Metrics history:**
+- Single metric sample: ~64 bytes (timestamp, fps, frameTime, drawCalls, vertices, triangles, etc.)
+- Retention windows at 10 Hz:
+  - 30s: 300 samples × 64 bytes = ~19 KB
+  - 60s: 600 samples × 64 bytes = ~38 KB
+  - 5min: 3000 samples × 64 bytes = ~188 KB
+  - 10min: 6000 samples × 64 bytes = ~375 KB
+- **Total for all metrics**: < 400 KB maximum
+
+**Logs:**
+- Single log entry: ~256 bytes (level, category, message, timestamp, file, line)
+- Count limits:
+  - 500 entries: ~125 KB
+  - 1000 entries: ~250 KB
+  - 2000 entries: ~500 KB
+  - 5000 entries: ~1.25 MB
+- **Total for logs**: < 1.5 MB maximum
+
+**Overall memory footprint:**
+- In-memory (React state): < 2 MB typical, < 5 MB maximum
+- localStorage (persisted): Same as in-memory (JSON serialization overhead ~10%)
+- **Well within browser limits** (~5-10 MB localStorage quota)
+
+### localStorage Performance
+
+**Read/Write frequency:**
+- **Read**: Once on mount (~10-50ms for 2 MB JSON.parse)
+- **Write**: Once on unmount/unload (~10-50ms for 2 MB JSON.stringify)
+- **Not during operation**: No localStorage I/O in hot path
+
+**Serialization strategy:**
+- Use JSON.stringify/parse (built-in, fast enough)
+- No compression needed (data is small)
+- Atomic write: Single localStorage.setItem call
+
+**Error handling:**
+- localStorage disabled: App works without persistence (graceful degradation)
+- QuotaExceededError: Trim to 50% of limits, retry
+- JSON.parse failure: Clear localStorage, start fresh with empty state
+
+### SVG Rendering Performance
+
+**Target performance:**
+- Chart update rate: 10 Hz (matches SSE data rate)
+- SVG re-render via React: Negligible overhead for simple graphs
+- No performance impact on application being monitored
+
+**Optimization strategies:**
+- **React handles updates**: Only re-renders when data changes
+- **Circular buffer**: O(1) insert, no array shifting
+- **Simple SVG primitives**: Lines, polylines, text (no complex paths)
+- **Fixed viewBox**: SVG scales automatically without recalculation
+
+**Performance characteristics:**
+- 600 data points (60s window): Renders instantly (< 1ms)
+- 6000 data points (10min window): Still performant (< 5ms)
+- SVG DOM is lightweight for time-series graphs (< 100 elements total)
+
+### Circular Buffer Data Structure
+
+**Why circular buffer for metrics:**
+```
+Fixed-size array with head/tail pointers:
+- Insert: O(1) - write to head, advance pointer
+- Read: O(n) - iterate from tail to head
+- Memory: Fixed - no allocations during operation
+- No shifting: Unlike array, oldest data just gets overwritten
+```
+
+**Example with capacity 5:**
+```
+Initial: [_, _, _, _, _] head=0, tail=0
+After 3: [A, B, C, _, _] head=3, tail=0
+After 7: [F, G, C, D, E] head=2, tail=2  (wraps around, C overwritten)
+```
+
+**Why array for logs:**
+```
+Logs are historical record - order matters, can't overwrite:
+- Append: O(1) - push to end
+- Trim: O(n) - slice when over limit
+- Simpler: No head/tail pointer management
+- Search: O(n) - but needed for text search anyway
+```
+
+### Storage Quota Management
+
+**Browser localStorage limits:**
+- Chrome/Edge: ~10 MB
+- Firefox: ~10 MB
+- Safari: ~5 MB
+- **Design target**: < 5 MB (works on all browsers)
+
+**Automatic size management:**
+```typescript
+// Conceptual approach
+function persistState(state: PersistedState) {
+  const json = JSON.stringify(state);
+
+  // Check size before persisting
+  if (json.length > 5 * 1024 * 1024) {  // 5 MB
+    // Trim to 50% of limits
+    state.metrics.history = state.metrics.history.slice(-300);  // Keep last 30s
+    state.logs.entries = state.logs.entries.slice(-500);        // Keep last 500
+  }
+
+  try {
+    localStorage.setItem('developer-client', json);
+  } catch (e) {
+    if (e.name === 'QuotaExceededError') {
+      // Clear and retry with minimal state
+      localStorage.clear();
+      localStorage.setItem('developer-client', JSON.stringify({...state, metrics: {history: []}, logs: {entries: []}}));
+    }
+  }
+}
+```
+
+**Manual cleanup:**
+- "Clear History" button: Wipes all persisted data
+- "Reset to Defaults" button: Clears localStorage, resets retention settings
+- Automatic on quota error: Trim aggressively and retry
 
 ## Implementation Status
 
-- [x] Technology stack chosen (React + Vite + CSS Modules)
-- [x] Architecture defined (static SPA with relative paths)
-- [x] SSE client design
-- [ ] Project scaffolding (Vite + React + TypeScript)
-- [ ] CSS Modules setup with co-located styles
-- [ ] ServerConnection service implementation
-- [ ] App.tsx with SSE connection management
-- [ ] MetricsChart React component
-- [ ] LogViewer React component
-- [ ] UIHierarchyTree React component
-- [ ] HoverInspector React component
-- [ ] Build integration with CMake
-- [ ] Static build testing (open index.html directly)
+**Completed (Implemented):**
+- [x] Technology stack chosen (React + Vite + CSS Modules + EventSource)
+- [x] Architecture defined (single-file SPA with SSE streams)
+- [x] SSE connection pattern designed
+- [x] Build integration with CMake
+- [x] Project scaffolding (Vite + React + TypeScript)
+- [x] ServerConnection service implemented
+- [x] App.tsx with SSE connection management
+- [x] Basic metrics and logs display
 
-## Notes
+**Designed (Ready to Implement):**
+- [x] Client-side history aggregation architecture
+- [x] Configurable retention policies (metrics time-based, logs count-based)
+- [x] localStorage persistence strategy
+- [x] Cache management and cleanup
+- [x] Time-series graphing design
+- [x] Circular buffer for metrics
+- [x] Performance and storage budgets
 
-**Static file architecture**: The built application can be opened directly in a browser without any server. This is achieved through Vite's `base: "./"` configuration, which makes all asset paths relative.
+**In Progress:**
+- [ ] MetricsChart with SVG time-series rendering
+- [ ] Circular buffer implementation
+- [ ] localStorage persistence (save/restore on mount/unmount)
+- [ ] Configurable retention UI (dropdowns)
+- [ ] LogViewer with filtering and search
+- [ ] Auto-scroll and count limit UI
 
-**Auto-reconnection**: `EventSource` automatically reconnects when connection drops. No manual retry logic needed.
+**Planned:**
+- [ ] Multi-series graphing (multiple metrics on one chart)
+- [ ] Auto-scaling Y-axis
+- [ ] "Clear History" button
+- [ ] UIHierarchyTree component
+- [ ] HoverInspector component
+- [ ] ProfilerView with flame graphs
+- [ ] Log export functionality
 
-**Multiple servers**: Can connect to multiple applications simultaneously by opening multiple tabs (different ports). Each tab can point to a different developer server.
+## Key Takeaways
 
-**Debugging**: Use browser DevTools to debug the developer client itself (meta-debugging!).
+**Why external web app?**
+- Zero in-game performance overhead
+- Cannot crash or freeze the application
+- Browser DevTools for debugging
+- Modern web tech (React, TypeScript) for rapid UI development
 
-**Build workflow**: Simply run `make` from the project root. CMake handles everything - npm dependencies, Vite build, and copying files to `build/developer-client/`.
+**Why single-file build?**
+- No web server needed during development
+- Works with `file://` protocol
+- Portable - can email the HTML file
+- Still get Vite optimizations (minification, tree-shaking)
 
-**CSS Modules requirement**: Files must use the `.module.css` extension for CSS Modules to work. Regular `.css` files are treated as global styles.
+**Why EventSource over WebSocket?**
+- Built-in auto-reconnect (critical for dev workflow)
+- Simpler protocol (one-way streaming)
+- No handshake complexity
+- Sufficient for monitoring use case
+
+**Why client-side history aggregation?**
+- Server stays stateless and lightweight (just streams current values)
+- Client controls retention without restarting application
+- Multiple clients can have different policies
+- Browser has sufficient memory for dev tooling
+- Enables client-side analytics (moving averages, percentiles, etc.)
+
+**Why localStorage persistence?**
+- Preserves history across page reloads (common during development)
+- Survives application restarts while debugging
+- Remembers user preferences (retention windows, filters)
+- Graceful degradation if disabled (app still works)
+- Well within browser storage limits (< 5 MB)
+
+**Why circular buffer for metrics?**
+- O(1) insert performance (no array shifting)
+- Fixed memory usage (no unbounded growth)
+- Perfect fit for rolling time windows
+- Simple implementation (head/tail pointers)
+
+**Why array for logs?**
+- Logs are historical record (order matters, can't overwrite)
+- Text search requires full scan anyway (O(n) unavoidable)
+- Simpler implementation (no pointer management)
+- Trim when limit exceeded (acceptable O(n) operation)
+
+**Why SVG for charts?**
+- Declarative rendering (React-friendly)
+- Scalable without pixelation
+- Inspectable in browser DevTools
+- Sufficient performance for 10 Hz updates
+- Simpler than Canvas for simple line graphs
+
+**Why CSS Modules?**
+- Prevents class name conflicts
+- Co-location with components
+- No runtime overhead
+- Type-safe with proper TypeScript config
+
+## Related Documentation
+
+- [Developer Server](./developer-server.md) - C++ SSE streaming implementation
+- [UI Inspection](./ui-inspection.md) - UI hierarchy and hover data format
+- [Observability INDEX](./INDEX.md) - Complete observability system overview
+- [Logging System](../logging-system.md) - Log format and streaming design

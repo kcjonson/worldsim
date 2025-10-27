@@ -1,0 +1,57 @@
+.container {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.75rem;
+}
+
+.label {
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.value {
+  color: var(--text-primary);
+  font-family: monospace;
+  font-weight: bold;
+}
+
+.svg {
+  width: 100%;
+  height: 60px;
+  background: #1a1a1a;
+  border: 1px solid var(--border);
+  border-radius: 2px;
+}
+
+.svg polyline {
+  stroke: var(--accent-green);
+  stroke-width: 2;
+}
+
+/* Color variants */
+.container.fps polyline {
+  stroke: var(--accent-green);
+}
+
+.container.frameTime polyline {
+  stroke: var(--accent-yellow);
+}
+
+.container.drawCalls polyline {
+  stroke: var(--accent-blue);
+}
+
+.container.vertices polyline {
+  stroke: #ff00ff;
+}
+
+.container.triangles polyline {
+  stroke: #00ffff;
+}

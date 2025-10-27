@@ -1,0 +1,112 @@
+.container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--bg-secondary);
+  border-radius: 4px;
+}
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.title {
+  font-size: 1.2rem;
+  font-weight: bold;
+  margin: 0;
+  color: var(--text-primary);
+}
+
+.controls {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.select,
+.searchInput {
+  padding: 0.25rem 0.5rem;
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-family: monospace;
+  font-size: 0.9rem;
+}
+
+.searchInput {
+  width: 200px;
+}
+
+.logContainer {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0.5rem;
+  font-family: monospace;
+  font-size: 12px;
+}
+
+.logEntry {
+  padding: 0.25rem 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  display: flex;
+  gap: 0.5rem;
+}
+
+.timestamp {
+  color: var(--text-secondary);
+}
+
+.category {
+  color: var(--accent-blue, #5599ff);
+}
+
+.level {
+  font-weight: bold;
+}
+
+.message {
+  flex: 1;
+}
+
+.location {
+  color: var(--text-secondary);
+  font-style: italic;
+}
+
+.logDEBUG {
+  color: var(--text-secondary);
+}
+
+.logDEBUG .level {
+  color: var(--text-secondary);
+}
+
+.logINFO {
+  color: var(--text-primary);
+}
+
+.logINFO .level {
+  color: var(--text-primary);
+}
+
+.logWARN {
+  color: var(--accent-yellow, #ffff00);
+}
+
+.logWARN .level {
+  color: var(--accent-yellow, #ffff00);
+}
+
+.logERROR {
+  color: var(--accent-red, #ff0000);
+  font-weight: bold;
+}
+
+.logERROR .level {
+  color: var(--accent-red, #ff0000);
+}
