@@ -6,12 +6,13 @@
 // - REST endpoints for current metrics snapshots
 // - Server-Sent Events for real-time metric streaming
 //
-// Thread-safe: Game thread writes metrics, HTTP thread reads them.
+// Lock-free design: Game thread writes to ring buffer (never blocks),
+// HTTP thread reads latest sample. Zero mutex contention.
 
 #include "metrics/performance_metrics.h"
+#include "debug/lock_free_ring_buffer.h"
 #include <atomic>
 #include <memory>
-#include <mutex>
 #include <thread>
 
 // Forward declare httplib::Server to avoid exposing cpp-httplib in header
@@ -43,14 +44,13 @@ private:
 	std::thread m_serverThread;
 	std::atomic<bool> m_running;
 
-	// Latest metrics (protected by mutex)
-	PerformanceMetrics m_latestMetrics;
-	mutable std::mutex m_metricsMutex;
+	// Lock-free metrics buffer (game thread writes, HTTP thread reads)
+	LockFreeRingBuffer<PerformanceMetrics, 64> m_metricsBuffer;
 
 	// Server thread entry point
 	void ServerThreadFunc(int port);
 
-	// Helper: Get metrics snapshot (thread-safe)
+	// Helper: Get metrics snapshot (lock-free read)
 	PerformanceMetrics GetMetricsSnapshot() const;
 };
 

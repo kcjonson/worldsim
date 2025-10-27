@@ -10,8 +10,7 @@
 namespace Foundation {
 
 DebugServer::DebugServer() : m_running(false) {
-	// Initialize metrics to zeros
-	m_latestMetrics = {};
+	// Lock-free ring buffer is initialized automatically
 }
 
 DebugServer::~DebugServer() {
@@ -53,13 +52,15 @@ void DebugServer::Stop() {
 }
 
 void DebugServer::UpdateMetrics(const PerformanceMetrics& metrics) {
-	std::lock_guard<std::mutex> lock(m_metricsMutex);
-	m_latestMetrics = metrics;
+	// Lock-free write - never blocks, ~10-20 nanoseconds
+	m_metricsBuffer.Write(metrics);
 }
 
 PerformanceMetrics DebugServer::GetMetricsSnapshot() const {
-	std::lock_guard<std::mutex> lock(m_metricsMutex);
-	return m_latestMetrics;
+	// Lock-free read - gets latest sample, ~10-20 nanoseconds
+	PerformanceMetrics metrics = {};
+	m_metricsBuffer.ReadLatest(metrics);
+	return metrics;
 }
 
 void DebugServer::ServerThreadFunc(int port) {
@@ -69,10 +70,12 @@ void DebugServer::ServerThreadFunc(int port) {
 
 	// Health check endpoint
 	m_server->Get("/api/health", [this](const httplib::Request&, httplib::Response& res) {
+		PerformanceMetrics metrics = GetMetricsSnapshot();
+
 		std::ostringstream json;
 		json << "{";
 		json << "\"status\":\"ok\",";
-		json << "\"uptime\":" << m_latestMetrics.timestamp; // Using timestamp as uptime proxy
+		json << "\"uptime\":" << metrics.timestamp;
 		json << "}";
 
 		res.set_content(json.str(), "application/json");
