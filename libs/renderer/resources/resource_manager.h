@@ -89,7 +89,21 @@ public:
 
 	// Get resource (const)
 	const T* Get(ResourceHandle handle) const {
-		return const_cast<ResourceManager*>(this)->Get(handle);
+		if (!handle.IsValid()) {
+			return nullptr;
+		}
+
+		uint16_t index = handle.GetIndex();
+		if (index >= m_resources.size()) {
+			return nullptr;
+		}
+
+		// Check generation
+		if (handle.GetGeneration() != m_generations[index]) {
+			return nullptr; // Stale handle
+		}
+
+		return &m_resources[index];
 	}
 
 	// Get resource count (includes freed slots)
