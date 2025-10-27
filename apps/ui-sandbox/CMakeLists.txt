@@ -1,6 +1,6 @@
 add_executable(ui-sandbox
     main.cpp
-    demos/shapes_demo.cpp
+    demos/arena_demo.cpp
 )
 
 target_include_directories(ui-sandbox
