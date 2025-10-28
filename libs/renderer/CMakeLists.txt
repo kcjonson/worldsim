@@ -2,6 +2,7 @@ add_library(renderer
     primitives/primitives.cpp
     primitives/batch_renderer.cpp
     metrics/metrics_collector.cpp
+    vector/tessellator.cpp
 )
 
 target_include_directories(renderer

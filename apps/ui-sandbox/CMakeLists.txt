@@ -3,6 +3,7 @@ add_executable(ui-sandbox
     scenes/shapes_scene.cpp
     scenes/arena_scene.cpp
     scenes/handle_scene.cpp
+    scenes/vector_star_scene.cpp
 )
 
 target_include_directories(ui-sandbox

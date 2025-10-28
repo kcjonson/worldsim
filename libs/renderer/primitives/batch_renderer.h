@@ -34,6 +34,7 @@ public:
 
 	// Add geometry to current batch
 	void AddQuad(const Foundation::Rect& bounds, const Foundation::Color& color);
+	void AddTriangles(const Foundation::Vec2* vertices, const uint16_t* indices, size_t vertexCount, size_t indexCount, const Foundation::Color& color);
 
 	// Flush accumulated geometry to GPU and render
 	void Flush();

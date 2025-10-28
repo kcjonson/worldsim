@@ -124,6 +124,13 @@ void DrawLine(const LineArgs& args) {
 	s_batchRenderer->AddQuad(bounds, args.style.color);
 }
 
+void DrawTriangles(const TrianglesArgs& args) {
+	if (!s_batchRenderer)
+		return;
+
+	s_batchRenderer->AddTriangles(args.vertices, args.indices, args.vertexCount, args.indexCount, args.color);
+}
+
 // --- Scissor Stack ---
 
 void PushScissor(const Foundation::Rect& clipRect) {
