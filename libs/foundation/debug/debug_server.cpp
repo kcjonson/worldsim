@@ -14,8 +14,12 @@
 #include <GL/glew.h>
 
 // stb_image_write for PNG encoding
+// Protect against multiple definition errors if this gets included elsewhere
+#ifndef WORLDSIM_STB_IMAGE_WRITE_IMPL
+#define WORLDSIM_STB_IMAGE_WRITE_IMPL
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include <stb_image_write.h>
+#endif
 
 namespace Foundation {
 
@@ -161,19 +165,19 @@ void DebugServer::CaptureScreenshotIfRequested() {
 
 	LOG_DEBUG(Foundation, "Capturing screenshot: %dx%d", width, height);
 
-	// Allocate buffer for pixel data (RGB, 3 bytes per pixel)
-	std::vector<unsigned char> pixels(width * height * 3);
+	// Allocate buffer for pixel data (RGBA, 4 bytes per pixel - more efficient than RGB on most hardware)
+	std::vector<unsigned char> pixels(width * height * 4);
 
 	// Read pixels from framebuffer
-	glReadPixels(0, 0, width, height, GL_RGB, GL_UNSIGNED_BYTE, pixels.data());
+	glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
 
 	// Flip image vertically (OpenGL origin is bottom-left, PNG origin is top-left)
-	std::vector<unsigned char> flipped(width * height * 3);
+	std::vector<unsigned char> flipped(width * height * 4);
 	for (int y = 0; y < height; y++) {
 		memcpy(
-			flipped.data() + (height - 1 - y) * width * 3,
-			pixels.data() + y * width * 3,
-			width * 3
+			flipped.data() + (height - 1 - y) * width * 4,
+			pixels.data() + y * width * 4,
+			width * 4
 		);
 	}
 
@@ -186,12 +190,6 @@ void DebugServer::CaptureScreenshotIfRequested() {
 	PNGWriteContext context;
 	context.data = &m_screenshotData;
 
-	// Clear previous screenshot data
-	{
-		std::lock_guard<std::mutex> lock(m_screenshotMutex);
-		m_screenshotData.clear();
-	}
-
 	// Write callback for stb_image_write
 	auto pngWriteFunc = [](void* context, void* data, int size) {
 		PNGWriteContext* ctx = static_cast<PNGWriteContext*>(context);
@@ -199,17 +197,23 @@ void DebugServer::CaptureScreenshotIfRequested() {
 		ctx->data->insert(ctx->data->end(), bytes, bytes + size);
 	};
 
-	// Encode to PNG
+	// Encode to PNG (hold mutex for entire operation to prevent race conditions)
 	LOG_DEBUG(Foundation, "Encoding screenshot to PNG...");
-	int result = stbi_write_png_to_func(
-		pngWriteFunc,
-		&context,
-		width,
-		height,
-		3, // RGB (3 components)
-		flipped.data(),
-		width * 3 // stride
-	);
+	int result;
+	{
+		std::lock_guard<std::mutex> lock(m_screenshotMutex);
+		m_screenshotData.clear();
+
+		result = stbi_write_png_to_func(
+			pngWriteFunc,
+			&context,
+			width,
+			height,
+			4, // RGBA (4 components)
+			flipped.data(),
+			width * 4 // stride
+		);
+	}
 
 	if (result == 0) {
 		LOG_ERROR(Foundation, "Failed to encode screenshot to PNG");
@@ -294,9 +298,8 @@ void DebugServer::ServerThreadFunc(int port) {
 
 		// Request screenshot and wait for it (10 second timeout for large screenshots)
 		if (RequestScreenshot(pngData, 10000)) {
-			// Screenshot captured successfully
-			std::string pngStr(pngData.begin(), pngData.end());
-			res.set_content(pngStr, "image/png");
+			// Screenshot captured successfully - avoid copy by using data() and size()
+			res.set_content(reinterpret_cast<const char*>(pngData.data()), pngData.size(), "image/png");
 			res.set_header("Access-Control-Allow-Origin", "*");
 			res.set_header("Content-Disposition", "inline; filename=\"screenshot.png\"");
 		} else {
