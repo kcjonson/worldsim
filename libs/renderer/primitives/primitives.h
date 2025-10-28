@@ -56,11 +56,25 @@ struct LineArgs {
 	int zIndex = 0;
 };
 
+// Arguments for DrawTriangles
+struct TrianglesArgs {
+	const Foundation::Vec2* vertices;   // Vertex positions (array)
+	const uint16_t* indices;            // Triangle indices (array)
+	size_t vertexCount;                 // Number of vertices
+	size_t indexCount;                  // Number of indices (triangles * 3)
+	Foundation::Color color;            // Fill color
+	const char* id = nullptr;           // Optional: for inspection/debugging
+	int zIndex = 0;                     // Optional: explicit draw order
+};
+
 // Draw a rectangle with optional fill and border
 void DrawRect(const RectArgs& args);
 
 // Draw a line
 void DrawLine(const LineArgs& args);
+
+// Draw triangles from a mesh (for vector graphics tessellation)
+void DrawTriangles(const TrianglesArgs& args);
 
 // --- State Management ---
 

@@ -136,6 +136,23 @@ void BatchRenderer::AddQuad(const Foundation::Rect& bounds, const Foundation::Co
 	m_indices.push_back(baseIndex + 3);
 }
 
+void BatchRenderer::AddTriangles(const Foundation::Vec2* vertices, const uint16_t* indices, size_t vertexCount, size_t indexCount, const Foundation::Color& color) {
+	uint32_t baseIndex = static_cast<uint32_t>(m_vertices.size());
+
+	Foundation::Vec4 colorVec = color.ToVec4();
+
+	// Add all vertices
+	for (size_t i = 0; i < vertexCount; ++i) {
+		// For now, use (0,0) for texCoords (not used for vector graphics)
+		m_vertices.push_back({vertices[i], {0, 0}, colorVec});
+	}
+
+	// Add all indices (offset by baseIndex)
+	for (size_t i = 0; i < indexCount; ++i) {
+		m_indices.push_back(baseIndex + indices[i]);
+	}
+}
+
 void BatchRenderer::Flush() {
 	if (m_vertices.empty())
 		return;
