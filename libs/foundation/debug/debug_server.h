@@ -18,7 +18,9 @@
 #include <atomic>
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <thread>
+#include <vector>
 
 // Forward declare httplib::Server to avoid exposing cpp-httplib in header
 namespace httplib {
@@ -77,6 +79,14 @@ public:
 	// Check if server is running
 	bool IsRunning() const { return m_running.load(); }
 
+	// Screenshot capture (called from main thread with GL context)
+	// Checks if screenshot is requested, captures framebuffer if so
+	void CaptureScreenshotIfRequested();
+
+	// Request screenshot (called from HTTP thread)
+	// Returns true if screenshot was captured, false if timeout
+	bool RequestScreenshot(std::vector<unsigned char>& pngData, int timeoutMs = 5000);
+
 private:
 	std::unique_ptr<httplib::Server> m_server;
 	std::thread m_serverThread;
@@ -88,6 +98,12 @@ private:
 	// Lock-free log buffer (game thread writes, HTTP thread reads)
 	// Size: 1000 entries. If full, oldest logs dropped (circular buffer)
 	LockFreeRingBuffer<LogEntry, 1000> m_logBuffer;
+
+	// Screenshot request/response synchronization
+	std::atomic<bool> m_screenshotRequested{false};
+	std::atomic<bool> m_screenshotReady{false};
+	std::vector<unsigned char> m_screenshotData;
+	std::mutex m_screenshotMutex; // Protects m_screenshotData
 
 	// Server thread entry point
 	void ServerThreadFunc(int port);

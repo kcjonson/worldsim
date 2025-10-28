@@ -1,6 +1,7 @@
 // HTTP Debug Server implementation using cpp-httplib.
 
 #include "debug/debug_server.h"
+#include "utils/log.h"
 #include <httplib.h>
 #include <chrono>
 #include <cstring>
@@ -8,6 +9,17 @@
 #include <iostream>
 #include <sstream>
 #include <thread>
+
+// OpenGL for framebuffer capture
+#include <GL/glew.h>
+
+// stb_image_write for PNG encoding
+// Protect against multiple definition errors if this gets included elsewhere
+#ifndef WORLDSIM_STB_IMAGE_WRITE_IMPL
+#define WORLDSIM_STB_IMAGE_WRITE_IMPL
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include <stb_image_write.h>
+#endif
 
 namespace Foundation {
 
@@ -131,6 +143,129 @@ PerformanceMetrics DebugServer::GetMetricsSnapshot() const {
 	return metrics;
 }
 
+void DebugServer::CaptureScreenshotIfRequested() {
+	// Check if screenshot was requested (non-blocking check)
+	if (!m_screenshotRequested.load()) {
+		return; // No screenshot requested
+	}
+
+	LOG_INFO(Foundation, "Screenshot requested, beginning capture...");
+
+	// Get current framebuffer size
+	GLint viewport[4];
+	glGetIntegerv(GL_VIEWPORT, viewport);
+	int width = viewport[2];
+	int height = viewport[3];
+
+	if (width <= 0 || height <= 0) {
+		LOG_ERROR(Foundation, "Invalid viewport size for screenshot: %dx%d", width, height);
+		m_screenshotRequested.store(false);
+		return;
+	}
+
+	LOG_DEBUG(Foundation, "Capturing screenshot: %dx%d", width, height);
+
+	// Allocate buffer for pixel data (RGBA, 4 bytes per pixel - more efficient than RGB on most hardware)
+	std::vector<unsigned char> pixels(width * height * 4);
+
+	// Read pixels from framebuffer
+	glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+
+	// Flip image vertically (OpenGL origin is bottom-left, PNG origin is top-left)
+	std::vector<unsigned char> flipped(width * height * 4);
+	for (int y = 0; y < height; y++) {
+		memcpy(
+			flipped.data() + (height - 1 - y) * width * 4,
+			pixels.data() + y * width * 4,
+			width * 4
+		);
+	}
+
+	// Encode to PNG using stb_image_write
+	// We use a custom write function to write to a vector instead of a file
+	struct PNGWriteContext {
+		std::vector<unsigned char>* data;
+	};
+
+	PNGWriteContext context;
+	context.data = &m_screenshotData;
+
+	// Write callback for stb_image_write
+	auto pngWriteFunc = [](void* context, void* data, int size) {
+		PNGWriteContext* ctx = static_cast<PNGWriteContext*>(context);
+		unsigned char* bytes = static_cast<unsigned char*>(data);
+		ctx->data->insert(ctx->data->end(), bytes, bytes + size);
+	};
+
+	// Encode to PNG (hold mutex for entire operation to prevent race conditions)
+	LOG_DEBUG(Foundation, "Encoding screenshot to PNG...");
+	int result;
+	{
+		std::lock_guard<std::mutex> lock(m_screenshotMutex);
+		m_screenshotData.clear();
+
+		result = stbi_write_png_to_func(
+			pngWriteFunc,
+			&context,
+			width,
+			height,
+			4, // RGBA (4 components)
+			flipped.data(),
+			width * 4 // stride
+		);
+	}
+
+	if (result == 0) {
+		LOG_ERROR(Foundation, "Failed to encode screenshot to PNG");
+		m_screenshotRequested.store(false);
+		return;
+	}
+
+	LOG_INFO(Foundation, "Screenshot captured successfully (%zu bytes)", m_screenshotData.size());
+
+	// Signal that screenshot is ready
+	m_screenshotReady.store(true);
+	m_screenshotRequested.store(false);
+}
+
+bool DebugServer::RequestScreenshot(std::vector<unsigned char>& pngData, int timeoutMs) {
+	LOG_INFO(Foundation, "Screenshot requested via HTTP, waiting for capture...");
+
+	// Clear any previous ready state
+	m_screenshotReady.store(false);
+
+	// Request screenshot
+	m_screenshotRequested.store(true);
+
+	// Wait for screenshot to be ready (with timeout)
+	auto startTime = std::chrono::steady_clock::now();
+	while (!m_screenshotReady.load()) {
+		auto elapsed = std::chrono::steady_clock::now() - startTime;
+		if (std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count() > timeoutMs) {
+			// Timeout - cancel request
+			LOG_ERROR(Foundation, "Screenshot capture timeout after %dms", timeoutMs);
+			m_screenshotRequested.store(false);
+			return false;
+		}
+
+		// Sleep briefly to avoid busy-waiting
+		std::this_thread::sleep_for(std::chrono::milliseconds(10));
+	}
+
+	// Copy screenshot data
+	{
+		std::lock_guard<std::mutex> lock(m_screenshotMutex);
+		pngData = m_screenshotData;
+	}
+
+	LOG_INFO(Foundation, "Screenshot data copied to HTTP response (%zu bytes)", pngData.size());
+
+	// Clear ready flag
+	m_screenshotReady.store(false);
+
+	return true;
+}
+
 void DebugServer::ServerThreadFunc(int port) {
 	m_server = std::make_unique<httplib::Server>();
 
@@ -155,6 +290,24 @@ void DebugServer::ServerThreadFunc(int port) {
 		PerformanceMetrics metrics = GetMetricsSnapshot();
 		res.set_content(metrics.ToJSON(), "application/json");
 		res.set_header("Access-Control-Allow-Origin", "*");
+	});
+
+	// Screenshot endpoint
+	m_server->Get("/api/ui/screenshot", [this](const httplib::Request&, httplib::Response& res) {
+		std::vector<unsigned char> pngData;
+
+		// Request screenshot and wait for it (10 second timeout for large screenshots)
+		if (RequestScreenshot(pngData, 10000)) {
+			// Screenshot captured successfully - avoid copy by using data() and size()
+			res.set_content(reinterpret_cast<const char*>(pngData.data()), pngData.size(), "image/png");
+			res.set_header("Access-Control-Allow-Origin", "*");
+			res.set_header("Content-Disposition", "inline; filename=\"screenshot.png\"");
+		} else {
+			// Timeout or error
+			res.status = 500;
+			res.set_content("{\"error\":\"Screenshot capture timeout or failed\"}", "application/json");
+			res.set_header("Access-Control-Allow-Origin", "*");
+		}
 	});
 
 	// --- SSE Streaming Endpoint ---
@@ -294,6 +447,7 @@ void DebugServer::ServerThreadFunc(int port) {
         <ul>
             <li><a href="/api/health">/api/health</a> - Server health check</li>
             <li><a href="/api/metrics">/api/metrics</a> - Current performance metrics</li>
+            <li><a href="/api/ui/screenshot">/api/ui/screenshot</a> - Capture screenshot (PNG)</li>
             <li><a href="/stream/metrics">/stream/metrics</a> - Real-time metrics (SSE)</li>
             <li><a href="/stream/logs">/stream/logs</a> - Real-time logs (SSE)</li>
         </ul>
