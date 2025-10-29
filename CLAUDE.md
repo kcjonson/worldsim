@@ -118,6 +118,13 @@ World-sim is a C++20 game with 3D procedural world generation, 2D tile-based gam
 - Capture screenshot via HTTP endpoint to see actual output
 - See `/docs/workflows.md` → "Verifying Visual Output"
 
+**Sandbox Control:**
+- Start: `./build/apps/ui-sandbox/ui-sandbox --http-port=8081`
+- Control: `curl "http://127.0.0.1:8081/api/control?action={action}"`
+- Actions: `exit`, `scene&scene=name`, `pause`, `resume`, `reload`
+- Screenshot: `curl http://127.0.0.1:8081/api/ui/screenshot > screenshot.png`
+- If port in use: Sandbox exits with message to kill existing instance
+
 ## Quick Reference
 
 | When You Need... | Check... |

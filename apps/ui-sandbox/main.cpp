@@ -316,6 +316,7 @@ int main(int argc, char* argv[]) {
 
 	int frameCount = 0;
 	double lastTime = glfwGetTime();
+	bool isPaused = false;
 
 	while (!glfwWindowShouldClose(window)) {
 		// Calculate delta time
@@ -334,9 +335,66 @@ int main(int argc, char* argv[]) {
 		// Poll events
 		glfwPollEvents();
 
-		// Update and render current scene
-		engine::SceneManager::Get().Update(dt);
-		engine::SceneManager::Get().Render();
+		// Check for control actions from debug server (if enabled)
+		if (httpPort > 0) {
+			Foundation::ControlAction action = debugServer.GetControlAction();
+			if (action != Foundation::ControlAction::None) {
+				switch (action) {
+					case Foundation::ControlAction::Exit:
+						LOG_INFO(UI, "Exit requested via control endpoint");
+						glfwSetWindowShouldClose(window, GLFW_TRUE);
+						debugServer.ClearControlAction();
+						break;
+
+					case Foundation::ControlAction::SceneChange: {
+						std::string sceneName = debugServer.GetTargetSceneName();
+						LOG_INFO(UI, "Scene change requested: %s", sceneName.c_str());
+						if (engine::SceneManager::Get().SwitchTo(sceneName)) {
+							LOG_INFO(UI, "Switched to scene: %s", sceneName.c_str());
+						} else {
+							LOG_ERROR(UI, "Failed to switch to scene: %s", sceneName.c_str());
+						}
+						debugServer.ClearControlAction();
+						break;
+					}
+
+					case Foundation::ControlAction::Pause:
+						LOG_INFO(UI, "Pause requested via control endpoint");
+						isPaused = true;
+						debugServer.ClearControlAction();
+						break;
+
+					case Foundation::ControlAction::Resume:
+						LOG_INFO(UI, "Resume requested via control endpoint");
+						isPaused = false;
+						debugServer.ClearControlAction();
+						break;
+
+					case Foundation::ControlAction::ReloadScene: {
+						LOG_INFO(UI, "Reload scene requested via control endpoint");
+						std::string currentScene = engine::SceneManager::Get().GetCurrentSceneName();
+						if (!currentScene.empty()) {
+							if (engine::SceneManager::Get().SwitchTo(currentScene)) {
+								LOG_INFO(UI, "Reloaded scene: %s", currentScene.c_str());
+							} else {
+								LOG_ERROR(UI, "Failed to reload scene: %s", currentScene.c_str());
+							}
+						}
+						debugServer.ClearControlAction();
+						break;
+					}
+
+					default:
+						break;
+				}
+			}
+		}
+
+		// Update and render current scene (skip if paused)
+		if (!isPaused) {
+			engine::SceneManager::Get().Update(dt);
+			engine::SceneManager::Get().Render();
+		}
 
 		// Render navigation menu on top (if enabled)
 		RenderNavigationMenu();
