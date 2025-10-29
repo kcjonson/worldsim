@@ -157,8 +157,12 @@ class VectorPerfScene : public engine::IScene {
 		auto genEnd = std::chrono::high_resolution_clock::now();
 		float genMs = std::chrono::duration<float, std::milli>(genEnd - genStart).count();
 
-		LOG_INFO(UI, "Generated and tessellated %zu stars in %.2f ms (%.3f ms per star)", m_stars.size(), genMs,
-				 genMs / m_stars.size());
+		if (m_stars.size() > 0) {
+			LOG_INFO(UI, "Generated and tessellated %zu stars in %.2f ms (%.3f ms per star)", m_stars.size(), genMs,
+					 genMs / m_stars.size());
+		} else {
+			LOG_INFO(UI, "Generated and tessellated 0 stars in %.2f ms (N/A ms per star)", genMs);
+		}
 	}
 
 	renderer::VectorPath CreateStarPath(const Foundation::Vec2& center, float outerRadius, float innerRadius) {
