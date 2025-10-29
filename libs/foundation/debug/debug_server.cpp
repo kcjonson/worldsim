@@ -353,8 +353,8 @@ void DebugServer::ServerThreadFunc(int port) {
 			{
 				std::lock_guard<std::mutex> lock(m_sceneNameMutex);
 				m_targetSceneName = sceneName;
+				m_controlAction.store(ControlAction::SceneChange);
 			}
-			m_controlAction.store(ControlAction::SceneChange);
 
 			std::ostringstream json;
 			json << "{\"status\":\"ok\",\"action\":\"scene\",\"scene\":\"" << sceneName << "\"}";
