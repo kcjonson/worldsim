@@ -28,9 +28,6 @@ public:
 		glClearColor(0.1f, 0.1f, 0.15f, 1.0f);
 		glClear(GL_COLOR_BUFFER_BIT);
 
-		// Begin primitive rendering
-		Renderer::Primitives::BeginFrame();
-
 		// Draw filled rectangles with IDs for inspection
 		Renderer::Primitives::DrawRect({
 			.bounds = {50, 50, 200, 100},
@@ -91,9 +88,6 @@ public:
 				});
 			}
 		}
-
-		// End primitive rendering (flushes batches)
-		Renderer::Primitives::EndFrame();
 	}
 
 	void OnExit() override {

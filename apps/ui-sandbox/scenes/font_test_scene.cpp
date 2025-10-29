@@ -48,11 +48,8 @@ public:
 		glClearColor(0.1f, 0.1f, 0.2f, 1.0f);
 		glClear(GL_COLOR_BUFFER_BIT);
 
-		// Begin primitive rendering (required for menu to work)
-		Renderer::Primitives::BeginFrame();
 
 		if (!m_fontRenderer) {
-			Renderer::Primitives::EndFrame();
 			return;
 		}
 
@@ -69,8 +66,6 @@ public:
 		// Small text
 		m_fontRenderer->RenderText("Small text at 0.8 scale", glm::vec2(400, 100), 0.8f, glm::vec3(0.8f, 0.8f, 0.8f));
 
-		// End primitive rendering (flushes queued primitives like the menu)
-		Renderer::Primitives::EndFrame();
 	}
 
 	void OnExit() override {

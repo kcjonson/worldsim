@@ -60,8 +60,6 @@ class VectorPerfScene : public engine::IScene {
 		glClearColor(0.05f, 0.05f, 0.1f, 1.0f);
 		glClear(GL_COLOR_BUFFER_BIT);
 
-		// Begin primitive rendering
-		Renderer::Primitives::BeginFrame();
 
 		// Measure rendering time
 		auto renderStart = std::chrono::high_resolution_clock::now();
@@ -95,8 +93,6 @@ class VectorPerfScene : public engine::IScene {
 		Renderer::Primitives::DrawRect({.bounds = {10, 50, 300, 50},
 										.style = {.fill = Color(0.0f, 0.0f, 0.0f, 0.7f)}});
 
-		// End primitive rendering (flushes batches)
-		Renderer::Primitives::EndFrame();
 
 		// Update render time tracking
 		m_lastRenderTime = renderMs;

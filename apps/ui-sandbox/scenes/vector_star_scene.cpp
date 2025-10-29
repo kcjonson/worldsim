@@ -52,8 +52,6 @@ class VectorStarScene : public engine::IScene {
 		glClearColor(0.1f, 0.1f, 0.15f, 1.0f);
 		glClear(GL_COLOR_BUFFER_BIT);
 
-		// Begin primitive rendering
-		Renderer::Primitives::BeginFrame();
 
 		// Draw the tessellated star
 		if (!m_starMesh.vertices.empty()) {
@@ -100,8 +98,6 @@ class VectorStarScene : public engine::IScene {
 			}
 		}
 
-		// End primitive rendering (flushes batches)
-		Renderer::Primitives::EndFrame();
 	}
 
 	void OnExit() override {
