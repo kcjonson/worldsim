@@ -1,277 +1,376 @@
 # Project Status
 
-Last Updated: 2025-10-29 (Ready for PR3: Style System)
+Last Updated: 2025-10-29
 
-## Current Sprint/Phase
-Colonysim UI Integration - Porting production-quality UI systems to worldsim
+## Epic/Story/Task Template
 
-## Active Tasks
-- [x] Define project structure and documentation system
-- [x] Set up build system (CMake + vcpkg)
-- [x] Create library skeleton structure
-- [x] Implement basic application scaffolbing
-- [x] Begin vector graphics system implementation (star validation complete, grass validation in progress)
-- [ ] **Colonysim UI Integration** - 9 PRs planned (see detailed breakdown below)
-  - [x] PR 1: Compatibility Analysis & Planning ❌ SKIPPED (determined unnecessary)
-  - [x] PR 2: Font Rendering System ✅ COMPLETE
-  - [ ] PR 3: Style System ⏳ NEXT
-  - [ ] PR 4: Rendering Integration Decision
-  - [ ] PR 5: Layer System
-  - [ ] PR 6: Shape System
-  - [ ] PR 7: Button Component
-  - [ ] PR 8: TextInput Component
-  - [ ] PR 9: Polish & Integration
+Use this template for all work items:
 
-## Recent Decisions
+```markdown
+## Epic Title
+**Spec/Documentation:** /path/to/spec.md or /path/to/folder/
+**Dependencies:** Epic Name (if applicable)
+**Status:** ready | in progress | blocked | needs spec
 
-### Documentation & Organization
-- 2025-10-12 - Tech docs instead of ADRs, no numbering (topic-based organization)
-- 2025-10-12 - Created workflows.md for common tasks (separate from CLAUDE.md)
-- 2025-10-12 - CLAUDE.md streamlined to ~124 lines (was 312) - navigation guide only
+**Tasks:**
+- [ ] Story Title
+  - [ ] Task Title
+    - [ ] Sub-task Title
+```
 
-### C++ Standards & Tools
-- 2025-10-12 - **Naming**: PascalCase for classes/functions, camelCase for variables, m_ prefix for members, k prefix for constants
-- 2025-10-12 - **Header guards**: `#pragma once` (not traditional guards)
-- 2025-10-12 - **File organization**: Headers (.h) and implementation (.cpp) side-by-side in same directory
-- 2025-10-12 - **Linting**: clang-format (manual formatting) + clang-tidy (automatic analysis)
-- 2025-10-12 - Using user's existing .clang-format config (tabs, 140 column limit)
+**Notes:**
+- Max 3 levels of nesting (Story → Task → Sub-task)
+- Only last 4 completed epics + in-progress + planned epics shown here
+- Completed epics move to development-log.md with context
+- An epic is only complete when ALL tasks are [x]
 
-### Architecture Decisions
-- 2025-10-12 - **Vector-based assets (SVG)**: All game assets use SVG format with dynamic rasterization
-- 2025-10-12 - Using nested library structure with clear dependency hierarchy (6 core libraries)
-- 2025-10-12 - Using "scenes" terminology (game dev standard), not "screens"
-- 2025-10-12 - UI testability as a core requirement with inspector system
-- 2025-10-12 - **Custom ECS** implementation in engine (not external library like EnTT)
-- 2025-10-12 - **Roll our own implementations** for core systems (no external libs except platform/format support)
-- 2025-10-24 - **Client/Server Architecture from Day One**: Two-process design (world-sim + world-sim-server) even for single-player
-- 2025-10-24 - **Server spawns on-demand**: Only starts when player begins/loads game, not during main menu
-- 2025-10-24 - **HTTP + WebSocket protocol**: HTTP for control plane (create/load game), WebSocket for real-time gameplay (60 Hz)
-- 2025-10-24 - **HTTP Debug Server**: Separate debugging system (port 8080) using Server-Sent Events for real-time metrics
-- 2025-10-24 - **World object taxonomy**: Terrain (base), Flora (vegetation), Structures (buildings/ruins), Entities (dynamic)
-- 2025-10-24 - **Batch updates for mass events**: Area mutations (plagues, fires) use efficient batch messaging instead of individual events
-- 2025-10-24 - **cpp-httplib** for networking: Header-only library for both game server and debug server
-- 2025-10-26 - **Procedural Tile Rendering**: Tiles are code-generated (not SVG-based), with procedural ground covers (grass, sand, rock, water, etc.)
-- 2025-10-26 - **Biome Influence Percentage System**: Tiles have multiple biome influences (e.g., `{ meadow: 80%, forest: 20% }`), creating natural ecotones hundreds of tiles deep
-- 2025-10-26 - **SVG Asset Categorization**: Three distinct uses: (1) Decorations/Entities (placed objects like flowers, trees), (2) Texture Patterns (fills for code-drawn shapes like brick walls), (3) Animated Vegetation (spline deformation)
-- 2025-10-26 - **Deterministic Procedural Variation**: Same world position always generates same appearance (seed-based), ensuring consistency and multiplayer compatibility
-- 2025-10-26 - **Ground Covers vs Biomes**: Ground covers are physical surface types (permanent), biomes determine which covers appear and spawn decorations
-- 2025-10-26 - **Seasonal Overlays**: Snow is not a ground cover but a seasonal overlay system (0-100% coverage on top of existing ground)
-- 2025-10-26 - **1:1 Pixel Mapping for UI**: Primitive rendering uses framebuffer dimensions for pixel-perfect rendering - `Rect(50, 50, 200, 100)` is always exactly 200×100 pixels, matching RmlUI/ImGui industry standards
-- 2025-10-26 - **Logging Macro Naming**: Use unprefixed global macros (`LOG_ERROR` not `WSIM_LOG_ERROR`) for brevity and developer experience, accepting potential library conflict risk
-- 2025-10-27 - **Client-Side History Aggregation (Developer Client)**: Server streams current values only (stateless), client maintains all history with configurable retention (metrics: time-based, logs: count-based), localStorage persistence with automatic cleanup
+---
 
-### Engine Patterns to Implement
-- 2025-10-27 - **Resource handles** (32-bit IDs with generation) - ✅ **IMPLEMENTED** (PR #4)
-- 2025-10-27 - **Memory arenas** (linear allocators) - ✅ **IMPLEMENTED** (PR #3)
-- 2025-10-27 - **String hashing** (FNV-1a, compile-time) - ✅ **IMPLEMENTED**
-- 2025-10-26 - **Structured logging** (categories + levels) - ✅ **IMPLEMENTED**
-- 2025-10-12 - **Immediate mode debug rendering** - Implement Later
+## Recently Completed Epics (Last 4)
 
-### Colonysim UI Integration
-- 2025-10-29 - **Comprehensive analysis of colonysim codebase** - Identified valuable UI systems for integration
-- 2025-10-29 - **Singleton architecture confirmed** - Keep singletons for core rendering systems (industry best practice, best performance)
-- 2025-10-29 - **9-PR integration plan created** - Structured approach: analysis → foundations → rendering → layers → shapes → components → polish
-- 2025-10-29 - **Rendering integration strategy** - TBD after compatibility analysis (Option A: Adopt VectorGraphics, Option B: Adapt to Primitives)
-- 2025-10-29 - **Systems to port identified**: Font rendering (~350 lines), Layer/Container (~350 lines), Styles (~200 lines), Shapes (~400 lines), Components (~1,400 lines)
+### ✅ Vector Graphics Validation - Stars
+**Spec/Documentation:** `/docs/technical/vector-graphics/validation-plan.md`
+**Status:** complete
+
+**Completed Tasks:**
+- [x] Single Hardcoded Star
+  - [x] Implement basic tessellation
+  - [x] Render single star shape
+  - [x] Verify visual quality
+- [x] 10,000 Static Stars
+  - [x] Generate 10,000 star instances
+  - [x] Implement batching system
+  - [x] Verify performance: 60 FPS
+- [x] 10,000 Animated Stars
+  - [x] Implement rotation animation
+  - [x] Test with 10,000 stars
+  - [x] Verify 60 FPS sustained
+- [x] SVG Loading for Stars
+  - [x] Load star from SVG file
+  - [x] Parse SVG path data
+  - [x] Apply same rendering pipeline
+  - [x] Verify identical performance
+
+**Result:** Stars validated! 10,000 animated stars @ 60 FPS achieved
+
+---
+
+### ✅ Core Engine Patterns Implementation
+**Spec/Documentation:** `/docs/technical/` (multiple docs)
+**Status:** complete
+
+**Completed Tasks:**
+- [x] String Hashing System
+  - [x] Implement FNV-1a hash function
+  - [x] Create HASH() macro for compile-time hashing
+  - [x] Add debug collision detection
+  - [x] Create common hash constants
+- [x] Structured Logging System
+  - [x] Implement Logger class with categories
+  - [x] Add four log levels (Debug/Info/Warning/Error)
+  - [x] Create convenience macros
+  - [x] Add ANSI color terminal output
+  - [x] Integrate with debug server
+- [x] Memory Arena Allocators
+  - [x] Implement Arena class
+  - [x] Create FrameArena wrapper
+  - [x] Create ScopedArena RAII wrapper
+  - [x] Performance test (14× faster than malloc)
+- [x] Resource Handle System
+  - [x] Implement ResourceHandle type
+  - [x] Create ResourceManager template
+  - [x] Add generation validation
+  - [x] Test stale handle detection
+- [x] Application Class - Unified Game Loop
+  - [x] Implement Application class with main loop
+  - [x] Add HandleInput() phase to IScene interface
+  - [x] Integrate delta time and pause functionality
+  - [x] Add exception handling and error recovery
+  - [x] Refactor ui-sandbox and world-sim to use Application
+
+---
+
+### ✅ UI Sandbox & Observability Foundation
+**Spec/Documentation:** `/docs/technical/observability/`
+**Status:** complete
+
+**Completed Tasks:**
+- [x] Primitive Rendering API
+  - [x] Implement DrawRect, DrawLine, DrawRectBorder
+  - [x] Create batching system with OpenGL shaders
+  - [x] Add transform and scissor stacks
+  - [x] Fix pixel-perfect 1:1 coordinate mapping
+- [x] HTTP Debug Server
+  - [x] Implement lock-free ring buffer
+  - [x] Create HTTP server with cpp-httplib
+  - [x] Add REST endpoints (/api/health, /api/metrics)
+  - [x] Implement Server-Sent Events streaming
+  - [x] Create HTML UI for metrics display
+- [x] Sandbox Control Endpoints
+  - [x] Implement control actions (exit, scene switch, pause/resume)
+  - [x] Add port conflict detection
+  - [x] Create scene manager integration
+- [x] Developer Client (TypeScript/React)
+  - [x] Create React + TypeScript SPA
+  - [x] Implement real-time metrics dashboard
+  - [x] Build live log viewer with filtering
+  - [x] Add localStorage persistence
+  - [x] Integrate with CMake build system
+
+---
+
+### ✅ Colonysim UI Integration - Font Rendering
+**Spec/Documentation:** `/docs/status.md` (Colonysim Integration Plan section)
+**Status:** complete
+
+**Completed Tasks:**
+- [x] Add FreeType to vcpkg.json
+- [x] Port FontRenderer class to libs/ui/font/
+- [x] Port text shaders to shaders/
+- [x] Copy Roboto-Regular.ttf font
+- [x] Port Shader wrapper class
+- [x] Create font rendering demo scene
+- [x] Test rendering at various sizes and colors
+
+**Result:** Working text rendering in ui-sandbox ✅
+
+---
+
+## In Progress Epics
+
+### 🔄 Colonysim UI Integration
+**Spec/Documentation:** `/docs/status.md` (detailed plan), `/Volumes/Code/colonysim` (source code)
+**Dependencies:** None
+**Status:** in progress
+
+**Tasks:**
+- [x] Compatibility Analysis ✅ COMPLETE (see development-log.md 2025-10-29)
+- [x] Font Rendering System ✅ COMPLETE
+- [ ] Style System ⏳ NEXT
+  - [ ] Port Base style class to libs/renderer/styles/
+  - [ ] Port Border style class
+  - [ ] Port concrete style classes (Rectangle, Circle, Line, Text, Polygon)
+  - [ ] Port style parameter structs
+  - [ ] Create style demo scene
+  - [ ] Test shapes with different styles
+- [ ] Rendering Integration Decision
+  - [ ] Analyze coordinate system compatibility
+  - [ ] Make decision: Adopt VectorGraphics OR adapt to Primitives
+  - [ ] Implement chosen approach
+  - [ ] Verify existing scenes still work
+- [ ] Layer System
+  - [ ] Port CoordinateSystem utilities
+  - [ ] Port Layer hierarchy with z-ordering
+  - [ ] Implement parent-child management
+  - [ ] Implement WorldSpace/ScreenSpace projections
+  - [ ] Create layer demo (nested layers, z-ordering)
+  - [ ] Test input event propagation
+- [ ] Shape System
+  - [ ] Port Shape base class
+  - [ ] Port Rectangle, Circle, Line, Polygon shapes
+  - [ ] Port Text shape (uses FontRenderer)
+  - [ ] Create shapes demo
+  - [ ] Test all shape types rendering
+  - [ ] Test shapes nested in layers
+- [ ] Button Component
+  - [ ] Port Button class
+  - [ ] Implement state machine (normal/hover/pressed)
+  - [ ] Implement onClick callbacks
+  - [ ] Create button demo
+  - [ ] Test mouse interactions
+  - [ ] Test disabled state
+- [ ] TextInput Component
+  - [ ] Port Form/Text classes
+  - [ ] Implement focus management
+  - [ ] Implement cursor positioning and animation
+  - [ ] Implement text scrolling
+  - [ ] Create text input demo
+  - [ ] Test keyboard input
+  - [ ] Test focus switching
+- [ ] Polish & Integration
+  - [ ] Integrate memory arenas
+  - [ ] Profile draw calls
+  - [ ] Optimize batching if needed
+  - [ ] Abstract input handling
+  - [ ] Create comprehensive UI demo
+  - [ ] Update documentation
+  - [ ] Validate performance: <100 draw calls, 60 FPS
+
+---
+
+### 🔄 Vector Graphics Validation - Grass Blades
+**Spec/Documentation:** `/docs/technical/vector-graphics/validation-plan.md`
+**Dependencies:** None
+**Status:** in progress
+
+**Tasks:**
+- [ ] Single Grass Blade with Bezier Curves ⏳ CURRENT
+  - [ ] Implement cubic Bezier curve tessellation
+  - [ ] Create single grass blade shape with curves
+  - [ ] Render in ui-sandbox
+  - [ ] Verify visual quality and smoothness
+- [ ] 10,000 Static Grass Blades
+  - [ ] Generate 10,000 grass blade instances
+  - [ ] Apply procedural variation (height, width, curve)
+  - [ ] Implement batch rendering
+  - [ ] Verify performance: <5ms frame time
+- [ ] 10,000 Animated Grass Blades ⚠️ CRITICAL
+  - [ ] Implement wind simulation (sine waves + noise)
+  - [ ] Animate all 10,000 blades independently
+  - [ ] Retessellate curves per frame
+  - [ ] Profile tessellation cost
+  - [ ] Optimize if needed (compute shaders, SIMD)
+  - [ ] Verify: 60 FPS sustained
+  - [ ] Make GO/NO-GO decision on spline deformation
+- [ ] SVG Loading for Grass Blades
+  - [ ] Load grass blade from SVG file
+  - [ ] Parse Bezier path data
+  - [ ] Apply same animation system
+  - [ ] Verify identical performance to animated blades
+
+---
+
+## Planned Epics
+
+### Vector Graphics System - Full Implementation
+**Spec/Documentation:** `/docs/technical/vector-graphics/INDEX.md`
+**Dependencies:** Vector Graphics Validation - Grass Blades
+**Status:** needs validation results
+
+**Tasks:**
+- [ ] Foundation
+  - [ ] Design core architecture (AssetManager, Tessellator, Renderer)
+  - [ ] Implement SVG parser (nanosvg or similar)
+  - [ ] Implement path tessellation (lines, curves, arcs)
+  - [ ] Basic shape rendering (no animation)
+  - [ ] Integration with BatchRenderer
+- [ ] Animation System
+  - [ ] Design animation API (keyframes, interpolation, spline deformation)
+  - [ ] Implement spline deformation for organic shapes
+  - [ ] Implement vertex shader transforms
+  - [ ] Create animation demo scene
+- [ ] Batching + Atlasing
+  - [ ] Implement texture atlas system
+  - [ ] Implement instanced rendering
+  - [ ] Implement dynamic atlas updates
+  - [ ] Profile and optimize draw call count
+  - [ ] Verify: <100 draw calls for 10,000+ shapes
+- [ ] Tiered System
+  - [ ] Design tier architecture (baked, cached, dynamic)
+  - [ ] Implement baked tier (atlas at load time)
+  - [ ] Implement cached tier (periodic rebuilds)
+  - [ ] Implement dynamic tier (per-frame updates)
+  - [ ] Create heuristics for tier assignment
+- [ ] Collision + Interaction
+  - [ ] Generate collision shapes from SVG paths
+  - [ ] Integrate with physics system
+  - [ ] Implement click/hover detection
+  - [ ] Add debug visualization for collision shapes
+- [ ] Optimization + Polish
+  - [ ] Profile full system end-to-end
+  - [ ] Optimize hot paths
+  - [ ] Add memory budget management
+  - [ ] Implement asset streaming
+  - [ ] Write performance documentation
+  - [ ] Create artist guidelines for SVG creation
+
+
+---
+
+### Observability System - Full Feature Set
+**Spec/Documentation:** `/docs/technical/observability/INDEX.md`
+**Dependencies:** None
+**Status:** in progress
+
+**Tasks:**
+- [x] Developer Server Backend - Core
+  - [x] Metrics collection (FPS, frame time, draw calls)
+  - [x] Log streaming with ring buffer
+  - [x] SSE streaming endpoints
+  - [x] JSON serialization
+- [ ] Developer Server Backend - Advanced
+  - [ ] Frame profiler with hierarchical zones
+  - [ ] GPU profiler integration
+  - [ ] Export profiling data
+  - [ ] Custom metrics API for game systems
+- [x] Developer Client Frontend - Advanced Features
+  - [x] Time-series charts for metrics
+  - [x] Log filtering by category/level
+  - [x] Log search functionality
+  - [x] Color coding by level
+  - [x] Configurable retention policies
+- [ ] UI Inspection System
+  - [ ] Scene graph JSON serialization
+  - [ ] UI state streaming via SSE
+  - [ ] Hover data collection
+  - [ ] Event streaming
+  - [ ] Hierarchy path display
+
+---
+
+### World Generation System
+**Spec/Documentation:** `/docs/technical/world-generation-architecture.md`
+**Dependencies:** None
+**Status:** needs spec
+
+**Tasks:**
+- [ ] Core Architecture
+  - [ ] Define generator interface (abstract base class)
+  - [ ] Create generator registry system
+  - [ ] Implement seed-based deterministic generation
+  - [ ] Integrate with world-creator scene
+- [ ] Temporary: Perlin Noise Generator
+  - [ ] Implement 2D noise function
+  - [ ] Add octave layering for detail
+  - [ ] Create height map generation
+  - [ ] Map elevation to tile types
+  - [ ] Implement simple biome placement
+- [ ] Future: Spherical World Generation
+  - [ ] 3D spherical coordinate system
+  - [ ] Latitude-based biome distribution
+  - [ ] Tectonic plate simulation
+  - [ ] Erosion and river formation
+  - [ ] Ocean and continent generation
+
+---
+
+### Game Design Documentation
+**Spec/Documentation:** `/docs/design/game-overview.md`, `/docs/design/INDEX.md`
+**Dependencies:** None
+**Status:** needs completion
+
+**Tasks:**
+- [ ] Game Overview Completions
+  - [ ] Define game win condition
+  - [ ] Define game lose condition
+  - [ ] Define core game loop
+- [ ] Application Flow Design
+  - [ ] Splash screen sequence
+  - [ ] Main menu navigation
+  - [ ] Scene transitions and state management
+- [ ] Main Menu Design
+  - [ ] Menu options and layout
+  - [ ] Settings screens
+  - [ ] Save/load game UI
+- [ ] Game Scene Design
+  - [ ] Top-down 2D tile-based view
+  - [ ] Camera system
+  - [ ] HUD and UI overlay
+- [ ] Camera Controls Specification
+  - [ ] Pan controls (WASD, arrows, edge scrolling)
+  - [ ] Zoom levels and limits
+  - [ ] Focus and tracking modes
+- [ ] Infinite World Design
+  - [ ] Chunk loading system from player perspective
+  - [ ] Streaming and LOD behavior
+  - [ ] Performance implications
+- [ ] UI Component Library
+  - [ ] Overview of UI elements from player perspective
+  - [ ] Interaction patterns
+  - [ ] Visual style guide
+
+---
 
 ## Blockers & Issues
+
 None currently
-
-## Next Steps
-
-### Current Focus: Colonysim UI Integration
-Port valuable UI systems from colonysim project to worldsim. See detailed task breakdown below.
-
-### Future Work
-1. ✅ ~~Complete project foundation (CMake, vcpkg, VSCode config)~~ - DONE
-2. ✅ ~~Implement core engine patterns~~ - DONE (string hashing, logging, memory arenas, resource handles)
-3. ✅ ~~Begin vector graphics validation plan~~ - Star phases (0-3) complete, grass blade phases (4-7) in progress
-   - See `/docs/technical/vector-graphics/validation-plan.md` for detailed progression
-4. ✅ ~~Implement primitive rendering API with batching~~ - DONE (basic implementation, needs enhancement)
-5. Prototype SVG asset loading and tessellation
-6. Implement UI inspector/testability infrastructure
-7. Begin splash screen implementation for world-sim app
-
-## Colonysim UI Integration Plan
-
-**Goal**: Port production-quality UI systems from `/Volumes/Code/colonysim` to worldsim
-- Font rendering (FreeType-based, ~350 lines)
-- Layer/Container hierarchy (scene graph, ~350 lines)
-- Style system (composition-based, ~200 lines)
-- Shape system (Rectangle/Circle/Line/Polygon/Text, ~400 lines)
-- UI components (Button + TextInput, ~1,400 lines)
-
-**Total Estimated Lines**: ~2,700 lines of production C++20 code
-**Estimated Timeline**: 24-33 hours over multiple PRs
-
-### PR 1: Compatibility Analysis & Planning ❌ SKIPPED
-**Status**: Determined unnecessary - PR 2 proved direct porting is viable
-**Rationale**: The successful completion of PR 2 (Font Rendering System) demonstrated that colonysim code can be ported directly to worldsim with minimal adaptations (GLAD→GLEW, logging system updates). Both projects use compatible coordinate systems, OpenGL 3.3+, and similar architectural patterns. A formal compatibility analysis became unnecessary after this empirical validation.
-**Architectural Decision Made**: Direct porting with minor adaptations (no major rendering backend replacement needed)
-
-### PR 2: Font Rendering System ✅ COMPLETE
-**Branch**: `feature/font-rendering-system` (merged as PR #10)
-**Status**: Successfully ported and merged
-**Completed Tasks**:
-- [x] Add FreeType to vcpkg.json dependencies
-- [x] Port FontRenderer.h/cpp (~350 lines) to `libs/ui/font/`
-- [x] Port text.vert/frag shaders to `shaders/`
-- [x] Copy Roboto-Regular.ttf to `fonts/`
-- [x] Port Shader wrapper class to `libs/renderer/shader/`
-- [x] Create font rendering demo scene in ui-sandbox
-- [x] Test: Render "Hello World" at various sizes and colors
-**Deliverable**: Working text rendering in ui-sandbox ✅
-**Time Taken**: ~3 hours
-
-### PR 3: Style System ⏳ NEXT
-**Branch**: `feature/colonysim-styles` (to be created)
-**Objective**: Port composition-based style system from colonysim
-**Tasks**:
-- [ ] Port Base style class to `libs/renderer/styles/`
-- [ ] Port Border style class
-- [ ] Port concrete style classes (Rectangle, Circle, Line, Text, Polygon)
-- [ ] Port all style parameter structs
-- [ ] Create style demo scene showing various styles
-- [ ] Test: Create shapes with different styles (colors, borders, rounded corners)
-**Deliverable**: Complete style system with demo
-**Estimated Time**: 2-3 hours
-
-### PR 4: Rendering Integration Decision
-**Branch**: `feature/colonysim-rendering-integration`
-**Objective**: Integrate or replace BatchRenderer with VectorGraphics
-**Decision Point**: Based on PR 1 findings
-**Option A - Adopt VectorGraphics**:
-- [ ] Port VectorGraphics.h/cpp to `libs/renderer/vector/`
-- [ ] Replace BatchRenderer with VectorGraphics
-- [ ] Adapt Primitives API to call VectorGraphics
-- [ ] Test: Verify all existing scenes still work
-- [ ] Test: Verify scissor/batching improvements
-**Option B - Adapt to Primitives**:
-- [ ] Keep BatchRenderer as-is
-- [ ] Adapt colonysim Layer/Shape code to use Primitives API
-- [ ] Add missing features to Primitives (scissor, text)
-**Deliverable**: Unified rendering backend
-**Estimated Time**: 4-6 hours
-
-### PR 5: Layer System
-**Branch**: `feature/colonysim-layers`
-**Objective**: Port scene graph hierarchy system
-**Tasks**:
-- [ ] Port CoordinateSystem utilities to `libs/renderer/coordinate/`
-- [ ] Port Layer.h/cpp to `libs/engine/ui/`
-- [ ] Implement parent-child hierarchy management
-- [ ] Implement z-index ordering with dirty flags
-- [ ] Implement WorldSpace/ScreenSpace projection types
-- [ ] Implement update/input propagation
-- [ ] Create layer hierarchy demo (nested layers, z-ordering)
-- [ ] Test: Nested layers render in correct order
-- [ ] Test: Input events propagate correctly
-**Deliverable**: Working scene graph system
-**Estimated Time**: 3-4 hours
-
-### PR 6: Shape System
-**Branch**: `feature/colonysim-shapes`
-**Objective**: Port basic drawing primitives that extend Layer
-**Dependencies**: PR 3 (Styles), PR 4 (Rendering), PR 5 (Layers)
-**Tasks**:
-- [ ] Port Shape base class to `libs/engine/ui/shapes/`
-- [ ] Port Rectangle shape with rounded corners/borders
-- [ ] Port Circle shape
-- [ ] Port Line shape
-- [ ] Port Polygon shape
-- [ ] Port Text shape (uses FontRenderer from PR 2)
-- [ ] Create shapes demo showing all types
-- [ ] Test: All shape types render correctly
-- [ ] Test: Shapes nested in layers work
-**Deliverable**: Complete shape system
-**Estimated Time**: 4-5 hours
-
-### PR 7: Button Component
-**Branch**: `feature/colonysim-button`
-**Objective**: Port interactive button component
-**Dependencies**: PR 5 (Layers), PR 6 (Shapes)
-**Tasks**:
-- [ ] Port Button.h/cpp to `libs/engine/ui/components/`
-- [ ] Implement state machine (normal/hover/pressed)
-- [ ] Implement type-based styling (Primary/Secondary)
-- [ ] Implement onClick callbacks
-- [ ] Create button demo with multiple button types
-- [ ] Test: Button responds to mouse hover
-- [ ] Test: Button responds to mouse click
-- [ ] Test: onClick callback fires correctly
-- [ ] Test: Disabled state works
-**Deliverable**: Working button component
-**Estimated Time**: 3-4 hours
-
-### PR 8: TextInput Component
-**Branch**: `feature/colonysim-textinput`
-**Objective**: Port text input field component
-**Dependencies**: PR 5 (Layers), PR 6 (Shapes)
-**Tasks**:
-- [ ] Port Form/Text.h/cpp to `libs/engine/ui/components/`
-- [ ] Implement focus management (global focus tracking)
-- [ ] Implement cursor positioning and blinking animation
-- [ ] Implement text scrolling for overflow
-- [ ] Implement placeholder support
-- [ ] Implement onChange callbacks
-- [ ] Create text input demo
-- [ ] Test: Text input accepts keyboard input
-- [ ] Test: Cursor moves with arrow keys
-- [ ] Test: Focus switching between multiple inputs
-- [ ] Test: Text scrolls when overflow
-- [ ] Test: onChange callback fires correctly
-**Deliverable**: Working text input component
-**Estimated Time**: 4-5 hours
-
-### PR 9: Polish & Integration
-**Branch**: `feature/colonysim-polish`
-**Objective**: Optimize, document, and finalize integration
-**Tasks**:
-- [ ] Integrate memory arenas for temporary allocations
-- [ ] Profile draw calls using debug server
-- [ ] Optimize batching if needed
-- [ ] Complete transform stack implementation (if not done)
-- [ ] Abstract input handling (remove direct GLFW dependencies)
-- [ ] Create comprehensive UI demo scene (buttons, inputs, nested layers)
-- [ ] Update CLAUDE.md with UI component usage examples
-- [ ] Update `/docs/technical/INDEX.md` with UI system docs
-- [ ] Write development log entry in status.md
-- [ ] Performance validation: <100 draw calls, 60 FPS
-**Deliverable**: Production-ready UI system
-**Estimated Time**: 3-4 hours
-
-## Architecture Decision: Singletons vs DI
-
-**Decision**: Keep singletons for rendering (industry best practice for game engines)
-
-**Rationale**:
-- **Performance**: Singletons = zero indirection, one static pointer dereference
-- **Industry Standard**: Unreal, Unity, id Tech all use singletons for core systems
-- **Cache Friendly**: Fixed memory location, better CPU prediction
-- **No Parameter Overhead**: Don't need to pass renderer to every function
-- **Best Practice**: Core systems (Renderer, Audio, Physics, Input) use singletons
-- **Flexibility Where Needed**: Gameplay systems can use DI or ECS patterns
-
-Colonysim's singleton architecture is correct for game engine performance.
-
-## Architecture Decision: Rendering Integration Strategy
-
-**Decision**: TBD after PR 1 compatibility analysis
-
-**Option A (Recommended)**: Adopt VectorGraphics
-- Use colonysim's VectorGraphics as implementation behind worldsim's Primitives API
-- Get mature batching + text rendering + scissor support
-- Keep worldsim's clean API (scenes already use it)
-- Minimal refactoring of existing worldsim code
-
-**Option B**: Adapt to Primitives API
-- Keep worldsim's BatchRenderer
-- Port colonysim code to call Primitives API
-- More work, but keeps worldsim's architecture pure
-
-**Evaluation Criteria**:
-- Coordinate system compatibility
-- State management complexity
-- Performance characteristics
-- Code maintainability
-

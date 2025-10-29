@@ -1,5 +1,161 @@
 ## Development Log
 
+### 2025-10-29 - Application Class - Unified Game Loop Architecture
+
+**Production-Quality Game Loop Complete:**
+
+Implemented a unified Application class for managing the main game loop across all applications (ui-sandbox, world-sim). Based on ColonySim's ScreenManager pattern, adapted for WorldSim's Scene-based architecture.
+
+**Implementation:**
+
+**Application Class** (`libs/engine/application/application.{h,cpp}`):
+- Owns main game loop with consistent delta time calculation
+- Provides pause/resume functionality
+- Exception handling and error recovery
+- GLFW window integration with framebuffer resize callbacks
+- Manages viewport updates for rendering system
+- Integrates with DebugServer for metrics and control
+
+**IScene Interface Updates**:
+- Added `HandleInput(float dt)` method for input processing phase
+- Separates concerns: HandleInput → Update → Render
+- All scenes now implement HandleInput() in addition to Update() and Render()
+
+**SceneManager Enhancement**:
+- Forwards HandleInput() calls to current scene
+- Maintains existing Update() and Render() forwarding
+- Provides unified scene lifecycle management
+
+**Refactored Applications**:
+- **ui-sandbox**: Removed 141 lines of boilerplate game loop code
+- **world-sim**: Implemented using Application pattern (133+ lines of clean integration)
+- Both apps now share identical game loop (DRY principle)
+
+**Key Benefits:**
+
+**Shared Infrastructure**: Both applications use exact same game loop implementation - no duplication.
+
+**Testability**: Scenes can be tested independently without GLFW dependency (mock Application).
+
+**Foundation for UI**: Ready for ColonySim UI integration - matches the architecture patterns used in production.
+
+**Application-Level Features**: Pause, metrics, exception handling, viewport management all handled at application level, not per-scene.
+
+**Separation of Concerns**: Clear lifecycle phases (HandleInput → Update → Render) make scene logic easier to reason about.
+
+**Files Created:**
+- `libs/engine/application/application.h` - Application class interface (117 lines)
+- `libs/engine/application/application.cpp` - Game loop implementation (172 lines)
+
+**Files Modified:**
+- `apps/ui-sandbox/main.cpp` - Refactored to use Application (-141 lines of boilerplate)
+- `apps/world-sim/main.cpp` - Implemented using Application pattern (+133 lines clean code)
+- `libs/engine/scene/scene.h` - Added HandleInput() to IScene interface
+- `libs/engine/scene/scene_manager.{h,cpp}` - Added HandleInput() forwarding
+- All scene files in `apps/ui-sandbox/scenes/` - Implemented HandleInput() method
+
+**Testing:**
+- Verified ui-sandbox runs with all scenes (shapes, font_test, vector_perf, etc.)
+- Confirmed metrics stream correctly to debug server
+- Tested pause/resume functionality via control endpoints
+- Validated exception handling with deliberate errors
+
+**Next Steps:**
+This Application class provides the foundation for integrating ColonySim's UI systems, which expect similar lifecycle management patterns.
+
+### 2025-10-29 - Status.md Restructure: Epic/Story/Task Format
+
+**Documentation System Overhaul:**
+
+Transformed status.md from a mixed-format document (containing checklists, architectural decisions, and long-form content) into a pure Epic/Story/Task checklist system.
+
+**New Format:**
+- **Epic > Story > Task > Sub-task** hierarchy (max 3 levels of nesting)
+- Only last 4 completed epics + in-progress + planned epics
+- Completed epics move to development-log.md with context
+- Template provided at top of document for consistency
+- Epic is complete only when ALL sub-tasks are [x]
+
+**Structure:**
+1. **Recently Completed Epics** - Last 4 completed (with full task lists)
+2. **In Progress Epics** - Currently active work
+3. **Planned Epics** - Future work with dependencies
+4. **Blockers & Issues** - Current problems
+5. **Notes** - Brief status updates (not detailed rationale)
+
+**Content Migration:**
+- Architectural decisions → development-log.md (short) or technical docs (long)
+- Performance targets → Keep with epics (success criteria)
+- Recent Decisions list → development-log.md (preserved below)
+
+**Recent Architectural Decisions (Preserved from status.md):**
+
+**Documentation & Organization (2025-10-12):**
+- Tech docs instead of ADRs, no numbering (topic-based organization)
+- Created workflows.md for common tasks (separate from CLAUDE.md)
+- CLAUDE.md streamlined to ~124 lines (navigation guide only)
+
+**C++ Standards & Tools (2025-10-12):**
+- Naming: PascalCase classes/functions, camelCase variables, m_ prefix members, k prefix constants
+- Header guards: `#pragma once` (not traditional guards)
+- File organization: Headers (.h) and implementation (.cpp) side-by-side
+- Linting: clang-format (manual) + clang-tidy (automatic)
+- User's .clang-format: tabs, 140 column limit
+
+**Architecture Decisions:**
+
+**Vector-Based Assets (2025-10-12):**
+- All game assets use SVG format with dynamic rasterization
+- Roll our own core systems (not external libraries)
+
+**Client/Server Architecture (2025-10-24):**
+- Two-process design from day one (world-sim + world-sim-server)
+- Server spawns on-demand (only when playing, not during main menu)
+- HTTP + WebSocket protocol: HTTP for control, WebSocket for 60 Hz gameplay
+- HTTP Debug Server: Separate debugging system (port 8080) using SSE
+
+**Procedural Rendering (2025-10-26):**
+- Tiles are code-generated (not SVG-based)
+- Biome Influence Percentage System: Tiles have multiple biome influences creating natural ecotones
+- SVG Asset Categorization: (1) Decorations/Entities, (2) Texture Patterns, (3) Animated Vegetation
+- Ground Covers vs Biomes: Ground covers are physical surfaces, biomes determine appearance
+- 1:1 Pixel Mapping for UI: Primitives use framebuffer dimensions for pixel-perfect rendering
+
+**Singleton Architecture Decision (2025-10-29):**
+- **Keep singletons for rendering** (industry best practice for game engines)
+- Performance: Zero indirection, cache-friendly, no parameter overhead
+- Industry standard: Unreal, Unity, id Tech all use singletons for core systems
+- Colonysim's singleton architecture is correct for game engine performance
+
+**Rendering Integration Strategy (2025-10-29):**
+- **Decision deferred** until after compatibility analysis
+- **Option A (Recommended)**: Adopt colonysim's VectorGraphics as implementation behind worldsim's Primitives API
+  - Get mature batching + text + scissor support
+  - Keep worldsim's clean API
+  - Minimal refactoring
+- **Option B**: Keep worldsim's BatchRenderer, port colonysim code to use Primitives API
+  - More work, but keeps worldsim architecture pure
+
+**Logging Macro Naming (2025-10-26):**
+- Use unprefixed global macros (`LOG_ERROR` not `WSIM_LOG_ERROR`) for brevity
+- Trade-off: Potential library conflicts vs developer experience
+- Acceptable risk: Game project (not library), we control dependencies
+
+**Engine Patterns Implemented (2025-10-27):**
+- Resource handles (32-bit IDs with generation) - ✅ IMPLEMENTED
+- Memory arenas (linear allocators) - ✅ IMPLEMENTED (14× faster than malloc)
+- String hashing (FNV-1a, compile-time) - ✅ IMPLEMENTED
+- Structured logging (categories + levels) - ✅ IMPLEMENTED
+- Application class (unified game loop) - ✅ IMPLEMENTED (2025-10-29)
+- Immediate mode debug rendering - Planned for later
+
+**Files Modified:**
+- `/docs/status.md` - Complete rewrite to Epic/Story/Task format (~560 lines → ~400 lines)
+- `/docs/development-log.md` - Added this entry with preserved architectural decisions
+
+**Workflow Documentation Created:**
+Will be added to CLAUDE.md to ensure process is followed in future sessions
+
 ### 2025-10-29 - PR 2: Font Rendering System ✅ COMPLETE
 
 **Implementation Complete:**

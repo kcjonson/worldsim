@@ -67,7 +67,7 @@ World-sim is a C++20 game with 3D procedural world generation, 2D tile-based gam
 - Write quick hacks or temporary code
 - Ignore established patterns
 - Create technical debt
-- Cost things / estimate time to complete
+- **⚠️ NEVER provide time estimates or cost estimates for tasks** - You cannot accurately estimate how long work will take. Focus on clear task descriptions and deliverables instead.
 
 ## Documentation System
 
@@ -148,14 +148,90 @@ When you make code changes and need to verify visually:
 | Coding standards | `/docs/technical/cpp-coding-standards.md` |
 | Engine patterns to use | `/docs/technical/INDEX.md` (Engine Patterns section) |
 
+## Status.md Format and Workflow
+
+### Structure: Epic/Story/Task Hierarchy
+
+`/docs/status.md` is a **CHECKLIST-ONLY** document. NO long-form content, architectural decisions, or detailed rationale.
+
+**Format:**
+- **Epic** → **Story** → **Task** → **Sub-task** (max 3 levels of nesting)
+- Template provided at top of status.md
+- Use terminology: Epic (top level), Story (major feature), Task (implementation step), Sub-task (detail)
+
+**Required Fields for Each Epic:**
+```markdown
+## Epic Title
+**Spec/Documentation:** /path/to/doc.md or /path/to/folder/
+**Dependencies:** Other Epic Name (if applicable)
+**Status:** ready | in progress | blocked | needs spec
+
+**Tasks:**
+- [ ] Story Title
+  - [ ] Task Title
+    - [ ] Sub-task Title
+```
+
+**Sections in status.md:**
+1. **Recently Completed Epics** - Last 4 completed (with ALL tasks marked [x])
+2. **In Progress Epics** - Currently active work (at least one task incomplete)
+3. **Planned Epics** - Future work
+4. **Blockers & Issues** - Current problems
+
+### When to Update status.md
+
+**Before starting work:**
+1. Find or create the relevant Epic
+2. Mark the Story/Task you're working on as in-progress (mental note or comment)
+3. Check Dependencies field for prerequisite work
+
+**After completing a task:**
+1. Mark task as [x]
+2. If all tasks in an Epic are complete, mark Epic as complete
+3. Update Last Updated timestamp
+
+**When Epic is complete:**
+1. Move Epic to "Recently Completed Epics" section
+2. If more than 4 completed epics, move oldest to development-log.md
+3. Add development-log.md entry with:
+   - Date and title
+   - What was accomplished
+   - Files created/modified
+   - Technical decisions made
+   - Lessons learned
+   - Next steps
+
+### Content Placement Rules
+
+**status.md contains:**
+- ✅ Checklists (Epic/Story/Task/Sub-task)
+- ✅ Status indicators (ready/in progress/blocked/needs spec)
+- ✅ Dependencies between epics
+- ✅ Performance targets (as success criteria)
+- ✅ Blockers & issues
+
+**status.md does NOT contain:**
+- ❌ Architectural decisions (→ development-log.md if short, technical docs if long)
+- ❌ Implementation rationale (→ development-log.md or technical docs)
+- ❌ Detailed technical discussion (→ technical docs)
+- ❌ Long-form content or paragraphs (→ development-log.md or technical docs)
+- ❌ Historical "Recent Decisions" lists (→ development-log.md)
+- ❌ Notes section (→ notes go in the spec/documentation for each epic)
+
+**Where architectural content goes:**
+- **Short decisions** (<1 paragraph): development-log.md
+- **Long decisions** (>1 paragraph): Relevant technical doc (e.g., `/docs/technical/architecture.md`)
+- **Rationale and context**: development-log.md or technical docs
+- **Performance targets**: Can stay in status.md as success criteria for epics
+
 ## After Significant Work
 
 ### Update `/docs/status.md`:
 - Mark completed tasks with `[x]`
-- Add high-level architectural decisions to "Recent Decisions" section ONLY if they affect current/future work
 - Update "Blockers & Issues" if any
 - Update "Last Updated" timestamp
-- Keep it brief - this is a snapshot, not history
+- When Epic complete, move to "Recently Completed" and create development-log.md entry
+- Notes belong in the spec/documentation for each epic, NOT in status.md
 
 ### Add entry to `/docs/development-log.md`:
 Add a new timestamped section (newest at top) with:
