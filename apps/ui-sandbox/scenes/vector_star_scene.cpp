@@ -12,13 +12,13 @@
 #include <GL/glew.h>
 #include <cmath>
 #include <chrono>
+#include <numbers> // C++20 mathematical constants
 
 namespace {
 
 class VectorStarScene : public engine::IScene {
   public:
 	void OnEnter() override {
-		using namespace foundation;
 		LOG_INFO(UI, "Vector Star Scene - Tessellation Demo");
 
 		// Create a 5-pointed star path
@@ -105,7 +105,6 @@ class VectorStarScene : public engine::IScene {
 	}
 
 	void OnExit() override {
-		using namespace foundation;
 		LOG_INFO(UI, "Exiting Vector Star Scene");
 	}
 
@@ -126,7 +125,7 @@ class VectorStarScene : public engine::IScene {
 
 		// Generate star vertices (alternating outer and inner points)
 		for (int i = 0; i < numPoints * 2; ++i) {
-			float angle = (i * 3.14159f / numPoints) - 3.14159f / 2.0f; // Start at top
+			float angle = (i * std::numbers::pi_v<float> / numPoints) - std::numbers::pi_v<float> / 2.0f; // Start at top
 			float radius = (i % 2 == 0) ? outerRadius : innerRadius;
 
 			float x = centerX + radius * std::cos(angle);
@@ -155,7 +154,7 @@ class VectorStarScene : public engine::IScene {
 		path.vertices.clear();
 
 		for (int i = 0; i < numPoints * 2; ++i) {
-			float angle = (i * 3.14159f / numPoints) - 3.14159f / 2.0f;
+			float angle = (i * std::numbers::pi_v<float> / numPoints) - std::numbers::pi_v<float> / 2.0f;
 			float radius = (i % 2 == 0) ? outerRadius : innerRadius;
 
 			float x = centerX + radius * std::cos(angle);
