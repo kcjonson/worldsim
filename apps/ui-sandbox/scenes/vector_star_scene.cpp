@@ -19,7 +19,6 @@ namespace {
 class VectorStarScene : public engine::IScene {
   public:
 	void OnEnter() override {
-		using namespace foundation;
 		LOG_INFO(UI, "Vector Star Scene - Tessellation Demo");
 
 		// Create a 5-pointed star path
@@ -106,7 +105,6 @@ class VectorStarScene : public engine::IScene {
 	}
 
 	void OnExit() override {
-		using namespace foundation;
 		LOG_INFO(UI, "Exiting Vector Star Scene");
 	}
 

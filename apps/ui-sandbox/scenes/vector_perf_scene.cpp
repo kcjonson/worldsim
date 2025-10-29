@@ -31,7 +31,6 @@ struct Star {
 class VectorPerfScene : public engine::IScene {
   public:
 	void OnEnter() override {
-		using namespace foundation;
 		LOG_INFO(UI, "Vector Performance Scene - 10,000 Stars Stress Test");
 
 		// Generate 10,000 stars
@@ -104,7 +103,6 @@ class VectorPerfScene : public engine::IScene {
 	}
 
 	void OnExit() override {
-		using namespace foundation;
 		LOG_INFO(UI, "Exiting Vector Performance Scene");
 		LOG_INFO(UI, "Final stats: %zu stars, %.1f FPS, %.2fms render time", m_stars.size(), m_fps, m_lastRenderTime);
 	}
@@ -120,8 +118,6 @@ class VectorPerfScene : public engine::IScene {
 
   private:
 	void GenerateStars(size_t count) {
-		using namespace foundation;
-
 		// Random number generator
 		std::random_device rd;
 		std::mt19937 gen(rd());
