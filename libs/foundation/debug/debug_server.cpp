@@ -228,6 +228,11 @@ void DebugServer::CaptureScreenshotIfRequested() {
 	m_screenshotRequested.store(false);
 }
 
+std::string DebugServer::GetTargetSceneName() const {
+	std::lock_guard<std::mutex> lock(m_sceneNameMutex);
+	return m_targetSceneName;
+}
+
 bool DebugServer::RequestScreenshot(std::vector<unsigned char>& pngData, int timeoutMs) {
 	LOG_INFO(Foundation, "Screenshot requested via HTTP, waiting for capture...");
 
@@ -269,6 +274,12 @@ bool DebugServer::RequestScreenshot(std::vector<unsigned char>& pngData, int tim
 void DebugServer::ServerThreadFunc(int port) {
 	m_server = std::make_unique<httplib::Server>();
 
+	// Disable SO_REUSEADDR to prevent multiple instances on same port
+	m_server->set_socket_options([](socket_t sock) {
+		int reuse = 0;
+		setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, (const char*)&reuse, sizeof(reuse));
+	});
+
 	// --- REST Endpoints ---
 
 	// Health check endpoint
@@ -307,6 +318,61 @@ void DebugServer::ServerThreadFunc(int port) {
 			res.status = 500;
 			res.set_content("{\"error\":\"Screenshot capture timeout or failed\"}", "application/json");
 			res.set_header("Access-Control-Allow-Origin", "*");
+		}
+	});
+
+	// Control endpoint - allows control of sandbox via HTTP GET with query params
+	// Examples: /api/control?action=exit
+	//           /api/control?action=scene&scene=arena
+	//           /api/control?action=pause
+	m_server->Get("/api/control", [this](const httplib::Request& req, httplib::Response& res) {
+		res.set_header("Access-Control-Allow-Origin", "*");
+
+		// Get action parameter (required)
+		if (!req.has_param("action")) {
+			res.status = 400;
+			res.set_content("{\"error\":\"Missing required parameter 'action'\"}", "application/json");
+			return;
+		}
+
+		std::string action = req.get_param_value("action");
+
+		// Process action
+		if (action == "exit") {
+			m_controlAction.store(ControlAction::Exit);
+			res.set_content("{\"status\":\"ok\",\"action\":\"exit\"}", "application/json");
+		} else if (action == "scene") {
+			// Scene change requires 'scene' parameter
+			if (!req.has_param("scene")) {
+				res.status = 400;
+				res.set_content("{\"error\":\"Scene change requires 'scene' parameter\"}", "application/json");
+				return;
+			}
+
+			std::string sceneName = req.get_param_value("scene");
+			{
+				std::lock_guard<std::mutex> lock(m_sceneNameMutex);
+				m_targetSceneName = sceneName;
+			}
+			m_controlAction.store(ControlAction::SceneChange);
+
+			std::ostringstream json;
+			json << "{\"status\":\"ok\",\"action\":\"scene\",\"scene\":\"" << sceneName << "\"}";
+			res.set_content(json.str(), "application/json");
+		} else if (action == "pause") {
+			m_controlAction.store(ControlAction::Pause);
+			res.set_content("{\"status\":\"ok\",\"action\":\"pause\"}", "application/json");
+		} else if (action == "resume") {
+			m_controlAction.store(ControlAction::Resume);
+			res.set_content("{\"status\":\"ok\",\"action\":\"resume\"}", "application/json");
+		} else if (action == "reload") {
+			m_controlAction.store(ControlAction::ReloadScene);
+			res.set_content("{\"status\":\"ok\",\"action\":\"reload\"}", "application/json");
+		} else {
+			res.status = 400;
+			std::ostringstream json;
+			json << "{\"error\":\"Invalid action '" << action << "'. Valid actions: exit, scene, pause, resume, reload\"}";
+			res.set_content(json.str(), "application/json");
 		}
 	});
 
@@ -469,9 +535,18 @@ void DebugServer::ServerThreadFunc(int port) {
 		res.set_content(html, "text/html");
 	});
 
-	// Start listening
+	// Start listening (this will fail if port is in use since SO_REUSEADDR is disabled)
 	std::cout << "Debug server listening on http://localhost:" << port << std::endl;
-	m_server->listen("127.0.0.1", port);
+	if (!m_server->listen("127.0.0.1", port)) {
+		std::cerr << "\n";
+		std::cerr << "ERROR: Port " << port << " is already in use.\n";
+		std::cerr << "An instance of the sandbox is already running.\n";
+		std::cerr << "Use the following command to kill it:\n";
+		std::cerr << "  curl http://127.0.0.1:" << port << "/api/control?action=exit\n";
+		std::cerr << "\n";
+		m_running.store(false);
+		std::exit(1);
+	}
 }
 
 } // namespace Foundation

@@ -59,6 +59,10 @@ IScene* SceneManager::GetCurrentScene() const {
 	return m_currentScene.get();
 }
 
+std::string SceneManager::GetCurrentSceneName() const {
+	return m_currentSceneName;
+}
+
 std::vector<std::string> SceneManager::GetAllSceneNames() const {
 	std::vector<std::string> names;
 	names.reserve(m_sceneRegistry.size());

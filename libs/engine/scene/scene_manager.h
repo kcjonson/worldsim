@@ -55,6 +55,10 @@ public:
 	/// @return Pointer to current scene, or nullptr if no scene active
 	IScene* GetCurrentScene() const;
 
+	/// @brief Get current scene name
+	/// @return Name of current scene, or empty string if no scene active
+	std::string GetCurrentSceneName() const;
+
 	/// @brief Get list of all registered scene names
 	/// @return Vector of scene names (sorted alphabetically)
 	std::vector<std::string> GetAllSceneNames() const;

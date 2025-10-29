@@ -29,6 +29,16 @@ class Server;
 
 namespace Foundation {
 
+// Control actions for sandbox control endpoint
+enum class ControlAction {
+	None,
+	Exit,
+	SceneChange,
+	Pause,
+	Resume,
+	ReloadScene
+};
+
 // Log levels (must match foundation::LogLevel enum)
 enum class LogLevel { Debug, Info, Warning, Error };
 
@@ -87,6 +97,13 @@ public:
 	// Returns true if screenshot was captured, false if timeout
 	bool RequestScreenshot(std::vector<unsigned char>& pngData, int timeoutMs = 5000);
 
+	// Control action API (thread-safe, checked by main loop)
+	ControlAction GetControlAction() const { return m_controlAction.load(); }
+	void ClearControlAction() { m_controlAction.store(ControlAction::None); }
+
+	// Get target scene name (for SceneChange action)
+	std::string GetTargetSceneName() const;
+
 private:
 	std::unique_ptr<httplib::Server> m_server;
 	std::thread m_serverThread;
@@ -104,6 +121,11 @@ private:
 	std::atomic<bool> m_screenshotReady{false};
 	std::vector<unsigned char> m_screenshotData;
 	std::mutex m_screenshotMutex; // Protects m_screenshotData
+
+	// Control action state (HTTP thread writes, main thread reads)
+	std::atomic<ControlAction> m_controlAction{ControlAction::None};
+	std::string m_targetSceneName;
+	mutable std::mutex m_sceneNameMutex; // Protects m_targetSceneName
 
 	// Server thread entry point
 	void ServerThreadFunc(int port);
