@@ -39,6 +39,10 @@ public:
 		LOG_INFO(UI, "FontRenderer initialized successfully (%dx%d)", viewportWidth, viewportHeight);
 	}
 
+	void HandleInput(float dt) override {
+		// No input handling needed - static scene
+	}
+
 	void Update(float dt) override {
 		// No update logic needed for static text
 	}

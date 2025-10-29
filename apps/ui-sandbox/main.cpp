@@ -10,6 +10,7 @@
 // - HTTP debug server for UI inspection (future)
 
 #include <scene/scene_manager.h>
+#include <application/application.h>
 #include "primitives/primitives.h"
 #include "primitives/batch_renderer.h"
 #include "metrics/metrics_collector.h"
@@ -310,101 +311,86 @@ int main(int argc, char* argv[]) {
 	// Initialize metrics collection
 	Renderer::MetricsCollector metrics;
 
-	// Main loop
-	LOG_INFO(UI, "Entering main loop...");
-	LOG_DEBUG(UI, "Main loop started - rendering at 60 FPS (vsync)");
+	// Create application and set up game loop
+	LOG_INFO(UI, "Creating application");
+	engine::Application app(window);
 
-	int frameCount = 0;
-	double lastTime = glfwGetTime();
-	bool isPaused = false;
-
-	while (!glfwWindowShouldClose(window)) {
-		// Calculate delta time
-		double currentTime = glfwGetTime();
-		float dt = static_cast<float>(currentTime - lastTime);
-		lastTime = currentTime;
-
+	// Set up pre-frame callback (primitives begin frame + debug server control)
+	app.SetPreFrameCallback([&debugServer, &app, &metrics, httpPort]() -> bool {
 		// Begin frame timing
 		metrics.BeginFrame();
-
-		// Log every 60 frames (once per second at 60 FPS)
-		if (frameCount++ % 60 == 0) {
-			//LOG_DEBUG(UI, "Frame %d - main loop running", frameCount);
-		}
-
-		// Poll events
-		glfwPollEvents();
-
-		// Check for control actions from debug server (if enabled)
-		if (httpPort > 0) {
-			Foundation::ControlAction action = debugServer.GetControlAction();
-			if (action != Foundation::ControlAction::None) {
-				switch (action) {
-					case Foundation::ControlAction::Exit:
-						LOG_INFO(UI, "Exit requested via control endpoint");
-						glfwSetWindowShouldClose(window, GLFW_TRUE);
-						debugServer.ClearControlAction();
-						break;
-
-					case Foundation::ControlAction::SceneChange: {
-						std::string sceneName = debugServer.GetTargetSceneName();
-						LOG_INFO(UI, "Scene change requested: %s", sceneName.c_str());
-						if (engine::SceneManager::Get().SwitchTo(sceneName)) {
-							LOG_INFO(UI, "Switched to scene: %s", sceneName.c_str());
-						} else {
-							LOG_ERROR(UI, "Failed to switch to scene: %s", sceneName.c_str());
-						}
-						debugServer.ClearControlAction();
-						break;
-					}
-
-					case Foundation::ControlAction::Pause:
-						LOG_INFO(UI, "Pause requested via control endpoint");
-						isPaused = true;
-						debugServer.ClearControlAction();
-						break;
-
-					case Foundation::ControlAction::Resume:
-						LOG_INFO(UI, "Resume requested via control endpoint");
-						isPaused = false;
-						debugServer.ClearControlAction();
-						break;
-
-					case Foundation::ControlAction::ReloadScene: {
-						LOG_INFO(UI, "Reload scene requested via control endpoint");
-						std::string currentScene = engine::SceneManager::Get().GetCurrentSceneName();
-						if (!currentScene.empty()) {
-							if (engine::SceneManager::Get().SwitchTo(currentScene)) {
-								LOG_INFO(UI, "Reloaded scene: %s", currentScene.c_str());
-							} else {
-								LOG_ERROR(UI, "Failed to reload scene: %s", currentScene.c_str());
-							}
-						}
-						debugServer.ClearControlAction();
-						break;
-					}
-
-					default:
-						break;
-				}
-			}
-		}
 
 		// Begin frame for all rendering (scene + UI)
 		Renderer::Primitives::BeginFrame();
 
-		// Update and render current scene (skip if paused)
-		if (!isPaused) {
-			engine::SceneManager::Get().Update(dt);
-			engine::SceneManager::Get().Render();
-		}
+		// Debug server control (if enabled)
+		if (httpPort > 0) {
+			Foundation::ControlAction action = debugServer.GetControlAction();
+			if (action != Foundation::ControlAction::None) {
+			switch (action) {
+				case Foundation::ControlAction::Exit:
+					LOG_INFO(UI, "Exit requested via control endpoint");
+					app.Stop();
+					debugServer.ClearControlAction();
+					return false; // Request exit
 
-		// Render navigation menu on top (if enabled)
+				case Foundation::ControlAction::SceneChange: {
+					std::string sceneName = debugServer.GetTargetSceneName();
+					LOG_INFO(UI, "Scene change requested: %s", sceneName.c_str());
+					if (engine::SceneManager::Get().SwitchTo(sceneName)) {
+						LOG_INFO(UI, "Switched to scene: %s", sceneName.c_str());
+					} else {
+						LOG_ERROR(UI, "Failed to switch to scene: %s", sceneName.c_str());
+					}
+					debugServer.ClearControlAction();
+					break;
+				}
+
+				case Foundation::ControlAction::Pause:
+					LOG_INFO(UI, "Pause requested via control endpoint");
+					app.Pause();
+					debugServer.ClearControlAction();
+					break;
+
+				case Foundation::ControlAction::Resume:
+					LOG_INFO(UI, "Resume requested via control endpoint");
+					app.Resume();
+					debugServer.ClearControlAction();
+					break;
+
+				case Foundation::ControlAction::ReloadScene: {
+					LOG_INFO(UI, "Reload scene requested via control endpoint");
+					std::string currentScene = engine::SceneManager::Get().GetCurrentSceneName();
+					if (!currentScene.empty()) {
+						if (engine::SceneManager::Get().SwitchTo(currentScene)) {
+							LOG_INFO(UI, "Reloaded scene: %s", currentScene.c_str());
+						} else {
+							LOG_ERROR(UI, "Failed to reload scene: %s", currentScene.c_str());
+						}
+					}
+					debugServer.ClearControlAction();
+					break;
+				}
+
+				default:
+					break;
+			}
+			}
+		}
+		return true; // Continue running
+	});
+
+	// Set up overlay renderer (navigation menu)
+	app.SetOverlayRenderer([]() {
+		// Render navigation menu on top
 		RenderNavigationMenu();
 
 		// End frame - flush all queued primitives
 		Renderer::Primitives::EndFrame();
+	});
 
+	// Set up post-frame callback (metrics + screenshot)
+	app.SetPostFrameCallback([&metrics, &debugServer, httpPort]() {
 		// Get rendering stats
 		auto renderStats = Renderer::Primitives::GetStats();
 		metrics.SetRenderStats(renderStats.drawCalls, renderStats.vertexCount, renderStats.triangleCount);
@@ -420,10 +406,11 @@ int main(int argc, char* argv[]) {
 			// This must happen BEFORE glfwSwapBuffers() to capture the current frame
 			debugServer.CaptureScreenshotIfRequested();
 		}
+	});
 
-		// Swap buffers
-		glfwSwapBuffers(window);
-	}
+	// Run application
+	LOG_INFO(UI, "Starting application main loop");
+	app.Run();
 
 	// Cleanup
 	LOG_INFO(UI, "Shutting down...");

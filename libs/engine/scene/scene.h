@@ -19,6 +19,12 @@ public:
 	/// Use for initialization, resource loading, state setup
 	virtual void OnEnter() = 0;
 
+	/// @brief Called every frame to handle input
+	/// Separates input handling from game logic for better control
+	/// (e.g., can disable input during cutscenes while Update continues)
+	/// @param dt Delta time in seconds
+	virtual void HandleInput(float dt) = 0;
+
 	/// @brief Called every frame while scene is active
 	/// @param dt Delta time in seconds
 	virtual void Update(float dt) = 0;

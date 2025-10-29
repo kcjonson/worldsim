@@ -17,6 +17,10 @@ public:
 		// No initialization needed for shapes scene
 	}
 
+	void HandleInput(float dt) override {
+		// No input handling needed - static scene
+	}
+
 	void Update(float dt) override {
 		// No update logic needed - static shapes
 	}
