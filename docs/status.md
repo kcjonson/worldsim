@@ -1,16 +1,26 @@
 # Project Status
 
-Last Updated: 2025-10-27 (Memory Arenas & Resource Handles Implementation)
+Last Updated: 2025-10-29 (Colonysim UI Integration Planning)
 
 ## Current Sprint/Phase
-Initial project setup and architecture
+Colonysim UI Integration - Porting production-quality UI systems to worldsim
 
 ## Active Tasks
 - [x] Define project structure and documentation system
 - [x] Set up build system (CMake + vcpkg)
 - [x] Create library skeleton structure
-- [x] Implement basic application scaffolding
+- [x] Implement basic application scaffolbing
 - [x] Begin vector graphics system implementation (star validation complete, grass validation in progress)
+- [ ] **Colonysim UI Integration** - 9 PRs planned (see detailed breakdown below)
+  - [ ] PR 1: Compatibility Analysis & Planning ⏳ NEXT
+  - [ ] PR 2: Font Rendering System
+  - [ ] PR 3: Style System
+  - [ ] PR 4: Rendering Integration Decision
+  - [ ] PR 5: Layer System
+  - [ ] PR 6: Shape System
+  - [ ] PR 7: Button Component
+  - [ ] PR 8: TextInput Component
+  - [ ] PR 9: Polish & Integration
 
 ## Recent Decisions
 
@@ -57,20 +67,377 @@ Initial project setup and architecture
 - 2025-10-26 - **Structured logging** (categories + levels) - ✅ **IMPLEMENTED**
 - 2025-10-12 - **Immediate mode debug rendering** - Implement Later
 
+### Colonysim UI Integration
+- 2025-10-29 - **Comprehensive analysis of colonysim codebase** - Identified valuable UI systems for integration
+- 2025-10-29 - **Singleton architecture confirmed** - Keep singletons for core rendering systems (industry best practice, best performance)
+- 2025-10-29 - **9-PR integration plan created** - Structured approach: analysis → foundations → rendering → layers → shapes → components → polish
+- 2025-10-29 - **Rendering integration strategy** - TBD after compatibility analysis (Option A: Adopt VectorGraphics, Option B: Adapt to Primitives)
+- 2025-10-29 - **Systems to port identified**: Font rendering (~350 lines), Layer/Container (~350 lines), Styles (~200 lines), Shapes (~400 lines), Components (~1,400 lines)
+
 ## Blockers & Issues
 None currently
 
 ## Next Steps
+
+### Current Focus: Colonysim UI Integration
+Port valuable UI systems from colonysim project to worldsim. See detailed task breakdown below.
+
+### Future Work
 1. ✅ ~~Complete project foundation (CMake, vcpkg, VSCode config)~~ - DONE
 2. ✅ ~~Implement core engine patterns~~ - DONE (string hashing, logging, memory arenas, resource handles)
 3. ✅ ~~Begin vector graphics validation plan~~ - Star phases (0-3) complete, grass blade phases (4-7) in progress
    - See `/docs/technical/vector-graphics/validation-plan.md` for detailed progression
-4. Implement primitive rendering API with batching
+4. ✅ ~~Implement primitive rendering API with batching~~ - DONE (basic implementation, needs enhancement)
 5. Prototype SVG asset loading and tessellation
 6. Implement UI inspector/testability infrastructure
 7. Begin splash screen implementation for world-sim app
 
+## Colonysim UI Integration Plan
+
+**Goal**: Port production-quality UI systems from `/Volumes/Code/colonysim` to worldsim
+- Font rendering (FreeType-based, ~350 lines)
+- Layer/Container hierarchy (scene graph, ~350 lines)
+- Style system (composition-based, ~200 lines)
+- Shape system (Rectangle/Circle/Line/Polygon/Text, ~400 lines)
+- UI components (Button + TextInput, ~1,400 lines)
+
+**Total Estimated Lines**: ~2,700 lines of production C++20 code
+**Estimated Timeline**: 24-33 hours over multiple PRs
+
+### PR 1: Compatibility Analysis & Planning ⏳ NEXT
+**Branch**: `feature/colonysim-compatibility-analysis`
+**Objective**: Verify coordinate systems, test minimal integration, document findings
+**Tasks**:
+- [ ] Compare coordinate systems (top-left vs bottom-left, Y-axis direction)
+- [ ] Create minimal integration test (render one colonysim shape in worldsim)
+- [ ] Test OpenGL state compatibility (blending, depth, viewport)
+- [ ] Document coordinate transformations needed (if any)
+- [ ] Write compatibility report in `/docs/technical/colonysim-integration.md`
+- [ ] Make architectural decision: VectorGraphics adoption vs adaptation
+**Deliverable**: Compatibility report + integration strategy decision
+**Estimated Time**: 1-2 hours
+
+### PR 2: Font Rendering System
+**Branch**: `feature/colonysim-font-rendering`
+**Objective**: Add FreeType-based text rendering to worldsim
+**Tasks**:
+- [ ] Add FreeType to vcpkg.json dependencies
+- [ ] Port FontRenderer.h/cpp (~350 lines) to `libs/renderer/text/`
+- [ ] Port text.vert/frag shaders to `shaders/`
+- [ ] Copy Roboto-Regular.ttf to `assets/fonts/`
+- [ ] Port or adapt Shader wrapper class (if needed)
+- [ ] Create font rendering demo scene in ui-sandbox
+- [ ] Test: Render "Hello World" at various sizes and colors
+**Deliverable**: Working text rendering in ui-sandbox
+**Estimated Time**: 3-4 hours
+
+### PR 3: Style System
+**Branch**: `feature/colonysim-styles`
+**Objective**: Port composition-based style system
+**Tasks**:
+- [ ] Port Base style class to `libs/renderer/styles/`
+- [ ] Port Border style class
+- [ ] Port concrete style classes (Rectangle, Circle, Line, Text, Polygon)
+- [ ] Port all style parameter structs
+- [ ] Create style demo scene showing various styles
+- [ ] Test: Create shapes with different styles (colors, borders, rounded corners)
+**Deliverable**: Complete style system with demo
+**Estimated Time**: 2-3 hours
+
+### PR 4: Rendering Integration Decision
+**Branch**: `feature/colonysim-rendering-integration`
+**Objective**: Integrate or replace BatchRenderer with VectorGraphics
+**Decision Point**: Based on PR 1 findings
+**Option A - Adopt VectorGraphics**:
+- [ ] Port VectorGraphics.h/cpp to `libs/renderer/vector/`
+- [ ] Replace BatchRenderer with VectorGraphics
+- [ ] Adapt Primitives API to call VectorGraphics
+- [ ] Test: Verify all existing scenes still work
+- [ ] Test: Verify scissor/batching improvements
+**Option B - Adapt to Primitives**:
+- [ ] Keep BatchRenderer as-is
+- [ ] Adapt colonysim Layer/Shape code to use Primitives API
+- [ ] Add missing features to Primitives (scissor, text)
+**Deliverable**: Unified rendering backend
+**Estimated Time**: 4-6 hours
+
+### PR 5: Layer System
+**Branch**: `feature/colonysim-layers`
+**Objective**: Port scene graph hierarchy system
+**Tasks**:
+- [ ] Port CoordinateSystem utilities to `libs/renderer/coordinate/`
+- [ ] Port Layer.h/cpp to `libs/engine/ui/`
+- [ ] Implement parent-child hierarchy management
+- [ ] Implement z-index ordering with dirty flags
+- [ ] Implement WorldSpace/ScreenSpace projection types
+- [ ] Implement update/input propagation
+- [ ] Create layer hierarchy demo (nested layers, z-ordering)
+- [ ] Test: Nested layers render in correct order
+- [ ] Test: Input events propagate correctly
+**Deliverable**: Working scene graph system
+**Estimated Time**: 3-4 hours
+
+### PR 6: Shape System
+**Branch**: `feature/colonysim-shapes`
+**Objective**: Port basic drawing primitives that extend Layer
+**Dependencies**: PR 3 (Styles), PR 4 (Rendering), PR 5 (Layers)
+**Tasks**:
+- [ ] Port Shape base class to `libs/engine/ui/shapes/`
+- [ ] Port Rectangle shape with rounded corners/borders
+- [ ] Port Circle shape
+- [ ] Port Line shape
+- [ ] Port Polygon shape
+- [ ] Port Text shape (uses FontRenderer from PR 2)
+- [ ] Create shapes demo showing all types
+- [ ] Test: All shape types render correctly
+- [ ] Test: Shapes nested in layers work
+**Deliverable**: Complete shape system
+**Estimated Time**: 4-5 hours
+
+### PR 7: Button Component
+**Branch**: `feature/colonysim-button`
+**Objective**: Port interactive button component
+**Dependencies**: PR 5 (Layers), PR 6 (Shapes)
+**Tasks**:
+- [ ] Port Button.h/cpp to `libs/engine/ui/components/`
+- [ ] Implement state machine (normal/hover/pressed)
+- [ ] Implement type-based styling (Primary/Secondary)
+- [ ] Implement onClick callbacks
+- [ ] Create button demo with multiple button types
+- [ ] Test: Button responds to mouse hover
+- [ ] Test: Button responds to mouse click
+- [ ] Test: onClick callback fires correctly
+- [ ] Test: Disabled state works
+**Deliverable**: Working button component
+**Estimated Time**: 3-4 hours
+
+### PR 8: TextInput Component
+**Branch**: `feature/colonysim-textinput`
+**Objective**: Port text input field component
+**Dependencies**: PR 5 (Layers), PR 6 (Shapes)
+**Tasks**:
+- [ ] Port Form/Text.h/cpp to `libs/engine/ui/components/`
+- [ ] Implement focus management (global focus tracking)
+- [ ] Implement cursor positioning and blinking animation
+- [ ] Implement text scrolling for overflow
+- [ ] Implement placeholder support
+- [ ] Implement onChange callbacks
+- [ ] Create text input demo
+- [ ] Test: Text input accepts keyboard input
+- [ ] Test: Cursor moves with arrow keys
+- [ ] Test: Focus switching between multiple inputs
+- [ ] Test: Text scrolls when overflow
+- [ ] Test: onChange callback fires correctly
+**Deliverable**: Working text input component
+**Estimated Time**: 4-5 hours
+
+### PR 9: Polish & Integration
+**Branch**: `feature/colonysim-polish`
+**Objective**: Optimize, document, and finalize integration
+**Tasks**:
+- [ ] Integrate memory arenas for temporary allocations
+- [ ] Profile draw calls using debug server
+- [ ] Optimize batching if needed
+- [ ] Complete transform stack implementation (if not done)
+- [ ] Abstract input handling (remove direct GLFW dependencies)
+- [ ] Create comprehensive UI demo scene (buttons, inputs, nested layers)
+- [ ] Update CLAUDE.md with UI component usage examples
+- [ ] Update `/docs/technical/INDEX.md` with UI system docs
+- [ ] Write development log entry in status.md
+- [ ] Performance validation: <100 draw calls, 60 FPS
+**Deliverable**: Production-ready UI system
+**Estimated Time**: 3-4 hours
+
+## Architecture Decision: Singletons vs DI
+
+**Decision**: Keep singletons for rendering (industry best practice for game engines)
+
+**Rationale**:
+- **Performance**: Singletons = zero indirection, one static pointer dereference
+- **Industry Standard**: Unreal, Unity, id Tech all use singletons for core systems
+- **Cache Friendly**: Fixed memory location, better CPU prediction
+- **No Parameter Overhead**: Don't need to pass renderer to every function
+- **Best Practice**: Core systems (Renderer, Audio, Physics, Input) use singletons
+- **Flexibility Where Needed**: Gameplay systems can use DI or ECS patterns
+
+Colonysim's singleton architecture is correct for game engine performance.
+
+## Architecture Decision: Rendering Integration Strategy
+
+**Decision**: TBD after PR 1 compatibility analysis
+
+**Option A (Recommended)**: Adopt VectorGraphics
+- Use colonysim's VectorGraphics as implementation behind worldsim's Primitives API
+- Get mature batching + text rendering + scissor support
+- Keep worldsim's clean API (scenes already use it)
+- Minimal refactoring of existing worldsim code
+
+**Option B**: Adapt to Primitives API
+- Keep worldsim's BatchRenderer
+- Port colonysim code to call Primitives API
+- More work, but keeps worldsim's architecture pure
+
+**Evaluation Criteria**:
+- Coordinate system compatibility
+- State management complexity
+- Performance characteristics
+- Code maintainability
+
 ## Development Log
+
+### 2025-10-29 - Colonysim UI Integration - Comprehensive Analysis & Planning
+
+**Strategic Planning Session:**
+
+Conducted comprehensive analysis of `/Volumes/Code/colonysim` codebase to identify valuable UI systems for integration into worldsim. Created detailed 9-PR implementation plan with clear dependencies and deliverables.
+
+**Colonysim Codebase Analysis:**
+
+Analyzed 284 source files across colonysim project to identify production-quality C++20 UI systems:
+
+**Systems Identified (by quality and value):**
+
+1. **Font Rendering System** (9/10 quality, ~350 lines)
+   - FreeType-based glyph caching (ASCII 0-128)
+   - Pre-rendered textures per character
+   - Text measurement and layout utilities
+   - Dedicated vertex/fragment shaders
+   - **Highly portable** - only depends on FreeType and Shader class
+
+2. **Layer/Container Hierarchy** (9.5/10 quality, ~350 lines)
+   - Parent-child scene graph with z-index ordering
+   - Dirty flag optimization (only sorts when needed)
+   - WorldSpace vs ScreenSpace projection types
+   - Update/input propagation through tree
+   - **Comprehensive documentation** (LayeringSystem.md)
+
+3. **Style System** (9/10 quality, ~200 lines)
+   - Composition-based (Base + Border classes)
+   - Modern C++ with designated initializers
+   - Concrete styles: Rectangle, Circle, Line, Text, Polygon
+   - **Clean data structures**, highly portable
+
+4. **Shape System** (8.5/10 quality, ~400 lines)
+   - All shapes extend Layer (uniform treatment)
+   - Rectangle, Circle, Line, Polygon, Text implementations
+   - Dirty flag pattern for optimization
+   - **Key insight**: Everything is a Layer!
+
+5. **UI Components** (8.5/10 quality, ~1,400 lines)
+   - **Button**: State machine (normal/hover/pressed), callbacks, type-based styling
+   - **TextInput**: Focus management, cursor + blinking, scrolling, placeholder
+   - **Feature-complete** but needs input abstraction (direct GLFW calls)
+
+6. **VectorGraphics Batching** (9/10 quality, ~300 lines)
+   - Batched rendering singleton
+   - Queues geometry + text separately
+   - Scissor support for clipping
+   - **Mature implementation**, proven in production
+
+7. **CoordinateSystem** (9/10 quality, ~100 lines)
+   - Multi-DPI support with pixel ratio
+   - Screen/world space conversions
+   - Percentage-based layout helpers
+
+**Worldsim Current State Analysis:**
+
+Compared against worldsim's rendering architecture:
+
+**Worldsim Strengths:**
+- Clean Primitives API with batching
+- Memory arenas (14x faster than malloc)
+- Resource handle system with generation tracking
+- Debug server with real-time metrics streaming
+- Simple but effective scene management
+
+**Worldsim Gaps:**
+- No text rendering
+- No texture system
+- No UI hierarchy (scenes only)
+- Incomplete state management (scissor/transform tracked but not applied)
+- No Bezier curve support (blocks Phase 4+ vector graphics validation)
+
+**Architectural Decisions:**
+
+**1. Singleton Architecture Decision:**
+- **Keep singletons for rendering** (industry best practice)
+- Performance: Zero indirection, cache-friendly, no parameter overhead
+- Industry standard: Unreal, Unity, id Tech all use singletons for core systems
+- Colonysim's architecture is correct for game engine performance
+
+**2. Rendering Integration Strategy:**
+- **Decision deferred** to PR 1 compatibility analysis
+- **Option A (Recommended)**: Adopt colonysim's VectorGraphics as implementation behind worldsim's Primitives API
+  - Get mature batching + text + scissor support
+  - Keep worldsim's clean API (scenes already use it)
+  - Minimal refactoring
+- **Option B**: Keep worldsim's BatchRenderer, port colonysim code to use Primitives API
+  - More work, but keeps worldsim architecture pure
+
+**9-PR Implementation Plan:**
+
+**PR 1: Compatibility Analysis** (1-2 hours)
+- Compare coordinate systems
+- Test minimal integration
+- Make rendering strategy decision
+- Document findings
+
+**PR 2: Font Rendering System** (3-4 hours)
+- Port FontRenderer + shaders
+- Add FreeType dependency
+- Demo: "Hello World" rendering
+
+**PR 3: Style System** (2-3 hours)
+- Port Base, Border, concrete style classes
+- Demo: Various styled shapes
+
+**PR 4: Rendering Integration** (4-6 hours)
+- Based on PR 1 decision
+- Either adopt VectorGraphics or adapt to Primitives
+- Ensure all existing scenes still work
+
+**PR 5: Layer System** (3-4 hours)
+- Port Layer hierarchy with z-ordering
+- Port CoordinateSystem utilities
+- Demo: Nested layers
+
+**PR 6: Shape System** (4-5 hours)
+- Port all shape types (Rectangle, Circle, Line, Polygon, Text)
+- Demo: All shapes rendering
+
+**PR 7: Button Component** (3-4 hours)
+- Port Button with state machine
+- Demo: Interactive buttons
+
+**PR 8: TextInput Component** (4-5 hours)
+- Port TextInput with focus management
+- Demo: Text input fields
+
+**PR 9: Polish & Integration** (3-4 hours)
+- Memory arena integration
+- Performance profiling
+- Input abstraction
+- Documentation updates
+
+**Total Estimated Work:** 24-33 hours across 9 PRs
+
+**Key Insights:**
+
+**Production-Ready Code**: Colonysim's UI systems are 8.5-9.5/10 quality with modern C++20 patterns, proper optimizations, and comprehensive features.
+
+**Architectural Compatibility**: Both projects use singletons, GLFW, OpenGL 3.3+, similar patterns. High compatibility expected.
+
+**Hybrid Approach Best**: Use colonysim's VectorGraphics as implementation layer behind worldsim's Primitives API. Best of both worlds.
+
+**Minimal Refactoring**: Keep worldsim's scene system and API, swap implementation underneath. Existing scenes continue working.
+
+**Performance Focus**: All architectural decisions prioritize performance over flexibility (singletons, batching, dirty flags, memory arenas).
+
+**Files Updated:**
+- `/docs/status.md` - Added colonysim integration plan with 9 PRs, architectural decisions, task breakdown
+
+**Next Session:**
+Start PR 1 (Compatibility Analysis) - verify coordinate systems, test minimal integration, make rendering strategy decision.
 
 ### 2025-10-29 - Vector Graphics Validation Plan - Grass Blade Phases
 
