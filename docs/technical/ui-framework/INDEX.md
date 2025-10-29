@@ -16,7 +16,7 @@ This directory contains technical documentation for the UI framework in world-si
 
 ## Current Status
 
-**Implementation Phase**: Architecture complete, ready for implementation
+**Implementation Phase**: Colonysim UI components integration in progress
 
 **Completed**:
 - [x] Library options analysis
@@ -24,15 +24,20 @@ This directory contains technical documentation for the UI framework in world-si
 - [x] Rendering boundaries defined
 - [x] OpenGL integration strategy documented
 - [x] Production implementation guide created
+- [x] **Colonysim integration architecture analysis** ← NEW (2025-10-29)
+- [x] **Component storage patterns research** ← NEW (2025-10-29)
+- [x] **Rendering integration decision** - Use Primitives API ← NEW (2025-10-29)
 
 **In Progress**:
-- [ ] RmlUI backend implementation
-- [ ] Primitive API OpenGL implementation
+- [ ] **Porting colonysim UI components** (Layer, Shape, Button, TextInput) ← CURRENT FOCUS
+- [ ] RmlUI backend implementation (deferred - colonysim components first)
+- [ ] Primitive API OpenGL implementation (exists, needs colonysim adaptation)
 - [ ] Integration testing
 
 **Planned**:
 - [ ] Text rendering (SDF fonts with RmlUI)
 - [ ] Performance profiling and optimization
+- [ ] Potential optimization to value semantics (if profiling shows need)
 
 ## Documentation
 
@@ -69,6 +74,26 @@ This directory contains technical documentation for the UI framework in world-si
 - Unified primitive rendering layer
 - World-space vs screen-space UI
 - Complete render loop architecture
+- **NOTE**: Contains original analysis. See colonysim-integration-architecture.md for actual implementation plan.
+
+### Colonysim Integration (CURRENT PRIORITY)
+
+**[colonysim-integration-architecture.md](./colonysim-integration-architecture.md)** - **MUST READ** - Complete integration strategy
+- Four-layer rendering architecture (Components → Primitives → BatchRenderer → OpenGL)
+- Colonysim pattern analysis (shared_ptr in vectors)
+- Worldsim research pattern (value semantics)
+- **Pragmatic hybrid decision** - Start with shared_ptr, optimize later if needed
+- InputManager pattern (instance-based, not singleton)
+- Complete implementation plan and file organization
+- What we're porting vs what we're NOT doing
+- Adaptation examples (VectorGraphics → Primitives API)
+
+**Related Research**:
+- [Component Storage Patterns](/docs/research/component-storage-patterns.md) - Deep dive on memory patterns
+  - Pattern A (shared_ptr) vs Pattern B (value semantics) vs Pattern C (hybrid)
+  - Performance analysis and benchmarks from industry
+  - Why we chose Pattern A initially for UI components
+  - Future optimization paths
 
 ### Core Architecture
 

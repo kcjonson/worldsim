@@ -146,55 +146,69 @@ Use this template for all work items:
 **Tasks:**
 - [x] Compatibility Analysis ✅ COMPLETE (see development-log.md 2025-10-29)
 - [x] Font Rendering System ✅ COMPLETE
-- [ ] Style System ⏳ NEXT
-  - [ ] Port Base style class to libs/renderer/styles/
+- [x] Rendering Integration Decision ✅ COMPLETE (2025-10-29)
+  - [x] Analyzed colonysim vs worldsim rendering patterns
+  - [x] Researched memory patterns (shared_ptr vs value semantics)
+  - [x] Decision: Pragmatic hybrid - Port colonysim components to use Primitives API
+  - [x] Documented complete architecture in colonysim-integration-architecture.md
+  - [x] Created component-storage-patterns.md research doc
+
+**Phase 1: Port Components** (from colonysim-integration-architecture.md)
+- [ ] InputManager ⏳ NEXT (1-2 days)
+  - [ ] Create libs/engine/input/ library
+  - [ ] Port InputManager from colonysim
+  - [ ] Keep instance-based pattern (not singleton)
+  - [ ] Adapt GLFW callbacks to worldsim conventions
+  - [ ] Integration with Scene::HandleInput()
+- [ ] Style System (1 day)
+  - [ ] Create libs/renderer/styles/ library
+  - [ ] Port Base style class
   - [ ] Port Border style class
   - [ ] Port concrete style classes (Rectangle, Circle, Line, Text, Polygon)
   - [ ] Port style parameter structs
   - [ ] Create style demo scene
-  - [ ] Test shapes with different styles
-- [ ] Rendering Integration Decision
-  - [ ] Analyze coordinate system compatibility
-  - [ ] Make decision: Adopt VectorGraphics OR adapt to Primitives
-  - [ ] Implement chosen approach
-  - [ ] Verify existing scenes still work
-- [ ] Layer System
-  - [ ] Port CoordinateSystem utilities
-  - [ ] Port Layer hierarchy with z-ordering
-  - [ ] Implement parent-child management
-  - [ ] Implement WorldSpace/ScreenSpace projections
+- [ ] Layer System (2-3 days)
+  - [ ] Create libs/ui/layer/ library
+  - [ ] Port Layer class with shared_ptr storage
+  - [ ] Z-index sorting with dirty flag optimization
+  - [ ] Transform hierarchy support
+  - [ ] Update naming to worldsim conventions (PascalCase, m_ prefix)
   - [ ] Create layer demo (nested layers, z-ordering)
   - [ ] Test input event propagation
-- [ ] Shape System
+- [ ] Shape System (3-4 days)
+  - [ ] Create libs/ui/shapes/ library
   - [ ] Port Shape base class
-  - [ ] Port Rectangle, Circle, Line, Polygon shapes
-  - [ ] Port Text shape (uses FontRenderer)
+  - [ ] **CRITICAL**: Rewrite render() methods to call Primitives API
+  - [ ] Port Rectangle, Circle, Line shapes
+  - [ ] Adapt Text shape to use worldsim's FontRenderer
   - [ ] Create shapes demo
   - [ ] Test all shape types rendering
   - [ ] Test shapes nested in layers
-- [ ] Button Component
-  - [ ] Port Button class
-  - [ ] Implement state machine (normal/hover/pressed)
-  - [ ] Implement onClick callbacks
-  - [ ] Create button demo
-  - [ ] Test mouse interactions
-  - [ ] Test disabled state
-- [ ] TextInput Component
-  - [ ] Port Form/Text classes
-  - [ ] Implement focus management
-  - [ ] Implement cursor positioning and animation
-  - [ ] Implement text scrolling
-  - [ ] Create text input demo
-  - [ ] Test keyboard input
-  - [ ] Test focus switching
-- [ ] Polish & Integration
-  - [ ] Integrate memory arenas
-  - [ ] Profile draw calls
-  - [ ] Optimize batching if needed
-  - [ ] Abstract input handling
-  - [ ] Create comprehensive UI demo
-  - [ ] Update documentation
-  - [ ] Validate performance: <100 draw calls, 60 FPS
+- [ ] UI Components (3-4 days)
+  - [ ] Create libs/ui/components/ library
+  - [ ] Port Button (state machine, onClick callbacks)
+  - [ ] Port TextInput (cursor, focus, text editing)
+  - [ ] Adapt input handling to use InputManager (not direct GLFW)
+  - [ ] Use Primitives API for rendering
+  - [ ] Create button and text input demos
+  - [ ] Test mouse and keyboard interactions
+- [ ] CoordinateSystem (1-2 days)
+  - [ ] Create libs/renderer/coordinate_system/ library
+  - [ ] Port utility functions (percentWidth, percentHeight, etc.)
+  - [ ] DPI handling and projection matrix creation
+
+**Phase 2: Profile and Measure**
+- [ ] Measure performance characteristics
+  - [ ] Profile UI element count per frame
+  - [ ] Measure shared_ptr overhead (if any)
+  - [ ] Identify actual bottlenecks
+  - [ ] Verify 60 FPS with typical UI
+
+**Phase 3: Optimize If Needed** (only if profiling shows bottlenecks)
+- [ ] Consider value semantics optimization
+- [ ] Consider type-specific containers
+- [ ] Consider Structure of Arrays for hot paths
+- [ ] Consider object pooling
 
 ---
 

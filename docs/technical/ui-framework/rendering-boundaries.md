@@ -613,4 +613,74 @@ void Game::RenderFrame() {
    - RmlUI if you want CSS styling
    - Primitives if you want tight control
 
-Want me to create the primitive rendering API design as the next document?
+---
+
+## Appendix: Status After Colonysim Integration (2025-10-29)
+
+**This document contains the original architectural exploration** from 2025-10-26. The analysis and options presented here were valuable for understanding the design space, but the **actual implementation plan has been superseded** by colonysim integration research.
+
+### What Changed
+
+**Original question** (this document):
+> "Should we use RmlUI for everything, or custom rendering, or some hybrid?"
+
+**Actual decision** (colonysim integration):
+> **Port colonysim's proven UI components, adapt them to use worldsim's Primitives API**
+
+### Current Architecture (Decided)
+
+See **[colonysim-integration-architecture.md](./colonysim-integration-architecture.md)** for the complete plan.
+
+**Four-layer stack**:
+1. **Layer 4**: Colonysim components (Layer, Shape, Button, TextInput) - **Porting now**
+2. **Layer 3**: Primitives API - **Already exists** ✅
+3. **Layer 2**: BatchRenderer - **Already exists** ✅
+4. **Layer 1**: OpenGL - **Already exists** ✅
+
+**Key decisions**:
+- ✅ **Use colonysim's Layer hierarchy** (proven functional)
+- ✅ **Adapt components to Primitives API** (not VectorGraphics)
+- ✅ **Start with shared_ptr pattern** (optimize later if needed)
+- ✅ **RmlUI deferred** (colonysim components first)
+
+### What This Document Is Still Useful For
+
+✅ **Understanding the "two APIs for rectangles" problem** (still valid concern)
+✅ **Primitives API concept** (Layer 3 - implemented and used)
+✅ **Rendering boundaries** (world-space vs screen-space still applies)
+✅ **RmlUI integration strategy** (for future, when we add complex panels)
+
+### What's No Longer Relevant
+
+❌ **Options A/B/C/D comparison** - Superseded by colonysim port decision
+❌ **"Which system for health bars?"** - Answer: Colonysim components → Primitives API
+❌ **"Build custom or wrap library?"** - Answer: Port colonysim (proven hybrid)
+
+### Migration Path
+
+**Original plan** (this document):
+1. Primitives API
+2. RmlUI backend
+3. Game rendering
+4. World-space UI
+
+**Actual plan** (colonysim integration):
+1. ✅ Font Rendering (complete)
+2. **InputManager** (next)
+3. **Style System** (next)
+4. **Layer + Shape** (next)
+5. **Button + TextInput** (next)
+6. RmlUI (later, for complex panels like inventory)
+
+### For Historical Context
+
+This document captured the architectural thinking process before we had colonysim as a reference implementation. The **hybrid approach with unified Primitives layer** (Option C) was the right direction and **is exactly what we're implementing** via colonysim integration.
+
+The difference: We don't need to design and build Layer 4 from scratch - we can port and adapt colonysim's proven components.
+
+---
+
+## Revision History
+
+- 2025-10-26: Initial rendering boundaries analysis
+- 2025-10-29: Added appendix noting colonysim integration supersedes original options
