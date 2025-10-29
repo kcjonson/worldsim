@@ -3,6 +3,7 @@
 #include "font/font_renderer.h"
 #include <iostream>
 #include <algorithm>
+#include <cstdlib>
 
 namespace UI {
 
@@ -21,6 +22,9 @@ FontRenderer::~FontRenderer() {
 			glDeleteTextures(1, &character.textureID);
 		}
 	}
+	if (m_face) {
+		FT_Done_Face(m_face);
+	}
 	if (m_library) {
 		FT_Done_FreeType(m_library);
 	}
@@ -31,22 +35,33 @@ bool FontRenderer::Initialize() {
 
 	// Initialize FreeType
 	if (FT_Init_FreeType(&m_library)) {
-		std::cerr << "ERROR::FREETYPE: Could not init FreeType Library" << std::endl;
-		return false;
+		std::cerr << "FATAL ERROR: Could not init FreeType Library" << std::endl;
+		std::exit(1);
 	}
 	std::cout << "FreeType initialized successfully" << std::endl;
 
 	// Load font (hardcoded for now - can be made configurable later)
 	if (!LoadFont("fonts/Roboto-Regular.ttf")) {
-		std::cerr << "Failed to load font" << std::endl;
-		return false;
+		std::cerr << "FATAL ERROR: Failed to load font" << std::endl;
+		FT_Done_FreeType(m_library);
+		m_library = nullptr;
+		std::exit(1);
 	}
 	std::cout << "Font loaded successfully" << std::endl;
 
 	// Initialize the shader
 	if (!m_shader.LoadFromFile("text.vert", "text.frag")) {
-		std::cerr << "Failed to load text shaders" << std::endl;
-		return false;
+		std::cerr << "FATAL ERROR: Failed to load text shaders" << std::endl;
+		// Clean up textures created during LoadFont
+		for (auto& [c, character] : m_characters) {
+			if (character.textureID) {
+				glDeleteTextures(1, &character.textureID);
+			}
+		}
+		m_characters.clear();
+		FT_Done_FreeType(m_library);
+		m_library = nullptr;
+		std::exit(1);
 	}
 	std::cout << "Shaders compiled successfully" << std::endl;
 
