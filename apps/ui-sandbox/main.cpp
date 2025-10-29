@@ -390,6 +390,9 @@ int main(int argc, char* argv[]) {
 			}
 		}
 
+		// Begin frame for all rendering (scene + UI)
+		Renderer::Primitives::BeginFrame();
+
 		// Update and render current scene (skip if paused)
 		if (!isPaused) {
 			engine::SceneManager::Get().Update(dt);
@@ -398,6 +401,9 @@ int main(int argc, char* argv[]) {
 
 		// Render navigation menu on top (if enabled)
 		RenderNavigationMenu();
+
+		// End frame - flush all queued primitives
+		Renderer::Primitives::EndFrame();
 
 		// Get rendering stats
 		auto renderStats = Renderer::Primitives::GetStats();

@@ -5,6 +5,7 @@ add_executable(ui-sandbox
     scenes/handle_scene.cpp
     scenes/vector_star_scene.cpp
     scenes/vector_perf_scene.cpp
+    scenes/font_test_scene.cpp
 )
 
 target_include_directories(ui-sandbox

@@ -202,6 +202,11 @@ void BatchRenderer::SetViewport(int width, int height) {
 	m_viewportHeight = height;
 }
 
+void BatchRenderer::GetViewport(int& width, int& height) const {
+	width = m_viewportWidth;
+	height = m_viewportHeight;
+}
+
 BatchRenderer::RenderStats BatchRenderer::GetStats() const {
 	RenderStats stats;
 	stats.drawCalls = static_cast<uint32_t>(m_drawCallCount);

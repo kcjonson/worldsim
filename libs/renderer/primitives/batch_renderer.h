@@ -46,6 +46,9 @@ public:
 	// Set viewport dimensions for projection matrix
 	void SetViewport(int width, int height);
 
+	// Get current viewport dimensions
+	void GetViewport(int& width, int& height) const;
+
 	// Rendering statistics structure
 	struct RenderStats {
 		uint32_t drawCalls;

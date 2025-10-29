@@ -1,5 +1,6 @@
 add_library(ui
     core/placeholder.cpp
+    font/font_renderer.cpp
 )
 
 target_include_directories(ui
@@ -10,6 +11,9 @@ target_include_directories(ui
 
 target_compile_features(ui PUBLIC cxx_std_20)
 
+# Find FreeType
+find_package(Freetype REQUIRED)
+
 # Link dependencies
 target_link_libraries(ui
     PUBLIC
@@ -17,6 +21,7 @@ target_link_libraries(ui
         renderer
         httplib::httplib
         nlohmann_json::nlohmann_json
+        Freetype::Freetype
 )
 
 # Tests
