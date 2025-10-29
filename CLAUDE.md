@@ -140,6 +140,7 @@ When you make code changes and need to verify visually:
 | When You Need... | Check... |
 |------------------|----------|
 | Current project status | `/docs/status.md` |
+| Detailed implementation notes | `/docs/development-log.md` |
 | Game design & requirements | `/docs/design/INDEX.md` |
 | How to add a new library | `/docs/workflows.md` |
 | Project structure | `/docs/technical/monorepo-structure.md` |
@@ -149,11 +150,23 @@ When you make code changes and need to verify visually:
 
 ## After Significant Work
 
-Update `/docs/status.md` with:
-- Completed tasks
-- New decisions made
-- Blockers encountered
-- Development log entry
+### Update `/docs/status.md`:
+- Mark completed tasks with `[x]`
+- Add high-level architectural decisions to "Recent Decisions" section ONLY if they affect current/future work
+- Update "Blockers & Issues" if any
+- Update "Last Updated" timestamp
+- Keep it brief - this is a snapshot, not history
+
+### Add entry to `/docs/development-log.md`:
+Add a new timestamped section (newest at top) with:
+- **Date and title** (`### 2025-MM-DD - Title`)
+- **What was accomplished** - Brief summary
+- **Files created/modified** - List of changed files
+- **Technical details** - Implementation notes, decisions made
+- **Lessons learned** - What worked, what didn't
+- **Next steps** - What comes next
+
+**IMPORTANT**: Detailed implementation decisions, technical rationale, and design choices go in development-log.md, NOT status.md. The development log is the detailed historical record; status.md is only the current snapshot of project state.
 
 
 ### Workflow: After Writing Code

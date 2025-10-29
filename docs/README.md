@@ -21,6 +21,7 @@ Project documentation for World-Sim organized by purpose and audience.
 docs/
 ├── README.md                    # This file
 ├── status.md                    # Current project status (START HERE)
+├── development-log.md           # Detailed implementation history
 ├── setup.md                     # Development environment setup
 ├── workflows.md                 # Common development tasks
 │
@@ -50,15 +51,22 @@ docs/
 
 ### status.md
 **Read this first** to understand where we are in development:
-- Current sprint goals
-- Completed work
-- Active decisions
-- Known blockers
-- Development log
-- use checkboxes
-- do not put code or decisions here, this is purely a task list
+- Current sprint goals and active tasks (use checkboxes)
+- Recent architectural decisions
+- Known blockers and issues
+- DO NOT put detailed implementation notes here - use development-log.md instead
+- This is a snapshot of current project state, not a historical record
 
 **Update this after significant work.**
+
+### development-log.md
+**Detailed historical record** of implementation work:
+- Timestamped entries (newest first) documenting what was built
+- Files created/modified
+- Technical implementation details
+- Lessons learned and design decisions
+- Add a new entry after completing significant work (features, refactors, major fixes)
+- This is the historical record; status.md is the current snapshot
 
 ### workflows.md
 Common development tasks:
@@ -184,9 +192,9 @@ To clarify the distinction:
 
 ### When Completing Work
 ```
-1. Update implementation status → technical/{system}.md
-2. Add code references         → technical/{system}.md
-3. Update status log           → status.md
+1. Add detailed entry          → development-log.md (timestamped, newest first)
+2. Update current status       → status.md (mark tasks complete, update timestamp)
+3. Update implementation docs  → technical/{system}.md (if needed)
 4. Update project README       → If user-facing change
 ```
 
