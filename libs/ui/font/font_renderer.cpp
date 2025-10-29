@@ -1,7 +1,7 @@
 // Font rendering implementation
 
 #include "font/font_renderer.h"
-#include <iostream>
+#include "utils/log.h"
 #include <algorithm>
 #include <cstdlib>
 
@@ -31,27 +31,27 @@ FontRenderer::~FontRenderer() {
 }
 
 bool FontRenderer::Initialize() {
-	std::cout << "Initializing FontRenderer..." << std::endl;
+	LOG_INFO(UI, "Initializing FontRenderer...");
 
 	// Initialize FreeType
 	if (FT_Init_FreeType(&m_library)) {
-		std::cerr << "FATAL ERROR: Could not init FreeType Library" << std::endl;
+		LOG_ERROR(UI, "FATAL ERROR: Could not init FreeType Library");
 		std::exit(1);
 	}
-	std::cout << "FreeType initialized successfully" << std::endl;
+	LOG_INFO(UI, "FreeType initialized successfully");
 
 	// Load font (hardcoded for now - can be made configurable later)
 	if (!LoadFont("fonts/Roboto-Regular.ttf")) {
-		std::cerr << "FATAL ERROR: Failed to load font" << std::endl;
+		LOG_ERROR(UI, "FATAL ERROR: Failed to load font");
 		FT_Done_FreeType(m_library);
 		m_library = nullptr;
 		std::exit(1);
 	}
-	std::cout << "Font loaded successfully" << std::endl;
+	LOG_INFO(UI, "Font loaded successfully");
 
 	// Initialize the shader
 	if (!m_shader.LoadFromFile("text.vert", "text.frag")) {
-		std::cerr << "FATAL ERROR: Failed to load text shaders" << std::endl;
+		LOG_ERROR(UI, "FATAL ERROR: Failed to load text shaders");
 		// Clean up textures created during LoadFont
 		for (auto& [c, character] : m_characters) {
 			if (character.textureID) {
@@ -63,7 +63,7 @@ bool FontRenderer::Initialize() {
 		m_library = nullptr;
 		std::exit(1);
 	}
-	std::cout << "Shaders compiled successfully" << std::endl;
+	LOG_INFO(UI, "Shaders compiled successfully");
 
 	// Setup buffers
 	glGenVertexArrays(1, &m_vao);
@@ -76,21 +76,21 @@ bool FontRenderer::Initialize() {
 	glBindBuffer(GL_ARRAY_BUFFER, 0);
 	glBindVertexArray(0);
 
-	std::cout << "FontRenderer initialization complete" << std::endl;
+	LOG_INFO(UI, "FontRenderer initialization complete");
 	return true;
 }
 
 bool FontRenderer::LoadFont(const std::string& fontPath) {
-	std::cout << "Loading font from: " << fontPath << std::endl;
+	LOG_INFO(UI, "Loading font from: %s", fontPath.c_str());
 
 	if (FT_New_Face(m_library, fontPath.c_str(), 0, &m_face)) {
-		std::cerr << "ERROR::FREETYPE: Failed to load font" << std::endl;
+		LOG_ERROR(UI, "Failed to load font from %s", fontPath.c_str());
 		return false;
 	}
 
 	// Set base font size to 16px
 	FT_Set_Pixel_Sizes(m_face, 0, 16);
-	std::cout << "Font face loaded successfully" << std::endl;
+	LOG_INFO(UI, "Font face loaded successfully");
 
 	// Store the ascender for the base font size
 	// face->size->metrics.ascender is in 26.6 fixed point format
@@ -102,7 +102,7 @@ bool FontRenderer::LoadFont(const std::string& fontPath) {
 	glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
 	for (unsigned char c = 0; c < 128; c++) {
 		if (FT_Load_Char(m_face, c, FT_LOAD_RENDER)) {
-			std::cerr << "ERROR::FREETYPE: Failed to load Glyph " << static_cast<int>(c) << std::endl;
+			LOG_WARNING(UI, "Failed to load glyph for character %d", static_cast<int>(c));
 			continue;
 		}
 
@@ -138,7 +138,7 @@ bool FontRenderer::LoadFont(const std::string& fontPath) {
 	FT_Done_Face(m_face); // After this, m_face is no longer valid for metrics
 	m_face = nullptr;
 
-	std::cout << "Loaded " << m_characters.size() << " characters" << std::endl;
+	LOG_INFO(UI, "Loaded %zu characters", m_characters.size());
 	return true;
 }
 

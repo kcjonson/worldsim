@@ -5,10 +5,10 @@
 #include <scene/scene_manager.h>
 #include <font/font_renderer.h>
 #include <primitives/primitives.h>
+#include <utils/log.h>
 #include <GL/glew.h>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
-#include <iostream>
 #include <memory>
 
 namespace {
@@ -16,12 +16,12 @@ namespace {
 class FontTestScene : public engine::IScene {
 public:
 	void OnEnter() override {
-		std::cout << "FontTestScene::OnEnter()" << std::endl;
+		LOG_INFO(UI, "FontTestScene::OnEnter()");
 
 		// Initialize font renderer
 		m_fontRenderer = std::make_unique<UI::FontRenderer>();
 		if (!m_fontRenderer->Initialize()) {
-			std::cerr << "Failed to initialize FontRenderer!" << std::endl;
+			LOG_ERROR(UI, "Failed to initialize FontRenderer!");
 			return;
 		}
 
@@ -36,7 +36,7 @@ public:
 		);
 		m_fontRenderer->SetProjectionMatrix(projection);
 
-		std::cout << "FontRenderer initialized successfully (" << viewportWidth << "x" << viewportHeight << ")" << std::endl;
+		LOG_INFO(UI, "FontRenderer initialized successfully (%dx%d)", viewportWidth, viewportHeight);
 	}
 
 	void Update(float dt) override {
@@ -69,7 +69,7 @@ public:
 	}
 
 	void OnExit() override {
-		std::cout << "FontTestScene::OnExit()" << std::endl;
+		LOG_INFO(UI, "FontTestScene::OnExit()");
 		m_fontRenderer.reset();
 	}
 
