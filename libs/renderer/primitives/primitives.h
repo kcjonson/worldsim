@@ -37,6 +37,9 @@ void EndFrame(); // Flushes all batches
 // Set viewport dimensions for projection matrix
 void SetViewport(int width, int height);
 
+// Get current viewport dimensions
+void GetViewport(int& width, int& height);
+
 // --- Drawing Functions ---
 
 // Arguments for DrawRect

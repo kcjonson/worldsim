@@ -54,6 +54,15 @@ void SetViewport(int width, int height) {
 	}
 }
 
+void GetViewport(int& width, int& height) {
+	if (s_batchRenderer) {
+		s_batchRenderer->GetViewport(width, height);
+	} else {
+		width = 800;
+		height = 600;
+	}
+}
+
 // --- Drawing Functions ---
 
 void DrawRect(const RectArgs& args) {

@@ -125,6 +125,16 @@ World-sim is a C++20 game with 3D procedural world generation, 2D tile-based gam
 - Screenshot: `curl http://127.0.0.1:8081/api/ui/screenshot > screenshot.png`
 - If port in use: Sandbox exits with message to kill existing instance
 
+**CRITICAL: Testing Visual Changes**
+When you make code changes and need to verify visually:
+1. **Kill old instance**: `curl "http://127.0.0.1:8081/api/control?action=exit"`
+2. **Rebuild**: `cmake --build build --target ui-sandbox -j8`
+3. **Launch new instance**: `cd build/apps/ui-sandbox && ./ui-sandbox --scene=<scene> --http-port=8081 &`
+4. **Wait for startup**: `sleep 3`
+5. **Take screenshot**: `curl -s http://127.0.0.1:8081/api/ui/screenshot > /tmp/screenshot.png`
+
+**NEVER skip the rebuild step!** An old instance will not reflect your changes.
+
 ## Quick Reference
 
 | When You Need... | Check... |
