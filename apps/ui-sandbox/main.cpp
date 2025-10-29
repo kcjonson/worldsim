@@ -374,8 +374,11 @@ int main(int argc, char* argv[]) {
 						LOG_INFO(UI, "Reload scene requested via control endpoint");
 						std::string currentScene = engine::SceneManager::Get().GetCurrentSceneName();
 						if (!currentScene.empty()) {
-							engine::SceneManager::Get().SwitchTo(currentScene);
-							LOG_INFO(UI, "Reloaded scene: %s", currentScene.c_str());
+							if (engine::SceneManager::Get().SwitchTo(currentScene)) {
+								LOG_INFO(UI, "Reloaded scene: %s", currentScene.c_str());
+							} else {
+								LOG_ERROR(UI, "Failed to reload scene: %s", currentScene.c_str());
+							}
 						}
 						debugServer.ClearControlAction();
 						break;
