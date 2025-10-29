@@ -41,6 +41,10 @@ class VectorPerfScene : public engine::IScene {
 		LOG_INFO(UI, "Total vertices: %zu", CalculateTotalVertices());
 	}
 
+	void HandleInput(float dt) override {
+		// No input handling needed - performance test scene
+	}
+
 	void Update(float dt) override {
 		// Update FPS counter
 		m_frameCount++;

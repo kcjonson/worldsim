@@ -43,6 +43,12 @@ bool SceneManager::SwitchTo(const std::string& name) {
 	return true;
 }
 
+void SceneManager::HandleInput(float dt) {
+	if (m_currentScene) {
+		m_currentScene->HandleInput(dt);
+	}
+}
+
 void SceneManager::Update(float dt) {
 	if (m_currentScene) {
 		m_currentScene->Update(dt);

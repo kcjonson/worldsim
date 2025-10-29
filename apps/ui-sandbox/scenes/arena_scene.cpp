@@ -38,6 +38,10 @@ public:
 		LOG_INFO(UI, "");
 	}
 
+	void HandleInput(float dt) override {
+		// No input handling needed - test scene
+	}
+
 	void Update(float dt) override {
 		// No update logic needed - tests run on enter
 	}

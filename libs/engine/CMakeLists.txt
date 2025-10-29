@@ -1,5 +1,5 @@
 add_library(engine
-    application/placeholder.cpp
+    application/application.cpp
     scene/scene_manager.cpp
 )
 
@@ -18,6 +18,7 @@ target_link_libraries(engine
         renderer
         ui
         nlohmann_json::nlohmann_json
+        glfw
 )
 
 # Tests

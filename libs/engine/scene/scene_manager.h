@@ -44,6 +44,10 @@ public:
 	/// @return true if switch succeeded, false if scene not found
 	bool SwitchTo(const std::string& name);
 
+	/// @brief Handle input for current scene
+	/// @param dt Delta time in seconds
+	void HandleInput(float dt);
+
 	/// @brief Update current scene
 	/// @param dt Delta time in seconds
 	void Update(float dt);
