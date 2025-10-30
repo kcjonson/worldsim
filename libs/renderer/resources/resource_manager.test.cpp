@@ -1,6 +1,6 @@
-#include <gtest/gtest.h>
-#include "resource_handle.h"
 #include "resource_manager.h"
+#include "resource_handle.h"
+#include <gtest/gtest.h>
 
 using namespace renderer;
 
@@ -65,8 +65,8 @@ TEST(ResourceHandleTests, ExtractIndexAndGeneration) {
 
 TEST(ResourceHandleTests, TypeAliases) {
 	// Verify type aliases compile and behave correctly
-	TextureHandle texHandle = ResourceHandle::Make(1, 0);
-	MeshHandle meshHandle = ResourceHandle::Make(2, 0);
+	TextureHandle  texHandle = ResourceHandle::Make(1, 0);
+	MeshHandle	   meshHandle = ResourceHandle::Make(2, 0);
 	SVGAssetHandle svgHandle = ResourceHandle::Make(3, 0);
 
 	EXPECT_TRUE(texHandle.IsValid());
@@ -84,7 +84,7 @@ TEST(ResourceHandleTests, TypeAliases) {
 
 // Simple test resource type
 struct TestResource {
-	int value = 0;
+	int			value = 0;
 	std::string name;
 };
 
@@ -119,7 +119,7 @@ TEST(ResourceManagerTests, GetResource) {
 	ResourceManager<TestResource> manager;
 
 	ResourceHandle handle = manager.Allocate();
-	TestResource* resource = manager.Get(handle);
+	TestResource*  resource = manager.Get(handle);
 
 	ASSERT_NE(resource, nullptr);
 
@@ -138,7 +138,7 @@ TEST(ResourceManagerTests, GetInvalidHandle) {
 	ResourceManager<TestResource> manager;
 
 	ResourceHandle invalid = ResourceHandle::Invalid();
-	TestResource* resource = manager.Get(invalid);
+	TestResource*  resource = manager.Get(invalid);
 
 	EXPECT_EQ(resource, nullptr);
 }
@@ -148,7 +148,7 @@ TEST(ResourceManagerTests, GetOutOfBoundsHandle) {
 
 	// Create handle with index beyond allocated resources
 	ResourceHandle oob = ResourceHandle::Make(100, 0);
-	TestResource* resource = manager.Get(oob);
+	TestResource*  resource = manager.Get(oob);
 
 	EXPECT_EQ(resource, nullptr);
 }
@@ -157,7 +157,7 @@ TEST(ResourceManagerTests, FreeResource) {
 	ResourceManager<TestResource> manager;
 
 	ResourceHandle handle = manager.Allocate();
-	TestResource* resource = manager.Get(handle);
+	TestResource*  resource = manager.Get(handle);
 	ASSERT_NE(resource, nullptr);
 
 	// Free the resource
@@ -179,7 +179,7 @@ TEST(ResourceManagerTests, GenerationIncrementsOnFree) {
 	// Allocate again in same slot
 	ResourceHandle handle2 = manager.Allocate();
 	EXPECT_EQ(handle2.GetIndex(), handle.GetIndex()); // Same index
-	EXPECT_EQ(handle2.GetGeneration(), 1); // Generation incremented
+	EXPECT_EQ(handle2.GetGeneration(), 1);			  // Generation incremented
 
 	// Old handle should be invalid
 	EXPECT_EQ(manager.Get(handle), nullptr);
@@ -201,7 +201,7 @@ TEST(ResourceManagerTests, ReuseFreedSlots) {
 	// Allocate new resource - should reuse freed slot
 	ResourceHandle h4 = manager.Allocate();
 	EXPECT_EQ(h4.GetIndex(), h2.GetIndex()); // Same index as freed slot
-	EXPECT_EQ(h4.GetGeneration(), 1); // Generation incremented
+	EXPECT_EQ(h4.GetGeneration(), 1);		 // Generation incremented
 
 	// Total count should still be 3 (reused slot)
 	EXPECT_EQ(manager.GetCount(), 3);
@@ -297,12 +297,12 @@ TEST(ResourceManagerTests, ConstGetResource) {
 	ResourceManager<TestResource> manager;
 
 	ResourceHandle handle = manager.Allocate();
-	TestResource* resource = manager.Get(handle);
+	TestResource*  resource = manager.Get(handle);
 	resource->value = 42;
 
 	// Test const version
 	const ResourceManager<TestResource>& constManager = manager;
-	const TestResource* constResource = constManager.Get(handle);
+	const TestResource*					 constResource = constManager.Get(handle);
 
 	ASSERT_NE(constResource, nullptr);
 	EXPECT_EQ(constResource->value, 42);

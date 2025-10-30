@@ -15,150 +15,139 @@
 //
 // IMPORTANT: Arenas do NOT call destructors! Only use for POD types or manage cleanup manually.
 
+#include <cassert>
 #include <cstdint>
 #include <cstdlib>
-#include <cassert>
 
 namespace foundation {
 
-// Core linear allocator
-class Arena {
-public:
-	explicit Arena(size_t size)
-		: m_size(size)
-		, m_used(0)
-	{
-		m_buffer = static_cast<uint8_t*>(malloc(size));
-		assert(m_buffer && "Arena allocation failed: out of memory");
-	}
-
-	~Arena() {
-		free(m_buffer);
-	}
-
-	// Allocate memory from arena with alignment
-	void* Allocate(size_t size, size_t alignment = 8) {
-		// Align pointer
-		size_t aligned = (m_used + alignment - 1) & ~(alignment - 1);
-
-		// Check capacity
-		if (aligned + size > m_size) {
-			assert(false && "Arena out of memory");
-			return nullptr;
+	// Core linear allocator
+	class Arena {
+	  public:
+		explicit Arena(size_t size)
+			: m_size(size),
+			  m_used(0) {
+			m_buffer = static_cast<uint8_t*>(malloc(size));
+			assert(m_buffer && "Arena allocation failed: out of memory");
 		}
 
-		void* ptr = m_buffer + aligned;
-		m_used = aligned + size;
-		return ptr;
-	}
+		~Arena() { free(m_buffer); }
 
-	// Type-safe allocate single object
-	template<typename T>
-	T* Allocate() {
-		return static_cast<T*>(Allocate(sizeof(T), alignof(T)));
-	}
+		// Allocate memory from arena with alignment
+		void* Allocate(size_t size, size_t alignment = 8) {
+			// Align pointer
+			size_t aligned = (m_used + alignment - 1) & ~(alignment - 1);
 
-	// Type-safe allocate array
-	template<typename T>
-	T* AllocateArray(size_t count) {
-		return static_cast<T*>(Allocate(sizeof(T) * count, alignof(T)));
-	}
+			// Check capacity
+			if (aligned + size > m_size) {
+				assert(false && "Arena out of memory");
+				return nullptr;
+			}
 
-	// Reset arena (free all at once)
-	void Reset() {
-		m_used = 0;
-	}
+			void* ptr = m_buffer + aligned;
+			m_used = aligned + size;
+			return ptr;
+		}
 
-	// Restore arena to a previous checkpoint
-	void RestoreCheckpoint(size_t checkpoint) {
-		assert(checkpoint <= m_used && "Invalid checkpoint");
-		m_used = checkpoint;
-	}
+		// Type-safe allocate single object
+		template <typename T>
+		T* Allocate() {
+			return static_cast<T*>(Allocate(sizeof(T), alignof(T)));
+		}
 
-	// Get current usage
-	size_t GetUsed() const { return m_used; }
-	size_t GetSize() const { return m_size; }
-	size_t GetRemaining() const { return m_size - m_used; }
+		// Type-safe allocate array
+		template <typename T>
+		T* AllocateArray(size_t count) {
+			return static_cast<T*>(Allocate(sizeof(T) * count, alignof(T)));
+		}
 
-private:
-	uint8_t* m_buffer;
-	size_t   m_size;
-	size_t   m_used;
+		// Reset arena (free all at once)
+		void Reset() { m_used = 0; }
 
-	// Non-copyable
-	Arena(const Arena&) = delete;
-	Arena& operator=(const Arena&) = delete;
-};
+		// Restore arena to a previous checkpoint
+		void RestoreCheckpoint(size_t checkpoint) {
+			assert(checkpoint <= m_used && "Invalid checkpoint");
+			m_used = checkpoint;
+		}
 
-// Frame arena - designed for per-frame temporary data
-// Resets at the end of each frame
-class FrameArena {
-public:
-	explicit FrameArena(size_t size) : m_arena(size) {}
+		// Get current usage
+		size_t GetUsed() const { return m_used; }
+		size_t GetSize() const { return m_size; }
+		size_t GetRemaining() const { return m_size - m_used; }
 
-	template<typename T>
-	T* Allocate() {
-		return m_arena.Allocate<T>();
-	}
+	  private:
+		uint8_t* m_buffer;
+		size_t	 m_size;
+		size_t	 m_used;
 
-	template<typename T>
-	T* AllocateArray(size_t count) {
-		return m_arena.AllocateArray<T>(count);
-	}
+		// Non-copyable
+		Arena(const Arena&) = delete;
+		Arena& operator=(const Arena&) = delete;
+	};
 
-	void* Allocate(size_t size, size_t alignment = 8) {
-		return m_arena.Allocate(size, alignment);
-	}
+	// Frame arena - designed for per-frame temporary data
+	// Resets at the end of each frame
+	class FrameArena {
+	  public:
+		explicit FrameArena(size_t size)
+			: m_arena(size) {}
 
-	// Reset at end of frame
-	void ResetFrame() {
-		m_arena.Reset();
-	}
+		template <typename T>
+		T* Allocate() {
+			return m_arena.Allocate<T>();
+		}
 
-	// Get current usage
-	size_t GetUsed() const { return m_arena.GetUsed(); }
-	size_t GetSize() const { return m_arena.GetSize(); }
-	size_t GetRemaining() const { return m_arena.GetRemaining(); }
+		template <typename T>
+		T* AllocateArray(size_t count) {
+			return m_arena.AllocateArray<T>(count);
+		}
 
-private:
-	Arena m_arena;
-};
+		void* Allocate(size_t size, size_t alignment = 8) { return m_arena.Allocate(size, alignment); }
 
-// Scoped arena - RAII wrapper that resets arena on destruction
-// Useful for temporary allocations within a scope
-class ScopedArena {
-public:
-	explicit ScopedArena(Arena& arena)
-		: m_arena(arena)
-		, m_checkpoint(arena.GetUsed())
-	{}
+		// Reset at end of frame
+		void ResetFrame() { m_arena.Reset(); }
 
-	~ScopedArena() {
-		// Restore to checkpoint (undo all allocations made within this scope)
-		m_arena.RestoreCheckpoint(m_checkpoint);
-	}
+		// Get current usage
+		size_t GetUsed() const { return m_arena.GetUsed(); }
+		size_t GetSize() const { return m_arena.GetSize(); }
+		size_t GetRemaining() const { return m_arena.GetRemaining(); }
 
-	template<typename T>
-	T* Allocate() {
-		return m_arena.Allocate<T>();
-	}
+	  private:
+		Arena m_arena;
+	};
 
-	template<typename T>
-	T* AllocateArray(size_t count) {
-		return m_arena.AllocateArray<T>(count);
-	}
+	// Scoped arena - RAII wrapper that resets arena on destruction
+	// Useful for temporary allocations within a scope
+	class ScopedArena {
+	  public:
+		explicit ScopedArena(Arena& arena)
+			: m_arena(arena),
+			  m_checkpoint(arena.GetUsed()) {}
 
-	void* Allocate(size_t size, size_t alignment = 8) {
-		return m_arena.Allocate(size, alignment);
-	}
+		~ScopedArena() {
+			// Restore to checkpoint (undo all allocations made within this scope)
+			m_arena.RestoreCheckpoint(m_checkpoint);
+		}
 
-private:
-	Arena& m_arena;
-	size_t m_checkpoint;
+		template <typename T>
+		T* Allocate() {
+			return m_arena.Allocate<T>();
+		}
 
-	// Non-copyable
-	ScopedArena(const ScopedArena&) = delete;
-	ScopedArena& operator=(const ScopedArena&) = delete;
-};
+		template <typename T>
+		T* AllocateArray(size_t count) {
+			return m_arena.AllocateArray<T>(count);
+		}
+
+		void* Allocate(size_t size, size_t alignment = 8) { return m_arena.Allocate(size, alignment); }
+
+	  private:
+		Arena& m_arena;
+		size_t m_checkpoint;
+
+		// Non-copyable
+		ScopedArena(const ScopedArena&) = delete;
+		ScopedArena& operator=(const ScopedArena&) = delete;
+	};
 
 } // namespace foundation

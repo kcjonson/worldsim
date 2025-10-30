@@ -5,13 +5,13 @@
 
 namespace Demo {
 
-// Initialize the demo (called once at startup)
-void Init();
+	// Initialize the demo (called once at startup)
+	void Init();
 
-// Render the demo frame
-void Render();
+	// Render the demo frame
+	void Render();
 
-// Cleanup demo resources
-void Shutdown();
+	// Cleanup demo resources
+	void Shutdown();
 
 } // namespace Demo

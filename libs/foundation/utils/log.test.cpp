@@ -1,5 +1,5 @@
-#include <gtest/gtest.h>
 #include "log.h"
+#include <gtest/gtest.h>
 
 using namespace foundation;
 
@@ -14,8 +14,7 @@ TEST(LoggerTests, InitializeAndShutdown) {
 
 	// Verify that we can get levels for all categories
 	LogLevel level = Logger::GetLevel(LogCategory::Renderer);
-	EXPECT_TRUE(level == LogLevel::Debug || level == LogLevel::Info ||
-	            level == LogLevel::Warning || level == LogLevel::Error);
+	EXPECT_TRUE(level == LogLevel::Debug || level == LogLevel::Info || level == LogLevel::Warning || level == LogLevel::Error);
 
 	Logger::Shutdown();
 
@@ -31,8 +30,7 @@ TEST(LoggerTests, MultipleInitializeCalls) {
 	Logger::Initialize();
 
 	LogLevel level = Logger::GetLevel(LogCategory::Game);
-	EXPECT_TRUE(level == LogLevel::Debug || level == LogLevel::Info ||
-	            level == LogLevel::Warning || level == LogLevel::Error);
+	EXPECT_TRUE(level == LogLevel::Debug || level == LogLevel::Info || level == LogLevel::Warning || level == LogLevel::Error);
 
 	Logger::Shutdown();
 }
