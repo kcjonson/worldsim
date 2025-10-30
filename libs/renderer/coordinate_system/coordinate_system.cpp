@@ -85,9 +85,10 @@ namespace Renderer {
 	}
 
 	void CoordinateSystem::UpdateWindowSize(int width, int height) {
-		// Window size is tracked by GLFW, nothing to store here
-		// This method exists for API compatibility
-		// Mark pixel ratio as dirty so it gets recalculated
+		// NOTE: The width and height parameters are ignored.
+		// Window size is tracked internally by GLFW, so this method does not update or validate the window size.
+		// This method exists only for API compatibility with other systems that may expect such a function.
+		// Mark pixel ratio as dirty so it gets recalculated on next access.
 		m_pixelRatioDirty = true;
 	}
 
