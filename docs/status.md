@@ -289,13 +289,16 @@ Use this template for all work items:
   - [ ] Shader compilation tests (mock GL context)
   - [ ] Vertex buffer management tests
   - [x] Resource handle tests (ResourceHandle, ResourceManager) ✅ 25 tests passing
-- [ ] GitHub Actions CI/CD Integration
-  - [ ] Create .github/workflows/tests.yml
-  - [ ] Configure: trigger on PRs and pushes to main
-  - [ ] Build project with BUILD_TESTING=ON
-  - [ ] Run all tests via CTest
-  - [ ] Upload test results as artifacts
-  - [ ] Configure PR to fail if tests fail
+- [x] GitHub Actions CI/CD Integration ✅ COMPLETE
+  - [x] Created three separate workflow files (build.yml, code-quality.yml, tests.yml)
+  - [x] Build workflow: validates Release builds on Ubuntu
+  - [x] Code quality workflow: clang-format and clang-tidy checks
+  - [x] Tests workflow: runs CTest with BUILD_TESTING=ON, excludes benchmarks
+  - [x] All workflows trigger on PRs and pushes to main
+  - [x] Test results uploaded as artifacts
+  - [x] PRs fail if any check fails
+  - [x] Environment matched to local setup (Unix Makefiles, no Ninja)
+  - [x] All X11 dependencies configured for Ubuntu (libxmu-dev, libxi-dev, libgl-dev, libxrandr-dev, libxinerama-dev, libxcursor-dev, libx11-dev)
 - [ ] Documentation
   - [ ] Create testing-guidelines.md (patterns, conventions, mocking)
   - [ ] Update README.md with testing section
