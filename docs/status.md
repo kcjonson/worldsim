@@ -254,20 +254,21 @@ Use this template for all work items:
 **Status:** in progress
 
 **Tasks:**
-- [ ] Framework Research & Selection
+- [x] Framework Research & Selection
   - [x] Write research document comparing frameworks (cpp-test-framework-research.md)
   - [x] Create technical specification (unit-testing-strategy.md)
-  - [ ] Get approval on framework choice (Doctest)
-- [ ] Test Infrastructure Setup
-  - [ ] Add chosen framework to vcpkg.json
-  - [ ] Create test directories for all 6 libraries
-  - [ ] Write CMakeLists.txt for each test directory
-  - [ ] Create example test to verify infrastructure
-  - [ ] Verify local execution via ctest
-  - [ ] Confirm JUnit XML output generation
+  - [x] Get approval on framework choice (Google Test + Google Benchmark)
+  - [x] Document test organization decision in strategy doc (collocated tests with `*.test.cpp` and `*.bench.cpp` naming)
+- [x] Test Infrastructure Setup ✅ COMPLETE
+  - [x] Add chosen framework to vcpkg.json (gtest, benchmark)
+  - [x] Update all library CMakeLists.txt to use file globbing for test discovery
+  - [x] Create example tests to verify infrastructure (arena.test.cpp, arena.bench.cpp)
+  - [x] Verify local execution via ctest (100% tests passed)
+  - [x] Move enable_testing() before subdirectories in root CMakeLists.txt
 - [ ] Unit Tests - Foundation Library
   - [ ] Logging system tests
-  - [ ] Memory arena tests (Arena, FrameArena, ScopedArena)
+  - [x] Memory arena tests (Arena, FrameArena, ScopedArena) ✅ 18 tests passing
+  - [x] Memory arena benchmarks (vs malloc, batch allocations, alignment) ✅ passing
   - [ ] Resource handle tests (ResourceHandle, ResourceManager)
   - [ ] String hashing tests (FNV-1a, collision detection)
 - [ ] Unit Tests - Engine Library

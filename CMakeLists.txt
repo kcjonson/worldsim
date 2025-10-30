@@ -17,6 +17,10 @@ find_package(glm CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
 find_package(httplib CONFIG REQUIRED)
 
+# Enable testing (must be before subdirectories)
+include(CTest)
+enable_testing()
+
 # Add subdirectories in dependency order
 # Foundation layer
 add_subdirectory(libs/foundation)
@@ -67,6 +71,3 @@ if(CMAKE_BUILD_TYPE STREQUAL "Development" OR CMAKE_BUILD_TYPE STREQUAL "Debug")
         message(WARNING "npm not found - skipping developer-client build. Install Node.js to enable developer tools.")
     endif()
 endif()
-
-# Enable testing
-enable_testing()
