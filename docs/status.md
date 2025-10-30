@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2025-10-29
+Last Updated: 2025-10-30
 
 ## Epic/Story/Task Template
 
@@ -154,20 +154,11 @@ Use this template for all work items:
   - [x] Created component-storage-patterns.md research doc
 
 **Phase 1: Port Components** (from colonysim-integration-architecture.md)
-- [ ] InputManager ⏳ NEXT (1-2 days)
-  - [ ] Create libs/engine/input/ library
-  - [ ] Port InputManager from colonysim
-  - [ ] Keep instance-based pattern (not singleton)
-  - [ ] Adapt GLFW callbacks to worldsim conventions
-  - [ ] Integration with Scene::HandleInput()
-- [ ] Style System (1 day)
-  - [ ] Create libs/renderer/styles/ library
-  - [ ] Port Base style class
-  - [ ] Port Border style class
-  - [ ] Port concrete style classes (Rectangle, Circle, Line, Text, Polygon)
-  - [ ] Port style parameter structs
-  - [ ] Create style demo scene
-- [ ] Layer System (2-3 days)
+- [ ] CoordinateSystem
+  - [ ] Create libs/renderer/coordinate_system/ library
+  - [ ] Port utility functions (percentWidth, percentHeight, etc.)
+  - [ ] DPI handling and projection matrix creation
+- [ ] Layer System
   - [ ] Create libs/ui/layer/ library
   - [ ] Port Layer class with shared_ptr storage
   - [ ] Z-index sorting with dirty flag optimization
@@ -175,7 +166,7 @@ Use this template for all work items:
   - [ ] Update naming to worldsim conventions (PascalCase, m_ prefix)
   - [ ] Create layer demo (nested layers, z-ordering)
   - [ ] Test input event propagation
-- [ ] Shape System (3-4 days)
+- [ ] Shape System
   - [ ] Create libs/ui/shapes/ library
   - [ ] Port Shape base class
   - [ ] **CRITICAL**: Rewrite render() methods to call Primitives API
@@ -184,7 +175,20 @@ Use this template for all work items:
   - [ ] Create shapes demo
   - [ ] Test all shape types rendering
   - [ ] Test shapes nested in layers
-- [ ] UI Components (3-4 days)
+ - [ ] InputManager
+  - [ ] Create libs/engine/input/ library
+  - [ ] Port InputManager from colonysim
+  - [ ] Keep instance-based pattern (not singleton)
+  - [ ] Adapt GLFW callbacks to worldsim conventions
+  - [ ] Integration with Scene::HandleInput()
+- [ ] Style System
+  - [ ] Create libs/renderer/styles/ library
+  - [ ] Port Base style class
+  - [ ] Port Border style class
+  - [ ] Port concrete style classes (Rectangle, Circle, Line, Text, Polygon)
+  - [ ] Port style parameter structs
+  - [ ] Create style demo scene
+- [ ] UI Components
   - [ ] Create libs/ui/components/ library
   - [ ] Port Button (state machine, onClick callbacks)
   - [ ] Port TextInput (cursor, focus, text editing)
@@ -192,10 +196,7 @@ Use this template for all work items:
   - [ ] Use Primitives API for rendering
   - [ ] Create button and text input demos
   - [ ] Test mouse and keyboard interactions
-- [ ] CoordinateSystem (1-2 days)
-  - [ ] Create libs/renderer/coordinate_system/ library
-  - [ ] Port utility functions (percentWidth, percentHeight, etc.)
-  - [ ] DPI handling and projection matrix creation
+
 
 **Phase 2: Profile and Measure**
 - [ ] Measure performance characteristics
@@ -245,6 +246,52 @@ Use this template for all work items:
 ---
 
 ## Planned Epics
+
+### Unit Testing Infrastructure
+**Spec/Documentation:** `/docs/technical/unit-testing-strategy.md`, `/docs/technical/testing-guidelines.md` (TBD)
+**Research:** `/docs/research/cpp-test-framework-research.md`
+**Dependencies:** None
+**Status:** in progress
+
+**Tasks:**
+- [ ] Framework Research & Selection
+  - [x] Write research document comparing frameworks (cpp-test-framework-research.md)
+  - [x] Create technical specification (unit-testing-strategy.md)
+  - [ ] Get approval on framework choice (Doctest)
+- [ ] Test Infrastructure Setup
+  - [ ] Add chosen framework to vcpkg.json
+  - [ ] Create test directories for all 6 libraries
+  - [ ] Write CMakeLists.txt for each test directory
+  - [ ] Create example test to verify infrastructure
+  - [ ] Verify local execution via ctest
+  - [ ] Confirm JUnit XML output generation
+- [ ] Unit Tests - Foundation Library
+  - [ ] Logging system tests
+  - [ ] Memory arena tests (Arena, FrameArena, ScopedArena)
+  - [ ] Resource handle tests (ResourceHandle, ResourceManager)
+  - [ ] String hashing tests (FNV-1a, collision detection)
+- [ ] Unit Tests - Engine Library
+  - [ ] Application lifecycle tests (with mocked GLFW)
+  - [ ] Scene management tests
+  - [ ] Core ECS tests (entity creation, component storage)
+- [ ] Unit Tests - Renderer Library
+  - [ ] Shader compilation tests (mock GL context)
+  - [ ] Vertex buffer management tests
+  - [ ] Resource handle tests
+- [ ] GitHub Actions CI/CD Integration
+  - [ ] Create .github/workflows/tests.yml
+  - [ ] Configure: trigger on PRs and pushes to main
+  - [ ] Build project with BUILD_TESTING=ON
+  - [ ] Run all tests via CTest
+  - [ ] Upload test results as artifacts
+  - [ ] Configure PR to fail if tests fail
+- [ ] Documentation
+  - [ ] Create testing-guidelines.md (patterns, conventions, mocking)
+  - [ ] Update README.md with testing section
+  - [ ] Update workflows.md with testing workflow
+  - [ ] Update development-log.md with implementation notes
+
+---
 
 ### Vector Graphics System - Full Implementation
 **Spec/Documentation:** `/docs/technical/vector-graphics/INDEX.md`
