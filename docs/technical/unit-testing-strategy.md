@@ -1,7 +1,7 @@
 # Unit Testing Strategy
 
 **Date:** 2025-10-30
-**Status:** Proposed
+**Status:** Implemented
 **Framework:** Google Test + Google Benchmark
 **Research:** See `/docs/research/cpp-test-framework-research.md` for detailed analysis
 
@@ -127,45 +127,67 @@ CI System (GitHub Actions)
 
 ### Test Organization
 
+**Decision: Collocated Tests with Dot Notation**
+
+Tests live alongside the code they test, using `.test.cpp` and `.bench.cpp` naming:
+
 ```
 worldsim/
 ├── libs/
 │   ├── foundation/
-│   │   ├── tests/
-│   │   │   ├── CMakeLists.txt
-│   │   │   ├── unit/                    # Functional tests
-│   │   │   │   ├── arena_tests.cpp
-│   │   │   │   ├── logging_tests.cpp
-│   │   │   │   ├── hash_tests.cpp
-│   │   │   │   └── handle_tests.cpp
-│   │   │   └── benchmarks/              # Performance tests
-│   │   │       ├── arena_benchmarks.cpp
-│   │   │       └── hash_benchmarks.cpp
-│   │   ├── include/
-│   │   └── src/
+│   │   ├── memory/
+│   │   │   ├── arena.h
+│   │   │   ├── arena.test.cpp       # Unit tests
+│   │   │   └── arena.bench.cpp      # Benchmarks
+│   │   ├── utils/
+│   │   │   ├── log.h
+│   │   │   ├── log.cpp
+│   │   │   └── log.test.cpp
+│   │   ├── handles/
+│   │   │   ├── resource_handle.h
+│   │   │   ├── resource_handle.test.cpp
+│   │   │   └── resource_handle.bench.cpp
+│   │   └── CMakeLists.txt  # Uses file globbing to discover tests
 │   ├── engine/
-│   │   ├── tests/
-│   │   │   ├── CMakeLists.txt
-│   │   │   ├── unit/
-│   │   │   │   ├── application_tests.cpp
-│   │   │   │   ├── scene_tests.cpp
-│   │   │   │   └── ecs_tests.cpp
-│   │   │   └── benchmarks/
-│   │   │       └── ecs_benchmarks.cpp
-│   │   ├── include/
-│   │   └── src/
+│   │   ├── application/
+│   │   │   ├── application.h
+│   │   │   ├── application.cpp
+│   │   │   └── application.test.cpp
+│   │   ├── scene/
+│   │   │   ├── scene_manager.h
+│   │   │   ├── scene_manager.cpp
+│   │   │   └── scene_manager.test.cpp
+│   │   └── CMakeLists.txt
 │   └── [other libraries...]
 ```
 
-**Why separate unit/ and benchmarks/?**
+**Rationale:**
+1. **Developer experience**: Tests are right next to the code they test, reducing context switching
+2. **Discoverability**: Easy to find tests for any given file
+3. **Modern convention**: Aligns with Rust (`#[cfg(test)]`), Go (`*_test.go`), TypeScript (`*.test.ts`)
+4. **Clean naming**: Dot notation is clearer than underscore (`arena.test.cpp` vs `arena_test.cpp`)
+5. **No violation of best practices**: Google Test doesn't mandate directory structure
+
+**Comparison to other approaches:**
+- **Collocated tests** (CHOSEN): Used by Rust, Go, many modern C++ projects
+- **Separate test directories**: Used by Chromium, LLVM (very large codebases)
+- **Worldsim rationale**: As a medium-sized game engine with modular libraries, collocated tests provide better developer ergonomics
+
+**Trade-offs accepted:**
+- ✅ Tests co-located with source - easy navigation
+- ✅ Fewer directories to manage
+- ⚠️ More files in source directories
+- ⚠️ Slightly more complex CMake (file globbing vs explicit lists)
+
+**Why separate .test.cpp and .bench.cpp?**
 - Unit tests compile with `-O0 -g` (debugging enabled)
 - Benchmarks compile with `-O3` (optimizations enabled)
-- Different binaries, different purposes
+- Different binaries, different compilation flags
 
 ### Test Naming Convention
 
-- **Test directories:** `unit/` and `benchmarks/`
-- **Test files:** `{component}_tests.cpp` or `{component}_benchmarks.cpp`
+- **Test files:** `{component}.test.cpp` - Unit tests for {component}
+- **Benchmark files:** `{component}.bench.cpp` - Benchmarks for {component}
 - **Test executables:** `{library}-tests` and `{library}-benchmarks`
 - **Test cases:** Descriptive sentences (e.g., "Arena allocates memory correctly")
 
@@ -173,9 +195,9 @@ worldsim/
 
 ## Implementation Plan
 
-### Phase 1: Infrastructure Setup
+### Phase 1: Infrastructure Setup ✅ COMPLETE
 
-#### 1.1 Add Dependencies
+#### 1.1 Add Dependencies ✅
 
 **File:** `/vcpkg.json`
 
@@ -191,100 +213,99 @@ worldsim/
 }
 ```
 
-**Action:** Add `"gtest"` and `"benchmark"` to dependencies array
+**Status:** ✅ Complete - Added `"gtest"` and `"benchmark"` to dependencies
 
-#### 1.2 Create Test Directories
+#### 1.2 CMake Configuration ✅
 
-For each library in `libs/`:
-1. Create `tests/` subdirectory
-2. Create `tests/unit/` for functional tests
-3. Create `tests/benchmarks/` for performance tests
-4. Create `tests/CMakeLists.txt`
-
-**Libraries to set up:**
-- `libs/foundation/tests/`
-- `libs/engine/tests/`
-- `libs/renderer/tests/`
-- `libs/ui/tests/`
-- `libs/world/tests/`
-- `libs/game-systems/tests/`
-
-#### 1.3 CMake Configuration
-
-**Template:** `libs/{library}/tests/CMakeLists.txt`
+**File globbing in each library's CMakeLists.txt:**
 
 ```cmake
-# Unit tests (functional testing)
-find_package(GTest CONFIG REQUIRED)
+# Tests
+if(BUILD_TESTING)
+    # Discover test files using naming pattern
+    file(GLOB_RECURSE FOUNDATION_TEST_SOURCES
+        "${CMAKE_CURRENT_SOURCE_DIR}/**/*.test.cpp"
+    )
 
-add_executable({library}-tests
-    unit/arena_tests.cpp
-    unit/logging_tests.cpp
-    unit/hash_tests.cpp
-    # ... other unit test files
-)
+    # Discover benchmark files using naming pattern
+    file(GLOB_RECURSE FOUNDATION_BENCHMARK_SOURCES
+        "${CMAKE_CURRENT_SOURCE_DIR}/**/*.bench.cpp"
+    )
 
-target_link_libraries({library}-tests
-    PRIVATE
-    {library}
-    GTest::gtest
-    GTest::gtest_main    # Provides main() function
-)
+    # Create test executable if tests found
+    if(FOUNDATION_TEST_SOURCES)
+        find_package(GTest CONFIG REQUIRED)
+        add_executable(foundation-tests ${FOUNDATION_TEST_SOURCES})
+        target_link_libraries(foundation-tests
+            PRIVATE
+                foundation
+                GTest::gtest
+                GTest::gtest_main
+        )
+        # Debug builds with no optimization for accurate debugging
+        target_compile_options(foundation-tests PRIVATE -O0 -g)
 
-# Compile with debug symbols
-target_compile_options({library}-tests PRIVATE -O0 -g)
+        # Register with CTest
+        add_test(NAME foundation-tests COMMAND foundation-tests)
+    endif()
 
-# Register with CTest
-add_test(NAME {library}-tests COMMAND {library}-tests)
+    # Create benchmark executable if benchmarks found
+    if(FOUNDATION_BENCHMARK_SOURCES)
+        find_package(benchmark CONFIG REQUIRED)
+        add_executable(foundation-benchmarks ${FOUNDATION_BENCHMARK_SOURCES})
+        target_link_libraries(foundation-benchmarks
+            PRIVATE
+                foundation
+                benchmark::benchmark
+                benchmark::benchmark_main
+        )
+        # Release builds with full optimization for accurate performance measurement
+        target_compile_options(foundation-benchmarks PRIVATE -O3)
 
-# Generate JUnit XML for CI
-add_test(NAME {library}-tests-junit
-    COMMAND {library}-tests --gtest_output=xml:${CMAKE_BINARY_DIR}/test-results/{library}-tests.xml
-)
-
-# Benchmarks (performance testing)
-find_package(benchmark CONFIG REQUIRED)
-
-add_executable({library}-benchmarks
-    benchmarks/arena_benchmarks.cpp
-    benchmarks/hash_benchmarks.cpp
-    # ... other benchmark files
-)
-
-target_link_libraries({library}-benchmarks
-    PRIVATE
-    {library}
-    benchmark::benchmark
-    benchmark::benchmark_main
-)
-
-# Compile with optimizations
-target_compile_options({library}-benchmarks PRIVATE -O3)
-
-# Register with CTest
-add_test(NAME {library}-benchmarks
-    COMMAND {library}-benchmarks
-        --benchmark_format=console
-        --benchmark_out=${CMAKE_BINARY_DIR}/benchmark-results/{library}-benchmarks.json
-        --benchmark_out_format=json
-)
+        # Register with CTest (benchmarks can be run as tests too)
+        add_test(NAME foundation-benchmarks COMMAND foundation-benchmarks)
+    endif()
+endif()
 ```
 
-**Note:** Replace `{library}` with actual library name (e.g., `foundation`, `engine`, etc.)
+**Status:** ✅ Complete - All 6 library CMakeLists.txt files updated with file globbing
+
+**Key points:**
+- File globbing automatically discovers `*.test.cpp` and `*.bench.cpp` files
+- No need to manually list test files
+- Separate compilation flags for tests (`-O0 -g`) vs benchmarks (`-O3`)
+- Tests only built when `BUILD_TESTING=ON`
+
+#### 1.3 Enable CTest ✅
+
+**File:** `/CMakeLists.txt` (root)
+
+```cmake
+# Enable testing (must be before subdirectories)
+include(CTest)
+enable_testing()
+
+# Add subdirectories in dependency order
+add_subdirectory(libs/foundation)
+add_subdirectory(libs/renderer)
+# ... other libraries
+```
+
+**Status:** ✅ Complete - `enable_testing()` moved before `add_subdirectory()` calls
 
 ---
 
 ### Phase 2: Write Initial Tests
 
-#### 2.1 Foundation Library - Functional Tests
+#### 2.1 Foundation Library - Functional Tests ✅ PARTIAL
 
 **Priority tests:**
-- Memory arena (Arena, FrameArena, ScopedArena)
-- Logging system (Logger, log levels, categories)
-- Resource handles (ResourceHandle, ResourceManager)
-- String hashing (FNV-1a, collision detection)
+- ✅ Memory arena (Arena, FrameArena, ScopedArena) - 18 tests passing
+- ⏳ Logging system (Logger, log levels, categories)
+- ⏳ Resource handles (ResourceHandle, ResourceManager)
+- ⏳ String hashing (FNV-1a, collision detection)
 
-**Example:** `libs/foundation/tests/unit/arena_tests.cpp`
+**Example:** `libs/foundation/memory/arena.test.cpp`
 
 ```cpp
 #include <gtest/gtest.h>
@@ -346,9 +367,11 @@ TEST(ArenaTests, Exhaustion) {
 }
 ```
 
-#### 2.2 Foundation Library - Performance Tests
+#### 2.2 Foundation Library - Performance Tests ✅ PARTIAL
 
-**Example:** `libs/foundation/tests/benchmarks/arena_benchmarks.cpp`
+**Status:** ✅ Memory arena benchmarks complete - 24 benchmarks passing
+
+**Example:** `libs/foundation/memory/arena.bench.cpp`
 
 ```cpp
 #include <benchmark/benchmark.h>
@@ -439,7 +462,7 @@ BM_ArenaVsMalloc/1/128     12.5 ns         12.5 ns     56000000   Arena
 - OpenGL: Use function pointers for testing
 - File I/O: Inject file system interface
 
-**Example:** `libs/engine/tests/unit/scene_tests.cpp`
+**Example:** `libs/engine/scene/scene_manager.test.cpp`
 
 ```cpp
 #include <gtest/gtest.h>
