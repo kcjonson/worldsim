@@ -280,7 +280,7 @@ int main(int argc, char* argv[]) {
 
 	// Initialize coordinate system (for percentage helpers and future DPI-aware UI)
 	LOG_INFO(Renderer, "Initializing coordinate system");
-	static Renderer::CoordinateSystem coordinateSystem;
+	Renderer::CoordinateSystem coordinateSystem;
 	g_coordinateSystem = &coordinateSystem;
 	if (!coordinateSystem.Initialize(window)) {
 		LOG_ERROR(Renderer, "Failed to initialize coordinate system");
