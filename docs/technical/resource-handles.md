@@ -408,15 +408,6 @@ struct Tile {
 
 **Decision:** Essential for robust resource management and hot-reloading.
 
-## Implementation Status
-
-- [ ] Core ResourceHandle type
-- [ ] ResourceManager template
-- [ ] TextureManager implementation
-- [ ] SVGAssetManager implementation
-- [ ] Hot-reload support
-- [ ] Serialization support
-
 ## Related Documentation
 
 - Tech: [Vector Asset Pipeline](./vector-asset-pipeline.md)

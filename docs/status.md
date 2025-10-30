@@ -265,12 +265,11 @@ Use this template for all work items:
   - [x] Create example tests to verify infrastructure (arena.test.cpp, arena.bench.cpp)
   - [x] Verify local execution via ctest (100% tests passed)
   - [x] Move enable_testing() before subdirectories in root CMakeLists.txt
-- [ ] Unit Tests - Foundation Library
-  - [ ] Logging system tests
+- [x] Unit Tests - Foundation Library ✅ COMPLETE
+  - [x] Logging system tests ✅ 12 tests passing
   - [x] Memory arena tests (Arena, FrameArena, ScopedArena) ✅ 18 tests passing
   - [x] Memory arena benchmarks (vs malloc, batch allocations, alignment) ✅ passing
-  - [ ] Resource handle tests (ResourceHandle, ResourceManager)
-  - [ ] String hashing tests (FNV-1a, collision detection)
+  - [x] String hashing tests (FNV-1a, collision detection) ✅ 20 tests passing
 - [ ] Unit Tests - Engine Library
   - [ ] Application lifecycle tests (with mocked GLFW)
   - [ ] Scene management tests
@@ -278,7 +277,7 @@ Use this template for all work items:
 - [ ] Unit Tests - Renderer Library
   - [ ] Shader compilation tests (mock GL context)
   - [ ] Vertex buffer management tests
-  - [ ] Resource handle tests
+  - [x] Resource handle tests (ResourceHandle, ResourceManager) ✅ 25 tests passing
 - [ ] GitHub Actions CI/CD Integration
   - [ ] Create .github/workflows/tests.yml
   - [ ] Configure: trigger on PRs and pushes to main
@@ -291,6 +290,32 @@ Use this template for all work items:
   - [ ] Update README.md with testing section
   - [ ] Update workflows.md with testing workflow
   - [ ] Update development-log.md with implementation notes
+
+---
+
+### Resource Handle System Implementation
+**Spec/Documentation:** `/docs/technical/resource-handles.md`
+**Dependencies:** None
+**Status:** done?
+
+IS THIS WORK DONE? (I think it is)
+
+**Tasks:**
+- [ ] Core Implementation
+  - [ ] Create libs/foundation/resources/ directory
+  - [ ] Implement ResourceHandle type (resource_handle.h)
+  - [ ] Implement ResourceManager template (resource_manager.h)
+  - [ ] Add generation validation logic
+- [ ] Example Usage (Optional)
+  - [ ] Create TextureManager implementation
+  - [ ] Create SVGAssetManager implementation
+  - [ ] Add hot-reload support
+  - [ ] Add serialization support
+- [ ] Unit Tests
+  - [ ] ResourceHandle tests (creation, validation, equality)
+  - [ ] ResourceManager tests (allocate, free, get, generation)
+  - [ ] Stale handle detection tests
+  - [ ] Memory reuse tests
 
 ---
 

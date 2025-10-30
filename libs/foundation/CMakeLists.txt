@@ -23,6 +23,7 @@ target_link_libraries(foundation
     PUBLIC
         glm::glm
         httplib::httplib
+        OpenGL::GL  # DebugServer uses glReadPixels and glGetIntegerv
 )
 
 # Tests
