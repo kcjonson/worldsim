@@ -198,18 +198,29 @@ Use this template for all work items:
   - [ ] Test mouse and keyboard interactions
 
 
-**Phase 2: Profile and Measure**
+**Phase 2: Integration & Testing**
+- [ ] Integration testing
+  - [ ] Test component interactions
+  - [ ] Test event propagation
+  - [ ] Test layout with multiple components
+  - [ ] Verify all demos working
+
+**Phase 3: Profile and Measure**
 - [ ] Measure performance characteristics
   - [ ] Profile UI element count per frame
   - [ ] Measure shared_ptr overhead (if any)
   - [ ] Identify actual bottlenecks
   - [ ] Verify 60 FPS with typical UI
 
-**Phase 3: Optimize If Needed** (only if profiling shows bottlenecks)
+**Phase 4: Optimize If Needed** (only if profiling shows bottlenecks)
 - [ ] Consider value semantics optimization
 - [ ] Consider type-specific containers
 - [ ] Consider Structure of Arrays for hot paths
 - [ ] Consider object pooling
+
+**Future Enhancements** (deferred)
+- [ ] RmlUI backend implementation
+- [ ] SDF font rendering integration with RmlUI
 
 ---
 
@@ -219,7 +230,7 @@ Use this template for all work items:
 **Status:** in progress
 
 **Tasks:**
-- [ ] Single Grass Blade with Bezier Curves ⏳ CURRENT
+- [ ] Single Grass Blade with Bezier Curves
   - [ ] Implement cubic Bezier curve tessellation
   - [ ] Create single grass blade shape with curves
   - [ ] Render in ui-sandbox
@@ -293,32 +304,6 @@ Use this template for all work items:
 
 ---
 
-### Resource Handle System Implementation
-**Spec/Documentation:** `/docs/technical/resource-handles.md`
-**Dependencies:** None
-**Status:** done?
-
-IS THIS WORK DONE? (I think it is)
-
-**Tasks:**
-- [ ] Core Implementation
-  - [ ] Create libs/foundation/resources/ directory
-  - [ ] Implement ResourceHandle type (resource_handle.h)
-  - [ ] Implement ResourceManager template (resource_manager.h)
-  - [ ] Add generation validation logic
-- [ ] Example Usage (Optional)
-  - [ ] Create TextureManager implementation
-  - [ ] Create SVGAssetManager implementation
-  - [ ] Add hot-reload support
-  - [ ] Add serialization support
-- [ ] Unit Tests
-  - [ ] ResourceHandle tests (creation, validation, equality)
-  - [ ] ResourceManager tests (allocate, free, get, generation)
-  - [ ] Stale handle detection tests
-  - [ ] Memory reuse tests
-
----
-
 ### Vector Graphics System - Full Implementation
 **Spec/Documentation:** `/docs/technical/vector-graphics/INDEX.md`
 **Dependencies:** Vector Graphics Validation - Grass Blades
@@ -354,6 +339,13 @@ IS THIS WORK DONE? (I think it is)
   - [ ] Implement click/hover detection
   - [ ] Add debug visualization for collision shapes
 - [ ] Optimization + Polish
+  - [ ] Performance Profiling
+    - [ ] Measure tessellation time per frame
+    - [ ] Count draw calls per frame
+    - [ ] Monitor VBO update bandwidth
+    - [ ] Check texture atlas usage
+    - [ ] Profile memory allocations during animation updates
+    - [ ] Verify 60 FPS with target entity count
   - [ ] Profile full system end-to-end
   - [ ] Optimize hot paths
   - [ ] Add memory budget management
@@ -361,6 +353,25 @@ IS THIS WORK DONE? (I think it is)
   - [ ] Write performance documentation
   - [ ] Create artist guidelines for SVG creation
 
+
+---
+
+### Vector Asset Pipeline - Tile Rendering
+**Spec/Documentation:** `/docs/technical/vector-graphics/asset-pipeline.md`
+**Dependencies:** Vector Graphics System - Full Implementation
+**Status:** planned
+
+**Tasks:**
+- [ ] Core Pipeline
+  - [ ] SVG loading system
+  - [ ] Vector to raster conversion
+  - [ ] Tile variation system (procedural parameters)
+  - [ ] Raster caching with LRU eviction
+  - [ ] Memory management and budgets
+- [ ] Advanced Features
+  - [ ] Inter-tile blending for visual cohesion
+  - [ ] LOD system for distant tiles
+  - [ ] Performance profiling and optimization
 
 ---
 
@@ -418,6 +429,48 @@ IS THIS WORK DONE? (I think it is)
   - [ ] Tectonic plate simulation
   - [ ] Erosion and river formation
   - [ ] Ocean and continent generation
+
+---
+
+### Diagnostic Drawing System
+**Spec/Documentation:** `/docs/technical/diagnostic-drawing.md`
+**Dependencies:** None
+**Status:** Deferred
+
+**Tasks:**
+- [ ] Core Implementation
+  - [ ] Create DebugDraw class (immediate mode API)
+  - [ ] Implement line primitive
+  - [ ] Implement box primitive
+  - [ ] Implement sphere primitive
+  - [ ] Implement 2D primitives
+  - [ ] Add batched rendering
+  - [ ] Add runtime toggle (development builds only)
+- [ ] Integration
+  - [ ] Text rendering integration
+  - [ ] Example usage documentation
+  - [ ] Integration with ui-sandbox
+  - [ ] Integration with main game
+
+---
+
+### Core System Integrations & Polish
+**Spec/Documentation:** Various technical docs in `/docs/technical/`
+**Dependencies:** ECS System, Config System, World Generation System
+**Status:** planned (blocked on dependencies)
+
+**Tasks:**
+- [ ] String Hashing System Integrations
+  - [ ] ECS integration (depends on ECS system)
+  - [ ] Resource manager integration (depends on named resource system)
+  - [ ] Config system integration (depends on config system)
+- [ ] Logging System Enhancements
+  - [ ] File output support
+  - [ ] Config integration (depends on config system)
+- [ ] Memory Arena Integrations
+  - [ ] Integration with chunk generation (depends on world generation)
+  - [ ] Integration with frame loop (verify FrameArena usage)
+  - [ ] Performance profiling and optimization
 
 ---
 

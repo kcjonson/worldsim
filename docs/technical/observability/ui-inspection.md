@@ -408,19 +408,6 @@ endif()
 ### Option: External Testing Framework (Selenium-style)
 **Rejected** - External tools can't access internal C++ state easily. Embedding HTTP server is more flexible.
 
-## Implementation Status
-
-- [x] Strategy defined and aligned with developer-server.md
-- [ ] Scene graph JSON serialization
-- [ ] Lock-free ring buffers for UI state
-- [ ] HTTP debug server with SSE streaming
-- [ ] Mouse hover inspection (F3 toggle)
-- [ ] UI event streaming
-- [ ] Visual regression testing
-- [ ] External web debug app (TypeScript/Vite)
-- [ ] Integration with ui-sandbox (port 8081)
-- [ ] Integration with main game (port 8082)
-
 ## Cross-Reference: Debug Systems
 
 | System | Purpose | Access Method | In-Game UI | Availability |

@@ -309,15 +309,6 @@ float* huge = arena.AllocateArray<float>(10000);  // ASSERT!
 
 **Decision:** Essential for performance in chunk/tile systems.
 
-## Implementation Status
-
-- [ ] Core Arena class
-- [ ] FrameArena wrapper
-- [ ] ScopedArena wrapper
-- [ ] Integration with chunk generation
-- [ ] Integration with frame loop
-- [ ] Performance profiling
-
 ## Related Documentation
 
 - Tech: [Resource Handles](./resource-handles.md)

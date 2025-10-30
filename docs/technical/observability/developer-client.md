@@ -582,44 +582,6 @@ function persistState(state: PersistedState) {
 - "Reset to Defaults" button: Clears localStorage, resets retention settings
 - Automatic on quota error: Trim aggressively and retry
 
-## Implementation Status
-
-**Completed (Implemented):**
-- [x] Technology stack chosen (React + Vite + CSS Modules + EventSource)
-- [x] Architecture defined (single-file SPA with SSE streams)
-- [x] SSE connection pattern designed
-- [x] Build integration with CMake
-- [x] Project scaffolding (Vite + React + TypeScript)
-- [x] ServerConnection service implemented
-- [x] App.tsx with SSE connection management
-- [x] Basic metrics and logs display
-
-**Designed (Ready to Implement):**
-- [x] Client-side history aggregation architecture
-- [x] Configurable retention policies (metrics time-based, logs count-based)
-- [x] localStorage persistence strategy
-- [x] Cache management and cleanup
-- [x] Time-series graphing design
-- [x] Circular buffer for metrics
-- [x] Performance and storage budgets
-
-**In Progress:**
-- [ ] MetricsChart with SVG time-series rendering
-- [ ] Circular buffer implementation
-- [ ] localStorage persistence (save/restore on mount/unmount)
-- [ ] Configurable retention UI (dropdowns)
-- [ ] LogViewer with filtering and search
-- [ ] Auto-scroll and count limit UI
-
-**Planned:**
-- [ ] Multi-series graphing (multiple metrics on one chart)
-- [ ] Auto-scaling Y-axis
-- [ ] "Clear History" button
-- [ ] UIHierarchyTree component
-- [ ] HoverInspector component
-- [ ] ProfilerView with flame graphs
-- [ ] Log export functionality
-
 ## Key Takeaways
 
 **Why external web app?**

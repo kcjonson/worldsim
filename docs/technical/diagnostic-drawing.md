@@ -492,16 +492,6 @@ endif()
 - Inspecting UI element hierarchy
 - Automated testing and inspection
 
-## Implementation Status
-
-- [ ] Core DebugDraw class
-- [ ] Line, box, sphere primitives
-- [ ] Text rendering integration
-- [ ] 2D primitives
-- [ ] Batched rendering
-- [ ] Runtime toggle
-- [ ] Example usage
-
 ## Cross-Reference: Observability Systems
 
 | System | Purpose | Access Method | In-Game UI | Availability |

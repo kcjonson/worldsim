@@ -158,33 +158,6 @@ open http://localhost:8081
 open http://localhost:8082
 ```
 
-## Implementation Status
-
-### Developer Server
-- [x] Architecture defined
-- [x] SSE streaming design
-- [x] Ring buffer specification
-- [ ] Core HTTP server implementation
-- [ ] Metrics collection
-- [ ] Log streaming
-- [ ] Profiler integration
-
-### Developer Client
-- [x] Architecture defined
-- [x] Technology stack chosen (TypeScript/Vite)
-- [ ] SSE client implementation
-- [ ] Metrics chart rendering
-- [ ] Log viewer UI
-- [ ] Build integration
-
-### UI Inspection
-- [x] Strategy defined
-- [x] Hover inspection design (F3 toggle)
-- [ ] Scene graph JSON serialization
-- [ ] UI state streaming
-- [ ] Hover data collection
-- [ ] Event streaming
-
 ## Design Principles
 
 1. **Non-intrusive**: Game thread never blocks on network I/O

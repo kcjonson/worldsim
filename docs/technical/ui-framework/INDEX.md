@@ -14,31 +14,6 @@ This directory contains technical documentation for the UI framework in world-si
 - Testability via HTTP inspector (scene graph JSON export)
 - Integration with custom OpenGL renderer
 
-## Current Status
-
-**Implementation Phase**: Colonysim UI components integration in progress
-
-**Completed**:
-- [x] Library options analysis
-- [x] Architecture design (RmlUI + Primitive API + Isolation layer)
-- [x] Rendering boundaries defined
-- [x] OpenGL integration strategy documented
-- [x] Production implementation guide created
-- [x] **Colonysim integration architecture analysis** ← NEW (2025-10-29)
-- [x] **Component storage patterns research** ← NEW (2025-10-29)
-- [x] **Rendering integration decision** - Use Primitives API ← NEW (2025-10-29)
-
-**In Progress**:
-- [ ] **Porting colonysim UI components** (Layer, Shape, Button, TextInput) ← CURRENT FOCUS
-- [ ] RmlUI backend implementation (deferred - colonysim components first)
-- [ ] Primitive API OpenGL implementation (exists, needs colonysim adaptation)
-- [ ] Integration testing
-
-**Planned**:
-- [ ] Text rendering (SDF fonts with RmlUI)
-- [ ] Performance profiling and optimization
-- [ ] Potential optimization to value semantics (if profiling shows need)
-
 ## Documentation
 
 ### Library Selection

@@ -127,13 +127,6 @@ libs/renderer/
 
 **Decision:** Accept the upfront structure cost for long-term maintainability.
 
-## Implementation Status
-
-- [x] Structure defined
-- [ ] CMake configuration
-- [ ] Library skeletons created
-- [ ] Build system working
-
 ## Related Documentation
 
 - Design Doc: [Project Requirements](/docs/design/requirements/functional.md)

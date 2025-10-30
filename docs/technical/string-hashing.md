@@ -319,16 +319,6 @@ StringHash HashStringDebug(const char* str) {
 ### Option 3: 32-bit Hashes
 **Rejected** - Higher collision risk, not worth the 4 bytes saved
 
-## Implementation Status
-
-- [ ] Core hash function in foundation
-- [ ] Common hash constants
-- [ ] Debug collision detection
-- [ ] ECS integration
-- [ ] Resource manager integration
-- [ ] Config system integration
-- [ ] Unit tests
-
 ## Implementation Order
 
 1. **Phase 1: Foundation** (~30 min)

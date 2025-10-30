@@ -173,14 +173,6 @@ Each would implement `IWorldGenerator` with its own parameters and algorithms.
 ### Option: GPU-based generation
 **Considered for future** - For real-time previews during parameter adjustment. Start with CPU, optimize later.
 
-## Implementation Status
-
-- [x] Architecture designed
-- [ ] Interface defined in code
-- [ ] Perlin noise generator implemented
-- [ ] Generator registry implemented
-- [ ] Integration with world-creator scene
-
 ## Related Documentation
 
 - Design Doc: [World Generation Feature](/docs/design/features/world-creation/generation.md)

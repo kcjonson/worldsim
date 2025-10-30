@@ -104,14 +104,6 @@ See [architecture.md](./architecture.md) for complete system design.
 3. Cache mesh in GPU memory
 4. Render with transform-only updates
 
-### Performance Profiling Checklist
-- [ ] Measure tessellation time per frame
-- [ ] Count draw calls per frame
-- [ ] Monitor VBO update bandwidth
-- [ ] Check texture atlas usage
-- [ ] Profile memory allocations during animation updates
-- [ ] Verify 60 FPS with target entity count
-
 ## Implementation Phases
 
 ### Phase 1: Foundation (ui-sandbox)
