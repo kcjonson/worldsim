@@ -25,7 +25,8 @@ jobs:
       run: |
         echo "Checking code formatting..."
         find libs apps \( -name '*.cpp' -o -name '*.h' \) | xargs clang-format --dry-run --Werror
-        if [ $? -ne 0 ]; then
+        FORMAT_EXIT_CODE=$?
+        if [ $FORMAT_EXIT_CODE -ne 0 ]; then
           echo "❌ Code formatting check failed. Run 'clang-format -i' on the files above."
           exit 1
         fi
