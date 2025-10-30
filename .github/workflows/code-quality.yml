@@ -50,11 +50,10 @@ jobs:
     - name: Run clang-tidy
       run: |
         echo "Running clang-tidy static analysis..."
-        set +e
         find libs apps -name '*.cpp' | xargs clang-tidy -p build
-        if [ $? -ne 0 ]; then
+        EXIT_CODE=$?
+        if [ $EXIT_CODE -ne 0 ]; then
           echo "❌ clang-tidy found issues"
           exit 1
         fi
-        set -e
         echo "✅ clang-tidy check passed"
