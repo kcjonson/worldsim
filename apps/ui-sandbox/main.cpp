@@ -9,6 +9,7 @@
 // - RmlUI integration testing (future)
 // - HTTP debug server for UI inspection (future)
 
+#include "coordinate_system/coordinate_system.h"
 #include "debug/debug_server.h"
 #include "graphics/color.h"
 #include "graphics/rect.h"
@@ -37,12 +38,25 @@ static struct {
 } g_menuState;
 
 // GLFW callbacks
+// Global coordinate system (accessed by callbacks)
+static Renderer::CoordinateSystem* g_coordinateSystem = nullptr;
+
 void ErrorCallback(int error, const char* description) {
 	LOG_ERROR(UI, "GLFW Error (%d): %s", error, description);
 }
 
 void FramebufferSizeCallback(GLFWwindow* window, int width, int height) {
+	// width and height are framebuffer dimensions (physical pixels)
 	glViewport(0, 0, width, height);
+
+	// Update coordinate system (for percentage helpers)
+	int windowWidth, windowHeight;
+	glfwGetWindowSize(window, &windowWidth, &windowHeight);
+	if (g_coordinateSystem) {
+		g_coordinateSystem->UpdateWindowSize(windowWidth, windowHeight);
+	}
+
+	// Update primitives viewport with framebuffer size (for 1:1 pixel mapping)
 	Renderer::Primitives::SetViewport(width, height);
 }
 
@@ -264,15 +278,32 @@ int main(int argc, char* argv[]) {
 		return 1;
 	}
 
-	// Get actual window size
+	// Initialize coordinate system (for percentage helpers and future DPI-aware UI)
+	LOG_INFO(Renderer, "Initializing coordinate system");
+	static Renderer::CoordinateSystem coordinateSystem;
+	g_coordinateSystem = &coordinateSystem;
+	if (!coordinateSystem.Initialize(window)) {
+		LOG_ERROR(Renderer, "Failed to initialize coordinate system");
+		return 1;
+	}
+
+	// Get framebuffer size for 1:1 pixel mapping (worldsim uses physical pixels)
 	int windowWidth, windowHeight;
 	glfwGetFramebufferSize(window, &windowWidth, &windowHeight);
+	LOG_DEBUG(Renderer, "Framebuffer size (physical pixels): %dx%d", windowWidth, windowHeight);
+
+	// Log pixel ratio for information
+	float pixelRatio = coordinateSystem.GetPixelRatio();
+	LOG_DEBUG(Renderer, "Pixel ratio: %.2f", pixelRatio);
 
 	// Initialize primitive rendering system
 	LOG_INFO(Renderer, "Initializing primitive rendering system");
-	LOG_DEBUG(Renderer, "Viewport size: %dx%d", windowWidth, windowHeight);
 	Renderer::Primitives::Init(nullptr); // TODO: Pass renderer instance
+	// NOTE: We set the coordinate system for percentage helpers, but BatchRenderer
+	// will NOT use it for projection - it uses viewport size (framebuffer) instead
+	Renderer::Primitives::SetCoordinateSystem(&coordinateSystem);
 	Renderer::Primitives::SetViewport(windowWidth, windowHeight);
+
 	LOG_DEBUG(Renderer, "Primitive rendering system initialized");
 
 	// Initialize scene system
