@@ -22,12 +22,12 @@ target_link_libraries(game-systems
 if(BUILD_TESTING)
     # Discover test files using naming pattern
     file(GLOB_RECURSE GAME_SYSTEMS_TEST_SOURCES
-        "${CMAKE_CURRENT_SOURCE_DIR}/**/*.test.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/*.test.cpp"
     )
 
     # Discover benchmark files using naming pattern
     file(GLOB_RECURSE GAME_SYSTEMS_BENCHMARK_SOURCES
-        "${CMAKE_CURRENT_SOURCE_DIR}/**/*.bench.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/*.bench.cpp"
     )
 
     # Create test executable if tests found
