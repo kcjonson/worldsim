@@ -216,6 +216,9 @@ void main() {
 		height = m_viewportHeight;
 	}
 
+	// Sets the coordinate system to use for rendering.
+	// Note: BatchRenderer does NOT take ownership of the CoordinateSystem pointer.
+	// The caller is responsible for ensuring that the CoordinateSystem outlives the BatchRenderer.
 	void BatchRenderer::SetCoordinateSystem(CoordinateSystem* coordSystem) {
 		m_coordinateSystem = coordSystem;
 	}
