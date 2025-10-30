@@ -1,5 +1,5 @@
-#include <gtest/gtest.h>
 #include "arena.h"
+#include <gtest/gtest.h>
 
 using namespace foundation;
 
@@ -65,7 +65,7 @@ TEST(ArenaTests, TypeSafeAllocation) {
 	// Allocate struct
 	struct TestStruct {
 		double x;
-		int y;
+		int	   y;
 	};
 	TestStruct* structPtr = arena.Allocate<TestStruct>();
 	EXPECT_NE(structPtr, nullptr);

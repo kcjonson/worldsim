@@ -9,31 +9,31 @@
 // - RmlUI integration testing (future)
 // - HTTP debug server for UI inspection (future)
 
-#include <scene/scene_manager.h>
-#include <application/application.h>
-#include "primitives/primitives.h"
-#include "primitives/batch_renderer.h"
-#include "metrics/metrics_collector.h"
 #include "debug/debug_server.h"
 #include "graphics/color.h"
 #include "graphics/rect.h"
 #include "math/types.h"
+#include "metrics/metrics_collector.h"
+#include "primitives/batch_renderer.h"
+#include "primitives/primitives.h"
 #include "utils/log.h"
 #include "utils/string_hash.h"
+#include <application/application.h>
+#include <scene/scene_manager.h>
 
 #include <GL/glew.h>
 #include <GLFW/glfw3.h>
 
-#include <string>
 #include <cstring>
+#include <string>
 
 // Global state for menu interaction
 static struct {
-	bool showMenu = false;
+	bool					 showMenu = false;
 	std::vector<std::string> sceneNames;
-	int selectedIndex = 0;
-	double mouseX = 0;
-	double mouseY = 0;
+	int						 selectedIndex = 0;
+	double					 mouseX = 0;
+	double					 mouseY = 0;
 } g_menuState;
 
 // GLFW callbacks
@@ -47,8 +47,10 @@ void FramebufferSizeCallback(GLFWwindow* window, int width, int height) {
 }
 
 void MouseButtonCallback(GLFWwindow* window, int button, int action, int mods) {
-	if (!g_menuState.showMenu) return;
-	if (button != GLFW_MOUSE_BUTTON_LEFT || action != GLFW_PRESS) return;
+	if (!g_menuState.showMenu)
+		return;
+	if (button != GLFW_MOUSE_BUTTON_LEFT || action != GLFW_PRESS)
+		return;
 
 	// Menu bounds
 	const float menuX = 10;
@@ -61,8 +63,8 @@ void MouseButtonCallback(GLFWwindow* window, int button, int action, int mods) {
 	float clickX = static_cast<float>(g_menuState.mouseX);
 	float clickY = static_cast<float>(g_menuState.mouseY);
 
-	if (clickX >= menuX && clickX <= menuX + menuWidth &&
-		clickY >= menuY && clickY <= menuY + headerHeight + g_menuState.sceneNames.size() * lineHeight) {
+	if (clickX >= menuX && clickX <= menuX + menuWidth && clickY >= menuY &&
+		clickY <= menuY + headerHeight + g_menuState.sceneNames.size() * lineHeight) {
 
 		// Check which scene was clicked
 		if (clickY >= menuY + headerHeight) {
@@ -83,7 +85,8 @@ void CursorPosCallback(GLFWwindow* window, double xpos, double ypos) {
 
 // Render navigation menu
 void RenderNavigationMenu() {
-	if (!g_menuState.showMenu) return;
+	if (!g_menuState.showMenu)
+		return;
 
 	using namespace Foundation;
 
@@ -95,21 +98,16 @@ void RenderNavigationMenu() {
 	const float totalHeight = headerHeight + g_menuState.sceneNames.size() * lineHeight;
 
 	// Draw menu background
-	Renderer::Primitives::DrawRect({
-		.bounds = {menuX, menuY, menuWidth, totalHeight},
-		.style = {
-			.fill = Color(0.15f, 0.15f, 0.2f, 0.95f),
-			.border = BorderStyle{.color = Color(0.4f, 0.4f, 0.5f, 1.0f), .width = 1.0f}
-		},
-		.id = "menu_background"
-	});
+	Renderer::Primitives::DrawRect(
+		{.bounds = {menuX, menuY, menuWidth, totalHeight},
+		 .style = {.fill = Color(0.15f, 0.15f, 0.2f, 0.95f), .border = BorderStyle{.color = Color(0.4f, 0.4f, 0.5f, 1.0f), .width = 1.0f}},
+		 .id = "menu_background"}
+	);
 
 	// Draw header background
-	Renderer::Primitives::DrawRect({
-		.bounds = {menuX, menuY, menuWidth, headerHeight},
-		.style = {.fill = Color(0.2f, 0.2f, 0.3f, 1.0f)},
-		.id = "menu_header"
-	});
+	Renderer::Primitives::DrawRect(
+		{.bounds = {menuX, menuY, menuWidth, headerHeight}, .style = {.fill = Color(0.2f, 0.2f, 0.3f, 1.0f)}, .id = "menu_header"}
+	);
 
 	// Draw scene items
 	for (size_t i = 0; i < g_menuState.sceneNames.size(); i++) {
@@ -117,23 +115,22 @@ void RenderNavigationMenu() {
 
 		// Highlight selected scene
 		if (static_cast<int>(i) == g_menuState.selectedIndex) {
-			Renderer::Primitives::DrawRect({
-				.bounds = {menuX + 2, itemY + 2, menuWidth - 4, lineHeight - 4},
-				.style = {.fill = Color(0.3f, 0.4f, 0.6f, 0.8f)},
-				.id = ("menu_item_" + std::to_string(i)).c_str()
-			});
+			Renderer::Primitives::DrawRect(
+				{.bounds = {menuX + 2, itemY + 2, menuWidth - 4, lineHeight - 4},
+				 .style = {.fill = Color(0.3f, 0.4f, 0.6f, 0.8f)},
+				 .id = ("menu_item_" + std::to_string(i)).c_str()}
+			);
 		}
 
 		// Highlight hovered scene
 		float mouseX = static_cast<float>(g_menuState.mouseX);
 		float mouseY = static_cast<float>(g_menuState.mouseY);
-		if (mouseX >= menuX && mouseX <= menuX + menuWidth &&
-			mouseY >= itemY && mouseY <= itemY + lineHeight) {
-			Renderer::Primitives::DrawRect({
-				.bounds = {menuX + 2, itemY + 2, menuWidth - 4, lineHeight - 4},
-				.style = {.fill = Color(0.4f, 0.5f, 0.7f, 0.5f)},
-				.id = ("menu_hover_" + std::to_string(i)).c_str()
-			});
+		if (mouseX >= menuX && mouseX <= menuX + menuWidth && mouseY >= itemY && mouseY <= itemY + lineHeight) {
+			Renderer::Primitives::DrawRect(
+				{.bounds = {menuX + 2, itemY + 2, menuWidth - 4, lineHeight - 4},
+				 .style = {.fill = Color(0.4f, 0.5f, 0.7f, 0.5f)},
+				 .id = ("menu_hover_" + std::to_string(i)).c_str()}
+			);
 		}
 	}
 }
@@ -150,10 +147,10 @@ GLFWwindow* InitializeWindow() {
 	}
 
 	// Get primary monitor to calculate window size (80% of screen)
-	GLFWmonitor* primaryMonitor = glfwGetPrimaryMonitor();
+	GLFWmonitor*	   primaryMonitor = glfwGetPrimaryMonitor();
 	const GLFWvidmode* videoMode = glfwGetVideoMode(primaryMonitor);
-	int windowWidth = static_cast<int>(videoMode->width * 0.8f);
-	int windowHeight = static_cast<int>(videoMode->height * 0.8f);
+	int				   windowWidth = static_cast<int>(videoMode->width * 0.8f);
+	int				   windowHeight = static_cast<int>(videoMode->height * 0.8f);
 
 	LOG_INFO(UI, "Screen: %dx%d", videoMode->width, videoMode->height);
 	LOG_INFO(UI, "Window: %dx%d (80%% of screen)", windowWidth, windowHeight);
@@ -201,7 +198,7 @@ GLFWwindow* InitializeWindow() {
 
 int main(int argc, char* argv[]) {
 	// Parse command line arguments FIRST (before any logging)
-	int httpPort = 8081; // Default port for ui-sandbox
+	int	 httpPort = 8081; // Default port for ui-sandbox
 	bool hasSceneArg = false;
 
 	for (int i = 1; i < argc; i++) {
@@ -248,7 +245,7 @@ int main(int argc, char* argv[]) {
 	LOG_INFO(Foundation, "  Compile-time: 'Position' -> 0x%llx", kPositionHash);
 
 	// Runtime hashing (computed at runtime)
-	const char* runtimeString = "DynamicComponent";
+	const char*			   runtimeString = "DynamicComponent";
 	foundation::StringHash runtimeHash = foundation::HashString(runtimeString);
 	LOG_INFO(Foundation, "  Runtime: '%s' -> 0x%llx", runtimeString, runtimeHash);
 
@@ -258,8 +255,7 @@ int main(int argc, char* argv[]) {
 	foundation::HashStringDebug("Position");
 	foundation::HashStringDebug("TestComponent");
 
-	LOG_INFO(Foundation, "  Debug lookup: 0x%llx -> '%s'",
-		kTransformHash, foundation::GetStringForHash(kTransformHash));
+	LOG_INFO(Foundation, "  Debug lookup: 0x%llx -> '%s'", kTransformHash, foundation::GetStringForHash(kTransformHash));
 #endif
 
 	// Initialize window and OpenGL
@@ -327,54 +323,54 @@ int main(int argc, char* argv[]) {
 		if (httpPort > 0) {
 			Foundation::ControlAction action = debugServer.GetControlAction();
 			if (action != Foundation::ControlAction::None) {
-			switch (action) {
-				case Foundation::ControlAction::Exit:
-					LOG_INFO(UI, "Exit requested via control endpoint");
-					app.Stop();
-					debugServer.ClearControlAction();
-					return false; // Request exit
+				switch (action) {
+					case Foundation::ControlAction::Exit:
+						LOG_INFO(UI, "Exit requested via control endpoint");
+						app.Stop();
+						debugServer.ClearControlAction();
+						return false; // Request exit
 
-				case Foundation::ControlAction::SceneChange: {
-					std::string sceneName = debugServer.GetTargetSceneName();
-					LOG_INFO(UI, "Scene change requested: %s", sceneName.c_str());
-					if (engine::SceneManager::Get().SwitchTo(sceneName)) {
-						LOG_INFO(UI, "Switched to scene: %s", sceneName.c_str());
-					} else {
-						LOG_ERROR(UI, "Failed to switch to scene: %s", sceneName.c_str());
-					}
-					debugServer.ClearControlAction();
-					break;
-				}
-
-				case Foundation::ControlAction::Pause:
-					LOG_INFO(UI, "Pause requested via control endpoint");
-					app.Pause();
-					debugServer.ClearControlAction();
-					break;
-
-				case Foundation::ControlAction::Resume:
-					LOG_INFO(UI, "Resume requested via control endpoint");
-					app.Resume();
-					debugServer.ClearControlAction();
-					break;
-
-				case Foundation::ControlAction::ReloadScene: {
-					LOG_INFO(UI, "Reload scene requested via control endpoint");
-					std::string currentScene = engine::SceneManager::Get().GetCurrentSceneName();
-					if (!currentScene.empty()) {
-						if (engine::SceneManager::Get().SwitchTo(currentScene)) {
-							LOG_INFO(UI, "Reloaded scene: %s", currentScene.c_str());
+					case Foundation::ControlAction::SceneChange: {
+						std::string sceneName = debugServer.GetTargetSceneName();
+						LOG_INFO(UI, "Scene change requested: %s", sceneName.c_str());
+						if (engine::SceneManager::Get().SwitchTo(sceneName)) {
+							LOG_INFO(UI, "Switched to scene: %s", sceneName.c_str());
 						} else {
-							LOG_ERROR(UI, "Failed to reload scene: %s", currentScene.c_str());
+							LOG_ERROR(UI, "Failed to switch to scene: %s", sceneName.c_str());
 						}
+						debugServer.ClearControlAction();
+						break;
 					}
-					debugServer.ClearControlAction();
-					break;
-				}
 
-				default:
-					break;
-			}
+					case Foundation::ControlAction::Pause:
+						LOG_INFO(UI, "Pause requested via control endpoint");
+						app.Pause();
+						debugServer.ClearControlAction();
+						break;
+
+					case Foundation::ControlAction::Resume:
+						LOG_INFO(UI, "Resume requested via control endpoint");
+						app.Resume();
+						debugServer.ClearControlAction();
+						break;
+
+					case Foundation::ControlAction::ReloadScene: {
+						LOG_INFO(UI, "Reload scene requested via control endpoint");
+						std::string currentScene = engine::SceneManager::Get().GetCurrentSceneName();
+						if (!currentScene.empty()) {
+							if (engine::SceneManager::Get().SwitchTo(currentScene)) {
+								LOG_INFO(UI, "Reloaded scene: %s", currentScene.c_str());
+							} else {
+								LOG_ERROR(UI, "Failed to reload scene: %s", currentScene.c_str());
+							}
+						}
+						debugServer.ClearControlAction();
+						break;
+					}
+
+					default:
+						break;
+				}
 			}
 		}
 		return true; // Continue running

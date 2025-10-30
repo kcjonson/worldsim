@@ -1,5 +1,5 @@
-#include <benchmark/benchmark.h>
 #include "arena.h"
+#include <benchmark/benchmark.h>
 #include <cstdlib>
 
 using namespace foundation;
@@ -25,7 +25,7 @@ BENCHMARK(BM_MallocSingleAllocation)->Range(8, 8 << 10);
 // Benchmark: Single allocation with Arena
 static void BM_ArenaSingleAllocation(benchmark::State& state) {
 	size_t size = state.range(0);
-	Arena arena(1024 * 1024); // 1MB arena
+	Arena  arena(1024 * 1024); // 1MB arena
 
 	for (auto _ : state) {
 		arena.Reset();
@@ -43,7 +43,7 @@ BENCHMARK(BM_ArenaSingleAllocation)->Range(8, 8 << 10);
 
 // Benchmark: 1000 small allocations with malloc
 static void BM_MallocBatchSmallAllocations(benchmark::State& state) {
-	constexpr int kAllocCount = 1000;
+	constexpr int	 kAllocCount = 1000;
 	constexpr size_t kAllocSize = 64;
 
 	for (auto _ : state) {
@@ -64,7 +64,7 @@ BENCHMARK(BM_MallocBatchSmallAllocations);
 
 // Benchmark: 1000 small allocations with Arena
 static void BM_ArenaBatchSmallAllocations(benchmark::State& state) {
-	constexpr int kAllocCount = 1000;
+	constexpr int	 kAllocCount = 1000;
 	constexpr size_t kAllocSize = 64;
 
 	Arena arena(kAllocCount * kAllocSize * 2); // Ensure enough space
@@ -87,13 +87,13 @@ BENCHMARK(BM_ArenaBatchSmallAllocations);
 // ============================================================================
 
 struct SmallStruct {
-	int a;
+	int	  a;
 	float b;
 };
 
 struct LargeStruct {
 	double data[16];
-	int id;
+	int	   id;
 };
 
 // Benchmark: Allocate structs with malloc
@@ -138,7 +138,7 @@ BENCHMARK(BM_MallocArrayAllocation)->Range(8, 1024);
 
 // Benchmark: Array allocation with Arena
 static void BM_ArenaArrayAllocation(benchmark::State& state) {
-	int count = state.range(0);
+	int	  count = state.range(0);
 	Arena arena(1024 * 1024);
 
 	for (auto _ : state) {
@@ -352,8 +352,8 @@ static void BM_SimulatedUILayout(benchmark::State& state) {
 		for (int i = 0; i < 100; ++i) {
 			struct UIElementData {
 				float x, y, width, height;
-				int id;
-				char text[32];
+				int	  id;
+				char  text[32];
 			};
 
 			UIElementData* elem = arena.Allocate<UIElementData>();
@@ -389,11 +389,11 @@ static void BM_SimulatedParticleUpdate(benchmark::State& state) {
 
 		// Allocate particle batch
 		constexpr int kParticleCount = 1000;
-		Particle* particles = arena.AllocateArray<Particle>(kParticleCount);
+		Particle*	  particles = arena.AllocateArray<Particle>(kParticleCount);
 		benchmark::DoNotOptimize(particles);
 
 		// Allocate temporary buffers for sorting
-		int* indices = arena.AllocateArray<int>(kParticleCount);
+		int*   indices = arena.AllocateArray<int>(kParticleCount);
 		float* distances = arena.AllocateArray<float>(kParticleCount);
 		benchmark::DoNotOptimize(indices);
 		benchmark::DoNotOptimize(distances);

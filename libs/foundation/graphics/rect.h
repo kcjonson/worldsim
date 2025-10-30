@@ -8,52 +8,62 @@
 
 namespace Foundation {
 
-struct Rect {
-	float x, y, width, height;
+	struct Rect {
+		float x, y, width, height;
 
-	// Constructors
-	constexpr Rect() : x(0.0f), y(0.0f), width(0.0f), height(0.0f) {}
+		// Constructors
+		constexpr Rect()
+			: x(0.0f),
+			  y(0.0f),
+			  width(0.0f),
+			  height(0.0f) {}
 
-	constexpr Rect(float x, float y, float width, float height) : x(x), y(y), width(width), height(height) {}
+		constexpr Rect(float x, float y, float width, float height)
+			: x(x),
+			  y(y),
+			  width(width),
+			  height(height) {}
 
-	constexpr Rect(const Vec2& position, const Vec2& size) : x(position.x), y(position.y), width(size.x), height(size.y) {}
+		constexpr Rect(const Vec2& position, const Vec2& size)
+			: x(position.x),
+			  y(position.y),
+			  width(size.x),
+			  height(size.y) {}
 
-	// Helper methods
-	Vec2 Position() const { return Vec2(x, y); }
-	Vec2 Size() const { return Vec2(width, height); }
+		// Helper methods
+		Vec2 Position() const { return Vec2(x, y); }
+		Vec2 Size() const { return Vec2(width, height); }
 
-	float Left() const { return x; }
-	float Right() const { return x + width; }
-	float Top() const { return y; }
-	float Bottom() const { return y + height; }
+		float Left() const { return x; }
+		float Right() const { return x + width; }
+		float Top() const { return y; }
+		float Bottom() const { return y + height; }
 
-	Vec2 TopLeft() const { return Vec2(x, y); }
-	Vec2 TopRight() const { return Vec2(x + width, y); }
-	Vec2 BottomLeft() const { return Vec2(x, y + height); }
-	Vec2 BottomRight() const { return Vec2(x + width, y + height); }
+		Vec2 TopLeft() const { return Vec2(x, y); }
+		Vec2 TopRight() const { return Vec2(x + width, y); }
+		Vec2 BottomLeft() const { return Vec2(x, y + height); }
+		Vec2 BottomRight() const { return Vec2(x + width, y + height); }
 
-	Vec2 Center() const { return Vec2(x + width * 0.5f, y + height * 0.5f); }
+		Vec2 Center() const { return Vec2(x + width * 0.5f, y + height * 0.5f); }
 
-	bool Contains(const Vec2& point) const {
-		return point.x >= x && point.x <= x + width && point.y >= y && point.y <= y + height;
-	}
+		bool Contains(const Vec2& point) const { return point.x >= x && point.x <= x + width && point.y >= y && point.y <= y + height; }
 
-	bool Intersects(const Rect& other) const {
-		return x < other.x + other.width && x + width > other.x && y < other.y + other.height && y + height > other.y;
-	}
-
-	static Rect Intersection(const Rect& a, const Rect& b) {
-		float left = glm::max(a.x, b.x);
-		float right = glm::min(a.x + a.width, b.x + b.width);
-		float top = glm::max(a.y, b.y);
-		float bottom = glm::min(a.y + a.height, b.y + b.height);
-
-		if (right > left && bottom > top) {
-			return Rect(left, top, right - left, bottom - top);
+		bool Intersects(const Rect& other) const {
+			return x < other.x + other.width && x + width > other.x && y < other.y + other.height && y + height > other.y;
 		}
 
-		return Rect(); // Empty rect
-	}
-};
+		static Rect Intersection(const Rect& a, const Rect& b) {
+			float left = glm::max(a.x, b.x);
+			float right = glm::min(a.x + a.width, b.x + b.width);
+			float top = glm::max(a.y, b.y);
+			float bottom = glm::min(a.y + a.height, b.y + b.height);
+
+			if (right > left && bottom > top) {
+				return Rect(left, top, right - left, bottom - top);
+			}
+
+			return Rect(); // Empty rect
+		}
+	};
 
 } // namespace Foundation

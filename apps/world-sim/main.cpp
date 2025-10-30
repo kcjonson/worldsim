@@ -1,9 +1,9 @@
 // World-Sim - Main Game Application
 // Production game using unified Application-based game loop
 
-#include <scene/scene_manager.h>
 #include <application/application.h>
 #include <primitives/primitives.h>
+#include <scene/scene_manager.h>
 #include <utils/log.h>
 
 #include <GL/glew.h>
@@ -32,10 +32,10 @@ GLFWwindow* InitializeWindow() {
 	}
 
 	// Get primary monitor for window sizing
-	GLFWmonitor* primaryMonitor = glfwGetPrimaryMonitor();
+	GLFWmonitor*	   primaryMonitor = glfwGetPrimaryMonitor();
 	const GLFWvidmode* videoMode = glfwGetVideoMode(primaryMonitor);
-	int windowWidth = static_cast<int>(videoMode->width * 0.8f);
-	int windowHeight = static_cast<int>(videoMode->height * 0.8f);
+	int				   windowWidth = static_cast<int>(videoMode->width * 0.8f);
+	int				   windowHeight = static_cast<int>(videoMode->height * 0.8f);
 
 	LOG_INFO(Game, "Screen: %dx%d", videoMode->width, videoMode->height);
 	LOG_INFO(Game, "Window: %dx%d (80%% of screen)", windowWidth, windowHeight);
@@ -113,9 +113,7 @@ int main(int argc, char* argv[]) {
 	});
 
 	// Set up overlay renderer (primitives end frame)
-	app.SetOverlayRenderer([]() {
-		Renderer::Primitives::EndFrame();
-	});
+	app.SetOverlayRenderer([]() { Renderer::Primitives::EndFrame(); });
 
 	// Run application
 	LOG_INFO(Engine, "Starting application main loop");
