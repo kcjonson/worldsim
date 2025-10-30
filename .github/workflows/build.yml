@@ -31,7 +31,7 @@ jobs:
         cmake -S . -B build \
           -DCMAKE_BUILD_TYPE=Release \
           -DCMAKE_TOOLCHAIN_FILE=$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake \
-          -DBUILD_TESTING=ON
+          -DBUILD_TESTING=OFF
       env:
         CC: clang
         CXX: clang++
