@@ -22,7 +22,7 @@ jobs:
     - name: Check clang-format
       run: |
         echo "Checking code formatting..."
-        find libs apps -name '*.cpp' -o -name '*.h' | xargs clang-format --dry-run --Werror
+        find libs apps \( -name '*.cpp' -o -name '*.h' \) | xargs clang-format --dry-run --Werror
         if [ $? -ne 0 ]; then
           echo "❌ Code formatting check failed. Run 'clang-format -i' on the files above."
           exit 1
