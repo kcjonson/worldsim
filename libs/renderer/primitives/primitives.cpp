@@ -39,8 +39,8 @@ namespace Renderer {
 
 		void SetCoordinateSystem(CoordinateSystem* coordSystem) {
 			s_coordinateSystem = coordSystem;
-			// Also update the batch renderer with the coordinate system
-			if (s_batchRenderer && s_coordinateSystem) {
+			// Also update the batch renderer with the coordinate system (even if nullptr)
+			if (s_batchRenderer) {
 				s_batchRenderer->SetCoordinateSystem(s_coordinateSystem);
 			}
 		}
