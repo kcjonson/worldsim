@@ -17,7 +17,7 @@ jobs:
     - name: Install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y cmake ninja-build clang
+        sudo apt-get install -y cmake clang libxmu-dev libxi-dev libgl-dev
 
     - name: Setup vcpkg
       uses: lukka/run-vcpkg@v11
@@ -27,7 +27,6 @@ jobs:
     - name: Configure CMake
       run: |
         cmake -S . -B build \
-          -G Ninja \
           -DCMAKE_BUILD_TYPE=Release \
           -DCMAKE_TOOLCHAIN_FILE=$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake \
           -DBUILD_TESTING=ON

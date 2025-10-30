@@ -17,7 +17,7 @@ jobs:
     - name: Install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y clang-format clang-tidy
+        sudo apt-get install -y cmake clang clang-format clang-tidy libxmu-dev libxi-dev libgl-dev
 
     - name: Check clang-format
       run: |
