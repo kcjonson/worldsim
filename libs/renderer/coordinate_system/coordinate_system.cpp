@@ -94,7 +94,11 @@ namespace Renderer {
 
 	float CoordinateSystem::GetPixelRatio() const {
 		// Calculate and cache the pixel ratio for performance
-		if (m_pixelRatioDirty && m_window) {
+		if (!m_window) {
+			// Fallback: if window is null, return default pixel ratio
+			return 1.0f;
+		}
+		if (m_pixelRatioDirty) {
 			int windowWidth, windowHeight;
 			int framebufferWidth, framebufferHeight;
 
