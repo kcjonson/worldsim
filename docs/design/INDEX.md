@@ -4,25 +4,27 @@
 
 This directory contains game design documents, requirements, and planning documents for the world-sim project. These design docs describe *what* needs to be built from a **player-facing game design perspective**, while technical design docs describe *how* it's implemented.
 
-**What belongs here:**
+**Important**: Game design docs may differ from actual implementation. When implementation diverges, see the corresponding Technical Design Document for what was actually built and why.
+
+**What belongs in documents here:**
 - Player experience and game mechanics
 - UI/UX from the player's perspective
 - Game systems (building, colonists, raids, etc.)
 - Gameplay features and content
 - Player-facing requirements
 
-**What belongs in technical/:**
+**What doest not belong in documents here:**
 - Architecture and system design (client/server, ECS, etc.)
-- Implementation details (algorithms, data structures)
+- Rough Implementation detail examples. (algorithms, data structures)
 - Tools and infrastructure (debug server, asset pipeline)
 - Performance optimization
 - Technical systems (networking, rendering, etc.)
 
-**Important**: Game design docs may differ from actual implementation. When implementation diverges, see the corresponding Technical Design Document for what was actually built and why.
+
 
 ## Organization
 
-Documents can be organized in subdirectories (`features/`, `requirements/`) or at the top level - use whatever makes sense as the project grows. Prefer many short focused docs (1-5 pages) over long comprehensive documents.
+Documents can be organized in subdirectories (`features/`, `mechanics/`) or at the top level - use whatever makes sense as the project grows. Prefer many short focused docs (1-5 pages) over long comprehensive documents.
 
 ## Core Design Documents
 
