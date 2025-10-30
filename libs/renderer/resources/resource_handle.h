@@ -20,50 +20,36 @@
 
 namespace renderer {
 
-// 32-bit handle: 16-bit index + 16-bit generation
-struct ResourceHandle {
-	uint32_t value;
+	// 32-bit handle: 16-bit index + 16-bit generation
+	struct ResourceHandle {
+		uint32_t value;
 
-	static constexpr uint32_t kInvalidHandle = 0xFFFFFFFF;
+		static constexpr uint32_t kInvalidHandle = 0xFFFFFFFF;
 
-	// Check if handle is valid
-	bool IsValid() const {
-		return value != kInvalidHandle;
-	}
+		// Check if handle is valid
+		bool IsValid() const { return value != kInvalidHandle; }
 
-	// Extract index (lower 16 bits)
-	uint16_t GetIndex() const {
-		return value & 0xFFFF;
-	}
+		// Extract index (lower 16 bits)
+		uint16_t GetIndex() const { return value & 0xFFFF; }
 
-	// Extract generation (upper 16 bits)
-	uint16_t GetGeneration() const {
-		return value >> 16;
-	}
+		// Extract generation (upper 16 bits)
+		uint16_t GetGeneration() const { return value >> 16; }
 
-	// Create handle from index and generation
-	static ResourceHandle Make(uint16_t index, uint16_t generation) {
-		return { (static_cast<uint32_t>(generation) << 16) | index };
-	}
+		// Create handle from index and generation
+		static ResourceHandle Make(uint16_t index, uint16_t generation) { return {(static_cast<uint32_t>(generation) << 16) | index}; }
 
-	// Create invalid handle
-	static ResourceHandle Invalid() {
-		return { kInvalidHandle };
-	}
+		// Create invalid handle
+		static ResourceHandle Invalid() { return {kInvalidHandle}; }
 
-	// Comparison operators
-	bool operator==(ResourceHandle other) const {
-		return value == other.value;
-	}
+		// Comparison operators
+		bool operator==(ResourceHandle other) const { return value == other.value; }
 
-	bool operator!=(ResourceHandle other) const {
-		return value != other.value;
-	}
-};
+		bool operator!=(ResourceHandle other) const { return value != other.value; }
+	};
 
-// Type-safe handle aliases
-using TextureHandle = ResourceHandle;
-using MeshHandle = ResourceHandle;
-using SVGAssetHandle = ResourceHandle;
+	// Type-safe handle aliases
+	using TextureHandle = ResourceHandle;
+	using MeshHandle = ResourceHandle;
+	using SVGAssetHandle = ResourceHandle;
 
 } // namespace renderer

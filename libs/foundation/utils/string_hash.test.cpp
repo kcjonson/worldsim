@@ -1,5 +1,5 @@
-#include <gtest/gtest.h>
 #include "string_hash.h"
+#include <gtest/gtest.h>
 
 using namespace foundation;
 
@@ -59,7 +59,7 @@ TEST(StringHashTests, HashCaseSensitive) {
 
 TEST(StringHashTests, HashLongString) {
 	const char* longString = "This is a very long string with many characters to test the hash function";
-	StringHash hash = HashString(longString);
+	StringHash	hash = HashString(longString);
 
 	// Should produce a valid hash
 	EXPECT_NE(hash, 0);
@@ -121,7 +121,7 @@ TEST(StringHashTests, CompileTimeHashMacro) {
 
 TEST(StringHashTests, CompileTimeMatchesRuntime) {
 	constexpr StringHash compileTime = HASH("test_string");
-	StringHash runtime = HashString("test_string");
+	StringHash			 runtime = HashString("test_string");
 
 	// Compile-time and runtime should produce identical results
 	EXPECT_EQ(compileTime, runtime);
@@ -173,9 +173,7 @@ TEST(StringHashTests, CommonHashConstantsUnique) {
 	// Check all are unique
 	for (size_t i = 0; i < commonHashes.size(); i++) {
 		for (size_t j = i + 1; j < commonHashes.size(); j++) {
-			EXPECT_NE(commonHashes[i], commonHashes[j])
-				<< "Collision found between common hash constants at indices "
-				<< i << " and " << j;
+			EXPECT_NE(commonHashes[i], commonHashes[j]) << "Collision found between common hash constants at indices " << i << " and " << j;
 		}
 	}
 }
@@ -197,8 +195,7 @@ TEST(StringHashTests, HashDistribution) {
 	// Check all are unique (no collisions in 1000 sequential strings)
 	for (size_t i = 0; i < hashes.size(); i++) {
 		for (size_t j = i + 1; j < hashes.size(); j++) {
-			EXPECT_NE(hashes[i], hashes[j])
-				<< "Collision between 'string_" << i << "' and 'string_" << j << "'";
+			EXPECT_NE(hashes[i], hashes[j]) << "Collision between 'string_" << i << "' and 'string_" << j << "'";
 		}
 	}
 }
@@ -206,9 +203,7 @@ TEST(StringHashTests, HashDistribution) {
 TEST(StringHashTests, NoZeroHashes) {
 	// Verify that common strings don't hash to zero
 	std::vector<const char*> commonStrings = {
-		"", "a", "ab", "abc", "test", "hello", "world",
-		"Transform", "Position", "Velocity",
-		"0", "1", "123", "null", "nullptr"
+		"", "a", "ab", "abc", "test", "hello", "world", "Transform", "Position", "Velocity", "0", "1", "123", "null", "nullptr"
 	};
 
 	for (const char* str : commonStrings) {
@@ -241,7 +236,7 @@ TEST(StringHashDebugTests, HashStringDebug) {
 TEST(StringHashDebugTests, GetStringForHash) {
 	// Register a hash
 	const char* original = "test_lookup";
-	StringHash hash = HashStringDebug(original);
+	StringHash	hash = HashStringDebug(original);
 
 	// Look it up
 	const char* retrieved = GetStringForHash(hash);
@@ -316,10 +311,14 @@ TEST(StringHashTests, SwitchCasePattern) {
 	auto GetComponentType = [](const char* name) -> int {
 		StringHash hash = HashString(name);
 
-		if (hash == hashes::kTransform) return 1;
-		if (hash == hashes::kPosition) return 2;
-		if (hash == hashes::kVelocity) return 3;
-		if (hash == hashes::kRenderable) return 4;
+		if (hash == hashes::kTransform)
+			return 1;
+		if (hash == hashes::kPosition)
+			return 2;
+		if (hash == hashes::kVelocity)
+			return 3;
+		if (hash == hashes::kRenderable)
+			return 4;
 
 		return 0;
 	};

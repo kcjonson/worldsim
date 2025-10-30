@@ -10,23 +10,23 @@
 
 namespace Foundation {
 
-// Optional border style for rectangles
-struct BorderStyle {
-	Color color = Color::White();
-	float width = 1.0f;
-	float cornerRadius = 0.0f;
-};
+	// Optional border style for rectangles
+	struct BorderStyle {
+		Color color = Color::White();
+		float width = 1.0f;
+		float cornerRadius = 0.0f;
+	};
 
-// Rectangle visual style
-struct RectStyle {
-	Color fill = Color::White();
-	std::optional<BorderStyle> border = std::nullopt;
-};
+	// Rectangle visual style
+	struct RectStyle {
+		Color					   fill = Color::White();
+		std::optional<BorderStyle> border = std::nullopt;
+	};
 
-// Line visual style
-struct LineStyle {
-	Color color = Color::White();
-	float width = 1.0f;
-};
+	// Line visual style
+	struct LineStyle {
+		Color color = Color::White();
+		float width = 1.0f;
+	};
 
 } // namespace Foundation

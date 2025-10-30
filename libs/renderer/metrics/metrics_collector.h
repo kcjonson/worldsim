@@ -9,41 +9,41 @@
 
 namespace Renderer {
 
-class MetricsCollector {
-public:
-	MetricsCollector();
+	class MetricsCollector {
+	  public:
+		MetricsCollector();
 
-	// Frame lifecycle - call at start and end of each frame
-	void BeginFrame();
-	void EndFrame();
+		// Frame lifecycle - call at start and end of each frame
+		void BeginFrame();
+		void EndFrame();
 
-	// Get current metrics snapshot
-	Foundation::PerformanceMetrics GetCurrentMetrics() const;
+		// Get current metrics snapshot
+		Foundation::PerformanceMetrics GetCurrentMetrics() const;
 
-	// Set rendering stats (called by renderer)
-	void SetRenderStats(uint32_t drawCalls, uint32_t vertexCount, uint32_t triangleCount);
+		// Set rendering stats (called by renderer)
+		void SetRenderStats(uint32_t drawCalls, uint32_t vertexCount, uint32_t triangleCount);
 
-private:
-	using Clock = std::chrono::high_resolution_clock;
-	using TimePoint = std::chrono::time_point<Clock>;
+	  private:
+		using Clock = std::chrono::high_resolution_clock;
+		using TimePoint = std::chrono::time_point<Clock>;
 
-	TimePoint m_frameStart;
-	std::vector<float> m_frameTimeSamples; // Rolling window of frame times (last 60 frames)
-	size_t m_currentSampleIndex;
+		TimePoint		   m_frameStart;
+		std::vector<float> m_frameTimeSamples; // Rolling window of frame times (last 60 frames)
+		size_t			   m_currentSampleIndex;
 
-	// Current rendering stats
-	uint32_t m_drawCalls;
-	uint32_t m_vertexCount;
-	uint32_t m_triangleCount;
+		// Current rendering stats
+		uint32_t m_drawCalls;
+		uint32_t m_vertexCount;
+		uint32_t m_triangleCount;
 
-	// Helper: Get current Unix timestamp in milliseconds
-	uint64_t GetCurrentTimestamp() const;
+		// Helper: Get current Unix timestamp in milliseconds
+		uint64_t GetCurrentTimestamp() const;
 
-	// Helper: Calculate FPS from frame time
-	float CalculateFPS(float frameTimeMs) const;
+		// Helper: Calculate FPS from frame time
+		float CalculateFPS(float frameTimeMs) const;
 
-	// Helper: Get min/max frame times from sample window
-	void GetFrameTimeMinMax(float& outMin, float& outMax) const;
-};
+		// Helper: Get min/max frame times from sample window
+		void GetFrameTimeMinMax(float& outMin, float& outMax) const;
+	};
 
 } // namespace Renderer
