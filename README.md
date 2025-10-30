@@ -53,6 +53,17 @@ Open the project in VSCode. CMake should configure automatically.
 **Format code**: `Shift+Alt+F` (manual - not on save)
 **Debug**: Use the debug configurations in Run & Debug panel
 
+### 4. Git Hooks Setup (Optional but Recommended)
+
+Enable automatic code formatting on commit:
+
+```bash
+cd .git/hooks
+ln -s ../../scripts/git-hooks/pre-commit pre-commit
+```
+
+This hook automatically formats staged C++ files before each commit.
+
 ## Project Structure
 
 ```
