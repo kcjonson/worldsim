@@ -13,6 +13,9 @@
 
 namespace Renderer {
 
+	// Forward declaration
+	class CoordinateSystem;
+
 	// Vertex format for 2D primitives
 	struct PrimitiveVertex {
 		Foundation::Vec2 position;
@@ -55,6 +58,9 @@ namespace Renderer {
 		// Get current viewport dimensions
 		void GetViewport(int& width, int& height) const;
 
+		// Set coordinate system (for DPI-aware projection matrices)
+		void SetCoordinateSystem(CoordinateSystem* coordSystem);
+
 		// Rendering statistics structure
 		struct RenderStats {
 			uint32_t drawCalls;
@@ -85,6 +91,9 @@ namespace Renderer {
 		// Viewport dimensions
 		int m_viewportWidth = 800;
 		int m_viewportHeight = 600;
+
+		// Coordinate system (optional, for DPI-aware rendering)
+		CoordinateSystem* m_coordinateSystem = nullptr;
 
 		// Statistics
 		size_t m_drawCallCount = 0;

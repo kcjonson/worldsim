@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2025-10-30
+Last Updated: 2025-10-30 (CoordinateSystem port complete)
 
 ## Epic/Story/Task Template
 
@@ -154,10 +154,16 @@ Use this template for all work items:
   - [x] Created component-storage-patterns.md research doc
 
 **Phase 1: Port Components** (from colonysim-integration-architecture.md)
-- [ ] CoordinateSystem
-  - [ ] Create libs/renderer/coordinate_system/ library
-  - [ ] Port utility functions (percentWidth, percentHeight, etc.)
-  - [ ] DPI handling and projection matrix creation
+- [x] CoordinateSystem ✅ COMPLETE
+  - [x] Create libs/renderer/coordinate_system/ library with CMakeLists.txt
+  - [x] Port CoordinateSystem class (remove singleton, update naming conventions)
+  - [x] Integrate with Primitives API (SetCoordinateSystem, expose projection/percent methods)
+  - [x] Keep BatchRenderer using framebuffer size (physical pixels) for backward compatibility
+  - [x] Update application initialization in ui-sandbox
+  - [x] Unit tests: 18 tests covering initialization, percentage helpers, DPI conversion, projections
+  - [x] All tests passing (43/43 renderer tests)
+  - [x] Tested - rendering preserved, percentage helpers available for future UI components
+  - [x] Design note: Worldsim uses physical pixels, CoordinateSystem provides DPI utilities
 - [ ] Layer System
   - [ ] Create libs/ui/layer/ library
   - [ ] Port Layer class with shared_ptr storage
