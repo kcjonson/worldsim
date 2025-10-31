@@ -63,12 +63,12 @@ void MouseButtonCallback(GLFWwindow* window, int button, int action, int mods) {
 	float clickX = static_cast<float>(g_menuState.m_mouseX);
 	float clickY = static_cast<float>(g_menuState.m_mouseY);
 
-	if (clickX >= menuX && clickX <= menuX + menuWidth && clickY >= menuY &&
-		clickY <= menuY + headerHeight + g_menuState.m_sceneNames.size() * lineHeight) {
+	if (clickX >= kMenuX && clickX <= kMenuX + kMenuWidth && clickY >= kMenuY &&
+		clickY <= kMenuY + kHeaderHeight + g_menuState.m_sceneNames.size() * kLineHeight) {
 
 		// Check which scene was clicked
-		if (clickY >= menuY + headerHeight) {
-			int clickedIndex = static_cast<int>((clickY - menuY - headerHeight) / lineHeight);
+		if (clickY >= kMenuY + kHeaderHeight) {
+			int clickedIndex = static_cast<int>((clickY - kMenuY - kHeaderHeight) / kLineHeight);
 			if (clickedIndex >= 0 && clickedIndex < static_cast<int>(g_menuState.m_sceneNames.size())) {
 				// Switch to selected scene
 				engine::SceneManager::Get().SwitchTo(g_menuState.m_sceneNames[clickedIndex]);
@@ -95,28 +95,28 @@ void RenderNavigationMenu() {
 	const float kMenuWidth = 150;
 	const float kLineHeight = 25;
 	const float kHeaderHeight = 30;
-	const float kTotalHeight = headerHeight + g_menuState.m_sceneNames.size() * lineHeight;
+	const float kTotalHeight = kHeaderHeight + g_menuState.m_sceneNames.size() * kLineHeight;
 
 	// Draw menu background
 	Renderer::Primitives::DrawRect(
-		{.bounds = {menuX, menuY, menuWidth, totalHeight},
+		{.bounds = {kMenuX, kMenuY, kMenuWidth, kTotalHeight},
 		 .style = {.fill = Color(0.15F, 0.15F, 0.2F, 0.95F), .border = BorderStyle{.color = Color(0.4F, 0.4F, 0.5F, 1.0F), .width = 1.0F}},
 		 .id = "menu_background"}
 	);
 
 	// Draw header background
 	Renderer::Primitives::DrawRect(
-		{.bounds = {menuX, menuY, menuWidth, headerHeight}, .style = {.fill = Color(0.2F, 0.2F, 0.3F, 1.0F)}, .id = "menu_header"}
+		{.bounds = {kMenuX, kMenuY, kMenuWidth, kHeaderHeight}, .style = {.fill = Color(0.2F, 0.2F, 0.3F, 1.0F)}, .id = "menu_header"}
 	);
 
 	// Draw scene items
 	for (size_t i = 0; i < g_menuState.m_sceneNames.size(); i++) {
-		float itemY = menuY + headerHeight + i * lineHeight;
+		float itemY = kMenuY + kHeaderHeight + i * kLineHeight;
 
 		// Highlight selected scene
 		if (static_cast<int>(i) == g_menuState.m_selectedIndex) {
 			Renderer::Primitives::DrawRect(
-				{.bounds = {menuX + 2, itemY + 2, menuWidth - 4, lineHeight - 4},
+				{.bounds = {kMenuX + 2, itemY + 2, kMenuWidth - 4, kLineHeight - 4},
 				 .style = {.fill = Color(0.3F, 0.4F, 0.6F, 0.8F)},
 				 .id = ("menu_item_" + std::to_string(i)).c_str()}
 			);
@@ -125,9 +125,9 @@ void RenderNavigationMenu() {
 		// Highlight hovered scene
 		float mouseX = static_cast<float>(g_menuState.m_mouseX);
 		float mouseY = static_cast<float>(g_menuState.m_mouseY);
-		if (mouseX >= menuX && mouseX <= menuX + menuWidth && mouseY >= itemY && mouseY <= itemY + lineHeight) {
+		if (mouseX >= kMenuX && mouseX <= kMenuX + kMenuWidth && mouseY >= itemY && mouseY <= itemY + kLineHeight) {
 			Renderer::Primitives::DrawRect(
-				{.bounds = {menuX + 2, itemY + 2, menuWidth - 4, lineHeight - 4},
+				{.bounds = {kMenuX + 2, itemY + 2, kMenuWidth - 4, kLineHeight - 4},
 				 .style = {.fill = Color(0.4F, 0.5F, 0.7F, 0.5F)},
 				 .id = ("menu_hover_" + std::to_string(i)).c_str()}
 			);
