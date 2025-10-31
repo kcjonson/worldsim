@@ -34,8 +34,8 @@ GLFWwindow* InitializeWindow() {
 	// Get primary monitor for window sizing
 	GLFWmonitor*	   primaryMonitor = glfwGetPrimaryMonitor();
 	const GLFWvidmode* videoMode = glfwGetVideoMode(primaryMonitor);
-	int				   windowWidth = static_cast<int>(videoMode->width * 0.8f);
-	int				   windowHeight = static_cast<int>(videoMode->height * 0.8f);
+	int				   windowWidth = static_cast<int>(videoMode->width * 0.8F);
+	int				   windowHeight = static_cast<int>(videoMode->height * 0.8F);
 
 	LOG_INFO(Game, "Screen: %dx%d", videoMode->width, videoMode->height);
 	LOG_INFO(Game, "Window: %dx%d (80%% of screen)", windowWidth, windowHeight);

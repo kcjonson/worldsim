@@ -148,7 +148,7 @@ namespace UI {
 		glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
 		m_shader.Use();
-		glUniform3f(glGetUniformLocation(m_shader.GetProgram(), "textColor"), color.x, color.y, color.z);
+		glUniform3F(glGetUniformLocation(m_shader.GetProgram(), "textColor"), color.x, color.y, color.z);
 		glActiveTexture(GL_TEXTURE0);
 		glBindVertexArray(m_vao);
 
@@ -186,13 +186,13 @@ namespace UI {
 			float h = static_cast<float>(ch.size.y) * scale;
 
 			float vertices[6][4] = {
-				{xpos, ypos, 0.0f, 0.0f},
-				{xpos, ypos + h, 0.0f, 1.0f},
-				{xpos + w, ypos + h, 1.0f, 1.0f},
+				{xpos, ypos, 0.0F, 0.0F},
+				{xpos, ypos + h, 0.0F, 1.0F},
+				{xpos + w, ypos + h, 1.0F, 1.0F},
 
-				{xpos, ypos, 0.0f, 0.0f},
-				{xpos + w, ypos + h, 1.0f, 1.0f},
-				{xpos + w, ypos, 1.0f, 0.0f}
+				{xpos, ypos, 0.0F, 0.0F},
+				{xpos + w, ypos + h, 1.0F, 1.0F},
+				{xpos + w, ypos, 1.0F, 0.0F}
 			};
 
 			glBindTexture(GL_TEXTURE_2D, ch.textureID);
@@ -216,12 +216,12 @@ namespace UI {
 
 	glm::vec2 FontRenderer::MeasureText(const std::string& text, float scale) const {
 		if (text.empty()) {
-			return glm::vec2(0.0f, 0.0f);
+			return glm::vec2(0.0F, 0.0F);
 		}
 
-		float totalWidth = 0.0f;
-		float maxGlyphTopFromBaselineUnscaled = 0.0f;
-		float minGlyphBottomFromBaselineUnscaled = 0.0f;
+		float totalWidth = 0.0F;
+		float maxGlyphTopFromBaselineUnscaled = 0.0F;
+		float minGlyphBottomFromBaselineUnscaled = 0.0F;
 		bool  firstChar = true;
 
 		for (char c : text) {
@@ -257,11 +257,11 @@ namespace UI {
 		}
 
 		float scaledTotalWidth = totalWidth * scale;
-		float actualHeightScaled = 0.0f;
+		float actualHeightScaled = 0.0F;
 		if (!firstChar) {
 			actualHeightScaled = (maxGlyphTopFromBaselineUnscaled - minGlyphBottomFromBaselineUnscaled) * scale;
 		}
-		actualHeightScaled = std::max(0.0f, actualHeightScaled);
+		actualHeightScaled = std::max(0.0F, actualHeightScaled);
 
 		return glm::vec2(scaledTotalWidth, actualHeightScaled);
 	}

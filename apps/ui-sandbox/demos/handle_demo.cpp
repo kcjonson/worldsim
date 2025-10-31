@@ -45,7 +45,7 @@ namespace Demo {
 
 	void Render() {
 		// Clear background
-		glClearColor(0.1f, 0.1f, 0.15f, 1.0f);
+		glClearColor(0.1F, 0.1F, 0.15F, 1.0F);
 		glClear(GL_COLOR_BUFFER_BIT);
 
 		// No rendering needed for this demo - all output is to console
@@ -90,22 +90,22 @@ namespace Demo {
 		assert(res1 && res2 && res3 && "Failed to get resources");
 
 		res1->id = 1;
-		res1->value = 1.5f;
+		res1->value = 1.5F;
 		res1->name = "Resource1";
 
 		res2->id = 2;
-		res2->value = 2.5f;
+		res2->value = 2.5F;
 		res2->name = "Resource2";
 
 		res3->id = 3;
-		res3->value = 3.5f;
+		res3->value = 3.5F;
 		res3->name = "Resource3";
 
 		LOG_INFO(UI, "");
 		LOG_INFO(UI, "Resource data:");
-		LOG_INFO(UI, "  Resource 1: id=%d, value=%.1f, name=%s", res1->id, res1->value, res1->name);
-		LOG_INFO(UI, "  Resource 2: id=%d, value=%.1f, name=%s", res2->id, res2->value, res2->name);
-		LOG_INFO(UI, "  Resource 3: id=%d, value=%.1f, name=%s", res3->id, res3->value, res3->name);
+		LOG_INFO(UI, "  Resource 1: id=%d, value=%.1F, name=%s", res1->id, res1->value, res1->name);
+		LOG_INFO(UI, "  Resource 2: id=%d, value=%.1F, name=%s", res2->id, res2->value, res2->name);
+		LOG_INFO(UI, "  Resource 3: id=%d, value=%.1F, name=%s", res3->id, res3->value, res3->name);
 
 		// Verify count
 		LOG_INFO(UI, "");

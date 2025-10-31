@@ -100,13 +100,13 @@ void RenderNavigationMenu() {
 	// Draw menu background
 	Renderer::Primitives::DrawRect(
 		{.bounds = {menuX, menuY, menuWidth, totalHeight},
-		 .style = {.fill = Color(0.15f, 0.15f, 0.2f, 0.95f), .border = BorderStyle{.color = Color(0.4f, 0.4f, 0.5f, 1.0f), .width = 1.0f}},
+		 .style = {.fill = Color(0.15F, 0.15F, 0.2F, 0.95F), .border = BorderStyle{.color = Color(0.4F, 0.4F, 0.5F, 1.0F), .width = 1.0F}},
 		 .id = "menu_background"}
 	);
 
 	// Draw header background
 	Renderer::Primitives::DrawRect(
-		{.bounds = {menuX, menuY, menuWidth, headerHeight}, .style = {.fill = Color(0.2f, 0.2f, 0.3f, 1.0f)}, .id = "menu_header"}
+		{.bounds = {menuX, menuY, menuWidth, headerHeight}, .style = {.fill = Color(0.2F, 0.2F, 0.3F, 1.0F)}, .id = "menu_header"}
 	);
 
 	// Draw scene items
@@ -117,7 +117,7 @@ void RenderNavigationMenu() {
 		if (static_cast<int>(i) == g_menuState.selectedIndex) {
 			Renderer::Primitives::DrawRect(
 				{.bounds = {menuX + 2, itemY + 2, menuWidth - 4, lineHeight - 4},
-				 .style = {.fill = Color(0.3f, 0.4f, 0.6f, 0.8f)},
+				 .style = {.fill = Color(0.3F, 0.4F, 0.6F, 0.8F)},
 				 .id = ("menu_item_" + std::to_string(i)).c_str()}
 			);
 		}
@@ -128,7 +128,7 @@ void RenderNavigationMenu() {
 		if (mouseX >= menuX && mouseX <= menuX + menuWidth && mouseY >= itemY && mouseY <= itemY + lineHeight) {
 			Renderer::Primitives::DrawRect(
 				{.bounds = {menuX + 2, itemY + 2, menuWidth - 4, lineHeight - 4},
-				 .style = {.fill = Color(0.4f, 0.5f, 0.7f, 0.5f)},
+				 .style = {.fill = Color(0.4F, 0.5F, 0.7F, 0.5F)},
 				 .id = ("menu_hover_" + std::to_string(i)).c_str()}
 			);
 		}
@@ -149,8 +149,8 @@ GLFWwindow* InitializeWindow() {
 	// Get primary monitor to calculate window size (80% of screen)
 	GLFWmonitor*	   primaryMonitor = glfwGetPrimaryMonitor();
 	const GLFWvidmode* videoMode = glfwGetVideoMode(primaryMonitor);
-	int				   windowWidth = static_cast<int>(videoMode->width * 0.8f);
-	int				   windowHeight = static_cast<int>(videoMode->height * 0.8f);
+	int				   windowWidth = static_cast<int>(videoMode->width * 0.8F);
+	int				   windowHeight = static_cast<int>(videoMode->height * 0.8F);
 
 	LOG_INFO(UI, "Screen: %dx%d", videoMode->width, videoMode->height);
 	LOG_INFO(UI, "Window: %dx%d (80%% of screen)", windowWidth, windowHeight);

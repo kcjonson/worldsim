@@ -27,7 +27,7 @@ namespace renderer {
 
 		// Sort events by Y (top to bottom), then X (left to right)
 		bool operator<(const Event& other) const {
-			if (std::abs(position.y - other.position.y) < 1e-6f) {
+			if (std::abs(position.y - other.position.y) < 1e-6F) {
 				return position.x < other.position.x;
 			}
 			return position.y < other.position.y;
@@ -117,13 +117,13 @@ namespace renderer {
 
 					// Point-in-triangle test using barycentric coordinates
 					float denom = ((p1.y - p2.y) * (p0.x - p2.x) + (p2.x - p1.x) * (p0.y - p2.y));
-					if (std::abs(denom) < 1e-6f) {
+					if (std::abs(denom) < 1e-6F) {
 						continue; // Degenerate triangle
 					}
 
 					float a = ((p1.y - p2.y) * (p.x - p2.x) + (p2.x - p1.x) * (p.y - p2.y)) / denom;
 					float b = ((p2.y - p0.y) * (p.x - p2.x) + (p0.x - p2.x) * (p.y - p2.y)) / denom;
-					float c = 1.0f - a - b;
+					float c = 1.0F - a - b;
 
 					if (a >= 0 && b >= 0 && c >= 0) {
 						hasInteriorVertex = true;
@@ -179,7 +179,7 @@ namespace renderer {
 
 	bool Tessellator::CompareVertices(const Foundation::Vec2& a, const Foundation::Vec2& b) {
 		// Sort by Y (top to bottom), then X (left to right)
-		if (std::abs(a.y - b.y) < 1e-6f) {
+		if (std::abs(a.y - b.y) < 1e-6F) {
 			return a.x < b.x;
 		}
 		return a.y < b.y;

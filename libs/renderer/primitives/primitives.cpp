@@ -14,7 +14,7 @@ namespace Renderer {
 		static std::stack<Foundation::Rect> s_scissorStack;
 		static std::stack<Foundation::Mat4> s_transformStack;
 		static Foundation::Rect				s_currentScissor;
-		static Foundation::Mat4				s_currentTransform = Foundation::Mat4(1.0f);
+		static Foundation::Mat4				s_currentTransform = Foundation::Mat4(1.0F);
 
 		// --- Initialization ---
 
@@ -23,7 +23,7 @@ namespace Renderer {
 			s_batchRenderer->Init();
 
 			// Initialize identity transform
-			s_currentTransform = Foundation::Mat4(1.0f);
+			s_currentTransform = Foundation::Mat4(1.0F);
 		}
 
 		void Shutdown() {
@@ -70,7 +70,7 @@ namespace Renderer {
 				return;
 
 			// Draw fill if specified
-			if (args.style.fill.a > 0.0f) {
+			if (args.style.fill.a > 0.0F) {
 				s_batchRenderer->AddQuad(args.bounds, args.style.fill);
 			}
 
@@ -109,11 +109,11 @@ namespace Renderer {
 			Foundation::Vec2 dir = args.end - args.start;
 			float			 length = glm::length(dir);
 
-			if (length < 0.001f)
+			if (length < 0.001F)
 				return; // Too short to draw
 
 			Foundation::Vec2 normal = Foundation::Vec2(-dir.y, dir.x) / length;
-			Foundation::Vec2 offset = normal * (args.style.width * 0.5f);
+			Foundation::Vec2 offset = normal * (args.style.width * 0.5F);
 
 			// Create quad for line
 			Foundation::Vec2 p0 = args.start - offset;

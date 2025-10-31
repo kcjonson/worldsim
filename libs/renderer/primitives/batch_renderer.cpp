@@ -178,8 +178,8 @@ void main() {
 		// Set uniforms with 1:1 pixel mapping (framebuffer dimensions)
 		// Coordinates map directly to pixels - Rect(0, 0, 200, 100) is exactly 200x100 pixels
 		Foundation::Mat4 projection =
-			glm::ortho(0.0f, static_cast<float>(m_viewportWidth), static_cast<float>(m_viewportHeight), 0.0f, -1.0f, 1.0f);
-		Foundation::Mat4 transform = Foundation::Mat4(1.0f);
+			glm::ortho(0.0F, static_cast<float>(m_viewportWidth), static_cast<float>(m_viewportHeight), 0.0F, -1.0F, 1.0F);
+		Foundation::Mat4 transform = Foundation::Mat4(1.0F);
 
 		glUniformMatrix4fv(m_projectionLoc, 1, GL_FALSE, glm::value_ptr(projection));
 		glUniformMatrix4fv(m_transformLoc, 1, GL_FALSE, glm::value_ptr(transform));

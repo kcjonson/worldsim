@@ -13,10 +13,10 @@ namespace Foundation {
 
 		// Constructors
 		constexpr Rect()
-			: x(0.0f),
-			  y(0.0f),
-			  width(0.0f),
-			  height(0.0f) {}
+			: x(0.0F),
+			  y(0.0F),
+			  width(0.0F),
+			  height(0.0F) {}
 
 		constexpr Rect(float x, float y, float width, float height)
 			: x(x),
@@ -44,7 +44,7 @@ namespace Foundation {
 		Vec2 BottomLeft() const { return Vec2(x, y + height); }
 		Vec2 BottomRight() const { return Vec2(x + width, y + height); }
 
-		Vec2 Center() const { return Vec2(x + width * 0.5f, y + height * 0.5f); }
+		Vec2 Center() const { return Vec2(x + width * 0.5F, y + height * 0.5F); }
 
 		bool Contains(const Vec2& point) const { return point.x >= x && point.x <= x + width && point.y >= y && point.y <= y + height; }
 

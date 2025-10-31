@@ -12,7 +12,7 @@ namespace Renderer {
 		  m_vertexCount(0),
 		  m_triangleCount(0) {
 		// Reserve space for 60 frames (1 second at 60 FPS)
-		m_frameTimeSamples.resize(60, 16.67f); // Initialize with ~60 FPS
+		m_frameTimeSamples.resize(60, 16.67F); // Initialize with ~60 FPS
 	}
 
 	void MetricsCollector::BeginFrame() {
@@ -22,7 +22,7 @@ namespace Renderer {
 	void MetricsCollector::EndFrame() {
 		auto  frameEnd = Clock::now();
 		auto  duration = std::chrono::duration_cast<std::chrono::microseconds>(frameEnd - m_frameStart);
-		float frameTimeMs = duration.count() / 1000.0f;
+		float frameTimeMs = duration.count() / 1000.0F;
 
 		// Store in rolling buffer
 		m_frameTimeSamples[m_currentSampleIndex] = frameTimeMs;
@@ -63,14 +63,14 @@ namespace Renderer {
 	}
 
 	float MetricsCollector::CalculateFPS(float frameTimeMs) const {
-		if (frameTimeMs < 0.001f)
-			return 0.0f; // Avoid division by zero
-		return 1000.0f / frameTimeMs;
+		if (frameTimeMs < 0.001F)
+			return 0.0F; // Avoid division by zero
+		return 1000.0F / frameTimeMs;
 	}
 
 	void MetricsCollector::GetFrameTimeMinMax(float& outMin, float& outMax) const {
 		if (m_frameTimeSamples.empty()) {
-			outMin = outMax = 0.0f;
+			outMin = outMax = 0.0F;
 			return;
 		}
 

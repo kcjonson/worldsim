@@ -37,7 +37,7 @@ namespace Demo {
 
 	void Render() {
 		// Clear background
-		glClearColor(0.1f, 0.1f, 0.15f, 1.0f);
+		glClearColor(0.1F, 0.1F, 0.15F, 1.0F);
 		glClear(GL_COLOR_BUFFER_BIT);
 
 		// No rendering needed for this demo - all output is to console

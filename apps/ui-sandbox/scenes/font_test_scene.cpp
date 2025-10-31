@@ -30,7 +30,7 @@ namespace {
 			Renderer::Primitives::GetViewport(viewportWidth, viewportHeight);
 
 			// Set up projection matrix (orthographic for 2D text)
-			glm::mat4 projection = glm::ortho(0.0f, static_cast<float>(viewportWidth), static_cast<float>(viewportHeight), 0.0f);
+			glm::mat4 projection = glm::ortho(0.0F, static_cast<float>(viewportWidth), static_cast<float>(viewportHeight), 0.0F);
 			m_fontRenderer->SetProjectionMatrix(projection);
 
 			LOG_INFO(UI, "FontRenderer initialized successfully (%dx%d)", viewportWidth, viewportHeight);
@@ -46,7 +46,7 @@ namespace {
 
 		void Render() override {
 			// Clear background to dark blue
-			glClearColor(0.1f, 0.1f, 0.2f, 1.0f);
+			glClearColor(0.1F, 0.1F, 0.2F, 1.0F);
 			glClear(GL_COLOR_BUFFER_BIT);
 
 			if (!m_fontRenderer) {
@@ -54,17 +54,17 @@ namespace {
 			}
 
 			// Render "Hello World" text at different positions and scales
-			m_fontRenderer->RenderText("Hello World!", glm::vec2(50, 100), 2.0f, glm::vec3(1.0f, 1.0f, 1.0f));
-			m_fontRenderer->RenderText("Font Rendering System", glm::vec2(50, 200), 1.5f, glm::vec3(0.0f, 1.0f, 0.0f));
-			m_fontRenderer->RenderText("Ported from ColonySim", glm::vec2(50, 280), 1.0f, glm::vec3(1.0f, 0.5f, 0.0f));
+			m_fontRenderer->RenderText("Hello World!", glm::vec2(50, 100), 2.0F, glm::vec3(1.0F, 1.0F, 1.0F));
+			m_fontRenderer->RenderText("Font Rendering System", glm::vec2(50, 200), 1.5F, glm::vec3(0.0F, 1.0F, 0.0F));
+			m_fontRenderer->RenderText("Ported from ColonySim", glm::vec2(50, 280), 1.0F, glm::vec3(1.0F, 0.5F, 0.0F));
 
 			// Render colored text examples
-			m_fontRenderer->RenderText("Red Text", glm::vec2(50, 360), 1.2f, glm::vec3(1.0f, 0.0f, 0.0f));
-			m_fontRenderer->RenderText("Green Text", glm::vec2(50, 420), 1.2f, glm::vec3(0.0f, 1.0f, 0.0f));
-			m_fontRenderer->RenderText("Blue Text", glm::vec2(50, 480), 1.2f, glm::vec3(0.0f, 0.0f, 1.0f));
+			m_fontRenderer->RenderText("Red Text", glm::vec2(50, 360), 1.2F, glm::vec3(1.0F, 0.0F, 0.0F));
+			m_fontRenderer->RenderText("Green Text", glm::vec2(50, 420), 1.2F, glm::vec3(0.0F, 1.0F, 0.0F));
+			m_fontRenderer->RenderText("Blue Text", glm::vec2(50, 480), 1.2F, glm::vec3(0.0F, 0.0F, 1.0F));
 
 			// Small text
-			m_fontRenderer->RenderText("Small text at 0.8 scale", glm::vec2(400, 100), 0.8f, glm::vec3(0.8f, 0.8f, 0.8f));
+			m_fontRenderer->RenderText("Small text at 0.8 scale", glm::vec2(400, 100), 0.8F, glm::vec3(0.8F, 0.8F, 0.8F));
 		}
 
 		void OnExit() override {

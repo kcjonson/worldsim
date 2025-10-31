@@ -209,11 +209,11 @@ TEST(FrameArenaTests, ArrayAllocation) {
 	EXPECT_NE(arr, nullptr);
 
 	for (int i = 0; i < 20; ++i) {
-		arr[i] = static_cast<float>(i) * 0.5f;
+		arr[i] = static_cast<float>(i) * 0.5F;
 	}
 
 	for (int i = 0; i < 20; ++i) {
-		EXPECT_FLOAT_EQ(arr[i], static_cast<float>(i) * 0.5f);
+		EXPECT_FLOAT_EQ(arr[i], static_cast<float>(i) * 0.5F);
 	}
 }
 

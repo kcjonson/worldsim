@@ -11,7 +11,7 @@ namespace renderer {
 
 		// Tolerance for curve flattening (smaller = more vertices)
 		// Not used in Phase 0 (no curves yet), but planned for future
-		float curveFlatteningTolerance = 0.5f;
+		float curveFlatteningTolerance = 0.5F;
 	};
 
 	// Tessellator class - converts VectorPath to TessellatedMesh

@@ -12,8 +12,8 @@ namespace engine {
 		  m_isRunning(false),
 		  m_isPaused(false),
 		  m_lastTime(0.0),
-		  m_deltaTime(0.0f),
-		  m_fps(0.0f),
+		  m_deltaTime(0.0F),
+		  m_fps(0.0F),
 		  m_overlayRenderer(nullptr),
 		  m_preFrameCallback(nullptr),
 		  m_postFrameCallback(nullptr) {
@@ -41,14 +41,14 @@ namespace engine {
 
 			// Cap delta time to prevent large jumps (e.g., during debugging)
 			// This prevents physics explosions and other time-step-sensitive bugs
-			if (m_deltaTime > 0.25f) {
+			if (m_deltaTime > 0.25F) {
 				LOG_DEBUG(Engine, "Large delta time detected (%.3fs), capping to 0.25s", m_deltaTime);
-				m_deltaTime = 0.25f;
+				m_deltaTime = 0.25F;
 			}
 
 			// Calculate FPS
-			if (m_deltaTime > 0.0f) {
-				m_fps = 1.0f / m_deltaTime;
+			if (m_deltaTime > 0.0F) {
+				m_fps = 1.0F / m_deltaTime;
 			}
 
 			// Poll GLFW events

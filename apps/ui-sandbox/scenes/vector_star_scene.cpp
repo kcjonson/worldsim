@@ -35,7 +35,7 @@ namespace {
 
 			if (success) {
 				LOG_INFO(
-					UI, "Tessellation successful: %zu triangles in %.3f ms", m_starMesh.GetTriangleCount(), duration.count() / 1000.0f
+					UI, "Tessellation successful: %zu triangles in %.3F ms", m_starMesh.GetTriangleCount(), duration.count() / 1000.0F
 				);
 			} else {
 				LOG_ERROR(UI, "Tessellation failed!");
@@ -54,7 +54,7 @@ namespace {
 			using namespace Foundation;
 
 			// Clear background
-			glClearColor(0.1f, 0.1f, 0.15f, 1.0f);
+			glClearColor(0.1F, 0.1F, 0.15F, 1.0F);
 			glClear(GL_COLOR_BUFFER_BIT);
 
 			// Draw the tessellated star
@@ -64,7 +64,7 @@ namespace {
 					 .indices = m_starMesh.indices.data(),
 					 .vertexCount = m_starMesh.vertices.size(),
 					 .indexCount = m_starMesh.indices.size(),
-					 .color = Color(1.0f, 0.8f, 0.2f, 1.0f), // Gold
+					 .color = Color(1.0F, 0.8F, 0.2F, 1.0F), // Gold
 					 .id = "star"}
 				);
 			}
@@ -76,7 +76,7 @@ namespace {
 					 .indices = m_smallStarMesh.indices.data(),
 					 .vertexCount = m_smallStarMesh.vertices.size(),
 					 .indexCount = m_smallStarMesh.indices.size(),
-					 .color = Color(0.2f, 0.8f, 1.0f, 1.0f), // Cyan
+					 .color = Color(0.2F, 0.8F, 1.0F, 1.0F), // Cyan
 					 .id = "small_star"}
 				);
 			}
@@ -87,15 +87,15 @@ namespace {
 					for (int col = 0; col < 10; col++) {
 						// Create offset vertices for this star
 						std::vector<Foundation::Vec2> offsetVertices = m_tinyStarMesh.vertices;
-						Foundation::Vec2			  offset(50.0f + col * 60.0f, 400.0f + row * 60.0f);
+						Foundation::Vec2			  offset(50.0F + col * 60.0F, 400.0F + row * 60.0F);
 
 						for (auto& v : offsetVertices) {
 							v += offset;
 						}
 
 						// Color varies by position
-						float hue = (col * 5 + row) / 50.0f;
-						Color starColor(hue, 1.0f - hue, 0.5f, 1.0f);
+						float hue = (col * 5 + row) / 50.0F;
+						Color starColor(hue, 1.0F - hue, 0.5F, 1.0F);
 
 						Renderer::Primitives::DrawTriangles(
 							{.vertices = offsetVertices.data(),
@@ -118,17 +118,17 @@ namespace {
 	  private:
 		// Create a 5-pointed star path centered at (400, 200) with outer radius 100, inner radius 40
 		void CreateStarPath() {
-			const float centerX = 400.0f;
-			const float centerY = 200.0f;
-			const float outerRadius = 100.0f;
-			const float innerRadius = 40.0f;
+			const float centerX = 400.0F;
+			const float centerY = 200.0F;
+			const float outerRadius = 100.0F;
+			const float innerRadius = 40.0F;
 			const int	numPoints = 5;
 
 			m_starPath.vertices.clear();
 
 			// Generate star vertices (alternating outer and inner points)
 			for (int i = 0; i < numPoints * 2; ++i) {
-				float angle = (i * std::numbers::pi_v<float> / numPoints) - std::numbers::pi_v<float> / 2.0f; // Start at top
+				float angle = (i * std::numbers::pi_v<float> / numPoints) - std::numbers::pi_v<float> / 2.0F; // Start at top
 				float radius = (i % 2 == 0) ? outerRadius : innerRadius;
 
 				float x = centerX + radius * std::cos(angle);
@@ -140,10 +140,10 @@ namespace {
 			m_starPath.isClosed = true;
 
 			// Create smaller star (centered at 600, 200, half size)
-			CreateStarPathAt(m_smallStarPath, 600.0f, 200.0f, 50.0f, 20.0f);
+			CreateStarPathAt(m_smallStarPath, 600.0F, 200.0F, 50.0F, 20.0F);
 
 			// Create tiny star for grid (20x8)
-			CreateStarPathAt(m_tinyStarPath, 0.0f, 0.0f, 20.0f, 8.0f);
+			CreateStarPathAt(m_tinyStarPath, 0.0F, 0.0F, 20.0F, 8.0F);
 
 			// Tessellate all stars
 			renderer::Tessellator tessellator;
@@ -156,7 +156,7 @@ namespace {
 			path.vertices.clear();
 
 			for (int i = 0; i < numPoints * 2; ++i) {
-				float angle = (i * std::numbers::pi_v<float> / numPoints) - std::numbers::pi_v<float> / 2.0f;
+				float angle = (i * std::numbers::pi_v<float> / numPoints) - std::numbers::pi_v<float> / 2.0F;
 				float radius = (i % 2 == 0) ? outerRadius : innerRadius;
 
 				float x = centerX + radius * std::cos(angle);
