@@ -212,8 +212,8 @@ namespace demo {
 		// New handle should work
 		TestResource* newRes = manager.Get(newHandle);
 		assert(newRes && "New handle should be valid");
-		newRes->id = 99;
-		LOG_INFO(UI, "Accessing with new handle: PASS - got resource (id=%d)", newRes->id);
+		newRes->m_id = 99;
+		LOG_INFO(UI, "Accessing with new handle: PASS - got resource (id=%d)", newRes->m_id);
 
 		LOG_INFO(UI, "Stale handle test passed!");
 	}
