@@ -17,6 +17,9 @@ Checks: >
   -cppcoreguidelines-pro-type-union-access,
   -cppcoreguidelines-pro-type-vararg,
   -cppcoreguidelines-pro-type-reinterpret-cast,
+  -cppcoreguidelines-avoid-non-const-global-variables,
+  -bugprone-easily-swappable-parameters,
+  -readability-function-cognitive-complexity,
   -performance-avoid-endl
 
 WarningsAsErrors: '*'
@@ -45,6 +48,12 @@ CheckOptions:
     value: camelBack
   - key: readability-identifier-naming.LocalVariableCase
     value: camelBack
+
+  # Global variables: g_ prefix with camelCase
+  - key: readability-identifier-naming.GlobalVariableCase
+    value: camelBack
+  - key: readability-identifier-naming.GlobalVariablePrefix
+    value: g_
 
   # Member variables: m_ prefix
   - key: readability-identifier-naming.MemberCase

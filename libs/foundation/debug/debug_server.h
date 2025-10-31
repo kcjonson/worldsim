@@ -30,13 +30,13 @@ namespace httplib {
 namespace Foundation {
 
 	// Control actions for sandbox control endpoint
-	enum class ControlAction { None, Exit, SceneChange, Pause, Resume, ReloadScene };
+	enum class ControlAction : std::uint8_t { None, Exit, SceneChange, Pause, Resume, ReloadScene };
 
 	// Log levels (must match foundation::LogLevel enum)
-	enum class LogLevel { Debug, Info, Warning, Error };
+	enum class LogLevel : std::uint8_t { Debug, Info, Warning, Error };
 
 	// Log categories (must match foundation::LogCategory enum)
-	enum class LogCategory { Renderer, Physics, Audio, Network, Game, World, UI, Engine, Foundation };
+	enum class LogCategory : std::uint8_t { Renderer, Physics, Audio, Network, Game, World, UI, Engine, Foundation };
 
 	// Log entry for HTTP streaming
 	struct LogEntry {
