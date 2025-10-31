@@ -21,6 +21,7 @@ namespace Renderer {
 
 	// Forward declarations
 	class Renderer;
+	class CoordinateSystem;
 
 	namespace Primitives {
 
@@ -28,6 +29,9 @@ namespace Renderer {
 
 		void Init(Renderer* renderer);
 		void Shutdown();
+
+		// Set the coordinate system (must be called after Init)
+		void SetCoordinateSystem(CoordinateSystem* coordSystem);
 
 		// --- Frame Lifecycle ---
 
@@ -39,6 +43,20 @@ namespace Renderer {
 
 		// Get current viewport dimensions
 		void GetViewport(int& width, int& height);
+
+		// --- Coordinate System Helpers ---
+
+		// Get screen-space projection matrix (requires SetCoordinateSystem)
+		Foundation::Mat4 GetScreenSpaceProjection();
+
+		// Get world-space projection matrix (requires SetCoordinateSystem)
+		Foundation::Mat4 GetWorldSpaceProjection();
+
+		// Percentage-based layout helpers (requires SetCoordinateSystem)
+		float			 PercentWidth(float percent);
+		float			 PercentHeight(float percent);
+		Foundation::Vec2 PercentSize(float widthPercent, float heightPercent);
+		Foundation::Vec2 PercentPosition(float xPercent, float yPercent);
 
 		// --- Drawing Functions ---
 

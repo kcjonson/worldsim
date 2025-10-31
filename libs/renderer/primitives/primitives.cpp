@@ -2,6 +2,7 @@
 // Provides immediate-mode 2D drawing functions with internal batching.
 
 #include "primitives/primitives.h"
+#include "coordinate_system/coordinate_system.h"
 #include "primitives/batch_renderer.h"
 #include <glm/gtc/matrix_transform.hpp>
 #include <stack>
@@ -11,6 +12,7 @@ namespace Renderer {
 
 		// Internal state
 		static BatchRenderer*				s_batchRenderer = nullptr;
+		static CoordinateSystem*			s_coordinateSystem = nullptr;
 		static std::stack<Foundation::Rect> s_scissorStack;
 		static std::stack<Foundation::Mat4> s_transformStack;
 		static Foundation::Rect				s_currentScissor;
@@ -31,6 +33,15 @@ namespace Renderer {
 				s_batchRenderer->Shutdown();
 				delete s_batchRenderer;
 				s_batchRenderer = nullptr;
+			}
+			s_coordinateSystem = nullptr;
+		}
+
+		void SetCoordinateSystem(CoordinateSystem* coordSystem) {
+			s_coordinateSystem = coordSystem;
+			// Also update the batch renderer with the coordinate system (even if nullptr)
+			if (s_batchRenderer) {
+				s_batchRenderer->SetCoordinateSystem(s_coordinateSystem);
 			}
 		}
 
@@ -61,6 +72,52 @@ namespace Renderer {
 				width = 800;
 				height = 600;
 			}
+		}
+
+		// --- Coordinate System Helpers ---
+
+		Foundation::Mat4 GetScreenSpaceProjection() {
+			if (s_coordinateSystem) {
+				return s_coordinateSystem->CreateScreenSpaceProjection();
+			}
+			// Fallback to default projection
+			return glm::ortho(0.0f, 800.0f, 600.0f, 0.0f, -1.0f, 1.0f);
+		}
+
+		Foundation::Mat4 GetWorldSpaceProjection() {
+			if (s_coordinateSystem) {
+				return s_coordinateSystem->CreateWorldSpaceProjection();
+			}
+			// Fallback to default projection
+			return glm::ortho(-400.0f, 400.0f, -300.0f, 300.0f, -1.0f, 1.0f);
+		}
+
+		float PercentWidth(float percent) {
+			if (s_coordinateSystem) {
+				return s_coordinateSystem->PercentWidth(percent);
+			}
+			return 800.0f * (percent / 100.0f);
+		}
+
+		float PercentHeight(float percent) {
+			if (s_coordinateSystem) {
+				return s_coordinateSystem->PercentHeight(percent);
+			}
+			return 600.0f * (percent / 100.0f);
+		}
+
+		Foundation::Vec2 PercentSize(float widthPercent, float heightPercent) {
+			if (s_coordinateSystem) {
+				return s_coordinateSystem->PercentSize(widthPercent, heightPercent);
+			}
+			return Foundation::Vec2(800.0f * (widthPercent / 100.0f), 600.0f * (heightPercent / 100.0f));
+		}
+
+		Foundation::Vec2 PercentPosition(float xPercent, float yPercent) {
+			if (s_coordinateSystem) {
+				return s_coordinateSystem->PercentPosition(xPercent, yPercent);
+			}
+			return Foundation::Vec2(800.0f * (xPercent / 100.0f), 600.0f * (yPercent / 100.0f));
 		}
 
 		// --- Drawing Functions ---

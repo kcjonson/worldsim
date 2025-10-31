@@ -2,6 +2,7 @@
 // Accumulates 2D geometry and renders in optimized batches to minimize draw calls.
 
 #include "primitives/batch_renderer.h"
+#include "coordinate_system/coordinate_system.h"
 #include <glm/gtc/type_ptr.hpp>
 #include <iostream>
 
@@ -175,8 +176,9 @@ void main() {
 		glUseProgram(m_shader);
 		glBindVertexArray(m_vao);
 
-		// Set uniforms with 1:1 pixel mapping (framebuffer dimensions)
-		// Coordinates map directly to pixels - Rect(0, 0, 200, 100) is exactly 200x100 pixels
+		// Create projection matrix using viewport dimensions (NOT CoordinateSystem)
+		// Worldsim uses 1:1 pixel mapping with framebuffer (physical pixels)
+		// CoordinateSystem is only used for percentage layout helpers
 		Foundation::Mat4 projection =
 			glm::ortho(0.0F, static_cast<float>(m_viewportWidth), static_cast<float>(m_viewportHeight), 0.0F, -1.0F, 1.0F);
 		Foundation::Mat4 transform = Foundation::Mat4(1.0F);
@@ -212,6 +214,13 @@ void main() {
 	void BatchRenderer::GetViewport(int& width, int& height) const {
 		width = m_viewportWidth;
 		height = m_viewportHeight;
+	}
+
+	// Sets the coordinate system to use for rendering.
+	// Note: BatchRenderer does NOT take ownership of the CoordinateSystem pointer.
+	// The caller is responsible for ensuring that the CoordinateSystem outlives the BatchRenderer.
+	void BatchRenderer::SetCoordinateSystem(CoordinateSystem* coordSystem) {
+		m_coordinateSystem = coordSystem;
 	}
 
 	BatchRenderer::RenderStats BatchRenderer::GetStats() const {

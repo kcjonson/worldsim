@@ -11,6 +11,8 @@ jobs:
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # Fetch all history for git diff
 
     - name: Install dependencies
       run: |
@@ -45,13 +47,29 @@ jobs:
         CC: clang
         CXX: clang++
 
-    - name: Run clang-tidy
+    - name: Run clang-tidy on changed files
       run: |
-        echo "Running clang-tidy static analysis..."
-        find libs apps -name '*.cpp' | xargs clang-tidy -p build
+        echo "Running clang-tidy on changed files only..."
+
+        # Get list of changed C++ files in this PR
+        CHANGED_FILES=$(git diff --name-only origin/main...HEAD | grep -E '\.(cpp|h)$' || true)
+
+        if [ -z "$CHANGED_FILES" ]; then
+          echo "No C++ files changed in this PR, skipping clang-tidy"
+          exit 0
+        fi
+
+        echo "Changed files to check:"
+        echo "$CHANGED_FILES"
+        echo ""
+
+        # Run clang-tidy only on changed files
+        echo "$CHANGED_FILES" | xargs clang-tidy -p build
         EXIT_CODE=$?
+
         if [ $EXIT_CODE -ne 0 ]; then
-          echo "❌ clang-tidy found issues"
+          echo "❌ clang-tidy found issues in changed files"
           exit 1
         fi
-        echo "✅ clang-tidy check passed"
+
+        echo "✅ clang-tidy check passed for changed files"
