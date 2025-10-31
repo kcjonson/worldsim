@@ -7,6 +7,7 @@
 #include "utils/log.h"
 
 #include <GL/glew.h>
+#include <array>
 #include <vector>
 
 using namespace renderer;
@@ -126,20 +127,20 @@ namespace demo {
 		ResourceManager<TestResource> manager;
 
 		// Allocate 5 handles
-		ResourceHandle handles[5];
-		for (int i = 0; i < 5; i++) {
-			handles[i] = manager.Allocate();
-			TestResource* res = manager.Get(handles[i]);
-			res->m_id = i;
+		std::array<ResourceHandle, 5> handles;
+		for (size_t i = 0; i < handles.size(); i++) {
+			handles.at(i) = manager.Allocate();
+			TestResource* res = manager.Get(handles.at(i));
+			res->m_id = static_cast<int>(i);
 		}
 
 		LOG_INFO(UI, "Allocated 5 resources (indices 0-4)");
 		LOG_INFO(UI, "Active count: %zu", manager.GetActiveCount());
 
 		// Free handles 1, 2, 3 (indices 1, 2, 3)
-		manager.Free(handles[1]);
-		manager.Free(handles[2]);
-		manager.Free(handles[3]);
+		manager.Free(handles.at(1));
+		manager.Free(handles.at(2));
+		manager.Free(handles.at(3));
 
 		LOG_INFO(UI, "");
 		LOG_INFO(UI, "Freed handles at indices 1, 2, 3");

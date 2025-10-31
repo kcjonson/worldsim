@@ -26,6 +26,7 @@
 #include <GLFW/glfw3.h>
 
 #include <cstring>
+#include <span>
 #include <string>
 
 // Global state for menu interaction
@@ -50,9 +51,10 @@ void FramebufferSizeCallback(GLFWwindow* window, int width, int height) {
 	glViewport(0, 0, width, height);
 
 	// Update coordinate system (for percentage helpers)
-	int windowWidth, windowHeight;
+	int windowWidth = 0;
+	int windowHeight = 0;
 	glfwGetWindowSize(window, &windowWidth, &windowHeight);
-	if (g_coordinateSystem) {
+	if (g_coordinateSystem != nullptr) {
 		g_coordinateSystem->UpdateWindowSize(windowWidth, windowHeight);
 	}
 
@@ -215,15 +217,17 @@ GLFWwindow* InitializeWindow() {
 
 int main(int argc, char* argv[]) {
 	// Parse command line arguments FIRST (before any logging)
-	int	 httpPort = 8081; // Default port for ui-sandbox
-	bool hasSceneArg = false;
+	std::span<char*> args(argv, static_cast<size_t>(argc));
+	int				 httpPort = 8081; // Default port for ui-sandbox
+	bool			 hasSceneArg = false;
 
-	for (int i = 1; i < argc; i++) {
-		if (std::strncmp(argv[i], "--scene=", 8) == 0) {
+	for (size_t i = 1; i < args.size(); i++) {
+		if (std::strncmp(args[i], "--scene=", 8) == 0) {
 			hasSceneArg = true;
-		} else if (std::strcmp(argv[i], "--http-port") == 0 && i + 1 < argc) {
-			httpPort = std::stoi(argv[++i]);
-		} else if (std::strcmp(argv[i], "--help") == 0) {
+		} else if (std::strcmp(args[i], "--http-port") == 0 && i + 1 < args.size()) {
+			++i;
+			httpPort = std::stoi(args[i]);
+		} else if (std::strcmp(args[i], "--help") == 0) {
 			// Can't log yet, just print to stdout
 			printf("Usage: ui-sandbox [options]\n");
 			printf("Options:\n");
@@ -285,7 +289,7 @@ int main(int argc, char* argv[]) {
 	LOG_INFO(Renderer, "Initializing coordinate system");
 	Renderer::CoordinateSystem coordinateSystem;
 	g_coordinateSystem = &coordinateSystem;
-	if (coordinateSystem.Initialize(window) == 0) {
+	if (!coordinateSystem.Initialize(window)) {
 		LOG_ERROR(Renderer, "Failed to initialize coordinate system");
 		return 1;
 	}

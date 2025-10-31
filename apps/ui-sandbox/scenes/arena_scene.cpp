@@ -9,6 +9,7 @@
 
 #include <GL/glew.h>
 #include <chrono>
+#include <memory>
 #include <vector>
 
 using namespace foundation;
@@ -86,7 +87,7 @@ namespace {
 		auto  arenaStart = std::chrono::high_resolution_clock::now();
 
 		for (int i = 0; i < kIterations; i++) {
-			Foundation::Vec2* vec = arena.Allocate<Foundation::Vec2>();
+			auto* vec = arena.Allocate<Foundation::Vec2>();
 			vec->x = static_cast<float>(i);
 			vec->y = static_cast<float>(i * 2);
 		}
@@ -100,17 +101,17 @@ namespace {
 		arena.Reset();
 		LOG_INFO(UI, "Arena: Reset to 0 bytes used (instant)");
 
-		// Test 2: Standard allocation
-		std::vector<Foundation::Vec2*> pointers;
+		// Test 2: Standard allocation (using unique_ptr for RAII)
+		std::vector<std::unique_ptr<Foundation::Vec2>> pointers;
 		pointers.reserve(kIterations);
 
 		auto stdStart = std::chrono::high_resolution_clock::now();
 
 		for (int i = 0; i < kIterations; i++) {
-			Foundation::Vec2* vec = new Foundation::Vec2();
+			auto vec = std::make_unique<Foundation::Vec2>();
 			vec->x = static_cast<float>(i);
 			vec->y = static_cast<float>(i * 2);
-			pointers.push_back(vec);
+			pointers.push_back(std::move(vec));
 		}
 
 		auto stdEnd = std::chrono::high_resolution_clock::now();
@@ -118,9 +119,7 @@ namespace {
 
 		// Cleanup standard allocations
 		auto cleanupStart = std::chrono::high_resolution_clock::now();
-		for (Foundation::Vec2* vec : pointers) {
-			delete vec;
-		}
+		pointers.clear(); // Force deallocation
 		auto cleanupEnd = std::chrono::high_resolution_clock::now();
 		auto cleanupDuration = std::chrono::duration_cast<std::chrono::microseconds>(cleanupEnd - cleanupStart);
 
@@ -144,22 +143,22 @@ namespace {
 
 		// Test alignment for different types
 		struct Aligned1 {
-			uint8_t data;
+			uint8_t m_data;
 		};
 		struct Aligned4 {
-			uint32_t data;
+			uint32_t m_data;
 		};
 		struct Aligned8 {
-			uint64_t data;
+			uint64_t m_data;
 		};
 		struct Aligned16 {
-			double data[2];
+			double m_data[2];
 		};
 
-		Aligned1*  a1 = arena.Allocate<Aligned1>();
-		Aligned4*  a4 = arena.Allocate<Aligned4>();
-		Aligned8*  a8 = arena.Allocate<Aligned8>();
-		Aligned16* a16 = arena.Allocate<Aligned16>();
+		auto* a1 = arena.Allocate<Aligned1>();
+		auto* a4 = arena.Allocate<Aligned4>();
+		auto* a8 = arena.Allocate<Aligned8>();
+		auto* a16 = arena.Allocate<Aligned16>();
 
 		bool align1OK = (reinterpret_cast<uintptr_t>(a1) % alignof(Aligned1)) == 0;
 		bool align4OK = (reinterpret_cast<uintptr_t>(a4) % alignof(Aligned4)) == 0;
