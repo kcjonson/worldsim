@@ -12,7 +12,7 @@
 
 using namespace foundation;
 
-namespace Demo {
+namespace demo {
 
 	static void TestPerformance();
 	static void TestAlignment();
@@ -224,4 +224,4 @@ namespace Demo {
 		LOG_INFO(UI, "Scoped arena test passed!");
 	}
 
-} // namespace Demo
+} // namespace demo

@@ -8,7 +8,7 @@
 
 #include <GL/glew.h>
 
-namespace Demo {
+namespace demo {
 
 	void Init() {
 		// No initialization needed for shapes demo
@@ -71,4 +71,4 @@ namespace Demo {
 		// No cleanup needed for shapes demo
 	}
 
-} // namespace Demo
+} // namespace demo

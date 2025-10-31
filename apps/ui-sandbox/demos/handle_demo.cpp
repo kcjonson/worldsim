@@ -11,7 +11,7 @@
 
 using namespace renderer;
 
-namespace Demo {
+namespace demo {
 
 	// Simple test resource
 	struct TestResource {
@@ -303,4 +303,4 @@ namespace Demo {
 		LOG_INFO(UI, "Capacity limit test passed!");
 	}
 
-} // namespace Demo
+} // namespace demo
