@@ -29,11 +29,11 @@
 
 // Global state for menu interaction
 static struct {
-	bool					 showMenu = false;
-	std::vector<std::string> sceneNames;
-	int						 selectedIndex = 0;
-	double					 mouseX = 0;
-	double					 mouseY = 0;
+	bool					 m_showMenu = false;
+	std::vector<std::string> m_sceneNames;
+	int						 m_selectedIndex = 0;
+	double					 m_mouseX = 0;
+	double					 m_mouseY = 0;
 } g_menuState;
 
 // GLFW callbacks
@@ -47,55 +47,55 @@ void FramebufferSizeCallback(GLFWwindow* window, int width, int height) {
 }
 
 void MouseButtonCallback(GLFWwindow* window, int button, int action, int mods) {
-	if (!g_menuState.showMenu)
+	if (!g_menuState.m_showMenu)
 		return;
 	if (button != GLFW_MOUSE_BUTTON_LEFT || action != GLFW_PRESS)
 		return;
 
 	// Menu bounds
-	const float menuX = 10;
-	const float menuY = 10;
-	const float menuWidth = 150;
-	const float lineHeight = 25;
-	const float headerHeight = 30;
+	const float kMenuX = 10;
+	const float kMenuY = 10;
+	const float kMenuWidth = 150;
+	const float kLineHeight = 25;
+	const float kHeaderHeight = 30;
 
 	// Check if click is within menu bounds
-	float clickX = static_cast<float>(g_menuState.mouseX);
-	float clickY = static_cast<float>(g_menuState.mouseY);
+	float clickX = static_cast<float>(g_menuState.m_mouseX);
+	float clickY = static_cast<float>(g_menuState.m_mouseY);
 
 	if (clickX >= menuX && clickX <= menuX + menuWidth && clickY >= menuY &&
-		clickY <= menuY + headerHeight + g_menuState.sceneNames.size() * lineHeight) {
+		clickY <= menuY + headerHeight + g_menuState.m_sceneNames.size() * lineHeight) {
 
 		// Check which scene was clicked
 		if (clickY >= menuY + headerHeight) {
 			int clickedIndex = static_cast<int>((clickY - menuY - headerHeight) / lineHeight);
-			if (clickedIndex >= 0 && clickedIndex < static_cast<int>(g_menuState.sceneNames.size())) {
+			if (clickedIndex >= 0 && clickedIndex < static_cast<int>(g_menuState.m_sceneNames.size())) {
 				// Switch to selected scene
-				engine::SceneManager::Get().SwitchTo(g_menuState.sceneNames[clickedIndex]);
-				g_menuState.selectedIndex = clickedIndex;
+				engine::SceneManager::Get().SwitchTo(g_menuState.m_sceneNames[clickedIndex]);
+				g_menuState.m_selectedIndex = clickedIndex;
 			}
 		}
 	}
 }
 
 void CursorPosCallback(GLFWwindow* window, double xpos, double ypos) {
-	g_menuState.mouseX = xpos;
-	g_menuState.mouseY = ypos;
+	g_menuState.m_mouseX = xpos;
+	g_menuState.m_mouseY = ypos;
 }
 
 // Render navigation menu
 void RenderNavigationMenu() {
-	if (!g_menuState.showMenu)
+	if (!g_menuState.m_showMenu)
 		return;
 
 	using namespace Foundation;
 
-	const float menuX = 10;
-	const float menuY = 10;
-	const float menuWidth = 150;
-	const float lineHeight = 25;
-	const float headerHeight = 30;
-	const float totalHeight = headerHeight + g_menuState.sceneNames.size() * lineHeight;
+	const float kMenuX = 10;
+	const float kMenuY = 10;
+	const float kMenuWidth = 150;
+	const float kLineHeight = 25;
+	const float kHeaderHeight = 30;
+	const float kTotalHeight = headerHeight + g_menuState.m_sceneNames.size() * lineHeight;
 
 	// Draw menu background
 	Renderer::Primitives::DrawRect(
@@ -110,11 +110,11 @@ void RenderNavigationMenu() {
 	);
 
 	// Draw scene items
-	for (size_t i = 0; i < g_menuState.sceneNames.size(); i++) {
+	for (size_t i = 0; i < g_menuState.m_sceneNames.size(); i++) {
 		float itemY = menuY + headerHeight + i * lineHeight;
 
 		// Highlight selected scene
-		if (static_cast<int>(i) == g_menuState.selectedIndex) {
+		if (static_cast<int>(i) == g_menuState.m_selectedIndex) {
 			Renderer::Primitives::DrawRect(
 				{.bounds = {menuX + 2, itemY + 2, menuWidth - 4, lineHeight - 4},
 				 .style = {.fill = Color(0.3F, 0.4F, 0.6F, 0.8F)},
@@ -123,8 +123,8 @@ void RenderNavigationMenu() {
 		}
 
 		// Highlight hovered scene
-		float mouseX = static_cast<float>(g_menuState.mouseX);
-		float mouseY = static_cast<float>(g_menuState.mouseY);
+		float mouseX = static_cast<float>(g_menuState.m_mouseX);
+		float mouseY = static_cast<float>(g_menuState.m_mouseY);
 		if (mouseX >= menuX && mouseX <= menuX + menuWidth && mouseY >= itemY && mouseY <= itemY + lineHeight) {
 			Renderer::Primitives::DrawRect(
 				{.bounds = {menuX + 2, itemY + 2, menuWidth - 4, lineHeight - 4},
@@ -286,22 +286,22 @@ int main(int argc, char* argv[]) {
 	}
 
 	// Setup navigation menu
-	g_menuState.showMenu = !hasSceneArg;
+	g_menuState.m_showMenu = !hasSceneArg;
 
-	if (g_menuState.showMenu) {
-		g_menuState.sceneNames = engine::SceneManager::Get().GetAllSceneNames();
+	if (g_menuState.m_showMenu) {
+		g_menuState.m_sceneNames = engine::SceneManager::Get().GetAllSceneNames();
 		// Find current scene index
 		auto* currentScene = engine::SceneManager::Get().GetCurrentScene();
 		if (currentScene) {
 			const char* currentName = currentScene->GetName();
-			for (size_t i = 0; i < g_menuState.sceneNames.size(); i++) {
-				if (g_menuState.sceneNames[i] == currentName) {
-					g_menuState.selectedIndex = static_cast<int>(i);
+			for (size_t i = 0; i < g_menuState.m_sceneNames.size(); i++) {
+				if (g_menuState.m_sceneNames[i] == currentName) {
+					g_menuState.m_selectedIndex = static_cast<int>(i);
 					break;
 				}
 			}
 		}
-		LOG_INFO(UI, "Navigation menu enabled (%zu scenes available)", g_menuState.sceneNames.size());
+		LOG_INFO(UI, "Navigation menu enabled (%zu scenes available)", g_menuState.m_sceneNames.size());
 	}
 
 	// Initialize metrics collection
