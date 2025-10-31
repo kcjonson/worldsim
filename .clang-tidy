@@ -14,7 +14,7 @@ Checks: >
   -cppcoreguidelines-pro-bounds-array-to-pointer-decay,
   -cppcoreguidelines-avoid-c-arrays
 
-WarningsAsErrors: ''
+WarningsAsErrors: '*'
 
 HeaderFilterRegex: '.*'
 
