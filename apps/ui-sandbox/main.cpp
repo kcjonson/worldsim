@@ -64,11 +64,11 @@ void MouseButtonCallback(GLFWwindow* window, int button, int action, int mods) {
 	float clickY = static_cast<float>(g_menuState.m_mouseY);
 
 	if (clickX >= kMenuX && clickX <= kMenuX + kMenuWidth && clickY >= kMenuY &&
-		clickY <= kMenuY + kHeaderHeight + g_menuState.m_sceneNames.size() * kLineHeight) {
+		clickY <= kMenuY + kHeaderHeight + static_cast<float>(g_menuState.m_sceneNames.size()) * kLineHeight) {
 
 		// Check which scene was clicked
 		if (clickY >= kMenuY + kHeaderHeight) {
-			int clickedIndex = static_cast<int>((clickY - kMenuY - kHeaderHeight) / kLineHeight);
+			int clickedIndex = static_cast<int>(static_cast<int>((clickY - kMenuY - kHeaderHeight) / kLineHeight));
 			if (clickedIndex >= 0 && clickedIndex < static_cast<int>(g_menuState.m_sceneNames.size())) {
 				// Switch to selected scene
 				engine::SceneManager::Get().SwitchTo(g_menuState.m_sceneNames[clickedIndex]);

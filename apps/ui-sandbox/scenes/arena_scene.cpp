@@ -82,7 +82,7 @@ namespace {
 		constexpr int kIterations = 10000;
 
 		// Test 1: Arena allocation
-		Arena arena(1024 * 1024); // 1 MB
+		Arena arena(static_cast<size_t>(1024) * 1024); // 1 MB
 		auto  arenaStart = std::chrono::high_resolution_clock::now();
 
 		for (int i = 0; i < kIterations; i++) {
