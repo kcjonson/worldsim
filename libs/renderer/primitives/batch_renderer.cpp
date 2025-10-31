@@ -9,7 +9,7 @@
 namespace Renderer {
 
 	// Vertex shader source
-	static const char* kVertexShaderSource = R"(
+	static const char* g_kVertexShaderSource = R"(
 #version 330 core
 
 layout(location = 0) in vec2 a_position;
@@ -30,7 +30,7 @@ void main() {
 )";
 
 	// Fragment shader source
-	static const char* kFragmentShaderSource = R"(
+	static const char* g_kFragmentShaderSource = R"(
 #version 330 core
 
 in vec2 v_texCoord;
@@ -43,7 +43,7 @@ void main() {
 }
 )";
 
-	BatchRenderer::BatchRenderer() {
+	BatchRenderer::BatchRenderer() : m_vertices(), m_indices() {
 		// Reserve space for vertices to minimize allocations
 		m_vertices.reserve(10000);
 		m_indices.reserve(15000);
@@ -78,15 +78,15 @@ void main() {
 
 		// Position attribute
 		glEnableVertexAttribArray(0);
-		glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(PrimitiveVertex), (void*)offsetof(PrimitiveVertex, position));
+		glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(PrimitiveVertex), (void*)offsetof(PrimitiveVertex, m_position));
 
 		// TexCoord attribute
 		glEnableVertexAttribArray(1);
-		glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(PrimitiveVertex), (void*)offsetof(PrimitiveVertex, texCoord));
+		glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(PrimitiveVertex), (void*)offsetof(PrimitiveVertex, m_texCoord));
 
 		// Color attribute
 		glEnableVertexAttribArray(2);
-		glVertexAttribPointer(2, 4, GL_FLOAT, GL_FALSE, sizeof(PrimitiveVertex), (void*)offsetof(PrimitiveVertex, color));
+		glVertexAttribPointer(2, 4, GL_FLOAT, GL_FALSE, sizeof(PrimitiveVertex), (void*)offsetof(PrimitiveVertex, m_color));
 
 		// Bind index buffer
 		glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m_ibo);
@@ -95,22 +95,22 @@ void main() {
 	}
 
 	void BatchRenderer::Shutdown() {
-		if (m_vao) {
+		if (m_vao != 0) {
 			glDeleteVertexArrays(1, &m_vao);
 			m_vao = 0;
 		}
 
-		if (m_vbo) {
+		if (m_vbo != 0) {
 			glDeleteBuffers(1, &m_vbo);
 			m_vbo = 0;
 		}
 
-		if (m_ibo) {
+		if (m_ibo != 0) {
 			glDeleteBuffers(1, &m_ibo);
 			m_ibo = 0;
 		}
 
-		if (m_shader) {
+		if (m_shader != 0) {
 			glDeleteProgram(m_shader);
 			m_shader = 0;
 		}
@@ -161,8 +161,9 @@ void main() {
 	}
 
 	void BatchRenderer::Flush() {
-		if (m_vertices.empty())
+		if (m_vertices.empty()) {
 			return;
+		}
 
 		// Upload vertex data to GPU
 		glBindBuffer(GL_ARRAY_BUFFER, m_vbo);
@@ -225,21 +226,21 @@ void main() {
 
 	BatchRenderer::RenderStats BatchRenderer::GetStats() const {
 		RenderStats stats;
-		stats.drawCalls = static_cast<uint32_t>(m_drawCallCount);
-		stats.vertexCount = static_cast<uint32_t>(m_vertices.size());
-		stats.triangleCount = static_cast<uint32_t>(m_indices.size() / 3);
+		stats.m_drawCalls = static_cast<uint32_t>(m_drawCallCount);
+		stats.m_vertexCount = static_cast<uint32_t>(m_vertices.size());
+		stats.m_triangleCount = static_cast<uint32_t>(m_indices.size() / 3);
 		return stats;
 	}
 
 	GLuint BatchRenderer::CompileShader() {
 		// Compile vertex shader
 		GLuint vertexShader = glCreateShader(GL_VERTEX_SHADER);
-		glShaderSource(vertexShader, 1, &kVertexShaderSource, nullptr);
+		glShaderSource(vertexShader, 1, &g_kVertexShaderSource, nullptr);
 		glCompileShader(vertexShader);
 
 		GLint success = 0;
 		glGetShaderiv(vertexShader, GL_COMPILE_STATUS, &success);
-		if (!success) {
+		if (success == 0) {
 			char infoLog[512];
 			glGetShaderInfoLog(vertexShader, 512, nullptr, infoLog);
 			std::cerr << "Vertex shader compilation failed: " << infoLog << std::endl;
@@ -249,11 +250,11 @@ void main() {
 
 		// Compile fragment shader
 		GLuint fragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
-		glShaderSource(fragmentShader, 1, &kFragmentShaderSource, nullptr);
+		glShaderSource(fragmentShader, 1, &g_kFragmentShaderSource, nullptr);
 		glCompileShader(fragmentShader);
 
 		glGetShaderiv(fragmentShader, GL_COMPILE_STATUS, &success);
-		if (!success) {
+		if (success == 0) {
 			char infoLog[512];
 			glGetShaderInfoLog(fragmentShader, 512, nullptr, infoLog);
 			std::cerr << "Fragment shader compilation failed: " << infoLog << std::endl;
@@ -269,7 +270,7 @@ void main() {
 		glLinkProgram(program);
 
 		glGetProgramiv(program, GL_LINK_STATUS, &success);
-		if (!success) {
+		if (success == 0) {
 			char infoLog[512];
 			glGetProgramInfoLog(program, 512, nullptr, infoLog);
 			std::cerr << "Shader program linking failed: " << infoLog << std::endl;

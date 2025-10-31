@@ -87,13 +87,13 @@ BENCHMARK(BM_ArenaBatchSmallAllocations);
 // ============================================================================
 
 struct SmallStruct {
-	int	  a;
-	float b;
+	int	  m_a;
+	float m_b;
 };
 
 struct LargeStruct {
-	double data[16];
-	int	   id;
+	double m_data[16];
+	int	   m_id;
 };
 
 // Benchmark: Allocate structs with malloc

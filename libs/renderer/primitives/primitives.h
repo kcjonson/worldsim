@@ -62,30 +62,30 @@ namespace Renderer {
 
 		// Arguments for DrawRect
 		struct RectArgs {
-			Foundation::Rect	  bounds;
-			Foundation::RectStyle style;
-			const char*			  id = nullptr; // Optional: for inspection/debugging
-			int					  zIndex = 0;	// Optional: explicit draw order
+			Foundation::Rect	  m_bounds;
+			Foundation::RectStyle m_style;
+			const char*			  m_id = nullptr; // Optional: for inspection/debugging
+			int					  m_zIndex = 0;	  // Optional: explicit draw order
 		};
 
 		// Arguments for DrawLine
 		struct LineArgs {
-			Foundation::Vec2	  start;
-			Foundation::Vec2	  end;
-			Foundation::LineStyle style;
-			const char*			  id = nullptr;
-			int					  zIndex = 0;
+			Foundation::Vec2	  m_start;
+			Foundation::Vec2	  m_end;
+			Foundation::LineStyle m_style;
+			const char*			  m_id = nullptr;
+			int					  m_zIndex = 0;
 		};
 
 		// Arguments for DrawTriangles
 		struct TrianglesArgs {
-			const Foundation::Vec2* vertices;	  // Vertex positions (array)
-			const uint16_t*			indices;	  // Triangle indices (array)
-			size_t					vertexCount;  // Number of vertices
-			size_t					indexCount;	  // Number of indices (triangles * 3)
-			Foundation::Color		color;		  // Fill color
-			const char*				id = nullptr; // Optional: for inspection/debugging
-			int						zIndex = 0;	  // Optional: explicit draw order
+			const Foundation::Vec2* m_vertices = nullptr;	 // Vertex positions (array)
+			const uint16_t*			m_indices = nullptr;	 // Triangle indices (array)
+			size_t					m_vertexCount = 0;		 // Number of vertices
+			size_t					m_indexCount = 0;		 // Number of indices (triangles * 3)
+			Foundation::Color		m_color;				 // Fill color
+			const char*				m_id = nullptr;			 // Optional: for inspection/debugging
+			int						m_zIndex = 0;			 // Optional: explicit draw order
 		};
 
 		// Draw a rectangle with optional fill and border
@@ -112,9 +112,9 @@ namespace Renderer {
 		// --- Statistics ---
 
 		struct RenderStats {
-			uint32_t drawCalls;
-			uint32_t vertexCount;
-			uint32_t triangleCount;
+			uint32_t m_drawCalls = 0;
+			uint32_t m_vertexCount = 0;
+			uint32_t m_triangleCount = 0;
 		};
 
 		RenderStats GetStats();

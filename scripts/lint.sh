@@ -23,6 +23,8 @@ fi
 # Parse arguments
 MODE="check"
 FILES=""
+FILE_LIST=()
+FILE_COUNT=0
 
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -53,6 +55,7 @@ if [ "$MODE" = "staged" ]; then
 
   if [ -z "$FILES" ]; then
     echo "No C++ files staged, skipping format check"
+    echo "Total files linted: 0"
     exit 0
   fi
 else
@@ -60,11 +63,18 @@ else
   FILES=$(find libs apps \( -name '*.cpp' -o -name '*.h' \) | tr '\n' ' ')
 fi
 
+# Convert whitespace-delimited string to array for safe iteration
+if [ -n "$FILES" ]; then
+  read -r -a FILE_LIST <<< "$FILES"
+fi
+
+FILE_COUNT=${#FILE_LIST[@]}
+
 # Run clang-format
 if [ "$MODE" = "fix" ] || [ "$MODE" = "staged" ]; then
   # Format files in-place
-  echo "Formatting files..."
-  for FILE in $FILES; do
+  echo "Formatting $FILE_COUNT files..."
+  for FILE in "${FILE_LIST[@]}"; do
     if [ -f "$FILE" ]; then
       echo "  Formatting: $FILE"
       $CLANG_FORMAT -i "$FILE"
@@ -81,20 +91,30 @@ if [ "$MODE" = "fix" ] || [ "$MODE" = "staged" ]; then
   else
     echo "✅ Files formatted"
   fi
+
+  echo "Total files linted: $FILE_COUNT"
 else
   # Check mode - dry run with Werror
-  echo "Checking code formatting..."
-  echo "$FILES" | xargs $CLANG_FORMAT --dry-run --Werror
+  if [ "$FILE_COUNT" -eq 0 ]; then
+    echo "No C++ files found, skipping format check"
+    echo "Total files linted: 0"
+    exit 0
+  fi
+
+  echo "Checking code formatting on $FILE_COUNT files..."
+  printf '%s\0' "${FILE_LIST[@]}" | xargs -0 $CLANG_FORMAT --dry-run --Werror
   EXIT_CODE=$?
 
   if [ $EXIT_CODE -ne 0 ]; then
     echo ""
     echo "❌ Code formatting check failed."
     echo "Run './scripts/lint --fix' to format files."
+    echo "Total files linted: $FILE_COUNT"
     exit 1
   fi
 
   echo "✅ Code formatting check passed"
+  echo "Total files linted: $FILE_COUNT"
 fi
 
 exit 0

@@ -18,9 +18,9 @@ namespace Renderer {
 
 	// Vertex format for 2D primitives
 	struct PrimitiveVertex {
-		Foundation::Vec2 position;
-		Foundation::Vec2 texCoord;
-		Foundation::Vec4 color;
+		Foundation::Vec2 m_position;
+		Foundation::Vec2 m_texCoord;
+		Foundation::Vec4 m_color;
 	};
 
 	// Batch accumulator - collects geometry before GPU upload
@@ -63,9 +63,9 @@ namespace Renderer {
 
 		// Rendering statistics structure
 		struct RenderStats {
-			uint32_t drawCalls;
-			uint32_t vertexCount;
-			uint32_t triangleCount;
+			uint32_t m_drawCalls = 0;
+			uint32_t m_vertexCount = 0;
+			uint32_t m_triangleCount = 0;
 		};
 
 		// Statistics

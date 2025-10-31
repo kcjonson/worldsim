@@ -40,6 +40,9 @@ CheckOptions:
     value: CamelCase
   - key: readability-identifier-naming.MethodCase
     value: CamelCase
+  # Exception: Allow Google Benchmark convention (BM_FunctionName)
+  - key: readability-identifier-naming.FunctionIgnoredRegexp
+    value: '^BM_.*'
 
   # Variable naming: camelCase
   - key: readability-identifier-naming.VariableCase
