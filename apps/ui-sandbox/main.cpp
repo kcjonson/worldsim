@@ -31,7 +31,7 @@
 static struct {
 	bool					 m_showMenu = false;
 	std::vector<std::string> m_sceneNames;
-	int						 m_selectedIndex = 0;
+	size_t					 m_selectedIndex = 0;
 	double					 m_mouseX = 0;
 	double					 m_mouseY = 0;
 } g_menuState;
@@ -47,10 +47,12 @@ void FramebufferSizeCallback(GLFWwindow* window, int width, int height) {
 }
 
 void MouseButtonCallback(GLFWwindow* window, int button, int action, int mods) {
-	if (!g_menuState.m_showMenu)
+	if (!g_menuState.m_showMenu) {
 		return;
-	if (button != GLFW_MOUSE_BUTTON_LEFT || action != GLFW_PRESS)
+	}
+	if (button != GLFW_MOUSE_BUTTON_LEFT || action != GLFW_PRESS) {
 		return;
+	}
 
 	// Menu bounds
 	const float kMenuX = 10;
@@ -60,11 +62,11 @@ void MouseButtonCallback(GLFWwindow* window, int button, int action, int mods) {
 	const float kHeaderHeight = 30;
 
 	// Check if click is within menu bounds
-	float clickX = static_cast<float>(g_menuState.m_mouseX);
-	float clickY = static_cast<float>(g_menuState.m_mouseY);
+	auto clickX = static_cast<float>(g_menuState.m_mouseX);
+	auto clickY = static_cast<float>(g_menuState.m_mouseY);
 
 	if (clickX >= kMenuX && clickX <= kMenuX + kMenuWidth && clickY >= kMenuY &&
-		clickY <= kMenuY + kHeaderHeight + static_cast<float>(g_menuState.m_sceneNames.size()) * kLineHeight) {
+		clickY <= kMenuY + kHeaderHeight + (static_cast<float>(g_menuState.m_sceneNames.size()) * kLineHeight)) {
 
 		// Check which scene was clicked
 		if (clickY >= kMenuY + kHeaderHeight) {
@@ -72,7 +74,7 @@ void MouseButtonCallback(GLFWwindow* window, int button, int action, int mods) {
 			if (clickedIndex >= 0 && clickedIndex < static_cast<int>(g_menuState.m_sceneNames.size())) {
 				// Switch to selected scene
 				engine::SceneManager::Get().SwitchTo(g_menuState.m_sceneNames[clickedIndex]);
-				g_menuState.m_selectedIndex = clickedIndex;
+				g_menuState.m_selectedIndex = static_cast<size_t>(clickedIndex);
 			}
 		}
 	}
@@ -85,8 +87,9 @@ void CursorPosCallback(GLFWwindow* window, double xpos, double ypos) {
 
 // Render navigation menu
 void RenderNavigationMenu() {
-	if (!g_menuState.m_showMenu)
+	if (!g_menuState.m_showMenu) {
 		return;
+	}
 
 	using namespace Foundation;
 
@@ -95,7 +98,7 @@ void RenderNavigationMenu() {
 	const float kMenuWidth = 150;
 	const float kLineHeight = 25;
 	const float kHeaderHeight = 30;
-	const float kTotalHeight = kHeaderHeight + g_menuState.m_sceneNames.size() * kLineHeight;
+	const float kTotalHeight = kHeaderHeight + (static_cast<float>(g_menuState.m_sceneNames.size()) * kLineHeight);
 
 	// Draw menu background
 	Renderer::Primitives::DrawRect(
@@ -111,10 +114,10 @@ void RenderNavigationMenu() {
 
 	// Draw scene items
 	for (size_t i = 0; i < g_menuState.m_sceneNames.size(); i++) {
-		float itemY = kMenuY + kHeaderHeight + i * kLineHeight;
+		float itemY = kMenuY + kHeaderHeight + (static_cast<float>(i) * kLineHeight);
 
 		// Highlight selected scene
-		if (static_cast<int>(i) == g_menuState.m_selectedIndex) {
+		if (i == g_menuState.m_selectedIndex) {
 			Renderer::Primitives::DrawRect(
 				{.bounds = {kMenuX + 2, itemY + 2, kMenuWidth - 4, kLineHeight - 4},
 				 .style = {.fill = Color(0.3F, 0.4F, 0.6F, 0.8F)},
@@ -123,8 +126,8 @@ void RenderNavigationMenu() {
 		}
 
 		// Highlight hovered scene
-		float mouseX = static_cast<float>(g_menuState.m_mouseX);
-		float mouseY = static_cast<float>(g_menuState.m_mouseY);
+		auto mouseX = static_cast<float>(g_menuState.m_mouseX);
+		auto mouseY = static_cast<float>(g_menuState.m_mouseY);
 		if (mouseX >= kMenuX && mouseX <= kMenuX + kMenuWidth && mouseY >= itemY && mouseY <= itemY + kLineHeight) {
 			Renderer::Primitives::DrawRect(
 				{.bounds = {kMenuX + 2, itemY + 2, kMenuWidth - 4, kLineHeight - 4},
@@ -141,7 +144,7 @@ GLFWwindow* InitializeWindow() {
 	glfwSetErrorCallback(ErrorCallback);
 
 	// Initialize GLFW
-	if (!glfwInit()) {
+	if (glfwInit() == 0) {
 		LOG_ERROR(UI, "Failed to initialize GLFW");
 		return nullptr;
 	}
@@ -149,8 +152,8 @@ GLFWwindow* InitializeWindow() {
 	// Get primary monitor to calculate window size (80% of screen)
 	GLFWmonitor*	   primaryMonitor = glfwGetPrimaryMonitor();
 	const GLFWvidmode* videoMode = glfwGetVideoMode(primaryMonitor);
-	int				   windowWidth = static_cast<int>(videoMode->width * 0.8F);
-	int				   windowHeight = static_cast<int>(videoMode->height * 0.8F);
+	int				   windowWidth = static_cast<int>(static_cast<float>(videoMode->width) * 0.8F);
+	int				   windowHeight = static_cast<int>(static_cast<float>(videoMode->height) * 0.8F);
 
 	LOG_INFO(UI, "Screen: %dx%d", videoMode->width, videoMode->height);
 	LOG_INFO(UI, "Window: %dx%d (80%% of screen)", windowWidth, windowHeight);
@@ -164,7 +167,7 @@ GLFWwindow* InitializeWindow() {
 	// Create window
 	GLFWwindow* window = glfwCreateWindow(windowWidth, windowHeight, "UI Sandbox", nullptr, nullptr);
 
-	if (!window) {
+	if (window == nullptr) {
 		LOG_ERROR(UI, "Failed to create GLFW window");
 		glfwTerminate();
 		return nullptr;
@@ -260,12 +263,13 @@ int main(int argc, char* argv[]) {
 
 	// Initialize window and OpenGL
 	GLFWwindow* window = InitializeWindow();
-	if (!window) {
+	if (window == nullptr) {
 		return 1;
 	}
 
 	// Get actual window size
-	int windowWidth, windowHeight;
+	int windowWidth = 0;
+	int windowHeight = 0;
 	glfwGetFramebufferSize(window, &windowWidth, &windowHeight);
 
 	// Initialize primitive rendering system
@@ -292,11 +296,11 @@ int main(int argc, char* argv[]) {
 		g_menuState.m_sceneNames = engine::SceneManager::Get().GetAllSceneNames();
 		// Find current scene index
 		auto* currentScene = engine::SceneManager::Get().GetCurrentScene();
-		if (currentScene) {
+		if (currentScene != nullptr) {
 			const char* currentName = currentScene->GetName();
 			for (size_t i = 0; i < g_menuState.m_sceneNames.size(); i++) {
 				if (g_menuState.m_sceneNames[i] == currentName) {
-					g_menuState.m_selectedIndex = static_cast<int>(i);
+					g_menuState.m_selectedIndex = i;
 					break;
 				}
 			}
