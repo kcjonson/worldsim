@@ -121,16 +121,16 @@ namespace Demo {
 
 		// Test alignment for different types
 		struct Aligned1 {
-			uint8_t data;
+			uint8_t m_data;
 		};
 		struct Aligned4 {
-			uint32_t data;
+			uint32_t m_data;
 		};
 		struct Aligned8 {
-			uint64_t data;
+			uint64_t m_data;
 		};
 		struct Aligned16 {
-			double data[2];
+			double m_data[2];
 		};
 
 		Aligned1*  a1 = arena.Allocate<Aligned1>();

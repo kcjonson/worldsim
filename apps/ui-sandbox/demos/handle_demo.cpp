@@ -15,9 +15,9 @@ namespace Demo {
 
 	// Simple test resource
 	struct TestResource {
-		int			id;
-		float		value;
-		const char* name;
+		int			m_id;
+		float		m_value;
+		const char* m_name;
 	};
 
 	static void TestBasicAllocation();
@@ -89,23 +89,23 @@ namespace Demo {
 
 		assert(res1 && res2 && res3 && "Failed to get resources");
 
-		res1->id = 1;
-		res1->value = 1.5F;
-		res1->name = "Resource1";
+		res1->m_id = 1;
+		res1->m_value = 1.5F;
+		res1->m_name = "Resource1";
 
-		res2->id = 2;
-		res2->value = 2.5F;
-		res2->name = "Resource2";
+		res2->m_id = 2;
+		res2->m_value = 2.5F;
+		res2->m_name = "Resource2";
 
-		res3->id = 3;
-		res3->value = 3.5F;
-		res3->name = "Resource3";
+		res3->m_id = 3;
+		res3->m_value = 3.5F;
+		res3->m_name = "Resource3";
 
 		LOG_INFO(UI, "");
 		LOG_INFO(UI, "Resource data:");
-		LOG_INFO(UI, "  Resource 1: id=%d, value=%.1F, name=%s", res1->id, res1->value, res1->name);
-		LOG_INFO(UI, "  Resource 2: id=%d, value=%.1F, name=%s", res2->id, res2->value, res2->name);
-		LOG_INFO(UI, "  Resource 3: id=%d, value=%.1F, name=%s", res3->id, res3->value, res3->name);
+		LOG_INFO(UI, "  Resource 1: id=%d, value=%.1F, name=%s", res1->m_id, res1->m_value, res1->m_name);
+		LOG_INFO(UI, "  Resource 2: id=%d, value=%.1F, name=%s", res2->m_id, res2->m_value, res2->m_name);
+		LOG_INFO(UI, "  Resource 3: id=%d, value=%.1F, name=%s", res3->m_id, res3->m_value, res3->m_name);
 
 		// Verify count
 		LOG_INFO(UI, "");
@@ -130,7 +130,7 @@ namespace Demo {
 		for (int i = 0; i < 5; i++) {
 			handles[i] = manager.Allocate();
 			TestResource* res = manager.Get(handles[i]);
-			res->id = i;
+			res->m_id = i;
 		}
 
 		LOG_INFO(UI, "Allocated 5 resources (indices 0-4)");
@@ -180,10 +180,10 @@ namespace Demo {
 		ResourceHandle handle = manager.Allocate();
 		TestResource*  res = manager.Get(handle);
 		assert(res && "Failed to get resource");
-		res->id = 42;
+		res->m_id = 42;
 
 		LOG_INFO(UI, "Allocated handle: index=%d, gen=%d", handle.GetIndex(), handle.GetGeneration());
-		LOG_INFO(UI, "Resource id: %d", res->id);
+		LOG_INFO(UI, "Resource id: %d", res->m_id);
 
 		// Free the resource
 		manager.Free(handle);
@@ -288,7 +288,7 @@ namespace Demo {
 		for (int i = 0; i < kTestCount; i++) {
 			TestResource* res = manager.Get(handles[i]);
 			assert(res != nullptr && "Resource should be accessible");
-			res->id = i;
+			res->m_id = i;
 		}
 
 		LOG_INFO(UI, "All %d resources accessible and writable", kTestCount);
