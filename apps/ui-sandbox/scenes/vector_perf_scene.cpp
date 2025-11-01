@@ -24,7 +24,7 @@ namespace {
 		Foundation::Vec2		  position{};
 		float					  outerRadius{};
 		float					  innerRadius{};
-		Foundation::Color		  color{};
+		Foundation::Color		  color; // No {} - Color has default constructor
 		renderer::TessellatedMesh mesh;
 	};
 
@@ -158,12 +158,12 @@ namespace {
 				m_stars.push_back(std::move(star));
 			}
 
-			auto  genEnd = std::chrono::high_resolution_clock::now();
-			float genMs = std::chrono::duration<float, std::milli>(genEnd - genStart).count();
+			const auto	genEnd = std::chrono::high_resolution_clock::now();
+			const float genMs = std::chrono::duration<float, std::milli>(genEnd - genStart).count();
 
 			// Log generation results
-			const float msPerStar = m_stars.empty() ? 0.0F : (genMs / static_cast<float>(m_stars.size()));
-			LOG_INFO(UI, "Generated and tessellated %zu stars in %.2F ms (%.3F ms per star)", m_stars.size(), genMs, msPerStar);
+			const float kMsPerStar = m_stars.empty() ? 0.0F : (genMs / static_cast<float>(m_stars.size()));
+			LOG_INFO(UI, "Generated and tessellated %zu stars in %.2F ms (%.3F ms per star)", m_stars.size(), genMs, kMsPerStar);
 		}
 
 		static renderer::VectorPath CreateStarPath(const Foundation::Vec2& center, float outerRadius, float innerRadius) {
