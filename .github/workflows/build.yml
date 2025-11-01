@@ -15,8 +15,8 @@ jobs:
     - name: Install dependencies
       run: |
         # Install LLVM 21 from official apt repository for consistent toolchain
-        wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key | sudo apt-key add -
-        sudo add-apt-repository "deb http://apt.llvm.org/noble/ llvm-toolchain-noble-21 main"
+        wget -O /usr/share/keyrings/llvm-archive-keyring.gpg https://apt.llvm.org/llvm-snapshot.gpg.key
+        echo "deb [signed-by=/usr/share/keyrings/llvm-archive-keyring.gpg] http://apt.llvm.org/noble/ llvm-toolchain-noble-21 main" | sudo tee /etc/apt/sources.list.d/llvm-toolchain-noble-21.list > /dev/null
         sudo apt-get update
         sudo apt-get install -y make cmake clang-21 \
           libxmu-dev libxi-dev libgl-dev libxrandr-dev libxinerama-dev \
