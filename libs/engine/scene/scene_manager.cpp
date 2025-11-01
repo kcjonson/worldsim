@@ -88,7 +88,7 @@ namespace engine {
 		return m_sceneRegistry.find(name) != m_sceneRegistry.end();
 	}
 
-	bool SceneManager::SetInitialSceneFromArgs(
+	bool SceneManager::SetInitialSceneFromArgs( // NOLINT(readability-convert-member-functions-to-static)
 		int	   argc,
 		char** argv
 	) { // NOLINT(readability-convert-member-functions-to-static,cppcoreguidelines-pro-bounds-pointer-arithmetic)

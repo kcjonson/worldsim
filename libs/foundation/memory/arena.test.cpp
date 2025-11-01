@@ -213,7 +213,7 @@ TEST(FrameArenaTests, ArrayAllocation) {
 	}
 
 	for (int i = 0; i < 20; ++i) {
-		EXPECT_FLOAT_EQ(arr[i] // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic), static_cast<float>(i) * 0.5F);
+		EXPECT_FLOAT_EQ(arr[i], static_cast<float>(i) * 0.5F); // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic)
 	}
 }
 

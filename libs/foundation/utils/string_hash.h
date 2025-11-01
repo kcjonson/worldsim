@@ -26,7 +26,7 @@ namespace foundation {
 
 // Helper macro for compile-time hashing
 // Usage: constexpr StringHash hash = HASH("MyString");
-#define HASH(str) // NOLINT(cppcoreguidelines-macro-usage) (foundation::HashString(str))
+#define HASH(str) (foundation::HashString(str)) // NOLINT(cppcoreguidelines-macro-usage)
 
 	// Common hashes (compile-time constants)
 	// Add more as needed by different systems
