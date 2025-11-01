@@ -15,15 +15,15 @@ namespace renderer {
 
 	// Internal edge structure
 	struct Tessellator::Edge {
-		size_t startIndex;
-		size_t endIndex;
+		size_t startIndex{};
+		size_t endIndex{};
 	};
 
 	// Internal event structure for sweep line
 	struct Tessellator::Event {
 		Foundation::Vec2 position;
-		size_t			 vertexIndex;
-		VertexType		 type;
+		size_t			 vertexIndex{};
+		VertexType		 type{};
 
 		// Sort events by Y (top to bottom), then X (left to right)
 		bool operator<(const Event& other) const {
@@ -34,11 +34,11 @@ namespace renderer {
 		}
 	};
 
-	Tessellator::Tessellator() {}
+	Tessellator::Tessellator() = default; // NOLINT(cppcoreguidelines-pro-type-member-init)
 
-	Tessellator::~Tessellator() = default;
+	Tessellator::~Tessellator() = default; // NOLINT(performance-trivially-destructible)
 
-	bool Tessellator::Tessellate(const VectorPath& path, TessellatedMesh& outMesh, const TessellatorOptions& options) {
+	bool Tessellator::Tessellate(const VectorPath& path, TessellatedMesh& outMesh, const TessellatorOptions& options) { // NOLINT(readability-convert-member-functions-to-static)
 		// Clear output
 		outMesh.Clear();
 
@@ -99,7 +99,7 @@ namespace renderer {
 				// 1. Must be a convex vertex (interior angle < 180°)
 				Foundation::Vec2 edge1 = p1 - p0;
 				Foundation::Vec2 edge2 = p2 - p1;
-				float			 cross = edge1.x * edge2.y - edge1.y * edge2.x;
+				float			 cross = (edge1.x * edge2.y) - (edge1.y * edge2.x);
 
 				if (cross <= 0) {
 					// Concave vertex, skip
@@ -116,7 +116,7 @@ namespace renderer {
 					Foundation::Vec2 p = m_vertices[remainingVertices[j]].position;
 
 					// Point-in-triangle test using barycentric coordinates
-					float denom = ((p1.y - p2.y) * (p0.x - p2.x) + (p2.x - p1.x) * (p0.y - p2.y));
+					float denom = (((p1.y - p2.y) * (p0.x - p2.x)) + ((p2.x - p1.x) * (p0.y - p2.y)));
 					if (std::abs(denom) < 1e-6F) {
 						continue; // Degenerate triangle
 					}
@@ -171,7 +171,7 @@ namespace renderer {
 		// Will process events with sweep line algorithm
 	}
 
-	Tessellator::VertexType Tessellator::ClassifyVertex(size_t vertexIndex) const {
+	Tessellator::VertexType Tessellator::ClassifyVertex(size_t vertexIndex) const { // NOLINT(readability-convert-member-functions-to-static)
 		// Placeholder for monotone decomposition (Phase 1+)
 		// Will classify vertex as Start, End, Split, Merge, or Regular
 		return VertexType::Regular;

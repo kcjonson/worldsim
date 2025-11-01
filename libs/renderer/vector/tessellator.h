@@ -17,10 +17,16 @@ namespace renderer {
 	// Tessellator class - converts VectorPath to TessellatedMesh
 	// Currently implements simplified monotone decomposition for Phase 0
 	// Based on Lyon's approach but simplified for simple polygons
-	class Tessellator {
+	class Tessellator { // NOLINT(cppcoreguidelines-special-member-functions)
 	  public:
 		Tessellator();
-		~Tessellator();
+		~Tessellator(); // NOLINT(performance-trivially-destructible) - Defined in .cpp (needs complete types for vectors)
+
+		// Delete copy/move operations (Rule of 5)
+		Tessellator(const Tessellator&) = delete;
+		Tessellator& operator=(const Tessellator&) = delete;
+		Tessellator(Tessellator&&) = delete;
+		Tessellator& operator=(Tessellator&&) = delete;
 
 		// Tessellate a path into triangles
 		// Returns true on success, false on error

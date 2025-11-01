@@ -136,7 +136,7 @@ namespace Foundation {
 		m_metricsBuffer.Write(metrics);
 	}
 
-	void DebugServer::UpdateLog(
+	void DebugServer::UpdateLog( // NOLINT(readability-convert-member-functions-to-static)
 		LogLevel	level,
 		LogCategory category,
 		const char* message,
@@ -257,7 +257,7 @@ namespace Foundation {
 		return m_targetSceneName;
 	}
 
-	bool DebugServer::RequestScreenshot(std::vector<unsigned char>& pngData, int timeoutMs) {
+	bool DebugServer::RequestScreenshot(std::vector<unsigned char>& pngData, int timeoutMs) { // NOLINT(readability-identifier-naming)
 		LOG_INFO(Foundation, "Screenshot requested via HTTP, waiting for capture...");
 
 		// Clear any previous ready state
