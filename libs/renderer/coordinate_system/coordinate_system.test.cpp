@@ -35,7 +35,7 @@ class CoordinateSystemTest : public ::testing::Test {
 		glfwTerminate();
 	}
 
-protected: // NOLINT(readability-redundant-access-specifiers)
+  protected:						// NOLINT(readability-redundant-access-specifiers)
 	GLFWwindow* m_window = nullptr; // NOLINT(cppcoreguidelines-non-private-member-variables-in-classes)
 };
 

@@ -93,7 +93,7 @@ struct SmallStruct {
 
 struct LargeStruct {
 	double data[16]; // NOLINT(readability-identifier-naming)
-	int	   id; // NOLINT(readability-identifier-naming)
+	int	   id;		 // NOLINT(readability-identifier-naming)
 };
 
 // Benchmark: Allocate structs with malloc
@@ -352,8 +352,8 @@ static void BM_SimulatedUILayout(benchmark::State& state) {
 		for (int i = 0; i < 100; ++i) {
 			struct UIElementData {
 				float x, y, width, height; // NOLINT(readability-identifier-naming)
-				int	  id; // NOLINT(readability-identifier-naming)
-				char  text[32]; // NOLINT(readability-identifier-naming)
+				int	  id;				   // NOLINT(readability-identifier-naming)
+				char  text[32];			   // NOLINT(readability-identifier-naming)
 			};
 
 			UIElementData* elem = arena.Allocate<UIElementData>();
@@ -382,9 +382,9 @@ static void BM_SimulatedParticleUpdate(benchmark::State& state) {
 		arena.Reset();
 
 		struct Particle {
-			float x, y, z; // NOLINT(readability-identifier-naming)
+			float x, y, z;	  // NOLINT(readability-identifier-naming)
 			float vx, vy, vz; // NOLINT(readability-identifier-naming)
-			float life; // NOLINT(readability-identifier-naming)
+			float life;		  // NOLINT(readability-identifier-naming)
 		};
 
 		// Allocate particle batch

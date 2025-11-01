@@ -49,7 +49,8 @@ namespace foundation {
 
 			// Check capacity
 			if (aligned + size > m_size) {
-				assert(static_cast<bool>("Arena out of memory")); // NOLINT(readability-simplify-boolean-expr,readability-implicit-bool-conversion)
+				assert(static_cast<bool>("Arena out of memory")
+				); // NOLINT(readability-simplify-boolean-expr,readability-implicit-bool-conversion)
 				return nullptr;
 			}
 

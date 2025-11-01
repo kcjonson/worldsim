@@ -35,13 +35,10 @@ namespace renderer {
 		// Helper: Determine vertex type (start, end, split, merge, regular)
 		enum class VertexType : std::uint8_t // NOLINT(performance-enum-size) { Start, End, Split, Merge, Regular };
 
-		// Internal structures for sweep line algorithm
-		struct Vertex {
-			Foundation::Vec2 position;
-			size_t			 originalIndex{};
-			bool			 isEar{false};
-			bool			 isProcessed{false};
-		};
+			// Internal structures for sweep line algorithm
+			struct Vertex {
+				Foundation::Vec2 position; size_t originalIndex{}; bool isEar{false}; bool isProcessed{false};
+			};
 
 		struct Edge {
 			size_t startIndex{0};
