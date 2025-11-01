@@ -24,7 +24,7 @@ namespace {
 		Foundation::Vec2		  position{};
 		float					  outerRadius{};
 		float					  innerRadius{};
-		Foundation::Color		  color{};
+		Foundation::Color		  color;
 		renderer::TessellatedMesh mesh{};
 	};
 
