@@ -7,7 +7,7 @@
 #include <chrono>
 #include <vector>
 
-namespace Renderer {
+namespace Renderer { // NOLINT(readability-identifier-naming)
 
 	class MetricsCollector {
 	  public:

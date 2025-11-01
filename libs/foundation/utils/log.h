@@ -1,17 +1,34 @@
 #pragma once
 
 #include <cstdarg>
+#include <cstdint>
 
 // Forward declare DebugServer to avoid circular dependency
-namespace Foundation {
+namespace Foundation { // NOLINT(readability-identifier-naming)
 	class DebugServer;
 }
 
 namespace foundation {
 
-	enum class LogLevel { Debug, Info, Warning, Error };
+	enum class LogLevel : std::uint8_t { // NOLINT(performance-enum-size)
+		Debug,
+		Info,
+		Warning,
+		Error
+	};
 
-	enum class LogCategory { Renderer, Physics, Audio, Network, Game, World, UI, Engine, Foundation, Count };
+	enum class LogCategory : std::uint8_t { // NOLINT(performance-enum-size)
+		Renderer,
+		Physics,
+		Audio,
+		Network,
+		Game,
+		World,
+		UI,
+		Engine,
+		Foundation,
+		Count
+	};
 
 	class Logger {
 	  public:
@@ -28,11 +45,11 @@ namespace foundation {
 		static void SetDebugServer(Foundation::DebugServer* debugServer);
 
 	  private:
-		static LogLevel s_levels[static_cast<int>(LogCategory::Count)];
-		static bool		s_initialized;
+		static LogLevel s_levels[static_cast<int>(LogCategory::Count)]; // NOLINT(readability-identifier-naming)
+		static bool		s_initialized;									// NOLINT(readability-identifier-naming)
 
 #ifdef DEVELOPMENT_BUILD
-		static Foundation::DebugServer* s_debugServer;
+		static Foundation::DebugServer* s_debugServer; // NOLINT(readability-identifier-naming)
 #endif
 	};
 

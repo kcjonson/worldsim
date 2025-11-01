@@ -8,6 +8,7 @@
 #include <utils/log.h>
 
 #include <GL/glew.h>
+#include <array>
 #include <vector>
 
 using namespace renderer;
@@ -56,7 +57,7 @@ namespace {
 
 		void Render() override {
 			// Clear background
-			glClearColor(0.1f, 0.1f, 0.15f, 1.0f);
+			glClearColor(0.1F, 0.1F, 0.15F, 1.0F);
 			glClear(GL_COLOR_BUFFER_BIT);
 
 			// No rendering needed for this scene - all output is to console/logs
@@ -66,7 +67,7 @@ namespace {
 			// No cleanup needed
 		}
 
-		std::string ExportState() override {
+		[[nodiscard]] std::string ExportState() override { // NOLINT(readability-convert-member-functions-to-static)
 			return R"({
 			"scene": "handles",
 			"description": "Resource handle system tests",
@@ -110,33 +111,33 @@ namespace {
 		TestResource* res2 = manager.Get(handle2);
 		TestResource* res3 = manager.Get(handle3);
 
-		assert(res1 && res2 && res3 && "Failed to get resources");
+		assert((res1 != nullptr && res2 != nullptr && res3 != nullptr) && static_cast<bool>("Failed to get resources"));
 
 		res1->id = 1;
-		res1->value = 1.5f;
+		res1->value = 1.5F;
 		res1->name = "Resource1";
 
 		res2->id = 2;
-		res2->value = 2.5f;
+		res2->value = 2.5F;
 		res2->name = "Resource2";
 
 		res3->id = 3;
-		res3->value = 3.5f;
+		res3->value = 3.5F;
 		res3->name = "Resource3";
 
 		LOG_INFO(UI, "");
 		LOG_INFO(UI, "Resource data:");
-		LOG_INFO(UI, "  Resource 1: id=%d, value=%.1f, name=%s", res1->id, res1->value, res1->name);
-		LOG_INFO(UI, "  Resource 2: id=%d, value=%.1f, name=%s", res2->id, res2->value, res2->name);
-		LOG_INFO(UI, "  Resource 3: id=%d, value=%.1f, name=%s", res3->id, res3->value, res3->name);
+		LOG_INFO(UI, "  Resource 1: id=%d, value=%.1F, name=%s", res1->id, res1->value, res1->name != nullptr ? res1->name : "null");
+		LOG_INFO(UI, "  Resource 2: id=%d, value=%.1F, name=%s", res2->id, res2->value, res2->name != nullptr ? res2->name : "null");
+		LOG_INFO(UI, "  Resource 3: id=%d, value=%.1F, name=%s", res3->id, res3->value, res3->name != nullptr ? res3->name : "null");
 
 		// Verify count
 		LOG_INFO(UI, "");
 		LOG_INFO(UI, "Total count: %zu (should be 3)", manager.GetCount());
 		LOG_INFO(UI, "Active count: %zu (should be 3)", manager.GetActiveCount());
 
-		assert(manager.GetCount() == 3 && "Wrong total count");
-		assert(manager.GetActiveCount() == 3 && "Wrong active count");
+		assert(manager.GetCount() == 3 && static_cast<bool>("Wrong total count"));
+		assert(manager.GetActiveCount() == 3 && static_cast<bool>("Wrong active count"));
 
 		LOG_INFO(UI, "Basic allocation test passed!");
 	}
@@ -149,26 +150,26 @@ namespace {
 		ResourceManager<TestResource> manager;
 
 		// Allocate 5 handles
-		ResourceHandle handles[5];
-		for (int i = 0; i < 5; i++) {
-			handles[i] = manager.Allocate();
-			TestResource* res = manager.Get(handles[i]);
-			res->id = i;
+		std::array<ResourceHandle, 5> handles;
+		for (size_t i = 0; i < handles.size(); i++) {
+			handles.at(i) = manager.Allocate();
+			TestResource* res = manager.Get(handles.at(i));
+			res->id = static_cast<int>(i);
 		}
 
 		LOG_INFO(UI, "Allocated 5 resources (indices 0-4)");
 		LOG_INFO(UI, "Active count: %zu", manager.GetActiveCount());
 
 		// Free handles 1, 2, 3 (indices 1, 2, 3)
-		manager.Free(handles[1]);
-		manager.Free(handles[2]);
-		manager.Free(handles[3]);
+		manager.Free(handles.at(1));
+		manager.Free(handles.at(2));
+		manager.Free(handles.at(3));
 
 		LOG_INFO(UI, "");
 		LOG_INFO(UI, "Freed handles at indices 1, 2, 3");
 		LOG_INFO(UI, "Active count: %zu (should be 2)", manager.GetActiveCount());
 
-		assert(manager.GetActiveCount() == 2 && "Wrong active count after free");
+		assert(manager.GetActiveCount() == 2 && static_cast<bool>("Wrong active count after free"));
 
 		// Allocate 2 new handles - should reuse indices 3 and 2 (LIFO from free list)
 		ResourceHandle newHandle1 = manager.Allocate();
@@ -180,14 +181,14 @@ namespace {
 		LOG_INFO(UI, "  New handle 2: index=%d, gen=%d (should reuse index 2, gen 1)", newHandle2.GetIndex(), newHandle2.GetGeneration());
 
 		// Verify indices were reused and generation incremented
-		assert((newHandle1.GetIndex() == 3 || newHandle1.GetIndex() == 2) && "Index not reused");
-		assert((newHandle2.GetIndex() == 3 || newHandle2.GetIndex() == 2) && "Index not reused");
-		assert(newHandle1.GetGeneration() == 1 && "Generation not incremented");
-		assert(newHandle2.GetGeneration() == 1 && "Generation not incremented");
+		assert((newHandle1.GetIndex() == 3 || newHandle1.GetIndex() == 2) && static_cast<bool>("Index not reused"));
+		assert((newHandle2.GetIndex() == 3 || newHandle2.GetIndex() == 2) && static_cast<bool>("Index not reused"));
+		assert(newHandle1.GetGeneration() == 1 && static_cast<bool>("Generation not incremented"));
+		assert(newHandle2.GetGeneration() == 1 && static_cast<bool>("Generation not incremented"));
 
 		LOG_INFO(UI, "");
 		LOG_INFO(UI, "Active count: %zu (should be 4)", manager.GetActiveCount());
-		assert(manager.GetActiveCount() == 4 && "Wrong active count after realloc");
+		assert(manager.GetActiveCount() == 4 && static_cast<bool>("Wrong active count after realloc"));
 
 		LOG_INFO(UI, "Free list reuse test passed!");
 	}
@@ -202,7 +203,7 @@ namespace {
 		// Allocate resource
 		ResourceHandle handle = manager.Allocate();
 		TestResource*  res = manager.Get(handle);
-		assert(res && "Failed to get resource");
+		assert(res != nullptr && static_cast<bool>("Failed to get resource"));
 		res->id = 42;
 
 		LOG_INFO(UI, "Allocated handle: index=%d, gen=%d", handle.GetIndex(), handle.GetGeneration());
@@ -215,8 +216,8 @@ namespace {
 
 		// Try to access with old handle (should return nullptr)
 		TestResource* staleRes = manager.Get(handle);
-		LOG_INFO(UI, "Accessing with stale handle: %s", staleRes ? "FAIL - got resource!" : "PASS - returned null");
-		assert(staleRes == nullptr && "Stale handle returned resource!");
+		LOG_INFO(UI, "Accessing with stale handle: %s", staleRes != nullptr ? "FAIL - got resource!" : "PASS - returned null");
+		assert(staleRes == nullptr && static_cast<bool>("Stale handle returned resource!"));
 
 		// Allocate new resource in same slot
 		ResourceHandle newHandle = manager.Allocate();
@@ -224,17 +225,17 @@ namespace {
 		LOG_INFO(UI, "Allocated new handle in same slot: index=%d, gen=%d", newHandle.GetIndex(), newHandle.GetGeneration());
 
 		// Verify new handle has incremented generation
-		assert(newHandle.GetIndex() == handle.GetIndex() && "Different index");
-		assert(newHandle.GetGeneration() == handle.GetGeneration() + 1 && "Generation not incremented");
+		assert(newHandle.GetIndex() == handle.GetIndex() && static_cast<bool>("Different index"));
+		assert(newHandle.GetGeneration() == handle.GetGeneration() + 1 && static_cast<bool>("Generation not incremented"));
 
 		// Old handle should still be invalid
 		staleRes = manager.Get(handle);
-		LOG_INFO(UI, "Accessing with old handle after realloc: %s", staleRes ? "FAIL - got resource!" : "PASS - returned null");
-		assert(staleRes == nullptr && "Old handle should still be invalid");
+		LOG_INFO(UI, "Accessing with old handle after realloc: %s", staleRes != nullptr ? "FAIL - got resource!" : "PASS - returned null");
+		assert(staleRes == nullptr && static_cast<bool>("Old handle should still be invalid"));
 
 		// New handle should work
 		TestResource* newRes = manager.Get(newHandle);
-		assert(newRes && "New handle should be valid");
+		assert(newRes != nullptr && static_cast<bool>("New handle should be valid"));
 		newRes->id = 99;
 		LOG_INFO(UI, "Accessing with new handle: PASS - got resource (id=%d)", newRes->id);
 
@@ -251,17 +252,17 @@ namespace {
 		// Test invalid handle
 		ResourceHandle invalidHandle = ResourceHandle::Invalid();
 		LOG_INFO(UI, "Invalid handle: value=0x%08x, valid=%s", invalidHandle.value, invalidHandle.IsValid() ? "true" : "false");
-		assert(!invalidHandle.IsValid() && "Invalid handle should not be valid");
+		assert(!invalidHandle.IsValid() && static_cast<bool>("Invalid handle should not be valid"));
 
 		TestResource* res = manager.Get(invalidHandle);
-		LOG_INFO(UI, "Get with invalid handle: %s", res ? "FAIL - got resource!" : "PASS - returned null");
-		assert(res == nullptr && "Invalid handle should return null");
+		LOG_INFO(UI, "Get with invalid handle: %s", res != nullptr ? "FAIL - got resource!" : "PASS - returned null");
+		assert(res == nullptr && static_cast<bool>("Invalid handle should return null"));
 
 		// Test out-of-range handle
 		ResourceHandle outOfRange = ResourceHandle::Make(9999, 0);
 		res = manager.Get(outOfRange);
-		LOG_INFO(UI, "Get with out-of-range index (9999): %s", res ? "FAIL - got resource!" : "PASS - returned null");
-		assert(res == nullptr && "Out-of-range handle should return null");
+		LOG_INFO(UI, "Get with out-of-range index (9999): %s", res != nullptr ? "FAIL - got resource!" : "PASS - returned null");
+		assert(res == nullptr && static_cast<bool>("Out-of-range handle should return null"));
 
 		// Test handle comparison
 		ResourceHandle h1 = manager.Allocate();
@@ -270,14 +271,14 @@ namespace {
 
 		LOG_INFO(UI, "");
 		LOG_INFO(UI, "Handle comparison:");
-		LOG_INFO(UI, "  h1 == h1: %s", (h1 == h1) ? "true" : "false");
-		LOG_INFO(UI, "  h1 == h2: %s", (h1 == h2) ? "true" : "false");
-		LOG_INFO(UI, "  h1 == h3: %s", (h1 == h3) ? "true" : "false");
-		LOG_INFO(UI, "  h1 != h2: %s", (h1 != h2) ? "true" : "false");
+		LOG_INFO(UI, "  h1 == h1: %s", h1 == h1 ? "true" : "false");
+		LOG_INFO(UI, "  h1 == h2: %s", h1 == h2 ? "true" : "false");
+		LOG_INFO(UI, "  h1 == h3: %s", h1 == h3 ? "true" : "false");
+		LOG_INFO(UI, "  h1 != h2: %s", h1 != h2 ? "true" : "false");
 
-		assert((h1 == h1) && "Same handle should be equal");
-		assert((h1 != h2) && "Different handles should not be equal");
-		assert((h1 == h3) && "Copied handle should be equal");
+		assert(h1 == h1 && static_cast<bool>("Same handle should be equal"));
+		assert(h1 != h2 && static_cast<bool>("Different handles should not be equal"));
+		assert((h1 == h3) && static_cast<bool>("Copied handle should be equal"));
 
 		LOG_INFO(UI, "Handle validation test passed!");
 	}
@@ -298,8 +299,8 @@ namespace {
 
 		for (int i = 0; i < kTestCount; i++) {
 			ResourceHandle handle = manager.Allocate();
-			assert(handle.IsValid() && "Handle should be valid");
-			assert(handle.GetIndex() == i && "Index should match allocation order");
+			assert(handle.IsValid() && static_cast<bool>("Handle should be valid"));
+			assert(handle.GetIndex() == i && static_cast<bool>("Index should match allocation order"));
 			handles.push_back(handle);
 		}
 
@@ -310,15 +311,15 @@ namespace {
 		// Verify all handles are still valid and accessible
 		for (int i = 0; i < kTestCount; i++) {
 			TestResource* res = manager.Get(handles[i]);
-			assert(res != nullptr && "Resource should be accessible");
+			assert(res != nullptr && static_cast<bool>("Resource should be accessible"));
 			res->id = i;
 		}
 
 		LOG_INFO(UI, "All %d resources accessible and writable", kTestCount);
 
 		// Verify indices are correct
-		assert(handles[0].GetIndex() == 0 && "First index should be 0");
-		assert(handles[kTestCount - 1].GetIndex() == kTestCount - 1 && "Last index should be count-1");
+		assert(handles[0].GetIndex() == 0 && static_cast<bool>("First index should be 0"));
+		assert(handles[kTestCount - 1].GetIndex() == kTestCount - 1 && static_cast<bool>("Last index should be count-1"));
 
 		LOG_INFO(UI, "Index range: 0 to %d (correct)", kTestCount - 1);
 		LOG_INFO(UI, "");
@@ -327,7 +328,7 @@ namespace {
 	}
 
 	// Register scene with SceneManager
-	static bool s_registered = []() {
+	bool g_registered = []() {
 		engine::SceneManager::Get().RegisterScene("handles", []() { return std::make_unique<HandleScene>(); });
 		return true;
 	}();

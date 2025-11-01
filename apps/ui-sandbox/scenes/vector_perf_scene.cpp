@@ -21,11 +21,11 @@ namespace {
 
 	// Star instance data
 	struct Star {
-		Foundation::Vec2		  position;
-		float					  outerRadius;
-		float					  innerRadius;
-		Foundation::Color		  color;
-		renderer::TessellatedMesh mesh;
+		Foundation::Vec2		  position{};
+		float					  outerRadius{};
+		float					  innerRadius{};
+		Foundation::Color		  color{};
+		renderer::TessellatedMesh mesh{};
 	};
 
 	class VectorPerfScene : public engine::IScene {
@@ -50,10 +50,10 @@ namespace {
 			m_frameCount++;
 			m_frameDeltaAccumulator += dt;
 
-			if (m_frameDeltaAccumulator >= 1.0f) {
-				m_fps = m_frameCount / m_frameDeltaAccumulator;
+			if (m_frameDeltaAccumulator >= 1.0F) {
+				m_fps = static_cast<float>(m_frameCount) / m_frameDeltaAccumulator;
 				m_frameCount = 0;
-				m_frameDeltaAccumulator = 0.0f;
+				m_frameDeltaAccumulator = 0.0F;
 			}
 		}
 
@@ -61,7 +61,7 @@ namespace {
 			using namespace Foundation;
 
 			// Clear background
-			glClearColor(0.05f, 0.05f, 0.1f, 1.0f);
+			glClearColor(0.05F, 0.05F, 0.1F, 1.0F);
 			glClear(GL_COLOR_BUFFER_BIT);
 
 			// Measure rendering time
@@ -81,13 +81,14 @@ namespace {
 			}
 
 			auto  renderEnd = std::chrono::high_resolution_clock::now();
-			float renderMs = std::chrono::duration<float, std::milli>(renderEnd - renderStart).count();
+			float renderMs = 0.0F;
+			renderMs = std::chrono::duration<float, std::milli>(renderEnd - renderStart).count();
 
 			// Draw FPS counter (top-left corner)
 			char fpsText[64];
-			snprintf(fpsText, sizeof(fpsText), "FPS: %.1f", m_fps);
+			snprintf(fpsText, sizeof(fpsText), "FPS: %.1F", m_fps);
 
-			Renderer::Primitives::DrawRect({.bounds = {10, 10, 150, 30}, .style = {.fill = Color(0.0f, 0.0f, 0.0f, 0.7f)}});
+			Renderer::Primitives::DrawRect({.bounds = {10, 10, 150, 30}, .style = {.fill = Color(0.0F, 0.0F, 0.0F, 0.7F)}});
 
 			// Draw performance stats (top-left, below FPS)
 			char statsText[256];
@@ -100,7 +101,7 @@ namespace {
 				renderMs
 			);
 
-			Renderer::Primitives::DrawRect({.bounds = {10, 50, 300, 50}, .style = {.fill = Color(0.0f, 0.0f, 0.0f, 0.7f)}});
+			Renderer::Primitives::DrawRect({.bounds = {10, 50, 300, 50}, .style = {.fill = Color(0.0F, 0.0F, 0.0F, 0.7F)}});
 
 			// Update render time tracking
 			m_lastRenderTime = renderMs;
@@ -108,26 +109,26 @@ namespace {
 
 		void OnExit() override {
 			LOG_INFO(UI, "Exiting Vector Performance Scene");
-			LOG_INFO(UI, "Final stats: %zu stars, %.1f FPS, %.2fms render time", m_stars.size(), m_fps, m_lastRenderTime);
+			LOG_INFO(UI, "Final stats: %zu stars, %.1F FPS, %.2fms render time", m_stars.size(), m_fps, m_lastRenderTime);
 		}
 
 		std::string ExportState() override {
 			char buf[256];
-			snprintf(buf, sizeof(buf), R"({"stars": %zu, "fps": %.1f, "renderMs": %.2f})", m_stars.size(), m_fps, m_lastRenderTime);
-			return std::string(buf);
+			snprintf(buf, sizeof(buf), R"({"stars": %zu, "fps": %.1F, "renderMs": %.2F})", m_stars.size(), m_fps, m_lastRenderTime);
+			return {buf};
 		}
 
 		const char* GetName() const override { return "vector-perf"; }
 
 	  private:
-		void GenerateStars(size_t count) {
+		void GenerateStars(size_t count) { // NOLINT(readability-convert-member-functions-to-static)
 			// Random number generator
 			std::random_device					  rd;
 			std::mt19937						  gen(rd());
-			std::uniform_real_distribution<float> posXDist(50.0f, 2510.0f);		// Screen width
-			std::uniform_real_distribution<float> posYDist(50.0f, 1390.0f);		// Screen height
-			std::uniform_real_distribution<float> outerRadiusDist(8.0f, 25.0f); // Star size variation
-			std::uniform_real_distribution<float> colorDist(0.0f, 1.0f);
+			std::uniform_real_distribution<float> posXDist(50.0F, 2510.0F);		// Screen width
+			std::uniform_real_distribution<float> posYDist(50.0F, 1390.0F);		// Screen height
+			std::uniform_real_distribution<float> outerRadiusDist(8.0F, 25.0F); // Star size variation
+			std::uniform_real_distribution<float> colorDist(0.0F, 1.0F);
 
 			LOG_INFO(UI, "Generating %zu stars...", count);
 			auto genStart = std::chrono::high_resolution_clock::now();
@@ -138,11 +139,11 @@ namespace {
 				Star star;
 				star.position = Foundation::Vec2(posXDist(gen), posYDist(gen));
 				star.outerRadius = outerRadiusDist(gen);
-				star.innerRadius = star.outerRadius * 0.4f; // Inner radius is 40% of outer
+				star.innerRadius = star.outerRadius * 0.4F; // Inner radius is 40% of outer
 
 				// Random color
 				float hue = colorDist(gen);
-				star.color = Foundation::Color(hue, 1.0f - hue * 0.5f, 0.3f + hue * 0.4f, 1.0f);
+				star.color = Foundation::Color(hue, (1.0F - (hue * 0.5F)), (0.3F + (hue * 0.4F)), 1.0F);
 
 				// Create star path
 				renderer::VectorPath path = CreateStarPath(star.position, star.outerRadius, star.innerRadius);
@@ -158,36 +159,42 @@ namespace {
 			}
 
 			auto  genEnd = std::chrono::high_resolution_clock::now();
-			float genMs = std::chrono::duration<float, std::milli>(genEnd - genStart).count();
+			float genMs = 0.0F;
+			genMs = std::chrono::duration<float, std::milli>(genEnd - genStart).count();
 
-			if (m_stars.size() > 0) {
+			if (!m_stars.empty()) {
 				LOG_INFO(
-					UI, "Generated and tessellated %zu stars in %.2f ms (%.3f ms per star)", m_stars.size(), genMs, genMs / m_stars.size()
+					UI, "Generated and tessellated %zu stars in %.2F ms (%.3F ms per star)", m_stars.size(), genMs, genMs / m_stars.size()
 				);
 			} else {
-				LOG_INFO(UI, "Generated and tessellated 0 stars in %.2f ms (N/A ms per star)", genMs);
+				LOG_INFO(UI, "Generated and tessellated 0 stars in %.2F ms (N/A ms per star)", genMs);
 			}
 		}
 
-		renderer::VectorPath CreateStarPath(const Foundation::Vec2& center, float outerRadius, float innerRadius) {
+		static renderer::VectorPath CreateStarPath(const Foundation::Vec2& center, float outerRadius, float innerRadius) {
 			renderer::VectorPath path;
-			const int			 numPoints = 5;
+			const int			 kNumPoints = 5;
 
-			for (int i = 0; i < numPoints * 2; ++i) {
-				float angle = (i * std::numbers::pi_v<float> / numPoints) - std::numbers::pi_v<float> / 2.0f; // Start at top
+			for (int i = 0; i < kNumPoints * 2; ++i) {
+				float angle = 0.0F;
+				angle = (static_cast<float>(i) * std::numbers::pi_v<float> / static_cast<float>(kNumPoints)) -
+						std::numbers::pi_v<float> / 2.0F; // Start at top
 				float radius = (i % 2 == 0) ? outerRadius : innerRadius;
 
-				float x = center.x + radius * std::cos(angle);
-				float y = center.y + radius * std::sin(angle);
+				float x = 0.0F;
+				x = center.x + radius * std::cos(angle);
+				float y = 0.0F;
+				y = center.y + radius * std::sin(angle);
 
-				path.vertices.push_back(Foundation::Vec2(x, y));
+				path.vertices.emplace_back(x, y);
 			}
 
 			path.isClosed = true;
 			return path;
 		}
 
-		size_t CalculateTotalTriangles() const {
+		size_t CalculateTotalTriangles() const { // NOLINT(readability-convert-member-functions-to-static)
+												 // NOLINT(readability-convert-member-functions-to-static)
 			size_t total = 0;
 			for (const auto& star : m_stars) {
 				total += star.mesh.GetTriangleCount();
@@ -195,7 +202,8 @@ namespace {
 			return total;
 		}
 
-		size_t CalculateTotalVertices() const {
+		size_t CalculateTotalVertices() const { // NOLINT(readability-convert-member-functions-to-static)
+												// NOLINT(readability-convert-member-functions-to-static)
 			size_t total = 0;
 			for (const auto& star : m_stars) {
 				total += star.mesh.GetVertexCount();
@@ -204,14 +212,14 @@ namespace {
 		}
 
 		std::vector<Star> m_stars;
-		float			  m_fps = 0.0f;
+		float			  m_fps = 0.0F;
 		int				  m_frameCount = 0;
-		float			  m_frameDeltaAccumulator = 0.0f;
-		float			  m_lastRenderTime = 0.0f;
+		float			  m_frameDeltaAccumulator = 0.0F;
+		float			  m_lastRenderTime = 0.0F;
 	};
 
 	// Register scene with SceneManager
-	static bool s_registered = []() {
+	bool g_registered = []() {
 		engine::SceneManager::Get().RegisterScene("vector-perf", []() { return std::make_unique<VectorPerfScene>(); });
 		return true;
 	}();

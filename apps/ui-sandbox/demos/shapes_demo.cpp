@@ -8,7 +8,7 @@
 
 #include <GL/glew.h>
 
-namespace Demo {
+namespace demo {
 
 	void Init() {
 		// No initialization needed for shapes demo
@@ -18,7 +18,7 @@ namespace Demo {
 		using namespace Foundation;
 
 		// Clear background
-		glClearColor(0.1f, 0.1f, 0.15f, 1.0f);
+		glClearColor(0.1F, 0.1F, 0.15F, 1.0F);
 		glClear(GL_COLOR_BUFFER_BIT);
 
 		// Begin primitive rendering
@@ -34,13 +34,13 @@ namespace Demo {
 		// Draw rectangles with borders (no fill)
 		Renderer::Primitives::DrawRect(
 			{.bounds = {50, 200, 200, 100},
-			 .style = {.fill = Color::Transparent(), .border = BorderStyle{.color = Color::Yellow(), .width = 3.0f}},
+			 .style = {.fill = Color::Transparent(), .border = BorderStyle{.color = Color::Yellow(), .width = 3.0F}},
 			 .id = "yellow_border"}
 		);
 
 		Renderer::Primitives::DrawRect(
 			{.bounds = {300, 200, 200, 100},
-			 .style = {.fill = Color::Transparent(), .border = BorderStyle{.color = Color::Cyan(), .width = 3.0f}},
+			 .style = {.fill = Color::Transparent(), .border = BorderStyle{.color = Color::Cyan(), .width = 3.0F}},
 			 .id = "cyan_border"}
 		);
 
@@ -48,18 +48,21 @@ namespace Demo {
 		Renderer::Primitives::DrawRect(
 			{.bounds = {550, 200, 200, 100},
 			 .style =
-				 {.fill = Color(0.5f, 0.0f, 0.5f, 1.0f), // Purple
-				  .border = BorderStyle{.color = Color::White(), .width = 2.0f}},
+				 {.fill = Color(0.5F, 0.0F, 0.5F, 1.0F), // Purple
+				  .border = BorderStyle{.color = Color::White(), .width = 2.0F}},
 			 .id = "purple_rect_bordered"}
 		);
 
 		// Draw a grid of small rectangles (batching test)
 		for (int y = 0; y < 10; y++) {
 			for (int x = 0; x < 10; x++) {
-				float hue = (x * 10 + y) / 100.0f;
-				Color color(hue, 1.0f - hue, 0.5f, 1.0f);
+				float hue = static_cast<float>((x * 10) + y) / 100.0F;
+				Color color(hue, 1.0F - hue, 0.5F, 1.0F);
 
-				Renderer::Primitives::DrawRect({.bounds = {50.0f + x * 25.0f, 350.0f + y * 20.0f, 20.0f, 15.0f}, .style = {.fill = color}});
+				Renderer::Primitives::DrawRect(
+					{.bounds = {50.0F + (static_cast<float>(x) * 25.0F), 350.0F + (static_cast<float>(y) * 20.0F), 20.0F, 15.0F},
+					 .style = {.fill = color}}
+				);
 			}
 		}
 
@@ -71,4 +74,4 @@ namespace Demo {
 		// No cleanup needed for shapes demo
 	}
 
-} // namespace Demo
+} // namespace demo

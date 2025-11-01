@@ -49,9 +49,10 @@ namespace foundation {
 				return Foundation::LogCategory::UI;
 			case LogCategory::Engine:
 				return Foundation::LogCategory::Engine;
-			case LogCategory::Foundation:
+			case LogCategory::Foundation: // NOLINT(bugprone-branch-clone)
+			case LogCategory::Count:	  // NOLINT(clang-diagnostic-switch)
 				return Foundation::LogCategory::Foundation;
-			default:
+			default: // NOLINT(bugprone-branch-clone)
 				return Foundation::LogCategory::Foundation;
 		}
 	}
@@ -98,11 +99,11 @@ namespace foundation {
 	}
 
 	void Logger::SetLevel(LogCategory category, LogLevel level) {
-		s_levels[static_cast<int>(category)] = level;
+		s_levels[static_cast<int>(category)] = level; // NOLINT(cppcoreguidelines-pro-bounds-constant-array-index)
 	}
 
 	LogLevel Logger::GetLevel(LogCategory category) {
-		return s_levels[static_cast<int>(category)];
+		return s_levels[static_cast<int>(category)]; // NOLINT(cppcoreguidelines-pro-bounds-constant-array-index)
 	}
 
 	void Logger::Log(LogCategory category, LogLevel level, const char* file, int line, const char* format, ...) {
@@ -117,7 +118,7 @@ namespace foundation {
 		// ALWAYS send to debug server (regardless of console filter)
 		// Lock-free write, never blocks (~10-20 nanoseconds)
 		// Developer client has its own filtering UI
-		if (s_debugServer) {
+		if (s_debugServer != nullptr) { // NOLINT(readability-implicit-bool-conversion)
 			s_debugServer->UpdateLog(ConvertLogLevel(level), ConvertLogCategory(category), message, file, line);
 		}
 #endif

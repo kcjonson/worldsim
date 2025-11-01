@@ -13,7 +13,14 @@ namespace engine {
 	/// The SceneManager handles registration, switching, and lifecycle.
 	class IScene {
 	  public:
+		IScene() = default;
 		virtual ~IScene() = default;
+
+		// Interfaces should not be copied or moved
+		IScene(const IScene&) = delete;
+		IScene& operator=(const IScene&) = delete;
+		IScene(IScene&&) = delete;
+		IScene& operator=(IScene&&) = delete;
 
 		/// @brief Called when scene becomes active
 		/// Use for initialization, resource loading, state setup

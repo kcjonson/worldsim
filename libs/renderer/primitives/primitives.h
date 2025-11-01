@@ -17,13 +17,13 @@
 #include "math/types.h"
 #include <string>
 
-namespace Renderer {
+namespace Renderer { // NOLINT(readability-identifier-naming)
 
 	// Forward declarations
 	class Renderer;
 	class CoordinateSystem;
 
-	namespace Primitives {
+	namespace Primitives { // NOLINT(readability-identifier-naming)
 
 		// --- Initialization ---
 
@@ -79,13 +79,13 @@ namespace Renderer {
 
 		// Arguments for DrawTriangles
 		struct TrianglesArgs {
-			const Foundation::Vec2* vertices;	  // Vertex positions (array)
-			const uint16_t*			indices;	  // Triangle indices (array)
-			size_t					vertexCount;  // Number of vertices
-			size_t					indexCount;	  // Number of indices (triangles * 3)
-			Foundation::Color		color;		  // Fill color
-			const char*				id = nullptr; // Optional: for inspection/debugging
-			int						zIndex = 0;	  // Optional: explicit draw order
+			const Foundation::Vec2* vertices = nullptr; // Vertex positions (array)
+			const uint16_t*			indices = nullptr;	// Triangle indices (array)
+			size_t					vertexCount = 0;	// Number of vertices
+			size_t					indexCount = 0;		// Number of indices (triangles * 3)
+			Foundation::Color		color;				// Fill color
+			const char*				id = nullptr;		// Optional: for inspection/debugging
+			int						zIndex = 0;			// Optional: explicit draw order
 		};
 
 		// Draw a rectangle with optional fill and border
@@ -112,9 +112,9 @@ namespace Renderer {
 		// --- Statistics ---
 
 		struct RenderStats {
-			uint32_t drawCalls;
-			uint32_t vertexCount;
-			uint32_t triangleCount;
+			uint32_t drawCalls = 0;
+			uint32_t vertexCount = 0;
+			uint32_t triangleCount = 0;
 		};
 
 		RenderStats GetStats();

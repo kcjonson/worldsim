@@ -7,11 +7,12 @@
 #include "utils/log.h"
 
 #include <GL/glew.h>
+#include <array>
 #include <vector>
 
 using namespace renderer;
 
-namespace Demo {
+namespace demo {
 
 	// Simple test resource
 	struct TestResource {
@@ -45,7 +46,7 @@ namespace Demo {
 
 	void Render() {
 		// Clear background
-		glClearColor(0.1f, 0.1f, 0.15f, 1.0f);
+		glClearColor(0.1F, 0.1F, 0.15F, 1.0F);
 		glClear(GL_COLOR_BUFFER_BIT);
 
 		// No rendering needed for this demo - all output is to console
@@ -87,25 +88,25 @@ namespace Demo {
 		TestResource* res2 = manager.Get(handle2);
 		TestResource* res3 = manager.Get(handle3);
 
-		assert(res1 && res2 && res3 && "Failed to get resources");
+		assert(res1 && res2 && res3 && "Failed to get resources"); // NOLINT(readability-implicit-bool-conversion)
 
 		res1->id = 1;
-		res1->value = 1.5f;
+		res1->value = 1.5F;
 		res1->name = "Resource1";
 
 		res2->id = 2;
-		res2->value = 2.5f;
+		res2->value = 2.5F;
 		res2->name = "Resource2";
 
 		res3->id = 3;
-		res3->value = 3.5f;
+		res3->value = 3.5F;
 		res3->name = "Resource3";
 
 		LOG_INFO(UI, "");
 		LOG_INFO(UI, "Resource data:");
-		LOG_INFO(UI, "  Resource 1: id=%d, value=%.1f, name=%s", res1->id, res1->value, res1->name);
-		LOG_INFO(UI, "  Resource 2: id=%d, value=%.1f, name=%s", res2->id, res2->value, res2->name);
-		LOG_INFO(UI, "  Resource 3: id=%d, value=%.1f, name=%s", res3->id, res3->value, res3->name);
+		LOG_INFO(UI, "  Resource 1: id=%d, value=%.1F, name=%s", res1->id, res1->value, res1->name);
+		LOG_INFO(UI, "  Resource 2: id=%d, value=%.1F, name=%s", res2->id, res2->value, res2->name);
+		LOG_INFO(UI, "  Resource 3: id=%d, value=%.1F, name=%s", res3->id, res3->value, res3->name);
 
 		// Verify count
 		LOG_INFO(UI, "");
@@ -126,20 +127,20 @@ namespace Demo {
 		ResourceManager<TestResource> manager;
 
 		// Allocate 5 handles
-		ResourceHandle handles[5];
-		for (int i = 0; i < 5; i++) {
-			handles[i] = manager.Allocate();
-			TestResource* res = manager.Get(handles[i]);
-			res->id = i;
+		std::array<ResourceHandle, 5> handles;
+		for (size_t i = 0; i < handles.size(); i++) {
+			handles.at(i) = manager.Allocate();
+			TestResource* res = manager.Get(handles.at(i));
+			res->id = static_cast<int>(i);
 		}
 
 		LOG_INFO(UI, "Allocated 5 resources (indices 0-4)");
 		LOG_INFO(UI, "Active count: %zu", manager.GetActiveCount());
 
 		// Free handles 1, 2, 3 (indices 1, 2, 3)
-		manager.Free(handles[1]);
-		manager.Free(handles[2]);
-		manager.Free(handles[3]);
+		manager.Free(handles.at(1));
+		manager.Free(handles.at(2));
+		manager.Free(handles.at(3));
 
 		LOG_INFO(UI, "");
 		LOG_INFO(UI, "Freed handles at indices 1, 2, 3");
@@ -179,7 +180,7 @@ namespace Demo {
 		// Allocate resource
 		ResourceHandle handle = manager.Allocate();
 		TestResource*  res = manager.Get(handle);
-		assert(res && "Failed to get resource");
+		assert(res && "Failed to get resource"); // NOLINT(readability-implicit-bool-conversion)
 		res->id = 42;
 
 		LOG_INFO(UI, "Allocated handle: index=%d, gen=%d", handle.GetIndex(), handle.GetGeneration());
@@ -193,7 +194,7 @@ namespace Demo {
 		// Try to access with old handle (should return nullptr)
 		TestResource* staleRes = manager.Get(handle);
 		LOG_INFO(UI, "Accessing with stale handle: %s", staleRes ? "FAIL - got resource!" : "PASS - returned null");
-		assert(staleRes == nullptr && "Stale handle returned resource!");
+		assert(staleRes == nullptr && "Stale handle returned resource!"); // NOLINT(readability-implicit-bool-conversion)
 
 		// Allocate new resource in same slot
 		ResourceHandle newHandle = manager.Allocate();
@@ -207,11 +208,11 @@ namespace Demo {
 		// Old handle should still be invalid
 		staleRes = manager.Get(handle);
 		LOG_INFO(UI, "Accessing with old handle after realloc: %s", staleRes ? "FAIL - got resource!" : "PASS - returned null");
-		assert(staleRes == nullptr && "Old handle should still be invalid");
+		assert(staleRes == nullptr && "Old handle should still be invalid"); // NOLINT(readability-implicit-bool-conversion)
 
 		// New handle should work
 		TestResource* newRes = manager.Get(newHandle);
-		assert(newRes && "New handle should be valid");
+		assert(newRes && "New handle should be valid"); // NOLINT(readability-implicit-bool-conversion)
 		newRes->id = 99;
 		LOG_INFO(UI, "Accessing with new handle: PASS - got resource (id=%d)", newRes->id);
 
@@ -228,17 +229,17 @@ namespace Demo {
 		// Test invalid handle
 		ResourceHandle invalidHandle = ResourceHandle::Invalid();
 		LOG_INFO(UI, "Invalid handle: value=0x%08x, valid=%s", invalidHandle.value, invalidHandle.IsValid() ? "true" : "false");
-		assert(!invalidHandle.IsValid() && "Invalid handle should not be valid");
+		assert(!invalidHandle.IsValid() && "Invalid handle should not be valid"); // NOLINT(readability-implicit-bool-conversion)
 
 		TestResource* res = manager.Get(invalidHandle);
 		LOG_INFO(UI, "Get with invalid handle: %s", res ? "FAIL - got resource!" : "PASS - returned null");
-		assert(res == nullptr && "Invalid handle should return null");
+		assert(res == nullptr && "Invalid handle should return null"); // NOLINT(readability-implicit-bool-conversion)
 
 		// Test out-of-range handle
 		ResourceHandle outOfRange = ResourceHandle::Make(9999, 0);
 		res = manager.Get(outOfRange);
 		LOG_INFO(UI, "Get with out-of-range index (9999): %s", res ? "FAIL - got resource!" : "PASS - returned null");
-		assert(res == nullptr && "Out-of-range handle should return null");
+		assert(res == nullptr && "Out-of-range handle should return null"); // NOLINT(readability-implicit-bool-conversion)
 
 		// Test handle comparison
 		ResourceHandle h1 = manager.Allocate();
@@ -252,9 +253,9 @@ namespace Demo {
 		LOG_INFO(UI, "  h1 == h3: %s", (h1 == h3) ? "true" : "false");
 		LOG_INFO(UI, "  h1 != h2: %s", (h1 != h2) ? "true" : "false");
 
-		assert((h1 == h1) && "Same handle should be equal");
-		assert((h1 != h2) && "Different handles should not be equal");
-		assert((h1 == h3) && "Copied handle should be equal");
+		assert((h1 == h1) && "Same handle should be equal");		   // NOLINT(readability-implicit-bool-conversion)
+		assert((h1 != h2) && "Different handles should not be equal"); // NOLINT(readability-implicit-bool-conversion)
+		assert((h1 == h3) && "Copied handle should be equal");		   // NOLINT(readability-implicit-bool-conversion)
 
 		LOG_INFO(UI, "Handle validation test passed!");
 	}
@@ -275,7 +276,7 @@ namespace Demo {
 
 		for (int i = 0; i < kTestCount; i++) {
 			ResourceHandle handle = manager.Allocate();
-			assert(handle.IsValid() && "Handle should be valid");
+			assert(handle.IsValid() && "Handle should be valid"); // NOLINT(readability-implicit-bool-conversion)
 			assert(handle.GetIndex() == i && "Index should match allocation order");
 			handles.push_back(handle);
 		}
@@ -287,7 +288,7 @@ namespace Demo {
 		// Verify all handles are still valid and accessible
 		for (int i = 0; i < kTestCount; i++) {
 			TestResource* res = manager.Get(handles[i]);
-			assert(res != nullptr && "Resource should be accessible");
+			assert(res != nullptr && "Resource should be accessible"); // NOLINT(readability-implicit-bool-conversion)
 			res->id = i;
 		}
 
@@ -303,4 +304,4 @@ namespace Demo {
 		LOG_INFO(UI, "Capacity limit test passed!");
 	}
 
-} // namespace Demo
+} // namespace demo

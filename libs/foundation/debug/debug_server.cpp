@@ -67,7 +67,7 @@ namespace Foundation {
 	// Global buffer for LogEntry::ToJSON() (thread_local to be thread-safe)
 	static thread_local char g_logJsonBuffer[512];
 
-	const char* LogEntry::ToJSON() const {
+	const char* LogEntry::ToJSON() const { // NOLINT(readability-convert-member-functions-to-static)
 		std::snprintf(
 			g_logJsonBuffer,
 			sizeof(g_logJsonBuffer),
@@ -76,14 +76,20 @@ namespace Foundation {
 			LogCategoryToString(category),
 			message,
 			static_cast<unsigned long long>(timestamp),
-			file ? file : "",
+			(file != nullptr) ? file : "",
 			line
 		);
 		return g_logJsonBuffer;
 	}
 
-	DebugServer::DebugServer()
-		: m_running(false) {
+	DebugServer::DebugServer() // NOLINT(cppcoreguidelines-pro-type-member-init,modernize-use-equals-default)
+		: m_server(),
+		  m_serverThread(),
+		  m_running(false),
+		  m_screenshotData(),
+		  m_screenshotMutex(),
+		  m_targetSceneName(),
+		  m_sceneNameMutex() {
 		// Lock-free ring buffers are initialized automatically
 	}
 
@@ -91,7 +97,7 @@ namespace Foundation {
 		Stop();
 	}
 
-	void DebugServer::Start(int port) {
+	void DebugServer::Start(int port) { // NOLINT(readability-convert-member-functions-to-static)
 		if (m_running.load()) {
 			std::cerr << "DebugServer already running!" << std::endl;
 			return;
@@ -105,7 +111,7 @@ namespace Foundation {
 		std::cout << "Debug server starting on port " << port << "..." << std::endl;
 	}
 
-	void DebugServer::Stop() {
+	void DebugServer::Stop() { // NOLINT(readability-convert-member-functions-to-static)
 		if (!m_running.load()) {
 			return;
 		}
@@ -130,7 +136,13 @@ namespace Foundation {
 		m_metricsBuffer.Write(metrics);
 	}
 
-	void DebugServer::UpdateLog(LogLevel level, LogCategory category, const char* message, const char* file, int line) {
+	void DebugServer::UpdateLog( // NOLINT(readability-convert-member-functions-to-static)
+		LogLevel	level,
+		LogCategory category,
+		const char* message,
+		const char* file,
+		int			line
+	) { // NOLINT(readability-convert-member-functions-to-static)
 		// Get current timestamp in milliseconds
 		auto now = std::chrono::system_clock::now();
 		auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
@@ -152,14 +164,14 @@ namespace Foundation {
 		m_logBuffer.Write(entry);
 	}
 
-	PerformanceMetrics DebugServer::GetMetricsSnapshot() const {
+	PerformanceMetrics DebugServer::GetMetricsSnapshot() const { // NOLINT(readability-convert-member-functions-to-static)
 		// Lock-free read - gets latest sample, ~10-20 nanoseconds
 		PerformanceMetrics metrics = {};
 		m_metricsBuffer.ReadLatest(metrics);
 		return metrics;
 	}
 
-	void DebugServer::CaptureScreenshotIfRequested() {
+	void DebugServer::CaptureScreenshotIfRequested() { // NOLINT(readability-convert-member-functions-to-static)
 		// Check if screenshot was requested (non-blocking check)
 		if (!m_screenshotRequested.load()) {
 			return; // No screenshot requested
@@ -204,14 +216,14 @@ namespace Foundation {
 
 		// Write callback for stb_image_write
 		auto pngWriteFunc = [](void* context, void* data, int size) {
-			PNGWriteContext* ctx = static_cast<PNGWriteContext*>(context);
-			unsigned char*	 bytes = static_cast<unsigned char*>(data);
-			ctx->data->insert(ctx->data->end(), bytes, bytes + size);
+			auto* ctx = static_cast<PNGWriteContext*>(context);
+			auto* bytes = static_cast<unsigned char*>(data);
+			ctx->data->insert(ctx->data->end(), bytes, bytes + size); // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic)
 		};
 
 		// Encode to PNG (hold mutex for entire operation to prevent race conditions)
 		LOG_DEBUG(Foundation, "Encoding screenshot to PNG...");
-		int result;
+		int result = 0;
 		{
 			std::lock_guard<std::mutex> lock(m_screenshotMutex);
 			m_screenshotData.clear();
@@ -245,7 +257,7 @@ namespace Foundation {
 		return m_targetSceneName;
 	}
 
-	bool DebugServer::RequestScreenshot(std::vector<unsigned char>& pngData, int timeoutMs) {
+	bool DebugServer::RequestScreenshot(std::vector<unsigned char>& pngData, int timeoutMs) { // NOLINT(readability-identifier-naming)
 		LOG_INFO(Foundation, "Screenshot requested via HTTP, waiting for capture...");
 
 		// Clear any previous ready state
@@ -283,7 +295,7 @@ namespace Foundation {
 		return true;
 	}
 
-	void DebugServer::ServerThreadFunc(int port) {
+	void DebugServer::ServerThreadFunc(int port) { // NOLINT(readability-convert-member-functions-to-static)
 		m_server = std::make_unique<httplib::Server>();
 
 		// Disable SO_REUSEADDR to prevent multiple instances on same port

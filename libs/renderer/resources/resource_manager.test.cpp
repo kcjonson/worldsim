@@ -85,7 +85,7 @@ TEST(ResourceHandleTests, TypeAliases) {
 // Simple test resource type
 struct TestResource {
 	int			value = 0;
-	std::string name;
+	std::string name{};
 };
 
 TEST(ResourceManagerTests, AllocateFirstResource) {

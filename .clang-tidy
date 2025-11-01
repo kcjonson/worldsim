@@ -8,13 +8,21 @@ Checks: >
   cppcoreguidelines-*,
   -modernize-use-trailing-return-type,
   -modernize-avoid-c-arrays,
+  -modernize-use-nodiscard,
   -readability-identifier-length,
   -readability-magic-numbers,
   -cppcoreguidelines-avoid-magic-numbers,
   -cppcoreguidelines-pro-bounds-array-to-pointer-decay,
-  -cppcoreguidelines-avoid-c-arrays
+  -cppcoreguidelines-avoid-c-arrays,
+  -cppcoreguidelines-pro-type-union-access,
+  -cppcoreguidelines-pro-type-vararg,
+  -cppcoreguidelines-pro-type-reinterpret-cast,
+  -cppcoreguidelines-avoid-non-const-global-variables,
+  -bugprone-easily-swappable-parameters,
+  -readability-function-cognitive-complexity,
+  -performance-avoid-endl
 
-WarningsAsErrors: ''
+WarningsAsErrors: '*'
 
 HeaderFilterRegex: '.*'
 
@@ -32,6 +40,9 @@ CheckOptions:
     value: CamelCase
   - key: readability-identifier-naming.MethodCase
     value: CamelCase
+  # Exception: Allow Google Benchmark convention (BM_FunctionName)
+  - key: readability-identifier-naming.FunctionIgnoredRegexp
+    value: '^BM_.*'
 
   # Variable naming: camelCase
   - key: readability-identifier-naming.VariableCase
@@ -41,11 +52,15 @@ CheckOptions:
   - key: readability-identifier-naming.LocalVariableCase
     value: camelBack
 
-  # Member variables: m_ prefix
+  # Global variables: g_ prefix with camelCase
+  - key: readability-identifier-naming.GlobalVariableCase
+    value: camelBack
+  - key: readability-identifier-naming.GlobalVariablePrefix
+    value: g_
+
+  # Member variables: m_ prefix for private/protected only (public struct fields don't need it)
   - key: readability-identifier-naming.MemberCase
     value: camelBack
-  - key: readability-identifier-naming.MemberPrefix
-    value: m_
   - key: readability-identifier-naming.PrivateMemberPrefix
     value: m_
   - key: readability-identifier-naming.ProtectedMemberPrefix

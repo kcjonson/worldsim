@@ -8,22 +8,14 @@
 namespace engine {
 
 	Application::Application(GLFWwindow* window)
-		: m_window(window),
-		  m_isRunning(false),
-		  m_isPaused(false),
-		  m_lastTime(0.0),
-		  m_deltaTime(0.0f),
-		  m_fps(0.0f),
-		  m_overlayRenderer(nullptr),
-		  m_preFrameCallback(nullptr),
-		  m_postFrameCallback(nullptr) {
-		if (!m_window) {
+		: m_window(window) {
+		if (m_window == nullptr) {
 			LOG_ERROR(Engine, "Application created with null window");
 		}
 	}
 
 	void Application::Run() {
-		if (!m_window) {
+		if (m_window == nullptr) {
 			LOG_ERROR(Engine, "Cannot run: window not initialized");
 			return;
 		}
@@ -33,7 +25,7 @@ namespace engine {
 		m_isRunning = true;
 		m_lastTime = glfwGetTime();
 
-		while (!glfwWindowShouldClose(m_window) && m_isRunning) {
+		while (glfwWindowShouldClose(m_window) == 0 && m_isRunning) {
 			// Calculate delta time
 			double currentTime = glfwGetTime();
 			m_deltaTime = static_cast<float>(currentTime - m_lastTime);
@@ -41,14 +33,14 @@ namespace engine {
 
 			// Cap delta time to prevent large jumps (e.g., during debugging)
 			// This prevents physics explosions and other time-step-sensitive bugs
-			if (m_deltaTime > 0.25f) {
+			if (m_deltaTime > 0.25F) {
 				LOG_DEBUG(Engine, "Large delta time detected (%.3fs), capping to 0.25s", m_deltaTime);
-				m_deltaTime = 0.25f;
+				m_deltaTime = 0.25F;
 			}
 
 			// Calculate FPS
-			if (m_deltaTime > 0.0f) {
-				m_fps = 1.0f / m_deltaTime;
+			if (m_deltaTime > 0.0F) {
+				m_fps = 1.0F / m_deltaTime;
 			}
 
 			// Poll GLFW events
@@ -149,15 +141,15 @@ namespace engine {
 	}
 
 	void Application::SetOverlayRenderer(OverlayRenderer renderer) {
-		m_overlayRenderer = renderer;
+		m_overlayRenderer = std::move(renderer);
 	}
 
 	void Application::SetPreFrameCallback(PreFrameCallback callback) {
-		m_preFrameCallback = callback;
+		m_preFrameCallback = std::move(callback);
 	}
 
 	void Application::SetPostFrameCallback(PostFrameCallback callback) {
-		m_postFrameCallback = callback;
+		m_postFrameCallback = std::move(callback);
 	}
 
 	float Application::GetFPS() const {

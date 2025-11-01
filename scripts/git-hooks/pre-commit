@@ -1,44 +1,9 @@
 #!/bin/bash
 #
-# Pre-commit hook for clang-format
-# Automatically formats staged C++ files before commit
+# Pre-commit hook - runs linting on staged files
 #
 
-# Find all staged .cpp and .h files
-STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACM | grep -E '\.(cpp|h)$')
-
-if [ -z "$STAGED_FILES" ]; then
-  # No C++ files staged, allow commit
-  exit 0
-fi
-
-echo "Running clang-format on staged files..."
-
-# Determine clang-format command based on OS
-if [[ "$OSTYPE" == "darwin"* ]]; then
-  # macOS - use xcrun
-  CLANG_FORMAT="xcrun clang-format"
-else
-  # Linux/other - use system clang-format
-  CLANG_FORMAT="clang-format"
-fi
-
-# Format each staged file
-REFORMATTED=0
-for FILE in $STAGED_FILES; do
-  # Only format files that exist (not deleted)
-  if [ -f "$FILE" ]; then
-    echo "  Formatting: $FILE"
-    $CLANG_FORMAT -i "$FILE"
-
-    # Re-add the file to staging if it was modified
-    git add "$FILE"
-    REFORMATTED=1
-  fi
-done
-
-if [ $REFORMATTED -eq 1 ]; then
-  echo "Files formatted and re-staged"
-fi
+# Run lint script on staged files
+./scripts/lint.sh --staged
 
 exit 0

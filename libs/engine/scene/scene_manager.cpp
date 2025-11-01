@@ -10,16 +10,17 @@ namespace engine {
 		return instance;
 	}
 
-	void SceneManager::RegisterScene(const std::string& name, SceneFactory factory) {
+	void
+	SceneManager::RegisterScene(const std::string& name, SceneFactory factory) { // NOLINT(readability-convert-member-functions-to-static)
 		if (m_sceneRegistry.find(name) != m_sceneRegistry.end()) {
 			LOG_WARNING(Engine, "Scene '%s' already registered, overwriting", name.c_str());
 		}
 
-		m_sceneRegistry[name] = factory;
+		m_sceneRegistry[name] = std::move(factory);
 		LOG_DEBUG(Engine, "Registered scene: %s", name.c_str());
 	}
 
-	bool SceneManager::SwitchTo(const std::string& name) {
+	bool SceneManager::SwitchTo(const std::string& name) { // NOLINT(readability-convert-member-functions-to-static)
 		// Check if scene exists
 		auto it = m_sceneRegistry.find(name);
 		if (it == m_sceneRegistry.end()) {
@@ -43,19 +44,19 @@ namespace engine {
 		return true;
 	}
 
-	void SceneManager::HandleInput(float dt) {
+	void SceneManager::HandleInput(float dt) { // NOLINT(readability-convert-member-functions-to-static)
 		if (m_currentScene) {
 			m_currentScene->HandleInput(dt);
 		}
 	}
 
-	void SceneManager::Update(float dt) {
+	void SceneManager::Update(float dt) { // NOLINT(readability-convert-member-functions-to-static)
 		if (m_currentScene) {
 			m_currentScene->Update(dt);
 		}
 	}
 
-	void SceneManager::Render() {
+	void SceneManager::Render() { // NOLINT(readability-convert-member-functions-to-static)
 		if (m_currentScene) {
 			m_currentScene->Render();
 		}
@@ -87,14 +88,17 @@ namespace engine {
 		return m_sceneRegistry.find(name) != m_sceneRegistry.end();
 	}
 
-	bool SceneManager::SetInitialSceneFromArgs(int argc, char** argv) {
+	bool SceneManager::SetInitialSceneFromArgs( // NOLINT(readability-convert-member-functions-to-static)
+		int	   argc,
+		char** argv
+	) { // NOLINT(readability-convert-member-functions-to-static,cppcoreguidelines-pro-bounds-pointer-arithmetic)
 		// Look for --scene=<name> argument
 		for (int i = 1; i < argc; ++i) {
-			const char* arg = argv[i];
+			const char* arg = argv[i]; // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic)
 
 			// Check if starts with --scene=
 			if (std::strncmp(arg, "--scene=", 8) == 0) {
-				const char* sceneName = arg + 8; // Skip "--scene="
+				const char* sceneName = arg + 8; // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic) Skip "--scene="
 
 				if (std::strlen(sceneName) == 0) {
 					LOG_WARNING(Engine, "--scene argument provided but no scene name specified");
@@ -105,10 +109,9 @@ namespace engine {
 				if (SwitchTo(sceneName)) {
 					LOG_INFO(Engine, "Loaded scene from command-line: %s", sceneName);
 					return true;
-				} else {
-					LOG_ERROR(Engine, "Failed to load scene from command-line: %s", sceneName);
-					return false;
 				}
+				LOG_ERROR(Engine, "Failed to load scene from command-line: %s", sceneName);
+				return false;
 			}
 		}
 

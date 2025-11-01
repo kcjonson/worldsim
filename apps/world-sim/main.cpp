@@ -26,7 +26,7 @@ void FramebufferSizeCallback(GLFWwindow* window, int width, int height) {
 GLFWwindow* InitializeWindow() {
 	glfwSetErrorCallback(ErrorCallback);
 
-	if (!glfwInit()) {
+	if (glfwInit() == 0) {
 		LOG_ERROR(Game, "Failed to initialize GLFW");
 		return nullptr;
 	}
@@ -34,8 +34,8 @@ GLFWwindow* InitializeWindow() {
 	// Get primary monitor for window sizing
 	GLFWmonitor*	   primaryMonitor = glfwGetPrimaryMonitor();
 	const GLFWvidmode* videoMode = glfwGetVideoMode(primaryMonitor);
-	int				   windowWidth = static_cast<int>(videoMode->width * 0.8f);
-	int				   windowHeight = static_cast<int>(videoMode->height * 0.8f);
+	int				   windowWidth = static_cast<int>(static_cast<float>(videoMode->width) * 0.8F);
+	int				   windowHeight = static_cast<int>(static_cast<float>(videoMode->height) * 0.8F);
 
 	LOG_INFO(Game, "Screen: %dx%d", videoMode->width, videoMode->height);
 	LOG_INFO(Game, "Window: %dx%d (80%% of screen)", windowWidth, windowHeight);
@@ -48,7 +48,7 @@ GLFWwindow* InitializeWindow() {
 
 	// Create window
 	GLFWwindow* window = glfwCreateWindow(windowWidth, windowHeight, "World-Sim", nullptr, nullptr);
-	if (!window) {
+	if (window == nullptr) {
 		LOG_ERROR(Game, "Failed to create GLFW window");
 		glfwTerminate();
 		return nullptr;
@@ -83,13 +83,14 @@ int main(int argc, char* argv[]) {
 
 	// Initialize window and OpenGL
 	GLFWwindow* window = InitializeWindow();
-	if (!window) {
+	if (window == nullptr) {
 		foundation::Logger::Shutdown();
 		return 1;
 	}
 
 	// Get window size
-	int windowWidth, windowHeight;
+	int windowWidth = 0;
+	int windowHeight = 0;
 	glfwGetFramebufferSize(window, &windowWidth, &windowHeight);
 
 	// Initialize renderer

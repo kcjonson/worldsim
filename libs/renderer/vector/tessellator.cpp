@@ -15,30 +15,34 @@ namespace renderer {
 
 	// Internal edge structure
 	struct Tessellator::Edge {
-		size_t startIndex;
-		size_t endIndex;
+		size_t startIndex{};
+		size_t endIndex{};
 	};
 
 	// Internal event structure for sweep line
 	struct Tessellator::Event {
 		Foundation::Vec2 position;
-		size_t			 vertexIndex;
-		VertexType		 type;
+		size_t			 vertexIndex{};
+		VertexType		 type{};
 
 		// Sort events by Y (top to bottom), then X (left to right)
 		bool operator<(const Event& other) const {
-			if (std::abs(position.y - other.position.y) < 1e-6f) {
+			if (std::abs(position.y - other.position.y) < 1e-6F) {
 				return position.x < other.position.x;
 			}
 			return position.y < other.position.y;
 		}
 	};
 
-	Tessellator::Tessellator() {}
+	Tessellator::Tessellator() = default; // NOLINT(cppcoreguidelines-pro-type-member-init)
 
-	Tessellator::~Tessellator() {}
+	Tessellator::~Tessellator() = default; // NOLINT(performance-trivially-destructible)
 
-	bool Tessellator::Tessellate(const VectorPath& path, TessellatedMesh& outMesh, const TessellatorOptions& options) {
+	bool Tessellator::Tessellate( // NOLINT(readability-convert-member-functions-to-static)
+		const VectorPath&		  path,
+		TessellatedMesh&		  outMesh,
+		const TessellatorOptions& options
+	) {
 		// Clear output
 		outMesh.Clear();
 
@@ -99,7 +103,7 @@ namespace renderer {
 				// 1. Must be a convex vertex (interior angle < 180°)
 				Foundation::Vec2 edge1 = p1 - p0;
 				Foundation::Vec2 edge2 = p2 - p1;
-				float			 cross = edge1.x * edge2.y - edge1.y * edge2.x;
+				float			 cross = (edge1.x * edge2.y) - (edge1.y * edge2.x);
 
 				if (cross <= 0) {
 					// Concave vertex, skip
@@ -116,14 +120,14 @@ namespace renderer {
 					Foundation::Vec2 p = m_vertices[remainingVertices[j]].position;
 
 					// Point-in-triangle test using barycentric coordinates
-					float denom = ((p1.y - p2.y) * (p0.x - p2.x) + (p2.x - p1.x) * (p0.y - p2.y));
-					if (std::abs(denom) < 1e-6f) {
+					float denom = (((p1.y - p2.y) * (p0.x - p2.x)) + ((p2.x - p1.x) * (p0.y - p2.y)));
+					if (std::abs(denom) < 1e-6F) {
 						continue; // Degenerate triangle
 					}
 
 					float a = ((p1.y - p2.y) * (p.x - p2.x) + (p2.x - p1.x) * (p.y - p2.y)) / denom;
 					float b = ((p2.y - p0.y) * (p.x - p2.x) + (p0.x - p2.x) * (p.y - p2.y)) / denom;
-					float c = 1.0f - a - b;
+					float c = 1.0F - a - b;
 
 					if (a >= 0 && b >= 0 && c >= 0) {
 						hasInteriorVertex = true;
@@ -171,7 +175,9 @@ namespace renderer {
 		// Will process events with sweep line algorithm
 	}
 
-	Tessellator::VertexType Tessellator::ClassifyVertex(size_t vertexIndex) const {
+	Tessellator::VertexType Tessellator::ClassifyVertex( // NOLINT(readability-convert-member-functions-to-static)
+		size_t vertexIndex
+	) const {
 		// Placeholder for monotone decomposition (Phase 1+)
 		// Will classify vertex as Start, End, Split, Merge, or Regular
 		return VertexType::Regular;
@@ -179,7 +185,7 @@ namespace renderer {
 
 	bool Tessellator::CompareVertices(const Foundation::Vec2& a, const Foundation::Vec2& b) {
 		// Sort by Y (top to bottom), then X (left to right)
-		if (std::abs(a.y - b.y) < 1e-6f) {
+		if (std::abs(a.y - b.y) < 1e-6F) {
 			return a.x < b.x;
 		}
 		return a.y < b.y;

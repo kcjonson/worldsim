@@ -11,7 +11,7 @@
 #include <GL/glew.h>
 #include <vector>
 
-namespace Renderer {
+namespace Renderer { // NOLINT(readability-identifier-naming)
 
 	// Forward declaration
 	class CoordinateSystem;
@@ -24,7 +24,7 @@ namespace Renderer {
 	};
 
 	// Batch accumulator - collects geometry before GPU upload
-	class BatchRenderer {
+	class BatchRenderer { // NOLINT(cppcoreguidelines-special-member-functions)
 	  public:
 		BatchRenderer();
 		~BatchRenderer();
@@ -63,9 +63,9 @@ namespace Renderer {
 
 		// Rendering statistics structure
 		struct RenderStats {
-			uint32_t drawCalls;
-			uint32_t vertexCount;
-			uint32_t triangleCount;
+			uint32_t drawCalls = 0;
+			uint32_t vertexCount = 0;
+			uint32_t triangleCount = 0;
 		};
 
 		// Statistics

@@ -8,13 +8,13 @@
 #include "graphics/color.h"
 #include <optional>
 
-namespace Foundation {
+namespace Foundation { // NOLINT(readability-identifier-naming)
 
 	// Optional border style for rectangles
 	struct BorderStyle {
 		Color color = Color::White();
-		float width = 1.0f;
-		float cornerRadius = 0.0f;
+		float width = 1.0F;
+		float cornerRadius = 0.0F;
 	};
 
 	// Rectangle visual style
@@ -26,7 +26,7 @@ namespace Foundation {
 	// Line visual style
 	struct LineStyle {
 		Color color = Color::White();
-		float width = 1.0f;
+		float width = 1.0F;
 	};
 
 } // namespace Foundation

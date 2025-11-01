@@ -8,11 +8,12 @@
 
 #include <GL/glew.h>
 #include <chrono>
+#include <memory>
 #include <vector>
 
 using namespace foundation;
 
-namespace Demo {
+namespace demo {
 
 	static void TestPerformance();
 	static void TestAlignment();
@@ -37,7 +38,7 @@ namespace Demo {
 
 	void Render() {
 		// Clear background
-		glClearColor(0.1f, 0.1f, 0.15f, 1.0f);
+		glClearColor(0.1F, 0.1F, 0.15F, 1.0F);
 		glClear(GL_COLOR_BUFFER_BIT);
 
 		// No rendering needed for this demo - all output is to console
@@ -59,11 +60,11 @@ namespace Demo {
 		constexpr int kIterations = 10000;
 
 		// Test 1: Arena allocation
-		Arena arena(1024 * 1024); // 1 MB
+		Arena arena(static_cast<size_t>(1024) * 1024); // 1 MB
 		auto  arenaStart = std::chrono::high_resolution_clock::now();
 
 		for (int i = 0; i < kIterations; i++) {
-			Foundation::Vec2* vec = arena.Allocate<Foundation::Vec2>();
+			auto* vec = arena.Allocate<Foundation::Vec2>();
 			vec->x = static_cast<float>(i);
 			vec->y = static_cast<float>(i * 2);
 		}
@@ -77,17 +78,17 @@ namespace Demo {
 		arena.Reset();
 		LOG_INFO(UI, "Arena: Reset to 0 bytes used (instant)");
 
-		// Test 2: Standard allocation
-		std::vector<Foundation::Vec2*> pointers;
+		// Test 2: Standard allocation (using unique_ptr for RAII)
+		std::vector<std::unique_ptr<Foundation::Vec2>> pointers;
 		pointers.reserve(kIterations);
 
 		auto stdStart = std::chrono::high_resolution_clock::now();
 
 		for (int i = 0; i < kIterations; i++) {
-			Foundation::Vec2* vec = new Foundation::Vec2();
+			auto vec = std::make_unique<Foundation::Vec2>();
 			vec->x = static_cast<float>(i);
 			vec->y = static_cast<float>(i * 2);
-			pointers.push_back(vec);
+			pointers.push_back(std::move(vec));
 		}
 
 		auto stdEnd = std::chrono::high_resolution_clock::now();
@@ -95,9 +96,7 @@ namespace Demo {
 
 		// Cleanup standard allocations
 		auto cleanupStart = std::chrono::high_resolution_clock::now();
-		for (Foundation::Vec2* vec : pointers) {
-			delete vec;
-		}
+		pointers.clear(); // Force deallocation
 		auto cleanupEnd = std::chrono::high_resolution_clock::now();
 		auto cleanupDuration = std::chrono::duration_cast<std::chrono::microseconds>(cleanupEnd - cleanupStart);
 
@@ -121,22 +120,22 @@ namespace Demo {
 
 		// Test alignment for different types
 		struct Aligned1 {
-			uint8_t data;
+			uint8_t data{};
 		};
 		struct Aligned4 {
-			uint32_t data;
+			uint32_t data{};
 		};
 		struct Aligned8 {
-			uint64_t data;
+			uint64_t data{};
 		};
 		struct Aligned16 {
-			double data[2];
+			double data[2]{};
 		};
 
-		Aligned1*  a1 = arena.Allocate<Aligned1>();
-		Aligned4*  a4 = arena.Allocate<Aligned4>();
-		Aligned8*  a8 = arena.Allocate<Aligned8>();
-		Aligned16* a16 = arena.Allocate<Aligned16>();
+		auto* a1 = arena.Allocate<Aligned1>();
+		auto* a4 = arena.Allocate<Aligned4>();
+		auto* a8 = arena.Allocate<Aligned8>();
+		auto* a16 = arena.Allocate<Aligned16>();
 
 		bool align1OK = (reinterpret_cast<uintptr_t>(a1) % alignof(Aligned1)) == 0;
 		bool align4OK = (reinterpret_cast<uintptr_t>(a4) % alignof(Aligned4)) == 0;
@@ -148,7 +147,7 @@ namespace Demo {
 		LOG_INFO(UI, "8-byte alignment: %s", align8OK ? "PASS" : "FAIL");
 		LOG_INFO(UI, "16-byte alignment: %s", align16OK ? "PASS" : "FAIL");
 
-		assert(align1OK && align4OK && align8OK && align16OK && "Alignment test failed");
+		assert(align1OK && align4OK && align8OK && align16OK && static_cast<bool>("Alignment test failed"));
 		LOG_INFO(UI, "All alignment tests passed!");
 	}
 
@@ -182,8 +181,8 @@ namespace Demo {
 		LOG_INFO(UI, "Arena used: %zu bytes (should be 0)", arena.GetUsed());
 		LOG_INFO(UI, "Arena remaining: %zu bytes (should be %zu)", arena.GetRemaining(), kArenaSize);
 
-		assert(arena.GetUsed() == 0 && "Reset failed");
-		assert(arena.GetRemaining() == kArenaSize && "Reset failed");
+		assert(arena.GetUsed() == 0 && static_cast<bool>("Reset failed"));
+		assert(arena.GetRemaining() == kArenaSize && static_cast<bool>("Reset failed"));
 		LOG_INFO(UI, "Capacity test passed!");
 	}
 
@@ -215,13 +214,13 @@ namespace Demo {
 		// Should restore to usedBefore, NOT 0
 		LOG_INFO(UI, "Arena used after scope: %zu bytes (should be %zu)", arena.GetUsed(), usedBefore);
 
-		assert(arena.GetUsed() == usedBefore && "ScopedArena did not restore checkpoint");
+		assert(arena.GetUsed() == usedBefore && static_cast<bool>("ScopedArena did not restore checkpoint"));
 
 		// Verify data1 is still valid and has correct value
-		assert(*data1 == 42 && "Pre-scope allocation was invalidated!");
+		assert(*data1 == 42 && static_cast<bool>("Pre-scope allocation was invalidated!"));
 
 		LOG_INFO(UI, "Pre-scope allocation still valid with correct value (42)");
 		LOG_INFO(UI, "Scoped arena test passed!");
 	}
 
-} // namespace Demo
+} // namespace demo

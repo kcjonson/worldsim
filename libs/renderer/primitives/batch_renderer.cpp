@@ -9,7 +9,7 @@
 namespace Renderer {
 
 	// Vertex shader source
-	static const char* kVertexShaderSource = R"(
+	static const char* g_kVertexShaderSource = R"(
 #version 330 core
 
 layout(location = 0) in vec2 a_position;
@@ -30,7 +30,7 @@ void main() {
 )";
 
 	// Fragment shader source
-	static const char* kFragmentShaderSource = R"(
+	static const char* g_kFragmentShaderSource = R"(
 #version 330 core
 
 in vec2 v_texCoord;
@@ -43,7 +43,7 @@ void main() {
 }
 )";
 
-	BatchRenderer::BatchRenderer() {
+	BatchRenderer::BatchRenderer() { // NOLINT(cppcoreguidelines-pro-type-member-init,modernize-use-equals-default)
 		// Reserve space for vertices to minimize allocations
 		m_vertices.reserve(10000);
 		m_indices.reserve(15000);
@@ -95,28 +95,31 @@ void main() {
 	}
 
 	void BatchRenderer::Shutdown() {
-		if (m_vao) {
+		if (m_vao != 0) {
 			glDeleteVertexArrays(1, &m_vao);
 			m_vao = 0;
 		}
 
-		if (m_vbo) {
+		if (m_vbo != 0) {
 			glDeleteBuffers(1, &m_vbo);
 			m_vbo = 0;
 		}
 
-		if (m_ibo) {
+		if (m_ibo != 0) {
 			glDeleteBuffers(1, &m_ibo);
 			m_ibo = 0;
 		}
 
-		if (m_shader) {
+		if (m_shader != 0) {
 			glDeleteProgram(m_shader);
 			m_shader = 0;
 		}
 	}
 
-	void BatchRenderer::AddQuad(const Foundation::Rect& bounds, const Foundation::Color& color) {
+	void BatchRenderer::AddQuad( // NOLINT(readability-convert-member-functions-to-static)
+		const Foundation::Rect&	 bounds,
+		const Foundation::Color& color
+	) { // NOLINT(readability-convert-member-functions-to-static)
 		uint32_t baseIndex = static_cast<uint32_t>(m_vertices.size());
 
 		Foundation::Vec4 colorVec = color.ToVec4();
@@ -137,13 +140,13 @@ void main() {
 		m_indices.push_back(baseIndex + 3);
 	}
 
-	void BatchRenderer::AddTriangles(
+	void BatchRenderer::AddTriangles( // NOLINT(readability-convert-member-functions-to-static)
 		const Foundation::Vec2*	 vertices,
 		const uint16_t*			 indices,
 		size_t					 vertexCount,
 		size_t					 indexCount,
 		const Foundation::Color& color
-	) {
+	) { // NOLINT(readability-convert-member-functions-to-static)
 		uint32_t baseIndex = static_cast<uint32_t>(m_vertices.size());
 
 		Foundation::Vec4 colorVec = color.ToVec4();
@@ -161,8 +164,9 @@ void main() {
 	}
 
 	void BatchRenderer::Flush() {
-		if (m_vertices.empty())
+		if (m_vertices.empty()) {
 			return;
+		}
 
 		// Upload vertex data to GPU
 		glBindBuffer(GL_ARRAY_BUFFER, m_vbo);
@@ -180,8 +184,8 @@ void main() {
 		// Worldsim uses 1:1 pixel mapping with framebuffer (physical pixels)
 		// CoordinateSystem is only used for percentage layout helpers
 		Foundation::Mat4 projection =
-			glm::ortho(0.0f, static_cast<float>(m_viewportWidth), static_cast<float>(m_viewportHeight), 0.0f, -1.0f, 1.0f);
-		Foundation::Mat4 transform = Foundation::Mat4(1.0f);
+			glm::ortho(0.0F, static_cast<float>(m_viewportWidth), static_cast<float>(m_viewportHeight), 0.0F, -1.0F, 1.0F);
+		Foundation::Mat4 transform = Foundation::Mat4(1.0F);
 
 		glUniformMatrix4fv(m_projectionLoc, 1, GL_FALSE, glm::value_ptr(projection));
 		glUniformMatrix4fv(m_transformLoc, 1, GL_FALSE, glm::value_ptr(transform));
@@ -223,7 +227,7 @@ void main() {
 		m_coordinateSystem = coordSystem;
 	}
 
-	BatchRenderer::RenderStats BatchRenderer::GetStats() const {
+	BatchRenderer::RenderStats BatchRenderer::GetStats() const { // NOLINT(readability-convert-member-functions-to-static)
 		RenderStats stats;
 		stats.drawCalls = static_cast<uint32_t>(m_drawCallCount);
 		stats.vertexCount = static_cast<uint32_t>(m_vertices.size());
@@ -231,15 +235,15 @@ void main() {
 		return stats;
 	}
 
-	GLuint BatchRenderer::CompileShader() {
+	GLuint BatchRenderer::CompileShader() { // NOLINT(readability-convert-member-functions-to-static)
 		// Compile vertex shader
 		GLuint vertexShader = glCreateShader(GL_VERTEX_SHADER);
-		glShaderSource(vertexShader, 1, &kVertexShaderSource, nullptr);
+		glShaderSource(vertexShader, 1, &g_kVertexShaderSource, nullptr);
 		glCompileShader(vertexShader);
 
 		GLint success = 0;
 		glGetShaderiv(vertexShader, GL_COMPILE_STATUS, &success);
-		if (!success) {
+		if (success == 0) {
 			char infoLog[512];
 			glGetShaderInfoLog(vertexShader, 512, nullptr, infoLog);
 			std::cerr << "Vertex shader compilation failed: " << infoLog << std::endl;
@@ -249,11 +253,11 @@ void main() {
 
 		// Compile fragment shader
 		GLuint fragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
-		glShaderSource(fragmentShader, 1, &kFragmentShaderSource, nullptr);
+		glShaderSource(fragmentShader, 1, &g_kFragmentShaderSource, nullptr);
 		glCompileShader(fragmentShader);
 
 		glGetShaderiv(fragmentShader, GL_COMPILE_STATUS, &success);
-		if (!success) {
+		if (success == 0) {
 			char infoLog[512];
 			glGetShaderInfoLog(fragmentShader, 512, nullptr, infoLog);
 			std::cerr << "Fragment shader compilation failed: " << infoLog << std::endl;
@@ -269,7 +273,7 @@ void main() {
 		glLinkProgram(program);
 
 		glGetProgramiv(program, GL_LINK_STATUS, &success);
-		if (!success) {
+		if (success == 0) {
 			char infoLog[512];
 			glGetProgramInfoLog(program, 512, nullptr, infoLog);
 			std::cerr << "Shader program linking failed: " << infoLog << std::endl;

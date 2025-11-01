@@ -22,15 +22,7 @@ jobs:
           libxcursor-dev libx11-dev
 
     - name: Check clang-format
-      run: |
-        echo "Checking code formatting..."
-        find libs apps \( -name '*.cpp' -o -name '*.h' \) | xargs clang-format --dry-run --Werror
-        FORMAT_EXIT_CODE=$?
-        if [ $FORMAT_EXIT_CODE -ne 0 ]; then
-          echo "❌ Code formatting check failed. Run 'clang-format -i' on the files above."
-          exit 1
-        fi
-        echo "✅ Code formatting check passed"
+      run: ./scripts/lint.sh --check
 
     - name: Setup vcpkg (for clang-tidy)
       uses: lukka/run-vcpkg@v11
@@ -48,28 +40,4 @@ jobs:
         CXX: clang++
 
     - name: Run clang-tidy on changed files
-      run: |
-        echo "Running clang-tidy on changed files only..."
-
-        # Get list of changed C++ files in this PR
-        CHANGED_FILES=$(git diff --name-only origin/main...HEAD | grep -E '\.(cpp|h)$' || true)
-
-        if [ -z "$CHANGED_FILES" ]; then
-          echo "No C++ files changed in this PR, skipping clang-tidy"
-          exit 0
-        fi
-
-        echo "Changed files to check:"
-        echo "$CHANGED_FILES"
-        echo ""
-
-        # Run clang-tidy only on changed files
-        echo "$CHANGED_FILES" | xargs clang-tidy -p build
-        EXIT_CODE=$?
-
-        if [ $EXIT_CODE -ne 0 ]; then
-          echo "❌ clang-tidy found issues in changed files"
-          exit 1
-        fi
-
-        echo "✅ clang-tidy check passed for changed files"
+      run: ./scripts/tidy.sh --changed

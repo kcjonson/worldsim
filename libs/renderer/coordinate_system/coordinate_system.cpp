@@ -34,8 +34,9 @@ namespace Renderer {
 		// IMPORTANT: We use window size (logical pixels) for projection matrices, NOT framebuffer size.
 		// This ensures UI elements have consistent sizes regardless of display DPI.
 		// The GPU will handle the scaling to physical pixels automatically.
-		int width, height;
-		if (m_window) {
+		int width = 0;
+		int height = 0;
+		if (m_window != nullptr) {
 			glfwGetWindowSize(m_window, &width, &height);
 		} else {
 			width = 1920; // Default fallback
@@ -43,13 +44,14 @@ namespace Renderer {
 		}
 
 		// Screen-space orthographic projection: (0,0) at top-left, Y increases downward
-		return glm::ortho(0.0f, static_cast<float>(width), static_cast<float>(height), 0.0f, -1.0f, 1.0f);
+		return glm::ortho(0.0F, static_cast<float>(width), static_cast<float>(height), 0.0F, -1.0F, 1.0F);
 	}
 
 	glm::mat4 CoordinateSystem::CreateWorldSpaceProjection() const {
 		// Use window size for consistency with screen space projection
-		int width, height;
-		if (m_window) {
+		int width = 0;
+		int height = 0;
+		if (m_window != nullptr) {
 			glfwGetWindowSize(m_window, &width, &height);
 		} else {
 			width = 1920; // Default fallback
@@ -57,15 +59,16 @@ namespace Renderer {
 		}
 
 		// World-space orthographic projection: (0,0) at center, Y increases upward
-		float halfWidth = static_cast<float>(width) / 2.0f;
-		float halfHeight = static_cast<float>(height) / 2.0f;
-		return glm::ortho(-halfWidth, halfWidth, -halfHeight, halfHeight, -1.0f, 1.0f);
+		float halfWidth = static_cast<float>(width) / 2.0F;
+		float halfHeight = static_cast<float>(height) / 2.0F;
+		return glm::ortho(-halfWidth, halfWidth, -halfHeight, halfHeight, -1.0F, 1.0F);
 	}
 
 	glm::vec2 CoordinateSystem::GetWindowSize() const {
 		// Return logical window size, not physical framebuffer size
-		int width, height;
-		if (m_window) {
+		int width = 0;
+		int height = 0;
+		if (m_window != nullptr) {
 			glfwGetWindowSize(m_window, &width, &height);
 		} else {
 			width = 1920; // Default fallback
@@ -77,8 +80,9 @@ namespace Renderer {
 	void CoordinateSystem::SetFullViewport() const {
 		// IMPORTANT: glViewport needs PHYSICAL pixels (framebuffer size), not logical pixels!
 		// This is the only place where we use framebuffer size instead of window size.
-		if (m_window) {
-			int width, height;
+		if (m_window != nullptr) {
+			int width = 0;
+			int height = 0;
 			glfwGetFramebufferSize(m_window, &width, &height);
 			glViewport(0, 0, width, height);
 		}
@@ -94,13 +98,15 @@ namespace Renderer {
 
 	float CoordinateSystem::GetPixelRatio() const {
 		// Calculate and cache the pixel ratio for performance
-		if (!m_window) {
+		if (m_window == nullptr) {
 			// Fallback: if window is null, return default pixel ratio
-			return 1.0f;
+			return 1.0F;
 		}
 		if (m_pixelRatioDirty) {
-			int windowWidth, windowHeight;
-			int framebufferWidth, framebufferHeight;
+			int windowWidth = 0;
+			int windowHeight = 0;
+			int framebufferWidth = 0;
+			int framebufferHeight = 0;
 
 			glfwGetWindowSize(m_window, &windowWidth, &windowHeight);
 			glfwGetFramebufferSize(m_window, &framebufferWidth, &framebufferHeight);
@@ -109,7 +115,7 @@ namespace Renderer {
 			if (windowWidth > 0) {
 				m_cachedPixelRatio = static_cast<float>(framebufferWidth) / static_cast<float>(windowWidth);
 			} else {
-				m_cachedPixelRatio = 1.0f;
+				m_cachedPixelRatio = 1.0F;
 			}
 
 			m_pixelRatioDirty = false;
@@ -130,28 +136,30 @@ namespace Renderer {
 		return fbCoords / ratio;
 	}
 
-	float CoordinateSystem::PercentWidth(float percent) const {
+	float CoordinateSystem::PercentWidth(float percent) const { // NOLINT(readability-convert-member-functions-to-static)
 		// Convert percentage to logical pixels
 		glm::vec2 size = GetWindowSize();
-		return size.x * (percent / 100.0f);
+		return size.x * (percent / 100.0F);
 	}
 
-	float CoordinateSystem::PercentHeight(float percent) const {
+	float CoordinateSystem::PercentHeight(float percent) const { // NOLINT(readability-convert-member-functions-to-static)
 		// Convert percentage to logical pixels
 		glm::vec2 size = GetWindowSize();
-		return size.y * (percent / 100.0f);
+		return size.y * (percent / 100.0F);
 	}
 
-	glm::vec2 CoordinateSystem::PercentSize(float widthPercent, float heightPercent) const {
+	glm::vec2
+	CoordinateSystem::PercentSize(float widthPercent, float heightPercent) const { // NOLINT(readability-convert-member-functions-to-static)
 		// Convert percentage dimensions to logical pixels
 		glm::vec2 size = GetWindowSize();
-		return glm::vec2(size.x * (widthPercent / 100.0f), size.y * (heightPercent / 100.0f));
+		return glm::vec2(size.x * (widthPercent / 100.0F), size.y * (heightPercent / 100.0F));
 	}
 
-	glm::vec2 CoordinateSystem::PercentPosition(float xPercent, float yPercent) const {
+	glm::vec2
+	CoordinateSystem::PercentPosition(float xPercent, float yPercent) const { // NOLINT(readability-convert-member-functions-to-static)
 		// Convert percentage position to logical pixels
 		glm::vec2 size = GetWindowSize();
-		return glm::vec2(size.x * (xPercent / 100.0f), size.y * (yPercent / 100.0f));
+		return glm::vec2(size.x * (xPercent / 100.0F), size.y * (yPercent / 100.0F));
 	}
 
 } // namespace Renderer

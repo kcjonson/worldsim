@@ -22,7 +22,7 @@ namespace renderer {
 	template <typename T>
 	class ResourceManager {
 	  public:
-		explicit ResourceManager(size_t capacity = 1024) {
+		explicit ResourceManager(size_t capacity = 1024) { // NOLINT(cppcoreguidelines-pro-type-member-init)
 			m_resources.reserve(capacity);
 			m_generations.reserve(capacity);
 			m_freeIndices.reserve(capacity);

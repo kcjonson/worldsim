@@ -3,7 +3,7 @@
 // Demo interface for UI Sandbox component testing
 // Each demo showcases different UI components and rendering features
 
-namespace Demo {
+namespace demo {
 
 	// Initialize the demo (called once at startup)
 	void Init();
@@ -14,4 +14,4 @@ namespace Demo {
 	// Cleanup demo resources
 	void Shutdown();
 
-} // namespace Demo
+} // namespace demo

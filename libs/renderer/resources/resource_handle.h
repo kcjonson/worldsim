@@ -22,7 +22,7 @@ namespace renderer {
 
 	// 32-bit handle: 16-bit index + 16-bit generation
 	struct ResourceHandle {
-		uint32_t value;
+		uint32_t value{};
 
 		static constexpr uint32_t kInvalidHandle = 0xFFFFFFFF;
 
