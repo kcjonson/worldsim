@@ -14,10 +14,16 @@ jobs:
 
     - name: Install dependencies
       run: |
+        # Install LLVM 21 from official apt repository for consistent toolchain
+        wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key | sudo apt-key add -
+        sudo add-apt-repository "deb http://apt.llvm.org/noble/ llvm-toolchain-noble-21 main"
         sudo apt-get update
-        sudo apt-get install -y make cmake clang \
+        sudo apt-get install -y make cmake clang-21 \
           libxmu-dev libxi-dev libgl-dev libxrandr-dev libxinerama-dev \
           libxcursor-dev libx11-dev
+        # Create symlinks for version-specific tools
+        sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-21 100
+        sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-21 100
 
     - name: Setup vcpkg
       uses: lukka/run-vcpkg@v11
