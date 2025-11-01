@@ -87,7 +87,7 @@ namespace {
 					for (int col = 0; col < 10; col++) {
 						// Create offset vertices for this star
 						std::vector<Foundation::Vec2> offsetVertices = m_tinyStarMesh.vertices;
-						Foundation::Vec2			  offset(50.0F + col * 60.0F, 400.0F + row * 60.0F);
+						Foundation::Vec2 offset(50.0F + static_cast<float>(col) * 60.0F, 400.0F + static_cast<float>(row) * 60.0F);
 
 						for (auto& v : offsetVertices) {
 							v += offset;
@@ -138,7 +138,7 @@ namespace {
 				float x = kCenterX + (radius * std::cos(angle)); // NOLINT(cppcoreguidelines-init-variables)
 				float y = kCenterY + (radius * std::sin(angle)); // NOLINT(cppcoreguidelines-init-variables)
 
-				m_starPath.vertices.push_back(Foundation::Vec2(x, y));
+				m_starPath.vertices.emplace_back(x, y);
 			}
 
 			m_starPath.isClosed = true;
@@ -174,7 +174,7 @@ namespace {
 				float x = kCenterX + (radius * std::cos(angle)); // NOLINT(cppcoreguidelines-init-variables)
 				float y = kCenterY + (radius * std::sin(angle)); // NOLINT(cppcoreguidelines-init-variables)
 
-				path.vertices.push_back(Foundation::Vec2(x, y));
+				path.vertices.emplace_back(x, y);
 			}
 
 			path.isClosed = true;

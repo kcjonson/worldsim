@@ -21,11 +21,11 @@ namespace {
 
 	// Star instance data
 	struct Star {
-		Foundation::Vec2		  position;
-		float					  outerRadius;
-		float					  innerRadius;
-		Foundation::Color		  color;
-		renderer::TessellatedMesh mesh;
+		Foundation::Vec2		  position{};
+		float					  outerRadius{};
+		float					  innerRadius{};
+		Foundation::Color		  color{};
+		renderer::TessellatedMesh mesh{};
 	};
 
 	class VectorPerfScene : public engine::IScene {
@@ -115,7 +115,7 @@ namespace {
 		std::string ExportState() override {
 			char buf[256];
 			snprintf(buf, sizeof(buf), R"({"stars": %zu, "fps": %.1F, "renderMs": %.2F})", m_stars.size(), m_fps, m_lastRenderTime);
-			return std::string(buf);
+			return {buf};
 		}
 
 		const char* GetName() const override { return "vector-perf"; }
@@ -162,7 +162,7 @@ namespace {
 			float genMs = 0.0F;
 			genMs = std::chrono::duration<float, std::milli>(genEnd - genStart).count();
 
-			if (m_stars.size() > 0) {
+			if (!m_stars.empty()) {
 				LOG_INFO(
 					UI, "Generated and tessellated %zu stars in %.2F ms (%.3F ms per star)", m_stars.size(), genMs, genMs / m_stars.size()
 				);
@@ -177,7 +177,8 @@ namespace {
 
 			for (int i = 0; i < kNumPoints * 2; ++i) {
 				float angle = 0.0F;
-				angle = (i * std::numbers::pi_v<float> / kNumPoints) - std::numbers::pi_v<float> / 2.0F; // Start at top
+				angle = (static_cast<float>(i) * std::numbers::pi_v<float> / static_cast<float>(kNumPoints)) -
+						std::numbers::pi_v<float> / 2.0F; // Start at top
 				float radius = (i % 2 == 0) ? outerRadius : innerRadius;
 
 				float x = 0.0F;
@@ -185,7 +186,7 @@ namespace {
 				float y = 0.0F;
 				y = center.y + radius * std::sin(angle);
 
-				path.vertices.push_back(Foundation::Vec2(x, y));
+				path.vertices.emplace_back(x, y);
 			}
 
 			path.isClosed = true;

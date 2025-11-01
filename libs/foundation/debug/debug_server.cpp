@@ -76,20 +76,20 @@ namespace Foundation {
 			LogCategoryToString(category),
 			message,
 			static_cast<unsigned long long>(timestamp),
-			file ? file : "",
+			(file != nullptr) ? file : "",
 			line
 		);
 		return g_logJsonBuffer;
 	}
 
 	DebugServer::DebugServer() // NOLINT(cppcoreguidelines-pro-type-member-init,modernize-use-equals-default)
-		: m_server{},
-		  m_serverThread{},
+		: m_server,
+		  m_serverThread,
 		  m_running(false),
-		  m_screenshotData{},
-		  m_screenshotMutex{},
-		  m_targetSceneName{},
-		  m_sceneNameMutex{} {
+		  m_screenshotData,
+		  m_screenshotMutex,
+		  m_targetSceneName,
+		  m_sceneNameMutex {
 		// Lock-free ring buffers are initialized automatically
 	}
 

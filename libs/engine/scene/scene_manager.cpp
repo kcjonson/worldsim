@@ -16,7 +16,7 @@ namespace engine {
 			LOG_WARNING(Engine, "Scene '%s' already registered, overwriting", name.c_str());
 		}
 
-		m_sceneRegistry[name] = factory;
+		m_sceneRegistry[name] = std::move(factory);
 		LOG_DEBUG(Engine, "Registered scene: %s", name.c_str());
 	}
 

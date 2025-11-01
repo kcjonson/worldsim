@@ -141,15 +141,15 @@ namespace engine {
 	}
 
 	void Application::SetOverlayRenderer(OverlayRenderer renderer) {
-		m_overlayRenderer = renderer;
+		m_overlayRenderer = std::move(renderer);
 	}
 
 	void Application::SetPreFrameCallback(PreFrameCallback callback) {
-		m_preFrameCallback = callback;
+		m_preFrameCallback = std::move(callback);
 	}
 
 	void Application::SetPostFrameCallback(PostFrameCallback callback) {
-		m_postFrameCallback = callback;
+		m_postFrameCallback = std::move(callback);
 	}
 
 	float Application::GetFPS() const {
