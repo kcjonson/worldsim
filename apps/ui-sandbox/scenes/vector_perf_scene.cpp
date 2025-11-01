@@ -158,12 +158,12 @@ namespace {
 				m_stars.push_back(std::move(star));
 			}
 
-			const auto	genEnd = std::chrono::high_resolution_clock::now();
-			const float genMs = std::chrono::duration<float, std::milli>(genEnd - genStart).count();
+			const auto	kGenEnd = std::chrono::high_resolution_clock::now();
+			const float kGenMs = std::chrono::duration<float, std::milli>(kGenEnd - genStart).count();
 
 			// Log generation results
-			const float kMsPerStar = m_stars.empty() ? 0.0F : (genMs / static_cast<float>(m_stars.size()));
-			LOG_INFO(UI, "Generated and tessellated %zu stars in %.2F ms (%.3F ms per star)", m_stars.size(), genMs, kMsPerStar);
+			const float kMsPerStar = m_stars.empty() ? 0.0F : (kGenMs / static_cast<float>(m_stars.size()));
+			LOG_INFO(UI, "Generated and tessellated %zu stars in %.2F ms (%.3F ms per star)", m_stars.size(), kGenMs, kMsPerStar);
 		}
 
 		static renderer::VectorPath CreateStarPath(const Foundation::Vec2& center, float outerRadius, float innerRadius) {
