@@ -198,10 +198,10 @@ TEST(StringHashTests, HashDistribution) {
 	// Check all are unique (no collisions in 1000 sequential strings)
 	for (size_t i = 0; i < hashes.size(); i++) {
 		for (size_t j = i + 1; j < hashes.size(); j++) {
-			EXPECT_NE(hashes[i], hashes[j]) << "Collision between 'string_" << i
-											<< "' and 'string_" // NOLINT(readability-implicit-bool-conversion)
-											<< j				// NOLINT(readability-implicit-bool-conversion)
-											<< "'";				// NOLINT(readability-implicit-bool-conversion)
+			EXPECT_NE(hashes[i], hashes[j]) << "Collision between 'string_" << i // NOLINT(readability-implicit-bool-conversion)
+											<< "' and 'string_"					 // NOLINT(readability-implicit-bool-conversion)
+											<< j								 // NOLINT(readability-implicit-bool-conversion)
+											<< "'";								 // NOLINT(readability-implicit-bool-conversion)
 		}
 	}
 }
