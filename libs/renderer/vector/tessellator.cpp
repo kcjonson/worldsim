@@ -38,7 +38,11 @@ namespace renderer {
 
 	Tessellator::~Tessellator() = default; // NOLINT(performance-trivially-destructible)
 
-	bool Tessellator::Tessellate(const VectorPath& path, TessellatedMesh& outMesh, const TessellatorOptions& options) { // NOLINT(readability-convert-member-functions-to-static)
+	bool Tessellator::Tessellate( // NOLINT(readability-convert-member-functions-to-static)
+		const VectorPath&		  path,
+		TessellatedMesh&		  outMesh,
+		const TessellatorOptions& options
+	) {
 		// Clear output
 		outMesh.Clear();
 
@@ -171,7 +175,9 @@ namespace renderer {
 		// Will process events with sweep line algorithm
 	}
 
-	Tessellator::VertexType Tessellator::ClassifyVertex(size_t vertexIndex) const { // NOLINT(readability-convert-member-functions-to-static)
+	Tessellator::VertexType Tessellator::ClassifyVertex( // NOLINT(readability-convert-member-functions-to-static)
+		size_t vertexIndex
+	) const {
 		// Placeholder for monotone decomposition (Phase 1+)
 		// Will classify vertex as Start, End, Split, Merge, or Regular
 		return VertexType::Regular;

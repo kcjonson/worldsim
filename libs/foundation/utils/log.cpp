@@ -50,7 +50,7 @@ namespace foundation {
 			case LogCategory::Engine:
 				return Foundation::LogCategory::Engine;
 			case LogCategory::Foundation: // NOLINT(bugprone-branch-clone)
-		case LogCategory::Count: // NOLINT(clang-diagnostic-switch)
+			case LogCategory::Count:	  // NOLINT(clang-diagnostic-switch)
 				return Foundation::LogCategory::Foundation;
 			default: // NOLINT(bugprone-branch-clone)
 				return Foundation::LogCategory::Foundation;

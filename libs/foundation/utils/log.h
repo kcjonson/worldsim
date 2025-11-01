@@ -46,7 +46,7 @@ namespace foundation {
 
 	  private:
 		static LogLevel s_levels[static_cast<int>(LogCategory::Count)]; // NOLINT(readability-identifier-naming)
-		static bool		s_initialized; // NOLINT(readability-identifier-naming)
+		static bool		s_initialized;									// NOLINT(readability-identifier-naming)
 
 #ifdef DEVELOPMENT_BUILD
 		static Foundation::DebugServer* s_debugServer; // NOLINT(readability-identifier-naming)
