@@ -1,7 +1,7 @@
 # C++ Coding Standards
 
 Created: 2025-10-12
-Last Updated: 2025-10-26
+Last Updated: 2025-11-01
 Status: Active
 
 ## Philosophy
@@ -160,6 +160,46 @@ private:
     bool m_isInitialized;
 };
 ```
+
+### Member Initialization
+
+**Prefer in-class initializers** for member variables with default values:
+
+```cpp
+class Application {
+private:
+    GLFWwindow* m_window{nullptr};     // Prefer in-class init
+    bool m_isRunning{false};           // Makes default explicit
+    float m_deltaTime{0.0F};           // Visible at declaration
+
+    // std::function and other default-constructible types
+    std::function<void()> m_callback{};  // Initializes to empty/null
+    std::string m_name{};                // Initializes to empty string
+    std::vector<int> m_data{};           // Initializes to empty vector
+};
+```
+
+**Benefits:**
+- **Single source of truth**: Default values visible where variables are declared
+- **Prevents bugs**: All constructors get correct defaults even if you forget
+- **Satisfies clang-tidy**: Prevents `cppcoreguidelines-pro-type-member-init` warnings
+- **Modern C++ best practice**: Recommended by C++ Core Guidelines (C.48, C.45)
+
+**When to override in constructor:**
+
+Use constructor initializer lists when a value depends on constructor parameters:
+
+```cpp
+Application::Application(GLFWwindow* window)
+    : m_window(window) {  // Override: parameter-dependent
+    // m_isRunning, m_deltaTime, etc. use in-class defaults
+}
+```
+
+**Trade-offs:**
+- ✅ **Pro**: Makes defaults explicit and prevents accidental uninitialized members
+- ✅ **Pro**: Reduces constructor boilerplate for common default values
+- ⚠️ **Con**: Changing default requires header recompilation (vs .cpp only)
 
 ### Constants
 

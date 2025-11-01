@@ -109,9 +109,9 @@ namespace engine {
 		float		m_deltaTime{0.0F};	// Last frame delta time
 		float		m_fps{0.0F};		// Current FPS
 
-		OverlayRenderer	  m_overlayRenderer;   // Application-level UI
-		PreFrameCallback  m_preFrameCallback;  // Pre-frame callback
-		PostFrameCallback m_postFrameCallback; // Post-frame callback
+		OverlayRenderer	  m_overlayRenderer{};	 // Application-level UI
+		PreFrameCallback  m_preFrameCallback{};	 // Pre-frame callback
+		PostFrameCallback m_postFrameCallback{}; // Post-frame callback
 	};
 
 } // namespace engine
