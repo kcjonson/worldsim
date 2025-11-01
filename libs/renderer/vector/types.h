@@ -12,8 +12,8 @@ namespace renderer {
 
 	// VectorPath represents a 2D polygon path with vertices
 	struct VectorPath {
-		std::vector<Foundation::Vec2> vertices;
-		bool						  isClosed = true;
+		std::vector<Foundation::Vec2> vertices{};
+		bool						  isClosed{true};
 
 		VectorPath() = default;
 
@@ -34,8 +34,8 @@ namespace renderer {
 
 	// TessellatedMesh represents the triangulated output of tessellation
 	struct TessellatedMesh {
-		std::vector<Foundation::Vec2> vertices; // Position data (x, y)
-		std::vector<uint16_t>		  indices;	// Triangle indices (3 per triangle)
+		std::vector<Foundation::Vec2> vertices{}; // Position data (x, y)
+		std::vector<uint16_t>		  indices{};  // Triangle indices (3 per triangle)
 
 		TessellatedMesh() = default;
 

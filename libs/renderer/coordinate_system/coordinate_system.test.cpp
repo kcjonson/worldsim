@@ -14,7 +14,7 @@ class CoordinateSystemTest : public ::testing::Test {
 	void SetUp() override {
 		// Initialize GLFW for testing
 		if (glfwInit() == 0) {
-			GTEST_SKIP() << "GLFW initialization failed - skipping CoordinateSystem tests";  // NOLINT(readability-implicit-bool-conversion)
+			GTEST_SKIP() << "GLFW initialization failed - skipping CoordinateSystem tests"; // NOLINT(readability-implicit-bool-conversion)
 		}
 
 		// Create a hidden window for testing (no OpenGL context needed for coordinate math)
@@ -24,7 +24,7 @@ class CoordinateSystemTest : public ::testing::Test {
 		m_window = glfwCreateWindow(800, 600, "Test", nullptr, nullptr);
 		if (m_window == nullptr) {
 			glfwTerminate();
-			GTEST_SKIP() << "GLFW window creation failed - skipping CoordinateSystem tests";  // NOLINT(readability-implicit-bool-conversion)
+			GTEST_SKIP() << "GLFW window creation failed - skipping CoordinateSystem tests"; // NOLINT(readability-implicit-bool-conversion)
 		}
 	}
 
@@ -35,8 +35,8 @@ class CoordinateSystemTest : public ::testing::Test {
 		glfwTerminate();
 	}
 
-  private:
-	GLFWwindow* m_window = nullptr;
+protected: // NOLINT(readability-redundant-access-specifiers)
+	GLFWwindow* m_window = nullptr; // NOLINT(cppcoreguidelines-non-private-member-variables-in-classes)
 };
 
 // ----------------------------------------------------------------------------

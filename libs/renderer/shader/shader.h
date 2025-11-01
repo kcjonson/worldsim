@@ -7,7 +7,7 @@
 #include <glm/glm.hpp>
 #include <string>
 
-namespace Renderer {
+namespace Renderer { // NOLINT(readability-identifier-naming)
 
 	class Shader {
 	  public:

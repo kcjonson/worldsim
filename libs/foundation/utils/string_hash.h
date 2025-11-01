@@ -17,8 +17,8 @@ namespace foundation {
 	// Can be evaluated at compile-time for string literals
 	constexpr StringHash HashString(const char* str) {
 		StringHash hash = 0xcbf29ce484222325ULL; // FNV offset basis
-		while (*str) {
-			hash ^= static_cast<uint64_t>(*str++);
+		while (*str) { // NOLINT(readability-implicit-bool-conversion)
+			hash ^= static_cast<uint64_t>(*str++); // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic)
 			hash *= 0x100000001b3ULL; // FNV prime
 		}
 		return hash;
@@ -26,7 +26,7 @@ namespace foundation {
 
 // Helper macro for compile-time hashing
 // Usage: constexpr StringHash hash = HASH("MyString");
-#define HASH(str) (foundation::HashString(str))
+#define HASH(str) // NOLINT(cppcoreguidelines-macro-usage) (foundation::HashString(str))
 
 	// Common hashes (compile-time constants)
 	// Add more as needed by different systems

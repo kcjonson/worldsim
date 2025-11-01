@@ -102,16 +102,16 @@ namespace engine {
 		float GetDeltaTime() const;
 
 	  private:
-		GLFWwindow* m_window;	 // GLFW window (not owned)
-		bool		m_isRunning; // Main loop control flag
-		bool		m_isPaused;	 // Pause state
-		double		m_lastTime;	 // For delta time calculation
-		float		m_deltaTime; // Last frame delta time
-		float		m_fps;		 // Current FPS
+		GLFWwindow* m_window{nullptr};	// GLFW window (not owned)
+		bool		m_isRunning{false}; // Main loop control flag
+		bool		m_isPaused{false};	// Pause state
+		double		m_lastTime{0.0};	// For delta time calculation
+		float		m_deltaTime{0.0F};	// Last frame delta time
+		float		m_fps{0.0F};		// Current FPS
 
-		OverlayRenderer	  m_overlayRenderer;   // Application-level UI
-		PreFrameCallback  m_preFrameCallback;  // Pre-frame callback
-		PostFrameCallback m_postFrameCallback; // Post-frame callback
+		OverlayRenderer	  m_overlayRenderer{};	 // Application-level UI
+		PreFrameCallback  m_preFrameCallback{};	 // Pre-frame callback
+		PostFrameCallback m_postFrameCallback{}; // Post-frame callback
 	};
 
 } // namespace engine

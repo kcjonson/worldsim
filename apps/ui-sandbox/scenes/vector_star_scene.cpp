@@ -94,7 +94,7 @@ namespace {
 						}
 
 						// Color varies by position
-						float hue = (col * 5 + row) / 50.0F;
+						float hue = static_cast<float>((col * 5) + row) / 50.0F;
 						Color starColor(hue, 1.0F - hue, 0.5F, 1.0F);
 
 						Renderer::Primitives::DrawTriangles(
@@ -111,28 +111,31 @@ namespace {
 
 		void OnExit() override { LOG_INFO(UI, "Exiting Vector Star Scene"); }
 
-		std::string ExportState() override { return "{}"; }
+		std::string ExportState() override { // NOLINT(readability-convert-member-functions-to-static)
+			return "{}";
+		}
 
 		const char* GetName() const override { return "vector-star"; }
 
 	  private:
 		// Create a 5-pointed star path centered at (400, 200) with outer radius 100, inner radius 40
 		void CreateStarPath() {
-			const float centerX = 400.0F;
-			const float centerY = 200.0F;
-			const float outerRadius = 100.0F;
-			const float innerRadius = 40.0F;
-			const int	numPoints = 5;
+			const float kCenterX = 400.0F;
+			const float kCenterY = 200.0F;
+			const float kOuterRadius = 100.0F;
+			const float kInnerRadius = 40.0F;
+			const int	kNumPoints = 5;
 
 			m_starPath.vertices.clear();
 
 			// Generate star vertices (alternating outer and inner points)
-			for (int i = 0; i < numPoints * 2; ++i) {
-				float angle = (i * std::numbers::pi_v<float> / numPoints) - std::numbers::pi_v<float> / 2.0F; // Start at top
-				float radius = (i % 2 == 0) ? outerRadius : innerRadius;
+			for (int i = 0; i < kNumPoints * 2; ++i) {
+				float angle = // NOLINT(cppcoreguidelines-init-variables) (static_cast<float>(i) * std::numbers::pi_v<float> / static_cast<float>(kNumPoints)) -
+							  (std::numbers::pi_v<float> / 2.0F); // Start at top
+				float radius = (i % 2 == 0) ? kOuterRadius : kInnerRadius;
 
-				float x = centerX + radius * std::cos(angle);
-				float y = centerY + radius * std::sin(angle);
+				float x = // NOLINT(cppcoreguidelines-init-variables) kCenterX + (radius * std::cos(angle));
+				float y = // NOLINT(cppcoreguidelines-init-variables) kCenterY + (radius * std::sin(angle));
 
 				m_starPath.vertices.push_back(Foundation::Vec2(x, y));
 			}
@@ -151,16 +154,23 @@ namespace {
 			tessellator.Tessellate(m_tinyStarPath, m_tinyStarMesh);
 		}
 
-		void CreateStarPathAt(renderer::VectorPath& path, float centerX, float centerY, float outerRadius, float innerRadius) {
-			const int numPoints = 5;
+		void CreateStarPathAt( // NOLINT(readability-convert-member-functions-to-static)
+			renderer::VectorPath& path,
+			float				  kCenterX,
+			float				  kCenterY,
+			float				  kOuterRadius,
+			float				  kInnerRadius
+		) { // NOLINT(readability-convert-member-functions-to-static)
+			const int kNumPoints = 5;
 			path.vertices.clear();
 
-			for (int i = 0; i < numPoints * 2; ++i) {
-				float angle = (i * std::numbers::pi_v<float> / numPoints) - std::numbers::pi_v<float> / 2.0F;
-				float radius = (i % 2 == 0) ? outerRadius : innerRadius;
+			for (int i = 0; i < kNumPoints * 2; ++i) {
+				float angle = // NOLINT(cppcoreguidelines-init-variables) (static_cast<float>(i) * std::numbers::pi_v<float> / static_cast<float>(kNumPoints)) -
+							  (std::numbers::pi_v<float> / 2.0F);
+				float radius = (i % 2 == 0) ? kOuterRadius : kInnerRadius;
 
-				float x = centerX + radius * std::cos(angle);
-				float y = centerY + radius * std::sin(angle);
+				float x = // NOLINT(cppcoreguidelines-init-variables) kCenterX + (radius * std::cos(angle));
+				float y = // NOLINT(cppcoreguidelines-init-variables) kCenterY + (radius * std::sin(angle));
 
 				path.vertices.push_back(Foundation::Vec2(x, y));
 			}
@@ -178,7 +188,7 @@ namespace {
 	};
 
 	// Register scene with SceneManager
-	static bool s_registered = []() {
+	bool g_registered = []() {
 		engine::SceneManager::Get().RegisterScene("vector-star", []() { return std::make_unique<VectorStarScene>(); });
 		return true;
 	}();

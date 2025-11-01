@@ -56,11 +56,11 @@ namespace demo {
 		// Draw a grid of small rectangles (batching test)
 		for (int y = 0; y < 10; y++) {
 			for (int x = 0; x < 10; x++) {
-				float hue = static_cast<float>(x * 10 + y) / 100.0F;
+				float hue = static_cast<float>((x * 10) + y) / 100.0F;
 				Color color(hue, 1.0F - hue, 0.5F, 1.0F);
 
 				Renderer::Primitives::DrawRect(
-					{.bounds = {50.0F + static_cast<float>(x) * 25.0F, 350.0F + static_cast<float>(y) * 20.0F, 20.0F, 15.0F},
+					{.bounds = {50.0F + (static_cast<float>(x) * 25.0F), 350.0F + (static_cast<float>(y) * 20.0F), 20.0F, 15.0F},
 					 .style = {.fill = color}}
 				);
 			}

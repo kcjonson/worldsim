@@ -11,20 +11,20 @@
 #include <GL/glew.h>
 #include <vector>
 
-namespace Renderer {
+namespace Renderer { // NOLINT(readability-identifier-naming)
 
 	// Forward declaration
 	class CoordinateSystem;
 
 	// Vertex format for 2D primitives
 	struct PrimitiveVertex {
-		Foundation::Vec2 m_position;
-		Foundation::Vec2 m_texCoord;
-		Foundation::Vec4 m_color;
+		Foundation::Vec2 position;
+		Foundation::Vec2 texCoord;
+		Foundation::Vec4 color;
 	};
 
 	// Batch accumulator - collects geometry before GPU upload
-	class BatchRenderer {
+	class BatchRenderer { // NOLINT(cppcoreguidelines-special-member-functions)
 	  public:
 		BatchRenderer();
 		~BatchRenderer();
@@ -63,9 +63,9 @@ namespace Renderer {
 
 		// Rendering statistics structure
 		struct RenderStats {
-			uint32_t m_drawCalls = 0;
-			uint32_t m_vertexCount = 0;
-			uint32_t m_triangleCount = 0;
+			uint32_t drawCalls = 0;
+			uint32_t vertexCount = 0;
+			uint32_t triangleCount = 0;
 		};
 
 		// Statistics

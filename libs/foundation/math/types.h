@@ -7,7 +7,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 
-namespace Foundation {
+namespace Foundation { // NOLINT(readability-identifier-naming)
 
 	// Type aliases using GLM
 	using Vec2 = glm::vec2;

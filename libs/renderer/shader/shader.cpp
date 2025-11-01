@@ -77,8 +77,9 @@ namespace Renderer {
 		const char* fShaderCode = fragmentCode.c_str();
 
 		// Compile shaders
-		GLuint vertex, fragment;
-		GLint  success;
+		GLuint vertex = 0;
+		GLuint fragment = 0;
+		GLint  success = 0;
 		char   infoLog[512];
 
 		// Vertex shader
@@ -86,7 +87,7 @@ namespace Renderer {
 		glShaderSource(vertex, 1, &vShaderCode, nullptr);
 		glCompileShader(vertex);
 		glGetShaderiv(vertex, GL_COMPILE_STATUS, &success);
-		if (!success) {
+		if (success == 0) {
 			glGetShaderInfoLog(vertex, 512, nullptr, infoLog);
 			std::cerr << "ERROR::SHADER::VERTEX::COMPILATION_FAILED\n" << infoLog << std::endl;
 			glDeleteShader(vertex);
@@ -98,7 +99,7 @@ namespace Renderer {
 		glShaderSource(fragment, 1, &fShaderCode, nullptr);
 		glCompileShader(fragment);
 		glGetShaderiv(fragment, GL_COMPILE_STATUS, &success);
-		if (!success) {
+		if (success == 0) {
 			glGetShaderInfoLog(fragment, 512, nullptr, infoLog);
 			std::cerr << "ERROR::SHADER::FRAGMENT::COMPILATION_FAILED\n" << infoLog << std::endl;
 			glDeleteShader(vertex);
@@ -112,7 +113,7 @@ namespace Renderer {
 		glAttachShader(m_program, fragment);
 		glLinkProgram(m_program);
 		glGetProgramiv(m_program, GL_LINK_STATUS, &success);
-		if (!success) {
+		if (success == 0) {
 			glGetProgramInfoLog(m_program, 512, nullptr, infoLog);
 			std::cerr << "ERROR::SHADER::PROGRAM::LINKING_FAILED\n" << infoLog << std::endl;
 			glDeleteShader(vertex);
@@ -135,7 +136,7 @@ namespace Renderer {
 		}
 	}
 
-	void Shader::Unbind() const {
+	void Shader::Unbind() const { // NOLINT(readability-convert-member-functions-to-static)
 		glUseProgram(0);
 	}
 

@@ -19,14 +19,15 @@ namespace {
 			LOG_INFO(UI, "FontTestScene::OnEnter()");
 
 			// Initialize font renderer
-			m_fontRenderer = std::make_unique<UI::FontRenderer>();
+			m_fontRenderer = std::make_unique<ui::FontRenderer>();
 			if (!m_fontRenderer->Initialize()) {
 				LOG_ERROR(UI, "Failed to initialize FontRenderer!");
 				return;
 			}
 
 			// Get actual viewport dimensions for proper text rendering
-			int viewportWidth, viewportHeight;
+			int viewportWidth = 0;
+			int viewportHeight = 0;
 			Renderer::Primitives::GetViewport(viewportWidth, viewportHeight);
 
 			// Set up projection matrix (orthographic for 2D text)
@@ -72,7 +73,7 @@ namespace {
 			m_fontRenderer.reset();
 		}
 
-		std::string ExportState() override {
+		std::string ExportState() override { // NOLINT(readability-convert-member-functions-to-static)
 			return R"({
 			"scene": "font_test",
 			"description": "Font rendering demonstration",
@@ -83,11 +84,11 @@ namespace {
 		const char* GetName() const override { return "font_test"; }
 
 	  private:
-		std::unique_ptr<UI::FontRenderer> m_fontRenderer;
+		std::unique_ptr<ui::FontRenderer> m_fontRenderer;
 	};
 
 	// Register scene with SceneManager
-	static bool s_registered = []() {
+	bool g_registered = []() {
 		engine::SceneManager::Get().RegisterScene("font_test", []() { return std::make_unique<FontTestScene>(); });
 		return true;
 	}();

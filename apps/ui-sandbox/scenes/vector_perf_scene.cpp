@@ -51,7 +51,7 @@ namespace {
 			m_frameDeltaAccumulator += dt;
 
 			if (m_frameDeltaAccumulator >= 1.0F) {
-				m_fps = m_frameCount / m_frameDeltaAccumulator;
+				m_fps = static_cast<float>(m_frameCount) / m_frameDeltaAccumulator;
 				m_frameCount = 0;
 				m_frameDeltaAccumulator = 0.0F;
 			}
@@ -81,7 +81,8 @@ namespace {
 			}
 
 			auto  renderEnd = std::chrono::high_resolution_clock::now();
-			float renderMs = std::chrono::duration<float, std::milli>(renderEnd - renderStart).count();
+			float renderMs = 0.0F;
+			renderMs = std::chrono::duration<float, std::milli>(renderEnd - renderStart).count();
 
 			// Draw FPS counter (top-left corner)
 			char fpsText[64];
@@ -120,7 +121,7 @@ namespace {
 		const char* GetName() const override { return "vector-perf"; }
 
 	  private:
-		void GenerateStars(size_t count) {
+		void GenerateStars(size_t count) { // NOLINT(readability-convert-member-functions-to-static)
 			// Random number generator
 			std::random_device					  rd;
 			std::mt19937						  gen(rd());
@@ -142,7 +143,7 @@ namespace {
 
 				// Random color
 				float hue = colorDist(gen);
-				star.color = Foundation::Color(hue, 1.0F - hue * 0.5F, 0.3F + hue * 0.4F, 1.0F);
+				star.color = Foundation::Color(hue, (1.0F - (hue * 0.5F)), (0.3F + (hue * 0.4F)), 1.0F);
 
 				// Create star path
 				renderer::VectorPath path = CreateStarPath(star.position, star.outerRadius, star.innerRadius);
@@ -158,7 +159,8 @@ namespace {
 			}
 
 			auto  genEnd = std::chrono::high_resolution_clock::now();
-			float genMs = std::chrono::duration<float, std::milli>(genEnd - genStart).count();
+			float genMs = 0.0F;
+			genMs = std::chrono::duration<float, std::milli>(genEnd - genStart).count();
 
 			if (m_stars.size() > 0) {
 				LOG_INFO(
@@ -169,16 +171,19 @@ namespace {
 			}
 		}
 
-		renderer::VectorPath CreateStarPath(const Foundation::Vec2& center, float outerRadius, float innerRadius) {
+		static renderer::VectorPath CreateStarPath(const Foundation::Vec2& center, float outerRadius, float innerRadius) {
 			renderer::VectorPath path;
-			const int			 numPoints = 5;
+			const int			 kNumPoints = 5;
 
-			for (int i = 0; i < numPoints * 2; ++i) {
-				float angle = (i * std::numbers::pi_v<float> / numPoints) - std::numbers::pi_v<float> / 2.0F; // Start at top
+			for (int i = 0; i < kNumPoints * 2; ++i) {
+				float angle = 0.0F;
+				angle = (i * std::numbers::pi_v<float> / kNumPoints) - std::numbers::pi_v<float> / 2.0F; // Start at top
 				float radius = (i % 2 == 0) ? outerRadius : innerRadius;
 
-				float x = center.x + radius * std::cos(angle);
-				float y = center.y + radius * std::sin(angle);
+				float x = 0.0F;
+				x = center.x + radius * std::cos(angle);
+				float y = 0.0F;
+				y = center.y + radius * std::sin(angle);
 
 				path.vertices.push_back(Foundation::Vec2(x, y));
 			}
@@ -187,7 +192,8 @@ namespace {
 			return path;
 		}
 
-		size_t CalculateTotalTriangles() const {
+		size_t CalculateTotalTriangles() const { // NOLINT(readability-convert-member-functions-to-static)
+												 // NOLINT(readability-convert-member-functions-to-static)
 			size_t total = 0;
 			for (const auto& star : m_stars) {
 				total += star.mesh.GetTriangleCount();
@@ -195,7 +201,8 @@ namespace {
 			return total;
 		}
 
-		size_t CalculateTotalVertices() const {
+		size_t CalculateTotalVertices() const { // NOLINT(readability-convert-member-functions-to-static)
+												// NOLINT(readability-convert-member-functions-to-static)
 			size_t total = 0;
 			for (const auto& star : m_stars) {
 				total += star.mesh.GetVertexCount();
@@ -211,7 +218,7 @@ namespace {
 	};
 
 	// Register scene with SceneManager
-	static bool s_registered = []() {
+	bool g_registered = []() {
 		engine::SceneManager::Get().RegisterScene("vector-perf", []() { return std::make_unique<VectorPerfScene>(); });
 		return true;
 	}();

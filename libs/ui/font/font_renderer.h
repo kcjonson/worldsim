@@ -11,7 +11,7 @@
 #include "shader/shader.h"
 #include <GL/glew.h>
 
-namespace UI {
+namespace ui {
 
 	class FontRenderer {
 	  public:
@@ -21,6 +21,10 @@ namespace UI {
 		// Delete copy constructor and assignment operator
 		FontRenderer(const FontRenderer&) = delete;
 		FontRenderer& operator=(const FontRenderer&) = delete;
+
+		// Default move constructor and assignment operator
+		FontRenderer(FontRenderer&&) = default;
+		FontRenderer& operator=(FontRenderer&&) = default;
 
 		/**
 		 * Initialize the font renderer
@@ -63,10 +67,10 @@ namespace UI {
 		 * Character information for font rendering
 		 */
 		struct Character {
-			GLuint		 textureID; // OpenGL texture ID for the character
-			glm::ivec2	 size;		// Size of the character glyph
-			glm::ivec2	 bearing;	// Offset from baseline to top-left of glyph
-			unsigned int advance;	// Horizontal advance to next character
+			GLuint		 textureID{}; // OpenGL texture ID for the character
+			glm::ivec2	 size;		  // Size of the character glyph
+			glm::ivec2	 bearing;	  // Offset from baseline to top-left of glyph
+			unsigned int advance{};	  // Horizontal advance to next character
 		};
 
 		/**
@@ -86,4 +90,4 @@ namespace UI {
 		float					  m_maxGlyphHeightUnscaled = 0.0F; // Unscaled maximum glyph height
 	};
 
-} // namespace UI
+} // namespace ui

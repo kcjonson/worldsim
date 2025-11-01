@@ -13,8 +13,8 @@ namespace Renderer::Primitives {
 	// Internal state
 	static std::unique_ptr<BatchRenderer> g_batchRenderer = nullptr;
 	static CoordinateSystem*			  g_coordinateSystem = nullptr;
-	static std::stack<Foundation::Rect>   g_scissorStack;
-	static std::stack<Foundation::Mat4>   g_transformStack;
+	static std::stack<Foundation::Rect>	  g_scissorStack;
+	static std::stack<Foundation::Mat4>	  g_transformStack;
 	static Foundation::Rect				  g_currentScissor;
 	static Foundation::Mat4				  g_currentTransform = Foundation::Mat4(1.0F);
 
@@ -127,33 +127,29 @@ namespace Renderer::Primitives {
 		}
 
 		// Draw fill if specified
-		if (args.m_style.fill.a > 0.0F) {
-			g_batchRenderer->AddQuad(args.m_bounds, args.m_style.fill);
+		if (args.style.fill.a > 0.0F) {
+			g_batchRenderer->AddQuad(args.bounds, args.style.fill);
 		}
 
 		// Draw border if specified
-		if (args.m_style.border.has_value()) {
-			const auto& border = args.m_style.border.value();
+		if (args.style.border.has_value()) {
+			const auto& border = args.style.border.value();
 
 			// For now, draw 4 lines (no corner radius support yet)
 			// TODO: Add corner radius support with tessellation
 			DrawLine(
-				{.m_start = args.m_bounds.TopLeft(), .m_end = args.m_bounds.TopRight(), .m_style = {.color = border.color, .width = border.width}}
+				{.start = args.bounds.TopLeft(), .end = args.bounds.TopRight(), .style = {.color = border.color, .width = border.width}}
 			);
 			DrawLine(
-				{.m_start = args.m_bounds.TopRight(),
-				 .m_end = args.m_bounds.BottomRight(),
-				 .m_style = {.color = border.color, .width = border.width}}
+				{.start = args.bounds.TopRight(), .end = args.bounds.BottomRight(), .style = {.color = border.color, .width = border.width}}
 			);
 			DrawLine(
-				{.m_start = args.m_bounds.BottomRight(),
-				 .m_end = args.m_bounds.BottomLeft(),
-				 .m_style = {.color = border.color, .width = border.width}}
+				{.start = args.bounds.BottomRight(),
+				 .end = args.bounds.BottomLeft(),
+				 .style = {.color = border.color, .width = border.width}}
 			);
 			DrawLine(
-				{.m_start = args.m_bounds.BottomLeft(),
-				 .m_end = args.m_bounds.TopLeft(),
-				 .m_style = {.color = border.color, .width = border.width}}
+				{.start = args.bounds.BottomLeft(), .end = args.bounds.TopLeft(), .style = {.color = border.color, .width = border.width}}
 			);
 		}
 	}
@@ -164,7 +160,7 @@ namespace Renderer::Primitives {
 		}
 
 		// Draw line as thin rectangle
-		Foundation::Vec2 dir = args.m_end - args.m_start;
+		Foundation::Vec2 dir = args.end - args.start;
 		float			 length = glm::length(dir);
 
 		if (length < 0.001F) {
@@ -172,13 +168,13 @@ namespace Renderer::Primitives {
 		}
 
 		Foundation::Vec2 normal = Foundation::Vec2(-dir.y, dir.x) / length;
-		Foundation::Vec2 offset = normal * (args.m_style.width * 0.5F);
+		Foundation::Vec2 offset = normal * (args.style.width * 0.5F);
 
 		// Create quad for line
-		Foundation::Vec2 p0 = args.m_start - offset;
-		Foundation::Vec2 p1 = args.m_start + offset;
-		Foundation::Vec2 p2 = args.m_end + offset;
-		Foundation::Vec2 p3 = args.m_end - offset;
+		Foundation::Vec2 p0 = args.start - offset;
+		Foundation::Vec2 p1 = args.start + offset;
+		Foundation::Vec2 p2 = args.end + offset;
+		Foundation::Vec2 p3 = args.end - offset;
 
 		// Calculate bounding box
 		float minX = glm::min(glm::min(p0.x, p1.x), glm::min(p2.x, p3.x));
@@ -187,7 +183,7 @@ namespace Renderer::Primitives {
 		float maxY = glm::max(glm::max(p0.y, p1.y), glm::max(p2.y, p3.y));
 
 		Foundation::Rect bounds(minX, minY, maxX - minX, maxY - minY);
-		g_batchRenderer->AddQuad(bounds, args.m_style.color);
+		g_batchRenderer->AddQuad(bounds, args.style.color);
 	}
 
 	void DrawTriangles(const TrianglesArgs& args) {
@@ -195,7 +191,7 @@ namespace Renderer::Primitives {
 			return;
 		}
 
-		g_batchRenderer->AddTriangles(args.m_vertices, args.m_indices, args.m_vertexCount, args.m_indexCount, args.m_color);
+		g_batchRenderer->AddTriangles(args.vertices, args.indices, args.vertexCount, args.indexCount, args.color);
 	}
 
 	// --- Scissor Stack ---
@@ -261,9 +257,9 @@ namespace Renderer::Primitives {
 
 		if (g_batchRenderer != nullptr) {
 			auto batchStats = g_batchRenderer->GetStats();
-			stats.m_drawCalls = batchStats.m_drawCalls;
-			stats.m_vertexCount = batchStats.m_vertexCount;
-			stats.m_triangleCount = batchStats.m_triangleCount;
+			stats.drawCalls = batchStats.drawCalls;
+			stats.vertexCount = batchStats.vertexCount;
+			stats.triangleCount = batchStats.triangleCount;
 		}
 
 		return stats;

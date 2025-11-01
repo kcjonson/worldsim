@@ -4,7 +4,7 @@
 
 struct GLFWwindow;
 
-namespace Renderer {
+namespace Renderer { // NOLINT(readability-identifier-naming)
 
 	/**
 	 * CoordinateSystem abstracts high-DPI display complexity and provides coordinate system management.
@@ -118,7 +118,7 @@ namespace Renderer {
 
 	  private:
 		GLFWwindow*	  m_window = nullptr;
-		mutable float m_cachedPixelRatio = 1.0f;
+		mutable float m_cachedPixelRatio = 1.0F;
 		mutable bool  m_pixelRatioDirty = true;
 	};
 

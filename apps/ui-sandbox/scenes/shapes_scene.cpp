@@ -64,11 +64,12 @@ namespace {
 			// Draw a grid of small rectangles (batching test)
 			for (int y = 0; y < 10; y++) {
 				for (int x = 0; x < 10; x++) {
-					float hue = (x * 10 + y) / 100.0F;
+					float hue = static_cast<float>((x * 10) + y) / 100.0F;
 					Color color(hue, 1.0F - hue, 0.5F, 1.0F);
 
 					Renderer::Primitives::DrawRect(
-						{.bounds = {50.0F + x * 25.0F, 350.0F + y * 20.0F, 20.0F, 15.0F}, .style = {.fill = color}}
+						{.bounds = {50.0F + (static_cast<float>(x) * 25.0F), 350.0F + (static_cast<float>(y) * 20.0F), 20.0F, 15.0F},
+						 .style = {.fill = color}}
 					);
 				}
 			}
@@ -78,7 +79,7 @@ namespace {
 			// No cleanup needed for shapes scene
 		}
 
-		std::string ExportState() override {
+		std::string ExportState() override { // NOLINT(readability-convert-member-functions-to-static)
 			// Export basic scene info (static scene, no dynamic state)
 			return R"({
 			"scene": "shapes",
@@ -92,7 +93,7 @@ namespace {
 	};
 
 	// Register scene with SceneManager
-	static bool s_registered = []() {
+	bool g_registered = []() {
 		engine::SceneManager::Get().RegisterScene("shapes", []() { return std::make_unique<ShapesScene>(); });
 		return true;
 	}();

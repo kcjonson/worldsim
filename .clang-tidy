@@ -58,11 +58,9 @@ CheckOptions:
   - key: readability-identifier-naming.GlobalVariablePrefix
     value: g_
 
-  # Member variables: m_ prefix
+  # Member variables: m_ prefix for private/protected only (public struct fields don't need it)
   - key: readability-identifier-naming.MemberCase
     value: camelBack
-  - key: readability-identifier-naming.MemberPrefix
-    value: m_
   - key: readability-identifier-naming.PrivateMemberPrefix
     value: m_
   - key: readability-identifier-naming.ProtectedMemberPrefix

@@ -8,22 +8,14 @@
 namespace engine {
 
 	Application::Application(GLFWwindow* window)
-		: m_window(window),
-		  m_isRunning(false),
-		  m_isPaused(false),
-		  m_lastTime(0.0),
-		  m_deltaTime(0.0F),
-		  m_fps(0.0F),
-		  m_overlayRenderer(nullptr),
-		  m_preFrameCallback(nullptr),
-		  m_postFrameCallback(nullptr) {
-		if (!m_window) {
+		: m_window(window) {
+		if (m_window == nullptr) {
 			LOG_ERROR(Engine, "Application created with null window");
 		}
 	}
 
 	void Application::Run() {
-		if (!m_window) {
+		if (m_window == nullptr) {
 			LOG_ERROR(Engine, "Cannot run: window not initialized");
 			return;
 		}
@@ -33,7 +25,7 @@ namespace engine {
 		m_isRunning = true;
 		m_lastTime = glfwGetTime();
 
-		while (!glfwWindowShouldClose(m_window) && m_isRunning) {
+		while (glfwWindowShouldClose(m_window) == 0 && m_isRunning) {
 			// Calculate delta time
 			double currentTime = glfwGetTime();
 			m_deltaTime = static_cast<float>(currentTime - m_lastTime);

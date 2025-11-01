@@ -80,8 +80,9 @@ namespace Renderer {
 	void CoordinateSystem::SetFullViewport() const {
 		// IMPORTANT: glViewport needs PHYSICAL pixels (framebuffer size), not logical pixels!
 		// This is the only place where we use framebuffer size instead of window size.
-		if (m_window) {
-			int width, height;
+		if (m_window != nullptr) {
+			int width = 0;
+			int height = 0;
 			glfwGetFramebufferSize(m_window, &width, &height);
 			glViewport(0, 0, width, height);
 		}
@@ -97,13 +98,15 @@ namespace Renderer {
 
 	float CoordinateSystem::GetPixelRatio() const {
 		// Calculate and cache the pixel ratio for performance
-		if (!m_window) {
+		if (m_window == nullptr) {
 			// Fallback: if window is null, return default pixel ratio
 			return 1.0F;
 		}
 		if (m_pixelRatioDirty) {
-			int windowWidth, windowHeight;
-			int framebufferWidth, framebufferHeight;
+			int windowWidth = 0;
+			int windowHeight = 0;
+			int framebufferWidth = 0;
+			int framebufferHeight = 0;
 
 			glfwGetWindowSize(m_window, &windowWidth, &windowHeight);
 			glfwGetFramebufferSize(m_window, &framebufferWidth, &framebufferHeight);
@@ -133,25 +136,27 @@ namespace Renderer {
 		return fbCoords / ratio;
 	}
 
-	float CoordinateSystem::PercentWidth(float percent) const {
+	float CoordinateSystem::PercentWidth(float percent) const { // NOLINT(readability-convert-member-functions-to-static)
 		// Convert percentage to logical pixels
 		glm::vec2 size = GetWindowSize();
 		return size.x * (percent / 100.0F);
 	}
 
-	float CoordinateSystem::PercentHeight(float percent) const {
+	float CoordinateSystem::PercentHeight(float percent) const { // NOLINT(readability-convert-member-functions-to-static)
 		// Convert percentage to logical pixels
 		glm::vec2 size = GetWindowSize();
 		return size.y * (percent / 100.0F);
 	}
 
-	glm::vec2 CoordinateSystem::PercentSize(float widthPercent, float heightPercent) const {
+	glm::vec2
+	CoordinateSystem::PercentSize(float widthPercent, float heightPercent) const { // NOLINT(readability-convert-member-functions-to-static)
 		// Convert percentage dimensions to logical pixels
 		glm::vec2 size = GetWindowSize();
 		return glm::vec2(size.x * (widthPercent / 100.0F), size.y * (heightPercent / 100.0F));
 	}
 
-	glm::vec2 CoordinateSystem::PercentPosition(float xPercent, float yPercent) const {
+	glm::vec2
+	CoordinateSystem::PercentPosition(float xPercent, float yPercent) const { // NOLINT(readability-convert-member-functions-to-static)
 		// Convert percentage position to logical pixels
 		glm::vec2 size = GetWindowSize();
 		return glm::vec2(size.x * (xPercent / 100.0F), size.y * (yPercent / 100.0F));

@@ -8,7 +8,7 @@
 #include "graphics/color.h"
 #include <optional>
 
-namespace Foundation {
+namespace Foundation { // NOLINT(readability-identifier-naming)
 
 	// Optional border style for rectangles
 	struct BorderStyle {

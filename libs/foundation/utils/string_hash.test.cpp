@@ -111,28 +111,28 @@ TEST(StringHashTests, HashWithNumbers) {
 
 TEST(StringHashTests, CompileTimeHashMacro) {
 	// These should be compile-time constants
-	constexpr StringHash hash1 = HASH("compile_time");
-	constexpr StringHash hash2 = HASH("compile_time");
-	constexpr StringHash hash3 = HASH("different");
+	constexpr StringHash kHash1 = HASH("compile_time");
+	constexpr StringHash kHash2 = HASH("compile_time");
+	constexpr StringHash kHash3 = HASH("different");
 
-	EXPECT_EQ(hash1, hash2);
-	EXPECT_NE(hash1, hash3);
+	EXPECT_EQ(kHash1, kHash2);
+	EXPECT_NE(kHash1, kHash3);
 }
 
 TEST(StringHashTests, CompileTimeMatchesRuntime) {
-	constexpr StringHash compileTime = HASH("test_string");
+	constexpr StringHash kCompileTime = HASH("test_string");
 	StringHash			 runtime = HashString("test_string");
 
 	// Compile-time and runtime should produce identical results
-	EXPECT_EQ(compileTime, runtime);
+	EXPECT_EQ(kCompileTime, runtime);
 }
 
 TEST(StringHashTests, ConstexprHashString) {
 	// Verify HashString is actually constexpr
-	constexpr StringHash hash = HashString("constexpr_test");
+	constexpr StringHash kHash = HashString("constexpr_test");
 
-	EXPECT_NE(hash, 0);
-	EXPECT_EQ(hash, HashString("constexpr_test"));
+	EXPECT_NE(kHash, 0);
+	EXPECT_EQ(kHash, HashString("constexpr_test"));
 }
 
 // ============================================================================
@@ -173,7 +173,8 @@ TEST(StringHashTests, CommonHashConstantsUnique) {
 	// Check all are unique
 	for (size_t i = 0; i < commonHashes.size(); i++) {
 		for (size_t j = i + 1; j < commonHashes.size(); j++) {
-			EXPECT_NE(commonHashes[i], commonHashes[j]) << "Collision found between common hash constants at indices " << i << " and " << j;
+			EXPECT_NE(commonHashes[i], commonHashes[j]) << "Collision found between common hash constants at indices " << i << " and " // NOLINT(readability-implicit-bool-conversion)
+														<< j; // NOLINT(readability-implicit-bool-conversion)
 		}
 	}
 }
@@ -195,7 +196,8 @@ TEST(StringHashTests, HashDistribution) {
 	// Check all are unique (no collisions in 1000 sequential strings)
 	for (size_t i = 0; i < hashes.size(); i++) {
 		for (size_t j = i + 1; j < hashes.size(); j++) {
-			EXPECT_NE(hashes[i], hashes[j]) << "Collision between 'string_" << i << "' and 'string_" << j << "'";
+			EXPECT_NE(hashes[i], hashes[j]) << "Collision between 'string_" << i << "' and 'string_" << j // NOLINT(readability-implicit-bool-conversion)
+											<< "'"; // NOLINT(readability-implicit-bool-conversion)
 		}
 	}
 }
@@ -308,26 +310,30 @@ TEST(StringHashTests, HashIsConstant) {
 
 TEST(StringHashTests, SwitchCasePattern) {
 	// Verify hash can be used in switch-like patterns
-	auto GetComponentType = [](const char* name) -> int {
+	auto getComponentType = [](const char* name) -> int {
 		StringHash hash = HashString(name);
 
-		if (hash == hashes::kTransform)
+		if (hash == hashes::kTransform) {
 			return 1;
-		if (hash == hashes::kPosition)
+		}
+		if (hash == hashes::kPosition) {
 			return 2;
-		if (hash == hashes::kVelocity)
+		}
+		if (hash == hashes::kVelocity) {
 			return 3;
-		if (hash == hashes::kRenderable)
+		}
+		if (hash == hashes::kRenderable) {
 			return 4;
+		}
 
 		return 0;
 	};
 
-	EXPECT_EQ(GetComponentType("Transform"), 1);
-	EXPECT_EQ(GetComponentType("Position"), 2);
-	EXPECT_EQ(GetComponentType("Velocity"), 3);
-	EXPECT_EQ(GetComponentType("Renderable"), 4);
-	EXPECT_EQ(GetComponentType("Unknown"), 0);
+	EXPECT_EQ(getComponentType("Transform"), 1);
+	EXPECT_EQ(getComponentType("Position"), 2);
+	EXPECT_EQ(getComponentType("Velocity"), 3);
+	EXPECT_EQ(getComponentType("Renderable"), 4);
+	EXPECT_EQ(getComponentType("Unknown"), 0);
 }
 
 TEST(StringHashTests, MapKeyUsage) {

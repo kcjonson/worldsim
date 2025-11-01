@@ -6,7 +6,7 @@
 
 #include "math/types.h"
 
-namespace Foundation {
+namespace Foundation { // NOLINT(readability-identifier-naming)
 
 	struct Color {
 		float r, g, b, a;
@@ -34,15 +34,15 @@ namespace Foundation {
 		Vec4 ToVec4() const { return Vec4(r, g, b, a); }
 
 		// Common colors
-		static constexpr Color White() { return Color(1.0F, 1.0F, 1.0F, 1.0F); }
-		static constexpr Color Black() { return Color(0.0F, 0.0F, 0.0F, 1.0F); }
-		static constexpr Color Red() { return Color(1.0F, 0.0F, 0.0F, 1.0F); }
-		static constexpr Color Green() { return Color(0.0F, 1.0F, 0.0F, 1.0F); }
-		static constexpr Color Blue() { return Color(0.0F, 0.0F, 1.0F, 1.0F); }
-		static constexpr Color Yellow() { return Color(1.0F, 1.0F, 0.0F, 1.0F); }
-		static constexpr Color Cyan() { return Color(0.0F, 1.0F, 1.0F, 1.0F); }
-		static constexpr Color Magenta() { return Color(1.0F, 0.0F, 1.0F, 1.0F); }
-		static constexpr Color Transparent() { return Color(0.0F, 0.0F, 0.0F, 0.0F); }
+		static constexpr Color White() { return {1.0F, 1.0F, 1.0F, 1.0F}; }
+		static constexpr Color Black() { return {0.0F, 0.0F, 0.0F, 1.0F}; }
+		static constexpr Color Red() { return {1.0F, 0.0F, 0.0F, 1.0F}; }
+		static constexpr Color Green() { return {0.0F, 1.0F, 0.0F, 1.0F}; }
+		static constexpr Color Blue() { return {0.0F, 0.0F, 1.0F, 1.0F}; }
+		static constexpr Color Yellow() { return {1.0F, 1.0F, 0.0F, 1.0F}; }
+		static constexpr Color Cyan() { return {0.0F, 1.0F, 1.0F, 1.0F}; }
+		static constexpr Color Magenta() { return {1.0F, 0.0F, 1.0F, 1.0F}; }
+		static constexpr Color Transparent() { return {0.0F, 0.0F, 0.0F, 0.0F}; }
 	};
 
 } // namespace Foundation

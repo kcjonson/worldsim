@@ -120,16 +120,16 @@ namespace demo {
 
 		// Test alignment for different types
 		struct Aligned1 {
-			uint8_t m_data;
+			uint8_t data{};
 		};
 		struct Aligned4 {
-			uint32_t m_data;
+			uint32_t data{};
 		};
 		struct Aligned8 {
-			uint64_t m_data;
+			uint64_t data{};
 		};
 		struct Aligned16 {
-			double m_data[2];
+			double data[2]{};
 		};
 
 		auto* a1 = arena.Allocate<Aligned1>();
@@ -147,7 +147,7 @@ namespace demo {
 		LOG_INFO(UI, "8-byte alignment: %s", align8OK ? "PASS" : "FAIL");
 		LOG_INFO(UI, "16-byte alignment: %s", align16OK ? "PASS" : "FAIL");
 
-		assert(align1OK && align4OK && align8OK && align16OK && "Alignment test failed");
+		assert(align1OK && align4OK && align8OK && align16OK && static_cast<bool>("Alignment test failed"));
 		LOG_INFO(UI, "All alignment tests passed!");
 	}
 
@@ -181,8 +181,8 @@ namespace demo {
 		LOG_INFO(UI, "Arena used: %zu bytes (should be 0)", arena.GetUsed());
 		LOG_INFO(UI, "Arena remaining: %zu bytes (should be %zu)", arena.GetRemaining(), kArenaSize);
 
-		assert(arena.GetUsed() == 0 && "Reset failed");
-		assert(arena.GetRemaining() == kArenaSize && "Reset failed");
+		assert(arena.GetUsed() == 0 && static_cast<bool>("Reset failed"));
+		assert(arena.GetRemaining() == kArenaSize && static_cast<bool>("Reset failed"));
 		LOG_INFO(UI, "Capacity test passed!");
 	}
 
@@ -214,10 +214,10 @@ namespace demo {
 		// Should restore to usedBefore, NOT 0
 		LOG_INFO(UI, "Arena used after scope: %zu bytes (should be %zu)", arena.GetUsed(), usedBefore);
 
-		assert(arena.GetUsed() == usedBefore && "ScopedArena did not restore checkpoint");
+		assert(arena.GetUsed() == usedBefore && static_cast<bool>("ScopedArena did not restore checkpoint"));
 
 		// Verify data1 is still valid and has correct value
-		assert(*data1 == 42 && "Pre-scope allocation was invalidated!");
+		assert(*data1 == 42 && static_cast<bool>("Pre-scope allocation was invalidated!"));
 
 		LOG_INFO(UI, "Pre-scope allocation still valid with correct value (42)");
 		LOG_INFO(UI, "Scoped arena test passed!");

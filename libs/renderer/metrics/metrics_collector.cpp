@@ -6,7 +6,7 @@
 
 namespace Renderer {
 
-	MetricsCollector::MetricsCollector()
+	MetricsCollector::MetricsCollector() // NOLINT(cppcoreguidelines-pro-type-member-init,modernize-use-equals-default)
 		: m_currentSampleIndex(0),
 		  m_drawCalls(0),
 		  m_vertexCount(0),
@@ -19,7 +19,7 @@ namespace Renderer {
 		m_frameStart = Clock::now();
 	}
 
-	void MetricsCollector::EndFrame() {
+	void MetricsCollector::EndFrame() { // NOLINT(readability-convert-member-functions-to-static)
 		auto  frameEnd = Clock::now();
 		auto  duration = std::chrono::duration_cast<std::chrono::microseconds>(frameEnd - m_frameStart);
 		float frameTimeMs = duration.count() / 1000.0F;
@@ -56,19 +56,23 @@ namespace Renderer {
 		m_triangleCount = triangleCount;
 	}
 
-	uint64_t MetricsCollector::GetCurrentTimestamp() const {
+	uint64_t MetricsCollector::GetCurrentTimestamp() const { // NOLINT(readability-convert-member-functions-to-static)
 		auto now = std::chrono::system_clock::now();
 		auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch());
 		return static_cast<uint64_t>(ms.count());
 	}
 
-	float MetricsCollector::CalculateFPS(float frameTimeMs) const {
-		if (frameTimeMs < 0.001F)
+	float MetricsCollector::CalculateFPS(float frameTimeMs) const { // NOLINT(readability-convert-member-functions-to-static)
+		if (frameTimeMs < 0.001F) {
 			return 0.0F; // Avoid division by zero
+		}
 		return 1000.0F / frameTimeMs;
 	}
 
-	void MetricsCollector::GetFrameTimeMinMax(float& outMin, float& outMax) const {
+	void MetricsCollector::GetFrameTimeMinMax( // NOLINT(readability-convert-member-functions-to-static)
+		float& outMin,
+		float& outMax
+	) const {
 		if (m_frameTimeSamples.empty()) {
 			outMin = outMax = 0.0F;
 			return;

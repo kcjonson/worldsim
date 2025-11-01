@@ -48,12 +48,12 @@ static void BM_MallocBatchSmallAllocations(benchmark::State& state) {
 
 	for (auto _ : state) {
 		void* ptrs[kAllocCount];
-		for (int i = 0; i < kAllocCount; ++i) {
-			ptrs[i] = malloc(kAllocSize);
-			benchmark::DoNotOptimize(ptrs[i]);
+		for (int i = 0; i < kAllocCount; ++i) { // NOLINT(modernize-loop-convert)
+			ptrs[i] = malloc(kAllocSize);		// NOLINT(cppcoreguidelines-pro-bounds-constant-array-index)
+			benchmark::DoNotOptimize(ptrs[i]);	// NOLINT(cppcoreguidelines-pro-bounds-constant-array-index)
 		}
-		for (int i = 0; i < kAllocCount; ++i) {
-			free(ptrs[i]);
+		for (int i = 0; i < kAllocCount; ++i) { // NOLINT(modernize-loop-convert)
+			free(ptrs[i]);						// NOLINT(cppcoreguidelines-pro-bounds-constant-array-index)
 		}
 	}
 
@@ -87,19 +87,19 @@ BENCHMARK(BM_ArenaBatchSmallAllocations);
 // ============================================================================
 
 struct SmallStruct {
-	int	  m_a;
-	float m_b;
+	int	  a; // NOLINT(readability-identifier-naming)
+	float b; // NOLINT(readability-identifier-naming)
 };
 
 struct LargeStruct {
-	double m_data[16];
-	int	   m_id;
+	double data[16]; // NOLINT(readability-identifier-naming)
+	int	   id; // NOLINT(readability-identifier-naming)
 };
 
 // Benchmark: Allocate structs with malloc
 static void BM_MallocStructAllocation(benchmark::State& state) {
 	for (auto _ : state) {
-		SmallStruct* ptr = static_cast<SmallStruct*>(malloc(sizeof(SmallStruct)));
+		auto* ptr = static_cast<SmallStruct*>(malloc(sizeof(SmallStruct)));
 		benchmark::DoNotOptimize(ptr);
 		free(ptr);
 	}
@@ -351,9 +351,9 @@ static void BM_SimulatedUILayout(benchmark::State& state) {
 		// Simulate UI element data allocations
 		for (int i = 0; i < 100; ++i) {
 			struct UIElementData {
-				float x, y, width, height;
-				int	  id;
-				char  text[32];
+				float x, y, width, height; // NOLINT(readability-identifier-naming)
+				int	  id; // NOLINT(readability-identifier-naming)
+				char  text[32]; // NOLINT(readability-identifier-naming)
 			};
 
 			UIElementData* elem = arena.Allocate<UIElementData>();
@@ -382,9 +382,9 @@ static void BM_SimulatedParticleUpdate(benchmark::State& state) {
 		arena.Reset();
 
 		struct Particle {
-			float x, y, z;
-			float vx, vy, vz;
-			float life;
+			float x, y, z; // NOLINT(readability-identifier-naming)
+			float vx, vy, vz; // NOLINT(readability-identifier-naming)
+			float life; // NOLINT(readability-identifier-naming)
 		};
 
 		// Allocate particle batch

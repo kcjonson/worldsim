@@ -43,7 +43,7 @@ void main() {
 }
 )";
 
-	BatchRenderer::BatchRenderer() : m_vertices(), m_indices() {
+	BatchRenderer::BatchRenderer() { // NOLINT(cppcoreguidelines-pro-type-member-init,modernize-use-equals-default)
 		// Reserve space for vertices to minimize allocations
 		m_vertices.reserve(10000);
 		m_indices.reserve(15000);
@@ -78,15 +78,15 @@ void main() {
 
 		// Position attribute
 		glEnableVertexAttribArray(0);
-		glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(PrimitiveVertex), (void*)offsetof(PrimitiveVertex, m_position));
+		glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(PrimitiveVertex), (void*)offsetof(PrimitiveVertex, position));
 
 		// TexCoord attribute
 		glEnableVertexAttribArray(1);
-		glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(PrimitiveVertex), (void*)offsetof(PrimitiveVertex, m_texCoord));
+		glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(PrimitiveVertex), (void*)offsetof(PrimitiveVertex, texCoord));
 
 		// Color attribute
 		glEnableVertexAttribArray(2);
-		glVertexAttribPointer(2, 4, GL_FLOAT, GL_FALSE, sizeof(PrimitiveVertex), (void*)offsetof(PrimitiveVertex, m_color));
+		glVertexAttribPointer(2, 4, GL_FLOAT, GL_FALSE, sizeof(PrimitiveVertex), (void*)offsetof(PrimitiveVertex, color));
 
 		// Bind index buffer
 		glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m_ibo);
@@ -116,7 +116,10 @@ void main() {
 		}
 	}
 
-	void BatchRenderer::AddQuad(const Foundation::Rect& bounds, const Foundation::Color& color) {
+	void BatchRenderer::AddQuad( // NOLINT(readability-convert-member-functions-to-static)
+		const Foundation::Rect&	 bounds,
+		const Foundation::Color& color
+	) { // NOLINT(readability-convert-member-functions-to-static)
 		uint32_t baseIndex = static_cast<uint32_t>(m_vertices.size());
 
 		Foundation::Vec4 colorVec = color.ToVec4();
@@ -137,13 +140,13 @@ void main() {
 		m_indices.push_back(baseIndex + 3);
 	}
 
-	void BatchRenderer::AddTriangles(
+	void BatchRenderer::AddTriangles( // NOLINT(readability-convert-member-functions-to-static)
 		const Foundation::Vec2*	 vertices,
 		const uint16_t*			 indices,
 		size_t					 vertexCount,
 		size_t					 indexCount,
 		const Foundation::Color& color
-	) {
+	) { // NOLINT(readability-convert-member-functions-to-static)
 		uint32_t baseIndex = static_cast<uint32_t>(m_vertices.size());
 
 		Foundation::Vec4 colorVec = color.ToVec4();
@@ -224,15 +227,15 @@ void main() {
 		m_coordinateSystem = coordSystem;
 	}
 
-	BatchRenderer::RenderStats BatchRenderer::GetStats() const {
+	BatchRenderer::RenderStats BatchRenderer::GetStats() const { // NOLINT(readability-convert-member-functions-to-static)
 		RenderStats stats;
-		stats.m_drawCalls = static_cast<uint32_t>(m_drawCallCount);
-		stats.m_vertexCount = static_cast<uint32_t>(m_vertices.size());
-		stats.m_triangleCount = static_cast<uint32_t>(m_indices.size() / 3);
+		stats.drawCalls = static_cast<uint32_t>(m_drawCallCount);
+		stats.vertexCount = static_cast<uint32_t>(m_vertices.size());
+		stats.triangleCount = static_cast<uint32_t>(m_indices.size() / 3);
 		return stats;
 	}
 
-	GLuint BatchRenderer::CompileShader() {
+	GLuint BatchRenderer::CompileShader() { // NOLINT(readability-convert-member-functions-to-static)
 		// Compile vertex shader
 		GLuint vertexShader = glCreateShader(GL_VERTEX_SHADER);
 		glShaderSource(vertexShader, 1, &g_kVertexShaderSource, nullptr);

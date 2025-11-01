@@ -5,15 +5,15 @@
 #include <algorithm>
 #include <cstdlib>
 
-namespace UI {
+namespace ui {
 
 	FontRenderer::FontRenderer() = default;
 
 	FontRenderer::~FontRenderer() {
-		if (m_vao) {
+		if (m_vao != 0) {
 			glDeleteVertexArrays(1, &m_vao);
 		}
-		if (m_vbo) {
+		if (m_vbo != 0) {
 			glDeleteBuffers(1, &m_vbo);
 		}
 		// Clean up FreeType textures
@@ -22,10 +22,10 @@ namespace UI {
 				glDeleteTextures(1, &character.textureID);
 			}
 		}
-		if (m_face) {
+		if (m_face != nullptr) {
 			FT_Done_Face(m_face);
 		}
-		if (m_library) {
+		if (m_library != nullptr) {
 			FT_Done_FreeType(m_library);
 		}
 	}
@@ -34,7 +34,7 @@ namespace UI {
 		LOG_INFO(UI, "Initializing FontRenderer...");
 
 		// Initialize FreeType
-		if (FT_Init_FreeType(&m_library)) {
+		if (FT_Init_FreeType(&m_library) != 0) {
 			LOG_ERROR(UI, "FATAL ERROR: Could not init FreeType Library");
 			std::exit(1);
 		}
@@ -101,20 +101,20 @@ namespace UI {
 		// Load first 128 characters of ASCII set
 		glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
 		for (unsigned char c = 0; c < 128; c++) {
-			if (FT_Load_Char(m_face, c, FT_LOAD_RENDER)) {
+			if (FT_Load_Char(m_face, c, FT_LOAD_RENDER) != 0) {
 				LOG_WARNING(UI, "Failed to load glyph for character %d", static_cast<int>(c));
 				continue;
 			}
 
-			GLuint texture;
+			GLuint texture = 0;
 			glGenTextures(1, &texture);
 			glBindTexture(GL_TEXTURE_2D, texture);
 			glTexImage2D(
 				GL_TEXTURE_2D,
 				0,
 				GL_RED,
-				m_face->glyph->bitmap.width,
-				m_face->glyph->bitmap.rows,
+				static_cast<GLsizei>(m_face->glyph->bitmap.width),
+				static_cast<GLsizei>(m_face->glyph->bitmap.rows),
 				0,
 				GL_RED,
 				GL_UNSIGNED_BYTE,
@@ -128,7 +128,7 @@ namespace UI {
 
 			Character character{
 				.textureID = texture,
-				.size = glm::ivec2(m_face->glyph->bitmap.width, m_face->glyph->bitmap.rows),
+				.size = glm::ivec2(static_cast<GLsizei>(m_face->glyph->bitmap.width), m_face->glyph->bitmap.rows),
 				.bearing = glm::ivec2(m_face->glyph->bitmap_left, m_face->glyph->bitmap_top),
 				.advance = static_cast<unsigned int>(m_face->glyph->advance.x)
 			};
@@ -214,7 +214,8 @@ namespace UI {
 		m_shader.SetUniform("projection", projection);
 	}
 
-	glm::vec2 FontRenderer::MeasureText(const std::string& text, float scale) const {
+	glm::vec2
+	FontRenderer::MeasureText(const std::string& text, float scale) const { // NOLINT(readability-convert-member-functions-to-static)
 		if (text.empty()) {
 			return glm::vec2(0.0F, 0.0F);
 		}
@@ -270,4 +271,4 @@ namespace UI {
 		return m_maxGlyphHeightUnscaled * scale;
 	}
 
-} // namespace UI
+} // namespace ui

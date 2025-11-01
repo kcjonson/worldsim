@@ -27,25 +27,35 @@ namespace httplib {
 	class Server;
 }
 
-namespace Foundation {
+namespace Foundation { // NOLINT(readability-identifier-naming)
 
 	// Control actions for sandbox control endpoint
-	enum class ControlAction : std::uint8_t { None, Exit, SceneChange, Pause, Resume, ReloadScene };
+	enum class ControlAction : std::uint8_t { None, Exit, SceneChange, Pause, Resume, ReloadScene }; // NOLINT(performance-enum-size)
 
 	// Log levels (must match foundation::LogLevel enum)
-	enum class LogLevel : std::uint8_t { Debug, Info, Warning, Error };
+	enum class LogLevel : std::uint8_t { Debug, Info, Warning, Error }; // NOLINT(performance-enum-size)
 
 	// Log categories (must match foundation::LogCategory enum)
-	enum class LogCategory : std::uint8_t { Renderer, Physics, Audio, Network, Game, World, UI, Engine, Foundation };
+	enum class LogCategory : std::uint8_t { // NOLINT(performance-enum-size)
+		Renderer,
+		Physics,
+		Audio,
+		Network,
+		Game,
+		World,
+		UI,
+		Engine,
+		Foundation
+	}; // NOLINT(performance-enum-size)
 
 	// Log entry for HTTP streaming
-	struct LogEntry {
-		LogLevel	level;
-		LogCategory category;
-		char		message[256];
-		uint64_t	timestamp; // Unix timestamp in milliseconds
-		const char* file;	   // Pointer to static string (filename)
-		int			line;
+	struct LogEntry { // NOLINT(cppcoreguidelines-pro-type-member-init)
+		LogLevel	level{};
+		LogCategory category{};
+		char		message[256]{};
+		uint64_t	timestamp{}; // Unix timestamp in milliseconds
+		const char* file{};		 // Pointer to static string (filename)
+		int			line{};
 
 		// Serialize to JSON
 		const char* ToJSON() const;
@@ -55,6 +65,14 @@ namespace Foundation {
 	  public:
 		DebugServer();
 		~DebugServer();
+
+		// Delete copy operations (not copyable due to unique_ptr and thread)
+		DebugServer(const DebugServer&) = delete;
+		DebugServer& operator=(const DebugServer&) = delete;
+
+		// Delete move operations (not movable due to thread)
+		DebugServer(DebugServer&&) = delete;
+		DebugServer& operator=(DebugServer&&) = delete;
 
 		// Start HTTP server on specified port (runs in separate thread)
 		void Start(int port);

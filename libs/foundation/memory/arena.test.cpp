@@ -87,7 +87,7 @@ TEST(ArenaTests, ArrayAllocation) {
 
 	// Verify we can write to it
 	for (int i = 0; i < 10; ++i) {
-		arr[i] = i * 10;
+		arr[i] = i * 10; // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic)
 	}
 
 	for (int i = 0; i < 10; ++i) {
@@ -209,11 +209,11 @@ TEST(FrameArenaTests, ArrayAllocation) {
 	EXPECT_NE(arr, nullptr);
 
 	for (int i = 0; i < 20; ++i) {
-		arr[i] = static_cast<float>(i) * 0.5F;
+		arr[i] = static_cast<float>(i) * 0.5F; // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic)
 	}
 
 	for (int i = 0; i < 20; ++i) {
-		EXPECT_FLOAT_EQ(arr[i], static_cast<float>(i) * 0.5F);
+		EXPECT_FLOAT_EQ(arr[i] // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic), static_cast<float>(i) * 0.5F);
 	}
 }
 
@@ -318,7 +318,7 @@ TEST(ScopedArenaTests, TypeSafeAllocation) {
 		double* arr = scoped.AllocateArray<double>(5);
 		EXPECT_NE(arr, nullptr);
 		for (int i = 0; i < 5; ++i) {
-			arr[i] = static_cast<double>(i) * 1.5;
+			arr[i] = static_cast<double>(i) * 1.5; // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic)
 		}
 
 		EXPECT_GT(arena.GetUsed(), 0);
