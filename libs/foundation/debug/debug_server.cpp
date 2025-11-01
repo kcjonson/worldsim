@@ -83,13 +83,13 @@ namespace Foundation {
 	}
 
 	DebugServer::DebugServer() // NOLINT(cppcoreguidelines-pro-type-member-init,modernize-use-equals-default)
-		: m_server,
-		  m_serverThread,
+		: m_server(),
+		  m_serverThread(),
 		  m_running(false),
-		  m_screenshotData,
-		  m_screenshotMutex,
-		  m_targetSceneName,
-		  m_sceneNameMutex {
+		  m_screenshotData(),
+		  m_screenshotMutex(),
+		  m_targetSceneName(),
+		  m_sceneNameMutex() {
 		// Lock-free ring buffers are initialized automatically
 	}
 
