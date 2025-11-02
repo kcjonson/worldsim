@@ -16,10 +16,29 @@ jobs:
 
     - name: Install dependencies
       run: |
+        # Install LLVM 21 from official apt repository for consistent clang-tidy version
+        wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc
+        sudo add-apt-repository -y "deb http://apt.llvm.org/noble/ llvm-toolchain-noble-21 main"
         sudo apt-get update
-        sudo apt-get install -y make cmake clang clang-format clang-tidy \
+        sudo apt-get install -y make cmake clang-21 clang-format-21 clang-tidy-21 \
           libxmu-dev libxi-dev libgl-dev libxrandr-dev libxinerama-dev \
           libxcursor-dev libx11-dev
+        # Create symlinks for version-specific tools
+        sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-21 100
+        sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-21 100
+        sudo update-alternatives --install /usr/bin/clang-format clang-format /usr/bin/clang-format-21 100
+        sudo update-alternatives --install /usr/bin/clang-tidy clang-tidy /usr/bin/clang-tidy-21 100
+
+    - name: Verify LLVM versions
+      run: |
+        echo "Clang version:"
+        clang --version
+        echo ""
+        echo "clang-format version:"
+        clang-format --version
+        echo ""
+        echo "clang-tidy version:"
+        clang-tidy --version
 
     - name: Check clang-format
       run: ./scripts/lint.sh --check
