@@ -83,9 +83,9 @@ namespace engine {
 		SceneManager() = default;
 		~SceneManager() = default;
 
-		std::map<std::string, SceneFactory> m_sceneRegistry{};
-		std::unique_ptr<IScene>				m_currentScene{nullptr};
-		std::string							m_currentSceneName{};
+		std::map<std::string, SceneFactory> m_sceneRegistry;
+		std::unique_ptr<IScene>				m_currentScene;
+		std::string							m_currentSceneName;
 	};
 
 } // namespace engine

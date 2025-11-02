@@ -44,7 +44,7 @@ namespace Foundation { // NOLINT(readability-identifier-naming)
 		Vec2 BottomLeft() const { return {x, y + height}; }
 		Vec2 BottomRight() const { return {x + width, y + height}; }
 
-		Vec2 Center() const { return Vec2(x + (width * 0.5F), y + (height * 0.5F)); }
+		Vec2 Center() const { return {x + (width * 0.5F), y + (height * 0.5F)}; }
 
 		bool Contains(const Vec2& point) const { return point.x >= x && point.x <= x + width && point.y >= y && point.y <= y + height; }
 
