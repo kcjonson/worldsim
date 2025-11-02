@@ -60,6 +60,7 @@ namespace foundation {
 } // namespace foundation
 
 // Convenience macros that automatically capture file and line
+// NOLINTBEGIN(cppcoreguidelines-macro-usage)
 #define LOG_DEBUG(category, format, ...)                                                                                                   \
 	foundation::Logger::Log(foundation::LogCategory::category, foundation::LogLevel::Debug, __FILE__, __LINE__, format, ##__VA_ARGS__)
 
@@ -85,3 +86,4 @@ namespace foundation {
 
 // Only LOG_ERROR remains in Release builds
 #endif
+// NOLINTEND(cppcoreguidelines-macro-usage)
