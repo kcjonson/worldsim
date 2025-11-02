@@ -35,7 +35,7 @@ namespace renderer {
 	// TessellatedMesh represents the triangulated output of tessellation
 	struct TessellatedMesh {
 		std::vector<Foundation::Vec2> vertices; // Position data (x, y)
-		std::vector<uint16_t>		  indices;  // Triangle indices (3 per triangle)
+		std::vector<uint16_t>		  indices;	// Triangle indices (3 per triangle)
 
 		TessellatedMesh() = default;
 
