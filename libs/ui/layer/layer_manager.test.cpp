@@ -11,7 +11,7 @@ TEST(LayerManagerTest, CreateRectangle) {
 	LayerManager manager;
 
 	Rectangle rect{.position = {10.0f, 20.0f}, .size = {100.0f, 50.0f}};
-	uint32_t	 index = manager.CreateRectangle(rect);
+	uint32_t  index = manager.CreateRectangle(rect);
 
 	EXPECT_EQ(index, 0);
 	EXPECT_EQ(manager.GetLayerCount(), 1);
@@ -32,7 +32,7 @@ TEST(LayerManagerTest, CreateMultipleLayers) {
 	uint32_t rect1 = manager.CreateRectangle({});
 	uint32_t rect2 = manager.CreateRectangle({});
 	uint32_t circle = manager.CreateCircle({});
-	uint32_t line	= manager.CreateLine({});
+	uint32_t line = manager.CreateLine({});
 
 	EXPECT_EQ(rect1, 0);
 	EXPECT_EQ(rect2, 1);
@@ -81,12 +81,12 @@ TEST(LayerManagerTest, AddChild) {
 	LayerManager manager;
 
 	uint32_t parent = manager.CreateRectangle({});
-	uint32_t child	= manager.CreateRectangle({});
+	uint32_t child = manager.CreateRectangle({});
 
 	manager.AddChild(parent, child);
 
 	const auto& parentNode = manager.GetNode(parent);
-	const auto& childNode  = manager.GetNode(child);
+	const auto& childNode = manager.GetNode(child);
 
 	EXPECT_EQ(parentNode.childIndices.size(), 1);
 	EXPECT_EQ(parentNode.childIndices[0], child);
@@ -116,13 +116,13 @@ TEST(LayerManagerTest, RemoveChild) {
 	LayerManager manager;
 
 	uint32_t parent = manager.CreateRectangle({});
-	uint32_t child	= manager.CreateRectangle({});
+	uint32_t child = manager.CreateRectangle({});
 
 	manager.AddChild(parent, child);
 	manager.RemoveChild(parent, child);
 
 	const auto& parentNode = manager.GetNode(parent);
-	const auto& childNode  = manager.GetNode(child);
+	const auto& childNode = manager.GetNode(child);
 
 	EXPECT_EQ(parentNode.childIndices.size(), 0);
 	EXPECT_EQ(childNode.parentIndex, UINT32_MAX); // Root
@@ -133,7 +133,7 @@ TEST(LayerManagerTest, ReparentChild) {
 
 	uint32_t parent1 = manager.CreateRectangle({});
 	uint32_t parent2 = manager.CreateRectangle({});
-	uint32_t child	 = manager.CreateRectangle({});
+	uint32_t child = manager.CreateRectangle({});
 
 	// Add to first parent
 	manager.AddChild(parent1, child);
@@ -150,10 +150,10 @@ TEST(LayerManagerTest, ReparentChild) {
 TEST(LayerManagerTest, NestedHierarchy) {
 	LayerManager manager;
 
-	uint32_t root	 = manager.CreateRectangle({});
+	uint32_t root = manager.CreateRectangle({});
 	uint32_t level1a = manager.CreateRectangle({});
 	uint32_t level1b = manager.CreateRectangle({});
-	uint32_t level2	 = manager.CreateRectangle({});
+	uint32_t level2 = manager.CreateRectangle({});
 
 	manager.AddChild(root, level1a);
 	manager.AddChild(root, level1b);
@@ -169,7 +169,7 @@ TEST(LayerManagerTest, NestedHierarchy) {
 TEST(LayerManagerTest, CycleDetection) {
 	LayerManager manager;
 
-	uint32_t root  = manager.CreateRectangle({});
+	uint32_t root = manager.CreateRectangle({});
 	uint32_t child = manager.CreateRectangle({});
 	uint32_t grandchild = manager.CreateRectangle({});
 
@@ -202,7 +202,7 @@ TEST(LayerManagerTest, ZIndexMarksDirtyFlag) {
 	LayerManager manager;
 
 	uint32_t parent = manager.CreateRectangle({});
-	uint32_t child	= manager.CreateRectangle({});
+	uint32_t child = manager.CreateRectangle({});
 
 	manager.AddChild(parent, child);
 
@@ -306,7 +306,7 @@ TEST(LayerManagerTest, DestroyLayer) {
 	LayerManager manager;
 
 	uint32_t parent = manager.CreateRectangle({});
-	uint32_t child	= manager.CreateRectangle({});
+	uint32_t child = manager.CreateRectangle({});
 
 	manager.AddChild(parent, child);
 
@@ -324,7 +324,7 @@ TEST(LayerManagerTest, DestroyLayer) {
 TEST(LayerManagerTest, DestroyLayerWithChildren) {
 	LayerManager manager;
 
-	uint32_t root	= manager.CreateRectangle({});
+	uint32_t root = manager.CreateRectangle({});
 	uint32_t child1 = manager.CreateRectangle({});
 	uint32_t child2 = manager.CreateRectangle({});
 
@@ -381,7 +381,7 @@ TEST(LayerManagerTest, RenderAllDoesNotCrash) {
 TEST(LayerManagerTest, RenderSubtree) {
 	LayerManager manager;
 
-	uint32_t root  = manager.CreateRectangle({});
+	uint32_t root = manager.CreateRectangle({});
 	uint32_t child = manager.CreateCircle({});
 
 	manager.AddChild(root, child);
@@ -435,9 +435,9 @@ TEST(LayerManagerTest, ContiguousStorage) {
 TEST(LayerManagerTest, FreeListReuse) {
 	LayerManager manager;
 
-	uint32_t first	= manager.CreateRectangle({});
+	uint32_t first = manager.CreateRectangle({});
 	uint32_t second = manager.CreateRectangle({});
-	uint32_t third	= manager.CreateRectangle({});
+	uint32_t third = manager.CreateRectangle({});
 
 	EXPECT_EQ(first, 0);
 	EXPECT_EQ(second, 1);

@@ -11,45 +11,45 @@
 
 namespace UI {
 
-// Rectangle shape
-struct Rectangle {
-	Foundation::Vec2	  position{0.0f, 0.0f};
-	Foundation::Vec2	  size{100.0f, 100.0f};
-	Foundation::RectStyle style;
-	const char*			  id = nullptr; // Optional: for inspection/debugging
+	// Rectangle shape
+	struct Rectangle {
+		Foundation::Vec2	  position{0.0f, 0.0f};
+		Foundation::Vec2	  size{100.0f, 100.0f};
+		Foundation::RectStyle style;
+		const char*			  id = nullptr; // Optional: for inspection/debugging
 
-	// Render this rectangle using Primitives API
-	void Render() const;
-};
+		// Render this rectangle using Primitives API
+		void Render() const;
+	};
 
-// Circle shape
-struct Circle {
-	Foundation::Vec2 center{0.0f, 0.0f};
-	float			 radius{50.0f};
-	Foundation::Color color = Foundation::Color::White(); // TODO: Add CircleStyle
-	const char*		 id = nullptr;
+	// Circle shape
+	struct Circle {
+		Foundation::Vec2  center{0.0f, 0.0f};
+		float			  radius{50.0f};
+		Foundation::Color color = Foundation::Color::White(); // TODO: Add CircleStyle
+		const char*		  id = nullptr;
 
-	void Render() const;
-};
+		void Render() const;
+	};
 
-// Line shape
-struct Line {
-	Foundation::Vec2	  start{0.0f, 0.0f};
-	Foundation::Vec2	  end{100.0f, 100.0f};
-	Foundation::LineStyle style;
-	const char*			  id = nullptr;
+	// Line shape
+	struct Line {
+		Foundation::Vec2	  start{0.0f, 0.0f};
+		Foundation::Vec2	  end{100.0f, 100.0f};
+		Foundation::LineStyle style;
+		const char*			  id = nullptr;
 
-	void Render() const;
-};
+		void Render() const;
+	};
 
-// Text shape
-struct Text {
-	Foundation::Vec2  position{0.0f, 0.0f};
-	std::string		  text;
-	Foundation::Color color = Foundation::Color::White(); // TODO: Add TextStyle
-	const char*		  id = nullptr;
+	// Text shape
+	struct Text {
+		Foundation::Vec2  position{0.0f, 0.0f};
+		std::string		  text;
+		Foundation::Color color = Foundation::Color::White(); // TODO: Add TextStyle
+		const char*		  id = nullptr;
 
-	void Render() const;
-};
+		void Render() const;
+	};
 
 } // namespace UI
