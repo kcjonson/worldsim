@@ -18,6 +18,7 @@ struct LayerNode {
 	std::vector<uint32_t>	 childIndices;			// Index-based hierarchy (not pointers!)
 	float					 zIndex{0.0f};			// Z-ordering for rendering
 	bool					 visible{true};			// Visibility flag
+	bool					 active{true};			// Is this node active? (false if in free list)
 	bool					 childrenNeedSorting{false}; // Dirty flag optimization
 	uint32_t				 parentIndex{UINT32_MAX};	 // Parent node (UINT32_MAX = no parent)
 
@@ -136,6 +137,13 @@ class LayerManager {
 
 	// Validate index is in range
 	[[nodiscard]] bool IsValidIndex(uint32_t index) const;
+
+	// Check if 'ancestor' is an ancestor of 'node' (prevents cycles)
+	[[nodiscard]] bool IsAncestor(uint32_t ancestor, uint32_t node) const;
+
+	// Create a layer with the given shape data (handles free list reuse)
+	template <typename T>
+	uint32_t CreateLayer(const T& shapeData);
 
 	// Render a single node (recursively renders children)
 	void RenderNode(uint32_t nodeIndex);

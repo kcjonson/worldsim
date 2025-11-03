@@ -5,67 +5,41 @@
 
 namespace UI {
 
-	// --- Layer Creation ---
+	// --- Internal Helpers ---
 
-	uint32_t LayerManager::CreateRectangle(const Rectangle& rect) {
+	template <typename T>
+	uint32_t LayerManager::CreateLayer(const T& shapeData) {
 		uint32_t index;
 
 		// Reuse from free list if available
 		if (!m_freeList.empty()) {
 			index = m_freeList.back();
 			m_freeList.pop_back();
-			m_nodes[index] = LayerNode{.data = rect};
+			m_nodes[index] = LayerNode{.data = shapeData, .active = true}; // Mark as active
 		} else {
 			index = static_cast<uint32_t>(m_nodes.size());
-			m_nodes.push_back(LayerNode{.data = rect});
+			m_nodes.push_back(LayerNode{.data = shapeData}); // active=true by default
 		}
 
 		return index;
+	}
+
+	// --- Layer Creation ---
+
+	uint32_t LayerManager::CreateRectangle(const Rectangle& rect) {
+		return CreateLayer(rect);
 	}
 
 	uint32_t LayerManager::CreateCircle(const Circle& circle) {
-		uint32_t index;
-
-		if (!m_freeList.empty()) {
-			index = m_freeList.back();
-			m_freeList.pop_back();
-			m_nodes[index] = LayerNode{.data = circle};
-		} else {
-			index = static_cast<uint32_t>(m_nodes.size());
-			m_nodes.push_back(LayerNode{.data = circle});
-		}
-
-		return index;
+		return CreateLayer(circle);
 	}
 
 	uint32_t LayerManager::CreateText(const Text& text) {
-		uint32_t index;
-
-		if (!m_freeList.empty()) {
-			index = m_freeList.back();
-			m_freeList.pop_back();
-			m_nodes[index] = LayerNode{.data = text};
-		} else {
-			index = static_cast<uint32_t>(m_nodes.size());
-			m_nodes.push_back(LayerNode{.data = text});
-		}
-
-		return index;
+		return CreateLayer(text);
 	}
 
 	uint32_t LayerManager::CreateLine(const Line& line) {
-		uint32_t index;
-
-		if (!m_freeList.empty()) {
-			index = m_freeList.back();
-			m_freeList.pop_back();
-			m_nodes[index] = LayerNode{.data = line};
-		} else {
-			index = static_cast<uint32_t>(m_nodes.size());
-			m_nodes.push_back(LayerNode{.data = line});
-		}
-
-		return index;
+		return CreateLayer(line);
 	}
 
 	// --- Hierarchy Management ---
@@ -74,6 +48,7 @@ namespace UI {
 		assert(IsValidIndex(parentIndex) && "Parent index out of range");
 		assert(IsValidIndex(childIndex) && "Child index out of range");
 		assert(parentIndex != childIndex && "Cannot add layer as its own child");
+		assert(!IsAncestor(childIndex, parentIndex) && "Cannot add ancestor as child (would create cycle)");
 
 		LayerNode& parent = m_nodes[parentIndex];
 		LayerNode& child = m_nodes[childIndex];
@@ -196,9 +171,9 @@ namespace UI {
 	// --- Rendering ---
 
 	void LayerManager::RenderAll() {
-		// Render all root nodes (nodes without parents)
+		// Render all active root nodes (nodes without parents)
 		for (uint32_t i = 0; i < m_nodes.size(); ++i) {
-			if (m_nodes[i].IsRoot()) {
+			if (m_nodes[i].active && m_nodes[i].IsRoot()) {
 				RenderNode(i);
 			}
 		}
@@ -232,9 +207,9 @@ namespace UI {
 	// --- Update ---
 
 	void LayerManager::UpdateAll(float deltaTime) {
-		// Update all root nodes
+		// Update all active root nodes
 		for (uint32_t i = 0; i < m_nodes.size(); ++i) {
-			if (m_nodes[i].IsRoot()) {
+			if (m_nodes[i].active && m_nodes[i].IsRoot()) {
 				UpdateNode(i, deltaTime);
 			}
 		}
@@ -264,6 +239,18 @@ namespace UI {
 
 	// --- Lifecycle ---
 
+	// DestroyLayer is the public API for destroying a layer and its children.
+	// Responsibilities:
+	//   1. Remove the node from its parent (if it has one)
+	//   2. Recursively destroy the entire subtree (via DestroySubtree)
+	//   3. Add the root node to the free list
+	//
+	// DestroySubtree is the internal recursive helper.
+	// Responsibilities:
+	//   1. Recursively destroy all children
+	//   2. Add children to the free list
+	//   3. Clear the node's data and mark it as inactive
+	//   4. Does NOT add the root node to the free list (caller's responsibility)
 	void LayerManager::DestroyLayer(uint32_t nodeIndex) {
 		assert(IsValidIndex(nodeIndex) && "Node index out of range");
 
@@ -292,10 +279,11 @@ namespace UI {
 			m_freeList.push_back(childIndex);
 		}
 
-		// Clear this node's data
+		// Clear this node's data and mark as inactive
 		node.childIndices.clear();
 		node.parentIndex = UINT32_MAX;
 		node.visible = true;
+		node.active = false; // Mark as inactive so RenderAll/UpdateAll skip it
 		node.zIndex = 0.0f;
 		node.childrenNeedSorting = false;
 	}
@@ -310,5 +298,23 @@ namespace UI {
 	bool LayerManager::IsValidIndex(uint32_t index) const {
 		return index < m_nodes.size();
 	}
+
+	bool LayerManager::IsAncestor(uint32_t ancestor, uint32_t node) const {
+		// Walk up the parent chain from 'node' to see if we reach 'ancestor'
+		uint32_t current = node;
+		while (!m_nodes[current].IsRoot()) {
+			current = m_nodes[current].parentIndex;
+			if (current == ancestor) {
+				return true; // Found ancestor in parent chain
+			}
+		}
+		return false; // Reached root without finding ancestor
+	}
+
+	// Explicit template instantiations for all supported shape types
+	template uint32_t LayerManager::CreateLayer(const Rectangle&);
+	template uint32_t LayerManager::CreateLayer(const Circle&);
+	template uint32_t LayerManager::CreateLayer(const Text&);
+	template uint32_t LayerManager::CreateLayer(const Line&);
 
 } // namespace UI

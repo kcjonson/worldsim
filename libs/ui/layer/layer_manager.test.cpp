@@ -166,6 +166,22 @@ TEST(LayerManagerTest, NestedHierarchy) {
 	EXPECT_EQ(manager.GetNode(level2).parentIndex, level1a);
 }
 
+TEST(LayerManagerTest, CycleDetection) {
+	LayerManager manager;
+
+	uint32_t root  = manager.CreateRectangle({});
+	uint32_t child = manager.CreateRectangle({});
+	uint32_t grandchild = manager.CreateRectangle({});
+
+	manager.AddChild(root, child);
+	manager.AddChild(child, grandchild);
+
+	// Attempting to make root a child of its own descendant should trigger assertion
+	// This would create a cycle: root -> child -> grandchild -> root
+	EXPECT_DEATH(manager.AddChild(grandchild, root), "Cannot add ancestor as child");
+	EXPECT_DEATH(manager.AddChild(child, root), "Cannot add ancestor as child");
+}
+
 // ============================================================================
 // Z-Index Management Tests
 // ============================================================================
