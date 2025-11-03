@@ -6,4 +6,6 @@
 # Run lint script on staged files
 ./scripts/lint.sh --staged
 
-exit 0
+# Propagate exit code from lint script
+# If formatting fails, block the commit
+exit $?
