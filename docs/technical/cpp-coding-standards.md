@@ -56,6 +56,17 @@ clang-tidy enforces our naming conventions:
 
 Violations show as warnings during development.
 
+### Disabled Checks
+
+Some clang-tidy checks are disabled in `.clang-tidy` due to false positives or conflicts with our coding style:
+
+**`cppcoreguidelines-init-variables`** - DISABLED (2025-11-02)
+- **Reason**: Produces false positives for variables initialized on the same line via function calls
+- **Example false positive**: `const float value = someFunction();` flagged as uninitialized
+- **Bug prevention**: While this check prevents used-before-set bugs, it incorrectly flags correct code
+- **References**: [LLVM Issue #58755](https://github.com/llvm/llvm-project/issues/58755)
+- **Alternative**: Rely on compiler warnings and code review for actual uninitialized variables
+
 ## File Organization
 
 ### Headers and Implementation Side-by-Side

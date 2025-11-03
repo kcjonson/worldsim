@@ -31,7 +31,7 @@ namespace Foundation { // NOLINT(readability-identifier-naming)
 			  a(v.w) {}
 
 		// Conversion to Vec4
-		Vec4 ToVec4() const { return Vec4(r, g, b, a); }
+		Vec4 ToVec4() const { return {r, g, b, a}; }
 
 		// Common colors
 		static constexpr Color White() { return {1.0F, 1.0F, 1.0F, 1.0F}; }

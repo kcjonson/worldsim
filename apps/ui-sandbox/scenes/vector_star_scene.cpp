@@ -130,13 +130,12 @@ namespace {
 
 			// Generate star vertices (alternating outer and inner points)
 			for (int i = 0; i < kNumPoints * 2; ++i) {
-				float angle = // NOLINT(cppcoreguidelines-init-variables) (static_cast<float>(i) * std::numbers::pi_v<float> /
-							  // static_cast<float>(kNumPoints)) -
-					(std::numbers::pi_v<float> / 2.0F); // Start at top
+				float angle = (static_cast<float>(i) * std::numbers::pi_v<float> / static_cast<float>(kNumPoints)) -
+							  (std::numbers::pi_v<float> / 2.0F); // Start at top
 				float radius = (i % 2 == 0) ? kOuterRadius : kInnerRadius;
 
-				float x = kCenterX + (radius * std::cos(angle)); // NOLINT(cppcoreguidelines-init-variables)
-				float y = kCenterY + (radius * std::sin(angle)); // NOLINT(cppcoreguidelines-init-variables)
+				float x = kCenterX + (radius * std::cos(angle));
+				float y = kCenterY + (radius * std::sin(angle));
 
 				m_starPath.vertices.emplace_back(x, y);
 			}
@@ -166,13 +165,12 @@ namespace {
 			path.vertices.clear();
 
 			for (int i = 0; i < kNumPoints * 2; ++i) {
-				float angle = // NOLINT(cppcoreguidelines-init-variables) (static_cast<float>(i) * std::numbers::pi_v<float> /
-							  // static_cast<float>(kNumPoints)) -
-					(std::numbers::pi_v<float> / 2.0F);
+				float angle = (static_cast<float>(i) * std::numbers::pi_v<float> / static_cast<float>(kNumPoints)) -
+							  (std::numbers::pi_v<float> / 2.0F);
 				float radius = (i % 2 == 0) ? kOuterRadius : kInnerRadius;
 
-				float x = kCenterX + (radius * std::cos(angle)); // NOLINT(cppcoreguidelines-init-variables)
-				float y = kCenterY + (radius * std::sin(angle)); // NOLINT(cppcoreguidelines-init-variables)
+				float x = kCenterX + (radius * std::cos(angle));
+				float y = kCenterY + (radius * std::sin(angle));
 
 				path.vertices.emplace_back(x, y);
 			}

@@ -53,7 +53,7 @@ namespace foundation {
 				return nullptr;
 			}
 
-			void* ptr = m_buffer + aligned; // NOLINT(cppcoreguidelines-init-variables)
+			void* ptr = m_buffer + aligned;
 			m_used = aligned + size;
 			return ptr;
 		}

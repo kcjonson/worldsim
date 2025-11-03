@@ -31,20 +31,20 @@ namespace Foundation { // NOLINT(readability-identifier-naming)
 			  height(size.y) {}
 
 		// Helper methods
-		Vec2 Position() const { return Vec2(x, y); }
-		Vec2 Size() const { return Vec2(width, height); }
+		Vec2 Position() const { return {x, y}; }
+		Vec2 Size() const { return {width, height}; }
 
 		float Left() const { return x; }
 		float Right() const { return x + width; }
 		float Top() const { return y; }
 		float Bottom() const { return y + height; }
 
-		Vec2 TopLeft() const { return Vec2(x, y); }
-		Vec2 TopRight() const { return Vec2(x + width, y); }
-		Vec2 BottomLeft() const { return Vec2(x, y + height); }
-		Vec2 BottomRight() const { return Vec2(x + width, y + height); }
+		Vec2 TopLeft() const { return {x, y}; }
+		Vec2 TopRight() const { return {x + width, y}; }
+		Vec2 BottomLeft() const { return {x, y + height}; }
+		Vec2 BottomRight() const { return {x + width, y + height}; }
 
-		Vec2 Center() const { return Vec2(x + (width * 0.5F), y + (height * 0.5F)); }
+		Vec2 Center() const { return {x + (width * 0.5F), y + (height * 0.5F)}; }
 
 		bool Contains(const Vec2& point) const { return point.x >= x && point.x <= x + width && point.y >= y && point.y <= y + height; }
 

@@ -18,6 +18,7 @@ Checks: >
   -cppcoreguidelines-pro-type-vararg,
   -cppcoreguidelines-pro-type-reinterpret-cast,
   -cppcoreguidelines-avoid-non-const-global-variables,
+  -cppcoreguidelines-init-variables,
   -bugprone-easily-swappable-parameters,
   -readability-function-cognitive-complexity,
   -performance-avoid-endl

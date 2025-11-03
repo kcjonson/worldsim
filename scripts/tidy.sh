@@ -6,6 +6,7 @@
 #   ./scripts/tidy              # Check all files
 #   ./scripts/tidy --changed    # Check only files changed vs main branch
 #   ./scripts/tidy --staged     # Check only staged files
+#   ./scripts/tidy <file.cpp>   # Check a specific file
 #
 
 set -e
@@ -39,6 +40,7 @@ fi
 
 # Parse arguments
 MODE="all"
+SPECIFIC_FILE=""
 
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -54,9 +56,14 @@ while [[ $# -gt 0 ]]; do
       MODE="all"
       shift
       ;;
+    *.cpp)
+      MODE="file"
+      SPECIFIC_FILE="$1"
+      shift
+      ;;
     *)
       echo "Unknown option: $1"
-      echo "Usage: $0 [--all|--changed|--staged]"
+      echo "Usage: $0 [--all|--changed|--staged|<file.cpp>]"
       exit 1
       ;;
   esac
@@ -65,7 +72,15 @@ done
 # Get files to check
 FILES=""
 
-if [ "$MODE" = "staged" ]; then
+if [ "$MODE" = "file" ]; then
+  # Check specific file
+  if [ ! -f "$SPECIFIC_FILE" ]; then
+    echo "❌ File not found: $SPECIFIC_FILE"
+    exit 1
+  fi
+  FILES="$SPECIFIC_FILE"
+  echo "Checking specific file:"
+elif [ "$MODE" = "staged" ]; then
   # Get staged .cpp files only (clang-tidy needs implementation files)
   FILES=$(git diff --cached --name-only --diff-filter=ACM | grep -E '\.cpp$' || true)
 
