@@ -11,13 +11,31 @@
 
 set -e
 
-# Determine clang-format command based on OS
-if [[ "$OSTYPE" == "darwin"* ]]; then
-  # macOS - use xcrun
+# Determine clang-format command
+# Prefer clang-format-21 to match CI, fall back to system version
+if command -v clang-format-21 &> /dev/null; then
+  CLANG_FORMAT="clang-format-21"
+elif [ -x "/usr/local/opt/llvm/bin/clang-format" ]; then
+  # macOS Homebrew LLVM installation
+  CLANG_FORMAT="/usr/local/opt/llvm/bin/clang-format"
+elif [ -x "/opt/homebrew/opt/llvm/bin/clang-format" ]; then
+  # macOS Homebrew LLVM installation (Apple Silicon)
+  CLANG_FORMAT="/opt/homebrew/opt/llvm/bin/clang-format"
+elif [[ "$OSTYPE" == "darwin"* ]]; then
+  # macOS - use xcrun (last resort)
   CLANG_FORMAT="xcrun clang-format"
 else
   # Linux/other - use system clang-format
   CLANG_FORMAT="clang-format"
+fi
+
+# Check version and warn if not version 21
+CLANG_FORMAT_VERSION=$($CLANG_FORMAT --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 | cut -d. -f1)
+if [ "$CLANG_FORMAT_VERSION" != "21" ]; then
+  echo "⚠️  Warning: Using clang-format version $CLANG_FORMAT_VERSION, but CI uses version 21"
+  echo "   Install clang-format 21 for consistent formatting:"
+  echo "   macOS: brew install llvm@21 && brew link llvm@21"
+  echo ""
 fi
 
 # Parse arguments

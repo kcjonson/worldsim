@@ -165,46 +165,59 @@ struct RenderSystem {
 
 ---
 
-## Architectural Decision: Pragmatic Hybrid
+## Architectural Decision: Research-Optimized Performance
 
 ### Decision
 
-**Port colonysim's Layer 4 using shared_ptr pattern initially, optimize later if needed**.
+**UPDATED 2025-11-03**: Use value semantics with `std::variant` from the start. Skip the shared_ptr intermediate step entirely.
+
+**Implementation: Store UI components in contiguous arrays using std::variant for polymorphism**.
 
 ### Rationale
 
-**Why Start With shared_ptr**:
-1. **Proven functional** - Colonysim works in production
-2. **Faster to implement** - Less refactoring required
-3. **Enables complete system quickly** - Get all components working
-4. **Can measure actual performance** - Profile before optimizing
-5. **Research endorses pragmatic approach** - "start simple, measure, optimize"
+**Why Value Semantics from Start**:
+1. **Maximum performance** - 50x improvement over pointer-based approaches (research line 125)
+2. **Cache-friendly** - Contiguous memory layout prevents cache misses
+3. **No ref-counting overhead** - Eliminates atomic operations from shared_ptr
+4. **Research-aligned** - Follows `/docs/research/modern_rendering_architecture.md` guidance (line 82-83)
+5. **No future refactoring** - Built performant from day 1
 
-**Why Easy to Refactor Later**:
+**Research Guidance** (modern_rendering_architecture.md line 82-83):
+> "Do not use std::shared_ptr for individual shapes—the reference counting overhead and scattered allocation pattern directly conflicts with performance requirements."
+
+**Storage Pattern**:
 ```cpp
-// Current: Component calls Primitives
-void Rectangle::Render() {
-    Primitives::DrawRect({
-        .bounds = GetBounds(),
-        .style = m_style
-    });
-}
+// Separate vectors per type (cache-friendly)
+class LayerManager {
+    std::vector<Rectangle> m_rectangles;
+    std::vector<Circle> m_circles;
+    std::vector<Text> m_texts;
+    std::vector<Line> m_lines;
 
-// If we optimize storage from shared_ptr to value semantics later,
-// Render() logic doesn't change! Only storage changes.
+    // Or: Unified with variant
+    using LayerData = std::variant<Rectangle, Circle, Text, Line>;
+    std::vector<LayerData> m_layers;
+};
+
+// Polymorphism via std::visit
+void Render(const LayerData& layer) {
+    std::visit([](auto& shape) {
+        shape.Render();  // Calls Primitives::DrawRect/DrawCircle/etc
+    }, layer);
+}
 ```
 
-**Render methods are already abstracted** - they only call Primitives API.
+**Render methods are still abstracted** - they only call Primitives API, regardless of storage pattern.
 
-### What We're Porting
+### What We're Implementing
 
-**From Colonysim** (in order):
+**From Colonysim Concepts** (adapted to value semantics):
 1. **InputManager** - Instance-based pattern (already matches research)
 2. **Style system** - Plain structs (no pointers)
-3. **Layer hierarchy** - With `shared_ptr<Layer>` initially
-4. **Shape classes** - Rectangle, Circle, Line, Text
-5. **UI Components** - Button, TextInput
-6. **CoordinateSystem** - Utility functions
+3. **Layer hierarchy** - With index-based references (NOT shared_ptr)
+4. **Shape classes** - Rectangle, Circle, Line, Text (stored by value)
+5. **UI Components** - Button, TextInput (stored by value)
+6. **CoordinateSystem** - Already ported ✅
 
 **Adaptation Required**:
 ```cpp
@@ -302,45 +315,55 @@ public:
 
 ### 3. Layer Hierarchy
 
-**Colonysim's Layer**:
+**Colonysim's Layer** (shared_ptr pattern):
 ```cpp
 class Layer {
 protected:
-    std::vector<std::shared_ptr<Layer>> children;
+    std::vector<std::shared_ptr<Layer>> children;  // Scattered memory
     glm::vec2 position;
     float zIndex;
-    bool dirty;  // For sort optimization
-
-public:
-    void addItem(std::shared_ptr<Layer> item);
-    void removeItem(std::shared_ptr<Layer> item);
-    void sortChildren();  // By z-index (only when dirty)
-    virtual void render(bool batched = false);
-    virtual void update(float deltaTime);
-    virtual void handleInput(/* ... */);
+    bool dirty;
 };
 ```
 
-**Port to worldsim**:
+**Worldsim's LayerManager** (value semantics, research-optimized):
 ```cpp
-// libs/ui/layer/layer.h
-// Keep pattern initially, optimize later if needed
-class Layer {
-protected:
-    std::vector<std::shared_ptr<Layer>> m_children;  // Worldsim naming (m_ prefix)
-    glm::vec2 m_position;
-    float m_zIndex;
-    bool m_dirty;
+// libs/ui/layer/layer_manager.h
+class LayerManager {
+private:
+    // Option A: Separate vectors per type (best cache performance)
+    std::vector<Rectangle> m_rectangles;
+    std::vector<Circle> m_circles;
+    std::vector<Text> m_texts;
+    std::vector<Line> m_lines;
+
+    // Option B: Unified variant (simpler, still cache-friendly)
+    using LayerData = std::variant<Rectangle, Circle, Text, Line>;
+    struct LayerNode {
+        LayerData data;
+        std::vector<uint32_t> m_childIndices;  // Index-based hierarchy
+        glm::vec2 m_position;
+        float m_zIndex{0.0f};
+        bool m_childrenNeedSorting{false};
+    };
+    std::vector<LayerNode> m_nodes;  // Contiguous storage
 
 public:
-    void AddChild(std::shared_ptr<Layer> child);     // PascalCase per worldsim
-    void RemoveChild(std::shared_ptr<Layer> child);
-    void SortChildren();
-    virtual void Render();
-    virtual void Update(float deltaTime);
-    virtual void HandleInput(const InputState& input);  // Use InputManager state
+    uint32_t CreateRectangle(const RectangleArgs& args);
+    uint32_t CreateCircle(const CircleArgs& args);
+    void AddChild(uint32_t parent, uint32_t child);
+    void RemoveChild(uint32_t parent, uint32_t child);
+    void SortChildren(uint32_t nodeIndex);
+    void RenderAll();
+    void UpdateAll(float deltaTime);
 };
 ```
+
+**Key differences**:
+- Index-based references (not pointers)
+- Contiguous memory layout (cache-friendly)
+- std::variant for type-safe polymorphism
+- Central manager owns all layers
 
 ### 4. Style System
 

@@ -1,6 +1,8 @@
 add_library(ui
     core/placeholder.cpp
     font/font_renderer.cpp
+    layer/layer_manager.cpp
+    shapes/shapes.cpp
 )
 
 target_include_directories(ui
