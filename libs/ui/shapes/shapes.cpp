@@ -11,7 +11,7 @@ namespace UI {
 		// TODO: Add DrawCircle to Primitives API
 		// For now, render as a square (placeholder)
 		Renderer::Primitives::DrawRect(
-			{.bounds = {center.x - radius, center.y - radius, radius * 2.0f, radius * 2.0f}, .style = {.fill = color}, .id = id}
+			{.bounds = {center.x - radius, center.y - radius, radius * 2.0F, radius * 2.0F}, .style = {.fill = color}, .id = id}
 		);
 	}
 
@@ -22,7 +22,7 @@ namespace UI {
 	void Text::Render() const {
 		// TODO: Add DrawText to Primitives API
 		// For now, render as a small rectangle (placeholder)
-		Renderer::Primitives::DrawRect({.bounds = {position.x, position.y, 100.0f, 20.0f}, .style = {.fill = color}, .id = id});
+		Renderer::Primitives::DrawRect({.bounds = {position.x, position.y, 100.0F, 20.0F}, .style = {.fill = color}, .id = id});
 	}
 
 } // namespace UI
