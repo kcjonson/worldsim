@@ -16,7 +16,7 @@ namespace UI {
 	struct LayerNode {
 		LayerData			  data;						  // Actual shape data (contiguous)
 		std::vector<uint32_t> childIndices;				  // Index-based hierarchy (not pointers!)
-		float				  zIndex{0.0f};				  // Z-ordering for rendering
+		float				  zIndex{0.0F};				  // Z-ordering for rendering
 		bool				  visible{true};			  // Visibility flag
 		bool				  active{true};				  // Is this node active? (false if in free list)
 		bool				  childrenNeedSorting{false}; // Dirty flag optimization

@@ -84,20 +84,20 @@ namespace {
 
 			// Sidebar items (buttons)
 			for (int i = 0; i < 5; i++) {
-				auto const iF = static_cast<float>(i);
+				auto const iFloat = static_cast<float>(i);
 				Rectangle  button{
-					 .position = {560.0F, 170.0F + (iF * 60.0F)},
+					 .position = {560.0F, 170.0F + (iFloat * 60.0F)},
 					 .size = {130.0F, 50.0F},
 					 .style = {.fill = Color(0.4F, 0.4F, 0.45F, 1.0F), .border = BorderStyle{.color = Color::White(), .width = 1.0F}},
 					 .id = nullptr
 				 };
 				uint32_t buttonLayer = m_layerManager.CreateRectangle(button);
-				m_layerManager.SetZIndex(buttonLayer, iF);
+				m_layerManager.SetZIndex(buttonLayer, iFloat);
 				m_layerManager.AddChild(sidebarLayer, buttonLayer);
 
 				// Button label
 				Text buttonText{
-					.position = {570.0F, 190.0F + (iF * 60.0F)},
+					.position = {570.0F, 190.0F + (iFloat * 60.0F)},
 					.text = "Button " + std::to_string(i + 1),
 					.color = Color::White(),
 					.id = nullptr

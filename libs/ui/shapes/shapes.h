@@ -13,8 +13,8 @@ namespace UI {
 
 	// Rectangle shape
 	struct Rectangle {
-		Foundation::Vec2	  position{0.0f, 0.0f};
-		Foundation::Vec2	  size{100.0f, 100.0f};
+		Foundation::Vec2	  position{0.0F, 0.0F};
+		Foundation::Vec2	  size{100.0F, 100.0F};
 		Foundation::RectStyle style;
 		const char*			  id = nullptr; // Optional: for inspection/debugging
 
@@ -24,8 +24,8 @@ namespace UI {
 
 	// Circle shape
 	struct Circle {
-		Foundation::Vec2  center{0.0f, 0.0f};
-		float			  radius{50.0f};
+		Foundation::Vec2  center{0.0F, 0.0F};
+		float			  radius{50.0F};
 		Foundation::Color color = Foundation::Color::White(); // TODO: Add CircleStyle
 		const char*		  id = nullptr;
 
@@ -34,8 +34,8 @@ namespace UI {
 
 	// Line shape
 	struct Line {
-		Foundation::Vec2	  start{0.0f, 0.0f};
-		Foundation::Vec2	  end{100.0f, 100.0f};
+		Foundation::Vec2	  start{0.0F, 0.0F};
+		Foundation::Vec2	  end{100.0F, 100.0F};
 		Foundation::LineStyle style;
 		const char*			  id = nullptr;
 
@@ -44,7 +44,7 @@ namespace UI {
 
 	// Text shape
 	struct Text {
-		Foundation::Vec2  position{0.0f, 0.0f};
+		Foundation::Vec2  position{0.0F, 0.0F};
 		std::string		  text;
 		Foundation::Color color = Foundation::Color::White(); // TODO: Add TextStyle
 		const char*		  id = nullptr;
