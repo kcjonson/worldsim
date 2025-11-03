@@ -1,11 +1,13 @@
 #!/bin/bash
 #
-# Pre-commit hook - runs linting on staged files
+# Pre-commit hook - Auto-format staged C++ files before commit
+#
+# This hook runs clang-format on staged files and re-stages them.
+# The formatted files will be included in the commit.
 #
 
-# Run lint script on staged files
-./scripts/lint.sh --staged
+set -e
 
-# Propagate exit code from lint script
-# If formatting fails, block the commit
-exit $?
+# Run lint script on staged files
+# This will format files and re-add them to the index
+./scripts/lint.sh --staged
