@@ -1,5 +1,6 @@
 #include "input/input_manager.h"
 #include "utils/log.h"
+#include <stdexcept>
 
 namespace engine {
 
