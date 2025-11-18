@@ -342,10 +342,11 @@ int main(int argc, char* argv[]) {
 	// Initialize primitive rendering system
 	LOG_INFO(Renderer, "Initializing primitive rendering system");
 	Renderer::Primitives::Init(nullptr); // TODO: Pass renderer instance
-	// NOTE: We set the coordinate system for percentage helpers, but BatchRenderer
-	// will NOT use it for projection - it uses viewport size (framebuffer) instead
+	// NOTE: BatchRenderer uses the CoordinateSystem for DPI-aware projection (logical pixels)
+	// and for percentage-based layout helpers
 	Renderer::Primitives::SetCoordinateSystem(&coordinateSystem);
-	// Use framebuffer size for viewport (high-res rendering) but window size for coordinate space
+	// Use framebuffer size for GL viewport (high-res rendering)
+	// but coordinate system projection uses logical pixels (window size)
 	Renderer::Primitives::SetViewport(framebufferWidth, framebufferHeight);
 
 	LOG_DEBUG(Renderer, "Primitive rendering system initialized");
