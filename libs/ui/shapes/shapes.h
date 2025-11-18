@@ -11,12 +11,24 @@
 
 namespace UI {
 
+	// Container - Pure hierarchy node with no visual representation
+	// Used for grouping and organizing other layers
+	struct Container {
+		const char* id = nullptr;
+		float		zIndex{-1.0F}; // -1.0F = auto-assign based on insertion order
+		bool		visible{true};
+
+		void Render() const {} // No-op: containers don't render
+	};
+
 	// Rectangle shape
 	struct Rectangle {
 		Foundation::Vec2	  position{0.0F, 0.0F};
 		Foundation::Vec2	  size{100.0F, 100.0F};
 		Foundation::RectStyle style;
-		const char*			  id = nullptr; // Optional: for inspection/debugging
+		float				  zIndex{-1.0F}; // -1.0F = auto-assign based on insertion order
+		bool				  visible{true};
+		const char*			  id = nullptr;
 
 		// Render this rectangle using Primitives API
 		void Render() const;
@@ -27,6 +39,8 @@ namespace UI {
 		Foundation::Vec2  center{0.0F, 0.0F};
 		float			  radius{50.0F};
 		Foundation::Color color = Foundation::Color::White(); // TODO: Add CircleStyle
+		float			  zIndex{-1.0F}; // -1.0F = auto-assign based on insertion order
+		bool			  visible{true};
 		const char*		  id = nullptr;
 
 		void Render() const;
@@ -37,6 +51,8 @@ namespace UI {
 		Foundation::Vec2	  start{0.0F, 0.0F};
 		Foundation::Vec2	  end{100.0F, 100.0F};
 		Foundation::LineStyle style;
+		float				  zIndex{-1.0F}; // -1.0F = auto-assign based on insertion order
+		bool				  visible{true};
 		const char*			  id = nullptr;
 
 		void Render() const;
@@ -47,6 +63,8 @@ namespace UI {
 		Foundation::Vec2  position{0.0F, 0.0F};
 		std::string		  text;
 		Foundation::Color color = Foundation::Color::White(); // TODO: Add TextStyle
+		float			  zIndex{-1.0F}; // -1.0F = auto-assign based on insertion order
+		bool			  visible{true};
 		const char*		  id = nullptr;
 
 		void Render() const;

@@ -11,14 +11,32 @@ namespace UI {
 	uint32_t LayerManager::CreateLayer(const T& shapeData) {
 		uint32_t index;
 
+		// Auto-assign zIndex if not explicitly set (default is -1.0F)
+		// This maintains insertion order by default
+		float assignedZIndex = shapeData.zIndex;
+		if (assignedZIndex < 0.0F) {
+			assignedZIndex = m_nextAutoZIndex;
+			m_nextAutoZIndex += 1.0F;
+		}
+
 		// Reuse from free list if available
 		if (!m_freeList.empty()) {
 			index = m_freeList.back();
 			m_freeList.pop_back();
-			m_nodes[index] = LayerNode{.data = shapeData, .active = true}; // Mark as active
+			m_nodes[index] = LayerNode{
+				.data = shapeData,
+				.zIndex = assignedZIndex,		// Auto-assigned or explicit
+				.visible = shapeData.visible,	// Read from shape
+				.active = true
+			};
 		} else {
 			index = static_cast<uint32_t>(m_nodes.size());
-			m_nodes.push_back(LayerNode{.data = shapeData}); // active=true by default
+			m_nodes.push_back(LayerNode{
+				.data = shapeData,
+				.zIndex = assignedZIndex,		// Auto-assigned or explicit
+				.visible = shapeData.visible	// Read from shape
+				// active=true by default
+			});
 		}
 
 		return index;
@@ -26,24 +44,60 @@ namespace UI {
 
 	// --- Layer Creation ---
 
-	uint32_t LayerManager::CreateRectangle(const Rectangle& rect) {
+	uint32_t LayerManager::Create(const Container& container) {
+		return CreateLayer(container);
+	}
+
+	uint32_t LayerManager::Create(const Rectangle& rect) {
 		return CreateLayer(rect);
 	}
 
-	uint32_t LayerManager::CreateCircle(const Circle& circle) {
+	uint32_t LayerManager::Create(const Circle& circle) {
 		return CreateLayer(circle);
 	}
 
-	uint32_t LayerManager::CreateText(const Text& text) {
+	uint32_t LayerManager::Create(const Text& text) {
 		return CreateLayer(text);
 	}
 
-	uint32_t LayerManager::CreateLine(const Line& line) {
+	uint32_t LayerManager::Create(const Line& line) {
 		return CreateLayer(line);
 	}
 
 	// --- Hierarchy Management ---
 
+	// Convenience overloads - create and attach in one call
+	uint32_t LayerManager::AddChild(uint32_t parentIndex, const Container& container) {
+		uint32_t childIndex = CreateLayer(container);
+		AddChild(parentIndex, childIndex);
+		return childIndex;
+	}
+
+	uint32_t LayerManager::AddChild(uint32_t parentIndex, const Rectangle& rect) {
+		uint32_t childIndex = CreateLayer(rect);
+		AddChild(parentIndex, childIndex);
+		return childIndex;
+	}
+
+	uint32_t LayerManager::AddChild(uint32_t parentIndex, const Circle& circle) {
+		uint32_t childIndex = CreateLayer(circle);
+		AddChild(parentIndex, childIndex);
+		return childIndex;
+	}
+
+	uint32_t LayerManager::AddChild(uint32_t parentIndex, const Text& text) {
+		uint32_t childIndex = CreateLayer(text);
+		AddChild(parentIndex, childIndex);
+		return childIndex;
+	}
+
+	uint32_t LayerManager::AddChild(uint32_t parentIndex, const Line& line) {
+		uint32_t childIndex = CreateLayer(line);
+		AddChild(parentIndex, childIndex);
+		return childIndex;
+	}
+
+	// Add existing child to parent
 	void LayerManager::AddChild(uint32_t parentIndex, uint32_t childIndex) {
 		assert(IsValidIndex(parentIndex) && "Parent index out of range");
 		assert(IsValidIndex(childIndex) && "Child index out of range");
@@ -126,7 +180,8 @@ namespace UI {
 
 		// Only sort if dirty flag is set (performance optimization)
 		if (node.childrenNeedSorting) {
-			std::sort(node.childIndices.begin(), node.childIndices.end(), [this](uint32_t a, uint32_t b) {
+			// Use stable_sort to preserve insertion order for equal zIndex (like CSS)
+			std::stable_sort(node.childIndices.begin(), node.childIndices.end(), [this](uint32_t a, uint32_t b) {
 				return m_nodes[a].zIndex < m_nodes[b].zIndex;
 			});
 
@@ -291,6 +346,7 @@ namespace UI {
 	void LayerManager::Clear() {
 		m_nodes.clear();
 		m_freeList.clear();
+		m_nextAutoZIndex = 1.0F; // Reset auto counter
 	}
 
 	// --- Internal Helpers ---
@@ -312,6 +368,7 @@ namespace UI {
 	}
 
 	// Explicit template instantiations for all supported shape types
+	template uint32_t LayerManager::CreateLayer(const Container&);
 	template uint32_t LayerManager::CreateLayer(const Rectangle&);
 	template uint32_t LayerManager::CreateLayer(const Circle&);
 	template uint32_t LayerManager::CreateLayer(const Text&);
