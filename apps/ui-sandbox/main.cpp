@@ -11,6 +11,7 @@
 
 #include "coordinate_system/coordinate_system.h"
 #include "debug/debug_server.h"
+#include "font/font_renderer.h"
 #include "graphics/color.h"
 #include "graphics/rect.h"
 #include "math/types.h"
@@ -24,8 +25,11 @@
 
 #include <GL/glew.h>
 #include <GLFW/glfw3.h>
+#include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 
 #include <cstring>
+#include <memory>
 #include <span>
 #include <string>
 
@@ -40,7 +44,8 @@ static struct {
 
 // GLFW callbacks
 // Global coordinate system (accessed by callbacks)
-static Renderer::CoordinateSystem* g_coordinateSystem = nullptr;
+static Renderer::CoordinateSystem*		 g_coordinateSystem = nullptr;
+static std::unique_ptr<ui::FontRenderer> g_fontRenderer = nullptr;
 
 void ErrorCallback(int error, const char* description) {
 	LOG_ERROR(UI, "GLFW Error (%d): %s", error, description);
@@ -128,6 +133,12 @@ void RenderNavigationMenu() {
 		{.bounds = {kMenuX, kMenuY, kMenuWidth, kHeaderHeight}, .style = {.fill = Color(0.2F, 0.2F, 0.3F, 1.0F)}, .id = "menu_header"}
 	);
 
+	// Draw header title
+	if (g_fontRenderer) {
+		glm::vec3 headerColor(0.9F, 0.9F, 0.9F);
+		g_fontRenderer->RenderText("Scenes", glm::vec2(kMenuX + 10, kMenuY + 8), 1.0F, headerColor);
+	}
+
 	// Draw scene items
 	for (size_t i = 0; i < g_menuState.sceneNames.size(); i++) {
 		float itemY = kMenuY + kHeaderHeight + (static_cast<float>(i) * kLineHeight);
@@ -150,6 +161,12 @@ void RenderNavigationMenu() {
 				 .style = {.fill = Color(0.4F, 0.5F, 0.7F, 0.5F)},
 				 .id = ("menu_hover_" + std::to_string(i)).c_str()}
 			);
+		}
+
+		// Draw scene name
+		if (g_fontRenderer) {
+			glm::vec3 textColor = (i == g_menuState.selectedIndex) ? glm::vec3(1.0F, 1.0F, 1.0F) : glm::vec3(0.8F, 0.8F, 0.8F);
+			g_fontRenderer->RenderText(g_menuState.sceneNames[i], glm::vec2(kMenuX + 10, itemY + 5), 0.8F, textColor);
 		}
 	}
 }
@@ -314,6 +331,21 @@ int main(int argc, char* argv[]) {
 
 	LOG_DEBUG(Renderer, "Primitive rendering system initialized");
 
+	// Initialize font renderer for navigation menu
+	LOG_INFO(UI, "Initializing font renderer for navigation menu");
+	g_fontRenderer = std::make_unique<ui::FontRenderer>();
+	if (!g_fontRenderer->Initialize()) {
+		LOG_ERROR(UI, "Failed to initialize FontRenderer for menu!");
+		// Continue anyway - menu will just not have text labels
+	} else {
+		// Set up projection matrix for text rendering
+		glm::mat4 projection = glm::ortho(0.0F, static_cast<float>(windowWidth), static_cast<float>(windowHeight), 0.0F);
+		g_fontRenderer->SetProjectionMatrix(projection);
+		// Set font renderer in Primitives API for Text shapes
+		Renderer::Primitives::SetFontRenderer(g_fontRenderer.get());
+		LOG_INFO(UI, "Font renderer initialized successfully");
+	}
+
 	// Initialize scene system
 	LOG_INFO(Engine, "Initializing scene system");
 
@@ -458,6 +490,10 @@ int main(int argc, char* argv[]) {
 
 	// Scene manager will automatically call OnExit on current scene
 	// when it goes out of scope (destructor)
+
+	// Cleanup font renderer
+	Renderer::Primitives::SetFontRenderer(nullptr);
+	g_fontRenderer.reset();
 
 	Renderer::Primitives::Shutdown();
 	glfwDestroyWindow(window);

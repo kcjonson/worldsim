@@ -6,6 +6,7 @@ add_executable(ui-sandbox
     scenes/vector_star_scene.cpp
     scenes/vector_perf_scene.cpp
     scenes/font_test_scene.cpp
+    scenes/text_shapes_scene.cpp
     scenes/layer_scene.cpp
 )
 
