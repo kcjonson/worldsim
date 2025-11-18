@@ -5,6 +5,9 @@
 
 namespace UI {
 
+	// Base font size used for font scaling calculations (16px = 1.0 scale)
+	constexpr float BASE_FONT_SIZE = 16.0F;
+
 	void Rectangle::Render() const {
 		Renderer::Primitives::DrawRect({.bounds = {position.x, position.y, size.x, size.y}, .style = style, .id = id});
 	}
@@ -25,7 +28,7 @@ namespace UI {
 		}
 
 		// Calculate text scale from fontSize (16px base size = 1.0 scale)
-		const float scale = style.fontSize / 16.0F;
+		const float scale = style.fontSize / BASE_FONT_SIZE;
 
 		// Measure text dimensions for alignment
 		glm::vec2 textSize = fontRenderer->MeasureText(text, scale);
@@ -48,13 +51,13 @@ namespace UI {
 		}
 
 		// Vertical alignment
-		float lineHeight = fontRenderer->GetMaxGlyphHeight(scale);
+		float ascent = fontRenderer->GetAscent(scale);
 		switch (style.vAlign) {
 			case Foundation::VerticalAlign::Middle:
-				alignedPos.y -= lineHeight * 0.5F;
+				alignedPos.y -= ascent * 0.5F;
 				break;
 			case Foundation::VerticalAlign::Bottom:
-				alignedPos.y -= lineHeight;
+				alignedPos.y -= ascent;
 				break;
 			case Foundation::VerticalAlign::Top:
 			default:

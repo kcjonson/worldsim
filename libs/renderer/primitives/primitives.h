@@ -41,10 +41,28 @@ namespace Renderer {
 		// Set the coordinate system (must be called after Init)
 		void SetCoordinateSystem(CoordinateSystem* coordSystem);
 
-		// Set the font renderer for text rendering (optional)
+		// Set the font renderer for text rendering.
+		//
+		// This function stores a FontRenderer instance that Text shapes can retrieve
+		// and use for rendering. This dependency injection pattern avoids circular
+		// dependencies between the renderer and ui libraries.
+		//
+		// Should be called during application initialization if text rendering is needed.
+		// Pass nullptr to disable text rendering.
+		//
+		// Example:
+		//   auto fontRenderer = std::make_unique<ui::FontRenderer>();
+		//   fontRenderer->Initialize();
+		//   Renderer::Primitives::SetFontRenderer(fontRenderer.get());
 		void SetFontRenderer(ui::FontRenderer* fontRenderer);
 
-		// Get the current font renderer (returns nullptr if not set)
+		// Get the current font renderer instance.
+		//
+		// Returns the FontRenderer previously set via SetFontRenderer(), or nullptr
+		// if no font renderer has been configured. Used internally by Text shapes
+		// to access font rendering capabilities.
+		//
+		// Returns: Pointer to FontRenderer, or nullptr if not set
 		ui::FontRenderer* GetFontRenderer();
 
 		// --- Frame Lifecycle ---
@@ -120,7 +138,19 @@ namespace Renderer {
 			int						zIndex = 0;
 		};
 
-		// Draw a circle with optional fill and border
+		// Draw a circle with optional fill and border.
+		//
+		// Circles are tessellated into a 64-segment triangle fan on the CPU,
+		// providing smooth appearance without requiring special shaders.
+		// Borders are rendered as connected line segments.
+		//
+		// Parameters:
+		//   - center: Circle center position in current coordinate space
+		//   - radius: Circle radius in pixels
+		//   - style.fill: Fill color (set alpha to 0 to disable fill)
+		//   - style.border: Optional border (color and width)
+		//   - id: Optional debug identifier
+		//   - zIndex: Draw order (higher values drawn later)
 		void DrawCircle(const CircleArgs& args);
 
 		// --- State Management ---

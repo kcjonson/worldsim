@@ -271,4 +271,8 @@ namespace ui {
 		return m_maxGlyphHeightUnscaled * scale;
 	}
 
+	float FontRenderer::GetAscent(float scale) const {
+		return m_scaledAscender * scale;
+	}
+
 } // namespace ui
