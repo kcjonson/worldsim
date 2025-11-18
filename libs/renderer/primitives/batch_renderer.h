@@ -6,9 +6,11 @@
 // It accumulates draw commands and flushes them to the GPU in optimized batches.
 
 #include "graphics/color.h"
+#include "graphics/primitive_styles.h"
 #include "graphics/rect.h"
 #include "math/types.h"
 #include <GL/glew.h>
+#include <optional>
 #include <vector>
 
 namespace Renderer { // NOLINT(readability-identifier-naming)
@@ -16,11 +18,13 @@ namespace Renderer { // NOLINT(readability-identifier-naming)
 	// Forward declaration
 	class CoordinateSystem;
 
-	// Vertex format for 2D primitives
+	// Vertex format for 2D primitives with SDF rendering support
 	struct PrimitiveVertex {
-		Foundation::Vec2 position;
-		Foundation::Vec2 texCoord;
-		Foundation::Vec4 color;
+		Foundation::Vec2 position;      // Screen-space position
+		Foundation::Vec2 rectLocalPos;  // Rect-local coordinates for SDF calculation
+		Foundation::Vec4 color;         // Fill color RGBA
+		Foundation::Vec4 borderData;    // Border: (color.rgb, width)
+		Foundation::Vec4 shapeParams;   // Shape: (halfWidth, halfHeight, cornerRadius, borderPosition)
 	};
 
 	// Batch accumulator - collects geometry before GPU upload
@@ -35,8 +39,13 @@ namespace Renderer { // NOLINT(readability-identifier-naming)
 		// Cleanup OpenGL resources
 		void Shutdown();
 
-		// Add geometry to current batch
-		void AddQuad(const Foundation::Rect& bounds, const Foundation::Color& color);
+		// Add geometry to current batch (with optional SDF border and corner radius)
+		void AddQuad(
+			const Foundation::Rect&						bounds,
+			const Foundation::Color&					fillColor,
+			const std::optional<Foundation::BorderStyle>& border = std::nullopt,
+			float										cornerRadius = 0.0F
+		);
 		void AddTriangles(
 			const Foundation::Vec2*	 vertices,
 			const uint16_t*			 indices,

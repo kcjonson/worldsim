@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2025-11-18 (InputManager complete - Full input state tracking with test scene)
+Last Updated: 2025-11-18 (GPU-Based SDF Rendering spec complete, Style System research complete)
 
 ## Epic/Story/Task Template
 
@@ -194,13 +194,16 @@ Use this template for all work items:
   - [x] Adapt GLFW callbacks to worldsim conventions
   - [x] Integration with Application::Update() → InputManager::Update() → Scene::HandleInput()
   - [x] InputTestScene for testing and demonstration
-- [ ] Style System
-  - [ ] Create libs/renderer/styles/ library
-  - [ ] Port Base style class
-  - [ ] Port Border style class
-  - [ ] Port concrete style classes (Rectangle, Circle, Line, Text, Polygon)
-  - [ ] Port style parameter structs
-  - [ ] Create style demo scene
+- [x] Style System ✅ COMPLETE (Research findings: worldsim's approach is superior)
+  - [x] Style system already exists in primitive_styles.h (struct-based, not class-based)
+  - [x] Decision: Enhance worldsim's existing system instead of porting colonysim's classes
+  - [x] BorderStyle, RectStyle, LineStyle, CircleStyle, TextStyle already exist
+  - [x] Already integrated with Primitives API and shapes
+  - [ ] Enhancements (via GPU-Based SDF Rendering epic):
+    - [ ] BorderPosition enum will be added by SDF Rendering implementation
+    - [ ] Opacity support will be added by SDF Rendering implementation
+    - [ ] Corner radius rendering will be implemented in fragment shader
+  - [x] Note: colonysim's class-based style hierarchy not needed (worldsim's struct approach is simpler and more performant)
 - [ ] UI Components
   - [ ] Create libs/ui/components/ library
   - [ ] Port Button (state machine, onClick callbacks)
@@ -467,6 +470,56 @@ Use this template for all work items:
   - [ ] Example usage documentation
   - [ ] Integration with ui-sandbox
   - [ ] Integration with main game
+
+---
+
+### GPU-Based SDF Rendering for UI Primitives
+**Spec/Documentation:** `/docs/technical/ui-framework/sdf-rendering.md`
+**Dependencies:** None
+**Status:** ready
+
+**Performance Goals:**
+- 5x geometry reduction (4 vertices vs 20 per bordered rect)
+- <1ms frame time for 1000 bordered rectangles
+- Corner radius support with perfect anti-aliasing
+- Inside/Outside/Center border positioning
+
+**Tasks:**
+- [ ] Phase 1: Core Implementation
+  - [ ] Update PrimitiveVertex struct with new fields (rectLocalPos, borderData, shapeParams)
+  - [ ] Implement SDF vertex shader (pass-through with new attributes)
+  - [ ] Implement SDF fragment shader with sdRoundedBox function
+  - [ ] Add border positioning logic (Inside/Center/Outside)
+  - [ ] Add anti-aliasing with smoothstep and screen-space derivatives
+  - [ ] Update BatchRenderer::Init() for new vertex attribute layout
+  - [ ] Modify BatchRenderer::AddQuad() to calculate rect-local coordinates
+  - [ ] Update primitive_styles.h with BorderPosition enum
+  - [ ] Remove DrawLine calls from DrawRect in primitives.cpp
+  - [ ] Update CompileShader() with new shader sources
+- [ ] Phase 2: Testing
+  - [ ] Write unit tests for vertex data correctness
+  - [ ] Write unit tests for SDF function accuracy (CPU reference implementation)
+  - [ ] Write unit tests for border positioning logic
+  - [ ] Create integration tests for rendering correctness (framebuffer pixel checking)
+  - [ ] Create visual test scene (sdf_test_scene.cpp) with corner radius variations
+  - [ ] Create visual test scene for all border positions (Inside/Center/Outside)
+  - [ ] Test anti-aliasing quality at different zoom levels
+  - [ ] Test edge cases (zero radius, zero border, tiny rects)
+- [ ] Phase 3: Performance Validation
+  - [ ] Implement benchmark suite for 1000+ rectangles with borders
+  - [ ] Measure frame time vs old implementation (target: 3x faster)
+  - [ ] Verify geometry reduction (4 vertices per rect, not 20)
+  - [ ] Profile GPU with RenderDoc or Nsight (fragment shader cost should be <0.5ms)
+  - [ ] Verify batching preserved (single draw call)
+  - [ ] Measure upload bandwidth reduction (target: 2.5x)
+- [ ] Phase 4: Polish & Documentation
+  - [ ] Test on various DPI displays (Retina, standard)
+  - [ ] Tune anti-aliasing parameters if needed
+  - [ ] Verify color accuracy and visual quality
+  - [ ] Capture reference screenshots for regression testing
+  - [ ] Update primitive-rendering-api.md with SDF section
+  - [ ] Update sdf-rendering.md spec with findings
+  - [ ] Code review and address feedback
 
 ---
 

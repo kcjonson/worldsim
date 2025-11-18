@@ -3,45 +3,11 @@
 
 #include "primitives/batch_renderer.h"
 #include "coordinate_system/coordinate_system.h"
+#include "shader/shader_loader.h"
 #include <glm/gtc/type_ptr.hpp>
 #include <iostream>
 
 namespace Renderer {
-
-	// Vertex shader source
-	static const char* g_kVertexShaderSource = R"(
-#version 330 core
-
-layout(location = 0) in vec2 a_position;
-layout(location = 1) in vec2 a_texCoord;
-layout(location = 2) in vec4 a_color;
-
-uniform mat4 u_projection;
-uniform mat4 u_transform;
-
-out vec2 v_texCoord;
-out vec4 v_color;
-
-void main() {
-	v_texCoord = a_texCoord;
-	v_color = a_color;
-	gl_Position = u_projection * u_transform * vec4(a_position, 0.0, 1.0);
-}
-)";
-
-	// Fragment shader source
-	static const char* g_kFragmentShaderSource = R"(
-#version 330 core
-
-in vec2 v_texCoord;
-in vec4 v_color;
-
-out vec4 FragColor;
-
-void main() {
-	FragColor = v_color;
-}
-)";
 
 	BatchRenderer::BatchRenderer() { // NOLINT(cppcoreguidelines-pro-type-member-init,modernize-use-equals-default)
 		// Reserve space for vertices to minimize allocations
@@ -76,17 +42,25 @@ void main() {
 		// Set up vertex buffer
 		glBindBuffer(GL_ARRAY_BUFFER, m_vbo);
 
-		// Position attribute
+		// Position attribute (location = 0)
 		glEnableVertexAttribArray(0);
 		glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(PrimitiveVertex), (void*)offsetof(PrimitiveVertex, position));
 
-		// TexCoord attribute
+		// RectLocalPos attribute (location = 1)
 		glEnableVertexAttribArray(1);
-		glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(PrimitiveVertex), (void*)offsetof(PrimitiveVertex, texCoord));
+		glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(PrimitiveVertex), (void*)offsetof(PrimitiveVertex, rectLocalPos));
 
-		// Color attribute
+		// Color attribute (location = 2)
 		glEnableVertexAttribArray(2);
 		glVertexAttribPointer(2, 4, GL_FLOAT, GL_FALSE, sizeof(PrimitiveVertex), (void*)offsetof(PrimitiveVertex, color));
+
+		// BorderData attribute (location = 3)
+		glEnableVertexAttribArray(3);
+		glVertexAttribPointer(3, 4, GL_FLOAT, GL_FALSE, sizeof(PrimitiveVertex), (void*)offsetof(PrimitiveVertex, borderData));
+
+		// ShapeParams attribute (location = 4)
+		glEnableVertexAttribArray(4);
+		glVertexAttribPointer(4, 4, GL_FLOAT, GL_FALSE, sizeof(PrimitiveVertex), (void*)offsetof(PrimitiveVertex, shapeParams));
 
 		// Bind index buffer
 		glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m_ibo);
@@ -117,18 +91,58 @@ void main() {
 	}
 
 	void BatchRenderer::AddQuad( // NOLINT(readability-convert-member-functions-to-static)
-		const Foundation::Rect&	 bounds,
-		const Foundation::Color& color
+		const Foundation::Rect&						bounds,
+		const Foundation::Color&					fillColor,
+		const std::optional<Foundation::BorderStyle>& border,
+		float										cornerRadius
 	) { // NOLINT(readability-convert-member-functions-to-static)
 		uint32_t baseIndex = static_cast<uint32_t>(m_vertices.size());
 
-		Foundation::Vec4 colorVec = color.ToVec4();
+		// Calculate rect center and half-dimensions for SDF
+		Foundation::Vec2 center = bounds.Center();
+		float			 halfW = bounds.width * 0.5F;
+		float			 halfH = bounds.height * 0.5F;
 
-		// Add 4 vertices (quad corners)
-		m_vertices.push_back({bounds.TopLeft(), {0, 0}, colorVec});
-		m_vertices.push_back({bounds.TopRight(), {1, 0}, colorVec});
-		m_vertices.push_back({bounds.BottomRight(), {1, 1}, colorVec});
-		m_vertices.push_back({bounds.BottomLeft(), {0, 1}, colorVec});
+		// Fill color
+		Foundation::Vec4 colorVec = fillColor.ToVec4();
+
+		// Pack border data (color RGB + width)
+		Foundation::Vec4 borderData(0.0F, 0.0F, 0.0F, 0.0F);
+		if (border.has_value()) {
+			borderData = Foundation::Vec4(border->color.r, border->color.g, border->color.b, border->width);
+			// Use corner radius from border if provided
+			if (border->cornerRadius > 0.0F) {
+				cornerRadius = border->cornerRadius;
+			}
+		}
+
+		// Pack shape parameters (halfWidth, halfHeight, cornerRadius, borderPosition)
+		float borderPosEnum = 1.0F; // Default to Center
+		if (border.has_value()) {
+			switch (border->position) {
+				case Foundation::BorderPosition::Inside: borderPosEnum = 0.0F; break;
+				case Foundation::BorderPosition::Center: borderPosEnum = 1.0F; break;
+				case Foundation::BorderPosition::Outside: borderPosEnum = 2.0F; break;
+			}
+		}
+		Foundation::Vec4 shapeParams(halfW, halfH, cornerRadius, borderPosEnum);
+
+		// Add 4 vertices with rect-local coordinates
+		// Top-left corner
+		m_vertices.push_back({bounds.TopLeft(), Foundation::Vec2(-halfW, -halfH), // Rect-local: top-left
+			colorVec, borderData, shapeParams});
+
+		// Top-right corner
+		m_vertices.push_back({bounds.TopRight(), Foundation::Vec2(halfW, -halfH), // Rect-local: top-right
+			colorVec, borderData, shapeParams});
+
+		// Bottom-right corner
+		m_vertices.push_back({bounds.BottomRight(), Foundation::Vec2(halfW, halfH), // Rect-local: bottom-right
+			colorVec, borderData, shapeParams});
+
+		// Bottom-left corner
+		m_vertices.push_back({bounds.BottomLeft(), Foundation::Vec2(-halfW, halfH), // Rect-local: bottom-left
+			colorVec, borderData, shapeParams});
 
 		// Add 6 indices (2 triangles)
 		m_indices.push_back(baseIndex + 0);
@@ -151,10 +165,16 @@ void main() {
 
 		Foundation::Vec4 colorVec = color.ToVec4();
 
+		// Default SDF data (not used for tessellated shapes, but required for vertex format)
+		Foundation::Vec2 zeroVec2(0.0F, 0.0F);
+		Foundation::Vec4 zeroVec4(0.0F, 0.0F, 0.0F, 0.0F);
+
 		// Add all vertices
 		for (size_t i = 0; i < vertexCount; ++i) {
-			// For now, use (0,0) for texCoords (not used for vector graphics)
-			m_vertices.push_back({vertices[i], {0, 0}, colorVec});
+			m_vertices.push_back({vertices[i], zeroVec2, // rectLocalPos (unused)
+				colorVec, zeroVec4,	  // borderData (unused)
+				zeroVec4			  // shapeParams (unused)
+			});
 		}
 
 		// Add all indices (offset by baseIndex)
@@ -240,58 +260,8 @@ void main() {
 	}
 
 	GLuint BatchRenderer::CompileShader() { // NOLINT(readability-convert-member-functions-to-static)
-		// Compile vertex shader
-		GLuint vertexShader = glCreateShader(GL_VERTEX_SHADER);
-		glShaderSource(vertexShader, 1, &g_kVertexShaderSource, nullptr);
-		glCompileShader(vertexShader);
-
-		GLint success = 0;
-		glGetShaderiv(vertexShader, GL_COMPILE_STATUS, &success);
-		if (success == 0) {
-			char infoLog[512];
-			glGetShaderInfoLog(vertexShader, 512, nullptr, infoLog);
-			std::cerr << "Vertex shader compilation failed: " << infoLog << std::endl;
-			glDeleteShader(vertexShader);
-			return 0;
-		}
-
-		// Compile fragment shader
-		GLuint fragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
-		glShaderSource(fragmentShader, 1, &g_kFragmentShaderSource, nullptr);
-		glCompileShader(fragmentShader);
-
-		glGetShaderiv(fragmentShader, GL_COMPILE_STATUS, &success);
-		if (success == 0) {
-			char infoLog[512];
-			glGetShaderInfoLog(fragmentShader, 512, nullptr, infoLog);
-			std::cerr << "Fragment shader compilation failed: " << infoLog << std::endl;
-			glDeleteShader(vertexShader);
-			glDeleteShader(fragmentShader);
-			return 0;
-		}
-
-		// Link shader program
-		GLuint program = glCreateProgram();
-		glAttachShader(program, vertexShader);
-		glAttachShader(program, fragmentShader);
-		glLinkProgram(program);
-
-		glGetProgramiv(program, GL_LINK_STATUS, &success);
-		if (success == 0) {
-			char infoLog[512];
-			glGetProgramInfoLog(program, 512, nullptr, infoLog);
-			std::cerr << "Shader program linking failed: " << infoLog << std::endl;
-			glDeleteProgram(program);
-			glDeleteShader(vertexShader);
-			glDeleteShader(fragmentShader);
-			return 0;
-		}
-
-		// Clean up shaders (no longer needed after linking)
-		glDeleteShader(vertexShader);
-		glDeleteShader(fragmentShader);
-
-		return program;
+		// Load shaders from disk (build directory)
+		return ShaderLoader::LoadShaderProgram("build/shaders/primitive.vert", "build/shaders/primitive.frag");
 	}
 
 } // namespace Renderer

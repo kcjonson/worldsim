@@ -41,12 +41,12 @@ namespace engine {
 		m_mousePosition = glm::vec2(static_cast<float>(x), static_cast<float>(y));
 		m_lastMousePosition = m_mousePosition;
 
-		// Register GLFW callbacks
-		glfwSetKeyCallback(window, KeyCallback);
-		glfwSetMouseButtonCallback(window, MouseButtonCallback);
-		glfwSetCursorPosCallback(window, CursorPosCallback);
-		glfwSetScrollCallback(window, ScrollCallback);
-		glfwSetCursorEnterCallback(window, CursorEnterCallback);
+		// Save existing callbacks before overwriting them (for callback chaining)
+		m_previousKeyCallback = glfwSetKeyCallback(window, KeyCallback);
+		m_previousMouseButtonCallback = glfwSetMouseButtonCallback(window, MouseButtonCallback);
+		m_previousCursorPosCallback = glfwSetCursorPosCallback(window, CursorPosCallback);
+		m_previousScrollCallback = glfwSetScrollCallback(window, ScrollCallback);
+		m_previousCursorEnterCallback = glfwSetCursorEnterCallback(window, CursorEnterCallback);
 
 		LOG_INFO(Engine, "InputManager initialized successfully");
 	}
@@ -144,32 +144,62 @@ namespace engine {
 
 	// GLFW static callbacks
 	void InputManager::KeyCallback(GLFWwindow* window, int key, int scancode, int action, int mods) {
+		// Process input for InputManager
 		if (s_instance) {
 			s_instance->HandleKeyInput(key, action);
+
+			// Chain to previous callback (e.g., UI/menu handlers)
+			if (s_instance->m_previousKeyCallback) {
+				s_instance->m_previousKeyCallback(window, key, scancode, action, mods);
+			}
 		}
 	}
 
 	void InputManager::MouseButtonCallback(GLFWwindow* window, int button, int action, int mods) {
+		// Process input for InputManager
 		if (s_instance) {
 			s_instance->HandleMouseButton(button, action);
+
+			// Chain to previous callback (e.g., UI/menu handlers)
+			if (s_instance->m_previousMouseButtonCallback) {
+				s_instance->m_previousMouseButtonCallback(window, button, action, mods);
+			}
 		}
 	}
 
 	void InputManager::CursorPosCallback(GLFWwindow* window, double xpos, double ypos) {
+		// Process input for InputManager
 		if (s_instance) {
 			s_instance->HandleMouseMove(xpos, ypos);
+
+			// Chain to previous callback (e.g., UI/menu handlers)
+			if (s_instance->m_previousCursorPosCallback) {
+				s_instance->m_previousCursorPosCallback(window, xpos, ypos);
+			}
 		}
 	}
 
 	void InputManager::ScrollCallback(GLFWwindow* window, double xoffset, double yoffset) {
+		// Process input for InputManager
 		if (s_instance) {
 			s_instance->HandleScroll(xoffset, yoffset);
+
+			// Chain to previous callback (e.g., UI/menu handlers)
+			if (s_instance->m_previousScrollCallback) {
+				s_instance->m_previousScrollCallback(window, xoffset, yoffset);
+			}
 		}
 	}
 
 	void InputManager::CursorEnterCallback(GLFWwindow* window, int entered) {
+		// Process input for InputManager
 		if (s_instance) {
 			s_instance->HandleCursorEnter(entered);
+
+			// Chain to previous callback (e.g., UI/menu handlers)
+			if (s_instance->m_previousCursorEnterCallback) {
+				s_instance->m_previousCursorEnterCallback(window, entered);
+			}
 		}
 	}
 

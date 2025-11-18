@@ -1,0 +1,103 @@
+// Shader Loader implementation
+// Loads shader source from disk and compiles into OpenGL programs
+
+#include "shader/shader_loader.h"
+#include <fstream>
+#include <iostream>
+#include <sstream>
+
+namespace Renderer {
+
+	std::string ShaderLoader::LoadShaderSource(const char* filepath) {
+		std::ifstream file(filepath);
+
+		if (!file.is_open()) {
+			std::cerr << "Failed to open shader file: " << filepath << std::endl;
+			return "";
+		}
+
+		std::stringstream buffer;
+		buffer << file.rdbuf();
+		return buffer.str();
+	}
+
+	GLuint ShaderLoader::CompileShader(GLenum shaderType, const char* source, const char* filepath) {
+		GLuint shader = glCreateShader(shaderType);
+		glShaderSource(shader, 1, &source, nullptr);
+		glCompileShader(shader);
+
+		// Check for compilation errors
+		GLint success = 0;
+		glGetShaderiv(shader, GL_COMPILE_STATUS, &success);
+
+		if (success == 0) {
+			char infoLog[512];
+			glGetShaderInfoLog(shader, 512, nullptr, infoLog);
+
+			const char* shaderTypeStr = (shaderType == GL_VERTEX_SHADER) ? "Vertex" : "Fragment";
+			std::cerr << shaderTypeStr << " shader compilation failed (" << filepath << "):" << std::endl;
+			std::cerr << infoLog << std::endl;
+
+			glDeleteShader(shader);
+			return 0;
+		}
+
+		return shader;
+	}
+
+	GLuint ShaderLoader::LinkProgram(GLuint vertexShader, GLuint fragmentShader) {
+		GLuint program = glCreateProgram();
+		glAttachShader(program, vertexShader);
+		glAttachShader(program, fragmentShader);
+		glLinkProgram(program);
+
+		// Check for linking errors
+		GLint success = 0;
+		glGetProgramiv(program, GL_LINK_STATUS, &success);
+
+		if (success == 0) {
+			char infoLog[512];
+			glGetProgramInfoLog(program, 512, nullptr, infoLog);
+			std::cerr << "Shader program linking failed:" << std::endl;
+			std::cerr << infoLog << std::endl;
+
+			glDeleteProgram(program);
+			return 0;
+		}
+
+		return program;
+	}
+
+	GLuint ShaderLoader::LoadShaderProgram(const char* vertexPath, const char* fragmentPath) {
+		// Load shader source files
+		std::string vertexSource = LoadShaderSource(vertexPath);
+		std::string fragmentSource = LoadShaderSource(fragmentPath);
+
+		if (vertexSource.empty() || fragmentSource.empty()) {
+			std::cerr << "Failed to load shader sources" << std::endl;
+			return 0;
+		}
+
+		// Compile shaders
+		GLuint vertexShader = CompileShader(GL_VERTEX_SHADER, vertexSource.c_str(), vertexPath);
+		if (vertexShader == 0) {
+			return 0;
+		}
+
+		GLuint fragmentShader = CompileShader(GL_FRAGMENT_SHADER, fragmentSource.c_str(), fragmentPath);
+		if (fragmentShader == 0) {
+			glDeleteShader(vertexShader);
+			return 0;
+		}
+
+		// Link program
+		GLuint program = LinkProgram(vertexShader, fragmentShader);
+
+		// Clean up shaders (no longer needed after linking)
+		glDeleteShader(vertexShader);
+		glDeleteShader(fragmentShader);
+
+		return program;
+	}
+
+} // namespace Renderer

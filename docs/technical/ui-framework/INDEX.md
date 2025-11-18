@@ -80,6 +80,15 @@ This directory contains technical documentation for the UI framework in world-si
 - Clipping and transform stacks
 - **Solves the "two different APIs" problem**
 
+**[sdf-rendering.md](./sdf-rendering.md)** - **GPU-Based SDF Rendering for UI Primitives** (NEW)
+- Signed Distance Field approach for rectangle borders and rounded corners
+- 5x geometry reduction (4 vertices vs 20 per bordered rect)
+- Fragment shader implementation with perfect anti-aliasing
+- Border positioning modes (Inside/Center/Outside)
+- Performance analysis: 3x faster than CPU tessellation
+- Complete implementation guide with testing strategy
+- **Critical for modern UI aesthetics and performance**
+
 **[rmlui-integration-architecture.md](./rmlui-integration-architecture.md)** - Complete RmlUI integration design
 - Isolation layer (IUISystem, IDocument, IElement interfaces)
 - RmlUI adapter implementation (hidden from game code)

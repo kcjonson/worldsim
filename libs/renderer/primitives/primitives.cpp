@@ -141,32 +141,15 @@ namespace Renderer::Primitives {
 			return;
 		}
 
-		// Draw fill if specified
-		if (args.style.fill.a > 0.0F) {
-			g_batchRenderer->AddQuad(args.bounds, args.style.fill);
+		// Use SDF-based rendering for fill, border, and corner radius
+		// Extract corner radius from border if present, otherwise use 0
+		float cornerRadius = 0.0F;
+		if (args.style.border.has_value() && args.style.border.value().cornerRadius > 0.0F) {
+			cornerRadius = args.style.border.value().cornerRadius;
 		}
 
-		// Draw border if specified
-		if (args.style.border.has_value()) {
-			const auto& border = args.style.border.value();
-
-			// For now, draw 4 lines (no corner radius support yet)
-			// TODO: Add corner radius support with tessellation
-			DrawLine(
-				{.start = args.bounds.TopLeft(), .end = args.bounds.TopRight(), .style = {.color = border.color, .width = border.width}}
-			);
-			DrawLine(
-				{.start = args.bounds.TopRight(), .end = args.bounds.BottomRight(), .style = {.color = border.color, .width = border.width}}
-			);
-			DrawLine(
-				{.start = args.bounds.BottomRight(),
-				 .end = args.bounds.BottomLeft(),
-				 .style = {.color = border.color, .width = border.width}}
-			);
-			DrawLine(
-				{.start = args.bounds.BottomLeft(), .end = args.bounds.TopLeft(), .style = {.color = border.color, .width = border.width}}
-			);
-		}
+		// Single AddQuad call handles fill, border, and rounded corners via GPU fragment shader
+		g_batchRenderer->AddQuad(args.bounds, args.style.fill, args.style.border, cornerRadius);
 	}
 
 	void DrawLine(const LineArgs& args) {
@@ -198,7 +181,7 @@ namespace Renderer::Primitives {
 		float maxY = glm::max(glm::max(p0.y, p1.y), glm::max(p2.y, p3.y));
 
 		Foundation::Rect bounds(minX, minY, maxX - minX, maxY - minY);
-		g_batchRenderer->AddQuad(bounds, args.style.color);
+		g_batchRenderer->AddQuad(bounds, args.style.color, std::nullopt, 0.0F);
 	}
 
 	void DrawTriangles(const TrianglesArgs& args) {

@@ -4,6 +4,7 @@ add_library(renderer
     metrics/metrics_collector.cpp
     vector/tessellator.cpp
     shader/shader.cpp
+    shader/shader_loader.cpp
     coordinate_system/coordinate_system.cpp
 )
 
@@ -23,6 +24,14 @@ target_link_libraries(renderer
         GLEW::GLEW
         glfw
         glm::glm
+)
+
+# Copy shaders to build directory
+add_custom_command(TARGET renderer POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders
+    ${CMAKE_BINARY_DIR}/shaders
+    COMMENT "Copying shader files to build directory"
 )
 
 # Tests
