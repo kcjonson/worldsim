@@ -109,9 +109,9 @@ fi
 echo "$FILES"
 echo ""
 
-# Run clang-tidy
+# Run clang-tidy (one file at a time with -j1 to avoid parallel processing issues)
 echo "Running clang-tidy..."
-echo "$FILES" | xargs $CLANG_TIDY -p build
+echo "$FILES" | xargs -n1 $CLANG_TIDY -p build --quiet
 
 EXIT_CODE=$?
 

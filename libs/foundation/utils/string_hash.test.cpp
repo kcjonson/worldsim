@@ -191,8 +191,7 @@ TEST(StringHashTests, HashDistribution) {
 	hashes.reserve(1000);
 
 	for (int i = 0; i < 1000; i++) {
-		std::string str = "string_" + std::to_string(i);
-		hashes.push_back(HashString(str.c_str()));
+		hashes.push_back(HashString(("string_" + std::to_string(i)).c_str()));
 	}
 
 	// Check all are unique (no collisions in 1000 sequential strings)

@@ -563,7 +563,7 @@ namespace Foundation {
 			std::cerr << "  curl http://127.0.0.1:" << port << "/api/control?action=exit\n";
 			std::cerr << "\n";
 			m_running.store(false);
-			std::exit(1);
+			std::exit(EXIT_FAILURE);
 		}
 	}
 

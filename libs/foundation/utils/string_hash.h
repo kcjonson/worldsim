@@ -74,7 +74,7 @@ namespace foundation {
 		if (it != registry.end() && it->second != str) {
 			// COLLISION DETECTED!
 			fprintf(stderr, "HASH COLLISION: '%s' and '%s' both hash to %llx\n", str, it->second.c_str(), hash);
-			assert(false && "Hash collision detected");
+			assert(false);
 		}
 
 		registry[hash] = str;

@@ -88,7 +88,7 @@ namespace demo {
 		TestResource* res2 = manager.Get(handle2);
 		TestResource* res3 = manager.Get(handle3);
 
-		assert(res1 && res2 && res3 && "Failed to get resources"); // NOLINT(readability-implicit-bool-conversion)
+		assert(res1 && res2 && res3); // NOLINT(readability-implicit-bool-conversion)
 
 		res1->id = 1;
 		res1->value = 1.5F;
@@ -113,8 +113,8 @@ namespace demo {
 		LOG_INFO(UI, "Total count: %zu (should be 3)", manager.GetCount());
 		LOG_INFO(UI, "Active count: %zu (should be 3)", manager.GetActiveCount());
 
-		assert(manager.GetCount() == 3 && "Wrong total count");
-		assert(manager.GetActiveCount() == 3 && "Wrong active count");
+		assert(manager.GetCount() == 3);
+		assert(manager.GetActiveCount() == 3);
 
 		LOG_INFO(UI, "Basic allocation test passed!");
 	}
@@ -146,7 +146,7 @@ namespace demo {
 		LOG_INFO(UI, "Freed handles at indices 1, 2, 3");
 		LOG_INFO(UI, "Active count: %zu (should be 2)", manager.GetActiveCount());
 
-		assert(manager.GetActiveCount() == 2 && "Wrong active count after free");
+		assert(manager.GetActiveCount() == 2);
 
 		// Allocate 2 new handles - should reuse indices 3 and 2 (LIFO from free list)
 		ResourceHandle newHandle1 = manager.Allocate();
@@ -158,14 +158,14 @@ namespace demo {
 		LOG_INFO(UI, "  New handle 2: index=%d, gen=%d (should reuse index 2, gen 1)", newHandle2.GetIndex(), newHandle2.GetGeneration());
 
 		// Verify indices were reused and generation incremented
-		assert((newHandle1.GetIndex() == 3 || newHandle1.GetIndex() == 2) && "Index not reused");
-		assert((newHandle2.GetIndex() == 3 || newHandle2.GetIndex() == 2) && "Index not reused");
-		assert(newHandle1.GetGeneration() == 1 && "Generation not incremented");
-		assert(newHandle2.GetGeneration() == 1 && "Generation not incremented");
+		assert((newHandle1.GetIndex() == 3 || newHandle1.GetIndex() == 2));
+		assert((newHandle2.GetIndex() == 3 || newHandle2.GetIndex() == 2));
+		assert(newHandle1.GetGeneration() == 1);
+		assert(newHandle2.GetGeneration() == 1);
 
 		LOG_INFO(UI, "");
 		LOG_INFO(UI, "Active count: %zu (should be 4)", manager.GetActiveCount());
-		assert(manager.GetActiveCount() == 4 && "Wrong active count after realloc");
+		assert(manager.GetActiveCount() == 4);
 
 		LOG_INFO(UI, "Free list reuse test passed!");
 	}
@@ -180,7 +180,7 @@ namespace demo {
 		// Allocate resource
 		ResourceHandle handle = manager.Allocate();
 		TestResource*  res = manager.Get(handle);
-		assert(res && "Failed to get resource"); // NOLINT(readability-implicit-bool-conversion)
+		assert(res); // NOLINT(readability-implicit-bool-conversion)
 		res->id = 42;
 
 		LOG_INFO(UI, "Allocated handle: index=%d, gen=%d", handle.GetIndex(), handle.GetGeneration());
@@ -194,7 +194,7 @@ namespace demo {
 		// Try to access with old handle (should return nullptr)
 		TestResource* staleRes = manager.Get(handle);
 		LOG_INFO(UI, "Accessing with stale handle: %s", staleRes ? "FAIL - got resource!" : "PASS - returned null");
-		assert(staleRes == nullptr && "Stale handle returned resource!"); // NOLINT(readability-implicit-bool-conversion)
+		assert(staleRes == nullptr); // NOLINT(readability-implicit-bool-conversion)
 
 		// Allocate new resource in same slot
 		ResourceHandle newHandle = manager.Allocate();
@@ -202,17 +202,17 @@ namespace demo {
 		LOG_INFO(UI, "Allocated new handle in same slot: index=%d, gen=%d", newHandle.GetIndex(), newHandle.GetGeneration());
 
 		// Verify new handle has incremented generation
-		assert(newHandle.GetIndex() == handle.GetIndex() && "Different index");
-		assert(newHandle.GetGeneration() == handle.GetGeneration() + 1 && "Generation not incremented");
+		assert(newHandle.GetIndex() == handle.GetIndex());
+		assert(newHandle.GetGeneration() == handle.GetGeneration() + 1);
 
 		// Old handle should still be invalid
 		staleRes = manager.Get(handle);
 		LOG_INFO(UI, "Accessing with old handle after realloc: %s", staleRes ? "FAIL - got resource!" : "PASS - returned null");
-		assert(staleRes == nullptr && "Old handle should still be invalid"); // NOLINT(readability-implicit-bool-conversion)
+		assert(staleRes == nullptr); // NOLINT(readability-implicit-bool-conversion)
 
 		// New handle should work
 		TestResource* newRes = manager.Get(newHandle);
-		assert(newRes && "New handle should be valid"); // NOLINT(readability-implicit-bool-conversion)
+		assert(newRes); // NOLINT(readability-implicit-bool-conversion)
 		newRes->id = 99;
 		LOG_INFO(UI, "Accessing with new handle: PASS - got resource (id=%d)", newRes->id);
 
@@ -229,17 +229,17 @@ namespace demo {
 		// Test invalid handle
 		ResourceHandle invalidHandle = ResourceHandle::Invalid();
 		LOG_INFO(UI, "Invalid handle: value=0x%08x, valid=%s", invalidHandle.value, invalidHandle.IsValid() ? "true" : "false");
-		assert(!invalidHandle.IsValid() && "Invalid handle should not be valid"); // NOLINT(readability-implicit-bool-conversion)
+		assert(!invalidHandle.IsValid()); // NOLINT(readability-implicit-bool-conversion)
 
 		TestResource* res = manager.Get(invalidHandle);
 		LOG_INFO(UI, "Get with invalid handle: %s", res ? "FAIL - got resource!" : "PASS - returned null");
-		assert(res == nullptr && "Invalid handle should return null"); // NOLINT(readability-implicit-bool-conversion)
+		assert(res == nullptr); // NOLINT(readability-implicit-bool-conversion)
 
 		// Test out-of-range handle
 		ResourceHandle outOfRange = ResourceHandle::Make(9999, 0);
 		res = manager.Get(outOfRange);
 		LOG_INFO(UI, "Get with out-of-range index (9999): %s", res ? "FAIL - got resource!" : "PASS - returned null");
-		assert(res == nullptr && "Out-of-range handle should return null"); // NOLINT(readability-implicit-bool-conversion)
+		assert(res == nullptr); // NOLINT(readability-implicit-bool-conversion)
 
 		// Test handle comparison
 		ResourceHandle h1 = manager.Allocate();
@@ -253,9 +253,9 @@ namespace demo {
 		LOG_INFO(UI, "  h1 == h3: %s", (h1 == h3) ? "true" : "false");
 		LOG_INFO(UI, "  h1 != h2: %s", (h1 != h2) ? "true" : "false");
 
-		assert((h1 == h1) && "Same handle should be equal");		   // NOLINT(readability-implicit-bool-conversion)
-		assert((h1 != h2) && "Different handles should not be equal"); // NOLINT(readability-implicit-bool-conversion)
-		assert((h1 == h3) && "Copied handle should be equal");		   // NOLINT(readability-implicit-bool-conversion)
+		assert((h1 == h1)); // NOLINT(readability-implicit-bool-conversion)
+		assert((h1 != h2)); // NOLINT(readability-implicit-bool-conversion)
+		assert((h1 == h3)); // NOLINT(readability-implicit-bool-conversion)
 
 		LOG_INFO(UI, "Handle validation test passed!");
 	}
@@ -276,8 +276,8 @@ namespace demo {
 
 		for (int i = 0; i < kTestCount; i++) {
 			ResourceHandle handle = manager.Allocate();
-			assert(handle.IsValid() && "Handle should be valid"); // NOLINT(readability-implicit-bool-conversion)
-			assert(handle.GetIndex() == i && "Index should match allocation order");
+			assert(handle.IsValid()); // NOLINT(readability-implicit-bool-conversion)
+			assert(handle.GetIndex() == i);
 			handles.push_back(handle);
 		}
 
@@ -288,15 +288,15 @@ namespace demo {
 		// Verify all handles are still valid and accessible
 		for (int i = 0; i < kTestCount; i++) {
 			TestResource* res = manager.Get(handles[i]);
-			assert(res != nullptr && "Resource should be accessible"); // NOLINT(readability-implicit-bool-conversion)
+			assert(res != nullptr); // NOLINT(readability-implicit-bool-conversion)
 			res->id = i;
 		}
 
 		LOG_INFO(UI, "All %d resources accessible and writable", kTestCount);
 
 		// Verify indices are correct
-		assert(handles[0].GetIndex() == 0 && "First index should be 0");
-		assert(handles[kTestCount - 1].GetIndex() == kTestCount - 1 && "Last index should be count-1");
+		assert(handles[0].GetIndex() == 0);
+		assert(handles[kTestCount - 1].GetIndex() == kTestCount - 1);
 
 		LOG_INFO(UI, "Index range: 0 to %d (correct)", kTestCount - 1);
 		LOG_INFO(UI, "");

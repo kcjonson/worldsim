@@ -29,12 +29,12 @@ namespace Renderer { // NOLINT(readability-identifier-naming)
 
 		TimePoint		   m_frameStart;
 		std::vector<float> m_frameTimeSamples; // Rolling window of frame times (last 60 frames)
-		size_t			   m_currentSampleIndex;
+		size_t			   m_currentSampleIndex = 0;
 
 		// Current rendering stats
-		uint32_t m_drawCalls;
-		uint32_t m_vertexCount;
-		uint32_t m_triangleCount;
+		uint32_t m_drawCalls = 0;
+		uint32_t m_vertexCount = 0;
+		uint32_t m_triangleCount = 0;
 
 		// Helper: Get current Unix timestamp in milliseconds
 		uint64_t GetCurrentTimestamp() const;
