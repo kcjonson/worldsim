@@ -1,5 +1,6 @@
 #include "application.h"
 #include "scene/scene_manager.h"
+#include "input/input_manager.h"
 #include "utils/log.h"
 
 #include <exception>
@@ -11,7 +12,19 @@ namespace engine {
 		: m_window(window) {
 		if (m_window == nullptr) {
 			LOG_ERROR(Engine, "Application created with null window");
+			return;
 		}
+
+		// Create and initialize InputManager
+		m_inputManager = std::make_unique<InputManager>(m_window);
+		InputManager::SetInstance(m_inputManager.get());
+		LOG_INFO(Engine, "Application initialized with InputManager");
+	}
+
+	Application::~Application() {
+		// Destructor must be defined in .cpp where InputManager is complete type
+		// std::unique_ptr destructor requires complete type
+		LOG_INFO(Engine, "Application destroyed");
 	}
 
 	void Application::Run() {
@@ -45,6 +58,17 @@ namespace engine {
 
 			// Poll GLFW events
 			glfwPollEvents();
+
+			// Update InputManager to capture input state for this frame
+			if (m_inputManager) {
+				try {
+					m_inputManager->Update(m_deltaTime);
+				} catch (const std::exception& e) {
+					LOG_ERROR(Engine, "Exception in InputManager::Update: %s", e.what());
+				} catch (...) {
+					LOG_ERROR(Engine, "Unknown exception in InputManager::Update");
+				}
+			}
 
 			// Pre-frame callback (debug server control, etc.)
 			// Can return false to request exit
