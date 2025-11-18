@@ -23,6 +23,14 @@ namespace Renderer { // NOLINT(readability-identifier-naming)
 	class Renderer;
 	class CoordinateSystem;
 
+} // namespace Renderer
+
+// Forward declaration from ui namespace
+namespace ui {
+	class FontRenderer;
+}
+
+namespace Renderer {
 	namespace Primitives { // NOLINT(readability-identifier-naming)
 
 		// --- Initialization ---
@@ -32,6 +40,12 @@ namespace Renderer { // NOLINT(readability-identifier-naming)
 
 		// Set the coordinate system (must be called after Init)
 		void SetCoordinateSystem(CoordinateSystem* coordSystem);
+
+		// Set the font renderer for text rendering (optional)
+		void SetFontRenderer(ui::FontRenderer* fontRenderer);
+
+		// Get the current font renderer (returns nullptr if not set)
+		ui::FontRenderer* GetFontRenderer();
 
 		// --- Frame Lifecycle ---
 
@@ -96,6 +110,18 @@ namespace Renderer { // NOLINT(readability-identifier-naming)
 
 		// Draw triangles from a mesh (for vector graphics tessellation)
 		void DrawTriangles(const TrianglesArgs& args);
+
+		// Arguments for DrawCircle
+		struct CircleArgs {
+			Foundation::Vec2		center;
+			float					radius;
+			Foundation::CircleStyle style;
+			const char*				id = nullptr;
+			int						zIndex = 0;
+		};
+
+		// Draw a circle with optional fill and border
+		void DrawCircle(const CircleArgs& args);
 
 		// --- State Management ---
 
