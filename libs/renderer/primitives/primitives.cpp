@@ -109,14 +109,14 @@ namespace Renderer::Primitives {
 		if (g_coordinateSystem != nullptr) {
 			return g_coordinateSystem->PercentSize(widthPercent, heightPercent);
 		}
-		return Foundation::Vec2(800.0F * (widthPercent / 100.0F), 600.0F * (heightPercent / 100.0F));
+		return {800.0F * (widthPercent / 100.0F), 600.0F * (heightPercent / 100.0F)};
 	}
 
 	Foundation::Vec2 PercentPosition(float xPercent, float yPercent) {
 		if (g_coordinateSystem != nullptr) {
 			return g_coordinateSystem->PercentPosition(xPercent, yPercent);
 		}
-		return Foundation::Vec2(800.0F * (xPercent / 100.0F), 600.0F * (yPercent / 100.0F));
+		return {800.0F * (xPercent / 100.0F), 600.0F * (yPercent / 100.0F)};
 	}
 
 	// --- Drawing Functions ---

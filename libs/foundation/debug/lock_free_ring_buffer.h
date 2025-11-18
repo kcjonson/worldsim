@@ -21,10 +21,7 @@ namespace Foundation { // NOLINT(readability-identifier-naming)
 	template <typename T, size_t N = 64>
 	class LockFreeRingBuffer {
 	  public:
-		LockFreeRingBuffer() // NOLINT(cppcoreguidelines-pro-type-member-init,modernize-use-equals-default)
-			: m_buffer{},
-			  m_writeIndex(0),
-			  m_readIndex(0) {}
+		LockFreeRingBuffer() = default;
 
 		// Write item to buffer (called by game thread)
 		// Never blocks, always succeeds
@@ -78,9 +75,9 @@ namespace Foundation { // NOLINT(readability-identifier-naming)
 		}
 
 	  private:
-		mutable std::array<T, N>	m_buffer; // Mutable for lock-free const reads
-		mutable std::atomic<size_t> m_writeIndex;
-		mutable std::atomic<size_t> m_readIndex;
+		mutable std::array<T, N>	m_buffer{}; // Mutable for lock-free const reads
+		mutable std::atomic<size_t> m_writeIndex{};
+		mutable std::atomic<size_t> m_readIndex{};
 	};
 
 } // namespace Foundation

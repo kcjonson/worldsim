@@ -77,8 +77,8 @@ namespace foundation {
 		s_levels[static_cast<int>(LogCategory::Foundation)] = LogLevel::Info;
 #else
 		// Release builds: only errors
-		for (int i = 0; i < static_cast<int>(LogCategory::Count); i++) {
-			s_levels[i] = LogLevel::Error;
+		for (auto& level : s_levels) {
+			level = LogLevel::Error;
 		}
 #endif
 

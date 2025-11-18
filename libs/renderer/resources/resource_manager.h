@@ -38,7 +38,7 @@ namespace renderer {
 				m_freeIndices.pop_back();
 			} else {
 				// Allocate new slot - check BEFORE cast to prevent wraparound
-				assert(m_resources.size() < 65536 && "ResourceManager out of slots");
+				assert(m_resources.size() < 65536);
 				index = static_cast<uint16_t>(m_resources.size());
 				m_resources.emplace_back();
 				m_generations.push_back(0);
@@ -54,7 +54,7 @@ namespace renderer {
 			}
 
 			uint16_t index = handle.GetIndex();
-			assert(index < m_resources.size() && "Invalid handle index");
+			assert(index < m_resources.size());
 
 			// Check generation matches (prevent double-free of stale handles)
 			if (handle.GetGeneration() != m_generations[index]) {

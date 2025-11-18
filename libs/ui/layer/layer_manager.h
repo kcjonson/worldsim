@@ -7,7 +7,7 @@
 
 // Note: std::variant requires complete types, so we include shapes.h
 
-namespace UI {
+namespace ui {
 
 	// Type-safe variant for all layer types
 	using LayerData = std::variant<Rectangle, Circle, Text, Line>;
@@ -15,7 +15,7 @@ namespace UI {
 	// Layer node in the scene graph hierarchy
 	struct LayerNode {
 		LayerData			  data;						  // Actual shape data (contiguous)
-		std::vector<uint32_t> childIndices;				  // Index-based hierarchy (not pointers!)
+		std::vector<uint32_t> childIndices{};			  // Index-based hierarchy (not pointers!)
 		float				  zIndex{0.0F};				  // Z-ordering for rendering
 		bool				  visible{true};			  // Visibility flag
 		bool				  active{true};				  // Is this node active? (false if in free list)
@@ -128,10 +128,10 @@ namespace UI {
 
 	  private:
 		// All layer nodes stored contiguously (cache-friendly!)
-		std::vector<LayerNode> m_nodes;
+		std::vector<LayerNode> m_nodes{};
 
 		// Free list for reusing destroyed layer indices
-		std::vector<uint32_t> m_freeList;
+		std::vector<uint32_t> m_freeList{};
 
 		// --- Internal Helpers ---
 
@@ -140,10 +140,6 @@ namespace UI {
 
 		// Check if 'ancestor' is an ancestor of 'node' (prevents cycles)
 		[[nodiscard]] bool IsAncestor(uint32_t ancestor, uint32_t node) const;
-
-		// Create a layer with the given shape data (handles free list reuse)
-		template <typename T>
-		uint32_t CreateLayer(const T& shapeData);
 
 		// Render a single node (recursively renders children)
 		void RenderNode(uint32_t nodeIndex);
@@ -155,4 +151,4 @@ namespace UI {
 		void DestroySubtree(uint32_t nodeIndex);
 	};
 
-} // namespace UI
+} // namespace ui

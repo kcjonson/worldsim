@@ -3,52 +3,65 @@
 #include <algorithm>
 #include <cassert>
 
-namespace UI {
-
-	// --- Internal Helpers ---
-
-	template <typename T>
-	uint32_t LayerManager::CreateLayer(const T& shapeData) {
-		uint32_t index;
-
-		// Reuse from free list if available
-		if (!m_freeList.empty()) {
-			index = m_freeList.back();
-			m_freeList.pop_back();
-			m_nodes[index] = LayerNode{.data = shapeData, .active = true}; // Mark as active
-		} else {
-			index = static_cast<uint32_t>(m_nodes.size());
-			m_nodes.push_back(LayerNode{.data = shapeData}); // active=true by default
-		}
-
-		return index;
-	}
+namespace ui {
 
 	// --- Layer Creation ---
 
 	uint32_t LayerManager::CreateRectangle(const Rectangle& rect) {
-		return CreateLayer(rect);
+		LayerNode newNode{.data = rect, .active = true};
+		uint32_t index = m_freeList.empty() ? static_cast<uint32_t>(m_nodes.size()) : m_freeList.back();
+		if (m_freeList.empty()) {
+			m_nodes.push_back(newNode);
+		} else {
+			m_freeList.pop_back();
+			m_nodes[index] = newNode;
+		}
+		return index;
 	}
 
 	uint32_t LayerManager::CreateCircle(const Circle& circle) {
-		return CreateLayer(circle);
+		LayerNode newNode{.data = circle, .active = true};
+		uint32_t index = m_freeList.empty() ? static_cast<uint32_t>(m_nodes.size()) : m_freeList.back();
+		if (m_freeList.empty()) {
+			m_nodes.push_back(newNode);
+		} else {
+			m_freeList.pop_back();
+			m_nodes[index] = newNode;
+		}
+		return index;
 	}
 
 	uint32_t LayerManager::CreateText(const Text& text) {
-		return CreateLayer(text);
+		LayerNode newNode{.data = text, .active = true};
+		uint32_t index = m_freeList.empty() ? static_cast<uint32_t>(m_nodes.size()) : m_freeList.back();
+		if (m_freeList.empty()) {
+			m_nodes.push_back(newNode);
+		} else {
+			m_freeList.pop_back();
+			m_nodes[index] = newNode;
+		}
+		return index;
 	}
 
 	uint32_t LayerManager::CreateLine(const Line& line) {
-		return CreateLayer(line);
+		LayerNode newNode{.data = line, .active = true};
+		uint32_t index = m_freeList.empty() ? static_cast<uint32_t>(m_nodes.size()) : m_freeList.back();
+		if (m_freeList.empty()) {
+			m_nodes.push_back(newNode);
+		} else {
+			m_freeList.pop_back();
+			m_nodes[index] = newNode;
+		}
+		return index;
 	}
 
 	// --- Hierarchy Management ---
 
 	void LayerManager::AddChild(uint32_t parentIndex, uint32_t childIndex) {
-		assert(IsValidIndex(parentIndex) && "Parent index out of range");
-		assert(IsValidIndex(childIndex) && "Child index out of range");
-		assert(parentIndex != childIndex && "Cannot add layer as its own child");
-		assert(!IsAncestor(childIndex, parentIndex) && "Cannot add ancestor as child (would create cycle)");
+		assert(IsValidIndex(parentIndex));
+		assert(IsValidIndex(childIndex));
+		assert(parentIndex != childIndex);
+		assert(!IsAncestor(childIndex, parentIndex));
 
 		LayerNode& parent = m_nodes[parentIndex];
 		LayerNode& child = m_nodes[childIndex];
@@ -76,8 +89,8 @@ namespace UI {
 	}
 
 	void LayerManager::RemoveChild(uint32_t parentIndex, uint32_t childIndex) {
-		assert(IsValidIndex(parentIndex) && "Parent index out of range");
-		assert(IsValidIndex(childIndex) && "Child index out of range");
+		assert(IsValidIndex(parentIndex));
+		assert(IsValidIndex(childIndex));
 
 		LayerNode& parent = m_nodes[parentIndex];
 		LayerNode& child = m_nodes[childIndex];
@@ -93,14 +106,14 @@ namespace UI {
 	}
 
 	const std::vector<uint32_t>& LayerManager::GetChildren(uint32_t nodeIndex) const {
-		assert(IsValidIndex(nodeIndex) && "Node index out of range");
+		assert(IsValidIndex(nodeIndex));
 		return m_nodes[nodeIndex].childIndices;
 	}
 
 	// --- Z-Index Management ---
 
 	void LayerManager::SetZIndex(uint32_t nodeIndex, float zIndex) {
-		assert(IsValidIndex(nodeIndex) && "Node index out of range");
+		assert(IsValidIndex(nodeIndex));
 
 		LayerNode& node = m_nodes[nodeIndex];
 
@@ -115,12 +128,12 @@ namespace UI {
 	}
 
 	float LayerManager::GetZIndex(uint32_t nodeIndex) const {
-		assert(IsValidIndex(nodeIndex) && "Node index out of range");
+		assert(IsValidIndex(nodeIndex));
 		return m_nodes[nodeIndex].zIndex;
 	}
 
 	void LayerManager::SortChildren(uint32_t nodeIndex) {
-		assert(IsValidIndex(nodeIndex) && "Node index out of range");
+		assert(IsValidIndex(nodeIndex));
 
 		LayerNode& node = m_nodes[nodeIndex];
 
@@ -137,34 +150,34 @@ namespace UI {
 	// --- Visibility ---
 
 	void LayerManager::SetVisible(uint32_t nodeIndex, bool visible) {
-		assert(IsValidIndex(nodeIndex) && "Node index out of range");
+		assert(IsValidIndex(nodeIndex));
 		m_nodes[nodeIndex].visible = visible;
 	}
 
 	bool LayerManager::IsVisible(uint32_t nodeIndex) const {
-		assert(IsValidIndex(nodeIndex) && "Node index out of range");
+		assert(IsValidIndex(nodeIndex));
 		return m_nodes[nodeIndex].visible;
 	}
 
 	// --- Access ---
 
 	const LayerNode& LayerManager::GetNode(uint32_t nodeIndex) const {
-		assert(IsValidIndex(nodeIndex) && "Node index out of range");
+		assert(IsValidIndex(nodeIndex));
 		return m_nodes[nodeIndex];
 	}
 
 	LayerNode& LayerManager::GetNode(uint32_t nodeIndex) {
-		assert(IsValidIndex(nodeIndex) && "Node index out of range");
+		assert(IsValidIndex(nodeIndex));
 		return m_nodes[nodeIndex];
 	}
 
 	const LayerData& LayerManager::GetData(uint32_t nodeIndex) const {
-		assert(IsValidIndex(nodeIndex) && "Node index out of range");
+		assert(IsValidIndex(nodeIndex));
 		return m_nodes[nodeIndex].data;
 	}
 
 	LayerData& LayerManager::GetData(uint32_t nodeIndex) {
-		assert(IsValidIndex(nodeIndex) && "Node index out of range");
+		assert(IsValidIndex(nodeIndex));
 		return m_nodes[nodeIndex].data;
 	}
 
@@ -180,7 +193,7 @@ namespace UI {
 	}
 
 	void LayerManager::RenderSubtree(uint32_t rootIndex) {
-		assert(IsValidIndex(rootIndex) && "Root index out of range");
+		assert(IsValidIndex(rootIndex));
 		RenderNode(rootIndex);
 	}
 
@@ -216,7 +229,7 @@ namespace UI {
 	}
 
 	void LayerManager::UpdateSubtree(uint32_t rootIndex, float deltaTime) {
-		assert(IsValidIndex(rootIndex) && "Root index out of range");
+		assert(IsValidIndex(rootIndex));
 		UpdateNode(rootIndex, deltaTime);
 	}
 
@@ -252,7 +265,7 @@ namespace UI {
 	//   3. Clear the node's data and mark it as inactive
 	//   4. Does NOT add the root node to the free list (caller's responsibility)
 	void LayerManager::DestroyLayer(uint32_t nodeIndex) {
-		assert(IsValidIndex(nodeIndex) && "Node index out of range");
+		assert(IsValidIndex(nodeIndex));
 
 		// Remove from parent if it has one
 		LayerNode& node = m_nodes[nodeIndex];
@@ -284,7 +297,7 @@ namespace UI {
 		node.parentIndex = UINT32_MAX;
 		node.visible = true;
 		node.active = false; // Mark as inactive so RenderAll/UpdateAll skip it
-		node.zIndex = 0.0f;
+		node.zIndex = 0.0F;
 		node.childrenNeedSorting = false;
 	}
 
@@ -311,10 +324,4 @@ namespace UI {
 		return false; // Reached root without finding ancestor
 	}
 
-	// Explicit template instantiations for all supported shape types
-	template uint32_t LayerManager::CreateLayer(const Rectangle&);
-	template uint32_t LayerManager::CreateLayer(const Circle&);
-	template uint32_t LayerManager::CreateLayer(const Text&);
-	template uint32_t LayerManager::CreateLayer(const Line&);
-
-} // namespace UI
+} // namespace ui

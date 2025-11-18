@@ -16,6 +16,7 @@
 // IMPORTANT: Arenas do NOT call destructors! Only use for POD types or manage cleanup manually.
 
 #include <cassert>
+#include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 
@@ -24,15 +25,13 @@ namespace foundation {
 	// Core linear allocator
 	class Arena {
 	  public:
-		explicit Arena(size_t size) // NOLINT(cppcoreguidelines-pro-type-member-init)
-			: m_buffer(nullptr),
-			  m_size(size),
-			  m_used(0) {
-			m_buffer = static_cast<uint8_t*>(malloc(size));
-			assert(m_buffer && static_cast<bool>("Arena allocation failed: out of memory"));
+		explicit Arena(size_t size)
+			: m_buffer(static_cast<uint8_t*>(std::malloc(size))),
+			  m_size(size) {
+			assert(m_buffer != nullptr);
 		}
 
-		~Arena() { free(m_buffer); }
+		~Arena() { std::free(m_buffer); }
 
 		// Non-copyable
 		Arena(const Arena&) = delete;
@@ -49,7 +48,7 @@ namespace foundation {
 
 			// Check capacity
 			if (aligned + size > m_size) {
-				assert(false && "Arena out of memory"); // NOLINT(readability-simplify-boolean-expr,readability-implicit-bool-conversion)
+				assert(false); // NOLINT(readability-simplify-boolean-expr,readability-implicit-bool-conversion)
 				return nullptr;
 			}
 
@@ -74,8 +73,8 @@ namespace foundation {
 		void Reset() { m_used = 0; }
 
 		// Restore arena to a previous checkpoint
-		void RestoreCheckpoint(size_t checkpoint) { // NOLINT(readability-convert-member-functions-to-static)
-			assert(checkpoint <= m_used && static_cast<bool>("Invalid checkpoint"));
+		void RestoreCheckpoint(size_t checkpoint) {
+			assert(checkpoint <= m_used);
 			m_used = checkpoint;
 		}
 
@@ -85,9 +84,9 @@ namespace foundation {
 		size_t GetRemaining() const { return m_size - m_used; }
 
 	  private:
-		uint8_t* m_buffer;
-		size_t	 m_size;
-		size_t	 m_used;
+		uint8_t* m_buffer = nullptr;
+		size_t	 m_size = 0;
+		size_t	 m_used = 0;
 	};
 
 	// Frame arena - designed for per-frame temporary data

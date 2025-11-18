@@ -7,8 +7,8 @@ namespace renderer {
 
 	// Internal vertex structure for tessellation
 	struct Tessellator::Vertex {
-		Foundation::Vec2 position;
-		size_t			 originalIndex;
+		Foundation::Vec2 position{};
+		size_t			 originalIndex{};
 		bool			 isEar = false; // For ear clipping
 		bool			 isProcessed = false;
 	};

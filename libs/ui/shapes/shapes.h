@@ -9,7 +9,7 @@
 // These are plain structs that call Primitives API during rendering
 // Research-aligned: value semantics, no pointers, contiguous storage
 
-namespace UI {
+namespace ui {
 
 	// Rectangle shape
 	struct Rectangle {
@@ -52,4 +52,4 @@ namespace UI {
 		void Render() const;
 	};
 
-} // namespace UI
+} // namespace ui

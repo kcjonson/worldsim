@@ -74,7 +74,7 @@ namespace Renderer {
 			width = 1920; // Default fallback
 			height = 1080;
 		}
-		return glm::vec2(static_cast<float>(width), static_cast<float>(height));
+		return {static_cast<float>(width), static_cast<float>(height)};
 	}
 
 	void CoordinateSystem::SetFullViewport() const {
@@ -152,14 +152,14 @@ namespace Renderer {
 	CoordinateSystem::PercentSize(float widthPercent, float heightPercent) const { // NOLINT(readability-convert-member-functions-to-static)
 		// Convert percentage dimensions to logical pixels
 		glm::vec2 size = GetWindowSize();
-		return glm::vec2(size.x * (widthPercent / 100.0F), size.y * (heightPercent / 100.0F));
+		return {size.x * (widthPercent / 100.0F), size.y * (heightPercent / 100.0F)};
 	}
 
 	glm::vec2
 	CoordinateSystem::PercentPosition(float xPercent, float yPercent) const { // NOLINT(readability-convert-member-functions-to-static)
 		// Convert percentage position to logical pixels
 		glm::vec2 size = GetWindowSize();
-		return glm::vec2(size.x * (xPercent / 100.0F), size.y * (yPercent / 100.0F));
+		return {size.x * (xPercent / 100.0F), size.y * (yPercent / 100.0F)};
 	}
 
 } // namespace Renderer

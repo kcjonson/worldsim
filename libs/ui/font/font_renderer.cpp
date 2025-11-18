@@ -36,7 +36,7 @@ namespace ui {
 		// Initialize FreeType
 		if (FT_Init_FreeType(&m_library) != 0) {
 			LOG_ERROR(UI, "FATAL ERROR: Could not init FreeType Library");
-			std::exit(1);
+			std::exit(EXIT_FAILURE);
 		}
 		LOG_INFO(UI, "FreeType initialized successfully");
 
@@ -45,7 +45,7 @@ namespace ui {
 			LOG_ERROR(UI, "FATAL ERROR: Failed to load font");
 			FT_Done_FreeType(m_library);
 			m_library = nullptr;
-			std::exit(1);
+			std::exit(EXIT_FAILURE);
 		}
 		LOG_INFO(UI, "Font loaded successfully");
 
@@ -61,7 +61,7 @@ namespace ui {
 			m_characters.clear();
 			FT_Done_FreeType(m_library);
 			m_library = nullptr;
-			std::exit(1);
+			std::exit(EXIT_FAILURE);
 		}
 		LOG_INFO(UI, "Shaders compiled successfully");
 
@@ -217,7 +217,7 @@ namespace ui {
 	glm::vec2
 	FontRenderer::MeasureText(const std::string& text, float scale) const { // NOLINT(readability-convert-member-functions-to-static)
 		if (text.empty()) {
-			return glm::vec2(0.0F, 0.0F);
+			return {0.0F, 0.0F};
 		}
 
 		float totalWidth = 0.0F;
@@ -264,7 +264,7 @@ namespace ui {
 		}
 		actualHeightScaled = std::max(0.0F, actualHeightScaled);
 
-		return glm::vec2(scaledTotalWidth, actualHeightScaled);
+		return {scaledTotalWidth, actualHeightScaled};
 	}
 
 	float FontRenderer::GetMaxGlyphHeight(float scale) const {

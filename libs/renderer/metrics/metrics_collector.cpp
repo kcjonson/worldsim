@@ -6,11 +6,7 @@
 
 namespace Renderer {
 
-	MetricsCollector::MetricsCollector() // NOLINT(cppcoreguidelines-pro-type-member-init,modernize-use-equals-default)
-		: m_currentSampleIndex(0),
-		  m_drawCalls(0),
-		  m_vertexCount(0),
-		  m_triangleCount(0) {
+	MetricsCollector::MetricsCollector() {
 		// Reserve space for 60 frames (1 second at 60 FPS)
 		m_frameTimeSamples.resize(60, 16.67F); // Initialize with ~60 FPS
 	}
