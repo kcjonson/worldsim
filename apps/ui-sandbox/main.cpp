@@ -102,8 +102,20 @@ void MouseButtonCallback(GLFWwindow* window, int button, int action, int mods) {
 }
 
 void CursorPosCallback(GLFWwindow* window, double xpos, double ypos) {
-	g_menuState.mouseX = xpos;
-	g_menuState.mouseY = ypos;
+	// Mouse coordinates are in window space, but rendering is in framebuffer space
+	// On high-DPI displays (Retina), we need to scale the coordinates
+	int windowWidth = 0;
+	int windowHeight = 0;
+	int framebufferWidth = 0;
+	int framebufferHeight = 0;
+	glfwGetWindowSize(window, &windowWidth, &windowHeight);
+	glfwGetFramebufferSize(window, &framebufferWidth, &framebufferHeight);
+
+	float scaleX = static_cast<float>(framebufferWidth) / static_cast<float>(windowWidth);
+	float scaleY = static_cast<float>(framebufferHeight) / static_cast<float>(windowHeight);
+
+	g_menuState.mouseX = xpos * scaleX;
+	g_menuState.mouseY = ypos * scaleY;
 }
 
 // Render navigation menu
@@ -133,13 +145,7 @@ void RenderNavigationMenu() {
 		{.bounds = {kMenuX, kMenuY, kMenuWidth, kHeaderHeight}, .style = {.fill = Color(0.2F, 0.2F, 0.3F, 1.0F)}, .id = "menu_header"}
 	);
 
-	// Draw header title
-	if (g_fontRenderer) {
-		glm::vec3 headerColor(0.9F, 0.9F, 0.9F);
-		g_fontRenderer->RenderText("Scenes", glm::vec2(kMenuX + 10, kMenuY + 8), 1.0F, headerColor);
-	}
-
-	// Draw scene items
+	// Draw scene item rectangles (highlights)
 	for (size_t i = 0; i < g_menuState.sceneNames.size(); i++) {
 		float itemY = kMenuY + kHeaderHeight + (static_cast<float>(i) * kLineHeight);
 
@@ -162,8 +168,22 @@ void RenderNavigationMenu() {
 				 .id = ("menu_hover_" + std::to_string(i)).c_str()}
 			);
 		}
+	}
 
-		// Draw scene name
+	// Flush batched rectangles before rendering text
+	Renderer::Primitives::EndFrame();
+	Renderer::Primitives::BeginFrame();
+
+	// Draw header title
+	if (g_fontRenderer) {
+		glm::vec3 headerColor(0.9F, 0.9F, 0.9F);
+		g_fontRenderer->RenderText("Scenes", glm::vec2(kMenuX + 10, kMenuY + 8), 1.0F, headerColor);
+	}
+
+	// Draw scene names
+	for (size_t i = 0; i < g_menuState.sceneNames.size(); i++) {
+		float itemY = kMenuY + kHeaderHeight + (static_cast<float>(i) * kLineHeight);
+
 		if (g_fontRenderer) {
 			glm::vec3 textColor = (i == g_menuState.selectedIndex) ? glm::vec3(1.0F, 1.0F, 1.0F) : glm::vec3(0.8F, 0.8F, 0.8F);
 			g_fontRenderer->RenderText(g_menuState.sceneNames[i], glm::vec2(kMenuX + 10, itemY + 5), 0.8F, textColor);
