@@ -26,3 +26,11 @@ target_link_libraries(ui-sandbox
         renderer
         foundation
 )
+
+# Copy shaders to executable directory
+add_custom_command(TARGET ui-sandbox POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+    ${CMAKE_BINARY_DIR}/shaders
+    $<TARGET_FILE_DIR:ui-sandbox>/shaders
+    COMMENT "Copying shaders to ui-sandbox directory"
+)

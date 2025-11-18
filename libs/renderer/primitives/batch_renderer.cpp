@@ -8,41 +8,6 @@
 
 namespace Renderer {
 
-	// Vertex shader source
-	static const char* g_kVertexShaderSource = R"(
-#version 330 core
-
-layout(location = 0) in vec2 a_position;
-layout(location = 1) in vec2 a_texCoord;
-layout(location = 2) in vec4 a_color;
-
-uniform mat4 u_projection;
-uniform mat4 u_transform;
-
-out vec2 v_texCoord;
-out vec4 v_color;
-
-void main() {
-	v_texCoord = a_texCoord;
-	v_color = a_color;
-	gl_Position = u_projection * u_transform * vec4(a_position, 0.0, 1.0);
-}
-)";
-
-	// Fragment shader source
-	static const char* g_kFragmentShaderSource = R"(
-#version 330 core
-
-in vec2 v_texCoord;
-in vec4 v_color;
-
-out vec4 FragColor;
-
-void main() {
-	FragColor = v_color;
-}
-)";
-
 	BatchRenderer::BatchRenderer() { // NOLINT(cppcoreguidelines-pro-type-member-init,modernize-use-equals-default)
 		// Reserve space for vertices to minimize allocations
 		m_vertices.reserve(10000);
@@ -54,17 +19,15 @@ void main() {
 	}
 
 	void BatchRenderer::Init() {
-		// Compile shader
-		m_shader = CompileShader();
-
-		if (m_shader == 0) {
-			std::cerr << "Failed to compile primitive shader!" << std::endl;
+		// Load shader from files
+		if (!m_shader.LoadFromFile("primitive.vert", "primitive.frag")) {
+			std::cerr << "Failed to load primitive shaders!" << std::endl;
 			return;
 		}
 
 		// Get uniform locations
-		m_projectionLoc = glGetUniformLocation(m_shader, "u_projection");
-		m_transformLoc = glGetUniformLocation(m_shader, "u_transform");
+		m_projectionLoc = glGetUniformLocation(m_shader.GetProgram(), "u_projection");
+		m_transformLoc = glGetUniformLocation(m_shader.GetProgram(), "u_transform");
 
 		// Create VAO/VBO/IBO
 		glGenVertexArrays(1, &m_vao);
@@ -110,10 +73,7 @@ void main() {
 			m_ibo = 0;
 		}
 
-		if (m_shader != 0) {
-			glDeleteProgram(m_shader);
-			m_shader = 0;
-		}
+		// Shader cleanup is handled automatically by RAII
 	}
 
 	void BatchRenderer::AddQuad( // NOLINT(readability-convert-member-functions-to-static)
@@ -177,7 +137,7 @@ void main() {
 		glBufferData(GL_ELEMENT_ARRAY_BUFFER, m_indices.size() * sizeof(uint32_t), m_indices.data(), GL_DYNAMIC_DRAW);
 
 		// Bind shader and VAO
-		glUseProgram(m_shader);
+		m_shader.Use();
 		glBindVertexArray(m_vao);
 
 		// Create projection matrix
@@ -237,61 +197,6 @@ void main() {
 		stats.vertexCount = static_cast<uint32_t>(m_vertices.size());
 		stats.triangleCount = static_cast<uint32_t>(m_indices.size() / 3);
 		return stats;
-	}
-
-	GLuint BatchRenderer::CompileShader() { // NOLINT(readability-convert-member-functions-to-static)
-		// Compile vertex shader
-		GLuint vertexShader = glCreateShader(GL_VERTEX_SHADER);
-		glShaderSource(vertexShader, 1, &g_kVertexShaderSource, nullptr);
-		glCompileShader(vertexShader);
-
-		GLint success = 0;
-		glGetShaderiv(vertexShader, GL_COMPILE_STATUS, &success);
-		if (success == 0) {
-			char infoLog[512];
-			glGetShaderInfoLog(vertexShader, 512, nullptr, infoLog);
-			std::cerr << "Vertex shader compilation failed: " << infoLog << std::endl;
-			glDeleteShader(vertexShader);
-			return 0;
-		}
-
-		// Compile fragment shader
-		GLuint fragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
-		glShaderSource(fragmentShader, 1, &g_kFragmentShaderSource, nullptr);
-		glCompileShader(fragmentShader);
-
-		glGetShaderiv(fragmentShader, GL_COMPILE_STATUS, &success);
-		if (success == 0) {
-			char infoLog[512];
-			glGetShaderInfoLog(fragmentShader, 512, nullptr, infoLog);
-			std::cerr << "Fragment shader compilation failed: " << infoLog << std::endl;
-			glDeleteShader(vertexShader);
-			glDeleteShader(fragmentShader);
-			return 0;
-		}
-
-		// Link shader program
-		GLuint program = glCreateProgram();
-		glAttachShader(program, vertexShader);
-		glAttachShader(program, fragmentShader);
-		glLinkProgram(program);
-
-		glGetProgramiv(program, GL_LINK_STATUS, &success);
-		if (success == 0) {
-			char infoLog[512];
-			glGetProgramInfoLog(program, 512, nullptr, infoLog);
-			std::cerr << "Shader program linking failed: " << infoLog << std::endl;
-			glDeleteProgram(program);
-			glDeleteShader(vertexShader);
-			glDeleteShader(fragmentShader);
-			return 0;
-		}
-
-		// Clean up shaders (no longer needed after linking)
-		glDeleteShader(vertexShader);
-		glDeleteShader(fragmentShader);
-
-		return program;
 	}
 
 } // namespace Renderer
