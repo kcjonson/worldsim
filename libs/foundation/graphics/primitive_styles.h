@@ -36,18 +36,10 @@ namespace Foundation { // NOLINT(readability-identifier-naming)
 	};
 
 	// Text horizontal alignment
-	enum class HorizontalAlign {
-		Left,
-		Center,
-		Right
-	};
+	enum class HorizontalAlign { Left, Center, Right };
 
 	// Text vertical alignment
-	enum class VerticalAlign {
-		Top,
-		Middle,
-		Bottom
-	};
+	enum class VerticalAlign { Top, Middle, Bottom };
 
 	// Text visual style
 	struct TextStyle {

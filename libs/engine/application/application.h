@@ -3,8 +3,12 @@
 #include <GL/glew.h>
 #include <GLFW/glfw3.h>
 #include <functional>
+#include <memory>
 
 namespace engine {
+
+	// Forward declarations
+	class InputManager;
 
 	/// @brief Core application class that owns the main game loop
 	///
@@ -51,7 +55,9 @@ namespace engine {
 		/// @param window GLFW window (must be valid, Application does not take ownership)
 		explicit Application(GLFWwindow* window);
 
-		~Application() = default;
+		/// @brief Destructor
+		/// Explicitly defined in .cpp because of std::unique_ptr<InputManager>
+		~Application();
 
 		// Disable copy/move
 		Application(const Application&) = delete;
@@ -108,6 +114,8 @@ namespace engine {
 		double		m_lastTime{0.0};	// For delta time calculation
 		float		m_deltaTime{0.0F};	// Last frame delta time
 		float		m_fps{0.0F};		// Current FPS
+
+		std::unique_ptr<InputManager> m_inputManager; // Input management system
 
 		OverlayRenderer	  m_overlayRenderer{};	 // Application-level UI
 		PreFrameCallback  m_preFrameCallback{};	 // Pre-frame callback

@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2025-11-18 (Shape System complete - Circle and Text rendering working)
+Last Updated: 2025-11-18 (InputManager complete - Full input state tracking with test scene)
 
 ## Epic/Story/Task Template
 
@@ -187,12 +187,13 @@ Use this template for all work items:
   - [x] Create shapes demo (layer_scene demonstrates all shapes)
   - [x] Test all shape types rendering (verified via screenshot)
   - [x] Test shapes nested in layers (working correctly)
- - [ ] InputManager
-  - [ ] Create libs/engine/input/ library
-  - [ ] Port InputManager from colonysim
-  - [ ] Keep instance-based pattern (not singleton)
-  - [ ] Adapt GLFW callbacks to worldsim conventions
-  - [ ] Integration with Scene::HandleInput()
+- [x] InputManager ✅ COMPLETE
+  - [x] Create libs/engine/input/ library
+  - [x] Port InputManager from colonysim
+  - [x] Application-owned singleton pattern (matches SceneManager)
+  - [x] Adapt GLFW callbacks to worldsim conventions
+  - [x] Integration with Application::Update() → InputManager::Update() → Scene::HandleInput()
+  - [x] InputTestScene for testing and demonstration
 - [ ] Style System
   - [ ] Create libs/renderer/styles/ library
   - [ ] Port Base style class

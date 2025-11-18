@@ -1,6 +1,6 @@
 #include "shapes/shapes.h"
-#include "primitives/primitives.h"
 #include "font/font_renderer.h"
+#include "primitives/primitives.h"
 #include <glm/glm.hpp>
 
 namespace UI {
@@ -51,9 +51,9 @@ namespace UI {
 		}
 
 		// Vertical alignment
-	// Note: We use font ascent (not textSize.y) for consistent alignment across different text
-	// strings. This ensures buttons and labels align consistently regardless of whether the
-	// specific text contains descenders (like g, y, p). This is standard for UI text.
+		// Note: We use font ascent (not textSize.y) for consistent alignment across different text
+		// strings. This ensures buttons and labels align consistently regardless of whether the
+		// specific text contains descenders (like g, y, p). This is standard for UI text.
 		float ascent = fontRenderer->GetAscent(scale);
 		switch (style.vAlign) {
 			case Foundation::VerticalAlign::Middle:

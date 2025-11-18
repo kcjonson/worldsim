@@ -64,7 +64,7 @@ namespace {
 			};
 			m_layerManager.AddChild(m_rootLayer, sizeLabel);
 
-			float yOffset = 160.0F;
+			float		yOffset = 160.0F;
 			const float sizes[] = {12.0F, 16.0F, 20.0F, 24.0F, 32.0F};
 			for (float size : sizes) {
 				Text sizeExample{
@@ -87,34 +87,22 @@ namespace {
 			m_layerManager.AddChild(m_rootLayer, colorLabel);
 
 			Text redText{
-				.position = {400.0F, 160.0F},
-				.text = "Red Text",
-				.style = {.color = Color::Red(), .fontSize = 18.0F},
-				.id = "red"
+				.position = {400.0F, 160.0F}, .text = "Red Text", .style = {.color = Color::Red(), .fontSize = 18.0F}, .id = "red"
 			};
 			m_layerManager.AddChild(m_rootLayer, redText);
 
 			Text greenText{
-				.position = {400.0F, 190.0F},
-				.text = "Green Text",
-				.style = {.color = Color::Green(), .fontSize = 18.0F},
-				.id = "green"
+				.position = {400.0F, 190.0F}, .text = "Green Text", .style = {.color = Color::Green(), .fontSize = 18.0F}, .id = "green"
 			};
 			m_layerManager.AddChild(m_rootLayer, greenText);
 
 			Text blueText{
-				.position = {400.0F, 220.0F},
-				.text = "Blue Text",
-				.style = {.color = Color::Blue(), .fontSize = 18.0F},
-				.id = "blue"
+				.position = {400.0F, 220.0F}, .text = "Blue Text", .style = {.color = Color::Blue(), .fontSize = 18.0F}, .id = "blue"
 			};
 			m_layerManager.AddChild(m_rootLayer, blueText);
 
 			Text yellowText{
-				.position = {400.0F, 250.0F},
-				.text = "Yellow Text",
-				.style = {.color = Color::Yellow(), .fontSize = 18.0F},
-				.id = "yellow"
+				.position = {400.0F, 250.0F}, .text = "Yellow Text", .style = {.color = Color::Yellow(), .fontSize = 18.0F}, .id = "yellow"
 			};
 			m_layerManager.AddChild(m_rootLayer, yellowText);
 
@@ -129,10 +117,7 @@ namespace {
 
 			// Draw reference line
 			Rectangle refLine{
-				.position = {350.0F, 420.0F},
-				.size = {2.0F, 100.0F},
-				.style = {.fill = Color(0.5F, 0.5F, 0.5F, 1.0F)},
-				.id = "ref_line"
+				.position = {350.0F, 420.0F}, .size = {2.0F, 100.0F}, .style = {.fill = Color(0.5F, 0.5F, 0.5F, 1.0F)}, .id = "ref_line"
 			};
 			m_layerManager.AddChild(m_rootLayer, refLine);
 
@@ -171,10 +156,7 @@ namespace {
 
 			// Draw reference line
 			Rectangle vRefLine{
-				.position = {600.0F, 470.0F},
-				.size = {300.0F, 2.0F},
-				.style = {.fill = Color(0.5F, 0.5F, 0.5F, 1.0F)},
-				.id = "vref_line"
+				.position = {600.0F, 470.0F}, .size = {300.0F, 2.0F}, .style = {.fill = Color(0.5F, 0.5F, 0.5F, 1.0F)}, .id = "vref_line"
 			};
 			m_layerManager.AddChild(m_rootLayer, vRefLine);
 
@@ -207,9 +189,7 @@ namespace {
 			// No input handling needed
 		}
 
-		void Update(float dt) override {
-			m_layerManager.UpdateAll(dt);
-		}
+		void Update(float dt) override { m_layerManager.UpdateAll(dt); }
 
 		void Render() override {
 			// Clear background
@@ -226,9 +206,7 @@ namespace {
 			m_fontRenderer.reset();
 		}
 
-		std::string ExportState() override {
-			return R"({"scene": "text_shapes", "description": "Text shape API demonstration"})";
-		}
+		std::string ExportState() override { return R"({"scene": "text_shapes", "description": "Text shape API demonstration"})"; }
 
 		const char* GetName() const override { return "text_shapes"; }
 

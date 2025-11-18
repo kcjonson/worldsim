@@ -25,18 +25,20 @@ namespace UI {
 			m_freeList.pop_back();
 			m_nodes[index] = LayerNode{
 				.data = shapeData,
-				.zIndex = assignedZIndex,		// Auto-assigned or explicit
-				.visible = shapeData.visible,	// Read from shape
+				.zIndex = assignedZIndex,	  // Auto-assigned or explicit
+				.visible = shapeData.visible, // Read from shape
 				.active = true
 			};
 		} else {
 			index = static_cast<uint32_t>(m_nodes.size());
-			m_nodes.push_back(LayerNode{
-				.data = shapeData,
-				.zIndex = assignedZIndex,		// Auto-assigned or explicit
-				.visible = shapeData.visible	// Read from shape
-				// active=true by default
-			});
+			m_nodes.push_back(
+				LayerNode{
+					.data = shapeData,
+					.zIndex = assignedZIndex,	 // Auto-assigned or explicit
+					.visible = shapeData.visible // Read from shape
+												 // active=true by default
+				}
+			);
 		}
 
 		return index;
