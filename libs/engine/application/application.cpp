@@ -1,6 +1,6 @@
 #include "application.h"
-#include "scene/scene_manager.h"
 #include "input/input_manager.h"
+#include "scene/scene_manager.h"
 #include "utils/log.h"
 
 #include <exception>

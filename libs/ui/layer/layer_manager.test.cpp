@@ -140,8 +140,8 @@ TEST(LayerManagerTest, AutoAssignZIndexOnAddChild) {
 	// AddChild should also auto-assign zIndex
 	Rectangle rect1{};
 	Rectangle rect2{};
-	uint32_t child1 = manager.AddChild(parent, rect1);
-	uint32_t child2 = manager.AddChild(parent, rect2);
+	uint32_t  child1 = manager.AddChild(parent, rect1);
+	uint32_t  child2 = manager.AddChild(parent, rect2);
 
 	// Auto-assignment continues from previous counter
 	// parent got 1.0, so children should get 2.0, 3.0
@@ -152,9 +152,9 @@ TEST(LayerManagerTest, AutoAssignZIndexOnAddChild) {
 TEST(LayerManagerTest, ExplicitZIndexOverridesAuto) {
 	LayerManager manager;
 
-	Rectangle rect1{};					// Auto-assign (1.0)
-	Rectangle rect2{.zIndex = 99.0f};	// Explicit
-	Rectangle rect3{};					// Auto-assign (2.0, not 100.0)
+	Rectangle rect1{};				  // Auto-assign (1.0)
+	Rectangle rect2{.zIndex = 99.0f}; // Explicit
+	Rectangle rect3{};				  // Auto-assign (2.0, not 100.0)
 
 	uint32_t index1 = manager.Create(rect1);
 	uint32_t index2 = manager.Create(rect2);
@@ -310,7 +310,7 @@ TEST(LayerManagerTest, AddChildConvenienceOverload_Rectangle) {
 	uint32_t parent = manager.Create(Container{});
 
 	Rectangle rect{.position = {10.0f, 20.0f}, .size = {100.0f, 50.0f}, .zIndex = 3.0f, .visible = false};
-	uint32_t child = manager.AddChild(parent, rect);
+	uint32_t  child = manager.AddChild(parent, rect);
 
 	// Verify hierarchy
 	EXPECT_EQ(manager.GetNode(parent).childIndices.size(), 1);
@@ -331,7 +331,7 @@ TEST(LayerManagerTest, AddChildConvenienceOverload_Circle) {
 
 	uint32_t parent = manager.Create(Container{.id = "parent"});
 
-	Circle circle{.center = {50.0f, 50.0f}, .radius = 25.0f, .zIndex = 10.0f};
+	Circle	 circle{.center = {50.0f, 50.0f}, .radius = 25.0f, .zIndex = 10.0f};
 	uint32_t child = manager.AddChild(parent, circle);
 
 	EXPECT_EQ(manager.GetNode(child).parentIndex, parent);
@@ -345,7 +345,7 @@ TEST(LayerManagerTest, AddChildConvenienceOverload_Container) {
 	uint32_t parent = manager.Create(Container{});
 
 	Container childContainer{.id = "child_container", .zIndex = 5.0f};
-	uint32_t child = manager.AddChild(parent, childContainer);
+	uint32_t  child = manager.AddChild(parent, childContainer);
 
 	EXPECT_EQ(manager.GetNode(child).parentIndex, parent);
 	EXPECT_TRUE(std::holds_alternative<Container>(manager.GetNode(child).data));

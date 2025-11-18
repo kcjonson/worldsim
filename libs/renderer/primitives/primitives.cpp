@@ -220,8 +220,8 @@ namespace Renderer::Primitives {
 		constexpr int	vertexCount = segments + 1; // Center + perimeter vertices
 		constexpr int	indexCount = segments * 3;	// Each segment creates a triangle
 
-	// Ensure vertex count fits in uint16_t index buffer
-	static_assert(vertexCount <= 65535, "Circle vertex count exceeds uint16_t index range");
+		// Ensure vertex count fits in uint16_t index buffer
+		static_assert(vertexCount <= 65535, "Circle vertex count exceeds uint16_t index range");
 
 		// Use thread-local buffers to avoid allocations on every call
 		static thread_local std::vector<Foundation::Vec2> vertices;
