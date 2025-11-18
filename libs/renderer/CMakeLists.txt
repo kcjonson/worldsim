@@ -25,6 +25,14 @@ target_link_libraries(renderer
         glm::glm
 )
 
+# Copy shaders to build directory
+add_custom_command(TARGET renderer POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders
+    ${CMAKE_BINARY_DIR}/shaders
+    COMMENT "Copying shader files to build directory"
+)
+
 # Tests
 if(BUILD_TESTING)
     # Discover test files using naming pattern
