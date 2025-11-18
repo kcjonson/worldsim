@@ -1,13 +1,18 @@
 // Layer Scene - UI Layer System Showcase
 // Demonstrates LayerManager with hierarchy, z-ordering, and all shape types
 
+#include <font/font_renderer.h>
 #include <graphics/color.h>
 #include <layer/layer_manager.h>
 #include <primitives/primitives.h>
 #include <scene/scene.h>
 #include <scene/scene_manager.h>
+#include <utils/log.h>
 
 #include <GL/glew.h>
+#include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+#include <memory>
 
 namespace {
 
@@ -16,6 +21,25 @@ namespace {
 		void OnEnter() override {
 			using namespace UI;
 			using namespace Foundation;
+
+			// Initialize font renderer for text shapes
+			m_fontRenderer = std::make_unique<ui::FontRenderer>();
+			if (!m_fontRenderer->Initialize()) {
+				LOG_ERROR(UI, "Failed to initialize FontRenderer!");
+				return;
+			}
+
+			// Set up projection matrix for text rendering
+			int viewportWidth = 0;
+			int viewportHeight = 0;
+			Renderer::Primitives::GetViewport(viewportWidth, viewportHeight);
+			glm::mat4 projection = glm::ortho(0.0F, static_cast<float>(viewportWidth), static_cast<float>(viewportHeight), 0.0F);
+			m_fontRenderer->SetProjectionMatrix(projection);
+
+			// Set font renderer in Primitives API so Text shapes can use it
+			Renderer::Primitives::SetFontRenderer(m_fontRenderer.get());
+
+			LOG_INFO(UI, "FontRenderer initialized for layer scene");
 
 			// Create root container (pure hierarchy node - no visual)
 			// No zIndex needed - will auto-assign based on insertion order
@@ -43,8 +67,13 @@ namespace {
 			};
 			m_layerManager.AddChild(bgLayer, rect1);
 
-			// Circle layer (auto zIndex = 4.0) - overlaps rectangle
-			Circle circle{.center = {400.0F, 250.0F}, .radius = 80.0F, .color = Color::Blue(), .id = "blue_circle"};
+			// Circle layer (auto zIndex = 4.0) - overlaps rectangle with border
+			Circle circle{
+				.center = {400.0F, 250.0F},
+				.radius = 80.0F,
+				.style = {.fill = Color::Blue(), .border = BorderStyle{.color = Color::Cyan(), .width = 3.0F}},
+				.id = "blue_circle"
+			};
 			m_layerManager.AddChild(bgLayer, circle);
 
 			// Line layer (auto zIndex = 5.0) - crosses other shapes
@@ -53,8 +82,13 @@ namespace {
 			};
 			m_layerManager.AddChild(bgLayer, line);
 
-			// Text layer (auto zIndex = 6.0) - on top
-			Text text{.position = {200.0F, 180.0F}, .text = "Layer System Demo", .color = Color::Yellow(), .id = "title_text"};
+			// Text layer (auto zIndex = 6.0) - on top with larger font
+			Text text{
+				.position = {200.0F, 180.0F},
+				.text = "Layer System Demo",
+				.style = {.color = Color::Yellow(), .fontSize = 24.0F, .hAlign = HorizontalAlign::Left, .vAlign = VerticalAlign::Top},
+				.id = "title_text"
+			};
 			m_layerManager.AddChild(bgLayer, text);
 
 			// Nested hierarchy demonstration - sidebar with children
@@ -79,9 +113,9 @@ namespace {
 
 				// Button label (renders on top due to insertion order)
 				Text buttonText{
-					.position = {570.0F, 190.0F + (iFloat * 60.0F)},
+					.position = {625.0F, 195.0F + (iFloat * 60.0F)},
 					.text = "Button " + std::to_string(i + 1),
-					.color = Color::White(),
+					.style = {.color = Color::White(), .fontSize = 14.0F, .hAlign = HorizontalAlign::Center},
 					.id = nullptr
 				};
 				m_layerManager.AddChild(buttonLayer, buttonText);
@@ -141,6 +175,10 @@ namespace {
 		void OnExit() override {
 			// Cleanup
 			m_layerManager.Clear();
+
+			// Clear font renderer from Primitives API
+			Renderer::Primitives::SetFontRenderer(nullptr);
+			m_fontRenderer.reset();
 		}
 
 		std::string ExportState() override {
@@ -158,8 +196,9 @@ namespace {
 		const char* GetName() const override { return "layer"; }
 
 	  private:
-		UI::LayerManager m_layerManager;
-		uint32_t		 m_rootLayer{0};
+		UI::LayerManager				  m_layerManager;
+		uint32_t						  m_rootLayer{0};
+		std::unique_ptr<ui::FontRenderer> m_fontRenderer;
 	};
 
 	// Register scene with SceneManager

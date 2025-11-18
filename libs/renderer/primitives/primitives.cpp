@@ -4,15 +4,22 @@
 #include "primitives/primitives.h"
 #include "coordinate_system/coordinate_system.h"
 #include "primitives/batch_renderer.h"
+#include <cmath>
 #include <glm/gtc/matrix_transform.hpp>
 #include <memory>
+#include <numbers>
 #include <stack>
+#include <vector>
+
+// Forward declaration is enough for pointer usage
+// Full include would require adding ui library as dependency to renderer
 
 namespace Renderer::Primitives {
 
 	// Internal state
 	static std::unique_ptr<BatchRenderer> g_batchRenderer = nullptr;
 	static CoordinateSystem*			  g_coordinateSystem = nullptr;
+	static ui::FontRenderer*			  g_fontRenderer = nullptr;
 	static std::stack<Foundation::Rect>	  g_scissorStack;
 	static std::stack<Foundation::Mat4>	  g_transformStack;
 	static Foundation::Rect				  g_currentScissor;
@@ -42,6 +49,14 @@ namespace Renderer::Primitives {
 		if (g_batchRenderer != nullptr) {
 			g_batchRenderer->SetCoordinateSystem(g_coordinateSystem);
 		}
+	}
+
+	void SetFontRenderer(ui::FontRenderer* fontRenderer) {
+		g_fontRenderer = fontRenderer;
+	}
+
+	ui::FontRenderer* GetFontRenderer() {
+		return g_fontRenderer;
 	}
 
 	// --- Frame Lifecycle ---
@@ -192,6 +207,72 @@ namespace Renderer::Primitives {
 		}
 
 		g_batchRenderer->AddTriangles(args.vertices, args.indices, args.vertexCount, args.indexCount, args.color);
+	}
+
+	void DrawCircle(const CircleArgs& args) {
+		if (g_batchRenderer == nullptr) {
+			return;
+		}
+
+		// Tessellate circle into triangle fan
+		constexpr int	segments = 64; // Enough for smooth circles
+		constexpr float angleStep = (2.0F * std::numbers::pi_v<float>) / static_cast<float>(segments);
+		constexpr int	vertexCount = segments + 1; // Center + perimeter vertices
+		constexpr int	indexCount = segments * 3;	// Each segment creates a triangle
+
+	// Ensure vertex count fits in uint16_t index buffer
+	static_assert(vertexCount <= 65535, "Circle vertex count exceeds uint16_t index range");
+
+		// Use thread-local buffers to avoid allocations on every call
+		static thread_local std::vector<Foundation::Vec2> vertices;
+		static thread_local std::vector<uint16_t>		  indices;
+		vertices.clear();
+		indices.clear();
+		vertices.reserve(vertexCount);
+		indices.reserve(indexCount);
+
+		// Center vertex
+		vertices.push_back(args.center);
+
+		// Perimeter vertices
+		for (int i = 0; i < segments; ++i) {
+			float angle = static_cast<float>(i) * angleStep;
+			float x = args.center.x + args.radius * std::cos(angle);
+			float y = args.center.y + args.radius * std::sin(angle);
+			vertices.emplace_back(x, y);
+		}
+
+		// Generate triangle fan indices
+		for (int i = 0; i < segments; ++i) {
+			indices.push_back(0);											  // Center
+			indices.push_back(static_cast<uint16_t>(i + 1));				  // Current perimeter vertex
+			indices.push_back(static_cast<uint16_t>(1 + (i + 1) % segments)); // Next perimeter vertex
+		}
+
+		// Draw filled circle
+		if (args.style.fill.a > 0.0F) {
+			DrawTriangles(
+				{.vertices = vertices.data(),
+				 .indices = indices.data(),
+				 .vertexCount = vertices.size(),
+				 .indexCount = indices.size(),
+				 .color = args.style.fill,
+				 .id = args.id,
+				 .zIndex = args.zIndex}
+			);
+		}
+
+		// Draw border if specified
+		if (args.style.border.has_value()) {
+			const auto& border = args.style.border.value();
+
+			// Draw border as connected line segments
+			for (int i = 0; i < segments; ++i) {
+				Foundation::Vec2 start = vertices[i + 1];
+				Foundation::Vec2 end = vertices[1 + (i + 1) % segments];
+				DrawLine({.start = start, .end = end, .style = {.color = border.color, .width = border.width}});
+			}
+		}
 	}
 
 	// --- Scissor Stack ---

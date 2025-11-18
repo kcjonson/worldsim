@@ -36,12 +36,12 @@ namespace UI {
 
 	// Circle shape
 	struct Circle {
-		Foundation::Vec2  center{0.0F, 0.0F};
-		float			  radius{50.0F};
-		Foundation::Color color = Foundation::Color::White(); // TODO: Add CircleStyle
-		float			  zIndex{-1.0F}; // -1.0F = auto-assign based on insertion order
-		bool			  visible{true};
-		const char*		  id = nullptr;
+		Foundation::Vec2		center{0.0F, 0.0F};
+		float					radius{50.0F};
+		Foundation::CircleStyle style;
+		float					zIndex{-1.0F}; // -1.0F = auto-assign based on insertion order
+		bool					visible{true};
+		const char*				id = nullptr;
 
 		void Render() const;
 	};
@@ -60,12 +60,12 @@ namespace UI {
 
 	// Text shape
 	struct Text {
-		Foundation::Vec2  position{0.0F, 0.0F};
-		std::string		  text;
-		Foundation::Color color = Foundation::Color::White(); // TODO: Add TextStyle
-		float			  zIndex{-1.0F}; // -1.0F = auto-assign based on insertion order
-		bool			  visible{true};
-		const char*		  id = nullptr;
+		Foundation::Vec2	  position{0.0F, 0.0F};
+		std::string			  text;
+		Foundation::TextStyle style;
+		float				  zIndex{-1.0F}; // -1.0F = auto-assign based on insertion order
+		bool				  visible{true};
+		const char*			  id = nullptr;
 
 		void Render() const;
 	};

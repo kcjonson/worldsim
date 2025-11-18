@@ -29,4 +29,32 @@ namespace Foundation { // NOLINT(readability-identifier-naming)
 		float width = 1.0F;
 	};
 
+	// Circle visual style
+	struct CircleStyle {
+		Color					   fill = Color::White();
+		std::optional<BorderStyle> border = std::nullopt;
+	};
+
+	// Text horizontal alignment
+	enum class HorizontalAlign {
+		Left,
+		Center,
+		Right
+	};
+
+	// Text vertical alignment
+	enum class VerticalAlign {
+		Top,
+		Middle,
+		Bottom
+	};
+
+	// Text visual style
+	struct TextStyle {
+		Color			color = Color::White();
+		float			fontSize = 16.0F;
+		HorizontalAlign hAlign = HorizontalAlign::Left;
+		VerticalAlign	vAlign = VerticalAlign::Top;
+	};
+
 } // namespace Foundation

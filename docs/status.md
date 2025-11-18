@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2025-11-18 (Layer System API improvements complete)
+Last Updated: 2025-11-18 (Shape System complete - Circle and Text rendering working)
 
 ## Epic/Story/Task Template
 
@@ -174,15 +174,19 @@ Use this template for all work items:
   - [x] Z-index sorting with dirty flag optimization working
   - [x] layer_scene demo showing auto and explicit zIndex modes
   - [x] 37 tests passing including new auto-zIndex and stable sort tests
-- [ ] Shape System
-  - [ ] Create libs/ui/shapes/ library
-  - [ ] Port Shape base class
-  - [ ] **CRITICAL**: Rewrite render() methods to call Primitives API
-  - [ ] Port Rectangle, Circle, Line shapes
-  - [ ] Adapt Text shape to use worldsim's FontRenderer
-  - [ ] Create shapes demo
-  - [ ] Test all shape types rendering
-  - [ ] Test shapes nested in layers
+- [x] Shape System ✅ COMPLETE
+  - [x] Create libs/ui/shapes/ library (already existed)
+  - [x] Port Shape base class (value semantics, no base class needed)
+  - [x] **CRITICAL**: Rewrite render() methods to call Primitives API
+    - [x] Rectangle ✅ DONE
+    - [x] Line ✅ DONE
+    - [x] Circle ✅ DONE (DrawCircle implemented with tessellation)
+    - [x] Text ✅ DONE (integrated FontRenderer)
+  - [x] Port Rectangle, Circle, Line shapes (all complete with proper styles)
+  - [x] Adapt Text shape to use worldsim's FontRenderer
+  - [x] Create shapes demo (layer_scene demonstrates all shapes)
+  - [x] Test all shape types rendering (verified via screenshot)
+  - [x] Test shapes nested in layers (working correctly)
  - [ ] InputManager
   - [ ] Create libs/engine/input/ library
   - [ ] Port InputManager from colonysim
