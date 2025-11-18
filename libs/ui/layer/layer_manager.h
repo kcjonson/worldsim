@@ -10,7 +10,7 @@
 namespace UI {
 
 	// Type-safe variant for all layer types
-	using LayerData = std::variant<Rectangle, Circle, Text, Line>;
+	using LayerData = std::variant<Container, Rectangle, Circle, Text, Line>;
 
 	// Layer node in the scene graph hierarchy
 	struct LayerNode {
@@ -42,22 +42,28 @@ namespace UI {
 
 		// --- Layer Creation ---
 
-		// Create a new rectangle layer
+		// Create a standalone layer (no parent)
+		// Reads zIndex and visible from the shape struct
 		// Returns index to the created layer
-		uint32_t CreateRectangle(const Rectangle& rect);
-
-		// Create a new circle layer
-		uint32_t CreateCircle(const Circle& circle);
-
-		// Create a new text layer
-		uint32_t CreateText(const Text& text);
-
-		// Create a new line layer
-		uint32_t CreateLine(const Line& line);
+		uint32_t Create(const Container& container);
+		uint32_t Create(const Rectangle& rect);
+		uint32_t Create(const Circle& circle);
+		uint32_t Create(const Text& text);
+		uint32_t Create(const Line& line);
 
 		// --- Hierarchy Management ---
 
-		// Add a child to a parent layer
+		// Add a child layer to a parent
+		// Creates the layer and attaches it in one call
+		// Reads zIndex and visible from the shape struct
+		// Returns index to the created child layer
+		uint32_t AddChild(uint32_t parentIndex, const Container& container);
+		uint32_t AddChild(uint32_t parentIndex, const Rectangle& rect);
+		uint32_t AddChild(uint32_t parentIndex, const Circle& circle);
+		uint32_t AddChild(uint32_t parentIndex, const Text& text);
+		uint32_t AddChild(uint32_t parentIndex, const Line& line);
+
+		// Add an existing child to a parent layer (for advanced use)
 		// Both parent and child must be valid indices
 		void AddChild(uint32_t parentIndex, uint32_t childIndex);
 
@@ -132,6 +138,10 @@ namespace UI {
 
 		// Free list for reusing destroyed layer indices
 		std::vector<uint32_t> m_freeList;
+
+		// Auto-incrementing zIndex for insertion order
+		// When shape.zIndex < 0.0F (default is -1.0F), assign this value and increment
+		float m_nextAutoZIndex{1.0F};
 
 		// --- Internal Helpers ---
 

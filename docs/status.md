@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2025-10-30 (CoordinateSystem port complete)
+Last Updated: 2025-11-18 (Layer System API improvements complete)
 
 ## Epic/Story/Task Template
 
@@ -164,14 +164,16 @@ Use this template for all work items:
   - [x] All tests passing (43/43 renderer tests)
   - [x] Tested - rendering preserved, percentage helpers available for future UI components
   - [x] Design note: Worldsim uses physical pixels, CoordinateSystem provides DPI utilities
-- [ ] Layer System
-  - [ ] Create libs/ui/layer/ library
-  - [ ] Port Layer class with shared_ptr storage
-  - [ ] Z-index sorting with dirty flag optimization
-  - [ ] Transform hierarchy support
-  - [ ] Update naming to worldsim conventions (PascalCase, m_ prefix)
-  - [ ] Create layer demo (nested layers, z-ordering)
-  - [ ] Test input event propagation
+- [x] Layer System ✅ COMPLETE (PR #21 + PR #23)
+  - [x] Layer system already existed (PR #21) with value semantics architecture
+  - [x] Refactored API for ergonomics (PR #23)
+  - [x] Added Container type for pure hierarchy nodes
+  - [x] Implemented auto-zIndex based on insertion order
+  - [x] Simplified creation API (one-call AddChild instead of 3-step pattern)
+  - [x] Stable sort for equal zIndex (CSS-like behavior)
+  - [x] Z-index sorting with dirty flag optimization working
+  - [x] layer_scene demo showing auto and explicit zIndex modes
+  - [x] 37 tests passing including new auto-zIndex and stable sort tests
 - [ ] Shape System
   - [ ] Create libs/ui/shapes/ library
   - [ ] Port Shape base class
