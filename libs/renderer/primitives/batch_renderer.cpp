@@ -120,29 +120,55 @@ namespace Renderer {
 		float borderPosEnum = 1.0F; // Default to Center
 		if (border.has_value()) {
 			switch (border->position) {
-				case Foundation::BorderPosition::Inside: borderPosEnum = 0.0F; break;
-				case Foundation::BorderPosition::Center: borderPosEnum = 1.0F; break;
-				case Foundation::BorderPosition::Outside: borderPosEnum = 2.0F; break;
+				case Foundation::BorderPosition::Inside:
+					borderPosEnum = 0.0F;
+					break;
+				case Foundation::BorderPosition::Center:
+					borderPosEnum = 1.0F;
+					break;
+				case Foundation::BorderPosition::Outside:
+					borderPosEnum = 2.0F;
+					break;
 			}
 		}
 		Foundation::Vec4 shapeParams(halfW, halfH, cornerRadius, borderPosEnum);
 
 		// Add 4 vertices with rect-local coordinates
 		// Top-left corner
-		m_vertices.push_back({bounds.TopLeft(), Foundation::Vec2(-halfW, -halfH), // Rect-local: top-left
-			colorVec, borderData, shapeParams});
+		m_vertices.push_back(
+			{bounds.TopLeft(),
+			 Foundation::Vec2(-halfW, -halfH), // Rect-local: top-left
+			 colorVec,
+			 borderData,
+			 shapeParams}
+		);
 
 		// Top-right corner
-		m_vertices.push_back({bounds.TopRight(), Foundation::Vec2(halfW, -halfH), // Rect-local: top-right
-			colorVec, borderData, shapeParams});
+		m_vertices.push_back(
+			{bounds.TopRight(),
+			 Foundation::Vec2(halfW, -halfH), // Rect-local: top-right
+			 colorVec,
+			 borderData,
+			 shapeParams}
+		);
 
 		// Bottom-right corner
-		m_vertices.push_back({bounds.BottomRight(), Foundation::Vec2(halfW, halfH), // Rect-local: bottom-right
-			colorVec, borderData, shapeParams});
+		m_vertices.push_back(
+			{bounds.BottomRight(),
+			 Foundation::Vec2(halfW, halfH), // Rect-local: bottom-right
+			 colorVec,
+			 borderData,
+			 shapeParams}
+		);
 
 		// Bottom-left corner
-		m_vertices.push_back({bounds.BottomLeft(), Foundation::Vec2(-halfW, halfH), // Rect-local: bottom-left
-			colorVec, borderData, shapeParams});
+		m_vertices.push_back(
+			{bounds.BottomLeft(),
+			 Foundation::Vec2(-halfW, halfH), // Rect-local: bottom-left
+			 colorVec,
+			 borderData,
+			 shapeParams}
+		);
 
 		// Add 6 indices (2 triangles)
 		m_indices.push_back(baseIndex + 0);
@@ -171,9 +197,12 @@ namespace Renderer {
 
 		// Add all vertices
 		for (size_t i = 0; i < vertexCount; ++i) {
-			m_vertices.push_back({vertices[i], zeroVec2, // rectLocalPos (unused)
-				colorVec, zeroVec4,	  // borderData (unused)
-				zeroVec4			  // shapeParams (unused)
+			m_vertices.push_back({
+				vertices[i],
+				zeroVec2, // rectLocalPos (unused)
+				colorVec,
+				zeroVec4, // borderData (unused)
+				zeroVec4  // shapeParams (unused)
 			});
 		}
 

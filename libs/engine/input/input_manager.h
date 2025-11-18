@@ -77,11 +77,11 @@ namespace engine {
 		static InputManager* s_instance;
 
 		// Store original callbacks (for chaining)
-		GLFWkeyfun			m_previousKeyCallback = nullptr;
-		GLFWmousebuttonfun	m_previousMouseButtonCallback = nullptr;
-		GLFWcursorposfun	m_previousCursorPosCallback = nullptr;
-		GLFWscrollfun		m_previousScrollCallback = nullptr;
-		GLFWcursorenterfun	m_previousCursorEnterCallback = nullptr;
+		GLFWkeyfun		   m_previousKeyCallback = nullptr;
+		GLFWmousebuttonfun m_previousMouseButtonCallback = nullptr;
+		GLFWcursorposfun   m_previousCursorPosCallback = nullptr;
+		GLFWscrollfun	   m_previousScrollCallback = nullptr;
+		GLFWcursorenterfun m_previousCursorEnterCallback = nullptr;
 
 		// GLFW window reference
 		GLFWwindow* m_window;
