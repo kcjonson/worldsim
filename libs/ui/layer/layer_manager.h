@@ -140,7 +140,7 @@ namespace UI {
 		std::vector<uint32_t> m_freeList;
 
 		// Auto-incrementing zIndex for insertion order
-		// When shape.zIndex == 0.0F (default), assign this value and increment
+		// When shape.zIndex < 0.0F (default is -1.0F), assign this value and increment
 		float m_nextAutoZIndex{1.0F};
 
 		// --- Internal Helpers ---

@@ -25,7 +25,7 @@ namespace {
 			// Create child layers - they'll render in insertion order automatically
 			// No need to specify zIndex unless you want explicit ordering
 
-			// Background layer (auto zIndex = 1.0)
+			// Background layer (auto zIndex = 2.0)
 			Rectangle bgRect{
 				.position = {100.0F, 100.0F},
 				.size = {600.0F, 400.0F},
@@ -34,7 +34,7 @@ namespace {
 			};
 			uint32_t bgLayer = m_layerManager.AddChild(m_rootLayer, bgRect);
 
-			// Rectangle layer (auto zIndex = 2.0)
+			// Rectangle layer (auto zIndex = 3.0)
 			Rectangle rect1{
 				.position = {150.0F, 150.0F},
 				.size = {200.0F, 150.0F},
@@ -43,17 +43,17 @@ namespace {
 			};
 			m_layerManager.AddChild(bgLayer, rect1);
 
-			// Circle layer (auto zIndex = 3.0) - overlaps rectangle
+			// Circle layer (auto zIndex = 4.0) - overlaps rectangle
 			Circle circle{.center = {400.0F, 250.0F}, .radius = 80.0F, .color = Color::Blue(), .id = "blue_circle"};
 			m_layerManager.AddChild(bgLayer, circle);
 
-			// Line layer (auto zIndex = 4.0) - crosses other shapes
+			// Line layer (auto zIndex = 5.0) - crosses other shapes
 			Line line{
 				.start = {150.0F, 150.0F}, .end = {500.0F, 400.0F}, .style = {.color = Color::Green(), .width = 4.0F}, .id = "diagonal_line"
 			};
 			m_layerManager.AddChild(bgLayer, line);
 
-			// Text layer (auto zIndex = 5.0) - on top
+			// Text layer (auto zIndex = 6.0) - on top
 			Text text{.position = {200.0F, 180.0F}, .text = "Layer System Demo", .color = Color::Yellow(), .id = "title_text"};
 			m_layerManager.AddChild(bgLayer, text);
 
