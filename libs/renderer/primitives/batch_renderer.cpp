@@ -180,11 +180,15 @@ void main() {
 		glUseProgram(m_shader);
 		glBindVertexArray(m_vao);
 
-		// Create projection matrix using viewport dimensions (NOT CoordinateSystem)
-		// Worldsim uses 1:1 pixel mapping with framebuffer (physical pixels)
-		// CoordinateSystem is only used for percentage layout helpers
-		Foundation::Mat4 projection =
-			glm::ortho(0.0F, static_cast<float>(m_viewportWidth), static_cast<float>(m_viewportHeight), 0.0F, -1.0F, 1.0F);
+		// Create projection matrix
+		// If CoordinateSystem is set, use it for DPI-aware projection (logical pixels)
+		// Otherwise fall back to viewport dimensions (may be incorrect on high-DPI displays)
+		Foundation::Mat4 projection;
+		if (m_coordinateSystem != nullptr) {
+			projection = m_coordinateSystem->CreateScreenSpaceProjection();
+		} else {
+			projection = glm::ortho(0.0F, static_cast<float>(m_viewportWidth), static_cast<float>(m_viewportHeight), 0.0F, -1.0F, 1.0F);
+		}
 		Foundation::Mat4 transform = Foundation::Mat4(1.0F);
 
 		glUniformMatrix4fv(m_projectionLoc, 1, GL_FALSE, glm::value_ptr(projection));

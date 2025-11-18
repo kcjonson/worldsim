@@ -102,20 +102,11 @@ void MouseButtonCallback(GLFWwindow* window, int button, int action, int mods) {
 }
 
 void CursorPosCallback(GLFWwindow* window, double xpos, double ypos) {
-	// Mouse coordinates are in window space, but rendering is in framebuffer space
-	// On high-DPI displays (Retina), we need to scale the coordinates
-	int windowWidth = 0;
-	int windowHeight = 0;
-	int framebufferWidth = 0;
-	int framebufferHeight = 0;
-	glfwGetWindowSize(window, &windowWidth, &windowHeight);
-	glfwGetFramebufferSize(window, &framebufferWidth, &framebufferHeight);
-
-	float scaleX = static_cast<float>(framebufferWidth) / static_cast<float>(windowWidth);
-	float scaleY = static_cast<float>(framebufferHeight) / static_cast<float>(windowHeight);
-
-	g_menuState.mouseX = xpos * scaleX;
-	g_menuState.mouseY = ypos * scaleY;
+	// Mouse coordinates from GLFW are in window space (logical pixels)
+	// Rendering now uses logical pixels (via CoordinateSystem)
+	// Therefore, no scaling needed - coordinates match directly
+	g_menuState.mouseX = xpos;
+	g_menuState.mouseY = ypos;
 }
 
 // Render navigation menu
@@ -331,15 +322,22 @@ int main(int argc, char* argv[]) {
 		return 1;
 	}
 
-	// Get framebuffer size for 1:1 pixel mapping (worldsim uses physical pixels)
+	// Get window size (logical pixels) for UI coordinate space
+	// This ensures UI elements appear at the correct perceived size on high-DPI displays
 	int windowWidth = 0;
 	int windowHeight = 0;
-	glfwGetFramebufferSize(window, &windowWidth, &windowHeight);
-	LOG_DEBUG(Renderer, "Framebuffer size (physical pixels): %dx%d", windowWidth, windowHeight);
+	glfwGetWindowSize(window, &windowWidth, &windowHeight);
+	LOG_DEBUG(Renderer, "Window size (logical pixels): %dx%d", windowWidth, windowHeight);
+
+	// Get framebuffer size (physical pixels) for OpenGL viewport
+	int framebufferWidth = 0;
+	int framebufferHeight = 0;
+	glfwGetFramebufferSize(window, &framebufferWidth, &framebufferHeight);
+	LOG_DEBUG(Renderer, "Framebuffer size (physical pixels): %dx%d", framebufferWidth, framebufferHeight);
 
 	// Log pixel ratio for information
 	float pixelRatio = coordinateSystem.GetPixelRatio();
-	LOG_DEBUG(Renderer, "Pixel ratio: %.2f", pixelRatio);
+	LOG_DEBUG(Renderer, "Pixel ratio: %.2f (framebuffer is %dx window)", pixelRatio, static_cast<int>(pixelRatio));
 
 	// Initialize primitive rendering system
 	LOG_INFO(Renderer, "Initializing primitive rendering system");
@@ -347,7 +345,8 @@ int main(int argc, char* argv[]) {
 	// NOTE: We set the coordinate system for percentage helpers, but BatchRenderer
 	// will NOT use it for projection - it uses viewport size (framebuffer) instead
 	Renderer::Primitives::SetCoordinateSystem(&coordinateSystem);
-	Renderer::Primitives::SetViewport(windowWidth, windowHeight);
+	// Use framebuffer size for viewport (high-res rendering) but window size for coordinate space
+	Renderer::Primitives::SetViewport(framebufferWidth, framebufferHeight);
 
 	LOG_DEBUG(Renderer, "Primitive rendering system initialized");
 
