@@ -6,6 +6,11 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# Force use of LLVM's libc++ on macOS
+if(APPLE)
+    add_link_options("-L/usr/local/opt/llvm/lib/c++" "-Wl,-rpath,/usr/local/opt/llvm/lib/c++")
+endif()
+
 # Export compile commands for IDE support
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 

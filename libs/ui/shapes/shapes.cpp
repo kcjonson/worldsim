@@ -1,5 +1,7 @@
 #include "shapes/shapes.h"
 #include "font/font_renderer.h"
+#include "font/text_batch_renderer.h"
+#include "core/render_context.h"
 #include "primitives/primitives.h"
 #include <glm/glm.hpp>
 
@@ -21,10 +23,16 @@ namespace UI {
 	}
 
 	void Text::Render() const {
-		// Get font renderer from Primitives API
+		// Get text batch renderer from Primitives API
+		ui::TextBatchRenderer* textBatchRenderer = Renderer::Primitives::GetTextBatchRenderer();
+		if (textBatchRenderer == nullptr || text.empty()) {
+			return; // No text batch renderer available or nothing to render
+		}
+
+		// Get font renderer for alignment calculations
 		ui::FontRenderer* fontRenderer = Renderer::Primitives::GetFontRenderer();
-		if (fontRenderer == nullptr || text.empty()) {
-			return; // No font renderer available or nothing to render
+		if (fontRenderer == nullptr) {
+			return; // No font renderer available for measurements
 		}
 
 		// Calculate text scale from fontSize (16px base size = 1.0 scale)
@@ -68,9 +76,12 @@ namespace UI {
 				break;
 		}
 
-		// Render text
-		glm::vec3 color(style.color.r, style.color.g, style.color.b);
-		fontRenderer->RenderText(text, glm::vec2(alignedPos.x, alignedPos.y), scale, color);
+		// Get current z-index from render context (set by LayerManager)
+		float zIndex = RenderContext::GetZIndex();
+
+		// Add text to batch renderer with z-index for proper sorting
+		glm::vec4 color(style.color.r, style.color.g, style.color.b, style.color.a);
+		textBatchRenderer->AddText(text, glm::vec2(alignedPos.x, alignedPos.y), scale, color, zIndex);
 	}
 
 } // namespace UI

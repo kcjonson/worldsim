@@ -28,6 +28,7 @@ namespace Renderer { // NOLINT(readability-identifier-naming)
 // Forward declaration from ui namespace
 namespace ui {
 	class FontRenderer;
+	class TextBatchRenderer;
 }
 
 namespace Renderer {
@@ -64,6 +65,22 @@ namespace Renderer {
 		//
 		// Returns: Pointer to FontRenderer, or nullptr if not set
 		ui::FontRenderer* GetFontRenderer();
+
+		// Set the text batch renderer for batched SDF text rendering.
+		//
+		// The TextBatchRenderer collects all text draw calls and renders them
+		// in sorted z-order after all other rendering is complete.
+		//
+		// Example:
+		//   auto textBatchRenderer = std::make_unique<ui::TextBatchRenderer>();
+		//   textBatchRenderer->Initialize(&fontRenderer);
+		//   Renderer::Primitives::SetTextBatchRenderer(textBatchRenderer.get());
+		void SetTextBatchRenderer(ui::TextBatchRenderer* batchRenderer);
+
+		// Get the current text batch renderer instance.
+		//
+		// Returns: Pointer to TextBatchRenderer, or nullptr if not set
+		ui::TextBatchRenderer* GetTextBatchRenderer();
 
 		// --- Frame Lifecycle ---
 
@@ -152,6 +169,29 @@ namespace Renderer {
 		//   - id: Optional debug identifier
 		//   - zIndex: Draw order (higher values drawn later)
 		void DrawCircle(const CircleArgs& args);
+
+		// Arguments for DrawText
+		struct TextArgs {
+			std::string			 text;
+			Foundation::Vec2	 position; // Top-left position
+			float				 scale = 1.0F; // Text scale (1.0F = 16px base size)
+			Foundation::Color	 color = Foundation::Color(1.0F, 1.0F, 1.0F, 1.0F); // RGBA
+			const char*			 id = nullptr;
+			float				 zIndex = 0.0F;
+		};
+
+		// Draw text using the font renderer.
+		//
+		// IMPORTANT: Requires SetFontRenderer() to be called during initialization.
+		// Text rendering uses batched command queue for proper z-ordering with shapes.
+		//
+		// Parameters:
+		//   - text: String to render
+		//   - position: Top-left position in current coordinate space
+		//   - scale: Text size scale (1.0F = 16px base font size)
+		//   - color: RGBA text color
+		//   - zIndex: Draw order (higher values drawn later, allows proper layering with shapes)
+		void DrawText(const TextArgs& args);
 
 		// --- State Management ---
 

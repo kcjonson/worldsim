@@ -26,6 +26,11 @@ target_link_libraries(foundation
         OpenGL::GL  # DebugServer uses glReadPixels and glGetIntegerv
 )
 
+# Link CoreFoundation on macOS (required by httplib for DNS resolution)
+if(APPLE)
+    target_link_libraries(foundation PUBLIC "-framework CoreFoundation")
+endif()
+
 # Tests
 if(BUILD_TESTING)
     # Discover test files using naming pattern
