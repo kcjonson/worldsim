@@ -5,6 +5,7 @@
 #include <fstream>
 #include <iostream>
 #include <sstream>
+#include <vector>
 
 namespace Renderer {
 
@@ -31,12 +32,15 @@ namespace Renderer {
 		glGetShaderiv(shader, GL_COMPILE_STATUS, &success);
 
 		if (success == 0) {
-			char infoLog[512];
-			glGetShaderInfoLog(shader, 512, nullptr, infoLog);
+			GLint logLength = 0;
+			glGetShaderiv(shader, GL_INFO_LOG_LENGTH, &logLength);
+
+			std::vector<char> infoLog(logLength > 0 ? logLength : 1);
+			glGetShaderInfoLog(shader, logLength, nullptr, infoLog.data());
 
 			const char* shaderTypeStr = (shaderType == GL_VERTEX_SHADER) ? "Vertex" : "Fragment";
 			std::cerr << shaderTypeStr << " shader compilation failed (" << filepath << "):" << std::endl;
-			std::cerr << infoLog << std::endl;
+			std::cerr << infoLog.data() << std::endl;
 
 			glDeleteShader(shader);
 			return 0;
@@ -56,10 +60,13 @@ namespace Renderer {
 		glGetProgramiv(program, GL_LINK_STATUS, &success);
 
 		if (success == 0) {
-			char infoLog[512];
-			glGetProgramInfoLog(program, 512, nullptr, infoLog);
+			GLint logLength = 0;
+			glGetProgramiv(program, GL_INFO_LOG_LENGTH, &logLength);
+
+			std::vector<char> infoLog(logLength > 0 ? logLength : 1);
+			glGetProgramInfoLog(program, logLength, nullptr, infoLog.data());
 			std::cerr << "Shader program linking failed:" << std::endl;
-			std::cerr << infoLog << std::endl;
+			std::cerr << infoLog.data() << std::endl;
 
 			glDeleteProgram(program);
 			return 0;
