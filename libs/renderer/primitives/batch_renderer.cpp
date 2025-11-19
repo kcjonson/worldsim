@@ -3,7 +3,6 @@
 
 #include "primitives/batch_renderer.h"
 #include "coordinate_system/coordinate_system.h"
-#include "shader/shader_loader.h"
 #include <glm/gtc/type_ptr.hpp>
 #include <iostream>
 
@@ -20,17 +19,15 @@ namespace Renderer {
 	}
 
 	void BatchRenderer::Init() {
-		// Compile shader
-		m_shader = CompileShader();
-
-		if (m_shader == 0) {
-			std::cerr << "Failed to compile primitive shader!" << std::endl;
+		// Load shader from files
+		if (!m_shader.LoadFromFile("primitive.vert", "primitive.frag")) {
+			std::cerr << "Failed to load primitive shaders!" << std::endl;
 			return;
 		}
 
 		// Get uniform locations
-		m_projectionLoc = glGetUniformLocation(m_shader, "u_projection");
-		m_transformLoc = glGetUniformLocation(m_shader, "u_transform");
+		m_projectionLoc = glGetUniformLocation(m_shader.GetProgram(), "u_projection");
+		m_transformLoc = glGetUniformLocation(m_shader.GetProgram(), "u_transform");
 
 		// Create VAO/VBO/IBO
 		glGenVertexArrays(1, &m_vao);
@@ -84,10 +81,7 @@ namespace Renderer {
 			m_ibo = 0;
 		}
 
-		if (m_shader != 0) {
-			glDeleteProgram(m_shader);
-			m_shader = 0;
-		}
+		// Shader cleanup handled by RAII destructor
 	}
 
 	void BatchRenderer::AddQuad( // NOLINT(readability-convert-member-functions-to-static)
@@ -226,7 +220,7 @@ namespace Renderer {
 		glBufferData(GL_ELEMENT_ARRAY_BUFFER, m_indices.size() * sizeof(uint32_t), m_indices.data(), GL_DYNAMIC_DRAW);
 
 		// Bind shader and VAO
-		glUseProgram(m_shader);
+		m_shader.Use();
 		glBindVertexArray(m_vao);
 
 		// Create projection matrix
@@ -286,11 +280,6 @@ namespace Renderer {
 		stats.vertexCount = static_cast<uint32_t>(m_vertices.size());
 		stats.triangleCount = static_cast<uint32_t>(m_indices.size() / 3);
 		return stats;
-	}
-
-	GLuint BatchRenderer::CompileShader() { // NOLINT(readability-convert-member-functions-to-static)
-		// Load shaders from disk (build directory)
-		return ShaderLoader::LoadShaderProgram("build/shaders/primitive.vert", "build/shaders/primitive.frag");
 	}
 
 } // namespace Renderer
