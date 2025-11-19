@@ -6,6 +6,7 @@
 #include <glm/gtc/type_ptr.hpp>
 #include <iostream>
 #include <sstream>
+#include <vector>
 
 namespace Renderer {
 
@@ -33,13 +34,39 @@ namespace Renderer {
 	}
 
 	bool Shader::LoadFromFile(const char* vertexPath, const char* fragmentPath) {
-		// Get the executable's directory and locate shaders
-		std::filesystem::path exePath = std::filesystem::current_path();
-		std::filesystem::path shaderDir = exePath / "shaders";
+		// Search for shaders in multiple possible locations
+		// This allows the executable to run from different directories
+		std::vector<std::filesystem::path> searchPaths = {
+			std::filesystem::current_path() / "shaders",					   // Current directory
+			std::filesystem::current_path() / "build/apps/ui-sandbox/shaders", // From project root
+		};
 
-		// Construct full paths
-		std::filesystem::path fullVertexPath = shaderDir / vertexPath;
-		std::filesystem::path fullFragmentPath = shaderDir / fragmentPath;
+		std::filesystem::path fullVertexPath;
+		std::filesystem::path fullFragmentPath;
+		bool				  found = false;
+
+		// Try each search path until we find the shaders
+		for (const auto& searchPath : searchPaths) {
+			std::filesystem::path testVertexPath = searchPath / vertexPath;
+			std::filesystem::path testFragmentPath = searchPath / fragmentPath;
+
+			if (std::filesystem::exists(testVertexPath) && std::filesystem::exists(testFragmentPath)) {
+				fullVertexPath = testVertexPath;
+				fullFragmentPath = testFragmentPath;
+				found = true;
+				break;
+			}
+		}
+
+		if (!found) {
+			std::cerr << "ERROR::SHADER::FILES_NOT_FOUND" << std::endl;
+			std::cerr << "Could not find shaders: " << vertexPath << " and " << fragmentPath << std::endl;
+			std::cerr << "Searched in:" << std::endl;
+			for (const auto& path : searchPaths) {
+				std::cerr << "  - " << path << std::endl;
+			}
+			return false;
+		}
 
 		// Read vertex shader
 		std::string	  vertexCode;

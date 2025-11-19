@@ -9,6 +9,7 @@
 #include "graphics/primitive_styles.h"
 #include "graphics/rect.h"
 #include "math/types.h"
+#include "shader/shader.h"
 #include <GL/glew.h>
 #include <optional>
 #include <vector>
@@ -91,7 +92,7 @@ namespace Renderer { // NOLINT(readability-identifier-naming)
 		GLuint m_vao = 0;
 		GLuint m_vbo = 0;
 		GLuint m_ibo = 0;
-		GLuint m_shader = 0;
+		Shader m_shader;
 
 		// Uniform locations
 		GLint m_projectionLoc = -1;
@@ -106,9 +107,6 @@ namespace Renderer { // NOLINT(readability-identifier-naming)
 
 		// Statistics
 		size_t m_drawCallCount = 0;
-
-		// Helper: Compile shader program
-		GLuint CompileShader();
 	};
 
 } // namespace Renderer
