@@ -10,11 +10,19 @@
 
 namespace Foundation { // NOLINT(readability-identifier-naming)
 
+	// Border positioning mode (CSS-like)
+	enum class BorderPosition {
+		Inside, // Border drawn inside rect bounds (content area reduced)
+		Center, // Border centered on rect edge (default, matches CSS)
+		Outside // Border drawn outside rect bounds (total size increased)
+	};
+
 	// Optional border style for rectangles
 	struct BorderStyle {
-		Color color = Color::White();
-		float width = 1.0F;
-		float cornerRadius = 0.0F;
+		Color		   color = Color::White();
+		float		   width = 1.0F;
+		float		   cornerRadius = 0.0F;
+		BorderPosition position = BorderPosition::Center;
 	};
 
 	// Rectangle visual style

@@ -4,6 +4,7 @@ add_library(renderer
     metrics/metrics_collector.cpp
     vector/tessellator.cpp
     shader/shader.cpp
+    shader/shader_loader.cpp
     coordinate_system/coordinate_system.cpp
 )
 
