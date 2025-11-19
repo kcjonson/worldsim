@@ -53,7 +53,7 @@ Documents can be organized in subdirectories (`features/`, `mechanics/`) or at t
 - [Environmental Interactions](./features/vector-graphics/environmental-interactions.md) - Trampling, harvesting, wind effects
 
 ### Core Application
-- [Application Flow](./features/application-flow/README.md) - Splash screen, main menu, scene transitions *(planned)*
+- [Game Start Experience](./features/game-start-experience.md) - From launch to gameplay: loading, menus, scenario/party/planet setup, landing sequence
 - [Main Menu](./features/main-menu/README.md) - Menu options and navigation *(planned)*
 
 ### World Generation (3D Spherical Planets)

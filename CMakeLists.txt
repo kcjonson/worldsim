@@ -40,6 +40,9 @@ add_subdirectory(libs/engine)
 add_subdirectory(apps/world-sim)
 add_subdirectory(apps/ui-sandbox)
 
+# Build tools (atlas generator, etc.)
+add_subdirectory(tools/generate_sdf_atlas)
+
 # Developer client (web app)
 # Only build in Development mode (builds React app with npm)
 if(CMAKE_BUILD_TYPE STREQUAL "Development" OR CMAKE_BUILD_TYPE STREQUAL "Debug")

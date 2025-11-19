@@ -4,6 +4,11 @@
 #include "utils/log.h"
 #include <algorithm>
 #include <cstdlib>
+#include <fstream>
+#include <nlohmann/json.hpp>
+
+#define STB_IMAGE_IMPLEMENTATION
+#include <stb_image.h>
 
 namespace ui {
 
@@ -21,6 +26,10 @@ namespace ui {
 			if (character.textureID) {
 				glDeleteTextures(1, &character.textureID);
 			}
+		}
+		// Clean up SDF atlas texture
+		if (m_atlasTexture != 0) {
+			glDeleteTextures(1, &m_atlasTexture);
 		}
 		if (m_face != nullptr) {
 			FT_Done_Face(m_face);
@@ -273,6 +282,191 @@ namespace ui {
 
 	float FontRenderer::GetAscent(float scale) const {
 		return m_scaledAscender * scale;
+	}
+
+	bool FontRenderer::LoadSDFAtlas(const std::string& pngPath, const std::string& jsonPath) {
+		LOG_INFO(UI, "Loading SDF atlas from: %s", pngPath.c_str());
+		LOG_INFO(UI, "Loading SDF metadata from: %s", jsonPath.c_str());
+
+		// Load JSON metadata
+		std::ifstream jsonFile(jsonPath);
+		if (!jsonFile.is_open()) {
+			LOG_ERROR(UI, "Failed to open SDF metadata file: %s", jsonPath.c_str());
+			return false;
+		}
+
+		nlohmann::json json;
+		try {
+			jsonFile >> json;
+		} catch (const std::exception& e) {
+			LOG_ERROR(UI, "Failed to parse SDF metadata JSON: %s", e.what());
+			return false;
+		}
+
+		// Parse atlas metadata
+		m_atlasMetadata.distanceRange = json["atlas"]["distanceRange"].get<float>();
+		m_atlasMetadata.glyphSize = json["atlas"]["size"].get<int>();
+		m_atlasMetadata.atlasWidth = json["atlas"]["width"].get<int>();
+		m_atlasMetadata.atlasHeight = json["atlas"]["height"].get<int>();
+		m_atlasMetadata.emSize = json["metrics"]["emSize"].get<float>();
+		m_atlasMetadata.ascender = json["metrics"]["ascender"].get<float>();
+		m_atlasMetadata.descender = json["metrics"]["descender"].get<float>();
+		m_atlasMetadata.lineHeight = json["metrics"]["lineHeight"].get<float>();
+
+		LOG_INFO(
+			UI,
+			"Atlas metadata: size=%dx%d, glyphSize=%d, range=%.1f",
+			m_atlasMetadata.atlasWidth,
+			m_atlasMetadata.atlasHeight,
+			m_atlasMetadata.glyphSize,
+			m_atlasMetadata.distanceRange
+		);
+
+		// Parse glyphs
+		const auto& glyphsJson = json["glyphs"];
+		for (auto it = glyphsJson.begin(); it != glyphsJson.end(); ++it) {
+			const std::string& key = it.key();
+			if (key.empty())
+				continue;
+
+			char		c = key[0]; // Get first character (handles escaped chars)
+			const auto& glyphJson = it.value();
+
+			SDFGlyph glyph{};
+			glyph.advance = glyphJson["advance"].get<float>();
+
+			// Check if glyph has geometry (not whitespace)
+			if (!glyphJson["atlas"].is_null()) {
+				glyph.hasGeometry = true;
+
+				// Atlas UV coordinates (normalized 0-1)
+				glyph.atlasUVMin.x = glyphJson["atlas"]["x"].get<float>();
+				glyph.atlasUVMin.y = glyphJson["atlas"]["y"].get<float>();
+				glyph.atlasUVMax.x = glyph.atlasUVMin.x + glyphJson["atlas"]["width"].get<float>();
+				glyph.atlasUVMax.y = glyph.atlasUVMin.y + glyphJson["atlas"]["height"].get<float>();
+
+				// Plane bounds (in em units)
+				glyph.planeBoundsMin.x = glyphJson["plane"]["left"].get<float>();
+				glyph.planeBoundsMin.y = glyphJson["plane"]["bottom"].get<float>();
+				glyph.planeBoundsMax.x = glyphJson["plane"]["right"].get<float>();
+				glyph.planeBoundsMax.y = glyphJson["plane"]["top"].get<float>();
+			} else {
+				glyph.hasGeometry = false;
+			}
+
+			m_sdfGlyphs[c] = glyph;
+		}
+
+		LOG_INFO(UI, "Loaded %zu SDF glyphs", m_sdfGlyphs.size());
+
+		// Load PNG atlas texture using stb_image
+		int			   width = 0;
+		int			   height = 0;
+		int			   channels = 0;
+		unsigned char* imageData = stbi_load(pngPath.c_str(), &width, &height, &channels, 3); // Force RGB
+
+		if (!imageData) {
+			LOG_ERROR(UI, "Failed to load SDF atlas texture: %s", pngPath.c_str());
+			return false;
+		}
+
+		LOG_INFO(UI, "Loaded atlas texture: %dx%d, %d channels", width, height, channels);
+
+		// Create OpenGL texture
+		glGenTextures(1, &m_atlasTexture);
+		glBindTexture(GL_TEXTURE_2D, m_atlasTexture);
+
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, imageData);
+
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+		glBindTexture(GL_TEXTURE_2D, 0);
+
+		stbi_image_free(imageData);
+
+		// Update font metrics for compatibility with existing code
+		m_scaledAscender = m_atlasMetadata.ascender * static_cast<float>(m_atlasMetadata.glyphSize);
+		m_maxGlyphHeightUnscaled = m_atlasMetadata.lineHeight;
+		m_usingSDF = true;
+
+		LOG_INFO(UI, "SDF atlas loaded successfully");
+		return true;
+	}
+
+	void FontRenderer::GenerateGlyphQuads(
+		const std::string&		text,
+		const glm::vec2&		position,
+		float					scale,
+		const glm::vec4&		color,
+		std::vector<GlyphQuad>& outQuads
+	) const {
+		if (!m_usingSDF) {
+			LOG_WARNING(UI, "GenerateGlyphQuads called but SDF atlas not loaded");
+			return;
+		}
+
+		// Calculate baseline position
+		// Font size in pixels = glyphSize * scale
+		float fontSize = static_cast<float>(m_atlasMetadata.glyphSize) * scale;
+		float ascenderAtCurrentScale = m_atlasMetadata.ascender * fontSize;
+
+		glm::vec2 penPosition = position;
+		penPosition.y += ascenderAtCurrentScale; // Move to baseline
+
+		for (char currentChar : text) {
+			auto			it = m_sdfGlyphs.find(currentChar);
+			const SDFGlyph* glyphPtr = nullptr;
+
+			if (it != m_sdfGlyphs.end()) {
+				glyphPtr = &it->second;
+			} else {
+				// Fallback to '?' if character not found
+				auto fallbackIt = m_sdfGlyphs.find('?');
+				if (fallbackIt != m_sdfGlyphs.end()) {
+					glyphPtr = &fallbackIt->second;
+				}
+			}
+
+			if (!glyphPtr) {
+				continue; // Skip if no valid glyph or fallback
+			}
+
+			const SDFGlyph& glyph = *glyphPtr;
+
+			// Only generate quad if glyph has geometry (not whitespace)
+			if (glyph.hasGeometry) {
+				// Calculate quad position in screen space
+				float xpos = penPosition.x + glyph.planeBoundsMin.x * fontSize;
+				float ypos = penPosition.y - glyph.planeBoundsMax.y * fontSize; // Top-left corner
+
+				float w = (glyph.planeBoundsMax.x - glyph.planeBoundsMin.x) * fontSize;
+				float h = (glyph.planeBoundsMax.y - glyph.planeBoundsMin.y) * fontSize;
+
+				// Create glyph quad
+				GlyphQuad quad{};
+				quad.position = glm::vec2(xpos, ypos);
+				quad.size = glm::vec2(w, h);
+				quad.uvMin = glyph.atlasUVMin;
+				quad.uvMax = glyph.atlasUVMax;
+				quad.color = color;
+
+				outQuads.push_back(quad);
+			}
+
+			// Advance pen position
+			penPosition.x += glyph.advance * fontSize;
+		}
+	}
+
+	GLuint FontRenderer::GetAtlasTexture() const {
+		if (m_usingSDF) {
+			return m_atlasTexture;
+		} else {
+			return m_firstGlyphTexture;
+		}
 	}
 
 } // namespace ui

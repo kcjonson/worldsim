@@ -1,5 +1,7 @@
 # Batched Text Rendering
 
+**NOTE**: This document describes the command queue architecture for unified text + shape batching. For the text rendering implementation itself (SDF fonts), see [sdf-text-rendering.md](./sdf-text-rendering.md).
+
 ## Problem Statement
 
 Currently, text rendering in the UI framework has a critical architectural issue:
@@ -81,13 +83,13 @@ Based on research into Unity, Unreal, Chrome, and other modern engines, the corr
 
 ```cpp
 namespace Renderer::Primitives {
-    // Material identifier for batching
-    struct MaterialID {
+    // Batch key - identifies which commands can be batched together
+    struct BatchKey {
         GLuint shader;
         GLuint texture;
         BlendMode blendMode;
 
-        bool operator==(const MaterialID& other) const {
+        bool operator==(const BatchKey& other) const {
             return shader == other.shader &&
                    texture == other.texture &&
                    blendMode == other.blendMode;
@@ -96,7 +98,7 @@ namespace Renderer::Primitives {
 
     // Base draw command
     struct DrawCommand {
-        MaterialID material;          // What GPU state does this need?
+        BatchKey batchKey;            // What GPU state does this need?
         float zIndex;                 // Render order
         bool isTransparent;           // Opaque vs transparent pass
         std::optional<Rect> scissor;  // Optional clipping region
@@ -123,7 +125,7 @@ namespace Renderer::Primitives {
 ```cpp
 void DrawRect(const RectArgs& args) {
     DrawCommand cmd;
-    cmd.material = GetColorMaterial();  // Solid color shader
+    cmd.batchKey = GetColorBatchKey();  // Solid color shader
     cmd.zIndex = args.zIndex;
     cmd.isTransparent = args.style.fillColor.a < 1.0F;
     cmd.scissor = GetCurrentScissor();
@@ -139,7 +141,7 @@ void DrawText(const TextArgs& args) {
     if (!g_fontRenderer) return;
 
     DrawCommand cmd;
-    cmd.material = GetTextMaterial(g_fontRenderer->GetAtlasTexture());
+    cmd.batchKey = GetTextBatchKey(g_fontRenderer->GetAtlasTexture());
     cmd.zIndex = args.zIndex;
     cmd.isTransparent = args.color.a < 1.0F;
     cmd.scissor = GetCurrentScissor();
@@ -160,7 +162,7 @@ void DrawText(const TextArgs& args) {
 
 void DrawCircle(const CircleArgs& args) {
     // Tessellate circle, add to command queue
-    // Uses same material as rectangles (both solid color)
+    // Uses same batch key as rectangles (both solid color)
 }
 ```
 
@@ -183,8 +185,8 @@ void EndFrame() {
 
     std::stable_sort(g_commandQueue.begin(), transparentStart,
         [](const DrawCommand& a, const DrawCommand& b) {
-            // Sort key: material first (batching), then depth front-to-back
-            if (a.material != b.material) return a.material < b.material;
+            // Sort key: batch key first (batching), then depth front-to-back
+            if (a.batchKey != b.batchKey) return a.batchKey < b.batchKey;
             return a.zIndex > b.zIndex;  // Higher z = closer = render first
         });
 
@@ -195,15 +197,15 @@ void EndFrame() {
 
     // ===== PASS 2: TRANSPARENT OBJECTS =====
     // Sort transparent objects: back-to-front by z-index (correct blending)
-    // Then by material (minimize state changes within z-level)
+    // Then by batch key (minimize state changes within z-level)
 
     std::stable_sort(transparentStart, g_commandQueue.end(),
         [](const DrawCommand& a, const DrawCommand& b) {
-            // Sort key: z-index first (visual correctness), then material
+            // Sort key: z-index first (visual correctness), then batch key
             if (std::abs(a.zIndex - b.zIndex) > 0.001F) {
                 return a.zIndex < b.zIndex;  // Back-to-front
             }
-            return a.material < b.material;  // Batch same z-level
+            return a.batchKey < b.batchKey;  // Batch same z-level
         });
 
     // Render transparent pass with depth writes disabled
@@ -222,7 +224,7 @@ void EndFrame() {
 void RenderBatch(CommandIterator begin, CommandIterator end) {
     if (begin == end) return;
 
-    MaterialID currentMaterial = {};
+    BatchKey currentBatchKey = {};
     std::optional<Rect> currentScissor;
     std::vector<float> batchVertices;
     GLenum currentPrimitiveType = GL_TRIANGLES;
@@ -247,11 +249,11 @@ void RenderBatch(CommandIterator begin, CommandIterator end) {
         // State change detection
         bool needFlush = false;
 
-        // Material change (most expensive)
-        if (cmd.material != currentMaterial) {
+        // Batch key change (most expensive)
+        if (cmd.batchKey != currentBatchKey) {
             needFlush = true;
-            BindMaterial(cmd.material);
-            currentMaterial = cmd.material;
+            BindBatchKey(cmd.batchKey);
+            currentBatchKey = cmd.batchKey;
         }
 
         // Scissor change (forces flush)
@@ -283,35 +285,36 @@ void RenderBatch(CommandIterator begin, CommandIterator end) {
 
 #### 5. FontRenderer Modification
 
-**Add batch mode support:**
+**Add SDF batch mode support:**
 
 ```cpp
 class FontRenderer {
 public:
-    // Immediate mode (keep for compatibility)
-    void RenderText(const std::string& text, glm::vec2 position,
-                    float scale, glm::vec3 color);
+    // Load SDF font atlas (see sdf-text-rendering.md for details)
+    bool LoadSDFFont(const std::string& atlasPath, const std::string& metadataPath);
 
-    // NEW: Batch mode - generate quads without rendering
+    // NEW: Batch mode - generate SDF quads without rendering
     struct GlyphQuad {
         glm::vec2 position;
         glm::vec2 size;
-        glm::vec2 uvMin;
+        glm::vec2 uvMin;     // Atlas UV coordinates
         glm::vec2 uvMax;
-        glm::vec4 color;  // RGBA for transparency
+        glm::vec4 color;     // RGBA for transparency
     };
 
     void GenerateGlyphQuads(const std::string& text, glm::vec2 position,
                            float scale, glm::vec4 color,
                            std::vector<GlyphQuad>& outQuads) const;
 
-    GLuint GetAtlasTexture() const { return m_textureAtlas; }
+    GLuint GetSDFAtlas() const { return m_sdfAtlas; }
 
     // Helper for vertex generation
     glm::vec2 MeasureText(const std::string& text, float scale) const;
     float GetAscent(float scale) const;
 };
 ```
+
+**NOTE**: See [sdf-text-rendering.md](./sdf-text-rendering.md) for complete SDF font implementation details.
 
 ### Z-Ordering Examples
 
@@ -356,10 +359,10 @@ DrawText({.zIndex = 1.2F, ...});
 ## Implementation Plan
 
 ### Phase 1: Command Queue Infrastructure
-- [ ] Define `DrawCommand` struct with material, z-index, transparency flag
-- [ ] Define `MaterialID` for batching key
+- [ ] Define `DrawCommand` struct with batch key, z-index, transparency flag
+- [ ] Define `BatchKey` for batching (shader + texture + blend mode)
 - [ ] Add `g_commandQueue` to Primitives API
-- [ ] Implement `GetColorMaterial()` and `GetTextMaterial()` helpers
+- [ ] Implement `GetColorBatchKey()` and `GetTextBatchKey()` helpers
 - [ ] Add `isTransparent` detection based on alpha channel
 
 ### Phase 2: Modify Existing Draw Functions
@@ -368,10 +371,12 @@ DrawText({.zIndex = 1.2F, ...});
 - [ ] Update `DrawLine()` to queue commands
 - [ ] Keep existing tessellation code, just queue instead of batch
 
-### Phase 3: FontRenderer Batch Support
-- [ ] Add `GenerateGlyphQuads()` to FontRenderer (no rendering)
+### Phase 3: FontRenderer SDF Support
+- [ ] Implement SDF font loading (see sdf-text-rendering.md)
+- [ ] Add `GenerateGlyphQuads()` for SDF atlas
 - [ ] Add `GlyphQuad` struct with position, size, UV, color
 - [ ] Implement `DrawText()` in Primitives API that queues text commands
+- [ ] Create SDF text shaders (vertex + fragment)
 - [ ] Update `Text::Render()` to use `DrawText()`
 
 ### Phase 4: Two-Pass Rendering
@@ -479,14 +484,14 @@ void Text::Render() const {
 
 ## Key Design Decisions
 
-### 1. Material-Based Batching (Not Shape-Type)
+### 1. Batch-Key-Based Batching (Not Shape-Type)
 
 **Why**: GPU doesn't care about semantics (rect vs circle). What matters:
 - Shader program
 - Texture binding
 - Blend mode
 
-**Benefit**: Rectangles, circles, polygons, stars all batch together if they use the same material.
+**Benefit**: Rectangles, circles, polygons, stars all batch together if they use the same batch key (GPU state).
 
 ### 2. Two-Pass Rendering (Opaque/Transparent Split)
 

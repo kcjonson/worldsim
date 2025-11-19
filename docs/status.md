@@ -283,6 +283,52 @@ Use this template for all work items:
 
 ## Planned Epics
 
+### SDF Text Rendering & Batched Command Queue
+**Spec/Documentation:** `/docs/technical/ui-framework/sdf-text-rendering.md`, `/docs/technical/ui-framework/batched-text-rendering.md`
+**Dependencies:** None (uses existing FontRenderer and Primitives API)
+**Status:** ready
+
+**Background:**
+Current text rendering has two critical issues:
+1. **Z-ordering bug**: Text renders immediately while shapes batch, causing text to render behind buttons
+2. **Performance**: Each character is a separate draw call with texture bind (terrible for batching)
+
+**Solution:**
+- SDF (Signed Distance Field) fonts for crisp, scalable text at any size
+- Unified command queue batches text + shapes together
+- Two-pass rendering (opaque front-to-back, transparent back-to-front)
+- All text batches into single draw call per atlas
+
+**Tasks:**
+- [ ] Phase 1: SDF Atlas Generation Tool
+  - [ ] Add msdfgen to vcpkg.json
+  - [ ] Create tools/generate_sdf_atlas executable
+  - [ ] Generate Roboto-Regular SDF atlas + metadata JSON
+  - [ ] Test atlas loading in FontRenderer
+- [ ] Phase 2: FontRenderer SDF Support
+  - [ ] Add LoadSDFFont() method (atlas + metadata)
+  - [ ] Implement GenerateGlyphQuads() for SDF
+  - [ ] Add GetSDFAtlas() for batch key
+  - [ ] Remove old immediate rendering code
+- [ ] Phase 3: SDF Shaders
+  - [ ] Create sdf_text.vert shader
+  - [ ] Create sdf_text.frag with median filtering + smoothstep
+  - [ ] Add uPixelRange uniform
+  - [ ] Test anti-aliasing quality at multiple scales
+- [ ] Phase 4: Command Queue & Two-Pass Rendering
+  - [ ] Implement DrawText() in Primitives API
+  - [ ] Implement two-pass EndFrame() (opaque → transparent)
+  - [ ] Sort by batch key + z-index
+  - [ ] Implement RenderBatch() with state change minimization
+- [ ] Phase 5: Integration & Testing
+  - [ ] Update Text::Render() to use Primitives::DrawText()
+  - [ ] Test button scene - verify text renders on top of buttons
+  - [ ] Test at multiple scales (8px to 144px)
+  - [ ] Performance test - verify single draw call for all text
+  - [ ] Test transparency and z-ordering
+
+---
+
 ### Unit Testing Infrastructure
 **Spec/Documentation:** `/docs/technical/unit-testing-strategy.md`, `/docs/technical/testing-guidelines.md` (TBD)
 **Research:** `/docs/research/cpp-test-framework-research.md`

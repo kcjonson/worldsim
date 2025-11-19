@@ -11,8 +11,13 @@
     "cpp-httplib",
     "nanosvg",
     "freetype",
+    {
+      "name": "msdfgen",
+      "default-features": false,
+      "features": ["extensions"]
+    },
     "gtest",
     "benchmark"
   ],
-  "builtin-baseline": "8f54ef5453e7e76ff01e15988bf243e7247c5eb5"
+  "builtin-baseline": "bfc6984dcbe4a165741aa95411cb5e77d9c88068"
 }

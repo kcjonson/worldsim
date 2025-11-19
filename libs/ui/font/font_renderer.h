@@ -69,6 +69,39 @@ namespace ui {
 		 */
 		float GetAscent(float scale = 1.0F) const;
 
+		/**
+		 * Glyph quad data for batched text rendering
+		 */
+		struct GlyphQuad {
+			glm::vec2 position; // Top-left position of the quad
+			glm::vec2 size;		// Width and height of the quad
+			glm::vec2 uvMin;	// Texture coordinate bottom-left
+			glm::vec2 uvMax;	// Texture coordinate top-right
+			glm::vec4 color;	// RGBA color
+		};
+
+		/**
+		 * Generate glyph quads for batched rendering (does not render immediately)
+		 * @param text The string to generate quads for
+		 * @param position Top-left position of the text in screen space
+		 * @param scale Scaling factor for the text size (1.0F = 16px base size)
+		 * @param color RGBA color of the text (0-1 range)
+		 * @param outQuads Output vector to append generated quads to
+		 */
+		void GenerateGlyphQuads(
+			const std::string& text,
+			const glm::vec2&   position,
+			float			   scale,
+			const glm::vec4&   color,
+			std::vector<GlyphQuad>& outQuads
+		) const;
+
+		/**
+		 * Get the texture ID of the font atlas (for batching)
+		 * @return OpenGL texture ID
+		 */
+		GLuint GetAtlasTexture() const;
+
 	  private:
 		/**
 		 * Character information for font rendering
@@ -81,20 +114,59 @@ namespace ui {
 		};
 
 		/**
-		 * Load a font file
+		 * SDF atlas-based glyph information
+		 */
+		struct SDFGlyph {
+			glm::vec2 atlasUVMin;	// Bottom-left UV in atlas texture
+			glm::vec2 atlasUVMax;	// Top-right UV in atlas texture
+			glm::vec2 planeBoundsMin; // Glyph bounds min (in em units)
+			glm::vec2 planeBoundsMax; // Glyph bounds max (in em units)
+			float advance;			  // Horizontal advance (in em units)
+			bool hasGeometry;		  // False for whitespace characters
+		};
+
+		/**
+		 * SDF atlas metadata
+		 */
+		struct SDFAtlasMetadata {
+			float distanceRange;	// Distance field range in pixels
+			int	  glyphSize;		// Size of each glyph in atlas
+			int	  atlasWidth;		// Atlas texture width
+			int	  atlasHeight;		// Atlas texture height
+			float emSize;			// Font em size
+			float ascender;			// Font ascender (in em units)
+			float descender;		// Font descender (in em units)
+			float lineHeight;		// Line height (in em units)
+		};
+
+		/**
+		 * Load a font file using FreeType (legacy)
 		 * @param fontPath Path to the font file
 		 * @return true if font was loaded successfully
 		 */
 		bool LoadFont(const std::string& fontPath);
 
-		std::map<char, Character> m_characters;					   // Map of loaded characters
+		/**
+		 * Load SDF atlas from PNG and JSON files
+		 * @param pngPath Path to the PNG atlas texture
+		 * @param jsonPath Path to the JSON metadata file
+		 * @return true if atlas was loaded successfully
+		 */
+		bool LoadSDFAtlas(const std::string& pngPath, const std::string& jsonPath);
+
+		std::map<char, Character> m_characters;					   // Map of loaded characters (FreeType mode)
+		std::map<char, SDFGlyph> m_sdfGlyphs;					   // Map of SDF glyphs (Atlas mode)
+		SDFAtlasMetadata		 m_atlasMetadata{};				   // SDF atlas metadata
 		Renderer::Shader		  m_shader;						   // Shader for text rendering
 		GLuint					  m_vao = 0;					   // Vertex Array Object
 		GLuint					  m_vbo = 0;					   // Vertex Buffer Object
+		GLuint					  m_atlasTexture = 0;			   // SDF atlas texture
+		bool					  m_usingSDF = false;			   // True if using SDF atlas mode
 		FT_Library				  m_library = nullptr;			   // FreeType library instance
 		FT_Face					  m_face = nullptr;				   // FreeType font face
 		float					  m_scaledAscender = 0.0F;		   // Stores the ascender for the base font size
 		float					  m_maxGlyphHeightUnscaled = 0.0F; // Unscaled maximum glyph height
+		GLuint					  m_firstGlyphTexture = 0;		   // First glyph texture (for batch key)
 	};
 
 } // namespace ui
