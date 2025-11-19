@@ -2,11 +2,11 @@
 // Displays real-time input state from InputManager
 
 #include <GL/glew.h>
-#include <GLFW/glfw3.h>
 #include <font/font_renderer.h>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <input/input_manager.h>
+#include <input/input_types.h>
 #include <memory>
 #include <primitives/primitives.h>
 #include <scene/scene.h>
@@ -87,9 +87,9 @@ namespace {
 			yPos += lineHeight;
 
 			// Mouse Buttons
-			bool leftDown = input.IsMouseButtonDown(GLFW_MOUSE_BUTTON_LEFT);
-			bool rightDown = input.IsMouseButtonDown(GLFW_MOUSE_BUTTON_RIGHT);
-			bool middleDown = input.IsMouseButtonDown(GLFW_MOUSE_BUTTON_MIDDLE);
+			bool leftDown = input.IsMouseButtonDown(engine::MouseButton::Left);
+			bool rightDown = input.IsMouseButtonDown(engine::MouseButton::Right);
+			bool middleDown = input.IsMouseButtonDown(engine::MouseButton::Middle);
 
 			oss.str("");
 			oss << "Mouse Buttons: L:" << (leftDown ? "DOWN" : "UP") << "  R:" << (rightDown ? "DOWN" : "UP")
@@ -131,22 +131,22 @@ namespace {
 
 			// Test common keys
 			struct KeyTest {
-				int			key;
+				engine::Key	key;
 				const char* name;
 			};
 
 			KeyTest keys[] = {
-				{GLFW_KEY_W, "W"},
-				{GLFW_KEY_A, "A"},
-				{GLFW_KEY_S, "S"},
-				{GLFW_KEY_D, "D"},
-				{GLFW_KEY_SPACE, "SPACE"},
-				{GLFW_KEY_ENTER, "ENTER"},
-				{GLFW_KEY_ESCAPE, "ESC"},
-				{GLFW_KEY_UP, "UP"},
-				{GLFW_KEY_DOWN, "DOWN"},
-				{GLFW_KEY_LEFT, "LEFT"},
-				{GLFW_KEY_RIGHT, "RIGHT"}
+				{engine::Key::W, "W"},
+				{engine::Key::A, "A"},
+				{engine::Key::S, "S"},
+				{engine::Key::D, "D"},
+				{engine::Key::Space, "SPACE"},
+				{engine::Key::Enter, "ENTER"},
+				{engine::Key::Escape, "ESC"},
+				{engine::Key::Up, "UP"},
+				{engine::Key::Down, "DOWN"},
+				{engine::Key::Left, "LEFT"},
+				{engine::Key::Right, "RIGHT"}
 			};
 
 			for (const auto& keyTest : keys) {

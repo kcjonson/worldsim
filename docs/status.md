@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2025-11-18 (GPU-Based SDF Rendering spec complete, Style System research complete)
+Last Updated: 2025-11-18 (Batched Text Rendering design doc created, Button component complete)
 
 ## Epic/Story/Task Template
 
@@ -205,13 +205,22 @@ Use this template for all work items:
     - [ ] Corner radius rendering will be implemented in fragment shader
   - [x] Note: colonysim's class-based style hierarchy not needed (worldsim's struct approach is simpler and more performant)
 - [ ] UI Components
-  - [ ] Create libs/ui/components/ library
-  - [ ] Port Button (state machine, onClick callbacks)
+  - [x] Create libs/ui/components/button/ library
+  - [x] Port Button (state machine, onClick callbacks)
+  - [x] Adapt input handling to use InputManager with abstraction enums (Key, MouseButton)
+  - [x] Use Primitives API for rendering
+  - [x] Create button demo scene
+  - [x] Test mouse and keyboard interactions
+  - [ ] Implement Batched Text Rendering (see `/docs/technical/ui-framework/batched-text-rendering.md`)
+    - [ ] Add GenerateGlyphQuads() to FontRenderer
+    - [ ] Add DrawText() to Primitives API
+    - [ ] Implement text batching in Primitives
+    - [ ] Update Text::Render() to use Primitives::DrawText()
+    - [ ] Test button scene - verify text renders on top
+    - [ ] Performance test - verify batching improves performance
+  - [ ] Create Keyboard Focus Manager (global Tab navigation system)
   - [ ] Port TextInput (cursor, focus, text editing)
-  - [ ] Adapt input handling to use InputManager (not direct GLFW)
-  - [ ] Use Primitives API for rendering
-  - [ ] Create button and text input demos
-  - [ ] Test mouse and keyboard interactions
+  - [ ] Create text input demo
 
 
 **Phase 2: Integration & Testing**

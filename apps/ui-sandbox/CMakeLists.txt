@@ -9,6 +9,7 @@ add_executable(ui-sandbox
     scenes/text_shapes_scene.cpp
     scenes/layer_scene.cpp
     scenes/input_test_scene.cpp
+    scenes/button_scene.cpp
 )
 
 target_include_directories(ui-sandbox
