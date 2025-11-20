@@ -30,8 +30,8 @@ void main() {
     // Convert to screen-space distance
     float screenPxDistance = screenPxRange() * (sd - 0.5);
 
-    // Anti-aliased opacity (smoothstep around 0)
-    float opacity = clamp(screenPxDistance + 0.5, 0.0, 1.0);
+    // Anti-aliased opacity using smoothstep for proper anti-aliasing
+    float opacity = smoothstep(-0.5, 0.5, screenPxDistance);
 
     // Output color with opacity
     FragColor = vec4(vColor.rgb, vColor.a * opacity);

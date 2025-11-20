@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cstdlib>
 #include <fstream>
+#include <memory>
 #include <nlohmann/json.hpp>
 
 #define STB_IMAGE_IMPLEMENTATION
@@ -318,15 +319,25 @@ namespace ui {
 			return false;
 		}
 
-		// Parse atlas metadata
-		m_atlasMetadata.distanceRange = json["atlas"]["distanceRange"].get<float>();
-		m_atlasMetadata.glyphSize = json["atlas"]["size"].get<int>();
-		m_atlasMetadata.atlasWidth = json["atlas"]["width"].get<int>();
-		m_atlasMetadata.atlasHeight = json["atlas"]["height"].get<int>();
-		m_atlasMetadata.emSize = json["metrics"]["emSize"].get<float>();
-		m_atlasMetadata.ascender = json["metrics"]["ascender"].get<float>();
-		m_atlasMetadata.descender = json["metrics"]["descender"].get<float>();
-		m_atlasMetadata.lineHeight = json["metrics"]["lineHeight"].get<float>();
+		// Parse atlas metadata with error handling
+		try {
+			if (!json.contains("atlas") || !json.contains("metrics") || !json.contains("glyphs")) {
+				LOG_ERROR(UI, "SDF metadata JSON missing required fields (atlas, metrics, or glyphs)");
+				return false;
+			}
+
+			m_atlasMetadata.distanceRange = json["atlas"]["distanceRange"].get<float>();
+			m_atlasMetadata.glyphSize = json["atlas"]["size"].get<int>();
+			m_atlasMetadata.atlasWidth = json["atlas"]["width"].get<int>();
+			m_atlasMetadata.atlasHeight = json["atlas"]["height"].get<int>();
+			m_atlasMetadata.emSize = json["metrics"]["emSize"].get<float>();
+			m_atlasMetadata.ascender = json["metrics"]["ascender"].get<float>();
+			m_atlasMetadata.descender = json["metrics"]["descender"].get<float>();
+			m_atlasMetadata.lineHeight = json["metrics"]["lineHeight"].get<float>();
+		} catch (const std::exception& e) {
+			LOG_ERROR(UI, "Failed to parse SDF atlas metadata: %s", e.what());
+			return false;
+		}
 
 		LOG_INFO(
 			UI,
@@ -337,72 +348,87 @@ namespace ui {
 			m_atlasMetadata.distanceRange
 		);
 
-		// Parse glyphs
-		const auto& glyphsJson = json["glyphs"];
-		for (auto it = glyphsJson.begin(); it != glyphsJson.end(); ++it) {
-			const std::string& key = it.key();
-			if (key.empty())
-				continue;
+		// Parse glyphs with error handling
+		try {
+			const auto& glyphsJson = json["glyphs"];
+			for (auto it = glyphsJson.begin(); it != glyphsJson.end(); ++it) {
+				const std::string& key = it.key();
+				if (key.empty())
+					continue;
 
-			char		c = key[0]; // Get first character (handles escaped chars)
-			const auto& glyphJson = it.value();
+				char		c = key[0]; // Get first character (handles escaped chars)
+				const auto& glyphJson = it.value();
 
-			SDFGlyph glyph{};
-			glyph.advance = glyphJson["advance"].get<float>();
-
-			// Check if glyph has geometry (not whitespace)
-			if (!glyphJson["atlas"].is_null()) {
-				glyph.hasGeometry = true;
-
-				// Atlas UV coordinates (normalized 0-1) - full allocated cell
-				glyph.atlasUVMin.x = glyphJson["atlas"]["x"].get<float>();
-				glyph.atlasUVMin.y = glyphJson["atlas"]["y"].get<float>();
-				glyph.atlasUVMax.x = glyph.atlasUVMin.x + glyphJson["atlas"]["width"].get<float>();
-				glyph.atlasUVMax.y = glyph.atlasUVMin.y + glyphJson["atlas"]["height"].get<float>();
-
-				// Atlas bounds UV coordinates (normalized 0-1) - actual glyph content
-				// Reference: https://github.com/Chlumsky/msdf-atlas-gen/issues/2
-				// atlasBounds defines where the actual rendered glyph is within the cell
-				// Fall back to full cell if atlasBounds not present (older atlas format)
-				if (glyphJson.contains("atlasBounds") && !glyphJson["atlasBounds"].is_null()) {
-					glyph.atlasBoundsMin.x = glyphJson["atlasBounds"]["left"].get<float>();
-					glyph.atlasBoundsMin.y = glyphJson["atlasBounds"]["bottom"].get<float>();
-					glyph.atlasBoundsMax.x = glyphJson["atlasBounds"]["right"].get<float>();
-					glyph.atlasBoundsMax.y = glyphJson["atlasBounds"]["top"].get<float>();
-				} else {
-					// Fallback: use full atlas cell if atlasBounds not available
-					glyph.atlasBoundsMin = glyph.atlasUVMin;
-					glyph.atlasBoundsMax = glyph.atlasUVMax;
+				if (!glyphJson.contains("advance")) {
+					LOG_WARNING(UI, "Glyph '%c' missing advance field, skipping", c);
+					continue;
 				}
 
-				// Plane bounds (in em units)
-				glyph.planeBoundsMin.x = glyphJson["plane"]["left"].get<float>();
-				glyph.planeBoundsMin.y = glyphJson["plane"]["bottom"].get<float>();
-				glyph.planeBoundsMax.x = glyphJson["plane"]["right"].get<float>();
-				glyph.planeBoundsMax.y = glyphJson["plane"]["top"].get<float>();
-			} else {
-				glyph.hasGeometry = false;
-			}
+				SDFGlyph glyph{};
+				glyph.advance = glyphJson["advance"].get<float>();
 
-			m_sdfGlyphs[c] = glyph;
+				// Check if glyph has geometry (not whitespace)
+				if (glyphJson.contains("atlas") && !glyphJson["atlas"].is_null()) {
+					glyph.hasGeometry = true;
+
+					// Atlas UV coordinates (normalized 0-1) - full allocated cell
+					glyph.atlasUVMin.x = glyphJson["atlas"]["x"].get<float>();
+					glyph.atlasUVMin.y = glyphJson["atlas"]["y"].get<float>();
+					glyph.atlasUVMax.x = glyph.atlasUVMin.x + glyphJson["atlas"]["width"].get<float>();
+					glyph.atlasUVMax.y = glyph.atlasUVMin.y + glyphJson["atlas"]["height"].get<float>();
+
+					// Atlas bounds UV coordinates (normalized 0-1) - actual glyph content
+					// Reference: https://github.com/Chlumsky/msdf-atlas-gen/issues/2
+					// atlasBounds defines where the actual rendered glyph is within the cell
+					// Fall back to full cell if atlasBounds not present (older atlas format)
+					if (glyphJson.contains("atlasBounds") && !glyphJson["atlasBounds"].is_null()) {
+						glyph.atlasBoundsMin.x = glyphJson["atlasBounds"]["left"].get<float>();
+						glyph.atlasBoundsMin.y = glyphJson["atlasBounds"]["bottom"].get<float>();
+						glyph.atlasBoundsMax.x = glyphJson["atlasBounds"]["right"].get<float>();
+						glyph.atlasBoundsMax.y = glyphJson["atlasBounds"]["top"].get<float>();
+					} else {
+						// Fallback: use full atlas cell if atlasBounds not available
+						glyph.atlasBoundsMin = glyph.atlasUVMin;
+						glyph.atlasBoundsMax = glyph.atlasUVMax;
+					}
+
+					// Plane bounds (in em units)
+					if (glyphJson.contains("plane") && !glyphJson["plane"].is_null()) {
+						glyph.planeBoundsMin.x = glyphJson["plane"]["left"].get<float>();
+						glyph.planeBoundsMin.y = glyphJson["plane"]["bottom"].get<float>();
+						glyph.planeBoundsMax.x = glyphJson["plane"]["right"].get<float>();
+						glyph.planeBoundsMax.y = glyphJson["plane"]["top"].get<float>();
+					}
+				} else {
+					glyph.hasGeometry = false;
+				}
+
+				m_sdfGlyphs[c] = glyph;
+			}
+		} catch (const std::exception& e) {
+			LOG_ERROR(UI, "Failed to parse SDF glyphs: %s", e.what());
+			return false;
 		}
 
 		LOG_INFO(UI, "Loaded %zu SDF glyphs", m_sdfGlyphs.size());
 
 		// Load PNG atlas texture using stb_image
-		int			   width = 0;
-		int			   height = 0;
-		int			   channels = 0;
+		int width = 0;
+		int height = 0;
+		int channels = 0;
 		// OpenGL expects (0,0) at bottom-left, but images are stored with (0,0) at top-left
 		// Flip vertically so texture coordinates match
 		stbi_set_flip_vertically_on_load(1);
 
-		unsigned char* imageData = stbi_load(pngPath.c_str(), &width, &height, &channels, 3); // Force RGB
+		unsigned char* imageDataRaw = stbi_load(pngPath.c_str(), &width, &height, &channels, 3); // Force RGB
 
-		if (!imageData) {
+		if (!imageDataRaw) {
 			LOG_ERROR(UI, "Failed to load SDF atlas texture: %s", pngPath.c_str());
 			return false;
 		}
+
+		// Use RAII to ensure imageData is freed even if OpenGL operations fail
+		std::unique_ptr<unsigned char, decltype(&stbi_image_free)> imageData(imageDataRaw, stbi_image_free);
 
 		LOG_INFO(UI, "Loaded atlas texture: %dx%d, %d channels", width, height, channels);
 
@@ -410,7 +436,7 @@ namespace ui {
 		glGenTextures(1, &m_atlasTexture);
 		glBindTexture(GL_TEXTURE_2D, m_atlasTexture);
 
-		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, imageData);
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, imageData.get());
 
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
@@ -419,7 +445,7 @@ namespace ui {
 
 		glBindTexture(GL_TEXTURE_2D, 0);
 
-		stbi_image_free(imageData);
+		// imageData automatically freed by unique_ptr
 
 		// Update font metrics for compatibility with existing code
 		m_scaledAscender = m_atlasMetadata.ascender * static_cast<float>(m_atlasMetadata.glyphSize);
@@ -492,9 +518,19 @@ namespace ui {
 
 				// Log first glyph for debugging
 				if (outQuads.empty()) {
-					LOG_INFO(UI, "    First glyph: char='%c', pos=(%.1f,%.1f), size=(%.1f,%.1f), uv=(%.3f,%.3f)-(%.3f,%.3f)",
-						currentChar, xpos, ypos, w, h,
-						glyph.atlasBoundsMin.x, glyph.atlasBoundsMin.y, glyph.atlasBoundsMax.x, glyph.atlasBoundsMax.y);
+					LOG_INFO(
+						UI,
+						"    First glyph: char='%c', pos=(%.1f,%.1f), size=(%.1f,%.1f), uv=(%.3f,%.3f)-(%.3f,%.3f)",
+						currentChar,
+						xpos,
+						ypos,
+						w,
+						h,
+						glyph.atlasBoundsMin.x,
+						glyph.atlasBoundsMin.y,
+						glyph.atlasBoundsMax.x,
+						glyph.atlasBoundsMax.y
+					);
 				}
 
 				outQuads.push_back(quad);
