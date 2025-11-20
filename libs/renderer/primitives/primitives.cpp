@@ -14,8 +14,9 @@
 #include <stack>
 #include <vector>
 
-// Forward declaration is enough for pointer usage
-// Full include would require adding ui library as dependency to renderer
+// NOTE: TextBatchRenderer include deliberately omitted to avoid circular dependency
+// (renderer → ui → renderer). Text rendering is implemented in ui/shapes/shapes.cpp
+// which has access to both renderer (Primitives API) and ui (TextBatchRenderer) libraries.
 
 namespace Renderer::Primitives {
 
@@ -61,6 +62,7 @@ namespace Renderer::Primitives {
 	static CoordinateSystem*			  g_coordinateSystem = nullptr;
 	static ui::FontRenderer*			  g_fontRenderer = nullptr;
 	static ui::TextBatchRenderer*		  g_textBatchRenderer = nullptr;
+	static FlushCallback				  g_textFlushCallback = nullptr;
 	static std::stack<Foundation::Rect>	  g_scissorStack;
 	static std::stack<Foundation::Mat4>	  g_transformStack;
 	static Foundation::Rect				  g_currentScissor;
@@ -111,6 +113,10 @@ namespace Renderer::Primitives {
 		return g_textBatchRenderer;
 	}
 
+	void SetTextFlushCallback(FlushCallback callback) {
+		g_textFlushCallback = callback;
+	}
+
 	// --- Batch Key Helpers ---
 
 	// Get batch key for solid color primitives (no texture)
@@ -141,8 +147,15 @@ namespace Renderer::Primitives {
 	}
 
 	void EndFrame() {
+		// Flush batched shapes
 		if (g_batchRenderer != nullptr) {
 			g_batchRenderer->EndFrame();
+		}
+
+		// Flush batched text via callback (renders after shapes for proper z-ordering)
+		// This callback pattern avoids circular dependency (renderer → ui → renderer)
+		if (g_textFlushCallback != nullptr) {
+			g_textFlushCallback();
 		}
 	}
 
@@ -329,6 +342,18 @@ namespace Renderer::Primitives {
 				DrawLine({.start = start, .end = end, .style = {.color = border.color, .width = border.width}});
 			}
 		}
+	}
+
+	void DrawText(const TextArgs& args) {
+		// NOTE: Implementation deliberately omitted to avoid circular dependency.
+		// Text rendering is implemented in ui/shapes/shapes.cpp (Text::Render())
+		// which has access to TextBatchRenderer.
+		//
+		// This function exists in the API for:
+		// 1. Documentation of the text rendering interface
+		// 2. Future refactoring if we move TextBatchRenderer to renderer library
+		// 3. Consistency with other primitive drawing functions
+		(void)args; // Suppress unused parameter warning
 	}
 
 	// --- Scissor Stack ---

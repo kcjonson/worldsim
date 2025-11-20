@@ -53,6 +53,14 @@ namespace {
 			m_textBatchRenderer->SetProjectionMatrix(projection); // Set projection for MSDF shader
 			Renderer::Primitives::SetTextBatchRenderer(m_textBatchRenderer.get());
 
+			// Register flush callback so Primitives::EndFrame() automatically flushes text batches
+			Renderer::Primitives::SetTextFlushCallback([]() {
+				auto* textBatchRenderer = Renderer::Primitives::GetTextBatchRenderer();
+				if (textBatchRenderer) {
+					textBatchRenderer->Flush();
+				}
+			});
+
 			LOG_INFO(UI, "FontRenderer and TextBatchRenderer initialized for button scene");
 
 			// Create root container

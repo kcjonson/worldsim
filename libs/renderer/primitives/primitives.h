@@ -82,6 +82,15 @@ namespace Renderer {
 		// Returns: Pointer to TextBatchRenderer, or nullptr if not set
 		ui::TextBatchRenderer* GetTextBatchRenderer();
 
+		// Set a callback to flush text rendering at end of frame.
+		//
+		// This allows the ui library to register TextBatchRenderer::Flush() without
+		// creating a circular dependency (renderer → ui → renderer).
+		//
+		// The callback will be invoked by EndFrame() after flushing shape batches.
+		using FlushCallback = void (*)();
+		void SetTextFlushCallback(FlushCallback callback);
+
 		// --- Frame Lifecycle ---
 
 		void BeginFrame();
