@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2025-11-18 (Batched Text Rendering design doc created, Button component complete)
+Last Updated: 2025-11-20 (SDF Text Rendering Phases 1-4 complete, horizontal squishing bug fixed)
 
 ## Epic/Story/Task Template
 
@@ -281,12 +281,10 @@ Use this template for all work items:
 
 ---
 
-## Planned Epics
-
-### SDF Text Rendering & Batched Command Queue
+### 🔄 SDF Text Rendering & Batched Command Queue
 **Spec/Documentation:** `/docs/technical/ui-framework/sdf-text-rendering.md`, `/docs/technical/ui-framework/batched-text-rendering.md`
 **Dependencies:** None (uses existing FontRenderer and Primitives API)
-**Status:** ready
+**Status:** in progress (Phases 1-4 complete, Phase 5 remaining)
 
 **Background:**
 Current text rendering has two critical issues:
@@ -299,27 +297,31 @@ Current text rendering has two critical issues:
 - Two-pass rendering (opaque front-to-back, transparent back-to-front)
 - All text batches into single draw call per atlas
 
+**Recent Work (2025-11-20):**
+Fixed critical bug where glyphs were horizontally compressed. Added atlasBounds support to distinguish between allocated atlas cells (32×32) and actual glyph content (varying sizes). See development-log.md for details.
+
 **Tasks:**
-- [ ] Phase 1: SDF Atlas Generation Tool
-  - [ ] Add msdfgen to vcpkg.json
-  - [ ] Create tools/generate_sdf_atlas executable
-  - [ ] Generate Roboto-Regular SDF atlas + metadata JSON
-  - [ ] Test atlas loading in FontRenderer
-- [ ] Phase 2: FontRenderer SDF Support
-  - [ ] Add LoadSDFFont() method (atlas + metadata)
-  - [ ] Implement GenerateGlyphQuads() for SDF
-  - [ ] Add GetSDFAtlas() for batch key
-  - [ ] Remove old immediate rendering code
-- [ ] Phase 3: SDF Shaders
-  - [ ] Create sdf_text.vert shader
-  - [ ] Create sdf_text.frag with median filtering + smoothstep
-  - [ ] Add uPixelRange uniform
-  - [ ] Test anti-aliasing quality at multiple scales
-- [ ] Phase 4: Command Queue & Two-Pass Rendering
-  - [ ] Implement DrawText() in Primitives API
-  - [ ] Implement two-pass EndFrame() (opaque → transparent)
-  - [ ] Sort by batch key + z-index
-  - [ ] Implement RenderBatch() with state change minimization
+- [x] Phase 1: SDF Atlas Generation Tool
+  - [x] Add msdfgen to vcpkg.json
+  - [x] Create tools/generate_sdf_atlas executable
+  - [x] Generate Roboto-Regular SDF atlas + metadata JSON
+  - [x] Test atlas loading in FontRenderer
+  - [x] Fix horizontal squishing bug (atlasBounds support)
+- [x] Phase 2: FontRenderer SDF Support
+  - [x] Add LoadSDFFont() method (atlas + metadata)
+  - [x] Implement GenerateGlyphQuads() for SDF
+  - [x] Add GetSDFAtlas() for batch key
+  - [ ] Remove old immediate rendering code (keeping TTF fallback)
+- [x] Phase 3: SDF Shaders
+  - [x] Create sdf_text.vert shader
+  - [x] Create sdf_text.frag with median filtering + smoothstep
+  - [x] Add uPixelRange uniform
+  - [x] Test anti-aliasing quality at multiple scales
+- [x] Phase 4: Command Queue & Two-Pass Rendering
+  - [x] Implement DrawText() in Primitives API (via TextBatchRenderer)
+  - [x] Implement batched rendering with z-ordering
+  - [x] Sort by z-index within text batches
+  - [x] Implement state change minimization
 - [ ] Phase 5: Integration & Testing
   - [ ] Update Text::Render() to use Primitives::DrawText()
   - [ ] Test button scene - verify text renders on top of buttons
@@ -328,6 +330,8 @@ Current text rendering has two critical issues:
   - [ ] Test transparency and z-ordering
 
 ---
+
+## Planned Epics
 
 ### Unit Testing Infrastructure
 **Spec/Documentation:** `/docs/technical/unit-testing-strategy.md`, `/docs/technical/testing-guidelines.md` (TBD)

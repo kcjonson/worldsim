@@ -10,6 +10,7 @@ add_executable(ui-sandbox
     scenes/layer_scene.cpp
     scenes/input_test_scene.cpp
     scenes/button_scene.cpp
+    scenes/sdf_minimal_scene.cpp
 )
 
 target_include_directories(ui-sandbox
@@ -34,4 +35,12 @@ add_custom_command(TARGET ui-sandbox POST_BUILD
     ${CMAKE_BINARY_DIR}/shaders
     $<TARGET_FILE_DIR:ui-sandbox>/shaders
     COMMENT "Copying shaders to ui-sandbox directory"
+)
+
+# Copy fonts to executable directory
+add_custom_command(TARGET ui-sandbox POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+    ${CMAKE_SOURCE_DIR}/fonts
+    $<TARGET_FILE_DIR:ui-sandbox>/fonts
+    COMMENT "Copying fonts to ui-sandbox directory"
 )

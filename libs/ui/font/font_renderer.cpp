@@ -49,14 +49,29 @@ namespace ui {
 		}
 		LOG_INFO(UI, "FreeType initialized successfully");
 
-		// Load font (hardcoded for now - can be made configurable later)
-		if (!LoadFont("fonts/Roboto-Regular.ttf")) {
-			LOG_ERROR(UI, "FATAL ERROR: Failed to load font");
+		// Try to load SDF atlas first, fall back to TTF rasterization
+		bool fontLoaded = false;
+		if (LoadSDFAtlas("fonts/Roboto-SDF.png", "fonts/Roboto-SDF.json")) {
+			LOG_INFO(UI, "Using SDF atlas for text rendering");
+			fontLoaded = true;
+		} else {
+			LOG_WARNING(UI, "SDF atlas not found, falling back to TTF rasterization");
+			if (!LoadFont("fonts/Roboto-Regular.ttf")) {
+				LOG_ERROR(UI, "FATAL ERROR: Failed to load font");
+				FT_Done_FreeType(m_library);
+				m_library = nullptr;
+				std::exit(1);
+			}
+			LOG_INFO(UI, "Using TTF rasterization for text rendering");
+			fontLoaded = true;
+		}
+
+		if (!fontLoaded) {
+			LOG_ERROR(UI, "FATAL ERROR: Failed to load any font");
 			FT_Done_FreeType(m_library);
 			m_library = nullptr;
 			std::exit(1);
 		}
-		LOG_INFO(UI, "Font loaded successfully");
 
 		// Initialize the shader
 		if (!m_shader.LoadFromFile("text.vert", "text.frag")) {
@@ -339,11 +354,26 @@ namespace ui {
 			if (!glyphJson["atlas"].is_null()) {
 				glyph.hasGeometry = true;
 
-				// Atlas UV coordinates (normalized 0-1)
+				// Atlas UV coordinates (normalized 0-1) - full allocated cell
 				glyph.atlasUVMin.x = glyphJson["atlas"]["x"].get<float>();
 				glyph.atlasUVMin.y = glyphJson["atlas"]["y"].get<float>();
 				glyph.atlasUVMax.x = glyph.atlasUVMin.x + glyphJson["atlas"]["width"].get<float>();
 				glyph.atlasUVMax.y = glyph.atlasUVMin.y + glyphJson["atlas"]["height"].get<float>();
+
+				// Atlas bounds UV coordinates (normalized 0-1) - actual glyph content
+				// Reference: https://github.com/Chlumsky/msdf-atlas-gen/issues/2
+				// atlasBounds defines where the actual rendered glyph is within the cell
+				// Fall back to full cell if atlasBounds not present (older atlas format)
+				if (glyphJson.contains("atlasBounds") && !glyphJson["atlasBounds"].is_null()) {
+					glyph.atlasBoundsMin.x = glyphJson["atlasBounds"]["left"].get<float>();
+					glyph.atlasBoundsMin.y = glyphJson["atlasBounds"]["bottom"].get<float>();
+					glyph.atlasBoundsMax.x = glyphJson["atlasBounds"]["right"].get<float>();
+					glyph.atlasBoundsMax.y = glyphJson["atlasBounds"]["top"].get<float>();
+				} else {
+					// Fallback: use full atlas cell if atlasBounds not available
+					glyph.atlasBoundsMin = glyph.atlasUVMin;
+					glyph.atlasBoundsMax = glyph.atlasUVMax;
+				}
 
 				// Plane bounds (in em units)
 				glyph.planeBoundsMin.x = glyphJson["plane"]["left"].get<float>();
@@ -363,6 +393,10 @@ namespace ui {
 		int			   width = 0;
 		int			   height = 0;
 		int			   channels = 0;
+		// OpenGL expects (0,0) at bottom-left, but images are stored with (0,0) at top-left
+		// Flip vertically so texture coordinates match
+		stbi_set_flip_vertically_on_load(1);
+
 		unsigned char* imageData = stbi_load(pngPath.c_str(), &width, &height, &channels, 3); // Force RGB
 
 		if (!imageData) {
@@ -446,12 +480,22 @@ namespace ui {
 				float h = (glyph.planeBoundsMax.y - glyph.planeBoundsMin.y) * fontSize;
 
 				// Create glyph quad
+				// Use atlasBounds (actual glyph content) instead of atlas (full cell)
+				// Reference: https://github.com/Chlumsky/msdf-atlas-gen/issues/2
+				// This ensures we only sample the actual glyph pixels, not the empty padding
 				GlyphQuad quad{};
 				quad.position = glm::vec2(xpos, ypos);
 				quad.size = glm::vec2(w, h);
-				quad.uvMin = glyph.atlasUVMin;
-				quad.uvMax = glyph.atlasUVMax;
+				quad.uvMin = glyph.atlasBoundsMin;
+				quad.uvMax = glyph.atlasBoundsMax;
 				quad.color = color;
+
+				// Log first glyph for debugging
+				if (outQuads.empty()) {
+					LOG_INFO(UI, "    First glyph: char='%c', pos=(%.1f,%.1f), size=(%.1f,%.1f), uv=(%.3f,%.3f)-(%.3f,%.3f)",
+						currentChar, xpos, ypos, w, h,
+						glyph.atlasBoundsMin.x, glyph.atlasBoundsMin.y, glyph.atlasBoundsMax.x, glyph.atlasBoundsMax.y);
+				}
 
 				outQuads.push_back(quad);
 			}

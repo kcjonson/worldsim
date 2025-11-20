@@ -16,13 +16,22 @@ struct GlyphData {
 	double advance;
 	msdfgen::Shape shape;
 
-	// Atlas coordinates (in pixels)
+	// Atlas cell coordinates (in pixels) - the full allocated cell
 	int atlasX = 0;
 	int atlasY = 0;
 	int atlasWidth = 0;
 	int atlasHeight = 0;
 
-	// Plane bounds (in font units)
+	// Atlas bounds (in pixels) - actual glyph content within the cell
+	// Reference: https://github.com/Chlumsky/msdf-atlas-gen/issues/2
+	// atlasBounds defines where the actual rendered glyph is within the cell
+	double atlasBoundsLeft = 0;
+	double atlasBoundsBottom = 0;
+	double atlasBoundsRight = 0;
+	double atlasBoundsTop = 0;
+
+	// Plane bounds (in EM units) - glyph positioning relative to baseline
+	// Reference: https://github.com/Chlumsky/msdf-atlas-gen/discussions/17
 	double planeLeft = 0;
 	double planeBottom = 0;
 	double planeRight = 0;
@@ -201,8 +210,20 @@ int main(int argc, char** argv) {
 	std::cout << "Generating distance fields...\n";
 
 	// Generate MSDF for each glyph and blit into atlas
+	//
+	// CRITICAL: Use UNIFORM scaling for all glyphs, not per-glyph scaling
+	// Reference: https://github.com/Chlumsky/msdf-atlas-gen
+	// The official msdf-atlas-gen uses wrapBox() with a uniform glyphScale
+	// This ensures plane bounds (in EM units) correctly map to atlas pixels
+	//
+	// Uniform scale = glyphSize (pixels) / emSize (EM units)
+	// For glyphSize=32 and emSize=1.0: scale = 32.0
+	// This means: 1 EM = 32 pixels in atlas
+	// Example: A glyph 0.6 EM wide occupies 0.6 * 32 = 19.2 pixels in atlas
+	double uniformScale = static_cast<double>(config.glyphSize) / metrics.emSize;
+
 	int processedCount = 0;
-	for (const auto& glyph : glyphs) {
+	for (auto& glyph : glyphs) {
 		if (glyph.shape.contours.empty()) {
 			continue;
 		}
@@ -210,27 +231,33 @@ int main(int argc, char** argv) {
 		// Create a temporary bitmap for this glyph
 		msdfgen::Bitmap<float, 3> glyphBitmap(glyph.atlasWidth, glyph.atlasHeight);
 
-		// Calculate transformation from glyph space to pixel space
+		// Calculate glyph dimensions in EM units
 		double glyphWidth = glyph.planeRight - glyph.planeLeft;
 		double glyphHeight = glyph.planeTop - glyph.planeBottom;
 
-		// Scale to fit in glyph size with some padding
-		double padding = 0.1;  // 10% padding
-		double scale = std::min(
-			(glyph.atlasWidth * (1.0 - 2.0 * padding)) / glyphWidth,
-			(glyph.atlasHeight * (1.0 - 2.0 * padding)) / glyphHeight
-		);
+		// Center the glyph in its atlas cell using uniform scale
+		// translateX/Y position the glyph so its center aligns with cell center
+		double translateX = -glyph.planeLeft + (glyph.atlasWidth / uniformScale - glyphWidth) / 2.0;
+		double translateY = -glyph.planeBottom + (glyph.atlasHeight / uniformScale - glyphHeight) / 2.0;
 
-		// Center the glyph
-		double translateX = -glyph.planeLeft + (glyph.atlasWidth / scale - glyphWidth) / 2.0;
-		double translateY = -glyph.planeBottom + (glyph.atlasHeight / scale - glyphHeight) / 2.0;
-
-		// Set up transformation
-		msdfgen::Vector2 scaleVec(scale, scale);
+		// Set up transformation using UNIFORM scale for all glyphs
+		// Reference: https://github.com/Chlumsky/msdf-atlas-gen/discussions/47
+		// The scale vector transforms EM units to atlas pixels
+		// The range determines SDF sample area: pixelRange / scale
+		msdfgen::Vector2 scaleVec(uniformScale, uniformScale);
 		msdfgen::Vector2 translateVec(translateX, translateY);
 		msdfgen::Projection projection(scaleVec, translateVec);
-		msdfgen::Range range(config.pixelRange / scale);
+		msdfgen::Range range(config.pixelRange / uniformScale);
 		msdfgen::SDFTransformation transformation(projection, msdfgen::DistanceMapping(range));
+
+		// Calculate actual glyph bounds within the atlas cell (in pixels)
+		// Apply transformation to plane bounds to get pixel coordinates
+		// Reference: https://github.com/Chlumsky/msdf-atlas-gen/issues/2
+		// atlasBounds defines where the actual rendered glyph is within the cell
+		glyph.atlasBoundsLeft = (glyph.planeLeft + translateX) * uniformScale;
+		glyph.atlasBoundsBottom = (glyph.planeBottom + translateY) * uniformScale;
+		glyph.atlasBoundsRight = (glyph.planeRight + translateX) * uniformScale;
+		glyph.atlasBoundsTop = (glyph.planeTop + translateY) * uniformScale;
 
 		// Generate MSDF
 		msdfgen::MSDFGeneratorConfig genConfig;
@@ -307,7 +334,7 @@ int main(int argc, char** argv) {
 
 		jsonFile << "    \"" << charStr << "\": {\n";
 
-		// Atlas bounds (normalized 0-1)
+		// Atlas cell coordinates (normalized 0-1) - the full allocated cell
 		if (!glyph.shape.contours.empty()) {
 			double normX = static_cast<double>(glyph.atlasX) / config.atlasWidth;
 			double normY = static_cast<double>(glyph.atlasY) / config.atlasHeight;
@@ -320,6 +347,20 @@ int main(int argc, char** argv) {
 			jsonFile << "\"width\": " << normW << ", ";
 			jsonFile << "\"height\": " << normH << "},\n";
 
+			// Atlas bounds (normalized 0-1) - actual glyph content within the cell
+			// Reference: https://github.com/Chlumsky/msdf-atlas-gen/issues/2
+			// These are the pixel coordinates where the actual glyph is rendered
+			double atlasBoundsLeft = (glyph.atlasX + glyph.atlasBoundsLeft) / config.atlasWidth;
+			double atlasBoundsBottom = (glyph.atlasY + glyph.atlasBoundsBottom) / config.atlasHeight;
+			double atlasBoundsRight = (glyph.atlasX + glyph.atlasBoundsRight) / config.atlasWidth;
+			double atlasBoundsTop = (glyph.atlasY + glyph.atlasBoundsTop) / config.atlasHeight;
+
+			jsonFile << "      \"atlasBounds\": {";
+			jsonFile << "\"left\": " << atlasBoundsLeft << ", ";
+			jsonFile << "\"bottom\": " << atlasBoundsBottom << ", ";
+			jsonFile << "\"right\": " << atlasBoundsRight << ", ";
+			jsonFile << "\"top\": " << atlasBoundsTop << "},\n";
+
 			jsonFile << "      \"plane\": {";
 			jsonFile << "\"left\": " << glyph.planeLeft << ", ";
 			jsonFile << "\"bottom\": " << glyph.planeBottom << ", ";
@@ -328,6 +369,7 @@ int main(int argc, char** argv) {
 		} else {
 			// Whitespace - no atlas coordinates
 			jsonFile << "      \"atlas\": null,\n";
+			jsonFile << "      \"atlasBounds\": null,\n";
 			jsonFile << "      \"plane\": null,\n";
 		}
 

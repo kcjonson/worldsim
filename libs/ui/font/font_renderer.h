@@ -119,6 +119,8 @@ namespace ui {
 		struct SDFGlyph {
 			glm::vec2 atlasUVMin;	// Bottom-left UV in atlas texture
 			glm::vec2 atlasUVMax;	// Top-right UV in atlas texture
+			glm::vec2 atlasBoundsMin; // Bottom-left UV of actual glyph content
+			glm::vec2 atlasBoundsMax; // Top-right UV of actual glyph content
 			glm::vec2 planeBoundsMin; // Glyph bounds min (in em units)
 			glm::vec2 planeBoundsMax; // Glyph bounds max (in em units)
 			float advance;			  // Horizontal advance (in em units)
