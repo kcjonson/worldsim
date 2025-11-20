@@ -110,10 +110,12 @@ This directory contains technical documentation for the UI framework in world-si
 - Performance targets and profiling strategy
 - **Read this to implement the rendering layer**
 
-**text-rendering.md** (to be created if needed)
-- SDF font integration with RmlUI
-- Custom font backend using msdfgen
-- Font atlas generation and management
+**[sdf-text-rendering.md](./sdf-text-rendering.md)** - SDF Font Rendering System
+- Signed Distance Field approach for crisp, scalable text
+- msdfgen integration for atlas generation
+- SDF shader implementation with perfect anti-aliasing
+- Batching integration with command queue system
+- Complete implementation guide
 
 ## Quick Reference
 

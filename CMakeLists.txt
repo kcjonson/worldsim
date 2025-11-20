@@ -6,6 +6,11 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# Force use of LLVM's libc++ on macOS
+if(APPLE)
+    add_link_options("-L/usr/local/opt/llvm/lib/c++" "-Wl,-rpath,/usr/local/opt/llvm/lib/c++")
+endif()
+
 # Export compile commands for IDE support
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
@@ -39,6 +44,9 @@ add_subdirectory(libs/engine)
 # Applications
 add_subdirectory(apps/world-sim)
 add_subdirectory(apps/ui-sandbox)
+
+# Build tools (atlas generator, etc.)
+add_subdirectory(tools/generate_sdf_atlas)
 
 # Developer client (web app)
 # Only build in Development mode (builds React app with npm)

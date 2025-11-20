@@ -83,6 +83,9 @@ namespace Renderer { // NOLINT(readability-identifier-naming)
 		size_t		GetDrawCallCount() const { return m_drawCallCount; }
 		RenderStats GetStats() const;
 
+		// Shader access for batching
+		GLuint GetShaderProgram() const { return m_shader.GetProgram(); }
+
 	  private:
 		// Vertex data (CPU-side accumulation)
 		std::vector<PrimitiveVertex> m_vertices;

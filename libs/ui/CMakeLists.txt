@@ -1,8 +1,12 @@
 add_library(ui
     core/placeholder.cpp
+    core/render_context.cpp
+    stb_image.cpp
     font/font_renderer.cpp
+    font/text_batch_renderer.cpp
     layer/layer_manager.cpp
     shapes/shapes.cpp
+    components/button/button.cpp
 )
 
 target_include_directories(ui
@@ -21,6 +25,7 @@ target_link_libraries(ui
     PUBLIC
         foundation
         renderer
+        engine
         httplib::httplib
         nlohmann_json::nlohmann_json
         Freetype::Freetype

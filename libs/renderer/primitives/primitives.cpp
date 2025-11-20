@@ -4,10 +4,13 @@
 #include "primitives/primitives.h"
 #include "coordinate_system/coordinate_system.h"
 #include "primitives/batch_renderer.h"
+#include <GL/glew.h>
+#include <algorithm>
 #include <cmath>
 #include <glm/gtc/matrix_transform.hpp>
 #include <memory>
 #include <numbers>
+#include <optional>
 #include <stack>
 #include <vector>
 
@@ -16,14 +19,55 @@
 
 namespace Renderer::Primitives {
 
+	// --- Command Queue Data Structures ---
+
+	// Batch key - identifies which draw commands can be batched together
+	// Commands with the same batch key share GPU state (shader, texture, blend mode)
+	struct BatchKey {
+		GLuint shader = 0;
+		GLuint texture = 0;
+		enum class BlendMode { None, Alpha, Additive };
+		BlendMode blendMode = BlendMode::None;
+
+		bool operator==(const BatchKey& other) const {
+			return shader == other.shader && texture == other.texture && blendMode == other.blendMode;
+		}
+
+		bool operator<(const BatchKey& other) const {
+			// Sort order: shader → texture → blend mode
+			if (shader != other.shader)
+				return shader < other.shader;
+			if (texture != other.texture)
+				return texture < other.texture;
+			return static_cast<int>(blendMode) < static_cast<int>(other.blendMode);
+		}
+	};
+
+	// Draw command for deferred rendering
+	struct DrawCommand {
+		BatchKey					 batchKey;		 // GPU state for batching
+		float						 zIndex = 0.0F;	 // Render order
+		bool						 isTransparent = false; // Opaque vs transparent pass
+		std::optional<Foundation::Rect> scissor;		 // Optional clipping region
+		const char*					 id = nullptr;	 // Debug identifier
+
+		// Vertex data (triangles, lines, etc.)
+		std::vector<float> vertices;
+		GLenum			   primitiveType = GL_TRIANGLES; // GL_TRIANGLES, GL_LINES, etc.
+	};
+
 	// Internal state
 	static std::unique_ptr<BatchRenderer> g_batchRenderer = nullptr;
 	static CoordinateSystem*			  g_coordinateSystem = nullptr;
 	static ui::FontRenderer*			  g_fontRenderer = nullptr;
+	static ui::TextBatchRenderer*		  g_textBatchRenderer = nullptr;
 	static std::stack<Foundation::Rect>	  g_scissorStack;
 	static std::stack<Foundation::Mat4>	  g_transformStack;
 	static Foundation::Rect				  g_currentScissor;
 	static Foundation::Mat4				  g_currentTransform = Foundation::Mat4(1.0F);
+
+	// Command queue for batched rendering
+	static std::vector<DrawCommand> g_commandQueue;
 
 	// --- Initialization ---
 
@@ -57,6 +101,35 @@ namespace Renderer::Primitives {
 
 	ui::FontRenderer* GetFontRenderer() {
 		return g_fontRenderer;
+	}
+
+	void SetTextBatchRenderer(ui::TextBatchRenderer* batchRenderer) {
+		g_textBatchRenderer = batchRenderer;
+	}
+
+	ui::TextBatchRenderer* GetTextBatchRenderer() {
+		return g_textBatchRenderer;
+	}
+
+	// --- Batch Key Helpers ---
+
+	// Get batch key for solid color primitives (no texture)
+	static BatchKey GetColorBatchKey(bool hasAlpha = false) {
+		BatchKey key;
+		key.shader = g_batchRenderer ? g_batchRenderer->GetShaderProgram() : 0;
+		key.texture = 0; // No texture for solid colors
+		key.blendMode = hasAlpha ? BatchKey::BlendMode::Alpha : BatchKey::BlendMode::None;
+		return key;
+	}
+
+	// Get batch key for text rendering (uses font atlas texture)
+	static BatchKey GetTextBatchKey(GLuint fontAtlasTexture) {
+		BatchKey key;
+		// TODO: Get text shader program (different from color shader)
+		key.shader = g_batchRenderer ? g_batchRenderer->GetShaderProgram() : 0;
+		key.texture = fontAtlasTexture;
+		key.blendMode = BatchKey::BlendMode::Alpha; // Text always uses alpha blending
+		return key;
 	}
 
 	// --- Frame Lifecycle ---

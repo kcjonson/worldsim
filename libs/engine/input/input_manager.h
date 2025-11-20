@@ -1,5 +1,6 @@
 #pragma once
 
+#include "input/input_types.h"
 #include <GLFW/glfw3.h>
 #include <glm/glm.hpp>
 #include <string>
@@ -44,16 +45,16 @@ namespace engine {
 		// Query API for scenes to read current input state
 		glm::vec2 GetMousePosition() const { return m_mousePosition; }
 		glm::vec2 GetMouseDelta() const { return m_mouseDelta; }
-		bool	  IsMouseButtonDown(int button) const;
-		bool	  IsMouseButtonPressed(int button) const;  // True only on frame button was pressed
-		bool	  IsMouseButtonReleased(int button) const; // True only on frame button was released
+		bool	  IsMouseButtonDown(MouseButton button) const;
+		bool	  IsMouseButtonPressed(MouseButton button) const;  // True only on frame button was pressed
+		bool	  IsMouseButtonReleased(MouseButton button) const; // True only on frame button was released
 		bool	  IsDragging() const { return m_isDragging; }
 		glm::vec2 GetDragStartPosition() const { return m_dragStartPos; }
 		glm::vec2 GetDragDelta() const { return m_mousePosition - m_dragStartPos; }
 
-		bool IsKeyDown(int key) const;
-		bool IsKeyPressed(int key) const;  // True only on frame key was pressed
-		bool IsKeyReleased(int key) const; // True only on frame key was released
+		bool IsKeyDown(Key key) const;
+		bool IsKeyPressed(Key key) const;  // True only on frame key was pressed
+		bool IsKeyReleased(Key key) const; // True only on frame key was released
 
 		float	  GetScrollDelta() const { return m_scrollDelta; }
 		bool	  IsCursorInWindow() const { return m_cursorInWindow; }

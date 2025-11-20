@@ -1,5 +1,8 @@
 #include "layer/layer_manager.h"
 #include "shapes/shapes.h"
+#include "core/render_context.h"
+#include "font/text_batch_renderer.h"
+#include "primitives/primitives.h"
 #include <algorithm>
 #include <cassert>
 
@@ -234,11 +237,23 @@ namespace UI {
 				RenderNode(i);
 			}
 		}
+
+		// Flush batched text rendering (renders all text in z-order)
+		ui::TextBatchRenderer* textBatchRenderer = Renderer::Primitives::GetTextBatchRenderer();
+		if (textBatchRenderer != nullptr) {
+			textBatchRenderer->Flush();
+		}
 	}
 
 	void LayerManager::RenderSubtree(uint32_t rootIndex) {
 		assert(IsValidIndex(rootIndex) && "Root index out of range");
 		RenderNode(rootIndex);
+
+		// Flush batched text rendering (renders all text in z-order)
+		ui::TextBatchRenderer* textBatchRenderer = Renderer::Primitives::GetTextBatchRenderer();
+		if (textBatchRenderer != nullptr) {
+			textBatchRenderer->Flush();
+		}
 	}
 
 	void LayerManager::RenderNode(uint32_t nodeIndex) {
@@ -251,6 +266,9 @@ namespace UI {
 
 		// Sort children if needed (dirty flag optimization)
 		SortChildren(nodeIndex);
+
+		// Set z-index in render context so shapes can access it
+		RenderContext::SetZIndex(node.zIndex);
 
 		// Render this node using std::visit pattern
 		std::visit([](auto& shape) { shape.Render(); }, node.data);
