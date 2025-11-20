@@ -2,6 +2,7 @@
 // Demonstrates UI::Text shapes with various styles, sizes, and alignments
 
 #include <font/font_renderer.h>
+#include <font/text_batch_renderer.h>
 #include <graphics/color.h>
 #include <layer/layer_manager.h>
 #include <primitives/primitives.h>
@@ -40,7 +41,13 @@ namespace {
 			// Set font renderer in Primitives API so Text shapes can use it
 			Renderer::Primitives::SetFontRenderer(m_fontRenderer.get());
 
-			LOG_INFO(UI, "FontRenderer initialized for text shapes scene");
+			// Initialize text batch renderer for batched SDF text rendering
+			m_textBatchRenderer = std::make_unique<ui::TextBatchRenderer>();
+			m_textBatchRenderer->Initialize(m_fontRenderer.get());
+			m_textBatchRenderer->SetProjectionMatrix(projection);
+			Renderer::Primitives::SetTextBatchRenderer(m_textBatchRenderer.get());
+
+			LOG_INFO(UI, "FontRenderer and TextBatchRenderer initialized for text shapes scene");
 
 			// Create root container
 			Container rootContainer{.id = "root"};
@@ -202,7 +209,9 @@ namespace {
 
 		void OnExit() override {
 			m_layerManager.Clear();
+			Renderer::Primitives::SetTextBatchRenderer(nullptr);
 			Renderer::Primitives::SetFontRenderer(nullptr);
+			m_textBatchRenderer.reset();
 			m_fontRenderer.reset();
 		}
 
@@ -214,6 +223,7 @@ namespace {
 		UI::LayerManager				  m_layerManager;
 		uint32_t						  m_rootLayer{0};
 		std::unique_ptr<ui::FontRenderer> m_fontRenderer;
+		std::unique_ptr<ui::TextBatchRenderer> m_textBatchRenderer;
 	};
 
 	// Register scene with SceneManager

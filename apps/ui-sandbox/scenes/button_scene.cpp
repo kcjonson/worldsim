@@ -3,6 +3,7 @@
 
 #include <components/button/button.h>
 #include <font/font_renderer.h>
+#include <font/text_batch_renderer.h>
 #include <graphics/color.h>
 #include <input/input_manager.h>
 #include <input/input_types.h>
@@ -46,7 +47,13 @@ namespace {
 			// Set font renderer in Primitives API so buttons can use it
 			Renderer::Primitives::SetFontRenderer(m_fontRenderer.get());
 
-			LOG_INFO(UI, "FontRenderer initialized for button scene");
+			// Initialize text batch renderer for batched SDF text rendering
+			m_textBatchRenderer = std::make_unique<ui::TextBatchRenderer>();
+			m_textBatchRenderer->Initialize(m_fontRenderer.get());
+			m_textBatchRenderer->SetProjectionMatrix(projection); // Set projection for MSDF shader
+			Renderer::Primitives::SetTextBatchRenderer(m_textBatchRenderer.get());
+
+			LOG_INFO(UI, "FontRenderer and TextBatchRenderer initialized for button scene");
 
 			// Create root container
 			Container rootContainer{.id = "root_container"};
@@ -242,6 +249,7 @@ namespace {
 
 		void OnExit() override {
 			m_buttons.clear();
+			m_textBatchRenderer.reset();
 			m_fontRenderer.reset();
 			LOG_INFO(UI, "Button scene exited");
 		}
@@ -310,7 +318,8 @@ namespace {
 
 	  private:
 		// Font renderer
-		std::unique_ptr<ui::FontRenderer> m_fontRenderer;
+		std::unique_ptr<ui::FontRenderer>	   m_fontRenderer;
+		std::unique_ptr<ui::TextBatchRenderer> m_textBatchRenderer;
 
 		// Layer management
 		UI::LayerManager m_layerManager;

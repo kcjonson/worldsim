@@ -174,4 +174,18 @@ namespace Renderer {
 		}
 	}
 
+	void Shader::SetUniform(const char* name, int value) const {
+		GLint location = glGetUniformLocation(m_program, name);
+		if (location != -1) {
+			glUniform1i(location, value);
+		}
+	}
+
+	void Shader::SetUniform(const char* name, float value) const {
+		GLint location = glGetUniformLocation(m_program, name);
+		if (location != -1) {
+			glUniform1f(location, value);
+		}
+	}
+
 } // namespace Renderer

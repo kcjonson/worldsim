@@ -91,6 +91,7 @@ namespace ui {
 
 		FontRenderer*			   m_fontRenderer = nullptr; // Reference to font renderer
 		Renderer::Shader		   m_shader;				 // MSDF text shader
+		glm::mat4				   m_projection;			 // Projection matrix for text rendering
 		std::vector<TextCommand>   m_commands;				 // Pending text commands
 		GLuint					   m_vao = 0;				 // Vertex Array Object
 		GLuint					   m_vbo = 0;				 // Vertex Buffer Object
