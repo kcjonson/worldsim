@@ -151,6 +151,11 @@ namespace ui {
 			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
 			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 
+			// Store first texture for batch rendering key
+			if (m_firstGlyphTexture == 0) {
+				m_firstGlyphTexture = texture;
+			}
+
 			Character character{
 				.textureID = texture,
 				.size = glm::ivec2(static_cast<GLsizei>(m_face->glyph->bitmap.width), m_face->glyph->bitmap.rows),

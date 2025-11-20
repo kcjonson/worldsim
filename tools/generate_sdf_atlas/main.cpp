@@ -67,7 +67,17 @@ int main(int argc, char** argv) {
 		} else if (arg == "--metadata" && i + 1 < argc) {
 			config.metadataPath = argv[++i];
 		} else if (arg == "--size" && i + 1 < argc) {
-			config.atlasWidth = config.atlasHeight = std::stoi(argv[++i]);
+			try {
+				int size = std::stoi(argv[++i]);
+				if (size < 64 || size > 4096) {
+					std::cerr << "Error: Atlas size must be between 64 and 4096 pixels\n";
+					return 1;
+				}
+				config.atlasWidth = config.atlasHeight = size;
+			} catch (const std::exception& e) {
+				std::cerr << "Error: Invalid atlas size value: " << e.what() << "\n";
+				return 1;
+			}
 		} else if (arg == "--help") {
 			std::cout << "Usage: generate_sdf_atlas [options]\n";
 			std::cout << "Options:\n";
