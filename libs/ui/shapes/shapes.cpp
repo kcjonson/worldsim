@@ -3,6 +3,7 @@
 #include "font/text_batch_renderer.h"
 #include "core/render_context.h"
 #include "primitives/primitives.h"
+#include "utils/log.h"
 #include <glm/glm.hpp>
 
 namespace UI {
@@ -75,6 +76,10 @@ namespace UI {
 				// Already at top position
 				break;
 		}
+
+		// DEBUG: Log alignment calculations
+		LOG_INFO(UI, "Text '%s': pos(%.1f,%.1f) size(%.1f,%.1f) ascent=%.1f -> aligned(%.1f,%.1f)",
+			text.c_str(), position.x, position.y, textSize.x, textSize.y, ascent, alignedPos.x, alignedPos.y);
 
 		// Get current z-index from render context (set by LayerManager)
 		float zIndex = RenderContext::GetZIndex();

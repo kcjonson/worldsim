@@ -248,51 +248,77 @@ namespace ui {
 			return glm::vec2(0.0F, 0.0F);
 		}
 
-		float totalWidth = 0.0F;
-		float maxGlyphTopFromBaselineUnscaled = 0.0F;
-		float minGlyphBottomFromBaselineUnscaled = 0.0F;
-		bool  firstChar = true;
+		// Use SDF glyph data if available, otherwise use FreeType character data
+		if (m_usingSDF) {
+			// SDF path: use m_sdfGlyphs
+			float totalWidth = 0.0F;
+			float fontSize = static_cast<float>(m_atlasMetadata.glyphSize) * scale;
 
-		for (char c : text) {
-			auto			 it = m_characters.find(c);
-			const Character* pCh = nullptr;
-
-			if (it != m_characters.end()) {
-				pCh = &it->second;
-			} else {
-				auto itQ = m_characters.find('?');
-				if (itQ != m_characters.end()) {
-					pCh = &itQ->second;
+			for (char c : text) {
+				auto it = m_sdfGlyphs.find(c);
+				if (it != m_sdfGlyphs.end()) {
+					totalWidth += it->second.advance * fontSize;
 				} else {
-					continue;
+					// Fallback to '?' if character not found
+					auto fallbackIt = m_sdfGlyphs.find('?');
+					if (fallbackIt != m_sdfGlyphs.end()) {
+						totalWidth += fallbackIt->second.advance * fontSize;
+					}
 				}
 			}
 
-			const Character& ch = *pCh;
+			// For height, use the line height from atlas metadata
+			float textHeight = m_atlasMetadata.lineHeight * fontSize;
 
-			float glyphTopUnscaled = static_cast<float>(ch.bearing.y);
-			float glyphBottomUnscaled = static_cast<float>(ch.bearing.y) - static_cast<float>(ch.size.y);
+			return glm::vec2(totalWidth, textHeight);
+		} else {
+			// FreeType path: use m_characters
+			float totalWidth = 0.0F;
+			float maxGlyphTopFromBaselineUnscaled = 0.0F;
+			float minGlyphBottomFromBaselineUnscaled = 0.0F;
+			bool  firstChar = true;
 
-			if (firstChar) {
-				maxGlyphTopFromBaselineUnscaled = glyphTopUnscaled;
-				minGlyphBottomFromBaselineUnscaled = glyphBottomUnscaled;
-				firstChar = false;
-			} else {
-				maxGlyphTopFromBaselineUnscaled = std::max(maxGlyphTopFromBaselineUnscaled, glyphTopUnscaled);
-				minGlyphBottomFromBaselineUnscaled = std::min(minGlyphBottomFromBaselineUnscaled, glyphBottomUnscaled);
+			for (char c : text) {
+				auto			 it = m_characters.find(c);
+				const Character* pCh = nullptr;
+
+				if (it != m_characters.end()) {
+					pCh = &it->second;
+				} else {
+					auto itQ = m_characters.find('?');
+					if (itQ != m_characters.end()) {
+						pCh = &itQ->second;
+					} else {
+						continue;
+					}
+				}
+
+				const Character& ch = *pCh;
+
+				float glyphTopUnscaled = static_cast<float>(ch.bearing.y);
+				float glyphBottomUnscaled = static_cast<float>(ch.bearing.y) - static_cast<float>(ch.size.y);
+
+				if (firstChar) {
+					maxGlyphTopFromBaselineUnscaled = glyphTopUnscaled;
+					minGlyphBottomFromBaselineUnscaled = glyphBottomUnscaled;
+					firstChar = false;
+				} else {
+					maxGlyphTopFromBaselineUnscaled = std::max(maxGlyphTopFromBaselineUnscaled, glyphTopUnscaled);
+					minGlyphBottomFromBaselineUnscaled = std::min(minGlyphBottomFromBaselineUnscaled, glyphBottomUnscaled);
+				}
+
+				totalWidth += (ch.advance >> 6);
 			}
 
-			totalWidth += (ch.advance >> 6);
-		}
+			float scaledTotalWidth = totalWidth * scale;
+			float actualHeightScaled = 0.0F;
+			if (!firstChar) {
+				actualHeightScaled = (maxGlyphTopFromBaselineUnscaled - minGlyphBottomFromBaselineUnscaled) * scale;
+			}
+			actualHeightScaled = std::max(0.0F, actualHeightScaled);
 
-		float scaledTotalWidth = totalWidth * scale;
-		float actualHeightScaled = 0.0F;
-		if (!firstChar) {
-			actualHeightScaled = (maxGlyphTopFromBaselineUnscaled - minGlyphBottomFromBaselineUnscaled) * scale;
+			return glm::vec2(scaledTotalWidth, actualHeightScaled);
 		}
-		actualHeightScaled = std::max(0.0F, actualHeightScaled);
-
-		return glm::vec2(scaledTotalWidth, actualHeightScaled);
 	}
 
 	float FontRenderer::GetMaxGlyphHeight(float scale) const {
