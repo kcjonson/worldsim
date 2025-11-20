@@ -8,9 +8,8 @@
 namespace ui {
 
 	TextBatchRenderer::TextBatchRenderer()
-		: m_projection(1.0f)  // Initialize to identity matrix
-	{
-	}
+		: m_projection(1.0f) // Initialize to identity matrix
+	{}
 
 	TextBatchRenderer::~TextBatchRenderer() {
 		if (m_vao != 0) {
@@ -86,33 +85,22 @@ namespace ui {
 
 	void TextBatchRenderer::SetProjectionMatrix(const glm::mat4& projection) {
 		LOG_DEBUG(UI, "SetProjectionMatrix called");
-		LOG_DEBUG(UI, "  Matrix[0]: %.2f, %.2f, %.2f, %.2f",
-			projection[0][0], projection[0][1], projection[0][2], projection[0][3]);
-		LOG_DEBUG(UI, "  Matrix[1]: %.2f, %.2f, %.2f, %.2f",
-			projection[1][0], projection[1][1], projection[1][2], projection[1][3]);
-		LOG_DEBUG(UI, "  Matrix[2]: %.2f, %.2f, %.2f, %.2f",
-			projection[2][0], projection[2][1], projection[2][2], projection[2][3]);
-		LOG_DEBUG(UI, "  Matrix[3]: %.2f, %.2f, %.2f, %.2f",
-			projection[3][0], projection[3][1], projection[3][2], projection[3][3]);
+		LOG_DEBUG(UI, "  Matrix[0]: %.2f, %.2f, %.2f, %.2f", projection[0][0], projection[0][1], projection[0][2], projection[0][3]);
+		LOG_DEBUG(UI, "  Matrix[1]: %.2f, %.2f, %.2f, %.2f", projection[1][0], projection[1][1], projection[1][2], projection[1][3]);
+		LOG_DEBUG(UI, "  Matrix[2]: %.2f, %.2f, %.2f, %.2f", projection[2][0], projection[2][1], projection[2][2], projection[2][3]);
+		LOG_DEBUG(UI, "  Matrix[3]: %.2f, %.2f, %.2f, %.2f", projection[3][0], projection[3][1], projection[3][2], projection[3][3]);
 
 		// Store projection matrix for use in Flush()
 		m_projection = projection;
 	}
 
-	void TextBatchRenderer::AddText(
-		const std::string& text,
-		const glm::vec2&   position,
-		float			   scale,
-		const glm::vec4&   color,
-		float			   zIndex
-	) {
+	void TextBatchRenderer::AddText(const std::string& text, const glm::vec2& position, float scale, const glm::vec4& color, float zIndex) {
 		if (!m_fontRenderer) {
 			LOG_WARNING(UI, "AddText called but FontRenderer not set");
 			return;
 		}
 
-		LOG_DEBUG(UI, "AddText called: text='%s', pos=(%.1f,%.1f), scale=%.2f",
-			text.c_str(), position.x, position.y, scale);
+		LOG_DEBUG(UI, "AddText called: text='%s', pos=(%.1f,%.1f), scale=%.2f", text.c_str(), position.x, position.y, scale);
 
 		// Create command with generated glyphs
 		TextCommand cmd;
@@ -157,14 +145,10 @@ namespace ui {
 				}
 
 				// Create 4 vertices for this glyph quad
-				// Both U and V flipped to correct mirroring and upside-down text
+				// V flipped (Y texture coordinates inverted) for OpenGL coordinate system
 				// Top-left
 				m_vertices.push_back(
-					Vertex{
-						.position = glyph.position,
-						.texCoord = glm::vec2(glyph.uvMin.x, glyph.uvMax.y),
-						.color = glyph.color
-					}
+					Vertex{.position = glyph.position, .texCoord = glm::vec2(glyph.uvMin.x, glyph.uvMax.y), .color = glyph.color}
 				);
 
 				// Top-right
@@ -221,9 +205,18 @@ namespace ui {
 			// Log first vertex to verify data
 			if (!m_vertices.empty()) {
 				const auto& v = m_vertices[0];
-				LOG_DEBUG(UI, "  First vertex: pos=(%.2f, %.2f), uv=(%.4f, %.4f), color=(%.2f,%.2f,%.2f,%.2f)",
-					v.position.x, v.position.y, v.texCoord.x, v.texCoord.y,
-					v.color.r, v.color.g, v.color.b, v.color.a);
+				LOG_DEBUG(
+					UI,
+					"  First vertex: pos=(%.2f, %.2f), uv=(%.4f, %.4f), color=(%.2f,%.2f,%.2f,%.2f)",
+					v.position.x,
+					v.position.y,
+					v.texCoord.x,
+					v.texCoord.y,
+					v.color.r,
+					v.color.g,
+					v.color.b,
+					v.color.a
+				);
 			}
 
 			// Disable face culling (our quads are clockwise in screen space)
@@ -290,8 +283,13 @@ namespace ui {
 				LOG_ERROR(UI, "OpenGL error after buffer uploads: 0x%X", err4);
 			}
 
-			LOG_DEBUG(UI, "  Drawing: %zu vertices, %zu indices, texture=%u",
-				m_vertices.size(), m_indices.size(), m_fontRenderer->GetAtlasTexture());
+			LOG_DEBUG(
+				UI,
+				"  Drawing: %zu vertices, %zu indices, texture=%u",
+				m_vertices.size(),
+				m_indices.size(),
+				m_fontRenderer->GetAtlasTexture()
+			);
 
 			// Draw
 			glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(m_indices.size()), GL_UNSIGNED_INT, 0);
