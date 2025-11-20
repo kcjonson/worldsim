@@ -85,14 +85,14 @@ namespace ui {
 	}
 
 	void TextBatchRenderer::SetProjectionMatrix(const glm::mat4& projection) {
-		LOG_INFO(UI, "SetProjectionMatrix called");
-		LOG_INFO(UI, "  Matrix[0]: %.2f, %.2f, %.2f, %.2f",
+		LOG_DEBUG(UI, "SetProjectionMatrix called");
+		LOG_DEBUG(UI, "  Matrix[0]: %.2f, %.2f, %.2f, %.2f",
 			projection[0][0], projection[0][1], projection[0][2], projection[0][3]);
-		LOG_INFO(UI, "  Matrix[1]: %.2f, %.2f, %.2f, %.2f",
+		LOG_DEBUG(UI, "  Matrix[1]: %.2f, %.2f, %.2f, %.2f",
 			projection[1][0], projection[1][1], projection[1][2], projection[1][3]);
-		LOG_INFO(UI, "  Matrix[2]: %.2f, %.2f, %.2f, %.2f",
+		LOG_DEBUG(UI, "  Matrix[2]: %.2f, %.2f, %.2f, %.2f",
 			projection[2][0], projection[2][1], projection[2][2], projection[2][3]);
-		LOG_INFO(UI, "  Matrix[3]: %.2f, %.2f, %.2f, %.2f",
+		LOG_DEBUG(UI, "  Matrix[3]: %.2f, %.2f, %.2f, %.2f",
 			projection[3][0], projection[3][1], projection[3][2], projection[3][3]);
 
 		// Store projection matrix for use in Flush()
@@ -111,7 +111,7 @@ namespace ui {
 			return;
 		}
 
-		LOG_INFO(UI, "AddText called: text='%s', pos=(%.1f,%.1f), scale=%.2f",
+		LOG_DEBUG(UI, "AddText called: text='%s', pos=(%.1f,%.1f), scale=%.2f",
 			text.c_str(), position.x, position.y, scale);
 
 		// Create command with generated glyphs
@@ -121,7 +121,7 @@ namespace ui {
 		// Generate glyph quads using FontRenderer
 		m_fontRenderer->GenerateGlyphQuads(text, position, scale, color, cmd.glyphs);
 
-		LOG_INFO(UI, "  Generated %zu glyphs for text", cmd.glyphs.size());
+		LOG_DEBUG(UI, "  Generated %zu glyphs for text", cmd.glyphs.size());
 
 		// Only add if we generated glyphs
 		if (!cmd.glyphs.empty()) {
@@ -131,11 +131,11 @@ namespace ui {
 
 	void TextBatchRenderer::Flush() {
 		if (m_commands.empty()) {
-			LOG_INFO(UI, "Flush called but no commands to render");
+			LOG_DEBUG(UI, "Flush called but no commands to render");
 			return; // Nothing to render
 		}
 
-		LOG_INFO(UI, "Flush: Rendering %zu text commands", m_commands.size());
+		LOG_DEBUG(UI, "Flush: Rendering %zu text commands", m_commands.size());
 
 		// Sort commands by z-index (back to front)
 		std::stable_sort(m_commands.begin(), m_commands.end(), [](const TextCommand& a, const TextCommand& b) {
@@ -212,16 +212,16 @@ namespace ui {
 			// Check GL state before rendering
 			GLint viewport[4];
 			glGetIntegerv(GL_VIEWPORT, viewport);
-			LOG_INFO(UI, "  Viewport: x=%d, y=%d, w=%d, h=%d", viewport[0], viewport[1], viewport[2], viewport[3]);
+			LOG_DEBUG(UI, "  Viewport: x=%d, y=%d, w=%d, h=%d", viewport[0], viewport[1], viewport[2], viewport[3]);
 
 			GLboolean scissorEnabled;
 			glGetBooleanv(GL_SCISSOR_TEST, &scissorEnabled);
-			LOG_INFO(UI, "  Scissor test: %s", scissorEnabled ? "ENABLED" : "disabled");
+			LOG_DEBUG(UI, "  Scissor test: %s", scissorEnabled ? "ENABLED" : "disabled");
 
 			// Log first vertex to verify data
 			if (!m_vertices.empty()) {
 				const auto& v = m_vertices[0];
-				LOG_INFO(UI, "  First vertex: pos=(%.2f, %.2f), uv=(%.4f, %.4f), color=(%.2f,%.2f,%.2f,%.2f)",
+				LOG_DEBUG(UI, "  First vertex: pos=(%.2f, %.2f), uv=(%.4f, %.4f), color=(%.2f,%.2f,%.2f,%.2f)",
 					v.position.x, v.position.y, v.texCoord.x, v.texCoord.y,
 					v.color.r, v.color.g, v.color.b, v.color.a);
 			}
@@ -236,13 +236,13 @@ namespace ui {
 			glEnable(GL_BLEND);
 			glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-			LOG_INFO(UI, "  About to use shader and bind VAO");
+			LOG_DEBUG(UI, "  About to use shader and bind VAO");
 			m_shader.Use();
 
 			// Verify shader is bound
 			GLint currentProgram = 0;
 			glGetIntegerv(GL_CURRENT_PROGRAM, &currentProgram);
-			LOG_INFO(UI, "  Current shader program: %d", currentProgram);
+			LOG_DEBUG(UI, "  Current shader program: %d", currentProgram);
 
 			// Check for errors after shader use
 			GLenum err1 = glGetError();
@@ -290,7 +290,7 @@ namespace ui {
 				LOG_ERROR(UI, "OpenGL error after buffer uploads: 0x%X", err4);
 			}
 
-			LOG_INFO(UI, "  Drawing: %zu vertices, %zu indices, texture=%u",
+			LOG_DEBUG(UI, "  Drawing: %zu vertices, %zu indices, texture=%u",
 				m_vertices.size(), m_indices.size(), m_fontRenderer->GetAtlasTexture());
 
 			// Draw

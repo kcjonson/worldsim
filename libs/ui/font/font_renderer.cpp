@@ -7,8 +7,6 @@
 #include <fstream>
 #include <memory>
 #include <nlohmann/json.hpp>
-
-#define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
 
 namespace ui {
