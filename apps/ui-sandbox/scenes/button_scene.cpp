@@ -296,7 +296,7 @@ namespace {
 					textDataPtr->text = "Clicks: " + std::to_string(m_clickCount);
 					m_lastClickCount = m_clickCount;
 				} else {
-					LOG_ERROR(UI, "Layer %s does not contain UI::Text for click counter", m_clickCounterTextLayer.c_str());
+					LOG_ERROR(UI, "Layer %u does not contain UI::Text for click counter", m_clickCounterTextLayer);
 				}
 			}
 		}
