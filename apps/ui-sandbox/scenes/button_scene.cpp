@@ -290,10 +290,14 @@ namespace {
 
 			// Update click counter text
 			if (m_lastClickCount != m_clickCount) {
-				// Get mutable reference to the Text data and update it
-				auto& textData = std::get<UI::Text>(m_layerManager.GetData(m_clickCounterTextLayer));
-				textData.text = "Clicks: " + std::to_string(m_clickCount);
-				m_lastClickCount = m_clickCount;
+				// Get mutable reference to the Text data and update it safely
+				auto* textDataPtr = std::get_if<UI::Text>(&m_layerManager.GetData(m_clickCounterTextLayer));
+				if (textDataPtr) {
+					textDataPtr->text = "Clicks: " + std::to_string(m_clickCount);
+					m_lastClickCount = m_clickCount;
+				} else {
+					LOG_ERROR(UI, "Layer %s does not contain UI::Text for click counter", m_clickCounterTextLayer.c_str());
+				}
 			}
 		}
 
