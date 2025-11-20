@@ -7,6 +7,7 @@
 #include <glm/glm.hpp>
 #include <map>
 #include <string>
+#include <vector>
 #include FT_FREETYPE_H
 #include "shader/shader.h"
 #include <GL/glew.h>
@@ -89,10 +90,10 @@ namespace ui {
 		 * @param outQuads Output vector to append generated quads to
 		 */
 		void GenerateGlyphQuads(
-			const std::string& text,
-			const glm::vec2&   position,
-			float			   scale,
-			const glm::vec4&   color,
+			const std::string&		text,
+			const glm::vec2&		position,
+			float					scale,
+			const glm::vec4&		color,
 			std::vector<GlyphQuad>& outQuads
 		) const;
 
@@ -117,28 +118,28 @@ namespace ui {
 		 * SDF atlas-based glyph information
 		 */
 		struct SDFGlyph {
-			glm::vec2 atlasUVMin;	// Bottom-left UV in atlas texture
-			glm::vec2 atlasUVMax;	// Top-right UV in atlas texture
+			glm::vec2 atlasUVMin;	  // Bottom-left UV in atlas texture
+			glm::vec2 atlasUVMax;	  // Top-right UV in atlas texture
 			glm::vec2 atlasBoundsMin; // Bottom-left UV of actual glyph content
 			glm::vec2 atlasBoundsMax; // Top-right UV of actual glyph content
 			glm::vec2 planeBoundsMin; // Glyph bounds min (in em units)
 			glm::vec2 planeBoundsMax; // Glyph bounds max (in em units)
-			float advance;			  // Horizontal advance (in em units)
-			bool hasGeometry;		  // False for whitespace characters
+			float	  advance;		  // Horizontal advance (in em units)
+			bool	  hasGeometry;	  // False for whitespace characters
 		};
 
 		/**
 		 * SDF atlas metadata
 		 */
 		struct SDFAtlasMetadata {
-			float distanceRange;	// Distance field range in pixels
-			int	  glyphSize;		// Size of each glyph in atlas
-			int	  atlasWidth;		// Atlas texture width
-			int	  atlasHeight;		// Atlas texture height
-			float emSize;			// Font em size
-			float ascender;			// Font ascender (in em units)
-			float descender;		// Font descender (in em units)
-			float lineHeight;		// Line height (in em units)
+			float distanceRange; // Distance field range in pixels
+			int	  glyphSize;	 // Size of each glyph in atlas
+			int	  atlasWidth;	 // Atlas texture width
+			int	  atlasHeight;	 // Atlas texture height
+			float emSize;		 // Font em size
+			float ascender;		 // Font ascender (in em units)
+			float descender;	 // Font descender (in em units)
+			float lineHeight;	 // Line height (in em units)
 		};
 
 		/**
@@ -157,8 +158,8 @@ namespace ui {
 		bool LoadSDFAtlas(const std::string& pngPath, const std::string& jsonPath);
 
 		std::map<char, Character> m_characters;					   // Map of loaded characters (FreeType mode)
-		std::map<char, SDFGlyph> m_sdfGlyphs;					   // Map of SDF glyphs (Atlas mode)
-		SDFAtlasMetadata		 m_atlasMetadata{};				   // SDF atlas metadata
+		std::map<char, SDFGlyph>  m_sdfGlyphs;					   // Map of SDF glyphs (Atlas mode)
+		SDFAtlasMetadata		  m_atlasMetadata{};			   // SDF atlas metadata
 		Renderer::Shader		  m_shader;						   // Shader for text rendering
 		GLuint					  m_vao = 0;					   // Vertex Array Object
 		GLuint					  m_vbo = 0;					   // Vertex Buffer Object
