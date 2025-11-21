@@ -47,6 +47,14 @@ namespace {
 			m_textBatchRenderer->SetProjectionMatrix(projection);
 			Renderer::Primitives::SetTextBatchRenderer(m_textBatchRenderer.get());
 
+			// Register flush callback so Primitives::EndFrame() automatically flushes text batches
+			Renderer::Primitives::SetTextFlushCallback([]() {
+				auto* textBatchRenderer = Renderer::Primitives::GetTextBatchRenderer();
+				if (textBatchRenderer) {
+					textBatchRenderer->Flush();
+				}
+			});
+
 			LOG_INFO(UI, "FontRenderer and TextBatchRenderer initialized for text shapes scene");
 
 			// Create root container

@@ -248,51 +248,77 @@ namespace ui {
 			return glm::vec2(0.0F, 0.0F);
 		}
 
-		float totalWidth = 0.0F;
-		float maxGlyphTopFromBaselineUnscaled = 0.0F;
-		float minGlyphBottomFromBaselineUnscaled = 0.0F;
-		bool  firstChar = true;
+		// Use SDF glyph data if available, otherwise use FreeType character data
+		if (m_usingSDF) {
+			// SDF path: use m_sdfGlyphs
+			float totalWidth = 0.0F;
+			float fontSize = static_cast<float>(m_atlasMetadata.glyphSize) * scale;
 
-		for (char c : text) {
-			auto			 it = m_characters.find(c);
-			const Character* pCh = nullptr;
-
-			if (it != m_characters.end()) {
-				pCh = &it->second;
-			} else {
-				auto itQ = m_characters.find('?');
-				if (itQ != m_characters.end()) {
-					pCh = &itQ->second;
+			for (char c : text) {
+				auto it = m_sdfGlyphs.find(c);
+				if (it != m_sdfGlyphs.end()) {
+					totalWidth += it->second.advance * fontSize;
 				} else {
-					continue;
+					// Fallback to '?' if character not found
+					auto fallbackIt = m_sdfGlyphs.find('?');
+					if (fallbackIt != m_sdfGlyphs.end()) {
+						totalWidth += fallbackIt->second.advance * fontSize;
+					}
 				}
 			}
 
-			const Character& ch = *pCh;
+			// For height, use the line height from atlas metadata
+			float textHeight = m_atlasMetadata.lineHeight * fontSize;
 
-			float glyphTopUnscaled = static_cast<float>(ch.bearing.y);
-			float glyphBottomUnscaled = static_cast<float>(ch.bearing.y) - static_cast<float>(ch.size.y);
+			return glm::vec2(totalWidth, textHeight);
+		} else {
+			// FreeType path: use m_characters
+			float totalWidth = 0.0F;
+			float maxGlyphTopFromBaselineUnscaled = 0.0F;
+			float minGlyphBottomFromBaselineUnscaled = 0.0F;
+			bool  firstChar = true;
 
-			if (firstChar) {
-				maxGlyphTopFromBaselineUnscaled = glyphTopUnscaled;
-				minGlyphBottomFromBaselineUnscaled = glyphBottomUnscaled;
-				firstChar = false;
-			} else {
-				maxGlyphTopFromBaselineUnscaled = std::max(maxGlyphTopFromBaselineUnscaled, glyphTopUnscaled);
-				minGlyphBottomFromBaselineUnscaled = std::min(minGlyphBottomFromBaselineUnscaled, glyphBottomUnscaled);
+			for (char c : text) {
+				auto			 it = m_characters.find(c);
+				const Character* pCh = nullptr;
+
+				if (it != m_characters.end()) {
+					pCh = &it->second;
+				} else {
+					auto itQ = m_characters.find('?');
+					if (itQ != m_characters.end()) {
+						pCh = &itQ->second;
+					} else {
+						continue;
+					}
+				}
+
+				const Character& ch = *pCh;
+
+				float glyphTopUnscaled = static_cast<float>(ch.bearing.y);
+				float glyphBottomUnscaled = static_cast<float>(ch.bearing.y) - static_cast<float>(ch.size.y);
+
+				if (firstChar) {
+					maxGlyphTopFromBaselineUnscaled = glyphTopUnscaled;
+					minGlyphBottomFromBaselineUnscaled = glyphBottomUnscaled;
+					firstChar = false;
+				} else {
+					maxGlyphTopFromBaselineUnscaled = std::max(maxGlyphTopFromBaselineUnscaled, glyphTopUnscaled);
+					minGlyphBottomFromBaselineUnscaled = std::min(minGlyphBottomFromBaselineUnscaled, glyphBottomUnscaled);
+				}
+
+				totalWidth += (ch.advance >> 6);
 			}
 
-			totalWidth += (ch.advance >> 6);
-		}
+			float scaledTotalWidth = totalWidth * scale;
+			float actualHeightScaled = 0.0F;
+			if (!firstChar) {
+				actualHeightScaled = (maxGlyphTopFromBaselineUnscaled - minGlyphBottomFromBaselineUnscaled) * scale;
+			}
+			actualHeightScaled = std::max(0.0F, actualHeightScaled);
 
-		float scaledTotalWidth = totalWidth * scale;
-		float actualHeightScaled = 0.0F;
-		if (!firstChar) {
-			actualHeightScaled = (maxGlyphTopFromBaselineUnscaled - minGlyphBottomFromBaselineUnscaled) * scale;
+			return glm::vec2(scaledTotalWidth, actualHeightScaled);
 		}
-		actualHeightScaled = std::max(0.0F, actualHeightScaled);
-
-		return glm::vec2(scaledTotalWidth, actualHeightScaled);
 	}
 
 	float FontRenderer::GetMaxGlyphHeight(float scale) const {
@@ -471,12 +497,43 @@ namespace ui {
 			return;
 		}
 
+		// Try cache lookup if enabled
+		if (FontRendererConfig::kEnableGlyphQuadCache) {
+			CacheKey key{text, scale};
+			auto	 it = m_glyphQuadCache.find(key);
+
+			if (it != m_glyphQuadCache.end()) {
+				// Cache hit! Copy quads and adjust position/color
+				const std::vector<GlyphQuad>& cachedQuads = it->second.quads;
+
+				// Update LRU tracking
+				it->second.lastAccessFrame = m_currentFrame;
+
+				// Copy quads with position/color adjustment
+				size_t startIdx = outQuads.size();
+				outQuads.reserve(outQuads.size() + cachedQuads.size());
+				for (const auto& cachedQuad : cachedQuads) {
+					GlyphQuad quad = cachedQuad;
+					// Adjust position (cached quads are relative to origin)
+					quad.position += position;
+					// Update color (cached quads have color from first render)
+					quad.color = color;
+					outQuads.push_back(quad);
+				}
+
+				return; // Cache hit, done!
+			}
+		}
+
+		// Cache miss or caching disabled - generate quads
+		size_t startIdx = outQuads.size(); // Track where we started adding
+
 		// Calculate baseline position
 		// Font size in pixels = glyphSize * scale
 		float fontSize = static_cast<float>(m_atlasMetadata.glyphSize) * scale;
 		float ascenderAtCurrentScale = m_atlasMetadata.ascender * fontSize;
 
-		glm::vec2 penPosition = position;
+		glm::vec2 penPosition = glm::vec2(0, 0); // Generate relative to origin for caching
 		penPosition.y += ascenderAtCurrentScale; // Move to baseline
 
 		for (char currentChar : text) {
@@ -519,28 +576,47 @@ namespace ui {
 				quad.uvMax = glyph.atlasBoundsMax;
 				quad.color = color;
 
-				// Log first glyph for debugging
-				if (outQuads.empty()) {
-					LOG_INFO(
-						UI,
-						"    First glyph: char='%c', pos=(%.1f,%.1f), size=(%.1f,%.1f), uv=(%.3f,%.3f)-(%.3f,%.3f)",
-						currentChar,
-						xpos,
-						ypos,
-						w,
-						h,
-						glyph.atlasBoundsMin.x,
-						glyph.atlasBoundsMin.y,
-						glyph.atlasBoundsMax.x,
-						glyph.atlasBoundsMax.y
-					);
-				}
-
 				outQuads.push_back(quad);
 			}
 
 			// Advance pen position
 			penPosition.x += glyph.advance * fontSize;
+		}
+
+		// Cache the generated quads if enabled
+		if (FontRendererConfig::kEnableGlyphQuadCache) {
+			// Check if cache is full and needs eviction
+			if (m_glyphQuadCache.size() >= FontRendererConfig::kMaxGlyphQuadCacheEntries) {
+				// Find and evict the LRU entry
+				auto oldestIt = m_glyphQuadCache.begin();
+				for (auto it = m_glyphQuadCache.begin(); it != m_glyphQuadCache.end(); ++it) {
+					if (it->second.lastAccessFrame < oldestIt->second.lastAccessFrame) {
+						oldestIt = it;
+					}
+				}
+				m_glyphQuadCache.erase(oldestIt);
+			}
+
+			// Cache the generated quads (relative to origin, before position adjustment)
+			CacheEntry entry;
+			entry.lastAccessFrame = m_currentFrame;
+			entry.quads.reserve(outQuads.size() - startIdx);
+			for (size_t i = startIdx; i < outQuads.size(); ++i) {
+				entry.quads.push_back(outQuads[i]);
+			}
+
+			CacheKey key{text, scale};
+			m_glyphQuadCache[key] = std::move(entry);
+
+			// Now adjust positions in outQuads for the caller
+			for (size_t i = startIdx; i < outQuads.size(); ++i) {
+				outQuads[i].position += position;
+			}
+		} else {
+			// No caching - just adjust positions
+			for (size_t i = startIdx; i < outQuads.size(); ++i) {
+				outQuads[i].position += position;
+			}
 		}
 	}
 
@@ -550,6 +626,19 @@ namespace ui {
 		} else {
 			return m_firstGlyphTexture;
 		}
+	}
+
+	void FontRenderer::UpdateFrame() {
+		m_currentFrame++;
+	}
+
+	void FontRenderer::ClearGlyphQuadCache() {
+		m_glyphQuadCache.clear();
+		LOG_DEBUG(UI, "Cleared glyph quad cache");
+	}
+
+	size_t FontRenderer::GetGlyphQuadCacheSize() const {
+		return m_glyphQuadCache.size();
 	}
 
 } // namespace ui

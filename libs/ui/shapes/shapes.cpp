@@ -3,6 +3,7 @@
 #include "font/text_batch_renderer.h"
 #include "core/render_context.h"
 #include "primitives/primitives.h"
+#include "utils/log.h"
 #include <glm/glm.hpp>
 
 namespace UI {
@@ -76,10 +77,17 @@ namespace UI {
 				break;
 		}
 
+		// DEBUG: Log alignment calculations
+		LOG_INFO(UI, "Text '%s': pos(%.1f,%.1f) size(%.1f,%.1f) ascent=%.1f -> aligned(%.1f,%.1f)",
+			text.c_str(), position.x, position.y, textSize.x, textSize.y, ascent, alignedPos.x, alignedPos.y);
+
 		// Get current z-index from render context (set by LayerManager)
 		float zIndex = RenderContext::GetZIndex();
 
 		// Add text to batch renderer with z-index for proper sorting
+		// NOTE: We call TextBatchRenderer directly here rather than using Primitives::DrawText()
+		// to avoid circular dependency (renderer → ui → renderer). This is fine since shapes.cpp
+		// is in the ui library which has access to both renderer and ui libraries.
 		glm::vec4 color(style.color.r, style.color.g, style.color.b, style.color.a);
 		textBatchRenderer->AddText(text, glm::vec2(alignedPos.x, alignedPos.y), scale, color, zIndex);
 	}

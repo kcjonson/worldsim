@@ -3,17 +3,18 @@
 #include <input/input_manager.h>
 #include <input/input_types.h>
 #include <primitives/primitives.h>
+#include <utils/log.h>
 
 namespace UI {
 
 	Button::Button(const Args& args)
-		: m_position(args.position)
-		, m_size(args.size)
-		, m_label(args.label)
-		, m_disabled(args.disabled)
-		, m_onClick(args.onClick)
-		, zIndex(args.zIndex)
-		, id(args.id) {
+		: m_position(args.position),
+		  m_size(args.size),
+		  m_label(args.label),
+		  m_disabled(args.disabled),
+		  m_onClick(args.onClick),
+		  zIndex(args.zIndex),
+		  id(args.id) {
 
 		// Set appearance based on type
 		if (args.type == Type::Primary) {
@@ -27,20 +28,22 @@ namespace UI {
 			m_appearance = ButtonStyles::Primary();
 		}
 
-		// Initialize text label component
-		// We'll calculate the centered position in Update()
+		// Initialize text label component centered in button
 		const ButtonStyle& style = GetCurrentStyle();
+		Foundation::Vec2   centerPos = Foundation::Vec2{m_position.x + m_size.x * 0.5F, m_position.y + m_size.y * 0.5F};
+
 		m_labelText = Text{
-			.position = m_position, // Temporary, will be updated in Update()
+			.position = centerPos,
 			.text = m_label,
-			.style = {
-				.color = style.textColor,
-				.fontSize = style.fontSize,
-				.hAlign = Foundation::HorizontalAlign::Left,
-				.vAlign = Foundation::VerticalAlign::Top},
+			.style =
+				{.color = style.textColor,
+				 .fontSize = style.fontSize,
+				 .hAlign = Foundation::HorizontalAlign::Center,
+				 .vAlign = Foundation::VerticalAlign::Middle},
 			.zIndex = zIndex + 0.1F, // Slightly above button background
 			.visible = visible,
-			.id = id};
+			.id = id
+		};
 	}
 
 	void Button::HandleInput() {
@@ -53,7 +56,7 @@ namespace UI {
 		}
 
 		// Get input state from InputManager
-		auto& input = engine::InputManager::Get();
+		auto&			 input = engine::InputManager::Get();
 		Foundation::Vec2 mousePos = input.GetMousePosition();
 
 		// Update mouse-over state
@@ -103,30 +106,15 @@ namespace UI {
 		// Update text component to match current button style
 		const ButtonStyle& style = GetCurrentStyle();
 
-		// Get font renderer for text measurement
-		ui::FontRenderer* fontRenderer = Renderer::Primitives::GetFontRenderer();
-		if (fontRenderer && !m_label.empty()) {
-			// Calculate text scale from fontSize (16px base size = 1.0 scale)
-			constexpr float BASE_FONT_SIZE = 16.0F;
-			const float scale = style.fontSize / BASE_FONT_SIZE;
+		// Position text at center of button - Text::Render() will handle Center/Middle alignment
+		Foundation::Vec2 centerPos = Foundation::Vec2{m_position.x + m_size.x * 0.5F, m_position.y + m_size.y * 0.5F};
 
-			// Measure text for proper centering
-			Foundation::Vec2 textSize{fontRenderer->MeasureText(m_label, scale)};
-			float ascent = fontRenderer->GetAscent(scale);
-
-			// Center text in button (manual calculation using Left/Top alignment)
-			float textX = m_position.x + (m_size.x - textSize.x) * 0.5F;
-			float textY = m_position.y + (m_size.y - ascent) * 0.5F;
-
-			m_labelText.position = Foundation::Vec2{textX, textY};
-		} else {
-			// Fallback if no font renderer - position at button top-left
-			m_labelText.position = m_position;
-		}
-
+		m_labelText.position = centerPos;
 		m_labelText.text = m_label;
 		m_labelText.style.color = style.textColor;
 		m_labelText.style.fontSize = style.fontSize;
+		m_labelText.style.hAlign = Foundation::HorizontalAlign::Center;
+		m_labelText.style.vAlign = Foundation::VerticalAlign::Middle;
 		m_labelText.visible = visible;
 	}
 
@@ -147,8 +135,8 @@ namespace UI {
 	}
 
 	bool Button::ContainsPoint(const Foundation::Vec2& point) const {
-		return point.x >= m_position.x && point.x <= m_position.x + m_size.x &&
-			   point.y >= m_position.y && point.y <= m_position.y + m_size.y;
+		return point.x >= m_position.x && point.x <= m_position.x + m_size.x && point.y >= m_position.y &&
+			   point.y <= m_position.y + m_size.y;
 	}
 
 	const ButtonStyle& Button::GetCurrentStyle() const {

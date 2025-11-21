@@ -7,12 +7,26 @@
 #include <glm/glm.hpp>
 #include <map>
 #include <string>
+#include <unordered_map>
 #include <vector>
 #include FT_FREETYPE_H
 #include "shader/shader.h"
 #include <GL/glew.h>
 
 namespace ui {
+
+	/**
+	 * Configuration constants for FontRenderer performance tuning
+	 */
+	namespace FontRendererConfig {
+		// Glyph quad cache settings
+		// Size to handle complex UIs: ~1000 unique strings × ~4 scales = 4000 entries
+		// Memory cost: ~6-8MB max (1.5KB average per entry)
+		constexpr size_t kMaxGlyphQuadCacheEntries = 4096;
+
+		// Runtime toggle for cache (disable for testing/comparison)
+		constexpr bool kEnableGlyphQuadCache = true;
+	} // namespace FontRendererConfig
 
 	class FontRenderer {
 	  public:
@@ -103,6 +117,23 @@ namespace ui {
 		 */
 		GLuint GetAtlasTexture() const;
 
+		/**
+		 * Update the internal frame counter for cache LRU tracking
+		 * Should be called once per frame from the main application loop
+		 */
+		void UpdateFrame();
+
+		/**
+		 * Clear the glyph quad cache (e.g., on scene transitions)
+		 */
+		void ClearGlyphQuadCache();
+
+		/**
+		 * Get the current size of the glyph quad cache (for debugging/profiling)
+		 * @return Number of entries currently cached
+		 */
+		size_t GetGlyphQuadCacheSize() const;
+
 	  private:
 		/**
 		 * Character information for font rendering
@@ -157,6 +188,37 @@ namespace ui {
 		 */
 		bool LoadSDFAtlas(const std::string& pngPath, const std::string& jsonPath);
 
+		/**
+		 * Cache key for glyph quad caching (text + scale)
+		 */
+		struct CacheKey {
+			std::string text;
+			float		scale;
+
+			bool operator==(const CacheKey& other) const {
+				return text == other.text && std::abs(scale - other.scale) < 0.001F;
+			}
+		};
+
+		/**
+		 * Hash function for CacheKey
+		 */
+		struct CacheKeyHash {
+			size_t operator()(const CacheKey& key) const {
+				size_t h1 = std::hash<std::string>{}(key.text);
+				size_t h2 = std::hash<float>{}(key.scale);
+				return h1 ^ (h2 << 1);
+			}
+		};
+
+		/**
+		 * Cache entry storing generated quads + LRU tracking
+		 */
+		struct CacheEntry {
+			std::vector<GlyphQuad> quads;
+			uint64_t			   lastAccessFrame;
+		};
+
 		std::map<char, Character> m_characters;					   // Map of loaded characters (FreeType mode)
 		std::map<char, SDFGlyph>  m_sdfGlyphs;					   // Map of SDF glyphs (Atlas mode)
 		SDFAtlasMetadata		  m_atlasMetadata{};			   // SDF atlas metadata
@@ -170,6 +232,10 @@ namespace ui {
 		float					  m_scaledAscender = 0.0F;		   // Stores the ascender for the base font size
 		float					  m_maxGlyphHeightUnscaled = 0.0F; // Unscaled maximum glyph height
 		GLuint					  m_firstGlyphTexture = 0;		   // First glyph texture (for batch key)
+
+		// Glyph quad cache (mutable for const GenerateGlyphQuads)
+		mutable std::unordered_map<CacheKey, CacheEntry, CacheKeyHash> m_glyphQuadCache;
+		mutable uint64_t												m_currentFrame = 0;
 	};
 
 } // namespace ui

@@ -82,6 +82,24 @@ namespace Renderer {
 		// Returns: Pointer to TextBatchRenderer, or nullptr if not set
 		ui::TextBatchRenderer* GetTextBatchRenderer();
 
+		// Set a callback to flush text rendering at end of frame.
+		//
+		// This allows the ui library to register TextBatchRenderer::Flush() without
+		// creating a circular dependency (renderer → ui → renderer).
+		//
+		// The callback will be invoked by EndFrame() after flushing shape batches.
+		using FlushCallback = void (*)();
+		void SetTextFlushCallback(FlushCallback callback);
+
+		// Set a callback to update frame counter for FontRenderer cache LRU tracking.
+		//
+		// This allows the ui library to register FontRenderer::UpdateFrame() without
+		// creating a circular dependency (renderer → ui → renderer).
+		//
+		// The callback will be invoked by BeginFrame() before rendering.
+		using FrameUpdateCallback = void (*)();
+		void SetFrameUpdateCallback(FrameUpdateCallback callback);
+
 		// --- Frame Lifecycle ---
 
 		void BeginFrame();
