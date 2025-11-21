@@ -363,6 +363,12 @@ int main(int argc, char* argv[]) {
 		g_fontRenderer->SetProjectionMatrix(projection);
 		// Set font renderer in Primitives API for Text shapes
 		Renderer::Primitives::SetFontRenderer(g_fontRenderer.get());
+		// Register frame update callback for LRU cache tracking
+		Renderer::Primitives::SetFrameUpdateCallback([]() {
+			if (g_fontRenderer) {
+				g_fontRenderer->UpdateFrame();
+			}
+		});
 		LOG_INFO(UI, "Font renderer initialized successfully");
 	}
 

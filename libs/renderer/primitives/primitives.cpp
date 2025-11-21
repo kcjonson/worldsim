@@ -63,6 +63,7 @@ namespace Renderer::Primitives {
 	static ui::FontRenderer*			  g_fontRenderer = nullptr;
 	static ui::TextBatchRenderer*		  g_textBatchRenderer = nullptr;
 	static FlushCallback				  g_textFlushCallback = nullptr;
+	static FrameUpdateCallback			  g_frameUpdateCallback = nullptr;
 	static std::stack<Foundation::Rect>	  g_scissorStack;
 	static std::stack<Foundation::Mat4>	  g_transformStack;
 	static Foundation::Rect				  g_currentScissor;
@@ -117,6 +118,10 @@ namespace Renderer::Primitives {
 		g_textFlushCallback = callback;
 	}
 
+	void SetFrameUpdateCallback(FrameUpdateCallback callback) {
+		g_frameUpdateCallback = callback;
+	}
+
 	// --- Batch Key Helpers ---
 
 	// Get batch key for solid color primitives (no texture)
@@ -143,6 +148,11 @@ namespace Renderer::Primitives {
 	void BeginFrame() {
 		if (g_batchRenderer != nullptr) {
 			g_batchRenderer->BeginFrame();
+		}
+
+		// Invoke frame update callback for FontRenderer cache LRU tracking
+		if (g_frameUpdateCallback != nullptr) {
+			g_frameUpdateCallback();
 		}
 	}
 
