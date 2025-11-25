@@ -22,7 +22,9 @@
 #include "utils/log.h"
 #include "utils/string_hash.h"
 #include <application/application.h>
+#include <components/button/button.h>
 #include <scene/scene_manager.h>
+#include <shapes/shapes.h>
 
 #include <GL/glew.h>
 #include <GLFW/glfw3.h>
@@ -39,8 +41,8 @@ static struct {
 	bool					 showMenu = false;
 	std::vector<std::string> sceneNames;
 	size_t					 selectedIndex = 0;
-	double					 mouseX = 0;
-	double					 mouseY = 0;
+	std::vector<UI::Button>	 menuButtons; // Button components for each scene
+	UI::Text				 headerText;  // Header "Scenes" text
 } g_menuState;
 
 // GLFW callbacks
@@ -69,46 +71,65 @@ void FramebufferSizeCallback(GLFWwindow* window, int width, int height) {
 	Renderer::Primitives::SetViewport(width, height);
 }
 
-void MouseButtonCallback(GLFWwindow* window, int button, int action, int mods) {
+// Handle navigation menu input (button interaction)
+void HandleNavigationMenuInput() {
 	if (!g_menuState.showMenu) {
 		return;
 	}
-	if (button != GLFW_MOUSE_BUTTON_LEFT || action != GLFW_PRESS) {
-		return;
-	}
 
-	// Menu bounds
+	// Update all menu buttons
+	for (auto& button : g_menuState.menuButtons) {
+		button.HandleInput();
+		button.Update(0.0F);
+	}
+}
+
+// Initialize navigation menu buttons
+void InitializeNavigationMenu() {
+	using namespace Foundation;
+	using namespace UI;
+
 	const float kMenuX = 10;
 	const float kMenuY = 10;
 	const float kMenuWidth = 150;
 	const float kLineHeight = 25;
 	const float kHeaderHeight = 30;
 
-	// Check if click is within menu bounds
-	auto clickX = static_cast<float>(g_menuState.mouseX);
-	auto clickY = static_cast<float>(g_menuState.mouseY);
+	// Create header text
+	g_menuState.headerText = Text{
+		.position = {kMenuX + 10, kMenuY + 8},
+		.text = "Scenes",
+		.style = {.color = Color(0.9F, 0.9F, 0.9F, 1.0F), .fontSize = 16.0F},
+		.zIndex = 110.0F,
+		.id = "menu_header_text"
+	};
 
-	if (clickX >= kMenuX && clickX <= kMenuX + kMenuWidth && clickY >= kMenuY &&
-		clickY <= kMenuY + kHeaderHeight + (static_cast<float>(g_menuState.sceneNames.size()) * kLineHeight)) {
+	// Create button for each scene
+	g_menuState.menuButtons.clear();
+	for (size_t i = 0; i < g_menuState.sceneNames.size(); i++) {
+		float itemY = kMenuY + kHeaderHeight + (static_cast<float>(i) * kLineHeight);
 
-		// Check which scene was clicked
-		if (clickY >= kMenuY + kHeaderHeight) {
-			int clickedIndex = static_cast<int>((clickY - kMenuY - kHeaderHeight) / kLineHeight);
-			if (clickedIndex >= 0 && clickedIndex < static_cast<int>(g_menuState.sceneNames.size())) {
-				// Switch to selected scene
-				engine::SceneManager::Get().SwitchTo(g_menuState.sceneNames[clickedIndex]);
-				g_menuState.selectedIndex = static_cast<size_t>(clickedIndex);
-			}
-		}
+		// Capture scene name by value for onClick callback
+		std::string sceneName = g_menuState.sceneNames[i];
+		size_t		sceneIndex = i;
+
+		g_menuState.menuButtons.push_back(
+			Button{Button::Args{
+				.label = sceneName,
+				.position = {kMenuX + 2, itemY + 2},
+				.size = {kMenuWidth - 4, kLineHeight - 4},
+				.type = Button::Type::Secondary,
+				.onClick =
+					[sceneName, sceneIndex]() {
+						engine::SceneManager::Get().SwitchTo(sceneName);
+						g_menuState.selectedIndex = sceneIndex;
+						LOG_INFO(UI, "Switched to scene: {}", sceneName.c_str());
+					},
+				.zIndex = 100.0F,
+				.id = ("menu_button_" + std::to_string(i)).c_str()
+			}}
+		);
 	}
-}
-
-void CursorPosCallback(GLFWwindow* window, double xpos, double ypos) {
-	// Mouse coordinates from GLFW are in window space (logical pixels)
-	// Rendering now uses logical pixels (via CoordinateSystem)
-	// Therefore, no scaling needed - coordinates match directly
-	g_menuState.mouseX = xpos;
-	g_menuState.mouseY = ypos;
 }
 
 // Render navigation menu
@@ -138,49 +159,12 @@ void RenderNavigationMenu() {
 		{.bounds = {kMenuX, kMenuY, kMenuWidth, kHeaderHeight}, .style = {.fill = Color(0.2F, 0.2F, 0.3F, 1.0F)}, .id = "menu_header"}
 	);
 
-	// Draw scene item rectangles (highlights)
-	for (size_t i = 0; i < g_menuState.sceneNames.size(); i++) {
-		float itemY = kMenuY + kHeaderHeight + (static_cast<float>(i) * kLineHeight);
+	// Render header text
+	g_menuState.headerText.Render();
 
-		// Highlight selected scene
-		if (i == g_menuState.selectedIndex) {
-			Renderer::Primitives::DrawRect(
-				{.bounds = {kMenuX + 2, itemY + 2, kMenuWidth - 4, kLineHeight - 4},
-				 .style = {.fill = Color(0.3F, 0.4F, 0.6F, 0.8F)},
-				 .id = ("menu_item_" + std::to_string(i)).c_str()}
-			);
-		}
-
-		// Highlight hovered scene
-		auto mouseX = static_cast<float>(g_menuState.mouseX);
-		auto mouseY = static_cast<float>(g_menuState.mouseY);
-		if (mouseX >= kMenuX && mouseX <= kMenuX + kMenuWidth && mouseY >= itemY && mouseY <= itemY + kLineHeight) {
-			Renderer::Primitives::DrawRect(
-				{.bounds = {kMenuX + 2, itemY + 2, kMenuWidth - 4, kLineHeight - 4},
-				 .style = {.fill = Color(0.4F, 0.5F, 0.7F, 0.5F)},
-				 .id = ("menu_hover_" + std::to_string(i)).c_str()}
-			);
-		}
-	}
-
-	// Flush batched rectangles before rendering text
-	Renderer::Primitives::EndFrame();
-	Renderer::Primitives::BeginFrame();
-
-	// Draw header title
-	if (g_fontRenderer) {
-		glm::vec3 headerColor(0.9F, 0.9F, 0.9F);
-		g_fontRenderer->RenderText("Scenes", glm::vec2(kMenuX + 10, kMenuY + 8), 1.0F, headerColor);
-	}
-
-	// Draw scene names
-	for (size_t i = 0; i < g_menuState.sceneNames.size(); i++) {
-		float itemY = kMenuY + kHeaderHeight + (static_cast<float>(i) * kLineHeight);
-
-		if (g_fontRenderer) {
-			glm::vec3 textColor = (i == g_menuState.selectedIndex) ? glm::vec3(1.0F, 1.0F, 1.0F) : glm::vec3(0.8F, 0.8F, 0.8F);
-			g_fontRenderer->RenderText(g_menuState.sceneNames[i], glm::vec2(kMenuX + 10, itemY + 5), 0.8F, textColor);
-		}
+	// Render all menu buttons
+	for (const auto& button : g_menuState.menuButtons) {
+		button.Render();
 	}
 }
 
@@ -221,8 +205,9 @@ GLFWwindow* InitializeWindow() {
 
 	glfwMakeContextCurrent(window);
 	glfwSetFramebufferSizeCallback(window, FramebufferSizeCallback);
-	glfwSetMouseButtonCallback(window, MouseButtonCallback);
-	glfwSetCursorPosCallback(window, CursorPosCallback);
+
+	// NOTE: Mouse input is handled by InputManager for menu buttons
+	// No need for separate GLFW callbacks
 
 	// Enable vsync
 	glfwSwapInterval(1);
@@ -417,6 +402,8 @@ int main(int argc, char* argv[]) {
 				}
 			}
 		}
+		// Initialize menu buttons and text
+		InitializeNavigationMenu();
 		LOG_INFO(UI, "Navigation menu enabled (%zu scenes available)", g_menuState.sceneNames.size());
 	}
 
@@ -494,6 +481,9 @@ int main(int argc, char* argv[]) {
 
 	// Set up overlay renderer (navigation menu)
 	app.SetOverlayRenderer([]() {
+		// Handle navigation menu input
+		HandleNavigationMenuInput();
+
 		// Render navigation menu on top
 		RenderNavigationMenu();
 
