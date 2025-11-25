@@ -1,9 +1,9 @@
 // Button Scene - UI Button Component Showcase
 // Demonstrates Button component with all states: Normal, Hover, Pressed, Disabled, Focused
 
+#include <GL/glew.h>
+
 #include <components/button/button.h>
-#include <font/font_renderer.h>
-#include <font/text_batch_renderer.h>
 #include <graphics/color.h>
 #include <input/input_manager.h>
 #include <input/input_types.h>
@@ -13,8 +13,6 @@
 #include <scene/scene_manager.h>
 #include <shapes/shapes.h>
 #include <utils/log.h>
-
-#include <GL/glew.h>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <memory>
@@ -30,38 +28,8 @@ namespace {
 			using namespace UI;
 			using namespace Foundation;
 
-			// Initialize font renderer for button text
-			m_fontRenderer = std::make_unique<ui::FontRenderer>();
-			if (!m_fontRenderer->Initialize()) {
-				LOG_ERROR(UI, "Failed to initialize FontRenderer!");
-				return;
-			}
-
-			// Set up projection matrix for text rendering
-			int viewportWidth = 0;
-			int viewportHeight = 0;
-			Renderer::Primitives::GetViewport(viewportWidth, viewportHeight);
-			glm::mat4 projection = glm::ortho(0.0F, static_cast<float>(viewportWidth), static_cast<float>(viewportHeight), 0.0F);
-			m_fontRenderer->SetProjectionMatrix(projection);
-
-			// Set font renderer in Primitives API so buttons can use it
-			Renderer::Primitives::SetFontRenderer(m_fontRenderer.get());
-
-			// Initialize text batch renderer for batched SDF text rendering
-			m_textBatchRenderer = std::make_unique<ui::TextBatchRenderer>();
-			m_textBatchRenderer->Initialize(m_fontRenderer.get());
-			m_textBatchRenderer->SetProjectionMatrix(projection); // Set projection for MSDF shader
-			Renderer::Primitives::SetTextBatchRenderer(m_textBatchRenderer.get());
-
-			// Register flush callback so Primitives::EndFrame() automatically flushes text batches
-			Renderer::Primitives::SetTextFlushCallback([]() {
-				auto* textBatchRenderer = Renderer::Primitives::GetTextBatchRenderer();
-				if (textBatchRenderer) {
-					textBatchRenderer->Flush();
-				}
-			});
-
-			LOG_INFO(UI, "FontRenderer and TextBatchRenderer initialized for button scene");
+			// NOTE: FontRenderer and TextBatchRenderer are initialized globally in main.cpp
+			// No per-scene setup required!
 
 			// Create root container
 			Container rootContainer{.id = "root_container"};
@@ -257,8 +225,7 @@ namespace {
 
 		void OnExit() override {
 			m_buttons.clear();
-			m_textBatchRenderer.reset();
-			m_fontRenderer.reset();
+			// NOTE: FontRenderer and TextBatchRenderer cleanup handled by main.cpp
 			LOG_INFO(UI, "Button scene exited");
 		}
 
@@ -329,10 +296,6 @@ namespace {
 		}
 
 	  private:
-		// Font renderer
-		std::unique_ptr<ui::FontRenderer>	   m_fontRenderer;
-		std::unique_ptr<ui::TextBatchRenderer> m_textBatchRenderer;
-
 		// Layer management
 		UI::LayerManager m_layerManager;
 		uint32_t		 m_rootLayer{0};

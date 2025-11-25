@@ -251,8 +251,9 @@ namespace ui {
 		// Use SDF glyph data if available, otherwise use FreeType character data
 		if (m_usingSDF) {
 			// SDF path: use m_sdfGlyphs
+			constexpr float BASE_FONT_SIZE = 16.0F;  // scale=1.0 renders at this size
 			float totalWidth = 0.0F;
-			float fontSize = static_cast<float>(m_atlasMetadata.glyphSize) * scale;
+			float fontSize = BASE_FONT_SIZE * scale;  // Requested rendering size, not atlas size
 
 			for (char c : text) {
 				auto it = m_sdfGlyphs.find(c);
@@ -477,7 +478,9 @@ namespace ui {
 		// imageData automatically freed by unique_ptr
 
 		// Update font metrics for compatibility with existing code
-		m_scaledAscender = m_atlasMetadata.ascender * static_cast<float>(m_atlasMetadata.glyphSize);
+		// Use BASE_FONT_SIZE (16px) not glyphSize (32px) since atlas is 2x oversampled for quality
+		constexpr float BASE_FONT_SIZE = 16.0F;
+		m_scaledAscender = m_atlasMetadata.ascender * BASE_FONT_SIZE;
 		m_maxGlyphHeightUnscaled = m_atlasMetadata.lineHeight;
 		m_usingSDF = true;
 
@@ -529,8 +532,12 @@ namespace ui {
 		size_t startIdx = outQuads.size(); // Track where we started adding
 
 		// Calculate baseline position
-		// Font size in pixels = glyphSize * scale
-		float fontSize = static_cast<float>(m_atlasMetadata.glyphSize) * scale;
+		// IMPORTANT: fontSize should be the REQUESTED rendering size, not atlas glyph size!
+		// The atlas may be generated at higher resolution (e.g., 32px) for quality,
+		// but scale=1.0 should render at BASE_FONT_SIZE (16px), not glyphSize (32px).
+		// The glyph metrics are in EM units, so we scale by the requested pixel size.
+		constexpr float BASE_FONT_SIZE = 16.0F;  // scale=1.0 renders at this size
+		float fontSize = BASE_FONT_SIZE * scale;  // Requested rendering size in pixels
 		float ascenderAtCurrentScale = m_atlasMetadata.ascender * fontSize;
 
 		glm::vec2 penPosition = glm::vec2(0, 0); // Generate relative to origin for caching

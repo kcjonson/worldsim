@@ -107,6 +107,10 @@ namespace engine {
 				}
 			}
 
+			// Clear screen before rendering
+			glClearColor(0.1F, 0.1F, 0.15F, 1.0F);
+			glClear(GL_COLOR_BUFFER_BIT);
+
 			// Render (even when paused, so screen doesn't freeze)
 			try {
 				SceneManager::Get().Render();

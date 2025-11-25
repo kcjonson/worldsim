@@ -1,7 +1,6 @@
 // Layer Scene - UI Layer System Showcase
 // Demonstrates LayerManager with hierarchy, z-ordering, and all shape types
 
-#include <font/font_renderer.h>
 #include <graphics/color.h>
 #include <layer/layer_manager.h>
 #include <primitives/primitives.h>
@@ -22,24 +21,8 @@ namespace {
 			using namespace UI;
 			using namespace Foundation;
 
-			// Initialize font renderer for text shapes
-			m_fontRenderer = std::make_unique<ui::FontRenderer>();
-			if (!m_fontRenderer->Initialize()) {
-				LOG_ERROR(UI, "Failed to initialize FontRenderer!");
-				return;
-			}
-
-			// Set up projection matrix for text rendering
-			int viewportWidth = 0;
-			int viewportHeight = 0;
-			Renderer::Primitives::GetViewport(viewportWidth, viewportHeight);
-			glm::mat4 projection = glm::ortho(0.0F, static_cast<float>(viewportWidth), static_cast<float>(viewportHeight), 0.0F);
-			m_fontRenderer->SetProjectionMatrix(projection);
-
-			// Set font renderer in Primitives API so Text shapes can use it
-			Renderer::Primitives::SetFontRenderer(m_fontRenderer.get());
-
-			LOG_INFO(UI, "FontRenderer initialized for layer scene");
+			// NOTE: FontRenderer and TextBatchRenderer are initialized globally in main.cpp
+			// No per-scene setup required!
 
 			// Create root container (pure hierarchy node - no visual)
 			// No zIndex needed - will auto-assign based on insertion order
@@ -175,10 +158,6 @@ namespace {
 		void OnExit() override {
 			// Cleanup
 			m_layerManager.Clear();
-
-			// Clear font renderer from Primitives API
-			Renderer::Primitives::SetFontRenderer(nullptr);
-			m_fontRenderer.reset();
 		}
 
 		std::string ExportState() override {
@@ -196,9 +175,8 @@ namespace {
 		const char* GetName() const override { return "layer"; }
 
 	  private:
-		UI::LayerManager				  m_layerManager;
-		uint32_t						  m_rootLayer{0};
-		std::unique_ptr<ui::FontRenderer> m_fontRenderer;
+		UI::LayerManager m_layerManager;
+		uint32_t		 m_rootLayer{0};
 	};
 
 	// Register scene with SceneManager

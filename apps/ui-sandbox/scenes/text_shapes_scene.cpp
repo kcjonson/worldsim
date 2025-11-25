@@ -1,8 +1,6 @@
 // Text Shapes Scene - Text Shape API Demonstration
 // Demonstrates UI::Text shapes with various styles, sizes, and alignments
 
-#include <font/font_renderer.h>
-#include <font/text_batch_renderer.h>
 #include <graphics/color.h>
 #include <layer/layer_manager.h>
 #include <primitives/primitives.h>
@@ -24,38 +22,8 @@ namespace {
 			using namespace UI;
 			using namespace Foundation;
 
-			// Initialize font renderer for text shapes
-			m_fontRenderer = std::make_unique<ui::FontRenderer>();
-			if (!m_fontRenderer->Initialize()) {
-				LOG_ERROR(UI, "Failed to initialize FontRenderer!");
-				return;
-			}
-
-			// Set up projection matrix for text rendering
-			int viewportWidth = 0;
-			int viewportHeight = 0;
-			Renderer::Primitives::GetViewport(viewportWidth, viewportHeight);
-			glm::mat4 projection = glm::ortho(0.0F, static_cast<float>(viewportWidth), static_cast<float>(viewportHeight), 0.0F);
-			m_fontRenderer->SetProjectionMatrix(projection);
-
-			// Set font renderer in Primitives API so Text shapes can use it
-			Renderer::Primitives::SetFontRenderer(m_fontRenderer.get());
-
-			// Initialize text batch renderer for batched SDF text rendering
-			m_textBatchRenderer = std::make_unique<ui::TextBatchRenderer>();
-			m_textBatchRenderer->Initialize(m_fontRenderer.get());
-			m_textBatchRenderer->SetProjectionMatrix(projection);
-			Renderer::Primitives::SetTextBatchRenderer(m_textBatchRenderer.get());
-
-			// Register flush callback so Primitives::EndFrame() automatically flushes text batches
-			Renderer::Primitives::SetTextFlushCallback([]() {
-				auto* textBatchRenderer = Renderer::Primitives::GetTextBatchRenderer();
-				if (textBatchRenderer) {
-					textBatchRenderer->Flush();
-				}
-			});
-
-			LOG_INFO(UI, "FontRenderer and TextBatchRenderer initialized for text shapes scene");
+			// NOTE: FontRenderer and TextBatchRenderer are initialized globally in main.cpp
+			// No per-scene setup required!
 
 			// Create root container
 			Container rootContainer{.id = "root"};
@@ -86,6 +54,7 @@ namespace {
 					.position = {50.0F, yOffset},
 					.text = "Text at " + std::to_string(static_cast<int>(size)) + "px",
 					.style = {.color = Color::White(), .fontSize = size},
+					.zIndex = 1.0F,
 					.id = nullptr
 				};
 				m_layerManager.AddChild(m_rootLayer, sizeExample);
@@ -121,83 +90,93 @@ namespace {
 			};
 			m_layerManager.AddChild(m_rootLayer, yellowText);
 
-			// Horizontal Alignment Examples
-			Text hAlignLabel{
+			// Bounding Box Alignment - 3x3 Grid
+			Text alignGridLabel{
+				.position = {700.0F, 50.0F},
+				.text = "Bounding Box Alignment (3x3 Grid):",
+				.style = {.color = Color(0.7F, 0.7F, 0.7F, 1.0F), .fontSize = 20.0F},
+				.id = "align_grid_label"
+			};
+			m_layerManager.AddChild(m_rootLayer, alignGridLabel);
+
+			// Grid configuration
+			constexpr float		  boxWidth = 180.0F;
+			constexpr float		  boxHeight = 120.0F;
+			constexpr float		  gap = 20.0F;
+			constexpr float		  startX = 700.0F;
+			constexpr float		  startY = 90.0F;
+			const HorizontalAlign hAligns[] = {HorizontalAlign::Left, HorizontalAlign::Center, HorizontalAlign::Right};
+			const VerticalAlign	  vAligns[] = {VerticalAlign::Top, VerticalAlign::Middle, VerticalAlign::Bottom};
+
+			// Create 3x3 grid of text boxes with visible bounding boxes
+			for (int row = 0; row < 3; row++) {
+				for (int col = 0; col < 3; col++) {
+					float xPos = startX + col * (boxWidth + gap);
+					float yPos = startY + row * (boxHeight + gap);
+
+					// Draw bounding box border
+					Rectangle boundingBox{
+						.position = {xPos, yPos},
+						.size = {boxWidth, boxHeight},
+						.style =
+							{.fill = Color(0.2F, 0.2F, 0.25F, 1.0F),
+							 .border = BorderStyle{.color = Color(0.5F, 0.5F, 0.5F, 1.0F), .width = 2.0F}},
+						.zIndex = 1.0F,
+						.id = nullptr
+					};
+					m_layerManager.AddChild(m_rootLayer, boundingBox);
+
+					// Create text with bounding box (no alignment set)
+					Text alignedText{
+						.position = {xPos, yPos},
+						.width = boxWidth,
+						.height = boxHeight,
+						.text = "TEXT",
+						.style = {.color = Color::White(), .fontSize = 24.0F, .hAlign = hAligns[col], .vAlign = vAligns[row]},
+						.zIndex = 2.0F,
+						.id = nullptr
+					};
+					m_layerManager.AddChild(m_rootLayer, alignedText);
+				}
+			}
+
+			// Point-Based Alignment - 3x3 Grid (no width/height)
+			Text alignGridLabel2{
 				.position = {50.0F, 380.0F},
-				.text = "Horizontal Alignment:",
+				.text = "Point-Based Alignment (3x3 Grid):",
 				.style = {.color = Color(0.7F, 0.7F, 0.7F, 1.0F), .fontSize = 20.0F},
-				.id = "halign_label"
+				.id = "align_point_label"
 			};
-			m_layerManager.AddChild(m_rootLayer, hAlignLabel);
+			m_layerManager.AddChild(m_rootLayer, alignGridLabel2);
 
-			// Draw reference line
-			Rectangle refLine{
-				.position = {350.0F, 420.0F}, .size = {2.0F, 100.0F}, .style = {.fill = Color(0.5F, 0.5F, 0.5F, 1.0F)}, .id = "ref_line"
-			};
-			m_layerManager.AddChild(m_rootLayer, refLine);
+			// Grid configuration for point-based alignment
+			const float spacing = 100.0F;
+			const float pointStartX = 150.0F;
+			const float pointStartY = 440.0F;
 
-			Text leftAlign{
-				.position = {350.0F, 430.0F},
-				.text = "Left aligned",
-				.style = {.color = Color::White(), .fontSize = 16.0F, .hAlign = HorizontalAlign::Left},
-				.id = "left_align"
-			};
-			m_layerManager.AddChild(m_rootLayer, leftAlign);
+			// Create 3x3 grid of text with origin markers (no bounding boxes)
+			for (int row = 0; row < 3; row++) {
+				for (int col = 0; col < 3; col++) {
+					float xPos = pointStartX + col * spacing;
+					float yPos = pointStartY + row * spacing;
 
-			Text centerAlign{
-				.position = {350.0F, 460.0F},
-				.text = "Center aligned",
-				.style = {.color = Color::White(), .fontSize = 16.0F, .hAlign = HorizontalAlign::Center},
-				.id = "center_align"
-			};
-			m_layerManager.AddChild(m_rootLayer, centerAlign);
+					// Draw small red circle at the origin point
+					Circle originMarker{
+						.center = {xPos, yPos}, .radius = 4.0F, .style = {.fill = Color::Red()}, .zIndex = 3.0F, .id = nullptr
+					};
+					m_layerManager.AddChild(m_rootLayer, originMarker);
 
-			Text rightAlign{
-				.position = {350.0F, 490.0F},
-				.text = "Right aligned",
-				.style = {.color = Color::White(), .fontSize = 16.0F, .hAlign = HorizontalAlign::Right},
-				.id = "right_align"
-			};
-			m_layerManager.AddChild(m_rootLayer, rightAlign);
-
-			// Vertical Alignment Examples
-			Text vAlignLabel{
-				.position = {600.0F, 380.0F},
-				.text = "Vertical Alignment:",
-				.style = {.color = Color(0.7F, 0.7F, 0.7F, 1.0F), .fontSize = 20.0F},
-				.id = "valign_label"
-			};
-			m_layerManager.AddChild(m_rootLayer, vAlignLabel);
-
-			// Draw reference line
-			Rectangle vRefLine{
-				.position = {600.0F, 470.0F}, .size = {300.0F, 2.0F}, .style = {.fill = Color(0.5F, 0.5F, 0.5F, 1.0F)}, .id = "vref_line"
-			};
-			m_layerManager.AddChild(m_rootLayer, vRefLine);
-
-			Text topAlign{
-				.position = {610.0F, 470.0F},
-				.text = "Top",
-				.style = {.color = Color::White(), .fontSize = 16.0F, .vAlign = VerticalAlign::Top},
-				.id = "top_align"
-			};
-			m_layerManager.AddChild(m_rootLayer, topAlign);
-
-			Text middleAlign{
-				.position = {700.0F, 470.0F},
-				.text = "Middle",
-				.style = {.color = Color::White(), .fontSize = 16.0F, .vAlign = VerticalAlign::Middle},
-				.id = "middle_align"
-			};
-			m_layerManager.AddChild(m_rootLayer, middleAlign);
-
-			Text bottomAlign{
-				.position = {810.0F, 470.0F},
-				.text = "Bottom",
-				.style = {.color = Color::White(), .fontSize = 16.0F, .vAlign = VerticalAlign::Bottom},
-				.id = "bottom_align"
-			};
-			m_layerManager.AddChild(m_rootLayer, bottomAlign);
+					// Create text with point-based alignment (NO width/height)
+					Text pointText{
+						.position = {xPos, yPos},
+						.text = "TEXT",
+						.style = {.color = Color::White(), .fontSize = 24.0F, .hAlign = hAligns[col], .vAlign = vAligns[row]},
+						.zIndex = 2.0F,
+						.id = nullptr
+					};
+					m_layerManager.AddChild(m_rootLayer, pointText);
+				}
+			}
 		}
 
 		void HandleInput(float dt) override {
@@ -207,20 +186,13 @@ namespace {
 		void Update(float dt) override { m_layerManager.UpdateAll(dt); }
 
 		void Render() override {
-			// Clear background
-			glClearColor(0.1F, 0.1F, 0.15F, 1.0F);
-			glClear(GL_COLOR_BUFFER_BIT);
-
-			// Render all text shapes
+			// NOTE: Screen clearing handled by Application main loop
 			m_layerManager.RenderAll();
 		}
 
 		void OnExit() override {
 			m_layerManager.Clear();
-			Renderer::Primitives::SetTextBatchRenderer(nullptr);
-			Renderer::Primitives::SetFontRenderer(nullptr);
-			m_textBatchRenderer.reset();
-			m_fontRenderer.reset();
+			// NOTE: FontRenderer and TextBatchRenderer cleanup handled by main.cpp
 		}
 
 		std::string ExportState() override { return R"({"scene": "text_shapes", "description": "Text shape API demonstration"})"; }
@@ -228,10 +200,8 @@ namespace {
 		const char* GetName() const override { return "text_shapes"; }
 
 	  private:
-		UI::LayerManager				  m_layerManager;
-		uint32_t						  m_rootLayer{0};
-		std::unique_ptr<ui::FontRenderer> m_fontRenderer;
-		std::unique_ptr<ui::TextBatchRenderer> m_textBatchRenderer;
+		UI::LayerManager m_layerManager;
+		uint32_t		 m_rootLayer{0};
 	};
 
 	// Register scene with SceneManager
