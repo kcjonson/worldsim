@@ -41,45 +41,80 @@ namespace UI {
 
 		// Measure text dimensions for alignment
 		glm::vec2 textSize = fontRenderer->MeasureText(text, scale);
+		float ascent = fontRenderer->GetAscent(scale);
 
 		// Calculate aligned position
 		Foundation::Vec2 alignedPos = position;
 
-		// Horizontal alignment
-		switch (style.hAlign) {
-			case Foundation::HorizontalAlign::Center:
-				alignedPos.x -= textSize.x * 0.5F;
-				break;
-			case Foundation::HorizontalAlign::Right:
-				alignedPos.x -= textSize.x;
-				break;
-			case Foundation::HorizontalAlign::Left:
-			default:
-				// Already at left position
-				break;
-		}
+		// Check if we're in bounding box mode or point mode
+		if (width.has_value() && height.has_value()) {
+			// BOUNDING BOX MODE
+			// Position is top-left of box, align text within the box
+			float boxWidth = *width;
+			float boxHeight = *height;
 
-		// Vertical alignment
-		// Note: We use font ascent (not textSize.y) for consistent alignment across different text
-		// strings. This ensures buttons and labels align consistently regardless of whether the
-		// specific text contains descenders (like g, y, p). This is standard for UI text.
-		float ascent = fontRenderer->GetAscent(scale);
-		switch (style.vAlign) {
-			case Foundation::VerticalAlign::Middle:
-				alignedPos.y -= ascent * 0.5F;
-				break;
-			case Foundation::VerticalAlign::Bottom:
-				alignedPos.y -= ascent;
-				break;
-			case Foundation::VerticalAlign::Top:
-			default:
-				// Already at top position
-				break;
-		}
+			// Horizontal alignment within box
+			switch (style.hAlign) {
+				case Foundation::HorizontalAlign::Center:
+					alignedPos.x += (boxWidth - textSize.x) * 0.5F;
+					break;
+				case Foundation::HorizontalAlign::Right:
+					alignedPos.x += boxWidth - textSize.x;
+					break;
+				case Foundation::HorizontalAlign::Left:
+				default:
+					// Text at left edge of box (no offset)
+					break;
+			}
 
-		// DEBUG: Log alignment calculations
-		LOG_INFO(UI, "Text '%s': pos(%.1f,%.1f) size(%.1f,%.1f) ascent=%.1f -> aligned(%.1f,%.1f)",
-			text.c_str(), position.x, position.y, textSize.x, textSize.y, ascent, alignedPos.x, alignedPos.y);
+			// Vertical alignment within box
+			switch (style.vAlign) {
+				case Foundation::VerticalAlign::Middle:
+					alignedPos.y += (boxHeight - ascent) * 0.5F;
+					break;
+				case Foundation::VerticalAlign::Bottom:
+					alignedPos.y += boxHeight - ascent;
+					break;
+				case Foundation::VerticalAlign::Top:
+				default:
+					// Text at top of box (no offset)
+					break;
+			}
+		} else {
+			// POINT MODE (legacy behavior)
+			// Position is the alignment anchor, text is offset based on alignment
+
+			// Horizontal alignment
+			switch (style.hAlign) {
+				case Foundation::HorizontalAlign::Center:
+					alignedPos.x -= textSize.x * 0.5F;
+					break;
+				case Foundation::HorizontalAlign::Right:
+					alignedPos.x -= textSize.x;
+					break;
+				case Foundation::HorizontalAlign::Left:
+				default:
+					// Already at left position
+					break;
+			}
+
+			// Vertical alignment
+			// Note: We use font ascent (not textSize.y) for consistent alignment across different text
+			// strings. This ensures buttons and labels align consistently regardless of whether the
+			// specific text contains descenders (like g, y, p). This is standard for UI text.
+			switch (style.vAlign) {
+				case Foundation::VerticalAlign::Middle:
+					alignedPos.y -= ascent * 0.5F;
+					break;
+				case Foundation::VerticalAlign::Bottom:
+					// No offset - position is already at the bottom (baseline)
+					break;
+				case Foundation::VerticalAlign::Top:
+				default:
+					// No offset - position is already the top-left
+					break;
+			}
+		}
 
 		// Get current z-index from render context (set by LayerManager)
 		float zIndex = RenderContext::GetZIndex();
