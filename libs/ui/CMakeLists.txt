@@ -7,6 +7,8 @@ add_library(ui
     layer/layer_manager.cpp
     shapes/shapes.cpp
     components/button/button.cpp
+    components/text_input/text_input.cpp
+    focus/focus_manager.cpp
 )
 
 target_include_directories(ui

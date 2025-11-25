@@ -1,6 +1,7 @@
 #pragma once
 
 #include "components/button/button_style.h"
+#include "focus/focusable.h"
 #include "math/types.h"
 #include "shapes/shapes.h"
 #include <functional>
@@ -11,11 +12,15 @@
 // Interactive UI button with state management and event handling.
 // Supports 5 visual states: Normal, Hover, Pressed, Disabled, Focused
 // Uses standard lifecycle: HandleInput() → Update() → Render()
+// Implements IFocusable for keyboard focus management and Tab navigation
 
 namespace UI {
 
-	// Button component - value semantics, no inheritance
-	struct Button {
+	// Forward declarations
+	class FocusManager;
+
+	// Button component - implements IFocusable for keyboard focus
+	struct Button : public IFocusable {
 		// Button type enum for predefined styles
 		enum class Type { Primary, Secondary, Custom };
 
@@ -33,6 +38,8 @@ namespace UI {
 			std::function<void()> onClick = nullptr;
 			float				  zIndex = -1.0F; // -1.0F = auto-assign
 			const char*			  id = nullptr;
+			FocusManager*		  focusManager = nullptr; // Optional: auto-register for keyboard focus
+			int					  tabIndex = -1; // Tab order (-1 for auto-assign)
 		};
 
 		// --- Public Members ---
@@ -60,19 +67,35 @@ namespace UI {
 
 		// --- Public Methods ---
 
-		// Constructor
+		// Constructor & Destructor
 		explicit Button(const Args& args);
+		~Button();
+
+		// Disable copy (Button may register with FocusManager)
+		Button(const Button&) = delete;
+		Button& operator=(const Button&) = delete;
+
+		// Allow move (must unregister from old address and re-register at new address)
+		Button(Button&& other) noexcept;
+		Button& operator=(Button&& other) noexcept;
 
 		// Standard lifecycle methods
-		void HandleInput(); // Process mouse/keyboard input, update state
+		void HandleInput(); // Process mouse input, update state
 		void Update(float deltaTime); // Apply state changes to visual appearance
 		void Render() const; // Draw button using Primitives API
 
 		// State management
-		void SetFocused(bool focused) { m_focused = focused; }
+		void SetFocused(bool focused) { m_focused = focused; } // For manual focus (backward compat)
 		void SetDisabled(bool disabled) { m_disabled = disabled; }
 		bool IsFocused() const { return m_focused; }
 		bool IsDisabled() const { return m_disabled; }
+
+		// IFocusable interface implementation
+		void OnFocusGained() override;
+		void OnFocusLost() override;
+		void HandleKeyInput(engine::Key key, bool shift, bool ctrl, bool alt) override;
+		void HandleCharInput(char32_t codepoint) override;
+		bool CanReceiveFocus() const override;
 
 		// Geometry queries
 		bool ContainsPoint(const Foundation::Vec2& point) const;
@@ -89,6 +112,9 @@ namespace UI {
 
 		// Text label component (centered within button)
 		Text m_labelText;
+
+		// Focus management
+		FocusManager* m_focusManager{nullptr}; // Optional FocusManager for auto-registration
 
 		// Get current style based on state/flags
 		const ButtonStyle& GetCurrentStyle() const;
