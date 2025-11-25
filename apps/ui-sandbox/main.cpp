@@ -123,7 +123,7 @@ void InitializeNavigationMenu() {
 					[sceneName, sceneIndex]() {
 						engine::SceneManager::Get().SwitchTo(sceneName);
 						g_menuState.selectedIndex = sceneIndex;
-						LOG_INFO(UI, "Switched to scene: {}", sceneName.c_str());
+						LOG_INFO(UI, "Switched to scene: %s", sceneName.c_str());
 					},
 				.zIndex = 100.0F,
 				.id = ("menu_button_" + std::to_string(i)).c_str()

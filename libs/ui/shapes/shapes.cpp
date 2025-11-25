@@ -102,16 +102,17 @@ namespace UI {
 			// Note: We use font ascent (not textSize.y) for consistent alignment across different text
 			// strings. This ensures buttons and labels align consistently regardless of whether the
 			// specific text contains descenders (like g, y, p). This is standard for UI text.
+			// In POINT MODE: position Y represents the text baseline, offsets adjust relative to that.
 			switch (style.vAlign) {
 				case Foundation::VerticalAlign::Middle:
-					alignedPos.y -= ascent * 0.5F;
+					alignedPos.y -= ascent * 0.5F;  // Shift up by half ascent to center on the point
 					break;
 				case Foundation::VerticalAlign::Bottom:
-					// No offset - position is already at the bottom (baseline)
+					// No offset - baseline is already at the alignment point (bottom of text)
 					break;
 				case Foundation::VerticalAlign::Top:
 				default:
-					// No offset - position is already the top-left
+					// No offset for top alignment (TODO: should this offset by -ascent?)
 					break;
 			}
 		}

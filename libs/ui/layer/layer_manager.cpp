@@ -238,22 +238,16 @@ namespace UI {
 			}
 		}
 
-		// Flush batched text rendering (renders all text in z-order)
-		ui::TextBatchRenderer* textBatchRenderer = Renderer::Primitives::GetTextBatchRenderer();
-		if (textBatchRenderer != nullptr) {
-			// textBatchRenderer->Flush(); // DISABLED: causes z-order issues
-		}
+		// Note: Text flushing is handled by the overlay renderer in main.cpp
+		// to ensure proper z-ordering across all UI elements including the menu
 	}
 
 	void LayerManager::RenderSubtree(uint32_t rootIndex) {
 		assert(IsValidIndex(rootIndex) && "Root index out of range");
 		RenderNode(rootIndex);
 
-		// Flush batched text rendering (renders all text in z-order)
-		ui::TextBatchRenderer* textBatchRenderer = Renderer::Primitives::GetTextBatchRenderer();
-		if (textBatchRenderer != nullptr) {
-			// textBatchRenderer->Flush(); // DISABLED: causes z-order issues
-		}
+		// Note: Text flushing is handled by the overlay renderer in main.cpp
+		// to ensure proper z-ordering across all UI elements including the menu
 	}
 
 	void LayerManager::RenderNode(uint32_t nodeIndex) {
