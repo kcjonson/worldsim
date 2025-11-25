@@ -132,7 +132,7 @@ namespace {
 						.width = boxWidth,
 						.height = boxHeight,
 						.text = "TEXT",
-						.style = {.color = Color::White(), .fontSize = 24.0F},
+						.style = {.color = Color::White(), .fontSize = 24.0F, .hAlign = hAligns[col], .vAlign = vAligns[row]},
 						.zIndex = 2.0F,
 						.id = nullptr
 					};
