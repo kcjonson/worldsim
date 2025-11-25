@@ -241,7 +241,7 @@ namespace UI {
 		// Flush batched text rendering (renders all text in z-order)
 		ui::TextBatchRenderer* textBatchRenderer = Renderer::Primitives::GetTextBatchRenderer();
 		if (textBatchRenderer != nullptr) {
-			textBatchRenderer->Flush();
+			// textBatchRenderer->Flush(); // DISABLED: causes z-order issues
 		}
 	}
 
@@ -252,7 +252,7 @@ namespace UI {
 		// Flush batched text rendering (renders all text in z-order)
 		ui::TextBatchRenderer* textBatchRenderer = Renderer::Primitives::GetTextBatchRenderer();
 		if (textBatchRenderer != nullptr) {
-			textBatchRenderer->Flush();
+			// textBatchRenderer->Flush(); // DISABLED: causes z-order issues
 		}
 	}
 

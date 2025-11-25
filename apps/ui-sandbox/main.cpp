@@ -12,6 +12,7 @@
 #include "coordinate_system/coordinate_system.h"
 #include "debug/debug_server.h"
 #include "font/font_renderer.h"
+#include "font/text_batch_renderer.h"
 #include "graphics/color.h"
 #include "graphics/rect.h"
 #include "math/types.h"
@@ -44,8 +45,9 @@ static struct {
 
 // GLFW callbacks
 // Global coordinate system (accessed by callbacks)
-static Renderer::CoordinateSystem*		 g_coordinateSystem = nullptr;
-static std::unique_ptr<ui::FontRenderer> g_fontRenderer = nullptr;
+static Renderer::CoordinateSystem*			  g_coordinateSystem = nullptr;
+static std::unique_ptr<ui::FontRenderer>	  g_fontRenderer = nullptr;
+static std::unique_ptr<ui::TextBatchRenderer> g_textBatchRenderer = nullptr;
 
 void ErrorCallback(int error, const char* description) {
 	LOG_ERROR(UI, "GLFW Error (%d): %s", error, description);
@@ -358,18 +360,35 @@ int main(int argc, char* argv[]) {
 		LOG_ERROR(UI, "Failed to initialize FontRenderer for menu!");
 		// Continue anyway - menu will just not have text labels
 	} else {
-		// Set up projection matrix for text rendering
-		glm::mat4 projection = glm::ortho(0.0F, static_cast<float>(windowWidth), static_cast<float>(windowHeight), 0.0F);
+		// CRITICAL: Use CoordinateSystem projection for text rendering to match shapes
+		// CoordinateSystem uses LOGICAL pixels (window size), not physical pixels (framebuffer size)
+		// This ensures x=20,y=20 means the same thing for text and shapes
+		glm::mat4 projection = coordinateSystem.CreateScreenSpaceProjection();
 		g_fontRenderer->SetProjectionMatrix(projection);
 		// Set font renderer in Primitives API for Text shapes
 		Renderer::Primitives::SetFontRenderer(g_fontRenderer.get());
+
+		// Initialize text batch renderer for batched SDF text rendering
+		g_textBatchRenderer = std::make_unique<ui::TextBatchRenderer>();
+		g_textBatchRenderer->Initialize(g_fontRenderer.get());
+		g_textBatchRenderer->SetProjectionMatrix(projection);
+		Renderer::Primitives::SetTextBatchRenderer(g_textBatchRenderer.get());
+
+		// Register flush callback so Primitives::EndFrame() automatically flushes text batches
+		Renderer::Primitives::SetTextFlushCallback([]() {
+			if (g_textBatchRenderer) {
+				g_textBatchRenderer->Flush();
+			}
+		});
+
 		// Register frame update callback for LRU cache tracking
 		Renderer::Primitives::SetFrameUpdateCallback([]() {
 			if (g_fontRenderer) {
 				g_fontRenderer->UpdateFrame();
 			}
 		});
-		LOG_INFO(UI, "Font renderer initialized successfully");
+
+		LOG_INFO(UI, "Font renderer and text batch renderer initialized successfully");
 	}
 
 	// Initialize scene system
@@ -517,7 +536,11 @@ int main(int argc, char* argv[]) {
 	// Scene manager will automatically call OnExit on current scene
 	// when it goes out of scope (destructor)
 
-	// Cleanup font renderer
+	// Cleanup text batch renderer and font renderer
+	Renderer::Primitives::SetTextFlushCallback(nullptr);
+	Renderer::Primitives::SetTextBatchRenderer(nullptr);
+	g_textBatchRenderer.reset();
+
 	Renderer::Primitives::SetFontRenderer(nullptr);
 	g_fontRenderer.reset();
 

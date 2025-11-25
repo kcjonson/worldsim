@@ -3,6 +3,7 @@
 #include "graphics/color.h"
 #include "graphics/primitive_styles.h"
 #include "math/types.h"
+#include <optional>
 #include <string>
 
 // Basic shape types for UI layer system
@@ -61,6 +62,8 @@ namespace UI {
 	// Text shape
 	struct Text {
 		Foundation::Vec2	  position{0.0F, 0.0F};
+		std::optional<float>  width = std::nullopt;  // Optional bounding box width
+		std::optional<float>  height = std::nullopt; // Optional bounding box height
 		std::string			  text;
 		Foundation::TextStyle style;
 		float				  zIndex{-1.0F}; // -1.0F = auto-assign based on insertion order
