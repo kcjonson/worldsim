@@ -17,6 +17,7 @@
 #include "graphics/rect.h"
 #include "math/types.h"
 #include "metrics/metrics_collector.h"
+#include "navigation_menu.h"
 #include "primitives/batch_renderer.h"
 #include "primitives/primitives.h"
 #include "utils/log.h"
@@ -33,17 +34,12 @@
 
 #include <cstring>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 
-// Global state for menu interaction
-static struct {
-	bool					 showMenu = false;
-	std::vector<std::string> sceneNames;
-	size_t					 selectedIndex = 0;
-	std::vector<UI::Button>	 menuButtons; // Button components for each scene
-	UI::Text				 headerText;  // Header "Scenes" text
-} g_menuState;
+// Global navigation menu (only created when no --scene argument)
+static std::optional<UI::NavigationMenu> g_navigationMenu;
 
 // GLFW callbacks
 // Global coordinate system (accessed by callbacks)
@@ -69,102 +65,10 @@ void FramebufferSizeCallback(GLFWwindow* window, int width, int height) {
 
 	// Update primitives viewport with framebuffer size (for 1:1 pixel mapping)
 	Renderer::Primitives::SetViewport(width, height);
-}
 
-// Handle navigation menu input (button interaction)
-void HandleNavigationMenuInput() {
-	if (!g_menuState.showMenu) {
-		return;
-	}
-
-	// Update all menu buttons
-	for (auto& button : g_menuState.menuButtons) {
-		button.HandleInput();
-		button.Update(0.0F);
-	}
-}
-
-// Initialize navigation menu buttons
-void InitializeNavigationMenu() {
-	using namespace Foundation;
-	using namespace UI;
-
-	const float kMenuX = 10;
-	const float kMenuY = 10;
-	const float kMenuWidth = 150;
-	const float kLineHeight = 25;
-	const float kHeaderHeight = 30;
-
-	// Create header text
-	g_menuState.headerText = Text{
-		.position = {kMenuX + 10, kMenuY + 8},
-		.text = "Scenes",
-		.style = {.color = Color(0.9F, 0.9F, 0.9F, 1.0F), .fontSize = 16.0F},
-		.zIndex = 110.0F,
-		.id = "menu_header_text"
-	};
-
-	// Create button for each scene
-	g_menuState.menuButtons.clear();
-	for (size_t i = 0; i < g_menuState.sceneNames.size(); i++) {
-		float itemY = kMenuY + kHeaderHeight + (static_cast<float>(i) * kLineHeight);
-
-		// Capture scene name by value for onClick callback
-		std::string sceneName = g_menuState.sceneNames[i];
-		size_t		sceneIndex = i;
-
-		g_menuState.menuButtons.push_back(
-			Button{Button::Args{
-				.label = sceneName,
-				.position = {kMenuX + 2, itemY + 2},
-				.size = {kMenuWidth - 4, kLineHeight - 4},
-				.type = Button::Type::Secondary,
-				.onClick =
-					[sceneName, sceneIndex]() {
-						engine::SceneManager::Get().SwitchTo(sceneName);
-						g_menuState.selectedIndex = sceneIndex;
-						LOG_INFO(UI, "Switched to scene: %s", sceneName.c_str());
-					},
-				.zIndex = 100.0F,
-				.id = ("menu_button_" + std::to_string(i)).c_str()
-			}}
-		);
-	}
-}
-
-// Render navigation menu
-void RenderNavigationMenu() {
-	if (!g_menuState.showMenu) {
-		return;
-	}
-
-	using namespace Foundation;
-
-	const float kMenuX = 10;
-	const float kMenuY = 10;
-	const float kMenuWidth = 150;
-	const float kLineHeight = 25;
-	const float kHeaderHeight = 30;
-	const float kTotalHeight = kHeaderHeight + (static_cast<float>(g_menuState.sceneNames.size()) * kLineHeight);
-
-	// Draw menu background
-	Renderer::Primitives::DrawRect(
-		{.bounds = {kMenuX, kMenuY, kMenuWidth, kTotalHeight},
-		 .style = {.fill = Color(0.15F, 0.15F, 0.2F, 0.95F), .border = BorderStyle{.color = Color(0.4F, 0.4F, 0.5F, 1.0F), .width = 1.0F}},
-		 .id = "menu_background"}
-	);
-
-	// Draw header background
-	Renderer::Primitives::DrawRect(
-		{.bounds = {kMenuX, kMenuY, kMenuWidth, kHeaderHeight}, .style = {.fill = Color(0.2F, 0.2F, 0.3F, 1.0F)}, .id = "menu_header"}
-	);
-
-	// Render header text
-	g_menuState.headerText.Render();
-
-	// Render all menu buttons
-	for (const auto& button : g_menuState.menuButtons) {
-		button.Render();
+	// Update navigation menu positions if it exists
+	if (g_navigationMenu) {
+		g_navigationMenu->OnWindowResize();
 	}
 }
 
@@ -393,25 +297,21 @@ int main(int argc, char* argv[]) {
 		engine::SceneManager::Get().SwitchTo("shapes");
 	}
 
-	// Setup navigation menu
-	g_menuState.showMenu = !hasSceneArg;
-
-	if (g_menuState.showMenu) {
-		g_menuState.sceneNames = engine::SceneManager::Get().GetAllSceneNames();
-		// Find current scene index
-		auto* currentScene = engine::SceneManager::Get().GetCurrentScene();
-		if (currentScene != nullptr) {
-			const char* currentName = currentScene->GetName();
-			for (size_t i = 0; i < g_menuState.sceneNames.size(); i++) {
-				if (g_menuState.sceneNames[i] == currentName) {
-					g_menuState.selectedIndex = i;
-					break;
-				}
+	// Setup navigation menu (only when no --scene argument for zero perf impact on scene tests)
+	if (!hasSceneArg) {
+		auto sceneNames = engine::SceneManager::Get().GetAllSceneNames();
+		g_navigationMenu.emplace(
+			UI::NavigationMenu::Args{
+				.sceneNames = sceneNames,
+				.onSceneSelected =
+					[](const std::string& sceneName) {
+						engine::SceneManager::Get().SwitchTo(sceneName);
+						LOG_INFO(UI, "Switched to scene: %s", sceneName.c_str());
+					},
+				.coordinateSystem = g_coordinateSystem
 			}
-		}
-		// Initialize menu buttons and text
-		InitializeNavigationMenu();
-		LOG_INFO(UI, "Navigation menu enabled (%zu scenes available)", g_menuState.sceneNames.size());
+		);
+		LOG_INFO(UI, "Navigation menu enabled (%zu scenes available)", sceneNames.size());
 	}
 
 	// Set up pre-frame callback (primitives begin frame + debug server control)
@@ -481,11 +381,12 @@ int main(int argc, char* argv[]) {
 
 	// Set up overlay renderer (navigation menu)
 	app.SetOverlayRenderer([]() {
-		// Handle navigation menu input
-		HandleNavigationMenuInput();
-
-		// Render navigation menu on top
-		RenderNavigationMenu();
+		// Handle navigation menu if it exists (zero overhead when not created)
+		if (g_navigationMenu) {
+			g_navigationMenu->HandleInput();
+			g_navigationMenu->Update(0.0F);
+			g_navigationMenu->Render();
+		}
 
 		// End frame - flush all queued primitives
 		Renderer::Primitives::EndFrame();

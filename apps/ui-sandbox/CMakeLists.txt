@@ -1,5 +1,6 @@
 add_executable(ui-sandbox
     main.cpp
+    navigation_menu.cpp
     scenes/shapes_scene.cpp
     scenes/arena_scene.cpp
     scenes/handle_scene.cpp
