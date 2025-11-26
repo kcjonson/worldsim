@@ -17,13 +17,13 @@
 #include "graphics/rect.h"
 #include "math/types.h"
 #include "metrics/metrics_collector.h"
+#include "navigation_menu.h"
 #include "primitives/batch_renderer.h"
 #include "primitives/primitives.h"
 #include "utils/log.h"
 #include "utils/string_hash.h"
 #include <application/application.h>
 #include <components/button/button.h>
-#include <components/navigation_menu/navigation_menu.h>
 #include <scene/scene_manager.h>
 #include <shapes/shapes.h>
 

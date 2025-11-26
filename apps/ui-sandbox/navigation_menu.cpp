@@ -1,4 +1,4 @@
-#include "components/navigation_menu/navigation_menu.h"
+#include "navigation_menu.h"
 #include "graphics/color.h"
 #include "primitives/primitives.h"
 #include "utils/log.h"
