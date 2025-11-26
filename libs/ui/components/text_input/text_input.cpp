@@ -116,9 +116,7 @@ namespace UI {
 	// ============================================================================
 
 	void TextInput::HandleInput() {
-		LOG_INFO(UI, "TextInput(%s): HandleInput called, m_enabled=%d", id, m_enabled);
 		if (!m_enabled) {
-			LOG_INFO(UI, "TextInput(%s): DISABLED, returning early", id);
 			return;
 		}
 
@@ -155,7 +153,7 @@ namespace UI {
 			}
 
 			// Mouse drag selection
-			if (m_mouseDown && input.IsMouseButtonDown(engine::MouseButton::Left)) {
+			if (m_focused && m_mouseDown && input.IsMouseButtonDown(engine::MouseButton::Left)) {
 				Foundation::Vec2 mousePos = input.GetMousePosition();
 				float			 localX = mousePos.x - m_position.x - m_style.paddingLeft + m_horizontalScroll;
 				size_t			 dragPosition = GetCursorPositionFromMouse(localX);
@@ -176,11 +174,12 @@ namespace UI {
 				}
 			}
 
-			// Release mouse
-			if (m_mouseDown && !input.IsMouseButtonDown(engine::MouseButton::Left)) {
-				m_mouseDown = false;
-			}
 		}
+
+	// Release mouse (outside the IsMouseButtonDown block)
+	if (m_mouseDown && !input.IsMouseButtonDown(engine::MouseButton::Left)) {
+		m_mouseDown = false;
+	}
 	}
 
 	void TextInput::Update(float deltaTime) {
@@ -340,7 +339,10 @@ namespace UI {
 
 		// Delete selection first if active
 		if (m_selection.has_value() && !m_selection->IsEmpty()) {
+			LOG_INFO(UI, "InsertChar: deleting selection before insert");
 			DeleteSelection();
+		} else {
+			LOG_INFO(UI, "InsertChar: no selection, inserting at cursor");
 		}
 
 		// Convert codepoint to UTF-8
@@ -446,9 +448,13 @@ namespace UI {
 	void TextInput::SetSelection(size_t start, size_t end) {
 		m_selection = TextSelection{start, end};
 		m_cursorBlinkTimer = 0.0F;
+		LOG_INFO(UI, "SetSelection(%zu, %zu)", start, end);
 	}
 
 	void TextInput::ClearSelection() {
+		if (m_selection.has_value()) {
+			LOG_INFO(UI, "ClearSelection (was %zu-%zu)", m_selection->start, m_selection->end);
+		}
 		m_selection.reset();
 	}
 
@@ -464,11 +470,13 @@ namespace UI {
 
 	void TextInput::DeleteSelection() {
 		if (!m_selection.has_value() || m_selection->IsEmpty()) {
+			LOG_INFO(UI, "DeleteSelection called but no selection");
 			return;
 		}
 
 		size_t start = m_selection->GetMin();
 		size_t end = m_selection->GetMax();
+		LOG_INFO(UI, "DeleteSelection deleting range %zu-%zu", start, end);
 
 		// Delete the selected range
 		m_text.erase(start, end - start);

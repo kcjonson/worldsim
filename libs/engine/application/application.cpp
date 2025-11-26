@@ -23,12 +23,13 @@ namespace engine {
 
 		// Create and initialize FocusManager
 		m_focusManager = std::make_unique<UI::FocusManager>();
+		UI::FocusManager::SetInstance(m_focusManager.get());
 		LOG_INFO(Engine, "Application initialized with FocusManager");
 
 		// Wire InputManager callbacks to FocusManager
 		m_inputManager->SetKeyInputCallback([this](Key key, int action, int mods) -> bool {
-			// Only handle key press events (not release or repeat)
-			if (action != GLFW_PRESS) {
+			// Only handle key press and repeat events (not release)
+			if (action != GLFW_PRESS && action != GLFW_REPEAT) {
 				return false; // Don't consume
 			}
 
