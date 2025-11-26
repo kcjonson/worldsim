@@ -72,7 +72,7 @@ namespace {
 				std::make_unique<UI::TextInput>(UI::TextInput::Args{
 					.position = {50.0F, yPos},
 					.size = {400.0F, 40.0F},
-					.text = "Initial text with Unicode: 你好 😀",
+					.text = "Initial text value",
 					.placeholder = "",
 					.style = {},
 					.focusManager = &UI::FocusManager::Get(),

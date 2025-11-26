@@ -310,9 +310,18 @@ namespace UI {
 			return;
 		}
 
-		// Filter control characters (except Tab which may be used)
+		// Filter control characters
 		if (codepoint < 32 || codepoint == 127) {
-			return; // Skip control characters
+			return;
+		}
+
+		// Block emoji ranges (font atlas doesn't support them)
+		// Main emoji blocks: U+1F300-U+1F9FF, U+2600-U+27BF (misc symbols/dingbats)
+		if ((codepoint >= 0x1F300 && codepoint <= 0x1FAFF) || // Emoji and pictographs
+			(codepoint >= 0x2600 && codepoint <= 0x27BF) ||	  // Misc symbols, dingbats
+			(codepoint >= 0xFE00 && codepoint <= 0xFE0F) ||	  // Variation selectors
+			(codepoint >= 0x1F000 && codepoint <= 0x1F02F)) { // Mahjong, dominos
+			return;
 		}
 
 		InsertChar(codepoint);
@@ -559,6 +568,14 @@ namespace UI {
 		for (char32_t codepoint : codepoints) {
 			// Filter newlines and control characters
 			if (codepoint == '\n' || codepoint == '\r' || (codepoint < 32 && codepoint != '\t')) {
+				continue;
+			}
+
+			// Block emoji ranges (font atlas doesn't support them)
+			if ((codepoint >= 0x1F300 && codepoint <= 0x1FAFF) || // Emoji and pictographs
+				(codepoint >= 0x2600 && codepoint <= 0x27BF) ||	  // Misc symbols, dingbats
+				(codepoint >= 0xFE00 && codepoint <= 0xFE0F) ||	  // Variation selectors
+				(codepoint >= 0x1F000 && codepoint <= 0x1F02F)) { // Mahjong, dominos
 				continue;
 			}
 
