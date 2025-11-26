@@ -8,11 +8,10 @@
 #include <clipboard/clipboard_manager.h>
 #include <input/input_manager.h>
 #include <primitives/primitives.h>
-#include <utils/log.h>
 
 namespace {
-// Base font size for scale calculations (matches SDF atlas generation)
-constexpr float kBaseFontSize = 16.0F;
+	// Base font size for scale calculations (matches SDF atlas generation)
+	constexpr float kBaseFontSize = 16.0F;
 } // namespace
 
 namespace UI {
@@ -33,8 +32,6 @@ namespace UI {
 		  m_enabled(args.enabled),
 		  m_focusManager(args.focusManager),
 		  m_tabIndex(args.tabIndex) {
-
-		LOG_INFO(UI, "TextInput(%s): Created with m_enabled=%d", id, m_enabled);
 
 		// Set cursor to end of text
 		m_cursorPosition = m_text.size();
@@ -134,11 +131,9 @@ namespace UI {
 			if (!wasMouseDown) {
 				// Mouse just pressed - process initial click
 				Foundation::Vec2 mousePos = input.GetMousePosition();
-				LOG_DEBUG(UI, "TextInput(%s): Mouse clicked at (%.1f, %.1f)", id, mousePos.x, mousePos.y);
 
 				// Check if click is inside text input
 				if (ContainsPoint(mousePos)) {
-					LOG_INFO(UI, "TextInput(%s): Click inside bounds, grabbing focus", id);
 					// Grab focus
 					if (m_focusManager != nullptr) {
 						m_focusManager->SetFocus(this);
@@ -178,13 +173,12 @@ namespace UI {
 					UpdateHorizontalScroll();
 				}
 			}
-
 		}
 
-	// Release mouse (outside the IsMouseButtonDown block)
-	if (m_mouseDown && !input.IsMouseButtonDown(engine::MouseButton::Left)) {
-		m_mouseDown = false;
-	}
+		// Release mouse (outside the IsMouseButtonDown block)
+		if (m_mouseDown && !input.IsMouseButtonDown(engine::MouseButton::Left)) {
+			m_mouseDown = false;
+		}
 	}
 
 	void TextInput::Update(float deltaTime) {
@@ -214,7 +208,7 @@ namespace UI {
 		if (m_text.empty() && !m_focused) {
 			RenderPlaceholder();
 		} else {
-			RenderSelection(); // Phase 2 (currently stub)
+			RenderSelection();
 			RenderText();
 			RenderCursor();
 		}
@@ -240,13 +234,11 @@ namespace UI {
 	// ============================================================================
 
 	void TextInput::OnFocusGained() {
-		LOG_INFO(UI, "TextInput(%s): Focus gained", id);
 		m_focused = true;
 		m_cursorBlinkTimer = 0.0F; // Reset blink (cursor visible)
 	}
 
 	void TextInput::OnFocusLost() {
-		LOG_INFO(UI, "TextInput(%s): Focus lost", id);
 		m_focused = false;
 		ClearSelection();
 	}
@@ -317,8 +309,6 @@ namespace UI {
 		if (!m_enabled || !m_focused) {
 			return;
 		}
-
-		LOG_DEBUG(UI, "TextInput(%s): Received char input: U+%04X", id, codepoint);
 
 		// Filter control characters (except Tab which may be used)
 		if (codepoint < 32 || codepoint == 127) {
@@ -445,13 +435,9 @@ namespace UI {
 	void TextInput::SetSelection(size_t start, size_t end) {
 		m_selection = TextSelection{start, end};
 		m_cursorBlinkTimer = 0.0F;
-		LOG_INFO(UI, "SetSelection(%zu, %zu)", start, end);
 	}
 
 	void TextInput::ClearSelection() {
-		if (m_selection.has_value()) {
-			LOG_INFO(UI, "ClearSelection (was %zu-%zu)", m_selection->start, m_selection->end);
-		}
 		m_selection.reset();
 	}
 
@@ -467,13 +453,11 @@ namespace UI {
 
 	void TextInput::DeleteSelection() {
 		if (!m_selection.has_value() || m_selection->IsEmpty()) {
-			LOG_INFO(UI, "DeleteSelection called but no selection");
 			return;
 		}
 
 		size_t start = m_selection->GetMin();
 		size_t end = m_selection->GetMax();
-		LOG_INFO(UI, "DeleteSelection deleting range %zu-%zu", start, end);
 
 		// Delete the selected range
 		m_text.erase(start, end - start);
