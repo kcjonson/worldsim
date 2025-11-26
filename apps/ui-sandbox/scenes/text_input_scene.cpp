@@ -85,21 +85,20 @@ namespace {
 			);
 			yPos += spacing;
 
-			// Numbers-only input with validator
+			// Third text input
 			m_inputs.push_back(
 				std::make_unique<UI::TextInput>(UI::TextInput::Args{
 					.position = {50.0F, yPos},
 					.size = {400.0F, 40.0F},
 					.text = "",
-					.placeholder = "Numbers only (try typing letters)",
+					.placeholder = "Another text input",
 					.style = {},
 					.focusManager = &UI::FocusManager::Get(),
 					.tabIndex = 2,
 					.id = "input3",
 					.zIndex = 5.0F,
 					.enabled = true,
-					.onChange = [this](const std::string& text) { m_output3 = "Input 3 (numbers): " + text; },
-					.charValidator = [](char32_t c) { return (c >= '0' && c <= '9') || c == '.' || c == '-'; }
+					.onChange = [this](const std::string& text) { m_output3 = "Input 3: " + text; }
 				})
 			);
 			yPos += spacing;

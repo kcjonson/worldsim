@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2025-11-25 (SDF Text Rendering complete, text alignment system complete)
+Last Updated: 2025-11-26 (PR #30 feedback fixes in progress)
 
 ## Epic/Story/Task Template
 
@@ -280,6 +280,38 @@ Use this template for all work items:
 **Future Enhancements** (deferred)
 - [ ] RmlUI backend implementation
 - [ ] SDF font rendering integration with RmlUI
+
+---
+
+### ✅ PR #30 Feedback Fixes - TextInput & Focus Management
+**Spec/Documentation:** PR #30 review comments, `/Users/kcjonson/.claude/plans/whimsical-crafting-snowglobe.md`
+**Dependencies:** Colonysim UI Integration (TextInput component)
+**Status:** complete
+
+**Tasks:**
+- [x] FocusManager Static Instance Pattern
+  - [x] Add static `s_instance` member to FocusManager
+  - [x] Add static `Get()` method
+  - [x] Add static `SetInstance()` method
+  - [x] Follow InputManager pattern
+- [x] Code Quality Fixes
+  - [x] Add m_tabIndex preservation in TextInput move operations
+  - [x] Add m_tabIndex preservation in Button move operations
+  - [x] Remove debug LOG_INFO calls in TextInput::InsertChar
+- [x] Remove charValidator Functionality
+  - [x] Remove charValidator from TextInput::Args struct
+  - [x] Remove m_charValidator member
+  - [x] Remove charValidator logic from HandleCharInput/InsertChar/Paste
+  - [x] Remove numbers-only demo from text_input_scene.cpp
+- [x] Create ClipboardManager Abstraction
+  - [x] Create libs/engine/clipboard/clipboard_manager.h
+  - [x] Create libs/engine/clipboard/clipboard_manager.cpp
+  - [x] Add to libs/engine/CMakeLists.txt
+  - [x] Follow InputManager singleton pattern
+  - [x] Update Application to own ClipboardManager
+  - [x] Update TextInput to use ClipboardManager instead of GLFW
+- [x] Fix BASE_FONT_SIZE Constant
+  - [x] Move to file-level kBaseFontSize constant in anonymous namespace
 
 ---
 

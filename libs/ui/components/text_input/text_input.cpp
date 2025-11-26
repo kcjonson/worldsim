@@ -4,11 +4,16 @@
 #include "font/text_batch_renderer.h"
 #include "shapes/shapes.h"
 #include "utils/utf8.h"
-#include <GLFW/glfw3.h>
 #include <algorithm>
+#include <clipboard/clipboard_manager.h>
 #include <input/input_manager.h>
 #include <primitives/primitives.h>
 #include <utils/log.h>
+
+namespace {
+// Base font size for scale calculations (matches SDF atlas generation)
+constexpr float kBaseFontSize = 16.0F;
+} // namespace
 
 namespace UI {
 
@@ -23,11 +28,11 @@ namespace UI {
 		  m_placeholder(args.placeholder),
 		  m_style(args.style),
 		  m_onChange(args.onChange),
-		  m_charValidator(args.charValidator),
 		  zIndex(args.zIndex),
 		  id(args.id),
 		  m_enabled(args.enabled),
-		  m_focusManager(args.focusManager) {
+		  m_focusManager(args.focusManager),
+		  m_tabIndex(args.tabIndex) {
 
 		LOG_INFO(UI, "TextInput(%s): Created with m_enabled=%d", id, m_enabled);
 
@@ -36,7 +41,7 @@ namespace UI {
 
 		// Register with FocusManager if provided
 		if (m_focusManager != nullptr) {
-			m_focusManager->RegisterFocusable(this, args.tabIndex);
+			m_focusManager->RegisterFocusable(this, m_tabIndex);
 		}
 	}
 
@@ -54,7 +59,6 @@ namespace UI {
 		  m_placeholder(std::move(other.m_placeholder)),
 		  m_style(other.m_style),
 		  m_onChange(std::move(other.m_onChange)),
-		  m_charValidator(std::move(other.m_charValidator)),
 		  m_cursorPosition(other.m_cursorPosition),
 		  m_selection(other.m_selection),
 		  m_cursorBlinkTimer(other.m_cursorBlinkTimer),
@@ -65,11 +69,12 @@ namespace UI {
 		  m_enabled(other.m_enabled),
 		  m_focused(other.m_focused),
 		  m_focusManager(other.m_focusManager),
+		  m_tabIndex(other.m_tabIndex),
 		  m_mouseDown(other.m_mouseDown) {
 		// Unregister other from its old address, register this at new address
 		if (m_focusManager != nullptr) {
 			m_focusManager->UnregisterFocusable(&other);
-			m_focusManager->RegisterFocusable(this, -1);
+			m_focusManager->RegisterFocusable(this, m_tabIndex);
 		}
 		other.m_focusManager = nullptr; // Prevent double-unregister
 	}
@@ -88,7 +93,6 @@ namespace UI {
 			m_placeholder = std::move(other.m_placeholder);
 			m_style = other.m_style;
 			m_onChange = std::move(other.m_onChange);
-			m_charValidator = std::move(other.m_charValidator);
 			m_cursorPosition = other.m_cursorPosition;
 			m_selection = other.m_selection;
 			m_cursorBlinkTimer = other.m_cursorBlinkTimer;
@@ -100,11 +104,12 @@ namespace UI {
 			m_focused = other.m_focused;
 			m_mouseDown = other.m_mouseDown;
 			m_focusManager = other.m_focusManager;
+			m_tabIndex = other.m_tabIndex;
 
 			// Unregister other from its old address, register this at new address
 			if (m_focusManager != nullptr) {
 				m_focusManager->UnregisterFocusable(&other);
-				m_focusManager->RegisterFocusable(this, -1);
+				m_focusManager->RegisterFocusable(this, m_tabIndex);
 			}
 			other.m_focusManager = nullptr;
 		}
@@ -332,17 +337,9 @@ namespace UI {
 	// ============================================================================
 
 	void TextInput::InsertChar(char32_t codepoint) {
-		// Validate character (if validator provided)
-		if (m_charValidator && !m_charValidator(codepoint)) {
-			return; // Reject character
-		}
-
 		// Delete selection first if active
 		if (m_selection.has_value() && !m_selection->IsEmpty()) {
-			LOG_INFO(UI, "InsertChar: deleting selection before insert");
 			DeleteSelection();
-		} else {
-			LOG_INFO(UI, "InsertChar: no selection, inserting at cursor");
 		}
 
 		// Convert codepoint to UTF-8
@@ -543,11 +540,7 @@ namespace UI {
 			return;
 		}
 
-		// Set clipboard using GLFW
-		GLFWwindow* window = glfwGetCurrentContext();
-		if (window != nullptr) {
-			glfwSetClipboardString(window, selectedText.c_str());
-		}
+		engine::ClipboardManager::Get().SetText(selectedText);
 	}
 
 	void TextInput::Cut() {
@@ -557,24 +550,16 @@ namespace UI {
 		}
 
 		// Copy to clipboard
-		GLFWwindow* window = glfwGetCurrentContext();
-		if (window != nullptr) {
-			glfwSetClipboardString(window, selectedText.c_str());
-		}
+		engine::ClipboardManager::Get().SetText(selectedText);
 
 		// Delete selection
 		DeleteSelection();
 	}
 
 	void TextInput::Paste() {
-		// Get clipboard text using GLFW
-		GLFWwindow* window = glfwGetCurrentContext();
-		if (window == nullptr) {
-			return;
-		}
-
-		const char* clipboardText = glfwGetClipboardString(window);
-		if (clipboardText == nullptr || clipboardText[0] == '\0') {
+		// Get clipboard text
+		std::string pasteText = engine::ClipboardManager::Get().GetText();
+		if (pasteText.empty()) {
 			return;
 		}
 
@@ -585,17 +570,11 @@ namespace UI {
 
 		// Insert clipboard text at cursor
 		// Convert to UTF-8 codepoints and insert each character
-		std::string			  pasteText(clipboardText);
 		std::vector<char32_t> codepoints = foundation::UTF8::Decode(pasteText);
 
 		for (char32_t codepoint : codepoints) {
 			// Filter newlines and control characters
 			if (codepoint == '\n' || codepoint == '\r' || (codepoint < 32 && codepoint != '\t')) {
-				continue;
-			}
-
-			// Validate character if validator provided
-			if (m_charValidator && !m_charValidator(codepoint)) {
 				continue;
 			}
 
@@ -657,9 +636,8 @@ namespace UI {
 			return;
 		}
 
-		// Convert fontSize to scale (16px base size = 1.0 scale)
-		constexpr float BASE_FONT_SIZE = 16.0F;
-		float			scale = m_style.fontSize / BASE_FONT_SIZE;
+		// Convert fontSize to scale (kBaseFontSize = 1.0 scale)
+		float scale = m_style.fontSize / kBaseFontSize;
 
 		// Calculate horizontal position with scroll
 		float textX = m_position.x + m_style.paddingLeft - m_horizontalScroll;
@@ -726,9 +704,8 @@ namespace UI {
 			return;
 		}
 
-		// Convert fontSize to scale (16px base size = 1.0 scale)
-		constexpr float BASE_FONT_SIZE = 16.0F;
-		float			scale = m_style.fontSize / BASE_FONT_SIZE;
+		// Convert fontSize to scale (kBaseFontSize = 1.0 scale)
+		float scale = m_style.fontSize / kBaseFontSize;
 
 		// Measure text before selection start
 		std::string textBeforeStart = m_text.substr(0, start);
@@ -773,9 +750,8 @@ namespace UI {
 			return;
 		}
 
-		// Convert fontSize to scale (16px base size = 1.0 scale)
-		constexpr float BASE_FONT_SIZE = 16.0F;
-		float			scale = m_style.fontSize / BASE_FONT_SIZE;
+		// Convert fontSize to scale (kBaseFontSize = 1.0 scale)
+		float scale = m_style.fontSize / kBaseFontSize;
 
 		// Calculate horizontal position (no scroll for placeholder)
 		float textX = m_position.x + m_style.paddingLeft;
@@ -804,9 +780,8 @@ namespace UI {
 		std::string textBeforeCursor = m_text.substr(0, m_cursorPosition);
 
 		// Measure width using FontRenderer
-		// Convert fontSize to scale (16px base size = 1.0 scale)
-		constexpr float BASE_FONT_SIZE = 16.0F;
-		float			scale = m_style.fontSize / BASE_FONT_SIZE;
+		// Convert fontSize to scale (kBaseFontSize = 1.0 scale)
+		float scale = m_style.fontSize / kBaseFontSize;
 
 		ui::FontRenderer* fontRenderer = Renderer::Primitives::GetFontRenderer();
 		float			  width = fontRenderer ? fontRenderer->MeasureText(textBeforeCursor, scale).x : 0.0F;
@@ -822,9 +797,8 @@ namespace UI {
 		size_t bestPosition = 0;
 		float  bestDistance = std::abs(localX);
 
-		// Convert fontSize to scale (16px base size = 1.0 scale)
-		constexpr float BASE_FONT_SIZE = 16.0F;
-		float			scale = m_style.fontSize / BASE_FONT_SIZE;
+		// Convert fontSize to scale (kBaseFontSize = 1.0 scale)
+		float scale = m_style.fontSize / kBaseFontSize;
 
 		// Check each character boundary
 		ui::FontRenderer* fontRenderer = Renderer::Primitives::GetFontRenderer();
@@ -864,9 +838,8 @@ namespace UI {
 		}
 
 		// Clamp to ensure text fills from left when possible
-		// Convert fontSize to scale (16px base size = 1.0 scale)
-		constexpr float BASE_FONT_SIZE = 16.0F;
-		float			scale = m_style.fontSize / BASE_FONT_SIZE;
+		// Convert fontSize to scale (kBaseFontSize = 1.0 scale)
+		float scale = m_style.fontSize / kBaseFontSize;
 
 		ui::FontRenderer* fontRenderer = Renderer::Primitives::GetFontRenderer();
 		float			  textWidth = fontRenderer ? fontRenderer->MeasureText(m_text, scale).x : 0.0F;

@@ -1,4 +1,5 @@
 #include "application.h"
+#include "clipboard/clipboard_manager.h"
 #include "focus/focus_manager.h"
 #include "input/input_manager.h"
 #include "scene/scene_manager.h"
@@ -20,6 +21,11 @@ namespace engine {
 		m_inputManager = std::make_unique<InputManager>(m_window);
 		InputManager::SetInstance(m_inputManager.get());
 		LOG_INFO(Engine, "Application initialized with InputManager");
+
+		// Create and initialize ClipboardManager
+		m_clipboardManager = std::make_unique<ClipboardManager>(m_window);
+		ClipboardManager::SetInstance(m_clipboardManager.get());
+		LOG_INFO(Engine, "Application initialized with ClipboardManager");
 
 		// Create and initialize FocusManager
 		m_focusManager = std::make_unique<UI::FocusManager>();

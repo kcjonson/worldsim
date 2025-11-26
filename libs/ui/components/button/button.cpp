@@ -16,7 +16,8 @@ namespace UI {
 		  m_onClick(args.onClick),
 		  zIndex(args.zIndex),
 		  id(args.id),
-		  m_focusManager(args.focusManager) {
+		  m_focusManager(args.focusManager),
+		  m_tabIndex(args.tabIndex) {
 
 		// Set appearance based on type
 		if (args.type == Type::Primary) {
@@ -49,7 +50,7 @@ namespace UI {
 
 		// Register with FocusManager if provided
 		if (m_focusManager != nullptr) {
-			m_focusManager->RegisterFocusable(this, args.tabIndex);
+			m_focusManager->RegisterFocusable(this, m_tabIndex);
 		}
 	}
 
@@ -75,13 +76,12 @@ namespace UI {
 		  m_mouseOver(other.m_mouseOver),
 		  m_mouseDown(other.m_mouseDown),
 		  m_labelText(other.m_labelText),
-		  m_focusManager(other.m_focusManager) {
+		  m_focusManager(other.m_focusManager),
+		  m_tabIndex(other.m_tabIndex) {
 		// Unregister other from its old address, register this at new address
 		if (m_focusManager != nullptr) {
 			m_focusManager->UnregisterFocusable(&other);
-			// We need to register with the same tabIndex, but FocusManager doesn't store it separately
-			// For now, just register with auto-assign
-			m_focusManager->RegisterFocusable(this, -1);
+			m_focusManager->RegisterFocusable(this, m_tabIndex);
 		}
 		other.m_focusManager = nullptr; // Prevent double-unregister
 	}
@@ -109,11 +109,12 @@ namespace UI {
 			m_mouseDown = other.m_mouseDown;
 			m_labelText = other.m_labelText;
 			m_focusManager = other.m_focusManager;
+			m_tabIndex = other.m_tabIndex;
 
 			// Unregister other from its old address, register this at new address
 			if (m_focusManager != nullptr) {
 				m_focusManager->UnregisterFocusable(&other);
-				m_focusManager->RegisterFocusable(this, -1);
+				m_focusManager->RegisterFocusable(this, m_tabIndex);
 			}
 			other.m_focusManager = nullptr;
 		}

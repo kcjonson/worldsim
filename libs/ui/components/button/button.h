@@ -115,6 +115,7 @@ namespace UI {
 
 		// Focus management
 		FocusManager* m_focusManager{nullptr}; // Optional FocusManager for auto-registration
+		int			  m_tabIndex{-1};		   // Preserved for move operations
 
 		// Get current style based on state/flags
 		const ButtonStyle& GetCurrentStyle() const;

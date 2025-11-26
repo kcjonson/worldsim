@@ -74,8 +74,7 @@ struct TextInput : public IFocusable {
 		const char*		  id = nullptr;
 		float			  zIndex = -1.0F;
 		bool			  enabled = true;
-		std::function<void(const std::string&)> onChange;		 // Called when text changes
-		std::function<bool(char32_t)>			charValidator; // Return false to reject character
+		std::function<void(const std::string&)> onChange; // Called when text changes
 	};
 
 	// --- Public Members ---
@@ -93,7 +92,6 @@ struct TextInput : public IFocusable {
 
 	// Callbacks
 	std::function<void(const std::string&)> m_onChange;
-	std::function<bool(char32_t)>			m_charValidator;
 
 	// State
 	size_t						m_cursorPosition{0};	 // Byte offset in UTF-8 string
@@ -146,6 +144,7 @@ struct TextInput : public IFocusable {
   private:
 	// Focus management
 	FocusManager* m_focusManager{nullptr};
+	int			  m_tabIndex{-1}; // Preserved for move operations
 
 	// Internal state tracking
 	bool m_mouseDown{false};

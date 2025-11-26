@@ -2,8 +2,31 @@
 #include <utils/log.h>
 #include <algorithm>
 #include <cassert>
+#include <stdexcept>
 
 namespace UI {
+
+// Static member initialization
+FocusManager* FocusManager::s_instance = nullptr;
+
+FocusManager& FocusManager::Get() {
+	if (!s_instance) {
+		LOG_ERROR(UI, "FocusManager::Get() called before FocusManager was created");
+		throw std::runtime_error("FocusManager not initialized");
+	}
+	return *s_instance;
+}
+
+void FocusManager::SetInstance(FocusManager* instance) {
+	s_instance = instance;
+	LOG_INFO(UI, "FocusManager singleton instance set");
+}
+
+FocusManager::~FocusManager() {
+	if (s_instance == this) {
+		s_instance = nullptr;
+	}
+}
 
 void FocusManager::RegisterFocusable(IFocusable* component, int tabIndex) {
 	assert(component != nullptr);

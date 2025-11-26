@@ -35,8 +35,12 @@ namespace UI {
  */
 class FocusManager {
   public:
+	// Singleton access
+	static FocusManager& Get();
+	static void			 SetInstance(FocusManager* instance);
+
 	FocusManager() = default;
-	~FocusManager() = default;
+	~FocusManager();
 
 	// Disable copy/move (singleton-like usage)
 	FocusManager(const FocusManager&) = delete;
@@ -137,6 +141,9 @@ class FocusManager {
 	void RouteCharInput(char32_t codepoint);
 
   private:
+	// Singleton instance pointer
+	static FocusManager* s_instance;
+
 	// Focus entry with tab order
 	struct FocusEntry {
 		IFocusable* component;

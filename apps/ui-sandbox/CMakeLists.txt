@@ -11,6 +11,7 @@ add_executable(ui-sandbox
     scenes/input_test_scene.cpp
     scenes/button_scene.cpp
     scenes/sdf_minimal_scene.cpp
+    scenes/text_input_scene.cpp
 )
 
 target_include_directories(ui-sandbox
