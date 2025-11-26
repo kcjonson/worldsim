@@ -240,6 +240,7 @@ namespace UI {
 
 	void TextInput::OnFocusLost() {
 		m_focused = false;
+		m_mouseDown = false; // Clear mouse state to prevent ghost selections
 		ClearSelection();
 	}
 
