@@ -376,6 +376,13 @@ int main(int argc, char* argv[]) {
 		LOG_INFO(UI, "Font renderer and text batch renderer initialized successfully");
 	}
 
+	// Initialize metrics collection
+	Renderer::MetricsCollector metrics;
+
+	// Create application BEFORE scene loading (FocusManager, InputManager, etc. need to exist)
+	LOG_INFO(UI, "Creating application");
+	engine::Application app(window);
+
 	// Initialize scene system
 	LOG_INFO(Engine, "Initializing scene system");
 
@@ -406,13 +413,6 @@ int main(int argc, char* argv[]) {
 		InitializeNavigationMenu();
 		LOG_INFO(UI, "Navigation menu enabled (%zu scenes available)", g_menuState.sceneNames.size());
 	}
-
-	// Initialize metrics collection
-	Renderer::MetricsCollector metrics;
-
-	// Create application and set up game loop
-	LOG_INFO(UI, "Creating application");
-	engine::Application app(window);
 
 	// Set up pre-frame callback (primitives begin frame + debug server control)
 	app.SetPreFrameCallback([&debugServer, &app, &metrics, httpPort]() -> bool {

@@ -3,6 +3,7 @@
 #include "input/input_types.h"
 #include <GLFW/glfw3.h>
 #include <glm/glm.hpp>
+#include <functional>
 #include <string>
 #include <unordered_map>
 
@@ -60,6 +61,13 @@ namespace engine {
 		bool	  IsCursorInWindow() const { return m_cursorInWindow; }
 		glm::vec2 GetWindowSize() const { return m_windowSize; }
 
+		// Callbacks for external systems (e.g., FocusManager)
+		using KeyInputCallback = std::function<bool(Key key, int action, int mods)>;
+		using CharInputCallback = std::function<bool(char32_t codepoint)>;
+
+		void SetKeyInputCallback(KeyInputCallback callback) { m_keyInputCallback = callback; }
+		void SetCharInputCallback(CharInputCallback callback) { m_charInputCallback = callback; }
+
 		// Configuration setters
 		void SetPanSpeed(float speed) { m_panSpeed = speed; }
 		void SetZoomSpeed(float speed) { m_zoomSpeed = speed; }
@@ -68,6 +76,7 @@ namespace engine {
 
 		// GLFW static callbacks
 		static void KeyCallback(GLFWwindow* window, int key, int scancode, int action, int mods);
+		static void CharCallback(GLFWwindow* window, unsigned int codepoint);
 		static void MouseButtonCallback(GLFWwindow* window, int button, int action, int mods);
 		static void CursorPosCallback(GLFWwindow* window, double xpos, double ypos);
 		static void ScrollCallback(GLFWwindow* window, double xoffset, double yoffset);
@@ -79,6 +88,7 @@ namespace engine {
 
 		// Store original callbacks (for chaining)
 		GLFWkeyfun		   m_previousKeyCallback = nullptr;
+		GLFWcharfun		   m_previousCharCallback = nullptr;
 		GLFWmousebuttonfun m_previousMouseButtonCallback = nullptr;
 		GLFWcursorposfun   m_previousCursorPosCallback = nullptr;
 		GLFWscrollfun	   m_previousScrollCallback = nullptr;
@@ -118,6 +128,7 @@ namespace engine {
 
 		// Instance methods called by static callbacks
 		void HandleKeyInput(int key, int action);
+		void HandleCharInput(unsigned int codepoint);
 		void HandleMouseButton(int button, int action);
 		void HandleMouseMove(double x, double y);
 		void HandleScroll(double xoffset, double yoffset);
@@ -125,6 +136,10 @@ namespace engine {
 
 		// Helper to update button state transitions
 		void UpdateButtonStates();
+
+		// External callbacks (for FocusManager integration)
+		KeyInputCallback  m_keyInputCallback{};
+		CharInputCallback m_charInputCallback{};
 	};
 
 } // namespace engine

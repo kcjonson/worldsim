@@ -1,4 +1,6 @@
 #include "application.h"
+#include "clipboard/clipboard_manager.h"
+#include "focus/focus_manager.h"
 #include "input/input_manager.h"
 #include "scene/scene_manager.h"
 #include "utils/log.h"
@@ -19,10 +21,55 @@ namespace engine {
 		m_inputManager = std::make_unique<InputManager>(m_window);
 		InputManager::SetInstance(m_inputManager.get());
 		LOG_INFO(Engine, "Application initialized with InputManager");
+
+		// Create and initialize ClipboardManager
+		m_clipboardManager = std::make_unique<ClipboardManager>(m_window);
+		ClipboardManager::SetInstance(m_clipboardManager.get());
+		LOG_INFO(Engine, "Application initialized with ClipboardManager");
+
+		// Create and initialize FocusManager
+		m_focusManager = std::make_unique<UI::FocusManager>();
+		UI::FocusManager::SetInstance(m_focusManager.get());
+		LOG_INFO(Engine, "Application initialized with FocusManager");
+
+		// Wire InputManager callbacks to FocusManager
+		m_inputManager->SetKeyInputCallback([this](Key key, int action, int mods) -> bool {
+			// Only handle key press and repeat events (not release)
+			if (action != GLFW_PRESS && action != GLFW_REPEAT) {
+				return false; // Don't consume
+			}
+
+			// Handle Tab key for focus navigation
+			if (key == Key::Tab) {
+				if (mods & GLFW_MOD_SHIFT) {
+					m_focusManager->FocusPrevious();
+				} else {
+					m_focusManager->FocusNext();
+				}
+				return true; // Consume Tab key
+			}
+
+			// Route other keys to focused component
+			bool shift = (mods & GLFW_MOD_SHIFT) != 0;
+			bool ctrl = (mods & GLFW_MOD_CONTROL) != 0;
+#ifdef __APPLE__
+			// On macOS, Cmd (Super) is used for standard shortcuts like Cmd+C/V/X
+			ctrl = ctrl || (mods & GLFW_MOD_SUPER) != 0;
+#endif
+			bool alt = (mods & GLFW_MOD_ALT) != 0;
+
+			m_focusManager->RouteKeyInput(key, shift, ctrl, alt);
+			return m_focusManager->GetFocused() != nullptr; // Consume if component has focus
+		});
+
+		m_inputManager->SetCharInputCallback([this](char32_t codepoint) -> bool {
+			m_focusManager->RouteCharInput(codepoint);
+			return m_focusManager->GetFocused() != nullptr; // Consume if component has focus
+		});
 	}
 
 	Application::~Application() {
-		// Destructor must be defined in .cpp where InputManager is complete type
+		// Destructor must be defined in .cpp where InputManager/FocusManager are complete types
 		// std::unique_ptr destructor requires complete type
 		LOG_INFO(Engine, "Application destroyed");
 	}
@@ -186,6 +233,10 @@ namespace engine {
 
 	float Application::GetDeltaTime() const {
 		return m_deltaTime;
+	}
+
+	UI::FocusManager& Application::GetFocusManager() {
+		return *m_focusManager;
 	}
 
 } // namespace engine

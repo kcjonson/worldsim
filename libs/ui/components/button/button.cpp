@@ -1,4 +1,5 @@
 #include "components/button/button.h"
+#include "focus/focus_manager.h"
 #include "font/font_renderer.h"
 #include <input/input_manager.h>
 #include <input/input_types.h>
@@ -14,7 +15,8 @@ namespace UI {
 		  m_disabled(args.disabled),
 		  m_onClick(args.onClick),
 		  zIndex(args.zIndex),
-		  id(args.id) {
+		  id(args.id),
+		  m_tabIndex(args.tabIndex) {
 
 		// Set appearance based on type
 		if (args.type == Type::Primary) {
@@ -44,6 +46,66 @@ namespace UI {
 			.visible = visible,
 			.id = id
 		};
+
+		// Register with global FocusManager singleton
+		FocusManager::Get().RegisterFocusable(this, m_tabIndex);
+	}
+
+	Button::~Button() {
+		// Unregister from FocusManager
+		FocusManager::Get().UnregisterFocusable(this);
+	}
+
+	Button::Button(Button&& other) noexcept
+		: m_position(other.m_position),
+		  m_size(other.m_size),
+		  m_label(std::move(other.m_label)),
+		  m_state(other.m_state),
+		  m_disabled(other.m_disabled),
+		  m_focused(other.m_focused),
+		  m_appearance(other.m_appearance),
+		  m_onClick(std::move(other.m_onClick)),
+		  zIndex(other.zIndex),
+		  visible(other.visible),
+		  id(other.id),
+		  m_mouseOver(other.m_mouseOver),
+		  m_mouseDown(other.m_mouseDown),
+		  m_labelText(other.m_labelText),
+		  m_tabIndex(other.m_tabIndex) {
+		// Unregister other from its old address, register this at new address
+		FocusManager::Get().UnregisterFocusable(&other);
+		FocusManager::Get().RegisterFocusable(this, m_tabIndex);
+		other.m_tabIndex = -2; // Mark as moved-from to prevent double-unregister
+	}
+
+	Button& Button::operator=(Button&& other) noexcept {
+		if (this != &other) {
+			// Unregister this from FocusManager
+			FocusManager::Get().UnregisterFocusable(this);
+
+			// Move data
+			m_position = other.m_position;
+			m_size = other.m_size;
+			m_label = std::move(other.m_label);
+			m_state = other.m_state;
+			m_disabled = other.m_disabled;
+			m_focused = other.m_focused;
+			m_appearance = other.m_appearance;
+			m_onClick = std::move(other.m_onClick);
+			zIndex = other.zIndex;
+			visible = other.visible;
+			id = other.id;
+			m_mouseOver = other.m_mouseOver;
+			m_mouseDown = other.m_mouseDown;
+			m_labelText = other.m_labelText;
+			m_tabIndex = other.m_tabIndex;
+
+			// Unregister other from its old address, register this at new address
+			FocusManager::Get().UnregisterFocusable(&other);
+			FocusManager::Get().RegisterFocusable(this, m_tabIndex);
+			other.m_tabIndex = -2; // Mark as moved-from
+		}
+		return *this;
 	}
 
 	void Button::HandleInput() {
@@ -89,16 +151,6 @@ namespace UI {
 			// Mouse not over button
 			m_state = State::Normal;
 			m_mouseDown = false;
-		}
-
-		// Handle keyboard input for focused buttons
-		if (m_focused && !m_disabled) {
-			// Enter or Space activates the button
-			if (input.IsKeyPressed(engine::Key::Enter) || input.IsKeyPressed(engine::Key::Space)) {
-				if (m_onClick) {
-					m_onClick();
-				}
-			}
 		}
 	}
 
@@ -156,6 +208,39 @@ namespace UI {
 			default:
 				return m_appearance.normal;
 		}
+	}
+
+	// IFocusable interface implementation
+
+	void Button::OnFocusGained() {
+		m_focused = true;
+	}
+
+	void Button::OnFocusLost() {
+		m_focused = false;
+	}
+
+	void Button::HandleKeyInput(engine::Key key, bool /*shift*/, bool /*ctrl*/, bool /*alt*/) {
+		// Disabled buttons don't respond to keyboard input
+		if (m_disabled) {
+			return;
+		}
+
+		// Enter or Space activates the button
+		if (key == engine::Key::Enter || key == engine::Key::Space) {
+			if (m_onClick) {
+				m_onClick();
+			}
+		}
+	}
+
+	void Button::HandleCharInput(char32_t /*codepoint*/) {
+		// Button doesn't use character input
+	}
+
+	bool Button::CanReceiveFocus() const {
+		// Only enabled buttons can receive focus
+		return !m_disabled;
 	}
 
 } // namespace UI

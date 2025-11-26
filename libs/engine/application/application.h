@@ -9,6 +9,15 @@ namespace engine {
 
 	// Forward declarations
 	class InputManager;
+	class ClipboardManager;
+
+}
+
+namespace UI {
+	class FocusManager;
+}
+
+namespace engine {
 
 	/// @brief Core application class that owns the main game loop
 	///
@@ -107,6 +116,10 @@ namespace engine {
 		/// @return Delta time in seconds
 		float GetDeltaTime() const;
 
+		/// @brief Get FocusManager instance
+		/// @return Reference to the FocusManager
+		UI::FocusManager& GetFocusManager();
+
 	  private:
 		GLFWwindow* m_window{nullptr};	// GLFW window (not owned)
 		bool		m_isRunning{false}; // Main loop control flag
@@ -115,7 +128,9 @@ namespace engine {
 		float		m_deltaTime{0.0F};	// Last frame delta time
 		float		m_fps{0.0F};		// Current FPS
 
-		std::unique_ptr<InputManager> m_inputManager; // Input management system
+		std::unique_ptr<InputManager>		m_inputManager;		 // Input management system
+		std::unique_ptr<ClipboardManager>	m_clipboardManager;	 // Clipboard management system
+		std::unique_ptr<UI::FocusManager>	m_focusManager;		 // Focus management system
 
 		OverlayRenderer	  m_overlayRenderer{};	 // Application-level UI
 		PreFrameCallback  m_preFrameCallback{};	 // Pre-frame callback
