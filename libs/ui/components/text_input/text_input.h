@@ -69,8 +69,7 @@ struct TextInput : public IFocusable {
 		std::string		  text;
 		std::string		  placeholder;
 		TextInputStyle	  style;
-		FocusManager*	  focusManager = nullptr; // Optional: auto-register for keyboard focus
-		int				  tabIndex = -1;		  // Tab order (-1 for auto-assign)
+		int				  tabIndex = -1; // Tab order (-1 for auto-assign)
 		const char*		  id = nullptr;
 		float			  zIndex = -1.0F;
 		bool			  enabled = true;
@@ -143,8 +142,7 @@ struct TextInput : public IFocusable {
 
   private:
 	// Focus management
-	FocusManager* m_focusManager{nullptr};
-	int			  m_tabIndex{-1}; // Preserved for move operations
+	int m_tabIndex{-1}; // Preserved for move operations
 
 	// Internal state tracking
 	bool m_mouseDown{false};

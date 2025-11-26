@@ -30,23 +30,18 @@ namespace UI {
 		  zIndex(args.zIndex),
 		  id(args.id),
 		  m_enabled(args.enabled),
-		  m_focusManager(args.focusManager),
 		  m_tabIndex(args.tabIndex) {
 
 		// Set cursor to end of text
 		m_cursorPosition = m_text.size();
 
-		// Register with FocusManager if provided
-		if (m_focusManager != nullptr) {
-			m_focusManager->RegisterFocusable(this, m_tabIndex);
-		}
+		// Register with global FocusManager singleton
+		FocusManager::Get().RegisterFocusable(this, m_tabIndex);
 	}
 
 	TextInput::~TextInput() {
-		// Unregister from FocusManager if registered
-		if (m_focusManager != nullptr) {
-			m_focusManager->UnregisterFocusable(this);
-		}
+		// Unregister from FocusManager
+		FocusManager::Get().UnregisterFocusable(this);
 	}
 
 	TextInput::TextInput(TextInput&& other) noexcept
@@ -65,23 +60,18 @@ namespace UI {
 		  id(other.id),
 		  m_enabled(other.m_enabled),
 		  m_focused(other.m_focused),
-		  m_focusManager(other.m_focusManager),
 		  m_tabIndex(other.m_tabIndex),
 		  m_mouseDown(other.m_mouseDown) {
 		// Unregister other from its old address, register this at new address
-		if (m_focusManager != nullptr) {
-			m_focusManager->UnregisterFocusable(&other);
-			m_focusManager->RegisterFocusable(this, m_tabIndex);
-		}
-		other.m_focusManager = nullptr; // Prevent double-unregister
+		FocusManager::Get().UnregisterFocusable(&other);
+		FocusManager::Get().RegisterFocusable(this, m_tabIndex);
+		other.m_tabIndex = -2; // Mark as moved-from to prevent double-unregister
 	}
 
 	TextInput& TextInput::operator=(TextInput&& other) noexcept {
 		if (this != &other) {
-			// Unregister this from old FocusManager
-			if (m_focusManager != nullptr) {
-				m_focusManager->UnregisterFocusable(this);
-			}
+			// Unregister this from FocusManager
+			FocusManager::Get().UnregisterFocusable(this);
 
 			// Move data
 			m_position = other.m_position;
@@ -100,15 +90,12 @@ namespace UI {
 			m_enabled = other.m_enabled;
 			m_focused = other.m_focused;
 			m_mouseDown = other.m_mouseDown;
-			m_focusManager = other.m_focusManager;
 			m_tabIndex = other.m_tabIndex;
 
 			// Unregister other from its old address, register this at new address
-			if (m_focusManager != nullptr) {
-				m_focusManager->UnregisterFocusable(&other);
-				m_focusManager->RegisterFocusable(this, m_tabIndex);
-			}
-			other.m_focusManager = nullptr;
+			FocusManager::Get().UnregisterFocusable(&other);
+			FocusManager::Get().RegisterFocusable(this, m_tabIndex);
+			other.m_tabIndex = -2; // Mark as moved-from
 		}
 		return *this;
 	}
@@ -135,9 +122,7 @@ namespace UI {
 				// Check if click is inside text input
 				if (ContainsPoint(mousePos)) {
 					// Grab focus
-					if (m_focusManager != nullptr) {
-						m_focusManager->SetFocus(this);
-					}
+					FocusManager::Get().SetFocus(this);
 
 					// Position cursor from mouse X
 					float localX = mousePos.x - m_position.x - m_style.paddingLeft + m_horizontalScroll;

@@ -3,7 +3,6 @@
 
 #include "components/button/button.h"
 #include "components/text_input/text_input.h"
-#include "focus/focus_manager.h"
 #include "primitives/primitives.h"
 #include "shapes/shapes.h"
 #include <GL/glew.h>
@@ -56,8 +55,6 @@ namespace {
 					.size = {400.0F, 40.0F},
 					.text = "",
 					.placeholder = "Basic text input (Tab index 0)",
-					.style = {},
-					.focusManager = &UI::FocusManager::Get(),
 					.tabIndex = 0,
 					.id = "input1",
 					.zIndex = 5.0F,
@@ -74,8 +71,6 @@ namespace {
 					.size = {400.0F, 40.0F},
 					.text = "Initial text value",
 					.placeholder = "",
-					.style = {},
-					.focusManager = &UI::FocusManager::Get(),
 					.tabIndex = 1,
 					.id = "input2",
 					.zIndex = 5.0F,
@@ -92,8 +87,6 @@ namespace {
 					.size = {400.0F, 40.0F},
 					.text = "",
 					.placeholder = "Another text input",
-					.style = {},
-					.focusManager = &UI::FocusManager::Get(),
 					.tabIndex = 2,
 					.id = "input3",
 					.zIndex = 5.0F,
@@ -121,7 +114,6 @@ namespace {
 					.text = "",
 					.placeholder = "Styled input with custom colors",
 					.style = styledStyle,
-					.focusManager = &UI::FocusManager::Get(),
 					.tabIndex = 3,
 					.id = "input4",
 					.zIndex = 5.0F,
@@ -136,7 +128,6 @@ namespace {
 				.label = "Test Button (Tab index 4)",
 				.position = {50.0F, yPos},
 				.size = {200.0F, 40.0F},
-				.focusManager = &UI::FocusManager::Get(),
 				.tabIndex = 4,
 				.id = "button1",
 				.onClick = []() { LOG_INFO(UI, "Button clicked!"); }

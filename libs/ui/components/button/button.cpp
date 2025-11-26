@@ -16,7 +16,6 @@ namespace UI {
 		  m_onClick(args.onClick),
 		  zIndex(args.zIndex),
 		  id(args.id),
-		  m_focusManager(args.focusManager),
 		  m_tabIndex(args.tabIndex) {
 
 		// Set appearance based on type
@@ -48,17 +47,13 @@ namespace UI {
 			.id = id
 		};
 
-		// Register with FocusManager if provided
-		if (m_focusManager != nullptr) {
-			m_focusManager->RegisterFocusable(this, m_tabIndex);
-		}
+		// Register with global FocusManager singleton
+		FocusManager::Get().RegisterFocusable(this, m_tabIndex);
 	}
 
 	Button::~Button() {
-		// Unregister from FocusManager if registered
-		if (m_focusManager != nullptr) {
-			m_focusManager->UnregisterFocusable(this);
-		}
+		// Unregister from FocusManager
+		FocusManager::Get().UnregisterFocusable(this);
 	}
 
 	Button::Button(Button&& other) noexcept
@@ -76,22 +71,17 @@ namespace UI {
 		  m_mouseOver(other.m_mouseOver),
 		  m_mouseDown(other.m_mouseDown),
 		  m_labelText(other.m_labelText),
-		  m_focusManager(other.m_focusManager),
 		  m_tabIndex(other.m_tabIndex) {
 		// Unregister other from its old address, register this at new address
-		if (m_focusManager != nullptr) {
-			m_focusManager->UnregisterFocusable(&other);
-			m_focusManager->RegisterFocusable(this, m_tabIndex);
-		}
-		other.m_focusManager = nullptr; // Prevent double-unregister
+		FocusManager::Get().UnregisterFocusable(&other);
+		FocusManager::Get().RegisterFocusable(this, m_tabIndex);
+		other.m_tabIndex = -2; // Mark as moved-from to prevent double-unregister
 	}
 
 	Button& Button::operator=(Button&& other) noexcept {
 		if (this != &other) {
-			// Unregister this from old FocusManager
-			if (m_focusManager != nullptr) {
-				m_focusManager->UnregisterFocusable(this);
-			}
+			// Unregister this from FocusManager
+			FocusManager::Get().UnregisterFocusable(this);
 
 			// Move data
 			m_position = other.m_position;
@@ -108,15 +98,12 @@ namespace UI {
 			m_mouseOver = other.m_mouseOver;
 			m_mouseDown = other.m_mouseDown;
 			m_labelText = other.m_labelText;
-			m_focusManager = other.m_focusManager;
 			m_tabIndex = other.m_tabIndex;
 
 			// Unregister other from its old address, register this at new address
-			if (m_focusManager != nullptr) {
-				m_focusManager->UnregisterFocusable(&other);
-				m_focusManager->RegisterFocusable(this, m_tabIndex);
-			}
-			other.m_focusManager = nullptr;
+			FocusManager::Get().UnregisterFocusable(&other);
+			FocusManager::Get().RegisterFocusable(this, m_tabIndex);
+			other.m_tabIndex = -2; // Mark as moved-from
 		}
 		return *this;
 	}

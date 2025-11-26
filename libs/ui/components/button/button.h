@@ -38,7 +38,6 @@ namespace UI {
 			std::function<void()> onClick = nullptr;
 			float				  zIndex = -1.0F; // -1.0F = auto-assign
 			const char*			  id = nullptr;
-			FocusManager*		  focusManager = nullptr; // Optional: auto-register for keyboard focus
 			int					  tabIndex = -1; // Tab order (-1 for auto-assign)
 		};
 
@@ -114,8 +113,7 @@ namespace UI {
 		Text m_labelText;
 
 		// Focus management
-		FocusManager* m_focusManager{nullptr}; // Optional FocusManager for auto-registration
-		int			  m_tabIndex{-1};		   // Preserved for move operations
+		int m_tabIndex{-1}; // Preserved for move operations
 
 		// Get current style based on state/flags
 		const ButtonStyle& GetCurrentStyle() const;
