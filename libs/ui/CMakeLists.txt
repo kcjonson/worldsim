@@ -8,6 +8,7 @@ add_library(ui
     shapes/shapes.cpp
     components/button/button.cpp
     components/text_input/text_input.cpp
+    components/navigation_menu/navigation_menu.cpp
     focus/focus_manager.cpp
 )
 
