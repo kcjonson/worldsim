@@ -119,17 +119,18 @@ World-sim is a C++20 game with 3D procedural world generation, 2D tile-based gam
 - See `/docs/workflows.md` → "Verifying Visual Output"
 
 **Sandbox Control:**
-- Start: `./build/apps/ui-sandbox/ui-sandbox --http-port=8081`
+- Start: `cd build/apps/ui-sandbox && ./ui-sandbox`
 - Control: `curl "http://127.0.0.1:8081/api/control?action={action}"`
 - Actions: `exit`, `scene&scene=name`, `pause`, `resume`, `reload`
 - Screenshot: `curl http://127.0.0.1:8081/api/ui/screenshot > screenshot.png`
-- If port in use: Sandbox exits with message to kill existing instance
+- **IMPORTANT: Port 8081 is the DEFAULT - do NOT specify --http-port unless using a non-standard port**
+- **IMPORTANT: Only ONE instance can run at a time** - the app has built-in port conflict detection. Do not assume multiple instances exist.
 
 **CRITICAL: Testing Visual Changes**
 When you make code changes and need to verify visually:
 1. **Kill old instance**: `curl "http://127.0.0.1:8081/api/control?action=exit"`
 2. **Rebuild**: `cmake --build build --target ui-sandbox -j8`
-3. **Launch new instance**: `cd build/apps/ui-sandbox && ./ui-sandbox --scene=<scene> --http-port=8081 &`
+3. **Launch new instance**: `cd build/apps/ui-sandbox && ./ui-sandbox --scene=<scene> &`
 4. **Wait for startup**: `sleep 3`
 5. **Take screenshot**: `curl -s http://127.0.0.1:8081/api/ui/screenshot > /tmp/screenshot.png`
 

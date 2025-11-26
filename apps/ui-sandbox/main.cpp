@@ -418,8 +418,12 @@ int main(int argc, char* argv[]) {
 	// Cleanup
 	LOG_INFO(UI, "Shutting down...");
 
-	// Destroy navigation menu first - its Button components need FocusManager
-	// which is owned by Application and will be destroyed when app goes out of scope
+	// Shutdown scene system first - scene components (Button, TextInput) need FocusManager
+	// SceneManager is a static singleton that outlives Application, so we must explicitly
+	// destroy scenes while FocusManager is still valid
+	engine::SceneManager::Get().Shutdown();
+
+	// Destroy navigation menu - its Button components also need FocusManager
 	g_navigationMenu.reset();
 
 	if (httpPort > 0) {
@@ -428,8 +432,7 @@ int main(int argc, char* argv[]) {
 		debugServer.Stop();
 	}
 
-	// Scene manager will automatically call OnExit on current scene
-	// when it goes out of scope (destructor)
+	// Scene cleanup is handled above via SceneManager::Shutdown()
 
 	// Cleanup text batch renderer and font renderer
 	Renderer::Primitives::SetTextFlushCallback(nullptr);

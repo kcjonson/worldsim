@@ -79,6 +79,13 @@ namespace engine {
 		/// @return true if --scene arg found and scene loaded, false otherwise
 		bool SetInitialSceneFromArgs(int argc, char** argv);
 
+		/// @brief Shutdown scene system - exits and destroys current scene
+		/// Must be called before singletons (FocusManager, InputManager) are destroyed
+		/// This is required because SceneManager is a static singleton that outlives
+		/// Application. Scene components (Button, TextInput) need FocusManager to
+		/// unregister during destruction.
+		void Shutdown();
+
 	  private:
 		SceneManager() = default;
 		~SceneManager() = default;

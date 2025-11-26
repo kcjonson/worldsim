@@ -88,6 +88,15 @@ namespace engine {
 		return m_sceneRegistry.find(name) != m_sceneRegistry.end();
 	}
 
+	void SceneManager::Shutdown() {
+		if (m_currentScene) {
+			LOG_INFO(Engine, "Shutting down scene system, exiting scene: %s", m_currentSceneName.c_str());
+			m_currentScene->OnExit();
+			m_currentScene.reset();
+			m_currentSceneName.clear();
+		}
+	}
+
 	bool SceneManager::SetInitialSceneFromArgs( // NOLINT(readability-convert-member-functions-to-static)
 		int	   argc,
 		char** argv
