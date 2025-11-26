@@ -52,6 +52,10 @@ namespace engine {
 			// Route other keys to focused component
 			bool shift = (mods & GLFW_MOD_SHIFT) != 0;
 			bool ctrl = (mods & GLFW_MOD_CONTROL) != 0;
+#ifdef __APPLE__
+			// On macOS, Cmd (Super) is used for standard shortcuts like Cmd+C/V/X
+			ctrl = ctrl || (mods & GLFW_MOD_SUPER) != 0;
+#endif
 			bool alt = (mods & GLFW_MOD_ALT) != 0;
 
 			m_focusManager->RouteKeyInput(key, shift, ctrl, alt);
