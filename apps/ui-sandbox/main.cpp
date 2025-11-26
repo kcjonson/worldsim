@@ -33,16 +33,19 @@
 
 #include <cstring>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 
 // Global state for menu interaction
 static struct {
-	bool					 showMenu = false;
-	std::vector<std::string> sceneNames;
-	size_t					 selectedIndex = 0;
-	std::vector<UI::Button>	 menuButtons; // Button components for each scene
-	UI::Text				 headerText;  // Header "Scenes" text
+	bool					  showMenu = false;		// Whether menu system is enabled
+	bool					  menuExpanded = false; // Whether menu is currently expanded
+	std::vector<std::string>  sceneNames;
+	size_t					  selectedIndex = 0;
+	std::vector<UI::Button>	  menuButtons;	// Button components for each scene
+	UI::Text				  headerText;	// Header "Scenes" text
+	std::optional<UI::Button> toggleButton; // Toggle button to show/hide menu
 } g_menuState;
 
 // GLFW callbacks
@@ -77,10 +80,18 @@ void HandleNavigationMenuInput() {
 		return;
 	}
 
-	// Update all menu buttons
-	for (auto& button : g_menuState.menuButtons) {
-		button.HandleInput();
-		button.Update(0.0F);
+	// Always handle the toggle button
+	if (g_menuState.toggleButton) {
+		g_menuState.toggleButton->HandleInput();
+		g_menuState.toggleButton->Update(0.0F);
+	}
+
+	// Only handle menu buttons when expanded
+	if (g_menuState.menuExpanded) {
+		for (auto& button : g_menuState.menuButtons) {
+			button.HandleInput();
+			button.Update(0.0F);
+		}
 	}
 }
 
@@ -89,15 +100,41 @@ void InitializeNavigationMenu() {
 	using namespace Foundation;
 	using namespace UI;
 
-	const float kMenuX = 10;
-	const float kMenuY = 10;
-	const float kMenuWidth = 150;
-	const float kLineHeight = 25;
-	const float kHeaderHeight = 30;
+	// Menu dimensions
+	const float kToggleSize = 30.0F;
+	const float kMargin = 10.0F;
+	const float kMenuWidth = 150.0F;
+	const float kLineHeight = 25.0F;
+	const float kHeaderHeight = 30.0F;
+
+	// Get window size for bottom-right positioning
+	glm::vec2 windowSize = g_coordinateSystem->GetWindowSize();
+
+	// Toggle button position (bottom-right corner)
+	float toggleX = windowSize.x - kToggleSize - kMargin;
+	float toggleY = windowSize.y - kToggleSize - kMargin;
+
+	// Create toggle button with simple icon
+	g_menuState.toggleButton.emplace(
+		Button::Args{
+			.label = "...",
+			.position = {toggleX, toggleY},
+			.size = {kToggleSize, kToggleSize},
+			.type = Button::Type::Primary,
+			.onClick = []() { g_menuState.menuExpanded = !g_menuState.menuExpanded; },
+			.zIndex = 120.0F,
+			.id = "menu_toggle_button"
+		}
+	);
+
+	// Calculate menu position (above the toggle button)
+	float menuHeight = kHeaderHeight + (static_cast<float>(g_menuState.sceneNames.size()) * kLineHeight);
+	float menuX = windowSize.x - kMenuWidth - kMargin;
+	float menuY = toggleY - menuHeight - 5.0F; // 5px gap between menu and toggle
 
 	// Create header text
 	g_menuState.headerText = Text{
-		.position = {kMenuX + 10, kMenuY + 8},
+		.position = {menuX + 10, menuY + 8},
 		.text = "Scenes",
 		.style = {.color = Color(0.9F, 0.9F, 0.9F, 1.0F), .fontSize = 16.0F},
 		.zIndex = 110.0F,
@@ -107,7 +144,7 @@ void InitializeNavigationMenu() {
 	// Create button for each scene
 	g_menuState.menuButtons.clear();
 	for (size_t i = 0; i < g_menuState.sceneNames.size(); i++) {
-		float itemY = kMenuY + kHeaderHeight + (static_cast<float>(i) * kLineHeight);
+		float itemY = menuY + kHeaderHeight + (static_cast<float>(i) * kLineHeight);
 
 		// Capture scene name by value for onClick callback
 		std::string sceneName = g_menuState.sceneNames[i];
@@ -116,13 +153,14 @@ void InitializeNavigationMenu() {
 		g_menuState.menuButtons.push_back(
 			Button{Button::Args{
 				.label = sceneName,
-				.position = {kMenuX + 2, itemY + 2},
+				.position = {menuX + 2, itemY + 2},
 				.size = {kMenuWidth - 4, kLineHeight - 4},
 				.type = Button::Type::Secondary,
 				.onClick =
 					[sceneName, sceneIndex]() {
 						engine::SceneManager::Get().SwitchTo(sceneName);
 						g_menuState.selectedIndex = sceneIndex;
+						g_menuState.menuExpanded = false; // Close menu after selection
 						LOG_INFO(UI, "Switched to scene: %s", sceneName.c_str());
 					},
 				.zIndex = 100.0F,
@@ -140,23 +178,40 @@ void RenderNavigationMenu() {
 
 	using namespace Foundation;
 
-	const float kMenuX = 10;
-	const float kMenuY = 10;
-	const float kMenuWidth = 150;
-	const float kLineHeight = 25;
-	const float kHeaderHeight = 30;
+	// Always render the toggle button
+	if (g_menuState.toggleButton) {
+		g_menuState.toggleButton->Render();
+	}
+
+	// Only render menu when expanded
+	if (!g_menuState.menuExpanded) {
+		return;
+	}
+
+	// Menu dimensions (must match InitializeNavigationMenu)
+	const float kMargin = 10.0F;
+	const float kToggleSize = 30.0F;
+	const float kMenuWidth = 150.0F;
+	const float kLineHeight = 25.0F;
+	const float kHeaderHeight = 30.0F;
 	const float kTotalHeight = kHeaderHeight + (static_cast<float>(g_menuState.sceneNames.size()) * kLineHeight);
+
+	// Calculate menu position (above the toggle button, bottom-right)
+	glm::vec2 windowSize = g_coordinateSystem->GetWindowSize();
+	float	  toggleY = windowSize.y - kToggleSize - kMargin;
+	float	  menuX = windowSize.x - kMenuWidth - kMargin;
+	float	  menuY = toggleY - kTotalHeight - 5.0F;
 
 	// Draw menu background
 	Renderer::Primitives::DrawRect(
-		{.bounds = {kMenuX, kMenuY, kMenuWidth, kTotalHeight},
+		{.bounds = {menuX, menuY, kMenuWidth, kTotalHeight},
 		 .style = {.fill = Color(0.15F, 0.15F, 0.2F, 0.95F), .border = BorderStyle{.color = Color(0.4F, 0.4F, 0.5F, 1.0F), .width = 1.0F}},
 		 .id = "menu_background"}
 	);
 
 	// Draw header background
 	Renderer::Primitives::DrawRect(
-		{.bounds = {kMenuX, kMenuY, kMenuWidth, kHeaderHeight}, .style = {.fill = Color(0.2F, 0.2F, 0.3F, 1.0F)}, .id = "menu_header"}
+		{.bounds = {menuX, menuY, kMenuWidth, kHeaderHeight}, .style = {.fill = Color(0.2F, 0.2F, 0.3F, 1.0F)}, .id = "menu_header"}
 	);
 
 	// Render header text
