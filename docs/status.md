@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2025-11-26 (PR #30 feedback fixes in progress)
+Last Updated: 2025-11-26 (TextInput & Focus Management complete, PR #30 merged)
 
 ## Epic/Story/Task Template
 
@@ -252,9 +252,9 @@ Use this template for all work items:
   - [x] Create button demo scene
   - [x] Test mouse and keyboard interactions
   - [x] Implement Batched Text Rendering ✅ COMPLETE (via SDF Text Rendering epic)
-  - [ ] Create Keyboard Focus Manager (global Tab navigation system)
-  - [ ] Port TextInput (cursor, focus, text editing)
-  - [ ] Create text input demo
+  - [x] Create Keyboard Focus Manager (global Tab navigation system)
+  - [x] Port TextInput (cursor, focus, text editing)
+  - [x] Create text input demo
 
 
 **Phase 2: Integration & Testing**
