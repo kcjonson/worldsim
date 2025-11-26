@@ -143,9 +143,16 @@ struct TextInput : public IFocusable {
 	// Geometry queries
 	bool ContainsPoint(const Foundation::Vec2& point) const;
 
+	// Selection operations (public for programmatic use)
+	void SetSelection(size_t start, size_t end);
+	void ClearSelection();
+	std::string GetSelectedText() const;
+	void SelectAll(); // Ctrl+A
+
   private:
 	// Focus management
 	FocusManager* m_focusManager{nullptr};
+	int			  m_tabIndex{-1};  // Preserved for move operations
 
 	// Internal state tracking
 	bool m_mouseDown{false};
@@ -160,21 +167,14 @@ struct TextInput : public IFocusable {
 	void MoveCursorHome();
 	void MoveCursorEnd();
 
-	// --- Phase 2: Selection Operations ---
+	// --- Phase 2: Internal Selection & Clipboard Operations ---
 
-	void SetSelection(size_t start, size_t end);
-	void ClearSelection();
-	std::string GetSelectedText() const;
 	void DeleteSelection();
 	void ExtendSelectionLeft();	 // Shift+Left
 	void ExtendSelectionRight(); // Shift+Right
-
-	// --- Phase 2: Clipboard Operations ---
-
 	void Copy();	  // Ctrl+C
 	void Cut();		  // Ctrl+X
 	void Paste();	  // Ctrl+V
-	void SelectAll(); // Ctrl+A
 
 	// --- Rendering Helpers ---
 

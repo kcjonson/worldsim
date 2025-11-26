@@ -27,7 +27,8 @@ namespace UI {
 		  zIndex(args.zIndex),
 		  id(args.id),
 		  m_enabled(args.enabled),
-		  m_focusManager(args.focusManager) {
+		  m_focusManager(args.focusManager),
+		  m_tabIndex(args.tabIndex) {
 
 		LOG_INFO(UI, "TextInput(%s): Created with m_enabled=%d", id, m_enabled);
 
@@ -65,11 +66,12 @@ namespace UI {
 		  m_enabled(other.m_enabled),
 		  m_focused(other.m_focused),
 		  m_focusManager(other.m_focusManager),
+		  m_tabIndex(other.m_tabIndex),
 		  m_mouseDown(other.m_mouseDown) {
 		// Unregister other from its old address, register this at new address
 		if (m_focusManager != nullptr) {
 			m_focusManager->UnregisterFocusable(&other);
-			m_focusManager->RegisterFocusable(this, -1);
+			m_focusManager->RegisterFocusable(this, m_tabIndex);
 		}
 		other.m_focusManager = nullptr; // Prevent double-unregister
 	}
@@ -100,11 +102,12 @@ namespace UI {
 			m_focused = other.m_focused;
 			m_mouseDown = other.m_mouseDown;
 			m_focusManager = other.m_focusManager;
+		m_tabIndex = other.m_tabIndex;
 
 			// Unregister other from its old address, register this at new address
 			if (m_focusManager != nullptr) {
 				m_focusManager->UnregisterFocusable(&other);
-				m_focusManager->RegisterFocusable(this, -1);
+				m_focusManager->RegisterFocusable(this, m_tabIndex);
 			}
 			other.m_focusManager = nullptr;
 		}
