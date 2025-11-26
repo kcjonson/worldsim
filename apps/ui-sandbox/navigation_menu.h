@@ -63,9 +63,10 @@ namespace UI {
 		Renderer::CoordinateSystem*			m_coordinateSystem = nullptr;
 
 		// Sub-components
-		std::optional<Button> m_toggleButton;
-		std::vector<Button>	  m_menuButtons;
-		Text				  m_headerText;
+		std::optional<Button>		 m_toggleButton;
+		std::vector<Button>			 m_menuButtons;
+		std::vector<std::string>	 m_buttonIds; // Store button IDs to avoid dangling pointers
+		Text						 m_headerText;
 
 		// Cached layout values (updated on resize)
 		float m_menuX = 0.0F;
