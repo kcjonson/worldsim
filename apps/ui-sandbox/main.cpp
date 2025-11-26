@@ -418,6 +418,10 @@ int main(int argc, char* argv[]) {
 	// Cleanup
 	LOG_INFO(UI, "Shutting down...");
 
+	// Destroy navigation menu first - its Button components need FocusManager
+	// which is owned by Application and will be destroyed when app goes out of scope
+	g_navigationMenu.reset();
+
 	if (httpPort > 0) {
 		// Disconnect logger from debug server before stopping it
 		foundation::Logger::SetDebugServer(nullptr);
