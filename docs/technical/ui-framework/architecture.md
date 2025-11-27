@@ -89,10 +89,16 @@ static_assert(Layer<Rectangle>);
 Layers are stored contiguously using `std::variant`, not scattered on the heap:
 
 ```cpp
+// Current implementation (shapes only)
 using LayerData = std::variant<
-    Container, Rectangle, Circle, Text, Line,  // Shapes
-    Button, TextInput                          // Components
+    Container, Rectangle, Circle, Text, Line   // Shapes
 >;
+
+// Future: Add components to variant for full unified storage
+// using LayerData = std::variant<
+//     Container, Rectangle, Circle, Text, Line,  // Shapes
+//     Button, TextInput                          // Components
+// >;
 
 std::vector<LayerNode> m_nodes;  // Contiguous storage
 ```
@@ -104,8 +110,16 @@ Children are referenced by handle (index + generation), not pointers. This preve
 **See:** [Resource Handles](../resource-handles.md) for complete documentation of this pattern.
 
 ```cpp
-// LayerHandle uses same pattern as ResourceHandle
-using LayerHandle = ResourceHandle;  // 16-bit index + 16-bit generation
+// LayerHandle: 16-bit index + 16-bit generation (same pattern as ResourceHandle)
+struct LayerHandle {
+    uint32_t value{kInvalidHandle};
+    static constexpr uint32_t kInvalidHandle = 0xFFFFFFFF;
+
+    bool IsValid() const;
+    uint16_t GetIndex() const;      // Lower 16 bits
+    uint16_t GetGeneration() const; // Upper 16 bits
+    static LayerHandle Make(uint16_t index, uint16_t generation);
+};
 
 // Safe child access
 LayerHandle label = layerManager.AddChild(parent, Text{...});
