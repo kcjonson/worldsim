@@ -1,5 +1,51 @@
 ## Development Log
 
+### 2025-11-26 - UI Component Architecture Documentation
+
+**Summary:**
+Created comprehensive architecture documentation for the UI framework's unified layer model, C++20 concepts, and handle-based references. This establishes the foundational design patterns for the UI system.
+
+**What Was Accomplished:**
+- Created `/docs/technical/ui-framework/architecture.md` documenting the unified layer model
+- Defined `Layer` concept (HandleInput/Update/Render lifecycle) in `/libs/ui/layer/layer.h`
+- Defined `Focusable` concept for keyboard focus management
+- Created `LayerHandle` type (index + generation) for safe layer references
+- Added lifecycle methods (HandleInput/Update) to all shape types
+- Added compile-time concept verification (static_assert) to Button and TextInput
+
+**Files Created:**
+- `libs/ui/layer/layer.h` - Layer and Focusable concepts, LayerHandle type
+
+**Files Modified:**
+- `libs/ui/shapes/shapes.h` - Added HandleInput()/Update() to all shapes, added static_assert for Layer concept
+- `libs/ui/components/button/button.h` - Added layer.h include, static_assert for Layer and Focusable concepts
+- `libs/ui/components/text_input/text_input.h` - Added layer.h include, static_assert for Layer and Focusable concepts
+- `docs/technical/ui-framework/INDEX.md` - Added architecture.md to Core Architecture section
+- `docs/technical/INDEX.md` - Updated architecture.md entry (no longer planned)
+
+**Key Design Decisions:**
+
+1. **Unified Layer Model**: Everything is a Layer (shapes + components in one hierarchy). No separate managers for primitives vs widgets.
+
+2. **C++20 Concepts**: Compile-time interface enforcement with zero runtime overhead, replacing need for virtual interface verification.
+
+3. **Handle-Based References**: Uses existing ResourceHandle pattern (16-bit index + 16-bit generation) for safe layer references. Prevents dangling pointers when layers are removed.
+
+4. **Hybrid FocusManager Approach**: Currently uses IFocusable for runtime dispatch while concepts provide compile-time verification. Full variant storage refactor documented as future optimization.
+
+5. **Comparison with Colonysim**: Worldsim uses handles + concepts (performance-focused) vs colonysim's shared_ptr + virtual (simplicity-focused). Same conceptual model, different implementation.
+
+**Lessons Learned:**
+- FocusManager refactor to variant storage requires modifying components first, creating circular dependency issues
+- Pragmatic hybrid approach (keep IFocusable, add concept verification) allows incremental migration
+- Static_assert provides compile-time safety even with virtual interface
+
+**Next Steps:**
+- Future optimization: Refactor FocusManager to use variant storage instead of IFocusable*
+- Future optimization: Add generation tracking to LayerManager for stale handle detection
+
+---
+
 ### 2025-11-26 - Completed TextInput Component & Focus Management (PR #30)
 
 **Summary:**

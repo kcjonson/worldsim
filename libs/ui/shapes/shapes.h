@@ -2,13 +2,16 @@
 
 #include "graphics/color.h"
 #include "graphics/primitive_styles.h"
+#include "layer/layer.h"
 #include "math/types.h"
 #include <optional>
 #include <string>
 
 // Basic shape types for UI layer system
 // These are plain structs that call Primitives API during rendering
-// Research-aligned: value semantics, no pointers, contiguous storage
+// All shapes satisfy the Layer concept with no-op HandleInput/Update methods
+//
+// See: /docs/technical/ui-framework/architecture.md
 
 namespace UI {
 
@@ -19,7 +22,10 @@ namespace UI {
 		float		zIndex{-1.0F}; // -1.0F = auto-assign based on insertion order
 		bool		visible{true};
 
-		void Render() const {} // No-op: containers don't render
+		// Layer concept implementation (all no-ops for containers)
+		void HandleInput() {}
+		void Update(float /*deltaTime*/) {}
+		void Render() const {}
 	};
 
 	// Rectangle shape
@@ -31,7 +37,9 @@ namespace UI {
 		bool				  visible{true};
 		const char*			  id = nullptr;
 
-		// Render this rectangle using Primitives API
+		// Layer concept implementation
+		void HandleInput() {}
+		void Update(float /*deltaTime*/) {}
 		void Render() const;
 	};
 
@@ -44,6 +52,9 @@ namespace UI {
 		bool					visible{true};
 		const char*				id = nullptr;
 
+		// Layer concept implementation
+		void HandleInput() {}
+		void Update(float /*deltaTime*/) {}
 		void Render() const;
 	};
 
@@ -56,6 +67,9 @@ namespace UI {
 		bool				  visible{true};
 		const char*			  id = nullptr;
 
+		// Layer concept implementation
+		void HandleInput() {}
+		void Update(float /*deltaTime*/) {}
 		void Render() const;
 	};
 
@@ -70,7 +84,17 @@ namespace UI {
 		bool				  visible{true};
 		const char*			  id = nullptr;
 
+		// Layer concept implementation
+		void HandleInput() {}
+		void Update(float /*deltaTime*/) {}
 		void Render() const;
 	};
+
+	// Compile-time verification that all shapes satisfy the Layer concept
+	static_assert(Layer<Container>, "Container must satisfy Layer concept");
+	static_assert(Layer<Rectangle>, "Rectangle must satisfy Layer concept");
+	static_assert(Layer<Circle>, "Circle must satisfy Layer concept");
+	static_assert(Layer<Line>, "Line must satisfy Layer concept");
+	static_assert(Layer<Text>, "Text must satisfy Layer concept");
 
 } // namespace UI

@@ -82,7 +82,7 @@ World-sim is a C++20 game project built as a monorepo of independent libraries. 
 - [Library Options](./ui-framework/library-options.md) - Comparative analysis: Dear ImGui, Nuklear, RmlUI, NanoGUI, MyGUI, custom implementation
 - [Batched Text Rendering](./ui-framework/batched-text-rendering.md) - Unified batching for text and shapes, fixing z-order issues
 - [SDF Text Rendering](./ui-framework/sdf-text-rendering.md) - Signed Distance Field fonts for crisp, scalable text
-- [Architecture](./ui-framework/architecture.md) - Scene graph, event system, component lifecycle *(planned)*
+- [Architecture](./ui-framework/architecture.md) - Unified layer model, C++20 concepts, handle-based references
 - [Scrolling Containers](./ui-framework/scrolling-containers.md) - OpenGL clipping, culling, performance *(planned)*
 - [Renderer Integration](./ui-framework/renderer-integration.md) - Batching, render passes, clipping stack *(planned)*
 

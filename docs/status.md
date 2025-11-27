@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2025-11-26 (TextInput & Focus Management complete, PR #30 merged)
+Last Updated: 2025-11-26 (UI Component Architecture documentation complete)
 
 ## Epic/Story/Task Template
 
@@ -255,6 +255,16 @@ Use this template for all work items:
   - [x] Create Keyboard Focus Manager (global Tab navigation system)
   - [x] Port TextInput (cursor, focus, text editing)
   - [x] Create text input demo
+- [x] UI Component Architecture ✅ COMPLETE
+  - [x] Create architecture documentation (/docs/technical/ui-framework/architecture.md)
+  - [x] Define Layer concept (HandleInput/Update/Render lifecycle)
+  - [x] Define Focusable concept (focus management)
+  - [x] Create LayerHandle type for safe layer references
+  - [x] Add lifecycle methods to all shapes
+  - [x] Add concept static_asserts to Button and TextInput
+  - [x] Document unified layer model (shapes + components)
+  - [x] Document handle-based references vs shared_ptr
+  - [x] Document FocusManager hybrid approach (IFocusable + concepts)
 
 
 **Phase 2: Integration & Testing**

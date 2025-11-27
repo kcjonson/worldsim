@@ -2,6 +2,7 @@
 
 #include "components/button/button_style.h"
 #include "focus/focusable.h"
+#include "layer/layer.h"
 #include "math/types.h"
 #include "shapes/shapes.h"
 #include <functional>
@@ -12,14 +13,18 @@
 // Interactive UI button with state management and event handling.
 // Supports 5 visual states: Normal, Hover, Pressed, Disabled, Focused
 // Uses standard lifecycle: HandleInput() → Update() → Render()
-// Implements IFocusable for keyboard focus management and Tab navigation
+// Implements IFocusable and satisfies Layer/Focusable concepts
+//
+// Note: Currently inherits IFocusable for FocusManager compatibility.
+// The Focusable concept provides compile-time verification.
+// See: /docs/technical/ui-framework/architecture.md
 
 namespace UI {
 
 	// Forward declarations
 	class FocusManager;
 
-	// Button component - implements IFocusable for keyboard focus
+	// Button component - implements IFocusable and satisfies Layer/Focusable concepts
 	struct Button : public IFocusable {
 		// Button type enum for predefined styles
 		enum class Type { Primary, Secondary, Custom };
@@ -29,12 +34,12 @@ namespace UI {
 
 		// Constructor arguments struct (C++20 designated initializers)
 		struct Args {
-			std::string		  label;
-			Foundation::Vec2  position{0.0F, 0.0F};
-			Foundation::Vec2  size{120.0F, 40.0F};
-			Type			  type = Type::Primary;
-			ButtonAppearance* customAppearance = nullptr; // Only used if type == Custom
-			bool			  disabled = false;
+			std::string			  label;
+			Foundation::Vec2	  position{0.0F, 0.0F};
+			Foundation::Vec2	  size{120.0F, 40.0F};
+			Type				  type = Type::Primary;
+			ButtonAppearance*	  customAppearance = nullptr; // Only used if type == Custom
+			bool				  disabled = false;
 			std::function<void()> onClick = nullptr;
 			float				  zIndex = -1.0F; // -1.0F = auto-assign
 			const char*			  id = nullptr;
@@ -79,9 +84,9 @@ namespace UI {
 		Button& operator=(Button&& other) noexcept;
 
 		// Standard lifecycle methods
-		void HandleInput(); // Process mouse input, update state
+		void HandleInput();			  // Process mouse input, update state
 		void Update(float deltaTime); // Apply state changes to visual appearance
-		void Render() const; // Draw button using Primitives API
+		void Render() const;		  // Draw button using Primitives API
 
 		// State management
 		void SetFocused(bool focused) { m_focused = focused; } // For manual focus (backward compat)
@@ -89,7 +94,7 @@ namespace UI {
 		bool IsFocused() const { return m_focused; }
 		bool IsDisabled() const { return m_disabled; }
 
-		// IFocusable interface implementation
+		// IFocusable interface implementation (also satisfies Focusable concept)
 		void OnFocusGained() override;
 		void OnFocusLost() override;
 		void HandleKeyInput(engine::Key key, bool shift, bool ctrl, bool alt) override;
@@ -97,12 +102,8 @@ namespace UI {
 		bool CanReceiveFocus() const override;
 
 		// Geometry queries
-		bool ContainsPoint(const Foundation::Vec2& point) const;
-		Foundation::Vec2 GetCenter() const {
-			return Foundation::Vec2{
-				m_position.x + m_size.x * 0.5F,
-				m_position.y + m_size.y * 0.5F};
-		}
+		bool			 ContainsPoint(const Foundation::Vec2& point) const;
+		Foundation::Vec2 GetCenter() const { return Foundation::Vec2{m_position.x + m_size.x * 0.5F, m_position.y + m_size.y * 0.5F}; }
 
 	  private:
 		// Internal state tracking
@@ -118,5 +119,9 @@ namespace UI {
 		// Get current style based on state/flags
 		const ButtonStyle& GetCurrentStyle() const;
 	};
+
+	// Compile-time verification that Button satisfies concepts
+	static_assert(Layer<Button>, "Button must satisfy Layer concept");
+	static_assert(Focusable<Button>, "Button must satisfy Focusable concept");
 
 } // namespace UI

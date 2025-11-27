@@ -2,6 +2,7 @@
 
 #include "focus/focusable.h"
 #include "graphics/color.h"
+#include "layer/layer.h"
 #include "math/types.h"
 #include <functional>
 #include <optional>
@@ -14,7 +15,9 @@
 // Phase 2: Selection & clipboard (Shift+Arrow, mouse drag, Copy/Cut/Paste)
 //
 // Lifecycle: HandleInput() → Update(deltaTime) → Render()
-// Implements IFocusable for Tab navigation and keyboard input routing
+// Implements IFocusable and satisfies Layer/Focusable concepts
+//
+// See: /docs/technical/ui-framework/architecture.md
 
 namespace UI {
 
@@ -187,5 +190,9 @@ struct TextInput : public IFocusable {
 	size_t GetCursorPositionFromMouse(float mouseX) const; // Index from pixel X
 	void   UpdateHorizontalScroll();						   // Ensure cursor is visible
 };
+
+// Compile-time verification that TextInput satisfies concepts
+static_assert(Layer<TextInput>, "TextInput must satisfy Layer concept");
+static_assert(Focusable<TextInput>, "TextInput must satisfy Focusable concept");
 
 } // namespace UI
