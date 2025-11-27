@@ -201,7 +201,7 @@ namespace {
 
 	  private:
 		UI::LayerManager m_layerManager;
-		uint32_t		 m_rootLayer{0};
+		UI::LayerHandle	 m_rootLayer;
 	};
 
 	// Register scene with SceneManager

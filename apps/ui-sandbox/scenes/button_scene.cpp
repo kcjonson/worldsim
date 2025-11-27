@@ -4,18 +4,18 @@
 #include <GL/glew.h>
 
 #include <components/button/button.h>
+#include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 #include <graphics/color.h>
 #include <input/input_manager.h>
 #include <input/input_types.h>
 #include <layer/layer_manager.h>
+#include <memory>
 #include <primitives/primitives.h>
 #include <scene/scene.h>
 #include <scene/scene_manager.h>
 #include <shapes/shapes.h>
 #include <utils/log.h>
-#include <glm/glm.hpp>
-#include <glm/gtc/matrix_transform.hpp>
-#include <memory>
 
 namespace {
 
@@ -271,7 +271,7 @@ namespace {
 					textDataPtr->text = "Clicks: " + std::to_string(m_clickCount);
 					m_lastClickCount = m_clickCount;
 				} else {
-					LOG_ERROR(UI, "Layer %u does not contain UI::Text for click counter", m_clickCounterTextLayer);
+					LOG_ERROR(UI, "Layer does not contain UI::Text for click counter");
 				}
 			}
 		}
@@ -298,8 +298,8 @@ namespace {
 	  private:
 		// Layer management
 		UI::LayerManager m_layerManager;
-		uint32_t		 m_rootLayer{0};
-		uint32_t		 m_clickCounterTextLayer{0};
+		UI::LayerHandle	 m_rootLayer;
+		UI::LayerHandle	 m_clickCounterTextLayer;
 
 		// Buttons
 		std::vector<UI::Button> m_buttons;

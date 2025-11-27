@@ -39,7 +39,7 @@ namespace {
 				.style = {.fill = Color(0.15F, 0.15F, 0.2F, 1.0F)},
 				.id = "background"
 			};
-			uint32_t bgLayer = m_layerManager.AddChild(m_rootLayer, bgRect);
+			LayerHandle bgLayer = m_layerManager.AddChild(m_rootLayer, bgRect);
 
 			// Rectangle layer (auto zIndex = 3.0)
 			Rectangle rect1{
@@ -81,7 +81,7 @@ namespace {
 				.style = {.fill = Color(0.3F, 0.3F, 0.35F, 1.0F), .border = BorderStyle{.color = Color::Cyan(), .width = 2.0F}},
 				.id = "sidebar"
 			};
-			uint32_t sidebarLayer = m_layerManager.AddChild(bgLayer, sidebar);
+			LayerHandle sidebarLayer = m_layerManager.AddChild(bgLayer, sidebar);
 
 			// Sidebar items (buttons) - auto zIndex maintains insertion order
 			for (int i = 0; i < 5; i++) {
@@ -92,7 +92,7 @@ namespace {
 					 .style = {.fill = Color(0.4F, 0.4F, 0.45F, 1.0F), .border = BorderStyle{.color = Color::White(), .width = 1.0F}},
 					 .id = nullptr
 				 };
-				uint32_t buttonLayer = m_layerManager.AddChild(sidebarLayer, button);
+				LayerHandle buttonLayer = m_layerManager.AddChild(sidebarLayer, button);
 
 				// Button label (renders on top due to insertion order)
 				Text buttonText{
@@ -176,7 +176,7 @@ namespace {
 
 	  private:
 		UI::LayerManager m_layerManager;
-		uint32_t		 m_rootLayer{0};
+		UI::LayerHandle	 m_rootLayer;
 	};
 
 	// Register scene with SceneManager
