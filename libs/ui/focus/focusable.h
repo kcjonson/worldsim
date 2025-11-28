@@ -1,7 +1,7 @@
 #pragma once
 
+#include "component/component.h"
 #include "input/input_types.h"
-#include <cstdint>
 
 namespace UI {
 
@@ -9,20 +9,19 @@ namespace UI {
  * IFocusable
  *
  * Interface for UI components that can receive keyboard focus.
+ * Extends ILayer (which extends IComponent) so focusable components
+ * participate in the full lifecycle: HandleInput -> Update -> Render.
+ *
  * Components implementing this interface can participate in Tab navigation
  * and receive keyboard input events when focused.
  *
  * Usage:
- *   struct MyComponent : IFocusable {
- *       // Component data (value semantics)
- *       ...
- *
- *       // IFocusable implementation
- *       void OnFocusGained() override { focused = true; }
- *       void OnFocusLost() override { focused = false; }
+ *   class MyComponent : public Component, public IFocusable {
+ *       void OnFocusGained() override { m_focused = true; }
+ *       void OnFocusLost() override { m_focused = false; }
  *       void HandleKeyInput(...) override { ... }
  *       void HandleCharInput(...) override { ... }
- *       bool CanReceiveFocus() const override { return enabled; }
+ *       bool CanReceiveFocus() const override { return m_enabled; }
  *   };
  */
 class IFocusable {

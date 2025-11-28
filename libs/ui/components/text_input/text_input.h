@@ -1,8 +1,8 @@
 #pragma once
 
+#include "component/component.h"
 #include "focus/focusable.h"
 #include "graphics/color.h"
-#include "layer/layer.h"
 #include "math/types.h"
 #include <functional>
 #include <optional>
@@ -63,8 +63,9 @@ struct TextInputStyle {
 	float paddingBottom{6.0F};
 };
 
-// TextInput component - implements IFocusable for keyboard focus
-struct TextInput : public IFocusable {
+// TextInput component - extends Component and implements IFocusable for keyboard focus
+class TextInput : public Component, public IFocusable {
+  public:
 	// Constructor arguments struct
 	struct Args {
 		Foundation::Vec2  position{0.0F, 0.0F};
@@ -74,7 +75,6 @@ struct TextInput : public IFocusable {
 		TextInputStyle	  style;
 		int				  tabIndex = -1; // Tab order (-1 for auto-assign)
 		const char*		  id = nullptr;
-		float			  zIndex = -1.0F;
 		bool			  enabled = true;
 		std::function<void(const std::string&)> onChange; // Called when text changes
 	};
@@ -101,8 +101,7 @@ struct TextInput : public IFocusable {
 	float						m_cursorBlinkTimer{0.0F}; // For cursor blink animation
 	float						m_horizontalScroll{0.0F}; // Scroll offset for overflow text
 
-	// Layer properties
-	float		zIndex{-1.0F};
+	// Properties
 	bool		visible{true};
 	const char* id = nullptr;
 	bool		m_enabled{true};
@@ -122,10 +121,10 @@ struct TextInput : public IFocusable {
 	TextInput(TextInput&& other) noexcept;
 	TextInput& operator=(TextInput&& other) noexcept;
 
-	// Standard lifecycle methods
-	void HandleInput();			 // Mouse click detection (called before Update in scene)
-	void Update(float deltaTime); // Update cursor blink, etc.
-	void Render() const;		 // Draw text input
+	// ILayer implementation (overrides Component)
+	void HandleInput() override;	  // Mouse click detection (called before Update in scene)
+	void Update(float deltaTime) override; // Update cursor blink, etc.
+	void Render() override;			  // Draw text input
 
 	// State management
 	void SetEnabled(bool enabled) { m_enabled = enabled; }
@@ -190,9 +189,5 @@ struct TextInput : public IFocusable {
 	size_t GetCursorPositionFromMouse(float mouseX) const; // Index from pixel X
 	void   UpdateHorizontalScroll();						   // Ensure cursor is visible
 };
-
-// Compile-time verification that TextInput satisfies concepts
-static_assert(Layer<TextInput>, "TextInput must satisfy Layer concept");
-static_assert(Focusable<TextInput>, "TextInput must satisfy Focusable concept");
 
 } // namespace UI

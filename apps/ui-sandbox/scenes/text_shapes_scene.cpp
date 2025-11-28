@@ -2,17 +2,16 @@
 // Demonstrates UI::Text shapes with various styles, sizes, and alignments
 
 #include <graphics/color.h>
-#include <layer/layer_manager.h>
 #include <primitives/primitives.h>
 #include <scene/scene.h>
 #include <scene/scene_manager.h>
+#include <shapes/shapes.h>
 #include <utils/log.h>
 
 #include <GL/glew.h>
-#include <glm/glm.hpp>
-#include <glm/gtc/matrix_transform.hpp>
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -22,82 +21,76 @@ namespace {
 			using namespace UI;
 			using namespace Foundation;
 
-			// NOTE: FontRenderer and TextBatchRenderer are initialized globally in main.cpp
-			// No per-scene setup required!
-
-			// Create root container
-			Container rootContainer{.id = "root"};
-			m_rootLayer = m_layerManager.Create(rootContainer);
-
 			// Title
-			Text title{
+			m_shapes.push_back(std::make_unique<Text>(Text::Args{
 				.position = {50.0F, 50.0F},
 				.text = "Text Shape Demonstration",
 				.style = {.color = Color::White(), .fontSize = 32.0F},
 				.id = "title"
-			};
-			m_layerManager.AddChild(m_rootLayer, title);
+			}));
 
 			// Font Size Examples
-			Text sizeLabel{
+			m_shapes.push_back(std::make_unique<Text>(Text::Args{
 				.position = {50.0F, 120.0F},
 				.text = "Font Sizes:",
 				.style = {.color = Color(0.7F, 0.7F, 0.7F, 1.0F), .fontSize = 20.0F},
 				.id = "size_label"
-			};
-			m_layerManager.AddChild(m_rootLayer, sizeLabel);
+			}));
 
 			float		yOffset = 160.0F;
 			const float sizes[] = {12.0F, 16.0F, 20.0F, 24.0F, 32.0F};
 			for (float size : sizes) {
-				Text sizeExample{
+				m_shapes.push_back(std::make_unique<Text>(Text::Args{
 					.position = {50.0F, yOffset},
 					.text = "Text at " + std::to_string(static_cast<int>(size)) + "px",
-					.style = {.color = Color::White(), .fontSize = size},
-					.zIndex = 1.0F,
-					.id = nullptr
-				};
-				m_layerManager.AddChild(m_rootLayer, sizeExample);
+					.style = {.color = Color::White(), .fontSize = size}
+				}));
 				yOffset += size + 10.0F;
 			}
 
 			// Color Examples
-			Text colorLabel{
+			m_shapes.push_back(std::make_unique<Text>(Text::Args{
 				.position = {400.0F, 120.0F},
 				.text = "Colors:",
 				.style = {.color = Color(0.7F, 0.7F, 0.7F, 1.0F), .fontSize = 20.0F},
 				.id = "color_label"
-			};
-			m_layerManager.AddChild(m_rootLayer, colorLabel);
+			}));
 
-			Text redText{
-				.position = {400.0F, 160.0F}, .text = "Red Text", .style = {.color = Color::Red(), .fontSize = 18.0F}, .id = "red"
-			};
-			m_layerManager.AddChild(m_rootLayer, redText);
+			m_shapes.push_back(std::make_unique<Text>(Text::Args{
+				.position = {400.0F, 160.0F},
+				.text = "Red Text",
+				.style = {.color = Color::Red(), .fontSize = 18.0F},
+				.id = "red"
+			}));
 
-			Text greenText{
-				.position = {400.0F, 190.0F}, .text = "Green Text", .style = {.color = Color::Green(), .fontSize = 18.0F}, .id = "green"
-			};
-			m_layerManager.AddChild(m_rootLayer, greenText);
+			m_shapes.push_back(std::make_unique<Text>(Text::Args{
+				.position = {400.0F, 190.0F},
+				.text = "Green Text",
+				.style = {.color = Color::Green(), .fontSize = 18.0F},
+				.id = "green"
+			}));
 
-			Text blueText{
-				.position = {400.0F, 220.0F}, .text = "Blue Text", .style = {.color = Color::Blue(), .fontSize = 18.0F}, .id = "blue"
-			};
-			m_layerManager.AddChild(m_rootLayer, blueText);
+			m_shapes.push_back(std::make_unique<Text>(Text::Args{
+				.position = {400.0F, 220.0F},
+				.text = "Blue Text",
+				.style = {.color = Color::Blue(), .fontSize = 18.0F},
+				.id = "blue"
+			}));
 
-			Text yellowText{
-				.position = {400.0F, 250.0F}, .text = "Yellow Text", .style = {.color = Color::Yellow(), .fontSize = 18.0F}, .id = "yellow"
-			};
-			m_layerManager.AddChild(m_rootLayer, yellowText);
+			m_shapes.push_back(std::make_unique<Text>(Text::Args{
+				.position = {400.0F, 250.0F},
+				.text = "Yellow Text",
+				.style = {.color = Color::Yellow(), .fontSize = 18.0F},
+				.id = "yellow"
+			}));
 
 			// Bounding Box Alignment - 3x3 Grid
-			Text alignGridLabel{
+			m_shapes.push_back(std::make_unique<Text>(Text::Args{
 				.position = {700.0F, 50.0F},
 				.text = "Bounding Box Alignment (3x3 Grid):",
 				.style = {.color = Color(0.7F, 0.7F, 0.7F, 1.0F), .fontSize = 20.0F},
 				.id = "align_grid_label"
-			};
-			m_layerManager.AddChild(m_rootLayer, alignGridLabel);
+			}));
 
 			// Grid configuration
 			constexpr float		  boxWidth = 180.0F;
@@ -111,43 +104,37 @@ namespace {
 			// Create 3x3 grid of text boxes with visible bounding boxes
 			for (int row = 0; row < 3; row++) {
 				for (int col = 0; col < 3; col++) {
-					float xPos = startX + col * (boxWidth + gap);
-					float yPos = startY + row * (boxHeight + gap);
+					float xPos = startX + static_cast<float>(col) * (boxWidth + gap);
+					float yPos = startY + static_cast<float>(row) * (boxHeight + gap);
 
 					// Draw bounding box border
-					Rectangle boundingBox{
+					m_shapes.push_back(std::make_unique<Rectangle>(Rectangle::Args{
 						.position = {xPos, yPos},
 						.size = {boxWidth, boxHeight},
-						.style =
-							{.fill = Color(0.2F, 0.2F, 0.25F, 1.0F),
-							 .border = BorderStyle{.color = Color(0.5F, 0.5F, 0.5F, 1.0F), .width = 2.0F}},
-						.zIndex = 1.0F,
-						.id = nullptr
-					};
-					m_layerManager.AddChild(m_rootLayer, boundingBox);
+						.style = {
+							.fill = Color(0.2F, 0.2F, 0.25F, 1.0F),
+							.border = BorderStyle{.color = Color(0.5F, 0.5F, 0.5F, 1.0F), .width = 2.0F}
+						}
+					}));
 
-					// Create text with bounding box (no alignment set)
-					Text alignedText{
+					// Create text with bounding box alignment
+					m_shapes.push_back(std::make_unique<Text>(Text::Args{
 						.position = {xPos, yPos},
 						.width = boxWidth,
 						.height = boxHeight,
 						.text = "TEXT",
-						.style = {.color = Color::White(), .fontSize = 24.0F, .hAlign = hAligns[col], .vAlign = vAligns[row]},
-						.zIndex = 2.0F,
-						.id = nullptr
-					};
-					m_layerManager.AddChild(m_rootLayer, alignedText);
+						.style = {.color = Color::White(), .fontSize = 24.0F, .hAlign = hAligns[col], .vAlign = vAligns[row]}
+					}));
 				}
 			}
 
 			// Point-Based Alignment - 3x3 Grid (no width/height)
-			Text alignGridLabel2{
+			m_shapes.push_back(std::make_unique<Text>(Text::Args{
 				.position = {50.0F, 380.0F},
 				.text = "Point-Based Alignment (3x3 Grid):",
 				.style = {.color = Color(0.7F, 0.7F, 0.7F, 1.0F), .fontSize = 20.0F},
 				.id = "align_point_label"
-			};
-			m_layerManager.AddChild(m_rootLayer, alignGridLabel2);
+			}));
 
 			// Grid configuration for point-based alignment
 			const float spacing = 100.0F;
@@ -157,51 +144,59 @@ namespace {
 			// Create 3x3 grid of text with origin markers (no bounding boxes)
 			for (int row = 0; row < 3; row++) {
 				for (int col = 0; col < 3; col++) {
-					float xPos = pointStartX + col * spacing;
-					float yPos = pointStartY + row * spacing;
+					float xPos = pointStartX + static_cast<float>(col) * spacing;
+					float yPos = pointStartY + static_cast<float>(row) * spacing;
 
 					// Draw small red circle at the origin point
-					Circle originMarker{
-						.center = {xPos, yPos}, .radius = 4.0F, .style = {.fill = Color::Red()}, .zIndex = 3.0F, .id = nullptr
-					};
-					m_layerManager.AddChild(m_rootLayer, originMarker);
+					m_shapes.push_back(std::make_unique<Circle>(Circle::Args{
+						.center = {xPos, yPos},
+						.radius = 4.0F,
+						.style = {.fill = Color::Red()}
+					}));
 
 					// Create text with point-based alignment (NO width/height)
-					Text pointText{
+					m_shapes.push_back(std::make_unique<Text>(Text::Args{
 						.position = {xPos, yPos},
 						.text = "TEXT",
-						.style = {.color = Color::White(), .fontSize = 24.0F, .hAlign = hAligns[col], .vAlign = vAligns[row]},
-						.zIndex = 2.0F,
-						.id = nullptr
-					};
-					m_layerManager.AddChild(m_rootLayer, pointText);
+						.style = {.color = Color::White(), .fontSize = 24.0F, .hAlign = hAligns[col], .vAlign = vAligns[row]}
+					}));
 				}
 			}
+
+			LOG_INFO(UI, "Text shapes scene initialized with {} shapes", m_shapes.size());
 		}
 
-		void HandleInput(float dt) override {
+		void HandleInput(float /*dt*/) override {
 			// No input handling needed
 		}
 
-		void Update(float dt) override { m_layerManager.UpdateAll(dt); }
+		void Update(float /*dt*/) override {
+			// Static scene - no updates needed
+		}
 
 		void Render() override {
-			// NOTE: Screen clearing handled by Application main loop
-			m_layerManager.RenderAll();
+			// Clear background
+			glClearColor(0.1F, 0.1F, 0.12F, 1.0F);
+			glClear(GL_COLOR_BUFFER_BIT);
+
+			// Render all shapes
+			for (auto& shape : m_shapes) {
+				shape->Render();
+			}
 		}
 
 		void OnExit() override {
-			m_layerManager.Clear();
-			// NOTE: FontRenderer and TextBatchRenderer cleanup handled by main.cpp
+			m_shapes.clear();
 		}
 
-		std::string ExportState() override { return R"({"scene": "text_shapes", "description": "Text shape API demonstration"})"; }
+		std::string ExportState() override {
+			return R"({"scene": "text_shapes", "description": "Text shape API demonstration"})";
+		}
 
 		const char* GetName() const override { return "text_shapes"; }
 
 	  private:
-		UI::LayerManager m_layerManager;
-		UI::LayerHandle	 m_rootLayer;
+		std::vector<std::unique_ptr<UI::IComponent>> m_shapes;
 	};
 
 	// Register scene with SceneManager

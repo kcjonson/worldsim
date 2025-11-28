@@ -4,7 +4,6 @@ add_library(ui
     stb_image.cpp
     font/font_renderer.cpp
     font/text_batch_renderer.cpp
-    layer/layer_manager.cpp
     shapes/shapes.cpp
     components/button/button.cpp
     components/text_input/text_input.cpp

@@ -1,17 +1,20 @@
-// Layer Scene - UI Layer System Showcase
-// Demonstrates LayerManager with hierarchy, z-ordering, and all shape types
+// Layer Scene - UI Component Hierarchy Showcase
+// Demonstrates Component hierarchy with shapes and containers
 
+#include <component/component.h>
+#include <component/container.h>
+#include <core/render_context.h>
 #include <graphics/color.h>
-#include <layer/layer_manager.h>
 #include <primitives/primitives.h>
 #include <scene/scene.h>
 #include <scene/scene_manager.h>
+#include <shapes/shapes.h>
 #include <utils/log.h>
 
 #include <GL/glew.h>
-#include <glm/glm.hpp>
-#include <glm/gtc/matrix_transform.hpp>
+#include <algorithm>
 #include <memory>
+#include <vector>
 
 namespace {
 
@@ -21,129 +24,110 @@ namespace {
 			using namespace UI;
 			using namespace Foundation;
 
-			// NOTE: FontRenderer and TextBatchRenderer are initialized globally in main.cpp
-			// No per-scene setup required!
-
-			// Create root container (pure hierarchy node - no visual)
-			// No zIndex needed - will auto-assign based on insertion order
-			Container rootContainer{.id = "root_container"};
-			m_rootLayer = m_layerManager.Create(rootContainer);
-
-			// Create child layers - they'll render in insertion order automatically
-			// No need to specify zIndex unless you want explicit ordering
-
-			// Background layer (auto zIndex = 2.0)
-			Rectangle bgRect{
+			// Background rectangle
+			m_shapes.push_back(std::make_unique<Rectangle>(Rectangle::Args{
 				.position = {100.0F, 100.0F},
 				.size = {600.0F, 400.0F},
 				.style = {.fill = Color(0.15F, 0.15F, 0.2F, 1.0F)},
 				.id = "background"
-			};
-			LayerHandle bgLayer = m_layerManager.AddChild(m_rootLayer, bgRect);
+			}));
 
-			// Rectangle layer (auto zIndex = 3.0)
-			Rectangle rect1{
+			// Red rectangle with border
+			m_shapes.push_back(std::make_unique<Rectangle>(Rectangle::Args{
 				.position = {150.0F, 150.0F},
 				.size = {200.0F, 150.0F},
 				.style = {.fill = Color::Red(), .border = BorderStyle{.color = Color::White(), .width = 3.0F}},
 				.id = "red_rect"
-			};
-			m_layerManager.AddChild(bgLayer, rect1);
+			}));
 
-			// Circle layer (auto zIndex = 4.0) - overlaps rectangle with border
-			Circle circle{
+			// Blue circle with border
+			m_shapes.push_back(std::make_unique<Circle>(Circle::Args{
 				.center = {400.0F, 250.0F},
 				.radius = 80.0F,
 				.style = {.fill = Color::Blue(), .border = BorderStyle{.color = Color::Cyan(), .width = 3.0F}},
 				.id = "blue_circle"
-			};
-			m_layerManager.AddChild(bgLayer, circle);
+			}));
 
-			// Line layer (auto zIndex = 5.0) - crosses other shapes
-			Line line{
-				.start = {150.0F, 150.0F}, .end = {500.0F, 400.0F}, .style = {.color = Color::Green(), .width = 4.0F}, .id = "diagonal_line"
-			};
-			m_layerManager.AddChild(bgLayer, line);
+			// Diagonal line
+			m_shapes.push_back(std::make_unique<Line>(Line::Args{
+				.start = {150.0F, 150.0F},
+				.end = {500.0F, 400.0F},
+				.style = {.color = Color::Green(), .width = 4.0F},
+				.id = "diagonal_line"
+			}));
 
-			// Text layer (auto zIndex = 6.0) - on top with larger font
-			Text text{
+			// Title text
+			m_shapes.push_back(std::make_unique<Text>(Text::Args{
 				.position = {200.0F, 180.0F},
-				.text = "Layer System Demo",
+				.text = "Component Hierarchy Demo",
 				.style = {.color = Color::Yellow(), .fontSize = 24.0F, .hAlign = HorizontalAlign::Left, .vAlign = VerticalAlign::Top},
 				.id = "title_text"
-			};
-			m_layerManager.AddChild(bgLayer, text);
+			}));
 
-			// Nested hierarchy demonstration - sidebar with children
-			Rectangle sidebar{
+			// Sidebar
+			m_shapes.push_back(std::make_unique<Rectangle>(Rectangle::Args{
 				.position = {550.0F, 150.0F},
 				.size = {150.0F, 350.0F},
 				.style = {.fill = Color(0.3F, 0.3F, 0.35F, 1.0F), .border = BorderStyle{.color = Color::Cyan(), .width = 2.0F}},
 				.id = "sidebar"
-			};
-			LayerHandle sidebarLayer = m_layerManager.AddChild(bgLayer, sidebar);
+			}));
 
-			// Sidebar items (buttons) - auto zIndex maintains insertion order
+			// Sidebar items (fake buttons)
 			for (int i = 0; i < 5; i++) {
 				auto const iFloat = static_cast<float>(i);
-				Rectangle  button{
-					 .position = {560.0F, 170.0F + (iFloat * 60.0F)},
-					 .size = {130.0F, 50.0F},
-					 .style = {.fill = Color(0.4F, 0.4F, 0.45F, 1.0F), .border = BorderStyle{.color = Color::White(), .width = 1.0F}},
-					 .id = nullptr
-				 };
-				LayerHandle buttonLayer = m_layerManager.AddChild(sidebarLayer, button);
 
-				// Button label (renders on top due to insertion order)
-				Text buttonText{
+				// Button background
+				m_shapes.push_back(std::make_unique<Rectangle>(Rectangle::Args{
+					.position = {560.0F, 170.0F + (iFloat * 60.0F)},
+					.size = {130.0F, 50.0F},
+					.style = {.fill = Color(0.4F, 0.4F, 0.45F, 1.0F), .border = BorderStyle{.color = Color::White(), .width = 1.0F}}
+				}));
+
+				// Button label
+				m_shapes.push_back(std::make_unique<Text>(Text::Args{
 					.position = {625.0F, 195.0F + (iFloat * 60.0F)},
 					.text = "Button " + std::to_string(i + 1),
-					.style = {.color = Color::White(), .fontSize = 14.0F, .hAlign = HorizontalAlign::Center},
-					.id = nullptr
-				};
-				m_layerManager.AddChild(buttonLayer, buttonText);
+					.style = {.color = Color::White(), .fontSize = 14.0F, .hAlign = HorizontalAlign::Center}
+				}));
 			}
 
-			// Z-ordering demonstration - overlapping rectangles (insertion order = render order)
+			// Overlapping rectangles - ascending zIndex (back to front)
 			for (int i = 0; i < 4; i++) {
 				float offset = static_cast<float>(i) * 30.0F;
 				float hue = static_cast<float>(i) / 4.0F;
 				Color color(hue, 1.0F - hue, 0.5F, 0.8F);
 
-				Rectangle overlapRect{
+				m_shapes.push_back(std::make_unique<Rectangle>(Rectangle::Args{
 					.position = {150.0F + offset, 350.0F + offset},
 					.size = {100.0F, 100.0F},
 					.style = {.fill = color, .border = BorderStyle{.color = Color::White(), .width = 2.0F}},
-					.id = nullptr
-				};
-				m_layerManager.AddChild(bgLayer, overlapRect);
+					.zIndex = static_cast<short>(i)
+				}));
 			}
 
-			// Explicit zIndex override demonstration - reverse the render order
-			// Added in order 0,1,2,3 but with zIndex 30,20,10,0 = renders as blue,green,orange,red (reversed!)
+			// Another set - descending zIndex (front to back, demonstrating z-ordering)
 			for (int i = 0; i < 4; i++) {
 				float offset = static_cast<float>(i) * 30.0F;
 				float hue = static_cast<float>(i) / 4.0F;
 				Color color(hue, 0.5F, 1.0F - hue, 0.8F);
 
-				Rectangle reverseRect{
+				m_shapes.push_back(std::make_unique<Rectangle>(Rectangle::Args{
 					.position = {450.0F + offset, 350.0F + offset},
 					.size = {100.0F, 100.0F},
 					.style = {.fill = color, .border = BorderStyle{.color = Color::White(), .width = 2.0F}},
-					.zIndex = 30.0F - (static_cast<float>(i) * 10.0F), // 30, 20, 10, 0 (explicit reverse)
-					.id = nullptr
-				};
-				m_layerManager.AddChild(bgLayer, reverseRect);
+					.zIndex = static_cast<short>(3 - i)  // Reverse z-order
+				}));
 			}
+
+			LOG_INFO(UI, "Layer scene initialized with {} shapes", m_shapes.size());
 		}
 
-		void HandleInput(float dt) override {
+		void HandleInput(float /*dt*/) override {
 			// No input handling needed - static scene
 		}
 
-		void Update(float dt) override {
-			// Update layer manager (for animations in future)
-			m_layerManager.UpdateAll(dt);
+		void Update(float /*dt*/) override {
+			// Static scene - no updates needed
 		}
 
 		void Render() override {
@@ -151,23 +135,31 @@ namespace {
 			glClearColor(0.1F, 0.1F, 0.15F, 1.0F);
 			glClear(GL_COLOR_BUFFER_BIT);
 
-			// Render entire layer hierarchy
-			m_layerManager.RenderAll();
+			// Sort shapes by zIndex when needed
+			if (m_shapesNeedSorting) {
+				std::stable_sort(m_shapes.begin(), m_shapes.end(),
+								 [](const auto& a, const auto& b) { return a->zIndex < b->zIndex; });
+				m_shapesNeedSorting = false;
+			}
+
+			// Render all shapes, setting RenderContext for each
+			for (auto& shape : m_shapes) {
+				UI::RenderContext::SetZIndex(shape->zIndex);
+				shape->Render();
+			}
 		}
 
 		void OnExit() override {
-			// Cleanup
-			m_layerManager.Clear();
+			m_shapes.clear();
 		}
 
 		std::string ExportState() override {
-			// Export layer hierarchy info with actual counts
-			char buf[512];
+			char buf[256];
 			snprintf(
 				buf,
 				sizeof(buf),
-				R"({"scene": "layer", "description": "UI Layer System showcase", "layer_count": %zu})",
-				m_layerManager.GetLayerCount()
+				R"({"scene": "layer", "description": "Component hierarchy showcase", "shape_count": %zu})",
+				m_shapes.size()
 			);
 			return {buf};
 		}
@@ -175,8 +167,8 @@ namespace {
 		const char* GetName() const override { return "layer"; }
 
 	  private:
-		UI::LayerManager m_layerManager;
-		UI::LayerHandle	 m_rootLayer;
+		std::vector<std::unique_ptr<UI::IComponent>> m_shapes;
+		bool m_shapesNeedSorting{true};  // Sort on first render
 	};
 
 	// Register scene with SceneManager

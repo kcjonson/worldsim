@@ -42,7 +42,7 @@ namespace UI {
 		// Standard lifecycle methods
 		void HandleInput();
 		void Update(float deltaTime);
-		void Render() const;
+		void Render();
 
 		// Window resize handling - recalculates all positions
 		void OnWindowResize();

@@ -1,4 +1,5 @@
 #include "components/text_input/text_input.h"
+#include "core/render_context.h"
 #include "focus/focus_manager.h"
 #include "font/font_renderer.h"
 #include "font/text_batch_renderer.h"
@@ -27,7 +28,6 @@ namespace UI {
 		  m_placeholder(args.placeholder),
 		  m_style(args.style),
 		  m_onChange(args.onChange),
-		  zIndex(args.zIndex),
 		  id(args.id),
 		  m_enabled(args.enabled),
 		  m_tabIndex(args.tabIndex) {
@@ -55,7 +55,6 @@ namespace UI {
 		  m_selection(other.m_selection),
 		  m_cursorBlinkTimer(other.m_cursorBlinkTimer),
 		  m_horizontalScroll(other.m_horizontalScroll),
-		  zIndex(other.zIndex),
 		  visible(other.visible),
 		  id(other.id),
 		  m_enabled(other.m_enabled),
@@ -84,7 +83,6 @@ namespace UI {
 			m_selection = other.m_selection;
 			m_cursorBlinkTimer = other.m_cursorBlinkTimer;
 			m_horizontalScroll = other.m_horizontalScroll;
-			zIndex = other.zIndex;
 			visible = other.visible;
 			id = other.id;
 			m_enabled = other.m_enabled;
@@ -175,7 +173,7 @@ namespace UI {
 		}
 	}
 
-	void TextInput::Render() const {
+	void TextInput::Render() {
 		if (!visible) {
 			return;
 		}
@@ -601,8 +599,9 @@ namespace UI {
 			.border = Foundation::BorderStyle{.color = borderColor, .width = m_style.borderWidth, .cornerRadius = m_style.cornerRadius}
 		};
 
+		float baseZIndex = RenderContext::GetZIndex();
 		Renderer::Primitives::DrawRect(
-			{.bounds = {m_position.x, m_position.y, m_size.x, m_size.y}, .style = rectStyle, .id = id, .zIndex = static_cast<int>(zIndex)}
+			{.bounds = {m_position.x, m_position.y, m_size.x, m_size.y}, .style = rectStyle, .id = id, .zIndex = static_cast<int>(baseZIndex)}
 		);
 	}
 
@@ -635,12 +634,13 @@ namespace UI {
 		float baselineY = m_position.y + (m_size.y - ascent) * 0.5F;
 
 		// Add text to batch
+		float baseZIndex = RenderContext::GetZIndex();
 		batchRenderer->AddText(
 			m_text,
 			glm::vec2(textX, baselineY),
 			scale,
 			glm::vec4(m_style.textColor.r, m_style.textColor.g, m_style.textColor.b, m_style.textColor.a),
-			zIndex + 0.1F
+			baseZIndex + 0.1F
 		);
 	}
 
@@ -668,12 +668,13 @@ namespace UI {
 		float cursorStartY = centerY - (textHeight * 0.5F);
 		float cursorEndY = centerY + (textHeight * 0.5F);
 
+		float baseZIndex = RenderContext::GetZIndex();
 		Renderer::Primitives::DrawLine(
 			{.start = {cursorX, cursorStartY},
 			 .end = {cursorX, cursorEndY},
 			 .style = Foundation::LineStyle{.color = m_style.cursorColor, .width = m_style.cursorWidth},
 			 .id = id,
-			 .zIndex = static_cast<int>(zIndex + 0.2F)}
+			 .zIndex = static_cast<int>(baseZIndex + 0.2F)}
 		);
 	}
 
@@ -712,11 +713,12 @@ namespace UI {
 		// Draw selection background
 		Foundation::RectStyle selectionStyle{.fill = m_style.selectionColor, .border = std::nullopt};
 
+		float baseZIndex = RenderContext::GetZIndex();
 		Renderer::Primitives::DrawRect({
 			.bounds = {selectionX, selectionY, selectionWidth, selectionHeight},
 			.style = selectionStyle,
 			.id = id,
-			.zIndex = static_cast<int>(zIndex + 0.05F) // Below text but above background
+			.zIndex = static_cast<int>(baseZIndex + 0.05F) // Below text but above background
 		});
 	}
 
@@ -749,12 +751,13 @@ namespace UI {
 		float baselineY = m_position.y + (m_size.y - ascent) * 0.5F;
 
 		// Add placeholder to batch
+		float baseZIndex = RenderContext::GetZIndex();
 		batchRenderer->AddText(
 			m_placeholder,
 			glm::vec2(textX, baselineY),
 			scale,
 			glm::vec4(m_style.placeholderColor.r, m_style.placeholderColor.g, m_style.placeholderColor.b, m_style.placeholderColor.a),
-			zIndex + 0.1F
+			baseZIndex + 0.1F
 		);
 	}
 

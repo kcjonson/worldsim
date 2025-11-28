@@ -1,116 +1,175 @@
 # UI Framework Architecture
 
 Created: 2025-11-26
-Last Updated: 2025-11-26
+Last Updated: 2025-11-28
 Status: Active
 
-## Core Principle: Everything Is a Layer
+## Core Principle: Interface-Based Component Hierarchy
 
-The worldsim UI framework uses a **unified layer model**. There is no distinction between "shapes" and "components" - they are all layers in a hierarchical tree. The only difference is behavior:
+The worldsim UI framework uses a **component hierarchy with explicit interfaces**. Components form a tree where:
 
-- **Simple layers** (shapes) - Minimal `HandleInput`/`Update`, just `Render`
-- **Interactive layers** (components) - Full lifecycle with input handling
-- **All layers** can contain children and propagate lifecycle calls
+- **IComponent** - Base interface for anything that can render
+- **ILayer** - Extension of IComponent with full lifecycle (HandleInput, Update, Render)
+- **Component** - Base class for elements that can have children (uses MemoryArena for contiguous storage)
+- **IFocusable** - Interface for components that can receive keyboard focus
 
 ```
 Scene
-└── RootLayer
-    ├── DialogLayer (interactive)
-    │   ├── TitleBar (interactive)
-    │   │   ├── Text (shape)
-    │   │   └── CloseButton (interactive)
-    │   ├── TextInput (interactive)
-    │   └── Button (interactive)
-    └── BackgroundRect (shape)
+└── Container (Component)
+    ├── DialogLayer (Component)
+    │   ├── TitleBar (Component)
+    │   │   ├── Text (IComponent)
+    │   │   └── CloseButton (Button extends Component + IFocusable)
+    │   ├── TextInput (Component + IFocusable)
+    │   └── Button (Component + IFocusable)
+    └── Rectangle (IComponent)
+```
+
+## Interface Hierarchy
+
+### IComponent (Render Only)
+
+The minimal interface for anything that can be drawn. Shapes implement this:
+
+```cpp
+struct IComponent {
+    virtual ~IComponent() = default;
+    virtual void Render() = 0;
+};
+
+// Shapes are leaf nodes - render only, no children
+struct Rectangle : public IComponent {
+    Foundation::Vec2 position{0.0F, 0.0F};
+    Foundation::Vec2 size{100.0F, 100.0F};
+    Foundation::RectStyle style;
+
+    void Render() override;
+};
+```
+
+### ILayer (Full Lifecycle)
+
+For components that need input handling and updates:
+
+```cpp
+struct ILayer : public IComponent {
+    virtual void HandleInput() = 0;
+    virtual void Update(float deltaTime) = 0;
+    // void Render() inherited from IComponent
+};
+```
+
+### Component (Base Class with Children)
+
+The base class for any element that can contain children:
+
+```cpp
+class Component : public ILayer {
+protected:
+    MemoryArena m_arena{4096};           // Contiguous child storage
+    std::vector<IComponent*> m_children; // Child pointers into arena
+    uint16_t m_generation{0};            // For handle validation
+
+public:
+    // Add any IComponent as a child
+    template <typename T>
+    LayerHandle AddChild(T&& child) {
+        static_assert(std::is_base_of_v<IComponent, std::decay_t<T>>,
+            "Child must implement IComponent");
+        auto* ptr = m_arena.Allocate<std::decay_t<T>>(std::forward<T>(child));
+        m_children.push_back(ptr);
+        return LayerHandle::Make(static_cast<uint16_t>(m_children.size() - 1), m_generation);
+    }
+
+    // Lifecycle propagates to children
+    void HandleInput() override;
+    void Update(float deltaTime) override;
+    void Render() override;
+};
+```
+
+### IFocusable (Keyboard Focus)
+
+For components that participate in Tab navigation:
+
+```cpp
+class IFocusable {
+public:
+    virtual ~IFocusable() = default;
+    virtual void OnFocusGained() = 0;
+    virtual void OnFocusLost() = 0;
+    virtual void HandleKeyInput(engine::Key key, bool shift, bool ctrl, bool alt) = 0;
+    virtual void HandleCharInput(char32_t codepoint) = 0;
+    virtual bool CanReceiveFocus() const = 0;
+};
 ```
 
 ## Why This Design?
 
-### Problem with Separate Hierarchies
+### Problem: Visibility of Relationships
 
-Many UI frameworks separate "primitives" (shapes) from "widgets" (components), creating two parallel systems:
-
-```cpp
-// Anti-pattern: two separate managers
-ShapeManager shapeManager;     // Rectangles, circles, text
-WidgetManager widgetManager;   // Buttons, text inputs
-
-// Problems:
-// - Which manager handles z-ordering?
-// - How do widgets contain shapes?
-// - Duplicated hierarchy code
-```
-
-### Unified Layer Solution
-
-Everything participates in the same hierarchy:
+The original design used C++20 concepts which provide compile-time verification but aren't visible in class definitions:
 
 ```cpp
-// Single manager for all layers
-LayerManager layerManager;
-
-// Button is just a layer that contains shape children
-LayerHandle button = layerManager.Add(Button{...});
-// Button internally creates shape children (background rect, label text)
-
-// Lifecycle propagates uniformly
-void Layer::HandleInput() {
-    // 1. Own input handling
-    // 2. Propagate to children
-    for (auto& childHandle : m_children) {
-        auto* child = layerManager.Get(childHandle);
-        if (child) child->HandleInput();
-    }
-}
-```
-
-## Design Pillars
-
-### 1. C++20 Concepts for Interface Enforcement
-
-Instead of virtual interfaces with runtime overhead, we use C++20 concepts for compile-time enforcement:
-
-```cpp
-// Compile-time interface - zero overhead
-template <typename T>
-concept Layer = requires(T& l, float deltaTime) {
-    { l.HandleInput() } -> std::same_as<void>;
-    { l.Update(deltaTime) } -> std::same_as<void>;
-    { l.Render() } -> std::same_as<void>;
+// Old approach - can't tell at a glance what Button implements
+struct Button {
+    void HandleInput();
+    void Update(float dt);
+    void Render();
+    // ...
 };
-
-// Fails at compile time if missing methods
-static_assert(Layer<Button>);
-static_assert(Layer<Rectangle>);
+static_assert(Layer<Button>);  // Verification hidden at bottom
 ```
 
-### 2. Value Semantics with Variant Storage
+### Solution: Explicit Interface Inheritance
 
-Layers are stored contiguously using `std::variant`, not scattered on the heap:
+With virtual interfaces, the relationship is explicit:
 
 ```cpp
-// Current implementation (shapes only)
-using LayerData = std::variant<
-    Container, Rectangle, Circle, Text, Line   // Shapes
->;
+// New approach - immediately visible
+class Button : public Component, public IFocusable {
+    void HandleInput() override;    // From ILayer (via Component)
+    void Update(float dt) override;
+    void Render() override;
 
-// Future: Add components to variant for full unified storage
-// using LayerData = std::variant<
-//     Container, Rectangle, Circle, Text, Line,  // Shapes
-//     Button, TextInput                          // Components
-// >;
-
-std::vector<LayerNode> m_nodes;  // Contiguous storage
+    void OnFocusGained() override;  // From IFocusable
+    // ...
+};
 ```
 
-### 3. Handle-Based References
+## Memory Arena for Contiguous Storage
 
-Children are referenced by handle (index + generation), not pointers. This prevents dangling references when layers are removed.
-
-**See:** [Resource Handles](../resource-handles.md) for complete documentation of this pattern.
+Children are allocated in a contiguous memory arena instead of scattered heap allocations:
 
 ```cpp
-// LayerHandle: 16-bit index + 16-bit generation (same pattern as ResourceHandle)
+class MemoryArena {
+    std::vector<std::byte> m_buffer;
+    size_t m_offset{0};
+
+public:
+    template <typename T, typename... Args>
+    T* Allocate(Args&&... args) {
+        // Align and allocate in contiguous buffer
+        size_t aligned = (m_offset + alignof(T) - 1) & ~(alignof(T) - 1);
+        T* ptr = new (m_buffer.data() + aligned) T(std::forward<Args>(args)...);
+        m_offset = aligned + sizeof(T);
+        return ptr;
+    }
+};
+```
+
+**Benefits:**
+- Cache-friendly iteration over children
+- No individual heap allocations per child
+- Memory locality for better performance with thousands of layers
+
+## Handle-Based References
+
+Children are referenced by handle (index + generation), not raw pointers:
+
+**See:** [Resource Handles](../resource-handles.md) for complete documentation.
+
+```cpp
 struct LayerHandle {
     uint32_t value{kInvalidHandle};
     static constexpr uint32_t kInvalidHandle = 0xFFFFFFFF;
@@ -120,247 +179,141 @@ struct LayerHandle {
     uint16_t GetGeneration() const; // Upper 16 bits
     static LayerHandle Make(uint16_t index, uint16_t generation);
 };
-
-// Safe child access
-LayerHandle label = layerManager.AddChild(parent, Text{...});
-
-// Later: check if still valid
-if (auto* text = layerManager.Get<Text>(label)) {
-    text->position.x += 10;  // Safe to mutate
-}
-// If layer was removed, Get returns nullptr
 ```
 
-## Why Not Other Approaches?
+## Component Types
 
-### Comparison: Colonysim vs Worldsim
+### Shapes (IComponent)
 
-Colonysim uses virtual inheritance + shared_ptr. Worldsim differs intentionally for performance:
+Leaf nodes with no children. Render-only:
 
-| Aspect | Colonysim | Worldsim |
-|--------|-----------|----------|
-| Hierarchy | `std::shared_ptr<Layer>` children | Handle-based (index + generation) |
-| Polymorphism | Virtual methods, vtable | C++20 concepts, zero overhead |
-| Storage | Heap-allocated, scattered | Contiguous vector with variant |
-| Memory | 8+ bytes per reference | 4 bytes per handle |
-| Safety | Reference counting | Generation check for stale handles |
+| Shape | Description |
+|-------|-------------|
+| `Rectangle` | Filled/bordered rectangle |
+| `Circle` | Filled/bordered circle |
+| `Line` | Line segment |
+| `Text` | Text with font rendering |
 
-**Same conceptual model** (unified hierarchy), **different implementation** for performance.
-
-### Comparison: Virtual Interface vs Concepts
-
-| Aspect | Virtual Interface | C++20 Concepts |
-|--------|------------------|----------------|
-| Runtime overhead | VTable lookup per call | Zero |
-| Storage | Requires pointers/heap | Value types, contiguous |
-| Compile-time check | No (runtime crash on pure virtual) | Yes (compiler error) |
-| Code pattern | Inheritance hierarchy | Duck typing |
-
-### Comparison: Pointers vs Handles
-
-| Problem with Pointers | Handle Solution |
-|----------------------|-----------------|
-| Dangling pointers when layer removed | Generation check detects stale handles |
-| Can't tell if pointer is valid | `Get()` returns nullptr for invalid |
-| Memory scattered across heap | Contiguous vector storage |
-| 8 bytes per reference | 4 bytes per handle |
-
-## Child Composition Patterns
-
-Components choose how to reference children based on whether they need to mutate them:
-
-### Pattern A: Static Children (Fire and Forget)
-
-For children that never change after creation:
-
+Usage:
 ```cpp
-void Button::Initialize() {
-    // Don't store handle - child is immutable
-    layerManager.AddChild(m_selfHandle, Rectangle{
-        .position = m_position,
-        .size = m_size,
-        .style = m_appearance.normalStyle
-    });
-}
+// Shapes use Args constructor (non-aggregate due to IComponent base)
+UI::Text title(UI::Text::Args{
+    .position = {50.0F, 40.0F},
+    .text = "Hello World",
+    .style = {.color = {1.0F, 1.0F, 1.0F, 1.0F}, .fontSize = 24.0F}
+});
+title.Render();
 ```
 
-### Pattern B: Dynamic Children (Need Mutation)
+### Container (Component)
 
-For children that need runtime updates:
+Pure organizational component with no visual representation:
 
 ```cpp
-struct Button {
-    LayerHandle m_backgroundRect;  // Keep handle for mutation
-
-    void Initialize() {
-        m_backgroundRect = layerManager.AddChild(m_selfHandle, Rectangle{...});
-    }
-
-    void Update(float dt) {
-        // Update background color based on hover state
-        if (auto* bg = layerManager.Get<Rectangle>(m_backgroundRect)) {
-            bg->style.fillColor = GetCurrentColor();
-        }
-    }
+class Container : public Component {
+public:
+    Container() = default;
+    // Inherits AddChild, lifecycle methods from Component
 };
 ```
 
-## Layer Lifecycle
+### Interactive Components (Component + IFocusable)
 
-All layers implement the same lifecycle, called in order each frame:
+Full-featured UI widgets:
+
+| Component | Description |
+|-----------|-------------|
+| `Button` | Interactive button with states |
+| `TextInput` | Text editing with cursor, selection, clipboard |
+
+Usage:
+```cpp
+auto button = std::make_unique<UI::Button>(UI::Button::Args{
+    .label = "Click Me",
+    .position = {100.0F, 100.0F},
+    .size = {120.0F, 40.0F},
+    .onClick = []() { LOG_INFO(UI, "Clicked!"); }
+});
+
+// Lifecycle called each frame
+button->HandleInput();
+button->Update(deltaTime);
+button->Render();
+```
+
+## Component Lifecycle
+
+All ILayer components implement the same lifecycle:
 
 ```
 HandleInput()  →  Update(deltaTime)  →  Render()
 ```
 
-### For Shapes
+### Lifecycle Propagation
 
-Shapes have no-op implementations for input and update:
-
-```cpp
-struct Rectangle {
-    void HandleInput() {}      // No-op
-    void Update(float) {}      // No-op
-    void Render() const;       // Draw rectangle
-};
-```
-
-### For Components
-
-Components implement full lifecycle:
+Component's base implementation propagates to children:
 
 ```cpp
-struct Button {
-    void HandleInput() {
-        // Check mouse hover, clicks
-        if (ContainsPoint(mousePos)) {
-            if (mousePressed) m_state = Pressed;
-            else m_state = Hover;
+void Component::HandleInput() {
+    for (IComponent* child : m_children) {
+        if (auto* layer = dynamic_cast<ILayer*>(child)) {
+            layer->HandleInput();
         }
     }
+}
 
-    void Update(float dt) {
-        // Update animations, visual state
+void Component::Render() {
+    for (IComponent* child : m_children) {
+        child->Render();
     }
-
-    void Render() const {
-        // Children render themselves via LayerManager
-    }
-};
-```
-
-## Focusable Concept
-
-For layers that can receive keyboard focus:
-
-```cpp
-template <typename T>
-concept Focusable = requires(T& c, engine::Key key, bool shift, bool ctrl, bool alt, char32_t codepoint) {
-    { c.OnFocusGained() } -> std::same_as<void>;
-    { c.OnFocusLost() } -> std::same_as<void>;
-    { c.HandleKeyInput(key, shift, ctrl, alt) } -> std::same_as<void>;
-    { c.HandleCharInput(codepoint) } -> std::same_as<void>;
-    { c.CanReceiveFocus() } -> std::same_as<bool>;
-};
-
-static_assert(Focusable<Button>);
-static_assert(Focusable<TextInput>);
+}
 ```
 
 ## FocusManager Integration
 
-### Current Implementation (Hybrid Approach)
-
-Currently, FocusManager uses the `IFocusable` interface for runtime polymorphism, while the `Focusable` concept provides compile-time verification:
+FocusManager handles Tab navigation using the IFocusable interface:
 
 ```cpp
-// Current approach: IFocusable for runtime dispatch
-struct Button : public IFocusable {
-    void OnFocusGained() override;
-    // ...
-};
+// Register focusable components
+FocusManager::Get().RegisterFocusable(&button, tabIndex);
 
-// Concept provides compile-time verification
-static_assert(Focusable<Button>, "Button must satisfy Focusable concept");
+// Tab navigation
+FocusManager::Get().FocusNext();     // Tab
+FocusManager::Get().FocusPrevious(); // Shift+Tab
+
+// Route keyboard input to focused component
+FocusManager::Get().RouteKeyInput(key, shift, ctrl, alt);
 ```
 
-This hybrid approach is pragmatic:
-- IFocusable enables FocusManager's existing runtime dispatch
-- Focusable concept ensures compile-time interface verification
-- Migration to full variant storage can happen incrementally
-
-### Future Optimization (Variant Storage)
-
-For maximum performance (eliminating vtable overhead), FocusManager can be refactored to use variant storage:
-
-```cpp
-// Future approach: variant for zero-overhead dispatch
-using FocusableLayer = std::variant<Button*, TextInput*>;
-
-struct FocusEntry {
-    FocusableLayer layer;
-    int tabIndex;
-};
-
-// Type-safe dispatch via std::visit
-void FocusManager::SetFocus(FocusableLayer& layer) {
-    std::visit([](auto* l) { l->OnFocusGained(); }, layer);
-}
-```
-
-This refactor would:
-1. Replace `IFocusable*` with `std::variant<Button*, TextInput*>`
-2. Use `std::visit` for method dispatch
-3. Allow removing IFocusable inheritance from components
-4. Eliminate virtual function overhead
-
-## LayerManager API
-
-### Adding Layers
-
-```cpp
-// Add root-level layer
-LayerHandle button = layerManager.Add(Button{...});
-
-// Add child layer
-LayerHandle label = layerManager.AddChild(button, Text{...});
-```
-
-### Accessing Layers
-
-```cpp
-// Type-safe access (returns nullptr if wrong type or invalid handle)
-if (auto* btn = layerManager.Get<Button>(handle)) {
-    btn->SetDisabled(true);
-}
-
-// Visit pattern for unknown type
-layerManager.Visit(handle, [](auto& layer) {
-    layer.HandleInput();
-});
-```
-
-### Removing Layers
-
-```cpp
-layerManager.Remove(handle);  // Also removes all children
-// Increments generation, so old handles become invalid
-```
+Components automatically register/unregister in constructor/destructor.
 
 ## Implementation Files
 
 | File | Purpose |
 |------|---------|
-| `/libs/ui/layer/layer.h` | Layer and Focusable concepts, LayerHandle typedef |
-| `/libs/ui/layer/layer_manager.h` | LayerManager with variant storage |
-| `/libs/ui/layer/layer_manager.cpp` | Implementation with handle validation |
-| `/libs/ui/shapes/shapes.h` | Shape types with lifecycle methods |
-| `/libs/ui/components/button/button.h` | Button satisfying Layer + Focusable |
-| `/libs/ui/components/text_input/text_input.h` | TextInput satisfying Layer + Focusable |
-| `/libs/ui/focus/focus_manager.h` | FocusManager with variant storage |
+| `/libs/ui/component/component.h` | IComponent, ILayer, MemoryArena, Component base |
+| `/libs/ui/component/container.h` | Container class |
+| `/libs/ui/layer/layer.h` | LayerHandle definition |
+| `/libs/ui/shapes/shapes.h` | Rectangle, Circle, Line, Text |
+| `/libs/ui/focus/focusable.h` | IFocusable interface |
+| `/libs/ui/focus/focus_manager.h` | FocusManager singleton |
+| `/libs/ui/components/button/` | Button component |
+| `/libs/ui/components/text_input/` | TextInput component |
+
+## Comparison with Previous Design
+
+| Aspect | Previous (Concepts) | Current (Interfaces) |
+|--------|--------------------|-----------------------|
+| Interface visibility | Hidden static_asserts | Explicit inheritance |
+| Compile-time check | Concept satisfaction | Virtual override |
+| Runtime overhead | Zero (concepts) | Minimal (vtable) |
+| Child storage | std::variant | MemoryArena |
+| Scalability | Limited by variant types | Unlimited IComponent |
+
+The current design trades minimal runtime overhead (~2-5ns per virtual call) for explicit interface visibility and unlimited scalability of component types.
 
 ## Related Documentation
 
-- [Resource Handles](../resource-handles.md) - Handle pattern we extend for layers
-- [Batched Text Rendering](./batched-text-rendering.md) - How text layers render
+- [Resource Handles](../resource-handles.md) - Handle pattern for safe references
+- [Batched Text Rendering](./batched-text-rendering.md) - How text shapes render
 - [SDF Text Rendering](./sdf-text-rendering.md) - Font rendering pipeline

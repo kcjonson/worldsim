@@ -71,7 +71,6 @@ namespace UI {
 				.size = {kToggleSize, kToggleSize},
 				.type = Button::Type::Primary,
 				.onClick = [this]() { m_expanded = !m_expanded; },
-				.zIndex = 120.0F,
 				.id = "menu_toggle_button"
 			}
 		);
@@ -82,13 +81,14 @@ namespace UI {
 		m_menuY = toggleY - m_menuHeight - kMenuToggleGap;
 
 		// Create header text
-		m_headerText = Text{
-			.position = {m_menuX + 10, m_menuY + 8},
-			.text = "Scenes",
-			.style = {.color = Color(0.9F, 0.9F, 0.9F, 1.0F), .fontSize = 16.0F},
-			.zIndex = 110.0F,
-			.id = "menu_header_text"
-		};
+		m_headerText = Text(
+			Text::Args{
+				.position = {m_menuX + 10, m_menuY + 8},
+				.text = "Scenes",
+				.style = {.color = Color(0.9F, 0.9F, 0.9F, 1.0F), .fontSize = 16.0F},
+				.id = "menu_header_text"
+			}
+		);
 
 		// Create button for each scene
 		m_menuButtons.clear();
@@ -116,7 +116,6 @@ namespace UI {
 							}
 							m_expanded = false; // Close menu after selection
 						},
-					.zIndex = 100.0F,
 					.id = m_buttonIds.back().c_str()
 				}}
 			);
@@ -155,7 +154,7 @@ namespace UI {
 		}
 	}
 
-	void NavigationMenu::Render() const {
+	void NavigationMenu::Render() {
 		using namespace Foundation;
 
 		// Always render the toggle button
@@ -185,7 +184,7 @@ namespace UI {
 		m_headerText.Render();
 
 		// Render all menu buttons
-		for (const auto& button : m_menuButtons) {
+		for (auto& button : m_menuButtons) {
 			button.Render();
 		}
 	}
