@@ -25,6 +25,11 @@ struct LayerHandle {
 	}
 
 	static LayerHandle Make(uint16_t index, uint16_t generation) {
+		// Prevent creating handles that match kInvalidHandle
+		// Generation 0xFFFF with index 0xFFFF would create 0xFFFFFFFF
+		if (generation == 0xFFFF && index == 0xFFFF) {
+			return Invalid();
+		}
 		return {(static_cast<uint32_t>(generation) << 16) | index};
 	}
 

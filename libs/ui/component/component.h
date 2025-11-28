@@ -23,7 +23,9 @@ namespace UI {
 		virtual void Render() = 0;
 
 		// Z-index for render ordering (higher values render on top)
+		// Valid range: -32768 to 32767 (signed 16-bit)
 		// Set via Args in derived classes, e.g.: Rectangle::Args{.zIndex = 5}
+		// Note: Using short saves memory vs float/int32 with thousands of components
 		short zIndex{0};
 	};
 
