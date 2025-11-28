@@ -599,9 +599,9 @@ namespace UI {
 			.border = Foundation::BorderStyle{.color = borderColor, .width = m_style.borderWidth, .cornerRadius = m_style.cornerRadius}
 		};
 
-		float baseZIndex = RenderContext::GetZIndex();
+		short zIndex = RenderContext::GetZIndex();
 		Renderer::Primitives::DrawRect(
-			{.bounds = {m_position.x, m_position.y, m_size.x, m_size.y}, .style = rectStyle, .id = id, .zIndex = static_cast<int>(baseZIndex)}
+			{.bounds = {m_position.x, m_position.y, m_size.x, m_size.y}, .style = rectStyle, .id = id, .zIndex = zIndex}
 		);
 	}
 
@@ -634,13 +634,13 @@ namespace UI {
 		float baselineY = m_position.y + (m_size.y - ascent) * 0.5F;
 
 		// Add text to batch
-		float baseZIndex = RenderContext::GetZIndex();
+		short zIndex = RenderContext::GetZIndex();
 		batchRenderer->AddText(
 			m_text,
 			glm::vec2(textX, baselineY),
 			scale,
 			glm::vec4(m_style.textColor.r, m_style.textColor.g, m_style.textColor.b, m_style.textColor.a),
-			baseZIndex + 0.1F
+			zIndex + 2 // Above selection (+1), below cursor (+3)
 		);
 	}
 
@@ -668,13 +668,13 @@ namespace UI {
 		float cursorStartY = centerY - (textHeight * 0.5F);
 		float cursorEndY = centerY + (textHeight * 0.5F);
 
-		float baseZIndex = RenderContext::GetZIndex();
+		short zIndex = RenderContext::GetZIndex();
 		Renderer::Primitives::DrawLine(
 			{.start = {cursorX, cursorStartY},
 			 .end = {cursorX, cursorEndY},
 			 .style = Foundation::LineStyle{.color = m_style.cursorColor, .width = m_style.cursorWidth},
 			 .id = id,
-			 .zIndex = static_cast<int>(baseZIndex + 0.2F)}
+			 .zIndex = zIndex + 3} // On top of everything
 		);
 	}
 
@@ -713,12 +713,12 @@ namespace UI {
 		// Draw selection background
 		Foundation::RectStyle selectionStyle{.fill = m_style.selectionColor, .border = std::nullopt};
 
-		float baseZIndex = RenderContext::GetZIndex();
+		short zIndex = RenderContext::GetZIndex();
 		Renderer::Primitives::DrawRect({
 			.bounds = {selectionX, selectionY, selectionWidth, selectionHeight},
 			.style = selectionStyle,
 			.id = id,
-			.zIndex = static_cast<int>(baseZIndex + 0.05F) // Below text but above background
+			.zIndex = zIndex + 1 // Above background, below text (+2)
 		});
 	}
 
@@ -751,13 +751,13 @@ namespace UI {
 		float baselineY = m_position.y + (m_size.y - ascent) * 0.5F;
 
 		// Add placeholder to batch
-		float baseZIndex = RenderContext::GetZIndex();
+		short zIndex = RenderContext::GetZIndex();
 		batchRenderer->AddText(
 			m_placeholder,
 			glm::vec2(textX, baselineY),
 			scale,
 			glm::vec4(m_style.placeholderColor.r, m_style.placeholderColor.g, m_style.placeholderColor.b, m_style.placeholderColor.a),
-			baseZIndex + 0.1F
+			zIndex + 2 // Same layer as regular text
 		);
 	}
 
