@@ -25,24 +25,22 @@ namespace {
 			Renderer::Primitives::GetViewport(viewportWidth, viewportHeight);
 
 			// Create title text
-			m_title = UI::Text{
+			m_title = UI::Text(UI::Text::Args{
 				.position = {50.0F, 40.0F},
 				.text = "TextInput Component Demo",
 				.style = {.color = {1.0F, 1.0F, 1.0F, 1.0F}, .fontSize = 24.0F},
-				.zIndex = 10.0F,
 				.visible = true,
 				.id = "title"
-			};
+			});
 
 			// Create instructions
-			m_instructions = UI::Text{
+			m_instructions = UI::Text(UI::Text::Args{
 				.position = {50.0F, 80.0F},
 				.text = "Use Tab to navigate between fields. Try selection (Shift+Arrow, mouse drag) and clipboard (Ctrl+C/X/V/A)",
 				.style = {.color = {0.7F, 0.7F, 0.7F, 1.0F}, .fontSize = 14.0F},
-				.zIndex = 10.0F,
 				.visible = true,
 				.id = "instructions"
-			};
+			});
 
 			// Create text input components with different configurations
 			float		yPos = 140.0F;
@@ -57,7 +55,6 @@ namespace {
 					.placeholder = "Basic text input (Tab index 0)",
 					.tabIndex = 0,
 					.id = "input1",
-					.zIndex = 5.0F,
 					.enabled = true,
 					.onChange = [this](const std::string& text) { m_output1 = "Input 1: " + text; }
 				})
@@ -73,7 +70,6 @@ namespace {
 					.placeholder = "",
 					.tabIndex = 1,
 					.id = "input2",
-					.zIndex = 5.0F,
 					.enabled = true,
 					.onChange = [this](const std::string& text) { m_output2 = "Input 2: " + text; }
 				})
@@ -89,7 +85,6 @@ namespace {
 					.placeholder = "Another text input",
 					.tabIndex = 2,
 					.id = "input3",
-					.zIndex = 5.0F,
 					.enabled = true,
 					.onChange = [this](const std::string& text) { m_output3 = "Input 3: " + text; }
 				})
@@ -116,7 +111,6 @@ namespace {
 					.style = styledStyle,
 					.tabIndex = 3,
 					.id = "input4",
-					.zIndex = 5.0F,
 					.enabled = true,
 					.onChange = [this](const std::string& text) { m_output4 = "Input 4 (styled): " + text; }
 				})
@@ -134,14 +128,13 @@ namespace {
 			});
 
 			// Create output display area
-			m_outputLabel = UI::Text{
+			m_outputLabel = UI::Text(UI::Text::Args{
 				.position = {500.0F, 140.0F},
 				.text = "Output (onChange callbacks):",
 				.style = {.color = {1.0F, 1.0F, 1.0F, 1.0F}, .fontSize = 16.0F},
-				.zIndex = 10.0F,
 				.visible = true,
 				.id = "output_label"
-			};
+			});
 		}
 
 		void HandleInput(float /*dt*/) override {
@@ -195,21 +188,20 @@ namespace {
 			std::vector<std::string> outputs = {m_output1, m_output2, m_output3, m_output4};
 			for (const auto& output : outputs) {
 				if (!output.empty()) {
-					UI::Text outputText{
+					UI::Text outputText(UI::Text::Args{
 						.position = {500.0F, outputY},
 						.text = output,
 						.style = {.color = {0.8F, 0.9F, 1.0F, 1.0F}, .fontSize = 14.0F},
-						.zIndex = 10.0F,
 						.visible = true,
 						.id = "output"
-					};
+					});
 					outputText.Render();
 					outputY += outputSpacing;
 				}
 			}
 
 			// Render help text
-			UI::Text helpText{
+			UI::Text helpText(UI::Text::Args{
 				.position = {500.0F, 400.0F},
 				.text = "Keyboard Shortcuts:\n"
 						"  Ctrl+C: Copy\n"
@@ -219,10 +211,9 @@ namespace {
 						"  Shift+Arrows: Extend selection\n"
 						"  Tab: Next field",
 				.style = {.color = {0.6F, 0.6F, 0.6F, 1.0F}, .fontSize = 13.0F},
-				.zIndex = 10.0F,
 				.visible = true,
 				.id = "help"
-			};
+			});
 			helpText.Render();
 		}
 

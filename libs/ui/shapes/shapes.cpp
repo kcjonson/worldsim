@@ -11,19 +11,25 @@ namespace UI {
 	// Base font size used for font scaling calculations (16px = 1.0 scale)
 	constexpr float BASE_FONT_SIZE = 16.0F;
 
-	void Rectangle::Render() const {
-		Renderer::Primitives::DrawRect({.bounds = {position.x, position.y, size.x, size.y}, .style = style, .id = id});
+	void Rectangle::Render() {
+		Renderer::Primitives::DrawRect(
+			{.bounds = {position.x, position.y, size.x, size.y}, .style = style, .id = id, .zIndex = RenderContext::GetZIndex()}
+		);
 	}
 
-	void Circle::Render() const {
-		Renderer::Primitives::DrawCircle({.center = center, .radius = radius, .style = style, .id = id});
+	void Circle::Render() {
+		Renderer::Primitives::DrawCircle(
+			{.center = center, .radius = radius, .style = style, .id = id, .zIndex = RenderContext::GetZIndex()}
+		);
 	}
 
-	void Line::Render() const {
-		Renderer::Primitives::DrawLine({.start = start, .end = end, .style = style, .id = id});
+	void Line::Render() {
+		Renderer::Primitives::DrawLine(
+			{.start = start, .end = end, .style = style, .id = id, .zIndex = RenderContext::GetZIndex()}
+		);
 	}
 
-	void Text::Render() const {
+	void Text::Render() {
 		// Get text batch renderer from Primitives API
 		ui::TextBatchRenderer* textBatchRenderer = Renderer::Primitives::GetTextBatchRenderer();
 		if (textBatchRenderer == nullptr || text.empty()) {
@@ -117,15 +123,15 @@ namespace UI {
 			}
 		}
 
-		// Get current z-index from render context (set by LayerManager)
-		float zIndex = RenderContext::GetZIndex();
+		// Get current z-index from render context (set by Component before render)
+		short zIdx = RenderContext::GetZIndex();
 
 		// Add text to batch renderer with z-index for proper sorting
 		// NOTE: We call TextBatchRenderer directly here rather than using Primitives::DrawText()
 		// to avoid circular dependency (renderer → ui → renderer). This is fine since shapes.cpp
 		// is in the ui library which has access to both renderer and ui libraries.
 		glm::vec4 color(style.color.r, style.color.g, style.color.b, style.color.a);
-		textBatchRenderer->AddText(text, glm::vec2(alignedPos.x, alignedPos.y), scale, color, zIndex);
+		textBatchRenderer->AddText(text, glm::vec2(alignedPos.x, alignedPos.y), scale, color, zIdx);
 	}
 
 } // namespace UI

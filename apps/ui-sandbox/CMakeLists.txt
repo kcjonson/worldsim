@@ -9,8 +9,8 @@ add_executable(ui-sandbox
     scenes/font_test_scene.cpp
     scenes/text_shapes_scene.cpp
     scenes/layer_scene.cpp
-    scenes/input_test_scene.cpp
     scenes/button_scene.cpp
+    scenes/input_test_scene.cpp
     scenes/sdf_minimal_scene.cpp
     scenes/text_input_scene.cpp
 )

@@ -14,7 +14,6 @@ namespace UI {
 		  m_label(args.label),
 		  m_disabled(args.disabled),
 		  m_onClick(args.onClick),
-		  zIndex(args.zIndex),
 		  id(args.id),
 		  m_tabIndex(args.tabIndex) {
 
@@ -34,18 +33,15 @@ namespace UI {
 		const ButtonStyle& style = GetCurrentStyle();
 		Foundation::Vec2   centerPos = Foundation::Vec2{m_position.x + m_size.x * 0.5F, m_position.y + m_size.y * 0.5F};
 
-		m_labelText = Text{
-			.position = centerPos,
-			.text = m_label,
-			.style =
-				{.color = style.textColor,
-				 .fontSize = style.fontSize,
-				 .hAlign = Foundation::HorizontalAlign::Center,
-				 .vAlign = Foundation::VerticalAlign::Middle},
-			.zIndex = zIndex + 0.1F, // Slightly above button background
-			.visible = visible,
-			.id = id
-		};
+		// Two-phase init (Text is non-aggregate due to IComponent base class with virtual destructor)
+		m_labelText.position = centerPos;
+		m_labelText.text = m_label;
+		m_labelText.style.color = style.textColor;
+		m_labelText.style.fontSize = style.fontSize;
+		m_labelText.style.hAlign = Foundation::HorizontalAlign::Center;
+		m_labelText.style.vAlign = Foundation::VerticalAlign::Middle;
+		m_labelText.visible = visible;
+		m_labelText.id = id;
 
 		// Register with global FocusManager singleton
 		FocusManager::Get().RegisterFocusable(this, m_tabIndex);
@@ -65,7 +61,6 @@ namespace UI {
 		  m_focused(other.m_focused),
 		  m_appearance(other.m_appearance),
 		  m_onClick(std::move(other.m_onClick)),
-		  zIndex(other.zIndex),
 		  visible(other.visible),
 		  id(other.id),
 		  m_mouseOver(other.m_mouseOver),
@@ -92,7 +87,6 @@ namespace UI {
 			m_focused = other.m_focused;
 			m_appearance = other.m_appearance;
 			m_onClick = std::move(other.m_onClick);
-			zIndex = other.zIndex;
 			visible = other.visible;
 			id = other.id;
 			m_mouseOver = other.m_mouseOver;
@@ -170,7 +164,7 @@ namespace UI {
 		m_labelText.visible = visible;
 	}
 
-	void Button::Render() const {
+	void Button::Render() {
 		if (!visible) {
 			return;
 		}

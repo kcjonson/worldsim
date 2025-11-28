@@ -72,6 +72,13 @@ This directory contains technical documentation for the UI framework in world-si
 
 ### Core Architecture
 
+**[architecture.md](./architecture.md)** - **FOUNDATIONAL** - Unified Layer Model
+- Everything is a Layer (shapes + components in one hierarchy)
+- C++20 Concepts for compile-time interface enforcement
+- Handle-based references (no shared_ptr)
+- Comparison with colonysim (shared_ptr) and RmlUI (unique_ptr)
+- **Read this to understand worldsim's approach**
+
 **[primitive-rendering-api.md](./primitive-rendering-api.md)** - Unified foundation for all 2D drawing
 - DrawRect, DrawText, DrawTexture API
 - Used by RmlUI backend, game rendering, and world-space UI

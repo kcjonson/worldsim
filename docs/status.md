@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2025-11-26 (TextInput & Focus Management complete, PR #30 merged)
+Last Updated: 2025-11-28 (Added Uber Shader epic, Component Architecture refactored)
 
 ## Epic/Story/Task Template
 
@@ -255,6 +255,16 @@ Use this template for all work items:
   - [x] Create Keyboard Focus Manager (global Tab navigation system)
   - [x] Port TextInput (cursor, focus, text editing)
   - [x] Create text input demo
+- [x] UI Component Architecture ✅ COMPLETE
+  - [x] Create architecture documentation (/docs/technical/ui-framework/architecture.md)
+  - [x] Define ILayer interface (HandleInput/Update/Render lifecycle)
+  - [x] Define IFocusable interface (focus management)
+  - [x] Create LayerHandle type for safe layer references
+  - [x] Add lifecycle methods to all shapes
+  - [x] Add interface implementations to Button and TextInput
+  - [x] Document unified layer model (shapes + components)
+  - [x] Document handle-based references vs shared_ptr
+  - [x] Document FocusManager with IFocusable interface
 
 
 **Phase 2: Integration & Testing**
@@ -652,6 +662,44 @@ Use this template for all work items:
   - [ ] Overview of UI elements from player perspective
   - [ ] Interaction patterns
   - [ ] Visual style guide
+
+---
+
+### Uber Shader - Unified Rendering Pipeline
+**Spec/Documentation:** `/docs/technical/ui-framework/uber-shader.md` (TBD)
+**Dependencies:** None
+**Status:** ready
+
+**Problem:** Text and shapes use separate renderers that flush independently - ALL shapes render first, then ALL text renders on top. This breaks z-ordering when text should appear between shapes, and is fundamentally broken for transparency/alpha blending.
+
+**Solution:** Merge shape and text shaders into a single "uber shader" that handles both, eliminating shader switches and allowing everything to render in correct z-order.
+
+**Tasks:**
+- [ ] Phase 1: Delete Old Renderers
+  - [ ] Delete TextBatchRenderer
+  - [ ] Delete separate text flush callback system
+  - [ ] Delete msdf_text.vert/frag shaders
+- [ ] Phase 2: Create Uber Shader
+  - [ ] Create uber.vert (unified vertex format)
+  - [ ] Create uber.frag (renderMode branching: SHAPE vs TEXT)
+  - [ ] Preserve MSDF text math exactly (copy-paste)
+  - [ ] Preserve SDF shape math exactly (copy-paste)
+- [ ] Phase 3: Unify BatchRenderer
+  - [ ] Add renderMode to vertex format
+  - [ ] Add AddText() method to BatchRenderer
+  - [ ] Sort all commands by zIndex in Flush()
+  - [ ] Bind font atlas once at frame start
+- [ ] Phase 4: Update Consumers
+  - [ ] Update Text::Render() to use BatchRenderer::AddText()
+  - [ ] Update Primitives API (remove text callback)
+  - [ ] Create test scene with overlapping transparent shapes + text
+  - [ ] Verify text quality unchanged
+
+**Performance Goals:**
+- Zero shader switches per frame
+- Single draw call for entire UI
+- Correct z-ordering for all elements
+- Correct alpha blending for transparency
 
 ---
 
