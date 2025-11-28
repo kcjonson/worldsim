@@ -257,14 +257,14 @@ Use this template for all work items:
   - [x] Create text input demo
 - [x] UI Component Architecture ✅ COMPLETE
   - [x] Create architecture documentation (/docs/technical/ui-framework/architecture.md)
-  - [x] Define Layer concept (HandleInput/Update/Render lifecycle)
-  - [x] Define Focusable concept (focus management)
+  - [x] Define ILayer interface (HandleInput/Update/Render lifecycle)
+  - [x] Define IFocusable interface (focus management)
   - [x] Create LayerHandle type for safe layer references
   - [x] Add lifecycle methods to all shapes
-  - [x] Add concept static_asserts to Button and TextInput
+  - [x] Add interface implementations to Button and TextInput
   - [x] Document unified layer model (shapes + components)
   - [x] Document handle-based references vs shared_ptr
-  - [x] Document FocusManager hybrid approach (IFocusable + concepts)
+  - [x] Document FocusManager with IFocusable interface
 
 
 **Phase 2: Integration & Testing**

@@ -3,9 +3,10 @@
 #include "core/render_context.h"
 #include "layer/layer.h"
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
-#include <cstring>
 #include <memory>
+#include <stdexcept>
 #include <vector>
 
 namespace UI {
@@ -45,12 +46,16 @@ namespace UI {
 	//
 	// Allocates objects from a contiguous memory block for cache-friendly iteration.
 	// Used by Component to store children.
+	//
+	// NOTE: Arena is non-growable by design. Growing would require memcpy which
+	// breaks vtable pointers for polymorphic types. If capacity is exceeded,
+	// an exception is thrown - increase the capacity at construction time.
 
 	class MemoryArena {
 	  public:
-		explicit MemoryArena(size_t initialSize = 64 * 1024) // 64KB default
-			: m_buffer(std::make_unique<char[]>(initialSize)),
-			  m_capacity(initialSize),
+		explicit MemoryArena(size_t capacity = 64 * 1024) // 64KB default
+			: m_buffer(std::make_unique<char[]>(capacity)),
+			  m_capacity(capacity),
 			  m_offset(0) {}
 
 		~MemoryArena() {
@@ -73,9 +78,10 @@ namespace UI {
 			size_t alignedOffset = (m_offset + alignment - 1) & ~(alignment - 1);
 			size_t requiredSize = alignedOffset + sizeof(T);
 
-			// Grow buffer if needed
+			// Arena is non-growable - memcpy would break vtables for polymorphic types
+			// If you hit this, increase the arena capacity at construction
 			if (requiredSize > m_capacity) {
-				Grow(requiredSize * 2);
+				throw std::runtime_error("MemoryArena capacity exceeded. Increase initial capacity.");
 			}
 
 			// Construct object in place
@@ -98,20 +104,6 @@ namespace UI {
 		}
 
 	  private:
-		void Grow(size_t newSize) {
-			auto newBuffer = std::make_unique<char[]>(newSize);
-			std::memcpy(newBuffer.get(), m_buffer.get(), m_offset);
-
-			// Update destructor pointers to new buffer locations
-			ptrdiff_t delta = newBuffer.get() - m_buffer.get();
-			for (auto& [ptr, destructor] : m_destructors) {
-				ptr = static_cast<char*>(ptr) + delta;
-			}
-
-			m_buffer = std::move(newBuffer);
-			m_capacity = newSize;
-		}
-
 		std::unique_ptr<char[]>						   m_buffer;
 		size_t										   m_capacity;
 		size_t										   m_offset;
