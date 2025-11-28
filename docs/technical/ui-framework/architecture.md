@@ -66,7 +66,7 @@ The base class for any element that can contain children:
 ```cpp
 class Component : public ILayer {
 protected:
-    MemoryArena m_arena{4096};           // Contiguous child storage
+    MemoryArena m_arena{64 * 1024};      // 64KB contiguous child storage
     std::vector<IComponent*> m_children; // Child pointers into arena
     uint16_t m_generation{0};            // For handle validation
 
@@ -143,15 +143,21 @@ Children are allocated in a contiguous memory arena instead of scattered heap al
 
 ```cpp
 class MemoryArena {
-    std::vector<std::byte> m_buffer;
+    std::unique_ptr<char[]> m_buffer;
+    size_t m_capacity;
     size_t m_offset{0};
 
 public:
+    explicit MemoryArena(size_t capacity = 64 * 1024);  // 64KB default
+
     template <typename T, typename... Args>
     T* Allocate(Args&&... args) {
         // Align and allocate in contiguous buffer
         size_t aligned = (m_offset + alignof(T) - 1) & ~(alignof(T) - 1);
-        T* ptr = new (m_buffer.data() + aligned) T(std::forward<Args>(args)...);
+        if (aligned + sizeof(T) > m_capacity) {
+            throw std::runtime_error("MemoryArena capacity exceeded");
+        }
+        T* ptr = new (m_buffer.get() + aligned) T(std::forward<Args>(args)...);
         m_offset = aligned + sizeof(T);
         return ptr;
     }
