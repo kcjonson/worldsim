@@ -1,7 +1,9 @@
 // Minimal SDF Test Scene - Single line of text to verify SDF rendering works
+// Uses the unified uber shader for combined shape + text rendering
 
 #include <font/font_renderer.h>
-#include <font/text_batch_renderer.h>
+#include <graphics/color.h>
+#include <primitives/batch_renderer.h>
 #include <primitives/primitives.h>
 #include <scene/scene.h>
 #include <scene/scene_manager.h>
@@ -11,73 +13,30 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <memory>
+#include <vector>
 
 namespace {
 
 	class SDFMinimalScene : public engine::IScene {
 	  public:
 		void OnEnter() override {
-			LOG_INFO(UI, "=== SDF Minimal Test Scene ===");
+			LOG_INFO(UI, "=== SDF Minimal Test Scene (Uber Shader) ===");
 
-			// Initialize FontRenderer
-			m_fontRenderer = std::make_unique<ui::FontRenderer>();
-			if (!m_fontRenderer->Initialize()) {
-				LOG_ERROR(UI, "Failed to initialize FontRenderer");
+			// Get font renderer from Primitives API (initialized in main.cpp)
+			m_fontRenderer = Renderer::Primitives::GetFontRenderer();
+			if (m_fontRenderer == nullptr) {
+				LOG_ERROR(UI, "FontRenderer not available from Primitives API");
 				return;
 			}
 
-			// Initialize TextBatchRenderer
-			m_textBatchRenderer = std::make_unique<ui::TextBatchRenderer>();
-			if (!m_textBatchRenderer->Initialize(m_fontRenderer.get())) {
-				LOG_ERROR(UI, "Failed to initialize TextBatchRenderer");
+			// Get batch renderer from Primitives API
+			m_batchRenderer = Renderer::Primitives::GetBatchRenderer();
+			if (m_batchRenderer == nullptr) {
+				LOG_ERROR(UI, "BatchRenderer not available from Primitives API");
 				return;
 			}
 
-			// IMPORTANT: Use LOGICAL pixels (window size), not PHYSICAL pixels (framebuffer size)
-			// On Retina displays, GL_VIEWPORT returns physical pixels (2x larger)
-			// But text coordinates and BatchRenderer primitives use logical pixels
-			// For consistency, we use the same logical dimensions as CoordinateSystem
-			//
-			// TODO: Make TextBatchRenderer use CoordinateSystem directly like BatchRenderer
-			int logicalWidth = 1344; // Logical pixel width (half of 2688 physical pixels on Retina)
-			int logicalHeight = 840; // Logical pixel height (half of 1680 physical pixels on Retina)
-
-			LOG_INFO(UI, "Setting projection for logical viewport: %dx%d", logicalWidth, logicalHeight);
-
-			// CRITICAL: glm::ortho() returns all zeros (rows 0 and 1) in this build environment!
-			// Manually construct orthographic projection matrix
-			// Formula for ortho(left, right, bottom, top, near, far):
-			//   Matrix[0][0] = 2 / (right - left)
-			//   Matrix[1][1] = 2 / (top - bottom)
-			//   Matrix[2][2] = -2 / (far - near)
-			//   Matrix[3][0] = -(right + left) / (right - left)
-			//   Matrix[3][1] = -(top + bottom) / (top - bottom)
-			//   Matrix[3][2] = -(far + near) / (far - near)
-
-			float left = 0.0f;
-			float right = static_cast<float>(logicalWidth);	  // 1344
-			float bottom = static_cast<float>(logicalHeight); // 840
-			float top = 0.0f;
-			float near = -1.0f;
-			float far = 1.0f;
-
-			glm::mat4 projection(1.0f);							 // Start with identity
-			projection[0][0] = 2.0f / (right - left);			 // Standard X-axis scaling
-			projection[1][1] = 2.0f / (top - bottom);			 // 2/(0-840) = -0.002380...
-			projection[2][2] = -2.0f / (far - near);			 // -2/2 = -1.0
-			projection[3][0] = -(right + left) / (right - left); // -1344/1344 = -1.0
-			projection[3][1] = -(top + bottom) / (top - bottom); // -840/-840 = 1.0
-			projection[3][2] = -(far + near) / (far - near);	 // 0/2 = 0.0
-
-			LOG_INFO(UI, "Manual projection matrix:");
-			LOG_INFO(UI, "  [0]: %.6f, %.6f, %.6f, %.6f", projection[0][0], projection[0][1], projection[0][2], projection[0][3]);
-			LOG_INFO(UI, "  [1]: %.6f, %.6f, %.6f, %.6f", projection[1][0], projection[1][1], projection[1][2], projection[1][3]);
-			LOG_INFO(UI, "  [2]: %.6f, %.6f, %.6f, %.6f", projection[2][0], projection[2][1], projection[2][2], projection[2][3]);
-			LOG_INFO(UI, "  [3]: %.6f, %.6f, %.6f, %.6f", projection[3][0], projection[3][1], projection[3][2], projection[3][3]);
-
-			m_textBatchRenderer->SetProjectionMatrix(projection);
-
-			LOG_INFO(UI, "SDF Minimal Scene initialized");
+			LOG_INFO(UI, "SDF Minimal Scene initialized with uber shader");
 		}
 
 		void HandleInput(float dt) override {}
@@ -89,38 +48,61 @@ namespace {
 			glClearColor(0.1f, 0.1f, 0.2f, 1.0f);
 			glClear(GL_COLOR_BUFFER_BIT);
 
-			float	  scale = 2.0f;					 // 2.0 = 32px (base is 16px)
-			glm::vec4 color(1.0f, 1.0f, 1.0f, 1.0f); // White
-			float	  zIndex = 0.0f;
+			// Begin frame for primitives
+			Renderer::Primitives::BeginFrame();
+
+			float scale = 2.0f; // 2.0 = 32px (base is 16px)
+			Foundation::Color textColor(1.0F, 1.0F, 1.0F, 1.0F); // White
 
 			// Render uppercase alphabet
-			glm::vec2 position1(50.0f, 150.0f);
-			m_textBatchRenderer->AddText("ABCDEFGHIJKLMNOPQRSTUVWXYZ", position1, scale, color, zIndex);
+			RenderTextLine("ABCDEFGHIJKLMNOPQRSTUVWXYZ", glm::vec2(50.0f, 150.0f), scale, textColor);
 
 			// Render lowercase alphabet
-			glm::vec2 position2(50.0f, 250.0f);
-			m_textBatchRenderer->AddText("abcdefghijklmnopqrstuvwxyz", position2, scale, color, zIndex);
+			RenderTextLine("abcdefghijklmnopqrstuvwxyz", glm::vec2(50.0f, 250.0f), scale, textColor);
 
 			// Render numbers for reference
-			glm::vec2 position3(50.0f, 350.0f);
-			m_textBatchRenderer->AddText("0123456789", position3, scale, color, zIndex);
+			RenderTextLine("0123456789", glm::vec2(50.0f, 350.0f), scale, textColor);
 
-			// Flush to render
-			m_textBatchRenderer->Flush();
+			// End frame flushes all batched geometry
+			Renderer::Primitives::EndFrame();
 		}
 
 		void OnExit() override {
-			m_textBatchRenderer.reset();
-			m_fontRenderer.reset();
+			// Font and batch renderers are owned by Primitives API, not this scene
+			m_fontRenderer = nullptr;
+			m_batchRenderer = nullptr;
 		}
 
-		std::string ExportState() override { return R"({"scene": "sdf_minimal", "description": "Minimal SDF rendering test"})"; }
+		std::string ExportState() override { return R"({"scene": "sdf_minimal", "description": "Minimal SDF rendering test with uber shader"})"; }
 
 		const char* GetName() const override { return "sdf_minimal"; }
 
 	  private:
-		std::unique_ptr<ui::FontRenderer>	   m_fontRenderer;
-		std::unique_ptr<ui::TextBatchRenderer> m_textBatchRenderer;
+		// Helper to render a line of text using the unified batch renderer
+		void RenderTextLine(const std::string& text, const glm::vec2& position, float scale, const Foundation::Color& color) {
+			if (m_fontRenderer == nullptr || m_batchRenderer == nullptr) {
+				return;
+			}
+
+			// Generate glyph quads
+			glm::vec4 glyphColor(color.r, color.g, color.b, color.a);
+			std::vector<ui::FontRenderer::GlyphQuad> glyphs;
+			m_fontRenderer->GenerateGlyphQuads(text, position, scale, glyphColor, glyphs);
+
+			// Add each glyph to the unified batch renderer
+			for (const auto& glyph : glyphs) {
+				m_batchRenderer->AddTextQuad(
+					Foundation::Vec2(glyph.position.x, glyph.position.y),
+					Foundation::Vec2(glyph.size.x, glyph.size.y),
+					Foundation::Vec2(glyph.uvMin.x, glyph.uvMin.y),
+					Foundation::Vec2(glyph.uvMax.x, glyph.uvMax.y),
+					color
+				);
+			}
+		}
+
+		ui::FontRenderer* m_fontRenderer = nullptr;
+		Renderer::BatchRenderer* m_batchRenderer = nullptr;
 	};
 
 	// Register scene
