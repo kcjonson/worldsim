@@ -12,13 +12,11 @@
 #include "coordinate_system/coordinate_system.h"
 #include "debug/debug_server.h"
 #include "font/font_renderer.h"
-#include "font/text_batch_renderer.h"
 #include "graphics/color.h"
 #include "graphics/rect.h"
 #include "math/types.h"
 #include "metrics/metrics_collector.h"
 #include "navigation_menu.h"
-#include "primitives/batch_renderer.h"
 #include "primitives/primitives.h"
 #include "utils/log.h"
 #include "utils/string_hash.h"
@@ -43,9 +41,8 @@ static std::optional<UI::NavigationMenu> g_navigationMenu;
 
 // GLFW callbacks
 // Global coordinate system (accessed by callbacks)
-static Renderer::CoordinateSystem*			  g_coordinateSystem = nullptr;
-static std::unique_ptr<ui::FontRenderer>	  g_fontRenderer = nullptr;
-static std::unique_ptr<ui::TextBatchRenderer> g_textBatchRenderer = nullptr;
+static Renderer::CoordinateSystem*		 g_coordinateSystem = nullptr;
+static std::unique_ptr<ui::FontRenderer> g_fontRenderer = nullptr;
 
 void ErrorCallback(int error, const char* description) {
 	LOG_ERROR(UI, "GLFW Error (%d): %s", error, description);
@@ -254,21 +251,13 @@ int main(int argc, char* argv[]) {
 		// This ensures x=20,y=20 means the same thing for text and shapes
 		glm::mat4 projection = coordinateSystem.CreateScreenSpaceProjection();
 		g_fontRenderer->SetProjectionMatrix(projection);
-		// Set font renderer in Primitives API for Text shapes
+
+		// Set font renderer in Primitives API for Text shapes (provides font metrics)
 		Renderer::Primitives::SetFontRenderer(g_fontRenderer.get());
 
-		// Initialize text batch renderer for batched SDF text rendering
-		g_textBatchRenderer = std::make_unique<ui::TextBatchRenderer>();
-		g_textBatchRenderer->Initialize(g_fontRenderer.get());
-		g_textBatchRenderer->SetProjectionMatrix(projection);
-		Renderer::Primitives::SetTextBatchRenderer(g_textBatchRenderer.get());
-
-		// Register flush callback so Primitives::EndFrame() automatically flushes text batches
-		Renderer::Primitives::SetTextFlushCallback([]() {
-			if (g_textBatchRenderer) {
-				g_textBatchRenderer->Flush();
-			}
-		});
+		// Configure the unified BatchRenderer with the font atlas for text rendering
+		// The uber shader handles both SDF shapes and MSDF text in a single draw call
+		Renderer::Primitives::SetFontAtlas(g_fontRenderer->GetAtlasTexture(), 4.0F);
 
 		// Register frame update callback for LRU cache tracking
 		Renderer::Primitives::SetFrameUpdateCallback([]() {
@@ -277,7 +266,7 @@ int main(int argc, char* argv[]) {
 			}
 		});
 
-		LOG_INFO(UI, "Font renderer and text batch renderer initialized successfully");
+		LOG_INFO(UI, "Font renderer initialized with unified uber shader");
 	}
 
 	// Initialize metrics collection
@@ -434,11 +423,7 @@ int main(int argc, char* argv[]) {
 
 	// Scene cleanup is handled above via SceneManager::Shutdown()
 
-	// Cleanup text batch renderer and font renderer
-	Renderer::Primitives::SetTextFlushCallback(nullptr);
-	Renderer::Primitives::SetTextBatchRenderer(nullptr);
-	g_textBatchRenderer.reset();
-
+	// Cleanup font renderer
 	Renderer::Primitives::SetFontRenderer(nullptr);
 	g_fontRenderer.reset();
 

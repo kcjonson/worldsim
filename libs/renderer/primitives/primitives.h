@@ -22,13 +22,13 @@ namespace Renderer { // NOLINT(readability-identifier-naming)
 	// Forward declarations
 	class Renderer;
 	class CoordinateSystem;
+	class BatchRenderer;
 
 } // namespace Renderer
 
 // Forward declaration from ui namespace
 namespace ui {
 	class FontRenderer;
-	class TextBatchRenderer;
 }
 
 namespace Renderer {
@@ -66,30 +66,24 @@ namespace Renderer {
 		// Returns: Pointer to FontRenderer, or nullptr if not set
 		ui::FontRenderer* GetFontRenderer();
 
-		// Set the text batch renderer for batched SDF text rendering.
+		// Set the font atlas texture for text rendering.
 		//
-		// The TextBatchRenderer collects all text draw calls and renders them
-		// in sorted z-order after all other rendering is complete.
+		// This configures the BatchRenderer with the MSDF font atlas texture
+		// that will be used for text rendering. Must be called after Init()
+		// and before rendering any text.
 		//
-		// Example:
-		//   auto textBatchRenderer = std::make_unique<ui::TextBatchRenderer>();
-		//   textBatchRenderer->Initialize(&fontRenderer);
-		//   Renderer::Primitives::SetTextBatchRenderer(textBatchRenderer.get());
-		void SetTextBatchRenderer(ui::TextBatchRenderer* batchRenderer);
+		// Parameters:
+		//   - atlasTexture: OpenGL texture ID of the MSDF font atlas
+		//   - pixelRange: Distance field pixel range (default 4.0, from atlas generation)
+		void SetFontAtlas(unsigned int atlasTexture, float pixelRange = 4.0F);
 
-		// Get the current text batch renderer instance.
+		// Get the internal batch renderer for direct text rendering.
 		//
-		// Returns: Pointer to TextBatchRenderer, or nullptr if not set
-		ui::TextBatchRenderer* GetTextBatchRenderer();
-
-		// Set a callback to flush text rendering at end of frame.
+		// Used internally by Text shapes to call AddTextQuad() for batched
+		// text rendering with proper z-ordering alongside shapes.
 		//
-		// This allows the ui library to register TextBatchRenderer::Flush() without
-		// creating a circular dependency (renderer → ui → renderer).
-		//
-		// The callback will be invoked by EndFrame() after flushing shape batches.
-		using FlushCallback = void (*)();
-		void SetTextFlushCallback(FlushCallback callback);
+		// Returns: Pointer to BatchRenderer, or nullptr if not initialized
+		BatchRenderer* GetBatchRenderer();
 
 		// Set a callback to update frame counter for FontRenderer cache LRU tracking.
 		//

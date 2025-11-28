@@ -3,7 +3,6 @@ add_library(ui
     core/render_context.cpp
     stb_image.cpp
     font/font_renderer.cpp
-    font/text_batch_renderer.cpp
     shapes/shapes.cpp
     components/button/button.cpp
     components/text_input/text_input.cpp

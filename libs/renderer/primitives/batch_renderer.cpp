@@ -1,5 +1,5 @@
-// Batch Renderer implementation.
-// Accumulates 2D geometry and renders in optimized batches to minimize draw calls.
+// Uber Batch Renderer implementation.
+// Accumulates 2D geometry (shapes + text) and renders in optimized batches.
 
 #include "primitives/batch_renderer.h"
 #include "coordinate_system/coordinate_system.h"
@@ -19,15 +19,16 @@ namespace Renderer {
 	}
 
 	void BatchRenderer::Init() {
-		// Load shader from files
-		if (!m_shader.LoadFromFile("primitive.vert", "primitive.frag")) {
-			std::cerr << "Failed to load primitive shaders!" << std::endl;
+		// Load uber shader (unified shapes + text)
+		if (!m_shader.LoadFromFile("uber.vert", "uber.frag")) {
+			std::cerr << "Failed to load uber shaders!" << std::endl;
 			return;
 		}
 
 		// Get uniform locations
 		m_projectionLoc = glGetUniformLocation(m_shader.GetProgram(), "u_projection");
 		m_transformLoc = glGetUniformLocation(m_shader.GetProgram(), "u_transform");
+		m_atlasLoc = glGetUniformLocation(m_shader.GetProgram(), "u_atlas");
 
 		// Create VAO/VBO/IBO
 		glGenVertexArrays(1, &m_vao);
@@ -41,23 +42,23 @@ namespace Renderer {
 
 		// Position attribute (location = 0)
 		glEnableVertexAttribArray(0);
-		glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(PrimitiveVertex), (void*)offsetof(PrimitiveVertex, position));
+		glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(UberVertex), (void*)offsetof(UberVertex, position));
 
-		// RectLocalPos attribute (location = 1)
+		// TexCoord attribute (location = 1) - UV for text, rectLocalPos for shapes
 		glEnableVertexAttribArray(1);
-		glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(PrimitiveVertex), (void*)offsetof(PrimitiveVertex, rectLocalPos));
+		glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(UberVertex), (void*)offsetof(UberVertex, texCoord));
 
 		// Color attribute (location = 2)
 		glEnableVertexAttribArray(2);
-		glVertexAttribPointer(2, 4, GL_FLOAT, GL_FALSE, sizeof(PrimitiveVertex), (void*)offsetof(PrimitiveVertex, color));
+		glVertexAttribPointer(2, 4, GL_FLOAT, GL_FALSE, sizeof(UberVertex), (void*)offsetof(UberVertex, color));
 
-		// BorderData attribute (location = 3)
+		// Data1 attribute (location = 3) - borderData for shapes
 		glEnableVertexAttribArray(3);
-		glVertexAttribPointer(3, 4, GL_FLOAT, GL_FALSE, sizeof(PrimitiveVertex), (void*)offsetof(PrimitiveVertex, borderData));
+		glVertexAttribPointer(3, 4, GL_FLOAT, GL_FALSE, sizeof(UberVertex), (void*)offsetof(UberVertex, data1));
 
-		// ShapeParams attribute (location = 4)
+		// Data2 attribute (location = 4) - shapeParams for shapes, (pixelRange, 0, 0, -1) for text
 		glEnableVertexAttribArray(4);
-		glVertexAttribPointer(4, 4, GL_FLOAT, GL_FALSE, sizeof(PrimitiveVertex), (void*)offsetof(PrimitiveVertex, shapeParams));
+		glVertexAttribPointer(4, 4, GL_FLOAT, GL_FALSE, sizeof(UberVertex), (void*)offsetof(UberVertex, data2));
 
 		// Bind index buffer
 		glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m_ibo);
@@ -93,26 +94,23 @@ namespace Renderer {
 		uint32_t baseIndex = static_cast<uint32_t>(m_vertices.size());
 
 		// Calculate rect center and half-dimensions for SDF
-		Foundation::Vec2 center = bounds.Center();
-		float			 halfW = bounds.width * 0.5F;
-		float			 halfH = bounds.height * 0.5F;
+		float halfW = bounds.width * 0.5F;
+		float halfH = bounds.height * 0.5F;
 
 		// Fill color
 		Foundation::Vec4 colorVec = fillColor.ToVec4();
 
 		// Pack border data (color RGB + width)
 		Foundation::Vec4 borderData(0.0F, 0.0F, 0.0F, 0.0F);
+		float borderWidth = 0.0F;
+		float borderPosEnum = 1.0F; // Default to Center
 		if (border.has_value()) {
 			borderData = Foundation::Vec4(border->color.r, border->color.g, border->color.b, border->width);
+			borderWidth = border->width;
 			// Use corner radius from border if provided
 			if (border->cornerRadius > 0.0F) {
 				cornerRadius = border->cornerRadius;
 			}
-		}
-
-		// Pack shape parameters (halfWidth, halfHeight, cornerRadius, borderPosition)
-		float borderPosEnum = 1.0F; // Default to Center
-		if (border.has_value()) {
 			switch (border->position) {
 				case Foundation::BorderPosition::Inside:
 					borderPosEnum = 0.0F;
@@ -125,13 +123,36 @@ namespace Renderer {
 					break;
 			}
 		}
+
+		// Calculate how much the border extends outside the shape bounds
+		// Inside (0): border entirely inside, no expansion needed
+		// Center (1): border straddles edge, half extends outside
+		// Outside (2): border entirely outside, full width extends outside
+		float borderOuterExtent = 0.0F;
+		if (borderPosEnum == 1.0F) {
+			borderOuterExtent = borderWidth * 0.5F; // Center: half outside
+		} else if (borderPosEnum == 2.0F) {
+			borderOuterExtent = borderWidth; // Outside: full width outside
+		}
+
+		// Expand the quad to cover the border that extends outside the shape
+		float expandedHalfW = halfW + borderOuterExtent;
+		float expandedHalfH = halfH + borderOuterExtent;
+
+		// Calculate expanded screen-space bounds
+		float centerX = bounds.x + halfW;
+		float centerY = bounds.y + halfH;
+
+		// Pack shape parameters (halfWidth, halfHeight, cornerRadius, borderPosition)
+		// Note: shapeParams still uses the ORIGINAL halfW/halfH for SDF calculation
 		Foundation::Vec4 shapeParams(halfW, halfH, cornerRadius, borderPosEnum);
 
-		// Add 4 vertices with rect-local coordinates
+		// Add 4 vertices with expanded screen positions but rect-local coordinates
+		// that extend beyond the original shape bounds
 		// Top-left corner
 		m_vertices.push_back(
-			{bounds.TopLeft(),
-			 Foundation::Vec2(-halfW, -halfH), // Rect-local: top-left
+			{Foundation::Vec2(centerX - expandedHalfW, centerY - expandedHalfH),
+			 Foundation::Vec2(-expandedHalfW, -expandedHalfH), // Rect-local: top-left (expanded)
 			 colorVec,
 			 borderData,
 			 shapeParams}
@@ -139,8 +160,8 @@ namespace Renderer {
 
 		// Top-right corner
 		m_vertices.push_back(
-			{bounds.TopRight(),
-			 Foundation::Vec2(halfW, -halfH), // Rect-local: top-right
+			{Foundation::Vec2(centerX + expandedHalfW, centerY - expandedHalfH),
+			 Foundation::Vec2(expandedHalfW, -expandedHalfH), // Rect-local: top-right (expanded)
 			 colorVec,
 			 borderData,
 			 shapeParams}
@@ -148,8 +169,8 @@ namespace Renderer {
 
 		// Bottom-right corner
 		m_vertices.push_back(
-			{bounds.BottomRight(),
-			 Foundation::Vec2(halfW, halfH), // Rect-local: bottom-right
+			{Foundation::Vec2(centerX + expandedHalfW, centerY + expandedHalfH),
+			 Foundation::Vec2(expandedHalfW, expandedHalfH), // Rect-local: bottom-right (expanded)
 			 colorVec,
 			 borderData,
 			 shapeParams}
@@ -157,8 +178,8 @@ namespace Renderer {
 
 		// Bottom-left corner
 		m_vertices.push_back(
-			{bounds.BottomLeft(),
-			 Foundation::Vec2(-halfW, halfH), // Rect-local: bottom-left
+			{Foundation::Vec2(centerX - expandedHalfW, centerY + expandedHalfH),
+			 Foundation::Vec2(-expandedHalfW, expandedHalfH), // Rect-local: bottom-left (expanded)
 			 colorVec,
 			 borderData,
 			 shapeParams}
@@ -185,18 +206,20 @@ namespace Renderer {
 
 		Foundation::Vec4 colorVec = color.ToVec4();
 
-		// Default SDF data (not used for tessellated shapes, but required for vertex format)
+		// Default data (not used for tessellated shapes, but required for vertex format)
+		// Use borderPosition=1 (Center) so shader treats these as shapes, not text
 		Foundation::Vec2 zeroVec2(0.0F, 0.0F);
 		Foundation::Vec4 zeroVec4(0.0F, 0.0F, 0.0F, 0.0F);
+		Foundation::Vec4 shapeParams(0.0F, 0.0F, 0.0F, 1.0F); // borderPos=1 marks as shape
 
 		// Add all vertices
 		for (size_t i = 0; i < vertexCount; ++i) {
 			m_vertices.push_back({
 				vertices[i],
-				zeroVec2, // rectLocalPos (unused)
+				zeroVec2,	  // texCoord (unused for triangles)
 				colorVec,
-				zeroVec4, // borderData (unused)
-				zeroVec4  // shapeParams (unused)
+				zeroVec4,	  // data1 (unused)
+				shapeParams	  // data2 with borderPos >= 0 marks as shape
 			});
 		}
 
@@ -206,14 +229,95 @@ namespace Renderer {
 		}
 	}
 
+	void BatchRenderer::AddTextQuad(
+		const Foundation::Vec2&	 position,
+		const Foundation::Vec2&	 size,
+		const Foundation::Vec2&	 uvMin,
+		const Foundation::Vec2&	 uvMax,
+		const Foundation::Color& color
+	) {
+		uint32_t baseIndex = static_cast<uint32_t>(m_vertices.size());
+
+		Foundation::Vec4 colorVec = color.ToVec4();
+
+		// Text data packing:
+		// data1 = unused (0,0,0,0)
+		// data2 = (pixelRange, 0, 0, -1) where -1 signals text rendering mode
+		Foundation::Vec4 zeroVec4(0.0F, 0.0F, 0.0F, 0.0F);
+		Foundation::Vec4 textParams(m_fontPixelRange, 0.0F, 0.0F, kRenderModeText);
+
+		// Add 4 vertices for glyph quad
+		// Note: UV Y coordinates are flipped for OpenGL coordinate system
+
+		// Top-left
+		m_vertices.push_back({
+			position,
+			Foundation::Vec2(uvMin.x, uvMax.y), // UV flipped
+			colorVec,
+			zeroVec4,
+			textParams
+		});
+
+		// Top-right
+		m_vertices.push_back({
+			Foundation::Vec2(position.x + size.x, position.y),
+			Foundation::Vec2(uvMax.x, uvMax.y), // UV flipped
+			colorVec,
+			zeroVec4,
+			textParams
+		});
+
+		// Bottom-right
+		m_vertices.push_back({
+			Foundation::Vec2(position.x + size.x, position.y + size.y),
+			Foundation::Vec2(uvMax.x, uvMin.y), // UV flipped
+			colorVec,
+			zeroVec4,
+			textParams
+		});
+
+		// Bottom-left
+		m_vertices.push_back({
+			Foundation::Vec2(position.x, position.y + size.y),
+			Foundation::Vec2(uvMin.x, uvMin.y), // UV flipped
+			colorVec,
+			zeroVec4,
+			textParams
+		});
+
+		// Add 6 indices (2 triangles)
+		m_indices.push_back(baseIndex + 0);
+		m_indices.push_back(baseIndex + 1);
+		m_indices.push_back(baseIndex + 2);
+
+		m_indices.push_back(baseIndex + 0);
+		m_indices.push_back(baseIndex + 2);
+		m_indices.push_back(baseIndex + 3);
+	}
+
+	void BatchRenderer::SetFontAtlas(GLuint atlasTexture, float pixelRange) {
+		m_fontAtlas = atlasTexture;
+		m_fontPixelRange = pixelRange;
+	}
+
 	void BatchRenderer::Flush() {
 		if (m_vertices.empty()) {
 			return;
 		}
 
+		// Enable blending for transparency (shapes and text both need this)
+		glEnable(GL_BLEND);
+		glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+		// Disable depth testing for 2D rendering
+		glDisable(GL_DEPTH_TEST);
+
+		// Disable face culling (quads may be in either winding order)
+		glDisable(GL_CULL_FACE);
+
 		// Upload vertex data to GPU
 		glBindBuffer(GL_ARRAY_BUFFER, m_vbo);
-		glBufferData(GL_ARRAY_BUFFER, m_vertices.size() * sizeof(PrimitiveVertex), m_vertices.data(), GL_DYNAMIC_DRAW);
+		glBufferData(GL_ARRAY_BUFFER, m_vertices.size() * sizeof(UberVertex), m_vertices.data(), GL_DYNAMIC_DRAW);
 
 		// Upload index data to GPU
 		glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m_ibo);
@@ -237,10 +341,24 @@ namespace Renderer {
 		glUniformMatrix4fv(m_projectionLoc, 1, GL_FALSE, glm::value_ptr(projection));
 		glUniformMatrix4fv(m_transformLoc, 1, GL_FALSE, glm::value_ptr(transform));
 
+		// Bind font atlas texture (always bound, shader ignores it for shapes)
+		if (m_fontAtlas != 0) {
+			glActiveTexture(GL_TEXTURE0);
+			glBindTexture(GL_TEXTURE_2D, m_fontAtlas);
+			glUniform1i(m_atlasLoc, 0);
+		}
+
 		// Draw
 		glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(m_indices.size()), GL_UNSIGNED_INT, nullptr);
 
 		m_drawCallCount++;
+
+		// Cleanup
+		glBindVertexArray(0);
+		if (m_fontAtlas != 0) {
+			glBindTexture(GL_TEXTURE_2D, 0);
+		}
+		glDisable(GL_BLEND);
 
 		// Clear buffers for next batch
 		m_vertices.clear();

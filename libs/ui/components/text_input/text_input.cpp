@@ -2,12 +2,12 @@
 #include "core/render_context.h"
 #include "focus/focus_manager.h"
 #include "font/font_renderer.h"
-#include "font/text_batch_renderer.h"
 #include "shapes/shapes.h"
 #include "utils/utf8.h"
 #include <algorithm>
 #include <clipboard/clipboard_manager.h>
 #include <input/input_manager.h>
+#include <primitives/batch_renderer.h>
 #include <primitives/primitives.h>
 
 namespace {
@@ -610,13 +610,13 @@ namespace UI {
 			return;
 		}
 
-		// Get batch renderer
-		ui::TextBatchRenderer* batchRenderer = Renderer::Primitives::GetTextBatchRenderer();
+		// Get unified batch renderer
+		Renderer::BatchRenderer* batchRenderer = Renderer::Primitives::GetBatchRenderer();
 		if (batchRenderer == nullptr) {
 			return;
 		}
 
-		// Get font renderer for metrics
+		// Get font renderer for metrics and glyph generation
 		ui::FontRenderer* fontRenderer = Renderer::Primitives::GetFontRenderer();
 		if (fontRenderer == nullptr) {
 			return;
@@ -633,15 +633,22 @@ namespace UI {
 		float ascent = fontRenderer->GetAscent(scale);
 		float baselineY = m_position.y + (m_size.y - ascent) * 0.5F;
 
-		// Add text to batch
-		short zIndex = RenderContext::GetZIndex();
-		batchRenderer->AddText(
-			m_text,
-			glm::vec2(textX, baselineY),
-			scale,
-			glm::vec4(m_style.textColor.r, m_style.textColor.g, m_style.textColor.b, m_style.textColor.a),
-			zIndex + 2 // Above selection (+1), below cursor (+3)
-		);
+		// Generate glyph quads using FontRenderer
+		glm::vec4 glyphColor(m_style.textColor.r, m_style.textColor.g, m_style.textColor.b, m_style.textColor.a);
+		std::vector<ui::FontRenderer::GlyphQuad> glyphs;
+		fontRenderer->GenerateGlyphQuads(m_text, glm::vec2(textX, baselineY), scale, glyphColor, glyphs);
+
+		// Add each glyph to the unified batch renderer
+		Foundation::Color textColor(m_style.textColor.r, m_style.textColor.g, m_style.textColor.b, m_style.textColor.a);
+		for (const auto& glyph : glyphs) {
+			batchRenderer->AddTextQuad(
+				Foundation::Vec2(glyph.position.x, glyph.position.y),
+				Foundation::Vec2(glyph.size.x, glyph.size.y),
+				Foundation::Vec2(glyph.uvMin.x, glyph.uvMin.y),
+				Foundation::Vec2(glyph.uvMax.x, glyph.uvMax.y),
+				textColor
+			);
+		}
 	}
 
 	void TextInput::RenderCursor() const {
@@ -727,13 +734,13 @@ namespace UI {
 			return;
 		}
 
-		// Get batch renderer
-		ui::TextBatchRenderer* batchRenderer = Renderer::Primitives::GetTextBatchRenderer();
+		// Get unified batch renderer
+		Renderer::BatchRenderer* batchRenderer = Renderer::Primitives::GetBatchRenderer();
 		if (batchRenderer == nullptr) {
 			return;
 		}
 
-		// Get font renderer for metrics
+		// Get font renderer for metrics and glyph generation
 		ui::FontRenderer* fontRenderer = Renderer::Primitives::GetFontRenderer();
 		if (fontRenderer == nullptr) {
 			return;
@@ -750,15 +757,22 @@ namespace UI {
 		float ascent = fontRenderer->GetAscent(scale);
 		float baselineY = m_position.y + (m_size.y - ascent) * 0.5F;
 
-		// Add placeholder to batch
-		short zIndex = RenderContext::GetZIndex();
-		batchRenderer->AddText(
-			m_placeholder,
-			glm::vec2(textX, baselineY),
-			scale,
-			glm::vec4(m_style.placeholderColor.r, m_style.placeholderColor.g, m_style.placeholderColor.b, m_style.placeholderColor.a),
-			zIndex + 2 // Same layer as regular text
-		);
+		// Generate glyph quads using FontRenderer
+		glm::vec4 glyphColor(m_style.placeholderColor.r, m_style.placeholderColor.g, m_style.placeholderColor.b, m_style.placeholderColor.a);
+		std::vector<ui::FontRenderer::GlyphQuad> glyphs;
+		fontRenderer->GenerateGlyphQuads(m_placeholder, glm::vec2(textX, baselineY), scale, glyphColor, glyphs);
+
+		// Add each glyph to the unified batch renderer
+		Foundation::Color placeholderColor(m_style.placeholderColor.r, m_style.placeholderColor.g, m_style.placeholderColor.b, m_style.placeholderColor.a);
+		for (const auto& glyph : glyphs) {
+			batchRenderer->AddTextQuad(
+				Foundation::Vec2(glyph.position.x, glyph.position.y),
+				Foundation::Vec2(glyph.size.x, glyph.size.y),
+				Foundation::Vec2(glyph.uvMin.x, glyph.uvMin.y),
+				Foundation::Vec2(glyph.uvMax.x, glyph.uvMax.y),
+				placeholderColor
+			);
+		}
 	}
 
 	// ============================================================================

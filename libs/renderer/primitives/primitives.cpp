@@ -14,9 +14,8 @@
 #include <stack>
 #include <vector>
 
-// NOTE: TextBatchRenderer include deliberately omitted to avoid circular dependency
-// (renderer → ui → renderer). Text rendering is implemented in ui/shapes/shapes.cpp
-// which has access to both renderer (Primitives API) and ui (TextBatchRenderer) libraries.
+// Text rendering is implemented via the unified uber shader in BatchRenderer.
+// Text shapes call BatchRenderer::AddTextQuad() directly to batch text with shapes.
 
 namespace Renderer::Primitives {
 
@@ -61,8 +60,6 @@ namespace Renderer::Primitives {
 	static std::unique_ptr<BatchRenderer> g_batchRenderer = nullptr;
 	static CoordinateSystem*			  g_coordinateSystem = nullptr;
 	static ui::FontRenderer*			  g_fontRenderer = nullptr;
-	static ui::TextBatchRenderer*		  g_textBatchRenderer = nullptr;
-	static FlushCallback				  g_textFlushCallback = nullptr;
 	static FrameUpdateCallback			  g_frameUpdateCallback = nullptr;
 	static std::stack<Foundation::Rect>	  g_scissorStack;
 	static std::stack<Foundation::Mat4>	  g_transformStack;
@@ -106,16 +103,14 @@ namespace Renderer::Primitives {
 		return g_fontRenderer;
 	}
 
-	void SetTextBatchRenderer(ui::TextBatchRenderer* batchRenderer) {
-		g_textBatchRenderer = batchRenderer;
+	void SetFontAtlas(unsigned int atlasTexture, float pixelRange) {
+		if (g_batchRenderer != nullptr) {
+			g_batchRenderer->SetFontAtlas(atlasTexture, pixelRange);
+		}
 	}
 
-	ui::TextBatchRenderer* GetTextBatchRenderer() {
-		return g_textBatchRenderer;
-	}
-
-	void SetTextFlushCallback(FlushCallback callback) {
-		g_textFlushCallback = callback;
+	BatchRenderer* GetBatchRenderer() {
+		return g_batchRenderer.get();
 	}
 
 	void SetFrameUpdateCallback(FrameUpdateCallback callback) {
@@ -157,15 +152,10 @@ namespace Renderer::Primitives {
 	}
 
 	void EndFrame() {
-		// Flush batched shapes
+		// Flush all batched geometry (shapes + text) in a single draw call
+		// The uber shader handles both SDF shapes and MSDF text
 		if (g_batchRenderer != nullptr) {
 			g_batchRenderer->EndFrame();
-		}
-
-		// Flush batched text via callback (renders after shapes for proper z-ordering)
-		// This callback pattern avoids circular dependency (renderer → ui → renderer)
-		if (g_textFlushCallback != nullptr) {
-			g_textFlushCallback();
 		}
 	}
 
@@ -355,14 +345,13 @@ namespace Renderer::Primitives {
 	}
 
 	void DrawText(const TextArgs& args) {
-		// NOTE: Implementation deliberately omitted to avoid circular dependency.
 		// Text rendering is implemented in ui/shapes/shapes.cpp (Text::Render())
-		// which has access to TextBatchRenderer.
+		// which calls BatchRenderer::AddTextQuad() directly for each glyph.
 		//
 		// This function exists in the API for:
 		// 1. Documentation of the text rendering interface
-		// 2. Future refactoring if we move TextBatchRenderer to renderer library
-		// 3. Consistency with other primitive drawing functions
+		// 2. Consistency with other primitive drawing functions
+		// 3. Future direct DrawText implementation if needed
 		(void)args; // Suppress unused parameter warning
 	}
 

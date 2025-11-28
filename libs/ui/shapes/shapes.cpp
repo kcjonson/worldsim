@@ -1,7 +1,7 @@
 #include "shapes/shapes.h"
 #include "font/font_renderer.h"
-#include "font/text_batch_renderer.h"
 #include "core/render_context.h"
+#include "primitives/batch_renderer.h"
 #include "primitives/primitives.h"
 #include "utils/log.h"
 #include <glm/glm.hpp>
@@ -30,13 +30,13 @@ namespace UI {
 	}
 
 	void Text::Render() {
-		// Get text batch renderer from Primitives API
-		ui::TextBatchRenderer* textBatchRenderer = Renderer::Primitives::GetTextBatchRenderer();
-		if (textBatchRenderer == nullptr || text.empty()) {
-			return; // No text batch renderer available or nothing to render
+		// Get batch renderer for unified shape + text rendering
+		Renderer::BatchRenderer* batchRenderer = Renderer::Primitives::GetBatchRenderer();
+		if (batchRenderer == nullptr || text.empty()) {
+			return; // No batch renderer available or nothing to render
 		}
 
-		// Get font renderer for alignment calculations
+		// Get font renderer for glyph generation and alignment calculations
 		ui::FontRenderer* fontRenderer = Renderer::Primitives::GetFontRenderer();
 		if (fontRenderer == nullptr) {
 			return; // No font renderer available for measurements
@@ -123,15 +123,23 @@ namespace UI {
 			}
 		}
 
-		// Get current z-index from render context (set by Component before render)
-		short zIdx = RenderContext::GetZIndex();
+		// Generate glyph quads using FontRenderer
+		glm::vec4 glyphColor(style.color.r, style.color.g, style.color.b, style.color.a);
+		std::vector<ui::FontRenderer::GlyphQuad> glyphs;
+		fontRenderer->GenerateGlyphQuads(text, glm::vec2(alignedPos.x, alignedPos.y), scale, glyphColor, glyphs);
 
-		// Add text to batch renderer with z-index for proper sorting
-		// NOTE: We call TextBatchRenderer directly here rather than using Primitives::DrawText()
-		// to avoid circular dependency (renderer → ui → renderer). This is fine since shapes.cpp
-		// is in the ui library which has access to both renderer and ui libraries.
-		glm::vec4 color(style.color.r, style.color.g, style.color.b, style.color.a);
-		textBatchRenderer->AddText(text, glm::vec2(alignedPos.x, alignedPos.y), scale, color, zIdx);
+		// Add each glyph to the unified batch renderer
+		// Text is interleaved with shapes in submission order, preserving correct z-ordering
+		Foundation::Color textColor(style.color.r, style.color.g, style.color.b, style.color.a);
+		for (const auto& glyph : glyphs) {
+			batchRenderer->AddTextQuad(
+				Foundation::Vec2(glyph.position.x, glyph.position.y),
+				Foundation::Vec2(glyph.size.x, glyph.size.y),
+				Foundation::Vec2(glyph.uvMin.x, glyph.uvMin.y),
+				Foundation::Vec2(glyph.uvMax.x, glyph.uvMax.y),
+				textColor
+			);
+		}
 	}
 
 } // namespace UI
