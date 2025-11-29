@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2025-11-28 (Added Uber Shader epic, Component Architecture refactored)
+Last Updated: 2025-11-29 (Completed Phase 1 Clipping - Shader Fast Path)
 
 ## Epic/Story/Task Template
 
@@ -322,6 +322,37 @@ Use this template for all work items:
   - [x] Update TextInput to use ClipboardManager instead of GLFW
 - [x] Fix BASE_FONT_SIZE Constant
   - [x] Move to file-level kBaseFontSize constant in anonymous namespace
+
+---
+
+### 🔄 Clipping and Scrolling System
+**Spec/Documentation:** `/docs/technical/ui-framework/clipping.md`
+**Dependencies:** None
+**Status:** in progress
+
+**Tasks:**
+- [x] Phase 1: Shader Fast Path (Rect Clipping) ✅ COMPLETE
+  - [x] Create clip_types.h with ClipShape, ClipMode, ClipSettings
+  - [x] Add clipBounds to UberVertex struct
+  - [x] Update VAO setup in batch_renderer.cpp
+  - [x] Add clip test to uber.frag shader
+  - [x] Implement PushClip/PopClip in primitives.cpp
+  - [x] Fix DPI scaling for Retina displays (physical vs logical pixels)
+- [x] Demo Scenes ✅ COMPLETE
+  - [x] Create clip_scene.cpp with visual feature tests (shapes + text clipping)
+  - [x] Modify vector_perf_scene.cpp for performance testing (C key toggle)
+- [ ] Phase 2: Content Offset (Scrolling)
+  - [ ] Add clip and contentOffset properties to Container
+  - [ ] Implement Container::Render() with clip/offset
+- [ ] Automated Performance Benchmarks
+  - [ ] Create clipping.bench.cpp
+- [ ] Stub Functions for Future Phases
+  - [ ] Add stubs for ClipRoundedRect, ClipCircle, ClipPath
+  - [ ] Add stub for ClipMode::Outside
+
+**Known Issues:**
+- Primitives::DrawText is a stub (dependency architecture issue - see development-log.md 2025-11-29)
+- Use UI::Text component for text rendering instead
 
 ---
 

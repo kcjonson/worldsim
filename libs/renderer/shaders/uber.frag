@@ -7,11 +7,18 @@ in vec2 v_texCoord;
 in vec4 v_color;
 in vec4 v_data1;
 in vec4 v_data2;
+in vec4 v_clipBounds;  // Clip rect (minX, minY, maxX, maxY) or (0,0,0,0) for no clip
 
 out vec4 FragColor;
 
 // MSDF font atlas texture (bound once per frame, ignored for shapes)
 uniform sampler2D u_atlas;
+
+// Viewport height for Y-coordinate flip (OpenGL origin is bottom-left, UI is top-left)
+// NOTE: This is the PHYSICAL framebuffer height in physical pixels
+uniform float u_viewportHeight;
+// Pixel ratio for DPI scaling (physical pixels / logical pixels)
+uniform float u_pixelRatio;
 
 // ============================================================================
 // SHAPE SDF FUNCTIONS (from primitive.frag)
@@ -51,6 +58,24 @@ float screenPxRange(float pixelRange) {
 // ============================================================================
 
 void main() {
+	// ========== FAST-PATH RECT CLIPPING ==========
+	// Clip bounds check: (minX, minY, maxX, maxY) in UI coordinates (top-left origin, logical pixels)
+	// A clipBounds of (0,0,0,0) means no clipping (maxX <= minX check detects this)
+	if (v_clipBounds.z > v_clipBounds.x) {
+		// Scale clip bounds from logical pixels to physical pixels for gl_FragCoord comparison
+		vec4 physicalClipBounds = v_clipBounds * u_pixelRatio;
+
+		// Convert gl_FragCoord.y from OpenGL coordinates (bottom-left origin, physical pixels)
+		// to UI coordinates (top-left origin, physical pixels)
+		float physicalY = u_viewportHeight - gl_FragCoord.y;
+
+		// Discard if outside clip bounds (all comparisons in physical pixels)
+		if (gl_FragCoord.x < physicalClipBounds.x || gl_FragCoord.x > physicalClipBounds.z ||
+			physicalY < physicalClipBounds.y || physicalY > physicalClipBounds.w) {
+			discard;
+		}
+	}
+
 	// Render mode detection:
 	// - Shapes: v_data2.w >= 0 (borderPosition: 0=Inside, 1=Center, 2=Outside)
 	// - Text:   v_data2.w < 0 (renderMode = -1.0)

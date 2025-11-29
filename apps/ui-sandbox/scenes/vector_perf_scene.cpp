@@ -1,6 +1,8 @@
 // Vector Performance Scene - 10,000 Stars Stress Test
 // Phase 1 validation: Prove real-time tessellation at scale
+// Press 'C' to toggle clipping for performance comparison
 
+#include <graphics/clip_types.h>
 #include <graphics/color.h>
 #include <primitives/primitives.h>
 #include <scene/scene.h>
@@ -41,8 +43,17 @@ namespace {
 			LOG_INFO(UI, "Total vertices: %zu", CalculateTotalVertices());
 		}
 
-		void HandleInput(float dt) override {
-			// No input handling needed - performance test scene
+		void HandleInput(float /*dt*/) override {
+			// Toggle clipping with 'C' key
+			static bool lastKeyState = false;
+			bool		currentKeyState = glfwGetKey(glfwGetCurrentContext(), GLFW_KEY_C) == GLFW_PRESS;
+
+			// Detect key press (transition from not-pressed to pressed)
+			if (currentKeyState && !lastKeyState) {
+				m_clippingEnabled = !m_clippingEnabled;
+				LOG_INFO(UI, "Clipping %s", m_clippingEnabled ? "ENABLED" : "DISABLED");
+			}
+			lastKeyState = currentKeyState;
 		}
 
 		void Update(float dt) override {
@@ -64,8 +75,25 @@ namespace {
 			glClearColor(0.05F, 0.05F, 0.1F, 1.0F);
 			glClear(GL_COLOR_BUFFER_BIT);
 
+			// Get logical window dimensions (not physical pixels) for UI layout
+			float windowWidth = Renderer::Primitives::PercentWidth(100.0F);
+			float windowHeight = Renderer::Primitives::PercentHeight(100.0F);
+
 			// Measure rendering time
 			auto renderStart = std::chrono::high_resolution_clock::now();
+
+			// Calculate clip region (100px margin on all sides)
+			const float margin = 100.0F;
+			float		clipWidth = windowWidth - (2.0F * margin);
+			float		clipHeight = windowHeight - (2.0F * margin);
+
+			// Apply clipping if enabled
+			if (m_clippingEnabled) {
+				ClipSettings clipSettings;
+				clipSettings.shape = ClipRect{.bounds = Rect{margin, margin, clipWidth, clipHeight}};
+				clipSettings.mode = ClipMode::Inside;
+				Renderer::Primitives::PushClip(clipSettings);
+			}
 
 			// Draw all 10,000 stars
 			for (const auto& star : m_stars) {
@@ -80,6 +108,11 @@ namespace {
 				}
 			}
 
+			// Pop clipping if it was enabled
+			if (m_clippingEnabled) {
+				Renderer::Primitives::PopClip();
+			}
+
 			auto  renderEnd = std::chrono::high_resolution_clock::now();
 			float renderMs = 0.0F;
 			renderMs = std::chrono::duration<float, std::milli>(renderEnd - renderStart).count();
@@ -88,20 +121,31 @@ namespace {
 			char fpsText[64];
 			snprintf(fpsText, sizeof(fpsText), "FPS: %.1F", m_fps);
 
-			Renderer::Primitives::DrawRect({.bounds = {10, 10, 150, 30}, .style = {.fill = Color(0.0F, 0.0F, 0.0F, 0.7F)}});
+			Renderer::Primitives::DrawRect({.bounds = {10, 10, 200, 30}, .style = {.fill = Color(0.0F, 0.0F, 0.0F, 0.7F)}});
 
 			// Draw performance stats (top-left, below FPS)
 			char statsText[256];
 			snprintf(
 				statsText,
 				sizeof(statsText),
-				"Stars: %zu | Triangles: %zu\nRender: %.2fms",
+				"Stars: %zu | Tris: %zu | Clip: %s",
 				m_stars.size(),
 				CalculateTotalTriangles(),
-				renderMs
+				m_clippingEnabled ? "ON" : "OFF"
 			);
 
-			Renderer::Primitives::DrawRect({.bounds = {10, 50, 300, 50}, .style = {.fill = Color(0.0F, 0.0F, 0.0F, 0.7F)}});
+			Renderer::Primitives::DrawRect({.bounds = {10, 50, 350, 50}, .style = {.fill = Color(0.0F, 0.0F, 0.0F, 0.7F)}});
+
+			// Draw instruction hint
+			Renderer::Primitives::DrawRect({.bounds = {10, 110, 200, 25}, .style = {.fill = Color(0.0F, 0.0F, 0.5F, 0.5F)}});
+
+			// Draw clip boundary indicator when clipping is enabled
+			if (m_clippingEnabled) {
+				Renderer::Primitives::DrawRect(
+					{.bounds = {margin, margin, clipWidth, clipHeight},
+					 .style = {.fill = Color(0.0F, 0.0F, 0.0F, 0.0F), .border = BorderStyle{.color = Color::Cyan(), .width = 2.0F}}}
+				);
+			}
 
 			// Update render time tracking
 			m_lastRenderTime = renderMs;
@@ -122,11 +166,21 @@ namespace {
 
 	  private:
 		void GenerateStars(size_t count) { // NOLINT(readability-convert-member-functions-to-static)
-			// Random number generator
+			// Get logical window dimensions for star placement
+			float windowWidth = Renderer::Primitives::PercentWidth(100.0F);
+			float windowHeight = Renderer::Primitives::PercentHeight(100.0F);
+
+			// Fall back to reasonable defaults if coordinate system not yet initialized
+			if (windowWidth <= 0.0F || windowHeight <= 0.0F) {
+				windowWidth = 672.0F;	// Default logical window width (1344/2 for Retina)
+				windowHeight = 420.0F;	// Default logical window height (840/2 for Retina)
+			}
+
+			// Random number generator - spread stars across entire window
 			std::random_device					  rd;
 			std::mt19937						  gen(rd());
-			std::uniform_real_distribution<float> posXDist(50.0F, 2510.0F);		// Screen width
-			std::uniform_real_distribution<float> posYDist(50.0F, 1390.0F);		// Screen height
+			std::uniform_real_distribution<float> posXDist(0.0F, windowWidth);
+			std::uniform_real_distribution<float> posYDist(0.0F, windowHeight);
 			std::uniform_real_distribution<float> outerRadiusDist(8.0F, 25.0F); // Star size variation
 			std::uniform_real_distribution<float> colorDist(0.0F, 1.0F);
 
@@ -211,6 +265,7 @@ namespace {
 		int				  m_frameCount = 0;
 		float			  m_frameDeltaAccumulator = 0.0F;
 		float			  m_lastRenderTime = 0.0F;
+		bool			  m_clippingEnabled = true; // Toggle with 'C' key (starts enabled)
 	};
 
 	// Register scene with SceneManager
