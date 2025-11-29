@@ -3,6 +3,7 @@
 
 #include "primitives/primitives.h"
 #include "coordinate_system/coordinate_system.h"
+#include "graphics/clip_types.h"
 #include "primitives/batch_renderer.h"
 #include <GL/glew.h>
 #include <algorithm>
@@ -65,6 +66,14 @@ namespace Renderer::Primitives {
 	static std::stack<Foundation::Mat4>	  g_transformStack;
 	static Foundation::Rect				  g_currentScissor;
 	static Foundation::Mat4				  g_currentTransform = Foundation::Mat4(1.0F);
+
+	// Clip stack for shader-based clipping (preserves batching)
+	// Each entry stores the ClipSettings and the computed bounds
+	struct ClipStackEntry {
+		Foundation::ClipSettings settings;
+		Foundation::Vec4		 bounds; // Computed (minX, minY, maxX, maxY)
+	};
+	static std::stack<ClipStackEntry> g_clipStack;
 
 	// Command queue for batched rendering
 	static std::vector<DrawCommand> g_commandQueue;
@@ -345,17 +354,160 @@ namespace Renderer::Primitives {
 	}
 
 	void DrawText(const TextArgs& args) {
-		// Text rendering is implemented in ui/shapes/shapes.cpp (Text::Render())
-		// which calls BatchRenderer::AddTextQuad() directly for each glyph.
+		// TODO: Implement Primitives::DrawText
 		//
-		// This function exists in the API for:
-		// 1. Documentation of the text rendering interface
-		// 2. Consistency with other primitive drawing functions
-		// 3. Future direct DrawText implementation if needed
-		(void)args; // Suppress unused parameter warning
+		// Currently a stub. Text rendering requires FontRenderer (in ui library) to generate
+		// glyph quads. The renderer library cannot depend on ui (would create circular dep).
+		//
+		// Options to implement:
+		// 1. Move FontRenderer to renderer library (cleanest, but significant refactor)
+		// 2. Add PRIVATE include path to ui in renderer CMake (include-only, no link dep)
+		// 3. Create abstract IGlyphGenerator interface in renderer, implement in ui
+		//
+		// For now, use UI::Text component for text rendering.
+		// See development-log.md for detailed analysis.
+		(void)args;
 	}
 
-	// --- Scissor Stack ---
+	// --- Clip Stack (Shader-based, batching-friendly) ---
+
+	// Helper to compute Vec4 bounds from ClipSettings
+	static Foundation::Vec4 ComputeClipBounds(const Foundation::ClipSettings& settings) {
+		// Check for ClipRect (fast path)
+		if (const auto* clipRect = std::get_if<Foundation::ClipRect>(&settings.shape)) {
+			if (clipRect->bounds.has_value()) {
+				const auto& rect = clipRect->bounds.value();
+				return Foundation::Vec4(rect.x, rect.y, rect.x + rect.width, rect.y + rect.height);
+			}
+			// If no explicit bounds, use full viewport (no clipping)
+			return Foundation::Vec4(0.0F, 0.0F, 0.0F, 0.0F);
+		}
+
+		// Stub for future complex shapes (rounded rect, circle, path)
+		// These will use stencil buffer in future phases
+		if (std::holds_alternative<Foundation::ClipRoundedRect>(settings.shape)) {
+			// TODO: Phase 3 - use stencil buffer for rounded rect
+			// For now, use bounding box approximation
+			const auto& rr = std::get<Foundation::ClipRoundedRect>(settings.shape);
+			if (rr.bounds.has_value()) {
+				const auto& rect = rr.bounds.value();
+				return Foundation::Vec4(rect.x, rect.y, rect.x + rect.width, rect.y + rect.height);
+			}
+		}
+
+		if (std::holds_alternative<Foundation::ClipCircle>(settings.shape)) {
+			// TODO: Phase 3 - use stencil buffer for circle
+			// For now, use bounding box approximation
+			const auto& circle = std::get<Foundation::ClipCircle>(settings.shape);
+			float		minX = circle.center.x - circle.radius;
+			float		minY = circle.center.y - circle.radius;
+			float		maxX = circle.center.x + circle.radius;
+			float		maxY = circle.center.y + circle.radius;
+			return Foundation::Vec4(minX, minY, maxX, maxY);
+		}
+
+		if (std::holds_alternative<Foundation::ClipPath>(settings.shape)) {
+			// TODO: Phase 3 - use stencil buffer for path
+			// For now, compute bounding box of path vertices
+			const auto& path = std::get<Foundation::ClipPath>(settings.shape);
+			if (!path.vertices.empty()) {
+				float minX = path.vertices[0].x;
+				float minY = path.vertices[0].y;
+				float maxX = minX;
+				float maxY = minY;
+				for (const auto& v : path.vertices) {
+					minX = std::min(minX, v.x);
+					minY = std::min(minY, v.y);
+					maxX = std::max(maxX, v.x);
+					maxY = std::max(maxY, v.y);
+				}
+				return Foundation::Vec4(minX, minY, maxX, maxY);
+			}
+		}
+
+		// No clipping
+		return Foundation::Vec4(0.0F, 0.0F, 0.0F, 0.0F);
+	}
+
+	// Helper to intersect two clip bounds
+	static Foundation::Vec4 IntersectClipBounds(const Foundation::Vec4& a, const Foundation::Vec4& b) {
+		// If either is empty (0,0,0,0), use the other
+		bool aEmpty = (a.z <= a.x || a.w <= a.y);
+		bool bEmpty = (b.z <= b.x || b.w <= b.y);
+
+		if (aEmpty)
+			return b;
+		if (bEmpty)
+			return a;
+
+		// Intersect the two rectangles
+		float minX = std::max(a.x, b.x);
+		float minY = std::max(a.y, b.y);
+		float maxX = std::min(a.z, b.z);
+		float maxY = std::min(a.w, b.w);
+
+		// Check for no intersection (empty result)
+		if (maxX <= minX || maxY <= minY) {
+			return Foundation::Vec4(0.0F, 0.0F, 0.0F, 0.0F);
+		}
+
+		return Foundation::Vec4(minX, minY, maxX, maxY);
+	}
+
+	void PushClip(const Foundation::ClipSettings& settings) {
+		if (g_batchRenderer == nullptr) {
+			return;
+		}
+
+		// Compute bounds for this clip
+		Foundation::Vec4 bounds = ComputeClipBounds(settings);
+
+		// Intersect with current clip (nested clipping)
+		if (!g_clipStack.empty()) {
+			bounds = IntersectClipBounds(g_clipStack.top().bounds, bounds);
+		}
+
+		// Push to stack
+		g_clipStack.push({settings, bounds});
+
+		// Update batch renderer with new clip bounds
+		g_batchRenderer->SetClipBounds(bounds);
+	}
+
+	void PopClip() {
+		if (g_clipStack.empty()) {
+			return;
+		}
+
+		g_clipStack.pop();
+
+		// Restore parent clip or clear if stack is empty
+		if (g_batchRenderer != nullptr) {
+			if (g_clipStack.empty()) {
+				g_batchRenderer->ClearClipBounds();
+			} else {
+				g_batchRenderer->SetClipBounds(g_clipStack.top().bounds);
+			}
+		}
+	}
+
+	Foundation::Vec4 GetCurrentClipBounds() {
+		if (g_clipStack.empty()) {
+			return Foundation::Vec4(0.0F, 0.0F, 0.0F, 0.0F);
+		}
+		return g_clipStack.top().bounds;
+	}
+
+	bool IsClipActive() {
+		if (g_clipStack.empty()) {
+			return false;
+		}
+		const auto& bounds = g_clipStack.top().bounds;
+		// Clip is active if bounds form a valid rectangle (maxX > minX, maxY > minY)
+		return (bounds.z > bounds.x) && (bounds.w > bounds.y);
+	}
+
+	// --- Scissor Stack (Legacy) ---
 
 	void PushScissor(const Foundation::Rect& clipRect) {
 		// Intersect with current scissor (nested clipping)

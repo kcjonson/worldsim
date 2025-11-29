@@ -27,12 +27,14 @@ namespace Renderer { // NOLINT(readability-identifier-naming)
 	//   location 2: a_color (vec4)
 	//   location 3: a_data1 (vec4) - borderData for shapes, unused for text
 	//   location 4: a_data2 (vec4) - shapeParams for shapes, (pixelRange, 0, 0, -1) for text
+	//   location 5: a_clipBounds (vec4) - (minX, minY, maxX, maxY) or (0,0,0,0) for no clip
 	struct UberVertex {
-		Foundation::Vec2 position; // Screen-space position
-		Foundation::Vec2 texCoord; // UV for text, rectLocalPos for shapes
-		Foundation::Vec4 color;	   // Fill color RGBA
-		Foundation::Vec4 data1;	   // Border: (color.rgb, width) for shapes, unused for text
-		Foundation::Vec4 data2;	   // Shape: (halfW, halfH, cornerRadius, borderPos), Text: (pixelRange, 0, 0, -1)
+		Foundation::Vec2 position;	 // Screen-space position
+		Foundation::Vec2 texCoord;	 // UV for text, rectLocalPos for shapes
+		Foundation::Vec4 color;		 // Fill color RGBA
+		Foundation::Vec4 data1;		 // Border: (color.rgb, width) for shapes, unused for text
+		Foundation::Vec4 data2;		 // Shape: (halfW, halfH, cornerRadius, borderPos), Text: (pixelRange, 0, 0, -1)
+		Foundation::Vec4 clipBounds; // Clip rect (minX, minY, maxX, maxY), or (0,0,0,0) for no clipping
 	};
 
 	// Render mode constants for data2.w
@@ -106,6 +108,18 @@ namespace Renderer { // NOLINT(readability-identifier-naming)
 		// Set coordinate system (for DPI-aware projection matrices)
 		void SetCoordinateSystem(CoordinateSystem* coordSystem);
 
+		// --- Clipping ---
+
+		// Set current clip bounds (applied to all subsequent vertices)
+		// bounds: (minX, minY, maxX, maxY) in screen coordinates
+		void SetClipBounds(const Foundation::Vec4& bounds);
+
+		// Clear clip bounds (disables clipping)
+		void ClearClipBounds();
+
+		// Get current clip bounds
+		const Foundation::Vec4& GetClipBounds() const { return m_currentClipBounds; }
+
 		// Rendering statistics structure
 		struct RenderStats {
 			uint32_t drawCalls = 0;
@@ -136,6 +150,8 @@ namespace Renderer { // NOLINT(readability-identifier-naming)
 		GLint m_projectionLoc = -1;
 		GLint m_transformLoc = -1;
 		GLint m_atlasLoc = -1;
+		GLint m_viewportHeightLoc = -1;
+		GLint m_pixelRatioLoc = -1;
 
 		// Viewport dimensions
 		int m_viewportWidth = 800;
@@ -147,6 +163,10 @@ namespace Renderer { // NOLINT(readability-identifier-naming)
 		// Font atlas for text rendering
 		GLuint m_fontAtlas = 0;
 		float  m_fontPixelRange = 4.0F;
+
+		// Current clip bounds (applied to all vertices)
+		// (0,0,0,0) means no clipping
+		Foundation::Vec4 m_currentClipBounds{0.0F, 0.0F, 0.0F, 0.0F};
 
 		// Statistics
 		size_t m_drawCallCount = 0;

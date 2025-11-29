@@ -29,6 +29,8 @@ namespace Renderer {
 		m_projectionLoc = glGetUniformLocation(m_shader.GetProgram(), "u_projection");
 		m_transformLoc = glGetUniformLocation(m_shader.GetProgram(), "u_transform");
 		m_atlasLoc = glGetUniformLocation(m_shader.GetProgram(), "u_atlas");
+		m_viewportHeightLoc = glGetUniformLocation(m_shader.GetProgram(), "u_viewportHeight");
+		m_pixelRatioLoc = glGetUniformLocation(m_shader.GetProgram(), "u_pixelRatio");
 
 		// Create VAO/VBO/IBO
 		glGenVertexArrays(1, &m_vao);
@@ -59,6 +61,10 @@ namespace Renderer {
 		// Data2 attribute (location = 4) - shapeParams for shapes, (pixelRange, 0, 0, -1) for text
 		glEnableVertexAttribArray(4);
 		glVertexAttribPointer(4, 4, GL_FLOAT, GL_FALSE, sizeof(UberVertex), (void*)offsetof(UberVertex, data2));
+
+		// ClipBounds attribute (location = 5) - (minX, minY, maxX, maxY) for clipping
+		glEnableVertexAttribArray(5);
+		glVertexAttribPointer(5, 4, GL_FLOAT, GL_FALSE, sizeof(UberVertex), (void*)offsetof(UberVertex, clipBounds));
 
 		// Bind index buffer
 		glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m_ibo);
@@ -155,7 +161,8 @@ namespace Renderer {
 			 Foundation::Vec2(-expandedHalfW, -expandedHalfH), // Rect-local: top-left (expanded)
 			 colorVec,
 			 borderData,
-			 shapeParams}
+			 shapeParams,
+			 m_currentClipBounds}
 		);
 
 		// Top-right corner
@@ -164,7 +171,8 @@ namespace Renderer {
 			 Foundation::Vec2(expandedHalfW, -expandedHalfH), // Rect-local: top-right (expanded)
 			 colorVec,
 			 borderData,
-			 shapeParams}
+			 shapeParams,
+			 m_currentClipBounds}
 		);
 
 		// Bottom-right corner
@@ -173,7 +181,8 @@ namespace Renderer {
 			 Foundation::Vec2(expandedHalfW, expandedHalfH), // Rect-local: bottom-right (expanded)
 			 colorVec,
 			 borderData,
-			 shapeParams}
+			 shapeParams,
+			 m_currentClipBounds}
 		);
 
 		// Bottom-left corner
@@ -182,7 +191,8 @@ namespace Renderer {
 			 Foundation::Vec2(-expandedHalfW, expandedHalfH), // Rect-local: bottom-left (expanded)
 			 colorVec,
 			 borderData,
-			 shapeParams}
+			 shapeParams,
+			 m_currentClipBounds}
 		);
 
 		// Add 6 indices (2 triangles)
@@ -216,10 +226,11 @@ namespace Renderer {
 		for (size_t i = 0; i < vertexCount; ++i) {
 			m_vertices.push_back({
 				vertices[i],
-				zeroVec2,	  // texCoord (unused for triangles)
+				zeroVec2,			  // texCoord (unused for triangles)
 				colorVec,
-				zeroVec4,	  // data1 (unused)
-				shapeParams	  // data2 with borderPos >= 0 marks as shape
+				zeroVec4,			  // data1 (unused)
+				shapeParams,		  // data2 with borderPos >= 0 marks as shape
+				m_currentClipBounds	  // clip bounds
 			});
 		}
 
@@ -255,7 +266,8 @@ namespace Renderer {
 			Foundation::Vec2(uvMin.x, uvMax.y), // UV flipped
 			colorVec,
 			zeroVec4,
-			textParams
+			textParams,
+			m_currentClipBounds
 		});
 
 		// Top-right
@@ -264,7 +276,8 @@ namespace Renderer {
 			Foundation::Vec2(uvMax.x, uvMax.y), // UV flipped
 			colorVec,
 			zeroVec4,
-			textParams
+			textParams,
+			m_currentClipBounds
 		});
 
 		// Bottom-right
@@ -273,7 +286,8 @@ namespace Renderer {
 			Foundation::Vec2(uvMax.x, uvMin.y), // UV flipped
 			colorVec,
 			zeroVec4,
-			textParams
+			textParams,
+			m_currentClipBounds
 		});
 
 		// Bottom-left
@@ -282,7 +296,8 @@ namespace Renderer {
 			Foundation::Vec2(uvMin.x, uvMin.y), // UV flipped
 			colorVec,
 			zeroVec4,
-			textParams
+			textParams,
+			m_currentClipBounds
 		});
 
 		// Add 6 indices (2 triangles)
@@ -341,6 +356,20 @@ namespace Renderer {
 		glUniformMatrix4fv(m_projectionLoc, 1, GL_FALSE, glm::value_ptr(projection));
 		glUniformMatrix4fv(m_transformLoc, 1, GL_FALSE, glm::value_ptr(transform));
 
+		// Set viewport height and pixel ratio for clipping
+		// gl_FragCoord uses physical pixels, so we need framebuffer height and pixel ratio
+		float framebufferHeight = static_cast<float>(m_viewportHeight);
+		float pixelRatio = 1.0F;
+		if (m_coordinateSystem != nullptr) {
+			// Get pixel ratio for DPI scaling
+			pixelRatio = m_coordinateSystem->GetPixelRatio();
+			// Get logical height and convert to framebuffer (physical) height
+			glm::vec2 windowSize = m_coordinateSystem->GetWindowSize();
+			framebufferHeight = windowSize.y * pixelRatio;
+		}
+		glUniform1f(m_viewportHeightLoc, framebufferHeight);
+		glUniform1f(m_pixelRatioLoc, pixelRatio);
+
 		// Bind font atlas texture (always bound, shader ignores it for shapes)
 		if (m_fontAtlas != 0) {
 			glActiveTexture(GL_TEXTURE0);
@@ -398,6 +427,14 @@ namespace Renderer {
 		stats.vertexCount = static_cast<uint32_t>(m_vertices.size());
 		stats.triangleCount = static_cast<uint32_t>(m_indices.size() / 3);
 		return stats;
+	}
+
+	void BatchRenderer::SetClipBounds(const Foundation::Vec4& bounds) {
+		m_currentClipBounds = bounds;
+	}
+
+	void BatchRenderer::ClearClipBounds() {
+		m_currentClipBounds = Foundation::Vec4(0.0F, 0.0F, 0.0F, 0.0F);
 	}
 
 } // namespace Renderer
