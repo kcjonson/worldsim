@@ -1,7 +1,7 @@
 # Clipping and Scrolling
 
 Created: 2025-11-27
-Status: Design Complete (Not Yet Implemented)
+Status: In Progress (Phase 1-2)
 
 ## Overview
 

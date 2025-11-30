@@ -11,6 +11,7 @@
 // Implementation uses batching to minimize draw calls while maintaining a simple API.
 // Uses C++20 designated initializers (.Args{} pattern) for clean, readable code.
 
+#include "graphics/clip_types.h"
 #include "graphics/color.h"
 #include "graphics/primitive_styles.h"
 #include "graphics/rect.h"
@@ -207,6 +208,35 @@ namespace Renderer {
 
 		// --- State Management ---
 
+		// === Clipping System (Shader-based, batching-friendly) ===
+		//
+		// PushClip/PopClip provide per-vertex clip bounds that preserve batching.
+		// All vertices added after PushClip() will be clipped to the specified region.
+		// Supports nested clipping (intersection of all active clip regions).
+		//
+		// Fast path: ClipRect with ClipMode::Inside uses shader-based clipping
+		// (zero GL state changes, full batching preserved).
+		//
+		// Slow path: Complex shapes (rounded rect, circle, path) or ClipMode::Outside
+		// will use stencil buffer in future phases (stub functions for now).
+		//
+		// See /docs/technical/ui-framework/clipping.md for design details.
+
+		// Push a new clip region. Nested clips are intersected.
+		// For ClipRect with ClipMode::Inside, this uses the fast shader path.
+		void PushClip(const Foundation::ClipSettings& settings);
+
+		// Pop the most recent clip region, restoring the parent clip (if any).
+		void PopClip();
+
+		// Get current clip bounds as Vec4 (minX, minY, maxX, maxY).
+		// Returns (0,0,0,0) if no clip is active.
+		Foundation::Vec4 GetCurrentClipBounds();
+
+		// Check if any clip region is currently active.
+		bool IsClipActive();
+
+		// Legacy scissor functions (deprecated - use PushClip/PopClip instead)
 		// Scissor/clipping (for scrollable containers)
 		void			 PushScissor(const Foundation::Rect& clipRect);
 		void			 PopScissor();
