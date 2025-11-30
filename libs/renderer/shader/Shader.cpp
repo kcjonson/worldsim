@@ -1,6 +1,7 @@
 // Shader utility implementation
 
 #include "shader/Shader.h"
+#include "utils/ResourcePath.h"
 #include <filesystem>
 #include <fstream>
 #include <glm/gtc/type_ptr.hpp>
@@ -34,37 +35,15 @@ namespace Renderer {
 	}
 
 	bool Shader::LoadFromFile(const char* vertexPath, const char* fragmentPath) {
-		// Search for shaders in multiple possible locations
-		// This allows the executable to run from different directories
-		std::vector<std::filesystem::path> searchPaths = {
-			std::filesystem::current_path() / "shaders",					   // Current directory
-			std::filesystem::current_path() / "build/apps/ui-sandbox/shaders", // From project root
-		};
+		// Find shaders using the resource path utility (handles invalid cwd from IDEs)
+		std::filesystem::path shadersDir("shaders");
+		auto				  fullVertexPath = Foundation::findResource(shadersDir / vertexPath);
+		auto				  fullFragmentPath = Foundation::findResource(shadersDir / fragmentPath);
 
-		std::filesystem::path fullVertexPath;
-		std::filesystem::path fullFragmentPath;
-		bool				  found = false;
-
-		// Try each search path until we find the shaders
-		for (const auto& searchPath : searchPaths) {
-			std::filesystem::path testVertexPath = searchPath / vertexPath;
-			std::filesystem::path testFragmentPath = searchPath / fragmentPath;
-
-			if (std::filesystem::exists(testVertexPath) && std::filesystem::exists(testFragmentPath)) {
-				fullVertexPath = testVertexPath;
-				fullFragmentPath = testFragmentPath;
-				found = true;
-				break;
-			}
-		}
-
-		if (!found) {
+		if (!fullVertexPath || !fullFragmentPath) {
 			std::cerr << "ERROR::SHADER::FILES_NOT_FOUND" << std::endl;
 			std::cerr << "Could not find shaders: " << vertexPath << " and " << fragmentPath << std::endl;
-			std::cerr << "Searched in:" << std::endl;
-			for (const auto& path : searchPaths) {
-				std::cerr << "  - " << path << std::endl;
-			}
+			std::cerr << "Searched relative to executable dir and current working directory" << std::endl;
 			return false;
 		}
 
@@ -73,14 +52,14 @@ namespace Renderer {
 		std::ifstream vShaderFile;
 		vShaderFile.exceptions(std::ifstream::failbit | std::ifstream::badbit);
 		try {
-			vShaderFile.open(fullVertexPath);
+			vShaderFile.open(fullVertexPath.value());
 			std::stringstream vShaderStream;
 			vShaderStream << vShaderFile.rdbuf();
 			vShaderFile.close();
 			vertexCode = vShaderStream.str();
 		} catch (const std::ifstream::failure& e) {
 			std::cerr << "ERROR::SHADER::VERTEX::FILE_NOT_SUCCESSFULLY_READ: " << e.what() << std::endl;
-			std::cerr << "Tried to open: " << fullVertexPath << std::endl;
+			std::cerr << "Tried to open: " << fullVertexPath.value() << std::endl;
 			return false;
 		}
 
@@ -89,14 +68,14 @@ namespace Renderer {
 		std::ifstream fShaderFile;
 		fShaderFile.exceptions(std::ifstream::failbit | std::ifstream::badbit);
 		try {
-			fShaderFile.open(fullFragmentPath);
+			fShaderFile.open(fullFragmentPath.value());
 			std::stringstream fShaderStream;
 			fShaderStream << fShaderFile.rdbuf();
 			fShaderFile.close();
 			fragmentCode = fShaderStream.str();
 		} catch (const std::ifstream::failure& e) {
 			std::cerr << "ERROR::SHADER::FRAGMENT::FILE_NOT_SUCCESSFULLY_READ: " << e.what() << std::endl;
-			std::cerr << "Tried to open: " << fullFragmentPath << std::endl;
+			std::cerr << "Tried to open: " << fullFragmentPath.value() << std::endl;
 			return false;
 		}
 

@@ -2,6 +2,7 @@ add_library(foundation
     metrics/PerformanceMetrics.cpp
     debug/DebugServer.cpp
     utils/Log.cpp
+    utils/ResourcePath.cpp
     utils/Utf8.cpp
 )
 

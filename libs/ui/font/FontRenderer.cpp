@@ -2,6 +2,7 @@
 
 #include "font/FontRenderer.h"
 #include "utils/Log.h"
+#include "utils/ResourcePath.h"
 #include <algorithm>
 #include <cstdlib>
 #include <fstream>
@@ -50,13 +51,20 @@ namespace ui {
 
 		// Try to load SDF atlas first, fall back to TTF rasterization
 		bool fontLoaded = false;
-		if (LoadSDFAtlas("fonts/Roboto-SDF.png", "fonts/Roboto-SDF.json")) {
+
+		// Resolve font paths using resource finder (handles invalid cwd from IDEs)
+		std::string sdfAtlasPath = Foundation::findResourceString("fonts/Roboto-SDF.png");
+		std::string sdfMetadataPath = Foundation::findResourceString("fonts/Roboto-SDF.json");
+		std::string ttfPath = Foundation::findResourceString("fonts/Roboto-Regular.ttf");
+
+		if (!sdfAtlasPath.empty() && !sdfMetadataPath.empty() &&
+			LoadSDFAtlas(sdfAtlasPath.c_str(), sdfMetadataPath.c_str())) {
 			LOG_INFO(UI, "Using SDF atlas for text rendering");
 			fontLoaded = true;
 		} else {
 			LOG_WARNING(UI, "SDF atlas not found, falling back to TTF rasterization");
-			if (!LoadFont("fonts/Roboto-Regular.ttf")) {
-				LOG_ERROR(UI, "FATAL ERROR: Failed to load font");
+			if (ttfPath.empty() || !LoadFont(ttfPath.c_str())) {
+				LOG_ERROR(UI, "FATAL ERROR: Failed to load font (searched in exe dir and cwd)");
 				FT_Done_FreeType(library);
 				library = nullptr;
 				std::exit(1);
