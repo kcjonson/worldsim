@@ -17,7 +17,7 @@ FocusManager& FocusManager::Get() {
 	return *s_instance;
 }
 
-void FocusManager::SetInstance(FocusManager* instance) {
+void FocusManager::setInstance(FocusManager* instance) {
 	s_instance = instance;
 	LOG_INFO(UI, "FocusManager singleton instance set");
 }
@@ -28,7 +28,7 @@ FocusManager::~FocusManager() {
 	}
 }
 
-void FocusManager::RegisterFocusable(IFocusable* component, int tabIndex) {
+void FocusManager::registerFocusable(IFocusable* component, int tabIndex) {
 	assert(component != nullptr);
 
 	// Check if already registered
@@ -51,7 +51,7 @@ void FocusManager::RegisterFocusable(IFocusable* component, int tabIndex) {
 	sortFocusables();
 }
 
-void FocusManager::UnregisterFocusable(IFocusable* component) {
+void FocusManager::unregisterFocusable(IFocusable* component) {
 	assert(component != nullptr);
 
 	// Remove from focusables list
@@ -83,7 +83,7 @@ void FocusManager::UnregisterFocusable(IFocusable* component) {
 	}
 }
 
-void FocusManager::SetFocus(IFocusable* component) {
+void FocusManager::setFocus(IFocusable* component) {
 	if (component == currentFocus) {
 		return; // Already has focus
 	}
@@ -101,18 +101,18 @@ void FocusManager::SetFocus(IFocusable* component) {
 	}
 }
 
-void FocusManager::ClearFocus() {
+void FocusManager::clearFocus() {
 	if (currentFocus != nullptr) {
 		currentFocus->OnFocusLost();
 		currentFocus = nullptr;
 	}
 }
 
-void FocusManager::FocusNext() {
+void FocusManager::focusNext() {
 	auto focusables = getActiveFocusables();
 
 	if (focusables.empty()) {
-		ClearFocus();
+		clearFocus();
 		return;
 	}
 
@@ -126,7 +126,7 @@ void FocusManager::FocusNext() {
 	do {
 		IFocusable* candidate = focusables[index];
 		if (candidate->CanReceiveFocus()) {
-			SetFocus(candidate);
+			setFocus(candidate);
 			return;
 		}
 
@@ -134,14 +134,14 @@ void FocusManager::FocusNext() {
 	} while (index != startIndex);
 
 	// No focusable component found - clear focus
-	ClearFocus();
+	clearFocus();
 }
 
-void FocusManager::FocusPrevious() {
+void FocusManager::focusPrevious() {
 	auto focusables = getActiveFocusables();
 
 	if (focusables.empty()) {
-		ClearFocus();
+		clearFocus();
 		return;
 	}
 
@@ -155,7 +155,7 @@ void FocusManager::FocusPrevious() {
 	do {
 		IFocusable* candidate = focusables[index];
 		if (candidate->CanReceiveFocus()) {
-			SetFocus(candidate);
+			setFocus(candidate);
 			return;
 		}
 
@@ -163,10 +163,10 @@ void FocusManager::FocusPrevious() {
 	} while (index != startIndex);
 
 	// No focusable component found - clear focus
-	ClearFocus();
+	clearFocus();
 }
 
-void FocusManager::PushFocusScope(const std::vector<IFocusable*>& components) {
+void FocusManager::pushFocusScope(const std::vector<IFocusable*>& components) {
 	FocusScope scope;
 	scope.components = components;
 	scope.previousFocus = currentFocus;
@@ -174,10 +174,10 @@ void FocusManager::PushFocusScope(const std::vector<IFocusable*>& components) {
 	scopeStack.push_back(scope);
 
 	// Clear current focus (modal will set its own focus)
-	ClearFocus();
+	clearFocus();
 }
 
-void FocusManager::PopFocusScope() {
+void FocusManager::popFocusScope() {
 	assert(!scopeStack.empty() && "PopFocusScope called with empty stack");
 
 	FocusScope scope = scopeStack.back();
@@ -195,20 +195,20 @@ void FocusManager::PopFocusScope() {
 		}
 
 		if (stillExists) {
-			SetFocus(scope.previousFocus);
+			setFocus(scope.previousFocus);
 		} else {
-			ClearFocus();
+			clearFocus();
 		}
 	}
 }
 
-void FocusManager::RouteKeyInput(engine::Key key, bool shift, bool ctrl, bool alt) {
+void FocusManager::routeKeyInput(engine::Key key, bool shift, bool ctrl, bool alt) {
 	if (currentFocus != nullptr) {
 		currentFocus->HandleKeyInput(key, shift, ctrl, alt);
 	}
 }
 
-void FocusManager::RouteCharInput(char32_t codepoint) {
+void FocusManager::routeCharInput(char32_t codepoint) {
 	if (currentFocus != nullptr) {
 		currentFocus->HandleCharInput(codepoint);
 	}

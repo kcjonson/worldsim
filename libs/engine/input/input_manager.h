@@ -29,7 +29,7 @@ namespace engine {
 	  public:
 		// Singleton access
 		static InputManager& Get();
-		static void			 SetInstance(InputManager* instance);
+		static void setInstance(InputManager* instance);
 
 		explicit InputManager(GLFWwindow* window);
 		~InputManager();
@@ -41,38 +41,38 @@ namespace engine {
 		InputManager& operator=(InputManager&&) = delete;
 
 		// Frame update - call once per frame before scene HandleInput
-		void Update(float deltaTime);
+		void update(float deltaTime);
 
 		// Query API for scenes to read current input state
-		glm::vec2 GetMousePosition() const { return mousePosition; }
-		glm::vec2 GetMouseDelta() const { return mouseDelta; }
-		bool	  IsMouseButtonDown(MouseButton button) const;
-		bool	  IsMouseButtonPressed(MouseButton button) const;  // True only on frame button was pressed
-		bool	  IsMouseButtonReleased(MouseButton button) const; // True only on frame button was released
-		bool	  IsDragging() const { return isDragging; }
-		glm::vec2 GetDragStartPosition() const { return dragStartPos; }
-		glm::vec2 GetDragDelta() const { return mousePosition - dragStartPos; }
+		glm::vec2 getMousePosition() const { return mousePosition; }
+		glm::vec2 getMouseDelta() const { return mouseDelta; }
+		bool isMouseButtonDown(MouseButton button) const;
+		bool isMouseButtonPressed(MouseButton button) const;  // True only on frame button was pressed
+		bool isMouseButtonReleased(MouseButton button) const; // True only on frame button was released
+		bool isDragging() const { return dragging; }
+		glm::vec2 getDragStartPosition() const { return dragStartPos; }
+		glm::vec2 getDragDelta() const { return mousePosition - dragStartPos; }
 
-		bool IsKeyDown(Key key) const;
-		bool IsKeyPressed(Key key) const;  // True only on frame key was pressed
-		bool IsKeyReleased(Key key) const; // True only on frame key was released
+		bool isKeyDown(Key key) const;
+		bool isKeyPressed(Key key) const;  // True only on frame key was pressed
+		bool isKeyReleased(Key key) const; // True only on frame key was released
 
-		float	  GetScrollDelta() const { return scrollDelta; }
-		bool	  IsCursorInWindow() const { return cursorInWindow; }
-		glm::vec2 GetWindowSize() const { return windowSize; }
+		float getScrollDelta() const { return scrollDelta; }
+		bool isCursorInWindow() const { return cursorInWindow; }
+		glm::vec2 getWindowSize() const { return windowSize; }
 
 		// Callbacks for external systems (e.g., FocusManager)
 		using KeyInputCallback = std::function<bool(Key key, int action, int mods)>;
 		using CharInputCallback = std::function<bool(char32_t codepoint)>;
 
-		void SetKeyInputCallback(KeyInputCallback callback) { keyInputCallback = callback; }
-		void SetCharInputCallback(CharInputCallback callback) { charInputCallback = callback; }
+		void setKeyInputCallback(KeyInputCallback callback) { keyInputCallback = callback; }
+		void setCharInputCallback(CharInputCallback callback) { charInputCallback = callback; }
 
 		// Configuration setters
-		void SetPanSpeed(float speed) { panSpeed = speed; }
-		void SetZoomSpeed(float speed) { zoomSpeed = speed; }
-		void SetEdgePanThreshold(float threshold) { edgePanThreshold = threshold; }
-		void SetEdgePanSpeed(float speed) { edgePanSpeed = speed; }
+		void setPanSpeed(float speed) { panSpeed = speed; }
+		void setZoomSpeed(float speed) { zoomSpeed = speed; }
+		void setEdgePanThreshold(float threshold) { edgePanThreshold = threshold; }
+		void setEdgePanSpeed(float speed) { edgePanSpeed = speed; }
 
 		// GLFW static callbacks
 		static void KeyCallback(GLFWwindow* window, int key, int scancode, int action, int mods);
@@ -102,7 +102,7 @@ namespace engine {
 		glm::vec2 lastMousePosition{0.0f};
 		glm::vec2 mouseDelta{0.0f};
 		glm::vec2 windowSize{800.0f, 600.0f};
-		bool	  isDragging = false;
+		bool	  dragging = false;
 		glm::vec2 dragStartPos{0.0f};
 
 		// Mouse button state tracking

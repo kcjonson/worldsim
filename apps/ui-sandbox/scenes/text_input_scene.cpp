@@ -247,7 +247,7 @@ namespace {
 
 	// Register scene with SceneManager
 	bool g_registered = []() {
-		engine::SceneManager::Get().RegisterScene("text_input", []() { return std::make_unique<TextInputScene>(); });
+		engine::SceneManager::Get().registerScene("text_input", []() { return std::make_unique<TextInputScene>(); });
 		return true;
 	}();
 

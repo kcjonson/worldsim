@@ -107,7 +107,7 @@ namespace {
 
 	// Register scene
 	bool g_registered = []() {
-		engine::SceneManager::Get().RegisterScene("sdf_minimal", []() { return std::make_unique<SDFMinimalScene>(); });
+		engine::SceneManager::Get().registerScene("sdf_minimal", []() { return std::make_unique<SDFMinimalScene>(); });
 		return true;
 	}();
 

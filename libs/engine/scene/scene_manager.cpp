@@ -11,7 +11,7 @@ namespace engine {
 	}
 
 	void
-	SceneManager::RegisterScene(const std::string& name, SceneFactory factory) { // NOLINT(readability-convert-member-functions-to-static)
+	SceneManager::registerScene(const std::string& name, SceneFactory factory) { // NOLINT(readability-convert-member-functions-to-static)
 		if (sceneRegistry.find(name) != sceneRegistry.end()) {
 			LOG_WARNING(Engine, "Scene '%s' already registered, overwriting", name.c_str());
 		}
@@ -20,7 +20,7 @@ namespace engine {
 		LOG_DEBUG(Engine, "Registered scene: %s", name.c_str());
 	}
 
-	bool SceneManager::SwitchTo(const std::string& name) { // NOLINT(readability-convert-member-functions-to-static)
+	bool SceneManager::switchTo(const std::string& name) { // NOLINT(readability-convert-member-functions-to-static)
 		// Check if scene exists
 		auto it = sceneRegistry.find(name);
 		if (it == sceneRegistry.end()) {
@@ -44,33 +44,33 @@ namespace engine {
 		return true;
 	}
 
-	void SceneManager::HandleInput(float dt) { // NOLINT(readability-convert-member-functions-to-static)
+	void SceneManager::handleInput(float dt) { // NOLINT(readability-convert-member-functions-to-static)
 		if (currentScene) {
 			currentScene->HandleInput(dt);
 		}
 	}
 
-	void SceneManager::Update(float dt) { // NOLINT(readability-convert-member-functions-to-static)
+	void SceneManager::update(float dt) { // NOLINT(readability-convert-member-functions-to-static)
 		if (currentScene) {
 			currentScene->Update(dt);
 		}
 	}
 
-	void SceneManager::Render() { // NOLINT(readability-convert-member-functions-to-static)
+	void SceneManager::render() { // NOLINT(readability-convert-member-functions-to-static)
 		if (currentScene) {
 			currentScene->Render();
 		}
 	}
 
-	IScene* SceneManager::GetCurrentScene() const {
+	IScene* SceneManager::getCurrentScene() const {
 		return currentScene.get();
 	}
 
-	std::string SceneManager::GetCurrentSceneName() const {
+	std::string SceneManager::getCurrentSceneName() const {
 		return currentSceneName;
 	}
 
-	std::vector<std::string> SceneManager::GetAllSceneNames() const {
+	std::vector<std::string> SceneManager::getAllSceneNames() const {
 		std::vector<std::string> names;
 		names.reserve(sceneRegistry.size());
 
@@ -84,11 +84,11 @@ namespace engine {
 		return names;
 	}
 
-	bool SceneManager::HasScene(const std::string& name) const {
+	bool SceneManager::hasScene(const std::string& name) const {
 		return sceneRegistry.find(name) != sceneRegistry.end();
 	}
 
-	void SceneManager::Shutdown() {
+	void SceneManager::shutdown() {
 		if (currentScene) {
 			LOG_INFO(Engine, "Shutting down scene system, exiting scene: %s", currentSceneName.c_str());
 			currentScene->OnExit();
@@ -97,7 +97,7 @@ namespace engine {
 		}
 	}
 
-	bool SceneManager::SetInitialSceneFromArgs( // NOLINT(readability-convert-member-functions-to-static)
+	bool SceneManager::setInitialSceneFromArgs( // NOLINT(readability-convert-member-functions-to-static)
 		int	   argc,
 		char** argv
 	) { // NOLINT(readability-convert-member-functions-to-static,cppcoreguidelines-pro-bounds-pointer-arithmetic)
@@ -115,7 +115,7 @@ namespace engine {
 				}
 
 				// Try to switch to the specified scene
-				if (SwitchTo(sceneName)) {
+				if (switchTo(sceneName)) {
 					LOG_INFO(Engine, "Loaded scene from command-line: %s", sceneName);
 					return true;
 				}

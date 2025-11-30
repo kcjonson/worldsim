@@ -55,13 +55,13 @@ namespace UI {
 	class MemoryArena {
 	  public:
 		explicit MemoryArena(size_t capacity = 64 * 1024) // 64KB default
-			: m_buffer(std::make_unique<char[]>(capacity)),
-			  m_capacity(capacity),
-			  m_offset(0) {}
+			: buffer(std::make_unique<char[]>(capacity)),
+			  capacity(capacity),
+			  offset(0) {}
 
 		~MemoryArena() {
 			// Call destructors for all allocated objects
-			for (auto& [ptr, destructor] : m_destructors) {
+			for (auto& [ptr, destructor] : destructors) {
 				destructor(ptr);
 			}
 		}
@@ -73,42 +73,42 @@ namespace UI {
 		MemoryArena& operator=(MemoryArena&&) = default;
 
 		template <typename T, typename... Args>
-		T* Allocate(Args&&... args) {
+		T* allocate(Args&&... args) {
 			// Align to type's alignment requirement
 			size_t alignment = alignof(T);
-			size_t alignedOffset = (m_offset + alignment - 1) & ~(alignment - 1);
+			size_t alignedOffset = (offset + alignment - 1) & ~(alignment - 1);
 			size_t requiredSize = alignedOffset + sizeof(T);
 
 			// Arena is non-growable - memcpy would break vtables for polymorphic types
 			// If you hit this, increase the arena capacity at construction
-			if (requiredSize > m_capacity) {
+			if (requiredSize > this->capacity) {
 				throw std::runtime_error("MemoryArena capacity exceeded. Increase initial capacity.");
 			}
 
 			// Construct object in place
-			T* ptr = new (m_buffer.get() + alignedOffset) T(std::forward<Args>(args)...);
-			m_offset = alignedOffset + sizeof(T);
+			T* ptr = new (buffer.get() + alignedOffset) T(std::forward<Args>(args)...);
+			offset = alignedOffset + sizeof(T);
 
 			// Track destructor for cleanup
-			m_destructors.emplace_back(ptr, [](void* p) { static_cast<T*>(p)->~T(); });
+			destructors.emplace_back(ptr, [](void* p) { static_cast<T*>(p)->~T(); });
 
 			return ptr;
 		}
 
-		void Clear() {
+		void clear() {
 			// Call destructors and reset
-			for (auto& [ptr, destructor] : m_destructors) {
+			for (auto& [ptr, destructor] : destructors) {
 				destructor(ptr);
 			}
-			m_destructors.clear();
-			m_offset = 0;
+			destructors.clear();
+			offset = 0;
 		}
 
 	  private:
-		std::unique_ptr<char[]>						   m_buffer;
-		size_t										   m_capacity;
-		size_t										   m_offset;
-		std::vector<std::pair<void*, void (*)(void*)>> m_destructors;
+		std::unique_ptr<char[]>						   buffer;
+		size_t										   capacity;
+		size_t										   offset;
+		std::vector<std::pair<void*, void (*)(void*)>> destructors;
 	};
 
 	// ============================================================================
@@ -141,33 +141,33 @@ namespace UI {
 
 		// Add a child component - returns handle for later access
 		template <typename T>
-		LayerHandle AddChild(T&& child) {
+		LayerHandle addChild(T&& child) {
 			static_assert(std::is_base_of_v<IComponent, std::decay_t<T>>, "Child must implement IComponent");
 
-			auto* ptr = m_arena.Allocate<std::decay_t<T>>(std::forward<T>(child));
-			m_children.push_back(ptr);
-			m_childrenNeedSorting = true;
+			auto* ptr = arena.allocate<std::decay_t<T>>(std::forward<T>(child));
+			children.push_back(ptr);
+			childrenNeedSorting = true;
 
-			uint16_t index = static_cast<uint16_t>(m_children.size() - 1);
-			return LayerHandle::Make(index, m_generation);
+			uint16_t index = static_cast<uint16_t>(children.size() - 1);
+			return LayerHandle::make(index, generation);
 		}
 
 		// Get child by handle (returns nullptr if invalid)
 		template <typename T>
-		T* GetChild(LayerHandle handle) {
-			if (!handle.IsValid() || handle.GetGeneration() != m_generation) {
+		T* getChild(LayerHandle handle) {
+			if (!handle.isValid() || handle.getGeneration() != generation) {
 				return nullptr;
 			}
-			uint16_t index = handle.GetIndex();
-			if (index >= m_children.size()) {
+			uint16_t index = handle.getIndex();
+			if (index >= children.size()) {
 				return nullptr;
 			}
-			return dynamic_cast<T*>(m_children[index]);
+			return dynamic_cast<T*>(children[index]);
 		}
 
 		// ILayer implementation - propagates to children
 		void HandleInput() override {
-			for (auto* child : m_children) {
+			for (auto* child : children) {
 				if (auto* layer = dynamic_cast<ILayer*>(child)) {
 					layer->HandleInput();
 				}
@@ -175,7 +175,7 @@ namespace UI {
 		}
 
 		void Update(float deltaTime) override {
-			for (auto* child : m_children) {
+			for (auto* child : children) {
 				if (auto* layer = dynamic_cast<ILayer*>(child)) {
 					layer->Update(deltaTime);
 				}
@@ -184,27 +184,27 @@ namespace UI {
 
 		void Render() override {
 			// Sort children by zIndex when needed (stable sort preserves insertion order for equal zIndex)
-			if (m_childrenNeedSorting) {
-				std::stable_sort(m_children.begin(), m_children.end(), [](const IComponent* a, const IComponent* b) {
+			if (childrenNeedSorting) {
+				std::stable_sort(children.begin(), children.end(), [](const IComponent* a, const IComponent* b) {
 					return a->zIndex < b->zIndex;
 				});
-				m_childrenNeedSorting = false;
+				childrenNeedSorting = false;
 			}
 
-			for (auto* child : m_children) {
+			for (auto* child : children) {
 				RenderContext::SetZIndex(child->zIndex);
 				child->Render();
 			}
 		}
 
 		// Mark children for re-sort (call when a child's zIndex changes)
-		void MarkChildrenNeedSorting() { m_childrenNeedSorting = true; }
+		void markChildrenNeedSorting() { childrenNeedSorting = true; }
 
 	  protected:
-		MemoryArena				 m_arena;
-		std::vector<IComponent*> m_children;
-		uint16_t				 m_generation{0};
-		bool					 m_childrenNeedSorting{false};
+		MemoryArena				 arena;
+		std::vector<IComponent*> children;
+		uint16_t				 generation{0};
+		bool					 childrenNeedSorting{false};
 	};
 
 } // namespace UI

@@ -9,159 +9,159 @@
 namespace UI {
 
 	Button::Button(const Args& args)
-		: m_position(args.position),
-		  m_size(args.size),
-		  m_label(args.label),
-		  m_disabled(args.disabled),
-		  m_onClick(args.onClick),
+		: position(args.position),
+		  size(args.size),
+		  label(args.label),
+		  disabled(args.disabled),
+		  onClick(args.onClick),
 		  id(args.id),
-		  m_tabIndex(args.tabIndex) {
+		  tabIndex(args.tabIndex) {
 
 		// Set appearance based on type
 		if (args.type == Type::Primary) {
-			m_appearance = ButtonStyles::Primary();
+			appearance = ButtonStyles::primary();
 		} else if (args.type == Type::Secondary) {
-			m_appearance = ButtonStyles::Secondary();
+			appearance = ButtonStyles::secondary();
 		} else if (args.type == Type::Custom && args.customAppearance != nullptr) {
-			m_appearance = *args.customAppearance;
+			appearance = *args.customAppearance;
 		} else {
 			// Default to Primary if Custom but no appearance provided
-			m_appearance = ButtonStyles::Primary();
+			appearance = ButtonStyles::primary();
 		}
 
 		// Initialize text label component centered in button
-		const ButtonStyle& style = GetCurrentStyle();
-		Foundation::Vec2   centerPos = Foundation::Vec2{m_position.x + m_size.x * 0.5F, m_position.y + m_size.y * 0.5F};
+		const ButtonStyle& style = getCurrentStyle();
+		Foundation::Vec2   centerPos = Foundation::Vec2{position.x + size.x * 0.5F, position.y + size.y * 0.5F};
 
 		// Two-phase init (Text is non-aggregate due to IComponent base class with virtual destructor)
-		m_labelText.position = centerPos;
-		m_labelText.text = m_label;
-		m_labelText.style.color = style.textColor;
-		m_labelText.style.fontSize = style.fontSize;
-		m_labelText.style.hAlign = Foundation::HorizontalAlign::Center;
-		m_labelText.style.vAlign = Foundation::VerticalAlign::Middle;
-		m_labelText.visible = visible;
-		m_labelText.id = id;
+		labelText.position = centerPos;
+		labelText.text = label;
+		labelText.style.color = style.textColor;
+		labelText.style.fontSize = style.fontSize;
+		labelText.style.hAlign = Foundation::HorizontalAlign::Center;
+		labelText.style.vAlign = Foundation::VerticalAlign::Middle;
+		labelText.visible = visible;
+		labelText.id = id;
 
 		// Register with global FocusManager singleton
-		FocusManager::Get().RegisterFocusable(this, m_tabIndex);
+		FocusManager::Get().registerFocusable(this, tabIndex);
 	}
 
 	Button::~Button() {
 		// Unregister from FocusManager
-		FocusManager::Get().UnregisterFocusable(this);
+		FocusManager::Get().unregisterFocusable(this);
 	}
 
 	Button::Button(Button&& other) noexcept
-		: m_position(other.m_position),
-		  m_size(other.m_size),
-		  m_label(std::move(other.m_label)),
-		  m_state(other.m_state),
-		  m_disabled(other.m_disabled),
-		  m_focused(other.m_focused),
-		  m_appearance(other.m_appearance),
-		  m_onClick(std::move(other.m_onClick)),
+		: position(other.position),
+		  size(other.size),
+		  label(std::move(other.label)),
+		  state(other.state),
+		  disabled(other.disabled),
+		  focused(other.focused),
+		  appearance(other.appearance),
+		  onClick(std::move(other.onClick)),
 		  visible(other.visible),
 		  id(other.id),
-		  m_mouseOver(other.m_mouseOver),
-		  m_mouseDown(other.m_mouseDown),
-		  m_labelText(other.m_labelText),
-		  m_tabIndex(other.m_tabIndex) {
+		  mouseOver(other.mouseOver),
+		  mouseDown(other.mouseDown),
+		  labelText(other.labelText),
+		  tabIndex(other.tabIndex) {
 		// Unregister other from its old address, register this at new address
-		FocusManager::Get().UnregisterFocusable(&other);
-		FocusManager::Get().RegisterFocusable(this, m_tabIndex);
-		other.m_tabIndex = -2; // Mark as moved-from to prevent double-unregister
+		FocusManager::Get().unregisterFocusable(&other);
+		FocusManager::Get().registerFocusable(this, tabIndex);
+		other.tabIndex = -2; // Mark as moved-from to prevent double-unregister
 	}
 
 	Button& Button::operator=(Button&& other) noexcept {
 		if (this != &other) {
 			// Unregister this from FocusManager
-			FocusManager::Get().UnregisterFocusable(this);
+			FocusManager::Get().unregisterFocusable(this);
 
 			// Move data
-			m_position = other.m_position;
-			m_size = other.m_size;
-			m_label = std::move(other.m_label);
-			m_state = other.m_state;
-			m_disabled = other.m_disabled;
-			m_focused = other.m_focused;
-			m_appearance = other.m_appearance;
-			m_onClick = std::move(other.m_onClick);
+			position = other.position;
+			size = other.size;
+			label = std::move(other.label);
+			state = other.state;
+			disabled = other.disabled;
+			focused = other.focused;
+			appearance = other.appearance;
+			onClick = std::move(other.onClick);
 			visible = other.visible;
 			id = other.id;
-			m_mouseOver = other.m_mouseOver;
-			m_mouseDown = other.m_mouseDown;
-			m_labelText = other.m_labelText;
-			m_tabIndex = other.m_tabIndex;
+			mouseOver = other.mouseOver;
+			mouseDown = other.mouseDown;
+			labelText = other.labelText;
+			tabIndex = other.tabIndex;
 
 			// Unregister other from its old address, register this at new address
-			FocusManager::Get().UnregisterFocusable(&other);
-			FocusManager::Get().RegisterFocusable(this, m_tabIndex);
-			other.m_tabIndex = -2; // Mark as moved-from
+			FocusManager::Get().unregisterFocusable(&other);
+			FocusManager::Get().registerFocusable(this, tabIndex);
+			other.tabIndex = -2; // Mark as moved-from
 		}
 		return *this;
 	}
 
 	void Button::HandleInput() {
 		// Skip input processing if disabled
-		if (m_disabled) {
-			m_state = State::Normal;
-			m_mouseOver = false;
-			m_mouseDown = false;
+		if (disabled) {
+			state = State::Normal;
+			mouseOver = false;
+			mouseDown = false;
 			return;
 		}
 
 		// Get input state from InputManager
 		auto&			 input = engine::InputManager::Get();
-		Foundation::Vec2 mousePos = input.GetMousePosition();
+		Foundation::Vec2 mousePos = input.getMousePosition();
 
 		// Update mouse-over state
-		bool wasMouseOver = m_mouseOver;
-		m_mouseOver = ContainsPoint(mousePos);
+		bool wasMouseOver = mouseOver;
+		mouseOver = containsPoint(mousePos);
 
 		// Handle mouse button state
-		bool isLeftButtonDown = input.IsMouseButtonDown(engine::MouseButton::Left);
-		bool wasMouseDown = m_mouseDown;
+		bool isLeftButtonDown = input.isMouseButtonDown(engine::MouseButton::Left);
+		bool wasMouseDown = mouseDown;
 
 		// State transitions based on mouse input
-		if (m_mouseOver) {
+		if (mouseOver) {
 			if (isLeftButtonDown) {
 				// Mouse pressed while over button
-				m_state = State::Pressed;
-				m_mouseDown = true;
+				state = State::Pressed;
+				mouseDown = true;
 			} else if (wasMouseDown && !isLeftButtonDown) {
 				// Mouse released while over button - FIRE CLICK!
-				if (m_onClick) {
-					m_onClick();
+				if (onClick) {
+					onClick();
 				}
-				m_state = State::Hover;
-				m_mouseDown = false;
+				state = State::Hover;
+				mouseDown = false;
 			} else {
 				// Just hovering
-				m_state = State::Hover;
-				m_mouseDown = false;
+				state = State::Hover;
+				mouseDown = false;
 			}
 		} else {
 			// Mouse not over button
-			m_state = State::Normal;
-			m_mouseDown = false;
+			state = State::Normal;
+			mouseDown = false;
 		}
 	}
 
 	void Button::Update(float /*deltaTime*/) {
 		// Update text component to match current button style
-		const ButtonStyle& style = GetCurrentStyle();
+		const ButtonStyle& style = getCurrentStyle();
 
 		// Position text at center of button - Text::Render() will handle Center/Middle alignment
-		Foundation::Vec2 centerPos = Foundation::Vec2{m_position.x + m_size.x * 0.5F, m_position.y + m_size.y * 0.5F};
+		Foundation::Vec2 centerPos = Foundation::Vec2{position.x + size.x * 0.5F, position.y + size.y * 0.5F};
 
-		m_labelText.position = centerPos;
-		m_labelText.text = m_label;
-		m_labelText.style.color = style.textColor;
-		m_labelText.style.fontSize = style.fontSize;
-		m_labelText.style.hAlign = Foundation::HorizontalAlign::Center;
-		m_labelText.style.vAlign = Foundation::VerticalAlign::Middle;
-		m_labelText.visible = visible;
+		labelText.position = centerPos;
+		labelText.text = label;
+		labelText.style.color = style.textColor;
+		labelText.style.fontSize = style.fontSize;
+		labelText.style.hAlign = Foundation::HorizontalAlign::Center;
+		labelText.style.vAlign = Foundation::VerticalAlign::Middle;
+		labelText.visible = visible;
 	}
 
 	void Button::Render() {
@@ -170,60 +170,60 @@ namespace UI {
 		}
 
 		// Get current style based on state
-		const ButtonStyle& style = GetCurrentStyle();
+		const ButtonStyle& style = getCurrentStyle();
 
 		// Draw background rectangle (batched)
-		Foundation::Rect bounds{m_position.x, m_position.y, m_size.x, m_size.y};
+		Foundation::Rect bounds{position.x, position.y, size.x, size.y};
 		Renderer::Primitives::DrawRect({.bounds = bounds, .style = style.background, .id = id});
 
 		// Draw label text using Text component
-		m_labelText.Render();
+		labelText.Render();
 	}
 
-	bool Button::ContainsPoint(const Foundation::Vec2& point) const {
-		return point.x >= m_position.x && point.x <= m_position.x + m_size.x && point.y >= m_position.y &&
-			   point.y <= m_position.y + m_size.y;
+	bool Button::containsPoint(const Foundation::Vec2& point) const {
+		return point.x >= position.x && point.x <= position.x + size.x && point.y >= position.y &&
+			   point.y <= position.y + size.y;
 	}
 
-	const ButtonStyle& Button::GetCurrentStyle() const {
+	const ButtonStyle& Button::getCurrentStyle() const {
 		// Priority: Disabled > Focused > Pressed > Hover > Normal
-		if (m_disabled) {
-			return m_appearance.disabled;
+		if (disabled) {
+			return appearance.disabled;
 		}
-		if (m_focused) {
-			return m_appearance.focused;
+		if (focused) {
+			return appearance.focused;
 		}
-		switch (m_state) {
+		switch (state) {
 			case State::Pressed:
-				return m_appearance.pressed;
+				return appearance.pressed;
 			case State::Hover:
-				return m_appearance.hover;
+				return appearance.hover;
 			case State::Normal:
 			default:
-				return m_appearance.normal;
+				return appearance.normal;
 		}
 	}
 
 	// IFocusable interface implementation
 
 	void Button::OnFocusGained() {
-		m_focused = true;
+		focused = true;
 	}
 
 	void Button::OnFocusLost() {
-		m_focused = false;
+		focused = false;
 	}
 
 	void Button::HandleKeyInput(engine::Key key, bool /*shift*/, bool /*ctrl*/, bool /*alt*/) {
 		// Disabled buttons don't respond to keyboard input
-		if (m_disabled) {
+		if (disabled) {
 			return;
 		}
 
 		// Enter or Space activates the button
 		if (key == engine::Key::Enter || key == engine::Key::Space) {
-			if (m_onClick) {
-				m_onClick();
+			if (onClick) {
+				onClick();
 			}
 		}
 	}
@@ -234,7 +234,7 @@ namespace UI {
 
 	bool Button::CanReceiveFocus() const {
 		// Only enabled buttons can receive focus
-		return !m_disabled;
+		return !disabled;
 	}
 
 } // namespace UI

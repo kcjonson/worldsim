@@ -280,21 +280,21 @@ int main(int argc, char* argv[]) {
 	LOG_INFO(Engine, "Initializing scene system");
 
 	// Try to load scene from command-line args
-	if (!engine::SceneManager::Get().SetInitialSceneFromArgs(argc, argv)) {
+	if (!engine::SceneManager::Get().setInitialSceneFromArgs(argc, argv)) {
 		// No --scene arg provided, load default scene
 		LOG_INFO(Engine, "No scene specified, loading default: shapes");
-		engine::SceneManager::Get().SwitchTo("shapes");
+		engine::SceneManager::Get().switchTo("shapes");
 	}
 
 	// Setup navigation menu (only when no --scene argument for zero perf impact on scene tests)
 	if (!hasSceneArg) {
-		auto sceneNames = engine::SceneManager::Get().GetAllSceneNames();
+		auto sceneNames = engine::SceneManager::Get().getAllSceneNames();
 		g_navigationMenu.emplace(
 			UI::NavigationMenu::Args{
 				.sceneNames = sceneNames,
 				.onSceneSelected =
 					[](const std::string& sceneName) {
-						engine::SceneManager::Get().SwitchTo(sceneName);
+						engine::SceneManager::Get().switchTo(sceneName);
 						LOG_INFO(UI, "Switched to scene: %s", sceneName.c_str());
 					},
 				.coordinateSystem = g_coordinateSystem
@@ -304,7 +304,7 @@ int main(int argc, char* argv[]) {
 	}
 
 	// Set up pre-frame callback (primitives begin frame + debug server control)
-	app.SetPreFrameCallback([&debugServer, &app, &metrics, httpPort]() -> bool {
+	app.setPreFrameCallback([&debugServer, &app, &metrics, httpPort]() -> bool {
 		// Begin frame timing
 		metrics.BeginFrame();
 
@@ -318,14 +318,14 @@ int main(int argc, char* argv[]) {
 				switch (action) {
 					case Foundation::ControlAction::Exit:
 						LOG_INFO(UI, "Exit requested via control endpoint");
-						app.Stop();
+						app.stop();
 						debugServer.clearControlAction();
 						return false; // Request exit
 
 					case Foundation::ControlAction::SceneChange: {
 						std::string sceneName = debugServer.getTargetSceneName();
 						LOG_INFO(UI, "Scene change requested: %s", sceneName.c_str());
-						if (engine::SceneManager::Get().SwitchTo(sceneName)) {
+						if (engine::SceneManager::Get().switchTo(sceneName)) {
 							LOG_INFO(UI, "Switched to scene: %s", sceneName.c_str());
 						} else {
 							LOG_ERROR(UI, "Failed to switch to scene: %s", sceneName.c_str());
@@ -336,21 +336,21 @@ int main(int argc, char* argv[]) {
 
 					case Foundation::ControlAction::Pause:
 						LOG_INFO(UI, "Pause requested via control endpoint");
-						app.Pause();
+						app.pause();
 						debugServer.clearControlAction();
 						break;
 
 					case Foundation::ControlAction::Resume:
 						LOG_INFO(UI, "Resume requested via control endpoint");
-						app.Resume();
+						app.resume();
 						debugServer.clearControlAction();
 						break;
 
 					case Foundation::ControlAction::ReloadScene: {
 						LOG_INFO(UI, "Reload scene requested via control endpoint");
-						std::string currentScene = engine::SceneManager::Get().GetCurrentSceneName();
+						std::string currentScene = engine::SceneManager::Get().getCurrentSceneName();
 						if (!currentScene.empty()) {
-							if (engine::SceneManager::Get().SwitchTo(currentScene)) {
+							if (engine::SceneManager::Get().switchTo(currentScene)) {
 								LOG_INFO(UI, "Reloaded scene: %s", currentScene.c_str());
 							} else {
 								LOG_ERROR(UI, "Failed to reload scene: %s", currentScene.c_str());
@@ -369,7 +369,7 @@ int main(int argc, char* argv[]) {
 	});
 
 	// Set up overlay renderer (navigation menu)
-	app.SetOverlayRenderer([]() {
+	app.setOverlayRenderer([]() {
 		// Handle navigation menu if it exists (zero overhead when not created)
 		if (g_navigationMenu) {
 			g_navigationMenu->HandleInput();
@@ -382,7 +382,7 @@ int main(int argc, char* argv[]) {
 	});
 
 	// Set up post-frame callback (metrics + screenshot)
-	app.SetPostFrameCallback([&metrics, &debugServer, httpPort]() {
+	app.setPostFrameCallback([&metrics, &debugServer, httpPort]() {
 		// Get rendering stats
 		auto renderStats = Renderer::Primitives::GetStats();
 		metrics.SetRenderStats(renderStats.drawCalls, renderStats.vertexCount, renderStats.triangleCount);
@@ -402,7 +402,7 @@ int main(int argc, char* argv[]) {
 
 	// Run application
 	LOG_INFO(UI, "Starting application main loop");
-	app.Run();
+	app.run();
 
 	// Cleanup
 	LOG_INFO(UI, "Shutting down...");
@@ -410,7 +410,7 @@ int main(int argc, char* argv[]) {
 	// Shutdown scene system first - scene components (Button, TextInput) need FocusManager
 	// SceneManager is a static singleton that outlives Application, so we must explicitly
 	// destroy scenes while FocusManager is still valid
-	engine::SceneManager::Get().Shutdown();
+	engine::SceneManager::Get().shutdown();
 
 	// Destroy navigation menu - its Button components also need FocusManager
 	g_navigationMenu.reset();

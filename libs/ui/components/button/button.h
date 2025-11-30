@@ -46,20 +46,20 @@ class Button : public Component, public IFocusable {
 	// --- Public Members ---
 
 	// Geometry
-	Foundation::Vec2 m_position{0.0F, 0.0F};
-	Foundation::Vec2 m_size{120.0F, 40.0F};
-	std::string		 m_label;
+	Foundation::Vec2 position{0.0F, 0.0F};
+	Foundation::Vec2 size{120.0F, 40.0F};
+	std::string		 label;
 
 	// State
-	State m_state{State::Normal};
-	bool  m_disabled{false};
-	bool  m_focused{false};
+	State state{State::Normal};
+	bool  disabled{false};
+	bool  focused{false};
 
 	// Visual appearance (all 5 state styles)
-	ButtonAppearance m_appearance;
+	ButtonAppearance appearance;
 
 	// Callback
-	std::function<void()> m_onClick;
+	std::function<void()> onClick;
 
 	// Properties
 	bool		visible{true};
@@ -85,10 +85,10 @@ class Button : public Component, public IFocusable {
 	void Render() override;
 
 	// State management
-	void SetFocused(bool focused) { m_focused = focused; }
-	void SetDisabled(bool disabled) { m_disabled = disabled; }
-	bool IsFocused() const { return m_focused; }
-	bool IsDisabled() const { return m_disabled; }
+	void setFocused(bool newFocused) { focused = newFocused; }
+	void setDisabled(bool newDisabled) { disabled = newDisabled; }
+	bool isFocused() const { return focused; }
+	bool isDisabled() const { return disabled; }
 
 	// IFocusable implementation
 	void OnFocusGained() override;
@@ -98,24 +98,24 @@ class Button : public Component, public IFocusable {
 	bool CanReceiveFocus() const override;
 
 	// Geometry queries
-	bool			 ContainsPoint(const Foundation::Vec2& point) const;
-	Foundation::Vec2 GetCenter() const {
-		return Foundation::Vec2{m_position.x + m_size.x * 0.5F, m_position.y + m_size.y * 0.5F};
+	bool			 containsPoint(const Foundation::Vec2& point) const;
+	Foundation::Vec2 getCenter() const {
+		return Foundation::Vec2{position.x + size.x * 0.5F, position.y + size.y * 0.5F};
 	}
 
   private:
 	// Internal state tracking
-	bool m_mouseOver{false};
-	bool m_mouseDown{false};
+	bool mouseOver{false};
+	bool mouseDown{false};
 
 	// Text label (owned directly for simplicity)
-	Text m_labelText;
+	Text labelText;
 
 	// Focus management
-	int m_tabIndex{-1};
+	int tabIndex{-1};
 
 	// Get current style based on state/flags
-	const ButtonStyle& GetCurrentStyle() const;
+	const ButtonStyle& getCurrentStyle() const;
 };
 
 } // namespace UI

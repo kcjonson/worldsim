@@ -235,7 +235,7 @@ namespace {
 
 	// Register scene with scene manager
 	static bool registered = []() {
-		engine::SceneManager::Get().RegisterScene("button", []() { return std::make_unique<ButtonScene>(); });
+		engine::SceneManager::Get().registerScene("button", []() { return std::make_unique<ButtonScene>(); });
 		return true;
 	}();
 

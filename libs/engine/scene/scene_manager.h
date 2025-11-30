@@ -36,55 +36,55 @@ namespace engine {
 		/// @brief Register a scene with the manager
 		/// @param name Unique scene name (lowercase, no spaces)
 		/// @param factory Function that creates a new instance of the scene
-		void RegisterScene(const std::string& name, SceneFactory factory);
+		void registerScene(const std::string& name, SceneFactory factory);
 
 		/// @brief Switch to a different scene
 		/// Calls OnExit() on current scene, then OnEnter() on new scene
 		/// @param name Name of scene to switch to
 		/// @return true if switch succeeded, false if scene not found
-		bool SwitchTo(const std::string& name);
+		bool switchTo(const std::string& name);
 
 		/// @brief Handle input for current scene
 		/// @param dt Delta time in seconds
-		void HandleInput(float dt);
+		void handleInput(float dt);
 
 		/// @brief Update current scene
 		/// @param dt Delta time in seconds
-		void Update(float dt);
+		void update(float dt);
 
 		/// @brief Render current scene
-		void Render();
+		void render();
 
 		/// @brief Get current active scene
 		/// @return Pointer to current scene, or nullptr if no scene active
-		IScene* GetCurrentScene() const;
+		IScene* getCurrentScene() const;
 
 		/// @brief Get current scene name
 		/// @return Name of current scene, or empty string if no scene active
-		std::string GetCurrentSceneName() const;
+		std::string getCurrentSceneName() const;
 
 		/// @brief Get list of all registered scene names
 		/// @return Vector of scene names (sorted alphabetically)
-		std::vector<std::string> GetAllSceneNames() const;
+		std::vector<std::string> getAllSceneNames() const;
 
 		/// @brief Check if a scene is registered
 		/// @param name Scene name to check
 		/// @return true if scene exists in registry
-		bool HasScene(const std::string& name) const;
+		bool hasScene(const std::string& name) const;
 
 		/// @brief Parse command-line args and switch to specified scene
 		/// Looks for --scene=<name> argument
 		/// @param argc Argument count
 		/// @param argv Argument vector
 		/// @return true if --scene arg found and scene loaded, false otherwise
-		bool SetInitialSceneFromArgs(int argc, char** argv);
+		bool setInitialSceneFromArgs(int argc, char** argv);
 
 		/// @brief Shutdown scene system - exits and destroys current scene
 		/// Must be called before singletons (FocusManager, InputManager) are destroyed
 		/// This is required because SceneManager is a static singleton that outlives
 		/// Application. Scene components (Button, TextInput) need FocusManager to
 		/// unregister during destruction.
-		void Shutdown();
+		void shutdown();
 
 	  private:
 		SceneManager() = default;

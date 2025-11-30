@@ -108,18 +108,18 @@ int main(int argc, char* argv[]) {
 	engine::Application app(window);
 
 	// Set up pre-frame callback (primitives begin frame)
-	app.SetPreFrameCallback([]() -> bool {
+	app.setPreFrameCallback([]() -> bool {
 		Renderer::Primitives::BeginFrame();
 		return true; // Continue running
 	});
 
 	// Set up overlay renderer (primitives end frame)
-	app.SetOverlayRenderer([]() { Renderer::Primitives::EndFrame(); });
+	app.setOverlayRenderer([]() { Renderer::Primitives::EndFrame(); });
 
 	// Run application
 	LOG_INFO(Engine, "Starting application main loop");
 	LOG_INFO(Game, "Game running... (No scenes registered yet - will show blank screen)");
-	app.Run();
+	app.run();
 
 	// Cleanup
 	LOG_INFO(Game, "Shutting down...");

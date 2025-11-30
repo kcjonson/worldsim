@@ -248,7 +248,7 @@ namespace {
 
 	// Register scene with SceneManager
 	bool g_registered = []() {
-		engine::SceneManager::Get().RegisterScene("arena", []() { return std::make_unique<ArenaScene>(); });
+		engine::SceneManager::Get().registerScene("arena", []() { return std::make_unique<ArenaScene>(); });
 		return true;
 	}();
 

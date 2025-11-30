@@ -37,7 +37,7 @@ namespace UI {
 	namespace ButtonStyles {
 
 		// Primary button - Blue, high prominence
-		inline ButtonAppearance Primary() {
+		inline ButtonAppearance primary() {
 			ButtonAppearance appearance;
 
 			// Normal - Blue background
@@ -94,7 +94,7 @@ namespace UI {
 		}
 
 		// Secondary button - Light blue, lower prominence
-		inline ButtonAppearance Secondary() {
+		inline ButtonAppearance secondary() {
 			ButtonAppearance appearance;
 
 			// Normal - Light blue background

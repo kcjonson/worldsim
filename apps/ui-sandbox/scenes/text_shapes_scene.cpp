@@ -201,7 +201,7 @@ namespace {
 
 	// Register scene with SceneManager
 	bool g_registered = []() {
-		engine::SceneManager::Get().RegisterScene("text_shapes", []() { return std::make_unique<TextShapesScene>(); });
+		engine::SceneManager::Get().registerScene("text_shapes", []() { return std::make_unique<TextShapesScene>(); });
 		return true;
 	}();
 

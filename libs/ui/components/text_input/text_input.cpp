@@ -36,12 +36,12 @@ namespace UI {
 		cursorPosition = text.size();
 
 		// Register with global FocusManager singleton
-		FocusManager::Get().RegisterFocusable(this, tabIndex);
+		FocusManager::Get().registerFocusable(this, tabIndex);
 	}
 
 	TextInput::~TextInput() {
 		// Unregister from FocusManager
-		FocusManager::Get().UnregisterFocusable(this);
+		FocusManager::Get().unregisterFocusable(this);
 	}
 
 	TextInput::TextInput(TextInput&& other) noexcept
@@ -62,15 +62,15 @@ namespace UI {
 		  tabIndex(other.tabIndex),
 		  mouseDown(other.mouseDown) {
 		// Unregister other from its old address, register this at new address
-		FocusManager::Get().UnregisterFocusable(&other);
-		FocusManager::Get().RegisterFocusable(this, tabIndex);
+		FocusManager::Get().unregisterFocusable(&other);
+		FocusManager::Get().registerFocusable(this, tabIndex);
 		other.tabIndex = -2; // Mark as moved-from to prevent double-unregister
 	}
 
 	TextInput& TextInput::operator=(TextInput&& other) noexcept {
 		if (this != &other) {
 			// Unregister this from FocusManager
-			FocusManager::Get().UnregisterFocusable(this);
+			FocusManager::Get().unregisterFocusable(this);
 
 			// Move data
 			position = other.position;
@@ -91,8 +91,8 @@ namespace UI {
 			tabIndex = other.tabIndex;
 
 			// Unregister other from its old address, register this at new address
-			FocusManager::Get().UnregisterFocusable(&other);
-			FocusManager::Get().RegisterFocusable(this, tabIndex);
+			FocusManager::Get().unregisterFocusable(&other);
+			FocusManager::Get().registerFocusable(this, tabIndex);
 			other.tabIndex = -2; // Mark as moved-from
 		}
 		return *this;
@@ -111,16 +111,16 @@ namespace UI {
 
 		// Check for mouse click
 		// Use IsMouseButtonDown (not IsMouseButtonPressed) like Button does
-		if (input.IsMouseButtonDown(engine::MouseButton::Left)) {
+		if (input.isMouseButtonDown(engine::MouseButton::Left)) {
 			bool wasMouseDown = mouseDown;
 			if (!wasMouseDown) {
 				// Mouse just pressed - process initial click
-				Foundation::Vec2 mousePos = input.GetMousePosition();
+				Foundation::Vec2 mousePos = input.getMousePosition();
 
 				// Check if click is inside text input
 				if (containsPoint(mousePos)) {
 					// Grab focus
-					FocusManager::Get().SetFocus(this);
+					FocusManager::Get().setFocus(this);
 
 					// Position cursor from mouse X
 					float localX = mousePos.x - position.x - style.paddingLeft + horizontalScroll;
@@ -136,8 +136,8 @@ namespace UI {
 			}
 
 			// Mouse drag selection
-			if (focused && mouseDown && input.IsMouseButtonDown(engine::MouseButton::Left)) {
-				Foundation::Vec2 mousePos = input.GetMousePosition();
+			if (focused && mouseDown && input.isMouseButtonDown(engine::MouseButton::Left)) {
+				Foundation::Vec2 mousePos = input.getMousePosition();
 				float			 localX = mousePos.x - position.x - style.paddingLeft + horizontalScroll;
 				size_t			 dragPosition = getCursorPositionFromMouse(localX);
 
@@ -159,7 +159,7 @@ namespace UI {
 		}
 
 		// Release mouse (outside the IsMouseButtonDown block)
-		if (mouseDown && !input.IsMouseButtonDown(engine::MouseButton::Left)) {
+		if (mouseDown && !input.isMouseButtonDown(engine::MouseButton::Left)) {
 			mouseDown = false;
 		}
 	}
@@ -321,7 +321,7 @@ namespace UI {
 
 	void TextInput::insertChar(char32_t codepoint) {
 		// Delete selection first if active
-		if (selection.has_value() && !selection->IsEmpty()) {
+		if (selection.has_value() && !selection->isEmpty()) {
 			deleteSelection();
 		}
 
@@ -344,7 +344,7 @@ namespace UI {
 
 	void TextInput::deleteCharAtCursor() {
 		// Delete selection if active
-		if (selection.has_value() && !selection->IsEmpty()) {
+		if (selection.has_value() && !selection->isEmpty()) {
 			deleteSelection();
 			return;
 		}
@@ -366,7 +366,7 @@ namespace UI {
 
 	void TextInput::deleteCharBeforeCursor() {
 		// Delete selection if active
-		if (selection.has_value() && !selection->IsEmpty()) {
+		if (selection.has_value() && !selection->isEmpty()) {
 			deleteSelection();
 			return;
 		}
@@ -435,22 +435,22 @@ namespace UI {
 	}
 
 	std::string TextInput::getSelectedText() const {
-		if (!selection.has_value() || selection->IsEmpty()) {
+		if (!selection.has_value() || selection->isEmpty()) {
 			return "";
 		}
 
-		size_t start = selection->GetMin();
-		size_t end = selection->GetMax();
+		size_t start = selection->getMin();
+		size_t end = selection->getMax();
 		return text.substr(start, end - start);
 	}
 
 	void TextInput::deleteSelection() {
-		if (!selection.has_value() || selection->IsEmpty()) {
+		if (!selection.has_value() || selection->isEmpty()) {
 			return;
 		}
 
-		size_t start = selection->GetMin();
-		size_t end = selection->GetMax();
+		size_t start = selection->getMin();
+		size_t end = selection->getMax();
 
 		// Delete the selected range
 		text.erase(start, end - start);
@@ -517,7 +517,7 @@ namespace UI {
 			return;
 		}
 
-		engine::ClipboardManager::Get().SetText(selectedText);
+		engine::ClipboardManager::Get().setText(selectedText);
 	}
 
 	void TextInput::cut() {
@@ -527,7 +527,7 @@ namespace UI {
 		}
 
 		// Copy to clipboard
-		engine::ClipboardManager::Get().SetText(selectedText);
+		engine::ClipboardManager::Get().setText(selectedText);
 
 		// Delete selection
 		deleteSelection();
@@ -535,13 +535,13 @@ namespace UI {
 
 	void TextInput::paste() {
 		// Get clipboard text
-		std::string pasteText = engine::ClipboardManager::Get().GetText();
+		std::string pasteText = engine::ClipboardManager::Get().getText();
 		if (pasteText.empty()) {
 			return;
 		}
 
 		// Delete selection if active
-		if (selection.has_value() && !selection->IsEmpty()) {
+		if (selection.has_value() && !selection->isEmpty()) {
 			deleteSelection();
 		}
 
@@ -657,7 +657,7 @@ namespace UI {
 		}
 
 		// Don't render cursor when selection is active
-		if (selection.has_value() && !selection->IsEmpty()) {
+		if (selection.has_value() && !selection->isEmpty()) {
 			return;
 		}
 
@@ -686,12 +686,12 @@ namespace UI {
 	}
 
 	void TextInput::renderSelection() const {
-		if (!selection.has_value() || selection->IsEmpty()) {
+		if (!selection.has_value() || selection->isEmpty()) {
 			return;
 		}
 
-		size_t start = selection->GetMin();
-		size_t end = selection->GetMax();
+		size_t start = selection->getMin();
+		size_t end = selection->getMax();
 
 		// Get FontRenderer for text measurement
 		ui::FontRenderer* fontRenderer = Renderer::Primitives::GetFontRenderer();

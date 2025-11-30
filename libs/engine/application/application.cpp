@@ -19,21 +19,21 @@ namespace engine {
 
 		// Create and initialize InputManager
 		inputManager = std::make_unique<InputManager>(window);
-		InputManager::SetInstance(inputManager.get());
+		InputManager::setInstance(inputManager.get());
 		LOG_INFO(Engine, "Application initialized with InputManager");
 
 		// Create and initialize ClipboardManager
 		clipboardManager = std::make_unique<ClipboardManager>(window);
-		ClipboardManager::SetInstance(clipboardManager.get());
+		ClipboardManager::setInstance(clipboardManager.get());
 		LOG_INFO(Engine, "Application initialized with ClipboardManager");
 
 		// Create and initialize FocusManager
 		focusManager = std::make_unique<UI::FocusManager>();
-		UI::FocusManager::SetInstance(focusManager.get());
+		UI::FocusManager::setInstance(focusManager.get());
 		LOG_INFO(Engine, "Application initialized with FocusManager");
 
 		// Wire InputManager callbacks to FocusManager
-		inputManager->SetKeyInputCallback([this](Key key, int action, int mods) -> bool {
+		inputManager->setKeyInputCallback([this](Key key, int action, int mods) -> bool {
 			// Only handle key press and repeat events (not release)
 			if (action != GLFW_PRESS && action != GLFW_REPEAT) {
 				return false; // Don't consume
@@ -42,9 +42,9 @@ namespace engine {
 			// Handle Tab key for focus navigation
 			if (key == Key::Tab) {
 				if (mods & GLFW_MOD_SHIFT) {
-					focusManager->FocusPrevious();
+					focusManager->focusPrevious();
 				} else {
-					focusManager->FocusNext();
+					focusManager->focusNext();
 				}
 				return true; // Consume Tab key
 			}
@@ -58,12 +58,12 @@ namespace engine {
 #endif
 			bool alt = (mods & GLFW_MOD_ALT) != 0;
 
-			focusManager->RouteKeyInput(key, shift, ctrl, alt);
+			focusManager->routeKeyInput(key, shift, ctrl, alt);
 			return focusManager->getFocused() != nullptr; // Consume if component has focus
 		});
 
-		inputManager->SetCharInputCallback([this](char32_t codepoint) -> bool {
-			focusManager->RouteCharInput(codepoint);
+		inputManager->setCharInputCallback([this](char32_t codepoint) -> bool {
+			focusManager->routeCharInput(codepoint);
 			return focusManager->getFocused() != nullptr; // Consume if component has focus
 		});
 	}
@@ -74,7 +74,7 @@ namespace engine {
 		LOG_INFO(Engine, "Application destroyed");
 	}
 
-	void Application::Run() {
+	void Application::run() {
 		if (window == nullptr) {
 			LOG_ERROR(Engine, "Cannot run: window not initialized");
 			return;
@@ -109,7 +109,7 @@ namespace engine {
 			// Update InputManager to capture input state for this frame
 			if (inputManager) {
 				try {
-					inputManager->Update(deltaTime);
+					inputManager->update(deltaTime);
 				} catch (const std::exception& e) {
 					LOG_ERROR(Engine, "Exception in InputManager::Update: %s", e.what());
 				} catch (...) {
@@ -134,10 +134,10 @@ namespace engine {
 			}
 
 			// Scene lifecycle (skip if paused)
-			if (!isPaused) {
+			if (!paused) {
 				// Handle input
 				try {
-					SceneManager::Get().HandleInput(deltaTime);
+					SceneManager::Get().handleInput(deltaTime);
 				} catch (const std::exception& e) {
 					LOG_ERROR(Engine, "Exception in HandleInput: %s", e.what());
 				} catch (...) {
@@ -146,7 +146,7 @@ namespace engine {
 
 				// Update
 				try {
-					SceneManager::Get().Update(deltaTime);
+					SceneManager::Get().update(deltaTime);
 				} catch (const std::exception& e) {
 					LOG_ERROR(Engine, "Exception in Update: %s", e.what());
 				} catch (...) {
@@ -160,7 +160,7 @@ namespace engine {
 
 			// Render (even when paused, so screen doesn't freeze)
 			try {
-				SceneManager::Get().Render();
+				SceneManager::Get().render();
 			} catch (const std::exception& e) {
 				LOG_ERROR(Engine, "Exception in Render: %s", e.what());
 			} catch (...) {
@@ -196,46 +196,46 @@ namespace engine {
 		LOG_INFO(Engine, "Application main loop ended");
 	}
 
-	void Application::Stop() {
+	void Application::stop() {
 		LOG_INFO(Engine, "Application stop requested");
 		isRunning = false;
 	}
 
-	void Application::Pause() {
+	void Application::pause() {
 		LOG_INFO(Engine, "Application paused");
-		isPaused = true;
+		paused = true;
 	}
 
-	void Application::Resume() {
+	void Application::resume() {
 		LOG_INFO(Engine, "Application resumed");
-		isPaused = false;
+		paused = false;
 	}
 
-	bool Application::IsPaused() const {
-		return isPaused;
+	bool Application::isPaused() const {
+		return paused;
 	}
 
-	void Application::SetOverlayRenderer(OverlayRenderer renderer) {
+	void Application::setOverlayRenderer(OverlayRenderer renderer) {
 		overlayRenderer = std::move(renderer);
 	}
 
-	void Application::SetPreFrameCallback(PreFrameCallback callback) {
+	void Application::setPreFrameCallback(PreFrameCallback callback) {
 		preFrameCallback = std::move(callback);
 	}
 
-	void Application::SetPostFrameCallback(PostFrameCallback callback) {
+	void Application::setPostFrameCallback(PostFrameCallback callback) {
 		postFrameCallback = std::move(callback);
 	}
 
-	float Application::GetFPS() const {
+	float Application::getFPS() const {
 		return fps;
 	}
 
-	float Application::GetDeltaTime() const {
+	float Application::getDeltaTime() const {
 		return deltaTime;
 	}
 
-	UI::FocusManager& Application::GetFocusManager() {
+	UI::FocusManager& Application::getFocusManager() {
 		return *focusManager;
 	}
 

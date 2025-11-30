@@ -223,7 +223,7 @@ namespace engine {
 		return *s_instance;
 	}
 
-	void InputManager::SetInstance(InputManager* instance) {
+	void InputManager::setInstance(InputManager* instance) {
 		s_instance = instance;
 		LOG_INFO(Engine, "InputManager singleton instance set");
 	}
@@ -268,7 +268,7 @@ namespace engine {
 		}
 	}
 
-	void InputManager::Update(float deltaTime) {
+	void InputManager::update(float deltaTime) {
 		// Calculate mouse delta
 		mouseDelta = mousePosition - lastMousePosition;
 		lastMousePosition = mousePosition;
@@ -310,7 +310,7 @@ namespace engine {
 	}
 
 	// Query API implementations
-	bool InputManager::IsMouseButtonDown(MouseButton button) const {
+	bool InputManager::isMouseButtonDown(MouseButton button) const {
 		int glfwButton = ToGLFW(button);
 		auto it = mouseButtonStates.find(glfwButton);
 		if (it == mouseButtonStates.end())
@@ -318,7 +318,7 @@ namespace engine {
 		return it->second == ButtonState::Down || it->second == ButtonState::Pressed;
 	}
 
-	bool InputManager::IsMouseButtonPressed(MouseButton button) const {
+	bool InputManager::isMouseButtonPressed(MouseButton button) const {
 		int glfwButton = ToGLFW(button);
 		auto it = mouseButtonStates.find(glfwButton);
 		if (it == mouseButtonStates.end())
@@ -326,7 +326,7 @@ namespace engine {
 		return it->second == ButtonState::Pressed;
 	}
 
-	bool InputManager::IsMouseButtonReleased(MouseButton button) const {
+	bool InputManager::isMouseButtonReleased(MouseButton button) const {
 		int glfwButton = ToGLFW(button);
 		auto it = mouseButtonStates.find(glfwButton);
 		if (it == mouseButtonStates.end())
@@ -334,7 +334,7 @@ namespace engine {
 		return it->second == ButtonState::Released;
 	}
 
-	bool InputManager::IsKeyDown(Key key) const {
+	bool InputManager::isKeyDown(Key key) const {
 		int glfwKey = ToGLFW(key);
 		auto it = keyStates.find(glfwKey);
 		if (it == keyStates.end())
@@ -342,7 +342,7 @@ namespace engine {
 		return it->second == ButtonState::Down || it->second == ButtonState::Pressed;
 	}
 
-	bool InputManager::IsKeyPressed(Key key) const {
+	bool InputManager::isKeyPressed(Key key) const {
 		int glfwKey = ToGLFW(key);
 		auto it = keyStates.find(glfwKey);
 		if (it == keyStates.end())
@@ -350,7 +350,7 @@ namespace engine {
 		return it->second == ButtonState::Pressed;
 	}
 
-	bool InputManager::IsKeyReleased(Key key) const {
+	bool InputManager::isKeyReleased(Key key) const {
 		int glfwKey = ToGLFW(key);
 		auto it = keyStates.find(glfwKey);
 		if (it == keyStates.end())
@@ -470,7 +470,7 @@ namespace engine {
 
 			// Track dragging for left mouse button
 			if (button == GLFW_MOUSE_BUTTON_LEFT) {
-				isDragging = true;
+				dragging = true;
 				dragStartPos = mousePosition;
 			}
 		} else if (action == GLFW_RELEASE) {
@@ -479,7 +479,7 @@ namespace engine {
 
 			// Stop dragging
 			if (button == GLFW_MOUSE_BUTTON_LEFT) {
-				isDragging = false;
+				dragging = false;
 			}
 		}
 	}

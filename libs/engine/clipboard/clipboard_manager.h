@@ -19,7 +19,7 @@ class ClipboardManager {
   public:
 	// Singleton access
 	static ClipboardManager& Get();
-	static void				 SetInstance(ClipboardManager* instance);
+	static void setInstance(ClipboardManager* instance);
 
 	explicit ClipboardManager(GLFWwindow* window);
 	~ClipboardManager();
@@ -31,9 +31,9 @@ class ClipboardManager {
 	ClipboardManager& operator=(ClipboardManager&&) = delete;
 
 	// Clipboard API
-	std::string GetText() const;
-	void		SetText(const std::string& text);
-	bool		HasText() const;
+	std::string getText() const;
+	void setText(const std::string& text);
+	bool hasText() const;
 
   private:
 	// Singleton instance pointer

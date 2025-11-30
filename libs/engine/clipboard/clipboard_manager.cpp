@@ -15,7 +15,7 @@ ClipboardManager& ClipboardManager::Get() {
 	return *s_instance;
 }
 
-void ClipboardManager::SetInstance(ClipboardManager* instance) {
+void ClipboardManager::setInstance(ClipboardManager* instance) {
 	s_instance = instance;
 	LOG_INFO(Engine, "ClipboardManager singleton instance set");
 }
@@ -30,7 +30,7 @@ ClipboardManager::~ClipboardManager() {
 	}
 }
 
-std::string ClipboardManager::GetText() const {
+std::string ClipboardManager::getText() const {
 	if (window == nullptr) {
 		return "";
 	}
@@ -43,7 +43,7 @@ std::string ClipboardManager::GetText() const {
 	return std::string(text);
 }
 
-void ClipboardManager::SetText(const std::string& text) {
+void ClipboardManager::setText(const std::string& text) {
 	if (window == nullptr) {
 		return;
 	}
@@ -51,7 +51,7 @@ void ClipboardManager::SetText(const std::string& text) {
 	glfwSetClipboardString(window, text.c_str());
 }
 
-bool ClipboardManager::HasText() const {
+bool ClipboardManager::hasText() const {
 	if (window == nullptr) {
 		return false;
 	}

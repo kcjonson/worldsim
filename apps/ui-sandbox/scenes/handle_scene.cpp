@@ -329,7 +329,7 @@ namespace {
 
 	// Register scene with SceneManager
 	bool g_registered = []() {
-		engine::SceneManager::Get().RegisterScene("handles", []() { return std::make_unique<HandleScene>(); });
+		engine::SceneManager::Get().registerScene("handles", []() { return std::make_unique<HandleScene>(); });
 		return true;
 	}();
 

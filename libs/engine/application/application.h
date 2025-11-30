@@ -76,54 +76,54 @@ namespace engine {
 
 		/// @brief Run the main game loop
 		/// Blocks until window should close or Stop() is called
-		void Run();
+		void run();
 
 		/// @brief Stop the game loop
 		/// Sets flag to exit on next iteration
-		void Stop();
+		void stop();
 
 		/// @brief Pause scene updates
 		/// When paused, HandleInput() and Update() are skipped, but Render() continues
-		void Pause();
+		void pause();
 
 		/// @brief Resume scene updates
-		void Resume();
+		void resume();
 
 		/// @brief Check if application is paused
 		/// @return true if paused, false otherwise
-		bool IsPaused() const;
+		bool isPaused() const;
 
 		/// @brief Set overlay renderer callback
 		/// Overlay is rendered after scene, for application-level UI
 		/// @param renderer Callback function to render overlay
-		void SetOverlayRenderer(OverlayRenderer renderer);
+		void setOverlayRenderer(OverlayRenderer renderer);
 
 		/// @brief Set pre-frame callback
 		/// Called before scene lifecycle each frame
 		/// @param callback Callback function, return false to exit application
-		void SetPreFrameCallback(PreFrameCallback callback);
+		void setPreFrameCallback(PreFrameCallback callback);
 
 		/// @brief Set post-frame callback
 		/// Called after all rendering, before buffer swap
 		/// @param callback Callback function
-		void SetPostFrameCallback(PostFrameCallback callback);
+		void setPostFrameCallback(PostFrameCallback callback);
 
 		/// @brief Get current FPS
 		/// @return Frames per second
-		float GetFPS() const;
+		float getFPS() const;
 
 		/// @brief Get last delta time
 		/// @return Delta time in seconds
-		float GetDeltaTime() const;
+		float getDeltaTime() const;
 
 		/// @brief Get FocusManager instance
 		/// @return Reference to the FocusManager
-		UI::FocusManager& GetFocusManager();
+		UI::FocusManager& getFocusManager();
 
 	  private:
 		GLFWwindow* window{nullptr};	// GLFW window (not owned)
 		bool		isRunning{false}; // Main loop control flag
-		bool		isPaused{false};	// Pause state
+		bool		paused{false};	// Pause state
 		double		lastTime{0.0};	// For delta time calculation
 		float		deltaTime{0.0F};	// Last frame delta time
 		float		fps{0.0F};		// Current FPS

@@ -37,7 +37,7 @@ class FocusManager {
   public:
 	// Singleton access
 	static FocusManager& Get();
-	static void			 SetInstance(FocusManager* instance);
+	static void setInstance(FocusManager* instance);
 
 	FocusManager() = default;
 	~FocusManager();
@@ -55,14 +55,14 @@ class FocusManager {
 	 * @param component - Pointer to component implementing IFocusable
 	 * @param tabIndex - Explicit tab order (-1 for auto-assign based on registration order)
 	 */
-	void RegisterFocusable(IFocusable* component, int tabIndex = -1);
+	void registerFocusable(IFocusable* component, int tabIndex = -1);
 
 	/**
 	 * Unregister a component (call in destructor).
 	 *
 	 * @param component - Pointer to previously registered component
 	 */
-	void UnregisterFocusable(IFocusable* component);
+	void unregisterFocusable(IFocusable* component);
 
 	// Focus control
 	/**
@@ -70,26 +70,26 @@ class FocusManager {
 	 *
 	 * @param component - Component to focus (must be registered)
 	 */
-	void SetFocus(IFocusable* component);
+	void setFocus(IFocusable* component);
 
 	/**
 	 * Remove focus from current component.
 	 */
-	void ClearFocus();
+	void clearFocus();
 
 	/**
 	 * Move focus to next component in tab order (Tab key).
 	 * Skips components where CanReceiveFocus() returns false.
 	 * Wraps from last to first component.
 	 */
-	void FocusNext();
+	void focusNext();
 
 	/**
 	 * Move focus to previous component in tab order (Shift+Tab).
 	 * Skips components where CanReceiveFocus() returns false.
 	 * Wraps from first to last component.
 	 */
-	void FocusPrevious();
+	void focusPrevious();
 
 	// Focus scope (for modals)
 	/**
@@ -98,13 +98,13 @@ class FocusManager {
 	 *
 	 * @param components - List of components in this scope
 	 */
-	void PushFocusScope(const std::vector<IFocusable*>& components);
+	void pushFocusScope(const std::vector<IFocusable*>& components);
 
 	/**
 	 * Pop the topmost focus scope and restore previous focus.
 	 * Asserts if scope stack is empty (must match Push/Pop).
 	 */
-	void PopFocusScope();
+	void popFocusScope();
 
 	// Query
 	/**
@@ -131,14 +131,14 @@ class FocusManager {
 	 * @param ctrl - True if Ctrl/Cmd modifier is pressed
 	 * @param alt - True if Alt/Option modifier is pressed
 	 */
-	void RouteKeyInput(engine::Key key, bool shift, bool ctrl, bool alt);
+	void routeKeyInput(engine::Key key, bool shift, bool ctrl, bool alt);
 
 	/**
 	 * Route character input to focused component (called by InputManager).
 	 *
 	 * @param codepoint - Unicode codepoint of character typed
 	 */
-	void RouteCharInput(char32_t codepoint);
+	void routeCharInput(char32_t codepoint);
 
   private:
 	// Singleton instance pointer

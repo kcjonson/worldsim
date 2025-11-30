@@ -31,17 +31,17 @@ namespace {
 			bool		currentKeyState = glfwGetKey(glfwGetCurrentContext(), GLFW_KEY_C) == GLFW_PRESS;
 
 			if (currentKeyState && !lastKeyState) {
-				m_clippingEnabled = !m_clippingEnabled;
-				LOG_INFO(UI, "Clipping %s", m_clippingEnabled ? "ENABLED" : "DISABLED");
+				clippingEnabled = !clippingEnabled;
+				LOG_INFO(UI, "Clipping %s", clippingEnabled ? "ENABLED" : "DISABLED");
 			}
 			lastKeyState = currentKeyState;
 		}
 
 		void Update(float dt) override {
 			// Animate scroll position for demo
-			m_scrollY += dt * 30.0F;
-			if (m_scrollY > 150.0F) {
-				m_scrollY = 0.0F;
+			scrollY += dt * 30.0F;
+			if (scrollY > 150.0F) {
+				scrollY = 0.0F;
 			}
 		}
 
@@ -63,9 +63,9 @@ namespace {
 			drawText("Clip Scene - Clipping Demo", 30, 30, 20.0F, Color::white());
 
 			// Status indicator
-			Color statusColor = m_clippingEnabled ? Color::green() : Color::red();
+			Color statusColor = clippingEnabled ? Color::green() : Color::red();
 			Primitives::DrawRect({.bounds = {20, 70, 300, 30}, .style = {.fill = Color(0.0F, 0.0F, 0.0F, 0.5F)}});
-			drawText(m_clippingEnabled ? "Clipping: ON (press C)" : "Clipping: OFF (press C)", 30, 78, 14.0F, statusColor);
+			drawText(clippingEnabled ? "Clipping: ON (press C)" : "Clipping: OFF (press C)", 30, 78, 14.0F, statusColor);
 
 			// ========================================================================
 			// Section 1: Basic Rect Clipping Demo
@@ -82,7 +82,7 @@ namespace {
 			);
 
 			// Apply clipping for the content
-			if (m_clippingEnabled) {
+			if (clippingEnabled) {
 				ClipSettings clipSettings;
 				clipSettings.shape = ClipRect{.bounds = Rect{50.0F, 160.0F, 300.0F, 80.0F}};
 				clipSettings.mode = ClipMode::Inside;
@@ -102,7 +102,7 @@ namespace {
 			); // Blue - overflows bottom+right
 			drawText("This text clips at bottom edge", 65, 235, 12.0F, Color::white());
 
-			if (m_clippingEnabled) {
+			if (clippingEnabled) {
 				Primitives::PopClip();
 			}
 
@@ -121,7 +121,7 @@ namespace {
 			);
 
 			// Apply clipping for scroll container
-			if (m_clippingEnabled) {
+			if (clippingEnabled) {
 				ClipSettings clipSettings;
 				clipSettings.shape = ClipRect{.bounds = Rect{50.0F, 310.0F, 300.0F, 120.0F}};
 				Primitives::PushClip(clipSettings);
@@ -139,14 +139,14 @@ namespace {
 				"Item 8 - Eighth Entry"
 			};
 			for (int i = 0; i < 8; i++) {
-				float baseY = 320.0F + (static_cast<float>(i) * 35.0F) - m_scrollY;
+				float baseY = 320.0F + (static_cast<float>(i) * 35.0F) - scrollY;
 				Color itemColor = (i % 2 == 0) ? Color(0.25F, 0.25F, 0.3F, 1.0F) : Color(0.3F, 0.3F, 0.35F, 1.0F);
 
 				Primitives::DrawRect({.bounds = {60, baseY, 280, 30}, .style = {.fill = itemColor}});
 				drawText(listItems[i], 70, baseY + 6, 14.0F, Color::white());
 			}
 
-			if (m_clippingEnabled) {
+			if (clippingEnabled) {
 				Primitives::PopClip();
 			}
 
@@ -165,7 +165,7 @@ namespace {
 			);
 
 			// Apply outer clip
-			if (m_clippingEnabled) {
+			if (clippingEnabled) {
 				ClipSettings outerClip;
 				outerClip.shape = ClipRect{.bounds = Rect{400.0F, 160.0F, 250.0F, 180.0F}};
 				Primitives::PushClip(outerClip);
@@ -178,7 +178,7 @@ namespace {
 			);
 
 			// Apply inner clip (nested - should intersect with outer)
-			if (m_clippingEnabled) {
+			if (clippingEnabled) {
 				ClipSettings innerClip;
 				innerClip.shape = ClipRect{.bounds = Rect{430.0F, 190.0F, 190.0F, 120.0F}};
 				Primitives::PushClip(innerClip);
@@ -189,7 +189,7 @@ namespace {
 			Primitives::DrawRect({.bounds = {410, 220, 220, 100}, .style = {.fill = Color(0.6F, 0.4F, 0.8F, 0.9F)}});
 
 			// Pop both clips
-			if (m_clippingEnabled) {
+			if (clippingEnabled) {
 				Primitives::PopClip(); // Inner
 				Primitives::PopClip(); // Outer
 			}
@@ -217,20 +217,20 @@ namespace {
 
 		std::string ExportState() override {
 			char buf[128];
-			snprintf(buf, sizeof(buf), R"({"clipping": %s, "scrollY": %.1F})", m_clippingEnabled ? "true" : "false", m_scrollY);
+			snprintf(buf, sizeof(buf), R"({"clipping": %s, "scrollY": %.1F})", clippingEnabled ? "true" : "false", scrollY);
 			return {buf};
 		}
 
 		const char* GetName() const override { return "clip"; }
 
 	  private:
-		bool  m_clippingEnabled = true; // Start with clipping enabled to show it working
-		float m_scrollY = 0.0F;
+		bool  clippingEnabled = true; // Start with clipping enabled to show it working
+		float scrollY = 0.0F;
 	};
 
 	// Register scene with SceneManager
 	bool g_registered = []() {
-		engine::SceneManager::Get().RegisterScene("clip", []() { return std::make_unique<ClipScene>(); });
+		engine::SceneManager::Get().registerScene("clip", []() { return std::make_unique<ClipScene>(); });
 		return true;
 	}();
 

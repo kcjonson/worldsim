@@ -29,9 +29,9 @@ struct TextSelection {
 	size_t start; // Byte offset where selection started (anchor)
 	size_t end;	  // Byte offset where cursor is (head)
 
-	size_t GetMin() const { return std::min(start, end); }
-	size_t GetMax() const { return std::max(start, end); }
-	bool   IsEmpty() const { return start == end; }
+	size_t getMin() const { return std::min(start, end); }
+	size_t getMax() const { return std::max(start, end); }
+	bool   isEmpty() const { return start == end; }
 };
 
 // TextInput visual style

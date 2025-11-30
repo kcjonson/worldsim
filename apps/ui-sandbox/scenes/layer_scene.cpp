@@ -25,7 +25,7 @@ namespace {
 			root = std::make_unique<Container>();
 
 			// Background rectangle (z=0, default)
-			root->AddChild(Rectangle(
+			root->addChild(Rectangle(
 				Rectangle::Args{
 					.position = {100.0F, 100.0F},
 					.size = {600.0F, 400.0F},
@@ -35,12 +35,12 @@ namespace {
 			));
 
 			// Green panel with title (z=1)
-			root->AddChild(Rectangle(
+			root->addChild(Rectangle(
 				Rectangle::Args{.position = {150.0F, 120.0F}, .size = {350.0F, 200.0F}, .style = {.fill = Color::green()}, .zIndex = 1}
 			));
 
 			// Title text on green panel (z=2)
-			root->AddChild(Text(
+			root->addChild(Text(
 				Text::Args{
 					.position = {200.0F, 200.0F},
 					.text = "Component Hierarchy Demo",
@@ -50,7 +50,7 @@ namespace {
 			));
 
 			// Sidebar container (z=1)
-			root->AddChild(Rectangle(
+			root->addChild(Rectangle(
 				Rectangle::Args{
 					.position = {550.0F, 150.0F},
 					.size = {150.0F, 350.0F},
@@ -64,7 +64,7 @@ namespace {
 				auto const iFloat = static_cast<float>(i);
 
 				// Button background
-				root->AddChild(Rectangle(
+				root->addChild(Rectangle(
 					Rectangle::Args{
 						.position = {560.0F, 170.0F + (iFloat * 60.0F)},
 						.size = {130.0F, 50.0F},
@@ -74,7 +74,7 @@ namespace {
 				));
 
 				// Button label
-				root->AddChild(Text(
+				root->addChild(Text(
 					Text::Args{
 						.position = {625.0F, 195.0F + (iFloat * 60.0F)},
 						.text = "Button " + std::to_string(i + 1),
@@ -91,7 +91,7 @@ namespace {
 				float hue = static_cast<float>(i) / 4.0F;
 				Color color(hue, 1.0F - hue, 0.5F, 0.8F);
 
-				root->AddChild(Rectangle(
+				root->addChild(Rectangle(
 					Rectangle::Args{
 						.position = {150.0F + offset, 350.0F + offset},
 						.size = {100.0F, 100.0F},
@@ -108,7 +108,7 @@ namespace {
 				float hue = static_cast<float>(i) / 4.0F;
 				Color color(hue, 0.5F, 1.0F - hue, 0.8F);
 
-				root->AddChild(Rectangle(
+				root->addChild(Rectangle(
 					Rectangle::Args{
 						.position = {450.0F + offset, 350.0F + offset},
 						.size = {100.0F, 100.0F},
@@ -154,7 +154,7 @@ namespace {
 
 	// Register scene with SceneManager
 	bool g_registered = []() {
-		engine::SceneManager::Get().RegisterScene("layer", []() { return std::make_unique<LayerScene>(); });
+		engine::SceneManager::Get().registerScene("layer", []() { return std::make_unique<LayerScene>(); });
 		return true;
 	}();
 

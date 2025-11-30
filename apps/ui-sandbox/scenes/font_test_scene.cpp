@@ -89,7 +89,7 @@ namespace {
 
 	// Register scene with SceneManager
 	bool g_registered = []() {
-		engine::SceneManager::Get().RegisterScene("font_test", []() { return std::make_unique<FontTestScene>(); });
+		engine::SceneManager::Get().registerScene("font_test", []() { return std::make_unique<FontTestScene>(); });
 		return true;
 	}();
 

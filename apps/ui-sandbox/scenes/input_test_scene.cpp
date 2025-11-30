@@ -73,23 +73,23 @@ namespace {
 			auto& input = engine::InputManager::Get();
 
 			// Mouse Position
-			glm::vec2		   mousePos = input.GetMousePosition();
+			glm::vec2		   mousePos = input.getMousePosition();
 			std::ostringstream oss;
 			oss << "Mouse Position: (" << static_cast<int>(mousePos.x) << ", " << static_cast<int>(mousePos.y) << ")";
 			fontRenderer->RenderText(oss.str(), glm::vec2(50, yPos), scale, white);
 			yPos += lineHeight;
 
 			// Mouse Delta
-			glm::vec2 mouseDelta = input.GetMouseDelta();
+			glm::vec2 mouseDelta = input.getMouseDelta();
 			oss.str("");
 			oss << "Mouse Delta: (" << static_cast<int>(mouseDelta.x) << ", " << static_cast<int>(mouseDelta.y) << ")";
 			fontRenderer->RenderText(oss.str(), glm::vec2(50, yPos), scale, white);
 			yPos += lineHeight;
 
 			// Mouse Buttons
-			bool leftDown = input.IsMouseButtonDown(engine::MouseButton::Left);
-			bool rightDown = input.IsMouseButtonDown(engine::MouseButton::Right);
-			bool middleDown = input.IsMouseButtonDown(engine::MouseButton::Middle);
+			bool leftDown = input.isMouseButtonDown(engine::MouseButton::Left);
+			bool rightDown = input.isMouseButtonDown(engine::MouseButton::Right);
+			bool middleDown = input.isMouseButtonDown(engine::MouseButton::Middle);
 
 			oss.str("");
 			oss << "Mouse Buttons: L:" << (leftDown ? "DOWN" : "UP") << "  R:" << (rightDown ? "DOWN" : "UP")
@@ -98,10 +98,10 @@ namespace {
 			yPos += lineHeight;
 
 			// Dragging
-			bool dragging = input.IsDragging();
+			bool dragging = input.isDragging();
 			if (dragging) {
-				glm::vec2 dragStart = input.GetDragStartPosition();
-				glm::vec2 dragDelta = input.GetDragDelta();
+				glm::vec2 dragStart = input.getDragStartPosition();
+				glm::vec2 dragDelta = input.getDragDelta();
 				oss.str("");
 				oss << "Dragging: Start(" << static_cast<int>(dragStart.x) << "," << static_cast<int>(dragStart.y) << ") Delta("
 					<< static_cast<int>(dragDelta.x) << "," << static_cast<int>(dragDelta.y) << ")";
@@ -112,14 +112,14 @@ namespace {
 			yPos += lineHeight;
 
 			// Scroll
-			float scrollDelta = input.GetScrollDelta();
+			float scrollDelta = input.getScrollDelta();
 			oss.str("");
 			oss << "Scroll Delta: " << scrollDelta;
 			fontRenderer->RenderText(oss.str(), glm::vec2(50, yPos), scale, scrollDelta != 0.0F ? yellow : white);
 			yPos += lineHeight;
 
 			// Cursor in window
-			bool cursorIn = input.IsCursorInWindow();
+			bool cursorIn = input.isCursorInWindow();
 			oss.str("");
 			oss << "Cursor In Window: " << (cursorIn ? "YES" : "NO");
 			fontRenderer->RenderText(oss.str(), glm::vec2(50, yPos), scale, cursorIn ? green : yellow);
@@ -150,9 +150,9 @@ namespace {
 			};
 
 			for (const auto& keyTest : keys) {
-				bool isDown = input.IsKeyDown(keyTest.key);
-				bool isPressed = input.IsKeyPressed(keyTest.key);
-				bool isReleased = input.IsKeyReleased(keyTest.key);
+				bool isDown = input.isKeyDown(keyTest.key);
+				bool isPressed = input.isKeyPressed(keyTest.key);
+				bool isReleased = input.isKeyReleased(keyTest.key);
 
 				oss.str("");
 				oss << keyTest.name << ": ";
@@ -208,7 +208,7 @@ namespace {
 
 	// Register scene with SceneManager
 	bool g_registered = []() {
-		engine::SceneManager::Get().RegisterScene("input_test", []() { return std::make_unique<InputTestScene>(); });
+		engine::SceneManager::Get().registerScene("input_test", []() { return std::make_unique<InputTestScene>(); });
 		return true;
 	}();
 

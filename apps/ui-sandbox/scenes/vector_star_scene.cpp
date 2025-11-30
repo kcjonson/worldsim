@@ -189,7 +189,7 @@ namespace {
 
 	// Register scene with SceneManager
 	bool g_registered = []() {
-		engine::SceneManager::Get().RegisterScene("vector-star", []() { return std::make_unique<VectorStarScene>(); });
+		engine::SceneManager::Get().registerScene("vector-star", []() { return std::make_unique<VectorStarScene>(); });
 		return true;
 	}();
 

@@ -270,7 +270,7 @@ namespace {
 
 	// Register scene with SceneManager
 	bool g_registered = []() {
-		engine::SceneManager::Get().RegisterScene("vector-perf", []() { return std::make_unique<VectorPerfScene>(); });
+		engine::SceneManager::Get().registerScene("vector-perf", []() { return std::make_unique<VectorPerfScene>(); });
 		return true;
 	}();
 
