@@ -49,9 +49,10 @@ Use external libraries only for:
 ### Naming Enforcement
 
 clang-tidy enforces our naming conventions:
-- Classes/Functions: PascalCase → `Shader`, `LoadTexture()`
+- Classes/Structs/Enums: PascalCase → `Shader`, `TextureManager`
+- Functions/Methods: camelCase → `loadTexture()`, `isValid()`
 - Variables: camelCase → `frameCount`, `deltaTime`
-- Members: m_ prefix → `m_shader`, `m_isInitialized`
+- Members: camelCase (no prefix) → `shader`, `isInitialized`
 - Constants: k prefix → `kMaxTextures`, `kDefaultFOV`
 
 Violations show as warnings during development.
@@ -141,12 +142,12 @@ struct WorldData { };
 
 ### Functions and Methods
 
-**PascalCase** for all functions:
+**camelCase** for all functions and methods:
 
 ```cpp
-void LoadShader();
-void UpdateWorldState();
-bool IsValid() const;
+void loadShader();
+void updateWorldState();
+bool isValid() const;
 ```
 
 ### Variables
@@ -161,14 +162,14 @@ Shader* currentShader;
 
 ### Member Variables
 
-Prefix with `m_`:
+**camelCase** with no prefix:
 
 ```cpp
 class Renderer {
 private:
-    Shader* m_shader;
-    int m_frameCount;
-    bool m_isInitialized;
+    Shader* shader;
+    int frameCount;
+    bool isInitialized;
 };
 ```
 
@@ -207,14 +208,14 @@ void setText(const std::string& newText) {
 ```cpp
 class Application {
 private:
-    GLFWwindow* m_window{nullptr};     // Prefer in-class init
-    bool m_isRunning{false};           // Makes default explicit
-    float m_deltaTime{0.0F};           // Visible at declaration
+    GLFWwindow* window{nullptr};     // Prefer in-class init
+    bool isRunning{false};           // Makes default explicit
+    float deltaTime{0.0F};           // Visible at declaration
 
     // std::function and other default-constructible types
-    std::function<void()> m_callback{};  // Initializes to empty/null
-    std::string m_name{};                // Initializes to empty string
-    std::vector<int> m_data{};           // Initializes to empty vector
+    std::function<void()> callback{};  // Initializes to empty/null
+    std::string name{};                // Initializes to empty string
+    std::vector<int> data{};           // Initializes to empty vector
 };
 ```
 
@@ -229,9 +230,9 @@ private:
 Use constructor initializer lists when a value depends on constructor parameters:
 
 ```cpp
-Application::Application(GLFWwindow* window)
-    : m_window(window) {  // Override: parameter-dependent
-    // m_isRunning, m_deltaTime, etc. use in-class defaults
+Application::Application(GLFWwindow* newWindow)
+    : window(newWindow) {  // Override: parameter-dependent
+    // isRunning, deltaTime, etc. use in-class defaults
 }
 ```
 
@@ -300,13 +301,13 @@ struct FunctionNameArgs {
     const char* id = nullptr;
 };
 
-void FunctionName(const FunctionNameArgs& args);
+void functionName(const FunctionNameArgs& args);
 ```
 
 **Usage:**
 
 ```cpp
-FunctionName({
+functionName({
     .requiredParam = value,
     .optionalParam = value,  // Can omit if using default
     .id = "debug_name"
@@ -322,14 +323,14 @@ struct RectArgs {
     const char* id = nullptr;
 };
 
-void DrawRect(const RectArgs& args);
+void drawRect(const RectArgs& args);
 
 // Usage
-DrawRect({
+drawRect({
     .bounds = {50, 50, 200, 100},
     .style = {
-        .fill = Color::Red(),
-        .border = {.color = Color::Yellow(), .width = 3.0f}
+        .fill = Color::red(),
+        .border = {.color = Color::yellow(), .width = 3.0f}
     },
     .id = "test_rect"
 });
@@ -414,11 +415,11 @@ Resources are acquired in constructors, released in destructors:
 class Texture {
 public:
     Texture() {
-        glGenTextures(1, &m_id);
+        glGenTextures(1, &id);
     }
 
     ~Texture() {
-        glDeleteTextures(1, &m_id);
+        glDeleteTextures(1, &id);
     }
 
     // Delete copy, implement move
@@ -428,7 +429,7 @@ public:
     Texture& operator=(Texture&&) noexcept = default;
 
 private:
-    GLuint m_id;
+    GLuint id;
 };
 ```
 
@@ -438,12 +439,12 @@ For frequently created/destroyed objects, use object pools:
 
 ```cpp
 class TilePool {
-    std::vector<Tile> m_pool;
-    std::vector<Tile*> m_available;
+    std::vector<Tile> pool;
+    std::vector<Tile*> available;
 
 public:
-    Tile* Acquire();
-    void Release(Tile* tile);
+    Tile* acquire();
+    void release(Tile* tile);
 };
 ```
 
@@ -548,7 +549,7 @@ constexpr int kTileSize = Square(16);
 
 **`std::span` for array views:**
 ```cpp
-void ProcessVertices(std::span<const Vertex> vertices);
+void processVertices(std::span<const Vertex> vertices);
 ```
 
 **Structured bindings for clarity:**
@@ -590,8 +591,8 @@ T Add(T a, T b) { return a + b; }
 For non-trivial types, pass by const reference:
 
 ```cpp
-void ProcessMesh(const Mesh& mesh);  // Good
-void ProcessMesh(Mesh mesh);         // Bad - copies entire mesh
+void processMesh(const Mesh& mesh);  // Good
+void processMesh(Mesh mesh);         // Bad - copies entire mesh
 ```
 
 ### Use const Liberally
@@ -601,10 +602,10 @@ Mark everything const that doesn't modify:
 ```cpp
 class Transform {
 public:
-    glm::mat4 GetMatrix() const;  // Doesn't modify
-    bool IsIdentity() const;
+    glm::mat4 getMatrix() const;  // Doesn't modify
+    bool isIdentity() const;
 
-    void SetPosition(const glm::vec3& pos);  // Modifies
+    void setPosition(const glm::vec3& pos);  // Modifies
 };
 ```
 
@@ -653,7 +654,7 @@ Use forward declarations to reduce compile times:
 class Texture;  // Forward declaration
 
 class Shader {
-    void BindTexture(const Texture* texture);
+    void bindTexture(const Texture* texture);
 };
 ```
 
@@ -682,10 +683,10 @@ Each file should have a single, clear purpose. If a file is growing large (>500 
 Use assertions liberally in debug builds:
 
 ```cpp
-void SetShader(Shader* shader) {
-    assert(shader != nullptr && "Shader cannot be null");
-    assert(shader->IsCompiled() && "Shader must be compiled");
-    m_shader = shader;
+void setShader(Shader* newShader) {
+    assert(newShader != nullptr && "Shader cannot be null");
+    assert(newShader->isCompiled() && "Shader must be compiled");
+    shader = newShader;
 }
 ```
 
@@ -733,19 +734,19 @@ Document decision here once made.
 ```cpp
 // Bad - obvious
 // Increment frame count
-m_frameCount++;
+frameCount++;
 
 // Good - explains why
 // Skip first frame to avoid initialization hiccups
-if (m_frameCount > 0) {
-    UpdatePhysics(deltaTime);
+if (frameCount > 0) {
+    updatePhysics(deltaTime);
 }
 
 // Good - documents temporary implementation
 // TODO: Replace with proper terrain generation algorithm
 // See docs/technical/world-generation-architecture.md
-float GenerateTerrain(float x, float y) {
-    return PerlinNoise(x, y);  // TEMPORARY
+float generateTerrain(float x, float y) {
+    return perlinNoise(x, y);  // TEMPORARY
 }
 ```
 

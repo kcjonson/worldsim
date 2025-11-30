@@ -36,11 +36,11 @@ CheckOptions:
   - key: readability-identifier-naming.EnumCase
     value: CamelCase
 
-  # Function naming: PascalCase
+  # Function naming: camelCase
   - key: readability-identifier-naming.FunctionCase
-    value: CamelCase
+    value: camelBack
   - key: readability-identifier-naming.MethodCase
-    value: CamelCase
+    value: camelBack
   # Exception: Allow Google Benchmark convention (BM_FunctionName)
   - key: readability-identifier-naming.FunctionIgnoredRegexp
     value: '^BM_.*'
@@ -59,13 +59,13 @@ CheckOptions:
   - key: readability-identifier-naming.GlobalVariablePrefix
     value: g_
 
-  # Member variables: m_ prefix for private/protected only (public struct fields don't need it)
+  # Member variables: camelCase, no prefix
   - key: readability-identifier-naming.MemberCase
     value: camelBack
   - key: readability-identifier-naming.PrivateMemberPrefix
-    value: m_
+    value: ''
   - key: readability-identifier-naming.ProtectedMemberPrefix
-    value: m_
+    value: ''
 
   # Constants: k prefix with PascalCase
   - key: readability-identifier-naming.ConstantCase
