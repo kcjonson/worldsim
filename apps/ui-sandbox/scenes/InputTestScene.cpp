@@ -2,15 +2,13 @@
 // Displays real-time input state from InputManager
 
 #include <GL/glew.h>
-#include <font/FontRenderer.h>
-#include <glm/glm.hpp>
-#include <glm/gtc/matrix_transform.hpp>
+#include <graphics/Color.h>
 #include <input/InputManager.h>
 #include <input/InputTypes.h>
-#include <memory>
 #include <primitives/Primitives.h>
 #include <scene/Scene.h>
 #include <scene/SceneManager.h>
+#include <shapes/Shapes.h>
 #include <sstream>
 #include <utils/Log.h>
 
@@ -20,53 +18,39 @@ namespace {
 	  public:
 		void onEnter() override {
 			LOG_INFO(UI, "InputTestScene::OnEnter()");
-
-			// Initialize font renderer
-			fontRenderer = std::make_unique<ui::FontRenderer>();
-			if (!fontRenderer->Initialize()) {
-				LOG_ERROR(UI, "Failed to initialize FontRenderer!");
-				return;
-			}
-
-			// Get actual viewport dimensions
-			int viewportWidth = 0;
-			int viewportHeight = 0;
-			Renderer::Primitives::getViewport(viewportWidth, viewportHeight);
-
-			// Set up projection matrix (orthographic for 2D text)
-			glm::mat4 projection = glm::ortho(0.0F, static_cast<float>(viewportWidth), static_cast<float>(viewportHeight), 0.0F);
-			fontRenderer->setProjectionMatrix(projection);
-
-			LOG_INFO(UI, "InputTestScene initialized (%dx%d)", viewportWidth, viewportHeight);
 		}
 
-		void handleInput(float dt) override {
+		void handleInput(float /*dt*/) override {
 			// Just read input state - InputManager handles everything
 		}
 
-		void update(float dt) override {
-			// No update logic needed - input state is read in Render()
+		void update(float /*dt*/) override {
+			// No update logic needed - input state is read in render()
 		}
 
 		void render() override {
+			using namespace Foundation;
+
 			// Clear background to dark gray
 			glClearColor(0.15F, 0.15F, 0.15F, 1.0F);
 			glClear(GL_COLOR_BUFFER_BIT);
 
-			if (!fontRenderer) {
-				return;
-			}
+			// Helper to draw text using UI::Text shapes
+			auto drawText = [](const std::string& str, float x, float y, float fontSize, const Color& color) {
+				UI::Text text(UI::Text::Args{.position = {x, y}, .text = str, .style = {.color = color, .fontSize = fontSize}});
+				text.render();
+			};
 
-			const float		scale = 1.5F;
-			float			yPos = 50.0F;
-			const float		lineHeight = 50.0F;
-			const glm::vec3 white(1.0F, 1.0F, 1.0F);
-			const glm::vec3 green(0.0F, 1.0F, 0.0F);
-			const glm::vec3 yellow(1.0F, 1.0F, 0.0F);
-			const glm::vec3 cyan(0.0F, 1.0F, 1.0F);
+			const float fontSize = 20.0F;
+			float		yPos = 50.0F;
+			const float lineHeight = 35.0F;
+			const Color white = Color::white();
+			const Color green = Color::green();
+			const Color yellow = Color::yellow();
+			const Color cyan = Color::cyan();
 
 			// Title
-			fontRenderer->renderText("Input Test Scene", glm::vec2(50, yPos), 2.0F, white);
+			drawText("Input Test Scene", 50, yPos, 28.0F, white);
 			yPos += lineHeight * 1.5F;
 
 			// Get input state from InputManager
@@ -76,14 +60,14 @@ namespace {
 			glm::vec2		   mousePos = input.getMousePosition();
 			std::ostringstream oss;
 			oss << "Mouse Position: (" << static_cast<int>(mousePos.x) << ", " << static_cast<int>(mousePos.y) << ")";
-			fontRenderer->renderText(oss.str(), glm::vec2(50, yPos), scale, white);
+			drawText(oss.str(), 50, yPos, fontSize, white);
 			yPos += lineHeight;
 
 			// Mouse Delta
 			glm::vec2 mouseDelta = input.getMouseDelta();
 			oss.str("");
 			oss << "Mouse Delta: (" << static_cast<int>(mouseDelta.x) << ", " << static_cast<int>(mouseDelta.y) << ")";
-			fontRenderer->renderText(oss.str(), glm::vec2(50, yPos), scale, white);
+			drawText(oss.str(), 50, yPos, fontSize, white);
 			yPos += lineHeight;
 
 			// Mouse Buttons
@@ -94,7 +78,7 @@ namespace {
 			oss.str("");
 			oss << "Mouse Buttons: L:" << (leftDown ? "DOWN" : "UP") << "  R:" << (rightDown ? "DOWN" : "UP")
 				<< "  M:" << (middleDown ? "DOWN" : "UP");
-			fontRenderer->renderText(oss.str(), glm::vec2(50, yPos), scale, leftDown || rightDown || middleDown ? green : white);
+			drawText(oss.str(), 50, yPos, fontSize, leftDown || rightDown || middleDown ? green : white);
 			yPos += lineHeight;
 
 			// Dragging
@@ -105,9 +89,9 @@ namespace {
 				oss.str("");
 				oss << "Dragging: Start(" << static_cast<int>(dragStart.x) << "," << static_cast<int>(dragStart.y) << ") Delta("
 					<< static_cast<int>(dragDelta.x) << "," << static_cast<int>(dragDelta.y) << ")";
-				fontRenderer->renderText(oss.str(), glm::vec2(50, yPos), scale, yellow);
+				drawText(oss.str(), 50, yPos, fontSize, yellow);
 			} else {
-				fontRenderer->renderText("Dragging: No", glm::vec2(50, yPos), scale, white);
+				drawText("Dragging: No", 50, yPos, fontSize, white);
 			}
 			yPos += lineHeight;
 
@@ -115,18 +99,18 @@ namespace {
 			float scrollDelta = input.getScrollDelta();
 			oss.str("");
 			oss << "Scroll Delta: " << scrollDelta;
-			fontRenderer->renderText(oss.str(), glm::vec2(50, yPos), scale, scrollDelta != 0.0F ? yellow : white);
+			drawText(oss.str(), 50, yPos, fontSize, scrollDelta != 0.0F ? yellow : white);
 			yPos += lineHeight;
 
 			// Cursor in window
 			bool cursorIn = input.isCursorInWindow();
 			oss.str("");
 			oss << "Cursor In Window: " << (cursorIn ? "YES" : "NO");
-			fontRenderer->renderText(oss.str(), glm::vec2(50, yPos), scale, cursorIn ? green : yellow);
+			drawText(oss.str(), 50, yPos, fontSize, cursorIn ? green : yellow);
 			yPos += lineHeight * 1.5F;
 
 			// Keyboard Section
-			fontRenderer->renderText("Keyboard (Try WASD, Arrow Keys, Space, Enter):", glm::vec2(50, yPos), scale, cyan);
+			drawText("Keyboard (Try WASD, Arrow Keys, Space, Enter):", 50, yPos, fontSize, cyan);
 			yPos += lineHeight;
 
 			// Test common keys
@@ -166,7 +150,7 @@ namespace {
 					oss << "UP";
 				}
 
-				glm::vec3 color = white;
+				Color color = white;
 				if (isPressed)
 					color = green;
 				else if (isReleased)
@@ -174,23 +158,17 @@ namespace {
 				else if (isDown)
 					color = cyan;
 
-				fontRenderer->renderText(oss.str(), glm::vec2(50, yPos), scale, color);
+				drawText(oss.str(), 50, yPos, fontSize, color);
 				yPos += lineHeight;
 			}
 
 			// Instructions
 			yPos += lineHeight;
-			fontRenderer->renderText(
-				"Try moving mouse, clicking, dragging, scrolling, and pressing keys!",
-				glm::vec2(50, yPos),
-				1.2F,
-				glm::vec3(0.7F, 0.7F, 0.7F)
-			);
+			drawText("Try moving mouse, clicking, dragging, scrolling, and pressing keys!", 50, yPos, 16.0F, Color(0.7F, 0.7F, 0.7F, 1.0F));
 		}
 
 		void onExit() override {
 			LOG_INFO(UI, "InputTestScene::OnExit()");
-			fontRenderer.reset();
 		}
 
 		std::string exportState() override { // NOLINT(readability-convert-member-functions-to-static)
@@ -201,9 +179,6 @@ namespace {
 		}
 
 		const char* getName() const override { return "input_test"; }
-
-	  private:
-		std::unique_ptr<ui::FontRenderer> fontRenderer;
 	};
 
 	// Register scene with SceneManager

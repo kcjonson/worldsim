@@ -120,6 +120,17 @@ namespace Renderer { // NOLINT(readability-identifier-naming)
 		// Get current clip bounds
 		const Foundation::Vec4& getClipBounds() const { return currentClipBounds; }
 
+		// --- Transform ---
+
+		// Set the current transform matrix.
+		// The transform is baked into vertex positions when vertices are added (not at flush time).
+		// This allows different transforms for different parts of the scene within a single batch.
+		// Used for content offset (scrolling) in containers.
+		void setTransform(const Foundation::Mat4& transform);
+
+		// Get current transform matrix
+		const Foundation::Mat4& getTransform() const { return currentTransform; }
+
 		// Rendering statistics structure
 		struct RenderStats {
 			uint32_t drawCalls = 0;
@@ -167,6 +178,10 @@ namespace Renderer { // NOLINT(readability-identifier-naming)
 		// Current clip bounds (applied to all vertices)
 		// (0,0,0,0) means no clipping
 		Foundation::Vec4 currentClipBounds{0.0F, 0.0F, 0.0F, 0.0F};
+
+		// Current transform matrix (baked into vertex positions at add-time)
+		Foundation::Mat4 currentTransform{1.0F}; // Identity
+		bool			 transformIsIdentity = true; // Cached to avoid per-vertex checks
 
 		// Statistics
 		size_t drawCallCount = 0;

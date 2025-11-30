@@ -8,6 +8,19 @@
 
 namespace Renderer {
 
+	namespace {
+		// Helper to transform a 2D position by a 4x4 matrix
+		// isIdentity flag is pre-computed in setTransform() to avoid per-vertex checks
+		inline Foundation::Vec2 TransformPosition(const Foundation::Vec2& pos, const Foundation::Mat4& transform, bool isIdentity) {
+			if (isIdentity) {
+				return pos;
+			}
+			// Apply transform: multiply position by matrix
+			Foundation::Vec4 result = transform * Foundation::Vec4(pos.x, pos.y, 0.0F, 1.0F);
+			return Foundation::Vec2(result.x, result.y);
+		}
+	} // namespace
+
 	BatchRenderer::BatchRenderer() { // NOLINT(cppcoreguidelines-pro-type-member-init,modernize-use-equals-default)
 		// Reserve space for vertices to minimize allocations
 		vertices.reserve(10000);
@@ -108,8 +121,8 @@ namespace Renderer {
 
 		// Pack border data (color RGB + width)
 		Foundation::Vec4 borderData(0.0F, 0.0F, 0.0F, 0.0F);
-		float borderWidth = 0.0F;
-		float borderPosEnum = 1.0F; // Default to Center
+		float			 borderWidth = 0.0F;
+		float			 borderPosEnum = 1.0F; // Default to Center
 		if (border.has_value()) {
 			borderData = Foundation::Vec4(border->color.r, border->color.g, border->color.b, border->width);
 			borderWidth = border->width;
@@ -154,10 +167,11 @@ namespace Renderer {
 		Foundation::Vec4 shapeParams(halfW, halfH, cornerRadius, borderPosEnum);
 
 		// Add 4 vertices with expanded screen positions but rect-local coordinates
-		// that extend beyond the original shape bounds
+		// that extend beyond the original shape bounds.
+		// Positions are transformed by currentTransform to support scrolling/offset.
 		// Top-left corner
 		vertices.push_back(
-			{Foundation::Vec2(centerX - expandedHalfW, centerY - expandedHalfH),
+			{TransformPosition(Foundation::Vec2(centerX - expandedHalfW, centerY - expandedHalfH), currentTransform, transformIsIdentity),
 			 Foundation::Vec2(-expandedHalfW, -expandedHalfH), // Rect-local: top-left (expanded)
 			 colorVec,
 			 borderData,
@@ -167,7 +181,7 @@ namespace Renderer {
 
 		// Top-right corner
 		vertices.push_back(
-			{Foundation::Vec2(centerX + expandedHalfW, centerY - expandedHalfH),
+			{TransformPosition(Foundation::Vec2(centerX + expandedHalfW, centerY - expandedHalfH), currentTransform, transformIsIdentity),
 			 Foundation::Vec2(expandedHalfW, -expandedHalfH), // Rect-local: top-right (expanded)
 			 colorVec,
 			 borderData,
@@ -177,7 +191,7 @@ namespace Renderer {
 
 		// Bottom-right corner
 		vertices.push_back(
-			{Foundation::Vec2(centerX + expandedHalfW, centerY + expandedHalfH),
+			{TransformPosition(Foundation::Vec2(centerX + expandedHalfW, centerY + expandedHalfH), currentTransform, transformIsIdentity),
 			 Foundation::Vec2(expandedHalfW, expandedHalfH), // Rect-local: bottom-right (expanded)
 			 colorVec,
 			 borderData,
@@ -187,7 +201,7 @@ namespace Renderer {
 
 		// Bottom-left corner
 		vertices.push_back(
-			{Foundation::Vec2(centerX - expandedHalfW, centerY + expandedHalfH),
+			{TransformPosition(Foundation::Vec2(centerX - expandedHalfW, centerY + expandedHalfH), currentTransform, transformIsIdentity),
 			 Foundation::Vec2(-expandedHalfW, expandedHalfH), // Rect-local: bottom-left (expanded)
 			 colorVec,
 			 borderData,
@@ -222,15 +236,15 @@ namespace Renderer {
 		Foundation::Vec4 zeroVec4(0.0F, 0.0F, 0.0F, 0.0F);
 		Foundation::Vec4 shapeParams(0.0F, 0.0F, 0.0F, 1.0F); // borderPos=1 marks as shape
 
-		// Add all vertices
+		// Add all vertices (positions transformed by currentTransform)
 		for (size_t i = 0; i < vertexCount; ++i) {
 			vertices.push_back({
-				inputVertices[i],
-				zeroVec2,	  // texCoord (unused for triangles)
+				TransformPosition(inputVertices[i], currentTransform, transformIsIdentity),
+				zeroVec2, // texCoord (unused for triangles)
 				colorVec,
-				zeroVec4,			  // data1 (unused)
-				shapeParams,		  // data2 with borderPos >= 0 marks as shape
-				currentClipBounds	  // clip bounds
+				zeroVec4,		  // data1 (unused)
+				shapeParams,	  // data2 with borderPos >= 0 marks as shape
+				currentClipBounds // clip bounds
 			});
 		}
 
@@ -259,46 +273,47 @@ namespace Renderer {
 
 		// Add 4 vertices for glyph quad
 		// Note: UV Y coordinates are flipped for OpenGL coordinate system
+		// Positions are transformed by currentTransform to support scrolling/offset
 
 		// Top-left
-		vertices.push_back({
-			position,
-			Foundation::Vec2(uvMin.x, uvMax.y), // UV flipped
-			colorVec,
-			zeroVec4,
-			textParams,
-			currentClipBounds
-		});
+		vertices.push_back(
+			{TransformPosition(position, currentTransform, transformIsIdentity),
+			 Foundation::Vec2(uvMin.x, uvMax.y), // UV flipped
+			 colorVec,
+			 zeroVec4,
+			 textParams,
+			 currentClipBounds}
+		);
 
 		// Top-right
-		vertices.push_back({
-			Foundation::Vec2(position.x + size.x, position.y),
-			Foundation::Vec2(uvMax.x, uvMax.y), // UV flipped
-			colorVec,
-			zeroVec4,
-			textParams,
-			currentClipBounds
-		});
+		vertices.push_back(
+			{TransformPosition(Foundation::Vec2(position.x + size.x, position.y), currentTransform, transformIsIdentity),
+			 Foundation::Vec2(uvMax.x, uvMax.y), // UV flipped
+			 colorVec,
+			 zeroVec4,
+			 textParams,
+			 currentClipBounds}
+		);
 
 		// Bottom-right
-		vertices.push_back({
-			Foundation::Vec2(position.x + size.x, position.y + size.y),
-			Foundation::Vec2(uvMax.x, uvMin.y), // UV flipped
-			colorVec,
-			zeroVec4,
-			textParams,
-			currentClipBounds
-		});
+		vertices.push_back(
+			{TransformPosition(Foundation::Vec2(position.x + size.x, position.y + size.y), currentTransform, transformIsIdentity),
+			 Foundation::Vec2(uvMax.x, uvMin.y), // UV flipped
+			 colorVec,
+			 zeroVec4,
+			 textParams,
+			 currentClipBounds}
+		);
 
 		// Bottom-left
-		vertices.push_back({
-			Foundation::Vec2(position.x, position.y + size.y),
-			Foundation::Vec2(uvMin.x, uvMin.y), // UV flipped
-			colorVec,
-			zeroVec4,
-			textParams,
-			currentClipBounds
-		});
+		vertices.push_back(
+			{TransformPosition(Foundation::Vec2(position.x, position.y + size.y), currentTransform, transformIsIdentity),
+			 Foundation::Vec2(uvMin.x, uvMin.y), // UV flipped
+			 colorVec,
+			 zeroVec4,
+			 textParams,
+			 currentClipBounds}
+		);
 
 		// Add 6 indices (2 triangles)
 		indices.push_back(baseIndex + 0);
@@ -351,10 +366,12 @@ namespace Renderer {
 		} else {
 			projection = glm::ortho(0.0F, static_cast<float>(viewportWidth), static_cast<float>(viewportHeight), 0.0F, -1.0F, 1.0F);
 		}
-		Foundation::Mat4 transform = Foundation::Mat4(1.0F);
 
 		glUniformMatrix4fv(projectionLoc, 1, GL_FALSE, glm::value_ptr(projection));
-		glUniformMatrix4fv(transformLoc, 1, GL_FALSE, glm::value_ptr(transform));
+		// Transform is identity since transforms are baked into vertex positions at add time
+		// This allows different parts of the scene to have different transforms within one batch
+		Foundation::Mat4 identityTransform(1.0F);
+		glUniformMatrix4fv(transformLoc, 1, GL_FALSE, glm::value_ptr(identityTransform));
 
 		// Set viewport height and pixel ratio for clipping
 		// gl_FragCoord uses physical pixels, so we need framebuffer height and pixel ratio
@@ -435,6 +452,21 @@ namespace Renderer {
 
 	void BatchRenderer::clearClipBounds() {
 		currentClipBounds = Foundation::Vec4(0.0F, 0.0F, 0.0F, 0.0F);
+	}
+
+	void BatchRenderer::setTransform(const Foundation::Mat4& transform) {
+		currentTransform = transform;
+		// Cache identity check (expensive to do per-vertex, cheap once per transform change)
+		// Check all elements for true identity matrix (GLM uses column-major storage)
+		transformIsIdentity =
+			// Diagonal must be 1.0
+			transform[0][0] == 1.0F && transform[1][1] == 1.0F && transform[2][2] == 1.0F && transform[3][3] == 1.0F &&
+			// Translation (column 3) must be 0
+			transform[3][0] == 0.0F && transform[3][1] == 0.0F && transform[3][2] == 0.0F &&
+			// Rotation/shear off-diagonals must be 0
+			transform[0][1] == 0.0F && transform[0][2] == 0.0F && transform[0][3] == 0.0F && transform[1][0] == 0.0F &&
+			transform[1][2] == 0.0F && transform[1][3] == 0.0F && transform[2][0] == 0.0F && transform[2][1] == 0.0F &&
+			transform[2][3] == 0.0F;
 	}
 
 } // namespace Renderer

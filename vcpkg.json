@@ -10,7 +10,6 @@
     "stb",
     "cpp-httplib",
     "nanosvg",
-    "freetype",
     {
       "name": "msdfgen",
       "default-features": false,
