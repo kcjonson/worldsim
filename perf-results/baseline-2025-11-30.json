@@ -1,0 +1,82 @@
+{
+  "timestamp": "2025-11-30T00:00:00Z",
+  "git_commit": "494aa1d",
+  "description": "Baseline performance measurements before clipping optimization work",
+  "notes": [
+    "drawCalls/vertexCount/triangleCount show 0 - metrics tracking needs investigation",
+    "vsync appears off for simple scenes (shapes, clip) but on for complex scenes",
+    "Multiple samples taken per scene for accuracy"
+  ],
+  "scenes": {
+    "shapes": {
+      "description": "Basic shapes rendering without clipping",
+      "samples": [
+        {"fps": 16393.44, "frameTimeMs": 0.06, "frameTimeMinMs": 0.06, "frameTimeMaxMs": 0.17},
+        {"fps": 12820.51, "frameTimeMs": 0.08, "frameTimeMinMs": 0.06, "frameTimeMaxMs": 0.18},
+        {"fps": 16129.03, "frameTimeMs": 0.06, "frameTimeMinMs": 0.06, "frameTimeMaxMs": 0.19}
+      ],
+      "summary": {
+        "avgFrameTimeMs": 0.07,
+        "minFrameTimeMs": 0.06,
+        "maxFrameTimeMs": 0.19
+      }
+    },
+    "clip": {
+      "description": "Clipping demo scene with shader-based clipping",
+      "samples": [
+        {"fps": 1455.60, "frameTimeMs": 0.69, "frameTimeMinMs": 0.55, "frameTimeMaxMs": 1.21},
+        {"fps": 1533.74, "frameTimeMs": 0.65, "frameTimeMinMs": 0.47, "frameTimeMaxMs": 0.84},
+        {"fps": 1773.05, "frameTimeMs": 0.56, "frameTimeMinMs": 0.48, "frameTimeMaxMs": 1.12}
+      ],
+      "summary": {
+        "avgFrameTimeMs": 0.63,
+        "minFrameTimeMs": 0.47,
+        "maxFrameTimeMs": 1.21
+      }
+    },
+    "scroll-container": {
+      "description": "Scroll container with clipping enabled",
+      "samples": [
+        {"fps": 1745.20, "frameTimeMs": 0.57, "frameTimeMinMs": 0.50, "frameTimeMaxMs": 1.28},
+        {"fps": 1715.27, "frameTimeMs": 0.58, "frameTimeMinMs": 0.55, "frameTimeMaxMs": 1.04},
+        {"fps": 1321.00, "frameTimeMs": 0.76, "frameTimeMinMs": 0.47, "frameTimeMaxMs": 0.94}
+      ],
+      "summary": {
+        "avgFrameTimeMs": 0.64,
+        "minFrameTimeMs": 0.47,
+        "maxFrameTimeMs": 1.28
+      }
+    },
+    "vector-perf": {
+      "description": "10k stars stress test",
+      "samples": [
+        {"fps": 83.21, "frameTimeMs": 12.02, "frameTimeMinMs": 11.37, "frameTimeMaxMs": 14.27}
+      ],
+      "summary": {
+        "avgFrameTimeMs": 12.02,
+        "minFrameTimeMs": 11.37,
+        "maxFrameTimeMs": 14.27
+      }
+    },
+    "text-shapes": {
+      "description": "Text rendering with shapes",
+      "samples": [
+        {"fps": 83.75, "frameTimeMs": 11.94, "frameTimeMinMs": 11.76, "frameTimeMaxMs": 14.45}
+      ],
+      "summary": {
+        "avgFrameTimeMs": 11.94,
+        "minFrameTimeMs": 11.76,
+        "maxFrameTimeMs": 14.45
+      }
+    }
+  },
+  "analysis": {
+    "baseline_scene": "shapes",
+    "baseline_frameTimeMs": 0.07,
+    "clipping_overhead": {
+      "clip_scene_vs_shapes": "9x slower (0.63ms vs 0.07ms)",
+      "scroll_container_vs_shapes": "9x slower (0.64ms vs 0.07ms)",
+      "absolute_overhead_ms": 0.56
+    }
+  }
+}
