@@ -23,13 +23,13 @@ namespace renderer {
 			  isClosed(closed) {}
 
 		// Convenience: Add a vertex
-		void AddVertex(Foundation::Vec2 v) { vertices.push_back(v); }
+		void addVertex(Foundation::Vec2 v) { vertices.push_back(v); }
 
 		// Get vertex count
 		size_t GetVertexCount() const { return vertices.size(); }
 
 		// Clear all vertices
-		void Clear() { vertices.clear(); }
+		void clear() { vertices.clear(); }
 	};
 
 	// TessellatedMesh represents the triangulated output of tessellation
@@ -46,13 +46,13 @@ namespace renderer {
 		size_t GetVertexCount() const { return vertices.size(); }
 
 		// Clear all data
-		void Clear() {
+		void clear() {
 			vertices.clear();
 			indices.clear();
 		}
 
 		// Reserve memory for vertices and indices
-		void Reserve(size_t vertexCount, size_t indexCount) {
+		void reserve(size_t vertexCount, size_t indexCount) {
 			vertices.reserve(vertexCount);
 			indices.reserve(indexCount);
 		}

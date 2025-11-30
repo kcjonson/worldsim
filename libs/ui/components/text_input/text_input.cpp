@@ -102,7 +102,7 @@ namespace UI {
 	// Lifecycle Methods
 	// ============================================================================
 
-	void TextInput::HandleInput() {
+	void TextInput::handleInput() {
 		if (!enabled) {
 			return;
 		}
@@ -164,7 +164,7 @@ namespace UI {
 		}
 	}
 
-	void TextInput::Update(float deltaTime) {
+	void TextInput::update(float deltaTime) {
 		if (focused) {
 			cursorBlinkTimer += deltaTime;
 			if (cursorBlinkTimer > style.cursorBlinkRate) {
@@ -173,7 +173,7 @@ namespace UI {
 		}
 	}
 
-	void TextInput::Render() {
+	void TextInput::render() {
 		if (!visible) {
 			return;
 		}
@@ -216,18 +216,18 @@ namespace UI {
 	// IFocusable Interface
 	// ============================================================================
 
-	void TextInput::OnFocusGained() {
+	void TextInput::onFocusGained() {
 		focused = true;
 		cursorBlinkTimer = 0.0F; // Reset blink (cursor visible)
 	}
 
-	void TextInput::OnFocusLost() {
+	void TextInput::onFocusLost() {
 		focused = false;
 		mouseDown = false; // Clear mouse state to prevent ghost selections
 		clearSelection();
 	}
 
-	void TextInput::HandleKeyInput(engine::Key key, bool shift, bool ctrl, bool /*alt*/) {
+	void TextInput::handleKeyInput(engine::Key key, bool shift, bool ctrl, bool /*alt*/) {
 		if (!enabled || !focused) {
 			return;
 		}
@@ -289,7 +289,7 @@ namespace UI {
 		}
 	}
 
-	void TextInput::HandleCharInput(char32_t codepoint) {
+	void TextInput::handleCharInput(char32_t codepoint) {
 		if (!enabled || !focused) {
 			return;
 		}
@@ -311,7 +311,7 @@ namespace UI {
 		insertChar(codepoint);
 	}
 
-	bool TextInput::CanReceiveFocus() const {
+	bool TextInput::canReceiveFocus() const {
 		return enabled;
 	}
 
@@ -600,7 +600,7 @@ namespace UI {
 		};
 
 		short zIndex = RenderContext::GetZIndex();
-		Renderer::Primitives::DrawRect(
+		Renderer::Primitives::drawRect(
 			{.bounds = {position.x, position.y, size.x, size.y}, .style = rectStyle, .id = id, .zIndex = zIndex}
 		);
 	}
@@ -636,12 +636,12 @@ namespace UI {
 		// Generate glyph quads using FontRenderer
 		glm::vec4 glyphColor(style.textColor.r, style.textColor.g, style.textColor.b, style.textColor.a);
 		std::vector<ui::FontRenderer::GlyphQuad> glyphs;
-		fontRenderer->GenerateGlyphQuads(text, glm::vec2(textX, baselineY), scale, glyphColor, glyphs);
+		fontRenderer->generateGlyphQuads(text, glm::vec2(textX, baselineY), scale, glyphColor, glyphs);
 
 		// Add each glyph to the unified batch renderer
 		Foundation::Color textColor(style.textColor.r, style.textColor.g, style.textColor.b, style.textColor.a);
 		for (const auto& glyph : glyphs) {
-			batchRenderer->AddTextQuad(
+			batchRenderer->addTextQuad(
 				Foundation::Vec2(glyph.position.x, glyph.position.y),
 				Foundation::Vec2(glyph.size.x, glyph.size.y),
 				Foundation::Vec2(glyph.uvMin.x, glyph.uvMin.y),
@@ -676,7 +676,7 @@ namespace UI {
 		float cursorEndY = centerY + (textHeight * 0.5F);
 
 		short zIndex = RenderContext::GetZIndex();
-		Renderer::Primitives::DrawLine(
+		Renderer::Primitives::drawLine(
 			{.start = {cursorX, cursorStartY},
 			 .end = {cursorX, cursorEndY},
 			 .style = Foundation::LineStyle{.color = style.cursorColor, .width = style.cursorWidth},
@@ -721,7 +721,7 @@ namespace UI {
 		Foundation::RectStyle selectionStyle{.fill = style.selectionColor, .border = std::nullopt};
 
 		short zIndex = RenderContext::GetZIndex();
-		Renderer::Primitives::DrawRect({
+		Renderer::Primitives::drawRect({
 			.bounds = {selectionX, selectionY, selectionWidth, selectionHeight},
 			.style = selectionStyle,
 			.id = id,
@@ -760,12 +760,12 @@ namespace UI {
 		// Generate glyph quads using FontRenderer
 		glm::vec4 glyphColor(style.placeholderColor.r, style.placeholderColor.g, style.placeholderColor.b, style.placeholderColor.a);
 		std::vector<ui::FontRenderer::GlyphQuad> glyphs;
-		fontRenderer->GenerateGlyphQuads(placeholder, glm::vec2(textX, baselineY), scale, glyphColor, glyphs);
+		fontRenderer->generateGlyphQuads(placeholder, glm::vec2(textX, baselineY), scale, glyphColor, glyphs);
 
 		// Add each glyph to the unified batch renderer
 		Foundation::Color placeholderColor(style.placeholderColor.r, style.placeholderColor.g, style.placeholderColor.b, style.placeholderColor.a);
 		for (const auto& glyph : glyphs) {
-			batchRenderer->AddTextQuad(
+			batchRenderer->addTextQuad(
 				Foundation::Vec2(glyph.position.x, glyph.position.y),
 				Foundation::Vec2(glyph.size.x, glyph.size.y),
 				Foundation::Vec2(glyph.uvMin.x, glyph.uvMin.y),

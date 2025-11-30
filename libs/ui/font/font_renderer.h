@@ -54,13 +54,13 @@ namespace ui {
 		 * @param scale Scaling factor for the text size (1.0F = 16px base size)
 		 * @param color RGB color of the text (0-1 range)
 		 */
-		void RenderText(const std::string& text, const glm::vec2& position, float scale, const glm::vec3& color);
+		void renderText(const std::string& text, const glm::vec2& position, float scale, const glm::vec3& color);
 
 		/**
 		 * Set the projection matrix for the text shader
 		 * @param projection The projection matrix to use
 		 */
-		void SetProjectionMatrix(const glm::mat4& projection);
+		void setProjectionMatrix(const glm::mat4& projection);
 
 		/**
 		 * Calculate the dimensions of a text string with the given scale
@@ -103,7 +103,7 @@ namespace ui {
 		 * @param color RGBA color of the text (0-1 range)
 		 * @param outQuads Output vector to append generated quads to
 		 */
-		void GenerateGlyphQuads(
+		void generateGlyphQuads(
 			const std::string&		text,
 			const glm::vec2&		position,
 			float					scale,
@@ -121,12 +121,12 @@ namespace ui {
 		 * Update the internal frame counter for cache LRU tracking
 		 * Should be called once per frame from the main application loop
 		 */
-		void UpdateFrame();
+		void updateFrame();
 
 		/**
 		 * Clear the glyph quad cache (e.g., on scene transitions)
 		 */
-		void ClearGlyphQuadCache();
+		void clearGlyphQuadCache();
 
 		/**
 		 * Get the current size of the glyph quad cache (for debugging/profiling)

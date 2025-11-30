@@ -17,7 +17,7 @@ namespace {
 
 	class LayerScene : public engine::IScene {
 	  public:
-		void OnEnter() override {
+		void onEnter() override {
 			using namespace UI;
 			using namespace Foundation;
 
@@ -121,32 +121,32 @@ namespace {
 			LOG_INFO(UI, "Layer scene initialized with Component hierarchy");
 		}
 
-		void HandleInput(float /*dt*/) override {
+		void handleInput(float /*dt*/) override {
 			if (root) {
-				root->HandleInput();
+				root->handleInput();
 			}
 		}
 
-		void Update(float /*dt*/) override {
+		void update(float /*dt*/) override {
 			if (root) {
-				root->Update(0.0F);
+				root->update(0.0F);
 			}
 		}
 
-		void Render() override {
+		void render() override {
 			glClearColor(0.1F, 0.1F, 0.15F, 1.0F);
 			glClear(GL_COLOR_BUFFER_BIT);
 
 			if (root) {
-				root->Render();
+				root->render();
 			}
 		}
 
-		void OnExit() override { root.reset(); }
+		void onExit() override { root.reset(); }
 
-		std::string ExportState() override { return "{\"scene\": \"layer\", \"description\": \"Component hierarchy demo\"}"; }
+		std::string exportState() override { return "{\"scene\": \"layer\", \"description\": \"Component hierarchy demo\"}"; }
 
-		const char* GetName() const override { return "layer"; }
+		const char* getName() const override { return "layer"; }
 
 	  private:
 		std::unique_ptr<UI::Container> root;

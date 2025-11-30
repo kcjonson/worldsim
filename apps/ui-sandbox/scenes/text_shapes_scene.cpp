@@ -17,7 +17,7 @@ namespace {
 
 	class TextShapesScene : public engine::IScene {
 	  public:
-		void OnEnter() override {
+		void onEnter() override {
 			using namespace UI;
 			using namespace Foundation;
 
@@ -166,34 +166,34 @@ namespace {
 			LOG_INFO(UI, "Text shapes scene initialized with {} shapes", shapes.size());
 		}
 
-		void HandleInput(float /*dt*/) override {
+		void handleInput(float /*dt*/) override {
 			// No input handling needed
 		}
 
-		void Update(float /*dt*/) override {
+		void update(float /*dt*/) override {
 			// Static scene - no updates needed
 		}
 
-		void Render() override {
+		void render() override {
 			// Clear background
 			glClearColor(0.1F, 0.1F, 0.12F, 1.0F);
 			glClear(GL_COLOR_BUFFER_BIT);
 
 			// Render all shapes
 			for (auto& shape : shapes) {
-				shape->Render();
+				shape->render();
 			}
 		}
 
-		void OnExit() override {
+		void onExit() override {
 			shapes.clear();
 		}
 
-		std::string ExportState() override {
+		std::string exportState() override {
 			return R"({"scene": "text_shapes", "description": "Text shape API demonstration"})";
 		}
 
-		const char* GetName() const override { return "text_shapes"; }
+		const char* getName() const override { return "text_shapes"; }
 
 	  private:
 		std::vector<std::unique_ptr<UI::IComponent>> shapes;

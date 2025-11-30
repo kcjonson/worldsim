@@ -102,7 +102,7 @@ namespace UI {
 		return *this;
 	}
 
-	void Button::HandleInput() {
+	void Button::handleInput() {
 		// Skip input processing if disabled
 		if (disabled) {
 			state = State::Normal;
@@ -148,11 +148,11 @@ namespace UI {
 		}
 	}
 
-	void Button::Update(float /*deltaTime*/) {
+	void Button::update(float /*deltaTime*/) {
 		// Update text component to match current button style
 		const ButtonStyle& style = getCurrentStyle();
 
-		// Position text at center of button - Text::Render() will handle Center/Middle alignment
+		// Position text at center of button - Text::render() will handle Center/Middle alignment
 		Foundation::Vec2 centerPos = Foundation::Vec2{position.x + size.x * 0.5F, position.y + size.y * 0.5F};
 
 		labelText.position = centerPos;
@@ -164,7 +164,7 @@ namespace UI {
 		labelText.visible = visible;
 	}
 
-	void Button::Render() {
+	void Button::render() {
 		if (!visible) {
 			return;
 		}
@@ -174,10 +174,10 @@ namespace UI {
 
 		// Draw background rectangle (batched)
 		Foundation::Rect bounds{position.x, position.y, size.x, size.y};
-		Renderer::Primitives::DrawRect({.bounds = bounds, .style = style.background, .id = id});
+		Renderer::Primitives::drawRect({.bounds = bounds, .style = style.background, .id = id});
 
 		// Draw label text using Text component
-		labelText.Render();
+		labelText.render();
 	}
 
 	bool Button::containsPoint(const Foundation::Vec2& point) const {
@@ -206,15 +206,15 @@ namespace UI {
 
 	// IFocusable interface implementation
 
-	void Button::OnFocusGained() {
+	void Button::onFocusGained() {
 		focused = true;
 	}
 
-	void Button::OnFocusLost() {
+	void Button::onFocusLost() {
 		focused = false;
 	}
 
-	void Button::HandleKeyInput(engine::Key key, bool /*shift*/, bool /*ctrl*/, bool /*alt*/) {
+	void Button::handleKeyInput(engine::Key key, bool /*shift*/, bool /*ctrl*/, bool /*alt*/) {
 		// Disabled buttons don't respond to keyboard input
 		if (disabled) {
 			return;
@@ -228,11 +228,11 @@ namespace UI {
 		}
 	}
 
-	void Button::HandleCharInput(char32_t /*codepoint*/) {
+	void Button::handleCharInput(char32_t /*codepoint*/) {
 		// Button doesn't use character input
 	}
 
-	bool Button::CanReceiveFocus() const {
+	bool Button::canReceiveFocus() const {
 		// Only enabled buttons can receive focus
 		return !disabled;
 	}

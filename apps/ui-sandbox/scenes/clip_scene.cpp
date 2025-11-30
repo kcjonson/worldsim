@@ -20,12 +20,12 @@ namespace {
 
 	class ClipScene : public engine::IScene {
 	  public:
-		void OnEnter() override {
+		void onEnter() override {
 			LOG_INFO(UI, "Clip Scene - Clipping and Scrolling Demo");
 			LOG_INFO(UI, "Press 'C' to toggle clipping on/off");
 		}
 
-		void HandleInput(float /*dt*/) override {
+		void handleInput(float /*dt*/) override {
 			// Toggle clipping with 'C' key
 			static bool lastKeyState = false;
 			bool		currentKeyState = glfwGetKey(glfwGetCurrentContext(), GLFW_KEY_C) == GLFW_PRESS;
@@ -37,7 +37,7 @@ namespace {
 			lastKeyState = currentKeyState;
 		}
 
-		void Update(float dt) override {
+		void update(float dt) override {
 			// Animate scroll position for demo
 			scrollY += dt * 30.0F;
 			if (scrollY > 150.0F) {
@@ -45,7 +45,7 @@ namespace {
 			}
 		}
 
-		void Render() override {
+		void render() override {
 			using namespace Foundation;
 			using namespace Renderer;
 
@@ -55,16 +55,16 @@ namespace {
 			// Helper to render text (creates temporary Text shape)
 			auto drawText = [](const std::string& str, float x, float y, float fontSize, const Color& color) {
 				UI::Text text(UI::Text::Args{.position = {x, y}, .text = str, .style = {.color = color, .fontSize = fontSize}});
-				text.Render();
+				text.render();
 			};
 
 			// Title
-			Primitives::DrawRect({.bounds = {20, 20, 400, 40}, .style = {.fill = Color(0.0F, 0.0F, 0.0F, 0.5F)}});
+			Primitives::drawRect({.bounds = {20, 20, 400, 40}, .style = {.fill = Color(0.0F, 0.0F, 0.0F, 0.5F)}});
 			drawText("Clip Scene - Clipping Demo", 30, 30, 20.0F, Color::white());
 
 			// Status indicator
 			Color statusColor = clippingEnabled ? Color::green() : Color::red();
-			Primitives::DrawRect({.bounds = {20, 70, 300, 30}, .style = {.fill = Color(0.0F, 0.0F, 0.0F, 0.5F)}});
+			Primitives::drawRect({.bounds = {20, 70, 300, 30}, .style = {.fill = Color(0.0F, 0.0F, 0.0F, 0.5F)}});
 			drawText(clippingEnabled ? "Clipping: ON (press C)" : "Clipping: OFF (press C)", 30, 78, 14.0F, statusColor);
 
 			// ========================================================================
@@ -72,11 +72,11 @@ namespace {
 			// ========================================================================
 
 			// Section label background
-			Primitives::DrawRect({.bounds = {50, 120, 300, 25}, .style = {.fill = Color(0.2F, 0.2F, 0.3F, 1.0F)}});
+			Primitives::drawRect({.bounds = {50, 120, 300, 25}, .style = {.fill = Color(0.2F, 0.2F, 0.3F, 1.0F)}});
 			drawText("1. Basic Rect Clipping + Text", 55, 125, 14.0F, Color::white());
 
 			// Clip boundary indicator (always visible)
-			Primitives::DrawRect(
+			Primitives::drawRect(
 				{.bounds = {50, 160, 300, 80},
 				 .style = {.fill = Color(0.15F, 0.15F, 0.2F, 1.0F), .border = BorderStyle{.color = Color::cyan(), .width = 2.0F}}}
 			);
@@ -86,24 +86,24 @@ namespace {
 				ClipSettings clipSettings;
 				clipSettings.shape = ClipRect{.bounds = Rect{50.0F, 160.0F, 300.0F, 80.0F}};
 				clipSettings.mode = ClipMode::Inside;
-				Primitives::PushClip(clipSettings);
+				Primitives::pushClip(clipSettings);
 			}
 
 			// Content that overflows the clip boundary - rectangles with text
 			// These extend beyond the 300x80 clip region
-			Primitives::DrawRect({.bounds = {60, 170, 350, 25}, .style = {.fill = Color(0.8F, 0.3F, 0.3F, 1.0F)}}); // Red - overflows right
+			Primitives::drawRect({.bounds = {60, 170, 350, 25}, .style = {.fill = Color(0.8F, 0.3F, 0.3F, 1.0F)}}); // Red - overflows right
 			drawText("This text extends past the clip boundary ->>>>>", 65, 175, 12.0F, Color::white());
 
-			Primitives::DrawRect({.bounds = {60, 200, 280, 25}, .style = {.fill = Color(0.3F, 0.8F, 0.3F, 1.0F)}}); // Green - fits
+			Primitives::drawRect({.bounds = {60, 200, 280, 25}, .style = {.fill = Color(0.3F, 0.8F, 0.3F, 1.0F)}}); // Green - fits
 			drawText("This text fits inside", 65, 205, 12.0F, Color::white());
 
-			Primitives::DrawRect(
+			Primitives::drawRect(
 				{.bounds = {60, 230, 320, 25}, .style = {.fill = Color(0.3F, 0.3F, 0.8F, 1.0F)}}
 			); // Blue - overflows bottom+right
 			drawText("This text clips at bottom edge", 65, 235, 12.0F, Color::white());
 
 			if (clippingEnabled) {
-				Primitives::PopClip();
+				Primitives::popClip();
 			}
 
 			// ========================================================================
@@ -111,11 +111,11 @@ namespace {
 			// ========================================================================
 
 			// Section label
-			Primitives::DrawRect({.bounds = {50, 270, 300, 25}, .style = {.fill = Color(0.2F, 0.2F, 0.3F, 1.0F)}});
+			Primitives::drawRect({.bounds = {50, 270, 300, 25}, .style = {.fill = Color(0.2F, 0.2F, 0.3F, 1.0F)}});
 			drawText("2. Scrollable List with Text", 55, 275, 14.0F, Color::white());
 
 			// Scroll container boundary
-			Primitives::DrawRect(
+			Primitives::drawRect(
 				{.bounds = {50, 310, 300, 120},
 				 .style = {.fill = Color(0.12F, 0.12F, 0.18F, 1.0F), .border = BorderStyle{.color = Color::green(), .width = 2.0F}}}
 			);
@@ -124,7 +124,7 @@ namespace {
 			if (clippingEnabled) {
 				ClipSettings clipSettings;
 				clipSettings.shape = ClipRect{.bounds = Rect{50.0F, 310.0F, 300.0F, 120.0F}};
-				Primitives::PushClip(clipSettings);
+				Primitives::pushClip(clipSettings);
 			}
 
 			// Draw list items with text (more than can fit, offset by scroll position)
@@ -142,12 +142,12 @@ namespace {
 				float baseY = 320.0F + (static_cast<float>(i) * 35.0F) - scrollY;
 				Color itemColor = (i % 2 == 0) ? Color(0.25F, 0.25F, 0.3F, 1.0F) : Color(0.3F, 0.3F, 0.35F, 1.0F);
 
-				Primitives::DrawRect({.bounds = {60, baseY, 280, 30}, .style = {.fill = itemColor}});
+				Primitives::drawRect({.bounds = {60, baseY, 280, 30}, .style = {.fill = itemColor}});
 				drawText(listItems[i], 70, baseY + 6, 14.0F, Color::white());
 			}
 
 			if (clippingEnabled) {
-				Primitives::PopClip();
+				Primitives::popClip();
 			}
 
 			// ========================================================================
@@ -155,11 +155,11 @@ namespace {
 			// ========================================================================
 
 			// Section label
-			Primitives::DrawRect({.bounds = {400, 120, 250, 25}, .style = {.fill = Color(0.2F, 0.2F, 0.3F, 1.0F)}});
+			Primitives::drawRect({.bounds = {400, 120, 250, 25}, .style = {.fill = Color(0.2F, 0.2F, 0.3F, 1.0F)}});
 			drawText("3. Nested Clips", 405, 125, 14.0F, Color::white());
 
 			// Outer clip boundary (red)
-			Primitives::DrawRect(
+			Primitives::drawRect(
 				{.bounds = {400, 160, 250, 180},
 				 .style = {.fill = Color(0.2F, 0.1F, 0.1F, 1.0F), .border = BorderStyle{.color = Color::red(), .width = 2.0F}}}
 			);
@@ -168,11 +168,11 @@ namespace {
 			if (clippingEnabled) {
 				ClipSettings outerClip;
 				outerClip.shape = ClipRect{.bounds = Rect{400.0F, 160.0F, 250.0F, 180.0F}};
-				Primitives::PushClip(outerClip);
+				Primitives::pushClip(outerClip);
 			}
 
 			// Inner clip boundary (green) - inside outer
-			Primitives::DrawRect(
+			Primitives::drawRect(
 				{.bounds = {430, 190, 190, 120},
 				 .style = {.fill = Color(0.1F, 0.2F, 0.1F, 1.0F), .border = BorderStyle{.color = Color::green(), .width = 2.0F}}}
 			);
@@ -181,47 +181,47 @@ namespace {
 			if (clippingEnabled) {
 				ClipSettings innerClip;
 				innerClip.shape = ClipRect{.bounds = Rect{430.0F, 190.0F, 190.0F, 120.0F}};
-				Primitives::PushClip(innerClip);
+				Primitives::pushClip(innerClip);
 			}
 
 			// Content that crosses both boundaries (purple rectangle)
 			// This should only be visible within the intersection of both clips
-			Primitives::DrawRect({.bounds = {410, 220, 220, 100}, .style = {.fill = Color(0.6F, 0.4F, 0.8F, 0.9F)}});
+			Primitives::drawRect({.bounds = {410, 220, 220, 100}, .style = {.fill = Color(0.6F, 0.4F, 0.8F, 0.9F)}});
 
 			// Pop both clips
 			if (clippingEnabled) {
-				Primitives::PopClip(); // Inner
-				Primitives::PopClip(); // Outer
+				Primitives::popClip(); // Inner
+				Primitives::popClip(); // Outer
 			}
 
 			// ========================================================================
 			// Section 4: Future Features (Placeholders)
 			// ========================================================================
 
-			Primitives::DrawRect({.bounds = {400, 370, 300, 25}, .style = {.fill = Color(0.15F, 0.15F, 0.2F, 1.0F)}});
+			Primitives::drawRect({.bounds = {400, 370, 300, 25}, .style = {.fill = Color(0.15F, 0.15F, 0.2F, 1.0F)}});
 			drawText("4. Future: Rounded/Circle Clips", 405, 375, 14.0F, Color(0.5F, 0.5F, 0.5F, 1.0F));
 
 			// Placeholder items (grayed out)
-			Primitives::DrawRect({.bounds = {410, 410, 200, 20}, .style = {.fill = Color(0.2F, 0.2F, 0.2F, 0.5F)}});
-			Primitives::DrawRect({.bounds = {410, 435, 180, 20}, .style = {.fill = Color(0.2F, 0.2F, 0.2F, 0.5F)}});
-			Primitives::DrawRect({.bounds = {410, 460, 220, 20}, .style = {.fill = Color(0.2F, 0.2F, 0.2F, 0.5F)}});
+			Primitives::drawRect({.bounds = {410, 410, 200, 20}, .style = {.fill = Color(0.2F, 0.2F, 0.2F, 0.5F)}});
+			Primitives::drawRect({.bounds = {410, 435, 180, 20}, .style = {.fill = Color(0.2F, 0.2F, 0.2F, 0.5F)}});
+			Primitives::drawRect({.bounds = {410, 460, 220, 20}, .style = {.fill = Color(0.2F, 0.2F, 0.2F, 0.5F)}});
 
 			// ========================================================================
 			// Instructions
 			// ========================================================================
-			Primitives::DrawRect({.bounds = {50, 470, 400, 30}, .style = {.fill = Color(0.0F, 0.0F, 0.3F, 0.5F)}});
+			Primitives::drawRect({.bounds = {50, 470, 400, 30}, .style = {.fill = Color(0.0F, 0.0F, 0.3F, 0.5F)}});
 			drawText("Press 'C' to toggle clipping | Watch scrolling list animate", 60, 478, 12.0F, Color::white());
 		}
 
-		void OnExit() override { LOG_INFO(UI, "Exiting Clip Scene"); }
+		void onExit() override { LOG_INFO(UI, "Exiting Clip Scene"); }
 
-		std::string ExportState() override {
+		std::string exportState() override {
 			char buf[128];
 			snprintf(buf, sizeof(buf), R"({"clipping": %s, "scrollY": %.1F})", clippingEnabled ? "true" : "false", scrollY);
 			return {buf};
 		}
 
-		const char* GetName() const override { return "clip"; }
+		const char* getName() const override { return "clip"; }
 
 	  private:
 		bool  clippingEnabled = true; // Start with clipping enabled to show it working

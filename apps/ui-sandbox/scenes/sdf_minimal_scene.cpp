@@ -19,7 +19,7 @@ namespace {
 
 	class SDFMinimalScene : public engine::IScene {
 	  public:
-		void OnEnter() override {
+		void onEnter() override {
 			LOG_INFO(UI, "=== SDF Minimal Test Scene (Uber Shader) ===");
 
 			// Get font renderer from Primitives API (initialized in main.cpp)
@@ -39,47 +39,47 @@ namespace {
 			LOG_INFO(UI, "SDF Minimal Scene initialized with uber shader");
 		}
 
-		void HandleInput(float dt) override {}
+		void handleInput(float dt) override {}
 
-		void Update(float dt) override {}
+		void update(float dt) override {}
 
-		void Render() override {
+		void render() override {
 			// Clear to dark blue
 			glClearColor(0.1f, 0.1f, 0.2f, 1.0f);
 			glClear(GL_COLOR_BUFFER_BIT);
 
 			// Begin frame for primitives
-			Renderer::Primitives::BeginFrame();
+			Renderer::Primitives::beginFrame();
 
 			float scale = 2.0f; // 2.0 = 32px (base is 16px)
 			Foundation::Color textColor(1.0F, 1.0F, 1.0F, 1.0F); // White
 
 			// Render uppercase alphabet
-			RenderTextLine("ABCDEFGHIJKLMNOPQRSTUVWXYZ", glm::vec2(50.0f, 150.0f), scale, textColor);
+			renderTextLine("ABCDEFGHIJKLMNOPQRSTUVWXYZ", glm::vec2(50.0f, 150.0f), scale, textColor);
 
 			// Render lowercase alphabet
-			RenderTextLine("abcdefghijklmnopqrstuvwxyz", glm::vec2(50.0f, 250.0f), scale, textColor);
+			renderTextLine("abcdefghijklmnopqrstuvwxyz", glm::vec2(50.0f, 250.0f), scale, textColor);
 
 			// Render numbers for reference
-			RenderTextLine("0123456789", glm::vec2(50.0f, 350.0f), scale, textColor);
+			renderTextLine("0123456789", glm::vec2(50.0f, 350.0f), scale, textColor);
 
 			// End frame flushes all batched geometry
-			Renderer::Primitives::EndFrame();
+			Renderer::Primitives::endFrame();
 		}
 
-		void OnExit() override {
+		void onExit() override {
 			// Font and batch renderers are owned by Primitives API, not this scene
 			fontRenderer = nullptr;
 			batchRenderer = nullptr;
 		}
 
-		std::string ExportState() override { return R"({"scene": "sdf_minimal", "description": "Minimal SDF rendering test with uber shader"})"; }
+		std::string exportState() override { return R"({"scene": "sdf_minimal", "description": "Minimal SDF rendering test with uber shader"})"; }
 
-		const char* GetName() const override { return "sdf_minimal"; }
+		const char* getName() const override { return "sdf_minimal"; }
 
 	  private:
 		// Helper to render a line of text using the unified batch renderer
-		void RenderTextLine(const std::string& text, const glm::vec2& position, float scale, const Foundation::Color& color) {
+		void renderTextLine(const std::string& text, const glm::vec2& position, float scale, const Foundation::Color& color) {
 			if (fontRenderer == nullptr || batchRenderer == nullptr) {
 				return;
 			}
@@ -87,11 +87,11 @@ namespace {
 			// Generate glyph quads
 			glm::vec4 glyphColor(color.r, color.g, color.b, color.a);
 			std::vector<ui::FontRenderer::GlyphQuad> glyphs;
-			fontRenderer->GenerateGlyphQuads(text, position, scale, glyphColor, glyphs);
+			fontRenderer->generateGlyphQuads(text, position, scale, glyphColor, glyphs);
 
 			// Add each glyph to the unified batch renderer
 			for (const auto& glyph : glyphs) {
-				batchRenderer->AddTextQuad(
+				batchRenderer->addTextQuad(
 					Foundation::Vec2(glyph.position.x, glyph.position.y),
 					Foundation::Vec2(glyph.size.x, glyph.size.y),
 					Foundation::Vec2(glyph.uvMin.x, glyph.uvMin.y),

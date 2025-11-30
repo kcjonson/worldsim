@@ -20,7 +20,7 @@ namespace UI {
 
 	struct IComponent {
 		virtual ~IComponent() = default;
-		virtual void Render() = 0;
+		virtual void render() = 0;
 
 		// Z-index for render ordering (higher values render on top)
 		// Valid range: -32768 to 32767 (signed 16-bit)
@@ -37,8 +37,8 @@ namespace UI {
 	// Shapes do NOT implement ILayer - they only render.
 
 	struct ILayer : public IComponent {
-		virtual void HandleInput() = 0;
-		virtual void Update(float deltaTime) = 0;
+		virtual void handleInput() = 0;
+		virtual void update(float deltaTime) = 0;
 	};
 
 	// ============================================================================
@@ -166,23 +166,23 @@ namespace UI {
 		}
 
 		// ILayer implementation - propagates to children
-		void HandleInput() override {
+		void handleInput() override {
 			for (auto* child : children) {
 				if (auto* layer = dynamic_cast<ILayer*>(child)) {
-					layer->HandleInput();
+					layer->handleInput();
 				}
 			}
 		}
 
-		void Update(float deltaTime) override {
+		void update(float deltaTime) override {
 			for (auto* child : children) {
 				if (auto* layer = dynamic_cast<ILayer*>(child)) {
-					layer->Update(deltaTime);
+					layer->update(deltaTime);
 				}
 			}
 		}
 
-		void Render() override {
+		void render() override {
 			// Sort children by zIndex when needed (stable sort preserves insertion order for equal zIndex)
 			if (childrenNeedSorting) {
 				std::stable_sort(children.begin(), children.end(), [](const IComponent* a, const IComponent* b) {
@@ -192,8 +192,8 @@ namespace UI {
 			}
 
 			for (auto* child : children) {
-				RenderContext::SetZIndex(child->zIndex);
-				child->Render();
+				RenderContext::setZIndex(child->zIndex);
+				child->render();
 			}
 		}
 

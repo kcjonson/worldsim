@@ -48,15 +48,15 @@ namespace Renderer { // NOLINT(readability-identifier-naming)
 		~BatchRenderer();
 
 		// Initialize OpenGL resources (shaders, VBOs)
-		void Init();
+		void init();
 
 		// Cleanup OpenGL resources
-		void Shutdown();
+		void shutdown();
 
 		// --- Shape rendering (SDF) ---
 
 		// Add shape quad to batch (with optional SDF border and corner radius)
-		void AddQuad(
+		void addQuad(
 			const Foundation::Rect&						  bounds,
 			const Foundation::Color&					  fillColor,
 			const std::optional<Foundation::BorderStyle>& border = std::nullopt,
@@ -64,7 +64,7 @@ namespace Renderer { // NOLINT(readability-identifier-naming)
 		);
 
 		// Add raw triangles (for circles, polygons, etc.)
-		void AddTriangles(
+		void addTriangles(
 			const Foundation::Vec2*	 inputVertices,
 			const uint16_t*			 inputIndices,
 			size_t					 vertexCount,
@@ -79,7 +79,7 @@ namespace Renderer { // NOLINT(readability-identifier-naming)
 		// size: glyph dimensions in screen pixels
 		// uvMin/uvMax: texture coordinates in MSDF atlas
 		// color: text color with alpha
-		void AddTextQuad(
+		void addTextQuad(
 			const Foundation::Vec2&	 position,
 			const Foundation::Vec2&	 size,
 			const Foundation::Vec2&	 uvMin,
@@ -88,34 +88,34 @@ namespace Renderer { // NOLINT(readability-identifier-naming)
 		);
 
 		// Set the MSDF font atlas texture (call once per font)
-		void SetFontAtlas(GLuint atlasTexture, float pixelRange = 4.0F);
+		void setFontAtlas(GLuint atlasTexture, float pixelRange = 4.0F);
 
 		// --- Rendering ---
 
 		// Flush accumulated geometry to GPU and render
-		void Flush();
+		void flush();
 
 		// Frame lifecycle
-		void BeginFrame();
-		void EndFrame();
+		void beginFrame();
+		void endFrame();
 
 		// Set viewport dimensions for projection matrix
-		void SetViewport(int width, int height);
+		void setViewport(int width, int height);
 
 		// Get current viewport dimensions
-		void GetViewport(int& width, int& height) const;
+		void getViewport(int& width, int& height) const;
 
 		// Set coordinate system (for DPI-aware projection matrices)
-		void SetCoordinateSystem(CoordinateSystem* coordSystem);
+		void setCoordinateSystem(CoordinateSystem* coordSystem);
 
 		// --- Clipping ---
 
 		// Set current clip bounds (applied to all subsequent vertices)
 		// bounds: (minX, minY, maxX, maxY) in screen coordinates
-		void SetClipBounds(const Foundation::Vec4& bounds);
+		void setClipBounds(const Foundation::Vec4& bounds);
 
 		// Clear clip bounds (disables clipping)
-		void ClearClipBounds();
+		void clearClipBounds();
 
 		// Get current clip bounds
 		const Foundation::Vec4& GetClipBounds() const { return currentClipBounds; }

@@ -148,7 +148,7 @@ TEST_F(CoordinateSystemTest, PixelRatioInvalidatesOnWindowResize) {
 	float ratio1 = coordSys.GetPixelRatio();
 
 	// Simulate window resize
-	coordSys.UpdateWindowSize(1024, 768);
+	coordSys.updateWindowSize(1024, 768);
 
 	// This should have invalidated the cache (though ratio might be the same)
 	float ratio2 = coordSys.GetPixelRatio();
@@ -265,7 +265,7 @@ TEST_F(CoordinateSystemTest, UpdateWindowSizeInvalidatesCache) {
 	coordSys.GetPixelRatio();
 
 	// Update window size should mark cache as dirty
-	coordSys.UpdateWindowSize(1024, 768);
+	coordSys.updateWindowSize(1024, 768);
 
 	// Next call should recalculate (we can't directly test the dirty flag,
 	// but we can verify the function completes without error)

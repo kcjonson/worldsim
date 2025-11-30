@@ -39,10 +39,10 @@ namespace renderer {
 		struct Event;
 
 		// Phase 1: Build events from path vertices
-		void BuildEvents(const VectorPath& path);
+		void buildEvents(const VectorPath& path);
 
 		// Phase 2: Process events with sweep line
-		void ProcessEvents(TessellatedMesh& outMesh);
+		void processEvents(TessellatedMesh& outMesh);
 
 		// Helper: Determine vertex type (start, end, split, merge, regular)
 		enum class VertexType : std::uint8_t { // NOLINT(performance-enum-size)

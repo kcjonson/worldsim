@@ -17,11 +17,11 @@ namespace UI {
  *
  * Usage:
  *   class MyComponent : public Component, public IFocusable {
- *       void OnFocusGained() override { focused = true; }
- *       void OnFocusLost() override { focused = false; }
- *       void HandleKeyInput(...) override { ... }
- *       void HandleCharInput(...) override { ... }
- *       bool CanReceiveFocus() const override { return enabled; }
+ *       void onFocusGained() override { focused = true; }
+ *       void onFocusLost() override { focused = false; }
+ *       void handleKeyInput(...) override { ... }
+ *       void handleCharInput(...) override { ... }
+ *       bool canReceiveFocus() const override { return enabled; }
  *   };
  */
 class IFocusable {
@@ -32,13 +32,13 @@ class IFocusable {
 	 * Called when this component receives keyboard focus.
 	 * Use this to update visual state (show focus indicator, start cursor blink, etc.)
 	 */
-	virtual void OnFocusGained() = 0;
+	virtual void onFocusGained() = 0;
 
 	/**
 	 * Called when this component loses keyboard focus.
 	 * Use this to clean up (hide cursor, clear selection, etc.)
 	 */
-	virtual void OnFocusLost() = 0;
+	virtual void onFocusLost() = 0;
 
 	/**
 	 * Handle keyboard input when focused.
@@ -48,7 +48,7 @@ class IFocusable {
 	 * @param ctrl - True if Ctrl/Cmd modifier is pressed
 	 * @param alt - True if Alt/Option modifier is pressed
 	 */
-	virtual void HandleKeyInput(engine::Key key, bool shift, bool ctrl, bool alt) = 0;
+	virtual void handleKeyInput(engine::Key key, bool shift, bool ctrl, bool alt) = 0;
 
 	/**
 	 * Handle character input when focused.
@@ -56,7 +56,7 @@ class IFocusable {
 	 *
 	 * @param codepoint - Unicode codepoint of character typed
 	 */
-	virtual void HandleCharInput(char32_t codepoint) = 0;
+	virtual void handleCharInput(char32_t codepoint) = 0;
 
 	/**
 	 * Query whether this component can currently receive focus.
@@ -64,7 +64,7 @@ class IFocusable {
 	 *
 	 * @return true if component can receive focus (e.g., enabled=true)
 	 */
-	virtual bool CanReceiveFocus() const = 0;
+	virtual bool canReceiveFocus() const = 0;
 };
 
 } // namespace UI

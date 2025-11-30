@@ -16,7 +16,7 @@
 #include <vector>
 
 // Text rendering is implemented via the unified uber shader in BatchRenderer.
-// Text shapes call BatchRenderer::AddTextQuad() directly to batch text with shapes.
+// Text shapes call BatchRenderer::addTextQuad() directly to batch text with shapes.
 
 namespace Renderer::Primitives {
 
@@ -80,31 +80,31 @@ namespace Renderer::Primitives {
 
 	// --- Initialization ---
 
-	void Init(Renderer* renderer) {
+	void init(Renderer* renderer) {
 		g_batchRenderer = std::make_unique<BatchRenderer>();
-		g_batchRenderer->Init();
+		g_batchRenderer->init();
 
 		// Initialize identity transform
 		g_currentTransform = Foundation::Mat4(1.0F);
 	}
 
-	void Shutdown() {
+	void shutdown() {
 		if (g_batchRenderer != nullptr) {
-			g_batchRenderer->Shutdown();
+			g_batchRenderer->shutdown();
 			g_batchRenderer.reset();
 		}
 		g_coordinateSystem = nullptr;
 	}
 
-	void SetCoordinateSystem(CoordinateSystem* coordSystem) {
+	void setCoordinateSystem(CoordinateSystem* coordSystem) {
 		g_coordinateSystem = coordSystem;
 		// Also update the batch renderer with the coordinate system (even if nullptr)
 		if (g_batchRenderer != nullptr) {
-			g_batchRenderer->SetCoordinateSystem(g_coordinateSystem);
+			g_batchRenderer->setCoordinateSystem(g_coordinateSystem);
 		}
 	}
 
-	void SetFontRenderer(ui::FontRenderer* fontRenderer) {
+	void setFontRenderer(ui::FontRenderer* fontRenderer) {
 		g_fontRenderer = fontRenderer;
 	}
 
@@ -112,9 +112,9 @@ namespace Renderer::Primitives {
 		return g_fontRenderer;
 	}
 
-	void SetFontAtlas(unsigned int atlasTexture, float pixelRange) {
+	void setFontAtlas(unsigned int atlasTexture, float pixelRange) {
 		if (g_batchRenderer != nullptr) {
-			g_batchRenderer->SetFontAtlas(atlasTexture, pixelRange);
+			g_batchRenderer->setFontAtlas(atlasTexture, pixelRange);
 		}
 	}
 
@@ -122,7 +122,7 @@ namespace Renderer::Primitives {
 		return g_batchRenderer.get();
 	}
 
-	void SetFrameUpdateCallback(FrameUpdateCallback callback) {
+	void setFrameUpdateCallback(FrameUpdateCallback callback) {
 		g_frameUpdateCallback = callback;
 	}
 
@@ -149,9 +149,9 @@ namespace Renderer::Primitives {
 
 	// --- Frame Lifecycle ---
 
-	void BeginFrame() {
+	void beginFrame() {
 		if (g_batchRenderer != nullptr) {
-			g_batchRenderer->BeginFrame();
+			g_batchRenderer->beginFrame();
 		}
 
 		// Invoke frame update callback for FontRenderer cache LRU tracking
@@ -160,23 +160,23 @@ namespace Renderer::Primitives {
 		}
 	}
 
-	void EndFrame() {
+	void endFrame() {
 		// Flush all batched geometry (shapes + text) in a single draw call
 		// The uber shader handles both SDF shapes and MSDF text
 		if (g_batchRenderer != nullptr) {
-			g_batchRenderer->EndFrame();
+			g_batchRenderer->endFrame();
 		}
 	}
 
-	void SetViewport(int width, int height) {
+	void setViewport(int width, int height) {
 		if (g_batchRenderer != nullptr) {
-			g_batchRenderer->SetViewport(width, height);
+			g_batchRenderer->setViewport(width, height);
 		}
 	}
 
-	void GetViewport(int& width, int& height) {
+	void getViewport(int& width, int& height) {
 		if (g_batchRenderer != nullptr) {
-			g_batchRenderer->GetViewport(width, height);
+			g_batchRenderer->getViewport(width, height);
 		} else {
 			width = 800;
 			height = 600;
@@ -231,7 +231,7 @@ namespace Renderer::Primitives {
 
 	// --- Drawing Functions ---
 
-	void DrawRect(const RectArgs& args) {
+	void drawRect(const RectArgs& args) {
 		if (g_batchRenderer == nullptr) {
 			return;
 		}
@@ -244,10 +244,10 @@ namespace Renderer::Primitives {
 		}
 
 		// Single AddQuad call handles fill, border, and rounded corners via GPU fragment shader
-		g_batchRenderer->AddQuad(args.bounds, args.style.fill, args.style.border, cornerRadius);
+		g_batchRenderer->addQuad(args.bounds, args.style.fill, args.style.border, cornerRadius);
 	}
 
-	void DrawLine(const LineArgs& args) {
+	void drawLine(const LineArgs& args) {
 		if (g_batchRenderer == nullptr) {
 			return;
 		}
@@ -276,18 +276,18 @@ namespace Renderer::Primitives {
 		float maxY = glm::max(glm::max(p0.y, p1.y), glm::max(p2.y, p3.y));
 
 		Foundation::Rect bounds(minX, minY, maxX - minX, maxY - minY);
-		g_batchRenderer->AddQuad(bounds, args.style.color, std::nullopt, 0.0F);
+		g_batchRenderer->addQuad(bounds, args.style.color, std::nullopt, 0.0F);
 	}
 
-	void DrawTriangles(const TrianglesArgs& args) {
+	void drawTriangles(const TrianglesArgs& args) {
 		if (g_batchRenderer == nullptr) {
 			return;
 		}
 
-		g_batchRenderer->AddTriangles(args.vertices, args.indices, args.vertexCount, args.indexCount, args.color);
+		g_batchRenderer->addTriangles(args.vertices, args.indices, args.vertexCount, args.indexCount, args.color);
 	}
 
-	void DrawCircle(const CircleArgs& args) {
+	void drawCircle(const CircleArgs& args) {
 		if (g_batchRenderer == nullptr) {
 			return;
 		}
@@ -329,7 +329,7 @@ namespace Renderer::Primitives {
 
 		// Draw filled circle
 		if (args.style.fill.a > 0.0F) {
-			DrawTriangles(
+			drawTriangles(
 				{.vertices = vertices.data(),
 				 .indices = indices.data(),
 				 .vertexCount = vertices.size(),
@@ -348,12 +348,12 @@ namespace Renderer::Primitives {
 			for (int i = 0; i < segments; ++i) {
 				Foundation::Vec2 start = vertices[i + 1];
 				Foundation::Vec2 end = vertices[1 + (i + 1) % segments];
-				DrawLine({.start = start, .end = end, .style = {.color = border.color, .width = border.width}});
+				drawLine({.start = start, .end = end, .style = {.color = border.color, .width = border.width}});
 			}
 		}
 	}
 
-	void DrawText(const TextArgs& args) {
+	void drawText(const TextArgs& args) {
 		// TODO: Implement Primitives::DrawText
 		//
 		// Currently a stub. Text rendering requires FontRenderer (in ui library) to generate
@@ -454,7 +454,7 @@ namespace Renderer::Primitives {
 		return Foundation::Vec4(minX, minY, maxX, maxY);
 	}
 
-	void PushClip(const Foundation::ClipSettings& settings) {
+	void pushClip(const Foundation::ClipSettings& settings) {
 		if (g_batchRenderer == nullptr) {
 			return;
 		}
@@ -471,10 +471,10 @@ namespace Renderer::Primitives {
 		g_clipStack.push({settings, bounds});
 
 		// Update batch renderer with new clip bounds
-		g_batchRenderer->SetClipBounds(bounds);
+		g_batchRenderer->setClipBounds(bounds);
 	}
 
-	void PopClip() {
+	void popClip() {
 		if (g_clipStack.empty()) {
 			return;
 		}
@@ -484,9 +484,9 @@ namespace Renderer::Primitives {
 		// Restore parent clip or clear if stack is empty
 		if (g_batchRenderer != nullptr) {
 			if (g_clipStack.empty()) {
-				g_batchRenderer->ClearClipBounds();
+				g_batchRenderer->clearClipBounds();
 			} else {
-				g_batchRenderer->SetClipBounds(g_clipStack.top().bounds);
+				g_batchRenderer->setClipBounds(g_clipStack.top().bounds);
 			}
 		}
 	}

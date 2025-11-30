@@ -34,27 +34,27 @@ namespace Renderer { // NOLINT(readability-identifier-naming)
 		/**
 		 * Activate this shader program for use
 		 */
-		void Use() const;
+		void use() const;
 
 		/**
 		 * Deactivate shader program
 		 */
-		void Unbind() const;
+		void unbind() const;
 
 		/**
 		 * Set a mat4 uniform
 		 */
-		void SetUniform(const char* name, const glm::mat4& value) const;
+		void setUniform(const char* name, const glm::mat4& value) const;
 
 		/**
 		 * Set an int uniform (used for texture samplers)
 		 */
-		void SetUniform(const char* name, int value) const;
+		void setUniform(const char* name, int value) const;
 
 		/**
 		 * Set a float uniform
 		 */
-		void SetUniform(const char* name, float value) const;
+		void setUniform(const char* name, float value) const;
 
 		/**
 		 * Get the OpenGL program ID

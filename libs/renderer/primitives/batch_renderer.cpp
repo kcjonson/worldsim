@@ -15,10 +15,10 @@ namespace Renderer {
 	}
 
 	BatchRenderer::~BatchRenderer() {
-		Shutdown();
+		shutdown();
 	}
 
-	void BatchRenderer::Init() {
+	void BatchRenderer::init() {
 		// Load uber shader (unified shapes + text)
 		if (!shader.LoadFromFile("uber.vert", "uber.frag")) {
 			std::cerr << "Failed to load uber shaders!" << std::endl;
@@ -72,7 +72,7 @@ namespace Renderer {
 		glBindVertexArray(0);
 	}
 
-	void BatchRenderer::Shutdown() {
+	void BatchRenderer::shutdown() {
 		if (vao != 0) {
 			glDeleteVertexArrays(1, &vao);
 			vao = 0;
@@ -91,7 +91,7 @@ namespace Renderer {
 		// Shader cleanup handled by RAII destructor
 	}
 
-	void BatchRenderer::AddQuad( // NOLINT(readability-convert-member-functions-to-static)
+	void BatchRenderer::addQuad( // NOLINT(readability-convert-member-functions-to-static)
 		const Foundation::Rect&						bounds,
 		const Foundation::Color&					fillColor,
 		const std::optional<Foundation::BorderStyle>& border,
@@ -205,7 +205,7 @@ namespace Renderer {
 		indices.push_back(baseIndex + 3);
 	}
 
-	void BatchRenderer::AddTriangles( // NOLINT(readability-convert-member-functions-to-static)
+	void BatchRenderer::addTriangles( // NOLINT(readability-convert-member-functions-to-static)
 		const Foundation::Vec2*	 inputVertices,
 		const uint16_t*			 inputIndices,
 		size_t					 vertexCount,
@@ -240,7 +240,7 @@ namespace Renderer {
 		}
 	}
 
-	void BatchRenderer::AddTextQuad(
+	void BatchRenderer::addTextQuad(
 		const Foundation::Vec2&	 position,
 		const Foundation::Vec2&	 size,
 		const Foundation::Vec2&	 uvMin,
@@ -310,12 +310,12 @@ namespace Renderer {
 		indices.push_back(baseIndex + 3);
 	}
 
-	void BatchRenderer::SetFontAtlas(GLuint atlasTexture, float pixelRange) {
+	void BatchRenderer::setFontAtlas(GLuint atlasTexture, float pixelRange) {
 		fontAtlas = atlasTexture;
 		fontPixelRange = pixelRange;
 	}
 
-	void BatchRenderer::Flush() {
+	void BatchRenderer::flush() {
 		if (vertices.empty()) {
 			return;
 		}
@@ -339,7 +339,7 @@ namespace Renderer {
 		glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(uint32_t), indices.data(), GL_DYNAMIC_DRAW);
 
 		// Bind shader and VAO
-		shader.Use();
+		shader.use();
 		glBindVertexArray(vao);
 
 		// Create projection matrix
@@ -394,22 +394,22 @@ namespace Renderer {
 		indices.clear();
 	}
 
-	void BatchRenderer::BeginFrame() {
+	void BatchRenderer::beginFrame() {
 		drawCallCount = 0;
 		vertices.clear();
 		indices.clear();
 	}
 
-	void BatchRenderer::EndFrame() {
-		Flush();
+	void BatchRenderer::endFrame() {
+		flush();
 	}
 
-	void BatchRenderer::SetViewport(int width, int height) {
+	void BatchRenderer::setViewport(int width, int height) {
 		viewportWidth = width;
 		viewportHeight = height;
 	}
 
-	void BatchRenderer::GetViewport(int& width, int& height) const {
+	void BatchRenderer::getViewport(int& width, int& height) const {
 		width = viewportWidth;
 		height = viewportHeight;
 	}
@@ -417,7 +417,7 @@ namespace Renderer {
 	// Sets the coordinate system to use for rendering.
 	// Note: BatchRenderer does NOT take ownership of the CoordinateSystem pointer.
 	// The caller is responsible for ensuring that the CoordinateSystem outlives the BatchRenderer.
-	void BatchRenderer::SetCoordinateSystem(CoordinateSystem* coordSystem) {
+	void BatchRenderer::setCoordinateSystem(CoordinateSystem* coordSystem) {
 		coordinateSystem = coordSystem;
 	}
 
@@ -429,11 +429,11 @@ namespace Renderer {
 		return stats;
 	}
 
-	void BatchRenderer::SetClipBounds(const Foundation::Vec4& bounds) {
+	void BatchRenderer::setClipBounds(const Foundation::Vec4& bounds) {
 		currentClipBounds = bounds;
 	}
 
-	void BatchRenderer::ClearClipBounds() {
+	void BatchRenderer::clearClipBounds() {
 		currentClipBounds = Foundation::Vec4(0.0F, 0.0F, 0.0F, 0.0F);
 	}
 

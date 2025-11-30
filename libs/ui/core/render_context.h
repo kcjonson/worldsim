@@ -13,7 +13,7 @@ namespace UI {
 		static short GetZIndex() { return s_currentZIndex; }
 
 		// Set the current rendering z-index (used by Component)
-		static void SetZIndex(short zIndex) { s_currentZIndex = zIndex; }
+		static void setZIndex(short zIndex) { s_currentZIndex = zIndex; }
 
 	  private:
 		static thread_local short s_currentZIndex;

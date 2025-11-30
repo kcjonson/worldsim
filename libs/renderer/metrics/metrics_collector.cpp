@@ -15,11 +15,11 @@ namespace Renderer {
 		frameTimeSamples.resize(60, 16.67F); // Initialize with ~60 FPS
 	}
 
-	void MetricsCollector::BeginFrame() {
+	void MetricsCollector::beginFrame() {
 		frameStart = Clock::now();
 	}
 
-	void MetricsCollector::EndFrame() { // NOLINT(readability-convert-member-functions-to-static)
+	void MetricsCollector::endFrame() { // NOLINT(readability-convert-member-functions-to-static)
 		auto  frameEnd = Clock::now();
 		auto  duration = std::chrono::duration_cast<std::chrono::microseconds>(frameEnd - frameStart);
 		float frameTimeMs = duration.count() / 1000.0F;
@@ -50,7 +50,7 @@ namespace Renderer {
 		return metrics;
 	}
 
-	void MetricsCollector::SetRenderStats(uint32_t drawCalls, uint32_t vertexCount, uint32_t triangleCount) {
+	void MetricsCollector::setRenderStats(uint32_t drawCalls, uint32_t vertexCount, uint32_t triangleCount) {
 		drawCalls = drawCalls;
 		vertexCount = vertexCount;
 		triangleCount = triangleCount;

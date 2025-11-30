@@ -22,40 +22,40 @@ namespace {
 		const char* name;
 	};
 
-	static void TestBasicAllocation();
-	static void TestFreeListReuse();
-	static void TestStaleHandles();
-	static void TestHandleValidation();
-	static void TestCapacityLimit();
+	static void testBasicAllocation();
+	static void testFreeListReuse();
+	static void testStaleHandles();
+	static void testHandleValidation();
+	static void testCapacityLimit();
 
 	class HandleScene : public engine::IScene {
 	  public:
-		void OnEnter() override {
+		void onEnter() override {
 			LOG_INFO(UI, "");
 			LOG_INFO(UI, "Handle Scene - Resource Handle System Tests");
 			LOG_INFO(UI, "================================================");
 
 			// Run all tests at initialization
-			TestBasicAllocation();
-			TestFreeListReuse();
-			TestStaleHandles();
-			TestHandleValidation();
-			TestCapacityLimit();
+			testBasicAllocation();
+			testFreeListReuse();
+			testStaleHandles();
+			testHandleValidation();
+			testCapacityLimit();
 
 			LOG_INFO(UI, "================================================");
 			LOG_INFO(UI, "All handle tests passed!");
 			LOG_INFO(UI, "");
 		}
 
-		void HandleInput(float dt) override {
+		void handleInput(float dt) override {
 			// No input handling needed - test scene
 		}
 
-		void Update(float dt) override {
+		void update(float dt) override {
 			// No update logic needed - tests run on enter
 		}
 
-		void Render() override {
+		void render() override {
 			// Clear background
 			glClearColor(0.1F, 0.1F, 0.15F, 1.0F);
 			glClear(GL_COLOR_BUFFER_BIT);
@@ -63,11 +63,11 @@ namespace {
 			// No rendering needed for this scene - all output is to console/logs
 		}
 
-		void OnExit() override {
+		void onExit() override {
 			// No cleanup needed
 		}
 
-		[[nodiscard]] std::string ExportState() override { // NOLINT(readability-convert-member-functions-to-static)
+		[[nodiscard]] std::string exportState() override { // NOLINT(readability-convert-member-functions-to-static)
 			return R"({
 			"scene": "handles",
 			"description": "Resource handle system tests",
@@ -76,14 +76,14 @@ namespace {
 		})";
 		}
 
-		const char* GetName() const override { return "handles"; }
+		const char* getName() const override { return "handles"; }
 	};
 
 	// ============================================================================
 	// Test Implementations
 	// ============================================================================
 
-	void TestBasicAllocation() {
+	void testBasicAllocation() {
 		LOG_INFO(UI, "");
 		LOG_INFO(UI, "Basic Allocation Test: Allocate and retrieve resources");
 		LOG_INFO(UI, "--------------------------------------------------------");
@@ -142,7 +142,7 @@ namespace {
 		LOG_INFO(UI, "Basic allocation test passed!");
 	}
 
-	void TestFreeListReuse() {
+	void testFreeListReuse() {
 		LOG_INFO(UI, "");
 		LOG_INFO(UI, "Free List Test: Verify index recycling");
 		LOG_INFO(UI, "---------------------------------------");
@@ -161,9 +161,9 @@ namespace {
 		LOG_INFO(UI, "Active count: %zu", manager.GetActiveCount());
 
 		// Free handles 1, 2, 3 (indices 1, 2, 3)
-		manager.Free(handles.at(1));
-		manager.Free(handles.at(2));
-		manager.Free(handles.at(3));
+		manager.free(handles.at(1));
+		manager.free(handles.at(2));
+		manager.free(handles.at(3));
 
 		LOG_INFO(UI, "");
 		LOG_INFO(UI, "Freed handles at indices 1, 2, 3");
@@ -193,7 +193,7 @@ namespace {
 		LOG_INFO(UI, "Free list reuse test passed!");
 	}
 
-	void TestStaleHandles() {
+	void testStaleHandles() {
 		LOG_INFO(UI, "");
 		LOG_INFO(UI, "Stale Handle Test: Verify generation validation");
 		LOG_INFO(UI, "-------------------------------------------------");
@@ -210,7 +210,7 @@ namespace {
 		LOG_INFO(UI, "Resource id: %d", res->id);
 
 		// Free the resource
-		manager.Free(handle);
+		manager.free(handle);
 		LOG_INFO(UI, "");
 		LOG_INFO(UI, "Freed the resource");
 
@@ -242,7 +242,7 @@ namespace {
 		LOG_INFO(UI, "Stale handle test passed!");
 	}
 
-	void TestHandleValidation() {
+	void testHandleValidation() {
 		LOG_INFO(UI, "");
 		LOG_INFO(UI, "Handle Validation Test: Test invalid handles");
 		LOG_INFO(UI, "---------------------------------------------");
@@ -283,7 +283,7 @@ namespace {
 		LOG_INFO(UI, "Handle validation test passed!");
 	}
 
-	void TestCapacityLimit() {
+	void testCapacityLimit() {
 		LOG_INFO(UI, "");
 		LOG_INFO(UI, "Capacity Limit Test: Verify 65,536 resource limit");
 		LOG_INFO(UI, "---------------------------------------------------");

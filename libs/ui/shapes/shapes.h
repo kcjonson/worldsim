@@ -39,7 +39,7 @@ struct Rectangle : public IComponent {
 		zIndex = args.zIndex;
 	}
 
-	void Render() override;
+	void render() override;
 };
 
 // Circle shape - leaf node
@@ -66,7 +66,7 @@ struct Circle : public IComponent {
 		zIndex = args.zIndex;
 	}
 
-	void Render() override;
+	void render() override;
 };
 
 // Line shape - leaf node
@@ -93,7 +93,7 @@ struct Line : public IComponent {
 		zIndex = args.zIndex;
 	}
 
-	void Render() override;
+	void render() override;
 };
 
 // Text shape - leaf node
@@ -125,7 +125,7 @@ struct Text : public IComponent {
 		zIndex = args.zIndex;
 	}
 
-	void Render() override;
+	void render() override;
 };
 
 } // namespace UI

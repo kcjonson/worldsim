@@ -20,8 +20,8 @@ namespace engine {
 	/// Usage:
 	///   SceneManager::Get().RegisterScene("shapes", []() { return std::make_unique<ShapesScene>(); });
 	///   SceneManager::Get().SwitchTo("shapes");
-	///   SceneManager::Get().Update(dt);
-	///   SceneManager::Get().Render();
+	///   SceneManager::Get().update(dt);
+	///   SceneManager::Get().render();
 	class SceneManager {
 	  public:
 		/// @brief Get singleton instance

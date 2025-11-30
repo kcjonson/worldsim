@@ -17,12 +17,12 @@ namespace {
 
 	class TextInputScene : public engine::IScene {
 	  public:
-		void OnEnter() override {
+		void onEnter() override {
 
 			// Get actual viewport dimensions
 			int viewportWidth = 0;
 			int viewportHeight = 0;
-			Renderer::Primitives::GetViewport(viewportWidth, viewportHeight);
+			Renderer::Primitives::getViewport(viewportWidth, viewportHeight);
 
 			// Create title text
 			title = UI::Text(UI::Text::Args{
@@ -137,51 +137,51 @@ namespace {
 			});
 		}
 
-		void HandleInput(float /*dt*/) override {
+		void handleInput(float /*dt*/) override {
 			// Handle input for all text inputs
 			for (size_t i = 0; i < inputs.size(); i++) {
-				inputs[i]->HandleInput();
+				inputs[i]->handleInput();
 			}
 
 			// Handle button input
 			if (button) {
-				button->HandleInput();
+				button->handleInput();
 			}
 		}
 
-		void Update(float dt) override {
+		void update(float dt) override {
 			// Update all text inputs
 			for (auto& input : inputs) {
-				input->Update(dt);
+				input->update(dt);
 			}
 
 			// Update button
 			if (button) {
-				button->Update(dt);
+				button->update(dt);
 			}
 		}
 
-		void Render() override {
+		void render() override {
 			// Clear background to dark gray
 			glClearColor(0.12F, 0.12F, 0.12F, 1.0F);
 			glClear(GL_COLOR_BUFFER_BIT);
 
 			// Render title and instructions
-			title.Render();
-			instructions.Render();
+			title.render();
+			instructions.render();
 
 			// Render all text inputs
 			for (auto& input : inputs) {
-				input->Render();
+				input->render();
 			}
 
 			// Render button
 			if (button) {
-				button->Render();
+				button->render();
 			}
 
 			// Render output labels
-			outputLabel.Render();
+			outputLabel.render();
 			float		outputY = 180.0F;
 			const float outputSpacing = 30.0F;
 
@@ -195,7 +195,7 @@ namespace {
 						.visible = true,
 						.id = "output"
 					});
-					outputText.Render();
+					outputText.render();
 					outputY += outputSpacing;
 				}
 			}
@@ -214,22 +214,22 @@ namespace {
 				.visible = true,
 				.id = "help"
 			});
-			helpText.Render();
+			helpText.render();
 		}
 
-		void OnExit() override {
+		void onExit() override {
 			inputs.clear();
 			button.reset();
 		}
 
-		std::string ExportState() override {
+		std::string exportState() override {
 			return R"({
 			"scene": "text_input",
 			"description": "TextInput component testing and demonstration"
 		})";
 		}
 
-		const char* GetName() const override { return "text_input"; }
+		const char* getName() const override { return "text_input"; }
 
 	  private:
 		std::vector<std::unique_ptr<UI::TextInput>> inputs;

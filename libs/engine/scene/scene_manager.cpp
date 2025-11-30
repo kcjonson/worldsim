@@ -31,7 +31,7 @@ namespace engine {
 		// Exit current scene
 		if (currentScene) {
 			LOG_DEBUG(Engine, "Exiting scene: %s", currentSceneName.c_str());
-			currentScene->OnExit();
+			currentScene->onExit();
 			currentScene.reset();
 		}
 
@@ -39,26 +39,26 @@ namespace engine {
 		currentSceneName = name;
 		currentScene = it->second();
 		LOG_INFO(Engine, "Entering scene: %s", currentSceneName.c_str());
-		currentScene->OnEnter();
+		currentScene->onEnter();
 
 		return true;
 	}
 
 	void SceneManager::handleInput(float dt) { // NOLINT(readability-convert-member-functions-to-static)
 		if (currentScene) {
-			currentScene->HandleInput(dt);
+			currentScene->handleInput(dt);
 		}
 	}
 
 	void SceneManager::update(float dt) { // NOLINT(readability-convert-member-functions-to-static)
 		if (currentScene) {
-			currentScene->Update(dt);
+			currentScene->update(dt);
 		}
 	}
 
 	void SceneManager::render() { // NOLINT(readability-convert-member-functions-to-static)
 		if (currentScene) {
-			currentScene->Render();
+			currentScene->render();
 		}
 	}
 
@@ -91,7 +91,7 @@ namespace engine {
 	void SceneManager::shutdown() {
 		if (currentScene) {
 			LOG_INFO(Engine, "Shutting down scene system, exiting scene: %s", currentSceneName.c_str());
-			currentScene->OnExit();
+			currentScene->onExit();
 			currentScene.reset();
 			currentSceneName.clear();
 		}

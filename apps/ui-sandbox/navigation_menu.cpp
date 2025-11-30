@@ -9,7 +9,7 @@ namespace UI {
 		: sceneNames(args.sceneNames),
 		  onSceneSelected(args.onSceneSelected),
 		  coordinateSystem(args.coordinateSystem) {
-		InitializeComponents();
+		initializeComponents();
 	}
 
 	NavigationMenu::~NavigationMenu() = default;
@@ -48,7 +48,7 @@ namespace UI {
 		return *this;
 	}
 
-	void NavigationMenu::InitializeComponents() {
+	void NavigationMenu::initializeComponents() {
 		using namespace Foundation;
 
 		if (coordinateSystem == nullptr) {
@@ -122,44 +122,44 @@ namespace UI {
 		}
 	}
 
-	void NavigationMenu::OnWindowResize() {
-		InitializeComponents();
+	void NavigationMenu::onWindowResize() {
+		initializeComponents();
 	}
 
-	void NavigationMenu::HandleInput() {
+	void NavigationMenu::handleInput() {
 		// Always handle the toggle button
 		if (toggleButton) {
-			toggleButton->HandleInput();
+			toggleButton->handleInput();
 		}
 
 		// Only handle menu buttons when expanded
 		if (expanded) {
 			for (auto& button : menuButtons) {
-				button.HandleInput();
+				button.handleInput();
 			}
 		}
 	}
 
-	void NavigationMenu::Update(float deltaTime) {
+	void NavigationMenu::update(float deltaTime) {
 		// Update toggle button
 		if (toggleButton) {
-			toggleButton->Update(deltaTime);
+			toggleButton->update(deltaTime);
 		}
 
 		// Update menu buttons if expanded
 		if (expanded) {
 			for (auto& button : menuButtons) {
-				button.Update(deltaTime);
+				button.update(deltaTime);
 			}
 		}
 	}
 
-	void NavigationMenu::Render() {
+	void NavigationMenu::render() {
 		using namespace Foundation;
 
 		// Always render the toggle button
 		if (toggleButton) {
-			toggleButton->Render();
+			toggleButton->render();
 		}
 
 		// Only render menu when expanded
@@ -168,7 +168,7 @@ namespace UI {
 		}
 
 		// Draw menu background
-		Renderer::Primitives::DrawRect(
+		Renderer::Primitives::drawRect(
 			{.bounds = {menuX, menuY, kMenuWidth, menuHeight},
 			 .style =
 				 {.fill = Color(0.15F, 0.15F, 0.2F, 0.95F), .border = BorderStyle{.color = Color(0.4F, 0.4F, 0.5F, 1.0F), .width = 1.0F}},
@@ -176,16 +176,16 @@ namespace UI {
 		);
 
 		// Draw header background
-		Renderer::Primitives::DrawRect(
+		Renderer::Primitives::drawRect(
 			{.bounds = {menuX, menuY, kMenuWidth, kHeaderHeight}, .style = {.fill = Color(0.2F, 0.2F, 0.3F, 1.0F)}, .id = "menu_header"}
 		);
 
 		// Render header text
-		headerText.Render();
+		headerText.render();
 
 		// Render all menu buttons
 		for (auto& button : menuButtons) {
-			button.Render();
+			button.render();
 		}
 	}
 

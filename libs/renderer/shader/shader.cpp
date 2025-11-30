@@ -157,31 +157,31 @@ namespace Renderer {
 		return true;
 	}
 
-	void Shader::Use() const {
+	void Shader::use() const {
 		if (program != 0) {
 			glUseProgram(program);
 		}
 	}
 
-	void Shader::Unbind() const { // NOLINT(readability-convert-member-functions-to-static)
+	void Shader::unbind() const { // NOLINT(readability-convert-member-functions-to-static)
 		glUseProgram(0);
 	}
 
-	void Shader::SetUniform(const char* name, const glm::mat4& value) const {
+	void Shader::setUniform(const char* name, const glm::mat4& value) const {
 		GLint location = glGetUniformLocation(program, name);
 		if (location != -1) {
 			glUniformMatrix4fv(location, 1, GL_FALSE, glm::value_ptr(value));
 		}
 	}
 
-	void Shader::SetUniform(const char* name, int value) const {
+	void Shader::setUniform(const char* name, int value) const {
 		GLint location = glGetUniformLocation(program, name);
 		if (location != -1) {
 			glUniform1i(location, value);
 		}
 	}
 
-	void Shader::SetUniform(const char* name, float value) const {
+	void Shader::setUniform(const char* name, float value) const {
 		GLint location = glGetUniformLocation(program, name);
 		if (location != -1) {
 			glUniform1f(location, value);

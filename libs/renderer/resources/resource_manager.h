@@ -48,7 +48,7 @@ namespace renderer {
 		}
 
 		// Free resource slot
-		void Free(ResourceHandle handle) {
+		void free(ResourceHandle handle) {
 			if (!handle.IsValid()) {
 				return;
 			}
@@ -113,7 +113,7 @@ namespace renderer {
 		size_t GetActiveCount() const { return resources.size() - freeIndices.size(); }
 
 		// Clear all resources
-		void Clear() {
+		void clear() {
 			resources.clear();
 			generations.clear();
 			freeIndices.clear();

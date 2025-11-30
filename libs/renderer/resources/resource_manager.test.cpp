@@ -11,15 +11,15 @@ using namespace renderer;
 TEST(ResourceHandleTests, CreateValidHandle) {
 	ResourceHandle handle = ResourceHandle::Make(42, 5);
 
-	EXPECT_TRUE(handle.IsValid());
-	EXPECT_EQ(handle.GetIndex(), 42);
-	EXPECT_EQ(handle.GetGeneration(), 5);
+	EXPECT_TRUE(handle.isValid());
+	EXPECT_EQ(handle.getIndex(), 42);
+	EXPECT_EQ(handle.getGeneration(), 5);
 }
 
 TEST(ResourceHandleTests, CreateInvalidHandle) {
 	ResourceHandle handle = ResourceHandle::Invalid();
 
-	EXPECT_FALSE(handle.IsValid());
+	EXPECT_FALSE(handle.isValid());
 	EXPECT_EQ(handle.value, ResourceHandle::kInvalidHandle);
 }
 
@@ -47,20 +47,20 @@ TEST(ResourceHandleTests, InvalidHandleEquality) {
 TEST(ResourceHandleTests, ExtractIndexAndGeneration) {
 	// Test various combinations
 	ResourceHandle h1 = ResourceHandle::Make(0, 0);
-	EXPECT_EQ(h1.GetIndex(), 0);
-	EXPECT_EQ(h1.GetGeneration(), 0);
+	EXPECT_EQ(h1.getIndex(), 0);
+	EXPECT_EQ(h1.getGeneration(), 0);
 
 	ResourceHandle h2 = ResourceHandle::Make(65535, 0); // Max index
-	EXPECT_EQ(h2.GetIndex(), 65535);
-	EXPECT_EQ(h2.GetGeneration(), 0);
+	EXPECT_EQ(h2.getIndex(), 65535);
+	EXPECT_EQ(h2.getGeneration(), 0);
 
 	ResourceHandle h3 = ResourceHandle::Make(0, 65535); // Max generation
-	EXPECT_EQ(h3.GetIndex(), 0);
-	EXPECT_EQ(h3.GetGeneration(), 65535);
+	EXPECT_EQ(h3.getIndex(), 0);
+	EXPECT_EQ(h3.getGeneration(), 65535);
 
 	ResourceHandle h4 = ResourceHandle::Make(65535, 65535); // Both max
-	EXPECT_EQ(h4.GetIndex(), 65535);
-	EXPECT_EQ(h4.GetGeneration(), 65535);
+	EXPECT_EQ(h4.getIndex(), 65535);
+	EXPECT_EQ(h4.getGeneration(), 65535);
 }
 
 TEST(ResourceHandleTests, TypeAliases) {
@@ -69,13 +69,13 @@ TEST(ResourceHandleTests, TypeAliases) {
 	MeshHandle	   meshHandle = ResourceHandle::Make(2, 0);
 	SVGAssetHandle svgHandle = ResourceHandle::Make(3, 0);
 
-	EXPECT_TRUE(texHandle.IsValid());
-	EXPECT_TRUE(meshHandle.IsValid());
-	EXPECT_TRUE(svgHandle.IsValid());
+	EXPECT_TRUE(texHandle.isValid());
+	EXPECT_TRUE(meshHandle.isValid());
+	EXPECT_TRUE(svgHandle.isValid());
 
-	EXPECT_EQ(texHandle.GetIndex(), 1);
-	EXPECT_EQ(meshHandle.GetIndex(), 2);
-	EXPECT_EQ(svgHandle.GetIndex(), 3);
+	EXPECT_EQ(texHandle.getIndex(), 1);
+	EXPECT_EQ(meshHandle.getIndex(), 2);
+	EXPECT_EQ(svgHandle.getIndex(), 3);
 }
 
 // ============================================================================
@@ -93,9 +93,9 @@ TEST(ResourceManagerTests, AllocateFirstResource) {
 
 	ResourceHandle handle = manager.Allocate();
 
-	EXPECT_TRUE(handle.IsValid());
-	EXPECT_EQ(handle.GetIndex(), 0);
-	EXPECT_EQ(handle.GetGeneration(), 0);
+	EXPECT_TRUE(handle.isValid());
+	EXPECT_EQ(handle.getIndex(), 0);
+	EXPECT_EQ(handle.getGeneration(), 0);
 }
 
 TEST(ResourceManagerTests, AllocateMultipleResources) {
@@ -105,14 +105,14 @@ TEST(ResourceManagerTests, AllocateMultipleResources) {
 	ResourceHandle h2 = manager.Allocate();
 	ResourceHandle h3 = manager.Allocate();
 
-	EXPECT_EQ(h1.GetIndex(), 0);
-	EXPECT_EQ(h2.GetIndex(), 1);
-	EXPECT_EQ(h3.GetIndex(), 2);
+	EXPECT_EQ(h1.getIndex(), 0);
+	EXPECT_EQ(h2.getIndex(), 1);
+	EXPECT_EQ(h3.getIndex(), 2);
 
 	// All should have generation 0 initially
-	EXPECT_EQ(h1.GetGeneration(), 0);
-	EXPECT_EQ(h2.GetGeneration(), 0);
-	EXPECT_EQ(h3.GetGeneration(), 0);
+	EXPECT_EQ(h1.getGeneration(), 0);
+	EXPECT_EQ(h2.getGeneration(), 0);
+	EXPECT_EQ(h3.getGeneration(), 0);
 }
 
 TEST(ResourceManagerTests, GetResource) {
@@ -172,14 +172,14 @@ TEST(ResourceManagerTests, GenerationIncrementsOnFree) {
 	ResourceManager<TestResource> manager;
 
 	ResourceHandle handle = manager.Allocate();
-	EXPECT_EQ(handle.GetGeneration(), 0);
+	EXPECT_EQ(handle.getGeneration(), 0);
 
 	manager.Free(handle);
 
 	// Allocate again in same slot
 	ResourceHandle handle2 = manager.Allocate();
-	EXPECT_EQ(handle2.GetIndex(), handle.GetIndex()); // Same index
-	EXPECT_EQ(handle2.GetGeneration(), 1);			  // Generation incremented
+	EXPECT_EQ(handle2.getIndex(), handle.getIndex()); // Same index
+	EXPECT_EQ(handle2.getGeneration(), 1);			  // Generation incremented
 
 	// Old handle should be invalid
 	EXPECT_EQ(manager.Get(handle), nullptr);
@@ -200,8 +200,8 @@ TEST(ResourceManagerTests, ReuseFreedSlots) {
 
 	// Allocate new resource - should reuse freed slot
 	ResourceHandle h4 = manager.Allocate();
-	EXPECT_EQ(h4.GetIndex(), h2.GetIndex()); // Same index as freed slot
-	EXPECT_EQ(h4.GetGeneration(), 1);		 // Generation incremented
+	EXPECT_EQ(h4.getIndex(), h2.getIndex()); // Same index as freed slot
+	EXPECT_EQ(h4.getGeneration(), 1);		 // Generation incremented
 
 	// Total count should still be 3 (reused slot)
 	EXPECT_EQ(manager.GetCount(), 3);
@@ -270,7 +270,7 @@ TEST(ResourceManagerTests, Clear) {
 
 	EXPECT_EQ(manager.GetCount(), 3);
 
-	manager.Clear();
+	manager.clear();
 
 	EXPECT_EQ(manager.GetCount(), 0);
 	EXPECT_EQ(manager.GetActiveCount(), 0);
@@ -285,12 +285,12 @@ TEST(ResourceManagerTests, ClearAndReallocate) {
 	ResourceManager<TestResource> manager;
 
 	ResourceHandle h1 = manager.Allocate();
-	manager.Clear();
+	manager.clear();
 
 	// After clear, allocation should start from 0 again
 	ResourceHandle h2 = manager.Allocate();
-	EXPECT_EQ(h2.GetIndex(), 0);
-	EXPECT_EQ(h2.GetGeneration(), 0);
+	EXPECT_EQ(h2.getIndex(), 0);
+	EXPECT_EQ(h2.getGeneration(), 0);
 }
 
 TEST(ResourceManagerTests, ConstGetResource) {
@@ -325,9 +325,9 @@ TEST(ResourceManagerTests, StaleHandleAfterMultipleFrees) {
 	EXPECT_NE(manager.Get(h3), nullptr);
 
 	// Verify generations
-	EXPECT_EQ(h1.GetGeneration(), 0);
-	EXPECT_EQ(h2.GetGeneration(), 1);
-	EXPECT_EQ(h3.GetGeneration(), 2);
+	EXPECT_EQ(h1.getGeneration(), 0);
+	EXPECT_EQ(h2.getGeneration(), 1);
+	EXPECT_EQ(h3.getGeneration(), 2);
 }
 
 TEST(ResourceManagerTests, LargeAllocation) {
@@ -339,8 +339,8 @@ TEST(ResourceManagerTests, LargeAllocation) {
 	// Allocate 1000 resources
 	for (int i = 0; i < 1000; i++) {
 		ResourceHandle handle = manager.Allocate();
-		EXPECT_TRUE(handle.IsValid());
-		EXPECT_EQ(handle.GetIndex(), i);
+		EXPECT_TRUE(handle.isValid());
+		EXPECT_EQ(handle.getIndex(), i);
 		handles.push_back(handle);
 
 		// Set unique value
@@ -379,8 +379,8 @@ TEST(ResourceManagerTests, InterleavedAllocateFree) {
 	EXPECT_NE(manager.Get(h4), nullptr);
 
 	// Verify slot reuse
-	EXPECT_EQ(h3.GetIndex(), h1.GetIndex());
-	EXPECT_EQ(h4.GetIndex(), h2.GetIndex());
+	EXPECT_EQ(h3.getIndex(), h1.getIndex());
+	EXPECT_EQ(h4.getIndex(), h2.getIndex());
 }
 
 // ============================================================================
@@ -392,7 +392,7 @@ TEST(ResourceManagerIntegrationTests, CompleteLifecycle) {
 
 	// Allocate resource
 	ResourceHandle handle = manager.Allocate();
-	EXPECT_TRUE(handle.IsValid());
+	EXPECT_TRUE(handle.isValid());
 
 	// Initialize resource
 	TestResource* resource = manager.Get(handle);
@@ -414,8 +414,8 @@ TEST(ResourceManagerIntegrationTests, CompleteLifecycle) {
 
 	// Allocate new resource in same slot
 	ResourceHandle newHandle = manager.Allocate();
-	EXPECT_EQ(newHandle.GetIndex(), handle.GetIndex());
-	EXPECT_NE(newHandle.GetGeneration(), handle.GetGeneration());
+	EXPECT_EQ(newHandle.getIndex(), handle.getIndex());
+	EXPECT_NE(newHandle.getGeneration(), handle.getGeneration());
 
 	// IMPORTANT: ResourceManager reuses the memory slot without resetting it
 	// This is correct behavior - the manager doesn't know how to initialize resources

@@ -62,14 +62,14 @@ namespace Renderer { // NOLINT(readability-identifier-naming)
 		 * Set OpenGL viewport to full framebuffer size (physical pixels).
 		 * This is the only method that uses physical pixels.
 		 */
-		void SetFullViewport() const;
+		void setFullViewport() const;
 
 		/**
 		 * Update internal state when window is resized.
 		 * @param width New window width in logical pixels
 		 * @param height New window height in logical pixels
 		 */
-		void UpdateWindowSize(int width, int height);
+		void updateWindowSize(int width, int height);
 
 		/**
 		 * Get the pixel ratio (physical pixels / logical pixels).

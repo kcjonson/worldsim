@@ -19,7 +19,7 @@ void ErrorCallback(int error, const char* description) {
 // GLFW framebuffer size callback
 void FramebufferSizeCallback(GLFWwindow* window, int width, int height) {
 	glViewport(0, 0, width, height);
-	Renderer::Primitives::SetViewport(width, height);
+	Renderer::Primitives::setViewport(width, height);
 }
 
 // Initialize GLFW and create window
@@ -95,8 +95,8 @@ int main(int argc, char* argv[]) {
 
 	// Initialize renderer
 	LOG_INFO(Renderer, "Initializing primitive rendering system");
-	Renderer::Primitives::Init(nullptr);
-	Renderer::Primitives::SetViewport(windowWidth, windowHeight);
+	Renderer::Primitives::init(nullptr);
+	Renderer::Primitives::setViewport(windowWidth, windowHeight);
 
 	// Initialize scene system
 	LOG_INFO(Engine, "Initializing scene system");
@@ -109,12 +109,12 @@ int main(int argc, char* argv[]) {
 
 	// Set up pre-frame callback (primitives begin frame)
 	app.setPreFrameCallback([]() -> bool {
-		Renderer::Primitives::BeginFrame();
+		Renderer::Primitives::beginFrame();
 		return true; // Continue running
 	});
 
 	// Set up overlay renderer (primitives end frame)
-	app.setOverlayRenderer([]() { Renderer::Primitives::EndFrame(); });
+	app.setOverlayRenderer([]() { Renderer::Primitives::endFrame(); });
 
 	// Run application
 	LOG_INFO(Engine, "Starting application main loop");
@@ -123,7 +123,7 @@ int main(int argc, char* argv[]) {
 
 	// Cleanup
 	LOG_INFO(Game, "Shutting down...");
-	Renderer::Primitives::Shutdown();
+	Renderer::Primitives::shutdown();
 	glfwDestroyWindow(window);
 	glfwTerminate();
 	foundation::Logger::shutdown();

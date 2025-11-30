@@ -65,7 +65,7 @@ void FocusManager::unregisterFocusable(IFocusable* component) {
 
 	// Clear focus if this component has focus
 	if (currentFocus == component) {
-		currentFocus->OnFocusLost();
+		currentFocus->onFocusLost();
 		currentFocus = nullptr;
 	}
 
@@ -90,20 +90,20 @@ void FocusManager::setFocus(IFocusable* component) {
 
 	// Clear current focus
 	if (currentFocus != nullptr) {
-		currentFocus->OnFocusLost();
+		currentFocus->onFocusLost();
 	}
 
 	// Set new focus
 	currentFocus = component;
 
 	if (currentFocus != nullptr) {
-		currentFocus->OnFocusGained();
+		currentFocus->onFocusGained();
 	}
 }
 
 void FocusManager::clearFocus() {
 	if (currentFocus != nullptr) {
-		currentFocus->OnFocusLost();
+		currentFocus->onFocusLost();
 		currentFocus = nullptr;
 	}
 }
@@ -125,7 +125,7 @@ void FocusManager::focusNext() {
 
 	do {
 		IFocusable* candidate = focusables[index];
-		if (candidate->CanReceiveFocus()) {
+		if (candidate->canReceiveFocus()) {
 			setFocus(candidate);
 			return;
 		}
@@ -154,7 +154,7 @@ void FocusManager::focusPrevious() {
 
 	do {
 		IFocusable* candidate = focusables[index];
-		if (candidate->CanReceiveFocus()) {
+		if (candidate->canReceiveFocus()) {
 			setFocus(candidate);
 			return;
 		}
@@ -204,13 +204,13 @@ void FocusManager::popFocusScope() {
 
 void FocusManager::routeKeyInput(engine::Key key, bool shift, bool ctrl, bool alt) {
 	if (currentFocus != nullptr) {
-		currentFocus->HandleKeyInput(key, shift, ctrl, alt);
+		currentFocus->handleKeyInput(key, shift, ctrl, alt);
 	}
 }
 
 void FocusManager::routeCharInput(char32_t codepoint) {
 	if (currentFocus != nullptr) {
-		currentFocus->HandleCharInput(codepoint);
+		currentFocus->handleCharInput(codepoint);
 	}
 }
 

@@ -19,10 +19,10 @@ namespace {
 
 	class ButtonScene : public engine::IScene {
 	  public:
-		const char* GetName() const override { return "button"; }
-		std::string ExportState() override { return "{}"; }
+		const char* getName() const override { return "button"; }
+		std::string exportState() override { return "{}"; }
 
-		void OnEnter() override {
+		void onEnter() override {
 			using namespace UI;
 			using namespace Foundation;
 
@@ -174,24 +174,24 @@ namespace {
 			LOG_INFO(UI, "Button scene initialized with {} buttons", buttons.size());
 		}
 
-		void OnExit() override {
+		void onExit() override {
 			buttons.clear();
 			labels.clear();
 			clickCounterText.reset();
 			LOG_INFO(UI, "Button scene exited");
 		}
 
-		void HandleInput(float /*deltaTime*/) override {
+		void handleInput(float /*deltaTime*/) override {
 			// Update all buttons' input state
 			for (auto& button : buttons) {
-				button->HandleInput();
+				button->handleInput();
 			}
 		}
 
-		void Update(float deltaTime) override {
+		void update(float deltaTime) override {
 			// Update all buttons
 			for (auto& button : buttons) {
-				button->Update(deltaTime);
+				button->update(deltaTime);
 			}
 
 			// Update click counter text
@@ -201,24 +201,24 @@ namespace {
 			}
 		}
 
-		void Render() override {
+		void render() override {
 			// Clear background
 			glClearColor(0.12F, 0.12F, 0.15F, 1.0F);
 			glClear(GL_COLOR_BUFFER_BIT);
 
 			// Render labels
 			for (auto& label : labels) {
-				label->Render();
+				label->render();
 			}
 
 			// Render click counter
 			if (clickCounterText) {
-				clickCounterText->Render();
+				clickCounterText->render();
 			}
 
 			// Render all buttons
 			for (auto& button : buttons) {
-				button->Render();
+				button->render();
 			}
 		}
 

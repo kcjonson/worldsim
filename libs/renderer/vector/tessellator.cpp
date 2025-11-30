@@ -44,7 +44,7 @@ namespace renderer {
 		const TessellatorOptions& options
 	) {
 		// Clear output
-		outMesh.Clear();
+		outMesh.clear();
 
 		// Validate input
 		if (path.vertices.size() < 3) {
@@ -165,12 +165,12 @@ namespace renderer {
 		return true;
 	}
 
-	void Tessellator::BuildEvents(const VectorPath& path) {
+	void Tessellator::buildEvents(const VectorPath& path) {
 		// Placeholder for monotone decomposition (Phase 1+)
 		// Will classify vertices and build sorted event queue
 	}
 
-	void Tessellator::ProcessEvents(TessellatedMesh& outMesh) {
+	void Tessellator::processEvents(TessellatedMesh& outMesh) {
 		// Placeholder for monotone decomposition (Phase 1+)
 		// Will process events with sweep line algorithm
 	}

@@ -122,9 +122,9 @@ class TextInput : public Component, public IFocusable {
 	TextInput& operator=(TextInput&& other) noexcept;
 
 	// ILayer implementation (overrides Component)
-	void HandleInput() override;	  // Mouse click detection (called before Update in scene)
-	void Update(float deltaTime) override; // Update cursor blink, etc.
-	void Render() override;			  // Draw text input
+	void handleInput() override;	  // Mouse click detection (called before Update in scene)
+	void update(float deltaTime) override; // Update cursor blink, etc.
+	void render() override;			  // Draw text input
 
 	// State management
 	void setEnabled(bool newEnabled) { enabled = newEnabled; }
@@ -133,11 +133,11 @@ class TextInput : public Component, public IFocusable {
 	const std::string& getText() const { return text; }
 
 	// IFocusable interface implementation
-	void OnFocusGained() override;
-	void OnFocusLost() override;
-	void HandleKeyInput(engine::Key key, bool shift, bool ctrl, bool alt) override;
-	void HandleCharInput(char32_t codepoint) override;
-	bool CanReceiveFocus() const override;
+	void onFocusGained() override;
+	void onFocusLost() override;
+	void handleKeyInput(engine::Key key, bool shift, bool ctrl, bool alt) override;
+	void handleCharInput(char32_t codepoint) override;
+	bool canReceiveFocus() const override;
 
 	// Geometry queries
 	bool containsPoint(const Foundation::Vec2& point) const;

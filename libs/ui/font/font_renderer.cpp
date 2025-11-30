@@ -170,12 +170,12 @@ namespace ui {
 		return true;
 	}
 
-	void FontRenderer::RenderText(const std::string& text, const glm::vec2& position, float scale, const glm::vec3& color) {
+	void FontRenderer::renderText(const std::string& text, const glm::vec2& position, float scale, const glm::vec3& color) {
 		// Enable blending for text transparency
 		glEnable(GL_BLEND);
 		glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-		shader.Use();
+		shader.use();
 		glUniform3f(glGetUniformLocation(shader.GetProgram(), "textColor"), color.x, color.y, color.z);
 		glActiveTexture(GL_TEXTURE0);
 		glBindVertexArray(vao);
@@ -237,9 +237,9 @@ namespace ui {
 		glDisable(GL_BLEND);
 	}
 
-	void FontRenderer::SetProjectionMatrix(const glm::mat4& projection) {
-		shader.Use();
-		shader.SetUniform("projection", projection);
+	void FontRenderer::setProjectionMatrix(const glm::mat4& projection) {
+		shader.use();
+		shader.setUniform("projection", projection);
 	}
 
 	glm::vec2
@@ -488,7 +488,7 @@ namespace ui {
 		return true;
 	}
 
-	void FontRenderer::GenerateGlyphQuads(
+	void FontRenderer::generateGlyphQuads(
 		const std::string&		text,
 		const glm::vec2&		position,
 		float					scale,
@@ -635,11 +635,11 @@ namespace ui {
 		}
 	}
 
-	void FontRenderer::UpdateFrame() {
+	void FontRenderer::updateFrame() {
 		currentFrame++;
 	}
 
-	void FontRenderer::ClearGlyphQuadCache() {
+	void FontRenderer::clearGlyphQuadCache() {
 		glyphQuadCache.clear();
 		LOG_DEBUG(UI, "Cleared glyph quad cache");
 	}

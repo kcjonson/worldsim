@@ -16,38 +16,38 @@ using namespace foundation;
 
 namespace {
 
-	static void TestPerformance();
-	static void TestAlignment();
-	static void TestCapacity();
-	static void TestScoped();
+	static void testPerformance();
+	static void testAlignment();
+	static void testCapacity();
+	static void testScoped();
 
 	class ArenaScene : public engine::IScene {
 	  public:
-		void OnEnter() override {
+		void onEnter() override {
 			LOG_INFO(UI, "");
 			LOG_INFO(UI, "Arena Scene - Memory Arena Performance Tests");
 			LOG_INFO(UI, "================================================");
 
 			// Run all tests at initialization
-			TestPerformance();
-			TestAlignment();
-			TestCapacity();
-			TestScoped();
+			testPerformance();
+			testAlignment();
+			testCapacity();
+			testScoped();
 
 			LOG_INFO(UI, "================================================");
 			LOG_INFO(UI, "All arena tests passed!");
 			LOG_INFO(UI, "");
 		}
 
-		void HandleInput(float dt) override {
+		void handleInput(float dt) override {
 			// No input handling needed - test scene
 		}
 
-		void Update(float dt) override {
+		void update(float dt) override {
 			// No update logic needed - tests run on enter
 		}
 
-		void Render() override {
+		void render() override {
 			// Clear background
 			glClearColor(0.1F, 0.1F, 0.15F, 1.0F);
 			glClear(GL_COLOR_BUFFER_BIT);
@@ -55,11 +55,11 @@ namespace {
 			// No rendering needed for this scene - all output is to console/logs
 		}
 
-		void OnExit() override {
+		void onExit() override {
 			// No cleanup needed
 		}
 
-		std::string ExportState() override { // NOLINT(readability-convert-member-functions-to-static)
+		std::string exportState() override { // NOLINT(readability-convert-member-functions-to-static)
 			return R"({
 			"scene": "arena",
 			"description": "Memory arena performance tests",
@@ -68,14 +68,14 @@ namespace {
 		})";
 		}
 
-		const char* GetName() const override { return "arena"; }
+		const char* getName() const override { return "arena"; }
 	};
 
 	// ============================================================================
 	// Test Implementations
 	// ============================================================================
 
-	void TestPerformance() {
+	void testPerformance() {
 		LOG_INFO(UI, "");
 		LOG_INFO(UI, "Performance Test: Arena vs Standard Allocation");
 		LOG_INFO(UI, "-----------------------------------------------");
@@ -134,7 +134,7 @@ namespace {
 		LOG_INFO(UI, "Result: Arena is %.1fx faster than standard allocation!", speedup);
 	}
 
-	void TestAlignment() {
+	void testAlignment() {
 		LOG_INFO(UI, "");
 		LOG_INFO(UI, "Alignment Test: Verify correct alignment for different types");
 		LOG_INFO(UI, "-------------------------------------------------------------");
@@ -174,7 +174,7 @@ namespace {
 		LOG_INFO(UI, "All alignment tests passed!");
 	}
 
-	void TestCapacity() {
+	void testCapacity() {
 		LOG_INFO(UI, "");
 		LOG_INFO(UI, "Capacity Test: Fill arena and verify tracking");
 		LOG_INFO(UI, "-----------------------------------------------");
@@ -209,7 +209,7 @@ namespace {
 		LOG_INFO(UI, "Capacity test passed!");
 	}
 
-	void TestScoped() {
+	void testScoped() {
 		LOG_INFO(UI, "");
 		LOG_INFO(UI, "Scoped Test: RAII arena with checkpoint restoration");
 		LOG_INFO(UI, "----------------------------------------------------");

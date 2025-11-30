@@ -18,11 +18,11 @@ namespace {
 
 	class VectorStarScene : public engine::IScene {
 	  public:
-		void OnEnter() override {
+		void onEnter() override {
 			LOG_INFO(UI, "Vector Star Scene - Tessellation Demo");
 
 			// Create a 5-pointed star path
-			CreateStarPath();
+			createStarPath();
 
 			// Tessellate the star
 			auto startTime = std::chrono::high_resolution_clock::now();
@@ -42,15 +42,15 @@ namespace {
 			}
 		}
 
-		void HandleInput(float dt) override {
+		void handleInput(float dt) override {
 			// No input handling needed - static scene
 		}
 
-		void Update(float dt) override {
+		void update(float dt) override {
 			// No update logic needed - static star
 		}
 
-		void Render() override {
+		void render() override {
 			using namespace Foundation;
 
 			// Clear background
@@ -59,7 +59,7 @@ namespace {
 
 			// Draw the tessellated star
 			if (!starMesh.vertices.empty()) {
-				Renderer::Primitives::DrawTriangles(
+				Renderer::Primitives::drawTriangles(
 					{.vertices = starMesh.vertices.data(),
 					 .indices = starMesh.indices.data(),
 					 .vertexCount = starMesh.vertices.size(),
@@ -71,7 +71,7 @@ namespace {
 
 			// Draw a second smaller star
 			if (!smallStarMesh.vertices.empty()) {
-				Renderer::Primitives::DrawTriangles(
+				Renderer::Primitives::drawTriangles(
 					{.vertices = smallStarMesh.vertices.data(),
 					 .indices = smallStarMesh.indices.data(),
 					 .vertexCount = smallStarMesh.vertices.size(),
@@ -97,7 +97,7 @@ namespace {
 						float hue = static_cast<float>((col * 5) + row) / 50.0F;
 						Color starColor(hue, 1.0F - hue, 0.5F, 1.0F);
 
-						Renderer::Primitives::DrawTriangles(
+						Renderer::Primitives::drawTriangles(
 							{.vertices = offsetVertices.data(),
 							 .indices = tinyStarMesh.indices.data(),
 							 .vertexCount = offsetVertices.size(),
@@ -109,17 +109,17 @@ namespace {
 			}
 		}
 
-		void OnExit() override { LOG_INFO(UI, "Exiting Vector Star Scene"); }
+		void onExit() override { LOG_INFO(UI, "Exiting Vector Star Scene"); }
 
-		std::string ExportState() override { // NOLINT(readability-convert-member-functions-to-static)
+		std::string exportState() override { // NOLINT(readability-convert-member-functions-to-static)
 			return "{}";
 		}
 
-		const char* GetName() const override { return "vector-star"; }
+		const char* getName() const override { return "vector-star"; }
 
 	  private:
 		// Create a 5-pointed star path centered at (400, 200) with outer radius 100, inner radius 40
-		void CreateStarPath() {
+		void createStarPath() {
 			const float kCenterX = 400.0F;
 			const float kCenterY = 200.0F;
 			const float kOuterRadius = 100.0F;
@@ -143,10 +143,10 @@ namespace {
 			starPath.isClosed = true;
 
 			// Create smaller star (centered at 600, 200, half size)
-			CreateStarPathAt(smallStarPath, 600.0F, 200.0F, 50.0F, 20.0F);
+			createStarPathAt(smallStarPath, 600.0F, 200.0F, 50.0F, 20.0F);
 
 			// Create tiny star for grid (20x8)
-			CreateStarPathAt(tinyStarPath, 0.0F, 0.0F, 20.0F, 8.0F);
+			createStarPathAt(tinyStarPath, 0.0F, 0.0F, 20.0F, 8.0F);
 
 			// Tessellate all stars
 			renderer::Tessellator tessellator;
@@ -154,7 +154,7 @@ namespace {
 			tessellator.Tessellate(tinyStarPath, tinyStarMesh);
 		}
 
-		void CreateStarPathAt( // NOLINT(readability-convert-member-functions-to-static)
+		void createStarPathAt( // NOLINT(readability-convert-member-functions-to-static)
 			renderer::VectorPath& path,
 			float				  kCenterX,
 			float				  kCenterY,

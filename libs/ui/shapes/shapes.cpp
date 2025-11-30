@@ -11,25 +11,25 @@ namespace UI {
 	// Base font size used for font scaling calculations (16px = 1.0 scale)
 	constexpr float BASE_FONT_SIZE = 16.0F;
 
-	void Rectangle::Render() {
-		Renderer::Primitives::DrawRect(
+	void Rectangle::render() {
+		Renderer::Primitives::drawRect(
 			{.bounds = {position.x, position.y, size.x, size.y}, .style = style, .id = id, .zIndex = RenderContext::GetZIndex()}
 		);
 	}
 
-	void Circle::Render() {
-		Renderer::Primitives::DrawCircle(
+	void Circle::render() {
+		Renderer::Primitives::drawCircle(
 			{.center = center, .radius = radius, .style = style, .id = id, .zIndex = RenderContext::GetZIndex()}
 		);
 	}
 
-	void Line::Render() {
-		Renderer::Primitives::DrawLine(
+	void Line::render() {
+		Renderer::Primitives::drawLine(
 			{.start = start, .end = end, .style = style, .id = id, .zIndex = RenderContext::GetZIndex()}
 		);
 	}
 
-	void Text::Render() {
+	void Text::render() {
 		// Get batch renderer for unified shape + text rendering
 		Renderer::BatchRenderer* batchRenderer = Renderer::Primitives::GetBatchRenderer();
 		if (batchRenderer == nullptr || text.empty()) {
@@ -126,13 +126,13 @@ namespace UI {
 		// Generate glyph quads using FontRenderer
 		glm::vec4 glyphColor(style.color.r, style.color.g, style.color.b, style.color.a);
 		std::vector<ui::FontRenderer::GlyphQuad> glyphs;
-		fontRenderer->GenerateGlyphQuads(text, glm::vec2(alignedPos.x, alignedPos.y), scale, glyphColor, glyphs);
+		fontRenderer->generateGlyphQuads(text, glm::vec2(alignedPos.x, alignedPos.y), scale, glyphColor, glyphs);
 
 		// Add each glyph to the unified batch renderer
 		// Text is interleaved with shapes in submission order, preserving correct z-ordering
 		Foundation::Color textColor(style.color.r, style.color.g, style.color.b, style.color.a);
 		for (const auto& glyph : glyphs) {
-			batchRenderer->AddTextQuad(
+			batchRenderer->addTextQuad(
 				Foundation::Vec2(glyph.position.x, glyph.position.y),
 				Foundation::Vec2(glyph.size.x, glyph.size.y),
 				Foundation::Vec2(glyph.uvMin.x, glyph.uvMin.y),

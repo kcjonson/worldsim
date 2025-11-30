@@ -79,14 +79,14 @@ class FocusManager {
 
 	/**
 	 * Move focus to next component in tab order (Tab key).
-	 * Skips components where CanReceiveFocus() returns false.
+	 * Skips components where canReceiveFocus() returns false.
 	 * Wraps from last to first component.
 	 */
 	void focusNext();
 
 	/**
 	 * Move focus to previous component in tab order (Shift+Tab).
-	 * Skips components where CanReceiveFocus() returns false.
+	 * Skips components where canReceiveFocus() returns false.
 	 * Wraps from first to last component.
 	 */
 	void focusPrevious();

@@ -80,9 +80,9 @@ class Button : public Component, public IFocusable {
 	Button& operator=(Button&& other) noexcept;
 
 	// ILayer implementation (overrides Component)
-	void HandleInput() override;
-	void Update(float deltaTime) override;
-	void Render() override;
+	void handleInput() override;
+	void update(float deltaTime) override;
+	void render() override;
 
 	// State management
 	void setFocused(bool newFocused) { focused = newFocused; }
@@ -91,11 +91,11 @@ class Button : public Component, public IFocusable {
 	bool isDisabled() const { return disabled; }
 
 	// IFocusable implementation
-	void OnFocusGained() override;
-	void OnFocusLost() override;
-	void HandleKeyInput(engine::Key key, bool shift, bool ctrl, bool alt) override;
-	void HandleCharInput(char32_t codepoint) override;
-	bool CanReceiveFocus() const override;
+	void onFocusGained() override;
+	void onFocusLost() override;
+	void handleKeyInput(engine::Key key, bool shift, bool ctrl, bool alt) override;
+	void handleCharInput(char32_t codepoint) override;
+	bool canReceiveFocus() const override;
 
 	// Geometry queries
 	bool			 containsPoint(const Foundation::Vec2& point) const;

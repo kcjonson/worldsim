@@ -6,12 +6,12 @@
 namespace demo {
 
 	// Initialize the demo (called once at startup)
-	void Init();
+	void init();
 
 	// Render the demo frame
-	void Render();
+	void render();
 
 	// Cleanup demo resources
-	void Shutdown();
+	void shutdown();
 
 } // namespace demo

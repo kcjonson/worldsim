@@ -21,30 +21,30 @@ namespace demo {
 		const char* name;
 	};
 
-	static void TestBasicAllocation();
-	static void TestFreeListReuse();
-	static void TestStaleHandles();
-	static void TestHandleValidation();
-	static void TestCapacityLimit();
+	static void testBasicAllocation();
+	static void testFreeListReuse();
+	static void testStaleHandles();
+	static void testHandleValidation();
+	static void testCapacityLimit();
 
-	void Init() {
+	void init() {
 		LOG_INFO(UI, "");
 		LOG_INFO(UI, "Handle Demo - Resource Handle System Tests");
 		LOG_INFO(UI, "================================================");
 
 		// Run all tests at initialization
-		TestBasicAllocation();
-		TestFreeListReuse();
-		TestStaleHandles();
-		TestHandleValidation();
-		TestCapacityLimit();
+		testBasicAllocation();
+		testFreeListReuse();
+		testStaleHandles();
+		testHandleValidation();
+		testCapacityLimit();
 
 		LOG_INFO(UI, "================================================");
 		LOG_INFO(UI, "All handle tests passed!");
 		LOG_INFO(UI, "");
 	}
 
-	void Render() {
+	void render() {
 		// Clear background
 		glClearColor(0.1F, 0.1F, 0.15F, 1.0F);
 		glClear(GL_COLOR_BUFFER_BIT);
@@ -52,7 +52,7 @@ namespace demo {
 		// No rendering needed for this demo - all output is to console
 	}
 
-	void Shutdown() {
+	void shutdown() {
 		// No cleanup needed
 	}
 
@@ -60,7 +60,7 @@ namespace demo {
 	// Test Implementations
 	// ============================================================================
 
-	void TestBasicAllocation() {
+	void testBasicAllocation() {
 		LOG_INFO(UI, "");
 		LOG_INFO(UI, "Basic Allocation Test: Allocate and retrieve resources");
 		LOG_INFO(UI, "--------------------------------------------------------");
@@ -119,7 +119,7 @@ namespace demo {
 		LOG_INFO(UI, "Basic allocation test passed!");
 	}
 
-	void TestFreeListReuse() {
+	void testFreeListReuse() {
 		LOG_INFO(UI, "");
 		LOG_INFO(UI, "Free List Test: Verify index recycling");
 		LOG_INFO(UI, "---------------------------------------");
@@ -138,9 +138,9 @@ namespace demo {
 		LOG_INFO(UI, "Active count: %zu", manager.GetActiveCount());
 
 		// Free handles 1, 2, 3 (indices 1, 2, 3)
-		manager.Free(handles.at(1));
-		manager.Free(handles.at(2));
-		manager.Free(handles.at(3));
+		manager.free(handles.at(1));
+		manager.free(handles.at(2));
+		manager.free(handles.at(3));
 
 		LOG_INFO(UI, "");
 		LOG_INFO(UI, "Freed handles at indices 1, 2, 3");
@@ -170,7 +170,7 @@ namespace demo {
 		LOG_INFO(UI, "Free list reuse test passed!");
 	}
 
-	void TestStaleHandles() {
+	void testStaleHandles() {
 		LOG_INFO(UI, "");
 		LOG_INFO(UI, "Stale Handle Test: Verify generation validation");
 		LOG_INFO(UI, "-------------------------------------------------");
@@ -187,7 +187,7 @@ namespace demo {
 		LOG_INFO(UI, "Resource id: %d", res->id);
 
 		// Free the resource
-		manager.Free(handle);
+		manager.free(handle);
 		LOG_INFO(UI, "");
 		LOG_INFO(UI, "Freed the resource");
 
@@ -219,7 +219,7 @@ namespace demo {
 		LOG_INFO(UI, "Stale handle test passed!");
 	}
 
-	void TestHandleValidation() {
+	void testHandleValidation() {
 		LOG_INFO(UI, "");
 		LOG_INFO(UI, "Handle Validation Test: Test invalid handles");
 		LOG_INFO(UI, "---------------------------------------------");
@@ -260,7 +260,7 @@ namespace demo {
 		LOG_INFO(UI, "Handle validation test passed!");
 	}
 
-	void TestCapacityLimit() {
+	void testCapacityLimit() {
 		LOG_INFO(UI, "");
 		LOG_INFO(UI, "Capacity Limit Test: Verify 65,536 resource limit");
 		LOG_INFO(UI, "---------------------------------------------------");

@@ -57,15 +57,15 @@ void FramebufferSizeCallback(GLFWwindow* window, int width, int height) {
 	int windowHeight = 0;
 	glfwGetWindowSize(window, &windowWidth, &windowHeight);
 	if (g_coordinateSystem != nullptr) {
-		g_coordinateSystem->UpdateWindowSize(windowWidth, windowHeight);
+		g_coordinateSystem->updateWindowSize(windowWidth, windowHeight);
 	}
 
 	// Update primitives viewport with framebuffer size (for 1:1 pixel mapping)
-	Renderer::Primitives::SetViewport(width, height);
+	Renderer::Primitives::setViewport(width, height);
 
 	// Update navigation menu positions if it exists
 	if (g_navigationMenu) {
-		g_navigationMenu->OnWindowResize();
+		g_navigationMenu->onWindowResize();
 	}
 }
 
@@ -229,13 +229,13 @@ int main(int argc, char* argv[]) {
 
 	// Initialize primitive rendering system
 	LOG_INFO(Renderer, "Initializing primitive rendering system");
-	Renderer::Primitives::Init(nullptr); // TODO: Pass renderer instance
+	Renderer::Primitives::init(nullptr); // TODO: Pass renderer instance
 	// NOTE: BatchRenderer uses the CoordinateSystem for DPI-aware projection (logical pixels)
 	// and for percentage-based layout helpers
-	Renderer::Primitives::SetCoordinateSystem(&coordinateSystem);
+	Renderer::Primitives::setCoordinateSystem(&coordinateSystem);
 	// Use framebuffer size for GL viewport (high-res rendering)
 	// but coordinate system projection uses logical pixels (window size)
-	Renderer::Primitives::SetViewport(framebufferWidth, framebufferHeight);
+	Renderer::Primitives::setViewport(framebufferWidth, framebufferHeight);
 
 	LOG_DEBUG(Renderer, "Primitive rendering system initialized");
 
@@ -250,19 +250,19 @@ int main(int argc, char* argv[]) {
 		// CoordinateSystem uses LOGICAL pixels (window size), not physical pixels (framebuffer size)
 		// This ensures x=20,y=20 means the same thing for text and shapes
 		glm::mat4 projection = coordinateSystem.CreateScreenSpaceProjection();
-		g_fontRenderer->SetProjectionMatrix(projection);
+		g_fontRenderer->setProjectionMatrix(projection);
 
 		// Set font renderer in Primitives API for Text shapes (provides font metrics)
-		Renderer::Primitives::SetFontRenderer(g_fontRenderer.get());
+		Renderer::Primitives::setFontRenderer(g_fontRenderer.get());
 
 		// Configure the unified BatchRenderer with the font atlas for text rendering
 		// The uber shader handles both SDF shapes and MSDF text in a single draw call
-		Renderer::Primitives::SetFontAtlas(g_fontRenderer->GetAtlasTexture(), 4.0F);
+		Renderer::Primitives::setFontAtlas(g_fontRenderer->GetAtlasTexture(), 4.0F);
 
 		// Register frame update callback for LRU cache tracking
-		Renderer::Primitives::SetFrameUpdateCallback([]() {
+		Renderer::Primitives::setFrameUpdateCallback([]() {
 			if (g_fontRenderer) {
-				g_fontRenderer->UpdateFrame();
+				g_fontRenderer->updateFrame();
 			}
 		});
 
@@ -306,10 +306,10 @@ int main(int argc, char* argv[]) {
 	// Set up pre-frame callback (primitives begin frame + debug server control)
 	app.setPreFrameCallback([&debugServer, &app, &metrics, httpPort]() -> bool {
 		// Begin frame timing
-		metrics.BeginFrame();
+		metrics.beginFrame();
 
 		// Begin frame for all rendering (scene + UI)
-		Renderer::Primitives::BeginFrame();
+		Renderer::Primitives::beginFrame();
 
 		// Debug server control (if enabled)
 		if (httpPort > 0) {
@@ -372,23 +372,23 @@ int main(int argc, char* argv[]) {
 	app.setOverlayRenderer([]() {
 		// Handle navigation menu if it exists (zero overhead when not created)
 		if (g_navigationMenu) {
-			g_navigationMenu->HandleInput();
-			g_navigationMenu->Update(0.0F);
-			g_navigationMenu->Render();
+			g_navigationMenu->handleInput();
+			g_navigationMenu->update(0.0F);
+			g_navigationMenu->render();
 		}
 
 		// End frame - flush all queued primitives
-		Renderer::Primitives::EndFrame();
+		Renderer::Primitives::endFrame();
 	});
 
 	// Set up post-frame callback (metrics + screenshot)
 	app.setPostFrameCallback([&metrics, &debugServer, httpPort]() {
 		// Get rendering stats
 		auto renderStats = Renderer::Primitives::GetStats();
-		metrics.SetRenderStats(renderStats.drawCalls, renderStats.vertexCount, renderStats.triangleCount);
+		metrics.setRenderStats(renderStats.drawCalls, renderStats.vertexCount, renderStats.triangleCount);
 
 		// End frame timing
-		metrics.EndFrame();
+		metrics.endFrame();
 
 		// Update debug server with latest metrics
 		if (httpPort > 0) {
@@ -428,13 +428,13 @@ int main(int argc, char* argv[]) {
 		debugServer.stop();
 	}
 
-	// Scene cleanup is handled above via SceneManager::Shutdown()
+	// Scene cleanup is handled above via SceneManager::shutdown()
 
 	// Cleanup font renderer
-	Renderer::Primitives::SetFontRenderer(nullptr);
+	Renderer::Primitives::setFontRenderer(nullptr);
 	g_fontRenderer.reset();
 
-	Renderer::Primitives::Shutdown();
+	Renderer::Primitives::shutdown();
 	glfwDestroyWindow(window);
 	glfwTerminate();
 

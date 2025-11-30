@@ -32,18 +32,18 @@ namespace {
 
 	class VectorPerfScene : public engine::IScene {
 	  public:
-		void OnEnter() override {
+		void onEnter() override {
 			LOG_INFO(UI, "Vector Performance Scene - 10,000 Stars Stress Test");
 
 			// Generate 10,000 stars
-			GenerateStars(10000);
+			generateStars(10000);
 
 			LOG_INFO(UI, "Generated %zu stars", stars.size());
 			LOG_INFO(UI, "Total triangles: %zu", CalculateTotalTriangles());
 			LOG_INFO(UI, "Total vertices: %zu", CalculateTotalVertices());
 		}
 
-		void HandleInput(float /*dt*/) override {
+		void handleInput(float /*dt*/) override {
 			// Toggle clipping with 'C' key
 			static bool lastKeyState = false;
 			bool		currentKeyState = glfwGetKey(glfwGetCurrentContext(), GLFW_KEY_C) == GLFW_PRESS;
@@ -56,7 +56,7 @@ namespace {
 			lastKeyState = currentKeyState;
 		}
 
-		void Update(float dt) override {
+		void update(float dt) override {
 			// Update FPS counter
 			frameCount++;
 			frameDeltaAccumulator += dt;
@@ -68,7 +68,7 @@ namespace {
 			}
 		}
 
-		void Render() override {
+		void render() override {
 			using namespace Foundation;
 
 			// Clear background
@@ -92,13 +92,13 @@ namespace {
 				ClipSettings clipSettings;
 				clipSettings.shape = ClipRect{.bounds = Rect{margin, margin, clipWidth, clipHeight}};
 				clipSettings.mode = ClipMode::Inside;
-				Renderer::Primitives::PushClip(clipSettings);
+				Renderer::Primitives::pushClip(clipSettings);
 			}
 
 			// Draw all 10,000 stars
 			for (const auto& star : stars) {
 				if (!star.mesh.vertices.empty()) {
-					Renderer::Primitives::DrawTriangles(
+					Renderer::Primitives::drawTriangles(
 						{.vertices = star.mesh.vertices.data(),
 						 .indices = star.mesh.indices.data(),
 						 .vertexCount = star.mesh.vertices.size(),
@@ -110,7 +110,7 @@ namespace {
 
 			// Pop clipping if it was enabled
 			if (clippingEnabled) {
-				Renderer::Primitives::PopClip();
+				Renderer::Primitives::popClip();
 			}
 
 			auto  renderEnd = std::chrono::high_resolution_clock::now();
@@ -121,7 +121,7 @@ namespace {
 			char fpsText[64];
 			snprintf(fpsText, sizeof(fpsText), "FPS: %.1F", fps);
 
-			Renderer::Primitives::DrawRect({.bounds = {10, 10, 200, 30}, .style = {.fill = Color(0.0F, 0.0F, 0.0F, 0.7F)}});
+			Renderer::Primitives::drawRect({.bounds = {10, 10, 200, 30}, .style = {.fill = Color(0.0F, 0.0F, 0.0F, 0.7F)}});
 
 			// Draw performance stats (top-left, below FPS)
 			char statsText[256];
@@ -134,14 +134,14 @@ namespace {
 				clippingEnabled ? "ON" : "OFF"
 			);
 
-			Renderer::Primitives::DrawRect({.bounds = {10, 50, 350, 50}, .style = {.fill = Color(0.0F, 0.0F, 0.0F, 0.7F)}});
+			Renderer::Primitives::drawRect({.bounds = {10, 50, 350, 50}, .style = {.fill = Color(0.0F, 0.0F, 0.0F, 0.7F)}});
 
 			// Draw instruction hint
-			Renderer::Primitives::DrawRect({.bounds = {10, 110, 200, 25}, .style = {.fill = Color(0.0F, 0.0F, 0.5F, 0.5F)}});
+			Renderer::Primitives::drawRect({.bounds = {10, 110, 200, 25}, .style = {.fill = Color(0.0F, 0.0F, 0.5F, 0.5F)}});
 
 			// Draw clip boundary indicator when clipping is enabled
 			if (clippingEnabled) {
-				Renderer::Primitives::DrawRect(
+				Renderer::Primitives::drawRect(
 					{.bounds = {margin, margin, clipWidth, clipHeight},
 					 .style = {.fill = Color(0.0F, 0.0F, 0.0F, 0.0F), .border = BorderStyle{.color = Color::cyan(), .width = 2.0F}}}
 				);
@@ -151,21 +151,21 @@ namespace {
 			lastRenderTime = renderMs;
 		}
 
-		void OnExit() override {
+		void onExit() override {
 			LOG_INFO(UI, "Exiting Vector Performance Scene");
 			LOG_INFO(UI, "Final stats: %zu stars, %.1F FPS, %.2fms render time", stars.size(), fps, lastRenderTime);
 		}
 
-		std::string ExportState() override {
+		std::string exportState() override {
 			char buf[256];
 			snprintf(buf, sizeof(buf), R"({"stars": %zu, "fps": %.1F, "renderMs": %.2F})", stars.size(), fps, lastRenderTime);
 			return {buf};
 		}
 
-		const char* GetName() const override { return "vector-perf"; }
+		const char* getName() const override { return "vector-perf"; }
 
 	  private:
-		void GenerateStars(size_t count) { // NOLINT(readability-convert-member-functions-to-static)
+		void generateStars(size_t count) { // NOLINT(readability-convert-member-functions-to-static)
 			// Get logical window dimensions for star placement
 			float windowWidth = Renderer::Primitives::PercentWidth(100.0F);
 			float windowHeight = Renderer::Primitives::PercentHeight(100.0F);
@@ -200,7 +200,7 @@ namespace {
 				star.color = Foundation::Color(hue, (1.0F - (hue * 0.5F)), (0.3F + (hue * 0.4F)), 1.0F);
 
 				// Create star path
-				renderer::VectorPath path = CreateStarPath(star.position, star.outerRadius, star.innerRadius);
+				renderer::VectorPath path = createStarPath(star.position, star.outerRadius, star.innerRadius);
 
 				// Tessellate
 				bool success = tessellator.Tessellate(path, star.mesh);
@@ -220,7 +220,7 @@ namespace {
 			LOG_INFO(UI, "Generated and tessellated %zu stars in %.2F ms (%.3F ms per star)", stars.size(), kGenMs, kMsPerStar);
 		}
 
-		static renderer::VectorPath CreateStarPath(const Foundation::Vec2& center, float outerRadius, float innerRadius) {
+		static renderer::VectorPath createStarPath(const Foundation::Vec2& center, float outerRadius, float innerRadius) {
 			renderer::VectorPath path;
 			const int			 kNumPoints = 5;
 

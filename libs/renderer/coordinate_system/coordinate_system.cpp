@@ -77,7 +77,7 @@ namespace Renderer {
 		return glm::vec2(static_cast<float>(width), static_cast<float>(height));
 	}
 
-	void CoordinateSystem::SetFullViewport() const {
+	void CoordinateSystem::setFullViewport() const {
 		// IMPORTANT: glViewport needs PHYSICAL pixels (framebuffer size), not logical pixels!
 		// This is the only place where we use framebuffer size instead of window size.
 		if (window != nullptr) {
@@ -88,7 +88,7 @@ namespace Renderer {
 		}
 	}
 
-	void CoordinateSystem::UpdateWindowSize(int width, int height) {
+	void CoordinateSystem::updateWindowSize(int width, int height) {
 		// NOTE: The width and height parameters are ignored.
 		// Window size is tracked internally by GLFW, so this method does not update or validate the window size.
 		// This method exists only for API compatibility with other systems that may expect such a function.

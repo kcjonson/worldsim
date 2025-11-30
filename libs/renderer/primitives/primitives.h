@@ -37,11 +37,11 @@ namespace Renderer {
 
 		// --- Initialization ---
 
-		void Init(Renderer* renderer);
-		void Shutdown();
+		void init(Renderer* renderer);
+		void shutdown();
 
 		// Set the coordinate system (must be called after Init)
-		void SetCoordinateSystem(CoordinateSystem* coordSystem);
+		void setCoordinateSystem(CoordinateSystem* coordSystem);
 
 		// Set the font renderer for text rendering.
 		//
@@ -55,8 +55,8 @@ namespace Renderer {
 		// Example:
 		//   auto fontRenderer = std::make_unique<ui::FontRenderer>();
 		//   fontRenderer->Initialize();
-		//   Renderer::Primitives::SetFontRenderer(fontRenderer.get());
-		void SetFontRenderer(ui::FontRenderer* fontRenderer);
+		//   Renderer::Primitives::setFontRenderer(fontRenderer.get());
+		void setFontRenderer(ui::FontRenderer* fontRenderer);
 
 		// Get the current font renderer instance.
 		//
@@ -76,7 +76,7 @@ namespace Renderer {
 		// Parameters:
 		//   - atlasTexture: OpenGL texture ID of the MSDF font atlas
 		//   - pixelRange: Distance field pixel range (default 4.0, from atlas generation)
-		void SetFontAtlas(unsigned int atlasTexture, float pixelRange = 4.0F);
+		void setFontAtlas(unsigned int atlasTexture, float pixelRange = 4.0F);
 
 		// Get the internal batch renderer for direct text rendering.
 		//
@@ -88,23 +88,23 @@ namespace Renderer {
 
 		// Set a callback to update frame counter for FontRenderer cache LRU tracking.
 		//
-		// This allows the ui library to register FontRenderer::UpdateFrame() without
+		// This allows the ui library to register FontRenderer::updateFrame() without
 		// creating a circular dependency (renderer → ui → renderer).
 		//
 		// The callback will be invoked by BeginFrame() before rendering.
 		using FrameUpdateCallback = void (*)();
-		void SetFrameUpdateCallback(FrameUpdateCallback callback);
+		void setFrameUpdateCallback(FrameUpdateCallback callback);
 
 		// --- Frame Lifecycle ---
 
-		void BeginFrame();
-		void EndFrame(); // Flushes all batches
+		void beginFrame();
+		void endFrame(); // Flushes all batches
 
 		// Set viewport dimensions for projection matrix
-		void SetViewport(int width, int height);
+		void setViewport(int width, int height);
 
 		// Get current viewport dimensions
-		void GetViewport(int& width, int& height);
+		void getViewport(int& width, int& height);
 
 		// --- Coordinate System Helpers ---
 
@@ -151,13 +151,13 @@ namespace Renderer {
 		};
 
 		// Draw a rectangle with optional fill and border
-		void DrawRect(const RectArgs& args);
+		void drawRect(const RectArgs& args);
 
 		// Draw a line
-		void DrawLine(const LineArgs& args);
+		void drawLine(const LineArgs& args);
 
 		// Draw triangles from a mesh (for vector graphics tessellation)
-		void DrawTriangles(const TrianglesArgs& args);
+		void drawTriangles(const TrianglesArgs& args);
 
 		// Arguments for DrawCircle
 		struct CircleArgs {
@@ -181,7 +181,7 @@ namespace Renderer {
 		//   - style.border: Optional border (color and width)
 		//   - id: Optional debug identifier
 		//   - zIndex: Draw order (higher values drawn later)
-		void DrawCircle(const CircleArgs& args);
+		void drawCircle(const CircleArgs& args);
 
 		// Arguments for DrawText
 		struct TextArgs {
@@ -204,7 +204,7 @@ namespace Renderer {
 		//   - scale: Text size scale (1.0F = 16px base font size)
 		//   - color: RGBA text color
 		//   - zIndex: Draw order (higher values drawn later, allows proper layering with shapes)
-		void DrawText(const TextArgs& args);
+		void drawText(const TextArgs& args);
 
 		// --- State Management ---
 
@@ -224,10 +224,10 @@ namespace Renderer {
 
 		// Push a new clip region. Nested clips are intersected.
 		// For ClipRect with ClipMode::Inside, this uses the fast shader path.
-		void PushClip(const Foundation::ClipSettings& settings);
+		void pushClip(const Foundation::ClipSettings& settings);
 
 		// Pop the most recent clip region, restoring the parent clip (if any).
-		void PopClip();
+		void popClip();
 
 		// Get current clip bounds as Vec4 (minX, minY, maxX, maxY).
 		// Returns (0,0,0,0) if no clip is active.

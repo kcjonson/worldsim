@@ -15,28 +15,28 @@ using namespace foundation;
 
 namespace demo {
 
-	static void TestPerformance();
-	static void TestAlignment();
-	static void TestCapacity();
-	static void TestScoped();
+	static void testPerformance();
+	static void testAlignment();
+	static void testCapacity();
+	static void testScoped();
 
-	void Init() {
+	void init() {
 		LOG_INFO(UI, "");
 		LOG_INFO(UI, "Arena Demo - Memory Arena Performance Tests");
 		LOG_INFO(UI, "================================================");
 
 		// Run all tests at initialization
-		TestPerformance();
-		TestAlignment();
-		TestCapacity();
-		TestScoped();
+		testPerformance();
+		testAlignment();
+		testCapacity();
+		testScoped();
 
 		LOG_INFO(UI, "================================================");
 		LOG_INFO(UI, "All arena tests passed!");
 		LOG_INFO(UI, "");
 	}
 
-	void Render() {
+	void render() {
 		// Clear background
 		glClearColor(0.1F, 0.1F, 0.15F, 1.0F);
 		glClear(GL_COLOR_BUFFER_BIT);
@@ -44,7 +44,7 @@ namespace demo {
 		// No rendering needed for this demo - all output is to console
 	}
 
-	void Shutdown() {
+	void shutdown() {
 		// No cleanup needed
 	}
 
@@ -52,7 +52,7 @@ namespace demo {
 	// Test Implementations
 	// ============================================================================
 
-	void TestPerformance() {
+	void testPerformance() {
 		LOG_INFO(UI, "");
 		LOG_INFO(UI, "Performance Test: Arena vs Standard Allocation");
 		LOG_INFO(UI, "-----------------------------------------------");
@@ -111,7 +111,7 @@ namespace demo {
 		LOG_INFO(UI, "Result: Arena is %.1fx faster than standard allocation!", speedup);
 	}
 
-	void TestAlignment() {
+	void testAlignment() {
 		LOG_INFO(UI, "");
 		LOG_INFO(UI, "Alignment Test: Verify correct alignment for different types");
 		LOG_INFO(UI, "-------------------------------------------------------------");
@@ -151,7 +151,7 @@ namespace demo {
 		LOG_INFO(UI, "All alignment tests passed!");
 	}
 
-	void TestCapacity() {
+	void testCapacity() {
 		LOG_INFO(UI, "");
 		LOG_INFO(UI, "Capacity Test: Fill arena and verify tracking");
 		LOG_INFO(UI, "-----------------------------------------------");
@@ -186,7 +186,7 @@ namespace demo {
 		LOG_INFO(UI, "Capacity test passed!");
 	}
 
-	void TestScoped() {
+	void testScoped() {
 		LOG_INFO(UI, "");
 		LOG_INFO(UI, "Scoped Test: RAII arena with checkpoint restoration");
 		LOG_INFO(UI, "----------------------------------------------------");

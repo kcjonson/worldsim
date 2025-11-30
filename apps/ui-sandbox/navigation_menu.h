@@ -40,12 +40,12 @@ namespace UI {
 		NavigationMenu& operator=(NavigationMenu&& other) noexcept;
 
 		// Standard lifecycle methods
-		void HandleInput();
-		void Update(float deltaTime);
-		void Render();
+		void handleInput();
+		void update(float deltaTime);
+		void render();
 
 		// Window resize handling - recalculates all positions
-		void OnWindowResize();
+		void onWindowResize();
 
 	  private:
 		// Layout constants
@@ -74,7 +74,7 @@ namespace UI {
 		float menuHeight = 0.0F;
 
 		// Initialize/reinitialize all sub-components with current window size
-		void InitializeComponents();
+		void initializeComponents();
 	};
 
 } // namespace UI
