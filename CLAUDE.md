@@ -128,13 +128,23 @@ World-sim is a C++20 game with 3D procedural world generation, 2D tile-based gam
 
 **CRITICAL: Testing Visual Changes**
 When you make code changes and need to verify visually:
-1. **Kill old instance**: `curl "http://127.0.0.1:8081/api/control?action=exit"`
+1. **Kill old instance** (if running): `curl "http://127.0.0.1:8081/api/control?action=exit"`
+   - This is a **blocking call** - it returns only after shutdown is complete and the port is free
+   - Response: `{"status":"ok","action":"exit","shutdown":"complete"}`
+   - When you receive the OK response, proceed immediately (NO sleep needed)
+   - If no instance is running, curl will fail with connection refused - that's fine, proceed
 2. **Rebuild**: `cmake --build build --target ui-sandbox -j8`
-3. **Launch new instance**: `cd build/apps/ui-sandbox && ./ui-sandbox --scene=<scene> &`
-4. **Wait for startup**: `sleep 3`
-5. **Take screenshot**: `curl -s http://127.0.0.1:8081/api/ui/screenshot > /tmp/screenshot.png`
+3. **Launch new instance**: Use Bash tool with `run_in_background: true`:
+   - Command: `cd /Volumes/Code/worldsim/build/apps/ui-sandbox && ./ui-sandbox --scene=<scene>`
+   - Do NOT use shell `&` - it blocks waiting for output
+4. **Take screenshot**: `curl -s http://127.0.0.1:8081/api/ui/screenshot > /tmp/screenshot.png`
+   - The screenshot endpoint implicitly waits for the app to be ready
+   - No sleep needed - curl will block until screenshot is captured
 
-**NEVER skip the rebuild step!** An old instance will not reflect your changes.
+**Key Points:**
+- **NO sleeps anywhere** - the exit is blocking and screenshot waits for startup
+- **NEVER skip the rebuild step!** An old instance will not reflect your changes
+- **Always use `run_in_background: true`** for launching - shell `&` doesn't work properly
 
 ## Quick Reference
 

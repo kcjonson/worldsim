@@ -418,6 +418,13 @@ int main(int argc, char* argv[]) {
 	if (httpPort > 0) {
 		// Disconnect logger from debug server before stopping it
 		foundation::Logger::SetDebugServer(nullptr);
+
+		// Signal that cleanup is complete - this unblocks the exit HTTP handler
+		// which will stop the server and send the response before we continue
+		debugServer.SignalShutdownComplete();
+
+		// Stop the server - waits for exit handler to complete if HTTP exit was triggered,
+		// then actually stops the server. Safe to call regardless of how shutdown was initiated.
 		debugServer.Stop();
 	}
 
