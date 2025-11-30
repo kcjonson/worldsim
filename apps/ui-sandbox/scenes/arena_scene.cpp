@@ -87,7 +87,7 @@ namespace {
 		auto  arenaStart = std::chrono::high_resolution_clock::now();
 
 		for (int i = 0; i < kIterations; i++) {
-			auto* vec = arena.Allocate<Foundation::Vec2>();
+			auto* vec = arena.allocate<Foundation::Vec2>();
 			vec->x = static_cast<float>(i);
 			vec->y = static_cast<float>(i * 2);
 		}
@@ -98,7 +98,7 @@ namespace {
 		LOG_INFO(UI, "Arena: Allocated %d Vec2 objects in %lld microseconds", kIterations, arenaDuration.count());
 
 		// Reset arena for reuse test
-		arena.Reset();
+		arena.reset();
 		LOG_INFO(UI, "Arena: Reset to 0 bytes used (instant)");
 
 		// Test 2: Standard allocation (using unique_ptr for RAII)
@@ -155,10 +155,10 @@ namespace {
 			double data[2]{};
 		};
 
-		auto* a1 = arena.Allocate<Aligned1>();
-		auto* a4 = arena.Allocate<Aligned4>();
-		auto* a8 = arena.Allocate<Aligned8>();
-		auto* a16 = arena.Allocate<Aligned16>();
+		auto* a1 = arena.allocate<Aligned1>();
+		auto* a4 = arena.allocate<Aligned4>();
+		auto* a8 = arena.allocate<Aligned8>();
+		auto* a16 = arena.allocate<Aligned16>();
 
 		bool align1OK = (reinterpret_cast<uintptr_t>(a1) % alignof(Aligned1)) == 0;
 		bool align4OK = (reinterpret_cast<uintptr_t>(a4) % alignof(Aligned4)) == 0;
@@ -182,30 +182,30 @@ namespace {
 		constexpr size_t kArenaSize = 1024; // 1 KB
 		Arena			 arena(kArenaSize);
 
-		LOG_INFO(UI, "Arena size: %zu bytes", arena.GetSize());
-		LOG_INFO(UI, "Arena used: %zu bytes", arena.GetUsed());
-		LOG_INFO(UI, "Arena remaining: %zu bytes", arena.GetRemaining());
+		LOG_INFO(UI, "Arena size: %zu bytes", arena.getSize());
+		LOG_INFO(UI, "Arena used: %zu bytes", arena.getUsed());
+		LOG_INFO(UI, "Arena remaining: %zu bytes", arena.getRemaining());
 
 		// Fill most of the arena
 		constexpr int kAllocCount = 100;
 		for (int i = 0; i < kAllocCount; i++) {
-			arena.Allocate<uint64_t>();
+			arena.allocate<uint64_t>();
 		}
 
 		LOG_INFO(UI, "");
 		LOG_INFO(UI, "After %d allocations:", kAllocCount);
-		LOG_INFO(UI, "Arena used: %zu bytes", arena.GetUsed());
-		LOG_INFO(UI, "Arena remaining: %zu bytes", arena.GetRemaining());
+		LOG_INFO(UI, "Arena used: %zu bytes", arena.getUsed());
+		LOG_INFO(UI, "Arena remaining: %zu bytes", arena.getRemaining());
 
 		// Reset and verify
-		arena.Reset();
+		arena.reset();
 		LOG_INFO(UI, "");
 		LOG_INFO(UI, "After reset:");
-		LOG_INFO(UI, "Arena used: %zu bytes (should be 0)", arena.GetUsed());
-		LOG_INFO(UI, "Arena remaining: %zu bytes (should be %zu)", arena.GetRemaining(), kArenaSize);
+		LOG_INFO(UI, "Arena used: %zu bytes (should be 0)", arena.getUsed());
+		LOG_INFO(UI, "Arena remaining: %zu bytes (should be %zu)", arena.getRemaining(), kArenaSize);
 
-		assert(arena.GetUsed() == 0 && static_cast<bool>("Reset failed"));
-		assert(arena.GetRemaining() == kArenaSize && static_cast<bool>("Reset failed"));
+		assert(arena.getUsed() == 0 && static_cast<bool>("Reset failed"));
+		assert(arena.getRemaining() == kArenaSize && static_cast<bool>("Reset failed"));
 		LOG_INFO(UI, "Capacity test passed!");
 	}
 
@@ -217,9 +217,9 @@ namespace {
 		Arena arena(1024);
 
 		// Allocate before scope to verify pre-scope allocations remain valid after checkpoint restoration
-		int* data1 = arena.Allocate<int>();
+		int* data1 = arena.allocate<int>();
 		*data1 = 42;
-		size_t usedBefore = arena.GetUsed();
+		size_t usedBefore = arena.getUsed();
 
 		LOG_INFO(UI, "Arena used before scope: %zu bytes (allocated int with value 42)", usedBefore);
 
@@ -228,16 +228,16 @@ namespace {
 
 			// Allocate within scope
 			for (int i = 0; i < 10; i++) {
-				scoped.Allocate<Foundation::Vec2>();
+				scoped.allocate<Foundation::Vec2>();
 			}
 
-			LOG_INFO(UI, "Arena used inside scope: %zu bytes", arena.GetUsed());
+			LOG_INFO(UI, "Arena used inside scope: %zu bytes", arena.getUsed());
 		}
 
 		// Should restore to usedBefore, NOT 0
-		LOG_INFO(UI, "Arena used after scope: %zu bytes (should be %zu)", arena.GetUsed(), usedBefore);
+		LOG_INFO(UI, "Arena used after scope: %zu bytes (should be %zu)", arena.getUsed(), usedBefore);
 
-		assert(arena.GetUsed() == usedBefore && static_cast<bool>("ScopedArena did not restore checkpoint"));
+		assert(arena.getUsed() == usedBefore && static_cast<bool>("ScopedArena did not restore checkpoint"));
 
 		// Verify data1 is still valid and has correct value
 		assert(*data1 == 42 && static_cast<bool>("Pre-scope allocation was invalidated!"));

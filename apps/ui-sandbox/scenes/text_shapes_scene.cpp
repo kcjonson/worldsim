@@ -25,7 +25,7 @@ namespace {
 			shapes.push_back(std::make_unique<Text>(Text::Args{
 				.position = {50.0F, 50.0F},
 				.text = "Text Shape Demonstration",
-				.style = {.color = Color::White(), .fontSize = 32.0F},
+				.style = {.color = Color::white(), .fontSize = 32.0F},
 				.id = "title"
 			}));
 
@@ -43,7 +43,7 @@ namespace {
 				shapes.push_back(std::make_unique<Text>(Text::Args{
 					.position = {50.0F, yOffset},
 					.text = "Text at " + std::to_string(static_cast<int>(size)) + "px",
-					.style = {.color = Color::White(), .fontSize = size}
+					.style = {.color = Color::white(), .fontSize = size}
 				}));
 				yOffset += size + 10.0F;
 			}
@@ -59,28 +59,28 @@ namespace {
 			shapes.push_back(std::make_unique<Text>(Text::Args{
 				.position = {400.0F, 160.0F},
 				.text = "Red Text",
-				.style = {.color = Color::Red(), .fontSize = 18.0F},
+				.style = {.color = Color::red(), .fontSize = 18.0F},
 				.id = "red"
 			}));
 
 			shapes.push_back(std::make_unique<Text>(Text::Args{
 				.position = {400.0F, 190.0F},
 				.text = "Green Text",
-				.style = {.color = Color::Green(), .fontSize = 18.0F},
+				.style = {.color = Color::green(), .fontSize = 18.0F},
 				.id = "green"
 			}));
 
 			shapes.push_back(std::make_unique<Text>(Text::Args{
 				.position = {400.0F, 220.0F},
 				.text = "Blue Text",
-				.style = {.color = Color::Blue(), .fontSize = 18.0F},
+				.style = {.color = Color::blue(), .fontSize = 18.0F},
 				.id = "blue"
 			}));
 
 			shapes.push_back(std::make_unique<Text>(Text::Args{
 				.position = {400.0F, 250.0F},
 				.text = "Yellow Text",
-				.style = {.color = Color::Yellow(), .fontSize = 18.0F},
+				.style = {.color = Color::yellow(), .fontSize = 18.0F},
 				.id = "yellow"
 			}));
 
@@ -123,7 +123,7 @@ namespace {
 						.width = boxWidth,
 						.height = boxHeight,
 						.text = "TEXT",
-						.style = {.color = Color::White(), .fontSize = 24.0F, .hAlign = hAligns[col], .vAlign = vAligns[row]}
+						.style = {.color = Color::white(), .fontSize = 24.0F, .hAlign = hAligns[col], .vAlign = vAligns[row]}
 					}));
 				}
 			}
@@ -151,14 +151,14 @@ namespace {
 					shapes.push_back(std::make_unique<Circle>(Circle::Args{
 						.center = {xPos, yPos},
 						.radius = 4.0F,
-						.style = {.fill = Color::Red()}
+						.style = {.fill = Color::red()}
 					}));
 
 					// Create text with point-based alignment (NO width/height)
 					shapes.push_back(std::make_unique<Text>(Text::Args{
 						.position = {xPos, yPos},
 						.text = "TEXT",
-						.style = {.color = Color::White(), .fontSize = 24.0F, .hAlign = hAligns[col], .vAlign = vAligns[row]}
+						.style = {.color = Color::white(), .fontSize = 24.0F, .hAlign = hAligns[col], .vAlign = vAligns[row]}
 					}));
 				}
 			}

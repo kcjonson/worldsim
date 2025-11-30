@@ -19,7 +19,7 @@ namespace Foundation { // NOLINT(readability-identifier-naming)
 		uint32_t triangleCount{};  // Number of triangles rendered this frame
 
 		// Serialize to JSON for HTTP API
-		std::string ToJSON() const;
+		std::string toJSON() const;
 	};
 
 } // namespace Foundation

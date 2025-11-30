@@ -15,7 +15,7 @@ namespace foundation {
 
 	// FNV-1a hash function - fast and good distribution
 	// Can be evaluated at compile-time for string literals
-	constexpr StringHash HashString(const char* str) {
+	constexpr StringHash hashString(const char* str) {
 		StringHash hash = 0xcbf29ce484222325ULL;   // FNV offset basis
 		while (*str) {							   // NOLINT(readability-implicit-bool-conversion)
 			hash ^= static_cast<uint64_t>(*str++); // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic)
@@ -26,7 +26,7 @@ namespace foundation {
 
 // Helper macro for compile-time hashing
 // Usage: constexpr StringHash hash = HASH("MyString");
-#define HASH(str) (foundation::HashString(str)) // NOLINT(cppcoreguidelines-macro-usage)
+#define HASH(str) (foundation::hashString(str)) // NOLINT(cppcoreguidelines-macro-usage)
 
 	// Common hashes (compile-time constants)
 	// Add more as needed by different systems
@@ -56,7 +56,7 @@ namespace foundation {
 	// Only available in Debug builds to avoid overhead in Release
 	namespace detail {
 
-		inline std::unordered_map<StringHash, std::string>& GetHashRegistry() {
+		inline std::unordered_map<StringHash, std::string>& getHashRegistry() {
 			static std::unordered_map<StringHash, std::string> registry;
 			return registry;
 		}
@@ -65,10 +65,10 @@ namespace foundation {
 
 	// Hash a string and register it for collision detection
 	// In Debug builds, this will assert if a collision is detected
-	inline StringHash HashStringDebug(const char* str) {
-		StringHash hash = HashString(str);
+	inline StringHash hashStringDebug(const char* str) {
+		StringHash hash = hashString(str);
 
-		auto& registry = detail::GetHashRegistry();
+		auto& registry = detail::getHashRegistry();
 		auto  it = registry.find(hash);
 
 		if (it != registry.end() && it->second != str) {
@@ -83,8 +83,8 @@ namespace foundation {
 
 	// Get the original string for a hash (for debugging)
 	// Returns "<unknown>" if the hash was never registered
-	inline const char* GetStringForHash(StringHash hash) {
-		auto& registry = detail::GetHashRegistry();
+	inline const char* getStringForHash(StringHash hash) {
+		auto& registry = detail::getHashRegistry();
 		auto  it = registry.find(hash);
 		return it != registry.end() ? it->second.c_str() : "<unknown>";
 	}
@@ -101,13 +101,13 @@ namespace foundation {
  *   if (hash == foundation::hashes::kTransform) { ... }
  *
  * Runtime hashing:
- *   const char* runtimeString = GetStringFromUser();
- *   StringHash hash = foundation::HashString(runtimeString);
+ *   const char* runtimeString = getStringFromUser();
+ *   StringHash hash = foundation::hashString(runtimeString);
  *
  * Debug collision detection:
  *   #ifdef DEBUG
- *   StringHash hash = foundation::HashStringDebug("MyString");
- *   const char* original = foundation::GetStringForHash(hash);
+ *   StringHash hash = foundation::hashStringDebug("MyString");
+ *   const char* original = foundation::getStringForHash(hash);
  *   #endif
  *
  * Best practices:
@@ -115,5 +115,5 @@ namespace foundation {
  *   - Cache runtime hashes (don't rehash in loops)
  *   - Use named constants from hashes namespace
  *   - Never rely on specific hash values in code
- *   - Use HashStringDebug() in tests to catch collisions
+ *   - Use hashStringDebug() in tests to catch collisions
  */

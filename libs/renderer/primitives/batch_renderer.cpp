@@ -104,7 +104,7 @@ namespace Renderer {
 		float halfH = bounds.height * 0.5F;
 
 		// Fill color
-		Foundation::Vec4 colorVec = fillColor.ToVec4();
+		Foundation::Vec4 colorVec = fillColor.toVec4();
 
 		// Pack border data (color RGB + width)
 		Foundation::Vec4 borderData(0.0F, 0.0F, 0.0F, 0.0F);
@@ -214,7 +214,7 @@ namespace Renderer {
 	) { // NOLINT(readability-convert-member-functions-to-static)
 		uint32_t baseIndex = static_cast<uint32_t>(vertices.size());
 
-		Foundation::Vec4 colorVec = color.ToVec4();
+		Foundation::Vec4 colorVec = color.toVec4();
 
 		// Default data (not used for tessellated shapes, but required for vertex format)
 		// Use borderPosition=1 (Center) so shader treats these as shapes, not text
@@ -249,7 +249,7 @@ namespace Renderer {
 	) {
 		uint32_t baseIndex = static_cast<uint32_t>(vertices.size());
 
-		Foundation::Vec4 colorVec = color.ToVec4();
+		Foundation::Vec4 colorVec = color.toVec4();
 
 		// Text data packing:
 		// data1 = unused (0,0,0,0)

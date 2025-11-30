@@ -16,7 +16,7 @@ namespace UI {
 		Foundation::RectStyle background;
 
 		// Text styling
-		Foundation::Color textColor = Foundation::Color::White();
+		Foundation::Color textColor = Foundation::Color::white();
 		float			  fontSize = 16.0F;
 
 		// Padding (text offset from background edges)
@@ -47,7 +47,7 @@ namespace UI {
 				.width = 2.0F,
 				.cornerRadius = 4.0F,
 				.position = Foundation::BorderPosition::Inside};
-			appearance.normal.textColor = Foundation::Color::White();
+			appearance.normal.textColor = Foundation::Color::white();
 			appearance.normal.fontSize = 16.0F;
 
 			// Hover - Lighter blue
@@ -57,7 +57,7 @@ namespace UI {
 				.width = 2.0F,
 				.cornerRadius = 4.0F,
 				.position = Foundation::BorderPosition::Inside};
-			appearance.hover.textColor = Foundation::Color::White();
+			appearance.hover.textColor = Foundation::Color::white();
 			appearance.hover.fontSize = 16.0F;
 
 			// Pressed - Darker blue
@@ -67,7 +67,7 @@ namespace UI {
 				.width = 2.0F,
 				.cornerRadius = 4.0F,
 				.position = Foundation::BorderPosition::Inside};
-			appearance.pressed.textColor = Foundation::Color::White();
+			appearance.pressed.textColor = Foundation::Color::white();
 			appearance.pressed.fontSize = 16.0F;
 
 			// Disabled - Grey
@@ -87,7 +87,7 @@ namespace UI {
 				.width = 3.0F,
 				.cornerRadius = 4.0F,
 				.position = Foundation::BorderPosition::Outside}; // Outside for focus ring
-			appearance.focused.textColor = Foundation::Color::White();
+			appearance.focused.textColor = Foundation::Color::white();
 			appearance.focused.fontSize = 16.0F;
 
 			return appearance;

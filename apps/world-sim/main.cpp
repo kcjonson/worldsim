@@ -76,7 +76,7 @@ GLFWwindow* InitializeWindow() {
 
 int main(int argc, char* argv[]) {
 	// Initialize logging
-	foundation::Logger::Initialize();
+	foundation::Logger::initialize();
 
 	LOG_INFO(Game, "World-Sim - Main Game");
 	LOG_INFO(Game, "Version 0.1.0");
@@ -84,7 +84,7 @@ int main(int argc, char* argv[]) {
 	// Initialize window and OpenGL
 	GLFWwindow* window = InitializeWindow();
 	if (window == nullptr) {
-		foundation::Logger::Shutdown();
+		foundation::Logger::shutdown();
 		return 1;
 	}
 
@@ -126,7 +126,7 @@ int main(int argc, char* argv[]) {
 	Renderer::Primitives::Shutdown();
 	glfwDestroyWindow(window);
 	glfwTerminate();
-	foundation::Logger::Shutdown();
+	foundation::Logger::shutdown();
 
 	return 0;
 }

@@ -30,7 +30,7 @@ namespace {
 			labels.push_back(std::make_unique<Text>(Text::Args{
 				.position = {50.0F, 30.0F},
 				.text = "Button Component Demo - Click, Hover, Tab to Focus, Enter to Activate",
-				.style = {.color = Color::White(), .fontSize = 20.0F},
+				.style = {.color = Color::white(), .fontSize = 20.0F},
 				.id = "title"
 			}));
 
@@ -38,7 +38,7 @@ namespace {
 			labels.push_back(std::make_unique<Text>(Text::Args{
 				.position = {50.0F, 80.0F},
 				.text = "Primary Buttons:",
-				.style = {.color = Color::Yellow(), .fontSize = 16.0F},
+				.style = {.color = Color::yellow(), .fontSize = 16.0F},
 				.id = "primary_label"
 			}));
 
@@ -80,7 +80,7 @@ namespace {
 			labels.push_back(std::make_unique<Text>(Text::Args{
 				.position = {50.0F, 180.0F},
 				.text = "Secondary Buttons:",
-				.style = {.color = Color::Yellow(), .fontSize = 16.0F},
+				.style = {.color = Color::yellow(), .fontSize = 16.0F},
 				.id = "secondary_label"
 			}));
 
@@ -106,7 +106,7 @@ namespace {
 			labels.push_back(std::make_unique<Text>(Text::Args{
 				.position = {50.0F, 280.0F},
 				.text = "Different Sizes:",
-				.style = {.color = Color::Yellow(), .fontSize = 16.0F},
+				.style = {.color = Color::yellow(), .fontSize = 16.0F},
 				.id = "size_label"
 			}));
 
@@ -132,7 +132,7 @@ namespace {
 			labels.push_back(std::make_unique<Text>(Text::Args{
 				.position = {50.0F, 390.0F},
 				.text = "Focus (Press Tab to cycle, Enter to activate):",
-				.style = {.color = Color::Yellow(), .fontSize = 16.0F},
+				.style = {.color = Color::yellow(), .fontSize = 16.0F},
 				.id = "focus_label"
 			}));
 
@@ -167,7 +167,7 @@ namespace {
 			clickCounterText = std::make_unique<Text>(Text::Args{
 				.position = {600.0F, 110.0F},
 				.text = "Clicks: 0",
-				.style = {.color = Color::Green(), .fontSize = 18.0F},
+				.style = {.color = Color::green(), .fontSize = 18.0F},
 				.id = "click_counter"
 			});
 

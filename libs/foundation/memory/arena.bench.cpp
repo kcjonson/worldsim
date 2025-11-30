@@ -28,8 +28,8 @@ static void BM_ArenaSingleAllocation(benchmark::State& state) {
 	Arena  arena(1024 * 1024); // 1MB arena
 
 	for (auto _ : state) {
-		arena.Reset();
-		void* ptr = arena.Allocate(size);
+		arena.reset();
+		void* ptr = arena.allocate(size);
 		benchmark::DoNotOptimize(ptr);
 	}
 
@@ -70,9 +70,9 @@ static void BM_ArenaBatchSmallAllocations(benchmark::State& state) {
 	Arena arena(kAllocCount * kAllocSize * 2); // Ensure enough space
 
 	for (auto _ : state) {
-		arena.Reset();
+		arena.reset();
 		for (int i = 0; i < kAllocCount; ++i) {
-			void* ptr = arena.Allocate(kAllocSize);
+			void* ptr = arena.allocate(kAllocSize);
 			benchmark::DoNotOptimize(ptr);
 		}
 	}
@@ -111,8 +111,8 @@ static void BM_ArenaStructAllocation(benchmark::State& state) {
 	Arena arena(1024 * 1024);
 
 	for (auto _ : state) {
-		arena.Reset();
-		SmallStruct* ptr = arena.Allocate<SmallStruct>();
+		arena.reset();
+		SmallStruct* ptr = arena.allocate<SmallStruct>();
 		benchmark::DoNotOptimize(ptr);
 	}
 }
@@ -142,8 +142,8 @@ static void BM_ArenaArrayAllocation(benchmark::State& state) {
 	Arena arena(1024 * 1024);
 
 	for (auto _ : state) {
-		arena.Reset();
-		int* arr = arena.AllocateArray<int>(count);
+		arena.reset();
+		int* arr = arena.allocateArray<int>(count);
 		benchmark::DoNotOptimize(arr);
 	}
 
@@ -160,9 +160,9 @@ static void BM_ArenaDefaultAlignment(benchmark::State& state) {
 	Arena arena(1024 * 1024);
 
 	for (auto _ : state) {
-		arena.Reset();
+		arena.reset();
 		for (int i = 0; i < 100; ++i) {
-			void* ptr = arena.Allocate(64, 8);
+			void* ptr = arena.allocate(64, 8);
 			benchmark::DoNotOptimize(ptr);
 		}
 	}
@@ -176,9 +176,9 @@ static void BM_Arena16ByteAlignment(benchmark::State& state) {
 	Arena arena(1024 * 1024);
 
 	for (auto _ : state) {
-		arena.Reset();
+		arena.reset();
 		for (int i = 0; i < 100; ++i) {
-			void* ptr = arena.Allocate(64, 16);
+			void* ptr = arena.allocate(64, 16);
 			benchmark::DoNotOptimize(ptr);
 		}
 	}
@@ -192,9 +192,9 @@ static void BM_Arena64ByteAlignment(benchmark::State& state) {
 	Arena arena(1024 * 1024);
 
 	for (auto _ : state) {
-		arena.Reset();
+		arena.reset();
 		for (int i = 0; i < 100; ++i) {
-			void* ptr = arena.Allocate(64, 64);
+			void* ptr = arena.allocate(64, 64);
 			benchmark::DoNotOptimize(ptr);
 		}
 	}
@@ -214,12 +214,12 @@ static void BM_ArenaReset(benchmark::State& state) {
 	for (auto _ : state) {
 		// Fill arena with allocations
 		for (int i = 0; i < 100; ++i) {
-			arena.Allocate(1024);
+			arena.allocate(1024);
 		}
 
 		// Benchmark the reset
-		arena.Reset();
-		benchmark::DoNotOptimize(arena.GetUsed());
+		arena.reset();
+		benchmark::DoNotOptimize(arena.getUsed());
 	}
 }
 BENCHMARK(BM_ArenaReset);
@@ -229,20 +229,20 @@ static void BM_ArenaCheckpointRestore(benchmark::State& state) {
 	Arena arena(1024 * 1024);
 
 	for (auto _ : state) {
-		arena.Reset();
+		arena.reset();
 
 		// Some initial allocations
-		arena.Allocate(1024);
-		size_t checkpoint = arena.GetUsed();
+		arena.allocate(1024);
+		size_t checkpoint = arena.getUsed();
 
 		// More allocations
 		for (int i = 0; i < 50; ++i) {
-			arena.Allocate(512);
+			arena.allocate(512);
 		}
 
 		// Benchmark the restore
-		arena.RestoreCheckpoint(checkpoint);
-		benchmark::DoNotOptimize(arena.GetUsed());
+		arena.restoreCheckpoint(checkpoint);
+		benchmark::DoNotOptimize(arena.getUsed());
 	}
 }
 BENCHMARK(BM_ArenaCheckpointRestore);
@@ -258,24 +258,24 @@ static void BM_FrameArenaFrameUsage(benchmark::State& state) {
 	for (auto _ : state) {
 		// Simulate frame allocations
 		for (int i = 0; i < 50; ++i) {
-			void* ptr = arena.Allocate(256);
+			void* ptr = arena.allocate(256);
 			benchmark::DoNotOptimize(ptr);
 		}
 
 		// Type-safe allocations
 		for (int i = 0; i < 20; ++i) {
-			SmallStruct* s = arena.Allocate<SmallStruct>();
+			SmallStruct* s = arena.allocate<SmallStruct>();
 			benchmark::DoNotOptimize(s);
 		}
 
 		// Array allocations
 		for (int i = 0; i < 10; ++i) {
-			int* arr = arena.AllocateArray<int>(32);
+			int* arr = arena.allocateArray<int>(32);
 			benchmark::DoNotOptimize(arr);
 		}
 
 		// Frame end - reset
-		arena.ResetFrame();
+		arena.resetFrame();
 	}
 
 	state.SetItemsProcessed(state.iterations() * 80); // 50 + 20 + 10
@@ -291,21 +291,21 @@ static void BM_ScopedArenaPattern(benchmark::State& state) {
 	Arena arena(1024 * 1024);
 
 	for (auto _ : state) {
-		arena.Reset();
+		arena.reset();
 
 		{
 			ScopedArena scoped(arena);
 
 			// Temporary allocations within scope
 			for (int i = 0; i < 20; ++i) {
-				void* ptr = scoped.Allocate(128);
+				void* ptr = scoped.allocate(128);
 				benchmark::DoNotOptimize(ptr);
 			}
 
 			// Destructor will restore checkpoint
 		}
 
-		benchmark::DoNotOptimize(arena.GetUsed());
+		benchmark::DoNotOptimize(arena.getUsed());
 	}
 
 	state.SetItemsProcessed(state.iterations() * 20);
@@ -317,24 +317,24 @@ static void BM_ScopedArenaNested(benchmark::State& state) {
 	Arena arena(1024 * 1024);
 
 	for (auto _ : state) {
-		arena.Reset();
+		arena.reset();
 
 		{
 			ScopedArena scoped1(arena);
-			scoped1.Allocate(256);
+			scoped1.allocate(256);
 
 			{
 				ScopedArena scoped2(arena);
-				scoped2.Allocate(512);
+				scoped2.allocate(512);
 
 				{
 					ScopedArena scoped3(arena);
-					scoped3.Allocate(1024);
+					scoped3.allocate(1024);
 				}
 			}
 		}
 
-		benchmark::DoNotOptimize(arena.GetUsed());
+		benchmark::DoNotOptimize(arena.getUsed());
 	}
 }
 BENCHMARK(BM_ScopedArenaNested);
@@ -356,18 +356,18 @@ static void BM_SimulatedUILayout(benchmark::State& state) {
 				char  text[32];			   // NOLINT(readability-identifier-naming)
 			};
 
-			UIElementData* elem = arena.Allocate<UIElementData>();
+			UIElementData* elem = arena.allocate<UIElementData>();
 			benchmark::DoNotOptimize(elem);
 		}
 
 		// Simulate temporary string buffers
 		for (int i = 0; i < 50; ++i) {
-			char* buffer = arena.AllocateArray<char>(128);
+			char* buffer = arena.allocateArray<char>(128);
 			benchmark::DoNotOptimize(buffer);
 		}
 
 		// Frame end
-		arena.ResetFrame();
+		arena.resetFrame();
 	}
 
 	state.SetItemsProcessed(state.iterations() * 150);
@@ -379,7 +379,7 @@ static void BM_SimulatedParticleUpdate(benchmark::State& state) {
 	Arena arena(1024 * 1024);
 
 	for (auto _ : state) {
-		arena.Reset();
+		arena.reset();
 
 		struct Particle {
 			float x, y, z;	  // NOLINT(readability-identifier-naming)
@@ -389,12 +389,12 @@ static void BM_SimulatedParticleUpdate(benchmark::State& state) {
 
 		// Allocate particle batch
 		constexpr int kParticleCount = 1000;
-		Particle*	  particles = arena.AllocateArray<Particle>(kParticleCount);
+		Particle*	  particles = arena.allocateArray<Particle>(kParticleCount);
 		benchmark::DoNotOptimize(particles);
 
 		// Allocate temporary buffers for sorting
-		int*   indices = arena.AllocateArray<int>(kParticleCount);
-		float* distances = arena.AllocateArray<float>(kParticleCount);
+		int*   indices = arena.allocateArray<int>(kParticleCount);
+		float* distances = arena.allocateArray<float>(kParticleCount);
 		benchmark::DoNotOptimize(indices);
 		benchmark::DoNotOptimize(distances);
 	}

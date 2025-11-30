@@ -32,7 +32,7 @@ namespace UTF8 {
 	 *   '世' (0xE4 0xB8 0x96) → 3 bytes
 	 *   '😀' (0xF0 0x9F 0x98 0x80) → 4 bytes
 	 */
-	size_t CharacterSize(unsigned char firstByte);
+	size_t characterSize(unsigned char firstByte);
 
 	/**
 	 * Get the byte size of the UTF-8 character immediately before the given offset.
@@ -45,7 +45,7 @@ namespace UTF8 {
 	 *   "Hello😀" at offset 8 → returns 4 (emoji is 4 bytes)
 	 *   "Hello😀" at offset 5 → returns 1 ('o' is 1 byte)
 	 */
-	size_t PreviousCharacterSize(const std::string& str, size_t offset);
+	size_t previousCharacterSize(const std::string& str, size_t offset);
 
 	/**
 	 * Encode a Unicode codepoint to UTF-8 string.
@@ -58,7 +58,7 @@ namespace UTF8 {
 	 *   U+00E9 ('é') → "\xC3\xA9" (2 bytes)
 	 *   U+1F600 ('😀') → "\xF0\x9F\x98\x80" (4 bytes)
 	 */
-	std::string Encode(char32_t codepoint);
+	std::string encode(char32_t codepoint);
 
 	/**
 	 * Decode a UTF-8 string to a vector of Unicode codepoints.
@@ -71,7 +71,7 @@ namespace UTF8 {
 	 *
 	 * Note: Invalid UTF-8 sequences are replaced with U+FFFD (replacement character)
 	 */
-	std::vector<char32_t> Decode(const std::string& str);
+	std::vector<char32_t> decode(const std::string& str);
 
 	/**
 	 * Count the number of UTF-8 characters in a string (not bytes).
@@ -83,7 +83,7 @@ namespace UTF8 {
 	 *   "Hello" → 5 characters (5 bytes)
 	 *   "Hello😀" → 6 characters (9 bytes)
 	 */
-	size_t CharacterCount(const std::string& str);
+	size_t characterCount(const std::string& str);
 
 	/**
 	 * Check if a byte is a valid UTF-8 continuation byte (10xxxxxx).
@@ -91,7 +91,7 @@ namespace UTF8 {
 	 * @param byte - Byte to check
 	 * @return True if byte is a continuation byte
 	 */
-	bool IsContinuationByte(unsigned char byte);
+	bool isContinuationByte(unsigned char byte);
 
 	/**
 	 * Find the byte offset of the next character boundary.
@@ -102,7 +102,7 @@ namespace UTF8 {
 	 *
 	 * Returns str.size() if at end of string.
 	 */
-	size_t NextCharacterBoundary(const std::string& str, size_t offset);
+	size_t nextCharacterBoundary(const std::string& str, size_t offset);
 
 	/**
 	 * Find the byte offset of the previous character boundary.
@@ -113,7 +113,7 @@ namespace UTF8 {
 	 *
 	 * Returns 0 if at start of string.
 	 */
-	size_t PreviousCharacterBoundary(const std::string& str, size_t offset);
+	size_t previousCharacterBoundary(const std::string& str, size_t offset);
 
 } // namespace UTF8
 

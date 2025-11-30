@@ -143,7 +143,7 @@ namespace {
 			if (clippingEnabled) {
 				Renderer::Primitives::DrawRect(
 					{.bounds = {margin, margin, clipWidth, clipHeight},
-					 .style = {.fill = Color(0.0F, 0.0F, 0.0F, 0.0F), .border = BorderStyle{.color = Color::Cyan(), .width = 2.0F}}}
+					 .style = {.fill = Color(0.0F, 0.0F, 0.0F, 0.0F), .border = BorderStyle{.color = Color::cyan(), .width = 2.0F}}}
 				);
 			}
 

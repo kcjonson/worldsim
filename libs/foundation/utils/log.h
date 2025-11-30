@@ -32,17 +32,17 @@ namespace foundation {
 
 	class Logger {
 	  public:
-		static void Initialize();
-		static void Shutdown();
+		static void initialize();
+		static void shutdown();
 
-		static void		SetLevel(LogCategory category, LogLevel level);
-		static LogLevel GetLevel(LogCategory category);
+		static void		setLevel(LogCategory category, LogLevel level);
+		static LogLevel getLevel(LogCategory category);
 
-		static void Log(LogCategory category, LogLevel level, const char* file, int line, const char* format, ...);
+		static void log(LogCategory category, LogLevel level, const char* file, int line, const char* format, ...);
 
 		// Set debug server for HTTP streaming (Development builds only)
-		// IMPORTANT: DebugServer must outlive Logger, or call SetDebugServer(nullptr) before destroying it
-		static void SetDebugServer(Foundation::DebugServer* debugServer);
+		// IMPORTANT: DebugServer must outlive Logger, or call setDebugServer(nullptr) before destroying it
+		static void setDebugServer(Foundation::DebugServer* debugServer);
 
 	  private:
 		static LogLevel s_levels[static_cast<int>(LogCategory::Count)]; // NOLINT(readability-identifier-naming)
@@ -54,24 +54,24 @@ namespace foundation {
 	};
 
 	// Helper functions to convert enums to strings
-	const char* CategoryToString(LogCategory cat);
-	const char* LevelToString(LogLevel level);
+	const char* categoryToString(LogCategory cat);
+	const char* levelToString(LogLevel level);
 
 } // namespace foundation
 
 // Convenience macros that automatically capture file and line
 // NOLINTBEGIN(cppcoreguidelines-macro-usage)
 #define LOG_DEBUG(category, format, ...)                                                                                                   \
-	foundation::Logger::Log(foundation::LogCategory::category, foundation::LogLevel::Debug, __FILE__, __LINE__, format, ##__VA_ARGS__)
+	foundation::Logger::log(foundation::LogCategory::category, foundation::LogLevel::Debug, __FILE__, __LINE__, format, ##__VA_ARGS__)
 
 #define LOG_INFO(category, format, ...)                                                                                                    \
-	foundation::Logger::Log(foundation::LogCategory::category, foundation::LogLevel::Info, __FILE__, __LINE__, format, ##__VA_ARGS__)
+	foundation::Logger::log(foundation::LogCategory::category, foundation::LogLevel::Info, __FILE__, __LINE__, format, ##__VA_ARGS__)
 
 #define LOG_WARNING(category, format, ...)                                                                                                 \
-	foundation::Logger::Log(foundation::LogCategory::category, foundation::LogLevel::Warning, __FILE__, __LINE__, format, ##__VA_ARGS__)
+	foundation::Logger::log(foundation::LogCategory::category, foundation::LogLevel::Warning, __FILE__, __LINE__, format, ##__VA_ARGS__)
 
 #define LOG_ERROR(category, format, ...)                                                                                                   \
-	foundation::Logger::Log(foundation::LogCategory::category, foundation::LogLevel::Error, __FILE__, __LINE__, format, ##__VA_ARGS__)
+	foundation::Logger::log(foundation::LogCategory::category, foundation::LogLevel::Error, __FILE__, __LINE__, format, ##__VA_ARGS__)
 
 // Compile out Debug, Info, and Warning logs in Release builds
 #ifndef DEVELOPMENT_BUILD

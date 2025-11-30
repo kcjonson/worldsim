@@ -8,15 +8,15 @@ using namespace foundation;
 // ============================================================================
 
 TEST(StringHashTests, HashEmptyString) {
-	StringHash hash = HashString("");
+	StringHash hash = hashString("");
 
 	// FNV-1a offset basis for empty string
 	EXPECT_EQ(hash, 0xcbf29ce484222325ULL);
 }
 
 TEST(StringHashTests, HashSingleCharacter) {
-	StringHash hashA = HashString("a");
-	StringHash hashB = HashString("b");
+	StringHash hashA = hashString("a");
+	StringHash hashB = hashString("b");
 
 	// Different characters should produce different hashes
 	EXPECT_NE(hashA, hashB);
@@ -28,9 +28,9 @@ TEST(StringHashTests, HashSingleCharacter) {
 }
 
 TEST(StringHashTests, HashDifferentStrings) {
-	StringHash hash1 = HashString("hello");
-	StringHash hash2 = HashString("world");
-	StringHash hash3 = HashString("test");
+	StringHash hash1 = hashString("hello");
+	StringHash hash2 = hashString("world");
+	StringHash hash3 = hashString("test");
 
 	// All should be unique
 	EXPECT_NE(hash1, hash2);
@@ -39,17 +39,17 @@ TEST(StringHashTests, HashDifferentStrings) {
 }
 
 TEST(StringHashTests, HashSameString) {
-	StringHash hash1 = HashString("identical");
-	StringHash hash2 = HashString("identical");
+	StringHash hash1 = hashString("identical");
+	StringHash hash2 = hashString("identical");
 
 	// Same string should produce same hash
 	EXPECT_EQ(hash1, hash2);
 }
 
 TEST(StringHashTests, HashCaseSensitive) {
-	StringHash hashLower = HashString("test");
-	StringHash hashUpper = HashString("TEST");
-	StringHash hashMixed = HashString("Test");
+	StringHash hashLower = hashString("test");
+	StringHash hashUpper = hashString("TEST");
+	StringHash hashMixed = hashString("Test");
 
 	// Case differences should produce different hashes
 	EXPECT_NE(hashLower, hashUpper);
@@ -59,20 +59,20 @@ TEST(StringHashTests, HashCaseSensitive) {
 
 TEST(StringHashTests, HashLongString) {
 	const char* longString = "This is a very long string with many characters to test the hash function";
-	StringHash	hash = HashString(longString);
+	StringHash	hash = hashString(longString);
 
 	// Should produce a valid hash
 	EXPECT_NE(hash, 0);
 
 	// Hashing again should produce same result
-	StringHash hash2 = HashString(longString);
+	StringHash hash2 = hashString(longString);
 	EXPECT_EQ(hash, hash2);
 }
 
 TEST(StringHashTests, HashSimilarStrings) {
-	StringHash hash1 = HashString("test1");
-	StringHash hash2 = HashString("test2");
-	StringHash hash3 = HashString("test_");
+	StringHash hash1 = hashString("test1");
+	StringHash hash2 = hashString("test2");
+	StringHash hash3 = hashString("test_");
 
 	// Similar strings should produce different hashes
 	EXPECT_NE(hash1, hash2);
@@ -81,10 +81,10 @@ TEST(StringHashTests, HashSimilarStrings) {
 }
 
 TEST(StringHashTests, HashWithSpecialCharacters) {
-	StringHash hash1 = HashString("hello_world");
-	StringHash hash2 = HashString("hello-world");
-	StringHash hash3 = HashString("hello world");
-	StringHash hash4 = HashString("hello@world");
+	StringHash hash1 = hashString("hello_world");
+	StringHash hash2 = hashString("hello-world");
+	StringHash hash3 = hashString("hello world");
+	StringHash hash4 = hashString("hello@world");
 
 	// All should be unique
 	EXPECT_NE(hash1, hash2);
@@ -96,9 +96,9 @@ TEST(StringHashTests, HashWithSpecialCharacters) {
 }
 
 TEST(StringHashTests, HashWithNumbers) {
-	StringHash hash1 = HashString("123");
-	StringHash hash2 = HashString("456");
-	StringHash hash3 = HashString("123456");
+	StringHash hash1 = hashString("123");
+	StringHash hash2 = hashString("456");
+	StringHash hash3 = hashString("123456");
 
 	EXPECT_NE(hash1, hash2);
 	EXPECT_NE(hash1, hash3);
@@ -121,18 +121,18 @@ TEST(StringHashTests, CompileTimeHashMacro) {
 
 TEST(StringHashTests, CompileTimeMatchesRuntime) {
 	constexpr StringHash kCompileTime = HASH("test_string");
-	StringHash			 runtime = HashString("test_string");
+	StringHash			 runtime = hashString("test_string");
 
 	// Compile-time and runtime should produce identical results
 	EXPECT_EQ(kCompileTime, runtime);
 }
 
-TEST(StringHashTests, ConstexprHashString) {
-	// Verify HashString is actually constexpr
-	constexpr StringHash kHash = HashString("constexpr_test");
+TEST(StringHashTests, ConstexprhashString) {
+	// Verify hashString is actually constexpr
+	constexpr StringHash kHash = hashString("constexpr_test");
 
 	EXPECT_NE(kHash, 0);
-	EXPECT_EQ(kHash, HashString("constexpr_test"));
+	EXPECT_EQ(kHash, hashString("constexpr_test"));
 }
 
 // ============================================================================
@@ -192,7 +192,7 @@ TEST(StringHashTests, HashDistribution) {
 
 	for (int i = 0; i < 1000; i++) {
 		std::string str = "string_" + std::to_string(i);
-		hashes.push_back(HashString(str.c_str()));
+		hashes.push_back(hashString(str.c_str()));
 	}
 
 	// Check all are unique (no collisions in 1000 sequential strings)
@@ -213,7 +213,7 @@ TEST(StringHashTests, NoZeroHashes) {
 	};
 
 	for (const char* str : commonStrings) {
-		StringHash hash = HashString(str);
+		StringHash hash = hashString(str);
 		// Only empty string should hash to FNV offset basis
 		if (str[0] == '\0') {
 			EXPECT_EQ(hash, 0xcbf29ce484222325ULL);
@@ -231,10 +231,10 @@ TEST(StringHashTests, NoZeroHashes) {
 
 #ifdef DEBUG
 
-TEST(StringHashDebugTests, HashStringDebug) {
-	// HashStringDebug should produce same results as HashString
-	StringHash hash1 = HashString("debug_test");
-	StringHash hash2 = HashStringDebug("debug_test");
+TEST(StringHashDebugTests, hashStringDebug) {
+	// hashStringDebug should produce same results as hashString
+	StringHash hash1 = hashString("debug_test");
+	StringHash hash2 = hashStringDebug("debug_test");
 
 	EXPECT_EQ(hash1, hash2);
 }
@@ -242,7 +242,7 @@ TEST(StringHashDebugTests, HashStringDebug) {
 TEST(StringHashDebugTests, GetStringForHash) {
 	// Register a hash
 	const char* original = "test_lookup";
-	StringHash	hash = HashStringDebug(original);
+	StringHash	hash = hashStringDebug(original);
 
 	// Look it up
 	const char* retrieved = GetStringForHash(hash);
@@ -251,18 +251,18 @@ TEST(StringHashDebugTests, GetStringForHash) {
 
 TEST(StringHashDebugTests, GetStringForUnknownHash) {
 	// Create a hash without registering it
-	StringHash hash = HashString("never_registered");
+	StringHash hash = hashString("never_registered");
 
 	// Should return "<unknown>"
 	const char* result = GetStringForHash(hash);
 	EXPECT_STREQ(result, "<unknown>");
 }
 
-TEST(StringHashDebugTests, MultipleHashStringDebugCalls) {
-	// Calling HashStringDebug multiple times with same string should not assert
-	StringHash hash1 = HashStringDebug("repeated");
-	StringHash hash2 = HashStringDebug("repeated");
-	StringHash hash3 = HashStringDebug("repeated");
+TEST(StringHashDebugTests, MultiplehashStringDebugCalls) {
+	// Calling hashStringDebug multiple times with same string should not assert
+	StringHash hash1 = hashStringDebug("repeated");
+	StringHash hash2 = hashStringDebug("repeated");
+	StringHash hash3 = hashStringDebug("repeated");
 
 	EXPECT_EQ(hash1, hash2);
 	EXPECT_EQ(hash2, hash3);
@@ -270,9 +270,9 @@ TEST(StringHashDebugTests, MultipleHashStringDebugCalls) {
 
 TEST(StringHashDebugTests, RegistryPersistsBetweenCalls) {
 	// Register several hashes
-	HashStringDebug("first");
-	HashStringDebug("second");
-	HashStringDebug("third");
+	hashStringDebug("first");
+	hashStringDebug("second");
+	hashStringDebug("third");
 
 	// All should be retrievable
 	EXPECT_STREQ(GetStringForHash(HASH("first")), "first");
@@ -300,9 +300,9 @@ TEST(StringHashTests, HashIsConstant) {
 	// Verify hashing is deterministic
 	const char* str = "deterministic_test";
 
-	StringHash hash1 = HashString(str);
-	StringHash hash2 = HashString(str);
-	StringHash hash3 = HashString(str);
+	StringHash hash1 = hashString(str);
+	StringHash hash2 = hashString(str);
+	StringHash hash3 = hashString(str);
 
 	EXPECT_EQ(hash1, hash2);
 	EXPECT_EQ(hash2, hash3);
@@ -315,7 +315,7 @@ TEST(StringHashTests, HashIsConstant) {
 TEST(StringHashTests, SwitchCasePattern) {
 	// Verify hash can be used in switch-like patterns
 	auto getComponentType = [](const char* name) -> int {
-		StringHash hash = HashString(name);
+		StringHash hash = hashString(name);
 
 		if (hash == hashes::kTransform) {
 			return 1;

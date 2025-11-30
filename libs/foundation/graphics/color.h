@@ -31,18 +31,18 @@ namespace Foundation { // NOLINT(readability-identifier-naming)
 			  a(v.w) {}
 
 		// Conversion to Vec4
-		Vec4 ToVec4() const { return {r, g, b, a}; }
+		Vec4 toVec4() const { return {r, g, b, a}; }
 
 		// Common colors
-		static constexpr Color White() { return {1.0F, 1.0F, 1.0F, 1.0F}; }
-		static constexpr Color Black() { return {0.0F, 0.0F, 0.0F, 1.0F}; }
-		static constexpr Color Red() { return {1.0F, 0.0F, 0.0F, 1.0F}; }
-		static constexpr Color Green() { return {0.0F, 1.0F, 0.0F, 1.0F}; }
-		static constexpr Color Blue() { return {0.0F, 0.0F, 1.0F, 1.0F}; }
-		static constexpr Color Yellow() { return {1.0F, 1.0F, 0.0F, 1.0F}; }
-		static constexpr Color Cyan() { return {0.0F, 1.0F, 1.0F, 1.0F}; }
-		static constexpr Color Magenta() { return {1.0F, 0.0F, 1.0F, 1.0F}; }
-		static constexpr Color Transparent() { return {0.0F, 0.0F, 0.0F, 0.0F}; }
+		static constexpr Color white() { return {1.0F, 1.0F, 1.0F, 1.0F}; }
+		static constexpr Color black() { return {0.0F, 0.0F, 0.0F, 1.0F}; }
+		static constexpr Color red() { return {1.0F, 0.0F, 0.0F, 1.0F}; }
+		static constexpr Color green() { return {0.0F, 1.0F, 0.0F, 1.0F}; }
+		static constexpr Color blue() { return {0.0F, 0.0F, 1.0F, 1.0F}; }
+		static constexpr Color yellow() { return {1.0F, 1.0F, 0.0F, 1.0F}; }
+		static constexpr Color cyan() { return {0.0F, 1.0F, 1.0F, 1.0F}; }
+		static constexpr Color magenta() { return {1.0F, 0.0F, 1.0F, 1.0F}; }
+		static constexpr Color transparent() { return {0.0F, 0.0F, 0.0F, 0.0F}; }
 	};
 
 } // namespace Foundation

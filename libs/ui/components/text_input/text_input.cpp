@@ -326,7 +326,7 @@ namespace UI {
 		}
 
 		// Convert codepoint to UTF-8
-		std::string utf8 = foundation::UTF8::Encode(codepoint);
+		std::string utf8 = foundation::UTF8::encode(codepoint);
 
 		// Insert at cursor position
 		text.insert(cursorPosition, utf8);
@@ -354,7 +354,7 @@ namespace UI {
 		}
 
 		// Find next UTF-8 character boundary
-		size_t charSize = foundation::UTF8::CharacterSize(static_cast<unsigned char>(text[cursorPosition]));
+		size_t charSize = foundation::UTF8::characterSize(static_cast<unsigned char>(text[cursorPosition]));
 		text.erase(cursorPosition, charSize);
 
 		cursorBlinkTimer = 0.0F;
@@ -376,7 +376,7 @@ namespace UI {
 		}
 
 		// Find previous UTF-8 character boundary
-		size_t charSize = foundation::UTF8::PreviousCharacterSize(text, cursorPosition);
+		size_t charSize = foundation::UTF8::previousCharacterSize(text, cursorPosition);
 		text.erase(cursorPosition - charSize, charSize);
 		cursorPosition -= charSize;
 
@@ -392,7 +392,7 @@ namespace UI {
 			return;
 		}
 
-		size_t charSize = foundation::UTF8::PreviousCharacterSize(text, cursorPosition);
+		size_t charSize = foundation::UTF8::previousCharacterSize(text, cursorPosition);
 		cursorPosition -= charSize;
 		cursorBlinkTimer = 0.0F;
 		updateHorizontalScroll();
@@ -403,7 +403,7 @@ namespace UI {
 			return;
 		}
 
-		size_t charSize = foundation::UTF8::CharacterSize(static_cast<unsigned char>(text[cursorPosition]));
+		size_t charSize = foundation::UTF8::characterSize(static_cast<unsigned char>(text[cursorPosition]));
 		cursorPosition += charSize;
 		cursorBlinkTimer = 0.0F;
 		updateHorizontalScroll();
@@ -480,7 +480,7 @@ namespace UI {
 		}
 
 		// Move cursor left (selection end)
-		size_t charSize = foundation::UTF8::PreviousCharacterSize(text, cursorPosition);
+		size_t charSize = foundation::UTF8::previousCharacterSize(text, cursorPosition);
 		cursorPosition -= charSize;
 		selection->end = cursorPosition;
 
@@ -499,7 +499,7 @@ namespace UI {
 		}
 
 		// Move cursor right (selection end)
-		size_t charSize = foundation::UTF8::CharacterSize(static_cast<unsigned char>(text[cursorPosition]));
+		size_t charSize = foundation::UTF8::characterSize(static_cast<unsigned char>(text[cursorPosition]));
 		cursorPosition += charSize;
 		selection->end = cursorPosition;
 
@@ -547,7 +547,7 @@ namespace UI {
 
 		// Insert clipboard text at cursor
 		// Convert to UTF-8 codepoints and insert each character
-		std::vector<char32_t> codepoints = foundation::UTF8::Decode(pasteText);
+		std::vector<char32_t> codepoints = foundation::UTF8::decode(pasteText);
 
 		for (char32_t codepoint : codepoints) {
 			// Filter newlines and control characters
@@ -564,7 +564,7 @@ namespace UI {
 			}
 
 			// Insert character
-			std::string utf8 = foundation::UTF8::Encode(codepoint);
+			std::string utf8 = foundation::UTF8::encode(codepoint);
 			text.insert(cursorPosition, utf8);
 			cursorPosition += utf8.size();
 		}
@@ -820,7 +820,7 @@ namespace UI {
 			if (i >= text.size()) {
 				break;
 			}
-			size_t charSize = foundation::UTF8::CharacterSize(static_cast<unsigned char>(text[i]));
+			size_t charSize = foundation::UTF8::characterSize(static_cast<unsigned char>(text[i]));
 			i += charSize;
 		}
 

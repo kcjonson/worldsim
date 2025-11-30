@@ -59,7 +59,7 @@ namespace Foundation { // NOLINT(readability-identifier-naming)
 		int			line{};
 
 		// Serialize to JSON
-		const char* ToJSON() const;
+		const char* toJSON() const;
 	};
 
 	class DebugServer {
@@ -76,76 +76,76 @@ namespace Foundation { // NOLINT(readability-identifier-naming)
 		DebugServer& operator=(DebugServer&&) = delete;
 
 		// Start HTTP server on specified port (runs in separate thread)
-		void Start(int port);
+		void start(int port);
 
 		// Stop HTTP server and join thread
-		void Stop();
+		void stop();
 
 		// Update metrics (called from game thread)
-		void UpdateMetrics(const PerformanceMetrics& metrics);
+		void updateMetrics(const PerformanceMetrics& metrics);
 
 		// Update logs (called from game thread) - NEVER BLOCKS
 		// If buffer is full, oldest logs are dropped silently
-		void UpdateLog(LogLevel level, LogCategory category, const char* message, const char* file, int line);
+		void updateLog(LogLevel level, LogCategory category, const char* message, const char* file, int line);
 
 		// Check if server is running
-		bool IsRunning() const { return m_running.load(); }
+		bool isRunning() const { return running.load(); }
 
 		// Screenshot capture (called from main thread with GL context)
 		// Checks if screenshot is requested, captures framebuffer if so
-		void CaptureScreenshotIfRequested();
+		void captureScreenshotIfRequested();
 
 		// Request screenshot (called from HTTP thread)
 		// Returns true if screenshot was captured, false if timeout
-		bool RequestScreenshot(std::vector<unsigned char>& pngData, int timeoutMs = 5000);
+		bool requestScreenshot(std::vector<unsigned char>& pngData, int timeoutMs = 5000);
 
 		// Control action API (thread-safe, checked by main loop)
-		ControlAction GetControlAction() const { return m_controlAction.load(); }
-		void		  ClearControlAction() { m_controlAction.store(ControlAction::None); }
+		ControlAction getControlAction() const { return controlAction.load(); }
+		void		  clearControlAction() { controlAction.store(ControlAction::None); }
 
 		// Get target scene name (for SceneChange action)
-		std::string GetTargetSceneName() const;
+		std::string getTargetSceneName() const;
 
 		// Shutdown synchronization (for graceful exit via HTTP)
 		// Called by main loop after all cleanup is complete
-		void SignalShutdownComplete();
+		void signalShutdownComplete();
 
 	  private:
 		// Called by exit handler to block until cleanup is done
-		void WaitForShutdownComplete();
-		std::unique_ptr<httplib::Server> m_server;
-		std::thread						 m_serverThread;
-		std::atomic<bool>				 m_running;
+		void waitForShutdownComplete();
+		std::unique_ptr<httplib::Server> server;
+		std::thread						 serverThread;
+		std::atomic<bool>				 running;
 
 		// Lock-free metrics buffer (game thread writes, HTTP thread reads)
-		LockFreeRingBuffer<PerformanceMetrics, 64> m_metricsBuffer;
+		LockFreeRingBuffer<PerformanceMetrics, 64> metricsBuffer;
 
 		// Lock-free log buffer (game thread writes, HTTP thread reads)
 		// Size: 1000 entries. If full, oldest logs dropped (circular buffer)
-		LockFreeRingBuffer<LogEntry, 1000> m_logBuffer;
+		LockFreeRingBuffer<LogEntry, 1000> logBuffer;
 
 		// Screenshot request/response synchronization
-		std::atomic<bool>		   m_screenshotRequested{false};
-		std::atomic<bool>		   m_screenshotReady{false};
-		std::vector<unsigned char> m_screenshotData;
-		std::mutex				   m_screenshotMutex; // Protects m_screenshotData
+		std::atomic<bool>		   screenshotRequested{false};
+		std::atomic<bool>		   screenshotReady{false};
+		std::vector<unsigned char> screenshotData;
+		std::mutex				   screenshotMutex; // Protects screenshotData
 
 		// Control action state (HTTP thread writes, main thread reads)
-		std::atomic<ControlAction> m_controlAction{ControlAction::None};
-		std::string				   m_targetSceneName;
-		mutable std::mutex		   m_sceneNameMutex; // Protects m_targetSceneName
+		std::atomic<ControlAction> controlAction{ControlAction::None};
+		std::string				   targetSceneName;
+		mutable std::mutex		   sceneNameMutex; // Protects targetSceneName
 
 		// Shutdown synchronization (for blocking exit handler until cleanup done)
-		mutable std::mutex		m_shutdownMutex;
-		std::condition_variable m_shutdownCV;
-		bool					m_shutdownComplete{false};
-		bool					m_handlerDone{false}; // True when exit handler has finished
+		mutable std::mutex		shutdownMutex;
+		std::condition_variable shutdownCV;
+		bool					shutdownComplete{false};
+		bool					handlerDone{false}; // True when exit handler has finished
 
 		// Server thread entry point
-		void ServerThreadFunc(int port);
+		void serverThreadFunc(int port);
 
 		// Helper: Get metrics snapshot (lock-free read)
-		PerformanceMetrics GetMetricsSnapshot() const;
+		PerformanceMetrics getMetricsSnapshot() const;
 	};
 
 } // namespace Foundation

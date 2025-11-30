@@ -24,7 +24,7 @@
 namespace Foundation {
 
 	// Helper functions for LogEntry
-	static const char* LogLevelToString(LogLevel level) {
+	static const char* logLevelToString(LogLevel level) {
 		switch (level) {
 			case LogLevel::Debug:
 				return "DEBUG";
@@ -39,7 +39,7 @@ namespace Foundation {
 		}
 	}
 
-	static const char* LogCategoryToString(LogCategory category) {
+	static const char* logCategoryToString(LogCategory category) {
 		switch (category) {
 			case LogCategory::Renderer:
 				return "Renderer";
@@ -64,16 +64,16 @@ namespace Foundation {
 		}
 	}
 
-	// Global buffer for LogEntry::ToJSON() (thread_local to be thread-safe)
+	// Global buffer for LogEntry::toJSON() (thread_local to be thread-safe)
 	static thread_local char g_logJsonBuffer[512];
 
-	const char* LogEntry::ToJSON() const { // NOLINT(readability-convert-member-functions-to-static)
+	const char* LogEntry::toJSON() const { // NOLINT(readability-convert-member-functions-to-static)
 		std::snprintf(
 			g_logJsonBuffer,
 			sizeof(g_logJsonBuffer),
 			R"({"level":"%s","category":"%s","message":"%s","timestamp":%llu,"file":"%s","line":%d})",
-			LogLevelToString(level),
-			LogCategoryToString(category),
+			logLevelToString(level),
+			logCategoryToString(category),
 			message,
 			static_cast<unsigned long long>(timestamp),
 			(file != nullptr) ? file : "",
@@ -83,56 +83,56 @@ namespace Foundation {
 	}
 
 	DebugServer::DebugServer() // NOLINT(cppcoreguidelines-pro-type-member-init,modernize-use-equals-default)
-		: m_server(),
-		  m_serverThread(),
-		  m_running(false),
-		  m_screenshotData(),
-		  m_screenshotMutex(),
-		  m_targetSceneName(),
-		  m_sceneNameMutex() {
+		: server(),
+		  serverThread(),
+		  running(false),
+		  screenshotData(),
+		  screenshotMutex(),
+		  targetSceneName(),
+		  sceneNameMutex() {
 		// Lock-free ring buffers are initialized automatically
 	}
 
 	DebugServer::~DebugServer() {
-		Stop();
+		stop();
 	}
 
-	void DebugServer::Start(int port) { // NOLINT(readability-convert-member-functions-to-static)
-		if (m_running.load()) {
+	void DebugServer::start(int port) { // NOLINT(readability-convert-member-functions-to-static)
+		if (running.load()) {
 			std::cerr << "DebugServer already running!" << std::endl;
 			return;
 		}
 
 		// Reset shutdown synchronization state for restart scenarios
 		{
-			std::lock_guard<std::mutex> lock(m_shutdownMutex);
-			m_shutdownComplete = false;
-			m_handlerDone = false;
+			std::lock_guard<std::mutex> lock(shutdownMutex);
+			shutdownComplete = false;
+			handlerDone = false;
 		}
-		m_controlAction.store(ControlAction::None);
+		controlAction.store(ControlAction::None);
 
-		m_running.store(true);
+		running.store(true);
 
 		// Start server thread
-		m_serverThread = std::thread(&DebugServer::ServerThreadFunc, this, port);
+		serverThread = std::thread(&DebugServer::serverThreadFunc, this, port);
 
 		std::cout << "Debug server starting on port " << port << "..." << std::endl;
 	}
 
-	void DebugServer::Stop() { // NOLINT(readability-convert-member-functions-to-static)
-		if (!m_running.load()) {
+	void DebugServer::stop() { // NOLINT(readability-convert-member-functions-to-static)
+		if (!running.load()) {
 			return;
 		}
 
-		m_running.store(false);
+		running.store(false);
 
 		// If an exit was triggered via HTTP, wait for the handler to set the response
-		// Check exitTriggered and m_handlerDone inside the lock to avoid race condition
+		// Check exitTriggered and handlerDone inside the lock to avoid race condition
 		{
-			std::unique_lock<std::mutex> lock(m_shutdownMutex);
-			bool						 exitTriggered = (m_controlAction.load() == ControlAction::Exit);
-			if (exitTriggered && !m_handlerDone) {
-				m_shutdownCV.wait(lock, [this] { return m_handlerDone; });
+			std::unique_lock<std::mutex> lock(shutdownMutex);
+			bool						 exitTriggered = (controlAction.load() == ControlAction::Exit);
+			if (exitTriggered && !handlerDone) {
+				shutdownCV.wait(lock, [this] { return handlerDone; });
 			}
 			// Handler has set response and is about to return (or already returned)
 		}
@@ -141,24 +141,24 @@ namespace Foundation {
 		// 1. Complete sending any pending responses
 		// 2. Close the listening socket
 		// 3. Make listen() return
-		if (m_server) {
-			m_server->stop();
+		if (server) {
+			server->stop();
 		}
 
 		// Wait for server thread to finish
-		if (m_serverThread.joinable()) {
-			m_serverThread.join();
+		if (serverThread.joinable()) {
+			serverThread.join();
 		}
 
 		std::cout << "Debug server stopped" << std::endl;
 	}
 
-	void DebugServer::UpdateMetrics(const PerformanceMetrics& metrics) {
+	void DebugServer::updateMetrics(const PerformanceMetrics& metrics) {
 		// Lock-free write - never blocks, ~10-20 nanoseconds
-		m_metricsBuffer.Write(metrics);
+		metricsBuffer.write(metrics);
 	}
 
-	void DebugServer::UpdateLog( // NOLINT(readability-convert-member-functions-to-static)
+	void DebugServer::updateLog( // NOLINT(readability-convert-member-functions-to-static)
 		LogLevel	level,
 		LogCategory category,
 		const char* message,
@@ -183,19 +183,19 @@ namespace Foundation {
 
 		// Lock-free write - never blocks, ~10-20 nanoseconds
 		// If buffer is full, oldest entry is silently dropped (circular buffer)
-		m_logBuffer.Write(entry);
+		logBuffer.write(entry);
 	}
 
-	PerformanceMetrics DebugServer::GetMetricsSnapshot() const { // NOLINT(readability-convert-member-functions-to-static)
+	PerformanceMetrics DebugServer::getMetricsSnapshot() const { // NOLINT(readability-convert-member-functions-to-static)
 		// Lock-free read - gets latest sample, ~10-20 nanoseconds
 		PerformanceMetrics metrics = {};
-		m_metricsBuffer.ReadLatest(metrics);
+		metricsBuffer.readLatest(metrics);
 		return metrics;
 	}
 
-	void DebugServer::CaptureScreenshotIfRequested() { // NOLINT(readability-convert-member-functions-to-static)
+	void DebugServer::captureScreenshotIfRequested() { // NOLINT(readability-convert-member-functions-to-static)
 		// Check if screenshot was requested (non-blocking check)
-		if (!m_screenshotRequested.load()) {
+		if (!screenshotRequested.load()) {
 			return; // No screenshot requested
 		}
 
@@ -209,7 +209,7 @@ namespace Foundation {
 
 		if (width <= 0 || height <= 0) {
 			LOG_ERROR(Foundation, "Invalid viewport size for screenshot: %dx%d", width, height);
-			m_screenshotRequested.store(false);
+			screenshotRequested.store(false);
 			return;
 		}
 
@@ -234,7 +234,7 @@ namespace Foundation {
 		};
 
 		PNGWriteContext context;
-		context.data = &m_screenshotData;
+		context.data = &screenshotData;
 
 		// Write callback for stb_image_write
 		auto pngWriteFunc = [](void* context, void* data, int size) {
@@ -247,8 +247,8 @@ namespace Foundation {
 		LOG_DEBUG(Foundation, "Encoding screenshot to PNG...");
 		int result = 0;
 		{
-			std::lock_guard<std::mutex> lock(m_screenshotMutex);
-			m_screenshotData.clear();
+			std::lock_guard<std::mutex> lock(screenshotMutex);
+			screenshotData.clear();
 
 			result = stbi_write_png_to_func(
 				pngWriteFunc,
@@ -263,55 +263,55 @@ namespace Foundation {
 
 		if (result == 0) {
 			LOG_ERROR(Foundation, "Failed to encode screenshot to PNG");
-			m_screenshotRequested.store(false);
+			screenshotRequested.store(false);
 			return;
 		}
 
-		LOG_INFO(Foundation, "Screenshot captured successfully (%zu bytes)", m_screenshotData.size());
+		LOG_INFO(Foundation, "Screenshot captured successfully (%zu bytes)", screenshotData.size());
 
 		// Signal that screenshot is ready
-		m_screenshotReady.store(true);
-		m_screenshotRequested.store(false);
+		screenshotReady.store(true);
+		screenshotRequested.store(false);
 	}
 
-	std::string DebugServer::GetTargetSceneName() const {
-		std::lock_guard<std::mutex> lock(m_sceneNameMutex);
-		return m_targetSceneName;
+	std::string DebugServer::getTargetSceneName() const {
+		std::lock_guard<std::mutex> lock(sceneNameMutex);
+		return targetSceneName;
 	}
 
-	void DebugServer::WaitForShutdownComplete() {
-		std::unique_lock<std::mutex> lock(m_shutdownMutex);
+	void DebugServer::waitForShutdownComplete() {
+		std::unique_lock<std::mutex> lock(shutdownMutex);
 		// Add timeout to prevent indefinite blocking if main loop exits abnormally
-		if (!m_shutdownCV.wait_for(lock, std::chrono::seconds(30), [this] { return m_shutdownComplete; })) {
+		if (!shutdownCV.wait_for(lock, std::chrono::seconds(30), [this] { return shutdownComplete; })) {
 			LOG_WARNING(Foundation, "Shutdown did not complete within 30 seconds; continuing anyway.");
 		}
 	}
 
-	void DebugServer::SignalShutdownComplete() {
+	void DebugServer::signalShutdownComplete() {
 		{
-			std::lock_guard<std::mutex> lock(m_shutdownMutex);
-			m_shutdownComplete = true;
+			std::lock_guard<std::mutex> lock(shutdownMutex);
+			shutdownComplete = true;
 		}
-		m_shutdownCV.notify_all();
+		shutdownCV.notify_all();
 	}
 
-	bool DebugServer::RequestScreenshot(std::vector<unsigned char>& pngData, int timeoutMs) { // NOLINT(readability-identifier-naming)
+	bool DebugServer::requestScreenshot(std::vector<unsigned char>& pngData, int timeoutMs) { // NOLINT(readability-identifier-naming)
 		LOG_INFO(Foundation, "Screenshot requested via HTTP, waiting for capture...");
 
 		// Clear any previous ready state
-		m_screenshotReady.store(false);
+		screenshotReady.store(false);
 
 		// Request screenshot
-		m_screenshotRequested.store(true);
+		screenshotRequested.store(true);
 
 		// Wait for screenshot to be ready (with timeout)
 		auto startTime = std::chrono::steady_clock::now();
-		while (!m_screenshotReady.load()) {
+		while (!screenshotReady.load()) {
 			auto elapsed = std::chrono::steady_clock::now() - startTime;
 			if (std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count() > timeoutMs) {
 				// Timeout - cancel request
 				LOG_ERROR(Foundation, "Screenshot capture timeout after %dms", timeoutMs);
-				m_screenshotRequested.store(false);
+				screenshotRequested.store(false);
 				return false;
 			}
 
@@ -321,23 +321,23 @@ namespace Foundation {
 
 		// Copy screenshot data
 		{
-			std::lock_guard<std::mutex> lock(m_screenshotMutex);
-			pngData = m_screenshotData;
+			std::lock_guard<std::mutex> lock(screenshotMutex);
+			pngData = screenshotData;
 		}
 
 		LOG_INFO(Foundation, "Screenshot data copied to HTTP response (%zu bytes)", pngData.size());
 
 		// Clear ready flag
-		m_screenshotReady.store(false);
+		screenshotReady.store(false);
 
 		return true;
 	}
 
-	void DebugServer::ServerThreadFunc(int port) { // NOLINT(readability-convert-member-functions-to-static)
-		m_server = std::make_unique<httplib::Server>();
+	void DebugServer::serverThreadFunc(int port) { // NOLINT(readability-convert-member-functions-to-static)
+		server = std::make_unique<httplib::Server>();
 
 		// Disable SO_REUSEADDR to prevent multiple instances on same port
-		m_server->set_socket_options([](socket_t sock) {
+		server->set_socket_options([](socket_t sock) {
 			int reuse = 0;
 			setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, (const char*)&reuse, sizeof(reuse));
 		});
@@ -345,8 +345,8 @@ namespace Foundation {
 		// --- REST Endpoints ---
 
 		// Health check endpoint
-		m_server->Get("/api/health", [this](const httplib::Request&, httplib::Response& res) {
-			PerformanceMetrics metrics = GetMetricsSnapshot();
+		server->Get("/api/health", [this](const httplib::Request&, httplib::Response& res) {
+			PerformanceMetrics metrics = getMetricsSnapshot();
 
 			std::ostringstream json;
 			json << "{";
@@ -359,18 +359,18 @@ namespace Foundation {
 		});
 
 		// Current metrics snapshot
-		m_server->Get("/api/metrics", [this](const httplib::Request&, httplib::Response& res) {
-			PerformanceMetrics metrics = GetMetricsSnapshot();
-			res.set_content(metrics.ToJSON(), "application/json");
+		server->Get("/api/metrics", [this](const httplib::Request&, httplib::Response& res) {
+			PerformanceMetrics metrics = getMetricsSnapshot();
+			res.set_content(metrics.toJSON(), "application/json");
 			res.set_header("Access-Control-Allow-Origin", "*");
 		});
 
 		// Screenshot endpoint
-		m_server->Get("/api/ui/screenshot", [this](const httplib::Request&, httplib::Response& res) {
+		server->Get("/api/ui/screenshot", [this](const httplib::Request&, httplib::Response& res) {
 			std::vector<unsigned char> pngData;
 
 			// Request screenshot and wait for it (10 second timeout for large screenshots)
-			if (RequestScreenshot(pngData, 10000)) {
+			if (requestScreenshot(pngData, 10000)) {
 				// Screenshot captured successfully - avoid copy by using data() and size()
 				res.set_content(reinterpret_cast<const char*>(pngData.data()), pngData.size(), "image/png");
 				res.set_header("Access-Control-Allow-Origin", "*");
@@ -387,7 +387,7 @@ namespace Foundation {
 		// Examples: /api/control?action=exit
 		//           /api/control?action=scene&scene=arena
 		//           /api/control?action=pause
-		m_server->Get("/api/control", [this](const httplib::Request& req, httplib::Response& res) {
+		server->Get("/api/control", [this](const httplib::Request& req, httplib::Response& res) {
 			res.set_header("Access-Control-Allow-Origin", "*");
 
 			// Get action parameter (required)
@@ -401,10 +401,10 @@ namespace Foundation {
 
 			// Process action
 			if (action == "exit") {
-				m_controlAction.store(ControlAction::Exit);
+				controlAction.store(ControlAction::Exit);
 
 				// Block until main loop signals shutdown is complete
-				WaitForShutdownComplete();
+				waitForShutdownComplete();
 
 				// Set response - this will be sent when handler returns
 				res.set_content("{\"status\":\"ok\",\"action\":\"exit\",\"shutdown\":\"complete\"}", "application/json");
@@ -413,13 +413,13 @@ namespace Foundation {
 				// Signal that the handler is done and response is set
 				// Main thread will call stop() after this
 				{
-					std::lock_guard<std::mutex> lock(m_shutdownMutex);
-					m_handlerDone = true;
+					std::lock_guard<std::mutex> lock(shutdownMutex);
+					handlerDone = true;
 				}
-				m_shutdownCV.notify_all();
+				shutdownCV.notify_all();
 
 				// Note: We DON'T call stop() here - the main thread does it
-				// after it sees m_handlerDone. This avoids the assertion failure
+				// after it sees handlerDone. This avoids the assertion failure
 				// from calling stop() on a handler thread.
 			} else if (action == "scene") {
 				// Scene change requires 'scene' parameter
@@ -431,22 +431,22 @@ namespace Foundation {
 
 				std::string sceneName = req.get_param_value("scene");
 				{
-					std::lock_guard<std::mutex> lock(m_sceneNameMutex);
-					m_targetSceneName = sceneName;
-					m_controlAction.store(ControlAction::SceneChange);
+					std::lock_guard<std::mutex> lock(sceneNameMutex);
+					targetSceneName = sceneName;
+					controlAction.store(ControlAction::SceneChange);
 				}
 
 				std::ostringstream json;
 				json << "{\"status\":\"ok\",\"action\":\"scene\",\"scene\":\"" << sceneName << "\"}";
 				res.set_content(json.str(), "application/json");
 			} else if (action == "pause") {
-				m_controlAction.store(ControlAction::Pause);
+				controlAction.store(ControlAction::Pause);
 				res.set_content("{\"status\":\"ok\",\"action\":\"pause\"}", "application/json");
 			} else if (action == "resume") {
-				m_controlAction.store(ControlAction::Resume);
+				controlAction.store(ControlAction::Resume);
 				res.set_content("{\"status\":\"ok\",\"action\":\"resume\"}", "application/json");
 			} else if (action == "reload") {
-				m_controlAction.store(ControlAction::ReloadScene);
+				controlAction.store(ControlAction::ReloadScene);
 				res.set_content("{\"status\":\"ok\",\"action\":\"reload\"}", "application/json");
 			} else {
 				res.status = 400;
@@ -459,7 +459,7 @@ namespace Foundation {
 		// --- SSE Streaming Endpoint ---
 
 		// Real-time metrics stream (10 Hz)
-		m_server->Get("/stream/metrics", [this](const httplib::Request&, httplib::Response& res) {
+		server->Get("/stream/metrics", [this](const httplib::Request&, httplib::Response& res) {
 			res.set_header("Content-Type", "text/event-stream");
 			res.set_header("Cache-Control", "no-cache");
 			res.set_header("Connection", "keep-alive");
@@ -470,17 +470,17 @@ namespace Foundation {
 				const auto updateInterval = std::chrono::milliseconds(1000 / updateRateHz);
 				auto	   lastUpdate = std::chrono::steady_clock::now();
 
-				while (m_running.load() && sink.is_writable()) {
+				while (running.load() && sink.is_writable()) {
 					auto now = std::chrono::steady_clock::now();
 					auto elapsed = now - lastUpdate;
 
 					// Send update if enough time has passed
 					if (elapsed >= updateInterval) {
-						PerformanceMetrics metrics = GetMetricsSnapshot();
+						PerformanceMetrics metrics = getMetricsSnapshot();
 
 						std::ostringstream event;
 						event << "event: metric\n";
-						event << "data: " << metrics.ToJSON() << "\n\n";
+						event << "data: " << metrics.toJSON() << "\n\n";
 
 						std::string eventStr = event.str();
 						if (!sink.write(eventStr.c_str(), eventStr.size())) {
@@ -499,7 +499,7 @@ namespace Foundation {
 		});
 
 		// Real-time log stream (10 Hz, throttled)
-		m_server->Get("/stream/logs", [this](const httplib::Request&, httplib::Response& res) {
+		server->Get("/stream/logs", [this](const httplib::Request&, httplib::Response& res) {
 			res.set_header("Content-Type", "text/event-stream");
 			res.set_header("Cache-Control", "no-cache");
 			res.set_header("Connection", "keep-alive");
@@ -513,7 +513,7 @@ namespace Foundation {
 				// Track which logs we've already sent
 				uint64_t lastSentTimestamp = 0;
 
-				while (m_running.load() && sink.is_writable()) {
+				while (running.load() && sink.is_writable()) {
 					auto now = std::chrono::steady_clock::now();
 					auto elapsed = now - lastUpdate;
 
@@ -521,13 +521,13 @@ namespace Foundation {
 					if (elapsed >= updateInterval) {
 						// Read all available log entries from ring buffer
 						LogEntry entry;
-						while (m_logBuffer.Read(entry)) {
+						while (logBuffer.read(entry)) {
 							// Only send logs we haven't sent yet
 							// Use >= to handle multiple logs with same timestamp
 							if (entry.timestamp >= lastSentTimestamp) {
 								std::ostringstream event;
 								event << "event: log\n";
-								event << "data: " << entry.ToJSON() << "\n\n";
+								event << "data: " << entry.toJSON() << "\n\n";
 
 								std::string eventStr = event.str();
 								if (!sink.write(eventStr.c_str(), eventStr.size())) {
@@ -559,7 +559,7 @@ namespace Foundation {
 
 		// TODO: Implement static file serving when developer-client is built
 		// For now, return a simple placeholder that explains how to access the app
-		m_server->Get("/", [](const httplib::Request&, httplib::Response& res) {
+		server->Get("/", [](const httplib::Request&, httplib::Response& res) {
 			const char* html = R"HTML(<!DOCTYPE html>
 <html>
 <head>
@@ -611,14 +611,14 @@ namespace Foundation {
 
 		// Start listening (this will fail if port is in use since SO_REUSEADDR is disabled)
 		std::cout << "Debug server listening on http://localhost:" << port << std::endl;
-		if (!m_server->listen("127.0.0.1", port)) {
+		if (!server->listen("127.0.0.1", port)) {
 			std::cerr << "\n";
 			std::cerr << "ERROR: Port " << port << " is already in use.\n";
 			std::cerr << "An instance of the sandbox is already running.\n";
 			std::cerr << "Use the following command to kill it:\n";
 			std::cerr << "  curl http://127.0.0.1:" << port << "/api/control?action=exit\n";
 			std::cerr << "\n";
-			m_running.store(false);
+			running.store(false);
 			std::exit(1);
 		}
 	}

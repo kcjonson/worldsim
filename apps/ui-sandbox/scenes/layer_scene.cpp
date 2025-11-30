@@ -36,7 +36,7 @@ namespace {
 
 			// Green panel with title (z=1)
 			root->AddChild(Rectangle(
-				Rectangle::Args{.position = {150.0F, 120.0F}, .size = {350.0F, 200.0F}, .style = {.fill = Color::Green()}, .zIndex = 1}
+				Rectangle::Args{.position = {150.0F, 120.0F}, .size = {350.0F, 200.0F}, .style = {.fill = Color::green()}, .zIndex = 1}
 			));
 
 			// Title text on green panel (z=2)
@@ -44,7 +44,7 @@ namespace {
 				Text::Args{
 					.position = {200.0F, 200.0F},
 					.text = "Component Hierarchy Demo",
-					.style = {.color = Color::Yellow(), .fontSize = 24.0F, .hAlign = HorizontalAlign::Left, .vAlign = VerticalAlign::Top},
+					.style = {.color = Color::yellow(), .fontSize = 24.0F, .hAlign = HorizontalAlign::Left, .vAlign = VerticalAlign::Top},
 					.zIndex = 2
 				}
 			));
@@ -54,7 +54,7 @@ namespace {
 				Rectangle::Args{
 					.position = {550.0F, 150.0F},
 					.size = {150.0F, 350.0F},
-					.style = {.fill = Color(0.3F, 0.3F, 0.35F, 1.0F), .border = BorderStyle{.color = Color::Cyan(), .width = 2.0F}},
+					.style = {.fill = Color(0.3F, 0.3F, 0.35F, 1.0F), .border = BorderStyle{.color = Color::cyan(), .width = 2.0F}},
 					.zIndex = 1
 				}
 			));
@@ -68,7 +68,7 @@ namespace {
 					Rectangle::Args{
 						.position = {560.0F, 170.0F + (iFloat * 60.0F)},
 						.size = {130.0F, 50.0F},
-						.style = {.fill = Color(0.4F, 0.4F, 0.45F, 1.0F), .border = BorderStyle{.color = Color::White(), .width = 1.0F}},
+						.style = {.fill = Color(0.4F, 0.4F, 0.45F, 1.0F), .border = BorderStyle{.color = Color::white(), .width = 1.0F}},
 						.zIndex = 2
 					}
 				));
@@ -78,7 +78,7 @@ namespace {
 					Text::Args{
 						.position = {625.0F, 195.0F + (iFloat * 60.0F)},
 						.text = "Button " + std::to_string(i + 1),
-						.style = {.color = Color::White(), .fontSize = 14.0F, .hAlign = HorizontalAlign::Center},
+						.style = {.color = Color::white(), .fontSize = 14.0F, .hAlign = HorizontalAlign::Center},
 						.zIndex = 3
 					}
 				));
@@ -95,7 +95,7 @@ namespace {
 					Rectangle::Args{
 						.position = {150.0F + offset, 350.0F + offset},
 						.size = {100.0F, 100.0F},
-						.style = {.fill = color, .border = BorderStyle{.color = Color::White(), .width = 2.0F}},
+						.style = {.fill = color, .border = BorderStyle{.color = Color::white(), .width = 2.0F}},
 						.zIndex = static_cast<short>(i)
 					}
 				));
@@ -112,7 +112,7 @@ namespace {
 					Rectangle::Args{
 						.position = {450.0F + offset, 350.0F + offset},
 						.size = {100.0F, 100.0F},
-						.style = {.fill = color, .border = BorderStyle{.color = Color::White(), .width = 2.0F}},
+						.style = {.fill = color, .border = BorderStyle{.color = Color::white(), .width = 2.0F}},
 						.zIndex = static_cast<short>(3 - i) // Reverse z-order
 					}
 				));

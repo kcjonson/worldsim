@@ -4,7 +4,7 @@
 namespace foundation {
 namespace UTF8 {
 
-size_t CharacterSize(unsigned char firstByte) {
+size_t characterSize(unsigned char firstByte) {
 	// UTF-8 encoding:
 	// 0xxxxxxx = 1 byte (ASCII)
 	// 110xxxxx = 2 bytes
@@ -29,16 +29,16 @@ size_t CharacterSize(unsigned char firstByte) {
 	return 1;
 }
 
-size_t PreviousCharacterSize(const std::string& str, size_t offset) {
-	assert(offset > 0 && "PreviousCharacterSize: offset must be > 0");
-	assert(offset <= str.size() && "PreviousCharacterSize: offset out of bounds");
+size_t previousCharacterSize(const std::string& str, size_t offset) {
+	assert(offset > 0 && "previousCharacterSize: offset must be > 0");
+	assert(offset <= str.size() && "previousCharacterSize: offset out of bounds");
 
 	// Walk backwards from offset-1 until we find a non-continuation byte
 	size_t pos = offset - 1;
 
 	// Skip continuation bytes (10xxxxxx)
 	size_t count = 1;
-	while (pos > 0 && IsContinuationByte(static_cast<unsigned char>(str[pos]))) {
+	while (pos > 0 && isContinuationByte(static_cast<unsigned char>(str[pos]))) {
 		pos--;
 		count++;
 		if (count > 4) {
@@ -48,7 +48,7 @@ size_t PreviousCharacterSize(const std::string& str, size_t offset) {
 	}
 
 	// Verify the character size matches what the first byte indicates
-	size_t expectedSize = CharacterSize(static_cast<unsigned char>(str[pos]));
+	size_t expectedSize = characterSize(static_cast<unsigned char>(str[pos]));
 	if (expectedSize != count) {
 		// Invalid UTF-8 sequence - return 1 byte as fallback
 		return 1;
@@ -57,7 +57,7 @@ size_t PreviousCharacterSize(const std::string& str, size_t offset) {
 	return count;
 }
 
-std::string Encode(char32_t codepoint) {
+std::string encode(char32_t codepoint) {
 	std::string result;
 
 	if (codepoint <= 0x7F) {
@@ -86,14 +86,14 @@ std::string Encode(char32_t codepoint) {
 	return result;
 }
 
-std::vector<char32_t> Decode(const std::string& str) {
+std::vector<char32_t> decode(const std::string& str) {
 	std::vector<char32_t> result;
 	result.reserve(str.size()); // Worst case: all ASCII
 
 	size_t i = 0;
 	while (i < str.size()) {
 		unsigned char firstByte = static_cast<unsigned char>(str[i]);
-		size_t		  charSize = CharacterSize(firstByte);
+		size_t		  charSize = characterSize(firstByte);
 
 		// Check if we have enough bytes
 		if (i + charSize > str.size()) {
@@ -128,12 +128,12 @@ std::vector<char32_t> Decode(const std::string& str) {
 	return result;
 }
 
-size_t CharacterCount(const std::string& str) {
+size_t characterCount(const std::string& str) {
 	size_t count = 0;
 	size_t i = 0;
 
 	while (i < str.size()) {
-		size_t charSize = CharacterSize(static_cast<unsigned char>(str[i]));
+		size_t charSize = characterSize(static_cast<unsigned char>(str[i]));
 		count++;
 		i += charSize;
 	}
@@ -141,26 +141,26 @@ size_t CharacterCount(const std::string& str) {
 	return count;
 }
 
-bool IsContinuationByte(unsigned char byte) {
+bool isContinuationByte(unsigned char byte) {
 	// Continuation bytes: 10xxxxxx
 	return (byte & 0xC0) == 0x80;
 }
 
-size_t NextCharacterBoundary(const std::string& str, size_t offset) {
+size_t nextCharacterBoundary(const std::string& str, size_t offset) {
 	if (offset >= str.size()) {
 		return str.size();
 	}
 
-	size_t charSize = CharacterSize(static_cast<unsigned char>(str[offset]));
+	size_t charSize = characterSize(static_cast<unsigned char>(str[offset]));
 	return std::min(offset + charSize, str.size());
 }
 
-size_t PreviousCharacterBoundary(const std::string& str, size_t offset) {
+size_t previousCharacterBoundary(const std::string& str, size_t offset) {
 	if (offset == 0) {
 		return 0;
 	}
 
-	size_t charSize = PreviousCharacterSize(str, offset);
+	size_t charSize = previousCharacterSize(str, offset);
 	return offset - charSize;
 }
 

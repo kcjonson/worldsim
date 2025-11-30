@@ -6,7 +6,7 @@
 
 namespace Foundation {
 
-	std::string PerformanceMetrics::ToJSON() const {
+	std::string PerformanceMetrics::toJSON() const {
 		std::ostringstream json;
 		json << std::fixed << std::setprecision(2);
 

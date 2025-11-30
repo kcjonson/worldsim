@@ -15,7 +15,7 @@ namespace foundation {
 #endif
 
 	// Helper: Convert foundation::LogLevel to Foundation::LogLevel
-	static Foundation::LogLevel ConvertLogLevel(LogLevel level) {
+	static Foundation::LogLevel convertLogLevel(LogLevel level) {
 		switch (level) {
 			case LogLevel::Debug:
 				return Foundation::LogLevel::Debug;
@@ -31,7 +31,7 @@ namespace foundation {
 	}
 
 	// Helper: Convert foundation::LogCategory to Foundation::LogCategory
-	static Foundation::LogCategory ConvertLogCategory(LogCategory category) {
+	static Foundation::LogCategory convertLogCategory(LogCategory category) {
 		switch (category) {
 			case LogCategory::Renderer:
 				return Foundation::LogCategory::Renderer;
@@ -57,14 +57,14 @@ namespace foundation {
 		}
 	}
 
-	void Logger::Initialize() {
+	void Logger::initialize() {
 		if (s_initialized) {
 			return;
 		}
 
 		// Set default log levels for each category
 		// Development: Debug for most categories, Info for less verbose ones
-		// These can be overridden by config or runtime calls to SetLevel()
+		// These can be overridden by config or runtime calls to setLevel()
 #ifdef DEVELOPMENT_BUILD
 		s_levels[static_cast<int>(LogCategory::Renderer)] = LogLevel::Info;
 		s_levels[static_cast<int>(LogCategory::Physics)] = LogLevel::Info;
@@ -85,28 +85,28 @@ namespace foundation {
 		s_initialized = true;
 	}
 
-	void Logger::Shutdown() {
+	void Logger::shutdown() {
 #ifdef DEVELOPMENT_BUILD
 		s_debugServer = nullptr;
 #endif
 		s_initialized = false;
 	}
 
-	void Logger::SetDebugServer(Foundation::DebugServer* debugServer) {
+	void Logger::setDebugServer(Foundation::DebugServer* debugServer) {
 #ifdef DEVELOPMENT_BUILD
 		s_debugServer = debugServer;
 #endif
 	}
 
-	void Logger::SetLevel(LogCategory category, LogLevel level) {
+	void Logger::setLevel(LogCategory category, LogLevel level) {
 		s_levels[static_cast<int>(category)] = level; // NOLINT(cppcoreguidelines-pro-bounds-constant-array-index)
 	}
 
-	LogLevel Logger::GetLevel(LogCategory category) {
+	LogLevel Logger::getLevel(LogCategory category) {
 		return s_levels[static_cast<int>(category)]; // NOLINT(cppcoreguidelines-pro-bounds-constant-array-index)
 	}
 
-	void Logger::Log(LogCategory category, LogLevel level, const char* file, int line, const char* format, ...) {
+	void Logger::log(LogCategory category, LogLevel level, const char* file, int line, const char* format, ...) {
 		// Format message first (needed for both console and debug server)
 		char	message[256];
 		va_list args;
@@ -119,12 +119,12 @@ namespace foundation {
 		// Lock-free write, never blocks (~10-20 nanoseconds)
 		// Developer client has its own filtering UI
 		if (s_debugServer != nullptr) { // NOLINT(readability-implicit-bool-conversion)
-			s_debugServer->UpdateLog(ConvertLogLevel(level), ConvertLogCategory(category), message, file, line);
+			s_debugServer->updateLog(convertLogLevel(level), convertLogCategory(category), message, file, line);
 		}
 #endif
 
 		// Filter by level for console output
-		if (level < GetLevel(category)) {
+		if (level < getLevel(category)) {
 			return; // Too verbose for console, skip console output
 		}
 
@@ -158,7 +158,7 @@ namespace foundation {
 #endif
 
 		// Print to console: [TIME][CATEGORY][LEVEL] message
-		printf("%s[%s][%s][%s]%s %s", colorCode, timestamp, CategoryToString(category), LevelToString(level), resetCode, message);
+		printf("%s[%s][%s][%s]%s %s", colorCode, timestamp, categoryToString(category), levelToString(level), resetCode, message);
 
 		// Add file:line for errors and warnings
 		if (level >= LogLevel::Warning) {
@@ -169,7 +169,7 @@ namespace foundation {
 		fflush(stdout);
 	}
 
-	const char* CategoryToString(LogCategory cat) {
+	const char* categoryToString(LogCategory cat) {
 		switch (cat) {
 			case LogCategory::Renderer:
 				return "Renderer";
@@ -194,7 +194,7 @@ namespace foundation {
 		}
 	}
 
-	const char* LevelToString(LogLevel level) {
+	const char* levelToString(LogLevel level) {
 		switch (level) {
 			case LogLevel::Debug:
 				return "DEBUG";

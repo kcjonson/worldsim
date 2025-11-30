@@ -512,7 +512,7 @@ namespace Renderer::Primitives {
 	void PushScissor(const Foundation::Rect& clipRect) {
 		// Intersect with current scissor (nested clipping)
 		if (!g_scissorStack.empty()) {
-			g_currentScissor = Foundation::Rect::Intersection(g_currentScissor, clipRect);
+			g_currentScissor = Foundation::Rect::intersection(g_currentScissor, clipRect);
 		} else {
 			g_currentScissor = clipRect;
 		}

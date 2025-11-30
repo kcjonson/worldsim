@@ -155,14 +155,14 @@ int main(int argc, char* argv[]) {
 	}
 
 	// Initialize logging system
-	foundation::Logger::Initialize();
+	foundation::Logger::initialize();
 
 	// Start debug server IMMEDIATELY (before any logs)
 	// This ensures ALL logs go to the ring buffer
 	Foundation::DebugServer debugServer;
-	foundation::Logger::SetDebugServer(&debugServer);
+	foundation::Logger::setDebugServer(&debugServer);
 	if (httpPort > 0) {
-		debugServer.Start(httpPort);
+		debugServer.start(httpPort);
 		LOG_INFO(Foundation, "Debug server: http://localhost:%d", httpPort);
 		LOG_INFO(Foundation, "Logger connected to debug server");
 		LOG_DEBUG(Foundation, "Debug server connection test - this DEBUG log should appear in browser");
@@ -183,14 +183,14 @@ int main(int argc, char* argv[]) {
 
 	// Runtime hashing (computed at runtime)
 	const char*			   runtimeString = "DynamicComponent";
-	foundation::StringHash runtimeHash = foundation::HashString(runtimeString);
+	foundation::StringHash runtimeHash = foundation::hashString(runtimeString);
 	LOG_INFO(Foundation, "  Runtime: '%s' -> 0x%llx", runtimeString, runtimeHash);
 
 #ifdef DEBUG
 	// Debug collision detection (only in debug builds)
-	foundation::HashStringDebug("Transform");
-	foundation::HashStringDebug("Position");
-	foundation::HashStringDebug("TestComponent");
+	foundation::hashStringDebug("Transform");
+	foundation::hashStringDebug("Position");
+	foundation::hashStringDebug("TestComponent");
 
 	LOG_INFO(Foundation, "  Debug lookup: 0x%llx -> '%s'", kTransformHash, foundation::GetStringForHash(kTransformHash));
 #endif
@@ -313,37 +313,37 @@ int main(int argc, char* argv[]) {
 
 		// Debug server control (if enabled)
 		if (httpPort > 0) {
-			Foundation::ControlAction action = debugServer.GetControlAction();
+			Foundation::ControlAction action = debugServer.getControlAction();
 			if (action != Foundation::ControlAction::None) {
 				switch (action) {
 					case Foundation::ControlAction::Exit:
 						LOG_INFO(UI, "Exit requested via control endpoint");
 						app.Stop();
-						debugServer.ClearControlAction();
+						debugServer.clearControlAction();
 						return false; // Request exit
 
 					case Foundation::ControlAction::SceneChange: {
-						std::string sceneName = debugServer.GetTargetSceneName();
+						std::string sceneName = debugServer.getTargetSceneName();
 						LOG_INFO(UI, "Scene change requested: %s", sceneName.c_str());
 						if (engine::SceneManager::Get().SwitchTo(sceneName)) {
 							LOG_INFO(UI, "Switched to scene: %s", sceneName.c_str());
 						} else {
 							LOG_ERROR(UI, "Failed to switch to scene: %s", sceneName.c_str());
 						}
-						debugServer.ClearControlAction();
+						debugServer.clearControlAction();
 						break;
 					}
 
 					case Foundation::ControlAction::Pause:
 						LOG_INFO(UI, "Pause requested via control endpoint");
 						app.Pause();
-						debugServer.ClearControlAction();
+						debugServer.clearControlAction();
 						break;
 
 					case Foundation::ControlAction::Resume:
 						LOG_INFO(UI, "Resume requested via control endpoint");
 						app.Resume();
-						debugServer.ClearControlAction();
+						debugServer.clearControlAction();
 						break;
 
 					case Foundation::ControlAction::ReloadScene: {
@@ -356,7 +356,7 @@ int main(int argc, char* argv[]) {
 								LOG_ERROR(UI, "Failed to reload scene: %s", currentScene.c_str());
 							}
 						}
-						debugServer.ClearControlAction();
+						debugServer.clearControlAction();
 						break;
 					}
 
@@ -392,11 +392,11 @@ int main(int argc, char* argv[]) {
 
 		// Update debug server with latest metrics
 		if (httpPort > 0) {
-			debugServer.UpdateMetrics(metrics.GetCurrentMetrics());
+			debugServer.updateMetrics(metrics.GetCurrentMetrics());
 
 			// Check if screenshot was requested and capture if so
 			// This must happen BEFORE glfwSwapBuffers() to capture the current frame
-			debugServer.CaptureScreenshotIfRequested();
+			debugServer.captureScreenshotIfRequested();
 		}
 	});
 
@@ -417,15 +417,15 @@ int main(int argc, char* argv[]) {
 
 	if (httpPort > 0) {
 		// Disconnect logger from debug server before stopping it
-		foundation::Logger::SetDebugServer(nullptr);
+		foundation::Logger::setDebugServer(nullptr);
 
 		// Signal that cleanup is complete - this unblocks the exit HTTP handler
 		// which will stop the server and send the response before we continue
-		debugServer.SignalShutdownComplete();
+		debugServer.signalShutdownComplete();
 
 		// Stop the server - waits for exit handler to complete if HTTP exit was triggered,
 		// then actually stops the server. Safe to call regardless of how shutdown was initiated.
-		debugServer.Stop();
+		debugServer.stop();
 	}
 
 	// Scene cleanup is handled above via SceneManager::Shutdown()
@@ -438,7 +438,7 @@ int main(int argc, char* argv[]) {
 	glfwDestroyWindow(window);
 	glfwTerminate();
 
-	foundation::Logger::Shutdown();
+	foundation::Logger::shutdown();
 
 	return 0;
 }

@@ -19,7 +19,7 @@ namespace Foundation { // NOLINT(readability-identifier-naming)
 
 	// Optional border style for rectangles
 	struct BorderStyle {
-		Color		   color = Color::White();
+		Color		   color = Color::white();
 		float		   width = 1.0F;
 		float		   cornerRadius = 0.0F;
 		BorderPosition position = BorderPosition::Center;
@@ -27,19 +27,19 @@ namespace Foundation { // NOLINT(readability-identifier-naming)
 
 	// Rectangle visual style
 	struct RectStyle {
-		Color					   fill = Color::White();
+		Color					   fill = Color::white();
 		std::optional<BorderStyle> border = std::nullopt;
 	};
 
 	// Line visual style
 	struct LineStyle {
-		Color color = Color::White();
+		Color color = Color::white();
 		float width = 1.0F;
 	};
 
 	// Circle visual style
 	struct CircleStyle {
-		Color					   fill = Color::White();
+		Color					   fill = Color::white();
 		std::optional<BorderStyle> border = std::nullopt;
 	};
 
@@ -51,7 +51,7 @@ namespace Foundation { // NOLINT(readability-identifier-naming)
 
 	// Text visual style
 	struct TextStyle {
-		Color			color = Color::White();
+		Color			color = Color::white();
 		float			fontSize = 16.0F;
 		HorizontalAlign hAlign = HorizontalAlign::Left;
 		VerticalAlign	vAlign = VerticalAlign::Top;

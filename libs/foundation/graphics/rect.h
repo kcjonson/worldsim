@@ -31,28 +31,28 @@ namespace Foundation { // NOLINT(readability-identifier-naming)
 			  height(size.y) {}
 
 		// Helper methods
-		Vec2 Position() const { return {x, y}; }
-		Vec2 Size() const { return {width, height}; }
+		Vec2 position() const { return {x, y}; }
+		Vec2 size() const { return {width, height}; }
 
-		float Left() const { return x; }
-		float Right() const { return x + width; }
-		float Top() const { return y; }
-		float Bottom() const { return y + height; }
+		float left() const { return x; }
+		float right() const { return x + width; }
+		float top() const { return y; }
+		float bottom() const { return y + height; }
 
-		Vec2 TopLeft() const { return {x, y}; }
-		Vec2 TopRight() const { return {x + width, y}; }
-		Vec2 BottomLeft() const { return {x, y + height}; }
-		Vec2 BottomRight() const { return {x + width, y + height}; }
+		Vec2 topLeft() const { return {x, y}; }
+		Vec2 topRight() const { return {x + width, y}; }
+		Vec2 bottomLeft() const { return {x, y + height}; }
+		Vec2 bottomRight() const { return {x + width, y + height}; }
 
-		Vec2 Center() const { return {x + (width * 0.5F), y + (height * 0.5F)}; }
+		Vec2 center() const { return {x + (width * 0.5F), y + (height * 0.5F)}; }
 
-		bool Contains(const Vec2& point) const { return point.x >= x && point.x <= x + width && point.y >= y && point.y <= y + height; }
+		bool contains(const Vec2& point) const { return point.x >= x && point.x <= x + width && point.y >= y && point.y <= y + height; }
 
-		bool Intersects(const Rect& other) const {
+		bool intersects(const Rect& other) const {
 			return x < other.x + other.width && x + width > other.x && y < other.y + other.height && y + height > other.y;
 		}
 
-		static Rect Intersection(const Rect& a, const Rect& b) {
+		static Rect intersection(const Rect& a, const Rect& b) {
 			float left = glm::max(a.x, b.x);
 			float right = glm::min(a.x + a.width, b.x + b.width);
 			float top = glm::max(a.y, b.y);
