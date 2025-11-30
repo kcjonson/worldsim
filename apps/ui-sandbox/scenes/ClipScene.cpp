@@ -2,6 +2,7 @@
 // Demonstrates clipping system features: rect clipping, nested clips, scrolling
 // See /docs/technical/ui-framework/clipping.md for design documentation.
 
+#include <component/Container.h>
 #include <graphics/ClipTypes.h>
 #include <graphics/Color.h>
 #include <primitives/Primitives.h>
@@ -23,18 +24,79 @@ namespace {
 		void onEnter() override {
 			LOG_INFO(UI, "Clip Scene - Clipping and Scrolling Demo");
 			LOG_INFO(UI, "Press 'C' to toggle clipping on/off");
+			LOG_INFO(UI, "UP/DOWN arrows scroll Section 4 Container");
+
+			// Build the scrollable container for Section 4
+			buildScrollableContainer();
+		}
+
+		void buildScrollableContainer() {
+			m_scrollContainer = std::make_unique<UI::Container>();
+
+			// Add items to the container
+			for (int i = 0; i < 8; ++i) {
+				float			  y = 5.0F + static_cast<float>(i) * 35.0F;
+				Foundation::Color itemColor =
+					(i % 2 == 0) ? Foundation::Color(0.3F, 0.5F, 0.4F, 1.0F) : Foundation::Color(0.35F, 0.55F, 0.45F, 1.0F);
+
+				m_scrollContainer->addChild(
+					UI::Rectangle(
+						UI::Rectangle::Args{
+							.position = {5, y},
+							.size = {270, 30},
+							.style = {
+								.fill = itemColor, .border = Foundation::BorderStyle{.color = Foundation::Color::white(), .width = 1.0F}
+							}
+						}
+					)
+				);
+
+				m_scrollContainer->addChild(
+					UI::Text(
+						UI::Text::Args{
+							.position = {15, y + 6},
+							.text = "Container Item " + std::to_string(i + 1),
+							.style = {.color = Foundation::Color::white(), .fontSize = 14.0F}
+						}
+					)
+				);
+			}
+
+			// Set up clipping for the container viewport
+			Foundation::ClipSettings clipSettings;
+			clipSettings.shape = Foundation::ClipRect{.bounds = Foundation::Rect{400.0F, 410.0F, 280.0F, 100.0F}};
+			clipSettings.mode = Foundation::ClipMode::Inside;
+			m_scrollContainer->setClip(clipSettings);
+
+			// Calculate scroll bounds
+			m_containerContentHeight = 8 * 35.0F + 5.0F;
+			m_containerMaxScroll = std::max(0.0F, m_containerContentHeight - 100.0F);
 		}
 
 		void handleInput(float /*dt*/) override {
+			GLFWwindow* window = glfwGetCurrentContext();
+
 			// Toggle clipping with 'C' key
 			static bool lastKeyState = false;
-			bool		currentKeyState = glfwGetKey(glfwGetCurrentContext(), GLFW_KEY_C) == GLFW_PRESS;
+			bool		currentKeyState = glfwGetKey(window, GLFW_KEY_C) == GLFW_PRESS;
 
 			if (currentKeyState && !lastKeyState) {
 				clippingEnabled = !clippingEnabled;
 				LOG_INFO(UI, "Clipping %s", clippingEnabled ? "ENABLED" : "DISABLED");
 			}
 			lastKeyState = currentKeyState;
+
+			// Scroll container with UP/DOWN arrows
+			constexpr float kScrollSpeed = 5.0F;
+			if (glfwGetKey(window, GLFW_KEY_UP) == GLFW_PRESS) {
+				m_containerScrollY = std::max(0.0F, m_containerScrollY - kScrollSpeed);
+			}
+			if (glfwGetKey(window, GLFW_KEY_DOWN) == GLFW_PRESS) {
+				m_containerScrollY = std::min(m_containerMaxScroll, m_containerScrollY + kScrollSpeed);
+			}
+
+			// Update container's content offset (position + scroll offset)
+			m_scrollContainer->setContentOffset({400.0F, 410.0F - m_containerScrollY});
 		}
 
 		void update(float dt) override {
@@ -195,25 +257,37 @@ namespace {
 			}
 
 			// ========================================================================
-			// Section 4: Future Features (Placeholders)
+			// Section 4: Container with Clip + ContentOffset (Scrollable)
 			// ========================================================================
 
-			Primitives::drawRect({.bounds = {400, 370, 300, 25}, .style = {.fill = Color(0.15F, 0.15F, 0.2F, 1.0F)}});
-			drawText("4. Future: Rounded/Circle Clips", 405, 375, 14.0F, Color(0.5F, 0.5F, 0.5F, 1.0F));
+			Primitives::drawRect({.bounds = {400, 370, 300, 25}, .style = {.fill = Color(0.2F, 0.2F, 0.3F, 1.0F)}});
+			drawText("4. Container (clip + scroll)", 405, 375, 14.0F, Color::white());
 
-			// Placeholder items (grayed out)
-			Primitives::drawRect({.bounds = {410, 410, 200, 20}, .style = {.fill = Color(0.2F, 0.2F, 0.2F, 0.5F)}});
-			Primitives::drawRect({.bounds = {410, 435, 180, 20}, .style = {.fill = Color(0.2F, 0.2F, 0.2F, 0.5F)}});
-			Primitives::drawRect({.bounds = {410, 460, 220, 20}, .style = {.fill = Color(0.2F, 0.2F, 0.2F, 0.5F)}});
+			// Scroll info
+			char scrollInfo[64];
+			snprintf(scrollInfo, sizeof(scrollInfo), "Scroll: %.0f / %.0f (UP/DOWN)", m_containerScrollY, m_containerMaxScroll);
+			drawText(scrollInfo, 550, 375, 12.0F, Color::yellow());
+
+			// Container boundary indicator
+			Primitives::drawRect(
+				{.bounds = {400, 410, 280, 100},
+				 .style = {.fill = Color(0.1F, 0.15F, 0.12F, 1.0F), .border = BorderStyle{.color = Color::magenta(), .width = 2.0F}}}
+			);
+
+			// Render the scrollable container (clipping + content offset applied automatically)
+			m_scrollContainer->render();
 
 			// ========================================================================
 			// Instructions
 			// ========================================================================
-			Primitives::drawRect({.bounds = {50, 470, 400, 30}, .style = {.fill = Color(0.0F, 0.0F, 0.3F, 0.5F)}});
-			drawText("Press 'C' to toggle clipping | Watch scrolling list animate", 60, 478, 12.0F, Color::white());
+			Primitives::drawRect({.bounds = {50, 530, 500, 30}, .style = {.fill = Color(0.0F, 0.0F, 0.3F, 0.5F)}});
+			drawText("'C' toggle clipping | UP/DOWN scroll Section 4 | Section 2 auto-scrolls", 60, 538, 12.0F, Color::white());
 		}
 
-		void onExit() override { LOG_INFO(UI, "Exiting Clip Scene"); }
+		void onExit() override {
+			LOG_INFO(UI, "Exiting Clip Scene");
+			m_scrollContainer.reset();
+		}
 
 		std::string exportState() override {
 			char buf[128];
@@ -225,7 +299,13 @@ namespace {
 
 	  private:
 		bool  clippingEnabled = true; // Start with clipping enabled to show it working
-		float scrollY = 0.0F;
+		float scrollY = 0.0F;		  // Auto-scroll for Section 2
+
+		// Section 4: Container with clip + scroll
+		std::unique_ptr<UI::Container> m_scrollContainer;
+		float						   m_containerScrollY = 0.0F;
+		float						   m_containerMaxScroll = 0.0F;
+		float						   m_containerContentHeight = 0.0F;
 	};
 
 	// Register scene with SceneManager

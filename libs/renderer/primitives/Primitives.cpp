@@ -547,7 +547,10 @@ namespace Renderer::Primitives {
 		g_transformStack.push(g_currentTransform);
 		g_currentTransform = g_currentTransform * transform;
 
-		// TODO: Apply to batch renderer
+		// Apply to batch renderer for GPU-side transform
+		if (g_batchRenderer != nullptr) {
+			g_batchRenderer->setTransform(g_currentTransform);
+		}
 	}
 
 	void PopTransform() {
@@ -555,7 +558,10 @@ namespace Renderer::Primitives {
 			g_currentTransform = g_transformStack.top();
 			g_transformStack.pop();
 
-			// TODO: Apply to batch renderer
+			// Apply to batch renderer for GPU-side transform
+			if (g_batchRenderer != nullptr) {
+				g_batchRenderer->setTransform(g_currentTransform);
+			}
 		}
 	}
 

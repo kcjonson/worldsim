@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2025-11-29 (Completed Phase 1 Clipping - Shader Fast Path)
+Last Updated: 2025-11-30 (Completed Phase 2 Clipping - Content Offset/Scrolling)
 
 ## Epic/Story/Task Template
 
@@ -341,9 +341,11 @@ Use this template for all work items:
 - [x] Demo Scenes ✅ COMPLETE
   - [x] Create clip_scene.cpp with visual feature tests (shapes + text clipping)
   - [x] Modify vector_perf_scene.cpp for performance testing (C key toggle)
-- [ ] Phase 2: Content Offset (Scrolling)
-  - [ ] Add clip and contentOffset properties to Container
-  - [ ] Implement Container::Render() with clip/offset
+- [x] Phase 2: Content Offset (Scrolling) ✅ COMPLETE
+  - [x] Add clip and contentOffset properties to Container
+  - [x] Implement Container::Render() with clip/offset
+  - [x] Wire up transform stack to BatchRenderer (bake transforms into vertices)
+  - [x] Update ClipScene with scrollable Container demo (Section 4)
 - [ ] Automated Performance Benchmarks
   - [ ] Create clipping.bench.cpp
 - [ ] Stub Functions for Future Phases
