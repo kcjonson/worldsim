@@ -236,6 +236,34 @@ namespace Renderer {
 		// Check if any clip region is currently active.
 		bool IsClipActive();
 
+		// === Convenience Functions for Future Clip Shapes ===
+		//
+		// These functions provide a simpler API for common clip shapes.
+		// Currently they use bounding-box approximation; future phases will
+		// implement proper stencil-buffer clipping for accurate shapes.
+
+		// Push a rounded rectangle clip region.
+		// NOTE: Currently uses bounding box approximation. Accurate rounded rect
+		// clipping requires stencil buffer (Phase 3).
+		void pushClipRoundedRect(const Foundation::Rect& bounds, float cornerRadius);
+
+		// Push a circular clip region.
+		// NOTE: Currently uses bounding box approximation. Accurate circular
+		// clipping requires stencil buffer (Phase 3).
+		void pushClipCircle(const Foundation::Vec2& center, float radius);
+
+		// Push an arbitrary path clip region.
+		// NOTE: Currently uses bounding box approximation. Accurate path
+		// clipping requires stencil buffer (Phase 3).
+		void pushClipPath(const std::vector<Foundation::Vec2>& vertices);
+
+		// === ClipMode::Outside Support ===
+		//
+		// ClipMode::Outside is defined in ClipTypes.h but not yet implemented.
+		// When implemented, it will allow "punch hole" effects where content
+		// is visible OUTSIDE the clip shape (e.g., spotlight effects).
+		// This requires stencil buffer with inverted test (Phase 3).
+
 		// Legacy scissor functions (deprecated - use PushClip/PopClip instead)
 		// Scissor/clipping (for scrollable containers)
 		void			 PushScissor(const Foundation::Rect& clipRect);

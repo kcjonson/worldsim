@@ -507,6 +507,34 @@ namespace Renderer::Primitives {
 		return (bounds.z > bounds.x) && (bounds.w > bounds.y);
 	}
 
+	// --- Convenience Functions for Future Clip Shapes ---
+	// These delegate to pushClip() with the appropriate ClipShape variant.
+	// Currently use bounding-box approximation; Phase 3 will add stencil-buffer support.
+
+	void pushClipRoundedRect(const Foundation::Rect& bounds, float cornerRadius) {
+		Foundation::ClipSettings settings;
+		settings.shape = Foundation::ClipRoundedRect{
+			.bounds = bounds,
+			.cornerRadius = cornerRadius
+		};
+		pushClip(settings);
+	}
+
+	void pushClipCircle(const Foundation::Vec2& center, float radius) {
+		Foundation::ClipSettings settings;
+		settings.shape = Foundation::ClipCircle{
+			.center = center,
+			.radius = radius
+		};
+		pushClip(settings);
+	}
+
+	void pushClipPath(const std::vector<Foundation::Vec2>& vertices) {
+		Foundation::ClipSettings settings;
+		settings.shape = Foundation::ClipPath{.vertices = vertices};
+		pushClip(settings);
+	}
+
 	// --- Scissor Stack (Legacy) ---
 
 	void PushScissor(const Foundation::Rect& clipRect) {
