@@ -1,15 +1,13 @@
-// Font rendering system using FreeType
-// Renders text with TrueType fonts using texture atlas approach
+// Font rendering system using MSDF (Multi-channel Signed Distance Field) atlas
+// Renders text with pre-generated SDF atlas for high-quality scalable text
 
 #pragma once
 
-#include <ft2build.h>
 #include <glm/glm.hpp>
 #include <map>
 #include <string>
 #include <unordered_map>
 #include <vector>
-#include FT_FREETYPE_H
 #include "shader/Shader.h"
 #include <GL/glew.h>
 
@@ -47,20 +45,6 @@ namespace ui {
 		 */
 		bool Initialize();
 
-		/**
-		 * Render text at the specified position
-		 * @param text The string to render
-		 * @param position Top-left position of the text in screen space
-		 * @param scale Scaling factor for the text size (1.0F = 16px base size)
-		 * @param color RGB color of the text (0-1 range)
-		 */
-		void renderText(const std::string& text, const glm::vec2& position, float scale, const glm::vec3& color);
-
-		/**
-		 * Set the projection matrix for the text shader
-		 * @param projection The projection matrix to use
-		 */
-		void setProjectionMatrix(const glm::mat4& projection);
 
 		/**
 		 * Calculate the dimensions of a text string with the given scale
@@ -136,16 +120,6 @@ namespace ui {
 
 	  private:
 		/**
-		 * Character information for font rendering
-		 */
-		struct Character {
-			GLuint		 textureID{}; // OpenGL texture ID for the character
-			glm::ivec2	 size;		  // Size of the character glyph
-			glm::ivec2	 bearing;	  // Offset from baseline to top-left of glyph
-			unsigned int advance{};	  // Horizontal advance to next character
-		};
-
-		/**
 		 * SDF atlas-based glyph information
 		 */
 		struct SDFGlyph {
@@ -172,13 +146,6 @@ namespace ui {
 			float descender;	 // Font descender (in em units)
 			float lineHeight;	 // Line height (in em units)
 		};
-
-		/**
-		 * Load a font file using FreeType (legacy)
-		 * @param fontPath Path to the font file
-		 * @return true if font was loaded successfully
-		 */
-		bool LoadFont(const std::string& fontPath);
 
 		/**
 		 * Load SDF atlas from PNG and JSON files
@@ -219,19 +186,11 @@ namespace ui {
 			uint64_t			   lastAccessFrame;
 		};
 
-		std::map<char, Character> characters;					   // Map of loaded characters (FreeType mode)
-		std::map<char, SDFGlyph>  sdfGlyphs;					   // Map of SDF glyphs (Atlas mode)
-		SDFAtlasMetadata		  atlasMetadata{};			   // SDF atlas metadata
-		Renderer::Shader		  shader;						   // Shader for text rendering
-		GLuint					  vao = 0;					   // Vertex Array Object
-		GLuint					  vbo = 0;					   // Vertex Buffer Object
-		GLuint					  atlasTexture = 0;			   // SDF atlas texture
-		bool					  usingSDF = false;			   // True if using SDF atlas mode
-		FT_Library				  library = nullptr;			   // FreeType library instance
-		FT_Face					  face = nullptr;				   // FreeType font face
-		float					  scaledAscender = 0.0F;		   // Stores the ascender for the base font size
-		float					  maxGlyphHeightUnscaled = 0.0F; // Unscaled maximum glyph height
-		GLuint					  firstGlyphTexture = 0;		   // First glyph texture (for batch key)
+		std::map<char, SDFGlyph> sdfGlyphs;					  // Map of SDF glyphs
+		SDFAtlasMetadata		 atlasMetadata{};			  // SDF atlas metadata
+		GLuint					 atlasTexture = 0;			  // SDF atlas texture
+		float					 scaledAscender = 0.0F;		  // Stores the ascender for the base font size
+		float					 maxGlyphHeightUnscaled = 0.0F; // Unscaled maximum glyph height
 
 		// Glyph quad cache (mutable for const GenerateGlyphQuads)
 		mutable std::unordered_map<CacheKey, CacheEntry, CacheKeyHash> glyphQuadCache;

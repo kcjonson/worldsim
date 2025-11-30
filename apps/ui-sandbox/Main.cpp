@@ -10,13 +10,13 @@
 // - HTTP debug server for UI inspection (future)
 
 #include "CoordinateSystem/CoordinateSystem.h"
+#include "NavigationMenu.h"
 #include "debug/DebugServer.h"
 #include "font/FontRenderer.h"
 #include "graphics/Color.h"
 #include "graphics/Rect.h"
 #include "math/Types.h"
 #include "metrics/MetricsCollector.h"
-#include "NavigationMenu.h"
 #include "primitives/Primitives.h"
 #include "utils/Log.h"
 #include "utils/StringHash.h"
@@ -246,12 +246,6 @@ int main(int argc, char* argv[]) {
 		LOG_ERROR(UI, "Failed to initialize FontRenderer for menu!");
 		// Continue anyway - menu will just not have text labels
 	} else {
-		// CRITICAL: Use CoordinateSystem projection for text rendering to match shapes
-		// CoordinateSystem uses LOGICAL pixels (window size), not physical pixels (framebuffer size)
-		// This ensures x=20,y=20 means the same thing for text and shapes
-		glm::mat4 projection = coordinateSystem.CreateScreenSpaceProjection();
-		g_fontRenderer->setProjectionMatrix(projection);
-
 		// Set font renderer in Primitives API for Text shapes (provides font metrics)
 		Renderer::Primitives::setFontRenderer(g_fontRenderer.get());
 
