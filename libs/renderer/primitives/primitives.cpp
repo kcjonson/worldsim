@@ -108,7 +108,7 @@ namespace Renderer::Primitives {
 		g_fontRenderer = fontRenderer;
 	}
 
-	ui::FontRenderer* GetFontRenderer() {
+	ui::FontRenderer* getFontRenderer() {
 		return g_fontRenderer;
 	}
 
@@ -118,7 +118,7 @@ namespace Renderer::Primitives {
 		}
 	}
 
-	BatchRenderer* GetBatchRenderer() {
+	BatchRenderer* getBatchRenderer() {
 		return g_batchRenderer.get();
 	}
 
@@ -185,7 +185,7 @@ namespace Renderer::Primitives {
 
 	// --- Coordinate System Helpers ---
 
-	Foundation::Mat4 GetScreenSpaceProjection() {
+	Foundation::Mat4 getScreenSpaceProjection() {
 		if (g_coordinateSystem != nullptr) {
 			return g_coordinateSystem->CreateScreenSpaceProjection();
 		}
@@ -193,7 +193,7 @@ namespace Renderer::Primitives {
 		return glm::ortho(0.0F, 800.0F, 600.0F, 0.0F, -1.0F, 1.0F);
 	}
 
-	Foundation::Mat4 GetWorldSpaceProjection() {
+	Foundation::Mat4 getWorldSpaceProjection() {
 		if (g_coordinateSystem != nullptr) {
 			return g_coordinateSystem->CreateWorldSpaceProjection();
 		}
@@ -491,7 +491,7 @@ namespace Renderer::Primitives {
 		}
 	}
 
-	Foundation::Vec4 GetCurrentClipBounds() {
+	Foundation::Vec4 getCurrentClipBounds() {
 		if (g_clipStack.empty()) {
 			return Foundation::Vec4(0.0F, 0.0F, 0.0F, 0.0F);
 		}

@@ -75,14 +75,14 @@ namespace ui {
 		 * @param scale Scaling factor for the font size (1.0F = original size)
 		 * @return Height of the tallest glyph in the font at the given scale
 		 */
-		float GetMaxGlyphHeight(float scale = 1.0F) const;
+		float getMaxGlyphHeight(float scale = 1.0F) const;
 
 		/**
 		 * Get the font's ascent (distance from baseline to top) scaled by the given factor
 		 * @param scale Scaling factor for the font size (1.0F = original size)
 		 * @return Font ascent at the given scale
 		 */
-		float GetAscent(float scale = 1.0F) const;
+		float getAscent(float scale = 1.0F) const;
 
 		/**
 		 * Glyph quad data for batched text rendering
@@ -115,7 +115,7 @@ namespace ui {
 		 * Get the texture ID of the font atlas (for batching)
 		 * @return OpenGL texture ID
 		 */
-		GLuint GetAtlasTexture() const;
+		GLuint getAtlasTexture() const;
 
 		/**
 		 * Update the internal frame counter for cache LRU tracking
@@ -132,7 +132,7 @@ namespace ui {
 		 * Get the current size of the glyph quad cache (for debugging/profiling)
 		 * @return Number of entries currently cached
 		 */
-		size_t GetGlyphQuadCacheSize() const;
+		size_t getGlyphQuadCacheSize() const;
 
 	  private:
 		/**

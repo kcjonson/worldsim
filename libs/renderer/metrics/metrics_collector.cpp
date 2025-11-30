@@ -29,7 +29,7 @@ namespace Renderer {
 		currentSampleIndex = (currentSampleIndex + 1) % frameTimeSamples.size();
 	}
 
-	Foundation::PerformanceMetrics MetricsCollector::GetCurrentMetrics() const {
+	Foundation::PerformanceMetrics MetricsCollector::getCurrentMetrics() const {
 		Foundation::PerformanceMetrics metrics;
 
 		metrics.timestamp = getCurrentTimestamp();

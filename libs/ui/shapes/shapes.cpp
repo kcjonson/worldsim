@@ -13,31 +13,31 @@ namespace UI {
 
 	void Rectangle::render() {
 		Renderer::Primitives::drawRect(
-			{.bounds = {position.x, position.y, size.x, size.y}, .style = style, .id = id, .zIndex = RenderContext::GetZIndex()}
+			{.bounds = {position.x, position.y, size.x, size.y}, .style = style, .id = id, .zIndex = RenderContext::getZIndex()}
 		);
 	}
 
 	void Circle::render() {
 		Renderer::Primitives::drawCircle(
-			{.center = center, .radius = radius, .style = style, .id = id, .zIndex = RenderContext::GetZIndex()}
+			{.center = center, .radius = radius, .style = style, .id = id, .zIndex = RenderContext::getZIndex()}
 		);
 	}
 
 	void Line::render() {
 		Renderer::Primitives::drawLine(
-			{.start = start, .end = end, .style = style, .id = id, .zIndex = RenderContext::GetZIndex()}
+			{.start = start, .end = end, .style = style, .id = id, .zIndex = RenderContext::getZIndex()}
 		);
 	}
 
 	void Text::render() {
 		// Get batch renderer for unified shape + text rendering
-		Renderer::BatchRenderer* batchRenderer = Renderer::Primitives::GetBatchRenderer();
+		Renderer::BatchRenderer* batchRenderer = Renderer::Primitives::getBatchRenderer();
 		if (batchRenderer == nullptr || text.empty()) {
 			return; // No batch renderer available or nothing to render
 		}
 
 		// Get font renderer for glyph generation and alignment calculations
-		ui::FontRenderer* fontRenderer = Renderer::Primitives::GetFontRenderer();
+		ui::FontRenderer* fontRenderer = Renderer::Primitives::getFontRenderer();
 		if (fontRenderer == nullptr) {
 			return; // No font renderer available for measurements
 		}
@@ -47,7 +47,7 @@ namespace UI {
 
 		// Measure text dimensions for alignment
 		glm::vec2 textSize = fontRenderer->MeasureText(text, scale);
-		float ascent = fontRenderer->GetAscent(scale);
+		float ascent = fontRenderer->getAscent(scale);
 
 		// Calculate aligned position
 		Foundation::Vec2 alignedPos = position;

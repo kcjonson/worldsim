@@ -27,19 +27,19 @@ namespace renderer {
 		static constexpr uint32_t kInvalidHandle = 0xFFFFFFFF;
 
 		// Check if handle is valid
-		bool IsValid() const { return value != kInvalidHandle; }
+		bool isValid() const { return value != kInvalidHandle; }
 
 		// Extract index (lower 16 bits)
-		uint16_t GetIndex() const { return value & 0xFFFF; }
+		uint16_t getIndex() const { return value & 0xFFFF; }
 
 		// Extract generation (upper 16 bits)
-		uint16_t GetGeneration() const { return value >> 16; }
+		uint16_t getGeneration() const { return value >> 16; }
 
 		// Create handle from index and generation
-		static ResourceHandle Make(uint16_t index, uint16_t generation) { return {(static_cast<uint32_t>(generation) << 16) | index}; }
+		static ResourceHandle make(uint16_t index, uint16_t generation) { return {(static_cast<uint32_t>(generation) << 16) | index}; }
 
 		// Create invalid handle
-		static ResourceHandle Invalid() { return {kInvalidHandle}; }
+		static ResourceHandle invalid() { return {kInvalidHandle}; }
 
 		// Comparison operators
 		bool operator==(ResourceHandle other) const { return value == other.value; }

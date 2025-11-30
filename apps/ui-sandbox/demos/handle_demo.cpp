@@ -74,13 +74,13 @@ namespace demo {
 
 		LOG_INFO(UI, "Allocated 3 handles");
 		LOG_INFO(
-			UI, "  Handle 1: index=%d, gen=%d, valid=%s", handle1.GetIndex(), handle1.GetGeneration(), handle1.IsValid() ? "true" : "false"
+			UI, "  Handle 1: index=%d, gen=%d, valid=%s", handle1.getIndex(), handle1.getGeneration(), handle1.IsValid() ? "true" : "false"
 		);
 		LOG_INFO(
-			UI, "  Handle 2: index=%d, gen=%d, valid=%s", handle2.GetIndex(), handle2.GetGeneration(), handle2.IsValid() ? "true" : "false"
+			UI, "  Handle 2: index=%d, gen=%d, valid=%s", handle2.getIndex(), handle2.getGeneration(), handle2.IsValid() ? "true" : "false"
 		);
 		LOG_INFO(
-			UI, "  Handle 3: index=%d, gen=%d, valid=%s", handle3.GetIndex(), handle3.GetGeneration(), handle3.IsValid() ? "true" : "false"
+			UI, "  Handle 3: index=%d, gen=%d, valid=%s", handle3.getIndex(), handle3.getGeneration(), handle3.IsValid() ? "true" : "false"
 		);
 
 		// Set resource data
@@ -110,11 +110,11 @@ namespace demo {
 
 		// Verify count
 		LOG_INFO(UI, "");
-		LOG_INFO(UI, "Total count: %zu (should be 3)", manager.GetCount());
-		LOG_INFO(UI, "Active count: %zu (should be 3)", manager.GetActiveCount());
+		LOG_INFO(UI, "Total count: %zu (should be 3)", manager.getCount());
+		LOG_INFO(UI, "Active count: %zu (should be 3)", manager.getActiveCount());
 
-		assert(manager.GetCount() == 3 && "Wrong total count");
-		assert(manager.GetActiveCount() == 3 && "Wrong active count");
+		assert(manager.getCount() == 3 && "Wrong total count");
+		assert(manager.getActiveCount() == 3 && "Wrong active count");
 
 		LOG_INFO(UI, "Basic allocation test passed!");
 	}
@@ -135,7 +135,7 @@ namespace demo {
 		}
 
 		LOG_INFO(UI, "Allocated 5 resources (indices 0-4)");
-		LOG_INFO(UI, "Active count: %zu", manager.GetActiveCount());
+		LOG_INFO(UI, "Active count: %zu", manager.getActiveCount());
 
 		// Free handles 1, 2, 3 (indices 1, 2, 3)
 		manager.free(handles.at(1));
@@ -144,9 +144,9 @@ namespace demo {
 
 		LOG_INFO(UI, "");
 		LOG_INFO(UI, "Freed handles at indices 1, 2, 3");
-		LOG_INFO(UI, "Active count: %zu (should be 2)", manager.GetActiveCount());
+		LOG_INFO(UI, "Active count: %zu (should be 2)", manager.getActiveCount());
 
-		assert(manager.GetActiveCount() == 2 && "Wrong active count after free");
+		assert(manager.getActiveCount() == 2 && "Wrong active count after free");
 
 		// Allocate 2 new handles - should reuse indices 3 and 2 (LIFO from free list)
 		ResourceHandle newHandle1 = manager.Allocate();
@@ -154,18 +154,18 @@ namespace demo {
 
 		LOG_INFO(UI, "");
 		LOG_INFO(UI, "Allocated 2 new handles:");
-		LOG_INFO(UI, "  New handle 1: index=%d, gen=%d (should reuse index 3, gen 1)", newHandle1.GetIndex(), newHandle1.GetGeneration());
-		LOG_INFO(UI, "  New handle 2: index=%d, gen=%d (should reuse index 2, gen 1)", newHandle2.GetIndex(), newHandle2.GetGeneration());
+		LOG_INFO(UI, "  New handle 1: index=%d, gen=%d (should reuse index 3, gen 1)", newHandle1.getIndex(), newHandle1.getGeneration());
+		LOG_INFO(UI, "  New handle 2: index=%d, gen=%d (should reuse index 2, gen 1)", newHandle2.getIndex(), newHandle2.getGeneration());
 
 		// Verify indices were reused and generation incremented
-		assert((newHandle1.GetIndex() == 3 || newHandle1.GetIndex() == 2) && "Index not reused");
-		assert((newHandle2.GetIndex() == 3 || newHandle2.GetIndex() == 2) && "Index not reused");
-		assert(newHandle1.GetGeneration() == 1 && "Generation not incremented");
-		assert(newHandle2.GetGeneration() == 1 && "Generation not incremented");
+		assert((newHandle1.getIndex() == 3 || newHandle1.getIndex() == 2) && "Index not reused");
+		assert((newHandle2.getIndex() == 3 || newHandle2.getIndex() == 2) && "Index not reused");
+		assert(newHandle1.getGeneration() == 1 && "Generation not incremented");
+		assert(newHandle2.getGeneration() == 1 && "Generation not incremented");
 
 		LOG_INFO(UI, "");
-		LOG_INFO(UI, "Active count: %zu (should be 4)", manager.GetActiveCount());
-		assert(manager.GetActiveCount() == 4 && "Wrong active count after realloc");
+		LOG_INFO(UI, "Active count: %zu (should be 4)", manager.getActiveCount());
+		assert(manager.getActiveCount() == 4 && "Wrong active count after realloc");
 
 		LOG_INFO(UI, "Free list reuse test passed!");
 	}
@@ -183,7 +183,7 @@ namespace demo {
 		assert(res && "Failed to get resource"); // NOLINT(readability-implicit-bool-conversion)
 		res->id = 42;
 
-		LOG_INFO(UI, "Allocated handle: index=%d, gen=%d", handle.GetIndex(), handle.GetGeneration());
+		LOG_INFO(UI, "Allocated handle: index=%d, gen=%d", handle.getIndex(), handle.getGeneration());
 		LOG_INFO(UI, "Resource id: %d", res->id);
 
 		// Free the resource
@@ -199,11 +199,11 @@ namespace demo {
 		// Allocate new resource in same slot
 		ResourceHandle newHandle = manager.Allocate();
 		LOG_INFO(UI, "");
-		LOG_INFO(UI, "Allocated new handle in same slot: index=%d, gen=%d", newHandle.GetIndex(), newHandle.GetGeneration());
+		LOG_INFO(UI, "Allocated new handle in same slot: index=%d, gen=%d", newHandle.getIndex(), newHandle.getGeneration());
 
 		// Verify new handle has incremented generation
-		assert(newHandle.GetIndex() == handle.GetIndex() && "Different index");
-		assert(newHandle.GetGeneration() == handle.GetGeneration() + 1 && "Generation not incremented");
+		assert(newHandle.getIndex() == handle.getIndex() && "Different index");
+		assert(newHandle.getGeneration() == handle.getGeneration() + 1 && "Generation not incremented");
 
 		// Old handle should still be invalid
 		staleRes = manager.Get(handle);
@@ -227,7 +227,7 @@ namespace demo {
 		ResourceManager<TestResource> manager;
 
 		// Test invalid handle
-		ResourceHandle invalidHandle = ResourceHandle::Invalid();
+		ResourceHandle invalidHandle = ResourceHandle::invalid();
 		LOG_INFO(UI, "Invalid handle: value=0x%08x, valid=%s", invalidHandle.value, invalidHandle.IsValid() ? "true" : "false");
 		assert(!invalidHandle.IsValid() && "Invalid handle should not be valid"); // NOLINT(readability-implicit-bool-conversion)
 
@@ -236,7 +236,7 @@ namespace demo {
 		assert(res == nullptr && "Invalid handle should return null"); // NOLINT(readability-implicit-bool-conversion)
 
 		// Test out-of-range handle
-		ResourceHandle outOfRange = ResourceHandle::Make(9999, 0);
+		ResourceHandle outOfRange = ResourceHandle::make(9999, 0);
 		res = manager.Get(outOfRange);
 		LOG_INFO(UI, "Get with out-of-range index (9999): %s", res ? "FAIL - got resource!" : "PASS - returned null");
 		assert(res == nullptr && "Out-of-range handle should return null"); // NOLINT(readability-implicit-bool-conversion)
@@ -277,13 +277,13 @@ namespace demo {
 		for (int i = 0; i < kTestCount; i++) {
 			ResourceHandle handle = manager.Allocate();
 			assert(handle.IsValid() && "Handle should be valid"); // NOLINT(readability-implicit-bool-conversion)
-			assert(handle.GetIndex() == i && "Index should match allocation order");
+			assert(handle.getIndex() == i && "Index should match allocation order");
 			handles.push_back(handle);
 		}
 
 		LOG_INFO(UI, "Successfully allocated %d resources", kTestCount);
-		LOG_INFO(UI, "Total count: %zu", manager.GetCount());
-		LOG_INFO(UI, "Active count: %zu", manager.GetActiveCount());
+		LOG_INFO(UI, "Total count: %zu", manager.getCount());
+		LOG_INFO(UI, "Active count: %zu", manager.getActiveCount());
 
 		// Verify all handles are still valid and accessible
 		for (int i = 0; i < kTestCount; i++) {
@@ -295,8 +295,8 @@ namespace demo {
 		LOG_INFO(UI, "All %d resources accessible and writable", kTestCount);
 
 		// Verify indices are correct
-		assert(handles[0].GetIndex() == 0 && "First index should be 0");
-		assert(handles[kTestCount - 1].GetIndex() == kTestCount - 1 && "Last index should be count-1");
+		assert(handles[0].getIndex() == 0 && "First index should be 0");
+		assert(handles[kTestCount - 1].getIndex() == kTestCount - 1 && "Last index should be count-1");
 
 		LOG_INFO(UI, "Index range: 0 to %d (correct)", kTestCount - 1);
 		LOG_INFO(UI, "");

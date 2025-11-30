@@ -22,7 +22,7 @@ namespace Renderer {
 		return buffer.str();
 	}
 
-	GLuint ShaderLoader::CompileShader(GLenum shaderType, const char* source, const char* filepath) {
+	GLuint ShaderLoader::compileShader(GLenum shaderType, const char* source, const char* filepath) {
 		GLuint shader = glCreateShader(shaderType);
 		glShaderSource(shader, 1, &source, nullptr);
 		glCompileShader(shader);
@@ -49,7 +49,7 @@ namespace Renderer {
 		return shader;
 	}
 
-	GLuint ShaderLoader::LinkProgram(GLuint vertexShader, GLuint fragmentShader) {
+	GLuint ShaderLoader::linkProgram(GLuint vertexShader, GLuint fragmentShader) {
 		GLuint program = glCreateProgram();
 		glAttachShader(program, vertexShader);
 		glAttachShader(program, fragmentShader);
@@ -75,7 +75,7 @@ namespace Renderer {
 		return program;
 	}
 
-	GLuint ShaderLoader::LoadShaderProgram(const char* vertexPath, const char* fragmentPath) {
+	GLuint ShaderLoader::loadShaderProgram(const char* vertexPath, const char* fragmentPath) {
 		// Load shader source files
 		std::string vertexSource = LoadShaderSource(vertexPath);
 		std::string fragmentSource = LoadShaderSource(fragmentPath);
@@ -86,19 +86,19 @@ namespace Renderer {
 		}
 
 		// Compile shaders
-		GLuint vertexShader = CompileShader(GL_VERTEX_SHADER, vertexSource.c_str(), vertexPath);
+		GLuint vertexShader = compileShader(GL_VERTEX_SHADER, vertexSource.c_str(), vertexPath);
 		if (vertexShader == 0) {
 			return 0;
 		}
 
-		GLuint fragmentShader = CompileShader(GL_FRAGMENT_SHADER, fragmentSource.c_str(), fragmentPath);
+		GLuint fragmentShader = compileShader(GL_FRAGMENT_SHADER, fragmentSource.c_str(), fragmentPath);
 		if (fragmentShader == 0) {
 			glDeleteShader(vertexShader);
 			return 0;
 		}
 
 		// Link program
-		GLuint program = LinkProgram(vertexShader, fragmentShader);
+		GLuint program = linkProgram(vertexShader, fragmentShader);
 
 		// Clean up shaders (no longer needed after linking)
 		glDeleteShader(vertexShader);

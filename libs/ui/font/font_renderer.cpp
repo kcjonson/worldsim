@@ -322,11 +322,11 @@ namespace ui {
 		}
 	}
 
-	float FontRenderer::GetMaxGlyphHeight(float scale) const {
+	float FontRenderer::getMaxGlyphHeight(float scale) const {
 		return maxGlyphHeightUnscaled * scale;
 	}
 
-	float FontRenderer::GetAscent(float scale) const {
+	float FontRenderer::getAscent(float scale) const {
 		return scaledAscender * scale;
 	}
 
@@ -627,7 +627,7 @@ namespace ui {
 		}
 	}
 
-	GLuint FontRenderer::GetAtlasTexture() const {
+	GLuint FontRenderer::getAtlasTexture() const {
 		if (usingSDF) {
 			return atlasTexture;
 		} else {
@@ -644,7 +644,7 @@ namespace ui {
 		LOG_DEBUG(UI, "Cleared glyph quad cache");
 	}
 
-	size_t FontRenderer::GetGlyphQuadCacheSize() const {
+	size_t FontRenderer::getGlyphQuadCacheSize() const {
 		return glyphQuadCache.size();
 	}
 

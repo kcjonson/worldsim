@@ -19,14 +19,14 @@ namespace Renderer {
 
 		// Compile and link a shader program from file paths
 		// Returns 0 on error (check stderr for error messages)
-		static GLuint LoadShaderProgram(const char* vertexPath, const char* fragmentPath);
+		static GLuint loadShaderProgram(const char* vertexPath, const char* fragmentPath);
 
 	  private:
 		// Compile a single shader from source code
-		static GLuint CompileShader(GLenum shaderType, const char* source, const char* filepath);
+		static GLuint compileShader(GLenum shaderType, const char* source, const char* filepath);
 
 		// Link shader program from compiled shaders
-		static GLuint LinkProgram(GLuint vertexShader, GLuint fragmentShader);
+		static GLuint linkProgram(GLuint vertexShader, GLuint fragmentShader);
 	};
 
 } // namespace Renderer

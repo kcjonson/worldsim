@@ -10,7 +10,7 @@ namespace UI {
 	class RenderContext {
 	  public:
 		// Get the current rendering z-index
-		static short GetZIndex() { return s_currentZIndex; }
+		static short getZIndex() { return s_currentZIndex; }
 
 		// Set the current rendering z-index (used by Component)
 		static void setZIndex(short zIndex) { s_currentZIndex = zIndex; }

@@ -9,7 +9,7 @@ using namespace renderer;
 // ============================================================================
 
 TEST(ResourceHandleTests, CreateValidHandle) {
-	ResourceHandle handle = ResourceHandle::Make(42, 5);
+	ResourceHandle handle = ResourceHandle::make(42, 5);
 
 	EXPECT_TRUE(handle.isValid());
 	EXPECT_EQ(handle.getIndex(), 42);
@@ -17,17 +17,17 @@ TEST(ResourceHandleTests, CreateValidHandle) {
 }
 
 TEST(ResourceHandleTests, CreateInvalidHandle) {
-	ResourceHandle handle = ResourceHandle::Invalid();
+	ResourceHandle handle = ResourceHandle::invalid();
 
 	EXPECT_FALSE(handle.isValid());
 	EXPECT_EQ(handle.value, ResourceHandle::kInvalidHandle);
 }
 
 TEST(ResourceHandleTests, HandleEquality) {
-	ResourceHandle handle1 = ResourceHandle::Make(10, 3);
-	ResourceHandle handle2 = ResourceHandle::Make(10, 3);
-	ResourceHandle handle3 = ResourceHandle::Make(10, 4); // Different generation
-	ResourceHandle handle4 = ResourceHandle::Make(11, 3); // Different index
+	ResourceHandle handle1 = ResourceHandle::make(10, 3);
+	ResourceHandle handle2 = ResourceHandle::make(10, 3);
+	ResourceHandle handle3 = ResourceHandle::make(10, 4); // Different generation
+	ResourceHandle handle4 = ResourceHandle::make(11, 3); // Different index
 
 	EXPECT_EQ(handle1, handle2);
 	EXPECT_NE(handle1, handle3);
@@ -36,9 +36,9 @@ TEST(ResourceHandleTests, HandleEquality) {
 }
 
 TEST(ResourceHandleTests, InvalidHandleEquality) {
-	ResourceHandle invalid1 = ResourceHandle::Invalid();
-	ResourceHandle invalid2 = ResourceHandle::Invalid();
-	ResourceHandle valid = ResourceHandle::Make(0, 0);
+	ResourceHandle invalid1 = ResourceHandle::invalid();
+	ResourceHandle invalid2 = ResourceHandle::invalid();
+	ResourceHandle valid = ResourceHandle::make(0, 0);
 
 	EXPECT_EQ(invalid1, invalid2);
 	EXPECT_NE(invalid1, valid);
@@ -46,28 +46,28 @@ TEST(ResourceHandleTests, InvalidHandleEquality) {
 
 TEST(ResourceHandleTests, ExtractIndexAndGeneration) {
 	// Test various combinations
-	ResourceHandle h1 = ResourceHandle::Make(0, 0);
+	ResourceHandle h1 = ResourceHandle::make(0, 0);
 	EXPECT_EQ(h1.getIndex(), 0);
 	EXPECT_EQ(h1.getGeneration(), 0);
 
-	ResourceHandle h2 = ResourceHandle::Make(65535, 0); // Max index
+	ResourceHandle h2 = ResourceHandle::make(65535, 0); // Max index
 	EXPECT_EQ(h2.getIndex(), 65535);
 	EXPECT_EQ(h2.getGeneration(), 0);
 
-	ResourceHandle h3 = ResourceHandle::Make(0, 65535); // Max generation
+	ResourceHandle h3 = ResourceHandle::make(0, 65535); // Max generation
 	EXPECT_EQ(h3.getIndex(), 0);
 	EXPECT_EQ(h3.getGeneration(), 65535);
 
-	ResourceHandle h4 = ResourceHandle::Make(65535, 65535); // Both max
+	ResourceHandle h4 = ResourceHandle::make(65535, 65535); // Both max
 	EXPECT_EQ(h4.getIndex(), 65535);
 	EXPECT_EQ(h4.getGeneration(), 65535);
 }
 
 TEST(ResourceHandleTests, TypeAliases) {
 	// Verify type aliases compile and behave correctly
-	TextureHandle  texHandle = ResourceHandle::Make(1, 0);
-	MeshHandle	   meshHandle = ResourceHandle::Make(2, 0);
-	SVGAssetHandle svgHandle = ResourceHandle::Make(3, 0);
+	TextureHandle  texHandle = ResourceHandle::make(1, 0);
+	MeshHandle	   meshHandle = ResourceHandle::make(2, 0);
+	SVGAssetHandle svgHandle = ResourceHandle::make(3, 0);
 
 	EXPECT_TRUE(texHandle.isValid());
 	EXPECT_TRUE(meshHandle.isValid());
@@ -137,7 +137,7 @@ TEST(ResourceManagerTests, GetResource) {
 TEST(ResourceManagerTests, GetInvalidHandle) {
 	ResourceManager<TestResource> manager;
 
-	ResourceHandle invalid = ResourceHandle::Invalid();
+	ResourceHandle invalid = ResourceHandle::invalid();
 	TestResource*  resource = manager.Get(invalid);
 
 	EXPECT_EQ(resource, nullptr);
@@ -147,7 +147,7 @@ TEST(ResourceManagerTests, GetOutOfBoundsHandle) {
 	ResourceManager<TestResource> manager;
 
 	// Create handle with index beyond allocated resources
-	ResourceHandle oob = ResourceHandle::Make(100, 0);
+	ResourceHandle oob = ResourceHandle::make(100, 0);
 	TestResource*  resource = manager.Get(oob);
 
 	EXPECT_EQ(resource, nullptr);
@@ -193,7 +193,7 @@ TEST(ResourceManagerTests, ReuseFreedSlots) {
 	ResourceHandle h2 = manager.Allocate();
 	ResourceHandle h3 = manager.Allocate();
 
-	EXPECT_EQ(manager.GetCount(), 3);
+	EXPECT_EQ(manager.getCount(), 3);
 
 	// Free middle slot
 	manager.Free(h2);
@@ -204,13 +204,13 @@ TEST(ResourceManagerTests, ReuseFreedSlots) {
 	EXPECT_EQ(h4.getGeneration(), 1);		 // Generation incremented
 
 	// Total count should still be 3 (reused slot)
-	EXPECT_EQ(manager.GetCount(), 3);
+	EXPECT_EQ(manager.getCount(), 3);
 }
 
 TEST(ResourceManagerTests, FreeInvalidHandle) {
 	ResourceManager<TestResource> manager;
 
-	ResourceHandle invalid = ResourceHandle::Invalid();
+	ResourceHandle invalid = ResourceHandle::invalid();
 
 	// Should not crash
 	manager.Free(invalid);
@@ -231,34 +231,34 @@ TEST(ResourceManagerTests, DoubleFree) {
 TEST(ResourceManagerTests, GetCount) {
 	ResourceManager<TestResource> manager;
 
-	EXPECT_EQ(manager.GetCount(), 0);
+	EXPECT_EQ(manager.getCount(), 0);
 
 	ResourceHandle h1 = manager.Allocate();
-	EXPECT_EQ(manager.GetCount(), 1);
+	EXPECT_EQ(manager.getCount(), 1);
 
 	ResourceHandle h2 = manager.Allocate();
-	EXPECT_EQ(manager.GetCount(), 2);
+	EXPECT_EQ(manager.getCount(), 2);
 
 	manager.Free(h1);
-	EXPECT_EQ(manager.GetCount(), 2); // Count doesn't decrease on free
+	EXPECT_EQ(manager.getCount(), 2); // Count doesn't decrease on free
 }
 
 TEST(ResourceManagerTests, GetActiveCount) {
 	ResourceManager<TestResource> manager;
 
-	EXPECT_EQ(manager.GetActiveCount(), 0);
+	EXPECT_EQ(manager.getActiveCount(), 0);
 
 	ResourceHandle h1 = manager.Allocate();
 	ResourceHandle h2 = manager.Allocate();
 	ResourceHandle h3 = manager.Allocate();
 
-	EXPECT_EQ(manager.GetActiveCount(), 3);
+	EXPECT_EQ(manager.getActiveCount(), 3);
 
 	manager.Free(h2);
-	EXPECT_EQ(manager.GetActiveCount(), 2); // Active count decreases
+	EXPECT_EQ(manager.getActiveCount(), 2); // Active count decreases
 
 	manager.Free(h1);
-	EXPECT_EQ(manager.GetActiveCount(), 1);
+	EXPECT_EQ(manager.getActiveCount(), 1);
 }
 
 TEST(ResourceManagerTests, Clear) {
@@ -268,12 +268,12 @@ TEST(ResourceManagerTests, Clear) {
 	ResourceHandle h2 = manager.Allocate();
 	ResourceHandle h3 = manager.Allocate();
 
-	EXPECT_EQ(manager.GetCount(), 3);
+	EXPECT_EQ(manager.getCount(), 3);
 
 	manager.clear();
 
-	EXPECT_EQ(manager.GetCount(), 0);
-	EXPECT_EQ(manager.GetActiveCount(), 0);
+	EXPECT_EQ(manager.getCount(), 0);
+	EXPECT_EQ(manager.getActiveCount(), 0);
 
 	// Old handles should be invalid
 	EXPECT_EQ(manager.Get(h1), nullptr);
@@ -356,8 +356,8 @@ TEST(ResourceManagerTests, LargeAllocation) {
 		EXPECT_EQ(resource->value, i);
 	}
 
-	EXPECT_EQ(manager.GetCount(), 1000);
-	EXPECT_EQ(manager.GetActiveCount(), 1000);
+	EXPECT_EQ(manager.getCount(), 1000);
+	EXPECT_EQ(manager.getActiveCount(), 1000);
 }
 
 TEST(ResourceManagerTests, InterleavedAllocateFree) {

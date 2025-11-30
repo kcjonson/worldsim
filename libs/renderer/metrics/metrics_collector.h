@@ -18,7 +18,7 @@ namespace Renderer { // NOLINT(readability-identifier-naming)
 		void endFrame();
 
 		// Get current metrics snapshot
-		Foundation::PerformanceMetrics GetCurrentMetrics() const;
+		Foundation::PerformanceMetrics getCurrentMetrics() const;
 
 		// Set rendering stats (called by renderer)
 		void setRenderStats(uint32_t drawCalls, uint32_t vertexCount, uint32_t triangleCount);

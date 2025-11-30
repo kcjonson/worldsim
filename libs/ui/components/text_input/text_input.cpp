@@ -599,7 +599,7 @@ namespace UI {
 			.border = Foundation::BorderStyle{.color = borderColor, .width = style.borderWidth, .cornerRadius = style.cornerRadius}
 		};
 
-		short zIndex = RenderContext::GetZIndex();
+		short zIndex = RenderContext::getZIndex();
 		Renderer::Primitives::drawRect(
 			{.bounds = {position.x, position.y, size.x, size.y}, .style = rectStyle, .id = id, .zIndex = zIndex}
 		);
@@ -611,13 +611,13 @@ namespace UI {
 		}
 
 		// Get unified batch renderer
-		Renderer::BatchRenderer* batchRenderer = Renderer::Primitives::GetBatchRenderer();
+		Renderer::BatchRenderer* batchRenderer = Renderer::Primitives::getBatchRenderer();
 		if (batchRenderer == nullptr) {
 			return;
 		}
 
 		// Get font renderer for metrics and glyph generation
-		ui::FontRenderer* fontRenderer = Renderer::Primitives::GetFontRenderer();
+		ui::FontRenderer* fontRenderer = Renderer::Primitives::getFontRenderer();
 		if (fontRenderer == nullptr) {
 			return;
 		}
@@ -630,7 +630,7 @@ namespace UI {
 
 		// Calculate baseline Y position for vertically centered text
 		// This matches Text component's bounding box Middle alignment behavior
-		float ascent = fontRenderer->GetAscent(scale);
+		float ascent = fontRenderer->getAscent(scale);
 		float baselineY = position.y + (size.y - ascent) * 0.5F;
 
 		// Generate glyph quads using FontRenderer
@@ -675,7 +675,7 @@ namespace UI {
 		float cursorStartY = centerY - (textHeight * 0.5F);
 		float cursorEndY = centerY + (textHeight * 0.5F);
 
-		short zIndex = RenderContext::GetZIndex();
+		short zIndex = RenderContext::getZIndex();
 		Renderer::Primitives::drawLine(
 			{.start = {cursorX, cursorStartY},
 			 .end = {cursorX, cursorEndY},
@@ -694,7 +694,7 @@ namespace UI {
 		size_t end = selection->getMax();
 
 		// Get FontRenderer for text measurement
-		ui::FontRenderer* fontRenderer = Renderer::Primitives::GetFontRenderer();
+		ui::FontRenderer* fontRenderer = Renderer::Primitives::getFontRenderer();
 		if (fontRenderer == nullptr) {
 			return;
 		}
@@ -720,7 +720,7 @@ namespace UI {
 		// Draw selection background
 		Foundation::RectStyle selectionStyle{.fill = style.selectionColor, .border = std::nullopt};
 
-		short zIndex = RenderContext::GetZIndex();
+		short zIndex = RenderContext::getZIndex();
 		Renderer::Primitives::drawRect({
 			.bounds = {selectionX, selectionY, selectionWidth, selectionHeight},
 			.style = selectionStyle,
@@ -735,13 +735,13 @@ namespace UI {
 		}
 
 		// Get unified batch renderer
-		Renderer::BatchRenderer* batchRenderer = Renderer::Primitives::GetBatchRenderer();
+		Renderer::BatchRenderer* batchRenderer = Renderer::Primitives::getBatchRenderer();
 		if (batchRenderer == nullptr) {
 			return;
 		}
 
 		// Get font renderer for metrics and glyph generation
-		ui::FontRenderer* fontRenderer = Renderer::Primitives::GetFontRenderer();
+		ui::FontRenderer* fontRenderer = Renderer::Primitives::getFontRenderer();
 		if (fontRenderer == nullptr) {
 			return;
 		}
@@ -754,7 +754,7 @@ namespace UI {
 
 		// Calculate baseline Y position for vertically centered text
 		// This matches Text component's bounding box Middle alignment behavior
-		float ascent = fontRenderer->GetAscent(scale);
+		float ascent = fontRenderer->getAscent(scale);
 		float baselineY = position.y + (size.y - ascent) * 0.5F;
 
 		// Generate glyph quads using FontRenderer
@@ -787,7 +787,7 @@ namespace UI {
 		// Convert fontSize to scale (kBaseFontSize = 1.0 scale)
 		float scale = style.fontSize / kBaseFontSize;
 
-		ui::FontRenderer* fontRenderer = Renderer::Primitives::GetFontRenderer();
+		ui::FontRenderer* fontRenderer = Renderer::Primitives::getFontRenderer();
 		float			  width = fontRenderer ? fontRenderer->MeasureText(textBeforeCursor, scale).x : 0.0F;
 
 		// Account for padding and scroll
@@ -805,7 +805,7 @@ namespace UI {
 		float scale = style.fontSize / kBaseFontSize;
 
 		// Check each character boundary
-		ui::FontRenderer* fontRenderer = Renderer::Primitives::GetFontRenderer();
+		ui::FontRenderer* fontRenderer = Renderer::Primitives::getFontRenderer();
 		for (size_t i = 0; i <= text.size();) {
 			std::string textUpToPos = text.substr(0, i);
 			float		width = fontRenderer ? fontRenderer->MeasureText(textUpToPos, scale).x : 0.0F;
@@ -845,7 +845,7 @@ namespace UI {
 		// Convert fontSize to scale (kBaseFontSize = 1.0 scale)
 		float scale = style.fontSize / kBaseFontSize;
 
-		ui::FontRenderer* fontRenderer = Renderer::Primitives::GetFontRenderer();
+		ui::FontRenderer* fontRenderer = Renderer::Primitives::getFontRenderer();
 		float			  textWidth = fontRenderer ? fontRenderer->MeasureText(text, scale).x : 0.0F;
 		if (textWidth < visibleWidth) {
 			horizontalScroll = 0.0F; // No scroll needed

@@ -257,7 +257,7 @@ int main(int argc, char* argv[]) {
 
 		// Configure the unified BatchRenderer with the font atlas for text rendering
 		// The uber shader handles both SDF shapes and MSDF text in a single draw call
-		Renderer::Primitives::setFontAtlas(g_fontRenderer->GetAtlasTexture(), 4.0F);
+		Renderer::Primitives::setFontAtlas(g_fontRenderer->getAtlasTexture(), 4.0F);
 
 		// Register frame update callback for LRU cache tracking
 		Renderer::Primitives::setFrameUpdateCallback([]() {
@@ -392,7 +392,7 @@ int main(int argc, char* argv[]) {
 
 		// Update debug server with latest metrics
 		if (httpPort > 0) {
-			debugServer.updateMetrics(metrics.GetCurrentMetrics());
+			debugServer.updateMetrics(metrics.getCurrentMetrics());
 
 			// Check if screenshot was requested and capture if so
 			// This must happen BEFORE glfwSwapBuffers() to capture the current frame

@@ -55,7 +55,7 @@ namespace renderer {
 		VertexType ClassifyVertex(size_t vertexIndex) const; // NOLINT(readability-convert-member-functions-to-static)
 
 		// Helper: Compare vertices by Y coordinate (primary), then X (secondary)
-		static bool CompareVertices(const Foundation::Vec2& a, const Foundation::Vec2& b);
+		static bool compareVertices(const Foundation::Vec2& a, const Foundation::Vec2& b);
 
 		// Working data (cleared between tessellations)
 		std::vector<Event>	events;

@@ -65,7 +65,7 @@ namespace Renderer {
 		// to access font rendering capabilities.
 		//
 		// Returns: Pointer to FontRenderer, or nullptr if not set
-		ui::FontRenderer* GetFontRenderer();
+		ui::FontRenderer* getFontRenderer();
 
 		// Set the font atlas texture for text rendering.
 		//
@@ -84,7 +84,7 @@ namespace Renderer {
 		// text rendering with proper z-ordering alongside shapes.
 		//
 		// Returns: Pointer to BatchRenderer, or nullptr if not initialized
-		BatchRenderer* GetBatchRenderer();
+		BatchRenderer* getBatchRenderer();
 
 		// Set a callback to update frame counter for FontRenderer cache LRU tracking.
 		//
@@ -109,10 +109,10 @@ namespace Renderer {
 		// --- Coordinate System Helpers ---
 
 		// Get screen-space projection matrix (requires SetCoordinateSystem)
-		Foundation::Mat4 GetScreenSpaceProjection();
+		Foundation::Mat4 getScreenSpaceProjection();
 
 		// Get world-space projection matrix (requires SetCoordinateSystem)
-		Foundation::Mat4 GetWorldSpaceProjection();
+		Foundation::Mat4 getWorldSpaceProjection();
 
 		// Percentage-based layout helpers (requires SetCoordinateSystem)
 		float			 PercentWidth(float percent);
@@ -231,7 +231,7 @@ namespace Renderer {
 
 		// Get current clip bounds as Vec4 (minX, minY, maxX, maxY).
 		// Returns (0,0,0,0) if no clip is active.
-		Foundation::Vec4 GetCurrentClipBounds();
+		Foundation::Vec4 getCurrentClipBounds();
 
 		// Check if any clip region is currently active.
 		bool IsClipActive();

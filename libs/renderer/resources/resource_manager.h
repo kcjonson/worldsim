@@ -44,20 +44,20 @@ namespace renderer {
 				generations.push_back(0);
 			}
 
-			return ResourceHandle::Make(index, generations[index]);
+			return ResourceHandle::make(index, generations[index]);
 		}
 
 		// Free resource slot
 		void free(ResourceHandle handle) {
-			if (!handle.IsValid()) {
+			if (!handle.isValid()) {
 				return;
 			}
 
-			uint16_t index = handle.GetIndex();
+			uint16_t index = handle.getIndex();
 			assert(index < resources.size() && "Invalid handle index");
 
 			// Check generation matches (prevent double-free of stale handles)
-			if (handle.GetGeneration() != generations[index]) {
+			if (handle.getGeneration() != generations[index]) {
 				return; // Stale handle, already freed
 			}
 
@@ -70,17 +70,17 @@ namespace renderer {
 
 		// Get resource (validates handle)
 		T* Get(ResourceHandle handle) {
-			if (!handle.IsValid()) {
+			if (!handle.isValid()) {
 				return nullptr;
 			}
 
-			uint16_t index = handle.GetIndex();
+			uint16_t index = handle.getIndex();
 			if (index >= resources.size()) {
 				return nullptr;
 			}
 
 			// Check generation
-			if (handle.GetGeneration() != generations[index]) {
+			if (handle.getGeneration() != generations[index]) {
 				return nullptr; // Stale handle
 			}
 
@@ -89,17 +89,17 @@ namespace renderer {
 
 		// Get resource (const)
 		const T* Get(ResourceHandle handle) const {
-			if (!handle.IsValid()) {
+			if (!handle.isValid()) {
 				return nullptr;
 			}
 
-			uint16_t index = handle.GetIndex();
+			uint16_t index = handle.getIndex();
 			if (index >= resources.size()) {
 				return nullptr;
 			}
 
 			// Check generation
-			if (handle.GetGeneration() != generations[index]) {
+			if (handle.getGeneration() != generations[index]) {
 				return nullptr; // Stale handle
 			}
 
@@ -107,10 +107,10 @@ namespace renderer {
 		}
 
 		// Get resource count (includes freed slots)
-		size_t GetCount() const { return resources.size(); }
+		size_t getCount() const { return resources.size(); }
 
 		// Get active resource count (excludes freed slots)
-		size_t GetActiveCount() const { return resources.size() - freeIndices.size(); }
+		size_t getActiveCount() const { return resources.size() - freeIndices.size(); }
 
 		// Clear all resources
 		void clear() {

@@ -183,7 +183,7 @@ namespace renderer {
 		return VertexType::Regular;
 	}
 
-	bool Tessellator::CompareVertices(const Foundation::Vec2& a, const Foundation::Vec2& b) {
+	bool Tessellator::compareVertices(const Foundation::Vec2& a, const Foundation::Vec2& b) {
 		// Sort by Y (top to bottom), then X (left to right)
 		if (std::abs(a.y - b.y) < 1e-6F) {
 			return a.x < b.x;

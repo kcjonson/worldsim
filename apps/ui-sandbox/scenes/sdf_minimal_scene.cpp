@@ -23,14 +23,14 @@ namespace {
 			LOG_INFO(UI, "=== SDF Minimal Test Scene (Uber Shader) ===");
 
 			// Get font renderer from Primitives API (initialized in main.cpp)
-			fontRenderer = Renderer::Primitives::GetFontRenderer();
+			fontRenderer = Renderer::Primitives::getFontRenderer();
 			if (fontRenderer == nullptr) {
 				LOG_ERROR(UI, "FontRenderer not available from Primitives API");
 				return;
 			}
 
 			// Get batch renderer from Primitives API
-			batchRenderer = Renderer::Primitives::GetBatchRenderer();
+			batchRenderer = Renderer::Primitives::getBatchRenderer();
 			if (batchRenderer == nullptr) {
 				LOG_ERROR(UI, "BatchRenderer not available from Primitives API");
 				return;
