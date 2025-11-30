@@ -35,7 +35,7 @@ namespace {
 
 			if (success) {
 				LOG_INFO(
-					UI, "Tessellation successful: %zu triangles in %.3F ms", starMesh.GetTriangleCount(), duration.count() / 1000.0F
+					UI, "Tessellation successful: %zu triangles in %.3F ms", starMesh.getTriangleCount(), duration.count() / 1000.0F
 				);
 			} else {
 				LOG_ERROR(UI, "Tessellation failed!");

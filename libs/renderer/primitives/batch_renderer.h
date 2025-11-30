@@ -118,7 +118,7 @@ namespace Renderer { // NOLINT(readability-identifier-naming)
 		void clearClipBounds();
 
 		// Get current clip bounds
-		const Foundation::Vec4& GetClipBounds() const { return currentClipBounds; }
+		const Foundation::Vec4& getClipBounds() const { return currentClipBounds; }
 
 		// Rendering statistics structure
 		struct RenderStats {
@@ -128,12 +128,12 @@ namespace Renderer { // NOLINT(readability-identifier-naming)
 		};
 
 		// Statistics
-		size_t		GetVertexCount() const { return vertices.size(); }
-		size_t		GetDrawCallCount() const { return drawCallCount; }
-		RenderStats GetStats() const;
+		size_t		getVertexCount() const { return vertices.size(); }
+		size_t		getDrawCallCount() const { return drawCallCount; }
+		RenderStats getStats() const;
 
 		// Shader access for batching
-		GLuint GetShaderProgram() const { return shader.GetProgram(); }
+		GLuint getShaderProgram() const { return shader.getProgram(); }
 
 	  private:
 		// Vertex data (CPU-side accumulation)

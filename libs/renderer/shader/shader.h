@@ -59,7 +59,7 @@ namespace Renderer { // NOLINT(readability-identifier-naming)
 		/**
 		 * Get the OpenGL program ID
 		 */
-		GLuint GetProgram() const { return program; }
+		GLuint getProgram() const { return program; }
 
 		/**
 		 * Check if shader program is valid

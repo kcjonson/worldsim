@@ -26,11 +26,11 @@ namespace Renderer {
 		}
 
 		// Get uniform locations
-		projectionLoc = glGetUniformLocation(shader.GetProgram(), "u_projection");
-		transformLoc = glGetUniformLocation(shader.GetProgram(), "u_transform");
-		atlasLoc = glGetUniformLocation(shader.GetProgram(), "u_atlas");
-		viewportHeightLoc = glGetUniformLocation(shader.GetProgram(), "u_viewportHeight");
-		pixelRatioLoc = glGetUniformLocation(shader.GetProgram(), "u_pixelRatio");
+		projectionLoc = glGetUniformLocation(shader.getProgram(), "u_projection");
+		transformLoc = glGetUniformLocation(shader.getProgram(), "u_transform");
+		atlasLoc = glGetUniformLocation(shader.getProgram(), "u_atlas");
+		viewportHeightLoc = glGetUniformLocation(shader.getProgram(), "u_viewportHeight");
+		pixelRatioLoc = glGetUniformLocation(shader.getProgram(), "u_pixelRatio");
 
 		// Create VAO/VBO/IBO
 		glGenVertexArrays(1, &vao);
@@ -362,9 +362,9 @@ namespace Renderer {
 		float pixelRatio = 1.0F;
 		if (coordinateSystem != nullptr) {
 			// Get pixel ratio for DPI scaling
-			pixelRatio = coordinateSystem->GetPixelRatio();
+			pixelRatio = coordinateSystem->getPixelRatio();
 			// Get logical height and convert to framebuffer (physical) height
-			glm::vec2 windowSize = coordinateSystem->GetWindowSize();
+			glm::vec2 windowSize = coordinateSystem->getWindowSize();
 			framebufferHeight = windowSize.y * pixelRatio;
 		}
 		glUniform1f(viewportHeightLoc, framebufferHeight);
@@ -421,7 +421,7 @@ namespace Renderer {
 		coordinateSystem = coordSystem;
 	}
 
-	BatchRenderer::RenderStats BatchRenderer::GetStats() const { // NOLINT(readability-convert-member-functions-to-static)
+	BatchRenderer::RenderStats BatchRenderer::getStats() const { // NOLINT(readability-convert-member-functions-to-static)
 		RenderStats stats;
 		stats.drawCalls = static_cast<uint32_t>(drawCallCount);
 		stats.vertexCount = static_cast<uint32_t>(vertices.size());

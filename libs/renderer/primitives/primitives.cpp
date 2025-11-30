@@ -131,7 +131,7 @@ namespace Renderer::Primitives {
 	// Get batch key for solid color primitives (no texture)
 	static BatchKey GetColorBatchKey(bool hasAlpha = false) {
 		BatchKey key;
-		key.shader = g_batchRenderer ? g_batchRenderer->GetShaderProgram() : 0;
+		key.shader = g_batchRenderer ? g_batchRenderer->getShaderProgram() : 0;
 		key.texture = 0; // No texture for solid colors
 		key.blendMode = hasAlpha ? BatchKey::BlendMode::Alpha : BatchKey::BlendMode::None;
 		return key;
@@ -141,7 +141,7 @@ namespace Renderer::Primitives {
 	static BatchKey GetTextBatchKey(GLuint fontAtlasTexture) {
 		BatchKey key;
 		// TODO: Get text shader program (different from color shader)
-		key.shader = g_batchRenderer ? g_batchRenderer->GetShaderProgram() : 0;
+		key.shader = g_batchRenderer ? g_batchRenderer->getShaderProgram() : 0;
 		key.texture = fontAtlasTexture;
 		key.blendMode = BatchKey::BlendMode::Alpha; // Text always uses alpha blending
 		return key;
@@ -537,7 +537,7 @@ namespace Renderer::Primitives {
 		}
 	}
 
-	Foundation::Rect GetCurrentScissor() {
+	Foundation::Rect getCurrentScissor() {
 		return g_currentScissor;
 	}
 
@@ -559,17 +559,17 @@ namespace Renderer::Primitives {
 		}
 	}
 
-	Foundation::Mat4 GetCurrentTransform() {
+	Foundation::Mat4 getCurrentTransform() {
 		return g_currentTransform;
 	}
 
 	// --- Statistics ---
 
-	RenderStats GetStats() {
+	RenderStats getStats() {
 		RenderStats stats = {};
 
 		if (g_batchRenderer != nullptr) {
-			auto batchStats = g_batchRenderer->GetStats();
+			auto batchStats = g_batchRenderer->getStats();
 			stats.drawCalls = batchStats.drawCalls;
 			stats.vertexCount = batchStats.vertexCount;
 			stats.triangleCount = batchStats.triangleCount;

@@ -61,7 +61,7 @@ TEST_F(CoordinateSystemTest, GetWindowSize) {
 	CoordinateSystem coordSys;
 	coordSys.Initialize(testWindow);
 
-	glm::vec2 size = coordSys.GetWindowSize();
+	glm::vec2 size = coordSys.getWindowSize();
 	EXPECT_EQ(size.x, 800.0F);
 	EXPECT_EQ(size.y, 600.0F);
 }
@@ -69,7 +69,7 @@ TEST_F(CoordinateSystemTest, GetWindowSize) {
 TEST_F(CoordinateSystemTest, GetWindowSizeWithoutInitialization) {
 	CoordinateSystem coordSys;
 	// Should return default fallback values
-	glm::vec2 size = coordSys.GetWindowSize();
+	glm::vec2 size = coordSys.getWindowSize();
 	EXPECT_EQ(size.x, 1920.0F); // Default fallback
 	EXPECT_EQ(size.y, 1080.0F);
 }
@@ -124,7 +124,7 @@ TEST_F(CoordinateSystemTest, GetPixelRatio) {
 	CoordinateSystem coordSys;
 	coordSys.Initialize(testWindow);
 
-	float ratio = coordSys.GetPixelRatio();
+	float ratio = coordSys.getPixelRatio();
 	// Ratio should be positive and reasonable (1.0 for non-retina, 2.0 for retina)
 	EXPECT_GT(ratio, 0.0F);
 	EXPECT_LE(ratio, 4.0F); // Most displays have ratio <= 4.0
@@ -134,8 +134,8 @@ TEST_F(CoordinateSystemTest, PixelRatioCaching) {
 	CoordinateSystem coordSys;
 	coordSys.Initialize(testWindow);
 
-	float ratio1 = coordSys.GetPixelRatio();
-	float ratio2 = coordSys.GetPixelRatio();
+	float ratio1 = coordSys.getPixelRatio();
+	float ratio2 = coordSys.getPixelRatio();
 
 	// Should return same value (cached)
 	EXPECT_FLOAT_EQ(ratio1, ratio2);
@@ -145,13 +145,13 @@ TEST_F(CoordinateSystemTest, PixelRatioInvalidatesOnWindowResize) {
 	CoordinateSystem coordSys;
 	coordSys.Initialize(testWindow);
 
-	float ratio1 = coordSys.GetPixelRatio();
+	float ratio1 = coordSys.getPixelRatio();
 
 	// Simulate window resize
 	coordSys.updateWindowSize(1024, 768);
 
 	// This should have invalidated the cache (though ratio might be the same)
-	float ratio2 = coordSys.GetPixelRatio();
+	float ratio2 = coordSys.getPixelRatio();
 
 	// Both ratios should be valid
 	EXPECT_GT(ratio1, 0.0F);
@@ -166,7 +166,7 @@ TEST_F(CoordinateSystemTest, WindowToFramebufferConversion) {
 	CoordinateSystem coordSys;
 	coordSys.Initialize(testWindow);
 
-	float	  ratio = coordSys.GetPixelRatio();
+	float	  ratio = coordSys.getPixelRatio();
 	glm::vec2 windowCoords(100.0F, 200.0F);
 	glm::vec2 framebufferCoords = coordSys.WindowToFramebuffer(windowCoords);
 
@@ -178,7 +178,7 @@ TEST_F(CoordinateSystemTest, FramebufferToWindowConversion) {
 	CoordinateSystem coordSys;
 	coordSys.Initialize(testWindow);
 
-	float	  ratio = coordSys.GetPixelRatio();
+	float	  ratio = coordSys.getPixelRatio();
 	glm::vec2 framebufferCoords(200.0F, 400.0F);
 	glm::vec2 windowCoords = coordSys.FramebufferToWindow(framebufferCoords);
 
@@ -262,13 +262,13 @@ TEST_F(CoordinateSystemTest, UpdateWindowSizeInvalidatesCache) {
 	coordSys.Initialize(testWindow);
 
 	// Get initial ratio (forces calculation)
-	coordSys.GetPixelRatio();
+	coordSys.getPixelRatio();
 
 	// Update window size should mark cache as dirty
 	coordSys.updateWindowSize(1024, 768);
 
 	// Next call should recalculate (we can't directly test the dirty flag,
 	// but we can verify the function completes without error)
-	float ratio = coordSys.GetPixelRatio();
+	float ratio = coordSys.getPixelRatio();
 	EXPECT_GT(ratio, 0.0F);
 }

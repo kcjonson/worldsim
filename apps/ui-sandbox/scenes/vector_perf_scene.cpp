@@ -246,7 +246,7 @@ namespace {
 												 // NOLINT(readability-convert-member-functions-to-static)
 			size_t total = 0;
 			for (const auto& star : stars) {
-				total += star.mesh.GetTriangleCount();
+				total += star.mesh.getTriangleCount();
 			}
 			return total;
 		}
@@ -255,7 +255,7 @@ namespace {
 												// NOLINT(readability-convert-member-functions-to-static)
 			size_t total = 0;
 			for (const auto& star : stars) {
-				total += star.mesh.GetVertexCount();
+				total += star.mesh.getVertexCount();
 			}
 			return total;
 		}

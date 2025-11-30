@@ -224,7 +224,7 @@ int main(int argc, char* argv[]) {
 	LOG_DEBUG(Renderer, "Framebuffer size (physical pixels): %dx%d", framebufferWidth, framebufferHeight);
 
 	// Log pixel ratio for information
-	float pixelRatio = coordinateSystem.GetPixelRatio();
+	float pixelRatio = coordinateSystem.getPixelRatio();
 	LOG_DEBUG(Renderer, "Pixel ratio: %.2f (framebuffer is %dx window)", pixelRatio, static_cast<int>(pixelRatio));
 
 	// Initialize primitive rendering system
@@ -384,7 +384,7 @@ int main(int argc, char* argv[]) {
 	// Set up post-frame callback (metrics + screenshot)
 	app.setPostFrameCallback([&metrics, &debugServer, httpPort]() {
 		// Get rendering stats
-		auto renderStats = Renderer::Primitives::GetStats();
+		auto renderStats = Renderer::Primitives::getStats();
 		metrics.setRenderStats(renderStats.drawCalls, renderStats.vertexCount, renderStats.triangleCount);
 
 		// End frame timing

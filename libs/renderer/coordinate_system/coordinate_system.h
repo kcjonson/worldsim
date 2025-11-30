@@ -56,7 +56,7 @@ namespace Renderer { // NOLINT(readability-identifier-naming)
 		/**
 		 * Get window size in logical pixels.
 		 */
-		glm::vec2 GetWindowSize() const;
+		glm::vec2 getWindowSize() const;
 
 		/**
 		 * Set OpenGL viewport to full framebuffer size (physical pixels).
@@ -75,7 +75,7 @@ namespace Renderer { // NOLINT(readability-identifier-naming)
 		 * Get the pixel ratio (physical pixels / logical pixels).
 		 * Cached for performance.
 		 */
-		float GetPixelRatio() const;
+		float getPixelRatio() const;
 
 		/**
 		 * Convert window coordinates (logical pixels) to framebuffer coordinates (physical pixels).

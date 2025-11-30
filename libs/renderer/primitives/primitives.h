@@ -240,12 +240,12 @@ namespace Renderer {
 		// Scissor/clipping (for scrollable containers)
 		void			 PushScissor(const Foundation::Rect& clipRect);
 		void			 PopScissor();
-		Foundation::Rect GetCurrentScissor();
+		Foundation::Rect getCurrentScissor();
 
 		// Transform stack (for world-space rendering)
 		void			 PushTransform(const Foundation::Mat4& transform);
 		void			 PopTransform();
-		Foundation::Mat4 GetCurrentTransform();
+		Foundation::Mat4 getCurrentTransform();
 
 		// --- Statistics ---
 
@@ -255,7 +255,7 @@ namespace Renderer {
 			uint32_t triangleCount = 0;
 		};
 
-		RenderStats GetStats();
+		RenderStats getStats();
 
 	} // namespace Primitives
 } // namespace Renderer

@@ -57,7 +57,7 @@ namespace UI {
 		}
 
 		// Get window size for bottom-right positioning
-		glm::vec2 windowSize = coordinateSystem->GetWindowSize();
+		glm::vec2 windowSize = coordinateSystem->getWindowSize();
 
 		// Toggle button position (bottom-right corner)
 		float toggleX = windowSize.x - kToggleSize - kMargin;

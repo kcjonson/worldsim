@@ -161,7 +161,7 @@ namespace renderer {
 			outMesh.indices.push_back(static_cast<uint16_t>(remainingVertices[2]));
 		}
 
-		LOG_DEBUG(Renderer, "Tessellated polygon: %zu vertices → %zu triangles", path.vertices.size(), outMesh.GetTriangleCount());
+		LOG_DEBUG(Renderer, "Tessellated polygon: %zu vertices → %zu triangles", path.vertices.size(), outMesh.getTriangleCount());
 		return true;
 	}
 

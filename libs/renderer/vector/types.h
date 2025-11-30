@@ -26,7 +26,7 @@ namespace renderer {
 		void addVertex(Foundation::Vec2 v) { vertices.push_back(v); }
 
 		// Get vertex count
-		size_t GetVertexCount() const { return vertices.size(); }
+		size_t getVertexCount() const { return vertices.size(); }
 
 		// Clear all vertices
 		void clear() { vertices.clear(); }
@@ -40,10 +40,10 @@ namespace renderer {
 		TessellatedMesh() = default;
 
 		// Get triangle count
-		size_t GetTriangleCount() const { return indices.size() / 3; }
+		size_t getTriangleCount() const { return indices.size() / 3; }
 
 		// Get vertex count
-		size_t GetVertexCount() const { return vertices.size(); }
+		size_t getVertexCount() const { return vertices.size(); }
 
 		// Clear all data
 		void clear() {
