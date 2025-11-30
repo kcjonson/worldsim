@@ -181,6 +181,7 @@ namespace Renderer { // NOLINT(readability-identifier-naming)
 
 		// Current transform matrix (baked into vertex positions at add-time)
 		Foundation::Mat4 currentTransform{1.0F}; // Identity
+		bool			 transformIsIdentity = true; // Cached to avoid per-vertex checks
 
 		// Statistics
 		size_t drawCallCount = 0;

@@ -10,16 +10,9 @@ namespace Renderer {
 
 	namespace {
 		// Helper to transform a 2D position by a 4x4 matrix
-		// Applies the transform and returns the transformed 2D position
-		inline Foundation::Vec2 TransformPosition(const Foundation::Vec2& pos, const Foundation::Mat4& transform) {
-			// Check if transform is identity (common case - avoid unnecessary math)
-			// Must check all relevant elements for 2D affine transforms:
-			// - Diagonal elements (scale)
-			// - Translation elements
-			// - Rotation/shear elements
-			if (transform[0][0] == 1.0F && transform[1][1] == 1.0F && transform[2][2] == 1.0F && transform[3][3] == 1.0F
-				&& transform[3][0] == 0.0F && transform[3][1] == 0.0F && transform[3][2] == 0.0F && transform[0][1] == 0.0F
-				&& transform[1][0] == 0.0F) {
+		// isIdentity flag is pre-computed in setTransform() to avoid per-vertex checks
+		inline Foundation::Vec2 TransformPosition(const Foundation::Vec2& pos, const Foundation::Mat4& transform, bool isIdentity) {
+			if (isIdentity) {
 				return pos;
 			}
 			// Apply transform: multiply position by matrix
@@ -128,8 +121,8 @@ namespace Renderer {
 
 		// Pack border data (color RGB + width)
 		Foundation::Vec4 borderData(0.0F, 0.0F, 0.0F, 0.0F);
-		float borderWidth = 0.0F;
-		float borderPosEnum = 1.0F; // Default to Center
+		float			 borderWidth = 0.0F;
+		float			 borderPosEnum = 1.0F; // Default to Center
 		if (border.has_value()) {
 			borderData = Foundation::Vec4(border->color.r, border->color.g, border->color.b, border->width);
 			borderWidth = border->width;
@@ -178,7 +171,7 @@ namespace Renderer {
 		// Positions are transformed by currentTransform to support scrolling/offset.
 		// Top-left corner
 		vertices.push_back(
-			{TransformPosition(Foundation::Vec2(centerX - expandedHalfW, centerY - expandedHalfH), currentTransform),
+			{TransformPosition(Foundation::Vec2(centerX - expandedHalfW, centerY - expandedHalfH), currentTransform, transformIsIdentity),
 			 Foundation::Vec2(-expandedHalfW, -expandedHalfH), // Rect-local: top-left (expanded)
 			 colorVec,
 			 borderData,
@@ -188,7 +181,7 @@ namespace Renderer {
 
 		// Top-right corner
 		vertices.push_back(
-			{TransformPosition(Foundation::Vec2(centerX + expandedHalfW, centerY - expandedHalfH), currentTransform),
+			{TransformPosition(Foundation::Vec2(centerX + expandedHalfW, centerY - expandedHalfH), currentTransform, transformIsIdentity),
 			 Foundation::Vec2(expandedHalfW, -expandedHalfH), // Rect-local: top-right (expanded)
 			 colorVec,
 			 borderData,
@@ -198,7 +191,7 @@ namespace Renderer {
 
 		// Bottom-right corner
 		vertices.push_back(
-			{TransformPosition(Foundation::Vec2(centerX + expandedHalfW, centerY + expandedHalfH), currentTransform),
+			{TransformPosition(Foundation::Vec2(centerX + expandedHalfW, centerY + expandedHalfH), currentTransform, transformIsIdentity),
 			 Foundation::Vec2(expandedHalfW, expandedHalfH), // Rect-local: bottom-right (expanded)
 			 colorVec,
 			 borderData,
@@ -208,7 +201,7 @@ namespace Renderer {
 
 		// Bottom-left corner
 		vertices.push_back(
-			{TransformPosition(Foundation::Vec2(centerX - expandedHalfW, centerY + expandedHalfH), currentTransform),
+			{TransformPosition(Foundation::Vec2(centerX - expandedHalfW, centerY + expandedHalfH), currentTransform, transformIsIdentity),
 			 Foundation::Vec2(-expandedHalfW, expandedHalfH), // Rect-local: bottom-left (expanded)
 			 colorVec,
 			 borderData,
@@ -246,12 +239,12 @@ namespace Renderer {
 		// Add all vertices (positions transformed by currentTransform)
 		for (size_t i = 0; i < vertexCount; ++i) {
 			vertices.push_back({
-				TransformPosition(inputVertices[i], currentTransform),
-				zeroVec2,	  // texCoord (unused for triangles)
+				TransformPosition(inputVertices[i], currentTransform, transformIsIdentity),
+				zeroVec2, // texCoord (unused for triangles)
 				colorVec,
-				zeroVec4,			  // data1 (unused)
-				shapeParams,		  // data2 with borderPos >= 0 marks as shape
-				currentClipBounds	  // clip bounds
+				zeroVec4,		  // data1 (unused)
+				shapeParams,	  // data2 with borderPos >= 0 marks as shape
+				currentClipBounds // clip bounds
 			});
 		}
 
@@ -283,44 +276,44 @@ namespace Renderer {
 		// Positions are transformed by currentTransform to support scrolling/offset
 
 		// Top-left
-		vertices.push_back({
-			TransformPosition(position, currentTransform),
-			Foundation::Vec2(uvMin.x, uvMax.y), // UV flipped
-			colorVec,
-			zeroVec4,
-			textParams,
-			currentClipBounds
-		});
+		vertices.push_back(
+			{TransformPosition(position, currentTransform, transformIsIdentity),
+			 Foundation::Vec2(uvMin.x, uvMax.y), // UV flipped
+			 colorVec,
+			 zeroVec4,
+			 textParams,
+			 currentClipBounds}
+		);
 
 		// Top-right
-		vertices.push_back({
-			TransformPosition(Foundation::Vec2(position.x + size.x, position.y), currentTransform),
-			Foundation::Vec2(uvMax.x, uvMax.y), // UV flipped
-			colorVec,
-			zeroVec4,
-			textParams,
-			currentClipBounds
-		});
+		vertices.push_back(
+			{TransformPosition(Foundation::Vec2(position.x + size.x, position.y), currentTransform, transformIsIdentity),
+			 Foundation::Vec2(uvMax.x, uvMax.y), // UV flipped
+			 colorVec,
+			 zeroVec4,
+			 textParams,
+			 currentClipBounds}
+		);
 
 		// Bottom-right
-		vertices.push_back({
-			TransformPosition(Foundation::Vec2(position.x + size.x, position.y + size.y), currentTransform),
-			Foundation::Vec2(uvMax.x, uvMin.y), // UV flipped
-			colorVec,
-			zeroVec4,
-			textParams,
-			currentClipBounds
-		});
+		vertices.push_back(
+			{TransformPosition(Foundation::Vec2(position.x + size.x, position.y + size.y), currentTransform, transformIsIdentity),
+			 Foundation::Vec2(uvMax.x, uvMin.y), // UV flipped
+			 colorVec,
+			 zeroVec4,
+			 textParams,
+			 currentClipBounds}
+		);
 
 		// Bottom-left
-		vertices.push_back({
-			TransformPosition(Foundation::Vec2(position.x, position.y + size.y), currentTransform),
-			Foundation::Vec2(uvMin.x, uvMin.y), // UV flipped
-			colorVec,
-			zeroVec4,
-			textParams,
-			currentClipBounds
-		});
+		vertices.push_back(
+			{TransformPosition(Foundation::Vec2(position.x, position.y + size.y), currentTransform, transformIsIdentity),
+			 Foundation::Vec2(uvMin.x, uvMin.y), // UV flipped
+			 colorVec,
+			 zeroVec4,
+			 textParams,
+			 currentClipBounds}
+		);
 
 		// Add 6 indices (2 triangles)
 		indices.push_back(baseIndex + 0);
@@ -463,6 +456,12 @@ namespace Renderer {
 
 	void BatchRenderer::setTransform(const Foundation::Mat4& transform) {
 		currentTransform = transform;
+		// Cache identity check (expensive to do per-vertex, cheap once per transform change)
+		// Check all relevant elements for 2D affine transforms
+		transformIsIdentity =
+			(transform[0][0] == 1.0F && transform[1][1] == 1.0F && transform[2][2] == 1.0F && transform[3][3] == 1.0F &&
+			 transform[3][0] == 0.0F && transform[3][1] == 0.0F && transform[3][2] == 0.0F && transform[0][1] == 0.0F &&
+			 transform[1][0] == 0.0F);
 	}
 
 } // namespace Renderer
