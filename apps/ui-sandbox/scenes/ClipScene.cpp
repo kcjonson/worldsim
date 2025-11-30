@@ -19,6 +19,11 @@
 
 namespace {
 
+	// Container demo configuration
+	constexpr int	kContainerItemCount = 8;
+	constexpr float kContainerItemHeight = 35.0F;
+	constexpr float kContainerViewportHeight = 100.0F;
+
 	class ClipScene : public engine::IScene {
 	  public:
 		void onEnter() override {
@@ -34,8 +39,8 @@ namespace {
 			m_scrollContainer = std::make_unique<UI::Container>();
 
 			// Add items to the container
-			for (int i = 0; i < 8; ++i) {
-				float			  y = 5.0F + static_cast<float>(i) * 35.0F;
+			for (int i = 0; i < kContainerItemCount; ++i) {
+				float			  y = 5.0F + static_cast<float>(i) * kContainerItemHeight;
 				Foundation::Color itemColor =
 					(i % 2 == 0) ? Foundation::Color(0.3F, 0.5F, 0.4F, 1.0F) : Foundation::Color(0.35F, 0.55F, 0.45F, 1.0F);
 
@@ -69,8 +74,8 @@ namespace {
 			m_scrollContainer->setClip(clipSettings);
 
 			// Calculate scroll bounds
-			m_containerContentHeight = 8 * 35.0F + 5.0F;
-			m_containerMaxScroll = std::max(0.0F, m_containerContentHeight - 100.0F);
+			m_containerContentHeight = static_cast<float>(kContainerItemCount) * kContainerItemHeight + 5.0F;
+			m_containerMaxScroll = std::max(0.0F, m_containerContentHeight - kContainerViewportHeight);
 		}
 
 		void handleInput(float /*dt*/) override {

@@ -1,7 +1,7 @@
 {
   "timestamp": "2025-11-30T00:00:00Z",
   "git_commit": "494aa1d",
-  "description": "Baseline performance measurements before clipping optimization work",
+  "description": "Performance measurements with Phase 2 clipping and scrolling implementation",
   "notes": [
     "drawCalls/vertexCount/triangleCount show 0 - metrics tracking needs investigation",
     "vsync appears off for simple scenes (shapes, clip) but on for complex scenes",

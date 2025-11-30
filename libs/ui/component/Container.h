@@ -5,6 +5,7 @@
 #include "math/Types.h"
 #include "primitives/Primitives.h"
 
+#include <glm/gtc/matrix_transform.hpp>
 #include <optional>
 
 namespace UI {
@@ -56,9 +57,8 @@ class Container : public Component {
 			// Note: The offset is applied as-is to child positions.
 			// For scrolling semantics (positive scroll moves content up),
 			// the caller should negate the scroll value when calling setContentOffset.
-			Foundation::Mat4 translation = Foundation::Mat4(1.0F);
-			translation[3][0] = m_contentOffset.x;
-			translation[3][1] = m_contentOffset.y;
+			Foundation::Mat4 translation =
+				glm::translate(Foundation::Mat4(1.0F), Foundation::Vec3(m_contentOffset.x, m_contentOffset.y, 0.0F));
 			Renderer::Primitives::PushTransform(translation);
 		}
 

@@ -457,11 +457,16 @@ namespace Renderer {
 	void BatchRenderer::setTransform(const Foundation::Mat4& transform) {
 		currentTransform = transform;
 		// Cache identity check (expensive to do per-vertex, cheap once per transform change)
-		// Check all relevant elements for 2D affine transforms
+		// Check all elements for true identity matrix (GLM uses column-major storage)
 		transformIsIdentity =
-			(transform[0][0] == 1.0F && transform[1][1] == 1.0F && transform[2][2] == 1.0F && transform[3][3] == 1.0F &&
-			 transform[3][0] == 0.0F && transform[3][1] == 0.0F && transform[3][2] == 0.0F && transform[0][1] == 0.0F &&
-			 transform[1][0] == 0.0F);
+			// Diagonal must be 1.0
+			transform[0][0] == 1.0F && transform[1][1] == 1.0F && transform[2][2] == 1.0F && transform[3][3] == 1.0F &&
+			// Translation (column 3) must be 0
+			transform[3][0] == 0.0F && transform[3][1] == 0.0F && transform[3][2] == 0.0F &&
+			// Rotation/shear off-diagonals must be 0
+			transform[0][1] == 0.0F && transform[0][2] == 0.0F && transform[0][3] == 0.0F && transform[1][0] == 0.0F &&
+			transform[1][2] == 0.0F && transform[1][3] == 0.0F && transform[2][0] == 0.0F && transform[2][1] == 0.0F &&
+			transform[2][3] == 0.0F;
 	}
 
 } // namespace Renderer
