@@ -423,7 +423,8 @@ int main(int argc, char* argv[]) {
 		// which will stop the server and send the response before we continue
 		debugServer.SignalShutdownComplete();
 
-		// Stop is safe to call even if already stopped by the exit handler
+		// Stop the server - waits for exit handler to complete if HTTP exit was triggered,
+		// then actually stops the server. Safe to call regardless of how shutdown was initiated.
 		debugServer.Stop();
 	}
 

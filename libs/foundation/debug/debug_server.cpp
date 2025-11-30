@@ -103,6 +103,14 @@ namespace Foundation {
 			return;
 		}
 
+		// Reset shutdown synchronization state for restart scenarios
+		{
+			std::lock_guard<std::mutex> lock(m_shutdownMutex);
+			m_shutdownComplete = false;
+			m_handlerDone = false;
+		}
+		m_controlAction.store(ControlAction::None);
+
 		m_running.store(true);
 
 		// Start server thread
@@ -119,11 +127,14 @@ namespace Foundation {
 		m_running.store(false);
 
 		// If an exit was triggered via HTTP, wait for the handler to set the response
-		bool exitTriggered = (m_controlAction.load() == ControlAction::Exit);
-		if (exitTriggered) {
+		// Check exitTriggered and m_handlerDone inside the lock to avoid race condition
+		{
 			std::unique_lock<std::mutex> lock(m_shutdownMutex);
-			m_shutdownCV.wait(lock, [this] { return m_handlerDone; });
-			// Handler has set response and is about to return
+			bool						 exitTriggered = (m_controlAction.load() == ControlAction::Exit);
+			if (exitTriggered && !m_handlerDone) {
+				m_shutdownCV.wait(lock, [this] { return m_handlerDone; });
+			}
+			// Handler has set response and is about to return (or already returned)
 		}
 
 		// Stop the server - this will:
@@ -270,7 +281,10 @@ namespace Foundation {
 
 	void DebugServer::WaitForShutdownComplete() {
 		std::unique_lock<std::mutex> lock(m_shutdownMutex);
-		m_shutdownCV.wait(lock, [this] { return m_shutdownComplete; });
+		// Add timeout to prevent indefinite blocking if main loop exits abnormally
+		if (!m_shutdownCV.wait_for(lock, std::chrono::seconds(30), [this] { return m_shutdownComplete; })) {
+			LOG_WARNING(Foundation, "Shutdown did not complete within 30 seconds; continuing anyway.");
+		}
 	}
 
 	void DebugServer::SignalShutdownComplete() {

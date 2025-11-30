@@ -135,7 +135,7 @@ curl http://127.0.0.1:8081/api/ui/screenshot -o /tmp/screenshot.png
 # View the screenshot
 open /tmp/screenshot.png
 
-# Clean shutdown (blocks until port free)
+# Clean shutdown (blocks until port free, returns: {"status":"ok","action":"exit","shutdown":"complete"})
 curl "http://127.0.0.1:8081/api/control?action=exit"
 ```
 
