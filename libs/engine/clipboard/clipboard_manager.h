@@ -40,7 +40,7 @@ class ClipboardManager {
 	static ClipboardManager* s_instance;
 
 	// GLFW window reference for clipboard access
-	GLFWwindow* m_window;
+	GLFWwindow* window;
 };
 
 } // namespace engine

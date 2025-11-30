@@ -57,21 +57,21 @@ namespace UI {
 		static constexpr float kMenuToggleGap = 5.0F;
 
 		// State
-		bool								m_expanded = false;
-		std::vector<std::string>			m_sceneNames;
-		std::function<void(const std::string&)> m_onSceneSelected;
-		Renderer::CoordinateSystem*			m_coordinateSystem = nullptr;
+		bool								expanded = false;
+		std::vector<std::string>			sceneNames;
+		std::function<void(const std::string&)> onSceneSelected;
+		Renderer::CoordinateSystem*			coordinateSystem = nullptr;
 
 		// Sub-components
-		std::optional<Button>		 m_toggleButton;
-		std::vector<Button>			 m_menuButtons;
-		std::vector<std::string>	 m_buttonIds; // Store button IDs to avoid dangling pointers
-		Text						 m_headerText;
+		std::optional<Button>		 toggleButton;
+		std::vector<Button>			 menuButtons;
+		std::vector<std::string>	 buttonIds; // Store button IDs to avoid dangling pointers
+		Text						 headerText;
 
 		// Cached layout values (updated on resize)
-		float m_menuX = 0.0F;
-		float m_menuY = 0.0F;
-		float m_menuHeight = 0.0F;
+		float menuX = 0.0F;
+		float menuY = 0.0F;
+		float menuHeight = 0.0F;
 
 		// Initialize/reinitialize all sub-components with current window size
 		void InitializeComponents();

@@ -10,62 +10,62 @@ using namespace UI;
 class MockFocusable : public IFocusable {
   public:
 	MockFocusable() = default;
-	explicit MockFocusable(bool canFocus) : m_canFocus(canFocus) {}
+	explicit MockFocusable(bool canFocus) : canFocusFlag(canFocus) {}
 
 	// IFocusable interface
 	void OnFocusGained() override {
-		m_hasFocus = true;
-		m_focusGainedCount++;
+		hasFocusFlag = true;
+		focusGainedCount++;
 	}
 
 	void OnFocusLost() override {
-		m_hasFocus = false;
-		m_focusLostCount++;
+		hasFocusFlag = false;
+		focusLostCount++;
 	}
 
 	void HandleKeyInput(engine::Key key, bool shift, bool ctrl, bool alt) override {
-		m_lastKey = key;
-		m_lastShift = shift;
-		m_lastCtrl = ctrl;
-		m_lastAlt = alt;
-		m_keyInputCount++;
+		lastKey = key;
+		lastShift = shift;
+		lastCtrl = ctrl;
+		lastAlt = alt;
+		keyInputCount++;
 	}
 
 	void HandleCharInput(char32_t codepoint) override {
-		m_lastChar = codepoint;
-		m_charInputCount++;
+		lastChar = codepoint;
+		charInputCount++;
 	}
 
-	bool CanReceiveFocus() const override { return m_canFocus; }
+	bool CanReceiveFocus() const override { return canFocusFlag; }
 
 	// Test helpers
 	void Reset() {
-		m_hasFocus = false;
-		m_focusGainedCount = 0;
-		m_focusLostCount = 0;
-		m_keyInputCount = 0;
-		m_charInputCount = 0;
-		m_lastKey = static_cast<engine::Key>(0);
-		m_lastChar = 0;
-		m_lastShift = false;
-		m_lastCtrl = false;
-		m_lastAlt = false;
+		hasFocusFlag = false;
+		focusGainedCount = 0;
+		focusLostCount = 0;
+		keyInputCount = 0;
+		charInputCount = 0;
+		lastKey = static_cast<engine::Key>(0);
+		lastChar = 0;
+		lastShift = false;
+		lastCtrl = false;
+		lastAlt = false;
 	}
 
-	void SetCanFocus(bool canFocus) { m_canFocus = canFocus; }
+	void SetCanFocus(bool canFocus) { canFocusFlag = canFocus; }
 
 	// State accessors for testing
-	bool		 m_hasFocus{false};
-	int			 m_focusGainedCount{0};
-	int			 m_focusLostCount{0};
-	int			 m_keyInputCount{0};
-	int			 m_charInputCount{0};
-	engine::Key	 m_lastKey{};
-	char32_t	 m_lastChar{0};
-	bool		 m_lastShift{false};
-	bool		 m_lastCtrl{false};
-	bool		 m_lastAlt{false};
-	bool		 m_canFocus{true};
+	bool		 hasFocusFlag{false};
+	int			 focusGainedCount{0};
+	int			 focusLostCount{0};
+	int			 keyInputCount{0};
+	int			 charInputCount{0};
+	engine::Key	 lastKey{};
+	char32_t	 lastChar{0};
+	bool		 lastShift{false};
+	bool		 lastCtrl{false};
+	bool		 lastAlt{false};
+	bool		 canFocusFlag{true};
 };
 
 // ============================================================================
@@ -79,8 +79,8 @@ TEST(FocusManagerTest, RegisterFocusable) {
 	manager.RegisterFocusable(&component);
 
 	// No focus by default
-	EXPECT_EQ(manager.GetFocused(), nullptr);
-	EXPECT_FALSE(manager.HasFocus(&component));
+	EXPECT_EQ(manager.getFocused(), nullptr);
+	EXPECT_FALSE(manager.hasFocus(&component));
 }
 
 TEST(FocusManagerTest, RegisterMultipleFocusables) {
@@ -93,7 +93,7 @@ TEST(FocusManagerTest, RegisterMultipleFocusables) {
 	manager.RegisterFocusable(&component2, 1);
 	manager.RegisterFocusable(&component3, 2);
 
-	EXPECT_EQ(manager.GetFocused(), nullptr);
+	EXPECT_EQ(manager.getFocused(), nullptr);
 }
 
 TEST(FocusManagerTest, RegisterWithAutoTabIndex) {
@@ -112,7 +112,7 @@ TEST(FocusManagerTest, RegisterWithAutoTabIndex) {
 	manager.FocusNext();
 
 	// Should move to component2 (auto-assigned in order)
-	EXPECT_TRUE(manager.HasFocus(&component2));
+	EXPECT_TRUE(manager.hasFocus(&component2));
 }
 
 TEST(FocusManagerTest, RegisterDuplicateComponent) {
@@ -124,7 +124,7 @@ TEST(FocusManagerTest, RegisterDuplicateComponent) {
 
 	// Component should only be registered once
 	manager.SetFocus(&component);
-	EXPECT_TRUE(manager.HasFocus(&component));
+	EXPECT_TRUE(manager.hasFocus(&component));
 }
 
 TEST(FocusManagerTest, UnregisterFocusable) {
@@ -133,12 +133,12 @@ TEST(FocusManagerTest, UnregisterFocusable) {
 
 	manager.RegisterFocusable(&component);
 	manager.SetFocus(&component);
-	EXPECT_TRUE(manager.HasFocus(&component));
+	EXPECT_TRUE(manager.hasFocus(&component));
 
 	// Unregister should clear focus
 	manager.UnregisterFocusable(&component);
-	EXPECT_EQ(manager.GetFocused(), nullptr);
-	EXPECT_EQ(component.m_focusLostCount, 1);
+	EXPECT_EQ(manager.getFocused(), nullptr);
+	EXPECT_EQ(component.focusLostCount, 1);
 }
 
 TEST(FocusManagerTest, UnregisterUnregisteredComponent) {
@@ -160,10 +160,10 @@ TEST(FocusManagerTest, SetFocus) {
 	manager.RegisterFocusable(&component);
 	manager.SetFocus(&component);
 
-	EXPECT_TRUE(manager.HasFocus(&component));
-	EXPECT_EQ(manager.GetFocused(), &component);
-	EXPECT_TRUE(component.m_hasFocus);
-	EXPECT_EQ(component.m_focusGainedCount, 1);
+	EXPECT_TRUE(manager.hasFocus(&component));
+	EXPECT_EQ(manager.getFocused(), &component);
+	EXPECT_TRUE(component.hasFocusFlag);
+	EXPECT_EQ(component.focusGainedCount, 1);
 }
 
 TEST(FocusManagerTest, SetFocusTransfersFromPrevious) {
@@ -176,15 +176,15 @@ TEST(FocusManagerTest, SetFocusTransfersFromPrevious) {
 
 	// Give focus to first
 	manager.SetFocus(&component1);
-	EXPECT_EQ(component1.m_focusGainedCount, 1);
-	EXPECT_EQ(component1.m_focusLostCount, 0);
+	EXPECT_EQ(component1.focusGainedCount, 1);
+	EXPECT_EQ(component1.focusLostCount, 0);
 
 	// Transfer focus to second
 	manager.SetFocus(&component2);
-	EXPECT_FALSE(component1.m_hasFocus);
-	EXPECT_TRUE(component2.m_hasFocus);
-	EXPECT_EQ(component1.m_focusLostCount, 1);
-	EXPECT_EQ(component2.m_focusGainedCount, 1);
+	EXPECT_FALSE(component1.hasFocusFlag);
+	EXPECT_TRUE(component2.hasFocusFlag);
+	EXPECT_EQ(component1.focusLostCount, 1);
+	EXPECT_EQ(component2.focusGainedCount, 1);
 }
 
 TEST(FocusManagerTest, SetFocusSameComponent) {
@@ -195,12 +195,12 @@ TEST(FocusManagerTest, SetFocusSameComponent) {
 
 	// Give focus
 	manager.SetFocus(&component);
-	EXPECT_EQ(component.m_focusGainedCount, 1);
+	EXPECT_EQ(component.focusGainedCount, 1);
 
 	// Set focus again (should be no-op)
 	manager.SetFocus(&component);
-	EXPECT_EQ(component.m_focusGainedCount, 1); // No second call
-	EXPECT_EQ(component.m_focusLostCount, 0);
+	EXPECT_EQ(component.focusGainedCount, 1); // No second call
+	EXPECT_EQ(component.focusLostCount, 0);
 }
 
 TEST(FocusManagerTest, ClearFocus) {
@@ -209,12 +209,12 @@ TEST(FocusManagerTest, ClearFocus) {
 
 	manager.RegisterFocusable(&component);
 	manager.SetFocus(&component);
-	EXPECT_TRUE(manager.HasFocus(&component));
+	EXPECT_TRUE(manager.hasFocus(&component));
 
 	manager.ClearFocus();
-	EXPECT_EQ(manager.GetFocused(), nullptr);
-	EXPECT_FALSE(component.m_hasFocus);
-	EXPECT_EQ(component.m_focusLostCount, 1);
+	EXPECT_EQ(manager.getFocused(), nullptr);
+	EXPECT_FALSE(component.hasFocusFlag);
+	EXPECT_EQ(component.focusLostCount, 1);
 }
 
 TEST(FocusManagerTest, ClearFocusWhenNone) {
@@ -222,7 +222,7 @@ TEST(FocusManagerTest, ClearFocusWhenNone) {
 
 	// Should not crash
 	EXPECT_NO_THROW(manager.ClearFocus());
-	EXPECT_EQ(manager.GetFocused(), nullptr);
+	EXPECT_EQ(manager.getFocused(), nullptr);
 }
 
 // ============================================================================
@@ -241,13 +241,13 @@ TEST(FocusManagerTest, FocusNext) {
 
 	// Start with no focus
 	manager.FocusNext();
-	EXPECT_TRUE(manager.HasFocus(&component1));
+	EXPECT_TRUE(manager.hasFocus(&component1));
 
 	manager.FocusNext();
-	EXPECT_TRUE(manager.HasFocus(&component2));
+	EXPECT_TRUE(manager.hasFocus(&component2));
 
 	manager.FocusNext();
-	EXPECT_TRUE(manager.HasFocus(&component3));
+	EXPECT_TRUE(manager.hasFocus(&component3));
 }
 
 TEST(FocusManagerTest, FocusNextWrapsAround) {
@@ -264,7 +264,7 @@ TEST(FocusManagerTest, FocusNextWrapsAround) {
 
 	// Should wrap to first
 	manager.FocusNext();
-	EXPECT_TRUE(manager.HasFocus(&component1));
+	EXPECT_TRUE(manager.hasFocus(&component1));
 }
 
 TEST(FocusManagerTest, FocusPrevious) {
@@ -280,10 +280,10 @@ TEST(FocusManagerTest, FocusPrevious) {
 	manager.SetFocus(&component3);
 
 	manager.FocusPrevious();
-	EXPECT_TRUE(manager.HasFocus(&component2));
+	EXPECT_TRUE(manager.hasFocus(&component2));
 
 	manager.FocusPrevious();
-	EXPECT_TRUE(manager.HasFocus(&component1));
+	EXPECT_TRUE(manager.hasFocus(&component1));
 }
 
 TEST(FocusManagerTest, FocusPreviousWrapsAround) {
@@ -300,7 +300,7 @@ TEST(FocusManagerTest, FocusPreviousWrapsAround) {
 
 	// Should wrap to last
 	manager.FocusPrevious();
-	EXPECT_TRUE(manager.HasFocus(&component3));
+	EXPECT_TRUE(manager.hasFocus(&component3));
 }
 
 TEST(FocusManagerTest, FocusNextSkipsDisabledComponents) {
@@ -317,7 +317,7 @@ TEST(FocusManagerTest, FocusNextSkipsDisabledComponents) {
 
 	// Should skip component2 (disabled)
 	manager.FocusNext();
-	EXPECT_TRUE(manager.HasFocus(&component3));
+	EXPECT_TRUE(manager.hasFocus(&component3));
 }
 
 TEST(FocusManagerTest, FocusPreviousSkipsDisabledComponents) {
@@ -334,7 +334,7 @@ TEST(FocusManagerTest, FocusPreviousSkipsDisabledComponents) {
 
 	// Should skip component2 (disabled)
 	manager.FocusPrevious();
-	EXPECT_TRUE(manager.HasFocus(&component1));
+	EXPECT_TRUE(manager.hasFocus(&component1));
 }
 
 TEST(FocusManagerTest, FocusNextWithAllDisabled) {
@@ -349,7 +349,7 @@ TEST(FocusManagerTest, FocusNextWithAllDisabled) {
 
 	// Should clear focus (no valid components)
 	manager.FocusNext();
-	EXPECT_EQ(manager.GetFocused(), nullptr);
+	EXPECT_EQ(manager.getFocused(), nullptr);
 }
 
 TEST(FocusManagerTest, FocusNextWithEmptyList) {
@@ -357,7 +357,7 @@ TEST(FocusManagerTest, FocusNextWithEmptyList) {
 
 	// Should not crash
 	EXPECT_NO_THROW(manager.FocusNext());
-	EXPECT_EQ(manager.GetFocused(), nullptr);
+	EXPECT_EQ(manager.getFocused(), nullptr);
 }
 
 TEST(FocusManagerTest, FocusPreviousWithEmptyList) {
@@ -365,7 +365,7 @@ TEST(FocusManagerTest, FocusPreviousWithEmptyList) {
 
 	// Should not crash
 	EXPECT_NO_THROW(manager.FocusPrevious());
-	EXPECT_EQ(manager.GetFocused(), nullptr);
+	EXPECT_EQ(manager.getFocused(), nullptr);
 }
 
 // ============================================================================
@@ -385,13 +385,13 @@ TEST(FocusManagerTest, TabOrderRespected) {
 
 	// Should navigate in sorted order (0, 1, 2)
 	manager.FocusNext();
-	EXPECT_TRUE(manager.HasFocus(&component1));
+	EXPECT_TRUE(manager.hasFocus(&component1));
 
 	manager.FocusNext();
-	EXPECT_TRUE(manager.HasFocus(&component2));
+	EXPECT_TRUE(manager.hasFocus(&component2));
 
 	manager.FocusNext();
-	EXPECT_TRUE(manager.HasFocus(&component3));
+	EXPECT_TRUE(manager.hasFocus(&component3));
 }
 
 TEST(FocusManagerTest, AutoTabIndexIncrements) {
@@ -407,13 +407,13 @@ TEST(FocusManagerTest, AutoTabIndexIncrements) {
 
 	// Should navigate in registration order
 	manager.FocusNext();
-	EXPECT_TRUE(manager.HasFocus(&component1));
+	EXPECT_TRUE(manager.hasFocus(&component1));
 
 	manager.FocusNext();
-	EXPECT_TRUE(manager.HasFocus(&component2));
+	EXPECT_TRUE(manager.hasFocus(&component2));
 
 	manager.FocusNext();
-	EXPECT_TRUE(manager.HasFocus(&component3));
+	EXPECT_TRUE(manager.hasFocus(&component3));
 }
 
 TEST(FocusManagerTest, MixedExplicitAndAutoTabIndex) {
@@ -430,16 +430,16 @@ TEST(FocusManagerTest, MixedExplicitAndAutoTabIndex) {
 
 	// Should navigate in sorted order: 0, 1, 2, 10
 	manager.FocusNext();
-	EXPECT_TRUE(manager.HasFocus(&component1)); // tabIndex 0
+	EXPECT_TRUE(manager.hasFocus(&component1)); // tabIndex 0
 
 	manager.FocusNext();
-	EXPECT_TRUE(manager.HasFocus(&component2)); // tabIndex 1
+	EXPECT_TRUE(manager.hasFocus(&component2)); // tabIndex 1
 
 	manager.FocusNext();
-	EXPECT_TRUE(manager.HasFocus(&component4)); // tabIndex 2
+	EXPECT_TRUE(manager.hasFocus(&component4)); // tabIndex 2
 
 	manager.FocusNext();
-	EXPECT_TRUE(manager.HasFocus(&component3)); // tabIndex 10
+	EXPECT_TRUE(manager.hasFocus(&component3)); // tabIndex 10
 }
 
 // ============================================================================
@@ -459,7 +459,7 @@ TEST(FocusManagerTest, PushFocusScope) {
 
 	// Give focus to background
 	manager.SetFocus(&background1);
-	EXPECT_TRUE(manager.HasFocus(&background1));
+	EXPECT_TRUE(manager.hasFocus(&background1));
 
 	// Register modal components
 	manager.RegisterFocusable(&modal1, 2);
@@ -470,8 +470,8 @@ TEST(FocusManagerTest, PushFocusScope) {
 	manager.PushFocusScope(modalComponents);
 
 	// Focus should be cleared
-	EXPECT_EQ(manager.GetFocused(), nullptr);
-	EXPECT_FALSE(background1.m_hasFocus);
+	EXPECT_EQ(manager.getFocused(), nullptr);
+	EXPECT_FALSE(background1.hasFocusFlag);
 }
 
 TEST(FocusManagerTest, FocusNextRespectsFocusScope) {
@@ -492,17 +492,17 @@ TEST(FocusManagerTest, FocusNextRespectsFocusScope) {
 
 	// Tab navigation should only cycle through modal components
 	manager.FocusNext();
-	EXPECT_TRUE(manager.HasFocus(&modal1));
+	EXPECT_TRUE(manager.hasFocus(&modal1));
 
 	manager.FocusNext();
-	EXPECT_TRUE(manager.HasFocus(&modal2));
+	EXPECT_TRUE(manager.hasFocus(&modal2));
 
 	manager.FocusNext(); // Wrap
-	EXPECT_TRUE(manager.HasFocus(&modal1));
+	EXPECT_TRUE(manager.hasFocus(&modal1));
 
 	// Background components should not receive focus
-	EXPECT_FALSE(manager.HasFocus(&background1));
-	EXPECT_FALSE(manager.HasFocus(&background2));
+	EXPECT_FALSE(manager.hasFocus(&background1));
+	EXPECT_FALSE(manager.hasFocus(&background2));
 }
 
 TEST(FocusManagerTest, PopFocusScope) {
@@ -526,12 +526,12 @@ TEST(FocusManagerTest, PopFocusScope) {
 
 	// Focus modal
 	manager.SetFocus(&modal1);
-	EXPECT_TRUE(manager.HasFocus(&modal1));
+	EXPECT_TRUE(manager.hasFocus(&modal1));
 
 	// Pop scope (should restore previous focus)
 	manager.PopFocusScope();
-	EXPECT_TRUE(manager.HasFocus(&background1));
-	EXPECT_FALSE(modal1.m_hasFocus);
+	EXPECT_TRUE(manager.hasFocus(&background1));
+	EXPECT_FALSE(modal1.hasFocusFlag);
 }
 
 TEST(FocusManagerTest, PopFocusScopeWithUnregisteredPrevious) {
@@ -556,7 +556,7 @@ TEST(FocusManagerTest, PopFocusScopeWithUnregisteredPrevious) {
 	manager.PopFocusScope();
 
 	// Should clear focus (previous component gone)
-	EXPECT_EQ(manager.GetFocused(), nullptr);
+	EXPECT_EQ(manager.getFocused(), nullptr);
 }
 
 TEST(FocusManagerTest, NestedFocusScopes) {
@@ -582,15 +582,15 @@ TEST(FocusManagerTest, NestedFocusScopes) {
 	manager.PushFocusScope(scope2);
 	manager.SetFocus(&modal2);
 
-	EXPECT_TRUE(manager.HasFocus(&modal2));
+	EXPECT_TRUE(manager.hasFocus(&modal2));
 
 	// Pop second modal (restore modal1)
 	manager.PopFocusScope();
-	EXPECT_TRUE(manager.HasFocus(&modal1));
+	EXPECT_TRUE(manager.hasFocus(&modal1));
 
 	// Pop first modal (restore background)
 	manager.PopFocusScope();
-	EXPECT_TRUE(manager.HasFocus(&background));
+	EXPECT_TRUE(manager.hasFocus(&background));
 }
 
 TEST(FocusManagerTest, PopFocusScopeEmptyStack) {
@@ -614,11 +614,11 @@ TEST(FocusManagerTest, RouteKeyInputToFocused) {
 	// Route key input
 	manager.RouteKeyInput(engine::Key::Enter, false, false, false);
 
-	EXPECT_EQ(component.m_keyInputCount, 1);
-	EXPECT_EQ(component.m_lastKey, engine::Key::Enter);
-	EXPECT_FALSE(component.m_lastShift);
-	EXPECT_FALSE(component.m_lastCtrl);
-	EXPECT_FALSE(component.m_lastAlt);
+	EXPECT_EQ(component.keyInputCount, 1);
+	EXPECT_EQ(component.lastKey, engine::Key::Enter);
+	EXPECT_FALSE(component.lastShift);
+	EXPECT_FALSE(component.lastCtrl);
+	EXPECT_FALSE(component.lastAlt);
 }
 
 TEST(FocusManagerTest, RouteKeyInputWithModifiers) {
@@ -631,11 +631,11 @@ TEST(FocusManagerTest, RouteKeyInputWithModifiers) {
 	// Route key input with modifiers
 	manager.RouteKeyInput(engine::Key::C, true, true, false);
 
-	EXPECT_EQ(component.m_keyInputCount, 1);
-	EXPECT_EQ(component.m_lastKey, engine::Key::C);
-	EXPECT_TRUE(component.m_lastShift);
-	EXPECT_TRUE(component.m_lastCtrl);
-	EXPECT_FALSE(component.m_lastAlt);
+	EXPECT_EQ(component.keyInputCount, 1);
+	EXPECT_EQ(component.lastKey, engine::Key::C);
+	EXPECT_TRUE(component.lastShift);
+	EXPECT_TRUE(component.lastCtrl);
+	EXPECT_FALSE(component.lastAlt);
 }
 
 TEST(FocusManagerTest, RouteKeyInputNoFocus) {
@@ -649,7 +649,7 @@ TEST(FocusManagerTest, RouteKeyInputNoFocus) {
 	EXPECT_NO_THROW(manager.RouteKeyInput(engine::Key::Enter, false, false, false));
 
 	// Component should not receive input
-	EXPECT_EQ(component.m_keyInputCount, 0);
+	EXPECT_EQ(component.keyInputCount, 0);
 }
 
 TEST(FocusManagerTest, RouteCharInputToFocused) {
@@ -662,8 +662,8 @@ TEST(FocusManagerTest, RouteCharInputToFocused) {
 	// Route character input
 	manager.RouteCharInput(U'A');
 
-	EXPECT_EQ(component.m_charInputCount, 1);
-	EXPECT_EQ(component.m_lastChar, U'A');
+	EXPECT_EQ(component.charInputCount, 1);
+	EXPECT_EQ(component.lastChar, U'A');
 }
 
 TEST(FocusManagerTest, RouteCharInputUnicode) {
@@ -676,8 +676,8 @@ TEST(FocusManagerTest, RouteCharInputUnicode) {
 	// Route Unicode character
 	manager.RouteCharInput(U'世'); // Chinese character
 
-	EXPECT_EQ(component.m_charInputCount, 1);
-	EXPECT_EQ(component.m_lastChar, U'世');
+	EXPECT_EQ(component.charInputCount, 1);
+	EXPECT_EQ(component.lastChar, U'世');
 }
 
 TEST(FocusManagerTest, RouteCharInputNoFocus) {
@@ -691,7 +691,7 @@ TEST(FocusManagerTest, RouteCharInputNoFocus) {
 	EXPECT_NO_THROW(manager.RouteCharInput(U'A'));
 
 	// Component should not receive input
-	EXPECT_EQ(component.m_charInputCount, 0);
+	EXPECT_EQ(component.charInputCount, 0);
 }
 
 // ============================================================================
@@ -704,13 +704,13 @@ TEST(FocusManagerTest, GetFocused) {
 
 	manager.RegisterFocusable(&component);
 
-	EXPECT_EQ(manager.GetFocused(), nullptr);
+	EXPECT_EQ(manager.getFocused(), nullptr);
 
 	manager.SetFocus(&component);
-	EXPECT_EQ(manager.GetFocused(), &component);
+	EXPECT_EQ(manager.getFocused(), &component);
 
 	manager.ClearFocus();
-	EXPECT_EQ(manager.GetFocused(), nullptr);
+	EXPECT_EQ(manager.getFocused(), nullptr);
 }
 
 TEST(FocusManagerTest, HasFocus) {
@@ -721,16 +721,16 @@ TEST(FocusManagerTest, HasFocus) {
 	manager.RegisterFocusable(&component1);
 	manager.RegisterFocusable(&component2);
 
-	EXPECT_FALSE(manager.HasFocus(&component1));
-	EXPECT_FALSE(manager.HasFocus(&component2));
+	EXPECT_FALSE(manager.hasFocus(&component1));
+	EXPECT_FALSE(manager.hasFocus(&component2));
 
 	manager.SetFocus(&component1);
-	EXPECT_TRUE(manager.HasFocus(&component1));
-	EXPECT_FALSE(manager.HasFocus(&component2));
+	EXPECT_TRUE(manager.hasFocus(&component1));
+	EXPECT_FALSE(manager.hasFocus(&component2));
 
 	manager.SetFocus(&component2);
-	EXPECT_FALSE(manager.HasFocus(&component1));
-	EXPECT_TRUE(manager.HasFocus(&component2));
+	EXPECT_FALSE(manager.hasFocus(&component1));
+	EXPECT_TRUE(manager.hasFocus(&component2));
 }
 
 // ============================================================================
@@ -753,29 +753,29 @@ TEST(FocusManagerTest, ComplexNavigationScenario) {
 
 	// Tab through (should skip disabled)
 	manager.FocusNext();
-	EXPECT_TRUE(manager.HasFocus(&button1));
+	EXPECT_TRUE(manager.hasFocus(&button1));
 
 	manager.FocusNext();
-	EXPECT_TRUE(manager.HasFocus(&button2));
+	EXPECT_TRUE(manager.hasFocus(&button2));
 
 	manager.FocusNext();
-	EXPECT_TRUE(manager.HasFocus(&textInput));
+	EXPECT_TRUE(manager.hasFocus(&textInput));
 
 	manager.FocusNext(); // Skip disabledButton
-	EXPECT_TRUE(manager.HasFocus(&checkbox));
+	EXPECT_TRUE(manager.hasFocus(&checkbox));
 
 	manager.FocusNext(); // Wrap
-	EXPECT_TRUE(manager.HasFocus(&button1));
+	EXPECT_TRUE(manager.hasFocus(&button1));
 
 	// Shift+Tab backwards
 	manager.FocusPrevious(); // Wrap
-	EXPECT_TRUE(manager.HasFocus(&checkbox));
+	EXPECT_TRUE(manager.hasFocus(&checkbox));
 
 	manager.FocusPrevious(); // Skip disabledButton
-	EXPECT_TRUE(manager.HasFocus(&textInput));
+	EXPECT_TRUE(manager.hasFocus(&textInput));
 
 	manager.FocusPrevious();
-	EXPECT_TRUE(manager.HasFocus(&button2));
+	EXPECT_TRUE(manager.hasFocus(&button2));
 }
 
 TEST(FocusManagerTest, DynamicEnableDisable) {
@@ -795,14 +795,14 @@ TEST(FocusManagerTest, DynamicEnableDisable) {
 
 	// Should skip component2
 	manager.FocusNext();
-	EXPECT_TRUE(manager.HasFocus(&component3));
+	EXPECT_TRUE(manager.hasFocus(&component3));
 
 	// Re-enable component2
 	component2.SetCanFocus(true);
 
 	// Should navigate normally
 	manager.FocusPrevious();
-	EXPECT_TRUE(manager.HasFocus(&component2));
+	EXPECT_TRUE(manager.hasFocus(&component2));
 }
 
 TEST(FocusManagerTest, UnregisterFocusedComponentInScope) {
@@ -822,17 +822,17 @@ TEST(FocusManagerTest, UnregisterFocusedComponentInScope) {
 	manager.PushFocusScope(modalComponents);
 
 	manager.SetFocus(&modal1);
-	EXPECT_TRUE(manager.HasFocus(&modal1));
+	EXPECT_TRUE(manager.hasFocus(&modal1));
 
 	// Unregister focused modal component
 	manager.UnregisterFocusable(&modal1);
 
 	// Focus should be cleared
-	EXPECT_EQ(manager.GetFocused(), nullptr);
+	EXPECT_EQ(manager.getFocused(), nullptr);
 
 	// Pop scope
 	manager.PopFocusScope();
 
 	// Background focus should be restored
-	EXPECT_TRUE(manager.HasFocus(&background));
+	EXPECT_TRUE(manager.hasFocus(&background));
 }

@@ -23,15 +23,15 @@ namespace {
 			LOG_INFO(UI, "=== SDF Minimal Test Scene (Uber Shader) ===");
 
 			// Get font renderer from Primitives API (initialized in main.cpp)
-			m_fontRenderer = Renderer::Primitives::GetFontRenderer();
-			if (m_fontRenderer == nullptr) {
+			fontRenderer = Renderer::Primitives::GetFontRenderer();
+			if (fontRenderer == nullptr) {
 				LOG_ERROR(UI, "FontRenderer not available from Primitives API");
 				return;
 			}
 
 			// Get batch renderer from Primitives API
-			m_batchRenderer = Renderer::Primitives::GetBatchRenderer();
-			if (m_batchRenderer == nullptr) {
+			batchRenderer = Renderer::Primitives::GetBatchRenderer();
+			if (batchRenderer == nullptr) {
 				LOG_ERROR(UI, "BatchRenderer not available from Primitives API");
 				return;
 			}
@@ -69,8 +69,8 @@ namespace {
 
 		void OnExit() override {
 			// Font and batch renderers are owned by Primitives API, not this scene
-			m_fontRenderer = nullptr;
-			m_batchRenderer = nullptr;
+			fontRenderer = nullptr;
+			batchRenderer = nullptr;
 		}
 
 		std::string ExportState() override { return R"({"scene": "sdf_minimal", "description": "Minimal SDF rendering test with uber shader"})"; }
@@ -80,18 +80,18 @@ namespace {
 	  private:
 		// Helper to render a line of text using the unified batch renderer
 		void RenderTextLine(const std::string& text, const glm::vec2& position, float scale, const Foundation::Color& color) {
-			if (m_fontRenderer == nullptr || m_batchRenderer == nullptr) {
+			if (fontRenderer == nullptr || batchRenderer == nullptr) {
 				return;
 			}
 
 			// Generate glyph quads
 			glm::vec4 glyphColor(color.r, color.g, color.b, color.a);
 			std::vector<ui::FontRenderer::GlyphQuad> glyphs;
-			m_fontRenderer->GenerateGlyphQuads(text, position, scale, glyphColor, glyphs);
+			fontRenderer->GenerateGlyphQuads(text, position, scale, glyphColor, glyphs);
 
 			// Add each glyph to the unified batch renderer
 			for (const auto& glyph : glyphs) {
-				m_batchRenderer->AddTextQuad(
+				batchRenderer->AddTextQuad(
 					Foundation::Vec2(glyph.position.x, glyph.position.y),
 					Foundation::Vec2(glyph.size.x, glyph.size.y),
 					Foundation::Vec2(glyph.uvMin.x, glyph.uvMin.y),
@@ -101,8 +101,8 @@ namespace {
 			}
 		}
 
-		ui::FontRenderer* m_fontRenderer = nullptr;
-		Renderer::BatchRenderer* m_batchRenderer = nullptr;
+		ui::FontRenderer* fontRenderer = nullptr;
+		Renderer::BatchRenderer* batchRenderer = nullptr;
 	};
 
 	// Register scene

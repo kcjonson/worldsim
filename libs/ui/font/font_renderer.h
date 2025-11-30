@@ -219,23 +219,23 @@ namespace ui {
 			uint64_t			   lastAccessFrame;
 		};
 
-		std::map<char, Character> m_characters;					   // Map of loaded characters (FreeType mode)
-		std::map<char, SDFGlyph>  m_sdfGlyphs;					   // Map of SDF glyphs (Atlas mode)
-		SDFAtlasMetadata		  m_atlasMetadata{};			   // SDF atlas metadata
-		Renderer::Shader		  m_shader;						   // Shader for text rendering
-		GLuint					  m_vao = 0;					   // Vertex Array Object
-		GLuint					  m_vbo = 0;					   // Vertex Buffer Object
-		GLuint					  m_atlasTexture = 0;			   // SDF atlas texture
-		bool					  m_usingSDF = false;			   // True if using SDF atlas mode
-		FT_Library				  m_library = nullptr;			   // FreeType library instance
-		FT_Face					  m_face = nullptr;				   // FreeType font face
-		float					  m_scaledAscender = 0.0F;		   // Stores the ascender for the base font size
-		float					  m_maxGlyphHeightUnscaled = 0.0F; // Unscaled maximum glyph height
-		GLuint					  m_firstGlyphTexture = 0;		   // First glyph texture (for batch key)
+		std::map<char, Character> characters;					   // Map of loaded characters (FreeType mode)
+		std::map<char, SDFGlyph>  sdfGlyphs;					   // Map of SDF glyphs (Atlas mode)
+		SDFAtlasMetadata		  atlasMetadata{};			   // SDF atlas metadata
+		Renderer::Shader		  shader;						   // Shader for text rendering
+		GLuint					  vao = 0;					   // Vertex Array Object
+		GLuint					  vbo = 0;					   // Vertex Buffer Object
+		GLuint					  atlasTexture = 0;			   // SDF atlas texture
+		bool					  usingSDF = false;			   // True if using SDF atlas mode
+		FT_Library				  library = nullptr;			   // FreeType library instance
+		FT_Face					  face = nullptr;				   // FreeType font face
+		float					  scaledAscender = 0.0F;		   // Stores the ascender for the base font size
+		float					  maxGlyphHeightUnscaled = 0.0F; // Unscaled maximum glyph height
+		GLuint					  firstGlyphTexture = 0;		   // First glyph texture (for batch key)
 
 		// Glyph quad cache (mutable for const GenerateGlyphQuads)
-		mutable std::unordered_map<CacheKey, CacheEntry, CacheKeyHash> m_glyphQuadCache;
-		mutable uint64_t												m_currentFrame = 0;
+		mutable std::unordered_map<CacheKey, CacheEntry, CacheKeyHash> glyphQuadCache;
+		mutable uint64_t												currentFrame = 0;
 	};
 
 } // namespace ui

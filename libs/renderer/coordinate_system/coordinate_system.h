@@ -117,9 +117,9 @@ namespace Renderer { // NOLINT(readability-identifier-naming)
 		glm::vec2 PercentPosition(float xPercent, float yPercent) const;
 
 	  private:
-		GLFWwindow*	  m_window = nullptr;
-		mutable float m_cachedPixelRatio = 1.0F;
-		mutable bool  m_pixelRatioDirty = true;
+		GLFWwindow*	  window = nullptr;
+		mutable float cachedPixelRatio = 1.0F;
+		mutable bool  pixelRatioDirty = true;
 	};
 
 } // namespace Renderer

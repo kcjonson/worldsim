@@ -27,7 +27,7 @@ namespace {
 			using namespace Foundation;
 
 			// Create title text
-			m_labels.push_back(std::make_unique<Text>(Text::Args{
+			labels.push_back(std::make_unique<Text>(Text::Args{
 				.position = {50.0F, 30.0F},
 				.text = "Button Component Demo - Click, Hover, Tab to Focus, Enter to Activate",
 				.style = {.color = Color::White(), .fontSize = 20.0F},
@@ -35,7 +35,7 @@ namespace {
 			}));
 
 			// Row 1: Primary Buttons
-			m_labels.push_back(std::make_unique<Text>(Text::Args{
+			labels.push_back(std::make_unique<Text>(Text::Args{
 				.position = {50.0F, 80.0F},
 				.text = "Primary Buttons:",
 				.style = {.color = Color::Yellow(), .fontSize = 16.0F},
@@ -43,20 +43,20 @@ namespace {
 			}));
 
 			// Normal clickable button
-			m_buttons.push_back(std::make_unique<Button>(Button::Args{
+			buttons.push_back(std::make_unique<Button>(Button::Args{
 				.label = "Click Me!",
 				.position = {50.0F, 110.0F},
 				.size = {150.0F, 40.0F},
 				.type = Button::Type::Primary,
 				.onClick = [this]() {
-					m_clickCount++;
-					LOG_INFO(UI, "Button clicked! Count: {}", m_clickCount);
+					clickCount++;
+					LOG_INFO(UI, "Button clicked! Count: {}", clickCount);
 				},
 				.id = "primary_button_1"
 			}));
 
 			// Another clickable button
-			m_buttons.push_back(std::make_unique<Button>(Button::Args{
+			buttons.push_back(std::make_unique<Button>(Button::Args{
 				.label = "Another Button",
 				.position = {220.0F, 110.0F},
 				.size = {170.0F, 40.0F},
@@ -66,7 +66,7 @@ namespace {
 			}));
 
 			// Disabled button
-			m_buttons.push_back(std::make_unique<Button>(Button::Args{
+			buttons.push_back(std::make_unique<Button>(Button::Args{
 				.label = "Disabled",
 				.position = {410.0F, 110.0F},
 				.size = {150.0F, 40.0F},
@@ -77,14 +77,14 @@ namespace {
 			}));
 
 			// Row 2: Secondary Buttons
-			m_labels.push_back(std::make_unique<Text>(Text::Args{
+			labels.push_back(std::make_unique<Text>(Text::Args{
 				.position = {50.0F, 180.0F},
 				.text = "Secondary Buttons:",
 				.style = {.color = Color::Yellow(), .fontSize = 16.0F},
 				.id = "secondary_label"
 			}));
 
-			m_buttons.push_back(std::make_unique<Button>(Button::Args{
+			buttons.push_back(std::make_unique<Button>(Button::Args{
 				.label = "Secondary",
 				.position = {50.0F, 210.0F},
 				.size = {150.0F, 40.0F},
@@ -93,7 +93,7 @@ namespace {
 				.id = "secondary_button_1"
 			}));
 
-			m_buttons.push_back(std::make_unique<Button>(Button::Args{
+			buttons.push_back(std::make_unique<Button>(Button::Args{
 				.label = "Another Secondary",
 				.position = {220.0F, 210.0F},
 				.size = {200.0F, 40.0F},
@@ -103,14 +103,14 @@ namespace {
 			}));
 
 			// Row 3: Different sizes
-			m_labels.push_back(std::make_unique<Text>(Text::Args{
+			labels.push_back(std::make_unique<Text>(Text::Args{
 				.position = {50.0F, 280.0F},
 				.text = "Different Sizes:",
 				.style = {.color = Color::Yellow(), .fontSize = 16.0F},
 				.id = "size_label"
 			}));
 
-			m_buttons.push_back(std::make_unique<Button>(Button::Args{
+			buttons.push_back(std::make_unique<Button>(Button::Args{
 				.label = "Small",
 				.position = {50.0F, 310.0F},
 				.size = {100.0F, 30.0F},
@@ -119,7 +119,7 @@ namespace {
 				.id = "small_button"
 			}));
 
-			m_buttons.push_back(std::make_unique<Button>(Button::Args{
+			buttons.push_back(std::make_unique<Button>(Button::Args{
 				.label = "Large Button",
 				.position = {170.0F, 310.0F},
 				.size = {250.0F, 50.0F},
@@ -129,14 +129,14 @@ namespace {
 			}));
 
 			// Row 4: Focus demonstration
-			m_labels.push_back(std::make_unique<Text>(Text::Args{
+			labels.push_back(std::make_unique<Text>(Text::Args{
 				.position = {50.0F, 390.0F},
 				.text = "Focus (Press Tab to cycle, Enter to activate):",
 				.style = {.color = Color::Yellow(), .fontSize = 16.0F},
 				.id = "focus_label"
 			}));
 
-			m_buttons.push_back(std::make_unique<Button>(Button::Args{
+			buttons.push_back(std::make_unique<Button>(Button::Args{
 				.label = "Focusable 1",
 				.position = {50.0F, 420.0F},
 				.size = {150.0F, 40.0F},
@@ -145,7 +145,7 @@ namespace {
 				.id = "focusable_1"
 			}));
 
-			m_buttons.push_back(std::make_unique<Button>(Button::Args{
+			buttons.push_back(std::make_unique<Button>(Button::Args{
 				.label = "Focusable 2",
 				.position = {220.0F, 420.0F},
 				.size = {150.0F, 40.0F},
@@ -154,7 +154,7 @@ namespace {
 				.id = "focusable_2"
 			}));
 
-			m_buttons.push_back(std::make_unique<Button>(Button::Args{
+			buttons.push_back(std::make_unique<Button>(Button::Args{
 				.label = "Focusable 3",
 				.position = {390.0F, 420.0F},
 				.size = {150.0F, 40.0F},
@@ -164,40 +164,40 @@ namespace {
 			}));
 
 			// Click counter display
-			m_clickCounterText = std::make_unique<Text>(Text::Args{
+			clickCounterText = std::make_unique<Text>(Text::Args{
 				.position = {600.0F, 110.0F},
 				.text = "Clicks: 0",
 				.style = {.color = Color::Green(), .fontSize = 18.0F},
 				.id = "click_counter"
 			});
 
-			LOG_INFO(UI, "Button scene initialized with {} buttons", m_buttons.size());
+			LOG_INFO(UI, "Button scene initialized with {} buttons", buttons.size());
 		}
 
 		void OnExit() override {
-			m_buttons.clear();
-			m_labels.clear();
-			m_clickCounterText.reset();
+			buttons.clear();
+			labels.clear();
+			clickCounterText.reset();
 			LOG_INFO(UI, "Button scene exited");
 		}
 
 		void HandleInput(float /*deltaTime*/) override {
 			// Update all buttons' input state
-			for (auto& button : m_buttons) {
+			for (auto& button : buttons) {
 				button->HandleInput();
 			}
 		}
 
 		void Update(float deltaTime) override {
 			// Update all buttons
-			for (auto& button : m_buttons) {
+			for (auto& button : buttons) {
 				button->Update(deltaTime);
 			}
 
 			// Update click counter text
-			if (m_lastClickCount != m_clickCount) {
-				m_clickCounterText->text = "Clicks: " + std::to_string(m_clickCount);
-				m_lastClickCount = m_clickCount;
+			if (lastClickCount != clickCount) {
+				clickCounterText->text = "Clicks: " + std::to_string(clickCount);
+				lastClickCount = clickCount;
 			}
 		}
 
@@ -207,30 +207,30 @@ namespace {
 			glClear(GL_COLOR_BUFFER_BIT);
 
 			// Render labels
-			for (auto& label : m_labels) {
+			for (auto& label : labels) {
 				label->Render();
 			}
 
 			// Render click counter
-			if (m_clickCounterText) {
-				m_clickCounterText->Render();
+			if (clickCounterText) {
+				clickCounterText->Render();
 			}
 
 			// Render all buttons
-			for (auto& button : m_buttons) {
+			for (auto& button : buttons) {
 				button->Render();
 			}
 		}
 
 	  private:
 		// UI Components
-		std::vector<std::unique_ptr<UI::Button>> m_buttons;
-		std::vector<std::unique_ptr<UI::Text>> m_labels;
-		std::unique_ptr<UI::Text> m_clickCounterText;
+		std::vector<std::unique_ptr<UI::Button>> buttons;
+		std::vector<std::unique_ptr<UI::Text>> labels;
+		std::unique_ptr<UI::Text> clickCounterText;
 
 		// Click tracking
-		int m_clickCount{0};
-		int m_lastClickCount{0};
+		int clickCount{0};
+		int lastClickCount{0};
 	};
 
 	// Register scene with scene manager

@@ -27,23 +27,23 @@ namespace Renderer { // NOLINT(readability-identifier-naming)
 		using Clock = std::chrono::high_resolution_clock;
 		using TimePoint = std::chrono::time_point<Clock>;
 
-		TimePoint		   m_frameStart;
-		std::vector<float> m_frameTimeSamples; // Rolling window of frame times (last 60 frames)
-		size_t			   m_currentSampleIndex;
+		TimePoint		   frameStart;
+		std::vector<float> frameTimeSamples; // Rolling window of frame times (last 60 frames)
+		size_t			   currentSampleIndex;
 
 		// Current rendering stats
-		uint32_t m_drawCalls;
-		uint32_t m_vertexCount;
-		uint32_t m_triangleCount;
+		uint32_t drawCalls;
+		uint32_t vertexCount;
+		uint32_t triangleCount;
 
 		// Helper: Get current Unix timestamp in milliseconds
-		uint64_t GetCurrentTimestamp() const;
+		uint64_t getCurrentTimestamp() const;
 
 		// Helper: Calculate FPS from frame time
-		float CalculateFPS(float frameTimeMs) const;
+		float calculateFPS(float frameTimeMs) const;
 
 		// Helper: Get min/max frame times from sample window
-		void GetFrameTimeMinMax(float& outMin, float& outMax) const;
+		void getFrameTimeMinMax(float& outMin, float& outMax) const;
 	};
 
 } // namespace Renderer

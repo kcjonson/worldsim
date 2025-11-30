@@ -121,20 +121,20 @@ namespace engine {
 		UI::FocusManager& GetFocusManager();
 
 	  private:
-		GLFWwindow* m_window{nullptr};	// GLFW window (not owned)
-		bool		m_isRunning{false}; // Main loop control flag
-		bool		m_isPaused{false};	// Pause state
-		double		m_lastTime{0.0};	// For delta time calculation
-		float		m_deltaTime{0.0F};	// Last frame delta time
-		float		m_fps{0.0F};		// Current FPS
+		GLFWwindow* window{nullptr};	// GLFW window (not owned)
+		bool		isRunning{false}; // Main loop control flag
+		bool		isPaused{false};	// Pause state
+		double		lastTime{0.0};	// For delta time calculation
+		float		deltaTime{0.0F};	// Last frame delta time
+		float		fps{0.0F};		// Current FPS
 
-		std::unique_ptr<InputManager>		m_inputManager;		 // Input management system
-		std::unique_ptr<ClipboardManager>	m_clipboardManager;	 // Clipboard management system
-		std::unique_ptr<UI::FocusManager>	m_focusManager;		 // Focus management system
+		std::unique_ptr<InputManager>		inputManager;		 // Input management system
+		std::unique_ptr<ClipboardManager>	clipboardManager;	 // Clipboard management system
+		std::unique_ptr<UI::FocusManager>	focusManager;		 // Focus management system
 
-		OverlayRenderer	  m_overlayRenderer{};	 // Application-level UI
-		PreFrameCallback  m_preFrameCallback{};	 // Pre-frame callback
-		PostFrameCallback m_postFrameCallback{}; // Post-frame callback
+		OverlayRenderer	  overlayRenderer{};	 // Application-level UI
+		PreFrameCallback  preFrameCallback{};	 // Pre-frame callback
+		PostFrameCallback postFrameCallback{}; // Post-frame callback
 	};
 
 } // namespace engine

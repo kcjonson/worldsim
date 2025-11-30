@@ -10,8 +10,8 @@ namespace Renderer {
 
 	BatchRenderer::BatchRenderer() { // NOLINT(cppcoreguidelines-pro-type-member-init,modernize-use-equals-default)
 		// Reserve space for vertices to minimize allocations
-		m_vertices.reserve(10000);
-		m_indices.reserve(15000);
+		vertices.reserve(10000);
+		indices.reserve(15000);
 	}
 
 	BatchRenderer::~BatchRenderer() {
@@ -20,27 +20,27 @@ namespace Renderer {
 
 	void BatchRenderer::Init() {
 		// Load uber shader (unified shapes + text)
-		if (!m_shader.LoadFromFile("uber.vert", "uber.frag")) {
+		if (!shader.LoadFromFile("uber.vert", "uber.frag")) {
 			std::cerr << "Failed to load uber shaders!" << std::endl;
 			return;
 		}
 
 		// Get uniform locations
-		m_projectionLoc = glGetUniformLocation(m_shader.GetProgram(), "u_projection");
-		m_transformLoc = glGetUniformLocation(m_shader.GetProgram(), "u_transform");
-		m_atlasLoc = glGetUniformLocation(m_shader.GetProgram(), "u_atlas");
-		m_viewportHeightLoc = glGetUniformLocation(m_shader.GetProgram(), "u_viewportHeight");
-		m_pixelRatioLoc = glGetUniformLocation(m_shader.GetProgram(), "u_pixelRatio");
+		projectionLoc = glGetUniformLocation(shader.GetProgram(), "u_projection");
+		transformLoc = glGetUniformLocation(shader.GetProgram(), "u_transform");
+		atlasLoc = glGetUniformLocation(shader.GetProgram(), "u_atlas");
+		viewportHeightLoc = glGetUniformLocation(shader.GetProgram(), "u_viewportHeight");
+		pixelRatioLoc = glGetUniformLocation(shader.GetProgram(), "u_pixelRatio");
 
 		// Create VAO/VBO/IBO
-		glGenVertexArrays(1, &m_vao);
-		glGenBuffers(1, &m_vbo);
-		glGenBuffers(1, &m_ibo);
+		glGenVertexArrays(1, &vao);
+		glGenBuffers(1, &vbo);
+		glGenBuffers(1, &ibo);
 
-		glBindVertexArray(m_vao);
+		glBindVertexArray(vao);
 
 		// Set up vertex buffer
-		glBindBuffer(GL_ARRAY_BUFFER, m_vbo);
+		glBindBuffer(GL_ARRAY_BUFFER, vbo);
 
 		// Position attribute (location = 0)
 		glEnableVertexAttribArray(0);
@@ -67,25 +67,25 @@ namespace Renderer {
 		glVertexAttribPointer(5, 4, GL_FLOAT, GL_FALSE, sizeof(UberVertex), (void*)offsetof(UberVertex, clipBounds));
 
 		// Bind index buffer
-		glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m_ibo);
+		glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ibo);
 
 		glBindVertexArray(0);
 	}
 
 	void BatchRenderer::Shutdown() {
-		if (m_vao != 0) {
-			glDeleteVertexArrays(1, &m_vao);
-			m_vao = 0;
+		if (vao != 0) {
+			glDeleteVertexArrays(1, &vao);
+			vao = 0;
 		}
 
-		if (m_vbo != 0) {
-			glDeleteBuffers(1, &m_vbo);
-			m_vbo = 0;
+		if (vbo != 0) {
+			glDeleteBuffers(1, &vbo);
+			vbo = 0;
 		}
 
-		if (m_ibo != 0) {
-			glDeleteBuffers(1, &m_ibo);
-			m_ibo = 0;
+		if (ibo != 0) {
+			glDeleteBuffers(1, &ibo);
+			ibo = 0;
 		}
 
 		// Shader cleanup handled by RAII destructor
@@ -97,7 +97,7 @@ namespace Renderer {
 		const std::optional<Foundation::BorderStyle>& border,
 		float										cornerRadius
 	) { // NOLINT(readability-convert-member-functions-to-static)
-		uint32_t baseIndex = static_cast<uint32_t>(m_vertices.size());
+		uint32_t baseIndex = static_cast<uint32_t>(vertices.size());
 
 		// Calculate rect center and half-dimensions for SDF
 		float halfW = bounds.width * 0.5F;
@@ -156,63 +156,63 @@ namespace Renderer {
 		// Add 4 vertices with expanded screen positions but rect-local coordinates
 		// that extend beyond the original shape bounds
 		// Top-left corner
-		m_vertices.push_back(
+		vertices.push_back(
 			{Foundation::Vec2(centerX - expandedHalfW, centerY - expandedHalfH),
 			 Foundation::Vec2(-expandedHalfW, -expandedHalfH), // Rect-local: top-left (expanded)
 			 colorVec,
 			 borderData,
 			 shapeParams,
-			 m_currentClipBounds}
+			 currentClipBounds}
 		);
 
 		// Top-right corner
-		m_vertices.push_back(
+		vertices.push_back(
 			{Foundation::Vec2(centerX + expandedHalfW, centerY - expandedHalfH),
 			 Foundation::Vec2(expandedHalfW, -expandedHalfH), // Rect-local: top-right (expanded)
 			 colorVec,
 			 borderData,
 			 shapeParams,
-			 m_currentClipBounds}
+			 currentClipBounds}
 		);
 
 		// Bottom-right corner
-		m_vertices.push_back(
+		vertices.push_back(
 			{Foundation::Vec2(centerX + expandedHalfW, centerY + expandedHalfH),
 			 Foundation::Vec2(expandedHalfW, expandedHalfH), // Rect-local: bottom-right (expanded)
 			 colorVec,
 			 borderData,
 			 shapeParams,
-			 m_currentClipBounds}
+			 currentClipBounds}
 		);
 
 		// Bottom-left corner
-		m_vertices.push_back(
+		vertices.push_back(
 			{Foundation::Vec2(centerX - expandedHalfW, centerY + expandedHalfH),
 			 Foundation::Vec2(-expandedHalfW, expandedHalfH), // Rect-local: bottom-left (expanded)
 			 colorVec,
 			 borderData,
 			 shapeParams,
-			 m_currentClipBounds}
+			 currentClipBounds}
 		);
 
 		// Add 6 indices (2 triangles)
-		m_indices.push_back(baseIndex + 0);
-		m_indices.push_back(baseIndex + 1);
-		m_indices.push_back(baseIndex + 2);
+		indices.push_back(baseIndex + 0);
+		indices.push_back(baseIndex + 1);
+		indices.push_back(baseIndex + 2);
 
-		m_indices.push_back(baseIndex + 0);
-		m_indices.push_back(baseIndex + 2);
-		m_indices.push_back(baseIndex + 3);
+		indices.push_back(baseIndex + 0);
+		indices.push_back(baseIndex + 2);
+		indices.push_back(baseIndex + 3);
 	}
 
 	void BatchRenderer::AddTriangles( // NOLINT(readability-convert-member-functions-to-static)
-		const Foundation::Vec2*	 vertices,
-		const uint16_t*			 indices,
+		const Foundation::Vec2*	 inputVertices,
+		const uint16_t*			 inputIndices,
 		size_t					 vertexCount,
 		size_t					 indexCount,
 		const Foundation::Color& color
 	) { // NOLINT(readability-convert-member-functions-to-static)
-		uint32_t baseIndex = static_cast<uint32_t>(m_vertices.size());
+		uint32_t baseIndex = static_cast<uint32_t>(vertices.size());
 
 		Foundation::Vec4 colorVec = color.ToVec4();
 
@@ -224,19 +224,19 @@ namespace Renderer {
 
 		// Add all vertices
 		for (size_t i = 0; i < vertexCount; ++i) {
-			m_vertices.push_back({
-				vertices[i],
-				zeroVec2,			  // texCoord (unused for triangles)
+			vertices.push_back({
+				inputVertices[i],
+				zeroVec2,	  // texCoord (unused for triangles)
 				colorVec,
 				zeroVec4,			  // data1 (unused)
 				shapeParams,		  // data2 with borderPos >= 0 marks as shape
-				m_currentClipBounds	  // clip bounds
+				currentClipBounds	  // clip bounds
 			});
 		}
 
 		// Add all indices (offset by baseIndex)
 		for (size_t i = 0; i < indexCount; ++i) {
-			m_indices.push_back(baseIndex + indices[i]);
+			indices.push_back(baseIndex + inputIndices[i]);
 		}
 	}
 
@@ -247,7 +247,7 @@ namespace Renderer {
 		const Foundation::Vec2&	 uvMax,
 		const Foundation::Color& color
 	) {
-		uint32_t baseIndex = static_cast<uint32_t>(m_vertices.size());
+		uint32_t baseIndex = static_cast<uint32_t>(vertices.size());
 
 		Foundation::Vec4 colorVec = color.ToVec4();
 
@@ -255,68 +255,68 @@ namespace Renderer {
 		// data1 = unused (0,0,0,0)
 		// data2 = (pixelRange, 0, 0, -1) where -1 signals text rendering mode
 		Foundation::Vec4 zeroVec4(0.0F, 0.0F, 0.0F, 0.0F);
-		Foundation::Vec4 textParams(m_fontPixelRange, 0.0F, 0.0F, kRenderModeText);
+		Foundation::Vec4 textParams(fontPixelRange, 0.0F, 0.0F, kRenderModeText);
 
 		// Add 4 vertices for glyph quad
 		// Note: UV Y coordinates are flipped for OpenGL coordinate system
 
 		// Top-left
-		m_vertices.push_back({
+		vertices.push_back({
 			position,
 			Foundation::Vec2(uvMin.x, uvMax.y), // UV flipped
 			colorVec,
 			zeroVec4,
 			textParams,
-			m_currentClipBounds
+			currentClipBounds
 		});
 
 		// Top-right
-		m_vertices.push_back({
+		vertices.push_back({
 			Foundation::Vec2(position.x + size.x, position.y),
 			Foundation::Vec2(uvMax.x, uvMax.y), // UV flipped
 			colorVec,
 			zeroVec4,
 			textParams,
-			m_currentClipBounds
+			currentClipBounds
 		});
 
 		// Bottom-right
-		m_vertices.push_back({
+		vertices.push_back({
 			Foundation::Vec2(position.x + size.x, position.y + size.y),
 			Foundation::Vec2(uvMax.x, uvMin.y), // UV flipped
 			colorVec,
 			zeroVec4,
 			textParams,
-			m_currentClipBounds
+			currentClipBounds
 		});
 
 		// Bottom-left
-		m_vertices.push_back({
+		vertices.push_back({
 			Foundation::Vec2(position.x, position.y + size.y),
 			Foundation::Vec2(uvMin.x, uvMin.y), // UV flipped
 			colorVec,
 			zeroVec4,
 			textParams,
-			m_currentClipBounds
+			currentClipBounds
 		});
 
 		// Add 6 indices (2 triangles)
-		m_indices.push_back(baseIndex + 0);
-		m_indices.push_back(baseIndex + 1);
-		m_indices.push_back(baseIndex + 2);
+		indices.push_back(baseIndex + 0);
+		indices.push_back(baseIndex + 1);
+		indices.push_back(baseIndex + 2);
 
-		m_indices.push_back(baseIndex + 0);
-		m_indices.push_back(baseIndex + 2);
-		m_indices.push_back(baseIndex + 3);
+		indices.push_back(baseIndex + 0);
+		indices.push_back(baseIndex + 2);
+		indices.push_back(baseIndex + 3);
 	}
 
 	void BatchRenderer::SetFontAtlas(GLuint atlasTexture, float pixelRange) {
-		m_fontAtlas = atlasTexture;
-		m_fontPixelRange = pixelRange;
+		fontAtlas = atlasTexture;
+		fontPixelRange = pixelRange;
 	}
 
 	void BatchRenderer::Flush() {
-		if (m_vertices.empty()) {
+		if (vertices.empty()) {
 			return;
 		}
 
@@ -331,73 +331,73 @@ namespace Renderer {
 		glDisable(GL_CULL_FACE);
 
 		// Upload vertex data to GPU
-		glBindBuffer(GL_ARRAY_BUFFER, m_vbo);
-		glBufferData(GL_ARRAY_BUFFER, m_vertices.size() * sizeof(UberVertex), m_vertices.data(), GL_DYNAMIC_DRAW);
+		glBindBuffer(GL_ARRAY_BUFFER, vbo);
+		glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(UberVertex), vertices.data(), GL_DYNAMIC_DRAW);
 
 		// Upload index data to GPU
-		glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m_ibo);
-		glBufferData(GL_ELEMENT_ARRAY_BUFFER, m_indices.size() * sizeof(uint32_t), m_indices.data(), GL_DYNAMIC_DRAW);
+		glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ibo);
+		glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(uint32_t), indices.data(), GL_DYNAMIC_DRAW);
 
 		// Bind shader and VAO
-		m_shader.Use();
-		glBindVertexArray(m_vao);
+		shader.Use();
+		glBindVertexArray(vao);
 
 		// Create projection matrix
 		// If CoordinateSystem is set, use it for DPI-aware projection (logical pixels)
 		// Otherwise fall back to viewport dimensions (may be incorrect on high-DPI displays)
 		Foundation::Mat4 projection;
-		if (m_coordinateSystem != nullptr) {
-			projection = m_coordinateSystem->CreateScreenSpaceProjection();
+		if (coordinateSystem != nullptr) {
+			projection = coordinateSystem->CreateScreenSpaceProjection();
 		} else {
-			projection = glm::ortho(0.0F, static_cast<float>(m_viewportWidth), static_cast<float>(m_viewportHeight), 0.0F, -1.0F, 1.0F);
+			projection = glm::ortho(0.0F, static_cast<float>(viewportWidth), static_cast<float>(viewportHeight), 0.0F, -1.0F, 1.0F);
 		}
 		Foundation::Mat4 transform = Foundation::Mat4(1.0F);
 
-		glUniformMatrix4fv(m_projectionLoc, 1, GL_FALSE, glm::value_ptr(projection));
-		glUniformMatrix4fv(m_transformLoc, 1, GL_FALSE, glm::value_ptr(transform));
+		glUniformMatrix4fv(projectionLoc, 1, GL_FALSE, glm::value_ptr(projection));
+		glUniformMatrix4fv(transformLoc, 1, GL_FALSE, glm::value_ptr(transform));
 
 		// Set viewport height and pixel ratio for clipping
 		// gl_FragCoord uses physical pixels, so we need framebuffer height and pixel ratio
-		float framebufferHeight = static_cast<float>(m_viewportHeight);
+		float framebufferHeight = static_cast<float>(viewportHeight);
 		float pixelRatio = 1.0F;
-		if (m_coordinateSystem != nullptr) {
+		if (coordinateSystem != nullptr) {
 			// Get pixel ratio for DPI scaling
-			pixelRatio = m_coordinateSystem->GetPixelRatio();
+			pixelRatio = coordinateSystem->GetPixelRatio();
 			// Get logical height and convert to framebuffer (physical) height
-			glm::vec2 windowSize = m_coordinateSystem->GetWindowSize();
+			glm::vec2 windowSize = coordinateSystem->GetWindowSize();
 			framebufferHeight = windowSize.y * pixelRatio;
 		}
-		glUniform1f(m_viewportHeightLoc, framebufferHeight);
-		glUniform1f(m_pixelRatioLoc, pixelRatio);
+		glUniform1f(viewportHeightLoc, framebufferHeight);
+		glUniform1f(pixelRatioLoc, pixelRatio);
 
 		// Bind font atlas texture (always bound, shader ignores it for shapes)
-		if (m_fontAtlas != 0) {
+		if (fontAtlas != 0) {
 			glActiveTexture(GL_TEXTURE0);
-			glBindTexture(GL_TEXTURE_2D, m_fontAtlas);
-			glUniform1i(m_atlasLoc, 0);
+			glBindTexture(GL_TEXTURE_2D, fontAtlas);
+			glUniform1i(atlasLoc, 0);
 		}
 
 		// Draw
-		glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(m_indices.size()), GL_UNSIGNED_INT, nullptr);
+		glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(indices.size()), GL_UNSIGNED_INT, nullptr);
 
-		m_drawCallCount++;
+		drawCallCount++;
 
 		// Cleanup
 		glBindVertexArray(0);
-		if (m_fontAtlas != 0) {
+		if (fontAtlas != 0) {
 			glBindTexture(GL_TEXTURE_2D, 0);
 		}
 		glDisable(GL_BLEND);
 
 		// Clear buffers for next batch
-		m_vertices.clear();
-		m_indices.clear();
+		vertices.clear();
+		indices.clear();
 	}
 
 	void BatchRenderer::BeginFrame() {
-		m_drawCallCount = 0;
-		m_vertices.clear();
-		m_indices.clear();
+		drawCallCount = 0;
+		vertices.clear();
+		indices.clear();
 	}
 
 	void BatchRenderer::EndFrame() {
@@ -405,36 +405,36 @@ namespace Renderer {
 	}
 
 	void BatchRenderer::SetViewport(int width, int height) {
-		m_viewportWidth = width;
-		m_viewportHeight = height;
+		viewportWidth = width;
+		viewportHeight = height;
 	}
 
 	void BatchRenderer::GetViewport(int& width, int& height) const {
-		width = m_viewportWidth;
-		height = m_viewportHeight;
+		width = viewportWidth;
+		height = viewportHeight;
 	}
 
 	// Sets the coordinate system to use for rendering.
 	// Note: BatchRenderer does NOT take ownership of the CoordinateSystem pointer.
 	// The caller is responsible for ensuring that the CoordinateSystem outlives the BatchRenderer.
 	void BatchRenderer::SetCoordinateSystem(CoordinateSystem* coordSystem) {
-		m_coordinateSystem = coordSystem;
+		coordinateSystem = coordSystem;
 	}
 
 	BatchRenderer::RenderStats BatchRenderer::GetStats() const { // NOLINT(readability-convert-member-functions-to-static)
 		RenderStats stats;
-		stats.drawCalls = static_cast<uint32_t>(m_drawCallCount);
-		stats.vertexCount = static_cast<uint32_t>(m_vertices.size());
-		stats.triangleCount = static_cast<uint32_t>(m_indices.size() / 3);
+		stats.drawCalls = static_cast<uint32_t>(drawCallCount);
+		stats.vertexCount = static_cast<uint32_t>(vertices.size());
+		stats.triangleCount = static_cast<uint32_t>(indices.size() / 3);
 		return stats;
 	}
 
 	void BatchRenderer::SetClipBounds(const Foundation::Vec4& bounds) {
-		m_currentClipBounds = bounds;
+		currentClipBounds = bounds;
 	}
 
 	void BatchRenderer::ClearClipBounds() {
-		m_currentClipBounds = Foundation::Vec4(0.0F, 0.0F, 0.0F, 0.0F);
+		currentClipBounds = Foundation::Vec4(0.0F, 0.0F, 0.0F, 0.0F);
 	}
 
 } // namespace Renderer

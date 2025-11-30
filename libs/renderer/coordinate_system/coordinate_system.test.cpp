@@ -21,22 +21,22 @@ class CoordinateSystemTest : public ::testing::Test {
 		glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
 		glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API); // No OpenGL context needed
 
-		m_window = glfwCreateWindow(800, 600, "Test", nullptr, nullptr);
-		if (m_window == nullptr) {
+		testWindow = glfwCreateWindow(800, 600, "Test", nullptr, nullptr);
+		if (testWindow == nullptr) {
 			glfwTerminate();
 			GTEST_SKIP() << "GLFW window creation failed - skipping CoordinateSystem tests"; // NOLINT(readability-implicit-bool-conversion)
 		}
 	}
 
 	void TearDown() override {
-		if (m_window != nullptr) {
-			glfwDestroyWindow(m_window);
+		if (testWindow != nullptr) {
+			glfwDestroyWindow(testWindow);
 		}
 		glfwTerminate();
 	}
 
   protected:						// NOLINT(readability-redundant-access-specifiers)
-	GLFWwindow* m_window = nullptr; // NOLINT(cppcoreguidelines-non-private-member-variables-in-classes)
+	GLFWwindow* testWindow = nullptr; // NOLINT(cppcoreguidelines-non-private-member-variables-in-classes)
 };
 
 // ----------------------------------------------------------------------------
@@ -45,7 +45,7 @@ class CoordinateSystemTest : public ::testing::Test {
 
 TEST_F(CoordinateSystemTest, Initialization) {
 	CoordinateSystem coordSys;
-	EXPECT_TRUE(coordSys.Initialize(m_window));
+	EXPECT_TRUE(coordSys.Initialize(testWindow));
 }
 
 TEST_F(CoordinateSystemTest, InitializationWithNullWindow) {
@@ -59,7 +59,7 @@ TEST_F(CoordinateSystemTest, InitializationWithNullWindow) {
 
 TEST_F(CoordinateSystemTest, GetWindowSize) {
 	CoordinateSystem coordSys;
-	coordSys.Initialize(m_window);
+	coordSys.Initialize(testWindow);
 
 	glm::vec2 size = coordSys.GetWindowSize();
 	EXPECT_EQ(size.x, 800.0F);
@@ -80,7 +80,7 @@ TEST_F(CoordinateSystemTest, GetWindowSizeWithoutInitialization) {
 
 TEST_F(CoordinateSystemTest, PercentWidth) {
 	CoordinateSystem coordSys;
-	coordSys.Initialize(m_window); // 800x600 window
+	coordSys.Initialize(testWindow); // 800x600 window
 
 	EXPECT_FLOAT_EQ(coordSys.PercentWidth(50.0F), 400.0F);	// 50% of 800
 	EXPECT_FLOAT_EQ(coordSys.PercentWidth(100.0F), 800.0F); // 100% of 800
@@ -90,7 +90,7 @@ TEST_F(CoordinateSystemTest, PercentWidth) {
 
 TEST_F(CoordinateSystemTest, PercentHeight) {
 	CoordinateSystem coordSys;
-	coordSys.Initialize(m_window); // 800x600 window
+	coordSys.Initialize(testWindow); // 800x600 window
 
 	EXPECT_FLOAT_EQ(coordSys.PercentHeight(50.0F), 300.0F);	 // 50% of 600
 	EXPECT_FLOAT_EQ(coordSys.PercentHeight(100.0F), 600.0F); // 100% of 600
@@ -100,7 +100,7 @@ TEST_F(CoordinateSystemTest, PercentHeight) {
 
 TEST_F(CoordinateSystemTest, PercentSize) {
 	CoordinateSystem coordSys;
-	coordSys.Initialize(m_window); // 800x600 window
+	coordSys.Initialize(testWindow); // 800x600 window
 
 	glm::vec2 size = coordSys.PercentSize(50.0F, 75.0F);
 	EXPECT_FLOAT_EQ(size.x, 400.0F); // 50% of 800
@@ -109,7 +109,7 @@ TEST_F(CoordinateSystemTest, PercentSize) {
 
 TEST_F(CoordinateSystemTest, PercentPosition) {
 	CoordinateSystem coordSys;
-	coordSys.Initialize(m_window); // 800x600 window
+	coordSys.Initialize(testWindow); // 800x600 window
 
 	glm::vec2 pos = coordSys.PercentPosition(25.0F, 50.0F);
 	EXPECT_FLOAT_EQ(pos.x, 200.0F); // 25% of 800
@@ -122,7 +122,7 @@ TEST_F(CoordinateSystemTest, PercentPosition) {
 
 TEST_F(CoordinateSystemTest, GetPixelRatio) {
 	CoordinateSystem coordSys;
-	coordSys.Initialize(m_window);
+	coordSys.Initialize(testWindow);
 
 	float ratio = coordSys.GetPixelRatio();
 	// Ratio should be positive and reasonable (1.0 for non-retina, 2.0 for retina)
@@ -132,7 +132,7 @@ TEST_F(CoordinateSystemTest, GetPixelRatio) {
 
 TEST_F(CoordinateSystemTest, PixelRatioCaching) {
 	CoordinateSystem coordSys;
-	coordSys.Initialize(m_window);
+	coordSys.Initialize(testWindow);
 
 	float ratio1 = coordSys.GetPixelRatio();
 	float ratio2 = coordSys.GetPixelRatio();
@@ -143,7 +143,7 @@ TEST_F(CoordinateSystemTest, PixelRatioCaching) {
 
 TEST_F(CoordinateSystemTest, PixelRatioInvalidatesOnWindowResize) {
 	CoordinateSystem coordSys;
-	coordSys.Initialize(m_window);
+	coordSys.Initialize(testWindow);
 
 	float ratio1 = coordSys.GetPixelRatio();
 
@@ -164,7 +164,7 @@ TEST_F(CoordinateSystemTest, PixelRatioInvalidatesOnWindowResize) {
 
 TEST_F(CoordinateSystemTest, WindowToFramebufferConversion) {
 	CoordinateSystem coordSys;
-	coordSys.Initialize(m_window);
+	coordSys.Initialize(testWindow);
 
 	float	  ratio = coordSys.GetPixelRatio();
 	glm::vec2 windowCoords(100.0F, 200.0F);
@@ -176,7 +176,7 @@ TEST_F(CoordinateSystemTest, WindowToFramebufferConversion) {
 
 TEST_F(CoordinateSystemTest, FramebufferToWindowConversion) {
 	CoordinateSystem coordSys;
-	coordSys.Initialize(m_window);
+	coordSys.Initialize(testWindow);
 
 	float	  ratio = coordSys.GetPixelRatio();
 	glm::vec2 framebufferCoords(200.0F, 400.0F);
@@ -188,7 +188,7 @@ TEST_F(CoordinateSystemTest, FramebufferToWindowConversion) {
 
 TEST_F(CoordinateSystemTest, RoundTripConversion) {
 	CoordinateSystem coordSys;
-	coordSys.Initialize(m_window);
+	coordSys.Initialize(testWindow);
 
 	glm::vec2 original(123.0F, 456.0F);
 	glm::vec2 framebuffer = coordSys.WindowToFramebuffer(original);
@@ -204,7 +204,7 @@ TEST_F(CoordinateSystemTest, RoundTripConversion) {
 
 TEST_F(CoordinateSystemTest, CreateScreenSpaceProjection) {
 	CoordinateSystem coordSys;
-	coordSys.Initialize(m_window);
+	coordSys.Initialize(testWindow);
 
 	glm::mat4 projection = coordSys.CreateScreenSpaceProjection();
 
@@ -225,7 +225,7 @@ TEST_F(CoordinateSystemTest, CreateScreenSpaceProjection) {
 
 TEST_F(CoordinateSystemTest, CreateWorldSpaceProjection) {
 	CoordinateSystem coordSys;
-	coordSys.Initialize(m_window);
+	coordSys.Initialize(testWindow);
 
 	glm::mat4 projection = coordSys.CreateWorldSpaceProjection();
 
@@ -259,7 +259,7 @@ TEST_F(CoordinateSystemTest, PercentHelpersWithoutWindow) {
 
 TEST_F(CoordinateSystemTest, UpdateWindowSizeInvalidatesCache) {
 	CoordinateSystem coordSys;
-	coordSys.Initialize(m_window);
+	coordSys.Initialize(testWindow);
 
 	// Get initial ratio (forces calculation)
 	coordSys.GetPixelRatio();

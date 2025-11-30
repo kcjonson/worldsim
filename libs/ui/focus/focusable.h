@@ -17,11 +17,11 @@ namespace UI {
  *
  * Usage:
  *   class MyComponent : public Component, public IFocusable {
- *       void OnFocusGained() override { m_focused = true; }
- *       void OnFocusLost() override { m_focused = false; }
+ *       void OnFocusGained() override { focused = true; }
+ *       void OnFocusLost() override { focused = false; }
  *       void HandleKeyInput(...) override { ... }
  *       void HandleCharInput(...) override { ... }
- *       bool CanReceiveFocus() const override { return m_enabled; }
+ *       bool CanReceiveFocus() const override { return enabled; }
  *   };
  */
 class IFocusable {

@@ -11,24 +11,24 @@
 namespace Renderer {
 
 	Shader::~Shader() {
-		if (m_program != 0) {
-			glDeleteProgram(m_program);
-			m_program = 0;
+		if (program != 0) {
+			glDeleteProgram(program);
+			program = 0;
 		}
 	}
 
 	Shader::Shader(Shader&& other) noexcept
-		: m_program(other.m_program) {
-		other.m_program = 0;
+		: program(other.program) {
+		other.program = 0;
 	}
 
 	Shader& Shader::operator=(Shader&& other) noexcept {
 		if (this != &other) {
-			if (m_program != 0) {
-				glDeleteProgram(m_program);
+			if (program != 0) {
+				glDeleteProgram(program);
 			}
-			m_program = other.m_program;
-			other.m_program = 0;
+			program = other.program;
+			other.program = 0;
 		}
 		return *this;
 	}
@@ -135,18 +135,18 @@ namespace Renderer {
 		}
 
 		// Shader program
-		m_program = glCreateProgram();
-		glAttachShader(m_program, vertex);
-		glAttachShader(m_program, fragment);
-		glLinkProgram(m_program);
-		glGetProgramiv(m_program, GL_LINK_STATUS, &success);
+		program = glCreateProgram();
+		glAttachShader(program, vertex);
+		glAttachShader(program, fragment);
+		glLinkProgram(program);
+		glGetProgramiv(program, GL_LINK_STATUS, &success);
 		if (success == 0) {
-			glGetProgramInfoLog(m_program, 512, nullptr, infoLog);
+			glGetProgramInfoLog(program, 512, nullptr, infoLog);
 			std::cerr << "ERROR::SHADER::PROGRAM::LINKING_FAILED\n" << infoLog << std::endl;
 			glDeleteShader(vertex);
 			glDeleteShader(fragment);
-			glDeleteProgram(m_program);
-			m_program = 0;
+			glDeleteProgram(program);
+			program = 0;
 			return false;
 		}
 
@@ -158,8 +158,8 @@ namespace Renderer {
 	}
 
 	void Shader::Use() const {
-		if (m_program != 0) {
-			glUseProgram(m_program);
+		if (program != 0) {
+			glUseProgram(program);
 		}
 	}
 
@@ -168,21 +168,21 @@ namespace Renderer {
 	}
 
 	void Shader::SetUniform(const char* name, const glm::mat4& value) const {
-		GLint location = glGetUniformLocation(m_program, name);
+		GLint location = glGetUniformLocation(program, name);
 		if (location != -1) {
 			glUniformMatrix4fv(location, 1, GL_FALSE, glm::value_ptr(value));
 		}
 	}
 
 	void Shader::SetUniform(const char* name, int value) const {
-		GLint location = glGetUniformLocation(m_program, name);
+		GLint location = glGetUniformLocation(program, name);
 		if (location != -1) {
 			glUniform1i(location, value);
 		}
 	}
 
 	void Shader::SetUniform(const char* name, float value) const {
-		GLint location = glGetUniformLocation(m_program, name);
+		GLint location = glGetUniformLocation(program, name);
 		if (location != -1) {
 			glUniform1f(location, value);
 		}

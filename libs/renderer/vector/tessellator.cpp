@@ -64,24 +64,24 @@ namespace renderer {
 		outMesh.vertices = path.vertices;
 
 		// Build internal vertex list
-		m_vertices.clear();
-		m_vertices.reserve(path.vertices.size());
+		tessVertices.clear();
+		tessVertices.reserve(path.vertices.size());
 		for (size_t i = 0; i < path.vertices.size(); ++i) {
 			Vertex v;
 			v.position = path.vertices[i];
 			v.originalIndex = i;
 			v.isProcessed = false;
-			m_vertices.push_back(v);
+			tessVertices.push_back(v);
 		}
 
 		// Ear clipping algorithm
 		std::vector<size_t> remainingVertices;
-		for (size_t i = 0; i < m_vertices.size(); ++i) {
+		for (size_t i = 0; i < tessVertices.size(); ++i) {
 			remainingVertices.push_back(i);
 		}
 
 		// Reserve space for indices (n-2 triangles, 3 indices each)
-		outMesh.indices.reserve((m_vertices.size() - 2) * 3);
+		outMesh.indices.reserve((tessVertices.size() - 2) * 3);
 
 		// Keep clipping ears until we have a triangle
 		while (remainingVertices.size() > 3) {
@@ -95,9 +95,9 @@ namespace renderer {
 				size_t v1 = remainingVertices[i];
 				size_t v2 = remainingVertices[nextIdx];
 
-				Foundation::Vec2 p0 = m_vertices[v0].position;
-				Foundation::Vec2 p1 = m_vertices[v1].position;
-				Foundation::Vec2 p2 = m_vertices[v2].position;
+				Foundation::Vec2 p0 = tessVertices[v0].position;
+				Foundation::Vec2 p1 = tessVertices[v1].position;
+				Foundation::Vec2 p2 = tessVertices[v2].position;
 
 				// Check if this forms a valid ear
 				// 1. Must be a convex vertex (interior angle < 180°)
@@ -117,7 +117,7 @@ namespace renderer {
 						continue;
 					}
 
-					Foundation::Vec2 p = m_vertices[remainingVertices[j]].position;
+					Foundation::Vec2 p = tessVertices[remainingVertices[j]].position;
 
 					// Point-in-triangle test using barycentric coordinates
 					float denom = (((p1.y - p2.y) * (p0.x - p2.x)) + ((p2.x - p1.x) * (p0.y - p2.y)));

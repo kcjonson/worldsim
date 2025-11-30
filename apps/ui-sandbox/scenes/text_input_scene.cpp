@@ -25,7 +25,7 @@ namespace {
 			Renderer::Primitives::GetViewport(viewportWidth, viewportHeight);
 
 			// Create title text
-			m_title = UI::Text(UI::Text::Args{
+			title = UI::Text(UI::Text::Args{
 				.position = {50.0F, 40.0F},
 				.text = "TextInput Component Demo",
 				.style = {.color = {1.0F, 1.0F, 1.0F, 1.0F}, .fontSize = 24.0F},
@@ -34,7 +34,7 @@ namespace {
 			});
 
 			// Create instructions
-			m_instructions = UI::Text(UI::Text::Args{
+			instructions = UI::Text(UI::Text::Args{
 				.position = {50.0F, 80.0F},
 				.text = "Use Tab to navigate between fields. Try selection (Shift+Arrow, mouse drag) and clipboard (Ctrl+C/X/V/A)",
 				.style = {.color = {0.7F, 0.7F, 0.7F, 1.0F}, .fontSize = 14.0F},
@@ -47,7 +47,7 @@ namespace {
 			const float spacing = 80.0F;
 
 			// Basic text input
-			m_inputs.push_back(
+			inputs.push_back(
 				std::make_unique<UI::TextInput>(UI::TextInput::Args{
 					.position = {50.0F, yPos},
 					.size = {400.0F, 40.0F},
@@ -56,13 +56,13 @@ namespace {
 					.tabIndex = 0,
 					.id = "input1",
 					.enabled = true,
-					.onChange = [this](const std::string& text) { m_output1 = "Input 1: " + text; }
+					.onChange = [this](const std::string& text) { output1 = "Input 1: " + text; }
 				})
 			);
 			yPos += spacing;
 
 			// Text input with initial value
-			m_inputs.push_back(
+			inputs.push_back(
 				std::make_unique<UI::TextInput>(UI::TextInput::Args{
 					.position = {50.0F, yPos},
 					.size = {400.0F, 40.0F},
@@ -71,13 +71,13 @@ namespace {
 					.tabIndex = 1,
 					.id = "input2",
 					.enabled = true,
-					.onChange = [this](const std::string& text) { m_output2 = "Input 2: " + text; }
+					.onChange = [this](const std::string& text) { output2 = "Input 2: " + text; }
 				})
 			);
 			yPos += spacing;
 
 			// Third text input
-			m_inputs.push_back(
+			inputs.push_back(
 				std::make_unique<UI::TextInput>(UI::TextInput::Args{
 					.position = {50.0F, yPos},
 					.size = {400.0F, 40.0F},
@@ -86,7 +86,7 @@ namespace {
 					.tabIndex = 2,
 					.id = "input3",
 					.enabled = true,
-					.onChange = [this](const std::string& text) { m_output3 = "Input 3: " + text; }
+					.onChange = [this](const std::string& text) { output3 = "Input 3: " + text; }
 				})
 			);
 			yPos += spacing;
@@ -102,7 +102,7 @@ namespace {
 			styledStyle.borderWidth = 2.0F;
 			styledStyle.fontSize = 18.0F;
 
-			m_inputs.push_back(
+			inputs.push_back(
 				std::make_unique<UI::TextInput>(UI::TextInput::Args{
 					.position = {50.0F, yPos},
 					.size = {400.0F, 45.0F},
@@ -112,13 +112,13 @@ namespace {
 					.tabIndex = 3,
 					.id = "input4",
 					.enabled = true,
-					.onChange = [this](const std::string& text) { m_output4 = "Input 4 (styled): " + text; }
+					.onChange = [this](const std::string& text) { output4 = "Input 4 (styled): " + text; }
 				})
 			);
 			yPos += spacing;
 
 			// Create a button to test Tab navigation integration
-			m_button = std::make_unique<UI::Button>(UI::Button::Args{
+			button = std::make_unique<UI::Button>(UI::Button::Args{
 				.label = "Test Button (Tab index 4)",
 				.position = {50.0F, yPos},
 				.size = {200.0F, 40.0F},
@@ -128,7 +128,7 @@ namespace {
 			});
 
 			// Create output display area
-			m_outputLabel = UI::Text(UI::Text::Args{
+			outputLabel = UI::Text(UI::Text::Args{
 				.position = {500.0F, 140.0F},
 				.text = "Output (onChange callbacks):",
 				.style = {.color = {1.0F, 1.0F, 1.0F, 1.0F}, .fontSize = 16.0F},
@@ -139,25 +139,25 @@ namespace {
 
 		void HandleInput(float /*dt*/) override {
 			// Handle input for all text inputs
-			for (size_t i = 0; i < m_inputs.size(); i++) {
-				m_inputs[i]->HandleInput();
+			for (size_t i = 0; i < inputs.size(); i++) {
+				inputs[i]->HandleInput();
 			}
 
 			// Handle button input
-			if (m_button) {
-				m_button->HandleInput();
+			if (button) {
+				button->HandleInput();
 			}
 		}
 
 		void Update(float dt) override {
 			// Update all text inputs
-			for (auto& input : m_inputs) {
+			for (auto& input : inputs) {
 				input->Update(dt);
 			}
 
 			// Update button
-			if (m_button) {
-				m_button->Update(dt);
+			if (button) {
+				button->Update(dt);
 			}
 		}
 
@@ -167,25 +167,25 @@ namespace {
 			glClear(GL_COLOR_BUFFER_BIT);
 
 			// Render title and instructions
-			m_title.Render();
-			m_instructions.Render();
+			title.Render();
+			instructions.Render();
 
 			// Render all text inputs
-			for (auto& input : m_inputs) {
+			for (auto& input : inputs) {
 				input->Render();
 			}
 
 			// Render button
-			if (m_button) {
-				m_button->Render();
+			if (button) {
+				button->Render();
 			}
 
 			// Render output labels
-			m_outputLabel.Render();
+			outputLabel.Render();
 			float		outputY = 180.0F;
 			const float outputSpacing = 30.0F;
 
-			std::vector<std::string> outputs = {m_output1, m_output2, m_output3, m_output4};
+			std::vector<std::string> outputs = {output1, output2, output3, output4};
 			for (const auto& output : outputs) {
 				if (!output.empty()) {
 					UI::Text outputText(UI::Text::Args{
@@ -218,8 +218,8 @@ namespace {
 		}
 
 		void OnExit() override {
-			m_inputs.clear();
-			m_button.reset();
+			inputs.clear();
+			button.reset();
 		}
 
 		std::string ExportState() override {
@@ -232,17 +232,17 @@ namespace {
 		const char* GetName() const override { return "text_input"; }
 
 	  private:
-		std::vector<std::unique_ptr<UI::TextInput>> m_inputs;
-		std::unique_ptr<UI::Button>					m_button;
+		std::vector<std::unique_ptr<UI::TextInput>> inputs;
+		std::unique_ptr<UI::Button>					button;
 
-		UI::Text m_title;
-		UI::Text m_instructions;
-		UI::Text m_outputLabel;
+		UI::Text title;
+		UI::Text instructions;
+		UI::Text outputLabel;
 
-		std::string m_output1;
-		std::string m_output2;
-		std::string m_output3;
-		std::string m_output4;
+		std::string output1;
+		std::string output2;
+		std::string output3;
+		std::string output4;
 	};
 
 	// Register scene with SceneManager

@@ -44,35 +44,35 @@ namespace engine {
 		void Update(float deltaTime);
 
 		// Query API for scenes to read current input state
-		glm::vec2 GetMousePosition() const { return m_mousePosition; }
-		glm::vec2 GetMouseDelta() const { return m_mouseDelta; }
+		glm::vec2 GetMousePosition() const { return mousePosition; }
+		glm::vec2 GetMouseDelta() const { return mouseDelta; }
 		bool	  IsMouseButtonDown(MouseButton button) const;
 		bool	  IsMouseButtonPressed(MouseButton button) const;  // True only on frame button was pressed
 		bool	  IsMouseButtonReleased(MouseButton button) const; // True only on frame button was released
-		bool	  IsDragging() const { return m_isDragging; }
-		glm::vec2 GetDragStartPosition() const { return m_dragStartPos; }
-		glm::vec2 GetDragDelta() const { return m_mousePosition - m_dragStartPos; }
+		bool	  IsDragging() const { return isDragging; }
+		glm::vec2 GetDragStartPosition() const { return dragStartPos; }
+		glm::vec2 GetDragDelta() const { return mousePosition - dragStartPos; }
 
 		bool IsKeyDown(Key key) const;
 		bool IsKeyPressed(Key key) const;  // True only on frame key was pressed
 		bool IsKeyReleased(Key key) const; // True only on frame key was released
 
-		float	  GetScrollDelta() const { return m_scrollDelta; }
-		bool	  IsCursorInWindow() const { return m_cursorInWindow; }
-		glm::vec2 GetWindowSize() const { return m_windowSize; }
+		float	  GetScrollDelta() const { return scrollDelta; }
+		bool	  IsCursorInWindow() const { return cursorInWindow; }
+		glm::vec2 GetWindowSize() const { return windowSize; }
 
 		// Callbacks for external systems (e.g., FocusManager)
 		using KeyInputCallback = std::function<bool(Key key, int action, int mods)>;
 		using CharInputCallback = std::function<bool(char32_t codepoint)>;
 
-		void SetKeyInputCallback(KeyInputCallback callback) { m_keyInputCallback = callback; }
-		void SetCharInputCallback(CharInputCallback callback) { m_charInputCallback = callback; }
+		void SetKeyInputCallback(KeyInputCallback callback) { keyInputCallback = callback; }
+		void SetCharInputCallback(CharInputCallback callback) { charInputCallback = callback; }
 
 		// Configuration setters
-		void SetPanSpeed(float speed) { m_panSpeed = speed; }
-		void SetZoomSpeed(float speed) { m_zoomSpeed = speed; }
-		void SetEdgePanThreshold(float threshold) { m_edgePanThreshold = threshold; }
-		void SetEdgePanSpeed(float speed) { m_edgePanSpeed = speed; }
+		void SetPanSpeed(float speed) { panSpeed = speed; }
+		void SetZoomSpeed(float speed) { zoomSpeed = speed; }
+		void SetEdgePanThreshold(float threshold) { edgePanThreshold = threshold; }
+		void SetEdgePanSpeed(float speed) { edgePanSpeed = speed; }
 
 		// GLFW static callbacks
 		static void KeyCallback(GLFWwindow* window, int key, int scancode, int action, int mods);
@@ -87,59 +87,59 @@ namespace engine {
 		static InputManager* s_instance;
 
 		// Store original callbacks (for chaining)
-		GLFWkeyfun		   m_previousKeyCallback = nullptr;
-		GLFWcharfun		   m_previousCharCallback = nullptr;
-		GLFWmousebuttonfun m_previousMouseButtonCallback = nullptr;
-		GLFWcursorposfun   m_previousCursorPosCallback = nullptr;
-		GLFWscrollfun	   m_previousScrollCallback = nullptr;
-		GLFWcursorenterfun m_previousCursorEnterCallback = nullptr;
+		GLFWkeyfun		   previousKeyCallback = nullptr;
+		GLFWcharfun		   previousCharCallback = nullptr;
+		GLFWmousebuttonfun previousMouseButtonCallback = nullptr;
+		GLFWcursorposfun   previousCursorPosCallback = nullptr;
+		GLFWscrollfun	   previousScrollCallback = nullptr;
+		GLFWcursorenterfun previousCursorEnterCallback = nullptr;
 
 		// GLFW window reference
-		GLFWwindow* m_window;
+		GLFWwindow* window;
 
 		// Mouse state
-		glm::vec2 m_mousePosition{0.0f};
-		glm::vec2 m_lastMousePosition{0.0f};
-		glm::vec2 m_mouseDelta{0.0f};
-		glm::vec2 m_windowSize{800.0f, 600.0f};
-		bool	  m_isDragging = false;
-		glm::vec2 m_dragStartPos{0.0f};
+		glm::vec2 mousePosition{0.0f};
+		glm::vec2 lastMousePosition{0.0f};
+		glm::vec2 mouseDelta{0.0f};
+		glm::vec2 windowSize{800.0f, 600.0f};
+		bool	  isDragging = false;
+		glm::vec2 dragStartPos{0.0f};
 
 		// Mouse button state tracking
 		enum class ButtonState { Up, Pressed, Down, Released };
-		std::unordered_map<int, ButtonState> m_mouseButtonStates;
-		std::unordered_map<int, ButtonState> m_mouseButtonPreviousStates;
+		std::unordered_map<int, ButtonState> mouseButtonStates;
+		std::unordered_map<int, ButtonState> mouseButtonPreviousStates;
 
 		// Keyboard state tracking
-		std::unordered_map<int, ButtonState> m_keyStates;
-		std::unordered_map<int, ButtonState> m_keyPreviousStates;
+		std::unordered_map<int, ButtonState> keyStates;
+		std::unordered_map<int, ButtonState> keyPreviousStates;
 
 		// Scroll state
-		float m_scrollDelta = 0.0f;
+		float scrollDelta = 0.0f;
 
 		// Window state
-		bool m_cursorInWindow = true;
+		bool cursorInWindow = true;
 
 		// Configuration (for future use by scenes)
-		float m_panSpeed = 100.0f;
-		float m_zoomSpeed = 1.0f;
-		float m_edgePanThreshold = 0.05f; // 5% of screen width/height
-		float m_edgePanSpeed = 50.0f;
+		float panSpeed = 100.0f;
+		float zoomSpeed = 1.0f;
+		float edgePanThreshold = 0.05f; // 5% of screen width/height
+		float edgePanSpeed = 50.0f;
 
 		// Instance methods called by static callbacks
-		void HandleKeyInput(int key, int action);
-		void HandleCharInput(unsigned int codepoint);
-		void HandleMouseButton(int button, int action);
-		void HandleMouseMove(double x, double y);
-		void HandleScroll(double xoffset, double yoffset);
-		void HandleCursorEnter(int entered);
+		void handleKeyInput(int key, int action);
+		void handleCharInput(unsigned int codepoint);
+		void handleMouseButton(int button, int action);
+		void handleMouseMove(double x, double y);
+		void handleScroll(double xoffset, double yoffset);
+		void handleCursorEnter(int entered);
 
 		// Helper to update button state transitions
-		void UpdateButtonStates();
+		void updateButtonStates();
 
 		// External callbacks (for FocusManager integration)
-		KeyInputCallback  m_keyInputCallback{};
-		CharInputCallback m_charInputCallback{};
+		KeyInputCallback  keyInputCallback{};
+		CharInputCallback charInputCallback{};
 	};
 
 } // namespace engine

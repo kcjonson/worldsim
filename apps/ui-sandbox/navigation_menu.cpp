@@ -6,44 +6,44 @@
 namespace UI {
 
 	NavigationMenu::NavigationMenu(const Args& args)
-		: m_sceneNames(args.sceneNames),
-		  m_onSceneSelected(args.onSceneSelected),
-		  m_coordinateSystem(args.coordinateSystem) {
+		: sceneNames(args.sceneNames),
+		  onSceneSelected(args.onSceneSelected),
+		  coordinateSystem(args.coordinateSystem) {
 		InitializeComponents();
 	}
 
 	NavigationMenu::~NavigationMenu() = default;
 
 	NavigationMenu::NavigationMenu(NavigationMenu&& other) noexcept
-		: m_expanded(other.m_expanded),
-		  m_sceneNames(std::move(other.m_sceneNames)),
-		  m_onSceneSelected(std::move(other.m_onSceneSelected)),
-		  m_coordinateSystem(other.m_coordinateSystem),
-		  m_toggleButton(std::move(other.m_toggleButton)),
-		  m_menuButtons(std::move(other.m_menuButtons)),
-		  m_buttonIds(std::move(other.m_buttonIds)),
-		  m_headerText(std::move(other.m_headerText)),
-		  m_menuX(other.m_menuX),
-		  m_menuY(other.m_menuY),
-		  m_menuHeight(other.m_menuHeight) {
-		other.m_coordinateSystem = nullptr;
+		: expanded(other.expanded),
+		  sceneNames(std::move(other.sceneNames)),
+		  onSceneSelected(std::move(other.onSceneSelected)),
+		  coordinateSystem(other.coordinateSystem),
+		  toggleButton(std::move(other.toggleButton)),
+		  menuButtons(std::move(other.menuButtons)),
+		  buttonIds(std::move(other.buttonIds)),
+		  headerText(std::move(other.headerText)),
+		  menuX(other.menuX),
+		  menuY(other.menuY),
+		  menuHeight(other.menuHeight) {
+		other.coordinateSystem = nullptr;
 	}
 
 	NavigationMenu& NavigationMenu::operator=(NavigationMenu&& other) noexcept {
 		if (this != &other) {
-			m_expanded = other.m_expanded;
-			m_sceneNames = std::move(other.m_sceneNames);
-			m_onSceneSelected = std::move(other.m_onSceneSelected);
-			m_coordinateSystem = other.m_coordinateSystem;
-			m_toggleButton = std::move(other.m_toggleButton);
-			m_menuButtons = std::move(other.m_menuButtons);
-			m_buttonIds = std::move(other.m_buttonIds);
-			m_headerText = std::move(other.m_headerText);
-			m_menuX = other.m_menuX;
-			m_menuY = other.m_menuY;
-			m_menuHeight = other.m_menuHeight;
+			expanded = other.expanded;
+			sceneNames = std::move(other.sceneNames);
+			onSceneSelected = std::move(other.onSceneSelected);
+			coordinateSystem = other.coordinateSystem;
+			toggleButton = std::move(other.toggleButton);
+			menuButtons = std::move(other.menuButtons);
+			buttonIds = std::move(other.buttonIds);
+			headerText = std::move(other.headerText);
+			menuX = other.menuX;
+			menuY = other.menuY;
+			menuHeight = other.menuHeight;
 
-			other.m_coordinateSystem = nullptr;
+			other.coordinateSystem = nullptr;
 		}
 		return *this;
 	}
@@ -51,39 +51,39 @@ namespace UI {
 	void NavigationMenu::InitializeComponents() {
 		using namespace Foundation;
 
-		if (m_coordinateSystem == nullptr) {
+		if (coordinateSystem == nullptr) {
 			LOG_ERROR(UI, "NavigationMenu: coordinateSystem is null");
 			return;
 		}
 
 		// Get window size for bottom-right positioning
-		glm::vec2 windowSize = m_coordinateSystem->GetWindowSize();
+		glm::vec2 windowSize = coordinateSystem->GetWindowSize();
 
 		// Toggle button position (bottom-right corner)
 		float toggleX = windowSize.x - kToggleSize - kMargin;
 		float toggleY = windowSize.y - kToggleSize - kMargin;
 
 		// Create toggle button with simple icon
-		m_toggleButton.emplace(
+		toggleButton.emplace(
 			Button::Args{
 				.label = "...",
 				.position = {toggleX, toggleY},
 				.size = {kToggleSize, kToggleSize},
 				.type = Button::Type::Primary,
-				.onClick = [this]() { m_expanded = !m_expanded; },
+				.onClick = [this]() { expanded = !expanded; },
 				.id = "menu_toggle_button"
 			}
 		);
 
 		// Calculate menu position (above the toggle button)
-		m_menuHeight = kHeaderHeight + (static_cast<float>(m_sceneNames.size()) * kLineHeight);
-		m_menuX = windowSize.x - kMenuWidth - kMargin;
-		m_menuY = toggleY - m_menuHeight - kMenuToggleGap;
+		menuHeight = kHeaderHeight + (static_cast<float>(sceneNames.size()) * kLineHeight);
+		menuX = windowSize.x - kMenuWidth - kMargin;
+		menuY = toggleY - menuHeight - kMenuToggleGap;
 
 		// Create header text
-		m_headerText = Text(
+		headerText = Text(
 			Text::Args{
-				.position = {m_menuX + 10, m_menuY + 8},
+				.position = {menuX + 10, menuY + 8},
 				.text = "Scenes",
 				.style = {.color = Color(0.9F, 0.9F, 0.9F, 1.0F), .fontSize = 16.0F},
 				.id = "menu_header_text"
@@ -91,32 +91,32 @@ namespace UI {
 		);
 
 		// Create button for each scene
-		m_menuButtons.clear();
-		m_buttonIds.clear();
-		m_buttonIds.reserve(m_sceneNames.size());
-		for (size_t i = 0; i < m_sceneNames.size(); i++) {
-			float itemY = m_menuY + kHeaderHeight + (static_cast<float>(i) * kLineHeight);
+		menuButtons.clear();
+		buttonIds.clear();
+		buttonIds.reserve(sceneNames.size());
+		for (size_t i = 0; i < sceneNames.size(); i++) {
+			float itemY = menuY + kHeaderHeight + (static_cast<float>(i) * kLineHeight);
 
 			// Capture scene name by value for onClick callback
-			std::string sceneName = m_sceneNames[i];
+			std::string sceneName = sceneNames[i];
 
 			// Store button ID to avoid dangling pointer from temporary string
-			m_buttonIds.push_back("menu_button_" + std::to_string(i));
+			buttonIds.push_back("menu_button_" + std::to_string(i));
 
-			m_menuButtons.push_back(
+			menuButtons.push_back(
 				Button{Button::Args{
 					.label = sceneName,
-					.position = {m_menuX + 2, itemY + 2},
+					.position = {menuX + 2, itemY + 2},
 					.size = {kMenuWidth - 4, kLineHeight - 4},
 					.type = Button::Type::Secondary,
 					.onClick =
 						[this, sceneName]() {
-							if (m_onSceneSelected) {
-								m_onSceneSelected(sceneName);
+							if (onSceneSelected) {
+								onSceneSelected(sceneName);
 							}
-							m_expanded = false; // Close menu after selection
+							expanded = false; // Close menu after selection
 						},
-					.id = m_buttonIds.back().c_str()
+					.id = buttonIds.back().c_str()
 				}}
 			);
 		}
@@ -128,13 +128,13 @@ namespace UI {
 
 	void NavigationMenu::HandleInput() {
 		// Always handle the toggle button
-		if (m_toggleButton) {
-			m_toggleButton->HandleInput();
+		if (toggleButton) {
+			toggleButton->HandleInput();
 		}
 
 		// Only handle menu buttons when expanded
-		if (m_expanded) {
-			for (auto& button : m_menuButtons) {
+		if (expanded) {
+			for (auto& button : menuButtons) {
 				button.HandleInput();
 			}
 		}
@@ -142,13 +142,13 @@ namespace UI {
 
 	void NavigationMenu::Update(float deltaTime) {
 		// Update toggle button
-		if (m_toggleButton) {
-			m_toggleButton->Update(deltaTime);
+		if (toggleButton) {
+			toggleButton->Update(deltaTime);
 		}
 
 		// Update menu buttons if expanded
-		if (m_expanded) {
-			for (auto& button : m_menuButtons) {
+		if (expanded) {
+			for (auto& button : menuButtons) {
 				button.Update(deltaTime);
 			}
 		}
@@ -158,18 +158,18 @@ namespace UI {
 		using namespace Foundation;
 
 		// Always render the toggle button
-		if (m_toggleButton) {
-			m_toggleButton->Render();
+		if (toggleButton) {
+			toggleButton->Render();
 		}
 
 		// Only render menu when expanded
-		if (!m_expanded) {
+		if (!expanded) {
 			return;
 		}
 
 		// Draw menu background
 		Renderer::Primitives::DrawRect(
-			{.bounds = {m_menuX, m_menuY, kMenuWidth, m_menuHeight},
+			{.bounds = {menuX, menuY, kMenuWidth, menuHeight},
 			 .style =
 				 {.fill = Color(0.15F, 0.15F, 0.2F, 0.95F), .border = BorderStyle{.color = Color(0.4F, 0.4F, 0.5F, 1.0F), .width = 1.0F}},
 			 .id = "menu_background"}
@@ -177,14 +177,14 @@ namespace UI {
 
 		// Draw header background
 		Renderer::Primitives::DrawRect(
-			{.bounds = {m_menuX, m_menuY, kMenuWidth, kHeaderHeight}, .style = {.fill = Color(0.2F, 0.2F, 0.3F, 1.0F)}, .id = "menu_header"}
+			{.bounds = {menuX, menuY, kMenuWidth, kHeaderHeight}, .style = {.fill = Color(0.2F, 0.2F, 0.3F, 1.0F)}, .id = "menu_header"}
 		);
 
 		// Render header text
-		m_headerText.Render();
+		headerText.Render();
 
 		// Render all menu buttons
-		for (auto& button : m_menuButtons) {
+		for (auto& button : menuButtons) {
 			button.Render();
 		}
 	}

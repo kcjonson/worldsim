@@ -32,7 +32,7 @@ void FocusManager::RegisterFocusable(IFocusable* component, int tabIndex) {
 	assert(component != nullptr);
 
 	// Check if already registered
-	for (const auto& entry : m_focusables) {
+	for (const auto& entry : focusables) {
 		if (entry.component == component) {
 			LOG_WARNING(UI, "FocusManager: Component already registered");
 			return;
@@ -41,36 +41,36 @@ void FocusManager::RegisterFocusable(IFocusable* component, int tabIndex) {
 
 	// Auto-assign tab index if -1
 	if (tabIndex == -1) {
-		tabIndex = m_nextAutoTabIndex++;
+		tabIndex = nextAutoTabIndex++;
 	}
 
 	// Add to list
-	m_focusables.push_back({component, tabIndex});
+	focusables.push_back({component, tabIndex});
 
 	// Sort by tab index (stable sort preserves registration order for equal tabIndex)
-	SortFocusables();
+	sortFocusables();
 }
 
 void FocusManager::UnregisterFocusable(IFocusable* component) {
 	assert(component != nullptr);
 
 	// Remove from focusables list
-	auto it = std::remove_if(m_focusables.begin(), m_focusables.end(), [component](const FocusEntry& entry) {
+	auto it = std::remove_if(focusables.begin(), focusables.end(), [component](const FocusEntry& entry) {
 		return entry.component == component;
 	});
 
-	if (it != m_focusables.end()) {
-		m_focusables.erase(it, m_focusables.end());
+	if (it != focusables.end()) {
+		focusables.erase(it, focusables.end());
 	}
 
 	// Clear focus if this component has focus
-	if (m_currentFocus == component) {
-		m_currentFocus->OnFocusLost();
-		m_currentFocus = nullptr;
+	if (currentFocus == component) {
+		currentFocus->OnFocusLost();
+		currentFocus = nullptr;
 	}
 
 	// Remove from all focus scopes
-	for (auto& scope : m_scopeStack) {
+	for (auto& scope : scopeStack) {
 		auto scopeIt = std::remove(scope.components.begin(), scope.components.end(), component);
 		if (scopeIt != scope.components.end()) {
 			scope.components.erase(scopeIt, scope.components.end());
@@ -84,32 +84,32 @@ void FocusManager::UnregisterFocusable(IFocusable* component) {
 }
 
 void FocusManager::SetFocus(IFocusable* component) {
-	if (component == m_currentFocus) {
+	if (component == currentFocus) {
 		return; // Already has focus
 	}
 
 	// Clear current focus
-	if (m_currentFocus != nullptr) {
-		m_currentFocus->OnFocusLost();
+	if (currentFocus != nullptr) {
+		currentFocus->OnFocusLost();
 	}
 
 	// Set new focus
-	m_currentFocus = component;
+	currentFocus = component;
 
-	if (m_currentFocus != nullptr) {
-		m_currentFocus->OnFocusGained();
+	if (currentFocus != nullptr) {
+		currentFocus->OnFocusGained();
 	}
 }
 
 void FocusManager::ClearFocus() {
-	if (m_currentFocus != nullptr) {
-		m_currentFocus->OnFocusLost();
-		m_currentFocus = nullptr;
+	if (currentFocus != nullptr) {
+		currentFocus->OnFocusLost();
+		currentFocus = nullptr;
 	}
 }
 
 void FocusManager::FocusNext() {
-	auto focusables = GetActiveFocusables();
+	auto focusables = getActiveFocusables();
 
 	if (focusables.empty()) {
 		ClearFocus();
@@ -117,7 +117,7 @@ void FocusManager::FocusNext() {
 	}
 
 	// Find current focus index
-	int currentIndex = FindFocusIndex(m_currentFocus);
+	int currentIndex = findFocusIndex(currentFocus);
 
 	// Search for next focusable component (wrap around)
 	int startIndex = (currentIndex + 1) % static_cast<int>(focusables.size());
@@ -138,7 +138,7 @@ void FocusManager::FocusNext() {
 }
 
 void FocusManager::FocusPrevious() {
-	auto focusables = GetActiveFocusables();
+	auto focusables = getActiveFocusables();
 
 	if (focusables.empty()) {
 		ClearFocus();
@@ -146,7 +146,7 @@ void FocusManager::FocusPrevious() {
 	}
 
 	// Find current focus index
-	int currentIndex = FindFocusIndex(m_currentFocus);
+	int currentIndex = findFocusIndex(currentFocus);
 
 	// Search for previous focusable component (wrap around)
 	int startIndex = (currentIndex - 1 + static_cast<int>(focusables.size())) % static_cast<int>(focusables.size());
@@ -169,25 +169,25 @@ void FocusManager::FocusPrevious() {
 void FocusManager::PushFocusScope(const std::vector<IFocusable*>& components) {
 	FocusScope scope;
 	scope.components = components;
-	scope.previousFocus = m_currentFocus;
+	scope.previousFocus = currentFocus;
 
-	m_scopeStack.push_back(scope);
+	scopeStack.push_back(scope);
 
 	// Clear current focus (modal will set its own focus)
 	ClearFocus();
 }
 
 void FocusManager::PopFocusScope() {
-	assert(!m_scopeStack.empty() && "PopFocusScope called with empty stack");
+	assert(!scopeStack.empty() && "PopFocusScope called with empty stack");
 
-	FocusScope scope = m_scopeStack.back();
-	m_scopeStack.pop_back();
+	FocusScope scope = scopeStack.back();
+	scopeStack.pop_back();
 
 	// Restore previous focus (if component still exists)
 	if (scope.previousFocus != nullptr) {
 		// Check if component is still registered
 		bool stillExists = false;
-		for (const auto& entry : m_focusables) {
+		for (const auto& entry : focusables) {
 			if (entry.component == scope.previousFocus) {
 				stillExists = true;
 				break;
@@ -203,40 +203,40 @@ void FocusManager::PopFocusScope() {
 }
 
 void FocusManager::RouteKeyInput(engine::Key key, bool shift, bool ctrl, bool alt) {
-	if (m_currentFocus != nullptr) {
-		m_currentFocus->HandleKeyInput(key, shift, ctrl, alt);
+	if (currentFocus != nullptr) {
+		currentFocus->HandleKeyInput(key, shift, ctrl, alt);
 	}
 }
 
 void FocusManager::RouteCharInput(char32_t codepoint) {
-	if (m_currentFocus != nullptr) {
-		m_currentFocus->HandleCharInput(codepoint);
+	if (currentFocus != nullptr) {
+		currentFocus->HandleCharInput(codepoint);
 	}
 }
 
 // Private methods
 
-void FocusManager::SortFocusables() {
-	std::stable_sort(m_focusables.begin(), m_focusables.end());
+void FocusManager::sortFocusables() {
+	std::stable_sort(focusables.begin(), focusables.end());
 }
 
-std::vector<IFocusable*> FocusManager::GetActiveFocusables() const {
+std::vector<IFocusable*> FocusManager::getActiveFocusables() const {
 	// If focus scope stack is not empty, use topmost scope's components
-	if (!m_scopeStack.empty()) {
-		return m_scopeStack.back().components;
+	if (!scopeStack.empty()) {
+		return scopeStack.back().components;
 	}
 
 	// Otherwise, use all registered focusables
 	std::vector<IFocusable*> result;
-	result.reserve(m_focusables.size());
-	for (const auto& entry : m_focusables) {
+	result.reserve(focusables.size());
+	for (const auto& entry : focusables) {
 		result.push_back(entry.component);
 	}
 	return result;
 }
 
-int FocusManager::FindFocusIndex(IFocusable* component) const {
-	auto focusables = GetActiveFocusables();
+int FocusManager::findFocusIndex(IFocusable* component) const {
+	auto focusables = getActiveFocusables();
 
 	for (size_t i = 0; i < focusables.size(); ++i) {
 		if (focusables[i] == component) {

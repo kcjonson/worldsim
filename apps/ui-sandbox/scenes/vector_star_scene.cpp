@@ -28,14 +28,14 @@ namespace {
 			auto startTime = std::chrono::high_resolution_clock::now();
 
 			renderer::Tessellator tessellator;
-			bool				  success = tessellator.Tessellate(m_starPath, m_starMesh);
+			bool				  success = tessellator.Tessellate(starPath, starMesh);
 
 			auto endTime = std::chrono::high_resolution_clock::now();
 			auto duration = std::chrono::duration_cast<std::chrono::microseconds>(endTime - startTime);
 
 			if (success) {
 				LOG_INFO(
-					UI, "Tessellation successful: %zu triangles in %.3F ms", m_starMesh.GetTriangleCount(), duration.count() / 1000.0F
+					UI, "Tessellation successful: %zu triangles in %.3F ms", starMesh.GetTriangleCount(), duration.count() / 1000.0F
 				);
 			} else {
 				LOG_ERROR(UI, "Tessellation failed!");
@@ -58,35 +58,35 @@ namespace {
 			glClear(GL_COLOR_BUFFER_BIT);
 
 			// Draw the tessellated star
-			if (!m_starMesh.vertices.empty()) {
+			if (!starMesh.vertices.empty()) {
 				Renderer::Primitives::DrawTriangles(
-					{.vertices = m_starMesh.vertices.data(),
-					 .indices = m_starMesh.indices.data(),
-					 .vertexCount = m_starMesh.vertices.size(),
-					 .indexCount = m_starMesh.indices.size(),
+					{.vertices = starMesh.vertices.data(),
+					 .indices = starMesh.indices.data(),
+					 .vertexCount = starMesh.vertices.size(),
+					 .indexCount = starMesh.indices.size(),
 					 .color = Color(1.0F, 0.8F, 0.2F, 1.0F), // Gold
 					 .id = "star"}
 				);
 			}
 
 			// Draw a second smaller star
-			if (!m_smallStarMesh.vertices.empty()) {
+			if (!smallStarMesh.vertices.empty()) {
 				Renderer::Primitives::DrawTriangles(
-					{.vertices = m_smallStarMesh.vertices.data(),
-					 .indices = m_smallStarMesh.indices.data(),
-					 .vertexCount = m_smallStarMesh.vertices.size(),
-					 .indexCount = m_smallStarMesh.indices.size(),
+					{.vertices = smallStarMesh.vertices.data(),
+					 .indices = smallStarMesh.indices.data(),
+					 .vertexCount = smallStarMesh.vertices.size(),
+					 .indexCount = smallStarMesh.indices.size(),
 					 .color = Color(0.2F, 0.8F, 1.0F, 1.0F), // Cyan
 					 .id = "small_star"}
 				);
 			}
 
 			// Draw a grid of tiny stars (batching test)
-			if (!m_tinyStarMesh.vertices.empty()) {
+			if (!tinyStarMesh.vertices.empty()) {
 				for (int row = 0; row < 5; row++) {
 					for (int col = 0; col < 10; col++) {
 						// Create offset vertices for this star
-						std::vector<Foundation::Vec2> offsetVertices = m_tinyStarMesh.vertices;
+						std::vector<Foundation::Vec2> offsetVertices = tinyStarMesh.vertices;
 						Foundation::Vec2 offset(50.0F + static_cast<float>(col) * 60.0F, 400.0F + static_cast<float>(row) * 60.0F);
 
 						for (auto& v : offsetVertices) {
@@ -99,9 +99,9 @@ namespace {
 
 						Renderer::Primitives::DrawTriangles(
 							{.vertices = offsetVertices.data(),
-							 .indices = m_tinyStarMesh.indices.data(),
+							 .indices = tinyStarMesh.indices.data(),
 							 .vertexCount = offsetVertices.size(),
-							 .indexCount = m_tinyStarMesh.indices.size(),
+							 .indexCount = tinyStarMesh.indices.size(),
 							 .color = starColor}
 						);
 					}
@@ -126,7 +126,7 @@ namespace {
 			const float kInnerRadius = 40.0F;
 			const int	kNumPoints = 5;
 
-			m_starPath.vertices.clear();
+			starPath.vertices.clear();
 
 			// Generate star vertices (alternating outer and inner points)
 			for (int i = 0; i < kNumPoints * 2; ++i) {
@@ -137,21 +137,21 @@ namespace {
 				float x = kCenterX + (radius * std::cos(angle));
 				float y = kCenterY + (radius * std::sin(angle));
 
-				m_starPath.vertices.emplace_back(x, y);
+				starPath.vertices.emplace_back(x, y);
 			}
 
-			m_starPath.isClosed = true;
+			starPath.isClosed = true;
 
 			// Create smaller star (centered at 600, 200, half size)
-			CreateStarPathAt(m_smallStarPath, 600.0F, 200.0F, 50.0F, 20.0F);
+			CreateStarPathAt(smallStarPath, 600.0F, 200.0F, 50.0F, 20.0F);
 
 			// Create tiny star for grid (20x8)
-			CreateStarPathAt(m_tinyStarPath, 0.0F, 0.0F, 20.0F, 8.0F);
+			CreateStarPathAt(tinyStarPath, 0.0F, 0.0F, 20.0F, 8.0F);
 
 			// Tessellate all stars
 			renderer::Tessellator tessellator;
-			tessellator.Tessellate(m_smallStarPath, m_smallStarMesh);
-			tessellator.Tessellate(m_tinyStarPath, m_tinyStarMesh);
+			tessellator.Tessellate(smallStarPath, smallStarMesh);
+			tessellator.Tessellate(tinyStarPath, tinyStarMesh);
 		}
 
 		void CreateStarPathAt( // NOLINT(readability-convert-member-functions-to-static)
@@ -178,13 +178,13 @@ namespace {
 			path.isClosed = true;
 		}
 
-		renderer::VectorPath m_starPath;
-		renderer::VectorPath m_smallStarPath;
-		renderer::VectorPath m_tinyStarPath;
+		renderer::VectorPath starPath;
+		renderer::VectorPath smallStarPath;
+		renderer::VectorPath tinyStarPath;
 
-		renderer::TessellatedMesh m_starMesh;
-		renderer::TessellatedMesh m_smallStarMesh;
-		renderer::TessellatedMesh m_tinyStarMesh;
+		renderer::TessellatedMesh starMesh;
+		renderer::TessellatedMesh smallStarMesh;
+		renderer::TessellatedMesh tinyStarMesh;
 	};
 
 	// Register scene with SceneManager

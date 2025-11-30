@@ -22,21 +22,21 @@ namespace UI {
 	// ============================================================================
 
 	TextInput::TextInput(const Args& args)
-		: m_position(args.position),
-		  m_size(args.size),
-		  m_text(args.text),
-		  m_placeholder(args.placeholder),
-		  m_style(args.style),
-		  m_onChange(args.onChange),
+		: position(args.position),
+		  size(args.size),
+		  text(args.text),
+		  placeholder(args.placeholder),
+		  style(args.style),
+		  onChange(args.onChange),
 		  id(args.id),
-		  m_enabled(args.enabled),
-		  m_tabIndex(args.tabIndex) {
+		  enabled(args.enabled),
+		  tabIndex(args.tabIndex) {
 
 		// Set cursor to end of text
-		m_cursorPosition = m_text.size();
+		cursorPosition = text.size();
 
 		// Register with global FocusManager singleton
-		FocusManager::Get().RegisterFocusable(this, m_tabIndex);
+		FocusManager::Get().RegisterFocusable(this, tabIndex);
 	}
 
 	TextInput::~TextInput() {
@@ -45,26 +45,26 @@ namespace UI {
 	}
 
 	TextInput::TextInput(TextInput&& other) noexcept
-		: m_position(other.m_position),
-		  m_size(other.m_size),
-		  m_text(std::move(other.m_text)),
-		  m_placeholder(std::move(other.m_placeholder)),
-		  m_style(other.m_style),
-		  m_onChange(std::move(other.m_onChange)),
-		  m_cursorPosition(other.m_cursorPosition),
-		  m_selection(other.m_selection),
-		  m_cursorBlinkTimer(other.m_cursorBlinkTimer),
-		  m_horizontalScroll(other.m_horizontalScroll),
+		: position(other.position),
+		  size(other.size),
+		  text(std::move(other.text)),
+		  placeholder(std::move(other.placeholder)),
+		  style(other.style),
+		  onChange(std::move(other.onChange)),
+		  cursorPosition(other.cursorPosition),
+		  selection(other.selection),
+		  cursorBlinkTimer(other.cursorBlinkTimer),
+		  horizontalScroll(other.horizontalScroll),
 		  visible(other.visible),
 		  id(other.id),
-		  m_enabled(other.m_enabled),
-		  m_focused(other.m_focused),
-		  m_tabIndex(other.m_tabIndex),
-		  m_mouseDown(other.m_mouseDown) {
+		  enabled(other.enabled),
+		  focused(other.focused),
+		  tabIndex(other.tabIndex),
+		  mouseDown(other.mouseDown) {
 		// Unregister other from its old address, register this at new address
 		FocusManager::Get().UnregisterFocusable(&other);
-		FocusManager::Get().RegisterFocusable(this, m_tabIndex);
-		other.m_tabIndex = -2; // Mark as moved-from to prevent double-unregister
+		FocusManager::Get().RegisterFocusable(this, tabIndex);
+		other.tabIndex = -2; // Mark as moved-from to prevent double-unregister
 	}
 
 	TextInput& TextInput::operator=(TextInput&& other) noexcept {
@@ -73,27 +73,27 @@ namespace UI {
 			FocusManager::Get().UnregisterFocusable(this);
 
 			// Move data
-			m_position = other.m_position;
-			m_size = other.m_size;
-			m_text = std::move(other.m_text);
-			m_placeholder = std::move(other.m_placeholder);
-			m_style = other.m_style;
-			m_onChange = std::move(other.m_onChange);
-			m_cursorPosition = other.m_cursorPosition;
-			m_selection = other.m_selection;
-			m_cursorBlinkTimer = other.m_cursorBlinkTimer;
-			m_horizontalScroll = other.m_horizontalScroll;
+			position = other.position;
+			size = other.size;
+			text = std::move(other.text);
+			placeholder = std::move(other.placeholder);
+			style = other.style;
+			onChange = std::move(other.onChange);
+			cursorPosition = other.cursorPosition;
+			selection = other.selection;
+			cursorBlinkTimer = other.cursorBlinkTimer;
+			horizontalScroll = other.horizontalScroll;
 			visible = other.visible;
 			id = other.id;
-			m_enabled = other.m_enabled;
-			m_focused = other.m_focused;
-			m_mouseDown = other.m_mouseDown;
-			m_tabIndex = other.m_tabIndex;
+			enabled = other.enabled;
+			focused = other.focused;
+			mouseDown = other.mouseDown;
+			tabIndex = other.tabIndex;
 
 			// Unregister other from its old address, register this at new address
 			FocusManager::Get().UnregisterFocusable(&other);
-			FocusManager::Get().RegisterFocusable(this, m_tabIndex);
-			other.m_tabIndex = -2; // Mark as moved-from
+			FocusManager::Get().RegisterFocusable(this, tabIndex);
+			other.tabIndex = -2; // Mark as moved-from
 		}
 		return *this;
 	}
@@ -103,7 +103,7 @@ namespace UI {
 	// ============================================================================
 
 	void TextInput::HandleInput() {
-		if (!m_enabled) {
+		if (!enabled) {
 			return;
 		}
 
@@ -112,63 +112,63 @@ namespace UI {
 		// Check for mouse click
 		// Use IsMouseButtonDown (not IsMouseButtonPressed) like Button does
 		if (input.IsMouseButtonDown(engine::MouseButton::Left)) {
-			bool wasMouseDown = m_mouseDown;
+			bool wasMouseDown = mouseDown;
 			if (!wasMouseDown) {
 				// Mouse just pressed - process initial click
 				Foundation::Vec2 mousePos = input.GetMousePosition();
 
 				// Check if click is inside text input
-				if (ContainsPoint(mousePos)) {
+				if (containsPoint(mousePos)) {
 					// Grab focus
 					FocusManager::Get().SetFocus(this);
 
 					// Position cursor from mouse X
-					float localX = mousePos.x - m_position.x - m_style.paddingLeft + m_horizontalScroll;
-					m_cursorPosition = GetCursorPositionFromMouse(localX);
-					m_cursorBlinkTimer = 0.0F;
+					float localX = mousePos.x - position.x - style.paddingLeft + horizontalScroll;
+					cursorPosition = getCursorPositionFromMouse(localX);
+					cursorBlinkTimer = 0.0F;
 
 					// Clear selection on click (will be recreated if dragging)
-					ClearSelection();
+					clearSelection();
 
 					// Track mouse down for drag selection
-					m_mouseDown = true;
+					mouseDown = true;
 				}
 			}
 
 			// Mouse drag selection
-			if (m_focused && m_mouseDown && input.IsMouseButtonDown(engine::MouseButton::Left)) {
+			if (focused && mouseDown && input.IsMouseButtonDown(engine::MouseButton::Left)) {
 				Foundation::Vec2 mousePos = input.GetMousePosition();
-				float			 localX = mousePos.x - m_position.x - m_style.paddingLeft + m_horizontalScroll;
-				size_t			 dragPosition = GetCursorPositionFromMouse(localX);
+				float			 localX = mousePos.x - position.x - style.paddingLeft + horizontalScroll;
+				size_t			 dragPosition = getCursorPositionFromMouse(localX);
 
 				// Create/update selection from original cursor position to drag position
-				if (dragPosition != m_cursorPosition) {
-					// Selection anchor is where mouse was first pressed (already set as m_cursorPosition)
+				if (dragPosition != cursorPosition) {
+					// Selection anchor is where mouse was first pressed (already set as cursorPosition)
 					// Selection head is current drag position
-					if (!m_selection.has_value()) {
+					if (!selection.has_value()) {
 						// Start new selection
-						SetSelection(m_cursorPosition, dragPosition);
+						setSelection(cursorPosition, dragPosition);
 					} else {
 						// Update existing selection
-						m_selection->end = dragPosition;
+						selection->end = dragPosition;
 					}
-					m_cursorPosition = dragPosition; // Move cursor to drag position
-					UpdateHorizontalScroll();
+					cursorPosition = dragPosition; // Move cursor to drag position
+					updateHorizontalScroll();
 				}
 			}
 		}
 
 		// Release mouse (outside the IsMouseButtonDown block)
-		if (m_mouseDown && !input.IsMouseButtonDown(engine::MouseButton::Left)) {
-			m_mouseDown = false;
+		if (mouseDown && !input.IsMouseButtonDown(engine::MouseButton::Left)) {
+			mouseDown = false;
 		}
 	}
 
 	void TextInput::Update(float deltaTime) {
-		if (m_focused) {
-			m_cursorBlinkTimer += deltaTime;
-			if (m_cursorBlinkTimer > m_style.cursorBlinkRate) {
-				m_cursorBlinkTimer -= m_style.cursorBlinkRate;
+		if (focused) {
+			cursorBlinkTimer += deltaTime;
+			if (cursorBlinkTimer > style.cursorBlinkRate) {
+				cursorBlinkTimer -= style.cursorBlinkRate;
 			}
 		}
 	}
@@ -178,22 +178,22 @@ namespace UI {
 			return;
 		}
 
-		RenderBackground();
+		renderBackground();
 
 		// Scissor test to clip overflowing text
-		float textAreaX = m_position.x + m_style.paddingLeft;
-		float textAreaY = m_position.y + m_style.paddingTop;
-		float textAreaWidth = m_size.x - m_style.paddingLeft - m_style.paddingRight;
-		float textAreaHeight = m_size.y - m_style.paddingTop - m_style.paddingBottom;
+		float textAreaX = position.x + style.paddingLeft;
+		float textAreaY = position.y + style.paddingTop;
+		float textAreaWidth = size.x - style.paddingLeft - style.paddingRight;
+		float textAreaHeight = size.y - style.paddingTop - style.paddingBottom;
 
 		Renderer::Primitives::PushScissor(Foundation::Rect{textAreaX, textAreaY, textAreaWidth, textAreaHeight});
 
-		if (m_text.empty() && !m_focused) {
-			RenderPlaceholder();
+		if (text.empty() && !focused) {
+			renderPlaceholder();
 		} else {
-			RenderSelection();
-			RenderText();
-			RenderCursor();
+			renderSelection();
+			renderText();
+			renderCursor();
 		}
 
 		Renderer::Primitives::PopScissor();
@@ -203,12 +203,12 @@ namespace UI {
 	// State Management
 	// ============================================================================
 
-	void TextInput::SetText(const std::string& text) {
-		m_text = text;
-		m_cursorPosition = std::min(m_cursorPosition, m_text.size());
-		UpdateHorizontalScroll();
-		if (m_onChange) {
-			m_onChange(m_text);
+	void TextInput::setText(const std::string& newText) {
+		text = newText;
+		cursorPosition = std::min(cursorPosition, text.size());
+		updateHorizontalScroll();
+		if (onChange) {
+			onChange(text);
 		}
 	}
 
@@ -217,18 +217,18 @@ namespace UI {
 	// ============================================================================
 
 	void TextInput::OnFocusGained() {
-		m_focused = true;
-		m_cursorBlinkTimer = 0.0F; // Reset blink (cursor visible)
+		focused = true;
+		cursorBlinkTimer = 0.0F; // Reset blink (cursor visible)
 	}
 
 	void TextInput::OnFocusLost() {
-		m_focused = false;
-		m_mouseDown = false; // Clear mouse state to prevent ghost selections
-		ClearSelection();
+		focused = false;
+		mouseDown = false; // Clear mouse state to prevent ghost selections
+		clearSelection();
 	}
 
 	void TextInput::HandleKeyInput(engine::Key key, bool shift, bool ctrl, bool /*alt*/) {
-		if (!m_enabled || !m_focused) {
+		if (!enabled || !focused) {
 			return;
 		}
 
@@ -236,16 +236,16 @@ namespace UI {
 		if (ctrl) {
 			switch (key) {
 				case engine::Key::C:
-					Copy();
+					copy();
 					return;
 				case engine::Key::X:
-					Cut();
+					cut();
 					return;
 				case engine::Key::V:
-					Paste();
+					paste();
 					return;
 				case engine::Key::A:
-					SelectAll();
+					selectAll();
 					return;
 				default:
 					break;
@@ -256,33 +256,33 @@ namespace UI {
 		switch (key) {
 			case engine::Key::Left:
 				if (shift) {
-					ExtendSelectionLeft();
+					extendSelectionLeft();
 				} else {
-					ClearSelection();
-					MoveCursorLeft();
+					clearSelection();
+					moveCursorLeft();
 				}
 				break;
 			case engine::Key::Right:
 				if (shift) {
-					ExtendSelectionRight();
+					extendSelectionRight();
 				} else {
-					ClearSelection();
-					MoveCursorRight();
+					clearSelection();
+					moveCursorRight();
 				}
 				break;
 			case engine::Key::Home:
-				ClearSelection();
-				MoveCursorHome();
+				clearSelection();
+				moveCursorHome();
 				break;
 			case engine::Key::End:
-				ClearSelection();
-				MoveCursorEnd();
+				clearSelection();
+				moveCursorEnd();
 				break;
 			case engine::Key::Delete:
-				DeleteCharAtCursor();
+				deleteCharAtCursor();
 				break;
 			case engine::Key::Backspace:
-				DeleteCharBeforeCursor();
+				deleteCharBeforeCursor();
 				break;
 			default:
 				break;
@@ -290,7 +290,7 @@ namespace UI {
 	}
 
 	void TextInput::HandleCharInput(char32_t codepoint) {
-		if (!m_enabled || !m_focused) {
+		if (!enabled || !focused) {
 			return;
 		}
 
@@ -308,211 +308,211 @@ namespace UI {
 			return;
 		}
 
-		InsertChar(codepoint);
+		insertChar(codepoint);
 	}
 
 	bool TextInput::CanReceiveFocus() const {
-		return m_enabled;
+		return enabled;
 	}
 
 	// ============================================================================
 	// Phase 1: Core Editing Operations
 	// ============================================================================
 
-	void TextInput::InsertChar(char32_t codepoint) {
+	void TextInput::insertChar(char32_t codepoint) {
 		// Delete selection first if active
-		if (m_selection.has_value() && !m_selection->IsEmpty()) {
-			DeleteSelection();
+		if (selection.has_value() && !selection->IsEmpty()) {
+			deleteSelection();
 		}
 
 		// Convert codepoint to UTF-8
 		std::string utf8 = foundation::UTF8::Encode(codepoint);
 
 		// Insert at cursor position
-		m_text.insert(m_cursorPosition, utf8);
-		m_cursorPosition += utf8.size();
+		text.insert(cursorPosition, utf8);
+		cursorPosition += utf8.size();
 
 		// Reset cursor blink
-		m_cursorBlinkTimer = 0.0F;
+		cursorBlinkTimer = 0.0F;
 
 		// Update scroll and notify
-		UpdateHorizontalScroll();
-		if (m_onChange) {
-			m_onChange(m_text);
+		updateHorizontalScroll();
+		if (onChange) {
+			onChange(text);
 		}
 	}
 
-	void TextInput::DeleteCharAtCursor() {
+	void TextInput::deleteCharAtCursor() {
 		// Delete selection if active
-		if (m_selection.has_value() && !m_selection->IsEmpty()) {
-			DeleteSelection();
+		if (selection.has_value() && !selection->IsEmpty()) {
+			deleteSelection();
 			return;
 		}
 
-		if (m_cursorPosition >= m_text.size()) {
+		if (cursorPosition >= text.size()) {
 			return; // At end
 		}
 
 		// Find next UTF-8 character boundary
-		size_t charSize = foundation::UTF8::CharacterSize(static_cast<unsigned char>(m_text[m_cursorPosition]));
-		m_text.erase(m_cursorPosition, charSize);
+		size_t charSize = foundation::UTF8::CharacterSize(static_cast<unsigned char>(text[cursorPosition]));
+		text.erase(cursorPosition, charSize);
 
-		m_cursorBlinkTimer = 0.0F;
-		UpdateHorizontalScroll();
-		if (m_onChange) {
-			m_onChange(m_text);
+		cursorBlinkTimer = 0.0F;
+		updateHorizontalScroll();
+		if (onChange) {
+			onChange(text);
 		}
 	}
 
-	void TextInput::DeleteCharBeforeCursor() {
+	void TextInput::deleteCharBeforeCursor() {
 		// Delete selection if active
-		if (m_selection.has_value() && !m_selection->IsEmpty()) {
-			DeleteSelection();
+		if (selection.has_value() && !selection->IsEmpty()) {
+			deleteSelection();
 			return;
 		}
 
-		if (m_cursorPosition == 0) {
+		if (cursorPosition == 0) {
 			return; // At start
 		}
 
 		// Find previous UTF-8 character boundary
-		size_t charSize = foundation::UTF8::PreviousCharacterSize(m_text, m_cursorPosition);
-		m_text.erase(m_cursorPosition - charSize, charSize);
-		m_cursorPosition -= charSize;
+		size_t charSize = foundation::UTF8::PreviousCharacterSize(text, cursorPosition);
+		text.erase(cursorPosition - charSize, charSize);
+		cursorPosition -= charSize;
 
-		m_cursorBlinkTimer = 0.0F;
-		UpdateHorizontalScroll();
-		if (m_onChange) {
-			m_onChange(m_text);
+		cursorBlinkTimer = 0.0F;
+		updateHorizontalScroll();
+		if (onChange) {
+			onChange(text);
 		}
 	}
 
-	void TextInput::MoveCursorLeft() {
-		if (m_cursorPosition == 0) {
+	void TextInput::moveCursorLeft() {
+		if (cursorPosition == 0) {
 			return;
 		}
 
-		size_t charSize = foundation::UTF8::PreviousCharacterSize(m_text, m_cursorPosition);
-		m_cursorPosition -= charSize;
-		m_cursorBlinkTimer = 0.0F;
-		UpdateHorizontalScroll();
+		size_t charSize = foundation::UTF8::PreviousCharacterSize(text, cursorPosition);
+		cursorPosition -= charSize;
+		cursorBlinkTimer = 0.0F;
+		updateHorizontalScroll();
 	}
 
-	void TextInput::MoveCursorRight() {
-		if (m_cursorPosition >= m_text.size()) {
+	void TextInput::moveCursorRight() {
+		if (cursorPosition >= text.size()) {
 			return;
 		}
 
-		size_t charSize = foundation::UTF8::CharacterSize(static_cast<unsigned char>(m_text[m_cursorPosition]));
-		m_cursorPosition += charSize;
-		m_cursorBlinkTimer = 0.0F;
-		UpdateHorizontalScroll();
+		size_t charSize = foundation::UTF8::CharacterSize(static_cast<unsigned char>(text[cursorPosition]));
+		cursorPosition += charSize;
+		cursorBlinkTimer = 0.0F;
+		updateHorizontalScroll();
 	}
 
-	void TextInput::MoveCursorHome() {
-		m_cursorPosition = 0;
-		m_cursorBlinkTimer = 0.0F;
-		UpdateHorizontalScroll();
+	void TextInput::moveCursorHome() {
+		cursorPosition = 0;
+		cursorBlinkTimer = 0.0F;
+		updateHorizontalScroll();
 	}
 
-	void TextInput::MoveCursorEnd() {
-		m_cursorPosition = m_text.size();
-		m_cursorBlinkTimer = 0.0F;
-		UpdateHorizontalScroll();
+	void TextInput::moveCursorEnd() {
+		cursorPosition = text.size();
+		cursorBlinkTimer = 0.0F;
+		updateHorizontalScroll();
 	}
 
 	// ============================================================================
 	// Phase 2: Selection Operations
 	// ============================================================================
 
-	void TextInput::SetSelection(size_t start, size_t end) {
-		m_selection = TextSelection{start, end};
-		m_cursorBlinkTimer = 0.0F;
+	void TextInput::setSelection(size_t start, size_t end) {
+		selection = TextSelection{start, end};
+		cursorBlinkTimer = 0.0F;
 	}
 
-	void TextInput::ClearSelection() {
-		m_selection.reset();
+	void TextInput::clearSelection() {
+		selection.reset();
 	}
 
-	std::string TextInput::GetSelectedText() const {
-		if (!m_selection.has_value() || m_selection->IsEmpty()) {
+	std::string TextInput::getSelectedText() const {
+		if (!selection.has_value() || selection->IsEmpty()) {
 			return "";
 		}
 
-		size_t start = m_selection->GetMin();
-		size_t end = m_selection->GetMax();
-		return m_text.substr(start, end - start);
+		size_t start = selection->GetMin();
+		size_t end = selection->GetMax();
+		return text.substr(start, end - start);
 	}
 
-	void TextInput::DeleteSelection() {
-		if (!m_selection.has_value() || m_selection->IsEmpty()) {
+	void TextInput::deleteSelection() {
+		if (!selection.has_value() || selection->IsEmpty()) {
 			return;
 		}
 
-		size_t start = m_selection->GetMin();
-		size_t end = m_selection->GetMax();
+		size_t start = selection->GetMin();
+		size_t end = selection->GetMax();
 
 		// Delete the selected range
-		m_text.erase(start, end - start);
+		text.erase(start, end - start);
 
 		// Move cursor to start of deleted range
-		m_cursorPosition = start;
+		cursorPosition = start;
 
 		// Clear selection
-		ClearSelection();
+		clearSelection();
 
 		// Update and notify
-		m_cursorBlinkTimer = 0.0F;
-		UpdateHorizontalScroll();
-		if (m_onChange) {
-			m_onChange(m_text);
+		cursorBlinkTimer = 0.0F;
+		updateHorizontalScroll();
+		if (onChange) {
+			onChange(text);
 		}
 	}
 
-	void TextInput::ExtendSelectionLeft() {
-		if (m_cursorPosition == 0) {
+	void TextInput::extendSelectionLeft() {
+		if (cursorPosition == 0) {
 			return;
 		}
 
 		// If no selection exists, create one starting at current cursor
-		if (!m_selection.has_value()) {
-			m_selection = TextSelection{m_cursorPosition, m_cursorPosition};
+		if (!selection.has_value()) {
+			selection = TextSelection{cursorPosition, cursorPosition};
 		}
 
 		// Move cursor left (selection end)
-		size_t charSize = foundation::UTF8::PreviousCharacterSize(m_text, m_cursorPosition);
-		m_cursorPosition -= charSize;
-		m_selection->end = m_cursorPosition;
+		size_t charSize = foundation::UTF8::PreviousCharacterSize(text, cursorPosition);
+		cursorPosition -= charSize;
+		selection->end = cursorPosition;
 
-		m_cursorBlinkTimer = 0.0F;
-		UpdateHorizontalScroll();
+		cursorBlinkTimer = 0.0F;
+		updateHorizontalScroll();
 	}
 
-	void TextInput::ExtendSelectionRight() {
-		if (m_cursorPosition >= m_text.size()) {
+	void TextInput::extendSelectionRight() {
+		if (cursorPosition >= text.size()) {
 			return;
 		}
 
 		// If no selection exists, create one starting at current cursor
-		if (!m_selection.has_value()) {
-			m_selection = TextSelection{m_cursorPosition, m_cursorPosition};
+		if (!selection.has_value()) {
+			selection = TextSelection{cursorPosition, cursorPosition};
 		}
 
 		// Move cursor right (selection end)
-		size_t charSize = foundation::UTF8::CharacterSize(static_cast<unsigned char>(m_text[m_cursorPosition]));
-		m_cursorPosition += charSize;
-		m_selection->end = m_cursorPosition;
+		size_t charSize = foundation::UTF8::CharacterSize(static_cast<unsigned char>(text[cursorPosition]));
+		cursorPosition += charSize;
+		selection->end = cursorPosition;
 
-		m_cursorBlinkTimer = 0.0F;
-		UpdateHorizontalScroll();
+		cursorBlinkTimer = 0.0F;
+		updateHorizontalScroll();
 	}
 
 	// ============================================================================
 	// Phase 2: Clipboard Operations
 	// ============================================================================
 
-	void TextInput::Copy() {
-		std::string selectedText = GetSelectedText();
+	void TextInput::copy() {
+		std::string selectedText = getSelectedText();
 		if (selectedText.empty()) {
 			return;
 		}
@@ -520,8 +520,8 @@ namespace UI {
 		engine::ClipboardManager::Get().SetText(selectedText);
 	}
 
-	void TextInput::Cut() {
-		std::string selectedText = GetSelectedText();
+	void TextInput::cut() {
+		std::string selectedText = getSelectedText();
 		if (selectedText.empty()) {
 			return;
 		}
@@ -530,10 +530,10 @@ namespace UI {
 		engine::ClipboardManager::Get().SetText(selectedText);
 
 		// Delete selection
-		DeleteSelection();
+		deleteSelection();
 	}
 
-	void TextInput::Paste() {
+	void TextInput::paste() {
 		// Get clipboard text
 		std::string pasteText = engine::ClipboardManager::Get().GetText();
 		if (pasteText.empty()) {
@@ -541,8 +541,8 @@ namespace UI {
 		}
 
 		// Delete selection if active
-		if (m_selection.has_value() && !m_selection->IsEmpty()) {
-			DeleteSelection();
+		if (selection.has_value() && !selection->IsEmpty()) {
+			deleteSelection();
 		}
 
 		// Insert clipboard text at cursor
@@ -565,48 +565,48 @@ namespace UI {
 
 			// Insert character
 			std::string utf8 = foundation::UTF8::Encode(codepoint);
-			m_text.insert(m_cursorPosition, utf8);
-			m_cursorPosition += utf8.size();
+			text.insert(cursorPosition, utf8);
+			cursorPosition += utf8.size();
 		}
 
 		// Update and notify
-		m_cursorBlinkTimer = 0.0F;
-		UpdateHorizontalScroll();
-		if (m_onChange) {
-			m_onChange(m_text);
+		cursorBlinkTimer = 0.0F;
+		updateHorizontalScroll();
+		if (onChange) {
+			onChange(text);
 		}
 	}
 
-	void TextInput::SelectAll() {
-		if (m_text.empty()) {
+	void TextInput::selectAll() {
+		if (text.empty()) {
 			return;
 		}
 
-		SetSelection(0, m_text.size());
-		m_cursorPosition = m_text.size(); // Cursor at end
-		UpdateHorizontalScroll();
+		setSelection(0, text.size());
+		cursorPosition = text.size(); // Cursor at end
+		updateHorizontalScroll();
 	}
 
 	// ============================================================================
 	// Rendering Helpers
 	// ============================================================================
 
-	void TextInput::RenderBackground() const {
-		Foundation::Color borderColor = m_focused ? m_style.focusedBorderColor : m_style.borderColor;
+	void TextInput::renderBackground() const {
+		Foundation::Color borderColor = focused ? style.focusedBorderColor : style.borderColor;
 
 		Foundation::RectStyle rectStyle{
-			.fill = m_style.backgroundColor,
-			.border = Foundation::BorderStyle{.color = borderColor, .width = m_style.borderWidth, .cornerRadius = m_style.cornerRadius}
+			.fill = style.backgroundColor,
+			.border = Foundation::BorderStyle{.color = borderColor, .width = style.borderWidth, .cornerRadius = style.cornerRadius}
 		};
 
 		short zIndex = RenderContext::GetZIndex();
 		Renderer::Primitives::DrawRect(
-			{.bounds = {m_position.x, m_position.y, m_size.x, m_size.y}, .style = rectStyle, .id = id, .zIndex = zIndex}
+			{.bounds = {position.x, position.y, size.x, size.y}, .style = rectStyle, .id = id, .zIndex = zIndex}
 		);
 	}
 
-	void TextInput::RenderText() const {
-		if (m_text.empty()) {
+	void TextInput::renderText() const {
+		if (text.empty()) {
 			return;
 		}
 
@@ -623,23 +623,23 @@ namespace UI {
 		}
 
 		// Convert fontSize to scale (kBaseFontSize = 1.0 scale)
-		float scale = m_style.fontSize / kBaseFontSize;
+		float scale = style.fontSize / kBaseFontSize;
 
 		// Calculate horizontal position with scroll
-		float textX = m_position.x + m_style.paddingLeft - m_horizontalScroll;
+		float textX = position.x + style.paddingLeft - horizontalScroll;
 
 		// Calculate baseline Y position for vertically centered text
 		// This matches Text component's bounding box Middle alignment behavior
 		float ascent = fontRenderer->GetAscent(scale);
-		float baselineY = m_position.y + (m_size.y - ascent) * 0.5F;
+		float baselineY = position.y + (size.y - ascent) * 0.5F;
 
 		// Generate glyph quads using FontRenderer
-		glm::vec4 glyphColor(m_style.textColor.r, m_style.textColor.g, m_style.textColor.b, m_style.textColor.a);
+		glm::vec4 glyphColor(style.textColor.r, style.textColor.g, style.textColor.b, style.textColor.a);
 		std::vector<ui::FontRenderer::GlyphQuad> glyphs;
-		fontRenderer->GenerateGlyphQuads(m_text, glm::vec2(textX, baselineY), scale, glyphColor, glyphs);
+		fontRenderer->GenerateGlyphQuads(text, glm::vec2(textX, baselineY), scale, glyphColor, glyphs);
 
 		// Add each glyph to the unified batch renderer
-		Foundation::Color textColor(m_style.textColor.r, m_style.textColor.g, m_style.textColor.b, m_style.textColor.a);
+		Foundation::Color textColor(style.textColor.r, style.textColor.g, style.textColor.b, style.textColor.a);
 		for (const auto& glyph : glyphs) {
 			batchRenderer->AddTextQuad(
 				Foundation::Vec2(glyph.position.x, glyph.position.y),
@@ -651,25 +651,25 @@ namespace UI {
 		}
 	}
 
-	void TextInput::RenderCursor() const {
-		if (!m_focused) {
+	void TextInput::renderCursor() const {
+		if (!focused) {
 			return;
 		}
 
 		// Don't render cursor when selection is active
-		if (m_selection.has_value() && !m_selection->IsEmpty()) {
+		if (selection.has_value() && !selection->IsEmpty()) {
 			return;
 		}
 
 		// Blink: visible for first half of cycle
-		bool visible = m_cursorBlinkTimer < (m_style.cursorBlinkRate * 0.5F);
+		bool visible = cursorBlinkTimer < (style.cursorBlinkRate * 0.5F);
 		if (!visible) {
 			return;
 		}
 
-		float cursorX = GetCursorXPosition();
-		float centerY = m_position.y + (m_size.y * 0.5F); // Vertical center of input box
-		float textHeight = m_style.fontSize;
+		float cursorX = getCursorXPosition();
+		float centerY = position.y + (size.y * 0.5F); // Vertical center of input box
+		float textHeight = style.fontSize;
 
 		// Position cursor vertically centered with the text
 		float cursorStartY = centerY - (textHeight * 0.5F);
@@ -679,19 +679,19 @@ namespace UI {
 		Renderer::Primitives::DrawLine(
 			{.start = {cursorX, cursorStartY},
 			 .end = {cursorX, cursorEndY},
-			 .style = Foundation::LineStyle{.color = m_style.cursorColor, .width = m_style.cursorWidth},
+			 .style = Foundation::LineStyle{.color = style.cursorColor, .width = style.cursorWidth},
 			 .id = id,
 			 .zIndex = zIndex + 3} // On top of everything
 		);
 	}
 
-	void TextInput::RenderSelection() const {
-		if (!m_selection.has_value() || m_selection->IsEmpty()) {
+	void TextInput::renderSelection() const {
+		if (!selection.has_value() || selection->IsEmpty()) {
 			return;
 		}
 
-		size_t start = m_selection->GetMin();
-		size_t end = m_selection->GetMax();
+		size_t start = selection->GetMin();
+		size_t end = selection->GetMax();
 
 		// Get FontRenderer for text measurement
 		ui::FontRenderer* fontRenderer = Renderer::Primitives::GetFontRenderer();
@@ -700,25 +700,25 @@ namespace UI {
 		}
 
 		// Convert fontSize to scale (kBaseFontSize = 1.0 scale)
-		float scale = m_style.fontSize / kBaseFontSize;
+		float scale = style.fontSize / kBaseFontSize;
 
 		// Measure text before selection start
-		std::string textBeforeStart = m_text.substr(0, start);
+		std::string textBeforeStart = text.substr(0, start);
 		float		startX = fontRenderer->MeasureText(textBeforeStart, scale).x;
 
 		// Measure text up to selection end
-		std::string textBeforeEnd = m_text.substr(0, end);
+		std::string textBeforeEnd = text.substr(0, end);
 		float		endX = fontRenderer->MeasureText(textBeforeEnd, scale).x;
 
 		// Calculate selection rectangle (vertically centered in the box)
-		float selectionX = m_position.x + m_style.paddingLeft + startX - m_horizontalScroll;
+		float selectionX = position.x + style.paddingLeft + startX - horizontalScroll;
 		float selectionWidth = endX - startX;
-		float centerY = m_position.y + (m_size.y * 0.5F);
-		float selectionHeight = m_style.fontSize;
+		float centerY = position.y + (size.y * 0.5F);
+		float selectionHeight = style.fontSize;
 		float selectionY = centerY - (selectionHeight * 0.5F);
 
 		// Draw selection background
-		Foundation::RectStyle selectionStyle{.fill = m_style.selectionColor, .border = std::nullopt};
+		Foundation::RectStyle selectionStyle{.fill = style.selectionColor, .border = std::nullopt};
 
 		short zIndex = RenderContext::GetZIndex();
 		Renderer::Primitives::DrawRect({
@@ -729,8 +729,8 @@ namespace UI {
 		});
 	}
 
-	void TextInput::RenderPlaceholder() const {
-		if (m_placeholder.empty()) {
+	void TextInput::renderPlaceholder() const {
+		if (placeholder.empty()) {
 			return;
 		}
 
@@ -747,23 +747,23 @@ namespace UI {
 		}
 
 		// Convert fontSize to scale (kBaseFontSize = 1.0 scale)
-		float scale = m_style.fontSize / kBaseFontSize;
+		float scale = style.fontSize / kBaseFontSize;
 
 		// Calculate horizontal position (no scroll for placeholder)
-		float textX = m_position.x + m_style.paddingLeft;
+		float textX = position.x + style.paddingLeft;
 
 		// Calculate baseline Y position for vertically centered text
 		// This matches Text component's bounding box Middle alignment behavior
 		float ascent = fontRenderer->GetAscent(scale);
-		float baselineY = m_position.y + (m_size.y - ascent) * 0.5F;
+		float baselineY = position.y + (size.y - ascent) * 0.5F;
 
 		// Generate glyph quads using FontRenderer
-		glm::vec4 glyphColor(m_style.placeholderColor.r, m_style.placeholderColor.g, m_style.placeholderColor.b, m_style.placeholderColor.a);
+		glm::vec4 glyphColor(style.placeholderColor.r, style.placeholderColor.g, style.placeholderColor.b, style.placeholderColor.a);
 		std::vector<ui::FontRenderer::GlyphQuad> glyphs;
-		fontRenderer->GenerateGlyphQuads(m_placeholder, glm::vec2(textX, baselineY), scale, glyphColor, glyphs);
+		fontRenderer->GenerateGlyphQuads(placeholder, glm::vec2(textX, baselineY), scale, glyphColor, glyphs);
 
 		// Add each glyph to the unified batch renderer
-		Foundation::Color placeholderColor(m_style.placeholderColor.r, m_style.placeholderColor.g, m_style.placeholderColor.b, m_style.placeholderColor.a);
+		Foundation::Color placeholderColor(style.placeholderColor.r, style.placeholderColor.g, style.placeholderColor.b, style.placeholderColor.a);
 		for (const auto& glyph : glyphs) {
 			batchRenderer->AddTextQuad(
 				Foundation::Vec2(glyph.position.x, glyph.position.y),
@@ -779,22 +779,22 @@ namespace UI {
 	// Utilities
 	// ============================================================================
 
-	float TextInput::GetCursorXPosition() const {
+	float TextInput::getCursorXPosition() const {
 		// Get text up to cursor position
-		std::string textBeforeCursor = m_text.substr(0, m_cursorPosition);
+		std::string textBeforeCursor = text.substr(0, cursorPosition);
 
 		// Measure width using FontRenderer
 		// Convert fontSize to scale (kBaseFontSize = 1.0 scale)
-		float scale = m_style.fontSize / kBaseFontSize;
+		float scale = style.fontSize / kBaseFontSize;
 
 		ui::FontRenderer* fontRenderer = Renderer::Primitives::GetFontRenderer();
 		float			  width = fontRenderer ? fontRenderer->MeasureText(textBeforeCursor, scale).x : 0.0F;
 
 		// Account for padding and scroll
-		return m_position.x + m_style.paddingLeft + width - m_horizontalScroll;
+		return position.x + style.paddingLeft + width - horizontalScroll;
 	}
 
-	size_t TextInput::GetCursorPositionFromMouse(float localX) const {
+	size_t TextInput::getCursorPositionFromMouse(float localX) const {
 		// localX is already relative to text area (with scroll applied)
 
 		// Binary search for closest character boundary
@@ -802,12 +802,12 @@ namespace UI {
 		float  bestDistance = std::abs(localX);
 
 		// Convert fontSize to scale (kBaseFontSize = 1.0 scale)
-		float scale = m_style.fontSize / kBaseFontSize;
+		float scale = style.fontSize / kBaseFontSize;
 
 		// Check each character boundary
 		ui::FontRenderer* fontRenderer = Renderer::Primitives::GetFontRenderer();
-		for (size_t i = 0; i <= m_text.size();) {
-			std::string textUpToPos = m_text.substr(0, i);
+		for (size_t i = 0; i <= text.size();) {
+			std::string textUpToPos = text.substr(0, i);
 			float		width = fontRenderer ? fontRenderer->MeasureText(textUpToPos, scale).x : 0.0F;
 			float		distance = std::abs(width - localX);
 
@@ -817,40 +817,40 @@ namespace UI {
 			}
 
 			// Move to next character boundary
-			if (i >= m_text.size()) {
+			if (i >= text.size()) {
 				break;
 			}
-			size_t charSize = foundation::UTF8::CharacterSize(static_cast<unsigned char>(m_text[i]));
+			size_t charSize = foundation::UTF8::CharacterSize(static_cast<unsigned char>(text[i]));
 			i += charSize;
 		}
 
 		return bestPosition;
 	}
 
-	void TextInput::UpdateHorizontalScroll() {
-		float cursorX = GetCursorXPosition() - m_position.x - m_style.paddingLeft + m_horizontalScroll;
-		float visibleWidth = m_size.x - m_style.paddingLeft - m_style.paddingRight;
+	void TextInput::updateHorizontalScroll() {
+		float cursorX = getCursorXPosition() - position.x - style.paddingLeft + horizontalScroll;
+		float visibleWidth = size.x - style.paddingLeft - style.paddingRight;
 
 		// Scroll right if cursor is past right edge
 		if (cursorX > visibleWidth) {
-			m_horizontalScroll += (cursorX - visibleWidth);
+			horizontalScroll += (cursorX - visibleWidth);
 		}
 
 		// Scroll left if cursor is past left edge
 		if (cursorX < 0) {
-			m_horizontalScroll += cursorX; // cursorX is negative
+			horizontalScroll += cursorX; // cursorX is negative
 		}
 
 		// Clamp to ensure text fills from left when possible
 		// Convert fontSize to scale (kBaseFontSize = 1.0 scale)
-		float scale = m_style.fontSize / kBaseFontSize;
+		float scale = style.fontSize / kBaseFontSize;
 
 		ui::FontRenderer* fontRenderer = Renderer::Primitives::GetFontRenderer();
-		float			  textWidth = fontRenderer ? fontRenderer->MeasureText(m_text, scale).x : 0.0F;
+		float			  textWidth = fontRenderer ? fontRenderer->MeasureText(text, scale).x : 0.0F;
 		if (textWidth < visibleWidth) {
-			m_horizontalScroll = 0.0F; // No scroll needed
+			horizontalScroll = 0.0F; // No scroll needed
 		} else {
-			m_horizontalScroll = std::max(0.0F, std::min(m_horizontalScroll, textWidth - visibleWidth));
+			horizontalScroll = std::max(0.0F, std::min(horizontalScroll, textWidth - visibleWidth));
 		}
 	}
 
@@ -858,9 +858,9 @@ namespace UI {
 	// Geometry Queries
 	// ============================================================================
 
-	bool TextInput::ContainsPoint(const Foundation::Vec2& point) const {
-		return point.x >= m_position.x && point.x <= m_position.x + m_size.x && point.y >= m_position.y &&
-			   point.y <= m_position.y + m_size.y;
+	bool TextInput::containsPoint(const Foundation::Vec2& point) const {
+		return point.x >= position.x && point.x <= position.x + size.x && point.y >= position.y &&
+			   point.y <= position.y + size.y;
 	}
 
 } // namespace UI

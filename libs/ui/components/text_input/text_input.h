@@ -82,30 +82,30 @@ class TextInput : public Component, public IFocusable {
 	// --- Public Members ---
 
 	// Geometry
-	Foundation::Vec2 m_position{0.0F, 0.0F};
-	Foundation::Vec2 m_size{200.0F, 32.0F};
+	Foundation::Vec2 position{0.0F, 0.0F};
+	Foundation::Vec2 size{200.0F, 32.0F};
 
 	// Text content
-	std::string m_text;
-	std::string m_placeholder;
+	std::string text;
+	std::string placeholder;
 
 	// Style
-	TextInputStyle m_style;
+	TextInputStyle style;
 
 	// Callbacks
-	std::function<void(const std::string&)> m_onChange;
+	std::function<void(const std::string&)> onChange;
 
 	// State
-	size_t						m_cursorPosition{0};	 // Byte offset in UTF-8 string
-	std::optional<TextSelection> m_selection;			 // Active selection (Phase 2)
-	float						m_cursorBlinkTimer{0.0F}; // For cursor blink animation
-	float						m_horizontalScroll{0.0F}; // Scroll offset for overflow text
+	size_t						cursorPosition{0};	 // Byte offset in UTF-8 string
+	std::optional<TextSelection> selection;			 // Active selection (Phase 2)
+	float						cursorBlinkTimer{0.0F}; // For cursor blink animation
+	float						horizontalScroll{0.0F}; // Scroll offset for overflow text
 
 	// Properties
 	bool		visible{true};
 	const char* id = nullptr;
-	bool		m_enabled{true};
-	bool		m_focused{false};
+	bool		enabled{true};
+	bool		focused{false};
 
 	// --- Public Methods ---
 
@@ -127,10 +127,10 @@ class TextInput : public Component, public IFocusable {
 	void Render() override;			  // Draw text input
 
 	// State management
-	void SetEnabled(bool enabled) { m_enabled = enabled; }
-	bool IsEnabled() const { return m_enabled; }
-	void SetText(const std::string& text);
-	const std::string& GetText() const { return m_text; }
+	void setEnabled(bool newEnabled) { enabled = newEnabled; }
+	bool isEnabled() const { return enabled; }
+	void setText(const std::string& newText);
+	const std::string& getText() const { return text; }
 
 	// IFocusable interface implementation
 	void OnFocusGained() override;
@@ -140,54 +140,54 @@ class TextInput : public Component, public IFocusable {
 	bool CanReceiveFocus() const override;
 
 	// Geometry queries
-	bool ContainsPoint(const Foundation::Vec2& point) const;
+	bool containsPoint(const Foundation::Vec2& point) const;
 
   private:
 	// Focus management
-	int m_tabIndex{-1}; // Preserved for move operations
+	int tabIndex{-1}; // Preserved for move operations
 
 	// Internal state tracking
-	bool m_mouseDown{false};
+	bool mouseDown{false};
 
 	// --- Phase 1: Core Editing Operations ---
 
-	void InsertChar(char32_t c);
-	void DeleteCharAtCursor();		 // Delete key
-	void DeleteCharBeforeCursor();	 // Backspace key
-	void MoveCursorLeft();
-	void MoveCursorRight();
-	void MoveCursorHome();
-	void MoveCursorEnd();
+	void insertChar(char32_t c);
+	void deleteCharAtCursor();		 // Delete key
+	void deleteCharBeforeCursor();	 // Backspace key
+	void moveCursorLeft();
+	void moveCursorRight();
+	void moveCursorHome();
+	void moveCursorEnd();
 
 	// --- Phase 2: Selection Operations ---
 
-	void SetSelection(size_t start, size_t end);
-	void ClearSelection();
-	std::string GetSelectedText() const;
-	void DeleteSelection();
-	void ExtendSelectionLeft();	 // Shift+Left
-	void ExtendSelectionRight(); // Shift+Right
+	void setSelection(size_t start, size_t end);
+	void clearSelection();
+	std::string getSelectedText() const;
+	void deleteSelection();
+	void extendSelectionLeft();	 // Shift+Left
+	void extendSelectionRight(); // Shift+Right
 
 	// --- Phase 2: Clipboard Operations ---
 
-	void Copy();	  // Ctrl+C
-	void Cut();		  // Ctrl+X
-	void Paste();	  // Ctrl+V
-	void SelectAll(); // Ctrl+A
+	void copy();	  // Ctrl+C
+	void cut();		  // Ctrl+X
+	void paste();	  // Ctrl+V
+	void selectAll(); // Ctrl+A
 
 	// --- Rendering Helpers ---
 
-	void RenderBackground() const;
-	void RenderText() const;
-	void RenderCursor() const;
-	void RenderSelection() const;	 // Phase 2
-	void RenderPlaceholder() const;
+	void renderBackground() const;
+	void renderText() const;
+	void renderCursor() const;
+	void renderSelection() const;	 // Phase 2
+	void renderPlaceholder() const;
 
 	// --- Utilities ---
 
-	float  GetCursorXPosition() const;						   // Pixel X for cursor position
-	size_t GetCursorPositionFromMouse(float mouseX) const; // Index from pixel X
-	void   UpdateHorizontalScroll();						   // Ensure cursor is visible
+	float  getCursorXPosition() const;						   // Pixel X for cursor position
+	size_t getCursorPositionFromMouse(float mouseX) const; // Index from pixel X
+	void   updateHorizontalScroll();						   // Ensure cursor is visible
 };
 
 } // namespace UI

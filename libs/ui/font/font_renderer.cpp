@@ -14,27 +14,27 @@ namespace ui {
 	FontRenderer::FontRenderer() = default;
 
 	FontRenderer::~FontRenderer() {
-		if (m_vao != 0) {
-			glDeleteVertexArrays(1, &m_vao);
+		if (vao != 0) {
+			glDeleteVertexArrays(1, &vao);
 		}
-		if (m_vbo != 0) {
-			glDeleteBuffers(1, &m_vbo);
+		if (vbo != 0) {
+			glDeleteBuffers(1, &vbo);
 		}
 		// Clean up FreeType textures
-		for (auto& [c, character] : m_characters) {
+		for (auto& [c, character] : characters) {
 			if (character.textureID) {
 				glDeleteTextures(1, &character.textureID);
 			}
 		}
 		// Clean up SDF atlas texture
-		if (m_atlasTexture != 0) {
-			glDeleteTextures(1, &m_atlasTexture);
+		if (atlasTexture != 0) {
+			glDeleteTextures(1, &atlasTexture);
 		}
-		if (m_face != nullptr) {
-			FT_Done_Face(m_face);
+		if (face != nullptr) {
+			FT_Done_Face(face);
 		}
-		if (m_library != nullptr) {
-			FT_Done_FreeType(m_library);
+		if (library != nullptr) {
+			FT_Done_FreeType(library);
 		}
 	}
 
@@ -42,7 +42,7 @@ namespace ui {
 		LOG_INFO(UI, "Initializing FontRenderer...");
 
 		// Initialize FreeType
-		if (FT_Init_FreeType(&m_library) != 0) {
+		if (FT_Init_FreeType(&library) != 0) {
 			LOG_ERROR(UI, "FATAL ERROR: Could not init FreeType Library");
 			std::exit(1);
 		}
@@ -57,8 +57,8 @@ namespace ui {
 			LOG_WARNING(UI, "SDF atlas not found, falling back to TTF rasterization");
 			if (!LoadFont("fonts/Roboto-Regular.ttf")) {
 				LOG_ERROR(UI, "FATAL ERROR: Failed to load font");
-				FT_Done_FreeType(m_library);
-				m_library = nullptr;
+				FT_Done_FreeType(library);
+				library = nullptr;
 				std::exit(1);
 			}
 			LOG_INFO(UI, "Using TTF rasterization for text rendering");
@@ -67,32 +67,32 @@ namespace ui {
 
 		if (!fontLoaded) {
 			LOG_ERROR(UI, "FATAL ERROR: Failed to load any font");
-			FT_Done_FreeType(m_library);
-			m_library = nullptr;
+			FT_Done_FreeType(library);
+			library = nullptr;
 			std::exit(1);
 		}
 
 		// Initialize the shader
-		if (!m_shader.LoadFromFile("text.vert", "text.frag")) {
+		if (!shader.LoadFromFile("text.vert", "text.frag")) {
 			LOG_ERROR(UI, "FATAL ERROR: Failed to load text shaders");
 			// Clean up textures created during LoadFont
-			for (auto& [c, character] : m_characters) {
+			for (auto& [c, character] : characters) {
 				if (character.textureID) {
 					glDeleteTextures(1, &character.textureID);
 				}
 			}
-			m_characters.clear();
-			FT_Done_FreeType(m_library);
-			m_library = nullptr;
+			characters.clear();
+			FT_Done_FreeType(library);
+			library = nullptr;
 			std::exit(1);
 		}
 		LOG_INFO(UI, "Shaders compiled successfully");
 
 		// Setup buffers
-		glGenVertexArrays(1, &m_vao);
-		glGenBuffers(1, &m_vbo);
-		glBindVertexArray(m_vao);
-		glBindBuffer(GL_ARRAY_BUFFER, m_vbo);
+		glGenVertexArrays(1, &vao);
+		glGenBuffers(1, &vbo);
+		glBindVertexArray(vao);
+		glBindBuffer(GL_ARRAY_BUFFER, vbo);
 		glBufferData(GL_ARRAY_BUFFER, sizeof(float) * 6 * 4, nullptr, GL_DYNAMIC_DRAW);
 		glEnableVertexAttribArray(0);
 		glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 4 * sizeof(float), nullptr);
@@ -106,25 +106,25 @@ namespace ui {
 	bool FontRenderer::LoadFont(const std::string& fontPath) {
 		LOG_INFO(UI, "Loading font from: %s", fontPath.c_str());
 
-		if (FT_New_Face(m_library, fontPath.c_str(), 0, &m_face)) {
+		if (FT_New_Face(library, fontPath.c_str(), 0, &face)) {
 			LOG_ERROR(UI, "Failed to load font from %s", fontPath.c_str());
 			return false;
 		}
 
 		// Set base font size to 16px
-		FT_Set_Pixel_Sizes(m_face, 0, 16);
+		FT_Set_Pixel_Sizes(face, 0, 16);
 		LOG_INFO(UI, "Font face loaded successfully");
 
 		// Store the ascender for the base font size
 		// face->size->metrics.ascender is in 26.6 fixed point format
-		m_scaledAscender = static_cast<float>(m_face->size->metrics.ascender >> 6);
+		scaledAscender = static_cast<float>(face->size->metrics.ascender >> 6);
 		// Store the maximum glyph line height for the base font size
-		m_maxGlyphHeightUnscaled = static_cast<float>(m_face->size->metrics.height >> 6);
+		maxGlyphHeightUnscaled = static_cast<float>(face->size->metrics.height >> 6);
 
 		// Load first 128 characters of ASCII set
 		glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
 		for (unsigned char c = 0; c < 128; c++) {
-			if (FT_Load_Char(m_face, c, FT_LOAD_RENDER) != 0) {
+			if (FT_Load_Char(face, c, FT_LOAD_RENDER) != 0) {
 				LOG_WARNING(UI, "Failed to load glyph for character %d", static_cast<int>(c));
 				continue;
 			}
@@ -136,12 +136,12 @@ namespace ui {
 				GL_TEXTURE_2D,
 				0,
 				GL_RED,
-				static_cast<GLsizei>(m_face->glyph->bitmap.width),
-				static_cast<GLsizei>(m_face->glyph->bitmap.rows),
+				static_cast<GLsizei>(face->glyph->bitmap.width),
+				static_cast<GLsizei>(face->glyph->bitmap.rows),
 				0,
 				GL_RED,
 				GL_UNSIGNED_BYTE,
-				m_face->glyph->bitmap.buffer
+				face->glyph->bitmap.buffer
 			);
 
 			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
@@ -150,23 +150,23 @@ namespace ui {
 			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 
 			// Store first texture for batch rendering key
-			if (m_firstGlyphTexture == 0) {
-				m_firstGlyphTexture = texture;
+			if (firstGlyphTexture == 0) {
+				firstGlyphTexture = texture;
 			}
 
 			Character character{
 				.textureID = texture,
-				.size = glm::ivec2(static_cast<GLsizei>(m_face->glyph->bitmap.width), m_face->glyph->bitmap.rows),
-				.bearing = glm::ivec2(m_face->glyph->bitmap_left, m_face->glyph->bitmap_top),
-				.advance = static_cast<unsigned int>(m_face->glyph->advance.x)
+				.size = glm::ivec2(static_cast<GLsizei>(face->glyph->bitmap.width), face->glyph->bitmap.rows),
+				.bearing = glm::ivec2(face->glyph->bitmap_left, face->glyph->bitmap_top),
+				.advance = static_cast<unsigned int>(face->glyph->advance.x)
 			};
-			m_characters[c] = character;
+			characters[c] = character;
 		}
 		glBindTexture(GL_TEXTURE_2D, 0);
-		FT_Done_Face(m_face); // After this, m_face is no longer valid for metrics
-		m_face = nullptr;
+		FT_Done_Face(face); // After this, face is no longer valid for metrics
+		face = nullptr;
 
-		LOG_INFO(UI, "Loaded %zu characters", m_characters.size());
+		LOG_INFO(UI, "Loaded %zu characters", characters.size());
 		return true;
 	}
 
@@ -175,27 +175,27 @@ namespace ui {
 		glEnable(GL_BLEND);
 		glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-		m_shader.Use();
-		glUniform3f(glGetUniformLocation(m_shader.GetProgram(), "textColor"), color.x, color.y, color.z);
+		shader.Use();
+		glUniform3f(glGetUniformLocation(shader.GetProgram(), "textColor"), color.x, color.y, color.z);
 		glActiveTexture(GL_TEXTURE0);
-		glBindVertexArray(m_vao);
+		glBindVertexArray(vao);
 
 		// Calculate baseline position
-		float	  ascenderAtCurrentScale = m_scaledAscender * scale;
+		float	  ascenderAtCurrentScale = scaledAscender * scale;
 		glm::vec2 penPosition = position;
 		penPosition.y += ascenderAtCurrentScale;
 
 		// Iterate through each character in the text
 		for (char currentChar : text) {
-			auto			 charIt = m_characters.find(currentChar);
+			auto			 charIt = characters.find(currentChar);
 			const Character* chToRenderPtr = nullptr;
 
-			if (charIt != m_characters.end()) {
+			if (charIt != characters.end()) {
 				chToRenderPtr = &charIt->second;
 			} else {
 				// Fallback to '?' if the character is not found
-				auto fallbackIt = m_characters.find('?');
-				if (fallbackIt != m_characters.end()) {
+				auto fallbackIt = characters.find('?');
+				if (fallbackIt != characters.end()) {
 					chToRenderPtr = &fallbackIt->second;
 				}
 			}
@@ -224,7 +224,7 @@ namespace ui {
 			};
 
 			glBindTexture(GL_TEXTURE_2D, ch.textureID);
-			glBindBuffer(GL_ARRAY_BUFFER, m_vbo);
+			glBindBuffer(GL_ARRAY_BUFFER, vbo);
 			glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(vertices), vertices);
 			glBindBuffer(GL_ARRAY_BUFFER, 0);
 			glDrawArrays(GL_TRIANGLES, 0, 6);
@@ -238,8 +238,8 @@ namespace ui {
 	}
 
 	void FontRenderer::SetProjectionMatrix(const glm::mat4& projection) {
-		m_shader.Use();
-		m_shader.SetUniform("projection", projection);
+		shader.Use();
+		shader.SetUniform("projection", projection);
 	}
 
 	glm::vec2
@@ -249,45 +249,45 @@ namespace ui {
 		}
 
 		// Use SDF glyph data if available, otherwise use FreeType character data
-		if (m_usingSDF) {
-			// SDF path: use m_sdfGlyphs
+		if (usingSDF) {
+			// SDF path: use sdfGlyphs
 			constexpr float BASE_FONT_SIZE = 16.0F;  // scale=1.0 renders at this size
 			float totalWidth = 0.0F;
 			float fontSize = BASE_FONT_SIZE * scale;  // Requested rendering size, not atlas size
 
 			for (char c : text) {
-				auto it = m_sdfGlyphs.find(c);
-				if (it != m_sdfGlyphs.end()) {
+				auto it = sdfGlyphs.find(c);
+				if (it != sdfGlyphs.end()) {
 					totalWidth += it->second.advance * fontSize;
 				} else {
 					// Fallback to '?' if character not found
-					auto fallbackIt = m_sdfGlyphs.find('?');
-					if (fallbackIt != m_sdfGlyphs.end()) {
+					auto fallbackIt = sdfGlyphs.find('?');
+					if (fallbackIt != sdfGlyphs.end()) {
 						totalWidth += fallbackIt->second.advance * fontSize;
 					}
 				}
 			}
 
 			// For height, use the line height from atlas metadata
-			float textHeight = m_atlasMetadata.lineHeight * fontSize;
+			float textHeight = atlasMetadata.lineHeight * fontSize;
 
 			return glm::vec2(totalWidth, textHeight);
 		} else {
-			// FreeType path: use m_characters
+			// FreeType path: use characters
 			float totalWidth = 0.0F;
 			float maxGlyphTopFromBaselineUnscaled = 0.0F;
 			float minGlyphBottomFromBaselineUnscaled = 0.0F;
 			bool  firstChar = true;
 
 			for (char c : text) {
-				auto			 it = m_characters.find(c);
+				auto			 it = characters.find(c);
 				const Character* pCh = nullptr;
 
-				if (it != m_characters.end()) {
+				if (it != characters.end()) {
 					pCh = &it->second;
 				} else {
-					auto itQ = m_characters.find('?');
-					if (itQ != m_characters.end()) {
+					auto itQ = characters.find('?');
+					if (itQ != characters.end()) {
 						pCh = &itQ->second;
 					} else {
 						continue;
@@ -323,11 +323,11 @@ namespace ui {
 	}
 
 	float FontRenderer::GetMaxGlyphHeight(float scale) const {
-		return m_maxGlyphHeightUnscaled * scale;
+		return maxGlyphHeightUnscaled * scale;
 	}
 
 	float FontRenderer::GetAscent(float scale) const {
-		return m_scaledAscender * scale;
+		return scaledAscender * scale;
 	}
 
 	bool FontRenderer::LoadSDFAtlas(const std::string& pngPath, const std::string& jsonPath) {
@@ -356,14 +356,14 @@ namespace ui {
 				return false;
 			}
 
-			m_atlasMetadata.distanceRange = json["atlas"]["distanceRange"].get<float>();
-			m_atlasMetadata.glyphSize = json["atlas"]["size"].get<int>();
-			m_atlasMetadata.atlasWidth = json["atlas"]["width"].get<int>();
-			m_atlasMetadata.atlasHeight = json["atlas"]["height"].get<int>();
-			m_atlasMetadata.emSize = json["metrics"]["emSize"].get<float>();
-			m_atlasMetadata.ascender = json["metrics"]["ascender"].get<float>();
-			m_atlasMetadata.descender = json["metrics"]["descender"].get<float>();
-			m_atlasMetadata.lineHeight = json["metrics"]["lineHeight"].get<float>();
+			atlasMetadata.distanceRange = json["atlas"]["distanceRange"].get<float>();
+			atlasMetadata.glyphSize = json["atlas"]["size"].get<int>();
+			atlasMetadata.atlasWidth = json["atlas"]["width"].get<int>();
+			atlasMetadata.atlasHeight = json["atlas"]["height"].get<int>();
+			atlasMetadata.emSize = json["metrics"]["emSize"].get<float>();
+			atlasMetadata.ascender = json["metrics"]["ascender"].get<float>();
+			atlasMetadata.descender = json["metrics"]["descender"].get<float>();
+			atlasMetadata.lineHeight = json["metrics"]["lineHeight"].get<float>();
 		} catch (const std::exception& e) {
 			LOG_ERROR(UI, "Failed to parse SDF atlas metadata: %s", e.what());
 			return false;
@@ -372,10 +372,10 @@ namespace ui {
 		LOG_INFO(
 			UI,
 			"Atlas metadata: size=%dx%d, glyphSize=%d, range=%.1f",
-			m_atlasMetadata.atlasWidth,
-			m_atlasMetadata.atlasHeight,
-			m_atlasMetadata.glyphSize,
-			m_atlasMetadata.distanceRange
+			atlasMetadata.atlasWidth,
+			atlasMetadata.atlasHeight,
+			atlasMetadata.glyphSize,
+			atlasMetadata.distanceRange
 		);
 
 		// Parse glyphs with error handling
@@ -433,14 +433,14 @@ namespace ui {
 					glyph.hasGeometry = false;
 				}
 
-				m_sdfGlyphs[c] = glyph;
+				sdfGlyphs[c] = glyph;
 			}
 		} catch (const std::exception& e) {
 			LOG_ERROR(UI, "Failed to parse SDF glyphs: %s", e.what());
 			return false;
 		}
 
-		LOG_INFO(UI, "Loaded %zu SDF glyphs", m_sdfGlyphs.size());
+		LOG_INFO(UI, "Loaded %zu SDF glyphs", sdfGlyphs.size());
 
 		// Load PNG atlas texture using stb_image
 		int width = 0;
@@ -463,8 +463,8 @@ namespace ui {
 		LOG_INFO(UI, "Loaded atlas texture: %dx%d, %d channels", width, height, channels);
 
 		// Create OpenGL texture
-		glGenTextures(1, &m_atlasTexture);
-		glBindTexture(GL_TEXTURE_2D, m_atlasTexture);
+		glGenTextures(1, &atlasTexture);
+		glBindTexture(GL_TEXTURE_2D, atlasTexture);
 
 		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, imageData.get());
 
@@ -480,9 +480,9 @@ namespace ui {
 		// Update font metrics for compatibility with existing code
 		// Use BASE_FONT_SIZE (16px) not glyphSize (32px) since atlas is 2x oversampled for quality
 		constexpr float BASE_FONT_SIZE = 16.0F;
-		m_scaledAscender = m_atlasMetadata.ascender * BASE_FONT_SIZE;
-		m_maxGlyphHeightUnscaled = m_atlasMetadata.lineHeight;
-		m_usingSDF = true;
+		scaledAscender = atlasMetadata.ascender * BASE_FONT_SIZE;
+		maxGlyphHeightUnscaled = atlasMetadata.lineHeight;
+		usingSDF = true;
 
 		LOG_INFO(UI, "SDF atlas loaded successfully");
 		return true;
@@ -495,7 +495,7 @@ namespace ui {
 		const glm::vec4&		color,
 		std::vector<GlyphQuad>& outQuads
 	) const {
-		if (!m_usingSDF) {
+		if (!usingSDF) {
 			LOG_WARNING(UI, "GenerateGlyphQuads called but SDF atlas not loaded");
 			return;
 		}
@@ -503,14 +503,14 @@ namespace ui {
 		// Try cache lookup if enabled
 		if (FontRendererConfig::kEnableGlyphQuadCache) {
 			CacheKey key{text, scale};
-			auto	 it = m_glyphQuadCache.find(key);
+			auto	 it = glyphQuadCache.find(key);
 
-			if (it != m_glyphQuadCache.end()) {
+			if (it != glyphQuadCache.end()) {
 				// Cache hit! Copy quads and adjust position/color
 				const std::vector<GlyphQuad>& cachedQuads = it->second.quads;
 
 				// Update LRU tracking
-				it->second.lastAccessFrame = m_currentFrame;
+				it->second.lastAccessFrame = currentFrame;
 
 				// Copy quads with position/color adjustment
 				size_t startIdx = outQuads.size();
@@ -538,21 +538,21 @@ namespace ui {
 		// The glyph metrics are in EM units, so we scale by the requested pixel size.
 		constexpr float BASE_FONT_SIZE = 16.0F;  // scale=1.0 renders at this size
 		float fontSize = BASE_FONT_SIZE * scale;  // Requested rendering size in pixels
-		float ascenderAtCurrentScale = m_atlasMetadata.ascender * fontSize;
+		float ascenderAtCurrentScale = atlasMetadata.ascender * fontSize;
 
 		glm::vec2 penPosition = glm::vec2(0, 0); // Generate relative to origin for caching
 		penPosition.y += ascenderAtCurrentScale; // Move to baseline
 
 		for (char currentChar : text) {
-			auto			it = m_sdfGlyphs.find(currentChar);
+			auto			it = sdfGlyphs.find(currentChar);
 			const SDFGlyph* glyphPtr = nullptr;
 
-			if (it != m_sdfGlyphs.end()) {
+			if (it != sdfGlyphs.end()) {
 				glyphPtr = &it->second;
 			} else {
 				// Fallback to '?' if character not found
-				auto fallbackIt = m_sdfGlyphs.find('?');
-				if (fallbackIt != m_sdfGlyphs.end()) {
+				auto fallbackIt = sdfGlyphs.find('?');
+				if (fallbackIt != sdfGlyphs.end()) {
 					glyphPtr = &fallbackIt->second;
 				}
 			}
@@ -593,27 +593,27 @@ namespace ui {
 		// Cache the generated quads if enabled
 		if (FontRendererConfig::kEnableGlyphQuadCache) {
 			// Check if cache is full and needs eviction
-			if (m_glyphQuadCache.size() >= FontRendererConfig::kMaxGlyphQuadCacheEntries) {
+			if (glyphQuadCache.size() >= FontRendererConfig::kMaxGlyphQuadCacheEntries) {
 				// Find and evict the LRU entry
-				auto oldestIt = m_glyphQuadCache.begin();
-				for (auto it = m_glyphQuadCache.begin(); it != m_glyphQuadCache.end(); ++it) {
+				auto oldestIt = glyphQuadCache.begin();
+				for (auto it = glyphQuadCache.begin(); it != glyphQuadCache.end(); ++it) {
 					if (it->second.lastAccessFrame < oldestIt->second.lastAccessFrame) {
 						oldestIt = it;
 					}
 				}
-				m_glyphQuadCache.erase(oldestIt);
+				glyphQuadCache.erase(oldestIt);
 			}
 
 			// Cache the generated quads (relative to origin, before position adjustment)
 			CacheEntry entry;
-			entry.lastAccessFrame = m_currentFrame;
+			entry.lastAccessFrame = currentFrame;
 			entry.quads.reserve(outQuads.size() - startIdx);
 			for (size_t i = startIdx; i < outQuads.size(); ++i) {
 				entry.quads.push_back(outQuads[i]);
 			}
 
 			CacheKey key{text, scale};
-			m_glyphQuadCache[key] = std::move(entry);
+			glyphQuadCache[key] = std::move(entry);
 
 			// Now adjust positions in outQuads for the caller
 			for (size_t i = startIdx; i < outQuads.size(); ++i) {
@@ -628,24 +628,24 @@ namespace ui {
 	}
 
 	GLuint FontRenderer::GetAtlasTexture() const {
-		if (m_usingSDF) {
-			return m_atlasTexture;
+		if (usingSDF) {
+			return atlasTexture;
 		} else {
-			return m_firstGlyphTexture;
+			return firstGlyphTexture;
 		}
 	}
 
 	void FontRenderer::UpdateFrame() {
-		m_currentFrame++;
+		currentFrame++;
 	}
 
 	void FontRenderer::ClearGlyphQuadCache() {
-		m_glyphQuadCache.clear();
+		glyphQuadCache.clear();
 		LOG_DEBUG(UI, "Cleared glyph quad cache");
 	}
 
 	size_t FontRenderer::GetGlyphQuadCacheSize() const {
-		return m_glyphQuadCache.size();
+		return glyphQuadCache.size();
 	}
 
 } // namespace ui

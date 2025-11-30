@@ -21,7 +21,7 @@ void ClipboardManager::SetInstance(ClipboardManager* instance) {
 }
 
 ClipboardManager::ClipboardManager(GLFWwindow* window)
-	: m_window(window) {
+	: window(window) {
 }
 
 ClipboardManager::~ClipboardManager() {
@@ -31,11 +31,11 @@ ClipboardManager::~ClipboardManager() {
 }
 
 std::string ClipboardManager::GetText() const {
-	if (m_window == nullptr) {
+	if (window == nullptr) {
 		return "";
 	}
 
-	const char* text = glfwGetClipboardString(m_window);
+	const char* text = glfwGetClipboardString(window);
 	if (text == nullptr) {
 		return "";
 	}
@@ -44,19 +44,19 @@ std::string ClipboardManager::GetText() const {
 }
 
 void ClipboardManager::SetText(const std::string& text) {
-	if (m_window == nullptr) {
+	if (window == nullptr) {
 		return;
 	}
 
-	glfwSetClipboardString(m_window, text.c_str());
+	glfwSetClipboardString(window, text.c_str());
 }
 
 bool ClipboardManager::HasText() const {
-	if (m_window == nullptr) {
+	if (window == nullptr) {
 		return false;
 	}
 
-	const char* text = glfwGetClipboardString(m_window);
+	const char* text = glfwGetClipboardString(window);
 	return text != nullptr && text[0] != '\0';
 }
 

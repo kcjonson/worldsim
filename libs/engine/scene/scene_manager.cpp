@@ -12,69 +12,69 @@ namespace engine {
 
 	void
 	SceneManager::RegisterScene(const std::string& name, SceneFactory factory) { // NOLINT(readability-convert-member-functions-to-static)
-		if (m_sceneRegistry.find(name) != m_sceneRegistry.end()) {
+		if (sceneRegistry.find(name) != sceneRegistry.end()) {
 			LOG_WARNING(Engine, "Scene '%s' already registered, overwriting", name.c_str());
 		}
 
-		m_sceneRegistry[name] = std::move(factory);
+		sceneRegistry[name] = std::move(factory);
 		LOG_DEBUG(Engine, "Registered scene: %s", name.c_str());
 	}
 
 	bool SceneManager::SwitchTo(const std::string& name) { // NOLINT(readability-convert-member-functions-to-static)
 		// Check if scene exists
-		auto it = m_sceneRegistry.find(name);
-		if (it == m_sceneRegistry.end()) {
+		auto it = sceneRegistry.find(name);
+		if (it == sceneRegistry.end()) {
 			LOG_ERROR(Engine, "Scene '%s' not found in registry", name.c_str());
 			return false;
 		}
 
 		// Exit current scene
-		if (m_currentScene) {
-			LOG_DEBUG(Engine, "Exiting scene: %s", m_currentSceneName.c_str());
-			m_currentScene->OnExit();
-			m_currentScene.reset();
+		if (currentScene) {
+			LOG_DEBUG(Engine, "Exiting scene: %s", currentSceneName.c_str());
+			currentScene->OnExit();
+			currentScene.reset();
 		}
 
 		// Create and enter new scene
-		m_currentSceneName = name;
-		m_currentScene = it->second();
-		LOG_INFO(Engine, "Entering scene: %s", m_currentSceneName.c_str());
-		m_currentScene->OnEnter();
+		currentSceneName = name;
+		currentScene = it->second();
+		LOG_INFO(Engine, "Entering scene: %s", currentSceneName.c_str());
+		currentScene->OnEnter();
 
 		return true;
 	}
 
 	void SceneManager::HandleInput(float dt) { // NOLINT(readability-convert-member-functions-to-static)
-		if (m_currentScene) {
-			m_currentScene->HandleInput(dt);
+		if (currentScene) {
+			currentScene->HandleInput(dt);
 		}
 	}
 
 	void SceneManager::Update(float dt) { // NOLINT(readability-convert-member-functions-to-static)
-		if (m_currentScene) {
-			m_currentScene->Update(dt);
+		if (currentScene) {
+			currentScene->Update(dt);
 		}
 	}
 
 	void SceneManager::Render() { // NOLINT(readability-convert-member-functions-to-static)
-		if (m_currentScene) {
-			m_currentScene->Render();
+		if (currentScene) {
+			currentScene->Render();
 		}
 	}
 
 	IScene* SceneManager::GetCurrentScene() const {
-		return m_currentScene.get();
+		return currentScene.get();
 	}
 
 	std::string SceneManager::GetCurrentSceneName() const {
-		return m_currentSceneName;
+		return currentSceneName;
 	}
 
 	std::vector<std::string> SceneManager::GetAllSceneNames() const {
 		std::vector<std::string> names;
-		names.reserve(m_sceneRegistry.size());
+		names.reserve(sceneRegistry.size());
 
-		for (const auto& [name, factory] : m_sceneRegistry) {
+		for (const auto& [name, factory] : sceneRegistry) {
 			names.push_back(name);
 		}
 
@@ -85,15 +85,15 @@ namespace engine {
 	}
 
 	bool SceneManager::HasScene(const std::string& name) const {
-		return m_sceneRegistry.find(name) != m_sceneRegistry.end();
+		return sceneRegistry.find(name) != sceneRegistry.end();
 	}
 
 	void SceneManager::Shutdown() {
-		if (m_currentScene) {
-			LOG_INFO(Engine, "Shutting down scene system, exiting scene: %s", m_currentSceneName.c_str());
-			m_currentScene->OnExit();
-			m_currentScene.reset();
-			m_currentSceneName.clear();
+		if (currentScene) {
+			LOG_INFO(Engine, "Shutting down scene system, exiting scene: %s", currentSceneName.c_str());
+			currentScene->OnExit();
+			currentScene.reset();
+			currentSceneName.clear();
 		}
 	}
 

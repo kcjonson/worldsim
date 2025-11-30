@@ -229,7 +229,7 @@ namespace engine {
 	}
 
 	InputManager::InputManager(GLFWwindow* window)
-		: m_window(window) {
+		: window(window) {
 
 		LOG_INFO(Engine, "Initializing InputManager");
 
@@ -241,22 +241,22 @@ namespace engine {
 		// Get initial window size
 		int width, height;
 		glfwGetWindowSize(window, &width, &height);
-		m_windowSize = glm::vec2(static_cast<float>(width), static_cast<float>(height));
-		LOG_DEBUG(Engine, "Window size: %.0fx%.0f", m_windowSize.x, m_windowSize.y);
+		windowSize = glm::vec2(static_cast<float>(width), static_cast<float>(height));
+		LOG_DEBUG(Engine, "Window size: %.0fx%.0f", windowSize.x, windowSize.y);
 
 		// Get initial mouse position
 		double x, y;
 		glfwGetCursorPos(window, &x, &y);
-		m_mousePosition = glm::vec2(static_cast<float>(x), static_cast<float>(y));
-		m_lastMousePosition = m_mousePosition;
+		mousePosition = glm::vec2(static_cast<float>(x), static_cast<float>(y));
+		lastMousePosition = mousePosition;
 
 		// Save existing callbacks before overwriting them (for callback chaining)
-		m_previousKeyCallback = glfwSetKeyCallback(window, KeyCallback);
-		m_previousCharCallback = glfwSetCharCallback(window, CharCallback);
-		m_previousMouseButtonCallback = glfwSetMouseButtonCallback(window, MouseButtonCallback);
-		m_previousCursorPosCallback = glfwSetCursorPosCallback(window, CursorPosCallback);
-		m_previousScrollCallback = glfwSetScrollCallback(window, ScrollCallback);
-		m_previousCursorEnterCallback = glfwSetCursorEnterCallback(window, CursorEnterCallback);
+		previousKeyCallback = glfwSetKeyCallback(window, KeyCallback);
+		previousCharCallback = glfwSetCharCallback(window, CharCallback);
+		previousMouseButtonCallback = glfwSetMouseButtonCallback(window, MouseButtonCallback);
+		previousCursorPosCallback = glfwSetCursorPosCallback(window, CursorPosCallback);
+		previousScrollCallback = glfwSetScrollCallback(window, ScrollCallback);
+		previousCursorEnterCallback = glfwSetCursorEnterCallback(window, CursorEnterCallback);
 
 		LOG_INFO(Engine, "InputManager initialized successfully");
 	}
@@ -270,27 +270,27 @@ namespace engine {
 
 	void InputManager::Update(float deltaTime) {
 		// Calculate mouse delta
-		m_mouseDelta = m_mousePosition - m_lastMousePosition;
-		m_lastMousePosition = m_mousePosition;
+		mouseDelta = mousePosition - lastMousePosition;
+		lastMousePosition = mousePosition;
 
 		// Update window size (in case window was resized)
-		if (m_window) {
+		if (window) {
 			int width, height;
-			glfwGetWindowSize(m_window, &width, &height);
-			m_windowSize = glm::vec2(static_cast<float>(width), static_cast<float>(height));
+			glfwGetWindowSize(window, &width, &height);
+			windowSize = glm::vec2(static_cast<float>(width), static_cast<float>(height));
 		}
 
 		// Update button state transitions (Pressed → Down, Released → Up)
-		UpdateButtonStates();
+		updateButtonStates();
 
 		// Reset per-frame state
-		m_scrollDelta = 0.0f;
+		scrollDelta = 0.0f;
 	}
 
-	void InputManager::UpdateButtonStates() {
+	void InputManager::updateButtonStates() {
 		// Update mouse button states
-		for (auto& [button, state] : m_mouseButtonStates) {
-			m_mouseButtonPreviousStates[button] = state;
+		for (auto& [button, state] : mouseButtonStates) {
+			mouseButtonPreviousStates[button] = state;
 			if (state == ButtonState::Pressed) {
 				state = ButtonState::Down;
 			} else if (state == ButtonState::Released) {
@@ -299,8 +299,8 @@ namespace engine {
 		}
 
 		// Update key states
-		for (auto& [key, state] : m_keyStates) {
-			m_keyPreviousStates[key] = state;
+		for (auto& [key, state] : keyStates) {
+			keyPreviousStates[key] = state;
 			if (state == ButtonState::Pressed) {
 				state = ButtonState::Down;
 			} else if (state == ButtonState::Released) {
@@ -312,48 +312,48 @@ namespace engine {
 	// Query API implementations
 	bool InputManager::IsMouseButtonDown(MouseButton button) const {
 		int glfwButton = ToGLFW(button);
-		auto it = m_mouseButtonStates.find(glfwButton);
-		if (it == m_mouseButtonStates.end())
+		auto it = mouseButtonStates.find(glfwButton);
+		if (it == mouseButtonStates.end())
 			return false;
 		return it->second == ButtonState::Down || it->second == ButtonState::Pressed;
 	}
 
 	bool InputManager::IsMouseButtonPressed(MouseButton button) const {
 		int glfwButton = ToGLFW(button);
-		auto it = m_mouseButtonStates.find(glfwButton);
-		if (it == m_mouseButtonStates.end())
+		auto it = mouseButtonStates.find(glfwButton);
+		if (it == mouseButtonStates.end())
 			return false;
 		return it->second == ButtonState::Pressed;
 	}
 
 	bool InputManager::IsMouseButtonReleased(MouseButton button) const {
 		int glfwButton = ToGLFW(button);
-		auto it = m_mouseButtonStates.find(glfwButton);
-		if (it == m_mouseButtonStates.end())
+		auto it = mouseButtonStates.find(glfwButton);
+		if (it == mouseButtonStates.end())
 			return false;
 		return it->second == ButtonState::Released;
 	}
 
 	bool InputManager::IsKeyDown(Key key) const {
 		int glfwKey = ToGLFW(key);
-		auto it = m_keyStates.find(glfwKey);
-		if (it == m_keyStates.end())
+		auto it = keyStates.find(glfwKey);
+		if (it == keyStates.end())
 			return false;
 		return it->second == ButtonState::Down || it->second == ButtonState::Pressed;
 	}
 
 	bool InputManager::IsKeyPressed(Key key) const {
 		int glfwKey = ToGLFW(key);
-		auto it = m_keyStates.find(glfwKey);
-		if (it == m_keyStates.end())
+		auto it = keyStates.find(glfwKey);
+		if (it == keyStates.end())
 			return false;
 		return it->second == ButtonState::Pressed;
 	}
 
 	bool InputManager::IsKeyReleased(Key key) const {
 		int glfwKey = ToGLFW(key);
-		auto it = m_keyStates.find(glfwKey);
-		if (it == m_keyStates.end())
+		auto it = keyStates.find(glfwKey);
+		if (it == keyStates.end())
 			return false;
 		return it->second == ButtonState::Released;
 	}
@@ -362,13 +362,13 @@ namespace engine {
 	void InputManager::KeyCallback(GLFWwindow* window, int key, int scancode, int action, int mods) {
 		// Process input for InputManager
 		if (s_instance) {
-			s_instance->HandleKeyInput(key, action);
+			s_instance->handleKeyInput(key, action);
 
 			// Call external callback (e.g., FocusManager) - can consume event
-			if (s_instance->m_keyInputCallback) {
+			if (s_instance->keyInputCallback) {
 				auto ourKey = FromGLFW(key);
 				if (ourKey.has_value()) {
-					bool consumed = s_instance->m_keyInputCallback(*ourKey, action, mods);
+					bool consumed = s_instance->keyInputCallback(*ourKey, action, mods);
 					if (consumed) {
 						return;  // Event consumed, don't chain
 					}
@@ -376,35 +376,35 @@ namespace engine {
 			}
 
 			// Chain to previous callback (e.g., UI/menu handlers)
-			if (s_instance->m_previousKeyCallback) {
-				s_instance->m_previousKeyCallback(window, key, scancode, action, mods);
+			if (s_instance->previousKeyCallback) {
+				s_instance->previousKeyCallback(window, key, scancode, action, mods);
 			}
 		}
 	}
 
 	void InputManager::CharCallback(GLFWwindow* window, unsigned int codepoint) {
 		// Call external callback (e.g., FocusManager for text input)
-		if (s_instance && s_instance->m_charInputCallback) {
-			bool consumed = s_instance->m_charInputCallback(static_cast<char32_t>(codepoint));
+		if (s_instance && s_instance->charInputCallback) {
+			bool consumed = s_instance->charInputCallback(static_cast<char32_t>(codepoint));
 			if (consumed) {
 				return;  // Event consumed, don't chain
 			}
 		}
 
 		// Chain to previous callback
-		if (s_instance && s_instance->m_previousCharCallback) {
-			s_instance->m_previousCharCallback(window, codepoint);
+		if (s_instance && s_instance->previousCharCallback) {
+			s_instance->previousCharCallback(window, codepoint);
 		}
 	}
 
 	void InputManager::MouseButtonCallback(GLFWwindow* window, int button, int action, int mods) {
 		// Process input for InputManager
 		if (s_instance) {
-			s_instance->HandleMouseButton(button, action);
+			s_instance->handleMouseButton(button, action);
 
 			// Chain to previous callback (e.g., UI/menu handlers)
-			if (s_instance->m_previousMouseButtonCallback) {
-				s_instance->m_previousMouseButtonCallback(window, button, action, mods);
+			if (s_instance->previousMouseButtonCallback) {
+				s_instance->previousMouseButtonCallback(window, button, action, mods);
 			}
 		}
 	}
@@ -412,11 +412,11 @@ namespace engine {
 	void InputManager::CursorPosCallback(GLFWwindow* window, double xpos, double ypos) {
 		// Process input for InputManager
 		if (s_instance) {
-			s_instance->HandleMouseMove(xpos, ypos);
+			s_instance->handleMouseMove(xpos, ypos);
 
 			// Chain to previous callback (e.g., UI/menu handlers)
-			if (s_instance->m_previousCursorPosCallback) {
-				s_instance->m_previousCursorPosCallback(window, xpos, ypos);
+			if (s_instance->previousCursorPosCallback) {
+				s_instance->previousCursorPosCallback(window, xpos, ypos);
 			}
 		}
 	}
@@ -424,11 +424,11 @@ namespace engine {
 	void InputManager::ScrollCallback(GLFWwindow* window, double xoffset, double yoffset) {
 		// Process input for InputManager
 		if (s_instance) {
-			s_instance->HandleScroll(xoffset, yoffset);
+			s_instance->handleScroll(xoffset, yoffset);
 
 			// Chain to previous callback (e.g., UI/menu handlers)
-			if (s_instance->m_previousScrollCallback) {
-				s_instance->m_previousScrollCallback(window, xoffset, yoffset);
+			if (s_instance->previousScrollCallback) {
+				s_instance->previousScrollCallback(window, xoffset, yoffset);
 			}
 		}
 	}
@@ -436,68 +436,68 @@ namespace engine {
 	void InputManager::CursorEnterCallback(GLFWwindow* window, int entered) {
 		// Process input for InputManager
 		if (s_instance) {
-			s_instance->HandleCursorEnter(entered);
+			s_instance->handleCursorEnter(entered);
 
 			// Chain to previous callback (e.g., UI/menu handlers)
-			if (s_instance->m_previousCursorEnterCallback) {
-				s_instance->m_previousCursorEnterCallback(window, entered);
+			if (s_instance->previousCursorEnterCallback) {
+				s_instance->previousCursorEnterCallback(window, entered);
 			}
 		}
 	}
 
 	// Instance event handlers
-	void InputManager::HandleKeyInput(int key, int action) {
+	void InputManager::handleKeyInput(int key, int action) {
 		if (action == GLFW_PRESS) {
-			m_keyStates[key] = ButtonState::Pressed;
+			keyStates[key] = ButtonState::Pressed;
 			LOG_DEBUG(Engine, "Key pressed: %d", key);
 		} else if (action == GLFW_RELEASE) {
-			m_keyStates[key] = ButtonState::Released;
+			keyStates[key] = ButtonState::Released;
 			LOG_DEBUG(Engine, "Key released: %d", key);
 		}
 		// GLFW_REPEAT is handled implicitly (key stays in Down state)
 	}
 
-	void InputManager::HandleCharInput(unsigned int codepoint) {
+	void InputManager::handleCharInput(unsigned int codepoint) {
 		LOG_DEBUG(Engine, "Character input: U+%04X (%lc)", codepoint, static_cast<wchar_t>(codepoint));
 		// Character input is routed via callback in CharCallback static method
 		// This method is just for logging/debugging
 	}
 
-	void InputManager::HandleMouseButton(int button, int action) {
+	void InputManager::handleMouseButton(int button, int action) {
 		if (action == GLFW_PRESS) {
-			m_mouseButtonStates[button] = ButtonState::Pressed;
-			LOG_DEBUG(Engine, "Mouse button pressed: %d at (%.0f, %.0f)", button, m_mousePosition.x, m_mousePosition.y);
+			mouseButtonStates[button] = ButtonState::Pressed;
+			LOG_DEBUG(Engine, "Mouse button pressed: %d at (%.0f, %.0f)", button, mousePosition.x, mousePosition.y);
 
 			// Track dragging for left mouse button
 			if (button == GLFW_MOUSE_BUTTON_LEFT) {
-				m_isDragging = true;
-				m_dragStartPos = m_mousePosition;
+				isDragging = true;
+				dragStartPos = mousePosition;
 			}
 		} else if (action == GLFW_RELEASE) {
-			m_mouseButtonStates[button] = ButtonState::Released;
-			LOG_DEBUG(Engine, "Mouse button released: %d at (%.0f, %.0f)", button, m_mousePosition.x, m_mousePosition.y);
+			mouseButtonStates[button] = ButtonState::Released;
+			LOG_DEBUG(Engine, "Mouse button released: %d at (%.0f, %.0f)", button, mousePosition.x, mousePosition.y);
 
 			// Stop dragging
 			if (button == GLFW_MOUSE_BUTTON_LEFT) {
-				m_isDragging = false;
+				isDragging = false;
 			}
 		}
 	}
 
-	void InputManager::HandleMouseMove(double x, double y) {
-		m_mousePosition = glm::vec2(static_cast<float>(x), static_cast<float>(y));
+	void InputManager::handleMouseMove(double x, double y) {
+		mousePosition = glm::vec2(static_cast<float>(x), static_cast<float>(y));
 	}
 
-	void InputManager::HandleScroll(double xoffset, double yoffset) {
-		m_scrollDelta = static_cast<float>(yoffset);
-		if (m_scrollDelta != 0.0f) {
-			LOG_DEBUG(Engine, "Scroll event: %.1f", m_scrollDelta);
+	void InputManager::handleScroll(double xoffset, double yoffset) {
+		scrollDelta = static_cast<float>(yoffset);
+		if (scrollDelta != 0.0f) {
+			LOG_DEBUG(Engine, "Scroll event: %.1f", scrollDelta);
 		}
 	}
 
-	void InputManager::HandleCursorEnter(int entered) {
-		m_cursorInWindow = (entered != 0);
-		LOG_DEBUG(Engine, "Cursor %s window", m_cursorInWindow ? "entered" : "left");
+	void InputManager::handleCursorEnter(int entered) {
+		cursorInWindow = (entered != 0);
+		LOG_DEBUG(Engine, "Cursor %s window", cursorInWindow ? "entered" : "left");
 	}
 
 } // namespace engine

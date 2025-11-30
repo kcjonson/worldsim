@@ -11,29 +11,29 @@
 namespace engine {
 
 	Application::Application(GLFWwindow* window)
-		: m_window(window) {
-		if (m_window == nullptr) {
+		: window(window) {
+		if (window == nullptr) {
 			LOG_ERROR(Engine, "Application created with null window");
 			return;
 		}
 
 		// Create and initialize InputManager
-		m_inputManager = std::make_unique<InputManager>(m_window);
-		InputManager::SetInstance(m_inputManager.get());
+		inputManager = std::make_unique<InputManager>(window);
+		InputManager::SetInstance(inputManager.get());
 		LOG_INFO(Engine, "Application initialized with InputManager");
 
 		// Create and initialize ClipboardManager
-		m_clipboardManager = std::make_unique<ClipboardManager>(m_window);
-		ClipboardManager::SetInstance(m_clipboardManager.get());
+		clipboardManager = std::make_unique<ClipboardManager>(window);
+		ClipboardManager::SetInstance(clipboardManager.get());
 		LOG_INFO(Engine, "Application initialized with ClipboardManager");
 
 		// Create and initialize FocusManager
-		m_focusManager = std::make_unique<UI::FocusManager>();
-		UI::FocusManager::SetInstance(m_focusManager.get());
+		focusManager = std::make_unique<UI::FocusManager>();
+		UI::FocusManager::SetInstance(focusManager.get());
 		LOG_INFO(Engine, "Application initialized with FocusManager");
 
 		// Wire InputManager callbacks to FocusManager
-		m_inputManager->SetKeyInputCallback([this](Key key, int action, int mods) -> bool {
+		inputManager->SetKeyInputCallback([this](Key key, int action, int mods) -> bool {
 			// Only handle key press and repeat events (not release)
 			if (action != GLFW_PRESS && action != GLFW_REPEAT) {
 				return false; // Don't consume
@@ -42,9 +42,9 @@ namespace engine {
 			// Handle Tab key for focus navigation
 			if (key == Key::Tab) {
 				if (mods & GLFW_MOD_SHIFT) {
-					m_focusManager->FocusPrevious();
+					focusManager->FocusPrevious();
 				} else {
-					m_focusManager->FocusNext();
+					focusManager->FocusNext();
 				}
 				return true; // Consume Tab key
 			}
@@ -58,13 +58,13 @@ namespace engine {
 #endif
 			bool alt = (mods & GLFW_MOD_ALT) != 0;
 
-			m_focusManager->RouteKeyInput(key, shift, ctrl, alt);
-			return m_focusManager->GetFocused() != nullptr; // Consume if component has focus
+			focusManager->RouteKeyInput(key, shift, ctrl, alt);
+			return focusManager->getFocused() != nullptr; // Consume if component has focus
 		});
 
-		m_inputManager->SetCharInputCallback([this](char32_t codepoint) -> bool {
-			m_focusManager->RouteCharInput(codepoint);
-			return m_focusManager->GetFocused() != nullptr; // Consume if component has focus
+		inputManager->SetCharInputCallback([this](char32_t codepoint) -> bool {
+			focusManager->RouteCharInput(codepoint);
+			return focusManager->getFocused() != nullptr; // Consume if component has focus
 		});
 	}
 
@@ -75,41 +75,41 @@ namespace engine {
 	}
 
 	void Application::Run() {
-		if (m_window == nullptr) {
+		if (window == nullptr) {
 			LOG_ERROR(Engine, "Cannot run: window not initialized");
 			return;
 		}
 
 		LOG_INFO(Engine, "Starting application main loop");
 
-		m_isRunning = true;
-		m_lastTime = glfwGetTime();
+		isRunning = true;
+		lastTime = glfwGetTime();
 
-		while (glfwWindowShouldClose(m_window) == 0 && m_isRunning) {
+		while (glfwWindowShouldClose(window) == 0 && isRunning) {
 			// Calculate delta time
 			double currentTime = glfwGetTime();
-			m_deltaTime = static_cast<float>(currentTime - m_lastTime);
-			m_lastTime = currentTime;
+			deltaTime = static_cast<float>(currentTime - lastTime);
+			lastTime = currentTime;
 
 			// Cap delta time to prevent large jumps (e.g., during debugging)
 			// This prevents physics explosions and other time-step-sensitive bugs
-			if (m_deltaTime > 0.25F) {
-				LOG_DEBUG(Engine, "Large delta time detected (%.3fs), capping to 0.25s", m_deltaTime);
-				m_deltaTime = 0.25F;
+			if (deltaTime > 0.25F) {
+				LOG_DEBUG(Engine, "Large delta time detected (%.3fs), capping to 0.25s", deltaTime);
+				deltaTime = 0.25F;
 			}
 
 			// Calculate FPS
-			if (m_deltaTime > 0.0F) {
-				m_fps = 1.0F / m_deltaTime;
+			if (deltaTime > 0.0F) {
+				fps = 1.0F / deltaTime;
 			}
 
 			// Poll GLFW events
 			glfwPollEvents();
 
 			// Update InputManager to capture input state for this frame
-			if (m_inputManager) {
+			if (inputManager) {
 				try {
-					m_inputManager->Update(m_deltaTime);
+					inputManager->Update(deltaTime);
 				} catch (const std::exception& e) {
 					LOG_ERROR(Engine, "Exception in InputManager::Update: %s", e.what());
 				} catch (...) {
@@ -119,11 +119,11 @@ namespace engine {
 
 			// Pre-frame callback (debug server control, etc.)
 			// Can return false to request exit
-			if (m_preFrameCallback) {
+			if (preFrameCallback) {
 				try {
-					if (!m_preFrameCallback()) {
+					if (!preFrameCallback()) {
 						LOG_INFO(Engine, "Pre-frame callback requested exit");
-						m_isRunning = false;
+						isRunning = false;
 						break;
 					}
 				} catch (const std::exception& e) {
@@ -134,10 +134,10 @@ namespace engine {
 			}
 
 			// Scene lifecycle (skip if paused)
-			if (!m_isPaused) {
+			if (!isPaused) {
 				// Handle input
 				try {
-					SceneManager::Get().HandleInput(m_deltaTime);
+					SceneManager::Get().HandleInput(deltaTime);
 				} catch (const std::exception& e) {
 					LOG_ERROR(Engine, "Exception in HandleInput: %s", e.what());
 				} catch (...) {
@@ -146,7 +146,7 @@ namespace engine {
 
 				// Update
 				try {
-					SceneManager::Get().Update(m_deltaTime);
+					SceneManager::Get().Update(deltaTime);
 				} catch (const std::exception& e) {
 					LOG_ERROR(Engine, "Exception in Update: %s", e.what());
 				} catch (...) {
@@ -168,9 +168,9 @@ namespace engine {
 			}
 
 			// Application-level overlay (debug UI, navigation menu, etc.)
-			if (m_overlayRenderer) {
+			if (overlayRenderer) {
 				try {
-					m_overlayRenderer();
+					overlayRenderer();
 				} catch (const std::exception& e) {
 					LOG_ERROR(Engine, "Exception in overlay renderer: %s", e.what());
 				} catch (...) {
@@ -179,9 +179,9 @@ namespace engine {
 			}
 
 			// Post-frame callback (metrics, screenshot capture, etc.)
-			if (m_postFrameCallback) {
+			if (postFrameCallback) {
 				try {
-					m_postFrameCallback();
+					postFrameCallback();
 				} catch (const std::exception& e) {
 					LOG_ERROR(Engine, "Exception in post-frame callback: %s", e.what());
 				} catch (...) {
@@ -190,7 +190,7 @@ namespace engine {
 			}
 
 			// Swap buffers
-			glfwSwapBuffers(m_window);
+			glfwSwapBuffers(window);
 		}
 
 		LOG_INFO(Engine, "Application main loop ended");
@@ -198,45 +198,45 @@ namespace engine {
 
 	void Application::Stop() {
 		LOG_INFO(Engine, "Application stop requested");
-		m_isRunning = false;
+		isRunning = false;
 	}
 
 	void Application::Pause() {
 		LOG_INFO(Engine, "Application paused");
-		m_isPaused = true;
+		isPaused = true;
 	}
 
 	void Application::Resume() {
 		LOG_INFO(Engine, "Application resumed");
-		m_isPaused = false;
+		isPaused = false;
 	}
 
 	bool Application::IsPaused() const {
-		return m_isPaused;
+		return isPaused;
 	}
 
 	void Application::SetOverlayRenderer(OverlayRenderer renderer) {
-		m_overlayRenderer = std::move(renderer);
+		overlayRenderer = std::move(renderer);
 	}
 
 	void Application::SetPreFrameCallback(PreFrameCallback callback) {
-		m_preFrameCallback = std::move(callback);
+		preFrameCallback = std::move(callback);
 	}
 
 	void Application::SetPostFrameCallback(PostFrameCallback callback) {
-		m_postFrameCallback = std::move(callback);
+		postFrameCallback = std::move(callback);
 	}
 
 	float Application::GetFPS() const {
-		return m_fps;
+		return fps;
 	}
 
 	float Application::GetDeltaTime() const {
-		return m_deltaTime;
+		return deltaTime;
 	}
 
 	UI::FocusManager& Application::GetFocusManager() {
-		return *m_focusManager;
+		return *focusManager;
 	}
 
 } // namespace engine

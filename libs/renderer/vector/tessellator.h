@@ -58,9 +58,9 @@ namespace renderer {
 		static bool CompareVertices(const Foundation::Vec2& a, const Foundation::Vec2& b);
 
 		// Working data (cleared between tessellations)
-		std::vector<Event>	m_events;
-		std::vector<Vertex> m_vertices;
-		std::vector<Edge>	m_edges;
+		std::vector<Event>	events;
+		std::vector<Vertex> tessVertices;
+		std::vector<Edge>	edges;
 	};
 
 } // namespace renderer

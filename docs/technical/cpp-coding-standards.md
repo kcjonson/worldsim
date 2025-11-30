@@ -1,7 +1,7 @@
 # C++ Coding Standards
 
 Created: 2025-10-12
-Last Updated: 2025-11-01
+Last Updated: 2025-11-30
 Status: Active
 
 ## Philosophy
@@ -171,6 +171,34 @@ private:
     bool m_isInitialized;
 };
 ```
+
+⚠️ **Common Bug: Parameter Shadowing**
+
+When a function parameter has the same name as a member variable, the parameter shadows the member. This leads to subtle bugs where assignments become self-assignments:
+
+```cpp
+// BUG: Parameter 'text' shadows member 'text'
+void setText(const std::string& text) {
+    text = text;  // Self-assignment! Member is never set
+}
+
+// CORRECT: Rename parameter to avoid shadowing
+void setText(const std::string& newText) {
+    text = newText;  // Now assigns to member correctly
+}
+```
+
+**Where this commonly occurs:**
+- Setters: `setFoo(Type foo)` → `setFoo(Type newFoo)`
+- Initializers: `Initialize(Window* window)` → `Initialize(Window* newWindow)`
+- Methods taking arrays: `AddTriangles(Vec2* vertices, ...)` → `AddTriangles(Vec2* inputVertices, ...)`
+
+**Compiler won't warn you:** Self-assignment is valid C++, so there's no compiler error. The bug only manifests at runtime when the member retains its old value.
+
+**Prevention strategies:**
+1. Always use prefixes (`new`, `input`, `initial`) for parameters that could shadow members
+2. In constructors, the initializer list syntax avoids this: `: position(position)` works correctly
+3. Code review: Watch for parameter names that match member names
 
 ### Member Initialization
 

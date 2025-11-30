@@ -25,9 +25,9 @@ namespace Renderer {
 	// - Mouse input is already in logical pixels from GLFW
 	// - This abstraction is hidden from UI components - they just use logical pixels
 
-	bool CoordinateSystem::Initialize(GLFWwindow* window) {
-		m_window = window;
-		return m_window != nullptr;
+	bool CoordinateSystem::Initialize(GLFWwindow* newWindow) {
+		window = newWindow;
+		return window != nullptr;
 	}
 
 	glm::mat4 CoordinateSystem::CreateScreenSpaceProjection() const {
@@ -36,8 +36,8 @@ namespace Renderer {
 		// The GPU will handle the scaling to physical pixels automatically.
 		int width = 0;
 		int height = 0;
-		if (m_window != nullptr) {
-			glfwGetWindowSize(m_window, &width, &height);
+		if (window != nullptr) {
+			glfwGetWindowSize(window, &width, &height);
 		} else {
 			width = 1920; // Default fallback
 			height = 1080;
@@ -51,8 +51,8 @@ namespace Renderer {
 		// Use window size for consistency with screen space projection
 		int width = 0;
 		int height = 0;
-		if (m_window != nullptr) {
-			glfwGetWindowSize(m_window, &width, &height);
+		if (window != nullptr) {
+			glfwGetWindowSize(window, &width, &height);
 		} else {
 			width = 1920; // Default fallback
 			height = 1080;
@@ -68,8 +68,8 @@ namespace Renderer {
 		// Return logical window size, not physical framebuffer size
 		int width = 0;
 		int height = 0;
-		if (m_window != nullptr) {
-			glfwGetWindowSize(m_window, &width, &height);
+		if (window != nullptr) {
+			glfwGetWindowSize(window, &width, &height);
 		} else {
 			width = 1920; // Default fallback
 			height = 1080;
@@ -80,10 +80,10 @@ namespace Renderer {
 	void CoordinateSystem::SetFullViewport() const {
 		// IMPORTANT: glViewport needs PHYSICAL pixels (framebuffer size), not logical pixels!
 		// This is the only place where we use framebuffer size instead of window size.
-		if (m_window != nullptr) {
+		if (window != nullptr) {
 			int width = 0;
 			int height = 0;
-			glfwGetFramebufferSize(m_window, &width, &height);
+			glfwGetFramebufferSize(window, &width, &height);
 			glViewport(0, 0, width, height);
 		}
 	}
@@ -93,35 +93,35 @@ namespace Renderer {
 		// Window size is tracked internally by GLFW, so this method does not update or validate the window size.
 		// This method exists only for API compatibility with other systems that may expect such a function.
 		// Mark pixel ratio as dirty so it gets recalculated on next access.
-		m_pixelRatioDirty = true;
+		pixelRatioDirty = true;
 	}
 
 	float CoordinateSystem::GetPixelRatio() const {
 		// Calculate and cache the pixel ratio for performance
-		if (m_window == nullptr) {
+		if (window == nullptr) {
 			// Fallback: if window is null, return default pixel ratio
 			return 1.0F;
 		}
-		if (m_pixelRatioDirty) {
+		if (pixelRatioDirty) {
 			int windowWidth = 0;
 			int windowHeight = 0;
 			int framebufferWidth = 0;
 			int framebufferHeight = 0;
 
-			glfwGetWindowSize(m_window, &windowWidth, &windowHeight);
-			glfwGetFramebufferSize(m_window, &framebufferWidth, &framebufferHeight);
+			glfwGetWindowSize(window, &windowWidth, &windowHeight);
+			glfwGetFramebufferSize(window, &framebufferWidth, &framebufferHeight);
 
 			// Use the width ratio (should be same as height ratio)
 			if (windowWidth > 0) {
-				m_cachedPixelRatio = static_cast<float>(framebufferWidth) / static_cast<float>(windowWidth);
+				cachedPixelRatio = static_cast<float>(framebufferWidth) / static_cast<float>(windowWidth);
 			} else {
-				m_cachedPixelRatio = 1.0F;
+				cachedPixelRatio = 1.0F;
 			}
 
-			m_pixelRatioDirty = false;
+			pixelRatioDirty = false;
 		}
 
-		return m_cachedPixelRatio;
+		return cachedPixelRatio;
 	}
 
 	glm::vec2 CoordinateSystem::WindowToFramebuffer(const glm::vec2& windowCoords) const {

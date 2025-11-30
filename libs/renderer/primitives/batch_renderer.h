@@ -65,8 +65,8 @@ namespace Renderer { // NOLINT(readability-identifier-naming)
 
 		// Add raw triangles (for circles, polygons, etc.)
 		void AddTriangles(
-			const Foundation::Vec2*	 vertices,
-			const uint16_t*			 indices,
+			const Foundation::Vec2*	 inputVertices,
+			const uint16_t*			 inputIndices,
 			size_t					 vertexCount,
 			size_t					 indexCount,
 			const Foundation::Color& color
@@ -118,7 +118,7 @@ namespace Renderer { // NOLINT(readability-identifier-naming)
 		void ClearClipBounds();
 
 		// Get current clip bounds
-		const Foundation::Vec4& GetClipBounds() const { return m_currentClipBounds; }
+		const Foundation::Vec4& GetClipBounds() const { return currentClipBounds; }
 
 		// Rendering statistics structure
 		struct RenderStats {
@@ -128,48 +128,48 @@ namespace Renderer { // NOLINT(readability-identifier-naming)
 		};
 
 		// Statistics
-		size_t		GetVertexCount() const { return m_vertices.size(); }
-		size_t		GetDrawCallCount() const { return m_drawCallCount; }
+		size_t		GetVertexCount() const { return vertices.size(); }
+		size_t		GetDrawCallCount() const { return drawCallCount; }
 		RenderStats GetStats() const;
 
 		// Shader access for batching
-		GLuint GetShaderProgram() const { return m_shader.GetProgram(); }
+		GLuint GetShaderProgram() const { return shader.GetProgram(); }
 
 	  private:
 		// Vertex data (CPU-side accumulation)
-		std::vector<UberVertex>	 m_vertices;
-		std::vector<uint32_t>	 m_indices;
+		std::vector<UberVertex>	 vertices;
+		std::vector<uint32_t>	 indices;
 
 		// OpenGL resources
-		GLuint m_vao = 0;
-		GLuint m_vbo = 0;
-		GLuint m_ibo = 0;
-		Shader m_shader;
+		GLuint vao = 0;
+		GLuint vbo = 0;
+		GLuint ibo = 0;
+		Shader shader;
 
 		// Uniform locations
-		GLint m_projectionLoc = -1;
-		GLint m_transformLoc = -1;
-		GLint m_atlasLoc = -1;
-		GLint m_viewportHeightLoc = -1;
-		GLint m_pixelRatioLoc = -1;
+		GLint projectionLoc = -1;
+		GLint transformLoc = -1;
+		GLint atlasLoc = -1;
+		GLint viewportHeightLoc = -1;
+		GLint pixelRatioLoc = -1;
 
 		// Viewport dimensions
-		int m_viewportWidth = 800;
-		int m_viewportHeight = 600;
+		int viewportWidth = 800;
+		int viewportHeight = 600;
 
 		// Coordinate system (optional, for DPI-aware rendering)
-		CoordinateSystem* m_coordinateSystem = nullptr;
+		CoordinateSystem* coordinateSystem = nullptr;
 
 		// Font atlas for text rendering
-		GLuint m_fontAtlas = 0;
-		float  m_fontPixelRange = 4.0F;
+		GLuint fontAtlas = 0;
+		float  fontPixelRange = 4.0F;
 
 		// Current clip bounds (applied to all vertices)
 		// (0,0,0,0) means no clipping
-		Foundation::Vec4 m_currentClipBounds{0.0F, 0.0F, 0.0F, 0.0F};
+		Foundation::Vec4 currentClipBounds{0.0F, 0.0F, 0.0F, 0.0F};
 
 		// Statistics
-		size_t m_drawCallCount = 0;
+		size_t drawCallCount = 0;
 	};
 
 } // namespace Renderer

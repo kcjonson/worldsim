@@ -38,7 +38,7 @@ namespace {
 			// Generate 10,000 stars
 			GenerateStars(10000);
 
-			LOG_INFO(UI, "Generated %zu stars", m_stars.size());
+			LOG_INFO(UI, "Generated %zu stars", stars.size());
 			LOG_INFO(UI, "Total triangles: %zu", CalculateTotalTriangles());
 			LOG_INFO(UI, "Total vertices: %zu", CalculateTotalVertices());
 		}
@@ -50,21 +50,21 @@ namespace {
 
 			// Detect key press (transition from not-pressed to pressed)
 			if (currentKeyState && !lastKeyState) {
-				m_clippingEnabled = !m_clippingEnabled;
-				LOG_INFO(UI, "Clipping %s", m_clippingEnabled ? "ENABLED" : "DISABLED");
+				clippingEnabled = !clippingEnabled;
+				LOG_INFO(UI, "Clipping %s", clippingEnabled ? "ENABLED" : "DISABLED");
 			}
 			lastKeyState = currentKeyState;
 		}
 
 		void Update(float dt) override {
 			// Update FPS counter
-			m_frameCount++;
-			m_frameDeltaAccumulator += dt;
+			frameCount++;
+			frameDeltaAccumulator += dt;
 
-			if (m_frameDeltaAccumulator >= 1.0F) {
-				m_fps = static_cast<float>(m_frameCount) / m_frameDeltaAccumulator;
-				m_frameCount = 0;
-				m_frameDeltaAccumulator = 0.0F;
+			if (frameDeltaAccumulator >= 1.0F) {
+				fps = static_cast<float>(frameCount) / frameDeltaAccumulator;
+				frameCount = 0;
+				frameDeltaAccumulator = 0.0F;
 			}
 		}
 
@@ -88,7 +88,7 @@ namespace {
 			float		clipHeight = windowHeight - (2.0F * margin);
 
 			// Apply clipping if enabled
-			if (m_clippingEnabled) {
+			if (clippingEnabled) {
 				ClipSettings clipSettings;
 				clipSettings.shape = ClipRect{.bounds = Rect{margin, margin, clipWidth, clipHeight}};
 				clipSettings.mode = ClipMode::Inside;
@@ -96,7 +96,7 @@ namespace {
 			}
 
 			// Draw all 10,000 stars
-			for (const auto& star : m_stars) {
+			for (const auto& star : stars) {
 				if (!star.mesh.vertices.empty()) {
 					Renderer::Primitives::DrawTriangles(
 						{.vertices = star.mesh.vertices.data(),
@@ -109,7 +109,7 @@ namespace {
 			}
 
 			// Pop clipping if it was enabled
-			if (m_clippingEnabled) {
+			if (clippingEnabled) {
 				Renderer::Primitives::PopClip();
 			}
 
@@ -119,7 +119,7 @@ namespace {
 
 			// Draw FPS counter (top-left corner)
 			char fpsText[64];
-			snprintf(fpsText, sizeof(fpsText), "FPS: %.1F", m_fps);
+			snprintf(fpsText, sizeof(fpsText), "FPS: %.1F", fps);
 
 			Renderer::Primitives::DrawRect({.bounds = {10, 10, 200, 30}, .style = {.fill = Color(0.0F, 0.0F, 0.0F, 0.7F)}});
 
@@ -129,9 +129,9 @@ namespace {
 				statsText,
 				sizeof(statsText),
 				"Stars: %zu | Tris: %zu | Clip: %s",
-				m_stars.size(),
+				stars.size(),
 				CalculateTotalTriangles(),
-				m_clippingEnabled ? "ON" : "OFF"
+				clippingEnabled ? "ON" : "OFF"
 			);
 
 			Renderer::Primitives::DrawRect({.bounds = {10, 50, 350, 50}, .style = {.fill = Color(0.0F, 0.0F, 0.0F, 0.7F)}});
@@ -140,7 +140,7 @@ namespace {
 			Renderer::Primitives::DrawRect({.bounds = {10, 110, 200, 25}, .style = {.fill = Color(0.0F, 0.0F, 0.5F, 0.5F)}});
 
 			// Draw clip boundary indicator when clipping is enabled
-			if (m_clippingEnabled) {
+			if (clippingEnabled) {
 				Renderer::Primitives::DrawRect(
 					{.bounds = {margin, margin, clipWidth, clipHeight},
 					 .style = {.fill = Color(0.0F, 0.0F, 0.0F, 0.0F), .border = BorderStyle{.color = Color::Cyan(), .width = 2.0F}}}
@@ -148,17 +148,17 @@ namespace {
 			}
 
 			// Update render time tracking
-			m_lastRenderTime = renderMs;
+			lastRenderTime = renderMs;
 		}
 
 		void OnExit() override {
 			LOG_INFO(UI, "Exiting Vector Performance Scene");
-			LOG_INFO(UI, "Final stats: %zu stars, %.1F FPS, %.2fms render time", m_stars.size(), m_fps, m_lastRenderTime);
+			LOG_INFO(UI, "Final stats: %zu stars, %.1F FPS, %.2fms render time", stars.size(), fps, lastRenderTime);
 		}
 
 		std::string ExportState() override {
 			char buf[256];
-			snprintf(buf, sizeof(buf), R"({"stars": %zu, "fps": %.1F, "renderMs": %.2F})", m_stars.size(), m_fps, m_lastRenderTime);
+			snprintf(buf, sizeof(buf), R"({"stars": %zu, "fps": %.1F, "renderMs": %.2F})", stars.size(), fps, lastRenderTime);
 			return {buf};
 		}
 
@@ -209,15 +209,15 @@ namespace {
 					continue;
 				}
 
-				m_stars.push_back(std::move(star));
+				stars.push_back(std::move(star));
 			}
 
 			const auto	kGenEnd = std::chrono::high_resolution_clock::now();
 			const float kGenMs = std::chrono::duration<float, std::milli>(kGenEnd - genStart).count();
 
 			// Log generation results
-			const float kMsPerStar = m_stars.empty() ? 0.0F : (kGenMs / static_cast<float>(m_stars.size()));
-			LOG_INFO(UI, "Generated and tessellated %zu stars in %.2F ms (%.3F ms per star)", m_stars.size(), kGenMs, kMsPerStar);
+			const float kMsPerStar = stars.empty() ? 0.0F : (kGenMs / static_cast<float>(stars.size()));
+			LOG_INFO(UI, "Generated and tessellated %zu stars in %.2F ms (%.3F ms per star)", stars.size(), kGenMs, kMsPerStar);
 		}
 
 		static renderer::VectorPath CreateStarPath(const Foundation::Vec2& center, float outerRadius, float innerRadius) {
@@ -245,7 +245,7 @@ namespace {
 		size_t CalculateTotalTriangles() const { // NOLINT(readability-convert-member-functions-to-static)
 												 // NOLINT(readability-convert-member-functions-to-static)
 			size_t total = 0;
-			for (const auto& star : m_stars) {
+			for (const auto& star : stars) {
 				total += star.mesh.GetTriangleCount();
 			}
 			return total;
@@ -254,18 +254,18 @@ namespace {
 		size_t CalculateTotalVertices() const { // NOLINT(readability-convert-member-functions-to-static)
 												// NOLINT(readability-convert-member-functions-to-static)
 			size_t total = 0;
-			for (const auto& star : m_stars) {
+			for (const auto& star : stars) {
 				total += star.mesh.GetVertexCount();
 			}
 			return total;
 		}
 
-		std::vector<Star> m_stars;
-		float			  m_fps = 0.0F;
-		int				  m_frameCount = 0;
-		float			  m_frameDeltaAccumulator = 0.0F;
-		float			  m_lastRenderTime = 0.0F;
-		bool			  m_clippingEnabled = true; // Toggle with 'C' key (starts enabled)
+		std::vector<Star> stars;
+		float			  fps = 0.0F;
+		int				  frameCount = 0;
+		float			  frameDeltaAccumulator = 0.0F;
+		float			  lastRenderTime = 0.0F;
+		bool			  clippingEnabled = true; // Toggle with 'C' key (starts enabled)
 	};
 
 	// Register scene with SceneManager

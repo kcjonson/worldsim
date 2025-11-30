@@ -112,7 +112,7 @@ class FocusManager {
 	 *
 	 * @return Pointer to focused component, or nullptr if no focus
 	 */
-	IFocusable* GetFocused() const { return m_currentFocus; }
+	IFocusable* getFocused() const { return currentFocus; }
 
 	/**
 	 * Check if specific component has focus.
@@ -120,7 +120,7 @@ class FocusManager {
 	 * @param component - Component to check
 	 * @return True if component currently has focus
 	 */
-	bool HasFocus(IFocusable* component) const { return m_currentFocus == component; }
+	bool hasFocus(IFocusable* component) const { return currentFocus == component; }
 
 	// Input routing (called by InputManager)
 	/**
@@ -159,15 +159,15 @@ class FocusManager {
 	};
 
 	// State
-	std::vector<FocusEntry>	  m_focusables;	  // All registered components (sorted by tabIndex)
-	IFocusable*				  m_currentFocus{nullptr}; // Currently focused component
-	std::vector<FocusScope>	  m_scopeStack;	  // Focus scope stack (for modals)
-	int						  m_nextAutoTabIndex{0};  // Auto-increment for tabIndex=-1
+	std::vector<FocusEntry>	  focusables;	  // All registered components (sorted by tabIndex)
+	IFocusable*				  currentFocus{nullptr}; // Currently focused component
+	std::vector<FocusScope>	  scopeStack;	  // Focus scope stack (for modals)
+	int						  nextAutoTabIndex{0};  // Auto-increment for tabIndex=-1
 
 	// Internal helpers
-	void						 SortFocusables();
-	std::vector<IFocusable*> GetActiveFocusables() const;
-	int							 FindFocusIndex(IFocusable* component) const;
+	void						 sortFocusables();
+	std::vector<IFocusable*> getActiveFocusables() const;
+	int							 findFocusIndex(IFocusable* component) const;
 };
 
 } // namespace UI
