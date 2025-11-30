@@ -104,26 +104,47 @@ Add component to `libs/ui/components/` and use in game scenes.
 
 **When user reports visual issues** ("things aren't in the right place", "X doesn't appear", "layout looks wrong"):
 
+### For Claude Code (AI Assistant)
+The sandbox has synchronous shutdown - the exit endpoint blocks until the port is free:
+
+```bash
+# Kill any existing instance (blocking - returns when port is free)
+curl "http://127.0.0.1:8081/api/control?action=exit"
+# Response: {"status":"ok","action":"exit","shutdown":"complete"}
+
+# Rebuild if code changed
+cmake --build build --target ui-sandbox -j8
+
+# Launch (use Bash tool with run_in_background: true)
+cd /Volumes/Code/worldsim/build/apps/ui-sandbox && ./ui-sandbox --scene=shapes
+
+# Screenshot (no sleep needed - endpoint waits for app ready)
+curl -s http://127.0.0.1:8081/api/ui/screenshot > /tmp/screenshot.png
+```
+
+**Key:** No sleeps anywhere. Exit is blocking, screenshot waits for startup.
+
+### For Human Developers
 ```bash
 # Run ui-sandbox with specific scene
-./build/apps/ui-sandbox/ui-sandbox --scene=shapes &
+cd build/apps/ui-sandbox && ./ui-sandbox --scene=shapes &
 
-# Capture screenshot to see actual output
-sleep 3
-curl http://localhost:8081/api/ui/screenshot -o /tmp/screenshot.png
+# Capture screenshot
+curl http://127.0.0.1:8081/api/ui/screenshot -o /tmp/screenshot.png
 
 # View the screenshot
 open /tmp/screenshot.png
 
-# Clean up
-pkill -f ui-sandbox
+# Clean shutdown (blocks until port free)
+curl "http://127.0.0.1:8081/api/control?action=exit"
 ```
 
 **Notes:**
 - Default port: 8081 (ui-sandbox), 8082 (main game client)
-- Takes ~5 seconds to capture (PNG encoding is slow)
+- Exit endpoint is **blocking** - returns only when shutdown complete and port free
+- Screenshot endpoint waits for app to be ready before capturing
 - Use `--scene=<name>` to test specific scenes
-- Works in browser too: `open http://localhost:8081/api/ui/screenshot`
+- Works in browser too: `open http://127.0.0.1:8081/api/ui/screenshot`
 
 ## Running Tests
 

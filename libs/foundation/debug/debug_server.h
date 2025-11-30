@@ -16,6 +16,7 @@
 #include "debug/lock_free_ring_buffer.h"
 #include "metrics/performance_metrics.h"
 #include <atomic>
+#include <condition_variable>
 #include <cstdint>
 #include <memory>
 #include <mutex>
@@ -105,7 +106,13 @@ namespace Foundation { // NOLINT(readability-identifier-naming)
 		// Get target scene name (for SceneChange action)
 		std::string GetTargetSceneName() const;
 
+		// Shutdown synchronization (for graceful exit via HTTP)
+		// Called by main loop after all cleanup is complete
+		void SignalShutdownComplete();
+
 	  private:
+		// Called by exit handler to block until cleanup is done
+		void WaitForShutdownComplete();
 		std::unique_ptr<httplib::Server> m_server;
 		std::thread						 m_serverThread;
 		std::atomic<bool>				 m_running;
@@ -127,6 +134,12 @@ namespace Foundation { // NOLINT(readability-identifier-naming)
 		std::atomic<ControlAction> m_controlAction{ControlAction::None};
 		std::string				   m_targetSceneName;
 		mutable std::mutex		   m_sceneNameMutex; // Protects m_targetSceneName
+
+		// Shutdown synchronization (for blocking exit handler until cleanup done)
+		mutable std::mutex		m_shutdownMutex;
+		std::condition_variable m_shutdownCV;
+		bool					m_shutdownComplete{false};
+		bool					m_handlerDone{false}; // True when exit handler has finished
 
 		// Server thread entry point
 		void ServerThreadFunc(int port);

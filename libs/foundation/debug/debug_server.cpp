@@ -118,7 +118,18 @@ namespace Foundation {
 
 		m_running.store(false);
 
-		// Stop the server
+		// If an exit was triggered via HTTP, wait for the handler to set the response
+		bool exitTriggered = (m_controlAction.load() == ControlAction::Exit);
+		if (exitTriggered) {
+			std::unique_lock<std::mutex> lock(m_shutdownMutex);
+			m_shutdownCV.wait(lock, [this] { return m_handlerDone; });
+			// Handler has set response and is about to return
+		}
+
+		// Stop the server - this will:
+		// 1. Complete sending any pending responses
+		// 2. Close the listening socket
+		// 3. Make listen() return
 		if (m_server) {
 			m_server->stop();
 		}
@@ -257,6 +268,19 @@ namespace Foundation {
 		return m_targetSceneName;
 	}
 
+	void DebugServer::WaitForShutdownComplete() {
+		std::unique_lock<std::mutex> lock(m_shutdownMutex);
+		m_shutdownCV.wait(lock, [this] { return m_shutdownComplete; });
+	}
+
+	void DebugServer::SignalShutdownComplete() {
+		{
+			std::lock_guard<std::mutex> lock(m_shutdownMutex);
+			m_shutdownComplete = true;
+		}
+		m_shutdownCV.notify_all();
+	}
+
 	bool DebugServer::RequestScreenshot(std::vector<unsigned char>& pngData, int timeoutMs) { // NOLINT(readability-identifier-naming)
 		LOG_INFO(Foundation, "Screenshot requested via HTTP, waiting for capture...");
 
@@ -364,7 +388,25 @@ namespace Foundation {
 			// Process action
 			if (action == "exit") {
 				m_controlAction.store(ControlAction::Exit);
-				res.set_content("{\"status\":\"ok\",\"action\":\"exit\"}", "application/json");
+
+				// Block until main loop signals shutdown is complete
+				WaitForShutdownComplete();
+
+				// Set response - this will be sent when handler returns
+				res.set_content("{\"status\":\"ok\",\"action\":\"exit\",\"shutdown\":\"complete\"}", "application/json");
+				res.set_header("Connection", "close"); // Tell client not to keep-alive
+
+				// Signal that the handler is done and response is set
+				// Main thread will call stop() after this
+				{
+					std::lock_guard<std::mutex> lock(m_shutdownMutex);
+					m_handlerDone = true;
+				}
+				m_shutdownCV.notify_all();
+
+				// Note: We DON'T call stop() here - the main thread does it
+				// after it sees m_handlerDone. This avoids the assertion failure
+				// from calling stop() on a handler thread.
 			} else if (action == "scene") {
 				// Scene change requires 'scene' parameter
 				if (!req.has_param("scene")) {
