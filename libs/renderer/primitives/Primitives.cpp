@@ -547,7 +547,7 @@ namespace Renderer::Primitives {
 		g_transformStack.push(g_currentTransform);
 		g_currentTransform = g_currentTransform * transform;
 
-		// Apply to batch renderer for GPU-side transform
+		// Apply to batch renderer (will be baked into vertex positions at add-time)
 		if (g_batchRenderer != nullptr) {
 			g_batchRenderer->setTransform(g_currentTransform);
 		}
@@ -558,7 +558,7 @@ namespace Renderer::Primitives {
 			g_currentTransform = g_transformStack.top();
 			g_transformStack.pop();
 
-			// Apply to batch renderer for GPU-side transform
+			// Apply to batch renderer (will be baked into vertex positions at add-time)
 			if (g_batchRenderer != nullptr) {
 				g_batchRenderer->setTransform(g_currentTransform);
 			}

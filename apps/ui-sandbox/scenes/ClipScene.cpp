@@ -95,7 +95,10 @@ namespace {
 				m_containerScrollY = std::min(m_containerMaxScroll, m_containerScrollY + kScrollSpeed);
 			}
 
-			// Update container's content offset (position + scroll offset)
+			// Update container's content offset.
+			// The offset combines absolute positioning (400, 410) with scroll offset.
+			// Children use local coordinates (e.g., {5, y}) which are then transformed
+			// to screen space by this offset. Subtracting scrollY moves content up.
 			m_scrollContainer->setContentOffset({400.0F, 410.0F - m_containerScrollY});
 		}
 

@@ -13,8 +13,13 @@ namespace Renderer {
 		// Applies the transform and returns the transformed 2D position
 		inline Foundation::Vec2 TransformPosition(const Foundation::Vec2& pos, const Foundation::Mat4& transform) {
 			// Check if transform is identity (common case - avoid unnecessary math)
-			if (transform[0][0] == 1.0F && transform[1][1] == 1.0F && transform[2][2] == 1.0F && transform[3][0] == 0.0F
-				&& transform[3][1] == 0.0F) {
+			// Must check all relevant elements for 2D affine transforms:
+			// - Diagonal elements (scale)
+			// - Translation elements
+			// - Rotation/shear elements
+			if (transform[0][0] == 1.0F && transform[1][1] == 1.0F && transform[2][2] == 1.0F && transform[3][3] == 1.0F
+				&& transform[3][0] == 0.0F && transform[3][1] == 0.0F && transform[3][2] == 0.0F && transform[0][1] == 0.0F
+				&& transform[1][0] == 0.0F) {
 				return pos;
 			}
 			// Apply transform: multiply position by matrix

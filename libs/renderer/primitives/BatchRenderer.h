@@ -179,7 +179,7 @@ namespace Renderer { // NOLINT(readability-identifier-naming)
 		// (0,0,0,0) means no clipping
 		Foundation::Vec4 currentClipBounds{0.0F, 0.0F, 0.0F, 0.0F};
 
-		// Current transform matrix (applied via shader uniform)
+		// Current transform matrix (baked into vertex positions at add-time)
 		Foundation::Mat4 currentTransform{1.0F}; // Identity
 
 		// Statistics

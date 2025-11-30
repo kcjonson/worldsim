@@ -53,9 +53,9 @@ class Container : public Component {
 		// Apply content offset as translation (moves content within fixed clip region)
 		bool hasOffset = (m_contentOffset.x != 0.0F || m_contentOffset.y != 0.0F);
 		if (hasOffset) {
-			// Note: We use negative offset because contentOffset represents how far
-			// content has scrolled, not where the viewport has moved.
-			// scrollY = 100 means "scroll down 100 pixels" = content moves UP by 100.
+			// Note: The offset is applied as-is to child positions.
+			// For scrolling semantics (positive scroll moves content up),
+			// the caller should negate the scroll value when calling setContentOffset.
 			Foundation::Mat4 translation = Foundation::Mat4(1.0F);
 			translation[3][0] = m_contentOffset.x;
 			translation[3][1] = m_contentOffset.y;
