@@ -277,9 +277,40 @@ ShaderType type = ShaderType::Vertex;
 
 ### File Names
 
-Match the class name, use snake_case:
-- `shader.h` / `shader.cpp`
-- `texture_manager.h` / `texture_manager.cpp`
+**PascalCase** - match the class/module name exactly:
+- `Shader.h` / `Shader.cpp`
+- `TextureManager.h` / `TextureManager.cpp`
+- `StringUtils.h` (utility files also use PascalCase)
+
+This provides direct mapping: class `TextureManager` → file `TextureManager.h`
+
+### Folder Names
+
+Folder naming depends on the folder's purpose:
+
+**PascalCase** - when folder contains a single primary class of the same name:
+```
+libs/renderer/CoordinateSystem/
+├── CoordinateSystem.h
+├── CoordinateSystem.cpp
+└── CoordinateSystem.test.cpp
+```
+
+**camelCase** - when folder is a category containing multiple related items:
+```
+libs/renderer/shader/
+├── Shader.h
+├── Shader.cpp
+├── ShaderLoader.h
+└── ShaderLoader.cpp
+
+libs/ui/components/
+├── Button.h
+├── TextInput.h
+└── ...
+```
+
+**Rule of thumb:** If renaming the folder would require renaming a class, use PascalCase. If the folder groups related but distinct items, use camelCase.
 
 ## Function Arguments and API Design
 

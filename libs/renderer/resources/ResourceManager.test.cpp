@@ -1,0 +1,433 @@
+#include "ResourceManager.h"
+#include "ResourceHandle.h"
+#include <gtest/gtest.h>
+
+using namespace renderer;
+
+// ============================================================================
+// ResourceHandle Tests
+// ============================================================================
+
+TEST(ResourceHandleTests, CreateValidHandle) {
+	ResourceHandle handle = ResourceHandle::make(42, 5);
+
+	EXPECT_TRUE(handle.isValid());
+	EXPECT_EQ(handle.getIndex(), 42);
+	EXPECT_EQ(handle.getGeneration(), 5);
+}
+
+TEST(ResourceHandleTests, CreateInvalidHandle) {
+	ResourceHandle handle = ResourceHandle::invalid();
+
+	EXPECT_FALSE(handle.isValid());
+	EXPECT_EQ(handle.value, ResourceHandle::kInvalidHandle);
+}
+
+TEST(ResourceHandleTests, HandleEquality) {
+	ResourceHandle handle1 = ResourceHandle::make(10, 3);
+	ResourceHandle handle2 = ResourceHandle::make(10, 3);
+	ResourceHandle handle3 = ResourceHandle::make(10, 4); // Different generation
+	ResourceHandle handle4 = ResourceHandle::make(11, 3); // Different index
+
+	EXPECT_EQ(handle1, handle2);
+	EXPECT_NE(handle1, handle3);
+	EXPECT_NE(handle1, handle4);
+	EXPECT_NE(handle3, handle4);
+}
+
+TEST(ResourceHandleTests, InvalidHandleEquality) {
+	ResourceHandle invalid1 = ResourceHandle::invalid();
+	ResourceHandle invalid2 = ResourceHandle::invalid();
+	ResourceHandle valid = ResourceHandle::make(0, 0);
+
+	EXPECT_EQ(invalid1, invalid2);
+	EXPECT_NE(invalid1, valid);
+}
+
+TEST(ResourceHandleTests, ExtractIndexAndGeneration) {
+	// Test various combinations
+	ResourceHandle h1 = ResourceHandle::make(0, 0);
+	EXPECT_EQ(h1.getIndex(), 0);
+	EXPECT_EQ(h1.getGeneration(), 0);
+
+	ResourceHandle h2 = ResourceHandle::make(65535, 0); // Max index
+	EXPECT_EQ(h2.getIndex(), 65535);
+	EXPECT_EQ(h2.getGeneration(), 0);
+
+	ResourceHandle h3 = ResourceHandle::make(0, 65535); // Max generation
+	EXPECT_EQ(h3.getIndex(), 0);
+	EXPECT_EQ(h3.getGeneration(), 65535);
+
+	ResourceHandle h4 = ResourceHandle::make(65535, 65535); // Both max
+	EXPECT_EQ(h4.getIndex(), 65535);
+	EXPECT_EQ(h4.getGeneration(), 65535);
+}
+
+TEST(ResourceHandleTests, TypeAliases) {
+	// Verify type aliases compile and behave correctly
+	TextureHandle  texHandle = ResourceHandle::make(1, 0);
+	MeshHandle	   meshHandle = ResourceHandle::make(2, 0);
+	SVGAssetHandle svgHandle = ResourceHandle::make(3, 0);
+
+	EXPECT_TRUE(texHandle.isValid());
+	EXPECT_TRUE(meshHandle.isValid());
+	EXPECT_TRUE(svgHandle.isValid());
+
+	EXPECT_EQ(texHandle.getIndex(), 1);
+	EXPECT_EQ(meshHandle.getIndex(), 2);
+	EXPECT_EQ(svgHandle.getIndex(), 3);
+}
+
+// ============================================================================
+// ResourceManager Tests
+// ============================================================================
+
+// Simple test resource type
+struct TestResource {
+	int			value = 0;
+	std::string name{};
+};
+
+TEST(ResourceManagerTests, AllocateFirstResource) {
+	ResourceManager<TestResource> manager;
+
+	ResourceHandle handle = manager.allocate();
+
+	EXPECT_TRUE(handle.isValid());
+	EXPECT_EQ(handle.getIndex(), 0);
+	EXPECT_EQ(handle.getGeneration(), 0);
+}
+
+TEST(ResourceManagerTests, AllocateMultipleResources) {
+	ResourceManager<TestResource> manager;
+
+	ResourceHandle h1 = manager.allocate();
+	ResourceHandle h2 = manager.allocate();
+	ResourceHandle h3 = manager.allocate();
+
+	EXPECT_EQ(h1.getIndex(), 0);
+	EXPECT_EQ(h2.getIndex(), 1);
+	EXPECT_EQ(h3.getIndex(), 2);
+
+	// All should have generation 0 initially
+	EXPECT_EQ(h1.getGeneration(), 0);
+	EXPECT_EQ(h2.getGeneration(), 0);
+	EXPECT_EQ(h3.getGeneration(), 0);
+}
+
+TEST(ResourceManagerTests, GetResource) {
+	ResourceManager<TestResource> manager;
+
+	ResourceHandle handle = manager.allocate();
+	TestResource*  resource = manager.get(handle);
+
+	ASSERT_NE(resource, nullptr);
+
+	// Modify resource
+	resource->value = 42;
+	resource->name = "test";
+
+	// Get again and verify it's the same resource
+	TestResource* resource2 = manager.get(handle);
+	ASSERT_NE(resource2, nullptr);
+	EXPECT_EQ(resource2->value, 42);
+	EXPECT_EQ(resource2->name, "test");
+}
+
+TEST(ResourceManagerTests, GetInvalidHandle) {
+	ResourceManager<TestResource> manager;
+
+	ResourceHandle invalid = ResourceHandle::invalid();
+	TestResource*  resource = manager.get(invalid);
+
+	EXPECT_EQ(resource, nullptr);
+}
+
+TEST(ResourceManagerTests, GetOutOfBoundsHandle) {
+	ResourceManager<TestResource> manager;
+
+	// Create handle with index beyond allocated resources
+	ResourceHandle oob = ResourceHandle::make(100, 0);
+	TestResource*  resource = manager.get(oob);
+
+	EXPECT_EQ(resource, nullptr);
+}
+
+TEST(ResourceManagerTests, FreeResource) {
+	ResourceManager<TestResource> manager;
+
+	ResourceHandle handle = manager.allocate();
+	TestResource*  resource = manager.get(handle);
+	ASSERT_NE(resource, nullptr);
+
+	// Free the resource
+	manager.free(handle);
+
+	// Handle should now be stale
+	TestResource* stale = manager.get(handle);
+	EXPECT_EQ(stale, nullptr);
+}
+
+TEST(ResourceManagerTests, GenerationIncrementsOnFree) {
+	ResourceManager<TestResource> manager;
+
+	ResourceHandle handle = manager.allocate();
+	EXPECT_EQ(handle.getGeneration(), 0);
+
+	manager.free(handle);
+
+	// Allocate again in same slot
+	ResourceHandle handle2 = manager.allocate();
+	EXPECT_EQ(handle2.getIndex(), handle.getIndex()); // Same index
+	EXPECT_EQ(handle2.getGeneration(), 1);			  // Generation incremented
+
+	// Old handle should be invalid
+	EXPECT_EQ(manager.get(handle), nullptr);
+	EXPECT_NE(manager.get(handle2), nullptr);
+}
+
+TEST(ResourceManagerTests, ReuseFreedSlots) {
+	ResourceManager<TestResource> manager;
+
+	ResourceHandle h1 = manager.allocate();
+	ResourceHandle h2 = manager.allocate();
+	ResourceHandle h3 = manager.allocate();
+
+	EXPECT_EQ(manager.getCount(), 3);
+
+	// Free middle slot
+	manager.free(h2);
+
+	// Allocate new resource - should reuse freed slot
+	ResourceHandle h4 = manager.allocate();
+	EXPECT_EQ(h4.getIndex(), h2.getIndex()); // Same index as freed slot
+	EXPECT_EQ(h4.getGeneration(), 1);		 // Generation incremented
+
+	// Total count should still be 3 (reused slot)
+	EXPECT_EQ(manager.getCount(), 3);
+}
+
+TEST(ResourceManagerTests, FreeInvalidHandle) {
+	ResourceManager<TestResource> manager;
+
+	ResourceHandle invalid = ResourceHandle::invalid();
+
+	// Should not crash
+	manager.free(invalid);
+}
+
+TEST(ResourceManagerTests, DoubleFree) {
+	ResourceManager<TestResource> manager;
+
+	ResourceHandle handle = manager.allocate();
+
+	manager.free(handle);
+	manager.free(handle); // Double free - should be safe
+
+	// Should not crash and handle should still be invalid
+	EXPECT_EQ(manager.get(handle), nullptr);
+}
+
+TEST(ResourceManagerTests, GetCount) {
+	ResourceManager<TestResource> manager;
+
+	EXPECT_EQ(manager.getCount(), 0);
+
+	ResourceHandle h1 = manager.allocate();
+	EXPECT_EQ(manager.getCount(), 1);
+
+	ResourceHandle h2 = manager.allocate();
+	EXPECT_EQ(manager.getCount(), 2);
+
+	manager.free(h1);
+	EXPECT_EQ(manager.getCount(), 2); // Count doesn't decrease on free
+}
+
+TEST(ResourceManagerTests, GetActiveCount) {
+	ResourceManager<TestResource> manager;
+
+	EXPECT_EQ(manager.getActiveCount(), 0);
+
+	ResourceHandle h1 = manager.allocate();
+	ResourceHandle h2 = manager.allocate();
+	ResourceHandle h3 = manager.allocate();
+
+	EXPECT_EQ(manager.getActiveCount(), 3);
+
+	manager.free(h2);
+	EXPECT_EQ(manager.getActiveCount(), 2); // Active count decreases
+
+	manager.free(h1);
+	EXPECT_EQ(manager.getActiveCount(), 1);
+}
+
+TEST(ResourceManagerTests, Clear) {
+	ResourceManager<TestResource> manager;
+
+	ResourceHandle h1 = manager.allocate();
+	ResourceHandle h2 = manager.allocate();
+	ResourceHandle h3 = manager.allocate();
+
+	EXPECT_EQ(manager.getCount(), 3);
+
+	manager.clear();
+
+	EXPECT_EQ(manager.getCount(), 0);
+	EXPECT_EQ(manager.getActiveCount(), 0);
+
+	// Old handles should be invalid
+	EXPECT_EQ(manager.get(h1), nullptr);
+	EXPECT_EQ(manager.get(h2), nullptr);
+	EXPECT_EQ(manager.get(h3), nullptr);
+}
+
+TEST(ResourceManagerTests, ClearAndReallocate) {
+	ResourceManager<TestResource> manager;
+
+	ResourceHandle h1 = manager.allocate();
+	manager.clear();
+
+	// After clear, allocation should start from 0 again
+	ResourceHandle h2 = manager.allocate();
+	EXPECT_EQ(h2.getIndex(), 0);
+	EXPECT_EQ(h2.getGeneration(), 0);
+}
+
+TEST(ResourceManagerTests, ConstGetResource) {
+	ResourceManager<TestResource> manager;
+
+	ResourceHandle handle = manager.allocate();
+	TestResource*  resource = manager.get(handle);
+	resource->value = 42;
+
+	// Test const version
+	const ResourceManager<TestResource>& constManager = manager;
+	const TestResource*					 constResource = constManager.get(handle);
+
+	ASSERT_NE(constResource, nullptr);
+	EXPECT_EQ(constResource->value, 42);
+}
+
+TEST(ResourceManagerTests, StaleHandleAfterMultipleFrees) {
+	ResourceManager<TestResource> manager;
+
+	ResourceHandle h1 = manager.allocate();
+	manager.free(h1);
+
+	ResourceHandle h2 = manager.allocate(); // Reuses slot, gen=1
+	manager.free(h2);
+
+	ResourceHandle h3 = manager.allocate(); // Reuses slot, gen=2
+
+	// h1 and h2 should be stale
+	EXPECT_EQ(manager.get(h1), nullptr);
+	EXPECT_EQ(manager.get(h2), nullptr);
+	EXPECT_NE(manager.get(h3), nullptr);
+
+	// Verify generations
+	EXPECT_EQ(h1.getGeneration(), 0);
+	EXPECT_EQ(h2.getGeneration(), 1);
+	EXPECT_EQ(h3.getGeneration(), 2);
+}
+
+TEST(ResourceManagerTests, LargeAllocation) {
+	ResourceManager<TestResource> manager(10000);
+
+	std::vector<ResourceHandle> handles;
+	handles.reserve(1000);
+
+	// Allocate 1000 resources
+	for (int i = 0; i < 1000; i++) {
+		ResourceHandle handle = manager.allocate();
+		EXPECT_TRUE(handle.isValid());
+		EXPECT_EQ(handle.getIndex(), i);
+		handles.push_back(handle);
+
+		// Set unique value
+		TestResource* resource = manager.get(handle);
+		ASSERT_NE(resource, nullptr);
+		resource->value = i;
+	}
+
+	// Verify all handles are still valid
+	for (int i = 0; i < 1000; i++) {
+		TestResource* resource = manager.get(handles[i]);
+		ASSERT_NE(resource, nullptr);
+		EXPECT_EQ(resource->value, i);
+	}
+
+	EXPECT_EQ(manager.getCount(), 1000);
+	EXPECT_EQ(manager.getActiveCount(), 1000);
+}
+
+TEST(ResourceManagerTests, InterleavedAllocateFree) {
+	ResourceManager<TestResource> manager;
+
+	ResourceHandle h1 = manager.allocate();
+	ResourceHandle h2 = manager.allocate();
+	manager.free(h1);
+	ResourceHandle h3 = manager.allocate(); // Reuses h1's slot
+	manager.free(h2);
+	ResourceHandle h4 = manager.allocate(); // Reuses h2's slot
+
+	// h1 and h2 should be stale
+	EXPECT_EQ(manager.get(h1), nullptr);
+	EXPECT_EQ(manager.get(h2), nullptr);
+
+	// h3 and h4 should be valid
+	EXPECT_NE(manager.get(h3), nullptr);
+	EXPECT_NE(manager.get(h4), nullptr);
+
+	// Verify slot reuse
+	EXPECT_EQ(h3.getIndex(), h1.getIndex());
+	EXPECT_EQ(h4.getIndex(), h2.getIndex());
+}
+
+// ============================================================================
+// Integration Tests
+// ============================================================================
+
+TEST(ResourceManagerIntegrationTests, CompleteLifecycle) {
+	ResourceManager<TestResource> manager;
+
+	// Allocate resource
+	ResourceHandle handle = manager.allocate();
+	EXPECT_TRUE(handle.isValid());
+
+	// Initialize resource
+	TestResource* resource = manager.get(handle);
+	ASSERT_NE(resource, nullptr);
+	resource->value = 999;
+	resource->name = "important_data";
+
+	// Verify data persists
+	TestResource* retrieved = manager.get(handle);
+	ASSERT_NE(retrieved, nullptr);
+	EXPECT_EQ(retrieved->value, 999);
+	EXPECT_EQ(retrieved->name, "important_data");
+
+	// Free resource
+	manager.free(handle);
+
+	// Handle is now stale
+	EXPECT_EQ(manager.get(handle), nullptr);
+
+	// Allocate new resource in same slot
+	ResourceHandle newHandle = manager.allocate();
+	EXPECT_EQ(newHandle.getIndex(), handle.getIndex());
+	EXPECT_NE(newHandle.getGeneration(), handle.getGeneration());
+
+	// IMPORTANT: ResourceManager reuses the memory slot without resetting it
+	// This is correct behavior - the manager doesn't know how to initialize resources
+	// Users must initialize resources after allocation
+	TestResource* newResource = manager.get(newHandle);
+	ASSERT_NE(newResource, nullptr);
+
+	// Initialize the reused resource
+	newResource->value = 0;
+	newResource->name = "";
+
+	// Verify initialization
+	EXPECT_EQ(newResource->value, 0);
+	EXPECT_EQ(newResource->name, "");
+}

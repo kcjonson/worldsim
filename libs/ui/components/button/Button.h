@@ -1,0 +1,121 @@
+#pragma once
+
+#include "components/button/ButtonStyle.h"
+#include "component/Component.h"
+#include "focus/Focusable.h"
+#include "math/Types.h"
+#include "shapes/Shapes.h"
+#include <functional>
+#include <string>
+
+// Button Component
+//
+// Interactive UI button with state management and event handling.
+// Supports 5 visual states: Normal, Hover, Pressed, Disabled, Focused
+// Extends Component (for AddChild capability) and IFocusable (for keyboard focus).
+//
+// See: /docs/technical/ui-framework/architecture.md
+
+namespace UI {
+
+// Forward declarations
+class FocusManager;
+
+// Button component - extends Component and implements IFocusable
+class Button : public Component, public IFocusable {
+  public:
+	// Button type enum for predefined styles
+	enum class Type { Primary, Secondary, Custom };
+
+	// Visual interaction state (mouse-driven)
+	enum class State { Normal, Hover, Pressed };
+
+	// Constructor arguments struct (C++20 designated initializers)
+	struct Args {
+		std::string			  label;
+		Foundation::Vec2	  position{0.0F, 0.0F};
+		Foundation::Vec2	  size{120.0F, 40.0F};
+		Type				  type = Type::Primary;
+		ButtonAppearance*	  customAppearance = nullptr; // Only used if type == Custom
+		bool				  disabled = false;
+		std::function<void()> onClick = nullptr;
+		const char*			  id = nullptr;
+		int					  tabIndex = -1; // Tab order (-1 for auto-assign)
+	};
+
+	// --- Public Members ---
+
+	// Geometry
+	Foundation::Vec2 position{0.0F, 0.0F};
+	Foundation::Vec2 size{120.0F, 40.0F};
+	std::string		 label;
+
+	// State
+	State state{State::Normal};
+	bool  disabled{false};
+	bool  focused{false};
+
+	// Visual appearance (all 5 state styles)
+	ButtonAppearance appearance;
+
+	// Callback
+	std::function<void()> onClick;
+
+	// Properties
+	bool		visible{true};
+	const char* id = nullptr;
+
+	// --- Public Methods ---
+
+	// Constructor & Destructor
+	explicit Button(const Args& args);
+	~Button() override;
+
+	// Disable copy (Button owns arena memory and registers with FocusManager)
+	Button(const Button&) = delete;
+	Button& operator=(const Button&) = delete;
+
+	// Allow move
+	Button(Button&& other) noexcept;
+	Button& operator=(Button&& other) noexcept;
+
+	// ILayer implementation (overrides Component)
+	void handleInput() override;
+	void update(float deltaTime) override;
+	void render() override;
+
+	// State management
+	void setFocused(bool newFocused) { focused = newFocused; }
+	void setDisabled(bool newDisabled) { disabled = newDisabled; }
+	bool isFocused() const { return focused; }
+	bool isDisabled() const { return disabled; }
+
+	// IFocusable implementation
+	void onFocusGained() override;
+	void onFocusLost() override;
+	void handleKeyInput(engine::Key key, bool shift, bool ctrl, bool alt) override;
+	void handleCharInput(char32_t codepoint) override;
+	bool canReceiveFocus() const override;
+
+	// Geometry queries
+	bool			 containsPoint(const Foundation::Vec2& point) const;
+	Foundation::Vec2 getCenter() const {
+		return Foundation::Vec2{position.x + size.x * 0.5F, position.y + size.y * 0.5F};
+	}
+
+  private:
+	// Internal state tracking
+	bool mouseOver{false};
+	bool mouseDown{false};
+
+	// Text label (owned directly for simplicity)
+	Text labelText;
+
+	// Focus management
+	int tabIndex{-1};
+
+	// Get current style based on state/flags
+	const ButtonStyle& getCurrentStyle() const;
+};
+
+} // namespace UI

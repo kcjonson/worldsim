@@ -1,5 +1,5 @@
 add_library(game-systems
-    chunks/placeholder.cpp
+    chunks/Placeholder.cpp
 )
 
 target_include_directories(game-systems

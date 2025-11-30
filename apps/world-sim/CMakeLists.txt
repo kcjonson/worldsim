@@ -1,9 +1,9 @@
 add_executable(world-sim
-    main.cpp
-    scenes/splash_scene.cpp
-    scenes/main_menu_scene.cpp
-    scenes/world_creator_scene.cpp
-    scenes/game_scene.cpp
+    Main.cpp
+    scenes/SplashScene.cpp
+    scenes/MainMenuScene.cpp
+    scenes/WorldCreatorScene.cpp
+    scenes/GameScene.cpp
 )
 
 target_include_directories(world-sim

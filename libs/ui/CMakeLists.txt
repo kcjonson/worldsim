@@ -1,12 +1,12 @@
 add_library(ui
-    core/placeholder.cpp
-    core/render_context.cpp
+    core/Placeholder.cpp
+    core/RenderContext.cpp
     stb_image.cpp
-    font/font_renderer.cpp
-    shapes/shapes.cpp
-    components/button/button.cpp
-    components/text_input/text_input.cpp
-    focus/focus_manager.cpp
+    font/FontRenderer.cpp
+    shapes/Shapes.cpp
+    components/button/Button.cpp
+    components/TextInput/TextInput.cpp
+    focus/FocusManager.cpp
 )
 
 target_include_directories(ui

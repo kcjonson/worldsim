@@ -1,5 +1,5 @@
 add_library(world
-    generation/placeholder.cpp
+    generation/Placeholder.cpp
 )
 
 target_include_directories(world

@@ -1,8 +1,8 @@
 add_library(foundation
-    metrics/performance_metrics.cpp
-    debug/debug_server.cpp
-    utils/log.cpp
-    utils/utf8.cpp
+    metrics/PerformanceMetrics.cpp
+    debug/DebugServer.cpp
+    utils/Log.cpp
+    utils/Utf8.cpp
 )
 
 target_include_directories(foundation

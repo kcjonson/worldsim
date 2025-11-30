@@ -1,11 +1,11 @@
 add_library(renderer
-    primitives/primitives.cpp
-    primitives/batch_renderer.cpp
-    metrics/metrics_collector.cpp
-    vector/tessellator.cpp
-    shader/shader.cpp
-    shader/shader_loader.cpp
-    coordinate_system/coordinate_system.cpp
+    primitives/Primitives.cpp
+    primitives/BatchRenderer.cpp
+    metrics/MetricsCollector.cpp
+    vector/Tessellator.cpp
+    shader/Shader.cpp
+    shader/ShaderLoader.cpp
+    CoordinateSystem/CoordinateSystem.cpp
 )
 
 target_include_directories(renderer

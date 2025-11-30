@@ -1,19 +1,19 @@
 add_executable(ui-sandbox
-    main.cpp
-    navigation_menu.cpp
-    scenes/shapes_scene.cpp
-    scenes/arena_scene.cpp
-    scenes/handle_scene.cpp
-    scenes/vector_star_scene.cpp
-    scenes/vector_perf_scene.cpp
-    scenes/font_test_scene.cpp
-    scenes/text_shapes_scene.cpp
-    scenes/layer_scene.cpp
-    scenes/button_scene.cpp
-    scenes/input_test_scene.cpp
-    scenes/sdf_minimal_scene.cpp
-    scenes/text_input_scene.cpp
-    scenes/clip_scene.cpp
+    Main.cpp
+    NavigationMenu.cpp
+    scenes/ShapesScene.cpp
+    scenes/ArenaScene.cpp
+    scenes/HandleScene.cpp
+    scenes/VectorStarScene.cpp
+    scenes/VectorPerfScene.cpp
+    scenes/FontTestScene.cpp
+    scenes/TextShapesScene.cpp
+    scenes/LayerScene.cpp
+    scenes/ButtonScene.cpp
+    scenes/InputTestScene.cpp
+    scenes/SdfMinimalScene.cpp
+    scenes/TextInputScene.cpp
+    scenes/ClipScene.cpp
 )
 
 target_include_directories(ui-sandbox
