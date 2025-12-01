@@ -31,14 +31,14 @@ namespace {
 			size_t loaded = engine::assets::AssetRegistry::Get().loadDefinitionsFromFolder("assets/definitions");
 			LOG_INFO(UI, "Loaded %zu asset definitions", loaded);
 
-			// Get the tree definition
-			m_treeDef = engine::assets::AssetRegistry::Get().getDefinition(kTreeAssetName);
-			if (m_treeDef == nullptr) {
+			// Verify the tree definition exists
+			const auto* treeDef = engine::assets::AssetRegistry::Get().getDefinition(kTreeAssetName);
+			if (treeDef == nullptr) {
 				LOG_ERROR(UI, "Asset definition not found: %s", kTreeAssetName);
 				return;
 			}
 
-			LOG_INFO(UI, "Found tree definition: %s", m_treeDef->defName.c_str());
+			LOG_INFO(UI, "Found tree definition: %s", treeDef->defName.c_str());
 
 			// Generate 40 trees with unique seeds
 			renderer::Tessellator tessellator;
@@ -151,8 +151,7 @@ namespace {
 			std::vector<PathRenderData> paths;
 		};
 
-		const engine::assets::AssetDefinition* m_treeDef = nullptr;
-		std::vector<TreeRenderData>			   m_trees;
+		std::vector<TreeRenderData> m_trees;
 	};
 
 	// Register scene with SceneManager

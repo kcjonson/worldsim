@@ -131,7 +131,8 @@ end
 
 -- 4. Draw branches ON TOP of main canopy (visible!)
 -- These branches extend from VARIOUS PLACES on trunk and END WITHIN the canopy
-local branchCount = 1 + math.floor(math.random() * 4)  -- 1-4 branches (more variation)
+local maxBranches = getInt("branchCount", 4)
+local branchCount = 1 + math.floor(math.random() * maxBranches)  -- 1 to maxBranches (from XML param)
 local trunkLength = trunkBottomY - trunkTopY
 
 -- Calculate canopy bounds for constraining branch endpoints

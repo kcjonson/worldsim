@@ -191,16 +191,14 @@ bool LuaEngine::executeGenerator(
 		(*m_lua)["seed"] = ctx.seed;
 		(*m_lua)["variantIndex"] = ctx.variantIndex;
 
-		// Seed the random number generator
-		std::string seedRng = "math.randomseed(" + std::to_string(ctx.seed + ctx.variantIndex) + ")";
-		m_lua->script(seedRng);
-
-		// Expose parameters as a table
-		sol::table paramsTable = m_lua->create_table();
-		// Note: We need to expose params through getter functions since GeneratorParams
-		// stores values as strings internally
+		// Seed the random number generator using sol2's type-safe method
+		// (avoids string concatenation which could be a code injection risk)
+		(*m_lua)["math"]["randomseed"](ctx.seed + ctx.variantIndex);
 
 		// Create helper functions to access params
+		// NOTE: These lambdas capture `params` and `outAsset` by reference. This is safe
+		// because scripts execute synchronously within this function call. If the execution
+		// model changes to async/deferred, these captures would need to be reconsidered.
 		(*m_lua)["getFloat"] = [&params](const std::string& key, float defaultVal) {
 			return params.getFloat(key.c_str(), defaultVal);
 		};

@@ -432,24 +432,29 @@ size_t AssetRegistry::loadDefinitionsFromFolder(const std::string& folderPath) {
 	size_t filesProcessed = 0;
 
 	// Recursively iterate through all files in the folder
-	for (const auto& entry : fs::recursive_directory_iterator(folderPath)) {
-		if (!entry.is_regular_file()) {
-			continue;
-		}
+	try {
+		for (const auto& entry : fs::recursive_directory_iterator(folderPath)) {
+			if (!entry.is_regular_file()) {
+				continue;
+			}
 
-		// Only process .xml files
-		if (entry.path().extension() != ".xml") {
-			continue;
-		}
+			// Only process .xml files
+			if (entry.path().extension() != ".xml") {
+				continue;
+			}
 
-		filesProcessed++;
-		size_t beforeCount = definitions.size();
+			filesProcessed++;
+			size_t beforeCount = definitions.size();
 
-		if (loadDefinitions(entry.path().string())) {
-			size_t loaded = definitions.size() - beforeCount;
-			totalLoaded += loaded;
-			LOG_DEBUG(Engine, "Loaded %zu definitions from %s", loaded, entry.path().string().c_str());
+			if (loadDefinitions(entry.path().string())) {
+				size_t loaded = definitions.size() - beforeCount;
+				totalLoaded += loaded;
+				LOG_DEBUG(Engine, "Loaded %zu definitions from %s", loaded, entry.path().string().c_str());
+			}
 		}
+	} catch (const fs::filesystem_error& e) {
+		LOG_ERROR(Engine, "Filesystem error scanning '%s': %s", folderPath.c_str(), e.what());
+		return totalLoaded;
 	}
 
 	LOG_INFO(Engine, "Asset folder scan complete: %zu definitions from %zu XML files in %s", totalLoaded, filesProcessed, folderPath.c_str());
@@ -517,9 +522,13 @@ bool AssetRegistry::generateAsset(const std::string& defName, uint32_t seed, Gen
 
 	// Check if this is a Lua script generator
 	if (def->isLuaGenerator()) {
-		// Create Lua generator for this script
-		LuaGenerator luaGen(def->scriptPath);
-		return luaGen.generate(ctx, def->params, outAsset);
+		try {
+			LuaGenerator luaGen(def->scriptPath);
+			return luaGen.generate(ctx, def->params, outAsset);
+		} catch (const std::exception& e) {
+			LOG_ERROR(Engine, "LuaGenerator error for '%s': %s", def->scriptPath.c_str(), e.what());
+			return false;
+		}
 	}
 
 	// Create C++ generator from registry
