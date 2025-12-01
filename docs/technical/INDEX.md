@@ -52,6 +52,14 @@ World-sim is a C++20 game project built as a monorepo of independent libraries. 
 - [Resource Handles](./resource-handles.md) - Safe resource references (Implement Soon)
 - [Diagnostic Drawing](./diagnostic-drawing.md) - Immediate mode debug draw (Implement Later)
 
+### Asset System
+**Complete documentation**: [Asset System Index](./asset-system/README.md)
+
+- [Asset System Overview](./asset-system/README.md) - Simple vs procedural assets, architecture
+- [Asset Definition Schema](./asset-system/asset-definitions.md) - XML format, inheritance, modding
+- [Lua Scripting API](./asset-system/lua-scripting-api.md) - Procedural generation API
+- [Variant Cache Format](./asset-system/variant-cache.md) - Binary cache for pre-generated assets *(planned)*
+
 ### World & Game
 - [World Generation Architecture](./world-generation-architecture.md) - Pluggable world generators
 - [Chunk Management System](./chunk-management-system.md) - Infinite 2D world from 3D sphere

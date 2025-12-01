@@ -1,5 +1,104 @@
 ## Development Log
 
+### 2025-11-30 - Asset System Architecture Design
+
+**Summary:**
+Designed comprehensive asset system architecture supporting both simple (designer-authored SVG) and procedural (Lua-generated) assets with moddability as a core requirement. This addresses the broader question of how game assets should be structured on disk.
+
+**Design Decisions:**
+
+1. **Simple vs Procedural Assets**
+   - **Simple**: Hand-drawn SVG files (flowers, mushrooms, rocks). Load once, tessellate, render via GPU instancing with per-instance variation (color, scale, rotation).
+   - **Procedural**: Lua script + parameters that generate vector graphics algorithmically (trees, bushes). Pre-generate N variants at load time, cache to disk.
+
+2. **Data-Driven Definitions (inspired by RimWorld)**
+   - XML asset definitions separate data from logic
+   - Definitions support inheritance (`ParentDef`) for DRY
+   - Later-loaded definitions override earlier ones (mod support)
+   - Example: `<defName>Tree_Oak</defName>` with `<generator><script>deciduous.lua</script></generator>`
+
+3. **Lua Scripting for Procedural Generation**
+   - Lua chosen for: embeddable (~200KB), sandboxable, fast (LuaJIT), industry standard
+   - Scripts define `generate(params, rng)` function returning `VectorAsset`
+   - API exposes: `VectorAsset`, `VectorPath`, `Color`, `Vec2`, `Math`, seeded RNG
+   - Sandbox restricts file I/O, OS access, network for mod safety
+
+4. **Pre-Generation Strategy**
+   - Procedural assets generate N variants at load time (e.g., 200 unique oaks)
+   - Variants cached to binary files for fast reload
+   - Variant selection by position seed ensures determinism
+   - Zero generation cost during gameplay
+
+**Research Findings:**
+- RimWorld's Def system proves highly moddable and extensible
+- Weber & Penn algorithm (SpeedTree) preferred for tree branching over L-systems
+- Similar patterns applicable to: terrain features, buildings, weather effects, creatures, items
+
+**Files Created:**
+- `docs/technical/asset-system/README.md` - Architecture overview
+- `docs/technical/asset-system/asset-definitions.md` - XML schema, inheritance, modding
+- `docs/technical/asset-system/lua-scripting-api.md` - Lua API reference with examples
+
+**Files Modified:**
+- `docs/technical/INDEX.md` - Added Asset System section
+- `docs/status.md` - Added Asset System Architecture epic
+
+**Relationship to Animation Performance:**
+This work complements the animation performance epic. The Asset System handles **what** assets exist and how they're generated, while the tiered renderer handles **how** they're rendered efficiently. Pre-generation at load time means procedural trees don't need runtime tessellation - they select from cached variants.
+
+**Next Steps:**
+Phase 1 implementation: Asset Registry, XML parser, simple asset loader, renderer integration.
+
+---
+
+### 2025-11-30 - Animated Grass NO-GO: CPU Tessellation Performance Analysis
+
+**Summary:**
+10,000 animated grass blades with per-frame Bezier retessellation achieved only **12 FPS** (target: 60 FPS). This is a critical NO-GO for naive CPU tessellation at scale. Created comprehensive optimization plan with tiered animation system.
+
+**Benchmark Results:**
+| Metric | Result | Target | Status |
+|--------|--------|--------|--------|
+| FPS | 12 | 60 | **4x under** |
+| Frame time | ~83ms | 16.67ms | **5x over** |
+| Tessellation | ~65ms | <10ms | **6x over** |
+| Blades | 10,000 | 10,000 | OK |
+| Triangles | 24,832 | - | OK |
+
+**Bottleneck Analysis:**
+- **Bezier flattening (De Casteljau)**: ~50ms (77% of frame)
+- **Ear clipping tessellation**: ~10ms (15% of frame)
+- **Buffer building/rendering**: ~5ms (8% of frame)
+
+**GO/NO-GO Decision:** NO-GO for naive CPU tessellation.
+
+**Research Conducted:**
+Explored three optimization approaches:
+1. **GPU Instancing + Vertex Shader Animation** - Pre-tessellate once, animate in vertex shader. Industry standard (Zelda BotW, Genshin Impact). Works for simple parametric deformation.
+2. **CPU Optimization Stack** - Arena allocators (5-10%), temporal coherence (2-4x), SIMD Bezier (2-3x). Combined can achieve 45-60 FPS.
+3. **Tiered System** - Combine both: GPU instancing for simple flora, optimized CPU for complex flora.
+
+**Key Insight:** User clarified this isn't just about grass - the system must support complex vector flora (trees, bushes, procedural assets) with true Bezier curve deformations. This means CPU tessellation must remain viable for complex assets even while GPU instancing handles simple repeated objects.
+
+**Chosen Architecture: Tiered Animation System**
+- **Tier 1 (GPU Instancing)**: Simple flora with parametric deformation (grass, small plants). Target: 100,000+ instances @ 60 FPS.
+- **Tier 2 (Optimized CPU)**: Complex flora with true Bezier curves (trees, bushes, procedural). Target: 1,000-2,000 assets @ 60 FPS.
+- **Tier 3 (Hybrid)**: Runtime tier selection based on asset complexity and distance.
+
+**Files Created:**
+- `docs/technical/vector-graphics/animation-performance.md` - Technical spec for optimization epic
+
+**Files Modified:**
+- `docs/status.md` - Added Animation Performance Optimization epic, marked Grass Validation complete
+
+**Next Steps:**
+Phase 1 (CPU Optimization) first to validate Bezier deformation can hit 60 FPS:
+1. Arena allocator integration for Bezier/Tessellator
+2. Temporal coherence system (skip unchanged blades)
+3. SIMD Bezier flattening (ARM NEON)
+
+---
+
 ### 2025-11-30 - Uber Shader Epic Complete
 
 **Summary:**

@@ -1,7 +1,9 @@
-// Grass Scene - Bezier Curve Tessellation Validation
-// Phase 4 validation: Prove Bezier curve flattening and tessellation works
-// 10,000 ANIMATED grass blades with per-frame retessellation - single draw call
+// Grass Scene - Asset System Integration Demo
+// Demonstrates the data-driven asset system with procedural grass generation.
+// Uses AssetRegistry to load XML definitions and GrassBladeGenerator for procedural shapes.
 
+#include <assets/AssetRegistry.h>
+#include <assets/generators/GrassBladeGenerator.h>
 #include <graphics/Color.h>
 #include <primitives/Primitives.h>
 #include <scene/Scene.h>
@@ -50,7 +52,22 @@ namespace {
 	class GrassScene : public engine::IScene {
 	  public:
 		void onEnter() override {
-			LOG_INFO(UI, "Grass Scene - 10,000 ANIMATED Grass Blades (Per-Frame Retessellation)");
+			LOG_INFO(UI, "Grass Scene - Asset System Integration Demo");
+
+			// Register generators (required before loading definitions that use them)
+			engine::assets::registerGrassBladeGenerator();
+
+			// Load asset definitions from XML
+			auto& registry = engine::assets::AssetRegistry::Get();
+			if (!registry.loadDefinitions("assets/definitions/flora/grass.xml")) {
+				LOG_ERROR(UI, "Failed to load grass asset definitions!");
+			} else {
+				// Get the template mesh from the asset system
+				m_bladeTemplate = registry.getTemplate("Flora_GrassBlade");
+				if (m_bladeTemplate == nullptr) {
+					LOG_ERROR(UI, "Failed to get blade template!");
+				}
+			}
 
 			// Get logical window dimensions
 			m_windowWidth = Renderer::Primitives::PercentWidth(100.0F);
@@ -63,9 +80,6 @@ namespace {
 
 			// Generate blade parameters (not geometry - that happens per frame)
 			generateBladeParams(kDefaultBladeCount);
-
-			LOG_INFO(UI, "Generated %zu blade parameters", m_bladeParams.size());
-			LOG_INFO(UI, "Animation enabled - per-frame Bezier retessellation");
 		}
 
 		void handleInput(float /*dt*/) override {
@@ -97,18 +111,6 @@ namespace {
 				m_fps = static_cast<float>(m_frameCount) / m_frameDeltaAccumulator;
 				m_avgFrameTimeMs = m_frameTimeSumMs / static_cast<float>(m_frameTimeSamples);
 				m_avgTessTimeMs = m_tessTimeSumMs / static_cast<float>(m_frameTimeSamples);
-
-				// Log performance stats once per second
-				LOG_INFO(
-					UI,
-					"[PERF] FPS: %.1f | Frame: avg=%.2fms min=%.2fms max=%.2fms | Tess: %.2fms (%.0f%%)",
-					m_fps,
-					m_avgFrameTimeMs,
-					m_minFrameTimeMs,
-					m_maxFrameTimeMs,
-					m_avgTessTimeMs,
-					(m_avgTessTimeMs / m_avgFrameTimeMs) * 100.0F
-				);
 
 				// Reset for next second
 				m_frameCount = 0;
@@ -142,27 +144,7 @@ namespace {
 		}
 
 		void onExit() override {
-			LOG_INFO(UI, "Exiting Animated Grass Scene");
-			LOG_INFO(UI, "Final stats: %zu blades, %.1f FPS, frame time: avg=%.2fms", m_bladeParams.size(), m_fps, m_avgFrameTimeMs);
-			LOG_INFO(UI, "Tessellation stats: avg=%.2fms per frame (%zu blades)", m_avgTessTimeMs, m_bladeParams.size());
-
-			// Performance target check for 60 FPS
-			bool targetMet = m_fps >= 55.0F; // Allow some tolerance
-			LOG_INFO(
-				UI,
-				"[PERFORMANCE TARGET] 60 FPS sustained: %s (actual: %.1f FPS, %.2fms)",
-				targetMet ? "PASSED" : "FAILED",
-				m_fps,
-				m_avgFrameTimeMs
-			);
-
-			// GO/NO-GO decision
-			if (targetMet) {
-				LOG_INFO(UI, "[GO/NO-GO] ✅ GO - Spline deformation is VIABLE at 10,000 blades");
-			} else {
-				LOG_INFO(UI, "[GO/NO-GO] ❌ NO-GO - Spline deformation needs optimization");
-				LOG_INFO(UI, "  Consider: compute shaders, SIMD, reduced blade count, or vertex shader animation");
-			}
+			// Performance stats available via exportState() for programmatic access
 		}
 
 		std::string exportState() override {
@@ -351,6 +333,9 @@ namespace {
 
 		// Blade parameters (generated once, used for per-frame regeneration)
 		std::vector<BladeParams> m_bladeParams;
+
+		// Asset system template (loaded once, cached)
+		const renderer::TessellatedMesh* m_bladeTemplate = nullptr;
 
 		// Window dimensions
 		float m_windowWidth = 0.0F;

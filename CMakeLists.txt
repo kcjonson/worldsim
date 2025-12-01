@@ -41,6 +41,9 @@ add_subdirectory(libs/game-systems)
 # Engine layer
 add_subdirectory(libs/engine)
 
+# Asset system (depends on foundation, renderer)
+add_subdirectory(libs/engine/assets)
+
 # Applications
 add_subdirectory(apps/world-sim)
 add_subdirectory(apps/ui-sandbox)

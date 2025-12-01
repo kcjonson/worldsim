@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Grass Asset Definitions
+     Flora assets for grass tiles and decorative grass.
+     Uses GrassBlade generator for procedural Bezier curve shapes.
+-->
+<AssetDefinitions>
+  <AssetDef>
+    <defName>Flora_GrassBlade</defName>
+    <label>Standard Grass Blade</label>
+    <assetType>procedural</assetType>
+
+    <generator>
+      <name>GrassBlade</name>
+      <params>
+        <!-- Height in pixels (min,max range) -->
+        <heightRange>10,14</heightRange>
+        <!-- Base width in pixels (min,max range) -->
+        <widthRange>1.6,2.4</widthRange>
+        <!-- Bend amount for wind (-1 to 1 range) -->
+        <bendRange>-0.3,0.3</bendRange>
+        <!-- Curve flattening tolerance (pixels) -->
+        <curveTolerance>1.0</curveTolerance>
+      </params>
+    </generator>
+
+    <rendering>
+      <!-- Simple = GPU instanced, Complex = individual tessellation -->
+      <complexity>simple</complexity>
+      <!-- Instanced = single template + GPU instancing -->
+      <tier>instanced</tier>
+    </rendering>
+
+    <animation>
+      <!-- Parametric = sin-based wind sway in vertex shader -->
+      <type>parametric</type>
+      <!-- How much wind affects this asset (0-1) -->
+      <windResponse>0.4</windResponse>
+      <!-- Animation speed range (cycles per second) -->
+      <swayFrequency>0.5,1.0</swayFrequency>
+    </animation>
+  </AssetDef>
+</AssetDefinitions>

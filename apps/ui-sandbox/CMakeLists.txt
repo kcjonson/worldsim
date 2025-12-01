@@ -30,6 +30,7 @@ target_link_libraries(ui-sandbox
         ui
         renderer
         foundation
+        assets
 )
 
 # Copy shaders to executable directory
@@ -46,4 +47,12 @@ add_custom_command(TARGET ui-sandbox POST_BUILD
     ${CMAKE_SOURCE_DIR}/fonts
     $<TARGET_FILE_DIR:ui-sandbox>/fonts
     COMMENT "Copying fonts to ui-sandbox directory"
+)
+
+# Copy asset definitions to executable directory
+add_custom_command(TARGET ui-sandbox POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+    ${CMAKE_SOURCE_DIR}/assets/definitions
+    $<TARGET_FILE_DIR:ui-sandbox>/assets/definitions
+    COMMENT "Copying asset definitions to ui-sandbox directory"
 )

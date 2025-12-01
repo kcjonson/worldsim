@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2025-11-30 (10,000 Animated Grass Blades - NO-GO for CPU Tessellation)
+Last Updated: 2025-11-30 (Asset System Architecture Epic Added)
 
 ## Epic/Story/Task Template
 
@@ -333,10 +333,10 @@ Use this template for all work items:
 
 ---
 
-### 🔄 Vector Graphics Validation - Grass Blades
+### ✅ Vector Graphics Validation - Grass Blades
 **Spec/Documentation:** `/docs/technical/vector-graphics/validation-plan.md`
 **Dependencies:** None
-**Status:** in progress
+**Status:** complete (validation phase - see Animation Performance epic for optimization)
 
 **Tasks:**
 - [x] Single Grass Blade with Bezier Curves
@@ -349,23 +349,124 @@ Use this template for all work items:
   - [x] Apply procedural variation (height, width, curve, color)
   - [x] Implement batch rendering (single draw call with per-vertex colors)
   - [x] Performance: ~9ms frame time (24,832 triangles, 44,832 vertices)
-- [x] 10,000 Animated Grass Blades ⚠️ CRITICAL - **NO-GO**
+- [x] 10,000 Animated Grass Blades ⚠️ **NO-GO for naive CPU tessellation**
   - [x] Implement wind simulation (sine waves + noise)
   - [x] Animate all 10,000 blades independently
   - [x] Retessellate curves per frame
   - [x] Profile tessellation cost: **~65ms per frame (4x budget)**
   - [x] Result: **12 FPS** (target was 60 FPS)
   - [x] **GO/NO-GO Decision: ❌ NO-GO for CPU tessellation**
-  - [x] Recommendation: Use vertex shader animation or compute shaders
-- [ ] SVG Loading for Grass Blades
-  - [ ] Load grass blade from SVG file
-  - [ ] Parse Bezier path data
-  - [ ] Apply same animation system
-  - [ ] Verify identical performance to animated blades
+  - [x] Recommendation: See Animation Performance Optimization epic
+
+**Result:** Validation complete. Static rendering works well. Animated requires optimization (see next epic).
+
+---
+
+### 🔄 Animated Vector Graphics Performance Optimization
+**Spec/Documentation:** `/docs/technical/vector-graphics/animation-performance.md`
+**Dependencies:** Vector Graphics Validation (completed)
+**Status:** in progress
+
+**Problem:** 10,000 animated grass blades run at 12 FPS (target 60 FPS). CPU tessellation takes ~65ms/frame (77% in Bezier flattening).
+
+**Solution:** Tiered animation system - GPU instancing for simple flora, optimized CPU tessellation for complex flora.
+
+**Phase 1: CPU Optimization Stack** (validates Bezier deformation can hit 60 FPS)
+- [ ] 1.1 Arena Allocator Integration
+  - [ ] Add arena parameter to `flattenCubicBezier()`
+  - [ ] Add arena to `Tessellator::Tessellate()`
+  - [ ] Create per-frame arena in GrassScene
+- [ ] 1.2 Temporal Coherence System
+  - [ ] Store previous frame's tessellated mesh per blade
+  - [ ] Calculate deformation delta threshold
+  - [ ] Skip retessellation if delta < threshold
+- [ ] 1.3 SIMD Bezier Flattening
+  - [ ] Create `flattenCubicBezierSIMD()` (4 curves in parallel)
+  - [ ] Use ARM NEON intrinsics
+  - [ ] Vectorize midpoint calculations
+- [ ] 1.4 Benchmark Phase 1
+  - [ ] Target: 45-60 FPS with 10,000 blades
+
+**Phase 2: GPU Instancing Path** (maximum performance for simple flora)
+- [ ] 2.1 Instanced Rendering Infrastructure
+  - [ ] Add `addInstancedGeometry()` to BatchRenderer
+  - [ ] Create instance data buffer (VBO with divisor=1)
+  - [ ] Add `glDrawElementsInstanced` path
+- [ ] 2.2 Vertex Shader Animation
+  - [ ] Add `u_time` uniform to uber shader
+  - [ ] Add instance data attributes
+  - [ ] Implement wind displacement in vertex shader
+- [ ] 2.3 Instanced Grass Demo
+  - [ ] Create `GrassInstancedScene.cpp`
+  - [ ] Target: 100,000+ instances at 60 FPS
+
+**Phase 3: Tiered System Integration**
+- [ ] 3.1 Asset Classification (simple vs complex)
+- [ ] 3.2 Runtime Tier Selection
+- [ ] 3.3 Mixed Flora Demo (grass + trees + bushes)
 
 ---
 
 ## Planned Epics
+
+### Asset System Architecture
+**Spec/Documentation:** `/docs/technical/asset-system/README.md`
+**Dependencies:** None
+**Status:** ready
+
+**Overview:** Data-driven asset system supporting simple (SVG) and procedural (Lua-generated) assets with modding support and pre-generation caching.
+
+**Phase 1: Core Infrastructure**
+- [ ] 1.1 Asset Registry
+  - [ ] Create `libs/engine/assets/` library
+  - [ ] Implement XML definition parser (RapidXML or pugixml)
+  - [ ] Create `AssetRegistry` class with `LoadDefinitions()`, `GetAsset()`
+  - [ ] Implement definition inheritance (`ParentDef` support)
+  - [ ] Add mod loading order support
+- [ ] 1.2 Simple Asset Loader
+  - [ ] Implement SVG loading via existing nanosvg
+  - [ ] Create `SimpleAssetLoader` that tessellates SVG → mesh
+  - [ ] Store tessellated meshes in registry
+  - [ ] Add color/scale/rotation variation support
+- [ ] 1.3 Integration with Renderer
+  - [ ] Connect `AssetRegistry` to `BatchRenderer`
+  - [ ] Add `renderAsset(defName, position, seed)` API
+  - [ ] Demo: Simple flower field using asset definitions
+
+**Phase 2: Lua Scripting**
+- [ ] 2.1 Lua Integration
+  - [ ] Add sol2 or LuaJIT to vcpkg.json
+  - [ ] Create `LuaEngine` class with sandbox restrictions
+  - [ ] Expose `VectorAsset`, `VectorPath` API to Lua
+  - [ ] Expose `Color`, `Vec2`, `Math`, `Ease` utilities
+- [ ] 2.2 Procedural Generator
+  - [ ] Create `ProceduralAssetGenerator` class
+  - [ ] Implement variant pre-generation at load time
+  - [ ] Add seeded RNG for deterministic generation
+  - [ ] Demo: Procedural bush with Lua script
+
+**Phase 3: Variant Caching**
+- [ ] 3.1 Binary Cache Format
+  - [ ] Design cache file format (header + tessellated meshes)
+  - [ ] Implement save/load for variant cache
+  - [ ] Add cache invalidation (script hash comparison)
+- [ ] 3.2 Load-Time Generation
+  - [ ] Generate all variants during loading screen
+  - [ ] Progress reporting for loading UI
+  - [ ] Parallel generation where possible
+
+**Phase 4: Full Tree Demo**
+- [ ] 4.1 Deciduous Tree Generator
+  - [ ] Implement Weber & Penn-style branching in Lua
+  - [ ] Leaf placement from SVG template
+  - [ ] Generate 200 variants at load time
+- [ ] 4.2 Mixed Flora Scene
+  - [ ] Create scene with procedural trees + simple flowers
+  - [ ] Verify GPU instancing for simple assets
+  - [ ] Verify variant selection for procedural assets
+  - [ ] Performance target: 60 FPS with 1000 trees + 10,000 flowers
+
+---
 
 ### Unit Testing Infrastructure
 **Spec/Documentation:** `/docs/technical/unit-testing-strategy.md`, `/docs/technical/testing-guidelines.md` (TBD)
