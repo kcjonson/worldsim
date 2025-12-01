@@ -76,10 +76,7 @@ namespace renderer {
 		if (isCCW) {
 			outMesh.vertices = path.vertices;
 		} else {
-			outMesh.vertices.reserve(path.vertices.size());
-			for (auto it = path.vertices.rbegin(); it != path.vertices.rend(); ++it) {
-				outMesh.vertices.push_back(*it);
-			}
+			outMesh.vertices.assign(path.vertices.rbegin(), path.vertices.rend());
 		}
 
 		// Build internal vertex list from the (possibly reversed) mesh vertices

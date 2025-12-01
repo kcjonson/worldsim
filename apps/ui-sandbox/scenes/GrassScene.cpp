@@ -156,7 +156,7 @@ namespace {
 			// Tessellate the SVG path to get our template mesh
 			renderer::VectorPath path;
 			path.vertices = loadedShapes[0].paths[0].vertices;
-			path.isClosed = true;
+			path.isClosed = loadedShapes[0].paths[0].isClosed;
 
 			renderer::Tessellator tessellator;
 			if (!tessellator.Tessellate(path, templateMesh)) {
@@ -265,7 +265,7 @@ namespace {
 	};
 
 	// Register scene with SceneManager
-	bool g_registered = []() {
+	[[maybe_unused]] bool g_registered = []() {
 		engine::SceneManager::Get().registerScene("grass", []() { return std::make_unique<GrassScene>(); });
 		return true;
 	}();

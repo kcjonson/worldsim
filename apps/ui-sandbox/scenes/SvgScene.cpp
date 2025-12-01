@@ -148,7 +148,7 @@ namespace {
 	};
 
 	// Register scene with SceneManager
-	bool g_registered = []() {
+	[[maybe_unused]] bool g_registered = []() {
 		engine::SceneManager::Get().registerScene("svg", []() { return std::make_unique<SvgScene>(); });
 		return true;
 	}();

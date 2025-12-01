@@ -5,14 +5,25 @@
 #include "SVGLoader.h"
 #include "Bezier.h"
 #include "utils/Log.h"
+#include <memory>
 
 namespace renderer {
+
+// RAII wrapper for NanoSVG image resources
+struct NSVGImageDeleter {
+	void operator()(NSVGimage* img) const {
+		if (img != nullptr) {
+			nsvgDelete(img);
+		}
+	}
+};
+using NSVGImagePtr = std::unique_ptr<NSVGimage, NSVGImageDeleter>;
 
 namespace {
 
 /// Convert NanoSVG ABGR color to Foundation::Color
 Foundation::Color convertColor(unsigned int nsvgColor, float opacity) {
-	// NanoSVG stores colors as ABGR (alpha in high byte, then blue, green, red)
+	// NanoSVG stores colors as 32-bit ABGR: alpha in bits 24-31, blue in bits 16-23, green in bits 8-15, red in bits 0-7
 	const float kColorScale = 1.0F / 255.0F;
 	float		red = static_cast<float>((nsvgColor >> 0) & 0xFF) * kColorScale;
 	float		green = static_cast<float>((nsvgColor >> 8) & 0xFF) * kColorScale;
@@ -64,7 +75,7 @@ void processPath(NSVGpath* nsvgPath, float tolerance, VectorPath& outPath) {
 	if (outPath.isClosed && outPath.vertices.size() >= 2) {
 		const auto& first = outPath.vertices.front();
 		const auto& last = outPath.vertices.back();
-		constexpr float kEpsilon = 1e-4F;
+		constexpr float kEpsilon = 1e-2F; // Use 0.01 pixels for robust duplicate detection
 		if (std::abs(first.x - last.x) < kEpsilon && std::abs(first.y - last.y) < kEpsilon) {
 			outPath.vertices.pop_back();
 		}
@@ -76,9 +87,9 @@ void processPath(NSVGpath* nsvgPath, float tolerance, VectorPath& outPath) {
 bool loadSVG(const std::string& filepath, float curveTolerance, std::vector<LoadedSVGShape>& outShapes) {
 	outShapes.clear();
 
-	// Parse the SVG file
+	// Parse the SVG file with RAII wrapper for automatic cleanup
 	// Units: "px" = pixels, DPI: 96 is standard for screen rendering
-	NSVGimage* image = nsvgParseFromFile(filepath.c_str(), "px", 96.0F);
+	NSVGImagePtr image(nsvgParseFromFile(filepath.c_str(), "px", 96.0F));
 	if (image == nullptr) {
 		LOG_ERROR(Renderer, "Failed to load SVG: %s", filepath.c_str());
 		return false;
@@ -126,9 +137,7 @@ bool loadSVG(const std::string& filepath, float curveTolerance, std::vector<Load
 		}
 	}
 
-	// Clean up NanoSVG resources
-	nsvgDelete(image);
-
+	// NSVGImagePtr automatically cleans up when going out of scope
 	LOG_INFO(Renderer, "Loaded SVG: %s (%zu shapes)", filepath.c_str(), outShapes.size());
 	return !outShapes.empty();
 }
