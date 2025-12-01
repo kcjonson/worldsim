@@ -38,5 +38,25 @@
       <!-- Animation speed range (cycles per second) -->
       <swayFrequency>0.5,1.0</swayFrequency>
     </animation>
+
+    <placement>
+      <biomes>
+        <biome>Grassland</biome>
+        <biome>Forest</biome>
+        <biome>Wetland</biome>
+      </biomes>
+      <!-- Probability of spawning at each potential point (0-1) -->
+      <spawnChance>0.5</spawnChance>
+      <!-- Distribution pattern: uniform, clumped, spaced -->
+      <distribution>clumped</distribution>
+      <clumping>
+        <!-- Instances per clump (min,max) -->
+        <clumpSize>5,15</clumpSize>
+        <!-- How spread out within clump in tiles (min,max) -->
+        <clumpRadius>0.3,1.0</clumpRadius>
+        <!-- Distance between clump centers in tiles (min,max) -->
+        <clumpSpacing>1,3</clumpSpacing>
+      </clumping>
+    </placement>
   </AssetDef>
 </AssetDefinitions>

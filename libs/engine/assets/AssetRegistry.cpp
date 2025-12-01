@@ -182,6 +182,70 @@ AnimationType parseAnimationType(const char* str) {
 	return AnimationType::None;
 }
 
+Distribution parseDistribution(const char* str) {
+	if (str == nullptr) {
+		return Distribution::Uniform;
+	}
+	std::string s(str);
+	if (s == "clumped" || s == "Clumped") {
+		return Distribution::Clumped;
+	}
+	if (s == "spaced" || s == "Spaced") {
+		return Distribution::Spaced;
+	}
+	return Distribution::Uniform;
+}
+
+/// Parse "min,max" format into two integers
+void parseIntRange(const std::string& str, int32_t& outMin, int32_t& outMax, int32_t defaultMin, int32_t defaultMax) {
+	outMin = defaultMin;
+	outMax = defaultMax;
+	if (str.empty()) {
+		return;
+	}
+	auto commaPos = str.find(',');
+	if (commaPos != std::string::npos) {
+		try {
+			outMin = std::stoi(str.substr(0, commaPos));
+			outMax = std::stoi(str.substr(commaPos + 1));
+		} catch (...) {
+			// Keep defaults
+		}
+	} else {
+		try {
+			outMin = std::stoi(str);
+			outMax = outMin;
+		} catch (...) {
+			// Keep defaults
+		}
+	}
+}
+
+/// Parse "min,max" format into two floats
+void parseFloatRange(const std::string& str, float& outMin, float& outMax, float defaultMin, float defaultMax) {
+	outMin = defaultMin;
+	outMax = defaultMax;
+	if (str.empty()) {
+		return;
+	}
+	auto commaPos = str.find(',');
+	if (commaPos != std::string::npos) {
+		try {
+			outMin = std::stof(str.substr(0, commaPos));
+			outMax = std::stof(str.substr(commaPos + 1));
+		} catch (...) {
+			// Keep defaults
+		}
+	} else {
+		try {
+			outMin = std::stof(str);
+			outMax = outMin;
+		} catch (...) {
+			// Keep defaults
+		}
+	}
+}
+
 }  // namespace
 
 bool AssetRegistry::loadDefinitions(const std::string& xmlPath) {
@@ -268,6 +332,61 @@ bool AssetRegistry::loadDefinitions(const std::string& xmlPath) {
 						// Keep defaults
 					}
 				}
+			}
+		}
+
+		// Placement settings
+		pugi::xml_node placementNode = defNode.child("placement");
+		if (placementNode) {
+			// Parse biomes list
+			pugi::xml_node biomesNode = placementNode.child("biomes");
+			if (biomesNode) {
+				for (pugi::xml_node biomeNode : biomesNode.children("biome")) {
+					std::string biomeName = biomeNode.child_value();
+					if (!biomeName.empty()) {
+						def.placement.biomes.push_back(biomeName);
+					}
+				}
+			}
+
+			// Spawn chance
+			def.placement.spawnChance =
+				static_cast<float>(placementNode.child("spawnChance").text().as_double(0.3));
+
+			// Distribution type
+			def.placement.distribution = parseDistribution(placementNode.child_value("distribution"));
+
+			// Clumping parameters (for Distribution::Clumped)
+			pugi::xml_node clumpingNode = placementNode.child("clumping");
+			if (clumpingNode) {
+				parseIntRange(
+					clumpingNode.child_value("clumpSize"),
+					def.placement.clumping.clumpSizeMin,
+					def.placement.clumping.clumpSizeMax,
+					3,
+					12
+				);
+				parseFloatRange(
+					clumpingNode.child_value("clumpRadius"),
+					def.placement.clumping.clumpRadiusMin,
+					def.placement.clumping.clumpRadiusMax,
+					0.5F,
+					2.0F
+				);
+				parseFloatRange(
+					clumpingNode.child_value("clumpSpacing"),
+					def.placement.clumping.clumpSpacingMin,
+					def.placement.clumping.clumpSpacingMax,
+					3.0F,
+					8.0F
+				);
+			}
+
+			// Spacing parameters (for Distribution::Spaced)
+			pugi::xml_node spacingNode = placementNode.child("spacing");
+			if (spacingNode) {
+				def.placement.spacing.minDistance =
+					static_cast<float>(spacingNode.child("minDistance").text().as_double(2.0));
 			}
 		}
 
