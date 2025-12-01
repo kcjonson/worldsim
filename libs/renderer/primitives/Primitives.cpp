@@ -284,7 +284,9 @@ namespace Renderer::Primitives {
 			return;
 		}
 
-		g_batchRenderer->addTriangles(args.vertices, args.indices, args.vertexCount, args.indexCount, args.color);
+		g_batchRenderer->addTriangles(
+			args.vertices, args.indices, args.vertexCount, args.indexCount, args.color, args.colors
+		);
 	}
 
 	void drawCircle(const CircleArgs& args) {

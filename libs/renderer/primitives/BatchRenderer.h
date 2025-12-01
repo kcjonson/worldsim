@@ -64,12 +64,14 @@ namespace Renderer { // NOLINT(readability-identifier-naming)
 		);
 
 		// Add raw triangles (for circles, polygons, etc.)
+		// If inputColors is provided, uses per-vertex colors; otherwise uses uniform color
 		void addTriangles(
-			const Foundation::Vec2*	 inputVertices,
-			const uint16_t*			 inputIndices,
-			size_t					 vertexCount,
-			size_t					 indexCount,
-			const Foundation::Color& color
+			const Foundation::Vec2*	  inputVertices,
+			const uint16_t*			  inputIndices,
+			size_t					  vertexCount,
+			size_t					  indexCount,
+			const Foundation::Color&  color,
+			const Foundation::Color*  inputColors = nullptr
 		);
 
 		// --- Text rendering (MSDF) ---
