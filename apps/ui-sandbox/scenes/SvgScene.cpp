@@ -6,6 +6,7 @@
 #include <scene/Scene.h>
 #include <scene/SceneManager.h>
 #include <utils/Log.h>
+#include <utils/ResourcePath.h>
 #include <vector/SVGLoader.h>
 #include <vector/Tessellator.h>
 #include <vector/Types.h>
@@ -82,18 +83,25 @@ namespace {
 
 	  private:
 		void loadAndTessellate() {
-			// Path to test SVG file (copied to build directory by CMake)
-			const std::string kSvgPath = "assets/svg/test_shape.svg";
+			// Path to test SVG file - use findResourceString for portable paths
+			const std::string kRelativePath = "assets/svg/test_shape.svg";
 			const float		  kCurveTolerance = 0.5F; // Half-pixel tolerance for smooth curves
 
-			LOG_INFO(UI, "Loading SVG: %s", kSvgPath.c_str());
+			// Use findResource to handle different working directories (IDE vs terminal)
+			std::string svgPath = Foundation::findResourceString(kRelativePath);
+			if (svgPath.empty()) {
+				LOG_ERROR(UI, "Could not find SVG: %s", kRelativePath.c_str());
+				return;
+			}
+
+			LOG_INFO(UI, "Loading SVG: %s", svgPath.c_str());
 
 			auto startTime = std::chrono::high_resolution_clock::now();
 
 			// Load the SVG file
 			std::vector<renderer::LoadedSVGShape> loadedShapes;
-			if (!renderer::loadSVG(kSvgPath, kCurveTolerance, loadedShapes)) {
-				LOG_ERROR(UI, "Failed to load SVG file: %s", kSvgPath.c_str());
+			if (!renderer::loadSVG(svgPath, kCurveTolerance, loadedShapes)) {
+				LOG_ERROR(UI, "Failed to load SVG file: %s", svgPath.c_str());
 				return;
 			}
 

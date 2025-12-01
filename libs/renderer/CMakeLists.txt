@@ -29,6 +29,8 @@ target_link_libraries(renderer
         glfw
         glm::glm
     PRIVATE
+        # NanoSVG is used only for internal SVG parsing in SVGLoader.cpp.
+        # No NanoSVG types are exposed in public headers, so PRIVATE linkage is correct.
         NanoSVG::nanosvg
 )
 

@@ -41,7 +41,7 @@ void processPath(NSVGpath* nsvgPath, float tolerance, VectorPath& outPath) {
 	// Process each cubic Bezier segment
 	// NanoSVG stores: start point, then groups of (cp1, cp2, end) = 3 points per segment
 	// So we iterate i from 0 to npts-4, stepping by 3 points (6 floats)
-	for (int i = 0; i < nsvgPath->npts - 1; i += 3) {
+	for (int i = 0; i < nsvgPath->npts - 3; i += 3) {
 		// Each segment starts at point i, with control points at i+1, i+2, and endpoint at i+3
 		float* p = &nsvgPath->pts[i * 2];
 
