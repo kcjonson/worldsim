@@ -179,7 +179,13 @@ namespace engine::assets {
 	}
 
 	void LuaEngine::setupSandbox() {
-		// Remove potentially dangerous functions for modding safety
+		// Sandbox Lua environment for safe asset generation scripts.
+		// Scripts can only use math, string manipulation, and our registered APIs.
+		// Removed capabilities:
+		// - os/io: Filesystem access could read/write arbitrary files
+		// - loadfile/dofile: Could execute untrusted code from disk
+		// - debug: Allows introspection/modification of Lua internals
+		// - package/require: Could load external modules with arbitrary code
 		(*m_lua)["os"] = sol::lua_nil;
 		(*m_lua)["io"] = sol::lua_nil;
 		(*m_lua)["loadfile"] = sol::lua_nil;
