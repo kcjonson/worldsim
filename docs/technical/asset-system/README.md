@@ -18,6 +18,7 @@ The asset system manages loading, generation, and caching of game assets with su
 2. **Moddable**: Modders can add/replace assets without touching C++ code
 3. **Performant**: Pre-generate expensive assets at load time, render with instancing
 4. **Flexible**: Support both hand-crafted and procedurally generated assets
+5. **World-Unique Flora**: Each world has unique procedural variants based on its map seed
 
 ## Architecture Overview
 
@@ -142,6 +143,59 @@ assets/
         ├── tree_oak_variants.bin
         └── tree_pine_variants.bin
 ```
+
+## World Seed and Procedural Uniqueness
+
+Each world in the game has a unique **map seed** that determines all procedural generation. This seed is used to create world-unique flora variants, ensuring every world is visually distinct.
+
+### Seed Propagation
+
+```
+World Seed (e.g., "my-world-123")
+       │
+       ▼
+   hash(seed) → uint64_t base_seed
+       │
+       ├──► Asset Generation RNG
+       │    - Seeded at world load time
+       │    - Used by Lua scripts via `math.randomseed()`
+       │    - Generates N variants per asset type
+       │
+       └──► Instance Placement RNG
+            - Seeded per-chunk: hash(base_seed, chunk_x, chunk_y)
+            - Deterministic variant selection by position
+            - Same position → same variant every time
+```
+
+### Implementation Approach
+
+**Option A: Session-Seeded RNG (Recommended)**
+- When a world loads, seed the Lua RNG with `hash(world_seed, "flora")`
+- All procedural generation during that session uses this RNG
+- Variant cache is keyed by world seed, regenerated if seed changes
+- Pro: Simple, all Lua `math.random()` calls "just work"
+- Con: Variant cache is per-world (more disk space if many worlds)
+
+**Option B: Per-Script Seed Parameter**
+- Pass seed explicitly to each generator: `generate(asset_def, seed)`
+- Script must call `math.randomseed(seed)` at start
+- Pro: More explicit control, cache can be shared across worlds with same parameters
+- Con: More boilerplate in every script
+
+### Cache Invalidation
+
+The variant cache filename includes a hash of:
+1. World seed
+2. Asset definition hash (detects XML changes)
+3. Script hash (detects Lua code changes)
+
+```
+cache/flora/tree_oak_variants_a1b2c3d4.bin
+                              ^^^^^^^^
+                              combined hash
+```
+
+If any input changes, cache is regenerated during the loading screen.
 
 ## Related Documents
 
