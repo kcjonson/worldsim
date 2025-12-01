@@ -279,6 +279,16 @@ namespace Foundation {
 		return targetSceneName;
 	}
 
+	void DebugServer::setCurrentSceneName(const std::string& name) {
+		std::lock_guard<std::mutex> lock(sceneNameMutex);
+		currentSceneName = name;
+	}
+
+	std::string DebugServer::getCurrentSceneName() const {
+		std::lock_guard<std::mutex> lock(sceneNameMutex);
+		return currentSceneName;
+	}
+
 	void DebugServer::waitForShutdownComplete() {
 		std::unique_lock<std::mutex> lock(shutdownMutex);
 		// Add timeout to prevent indefinite blocking if main loop exits abnormally
@@ -477,10 +487,16 @@ namespace Foundation {
 					// Send update if enough time has passed
 					if (elapsed >= updateInterval) {
 						PerformanceMetrics metrics = getMetricsSnapshot();
+						std::string		   sceneName = getCurrentSceneName();
+
+						// Get base metrics JSON and inject sceneName before closing brace
+						std::string metricsJson = metrics.toJSON();
+						metricsJson.pop_back(); // Remove trailing '}'
+						metricsJson += ",\"sceneName\":\"" + sceneName + "\"}";
 
 						std::ostringstream event;
 						event << "event: metric\n";
-						event << "data: " << metrics.toJSON() << "\n\n";
+						event << "data: " << metricsJson << "\n\n";
 
 						std::string eventStr = event.str();
 						if (!sink.write(eventStr.c_str(), eventStr.size())) {
