@@ -23,6 +23,40 @@
 
 namespace Foundation {
 
+	// Helper function to escape strings for JSON
+	static std::string escapeJsonString(const std::string& str) {
+		std::string escaped;
+		escaped.reserve(str.length());
+		for (char c : str) {
+			switch (c) {
+				case '"':
+					escaped += "\\\"";
+					break;
+				case '\\':
+					escaped += "\\\\";
+					break;
+				case '\b':
+					escaped += "\\b";
+					break;
+				case '\f':
+					escaped += "\\f";
+					break;
+				case '\n':
+					escaped += "\\n";
+					break;
+				case '\r':
+					escaped += "\\r";
+					break;
+				case '\t':
+					escaped += "\\t";
+					break;
+				default:
+					escaped += c;
+			}
+		}
+		return escaped;
+	}
+
 	// Helper functions for LogEntry
 	static const char* logLevelToString(LogLevel level) {
 		switch (level) {
@@ -492,7 +526,7 @@ namespace Foundation {
 						// Get base metrics JSON and inject sceneName before closing brace
 						std::string metricsJson = metrics.toJSON();
 						metricsJson.pop_back(); // Remove trailing '}'
-						metricsJson += ",\"sceneName\":\"" + sceneName + "\"}";
+						metricsJson += ",\"sceneName\":\"" + escapeJsonString(sceneName) + "\"}";
 
 						std::ostringstream event;
 						event << "event: metric\n";

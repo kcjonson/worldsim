@@ -1,14 +1,6 @@
 import { useEffect, useRef } from 'react';
+import { SceneSession } from '../services/LocalStorageService';
 import styles from './ScenePerformanceLog.module.css';
-
-export interface SceneSession {
-  sceneName: string;
-  startTime: number;
-  endTime?: number;
-  samples: number;
-  fpsSum: number;
-  frameTimeSum: number;
-}
 
 interface Props {
   currentSceneName?: string;
@@ -62,7 +54,8 @@ export function ScenePerformanceLog({
       currentSessionRef.current.fpsSum += fps;
       currentSessionRef.current.frameTimeSum += frameTimeMs;
     }
-  }, [currentSceneName, fps, frameTimeMs, isRecording, sessions, onSessionsChange]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentSceneName, fps, frameTimeMs, isRecording]);
 
   // Calculate averages for a session
   const getAverages = (session: SceneSession) => {
