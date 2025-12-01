@@ -1,151 +1,125 @@
 // Grass Scene - SVG Asset Demo
-// Demonstrates loading grass blade shapes from SVG and rendering 10,000 animated blades.
-// Uses SVGLoader to load the blade shape, then tessellates and transforms per-frame.
+// Demonstrates loading grass blade shapes from SVG and rendering 10,000 static blades.
+// Uses SVGLoader to load the blade shape, tessellates once, then transforms mesh vertices.
+//
+// Note: drawTriangles uses uint16_t indices (max 65535 vertices per draw call).
+// With 10,000 blades × 7 vertices = 70,000 vertices, we split into batches.
 
 #include <graphics/Color.h>
 #include <primitives/Primitives.h>
 #include <scene/Scene.h>
 #include <scene/SceneManager.h>
 #include <utils/Log.h>
+#include <utils/ResourcePath.h>
 #include <vector/SVGLoader.h>
 #include <vector/Tessellator.h>
 #include <vector/Types.h>
 
 #include <GL/glew.h>
-#include <algorithm>
-#include <chrono>
 #include <cmath>
-#include <numbers>
 #include <random>
 #include <vector>
 
 namespace {
 
 	// Grass blade configuration
-	constexpr float	 kBladeHeight = 12.0F;		 // Short blades for top-down view
 	constexpr size_t kDefaultBladeCount = 10000; // Target: 10,000 grass blades
 	constexpr size_t kBladesPerClump = 5;		 // Blades grouped in clumps
 	constexpr float	 kClumpRadius = 6.0F;		 // How spread out blades are within a clump
 
-	// Wind animation constants
-	constexpr float kWindSpeed = 2.0F;		  // Base wind wave speed
-	constexpr float kWindStrength = 0.4F;	  // How much wind affects bend (0-1)
-	constexpr float kWindWaveLength = 100.0F; // Spatial wavelength of wind pattern
-	constexpr float kWindTurbulence = 0.3F;	  // Secondary turbulence amount
+	// Max vertices per batch (uint16_t indices can address 0-65535)
+	constexpr size_t kMaxVerticesPerBatch = 60000; // Leave headroom below 65535
 
-	// Stored parameters for each grass blade (needed for per-frame regeneration)
-	struct BladeParams {
-		Foundation::Vec2  position;
-		float			  rotation;
-		float			  scale;
-		float			  heightMult;
-		float			  widthMult;
-		float			  baseBendAmount; // Static bend before wind
-		Foundation::Color color;
-		float			  phaseOffset; // For wind variation between blades
+	// A single batch of geometry that can be rendered in one draw call
+	struct GeometryBatch {
+		std::vector<Foundation::Vec2>  vertices;
+		std::vector<Foundation::Color> colors;
+		std::vector<uint16_t>		   indices;
 	};
 
 	class GrassScene : public engine::IScene {
 	  public:
 		void onEnter() override {
-			LOG_INFO(UI, "Grass Scene - Asset System Integration Demo");
+			LOG_INFO(UI, "Grass Scene - SVG Asset Demo (Static)");
 
-			// Load grass blade from SVG asset
-			loadGrassBladeFromSVG();
+			// Load grass blade from SVG asset and tessellate it once
+			if (!loadAndTessellateGrassBlade()) {
+				LOG_ERROR(UI, "Failed to load grass blade - scene will be empty");
+				return;
+			}
 
 			// Get logical window dimensions
-			m_windowWidth = Renderer::Primitives::PercentWidth(100.0F);
-			m_windowHeight = Renderer::Primitives::PercentHeight(100.0F);
+			windowWidth = Renderer::Primitives::PercentWidth(100.0F);
+			windowHeight = Renderer::Primitives::PercentHeight(100.0F);
 
-			if (m_windowWidth <= 0.0F || m_windowHeight <= 0.0F) {
-				m_windowWidth = 672.0F;
-				m_windowHeight = 420.0F;
+			if (windowWidth <= 0.0F || windowHeight <= 0.0F) {
+				windowWidth = 672.0F;
+				windowHeight = 420.0F;
 			}
 
-			// Generate blade parameters (not geometry - that happens per frame)
-			generateBladeParams(kDefaultBladeCount);
-		}
+			// Generate all blade instances (geometry is created once, not per-frame)
+			generateAllBladeGeometry(kDefaultBladeCount);
 
-		void handleInput(float /*dt*/) override {
-			// No input handling needed for this demo
-		}
-
-		void update(float dt) override {
-			// Update animation time
-			m_time += dt;
-
-			// Regenerate all grass blade geometry with animated wind
-			auto tessStart = std::chrono::high_resolution_clock::now();
-			regenerateAnimatedGeometry();
-			auto tessEnd = std::chrono::high_resolution_clock::now();
-			m_lastTessTimeMs = std::chrono::duration<float, std::milli>(tessEnd - tessStart).count();
-
-			// Track frame time stats
-			m_frameCount++;
-			m_frameDeltaAccumulator += dt;
-
-			float frameTimeMs = dt * 1000.0F;
-			m_minFrameTimeMs = std::min(m_minFrameTimeMs, frameTimeMs);
-			m_maxFrameTimeMs = std::max(m_maxFrameTimeMs, frameTimeMs);
-			m_frameTimeSumMs += frameTimeMs;
-			m_tessTimeSumMs += m_lastTessTimeMs;
-			m_frameTimeSamples++;
-
-			if (m_frameDeltaAccumulator >= 1.0F) {
-				m_fps = static_cast<float>(m_frameCount) / m_frameDeltaAccumulator;
-				m_avgFrameTimeMs = m_frameTimeSumMs / static_cast<float>(m_frameTimeSamples);
-				m_avgTessTimeMs = m_tessTimeSumMs / static_cast<float>(m_frameTimeSamples);
-
-				// Reset for next second
-				m_frameCount = 0;
-				m_frameDeltaAccumulator = 0.0F;
-				m_frameTimeSumMs = 0.0F;
-				m_tessTimeSumMs = 0.0F;
-				m_frameTimeSamples = 0;
-				m_minFrameTimeMs = 1000.0F;
-				m_maxFrameTimeMs = 0.0F;
+			size_t totalVerts = 0;
+			size_t totalIndices = 0;
+			for (const auto& batch : batches) {
+				totalVerts += batch.vertices.size();
+				totalIndices += batch.indices.size();
 			}
+			LOG_INFO(
+				UI,
+				"Generated %zu blade instances in %zu batches: %zu vertices, %zu indices",
+				kDefaultBladeCount,
+				batches.size(),
+				totalVerts,
+				totalIndices
+			);
+		}
+
+		void handleInput(float /*dt*/) override {}
+
+		void update(float /*dt*/) override {
+			// Static scene - no animation
 		}
 
 		void render() override {
-			using namespace Foundation;
-
 			// Clear background - grass tile base color (light green)
 			glClearColor(0.25F, 0.45F, 0.2F, 1.0F);
 			glClear(GL_COLOR_BUFFER_BIT);
 
-			// Draw ALL grass blades in a SINGLE draw call using per-vertex colors
-			if (!m_combinedVertices.empty()) {
-				Renderer::Primitives::drawTriangles(
-					{.vertices = m_combinedVertices.data(),
-					 .indices = m_combinedIndices.data(),
-					 .vertexCount = m_combinedVertices.size(),
-					 .indexCount = m_combinedIndices.size(),
-					 .color = Color(0.3F, 0.6F, 0.2F, 1.0F), // Fallback color (unused)
-					 .colors = m_combinedColors.data()}		 // Per-vertex colors!
-				);
+			// Draw grass blades in batches (each batch stays under 65535 vertices)
+			for (const auto& batch : batches) {
+				if (!batch.vertices.empty()) {
+					Renderer::Primitives::drawTriangles(
+						{.vertices = batch.vertices.data(),
+						 .indices = batch.indices.data(),
+						 .vertexCount = batch.vertices.size(),
+						 .indexCount = batch.indices.size(),
+						 .color = Foundation::Color(0.3F, 0.6F, 0.2F, 1.0F),
+						 .colors = batch.colors.data()}
+					);
+				}
 			}
 		}
 
-		void onExit() override {
-			// Performance stats available via exportState() for programmatic access
-		}
+		void onExit() override {}
 
 		std::string exportState() override {
-			char buf[512];
+			size_t totalVerts = 0;
+			size_t totalIndices = 0;
+			for (const auto& batch : batches) {
+				totalVerts += batch.vertices.size();
+				totalIndices += batch.indices.size();
+			}
+			char buf[256];
 			snprintf(
 				buf,
 				sizeof(buf),
-				R"({"blades": %zu, "animated": true, "fps": %.1f, )"
-				R"("frameTimeMs": {"avg": %.2f, "min": %.2f, "max": %.2f}, )"
-				R"("tessTimeMs": %.2f, "targetMet": %s})",
-				m_bladeParams.size(),
-				m_fps,
-				m_avgFrameTimeMs,
-				m_minFrameTimeMs,
-				m_maxFrameTimeMs,
-				m_avgTessTimeMs,
-				m_fps >= 55.0F ? "true" : "false"
+				R"({"blades": %zu, "batches": %zu, "vertices": %zu, "indices": %zu})",
+				kDefaultBladeCount,
+				batches.size(),
+				totalVerts,
+				totalIndices
 			);
 			return {buf};
 		}
@@ -153,208 +127,141 @@ namespace {
 		const char* getName() const override { return "grass"; }
 
 	  private:
-		/// Load grass blade shape from SVG asset and tessellate it
-		void loadGrassBladeFromSVG() {
-			const std::string kSvgPath = "assets/svg/grass_blade.svg";
+		/// Load grass blade from SVG and tessellate it once
+		bool loadAndTessellateGrassBlade() {
+			const std::string kRelativePath = "assets/svg/grass_blade.svg";
 			const float		  kCurveTolerance = 0.5F;
 
-			LOG_INFO(UI, "Loading grass blade SVG: %s", kSvgPath.c_str());
+			// Use findResource to handle different working directories (IDE vs terminal)
+			std::string svgPath = Foundation::findResourceString(kRelativePath);
+			if (svgPath.empty()) {
+				LOG_ERROR(UI, "Could not find grass blade SVG: %s", kRelativePath.c_str());
+				return false;
+			}
+
+			LOG_INFO(UI, "Loading grass blade SVG: %s", svgPath.c_str());
 
 			// Load the SVG file
 			std::vector<renderer::LoadedSVGShape> loadedShapes;
-			if (!renderer::loadSVG(kSvgPath, kCurveTolerance, loadedShapes)) {
-				LOG_ERROR(UI, "Failed to load grass blade SVG: %s", kSvgPath.c_str());
-				return;
+			if (!renderer::loadSVG(svgPath, kCurveTolerance, loadedShapes)) {
+				LOG_ERROR(UI, "Failed to load grass blade SVG: %s", svgPath.c_str());
+				return false;
 			}
 
 			if (loadedShapes.empty() || loadedShapes[0].paths.empty()) {
 				LOG_ERROR(UI, "Grass blade SVG has no paths!");
-				return;
+				return false;
 			}
 
-			// Store the first path's vertices as our blade template
-			// The SVG has Y pointing up with origin at base, which matches our needs
-			svgBladeVertices = loadedShapes[0].paths[0].vertices;
+			// Tessellate the SVG path to get our template mesh
+			renderer::VectorPath path;
+			path.vertices = loadedShapes[0].paths[0].vertices;
+			path.isClosed = true;
 
-			LOG_INFO(UI, "Loaded grass blade: %zu vertices from SVG", svgBladeVertices.size());
-		}
-
-		/// Calculate wind bend at a given position and time
-		float calculateWindBend(const Foundation::Vec2& position, float time, float phaseOffset) {
-			// Primary wind wave (large-scale movement)
-			float primaryWave = std::sin((position.x / kWindWaveLength + time * kWindSpeed) + phaseOffset);
-
-			// Secondary turbulence (higher frequency, smaller amplitude)
-			float turbulence =
-				std::sin((position.x / (kWindWaveLength * 0.3F) + time * kWindSpeed * 2.5F) * 1.7F + phaseOffset * 2.0F) * kWindTurbulence;
-
-			// Y-axis variation (wind gusts moving across field)
-			float gustVariation = std::sin((position.y / (kWindWaveLength * 0.5F) + time * kWindSpeed * 0.5F)) * 0.3F;
-
-			return (primaryWave + turbulence + gustVariation) * kWindStrength;
-		}
-
-		/// Apply rotation and translation to vertices
-		void transformVertices(std::vector<Foundation::Vec2>& vertices, const Foundation::Vec2& position, float rotation) {
-			float cosR = std::cos(rotation);
-			float sinR = std::sin(rotation);
-
-			for (auto& v : vertices) {
-				float rx = v.x * cosR - v.y * sinR;
-				float ry = v.x * sinR + v.y * cosR;
-				v.x = rx + position.x;
-				v.y = ry + position.y;
+			renderer::Tessellator tessellator;
+			if (!tessellator.Tessellate(path, templateMesh)) {
+				LOG_ERROR(UI, "Failed to tessellate grass blade!");
+				return false;
 			}
+
+			LOG_INFO(
+				UI,
+				"Loaded grass blade: %zu path vertices -> %zu mesh vertices, %zu indices",
+				path.vertices.size(),
+				templateMesh.vertices.size(),
+				templateMesh.indices.size()
+			);
+
+			return true;
 		}
 
-		/// Generate blade parameters (called once on scene enter)
-		void generateBladeParams(size_t count) {
+		/// Generate all blade geometry at once (called once on scene enter)
+		void generateAllBladeGeometry(size_t count) {
 			std::mt19937 gen(42);
 
-			// Clump center positions - distribute evenly across the ENTIRE window
+			// Clump center positions
 			size_t								  numClumps = count / kBladesPerClump;
-			std::uniform_real_distribution<float> xPosDist(0.0F, m_windowWidth);
-			std::uniform_real_distribution<float> yPosDist(0.0F, m_windowHeight);
+			std::uniform_real_distribution<float> xPosDist(0.0F, windowWidth);
+			std::uniform_real_distribution<float> yPosDist(0.0F, windowHeight);
 
-			// Per-blade variation within clump
+			// Per-blade variation
 			std::uniform_real_distribution<float> clumpOffsetDist(-kClumpRadius, kClumpRadius);
-			std::uniform_real_distribution<float> rotationDist(-0.2F, 0.2F);
-			std::uniform_real_distribution<float> scaleDist(0.6F, 1.4F);
-			std::uniform_real_distribution<float> heightMultDist(0.7F, 1.3F);
-			std::uniform_real_distribution<float> widthMultDist(0.8F, 1.2F);
-			std::uniform_real_distribution<float> bendDist(-0.3F, 0.3F); // Reduced base bend (wind adds more)
+			std::uniform_real_distribution<float> rotationDist(-0.3F, 0.3F);
+			std::uniform_real_distribution<float> scaleDist(0.8F, 1.5F);
 			std::uniform_real_distribution<float> colorVariation(-0.08F, 0.08F);
-			std::uniform_real_distribution<float> phaseDist(0.0F, 6.28318F); // Random phase offset per blade
 
-			m_bladeParams.reserve(count);
+			size_t vertsPerBlade = templateMesh.vertices.size();
+
+			// Start with one batch
+			batches.emplace_back();
 
 			for (size_t clump = 0; clump < numClumps; ++clump) {
 				Foundation::Vec2 clumpCenter(xPosDist(gen), yPosDist(gen));
 
 				for (size_t blade = 0; blade < kBladesPerClump; ++blade) {
-					BladeParams params;
-					params.position = Foundation::Vec2(clumpCenter.x + clumpOffsetDist(gen), clumpCenter.y + clumpOffsetDist(gen));
-					params.rotation = rotationDist(gen);
-					params.scale = scaleDist(gen);
-					params.heightMult = heightMultDist(gen);
-					params.widthMult = widthMultDist(gen);
-					params.baseBendAmount = bendDist(gen);
-					params.phaseOffset = phaseDist(gen);
+					// Check if we need a new batch before adding this blade
+					if (batches.back().vertices.size() + vertsPerBlade > kMaxVerticesPerBatch) {
+						batches.emplace_back();
+					}
 
-					float greenVar = colorVariation(gen);
-					params.color = Foundation::Color(0.15F + greenVar, 0.35F + greenVar * 2.0F, 0.1F + greenVar * 0.5F, 1.0F);
+					// Blade parameters
+					Foundation::Vec2 position(clumpCenter.x + clumpOffsetDist(gen), clumpCenter.y + clumpOffsetDist(gen));
+					float			 rotation = rotationDist(gen);
+					float			 scale = scaleDist(gen);
 
-					m_bladeParams.push_back(params);
+					float			  greenVar = colorVariation(gen);
+					Foundation::Color color(0.15F + greenVar, 0.35F + greenVar * 2.0F, 0.1F + greenVar * 0.5F, 1.0F);
+
+					// Add transformed blade to current batch
+					addTransformedBlade(batches.back(), position, rotation, scale, color);
 				}
 			}
 		}
 
-		/// Regenerate all geometry with current wind animation (called every frame)
-		void regenerateAnimatedGeometry() {
-			// Skip if SVG wasn't loaded
-			if (svgBladeVertices.empty()) {
-				return;
+		/// Add a single transformed blade instance to a batch
+		void addTransformedBlade(
+			GeometryBatch&			 batch,
+			const Foundation::Vec2&	 position,
+			float					 rotation,
+			float					 scale,
+			const Foundation::Color& color
+		) {
+			float cosR = std::cos(rotation);
+			float sinR = std::sin(rotation);
+
+			// Record base index for this blade's vertices (relative to this batch)
+			auto baseIndex = static_cast<uint16_t>(batch.vertices.size());
+
+			// Transform and add each vertex from template
+			for (const auto& v : templateMesh.vertices) {
+				// Scale
+				float sx = v.x * scale;
+				float sy = v.y * scale;
+
+				// Rotate
+				float rx = sx * cosR - sy * sinR;
+				float ry = sx * sinR + sy * cosR;
+
+				// Translate
+				batch.vertices.push_back(Foundation::Vec2(rx + position.x, ry + position.y));
+				batch.colors.push_back(color);
 			}
 
-			// Clear previous frame's geometry
-			m_combinedVertices.clear();
-			m_combinedColors.clear();
-			m_combinedIndices.clear();
-
-			// Pre-allocate (reuse capacity from previous frames)
-			m_combinedVertices.reserve(m_bladeParams.size() * svgBladeVertices.size());
-			m_combinedColors.reserve(m_bladeParams.size() * svgBladeVertices.size());
-			m_combinedIndices.reserve(m_bladeParams.size() * 9);
-
-			renderer::Tessellator tessellator;
-			size_t				  failedBlades = 0;
-
-			for (const auto& params : m_bladeParams) {
-				// Calculate animated bend amount (base + wind)
-				float windBend = calculateWindBend(params.position, m_time, params.phaseOffset);
-				float totalBend = params.baseBendAmount + windBend;
-
-				// Copy SVG template vertices and apply transformations
-				std::vector<Foundation::Vec2> vertices = svgBladeVertices;
-
-				// Apply scale, width/height variation, and wind bend
-				float scaleX = params.scale * params.widthMult;
-				float scaleY = params.scale * params.heightMult;
-				float bendOffset = totalBend * 15.0F * params.scale;
-
-				for (auto& v : vertices) {
-					// Scale the vertex
-					v.x *= scaleX;
-					v.y *= scaleY;
-
-					// Apply wind bend (more bend at the top, proportional to Y distance from base)
-					// SVG has Y=0 at base, negative Y toward tip
-					float bendFactor = -v.y / (kBladeHeight * scaleY); // 0 at base, 1 at tip
-					v.x += bendOffset * bendFactor;
-				}
-
-				// Apply rotation and translation
-				transformVertices(vertices, params.position, params.rotation);
-
-				// Tessellate
-				renderer::VectorPath path;
-				path.vertices = std::move(vertices);
-				path.isClosed = true;
-
-				renderer::TessellatedMesh mesh;
-				bool					  success = tessellator.Tessellate(path, mesh);
-
-				if (!success) {
-					failedBlades++;
-					continue;
-				}
-
-				// Append to combined buffers with index offset
-				uint16_t baseIndex = static_cast<uint16_t>(m_combinedVertices.size());
-
-				for (const auto& v : mesh.vertices) {
-					m_combinedVertices.push_back(v);
-					m_combinedColors.push_back(params.color);
-				}
-
-				for (const auto& idx : mesh.indices) {
-					m_combinedIndices.push_back(baseIndex + idx);
-				}
+			// Add indices (offset by base index within this batch)
+			for (const auto& idx : templateMesh.indices) {
+				batch.indices.push_back(baseIndex + idx);
 			}
 		}
 
-		// Blade parameters (generated once, used for per-frame regeneration)
-		std::vector<BladeParams> m_bladeParams;
-
-		// SVG-loaded blade template vertices (loaded once from grass_blade.svg)
-		std::vector<Foundation::Vec2> svgBladeVertices;
+		// Template mesh (tessellated once from SVG)
+		renderer::TessellatedMesh templateMesh;
 
 		// Window dimensions
-		float m_windowWidth = 0.0F;
-		float m_windowHeight = 0.0F;
+		float windowWidth = 0.0F;
+		float windowHeight = 0.0F;
 
-		// Animation state
-		float m_time = 0.0F;
-
-		// Combined geometry buffers (regenerated every frame)
-		std::vector<Foundation::Vec2>  m_combinedVertices;
-		std::vector<Foundation::Color> m_combinedColors;
-		std::vector<uint16_t>		   m_combinedIndices;
-
-		// Performance tracking
-		float m_fps = 0.0F;
-		int	  m_frameCount = 0;
-		float m_frameDeltaAccumulator = 0.0F;
-		float m_lastTessTimeMs = 0.0F;
-		float m_avgTessTimeMs = 0.0F;
-		float m_tessTimeSumMs = 0.0F;
-
-		// Frame time tracking
-		float m_minFrameTimeMs = 1000.0F;
-		float m_maxFrameTimeMs = 0.0F;
-		float m_avgFrameTimeMs = 0.0F;
-		float m_frameTimeSumMs = 0.0F;
-		int	  m_frameTimeSamples = 0;
+		// Geometry batches (each batch stays under 65535 vertices for uint16_t indices)
+		std::vector<GeometryBatch> batches;
 	};
 
 	// Register scene with SceneManager
