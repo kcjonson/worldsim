@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Tree Asset Definitions
+     Flora assets for trees using Lua-based procedural generation.
+-->
+<AssetDefinitions>
+  <AssetDef>
+    <defName>Flora_TreeDeciduous</defName>
+    <label>Deciduous Tree</label>
+    <assetType>procedural</assetType>
+
+    <generator>
+      <!-- Lua script path (relative to project root) -->
+      <scriptPath>assets/generators/trees/deciduous.lua</scriptPath>
+      <params>
+        <!-- Trunk dimensions -->
+        <trunkHeight>40</trunkHeight>
+        <trunkWidth>8</trunkWidth>
+        <!-- Canopy size -->
+        <canopyRadius>25</canopyRadius>
+        <!-- Number of visible branches -->
+        <branchCount>4</branchCount>
+      </params>
+    </generator>
+
+    <rendering>
+      <!-- Trees are complex assets (individual tessellation) -->
+      <complexity>complex</complexity>
+      <!-- Batched rendering for multiple variants -->
+      <tier>batched</tier>
+    </rendering>
+
+    <!-- No animation for now (trees sway is future work) -->
+
+    <!-- Per-biome placement configuration -->
+    <placement>
+      <!-- Forest: Common, spaced out -->
+      <biome name="Forest">
+        <spawnChance>0.5</spawnChance>
+        <distribution>spaced</distribution>
+        <spacing>
+          <minDistance>3.0</minDistance>
+        </spacing>
+      </biome>
+
+      <!-- Grassland: Occasional, well-spaced -->
+      <biome name="Grassland">
+        <spawnChance>0.1</spawnChance>
+        <distribution>spaced</distribution>
+        <spacing>
+          <minDistance>8.0</minDistance>
+        </spacing>
+      </biome>
+    </placement>
+
+    <!-- Pre-generate multiple variants for variety -->
+    <variantCount>20</variantCount>
+  </AssetDef>
+
+  <AssetDef>
+    <defName>Flora_TreeOak</defName>
+    <label>Oak Tree</label>
+    <assetType>procedural</assetType>
+
+    <generator>
+      <scriptPath>assets/generators/trees/deciduous.lua</scriptPath>
+      <params>
+        <!-- Larger oak trees -->
+        <trunkHeight>55</trunkHeight>
+        <trunkWidth>12</trunkWidth>
+        <canopyRadius>35</canopyRadius>
+        <branchCount>6</branchCount>
+      </params>
+    </generator>
+
+    <rendering>
+      <complexity>complex</complexity>
+      <tier>batched</tier>
+    </rendering>
+
+    <placement>
+      <biome name="Forest">
+        <spawnChance>0.3</spawnChance>
+        <distribution>spaced</distribution>
+        <spacing>
+          <minDistance>5.0</minDistance>
+        </spacing>
+      </biome>
+    </placement>
+
+    <variantCount>15</variantCount>
+  </AssetDef>
+</AssetDefinitions>

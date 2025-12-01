@@ -2,6 +2,7 @@
 // Handles XML parsing with pugixml and asset generation.
 
 #include "assets/AssetRegistry.h"
+#include "assets/lua/LuaGenerator.h"
 
 #include <utils/Log.h>
 #include <vector/Tessellator.h>
@@ -9,6 +10,7 @@
 #include <pugixml.hpp>
 
 #include <cstdlib>
+#include <filesystem>
 #include <sstream>
 
 namespace engine::assets {
@@ -294,6 +296,7 @@ bool AssetRegistry::loadDefinitions(const std::string& xmlPath) {
 		pugi::xml_node genNode = defNode.child("generator");
 		if (genNode) {
 			def.generatorName = genNode.child_value("name");
+			def.scriptPath = genNode.child_value("scriptPath");
 
 			// Parse generator parameters
 			pugi::xml_node paramsNode = genNode.child("params");
@@ -412,6 +415,52 @@ bool AssetRegistry::loadDefinitions(const std::string& xmlPath) {
 	return loadedCount > 0;
 }
 
+size_t AssetRegistry::loadDefinitionsFromFolder(const std::string& folderPath) {
+	namespace fs = std::filesystem;
+
+	if (!fs::exists(folderPath)) {
+		LOG_ERROR(Engine, "Asset definitions folder not found: %s", folderPath.c_str());
+		return 0;
+	}
+
+	if (!fs::is_directory(folderPath)) {
+		LOG_ERROR(Engine, "Path is not a directory: %s", folderPath.c_str());
+		return 0;
+	}
+
+	size_t totalLoaded = 0;
+	size_t filesProcessed = 0;
+
+	// Recursively iterate through all files in the folder
+	try {
+		for (const auto& entry : fs::recursive_directory_iterator(folderPath)) {
+			if (!entry.is_regular_file()) {
+				continue;
+			}
+
+			// Only process .xml files
+			if (entry.path().extension() != ".xml") {
+				continue;
+			}
+
+			filesProcessed++;
+			size_t beforeCount = definitions.size();
+
+			if (loadDefinitions(entry.path().string())) {
+				size_t loaded = definitions.size() - beforeCount;
+				totalLoaded += loaded;
+				LOG_DEBUG(Engine, "Loaded %zu definitions from %s", loaded, entry.path().string().c_str());
+			}
+		}
+	} catch (const fs::filesystem_error& e) {
+		LOG_ERROR(Engine, "Filesystem error scanning '%s': %s", folderPath.c_str(), e.what());
+		return totalLoaded;
+	}
+
+	LOG_INFO(Engine, "Asset folder scan complete: %zu definitions from %zu XML files in %s", totalLoaded, filesProcessed, folderPath.c_str());
+	return totalLoaded;
+}
+
 const AssetDefinition* AssetRegistry::getDefinition(const std::string& defName) const {
 	auto it = definitions.find(defName);
 	if (it != definitions.end()) {
@@ -465,19 +514,30 @@ bool AssetRegistry::generateAsset(const std::string& defName, uint32_t seed, Gen
 		return false;
 	}
 
-	// Create generator
+	// Set up generation context
+	GenerationContext ctx;
+	ctx.seed = seed;
+	ctx.variantIndex = 0;
+	outAsset.clear();
+
+	// Check if this is a Lua script generator
+	if (def->isLuaGenerator()) {
+		try {
+			LuaGenerator luaGen(def->scriptPath);
+			return luaGen.generate(ctx, def->params, outAsset);
+		} catch (const std::exception& e) {
+			LOG_ERROR(Engine, "LuaGenerator error for '%s': %s", def->scriptPath.c_str(), e.what());
+			return false;
+		}
+	}
+
+	// Create C++ generator from registry
 	auto generator = GeneratorRegistry::Get().create(def->generatorName.c_str());
 	if (!generator) {
 		LOG_ERROR(Engine, "Generator not found: %s", def->generatorName.c_str());
 		return false;
 	}
 
-	// Generate
-	GenerationContext ctx;
-	ctx.seed = seed;
-	ctx.variantIndex = 0;
-
-	outAsset.clear();
 	return generator->generate(ctx, def->params, outAsset);
 }
 
