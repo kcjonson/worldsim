@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2025-12-01 (Asset System Architecture Epic Added)
+Last Updated: 2025-12-01 (Asset System - Tile Integration In Progress)
 
 ## Epic/Story/Task Template
 
@@ -407,66 +407,60 @@ Use this template for all work items:
 
 ---
 
-## Planned Epics
-
-### Asset System Architecture
+### 🔄 Asset System Architecture
 **Spec/Documentation:** `/docs/technical/asset-system/README.md`
 **Dependencies:** None
-**Status:** ready
+**Status:** in progress
 
-**Overview:** Data-driven asset system supporting simple (SVG) and procedural (Lua-generated) assets with modding support and pre-generation caching.
+**Phase 1: Core Infrastructure** ✅ COMPLETE
+- [x] 1.1 Asset Registry
+  - [x] Create `libs/engine/assets/` library
+  - [x] Implement XML definition parser (pugixml)
+  - [x] Create `AssetRegistry` class with `loadDefinitions()`, `getDefinition()`, `getTemplate()`
+  - [x] Create `GeneratorRegistry` for procedural generators
+  - [x] Template caching system
+- [x] 1.2 Asset Loading Infrastructure
+  - [x] SVG loading via nanosvg (SVGLoader)
+  - [x] Bezier curve flattening (flattenCubicBezier, flattenQuadraticBezier)
+  - [x] Tessellator (ear-clipping algorithm)
+  - [x] GrassBladeGenerator (procedural Bezier blade generation)
+  - [x] Asset definition XML format (grass.xml)
 
-**Phase 1: Core Infrastructure**
-- [ ] 1.1 Asset Registry
-  - [ ] Create `libs/engine/assets/` library
-  - [ ] Implement XML definition parser (RapidXML or pugixml)
-  - [ ] Create `AssetRegistry` class with `LoadDefinitions()`, `GetAsset()`
-  - [ ] Implement definition inheritance (`ParentDef` support)
-  - [ ] Add mod loading order support
-- [ ] 1.2 Simple Asset Loader
-  - [ ] Implement SVG loading via existing nanosvg
-  - [ ] Create `SimpleAssetLoader` that tessellates SVG → mesh
-  - [ ] Store tessellated meshes in registry
-  - [ ] Add color/scale/rotation variation support
-- [ ] 1.3 Integration with Renderer
-  - [ ] Connect `AssetRegistry` to `BatchRenderer`
-  - [ ] Add `renderAsset(defName, position, seed)` API
-  - [ ] Demo: Simple flower field using asset definitions
+**Phase 1.5: Tile Integration** (CURRENT WORK)
+- [ ] 1.5.1 Wire Up Asset System
+  - [ ] Register GrassBlade generator at startup
+  - [ ] Load asset definitions at startup
+- [ ] 1.5.2 Tile System Foundation
+  - [ ] Create Tile struct (position, biome, dimensions)
+  - [ ] Create Biome enum (Grassland, Forest, etc.)
+  - [ ] Add Placement parsing to AssetRegistry (spawn chance, clumping)
+- [ ] 1.5.3 GrassScene Tile Integration
+  - [ ] Convert GrassScene to use tile grid
+  - [ ] Load grass via AssetRegistry::getTemplate()
+  - [ ] Spawn grass per-tile based on XML placement rules
+  - [ ] Test: verify 10K grass blades render via asset system
 
-**Phase 2: Lua Scripting**
+**Phase 2: Lua Scripting** (FUTURE)
 - [ ] 2.1 Lua Integration
   - [ ] Add sol2 or LuaJIT to vcpkg.json
   - [ ] Create `LuaEngine` class with sandbox restrictions
   - [ ] Expose `VectorAsset`, `VectorPath` API to Lua
-  - [ ] Expose `Color`, `Vec2`, `Math`, `Ease` utilities
 - [ ] 2.2 Procedural Generator
-  - [ ] Create `ProceduralAssetGenerator` class
   - [ ] Implement variant pre-generation at load time
-  - [ ] Add seeded RNG for deterministic generation
   - [ ] Demo: Procedural bush with Lua script
 
-**Phase 3: Variant Caching**
-- [ ] 3.1 Binary Cache Format
-  - [ ] Design cache file format (header + tessellated meshes)
-  - [ ] Implement save/load for variant cache
-  - [ ] Add cache invalidation (script hash comparison)
-- [ ] 3.2 Load-Time Generation
-  - [ ] Generate all variants during loading screen
-  - [ ] Progress reporting for loading UI
-  - [ ] Parallel generation where possible
+**Phase 3: Variant Caching** (FUTURE)
+- [ ] Binary cache format for pre-generated variants
+- [ ] Cache invalidation (script/definition hash comparison)
 
-**Phase 4: Full Tree Demo**
-- [ ] 4.1 Deciduous Tree Generator
-  - [ ] Implement Weber & Penn-style branching in Lua
-  - [ ] Leaf placement from SVG template
-  - [ ] Generate 200 variants at load time
-- [ ] 4.2 Mixed Flora Scene
-  - [ ] Create scene with procedural trees + simple flowers
-  - [ ] Verify GPU instancing for simple assets
-  - [ ] Verify variant selection for procedural assets
-  - [ ] Performance target: 60 FPS with 1000 trees + 10,000 flowers
+**Phase 4: Full Tree Demo** (FUTURE)
+- [ ] Deciduous tree generator (Weber & Penn branching)
+- [ ] Mixed flora scene (trees + flowers + grass)
+- [ ] Performance target: 60 FPS with 1000 trees + 10,000 flowers
 
 ---
+
+## Planned Epics
 
 ### Unit Testing Infrastructure
 **Spec/Documentation:** `/docs/technical/unit-testing-strategy.md`, `/docs/technical/testing-guidelines.md` (TBD)
