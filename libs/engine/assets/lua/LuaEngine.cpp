@@ -48,13 +48,15 @@ namespace engine::assets {
 		using namespace Foundation;
 
 		// Register Vec2 type
+		// NOTE: Using sol::property with lambdas instead of direct member pointers
+		// for cross-platform compatibility (clang on Linux has issues with direct binding)
 		m_lua->new_usertype<Vec2>(
 			"Vec2",
 			sol::constructors<Vec2(), Vec2(float, float)>(),
 			"x",
-			&Vec2::x,
+			sol::property([](Vec2& v) { return v.x; }, [](Vec2& v, float val) { v.x = val; }),
 			"y",
-			&Vec2::y,
+			sol::property([](Vec2& v) { return v.y; }, [](Vec2& v, float val) { v.y = val; }),
 			// Arithmetic operations
 			sol::meta_function::addition,
 			[](const Vec2& a, const Vec2& b) { return Vec2{a.x + b.x, a.y + b.y}; },
@@ -84,13 +86,13 @@ namespace engine::assets {
 			"Color",
 			sol::constructors<Color(), Color(float, float, float, float)>(),
 			"r",
-			&Color::r,
+			sol::property([](Color& c) { return c.r; }, [](Color& c, float val) { c.r = val; }),
 			"g",
-			&Color::g,
+			sol::property([](Color& c) { return c.g; }, [](Color& c, float val) { c.g = val; }),
 			"b",
-			&Color::b,
+			sol::property([](Color& c) { return c.b; }, [](Color& c, float val) { c.b = val; }),
 			"a",
-			&Color::a,
+			sol::property([](Color& c) { return c.a; }, [](Color& c, float val) { c.a = val; }),
 			// Factory functions
 			"rgb",
 			[](float r, float g, float b) { return Color(r, g, b, 1.0F); },
