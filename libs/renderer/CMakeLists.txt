@@ -1,9 +1,12 @@
+find_package(NanoSVG CONFIG REQUIRED)
+
 add_library(renderer
     primitives/Primitives.cpp
     primitives/BatchRenderer.cpp
     metrics/MetricsCollector.cpp
     vector/Tessellator.cpp
     vector/Bezier.cpp
+    vector/SVGLoader.cpp
     shader/Shader.cpp
     shader/ShaderLoader.cpp
     CoordinateSystem/CoordinateSystem.cpp
@@ -25,6 +28,8 @@ target_link_libraries(renderer
         GLEW::GLEW
         glfw
         glm::glm
+    PRIVATE
+        NanoSVG::nanosvg
 )
 
 # Copy shaders to build directory
