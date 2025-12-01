@@ -1,95 +1,112 @@
-// Grass Scene - SVG Asset Demo
-// Demonstrates loading grass blade shapes from SVG and rendering 10,000 static blades.
-// Uses SVGLoader to load the blade shape, tessellates once, then transforms mesh vertices.
-//
-// Note: drawTriangles uses uint16_t indices (max 65535 vertices per draw call).
-// With 10,000 blades × 7 vertices = 70,000 vertices, we split into batches.
+// Grass Scene - Tile-Based Asset Demo
+// Demonstrates the asset system with tile-based grass spawning.
+// Uses TileGrid, AssetSpawner, and AssetBatcher for clean separation.
 
+#include <assets/AssetBatcher.h>
+#include <assets/AssetRegistry.h>
+#include <assets/AssetSpawner.h>
 #include <graphics/Color.h>
 #include <primitives/Primitives.h>
 #include <scene/Scene.h>
 #include <scene/SceneManager.h>
 #include <utils/Log.h>
-#include <utils/ResourcePath.h>
-#include <vector/SVGLoader.h>
-#include <vector/Tessellator.h>
-#include <vector/Types.h>
+#include <world/TileGrid.h>
 
 #include <GL/glew.h>
-#include <cmath>
-#include <random>
-#include <vector>
 
 namespace {
 
-	// Grass blade configuration
-	constexpr size_t kDefaultBladeCount = 10000; // Target: 10,000 grass blades
-	constexpr size_t kBladesPerClump = 5;		 // Blades grouped in clumps
-	constexpr float	 kClumpRadius = 6.0F;		 // How spread out blades are within a clump
+	// Grid configuration
+	constexpr int32_t kTileGridWidth = 10;
+	constexpr int32_t kTileGridHeight = 10;
+	constexpr float	  kTileSize = 64.0F;
 
-	// Max vertices per batch (uint16_t indices can address 0-65535)
-	constexpr size_t kMaxVerticesPerBatch = 60000; // Leave headroom below 65535
-
-	// A single batch of geometry that can be rendered in one draw call
-	struct GeometryBatch {
-		std::vector<Foundation::Vec2>  vertices;
-		std::vector<Foundation::Color> colors;
-		std::vector<uint16_t>		   indices;
-	};
+	// Asset to spawn
+	const char* kGrassAssetName = "Flora_GrassBlade";
 
 	class GrassScene : public engine::IScene {
 	  public:
 		void onEnter() override {
-			LOG_INFO(UI, "Grass Scene - SVG Asset Demo (Static)");
-
-			// Load grass blade from SVG asset and tessellate it once
-			if (!loadAndTessellateGrassBlade()) {
-				LOG_ERROR(UI, "Failed to load grass blade - scene will be empty");
-				return;
-			}
+			LOG_INFO(UI, "Grass Scene - Tile-Based Asset Demo");
 
 			// Get logical window dimensions
-			windowWidth = Renderer::Primitives::PercentWidth(100.0F);
-			windowHeight = Renderer::Primitives::PercentHeight(100.0F);
+			float windowWidth = Renderer::Primitives::PercentWidth(100.0F);
+			float windowHeight = Renderer::Primitives::PercentHeight(100.0F);
 
 			if (windowWidth <= 0.0F || windowHeight <= 0.0F) {
 				windowWidth = 672.0F;
 				windowHeight = 420.0F;
 			}
 
-			// Generate all blade instances (geometry is created once, not per-frame)
-			generateAllBladeGeometry(kDefaultBladeCount);
+			// Center the grid in the window
+			float			 gridWidth = static_cast<float>(kTileGridWidth) * kTileSize;
+			float			 gridHeight = static_cast<float>(kTileGridHeight) * kTileSize;
+			Foundation::Vec2 gridOrigin((windowWidth - gridWidth) / 2.0F, (windowHeight - gridHeight) / 2.0F);
 
-			size_t totalVerts = 0;
-			size_t totalIndices = 0;
-			for (const auto& batch : batches) {
-				totalVerts += batch.vertices.size();
-				totalIndices += batch.indices.size();
+			// Create tile grid
+			engine::world::TileGridConfig gridConfig{
+				.width = kTileGridWidth, .height = kTileGridHeight, .tileSize = kTileSize, .origin = gridOrigin
+			};
+			m_grid = engine::world::TileGrid(gridConfig);
+			m_grid.setAllBiomes(engine::world::Biome::Grassland);
+
+			LOG_INFO(UI, "Created %dx%d tile grid (%zu tiles)", kTileGridWidth, kTileGridHeight, m_grid.tileCount());
+
+			// Get asset definition and template mesh
+			m_grassDef = engine::assets::AssetRegistry::Get().getDefinition(kGrassAssetName);
+			if (m_grassDef == nullptr) {
+				LOG_ERROR(UI, "Asset definition not found: %s", kGrassAssetName);
+				return;
 			}
+
+			m_templateMesh = engine::assets::AssetRegistry::Get().getTemplate(kGrassAssetName);
+			if (m_templateMesh == nullptr) {
+				LOG_ERROR(UI, "Failed to get template mesh for: %s", kGrassAssetName);
+				return;
+			}
+
+			LOG_INFO(
+				UI, "Loaded grass template: %zu vertices, %zu indices", m_templateMesh->vertices.size(), m_templateMesh->indices.size()
+			);
+
+			// Spawn instances using placement rules
+			engine::assets::SpawnConfig spawnConfig{.seed = 42, .colorVariation = 0.08F};
+			auto						instances = engine::assets::AssetSpawner::spawn(m_grid, *m_grassDef, spawnConfig);
+
+			// Batch geometry for rendering
+			m_batcher.addInstances(*m_templateMesh, instances);
+
 			LOG_INFO(
 				UI,
-				"Generated %zu blade instances in %zu batches: %zu vertices, %zu indices",
-				kDefaultBladeCount,
-				batches.size(),
-				totalVerts,
-				totalIndices
+				"Generated %zu grass instances in %zu batches: %zu vertices, %zu indices",
+				m_batcher.instanceCount(),
+				m_batcher.batches().size(),
+				m_batcher.totalVertices(),
+				m_batcher.totalIndices()
 			);
 		}
 
 		void handleInput(float /*dt*/) override {}
 
-		void update(float /*dt*/) override {
-			// Static scene - no animation
-		}
+		void update(float /*dt*/) override {}
 
 		void render() override {
-			// Clear background - grass tile base color (light green)
+			// Clear background - grass tile base color
 			glClearColor(0.25F, 0.45F, 0.2F, 1.0F);
 			glClear(GL_COLOR_BUFFER_BIT);
 
-			// Draw grass blades in batches (each batch stays under 65535 vertices)
-			for (const auto& batch : batches) {
-				if (!batch.vertices.empty()) {
+			// Draw tile grid (debug visualization)
+			for (const auto& tile : m_grid.tiles()) {
+				float shade = 0.02F * static_cast<float>((tile.gridX + tile.gridY) % 3);
+				Renderer::Primitives::drawRect(
+					{.bounds = Foundation::Rect(tile.worldPos.x, tile.worldPos.y, tile.width, tile.height),
+					 .style = {.fill = Foundation::Color(0.2F + shade, 0.4F + shade, 0.15F + shade, 1.0F)}}
+				);
+			}
+
+			// Draw grass batches
+			for (const auto& batch : m_batcher.batches()) {
+				if (!batch.empty()) {
 					Renderer::Primitives::drawTriangles(
 						{.vertices = batch.vertices.data(),
 						 .indices = batch.indices.data(),
@@ -105,21 +122,16 @@ namespace {
 		void onExit() override {}
 
 		std::string exportState() override {
-			size_t totalVerts = 0;
-			size_t totalIndices = 0;
-			for (const auto& batch : batches) {
-				totalVerts += batch.vertices.size();
-				totalIndices += batch.indices.size();
-			}
 			char buf[256];
 			snprintf(
 				buf,
 				sizeof(buf),
-				R"({"blades": %zu, "batches": %zu, "vertices": %zu, "indices": %zu})",
-				kDefaultBladeCount,
-				batches.size(),
-				totalVerts,
-				totalIndices
+				R"({"tiles": %zu, "instances": %zu, "batches": %zu, "vertices": %zu, "indices": %zu})",
+				m_grid.tileCount(),
+				m_batcher.instanceCount(),
+				m_batcher.batches().size(),
+				m_batcher.totalVertices(),
+				m_batcher.totalIndices()
 			);
 			return {buf};
 		}
@@ -127,142 +139,10 @@ namespace {
 		const char* getName() const override { return "grass"; }
 
 	  private:
-		/// Load grass blade from SVG and tessellate it once
-		bool loadAndTessellateGrassBlade() {
-			const std::string kRelativePath = "assets/svg/grass_blade.svg";
-			const float		  kCurveTolerance = 0.5F;
-
-			// Use findResource to handle different working directories (IDE vs terminal)
-			std::string svgPath = Foundation::findResourceString(kRelativePath);
-			if (svgPath.empty()) {
-				LOG_ERROR(UI, "Could not find grass blade SVG: %s", kRelativePath.c_str());
-				return false;
-			}
-
-			LOG_INFO(UI, "Loading grass blade SVG: %s", svgPath.c_str());
-
-			// Load the SVG file
-			std::vector<renderer::LoadedSVGShape> loadedShapes;
-			if (!renderer::loadSVG(svgPath, kCurveTolerance, loadedShapes)) {
-				LOG_ERROR(UI, "Failed to load grass blade SVG: %s", svgPath.c_str());
-				return false;
-			}
-
-			if (loadedShapes.empty() || loadedShapes[0].paths.empty()) {
-				LOG_ERROR(UI, "Grass blade SVG has no paths!");
-				return false;
-			}
-
-			// Tessellate the SVG path to get our template mesh
-			renderer::VectorPath path;
-			path.vertices = loadedShapes[0].paths[0].vertices;
-			path.isClosed = loadedShapes[0].paths[0].isClosed;
-
-			renderer::Tessellator tessellator;
-			if (!tessellator.Tessellate(path, templateMesh)) {
-				LOG_ERROR(UI, "Failed to tessellate grass blade!");
-				return false;
-			}
-
-			LOG_INFO(
-				UI,
-				"Loaded grass blade: %zu path vertices -> %zu mesh vertices, %zu indices",
-				path.vertices.size(),
-				templateMesh.vertices.size(),
-				templateMesh.indices.size()
-			);
-
-			return true;
-		}
-
-		/// Generate all blade geometry at once (called once on scene enter)
-		void generateAllBladeGeometry(size_t count) {
-			std::mt19937 gen(42);
-
-			// Clump center positions
-			size_t								  numClumps = count / kBladesPerClump;
-			std::uniform_real_distribution<float> xPosDist(0.0F, windowWidth);
-			std::uniform_real_distribution<float> yPosDist(0.0F, windowHeight);
-
-			// Per-blade variation
-			std::uniform_real_distribution<float> clumpOffsetDist(-kClumpRadius, kClumpRadius);
-			std::uniform_real_distribution<float> rotationDist(-0.3F, 0.3F);
-			std::uniform_real_distribution<float> scaleDist(0.8F, 1.5F);
-			std::uniform_real_distribution<float> colorVariation(-0.08F, 0.08F);
-
-			size_t vertsPerBlade = templateMesh.vertices.size();
-
-			for (size_t clump = 0; clump < numClumps; ++clump) {
-				// Ensure we have at least one batch (defensive check for first iteration)
-				if (batches.empty()) {
-					batches.emplace_back();
-				}
-				Foundation::Vec2 clumpCenter(xPosDist(gen), yPosDist(gen));
-
-				for (size_t blade = 0; blade < kBladesPerClump; ++blade) {
-					// Check if we need a new batch before adding this blade
-					if (batches.back().vertices.size() + vertsPerBlade > kMaxVerticesPerBatch) {
-						batches.emplace_back();
-					}
-
-					// Blade parameters
-					Foundation::Vec2 position(clumpCenter.x + clumpOffsetDist(gen), clumpCenter.y + clumpOffsetDist(gen));
-					float			 rotation = rotationDist(gen);
-					float			 scale = scaleDist(gen);
-
-					float			  greenVar = colorVariation(gen);
-					Foundation::Color color(0.15F + greenVar, 0.35F + greenVar * 2.0F, 0.1F + greenVar * 0.5F, 1.0F);
-
-					// Add transformed blade to current batch
-					addTransformedBlade(batches.back(), position, rotation, scale, color);
-				}
-			}
-		}
-
-		/// Add a single transformed blade instance to a batch
-		void addTransformedBlade(
-			GeometryBatch&			 batch,
-			const Foundation::Vec2&	 position,
-			float					 rotation,
-			float					 scale,
-			const Foundation::Color& color
-		) {
-			float cosR = std::cos(rotation);
-			float sinR = std::sin(rotation);
-
-			// Record base index for this blade's vertices (relative to this batch)
-			auto baseIndex = static_cast<uint16_t>(batch.vertices.size());
-
-			// Transform and add each vertex from template
-			for (const auto& v : templateMesh.vertices) {
-				// Scale
-				float sx = v.x * scale;
-				float sy = v.y * scale;
-
-				// Rotate
-				float rx = sx * cosR - sy * sinR;
-				float ry = sx * sinR + sy * cosR;
-
-				// Translate
-				batch.vertices.push_back(Foundation::Vec2(rx + position.x, ry + position.y));
-				batch.colors.push_back(color);
-			}
-
-			// Add indices (offset by base index within this batch)
-			for (const auto& idx : templateMesh.indices) {
-				batch.indices.push_back(baseIndex + idx);
-			}
-		}
-
-		// Template mesh (tessellated once from SVG)
-		renderer::TessellatedMesh templateMesh;
-
-		// Window dimensions
-		float windowWidth = 0.0F;
-		float windowHeight = 0.0F;
-
-		// Geometry batches (each batch stays under 65535 vertices for uint16_t indices)
-		std::vector<GeometryBatch> batches;
+		engine::world::TileGrid				   m_grid;
+		engine::assets::AssetBatcher		   m_batcher;
+		const engine::assets::AssetDefinition* m_grassDef = nullptr;
+		const renderer::TessellatedMesh*	   m_templateMesh = nullptr;
 	};
 
 	// Register scene with SceneManager

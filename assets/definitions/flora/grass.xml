@@ -28,6 +28,8 @@
       <complexity>simple</complexity>
       <!-- Instanced = single template + GPU instancing -->
       <tier>instanced</tier>
+      <!-- Number of mesh variants to pre-generate for visual variety -->
+      <variantCount>1</variantCount>
     </rendering>
 
     <animation>
@@ -38,5 +40,42 @@
       <!-- Animation speed range (cycles per second) -->
       <swayFrequency>0.5,1.0</swayFrequency>
     </animation>
+
+    <!-- Per-biome placement configuration -->
+    <!-- Each biome can have different spawn behavior -->
+    <placement>
+      <!-- Grassland: Dense, fairly uniform coverage -->
+      <biome name="Grassland">
+        <spawnChance>0.7</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>8,20</clumpSize>
+          <clumpRadius>0.5,1.5</clumpRadius>
+          <clumpSpacing>1,2</clumpSpacing>
+        </clumping>
+      </biome>
+
+      <!-- Forest: Sparse, small clumps in clearings -->
+      <biome name="Forest">
+        <spawnChance>0.2</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>3,8</clumpSize>
+          <clumpRadius>0.2,0.5</clumpRadius>
+          <clumpSpacing>3,6</clumpSpacing>
+        </clumping>
+      </biome>
+
+      <!-- Wetland: Moderate, taller grass in patches -->
+      <biome name="Wetland">
+        <spawnChance>0.4</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>5,12</clumpSize>
+          <clumpRadius>0.3,0.8</clumpRadius>
+          <clumpSpacing>2,4</clumpSpacing>
+        </clumping>
+      </biome>
+    </placement>
   </AssetDef>
 </AssetDefinitions>

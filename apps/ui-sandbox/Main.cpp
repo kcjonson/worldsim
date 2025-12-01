@@ -19,8 +19,11 @@
 #include "metrics/MetricsCollector.h"
 #include "primitives/Primitives.h"
 #include "utils/Log.h"
+#include "utils/ResourcePath.h"
 #include "utils/StringHash.h"
 #include <application/Application.h>
+#include <assets/AssetRegistry.h>
+#include <assets/generators/GrassBladeGenerator.h>
 #include <components/button/Button.h>
 #include <scene/SceneManager.h>
 #include <shapes/Shapes.h>
@@ -261,6 +264,20 @@ int main(int argc, char* argv[]) {
 		});
 
 		LOG_INFO(UI, "Font renderer initialized with unified uber shader");
+	}
+
+	// Initialize asset system
+	LOG_INFO(Engine, "Initializing asset system");
+	engine::assets::registerGrassBladeGenerator();
+	std::string grassDefPath = Foundation::findResourceString("assets/definitions/flora/grass.xml");
+	if (!grassDefPath.empty()) {
+		if (engine::assets::AssetRegistry::Get().loadDefinitions(grassDefPath)) {
+			LOG_INFO(Engine, "Loaded asset definitions from %s", grassDefPath.c_str());
+		} else {
+			LOG_WARNING(Engine, "Failed to load asset definitions from %s", grassDefPath.c_str());
+		}
+	} else {
+		LOG_WARNING(Engine, "Asset definitions file not found: assets/definitions/flora/grass.xml");
 	}
 
 	// Initialize metrics collection
