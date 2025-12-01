@@ -18,6 +18,15 @@ interface LogEntry {
   line?: number;
 }
 
+export interface SceneSession {
+  sceneName: string;
+  startTime: number;
+  endTime?: number;
+  samples: number;
+  fpsSum: number;
+  frameTimeSum: number;
+}
+
 export interface PersistedState {
   metrics: {
     history: MetricSample[];
@@ -27,6 +36,7 @@ export interface PersistedState {
     entries: LogEntry[];
     maxEntries: 500 | 1000 | 2000 | 5000;
   };
+  sceneSessions?: SceneSession[];
   preferences: {
     logLevelFilter: 'DEBUG' | 'INFO' | 'WARN' | 'ERROR';
     serverUrl: string;
@@ -137,6 +147,9 @@ export class LocalStorageService {
   private static trimState(state: PersistedState, factor: number = 0.5): PersistedState {
     const metricsToKeep = Math.floor(state.metrics.history.length * factor);
     const logsToKeep = Math.floor(state.logs.entries.length * factor);
+    const sessionsToKeep = state.sceneSessions
+      ? Math.floor(state.sceneSessions.length * factor)
+      : 0;
 
     return {
       ...state,
@@ -147,7 +160,8 @@ export class LocalStorageService {
       logs: {
         ...state.logs,
         entries: state.logs.entries.slice(-logsToKeep)
-      }
+      },
+      sceneSessions: state.sceneSessions?.slice(-sessionsToKeep)
     };
   }
 }

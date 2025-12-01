@@ -106,6 +106,10 @@ namespace Foundation { // NOLINT(readability-identifier-naming)
 		// Get target scene name (for SceneChange action)
 		std::string getTargetSceneName() const;
 
+		// Set/get current scene name (for metrics streaming to frontend)
+		void		setCurrentSceneName(const std::string& name);
+		std::string getCurrentSceneName() const;
+
 		// Shutdown synchronization (for graceful exit via HTTP)
 		// Called by main loop after all cleanup is complete
 		void signalShutdownComplete();
@@ -133,7 +137,8 @@ namespace Foundation { // NOLINT(readability-identifier-naming)
 		// Control action state (HTTP thread writes, main thread reads)
 		std::atomic<ControlAction> controlAction{ControlAction::None};
 		std::string				   targetSceneName;
-		mutable std::mutex		   sceneNameMutex; // Protects targetSceneName
+		std::string				   currentSceneName;
+		mutable std::mutex		   sceneNameMutex; // Protects targetSceneName and currentSceneName
 
 		// Shutdown synchronization (for blocking exit handler until cleanup done)
 		mutable std::mutex		shutdownMutex;

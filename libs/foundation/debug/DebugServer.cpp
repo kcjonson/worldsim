@@ -23,6 +23,40 @@
 
 namespace Foundation {
 
+	// Helper function to escape strings for JSON
+	static std::string escapeJsonString(const std::string& str) {
+		std::string escaped;
+		escaped.reserve(str.length());
+		for (char c : str) {
+			switch (c) {
+				case '"':
+					escaped += "\\\"";
+					break;
+				case '\\':
+					escaped += "\\\\";
+					break;
+				case '\b':
+					escaped += "\\b";
+					break;
+				case '\f':
+					escaped += "\\f";
+					break;
+				case '\n':
+					escaped += "\\n";
+					break;
+				case '\r':
+					escaped += "\\r";
+					break;
+				case '\t':
+					escaped += "\\t";
+					break;
+				default:
+					escaped += c;
+			}
+		}
+		return escaped;
+	}
+
 	// Helper functions for LogEntry
 	static const char* logLevelToString(LogLevel level) {
 		switch (level) {
@@ -279,6 +313,16 @@ namespace Foundation {
 		return targetSceneName;
 	}
 
+	void DebugServer::setCurrentSceneName(const std::string& name) {
+		std::lock_guard<std::mutex> lock(sceneNameMutex);
+		currentSceneName = name;
+	}
+
+	std::string DebugServer::getCurrentSceneName() const {
+		std::lock_guard<std::mutex> lock(sceneNameMutex);
+		return currentSceneName;
+	}
+
 	void DebugServer::waitForShutdownComplete() {
 		std::unique_lock<std::mutex> lock(shutdownMutex);
 		// Add timeout to prevent indefinite blocking if main loop exits abnormally
@@ -477,10 +521,16 @@ namespace Foundation {
 					// Send update if enough time has passed
 					if (elapsed >= updateInterval) {
 						PerformanceMetrics metrics = getMetricsSnapshot();
+						std::string		   sceneName = getCurrentSceneName();
+
+						// Get base metrics JSON and inject sceneName before closing brace
+						std::string metricsJson = metrics.toJSON();
+						metricsJson.pop_back(); // Remove trailing '}'
+						metricsJson += ",\"sceneName\":\"" + escapeJsonString(sceneName) + "\"}";
 
 						std::ostringstream event;
 						event << "event: metric\n";
-						event << "data: " << metrics.toJSON() << "\n\n";
+						event << "data: " << metricsJson << "\n\n";
 
 						std::string eventStr = event.str();
 						if (!sink.write(eventStr.c_str(), eventStr.size())) {

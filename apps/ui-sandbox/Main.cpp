@@ -401,8 +401,9 @@ int main(int argc, char* argv[]) {
 		// End frame timing
 		metrics.endFrame();
 
-		// Update debug server with latest metrics
+		// Update debug server with latest metrics and current scene
 		if (httpPort > 0) {
+			debugServer.setCurrentSceneName(engine::SceneManager::Get().getCurrentSceneName());
 			debugServer.updateMetrics(metrics.getCurrentMetrics());
 
 			// Check if screenshot was requested and capture if so

@@ -1,9 +1,10 @@
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { ServerConnection } from './services/ServerConnection';
-import { LocalStorageService, PersistedState } from './services/LocalStorageService';
+import { LocalStorageService, PersistedState, SceneSession } from './services/LocalStorageService';
 import { CircularBuffer } from './utils/CircularBuffer';
 import TimeSeriesChart from './components/TimeSeriesChart';
 import LogViewer from './components/LogViewer';
+import { ScenePerformanceLog } from './components/ScenePerformanceLog';
 import styles from './App.module.css';
 
 const serverUrl = 'http://localhost:8081'; // Or 8080, 8082 for other apps
@@ -26,7 +27,10 @@ interface MetricsData {
   drawCalls: number;
   vertexCount: number;
   triangleCount: number;
+  sceneName?: string;
 }
+
+type Tab = 'performance' | 'logs';
 
 function App() {
   const [metrics, setMetrics] = useState<MetricsData>({
@@ -41,6 +45,9 @@ function App() {
   });
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [connectionStatus, setConnectionStatus] = useState<'connecting' | 'connected' | 'error'>('connecting');
+  const [activeTab, setActiveTab] = useState<Tab>('performance');
+  const [isRecording, setIsRecording] = useState(true);
+  const [sceneSessions, setSceneSessions] = useState<SceneSession[]>([]);
 
   // Retention settings
   const [metricsRetention, setMetricsRetention] = useState<30 | 60 | 300 | 600>(60);
@@ -88,16 +95,21 @@ function App() {
       setMetricsHistory(metricsBufferRef.current?.getAll() || []);
 
       setLogs(persisted.logs.entries);
+
+      // Restore scene sessions
+      if (persisted.sceneSessions) {
+        setSceneSessions(persisted.sceneSessions);
+      }
     }
   }, []);
 
-  // Add new metrics to buffer
+  // Add new metrics to buffer (only when recording)
   useEffect(() => {
-    if (metrics.timestamp > 0 && metricsBufferRef.current) {
+    if (metrics.timestamp > 0 && metricsBufferRef.current && isRecording) {
       metricsBufferRef.current.push(metrics);
       setMetricsHistory(metricsBufferRef.current.getAll());
     }
-  }, [metrics]);
+  }, [metrics, isRecording]);
 
   // Save state to localStorage on unmount
   useEffect(() => {
@@ -113,6 +125,7 @@ function App() {
           entries: currentLogs.slice(-logsMaxEntries),
           maxEntries: logsMaxEntries
         },
+        sceneSessions,
         preferences: {
           logLevelFilter,
           serverUrl
@@ -127,7 +140,7 @@ function App() {
       handleUnload();
       window.removeEventListener('beforeunload', handleUnload);
     };
-  }, [metricsRetention, logsMaxEntries, logLevelFilter, logs]);
+  }, [metricsRetention, logsMaxEntries, logLevelFilter, logs, sceneSessions]);
 
   // Helper to add system log entries
   const addSystemLog = (level: LogEntry['level'], message: string) => {
@@ -187,8 +200,14 @@ function App() {
     setLogs([]);
     metricsBufferRef.current?.clear();
     setMetricsHistory([]);
+    setSceneSessions([]);
     addSystemLog('INFO', 'History cleared');
   };
+
+  // Memoized callback for scene sessions change
+  const handleSceneSessionsChange = useCallback((sessions: SceneSession[]) => {
+    setSceneSessions(sessions);
+  }, []);
 
   // Extract values for each metric
   const fpsValues = metricsHistory.map(m => m.fps);
@@ -205,6 +224,7 @@ function App() {
           <div className={styles.connectionStatus}>
             <span className={`${styles.statusIndicator} ${styles[connectionStatus]}`} />
             {serverUrl}
+            {metrics.sceneName && <span className={styles.sceneName}>| {metrics.sceneName}</span>}
           </div>
           <button onClick={handleClearHistory} className={styles.clearButton}>
             Clear History
@@ -212,62 +232,97 @@ function App() {
         </div>
       </header>
 
-      <div className={styles.content}>
-        <div className={styles.metricsPanel}>
-          <div className={styles.metricsHeader}>
-            <h2>Metrics</h2>
-            <select
-              value={metricsRetention}
-              onChange={e => setMetricsRetention(Number(e.target.value) as 30 | 60 | 300 | 600)}
-              className={styles.select}
-            >
-              <option value={30}>30s</option>
-              <option value={60}>1min</option>
-              <option value={300}>5min</option>
-              <option value={600}>10min</option>
-            </select>
-          </div>
-          <div className={styles.chartsColumn}>
-            <TimeSeriesChart
-              label="FPS"
-              values={fpsValues}
-              className="fps"
-            />
-            <TimeSeriesChart
-              label="Frame Time"
-              values={frameTimeValues}
-              unit="ms"
-              className="frameTime"
-            />
-            <TimeSeriesChart
-              label="Draw Calls"
-              values={drawCallsValues}
-              className="drawCalls"
-            />
-            <TimeSeriesChart
-              label="Vertices"
-              values={vertexValues}
-              className="vertices"
-            />
-            <TimeSeriesChart
-              label="Triangles"
-              values={triangleValues}
-              className="triangles"
-            />
-          </div>
-          <div className={styles.statsRow}>
-            <span>Min/Max Frame: {metrics.frameTimeMinMs.toFixed(2)} / {metrics.frameTimeMaxMs.toFixed(2)}ms</span>
-          </div>
-        </div>
+      <nav className={styles.tabNav}>
+        <button
+          className={`${styles.tabButton} ${activeTab === 'performance' ? styles.tabActive : ''}`}
+          onClick={() => setActiveTab('performance')}
+        >
+          Performance
+        </button>
+        <button
+          className={`${styles.tabButton} ${activeTab === 'logs' ? styles.tabActive : ''}`}
+          onClick={() => setActiveTab('logs')}
+        >
+          Logs
+        </button>
+      </nav>
 
-        <div className={styles.logsPanel} ref={logViewerRef}>
-          <LogViewer
-            logs={logs}
-            maxEntries={logsMaxEntries}
-            onMaxEntriesChange={setLogsMaxEntries}
-            onLogsChange={setLogs}
-          />
-        </div>
+      <div className={styles.content}>
+        {activeTab === 'performance' && (
+          <div className={styles.metricsPanel}>
+            <div className={styles.metricsHeader}>
+              <h2>Performance Metrics</h2>
+              <div className={styles.metricsControls}>
+                <button
+                  onClick={() => setIsRecording(!isRecording)}
+                  className={`${styles.recordButton} ${isRecording ? styles.recording : styles.paused}`}
+                >
+                  {isRecording ? '⏸ Pause' : '▶ Record'}
+                </button>
+                <select
+                  value={metricsRetention}
+                  onChange={e => setMetricsRetention(Number(e.target.value) as 30 | 60 | 300 | 600)}
+                  className={styles.select}
+                >
+                  <option value={30}>30s</option>
+                  <option value={60}>1min</option>
+                  <option value={300}>5min</option>
+                  <option value={600}>10min</option>
+                </select>
+              </div>
+            </div>
+            <div className={styles.chartsColumn}>
+              <TimeSeriesChart
+                label="FPS"
+                values={fpsValues}
+                className="fps"
+              />
+              <TimeSeriesChart
+                label="Frame Time"
+                values={frameTimeValues}
+                unit="ms"
+                className="frameTime"
+              />
+              <TimeSeriesChart
+                label="Draw Calls"
+                values={drawCallsValues}
+                className="drawCalls"
+              />
+              <TimeSeriesChart
+                label="Vertices"
+                values={vertexValues}
+                className="vertices"
+              />
+              <TimeSeriesChart
+                label="Triangles"
+                values={triangleValues}
+                className="triangles"
+              />
+            </div>
+            <div className={styles.statsRow}>
+              <span>Min/Max Frame: {metrics.frameTimeMinMs.toFixed(2)} / {metrics.frameTimeMaxMs.toFixed(2)}ms</span>
+            </div>
+            <ScenePerformanceLog
+              currentSceneName={metrics.sceneName}
+              fps={metrics.fps}
+              frameTimeMs={metrics.frameTimeMs}
+              isRecording={isRecording}
+              sessions={sceneSessions}
+              onSessionsChange={handleSceneSessionsChange}
+            />
+          </div>
+        )}
+
+        {activeTab === 'logs' && (
+          <div className={styles.logsPanel} ref={logViewerRef}>
+            <LogViewer
+              logs={logs}
+              maxEntries={logsMaxEntries}
+              onMaxEntriesChange={setLogsMaxEntries}
+              onLogsChange={setLogs}
+            />
+          </div>
+        )}
       </div>
     </div>
   );
