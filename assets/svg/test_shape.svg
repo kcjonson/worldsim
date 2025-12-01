@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200" viewBox="0 0 200 200">
+  <!-- Test SVG for demonstrating SVG loading pipeline -->
+  <!-- Uses simple, non-self-intersecting shapes that work with ear-clipping tessellation -->
+
+  <!-- Gold hexagon (convex polygon - easy to tessellate) -->
+  <polygon fill="#FFD700" points="100,10 170,45 170,115 100,150 30,115 30,45"/>
+
+  <!-- Blue rectangle -->
+  <rect fill="#4169E1" x="60" y="160" width="80" height="30"/>
+
+  <!-- Red triangle -->
+  <polygon fill="#DC143C" points="100,55 130,95 70,95"/>
+</svg>

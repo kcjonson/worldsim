@@ -14,6 +14,7 @@ add_executable(ui-sandbox
     scenes/SdfMinimalScene.cpp
     scenes/TextInputScene.cpp
     scenes/ClipScene.cpp
+    scenes/SvgScene.cpp
 )
 
 target_include_directories(ui-sandbox
@@ -49,10 +50,10 @@ add_custom_command(TARGET ui-sandbox POST_BUILD
     COMMENT "Copying fonts to ui-sandbox directory"
 )
 
-# Copy asset definitions to executable directory
+# Copy all assets to executable directory (definitions, svg, lua, etc.)
 add_custom_command(TARGET ui-sandbox POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
-    ${CMAKE_SOURCE_DIR}/assets/definitions
-    $<TARGET_FILE_DIR:ui-sandbox>/assets/definitions
-    COMMENT "Copying asset definitions to ui-sandbox directory"
+    ${CMAKE_SOURCE_DIR}/assets
+    $<TARGET_FILE_DIR:ui-sandbox>/assets
+    COMMENT "Copying assets to ui-sandbox directory"
 )

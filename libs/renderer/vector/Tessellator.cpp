@@ -60,15 +60,32 @@ namespace renderer {
 		// This is O(n²) but simple and works for all simple polygons
 		// We'll replace with monotone decomposition for Phase 1
 
-		// Copy vertices to mesh (tessellation doesn't add new vertices for simple polygons)
-		outMesh.vertices = path.vertices;
-
-		// Build internal vertex list
-		tessVertices.clear();
-		tessVertices.reserve(path.vertices.size());
+		// Compute signed area using the shoelace formula to determine winding order
+		// In screen coordinates (Y increases downward): Positive = CW, Negative = CCW
+		// We treat positive as CCW for consistent ear clipping (works for either convention)
+		float signedArea = 0.0F;
 		for (size_t i = 0; i < path.vertices.size(); ++i) {
+			size_t j = (i + 1) % path.vertices.size();
+			signedArea +=
+				(path.vertices[i].x * path.vertices[j].y) - (path.vertices[j].x * path.vertices[i].y);
+		}
+		signedArea *= 0.5F;
+		bool isCCW = (signedArea > 0);
+
+		// Copy vertices to mesh (tessellation doesn't add new vertices for simple polygons)
+		// If winding is CW, reverse the order to make it CCW for consistent ear clipping
+		if (isCCW) {
+			outMesh.vertices = path.vertices;
+		} else {
+			outMesh.vertices.assign(path.vertices.rbegin(), path.vertices.rend());
+		}
+
+		// Build internal vertex list from the (possibly reversed) mesh vertices
+		tessVertices.clear();
+		tessVertices.reserve(outMesh.vertices.size());
+		for (size_t i = 0; i < outMesh.vertices.size(); ++i) {
 			Vertex v;
-			v.position = path.vertices[i];
+			v.position = outMesh.vertices[i];
 			v.originalIndex = i;
 			v.isProcessed = false;
 			tessVertices.push_back(v);

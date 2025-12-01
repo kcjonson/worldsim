@@ -18,6 +18,7 @@ The asset system manages loading, generation, and caching of game assets with su
 2. **Moddable**: Modders can add/replace assets without touching C++ code
 3. **Performant**: Pre-generate expensive assets at load time, render with instancing
 4. **Flexible**: Support both hand-crafted and procedurally generated assets
+5. **World-Unique Flora**: Each world has unique procedural variants based on its map seed
 
 ## Architecture Overview
 
@@ -68,6 +69,249 @@ The asset system manages loading, generation, and caching of game assets with su
 │  └──────────────────────────────────────────────────────────────────────┘   │
 │                                                                              │
 └─────────────────────────────────────────────────────────────────────────────┘
+```
+
+## Biome and Placement System
+
+Assets declare which biomes they can appear in. **Biomes are engine-defined enums; assets reference them.**
+
+### Design Rationale
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    WHY ASSETS → BIOMES                          │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  BIOMES (Engine Code - C++ enum)          NOT MODDABLE         │
+│  ┌─────────────────────────────┐                               │
+│  │ enum class Biome {          │  - Hardcoded in world gen     │
+│  │   Grassland,                │  - Tile type determines biome │
+│  │   Forest,                   │  - Fixed, enumerated list     │
+│  │   Desert,                   │                               │
+│  │   Tundra,                   │                               │
+│  │   Wetland,                  │                               │
+│  │   Mountain,                 │                               │
+│  │   Beach,                    │                               │
+│  │   Ocean                     │                               │
+│  │ };                          │                               │
+│  └─────────────────────────────┘                               │
+│              ▲                                                  │
+│              │ references                                       │
+│              │                                                  │
+│  ASSETS (XML Definitions)                  MODDABLE            │
+│  ┌─────────────────────────────┐                               │
+│  │ <Asset name="Daisy">        │  - Modders add new flowers    │
+│  │   <Biomes>                  │  - Each asset lists its valid │
+│  │     <Biome>Grassland</Biome>│    biomes by name             │
+│  │     <Biome>Forest</Biome>   │  - Unknown biome names =      │
+│  │   </Biomes>                 │    warning, asset ignored     │
+│  │ </Asset>                    │                               │
+│  └─────────────────────────────┘                               │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Key principle**: Modders can add assets to existing biomes, but cannot create new biomes. This keeps world generation stable while allowing unlimited content expansion.
+
+### Biome Syntax
+
+Each `<Biome>` entry specifies where the asset can spawn. Optional `near` and `distance` attributes add tile proximity requirements.
+
+```xml
+<Biomes>
+  <!-- Simple: spawns anywhere in Grassland -->
+  <Biome>Grassland</Biome>
+
+  <!-- With proximity: spawns in Wetland, but only within 3 tiles of Water -->
+  <Biome near="Water" distance="3">Wetland</Biome>
+
+  <!-- Adjacent: spawns on Mud tiles directly touching Water (distance=1) -->
+  <Biome near="Water" distance="1">Mud</Biome>
+</Biomes>
+```
+
+| Attribute | Type | Description |
+|-----------|------|-------------|
+| (text)    | string | Biome name (must match engine enum) |
+| `near`    | string | Tile type that must be nearby (optional) |
+| `distance`| int | Maximum tiles away from `near` tile (required if `near` is set) |
+
+**Note**: `near` references **tile types** (Water, Mud, Sand, Rock, etc.), not biomes. Tile types are more granular than biomes and are used for adjacency checks.
+
+### Tile Proximity Examples
+
+```
+MARSH PLANT                    REEDS                         CACTUS
+near="Water" distance="3"      near="Water" distance="1"     (no proximity rule)
+
+    ~ ~ ~                         ~ ~
+  ~ • • • ~                     ~ • ~                        • •   •
+  ~ • • • ~                       • •                       •   •   •
+  ~ • • • ~                     ~ • ~                        •     •
+    ~ ~ ~                         ~ ~
+
+Spawns within 3 tiles          Spawns only adjacent         Spawns anywhere
+of any water tile              to water (touching)          in Desert biome
+```
+
+### Asset Definition Example
+
+```xml
+<AssetDefinition name="GrassBlade" type="simple">
+  <Source>svg/flora/grass_blade.svg</Source>
+
+  <!-- Placement rules -->
+  <Placement>
+    <Biomes>
+      <Biome>Grassland</Biome>
+      <Biome>Forest</Biome>
+      <Biome near="Water" distance="2">Wetland</Biome>
+    </Biomes>
+
+    <!-- Spawn probability: 0.0-1.0, checked per potential spawn point -->
+    <SpawnChance>0.3</SpawnChance>
+
+    <!-- Distribution pattern -->
+    <Distribution>clumped</Distribution>  <!-- uniform, clumped, spaced -->
+
+    <!-- Clump settings (only used when Distribution=clumped) -->
+    <Clumping>
+      <ClumpSize min="3" max="12"/>       <!-- instances per clump -->
+      <ClumpRadius min="0.5" max="2.0"/>  <!-- tiles -->
+      <ClumpSpacing min="3" max="8"/>     <!-- tiles between clump centers -->
+    </Clumping>
+
+    <!-- Spacing settings (only used when Distribution=spaced) -->
+    <Spacing>
+      <MinDistance>2.0</MinDistance>      <!-- minimum tiles between instances -->
+    </Spacing>
+  </Placement>
+
+  <!-- Variation ranges -->
+  <Variation>
+    <Scale min="0.8" max="1.5"/>
+    <Rotation min="-15" max="15"/>   <!-- degrees from vertical -->
+    <ColorShift hue="0.05" saturation="0.1" lightness="0.1"/>
+  </Variation>
+</AssetDefinition>
+```
+
+### Placement Parameters
+
+#### SpawnChance (0.0 - 1.0)
+Probability that an asset spawns at each potential spawn point. Lower values = rarer assets.
+
+| Value | Description              | Example Use               |
+|-------|--------------------------|---------------------------|
+| 0.01  | Very rare                | Special flowers, boulders |
+| 0.1   | Uncommon                 | Mushrooms, ferns          |
+| 0.3   | Common                   | Grass, small rocks        |
+| 0.7   | Abundant                 | Ground cover              |
+| 1.0   | Always (density limited) | Background fill           |
+
+#### Distribution Patterns
+
+```
+UNIFORM                    CLUMPED                    SPACED
+(random placement)         (patches/groups)           (regular spacing)
+
+  •    •   •               •••    ••                     •       •
+    •       •              ••••  •••                  •       •
+  •   •  •    •              ••     •••                  •       •
+     •    •                     ••••                  •       •
+  •      •   •             •••   ••                     •       •
+
+Good for:                  Good for:                  Good for:
+- Grass                    - Flower patches           - Trees
+- Small debris             - Mushroom rings           - Large bushes
+- Sand particles           - Berry bushes             - Cacti
+```
+
+| Pattern  | Description                                        |
+|----------|----------------------------------------------------|
+| uniform  | Random placement within tile, no clustering        |
+| clumped  | Groups together in patches (configurable size)     |
+| spaced   | Maintains minimum distance between instances       |
+
+#### Clumping Parameters
+
+When `Distribution=clumped`:
+
+| Parameter    | Description                                    |
+|--------------|------------------------------------------------|
+| ClumpSize    | Number of instances in each clump (min-max)    |
+| ClumpRadius  | How spread out instances are within clump      |
+| ClumpSpacing | Distance between clump centers (tiles)         |
+
+#### Spacing Parameters
+
+When `Distribution=spaced`:
+
+| Parameter   | Description                                     |
+|-------------|-------------------------------------------------|
+| MinDistance | Minimum tiles between any two instances         |
+
+This uses Poisson disk sampling - each new instance is placed at least MinDistance from all existing instances.
+
+### Examples by Asset Type
+
+```xml
+<!-- Grass: abundant, clumped in patches -->
+<Placement>
+  <SpawnChance>0.5</SpawnChance>
+  <Distribution>clumped</Distribution>
+  <Clumping>
+    <ClumpSize min="5" max="15"/>
+    <ClumpRadius min="0.3" max="1.0"/>
+    <ClumpSpacing min="1" max="3"/>
+  </Clumping>
+</Placement>
+
+<!-- Wildflowers: patches of color -->
+<Placement>
+  <SpawnChance>0.15</SpawnChance>
+  <Distribution>clumped</Distribution>
+  <Clumping>
+    <ClumpSize min="3" max="8"/>
+    <ClumpRadius min="1.0" max="2.5"/>
+    <ClumpSpacing min="5" max="12"/>
+  </Clumping>
+</Placement>
+
+<!-- Trees: evenly spaced, not too close -->
+<Placement>
+  <SpawnChance>0.4</SpawnChance>
+  <Distribution>spaced</Distribution>
+  <Spacing>
+    <MinDistance>3.0</MinDistance>
+  </Spacing>
+</Placement>
+
+<!-- Small rocks: scattered randomly -->
+<Placement>
+  <SpawnChance>0.08</SpawnChance>
+  <Distribution>uniform</Distribution>
+</Placement>
+
+<!-- Rare boulder: very uncommon, isolated -->
+<Placement>
+  <SpawnChance>0.005</SpawnChance>
+  <Distribution>spaced</Distribution>
+  <Spacing>
+    <MinDistance>10.0</MinDistance>
+  </Spacing>
+</Placement>
+```
+
+### Query API
+
+```cpp
+// Engine queries assets by biome at runtime
+std::vector<AssetDef*> assets = registry.GetAssetsForBiome(Biome::Grassland);
+
+// Filter by type
+auto flora = registry.GetAssetsForBiome(Biome::Grassland, AssetType::Flora);
+auto trees = registry.GetAssetsForBiome(Biome::Forest, AssetType::Tree);
 ```
 
 ## Asset Types
@@ -142,6 +386,59 @@ assets/
         ├── tree_oak_variants.bin
         └── tree_pine_variants.bin
 ```
+
+## World Seed and Procedural Uniqueness
+
+Each world in the game has a unique **map seed** that determines all procedural generation. This seed is used to create world-unique flora variants, ensuring every world is visually distinct.
+
+### Seed Propagation
+
+```
+World Seed (e.g., "my-world-123")
+       │
+       ▼
+   hash(seed) → uint64_t base_seed
+       │
+       ├──► Asset Generation RNG
+       │    - Seeded at world load time
+       │    - Used by Lua scripts via `math.randomseed()`
+       │    - Generates N variants per asset type
+       │
+       └──► Instance Placement RNG
+            - Seeded per-chunk: hash(base_seed, chunk_x, chunk_y)
+            - Deterministic variant selection by position
+            - Same position → same variant every time
+```
+
+### Implementation Approach
+
+**Option A: Session-Seeded RNG (Recommended)**
+- When a world loads, seed the Lua RNG with `hash(world_seed, "flora")`
+- All procedural generation during that session uses this RNG
+- Variant cache is keyed by world seed, regenerated if seed changes
+- Pro: Simple, all Lua `math.random()` calls "just work"
+- Con: Variant cache is per-world (more disk space if many worlds)
+
+**Option B: Per-Script Seed Parameter**
+- Pass seed explicitly to each generator: `generate(asset_def, seed)`
+- Script must call `math.randomseed(seed)` at start
+- Pro: More explicit control, cache can be shared across worlds with same parameters
+- Con: More boilerplate in every script
+
+### Cache Invalidation
+
+The variant cache filename includes a hash of:
+1. World seed
+2. Asset definition hash (detects XML changes)
+3. Script hash (detects Lua code changes)
+
+```
+cache/flora/tree_oak_variants_a1b2c3d4.bin
+                              ^^^^^^^^
+                              combined hash
+```
+
+If any input changes, cache is regenerated during the loading screen.
 
 ## Related Documents
 
