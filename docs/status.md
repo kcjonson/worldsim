@@ -442,7 +442,7 @@ Use this template for all work items:
 
 **Phase 2: Lua Scripting** ✅ COMPLETE
 - [x] 2.1 Lua Integration
-  - [x] Add sol2 (Lua 5.4.8) to vcpkg.json
+  - [x] Add sol2 (Lua 5.4.7) to vcpkg.json
   - [x] Create `LuaEngine` class with sandbox and seeded randomness
   - [x] Expose `Path`, `asset:addPath()` API to Lua
   - [x] Create `LuaGenerator` implementing `IAssetGenerator` interface

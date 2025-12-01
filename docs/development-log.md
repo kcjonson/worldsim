@@ -6,7 +6,7 @@
 Implemented Phase 2 of the Asset System: Lua scripting for procedural asset generation. Created a deciduous tree generator demonstrating 3/4 top-down view (Rimworld style) with extensive visual variation across 40 unique trees.
 
 **What Was Accomplished:**
-- Integrated sol2 (Lua 5.4.8) into vcpkg dependencies
+- Integrated sol2 (Lua 5.4.7) into vcpkg dependencies
 - Created `LuaEngine` class for script execution with seeded randomness
 - Created `LuaGenerator` implementing `IAssetGenerator` interface
 - Exposed Path API to Lua (`Path:new()`, `path:addVertex()`, `path:setColor()`, `path:close()`, `asset:addPath()`)
