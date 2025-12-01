@@ -192,10 +192,11 @@ namespace {
 
 			size_t vertsPerBlade = templateMesh.vertices.size();
 
-			// Start with one batch
-			batches.emplace_back();
-
 			for (size_t clump = 0; clump < numClumps; ++clump) {
+				// Ensure we have at least one batch (defensive check for first iteration)
+				if (batches.empty()) {
+					batches.emplace_back();
+				}
 				Foundation::Vec2 clumpCenter(xPosDist(gen), yPosDist(gen));
 
 				for (size_t blade = 0; blade < kBladesPerClump; ++blade) {
