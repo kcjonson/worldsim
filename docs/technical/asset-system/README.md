@@ -126,8 +126,24 @@ Assets declare which biomes they can appear in. **Biomes are engine-defined enum
       <Biome>Forest</Biome>
       <Biome>Wetland</Biome>
     </Biomes>
-    <Density>high</Density>          <!-- none, low, medium, high -->
-    <Clustering>clumped</Clustering> <!-- uniform, clumped, scattered -->
+
+    <!-- Spawn probability: 0.0-1.0, checked per potential spawn point -->
+    <SpawnChance>0.3</SpawnChance>
+
+    <!-- Distribution pattern -->
+    <Distribution>clumped</Distribution>  <!-- uniform, clumped, spaced -->
+
+    <!-- Clump settings (only used when Distribution=clumped) -->
+    <Clumping>
+      <ClumpSize min="3" max="12"/>       <!-- instances per clump -->
+      <ClumpRadius min="0.5" max="2.0"/>  <!-- tiles -->
+      <ClumpSpacing min="3" max="8"/>     <!-- tiles between clump centers -->
+    </Clumping>
+
+    <!-- Spacing settings (only used when Distribution=spaced) -->
+    <Spacing>
+      <MinDistance>2.0</MinDistance>      <!-- minimum tiles between instances -->
+    </Spacing>
   </Placement>
 
   <!-- Variation ranges -->
@@ -139,14 +155,112 @@ Assets declare which biomes they can appear in. **Biomes are engine-defined enum
 </AssetDefinition>
 ```
 
-### Density Levels
+### Placement Parameters
 
-| Level  | Description                | Approx. per tile |
-|--------|----------------------------|------------------|
-| none   | Asset does not spawn       | 0                |
-| low    | Sparse coverage            | 1-3              |
-| medium | Moderate coverage          | 5-10             |
-| high   | Dense coverage             | 15-30            |
+#### SpawnChance (0.0 - 1.0)
+Probability that an asset spawns at each potential spawn point. Lower values = rarer assets.
+
+| Value | Description              | Example Use               |
+|-------|--------------------------|---------------------------|
+| 0.01  | Very rare                | Special flowers, boulders |
+| 0.1   | Uncommon                 | Mushrooms, ferns          |
+| 0.3   | Common                   | Grass, small rocks        |
+| 0.7   | Abundant                 | Ground cover              |
+| 1.0   | Always (density limited) | Background fill           |
+
+#### Distribution Patterns
+
+```
+UNIFORM                    CLUMPED                    SPACED
+(random placement)         (patches/groups)           (regular spacing)
+
+  •    •   •               •••    ••                     •       •
+    •       •              ••••  •••                  •       •
+  •   •  •    •              ••     •••                  •       •
+     •    •                     ••••                  •       •
+  •      •   •             •••   ••                     •       •
+
+Good for:                  Good for:                  Good for:
+- Grass                    - Flower patches           - Trees
+- Small debris             - Mushroom rings           - Large bushes
+- Sand particles           - Berry bushes             - Cacti
+```
+
+| Pattern  | Description                                        |
+|----------|----------------------------------------------------|
+| uniform  | Random placement within tile, no clustering        |
+| clumped  | Groups together in patches (configurable size)     |
+| spaced   | Maintains minimum distance between instances       |
+
+#### Clumping Parameters
+
+When `Distribution=clumped`:
+
+| Parameter    | Description                                    |
+|--------------|------------------------------------------------|
+| ClumpSize    | Number of instances in each clump (min-max)    |
+| ClumpRadius  | How spread out instances are within clump      |
+| ClumpSpacing | Distance between clump centers (tiles)         |
+
+#### Spacing Parameters
+
+When `Distribution=spaced`:
+
+| Parameter   | Description                                     |
+|-------------|-------------------------------------------------|
+| MinDistance | Minimum tiles between any two instances         |
+
+This uses Poisson disk sampling - each new instance is placed at least MinDistance from all existing instances.
+
+### Examples by Asset Type
+
+```xml
+<!-- Grass: abundant, clumped in patches -->
+<Placement>
+  <SpawnChance>0.5</SpawnChance>
+  <Distribution>clumped</Distribution>
+  <Clumping>
+    <ClumpSize min="5" max="15"/>
+    <ClumpRadius min="0.3" max="1.0"/>
+    <ClumpSpacing min="1" max="3"/>
+  </Clumping>
+</Placement>
+
+<!-- Wildflowers: patches of color -->
+<Placement>
+  <SpawnChance>0.15</SpawnChance>
+  <Distribution>clumped</Distribution>
+  <Clumping>
+    <ClumpSize min="3" max="8"/>
+    <ClumpRadius min="1.0" max="2.5"/>
+    <ClumpSpacing min="5" max="12"/>
+  </Clumping>
+</Placement>
+
+<!-- Trees: evenly spaced, not too close -->
+<Placement>
+  <SpawnChance>0.4</SpawnChance>
+  <Distribution>spaced</Distribution>
+  <Spacing>
+    <MinDistance>3.0</MinDistance>
+  </Spacing>
+</Placement>
+
+<!-- Small rocks: scattered randomly -->
+<Placement>
+  <SpawnChance>0.08</SpawnChance>
+  <Distribution>uniform</Distribution>
+</Placement>
+
+<!-- Rare boulder: very uncommon, isolated -->
+<Placement>
+  <SpawnChance>0.005</SpawnChance>
+  <Distribution>spaced</Distribution>
+  <Spacing>
+    <MinDistance>10.0</MinDistance>
+  </Spacing>
+</Placement>
+```
 
 ### Query API
 
