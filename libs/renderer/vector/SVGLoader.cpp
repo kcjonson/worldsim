@@ -50,11 +50,12 @@ void processPath(NSVGpath* nsvgPath, float tolerance, VectorPath& outPath) {
 	outPath.vertices.push_back(Foundation::Vec2{nsvgPath->pts[0], nsvgPath->pts[1]});
 
 	// Process each cubic Bezier segment
+	// Each segment uses 4 points: segment 0 uses points 0-3, segment 1 uses points 3-6, etc.
 	// NanoSVG stores: start point, then groups of (cp1, cp2, end) = 3 points per segment
-	// So we iterate i from 0 to npts-4, stepping by 3 points (6 floats)
-	for (int i = 0; i < nsvgPath->npts - 3; i += 3) {
-		// Each segment starts at point i, with control points at i+1, i+2, and endpoint at i+3
-		float* p = &nsvgPath->pts[i * 2];
+	int numSegments = (nsvgPath->npts - 1) / 3;
+	for (int seg = 0; seg < numSegments; seg++) {
+		// Each segment uses points seg*3 to seg*3+3: start, cp1, cp2, end
+		float* p = &nsvgPath->pts[seg * 3 * 2];
 
 		CubicBezier curve{
 			.p0 = {p[0], p[1]}, // Current point (start of this segment)

@@ -61,7 +61,8 @@ namespace renderer {
 		// We'll replace with monotone decomposition for Phase 1
 
 		// Compute signed area using the shoelace formula to determine winding order
-		// Positive = CCW, Negative = CW
+		// In screen coordinates (Y increases downward): Positive = CW, Negative = CCW
+		// We treat positive as CCW for consistent ear clipping (works for either convention)
 		float signedArea = 0.0F;
 		for (size_t i = 0; i < path.vertices.size(); ++i) {
 			size_t j = (i + 1) % path.vertices.size();

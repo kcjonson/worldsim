@@ -39,33 +39,20 @@ namespace {
 		}
 
 		void render() override {
-			using namespace Foundation;
-
 			// Clear background to dark gray
 			glClearColor(0.15F, 0.15F, 0.2F, 1.0F);
 			glClear(GL_COLOR_BUFFER_BIT);
 
-			// Draw each tessellated shape centered on screen
-			constexpr float kScale = 1.5F;
-			constexpr float kCenterX = 400.0F;
-			constexpr float kCenterY = 300.0F;
-
+			// Draw each pre-transformed shape (vertices already scaled and centered during load)
 			for (const auto& shape : m_shapes) {
 				if (shape.mesh.vertices.empty()) {
 					continue;
 				}
 
-				// Transform vertices: scale and center
-				std::vector<Vec2> transformedVerts = shape.mesh.vertices;
-				for (auto& v : transformedVerts) {
-					v.x = v.x * kScale + kCenterX;
-					v.y = v.y * kScale + kCenterY;
-				}
-
 				Renderer::Primitives::drawTriangles(
-					{.vertices = transformedVerts.data(),
+					{.vertices = shape.mesh.vertices.data(),
 					 .indices = shape.mesh.indices.data(),
-					 .vertexCount = transformedVerts.size(),
+					 .vertexCount = shape.mesh.vertices.size(),
 					 .indexCount = shape.mesh.indices.size(),
 					 .color = shape.color,
 					 .id = "svg_shape"}
@@ -82,6 +69,11 @@ namespace {
 		const char* getName() const override { return "svg"; }
 
 	  private:
+		// Transform constants for centering and scaling the SVG on screen
+		static constexpr float kScale = 1.5F;
+		static constexpr float kCenterX = 400.0F;
+		static constexpr float kCenterY = 300.0F;
+
 		void loadAndTessellate() {
 			// Path to test SVG file - use findResourceString for portable paths
 			const std::string kRelativePath = "assets/svg/test_shape.svg";
@@ -121,6 +113,12 @@ namespace {
 					shape.color = loadedShape.fillColor;
 
 					if (tessellator.Tessellate(path, shape.mesh)) {
+						// Pre-transform vertices for display (scale and center)
+						for (auto& v : shape.mesh.vertices) {
+							v.x = v.x * kScale + kCenterX;
+							v.y = v.y * kScale + kCenterY;
+						}
+
 						totalTriangles += shape.mesh.getTriangleCount();
 						m_shapes.push_back(std::move(shape));
 						LOG_DEBUG(
