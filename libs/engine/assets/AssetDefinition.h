@@ -132,7 +132,8 @@ namespace engine::assets {
 		std::string		defName; // Unique identifier (e.g., "Flora_GrassBlade")
 		std::string		label;	 // Human-readable name
 		AssetType		assetType = AssetType::Procedural;
-		std::string		generatorName; // Generator to use (e.g., "GrassBlade")
+		std::string		generatorName; // Generator to use (e.g., "GrassBlade") - C++ generators
+		std::string		scriptPath;	   // For Lua generators: path to Lua script (relative to assets/)
 		std::string		svgPath;	   // For Simple assets: path to SVG file
 		GeneratorParams params;		   // Parameters for generator
 		AnimationParams animation;
@@ -140,6 +141,9 @@ namespace engine::assets {
 		AssetComplexity complexity = AssetComplexity::Simple;
 		RenderingTier	renderingTier = RenderingTier::Instanced;
 		uint32_t		variantCount = 1; // Number of variants to pre-generate
+
+		/// Check if this definition uses a Lua script generator
+		[[nodiscard]] bool isLuaGenerator() const { return !scriptPath.empty(); }
 	};
 
 } // namespace engine::assets

@@ -3,6 +3,8 @@ add_library(assets
     AssetSpawner.cpp
     AssetBatcher.cpp
     generators/GrassBladeGenerator.cpp
+    lua/LuaEngine.cpp
+    lua/LuaGenerator.cpp
 )
 
 target_include_directories(assets
@@ -16,6 +18,10 @@ target_compile_features(assets PUBLIC cxx_std_20)
 # Find pugixml
 find_package(pugixml CONFIG REQUIRED)
 
+# Find Lua and sol2
+find_package(Lua REQUIRED)
+find_path(SOL2_INCLUDE_DIRS "sol/sol.hpp")
+
 # Link dependencies
 # Note: engine dependency is for world/TileGrid.h access
 target_link_libraries(assets
@@ -24,6 +30,14 @@ target_link_libraries(assets
         renderer
         engine
         pugixml::pugixml
+    PRIVATE
+        ${LUA_LIBRARIES}
+)
+
+target_include_directories(assets
+    PRIVATE
+        ${LUA_INCLUDE_DIR}
+        ${SOL2_INCLUDE_DIRS}
 )
 
 # Tests

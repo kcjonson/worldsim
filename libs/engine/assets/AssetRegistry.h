@@ -27,6 +27,12 @@ class AssetRegistry {
 	/// @return true if loading succeeded
 	bool loadDefinitions(const std::string& xmlPath);
 
+	/// Load all asset definitions from a folder recursively
+	/// Scans for all *.xml files in the folder and subfolders.
+	/// @param folderPath Path to the definitions folder
+	/// @return Number of definitions loaded (0 if folder not found)
+	size_t loadDefinitionsFromFolder(const std::string& folderPath);
+
 	/// Get an asset definition by name
 	/// @param defName The definition name (e.g., "Flora_GrassBlade")
 	/// @return Pointer to definition, or nullptr if not found

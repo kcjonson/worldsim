@@ -7,6 +7,7 @@ add_executable(ui-sandbox
     scenes/VectorStarScene.cpp
     scenes/VectorPerfScene.cpp
     scenes/GrassScene.cpp
+    scenes/TreeScene.cpp
     scenes/TextShapesScene.cpp
     scenes/LayerScene.cpp
     scenes/ButtonScene.cpp

@@ -17,7 +17,9 @@
     },
     "gtest",
     "benchmark",
-    "pugixml"
+    "pugixml",
+    "lua",
+    "sol2"
   ],
   "builtin-baseline": "bfc6984dcbe4a165741aa95411cb5e77d9c88068",
   "overrides": [
