@@ -220,15 +220,16 @@ namespace Renderer {
 	}
 
 	void BatchRenderer::addTriangles( // NOLINT(readability-convert-member-functions-to-static)
-		const Foundation::Vec2*	 inputVertices,
-		const uint16_t*			 inputIndices,
-		size_t					 vertexCount,
-		size_t					 indexCount,
-		const Foundation::Color& color
+		const Foundation::Vec2*	  inputVertices,
+		const uint16_t*			  inputIndices,
+		size_t					  vertexCount,
+		size_t					  indexCount,
+		const Foundation::Color&  color,
+		const Foundation::Color*  inputColors
 	) { // NOLINT(readability-convert-member-functions-to-static)
 		uint32_t baseIndex = static_cast<uint32_t>(vertices.size());
 
-		Foundation::Vec4 colorVec = color.toVec4();
+		Foundation::Vec4 uniformColorVec = color.toVec4();
 
 		// Default data (not used for tessellated shapes, but required for vertex format)
 		// Use borderPosition=1 (Center) so shader treats these as shapes, not text
@@ -238,6 +239,10 @@ namespace Renderer {
 
 		// Add all vertices (positions transformed by currentTransform)
 		for (size_t i = 0; i < vertexCount; ++i) {
+			// Use per-vertex color if provided, otherwise uniform color
+			Foundation::Vec4 colorVec =
+				(inputColors != nullptr) ? inputColors[i].toVec4() : uniformColorVec;
+
 			vertices.push_back({
 				TransformPosition(inputVertices[i], currentTransform, transformIsIdentity),
 				zeroVec2, // texCoord (unused for triangles)

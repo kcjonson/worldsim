@@ -141,13 +141,14 @@ namespace Renderer {
 
 		// Arguments for DrawTriangles
 		struct TrianglesArgs {
-			const Foundation::Vec2* vertices = nullptr; // Vertex positions (array)
-			const uint16_t*			indices = nullptr;	// Triangle indices (array)
-			size_t					vertexCount = 0;	// Number of vertices
-			size_t					indexCount = 0;		// Number of indices (triangles * 3)
-			Foundation::Color		color;				// Fill color
-			const char*				id = nullptr;		// Optional: for inspection/debugging
-			int						zIndex = 0;			// Optional: explicit draw order
+			const Foundation::Vec2*	 vertices = nullptr;	 // Vertex positions (array)
+			const uint16_t*			 indices = nullptr;		 // Triangle indices (array)
+			size_t					 vertexCount = 0;		 // Number of vertices
+			size_t					 indexCount = 0;		 // Number of indices (triangles * 3)
+			Foundation::Color		 color;					 // Fill color (used if colors == nullptr)
+			const Foundation::Color* colors = nullptr;		 // Optional: per-vertex colors (array, same size as vertices)
+			const char*				 id = nullptr;			 // Optional: for inspection/debugging
+			int						 zIndex = 0;			 // Optional: explicit draw order
 		};
 
 		// Draw a rectangle with optional fill and border

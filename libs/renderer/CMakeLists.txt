@@ -3,6 +3,7 @@ add_library(renderer
     primitives/BatchRenderer.cpp
     metrics/MetricsCollector.cpp
     vector/Tessellator.cpp
+    vector/Bezier.cpp
     shader/Shader.cpp
     shader/ShaderLoader.cpp
     CoordinateSystem/CoordinateSystem.cpp
