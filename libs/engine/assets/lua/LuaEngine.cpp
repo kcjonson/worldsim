@@ -168,7 +168,9 @@ namespace engine::assets {
 			return t * t * (3.0F - 2.0F * t);
 		};
 
-		// Factory function for creating paths (more intuitive than calling the type)
+		// Factory function for creating paths - enables Path() syntax instead of Path.new()
+		// NOTE: This is intentional. sol2's new_usertype registers types as tables callable
+		// via Type.new(), but Path() is more intuitive for Lua scripts. Keep this factory.
 		lua["Path"] = []() {
 			return GeneratedPath{};
 		};

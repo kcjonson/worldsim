@@ -9,7 +9,7 @@
     <assetType>procedural</assetType>
 
     <generator>
-      <!-- Lua script path (relative to assets folder) -->
+      <!-- Lua script path (relative to project root) -->
       <scriptPath>assets/generators/trees/deciduous.lua</scriptPath>
       <params>
         <!-- Trunk dimensions -->
