@@ -71,6 +71,94 @@ The asset system manages loading, generation, and caching of game assets with su
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
+## Biome and Placement System
+
+Assets declare which biomes they can appear in. **Biomes are engine-defined enums; assets reference them.**
+
+### Design Rationale
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    WHY ASSETS → BIOMES                          │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  BIOMES (Engine Code - C++ enum)          NOT MODDABLE         │
+│  ┌─────────────────────────────┐                               │
+│  │ enum class Biome {          │  - Hardcoded in world gen     │
+│  │   Grassland,                │  - Tile type determines biome │
+│  │   Forest,                   │  - Fixed, enumerated list     │
+│  │   Desert,                   │                               │
+│  │   Tundra,                   │                               │
+│  │   Wetland,                  │                               │
+│  │   Mountain,                 │                               │
+│  │   Beach,                    │                               │
+│  │   Ocean                     │                               │
+│  │ };                          │                               │
+│  └─────────────────────────────┘                               │
+│              ▲                                                  │
+│              │ references                                       │
+│              │                                                  │
+│  ASSETS (XML Definitions)                  MODDABLE            │
+│  ┌─────────────────────────────┐                               │
+│  │ <Asset name="Daisy">        │  - Modders add new flowers    │
+│  │   <Biomes>                  │  - Each asset lists its valid │
+│  │     <Biome>Grassland</Biome>│    biomes by name             │
+│  │     <Biome>Forest</Biome>   │  - Unknown biome names =      │
+│  │   </Biomes>                 │    warning, asset ignored     │
+│  │ </Asset>                    │                               │
+│  └─────────────────────────────┘                               │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Key principle**: Modders can add assets to existing biomes, but cannot create new biomes. This keeps world generation stable while allowing unlimited content expansion.
+
+### Asset Definition Example
+
+```xml
+<AssetDefinition name="GrassBlade" type="simple">
+  <Source>svg/flora/grass_blade.svg</Source>
+
+  <!-- Placement rules -->
+  <Placement>
+    <Biomes>
+      <Biome>Grassland</Biome>
+      <Biome>Forest</Biome>
+      <Biome>Wetland</Biome>
+    </Biomes>
+    <Density>high</Density>          <!-- none, low, medium, high -->
+    <Clustering>clumped</Clustering> <!-- uniform, clumped, scattered -->
+  </Placement>
+
+  <!-- Variation ranges -->
+  <Variation>
+    <Scale min="0.8" max="1.5"/>
+    <Rotation min="-15" max="15"/>   <!-- degrees from vertical -->
+    <ColorShift hue="0.05" saturation="0.1" lightness="0.1"/>
+  </Variation>
+</AssetDefinition>
+```
+
+### Density Levels
+
+| Level  | Description                | Approx. per tile |
+|--------|----------------------------|------------------|
+| none   | Asset does not spawn       | 0                |
+| low    | Sparse coverage            | 1-3              |
+| medium | Moderate coverage          | 5-10             |
+| high   | Dense coverage             | 15-30            |
+
+### Query API
+
+```cpp
+// Engine queries assets by biome at runtime
+std::vector<AssetDef*> assets = registry.GetAssetsForBiome(Biome::Grassland);
+
+// Filter by type
+auto flora = registry.GetAssetsForBiome(Biome::Grassland, AssetType::Flora);
+auto trees = registry.GetAssetsForBiome(Biome::Forest, AssetType::Tree);
+```
+
 ## Asset Types
 
 ### Simple Assets
