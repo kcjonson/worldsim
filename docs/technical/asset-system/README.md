@@ -113,6 +113,47 @@ Assets declare which biomes they can appear in. **Biomes are engine-defined enum
 
 **Key principle**: Modders can add assets to existing biomes, but cannot create new biomes. This keeps world generation stable while allowing unlimited content expansion.
 
+### Biome Syntax
+
+Each `<Biome>` entry specifies where the asset can spawn. Optional `near` and `distance` attributes add tile proximity requirements.
+
+```xml
+<Biomes>
+  <!-- Simple: spawns anywhere in Grassland -->
+  <Biome>Grassland</Biome>
+
+  <!-- With proximity: spawns in Wetland, but only within 3 tiles of Water -->
+  <Biome near="Water" distance="3">Wetland</Biome>
+
+  <!-- Adjacent: spawns on Mud tiles directly touching Water (distance=1) -->
+  <Biome near="Water" distance="1">Mud</Biome>
+</Biomes>
+```
+
+| Attribute | Type | Description |
+|-----------|------|-------------|
+| (text)    | string | Biome name (must match engine enum) |
+| `near`    | string | Tile type that must be nearby (optional) |
+| `distance`| int | Maximum tiles away from `near` tile (required if `near` is set) |
+
+**Note**: `near` references **tile types** (Water, Mud, Sand, Rock, etc.), not biomes. Tile types are more granular than biomes and are used for adjacency checks.
+
+### Tile Proximity Examples
+
+```
+MARSH PLANT                    REEDS                         CACTUS
+near="Water" distance="3"      near="Water" distance="1"     (no proximity rule)
+
+    ~ ~ ~                         ~ ~
+  ~ • • • ~                     ~ • ~                        • •   •
+  ~ • • • ~                       • •                       •   •   •
+  ~ • • • ~                     ~ • ~                        •     •
+    ~ ~ ~                         ~ ~
+
+Spawns within 3 tiles          Spawns only adjacent         Spawns anywhere
+of any water tile              to water (touching)          in Desert biome
+```
+
 ### Asset Definition Example
 
 ```xml
@@ -124,7 +165,7 @@ Assets declare which biomes they can appear in. **Biomes are engine-defined enum
     <Biomes>
       <Biome>Grassland</Biome>
       <Biome>Forest</Biome>
-      <Biome>Wetland</Biome>
+      <Biome near="Water" distance="2">Wetland</Biome>
     </Biomes>
 
     <!-- Spawn probability: 0.0-1.0, checked per potential spawn point -->
