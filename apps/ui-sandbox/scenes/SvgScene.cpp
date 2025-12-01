@@ -44,35 +44,31 @@ namespace {
 			glClearColor(0.15F, 0.15F, 0.2F, 1.0F);
 			glClear(GL_COLOR_BUFFER_BIT);
 
-			// Draw each tessellated shape
-			for (size_t i = 0; i < m_shapes.size(); ++i) {
-				const auto& shape = m_shapes[i];
-				if (!shape.mesh.vertices.empty()) {
-					// Offset the shape to center it on screen
-					std::vector<Foundation::Vec2> offsetVertices = shape.mesh.vertices;
-					Foundation::Vec2			  offset(300.0F, 250.0F);
+			// Draw each tessellated shape centered on screen
+			constexpr float kScale = 1.5F;
+			constexpr float kCenterX = 400.0F;
+			constexpr float kCenterY = 300.0F;
 
-					for (auto& v : offsetVertices) {
-						// Scale up for visibility (original SVG is 100x100)
-						v.x *= 3.0F;
-						v.y *= 3.0F;
-						v += offset;
-					}
-
-					Renderer::Primitives::drawTriangles(
-						{.vertices = offsetVertices.data(),
-						 .indices = shape.mesh.indices.data(),
-						 .vertexCount = offsetVertices.size(),
-						 .indexCount = shape.mesh.indices.size(),
-						 .color = shape.color,
-						 .id = "svg_shape"}
-					);
+			for (const auto& shape : m_shapes) {
+				if (shape.mesh.vertices.empty()) {
+					continue;
 				}
-			}
 
-			// Draw info text position indicator (small marker at origin)
-			if (!m_shapes.empty()) {
-				// Draw a small indicator showing where the SVG was loaded
+				// Transform vertices: scale and center
+				std::vector<Vec2> transformedVerts = shape.mesh.vertices;
+				for (auto& v : transformedVerts) {
+					v.x = v.x * kScale + kCenterX;
+					v.y = v.y * kScale + kCenterY;
+				}
+
+				Renderer::Primitives::drawTriangles(
+					{.vertices = transformedVerts.data(),
+					 .indices = shape.mesh.indices.data(),
+					 .vertexCount = transformedVerts.size(),
+					 .indexCount = shape.mesh.indices.size(),
+					 .color = shape.color,
+					 .id = "svg_shape"}
+				);
 			}
 		}
 

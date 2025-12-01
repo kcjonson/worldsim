@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Grass Blade - Single blade for top-down 2D game view
+     Designed to match the programmatic blade in GrassScene.cpp
+     Base dimensions: 2px wide x 12px tall
+     Origin at bottom-left corner of blade base
+     Blade tapers to a point at the top with curved edges
+-->
+<svg xmlns="http://www.w3.org/2000/svg"
+     width="4" height="14"
+     viewBox="-1 -13 4 14">
+  <!--
+    The blade is defined as a closed path using cubic Bezier curves.
+    Starting at the left base (0,0), curving up to the tip, then back down the right side.
+
+    Coordinate system:
+    - Y axis points UP (negative Y values go toward tip)
+    - Origin at bottom-left of blade base
+
+    Path breakdown:
+    - M 0,0 : Start at left base
+    - C -2,-4 -0.5,-10 1,-12 : Left edge curve (outward bow, then in to tip)
+    - C 2.5,-10 4,-4 2,0 : Right edge curve (out from tip, then back to base)
+    - Z : Close path back to start
+  -->
+  <path
+    fill="#2d5016"
+    d="M 0,0
+       C -2,-4 -0.5,-10 1,-12
+       C 2.5,-10 4,-4 2,0
+       Z"
+  />
+</svg>

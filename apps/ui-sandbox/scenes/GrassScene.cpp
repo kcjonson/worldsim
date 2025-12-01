@@ -1,15 +1,13 @@
-// Grass Scene - Asset System Integration Demo
-// Demonstrates the data-driven asset system with procedural grass generation.
-// Uses AssetRegistry to load XML definitions and GrassBladeGenerator for procedural shapes.
+// Grass Scene - SVG Asset Demo
+// Demonstrates loading grass blade shapes from SVG and rendering 10,000 animated blades.
+// Uses SVGLoader to load the blade shape, then tessellates and transforms per-frame.
 
-#include <assets/AssetRegistry.h>
-#include <assets/generators/GrassBladeGenerator.h>
 #include <graphics/Color.h>
 #include <primitives/Primitives.h>
 #include <scene/Scene.h>
 #include <scene/SceneManager.h>
 #include <utils/Log.h>
-#include <vector/Bezier.h>
+#include <vector/SVGLoader.h>
 #include <vector/Tessellator.h>
 #include <vector/Types.h>
 
@@ -23,10 +21,8 @@
 
 namespace {
 
-	// Constants for TOP-DOWN grass blade shape (small decorations on grass tiles)
-	constexpr float	 kBladeBaseWidth = 2.0F;	 // Thin blades
+	// Grass blade configuration
 	constexpr float	 kBladeHeight = 12.0F;		 // Short blades for top-down view
-	constexpr float	 kCurveTolerance = 1.0F;	 // Pixels - flatness tolerance
 	constexpr size_t kDefaultBladeCount = 10000; // Target: 10,000 grass blades
 	constexpr size_t kBladesPerClump = 5;		 // Blades grouped in clumps
 	constexpr float	 kClumpRadius = 6.0F;		 // How spread out blades are within a clump
@@ -54,20 +50,8 @@ namespace {
 		void onEnter() override {
 			LOG_INFO(UI, "Grass Scene - Asset System Integration Demo");
 
-			// Register generators (required before loading definitions that use them)
-			engine::assets::registerGrassBladeGenerator();
-
-			// Load asset definitions from XML
-			auto& registry = engine::assets::AssetRegistry::Get();
-			if (!registry.loadDefinitions("assets/definitions/flora/grass.xml")) {
-				LOG_ERROR(UI, "Failed to load grass asset definitions!");
-			} else {
-				// Get the template mesh from the asset system
-				m_bladeTemplate = registry.getTemplate("Flora_GrassBlade");
-				if (m_bladeTemplate == nullptr) {
-					LOG_ERROR(UI, "Failed to get blade template!");
-				}
-			}
+			// Load grass blade from SVG asset
+			loadGrassBladeFromSVG();
 
 			// Get logical window dimensions
 			m_windowWidth = Renderer::Primitives::PercentWidth(100.0F);
@@ -169,6 +153,32 @@ namespace {
 		const char* getName() const override { return "grass"; }
 
 	  private:
+		/// Load grass blade shape from SVG asset and tessellate it
+		void loadGrassBladeFromSVG() {
+			const std::string kSvgPath = "assets/svg/grass_blade.svg";
+			const float		  kCurveTolerance = 0.5F;
+
+			LOG_INFO(UI, "Loading grass blade SVG: %s", kSvgPath.c_str());
+
+			// Load the SVG file
+			std::vector<renderer::LoadedSVGShape> loadedShapes;
+			if (!renderer::loadSVG(kSvgPath, kCurveTolerance, loadedShapes)) {
+				LOG_ERROR(UI, "Failed to load grass blade SVG: %s", kSvgPath.c_str());
+				return;
+			}
+
+			if (loadedShapes.empty() || loadedShapes[0].paths.empty()) {
+				LOG_ERROR(UI, "Grass blade SVG has no paths!");
+				return;
+			}
+
+			// Store the first path's vertices as our blade template
+			// The SVG has Y pointing up with origin at base, which matches our needs
+			svgBladeVertices = loadedShapes[0].paths[0].vertices;
+
+			LOG_INFO(UI, "Loaded grass blade: %zu vertices from SVG", svgBladeVertices.size());
+		}
+
 		/// Calculate wind bend at a given position and time
 		float calculateWindBend(const Foundation::Vec2& position, float time, float phaseOffset) {
 			// Primary wind wave (large-scale movement)
@@ -182,44 +192,6 @@ namespace {
 			float gustVariation = std::sin((position.y / (kWindWaveLength * 0.5F) + time * kWindSpeed * 0.5F)) * 0.3F;
 
 			return (primaryWave + turbulence + gustVariation) * kWindStrength;
-		}
-
-		/// Create the Bezier curves that define a single grass blade shape.
-		/// Returns flattened vertices ready for tessellation.
-		std::vector<Foundation::Vec2> createGrassBladeVertices(float scale, float heightMult, float widthMult, float bendAmount) {
-			using namespace Foundation;
-
-			std::vector<Vec2> vertices;
-
-			// Apply procedural variation to base dimensions
-			float bladeWidth = kBladeBaseWidth * widthMult * scale;
-			float bladeHeight = kBladeHeight * heightMult * scale;
-			float bladeTipX = bladeWidth / 2.0F;
-
-			// Bend offset - shifts control points horizontally based on bendAmount
-			float bendOffset = bendAmount * 15.0F * scale;
-
-			// Left edge curve
-			renderer::CubicBezier leftEdge = {
-				.p0 = {0.0F, 0.0F},
-				.p1 = {-2.0F * scale + bendOffset * 0.3F, -bladeHeight * 0.33F},
-				.p2 = {bladeTipX - 2.0F * scale + bendOffset * 0.7F, -bladeHeight * 0.83F},
-				.p3 = {bladeTipX + bendOffset, -bladeHeight}
-			};
-
-			// Right edge curve
-			renderer::CubicBezier rightEdge = {
-				.p0 = {bladeTipX + bendOffset, -bladeHeight},
-				.p1 = {bladeTipX + 2.0F * scale + bendOffset * 0.7F, -bladeHeight * 0.83F},
-				.p2 = {bladeWidth + 2.0F * scale + bendOffset * 0.3F, -bladeHeight * 0.33F},
-				.p3 = {bladeWidth, 0.0F}
-			};
-
-			vertices.push_back(leftEdge.p0);
-			renderer::flattenCubicBezier(leftEdge, kCurveTolerance, vertices);
-			renderer::flattenCubicBezier(rightEdge, kCurveTolerance, vertices);
-
-			return vertices;
 		}
 
 		/// Apply rotation and translation to vertices
@@ -279,14 +251,19 @@ namespace {
 
 		/// Regenerate all geometry with current wind animation (called every frame)
 		void regenerateAnimatedGeometry() {
+			// Skip if SVG wasn't loaded
+			if (svgBladeVertices.empty()) {
+				return;
+			}
+
 			// Clear previous frame's geometry
 			m_combinedVertices.clear();
 			m_combinedColors.clear();
 			m_combinedIndices.clear();
 
 			// Pre-allocate (reuse capacity from previous frames)
-			m_combinedVertices.reserve(m_bladeParams.size() * 5);
-			m_combinedColors.reserve(m_bladeParams.size() * 5);
+			m_combinedVertices.reserve(m_bladeParams.size() * svgBladeVertices.size());
+			m_combinedColors.reserve(m_bladeParams.size() * svgBladeVertices.size());
 			m_combinedIndices.reserve(m_bladeParams.size() * 9);
 
 			renderer::Tessellator tessellator;
@@ -297,11 +274,26 @@ namespace {
 				float windBend = calculateWindBend(params.position, m_time, params.phaseOffset);
 				float totalBend = params.baseBendAmount + windBend;
 
-				// Flatten Bezier curves with animated bend
-				std::vector<Foundation::Vec2> vertices =
-					createGrassBladeVertices(params.scale, params.heightMult, params.widthMult, totalBend);
+				// Copy SVG template vertices and apply transformations
+				std::vector<Foundation::Vec2> vertices = svgBladeVertices;
 
-				// Apply transformation
+				// Apply scale, width/height variation, and wind bend
+				float scaleX = params.scale * params.widthMult;
+				float scaleY = params.scale * params.heightMult;
+				float bendOffset = totalBend * 15.0F * params.scale;
+
+				for (auto& v : vertices) {
+					// Scale the vertex
+					v.x *= scaleX;
+					v.y *= scaleY;
+
+					// Apply wind bend (more bend at the top, proportional to Y distance from base)
+					// SVG has Y=0 at base, negative Y toward tip
+					float bendFactor = -v.y / (kBladeHeight * scaleY); // 0 at base, 1 at tip
+					v.x += bendOffset * bendFactor;
+				}
+
+				// Apply rotation and translation
 				transformVertices(vertices, params.position, params.rotation);
 
 				// Tessellate
@@ -334,8 +326,8 @@ namespace {
 		// Blade parameters (generated once, used for per-frame regeneration)
 		std::vector<BladeParams> m_bladeParams;
 
-		// Asset system template (loaded once, cached)
-		const renderer::TessellatedMesh* m_bladeTemplate = nullptr;
+		// SVG-loaded blade template vertices (loaded once from grass_blade.svg)
+		std::vector<Foundation::Vec2> svgBladeVertices;
 
 		// Window dimensions
 		float m_windowWidth = 0.0F;
