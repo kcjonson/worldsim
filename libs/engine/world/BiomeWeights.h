@@ -31,7 +31,8 @@ struct BiomeWeights {
 		return bw;
 	}
 
-	/// Get primary (dominant) biome - the one with highest weight
+	/// Get primary (dominant) biome - the one with highest weight.
+	/// Returns Biome::Grassland when all weights are zero (default behavior).
 	[[nodiscard]] Biome primary() const {
 		Biome best = Biome::Grassland;
 		float bestWeight = 0.0F;

@@ -22,7 +22,9 @@ struct TileGridConfig {
 /// Provides convenient access to tiles by grid coordinate or world position.
 class TileGrid {
   public:
-	/// Default constructor - creates empty grid
+	/// Default constructor - creates empty grid.
+	/// Note: width()/height()/tileSize() return config defaults even when empty.
+	/// Use empty() or tileCount() to check if grid is actually populated.
 	TileGrid() = default;
 
 	/// Create a tile grid with the given configuration

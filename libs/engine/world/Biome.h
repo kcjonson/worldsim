@@ -40,9 +40,10 @@ constexpr const char* biomeToString(Biome biome) {
 			return "Beach";
 		case Biome::Ocean:
 			return "Ocean";
-		default:
-			return "Unknown";
+		case Biome::Count:
+			return "Count";
 	}
+	return "Unknown";
 }
 
 /// Convert string name to biome enum (returns Grassland if not found)

@@ -219,6 +219,10 @@ void parseIntRange(const std::string& str, int32_t& outMin, int32_t& outMax, int
 			// Keep defaults
 		}
 	}
+	// Ensure min <= max for std::uniform_int_distribution
+	if (outMin > outMax) {
+		std::swap(outMin, outMax);
+	}
 }
 
 /// Parse "min,max" format into two floats
@@ -243,6 +247,10 @@ void parseFloatRange(const std::string& str, float& outMin, float& outMax, float
 		} catch (...) {
 			// Keep defaults
 		}
+	}
+	// Ensure min <= max for std::uniform_real_distribution
+	if (outMin > outMax) {
+		std::swap(outMin, outMax);
 	}
 }
 

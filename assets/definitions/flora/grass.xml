@@ -28,6 +28,8 @@
       <complexity>simple</complexity>
       <!-- Instanced = single template + GPU instancing -->
       <tier>instanced</tier>
+      <!-- Number of mesh variants to pre-generate for visual variety -->
+      <variantCount>1</variantCount>
     </rendering>
 
     <animation>

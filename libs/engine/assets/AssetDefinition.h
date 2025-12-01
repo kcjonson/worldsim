@@ -87,12 +87,12 @@ namespace engine::assets {
 
 	/// Clumping parameters for Distribution::Clumped
 	struct ClumpingParams {
-		int32_t clumpSizeMin = 3; // Instances per clump
-		int32_t clumpSizeMax = 12;
-		float	clumpRadiusMin = 0.5F; // Tiles - how spread out within clump
-		float	clumpRadiusMax = 2.0F;
-		float	clumpSpacingMin = 3.0F; // Tiles between clump centers
-		float	clumpSpacingMax = 8.0F;
+		int32_t clumpSizeMin = 3;		// Number of instances per clump (min)
+		int32_t clumpSizeMax = 12;		// Number of instances per clump (max)
+		float	clumpRadiusMin = 0.5F;	// Radius in tile-widths within which clump instances are distributed (min)
+		float	clumpRadiusMax = 2.0F;	// Radius in tile-widths within which clump instances are distributed (max)
+		float	clumpSpacingMin = 3.0F; // Minimum distance in tiles between centers of different clumps
+		float	clumpSpacingMax = 8.0F; // Maximum distance in tiles between centers of different clumps
 	};
 
 	/// Spacing parameters for Distribution::Spaced
