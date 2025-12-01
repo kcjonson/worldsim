@@ -1,5 +1,7 @@
 add_library(assets
     AssetRegistry.cpp
+    AssetSpawner.cpp
+    AssetBatcher.cpp
     generators/GrassBladeGenerator.cpp
 )
 
@@ -15,10 +17,12 @@ target_compile_features(assets PUBLIC cxx_std_20)
 find_package(pugixml CONFIG REQUIRED)
 
 # Link dependencies
+# Note: engine dependency is for world/TileGrid.h access
 target_link_libraries(assets
     PUBLIC
         foundation
         renderer
+        engine
         pugixml::pugixml
 )
 

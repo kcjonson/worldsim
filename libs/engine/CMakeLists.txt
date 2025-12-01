@@ -3,6 +3,7 @@ add_library(engine
     scene/SceneManager.cpp
     input/InputManager.cpp
     clipboard/ClipboardManager.cpp
+    world/TileGrid.cpp
 )
 
 target_include_directories(engine

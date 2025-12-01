@@ -335,58 +335,60 @@ bool AssetRegistry::loadDefinitions(const std::string& xmlPath) {
 			}
 		}
 
-		// Placement settings
+		// Placement settings - per-biome configuration
 		pugi::xml_node placementNode = defNode.child("placement");
 		if (placementNode) {
-			// Parse biomes list
-			pugi::xml_node biomesNode = placementNode.child("biomes");
-			if (biomesNode) {
-				for (pugi::xml_node biomeNode : biomesNode.children("biome")) {
-					std::string biomeName = biomeNode.child_value();
-					if (!biomeName.empty()) {
-						def.placement.biomes.push_back(biomeName);
-					}
+			// Parse per-biome placement configs
+			for (pugi::xml_node biomeNode : placementNode.children("biome")) {
+				BiomePlacement bp;
+
+				// Biome name (required)
+				bp.biomeName = biomeNode.attribute("name").as_string();
+				if (bp.biomeName.empty()) {
+					LOG_WARNING(Engine, "Skipping biome placement with empty name");
+					continue;
 				}
-			}
 
-			// Spawn chance
-			def.placement.spawnChance =
-				static_cast<float>(placementNode.child("spawnChance").text().as_double(0.3));
+				// Spawn chance
+				bp.spawnChance = static_cast<float>(biomeNode.child("spawnChance").text().as_double(0.3));
 
-			// Distribution type
-			def.placement.distribution = parseDistribution(placementNode.child_value("distribution"));
+				// Distribution type
+				bp.distribution = parseDistribution(biomeNode.child_value("distribution"));
 
-			// Clumping parameters (for Distribution::Clumped)
-			pugi::xml_node clumpingNode = placementNode.child("clumping");
-			if (clumpingNode) {
-				parseIntRange(
-					clumpingNode.child_value("clumpSize"),
-					def.placement.clumping.clumpSizeMin,
-					def.placement.clumping.clumpSizeMax,
-					3,
-					12
-				);
-				parseFloatRange(
-					clumpingNode.child_value("clumpRadius"),
-					def.placement.clumping.clumpRadiusMin,
-					def.placement.clumping.clumpRadiusMax,
-					0.5F,
-					2.0F
-				);
-				parseFloatRange(
-					clumpingNode.child_value("clumpSpacing"),
-					def.placement.clumping.clumpSpacingMin,
-					def.placement.clumping.clumpSpacingMax,
-					3.0F,
-					8.0F
-				);
-			}
+				// Clumping parameters (for Distribution::Clumped)
+				pugi::xml_node clumpingNode = biomeNode.child("clumping");
+				if (clumpingNode) {
+					parseIntRange(
+						clumpingNode.child_value("clumpSize"),
+						bp.clumping.clumpSizeMin,
+						bp.clumping.clumpSizeMax,
+						3,
+						12
+					);
+					parseFloatRange(
+						clumpingNode.child_value("clumpRadius"),
+						bp.clumping.clumpRadiusMin,
+						bp.clumping.clumpRadiusMax,
+						0.5F,
+						2.0F
+					);
+					parseFloatRange(
+						clumpingNode.child_value("clumpSpacing"),
+						bp.clumping.clumpSpacingMin,
+						bp.clumping.clumpSpacingMax,
+						3.0F,
+						8.0F
+					);
+				}
 
-			// Spacing parameters (for Distribution::Spaced)
-			pugi::xml_node spacingNode = placementNode.child("spacing");
-			if (spacingNode) {
-				def.placement.spacing.minDistance =
-					static_cast<float>(spacingNode.child("minDistance").text().as_double(2.0));
+				// Spacing parameters (for Distribution::Spaced)
+				pugi::xml_node spacingNode = biomeNode.child("spacing");
+				if (spacingNode) {
+					bp.spacing.minDistance =
+						static_cast<float>(spacingNode.child("minDistance").text().as_double(2.0));
+				}
+
+				def.placement.biomes.push_back(std::move(bp));
 			}
 		}
 

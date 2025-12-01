@@ -97,16 +97,34 @@ namespace engine::assets {
 
 	/// Spacing parameters for Distribution::Spaced
 	struct SpacingParams {
-		float minDistance = 2.0F; // Minimum tiles between instances
+		float minDistance = 2.0F;  // Minimum tiles between instances
 	};
 
-	/// Placement parameters - where assets spawn in the world
+	/// Per-biome placement configuration.
+	/// Each biome can have different spawn behavior for the same asset.
+	/// E.g., grass in grassland: dense/uniform; grass in forest: sparse/clumped.
+	struct BiomePlacement {
+		std::string	   biomeName;						   // "Grassland", "Forest", etc.
+		float		   spawnChance = 0.3F;				   // Probability at each spawn point (0-1)
+		Distribution   distribution = Distribution::Uniform;
+		ClumpingParams clumping;  // Only used if distribution == Clumped
+		SpacingParams  spacing;	  // Only used if distribution == Spaced
+	};
+
+	/// Placement parameters - where assets spawn in the world.
+	/// Contains per-biome configuration for flexible spawn behavior.
 	struct PlacementParams {
-		std::vector<std::string> biomes;			 // Valid biome names
-		float					 spawnChance = 0.3F; // Probability at each spawn point (0-1)
-		Distribution			 distribution = Distribution::Uniform;
-		ClumpingParams			 clumping;
-		SpacingParams			 spacing;
+		std::vector<BiomePlacement> biomes;	 // Per-biome spawn configuration
+
+		/// Find placement config for a specific biome name (returns nullptr if not found)
+		[[nodiscard]] const BiomePlacement* findBiome(const std::string& biomeName) const {
+			for (const auto& bp : biomes) {
+				if (bp.biomeName == biomeName) {
+					return &bp;
+				}
+			}
+			return nullptr;
+		}
 	};
 
 	/// Complete asset definition parsed from XML
