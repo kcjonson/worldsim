@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2025-12-01 (Asset System - Tile Integration Complete)
+Last Updated: 2025-12-01 (Asset System - Lua Scripting Complete)
 
 ## Epic/Story/Task Template
 
@@ -440,14 +440,17 @@ Use this template for all work items:
   - [x] Spawn grass per-tile based on XML placement rules
   - [x] Test: verified 497 grass blades spawning via asset system
 
-**Phase 2: Lua Scripting** (FUTURE)
-- [ ] 2.1 Lua Integration
-  - [ ] Add sol2 or LuaJIT to vcpkg.json
-  - [ ] Create `LuaEngine` class with sandbox restrictions
-  - [ ] Expose `VectorAsset`, `VectorPath` API to Lua
-- [ ] 2.2 Procedural Generator
-  - [ ] Implement variant pre-generation at load time
-  - [ ] Demo: Procedural bush with Lua script
+**Phase 2: Lua Scripting** ✅ COMPLETE
+- [x] 2.1 Lua Integration
+  - [x] Add sol2 (Lua 5.4.8) to vcpkg.json
+  - [x] Create `LuaEngine` class with sandbox and seeded randomness
+  - [x] Expose `Path`, `asset:addPath()` API to Lua
+  - [x] Create `LuaGenerator` implementing `IAssetGenerator` interface
+- [x] 2.2 Procedural Generator
+  - [x] Implement seed-based variant generation (math.randomseed from C++)
+  - [x] Demo: Deciduous tree generator in Lua (3/4 top-down Rimworld style)
+  - [x] TreeScene demo rendering 40 unique trees
+  - [x] XML definition format with scriptPath parameter
 
 **Phase 3: Variant Caching** (FUTURE)
 - [ ] Binary cache format for pre-generated variants
