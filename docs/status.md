@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2025-11-30 (Colonysim UI Integration Epic - All Phases Complete)
+Last Updated: 2025-11-30 (Uber Shader Epic - Complete)
 
 ## Epic/Story/Task Template
 
@@ -28,65 +28,32 @@ Use this template for all work items:
 
 ## Recently Completed Epics (Last 4)
 
-### ✅ Vector Graphics Validation - Stars
-**Spec/Documentation:** `/docs/technical/vector-graphics/validation-plan.md`
+### ✅ Uber Shader - Unified Rendering Pipeline
+**Spec/Documentation:** `libs/renderer/shaders/uber.vert`, `libs/renderer/shaders/uber.frag`
 **Status:** complete
 
 **Completed Tasks:**
-- [x] Single Hardcoded Star
-  - [x] Implement basic tessellation
-  - [x] Render single star shape
-  - [x] Verify visual quality
-- [x] 10,000 Static Stars
-  - [x] Generate 10,000 star instances
-  - [x] Implement batching system
-  - [x] Verify performance: 60 FPS
-- [x] 10,000 Animated Stars
-  - [x] Implement rotation animation
-  - [x] Test with 10,000 stars
-  - [x] Verify 60 FPS sustained
-- [x] SVG Loading for Stars
-  - [x] Load star from SVG file
-  - [x] Parse SVG path data
-  - [x] Apply same rendering pipeline
-  - [x] Verify identical performance
+- [x] Phase 1: Delete Old Renderers
+  - [x] Delete TextBatchRenderer
+  - [x] Delete separate text flush callback system
+  - [x] Delete msdf_text.vert/frag shaders
+- [x] Phase 2: Create Uber Shader
+  - [x] Create uber.vert (unified vertex format)
+  - [x] Create uber.frag (renderMode branching: SHAPE vs TEXT)
+  - [x] Preserve MSDF text math exactly (copy-paste)
+  - [x] Preserve SDF shape math exactly (copy-paste)
+- [x] Phase 3: Unify BatchRenderer
+  - [x] Add renderMode to vertex format (kRenderModeText = -1.0)
+  - [x] Add addTextQuad() method to BatchRenderer
+  - [x] Text interleaved with shapes in submission order
+  - [x] Bind font atlas once at frame start
+- [x] Phase 4: Update Consumers
+  - [x] Update Text::Render() to use BatchRenderer::addTextQuad()
+  - [x] Update Primitives API (getBatchRenderer() for direct access)
+  - [x] Verified text quality unchanged
+  - [x] Verified correct z-ordering and alpha blending
 
-**Result:** Stars validated! 10,000 animated stars @ 60 FPS achieved
-
----
-
-### ✅ Core Engine Patterns Implementation
-**Spec/Documentation:** `/docs/technical/` (multiple docs)
-**Status:** complete
-
-**Completed Tasks:**
-- [x] String Hashing System
-  - [x] Implement FNV-1a hash function
-  - [x] Create HASH() macro for compile-time hashing
-  - [x] Add debug collision detection
-  - [x] Create common hash constants
-- [x] Structured Logging System
-  - [x] Implement Logger class with categories
-  - [x] Add four log levels (Debug/Info/Warning/Error)
-  - [x] Create convenience macros
-  - [x] Add ANSI color terminal output
-  - [x] Integrate with debug server
-- [x] Memory Arena Allocators
-  - [x] Implement Arena class
-  - [x] Create FrameArena wrapper
-  - [x] Create ScopedArena RAII wrapper
-  - [x] Performance test (14× faster than malloc)
-- [x] Resource Handle System
-  - [x] Implement ResourceHandle type
-  - [x] Create ResourceManager template
-  - [x] Add generation validation
-  - [x] Test stale handle detection
-- [x] Application Class - Unified Game Loop
-  - [x] Implement Application class with main loop
-  - [x] Add HandleInput() phase to IScene interface
-  - [x] Integrate delta time and pause functionality
-  - [x] Add exception handling and error recovery
-  - [x] Refactor ui-sandbox and world-sim to use Application
+**Result:** Unified rendering pipeline - zero shader switches, single draw call, correct z-ordering ✅
 
 ---
 
@@ -227,14 +194,14 @@ Use this template for all work items:
   - [x] Create shapes demo (layer_scene demonstrates all shapes)
   - [x] Test all shape types rendering (verified via screenshot)
   - [x] Test shapes nested in layers (working correctly)
-- [x] InputManager ✅ COMPLETE
+- [x] InputManager 
   - [x] Create libs/engine/input/ library
   - [x] Port InputManager from colonysim
   - [x] Application-owned singleton pattern (matches SceneManager)
   - [x] Adapt GLFW callbacks to worldsim conventions
   - [x] Integration with Application::Update() → InputManager::Update() → Scene::HandleInput()
   - [x] InputTestScene for testing and demonstration
-- [x] Style System ✅ COMPLETE (Research findings: worldsim's approach is superior)
+- [x] Style System 
   - [x] Style system already exists in primitive_styles.h (struct-based, not class-based)
   - [x] Decision: Enhance worldsim's existing system instead of porting colonysim's classes
   - [x] BorderStyle, RectStyle, LineStyle, CircleStyle, TextStyle already exist
@@ -251,11 +218,11 @@ Use this template for all work items:
   - [x] Use Primitives API for rendering
   - [x] Create button demo scene
   - [x] Test mouse and keyboard interactions
-  - [x] Implement Batched Text Rendering ✅ COMPLETE (via SDF Text Rendering epic)
+  - [x] Implement Batched Text Rendering
   - [x] Create Keyboard Focus Manager (global Tab navigation system)
   - [x] Port TextInput (cursor, focus, text editing)
   - [x] Create text input demo
-- [x] UI Component Architecture ✅ COMPLETE
+- [x] UI Component Architecture 
   - [x] Create architecture documentation (/docs/technical/ui-framework/architecture.md)
   - [x] Define ILayer interface (HandleInput/Update/Render lifecycle)
   - [x] Define IFocusable interface (focus management)
@@ -703,44 +670,6 @@ Use this template for all work items:
   - [ ] Overview of UI elements from player perspective
   - [ ] Interaction patterns
   - [ ] Visual style guide
-
----
-
-### Uber Shader - Unified Rendering Pipeline
-**Spec/Documentation:** `/docs/technical/ui-framework/uber-shader.md` (TBD)
-**Dependencies:** None
-**Status:** ready
-
-**Problem:** Text and shapes use separate renderers that flush independently - ALL shapes render first, then ALL text renders on top. This breaks z-ordering when text should appear between shapes, and is fundamentally broken for transparency/alpha blending.
-
-**Solution:** Merge shape and text shaders into a single "uber shader" that handles both, eliminating shader switches and allowing everything to render in correct z-order.
-
-**Tasks:**
-- [ ] Phase 1: Delete Old Renderers
-  - [ ] Delete TextBatchRenderer
-  - [ ] Delete separate text flush callback system
-  - [ ] Delete msdf_text.vert/frag shaders
-- [ ] Phase 2: Create Uber Shader
-  - [ ] Create uber.vert (unified vertex format)
-  - [ ] Create uber.frag (renderMode branching: SHAPE vs TEXT)
-  - [ ] Preserve MSDF text math exactly (copy-paste)
-  - [ ] Preserve SDF shape math exactly (copy-paste)
-- [ ] Phase 3: Unify BatchRenderer
-  - [ ] Add renderMode to vertex format
-  - [ ] Add AddText() method to BatchRenderer
-  - [ ] Sort all commands by zIndex in Flush()
-  - [ ] Bind font atlas once at frame start
-- [ ] Phase 4: Update Consumers
-  - [ ] Update Text::Render() to use BatchRenderer::AddText()
-  - [ ] Update Primitives API (remove text callback)
-  - [ ] Create test scene with overlapping transparent shapes + text
-  - [ ] Verify text quality unchanged
-
-**Performance Goals:**
-- Zero shader switches per frame
-- Single draw call for entire UI
-- Correct z-ordering for all elements
-- Correct alpha blending for transparency
 
 ---
 
