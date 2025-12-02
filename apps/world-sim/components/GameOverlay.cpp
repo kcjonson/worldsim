@@ -66,38 +66,16 @@ namespace world_sim {
 	}
 
 	void GameOverlay::update(const engine::world::WorldCamera& camera, const engine::world::ChunkManager& chunkManager) {
-		// Update chunk count text
+		// Update chunk count text in-place (created in createElements())
 		std::ostringstream chunkStr;
 		chunkStr << "Chunks: " << chunkManager.loadedChunkCount();
-		chunksText = std::make_unique<UI::Text>(UI::Text::Args{
-			.position = {10.0F, 10.0F},
-			.text = chunkStr.str(),
-			.style =
-				{
-					.color = Foundation::Color::white(),
-					.fontSize = 16.0F,
-					.hAlign = Foundation::HorizontalAlign::Left,
-					.vAlign = Foundation::VerticalAlign::Top,
-				},
-			.id = "overlay_chunks"
-		});
+		chunksText->text = chunkStr.str();
 
-		// Update position text
+		// Update position text in-place (created in createElements())
 		std::ostringstream posStr;
 		posStr << "Position: (" << static_cast<int>(camera.position().x) << ", " << static_cast<int>(camera.position().y) << ") Chunk: ("
 			   << camera.currentChunk().x << ", " << camera.currentChunk().y << ")";
-		positionText = std::make_unique<UI::Text>(UI::Text::Args{
-			.position = {10.0F, 30.0F},
-			.text = posStr.str(),
-			.style =
-				{
-					.color = Foundation::Color::white(),
-					.fontSize = 16.0F,
-					.hAlign = Foundation::HorizontalAlign::Left,
-					.vAlign = Foundation::VerticalAlign::Top,
-				},
-			.id = "overlay_position"
-		});
+		positionText->text = posStr.str();
 
 		// Update zoom percentage
 		if (zoomControl) {

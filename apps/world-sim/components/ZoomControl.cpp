@@ -93,18 +93,9 @@ namespace world_sim {
 		float x = position.x + kButtonSize + kSpacing;
 		float y = position.y;
 
-		zoomText = std::make_unique<UI::Text>(UI::Text::Args{
-			.position = {x + kTextWidth * 0.5F, y + kButtonSize * 0.5F},
-			.text = oss.str(),
-			.style =
-				{
-					.color = Foundation::Color::white(),
-					.fontSize = kFontSize,
-					.hAlign = Foundation::HorizontalAlign::Center,
-					.vAlign = Foundation::VerticalAlign::Middle,
-				},
-			.id = "zoom_text"
-		});
+		// Update existing text in-place (created in constructor)
+		zoomText->text = oss.str();
+		zoomText->position = {x + kTextWidth * 0.5F, y + kButtonSize * 0.5F};
 	}
 
 	void ZoomControl::handleInput() {
