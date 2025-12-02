@@ -5,6 +5,10 @@ add_library(engine
     input/InputManager.cpp
     clipboard/ClipboardManager.cpp
     world/TileGrid.cpp
+    world/chunk/Chunk.cpp
+    world/chunk/ChunkManager.cpp
+    world/chunk/MockWorldSampler.cpp
+    world/rendering/ChunkRenderer.cpp
 )
 
 target_include_directories(engine

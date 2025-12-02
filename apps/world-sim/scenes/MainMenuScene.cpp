@@ -132,7 +132,10 @@ namespace {
 		}
 
 		void handleInput(float /*dt*/) override {
-			// Button input is handled by FocusManager
+			// Handle mouse input for buttons (keyboard input is routed via FocusManager)
+			for (const auto& button : buttons) {
+				button->handleInput();
+			}
 		}
 
 		void update(float /*dt*/) override {
