@@ -9,6 +9,7 @@
 #include <primitives/Primitives.h>
 #include <scene/Scene.h>
 #include <scene/SceneManager.h>
+#include "SceneTypes.h"
 #include <utils/Log.h>
 #include <vector/Tessellator.h>
 
@@ -158,8 +159,7 @@ namespace {
 
 } // anonymous namespace
 
-// Export factory function and name getter
+// Export scene info for registry
 namespace ui_sandbox::scenes {
-	std::unique_ptr<engine::IScene> createTreeScene() { return std::make_unique<TreeScene>(); }
-	const char* getTreeSceneName() { return kSceneName; }
-} // namespace ui_sandbox::scenes
+	extern const ui_sandbox::SceneInfo Tree = {kSceneName, []() { return std::make_unique<TreeScene>(); }};
+}

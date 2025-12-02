@@ -9,6 +9,7 @@
 #include <application/Application.h>
 #include <scene/Scene.h>
 #include <scene/SceneManager.h>
+#include "SceneTypes.h"
 #include <sstream>
 #include <utils/Log.h>
 #include <vector>
@@ -249,8 +250,7 @@ class TextInputScene : public engine::IScene {
 
 } // anonymous namespace
 
-// Export factory and name for scene registry
+// Export scene info for registry
 namespace ui_sandbox::scenes {
-	std::unique_ptr<engine::IScene> createTextInputScene() { return std::make_unique<TextInputScene>(); }
-	const char* getTextInputSceneName() { return kSceneName; }
+	extern const ui_sandbox::SceneInfo TextInput = {kSceneName, []() { return std::make_unique<TextInputScene>(); }};
 }

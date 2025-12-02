@@ -5,6 +5,7 @@
 #include <primitives/Primitives.h>
 #include <scene/Scene.h>
 #include <scene/SceneManager.h>
+#include "SceneTypes.h"
 #include <shapes/Shapes.h>
 #include <utils/Log.h>
 
@@ -203,8 +204,7 @@ class TextShapesScene : public engine::IScene {
 
 } // anonymous namespace
 
-// Export factory and name for scene registry
+// Export scene info for registry
 namespace ui_sandbox::scenes {
-	std::unique_ptr<engine::IScene> createTextShapesScene() { return std::make_unique<TextShapesScene>(); }
-	const char* getTextShapesSceneName() { return kSceneName; }
+	extern const ui_sandbox::SceneInfo TextShapes = {kSceneName, []() { return std::make_unique<TextShapesScene>(); }};
 }

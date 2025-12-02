@@ -96,8 +96,7 @@ class GameScene : public engine::IScene {
 
 } // namespace
 
-// Export factory function and name getter
+// Export scene info for registry
 namespace world_sim::scenes {
-	std::unique_ptr<engine::IScene> createGameScene() { return std::make_unique<GameScene>(); }
-	const char* getGameSceneName() { return kSceneName; }
-} // namespace world_sim::scenes
+	extern const world_sim::SceneInfo Game = {kSceneName, []() { return std::make_unique<GameScene>(); }};
+}

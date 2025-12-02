@@ -173,8 +173,7 @@ class MainMenuScene : public engine::IScene {
 
 } // namespace
 
-// Export factory function and name getter
+// Export scene info for registry
 namespace world_sim::scenes {
-	std::unique_ptr<engine::IScene> createMainMenuScene() { return std::make_unique<MainMenuScene>(); }
-	const char* getMainMenuSceneName() { return kSceneName; }
-} // namespace world_sim::scenes
+	extern const world_sim::SceneInfo MainMenu = {kSceneName, []() { return std::make_unique<MainMenuScene>(); }};
+}

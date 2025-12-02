@@ -1,50 +1,39 @@
 // SceneTypes.cpp - Scene registry initialization for world-sim
-// Each scene exports its factory function and name; this file collects them
+// Each scene exports a SceneInfo struct; this file collects them into one list
 
 #include "SceneTypes.h"
 #include <scene/Scene.h>
-#include <memory>
 
-// Forward declarations of scene factory functions (defined in each scene .cpp)
+// Forward declarations of scene info (defined in each scene .cpp)
 namespace world_sim::scenes {
-	std::unique_ptr<engine::IScene> createSplashScene();
-	const char* getSplashSceneName();
-
-	std::unique_ptr<engine::IScene> createMainMenuScene();
-	const char* getMainMenuSceneName();
-
-	std::unique_ptr<engine::IScene> createGameScene();
-	const char* getGameSceneName();
-
-	std::unique_ptr<engine::IScene> createSettingsScene();
-	const char* getSettingsSceneName();
-
-	std::unique_ptr<engine::IScene> createWorldCreatorScene();
-	const char* getWorldCreatorSceneName();
+	using world_sim::SceneInfo;
+	extern const SceneInfo Splash;
+	extern const SceneInfo MainMenu;
+	extern const SceneInfo Game;
+	extern const SceneInfo Settings;
+	extern const SceneInfo WorldCreator;
 } // namespace world_sim::scenes
 
 namespace world_sim {
 
 void initializeSceneManager() {
-	using namespace scenes;
+	// Single list: each scene mentioned exactly once
+	const std::pair<SceneType, const SceneInfo*> allScenes[] = {
+		{SceneType::Splash, &scenes::Splash},
+		{SceneType::MainMenu, &scenes::MainMenu},
+		{SceneType::Game, &scenes::Game},
+		{SceneType::Settings, &scenes::Settings},
+		{SceneType::WorldCreator, &scenes::WorldCreator},
+	};
 
-	// Build registry: enum -> factory
+	// One loop populates both registry and names
 	engine::SceneRegistry registry;
-	registry[toKey(SceneType::Splash)] = createSplashScene;
-	registry[toKey(SceneType::MainMenu)] = createMainMenuScene;
-	registry[toKey(SceneType::Game)] = createGameScene;
-	registry[toKey(SceneType::Settings)] = createSettingsScene;
-	registry[toKey(SceneType::WorldCreator)] = createWorldCreatorScene;
-
-	// Build names: enum -> name (each scene declares its own name)
 	std::unordered_map<engine::SceneKey, std::string> names;
-	names[toKey(SceneType::Splash)] = getSplashSceneName();
-	names[toKey(SceneType::MainMenu)] = getMainMenuSceneName();
-	names[toKey(SceneType::Game)] = getGameSceneName();
-	names[toKey(SceneType::Settings)] = getSettingsSceneName();
-	names[toKey(SceneType::WorldCreator)] = getWorldCreatorSceneName();
+	for (const auto& [type, info] : allScenes) {
+		registry[toKey(type)] = info->factory;
+		names[toKey(type)] = info->name;
+	}
 
-	// Initialize SceneManager with our registry
 	engine::SceneManager::Get().initialize(std::move(registry), std::move(names));
 }
 

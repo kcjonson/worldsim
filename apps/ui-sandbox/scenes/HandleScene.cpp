@@ -5,6 +5,7 @@
 #include <resources/ResourceManager.h>
 #include <scene/Scene.h>
 #include <scene/SceneManager.h>
+#include "SceneTypes.h"
 #include <utils/Log.h>
 
 #include <GL/glew.h>
@@ -331,8 +332,7 @@ constexpr const char* kSceneName = "handles";
 
 } // anonymous namespace
 
-// Export factory and name for scene registry
+// Export scene info for registry
 namespace ui_sandbox::scenes {
-	std::unique_ptr<engine::IScene> createHandleScene() { return std::make_unique<HandleScene>(); }
-	const char* getHandleSceneName() { return kSceneName; }
+	extern const ui_sandbox::SceneInfo Handle = {kSceneName, []() { return std::make_unique<HandleScene>(); }};
 }

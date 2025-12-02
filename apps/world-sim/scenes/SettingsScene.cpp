@@ -94,8 +94,7 @@ class SettingsScene : public engine::IScene {
 
 } // namespace
 
-// Export factory function and name getter
+// Export scene info for registry
 namespace world_sim::scenes {
-	std::unique_ptr<engine::IScene> createSettingsScene() { return std::make_unique<SettingsScene>(); }
-	const char* getSettingsSceneName() { return kSceneName; }
-} // namespace world_sim::scenes
+	extern const world_sim::SceneInfo Settings = {kSceneName, []() { return std::make_unique<SettingsScene>(); }};
+}

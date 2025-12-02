@@ -5,6 +5,7 @@
 #include <primitives/Primitives.h>
 #include <scene/Scene.h>
 #include <scene/SceneManager.h>
+#include "SceneTypes.h"
 #include <utils/Log.h>
 #include <vector/Tessellator.h>
 #include <vector/Types.h>
@@ -191,8 +192,7 @@ class VectorStarScene : public engine::IScene {
 
 } // anonymous namespace
 
-// Export factory and name for scene registry
+// Export scene info for registry
 namespace ui_sandbox::scenes {
-	std::unique_ptr<engine::IScene> createVectorStarScene() { return std::make_unique<VectorStarScene>(); }
-	const char* getVectorStarSceneName() { return kSceneName; }
+	extern const ui_sandbox::SceneInfo VectorStar = {kSceneName, []() { return std::make_unique<VectorStarScene>(); }};
 }

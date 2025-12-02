@@ -5,8 +5,13 @@
 
 namespace ui_sandbox {
 
+/// @brief Scene registration info - each scene exports one of these
+struct SceneInfo {
+	const char* name;
+	engine::SceneFactory factory;
+};
+
 /// @brief Scene types for ui-sandbox application
-/// Each scene declares its own human-readable name via static kSceneName member
 enum class SceneType : std::size_t {
 	Shapes = 0,
 	Arena,

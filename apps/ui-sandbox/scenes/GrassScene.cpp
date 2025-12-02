@@ -9,6 +9,7 @@
 #include <primitives/Primitives.h>
 #include <scene/Scene.h>
 #include <scene/SceneManager.h>
+#include "SceneTypes.h"
 #include <utils/Log.h>
 #include <world/TileGrid.h>
 
@@ -149,8 +150,7 @@ constexpr const char* kSceneName = "grass";
 
 } // anonymous namespace
 
-// Export factory and name for scene registry
+// Export scene info for registry
 namespace ui_sandbox::scenes {
-	std::unique_ptr<engine::IScene> createGrassScene() { return std::make_unique<GrassScene>(); }
-	const char* getGrassSceneName() { return kSceneName; }
+	extern const ui_sandbox::SceneInfo Grass = {kSceneName, []() { return std::make_unique<GrassScene>(); }};
 }

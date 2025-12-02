@@ -104,8 +104,7 @@ class SplashScene : public engine::IScene {
 
 } // namespace
 
-// Export factory function and name getter
+// Export scene info for registry
 namespace world_sim::scenes {
-	std::unique_ptr<engine::IScene> createSplashScene() { return std::make_unique<SplashScene>(); }
-	const char* getSplashSceneName() { return kSceneName; }
-} // namespace world_sim::scenes
+	extern const world_sim::SceneInfo Splash = {kSceneName, []() { return std::make_unique<SplashScene>(); }};
+}

@@ -1,101 +1,59 @@
 // SceneTypes.cpp - Scene registry initialization for ui-sandbox
-// Each scene exports its factory function and name; this file collects them
 
 #include "SceneTypes.h"
-#include <scene/Scene.h>
-#include <memory>
 
-// Forward declarations of scene factory functions (defined in each scene .cpp)
+// Each scene exports a SceneInfo - forward declare them here
 namespace ui_sandbox::scenes {
-	std::unique_ptr<engine::IScene> createShapesScene();
-	const char* getShapesSceneName();
-
-	std::unique_ptr<engine::IScene> createArenaScene();
-	const char* getArenaSceneName();
-
-	std::unique_ptr<engine::IScene> createHandleScene();
-	const char* getHandleSceneName();
-
-	std::unique_ptr<engine::IScene> createButtonScene();
-	const char* getButtonSceneName();
-
-	std::unique_ptr<engine::IScene> createTextInputScene();
-	const char* getTextInputSceneName();
-
-	std::unique_ptr<engine::IScene> createGrassScene();
-	const char* getGrassSceneName();
-
-	std::unique_ptr<engine::IScene> createVectorPerfScene();
-	const char* getVectorPerfSceneName();
-
-	std::unique_ptr<engine::IScene> createVectorStarScene();
-	const char* getVectorStarSceneName();
-
-	std::unique_ptr<engine::IScene> createSvgScene();
-	const char* getSvgSceneName();
-
-	std::unique_ptr<engine::IScene> createClipScene();
-	const char* getClipSceneName();
-
-	std::unique_ptr<engine::IScene> createLayerScene();
-	const char* getLayerSceneName();
-
-	std::unique_ptr<engine::IScene> createTextShapesScene();
-	const char* getTextShapesSceneName();
-
-	std::unique_ptr<engine::IScene> createSdfMinimalScene();
-	const char* getSdfMinimalSceneName();
-
-	std::unique_ptr<engine::IScene> createInputTestScene();
-	const char* getInputTestSceneName();
-
-	std::unique_ptr<engine::IScene> createTreeScene();
-	const char* getTreeSceneName();
+	using ui_sandbox::SceneInfo;
+	extern const SceneInfo Shapes;
+	extern const SceneInfo Arena;
+	extern const SceneInfo Handle;
+	extern const SceneInfo Button;
+	extern const SceneInfo TextInput;
+	extern const SceneInfo Grass;
+	extern const SceneInfo VectorPerf;
+	extern const SceneInfo VectorStar;
+	extern const SceneInfo Svg;
+	extern const SceneInfo Clip;
+	extern const SceneInfo Layer;
+	extern const SceneInfo TextShapes;
+	extern const SceneInfo SdfMinimal;
+	extern const SceneInfo InputTest;
+	extern const SceneInfo Tree;
 } // namespace ui_sandbox::scenes
 
 namespace ui_sandbox {
 
-void initializeSceneManager() {
-	using namespace scenes;
+	void initializeSceneManager() {
+		// Single list: enum -> scene info (each scene mentioned exactly once)
+		const std::pair<SceneType, const SceneInfo*> allScenes[] = {
+			{SceneType::Shapes, &scenes::Shapes},
+			{SceneType::Arena, &scenes::Arena},
+			{SceneType::Handle, &scenes::Handle},
+			{SceneType::Button, &scenes::Button},
+			{SceneType::TextInput, &scenes::TextInput},
+			{SceneType::Grass, &scenes::Grass},
+			{SceneType::VectorPerf, &scenes::VectorPerf},
+			{SceneType::VectorStar, &scenes::VectorStar},
+			{SceneType::Svg, &scenes::Svg},
+			{SceneType::Clip, &scenes::Clip},
+			{SceneType::Layer, &scenes::Layer},
+			{SceneType::TextShapes, &scenes::TextShapes},
+			{SceneType::SdfMinimal, &scenes::SdfMinimal},
+			{SceneType::InputTest, &scenes::InputTest},
+			{SceneType::Tree, &scenes::Tree},
+		};
 
-	// Build registry: enum -> factory
-	engine::SceneRegistry registry;
-	registry[toKey(SceneType::Shapes)] = createShapesScene;
-	registry[toKey(SceneType::Arena)] = createArenaScene;
-	registry[toKey(SceneType::Handle)] = createHandleScene;
-	registry[toKey(SceneType::Button)] = createButtonScene;
-	registry[toKey(SceneType::TextInput)] = createTextInputScene;
-	registry[toKey(SceneType::Grass)] = createGrassScene;
-	registry[toKey(SceneType::VectorPerf)] = createVectorPerfScene;
-	registry[toKey(SceneType::VectorStar)] = createVectorStarScene;
-	registry[toKey(SceneType::Svg)] = createSvgScene;
-	registry[toKey(SceneType::Clip)] = createClipScene;
-	registry[toKey(SceneType::Layer)] = createLayerScene;
-	registry[toKey(SceneType::TextShapes)] = createTextShapesScene;
-	registry[toKey(SceneType::SdfMinimal)] = createSdfMinimalScene;
-	registry[toKey(SceneType::InputTest)] = createInputTestScene;
-	registry[toKey(SceneType::Tree)] = createTreeScene;
+		// Build registry and names from the single list
+		engine::SceneRegistry							  registry;
+		std::unordered_map<engine::SceneKey, std::string> names;
 
-	// Build names: enum -> name (each scene declares its own name)
-	std::unordered_map<engine::SceneKey, std::string> names;
-	names[toKey(SceneType::Shapes)] = getShapesSceneName();
-	names[toKey(SceneType::Arena)] = getArenaSceneName();
-	names[toKey(SceneType::Handle)] = getHandleSceneName();
-	names[toKey(SceneType::Button)] = getButtonSceneName();
-	names[toKey(SceneType::TextInput)] = getTextInputSceneName();
-	names[toKey(SceneType::Grass)] = getGrassSceneName();
-	names[toKey(SceneType::VectorPerf)] = getVectorPerfSceneName();
-	names[toKey(SceneType::VectorStar)] = getVectorStarSceneName();
-	names[toKey(SceneType::Svg)] = getSvgSceneName();
-	names[toKey(SceneType::Clip)] = getClipSceneName();
-	names[toKey(SceneType::Layer)] = getLayerSceneName();
-	names[toKey(SceneType::TextShapes)] = getTextShapesSceneName();
-	names[toKey(SceneType::SdfMinimal)] = getSdfMinimalSceneName();
-	names[toKey(SceneType::InputTest)] = getInputTestSceneName();
-	names[toKey(SceneType::Tree)] = getTreeSceneName();
+		for (const auto& [type, info] : allScenes) {
+			registry[toKey(type)] = info->factory;
+			names[toKey(type)] = info->name;
+		}
 
-	// Initialize SceneManager with our registry
-	engine::SceneManager::Get().initialize(std::move(registry), std::move(names));
-}
+		engine::SceneManager::Get().initialize(std::move(registry), std::move(names));
+	}
 
 } // namespace ui_sandbox

@@ -7,6 +7,7 @@
 #include <primitives/Primitives.h>
 #include <scene/Scene.h>
 #include <scene/SceneManager.h>
+#include "SceneTypes.h"
 #include <utils/Log.h>
 
 #include <GL/glew.h>
@@ -109,8 +110,7 @@ class SDFMinimalScene : public engine::IScene {
 
 } // anonymous namespace
 
-// Export factory and name for scene registry
+// Export scene info for registry
 namespace ui_sandbox::scenes {
-	std::unique_ptr<engine::IScene> createSdfMinimalScene() { return std::make_unique<SDFMinimalScene>(); }
-	const char* getSdfMinimalSceneName() { return kSceneName; }
+	extern const ui_sandbox::SceneInfo SdfMinimal = {kSceneName, []() { return std::make_unique<SDFMinimalScene>(); }};
 }

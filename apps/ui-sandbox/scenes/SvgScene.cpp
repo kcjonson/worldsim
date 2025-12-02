@@ -5,6 +5,7 @@
 #include <primitives/Primitives.h>
 #include <scene/Scene.h>
 #include <scene/SceneManager.h>
+#include "SceneTypes.h"
 #include <utils/Log.h>
 #include <utils/ResourcePath.h>
 #include <vector/SVGLoader.h>
@@ -149,8 +150,7 @@ constexpr const char* kSceneName = "svg";
 
 } // anonymous namespace
 
-// Export factory and name for scene registry
+// Export scene info for registry
 namespace ui_sandbox::scenes {
-	std::unique_ptr<engine::IScene> createSvgScene() { return std::make_unique<SvgScene>(); }
-	const char* getSvgSceneName() { return kSceneName; }
+	extern const ui_sandbox::SceneInfo Svg = {kSceneName, []() { return std::make_unique<SvgScene>(); }};
 }

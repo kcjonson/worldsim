@@ -8,6 +8,7 @@
 #include <primitives/Primitives.h>
 #include <scene/Scene.h>
 #include <scene/SceneManager.h>
+#include "SceneTypes.h"
 #include <shapes/Shapes.h>
 #include <sstream>
 #include <utils/Log.h>
@@ -186,8 +187,7 @@ constexpr const char* kSceneName = "input_test";
 
 } // anonymous namespace
 
-// Export factory and name for scene registry (scene owns its name)
+// Export scene info for registry
 namespace ui_sandbox::scenes {
-	std::unique_ptr<engine::IScene> createInputTestScene() { return std::make_unique<InputTestScene>(); }
-	const char* getInputTestSceneName() { return kSceneName; }
+	extern const ui_sandbox::SceneInfo InputTest = {kSceneName, []() { return std::make_unique<InputTestScene>(); }};
 }
