@@ -1,5 +1,6 @@
 add_library(engine
     application/Application.cpp
+    application/AppLauncher.cpp
     scene/SceneManager.cpp
     input/InputManager.cpp
     clipboard/ClipboardManager.cpp
