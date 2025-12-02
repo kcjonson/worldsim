@@ -28,8 +28,13 @@ namespace engine::assets {
 		float cosR = std::cos(instance.rotation);
 		float sinR = std::sin(instance.rotation);
 
+		// Check if mesh has per-vertex colors
+		bool hasMeshColors = mesh.hasColors();
+
 		// Transform and add vertices
-		for (const auto& v : mesh.vertices) {
+		for (size_t i = 0; i < mesh.vertices.size(); ++i) {
+			const auto& v = mesh.vertices[i];
+
 			// Scale
 			float sx = v.x * instance.scale;
 			float sy = v.y * instance.scale;
@@ -40,7 +45,20 @@ namespace engine::assets {
 
 			// Translate
 			batch.vertices.push_back(Foundation::Vec2(rx + instance.position.x, ry + instance.position.y));
-			batch.colors.push_back(instance.colorTint);
+
+			// Use mesh color modulated by colorTint, or just colorTint if no mesh colors
+			if (hasMeshColors) {
+				const auto& meshColor = mesh.colors[i];
+				// Modulate mesh color by instance colorTint
+				batch.colors.push_back(Foundation::Color(
+					meshColor.r * instance.colorTint.r,
+					meshColor.g * instance.colorTint.g,
+					meshColor.b * instance.colorTint.b,
+					meshColor.a * instance.colorTint.a
+				));
+			} else {
+				batch.colors.push_back(instance.colorTint);
+			}
 		}
 
 		// Add indices with offset

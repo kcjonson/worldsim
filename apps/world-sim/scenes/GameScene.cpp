@@ -164,7 +164,6 @@ namespace {
 			Renderer::Primitives::getViewport(w, h);
 			m_renderer->render(*m_chunkManager, *m_camera, w, h);
 
-			// Render placed entities on top of terrain
 			m_entityRenderer->render(*m_placementExecutor, m_processedChunks, *m_camera, w, h);
 
 			m_overlay->render();

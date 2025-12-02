@@ -634,6 +634,7 @@ bool AssetRegistry::tessellateAsset(const GeneratedAsset& asset, renderer::Tesse
 		uint16_t baseIndex = static_cast<uint16_t>(outMesh.vertices.size());
 		for (const auto& v : pathMesh.vertices) {
 			outMesh.vertices.push_back(v);
+			outMesh.colors.push_back(path.fillColor); // Preserve path color per-vertex
 		}
 		for (const auto& idx : pathMesh.indices) {
 			outMesh.indices.push_back(baseIndex + idx);
