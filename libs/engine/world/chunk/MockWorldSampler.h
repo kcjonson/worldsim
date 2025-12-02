@@ -31,7 +31,16 @@ class MockWorldSampler : public IWorldSampler {
 	uint64_t m_seed;
 
 	/// Sample biome weights at a world position
+	/// Uses spherical tile quantization - positions are mapped to their containing
+	/// spherical tile (~5km), and the tile's center determines the biome.
 	[[nodiscard]] BiomeWeights sampleBiomeAt(WorldPosition pos) const;
+
+	/// Get the definitive biome for a spherical tile
+	/// Each spherical tile has exactly one biome (per spec)
+	[[nodiscard]] Biome getSphericalTileBiome(int32_t tileX, int32_t tileY) const;
+
+	/// Calculate distance from position to nearest spherical tile boundary
+	[[nodiscard]] float distanceToTileBoundary(WorldPosition pos) const;
 
 	/// Check if a chunk is "pure" (all corners have the same primary biome)
 	[[nodiscard]] static bool isChunkPure(const BiomeWeights& nw, const BiomeWeights& ne, const BiomeWeights& sw,
