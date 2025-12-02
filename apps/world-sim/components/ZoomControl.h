@@ -36,12 +36,12 @@ class ZoomControl {
 	void render();
 
   private:
-	Foundation::Vec2 m_position;
-	int m_zoomPercent = 100;
+	Foundation::Vec2 position;
+	int zoomPercent = 100;
 
-	std::unique_ptr<UI::Button> m_zoomOutButton;
-	std::unique_ptr<UI::Text> m_zoomText;
-	std::unique_ptr<UI::Button> m_zoomInButton;
+	std::unique_ptr<UI::Button> zoomOutButton;
+	std::unique_ptr<UI::Text> zoomText;
+	std::unique_ptr<UI::Button> zoomInButton;
 
 	void updateZoomText();
 };

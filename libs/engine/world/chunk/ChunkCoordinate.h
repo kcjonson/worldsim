@@ -4,6 +4,8 @@
 // Chunks are 512×512 tiles (512m × 512m at 1m per tile).
 // Provides hash specialization for use in std::unordered_map.
 
+#include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <functional>
 
@@ -124,9 +126,10 @@ namespace std {
 template <>
 struct hash<engine::world::ChunkCoordinate> {
 	size_t operator()(const engine::world::ChunkCoordinate& coord) const noexcept {
-		// Combine x and y into a single hash using bit shifting
-		// This avoids collisions for common coordinate ranges
-		return (static_cast<size_t>(coord.x) << 32) | static_cast<size_t>(static_cast<uint32_t>(coord.y));
+		// Use standard hash combining technique for portability (works on 32-bit and 64-bit)
+		size_t h1 = std::hash<int32_t>{}(coord.x);
+		size_t h2 = std::hash<int32_t>{}(coord.y);
+		return h1 ^ (h2 + 0x9e3779b9 + (h1 << 6) + (h1 >> 2));
 	}
 };
 }  // namespace std

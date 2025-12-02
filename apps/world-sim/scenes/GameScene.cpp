@@ -84,9 +84,9 @@ class GameScene : public engine::IScene {
 		}
 
 		if (dx != 0.0F && dy != 0.0F) {
-			constexpr float kDiag = 0.7071F;
-			dx *= kDiag;
-			dy *= kDiag;
+			constexpr float kDiagonalNormalizer = 0.7071F;  // 1/sqrt(2), normalizes diagonal movement to unit length
+			dx *= kDiagonalNormalizer;
+			dy *= kDiagonalNormalizer;
 		}
 
 		m_camera->move(dx, dy, dt);

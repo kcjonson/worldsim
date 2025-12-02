@@ -11,6 +11,7 @@
 
 #include <graphics/Rect.h>
 
+#include <algorithm>
 #include <cstdint>
 
 namespace engine::world {
