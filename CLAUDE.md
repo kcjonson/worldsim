@@ -116,6 +116,7 @@ World-sim is a C++20 game with 3D procedural world generation, 2D tile-based gam
 **Visual Verification:**
 - When user reports visual issues ("X doesn't appear", "layout is wrong")
 - Capture screenshot via HTTP endpoint to see actual output
+- IMPORTANT: Only capture a screenshot when requested by the user, avoid them where possible
 - See `/docs/workflows.md` → "Verifying Visual Output"
 
 **Sandbox Control:**

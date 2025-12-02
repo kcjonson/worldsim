@@ -25,7 +25,6 @@
 #include <chrono>
 #include <future>
 #include <memory>
-#include <mutex>
 #include <sstream>
 #include <unordered_set>
 #include <vector>
@@ -173,6 +172,16 @@ namespace {
 
 		void onExit() override {
 			LOG_INFO(Game, "GameScene - Exiting");
+
+			// Wait for all pending async tasks to complete before destroying executor
+			for (auto& [coord, future] : m_pendingFutures) {
+				if (future.valid()) {
+					future.wait();
+				}
+			}
+			m_pendingFutures.clear();
+			m_chunksBeingProcessed.clear();
+
 			m_overlay.reset();
 			m_placementExecutor.reset();
 			m_chunkManager.reset();
@@ -215,8 +224,11 @@ namespace {
 				// We create a snapshot of the chunk's biome/ground cover data
 				auto chunkData = captureChunkData(chunk);
 
+				// Capture executor pointer instead of 'this' for explicit thread safety boundary
+				auto* executor = m_placementExecutor.get();
+
 				// Launch async computation
-				auto future = std::async(std::launch::async, [this, coord, chunkData = std::move(chunkData)]() {
+				auto future = std::async(std::launch::async, [executor, coord, chunkData = std::move(chunkData)]() {
 					engine::assets::ChunkPlacementContext ctx;
 					ctx.coord = coord;
 					ctx.worldSeed = kDefaultWorldSeed;
@@ -228,7 +240,7 @@ namespace {
 					};
 
 					// Thread-safe computation (no shared state modification)
-					return m_placementExecutor->computeChunkEntities(ctx, m_placementExecutor.get());
+					return executor->computeChunkEntities(ctx, executor);
 				});
 
 				m_pendingFutures.emplace_back(coord, std::move(future));
@@ -321,9 +333,8 @@ namespace {
 		std::unordered_set<engine::world::ChunkCoordinate> m_processedChunks;
 
 		// Async chunk processing state
-		std::unordered_set<engine::world::ChunkCoordinate>									m_chunksBeingProcessed;
+		std::unordered_set<engine::world::ChunkCoordinate>									  m_chunksBeingProcessed;
 		std::vector<std::pair<engine::world::ChunkCoordinate, std::future<AsyncChunkResult>>> m_pendingFutures;
-		std::mutex m_asyncMutex;
 	};
 
 } // namespace

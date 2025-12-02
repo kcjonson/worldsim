@@ -137,9 +137,9 @@ namespace engine::assets {
 				}
 
 				// Check tile-type proximity ("near Water" etc)
+				// NOTE: Search is limited to within current chunk bounds.
+				// Entities near chunk edges may not detect tile types across the boundary.
 				if (!biomePlacement->nearTileType.empty() && context.getGroundCover) {
-					// Need to check if we're near the required tile type
-					// For now, check the current tile and immediate neighbors
 					bool foundNearby = false;
 					int	 searchRadius = static_cast<int>(biomePlacement->nearDistance);
 					if (searchRadius < 1) {

@@ -45,13 +45,10 @@ void EntityRenderer::render(const assets::PlacementExecutor& executor,
 		// Query only entities within visible bounds (view frustum culling)
 		auto visibleEntities = index->queryRect(minWorldX, minWorldY, maxWorldX, maxWorldY);
 		for (const auto* entity : visibleEntities) {
-			// Entity position is in tiles (= meters since kTileSize = 1.0)
+			// Entity position is in world coordinates (tiles = meters, kTileSize = 1.0)
 			// Convert world position to screen position
-			float worldX = entity->position.x * kTileSize;
-			float worldY = entity->position.y * kTileSize;
-
-			float screenX = (worldX - camera.position().x) * m_pixelsPerMeter * zoom + halfViewW;
-			float screenY = (worldY - camera.position().y) * m_pixelsPerMeter * zoom + halfViewH;
+			float screenX = (entity->position.x - camera.position().x) * m_pixelsPerMeter * zoom + halfViewW;
+			float screenY = (entity->position.y - camera.position().y) * m_pixelsPerMeter * zoom + halfViewH;
 
 			// Create spawned instance for batching
 			assets::SpawnedInstance instance{

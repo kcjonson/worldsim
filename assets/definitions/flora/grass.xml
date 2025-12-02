@@ -45,7 +45,7 @@
     <!-- Each biome can have different spawn behavior -->
     <placement>
       <!-- Grassland: Dense, fairly uniform coverage -->
-      <!-- TODO: Implement clumping - current system spawns per-tile, not per-clump -->
+      <!-- Note: Clumped/spaced distributions not yet implemented - uses uniform random per-tile -->
       <biome name="Grassland">
         <spawnChance>0.001</spawnChance>
         <distribution>clumped</distribution>

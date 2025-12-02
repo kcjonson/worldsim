@@ -98,11 +98,13 @@ Asset Definitions (XML)
 
 Each biome can specify a distribution pattern:
 
-| Pattern  | Description | Use Case |
-|----------|-------------|----------|
-| `uniform` | Random placement, no clustering | Grass, small debris |
-| `clumped` | Groups together in patches | Flower patches, mushroom rings |
-| `spaced`  | Maintains minimum distance | Trees, large bushes |
+| Pattern  | Description | Use Case | Status |
+|----------|-------------|----------|--------|
+| `uniform` | Random placement, no clustering | Grass, small debris | ✅ Implemented |
+| `clumped` | Groups together in patches | Flower patches, mushroom rings | 🚧 Planned |
+| `spaced`  | Maintains minimum distance | Trees, large bushes | 🚧 Planned |
+
+> **Note:** Currently only `uniform` distribution is implemented. All assets use random per-tile placement regardless of the distribution setting. Clumped and spaced distribution patterns are planned for a future phase.
 
 ```
 UNIFORM                    CLUMPED                    SPACED
