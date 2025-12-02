@@ -32,7 +32,7 @@ class ChunkRenderer {
 	void render(const ChunkManager& chunkManager, const WorldCamera& camera, int viewportWidth, int viewportHeight);
 
 	/// Set pixels per meter (zoom level)
-	void setPixelsPerMeter(float ppm) { m_pixelsPerMeter = ppm; }
+	void setPixelsPerMeter(float pixelsPerMeter) { m_pixelsPerMeter = pixelsPerMeter; }
 	[[nodiscard]] float pixelsPerMeter() const { return m_pixelsPerMeter; }
 
 	/// Set tile resolution for rendering (how many tiles to skip when rendering)

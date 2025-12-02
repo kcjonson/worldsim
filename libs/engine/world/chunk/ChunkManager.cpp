@@ -41,6 +41,7 @@ Chunk* ChunkManager::getChunk(ChunkCoordinate coord) {
 const Chunk* ChunkManager::getChunk(ChunkCoordinate coord) const {
 	auto it = m_chunks.find(coord);
 	if (it != m_chunks.end()) {
+		it->second->touch();
 		return it->second.get();
 	}
 	return nullptr;

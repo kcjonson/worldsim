@@ -1,5 +1,7 @@
 #include "Chunk.h"
 
+#include <cmath>
+
 namespace engine::world {
 
 	Chunk::Chunk(ChunkCoordinate coord, ChunkSampleResult biomeData, uint64_t worldSeed)

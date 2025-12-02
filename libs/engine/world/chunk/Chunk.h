@@ -73,7 +73,9 @@ class Chunk {
 	[[nodiscard]] static Foundation::Color getGroundCoverColor(GroundCover cover);
 
 	/// Update last accessed time (for LRU eviction)
-	void touch() { m_lastAccessed = std::chrono::steady_clock::now(); }
+	/// Note: touch() is const because m_lastAccessed is mutable - LRU timestamp
+	/// is not considered part of the logical state of the chunk.
+	void touch() const { m_lastAccessed = std::chrono::steady_clock::now(); }
 
 	/// Get last accessed time
 	[[nodiscard]] auto lastAccessed() const { return m_lastAccessed; }
@@ -82,7 +84,7 @@ class Chunk {
 	ChunkCoordinate m_coord;
 	ChunkSampleResult m_biomeData;
 	uint64_t m_worldSeed;
-	std::chrono::steady_clock::time_point m_lastAccessed;
+	mutable std::chrono::steady_clock::time_point m_lastAccessed;
 
 	/// Generate tile data procedurally
 	[[nodiscard]] TileData generateTile(uint16_t localX, uint16_t localY) const;

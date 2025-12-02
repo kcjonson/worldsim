@@ -2,8 +2,8 @@
 
 #include "input/InputTypes.h"
 #include <GLFW/glfw3.h>
-#include <glm/glm.hpp>
 #include <functional>
+#include <glm/glm.hpp>
 #include <string>
 #include <unordered_map>
 
@@ -29,7 +29,7 @@ namespace engine {
 	  public:
 		// Singleton access
 		static InputManager& Get();
-		static void setInstance(InputManager* instance);
+		static void			 setInstance(InputManager* instance);
 
 		explicit InputManager(GLFWwindow* window);
 		~InputManager();
@@ -46,10 +46,10 @@ namespace engine {
 		// Query API for scenes to read current input state
 		glm::vec2 getMousePosition() const { return mousePosition; }
 		glm::vec2 getMouseDelta() const { return mouseDelta; }
-		bool isMouseButtonDown(MouseButton button) const;
-		bool isMouseButtonPressed(MouseButton button) const;  // True only on frame button was pressed
-		bool isMouseButtonReleased(MouseButton button) const; // True only on frame button was released
-		bool isDragging() const { return dragging; }
+		bool	  isMouseButtonDown(MouseButton button) const;
+		bool	  isMouseButtonPressed(MouseButton button) const;  // True only on frame button was pressed
+		bool	  isMouseButtonReleased(MouseButton button) const; // True only on frame button was released
+		bool	  isDragging() const { return dragging; }
 		glm::vec2 getDragStartPosition() const { return dragStartPos; }
 		glm::vec2 getDragDelta() const { return mousePosition - dragStartPos; }
 
@@ -60,10 +60,10 @@ namespace engine {
 		float getScrollDelta() const { return scrollDelta; }
 		float consumeScrollDelta() {
 			float delta = scrollDelta;
-			scrollDelta = 0.0f;
+			scrollDelta = 0.0F;
 			return delta;
 		}
-		bool isCursorInWindow() const { return cursorInWindow; }
+		bool	  isCursorInWindow() const { return cursorInWindow; }
 		glm::vec2 getWindowSize() const { return windowSize; }
 
 		// Callbacks for external systems (e.g., FocusManager)
