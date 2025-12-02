@@ -87,11 +87,20 @@ class Chunk {
 	/// Generate tile data procedurally
 	[[nodiscard]] TileData generateTile(uint16_t localX, uint16_t localY) const;
 
-	/// Select ground cover based on biome
-	[[nodiscard]] GroundCover selectGroundCover(Biome biome, uint32_t tileHash) const;
+	/// Select ground cover based on biome using organic noise-based patches
+	[[nodiscard]] GroundCover selectGroundCover(Biome biome, uint16_t localX, uint16_t localY) const;
 
 	/// Hash function for deterministic tile generation
 	[[nodiscard]] static uint32_t tileHash(ChunkCoordinate chunk, uint16_t localX, uint16_t localY, uint64_t seed);
+
+	/// Value noise in range [0, 1] for organic patch generation
+	[[nodiscard]] float valueNoise(float x, float y, uint64_t seed) const;
+
+	/// Fractal noise (multiple octaves) for natural-looking variation
+	[[nodiscard]] float fractalNoise(float x, float y, uint64_t seed, int octaves, float persistence) const;
+
+	/// Smoothstep interpolation for noise
+	[[nodiscard]] static float smoothstep(float t);
 };
 
 }  // namespace engine::world

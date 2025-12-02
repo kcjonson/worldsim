@@ -22,11 +22,11 @@ namespace engine::world {
 		// Get elevation from interpolation
 		tile.elevation = m_biomeData.getTileElevation(localX, localY);
 
+		// Select ground cover based on biome (uses spatial clustering)
+		tile.groundCover = selectGroundCover(tile.biome.primary(), localX, localY);
+
 		// Generate deterministic properties from hash
 		uint32_t hash = tileHash(m_coord, localX, localY, m_worldSeed);
-
-		// Select ground cover based on biome
-		tile.groundCover = selectGroundCover(tile.biome.primary(), hash);
 
 		// Generate moisture (normalized hash + biome influence)
 		constexpr float kNormalize = 1.0F / static_cast<float>(UINT32_MAX);
@@ -43,44 +43,116 @@ namespace engine::world {
 		return tile;
 	}
 
-	GroundCover Chunk::selectGroundCover(Biome biome, uint32_t hash) const {
-		// Use hash to add minimal variation within biome
-		// For now, keep it very uniform (~98%+ primary ground cover)
-		// Real variation will come from procedural assets, not ground cover noise
-		float variation = static_cast<float>(hash % 1000) / 1000.0F;
+	GroundCover Chunk::selectGroundCover(Biome biome, uint16_t localX, uint16_t localY) const {
+		// Natural terrain approach using continuous noise:
+		// - Sample fractal noise at world position (creates organic blob shapes)
+		// - Use high threshold (0.92+) for sparse distribution
+		// - Different seed offsets = independent feature layers
+		// - Low frequency = larger patches, varying sizes
 
-		switch (biome) {
-			case Biome::Grassland:
-				return (variation < 0.98F) ? GroundCover::Grass : GroundCover::Dirt;
-
-			case Biome::Forest:
-				return (variation < 0.98F) ? GroundCover::Grass : GroundCover::Dirt;
-
-			case Biome::Desert:
-				return (variation < 0.98F) ? GroundCover::Sand : GroundCover::Rock;
-
-			case Biome::Tundra:
-				return (variation < 0.95F) ? GroundCover::Snow : GroundCover::Rock;
-
-			case Biome::Wetland:
-				return (variation < 0.95F) ? GroundCover::Water : GroundCover::Grass;
-
-			case Biome::Mountain:
-				// Mountains have more visible variation (rock vs snow)
-				if (variation < 0.15F) {
-					return GroundCover::Snow;
-				}
-				return GroundCover::Rock;
-
-			case Biome::Beach:
-				return (variation < 0.98F) ? GroundCover::Sand : GroundCover::Rock;
-
-			case Biome::Ocean:
-				return GroundCover::Water;
-
-			default:
-				return GroundCover::Grass;
+		// Ocean is always water
+		if (biome == Biome::Ocean) {
+			return GroundCover::Water;
 		}
+
+		// Calculate world position in tile units
+		float worldX = static_cast<float>(m_coord.x * kChunkSize + localX);
+		float worldY = static_cast<float>(m_coord.y * kChunkSize + localY);
+
+		// Scale for patch size: ~0.15 means patches are roughly 5-10 tiles across
+		// Higher frequency = smaller, more natural-looking clusters
+		constexpr float kPatchScale = 0.15F;
+		float			noiseX = worldX * kPatchScale;
+		float			noiseY = worldY * kPatchScale;
+
+		// Sample noise for ground cover variation
+		// Use 2 octaves for organic but not too complex shapes
+		float variationNoise = fractalNoise(noiseX, noiseY, m_worldSeed + 50000, 2, 0.5F);
+
+		// Helper to get primary and variation ground covers for a biome
+		auto getCovers = [](Biome b) -> std::pair<GroundCover, GroundCover> {
+			switch (b) {
+				case Biome::Grassland:
+					return {GroundCover::Grass, GroundCover::Dirt};
+				case Biome::Forest:
+					return {GroundCover::Grass, GroundCover::Dirt};
+				case Biome::Desert:
+					return {GroundCover::Sand, GroundCover::Rock};
+				case Biome::Tundra:
+					return {GroundCover::Snow, GroundCover::Rock};
+				case Biome::Wetland:
+					return {GroundCover::Water, GroundCover::Grass};
+				case Biome::Mountain:
+					return {GroundCover::Rock, GroundCover::Snow};
+				case Biome::Beach:
+					return {GroundCover::Sand, GroundCover::Rock};
+				case Biome::Ocean:
+					return {GroundCover::Water, GroundCover::Water};
+				default:
+					return {GroundCover::Grass, GroundCover::Dirt};
+			}
+		};
+
+		auto [primary, variation] = getCovers(biome);
+
+		// Threshold for sparse patches - fractal noise clusters around 0.5
+		// 0.72 captures ~5-8% of area with organic blob shapes
+		// Mountains get lower threshold for more variation
+		float threshold = (biome == Biome::Mountain) ? 0.62F : 0.72F;
+
+		if (variationNoise > threshold) {
+			return variation;
+		}
+		return primary;
+	}
+
+	float Chunk::smoothstep(float t) {
+		// Hermite interpolation: 3t² - 2t³
+		return t * t * (3.0F - 2.0F * t);
+	}
+
+	float Chunk::valueNoise(float x, float y, uint64_t seed) const {
+		// Get integer grid coordinates
+		auto	x0 = static_cast<int32_t>(std::floor(x));
+		auto	y0 = static_cast<int32_t>(std::floor(y));
+		int32_t x1 = x0 + 1;
+		int32_t y1 = y0 + 1;
+
+		// Get fractional part
+		float fx = x - static_cast<float>(x0);
+		float fy = y - static_cast<float>(y0);
+
+		// Apply smoothstep for smoother interpolation
+		float sx = smoothstep(fx);
+		float sy = smoothstep(fy);
+
+		// Hash at each corner, normalized to [0, 1]
+		constexpr float kNormalize = 1.0F / static_cast<float>(UINT32_MAX);
+		float			n00 = static_cast<float>(tileHash({x0, y0}, 0, 0, seed)) * kNormalize;
+		float			n10 = static_cast<float>(tileHash({x1, y0}, 0, 0, seed)) * kNormalize;
+		float			n01 = static_cast<float>(tileHash({x0, y1}, 0, 0, seed)) * kNormalize;
+		float			n11 = static_cast<float>(tileHash({x1, y1}, 0, 0, seed)) * kNormalize;
+
+		// Bilinear interpolation
+		float nx0 = n00 * (1.0F - sx) + n10 * sx;
+		float nx1 = n01 * (1.0F - sx) + n11 * sx;
+		return nx0 * (1.0F - sy) + nx1 * sy;
+	}
+
+	float Chunk::fractalNoise(float x, float y, uint64_t seed, int octaves, float persistence) const {
+		float total = 0.0F;
+		float amplitude = 1.0F;
+		float frequency = 1.0F;
+		float maxValue = 0.0F;
+
+		for (int i = 0; i < octaves; ++i) {
+			total += valueNoise(x * frequency, y * frequency, seed + static_cast<uint64_t>(i)) * amplitude;
+			maxValue += amplitude;
+			amplitude *= persistence;
+			frequency *= 2.0F;
+		}
+
+		return total / maxValue; // Normalize to [0, 1]
 	}
 
 	uint32_t Chunk::tileHash(ChunkCoordinate chunk, uint16_t localX, uint16_t localY, uint64_t seed) {
