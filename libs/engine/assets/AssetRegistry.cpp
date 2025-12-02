@@ -198,6 +198,23 @@ Distribution parseDistribution(const char* str) {
 	return Distribution::Uniform;
 }
 
+RelationshipKind parseRelationshipKind(const char* name) {
+	if (name == nullptr) {
+		return RelationshipKind::Affinity;
+	}
+	std::string s(name);
+	if (s == "requires") {
+		return RelationshipKind::Requires;
+	}
+	if (s == "affinity") {
+		return RelationshipKind::Affinity;
+	}
+	if (s == "avoids") {
+		return RelationshipKind::Avoids;
+	}
+	return RelationshipKind::Affinity;
+}
+
 /// Parse "min,max" format into two integers
 void parseIntRange(const std::string& str, int32_t& outMin, int32_t& outMax, int32_t defaultMin, int32_t defaultMax) {
 	outMin = defaultMin;
@@ -399,7 +416,55 @@ bool AssetRegistry::loadDefinitions(const std::string& xmlPath) {
 						static_cast<float>(spacingNode.child("minDistance").text().as_double(2.0));
 				}
 
+				// Tile-type proximity (e.g., <biome name="Wetland" near="Water" distance="2">)
+				bp.nearTileType = biomeNode.attribute("near").as_string();
+				bp.nearDistance = biomeNode.attribute("distance").as_float(0.0F);
+
 				def.placement.biomes.push_back(std::move(bp));
+			}
+
+			// Parse groups (self-declared group membership)
+			pugi::xml_node groupsNode = placementNode.child("groups");
+			if (groupsNode) {
+				for (pugi::xml_node groupNode : groupsNode.children("group")) {
+					const char* groupName = groupNode.text().as_string();
+					if (groupName != nullptr && groupName[0] != '\0') {
+						def.placement.groups.push_back(groupName);
+					}
+				}
+			}
+
+			// Parse relationships (entity-to-entity spawn rules)
+			pugi::xml_node relationshipsNode = placementNode.child("relationships");
+			if (relationshipsNode) {
+				for (pugi::xml_node relNode : relationshipsNode.children()) {
+					PlacementRelationship rel;
+					rel.kind = parseRelationshipKind(relNode.name());
+					rel.distance = relNode.attribute("distance").as_float(5.0F);
+
+					// Parse target (defName, group, or type="same")
+					if (relNode.attribute("defName")) {
+						rel.target.type = EntityRef::Type::DefName;
+						rel.target.value = relNode.attribute("defName").as_string();
+					} else if (relNode.attribute("group")) {
+						rel.target.type = EntityRef::Type::Group;
+						rel.target.value = relNode.attribute("group").as_string();
+					} else if (std::string(relNode.attribute("type").as_string()) == "same") {
+						rel.target.type = EntityRef::Type::Same;
+					}
+
+					// Kind-specific attributes
+					if (rel.kind == RelationshipKind::Affinity) {
+						rel.strength = relNode.attribute("strength").as_float(1.5F);
+					} else if (rel.kind == RelationshipKind::Avoids) {
+						rel.penalty = relNode.attribute("penalty").as_float(0.5F);
+					} else if (rel.kind == RelationshipKind::Requires) {
+						std::string effect = relNode.attribute("effect").as_string();
+						rel.required = (effect == "required");
+					}
+
+					def.placement.relationships.push_back(rel);
+				}
 			}
 		}
 
@@ -458,6 +523,10 @@ size_t AssetRegistry::loadDefinitionsFromFolder(const std::string& folderPath) {
 	}
 
 	LOG_INFO(Engine, "Asset folder scan complete: %zu definitions from %zu XML files in %s", totalLoaded, filesProcessed, folderPath.c_str());
+
+	// Build group index from loaded definitions
+	buildGroupIndex();
+
 	return totalLoaded;
 }
 
@@ -577,6 +646,7 @@ bool AssetRegistry::tessellateAsset(const GeneratedAsset& asset, renderer::Tesse
 void AssetRegistry::clear() {
 	definitions.clear();
 	templateCache.clear();
+	groupIndex.clear();
 }
 
 std::vector<std::string> AssetRegistry::getDefinitionNames() const {
@@ -586,6 +656,45 @@ std::vector<std::string> AssetRegistry::getDefinitionNames() const {
 		names.push_back(name);
 	}
 	return names;
+}
+
+// ============================================================================
+// Group Index Implementation
+// ============================================================================
+
+void AssetRegistry::buildGroupIndex() {
+	groupIndex.clear();
+
+	for (const auto& [defName, def] : definitions) {
+		for (const auto& group : def.placement.groups) {
+			groupIndex[group].push_back(defName);
+		}
+	}
+
+	if (!groupIndex.empty()) {
+		LOG_DEBUG(Engine, "Built group index: %zu groups", groupIndex.size());
+	}
+}
+
+std::vector<std::string> AssetRegistry::getGroupMembers(const std::string& groupName) const {
+	auto it = groupIndex.find(groupName);
+	if (it != groupIndex.end()) {
+		return it->second;
+	}
+	return {};
+}
+
+std::vector<std::string> AssetRegistry::getGroups() const {
+	std::vector<std::string> groups;
+	groups.reserve(groupIndex.size());
+	for (const auto& [name, _] : groupIndex) {
+		groups.push_back(name);
+	}
+	return groups;
+}
+
+bool AssetRegistry::hasGroup(const std::string& groupName) const {
+	return groupIndex.find(groupName) != groupIndex.end();
 }
 
 }  // namespace engine::assets

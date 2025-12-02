@@ -58,14 +58,36 @@ class AssetRegistry {
 	/// Get all loaded definition names
 	std::vector<std::string> getDefinitionNames() const;
 
+	// --- Entity Placement System API ---
+
+	/// Get all defNames that belong to a group
+	/// @param groupName The group name (e.g., "trees", "flowers")
+	/// @return Vector of defNames (empty if group doesn't exist)
+	[[nodiscard]] std::vector<std::string> getGroupMembers(const std::string& groupName) const;
+
+	/// Get all group names in the registry
+	/// @return Vector of all group names
+	[[nodiscard]] std::vector<std::string> getGroups() const;
+
+	/// Check if a group exists
+	/// @param groupName The group name to check
+	/// @return true if any asset declares membership in this group
+	[[nodiscard]] bool hasGroup(const std::string& groupName) const;
+
   private:
 	AssetRegistry() = default;
 
 	/// Tessellate a generated asset into a mesh
 	bool tessellateAsset(const GeneratedAsset& asset, renderer::TessellatedMesh& outMesh);
 
+	/// Build group index from loaded definitions
+	void buildGroupIndex();
+
 	std::unordered_map<std::string, AssetDefinition>		   definitions;
 	std::unordered_map<std::string, renderer::TessellatedMesh> templateCache;
+
+	// Group index: group name → list of defNames that belong to it
+	std::unordered_map<std::string, std::vector<std::string>> groupIndex;
 };
 
 }  // namespace engine::assets

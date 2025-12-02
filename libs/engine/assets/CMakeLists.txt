@@ -5,6 +5,8 @@ add_library(assets
     generators/GrassBladeGenerator.cpp
     lua/LuaEngine.cpp
     lua/LuaGenerator.cpp
+    placement/DependencyGraph.cpp
+    placement/SpatialIndex.cpp
 )
 
 target_include_directories(assets

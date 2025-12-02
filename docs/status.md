@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2025-12-02 (Entity Placement System Spec Added)
+Last Updated: 2025-12-02 (Entity Placement System Phase 1 Complete)
 
 ## Epic/Story/Task Template
 
@@ -239,20 +239,18 @@ Use this template for all work items:
 
 ---
 
-## Planned Epics
-
-### Entity Placement System
+### 🔄 Entity Placement System
 **Spec/Documentation:** `/docs/technical/entity-placement-system.md`
 **Dependencies:** Asset System Architecture (Phase 1 complete)
-**Status:** ready
+**Status:** in progress
 
-**Phase 1: Foundation**
-- [ ] Extend AssetDefinition with groups and relationships fields
-- [ ] Parse `<groups>` and `<relationships>` in AssetRegistry
-- [ ] Build group index (group name → list of defNames) at load time
-- [ ] Create DependencyGraph with topological sort
-- [ ] Create SpatialIndex with grid-based queries
-- [ ] Unit tests for all components
+**Phase 1: Foundation** ✅ COMPLETE
+- [x] Extend AssetDefinition with groups and relationships fields
+- [x] Parse `<groups>` and `<relationships>` in AssetRegistry
+- [x] Build group index (group name → list of defNames) at load time
+- [x] Create DependencyGraph with topological sort
+- [x] Create SpatialIndex with grid-based queries
+- [x] Unit tests for all components (46 tests passing)
 
 **Phase 2: Executor**
 - [ ] Create PlacementExecutor
@@ -264,6 +262,8 @@ Use this template for all work items:
 - [ ] Visual validation in world-sim
 
 ---
+
+## Planned Epics
 
 ### Unit Testing Infrastructure
 **Spec/Documentation:** `/docs/technical/unit-testing-strategy.md`, `/docs/technical/testing-guidelines.md` (TBD)
