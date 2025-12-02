@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2025-12-01 (Asset System - Lua Scripting Complete)
+Last Updated: 2025-12-02 (Chunk-Based World Rendering Complete)
 
 ## Epic/Story/Task Template
 
@@ -27,6 +27,39 @@ Use this template for all work items:
 ---
 
 ## Recently Completed Epics (Last 4)
+
+### ✅ Chunk-Based World Rendering System
+**Spec/Documentation:** `/docs/technical/chunk-management-system.md`
+**Status:** complete
+
+**Completed Tasks:**
+- [x] Coordinate System
+  - [x] ChunkCoordinate type with hash for unordered_map
+  - [x] WorldPosition continuous 2D coordinates
+  - [x] Coordinate transforms between chunk/world/screen
+- [x] World Sampling Interface
+  - [x] IWorldSampler abstract interface
+  - [x] MockWorldSampler with simplex noise biomes
+  - [x] ChunkSampleResult with sector grid (32×32) for O(1) tile lookup
+- [x] Chunk System
+  - [x] Chunk class with biome data and noise-based ground cover
+  - [x] ChunkManager with dynamic load/unload (5×5 load, 7×7 unload)
+  - [x] ChunkRenderer for tile grid rendering
+- [x] Camera & Controls
+  - [x] WorldCamera with WASD panning and scroll wheel zoom
+  - [x] GameOverlay HUD (FPS, chunk count, camera position)
+  - [x] ZoomControl UI component
+- [x] World-Sim App Bootstrap
+  - [x] SplashScene, MainMenuScene, GameScene
+  - [x] Full game flow: Splash → Menu → Game
+- [x] Testing
+  - [x] ChunkCoordinate tests (hashing, neighbors, transforms)
+  - [x] ChunkManager tests (load/unload lifecycle)
+  - [x] MockWorldSampler tests (biome distribution, determinism)
+
+**Result:** Playable world-sim with infinite pannable world and biome-based terrain ✅
+
+---
 
 ### ✅ Uber Shader - Unified Rendering Pipeline
 **Spec/Documentation:** `libs/renderer/shaders/uber.vert`, `libs/renderer/shaders/uber.frag`
@@ -103,264 +136,7 @@ Use this template for all work items:
 
 ---
 
-### ✅ SDF Text Rendering & Batched Command Queue
-**Spec/Documentation:** `/docs/technical/ui-framework/sdf-text-rendering.md`, `/docs/technical/ui-framework/batched-text-rendering.md`
-**Status:** complete
-
-**Completed Tasks:**
-- [x] Phase 1: SDF Atlas Generation Tool
-  - [x] Add msdfgen to vcpkg.json
-  - [x] Create tools/generate_sdf_atlas executable
-  - [x] Generate Roboto-Regular SDF atlas + metadata JSON
-  - [x] Test atlas loading in FontRenderer
-  - [x] Fix horizontal squishing bug (atlasBounds support)
-- [x] Phase 2: FontRenderer SDF Support
-  - [x] Add LoadSDFFont() method (atlas + metadata)
-  - [x] Implement GenerateGlyphQuads() for SDF
-  - [x] Add GetSDFAtlas() for batch key
-- [x] Phase 3: SDF Shaders
-  - [x] Create sdf_text.vert shader
-  - [x] Create sdf_text.frag with median filtering + smoothstep
-  - [x] Add uPixelRange uniform
-  - [x] Test anti-aliasing quality at multiple scales
-- [x] Phase 4: Command Queue & Two-Pass Rendering
-  - [x] Implement DrawText() in Primitives API (via TextBatchRenderer)
-  - [x] Implement batched rendering with z-ordering
-  - [x] Sort by z-index within text batches
-  - [x] Implement state change minimization
-- [x] Phase 5: Integration & Testing
-  - [x] Update Text::Render() to use Primitives::DrawText()
-  - [x] Implement text alignment system (horizontal + vertical)
-  - [x] Add LRU glyph quad cache for performance
-  - [x] Test button scene - text renders on top correctly
-  - [x] Test at multiple scales - crisp at all sizes
-  - [x] Performance test - single draw call batching verified
-  - [x] Test transparency and z-ordering - working correctly
-  - [x] Convert all UI components to use Text/Button
-  - [x] Fix coordinate system unification
-
-**Result:** SDF text rendering complete with proper z-ordering, batching, alignment, and performance optimization ✅
-
----
-
 ## In Progress Epics
-
-### ✅ Colonysim UI Integration
-**Spec/Documentation:** `/docs/status.md` (detailed plan), `/Volumes/Code/colonysim` (source code)
-**Dependencies:** None
-**Status:** complete
-
-**Tasks:**
-- [x] Compatibility Analysis ✅ COMPLETE (see development-log.md 2025-10-29)
-- [x] Font Rendering System ✅ COMPLETE
-- [x] Rendering Integration Decision ✅ COMPLETE (2025-10-29)
-  - [x] Analyzed colonysim vs worldsim rendering patterns
-  - [x] Researched memory patterns (shared_ptr vs value semantics)
-  - [x] Decision: Pragmatic hybrid - Port colonysim components to use Primitives API
-  - [x] Documented complete architecture in colonysim-integration-architecture.md
-  - [x] Created component-storage-patterns.md research doc
-
-**Phase 1: Port Components** (from colonysim-integration-architecture.md)
-- [x] CoordinateSystem ✅ COMPLETE
-  - [x] Create libs/renderer/coordinate_system/ library with CMakeLists.txt
-  - [x] Port CoordinateSystem class (remove singleton, update naming conventions)
-  - [x] Integrate with Primitives API (SetCoordinateSystem, expose projection/percent methods)
-  - [x] Keep BatchRenderer using framebuffer size (physical pixels) for backward compatibility
-  - [x] Update application initialization in ui-sandbox
-  - [x] Unit tests: 18 tests covering initialization, percentage helpers, DPI conversion, projections
-  - [x] All tests passing (43/43 renderer tests)
-  - [x] Tested - rendering preserved, percentage helpers available for future UI components
-  - [x] Design note: Worldsim uses physical pixels, CoordinateSystem provides DPI utilities
-- [x] Layer System ✅ COMPLETE (PR #21 + PR #23)
-  - [x] Layer system already existed (PR #21) with value semantics architecture
-  - [x] Refactored API for ergonomics (PR #23)
-  - [x] Added Container type for pure hierarchy nodes
-  - [x] Implemented auto-zIndex based on insertion order
-  - [x] Simplified creation API (one-call AddChild instead of 3-step pattern)
-  - [x] Stable sort for equal zIndex (CSS-like behavior)
-  - [x] Z-index sorting with dirty flag optimization working
-  - [x] layer_scene demo showing auto and explicit zIndex modes
-  - [x] 37 tests passing including new auto-zIndex and stable sort tests
-- [x] Shape System ✅ COMPLETE
-  - [x] Create libs/ui/shapes/ library (already existed)
-  - [x] Port Shape base class (value semantics, no base class needed)
-  - [x] **CRITICAL**: Rewrite render() methods to call Primitives API
-    - [x] Rectangle ✅ DONE
-    - [x] Line ✅ DONE
-    - [x] Circle ✅ DONE (DrawCircle implemented with tessellation)
-    - [x] Text ✅ DONE (integrated FontRenderer)
-  - [x] Port Rectangle, Circle, Line shapes (all complete with proper styles)
-  - [x] Adapt Text shape to use worldsim's FontRenderer
-  - [x] Create shapes demo (layer_scene demonstrates all shapes)
-  - [x] Test all shape types rendering (verified via screenshot)
-  - [x] Test shapes nested in layers (working correctly)
-- [x] InputManager 
-  - [x] Create libs/engine/input/ library
-  - [x] Port InputManager from colonysim
-  - [x] Application-owned singleton pattern (matches SceneManager)
-  - [x] Adapt GLFW callbacks to worldsim conventions
-  - [x] Integration with Application::Update() → InputManager::Update() → Scene::HandleInput()
-  - [x] InputTestScene for testing and demonstration
-- [x] Style System 
-  - [x] Style system already exists in primitive_styles.h (struct-based, not class-based)
-  - [x] Decision: Enhance worldsim's existing system instead of porting colonysim's classes
-  - [x] BorderStyle, RectStyle, LineStyle, CircleStyle, TextStyle already exist
-  - [x] Already integrated with Primitives API and shapes
-  - [ ] Enhancements (via GPU-Based SDF Rendering epic):
-    - [ ] BorderPosition enum will be added by SDF Rendering implementation
-    - [ ] Opacity support will be added by SDF Rendering implementation
-    - [ ] Corner radius rendering will be implemented in fragment shader
-  - [x] Note: colonysim's class-based style hierarchy not needed (worldsim's struct approach is simpler and more performant)
-- [ ] UI Components
-  - [x] Create libs/ui/components/button/ library
-  - [x] Port Button (state machine, onClick callbacks)
-  - [x] Adapt input handling to use InputManager with abstraction enums (Key, MouseButton)
-  - [x] Use Primitives API for rendering
-  - [x] Create button demo scene
-  - [x] Test mouse and keyboard interactions
-  - [x] Implement Batched Text Rendering
-  - [x] Create Keyboard Focus Manager (global Tab navigation system)
-  - [x] Port TextInput (cursor, focus, text editing)
-  - [x] Create text input demo
-- [x] UI Component Architecture 
-  - [x] Create architecture documentation (/docs/technical/ui-framework/architecture.md)
-  - [x] Define ILayer interface (HandleInput/Update/Render lifecycle)
-  - [x] Define IFocusable interface (focus management)
-  - [x] Create LayerHandle type for safe layer references
-  - [x] Add lifecycle methods to all shapes
-  - [x] Add interface implementations to Button and TextInput
-  - [x] Document unified layer model (shapes + components)
-  - [x] Document handle-based references vs shared_ptr
-  - [x] Document FocusManager with IFocusable interface
-
-
-**Phase 2: Integration & Testing** ✅ COMPLETE
-- [x] Integration testing
-  - [x] Test component interactions (FocusManager.test.cpp: 50+ tests)
-  - [x] Test event propagation (InputManager → FocusManager flow tested)
-  - [x] Test layout with multiple components (Layer.test.cpp: z-index, children)
-  - [x] Verify all demos working (12 demo scenes, all compile and run)
-  - [x] Unit tests: 100% passing (foundation-tests, renderer-tests, ui-tests)
-  - [x] CI/CD validates on every PR
-
-**Phase 3: Profile and Measure** ✅ COMPLETE
-- [x] Measure performance characteristics
-  - [x] Arena allocator benchmarks (14× faster than malloc)
-  - [x] Clipping system benchmarks (Clipping.bench.cpp)
-  - [x] Vector rendering performance (10,000 animated stars @ 60 FPS)
-  - [x] Text rendering profiled (SDF with LRU cache)
-  - [x] Batched rendering verified (single draw call)
-
-**Phase 4: Optimize If Needed** ✅ COMPLETE
-- [x] Value semantics implemented throughout (Layer, shapes - no shared_ptr overhead)
-- [x] Handle-based references for safe layer references
-- [x] LRU glyph quad cache for text performance
-- [x] Transform caching (identity transform check optimization)
-- [x] Dirty flag optimization for z-index sorting
-
-**Future Enhancements** (deferred)
-- [ ] RmlUI backend implementation
-- [ ] SDF font rendering integration with RmlUI
-
-**Result:** Complete UI framework with Layer system, Shapes (Rectangle, Circle, Line, Text), Button, TextInput, FocusManager, InputManager, ClipboardManager, and Clipping/Scrolling. All components tested via 100+ unit tests and 12 demo scenes ✅
-
----
-
-### ✅ PR #30 Feedback Fixes - TextInput & Focus Management
-**Spec/Documentation:** PR #30 review comments, `/Users/kcjonson/.claude/plans/whimsical-crafting-snowglobe.md`
-**Dependencies:** Colonysim UI Integration (TextInput component)
-**Status:** complete
-
-**Tasks:**
-- [x] FocusManager Static Instance Pattern
-  - [x] Add static `s_instance` member to FocusManager
-  - [x] Add static `Get()` method
-  - [x] Add static `SetInstance()` method
-  - [x] Follow InputManager pattern
-- [x] Code Quality Fixes
-  - [x] Add m_tabIndex preservation in TextInput move operations
-  - [x] Add m_tabIndex preservation in Button move operations
-  - [x] Remove debug LOG_INFO calls in TextInput::InsertChar
-- [x] Remove charValidator Functionality
-  - [x] Remove charValidator from TextInput::Args struct
-  - [x] Remove m_charValidator member
-  - [x] Remove charValidator logic from HandleCharInput/InsertChar/Paste
-  - [x] Remove numbers-only demo from text_input_scene.cpp
-- [x] Create ClipboardManager Abstraction
-  - [x] Create libs/engine/clipboard/clipboard_manager.h
-  - [x] Create libs/engine/clipboard/clipboard_manager.cpp
-  - [x] Add to libs/engine/CMakeLists.txt
-  - [x] Follow InputManager singleton pattern
-  - [x] Update Application to own ClipboardManager
-  - [x] Update TextInput to use ClipboardManager instead of GLFW
-- [x] Fix BASE_FONT_SIZE Constant
-  - [x] Move to file-level kBaseFontSize constant in anonymous namespace
-
----
-
-### ✅ Clipping and Scrolling System
-**Spec/Documentation:** `/docs/technical/ui-framework/clipping.md`
-**Dependencies:** None
-**Status:** complete
-
-**Completed Tasks:**
-- [x] Phase 1: Shader Fast Path (Rect Clipping)
-  - [x] Create clip_types.h with ClipShape, ClipMode, ClipSettings
-  - [x] Add clipBounds to UberVertex struct
-  - [x] Update VAO setup in batch_renderer.cpp
-  - [x] Add clip test to uber.frag shader
-  - [x] Implement PushClip/PopClip in primitives.cpp
-  - [x] Fix DPI scaling for Retina displays (physical vs logical pixels)
-- [x] Demo Scenes
-  - [x] Create clip_scene.cpp with visual feature tests (shapes + text clipping)
-  - [x] Modify vector_perf_scene.cpp for performance testing (C key toggle)
-- [x] Phase 2: Content Offset (Scrolling)
-  - [x] Add clip and contentOffset properties to Container
-  - [x] Implement Container::Render() with clip/offset
-  - [x] Wire up transform stack to BatchRenderer (bake transforms into vertices)
-  - [x] Update ClipScene with scrollable Container demo (Section 4)
-- [x] Automated Performance Benchmarks
-  - [x] Create Clipping.bench.cpp with stack, intersection, and fragment shader benchmarks
-- [x] Stub Functions for Future Phases
-  - [x] Add pushClipRoundedRect(), pushClipCircle(), pushClipPath() convenience functions
-  - [x] Document ClipMode::Outside as not-yet-implemented (Phase 3)
-
-**Known Issues:**
-- Primitives::DrawText is a stub (dependency architecture issue - see development-log.md 2025-11-29)
-- Use UI::Text component for text rendering instead
-
-**Result:** Shader-based clipping with full batching preservation, content offset for scrolling, and performance benchmarks ✅
-
----
-
-### ✅ Vector Graphics Validation - Grass Blades
-**Spec/Documentation:** `/docs/technical/vector-graphics/validation-plan.md`
-**Dependencies:** None
-**Status:** complete (validation phase - see Animation Performance epic for optimization)
-
-**Tasks:**
-- [x] Single Grass Blade with Bezier Curves
-  - [x] Implement cubic Bezier curve tessellation (De Casteljau's algorithm)
-  - [x] Create single grass blade shape with curves (GrassScene.cpp)
-  - [x] Render in ui-sandbox (8-blade cluster demo)
-  - [x] Verify visual quality and smoothness
-- [x] 10,000 Static Grass Blades
-  - [x] Generate 10,000 grass blade instances
-  - [x] Apply procedural variation (height, width, curve, color)
-  - [x] Implement batch rendering (single draw call with per-vertex colors)
-  - [x] Performance: ~9ms frame time (24,832 triangles, 44,832 vertices)
-- [x] 10,000 Animated Grass Blades ⚠️ **NO-GO for naive CPU tessellation**
-  - [x] Implement wind simulation (sine waves + noise)
-  - [x] Animate all 10,000 blades independently
-  - [x] Retessellate curves per frame
-  - [x] Profile tessellation cost: **~65ms per frame (4x budget)**
-  - [x] Result: **12 FPS** (target was 60 FPS)
-  - [x] **GO/NO-GO Decision: ❌ NO-GO for CPU tessellation**
-  - [x] Recommendation: See Animation Performance Optimization epic
-
-**Result:** Validation complete. Static rendering works well. Animated requires optimization (see next epic).
-
----
 
 ### 🔄 Animated Vector Graphics Performance Optimization
 **Spec/Documentation:** `/docs/technical/vector-graphics/animation-performance.md`
