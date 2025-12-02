@@ -76,7 +76,7 @@ namespace engine {
 		IScene* getCurrentScene() const;
 
 		/// @brief Get current scene key
-		/// @return Current scene key
+		/// @return Current scene key, or 0 (default SceneKey) if no scene is active
 		SceneKey getCurrentSceneKey() const;
 
 		/// @brief Check if a scene is registered

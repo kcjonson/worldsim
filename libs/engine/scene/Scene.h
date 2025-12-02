@@ -11,7 +11,7 @@ namespace engine {
 	///
 	/// Scenes represent distinct states of the application:
 	/// - ui-sandbox: ShapesScene, ArenaScene, HandleScene (test scenes)
-	/// - world-sim: SplashScene, MainMenuScene, GameplayScene (game scenes)
+	/// - world-sim: SplashScene, MainMenuScene, GameScene (game scenes)
 	///
 	/// The SceneManager handles registration, switching, and lifecycle.
 	///

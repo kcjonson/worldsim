@@ -21,6 +21,7 @@
 #include <cstring>
 #include <memory>
 #include <span>
+#include <stdexcept>
 
 namespace engine {
 
@@ -206,7 +207,12 @@ AppContext AppLauncher::initialize(int argc, char* argv[], const AppConfig& conf
 			hasSceneArg = true;
 		} else if (std::strcmp(args[i], "--http-port") == 0 && i + 1 < args.size()) {
 			++i;
-			httpPort = std::stoi(args[i]);
+			try {
+				httpPort = std::stoi(args[i]);
+			} catch (const std::exception& e) {
+				LOG_ERROR(Engine, "Invalid port number '%s': %s", args[i], e.what());
+				return {};
+			}
 		} else if (std::strcmp(args[i], "--help") == 0) {
 			printf("Usage: %s [options]\n", config.windowTitle);
 			printf("Options:\n");

@@ -10,10 +10,18 @@ namespace engine {
 	}
 
 	void SceneManager::initialize(SceneRegistry registry, std::unordered_map<SceneKey, std::string> names) {
+		// Exit current scene if one is active (handles re-initialization case)
+		if (currentScene) {
+			LOG_WARNING(Engine, "SceneManager::initialize() called with active scene - exiting current scene");
+			currentScene->onExit();
+			currentScene.reset();
+			currentSceneKey = {};
+		}
+
 		sceneRegistry = std::move(registry);
 		sceneNames = std::move(names);
 
-		// Build reverse lookup for switchToByName
+		// Build reverse lookup for getKeyForName()
 		nameToKey.clear();
 		for (const auto& [key, name] : sceneNames) {
 			nameToKey[name] = key;
@@ -39,6 +47,13 @@ namespace engine {
 		// Create new scene
 		currentSceneKey = key;
 		currentScene = it->second();
+
+		// Validate factory returned a valid scene
+		if (!currentScene) {
+			LOG_ERROR(Engine, "Scene factory for key %zu returned nullptr", key);
+			currentSceneKey = {};
+			return false;
+		}
 
 		// Inject SceneManager reference
 		currentScene->setSceneManager(this);
@@ -93,6 +108,7 @@ namespace engine {
 			LOG_INFO(Engine, "Shutting down scene system, exiting scene: %s", getSceneName(currentSceneKey));
 			currentScene->onExit();
 			currentScene.reset();
+			currentSceneKey = {};
 		}
 		exitRequested = false;
 	}
