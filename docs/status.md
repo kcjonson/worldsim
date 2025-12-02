@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2025-12-02 (Entity Placement System Phase 1 Complete)
+Last Updated: 2025-12-02 (Entity Placement System Phase 2 Complete)
 
 ## Epic/Story/Task Template
 
@@ -252,10 +252,18 @@ Use this template for all work items:
 - [x] Create SpatialIndex with grid-based queries
 - [x] Unit tests for all components (46 tests passing)
 
-**Phase 2: Executor**
-- [ ] Create PlacementExecutor
-- [ ] Integrate with ChunkManager (including adjacent chunk queries)
-- [ ] Wire up to GameScene
+**Phase 2: Executor** ✅ COMPLETE
+- [x] Create PlacementExecutor (main orchestration engine)
+  - [x] Dependency graph building from "requires" relationships
+  - [x] Deterministic RNG seeding from chunk coordinates
+  - [x] Tile-by-tile placement with biome/proximity checks
+  - [x] Relationship modifier calculation (requires/affinity/avoids)
+  - [x] Cross-chunk queries via IAdjacentChunkProvider interface
+- [x] Integrate with GameScene
+  - [x] PlacementExecutor initialization at game start
+  - [x] Chunk processing coordination (processNewChunks, cleanupUnloadedChunks)
+  - [x] PlacementExecutor serves as its own adjacent chunk provider
+- [x] Unit tests (17 new tests, 63 total passing)
 
 **Phase 3: Content**
 - [ ] Add groups + relationships to existing assets (grass, trees)

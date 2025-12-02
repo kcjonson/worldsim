@@ -63,7 +63,8 @@ namespace engine::assets {
 
 	/// Placement Executor - Main entity placement engine.
 	/// Processes chunks and spawns entities based on biome rules and relationships.
-	class PlacementExecutor {
+	/// Implements IAdjacentChunkProvider to serve as its own cross-chunk query source.
+	class PlacementExecutor : public IAdjacentChunkProvider {
 	  public:
 		/// Create executor with reference to asset registry
 		explicit PlacementExecutor(const AssetRegistry& registry);
