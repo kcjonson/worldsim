@@ -21,6 +21,7 @@ target_link_libraries(engine
         foundation
         renderer
         ui
+        assets
         nlohmann_json::nlohmann_json
         glfw
 )
