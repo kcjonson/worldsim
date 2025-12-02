@@ -15,7 +15,9 @@
 
 namespace {
 
-	class TextShapesScene : public engine::IScene {
+constexpr const char* kSceneName = "text_shapes";
+
+class TextShapesScene : public engine::IScene {
 	  public:
 		void onEnter() override {
 			using namespace UI;
@@ -193,16 +195,16 @@ namespace {
 			return R"({"scene": "text_shapes", "description": "Text shape API demonstration"})";
 		}
 
-		const char* getName() const override { return "text_shapes"; }
+		const char* getName() const override { return kSceneName; }
 
 	  private:
 		std::vector<std::unique_ptr<UI::IComponent>> shapes;
 	};
 
-	// Register scene with SceneManager
-	bool g_registered = []() {
-		engine::SceneManager::Get().registerScene("text_shapes", []() { return std::make_unique<TextShapesScene>(); });
-		return true;
-	}();
-
 } // anonymous namespace
+
+// Export factory and name for scene registry
+namespace ui_sandbox::scenes {
+	std::unique_ptr<engine::IScene> createTextShapesScene() { return std::make_unique<TextShapesScene>(); }
+	const char* getTextShapesSceneName() { return kSceneName; }
+}

@@ -4,6 +4,9 @@
 
 namespace engine {
 
+	// Forward declaration
+	class SceneManager;
+
 	/// @brief Base interface for all scenes (game states, UI test scenes, etc.)
 	///
 	/// Scenes represent distinct states of the application:
@@ -11,6 +14,13 @@ namespace engine {
 	/// - world-sim: SplashScene, MainMenuScene, GameplayScene (game scenes)
 	///
 	/// The SceneManager handles registration, switching, and lifecycle.
+	///
+	/// Resource Injection (colonysim pattern):
+	/// Scenes receive a pointer to SceneManager before onEnter() is called.
+	/// This provides access to:
+	/// - Scene transitions: sceneManager->switchTo(SceneType::MainMenu)
+	/// - Exit requests: sceneManager->requestExit()
+	/// This avoids direct GLFW calls in scenes and provides clean dependency injection.
 	class IScene {
 	  public:
 		IScene() = default;
@@ -21,6 +31,12 @@ namespace engine {
 		IScene& operator=(const IScene&) = delete;
 		IScene(IScene&&) = delete;
 		IScene& operator=(IScene&&) = delete;
+
+		/// @brief Set the SceneManager reference (called by SceneManager before onEnter)
+		/// This provides scenes with access to scene switching and exit requests
+		/// without needing to use global singletons directly.
+		/// @param manager Pointer to the SceneManager
+		void setSceneManager(SceneManager* manager) { sceneManager = manager; }
 
 		/// @brief Called when scene becomes active
 		/// Use for initialization, resource loading, state setup
@@ -55,6 +71,12 @@ namespace engine {
 		/// Should be lowercase with no spaces (e.g., "shapes", "main_menu")
 		/// @return Scene name
 		virtual const char* getName() const = 0;
+
+	  protected:
+		/// @brief SceneManager reference for scene transitions and exit requests
+		/// Set by SceneManager before onEnter() is called.
+		/// Scenes should use this instead of SceneManager::Get() for cleaner dependency injection.
+		SceneManager* sceneManager = nullptr;
 	};
 
 } // namespace engine

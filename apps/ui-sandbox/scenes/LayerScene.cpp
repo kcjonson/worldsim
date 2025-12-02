@@ -15,7 +15,9 @@
 
 namespace {
 
-	class LayerScene : public engine::IScene {
+constexpr const char* kSceneName = "layer";
+
+class LayerScene : public engine::IScene {
 	  public:
 		void onEnter() override {
 			using namespace UI;
@@ -146,16 +148,16 @@ namespace {
 
 		std::string exportState() override { return "{\"scene\": \"layer\", \"description\": \"Component hierarchy demo\"}"; }
 
-		const char* getName() const override { return "layer"; }
+		const char* getName() const override { return kSceneName; }
 
 	  private:
 		std::unique_ptr<UI::Container> root;
 	};
 
-	// Register scene with SceneManager
-	bool g_registered = []() {
-		engine::SceneManager::Get().registerScene("layer", []() { return std::make_unique<LayerScene>(); });
-		return true;
-	}();
-
 } // anonymous namespace
+
+// Export factory and name for scene registry
+namespace ui_sandbox::scenes {
+	std::unique_ptr<engine::IScene> createLayerScene() { return std::make_unique<LayerScene>(); }
+	const char* getLayerSceneName() { return kSceneName; }
+}

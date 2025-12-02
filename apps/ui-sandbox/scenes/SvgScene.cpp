@@ -16,7 +16,9 @@
 
 namespace {
 
-	/// Holds a tessellated SVG shape ready for rendering
+constexpr const char* kSceneName = "svg";
+
+/// Holds a tessellated SVG shape ready for rendering
 	struct TessellatedShape {
 		renderer::TessellatedMesh mesh;
 		Foundation::Color		  color;
@@ -66,7 +68,7 @@ namespace {
 			return "{}";
 		}
 
-		const char* getName() const override { return "svg"; }
+		const char* getName() const override { return kSceneName; }
 
 	  private:
 		// Transform constants for centering and scaling the SVG on screen
@@ -145,10 +147,10 @@ namespace {
 		std::vector<TessellatedShape> m_shapes;
 	};
 
-	// Register scene with SceneManager
-	[[maybe_unused]] bool g_registered = []() {
-		engine::SceneManager::Get().registerScene("svg", []() { return std::make_unique<SvgScene>(); });
-		return true;
-	}();
-
 } // anonymous namespace
+
+// Export factory and name for scene registry
+namespace ui_sandbox::scenes {
+	std::unique_ptr<engine::IScene> createSvgScene() { return std::make_unique<SvgScene>(); }
+	const char* getSvgSceneName() { return kSceneName; }
+}

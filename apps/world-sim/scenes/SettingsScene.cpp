@@ -1,5 +1,5 @@
-// World Creator Scene - 3D planet preview with parameter controls
-// Stub implementation - will be expanded with world generation UI
+// Settings Scene - Game settings and options
+// Stub implementation - will be expanded with settings UI
 
 #include "SceneTypes.h"
 #include <GL/glew.h>
@@ -16,19 +16,19 @@
 
 namespace {
 
-constexpr const char* kSceneName = "world_creator";
+constexpr const char* kSceneName = "settings";
 
-class WorldCreatorScene : public engine::IScene {
+class SettingsScene : public engine::IScene {
   public:
 	void onEnter() override {
-		LOG_INFO(Game, "WorldCreatorScene - Entering");
+		LOG_INFO(Game, "SettingsScene - Entering");
 
 		float centerX = Renderer::Primitives::PercentWidth(50.0F);
 		float centerY = Renderer::Primitives::PercentHeight(50.0F);
 
 		title = std::make_unique<UI::Text>(UI::Text::Args{
 			.position = {centerX, centerY - 50.0F},
-			.text = "World Creator",
+			.text = "Settings",
 			.style =
 				{
 					.color = Foundation::Color::white(),
@@ -36,7 +36,7 @@ class WorldCreatorScene : public engine::IScene {
 					.hAlign = Foundation::HorizontalAlign::Center,
 					.vAlign = Foundation::VerticalAlign::Middle,
 				},
-			.id = "creator_title"
+			.id = "settings_title"
 		});
 
 		hint = std::make_unique<UI::Text>(UI::Text::Args{
@@ -49,7 +49,7 @@ class WorldCreatorScene : public engine::IScene {
 					.hAlign = Foundation::HorizontalAlign::Center,
 					.vAlign = Foundation::VerticalAlign::Middle,
 				},
-			.id = "creator_hint"
+			.id = "settings_hint"
 		});
 	}
 
@@ -61,12 +61,12 @@ class WorldCreatorScene : public engine::IScene {
 	}
 
 	void update(float /*dt*/) override {
-		// Will update world generation preview
+		// Will update settings UI
 	}
 
 	void render() override {
-		// Dark purple background for creator mode
-		glClearColor(0.12F, 0.08F, 0.15F, 1.0F);
+		// Dark gray background for settings
+		glClearColor(0.1F, 0.1F, 0.1F, 1.0F);
 		glClear(GL_COLOR_BUFFER_BIT);
 
 		if (title) {
@@ -78,12 +78,12 @@ class WorldCreatorScene : public engine::IScene {
 	}
 
 	void onExit() override {
-		LOG_INFO(Game, "WorldCreatorScene - Exiting");
+		LOG_INFO(Game, "SettingsScene - Exiting");
 		title.reset();
 		hint.reset();
 	}
 
-	std::string exportState() override { return R"({"scene": "world_creator"})"; }
+	std::string exportState() override { return R"({"scene": "settings"})"; }
 
 	const char* getName() const override { return kSceneName; }
 
@@ -96,6 +96,6 @@ class WorldCreatorScene : public engine::IScene {
 
 // Export factory function and name getter
 namespace world_sim::scenes {
-	std::unique_ptr<engine::IScene> createWorldCreatorScene() { return std::make_unique<WorldCreatorScene>(); }
-	const char* getWorldCreatorSceneName() { return kSceneName; }
+	std::unique_ptr<engine::IScene> createSettingsScene() { return std::make_unique<SettingsScene>(); }
+	const char* getSettingsSceneName() { return kSceneName; }
 } // namespace world_sim::scenes

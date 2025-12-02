@@ -14,6 +14,9 @@
 
 namespace {
 
+// Scene name declared here - the scene owns its human-readable name
+constexpr const char* kSceneName = "input_test";
+
 	class InputTestScene : public engine::IScene {
 	  public:
 		void onEnter() override {
@@ -178,13 +181,13 @@ namespace {
 		})";
 		}
 
-		const char* getName() const override { return "input_test"; }
+		const char* getName() const override { return kSceneName; }
 	};
 
-	// Register scene with SceneManager
-	bool g_registered = []() {
-		engine::SceneManager::Get().registerScene("input_test", []() { return std::make_unique<InputTestScene>(); });
-		return true;
-	}();
-
 } // anonymous namespace
+
+// Export factory and name for scene registry (scene owns its name)
+namespace ui_sandbox::scenes {
+	std::unique_ptr<engine::IScene> createInputTestScene() { return std::make_unique<InputTestScene>(); }
+	const char* getInputTestSceneName() { return kSceneName; }
+}

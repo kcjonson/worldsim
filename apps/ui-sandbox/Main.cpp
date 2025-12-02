@@ -11,6 +11,7 @@
 
 #include "CoordinateSystem/CoordinateSystem.h"
 #include "NavigationMenu.h"
+#include "SceneTypes.h"
 #include "debug/DebugServer.h"
 #include "font/FontRenderer.h"
 #include "graphics/Color.h"
@@ -287,14 +288,26 @@ int main(int argc, char* argv[]) {
 	LOG_INFO(UI, "Creating application");
 	engine::Application app(window);
 
-	// Initialize scene system
+	// Initialize scene system with app-specific registry
 	LOG_INFO(Engine, "Initializing scene system");
+	ui_sandbox::initializeSceneManager();
 
-	// Try to load scene from command-line args
-	if (!engine::SceneManager::Get().setInitialSceneFromArgs(argc, argv)) {
-		// No --scene arg provided, load default scene
-		LOG_INFO(Engine, "No scene specified, loading default: shapes");
-		engine::SceneManager::Get().switchTo("shapes");
+	// Parse --scene argument and load scene
+	std::string initialSceneName = "shapes"; // default
+	for (size_t i = 1; i < args.size(); i++) {
+		if (std::strncmp(args[i], "--scene=", 8) == 0) {
+			initialSceneName = args[i] + 8;
+			break;
+		}
+	}
+	// Convert string to typed key at the edge, then use typed switching
+	engine::SceneKey initialSceneKey = engine::SceneManager::Get().getKeyForName(initialSceneName);
+	if (initialSceneKey != SIZE_MAX) {
+		LOG_INFO(Engine, "Loading scene: %s", initialSceneName.c_str());
+		engine::SceneManager::Get().switchTo(initialSceneKey);
+	} else {
+		LOG_ERROR(Engine, "Unknown scene: %s, falling back to shapes", initialSceneName.c_str());
+		engine::SceneManager::Get().switchTo(ui_sandbox::toKey(ui_sandbox::SceneType::Shapes));
 	}
 
 	// Setup navigation menu (only when no --scene argument for zero perf impact on scene tests)
@@ -305,8 +318,11 @@ int main(int argc, char* argv[]) {
 				.sceneNames = sceneNames,
 				.onSceneSelected =
 					[](const std::string& sceneName) {
-						engine::SceneManager::Get().switchTo(sceneName);
-						LOG_INFO(UI, "Switched to scene: %s", sceneName.c_str());
+						engine::SceneKey key = engine::SceneManager::Get().getKeyForName(sceneName);
+						if (key != SIZE_MAX) {
+							engine::SceneManager::Get().switchTo(key);
+							LOG_INFO(UI, "Switched to scene: %s", sceneName.c_str());
+						}
 					},
 				.coordinateSystem = g_coordinateSystem
 			}
@@ -336,7 +352,8 @@ int main(int argc, char* argv[]) {
 					case Foundation::ControlAction::SceneChange: {
 						std::string sceneName = debugServer.getTargetSceneName();
 						LOG_INFO(UI, "Scene change requested: %s", sceneName.c_str());
-						if (engine::SceneManager::Get().switchTo(sceneName)) {
+						engine::SceneKey key = engine::SceneManager::Get().getKeyForName(sceneName);
+						if (key != SIZE_MAX && engine::SceneManager::Get().switchTo(key)) {
 							LOG_INFO(UI, "Switched to scene: %s", sceneName.c_str());
 						} else {
 							LOG_ERROR(UI, "Failed to switch to scene: %s", sceneName.c_str());
@@ -359,13 +376,12 @@ int main(int argc, char* argv[]) {
 
 					case Foundation::ControlAction::ReloadScene: {
 						LOG_INFO(UI, "Reload scene requested via control endpoint");
-						std::string currentScene = engine::SceneManager::Get().getCurrentSceneName();
-						if (!currentScene.empty()) {
-							if (engine::SceneManager::Get().switchTo(currentScene)) {
-								LOG_INFO(UI, "Reloaded scene: %s", currentScene.c_str());
-							} else {
-								LOG_ERROR(UI, "Failed to reload scene: %s", currentScene.c_str());
-							}
+						// Reload uses the current key directly - no string conversion needed
+						engine::SceneKey currentKey = engine::SceneManager::Get().getCurrentSceneKey();
+						if (engine::SceneManager::Get().switchTo(currentKey)) {
+							LOG_INFO(UI, "Reloaded scene: %s", engine::SceneManager::Get().getSceneName(currentKey));
+						} else {
+							LOG_ERROR(UI, "Failed to reload scene");
 						}
 						debugServer.clearControlAction();
 						break;

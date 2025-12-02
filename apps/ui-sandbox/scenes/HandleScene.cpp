@@ -15,7 +15,9 @@ using namespace renderer;
 
 namespace {
 
-	// Simple test resource
+constexpr const char* kSceneName = "handles";
+
+// Simple test resource
 	struct TestResource {
 		int			id;
 		float		value;
@@ -76,10 +78,10 @@ namespace {
 		})";
 		}
 
-		const char* getName() const override { return "handles"; }
+		const char* getName() const override { return kSceneName; }
 	};
 
-	// ============================================================================
+// ============================================================================
 	// Test Implementations
 	// ============================================================================
 
@@ -327,10 +329,10 @@ namespace {
 		LOG_INFO(UI, "Capacity limit test passed!");
 	}
 
-	// Register scene with SceneManager
-	bool g_registered = []() {
-		engine::SceneManager::Get().registerScene("handles", []() { return std::make_unique<HandleScene>(); });
-		return true;
-	}();
-
 } // anonymous namespace
+
+// Export factory and name for scene registry
+namespace ui_sandbox::scenes {
+	std::unique_ptr<engine::IScene> createHandleScene() { return std::make_unique<HandleScene>(); }
+	const char* getHandleSceneName() { return kSceneName; }
+}

@@ -1,6 +1,5 @@
 #include "SceneManager.h"
 #include <algorithm>
-#include <cstring>
 #include <utils/Log.h>
 
 namespace engine {
@@ -10,122 +9,130 @@ namespace engine {
 		return instance;
 	}
 
-	void
-	SceneManager::registerScene(const std::string& name, SceneFactory factory) { // NOLINT(readability-convert-member-functions-to-static)
-		if (sceneRegistry.find(name) != sceneRegistry.end()) {
-			LOG_WARNING(Engine, "Scene '%s' already registered, overwriting", name.c_str());
+	void SceneManager::initialize(SceneRegistry registry, std::unordered_map<SceneKey, std::string> names) {
+		sceneRegistry = std::move(registry);
+		sceneNames = std::move(names);
+
+		// Build reverse lookup for switchToByName
+		nameToKey.clear();
+		for (const auto& [key, name] : sceneNames) {
+			nameToKey[name] = key;
 		}
 
-		sceneRegistry[name] = std::move(factory);
-		LOG_DEBUG(Engine, "Registered scene: %s", name.c_str());
+		LOG_INFO(Engine, "SceneManager initialized with %zu scenes", sceneRegistry.size());
 	}
 
-	bool SceneManager::switchTo(const std::string& name) { // NOLINT(readability-convert-member-functions-to-static)
-		// Check if scene exists
-		auto it = sceneRegistry.find(name);
+	bool SceneManager::switchTo(SceneKey key) {
+		auto it = sceneRegistry.find(key);
 		if (it == sceneRegistry.end()) {
-			LOG_ERROR(Engine, "Scene '%s' not found in registry", name.c_str());
+			LOG_ERROR(Engine, "Scene key %zu not found in registry", key);
 			return false;
 		}
 
 		// Exit current scene
 		if (currentScene) {
-			LOG_DEBUG(Engine, "Exiting scene: %s", currentSceneName.c_str());
+			LOG_DEBUG(Engine, "Exiting scene: %s", getSceneName(currentSceneKey));
 			currentScene->onExit();
 			currentScene.reset();
 		}
 
-		// Create and enter new scene
-		currentSceneName = name;
+		// Create new scene
+		currentSceneKey = key;
 		currentScene = it->second();
-		LOG_INFO(Engine, "Entering scene: %s", currentSceneName.c_str());
+
+		// Inject SceneManager reference
+		currentScene->setSceneManager(this);
+
+		LOG_INFO(Engine, "Entering scene: %s", getSceneName(currentSceneKey));
 		currentScene->onEnter();
 
 		return true;
 	}
 
-	void SceneManager::handleInput(float dt) { // NOLINT(readability-convert-member-functions-to-static)
+	void SceneManager::handleInput(float dt) {
 		if (currentScene) {
 			currentScene->handleInput(dt);
 		}
 	}
 
-	void SceneManager::update(float dt) { // NOLINT(readability-convert-member-functions-to-static)
+	void SceneManager::update(float dt) {
 		if (currentScene) {
 			currentScene->update(dt);
 		}
 	}
 
-	void SceneManager::render() { // NOLINT(readability-convert-member-functions-to-static)
+	void SceneManager::render() {
 		if (currentScene) {
 			currentScene->render();
 		}
+	}
+
+	void SceneManager::requestExit() {
+		LOG_INFO(Engine, "Exit requested");
+		exitRequested = true;
+	}
+
+	bool SceneManager::isExitRequested() const {
+		return exitRequested;
 	}
 
 	IScene* SceneManager::getCurrentScene() const {
 		return currentScene.get();
 	}
 
-	std::string SceneManager::getCurrentSceneName() const {
-		return currentSceneName;
+	SceneKey SceneManager::getCurrentSceneKey() const {
+		return currentSceneKey;
 	}
 
-	std::vector<std::string> SceneManager::getAllSceneNames() const {
-		std::vector<std::string> names;
-		names.reserve(sceneRegistry.size());
-
-		for (const auto& [name, factory] : sceneRegistry) {
-			names.push_back(name);
-		}
-
-		// Sort alphabetically for consistent ordering
-		std::sort(names.begin(), names.end());
-
-		return names;
-	}
-
-	bool SceneManager::hasScene(const std::string& name) const {
-		return sceneRegistry.find(name) != sceneRegistry.end();
+	bool SceneManager::hasScene(SceneKey key) const {
+		return sceneRegistry.find(key) != sceneRegistry.end();
 	}
 
 	void SceneManager::shutdown() {
 		if (currentScene) {
-			LOG_INFO(Engine, "Shutting down scene system, exiting scene: %s", currentSceneName.c_str());
+			LOG_INFO(Engine, "Shutting down scene system, exiting scene: %s", getSceneName(currentSceneKey));
 			currentScene->onExit();
 			currentScene.reset();
-			currentSceneName.clear();
 		}
+		exitRequested = false;
 	}
 
-	bool SceneManager::setInitialSceneFromArgs( // NOLINT(readability-convert-member-functions-to-static)
-		int	   argc,
-		char** argv
-	) { // NOLINT(readability-convert-member-functions-to-static,cppcoreguidelines-pro-bounds-pointer-arithmetic)
-		// Look for --scene=<name> argument
-		for (int i = 1; i < argc; ++i) {
-			const char* arg = argv[i]; // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic)
-
-			// Check if starts with --scene=
-			if (std::strncmp(arg, "--scene=", 8) == 0) {
-				const char* sceneName = arg + 8; // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic) Skip "--scene="
-
-				if (std::strlen(sceneName) == 0) {
-					LOG_WARNING(Engine, "--scene argument provided but no scene name specified");
-					return false;
-				}
-
-				// Try to switch to the specified scene
-				if (switchTo(sceneName)) {
-					LOG_INFO(Engine, "Loaded scene from command-line: %s", sceneName);
-					return true;
-				}
-				LOG_ERROR(Engine, "Failed to load scene from command-line: %s", sceneName);
-				return false;
-			}
+	SceneKey SceneManager::getKeyForName(const std::string& name) const {
+		auto it = nameToKey.find(name);
+		if (it == nameToKey.end()) {
+			LOG_ERROR(Engine, "Unknown scene name: %s", name.c_str());
+			return SIZE_MAX;
 		}
+		return it->second;
+	}
 
-		// No --scene argument found
-		return false;
+	const char* SceneManager::getSceneName(SceneKey key) const {
+		auto it = sceneNames.find(key);
+		if (it != sceneNames.end()) {
+			return it->second.c_str();
+		}
+		return "unknown";
+	}
+
+	std::vector<std::string> SceneManager::getAllSceneNames() const {
+		std::vector<std::string> names;
+		names.reserve(sceneNames.size());
+		for (const auto& [key, name] : sceneNames) {
+			names.push_back(name);
+		}
+		std::sort(names.begin(), names.end());
+		return names;
+	}
+
+	std::string SceneManager::getCurrentSceneName() const {
+		if (currentScene == nullptr) {
+			return "";
+		}
+		auto it = sceneNames.find(currentSceneKey);
+		if (it != sceneNames.end()) {
+			return it->second;
+		}
+		return "";
 	}
 
 } // namespace engine

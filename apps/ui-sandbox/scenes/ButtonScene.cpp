@@ -17,9 +17,11 @@
 
 namespace {
 
-	class ButtonScene : public engine::IScene {
+constexpr const char* kSceneName = "button";
+
+class ButtonScene : public engine::IScene {
 	  public:
-		const char* getName() const override { return "button"; }
+		const char* getName() const override { return kSceneName; }
 		std::string exportState() override { return "{}"; }
 
 		void onEnter() override {
@@ -233,10 +235,10 @@ namespace {
 		int lastClickCount{0};
 	};
 
-	// Register scene with scene manager
-	static bool registered = []() {
-		engine::SceneManager::Get().registerScene("button", []() { return std::make_unique<ButtonScene>(); });
-		return true;
-	}();
-
 } // anonymous namespace
+
+// Export factory and name for scene registry
+namespace ui_sandbox::scenes {
+	std::unique_ptr<engine::IScene> createButtonScene() { return std::make_unique<ButtonScene>(); }
+	const char* getButtonSceneName() { return kSceneName; }
+}

@@ -11,7 +11,9 @@
 
 namespace {
 
-	class ShapesScene : public engine::IScene {
+constexpr const char* kSceneName = "shapes";
+
+class ShapesScene : public engine::IScene {
 	  public:
 		void onEnter() override {
 			// No initialization needed for shapes scene
@@ -89,13 +91,13 @@ namespace {
 		})";
 		}
 
-		const char* getName() const override { return "shapes"; }
-	};
-
-	// Register scene with SceneManager
-	bool g_registered = []() {
-		engine::SceneManager::Get().registerScene("shapes", []() { return std::make_unique<ShapesScene>(); });
-		return true;
-	}();
+		const char* getName() const override { return kSceneName; }
+};
 
 } // anonymous namespace
+
+// Export factory and name for scene registry
+namespace ui_sandbox::scenes {
+	std::unique_ptr<engine::IScene> createShapesScene() { return std::make_unique<ShapesScene>(); }
+	const char* getShapesSceneName() { return kSceneName; }
+}

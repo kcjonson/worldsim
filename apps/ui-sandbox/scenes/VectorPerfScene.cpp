@@ -21,7 +21,9 @@
 
 namespace {
 
-	// Star instance data
+constexpr const char* kSceneName = "vector-perf";
+
+// Star instance data
 	struct Star {
 		Foundation::Vec2		  position{};
 		float					  outerRadius{};
@@ -162,7 +164,7 @@ namespace {
 			return {buf};
 		}
 
-		const char* getName() const override { return "vector-perf"; }
+		const char* getName() const override { return kSceneName; }
 
 	  private:
 		void generateStars(size_t count) { // NOLINT(readability-convert-member-functions-to-static)
@@ -268,10 +270,10 @@ namespace {
 		bool			  clippingEnabled = true; // Toggle with 'C' key (starts enabled)
 	};
 
-	// Register scene with SceneManager
-	bool g_registered = []() {
-		engine::SceneManager::Get().registerScene("vector-perf", []() { return std::make_unique<VectorPerfScene>(); });
-		return true;
-	}();
-
 } // anonymous namespace
+
+// Export factory and name for scene registry
+namespace ui_sandbox::scenes {
+	std::unique_ptr<engine::IScene> createVectorPerfScene() { return std::make_unique<VectorPerfScene>(); }
+	const char* getVectorPerfSceneName() { return kSceneName; }
+}

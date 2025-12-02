@@ -16,7 +16,9 @@ using namespace foundation;
 
 namespace {
 
-	static void testPerformance();
+constexpr const char* kSceneName = "arena";
+
+static void testPerformance();
 	static void testAlignment();
 	static void testCapacity();
 	static void testScoped();
@@ -68,10 +70,10 @@ namespace {
 		})";
 		}
 
-		const char* getName() const override { return "arena"; }
+		const char* getName() const override { return kSceneName; }
 	};
 
-	// ============================================================================
+// ============================================================================
 	// Test Implementations
 	// ============================================================================
 
@@ -246,10 +248,10 @@ namespace {
 		LOG_INFO(UI, "Scoped arena test passed!");
 	}
 
-	// Register scene with SceneManager
-	bool g_registered = []() {
-		engine::SceneManager::Get().registerScene("arena", []() { return std::make_unique<ArenaScene>(); });
-		return true;
-	}();
-
 } // anonymous namespace
+
+// Export factory and name for scene registry
+namespace ui_sandbox::scenes {
+	std::unique_ptr<engine::IScene> createArenaScene() { return std::make_unique<ArenaScene>(); }
+	const char* getArenaSceneName() { return kSceneName; }
+}

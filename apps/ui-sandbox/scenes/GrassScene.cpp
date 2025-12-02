@@ -16,7 +16,9 @@
 
 namespace {
 
-	// Grid configuration
+constexpr const char* kSceneName = "grass";
+
+// Grid configuration
 	constexpr int32_t kTileGridWidth = 10;
 	constexpr int32_t kTileGridHeight = 10;
 	constexpr float	  kTileSize = 64.0F;
@@ -136,7 +138,7 @@ namespace {
 			return {buf};
 		}
 
-		const char* getName() const override { return "grass"; }
+		const char* getName() const override { return kSceneName; }
 
 	  private:
 		engine::world::TileGrid				   m_grid;
@@ -145,10 +147,10 @@ namespace {
 		const renderer::TessellatedMesh*	   m_templateMesh = nullptr;
 	};
 
-	// Register scene with SceneManager
-	[[maybe_unused]] bool g_registered = []() {
-		engine::SceneManager::Get().registerScene("grass", []() { return std::make_unique<GrassScene>(); });
-		return true;
-	}();
-
 } // anonymous namespace
+
+// Export factory and name for scene registry
+namespace ui_sandbox::scenes {
+	std::unique_ptr<engine::IScene> createGrassScene() { return std::make_unique<GrassScene>(); }
+	const char* getGrassSceneName() { return kSceneName; }
+}

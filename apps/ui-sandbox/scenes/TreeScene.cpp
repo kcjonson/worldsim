@@ -16,6 +16,8 @@
 
 namespace {
 
+	constexpr const char* kSceneName = "tree";
+
 	// Tree configuration
 	const char*	  kTreeAssetName = "Flora_TreeDeciduous";
 	constexpr int kTreeCount = 40;
@@ -138,7 +140,7 @@ namespace {
 			return {buf};
 		}
 
-		const char* getName() const override { return "tree"; }
+		const char* getName() const override { return kSceneName; }
 
 	  private:
 		struct PathRenderData {
@@ -154,10 +156,10 @@ namespace {
 		std::vector<TreeRenderData> m_trees;
 	};
 
-	// Register scene with SceneManager
-	[[maybe_unused]] bool g_registered = []() {
-		engine::SceneManager::Get().registerScene("tree", []() { return std::make_unique<TreeScene>(); });
-		return true;
-	}();
-
 } // anonymous namespace
+
+// Export factory function and name getter
+namespace ui_sandbox::scenes {
+	std::unique_ptr<engine::IScene> createTreeScene() { return std::make_unique<TreeScene>(); }
+	const char* getTreeSceneName() { return kSceneName; }
+} // namespace ui_sandbox::scenes

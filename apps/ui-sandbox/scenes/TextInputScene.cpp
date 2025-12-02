@@ -15,7 +15,9 @@
 
 namespace {
 
-	class TextInputScene : public engine::IScene {
+constexpr const char* kSceneName = "text_input";
+
+class TextInputScene : public engine::IScene {
 	  public:
 		void onEnter() override {
 
@@ -229,7 +231,7 @@ namespace {
 		})";
 		}
 
-		const char* getName() const override { return "text_input"; }
+		const char* getName() const override { return kSceneName; }
 
 	  private:
 		std::vector<std::unique_ptr<UI::TextInput>> inputs;
@@ -245,10 +247,10 @@ namespace {
 		std::string output4;
 	};
 
-	// Register scene with SceneManager
-	bool g_registered = []() {
-		engine::SceneManager::Get().registerScene("text_input", []() { return std::make_unique<TextInputScene>(); });
-		return true;
-	}();
-
 } // anonymous namespace
+
+// Export factory and name for scene registry
+namespace ui_sandbox::scenes {
+	std::unique_ptr<engine::IScene> createTextInputScene() { return std::make_unique<TextInputScene>(); }
+	const char* getTextInputSceneName() { return kSceneName; }
+}
