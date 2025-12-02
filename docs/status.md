@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2025-12-02 (Chunk-Based World Rendering Complete)
+Last Updated: 2025-12-02 (Entity Placement System Phase 3 Complete)
 
 ## Epic/Story/Task Template
 
@@ -236,6 +236,40 @@ Use this template for all work items:
 - [ ] Deciduous tree generator (Weber & Penn branching)
 - [ ] Mixed flora scene (trees + flowers + grass)
 - [ ] Performance target: 60 FPS with 1000 trees + 10,000 flowers
+
+---
+
+### 🔄 Entity Placement System
+**Spec/Documentation:** `/docs/technical/entity-placement-system.md`
+**Dependencies:** Asset System Architecture (Phase 1 complete)
+**Status:** in progress
+
+**Phase 1: Foundation** ✅ COMPLETE
+- [x] Extend AssetDefinition with groups and relationships fields
+- [x] Parse `<groups>` and `<relationships>` in AssetRegistry
+- [x] Build group index (group name → list of defNames) at load time
+- [x] Create DependencyGraph with topological sort
+- [x] Create SpatialIndex with grid-based queries
+- [x] Unit tests for all components (46 tests passing)
+
+**Phase 2: Executor** ✅ COMPLETE
+- [x] Create PlacementExecutor (main orchestration engine)
+  - [x] Dependency graph building from "requires" relationships
+  - [x] Deterministic RNG seeding from chunk coordinates
+  - [x] Tile-by-tile placement with biome/proximity checks
+  - [x] Relationship modifier calculation (requires/affinity/avoids)
+  - [x] Cross-chunk queries via IAdjacentChunkProvider interface
+- [x] Integrate with GameScene
+  - [x] PlacementExecutor initialization at game start
+  - [x] Chunk processing coordination (processNewChunks, cleanupUnloadedChunks)
+  - [x] PlacementExecutor serves as its own adjacent chunk provider
+- [x] Unit tests (17 new tests, 63 total passing)
+
+**Phase 3: Content** ✅ COMPLETE
+- [x] Add groups + relationships to existing assets (grass, trees)
+  - [x] Trees: groups (trees, deciduous_trees, large_flora), relationships (avoids same/group)
+  - [x] Grass: groups (grass, small_flora, ground_cover), relationships (affinity for trees)
+- [x] Visual validation in world-sim (63 tests pass, entities placing in chunks)
 
 ---
 

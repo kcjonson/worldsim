@@ -4,21 +4,21 @@
 -->
 <AssetDefinitions>
   <AssetDef>
-    <defName>Flora_TreeDeciduous</defName>
-    <label>Deciduous Tree</label>
+    <defName>Flora_TreeMaple</defName>
+    <label>Maple Tree</label>
     <assetType>procedural</assetType>
 
     <generator>
       <!-- Lua script path (relative to project root) -->
       <scriptPath>assets/generators/trees/deciduous.lua</scriptPath>
       <params>
-        <!-- Trunk dimensions -->
-        <trunkHeight>40</trunkHeight>
-        <trunkWidth>8</trunkWidth>
+        <!-- Trunk dimensions (in pixels, 8px = 1 tile) -->
+        <trunkHeight>8</trunkHeight>
+        <trunkWidth>2</trunkWidth>
         <!-- Canopy size -->
-        <canopyRadius>25</canopyRadius>
+        <canopyRadius>6</canopyRadius>
         <!-- Number of visible branches -->
-        <branchCount>4</branchCount>
+        <branchCount>3</branchCount>
       </params>
     </generator>
 
@@ -35,21 +35,37 @@
     <placement>
       <!-- Forest: Common, spaced out -->
       <biome name="Forest">
-        <spawnChance>0.5</spawnChance>
+        <spawnChance>0.003</spawnChance>
         <distribution>spaced</distribution>
         <spacing>
-          <minDistance>3.0</minDistance>
+          <minDistance>5.0</minDistance>
         </spacing>
       </biome>
 
       <!-- Grassland: Occasional, well-spaced -->
       <biome name="Grassland">
-        <spawnChance>0.1</spawnChance>
+        <spawnChance>0.0008</spawnChance>
         <distribution>spaced</distribution>
         <spacing>
-          <minDistance>8.0</minDistance>
+          <minDistance>12.0</minDistance>
         </spacing>
       </biome>
+
+      <!-- Groups this asset belongs to -->
+      <groups>
+        <group>trees</group>
+        <group>deciduous_trees</group>
+        <group>maple_trees</group>
+        <group>large_flora</group>
+      </groups>
+
+      <!-- Relationships with other entities -->
+      <relationships>
+        <!-- Maples avoid spawning too close to other maples -->
+        <avoids type="same" distance="4.0" penalty="0.1"/>
+        <!-- Maples slightly avoid other tree types for variety -->
+        <avoids group="trees" distance="3.0" penalty="0.5"/>
+      </relationships>
     </placement>
 
     <!-- Pre-generate multiple variants for variety -->
@@ -64,11 +80,11 @@
     <generator>
       <scriptPath>assets/generators/trees/deciduous.lua</scriptPath>
       <params>
-        <!-- Larger oak trees -->
-        <trunkHeight>55</trunkHeight>
-        <trunkWidth>12</trunkWidth>
-        <canopyRadius>35</canopyRadius>
-        <branchCount>6</branchCount>
+        <!-- Slightly larger oak trees (in pixels, 8px = 1 tile) -->
+        <trunkHeight>10</trunkHeight>
+        <trunkWidth>3</trunkWidth>
+        <canopyRadius>8</canopyRadius>
+        <branchCount>4</branchCount>
       </params>
     </generator>
 
@@ -79,12 +95,28 @@
 
     <placement>
       <biome name="Forest">
-        <spawnChance>0.3</spawnChance>
+        <spawnChance>0.002</spawnChance>
         <distribution>spaced</distribution>
         <spacing>
-          <minDistance>5.0</minDistance>
+          <minDistance>6.0</minDistance>
         </spacing>
       </biome>
+
+      <!-- Groups this asset belongs to -->
+      <groups>
+        <group>trees</group>
+        <group>deciduous_trees</group>
+        <group>oak_trees</group>
+        <group>large_flora</group>
+      </groups>
+
+      <!-- Relationships with other entities -->
+      <relationships>
+        <!-- Oaks need more space due to their size -->
+        <avoids type="same" distance="6.0" penalty="0.1"/>
+        <!-- Oaks avoid other trees for variety -->
+        <avoids group="trees" distance="4.0" penalty="0.5"/>
+      </relationships>
     </placement>
 
     <variantCount>15</variantCount>

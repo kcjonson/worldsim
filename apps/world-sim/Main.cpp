@@ -13,7 +13,7 @@ int main(int argc, char* argv[]) {
 		.enableMetrics = true,
 		.initializeScenes = world_sim::initializeSceneManager,
 		.getDefaultSceneKey = []() { return world_sim::toKey(world_sim::SceneType::Splash); },
-		.assetDefinitionPaths = {"flora/grass.xml"}
+		.assetDefinitionPaths = {"flora/grass.xml", "flora/trees.xml"}
 	};
 
 	return engine::AppLauncher::launch(argc, argv, config);
