@@ -70,6 +70,19 @@ namespace engine::assets {
 		[[nodiscard]] bool hasNearbyGroup(glm::vec2 center, float radius,
 										  const std::unordered_set<std::string>& defNames) const;
 
+		/// Get all entities in the index for rendering/iteration
+		/// @returns Vector of all entities (copies for safe iteration)
+		[[nodiscard]] std::vector<PlacedEntity> allEntities() const;
+
+		/// Query all entities within an axis-aligned bounding box
+		/// @param minX Minimum X coordinate in tiles
+		/// @param minY Minimum Y coordinate in tiles
+		/// @param maxX Maximum X coordinate in tiles
+		/// @param maxY Maximum Y coordinate in tiles
+		/// @returns Pointers to entities within bounds (valid until next modification)
+		[[nodiscard]] std::vector<const PlacedEntity*> queryRect(float minX, float minY,
+																 float maxX, float maxY) const;
+
 	  private:
 		float  m_cellSize;
 		size_t m_entityCount = 0;

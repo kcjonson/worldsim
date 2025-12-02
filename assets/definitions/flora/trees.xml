@@ -4,8 +4,8 @@
 -->
 <AssetDefinitions>
   <AssetDef>
-    <defName>Flora_TreeDeciduous</defName>
-    <label>Deciduous Tree</label>
+    <defName>Flora_TreeMaple</defName>
+    <label>Maple Tree</label>
     <assetType>procedural</assetType>
 
     <generator>
@@ -50,6 +50,22 @@
           <minDistance>8.0</minDistance>
         </spacing>
       </biome>
+
+      <!-- Groups this asset belongs to -->
+      <groups>
+        <group>trees</group>
+        <group>deciduous_trees</group>
+        <group>maple_trees</group>
+        <group>large_flora</group>
+      </groups>
+
+      <!-- Relationships with other entities -->
+      <relationships>
+        <!-- Maples avoid spawning too close to other maples -->
+        <avoids type="same" distance="4.0" penalty="0.1"/>
+        <!-- Maples slightly avoid other tree types for variety -->
+        <avoids group="trees" distance="3.0" penalty="0.5"/>
+      </relationships>
     </placement>
 
     <!-- Pre-generate multiple variants for variety -->
@@ -85,6 +101,22 @@
           <minDistance>5.0</minDistance>
         </spacing>
       </biome>
+
+      <!-- Groups this asset belongs to -->
+      <groups>
+        <group>trees</group>
+        <group>deciduous_trees</group>
+        <group>oak_trees</group>
+        <group>large_flora</group>
+      </groups>
+
+      <!-- Relationships with other entities -->
+      <relationships>
+        <!-- Oaks need more space due to their size -->
+        <avoids type="same" distance="6.0" penalty="0.1"/>
+        <!-- Oaks avoid other trees for variety -->
+        <avoids group="trees" distance="4.0" penalty="0.5"/>
+      </relationships>
     </placement>
 
     <variantCount>15</variantCount>

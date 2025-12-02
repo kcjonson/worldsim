@@ -148,6 +148,45 @@ namespace engine::assets {
 		return {cellX, cellY};
 	}
 
+	std::vector<PlacedEntity> SpatialIndex::allEntities() const {
+		std::vector<PlacedEntity> result;
+		result.reserve(m_entityCount);
+		for (const auto& [key, entities] : m_cells) {
+			for (const auto& entity : entities) {
+				result.push_back(entity);
+			}
+		}
+		return result;
+	}
+
+	std::vector<const PlacedEntity*> SpatialIndex::queryRect(float minX, float minY,
+															 float maxX, float maxY) const {
+		std::vector<const PlacedEntity*> result;
+
+		// Calculate bounding box of cells to check
+		int32_t minCellX = static_cast<int32_t>(std::floor(minX / m_cellSize));
+		int32_t maxCellX = static_cast<int32_t>(std::floor(maxX / m_cellSize));
+		int32_t minCellY = static_cast<int32_t>(std::floor(minY / m_cellSize));
+		int32_t maxCellY = static_cast<int32_t>(std::floor(maxY / m_cellSize));
+
+		for (int32_t cx = minCellX; cx <= maxCellX; ++cx) {
+			for (int32_t cy = minCellY; cy <= maxCellY; ++cy) {
+				auto cellIt = m_cells.find(getCellKey(cx, cy));
+				if (cellIt != m_cells.end()) {
+					for (const auto& entity : cellIt->second) {
+						// Check if entity is actually within bounds
+						if (entity.position.x >= minX && entity.position.x <= maxX &&
+							entity.position.y >= minY && entity.position.y <= maxY) {
+							result.push_back(&entity);
+						}
+					}
+				}
+			}
+		}
+
+		return result;
+	}
+
 	std::vector<int64_t> SpatialIndex::getCellsInRadius(glm::vec2 center, float radius) const {
 		std::vector<int64_t> keys;
 

@@ -45,8 +45,9 @@
     <!-- Each biome can have different spawn behavior -->
     <placement>
       <!-- Grassland: Dense, fairly uniform coverage -->
+      <!-- TODO: Implement clumping - current system spawns per-tile, not per-clump -->
       <biome name="Grassland">
-        <spawnChance>0.7</spawnChance>
+        <spawnChance>0.001</spawnChance>
         <distribution>clumped</distribution>
         <clumping>
           <clumpSize>8,20</clumpSize>
@@ -57,7 +58,7 @@
 
       <!-- Forest: Sparse, small clumps in clearings -->
       <biome name="Forest">
-        <spawnChance>0.2</spawnChance>
+        <spawnChance>0.0003</spawnChance>
         <distribution>clumped</distribution>
         <clumping>
           <clumpSize>3,8</clumpSize>
@@ -68,7 +69,7 @@
 
       <!-- Wetland: Moderate, taller grass in patches -->
       <biome name="Wetland">
-        <spawnChance>0.4</spawnChance>
+        <spawnChance>0.0006</spawnChance>
         <distribution>clumped</distribution>
         <clumping>
           <clumpSize>5,12</clumpSize>
@@ -76,6 +77,19 @@
           <clumpSpacing>2,4</clumpSpacing>
         </clumping>
       </biome>
+
+      <!-- Groups this asset belongs to -->
+      <groups>
+        <group>grass</group>
+        <group>small_flora</group>
+        <group>ground_cover</group>
+      </groups>
+
+      <!-- Relationships with other entities -->
+      <relationships>
+        <!-- Grass has slight affinity for trees (grows in clearings around them) -->
+        <affinity group="trees" distance="5.0" strength="1.2"/>
+      </relationships>
     </placement>
   </AssetDef>
 </AssetDefinitions>

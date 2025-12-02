@@ -51,6 +51,14 @@ namespace engine::assets {
 		size_t						entitiesPlaced = 0;
 	};
 
+	/// Result of async chunk computation (includes spatial index for later storage)
+	struct AsyncChunkPlacementResult {
+		world::ChunkCoordinate		coord;
+		std::vector<PlacedEntity>	entities;
+		SpatialIndex				spatialIndex;
+		size_t						entitiesPlaced = 0;
+	};
+
 	/// Interface for querying adjacent chunks during placement.
 	/// Allows cross-chunk relationship lookups (e.g., mushroom near tree at chunk edge).
 	class IAdjacentChunkProvider {
@@ -77,8 +85,25 @@ namespace engine::assets {
 		/// @param context Chunk data (coord, seed, biome/ground lookups)
 		/// @param adjacentProvider Optional provider for cross-chunk queries (can be null)
 		/// @return Placement result with list of spawned entities
+		/// @note This method modifies internal state - NOT thread-safe
 		ChunkPlacementResult processChunk(const ChunkPlacementContext& context,
 										  const IAdjacentChunkProvider* adjacentProvider = nullptr);
+
+		/// Compute entity placements without storing to internal state (thread-safe).
+		/// Use this for async/background processing, then call storeChunkResult() on main thread.
+		/// @param context Chunk data (coord, seed, biome/ground lookups)
+		/// @param adjacentProvider Optional provider for cross-chunk queries (can be null)
+		/// @return Result including computed SpatialIndex for later storage
+		/// @note Thread-safe: does not modify internal state
+		[[nodiscard]] AsyncChunkPlacementResult computeChunkEntities(
+			const ChunkPlacementContext& context,
+			const IAdjacentChunkProvider* adjacentProvider = nullptr) const;
+
+		/// Store a pre-computed chunk result (main thread only).
+		/// Call this after computeChunkEntities() completes on a background thread.
+		/// @param result The async result from computeChunkEntities()
+		/// @note NOT thread-safe - call only from main thread
+		void storeChunkResult(AsyncChunkPlacementResult&& result);
 
 		/// Get the spatial index for a previously processed chunk.
 		/// Returns nullptr if chunk hasn't been processed.
@@ -114,7 +139,7 @@ namespace engine::assets {
 							 SpatialIndex& chunkIndex,
 							 const IAdjacentChunkProvider* adjacentProvider,
 							 std::mt19937& rng,
-							 std::vector<PlacedEntity>& outEntities);
+							 std::vector<PlacedEntity>& outEntities) const;
 
 		/// Calculate spawn probability modifier from relationships
 		/// @param def Asset definition with relationships

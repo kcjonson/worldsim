@@ -12,22 +12,32 @@
 #include <scene/SceneManager.h>
 #include <utils/Log.h>
 #include <world/camera/WorldCamera.h>
+#include <world/chunk/Chunk.h>
+#include <world/chunk/ChunkCoordinate.h>
 #include <world/chunk/ChunkManager.h>
 #include <world/chunk/MockWorldSampler.h>
 #include <world/rendering/ChunkRenderer.h>
+#include <world/rendering/EntityRenderer.h>
 
 #include <assets/AssetRegistry.h>
 #include <assets/placement/PlacementExecutor.h>
 
+#include <chrono>
+#include <future>
 #include <memory>
+#include <mutex>
 #include <sstream>
 #include <unordered_set>
+#include <vector>
 
 namespace {
 
 	constexpr const char* kSceneName = "game";
 	constexpr uint64_t	  kDefaultWorldSeed = 12345;
 	constexpr float		  kPixelsPerMeter = 8.0F;
+
+	/// Result of async chunk placement (wraps the PlacementExecutor's async result)
+	using AsyncChunkResult = engine::assets::AsyncChunkPlacementResult;
 
 	/// Convert GroundCover enum to string for placement rules
 	std::string groundCoverToString(engine::world::GroundCover cover) {
@@ -63,17 +73,16 @@ namespace {
 			m_renderer = std::make_unique<engine::world::ChunkRenderer>(kPixelsPerMeter);
 			m_renderer->setTileResolution(1); // Render every tile (no skipping)
 
+			m_entityRenderer = std::make_unique<engine::world::EntityRenderer>(kPixelsPerMeter);
+
 			// Initialize entity placement system
 			auto& assetRegistry = engine::assets::AssetRegistry::Get();
 			m_placementExecutor = std::make_unique<engine::assets::PlacementExecutor>(assetRegistry);
 			m_placementExecutor->initialize();
 			LOG_INFO(Game, "PlacementExecutor initialized with %zu entity types", m_placementExecutor->getSpawnOrder().size());
 
-			// Initial chunk load
+			// Initial chunk load (entity placement happens async in update())
 			m_chunkManager->update(m_camera->position());
-
-			// Process initial chunks for entity placement
-			processNewChunks();
 
 			// Create overlay with zoom callbacks
 			m_overlay = std::make_unique<world_sim::GameOverlay>(
@@ -156,6 +165,9 @@ namespace {
 			Renderer::Primitives::getViewport(w, h);
 			m_renderer->render(*m_chunkManager, *m_camera, w, h);
 
+			// Render placed entities on top of terrain
+			m_entityRenderer->render(*m_placementExecutor, m_processedChunks, *m_camera, w, h);
+
 			m_overlay->render();
 		}
 
@@ -165,6 +177,7 @@ namespace {
 			m_placementExecutor.reset();
 			m_chunkManager.reset();
 			m_camera.reset();
+			m_entityRenderer.reset();
 			m_renderer.reset();
 		}
 
@@ -177,41 +190,99 @@ namespace {
 		const char* getName() const override { return kSceneName; }
 
 	  private:
-		/// Process newly loaded chunks for entity placement.
-		/// Iterates loaded chunks and places entities in any that haven't been processed yet.
+		/// Launch async tasks for newly loaded chunks.
+		/// Non-blocking: spawns background threads for entity placement computation.
 		void processNewChunks() {
+			// First, poll and integrate any completed async tasks
+			pollCompletedChunks();
+
+			// Then launch new async tasks for unprocessed chunks
 			for (auto* chunk : m_chunkManager->getLoadedChunks()) {
 				auto coord = chunk->coordinate();
 
-				// Skip if already processed
+				// Skip if already processed or currently being processed
 				if (m_placementExecutor->getChunkIndex(coord) != nullptr) {
 					continue;
 				}
-
-				// Create placement context with callbacks to chunk data
-				engine::assets::ChunkPlacementContext ctx;
-				ctx.coord = coord;
-				ctx.worldSeed = kDefaultWorldSeed;
-				ctx.getBiome = [chunk](uint16_t x, uint16_t y) {
-					return chunk->getTile(x, y).biome.primary();
-				};
-				ctx.getGroundCover = [chunk](uint16_t x, uint16_t y) {
-					return groundCoverToString(chunk->getTile(x, y).groundCover);
-				};
-
-				// Process chunk (PlacementExecutor serves as its own adjacent chunk provider)
-				auto result = m_placementExecutor->processChunk(ctx, m_placementExecutor.get());
-
-				// Track this chunk as processed
-				m_processedChunks.insert(coord);
-
-				if (result.entitiesPlaced > 0) {
-					LOG_DEBUG(Game, "Placed %zu entities in chunk (%d, %d)", result.entitiesPlaced, coord.x, coord.y);
+				if (m_chunksBeingProcessed.find(coord) != m_chunksBeingProcessed.end()) {
+					continue;
 				}
 
-				// TODO: Store result.entities for rendering
-				// For now, entities are stored in the PlacementExecutor's spatial indices
+				// Mark as being processed
+				m_chunksBeingProcessed.insert(coord);
+
+				// Capture chunk data for the async task (copy tile data to avoid threading issues)
+				// We create a snapshot of the chunk's biome/ground cover data
+				auto chunkData = captureChunkData(chunk);
+
+				// Launch async computation
+				auto future = std::async(std::launch::async, [this, coord, chunkData = std::move(chunkData)]() {
+					engine::assets::ChunkPlacementContext ctx;
+					ctx.coord = coord;
+					ctx.worldSeed = kDefaultWorldSeed;
+					ctx.getBiome = [&chunkData](uint16_t x, uint16_t y) {
+						return chunkData.biomes[y * engine::world::kChunkSize + x];
+					};
+					ctx.getGroundCover = [&chunkData](uint16_t x, uint16_t y) {
+						return chunkData.groundCovers[y * engine::world::kChunkSize + x];
+					};
+
+					// Thread-safe computation (no shared state modification)
+					return m_placementExecutor->computeChunkEntities(ctx, m_placementExecutor.get());
+				});
+
+				m_pendingFutures.emplace_back(coord, std::move(future));
 			}
+		}
+
+		/// Poll for completed async chunk computations and integrate results.
+		void pollCompletedChunks() {
+			// Check each pending future for completion
+			for (auto it = m_pendingFutures.begin(); it != m_pendingFutures.end();) {
+				auto& [coord, future] = *it;
+
+				// Check if the future is ready (non-blocking)
+				if (future.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
+					// Get the result and store it on the main thread
+					auto result = future.get();
+					m_placementExecutor->storeChunkResult(std::move(result));
+
+					// Track as processed
+					m_processedChunks.insert(coord);
+					m_chunksBeingProcessed.erase(coord);
+
+					LOG_DEBUG(Game, "Async placement complete for chunk (%d, %d)", coord.x, coord.y);
+
+					// Remove from pending list
+					it = m_pendingFutures.erase(it);
+				} else {
+					++it;
+				}
+			}
+		}
+
+		/// Snapshot of chunk tile data for thread-safe async processing
+		struct ChunkDataSnapshot {
+			std::vector<engine::world::Biome> biomes;
+			std::vector<std::string>		  groundCovers;
+		};
+
+		/// Capture chunk tile data for async processing (avoids concurrent access to Chunk)
+		ChunkDataSnapshot captureChunkData(const engine::world::Chunk* chunk) {
+			ChunkDataSnapshot snapshot;
+			const size_t	  tileCount = engine::world::kChunkSize * engine::world::kChunkSize;
+			snapshot.biomes.reserve(tileCount);
+			snapshot.groundCovers.reserve(tileCount);
+
+			for (uint16_t y = 0; y < engine::world::kChunkSize; ++y) {
+				for (uint16_t x = 0; x < engine::world::kChunkSize; ++x) {
+					const auto& tile = chunk->getTile(x, y);
+					snapshot.biomes.push_back(tile.biome.primary());
+					snapshot.groundCovers.push_back(groundCoverToString(tile.groundCover));
+				}
+			}
+
+			return snapshot;
 		}
 
 		/// Unload placement data for chunks that are no longer loaded.
@@ -242,11 +313,17 @@ namespace {
 		std::unique_ptr<engine::world::ChunkManager>	   m_chunkManager;
 		std::unique_ptr<engine::world::WorldCamera>		   m_camera;
 		std::unique_ptr<engine::world::ChunkRenderer>	   m_renderer;
+		std::unique_ptr<engine::world::EntityRenderer>	   m_entityRenderer;
 		std::unique_ptr<engine::assets::PlacementExecutor> m_placementExecutor;
 		std::unique_ptr<world_sim::GameOverlay>			   m_overlay;
 
 		// Track processed chunk coordinates for cleanup detection
 		std::unordered_set<engine::world::ChunkCoordinate> m_processedChunks;
+
+		// Async chunk processing state
+		std::unordered_set<engine::world::ChunkCoordinate>									m_chunksBeingProcessed;
+		std::vector<std::pair<engine::world::ChunkCoordinate, std::future<AsyncChunkResult>>> m_pendingFutures;
+		std::mutex m_asyncMutex;
 	};
 
 } // namespace

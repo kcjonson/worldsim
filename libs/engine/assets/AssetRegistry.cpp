@@ -379,6 +379,7 @@ bool AssetRegistry::loadDefinitions(const std::string& xmlPath) {
 
 				// Spawn chance
 				bp.spawnChance = static_cast<float>(biomeNode.child("spawnChance").text().as_double(0.3));
+				LOG_DEBUG(Engine, "Parsed biome '%s' with spawnChance=%f", bp.biomeName.c_str(), bp.spawnChance);
 
 				// Distribution type
 				bp.distribution = parseDistribution(biomeNode.child_value("distribution"));

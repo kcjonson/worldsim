@@ -111,7 +111,7 @@ namespace engine::assets {
 		const IAdjacentChunkProvider* adjacentProvider,
 		std::mt19937&				  rng,
 		std::vector<PlacedEntity>&	  outEntities
-	) {
+	) const {
 		const auto* def = m_registry.getDefinition(defName);
 		if (def == nullptr) {
 			return;
@@ -372,6 +372,40 @@ namespace engine::assets {
 
 	void PlacementExecutor::unloadChunk(world::ChunkCoordinate coord) {
 		m_chunkIndices.erase(coord);
+	}
+
+	AsyncChunkPlacementResult PlacementExecutor::computeChunkEntities(
+		const ChunkPlacementContext&  context,
+		const IAdjacentChunkProvider* adjacentProvider
+	) const {
+		AsyncChunkPlacementResult result;
+		result.coord = context.coord;
+
+		if (!m_initialized) {
+			LOG_WARNING(Engine, "PlacementExecutor::computeChunkEntities called before initialize()");
+			return result;
+		}
+
+		// Create local spatial index (not stored in m_chunkIndices yet)
+		result.spatialIndex.clear();
+
+		// Create deterministic RNG from chunk coordinate and world seed
+		uint64_t chunkSeed = context.worldSeed;
+		chunkSeed ^= static_cast<uint64_t>(context.coord.x) * 0x9E3779B97F4A7C15ULL;
+		chunkSeed ^= static_cast<uint64_t>(context.coord.y) * 0x6C62272E07BB0143ULL;
+		std::mt19937 rng(static_cast<uint32_t>(chunkSeed));
+
+		// Process entity types in dependency order
+		for (const auto& defName : m_spawnOrder) {
+			placeEntityType(defName, context, result.spatialIndex, adjacentProvider, rng, result.entities);
+		}
+
+		result.entitiesPlaced = result.entities.size();
+		return result;
+	}
+
+	void PlacementExecutor::storeChunkResult(AsyncChunkPlacementResult&& result) {
+		m_chunkIndices[result.coord] = std::move(result.spatialIndex);
 	}
 
 	void PlacementExecutor::clear() {

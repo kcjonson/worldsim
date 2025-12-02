@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2025-12-02 (Entity Placement System Phase 2 Complete)
+Last Updated: 2025-12-02 (Entity Placement System Phase 3 Complete)
 
 ## Epic/Story/Task Template
 
@@ -265,9 +265,11 @@ Use this template for all work items:
   - [x] PlacementExecutor serves as its own adjacent chunk provider
 - [x] Unit tests (17 new tests, 63 total passing)
 
-**Phase 3: Content**
-- [ ] Add groups + relationships to existing assets (grass, trees)
-- [ ] Visual validation in world-sim
+**Phase 3: Content** ✅ COMPLETE
+- [x] Add groups + relationships to existing assets (grass, trees)
+  - [x] Trees: groups (trees, deciduous_trees, large_flora), relationships (avoids same/group)
+  - [x] Grass: groups (grass, small_flora, ground_cover), relationships (affinity for trees)
+- [x] Visual validation in world-sim (63 tests pass, entities placing in chunks)
 
 ---
 

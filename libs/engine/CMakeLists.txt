@@ -9,6 +9,7 @@ add_library(engine
     world/chunk/ChunkManager.cpp
     world/chunk/MockWorldSampler.cpp
     world/rendering/ChunkRenderer.cpp
+    world/rendering/EntityRenderer.cpp
 )
 
 target_include_directories(engine
