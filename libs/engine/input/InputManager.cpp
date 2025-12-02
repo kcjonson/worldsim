@@ -283,8 +283,8 @@ namespace engine {
 		// Update button state transitions (Pressed → Down, Released → Up)
 		updateButtonStates();
 
-		// Reset per-frame state
-		scrollDelta = 0.0f;
+		// Note: scrollDelta is NOT reset here - it's consumed by consumeScrollDelta()
+		// This allows handleInput() to read the value after update() is called
 	}
 
 	void InputManager::updateButtonStates() {

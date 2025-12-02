@@ -2,6 +2,9 @@
 
 #include "core/RenderContext.h"
 #include "layer/Layer.h"
+
+#include <graphics/Rect.h>
+
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
@@ -39,6 +42,10 @@ namespace UI {
 	struct ILayer : public IComponent {
 		virtual void handleInput() = 0;
 		virtual void update(float deltaTime) = 0;
+
+		/// Called when bounds change. Position children within the given bounds.
+		/// @param bounds The available space for this component
+		virtual void layout(const Foundation::Rect& bounds) = 0;
 	};
 
 	// ============================================================================
@@ -182,6 +189,15 @@ namespace UI {
 			}
 		}
 
+		void layout(const Foundation::Rect& newBounds) override {
+			bounds = newBounds;
+			for (auto* child : children) {
+				if (auto* layer = dynamic_cast<ILayer*>(child)) {
+					layer->layout(newBounds);
+				}
+			}
+		}
+
 		void render() override {
 			// Sort children by zIndex when needed (stable sort preserves insertion order for equal zIndex)
 			if (childrenNeedSorting) {
@@ -203,6 +219,7 @@ namespace UI {
 	  protected:
 		MemoryArena				 arena;
 		std::vector<IComponent*> children;
+		Foundation::Rect		 bounds;
 		uint16_t				 generation{0};
 		bool					 childrenNeedSorting{false};
 	};

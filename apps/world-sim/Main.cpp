@@ -8,9 +8,9 @@ int main(int argc, char* argv[]) {
 	engine::AppConfig config{
 		.windowTitle = "World-Sim",
 		.windowSizePercent = 0.8F,
-		.enableDebugServer = false,
+		.enableDebugServer = true,
 		.debugServerPort = 8081,
-		.enableMetrics = false,
+		.enableMetrics = true,
 		.initializeScenes = world_sim::initializeSceneManager,
 		.getDefaultSceneKey = []() { return world_sim::toKey(world_sim::SceneType::Splash); },
 		.assetDefinitionPaths = {"flora/grass.xml"}
