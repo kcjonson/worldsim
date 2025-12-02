@@ -11,13 +11,23 @@ struct SceneInfo {
 	engine::SceneFactory factory;
 };
 
-/// @brief Scene types for world-sim application
+// ============================================================================
+// SCENE LIST - Add new scenes here (the ONLY place you need to edit)
+// ============================================================================
+// clang-format off
+#define WORLD_SIM_SCENES(X) \
+	X(Splash)       \
+	X(MainMenu)     \
+	X(Game)         \
+	X(Settings)     \
+	X(WorldCreator)
+// clang-format on
+
+/// @brief Scene types for world-sim application (auto-generated from SCENE_LIST)
 enum class SceneType : std::size_t {
-	Splash = 0,
-	MainMenu,
-	Game,
-	Settings,
-	WorldCreator,
+#define SCENE_ENUM(name) name,
+	WORLD_SIM_SCENES(SCENE_ENUM)
+#undef SCENE_ENUM
 	Count // Must be last
 };
 

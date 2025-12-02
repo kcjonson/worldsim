@@ -2,49 +2,25 @@
 
 #include "SceneTypes.h"
 
-// Each scene exports a SceneInfo - forward declare them here
+// Forward declare all scene infos (auto-generated from SCENE_LIST)
 namespace ui_sandbox::scenes {
 	using ui_sandbox::SceneInfo;
-	extern const SceneInfo Shapes;
-	extern const SceneInfo Arena;
-	extern const SceneInfo Handle;
-	extern const SceneInfo Button;
-	extern const SceneInfo TextInput;
-	extern const SceneInfo Grass;
-	extern const SceneInfo VectorPerf;
-	extern const SceneInfo VectorStar;
-	extern const SceneInfo Svg;
-	extern const SceneInfo Clip;
-	extern const SceneInfo Layer;
-	extern const SceneInfo TextShapes;
-	extern const SceneInfo SdfMinimal;
-	extern const SceneInfo InputTest;
-	extern const SceneInfo Tree;
+#define SCENE_EXTERN(name) extern const SceneInfo name;
+	UI_SANDBOX_SCENES(SCENE_EXTERN)
+#undef SCENE_EXTERN
 } // namespace ui_sandbox::scenes
 
 namespace ui_sandbox {
 
 	void initializeSceneManager() {
-		// Single list: enum -> scene info (each scene mentioned exactly once)
+		// Build scene list (auto-generated from SCENE_LIST)
 		const std::pair<SceneType, const SceneInfo*> allScenes[] = {
-			{SceneType::Shapes, &scenes::Shapes},
-			{SceneType::Arena, &scenes::Arena},
-			{SceneType::Handle, &scenes::Handle},
-			{SceneType::Button, &scenes::Button},
-			{SceneType::TextInput, &scenes::TextInput},
-			{SceneType::Grass, &scenes::Grass},
-			{SceneType::VectorPerf, &scenes::VectorPerf},
-			{SceneType::VectorStar, &scenes::VectorStar},
-			{SceneType::Svg, &scenes::Svg},
-			{SceneType::Clip, &scenes::Clip},
-			{SceneType::Layer, &scenes::Layer},
-			{SceneType::TextShapes, &scenes::TextShapes},
-			{SceneType::SdfMinimal, &scenes::SdfMinimal},
-			{SceneType::InputTest, &scenes::InputTest},
-			{SceneType::Tree, &scenes::Tree},
+#define SCENE_PAIR(name) {SceneType::name, &scenes::name},
+			UI_SANDBOX_SCENES(SCENE_PAIR)
+#undef SCENE_PAIR
 		};
 
-		// Build registry and names from the single list
+		// Register all scenes
 		engine::SceneRegistry							  registry;
 		std::unordered_map<engine::SceneKey, std::string> names;
 
