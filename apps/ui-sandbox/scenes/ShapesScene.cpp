@@ -6,12 +6,15 @@
 #include <primitives/Primitives.h>
 #include <scene/Scene.h>
 #include <scene/SceneManager.h>
+#include "SceneTypes.h"
 
 #include <GL/glew.h>
 
 namespace {
 
-	class ShapesScene : public engine::IScene {
+constexpr const char* kSceneName = "shapes";
+
+class ShapesScene : public engine::IScene {
 	  public:
 		void onEnter() override {
 			// No initialization needed for shapes scene
@@ -89,13 +92,12 @@ namespace {
 		})";
 		}
 
-		const char* getName() const override { return "shapes"; }
-	};
-
-	// Register scene with SceneManager
-	bool g_registered = []() {
-		engine::SceneManager::Get().registerScene("shapes", []() { return std::make_unique<ShapesScene>(); });
-		return true;
-	}();
+		const char* getName() const override { return kSceneName; }
+};
 
 } // anonymous namespace
+
+// Export scene info for registry
+namespace ui_sandbox::scenes {
+	extern const ui_sandbox::SceneInfo Shapes = {kSceneName, []() { return std::make_unique<ShapesScene>(); }};
+}

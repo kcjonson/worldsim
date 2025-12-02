@@ -1,27 +1,34 @@
 #pragma once
 
 #include "Scene.h"
+#include <cstddef>
 #include <functional>
-#include <map>
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace engine {
 
+	/// @brief Key type for scene registry (apps cast their enum to this)
+	using SceneKey = std::size_t;
+
 	/// @brief Factory function type for creating scenes
 	using SceneFactory = std::function<std::unique_ptr<IScene>()>;
 
-	/// @brief Manages scene registration, lifecycle, and switching
+	/// @brief Scene registry mapping keys to factories
+	using SceneRegistry = std::unordered_map<SceneKey, SceneFactory>;
+
+	/// @brief Manages scene lifecycle and switching
 	///
-	/// Singleton that maintains a registry of available scenes and handles
-	/// switching between them. Used by both ui-sandbox and main game.
+	/// Initialized by each app with its own scene registry mapping enum values
+	/// to factory functions. The engine has no knowledge of app-specific scene types.
 	///
-	/// Usage:
-	///   SceneManager::Get().RegisterScene("shapes", []() { return std::make_unique<ShapesScene>(); });
-	///   SceneManager::Get().SwitchTo("shapes");
-	///   SceneManager::Get().update(dt);
-	///   SceneManager::Get().render();
+	/// Pattern:
+	/// - App defines its own SceneType enum
+	/// - App initializes SceneManager with {enum -> factory} map
+	/// - Scenes receive SceneManager pointer via dependency injection
+	/// - Exit requests via requestExit() instead of direct GLFW calls
 	class SceneManager {
 	  public:
 		/// @brief Get singleton instance
@@ -33,16 +40,16 @@ namespace engine {
 		SceneManager(SceneManager&&) = delete;
 		SceneManager& operator=(SceneManager&&) = delete;
 
-		/// @brief Register a scene with the manager
-		/// @param name Unique scene name (lowercase, no spaces)
-		/// @param factory Function that creates a new instance of the scene
-		void registerScene(const std::string& name, SceneFactory factory);
+		/// @brief Initialize with app-specific scene registry
+		/// @param registry Map of scene keys to factory functions
+		/// @param sceneNames Map of scene keys to names (for HTTP API, logging)
+		void initialize(SceneRegistry registry, std::unordered_map<SceneKey, std::string> sceneNames);
 
 		/// @brief Switch to a different scene
-		/// Calls OnExit() on current scene, then OnEnter() on new scene
-		/// @param name Name of scene to switch to
+		/// Calls onExit() on current scene, injects SceneManager, then onEnter() on new scene
+		/// @param key Scene key (app's enum cast to SceneKey)
 		/// @return true if switch succeeded, false if scene not found
-		bool switchTo(const std::string& name);
+		bool switchTo(SceneKey key);
 
 		/// @brief Handle input for current scene
 		/// @param dt Delta time in seconds
@@ -55,44 +62,59 @@ namespace engine {
 		/// @brief Render current scene
 		void render();
 
+		/// @brief Request application exit
+		/// Scenes call this instead of direct GLFW calls
+		void requestExit();
+
+		/// @brief Check if exit has been requested
+		/// Application main loop checks this each frame
+		/// @return true if exit was requested
+		bool isExitRequested() const;
+
 		/// @brief Get current active scene
 		/// @return Pointer to current scene, or nullptr if no scene active
 		IScene* getCurrentScene() const;
 
-		/// @brief Get current scene name
-		/// @return Name of current scene, or empty string if no scene active
-		std::string getCurrentSceneName() const;
-
-		/// @brief Get list of all registered scene names
-		/// @return Vector of scene names (sorted alphabetically)
-		std::vector<std::string> getAllSceneNames() const;
+		/// @brief Get current scene key
+		/// @return Current scene key, or 0 (default SceneKey) if no scene is active
+		SceneKey getCurrentSceneKey() const;
 
 		/// @brief Check if a scene is registered
-		/// @param name Scene name to check
+		/// @param key Scene key to check
 		/// @return true if scene exists in registry
-		bool hasScene(const std::string& name) const;
-
-		/// @brief Parse command-line args and switch to specified scene
-		/// Looks for --scene=<name> argument
-		/// @param argc Argument count
-		/// @param argv Argument vector
-		/// @return true if --scene arg found and scene loaded, false otherwise
-		bool setInitialSceneFromArgs(int argc, char** argv);
+		bool hasScene(SceneKey key) const;
 
 		/// @brief Shutdown scene system - exits and destroys current scene
 		/// Must be called before singletons (FocusManager, InputManager) are destroyed
-		/// This is required because SceneManager is a static singleton that outlives
-		/// Application. Scene components (Button, TextInput) need FocusManager to
-		/// unregister during destruction.
 		void shutdown();
+
+		/// @brief Get scene key from name (for CLI args, HTTP API edge conversion)
+		/// @param name Scene name
+		/// @return Scene key, or SIZE_MAX if not found
+		SceneKey getKeyForName(const std::string& name) const;
+
+		/// @brief Get scene name from key (for logging, debugging)
+		/// @param key Scene key
+		/// @return Scene name or "unknown"
+		const char* getSceneName(SceneKey key) const;
+
+		/// @brief Get all registered scene names (for HTTP API, navigation menu)
+		std::vector<std::string> getAllSceneNames() const;
+
+		/// @brief Get current scene name (for HTTP API, logging)
+		/// @return Current scene name or empty string if no scene active
+		std::string getCurrentSceneName() const;
 
 	  private:
 		SceneManager() = default;
 		~SceneManager() = default;
 
-		std::map<std::string, SceneFactory> sceneRegistry;
-		std::unique_ptr<IScene>				currentScene;
-		std::string							currentSceneName;
+		SceneRegistry sceneRegistry;
+		std::unordered_map<SceneKey, std::string> sceneNames;
+		std::unordered_map<std::string, SceneKey> nameToKey;
+		std::unique_ptr<IScene> currentScene;
+		SceneKey currentSceneKey{};
+		bool exitRequested{false};
 	};
 
 } // namespace engine

@@ -5,6 +5,7 @@
 #include <primitives/Primitives.h>
 #include <scene/Scene.h>
 #include <scene/SceneManager.h>
+#include "SceneTypes.h"
 #include <shapes/Shapes.h>
 #include <utils/Log.h>
 
@@ -15,7 +16,9 @@
 
 namespace {
 
-	class TextShapesScene : public engine::IScene {
+constexpr const char* kSceneName = "text_shapes";
+
+class TextShapesScene : public engine::IScene {
 	  public:
 		void onEnter() override {
 			using namespace UI;
@@ -193,16 +196,15 @@ namespace {
 			return R"({"scene": "text_shapes", "description": "Text shape API demonstration"})";
 		}
 
-		const char* getName() const override { return "text_shapes"; }
+		const char* getName() const override { return kSceneName; }
 
 	  private:
 		std::vector<std::unique_ptr<UI::IComponent>> shapes;
 	};
 
-	// Register scene with SceneManager
-	bool g_registered = []() {
-		engine::SceneManager::Get().registerScene("text_shapes", []() { return std::make_unique<TextShapesScene>(); });
-		return true;
-	}();
-
 } // anonymous namespace
+
+// Export scene info for registry
+namespace ui_sandbox::scenes {
+	extern const ui_sandbox::SceneInfo TextShapes = {kSceneName, []() { return std::make_unique<TextShapesScene>(); }};
+}

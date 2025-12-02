@@ -5,6 +5,7 @@
 #include <primitives/Primitives.h>
 #include <scene/Scene.h>
 #include <scene/SceneManager.h>
+#include "SceneTypes.h"
 #include <utils/Log.h>
 #include <vector/Tessellator.h>
 #include <vector/Types.h>
@@ -16,7 +17,9 @@
 
 namespace {
 
-	class VectorStarScene : public engine::IScene {
+constexpr const char* kSceneName = "vector-star";
+
+class VectorStarScene : public engine::IScene {
 	  public:
 		void onEnter() override {
 			LOG_INFO(UI, "Vector Star Scene - Tessellation Demo");
@@ -115,7 +118,7 @@ namespace {
 			return "{}";
 		}
 
-		const char* getName() const override { return "vector-star"; }
+		const char* getName() const override { return kSceneName; }
 
 	  private:
 		// Create a 5-pointed star path centered at (400, 200) with outer radius 100, inner radius 40
@@ -187,10 +190,9 @@ namespace {
 		renderer::TessellatedMesh tinyStarMesh;
 	};
 
-	// Register scene with SceneManager
-	bool g_registered = []() {
-		engine::SceneManager::Get().registerScene("vector-star", []() { return std::make_unique<VectorStarScene>(); });
-		return true;
-	}();
-
 } // anonymous namespace
+
+// Export scene info for registry
+namespace ui_sandbox::scenes {
+	extern const ui_sandbox::SceneInfo VectorStar = {kSceneName, []() { return std::make_unique<VectorStarScene>(); }};
+}

@@ -1,5 +1,6 @@
 add_library(engine
     application/Application.cpp
+    application/AppLauncher.cpp
     scene/SceneManager.cpp
     input/InputManager.cpp
     clipboard/ClipboardManager.cpp
@@ -20,6 +21,7 @@ target_link_libraries(engine
         foundation
         renderer
         ui
+        assets
         nlohmann_json::nlohmann_json
         glfw
 )

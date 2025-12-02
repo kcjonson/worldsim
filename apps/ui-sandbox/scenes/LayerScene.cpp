@@ -8,6 +8,7 @@
 #include <primitives/Primitives.h>
 #include <scene/Scene.h>
 #include <scene/SceneManager.h>
+#include "SceneTypes.h"
 #include <shapes/Shapes.h>
 #include <utils/Log.h>
 
@@ -15,7 +16,9 @@
 
 namespace {
 
-	class LayerScene : public engine::IScene {
+constexpr const char* kSceneName = "layer";
+
+class LayerScene : public engine::IScene {
 	  public:
 		void onEnter() override {
 			using namespace UI;
@@ -146,16 +149,15 @@ namespace {
 
 		std::string exportState() override { return "{\"scene\": \"layer\", \"description\": \"Component hierarchy demo\"}"; }
 
-		const char* getName() const override { return "layer"; }
+		const char* getName() const override { return kSceneName; }
 
 	  private:
 		std::unique_ptr<UI::Container> root;
 	};
 
-	// Register scene with SceneManager
-	bool g_registered = []() {
-		engine::SceneManager::Get().registerScene("layer", []() { return std::make_unique<LayerScene>(); });
-		return true;
-	}();
-
 } // anonymous namespace
+
+// Export scene info for registry
+namespace ui_sandbox::scenes {
+	extern const ui_sandbox::SceneInfo Layer = {kSceneName, []() { return std::make_unique<LayerScene>(); }};
+}

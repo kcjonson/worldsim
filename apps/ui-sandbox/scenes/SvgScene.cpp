@@ -5,6 +5,7 @@
 #include <primitives/Primitives.h>
 #include <scene/Scene.h>
 #include <scene/SceneManager.h>
+#include "SceneTypes.h"
 #include <utils/Log.h>
 #include <utils/ResourcePath.h>
 #include <vector/SVGLoader.h>
@@ -16,7 +17,9 @@
 
 namespace {
 
-	/// Holds a tessellated SVG shape ready for rendering
+constexpr const char* kSceneName = "svg";
+
+/// Holds a tessellated SVG shape ready for rendering
 	struct TessellatedShape {
 		renderer::TessellatedMesh mesh;
 		Foundation::Color		  color;
@@ -66,7 +69,7 @@ namespace {
 			return "{}";
 		}
 
-		const char* getName() const override { return "svg"; }
+		const char* getName() const override { return kSceneName; }
 
 	  private:
 		// Transform constants for centering and scaling the SVG on screen
@@ -145,10 +148,9 @@ namespace {
 		std::vector<TessellatedShape> m_shapes;
 	};
 
-	// Register scene with SceneManager
-	[[maybe_unused]] bool g_registered = []() {
-		engine::SceneManager::Get().registerScene("svg", []() { return std::make_unique<SvgScene>(); });
-		return true;
-	}();
-
 } // anonymous namespace
+
+// Export scene info for registry
+namespace ui_sandbox::scenes {
+	extern const ui_sandbox::SceneInfo Svg = {kSceneName, []() { return std::make_unique<SvgScene>(); }};
+}

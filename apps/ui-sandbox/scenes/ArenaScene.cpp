@@ -5,6 +5,7 @@
 #include <memory/Arena.h>
 #include <scene/Scene.h>
 #include <scene/SceneManager.h>
+#include "SceneTypes.h"
 #include <utils/Log.h>
 
 #include <GL/glew.h>
@@ -16,7 +17,9 @@ using namespace foundation;
 
 namespace {
 
-	static void testPerformance();
+constexpr const char* kSceneName = "arena";
+
+static void testPerformance();
 	static void testAlignment();
 	static void testCapacity();
 	static void testScoped();
@@ -68,10 +71,10 @@ namespace {
 		})";
 		}
 
-		const char* getName() const override { return "arena"; }
+		const char* getName() const override { return kSceneName; }
 	};
 
-	// ============================================================================
+// ============================================================================
 	// Test Implementations
 	// ============================================================================
 
@@ -246,10 +249,9 @@ namespace {
 		LOG_INFO(UI, "Scoped arena test passed!");
 	}
 
-	// Register scene with SceneManager
-	bool g_registered = []() {
-		engine::SceneManager::Get().registerScene("arena", []() { return std::make_unique<ArenaScene>(); });
-		return true;
-	}();
-
 } // anonymous namespace
+
+// Export scene info for registry
+namespace ui_sandbox::scenes {
+	extern const ui_sandbox::SceneInfo Arena = {kSceneName, []() { return std::make_unique<ArenaScene>(); }};
+}

@@ -85,7 +85,7 @@ namespace engine {
 		isRunning = true;
 		lastTime = glfwGetTime();
 
-		while (glfwWindowShouldClose(window) == 0 && isRunning) {
+		while (glfwWindowShouldClose(window) == 0 && isRunning && !SceneManager::Get().isExitRequested()) {
 			// Calculate delta time
 			double currentTime = glfwGetTime();
 			deltaTime = static_cast<float>(currentTime - lastTime);

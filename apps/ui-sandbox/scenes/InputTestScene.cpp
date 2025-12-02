@@ -8,11 +8,15 @@
 #include <primitives/Primitives.h>
 #include <scene/Scene.h>
 #include <scene/SceneManager.h>
+#include "SceneTypes.h"
 #include <shapes/Shapes.h>
 #include <sstream>
 #include <utils/Log.h>
 
 namespace {
+
+// Scene name declared here - the scene owns its human-readable name
+constexpr const char* kSceneName = "input_test";
 
 	class InputTestScene : public engine::IScene {
 	  public:
@@ -178,13 +182,12 @@ namespace {
 		})";
 		}
 
-		const char* getName() const override { return "input_test"; }
+		const char* getName() const override { return kSceneName; }
 	};
 
-	// Register scene with SceneManager
-	bool g_registered = []() {
-		engine::SceneManager::Get().registerScene("input_test", []() { return std::make_unique<InputTestScene>(); });
-		return true;
-	}();
-
 } // anonymous namespace
+
+// Export scene info for registry
+namespace ui_sandbox::scenes {
+	extern const ui_sandbox::SceneInfo InputTest = {kSceneName, []() { return std::make_unique<InputTestScene>(); }};
+}

@@ -9,12 +9,15 @@
 #include <primitives/Primitives.h>
 #include <scene/Scene.h>
 #include <scene/SceneManager.h>
+#include "SceneTypes.h"
 #include <utils/Log.h>
 #include <vector/Tessellator.h>
 
 #include <GL/glew.h>
 
 namespace {
+
+	constexpr const char* kSceneName = "tree";
 
 	// Tree configuration
 	const char*	  kTreeAssetName = "Flora_TreeDeciduous";
@@ -138,7 +141,7 @@ namespace {
 			return {buf};
 		}
 
-		const char* getName() const override { return "tree"; }
+		const char* getName() const override { return kSceneName; }
 
 	  private:
 		struct PathRenderData {
@@ -154,10 +157,9 @@ namespace {
 		std::vector<TreeRenderData> m_trees;
 	};
 
-	// Register scene with SceneManager
-	[[maybe_unused]] bool g_registered = []() {
-		engine::SceneManager::Get().registerScene("tree", []() { return std::make_unique<TreeScene>(); });
-		return true;
-	}();
-
 } // anonymous namespace
+
+// Export scene info for registry
+namespace ui_sandbox::scenes {
+	extern const ui_sandbox::SceneInfo Tree = {kSceneName, []() { return std::make_unique<TreeScene>(); }};
+}

@@ -7,6 +7,7 @@
 #include <primitives/Primitives.h>
 #include <scene/Scene.h>
 #include <scene/SceneManager.h>
+#include "SceneTypes.h"
 #include <utils/Log.h>
 
 #include <GL/glew.h>
@@ -17,7 +18,9 @@
 
 namespace {
 
-	class SDFMinimalScene : public engine::IScene {
+constexpr const char* kSceneName = "sdf_minimal";
+
+class SDFMinimalScene : public engine::IScene {
 	  public:
 		void onEnter() override {
 			LOG_INFO(UI, "=== SDF Minimal Test Scene (Uber Shader) ===");
@@ -75,7 +78,7 @@ namespace {
 
 		std::string exportState() override { return R"({"scene": "sdf_minimal", "description": "Minimal SDF rendering test with uber shader"})"; }
 
-		const char* getName() const override { return "sdf_minimal"; }
+		const char* getName() const override { return kSceneName; }
 
 	  private:
 		// Helper to render a line of text using the unified batch renderer
@@ -105,10 +108,9 @@ namespace {
 		Renderer::BatchRenderer* batchRenderer = nullptr;
 	};
 
-	// Register scene
-	bool g_registered = []() {
-		engine::SceneManager::Get().registerScene("sdf_minimal", []() { return std::make_unique<SDFMinimalScene>(); });
-		return true;
-	}();
-
 } // anonymous namespace
+
+// Export scene info for registry
+namespace ui_sandbox::scenes {
+	extern const ui_sandbox::SceneInfo SdfMinimal = {kSceneName, []() { return std::make_unique<SDFMinimalScene>(); }};
+}

@@ -5,6 +5,7 @@
 #include <resources/ResourceManager.h>
 #include <scene/Scene.h>
 #include <scene/SceneManager.h>
+#include "SceneTypes.h"
 #include <utils/Log.h>
 
 #include <GL/glew.h>
@@ -15,7 +16,9 @@ using namespace renderer;
 
 namespace {
 
-	// Simple test resource
+constexpr const char* kSceneName = "handles";
+
+// Simple test resource
 	struct TestResource {
 		int			id;
 		float		value;
@@ -76,10 +79,10 @@ namespace {
 		})";
 		}
 
-		const char* getName() const override { return "handles"; }
+		const char* getName() const override { return kSceneName; }
 	};
 
-	// ============================================================================
+// ============================================================================
 	// Test Implementations
 	// ============================================================================
 
@@ -327,10 +330,9 @@ namespace {
 		LOG_INFO(UI, "Capacity limit test passed!");
 	}
 
-	// Register scene with SceneManager
-	bool g_registered = []() {
-		engine::SceneManager::Get().registerScene("handles", []() { return std::make_unique<HandleScene>(); });
-		return true;
-	}();
-
 } // anonymous namespace
+
+// Export scene info for registry
+namespace ui_sandbox::scenes {
+	extern const ui_sandbox::SceneInfo Handle = {kSceneName, []() { return std::make_unique<HandleScene>(); }};
+}

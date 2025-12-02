@@ -9,13 +9,16 @@
 #include <application/Application.h>
 #include <scene/Scene.h>
 #include <scene/SceneManager.h>
+#include "SceneTypes.h"
 #include <sstream>
 #include <utils/Log.h>
 #include <vector>
 
 namespace {
 
-	class TextInputScene : public engine::IScene {
+constexpr const char* kSceneName = "text_input";
+
+class TextInputScene : public engine::IScene {
 	  public:
 		void onEnter() override {
 
@@ -229,7 +232,7 @@ namespace {
 		})";
 		}
 
-		const char* getName() const override { return "text_input"; }
+		const char* getName() const override { return kSceneName; }
 
 	  private:
 		std::vector<std::unique_ptr<UI::TextInput>> inputs;
@@ -245,10 +248,9 @@ namespace {
 		std::string output4;
 	};
 
-	// Register scene with SceneManager
-	bool g_registered = []() {
-		engine::SceneManager::Get().registerScene("text_input", []() { return std::make_unique<TextInputScene>(); });
-		return true;
-	}();
-
 } // anonymous namespace
+
+// Export scene info for registry
+namespace ui_sandbox::scenes {
+	extern const ui_sandbox::SceneInfo TextInput = {kSceneName, []() { return std::make_unique<TextInputScene>(); }};
+}

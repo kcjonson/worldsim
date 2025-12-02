@@ -8,6 +8,7 @@
 #include <primitives/Primitives.h>
 #include <scene/Scene.h>
 #include <scene/SceneManager.h>
+#include "SceneTypes.h"
 #include <shapes/Shapes.h>
 #include <utils/Log.h>
 
@@ -19,7 +20,9 @@
 
 namespace {
 
-	// Container demo configuration
+constexpr const char* kSceneName = "clip";
+
+// Container demo configuration
 	constexpr int	kContainerItemCount = 8;
 	constexpr float kContainerItemHeight = 35.0F;
 	constexpr float kContainerViewportHeight = 100.0F;
@@ -303,7 +306,7 @@ namespace {
 			return {buf};
 		}
 
-		const char* getName() const override { return "clip"; }
+		const char* getName() const override { return kSceneName; }
 
 	  private:
 		bool  clippingEnabled = true; // Start with clipping enabled to show it working
@@ -316,10 +319,9 @@ namespace {
 		float						   m_containerContentHeight = 0.0F;
 	};
 
-	// Register scene with SceneManager
-	bool g_registered = []() {
-		engine::SceneManager::Get().registerScene("clip", []() { return std::make_unique<ClipScene>(); });
-		return true;
-	}();
-
 } // anonymous namespace
+
+// Export scene info for registry
+namespace ui_sandbox::scenes {
+	extern const ui_sandbox::SceneInfo Clip = {kSceneName, []() { return std::make_unique<ClipScene>(); }};
+}
