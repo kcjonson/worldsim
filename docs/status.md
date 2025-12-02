@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2025-12-02 (Chunk-Based World Rendering Complete)
+Last Updated: 2025-12-02 (Entity Placement System Spec Added)
 
 ## Epic/Story/Task Template
 
@@ -240,6 +240,30 @@ Use this template for all work items:
 ---
 
 ## Planned Epics
+
+### Entity Placement System
+**Spec/Documentation:** `/docs/technical/entity-placement-system.md`
+**Dependencies:** Asset System Architecture (Phase 1 complete)
+**Status:** ready
+
+**Phase 1: Foundation**
+- [ ] Extend AssetDefinition with groups and relationships fields
+- [ ] Parse `<groups>` and `<relationships>` in AssetRegistry
+- [ ] Build group index (group name → list of defNames) at load time
+- [ ] Create DependencyGraph with topological sort
+- [ ] Create SpatialIndex with grid-based queries
+- [ ] Unit tests for all components
+
+**Phase 2: Executor**
+- [ ] Create PlacementExecutor
+- [ ] Integrate with ChunkManager (including adjacent chunk queries)
+- [ ] Wire up to GameScene
+
+**Phase 3: Content**
+- [ ] Add groups + relationships to existing assets (grass, trees)
+- [ ] Visual validation in world-sim
+
+---
 
 ### Unit Testing Infrastructure
 **Spec/Documentation:** `/docs/technical/unit-testing-strategy.md`, `/docs/technical/testing-guidelines.md` (TBD)
