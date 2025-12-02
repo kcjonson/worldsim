@@ -7,6 +7,7 @@ add_library(assets
     lua/LuaGenerator.cpp
     placement/DependencyGraph.cpp
     placement/SpatialIndex.cpp
+    placement/PlacementExecutor.cpp
 )
 
 target_include_directories(assets
