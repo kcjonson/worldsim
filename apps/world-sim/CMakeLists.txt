@@ -2,6 +2,7 @@ add_executable(world-sim
     Main.cpp
     SceneTypes.cpp
     components/GameOverlay.cpp
+    components/ZoomControl.cpp
     scenes/SplashScene.cpp
     scenes/MainMenuScene.cpp
     scenes/WorldCreatorScene.cpp

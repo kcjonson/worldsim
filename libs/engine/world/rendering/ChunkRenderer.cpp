@@ -24,7 +24,8 @@ void ChunkRenderer::render(const ChunkManager& chunkManager, const WorldCamera& 
 void ChunkRenderer::renderChunk(const Chunk& chunk, const WorldCamera& camera, const Foundation::Rect& visibleRect,
 								int viewportWidth, int viewportHeight) {
 	WorldPosition chunkOrigin = chunk.worldOrigin();
-	float tilePixelSize = m_pixelsPerMeter * kTileSize * static_cast<float>(m_tileResolution);
+	// Tile size must include zoom factor to match position calculations
+	float tilePixelSize = m_pixelsPerMeter * kTileSize * static_cast<float>(m_tileResolution) * camera.zoom();
 
 	// Calculate which tiles in this chunk are visible
 	float chunkMinX = chunkOrigin.x;

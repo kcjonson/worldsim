@@ -58,6 +58,11 @@ namespace engine {
 		bool isKeyReleased(Key key) const; // True only on frame key was released
 
 		float getScrollDelta() const { return scrollDelta; }
+		float consumeScrollDelta() {
+			float delta = scrollDelta;
+			scrollDelta = 0.0f;
+			return delta;
+		}
 		bool isCursorInWindow() const { return cursorInWindow; }
 		glm::vec2 getWindowSize() const { return windowSize; }
 

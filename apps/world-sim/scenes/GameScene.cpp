@@ -5,6 +5,7 @@
 
 #include <GL/glew.h>
 
+#include <graphics/Rect.h>
 #include <input/InputManager.h>
 #include <primitives/Primitives.h>
 #include <scene/Scene.h>
@@ -42,8 +43,17 @@ class GameScene : public engine::IScene {
 		// Initial chunk load
 		m_chunkManager->update(m_camera->position());
 
-		// Create overlay
-		m_overlay = std::make_unique<world_sim::GameOverlay>(world_sim::GameOverlay::Args{});
+		// Create overlay with zoom callbacks
+		m_overlay = std::make_unique<world_sim::GameOverlay>(world_sim::GameOverlay::Args{
+			.onZoomIn = [this]() { m_camera->zoomIn(); },
+			.onZoomOut = [this]() { m_camera->zoomOut(); }
+		});
+
+		// Initial layout pass
+		int viewportW = 0;
+		int viewportH = 0;
+		Renderer::Primitives::getViewport(viewportW, viewportH);
+		m_overlay->layout(Foundation::Rect{0, 0, static_cast<float>(viewportW), static_cast<float>(viewportH)});
 
 		LOG_INFO(Game, "World initialized with seed %llu", kDefaultWorldSeed);
 	}
@@ -80,6 +90,17 @@ class GameScene : public engine::IScene {
 		}
 
 		m_camera->move(dx, dy, dt);
+
+		// Zoom with scroll wheel (snaps to discrete levels)
+		float scrollDelta = input.consumeScrollDelta();
+		if (scrollDelta > 0.0F) {
+			m_camera->zoomIn();
+		} else if (scrollDelta < 0.0F) {
+			m_camera->zoomOut();
+		}
+
+		// Handle overlay input (zoom buttons)
+		m_overlay->handleInput();
 	}
 
 	void update(float dt) override {
