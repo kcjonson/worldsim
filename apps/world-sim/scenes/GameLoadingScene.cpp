@@ -48,27 +48,15 @@ namespace {
 			m_chunksLoaded = 0;
 			m_chunksProcessed = 0;
 			m_asyncProcessor.reset();
-			m_needsLayout = true; // Defer UI layout until first render (viewport not ready in onEnter)
+			m_needsLayout = true; // Defer position update until first render (viewport not ready in onEnter)
 
 			// Create the world state that will be transferred to GameScene
 			m_worldState = std::make_unique<world_sim::GameWorldState>();
 			m_worldState->m_worldSeed = kDefaultWorldSeed;
-		}
 
-		/// Create/update UI elements based on current viewport size
-		void layoutUI() {
-			// Use percentage-based positioning (same pattern as SplashScene)
-			float centerX = Renderer::Primitives::PercentWidth(50.0F);
-			float centerY = Renderer::Primitives::PercentHeight(50.0F);
-
-			// Check if viewport is ready (values will be 0 if not)
-			if (centerX < 1.0F || centerY < 1.0F) {
-				return; // Viewport not ready yet
-			}
-
-			// Create title text
+			// Create UI elements once with initial positions (will be updated in layoutUI)
 			m_title = std::make_unique<UI::Text>(UI::Text::Args{
-				.position = {centerX, centerY - 80.0F},
+				.position = {0.0F, 0.0F},
 				.text = "Loading World",
 				.style =
 					{
@@ -80,9 +68,8 @@ namespace {
 				.id = "loading_title"
 			});
 
-			// Create status text
 			m_statusText = std::make_unique<UI::Text>(UI::Text::Args{
-				.position = {centerX, centerY + 60.0F},
+				.position = {0.0F, 0.0F},
 				.text = "Initializing...",
 				.style =
 					{
@@ -93,6 +80,22 @@ namespace {
 					},
 				.id = "loading_status"
 			});
+		}
+
+		/// Update UI element positions based on current viewport size
+		void layoutUI() {
+			// Use percentage-based positioning (same pattern as SplashScene)
+			float centerX = Renderer::Primitives::PercentWidth(50.0F);
+			float centerY = Renderer::Primitives::PercentHeight(50.0F);
+
+			// Check if viewport is ready (values will be 0 if not)
+			if (centerX < 1.0F || centerY < 1.0F) {
+				return; // Viewport not ready yet
+			}
+
+			// Update positions of existing UI elements
+			m_title->position = {centerX, centerY - 80.0F};
+			m_statusText->position = {centerX, centerY + 60.0F};
 
 			// Progress bar dimensions
 			m_barWidth = 400.0F;
@@ -166,15 +169,13 @@ namespace {
 			// Render progress bar border
 			Renderer::Primitives::drawRect({
 				.bounds = {m_barX, m_barY, m_barWidth, m_barHeight},
-				.style =
-					{
-						.fill = Foundation::Color(0.0F, 0.0F, 0.0F, 0.0F), // Transparent fill
-						.border =
-							Foundation::BorderStyle{
-								.color = Foundation::Color(0.4F, 0.4F, 0.5F, 1.0F),
-								.width = 2.0F,
-							},
+				.style = {
+					.fill = Foundation::Color(0.0F, 0.0F, 0.0F, 0.0F), // Transparent fill
+					.border = Foundation::BorderStyle{
+						.color = Foundation::Color(0.4F, 0.4F, 0.5F, 1.0F),
+						.width = 2.0F,
 					},
+				},
 			});
 
 			// Render status text
@@ -223,9 +224,7 @@ namespace {
 			m_worldState->m_placementExecutor->initialize();
 
 			LOG_INFO(
-				Game,
-				"PlacementExecutor initialized with %zu entity types",
-				m_worldState->m_placementExecutor->getSpawnOrder().size()
+				Game, "PlacementExecutor initialized with %zu entity types", m_worldState->m_placementExecutor->getSpawnOrder().size()
 			);
 
 			// Move to next phase
@@ -247,9 +246,7 @@ namespace {
 
 				// Create async processor for entity placement
 				m_asyncProcessor = std::make_unique<engine::assets::AsyncChunkProcessor>(
-					*m_worldState->m_placementExecutor,
-					m_worldState->m_worldSeed,
-					m_worldState->m_processedChunks
+					*m_worldState->m_placementExecutor, m_worldState->m_worldSeed, m_worldState->m_processedChunks
 				);
 
 				// Launch all async tasks at once
@@ -274,7 +271,7 @@ namespace {
 			m_progress = 0.5F + (static_cast<float>(m_chunksProcessed) / static_cast<float>(kTargetChunks * 2));
 
 			// Update status with progress
-			int percent = static_cast<int>(m_progress * 100.0F);
+			int			percent = static_cast<int>(m_progress * 100.0F);
 			std::string status = "Placing entities... " + std::to_string(percent) + "%";
 			updateStatusText(status);
 
@@ -288,12 +285,7 @@ namespace {
 
 		/// Transition to GameScene with fully loaded state
 		void transitionToGame() {
-			LOG_INFO(
-				Game,
-				"GameLoadingScene - Complete! %d chunks loaded, %d processed",
-				m_chunksLoaded,
-				m_chunksProcessed
-			);
+			LOG_INFO(Game, "GameLoadingScene - Complete! %d chunks loaded, %d processed", m_chunksLoaded, m_chunksProcessed);
 
 			// Transfer state to pending holder
 			world_sim::GameWorldState::SetPending(std::move(m_worldState));
@@ -302,25 +294,10 @@ namespace {
 			sceneManager->switchTo(world_sim::toKey(world_sim::SceneType::Game));
 		}
 
-		/// Update the status text
+		/// Update the status text content (not the element itself)
 		void updateStatusText(const std::string& text) {
 			if (m_statusText) {
-				// Recreate text with new content (Text doesn't have setText method)
-				float centerX = Renderer::Primitives::PercentWidth(50.0F);
-				float centerY = Renderer::Primitives::PercentHeight(50.0F);
-
-				m_statusText = std::make_unique<UI::Text>(UI::Text::Args{
-					.position = {centerX, centerY + 60.0F},
-					.text = text,
-					.style =
-						{
-							.color = Foundation::Color(0.7F, 0.7F, 0.7F, 1.0F),
-							.fontSize = 18.0F,
-							.hAlign = Foundation::HorizontalAlign::Center,
-							.vAlign = Foundation::VerticalAlign::Middle,
-						},
-					.id = "loading_status"
-				});
+				m_statusText->text = text;
 			}
 		}
 
