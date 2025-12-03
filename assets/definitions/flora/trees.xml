@@ -12,11 +12,11 @@
       <!-- Lua script path (relative to project root) -->
       <scriptPath>assets/generators/trees/deciduous.lua</scriptPath>
       <params>
-        <!-- Trunk dimensions in meters -->
-        <trunkHeight>5.0</trunkHeight>
-        <trunkWidth>0.4</trunkWidth>
+        <!-- Trunk dimensions in meters (scaled for top-down game view) -->
+        <trunkHeight>1.2</trunkHeight>
+        <trunkWidth>0.15</trunkWidth>
         <!-- Canopy radius in meters -->
-        <canopyRadius>3.5</canopyRadius>
+        <canopyRadius>0.6</canopyRadius>
         <!-- Number of visible branches -->
         <branchCount>3</branchCount>
       </params>
@@ -80,11 +80,11 @@
     <generator>
       <scriptPath>assets/generators/trees/deciduous.lua</scriptPath>
       <params>
-        <!-- Trunk dimensions in meters (oak is larger than maple) -->
-        <trunkHeight>7.0</trunkHeight>
-        <trunkWidth>0.5</trunkWidth>
+        <!-- Trunk dimensions in meters (oak is larger than maple, scaled for top-down) -->
+        <trunkHeight>1.5</trunkHeight>
+        <trunkWidth>0.2</trunkWidth>
         <!-- Canopy radius in meters -->
-        <canopyRadius>5.0</canopyRadius>
+        <canopyRadius>0.8</canopyRadius>
         <!-- Number of visible branches -->
         <branchCount>4</branchCount>
       </params>
