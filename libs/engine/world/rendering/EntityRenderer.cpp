@@ -51,11 +51,17 @@ void EntityRenderer::render(const assets::PlacementExecutor& executor,
 			float screenY = (entity->position.y - camera.position().y) * m_pixelsPerMeter * zoom + halfViewH;
 
 			// Create spawned instance for batching
+			// Use entity's transform and color, scaled by camera zoom
 			assets::SpawnedInstance instance{
 				.position = Foundation::Vec2{screenX, screenY},
-				.rotation = 0.0F,
-				.scale = zoom,  // Scale with zoom
-				.colorTint = Foundation::Color{1.0F, 1.0F, 1.0F, 1.0F}
+				.rotation = entity->rotation,
+				.scale = entity->scale * zoom,
+				.colorTint = Foundation::Color{
+					entity->colorTint.r,
+					entity->colorTint.g,
+					entity->colorTint.b,
+					entity->colorTint.a
+				}
 			};
 
 			instancesByType[entity->defName].push_back(instance);
