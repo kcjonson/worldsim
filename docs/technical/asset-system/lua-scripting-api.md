@@ -1,13 +1,16 @@
-# Lua Scripting API for Procedural Asset Generation
+# Scripting API for Procedural Asset Generation
 
 **Status**: Design Phase
 **Created**: 2025-11-30
+**Last Updated**: 2025-12-03
 
 ## Overview
 
-Procedural assets use Lua scripts to generate vector graphics at load time. This document defines the API available to generator scripts.
+Procedural assets use scripts to generate vector graphics at load time. This document defines the API available to generator scripts.
 
-## Why Lua?
+**Note**: The current implementation uses Lua, but the scripting API is designed to be language-agnostic. References to "scripts" rather than "Lua" allow for potential future scripting language changes.
+
+## Why Lua (Current Implementation)?
 
 1. **Embeddable**: ~200KB footprint, easy C++ integration via sol2
 2. **Sandboxed**: Can restrict file/network access for mod safety
@@ -15,12 +18,51 @@ Procedural assets use Lua scripts to generate vector graphics at load time. This
 4. **Moddable**: Modders can write generators without compiling C++
 5. **Industry Standard**: Used by Factorio, Roblox, World of Warcraft
 
+## Script Location
+
+Scripts live inside asset folders:
+
+```
+assets/world/flora/MapleTree/
+├── MapleTree.xml       # Definition references generate.lua
+├── generate.lua        # Primary generator script
+├── helper.lua          # Asset-local helper (optional)
+└── maple_leaf.svg      # SVG component used by script
+```
+
+## Module Loading
+
+Scripts can load modules using `require()`:
+
+```lua
+-- Asset-local modules (checked first)
+local helper = require("helper")           -- ./helper.lua
+
+-- Shared modules (registered by name, no paths)
+local branch = require("branch_utils")     -- From shared/scripts/
+local noise = require("noise")             -- From shared/scripts/
+
+-- Load local SVG components
+local leaf = loadSvg("maple_leaf.svg")     -- ./maple_leaf.svg
+
+-- Load shared SVG components
+local template = loadComponent("leaf_shapes")  -- From shared/components/
+```
+
+**Resolution order for `require("foo")`:**
+1. Check asset folder for `foo.lua`
+2. Check shared module registry for "foo"
+3. Error if not found
+
 ## Script Structure
 
 Every generator script must define a `generate` function:
 
 ```lua
--- generators/trees/deciduous.lua
+-- assets/world/flora/MapleTree/generate.lua
+
+-- Load shared utilities (by name, not path)
+local branch = require("branch_utils")
 
 -- Called once per variant during pre-generation
 -- @param params  Table of parameters from asset definition
@@ -222,11 +264,14 @@ local val = Ease.inOutQuad(t)
 
 ### Asset Loading
 
-Load other assets from within a generator (e.g., leaf SVG for trees).
+Load SVG components from within a generator:
 
 ```lua
--- Load simple SVG asset
-local leaf = Asset.loadSvg("svg/flora/leaves/oak_leaf.svg")
+-- Load local SVG (from asset folder)
+local leaf = loadSvg("oak_leaf.svg")
+
+-- Load shared SVG component (by name)
+local template = loadComponent("leaf_shapes")
 
 -- Clone and modify
 local myLeaf = leaf:clone()
@@ -240,8 +285,11 @@ asset:addChild(myLeaf)
 ## Example: Deciduous Tree Generator
 
 ```lua
--- generators/trees/deciduous.lua
+-- assets/world/flora/OakTree/generate.lua
 -- Generates deciduous trees using Weber & Penn-style branching
+
+-- Load shared utilities (by name)
+local branch_utils = require("branch_utils")
 
 function generate(params, rng)
     local asset = VectorAsset.new()
@@ -268,9 +316,9 @@ function generate(params, rng)
     generateBranches(asset, trunkTop, Vec2.new(0, -1), trunkWidth * 0.7,
                      branchLevels, params, barkColor, endpoints, rng)
 
-    -- Add leaves at endpoints
+    -- Add leaves at endpoints (load local SVG)
     if params.leafSvg then
-        local leafTemplate = Asset.loadSvg(params.leafSvg)
+        local leafTemplate = loadSvg(params.leafSvg)  -- Local: oak_leaf.svg
         for _, endpoint in ipairs(endpoints) do
             addLeavesAtPoint(asset, leafTemplate, endpoint, leafBaseColor,
                             leafDensity, params.leafColorRange, rng)
@@ -389,19 +437,20 @@ end
 
 ## Sandbox Restrictions
 
-For mod safety, the Lua environment is sandboxed:
+For mod safety, the scripting environment is sandboxed:
 
 ### Allowed
 - Math operations
 - String manipulation
 - Table operations
 - Custom asset API (VectorAsset, VectorPath, etc.)
-- Loading other assets via `Asset.loadSvg()`
+- Loading SVGs via `loadSvg()` (local) and `loadComponent()` (shared)
+- Loading modules via `require()` (local first, then shared registry)
 
 ### NOT Allowed
 - File I/O (`io` module disabled)
 - OS access (`os` module disabled)
-- Loading arbitrary Lua (`loadfile`, `dofile` disabled)
+- Loading arbitrary scripts (`loadfile`, `dofile` disabled)
 - Network access
 - `debug` module
 
@@ -416,5 +465,6 @@ For mod safety, the Lua environment is sandboxed:
 ## Related Documents
 
 - [Asset System Architecture](./README.md) - System overview
+- [Folder-Based Assets](./folder-based-assets.md) - Folder structure and module loading
 - [Asset Definition Schema](./asset-definitions.md) - XML format
 - [Variant Cache Format](./variant-cache.md) - Binary cache format

@@ -2,7 +2,7 @@
 
 **Status**: Design Phase
 **Created**: 2025-11-30
-**Last Updated**: 2025-11-30
+**Last Updated**: 2025-12-03
 
 ## Overview
 
@@ -19,6 +19,7 @@ The asset system manages loading, generation, and caching of game assets with su
 3. **Performant**: Pre-generate expensive assets at load time, render with instancing
 4. **Flexible**: Support both hand-crafted and procedurally generated assets
 5. **World-Unique Flora**: Each world has unique procedural variants based on its map seed
+6. **Self-Contained**: Each asset is a folder containing all its resources
 
 ## Architecture Overview
 
@@ -28,21 +29,24 @@ The asset system manages loading, generation, and caching of game assets with su
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                              │
 │  ┌──────────────────────────────────────────────────────────────────────┐   │
-│  │                        Asset Definition Layer                         │   │
-│  │  XML/JSON files on disk defining what assets exist and their props    │   │
+│  │                        Asset Folder Layer                            │   │
+│  │  Each asset is a self-contained folder with XML definition + files   │   │
 │  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐                   │   │
-│  │  │ flora.xml   │  │ terrain.xml │  │ entities.xml│                   │   │
+│  │  │ GrassBlade/ │  │ MapleTree/  │  │ Boulder/    │                   │   │
+│  │  │  ├─ .xml    │  │  ├─ .xml    │  │  ├─ .xml    │                   │   │
+│  │  │  └─ .svg    │  │  ├─ .lua    │  │  └─ .svg    │                   │   │
+│  │  │             │  │  └─ .svg    │  │             │                   │   │
 │  │  └─────────────┘  └─────────────┘  └─────────────┘                   │   │
 │  └──────────────────────────────────────────────────────────────────────┘   │
 │                                    │                                         │
 │                                    ▼                                         │
 │  ┌──────────────────────────────────────────────────────────────────────┐   │
 │  │                        Asset Registry (C++)                           │   │
-│  │  Parses definitions, manages asset catalog, handles hot-reload        │   │
+│  │  Scans asset folders, manages catalog, handles hot-reload             │   │
 │  │  ┌─────────────────────────────────────────────────────────────────┐ │   │
-│  │  │ AssetRegistry::LoadDefinitions("assets/definitions/")          │ │   │
-│  │  │ AssetRegistry::GetAsset("Tree_Oak") → AssetDefinition          │ │   │
-│  │  │ AssetRegistry::GetVariant("Tree_Oak", seed) → CachedMesh       │ │   │
+│  │  │ AssetRegistry::LoadAssets("assets/")                            │ │   │
+│  │  │ AssetRegistry::GetAsset("MapleTree") → AssetDefinition          │ │   │
+│  │  │ AssetRegistry::GetVariant("MapleTree", seed) → CachedMesh       │ │   │
 │  │  └─────────────────────────────────────────────────────────────────┘ │   │
 │  └──────────────────────────────────────────────────────────────────────┘   │
 │                                    │                                         │
@@ -50,9 +54,9 @@ The asset system manages loading, generation, and caching of game assets with su
 │              ▼                     ▼                     ▼                  │
 │  ┌─────────────────────┐ ┌─────────────────────┐ ┌─────────────────────┐   │
 │  │   Simple Loader     │ │ Procedural Generator │ │   Variant Cache     │   │
-│  │   (SVG → Mesh)      │ │   (Lua → VectorAsset)│ │   (Pre-generated)   │   │
+│  │   (SVG → Mesh)      │ │   (Script→VectorAsset│ │   (Pre-generated)   │   │
 │  │                     │ │                      │ │                     │   │
-│  │ Load SVG file       │ │ Execute Lua script   │ │ Store N variants    │   │
+│  │ Load SVG file       │ │ Execute script       │ │ Store N variants    │   │
 │  │ Parse paths         │ │ Generate curves      │ │ Select by seed      │   │
 │  │ Tessellate once     │ │ Tessellate result    │ │ Ready for instancing│   │
 │  └─────────────────────┘ └─────────────────────┘ └─────────────────────┘   │
@@ -124,62 +128,72 @@ Hand-crafted SVG files created by designers. These are loaded directly, tessella
 
 ### Procedural Assets
 
-Script-generated assets using Lua. These require algorithmic generation (branching patterns, leaf placement, growth rules). Pre-generated at load time with N variants cached.
+Script-generated assets. These require algorithmic generation (branching patterns, leaf placement, growth rules). Pre-generated at load time with N variants cached.
 
 **Examples**: Trees (deciduous, conifer, palm), bushes, complex rock formations
 
 **Characteristics**:
-- Lua script generates VectorAsset programmatically
+- Script generates VectorAsset programmatically
 - Multiple variants pre-generated and cached (e.g., 200 unique oaks)
 - Selection by position seed ensures determinism
 - Can still use GPU instancing per-variant
 
 ## File Structure
 
+Assets use a **3-level hierarchy**: `category/subcategory/Asset/`
+
 ```
 assets/
-├── definitions/                    # Asset definition files (modder-editable)
-│   ├── flora/
-│   │   ├── flowers.xml
-│   │   ├── trees.xml
-│   │   ├── bushes.xml
-│   │   └── grass.xml
-│   ├── terrain/
-│   │   ├── rocks.xml
-│   │   └── water-features.xml
-│   └── entities/
-│       └── creatures.xml
+├── shared/                          # Shared resources
+│   ├── scripts/                     # Shared script modules (registered by name)
+│   │   ├── branch_utils.lua        # → require("branch_utils")
+│   │   ├── color.lua               # → require("color")
+│   │   └── noise.lua               # → require("noise")
+│   │
+│   └── components/                  # Shared SVG components
+│       └── leaf_shapes.svg         # → loadComponent("leaf_shapes")
 │
-├── svg/                            # Simple asset source files
-│   ├── flora/
-│   │   ├── flowers/
-│   │   │   ├── daisy.svg
-│   │   │   ├── poppy.svg
-│   │   │   └── tulip.svg
-│   │   └── mushrooms/
-│   │       ├── red_cap.svg
-│   │       └── puffball.svg
+├── world/                           # World generation assets
+│   ├── flora/                       # Plants
+│   │   ├── GrassBlade/
+│   │   │   ├── GrassBlade.xml      # Primary definition
+│   │   │   └── blade.svg           # SVG source
+│   │   │
+│   │   └── MapleTree/
+│   │       ├── MapleTree.xml       # Definition with generator config
+│   │       ├── generate.lua        # Primary generator script
+│   │       └── maple_leaf.svg      # Component SVG
+│   │
 │   └── terrain/
-│       └── rocks/
-│           ├── small_rock.svg
+│       └── Boulder/
+│           ├── Boulder.xml
 │           └── boulder.svg
 │
-├── generators/                     # Procedural generation scripts (Lua)
-│   ├── trees/
-│   │   ├── deciduous.lua          # Oak, maple, birch
-│   │   ├── conifer.lua            # Pine, spruce, fir
-│   │   └── palm.lua               # Tropical palms
-│   ├── bushes/
-│   │   └── berry_bush.lua
-│   └── shared/
-│       ├── branch_utils.lua       # Common branching algorithms
-│       └── leaf_placement.lua     # Leaf distribution utilities
+├── creatures/                       # Living things
+│   └── Deer/
+│       ├── Deer.xml
+│       └── body.svg
 │
-└── cache/                          # Generated variant cache (can be deleted)
-    └── flora/
-        ├── tree_oak_variants.bin
-        └── tree_pine_variants.bin
+├── objects/                         # World-placed objects
+│   └── crafting/
+│       └── Workbench/
+│           ├── Workbench.xml
+│           └── workbench.svg
+│
+├── items/                           # Inventory items
+│   └── tools/
+│       └── Axe/
+│           ├── Axe.xml
+│           └── axe.svg
+│
+└── ui/                              # UI assets
+    └── icons/
+        └── HealthIcon/
+            └── HealthIcon.xml
 ```
+
+**For complete file structure specification**, see:
+- [Folder-Based Assets](./folder-based-assets.md) - Self-contained asset folders, path resolution, naming
 
 ## World Seed and Procedural Uniqueness
 
@@ -195,7 +209,7 @@ World Seed (e.g., "my-world-123")
        │
        ├──► Asset Generation RNG
        │    - Seeded at world load time
-       │    - Used by Lua scripts via `math.randomseed()`
+       │    - Used by scripts via `math.randomseed()`
        │    - Generates N variants per asset type
        │
        └──► Instance Placement RNG
@@ -207,10 +221,10 @@ World Seed (e.g., "my-world-123")
 ### Implementation Approach
 
 **Option A: Session-Seeded RNG (Recommended)**
-- When a world loads, seed the Lua RNG with `hash(world_seed, "flora")`
+- When a world loads, seed the script RNG with `hash(world_seed, "flora")`
 - All procedural generation during that session uses this RNG
 - Variant cache is keyed by world seed, regenerated if seed changes
-- Pro: Simple, all Lua `math.random()` calls "just work"
+- Pro: Simple, all `math.random()` calls "just work"
 - Con: Variant cache is per-world (more disk space if many worlds)
 
 **Option B: Per-Script Seed Parameter**
@@ -224,19 +238,20 @@ World Seed (e.g., "my-world-123")
 The variant cache filename includes a hash of:
 1. World seed
 2. Asset definition hash (detects XML changes)
-3. Script hash (detects Lua code changes)
+3. Script hash (detects script code changes)
 
 ```
-cache/flora/tree_oak_variants_a1b2c3d4.bin
-                              ^^^^^^^^
-                              combined hash
+.cache/MapleTree/variants_a1b2c3d4.bin
+                          ^^^^^^^^
+                          combined hash
 ```
 
 If any input changes, cache is regenerated during the loading screen.
 
 ## Related Documents
 
-- [Asset Definition Schema](./asset-definitions.md) - XML/JSON schema for asset definitions
-- [Lua Scripting API](./lua-scripting-api.md) - API available to generator scripts
+- [Folder-Based Assets](./folder-based-assets.md) - Self-contained folder structure, path resolution
+- [Asset Definition Schema](./asset-definitions.md) - XML schema for asset definitions
+- [Scripting API](./lua-scripting-api.md) - API available to generator scripts
 - [Variant Cache Format](./variant-cache.md) - Binary format for pre-generated variants
 - [Integration with Tiered Renderer](../vector-graphics/animation-performance.md) - Rendering path selection
