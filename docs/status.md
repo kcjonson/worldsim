@@ -261,7 +261,7 @@ Use this template for all work items:
 **Phase 2.5: Coordinate System Standardization** ✅ COMPLETE
 - [x] Standardize all assets to meter-based coordinate system
   - [x] Update grass.xml with meter dimensions (0.2-0.5m height)
-  - [x] Update trees.xml with meter dimensions (5-7m trunk heights)
+  - [x] Update trees.xml with meter dimensions (1.2-1.5m trunk heights, scaled for top-down view)
   - [x] Fix EntityRenderer scale: `pixelsPerMeter * zoom`
 - [x] Fix BatchRenderer metrics
   - [x] Add cumulative frame counters (frameVertexCount, frameTriangleCount)

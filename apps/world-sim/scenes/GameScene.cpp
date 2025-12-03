@@ -40,9 +40,6 @@ namespace {
 	inline float elapsedMs(TimePoint start, TimePoint end) {
 		return std::chrono::duration<float, std::milli>(end - start).count();
 	}
-} // namespace
-
-namespace {
 
 	constexpr const char* kSceneName = "game";
 	constexpr uint64_t	  kDefaultWorldSeed = 12345;

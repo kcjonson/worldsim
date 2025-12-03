@@ -73,7 +73,7 @@ namespace engine::assets {
 						meshColor.a * instance.colorTint.a
 					);
 				} else {
-					batch.colors.push_back(instance.colorTint);
+					batch.colors.emplace_back(instance.colorTint);
 				}
 			}
 		} else {
@@ -103,7 +103,7 @@ namespace engine::assets {
 						meshColor.a * instance.colorTint.a
 					);
 				} else {
-					batch.colors.push_back(instance.colorTint);
+					batch.colors.emplace_back(instance.colorTint);
 				}
 			}
 		}

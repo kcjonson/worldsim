@@ -47,7 +47,7 @@ class ChunkRenderer {
   private:
 	float m_pixelsPerMeter = 16.0F;
 	int32_t m_tileResolution = 1;
-	mutable uint32_t m_lastTileCount = 0;
+	uint32_t m_lastTileCount = 0;
 
 	/// Render a single chunk
 	void renderChunk(const Chunk& chunk, const WorldCamera& camera, const Foundation::Rect& visibleRect,
