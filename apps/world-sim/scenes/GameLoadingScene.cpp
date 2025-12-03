@@ -36,7 +36,7 @@ namespace {
 	constexpr int		  kTargetChunks = 25; // 5×5 grid
 
 	/// Loading phases
-	enum class LoadingPhase { Initializing, LoadingChunks, PlacingEntities, Complete };
+	enum class LoadingPhase { Initializing, LoadingChunks, PlacingEntities, Complete, Cancelling };
 
 	class GameLoadingScene : public engine::IScene {
 	  public:
@@ -110,9 +110,11 @@ namespace {
 			auto& input = engine::InputManager::Get();
 
 			// Allow ESC to cancel and return to main menu
-			if (input.isKeyPressed(engine::Key::Escape)) {
-				LOG_INFO(Game, "GameLoadingScene - Cancelled, returning to main menu");
-				sceneManager->switchTo(world_sim::toKey(world_sim::SceneType::MainMenu));
+			// Don't allow cancel if already cancelling or complete
+			if (input.isKeyPressed(engine::Key::Escape) && m_phase != LoadingPhase::Cancelling && m_phase != LoadingPhase::Complete) {
+				LOG_INFO(Game, "GameLoadingScene - Cancel requested");
+				m_phase = LoadingPhase::Cancelling;
+				updateStatusText("Cancelling...");
 			}
 		}
 
@@ -132,6 +134,10 @@ namespace {
 
 				case LoadingPhase::Complete:
 					transitionToGame();
+					break;
+
+				case LoadingPhase::Cancelling:
+					cancelLoading();
 					break;
 			}
 		}
@@ -223,9 +229,7 @@ namespace {
 			m_worldState->placementExecutor = std::make_unique<engine::assets::PlacementExecutor>(assetRegistry);
 			m_worldState->placementExecutor->initialize();
 
-			LOG_INFO(
-				Game, "PlacementExecutor initialized with %zu entity types", m_worldState->placementExecutor->getSpawnOrder().size()
-			);
+			LOG_INFO(Game, "PlacementExecutor initialized with %zu entity types", m_worldState->placementExecutor->getSpawnOrder().size());
 
 			// Move to next phase
 			m_phase = LoadingPhase::LoadingChunks;
@@ -292,6 +296,23 @@ namespace {
 
 			// Switch to game scene
 			sceneManager->switchTo(world_sim::toKey(world_sim::SceneType::Game));
+		}
+
+		/// Cancel loading - waits for async tasks to complete with UI feedback
+		void cancelLoading() {
+			// Poll for completed tasks (non-blocking)
+			if (m_asyncProcessor) {
+				m_asyncProcessor->pollCompleted();
+
+				// Still have pending tasks - wait for them
+				if (m_asyncProcessor->hasPending()) {
+					return; // Keep polling each frame
+				}
+			}
+
+			// All tasks done, safe to transition
+			LOG_INFO(Game, "GameLoadingScene - Cancelled, returning to main menu");
+			sceneManager->switchTo(world_sim::toKey(world_sim::SceneType::MainMenu));
 		}
 
 		/// Update the status text content (not the element itself)
