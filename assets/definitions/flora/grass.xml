@@ -39,10 +39,10 @@
       <!-- Grassland: Dense, fairly uniform coverage -->
       <!-- With 512×512 tiles per chunk, spawnChance controls clump frequency -->
       <biome name="Grassland">
-        <spawnChance>0.02</spawnChance>
+        <spawnChance>0.7</spawnChance>
         <distribution>clumped</distribution>
         <clumping>
-          <clumpSize>8,20</clumpSize>
+          <clumpSize>3,12</clumpSize>
           <clumpRadius>0.5,1.5</clumpRadius>
           <clumpSpacing>1,2</clumpSpacing>
         </clumping>

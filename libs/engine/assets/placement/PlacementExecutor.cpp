@@ -109,8 +109,13 @@ namespace engine::assets {
 		}
 
 		result.entitiesPlaced = result.entities.size();
-		LOG_DEBUG(Engine, "PlacementExecutor::processChunk completed for chunk (%d, %d) - total %zu entities",
-			context.coord.x, context.coord.y, result.entitiesPlaced);
+		LOG_DEBUG(
+			Engine,
+			"PlacementExecutor::processChunk completed for chunk (%d, %d) - total %zu entities",
+			context.coord.x,
+			context.coord.y,
+			result.entitiesPlaced
+		);
 		return result;
 	}
 
@@ -141,9 +146,21 @@ namespace engine::assets {
 		// reduces iterations from 262K to ~16K per chunk while maintaining coverage
 		constexpr uint16_t kTileStride = 4;
 
-		// Iterate over sampled tiles in the chunk
-		for (uint16_t localY = 0; localY < world::kChunkSize; localY += kTileStride) {
-			for (uint16_t localX = 0; localX < world::kChunkSize; localX += kTileStride) {
+		// Jitter distribution to break up grid pattern (random offset 0 to stride-1)
+		std::uniform_int_distribution<uint16_t> jitterDist(0, kTileStride - 1);
+
+		// Iterate over sampled tiles in the chunk with jitter to break grid alignment
+		for (uint16_t baseY = 0; baseY < world::kChunkSize; baseY += kTileStride) {
+			for (uint16_t baseX = 0; baseX < world::kChunkSize; baseX += kTileStride) {
+				// Add random jitter to each sample point
+				uint16_t localX = baseX + jitterDist(rng);
+				uint16_t localY = baseY + jitterDist(rng);
+
+				// Clamp to chunk bounds
+				if (localX >= world::kChunkSize)
+					localX = world::kChunkSize - 1;
+				if (localY >= world::kChunkSize)
+					localY = world::kChunkSize - 1;
 				// Get biome at this tile
 				world::Biome biome = context.getBiome(localX, localY);
 				std::string	 biomeName = world::biomeToString(biome);
@@ -195,28 +212,20 @@ namespace engine::assets {
 				switch (bp->distribution) {
 					case Distribution::Clumped: {
 						// Generate clump center randomly within tile
-						glm::vec2 clumpCenter{
-							tileWorldX + offsetDist(rng),
-							tileWorldY + offsetDist(rng)
-						};
+						glm::vec2 clumpCenter{tileWorldX + offsetDist(rng), tileWorldY + offsetDist(rng)};
 
 						// Clump parameters
-						std::uniform_int_distribution<int32_t> clumpSizeDist(
-							bp->clumping.clumpSizeMin, bp->clumping.clumpSizeMax);
-						int32_t clumpSize = clumpSizeDist(rng);
+						std::uniform_int_distribution<int32_t> clumpSizeDist(bp->clumping.clumpSizeMin, bp->clumping.clumpSizeMax);
+						int32_t								   clumpSize = clumpSizeDist(rng);
 
-						std::uniform_real_distribution<float> clumpRadiusDist(
-							bp->clumping.clumpRadiusMin, bp->clumping.clumpRadiusMax);
-						float clumpRadius = clumpRadiusDist(rng);
+						std::uniform_real_distribution<float> clumpRadiusDist(bp->clumping.clumpRadiusMin, bp->clumping.clumpRadiusMax);
+						float								  clumpRadius = clumpRadiusDist(rng);
 
 						// Spawn instances in clump
 						for (int32_t i = 0; i < clumpSize; ++i) {
 							// Random offset within clump radius
 							std::uniform_real_distribution<float> clumpOffsetDist(-clumpRadius, clumpRadius);
-							glm::vec2 position{
-								clumpCenter.x + clumpOffsetDist(rng),
-								clumpCenter.y + clumpOffsetDist(rng)
-							};
+							glm::vec2 position{clumpCenter.x + clumpOffsetDist(rng), clumpCenter.y + clumpOffsetDist(rng)};
 
 							// Check relationship modifiers for this position
 							float modifier = calculateRelationshipModifier(*def, position, chunkIndex, adjacentProvider);
@@ -232,12 +241,7 @@ namespace engine::assets {
 							entity.position = position;
 							entity.rotation = rotationDist(rng);
 							entity.scale = scaleDist(rng);
-							entity.colorTint = glm::vec4(
-								0.15F + greenVar,
-								0.35F + greenVar * 2.0F,
-								0.1F + greenVar * 0.5F,
-								1.0F
-							);
+							entity.colorTint = glm::vec4(0.15F + greenVar, 0.35F + greenVar * 2.0F, 0.1F + greenVar * 0.5F, 1.0F);
 
 							chunkIndex.insert(entity);
 							outEntities.push_back(entity);
@@ -254,10 +258,7 @@ namespace engine::assets {
 					case Distribution::Uniform:
 					default: {
 						// Single entity at random position within tile
-						glm::vec2 position{
-							tileWorldX + offsetDist(rng),
-							tileWorldY + offsetDist(rng)
-						};
+						glm::vec2 position{tileWorldX + offsetDist(rng), tileWorldY + offsetDist(rng)};
 
 						// Check relationship modifiers
 						float modifier = calculateRelationshipModifier(*def, position, chunkIndex, adjacentProvider);
@@ -273,12 +274,7 @@ namespace engine::assets {
 						entity.position = position;
 						entity.rotation = rotationDist(rng);
 						entity.scale = scaleDist(rng);
-						entity.colorTint = glm::vec4(
-							0.15F + greenVar,
-							0.35F + greenVar * 2.0F,
-							0.1F + greenVar * 0.5F,
-							1.0F
-						);
+						entity.colorTint = glm::vec4(0.15F + greenVar, 0.35F + greenVar * 2.0F, 0.1F + greenVar * 0.5F, 1.0F);
 
 						chunkIndex.insert(entity);
 						outEntities.push_back(entity);
@@ -471,10 +467,8 @@ namespace engine::assets {
 		m_chunkIndices.erase(coord);
 	}
 
-	AsyncChunkPlacementResult PlacementExecutor::computeChunkEntities(
-		const ChunkPlacementContext&  context,
-		const IAdjacentChunkProvider* adjacentProvider
-	) const {
+	AsyncChunkPlacementResult
+	PlacementExecutor::computeChunkEntities(const ChunkPlacementContext& context, const IAdjacentChunkProvider* adjacentProvider) const {
 		AsyncChunkPlacementResult result;
 		result.coord = context.coord;
 
@@ -506,8 +500,13 @@ namespace engine::assets {
 		}
 
 		result.entitiesPlaced = result.entities.size();
-		LOG_INFO(Engine, "PlacementExecutor::computeChunkEntities completed for chunk (%d, %d) - total %zu entities",
-			context.coord.x, context.coord.y, result.entitiesPlaced);
+		LOG_INFO(
+			Engine,
+			"PlacementExecutor::computeChunkEntities completed for chunk (%d, %d) - total %zu entities",
+			context.coord.x,
+			context.coord.y,
+			result.entitiesPlaced
+		);
 		return result;
 	}
 

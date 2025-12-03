@@ -35,7 +35,7 @@
     <placement>
       <!-- Forest: Common, spaced out -->
       <biome name="Forest">
-        <spawnChance>0.003</spawnChance>
+        <spawnChance>0.05</spawnChance>
         <distribution>spaced</distribution>
         <spacing>
           <minDistance>5.0</minDistance>
@@ -44,7 +44,7 @@
 
       <!-- Grassland: Occasional, well-spaced -->
       <biome name="Grassland">
-        <spawnChance>0.0008</spawnChance>
+        <spawnChance>0.01</spawnChance>
         <distribution>spaced</distribution>
         <spacing>
           <minDistance>12.0</minDistance>
@@ -97,7 +97,7 @@
 
     <placement>
       <biome name="Forest">
-        <spawnChance>0.002</spawnChance>
+        <spawnChance>0.03</spawnChance>
         <distribution>spaced</distribution>
         <spacing>
           <minDistance>6.0</minDistance>

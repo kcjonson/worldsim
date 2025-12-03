@@ -47,10 +47,13 @@ add_custom_command(TARGET world-sim POST_BUILD
     COMMENT "Copying fonts to world-sim directory"
 )
 
-# Copy all shared assets to executable directory (definitions, svg, lua, etc.)
-add_custom_command(TARGET world-sim POST_BUILD
+# Create a custom target that always syncs assets (runs every build)
+add_custom_target(world-sim-assets ALL
     COMMAND ${CMAKE_COMMAND} -E copy_directory
     ${CMAKE_SOURCE_DIR}/assets
-    $<TARGET_FILE_DIR:world-sim>/assets
-    COMMENT "Copying assets to world-sim directory"
+    ${CMAKE_CURRENT_BINARY_DIR}/assets
+    COMMENT "Syncing assets to world-sim directory"
 )
+
+# Make world-sim depend on assets so they're copied before running
+add_dependencies(world-sim world-sim-assets)
