@@ -5,12 +5,14 @@
 #include "assets/lua/LuaGenerator.h"
 
 #include <utils/Log.h>
+#include <vector/SVGLoader.h>
 #include <vector/Tessellator.h>
 
 #include <pugixml.hpp>
 
 #include <cstdlib>
 #include <filesystem>
+#include <limits>
 #include <sstream>
 
 namespace engine::assets {
@@ -324,8 +326,9 @@ bool AssetRegistry::loadDefinitions(const std::string& xmlPath) {
 			}
 		}
 
-		// SVG path (for simple assets)
+		// SVG path and world height (for simple assets)
 		def.svgPath = defNode.child_value("svgPath");
+		def.worldHeight = static_cast<float>(defNode.child("worldHeight").text().as_double(1.0));
 
 		// Rendering settings
 		pugi::xml_node renderNode = defNode.child("rendering");
@@ -552,18 +555,69 @@ const renderer::TessellatedMesh* AssetRegistry::getTemplate(const std::string& d
 		return nullptr;
 	}
 
-	// Generate asset
-	GeneratedAsset asset;
-	if (!generateAsset(defName, 42, asset)) {  // Use fixed seed for template
-		LOG_ERROR(Engine, "Failed to generate asset: %s", defName.c_str());
-		return nullptr;
-	}
-
-	// Tessellate
 	renderer::TessellatedMesh mesh;
-	if (!tessellateAsset(asset, mesh)) {
-		LOG_ERROR(Engine, "Failed to tessellate asset: %s", defName.c_str());
-		return nullptr;
+
+	if (def->assetType == AssetType::Simple) {
+		// Load SVG and tessellate directly
+		if (def->svgPath.empty()) {
+			LOG_ERROR(Engine, "Simple asset %s has no svgPath", defName.c_str());
+			return nullptr;
+		}
+
+		std::vector<renderer::LoadedSVGShape> shapes;
+		constexpr float kCurveTolerance = 0.5F;
+		if (!renderer::loadSVG(def->svgPath, kCurveTolerance, shapes)) {
+			LOG_ERROR(Engine, "Failed to load SVG: %s", def->svgPath.c_str());
+			return nullptr;
+		}
+
+		// Calculate SVG bounding box for normalization
+		float minY = std::numeric_limits<float>::max();
+		float maxY = std::numeric_limits<float>::lowest();
+		for (const auto& shape : shapes) {
+			for (const auto& svgPath : shape.paths) {
+				for (const auto& v : svgPath.vertices) {
+					minY = std::min(minY, v.y);
+					maxY = std::max(maxY, v.y);
+				}
+			}
+		}
+		float svgHeight = maxY - minY;
+		float scaleFactor = (svgHeight > 0.001F) ? (def->worldHeight / svgHeight) : 1.0F;
+		LOG_INFO(Engine, "SVG '%s': minY=%.2f, maxY=%.2f, svgHeight=%.2f, worldHeight=%.2f, scaleFactor=%.4f",
+				 defName.c_str(), minY, maxY, svgHeight, def->worldHeight, scaleFactor);
+
+		// Convert SVG shapes to GeneratedAsset with normalization
+		GeneratedAsset asset;
+		for (const auto& shape : shapes) {
+			for (const auto& svgPath : shape.paths) {
+				GeneratedPath genPath;
+				genPath.vertices.reserve(svgPath.vertices.size());
+				for (const auto& v : svgPath.vertices) {
+					genPath.vertices.push_back({v.x * scaleFactor, v.y * scaleFactor});
+				}
+				genPath.fillColor = shape.fillColor;
+				genPath.isClosed = svgPath.isClosed;
+				asset.addPath(std::move(genPath));
+			}
+		}
+
+		if (!tessellateAsset(asset, mesh)) {
+			LOG_ERROR(Engine, "Failed to tessellate SVG asset: %s", defName.c_str());
+			return nullptr;
+		}
+	} else {
+		// Generate procedural asset
+		GeneratedAsset asset;
+		if (!generateAsset(defName, 42, asset)) {  // Use fixed seed for template
+			LOG_ERROR(Engine, "Failed to generate asset: %s", defName.c_str());
+			return nullptr;
+		}
+
+		if (!tessellateAsset(asset, mesh)) {
+			LOG_ERROR(Engine, "Failed to tessellate asset: %s", defName.c_str());
+			return nullptr;
+		}
 	}
 
 	// Cache and return

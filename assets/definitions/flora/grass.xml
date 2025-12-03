@@ -1,27 +1,19 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- Grass Asset Definitions
      Flora assets for grass tiles and decorative grass.
-     Uses GrassBlade generator for procedural Bezier curve shapes.
+     Uses SVG file for grass blade shape.
 -->
 <AssetDefinitions>
   <AssetDef>
     <defName>Flora_GrassBlade</defName>
     <label>Standard Grass Blade</label>
-    <assetType>procedural</assetType>
+    <assetType>simple</assetType>
 
-    <generator>
-      <name>GrassBlade</name>
-      <params>
-        <!-- Height in meters (savanna grass: 20-50cm) -->
-        <heightRange>0.2,0.5</heightRange>
-        <!-- Base width in meters (2-4cm) -->
-        <widthRange>0.02,0.04</widthRange>
-        <!-- Bend amount for wind (-1 to 1 range) -->
-        <bendRange>-0.3,0.3</bendRange>
-        <!-- Curve flattening tolerance (meters) -->
-        <curveTolerance>0.01</curveTolerance>
-      </params>
-    </generator>
+    <!-- SVG path relative to assets directory -->
+    <svgPath>assets/svg/grass_blade.svg</svgPath>
+    <!-- World height in meters - SVG is normalized to this height -->
+    <!-- Deep savannah grass: 0.25m min, 0.75m max - using 0.5m as base -->
+    <worldHeight>0.5</worldHeight>
 
     <rendering>
       <!-- Simple = GPU instanced, Complex = individual tessellation -->
@@ -45,9 +37,9 @@
     <!-- Each biome can have different spawn behavior -->
     <placement>
       <!-- Grassland: Dense, fairly uniform coverage -->
-      <!-- Note: Clumped/spaced distributions not yet implemented - uses uniform random per-tile -->
+      <!-- With 512×512 tiles per chunk, spawnChance controls clump frequency -->
       <biome name="Grassland">
-        <spawnChance>0.5</spawnChance>  <!-- Increased to 50% to test thousands of grass blades -->
+        <spawnChance>0.005</spawnChance>
         <distribution>clumped</distribution>
         <clumping>
           <clumpSize>8,20</clumpSize>

@@ -80,6 +80,8 @@ namespace engine::assets {
 		ChunkPlacementResult result;
 		result.coord = context.coord;
 
+		LOG_DEBUG(Engine, "PlacementExecutor::processChunk starting for chunk (%d, %d)", context.coord.x, context.coord.y);
+
 		if (!m_initialized) {
 			LOG_WARNING(Engine, "PlacementExecutor::processChunk called before initialize()");
 			return result;
@@ -96,11 +98,19 @@ namespace engine::assets {
 		std::mt19937 rng(static_cast<uint32_t>(chunkSeed));
 
 		// Process entity types in dependency order
+		size_t typeIndex = 0;
 		for (const auto& defName : m_spawnOrder) {
+			size_t entitiesBefore = result.entities.size();
+			LOG_DEBUG(Engine, "  Processing entity type %zu/%zu: %s", typeIndex + 1, m_spawnOrder.size(), defName.c_str());
 			placeEntityType(defName, context, chunkIndex, adjacentProvider, rng, result.entities);
+			size_t entitiesPlaced = result.entities.size() - entitiesBefore;
+			LOG_DEBUG(Engine, "    Placed %zu entities for %s", entitiesPlaced, defName.c_str());
+			++typeIndex;
 		}
 
 		result.entitiesPlaced = result.entities.size();
+		LOG_DEBUG(Engine, "PlacementExecutor::processChunk completed for chunk (%d, %d) - total %zu entities",
+			context.coord.x, context.coord.y, result.entitiesPlaced);
 		return result;
 	}
 
@@ -127,9 +137,13 @@ namespace engine::assets {
 		std::uniform_real_distribution<float> scaleDist(0.8F, 1.2F);
 		std::uniform_real_distribution<float> colorDist(-0.08F, 0.08F);
 
-		// Iterate over all tiles in the chunk
-		for (uint16_t localY = 0; localY < world::kChunkSize; ++localY) {
-			for (uint16_t localX = 0; localX < world::kChunkSize; ++localX) {
+		// Tile stride optimization: with 512x512 chunks, sampling every 4th tile
+		// reduces iterations from 262K to ~16K per chunk while maintaining coverage
+		constexpr uint16_t kTileStride = 4;
+
+		// Iterate over sampled tiles in the chunk
+		for (uint16_t localY = 0; localY < world::kChunkSize; localY += kTileStride) {
+			for (uint16_t localX = 0; localX < world::kChunkSize; localX += kTileStride) {
 				// Get biome at this tile
 				world::Biome biome = context.getBiome(localX, localY);
 				std::string	 biomeName = world::biomeToString(biome);
@@ -464,6 +478,8 @@ namespace engine::assets {
 		AsyncChunkPlacementResult result;
 		result.coord = context.coord;
 
+		LOG_INFO(Engine, "PlacementExecutor::computeChunkEntities starting for chunk (%d, %d)", context.coord.x, context.coord.y);
+
 		if (!m_initialized) {
 			LOG_WARNING(Engine, "PlacementExecutor::computeChunkEntities called before initialize()");
 			return result;
@@ -479,11 +495,19 @@ namespace engine::assets {
 		std::mt19937 rng(static_cast<uint32_t>(chunkSeed));
 
 		// Process entity types in dependency order
+		size_t typeIndex = 0;
 		for (const auto& defName : m_spawnOrder) {
+			size_t entitiesBefore = result.entities.size();
+			LOG_INFO(Engine, "  [async] Processing entity type %zu/%zu: %s", typeIndex + 1, m_spawnOrder.size(), defName.c_str());
 			placeEntityType(defName, context, result.spatialIndex, adjacentProvider, rng, result.entities);
+			size_t entitiesPlaced = result.entities.size() - entitiesBefore;
+			LOG_INFO(Engine, "    [async] Placed %zu entities for %s", entitiesPlaced, defName.c_str());
+			++typeIndex;
 		}
 
 		result.entitiesPlaced = result.entities.size();
+		LOG_INFO(Engine, "PlacementExecutor::computeChunkEntities completed for chunk (%d, %d) - total %zu entities",
+			context.coord.x, context.coord.y, result.entitiesPlaced);
 		return result;
 	}
 

@@ -1,7 +1,6 @@
 add_library(assets
     AssetRegistry.cpp
     AssetBatcher.cpp
-    generators/GrassBladeGenerator.cpp
     lua/LuaEngine.cpp
     lua/LuaGenerator.cpp
     placement/DependencyGraph.cpp
