@@ -30,6 +30,11 @@ struct AppConfig {
 	/// Example: []() { return ui_sandbox::toKey(ui_sandbox::SceneType::Shapes); }
 	std::function<std::size_t()> getDefaultSceneKey;
 
+	/// Optional: Remap scene names from CLI (e.g., "game" -> "gameloading")
+	/// Called before scene lookup. Return empty string to use original name.
+	/// Example: [](const std::string& name) { return name == "game" ? "gameloading" : ""; }
+	std::function<std::string(const std::string&)> remapSceneName;
+
 	// ========== Asset Definitions (optional) ==========
 
 	/// List of asset definition paths to load (relative to assets/definitions/)

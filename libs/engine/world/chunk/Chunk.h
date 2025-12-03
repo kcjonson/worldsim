@@ -12,6 +12,7 @@
 
 #include <chrono>
 #include <cstdint>
+#include <string>
 #include <vector>
 
 namespace engine::world {
@@ -25,6 +26,26 @@ enum class GroundCover : uint8_t {
 	Water,
 	Snow
 };
+
+/// Convert GroundCover enum to string for placement rules and debugging
+[[nodiscard]] inline std::string groundCoverToString(GroundCover cover) {
+	switch (cover) {
+		case GroundCover::Grass:
+			return "Grass";
+		case GroundCover::Dirt:
+			return "Dirt";
+		case GroundCover::Sand:
+			return "Sand";
+		case GroundCover::Rock:
+			return "Rock";
+		case GroundCover::Water:
+			return "Water";
+		case GroundCover::Snow:
+			return "Snow";
+		default:
+			return "Unknown";
+	}
+}
 
 /// Tile data generated from biome + seed
 struct TileData {

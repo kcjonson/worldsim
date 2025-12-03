@@ -18,6 +18,7 @@ struct SceneInfo {
 #define WORLD_SIM_SCENES(X) \
 	X(Splash)       \
 	X(MainMenu)     \
+	X(GameLoading)  \
 	X(Game)         \
 	X(Settings)     \
 	X(WorldCreator)

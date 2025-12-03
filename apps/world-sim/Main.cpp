@@ -13,6 +13,14 @@ int main(int argc, char* argv[]) {
 		.enableMetrics = true,
 		.initializeScenes = world_sim::initializeSceneManager,
 		.getDefaultSceneKey = []() { return world_sim::toKey(world_sim::SceneType::Splash); },
+		// Remap "game" -> "gameloading" to ensure loading always runs first
+		.remapSceneName =
+			[](const std::string& name) {
+				if (name == "game") {
+					return std::string("gameloading");
+				}
+				return std::string{}; // No remapping
+			},
 		.assetDefinitionPaths = {"flora/grass.xml", "flora/trees.xml"}
 	};
 
