@@ -92,6 +92,10 @@ class AppLauncher {
 	/// @param callback Function to call on window resize
 	static void setWindowResizeCallback(std::function<void()> callback);
 
+	/// @brief Get the metrics collector (for scenes to report timing breakdown)
+	/// @return Pointer to MetricsCollector, or nullptr if metrics disabled
+	static Renderer::MetricsCollector* getMetrics();
+
   private:
 	AppLauncher() = delete; // Static-only class
 };

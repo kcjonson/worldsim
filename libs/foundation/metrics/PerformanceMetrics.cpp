@@ -18,7 +18,13 @@ namespace Foundation {
 		json << "\"frameTimeMaxMs\":" << frameTimeMaxMs << ",";
 		json << "\"drawCalls\":" << drawCalls << ",";
 		json << "\"vertexCount\":" << vertexCount << ",";
-		json << "\"triangleCount\":" << triangleCount;
+		json << "\"triangleCount\":" << triangleCount << ",";
+		// Timing breakdown
+		json << "\"tileRenderMs\":" << tileRenderMs << ",";
+		json << "\"entityRenderMs\":" << entityRenderMs << ",";
+		json << "\"updateMs\":" << updateMs << ",";
+		json << "\"tileCount\":" << tileCount << ",";
+		json << "\"entityCount\":" << entityCount;
 		json << "}";
 
 		return json.str();

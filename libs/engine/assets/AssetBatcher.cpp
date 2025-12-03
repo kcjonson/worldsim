@@ -7,6 +7,23 @@
 namespace engine::assets {
 
 	void AssetBatcher::addInstances(const renderer::TessellatedMesh& templateMesh, const std::vector<SpawnedInstance>& instances) {
+		if (instances.empty()) {
+			return;
+		}
+
+		size_t vertsPerInstance = templateMesh.vertices.size();
+		size_t indicesPerInstance = templateMesh.indices.size();
+		size_t totalVerts = instances.size() * vertsPerInstance;
+
+		// Pre-reserve capacity to avoid reallocations
+		if (m_batches.empty()) {
+			m_batches.emplace_back();
+			auto& batch = m_batches.back();
+			batch.vertices.reserve(std::min(totalVerts, kMaxVerticesPerBatch));
+			batch.colors.reserve(std::min(totalVerts, kMaxVerticesPerBatch));
+			batch.indices.reserve(std::min(instances.size() * indicesPerInstance, kMaxVerticesPerBatch * 3 / 2));
+		}
+
 		for (const auto& instance : instances) {
 			addTransformedInstance(templateMesh, instance);
 		}
@@ -18,46 +35,76 @@ namespace engine::assets {
 		// Ensure we have a batch, or create new one if current is full
 		if (m_batches.empty() || m_batches.back().vertices.size() + vertsPerInstance > kMaxVerticesPerBatch) {
 			m_batches.emplace_back();
+			// Reserve capacity for new batch
+			auto& batch = m_batches.back();
+			batch.vertices.reserve(kMaxVerticesPerBatch);
+			batch.colors.reserve(kMaxVerticesPerBatch);
+			batch.indices.reserve(kMaxVerticesPerBatch * 3 / 2);
 		}
 
 		GeometryBatch& batch = m_batches.back();
 		// Safe cast: kMaxVerticesPerBatch (60000) < uint16_t max (65535)
 		auto baseIndex = static_cast<uint16_t>(batch.vertices.size());
 
-		// Precompute transform
-		float cosR = std::cos(instance.rotation);
-		float sinR = std::sin(instance.rotation);
-
 		// Check if mesh has per-vertex colors
 		bool hasMeshColors = mesh.hasColors();
 
-		// Transform and add vertices
-		for (size_t i = 0; i < mesh.vertices.size(); ++i) {
-			const auto& v = mesh.vertices[i];
+		// Fast path: no rotation (common case for grass, trees, etc.)
+		constexpr float kRotationEpsilon = 0.0001F;
+		bool noRotation = std::abs(instance.rotation) < kRotationEpsilon;
 
-			// Scale
-			float sx = v.x * instance.scale;
-			float sy = v.y * instance.scale;
+		if (noRotation) {
+			// Optimized path: skip rotation math
+			float scale = instance.scale;
+			float posX = instance.position.x;
+			float posY = instance.position.y;
 
-			// Rotate
-			float rx = sx * cosR - sy * sinR;
-			float ry = sx * sinR + sy * cosR;
+			for (size_t i = 0; i < mesh.vertices.size(); ++i) {
+				const auto& v = mesh.vertices[i];
+				// Scale + translate only
+				batch.vertices.emplace_back(v.x * scale + posX, v.y * scale + posY);
 
-			// Translate
-			batch.vertices.push_back(Foundation::Vec2(rx + instance.position.x, ry + instance.position.y));
+				if (hasMeshColors) {
+					const auto& meshColor = mesh.colors[i];
+					batch.colors.emplace_back(
+						meshColor.r * instance.colorTint.r,
+						meshColor.g * instance.colorTint.g,
+						meshColor.b * instance.colorTint.b,
+						meshColor.a * instance.colorTint.a
+					);
+				} else {
+					batch.colors.push_back(instance.colorTint);
+				}
+			}
+		} else {
+			// Full transform with rotation
+			float cosR = std::cos(instance.rotation);
+			float sinR = std::sin(instance.rotation);
+			float scale = instance.scale;
+			float posX = instance.position.x;
+			float posY = instance.position.y;
 
-			// Use mesh color modulated by colorTint, or just colorTint if no mesh colors
-			if (hasMeshColors) {
-				const auto& meshColor = mesh.colors[i];
-				// Modulate mesh color by instance colorTint
-				batch.colors.push_back(Foundation::Color(
-					meshColor.r * instance.colorTint.r,
-					meshColor.g * instance.colorTint.g,
-					meshColor.b * instance.colorTint.b,
-					meshColor.a * instance.colorTint.a
-				));
-			} else {
-				batch.colors.push_back(instance.colorTint);
+			for (size_t i = 0; i < mesh.vertices.size(); ++i) {
+				const auto& v = mesh.vertices[i];
+
+				// Scale
+				float sx = v.x * scale;
+				float sy = v.y * scale;
+
+				// Rotate + translate
+				batch.vertices.emplace_back(sx * cosR - sy * sinR + posX, sx * sinR + sy * cosR + posY);
+
+				if (hasMeshColors) {
+					const auto& meshColor = mesh.colors[i];
+					batch.colors.emplace_back(
+						meshColor.r * instance.colorTint.r,
+						meshColor.g * instance.colorTint.g,
+						meshColor.b * instance.colorTint.b,
+						meshColor.a * instance.colorTint.a
+					);
+				} else {
+					batch.colors.push_back(instance.colorTint);
+				}
 			}
 		}
 

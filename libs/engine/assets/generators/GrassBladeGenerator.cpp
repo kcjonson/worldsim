@@ -49,9 +49,12 @@ bool GrassBladeGenerator::generate(const GenerationContext& ctx, const Generator
 	float bladeBaseWidth = (widthMin + widthMax) / 2.0F;
 	float bendAmount = 0.0F;  // Template has no bend; wind adds bend at runtime
 
-	// Calculate derived values
+	// Calculate derived values - using proportional control points
 	float bladeTipX = bladeBaseWidth / 2.0F;
-	float bendOffset = bendAmount * 15.0F;	// Same multiplier as original
+	float bendOffset = bendAmount * bladeHeight;  // Proportional bend
+
+	// Control point curvature proportional to blade width
+	float controlCurve = bladeBaseWidth * 0.8F;
 
 	// Create blade path using Bezier curves
 	GeneratedPath bladePath;
@@ -61,16 +64,16 @@ bool GrassBladeGenerator::generate(const GenerationContext& ctx, const Generator
 	// Left edge curve: bottom-left to tip
 	renderer::CubicBezier leftEdge = {
 		.p0 = {0.0F, 0.0F},
-		.p1 = {-2.0F + bendOffset * 0.3F, -bladeHeight * 0.33F},
-		.p2 = {bladeTipX - 2.0F + bendOffset * 0.7F, -bladeHeight * 0.83F},
+		.p1 = {-controlCurve + bendOffset * 0.3F, -bladeHeight * 0.33F},
+		.p2 = {bladeTipX - controlCurve + bendOffset * 0.7F, -bladeHeight * 0.83F},
 		.p3 = {bladeTipX + bendOffset, -bladeHeight}
 	};
 
 	// Right edge curve: tip to bottom-right
 	renderer::CubicBezier rightEdge = {
 		.p0 = {bladeTipX + bendOffset, -bladeHeight},
-		.p1 = {bladeTipX + 2.0F + bendOffset * 0.7F, -bladeHeight * 0.83F},
-		.p2 = {bladeBaseWidth + 2.0F + bendOffset * 0.3F, -bladeHeight * 0.33F},
+		.p1 = {bladeTipX + controlCurve + bendOffset * 0.7F, -bladeHeight * 0.83F},
+		.p2 = {bladeBaseWidth + controlCurve + bendOffset * 0.3F, -bladeHeight * 0.33F},
 		.p3 = {bladeBaseWidth, 0.0F}
 	};
 

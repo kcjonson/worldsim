@@ -41,9 +41,13 @@ class ChunkRenderer {
 	void setTileResolution(int32_t resolution) { m_tileResolution = std::max(1, resolution); }
 	[[nodiscard]] int32_t tileResolution() const { return m_tileResolution; }
 
+	/// Get number of tiles rendered in last frame (for profiling)
+	[[nodiscard]] uint32_t lastTileCount() const { return m_lastTileCount; }
+
   private:
 	float m_pixelsPerMeter = 16.0F;
 	int32_t m_tileResolution = 1;
+	mutable uint32_t m_lastTileCount = 0;
 
 	/// Render a single chunk
 	void renderChunk(const Chunk& chunk, const WorldCamera& camera, const Foundation::Rect& visibleRect,

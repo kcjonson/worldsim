@@ -47,13 +47,29 @@ namespace Renderer {
 		metrics.vertexCount = vertexCount;
 		metrics.triangleCount = triangleCount;
 
+		// Timing breakdown
+		metrics.tileRenderMs = tileRenderMs;
+		metrics.entityRenderMs = entityRenderMs;
+		metrics.updateMs = updateMs;
+		metrics.tileCount = tileCount;
+		metrics.entityCount = entityCount;
+
 		return metrics;
 	}
 
-	void MetricsCollector::setRenderStats(uint32_t drawCalls, uint32_t vertexCount, uint32_t triangleCount) {
-		drawCalls = drawCalls;
-		vertexCount = vertexCount;
-		triangleCount = triangleCount;
+	void MetricsCollector::setRenderStats(uint32_t inDrawCalls, uint32_t inVertexCount, uint32_t inTriangleCount) {
+		drawCalls = inDrawCalls;
+		vertexCount = inVertexCount;
+		triangleCount = inTriangleCount;
+	}
+
+	void MetricsCollector::setTimingBreakdown(float inTileRenderMs, float inEntityRenderMs, float inUpdateMs,
+											  uint32_t inTileCount, uint32_t inEntityCount) {
+		tileRenderMs = inTileRenderMs;
+		entityRenderMs = inEntityRenderMs;
+		updateMs = inUpdateMs;
+		tileCount = inTileCount;
+		entityCount = inEntityCount;
 	}
 
 	uint64_t MetricsCollector::getCurrentTimestamp() const { // NOLINT(readability-convert-member-functions-to-static)

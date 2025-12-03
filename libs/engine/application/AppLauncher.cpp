@@ -421,4 +421,8 @@ void AppLauncher::setWindowResizeCallback(std::function<void()> callback) {
 	g_windowResizeCallback = std::move(callback);
 }
 
+Renderer::MetricsCollector* AppLauncher::getMetrics() {
+	return g_metrics.get();
+}
+
 } // namespace engine

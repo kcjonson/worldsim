@@ -187,6 +187,8 @@ namespace Renderer { // NOLINT(readability-identifier-naming)
 
 		// Statistics
 		size_t drawCallCount = 0;
+	size_t frameVertexCount = 0;	// Cumulative vertex count for the frame
+	size_t frameTriangleCount = 0;	// Cumulative triangle count for the frame
 	};
 
 } // namespace Renderer

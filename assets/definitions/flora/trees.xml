@@ -12,11 +12,11 @@
       <!-- Lua script path (relative to project root) -->
       <scriptPath>assets/generators/trees/deciduous.lua</scriptPath>
       <params>
-        <!-- Trunk dimensions (in pixels, 8px = 1 tile) -->
-        <trunkHeight>8</trunkHeight>
-        <trunkWidth>2</trunkWidth>
-        <!-- Canopy size -->
-        <canopyRadius>6</canopyRadius>
+        <!-- Trunk dimensions in meters -->
+        <trunkHeight>5.0</trunkHeight>
+        <trunkWidth>0.4</trunkWidth>
+        <!-- Canopy radius in meters -->
+        <canopyRadius>3.5</canopyRadius>
         <!-- Number of visible branches -->
         <branchCount>3</branchCount>
       </params>
@@ -80,10 +80,12 @@
     <generator>
       <scriptPath>assets/generators/trees/deciduous.lua</scriptPath>
       <params>
-        <!-- Slightly larger oak trees (in pixels, 8px = 1 tile) -->
-        <trunkHeight>10</trunkHeight>
-        <trunkWidth>3</trunkWidth>
-        <canopyRadius>8</canopyRadius>
+        <!-- Trunk dimensions in meters (oak is larger than maple) -->
+        <trunkHeight>7.0</trunkHeight>
+        <trunkWidth>0.5</trunkWidth>
+        <!-- Canopy radius in meters -->
+        <canopyRadius>5.0</canopyRadius>
+        <!-- Number of visible branches -->
         <branchCount>4</branchCount>
       </params>
     </generator>

@@ -12,14 +12,14 @@
     <generator>
       <name>GrassBlade</name>
       <params>
-        <!-- Height in pixels (min,max range) -->
-        <heightRange>10,14</heightRange>
-        <!-- Base width in pixels (min,max range) -->
-        <widthRange>1.6,2.4</widthRange>
+        <!-- Height in meters (savanna grass: 20-50cm) -->
+        <heightRange>0.2,0.5</heightRange>
+        <!-- Base width in meters (2-4cm) -->
+        <widthRange>0.02,0.04</widthRange>
         <!-- Bend amount for wind (-1 to 1 range) -->
         <bendRange>-0.3,0.3</bendRange>
-        <!-- Curve flattening tolerance (pixels) -->
-        <curveTolerance>1.0</curveTolerance>
+        <!-- Curve flattening tolerance (meters) -->
+        <curveTolerance>0.01</curveTolerance>
       </params>
     </generator>
 
@@ -47,7 +47,7 @@
       <!-- Grassland: Dense, fairly uniform coverage -->
       <!-- Note: Clumped/spaced distributions not yet implemented - uses uniform random per-tile -->
       <biome name="Grassland">
-        <spawnChance>0.001</spawnChance>
+        <spawnChance>0.5</spawnChance>  <!-- Increased to 50% to test thousands of grass blades -->
         <distribution>clumped</distribution>
         <clumping>
           <clumpSize>8,20</clumpSize>

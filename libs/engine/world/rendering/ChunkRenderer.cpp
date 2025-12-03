@@ -8,6 +8,8 @@ ChunkRenderer::ChunkRenderer(float pixelsPerMeter) : m_pixelsPerMeter(pixelsPerM
 
 void ChunkRenderer::render(const ChunkManager& chunkManager, const WorldCamera& camera, int viewportWidth,
 						   int viewportHeight) {
+	m_lastTileCount = 0;  // Reset tile count for this frame
+
 	// Get visible world rectangle
 	Foundation::Rect visibleRect = camera.getVisibleRect(viewportWidth, viewportHeight, m_pixelsPerMeter);
 
@@ -71,6 +73,7 @@ void ChunkRenderer::renderChunk(const Chunk& chunk, const WorldCamera& camera, c
 			.bounds = Foundation::Rect{screenX, screenY, chunkScreenSize, chunkScreenSize},
 			.style = Foundation::RectStyle{.fill = color}
 		});
+		m_lastTileCount++;  // Count as 1 tile (the whole chunk)
 		return;
 	}
 
@@ -95,6 +98,7 @@ void ChunkRenderer::renderChunk(const Chunk& chunk, const WorldCamera& camera, c
 				.bounds = Foundation::Rect{screenX, screenY, tilePixelSize, tilePixelSize},
 				.style = Foundation::RectStyle{.fill = color}
 			});
+			m_lastTileCount++;
 		}
 	}
 }
