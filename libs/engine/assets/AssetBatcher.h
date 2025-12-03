@@ -4,8 +4,6 @@
 // Transforms template meshes using instance data, manages batch size limits.
 // Produces GeometryBatch data ready for drawTriangles().
 
-#include "assets/AssetSpawner.h"
-
 #include <graphics/Color.h>
 #include <math/Types.h>
 #include <vector/Tessellator.h>
@@ -13,6 +11,14 @@
 #include <vector>
 
 namespace engine::assets {
+
+/// Instance data for spawning an asset at a specific location with transform
+struct SpawnedInstance {
+	Foundation::Vec2  position;               // World position
+	float             rotation = 0.0F;        // Rotation in radians
+	float             scale = 1.0F;           // Uniform scale
+	Foundation::Color colorTint{1.0F, 1.0F, 1.0F, 1.0F}; // Per-instance color tint
+};
 
 /// A batch of geometry that fits in one draw call (uint16_t indices max ~65535)
 struct GeometryBatch {

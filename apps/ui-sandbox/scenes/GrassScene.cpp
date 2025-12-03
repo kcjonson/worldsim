@@ -1,28 +1,35 @@
 // Grass Scene - Tile-Based Asset Demo
 // Demonstrates the asset system with tile-based grass spawning.
-// Uses TileGrid, AssetSpawner, and AssetBatcher for clean separation.
+// Uses TileGrid and AssetBatcher for rendering with inline clumping logic.
 
+#include "SceneTypes.h"
 #include <assets/AssetBatcher.h>
 #include <assets/AssetRegistry.h>
-#include <assets/AssetSpawner.h>
 #include <graphics/Color.h>
 #include <primitives/Primitives.h>
 #include <scene/Scene.h>
 #include <scene/SceneManager.h>
-#include "SceneTypes.h"
 #include <utils/Log.h>
 #include <world/TileGrid.h>
 
 #include <GL/glew.h>
+#include <random>
 
 namespace {
 
-constexpr const char* kSceneName = "grass";
+	constexpr const char* kSceneName = "grass";
 
-// Grid configuration
+	// Grid configuration
 	constexpr int32_t kTileGridWidth = 10;
 	constexpr int32_t kTileGridHeight = 10;
 	constexpr float	  kTileSize = 64.0F;
+
+	// Spawning configuration
+	constexpr float	  kSpawnChance = 0.3F;
+	constexpr int32_t kClumpSizeMin = 8;
+	constexpr int32_t kClumpSizeMax = 20;
+	constexpr float	  kClumpRadiusMin = 0.3F;
+	constexpr float	  kClumpRadiusMax = 0.6F;
 
 	// Asset to spawn
 	const char* kGrassAssetName = "Flora_GrassBlade";
@@ -55,13 +62,7 @@ constexpr const char* kSceneName = "grass";
 
 			LOG_INFO(UI, "Created %dx%d tile grid (%zu tiles)", kTileGridWidth, kTileGridHeight, m_grid.tileCount());
 
-			// Get asset definition and template mesh
-			m_grassDef = engine::assets::AssetRegistry::Get().getDefinition(kGrassAssetName);
-			if (m_grassDef == nullptr) {
-				LOG_ERROR(UI, "Asset definition not found: %s", kGrassAssetName);
-				return;
-			}
-
+			// Get template mesh
 			m_templateMesh = engine::assets::AssetRegistry::Get().getTemplate(kGrassAssetName);
 			if (m_templateMesh == nullptr) {
 				LOG_ERROR(UI, "Failed to get template mesh for: %s", kGrassAssetName);
@@ -72,9 +73,8 @@ constexpr const char* kSceneName = "grass";
 				UI, "Loaded grass template: %zu vertices, %zu indices", m_templateMesh->vertices.size(), m_templateMesh->indices.size()
 			);
 
-			// Spawn instances using placement rules
-			engine::assets::SpawnConfig spawnConfig{.seed = 42, .colorVariation = 0.08F};
-			auto						instances = engine::assets::AssetSpawner::spawn(m_grid, *m_grassDef, spawnConfig);
+			// Generate clumped grass instances
+			auto instances = generateClumpedInstances();
 
 			// Batch geometry for rendering
 			m_batcher.addInstances(*m_templateMesh, instances);
@@ -142,10 +142,58 @@ constexpr const char* kSceneName = "grass";
 		const char* getName() const override { return kSceneName; }
 
 	  private:
-		engine::world::TileGrid				   m_grid;
-		engine::assets::AssetBatcher		   m_batcher;
-		const engine::assets::AssetDefinition* m_grassDef = nullptr;
-		const renderer::TessellatedMesh*	   m_templateMesh = nullptr;
+		/// Generate grass instances with clumping behavior
+		std::vector<engine::assets::SpawnedInstance> generateClumpedInstances() {
+			std::vector<engine::assets::SpawnedInstance> instances;
+
+			std::mt19937						  rng(42); // Fixed seed for reproducibility
+			std::uniform_real_distribution<float> chanceDist(0.0F, 1.0F);
+			std::uniform_real_distribution<float> rotationDist(-0.3F, 0.3F);
+			std::uniform_real_distribution<float> scaleDist(0.8F, 1.5F);
+			std::uniform_real_distribution<float> colorDist(-0.08F, 0.08F);
+
+			for (const auto& tile : m_grid.tiles()) {
+				// Roll for spawn
+				if (chanceDist(rng) > kSpawnChance) {
+					continue;
+				}
+
+				// Generate clump center randomly within tile
+				std::uniform_real_distribution<float> posXDist(tile.worldPos.x, tile.worldPos.x + tile.width);
+				std::uniform_real_distribution<float> posYDist(tile.worldPos.y, tile.worldPos.y + tile.height);
+
+				Foundation::Vec2 clumpCenter{posXDist(rng), posYDist(rng)};
+
+				// Clump parameters
+				std::uniform_int_distribution<int32_t> clumpSizeDist(kClumpSizeMin, kClumpSizeMax);
+				int32_t								   clumpSize = clumpSizeDist(rng);
+
+				std::uniform_real_distribution<float> clumpRadiusDist(kClumpRadiusMin * tile.width, kClumpRadiusMax * tile.width);
+				float								  clumpRadius = clumpRadiusDist(rng);
+
+				std::uniform_real_distribution<float> clumpOffsetDist(-clumpRadius, clumpRadius);
+
+				// Spawn instances in clump
+				for (int32_t i = 0; i < clumpSize; ++i) {
+					engine::assets::SpawnedInstance inst;
+					inst.position = {clumpCenter.x + clumpOffsetDist(rng), clumpCenter.y + clumpOffsetDist(rng)};
+					inst.rotation = rotationDist(rng);
+					inst.scale = scaleDist(rng);
+
+					// Green color with variation
+					float greenVar = colorDist(rng);
+					inst.colorTint = Foundation::Color(0.15F + greenVar, 0.35F + greenVar * 2.0F, 0.1F + greenVar * 0.5F, 1.0F);
+
+					instances.push_back(inst);
+				}
+			}
+
+			return instances;
+		}
+
+		engine::world::TileGrid			 m_grid;
+		engine::assets::AssetBatcher	 m_batcher;
+		const renderer::TessellatedMesh* m_templateMesh = nullptr;
 	};
 
 } // anonymous namespace
@@ -153,4 +201,4 @@ constexpr const char* kSceneName = "grass";
 // Export scene info for registry
 namespace ui_sandbox::scenes {
 	extern const ui_sandbox::SceneInfo Grass = {kSceneName, []() { return std::make_unique<GrassScene>(); }};
-}
+} // namespace ui_sandbox::scenes
