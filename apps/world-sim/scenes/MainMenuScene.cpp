@@ -76,7 +76,7 @@ namespace {
 					.onClick =
 						[this]() {
 							LOG_INFO(Game, "Starting new game...");
-							sceneManager->switchTo(world_sim::toKey(world_sim::SceneType::Game));
+							sceneManager->switchTo(world_sim::toKey(world_sim::SceneType::GameLoading));
 						},
 					.id = "btn_new_game"
 				})

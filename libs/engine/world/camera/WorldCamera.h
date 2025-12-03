@@ -17,7 +17,7 @@ namespace engine::world {
 inline constexpr std::array<float, 13> kZoomLevels = {
 	0.25F, 0.5F, 0.75F, 1.0F, 1.5F, 2.0F, 3.0F, 4.0F, 6.0F, 8.0F, 10.0F, 15.0F, 20.0F
 };
-inline constexpr size_t kDefaultZoomIndex = 3;  // 1.0x
+inline constexpr size_t kDefaultZoomIndex = 6;  // 3.0x (displays as 100%)
 
 /// Camera for 2D world view with panning support.
 class WorldCamera {
@@ -69,8 +69,8 @@ class WorldCamera {
 		m_zoom = kZoomLevels[m_zoomIndex];
 	}
 
-	/// Get zoom as percentage integer (100 = 1.0x)
-	[[nodiscard]] int zoomPercent() const { return static_cast<int>(m_zoom * 100.0F); }
+	/// Get zoom as percentage integer (100 = 3.0x, which is the "normal" view)
+	[[nodiscard]] int zoomPercent() const { return static_cast<int>((m_zoom / 3.0F) * 100.0F); }
 
 	/// Movement input (call each frame)
 	/// @param dx Horizontal movement (-1 = left, +1 = right)
@@ -121,7 +121,7 @@ class WorldCamera {
 	WorldPosition m_position{0.0F, 0.0F};
 	WorldPosition m_targetPosition{0.0F, 0.0F};
 	float m_panSpeed = 500.0F;	// World units per second
-	float m_zoom = 1.0F;
+	float m_zoom = 3.0F;
 	size_t m_zoomIndex = kDefaultZoomIndex;
 };
 

@@ -271,9 +271,18 @@ AppContext AppLauncher::initialize(int argc, char* argv[], const AppConfig& conf
 	// Load initial scene
 	std::size_t initialSceneKey = SIZE_MAX;
 	if (hasSceneArg) {
-		initialSceneKey = SceneManager::Get().getKeyForName(sceneArg);
+		// Apply scene name remapping if configured
+		std::string effectiveSceneName = sceneArg;
+		if (config.remapSceneName) {
+			std::string remapped = config.remapSceneName(sceneArg);
+			if (!remapped.empty()) {
+				LOG_INFO(Engine, "Remapping scene '%s' -> '%s'", sceneArg.c_str(), remapped.c_str());
+				effectiveSceneName = remapped;
+			}
+		}
+		initialSceneKey = SceneManager::Get().getKeyForName(effectiveSceneName);
 		if (initialSceneKey == SIZE_MAX) {
-			LOG_ERROR(Engine, "Unknown scene: %s", sceneArg.c_str());
+			LOG_ERROR(Engine, "Unknown scene: %s", effectiveSceneName.c_str());
 		}
 	}
 	if (initialSceneKey == SIZE_MAX && config.getDefaultSceneKey) {
