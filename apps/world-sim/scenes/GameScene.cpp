@@ -45,12 +45,12 @@ namespace {
 			if (preloadedState) {
 				// Use pre-loaded state (no pop-in!)
 				LOG_INFO(Game, "GameScene - Using pre-loaded world state");
-				m_chunkManager = std::move(preloadedState->m_chunkManager);
-				m_camera = std::move(preloadedState->m_camera);
-				m_renderer = std::move(preloadedState->m_renderer);
-				m_entityRenderer = std::move(preloadedState->m_entityRenderer);
-				m_placementExecutor = std::move(preloadedState->m_placementExecutor);
-				m_processedChunks = std::move(preloadedState->m_processedChunks);
+				m_chunkManager = std::move(preloadedState->chunkManager);
+				m_camera = std::move(preloadedState->camera);
+				m_renderer = std::move(preloadedState->renderer);
+				m_entityRenderer = std::move(preloadedState->entityRenderer);
+				m_placementExecutor = std::move(preloadedState->placementExecutor);
+				m_processedChunks = std::move(preloadedState->processedChunks);
 
 				LOG_INFO(
 					Game,
@@ -59,7 +59,7 @@ namespace {
 					m_processedChunks.size()
 				);
 			} else {
-				// Fall back to progressive loading (for --scene=game direct access)
+				// Initialize fresh (for debugging or direct GameScene access)
 				LOG_INFO(Game, "GameScene - No pre-loaded state, initializing fresh");
 
 				// Create world systems

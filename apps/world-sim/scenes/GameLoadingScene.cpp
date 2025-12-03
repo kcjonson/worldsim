@@ -52,7 +52,7 @@ namespace {
 
 			// Create the world state that will be transferred to GameScene
 			m_worldState = std::make_unique<world_sim::GameWorldState>();
-			m_worldState->m_worldSeed = kDefaultWorldSeed;
+			m_worldState->worldSeed = kDefaultWorldSeed;
 
 			// Create UI elements once with initial positions (will be updated in layoutUI)
 			m_title = std::make_unique<UI::Text>(UI::Text::Args{
@@ -207,24 +207,24 @@ namespace {
 
 			// Create world sampler and chunk manager
 			auto sampler = std::make_unique<engine::world::MockWorldSampler>(kDefaultWorldSeed);
-			m_worldState->m_chunkManager = std::make_unique<engine::world::ChunkManager>(std::move(sampler));
+			m_worldState->chunkManager = std::make_unique<engine::world::ChunkManager>(std::move(sampler));
 
 			// Create camera at origin
-			m_worldState->m_camera = std::make_unique<engine::world::WorldCamera>();
-			m_worldState->m_camera->setPanSpeed(200.0F);
+			m_worldState->camera = std::make_unique<engine::world::WorldCamera>();
+			m_worldState->camera->setPanSpeed(200.0F);
 
 			// Create renderers
-			m_worldState->m_renderer = std::make_unique<engine::world::ChunkRenderer>(kPixelsPerMeter);
-			m_worldState->m_renderer->setTileResolution(1);
-			m_worldState->m_entityRenderer = std::make_unique<engine::world::EntityRenderer>(kPixelsPerMeter);
+			m_worldState->renderer = std::make_unique<engine::world::ChunkRenderer>(kPixelsPerMeter);
+			m_worldState->renderer->setTileResolution(1);
+			m_worldState->entityRenderer = std::make_unique<engine::world::EntityRenderer>(kPixelsPerMeter);
 
 			// Initialize placement executor
 			auto& assetRegistry = engine::assets::AssetRegistry::Get();
-			m_worldState->m_placementExecutor = std::make_unique<engine::assets::PlacementExecutor>(assetRegistry);
-			m_worldState->m_placementExecutor->initialize();
+			m_worldState->placementExecutor = std::make_unique<engine::assets::PlacementExecutor>(assetRegistry);
+			m_worldState->placementExecutor->initialize();
 
 			LOG_INFO(
-				Game, "PlacementExecutor initialized with %zu entity types", m_worldState->m_placementExecutor->getSpawnOrder().size()
+				Game, "PlacementExecutor initialized with %zu entity types", m_worldState->placementExecutor->getSpawnOrder().size()
 			);
 
 			// Move to next phase
@@ -235,8 +235,8 @@ namespace {
 		/// Phase 2: Load chunks (ChunkManager loads all needed chunks in one call)
 		void loadChunks() {
 			// ChunkManager::update() loads the 5×5 grid around the camera position
-			m_worldState->m_chunkManager->update(m_worldState->m_camera->position());
-			m_chunksLoaded = static_cast<int>(m_worldState->m_chunkManager->loadedChunkCount());
+			m_worldState->chunkManager->update(m_worldState->camera->position());
+			m_chunksLoaded = static_cast<int>(m_worldState->chunkManager->loadedChunkCount());
 
 			// Calculate progress (0-50% for chunk loading)
 			m_progress = static_cast<float>(m_chunksLoaded) / static_cast<float>(kTargetChunks * 2);
@@ -246,11 +246,11 @@ namespace {
 
 				// Create async processor for entity placement
 				m_asyncProcessor = std::make_unique<engine::assets::AsyncChunkProcessor>(
-					*m_worldState->m_placementExecutor, m_worldState->m_worldSeed, m_worldState->m_processedChunks
+					*m_worldState->placementExecutor, m_worldState->worldSeed, m_worldState->processedChunks
 				);
 
 				// Launch all async tasks at once
-				for (auto* chunk : m_worldState->m_chunkManager->getLoadedChunks()) {
+				for (auto* chunk : m_worldState->chunkManager->getLoadedChunks()) {
 					m_asyncProcessor->launchTask(chunk);
 				}
 

@@ -31,8 +31,9 @@ inline std::string groundCoverToString(world::GroundCover cover) {
 			return "Water";
 		case world::GroundCover::Snow:
 			return "Snow";
+		default:
+			return "Unknown";
 	}
-	return "Unknown";
 }
 
 /// Snapshot of chunk tile data for thread-safe async processing.
@@ -131,6 +132,13 @@ class AsyncChunkProcessor {
 
 		for (auto it = m_pendingFutures.begin(); it != m_pendingFutures.end();) {
 			auto& [coord, future] = *it;
+
+			// Skip invalid futures (should not happen, but defensive)
+			if (!future.valid()) {
+				m_chunksInProgress.erase(coord);
+				it = m_pendingFutures.erase(it);
+				continue;
+			}
 
 			// Non-blocking check if future is ready
 			if (future.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {

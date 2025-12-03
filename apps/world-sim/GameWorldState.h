@@ -19,16 +19,16 @@ namespace world_sim {
 	/// Holds initialized world state for transfer between loading and game scenes.
 	/// Uses static SetPending()/Take() pattern for scene-to-scene handoff.
 	struct GameWorldState {
-		std::unique_ptr<engine::world::ChunkManager>	m_chunkManager;
-		std::unique_ptr<engine::world::WorldCamera>		m_camera;
-		std::unique_ptr<engine::world::ChunkRenderer>	m_renderer;
-		std::unique_ptr<engine::world::EntityRenderer>	m_entityRenderer;
-		std::unique_ptr<engine::assets::PlacementExecutor> m_placementExecutor;
+		std::unique_ptr<engine::world::ChunkManager>	   chunkManager;
+		std::unique_ptr<engine::world::WorldCamera>		   camera;
+		std::unique_ptr<engine::world::ChunkRenderer>	   renderer;
+		std::unique_ptr<engine::world::EntityRenderer>	   entityRenderer;
+		std::unique_ptr<engine::assets::PlacementExecutor> placementExecutor;
 
 		/// Tracks which chunks have completed entity placement
-		std::unordered_set<engine::world::ChunkCoordinate> m_processedChunks;
+		std::unordered_set<engine::world::ChunkCoordinate> processedChunks;
 
-		uint64_t m_worldSeed = 0;
+		uint64_t worldSeed = 0;
 
 		/// Store pending state (call from GameLoadingScene when done)
 		static void SetPending(std::unique_ptr<GameWorldState> state);
