@@ -10,6 +10,7 @@ The asset system manages loading, generation, and caching of game assets with su
 - **Simple assets**: Designer-authored SVG files (flowers, mushrooms, rocks)
 - **Procedural assets**: Script-generated assets (trees, bushes, complex flora)
 - **Moddability**: All asset definitions exposed on disk for modder access
+- **Patching**: XPath-based modification of existing assets for mod compatibility
 - **Pre-generation**: Variant caching for procedural assets at load time
 
 ## Design Goals
@@ -186,14 +187,50 @@ assets/
 │           ├── Axe.xml
 │           └── axe.svg
 │
-└── ui/                              # UI assets
-    └── icons/
-        └── HealthIcon/
-            └── HealthIcon.xml
+├── ui/                              # UI assets
+│   └── icons/
+│       └── HealthIcon/
+│           └── HealthIcon.xml
+│
+└── patches/                         # Core game patches (if any)
+    └── balance_tweaks.xml
+
+mods/                                    # Mod folder (outside assets/)
+└── mymod/
+    ├── Mod.xml                         # Mod metadata (required)
+    ├── assets/                         # Mod's new assets
+    │   └── world/flora/ExoticPalm/
+    │       └── ExoticPalm.xml
+    └── patches/                        # Mod's patches to existing assets
+        └── tree_changes.xml
 ```
 
 **For complete file structure specification**, see:
 - [Folder-Based Assets](./folder-based-assets.md) - Self-contained asset folders, path resolution, naming
+
+## Loading Pipeline
+
+The asset system loads content in phases to support patching:
+
+```
+Phase 1: Load Definitions
+├── Load core assets (assets/**/*)
+└── Load mod assets (mods/*/assets/**/*) in mod load order
+
+Phase 2: Apply Patches
+├── Apply core patches (assets/patches/*.xml)
+└── Apply mod patches (mods/*/patches/*.xml) in mod load order
+
+Phase 3: Finalization
+├── Resolve inheritance (parent references)
+├── Validate all definitions
+└── Pre-generate procedural assets
+```
+
+**Key insight**: Patches modify in-memory definitions, not source files. This allows multiple mods to surgically edit the same asset without conflict.
+
+**For complete patching specification**, see:
+- [Patching System](./patching-system.md) - XPath operations, conditional patches, mod compatibility
 
 ## World Seed and Procedural Uniqueness
 
@@ -253,5 +290,7 @@ If any input changes, cache is regenerated during the loading screen.
 - [Folder-Based Assets](./folder-based-assets.md) - Self-contained folder structure, path resolution
 - [Asset Definition Schema](./asset-definitions.md) - XML schema for asset definitions
 - [Scripting API](./lua-scripting-api.md) - API available to generator scripts
+- [Patching System](./patching-system.md) - XPath-based modification of existing assets
+- [Mod Metadata](./mod-metadata.md) - Mod.xml specification and load order
 - [Variant Cache Format](./variant-cache.md) - Binary format for pre-generated variants
 - [Integration with Tiered Renderer](../vector-graphics/animation-performance.md) - Rendering path selection

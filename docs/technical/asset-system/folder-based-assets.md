@@ -581,18 +581,25 @@ Mods follow the same folder structure:
 ```
 mods/
 └── MyTreeMod/
-    ├── mod.json                    # Mod metadata
-    └── assets/
-        ├── _shared/
-        │   └── lua/
-        │       └── my_branch_algo.lua
-        │
-        └── flora/
-            └── ExoticPalm/
-                ├── ExoticPalm.xml
-                ├── generate.lua
-                └── palm_frond.svg
+    ├── Mod.xml                     # Mod metadata (required)
+    ├── assets/
+    │   ├── shared/
+    │   │   └── scripts/
+    │   │       └── my_branch_algo.lua
+    │   │
+    │   └── world/flora/
+    │       └── ExoticPalm/
+    │           ├── ExoticPalm.xml
+    │           ├── generate.lua
+    │           └── palm_frond.svg
+    │
+    └── patches/                    # Patches to existing assets
+        └── tree_tweaks.xml
 ```
+
+**For mod metadata and patching specifications**, see:
+- [Mod Metadata](./mod-metadata.md) - Mod.xml specification
+- [Patching System](./patching-system.md) - XPath-based modification
 
 ### Load Order
 
@@ -696,5 +703,7 @@ assets/
 
 - [Asset System Architecture](./README.md) - System overview
 - [Asset Definition Schema](./asset-definitions.md) - XML schema details
-- [Lua Scripting API](./lua-scripting-api.md) - Generator script API
+- [Scripting API](./lua-scripting-api.md) - Generator script API
+- [Patching System](./patching-system.md) - XPath-based modification
+- [Mod Metadata](./mod-metadata.md) - Mod.xml specification
 - [Entity Placement System](../entity-placement-system.md) - Placement rules

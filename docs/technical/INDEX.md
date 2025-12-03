@@ -58,8 +58,10 @@ World-sim is a C++20 game project built as a monorepo of independent libraries. 
 - [Asset System Overview](./asset-system/README.md) - Simple vs procedural assets, architecture
 - [Folder-Based Assets](./asset-system/folder-based-assets.md) - **PROPOSAL**: Self-contained asset folders *(under review)*
 - [Asset Definition Schema](./asset-system/asset-definitions.md) - XML format, inheritance, modding
+- [Patching System](./asset-system/patching-system.md) - XPath-based modification of existing assets
+- [Mod Metadata](./asset-system/mod-metadata.md) - Mod.xml specification and load order
 - [Entity Placement System](./entity-placement-system.md) - Biome rules, groups, relationships, distribution patterns
-- [Lua Scripting API](./asset-system/lua-scripting-api.md) - Procedural generation API
+- [Scripting API](./asset-system/lua-scripting-api.md) - Procedural generation API
 - [Variant Cache Format](./asset-system/variant-cache.md) - Binary cache for pre-generated assets *(planned)*
 
 ### World & Game
