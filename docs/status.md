@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2025-12-02 (Coordinate System Standardization Complete)
+Last Updated: 2025-12-03 (Asset System Epics Organized for MVP)
 
 ## Epic/Story/Task Template
 
@@ -213,10 +213,10 @@ Use this template for all work items:
 
 ---
 
-### 🔄 Asset System Architecture
+### ✅ Asset System Architecture - Foundation
 **Spec/Documentation:** `/docs/technical/asset-system/README.md`
 **Dependencies:** None
-**Status:** in progress
+**Status:** complete
 
 **Phase 1: Core Infrastructure** ✅ COMPLETE
 - [x] 1.1 Asset Registry
@@ -267,14 +267,7 @@ Use this template for all work items:
   - [x] Add cumulative frame counters (frameVertexCount, frameTriangleCount)
   - [x] Track stats before buffer clear, reset in beginFrame
 
-**Phase 3: Variant Caching** (FUTURE)
-- [ ] Binary cache format for pre-generated variants
-- [ ] Cache invalidation (script/definition hash comparison)
-
-**Phase 4: Full Tree Demo** (FUTURE)
-- [ ] Deciduous tree generator (Weber & Penn branching)
-- [ ] Mixed flora scene (trees + flowers + grass)
-- [ ] Performance target: 60 FPS with 1000 trees + 10,000 flowers
+**Result:** Working asset system with Lua scripting, procedural trees, grass, and entity placement ✅
 
 ---
 
@@ -314,74 +307,149 @@ Use this template for all work items:
 
 ## Planned Epics
 
-### Vector Graphics System - Full Implementation
-**Spec/Documentation:** `/docs/technical/vector-graphics/INDEX.md`
-**Dependencies:** Vector Graphics Validation - Grass Blades
-**Status:** needs validation results
+### Folder-Based Asset Migration
+**Spec/Documentation:** `/docs/technical/asset-system/folder-based-assets.md`
+**Dependencies:** Asset System Architecture - Foundation
+**Status:** ready
+
+**Goal:** Migrate from flat file structure to folder-per-asset organization for cleaner modding and content management.
 
 **Tasks:**
-- [ ] Foundation
-  - [ ] Design core architecture (AssetManager, Tessellator, Renderer)
-  - [ ] Implement SVG parser (nanosvg or similar)
-  - [ ] Implement path tessellation (lines, curves, arcs)
-  - [ ] Basic shape rendering (no animation)
-  - [ ] Integration with BatchRenderer
-- [ ] Animation System
-  - [ ] Design animation API (keyframes, interpolation, spline deformation)
-  - [ ] Implement spline deformation for organic shapes
-  - [ ] Implement vertex shader transforms
-  - [ ] Create animation demo scene
-- [ ] Batching + Atlasing
-  - [ ] Implement texture atlas system
-  - [ ] Implement instanced rendering
-  - [ ] Implement dynamic atlas updates
-  - [ ] Profile and optimize draw call count
-  - [ ] Verify: <100 draw calls for 10,000+ shapes
-- [ ] Tiered System
-  - [ ] Design tier architecture (baked, cached, dynamic)
-  - [ ] Implement baked tier (atlas at load time)
-  - [ ] Implement cached tier (periodic rebuilds)
-  - [ ] Implement dynamic tier (per-frame updates)
-  - [ ] Create heuristics for tier assignment
-- [ ] Collision + Interaction
-  - [ ] Generate collision shapes from SVG paths
-  - [ ] Integrate with physics system
-  - [ ] Implement click/hover detection
-  - [ ] Add debug visualization for collision shapes
-- [ ] Optimization + Polish
-  - [ ] Performance Profiling
-    - [ ] Measure tessellation time per frame
-    - [ ] Count draw calls per frame
-    - [ ] Monitor VBO update bandwidth
-    - [ ] Check texture atlas usage
-    - [ ] Profile memory allocations during animation updates
-    - [ ] Verify 60 FPS with target entity count
-  - [ ] Profile full system end-to-end
-  - [ ] Optimize hot paths
-  - [ ] Add memory budget management
-  - [ ] Implement asset streaming
-  - [ ] Write performance documentation
-  - [ ] Create artist guidelines for SVG creation
-
+- [ ] File Structure Migration
+  - [ ] Create 3-level hierarchy (`assets/world/flora/GrassBlade/`)
+  - [ ] Move grass.xml → `assets/world/flora/GrassBlade/GrassBlade.xml`
+  - [ ] Move trees.xml → `assets/world/flora/DeciduousTree/DeciduousTree.xml`
+  - [ ] Move Lua scripts into asset folders
+  - [ ] Create `assets/shared/scripts/` for shared modules
+- [ ] AssetRegistry Updates
+  - [ ] Update `loadAssets()` to scan folder structure
+  - [ ] Implement path resolution (relative to asset folder)
+  - [ ] Support `@components/` prefix for shared SVG components
+  - [ ] Add `getAssetFolder()` API for scripts
+- [ ] Module Registry
+  - [ ] Register shared scripts by name (not path)
+  - [ ] Update LuaEngine `require()` to check local folder first
+  - [ ] Support asset-local helper scripts
+- [ ] Validation
+  - [ ] All existing assets load correctly
+  - [ ] All tests pass
+  - [ ] GameScene renders correctly
 
 ---
 
-### Vector Asset Pipeline - Tile Rendering
-**Spec/Documentation:** `/docs/technical/vector-graphics/asset-pipeline.md`
-**Dependencies:** Vector Graphics System - Full Implementation
-**Status:** planned
+### Simple Asset Support (SVG-Only)
+**Spec/Documentation:** `/docs/technical/asset-system/asset-definitions.md`
+**Dependencies:** Folder-Based Asset Migration
+**Status:** ready
+
+**Goal:** Support hand-crafted SVG assets without Lua scripts (flowers, mushrooms, rocks).
 
 **Tasks:**
-- [ ] Core Pipeline
-  - [ ] SVG loading system
-  - [ ] Vector to raster conversion
-  - [ ] Tile variation system (procedural parameters)
-  - [ ] Raster caching with LRU eviction
-  - [ ] Memory management and budgets
-- [ ] Advanced Features
-  - [ ] Inter-tile blending for visual cohesion
-  - [ ] LOD system for distant tiles
-  - [ ] Performance profiling and optimization
+- [ ] Simple Asset Loader
+  - [ ] Detect `assetType="simple"` in XML
+  - [ ] Load SVG directly via `<svgPath>` element
+  - [ ] Tessellate once at load time
+  - [ ] Store in GPU buffer for instancing
+- [ ] Variation System
+  - [ ] Parse `<variation>` element (colorRange, scaleRange, rotationRange)
+  - [ ] Apply per-instance hue/saturation/value shifts
+  - [ ] Apply per-instance scale and rotation
+- [ ] Multi-Variant Simple Assets
+  - [ ] Parse `<components>` with `variant="random"`
+  - [ ] Support multiple SVG variants per asset
+  - [ ] Random variant selection by seed
+- [ ] Integration
+  - [ ] PlacementExecutor spawns simple assets
+  - [ ] EntityRenderer handles variation params
+  - [ ] Verify GPU instancing performance
+
+---
+
+### Flora Content Pack
+**Spec/Documentation:** `/docs/technical/asset-system/`
+**Dependencies:** Simple Asset Support
+**Status:** ready
+
+**Goal:** Add visual variety with flowers, mushrooms, rocks, and bushes.
+
+**Tasks:**
+- [ ] Create Simple Flora Assets
+  - [ ] Daisy (white/yellow flower, Grassland)
+  - [ ] Poppy (red flower, Grassland)
+  - [ ] Mushroom (multiple cap color variants, Forest)
+  - [ ] Fern (Forest floor cover)
+- [ ] Create Terrain Assets
+  - [ ] Small Boulder (gray rock, all biomes)
+  - [ ] Pebbles (cluster of small stones)
+- [ ] Create Procedural Flora
+  - [ ] Bush (Lua generator, medium complexity)
+  - [ ] Conifer Tree (Lua generator, Forest biome)
+- [ ] Placement Rules
+  - [ ] Configure biome spawn chances for all assets
+  - [ ] Set up group relationships (flowers near grass, mushrooms under trees)
+  - [ ] Test mixed flora scenes
+- [ ] Visual Validation
+  - [ ] Verify 60 FPS with full flora in GameScene
+  - [ ] Check visual variety and distribution
+
+---
+
+### Variant Cache System
+**Spec/Documentation:** `/docs/technical/asset-system/README.md` (World Seed section)
+**Dependencies:** Folder-Based Asset Migration
+**Status:** ready
+
+**Goal:** Pre-generate and cache procedural asset variants for fast loading.
+
+**Tasks:**
+- [ ] Binary Cache Format
+  - [ ] Design cache file structure (vertices, indices, colors)
+  - [ ] Implement cache writer in AssetRegistry
+  - [ ] Implement cache reader for fast loading
+- [ ] Cache Invalidation
+  - [ ] Hash asset definition XML
+  - [ ] Hash Lua script contents
+  - [ ] Include world seed in cache key
+  - [ ] Regenerate on hash mismatch
+- [ ] World Seed Integration
+  - [ ] Seed Lua RNG from world seed at load time
+  - [ ] Ensure deterministic variant generation
+  - [ ] Per-chunk variant selection by position hash
+- [ ] Performance
+  - [ ] Measure load time improvement (target: 10x faster)
+  - [ ] Background cache generation during loading screen
+
+---
+
+### Mod Support
+**Spec/Documentation:** `/docs/technical/asset-system/mod-metadata.md`, `/docs/technical/asset-system/patching-system.md`
+**Dependencies:** Folder-Based Asset Migration, Variant Cache System
+**Status:** planned (post-MVP)
+
+**Goal:** Enable community modding with asset additions and modifications.
+
+**Tasks:**
+- [ ] Mod Metadata (Mod.xml)
+  - [ ] Parse mod ID, name, version, author
+  - [ ] Parse loadAfter/loadBefore dependencies
+  - [ ] Build mod load order graph
+  - [ ] Detect circular dependencies
+- [ ] Mod Asset Loading
+  - [ ] Scan `mods/*/assets/` folders
+  - [ ] Merge mod assets with core assets
+  - [ ] Support asset overrides (`override="true"`)
+- [ ] Patching System
+  - [ ] Implement XPath patch parser
+  - [ ] Support operations: replace, add, remove, addOrReplace
+  - [ ] Support conditional patches (requiresMod)
+  - [ ] Apply patches in load order
+- [ ] Debugging
+  - [ ] Log patch applications
+  - [ ] `/asset dump <defName>` command for inspecting final definitions
+- [ ] Documentation
+  - [ ] Modder's guide: adding new assets
+  - [ ] Modder's guide: patching existing assets
+  - [ ] Example mod structure
 
 ---
 
