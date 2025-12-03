@@ -11,13 +11,17 @@
 #include <vector>
 
 #include <glm/vec2.hpp>
+#include <glm/vec4.hpp>
 
 namespace engine::assets {
 
 	/// A placed entity in the world
 	struct PlacedEntity {
-		std::string defName;   // Asset definition name
-		glm::vec2	position;  // World position in tiles
+		std::string defName;		// Asset definition name
+		glm::vec2	position;		// World position in tiles
+		float		rotation = 0.0F; // Rotation in radians
+		float		scale = 1.0F;	// Scale factor
+		glm::vec4	colorTint{1.0F, 1.0F, 1.0F, 1.0F}; // RGBA color tint
 	};
 
 	/// Grid-based spatial index for efficient neighbor queries.

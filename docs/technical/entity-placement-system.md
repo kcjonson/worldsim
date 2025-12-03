@@ -100,11 +100,11 @@ Each biome can specify a distribution pattern:
 
 | Pattern  | Description | Use Case | Status |
 |----------|-------------|----------|--------|
-| `uniform` | Random placement, no clustering | Grass, small debris | ✅ Implemented |
-| `clumped` | Groups together in patches | Flower patches, mushroom rings | 🚧 Planned |
+| `uniform` | Random placement within tile | Grass, small debris | ✅ Implemented |
+| `clumped` | Groups together in patches | Flower patches, mushroom rings | ✅ Implemented |
 | `spaced`  | Maintains minimum distance | Trees, large bushes | 🚧 Planned |
 
-> **Note:** Currently only `uniform` distribution is implemented. All assets use random per-tile placement regardless of the distribution setting. Clumped and spaced distribution patterns are planned for a future phase.
+> **Note:** `uniform` and `clumped` distributions are implemented. `spaced` distribution (Poisson disk sampling) is planned for a future phase.
 
 ```
 UNIFORM                    CLUMPED                    SPACED

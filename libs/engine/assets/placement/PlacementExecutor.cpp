@@ -120,8 +120,12 @@ namespace engine::assets {
 		// Get chunk origin for world position calculation
 		world::WorldPosition origin = context.coord.origin();
 
-		// Uniform distribution for spawn chance
+		// RNG distributions
 		std::uniform_real_distribution<float> chanceDist(0.0F, 1.0F);
+		std::uniform_real_distribution<float> offsetDist(0.0F, 1.0F); // Position within tile
+		std::uniform_real_distribution<float> rotationDist(-0.3F, 0.3F);
+		std::uniform_real_distribution<float> scaleDist(0.8F, 1.2F);
+		std::uniform_real_distribution<float> colorDist(-0.08F, 0.08F);
 
 		// Iterate over all tiles in the chunk
 		for (uint16_t localY = 0; localY < world::kChunkSize; ++localY) {
@@ -131,17 +135,15 @@ namespace engine::assets {
 				std::string	 biomeName = world::biomeToString(biome);
 
 				// Find placement config for this biome
-				const BiomePlacement* biomePlacement = def->placement.findBiome(biomeName);
-				if (biomePlacement == nullptr) {
+				const BiomePlacement* bp = def->placement.findBiome(biomeName);
+				if (bp == nullptr) {
 					continue; // This entity doesn't spawn in this biome
 				}
 
 				// Check tile-type proximity ("near Water" etc)
-				// NOTE: Search is limited to within current chunk bounds.
-				// Entities near chunk edges may not detect tile types across the boundary.
-				if (!biomePlacement->nearTileType.empty() && context.getGroundCover) {
+				if (!bp->nearTileType.empty() && context.getGroundCover) {
 					bool foundNearby = false;
-					int	 searchRadius = static_cast<int>(biomePlacement->nearDistance);
+					int	 searchRadius = static_cast<int>(bp->nearDistance);
 					if (searchRadius < 1) {
 						searchRadius = 1;
 					}
@@ -151,11 +153,10 @@ namespace engine::assets {
 							int checkX = static_cast<int>(localX) + dx;
 							int checkY = static_cast<int>(localY) + dy;
 
-							// Stay within chunk bounds for simplicity
 							if (checkX >= 0 && checkX < world::kChunkSize && checkY >= 0 && checkY < world::kChunkSize) {
 								std::string groundCover =
 									context.getGroundCover(static_cast<uint16_t>(checkX), static_cast<uint16_t>(checkY));
-								if (groundCover == biomePlacement->nearTileType) {
+								if (groundCover == bp->nearTileType) {
 									foundNearby = true;
 								}
 							}
@@ -163,30 +164,112 @@ namespace engine::assets {
 					}
 
 					if (!foundNearby) {
-						continue; // Tile-type proximity requirement not met
+						continue;
 					}
 				}
 
-				// Calculate world position (center of tile)
-				float	  worldX = origin.x + static_cast<float>(localX) + 0.5F;
-				float	  worldY = origin.y + static_cast<float>(localY) + 0.5F;
-				glm::vec2 position{worldX, worldY};
+				// Calculate tile world position (corner)
+				float tileWorldX = origin.x + static_cast<float>(localX);
+				float tileWorldY = origin.y + static_cast<float>(localY);
 
-				// Calculate base spawn chance
-				float spawnChance = biomePlacement->spawnChance;
-
-				// Apply relationship modifiers
-				float modifier = calculateRelationshipModifier(*def, position, chunkIndex, adjacentProvider);
-				if (modifier <= 0.0F) {
-					continue; // Required dependency not satisfied or completely avoided
+				// Roll for spawn based on distribution type
+				if (chanceDist(rng) >= bp->spawnChance) {
+					continue; // Spawn chance failed
 				}
-				spawnChance *= modifier;
 
-				// Roll for spawn
-				if (chanceDist(rng) < spawnChance) {
-					PlacedEntity entity{defName, position};
-					chunkIndex.insert(entity);
-					outEntities.push_back(entity);
+				// Handle distribution types
+				switch (bp->distribution) {
+					case Distribution::Clumped: {
+						// Generate clump center randomly within tile
+						glm::vec2 clumpCenter{
+							tileWorldX + offsetDist(rng),
+							tileWorldY + offsetDist(rng)
+						};
+
+						// Clump parameters
+						std::uniform_int_distribution<int32_t> clumpSizeDist(
+							bp->clumping.clumpSizeMin, bp->clumping.clumpSizeMax);
+						int32_t clumpSize = clumpSizeDist(rng);
+
+						std::uniform_real_distribution<float> clumpRadiusDist(
+							bp->clumping.clumpRadiusMin, bp->clumping.clumpRadiusMax);
+						float clumpRadius = clumpRadiusDist(rng);
+
+						// Spawn instances in clump
+						for (int32_t i = 0; i < clumpSize; ++i) {
+							// Random offset within clump radius
+							std::uniform_real_distribution<float> clumpOffsetDist(-clumpRadius, clumpRadius);
+							glm::vec2 position{
+								clumpCenter.x + clumpOffsetDist(rng),
+								clumpCenter.y + clumpOffsetDist(rng)
+							};
+
+							// Check relationship modifiers for this position
+							float modifier = calculateRelationshipModifier(*def, position, chunkIndex, adjacentProvider);
+							if (modifier <= 0.0F) {
+								continue;
+							}
+
+							// Generate visual variation
+							float greenVar = colorDist(rng);
+
+							PlacedEntity entity;
+							entity.defName = defName;
+							entity.position = position;
+							entity.rotation = rotationDist(rng);
+							entity.scale = scaleDist(rng);
+							entity.colorTint = glm::vec4(
+								0.15F + greenVar,
+								0.35F + greenVar * 2.0F,
+								0.1F + greenVar * 0.5F,
+								1.0F
+							);
+
+							chunkIndex.insert(entity);
+							outEntities.push_back(entity);
+						}
+						break;
+					}
+
+					case Distribution::Spaced: {
+						// TODO: Implement Poisson disk sampling
+						// For now, fall through to uniform
+						[[fallthrough]];
+					}
+
+					case Distribution::Uniform:
+					default: {
+						// Single entity at random position within tile
+						glm::vec2 position{
+							tileWorldX + offsetDist(rng),
+							tileWorldY + offsetDist(rng)
+						};
+
+						// Check relationship modifiers
+						float modifier = calculateRelationshipModifier(*def, position, chunkIndex, adjacentProvider);
+						if (modifier <= 0.0F) {
+							continue;
+						}
+
+						// Generate visual variation
+						float greenVar = colorDist(rng);
+
+						PlacedEntity entity;
+						entity.defName = defName;
+						entity.position = position;
+						entity.rotation = rotationDist(rng);
+						entity.scale = scaleDist(rng);
+						entity.colorTint = glm::vec4(
+							0.15F + greenVar,
+							0.35F + greenVar * 2.0F,
+							0.1F + greenVar * 0.5F,
+							1.0F
+						);
+
+						chunkIndex.insert(entity);
+						outEntities.push_back(entity);
+						break;
+					}
 				}
 			}
 		}

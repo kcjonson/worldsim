@@ -52,12 +52,17 @@ void EntityRenderer::render(const assets::PlacementExecutor& executor,
 			float screenY = (entity->position.y - camera.position().y) * m_pixelsPerMeter * zoom + halfViewH;
 
 			// Create spawned instance for batching
-			// Mesh vertices are in meters; convert to screen pixels
+			// Mesh vertices are in meters; convert to screen pixels with per-entity transforms
 			assets::SpawnedInstance instance{
 				.position = Foundation::Vec2{screenX, screenY},
-				.rotation = 0.0F,
-				.scale = m_pixelsPerMeter * zoom,  // meters → screen pixels
-				.colorTint = Foundation::Color{1.0F, 1.0F, 1.0F, 1.0F}
+				.rotation = entity->rotation,
+				.scale = entity->scale * m_pixelsPerMeter * zoom,  // entity scale * meters → screen pixels
+				.colorTint = Foundation::Color{
+					entity->colorTint.r,
+					entity->colorTint.g,
+					entity->colorTint.b,
+					entity->colorTint.a
+				}
 			};
 
 			instancesByType[entity->defName].push_back(instance);
