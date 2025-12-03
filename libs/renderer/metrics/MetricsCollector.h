@@ -23,6 +23,10 @@ namespace Renderer { // NOLINT(readability-identifier-naming)
 		// Set rendering stats (called by renderer)
 		void setRenderStats(uint32_t drawCalls, uint32_t vertexCount, uint32_t triangleCount);
 
+		// Set timing breakdown (called by game scene for profiling)
+		void setTimingBreakdown(float tileRenderMs, float entityRenderMs, float updateMs,
+								uint32_t tileCount, uint32_t entityCount);
+
 	  private:
 		using Clock = std::chrono::high_resolution_clock;
 		using TimePoint = std::chrono::time_point<Clock>;
@@ -35,6 +39,13 @@ namespace Renderer { // NOLINT(readability-identifier-naming)
 		uint32_t drawCalls;
 		uint32_t vertexCount;
 		uint32_t triangleCount;
+
+		// Timing breakdown
+		float	 tileRenderMs{};
+		float	 entityRenderMs{};
+		float	 updateMs{};
+		uint32_t tileCount{};
+		uint32_t entityCount{};
 
 		// Helper: Get current Unix timestamp in milliseconds
 		uint64_t getCurrentTimestamp() const;

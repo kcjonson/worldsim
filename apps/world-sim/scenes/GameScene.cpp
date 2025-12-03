@@ -6,8 +6,11 @@
 
 #include <GL/glew.h>
 
+#include <application/AppLauncher.h>
+#include <chrono>
 #include <graphics/Rect.h>
 #include <input/InputManager.h>
+#include <metrics/MetricsCollector.h>
 #include <primitives/Primitives.h>
 #include <scene/Scene.h>
 #include <scene/SceneManager.h>
@@ -30,6 +33,13 @@
 #include <vector>
 
 namespace {
+	// Helper for timing measurements
+	using Clock = std::chrono::high_resolution_clock;
+	using TimePoint = std::chrono::time_point<Clock>;
+
+	inline float elapsedMs(TimePoint start, TimePoint end) {
+		return std::chrono::duration<float, std::milli>(end - start).count();
+	}
 
 	constexpr const char* kSceneName = "game";
 	constexpr uint64_t	  kDefaultWorldSeed = 12345;
@@ -52,12 +62,7 @@ namespace {
 				m_placementExecutor = std::move(preloadedState->placementExecutor);
 				m_processedChunks = std::move(preloadedState->processedChunks);
 
-				LOG_INFO(
-					Game,
-					"Pre-loaded state: %zu chunks, %zu processed",
-					m_chunkManager->loadedChunkCount(),
-					m_processedChunks.size()
-				);
+				LOG_INFO(Game, "Pre-loaded state: %zu chunks, %zu processed", m_chunkManager->loadedChunkCount(), m_processedChunks.size());
 			} else {
 				// Initialize fresh (for debugging or direct GameScene access)
 				LOG_INFO(Game, "GameScene - No pre-loaded state, initializing fresh");
@@ -87,11 +92,8 @@ namespace {
 			}
 
 			// Create async processor for runtime chunk streaming
-			m_asyncProcessor = std::make_unique<engine::assets::AsyncChunkProcessor>(
-				*m_placementExecutor,
-				kDefaultWorldSeed,
-				m_processedChunks
-			);
+			m_asyncProcessor =
+				std::make_unique<engine::assets::AsyncChunkProcessor>(*m_placementExecutor, kDefaultWorldSeed, m_processedChunks);
 
 			// Create overlay with zoom callbacks
 			m_overlay = std::make_unique<world_sim::GameOverlay>(
@@ -151,6 +153,8 @@ namespace {
 		}
 
 		void update(float dt) override {
+			auto updateStart = Clock::now();
+
 			m_camera->update(dt);
 			m_chunkManager->update(m_camera->position());
 
@@ -161,6 +165,8 @@ namespace {
 			cleanupUnloadedChunks();
 
 			m_overlay->update(*m_camera, *m_chunkManager);
+
+			m_lastUpdateMs = elapsedMs(updateStart, Clock::now());
 		}
 
 		void render() override {
@@ -170,11 +176,26 @@ namespace {
 			int w = 0;
 			int h = 0;
 			Renderer::Primitives::getViewport(w, h);
-			m_renderer->render(*m_chunkManager, *m_camera, w, h);
 
+			// Time tile rendering
+			auto tileStart = Clock::now();
+			m_renderer->render(*m_chunkManager, *m_camera, w, h);
+			float tileMs = elapsedMs(tileStart, Clock::now());
+
+			// Time entity rendering
+			auto entityStart = Clock::now();
 			m_entityRenderer->render(*m_placementExecutor, m_processedChunks, *m_camera, w, h);
+			float entityMs = elapsedMs(entityStart, Clock::now());
 
 			m_overlay->render();
+
+			// Report timing breakdown to metrics system
+			auto* metrics = engine::AppLauncher::getMetrics();
+			if (metrics != nullptr) {
+				metrics->setTimingBreakdown(
+					tileMs, entityMs, m_lastUpdateMs, m_renderer->lastTileCount(), m_entityRenderer->lastEntityCount()
+				);
+			}
 		}
 
 		void onExit() override {
@@ -252,6 +273,9 @@ namespace {
 
 		// Track processed chunk coordinates for cleanup detection
 		std::unordered_set<engine::world::ChunkCoordinate> m_processedChunks;
+
+		// Timing for metrics
+		float m_lastUpdateMs = 0.0F;
 	};
 
 } // namespace

@@ -18,6 +18,13 @@ namespace Foundation { // NOLINT(readability-identifier-naming)
 		uint32_t vertexCount{};	   // Number of vertices rendered this frame
 		uint32_t triangleCount{};  // Number of triangles rendered this frame
 
+		// Timing breakdown (for profiling bottlenecks)
+		float	 tileRenderMs{};   // Time spent rendering tiles
+		float	 entityRenderMs{}; // Time spent rendering entities
+		float	 updateMs{};	   // Time spent in update loop
+		uint32_t tileCount{};	   // Number of tiles rendered
+		uint32_t entityCount{};	   // Number of entities rendered
+
 		// Serialize to JSON for HTTP API
 		std::string toJSON() const;
 	};

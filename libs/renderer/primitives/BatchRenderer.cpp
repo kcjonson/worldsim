@@ -411,6 +411,10 @@ namespace Renderer {
 		}
 		glDisable(GL_BLEND);
 
+		// Accumulate stats before clearing
+		frameVertexCount += vertices.size();
+		frameTriangleCount += indices.size() / 3;
+
 		// Clear buffers for next batch
 		vertices.clear();
 		indices.clear();
@@ -418,6 +422,8 @@ namespace Renderer {
 
 	void BatchRenderer::beginFrame() {
 		drawCallCount = 0;
+		frameVertexCount = 0;
+		frameTriangleCount = 0;
 		vertices.clear();
 		indices.clear();
 	}
@@ -446,8 +452,8 @@ namespace Renderer {
 	BatchRenderer::RenderStats BatchRenderer::getStats() const { // NOLINT(readability-convert-member-functions-to-static)
 		RenderStats stats;
 		stats.drawCalls = static_cast<uint32_t>(drawCallCount);
-		stats.vertexCount = static_cast<uint32_t>(vertices.size());
-		stats.triangleCount = static_cast<uint32_t>(indices.size() / 3);
+		stats.vertexCount = static_cast<uint32_t>(frameVertexCount);
+		stats.triangleCount = static_cast<uint32_t>(frameTriangleCount);
 		return stats;
 	}
 

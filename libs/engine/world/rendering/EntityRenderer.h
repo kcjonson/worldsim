@@ -38,9 +38,13 @@ class EntityRenderer {
 	void setPixelsPerMeter(float pixelsPerMeter) { m_pixelsPerMeter = pixelsPerMeter; }
 	[[nodiscard]] float pixelsPerMeter() const { return m_pixelsPerMeter; }
 
+	/// Get number of entities rendered in last frame (for profiling)
+	[[nodiscard]] uint32_t lastEntityCount() const { return m_lastEntityCount; }
+
   private:
 	float m_pixelsPerMeter = 16.0F;
 	assets::AssetBatcher m_batcher;
+	uint32_t m_lastEntityCount = 0;
 
 	// Cache for template meshes (keyed by defName)
 	std::unordered_map<std::string, const renderer::TessellatedMesh*> m_templateCache;

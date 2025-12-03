@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2025-12-02 (Unit Testing Infrastructure Complete)
+Last Updated: 2025-12-02 (Coordinate System Standardization Complete)
 
 ## Epic/Story/Task Template
 
@@ -257,6 +257,15 @@ Use this template for all work items:
   - [x] Demo: Deciduous tree generator in Lua (3/4 top-down Rimworld style)
   - [x] TreeScene demo rendering 40 unique trees
   - [x] XML definition format with scriptPath parameter
+
+**Phase 2.5: Coordinate System Standardization** ✅ COMPLETE
+- [x] Standardize all assets to meter-based coordinate system
+  - [x] Update grass.xml with meter dimensions (0.2-0.5m height)
+  - [x] Update trees.xml with meter dimensions (1.2-1.5m trunk heights, scaled for top-down view)
+  - [x] Fix EntityRenderer scale: `pixelsPerMeter * zoom`
+- [x] Fix BatchRenderer metrics
+  - [x] Add cumulative frame counters (frameVertexCount, frameTriangleCount)
+  - [x] Track stats before buffer clear, reset in beginFrame
 
 **Phase 3: Variant Caching** (FUTURE)
 - [ ] Binary cache format for pre-generated variants

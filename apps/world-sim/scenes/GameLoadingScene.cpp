@@ -33,7 +33,7 @@ namespace {
 	constexpr const char* kSceneName = "gameloading";
 	constexpr uint64_t	  kDefaultWorldSeed = 12345;
 	constexpr float		  kPixelsPerMeter = 8.0F;
-	constexpr int		  kTargetChunks = 25; // 5×5 grid
+	constexpr int		  kTargetChunks = 9; // 3×3 grid (center + 8 adjacent)
 
 	/// Loading phases
 	enum class LoadingPhase { Initializing, LoadingChunks, PlacingEntities, Complete, Cancelling };
@@ -215,6 +215,10 @@ namespace {
 			auto sampler = std::make_unique<engine::world::MockWorldSampler>(kDefaultWorldSeed);
 			m_worldState->chunkManager = std::make_unique<engine::world::ChunkManager>(std::move(sampler));
 
+			// Only load 3×3 grid (center + 8 adjacent) - chunks are large!
+			m_worldState->chunkManager->setLoadRadius(1);
+			m_worldState->chunkManager->setUnloadRadius(2);
+
 			// Create camera at origin
 			m_worldState->camera = std::make_unique<engine::world::WorldCamera>();
 			m_worldState->camera->setPanSpeed(200.0F);
@@ -268,8 +272,22 @@ namespace {
 		/// Phase 3: Place entities asynchronously for responsive UI
 		void placeEntities() {
 			// Poll for completed futures (non-blocking)
+			size_t pendingBefore = m_asyncProcessor->pendingCount();
 			size_t completed = m_asyncProcessor->pollCompleted();
 			m_chunksProcessed += static_cast<int>(completed);
+
+			// Debug logging to track progress
+			if (completed > 0) {
+				LOG_DEBUG(
+					Game,
+					"placeEntities: completed=%zu, chunksProcessed=%d/%d, pendingBefore=%zu, pendingAfter=%zu",
+					completed,
+					m_chunksProcessed,
+					kTargetChunks,
+					pendingBefore,
+					m_asyncProcessor->pendingCount()
+				);
+			}
 
 			// Update progress (50-100% for entity placement)
 			m_progress = 0.5F + (static_cast<float>(m_chunksProcessed) / static_cast<float>(kTargetChunks * 2));
@@ -281,6 +299,7 @@ namespace {
 
 			// Check if all tasks are complete
 			if (!m_asyncProcessor->hasPending()) {
+				LOG_INFO(Game, "placeEntities: All %d chunks completed!", m_chunksProcessed);
 				m_phase = LoadingPhase::Complete;
 				m_progress = 1.0F;
 				updateStatusText("Ready!");

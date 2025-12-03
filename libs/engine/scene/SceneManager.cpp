@@ -37,6 +37,38 @@ namespace engine {
 			return false;
 		}
 
+		// If no current scene (initialization), switch immediately
+		if (!currentScene) {
+			return doImmediateSwitch(key);
+		}
+
+		// Otherwise defer the switch to avoid use-after-free when called from callbacks
+		LOG_DEBUG(Engine, "Deferring scene switch to: %s", getSceneName(key));
+		pendingSceneKey = key;
+		return true;
+	}
+
+	bool SceneManager::hasPendingSwitch() const {
+		return pendingSceneKey.has_value();
+	}
+
+	bool SceneManager::applyPendingSceneChange() {
+		if (!pendingSceneKey.has_value()) {
+			return false;
+		}
+
+		SceneKey key = *pendingSceneKey;
+		pendingSceneKey.reset();
+		return doImmediateSwitch(key);
+	}
+
+	bool SceneManager::doImmediateSwitch(SceneKey key) {
+		auto it = sceneRegistry.find(key);
+		if (it == sceneRegistry.end()) {
+			LOG_ERROR(Engine, "Scene key %zu not found in registry", key);
+			return false;
+		}
+
 		// Exit current scene
 		if (currentScene) {
 			LOG_DEBUG(Engine, "Exiting scene: %s", getSceneName(currentSceneKey));
@@ -71,6 +103,9 @@ namespace engine {
 	}
 
 	void SceneManager::update(float dt) {
+		// Apply any pending scene change first (safe point after input handling)
+		applyPendingSceneChange();
+
 		if (currentScene) {
 			currentScene->update(dt);
 		}

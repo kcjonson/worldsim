@@ -16,6 +16,7 @@ void EntityRenderer::render(const assets::PlacementExecutor& executor,
 							int viewportWidth,
 							int viewportHeight) {
 	m_batcher.clear();
+	m_lastEntityCount = 0;  // Reset entity count for this frame
 
 	float halfViewW = static_cast<float>(viewportWidth) * 0.5F;
 	float halfViewH = static_cast<float>(viewportHeight) * 0.5F;
@@ -51,11 +52,11 @@ void EntityRenderer::render(const assets::PlacementExecutor& executor,
 			float screenY = (entity->position.y - camera.position().y) * m_pixelsPerMeter * zoom + halfViewH;
 
 			// Create spawned instance for batching
-			// Use entity's transform and color, scaled by camera zoom
+			// Mesh vertices are in meters; convert to screen pixels with per-entity transforms
 			assets::SpawnedInstance instance{
 				.position = Foundation::Vec2{screenX, screenY},
 				.rotation = entity->rotation,
-				.scale = entity->scale * zoom,
+				.scale = entity->scale * m_pixelsPerMeter * zoom,  // entity scale * meters → screen pixels
 				.colorTint = Foundation::Color{
 					entity->colorTint.r,
 					entity->colorTint.g,
@@ -76,6 +77,7 @@ void EntityRenderer::render(const assets::PlacementExecutor& executor,
 		}
 
 		m_batcher.addInstances(*templateMesh, instances);
+		m_lastEntityCount += static_cast<uint32_t>(instances.size());
 	}
 
 	// Render all batches

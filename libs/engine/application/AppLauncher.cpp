@@ -6,7 +6,6 @@
 
 #include <CoordinateSystem/CoordinateSystem.h>
 #include <assets/AssetRegistry.h>
-#include <assets/generators/GrassBladeGenerator.h>
 #include <debug/DebugServer.h>
 #include <font/FontRenderer.h>
 #include <metrics/MetricsCollector.h>
@@ -152,7 +151,6 @@ bool initializeRenderingSystems(GLFWwindow* window) {
 
 void initializeAssetSystem(const std::vector<std::string>& definitionPaths) {
 	LOG_INFO(Engine, "Initializing asset system");
-	engine::assets::registerGrassBladeGenerator();
 
 	for (const auto& path : definitionPaths) {
 		std::string fullPath = Foundation::findResourceString("assets/definitions/" + path);
@@ -419,6 +417,10 @@ int AppLauncher::launch(int argc, char* argv[], const AppConfig& config) {
 
 void AppLauncher::setWindowResizeCallback(std::function<void()> callback) {
 	g_windowResizeCallback = std::move(callback);
+}
+
+Renderer::MetricsCollector* AppLauncher::getMetrics() {
+	return g_metrics.get();
 }
 
 } // namespace engine
