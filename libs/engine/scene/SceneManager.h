@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -45,11 +46,17 @@ namespace engine {
 		/// @param sceneNames Map of scene keys to names (for HTTP API, logging)
 		void initialize(SceneRegistry registry, std::unordered_map<SceneKey, std::string> sceneNames);
 
-		/// @brief Switch to a different scene
-		/// Calls onExit() on current scene, injects SceneManager, then onEnter() on new scene
+		/// @brief Switch to a different scene (deferred for safety)
+		/// If called from input handlers/callbacks, the actual switch is deferred
+		/// until the next frame's update() to avoid use-after-free bugs.
+		/// If no scene is currently active (initialization), switch happens immediately.
 		/// @param key Scene key (app's enum cast to SceneKey)
-		/// @return true if switch succeeded, false if scene not found
+		/// @return true if scene exists in registry, false if not found
 		bool switchTo(SceneKey key);
+
+		/// @brief Check if a scene switch is pending
+		/// @return true if there's a queued scene transition
+		bool hasPendingSwitch() const;
 
 		/// @brief Handle input for current scene
 		/// @param dt Delta time in seconds
@@ -109,11 +116,21 @@ namespace engine {
 		SceneManager() = default;
 		~SceneManager() = default;
 
+		/// @brief Apply pending scene change (called at start of update)
+		/// @return true if a switch was applied, false if no pending switch
+		bool applyPendingSceneChange();
+
+		/// @brief Immediately switch to a scene (internal use)
+		/// @param key Scene key to switch to
+		/// @return true if switch succeeded
+		bool doImmediateSwitch(SceneKey key);
+
 		SceneRegistry sceneRegistry;
 		std::unordered_map<SceneKey, std::string> sceneNames;
 		std::unordered_map<std::string, SceneKey> nameToKey;
 		std::unique_ptr<IScene> currentScene;
 		SceneKey currentSceneKey{};
+		std::optional<SceneKey> pendingSceneKey;
 		bool exitRequested{false};
 	};
 
