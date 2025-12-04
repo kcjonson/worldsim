@@ -17,781 +17,786 @@
 
 namespace engine::assets {
 
-// ============================================================================
-// GeneratorParams Implementation
-// ============================================================================
+	// ============================================================================
+	// GeneratorParams Implementation
+	// ============================================================================
 
-std::string GeneratorParams::getString(const char* key, const std::string& defaultVal) const {
-	auto it = params.find(key);
-	if (it != params.end()) {
-		return it->second;
-	}
-	return defaultVal;
-}
-
-float GeneratorParams::getFloat(const char* key, float defaultVal) const {
-	auto it = params.find(key);
-	if (it != params.end()) {
-		try {
-			return std::stof(it->second);
-		} catch (...) {
-			return defaultVal;
+	std::string GeneratorParams::getString(const char* key, const std::string& defaultVal) const {
+		auto it = params.find(key);
+		if (it != params.end()) {
+			return it->second;
 		}
-	}
-	return defaultVal;
-}
-
-void GeneratorParams::getFloatRange(const char* key, float& outMin, float& outMax, float defaultMin, float defaultMax) const {
-	outMin = defaultMin;
-	outMax = defaultMax;
-
-	auto it = params.find(key);
-	if (it == params.end()) {
-		return;
+		return defaultVal;
 	}
 
-	const auto& str = it->second;
-	auto		commaPos = str.find(',');
-	if (commaPos == std::string::npos) {
-		// Single value - use for both min and max
-		try {
-			float val = std::stof(str);
-			outMin = val;
-			outMax = val;
-		} catch (...) {
-			// Keep defaults
+	float GeneratorParams::getFloat(const char* key, float defaultVal) const {
+		auto it = params.find(key);
+		if (it != params.end()) {
+			try {
+				return std::stof(it->second);
+			} catch (...) {
+				return defaultVal;
+			}
 		}
-		return;
+		return defaultVal;
 	}
 
-	// Parse min,max format
-	try {
-		outMin = std::stof(str.substr(0, commaPos));
-		outMax = std::stof(str.substr(commaPos + 1));
-	} catch (...) {
+	void GeneratorParams::getFloatRange(const char* key, float& outMin, float& outMax, float defaultMin, float defaultMax) const {
 		outMin = defaultMin;
 		outMax = defaultMax;
-	}
-}
 
-int32_t GeneratorParams::getInt(const char* key, int32_t defaultVal) const {
-	auto it = params.find(key);
-	if (it != params.end()) {
-		try {
-			return std::stoi(it->second);
-		} catch (...) {
-			return defaultVal;
+		auto it = params.find(key);
+		if (it == params.end()) {
+			return;
 		}
-	}
-	return defaultVal;
-}
 
-void GeneratorParams::setString(const char* key, const std::string& value) {
-	params[key] = value;
-}
-
-void GeneratorParams::setFloat(const char* key, float value) {
-	params[key] = std::to_string(value);
-}
-
-bool GeneratorParams::has(const char* key) const {
-	return params.find(key) != params.end();
-}
-
-// ============================================================================
-// GeneratorRegistry Implementation
-// ============================================================================
-
-GeneratorRegistry& GeneratorRegistry::Get() {
-	static GeneratorRegistry instance;
-	return instance;
-}
-
-void GeneratorRegistry::registerGenerator(const char* name, GeneratorFactory factory) {
-	factories[name] = std::move(factory);
-	LOG_DEBUG(Engine, "Registered generator: %s", name);
-}
-
-std::unique_ptr<IAssetGenerator> GeneratorRegistry::create(const char* name) {
-	auto it = factories.find(name);
-	if (it != factories.end()) {
-		return it->second();
-	}
-	LOG_WARNING(Engine, "Generator not found: %s", name);
-	return nullptr;
-}
-
-bool GeneratorRegistry::hasGenerator(const char* name) const {
-	return factories.find(name) != factories.end();
-}
-
-// ============================================================================
-// AssetRegistry Implementation
-// ============================================================================
-
-AssetRegistry& AssetRegistry::Get() {
-	static AssetRegistry instance;
-	return instance;
-}
-
-namespace {
-
-AssetType parseAssetType(const char* str) {
-	if (str == nullptr) {
-		return AssetType::Procedural;
-	}
-	std::string s(str);
-	if (s == "simple" || s == "Simple") {
-		return AssetType::Simple;
-	}
-	return AssetType::Procedural;
-}
-
-AssetComplexity parseComplexity(const char* str) {
-	if (str == nullptr) {
-		return AssetComplexity::Simple;
-	}
-	std::string s(str);
-	if (s == "complex" || s == "Complex") {
-		return AssetComplexity::Complex;
-	}
-	return AssetComplexity::Simple;
-}
-
-RenderingTier parseRenderingTier(const char* str) {
-	if (str == nullptr) {
-		return RenderingTier::Instanced;
-	}
-	std::string s(str);
-	if (s == "batched" || s == "Batched") {
-		return RenderingTier::Batched;
-	}
-	if (s == "individual" || s == "Individual") {
-		return RenderingTier::Individual;
-	}
-	return RenderingTier::Instanced;
-}
-
-AnimationType parseAnimationType(const char* str) {
-	if (str == nullptr) {
-		return AnimationType::None;
-	}
-	std::string s(str);
-	if (s == "parametric" || s == "Parametric") {
-		return AnimationType::Parametric;
-	}
-	if (s == "bezier" || s == "BezierDeform") {
-		return AnimationType::BezierDeform;
-	}
-	return AnimationType::None;
-}
-
-Distribution parseDistribution(const char* str) {
-	if (str == nullptr) {
-		return Distribution::Uniform;
-	}
-	std::string s(str);
-	if (s == "clumped" || s == "Clumped") {
-		return Distribution::Clumped;
-	}
-	if (s == "spaced" || s == "Spaced") {
-		return Distribution::Spaced;
-	}
-	return Distribution::Uniform;
-}
-
-RelationshipKind parseRelationshipKind(const char* name) {
-	if (name == nullptr) {
-		return RelationshipKind::Affinity;
-	}
-	std::string s(name);
-	if (s == "requires") {
-		return RelationshipKind::Requires;
-	}
-	if (s == "affinity") {
-		return RelationshipKind::Affinity;
-	}
-	if (s == "avoids") {
-		return RelationshipKind::Avoids;
-	}
-	return RelationshipKind::Affinity;
-}
-
-/// Parse "min,max" format into two integers
-void parseIntRange(const std::string& str, int32_t& outMin, int32_t& outMax, int32_t defaultMin, int32_t defaultMax) {
-	outMin = defaultMin;
-	outMax = defaultMax;
-	if (str.empty()) {
-		return;
-	}
-	auto commaPos = str.find(',');
-	if (commaPos != std::string::npos) {
-		try {
-			outMin = std::stoi(str.substr(0, commaPos));
-			outMax = std::stoi(str.substr(commaPos + 1));
-		} catch (...) {
-			// Keep defaults
+		const auto& str = it->second;
+		auto		commaPos = str.find(',');
+		if (commaPos == std::string::npos) {
+			// Single value - use for both min and max
+			try {
+				float val = std::stof(str);
+				outMin = val;
+				outMax = val;
+			} catch (...) {
+				// Keep defaults
+			}
+			return;
 		}
-	} else {
-		try {
-			outMin = std::stoi(str);
-			outMax = outMin;
-		} catch (...) {
-			// Keep defaults
-		}
-	}
-	// Ensure min <= max for std::uniform_int_distribution
-	if (outMin > outMax) {
-		std::swap(outMin, outMax);
-	}
-}
 
-/// Parse "min,max" format into two floats
-void parseFloatRange(const std::string& str, float& outMin, float& outMax, float defaultMin, float defaultMax) {
-	outMin = defaultMin;
-	outMax = defaultMax;
-	if (str.empty()) {
-		return;
-	}
-	auto commaPos = str.find(',');
-	if (commaPos != std::string::npos) {
+		// Parse min,max format
 		try {
 			outMin = std::stof(str.substr(0, commaPos));
 			outMax = std::stof(str.substr(commaPos + 1));
 		} catch (...) {
-			// Keep defaults
-		}
-	} else {
-		try {
-			outMin = std::stof(str);
-			outMax = outMin;
-		} catch (...) {
-			// Keep defaults
+			outMin = defaultMin;
+			outMax = defaultMax;
 		}
 	}
-	// Ensure min <= max for std::uniform_real_distribution
-	if (outMin > outMax) {
-		std::swap(outMin, outMax);
-	}
-}
 
-}  // namespace
-
-void AssetRegistry::setSharedScriptsPath(const std::filesystem::path& path) {
-	m_sharedScriptsPath = path;
-	LOG_DEBUG(Engine, "Set shared scripts path: %s", path.string().c_str());
-}
-
-bool AssetRegistry::loadDefinitions(const std::string& xmlPath) {
-	namespace fs = std::filesystem;
-
-	pugi::xml_document doc;
-	pugi::xml_parse_result result = doc.load_file(xmlPath.c_str());
-
-	// Extract base folder from XML path for relative path resolution
-	fs::path baseFolder = fs::path(xmlPath).parent_path();
-
-	if (!result) {
-		LOG_ERROR(Engine, "Failed to load XML: %s - %s", xmlPath.c_str(), result.description());
-		return false;
-	}
-
-	pugi::xml_node root = doc.child("AssetDefinitions");
-	if (!root) {
-		LOG_ERROR(Engine, "Missing <AssetDefinitions> root element in %s", xmlPath.c_str());
-		return false;
-	}
-
-	int loadedCount = 0;
-	for (pugi::xml_node defNode : root.children("AssetDef")) {
-		AssetDefinition def;
-
-		// Required fields
-		def.defName = defNode.child_value("defName");
-		if (def.defName.empty()) {
-			LOG_WARNING(Engine, "Skipping asset definition with empty defName");
-			continue;
-		}
-
-		def.label = defNode.child_value("label");
-		if (def.label.empty()) {
-			def.label = def.defName;
-		}
-
-		// Asset type
-		def.assetType = parseAssetType(defNode.child_value("assetType"));
-
-		// Generator (for procedural assets)
-		pugi::xml_node genNode = defNode.child("generator");
-		if (genNode) {
-			def.generatorName = genNode.child_value("name");
-			def.scriptPath = genNode.child_value("scriptPath");
-
-			// Parse generator parameters
-			pugi::xml_node paramsNode = genNode.child("params");
-			if (paramsNode) {
-				for (pugi::xml_node param : paramsNode.children()) {
-					def.params.setString(param.name(), param.child_value());
-				}
+	int32_t GeneratorParams::getInt(const char* key, int32_t defaultVal) const {
+		auto it = params.find(key);
+		if (it != params.end()) {
+			try {
+				return std::stoi(it->second);
+			} catch (...) {
+				return defaultVal;
 			}
 		}
+		return defaultVal;
+	}
 
-		// SVG path and world height (for simple assets)
-		def.svgPath = defNode.child_value("svgPath");
-		def.worldHeight = static_cast<float>(defNode.child("worldHeight").text().as_double(1.0));
+	void GeneratorParams::setString(const char* key, const std::string& value) {
+		params[key] = value;
+	}
 
-		// Rendering settings
-		pugi::xml_node renderNode = defNode.child("rendering");
-		if (renderNode) {
-			def.complexity = parseComplexity(renderNode.child_value("complexity"));
-			def.renderingTier = parseRenderingTier(renderNode.child_value("tier"));
+	void GeneratorParams::setFloat(const char* key, float value) {
+		params[key] = std::to_string(value);
+	}
+
+	bool GeneratorParams::has(const char* key) const {
+		return params.find(key) != params.end();
+	}
+
+	// ============================================================================
+	// GeneratorRegistry Implementation
+	// ============================================================================
+
+	GeneratorRegistry& GeneratorRegistry::Get() {
+		static GeneratorRegistry instance;
+		return instance;
+	}
+
+	void GeneratorRegistry::registerGenerator(const char* name, GeneratorFactory factory) {
+		factories[name] = std::move(factory);
+		LOG_DEBUG(Engine, "Registered generator: %s", name);
+	}
+
+	std::unique_ptr<IAssetGenerator> GeneratorRegistry::create(const char* name) {
+		auto it = factories.find(name);
+		if (it != factories.end()) {
+			return it->second();
 		}
-
-		// Animation settings
-		pugi::xml_node animNode = defNode.child("animation");
-		if (animNode) {
-			def.animation.enabled = true;
-			def.animation.type = parseAnimationType(animNode.child_value("type"));
-			def.animation.windResponse = static_cast<float>(animNode.child("windResponse").text().as_double(0.3));
-
-			// Parse sway frequency range
-			std::string swayStr = animNode.child_value("swayFrequency");
-			if (!swayStr.empty()) {
-				auto commaPos = swayStr.find(',');
-				if (commaPos != std::string::npos) {
-					try {
-						def.animation.swayFrequencyMin = std::stof(swayStr.substr(0, commaPos));
-						def.animation.swayFrequencyMax = std::stof(swayStr.substr(commaPos + 1));
-					} catch (...) {
-						// Keep defaults
-					}
-				} else {
-					try {
-						def.animation.swayFrequencyMin = std::stof(swayStr);
-						def.animation.swayFrequencyMax = def.animation.swayFrequencyMin;
-					} catch (...) {
-						// Keep defaults
-					}
-				}
-			}
-		}
-
-		// Placement settings - per-biome configuration
-		pugi::xml_node placementNode = defNode.child("placement");
-		if (placementNode) {
-			// Parse per-biome placement configs
-			for (pugi::xml_node biomeNode : placementNode.children("biome")) {
-				BiomePlacement bp;
-
-				// Biome name (required)
-				bp.biomeName = biomeNode.attribute("name").as_string();
-				if (bp.biomeName.empty()) {
-					LOG_WARNING(Engine, "Skipping biome placement with empty name");
-					continue;
-				}
-
-				// Spawn chance
-				bp.spawnChance = static_cast<float>(biomeNode.child("spawnChance").text().as_double(0.3));
-
-				// Distribution type
-				bp.distribution = parseDistribution(biomeNode.child_value("distribution"));
-
-				// Clumping parameters (for Distribution::Clumped)
-				pugi::xml_node clumpingNode = biomeNode.child("clumping");
-				if (clumpingNode) {
-					parseIntRange(
-						clumpingNode.child_value("clumpSize"),
-						bp.clumping.clumpSizeMin,
-						bp.clumping.clumpSizeMax,
-						3,
-						12
-					);
-					parseFloatRange(
-						clumpingNode.child_value("clumpRadius"),
-						bp.clumping.clumpRadiusMin,
-						bp.clumping.clumpRadiusMax,
-						0.5F,
-						2.0F
-					);
-					parseFloatRange(
-						clumpingNode.child_value("clumpSpacing"),
-						bp.clumping.clumpSpacingMin,
-						bp.clumping.clumpSpacingMax,
-						3.0F,
-						8.0F
-					);
-				}
-
-				// Spacing parameters (for Distribution::Spaced)
-				pugi::xml_node spacingNode = biomeNode.child("spacing");
-				if (spacingNode) {
-					bp.spacing.minDistance =
-						static_cast<float>(spacingNode.child("minDistance").text().as_double(2.0));
-				}
-
-				// Tile-type proximity (e.g., <biome name="Wetland" near="Water" distance="2">)
-				bp.nearTileType = biomeNode.attribute("near").as_string();
-				bp.nearDistance = biomeNode.attribute("distance").as_float(0.0F);
-
-				def.placement.biomes.push_back(std::move(bp));
-			}
-
-			// Parse groups (self-declared group membership)
-			pugi::xml_node groupsNode = placementNode.child("groups");
-			if (groupsNode) {
-				for (pugi::xml_node groupNode : groupsNode.children("group")) {
-					const char* groupName = groupNode.text().as_string();
-					if (groupName != nullptr && groupName[0] != '\0') {
-						def.placement.groups.push_back(groupName);
-					}
-				}
-			}
-
-			// Parse relationships (entity-to-entity spawn rules)
-			pugi::xml_node relationshipsNode = placementNode.child("relationships");
-			if (relationshipsNode) {
-				for (pugi::xml_node relNode : relationshipsNode.children()) {
-					PlacementRelationship rel;
-					rel.kind = parseRelationshipKind(relNode.name());
-					rel.distance = relNode.attribute("distance").as_float(5.0F);
-
-					// Parse target (defName, group, or type="same")
-					if (relNode.attribute("defName")) {
-						rel.target.type = EntityRef::Type::DefName;
-						rel.target.value = relNode.attribute("defName").as_string();
-					} else if (relNode.attribute("group")) {
-						rel.target.type = EntityRef::Type::Group;
-						rel.target.value = relNode.attribute("group").as_string();
-					} else if (std::string(relNode.attribute("type").as_string()) == "same") {
-						rel.target.type = EntityRef::Type::Same;
-					}
-
-					// Kind-specific attributes
-					if (rel.kind == RelationshipKind::Affinity) {
-						rel.strength = relNode.attribute("strength").as_float(1.5F);
-					} else if (rel.kind == RelationshipKind::Avoids) {
-						rel.penalty = relNode.attribute("penalty").as_float(0.5F);
-					} else if (rel.kind == RelationshipKind::Requires) {
-						std::string effect = relNode.attribute("effect").as_string();
-						rel.required = (effect == "required");
-					}
-
-					def.placement.relationships.push_back(rel);
-				}
-			}
-		}
-
-		// Variant count
-		def.variantCount = static_cast<uint32_t>(defNode.child("variantCount").text().as_uint(1));
-
-		// Store base folder for relative path resolution
-		def.baseFolder = baseFolder;
-
-		// Store definition
-		definitions[def.defName] = std::move(def);
-		loadedCount++;
-	}
-
-	LOG_DEBUG(Engine, "Loaded %d asset definitions from %s", loadedCount, xmlPath.c_str());
-	return loadedCount > 0;
-}
-
-size_t AssetRegistry::loadDefinitionsFromFolder(const std::string& folderPath) {
-	namespace fs = std::filesystem;
-
-	if (!fs::exists(folderPath)) {
-		LOG_ERROR(Engine, "Asset definitions folder not found: %s", folderPath.c_str());
-		return 0;
-	}
-
-	if (!fs::is_directory(folderPath)) {
-		LOG_ERROR(Engine, "Path is not a directory: %s", folderPath.c_str());
-		return 0;
-	}
-
-	size_t totalLoaded = 0;
-	size_t filesProcessed = 0;
-
-	// Recursively iterate through all files in the folder
-	// Only load "primary" XML files that match the FolderName/FolderName.xml pattern
-	try {
-		for (const auto& entry : fs::recursive_directory_iterator(folderPath)) {
-			if (!entry.is_regular_file()) {
-				continue;
-			}
-
-			// Only process .xml files
-			if (entry.path().extension() != ".xml") {
-				continue;
-			}
-
-			// Check if this is a primary XML file (FolderName/FolderName.xml pattern)
-			// This prevents loading helper XMLs or non-primary definition files
-			std::string filename = entry.path().stem().string();
-			std::string parentFolder = entry.path().parent_path().filename().string();
-			if (filename != parentFolder) {
-				LOG_DEBUG(Engine, "Skipping non-primary XML: %s (filename '%s' != parent '%s')",
-						  entry.path().string().c_str(), filename.c_str(), parentFolder.c_str());
-				continue;
-			}
-
-			filesProcessed++;
-			size_t beforeCount = definitions.size();
-
-			if (loadDefinitions(entry.path().string())) {
-				size_t loaded = definitions.size() - beforeCount;
-				totalLoaded += loaded;
-				LOG_DEBUG(Engine, "Loaded %zu definitions from %s", loaded, entry.path().string().c_str());
-			}
-		}
-	} catch (const fs::filesystem_error& e) {
-		LOG_ERROR(Engine, "Filesystem error scanning '%s': %s", folderPath.c_str(), e.what());
-		return totalLoaded;
-	}
-
-	LOG_INFO(Engine, "Asset folder scan complete: %zu definitions from %zu XML files in %s", totalLoaded, filesProcessed, folderPath.c_str());
-
-	// Build group index from loaded definitions
-	buildGroupIndex();
-
-	return totalLoaded;
-}
-
-const AssetDefinition* AssetRegistry::getDefinition(const std::string& defName) const {
-	auto it = definitions.find(defName);
-	if (it != definitions.end()) {
-		return &it->second;
-	}
-	return nullptr;
-}
-
-const renderer::TessellatedMesh* AssetRegistry::getTemplate(const std::string& defName) {
-	// Check cache first
-	auto cacheIt = templateCache.find(defName);
-	if (cacheIt != templateCache.end()) {
-		return &cacheIt->second;
-	}
-
-	// Get definition
-	const AssetDefinition* def = getDefinition(defName);
-	if (def == nullptr) {
-		LOG_ERROR(Engine, "Definition not found: %s", defName.c_str());
+		LOG_WARNING(Engine, "Generator not found: %s", name);
 		return nullptr;
 	}
 
-	renderer::TessellatedMesh mesh;
+	bool GeneratorRegistry::hasGenerator(const char* name) const {
+		return factories.find(name) != factories.end();
+	}
 
-	if (def->assetType == AssetType::Simple) {
-		// Load SVG and tessellate directly
-		if (def->svgPath.empty()) {
-			LOG_ERROR(Engine, "Simple asset %s has no svgPath", defName.c_str());
-			return nullptr;
-		}
+	// ============================================================================
+	// AssetRegistry Implementation
+	// ============================================================================
 
-		// Resolve SVG path relative to asset folder
-		std::string resolvedSvgPath = def->resolvePath(def->svgPath).string();
-		LOG_DEBUG(Engine, "Resolved SVG path: %s -> %s", def->svgPath.c_str(), resolvedSvgPath.c_str());
+	AssetRegistry& AssetRegistry::Get() {
+		static AssetRegistry instance;
+		return instance;
+	}
 
-		std::vector<renderer::LoadedSVGShape> shapes;
-		constexpr float kCurveTolerance = 0.5F;
-		if (!renderer::loadSVG(resolvedSvgPath, kCurveTolerance, shapes)) {
-			LOG_ERROR(Engine, "Failed to load SVG: %s (resolved from %s)", resolvedSvgPath.c_str(), def->svgPath.c_str());
-			return nullptr;
-		}
+	namespace {
 
-		// Calculate SVG bounding box for normalization
-		float minY = std::numeric_limits<float>::max();
-		float maxY = std::numeric_limits<float>::lowest();
-		for (const auto& shape : shapes) {
-			for (const auto& svgPath : shape.paths) {
-				for (const auto& v : svgPath.vertices) {
-					minY = std::min(minY, v.y);
-					maxY = std::max(maxY, v.y);
-				}
+		AssetType parseAssetType(const char* str) {
+			if (str == nullptr) {
+				return AssetType::Procedural;
 			}
-		}
-		float svgHeight = maxY - minY;
-		float scaleFactor = (svgHeight > 0.001F) ? (def->worldHeight / svgHeight) : 1.0F;
-		LOG_INFO(Engine, "SVG '%s': minY=%.2f, maxY=%.2f, svgHeight=%.2f, worldHeight=%.2f, scaleFactor=%.4f",
-				 defName.c_str(), minY, maxY, svgHeight, def->worldHeight, scaleFactor);
-
-		// Convert SVG shapes to GeneratedAsset with normalization
-		GeneratedAsset asset;
-		for (const auto& shape : shapes) {
-			for (const auto& svgPath : shape.paths) {
-				GeneratedPath genPath;
-				genPath.vertices.reserve(svgPath.vertices.size());
-				for (const auto& v : svgPath.vertices) {
-					genPath.vertices.push_back({v.x * scaleFactor, v.y * scaleFactor});
-				}
-				genPath.fillColor = shape.fillColor;
-				genPath.isClosed = svgPath.isClosed;
-				asset.addPath(std::move(genPath));
+			std::string s(str);
+			if (s == "simple" || s == "Simple") {
+				return AssetType::Simple;
 			}
+			return AssetType::Procedural;
 		}
 
-		if (!tessellateAsset(asset, mesh)) {
-			LOG_ERROR(Engine, "Failed to tessellate SVG asset: %s", defName.c_str());
-			return nullptr;
+		AssetComplexity parseComplexity(const char* str) {
+			if (str == nullptr) {
+				return AssetComplexity::Simple;
+			}
+			std::string s(str);
+			if (s == "complex" || s == "Complex") {
+				return AssetComplexity::Complex;
+			}
+			return AssetComplexity::Simple;
 		}
-	} else {
-		// Generate procedural asset
-		GeneratedAsset asset;
-		if (!generateAsset(defName, 42, asset)) {  // Use fixed seed for template
-			LOG_ERROR(Engine, "Failed to generate asset: %s", defName.c_str());
-			return nullptr;
+
+		RenderingTier parseRenderingTier(const char* str) {
+			if (str == nullptr) {
+				return RenderingTier::Instanced;
+			}
+			std::string s(str);
+			if (s == "batched" || s == "Batched") {
+				return RenderingTier::Batched;
+			}
+			if (s == "individual" || s == "Individual") {
+				return RenderingTier::Individual;
+			}
+			return RenderingTier::Instanced;
 		}
 
-		if (!tessellateAsset(asset, mesh)) {
-			LOG_ERROR(Engine, "Failed to tessellate asset: %s", defName.c_str());
-			return nullptr;
+		AnimationType parseAnimationType(const char* str) {
+			if (str == nullptr) {
+				return AnimationType::None;
+			}
+			std::string s(str);
+			if (s == "parametric" || s == "Parametric") {
+				return AnimationType::Parametric;
+			}
+			if (s == "bezier" || s == "BezierDeform") {
+				return AnimationType::BezierDeform;
+			}
+			return AnimationType::None;
 		}
-	}
 
-	// Cache and return
-	templateCache[defName] = std::move(mesh);
-	return &templateCache[defName];
-}
+		Distribution parseDistribution(const char* str) {
+			if (str == nullptr) {
+				return Distribution::Uniform;
+			}
+			std::string s(str);
+			if (s == "clumped" || s == "Clumped") {
+				return Distribution::Clumped;
+			}
+			if (s == "spaced" || s == "Spaced") {
+				return Distribution::Spaced;
+			}
+			return Distribution::Uniform;
+		}
 
-bool AssetRegistry::generateAsset(const std::string& defName, uint32_t seed, GeneratedAsset& outAsset) {
-	const AssetDefinition* def = getDefinition(defName);
-	if (def == nullptr) {
-		LOG_ERROR(Engine, "Definition not found: %s", defName.c_str());
-		return false;
-	}
+		RelationshipKind parseRelationshipKind(const char* name) {
+			if (name == nullptr) {
+				return RelationshipKind::Affinity;
+			}
+			std::string s(name);
+			if (s == "requires") {
+				return RelationshipKind::Requires;
+			}
+			if (s == "affinity") {
+				return RelationshipKind::Affinity;
+			}
+			if (s == "avoids") {
+				return RelationshipKind::Avoids;
+			}
+			return RelationshipKind::Affinity;
+		}
 
-	if (def->assetType != AssetType::Procedural) {
-		LOG_ERROR(Engine, "Asset %s is not procedural", defName.c_str());
-		return false;
-	}
-
-	// Set up generation context
-	GenerationContext ctx;
-	ctx.seed = seed;
-	ctx.variantIndex = 0;
-	outAsset.clear();
-
-	// Check if this is a Lua script generator
-	if (def->isLuaGenerator()) {
-		try {
-			// Resolve script path - check for @shared/ prefix
-			std::string resolvedScriptPath;
-			const std::string kSharedPrefix = "@shared/";
-			if (def->scriptPath.compare(0, kSharedPrefix.size(), kSharedPrefix) == 0) {
-				// Script is in shared folder - resolve using shared scripts path
-				std::string relativePath = def->scriptPath.substr(kSharedPrefix.size());
-				resolvedScriptPath = (m_sharedScriptsPath / relativePath).string();
-				LOG_DEBUG(Engine, "Resolved shared script: %s -> %s", def->scriptPath.c_str(), resolvedScriptPath.c_str());
+		/// Parse "min,max" format into two integers
+		void parseIntRange(const std::string& str, int32_t& outMin, int32_t& outMax, int32_t defaultMin, int32_t defaultMax) {
+			outMin = defaultMin;
+			outMax = defaultMax;
+			if (str.empty()) {
+				return;
+			}
+			auto commaPos = str.find(',');
+			if (commaPos != std::string::npos) {
+				try {
+					outMin = std::stoi(str.substr(0, commaPos));
+					outMax = std::stoi(str.substr(commaPos + 1));
+				} catch (...) {
+					// Keep defaults
+				}
 			} else {
-				// Script is local to asset folder
-				resolvedScriptPath = def->resolvePath(def->scriptPath).string();
-				LOG_DEBUG(Engine, "Resolved local script: %s -> %s", def->scriptPath.c_str(), resolvedScriptPath.c_str());
+				try {
+					outMin = std::stoi(str);
+					outMax = outMin;
+				} catch (...) {
+					// Keep defaults
+				}
 			}
+			// Ensure min <= max for std::uniform_int_distribution
+			if (outMin > outMax) {
+				std::swap(outMin, outMax);
+			}
+		}
 
-			LuaGenerator luaGen(resolvedScriptPath);
-			return luaGen.generate(ctx, def->params, outAsset);
-		} catch (const std::exception& e) {
-			LOG_ERROR(Engine, "LuaGenerator error for '%s': %s", def->scriptPath.c_str(), e.what());
+		/// Parse "min,max" format into two floats
+		void parseFloatRange(const std::string& str, float& outMin, float& outMax, float defaultMin, float defaultMax) {
+			outMin = defaultMin;
+			outMax = defaultMax;
+			if (str.empty()) {
+				return;
+			}
+			auto commaPos = str.find(',');
+			if (commaPos != std::string::npos) {
+				try {
+					outMin = std::stof(str.substr(0, commaPos));
+					outMax = std::stof(str.substr(commaPos + 1));
+				} catch (...) {
+					// Keep defaults
+				}
+			} else {
+				try {
+					outMin = std::stof(str);
+					outMax = outMin;
+				} catch (...) {
+					// Keep defaults
+				}
+			}
+			// Ensure min <= max for std::uniform_real_distribution
+			if (outMin > outMax) {
+				std::swap(outMin, outMax);
+			}
+		}
+
+	} // namespace
+
+	void AssetRegistry::setSharedScriptsPath(const std::filesystem::path& path) {
+		m_sharedScriptsPath = path;
+		LOG_DEBUG(Engine, "Set shared scripts path: %s", path.string().c_str());
+	}
+
+	bool AssetRegistry::loadDefinitions(const std::string& xmlPath) {
+		namespace fs = std::filesystem;
+
+		pugi::xml_document	   doc;
+		pugi::xml_parse_result result = doc.load_file(xmlPath.c_str());
+
+		// Extract base folder from XML path for relative path resolution
+		// Use fs::absolute() to ensure baseFolder is always an absolute path
+		fs::path baseFolder = fs::absolute(xmlPath).parent_path();
+
+		if (!result) {
+			LOG_ERROR(Engine, "Failed to load XML: %s - %s", xmlPath.c_str(), result.description());
 			return false;
 		}
-	}
 
-	// Create C++ generator from registry
-	auto generator = GeneratorRegistry::Get().create(def->generatorName.c_str());
-	if (!generator) {
-		LOG_ERROR(Engine, "Generator not found: %s", def->generatorName.c_str());
-		return false;
-	}
-
-	return generator->generate(ctx, def->params, outAsset);
-}
-
-bool AssetRegistry::tessellateAsset(const GeneratedAsset& asset, renderer::TessellatedMesh& outMesh) {
-	outMesh.clear();
-
-	renderer::Tessellator tessellator;
-
-	for (const auto& path : asset.paths) {
-		if (path.vertices.size() < 3) {
-			continue;
+		pugi::xml_node root = doc.child("AssetDefinitions");
+		if (!root) {
+			LOG_ERROR(Engine, "Missing <AssetDefinitions> root element in %s", xmlPath.c_str());
+			return false;
 		}
 
-		renderer::VectorPath vectorPath;
-		vectorPath.vertices = path.vertices;
-		vectorPath.isClosed = path.isClosed;
+		int loadedCount = 0;
+		for (pugi::xml_node defNode : root.children("AssetDef")) {
+			AssetDefinition def;
 
-		renderer::TessellatedMesh pathMesh;
-		if (!tessellator.Tessellate(vectorPath, pathMesh)) {
-			LOG_WARNING(Engine, "Failed to tessellate path with %zu vertices", path.vertices.size());
-			continue;
+			// Required fields
+			def.defName = defNode.child_value("defName");
+			if (def.defName.empty()) {
+				LOG_WARNING(Engine, "Skipping asset definition with empty defName");
+				continue;
+			}
+
+			def.label = defNode.child_value("label");
+			if (def.label.empty()) {
+				def.label = def.defName;
+			}
+
+			// Asset type
+			def.assetType = parseAssetType(defNode.child_value("assetType"));
+
+			// Generator (for procedural assets)
+			pugi::xml_node genNode = defNode.child("generator");
+			if (genNode) {
+				def.generatorName = genNode.child_value("name");
+				def.scriptPath = genNode.child_value("scriptPath");
+
+				// Parse generator parameters
+				pugi::xml_node paramsNode = genNode.child("params");
+				if (paramsNode) {
+					for (pugi::xml_node param : paramsNode.children()) {
+						def.params.setString(param.name(), param.child_value());
+					}
+				}
+			}
+
+			// SVG path and world height (for simple assets)
+			def.svgPath = defNode.child_value("svgPath");
+			def.worldHeight = static_cast<float>(defNode.child("worldHeight").text().as_double(1.0));
+
+			// Rendering settings
+			pugi::xml_node renderNode = defNode.child("rendering");
+			if (renderNode) {
+				def.complexity = parseComplexity(renderNode.child_value("complexity"));
+				def.renderingTier = parseRenderingTier(renderNode.child_value("tier"));
+			}
+
+			// Animation settings
+			pugi::xml_node animNode = defNode.child("animation");
+			if (animNode) {
+				def.animation.enabled = true;
+				def.animation.type = parseAnimationType(animNode.child_value("type"));
+				def.animation.windResponse = static_cast<float>(animNode.child("windResponse").text().as_double(0.3));
+
+				// Parse sway frequency range
+				std::string swayStr = animNode.child_value("swayFrequency");
+				if (!swayStr.empty()) {
+					auto commaPos = swayStr.find(',');
+					if (commaPos != std::string::npos) {
+						try {
+							def.animation.swayFrequencyMin = std::stof(swayStr.substr(0, commaPos));
+							def.animation.swayFrequencyMax = std::stof(swayStr.substr(commaPos + 1));
+						} catch (...) {
+							// Keep defaults
+						}
+					} else {
+						try {
+							def.animation.swayFrequencyMin = std::stof(swayStr);
+							def.animation.swayFrequencyMax = def.animation.swayFrequencyMin;
+						} catch (...) {
+							// Keep defaults
+						}
+					}
+				}
+			}
+
+			// Placement settings - per-biome configuration
+			pugi::xml_node placementNode = defNode.child("placement");
+			if (placementNode) {
+				// Parse per-biome placement configs
+				for (pugi::xml_node biomeNode : placementNode.children("biome")) {
+					BiomePlacement bp;
+
+					// Biome name (required)
+					bp.biomeName = biomeNode.attribute("name").as_string();
+					if (bp.biomeName.empty()) {
+						LOG_WARNING(Engine, "Skipping biome placement with empty name");
+						continue;
+					}
+
+					// Spawn chance
+					bp.spawnChance = static_cast<float>(biomeNode.child("spawnChance").text().as_double(0.3));
+
+					// Distribution type
+					bp.distribution = parseDistribution(biomeNode.child_value("distribution"));
+
+					// Clumping parameters (for Distribution::Clumped)
+					pugi::xml_node clumpingNode = biomeNode.child("clumping");
+					if (clumpingNode) {
+						parseIntRange(clumpingNode.child_value("clumpSize"), bp.clumping.clumpSizeMin, bp.clumping.clumpSizeMax, 3, 12);
+						parseFloatRange(
+							clumpingNode.child_value("clumpRadius"), bp.clumping.clumpRadiusMin, bp.clumping.clumpRadiusMax, 0.5F, 2.0F
+						);
+						parseFloatRange(
+							clumpingNode.child_value("clumpSpacing"), bp.clumping.clumpSpacingMin, bp.clumping.clumpSpacingMax, 3.0F, 8.0F
+						);
+					}
+
+					// Spacing parameters (for Distribution::Spaced)
+					pugi::xml_node spacingNode = biomeNode.child("spacing");
+					if (spacingNode) {
+						bp.spacing.minDistance = static_cast<float>(spacingNode.child("minDistance").text().as_double(2.0));
+					}
+
+					// Tile-type proximity (e.g., <biome name="Wetland" near="Water" distance="2">)
+					bp.nearTileType = biomeNode.attribute("near").as_string();
+					bp.nearDistance = biomeNode.attribute("distance").as_float(0.0F);
+
+					def.placement.biomes.push_back(std::move(bp));
+				}
+
+				// Parse groups (self-declared group membership)
+				pugi::xml_node groupsNode = placementNode.child("groups");
+				if (groupsNode) {
+					for (pugi::xml_node groupNode : groupsNode.children("group")) {
+						const char* groupName = groupNode.text().as_string();
+						if (groupName != nullptr && groupName[0] != '\0') {
+							def.placement.groups.push_back(groupName);
+						}
+					}
+				}
+
+				// Parse relationships (entity-to-entity spawn rules)
+				pugi::xml_node relationshipsNode = placementNode.child("relationships");
+				if (relationshipsNode) {
+					for (pugi::xml_node relNode : relationshipsNode.children()) {
+						PlacementRelationship rel;
+						rel.kind = parseRelationshipKind(relNode.name());
+						rel.distance = relNode.attribute("distance").as_float(5.0F);
+
+						// Parse target (defName, group, or type="same")
+						if (relNode.attribute("defName")) {
+							rel.target.type = EntityRef::Type::DefName;
+							rel.target.value = relNode.attribute("defName").as_string();
+						} else if (relNode.attribute("group")) {
+							rel.target.type = EntityRef::Type::Group;
+							rel.target.value = relNode.attribute("group").as_string();
+						} else if (std::string(relNode.attribute("type").as_string()) == "same") {
+							rel.target.type = EntityRef::Type::Same;
+						}
+
+						// Kind-specific attributes
+						if (rel.kind == RelationshipKind::Affinity) {
+							rel.strength = relNode.attribute("strength").as_float(1.5F);
+						} else if (rel.kind == RelationshipKind::Avoids) {
+							rel.penalty = relNode.attribute("penalty").as_float(0.5F);
+						} else if (rel.kind == RelationshipKind::Requires) {
+							std::string effect = relNode.attribute("effect").as_string();
+							rel.required = (effect == "required");
+						}
+
+						def.placement.relationships.push_back(rel);
+					}
+				}
+			}
+
+			// Variant count
+			def.variantCount = static_cast<uint32_t>(defNode.child("variantCount").text().as_uint(1));
+
+			// Store base folder for relative path resolution
+			def.baseFolder = baseFolder;
+
+			// Store definition
+			definitions[def.defName] = std::move(def);
+			loadedCount++;
 		}
 
-		// Append to output mesh (with index offset)
-		uint16_t baseIndex = static_cast<uint16_t>(outMesh.vertices.size());
-		for (const auto& v : pathMesh.vertices) {
-			outMesh.vertices.push_back(v);
-			outMesh.colors.push_back(path.fillColor); // Preserve path color per-vertex
+		LOG_DEBUG(Engine, "Loaded %d asset definitions from %s", loadedCount, xmlPath.c_str());
+		return loadedCount > 0;
+	}
+
+	size_t AssetRegistry::loadDefinitionsFromFolder(const std::string& folderPath) {
+		namespace fs = std::filesystem;
+
+		if (!fs::exists(folderPath)) {
+			LOG_ERROR(Engine, "Asset definitions folder not found: %s", folderPath.c_str());
+			return 0;
 		}
-		for (const auto& idx : pathMesh.indices) {
-			outMesh.indices.push_back(baseIndex + idx);
+
+		if (!fs::is_directory(folderPath)) {
+			LOG_ERROR(Engine, "Path is not a directory: %s", folderPath.c_str());
+			return 0;
+		}
+
+		size_t totalLoaded = 0;
+		size_t filesProcessed = 0;
+
+		// Recursively iterate through all files in the folder
+		// Only load "primary" XML files that match the FolderName/FolderName.xml pattern
+		try {
+			for (const auto& entry : fs::recursive_directory_iterator(folderPath)) {
+				if (!entry.is_regular_file()) {
+					continue;
+				}
+
+				// Only process .xml files
+				if (entry.path().extension() != ".xml") {
+					continue;
+				}
+
+				// Check if this is a primary XML file (FolderName/FolderName.xml pattern)
+				// This prevents loading helper XMLs or non-primary definition files
+				std::string filename = entry.path().stem().string();
+				std::string parentFolder = entry.path().parent_path().filename().string();
+				if (filename != parentFolder) {
+					LOG_DEBUG(
+						Engine,
+						"Skipping non-primary XML: %s (filename '%s' != parent '%s')",
+						entry.path().string().c_str(),
+						filename.c_str(),
+						parentFolder.c_str()
+					);
+					continue;
+				}
+
+				filesProcessed++;
+				size_t beforeCount = definitions.size();
+
+				if (loadDefinitions(entry.path().string())) {
+					size_t loaded = definitions.size() - beforeCount;
+					totalLoaded += loaded;
+					LOG_DEBUG(Engine, "Loaded %zu definitions from %s", loaded, entry.path().string().c_str());
+				}
+			}
+		} catch (const fs::filesystem_error& e) {
+			LOG_ERROR(Engine, "Filesystem error scanning '%s': %s", folderPath.c_str(), e.what());
+			return totalLoaded;
+		}
+
+		LOG_INFO(
+			Engine, "Asset folder scan complete: %zu definitions from %zu XML files in %s", totalLoaded, filesProcessed, folderPath.c_str()
+		);
+
+		// Build group index from loaded definitions
+		buildGroupIndex();
+
+		return totalLoaded;
+	}
+
+	const AssetDefinition* AssetRegistry::getDefinition(const std::string& defName) const {
+		auto it = definitions.find(defName);
+		if (it != definitions.end()) {
+			return &it->second;
+		}
+		return nullptr;
+	}
+
+	const renderer::TessellatedMesh* AssetRegistry::getTemplate(const std::string& defName) {
+		// Check cache first
+		auto cacheIt = templateCache.find(defName);
+		if (cacheIt != templateCache.end()) {
+			return &cacheIt->second;
+		}
+
+		// Get definition
+		const AssetDefinition* def = getDefinition(defName);
+		if (def == nullptr) {
+			LOG_ERROR(Engine, "Definition not found: %s", defName.c_str());
+			return nullptr;
+		}
+
+		renderer::TessellatedMesh mesh;
+
+		if (def->assetType == AssetType::Simple) {
+			// Load SVG and tessellate directly
+			if (def->svgPath.empty()) {
+				LOG_ERROR(Engine, "Simple asset %s has no svgPath", defName.c_str());
+				return nullptr;
+			}
+
+			// Resolve SVG path relative to asset folder
+			std::string resolvedSvgPath = def->resolvePath(def->svgPath).string();
+			LOG_DEBUG(Engine, "Resolved SVG path: %s -> %s", def->svgPath.c_str(), resolvedSvgPath.c_str());
+
+			std::vector<renderer::LoadedSVGShape> shapes;
+			constexpr float						  kCurveTolerance = 0.5F;
+			if (!renderer::loadSVG(resolvedSvgPath, kCurveTolerance, shapes)) {
+				LOG_ERROR(Engine, "Failed to load SVG: %s (resolved from %s)", resolvedSvgPath.c_str(), def->svgPath.c_str());
+				return nullptr;
+			}
+
+			// Calculate SVG bounding box for normalization
+			float minY = std::numeric_limits<float>::max();
+			float maxY = std::numeric_limits<float>::lowest();
+			for (const auto& shape : shapes) {
+				for (const auto& svgPath : shape.paths) {
+					for (const auto& v : svgPath.vertices) {
+						minY = std::min(minY, v.y);
+						maxY = std::max(maxY, v.y);
+					}
+				}
+			}
+			float svgHeight = maxY - minY;
+			float scaleFactor = (svgHeight > 0.001F) ? (def->worldHeight / svgHeight) : 1.0F;
+			LOG_INFO(
+				Engine,
+				"SVG '%s': minY=%.2f, maxY=%.2f, svgHeight=%.2f, worldHeight=%.2f, scaleFactor=%.4f",
+				defName.c_str(),
+				minY,
+				maxY,
+				svgHeight,
+				def->worldHeight,
+				scaleFactor
+			);
+
+			// Convert SVG shapes to GeneratedAsset with normalization
+			GeneratedAsset asset;
+			for (const auto& shape : shapes) {
+				for (const auto& svgPath : shape.paths) {
+					GeneratedPath genPath;
+					genPath.vertices.reserve(svgPath.vertices.size());
+					for (const auto& v : svgPath.vertices) {
+						genPath.vertices.push_back({v.x * scaleFactor, v.y * scaleFactor});
+					}
+					genPath.fillColor = shape.fillColor;
+					genPath.isClosed = svgPath.isClosed;
+					asset.addPath(std::move(genPath));
+				}
+			}
+
+			if (!tessellateAsset(asset, mesh)) {
+				LOG_ERROR(Engine, "Failed to tessellate SVG asset: %s", defName.c_str());
+				return nullptr;
+			}
+		} else {
+			// Generate procedural asset
+			GeneratedAsset asset;
+			if (!generateAsset(defName, 42, asset)) { // Use fixed seed for template
+				LOG_ERROR(Engine, "Failed to generate asset: %s", defName.c_str());
+				return nullptr;
+			}
+
+			if (!tessellateAsset(asset, mesh)) {
+				LOG_ERROR(Engine, "Failed to tessellate asset: %s", defName.c_str());
+				return nullptr;
+			}
+		}
+
+		// Cache and return
+		templateCache[defName] = std::move(mesh);
+		return &templateCache[defName];
+	}
+
+	bool AssetRegistry::generateAsset(const std::string& defName, uint32_t seed, GeneratedAsset& outAsset) {
+		const AssetDefinition* def = getDefinition(defName);
+		if (def == nullptr) {
+			LOG_ERROR(Engine, "Definition not found: %s", defName.c_str());
+			return false;
+		}
+
+		if (def->assetType != AssetType::Procedural) {
+			LOG_ERROR(Engine, "Asset %s is not procedural", defName.c_str());
+			return false;
+		}
+
+		// Set up generation context
+		GenerationContext ctx;
+		ctx.seed = seed;
+		ctx.variantIndex = 0;
+		outAsset.clear();
+
+		// Check if this is a Lua script generator
+		if (def->isLuaGenerator()) {
+			try {
+				// Resolve script path - check for @shared/ prefix
+				std::string		  resolvedScriptPath;
+				const std::string kSharedPrefix = "@shared/";
+				if (def->scriptPath.compare(0, kSharedPrefix.size(), kSharedPrefix) == 0) {
+					// Script is in shared folder - resolve using shared scripts path
+					if (m_sharedScriptsPath.empty()) {
+						LOG_ERROR(Engine, "Shared scripts path not configured, but @shared/ prefix used in: %s", def->scriptPath.c_str());
+						return false;
+					}
+					std::string relativePath = def->scriptPath.substr(kSharedPrefix.size());
+					resolvedScriptPath = (m_sharedScriptsPath / relativePath).string();
+					LOG_DEBUG(Engine, "Resolved shared script: %s -> %s", def->scriptPath.c_str(), resolvedScriptPath.c_str());
+				} else {
+					// Script is local to asset folder
+					resolvedScriptPath = def->resolvePath(def->scriptPath).string();
+					LOG_DEBUG(Engine, "Resolved local script: %s -> %s", def->scriptPath.c_str(), resolvedScriptPath.c_str());
+				}
+
+				LuaGenerator luaGen(resolvedScriptPath);
+				return luaGen.generate(ctx, def->params, outAsset);
+			} catch (const std::exception& e) {
+				LOG_ERROR(Engine, "LuaGenerator error for '%s': %s", def->scriptPath.c_str(), e.what());
+				return false;
+			}
+		}
+
+		// Create C++ generator from registry
+		auto generator = GeneratorRegistry::Get().create(def->generatorName.c_str());
+		if (!generator) {
+			LOG_ERROR(Engine, "Generator not found: %s", def->generatorName.c_str());
+			return false;
+		}
+
+		return generator->generate(ctx, def->params, outAsset);
+	}
+
+	bool AssetRegistry::tessellateAsset(const GeneratedAsset& asset, renderer::TessellatedMesh& outMesh) {
+		outMesh.clear();
+
+		renderer::Tessellator tessellator;
+
+		for (const auto& path : asset.paths) {
+			if (path.vertices.size() < 3) {
+				continue;
+			}
+
+			renderer::VectorPath vectorPath;
+			vectorPath.vertices = path.vertices;
+			vectorPath.isClosed = path.isClosed;
+
+			renderer::TessellatedMesh pathMesh;
+			if (!tessellator.Tessellate(vectorPath, pathMesh)) {
+				LOG_WARNING(Engine, "Failed to tessellate path with %zu vertices", path.vertices.size());
+				continue;
+			}
+
+			// Append to output mesh (with index offset)
+			uint16_t baseIndex = static_cast<uint16_t>(outMesh.vertices.size());
+			for (const auto& v : pathMesh.vertices) {
+				outMesh.vertices.push_back(v);
+				outMesh.colors.push_back(path.fillColor); // Preserve path color per-vertex
+			}
+			for (const auto& idx : pathMesh.indices) {
+				outMesh.indices.push_back(baseIndex + idx);
+			}
+		}
+
+		return !outMesh.vertices.empty();
+	}
+
+	void AssetRegistry::clear() {
+		definitions.clear();
+		templateCache.clear();
+		groupIndex.clear();
+	}
+
+	std::vector<std::string> AssetRegistry::getDefinitionNames() const {
+		std::vector<std::string> names;
+		names.reserve(definitions.size());
+		for (const auto& [name, _] : definitions) {
+			names.push_back(name);
+		}
+		return names;
+	}
+
+	// ============================================================================
+	// Group Index Implementation
+	// ============================================================================
+
+	void AssetRegistry::buildGroupIndex() {
+		groupIndex.clear();
+
+		for (const auto& [defName, def] : definitions) {
+			for (const auto& group : def.placement.groups) {
+				groupIndex[group].push_back(defName);
+			}
+		}
+
+		if (!groupIndex.empty()) {
+			LOG_DEBUG(Engine, "Built group index: %zu groups", groupIndex.size());
 		}
 	}
 
-	return !outMesh.vertices.empty();
-}
-
-void AssetRegistry::clear() {
-	definitions.clear();
-	templateCache.clear();
-	groupIndex.clear();
-}
-
-std::vector<std::string> AssetRegistry::getDefinitionNames() const {
-	std::vector<std::string> names;
-	names.reserve(definitions.size());
-	for (const auto& [name, _] : definitions) {
-		names.push_back(name);
-	}
-	return names;
-}
-
-// ============================================================================
-// Group Index Implementation
-// ============================================================================
-
-void AssetRegistry::buildGroupIndex() {
-	groupIndex.clear();
-
-	for (const auto& [defName, def] : definitions) {
-		for (const auto& group : def.placement.groups) {
-			groupIndex[group].push_back(defName);
+	std::vector<std::string> AssetRegistry::getGroupMembers(const std::string& groupName) const {
+		auto it = groupIndex.find(groupName);
+		if (it != groupIndex.end()) {
+			return it->second;
 		}
+		return {};
 	}
 
-	if (!groupIndex.empty()) {
-		LOG_DEBUG(Engine, "Built group index: %zu groups", groupIndex.size());
+	std::vector<std::string> AssetRegistry::getGroups() const {
+		std::vector<std::string> groups;
+		groups.reserve(groupIndex.size());
+		for (const auto& [name, _] : groupIndex) {
+			groups.push_back(name);
+		}
+		return groups;
 	}
-}
 
-std::vector<std::string> AssetRegistry::getGroupMembers(const std::string& groupName) const {
-	auto it = groupIndex.find(groupName);
-	if (it != groupIndex.end()) {
-		return it->second;
+	bool AssetRegistry::hasGroup(const std::string& groupName) const {
+		return groupIndex.find(groupName) != groupIndex.end();
 	}
-	return {};
-}
 
-std::vector<std::string> AssetRegistry::getGroups() const {
-	std::vector<std::string> groups;
-	groups.reserve(groupIndex.size());
-	for (const auto& [name, _] : groupIndex) {
-		groups.push_back(name);
-	}
-	return groups;
-}
-
-bool AssetRegistry::hasGroup(const std::string& groupName) const {
-	return groupIndex.find(groupName) != groupIndex.end();
-}
-
-}  // namespace engine::assets
+} // namespace engine::assets
