@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- Tree Asset Definitions
-     Flora assets for trees using Lua-based procedural generation.
+<!-- Maple Tree Asset Definition
+     Procedural tree using shared Lua generator.
+     Script path uses @shared/ prefix for shared scripts folder.
 -->
 <AssetDefinitions>
   <AssetDef>
@@ -9,8 +10,8 @@
     <assetType>procedural</assetType>
 
     <generator>
-      <!-- Lua script path (relative to project root) -->
-      <scriptPath>assets/generators/trees/deciduous.lua</scriptPath>
+      <!-- Shared script using @shared/ prefix -->
+      <scriptPath>@shared/deciduous.lua</scriptPath>
       <params>
         <!-- Trunk dimensions in meters (scaled for top-down game view) -->
         <trunkHeight>1.2</trunkHeight>
@@ -70,57 +71,5 @@
 
     <!-- Pre-generate multiple variants for variety -->
     <variantCount>20</variantCount>
-  </AssetDef>
-
-  <AssetDef>
-    <defName>Flora_TreeOak</defName>
-    <label>Oak Tree</label>
-    <assetType>procedural</assetType>
-
-    <generator>
-      <scriptPath>assets/generators/trees/deciduous.lua</scriptPath>
-      <params>
-        <!-- Trunk dimensions in meters (oak is larger than maple, scaled for top-down) -->
-        <trunkHeight>1.5</trunkHeight>
-        <trunkWidth>0.2</trunkWidth>
-        <!-- Canopy radius in meters -->
-        <canopyRadius>0.8</canopyRadius>
-        <!-- Number of visible branches -->
-        <branchCount>4</branchCount>
-      </params>
-    </generator>
-
-    <rendering>
-      <complexity>complex</complexity>
-      <tier>batched</tier>
-    </rendering>
-
-    <placement>
-      <biome name="Forest">
-        <spawnChance>0.03</spawnChance>
-        <distribution>spaced</distribution>
-        <spacing>
-          <minDistance>6.0</minDistance>
-        </spacing>
-      </biome>
-
-      <!-- Groups this asset belongs to -->
-      <groups>
-        <group>trees</group>
-        <group>deciduous_trees</group>
-        <group>oak_trees</group>
-        <group>large_flora</group>
-      </groups>
-
-      <!-- Relationships with other entities -->
-      <relationships>
-        <!-- Oaks need more space due to their size -->
-        <avoids type="same" distance="6.0" penalty="0.1"/>
-        <!-- Oaks avoid other trees for variety -->
-        <avoids group="trees" distance="4.0" penalty="0.5"/>
-      </relationships>
-    </placement>
-
-    <variantCount>15</variantCount>
   </AssetDef>
 </AssetDefinitions>

@@ -5,6 +5,7 @@
 // Designed for C++ generators now with Lua drop-in compatibility later.
 
 #include <cstdint>
+#include <filesystem>
 #include <string>
 #include <unordered_map>
 #include <variant>
@@ -144,8 +145,9 @@ namespace engine::assets {
 		AssetType		assetType = AssetType::Procedural;
 		std::string		generatorName; // Generator to use (e.g., "GrassBlade") - C++ generators
 		std::string		scriptPath;	   // For Lua generators: path to Lua script (relative to assets/)
-		std::string		svgPath;	   // For Simple assets: path to SVG file
-		float			worldHeight = 1.0F; // World height in meters (for SVG normalization)
+		std::string				svgPath;	// For Simple assets: path to SVG file
+		std::filesystem::path	baseFolder; // Folder containing this asset's definition (for relative path resolution)
+		float					worldHeight = 1.0F; // World height in meters (for SVG normalization)
 		GeneratorParams params;		   // Parameters for generator
 		AnimationParams animation;
 		PlacementParams placement; // Where this asset spawns
@@ -155,6 +157,18 @@ namespace engine::assets {
 
 		/// Check if this definition uses a Lua script generator
 		[[nodiscard]] bool isLuaGenerator() const { return !scriptPath.empty(); }
+
+		/// Resolve a relative path to absolute using this asset's base folder
+		[[nodiscard]] std::filesystem::path resolvePath(const std::string& relativePath) const {
+			if (relativePath.empty()) {
+				return {};
+			}
+			std::filesystem::path rel(relativePath);
+			if (rel.is_absolute()) {
+				return rel;
+			}
+			return baseFolder / rel;
+		}
 	};
 
 } // namespace engine::assets

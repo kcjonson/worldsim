@@ -35,11 +35,12 @@ struct AppConfig {
 	/// Example: [](const std::string& name) { return name == "game" ? "gameloading" : ""; }
 	std::function<std::string(const std::string&)> remapSceneName;
 
-	// ========== Asset Definitions (optional) ==========
+	// ========== Asset System (optional) ==========
 
-	/// List of asset definition paths to load (relative to assets/definitions/)
-	/// Example: {"flora/grass.xml", "flora/trees.xml"}
-	std::vector<std::string> assetDefinitionPaths = {"flora/grass.xml"};
+	/// Root folder for asset discovery (relative to executable)
+	/// Asset definitions are loaded from all FolderName/FolderName.xml files recursively.
+	/// Example: "assets/world" scans for assets/world/flora/GrassBlade/GrassBlade.xml etc.
+	std::string assetsRootPath = "assets/world";
 };
 
 } // namespace engine
