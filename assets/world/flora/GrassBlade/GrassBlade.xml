@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- Grass Asset Definitions
-     Flora assets for grass tiles and decorative grass.
-     Uses SVG file for grass blade shape.
+<!-- Grass Asset Definition
+     Standard grass blade using SVG file.
+     SVG path is relative to this asset folder.
 -->
 <AssetDefinitions>
   <AssetDef>
@@ -9,8 +9,8 @@
     <label>Standard Grass Blade</label>
     <assetType>simple</assetType>
 
-    <!-- SVG path relative to assets directory -->
-    <svgPath>assets/svg/grass_blade.svg</svgPath>
+    <!-- SVG path relative to this asset folder -->
+    <svgPath>blade.svg</svgPath>
     <!-- World height in meters - SVG is normalized to this height -->
     <!-- Deep savannah grass: 0.25m min, 0.75m max - using 0.5m as base -->
     <worldHeight>0.5</worldHeight>
@@ -37,7 +37,7 @@
     <!-- Each biome can have different spawn behavior -->
     <placement>
       <!-- Grassland: Dense, fairly uniform coverage -->
-      <!-- With 512×512 tiles per chunk, spawnChance controls clump frequency -->
+      <!-- With 512x512 tiles per chunk, spawnChance controls clump frequency -->
       <biome name="Grassland">
         <spawnChance>0.7</spawnChance>
         <distribution>clumped</distribution>

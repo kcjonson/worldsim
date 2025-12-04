@@ -22,8 +22,11 @@ int main(int argc, char* argv[]) {
 		.debugServerPort = 8081,
 		.enableMetrics = true,
 		.initializeScenes = ui_sandbox::initializeSceneManager,
-		.getDefaultSceneKey = []() { return ui_sandbox::toKey(ui_sandbox::SceneType::Shapes); },
-		.assetDefinitionPaths = {"flora/grass.xml"}
+		.getDefaultSceneKey =
+			[]() {
+				return ui_sandbox::toKey(ui_sandbox::SceneType::Shapes);
+			}
+		// Uses default assetsRootPath = "assets/world"
 	};
 
 	auto ctx = engine::AppLauncher::initialize(argc, argv, config);

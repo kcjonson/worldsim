@@ -20,8 +20,8 @@ int main(int argc, char* argv[]) {
 					return std::string("gameloading");
 				}
 				return std::string{}; // No remapping
-			},
-		.assetDefinitionPaths = {"flora/grass.xml", "flora/trees.xml"}
+			}
+		// Uses default assetsRootPath = "assets/world"
 	};
 
 	return engine::AppLauncher::launch(argc, argv, config);

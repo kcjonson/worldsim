@@ -9,6 +9,7 @@
 
 #include <vector/Types.h>
 
+#include <filesystem>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -74,6 +75,10 @@ class AssetRegistry {
 	/// @return true if any asset declares membership in this group
 	[[nodiscard]] bool hasGroup(const std::string& groupName) const;
 
+	/// Set the path to shared scripts folder (for @shared/ prefix resolution)
+	/// @param path Absolute path to the shared scripts folder
+	void setSharedScriptsPath(const std::filesystem::path& path);
+
   private:
 	AssetRegistry() = default;
 
@@ -88,6 +93,9 @@ class AssetRegistry {
 
 	// Group index: group name → list of defNames that belong to it
 	std::unordered_map<std::string, std::vector<std::string>> groupIndex;
+
+	// Path to shared scripts folder (for @shared/ prefix resolution)
+	std::filesystem::path m_sharedScriptsPath;
 };
 
 }  // namespace engine::assets

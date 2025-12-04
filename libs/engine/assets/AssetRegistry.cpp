@@ -277,9 +277,19 @@ void parseFloatRange(const std::string& str, float& outMin, float& outMax, float
 
 }  // namespace
 
+void AssetRegistry::setSharedScriptsPath(const std::filesystem::path& path) {
+	m_sharedScriptsPath = path;
+	LOG_DEBUG(Engine, "Set shared scripts path: %s", path.string().c_str());
+}
+
 bool AssetRegistry::loadDefinitions(const std::string& xmlPath) {
+	namespace fs = std::filesystem;
+
 	pugi::xml_document doc;
 	pugi::xml_parse_result result = doc.load_file(xmlPath.c_str());
+
+	// Extract base folder from XML path for relative path resolution
+	fs::path baseFolder = fs::path(xmlPath).parent_path();
 
 	if (!result) {
 		LOG_ERROR(Engine, "Failed to load XML: %s - %s", xmlPath.c_str(), result.description());
@@ -474,6 +484,9 @@ bool AssetRegistry::loadDefinitions(const std::string& xmlPath) {
 		// Variant count
 		def.variantCount = static_cast<uint32_t>(defNode.child("variantCount").text().as_uint(1));
 
+		// Store base folder for relative path resolution
+		def.baseFolder = baseFolder;
+
 		// Store definition
 		definitions[def.defName] = std::move(def);
 		loadedCount++;
@@ -500,6 +513,7 @@ size_t AssetRegistry::loadDefinitionsFromFolder(const std::string& folderPath) {
 	size_t filesProcessed = 0;
 
 	// Recursively iterate through all files in the folder
+	// Only load "primary" XML files that match the FolderName/FolderName.xml pattern
 	try {
 		for (const auto& entry : fs::recursive_directory_iterator(folderPath)) {
 			if (!entry.is_regular_file()) {
@@ -508,6 +522,16 @@ size_t AssetRegistry::loadDefinitionsFromFolder(const std::string& folderPath) {
 
 			// Only process .xml files
 			if (entry.path().extension() != ".xml") {
+				continue;
+			}
+
+			// Check if this is a primary XML file (FolderName/FolderName.xml pattern)
+			// This prevents loading helper XMLs or non-primary definition files
+			std::string filename = entry.path().stem().string();
+			std::string parentFolder = entry.path().parent_path().filename().string();
+			if (filename != parentFolder) {
+				LOG_DEBUG(Engine, "Skipping non-primary XML: %s (filename '%s' != parent '%s')",
+						  entry.path().string().c_str(), filename.c_str(), parentFolder.c_str());
 				continue;
 			}
 
@@ -564,10 +588,14 @@ const renderer::TessellatedMesh* AssetRegistry::getTemplate(const std::string& d
 			return nullptr;
 		}
 
+		// Resolve SVG path relative to asset folder
+		std::string resolvedSvgPath = def->resolvePath(def->svgPath).string();
+		LOG_DEBUG(Engine, "Resolved SVG path: %s -> %s", def->svgPath.c_str(), resolvedSvgPath.c_str());
+
 		std::vector<renderer::LoadedSVGShape> shapes;
 		constexpr float kCurveTolerance = 0.5F;
-		if (!renderer::loadSVG(def->svgPath, kCurveTolerance, shapes)) {
-			LOG_ERROR(Engine, "Failed to load SVG: %s", def->svgPath.c_str());
+		if (!renderer::loadSVG(resolvedSvgPath, kCurveTolerance, shapes)) {
+			LOG_ERROR(Engine, "Failed to load SVG: %s (resolved from %s)", resolvedSvgPath.c_str(), def->svgPath.c_str());
 			return nullptr;
 		}
 
@@ -646,7 +674,21 @@ bool AssetRegistry::generateAsset(const std::string& defName, uint32_t seed, Gen
 	// Check if this is a Lua script generator
 	if (def->isLuaGenerator()) {
 		try {
-			LuaGenerator luaGen(def->scriptPath);
+			// Resolve script path - check for @shared/ prefix
+			std::string resolvedScriptPath;
+			const std::string kSharedPrefix = "@shared/";
+			if (def->scriptPath.compare(0, kSharedPrefix.size(), kSharedPrefix) == 0) {
+				// Script is in shared folder - resolve using shared scripts path
+				std::string relativePath = def->scriptPath.substr(kSharedPrefix.size());
+				resolvedScriptPath = (m_sharedScriptsPath / relativePath).string();
+				LOG_DEBUG(Engine, "Resolved shared script: %s -> %s", def->scriptPath.c_str(), resolvedScriptPath.c_str());
+			} else {
+				// Script is local to asset folder
+				resolvedScriptPath = def->resolvePath(def->scriptPath).string();
+				LOG_DEBUG(Engine, "Resolved local script: %s -> %s", def->scriptPath.c_str(), resolvedScriptPath.c_str());
+			}
+
+			LuaGenerator luaGen(resolvedScriptPath);
 			return luaGen.generate(ctx, def->params, outAsset);
 		} catch (const std::exception& e) {
 			LOG_ERROR(Engine, "LuaGenerator error for '%s': %s", def->scriptPath.c_str(), e.what());

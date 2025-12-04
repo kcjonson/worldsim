@@ -149,21 +149,26 @@ bool initializeRenderingSystems(GLFWwindow* window) {
 	return true;
 }
 
-void initializeAssetSystem(const std::vector<std::string>& definitionPaths) {
-	LOG_INFO(Engine, "Initializing asset system");
+void initializeAssetSystem(const std::string& assetsRootPath) {
+	LOG_INFO(Engine, "Initializing asset system from %s", assetsRootPath.c_str());
 
-	for (const auto& path : definitionPaths) {
-		std::string fullPath = Foundation::findResourceString("assets/definitions/" + path);
-		if (!fullPath.empty()) {
-			if (engine::assets::AssetRegistry::Get().loadDefinitions(fullPath)) {
-				LOG_INFO(Engine, "Loaded asset definitions from %s", fullPath.c_str());
-			} else {
-				LOG_WARNING(Engine, "Failed to load asset definitions from %s", fullPath.c_str());
-			}
-		} else {
-			LOG_WARNING(Engine, "Asset definitions file not found: assets/definitions/%s", path.c_str());
-		}
+	// Find the assets root folder
+	std::string fullPath = Foundation::findResourceString(assetsRootPath);
+	if (fullPath.empty()) {
+		LOG_WARNING(Engine, "Assets root not found: %s", assetsRootPath.c_str());
+		return;
 	}
+
+	// Set shared scripts path (for @shared/ prefix resolution)
+	std::string sharedPath = Foundation::findResourceString("assets/shared/scripts");
+	if (!sharedPath.empty()) {
+		engine::assets::AssetRegistry::Get().setSharedScriptsPath(sharedPath);
+		LOG_INFO(Engine, "Set shared scripts path: %s", sharedPath.c_str());
+	}
+
+	// Load all asset definitions from the root folder
+	size_t loaded = engine::assets::AssetRegistry::Get().loadDefinitionsFromFolder(fullPath);
+	LOG_INFO(Engine, "Loaded %zu asset definitions from %s", loaded, fullPath.c_str());
 }
 
 void cleanup(GLFWwindow* window) {
@@ -254,7 +259,7 @@ AppContext AppLauncher::initialize(int argc, char* argv[], const AppConfig& conf
 	}
 
 	// Initialize asset system
-	initializeAssetSystem(config.assetDefinitionPaths);
+	initializeAssetSystem(config.assetsRootPath);
 
 	// Create application
 	LOG_INFO(Engine, "Creating application");
