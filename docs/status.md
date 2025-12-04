@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2025-12-03 (Asset System Epics Organized for MVP)
+Last Updated: 2025-12-03 (Folder-Based Asset Migration Complete)
 
 ## Epic/Story/Task Template
 
@@ -166,6 +166,33 @@ Use this template for all work items:
 
 ---
 
+### ✅ Folder-Based Asset Migration
+**Spec/Documentation:** `/docs/technical/asset-system/folder-based-assets.md`
+**Dependencies:** Asset System Architecture - Foundation
+**Status:** complete
+
+**Goal:** Migrate from flat file structure to folder-per-asset organization for cleaner modding and content management.
+
+**Completed Tasks:**
+- [x] File Structure Migration
+  - [x] Create 3-level hierarchy (`assets/world/flora/GrassBlade/`)
+  - [x] Move grass.xml → `assets/world/flora/GrassBlade/GrassBlade.xml`
+  - [x] Move trees.xml → `assets/world/flora/MapleTree/MapleTree.xml` + `OakTree/OakTree.xml`
+  - [x] Create `assets/shared/scripts/` with `@shared/` prefix support
+- [x] AssetRegistry Updates
+  - [x] Add `baseFolder` field to AssetDefinition for path resolution
+  - [x] Update `loadDefinitionsFromFolder()` to scan `FolderName/FolderName.xml` pattern
+  - [x] Implement `@shared/` prefix for shared Lua scripts
+  - [x] Simplify AppConfig to single `assetsRootPath`
+- [x] Validation
+  - [x] All 3 existing assets load correctly
+  - [x] All 7 test suites pass
+  - [x] GameScene renders trees and grass correctly
+
+**Result:** Self-contained folder-per-asset structure with shared script support via `@shared/` prefix ✅
+
+---
+
 ## In Progress Epics
 
 ### 🔄 Animated Vector Graphics Performance Optimization
@@ -306,36 +333,6 @@ Use this template for all work items:
 ---
 
 ## Planned Epics
-
-### Folder-Based Asset Migration
-**Spec/Documentation:** `/docs/technical/asset-system/folder-based-assets.md`
-**Dependencies:** Asset System Architecture - Foundation
-**Status:** ready
-
-**Goal:** Migrate from flat file structure to folder-per-asset organization for cleaner modding and content management.
-
-**Tasks:**
-- [ ] File Structure Migration
-  - [ ] Create 3-level hierarchy (`assets/world/flora/GrassBlade/`)
-  - [ ] Move grass.xml → `assets/world/flora/GrassBlade/GrassBlade.xml`
-  - [ ] Move trees.xml → `assets/world/flora/DeciduousTree/DeciduousTree.xml`
-  - [ ] Move Lua scripts into asset folders
-  - [ ] Create `assets/shared/scripts/` for shared modules
-- [ ] AssetRegistry Updates
-  - [ ] Update `loadAssets()` to scan folder structure
-  - [ ] Implement path resolution (relative to asset folder)
-  - [ ] Support `@components/` prefix for shared SVG components
-  - [ ] Add `getAssetFolder()` API for scripts
-- [ ] Module Registry
-  - [ ] Register shared scripts by name (not path)
-  - [ ] Update LuaEngine `require()` to check local folder first
-  - [ ] Support asset-local helper scripts
-- [ ] Validation
-  - [ ] All existing assets load correctly
-  - [ ] All tests pass
-  - [ ] GameScene renders correctly
-
----
 
 ### Simple Asset Support (SVG-Only)
 **Spec/Documentation:** `/docs/technical/asset-system/asset-definitions.md`
