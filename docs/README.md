@@ -2,262 +2,151 @@
 
 Project documentation for World-Sim organized by purpose and audience.
 
+---
+
 ## Quick Start
 
 **New to the project?** Start here:
+
 1. Read the main [README.md](../README.md) for build instructions
 2. Check [status.md](./status.md) to see what we're working on
 3. Review [setup.md](./setup.md) for development environment setup
 4. Consult [workflows.md](./workflows.md) for common tasks
 
 **Working on a feature?**
+
 1. Check [design/INDEX.md](./design/INDEX.md) for game design requirements
 2. Check [technical/INDEX.md](./technical/INDEX.md) for implementation details
-3. Update [status.md](./status.md) when done
+3. Check [design/mvp-scope.md](./design/mvp-scope.md) for what's in scope
+4. Update [status.md](./status.md) when done
+
+---
 
 ## Directory Structure
 
 ```
 docs/
-├── README.md                    # This file
-├── status.md                    # Current project status (START HERE)
-├── development-log.md           # Detailed implementation history
+├── README.md                    # This file - navigation hub
+├── status.md                    # Current project status
 ├── setup.md                     # Development environment setup
 ├── workflows.md                 # Common development tasks
 │
 ├── design/                      # Game design documents
 │   ├── INDEX.md                # Master list of design docs
-│   ├── competitive-analysis.md # Market research
+│   ├── mvp-scope.md            # Single source of truth for MVP
+│   ├── game-overview.md        # Core game concept
+│   ├── visual-style.md         # Art direction
 │   │
-│   ├── features/               # Feature designs
-│   │   ├── vector-assets/
-│   │   ├── debug-server/
-│   │   ├── multiplayer/
-│   │   └── ...
+│   ├── game-systems/           # Game mechanics organized by topic
+│   │   ├── colonists/          # Colonist behavior, needs, AI
+│   │   ├── world/              # World mechanics, rooms, entities
+│   │   └── features/           # Discrete player features
 │   │
-│   └── requirements/           # Requirements documents (planned)
-│       ├── functional.md
-│       ├── non-functional.md
-│       └── performance.md
+│   └── research/               # Market research, competitive analysis
 │
-└── technical/                   # Technical design documents
-    ├── INDEX.md                # Master list of technical docs
-    ├── monorepo-structure.md   # Project organization
-    ├── cpp-coding-standards.md # C++ style guide
-    └── ...                     # System-specific design docs
+├── technical/                   # Technical design documents
+│   ├── INDEX.md                # Master list of technical docs
+│   ├── library-decisions.md    # All library choices
+│   ├── monorepo-structure.md   # Project organization
+│   ├── cpp-coding-standards.md # C++ style guide
+│   │
+│   ├── vector-graphics/        # Vector rendering system
+│   ├── asset-system/           # Asset loading and generation
+│   ├── observability/          # Developer tools
+│   └── ...                     # Other technical systems
+│
+└── development-log/             # Implementation history
+    ├── README.md               # Index and process documentation
+    └── entries/                # Individual dated entries
 ```
+
+---
 
 ## Core Documents
 
 ### status.md
+
 **Read this first** to understand where we are in development:
-- Current sprint goals and active tasks (use checkboxes)
+- Current sprint goals and active tasks
 - Recent architectural decisions
 - Known blockers and issues
-- DO NOT put detailed implementation notes here - use development-log.md instead
-- This is a snapshot of current project state, not a historical record
 
-**Update this after significant work.**
+**Update after significant work.**
 
-### development-log.md
-**Detailed historical record** of implementation work:
-- Timestamped entries (newest first) documenting what was built
+### development-log/
+
+**Detailed historical record** of implementation work. Each entry is a separate file documenting:
+- What was built/changed
+- Technical decisions made
 - Files created/modified
-- Technical implementation details
-- Lessons learned and design decisions
-- Add a new entry after completing significant work (features, refactors, major fixes)
-- This is the historical record; status.md is the current snapshot
+
+See [development-log/README.md](./development-log/README.md) for the process.
 
 ### workflows.md
+
 Common development tasks:
+- Recording implementation work
 - Adding new libraries
 - Creating scenes
 - Running tests
-- Debugging
-- Updating documentation
+- Documentation standards
 
 ### setup.md
+
 Development environment setup:
 - Prerequisites
 - Build system configuration
 - IDE setup
 - Tool installation
 
-## Technical Documentation
+---
 
-Location: `technical/`
+## Game Design vs Technical Documentation
 
-**Purpose**: Describes *how* systems are implemented
+| Question | Document Type | Location |
+|----------|---------------|----------|
+| What does the player experience? | Game Design | `design/` |
+| How does this system work from a gameplay perspective? | Game Design | `design/game-systems/` |
+| How do we implement this technically? | Technical | `technical/` |
+| What library should we use? | Technical | `technical/library-decisions.md` |
+| What did we build and when? | Development Log | `development-log/entries/` |
 
-**What belongs here**:
-- Architecture and system design (client/server, ECS, rendering)
-- Implementation details (algorithms, data structures, protocols)
-- Tools and infrastructure (debug server, asset pipeline, build system)
-- Performance optimization and profiling
-- Technical patterns and conventions (logging, memory management, etc.)
+### Examples
 
-**What does NOT belong here** (goes in `design/`):
-- Player-facing game features and mechanics
-- UI/UX from the player's perspective
-- Game systems from a design perspective (not implementation)
-- Player-facing requirements
+| Topic | Design Doc | Technical Doc |
+|-------|------------|---------------|
+| Colonist needs | `design/game-systems/colonists/needs.md` | ECS components in `technical/cpp-coding-standards.md` |
+| Multiplayer | `design/features/multiplayer/README.md` | `technical/multiplayer-architecture.md` |
+| Vector graphics | `design/features/vector-graphics/` | `technical/vector-graphics/` |
 
-**Index**: See [technical/INDEX.md](./technical/INDEX.md)
-
-**Structure**: Flexible - organize as makes sense. Prefer many short focused docs (1-5 pages) over long comprehensive documents.
-
-**Key documents**:
-- `monorepo-structure.md` - Library organization and dependencies
-- `cpp-coding-standards.md` - C++ style guide and best practices
-- `vector-asset-pipeline.md` - SVG rendering system
-- `multiplayer-architecture.md` - Client/server implementation
-- `http-debug-server.md` - Development tooling
-- Engine patterns (string hashing, logging, memory arenas, etc.)
-
-**When to read**: Before implementing any system or modifying existing code
-
-**When to write**: After making architectural decisions or implementing new systems
-
-**Best Practices**: 
-- Code in technical docs should describe or demonstrate HOW something complex should be done, not have actual production code that is meant to be used. There should only be code to explain to the reader something unique or novel to the approach such as algorithms, data structures or best practices. There might also be code in a technical docs that shows multiple ways of doing the same thing for debate. The technical document might show a tree of where the files will be created and in human language what those files are responsible for. The actual codebase will contain the final code of record.
-- Should reference and link the design documents where relevant
-- Should not link to code in the codebase that was written as a result or output of this document. This document is the starting point for code that is to be generated, and logically can not link to that code since it has not been written. Do not update these documents after the code has been written. 
-
-## Game Design Documents
-
-Location: `design/`
-
-**Purpose**: Describes *what* needs to be built from a **player-facing game design perspective**
-
-**What belongs here**:
-- Player experience and game mechanics
-- UI/UX from the player's perspective
-- Game systems (building, colonists, raids, etc.)
-- Gameplay features and content
-- Player-facing requirements
-
-**What does NOT belong here** (goes in `technical/`):
-- Architecture and system design (client/server, ECS, etc.)
-- Implementation details (algorithms, data structures)
-- Tools and infrastructure (debug server, asset pipeline)
-- Performance optimization
-- Technical systems (networking, rendering, etc.)
-
-**Index**: See [design/INDEX.md](./design/INDEX.md)
-
-**Structure**: Flexible - use subdirectories (`features/`, `requirements/`) only when organization requires it. Prefer many short focused docs (1-5 pages) over long comprehensive documents.
-
-**When to read**: When starting a new feature or understanding player-facing requirements
-
-**When to write**: During game design and feature planning
-
-**Note**: Design docs may differ from actual implementation. When implementation diverges, the technical docs describe what was actually built and why.
-
-## Player-Facing vs Technical: Examples
-
-To clarify the distinction:
-
-| Topic | Design Doc (Player-Facing) | Technical Doc (Implementation) |
-|-------|---------------------------|-------------------------------|
-| **Multiplayer** | "Players can join each other's colonies and collaborate" | Client/server architecture, WebSocket protocol, state sync |
-| **Building System** | "Players can construct buildings that affect colonist behavior" | Building entity structure, ECS components, placement validation |
-| **World Creation** | "Players customize world parameters and preview the planet" | 3D noise generation algorithms, sphere sampling, OpenGL rendering |
-| **UI** | "Main menu with New Game, Load, Settings buttons" | ImGui implementation, scene management, input handling |
-| **Debug Tools** | N/A - This is purely technical | HTTP debug server, SSE streaming, metrics collection |
-| **Asset Pipeline** | N/A - This is purely technical | SVG parsing, rasterization, texture atlas generation |
-
-## Documentation Workflow
-
-### When You're Lost
-1. Check [status.md](./status.md) - Where are we?
-2. Check [workflows.md](./workflows.md) - How do I do X?
-3. Check [technical/INDEX.md](./technical/INDEX.md) - How is X implemented?
-4. Check [design/INDEX.md](./design/INDEX.md) - What are the game design requirements for X?
-
-### When Implementing a Feature
-```
-1. Read the game design   → design/features/{feature}/
-2. Read the tech design   → technical/{system}.md
-3. Write the code         → libs/ or apps/
-4. Update status          → status.md
-```
-
-### When Making Technical Decisions
-```
-1. Document decision      → technical/{system}.md (new or updated)
-2. Add to index          → technical/INDEX.md
-3. Update status         → status.md
-4. Note in CLAUDE.md     → If high-level structural change
-```
-
-### When Completing Work
-```
-1. Add detailed entry          → development-log.md (timestamped, newest first)
-2. Update current status       → status.md (mark tasks complete, update timestamp)
-3. Update implementation docs  → technical/{system}.md (if needed)
-4. Update project README       → If user-facing change
-```
-
-## Document Types
-
-### Game Design Documents
-- **Audience**: Anyone who needs to understand what the game should be
-- **Content**: Player experience, game mechanics, feature requirements, acceptance criteria
-- **Format**: Markdown with mockups, flows, and diagrams
-- **Location**: `design/features/`
-
-### Technical Design Documents
-- **Audience**: Developers implementing the system
-- **Content**: Architecture, patterns, implementation details, code examples
-- **Format**: Markdown with code snippets and diagrams
-- **Location**: `technical/`
-
-### Requirements Documents
-- **Audience**: Project stakeholders, designers, and developers
-- **Content**: Functional, non-functional, and performance requirements
-- **Format**: Markdown with structured lists and criteria
-- **Location**: `design/requirements/`
-
-### Status and Workflow Documents
-- **Audience**: All contributors
-- **Content**: Current state, common tasks, setup instructions
-- **Format**: Markdown with checklists and commands
-- **Location**: `docs/` root
+---
 
 ## Documentation Standards
 
-### General Guidelines
-- Use GitHub-flavored Markdown
-- Include code references as `file.cpp:123` for easy navigation
-- Link between documents liberally
-- Keep INDEX files up to date
-- Use clear, descriptive headings
-- Include examples where helpful
+### MVP References
 
-### File Naming
-- Lowercase with hyphens: `system-name.md`
-- README.md for directory overviews
-- INDEX.md for master lists
+Do NOT create "MVP Scope" sections in individual docs. Instead write:
 
-### Structure
-Each game design doc should include:
-- Feature overview
-- Player experience goals
-- Game mechanics description
-- UI/UX requirements
-- Acceptance criteria
-- Technical considerations (if any)
+```markdown
+**MVP Status:** See [MVP Scope](./design/mvp-scope.md) — This feature: Phase X
+```
 
-Each technical design doc should include:
-- Overview / Purpose
-- Architecture / Design
-- Implementation details
-- Code examples
-- Related documentation links
+### Historical Addendums
+
+When consolidating or superseding documents, add a "Historical Addendum" section at the bottom preserving original content for reference.
+
+### Cross-References
+
+Use relative paths for links within docs/:
+```markdown
+See [Needs System](./game-systems/colonists/needs.md)
+```
+
+---
 
 ## Related Files
 
-- [CLAUDE.md](../CLAUDE.md) - Instructions for Claude Code AI assistant
-- [README.md](../README.md) - Main project README with build instructions
-- [.clang-format](../.clang-format) - Code formatting rules
-- [CMakeLists.txt](../CMakeLists.txt) - Build system configuration
+- [CLAUDE.md](../CLAUDE.md) — Instructions for Claude Code AI assistant
+- [README.md](../README.md) — Main project README with build instructions
+- [.clang-format](../.clang-format) — Code formatting rules
+- [CMakeLists.txt](../CMakeLists.txt) — Build system configuration

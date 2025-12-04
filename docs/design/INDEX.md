@@ -2,96 +2,113 @@
 
 ## Overview
 
-This directory contains game design documents, requirements, and planning documents for the world-sim project. These design docs describe *what* needs to be built from a **player-facing game design perspective**, while technical design docs describe *how* it's implemented.
+This directory contains game design documents describing **what** we're building from a player-facing perspective. For technical implementation details, see [Technical Design Documents](/docs/technical/INDEX.md).
 
-**Important**: Game design docs may differ from actual implementation. When implementation diverges, see the corresponding Technical Design Document for what was actually built and why.
-
-**What belongs in documents here:**
+**What belongs here:**
 - Player experience and game mechanics
-- UI/UX from the player's perspective
-- Game systems (building, colonists, raids, etc.)
+- UI/UX from the player's perspective  
+- Game systems (colonists, building, world, etc.)
 - Gameplay features and content
 - Player-facing requirements
 
-**What doest not belong in documents here:**
-- Architecture and system design (client/server, ECS, etc.)
-- Rough Implementation detail examples. (algorithms, data structures)
-- Tools and infrastructure (debug server, asset pipeline)
+**What does NOT belong here** (goes in `technical/`):
+- Architecture and system design
+- Implementation details (algorithms, data structures)
+- Tools and infrastructure
 - Performance optimization
-- Technical systems (networking, rendering, etc.)
 
+---
 
+## Quick Links
 
-## Organization
+- **[MVP Scope](./mvp-scope.md)** — What's included in each development phase
+- **[Game Overview](./game-overview.md)** — Core concept, world mechanics
+- **[Visual Style](./visual-style.md)** — Art direction, aesthetics
 
-Documents can be organized in subdirectories (`features/`, `mechanics/`) or at the top level - use whatever makes sense as the project grows. Prefer many short focused docs (1-5 pages) over long comprehensive documents.
+---
 
-## Core Design Documents
+## Game Systems
 
-### Game Concept
-- [Game Overview](./game-overview.md) - Core concept, backstory options, world mechanics, and similar games
-- [UI Art Style](./ui-art-style.md) - Visual style guide ("High tech cowboy")
+Organized by topic area. Each folder contains related design documents.
 
-### Visual Design
-- [Visual Style](./visual-style.md) - Overall visual art direction, color philosophy, aesthetic goals
+### Colonists
 
-### Game Mechanics
-- [Colonist Attributes](./mechanics/colonists.md) - Character stats, needs, and personality traits
-- [Skills and Talents](./mechanics/skills.md) - Skill system, learning mechanics, and task priorities
-- [Room Types](./mechanics/rooms.md) - Room mechanics, types, bonuses, and ownership
-- [Crafting and Resources](./mechanics/crafting.md) - Resource types and crafting mechanics
+Location: `game-systems/colonists/`
 
-## Feature Designs
+Everything about colonist behavior, needs, and mechanics.
 
-*Note: Many of these are planned but not yet written. Add them as needed when designing features.*
+| Document | Description |
+|----------|-------------|
+| [README](./game-systems/colonists/README.md) | Overview and navigation |
+| [AI Behavior](./game-systems/colonists/ai-behavior.md) | Decision hierarchy, autonomous behavior |
+| [Needs System](./game-systems/colonists/needs.md) | Physical needs, mood, breakdowns |
+| [Memory System](./game-systems/colonists/memory.md) | What colonists know |
+| [Attributes](./game-systems/colonists/attributes.md) | Personality, backstory |
+| [Skills](./game-systems/colonists/skills.md) | Learning, progression |
+| [Work Priorities](./game-systems/colonists/work-priorities.md) | Work assignment |
 
-### Vector Graphics & SVG Assets
-- [Vector Graphics Overview](./features/vector-graphics/README.md) - All SVG use cases: decorations, texture patterns, animation
-- [SVG Decorations](./features/vector-graphics/svg-decorations.md) - Placed objects (flowers, trees, entities)
-- [SVG Texture Patterns](./features/vector-graphics/svg-texture-patterns.md) - Fill patterns for code-drawn shapes (brick, concrete, wood)
-- [Animated Vegetation](./features/vector-graphics/animated-vegetation.md) - Grass swaying, tree movement, environmental response
-- [Environmental Interactions](./features/vector-graphics/environmental-interactions.md) - Trampling, harvesting, wind effects
+### World
 
-### Core Application
-- [Game Start Experience](./features/game-start-experience.md) - From launch to gameplay: loading, menus, scenario/party/planet setup, landing sequence
-- [Main Menu](./features/main-menu/README.md) - Menu options and navigation *(planned)*
+Location: `game-systems/world/`
 
-### World Generation (3D Spherical Planets)
-- [World Generation Overview](./features/world-generation/README.md) - Complete overview of spherical world generation system
-- [Concept](./features/world-generation/concept.md) - Core concept, why spherical worlds, design philosophy
-- [Planet Parameters](./features/world-generation/planet-parameters.md) - Star, planet, orbital, and generator settings
-- [Generation Phases](./features/world-generation/generation-phases.md) - Eight phases from plates to biomes
-- [Biome Types](./features/world-generation/biomes.md) - Detailed terrestrial biome classification
-- [User Experience](./features/world-generation/user-experience.md) - Two-phase game flow, UI/UX, visualization modes
-- [Data Model](./features/world-generation/data-model.md) - Spherical world structure and 2D sampling architecture
+World mechanics, rooms, resources, and entity interactions.
 
-### 2D Game View & Tile Rendering
-- [Game View Overview](./features/game-view/README.md) - How the 2D game view renders data from the 3D world
-- [Biome Influence System](./features/game-view/biome-influence-system.md) - Percentage-based biome blending, natural ecotones
-- [Biome Ground Covers](./features/game-view/biome-ground-covers.md) - Physical ground surface types (grass, sand, rock, water)
-- [Tile Transitions](./features/game-view/tile-transitions.md) - Visual appearance of biome transition zones
-- [Procedural Variation](./features/game-view/procedural-variation.md) - Creating unique tiles while maintaining recognizability
+| Document | Description |
+|----------|-------------|
+| [Entity Capabilities](./game-systems/world/entity-capabilities.md) | How entities advertise what they do |
+| [Rooms](./game-systems/world/rooms.md) | Room types, detection, bonuses |
+| [Crafting](./game-systems/world/crafting.md) | Resource chains, recipes |
 
-### 2D Gameplay
-- [Game Scene](./features/game/README.md) - Top-down 2D tile-based gameplay *(planned)*
-- [Camera Controls](./features/game/camera-controls.md) - Pan, zoom, edge scrolling *(planned)*
-- [Infinite World](./features/game/infinite-world.md) - Chunk loading from spherical world *(planned)*
+### Features
 
-### UI Framework
-- [UI Component Library](./features/ui-framework/README.md) - Overview of UI system from player perspective *(planned)*
+Location: `features/`
 
-## Requirements
+Discrete player-facing features.
 
-- [Functional Requirements](./requirements/functional.md) - Core functionality
-- [Non-Functional Requirements](./requirements/non-functional.md) - Performance, testability, maintainability
-- [Performance Requirements](./requirements/performance.md) - Frame rate, load times, memory
+| Document | Description |
+|----------|-------------|
+| [Game Start Experience](./features/game-start-experience.md) | Main menu → gameplay flow |
+| [Player Control](./features/player-control.md) | Observation, command, direct control |
+| [Storage System](./features/storage-system.md) | Item storage, priority hauling |
+| [Vector Graphics](./features/vector-graphics/) | Asset workflow, animations |
+| [Multiplayer](./features/multiplayer/) | Co-op, multiplayer design |
+| [Debug Server](./features/debug-server/) | Developer tools (technical overlap) |
 
-## Related Technical Documentation
+---
 
-For technical implementation details, see [Technical Design Documents](/docs/technical/INDEX.md)
+## Research
 
-**Technical systems** (not player-facing game design):
-- [Multiplayer Architecture](/docs/technical/multiplayer-architecture.md) - Client/server implementation
-- [HTTP Debug Server](/docs/technical/http-debug-server.md) - Development tooling
-- [Vector Asset Pipeline](/docs/technical/vector-asset-pipeline.md) - SVG rendering system
-- [UI Testability Strategy](/docs/technical/ui-testability-strategy.md) - UI testing infrastructure
+| Document | Description |
+|----------|-------------|
+| [Competitive Analysis](./research/competitive-analysis.md) | Analysis of similar games |
+
+---
+
+## Document Standards
+
+### MVP References
+
+Do NOT create "MVP Scope" sections in individual docs. Instead reference:
+
+```markdown
+**MVP Status:** See [MVP Scope](./mvp-scope.md) — This feature: Phase X
+```
+
+### Cross-References
+
+Use relative paths for links within docs/:
+```markdown
+See [Needs System](./game-systems/colonists/needs.md)
+```
+
+### Historical Content
+
+When consolidating or superseding documents, add a "Historical Addendum" section at the bottom preserving the original content.
+
+---
+
+## Related Documentation
+
+- [Technical Design Documents](/docs/technical/INDEX.md) — How things are implemented
+- [Development Log](/docs/development-log/README.md) — Implementation history
+- [Project Status](/docs/status.md) — Current work

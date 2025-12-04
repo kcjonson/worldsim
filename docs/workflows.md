@@ -1,265 +1,225 @@
 # Development Workflows
 
-Common tasks and workflows for developing World-Sim.
+Common development tasks and processes for the worldsim project.
 
-## Adding a New Library
+---
 
-1. Create directory structure:
-   ```bash
-   mkdir -p libs/mylib/{subdir,tests}
+## Documentation Workflows
+
+### Recording Implementation Work
+
+When you complete significant work (features, refactors, major fixes):
+
+1. **Create a development log entry:**
+   ```
+   docs/development-log/entries/YYYY-MM-DD-topic-name.md
    ```
 
-2. Create `libs/mylib/CMakeLists.txt`:
+2. **Use this template:**
+   ```markdown
+   # [Date] - [Title]
+   
+   ## Summary
+   Brief description of what was accomplished.
+   
+   ## Details
+   - What was built/changed
+   - Technical decisions made
+   - Files created/modified
+   
+   ## Related Documentation
+   - Links to specs created/updated
+   
+   ## Next Steps
+   What should happen next (if applicable)
+   ```
+
+3. **Add entry to the index:**
+   - Edit `docs/development-log/README.md`
+   - Add link under appropriate date section (newest first)
+
+4. **Update status.md:**
+   - Mark completed tasks
+   - Update "Current Focus" if applicable
+
+**Key principle:** Development log entries are immutable history. Don't edit old entries — create new ones if things change.
+
+### Creating Design Documents
+
+For new game features or systems:
+
+1. **Determine location:**
+   - Player-facing features → `docs/design/game-systems/` or `docs/design/features/`
+   - Technical implementation → `docs/technical/`
+
+2. **Check MVP scope:**
+   - Reference `docs/design/mvp-scope.md`
+   - Don't create "MVP Scope" sections in individual docs
+   - Instead write: "**MVP Status:** See [MVP Scope](../mvp-scope.md) — This feature: Phase X"
+
+3. **Use consistent structure:**
+   - Overview / Purpose
+   - Details / Mechanics
+   - Related Documents (links)
+   - Historical Addendum (if consolidating/superseding other docs)
+
+4. **Update indexes:**
+   - Add to `docs/design/INDEX.md` or `docs/technical/INDEX.md`
+   - Add cross-references in related documents
+
+### Making Technical Decisions
+
+When choosing libraries, architectures, or approaches:
+
+1. **Document options:**
+   - Create comparative analysis in technical docs
+   - List pros/cons objectively
+
+2. **Prototype if significant:**
+   - Test in ui-sandbox
+   - Measure performance
+
+3. **Record decision:**
+   - Add to `docs/technical/library-decisions.md` for libraries
+   - Add to relevant technical doc for architecture decisions
+
+4. **Log the work:**
+   - Create development log entry with rationale
+
+---
+
+## Code Workflows
+
+### Adding New Libraries
+
+1. **Evaluate and document:**
+   - Add options to relevant technical doc
+   - Get decision recorded in library-decisions.md
+
+2. **Add to vcpkg:**
+   ```json
+   // vcpkg.json
+   {
+     "dependencies": [
+       "new-library-name"
+     ]
+   }
+   ```
+
+3. **Add to CMake:**
    ```cmake
-   add_library(mylib
-       subdir/file.cpp
-   )
-
-   target_include_directories(mylib
-       PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
-   )
-
-   target_compile_features(mylib PUBLIC cxx_std_20)
-
-   target_link_libraries(mylib
-       PUBLIC
-           foundation  # Add dependencies
-   )
+   find_package(NewLibrary CONFIG REQUIRED)
+   target_link_libraries(your-target PRIVATE NewLibrary::NewLibrary)
    ```
 
-3. Add to root `CMakeLists.txt` (in dependency order):
+4. **Update documentation:**
+   - library-decisions.md
+   - Relevant technical docs
+
+### Creating New Library (in libs/)
+
+1. **Create directory structure:**
+   ```
+   libs/new-lib/
+   ├── CMakeLists.txt
+   ├── include/new-lib/
+   │   └── public_header.h
+   ├── src/
+   │   └── implementation.cpp
+   └── tests/
+       └── new_lib_tests.cpp
+   ```
+
+2. **Add to root CMakeLists.txt:**
    ```cmake
-   add_subdirectory(libs/mylib)
+   add_subdirectory(libs/new-lib)
    ```
 
-4. Update `CLAUDE.md` project structure section if it's a major library
+3. **Follow dependency rules:**
+   - Check `docs/technical/monorepo-structure.md`
+   - Don't create circular dependencies
 
-## Adding Files to a Library
+### Running Tests
 
-1. Create `.h` and `.cpp` files in appropriate subdirectory:
-   ```bash
-   touch libs/renderer/gl/shader.h
-   touch libs/renderer/gl/shader.cpp
-   ```
+```bash
+# Build with tests
+cmake -B build -DBUILD_TESTING=ON
+cmake --build build
 
-2. Add `.cpp` file to library's `CMakeLists.txt`:
-   ```cmake
-   add_library(renderer
-       gl/shader.cpp          # Add this
-       gl/texture.cpp
-   )
-   ```
+# Run all tests
+ctest --test-dir build
 
-3. No need to list `.h` files (included via parent directory)
+# Run specific test
+./build/libs/new-lib/tests/new_lib_tests
+```
 
-## Creating a New Scene
+### Creating Scenes (in ui-sandbox)
 
-1. Create scene files:
-   ```bash
-   touch apps/world-sim/scenes/my_scene.h
-   touch apps/world-sim/scenes/my_scene.cpp
-   ```
-
-2. Add to `apps/world-sim/CMakeLists.txt`:
-   ```cmake
-   add_executable(world-sim
-       scenes/my_scene.cpp    # Add this
-       ...
-   )
-   ```
-
-3. Register scene with scene manager in `main.cpp`:
+1. **Create scene class:**
    ```cpp
-   sceneManager.RegisterScene("MyScene", new MyScene());
-   ```
-
-## Working with UI Components
-
-### 1. Create Component in ui-sandbox First
-```bash
-touch apps/ui-sandbox/demos/my_component_demo.cpp
-```
-
-Add demo to ui-sandbox CMakeLists.txt and implement demo.
-
-### 2. Test Component
-```bash
-./build/apps/ui-sandbox/ui-sandbox --component my_component
-```
-
-### 3. Test with HTTP Inspector
-```bash
-./build/apps/ui-sandbox/ui-sandbox --component my_component --http-port 8080
-```
-
-Then use curl or browser:
-```bash
-curl http://localhost:8080/ui/tree
-```
-
-### 4. Once Working, Use in Main Game
-Add component to `libs/ui/components/` and use in game scenes.
-
-## Verifying Visual Output (Screenshots)
-
-**When user reports visual issues** ("things aren't in the right place", "X doesn't appear", "layout looks wrong"):
-
-### For Claude Code (AI Assistant)
-The sandbox has synchronous shutdown - the exit endpoint blocks until the port is free:
-
-```bash
-# Kill any existing instance (blocking - returns when port is free)
-curl "http://127.0.0.1:8081/api/control?action=exit"
-# Response: {"status":"ok","action":"exit","shutdown":"complete"}
-
-# Rebuild if code changed
-cmake --build build --target ui-sandbox -j8
-
-# Launch (use Bash tool with run_in_background: true)
-cd /Volumes/Code/worldsim/build/apps/ui-sandbox && ./ui-sandbox --scene=shapes
-
-# Screenshot (no sleep needed - endpoint waits for app ready)
-curl -s http://127.0.0.1:8081/api/ui/screenshot > /tmp/screenshot.png
-```
-
-**Key:** No sleeps anywhere. Exit is blocking, screenshot waits for startup.
-
-### For Human Developers
-```bash
-# Run ui-sandbox with specific scene
-cd build/apps/ui-sandbox && ./ui-sandbox --scene=shapes &
-
-# Capture screenshot
-curl http://127.0.0.1:8081/api/ui/screenshot -o /tmp/screenshot.png
-
-# View the screenshot
-open /tmp/screenshot.png
-
-# Clean shutdown (blocks until port free, returns: {"status":"ok","action":"exit","shutdown":"complete"})
-curl "http://127.0.0.1:8081/api/control?action=exit"
-```
-
-**Notes:**
-- Default port: 8081 (ui-sandbox), 8082 (main game client)
-- Exit endpoint is **blocking** - returns only when shutdown complete and port free
-- Screenshot endpoint waits for app to be ready before capturing
-- Use `--scene=<name>` to test specific scenes
-- Works in browser too: `open http://127.0.0.1:8081/api/ui/screenshot`
-
-## Running Tests
-
-### All Tests
-```bash
-ctest --test-dir build --output-on-failure
-```
-
-### Specific Test
-```bash
-ctest --test-dir build -R TestName --output-on-failure
-```
-
-### With Verbose Output
-```bash
-ctest --test-dir build --verbose
-```
-
-## Debugging
-
-### VSCode Debugging
-
-1. Set breakpoints in code
-2. Press F5 or use Run & Debug panel
-3. Choose launch configuration:
-   - "(lldb) Launch world-sim"
-   - "(lldb) Launch ui-sandbox"
-
-### Command Line Debugging
-
-```bash
-lldb ./build/apps/world-sim/world-sim
-(lldb) breakpoint set --name main
-(lldb) run
-(lldb) continue
-(lldb) step
-(lldb) print variableName
-```
-
-## Formatting and Linting
-
-### Format Code
-Press `Shift+Alt+F` in VSCode, or:
-```bash
-clang-format -i path/to/file.cpp path/to/file.h
-```
-
-### View Linting Issues
-Linting (clang-tidy) runs automatically in VSCode. Look for:
-- Yellow squiggly lines (warnings)
-- Red squiggly lines (errors)
-- Hover for details
-
-### Fix Auto-Fixable Issues
-Click lightbulb icon next to warning.
-
-## Hot-Reloading Assets
-
-1. Modify SVG file in `apps/world-sim/assets/`
-2. Game detects change and reloads
-3. No restart needed (once implemented)
-
-## Adding a Log Category
-
-1. Add to enum in `libs/foundation/utils/log.h`:
-   ```cpp
-   enum class LogCategory {
-       MySystem,  // Add this
-       // ...
+   class NewScene : public IScene {
+   public:
+       void OnEnter() override;
+       void OnExit() override;
+       void Update(float dt) override;
+       void Render() override;
    };
    ```
 
-2. Add to string conversion:
+2. **Register in SceneManager:**
    ```cpp
-   const char* CategoryToString(LogCategory cat) {
-       case LogCategory::MySystem: return "MySystem";
-       // ...
-   }
+   sceneManager.RegisterScene("NewScene", std::make_unique<NewScene>());
    ```
 
-3. Use in code:
-   ```cpp
-   LOG_INFO(MySystem, "Something happened");
+3. **Add keyboard shortcut** (if desired) in main loop
+
+---
+
+## Debugging Workflows
+
+### Using the Developer Client
+
+1. **Start application** (ui-sandbox or world-sim)
+2. **Open browser** to `http://localhost:8080` (or 8081/8082)
+3. **View real-time metrics:**
+   - Frame time graph
+   - Memory usage
+   - Log streaming
+
+### Using Tracy Profiler
+
+1. **Enable Tracy** in CMake:
+   ```cmake
+   set(TRACY_ENABLE ON)
    ```
 
-## Profiling Performance
-
-1. Add profiling scopes:
+2. **Add instrumentation:**
    ```cpp
-   void ExpensiveFunction() {
-       PROFILE_SCOPE("ExpensiveFunction");
-       // ... work ...
-   }
+   ZoneScoped;  // Function scope
+   ZoneScopedN("CustomName");  // Named scope
    ```
 
-2. Run game with profiler enabled
-3. Analyze results
+3. **Run Tracy server** and connect
 
-(Note: Profiling system to be implemented)
+### Using RenderDoc
 
-## Updating Documentation
+1. **Launch application** through RenderDoc
+2. **Capture frame** (F12 or trigger)
+3. **Analyze:**
+   - Draw call count
+   - State changes
+   - Shader performance
 
-### After Making Technical Decision
-1. Check if decision affects existing tech doc
-2. If yes, update tech doc
-3. If new system, create new tech doc in `/docs/technical/`
-4. Add to `/docs/technical/INDEX.md`
-5. Update `/docs/status.md` with decision
+---
 
-### After Implementing Feature
-1. Mark implementation status in tech doc as complete
-2. Add code references (file:line) to tech doc
-3. Update `/docs/status.md` progress
+## Quick Reference
 
-### When Changing Architecture
-1. Update affected tech docs
-2. Update `CLAUDE.md` if high-level structure changed
-3. Update `/docs/status.md` with rationale
+| Task | Command/Location |
+|------|------------------|
+| Build | `cmake --build build` |
+| Run tests | `ctest --test-dir build` |
+| Run ui-sandbox | `./build/apps/ui-sandbox/ui-sandbox` |
+| View dev log | `docs/development-log/README.md` |
+| Check MVP scope | `docs/design/mvp-scope.md` |
+| Library decisions | `docs/technical/library-decisions.md` |
+| Project status | `docs/status.md` |

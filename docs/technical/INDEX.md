@@ -2,224 +2,134 @@
 
 ## Overview
 
-World-sim is a C++20 game project built as a monorepo of independent libraries. The architecture emphasizes modularity, testability (especially for UI), and clean dependency hierarchies. Libraries are designed to potentially become standalone open-source projects in the future.
+World-sim is a C++20 game project built as a monorepo of independent libraries. The architecture emphasizes modularity, testability, and clean dependency hierarchies.
 
 **What belongs here:**
-- Architecture and system design (client/server, ECS, rendering)
+- Architecture and system design
 - Implementation details (algorithms, data structures, protocols)
-- Tools and infrastructure (debug server, asset pipeline, build system)
-- Performance optimization and profiling
-- Technical patterns and conventions (logging, memory management, etc.)
+- Tools and infrastructure
+- Performance optimization
+- Technical patterns and conventions
 
 **What belongs in design/:**
 - Player-facing game features and mechanics
 - UI/UX from the player's perspective
-- Game systems from a design perspective (not implementation)
-- Player-facing requirements
+- Game systems from a design perspective
 
-## Core Architecture Principles
+---
 
-- **Clear dependency layers**: Foundation → Renderer → UI/World → Game Systems → Engine
-- **Testability first**: UI must be inspectable and testable by AI agents
-- **Minimal coupling**: Each library should be self-contained with clear interfaces
-- **Configuration-driven**: Use JSON configs where possible for flexibility
+## Quick Links
 
-## Technical Design Documents
+- **[Library Decisions](./library-decisions.md)** — All library choices in one place
+- **[Monorepo Structure](./monorepo-structure.md)** — Project organization
+- **[C++ Coding Standards](./cpp-coding-standards.md)** — Style guide
 
-### Core Systems
-- [Monorepo Structure](./monorepo-structure.md) - Library organization and dependencies
-- [Vector Asset Pipeline](./vector-asset-pipeline.md) - SVG-based assets with procedural variation
-- [Build System](./build-system.md) - CMake + vcpkg configuration
-- [C++ Coding Standards](./cpp-coding-standards.md) - Style guide and best practices
-- [Technical Notes](./technical-notes.md) - Research notes, open questions, and technical references
+---
 
-### Observability & Developer Tools
-- [Observability Overview](./observability/INDEX.md) - Complete system overview
-- [Developer Server](./observability/developer-server.md) - HTTP/SSE streaming from applications
-- [Developer Client](./observability/developer-client.md) - External TypeScript/Vite web app
-- [UI Inspection](./observability/ui-inspection.md) - UI hierarchy and hover inspection
-- [Logging System](./logging-system.md) - Structured logging with HTTP streaming
-- [Diagnostic Drawing](./diagnostic-drawing.md) - In-viewport debug visualization
+## Architecture Overview
 
-### Networking & Multiplayer
-- [Multiplayer Architecture](./multiplayer-architecture.md) - Client/server design for colony sim
-- [Process Management](./process-management.md) - Client spawns/monitors server process
-
-### Engine Patterns (Implement These!)
-- [String Hashing](./string-hashing.md) - Fast string→int conversion for lookups (Implement Now)
-- [Logging System](./logging-system.md) - Structured logging with categories (Implement Now)
-- [Memory Arenas](./memory-arenas.md) - Fast temporary allocations (Implement Soon)
-- [Resource Handles](./resource-handles.md) - Safe resource references (Implement Soon)
-- [Diagnostic Drawing](./diagnostic-drawing.md) - Immediate mode debug draw (Implement Later)
-
-### Asset System
-**Complete documentation**: [Asset System Index](./asset-system/README.md)
-
-- [Asset System Overview](./asset-system/README.md) - Simple vs procedural assets, architecture
-- [Folder-Based Assets](./asset-system/folder-based-assets.md) - **PROPOSAL**: Self-contained asset folders *(under review)*
-- [Asset Definition Schema](./asset-system/asset-definitions.md) - XML format, inheritance, modding
-- [Patching System](./asset-system/patching-system.md) - XPath-based modification of existing assets
-- [Mod Metadata](./asset-system/mod-metadata.md) - Mod.xml specification and load order
-- [Entity Placement System](./entity-placement-system.md) - Biome rules, groups, relationships, distribution patterns
-- [Scripting API](./asset-system/lua-scripting-api.md) - Procedural generation API
-- [Variant Cache Format](./asset-system/variant-cache.md) - Binary cache for pre-generated assets *(planned)*
-
-### World & Game
-- [World Generation Architecture](./world-generation-architecture.md) - Pluggable world generators
-- [Chunk Management System](./chunk-management-system.md) - Infinite 2D world from 3D sphere
-- [3D to 2D Sampling](./3d-to-2d-sampling.md) - Converting spherical world to tile data
-
-### Graphics & Rendering
-- [Renderer Architecture](./renderer-architecture.md) - OpenGL abstraction, 2D/3D rendering
-- [Resource Management](./resource-management.md) - Textures, shaders, fonts
-
-#### Vector Graphics System
-**Complete documentation**: [Vector Graphics Index](./vector-graphics/INDEX.md)
-
-- [Vector Asset Pipeline](./vector-graphics/asset-pipeline.md) - High-level overview of SVG asset workflow
-- [Architecture](./vector-graphics/architecture.md) - Four-tier rendering system, integration design
-- [Tessellation Options](./vector-graphics/tessellation-options.md) - Comparative analysis: libtess2, Earcut, custom
-- [SVG Parsing Options](./vector-graphics/svg-parsing-options.md) - Comparative analysis: NanoSVG, LunaSVG, PlutoVG, custom
-- [Rendering Backend Options](./vector-graphics/rendering-backend-options.md) - Comparative analysis: NanoVG, Blend2D, custom batched, Vello
-- [Batching Strategies](./vector-graphics/batching-strategies.md) - GPU batching, streaming VBOs, atlasing
-- [Animation System](./vector-graphics/animation-system.md) - Spline deformation, wind, trampling
-- [Collision Shapes](./vector-graphics/collision-shapes.md) - Dual representation design
-- [LOD System](./vector-graphics/lod-system.md) - Level of detail strategies
-- [Memory Management](./vector-graphics/memory-management.md) - Memory architecture, budgets, arenas
-- [Performance Targets](./vector-graphics/performance-targets.md) - Performance budgets, profiling
-
-#### UI Framework
-**Complete documentation**: [UI Framework Index](./ui-framework/INDEX.md)
-
-- [Library Options](./ui-framework/library-options.md) - Comparative analysis: Dear ImGui, Nuklear, RmlUI, NanoGUI, MyGUI, custom implementation
-- [Batched Text Rendering](./ui-framework/batched-text-rendering.md) - Unified batching for text and shapes, fixing z-order issues
-- [SDF Text Rendering](./ui-framework/sdf-text-rendering.md) - Signed Distance Field fonts for crisp, scalable text
-- [Architecture](./ui-framework/architecture.md) - Unified layer model, C++20 concepts, handle-based references
-- [Scrolling Containers](./ui-framework/scrolling-containers.md) - OpenGL clipping, culling, performance *(planned)*
-- [Renderer Integration](./ui-framework/renderer-integration.md) - Batching, render passes, clipping stack *(planned)*
-
-### Engine & Application
-- [Scene Management](./scene-management.md) - Scene lifecycle and transitions
-- [Configuration System](./config-system.md) - JSON-based game configuration
-- [Application Lifecycle](./application-lifecycle.md) - Fast splash screen, lazy loading
-
-## System Architecture Diagram
-
-### Applications & Services Overview
+### Application Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                          WORLD-SIM PROJECT                                  │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  ┌──────────────────────────┐              ┌──────────────────────────┐   │
-│  │   Game Server Process    │              │  Game Client Process     │   │
-│  │   (world-sim-server)     │              │  (world-sim)             │   │
-│  │                          │              │                          │   │
-│  │  - ECS (game state)      │   WebSocket  │  - Renderer              │   │
-│  │  - World generation      │◄────────────►│  - UI layer              │   │
-│  │  - Game logic (60 TPS)   │   Port 9000  │  - Input handling        │   │
-│  │  - Chunk management      │   60 Hz      │  - Audio                 │   │
-│  │                          │              │                          │   │
-│  │  Developer Server:       │              │  Developer Server:       │   │
-│  │  Port 8080 (HTTP/SSE)    │              │  Port 8082 (HTTP/SSE)    │   │
-│  └──────────┬───────────────┘              └──────────┬───────────────┘   │
-│             │                                         │                    │
-│             │                                         │                    │
-│  ┌──────────▼─────────────────────────────────────────▼──────────────┐    │
-│  │              Developer Client (Browser)                           │    │
-│  │              External TypeScript/Vite Web App                     │    │
-│  │                                                                    │    │
-│  │  Connects via HTTP/SSE to observe running applications:           │    │
-│  │                                                                    │    │
-│  │  - Metrics charts (FPS, memory, performance)                      │    │
-│  │  - Log viewer (real-time log streaming)                           │    │
-│  │  - Profiler (function timing, flame graphs)                       │    │
-│  │  - UI inspector (hierarchy, hover data)                           │    │
-│  │                                                                    │    │
-│  │  http://localhost:8080 → Game Server                              │    │
-│  │  http://localhost:8081 → UI-Sandbox                               │    │
-│  │  http://localhost:8082 → Game Client                              │    │
-│  └────────────────────────────┬───────────────────────────────────────┘   │
-│                               │                                            │
-│                               │ Also connects to:                          │
-│                               │                                            │
-│  ┌────────────────────────────▼──────────────────────────┐                │
-│  │   UI-Sandbox Process                                  │                │
-│  │   (ui-sandbox)                                        │                │
-│  │                                                        │                │
-│  │   Library development & testing sandbox               │                │
-│  │                                                        │                │
-│  │   - Develop atomic UI components (buttons, text)      │                │
-│  │   - Test OpenGL drawing code in isolation             │                │
-│  │   - Develop vector asset rendering (SVG)              │                │
-│  │   - Test graphics primitives & base rendering         │                │
-│  │   - Develop drawing libraries outside game context    │                │
-│  │                                                        │                │
-│  │   Developer Server: Port 8081 (HTTP/SSE)              │                │
-│  └────────────────────────────────────────────────────────┘                │
-│                                                                             │
-└─────────────────────────────────────────────────────────────────────────────┘
-
-KEY DISTINCTIONS:
-
-Gameplay Network (Production):
-  Game Server ←──WebSocket (port 9000, 60 Hz)──→ Game Client
-  Purpose: Real-time game state synchronization
-  Available in: All builds (Development + Release)
-
-Observability Network (Development Only):
-  Applications ──→ HTTP/SSE (ports 8080/8081/8082, 10-20 Hz) ──→ Developer Client
-  Purpose: Monitoring, debugging, inspection
-  Available in: Development builds only (compiled out in Release)
-
 Applications:
   1. Game Server    - Backend game logic (headless, no rendering)
   2. Game Client    - Player-facing game (rendering, UI, audio)
-  3. UI-Sandbox     - Library development sandbox (UI components, OpenGL, SVG)
-  4. Developer Client - External browser-based monitoring dashboard
+  3. UI-Sandbox     - Library development sandbox
+  4. Developer Client - Browser-based monitoring dashboard
 ```
 
 ### Port Assignments
 
-| Port | Service | Protocol | Purpose | Availability |
-|------|---------|----------|---------|--------------|
-| 9000 | Game Server ↔ Client | WebSocket | Gameplay sync (60 Hz) | All builds |
-| 8080 | Game Server Developer Server | HTTP/SSE | Observability (10-20 Hz) | Development only |
-| 8081 | UI-Sandbox Developer Server | HTTP/SSE | Observability (10-20 Hz) | Development only |
-| 8082 | Game Client Developer Server | HTTP/SSE | Observability (10-20 Hz) | Development only |
+| Port | Service | Protocol | Purpose |
+|------|---------|----------|---------|
+| 9000 | Game Server ↔ Client | WebSocket | Gameplay sync (60 Hz) |
+| 8080 | Game Server Developer Server | HTTP/SSE | Observability |
+| 8081 | UI-Sandbox Developer Server | HTTP/SSE | Observability |
+| 8082 | Game Client Developer Server | HTTP/SSE | Observability |
 
-### Process Communication
+---
 
-**Game Client ↔ Game Server (Gameplay):**
-- Protocol: WebSocket (bidirectional)
-- Rate: 60 Hz (real-time)
-- Purpose: Game state synchronization
-- Managed by: Game client spawns/monitors server process
-- See: [Multiplayer Architecture](./multiplayer-architecture.md), [Process Management](./process-management.md)
+## Technical Documents by Topic
 
-**Applications → Developer Client (Observability):**
-- Protocol: HTTP with Server-Sent Events (SSE) (server→client streaming)
-- Rate: 10-20 Hz (throttled, non-critical)
-- Purpose: Monitoring, debugging, inspection
-- Data: Metrics, logs, profiler data, UI hierarchy
-- See: [Observability Overview](./observability/INDEX.md)
+### Core Systems
 
-### Build Configurations
+| Document | Description |
+|----------|-------------|
+| [Monorepo Structure](./monorepo-structure.md) | Library organization and dependencies |
+| [Build System](./build-system.md) | CMake + vcpkg configuration |
+| [C++ Coding Standards](./cpp-coding-standards.md) | Style guide and best practices |
+| [Technical Notes](./technical-notes.md) | Research notes, open questions |
 
-**Development Build:**
-- Game Server: WebSocket server (9000) + Developer Server (8080)
-- Game Client: WebSocket client (9000) + Developer Server (8082)
-- UI-Sandbox: Developer Server (8081) only
-- Developer Client: Web app served from developer servers
+### Engine Patterns
 
-**Release Build:**
-- Game Server: WebSocket server only (9000)
-- Game Client: WebSocket client only (9000)
-- Developer servers: Compiled out completely
-- Developer Client: Not bundled
+| Document | Description | Priority |
+|----------|-------------|----------|
+| [String Hashing](./string-hashing.md) | Fast string→int conversion | Implement Now |
+| [Logging System](./logging-system.md) | Structured logging with categories | Implement Now |
+| [Memory Arenas](./memory-arenas.md) | Fast temporary allocations | Implement Soon |
+| [Resource Handles](./resource-handles.md) | Safe resource references | Implement Soon |
+| [Diagnostic Drawing](./diagnostic-drawing.md) | Immediate mode debug draw | Implement Later |
+
+### Networking & Multiplayer
+
+| Document | Description |
+|----------|-------------|
+| [Multiplayer Architecture](./multiplayer-architecture.md) | Client/server design for colony sim |
+| [Process Management](./process-management.md) | Client spawns/monitors server process |
+
+### Observability & Developer Tools
+
+| Document | Description |
+|----------|-------------|
+| [Observability Overview](./observability/INDEX.md) | Complete system overview |
+| [Developer Server](./observability/developer-server.md) | HTTP/SSE streaming from applications |
+| [Developer Client](./observability/developer-client.md) | External TypeScript/Vite web app |
+| [UI Inspection](./observability/ui-inspection.md) | UI hierarchy and hover inspection |
+
+### Vector Graphics System
+
+**Complete documentation:** [Vector Graphics Index](./vector-graphics/INDEX.md)
+
+| Document | Description |
+|----------|-------------|
+| [Architecture](./vector-graphics/architecture.md) | Four-tier rendering system |
+| [Asset Pipeline](./vector-graphics/asset-pipeline.md) | SVG asset workflow |
+| [Tessellation Options](./vector-graphics/tessellation-options.md) | Library comparison |
+| [SVG Parsing Options](./vector-graphics/svg-parsing-options.md) | Parser comparison |
+| [Rendering Backend Options](./vector-graphics/rendering-backend-options.md) | Renderer comparison |
+| [Performance Targets](./vector-graphics/performance-targets.md) | Budgets and profiling |
+
+### Asset System
+
+**Complete documentation:** [Asset System Index](./asset-system/README.md)
+
+| Document | Description |
+|----------|-------------|
+| [Overview](./asset-system/README.md) | Simple vs procedural assets |
+| [Asset Definitions](./asset-system/asset-definitions.md) | XML format, inheritance |
+| [Entity Placement](./entity-placement-system.md) | Biome rules, distribution |
+| [Lua Scripting API](./asset-system/lua-scripting-api.md) | Procedural generation |
+
+### World & Game
+
+| Document | Description |
+|----------|-------------|
+| [World Generation Architecture](./world-generation-architecture.md) | Pluggable world generators |
+| [Chunk Management System](./chunk-management-system.md) | Infinite 2D world from 3D sphere |
+| [3D to 2D Sampling](./3d-to-2d-sampling.md) | Converting spherical world to tiles |
+
+### Graphics & Rendering
+
+| Document | Description |
+|----------|-------------|
+| [Renderer Architecture](./renderer-architecture.md) | OpenGL abstraction |
+| [Resource Management](./resource-management.md) | Textures, shaders, fonts |
+
+---
 
 ## Related Documentation
 
-- [Development Status](/docs/status.md) - Current work and decisions
-- [Game Design Documents](/docs/design/INDEX.md) - Feature requirements and player experience
+- [Game Design Documents](/docs/design/INDEX.md) — What we're building
+- [Development Log](/docs/development-log/README.md) — Implementation history
+- [Project Status](/docs/status.md) — Current work
+- [Workflows](/docs/workflows.md) — Common development tasks
