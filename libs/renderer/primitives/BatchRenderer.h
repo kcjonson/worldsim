@@ -5,12 +5,16 @@
 // This is the internal batching implementation used by the Primitives API.
 // It accumulates draw commands for both shapes (SDF) and text (MSDF) and
 // renders them in a single pass with correct z-ordering.
+//
+// Also provides GPU instancing for efficient rendering of many identical meshes.
 
 #include "graphics/Color.h"
 #include "graphics/PrimitiveStyles.h"
 #include "graphics/Rect.h"
 #include "math/Types.h"
+#include "primitives/InstanceData.h"
 #include "shader/Shader.h"
+#include "vector/Tessellator.h"
 #include <GL/glew.h>
 #include <optional>
 #include <vector>
@@ -148,6 +152,39 @@ namespace Renderer { // NOLINT(readability-identifier-naming)
 		// Shader access for batching
 		GLuint getShaderProgram() const { return shader.getProgram(); }
 
+		// --- GPU Instancing (World-Space) ---
+
+		/// Upload a tessellated mesh to GPU for instanced rendering.
+		/// The mesh is uploaded once and reused for all instances.
+		/// @param mesh Tessellated mesh to upload
+		/// @param maxInstances Maximum number of instances to support (default 10000)
+		/// @return Handle for subsequent draw calls
+		InstancedMeshHandle uploadInstancedMesh(
+			const renderer::TessellatedMesh& mesh,
+			uint32_t maxInstances = 10000
+		);
+
+		/// Release GPU resources for an instanced mesh.
+		/// @param handle Handle to release (will be invalidated)
+		void releaseInstancedMesh(InstancedMeshHandle& handle);
+
+		/// Draw multiple instances of a mesh with GPU instancing.
+		/// Transforms are computed on GPU using camera uniforms.
+		/// @param handle Mesh handle from uploadInstancedMesh
+		/// @param instances Array of per-instance data (world position, rotation, scale, color)
+		/// @param count Number of instances to draw
+		/// @param cameraPosition Camera world position (center of view)
+		/// @param cameraZoom Camera zoom level (1.0 = normal)
+		/// @param pixelsPerMeter World scale factor
+		void drawInstanced(
+			const InstancedMeshHandle& handle,
+			const InstanceData* instances,
+			uint32_t count,
+			Foundation::Vec2 cameraPosition,
+			float cameraZoom,
+			float pixelsPerMeter
+		);
+
 	  private:
 		// Vertex data (CPU-side accumulation)
 		std::vector<UberVertex>	 vertices;
@@ -159,12 +196,19 @@ namespace Renderer { // NOLINT(readability-identifier-naming)
 		GLuint ibo = 0;
 		Shader shader;
 
-		// Uniform locations
+		// Uniform locations (standard batched rendering)
 		GLint projectionLoc = -1;
 		GLint transformLoc = -1;
 		GLint atlasLoc = -1;
 		GLint viewportHeightLoc = -1;
 		GLint pixelRatioLoc = -1;
+
+		// Uniform locations (instanced rendering)
+		GLint cameraPositionLoc = -1;
+		GLint cameraZoomLoc = -1;
+		GLint pixelsPerMeterLoc = -1;
+		GLint viewportSizeLoc = -1;
+		GLint instancedLoc = -1;
 
 		// Viewport dimensions
 		int viewportWidth = 800;

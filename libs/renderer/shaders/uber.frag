@@ -54,11 +54,29 @@ float screenPxRange(float pixelRange) {
 }
 
 // ============================================================================
+// RENDER MODE CONSTANTS
+// ============================================================================
+const float kRenderModeText = -1.0;      // MSDF text rendering
+const float kRenderModeInstanced = -2.0; // Simple solid color (instanced entities)
+
+// ============================================================================
 // MAIN - Branch on render mode
 // ============================================================================
 
 void main() {
-	// ========== FAST-PATH RECT CLIPPING ==========
+	// Render mode detection:
+	// - Shapes:    v_data2.w >= 0 (borderPosition: 0=Inside, 1=Center, 2=Outside)
+	// - Text:      v_data2.w == -1.0
+	// - Instanced: v_data2.w == -2.0
+
+	// ========== INSTANCED ENTITY RENDERING (simple solid color) ==========
+	if (v_data2.w < -1.5) {
+		// Output the vertex color (includes instance color tint from SVG asset)
+		FragColor = v_color;
+		return;
+	}
+
+	// ========== FAST-PATH RECT CLIPPING (for UI elements only) ==========
 	// Clip bounds check: (minX, minY, maxX, maxY) in UI coordinates (top-left origin, logical pixels)
 	// A clipBounds of (0,0,0,0) means no clipping (maxX <= minX check detects this)
 	if (v_clipBounds.z > v_clipBounds.x) {
@@ -75,10 +93,6 @@ void main() {
 			discard;
 		}
 	}
-
-	// Render mode detection:
-	// - Shapes: v_data2.w >= 0 (borderPosition: 0=Inside, 1=Center, 2=Outside)
-	// - Text:   v_data2.w < 0 (renderMode = -1.0)
 
 	if (v_data2.w >= 0.0) {
 		// ========== SHAPE RENDERING (SDF) ==========
