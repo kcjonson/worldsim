@@ -63,6 +63,9 @@ class ChunkRenderer {
 	/// Add pure chunk as single quad
 	void addPureChunk(const Chunk& chunk, const WorldCamera& camera,
 					  int viewportWidth, int viewportHeight);
+
+	/// Flush current batch to GPU (handles uint16_t index overflow)
+	void flushBatch();
 };
 
 }  // namespace engine::world

@@ -4,8 +4,33 @@
 
 namespace engine::world {
 
+	// Maximum vertices per batch to stay within uint16_t index range
+	// Leave headroom for a full chunk (64x64 tiles × 4 vertices = 16,384 vertices)
+	constexpr size_t kMaxVerticesPerBatch = 60000;
+
 	ChunkRenderer::ChunkRenderer(float pixelsPerMeter)
 		: m_pixelsPerMeter(pixelsPerMeter) {}
+
+	void ChunkRenderer::flushBatch() {
+		if (m_indices.empty()) {
+			return;
+		}
+
+		Renderer::Primitives::drawTriangles(
+			Renderer::Primitives::TrianglesArgs{
+				.vertices = m_vertices.data(),
+				.indices = m_indices.data(),
+				.vertexCount = m_vertices.size(),
+				.indexCount = m_indices.size(),
+				.colors = m_colors.data()
+			}
+		);
+
+		// Clear for next batch (keep capacity)
+		m_vertices.clear();
+		m_colors.clear();
+		m_indices.clear();
+	}
 
 	void ChunkRenderer::render(const ChunkManager& chunkManager, const WorldCamera& camera, int viewportWidth, int viewportHeight) {
 		m_lastTileCount = 0;
@@ -41,18 +66,8 @@ namespace engine::world {
 			}
 		}
 
-		// Single draw call for all tiles
-		if (!m_indices.empty()) {
-			Renderer::Primitives::drawTriangles(
-				Renderer::Primitives::TrianglesArgs{
-					.vertices = m_vertices.data(),
-					.indices = m_indices.data(),
-					.vertexCount = m_vertices.size(),
-					.indexCount = m_indices.size(),
-					.colors = m_colors.data()
-				}
-			);
-		}
+		// Final flush for remaining geometry
+		flushBatch();
 	}
 
 	void ChunkRenderer::addChunkTiles(
@@ -103,6 +118,11 @@ namespace engine::world {
 		// Add geometry for visible tiles
 		for (int32_t tileY = startTileY; tileY < endTileY; tileY += m_tileResolution) {
 			for (int32_t tileX = startTileX; tileX < endTileX; tileX += m_tileResolution) {
+				// Flush batch if approaching uint16_t index limit (each tile adds 4 vertices)
+				if (m_vertices.size() + 4 > kMaxVerticesPerBatch) {
+					flushBatch();
+				}
+
 				// Get tile data and color
 				TileData		  tile = chunk.getTile(static_cast<uint16_t>(tileX), static_cast<uint16_t>(tileY));
 				Foundation::Color color = Chunk::getGroundCoverColor(tile.groundCover);
@@ -115,7 +135,7 @@ namespace engine::world {
 				float screenX = (worldX - camX) * scale + halfViewW;
 				float screenY = (worldY - camY) * scale + halfViewH;
 
-				// Current vertex index for indices
+				// Current vertex index for indices (safe after flush check)
 				auto baseVertex = static_cast<uint16_t>(m_vertices.size());
 
 				// Add 4 vertices (quad corners) - already in screen space
@@ -144,6 +164,11 @@ namespace engine::world {
 	}
 
 	void ChunkRenderer::addPureChunk(const Chunk& chunk, const WorldCamera& camera, int viewportWidth, int viewportHeight) {
+		// Flush batch if approaching uint16_t index limit (each chunk adds 4 vertices)
+		if (m_vertices.size() + 4 > kMaxVerticesPerBatch) {
+			flushBatch();
+		}
+
 		WorldPosition	  chunkOrigin = chunk.worldOrigin();
 		Foundation::Color color = Chunk::getBiomeColor(chunk.primaryBiome());
 
@@ -158,7 +183,7 @@ namespace engine::world {
 		float screenY = (chunkOrigin.y - camY) * scale + halfViewH;
 		float chunkScreenSize = static_cast<float>(kChunkSize) * kTileSize * scale;
 
-		// Current vertex index for indices
+		// Current vertex index for indices (safe after flush check)
 		auto baseVertex = static_cast<uint16_t>(m_vertices.size());
 
 		// Add 4 vertices for chunk quad

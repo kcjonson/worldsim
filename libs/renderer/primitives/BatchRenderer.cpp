@@ -625,11 +625,6 @@ namespace Renderer {
 			return;
 		}
 
-		// Clamp to max instances
-		if (count > handle.maxInstances) {
-			count = handle.maxInstances;
-		}
-
 		// Enable blending for transparency
 		glEnable(GL_BLEND);
 		glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -672,26 +667,39 @@ namespace Renderer {
 
 		// Bind the instanced mesh VAO
 		glBindVertexArray(handle.vao);
-
-		// Upload instance data to GPU
 		glBindBuffer(GL_ARRAY_BUFFER, handle.instanceVBO);
-		glBufferSubData(
-			GL_ARRAY_BUFFER, 0, static_cast<GLsizeiptr>(count * sizeof(InstanceData)), instances
-		);
 
-		// Draw all instances with a single draw call
-		// This is the key performance win: one draw call for thousands of entities
-		glDrawElementsInstanced(
-			GL_TRIANGLES,
-			static_cast<GLsizei>(handle.indexCount),
-			GL_UNSIGNED_SHORT, // mesh indices are uint16_t
-			nullptr,
-			static_cast<GLsizei>(count)
-		);
+		// Handle overflow by batching multiple draw calls if needed
+		// This ensures all instances render even if count > maxInstances
+		uint32_t remaining = count;
+		uint32_t offset = 0;
 
-		drawCallCount++;
-		frameVertexCount += static_cast<size_t>(handle.indexCount / 3) * 3 * count; // Approximate
-		frameTriangleCount += static_cast<size_t>(handle.indexCount / 3) * count;
+		while (remaining > 0) {
+			uint32_t batchSize = std::min(remaining, handle.maxInstances);
+
+			// Upload this batch of instance data to GPU
+			glBufferSubData(
+				GL_ARRAY_BUFFER, 0,
+				static_cast<GLsizeiptr>(batchSize * sizeof(InstanceData)),
+				instances + offset
+			);
+
+			// Draw this batch of instances
+			glDrawElementsInstanced(
+				GL_TRIANGLES,
+				static_cast<GLsizei>(handle.indexCount),
+				GL_UNSIGNED_SHORT, // mesh indices are uint16_t
+				nullptr,
+				static_cast<GLsizei>(batchSize)
+			);
+
+			drawCallCount++;
+			frameVertexCount += static_cast<size_t>(handle.indexCount / 3) * 3 * batchSize;
+			frameTriangleCount += static_cast<size_t>(handle.indexCount / 3) * batchSize;
+
+			remaining -= batchSize;
+			offset += batchSize;
+		}
 
 		glBindVertexArray(0);
 		glDisable(GL_BLEND);

@@ -47,9 +47,11 @@ Renderer::InstancedMeshHandle& EntityRenderer::getOrCreateMeshHandle(
 	}
 
 	// Upload mesh to GPU
+	// Buffer size of 50,000 instances handles extreme zoom-out scenarios
+	// (observed 34k+ entities when fully zoomed out)
 	auto* batchRenderer = Renderer::Primitives::getBatchRenderer();
 	if (batchRenderer != nullptr && mesh != nullptr) {
-		auto handle = batchRenderer->uploadInstancedMesh(*mesh, 20000);
+		auto handle = batchRenderer->uploadInstancedMesh(*mesh, 50000);
 		auto [insertedIt, _] = m_meshHandles.emplace(defName, handle);
 		return insertedIt->second;
 	}
