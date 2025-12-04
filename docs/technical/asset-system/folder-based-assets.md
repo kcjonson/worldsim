@@ -1,7 +1,8 @@
 # Folder-Based Asset Definition System
 
-**Status**: Proposal
+**Status**: Implemented (Phase 1)
 **Created**: 2025-12-03
+**Updated**: 2025-12-03
 **Author**: Technical Design
 
 ## Overview
@@ -44,13 +45,12 @@ The asset system uses a **3-level hierarchy**: `category/subcategory/Asset/`
 ```
 assets/
 ├── shared/                          # Shared resources
-│   ├── scripts/                     # Shared script modules (registered by name)
-│   │   ├── branch_utils.lua        # → require("branch_utils")
-│   │   ├── color.lua               # → require("color")
-│   │   ├── noise.lua               # → require("noise")
-│   │   └── bezier.lua              # → require("bezier")
+│   ├── scripts/                     # Shared script modules (via @shared/ prefix)
+│   │   ├── deciduous.lua           # → @shared/deciduous.lua in XML
+│   │   ├── branch_utils.lua        # → @shared/branch_utils.lua
+│   │   └── noise.lua               # → @shared/noise.lua
 │   │
-│   └── components/                  # Shared SVG components
+│   └── components/                  # Shared SVG components (planned)
 │       ├── leaf_shapes.svg         # Reusable leaf templates
 │       └── bark_patterns.svg       # Bark texture patterns
 │
@@ -240,27 +240,23 @@ flora/MapleTree/
 
 **Generator Script:**
 ```lua
--- generate.lua
--- Load shared utilities from _shared
-local branch = require("_shared.lua.branch_utils")
-
--- Load asset-local helper (optional)
-local helper = require("branch_helper")  -- ./branch_helper.lua
+-- deciduous.lua (in assets/shared/scripts/)
+-- This script is referenced from XML via: <scriptPath>@shared/deciduous.lua</scriptPath>
+-- The C++ AssetRegistry resolves the @shared/ prefix before executing
 
 -- Get parameters from XML
 local trunkHeight = getFloat("trunkHeight", 1.2)
-local leafSvg = getString("leafSvg", "maple_leaf.svg")
+local canopyRadius = getFloat("canopyRadius", 0.6)
 
 -- Generate the tree...
 local asset = Asset.new()
 
--- Can load SVG components
-local leafPath = loadSvg(leafSvg)  -- Loads ./maple_leaf.svg
-
--- ... generation logic ...
+-- ... generation logic using params ...
 
 return asset
 ```
+
+> **Note:** The original proposal showed Lua using `require("branch_utils")` to load shared modules. In the implemented system, script selection happens at the XML level with `@shared/` prefix—the Lua script itself doesn't need to know about shared vs local paths.
 
 ### Type 3: Hybrid Assets (SVG + Lua Variation)
 
@@ -331,122 +327,130 @@ Shared utilities and components live in `assets/shared/`.
 
 ```
 assets/shared/
-├── scripts/                 # Shared script modules (registered by name)
-│   ├── branch_utils.lua    # → require("branch_utils")
-│   ├── color.lua           # → require("color")
-│   ├── noise.lua           # → require("noise")
-│   └── bezier.lua          # → require("bezier")
+├── scripts/                 # Shared script modules
+│   ├── deciduous.lua       # Shared tree generator
+│   ├── branch_utils.lua    # Branch generation utilities
+│   └── noise.lua           # Noise functions
 │
-└── components/              # Shared SVG components
+└── components/              # Shared SVG components (future)
     ├── leaf_shapes.svg     # Common leaf templates
     └── bark_patterns.svg   # Bark pattern library
 ```
 
-### Module Registry (Name-Based Resolution)
+### The `@shared/` Prefix
 
-Shared script modules are registered by **name**, not path. This decouples code from folder structure.
+Shared scripts are referenced using the **`@shared/` prefix** in XML definitions. The C++ AssetRegistry resolves these paths at load time.
+
+> **Implementation Note:** The original proposal called for a "Module Registry" where Lua's `require()` would be extended to resolve shared modules by name (e.g., `require("branch_utils")` finding `shared/scripts/branch_utils.lua`). We implemented a simpler approach instead:
+>
+> - **Proposed**: Lua-level module registry with custom `require()` resolver
+> - **Implemented**: XML-level `@shared/` prefix resolved by C++ before Lua execution
+>
+> The `@shared/` prefix approach is simpler because:
+> 1. No Lua environment customization needed
+> 2. Path resolution happens in one place (AssetRegistry)
+> 3. XML definitions are explicit about where scripts come from
+> 4. Easier to debug—paths are visible in the definition files
 
 **How it works:**
-1. All script files in `shared/scripts/` are auto-registered by filename
-2. `require("branch_utils")` finds `shared/scripts/branch_utils.lua`
-3. No folder paths in require statements
+1. XML uses `<scriptPath>@shared/deciduous.lua</scriptPath>`
+2. AssetRegistry recognizes the `@shared/` prefix
+3. Path is resolved to `assets/shared/scripts/deciduous.lua`
 
-**From scripts:**
-```lua
--- Shared modules (registered by name, engine resolves location)
-local branch = require("branch_utils")   -- Engine finds it
-local noise = require("noise")           -- Engine finds it
-local color = require("color")           -- Engine finds it
+**In XML definitions:**
+```xml
+<!-- MapleTree.xml -->
+<AssetDef>
+  <defName>Flora_TreeMaple</defName>
+  <assetType>procedural</assetType>
 
--- Asset-local modules (checked first, before registry)
-local helper = require("my_helper")      -- Looks in ./my_helper.lua first
+  <!-- @shared/ prefix resolves to assets/shared/scripts/ -->
+  <scriptPath>@shared/deciduous.lua</scriptPath>
 
--- Load local SVG
-local leafSvg = loadSvg("maple_leaf.svg")  -- ./maple_leaf.svg
+  <!-- Local paths (relative to asset folder) -->
+  <svgPath>maple_leaf.svg</svgPath>
+</AssetDef>
 ```
 
-**Resolution order for `require("foo")`:**
-1. **Asset-local**: Check `<asset_folder>/foo.lua`
-2. **Shared registry**: Check for registered module "foo"
-3. **Fail**: Error if not found
+**Path resolution in C++:**
+```cpp
+// In AssetRegistry::generateAsset()
+const std::string kSharedPrefix = "@shared/";
+if (def->scriptPath.compare(0, kSharedPrefix.size(), kSharedPrefix) == 0) {
+    // Strip prefix, resolve from shared scripts path
+    std::string relativePath = def->scriptPath.substr(kSharedPrefix.size());
+    resolvedScriptPath = (m_sharedScriptsPath / relativePath).string();
+} else {
+    // Local path - resolve from asset's baseFolder
+    resolvedScriptPath = def->resolvePath(def->scriptPath).string();
+}
+```
 
-### Referencing Shared SVG Components
+**Resolution rules:**
+- **`@shared/foo.lua`**: Resolves to `assets/shared/scripts/foo.lua`
+- **`foo.lua`** (no prefix): Resolves relative to the asset folder
 
-For shared SVG components, use the `@components/` prefix:
+### Referencing Shared SVG Components (Future)
 
-**From XML:**
+For shared SVG components, the `@components/` prefix is planned but not yet implemented:
+
+**Planned XML syntax:**
 ```xml
-<!-- Local SVG (relative to asset folder) -->
+<!-- Local SVG (relative to asset folder) - IMPLEMENTED -->
 <svgPath>blade.svg</svgPath>
 
-<!-- Shared component -->
+<!-- Shared component - PLANNED -->
 <leafTemplate>@components/leaf_shapes</leafTemplate>
-```
-
-**From scripts:**
-```lua
--- Local SVG
-local leaf = loadSvg("maple_leaf.svg")
-
--- Shared component
-local leafTemplate = loadComponent("leaf_shapes")
 ```
 
 ### Asset-Local vs Shared
 
-| Use Case | Location | Reference |
-|----------|----------|-----------|
-| Asset-specific helper | Asset folder | `require("my_helper")` (local first) |
-| Reusable algorithm | `shared/scripts/` | `require("branch_utils")` |
-| Asset's own SVG | Asset folder | `loadSvg("maple_leaf.svg")` |
-| Common SVG library | `shared/components/` | `loadComponent("leaf_shapes")` |
+| Use Case | Location | XML Reference | Status |
+|----------|----------|---------------|--------|
+| Asset's own SVG | Asset folder | `<svgPath>blade.svg</svgPath>` | ✅ Implemented |
+| Shared script | `shared/scripts/` | `<scriptPath>@shared/deciduous.lua</scriptPath>` | ✅ Implemented |
+| Shared SVG component | `shared/components/` | `<template>@components/leaf</template>` | 🔮 Planned |
 
 ## Path Resolution
 
-### Resolution Rules
+### Resolution Rules (Phase 1 - Implemented)
 
-**Lua `require()`:**
-1. Check asset folder for `<name>.lua`
-2. Check shared module registry for `<name>`
-3. Error if not found
+**XML `<scriptPath>`:**
+1. `@shared/foo.lua` → `assets/shared/scripts/foo.lua`
+2. `foo.lua` (no prefix) → `<asset_folder>/foo.lua`
 
-**SVG `loadSvg()`:**
-1. Relative path → asset folder
-2. `@components/<name>` → shared components
-
-**XML paths:**
-1. No prefix → relative to asset folder
-2. `@components/` → shared components
-3. `@<defName>` → reference another asset by defName
-
-### In Scripts
-
-```lua
--- Asset-local files (checked first)
-local myHelper = require("helper")           -- ./helper.lua
-local leafSvg = loadSvg("maple_leaf.svg")   -- ./maple_leaf.svg
-
--- Shared resources (name-based, no paths)
-local branch = require("branch_utils")       -- Registered module
-local template = loadComponent("leaf_shapes") -- Shared component
-
--- Reference another asset's output (by defName)
-local oakMesh = getAssetMesh("OakTree")      -- Gets OakTree's mesh
-```
+**XML `<svgPath>`:**
+1. Relative path → `<asset_folder>/<path>`
 
 ### In XML Definitions
 
 ```xml
-<!-- Local paths (relative to asset folder) -->
+<!-- Local paths (relative to asset folder) - IMPLEMENTED -->
 <svgPath>blade.svg</svgPath>
-<script>generate.lua</script>
+<scriptPath>generate.lua</scriptPath>
 
-<!-- Shared components -->
+<!-- Shared scripts - IMPLEMENTED -->
+<scriptPath>@shared/deciduous.lua</scriptPath>
+
+<!-- Shared components - PLANNED -->
 <leafTemplate>@components/leaf_shapes</leafTemplate>
 
-<!-- Reference another asset by defName -->
+<!-- Reference another asset by defName - PLANNED -->
 <basedOn>@MapleTree</basedOn>
 ```
+
+### Future: Lua-Level Resolution (Not Implemented)
+
+The original proposal included Lua-level path resolution. This is **not implemented** in Phase 1:
+
+```lua
+-- PLANNED (not yet implemented):
+local branch = require("branch_utils")       -- Would find shared module
+local template = loadComponent("leaf_shapes") -- Would find shared SVG
+local oakMesh = getAssetMesh("OakTree")      -- Would get another asset's mesh
+```
+
+Currently, all path resolution happens at the XML/C++ level before scripts execute.
 
 ## Definition Inheritance
 
@@ -635,24 +639,26 @@ mods/BiggerTrees/assets/flora/MapleTree/
 
 ### From Current to Folder-Based
 
-**Phase 1: Structure Migration**
-1. Create 3-level folder hierarchy (`world/flora/GrassBlade/`)
-2. Create folder for each existing defName
-3. Move XML definitions into matching folders
-4. Move SVG and script files into asset folders
-5. Update paths in XML to be folder-relative
-6. Move shared scripts to `shared/scripts/`
+**Phase 1: Structure Migration** ✅ COMPLETE
+1. ✅ Create 3-level folder hierarchy (`world/flora/GrassBlade/`)
+2. ✅ Create folder for each existing defName
+3. ✅ Move XML definitions into matching folders
+4. ✅ Move SVG and script files into asset folders
+5. ✅ Update paths in XML to be folder-relative
+6. ✅ Move shared scripts to `shared/scripts/`
 
-**Phase 2: Code Updates**
-1. Update AssetRegistry to scan 3-level folder structure
-2. Implement name-based module registry for `require()`
-3. Implement `@` reference resolution for cross-asset references
-4. Add `loadComponent()` API for shared SVG components
+**Phase 2: Code Updates** ✅ COMPLETE (partial)
+1. ✅ Update AssetRegistry to scan 3-level folder structure
+2. ✅ Implement `@shared/` prefix resolution for shared scripts
+3. ⏳ Implement `@` reference resolution for cross-asset references (planned)
+4. ⏳ Add `loadComponent()` API for shared SVG components (planned)
 
-**Phase 3: Validation**
-1. All existing assets load correctly
-2. All tests pass
-3. Performance unchanged
+> **Note:** We implemented `@shared/` prefix resolution in C++/XML instead of the originally planned Lua-level `require()` module registry. See the "Implementation Note" in the Shared Resources section for rationale.
+
+**Phase 3: Validation** ✅ COMPLETE
+1. ✅ All existing assets load correctly
+2. ✅ All tests pass
+3. ✅ Performance unchanged
 
 ### Example Migration
 
@@ -660,6 +666,7 @@ mods/BiggerTrees/assets/flora/MapleTree/
 ```
 assets/
 ├── definitions/flora/grass.xml     # <svgPath>assets/svg/grass_blade.svg</svgPath>
+├── definitions/flora/trees.xml     # <scriptPath>assets/generators/trees/deciduous.lua</scriptPath>
 ├── svg/grass_blade.svg
 └── generators/trees/deciduous.lua
 ```
@@ -669,17 +676,18 @@ assets/
 assets/
 ├── shared/
 │   └── scripts/
-│       └── branch_utils.lua        # → require("branch_utils")
+│       └── deciduous.lua           # Referenced via @shared/deciduous.lua
 │
 └── world/flora/
     ├── GrassBlade/
     │   ├── GrassBlade.xml          # <svgPath>blade.svg</svgPath>
     │   └── blade.svg
     │
-    └── MapleTree/
-        ├── MapleTree.xml
-        ├── generate.lua
-        └── maple_leaf.svg
+    ├── MapleTree/
+    │   └── MapleTree.xml           # <scriptPath>@shared/deciduous.lua</scriptPath>
+    │
+    └── OakTree/
+        └── OakTree.xml             # <scriptPath>@shared/deciduous.lua</scriptPath>
 ```
 
 ## Open Questions
