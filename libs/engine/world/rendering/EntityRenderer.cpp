@@ -6,9 +6,14 @@
 #include <graphics/Color.h>
 #include <primitives/BatchRenderer.h>
 #include <primitives/Primitives.h>
+#include <utils/Log.h>
 #include <cmath>
 
 namespace engine::world {
+
+// Debug logging frame counter
+static uint32_t s_debugFrameCounter = 0;
+constexpr uint32_t kDebugLogInterval = 300; // Log every 5 seconds at 60fps
 
 EntityRenderer::EntityRenderer(float pixelsPerMeter) : m_pixelsPerMeter(pixelsPerMeter) {}
 
@@ -130,6 +135,47 @@ void EntityRenderer::renderInstanced(
 			// Add to batch for this mesh type
 			m_instanceBatches[entity->defName].push_back(instance);
 			m_lastEntityCount++;
+		}
+	}
+
+	// Debug logging every N frames
+	s_debugFrameCounter++;
+	if (s_debugFrameCounter % kDebugLogInterval == 0) {
+		LOG_INFO(Engine, "=== EntityRenderer Debug Frame %u ===", s_debugFrameCounter);
+		LOG_INFO(Engine, "Camera: (%.1f, %.1f), zoom=%.2f", camX, camY, zoom);
+		LOG_INFO(Engine, "Query bounds: X[%.1f to %.1f], Y[%.1f to %.1f]",
+			minWorldX, maxWorldX, minWorldY, maxWorldY);
+		LOG_INFO(Engine, "Processed chunks: %zu, Total entities rendered: %u",
+			processedChunks.size(), m_lastEntityCount);
+
+		// Log per-chunk details with GrassBlade tracking
+		for (const auto& coord : processedChunks) {
+			const auto* index = executor.getChunkIndex(coord);
+			if (index == nullptr) {
+				LOG_INFO(Engine, "  Chunk (%d, %d): NO INDEX (null)", coord.x, coord.y);
+			} else {
+				// Count GrassBlade entities in this chunk's queryRect result
+				auto chunkEntities = index->queryRect(minWorldX, minWorldY, maxWorldX, maxWorldY);
+				uint32_t grassCount = 0;
+				uint32_t treeCount = 0;
+				for (const auto* entity : chunkEntities) {
+					if (entity->defName.find("Grass") != std::string::npos) {
+						grassCount++;
+					} else if (entity->defName.find("Tree") != std::string::npos) {
+						treeCount++;
+					}
+				}
+				LOG_INFO(Engine, "  Chunk (%d, %d): indexTotal=%zu, visible=%zu, grass=%u, trees=%u",
+					coord.x, coord.y, index->size(), chunkEntities.size(), grassCount, treeCount);
+			}
+		}
+
+		// Summary by entity type
+		LOG_INFO(Engine, "Entity summary by type:");
+		for (const auto& [defName, instances] : m_instanceBatches) {
+			if (!instances.empty()) {
+				LOG_INFO(Engine, "  %s: %zu instances", defName.c_str(), instances.size());
+			}
 		}
 	}
 
