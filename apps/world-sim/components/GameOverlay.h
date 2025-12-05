@@ -42,6 +42,7 @@ class GameOverlay {
   private:
 	std::unique_ptr<UI::Text> chunksText;
 	std::unique_ptr<UI::Text> positionText;
+	std::unique_ptr<UI::Text> biomeText;
 	std::unique_ptr<UI::Text> controlsText;
 	std::unique_ptr<ZoomControl> zoomControl;
 	Foundation::Rect viewportBounds;

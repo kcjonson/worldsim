@@ -38,12 +38,29 @@ namespace Renderer {
 			return;
 		}
 
-		// Get uniform locations
+		// Get uniform locations (standard batched rendering)
 		projectionLoc = glGetUniformLocation(shader.getProgram(), "u_projection");
 		transformLoc = glGetUniformLocation(shader.getProgram(), "u_transform");
 		atlasLoc = glGetUniformLocation(shader.getProgram(), "u_atlas");
 		viewportHeightLoc = glGetUniformLocation(shader.getProgram(), "u_viewportHeight");
 		pixelRatioLoc = glGetUniformLocation(shader.getProgram(), "u_pixelRatio");
+
+		// Get uniform locations (instanced rendering)
+		cameraPositionLoc = glGetUniformLocation(shader.getProgram(), "u_cameraPosition");
+		cameraZoomLoc = glGetUniformLocation(shader.getProgram(), "u_cameraZoom");
+		pixelsPerMeterLoc = glGetUniformLocation(shader.getProgram(), "u_pixelsPerMeter");
+		viewportSizeLoc = glGetUniformLocation(shader.getProgram(), "u_viewportSize");
+		instancedLoc = glGetUniformLocation(shader.getProgram(), "u_instanced");
+
+		// Debug: verify instancing uniforms are found (only in debug builds)
+#ifndef NDEBUG
+		std::cerr << "[BatchRenderer] Instancing uniforms: "
+				  << "u_instanced=" << instancedLoc
+				  << " u_cameraPosition=" << cameraPositionLoc
+				  << " u_cameraZoom=" << cameraZoomLoc
+				  << " u_pixelsPerMeter=" << pixelsPerMeterLoc
+				  << " u_viewportSize=" << viewportSizeLoc << std::endl;
+#endif
 
 		// Create VAO/VBO/IBO
 		glGenVertexArrays(1, &vao);
@@ -399,6 +416,9 @@ namespace Renderer {
 			glUniform1i(atlasLoc, 0);
 		}
 
+		// Set instanced = false for standard batched rendering path
+		glUniform1i(instancedLoc, 0);
+
 		// Draw
 		glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(indices.size()), GL_UNSIGNED_INT, nullptr);
 
@@ -478,6 +498,225 @@ namespace Renderer {
 			transform[0][1] == 0.0F && transform[0][2] == 0.0F && transform[0][3] == 0.0F && transform[1][0] == 0.0F &&
 			transform[1][2] == 0.0F && transform[1][3] == 0.0F && transform[2][0] == 0.0F && transform[2][1] == 0.0F &&
 			transform[2][3] == 0.0F;
+	}
+
+	// --- GPU Instancing Methods ---
+
+	// Maximum allowed instances to prevent excessive GPU memory allocation
+	constexpr uint32_t kMaxAllowedInstances = 100000;
+
+	InstancedMeshHandle BatchRenderer::uploadInstancedMesh(
+		const renderer::TessellatedMesh& mesh,
+		uint32_t						 maxInstances
+	) {
+		// Validate maxInstances parameter
+		if (maxInstances == 0 || maxInstances > kMaxAllowedInstances) {
+			std::cerr << "[BatchRenderer] Invalid maxInstances: " << maxInstances
+					  << " (must be 1-" << kMaxAllowedInstances << ")" << std::endl;
+			return InstancedMeshHandle{};
+		}
+
+		InstancedMeshHandle handle;
+		handle.maxInstances = maxInstances;
+
+		// Convert TessellatedMesh to InstancedMeshVertex format
+		// This format is simpler: just position + color (no SDF data needed for entities)
+		std::vector<InstancedMeshVertex> meshVertices;
+		meshVertices.reserve(mesh.vertices.size());
+
+		bool			  hasColors = mesh.hasColors();
+		Foundation::Color defaultColor(1.0F, 1.0F, 1.0F, 1.0F);
+
+		for (size_t i = 0; i < mesh.vertices.size(); ++i) {
+			InstancedMeshVertex v;
+			v.position = mesh.vertices[i];
+			v.color = hasColors ? mesh.colors[i] : defaultColor;
+			meshVertices.push_back(v);
+		}
+
+		// Create VAO for instanced rendering
+		glGenVertexArrays(1, &handle.vao);
+		glBindVertexArray(handle.vao);
+
+		// Create mesh VBO (static geometry - uploaded once, reused for all instances)
+		glGenBuffers(1, &handle.meshVBO);
+		glBindBuffer(GL_ARRAY_BUFFER, handle.meshVBO);
+		glBufferData(
+			GL_ARRAY_BUFFER,
+			static_cast<GLsizeiptr>(meshVertices.size() * sizeof(InstancedMeshVertex)),
+			meshVertices.data(),
+			GL_STATIC_DRAW
+		);
+
+		// Set up mesh vertex attributes (from meshVBO)
+		// Location 0: position (vec2)
+		glEnableVertexAttribArray(0);
+		glVertexAttribPointer(
+			0, 2, GL_FLOAT, GL_FALSE, sizeof(InstancedMeshVertex),
+			reinterpret_cast<void*>(offsetof(InstancedMeshVertex, position))
+		);
+
+		// Location 2: color (vec4 - Color has r,g,b,a floats)
+		glEnableVertexAttribArray(2);
+		glVertexAttribPointer(
+			2, 4, GL_FLOAT, GL_FALSE, sizeof(InstancedMeshVertex),
+			reinterpret_cast<void*>(offsetof(InstancedMeshVertex, color))
+		);
+
+		// Locations 1, 3, 4, 5 are not enabled - OpenGL provides default vertex attribute values (0,0,0,1)
+		// This is fine because the instanced path only uses position and color
+
+		// Create mesh IBO (index buffer for triangles)
+		glGenBuffers(1, &handle.meshIBO);
+		glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, handle.meshIBO);
+		glBufferData(
+			GL_ELEMENT_ARRAY_BUFFER,
+			static_cast<GLsizeiptr>(mesh.indices.size() * sizeof(uint16_t)),
+			mesh.indices.data(),
+			GL_STATIC_DRAW
+		);
+		handle.indexCount = static_cast<uint32_t>(mesh.indices.size());
+		handle.vertexCount = static_cast<uint32_t>(mesh.vertices.size());
+
+		// Create instance VBO (dynamic - updated each frame with per-instance data)
+		glGenBuffers(1, &handle.instanceVBO);
+		glBindBuffer(GL_ARRAY_BUFFER, handle.instanceVBO);
+		glBufferData(
+			GL_ARRAY_BUFFER,
+			static_cast<GLsizeiptr>(maxInstances * sizeof(InstanceData)),
+			nullptr, // No initial data - will be updated each frame
+			GL_DYNAMIC_DRAW
+		);
+
+		// Set up instance attributes with divisor = 1 (advance once per instance, not per vertex)
+		// Location 6: instanceData1 (worldPos.xy, rotation, scale)
+		// InstanceData layout: [worldPosition.x, worldPosition.y, rotation, scale, colorTint...]
+		glEnableVertexAttribArray(6);
+		glVertexAttribPointer(6, 4, GL_FLOAT, GL_FALSE, sizeof(InstanceData), reinterpret_cast<void*>(0));
+		glVertexAttribDivisor(6, 1); // Key: advance once per instance
+
+		// Location 7: instanceData2 (colorTint.rgba)
+		glEnableVertexAttribArray(7);
+		glVertexAttribPointer(
+			7, 4, GL_FLOAT, GL_FALSE, sizeof(InstanceData),
+			reinterpret_cast<void*>(offsetof(InstanceData, colorTint))
+		);
+		glVertexAttribDivisor(7, 1);
+
+		glBindVertexArray(0);
+
+		return handle;
+	}
+
+	void BatchRenderer::releaseInstancedMesh(InstancedMeshHandle& handle) {
+		if (handle.vao != 0) {
+			glDeleteVertexArrays(1, &handle.vao);
+		}
+		if (handle.meshVBO != 0) {
+			glDeleteBuffers(1, &handle.meshVBO);
+		}
+		if (handle.meshIBO != 0) {
+			glDeleteBuffers(1, &handle.meshIBO);
+		}
+		if (handle.instanceVBO != 0) {
+			glDeleteBuffers(1, &handle.instanceVBO);
+		}
+
+		// Invalidate handle
+		handle = InstancedMeshHandle{};
+	}
+
+	void BatchRenderer::drawInstanced(
+		const InstancedMeshHandle& handle,
+		const InstanceData*		   instances,
+		uint32_t				   count,
+		Foundation::Vec2		   cameraPosition,
+		float					   cameraZoom,
+		float					   pixelsPerMeter
+	) {
+		if (!handle.isValid() || count == 0 || instances == nullptr) {
+			return;
+		}
+
+		// Enable blending for transparency
+		glEnable(GL_BLEND);
+		glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+		glDisable(GL_DEPTH_TEST);
+		glDisable(GL_CULL_FACE);
+
+		// Use the uber shader
+		shader.use();
+
+		// Set up projection matrix (same as flush())
+		Foundation::Mat4 projection;
+		if (coordinateSystem != nullptr) {
+			projection = coordinateSystem->CreateScreenSpaceProjection();
+		} else {
+			projection = glm::ortho(
+				0.0F, static_cast<float>(viewportWidth), static_cast<float>(viewportHeight), 0.0F, -1.0F, 1.0F
+			);
+		}
+		glUniformMatrix4fv(projectionLoc, 1, GL_FALSE, glm::value_ptr(projection));
+
+		// Identity transform (world→screen is done in shader via instancing uniforms)
+		Foundation::Mat4 identity(1.0F);
+		glUniformMatrix4fv(transformLoc, 1, GL_FALSE, glm::value_ptr(identity));
+
+		// Set instancing uniforms
+		glUniform1i(instancedLoc, 1); // Enable instanced rendering path
+		glUniform2f(cameraPositionLoc, cameraPosition.x, cameraPosition.y);
+		glUniform1f(cameraZoomLoc, cameraZoom);
+		glUniform1f(pixelsPerMeterLoc, pixelsPerMeter);
+		// Use logical pixels for viewport size to match the projection matrix
+		// (CreateScreenSpaceProjection uses logical pixels, not physical pixels)
+		float logicalWidth = static_cast<float>(viewportWidth);
+		float logicalHeight = static_cast<float>(viewportHeight);
+		if (coordinateSystem != nullptr) {
+			glm::vec2 windowSize = coordinateSystem->getWindowSize();
+			logicalWidth = windowSize.x;
+			logicalHeight = windowSize.y;
+		}
+		glUniform2f(viewportSizeLoc, logicalWidth, logicalHeight);
+
+		// Bind the instanced mesh VAO
+		glBindVertexArray(handle.vao);
+		glBindBuffer(GL_ARRAY_BUFFER, handle.instanceVBO);
+
+		// Handle overflow by batching multiple draw calls if needed
+		// This ensures all instances render even if count > maxInstances
+		uint32_t remaining = count;
+		uint32_t offset = 0;
+
+		while (remaining > 0) {
+			uint32_t batchSize = std::min(remaining, handle.maxInstances);
+
+			// Upload this batch of instance data to GPU
+			glBufferSubData(
+				GL_ARRAY_BUFFER, 0,
+				static_cast<GLsizeiptr>(batchSize * sizeof(InstanceData)),
+				instances + offset
+			);
+
+			// Draw this batch of instances
+			glDrawElementsInstanced(
+				GL_TRIANGLES,
+				static_cast<GLsizei>(handle.indexCount),
+				GL_UNSIGNED_SHORT, // mesh indices are uint16_t
+				nullptr,
+				static_cast<GLsizei>(batchSize)
+			);
+
+			drawCallCount++;
+			// Each instance renders all mesh vertices; triangle count = indices / 3
+			frameVertexCount += static_cast<size_t>(handle.vertexCount) * batchSize;
+			frameTriangleCount += static_cast<size_t>(handle.indexCount / 3) * batchSize;
+
+			remaining -= batchSize;
+			offset += batchSize;
+		}
+
+		glBindVertexArray(0);
+		glDisable(GL_BLEND);
 	}
 
 } // namespace Renderer

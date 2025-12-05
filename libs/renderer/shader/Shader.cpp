@@ -1,6 +1,7 @@
 // Shader utility implementation
 
 #include "shader/Shader.h"
+#include "shader/ShaderPreprocessor.h"
 #include "utils/ResourcePath.h"
 #include <filesystem>
 #include <fstream>
@@ -47,40 +48,23 @@ namespace Renderer {
 			return false;
 		}
 
-		// Read vertex shader
-		std::string	  vertexCode;
-		std::ifstream vShaderFile;
-		vShaderFile.exceptions(std::ifstream::failbit | std::ifstream::badbit);
-		try {
-			vShaderFile.open(fullVertexPath.value());
-			std::stringstream vShaderStream;
-			vShaderStream << vShaderFile.rdbuf();
-			vShaderFile.close();
-			vertexCode = vShaderStream.str();
-		} catch (const std::ifstream::failure& e) {
-			std::cerr << "ERROR::SHADER::VERTEX::FILE_NOT_SUCCESSFULLY_READ: " << e.what() << std::endl;
-			std::cerr << "Tried to open: " << fullVertexPath.value() << std::endl;
+		// Process shaders through preprocessor (resolves #include directives)
+		auto vertexCode = ShaderPreprocessor::process(fullVertexPath.value());
+		if (!vertexCode) {
+			std::cerr << "ERROR::SHADER::VERTEX::PREPROCESSING_FAILED" << std::endl;
+			std::cerr << "Failed to process: " << fullVertexPath.value() << std::endl;
 			return false;
 		}
 
-		// Read fragment shader
-		std::string	  fragmentCode;
-		std::ifstream fShaderFile;
-		fShaderFile.exceptions(std::ifstream::failbit | std::ifstream::badbit);
-		try {
-			fShaderFile.open(fullFragmentPath.value());
-			std::stringstream fShaderStream;
-			fShaderStream << fShaderFile.rdbuf();
-			fShaderFile.close();
-			fragmentCode = fShaderStream.str();
-		} catch (const std::ifstream::failure& e) {
-			std::cerr << "ERROR::SHADER::FRAGMENT::FILE_NOT_SUCCESSFULLY_READ: " << e.what() << std::endl;
-			std::cerr << "Tried to open: " << fullFragmentPath.value() << std::endl;
+		auto fragmentCode = ShaderPreprocessor::process(fullFragmentPath.value());
+		if (!fragmentCode) {
+			std::cerr << "ERROR::SHADER::FRAGMENT::PREPROCESSING_FAILED" << std::endl;
+			std::cerr << "Failed to process: " << fullFragmentPath.value() << std::endl;
 			return false;
 		}
 
-		const char* vShaderCode = vertexCode.c_str();
-		const char* fShaderCode = fragmentCode.c_str();
+		const char* vShaderCode = vertexCode->c_str();
+		const char* fShaderCode = fragmentCode->c_str();
 
 		// Compile shaders
 		GLuint vertex = 0;

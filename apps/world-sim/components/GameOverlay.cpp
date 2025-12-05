@@ -1,5 +1,7 @@
 #include "GameOverlay.h"
 
+#include <world/Biome.h>
+
 #include <sstream>
 
 namespace world_sim {
@@ -38,6 +40,19 @@ namespace world_sim {
 			.id = "overlay_position"
 		});
 
+		biomeText = std::make_unique<UI::Text>(UI::Text::Args{
+			.position = {10.0F, 50.0F},
+			.text = "Biome: Unknown",
+			.style =
+				{
+					.color = Foundation::Color::white(),
+					.fontSize = 16.0F,
+					.hAlign = Foundation::HorizontalAlign::Left,
+					.vAlign = Foundation::VerticalAlign::Top,
+				},
+			.id = "overlay_biome"
+		});
+
 		controlsText = std::make_unique<UI::Text>(UI::Text::Args{
 			.position = {10.0F, 0.0F}, // Y will be set by layout()
 			.text = "WASD to move, Scroll to zoom, ESC for menu",
@@ -52,7 +67,7 @@ namespace world_sim {
 		});
 
 		zoomControl = std::make_unique<ZoomControl>(
-			ZoomControl::Args{.position = {10.0F, 55.0F}, .onZoomIn = onZoomIn, .onZoomOut = onZoomOut, .id = "zoom_control"}
+			ZoomControl::Args{.position = {10.0F, 75.0F}, .onZoomIn = onZoomIn, .onZoomOut = onZoomOut, .id = "zoom_control"}
 		);
 	}
 
@@ -77,6 +92,16 @@ namespace world_sim {
 			   << camera.currentChunk().x << ", " << camera.currentChunk().y << ")";
 		positionText->text = posStr.str();
 
+		// Update biome text - get biome from current chunk
+		std::ostringstream biomeStr;
+		const auto*		   currentChunk = chunkManager.getChunk(camera.currentChunk());
+		if (currentChunk != nullptr) {
+			biomeStr << "Biome: " << engine::world::biomeToString(currentChunk->primaryBiome());
+		} else {
+			biomeStr << "Biome: Loading...";
+		}
+		biomeText->text = biomeStr.str();
+
 		// Update zoom percentage
 		if (zoomControl) {
 			zoomControl->setZoomPercent(camera.zoomPercent());
@@ -95,6 +120,9 @@ namespace world_sim {
 		}
 		if (positionText) {
 			positionText->render();
+		}
+		if (biomeText) {
+			biomeText->render();
 		}
 		if (controlsText) {
 			controlsText->render();

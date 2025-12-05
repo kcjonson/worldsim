@@ -1,23 +1,25 @@
 #pragma once
 
 // ChunkRenderer - Renders chunks as colored ground tiles.
-// Uses the Primitives API to batch-render visible tiles.
-// For now, renders simple colored rectangles for each visible tile.
-// Future: will spawn assets on tiles based on biome.
+// Batches all visible tiles into a single draw call per frame.
+// Uses per-tile visibility culling for efficiency.
 
 #include "world/chunk/Chunk.h"
 #include "world/chunk/ChunkManager.h"
 #include "world/camera/WorldCamera.h"
 
+#include <graphics/Color.h>
 #include <graphics/Rect.h>
+#include <math/Types.h>
 
 #include <algorithm>
 #include <cstdint>
+#include <vector>
 
 namespace engine::world {
 
 /// Renders chunks as colored ground tiles.
-/// Batches all visible tiles into efficient draw calls.
+/// Batches visible tiles into single draw call for performance.
 class ChunkRenderer {
   public:
 	/// Create a chunk renderer
@@ -49,9 +51,21 @@ class ChunkRenderer {
 	int32_t m_tileResolution = 1;
 	uint32_t m_lastTileCount = 0;
 
-	/// Render a single chunk
-	void renderChunk(const Chunk& chunk, const WorldCamera& camera, const Foundation::Rect& visibleRect,
-					 int viewportWidth, int viewportHeight);
+	/// Per-frame geometry buffers (reused each frame, cleared at start)
+	std::vector<Foundation::Vec2> m_vertices;    // Screen-space positions
+	std::vector<Foundation::Color> m_colors;     // Per-vertex colors
+	std::vector<uint16_t> m_indices;             // Triangle indices
+
+	/// Add visible tiles from a chunk to the frame buffers
+	void addChunkTiles(const Chunk& chunk, const WorldCamera& camera, const Foundation::Rect& visibleRect,
+					   int viewportWidth, int viewportHeight);
+
+	/// Add pure chunk as single quad
+	void addPureChunk(const Chunk& chunk, const WorldCamera& camera,
+					  int viewportWidth, int viewportHeight);
+
+	/// Flush current batch to GPU (handles uint16_t index overflow)
+	void flushBatch();
 };
 
 }  // namespace engine::world

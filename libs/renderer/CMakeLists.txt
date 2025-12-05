@@ -9,6 +9,7 @@ add_library(renderer
     vector/SVGLoader.cpp
     shader/Shader.cpp
     shader/ShaderLoader.cpp
+    shader/ShaderPreprocessor.cpp
     CoordinateSystem/CoordinateSystem.cpp
 )
 
