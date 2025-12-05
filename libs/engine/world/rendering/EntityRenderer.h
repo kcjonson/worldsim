@@ -48,6 +48,20 @@ class EntityRenderer {
 				int viewportWidth,
 				int viewportHeight);
 
+	/// Render entities from processed chunks plus additional dynamic entities
+	/// @param executor PlacementExecutor containing entity data
+	/// @param processedChunks Set of chunk coordinates that have been processed
+	/// @param dynamicEntities Additional entities to render (e.g., from ECS)
+	/// @param camera Camera for coordinate transforms
+	/// @param viewportWidth Viewport width in pixels
+	/// @param viewportHeight Viewport height in pixels
+	void render(const assets::PlacementExecutor& executor,
+				const std::unordered_set<ChunkCoordinate>& processedChunks,
+				const std::vector<assets::PlacedEntity>& dynamicEntities,
+				const WorldCamera& camera,
+				int viewportWidth,
+				int viewportHeight);
+
 	/// Set pixels per meter (zoom level)
 	void setPixelsPerMeter(float pixelsPerMeter) { m_pixelsPerMeter = pixelsPerMeter; }
 	[[nodiscard]] float pixelsPerMeter() const { return m_pixelsPerMeter; }
@@ -82,6 +96,7 @@ class EntityRenderer {
 	void renderInstanced(
 		const assets::PlacementExecutor& executor,
 		const std::unordered_set<ChunkCoordinate>& processedChunks,
+		const std::vector<assets::PlacedEntity>* dynamicEntities,
 		const WorldCamera& camera,
 		int viewportWidth,
 		int viewportHeight
@@ -104,6 +119,7 @@ class EntityRenderer {
 	void renderBatched(
 		const assets::PlacementExecutor& executor,
 		const std::unordered_set<ChunkCoordinate>& processedChunks,
+		const std::vector<assets::PlacedEntity>* dynamicEntities,
 		const WorldCamera& camera,
 		int viewportWidth,
 		int viewportHeight

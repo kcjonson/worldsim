@@ -27,6 +27,16 @@
 #include <assets/placement/AsyncChunkProcessor.h>
 #include <assets/placement/PlacementExecutor.h>
 
+// ECS
+#include <ecs/World.h>
+#include <ecs/components/Appearance.h>
+#include <ecs/components/Colonist.h>
+#include <ecs/components/Movement.h>
+#include <ecs/components/Transform.h>
+#include <ecs/systems/DynamicEntityRenderSystem.h>
+#include <ecs/systems/MovementSystem.h>
+#include <ecs/systems/PhysicsSystem.h>
+
 #include <memory>
 #include <sstream>
 #include <unordered_set>
@@ -105,6 +115,9 @@ namespace {
 			int viewportH = 0;
 			Renderer::Primitives::getViewport(viewportW, viewportH);
 			m_overlay->layout(Foundation::Rect{0, 0, static_cast<float>(viewportW), static_cast<float>(viewportH)});
+
+			// Initialize ECS World
+			initializeECS();
 		}
 
 		void handleInput(float dt) override {
@@ -164,6 +177,9 @@ namespace {
 			// Unload placement data for chunks that were unloaded
 			cleanupUnloadedChunks();
 
+			// Update ECS world (movement, physics, render system)
+			ecsWorld->update(dt);
+
 			m_overlay->update(*m_camera, *m_chunkManager);
 
 			m_lastUpdateMs = elapsedMs(updateStart, Clock::now());
@@ -182,9 +198,11 @@ namespace {
 			m_renderer->render(*m_chunkManager, *m_camera, w, h);
 			float tileMs = elapsedMs(tileStart, Clock::now());
 
-			// Time entity rendering
-			auto entityStart = Clock::now();
-			m_entityRenderer->render(*m_placementExecutor, m_processedChunks, *m_camera, w, h);
+			// Time entity rendering (includes dynamic ECS entities)
+			auto		entityStart = Clock::now();
+			auto&		renderSystem = ecsWorld->getSystem<ecs::DynamicEntityRenderSystem>();
+			const auto& dynamicEntities = renderSystem.getRenderData();
+			m_entityRenderer->render(*m_placementExecutor, m_processedChunks, dynamicEntities, *m_camera, w, h);
 			float entityMs = elapsedMs(entityStart, Clock::now());
 
 			m_overlay->render();
@@ -208,6 +226,7 @@ namespace {
 
 			m_asyncProcessor.reset();
 			m_overlay.reset();
+			ecsWorld.reset();
 			m_placementExecutor.reset();
 			m_chunkManager.reset();
 			m_camera.reset();
@@ -224,6 +243,38 @@ namespace {
 		const char* getName() const override { return kSceneName; }
 
 	  private:
+		/// Initialize ECS world with systems and spawn initial entities.
+		void initializeECS() {
+			LOG_INFO(Game, "Initializing ECS World");
+
+			ecsWorld = std::make_unique<ecs::World>();
+
+			// Register systems in priority order (lower = runs first)
+			ecsWorld->registerSystem<ecs::MovementSystem>();			// Priority 100
+			ecsWorld->registerSystem<ecs::PhysicsSystem>();				// Priority 200
+			ecsWorld->registerSystem<ecs::DynamicEntityRenderSystem>(); // Priority 900
+
+			// Spawn initial colonist at map center (0, 0)
+			spawnColonist({0.0F, 0.0F}, "Bob");
+
+			LOG_INFO(Game, "ECS initialized with 1 colonist");
+		}
+
+		/// Spawn a new colonist entity at the given position.
+		ecs::EntityID spawnColonist(glm::vec2 newPosition, const std::string& newName) {
+			auto entity = ecsWorld->createEntity();
+
+			ecsWorld->addComponent<ecs::Position>(entity, ecs::Position{newPosition});
+			ecsWorld->addComponent<ecs::Rotation>(entity, ecs::Rotation{0.0F});
+			ecsWorld->addComponent<ecs::Velocity>(entity, ecs::Velocity{{0.0F, 0.0F}});
+			ecsWorld->addComponent<ecs::MovementTarget>(entity, ecs::MovementTarget{{0.0F, 0.0F}, 2.0F, false});
+			ecsWorld->addComponent<ecs::Appearance>(entity, ecs::Appearance{"Colonist", 1.0F, {1.0F, 1.0F, 1.0F, 1.0F}});
+			ecsWorld->addComponent<ecs::Colonist>(entity, ecs::Colonist{newName});
+
+			LOG_INFO(Game, "Spawned colonist '%s' at (%.1f, %.1f)", newName.c_str(), newPosition.x, newPosition.y);
+			return entity;
+		}
+
 		/// Launch async tasks for newly loaded chunks.
 		/// Non-blocking: spawns background threads for entity placement computation.
 		void processNewChunks() {
@@ -267,6 +318,9 @@ namespace {
 		std::unique_ptr<engine::world::EntityRenderer>	   m_entityRenderer;
 		std::unique_ptr<engine::assets::PlacementExecutor> m_placementExecutor;
 		std::unique_ptr<world_sim::GameOverlay>			   m_overlay;
+
+		// ECS World containing all dynamic entities
+		std::unique_ptr<ecs::World> ecsWorld;
 
 		// Async chunk processor (shared implementation with GameLoadingScene)
 		std::unique_ptr<engine::assets::AsyncChunkProcessor> m_asyncProcessor;
