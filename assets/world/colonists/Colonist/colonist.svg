@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Colonist - Top-down humanoid silhouette
+     Design: ~1m diameter, neutral gray (can be tinted)
+     Facing up (positive Y), with direction indicator at top
+     Coordinate system: center at 0,0
+     Using polygons only (tessellator can't handle ellipses)
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-50 -50 100 100">
+  <!-- Body - hexagonal approximation of oval -->
+  <polygon points="0,-25 20,-10 20,20 0,35 -20,20 -20,-10" fill="#6B7280"/>
+
+  <!-- Head - octagonal approximation of circle -->
+  <polygon points="0,-48 12,-44 17,-35 12,-26 0,-22 -12,-26 -17,-35 -12,-44" fill="#9CA3AF"/>
+
+  <!-- Direction indicator - small triangle pointing up -->
+  <polygon points="0,-52 -6,-46 6,-46" fill="#374151"/>
+
+  <!-- Left shoulder - diamond shape -->
+  <polygon points="-25,0 -18,-8 -12,0 -18,8" fill="#6B7280"/>
+
+  <!-- Right shoulder - diamond shape -->
+  <polygon points="25,0 18,-8 12,0 18,8" fill="#6B7280"/>
+</svg>

@@ -34,9 +34,22 @@ void EntityRenderer::render(const assets::PlacementExecutor& executor,
 							int viewportWidth,
 							int viewportHeight) {
 	if (m_useInstancing) {
-		renderInstanced(executor, processedChunks, camera, viewportWidth, viewportHeight);
+		renderInstanced(executor, processedChunks, nullptr, camera, viewportWidth, viewportHeight);
 	} else {
-		renderBatched(executor, processedChunks, camera, viewportWidth, viewportHeight);
+		renderBatched(executor, processedChunks, nullptr, camera, viewportWidth, viewportHeight);
+	}
+}
+
+void EntityRenderer::render(const assets::PlacementExecutor& executor,
+							const std::unordered_set<ChunkCoordinate>& processedChunks,
+							const std::vector<assets::PlacedEntity>& dynamicEntities,
+							const WorldCamera& camera,
+							int viewportWidth,
+							int viewportHeight) {
+	if (m_useInstancing) {
+		renderInstanced(executor, processedChunks, &dynamicEntities, camera, viewportWidth, viewportHeight);
+	} else {
+		renderBatched(executor, processedChunks, &dynamicEntities, camera, viewportWidth, viewportHeight);
 	}
 }
 
@@ -67,6 +80,7 @@ Renderer::InstancedMeshHandle& EntityRenderer::getOrCreateMeshHandle(
 void EntityRenderer::renderInstanced(
 	const assets::PlacementExecutor& executor,
 	const std::unordered_set<ChunkCoordinate>& processedChunks,
+	const std::vector<assets::PlacedEntity>* dynamicEntities,
 	const WorldCamera& camera,
 	int viewportWidth,
 	int viewportHeight
@@ -131,6 +145,41 @@ void EntityRenderer::renderInstanced(
 		}
 	}
 
+	// Process dynamic entities (from ECS)
+	if (dynamicEntities != nullptr) {
+		for (const auto& entity : *dynamicEntities) {
+			// Frustum culling for dynamic entities
+			if (entity.position.x < minWorldX || entity.position.x > maxWorldX ||
+				entity.position.y < minWorldY || entity.position.y > maxWorldY) {
+				continue;
+			}
+
+			// Get or create mesh handle for this asset type
+			const auto* templateMesh = getTemplate(entity.defName);
+			if (templateMesh == nullptr) {
+				continue;
+			}
+
+			// Ensure mesh handle exists
+			auto& handle = getOrCreateMeshHandle(entity.defName, templateMesh);
+			if (!handle.isValid()) {
+				continue;
+			}
+
+			// Create instance data (world-space - GPU does the transform!)
+			Renderer::InstanceData instance(
+				Foundation::Vec2(entity.position.x, entity.position.y),
+				entity.rotation,
+				entity.scale,
+				entity.colorTint
+			);
+
+			// Add to batch for this mesh type
+			m_instanceBatches[entity.defName].push_back(instance);
+			m_lastEntityCount++;
+		}
+	}
+
 	// Draw each batch with instanced rendering
 	auto* batchRenderer = Renderer::Primitives::getBatchRenderer();
 	if (batchRenderer == nullptr) {
@@ -172,6 +221,7 @@ void EntityRenderer::renderInstanced(
 
 void EntityRenderer::renderBatched(const assets::PlacementExecutor& executor,
 							const std::unordered_set<ChunkCoordinate>& processedChunks,
+							const std::vector<assets::PlacedEntity>* dynamicEntities,
 							const WorldCamera& camera,
 							int viewportWidth,
 							int viewportHeight) {
@@ -304,6 +354,111 @@ void EntityRenderer::renderBatched(const assets::PlacementExecutor& executor,
 							entity->colorTint.g,
 							entity->colorTint.b,
 							entity->colorTint.a
+						);
+					}
+				}
+			}
+
+			// Add indices (offset by current vertex count)
+			for (const auto& idx : templateMesh->indices) {
+				m_indices.push_back(static_cast<uint16_t>(vertexIndex + idx));
+			}
+
+			vertexIndex += static_cast<uint32_t>(templateMesh->vertices.size());
+			m_lastEntityCount++;
+		}
+	}
+
+	// Process dynamic entities (from ECS)
+	if (dynamicEntities != nullptr) {
+		for (const auto& entity : *dynamicEntities) {
+			// Frustum culling for dynamic entities
+			if (entity.position.x < minWorldX || entity.position.x > maxWorldX ||
+				entity.position.y < minWorldY || entity.position.y > maxWorldY) {
+				continue;
+			}
+
+			const auto* templateMesh = getTemplate(entity.defName);
+			if (templateMesh == nullptr) {
+				continue;
+			}
+
+			// Pre-compute entity transform factors
+			float entityScale = entity.scale;
+			float posX = entity.position.x;
+			float posY = entity.position.y;
+			bool hasMeshColors = templateMesh->hasColors();
+
+			// Check if we need rotation
+			constexpr float kRotationEpsilon = 0.0001F;
+			bool noRotation = std::abs(entity.rotation) < kRotationEpsilon;
+
+			if (noRotation) {
+				// Optimized path: scale + translate only
+				for (size_t i = 0; i < templateMesh->vertices.size(); ++i) {
+					const auto& v = templateMesh->vertices[i];
+
+					// Transform mesh vertex to world position, then to screen
+					float worldX = v.x * entityScale + posX;
+					float worldY = v.y * entityScale + posY;
+					float screenX = (worldX - camX) * scale + halfViewW;
+					float screenY = (worldY - camY) * scale + halfViewH;
+
+					m_vertices.emplace_back(screenX, screenY);
+
+					// Handle colors
+					if (hasMeshColors) {
+						const auto& meshColor = templateMesh->colors[i];
+						m_colors.emplace_back(
+							meshColor.r * entity.colorTint.r,
+							meshColor.g * entity.colorTint.g,
+							meshColor.b * entity.colorTint.b,
+							meshColor.a * entity.colorTint.a
+						);
+					} else {
+						m_colors.emplace_back(
+							entity.colorTint.r,
+							entity.colorTint.g,
+							entity.colorTint.b,
+							entity.colorTint.a
+						);
+					}
+				}
+			} else {
+				// Full transform with rotation
+				float cosR = std::cos(entity.rotation);
+				float sinR = std::sin(entity.rotation);
+
+				for (size_t i = 0; i < templateMesh->vertices.size(); ++i) {
+					const auto& v = templateMesh->vertices[i];
+
+					// Scale
+					float sx = v.x * entityScale;
+					float sy = v.y * entityScale;
+
+					// Rotate + translate to world, then to screen
+					float worldX = sx * cosR - sy * sinR + posX;
+					float worldY = sx * sinR + sy * cosR + posY;
+					float screenX = (worldX - camX) * scale + halfViewW;
+					float screenY = (worldY - camY) * scale + halfViewH;
+
+					m_vertices.emplace_back(screenX, screenY);
+
+					// Handle colors
+					if (hasMeshColors) {
+						const auto& meshColor = templateMesh->colors[i];
+						m_colors.emplace_back(
+							meshColor.r * entity.colorTint.r,
+							meshColor.g * entity.colorTint.g,
+							meshColor.b * entity.colorTint.b,
+							meshColor.a * entity.colorTint.a
+						);
+					} else {
+						m_colors.emplace_back(
+							entity.colorTint.r,
+							entity.colorTint.g,
+							entity.colorTint.b,
+							entity.colorTint.a
 						);
 					}
 				}

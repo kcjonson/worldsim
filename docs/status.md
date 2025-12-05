@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2025-12-05 (GPU Instancing for Entity Rendering)
+Last Updated: 2025-12-05 (MVP: Colonist Entity + ECS Foundation Complete)
 
 ## Epic/Story/Task Template
 
@@ -58,188 +58,6 @@ Use this template for all work items:
   - [x] MockWorldSampler tests (biome distribution, determinism)
 
 **Result:** Playable world-sim with infinite pannable world and biome-based terrain ✅
-
----
-
-### ✅ Uber Shader - Unified Rendering Pipeline
-**Spec/Documentation:** `libs/renderer/shaders/uber.vert`, `libs/renderer/shaders/uber.frag`
-**Status:** complete
-
-**Completed Tasks:**
-- [x] Phase 1: Delete Old Renderers
-  - [x] Delete TextBatchRenderer
-  - [x] Delete separate text flush callback system
-  - [x] Delete msdf_text.vert/frag shaders
-- [x] Phase 2: Create Uber Shader
-  - [x] Create uber.vert (unified vertex format)
-  - [x] Create uber.frag (renderMode branching: SHAPE vs TEXT)
-  - [x] Preserve MSDF text math exactly (copy-paste)
-  - [x] Preserve SDF shape math exactly (copy-paste)
-- [x] Phase 3: Unify BatchRenderer
-  - [x] Add renderMode to vertex format (kRenderModeText = -1.0)
-  - [x] Add addTextQuad() method to BatchRenderer
-  - [x] Text interleaved with shapes in submission order
-  - [x] Bind font atlas once at frame start
-- [x] Phase 4: Update Consumers
-  - [x] Update Text::Render() to use BatchRenderer::addTextQuad()
-  - [x] Update Primitives API (getBatchRenderer() for direct access)
-  - [x] Verified text quality unchanged
-  - [x] Verified correct z-ordering and alpha blending
-
-**Result:** Unified rendering pipeline - zero shader switches, single draw call, correct z-ordering ✅
-
----
-
-### ✅ UI Sandbox & Observability Foundation
-**Spec/Documentation:** `/docs/technical/observability/`
-**Status:** complete
-
-**Completed Tasks:**
-- [x] Primitive Rendering API
-  - [x] Implement DrawRect, DrawLine, DrawRectBorder
-  - [x] Create batching system with OpenGL shaders
-  - [x] Add transform and scissor stacks
-  - [x] Fix pixel-perfect 1:1 coordinate mapping
-- [x] HTTP Debug Server
-  - [x] Implement lock-free ring buffer
-  - [x] Create HTTP server with cpp-httplib
-  - [x] Add REST endpoints (/api/health, /api/metrics)
-  - [x] Implement Server-Sent Events streaming
-  - [x] Create HTML UI for metrics display
-- [x] Sandbox Control Endpoints
-  - [x] Implement control actions (exit, scene switch, pause/resume)
-  - [x] Add port conflict detection
-  - [x] Create scene manager integration
-- [x] Developer Client (TypeScript/React)
-  - [x] Create React + TypeScript SPA
-  - [x] Implement real-time metrics dashboard
-  - [x] Build live log viewer with filtering
-  - [x] Add localStorage persistence
-  - [x] Integrate with CMake build system
-
----
-
-### ✅ Unit Testing Infrastructure
-**Spec/Documentation:** `/docs/technical/unit-testing-strategy.md`, `/docs/research/cpp-test-framework-research.md`
-**Status:** complete
-
-**Completed Tasks:**
-- [x] Framework Research & Selection
-  - [x] Write research document comparing frameworks
-  - [x] Create technical specification
-  - [x] Get approval on framework choice (Google Test + Google Benchmark)
-  - [x] Document test organization (collocated `*.test.cpp` and `*.bench.cpp`)
-- [x] Test Infrastructure Setup
-  - [x] Add gtest and benchmark to vcpkg.json
-  - [x] Update all library CMakeLists.txt with file globbing
-  - [x] Create example tests to verify infrastructure
-  - [x] Verify local execution via ctest
-  - [x] Move enable_testing() before subdirectories in root CMakeLists.txt
-- [x] Unit Tests - Foundation Library (50+ tests)
-  - [x] Logging system tests (12 tests)
-  - [x] Memory arena tests (18 tests)
-  - [x] Memory arena benchmarks
-  - [x] String hashing tests (20 tests)
-- [x] Unit Tests - Engine Library (80+ tests)
-  - [x] ChunkCoordinate tests (hashing, neighbors, transforms)
-  - [x] ChunkManager tests (load/unload lifecycle)
-  - [x] MockWorldSampler tests (biome distribution, determinism)
-  - [x] DependencyGraph tests (topological sort)
-  - [x] SpatialIndex tests (grid-based queries)
-  - [x] PlacementExecutor tests (entity placement)
-- [x] Unit Tests - Renderer Library (25+ tests)
-  - [x] ResourceHandle/ResourceManager tests
-  - [x] CoordinateSystem tests
-  - [x] Clipping benchmarks
-- [x] Unit Tests - UI Library
-  - [x] FocusManager tests
-  - [x] Layer tests
-- [x] GitHub Actions CI/CD Integration
-  - [x] tests.yml workflow (runs on PRs, excludes benchmarks)
-  - [x] Test results uploaded as artifacts
-  - [x] PRs fail if tests fail
-- [x] Documentation
-  - [x] README.md testing section
-  - [x] workflows.md testing workflow
-
-**Result:** 298+ test assertions across 7 test executables, full CI/CD integration ✅
-
----
-
-### ✅ Folder-Based Asset Migration
-**Spec/Documentation:** `/docs/technical/asset-system/folder-based-assets.md`
-**Dependencies:** Asset System Architecture - Foundation
-**Status:** complete
-
-**Goal:** Migrate from flat file structure to folder-per-asset organization for cleaner modding and content management.
-
-**Completed Tasks:**
-- [x] File Structure Migration
-  - [x] Create 3-level hierarchy (`assets/world/flora/GrassBlade/`)
-  - [x] Move grass.xml → `assets/world/flora/GrassBlade/GrassBlade.xml`
-  - [x] Move trees.xml → `assets/world/flora/MapleTree/MapleTree.xml` + `OakTree/OakTree.xml`
-  - [x] Create `assets/shared/scripts/` with `@shared/` prefix support
-- [x] AssetRegistry Updates
-  - [x] Add `baseFolder` field to AssetDefinition for path resolution
-  - [x] Update `loadDefinitionsFromFolder()` to scan `FolderName/FolderName.xml` pattern
-  - [x] Implement `@shared/` prefix for shared Lua scripts
-  - [x] Simplify AppConfig to single `assetsRootPath`
-- [x] Validation
-  - [x] All 3 existing assets load correctly
-  - [x] All 7 test suites pass
-  - [x] GameScene renders trees and grass correctly
-
-**Result:** Self-contained folder-per-asset structure with shared script support via `@shared/` prefix ✅
-
----
-
-## In Progress Epics
-
-### 🔄 Animated Vector Graphics Performance Optimization
-**Spec/Documentation:** `/docs/technical/vector-graphics/animation-performance.md`
-**Dependencies:** Vector Graphics Validation (completed)
-**Status:** in progress
-
-**Problem:** 10,000 animated grass blades run at 12 FPS (target 60 FPS). CPU tessellation takes ~65ms/frame (77% in Bezier flattening).
-
-**Solution:** Tiered animation system - GPU instancing for simple flora, optimized CPU tessellation for complex flora.
-
-**Phase 1: CPU Optimization Stack** (validates Bezier deformation can hit 60 FPS)
-- [ ] 1.1 Arena Allocator Integration
-  - [ ] Add arena parameter to `flattenCubicBezier()`
-  - [ ] Add arena to `Tessellator::Tessellate()`
-  - [ ] Create per-frame arena in GrassScene
-- [ ] 1.2 Temporal Coherence System
-  - [ ] Store previous frame's tessellated mesh per blade
-  - [ ] Calculate deformation delta threshold
-  - [ ] Skip retessellation if delta < threshold
-- [ ] 1.3 SIMD Bezier Flattening
-  - [ ] Create `flattenCubicBezierSIMD()` (4 curves in parallel)
-  - [ ] Use ARM NEON intrinsics
-  - [ ] Vectorize midpoint calculations
-- [ ] 1.4 Benchmark Phase 1
-  - [ ] Target: 45-60 FPS with 10,000 blades
-
-**Phase 2: GPU Instancing Path** (maximum performance for simple flora) ✅ CORE COMPLETE
-- [x] 2.1 Instanced Rendering Infrastructure
-  - [x] Add `uploadInstancedMesh()` / `drawInstanced()` to BatchRenderer
-  - [x] Create instance data buffer (VBO with divisor=1)
-  - [x] Add `glDrawElementsInstanced` path
-  - [x] Create InstanceData struct (position, rotation, scale, colorTint)
-  - [x] Add instancing.glsl shader include with world→screen transform
-- [ ] 2.2 Vertex Shader Animation (deferred - not needed for current use case)
-  - [ ] Add `u_time` uniform to uber shader
-  - [x] Add instance data attributes (complete)
-  - [ ] Implement wind displacement in vertex shader
-- [x] 2.3 Entity Renderer Integration (~3x performance improvement)
-  - [x] EntityRenderer GPU instancing path (default enabled)
-  - [x] CPU batching fallback path preserved
-  - [x] Handles 34k+ entities at 60 FPS (exceeds 10k target)
-
-**Phase 3: Tiered System Integration**
-- [ ] 3.1 Asset Classification (simple vs complex)
-- [ ] 3.2 Runtime Tier Selection
-- [ ] 3.3 Mixed Flora Demo (grass + trees + bushes)
 
 ---
 
@@ -301,10 +119,10 @@ Use this template for all work items:
 
 ---
 
-### 🔄 Entity Placement System
+### ✅ Entity Placement System
 **Spec/Documentation:** `/docs/technical/entity-placement-system.md`
 **Dependencies:** Asset System Architecture (Phase 1 complete)
-**Status:** in progress
+**Status:** complete
 
 **Phase 1: Foundation** ✅ COMPLETE
 - [x] Extend AssetDefinition with groups and relationships fields
@@ -333,91 +151,306 @@ Use this template for all work items:
   - [x] Grass: groups (grass, small_flora, ground_cover), relationships (affinity for trees)
 - [x] Visual validation in world-sim (63 tests pass, entities placing in chunks)
 
+**Result:** Complete entity placement system with dependency ordering, spatial awareness, and biome filtering ✅
+
 ---
 
-## Planned Epics
+### ✅ Folder-Based Asset Migration
+**Spec/Documentation:** `/docs/technical/asset-system/folder-based-assets.md`
+**Dependencies:** Asset System Architecture - Foundation
+**Status:** complete
+
+**Goal:** Migrate from flat file structure to folder-per-asset organization for cleaner modding and content management.
+
+**Completed Tasks:**
+- [x] File Structure Migration
+  - [x] Create 3-level hierarchy (`assets/world/flora/GrassBlade/`)
+  - [x] Move grass.xml → `assets/world/flora/GrassBlade/GrassBlade.xml`
+  - [x] Move trees.xml → `assets/world/flora/MapleTree/MapleTree.xml` + `OakTree/OakTree.xml`
+  - [x] Create `assets/shared/scripts/` with `@shared/` prefix support
+- [x] AssetRegistry Updates
+  - [x] Add `baseFolder` field to AssetDefinition for path resolution
+  - [x] Update `loadDefinitionsFromFolder()` to scan `FolderName/FolderName.xml` pattern
+  - [x] Implement `@shared/` prefix for shared Lua scripts
+  - [x] Simplify AppConfig to single `assetsRootPath`
+- [x] Validation
+  - [x] All 3 existing assets load correctly
+  - [x] All 7 test suites pass
+  - [x] GameScene renders trees and grass correctly
+
+**Result:** Self-contained folder-per-asset structure with shared script support via `@shared/` prefix ✅
+
+---
+
+## In Progress Epics
+
+### ✅ MVP: Colonist Entity + ECS Foundation
+**Spec/Documentation:** `/Users/kcjonson/.claude/plans/curried-hopping-eagle.md`
+**Dependencies:** Asset System Architecture
+**Status:** complete
+
+**Goal:** Build ECS infrastructure and implement first colonist entity.
+
+**Completed Tasks:**
+- [x] ECS Core Infrastructure
+  - [x] EntityID with generation counter for safe handle reuse
+  - [x] ComponentPool with sparse set pattern for O(1) operations
+  - [x] Registry for entity lifecycle management
+  - [x] View for component queries
+  - [x] ISystem base interface with priority-based scheduling
+  - [x] World top-level ECS container
+- [x] Core Components
+  - [x] Position, Rotation (Transform)
+  - [x] Velocity, MovementTarget (Movement)
+  - [x] Appearance (Rendering)
+  - [x] Colonist (Identity tag)
+- [x] Core Systems
+  - [x] MovementSystem (priority 100)
+  - [x] PhysicsSystem (priority 200)
+  - [x] DynamicEntityRenderSystem (priority 900)
+- [x] Colonist Visual Asset
+  - [x] Create simple colonist SVG (polygon-based, ~1m diameter)
+  - [x] Add colonist asset definition XML
+  - [x] Test rendering in GameScene
+- [x] GameScene Integration
+  - [x] Create ECS World in onEnter()
+  - [x] Register all systems
+  - [x] Spawn colonist at map center (0,0)
+  - [x] Call ecsWorld->update(dt) in game loop
+  - [x] Pass dynamic entities to EntityRenderer
+
+**Result:** Colonist "Bob" spawns at map center and renders via GPU instancing ✅
+
+---
+
+### 🔄 MVP: Needs System
+**Spec/Documentation:** `/docs/design/game-systems/colonists/needs.md`
+**Dependencies:** Colonist Entity
+**Status:** ready
+
+**Goal:** Implement the four MVP needs (Hunger, Thirst, Energy, Bladder) with decay and threshold triggers.
+
+**Tasks:**
+- [ ] Need Data Structure
+  - [ ] Create Need struct (value 0-100%, decayRate, seekThreshold, criticalThreshold)
+  - [ ] Create NeedsComponent with 4 needs (Hunger, Thirst, Energy, Bladder)
+  - [ ] Configure thresholds per design doc (~50% seek, ~10% critical)
+- [ ] Need Decay System
+  - [ ] Implement per-frame decay for all needs
+  - [ ] Different decay rates per need type
+  - [ ] Bladder accelerated by drinking (biological loop)
+- [ ] Threshold Events
+  - [ ] Detect when need crosses seek threshold
+  - [ ] Detect when need crosses critical threshold
+  - [ ] Expose current need state for AI decision system
+
+---
+
+### 🔄 MVP: World Entities
+**Spec/Documentation:** `/docs/design/mvp-entities.md`, `/docs/design/game-systems/world/entity-capabilities.md`
+**Dependencies:** Asset System Architecture
+**Status:** ready
+
+**Goal:** Create the MVP world entities (Berry Bush, Pond) with capabilities for need fulfillment.
+
+**Tasks:**
+- [ ] Capability System
+  - [ ] Define capability types (Edible, Drinkable, Sleepable, Toilet)
+  - [ ] Add capability data to entity definitions
+  - [ ] Parse capabilities from asset XML
+- [ ] Berry Bush Asset
+  - [ ] Create Berry Bush SVG asset
+  - [ ] Add Edible capability (nutrition: 0.3)
+  - [ ] Configure spawning in Grassland biome
+- [ ] Pond Asset
+  - [ ] Create Pond SVG asset (water body visual)
+  - [ ] Add Drinkable capability (quality: clean)
+  - [ ] Configure spawning (one per chunk or region)
+- [ ] Ground Capabilities
+  - [ ] Mark all ground tiles as Sleepable (quality: terrible, recovery: 0.5x)
+  - [ ] Mark outdoor ground as Toilet fallback
+- [ ] Bio Pile Entity
+  - [ ] Create Bio Pile SVG (simple waste marker)
+  - [ ] Entity spawns when colonist uses ground as toilet
+  - [ ] No capabilities (just exists as marker)
+
+---
+
+### 🔄 MVP: Memory System
+**Spec/Documentation:** `/docs/design/game-systems/colonists/memory.md`
+**Dependencies:** World Entities, Colonist Entity
+**Status:** ready
+
+**Goal:** Colonists only know about entities they have seen. No omniscient pathfinding.
+
+**Tasks:**
+- [ ] Memory Data Structure
+  - [ ] Create MemoryComponent (set of known entity IDs)
+  - [ ] Track known entities per colonist
+- [ ] Vision System
+  - [ ] Implement circular sight radius around colonist
+  - [ ] Continuous observation during movement
+  - [ ] Add entities within sight to memory
+- [ ] Memory Queries
+  - [ ] Query known entities by capability type
+  - [ ] Find nearest known entity with capability
+  - [ ] Filter task targets to only known entities
+
+---
+
+### 🔄 MVP: AI Decision System
+**Spec/Documentation:** `/docs/design/game-systems/colonists/ai-behavior.md`
+**Dependencies:** Needs System, Memory System
+**Status:** ready
+
+**Goal:** Implement the decision hierarchy for autonomous colonist behavior (Tiers 3, 5, 6, 7 for MVP).
+
+**Tasks:**
+- [ ] Task Queue
+  - [ ] Create TaskQueue component per colonist
+  - [ ] Task struct (type, target, progress, reason)
+  - [ ] Display current/pending tasks
+- [ ] Decision Hierarchy
+  - [ ] Tier 3: Critical Needs (need < 10%) - immediate fulfillment
+  - [ ] Tier 5: Actionable Needs (need < 50%) - seek fulfillment
+  - [ ] Tier 6: Work - Harvest Wild (foraging) when needs satisfied
+  - [ ] Tier 7: Wander - random movement when nothing else to do
+- [ ] Task Selection Algorithm
+  - [ ] Evaluate tiers in priority order
+  - [ ] Select best task based on memory and needs
+  - [ ] Re-evaluate periodically or on need threshold change
+
+---
+
+### 🔄 MVP: Movement & Pathfinding
+**Spec/Documentation:** `/docs/design/game-systems/colonists/ai-behavior.md`
+**Dependencies:** Colonist Entity
+**Status:** ready
+
+**Goal:** Colonist can move to target locations (entities, tiles).
+
+**Tasks:**
+- [ ] Basic Pathfinding
+  - [ ] Simple direct movement toward target (MVP: no obstacle avoidance)
+  - [ ] Arrive at destination detection
+  - [ ] Movement state (idle, moving, arrived)
+- [ ] Task Movement Integration
+  - [ ] Move to target entity when task assigned
+  - [ ] Report arrival to action system
+  - [ ] Handle unreachable targets gracefully
+
+---
+
+### 🔄 MVP: Actions System
+**Spec/Documentation:** `/docs/design/game-systems/colonists/needs.md`, `/docs/design/mvp-entities.md`
+**Dependencies:** Movement & Pathfinding, World Entities, Needs System
+**Status:** ready
+
+**Goal:** Colonist performs actions that fulfill needs (Eat, Drink, Sleep, Toilet).
+
+**Tasks:**
+- [ ] Action Framework
+  - [ ] Action state machine (starting, in_progress, complete)
+  - [ ] Action duration/progress tracking
+  - [ ] Action completion callbacks
+- [ ] Eat Action
+  - [ ] Move to Edible entity (Berry Bush)
+  - [ ] Consume over time
+  - [ ] Restore Hunger based on nutrition value
+- [ ] Drink Action
+  - [ ] Move to Drinkable entity (Pond)
+  - [ ] Drink over time
+  - [ ] Restore Thirst
+  - [ ] Increase Bladder need (biological loop)
+- [ ] Sleep Action
+  - [ ] Move to Sleepable location (ground for MVP)
+  - [ ] Enter sleep state
+  - [ ] Restore Energy over time (quality affects rate)
+- [ ] Toilet Action
+  - [ ] Find suitable outdoor spot (not near water, prefer near existing Bio Piles)
+  - [ ] Relieve bladder
+  - [ ] Spawn Bio Pile entity at location
+
+---
+
+### 🔄 MVP: Player Observation UI
+**Spec/Documentation:** `/docs/design/mvp-scope.md`
+**Dependencies:** Needs System, AI Decision System
+**Status:** ready
+
+**Goal:** Player can observe colonist status and task queue (observation only, no control).
+
+**Tasks:**
+- [ ] Colonist Selection
+  - [ ] Click on colonist to select
+  - [ ] Visual indicator for selected colonist
+- [ ] Colonist Info Panel
+  - [ ] Display colonist name
+  - [ ] Show all 4 need bars (Hunger, Thirst, Energy, Bladder)
+  - [ ] Color coding for need urgency (green → yellow → red)
+- [ ] Task Queue Display
+  - [ ] Show current task with progress
+  - [ ] Show pending tasks in priority order
+  - [ ] Show reason for each task selection
+
+---
+
+## Deferred Epics
+
+### ⏸️ Animated Vector Graphics Performance Optimization
+**Spec/Documentation:** `/docs/technical/vector-graphics/animation-performance.md`
+**Dependencies:** Vector Graphics Validation (completed)
+**Status:** deferred
+
+**Reason:** Setting aside performance work to focus on MVP game systems. GPU instancing (Phase 2) is complete and provides sufficient performance (34k+ entities at 60 FPS).
+
+**Remaining Work (deferred):**
+- Phase 1: CPU Optimization Stack (arena allocators, temporal coherence, SIMD)
+- Phase 2.2: Vertex Shader Animation (wind displacement)
+- Phase 3: Tiered System Integration
+
+---
+
+## Planned Epics (Post-MVP)
 
 ### Simple Asset Support (SVG-Only)
 **Spec/Documentation:** `/docs/technical/asset-system/asset-definitions.md`
 **Dependencies:** Folder-Based Asset Migration
-**Status:** ready
+**Status:** planned
 
 **Goal:** Support hand-crafted SVG assets without Lua scripts (flowers, mushrooms, rocks).
-
-**Tasks:**
-- [ ] Simple Asset Loader
-  - [ ] Detect `assetType="simple"` in XML
-  - [ ] Load SVG directly via `<svgPath>` element
-  - [ ] Tessellate once at load time
-  - [ ] Store in GPU buffer for instancing
-- [ ] Variation System
-  - [ ] Parse `<variation>` element (colorRange, scaleRange, rotationRange)
-  - [ ] Apply per-instance hue/saturation/value shifts
-  - [ ] Apply per-instance scale and rotation
-- [ ] Multi-Variant Simple Assets
-  - [ ] Parse `<components>` with `variant="random"`
-  - [ ] Support multiple SVG variants per asset
-  - [ ] Random variant selection by seed
-- [ ] Integration
-  - [ ] PlacementExecutor spawns simple assets
-  - [ ] EntityRenderer handles variation params
-  - [ ] Verify GPU instancing performance
 
 ---
 
 ### Flora Content Pack
 **Spec/Documentation:** `/docs/technical/asset-system/`
 **Dependencies:** Simple Asset Support
-**Status:** ready
+**Status:** planned
 
 **Goal:** Add visual variety with flowers, mushrooms, rocks, and bushes.
-
-**Tasks:**
-- [ ] Create Simple Flora Assets
-  - [ ] Daisy (white/yellow flower, Grassland)
-  - [ ] Poppy (red flower, Grassland)
-  - [ ] Mushroom (multiple cap color variants, Forest)
-  - [ ] Fern (Forest floor cover)
-- [ ] Create Terrain Assets
-  - [ ] Small Boulder (gray rock, all biomes)
-  - [ ] Pebbles (cluster of small stones)
-- [ ] Create Procedural Flora
-  - [ ] Bush (Lua generator, medium complexity)
-  - [ ] Conifer Tree (Lua generator, Forest biome)
-- [ ] Placement Rules
-  - [ ] Configure biome spawn chances for all assets
-  - [ ] Set up group relationships (flowers near grass, mushrooms under trees)
-  - [ ] Test mixed flora scenes
-- [ ] Visual Validation
-  - [ ] Verify 60 FPS with full flora in GameScene
-  - [ ] Check visual variety and distribution
 
 ---
 
 ### Variant Cache System
 **Spec/Documentation:** `/docs/technical/asset-system/README.md` (World Seed section)
 **Dependencies:** Folder-Based Asset Migration
-**Status:** ready
+**Status:** planned
 
 **Goal:** Pre-generate and cache procedural asset variants for fast loading.
 
-**Tasks:**
-- [ ] Binary Cache Format
-  - [ ] Design cache file structure (vertices, indices, colors)
-  - [ ] Implement cache writer in AssetRegistry
-  - [ ] Implement cache reader for fast loading
-- [ ] Cache Invalidation
-  - [ ] Hash asset definition XML
-  - [ ] Hash Lua script contents
-  - [ ] Include world seed in cache key
-  - [ ] Regenerate on hash mismatch
-- [ ] World Seed Integration
-  - [ ] Seed Lua RNG from world seed at load time
-  - [ ] Ensure deterministic variant generation
-  - [ ] Per-chunk variant selection by position hash
-- [ ] Performance
-  - [ ] Measure load time improvement (target: 10x faster)
-  - [ ] Background cache generation during loading screen
+---
+
+### Observability System - Full Feature Set
+**Spec/Documentation:** `/docs/technical/observability/INDEX.md`
+**Dependencies:** None
+**Status:** planned
+
+---
+
+### GPU-Based SDF Rendering for UI Primitives
+**Spec/Documentation:** `/docs/technical/ui-framework/sdf-rendering.md`
+**Dependencies:** None
+**Status:** planned
 
 ---
 
@@ -426,219 +459,36 @@ Use this template for all work items:
 **Dependencies:** Folder-Based Asset Migration, Variant Cache System
 **Status:** planned (post-MVP)
 
-**Goal:** Enable community modding with asset additions and modifications.
-
-**Tasks:**
-- [ ] Mod Metadata (Mod.xml)
-  - [ ] Parse mod ID, name, version, author
-  - [ ] Parse loadAfter/loadBefore dependencies
-  - [ ] Build mod load order graph
-  - [ ] Detect circular dependencies
-- [ ] Mod Asset Loading
-  - [ ] Scan `mods/*/assets/` folders
-  - [ ] Merge mod assets with core assets
-  - [ ] Support asset overrides (`override="true"`)
-- [ ] Patching System
-  - [ ] Implement XPath patch parser
-  - [ ] Support operations: replace, add, remove, addOrReplace
-  - [ ] Support conditional patches (requiresMod)
-  - [ ] Apply patches in load order
-- [ ] Debugging
-  - [ ] Log patch applications
-  - [ ] `/asset dump <defName>` command for inspecting final definitions
-- [ ] Documentation
-  - [ ] Modder's guide: adding new assets
-  - [ ] Modder's guide: patching existing assets
-  - [ ] Example mod structure
-
----
-
-### Observability System - Full Feature Set
-**Spec/Documentation:** `/docs/technical/observability/INDEX.md`
-**Dependencies:** None
-**Status:** in progress
-
-**Tasks:**
-- [x] Developer Server Backend - Core
-  - [x] Metrics collection (FPS, frame time, draw calls)
-  - [x] Log streaming with ring buffer
-  - [x] SSE streaming endpoints
-  - [x] JSON serialization
-- [ ] Developer Server Backend - Advanced
-  - [ ] Frame profiler with hierarchical zones
-  - [ ] GPU profiler integration
-  - [ ] Export profiling data
-  - [ ] Custom metrics API for game systems
-- [x] Developer Client Frontend - Advanced Features
-  - [x] Time-series charts for metrics
-  - [x] Log filtering by category/level
-  - [x] Log search functionality
-  - [x] Color coding by level
-  - [x] Configurable retention policies
-- [ ] UI Inspection System
-  - [ ] Scene graph JSON serialization
-  - [ ] UI state streaming via SSE
-  - [ ] Hover data collection
-  - [ ] Event streaming
-  - [ ] Hierarchy path display
-
----
-
-### World Generation System
-**Spec/Documentation:** `/docs/technical/world-generation-architecture.md`
-**Dependencies:** None
-**Status:** needs spec
-
-**Tasks:**
-- [ ] Core Architecture
-  - [ ] Define generator interface (abstract base class)
-  - [ ] Create generator registry system
-  - [ ] Implement seed-based deterministic generation
-  - [ ] Integrate with world-creator scene
-- [ ] Temporary: Perlin Noise Generator
-  - [ ] Implement 2D noise function
-  - [ ] Add octave layering for detail
-  - [ ] Create height map generation
-  - [ ] Map elevation to tile types
-  - [ ] Implement simple biome placement
-- [ ] Future: Spherical World Generation
-  - [ ] 3D spherical coordinate system
-  - [ ] Latitude-based biome distribution
-  - [ ] Tectonic plate simulation
-  - [ ] Erosion and river formation
-  - [ ] Ocean and continent generation
-
----
-
-### Diagnostic Drawing System
-**Spec/Documentation:** `/docs/technical/diagnostic-drawing.md`
-**Dependencies:** None
-**Status:** Deferred
-
-**Tasks:**
-- [ ] Core Implementation
-  - [ ] Create DebugDraw class (immediate mode API)
-  - [ ] Implement line primitive
-  - [ ] Implement box primitive
-  - [ ] Implement sphere primitive
-  - [ ] Implement 2D primitives
-  - [ ] Add batched rendering
-  - [ ] Add runtime toggle (development builds only)
-- [ ] Integration
-  - [ ] Text rendering integration
-  - [ ] Example usage documentation
-  - [ ] Integration with ui-sandbox
-  - [ ] Integration with main game
-
----
-
-### GPU-Based SDF Rendering for UI Primitives
-**Spec/Documentation:** `/docs/technical/ui-framework/sdf-rendering.md`
-**Dependencies:** None
-**Status:** ready
-
-**Performance Goals:**
-- 5x geometry reduction (4 vertices vs 20 per bordered rect)
-- <1ms frame time for 1000 bordered rectangles
-- Corner radius support with perfect anti-aliasing
-- Inside/Outside/Center border positioning
-
-**Tasks:**
-- [ ] Phase 1: Core Implementation
-  - [ ] Update PrimitiveVertex struct with new fields (rectLocalPos, borderData, shapeParams)
-  - [ ] Implement SDF vertex shader (pass-through with new attributes)
-  - [ ] Implement SDF fragment shader with sdRoundedBox function
-  - [ ] Add border positioning logic (Inside/Center/Outside)
-  - [ ] Add anti-aliasing with smoothstep and screen-space derivatives
-  - [ ] Update BatchRenderer::Init() for new vertex attribute layout
-  - [ ] Modify BatchRenderer::AddQuad() to calculate rect-local coordinates
-  - [ ] Update primitive_styles.h with BorderPosition enum
-  - [ ] Remove DrawLine calls from DrawRect in primitives.cpp
-  - [ ] Update CompileShader() with new shader sources
-- [ ] Phase 2: Testing
-  - [ ] Write unit tests for vertex data correctness
-  - [ ] Write unit tests for SDF function accuracy (CPU reference implementation)
-  - [ ] Write unit tests for border positioning logic
-  - [ ] Create integration tests for rendering correctness (framebuffer pixel checking)
-  - [ ] Create visual test scene (sdf_test_scene.cpp) with corner radius variations
-  - [ ] Create visual test scene for all border positions (Inside/Center/Outside)
-  - [ ] Test anti-aliasing quality at different zoom levels
-  - [ ] Test edge cases (zero radius, zero border, tiny rects)
-- [ ] Phase 3: Performance Validation
-  - [ ] Implement benchmark suite for 1000+ rectangles with borders
-  - [ ] Measure frame time vs old implementation (target: 3x faster)
-  - [ ] Verify geometry reduction (4 vertices per rect, not 20)
-  - [ ] Profile GPU with RenderDoc or Nsight (fragment shader cost should be <0.5ms)
-  - [ ] Verify batching preserved (single draw call)
-  - [ ] Measure upload bandwidth reduction (target: 2.5x)
-- [ ] Phase 4: Polish & Documentation
-  - [ ] Test on various DPI displays (Retina, standard)
-  - [ ] Tune anti-aliasing parameters if needed
-  - [ ] Verify color accuracy and visual quality
-  - [ ] Capture reference screenshots for regression testing
-  - [ ] Update primitive-rendering-api.md with SDF section
-  - [ ] Update sdf-rendering.md spec with findings
-  - [ ] Code review and address feedback
-
----
-
-### Core System Integrations & Polish
-**Spec/Documentation:** Various technical docs in `/docs/technical/`
-**Dependencies:** ECS System, Config System, World Generation System
-**Status:** planned (blocked on dependencies)
-
-**Tasks:**
-- [ ] String Hashing System Integrations
-  - [ ] ECS integration (depends on ECS system)
-  - [ ] Resource manager integration (depends on named resource system)
-  - [ ] Config system integration (depends on config system)
-- [ ] Logging System Enhancements
-  - [ ] File output support
-  - [ ] Config integration (depends on config system)
-- [ ] Memory Arena Integrations
-  - [ ] Integration with chunk generation (depends on world generation)
-  - [ ] Integration with frame loop (verify FrameArena usage)
-  - [ ] Performance profiling and optimization
-
----
-
-### Game Design Documentation
-**Spec/Documentation:** `/docs/design/game-overview.md`, `/docs/design/INDEX.md`
-**Dependencies:** None
-**Status:** needs completion
-
-**Tasks:**
-- [ ] Game Overview Completions
-  - [ ] Define game win condition
-  - [ ] Define game lose condition
-  - [ ] Define core game loop
-- [ ] Application Flow Design
-  - [ ] Splash screen sequence
-  - [ ] Main menu navigation
-  - [ ] Scene transitions and state management
-- [ ] Main Menu Design
-  - [ ] Menu options and layout
-  - [ ] Settings screens
-  - [ ] Save/load game UI
-- [ ] Game Scene Design
-  - [ ] Top-down 2D tile-based view
-  - [ ] Camera system
-  - [ ] HUD and UI overlay
-- [ ] Camera Controls Specification
-  - [ ] Pan controls (WASD, arrows, edge scrolling)
-  - [ ] Zoom levels and limits
-  - [ ] Focus and tracking modes
-- [ ] Infinite World Design
-  - [ ] Chunk loading system from player perspective
-  - [ ] Streaming and LOD behavior
-  - [ ] Performance implications
-- [ ] UI Component Library
-  - [ ] Overview of UI elements from player perspective
-  - [ ] Interaction patterns
-  - [ ] Visual style guide
-
 ---
 
 ## Blockers & Issues
 
 None currently
+
+---
+
+## MVP Success Criteria
+
+From `/docs/design/mvp-scope.md`:
+
+**Test Scenario:**
+1. One colonist spawns at map center
+2. Several berry bushes scattered nearby
+3. One pond within walking distance
+4. Open ground for sleeping/bathroom
+
+**Expected Behavior (leave running):**
+1. Colonist wanders initially
+2. Discovers berry bush and pond through sight
+3. When hungry → walks to known berry bush → eats
+4. When thirsty → walks to known pond → drinks
+5. Drinking increases bladder need
+6. When bladder urgent → finds outdoor spot → creates Bio Pile
+7. When tired → sleeps on ground
+8. Repeat forever
+
+**Success:**
+- Colonist survives indefinitely
+- Task queue shows sensible decisions
+- No player intervention required
+- Colonist discovers new entities through wandering
