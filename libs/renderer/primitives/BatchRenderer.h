@@ -105,7 +105,8 @@ namespace Renderer { // NOLINT(readability-identifier-naming)
 		void beginFrame();
 		void endFrame();
 
-		// Set viewport dimensions for projection matrix
+		// Set viewport dimensions for projection matrix.
+		// IMPORTANT: Must be called before drawInstanced() to ensure correct projection.
 		void setViewport(int width, int height);
 
 		// Get current viewport dimensions

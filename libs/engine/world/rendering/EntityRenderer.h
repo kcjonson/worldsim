@@ -8,9 +8,9 @@
 // 1. GPU Instancing (default): One draw call per mesh type, transforms on GPU
 // 2. CPU Batching (fallback): All entities in one draw call, transforms on CPU
 
-#include "assets/AssetBatcher.h"
 #include "assets/placement/PlacementExecutor.h"
 #include "primitives/InstanceData.h"
+#include "vector/Tessellator.h"
 #include "world/camera/WorldCamera.h"
 #include "world/chunk/Chunk.h"
 
@@ -30,11 +30,11 @@ class EntityRenderer {
 	/// Destructor - releases GPU resources
 	~EntityRenderer();
 
-	// Non-copyable (owns GPU resources)
+	// Non-copyable, non-movable (owns GPU resources that require explicit release)
 	EntityRenderer(const EntityRenderer&) = delete;
 	EntityRenderer& operator=(const EntityRenderer&) = delete;
-	EntityRenderer(EntityRenderer&&) = default;
-	EntityRenderer& operator=(EntityRenderer&&) = default;
+	EntityRenderer(EntityRenderer&&) = delete;
+	EntityRenderer& operator=(EntityRenderer&&) = delete;
 
 	/// Render entities from processed chunks
 	/// @param executor PlacementExecutor containing entity data

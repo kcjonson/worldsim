@@ -52,13 +52,15 @@ namespace Renderer {
 		viewportSizeLoc = glGetUniformLocation(shader.getProgram(), "u_viewportSize");
 		instancedLoc = glGetUniformLocation(shader.getProgram(), "u_instanced");
 
-		// Debug: verify instancing uniforms are found
+		// Debug: verify instancing uniforms are found (only in debug builds)
+#ifndef NDEBUG
 		std::cerr << "[BatchRenderer] Instancing uniforms: "
 				  << "u_instanced=" << instancedLoc
 				  << " u_cameraPosition=" << cameraPositionLoc
 				  << " u_cameraZoom=" << cameraZoomLoc
 				  << " u_pixelsPerMeter=" << pixelsPerMeterLoc
 				  << " u_viewportSize=" << viewportSizeLoc << std::endl;
+#endif
 
 		// Create VAO/VBO/IBO
 		glGenVertexArrays(1, &vao);
@@ -500,10 +502,20 @@ namespace Renderer {
 
 	// --- GPU Instancing Methods ---
 
+	// Maximum allowed instances to prevent excessive GPU memory allocation
+	constexpr uint32_t kMaxAllowedInstances = 100000;
+
 	InstancedMeshHandle BatchRenderer::uploadInstancedMesh(
 		const renderer::TessellatedMesh& mesh,
 		uint32_t						 maxInstances
 	) {
+		// Validate maxInstances parameter
+		if (maxInstances == 0 || maxInstances > kMaxAllowedInstances) {
+			std::cerr << "[BatchRenderer] Invalid maxInstances: " << maxInstances
+					  << " (must be 1-" << kMaxAllowedInstances << ")" << std::endl;
+			return InstancedMeshHandle{};
+		}
+
 		InstancedMeshHandle handle;
 		handle.maxInstances = maxInstances;
 
@@ -551,7 +563,7 @@ namespace Renderer {
 			reinterpret_cast<void*>(offsetof(InstancedMeshVertex, color))
 		);
 
-		// Locations 1, 3, 4, 5 are not enabled - shader gets default values (0,0,0,1)
+		// Locations 1, 3, 4, 5 are not enabled - OpenGL provides default vertex attribute values (0,0,0,1)
 		// This is fine because the instanced path only uses position and color
 
 		// Create mesh IBO (index buffer for triangles)
@@ -564,6 +576,7 @@ namespace Renderer {
 			GL_STATIC_DRAW
 		);
 		handle.indexCount = static_cast<uint32_t>(mesh.indices.size());
+		handle.vertexCount = static_cast<uint32_t>(mesh.vertices.size());
 
 		// Create instance VBO (dynamic - updated each frame with per-instance data)
 		glGenBuffers(1, &handle.instanceVBO);
@@ -588,7 +601,7 @@ namespace Renderer {
 			7, 4, GL_FLOAT, GL_FALSE, sizeof(InstanceData),
 			reinterpret_cast<void*>(offsetof(InstanceData, colorTint))
 		);
-		glVertexAttribDivisor(7, 1); // Key: advance once per instance
+		glVertexAttribDivisor(7, 1);
 
 		glBindVertexArray(0);
 
@@ -694,7 +707,8 @@ namespace Renderer {
 			);
 
 			drawCallCount++;
-			frameVertexCount += static_cast<size_t>(handle.indexCount / 3) * 3 * batchSize;
+			// Each instance renders all mesh vertices; triangle count = indices / 3
+			frameVertexCount += static_cast<size_t>(handle.vertexCount) * batchSize;
 			frameTriangleCount += static_cast<size_t>(handle.indexCount / 3) * batchSize;
 
 			remaining -= batchSize;

@@ -145,10 +145,10 @@ namespace engine::world {
 				m_vertices.emplace_back(screenX, screenY + tileScreenSize);					 // Bottom-left
 
 				// Add colors (same for all 4 corners)
-				m_colors.push_back(color);
-				m_colors.push_back(color);
-				m_colors.push_back(color);
-				m_colors.push_back(color);
+				m_colors.emplace_back(color);
+				m_colors.emplace_back(color);
+				m_colors.emplace_back(color);
+				m_colors.emplace_back(color);
 
 				// Add indices for 2 triangles
 				m_indices.push_back(baseVertex);
@@ -193,10 +193,10 @@ namespace engine::world {
 		m_vertices.emplace_back(screenX, screenY + chunkScreenSize);				   // Bottom-left
 
 		// Add colors
-		m_colors.push_back(color);
-		m_colors.push_back(color);
-		m_colors.push_back(color);
-		m_colors.push_back(color);
+		m_colors.emplace_back(color);
+		m_colors.emplace_back(color);
+		m_colors.emplace_back(color);
+		m_colors.emplace_back(color);
 
 		// Add indices for 2 triangles
 		m_indices.push_back(baseVertex);

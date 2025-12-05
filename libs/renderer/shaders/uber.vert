@@ -25,7 +25,8 @@ out vec4 v_data1;
 out vec4 v_data2;
 out vec4 v_clipBounds;
 
-// Render mode constant for instanced entities
+// Render mode constant for instanced entities (matches uber.frag)
+// Stored in v_data2.w to signal fragment shader to use simple solid color output
 const float kRenderModeInstanced = -2.0;
 
 void main() {

@@ -77,7 +77,8 @@ void main() {
 	}
 
 	// ========== FAST-PATH RECT CLIPPING (for UI elements only) ==========
-	// Clip bounds check: (minX, minY, maxX, maxY) in UI coordinates (top-left origin, logical pixels)
+	// Clip bounds check: (minX, minY, maxX, maxY) in logical UI coordinates (top-left origin)
+	// NOT used for instanced world entities (v_clipBounds is zeroed for those)
 	// A clipBounds of (0,0,0,0) means no clipping (maxX <= minX check detects this)
 	if (v_clipBounds.z > v_clipBounds.x) {
 		// Scale clip bounds from logical pixels to physical pixels for gl_FragCoord comparison

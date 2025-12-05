@@ -11,9 +11,9 @@
 
 namespace engine::world {
 
-// Debug logging frame counter
-static uint32_t s_debugFrameCounter = 0;
-constexpr uint32_t kDebugLogInterval = 300; // Log every 5 seconds at 60fps
+// Maximum instances per mesh type for GPU instancing
+// Set high enough to handle extreme zoom-out scenarios (observed 34k+ entities)
+constexpr uint32_t kMaxInstancesPerMesh = 50000;
 
 EntityRenderer::EntityRenderer(float pixelsPerMeter) : m_pixelsPerMeter(pixelsPerMeter) {}
 
@@ -52,18 +52,16 @@ Renderer::InstancedMeshHandle& EntityRenderer::getOrCreateMeshHandle(
 	}
 
 	// Upload mesh to GPU
-	// Buffer size of 50,000 instances handles extreme zoom-out scenarios
-	// (observed 34k+ entities when fully zoomed out)
 	auto* batchRenderer = Renderer::Primitives::getBatchRenderer();
 	if (batchRenderer != nullptr && mesh != nullptr) {
-		auto handle = batchRenderer->uploadInstancedMesh(*mesh, 50000);
+		auto handle = batchRenderer->uploadInstancedMesh(*mesh, kMaxInstancesPerMesh);
 		auto [insertedIt, _] = m_meshHandles.emplace(defName, handle);
 		return insertedIt->second;
 	}
 
-	// Return invalid handle if we can't create one
-	static Renderer::InstancedMeshHandle s_invalidHandle;
-	return s_invalidHandle;
+	// Insert an invalid handle to avoid repeated lookup failures
+	auto [insertedIt, _] = m_meshHandles.emplace(defName, Renderer::InstancedMeshHandle{});
+	return insertedIt->second;
 }
 
 void EntityRenderer::renderInstanced(
@@ -124,58 +122,12 @@ void EntityRenderer::renderInstanced(
 				Foundation::Vec2(entity->position.x, entity->position.y),
 				entity->rotation,
 				entity->scale,
-				Foundation::Vec4(
-					entity->colorTint.x,
-					entity->colorTint.y,
-					entity->colorTint.z,
-					entity->colorTint.w
-				)
+				entity->colorTint
 			);
 
 			// Add to batch for this mesh type
 			m_instanceBatches[entity->defName].push_back(instance);
 			m_lastEntityCount++;
-		}
-	}
-
-	// Debug logging every N frames
-	s_debugFrameCounter++;
-	if (s_debugFrameCounter % kDebugLogInterval == 0) {
-		LOG_INFO(Engine, "=== EntityRenderer Debug Frame %u ===", s_debugFrameCounter);
-		LOG_INFO(Engine, "Camera: (%.1f, %.1f), zoom=%.2f", camX, camY, zoom);
-		LOG_INFO(Engine, "Query bounds: X[%.1f to %.1f], Y[%.1f to %.1f]",
-			minWorldX, maxWorldX, minWorldY, maxWorldY);
-		LOG_INFO(Engine, "Processed chunks: %zu, Total entities rendered: %u",
-			processedChunks.size(), m_lastEntityCount);
-
-		// Log per-chunk details with GrassBlade tracking
-		for (const auto& coord : processedChunks) {
-			const auto* index = executor.getChunkIndex(coord);
-			if (index == nullptr) {
-				LOG_INFO(Engine, "  Chunk (%d, %d): NO INDEX (null)", coord.x, coord.y);
-			} else {
-				// Count GrassBlade entities in this chunk's queryRect result
-				auto chunkEntities = index->queryRect(minWorldX, minWorldY, maxWorldX, maxWorldY);
-				uint32_t grassCount = 0;
-				uint32_t treeCount = 0;
-				for (const auto* entity : chunkEntities) {
-					if (entity->defName.find("Grass") != std::string::npos) {
-						grassCount++;
-					} else if (entity->defName.find("Tree") != std::string::npos) {
-						treeCount++;
-					}
-				}
-				LOG_INFO(Engine, "  Chunk (%d, %d): indexTotal=%zu, visible=%zu, grass=%u, trees=%u",
-					coord.x, coord.y, index->size(), chunkEntities.size(), grassCount, treeCount);
-			}
-		}
-
-		// Summary by entity type
-		LOG_INFO(Engine, "Entity summary by type:");
-		for (const auto& [defName, instances] : m_instanceBatches) {
-			if (!instances.empty()) {
-				LOG_INFO(Engine, "  %s: %zu instances", defName.c_str(), instances.size());
-			}
 		}
 	}
 
@@ -258,7 +210,7 @@ void EntityRenderer::renderBatched(const assets::PlacementExecutor& executor,
 	float minWorldY = camY - (viewWorldH * 0.5F) - kMargin;
 	float maxWorldY = camY + (viewWorldH * 0.5F) + kMargin;
 
-	uint16_t vertexIndex = 0;
+	uint32_t vertexIndex = 0;
 
 	// Process each chunk, query only visible entities
 	for (const auto& coord : processedChunks) {
@@ -357,12 +309,12 @@ void EntityRenderer::renderBatched(const assets::PlacementExecutor& executor,
 				}
 			}
 
-			// Add indices
+			// Add indices (offset by current vertex count)
 			for (const auto& idx : templateMesh->indices) {
-				m_indices.push_back(vertexIndex + idx);
+				m_indices.push_back(static_cast<uint16_t>(vertexIndex + idx));
 			}
 
-			vertexIndex += static_cast<uint16_t>(templateMesh->vertices.size());
+			vertexIndex += static_cast<uint32_t>(templateMesh->vertices.size());
 			m_lastEntityCount++;
 		}
 	}

@@ -44,6 +44,7 @@ struct alignas(16) InstanceData {
 };
 
 static_assert(sizeof(InstanceData) == 32, "InstanceData must be 32 bytes for GPU alignment");
+static_assert(alignof(InstanceData) == 16, "InstanceData must be 16-byte aligned for GPU upload");
 
 /// Handle to a mesh uploaded for instanced rendering.
 /// Created by BatchRenderer::uploadInstancedMesh(), released by releaseInstancedMesh().
@@ -53,6 +54,7 @@ struct InstancedMeshHandle {
 	GLuint	 meshIBO = 0;		 // Index buffer for mesh triangles
 	GLuint	 instanceVBO = 0;	 // Instance data buffer (per-instance, divisor=1)
 	uint32_t indexCount = 0;	 // Number of indices in mesh
+	uint32_t vertexCount = 0;	 // Number of vertices in mesh (for stats)
 	uint32_t maxInstances = 0;	 // Capacity of instance buffer
 
 	/// Check if this handle is valid (has GPU resources)
