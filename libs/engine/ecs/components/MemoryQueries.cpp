@@ -10,14 +10,18 @@ namespace ecs {
 
 std::vector<KnownWorldEntity> findKnownWithCapability(
 	const Memory&						  memory,
-	const engine::assets::AssetRegistry&  registry,
+	const engine::assets::AssetRegistry&  /*registry*/,
 	engine::assets::CapabilityType		  capability) {
 	std::vector<KnownWorldEntity> result;
 
-	for (const auto& [key, entity] : memory.knownWorldEntities) {
-		const auto* def = registry.getDefinition(entity.defName);
-		if (def != nullptr && def->capabilities.has(capability)) {
-			result.push_back(entity);
+	// Use capability index for O(1) set access instead of iterating all entities
+	const auto& entityKeys = memory.getEntitiesWithCapability(capability);
+	result.reserve(entityKeys.size());
+
+	for (uint64_t key : entityKeys) {
+		const auto* entity = memory.getWorldEntity(key);
+		if (entity != nullptr) {
+			result.push_back(*entity);
 		}
 	}
 
@@ -26,20 +30,23 @@ std::vector<KnownWorldEntity> findKnownWithCapability(
 
 std::optional<KnownWorldEntity> findNearestWithCapability(
 	const Memory&						  memory,
-	const engine::assets::AssetRegistry&  registry,
+	const engine::assets::AssetRegistry&  /*registry*/,
 	engine::assets::CapabilityType		  capability,
 	const glm::vec2&					  fromPosition) {
 	std::optional<KnownWorldEntity> nearest;
 	float							minDistSq = std::numeric_limits<float>::max();
 
-	for (const auto& [key, entity] : memory.knownWorldEntities) {
-		const auto* def = registry.getDefinition(entity.defName);
-		if (def != nullptr && def->capabilities.has(capability)) {
-			glm::vec2 diff = entity.position - fromPosition;
+	// Use capability index for O(1) set access
+	const auto& entityKeys = memory.getEntitiesWithCapability(capability);
+
+	for (uint64_t key : entityKeys) {
+		const auto* entity = memory.getWorldEntity(key);
+		if (entity != nullptr) {
+			glm::vec2 diff = entity->position - fromPosition;
 			float	  distSq = glm::dot(diff, diff); // Squared distance avoids sqrt
 			if (distSq < minDistSq) {
 				minDistSq = distSq;
-				nearest = entity;
+				nearest = *entity;
 			}
 		}
 	}
@@ -49,18 +56,10 @@ std::optional<KnownWorldEntity> findNearestWithCapability(
 
 size_t countKnownWithCapability(
 	const Memory&						  memory,
-	const engine::assets::AssetRegistry&  registry,
+	const engine::assets::AssetRegistry&  /*registry*/,
 	engine::assets::CapabilityType		  capability) {
-	size_t count = 0;
-
-	for (const auto& [key, entity] : memory.knownWorldEntities) {
-		const auto* def = registry.getDefinition(entity.defName);
-		if (def != nullptr && def->capabilities.has(capability)) {
-			++count;
-		}
-	}
-
-	return count;
+	// O(1) count using capability index
+	return memory.countWithCapability(capability);
 }
 
 } // namespace ecs

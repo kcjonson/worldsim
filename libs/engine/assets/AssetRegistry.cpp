@@ -607,6 +607,9 @@ namespace engine::assets {
 		// Build group index from loaded definitions
 		buildGroupIndex();
 
+		// Build string interning index for memory-efficient storage
+		buildDefNameIndex();
+
 		return totalLoaded;
 	}
 
@@ -857,6 +860,75 @@ namespace engine::assets {
 
 	bool AssetRegistry::hasGroup(const std::string& groupName) const {
 		return groupIndex.find(groupName) != groupIndex.end();
+	}
+
+	// ============================================================================
+	// String Interning Implementation
+	// ============================================================================
+
+	void AssetRegistry::buildDefNameIndex() {
+		m_defNameToId.clear();
+		m_idToDefName.clear();
+		m_capabilityMasks.clear();
+
+		// Reserve ID 0 as "invalid"
+		m_idToDefName.push_back("");
+		m_capabilityMasks.push_back(0);
+
+		// Build ID mapping for all definitions
+		uint32_t nextId = 1;
+		for (const auto& [defName, def] : definitions) {
+			m_defNameToId[defName] = nextId;
+			m_idToDefName.push_back(defName);
+
+			// Pre-compute capability mask for this definition
+			uint8_t mask = 0;
+			if (def.capabilities.edible.has_value()) {
+				mask |= (1 << static_cast<uint8_t>(CapabilityType::Edible));
+			}
+			if (def.capabilities.drinkable.has_value()) {
+				mask |= (1 << static_cast<uint8_t>(CapabilityType::Drinkable));
+			}
+			if (def.capabilities.sleepable.has_value()) {
+				mask |= (1 << static_cast<uint8_t>(CapabilityType::Sleepable));
+			}
+			if (def.capabilities.toilet.has_value()) {
+				mask |= (1 << static_cast<uint8_t>(CapabilityType::Toilet));
+			}
+			m_capabilityMasks.push_back(mask);
+
+			nextId++;
+		}
+
+		LOG_DEBUG(Engine, "Built defName index: %zu entries", m_idToDefName.size() - 1);
+	}
+
+	uint32_t AssetRegistry::getDefNameId(const std::string& defName) const {
+		auto it = m_defNameToId.find(defName);
+		if (it != m_defNameToId.end()) {
+			return it->second;
+		}
+		return 0; // Invalid ID
+	}
+
+	const std::string& AssetRegistry::getDefName(uint32_t id) const {
+		if (id < m_idToDefName.size()) {
+			return m_idToDefName[id];
+		}
+		static const std::string kEmptyString;
+		return kEmptyString;
+	}
+
+	uint8_t AssetRegistry::getCapabilityMask(uint32_t id) const {
+		if (id < m_capabilityMasks.size()) {
+			return m_capabilityMasks[id];
+		}
+		return 0;
+	}
+
+	bool AssetRegistry::hasCapability(uint32_t id, CapabilityType capability) const {
+		uint8_t mask = getCapabilityMask(id);
+		return (mask & (1 << static_cast<uint8_t>(capability))) != 0;
 	}
 
 } // namespace engine::assets
