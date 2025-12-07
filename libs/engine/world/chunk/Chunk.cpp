@@ -61,6 +61,26 @@ namespace engine::world {
 		float worldX = static_cast<float>(m_coord.x * kChunkSize + localX);
 		float worldY = static_cast<float>(m_coord.y * kChunkSize + localY);
 
+		// ========== POND/WATER GENERATION FOR GRASSLAND AND FOREST ==========
+		// Water clusters (ponds) use lower frequency noise for larger, pond-shaped blobs
+		// Separate seed offset ensures independent from ground cover variation
+		if (biome == Biome::Grassland || biome == Biome::Forest) {
+			// Lower frequency = larger pond clusters (~5-10 tiles across)
+			constexpr float kWaterScale = 0.08F;
+			float			waterNoiseX = worldX * kWaterScale;
+			float			waterNoiseY = worldY * kWaterScale;
+
+			// Sample water noise - 2 octaves for organic but cohesive shapes
+			float waterNoise = fractalNoise(waterNoiseX, waterNoiseY, m_worldSeed + 100000, 2, 0.5F);
+
+			// High threshold = sparse ponds (~3-5% coverage)
+			// This creates scattered pond-like clusters
+			constexpr float kWaterThreshold = 0.82F;
+			if (waterNoise > kWaterThreshold) {
+				return GroundCover::Water;
+			}
+		}
+
 		// Scale for patch size: ~0.15 means patches are roughly 5-10 tiles across
 		// Higher frequency = smaller, more natural-looking clusters
 		constexpr float kPatchScale = 0.15F;

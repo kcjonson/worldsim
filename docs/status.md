@@ -267,10 +267,10 @@ Use this template for all work items:
   - [x] Create Berry Bush SVG asset
   - [x] Add Edible capability (nutrition: 0.3, quality: normal, spoilable: true)
   - [x] Configure spawning in Grassland/Forest biomes with clumping
-- [x] Pond Asset
-  - [x] Create Pond SVG asset (water body visual)
-  - [x] Add Drinkable capability (quality: normal)
-  - [x] Configure spawning (spaced distribution, biome-specific)
+- [x] Water Tiles (Ponds)
+  - [x] Implement as tile-based (GroundCover::Water), not entity
+  - [x] Add water generation to Chunk::selectGroundCover() for Grassland/Forest
+  - [x] Use fractal noise for organic pond-like clusters (~3-8 tiles across)
 - [x] Bio Pile Entity
   - [x] Create Bio Pile SVG (simple waste marker)
   - [x] Entity spawns when colonist uses ground as toilet
@@ -481,7 +481,7 @@ From `/docs/design/mvp-scope.md`:
 **Test Scenario:**
 1. One colonist spawns at map center
 2. Several berry bushes scattered nearby
-3. One pond within walking distance
+3. Water tiles (ponds) within walking distance (tile-based, not entity)
 4. Open ground for sleeping/bathroom
 
 **Expected Behavior (leave running):**
