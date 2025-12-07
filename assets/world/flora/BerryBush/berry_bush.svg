@@ -18,10 +18,10 @@
            C19,38 30,25 50,20 Z"
         fill="#4a9a4a"/>
 
-  <!-- Highlight leaves -->
-  <ellipse cx="40" cy="35" rx="12" ry="10" fill="#5ab35a"/>
-  <ellipse cx="60" cy="40" rx="10" ry="8" fill="#5ab35a"/>
-  <ellipse cx="45" cy="60" rx="11" ry="9" fill="#5ab35a"/>
+  <!-- Highlight leaves (ellipse approximations using bezier paths) -->
+  <path d="M28,35 C28,29.5 33,25 40,25 C47,25 52,29.5 52,35 C52,40.5 47,45 40,45 C33,45 28,40.5 28,35 Z" fill="#5ab35a"/>
+  <path d="M50,40 C50,35.6 54,32 60,32 C66,32 70,35.6 70,40 C70,44.4 66,48 60,48 C54,48 50,44.4 50,40 Z" fill="#5ab35a"/>
+  <path d="M34,60 C34,55 39,51 45,51 C51,51 56,55 56,60 C56,65 51,69 45,69 C39,69 34,65 34,60 Z" fill="#5ab35a"/>
 
   <!-- Red berries (scattered clusters) -->
   <circle cx="35" cy="30" r="4" fill="#d62828"/>

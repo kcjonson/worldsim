@@ -470,7 +470,11 @@ Use this template for all work items:
 
 ## Blockers & Issues
 
-None currently
+### SVG Ellipse/Circle Tessellation Bug
+**Impact:** Berry Bush and other assets using `<ellipse>` or `<circle>` SVG elements fail to render
+**Workaround:** Convert ellipse/circle elements to `<path>` bezier approximations (done for Berry Bush)
+**Root Cause:** Ear-clipping tessellator receives degenerate polygons when nanosvg converts circles/ellipses to paths
+**Fix Needed:** Either improve tessellator robustness or convert shapes to paths in SVGLoader before tessellation
 
 ---
 
