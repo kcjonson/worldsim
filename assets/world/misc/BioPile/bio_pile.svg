@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100">
+  <!-- Bio Pile - Top-down view (~0.3m diameter) -->
+  <!-- Simple brown pile shape -->
+
+  <!-- Ground stain (wider, lighter) -->
+  <ellipse cx="50" cy="55" rx="35" ry="28" fill="#5a4a30" opacity="0.4"/>
+
+  <!-- Main pile (irregular brown shape) -->
+  <path d="M50,25
+           C65,28 75,38 72,55
+           C70,68 60,78 45,75
+           C32,72 25,60 28,45
+           C30,32 40,24 50,25 Z"
+        fill="#4a3a20"/>
+
+  <!-- Secondary mound -->
+  <ellipse cx="55" cy="50" rx="18" ry="15" fill="#5a4a30"/>
+
+  <!-- Texture/highlight -->
+  <ellipse cx="48" cy="45" rx="10" ry="8" fill="#6a5a40"/>
+  <ellipse cx="58" cy="55" rx="8" ry="6" fill="#6a5a40"/>
+
+  <!-- Small detail lumps -->
+  <circle cx="40" cy="52" r="5" fill="#5a4a30"/>
+  <circle cx="62" cy="48" r="4" fill="#5a4a30"/>
+  <circle cx="52" cy="62" r="4" fill="#4a3a20"/>
+</svg>

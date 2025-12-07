@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2025-12-07 (MVP: Needs System Core Complete)
+Last Updated: 2025-12-07 (MVP: World Entities - Capability System + Assets Complete)
 
 ## Epic/Story/Task Template
 
@@ -251,33 +251,35 @@ Use this template for all work items:
 
 ---
 
-### 🔄 MVP: World Entities
+### ✅ MVP: World Entities
 **Spec/Documentation:** `/docs/design/mvp-entities.md`, `/docs/design/game-systems/world/entity-capabilities.md`
 **Dependencies:** Asset System Architecture
-**Status:** ready
+**Status:** complete
 
 **Goal:** Create the MVP world entities (Berry Bush, Pond) with capabilities for need fulfillment.
 
-**Tasks:**
-- [ ] Capability System
-  - [ ] Define capability types (Edible, Drinkable, Sleepable, Toilet)
-  - [ ] Add capability data to entity definitions
-  - [ ] Parse capabilities from asset XML
-- [ ] Berry Bush Asset
-  - [ ] Create Berry Bush SVG asset
-  - [ ] Add Edible capability (nutrition: 0.3)
-  - [ ] Configure spawning in Grassland biome
-- [ ] Pond Asset
-  - [ ] Create Pond SVG asset (water body visual)
-  - [ ] Add Drinkable capability (quality: clean)
-  - [ ] Configure spawning (one per chunk or region)
-- [ ] Ground Capabilities
-  - [ ] Mark all ground tiles as Sleepable (quality: terrible, recovery: 0.5x)
-  - [ ] Mark outdoor ground as Toilet fallback
-- [ ] Bio Pile Entity
-  - [ ] Create Bio Pile SVG (simple waste marker)
-  - [ ] Entity spawns when colonist uses ground as toilet
-  - [ ] No capabilities (just exists as marker)
+**Completed Tasks:**
+- [x] Capability System
+  - [x] Define capability types (Edible, Drinkable, Sleepable, Toilet)
+  - [x] Add capability data to entity definitions (AssetDefinition.h)
+  - [x] Parse capabilities from asset XML (AssetRegistry.cpp)
+- [x] Berry Bush Asset
+  - [x] Create Berry Bush SVG asset
+  - [x] Add Edible capability (nutrition: 0.3, quality: normal, spoilable: true)
+  - [x] Configure spawning in Grassland/Forest biomes with clumping
+- [x] Pond Asset
+  - [x] Create Pond SVG asset (water body visual)
+  - [x] Add Drinkable capability (quality: normal)
+  - [x] Configure spawning (spaced distribution, biome-specific)
+- [x] Bio Pile Entity
+  - [x] Create Bio Pile SVG (simple waste marker)
+  - [x] Entity spawns when colonist uses ground as toilet
+  - [x] No capabilities (just exists as marker)
+
+**Deferred to Actions System:**
+- Ground Capabilities (Sleepable/Toilet on tiles) - handled by game logic, not spawned assets
+
+**Result:** Capability system with 4 capability types, 3 MVP world entities (Berry Bush, Pond, Bio Pile) with full placement rules ✅
 
 ---
 

@@ -6,6 +6,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <variant>
@@ -14,6 +15,80 @@
 #include "placement/PlacementTypes.h"
 
 namespace engine::assets {
+
+	// ─────────────────────────────────────────────────────────────────────────
+	// Entity Capability System
+	// Capabilities define what actions can be performed on/with an entity.
+	// Used by AI to find entities that fulfill needs.
+	// ─────────────────────────────────────────────────────────────────────────
+
+	/// Capability type - what kind of interaction an entity supports
+	enum class CapabilityType {
+		Edible,	   // Entity can be eaten to restore hunger
+		Drinkable, // Entity can be drunk from to restore thirst
+		Sleepable, // Entity can be slept on to restore energy
+		Toilet	   // Entity can be used to relieve bladder
+	};
+
+	/// Quality level for capabilities (affects mood, health effects)
+	enum class CapabilityQuality {
+		Terrible, // Ground sleeping, dirty water
+		Poor,	  // Basic/raw
+		Normal,	  // Standard
+		Good,	  // Comfortable
+		Excellent // Luxury
+	};
+
+	/// Edible capability - entity can be eaten
+	struct EdibleCapability {
+		float			  nutrition = 0.3F; // How much hunger is restored (0-1 scale per eat action)
+		CapabilityQuality quality = CapabilityQuality::Normal;
+		bool			  spoilable = false; // Does it decay over time?
+	};
+
+	/// Drinkable capability - entity can be drunk from
+	struct DrinkableCapability {
+		CapabilityQuality quality = CapabilityQuality::Normal; // Affects health (dirty water = illness risk)
+	};
+
+	/// Sleepable capability - entity can be slept on
+	struct SleepableCapability {
+		CapabilityQuality quality = CapabilityQuality::Normal;
+		float			  recoveryMultiplier = 1.0F; // Energy recovery rate (0.5 = slow, 1.0 = normal, 1.2 = good)
+	};
+
+	/// Toilet capability - entity can be used to relieve bladder
+	struct ToiletCapability {
+		bool hygieneBonus = false; // Does using this improve hygiene?
+	};
+
+	/// Container for all capabilities an entity may have
+	struct EntityCapabilities {
+		std::optional<EdibleCapability>	   edible;
+		std::optional<DrinkableCapability> drinkable;
+		std::optional<SleepableCapability> sleepable;
+		std::optional<ToiletCapability>	   toilet;
+
+		/// Check if entity has any capabilities
+		[[nodiscard]] bool hasAny() const {
+			return edible.has_value() || drinkable.has_value() || sleepable.has_value() || toilet.has_value();
+		}
+
+		/// Check if entity has a specific capability type
+		[[nodiscard]] bool has(CapabilityType type) const {
+			switch (type) {
+				case CapabilityType::Edible:
+					return edible.has_value();
+				case CapabilityType::Drinkable:
+					return drinkable.has_value();
+				case CapabilityType::Sleepable:
+					return sleepable.has_value();
+				case CapabilityType::Toilet:
+					return toilet.has_value();
+			}
+			return false;
+		}
+	};
 
 	/// Asset type - how the shape is defined
 	enum class AssetType {
@@ -140,20 +215,21 @@ namespace engine::assets {
 
 	/// Complete asset definition parsed from XML
 	struct AssetDefinition {
-		std::string		defName; // Unique identifier (e.g., "Flora_GrassBlade")
-		std::string		label;	 // Human-readable name
-		AssetType		assetType = AssetType::Procedural;
-		std::string		generatorName; // Generator to use (e.g., "GrassBlade") - C++ generators
-		std::string		scriptPath;	   // For Lua generators: path to Lua script (relative to assets/)
-		std::string				svgPath;	// For Simple assets: path to SVG file
-		std::filesystem::path	baseFolder; // Folder containing this asset's definition (for relative path resolution)
-		float					worldHeight = 1.0F; // World height in meters (for SVG normalization)
-		GeneratorParams params;		   // Parameters for generator
-		AnimationParams animation;
-		PlacementParams placement; // Where this asset spawns
-		AssetComplexity complexity = AssetComplexity::Simple;
-		RenderingTier	renderingTier = RenderingTier::Instanced;
-		uint32_t		variantCount = 1; // Number of variants to pre-generate
+		std::string			  defName; // Unique identifier (e.g., "Flora_GrassBlade")
+		std::string			  label;   // Human-readable name
+		AssetType			  assetType = AssetType::Procedural;
+		std::string			  generatorName;	  // Generator to use (e.g., "GrassBlade") - C++ generators
+		std::string			  scriptPath;		  // For Lua generators: path to Lua script (relative to assets/)
+		std::string			  svgPath;			  // For Simple assets: path to SVG file
+		std::filesystem::path baseFolder;		  // Folder containing this asset's definition (for relative path resolution)
+		float				  worldHeight = 1.0F; // World height in meters (for SVG normalization)
+		GeneratorParams		  params;			  // Parameters for generator
+		AnimationParams		  animation;
+		PlacementParams		  placement;	// Where this asset spawns
+		EntityCapabilities	  capabilities; // What actions can be performed on/with this entity
+		AssetComplexity		  complexity = AssetComplexity::Simple;
+		RenderingTier		  renderingTier = RenderingTier::Instanced;
+		uint32_t			  variantCount = 1; // Number of variants to pre-generate
 
 		/// Check if this definition uses a Lua script generator
 		[[nodiscard]] bool isLuaGenerator() const { return !scriptPath.empty(); }

@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Bio Pile Asset Definition
+     Waste marker created when colonists relieve themselves outdoors.
+     No capabilities - just exists as an entity marker.
+     Future: attracts flies, mood penalty if near base, can be cleaned up.
+-->
+<AssetDefinitions>
+  <AssetDef>
+    <defName>Misc_BioPile</defName>
+    <label>Bio Pile</label>
+    <assetType>simple</assetType>
+    <svgPath>bio_pile.svg</svgPath>
+    <worldHeight>0.3</worldHeight>
+
+    <rendering>
+      <complexity>simple</complexity>
+      <tier>instanced</tier>
+    </rendering>
+
+    <!-- No capabilities - this is just a marker entity -->
+    <!-- Future work may add: mood_penalty, decay, cleanup -->
+
+    <!-- Placement configuration - Bio Piles are spawned by colonists, not world gen -->
+    <!-- These rules are for colonist AI to find suitable spots -->
+    <placement>
+      <!-- Bio Piles cluster together (colonists prefer existing spots) -->
+      <groups>
+        <group>waste</group>
+        <group>cleanable</group>
+      </groups>
+
+      <!-- Relationships - colonists should prefer placing near existing bio piles -->
+      <relationships>
+        <!-- Bio piles cluster together -->
+        <affinity type="same" distance="3.0" strength="2.0"/>
+        <!-- Avoid water sources -->
+        <avoids group="water_sources" distance="5.0" penalty="0.0"/>
+        <!-- Avoid food sources -->
+        <avoids group="food_sources" distance="4.0" penalty="0.0"/>
+      </relationships>
+    </placement>
+
+    <variantCount>1</variantCount>
+  </AssetDef>
+</AssetDefinitions>
