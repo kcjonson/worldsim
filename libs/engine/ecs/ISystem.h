@@ -2,34 +2,32 @@
 
 namespace ecs {
 
-class World;
+	class World;
 
-/// Base interface for all ECS systems.
-/// Systems process entities with specific component combinations.
-class ISystem {
-public:
-    virtual ~ISystem() = default;
+	/// Base interface for all ECS systems.
+	/// Systems process entities with specific component combinations.
+	class ISystem {
+	  public:
+		virtual ~ISystem() = default;
 
-    /// Called each frame to update the system
-    /// @param deltaTime Time elapsed since last frame in seconds
-    virtual void update(float deltaTime) = 0;
+		/// Called each frame to update the system
+		/// @param deltaTime Time elapsed since last frame in seconds
+		virtual void update(float deltaTime) = 0;
 
-    /// Get the priority of this system. Lower values run first.
-    /// Recommended ranges:
-    /// - 0-99: Input handling
-    /// - 100-199: AI and movement decisions
-    /// - 200-299: Physics and position updates
-    /// - 300-899: Game logic
-    /// - 900-999: Rendering preparation
-    [[nodiscard]] virtual int priority() const = 0;
+		/// Get the priority of this system. Lower values run first.
+		/// Recommended ranges:
+		/// - 0-99: Input handling
+		/// - 100-199: AI and movement decisions
+		/// - 200-299: Physics and position updates
+		/// - 300-899: Game logic
+		/// - 900-999: Rendering preparation
+		[[nodiscard]] virtual int priority() const = 0;
 
-    /// Set the world reference (called by World::registerSystem)
-    void setWorld(World* world) {
-        m_world = world;
-    }
+		/// Set the world reference (called by World::registerSystem)
+		void setWorld(World* newWorld) { world = newWorld; }
 
-protected:
-    World* m_world = nullptr;
-};
+	  protected:
+		World* world = nullptr;
+	};
 
-}  // namespace ecs
+} // namespace ecs

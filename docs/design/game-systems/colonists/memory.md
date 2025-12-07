@@ -65,6 +65,8 @@ Colonists share knowledge during casual conversation.
 
 **What's Shared:** Random subset of known entities, biased toward groupings. Instead of sharing one random berry bush, Alice shares "here's where all the berry bushes are" — clusters of related knowledge.
 
+**UI Affordance** - a small UI affordance should be made above both the colonists heads, and an item should appear in the event log
+
 **MVP Status:** Deferred to Phase 2
 
 ---
@@ -105,12 +107,11 @@ This creates meaningful consequences for colonist death beyond losing labor.
 ### Colonist Info Panel
 
 Show what this colonist knows:
-- Known entities: 47 total
-- Food sources: 12
-- Water sources: 3
-- Work targets: 30
+- Known entities: 47 total - expandable to exact list
 
 ### Debug Overlay (Development)
+
+(low priority)
 
 Visualization mode showing colonist's knowledge:
 - Bright: Entities this colonist knows
@@ -135,6 +136,7 @@ Physical map items that grant knowledge when read.
 - Starting scenario might include local area map
 - Scouts could draw maps of explored territory
 - Found maps reveal new regions
+- maps contain a list of knowledge items
 
 ### Searching Behavior
 
@@ -147,6 +149,7 @@ When colonist goes to last known location and target is gone, they could enter a
 The memory system stores entity IDs per colonist. For a colony with 20 colonists and 10,000 entities:
 - **Worst case:** 200,000 entries (20 × 10,000)
 - **Realistic:** Much less — not every colonist knows every entity
+might need to bucket by type. this colonist knows there are trees (and a secondary step to search/access which trees). similar for stacks of items, this colonist knows there is a stack of wood (and need further query to get infomration about whats in that wood pile)
 
 Scale concerns are engineering problems, not gameplay constraints.
 

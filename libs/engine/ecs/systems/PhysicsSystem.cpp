@@ -8,7 +8,7 @@ namespace ecs {
 
 void PhysicsSystem::update(float deltaTime) {
     // Simple Euler integration: position += velocity * dt
-    for (auto [entity, pos, vel] : m_world->view<Position, Velocity>()) {
+    for (auto [entity, pos, vel] : world->view<Position, Velocity>()) {
         pos.value += vel.value * deltaTime;
     }
 }

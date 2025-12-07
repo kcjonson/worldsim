@@ -20,11 +20,11 @@ public:
     /// Get the render data for this frame.
     /// Call this after update() to get entities for rendering.
     [[nodiscard]] const std::vector<engine::assets::PlacedEntity>& getRenderData() const {
-        return m_renderData;
+        return renderData;
     }
 
 private:
-    std::vector<engine::assets::PlacedEntity> m_renderData;
+    std::vector<engine::assets::PlacedEntity> renderData;
 };
 
 }  // namespace ecs

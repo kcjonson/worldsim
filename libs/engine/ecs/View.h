@@ -14,70 +14,70 @@ namespace ecs {
 template <typename... Components>
 class View {
 public:
-    explicit View(Registry& registry) : m_registry(registry) {}
+    explicit View(Registry& registry) : registry(registry) {}
 
     /// Iterator for View
     class Iterator {
     public:
         Iterator(Registry& registry, size_t index, size_t size)
-            : m_registry(registry), m_index(index), m_size(size) {
+            : registry(registry), currentIndex(index), poolSize(size) {
             // Skip to first valid entity
             skipInvalid();
         }
 
         auto operator*() {
-            auto* smallestPool = m_registry.getPool<FirstComponent>();
-            EntityID entity = smallestPool->getEntity(m_index);
+            auto* smallestPool = registry.getPool<FirstComponent>();
+            EntityID entity = smallestPool->getEntity(currentIndex);
             return std::tuple<EntityID, Components&...>{
-                entity, *m_registry.getComponent<Components>(entity)...};
+                entity, *registry.getComponent<Components>(entity)...};
         }
 
         Iterator& operator++() {
-            ++m_index;
+            ++currentIndex;
             skipInvalid();
             return *this;
         }
 
         bool operator!=(const Iterator& other) const {
-            return m_index != other.m_index;
+            return currentIndex != other.currentIndex;
         }
 
     private:
         using FirstComponent = std::tuple_element_t<0, std::tuple<Components...>>;
 
         void skipInvalid() {
-            auto* smallestPool = m_registry.getPool<FirstComponent>();
+            auto* smallestPool = registry.getPool<FirstComponent>();
             if (!smallestPool) {
-                m_index = m_size;
+                currentIndex = poolSize;
                 return;
             }
 
-            while (m_index < m_size) {
-                EntityID entity = smallestPool->getEntity(m_index);
+            while (currentIndex < poolSize) {
+                EntityID entity = smallestPool->getEntity(currentIndex);
                 if (hasAllComponents(entity)) {
                     break;
                 }
-                ++m_index;
+                ++currentIndex;
             }
         }
 
         bool hasAllComponents(EntityID entity) {
-            return (m_registry.hasComponent<Components>(entity) && ...);
+            return (registry.hasComponent<Components>(entity) && ...);
         }
 
-        Registry& m_registry;
-        size_t m_index;
-        size_t m_size;
+        Registry& registry;
+        size_t currentIndex;
+        size_t poolSize;
     };
 
     [[nodiscard]] Iterator begin() {
         size_t size = getSmallestPoolSize();
-        return Iterator(m_registry, 0, size);
+        return Iterator(registry, 0, size);
     }
 
     [[nodiscard]] Iterator end() {
         size_t size = getSmallestPoolSize();
-        return Iterator(m_registry, size, size);
+        return Iterator(registry, size, size);
     }
 
 private:
@@ -86,11 +86,11 @@ private:
     [[nodiscard]] size_t getSmallestPoolSize() const {
         // For simplicity, use first component's pool size
         // A more optimal implementation would find the actual smallest pool
-        auto* pool = m_registry.template getPool<FirstComponent>();
+        auto* pool = registry.template getPool<FirstComponent>();
         return pool ? pool->size() : 0;
     }
 
-    Registry& m_registry;
+    Registry& registry;
 };
 
 }  // namespace ecs

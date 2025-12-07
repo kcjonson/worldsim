@@ -25,7 +25,10 @@ These create tasks. When they drop below threshold, colonist seeks fulfillment.
 | Failure Effect | Starvation damage |
 | Fulfilled By | Eating food (Edible capability) |
 
-Different foods restore different amounts. Food quality affects mood.
+Different foods restore different amounts. Food quality + colonist preferneces affects mood.
+
+**eating effects need to use bathroom**
+
 
 ### Thirst
 
@@ -49,7 +52,7 @@ Clean vs dirty water affects health. **Drinking accelerates bladder need** (biol
 
 Sleep quality affects recovery rate. Better sleeping spots = faster recovery + mood bonus.
 
-### Bladder
+### Bladder / Poop
 
 | Property | Value |
 |----------|-------|

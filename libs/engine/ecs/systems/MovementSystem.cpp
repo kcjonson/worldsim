@@ -14,7 +14,7 @@ void MovementSystem::update(float deltaTime) {
 
     // Process all entities with movement targets
     for (auto [entity, pos, vel, target] :
-         m_world->view<Position, Velocity, MovementTarget>()) {
+         world->view<Position, Velocity, MovementTarget>()) {
         if (!target.active) {
             continue;
         }
@@ -38,7 +38,7 @@ void MovementSystem::update(float deltaTime) {
     }
 
     // Update facing direction based on velocity
-    for (auto [entity, rot, vel] : m_world->view<Rotation, Velocity>()) {
+    for (auto [entity, rot, vel] : world->view<Rotation, Velocity>()) {
         if (glm::length(vel.value) > 0.01f) {
             rot.radians = std::atan2(vel.value.y, vel.value.x);
         }
