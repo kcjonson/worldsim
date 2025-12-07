@@ -13,6 +13,7 @@ add_library(engine
     ecs/systems/MovementSystem.cpp
     ecs/systems/PhysicsSystem.cpp
     ecs/systems/DynamicEntityRenderSystem.cpp
+    ecs/systems/NeedsDecaySystem.cpp
 )
 
 target_include_directories(engine

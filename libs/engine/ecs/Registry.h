@@ -28,20 +28,20 @@ public:
     [[nodiscard]] EntityID createEntity() {
         EntityID entity = kInvalidEntity;
 
-        if (!m_freeList.empty()) {
+        if (!freeList.empty()) {
             // Reuse a recycled index with incremented generation
-            uint32_t index = m_freeList.front();
-            m_freeList.pop();
-            uint32_t generation = m_generations[index];
+            uint32_t index = freeList.front();
+            freeList.pop();
+            uint32_t generation = generations[index];
             entity = makeEntityID(index, generation);
         } else {
             // Allocate new index
-            uint32_t index = static_cast<uint32_t>(m_generations.size());
-            m_generations.push_back(1);  // Start at generation 1
+            uint32_t index = static_cast<uint32_t>(generations.size());
+            generations.push_back(1);  // Start at generation 1
             entity = makeEntityID(index, 1);
         }
 
-        m_livingCount++;
+        livingCount++;
         return entity;
     }
 
@@ -54,14 +54,14 @@ public:
         uint32_t index = getIndex(entity);
 
         // Remove all components
-        for (auto& [typeIndex, pool] : m_pools) {
+        for (auto& [typeIndex, pool] : pools) {
             pool->remove(entity);
         }
 
         // Increment generation to invalidate existing handles
-        m_generations[index]++;
-        m_freeList.push(index);
-        m_livingCount--;
+        generations[index]++;
+        freeList.push(index);
+        livingCount--;
     }
 
     /// Check if an entity is still alive
@@ -71,7 +71,7 @@ public:
         }
         uint32_t index = getIndex(entity);
         uint32_t generation = getGeneration(entity);
-        return index < m_generations.size() && m_generations[index] == generation;
+        return index < generations.size() && generations[index] == generation;
     }
 
     /// Add a component to an entity
@@ -112,8 +112,8 @@ public:
     /// Get the component pool for a type (returns nullptr if none exists)
     template <typename T>
     [[nodiscard]] ComponentPool<T>* getPool() {
-        auto it = m_pools.find(std::type_index(typeid(T)));
-        if (it == m_pools.end()) {
+        auto it = pools.find(std::type_index(typeid(T)));
+        if (it == pools.end()) {
             return nullptr;
         }
         return static_cast<ComponentPool<T>*>(it->second.get());
@@ -122,8 +122,8 @@ public:
     /// Get the component pool for a type (const version)
     template <typename T>
     [[nodiscard]] const ComponentPool<T>* getPool() const {
-        auto it = m_pools.find(std::type_index(typeid(T)));
-        if (it == m_pools.end()) {
+        auto it = pools.find(std::type_index(typeid(T)));
+        if (it == pools.end()) {
             return nullptr;
         }
         return static_cast<const ComponentPool<T>*>(it->second.get());
@@ -131,28 +131,28 @@ public:
 
     /// Get the number of living entities
     [[nodiscard]] size_t getLivingCount() const {
-        return m_livingCount;
+        return livingCount;
     }
 
 private:
     template <typename T>
     ComponentPool<T>& getOrCreatePool() {
         auto typeIndex = std::type_index(typeid(T));
-        auto it = m_pools.find(typeIndex);
-        if (it == m_pools.end()) {
+        auto it = pools.find(typeIndex);
+        if (it == pools.end()) {
             auto pool = std::make_unique<ComponentPool<T>>();
             auto* rawPtr = pool.get();
-            m_pools[typeIndex] = std::move(pool);
+            pools[typeIndex] = std::move(pool);
             return *rawPtr;
         }
         return *static_cast<ComponentPool<T>*>(it->second.get());
     }
 
-    std::vector<uint32_t> m_generations;  // Generation counter per entity index
-    std::queue<uint32_t> m_freeList;      // Recycled entity indices
-    size_t m_livingCount = 0;
+    std::vector<uint32_t> generations;  // Generation counter per entity index
+    std::queue<uint32_t> freeList;      // Recycled entity indices
+    size_t livingCount = 0;
 
-    std::unordered_map<std::type_index, std::unique_ptr<IComponentPool>> m_pools;
+    std::unordered_map<std::type_index, std::unique_ptr<IComponentPool>> pools;
 };
 
 }  // namespace ecs

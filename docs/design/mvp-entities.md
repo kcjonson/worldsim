@@ -83,13 +83,14 @@ These come later:
 ## Test Scenario
 
 **Setup:**
-- One colonist spawns at map center
+- Find a location to spawn that:
 - Several berry bushes scattered nearby
 - One pond within walking distance
 - Open ground for sleeping/bathroom
+Later we'll need a work item for deeper suitable site selection
 
 **Expected Behavior (leave running):**
-1. Colonist wanders initially
+1. Colonist wanders initially (idle behavior)
 2. Discovers berry bush and pond through sight
 3. When hungry → walks to known berry bush → eats
 4. When thirsty → walks to known pond → drinks

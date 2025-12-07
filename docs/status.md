@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2025-12-05 (MVP: Colonist Entity + ECS Foundation Complete)
+Last Updated: 2025-12-07 (MVP: Needs System Core Complete)
 
 ## Epic/Story/Task Template
 
@@ -223,26 +223,31 @@ Use this template for all work items:
 
 ---
 
-### 🔄 MVP: Needs System
+### ✅ MVP: Needs System
 **Spec/Documentation:** `/docs/design/game-systems/colonists/needs.md`
 **Dependencies:** Colonist Entity
-**Status:** ready
+**Status:** complete
 
 **Goal:** Implement the four MVP needs (Hunger, Thirst, Energy, Bladder) with decay and threshold triggers.
 
-**Tasks:**
-- [ ] Need Data Structure
-  - [ ] Create Need struct (value 0-100%, decayRate, seekThreshold, criticalThreshold)
-  - [ ] Create NeedsComponent with 4 needs (Hunger, Thirst, Energy, Bladder)
-  - [ ] Configure thresholds per design doc (~50% seek, ~10% critical)
-- [ ] Need Decay System
-  - [ ] Implement per-frame decay for all needs
-  - [ ] Different decay rates per need type
-  - [ ] Bladder accelerated by drinking (biological loop)
-- [ ] Threshold Events
-  - [ ] Detect when need crosses seek threshold
-  - [ ] Detect when need crosses critical threshold
-  - [ ] Expose current need state for AI decision system
+**Completed Tasks:**
+- [x] Need Data Structure
+  - [x] Create Need struct (value 0-100%, decayRate, seekThreshold, criticalThreshold)
+  - [x] Create NeedsComponent with 4 needs (Hunger, Thirst, Energy, Bladder)
+  - [x] Configure thresholds per design doc (~50% seek, ~10% critical)
+  - [x] Helper methods: needsAttention(), isCritical(), mostUrgentNeed()
+- [x] Need Decay System
+  - [x] Create NeedsDecaySystem (priority 50, runs before movement)
+  - [x] Implement per-frame decay for all needs
+  - [x] Different decay rates per need type (Thirst fastest at 1.2, Bladder slowest at 0.3)
+  - [x] Game-time scaling (gameMinutesPerSecond)
+- [x] Integration
+  - [x] Add NeedsComponent to colonist spawn
+  - [x] Register NeedsDecaySystem in GameScene
+
+**Result:** Colonists have 4 decaying needs with configurable thresholds ✅
+
+**Note:** Bladder acceleration from drinking and threshold event handling will be implemented as part of the Actions System and AI Decision System epics.
 
 ---
 

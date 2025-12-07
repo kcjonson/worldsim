@@ -31,17 +31,17 @@ public:
 
     /// Create a new entity
     [[nodiscard]] EntityID createEntity() {
-        return m_registry.createEntity();
+        return registry.createEntity();
     }
 
     /// Destroy an entity
     void destroyEntity(EntityID entity) {
-        m_registry.destroyEntity(entity);
+        registry.destroyEntity(entity);
     }
 
     /// Check if entity is alive
     [[nodiscard]] bool isAlive(EntityID entity) const {
-        return m_registry.isAlive(entity);
+        return registry.isAlive(entity);
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -51,31 +51,31 @@ public:
     /// Add a component to an entity
     template <typename T, typename... Args>
     T& addComponent(EntityID entity, Args&&... args) {
-        return m_registry.addComponent<T>(entity, std::forward<Args>(args)...);
+        return registry.addComponent<T>(entity, std::forward<Args>(args)...);
     }
 
     /// Get a component from an entity
     template <typename T>
     [[nodiscard]] T* getComponent(EntityID entity) {
-        return m_registry.getComponent<T>(entity);
+        return registry.getComponent<T>(entity);
     }
 
     /// Get a component from an entity (const)
     template <typename T>
     [[nodiscard]] const T* getComponent(EntityID entity) const {
-        return m_registry.getComponent<T>(entity);
+        return registry.getComponent<T>(entity);
     }
 
     /// Check if entity has a component
     template <typename T>
     [[nodiscard]] bool hasComponent(EntityID entity) const {
-        return m_registry.hasComponent<T>(entity);
+        return registry.hasComponent<T>(entity);
     }
 
     /// Remove a component from an entity
     template <typename T>
     void removeComponent(EntityID entity) {
-        m_registry.removeComponent<T>(entity);
+        registry.removeComponent<T>(entity);
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -85,7 +85,7 @@ public:
     /// Create a view to iterate entities with specific components
     template <typename... Components>
     [[nodiscard]] View<Components...> view() {
-        return View<Components...>(m_registry);
+        return View<Components...>(registry);
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -102,9 +102,9 @@ public:
         T& ref = *system;
 
         auto typeIndex = std::type_index(typeid(T));
-        m_systemMap[typeIndex] = system.get();
-        m_systems.push_back(std::move(system));
-        m_sorted = false;
+        systemMap[typeIndex] = system.get();
+        systems.push_back(std::move(system));
+        sorted = false;
 
         return ref;
     }
@@ -112,16 +112,16 @@ public:
     /// Get a registered system by type
     template <typename T>
     [[nodiscard]] T& getSystem() {
-        auto it = m_systemMap.find(std::type_index(typeid(T)));
-        assert(it != m_systemMap.end() && "System not registered");
+        auto it = systemMap.find(std::type_index(typeid(T)));
+        assert(it != systemMap.end() && "System not registered");
         return *static_cast<T*>(it->second);
     }
 
     /// Get a registered system by type (const)
     template <typename T>
     [[nodiscard]] const T& getSystem() const {
-        auto it = m_systemMap.find(std::type_index(typeid(T)));
-        assert(it != m_systemMap.end() && "System not registered");
+        auto it = systemMap.find(std::type_index(typeid(T)));
+        assert(it != systemMap.end() && "System not registered");
         return *static_cast<const T*>(it->second);
     }
 
@@ -129,7 +129,7 @@ public:
     void update(float deltaTime) {
         sortSystemsIfNeeded();
 
-        for (auto& system : m_systems) {
+        for (auto& system : systems) {
             system->update(deltaTime);
         }
     }
@@ -140,32 +140,32 @@ public:
 
     /// Get direct access to the registry
     [[nodiscard]] Registry& getRegistry() {
-        return m_registry;
+        return registry;
     }
 
     /// Get direct access to the registry (const)
     [[nodiscard]] const Registry& getRegistry() const {
-        return m_registry;
+        return registry;
     }
 
 private:
     void sortSystemsIfNeeded() {
-        if (m_sorted) {
+        if (sorted) {
             return;
         }
 
-        std::sort(m_systems.begin(), m_systems.end(),
+        std::sort(systems.begin(), systems.end(),
                   [](const std::unique_ptr<ISystem>& a, const std::unique_ptr<ISystem>& b) {
                       return a->priority() < b->priority();
                   });
 
-        m_sorted = true;
+        sorted = true;
     }
 
-    Registry m_registry;
-    std::vector<std::unique_ptr<ISystem>> m_systems;
-    std::unordered_map<std::type_index, ISystem*> m_systemMap;
-    bool m_sorted = false;
+    Registry registry;
+    std::vector<std::unique_ptr<ISystem>> systems;
+    std::unordered_map<std::type_index, ISystem*> systemMap;
+    bool sorted = false;
 };
 
 }  // namespace ecs

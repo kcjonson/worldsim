@@ -32,9 +32,11 @@
 #include <ecs/components/Appearance.h>
 #include <ecs/components/Colonist.h>
 #include <ecs/components/Movement.h>
+#include <ecs/components/Needs.h>
 #include <ecs/components/Transform.h>
 #include <ecs/systems/DynamicEntityRenderSystem.h>
 #include <ecs/systems/MovementSystem.h>
+#include <ecs/systems/NeedsDecaySystem.h>
 #include <ecs/systems/PhysicsSystem.h>
 
 #include <memory>
@@ -250,6 +252,7 @@ namespace {
 			ecsWorld = std::make_unique<ecs::World>();
 
 			// Register systems in priority order (lower = runs first)
+			ecsWorld->registerSystem<ecs::NeedsDecaySystem>();			// Priority 50
 			ecsWorld->registerSystem<ecs::MovementSystem>();			// Priority 100
 			ecsWorld->registerSystem<ecs::PhysicsSystem>();				// Priority 200
 			ecsWorld->registerSystem<ecs::DynamicEntityRenderSystem>(); // Priority 900
@@ -270,6 +273,7 @@ namespace {
 			ecsWorld->addComponent<ecs::MovementTarget>(entity, ecs::MovementTarget{{0.0F, 0.0F}, 2.0F, false});
 			ecsWorld->addComponent<ecs::Appearance>(entity, ecs::Appearance{"Colonist", 1.0F, {1.0F, 1.0F, 1.0F, 1.0F}});
 			ecsWorld->addComponent<ecs::Colonist>(entity, ecs::Colonist{newName});
+			ecsWorld->addComponent<ecs::NeedsComponent>(entity, ecs::NeedsComponent::createDefault());
 
 			LOG_INFO(Game, "Spawned colonist '%s' at (%.1f, %.1f)", newName.c_str(), newPosition.x, newPosition.y);
 			return entity;

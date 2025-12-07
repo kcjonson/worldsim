@@ -40,6 +40,7 @@ This document is the **single source of truth** for MVP scope. All other documen
 
 ### Technical
 - Basic ECS integration
+- Basic behavior scripting
 - Single colonist (multi-colonist deferred)
 - No saving/loading
 - No UI beyond info panels
