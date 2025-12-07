@@ -279,7 +279,7 @@ Use this template for all work items:
 **Deferred to Actions System:**
 - Ground Capabilities (Sleepable/Toilet on tiles) - handled by game logic, not spawned assets
 
-**Result:** Capability system with 4 capability types, 3 MVP world entities (Berry Bush, Pond, Bio Pile) with full placement rules ✅
+**Result:** Capability system with 4 capability types, 2 MVP world entities (Berry Bush, Bio Pile) and Water Tiles with full placement rules ✅
 
 ---
 
@@ -475,6 +475,13 @@ Use this template for all work items:
 **Workaround:** Convert ellipse/circle elements to `<path>` bezier approximations (done for Berry Bush)
 **Root Cause:** Ear-clipping tessellator receives degenerate polygons when nanosvg converts circles/ellipses to paths
 **Fix Needed:** Either improve tessellator robustness or convert shapes to paths in SVGLoader before tessellation
+
+### Entities Spawning on Water Tiles
+**Impact:** Flora entities (grass, berry bushes, trees) spawn on water tiles instead of being restricted to land
+**Workaround:** None currently - visual issue only, doesn't affect gameplay
+**Root Cause:** PlacementExecutor doesn't check tile ground cover type when spawning entities
+**Fix Needed:** Add ground cover filtering to PlacementExecutor that checks tile type at spawn position
+**Attempted:** Added `groundCovers` field to BiomePlacement and checks in PlacementExecutor, but filtering didn't work as expected
 
 ---
 

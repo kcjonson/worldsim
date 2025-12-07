@@ -33,10 +33,9 @@
       <relationships>
         <!-- Bio piles cluster together -->
         <affinity type="same" distance="3.0" strength="2.0"/>
-        <!-- Avoid water sources -->
-        <avoids group="water_sources" distance="5.0" penalty="0.0"/>
+        <!-- Avoid water sources (handled via tile checks, not entity group) -->
         <!-- Avoid food sources -->
-        <avoids group="food_sources" distance="4.0" penalty="0.0"/>
+        <avoids group="food_sources" distance="4.0" penalty="0.5"/>
       </relationships>
     </placement>
 

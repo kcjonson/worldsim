@@ -65,7 +65,7 @@ namespace engine::world {
 		// Water clusters (ponds) use lower frequency noise for larger, pond-shaped blobs
 		// Separate seed offset ensures independent from ground cover variation
 		if (biome == Biome::Grassland || biome == Biome::Forest) {
-			// Lower frequency = larger pond clusters (~5-10 tiles across)
+			// Lower frequency = larger pond clusters (~3-8 tiles across)
 			constexpr float kWaterScale = 0.08F;
 			float			waterNoiseX = worldX * kWaterScale;
 			float			waterNoiseY = worldY * kWaterScale;
@@ -73,7 +73,7 @@ namespace engine::world {
 			// Sample water noise - 2 octaves for organic but cohesive shapes
 			float waterNoise = fractalNoise(waterNoiseX, waterNoiseY, m_worldSeed + 100000, 2, 0.5F);
 
-			// High threshold = sparse ponds (~3-5% coverage)
+			// High threshold = sparse ponds (~2-5% coverage)
 			// This creates scattered pond-like clusters
 			constexpr float kWaterThreshold = 0.82F;
 			if (waterNoise > kWaterThreshold) {
