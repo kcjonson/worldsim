@@ -22,6 +22,10 @@
 
 namespace ecs {
 
+	/// Default sight radius for colonists in meters.
+	/// Centralized constant - change this value to adjust all colonist sight ranges.
+	inline constexpr float kDefaultSightRadius = 10.0F;
+
 	/// A known world entity (static PlacedEntity from SpatialIndex)
 	/// Optimized: uses defNameId instead of string (~28 bytes saved per entity)
 	struct KnownWorldEntity {
@@ -88,7 +92,7 @@ namespace ecs {
 		// --- Configuration ---
 
 		/// Sight radius in meters (MVP: simple circle, sees through walls)
-		float sightRadius = 10.0F;
+		float sightRadius = kDefaultSightRadius;
 
 		// --- Legacy API (string-based, for compatibility) ---
 
