@@ -294,7 +294,7 @@ Use this template for all work items:
 - [x] Memory Data Structure
   - [x] Create MemoryComponent (set of known entity IDs with last-known positions)
   - [x] Track known world entities per colonist (position quantization for deduplication)
-  - [x] Configurable sight radius (default 20 meters)
+  - [x] Configurable sight radius (default 10 meters)
 - [x] Vision System
   - [x] Implement VisionSystem (priority 45, runs before NeedsDecay)
   - [x] Circular sight radius observation
