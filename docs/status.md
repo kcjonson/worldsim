@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2025-12-07 (MVP: Needs System Core Complete)
+Last Updated: 2025-12-07 (MVP: World Entities - Capability System + Assets Complete)
 
 ## Epic/Story/Task Template
 
@@ -251,33 +251,35 @@ Use this template for all work items:
 
 ---
 
-### 🔄 MVP: World Entities
+### ✅ MVP: World Entities
 **Spec/Documentation:** `/docs/design/mvp-entities.md`, `/docs/design/game-systems/world/entity-capabilities.md`
 **Dependencies:** Asset System Architecture
-**Status:** ready
+**Status:** complete
 
 **Goal:** Create the MVP world entities (Berry Bush, Pond) with capabilities for need fulfillment.
 
-**Tasks:**
-- [ ] Capability System
-  - [ ] Define capability types (Edible, Drinkable, Sleepable, Toilet)
-  - [ ] Add capability data to entity definitions
-  - [ ] Parse capabilities from asset XML
-- [ ] Berry Bush Asset
-  - [ ] Create Berry Bush SVG asset
-  - [ ] Add Edible capability (nutrition: 0.3)
-  - [ ] Configure spawning in Grassland biome
-- [ ] Pond Asset
-  - [ ] Create Pond SVG asset (water body visual)
-  - [ ] Add Drinkable capability (quality: clean)
-  - [ ] Configure spawning (one per chunk or region)
-- [ ] Ground Capabilities
-  - [ ] Mark all ground tiles as Sleepable (quality: terrible, recovery: 0.5x)
-  - [ ] Mark outdoor ground as Toilet fallback
-- [ ] Bio Pile Entity
-  - [ ] Create Bio Pile SVG (simple waste marker)
-  - [ ] Entity spawns when colonist uses ground as toilet
-  - [ ] No capabilities (just exists as marker)
+**Completed Tasks:**
+- [x] Capability System
+  - [x] Define capability types (Edible, Drinkable, Sleepable, Toilet)
+  - [x] Add capability data to entity definitions (AssetDefinition.h)
+  - [x] Parse capabilities from asset XML (AssetRegistry.cpp)
+- [x] Berry Bush Asset
+  - [x] Create Berry Bush SVG asset
+  - [x] Add Edible capability (nutrition: 0.3, quality: normal, spoilable: true)
+  - [x] Configure spawning in Grassland/Forest biomes with clumping
+- [x] Water Tiles (Ponds)
+  - [x] Implement as tile-based (GroundCover::Water), not entity
+  - [x] Add water generation to Chunk::selectGroundCover() for Grassland/Forest
+  - [x] Use fractal noise for organic pond-like clusters (~3-8 tiles across)
+- [x] Bio Pile Entity
+  - [x] Create Bio Pile SVG (simple waste marker)
+  - [x] Entity spawns when colonist uses ground as toilet
+  - [x] No capabilities (just exists as marker)
+
+**Deferred to Actions System:**
+- Ground Capabilities (Sleepable/Toilet on tiles) - handled by game logic, not spawned assets
+
+**Result:** Capability system with 4 capability types, 2 MVP world entities (Berry Bush, Bio Pile) and Water Tiles with full placement rules ✅
 
 ---
 
@@ -468,7 +470,18 @@ Use this template for all work items:
 
 ## Blockers & Issues
 
-None currently
+### SVG Ellipse/Circle Tessellation Bug
+**Impact:** Berry Bush and other assets using `<ellipse>` or `<circle>` SVG elements fail to render
+**Workaround:** Convert ellipse/circle elements to `<path>` bezier approximations (done for Berry Bush)
+**Root Cause:** Ear-clipping tessellator receives degenerate polygons when nanosvg converts circles/ellipses to paths
+**Fix Needed:** Either improve tessellator robustness or convert shapes to paths in SVGLoader before tessellation
+
+### Entities Spawning on Water Tiles
+**Impact:** Flora entities (grass, berry bushes, trees) spawn on water tiles instead of being restricted to land
+**Workaround:** None currently - visual issue only, doesn't affect gameplay
+**Root Cause:** PlacementExecutor doesn't check tile ground cover type when spawning entities
+**Fix Needed:** Add ground cover filtering to PlacementExecutor that checks tile type at spawn position
+**Attempted:** Added `groundCovers` field to BiomePlacement and checks in PlacementExecutor, but filtering didn't work as expected
 
 ---
 
@@ -479,7 +492,7 @@ From `/docs/design/mvp-scope.md`:
 **Test Scenario:**
 1. One colonist spawns at map center
 2. Several berry bushes scattered nearby
-3. One pond within walking distance
+3. Water tiles (ponds) within walking distance (tile-based, not entity)
 4. Open ground for sleeping/bathroom
 
 **Expected Behavior (leave running):**

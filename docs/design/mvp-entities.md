@@ -22,17 +22,29 @@ Minimum entities needed for the first playable prototype. Goal: watch a colonist
 - Colonist walks to bush, eats directly OR harvests berries (loose items)
 - For MVP: Eat directly, no harvesting/hauling
 
-### Pond
+### Water Tiles (Ponds)
 
 **Purpose:** Water source
 
-**Capabilities:**
+**Implementation:** Tile-based (not entity)
+
+Water appears as `GroundCover::Water` tiles within Grassland and Forest biomes. These tiles form natural pond-like clusters using fractal noise generation.
+
+**Properties:**
 - Drinkable (quality: clean)
+- Impassable (colonists walk around)
+- Cluster size: ~3-8 tiles across
+- Spawn rate: ~2-5% of Grassland/Forest tiles
 
 **Behavior:**
-- Stationary water body
-- Colonist walks to edge, drinks
+- Generated procedurally during chunk creation
+- Colonist walks to adjacent tile, drinks from water
 - Drinking increases bladder need
+
+**Technical:**
+- Uses separate noise layer in `Chunk::selectGroundCover()`
+- Low frequency noise creates larger, pond-shaped clusters
+- High threshold ensures sparse but meaningful water features
 
 ### Bio Pile
 
@@ -85,7 +97,7 @@ These come later:
 **Setup:**
 - Find a location to spawn that:
 - Several berry bushes scattered nearby
-- One pond within walking distance
+- Water tiles (pond) within walking distance
 - Open ground for sleeping/bathroom
 Later we'll need a work item for deeper suitable site selection
 

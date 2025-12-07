@@ -217,6 +217,27 @@ namespace engine::assets {
 			return RelationshipKind::Affinity;
 		}
 
+		CapabilityQuality parseCapabilityQuality(const char* str) {
+			if (str == nullptr) {
+				return CapabilityQuality::Normal;
+			}
+			std::string s(str);
+			if (s == "terrible" || s == "Terrible") {
+				return CapabilityQuality::Terrible;
+			}
+			if (s == "poor" || s == "Poor") {
+				return CapabilityQuality::Poor;
+			}
+			if (s == "good" || s == "Good") {
+				return CapabilityQuality::Good;
+			}
+			if (s == "excellent" || s == "Excellent") {
+				return CapabilityQuality::Excellent;
+			}
+			// "normal", "Normal", "clean", "Clean" all map to Normal
+			return CapabilityQuality::Normal;
+		}
+
 		/// Parse "min,max" format into two integers
 		void parseIntRange(const std::string& str, int32_t& outMin, int32_t& outMax, int32_t defaultMin, int32_t defaultMax) {
 			outMin = defaultMin;
@@ -469,6 +490,45 @@ namespace engine::assets {
 
 			// Variant count
 			def.variantCount = static_cast<uint32_t>(defNode.child("variantCount").text().as_uint(1));
+
+			// Capabilities - what actions can be performed on/with this entity
+			pugi::xml_node capabilitiesNode = defNode.child("capabilities");
+			if (capabilitiesNode) {
+				// Edible capability
+				pugi::xml_node edibleNode = capabilitiesNode.child("edible");
+				if (edibleNode) {
+					EdibleCapability edible;
+					edible.nutrition = edibleNode.attribute("nutrition").as_float(0.3F);
+					edible.quality = parseCapabilityQuality(edibleNode.attribute("quality").as_string());
+					edible.spoilable = edibleNode.attribute("spoilable").as_bool(false);
+					def.capabilities.edible = edible;
+				}
+
+				// Drinkable capability
+				pugi::xml_node drinkableNode = capabilitiesNode.child("drinkable");
+				if (drinkableNode) {
+					DrinkableCapability drinkable;
+					drinkable.quality = parseCapabilityQuality(drinkableNode.attribute("quality").as_string());
+					def.capabilities.drinkable = drinkable;
+				}
+
+				// Sleepable capability
+				pugi::xml_node sleepableNode = capabilitiesNode.child("sleepable");
+				if (sleepableNode) {
+					SleepableCapability sleepable;
+					sleepable.quality = parseCapabilityQuality(sleepableNode.attribute("quality").as_string());
+					sleepable.recoveryMultiplier = sleepableNode.attribute("recoveryMultiplier").as_float(1.0F);
+					def.capabilities.sleepable = sleepable;
+				}
+
+				// Toilet capability
+				pugi::xml_node toiletNode = capabilitiesNode.child("toilet");
+				if (toiletNode) {
+					ToiletCapability toilet;
+					toilet.hygieneBonus = toiletNode.attribute("hygieneBonus").as_bool(false);
+					def.capabilities.toilet = toilet;
+				}
+			}
 
 			// Store base folder for relative path resolution
 			def.baseFolder = baseFolder;
