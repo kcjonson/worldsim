@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2025-12-07 (MVP: World Entities - Capability System + Assets Complete)
+Last Updated: 2025-12-07 (MVP: Memory System Complete)
 
 ## Epic/Story/Task Template
 
@@ -283,25 +283,32 @@ Use this template for all work items:
 
 ---
 
-### 🔄 MVP: Memory System
+### ✅ MVP: Memory System
 **Spec/Documentation:** `/docs/design/game-systems/colonists/memory.md`
 **Dependencies:** World Entities, Colonist Entity
-**Status:** ready
+**Status:** complete
 
 **Goal:** Colonists only know about entities they have seen. No omniscient pathfinding.
 
-**Tasks:**
-- [ ] Memory Data Structure
-  - [ ] Create MemoryComponent (set of known entity IDs)
-  - [ ] Track known entities per colonist
-- [ ] Vision System
-  - [ ] Implement circular sight radius around colonist
-  - [ ] Continuous observation during movement
-  - [ ] Add entities within sight to memory
-- [ ] Memory Queries
-  - [ ] Query known entities by capability type
-  - [ ] Find nearest known entity with capability
-  - [ ] Filter task targets to only known entities
+**Completed Tasks:**
+- [x] Memory Data Structure
+  - [x] Create MemoryComponent (set of known entity IDs with last-known positions)
+  - [x] Track known world entities per colonist (position quantization for deduplication)
+  - [x] Configurable sight radius (default 10 meters)
+- [x] Vision System
+  - [x] Implement VisionSystem (priority 45, runs before NeedsDecay)
+  - [x] Circular sight radius observation
+  - [x] Query multiple chunks based on position ± sightRadius
+  - [x] Add entities within sight to Memory component
+- [x] Memory Queries
+  - [x] findKnownWithCapability() - filter by capability type
+  - [x] findNearestWithCapability() - find closest entity with capability
+  - [x] countKnownWithCapability() - count entities with capability
+- [x] GameScene Integration
+  - [x] Register VisionSystem with PlacementExecutor and processedChunks
+  - [x] Add Memory component to colonist spawn
+
+**Result:** Colonists can only interact with entities they have observed within their sight radius ✅
 
 ---
 

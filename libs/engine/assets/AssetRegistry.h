@@ -79,6 +79,30 @@ namespace engine::assets {
 		/// @param path Path to the shared scripts folder (should be absolute for reliable resolution)
 		void setSharedScriptsPath(const std::filesystem::path& path);
 
+		// --- String Interning API (for memory-efficient entity storage) ---
+
+		/// Get the numeric ID for a defName (for memory-efficient storage)
+		/// @param defName The definition name
+		/// @return ID (0 if not found - 0 is reserved as invalid ID)
+		[[nodiscard]] uint32_t getDefNameId(const std::string& defName) const;
+
+		/// Get the defName string for a numeric ID
+		/// @param id The ID returned by getDefNameId
+		/// @return Reference to the defName string, or empty string if invalid
+		[[nodiscard]] const std::string& getDefName(uint32_t id) const;
+
+		/// Get all capability types for a defName by ID (for capability indexing)
+		/// Returns a bitmask where bit N is set if capability N is present.
+		/// @param id The defName ID
+		/// @return Capability bitmask (0 if not found)
+		[[nodiscard]] uint8_t getCapabilityMask(uint32_t id) const;
+
+		/// Check if a defName ID has a specific capability
+		[[nodiscard]] bool hasCapability(uint32_t id, CapabilityType capability) const;
+
+		/// Get the total number of capability types
+		static constexpr size_t kCapabilityTypeCount = 4;
+
 	  private:
 		AssetRegistry() = default;
 
@@ -88,11 +112,22 @@ namespace engine::assets {
 		/// Build group index from loaded definitions
 		void buildGroupIndex();
 
+		/// Build string interning index from loaded definitions
+		void buildDefNameIndex();
+
 		std::unordered_map<std::string, AssetDefinition>		   definitions;
 		std::unordered_map<std::string, renderer::TessellatedMesh> templateCache;
 
 		// Group index: group name → list of defNames that belong to it
 		std::unordered_map<std::string, std::vector<std::string>> groupIndex;
+
+		// String interning: defName ↔ ID mapping for memory-efficient storage
+		// ID 0 is reserved as "invalid/not found"
+		std::unordered_map<std::string, uint32_t> m_defNameToId;
+		std::vector<std::string>				  m_idToDefName; // Index 0 = empty string (invalid)
+
+		// Pre-computed capability masks by ID (for O(1) capability checks)
+		std::vector<uint8_t> m_capabilityMasks;
 
 		// Path to shared scripts folder (for @shared/ prefix resolution)
 		std::filesystem::path m_sharedScriptsPath;

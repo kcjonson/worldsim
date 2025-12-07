@@ -14,6 +14,8 @@ add_library(engine
     ecs/systems/PhysicsSystem.cpp
     ecs/systems/DynamicEntityRenderSystem.cpp
     ecs/systems/NeedsDecaySystem.cpp
+    ecs/systems/VisionSystem.cpp
+    ecs/components/MemoryQueries.cpp
 )
 
 target_include_directories(engine
