@@ -286,9 +286,26 @@ namespace world_sim {
 	}
 
 	void EntityInfoPanel::update(const ecs::World& world, const engine::assets::AssetRegistry& registry, const Selection& selection) {
+		// Early return if not visible - avoid unnecessary input processing
+		if (!visible) {
+			// Still process selection changes to show panel when something is selected
+			std::visit(
+				[this](auto&& sel) {
+					using T = std::decay_t<decltype(sel)>;
+					if constexpr (!std::is_same_v<T, NoSelection>) {
+						visible = true;
+					}
+				},
+				selection
+			);
+			if (!visible) {
+				return;
+			}
+		}
+
 		// Handle close button click
 		auto& input = engine::InputManager::Get();
-		if (visible && input.isMouseButtonReleased(engine::MouseButton::Left)) {
+		if (input.isMouseButtonReleased(engine::MouseButton::Left)) {
 			auto mousePos = input.getMousePosition();
 
 			// Check if click is within close button bounds
@@ -328,6 +345,15 @@ namespace world_sim {
 
 	void EntityInfoPanel::updateColonistDisplay(const ecs::World& world, ecs::EntityID entityId) {
 		if (entityId == 0) {
+			return;
+		}
+
+		// Validate entity still exists - colonists can be deleted
+		if (!world.isAlive(entityId)) {
+			// Entity was deleted, trigger close to deselect
+			if (onCloseCallback) {
+				onCloseCallback();
+			}
 			return;
 		}
 

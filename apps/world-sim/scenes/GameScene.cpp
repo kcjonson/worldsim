@@ -1,9 +1,8 @@
 // Game Scene - Main gameplay with chunk-based world rendering
 
 #include "../GameWorldState.h"
-#include "../components/EntityInfoPanel.h"
+#include "../components/GameUI.h"
 #include "../components/Selection.h"
-#include "../components/GameOverlay.h"
 #include "SceneTypes.h"
 
 #include <GL/glew.h>
@@ -116,28 +115,20 @@ namespace {
 			m_asyncProcessor =
 				std::make_unique<engine::assets::AsyncChunkProcessor>(*m_placementExecutor, kDefaultWorldSeed, m_processedChunks);
 
-			// Create overlay with zoom callbacks
-			m_overlay = std::make_unique<world_sim::GameOverlay>(
-				world_sim::GameOverlay::Args{.onZoomIn = [this]() { m_camera->zoomIn(); }, .onZoomOut = [this]() { m_camera->zoomOut(); }}
-			);
+			// Create unified game UI (contains overlay and info panel)
+			gameUI = std::make_unique<world_sim::GameUI>(world_sim::GameUI::Args{
+				.onZoomIn = [this]() { m_camera->zoomIn(); },
+				.onZoomOut = [this]() { m_camera->zoomOut(); },
+				.onSelectionCleared = [this]() { selection = world_sim::NoSelection{}; }});
 
-			// Initial layout pass
+			// Initial layout pass with consistent DPI scaling
 			int viewportW = 0;
 			int viewportH = 0;
 			Renderer::Primitives::getViewport(viewportW, viewportH);
-			m_overlay->layout(Foundation::Rect{0, 0, static_cast<float>(viewportW), static_cast<float>(viewportH)});
-
-			// Create entity info panel (bottom-left corner with padding)
-			constexpr float kPanelWidth = 180.0F;
-			constexpr float kPanelPadding = 10.0F;
-			constexpr float kPanelHeight = 148.0F;
 			// Note: getViewport returns framebuffer dimensions, divide by 2 for logical coordinates on Retina
+			float logicalViewportW = static_cast<float>(viewportW) / 2.0F;
 			float logicalViewportH = static_cast<float>(viewportH) / 2.0F;
-			entityInfoPanel = std::make_unique<world_sim::EntityInfoPanel>(world_sim::EntityInfoPanel::Args{
-				.position = {kPanelPadding, logicalViewportH - kPanelHeight - kPanelPadding},
-				.width = kPanelWidth,
-				.id = "entity_panel",
-				.onClose = [this]() { selection = world_sim::NoSelection{}; }});
+			gameUI->layout(Foundation::Rect{0, 0, logicalViewportW, logicalViewportH});
 
 			// Initialize ECS World
 			initializeECS();
@@ -184,14 +175,18 @@ namespace {
 				m_camera->zoomOut();
 			}
 
-			// Handle overlay input (zoom buttons)
-			m_overlay->handleInput();
+			// Handle UI input first - returns true if UI consumed the click
+			bool uiConsumedInput = gameUI->handleInput();
 
-			// Handle entity selection on left click release
+			// Handle entity selection on left click release (only if UI didn't consume it)
 			// Note: Use isMouseButtonReleased (not Pressed) to avoid timing issues
 			// with the input state machine's Pressed→Down transition
-			if (input.isMouseButtonReleased(engine::MouseButton::Left)) {
-				handleEntitySelection(input.getMousePosition());
+			if (!uiConsumedInput && input.isMouseButtonReleased(engine::MouseButton::Left)) {
+				auto mousePos = input.getMousePosition();
+				// Additional check: don't process clicks over UI elements
+				if (!gameUI->isPointOverUI(Foundation::Vec2{mousePos.x, mousePos.y})) {
+					handleEntitySelection(mousePos);
+				}
 			}
 		}
 
@@ -210,13 +205,9 @@ namespace {
 			// Update ECS world (movement, physics, render system)
 			ecsWorld->update(dt);
 
-			m_overlay->update(*m_camera, *m_chunkManager);
-
-			// Update entity info panel with current selection
-			if (entityInfoPanel) {
-				auto& assetRegistry = engine::assets::AssetRegistry::Get();
-				entityInfoPanel->update(*ecsWorld, assetRegistry, selection);
-			}
+				// Update unified game UI (overlay + info panel)
+			auto& assetRegistry = engine::assets::AssetRegistry::Get();
+			gameUI->update(*m_camera, *m_chunkManager, *ecsWorld, assetRegistry, selection);
 
 			m_lastUpdateMs = elapsedMs(updateStart, Clock::now());
 		}
@@ -241,12 +232,8 @@ namespace {
 			m_entityRenderer->render(*m_placementExecutor, m_processedChunks, dynamicEntities, *m_camera, w, h);
 			float entityMs = elapsedMs(entityStart, Clock::now());
 
-			m_overlay->render();
-
-			// Render entity info panel if visible
-			if (entityInfoPanel && entityInfoPanel->isVisible()) {
-				entityInfoPanel->render();
-			}
+			// Render unified game UI (overlay + info panel)
+			gameUI->render();
 
 			// Report timing breakdown to metrics system
 			auto* metrics = engine::AppLauncher::getMetrics();
@@ -266,8 +253,7 @@ namespace {
 			}
 
 			m_asyncProcessor.reset();
-			entityInfoPanel.reset();
-			m_overlay.reset();
+			gameUI.reset();
 			ecsWorld.reset();
 			m_placementExecutor.reset();
 			m_chunkManager.reset();
@@ -458,8 +444,7 @@ namespace {
 		std::unique_ptr<engine::world::ChunkRenderer>	   m_renderer;
 		std::unique_ptr<engine::world::EntityRenderer>	   m_entityRenderer;
 		std::unique_ptr<engine::assets::PlacementExecutor> m_placementExecutor;
-		std::unique_ptr<world_sim::GameOverlay>			   m_overlay;
-		std::unique_ptr<world_sim::EntityInfoPanel>		   entityInfoPanel;
+		std::unique_ptr<world_sim::GameUI>				   gameUI;
 
 		// ECS World containing all dynamic entities
 		std::unique_ptr<ecs::World> ecsWorld;

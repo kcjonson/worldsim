@@ -92,6 +92,7 @@ void NeedBar::setPosition(Foundation::Vec2 newPos) {
 
 Foundation::Color NeedBar::valueToColor(float newValue) {
 	// Color gradient: red (0%) → yellow (50%) → green (100%)
+	// Note: Low values indicate need is depleted (bad), high values indicate satisfied (good)
 	// Using HSL-ish interpolation for pleasing gradient
 
 	if (newValue <= 0.0F) {

@@ -3,6 +3,7 @@ add_executable(world-sim
     SceneTypes.cpp
     GameWorldState.cpp
     components/GameOverlay.cpp
+    components/GameUI.cpp
     components/ZoomControl.cpp
     components/NeedBar.cpp
     components/EntityInfoPanel.cpp
