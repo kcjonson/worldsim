@@ -25,37 +25,6 @@ constexpr float kDefaultWaterQuality = 1.0F;
 /// Default nutrition when no edible entity found (shouldn't happen in practice)
 constexpr float kDefaultNutrition = 0.3F;
 
-/// Find nutrition value for the nearest edible entity at target position
-[[nodiscard]] float findNutritionAtTarget(const Memory& memory, const glm::vec2& targetPos) {
-	auto& registry = engine::assets::AssetRegistry::Get();
-
-	// Look through edible entities to find one at the target position
-	const auto& edibleKeys = memory.getEntitiesWithCapability(engine::assets::CapabilityType::Edible);
-
-	constexpr float kPositionTolerance = 0.5F;
-
-	for (uint64_t key : edibleKeys) {
-		const auto* entity = memory.getWorldEntity(key);
-		if (entity == nullptr) {
-			continue;
-		}
-
-		// Check if this entity is at the target position
-		float dx = entity->position.x - targetPos.x;
-		float dy = entity->position.y - targetPos.y;
-		if ((dx * dx + dy * dy) < (kPositionTolerance * kPositionTolerance)) {
-			// Found entity at target - get its nutrition value
-			const std::string& defName = registry.getDefName(entity->defNameId);
-			const auto* assetDef = registry.getDefinition(defName);
-			if (assetDef != nullptr && assetDef->capabilities.edible.has_value()) {
-				return assetDef->capabilities.edible->nutrition;
-			}
-		}
-	}
-
-	return kDefaultNutrition;
-}
-
 } // namespace
 
 void ActionSystem::update(float deltaTime) {
@@ -115,10 +84,23 @@ void ActionSystem::startAction(
 	const Position& position,
 	const Memory& memory
 ) {
+	auto& registry = engine::assets::AssetRegistry::Get();
+
 	switch (task.needToFulfill) {
 		case NeedType::Hunger: {
-			// Find nutrition value from the target entity
-			float nutrition = findNutritionAtTarget(memory, task.targetPosition);
+			// Find nutrition value from the target entity using MemoryQueries
+			auto maybeNutrition = findNutritionAtPosition(memory, registry, task.targetPosition);
+			float nutrition = kDefaultNutrition;
+			if (maybeNutrition.has_value()) {
+				nutrition = maybeNutrition.value();
+			} else {
+				LOG_WARNING(
+					Engine,
+					"[Action] No edible entity found at target (%.1f, %.1f), using default nutrition",
+					task.targetPosition.x,
+					task.targetPosition.y
+				);
+			}
 			action = Action::Eat(nutrition);
 			break;
 		}
@@ -145,7 +127,7 @@ void ActionSystem::startAction(
 
 		case NeedType::Count:
 			// Invalid need type - shouldn't happen
-			LOG_ERROR(Engine, "[Action] Invalid need type in task");
+			LOG_ERROR(Engine, "[Action] Invalid need type in task: %d", static_cast<int>(task.needToFulfill));
 			break;
 	}
 }

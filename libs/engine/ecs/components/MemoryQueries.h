@@ -45,4 +45,14 @@ namespace ecs {
 	const engine::assets::AssetRegistry&  registry,
 	engine::assets::CapabilityType		  capability);
 
+/// Find the nutrition value for an edible entity at a target position
+/// @param memory The colonist's memory to search
+/// @param registry Asset registry for capability lookups
+/// @param targetPos Position to search at (with tolerance)
+/// @returns Nutrition value (0.0-1.0) or nullopt if no edible found
+[[nodiscard]] std::optional<float> findNutritionAtPosition(
+	const Memory&						  memory,
+	const engine::assets::AssetRegistry&  registry,
+	const glm::vec2&					  targetPos);
+
 } // namespace ecs

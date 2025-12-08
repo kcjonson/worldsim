@@ -287,7 +287,7 @@ TEST_F(ActionSystemTest, NeedRestoredOnCompletion) {
 	EXPECT_FLOAT_EQ(needs->thirst().value, 90.0F); // 50 + 40
 }
 
-TEST_F(ActionSystemTest, DrinkAddsToBladder) {
+TEST_F(ActionSystemTest, DrinkFillsBladder) {
 	auto colonist = createColonist();
 	setupArrivedForNeed(colonist, NeedType::Thirst);
 	setNeedValue(colonist, NeedType::Thirst, 50.0F);
