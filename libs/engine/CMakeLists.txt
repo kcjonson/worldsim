@@ -15,6 +15,7 @@ add_library(engine
     ecs/systems/DynamicEntityRenderSystem.cpp
     ecs/systems/NeedsDecaySystem.cpp
     ecs/systems/VisionSystem.cpp
+    ecs/systems/AIDecisionSystem.cpp
     ecs/components/MemoryQueries.cpp
 )
 
