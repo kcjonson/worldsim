@@ -5,6 +5,61 @@
 
 namespace renderer {
 
+	namespace {
+
+		/// Check if a polygon is convex by verifying all cross products have the same sign.
+		/// Returns true for convex polygons (including circles converted to polygon approximations).
+		/// This allows us to use simple fan tessellation which is O(n) and always works.
+		bool isConvexPolygon(const std::vector<Foundation::Vec2>& vertices) {
+			if (vertices.size() < 3) {
+				return false;
+			}
+
+			// Track the sign of cross products - all should be same for convex polygon
+			int	   sign = 0;
+			size_t n = vertices.size();
+
+			for (size_t i = 0; i < n; ++i) {
+				const auto& p0 = vertices[i];
+				const auto& p1 = vertices[(i + 1) % n];
+				const auto& p2 = vertices[(i + 2) % n];
+
+				Foundation::Vec2 edge1 = p1 - p0;
+				Foundation::Vec2 edge2 = p2 - p1;
+				float			 cross = (edge1.x * edge2.y) - (edge1.y * edge2.x);
+
+				// Skip nearly-zero cross products (collinear points)
+				if (std::abs(cross) < 1e-6F) {
+					continue;
+				}
+
+				int currentSign = (cross > 0) ? 1 : -1;
+				if (sign == 0) {
+					sign = currentSign;
+				} else if (sign != currentSign) {
+					return false; // Sign change means concave
+				}
+			}
+
+			return true;
+		}
+
+		/// Fan tessellation for convex polygons - O(n) and always works.
+		/// Creates triangles from vertex 0 to each pair of consecutive vertices.
+		void tessellateConvexFan(const std::vector<Foundation::Vec2>& vertices, TessellatedMesh& outMesh) {
+			outMesh.vertices = vertices;
+			outMesh.indices.reserve((vertices.size() - 2) * 3);
+
+			// Fan from vertex 0: triangles (0, 1, 2), (0, 2, 3), (0, 3, 4), ...
+			for (size_t i = 1; i + 1 < vertices.size(); ++i) {
+				outMesh.indices.push_back(0);
+				outMesh.indices.push_back(static_cast<uint16_t>(i));
+				outMesh.indices.push_back(static_cast<uint16_t>(i + 1));
+			}
+		}
+
+	} // anonymous namespace
+
 	// Internal vertex structure for tessellation
 	struct Tessellator::Vertex {
 		Foundation::Vec2 position;
@@ -56,6 +111,16 @@ namespace renderer {
 			LOG_WARNING(Renderer, "Tessellator: Path is not closed, closing it automatically");
 		}
 
+		// Fast path for convex polygons (like circles and ellipses from SVG)
+		// Fan tessellation is O(n) and avoids ear-clipping issues with nearly-collinear vertices
+		if (isConvexPolygon(path.vertices)) {
+			tessellateConvexFan(path.vertices, outMesh);
+			LOG_DEBUG(
+				Renderer, "Tessellated convex polygon: %zu vertices → %zu triangles (fan)", path.vertices.size(), outMesh.getTriangleCount()
+			);
+			return true;
+		}
+
 		// For Phase 0: Use simple ear clipping algorithm
 		// This is O(n²) but simple and works for all simple polygons
 		// We'll replace with monotone decomposition for Phase 1
@@ -66,8 +131,7 @@ namespace renderer {
 		float signedArea = 0.0F;
 		for (size_t i = 0; i < path.vertices.size(); ++i) {
 			size_t j = (i + 1) % path.vertices.size();
-			signedArea +=
-				(path.vertices[i].x * path.vertices[j].y) - (path.vertices[j].x * path.vertices[i].y);
+			signedArea += (path.vertices[i].x * path.vertices[j].y) - (path.vertices[j].x * path.vertices[i].y);
 		}
 		signedArea *= 0.5F;
 		bool isCCW = (signedArea > 0);
