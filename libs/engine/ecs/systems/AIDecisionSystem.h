@@ -3,7 +3,7 @@
 // AI Decision System for Colonist Autonomous Behavior
 // Evaluates colonist needs and assigns movement targets based on tier priority:
 // - Tier 3: Critical Needs (<10%) - immediate fulfillment
-// - Tier 5: Actionable Needs (<50%) - seek fulfillment
+// - Tier 5: Actionable Needs (below seek threshold, varies by need type) - seek fulfillment
 // - Tier 7: Wander - random exploration when all needs satisfied
 // See /docs/design/game-systems/colonists/ai-behavior.md for design details.
 
