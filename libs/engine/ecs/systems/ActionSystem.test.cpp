@@ -24,10 +24,14 @@ TEST(ActionFactoryTest, EatActionCreation) {
 
 	EXPECT_EQ(action.type, ActionType::Eat);
 	EXPECT_EQ(action.state, ActionState::Starting);
-	EXPECT_EQ(action.needToFulfill, NeedType::Hunger);
 	EXPECT_FLOAT_EQ(action.duration, 2.0F);
-	EXPECT_FLOAT_EQ(action.restoreAmount, 50.0F); // 0.5 * 100
 	EXPECT_FLOAT_EQ(action.elapsed, 0.0F);
+
+	// Check variant-based effect
+	ASSERT_TRUE(action.hasNeedEffect());
+	const auto& effect = action.needEffect();
+	EXPECT_EQ(effect.need, NeedType::Hunger);
+	EXPECT_FLOAT_EQ(effect.restoreAmount, 50.0F); // 0.5 * 100
 }
 
 TEST(ActionFactoryTest, DrinkActionCreation) {
@@ -35,10 +39,15 @@ TEST(ActionFactoryTest, DrinkActionCreation) {
 
 	EXPECT_EQ(action.type, ActionType::Drink);
 	EXPECT_EQ(action.state, ActionState::Starting);
-	EXPECT_EQ(action.needToFulfill, NeedType::Thirst);
 	EXPECT_FLOAT_EQ(action.duration, 1.5F);
-	EXPECT_FLOAT_EQ(action.restoreAmount, 40.0F); // 40% base
-	EXPECT_FLOAT_EQ(action.sideEffectAmount, 15.0F); // bladder increase
+
+	// Check variant-based effect with side effects
+	ASSERT_TRUE(action.hasNeedEffect());
+	const auto& effect = action.needEffect();
+	EXPECT_EQ(effect.need, NeedType::Thirst);
+	EXPECT_FLOAT_EQ(effect.restoreAmount, 40.0F); // 40% base
+	EXPECT_EQ(effect.sideEffectNeed, NeedType::Bladder);
+	EXPECT_FLOAT_EQ(effect.sideEffectAmount, -15.0F); // negative = drains bladder
 }
 
 TEST(ActionFactoryTest, SleepActionCreation) {
@@ -46,9 +55,13 @@ TEST(ActionFactoryTest, SleepActionCreation) {
 
 	EXPECT_EQ(action.type, ActionType::Sleep);
 	EXPECT_EQ(action.state, ActionState::Starting);
-	EXPECT_EQ(action.needToFulfill, NeedType::Energy);
 	EXPECT_FLOAT_EQ(action.duration, 8.0F);
-	EXPECT_FLOAT_EQ(action.restoreAmount, 30.0F); // 60% * 0.5 quality
+
+	// Check variant-based effect
+	ASSERT_TRUE(action.hasNeedEffect());
+	const auto& effect = action.needEffect();
+	EXPECT_EQ(effect.need, NeedType::Energy);
+	EXPECT_FLOAT_EQ(effect.restoreAmount, 30.0F); // 60% * 0.5 quality
 }
 
 TEST(ActionFactoryTest, ToiletActionCreation) {
@@ -57,11 +70,16 @@ TEST(ActionFactoryTest, ToiletActionCreation) {
 
 	EXPECT_EQ(action.type, ActionType::Toilet);
 	EXPECT_EQ(action.state, ActionState::Starting);
-	EXPECT_EQ(action.needToFulfill, NeedType::Bladder);
 	EXPECT_FLOAT_EQ(action.duration, 3.0F);
-	EXPECT_FLOAT_EQ(action.restoreAmount, 100.0F); // Full relief
-	EXPECT_FLOAT_EQ(action.spawnPosition.x, 5.0F);
-	EXPECT_FLOAT_EQ(action.spawnPosition.y, 10.0F);
+	// Spawn position stored in common targetPosition field
+	EXPECT_FLOAT_EQ(action.targetPosition.x, 5.0F);
+	EXPECT_FLOAT_EQ(action.targetPosition.y, 10.0F);
+
+	// Check variant-based effect
+	ASSERT_TRUE(action.hasNeedEffect());
+	const auto& effect = action.needEffect();
+	EXPECT_EQ(effect.need, NeedType::Bladder);
+	EXPECT_FLOAT_EQ(effect.restoreAmount, 100.0F); // Full relief
 }
 
 TEST(ActionFactoryTest, ActionClear) {
@@ -73,10 +91,9 @@ TEST(ActionFactoryTest, ActionClear) {
 
 	EXPECT_EQ(action.type, ActionType::None);
 	EXPECT_EQ(action.state, ActionState::Starting);
-	EXPECT_EQ(action.needToFulfill, NeedType::Count);
 	EXPECT_FLOAT_EQ(action.duration, 0.0F);
 	EXPECT_FLOAT_EQ(action.elapsed, 0.0F);
-	EXPECT_FLOAT_EQ(action.restoreAmount, 0.0F);
+	EXPECT_FALSE(action.hasNeedEffect()); // Effect variant reset to monostate
 }
 
 TEST(ActionFactoryTest, ActionIsActive) {

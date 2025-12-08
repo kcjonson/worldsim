@@ -93,12 +93,16 @@ void ActionSystem::update(float deltaTime) {
 
 		// Complete action if done
 		if (action.isComplete()) {
+			float restoreAmount = 0.0F;
+			if (action.hasNeedEffect()) {
+				restoreAmount = action.needEffect().restoreAmount;
+			}
 			LOG_INFO(
 				Engine,
 				"[Action] Entity %llu: Completed %s action (restored %.1f%%)",
 				static_cast<unsigned long long>(entity),
 				actionTypeName(action.type),
-				action.restoreAmount
+				restoreAmount
 			);
 			completeAction(action, needs, task);
 		}
@@ -165,37 +169,41 @@ void ActionSystem::processAction(float deltaTime, Action& action, NeedsComponent
 }
 
 void ActionSystem::completeAction(Action& action, NeedsComponent& needs, Task& task) {
-	// Apply the primary need restoration
-	if (action.needToFulfill < NeedType::Count) {
-		needs.get(action.needToFulfill).restore(action.restoreAmount);
+	// Apply effects based on variant type
+	if (action.hasNeedEffect()) {
+		const auto& needEff = action.needEffect();
+
+		// Apply primary need restoration
+		if (needEff.need < NeedType::Count) {
+			needs.get(needEff.need).restore(needEff.restoreAmount);
+		}
+
+		// Apply side effect (if any)
+		if (needEff.sideEffectNeed < NeedType::Count) {
+			// Side effect amount: positive = restore, negative = drain
+			if (needEff.sideEffectAmount > 0.0F) {
+				needs.get(needEff.sideEffectNeed).restore(needEff.sideEffectAmount);
+			} else {
+				// Negative amount means drain (e.g., drinking fills bladder)
+				auto& need = needs.get(needEff.sideEffectNeed);
+				need.value += needEff.sideEffectAmount; // sideEffectAmount is already negative
+				if (need.value < 0.0F) {
+					need.value = 0.0F;
+				}
+			}
+		}
 	}
 
-	// Handle side effects
-	switch (action.type) {
-		case ActionType::Drink:
-			// Drinking adds to bladder pressure
-			needs.bladder().value -= action.sideEffectAmount;
-			if (needs.bladder().value < 0.0F) {
-				needs.bladder().value = 0.0F;
-			}
-			break;
-
-		case ActionType::Toilet:
-			// TODO: Spawn Bio Pile entity at action.spawnPosition
-			// For MVP, just log that it would happen
-			LOG_DEBUG(
-				Engine,
-				"[Action] Would spawn Bio Pile at (%.1f, %.1f)",
-				action.spawnPosition.x,
-				action.spawnPosition.y
-			);
-			break;
-
-		case ActionType::Eat:
-		case ActionType::Sleep:
-		case ActionType::None:
-			// No side effects
-			break;
+	// Handle spawn effects (e.g., Toilet creates Bio Pile)
+	if (action.type == ActionType::Toilet) {
+		// TODO: Spawn Bio Pile entity at action.targetPosition
+		// For MVP, just log that it would happen
+		LOG_DEBUG(
+			Engine,
+			"[Action] Would spawn Bio Pile at (%.1f, %.1f)",
+			action.targetPosition.x,
+			action.targetPosition.y
+		);
 	}
 
 	// Clear the action and task
