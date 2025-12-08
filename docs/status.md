@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2025-12-07 (MVP Systems Complete: Colonist, Needs, World Entities, Memory)
+Last Updated: 2025-12-08 (AI Decision System merged, Actions System next)
 
 ## Epic/Story/Task Template
 
@@ -312,53 +312,63 @@ Use this template for all work items:
 
 ---
 
-### 🔄 MVP: AI Decision System
+### ✅ MVP: AI Decision System
 **Spec/Documentation:** `/docs/design/game-systems/colonists/ai-behavior.md`
 **Dependencies:** Needs System, Memory System
-**Status:** ready
+**Status:** complete
 
-**Goal:** Implement the decision hierarchy for autonomous colonist behavior (Tiers 3, 5, 6, 7 for MVP).
+**Goal:** Implement the decision hierarchy for autonomous colonist behavior (Tiers 3, 5, 7 for MVP).
 
-**Tasks:**
-- [ ] Task Queue
-  - [ ] Create TaskQueue component per colonist
-  - [ ] Task struct (type, target, progress, reason)
-  - [ ] Display current/pending tasks
-- [ ] Decision Hierarchy
-  - [ ] Tier 3: Critical Needs (need < 10%) - immediate fulfillment
-  - [ ] Tier 5: Actionable Needs (need < 50%) - seek fulfillment
-  - [ ] Tier 6: Work - Harvest Wild (foraging) when needs satisfied
-  - [ ] Tier 7: Wander - random movement when nothing else to do
-- [ ] Task Selection Algorithm
-  - [ ] Evaluate tiers in priority order
-  - [ ] Select best task based on memory and needs
-  - [ ] Re-evaluate periodically or on need threshold change
+**Completed Tasks:**
+- [x] Task Component
+  - [x] Task struct with type, state, targetPosition, needToFulfill, reason
+  - [x] TaskType enum (None, FulfillNeed, Wander)
+  - [x] TaskState enum (Pending, Moving, Arrived)
+- [x] Decision Hierarchy
+  - [x] Tier 3: Critical Needs (need < 10%) - immediate fulfillment
+  - [x] Tier 5: Actionable Needs (below seek threshold) - seek fulfillment
+  - [x] Tier 7: Wander - random movement when all needs satisfied
+  - [x] Ground fallback for Energy/Bladder (sleep/toilet on ground)
+- [x] Task Selection Algorithm
+  - [x] Evaluate tiers in priority order
+  - [x] Query memory for entities with required capabilities
+  - [x] Re-evaluate every 0.5s or when critical needs emerge
+- [x] GameScene Integration
+  - [x] AIDecisionSystem registered (priority 60)
+  - [x] Task component added to colonist spawn
+  - [x] MovementTarget wired up by AI system
+
+**Deferred to Post-MVP:**
+- Tier 6: Work - Harvest Wild (foraging) when needs satisfied
+
+**Result:** Colonists autonomously navigate to entities based on need priorities ✅
 
 ---
 
-### 🔄 MVP: Movement & Pathfinding
+### ✅ MVP: Movement & Pathfinding
 **Spec/Documentation:** `/docs/design/game-systems/colonists/ai-behavior.md`
-**Dependencies:** Colonist Entity
-**Status:** ready
+**Dependencies:** Colonist Entity, AI Decision System
+**Status:** complete
 
 **Goal:** Colonist can move to target locations (entities, tiles).
 
-**Tasks:**
-- [ ] Basic Pathfinding
-  - [ ] Simple direct movement toward target (MVP: no obstacle avoidance)
-  - [ ] Arrive at destination detection
-  - [ ] Movement state (idle, moving, arrived)
-- [ ] Task Movement Integration
-  - [ ] Move to target entity when task assigned
-  - [ ] Report arrival to action system
-  - [ ] Handle unreachable targets gracefully
+**Completed Tasks:**
+- [x] Basic Pathfinding
+  - [x] Simple direct movement toward target (MVP: no obstacle avoidance)
+  - [x] Arrive at destination detection (distance check in MovementSystem)
+  - [x] Movement state tracking via TaskState (Pending → Moving → Arrived)
+- [x] Task Movement Integration
+  - [x] AIDecisionSystem sets MovementTarget when task assigned
+  - [x] MovementSystem updates TaskState to Arrived when reached
+
+**Result:** Colonists move to target positions and report arrival ✅
 
 ---
 
 ### 🔄 MVP: Actions System
 **Spec/Documentation:** `/docs/design/game-systems/colonists/needs.md`, `/docs/design/mvp-entities.md`
-**Dependencies:** Movement & Pathfinding, World Entities, Needs System
-**Status:** ready
+**Dependencies:** Movement & Pathfinding ✅, World Entities ✅, Needs System ✅
+**Status:** in progress
 
 **Goal:** Colonist performs actions that fulfill needs (Eat, Drink, Sleep, Toilet).
 
