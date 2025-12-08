@@ -341,51 +341,10 @@ namespace world_sim {
 	}
 
 	void EntityInfoPanel::hideSlots() {
-		// Use visibility flags instead of positioning offscreen
-		// This allows the GPU to skip these elements entirely during render
-
-		// Hide background
-		if (auto* bg = getChild<UI::Rectangle>(backgroundHandle)) {
-			bg->visible = false;
-		}
-
-		// Hide close button
-		if (auto* closeBg = getChild<UI::Rectangle>(closeButtonBgHandle)) {
-			closeBg->visible = false;
-		}
-		if (auto* closeText = getChild<UI::Text>(closeButtonTextHandle)) {
-			closeText->visible = false;
-		}
-
-		// Hide title
-		if (auto* title = getChild<UI::Text>(titleHandle)) {
-			title->visible = false;
-		}
-
-		// Hide all text slots
-		for (auto& handle : textHandles) {
-			if (auto* text = getChild<UI::Text>(handle)) {
-				text->visible = false;
-			}
-		}
-
-		// Hide all progress bars
-		for (auto& handle : progressBarHandles) {
-			if (auto* bar = getChild<NeedBar>(handle)) {
-				bar->visible = false;
-			}
-		}
-
-		// Hide list header
-		if (auto* header = getChild<UI::Text>(listHeaderHandle)) {
-			header->visible = false;
-		}
-
-		// Hide all list items
-		for (auto& handle : listItemHandles) {
-			if (auto* item = getChild<UI::Text>(handle)) {
-				item->visible = false;
-			}
+		// Hide all children via inherited Component::children vector
+		// This is O(n) but n is small (~30 elements) and avoids handle lookups
+		for (auto* child : children) {
+			child->visible = false;
 		}
 	}
 
