@@ -61,7 +61,7 @@ Sleep quality affects recovery rate. Better sleeping spots = faster recovery + m
 | Failure Effect | Accident |
 | Fulfilled By | Toilet capability OR outdoor spot |
 
-**Accelerated by drinking.** Each drink adds to bladder need.
+**Accelerated by drinking / eating.** Each drink / food adds to bladder / poop need.
 
 **Outdoor Relief Rules:**
 - Must be outdoors
