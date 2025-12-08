@@ -2,6 +2,7 @@
 
 #include "../World.h"
 #include "../components/Movement.h"
+#include "../components/Task.h"
 #include "../components/Transform.h"
 
 #include <cmath>
@@ -29,6 +30,13 @@ void MovementSystem::update(float deltaTime) {
             // Arrived at target
             vel.value = {0.0f, 0.0f};
             target.active = false;
+
+            // Update Task state if entity has a Task component
+            if (auto* task = world->getComponent<Task>(entity)) {
+                if (task->state == TaskState::Moving) {
+                    task->state = TaskState::Arrived;
+                }
+            }
             continue;
         }
 

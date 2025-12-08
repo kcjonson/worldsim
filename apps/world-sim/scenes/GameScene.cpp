@@ -34,7 +34,9 @@
 #include <ecs/components/Memory.h>
 #include <ecs/components/Movement.h>
 #include <ecs/components/Needs.h>
+#include <ecs/components/Task.h>
 #include <ecs/components/Transform.h>
+#include <ecs/systems/AIDecisionSystem.h>
 #include <ecs/systems/DynamicEntityRenderSystem.h>
 #include <ecs/systems/MovementSystem.h>
 #include <ecs/systems/NeedsDecaySystem.h>
@@ -254,11 +256,13 @@ namespace {
 			ecsWorld = std::make_unique<ecs::World>();
 
 			// Register systems in priority order (lower = runs first)
-			ecsWorld->registerSystem<ecs::VisionSystem>();				// Priority 45
-			ecsWorld->registerSystem<ecs::NeedsDecaySystem>();			// Priority 50
-			ecsWorld->registerSystem<ecs::MovementSystem>();			// Priority 100
-			ecsWorld->registerSystem<ecs::PhysicsSystem>();				// Priority 200
-			ecsWorld->registerSystem<ecs::DynamicEntityRenderSystem>(); // Priority 900
+			auto& assetRegistry = engine::assets::AssetRegistry::Get();
+			ecsWorld->registerSystem<ecs::VisionSystem>();					// Priority 45
+			ecsWorld->registerSystem<ecs::NeedsDecaySystem>();				// Priority 50
+			ecsWorld->registerSystem<ecs::AIDecisionSystem>(assetRegistry); // Priority 60
+			ecsWorld->registerSystem<ecs::MovementSystem>();				// Priority 100
+			ecsWorld->registerSystem<ecs::PhysicsSystem>();					// Priority 200
+			ecsWorld->registerSystem<ecs::DynamicEntityRenderSystem>();		// Priority 900
 
 			// Wire up VisionSystem with placement data for entity queries
 			auto& visionSystem = ecsWorld->getSystem<ecs::VisionSystem>();
@@ -275,13 +279,14 @@ namespace {
 			auto entity = ecsWorld->createEntity();
 
 			ecsWorld->addComponent<ecs::Position>(entity, ecs::Position{newPosition});
-			ecsWorld->addComponent<ecs::Rotation>(entity, ecs::Rotation{0.0F});
+			ecsWorld->addComponent<ecs::Rotation>(entity, ecs::Rotation{0.0F}); // Fixed rotation (no velocity-based facing)
 			ecsWorld->addComponent<ecs::Velocity>(entity, ecs::Velocity{{0.0F, 0.0F}});
 			ecsWorld->addComponent<ecs::MovementTarget>(entity, ecs::MovementTarget{{0.0F, 0.0F}, 2.0F, false});
 			ecsWorld->addComponent<ecs::Appearance>(entity, ecs::Appearance{"Colonist", 1.0F, {1.0F, 1.0F, 1.0F, 1.0F}});
 			ecsWorld->addComponent<ecs::Colonist>(entity, ecs::Colonist{newName});
 			ecsWorld->addComponent<ecs::NeedsComponent>(entity, ecs::NeedsComponent::createDefault());
 			ecsWorld->addComponent<ecs::Memory>(entity, ecs::Memory{});
+			ecsWorld->addComponent<ecs::Task>(entity, ecs::Task{});
 
 			LOG_INFO(Game, "Spawned colonist '%s' at (%.1f, %.1f)", newName.c_str(), newPosition.x, newPosition.y);
 			return entity;
