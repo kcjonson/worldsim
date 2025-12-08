@@ -60,6 +60,9 @@ class GameUI {
 	[[nodiscard]] bool isPointOverUI(Foundation::Vec2 screenPos) const;
 
   private:
+	/// Check if a point is within info panel bounds (when visible)
+	[[nodiscard]] bool isPointOverInfoPanel(Foundation::Vec2 screenPos) const;
+
 	std::unique_ptr<GameOverlay> overlay;
 	std::unique_ptr<EntityInfoPanel> infoPanel;
 

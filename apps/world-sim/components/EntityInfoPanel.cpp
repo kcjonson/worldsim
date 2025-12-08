@@ -79,12 +79,11 @@ namespace world_sim {
 		);
 
 		// Add close button background [X] in top-right corner
-		float closeX = args.position.x + panelWidth - kPadding - kCloseButtonSize;
-		float closeY = args.position.y + kPadding;
+		auto closePos = getCloseButtonPosition(args.position.y);
 		closeButtonBgHandle = addChild(
 			UI::Rectangle(
 				UI::Rectangle::Args{
-					.position = {closeX, closeY},
+					.position = closePos,
 					.size = {kCloseButtonSize, kCloseButtonSize},
 					.style =
 						{.fill = Foundation::Color(0.3F, 0.2F, 0.2F, 0.9F),
@@ -99,7 +98,7 @@ namespace world_sim {
 		closeButtonTextHandle = addChild(
 			UI::Text(
 				UI::Text::Args{
-					.position = {closeX + kCloseButtonSize * 0.5F, closeY + kCloseButtonSize * 0.5F - 1.0F},
+					.position = {closePos.x + kCloseButtonSize * 0.5F, closePos.y + kCloseButtonSize * 0.5F - 1.0F},
 					.text = "X",
 					.style =
 						{
@@ -239,11 +238,10 @@ namespace world_sim {
 
 				// Check if click is within close button bounds
 				float panelY = m_viewportHeight - panelHeight;
-				float closeX = panelX + panelWidth - kPadding - kCloseButtonSize;
-				float closeY = panelY + kPadding;
+				auto  closePos = getCloseButtonPosition(panelY);
 
-				if (mousePos.x >= closeX && mousePos.x <= closeX + kCloseButtonSize && mousePos.y >= closeY &&
-					mousePos.y <= closeY + kCloseButtonSize) {
+				if (mousePos.x >= closePos.x && mousePos.x <= closePos.x + kCloseButtonSize && mousePos.y >= closePos.y &&
+					mousePos.y <= closePos.y + kCloseButtonSize) {
 					if (onCloseCallback) {
 						onCloseCallback();
 					}
@@ -314,15 +312,14 @@ namespace world_sim {
 		}
 
 		// Show and position close button
-		float closeX = panelX + panelWidth - kPadding - kCloseButtonSize;
-		float closeY = panelY + kPadding;
+		auto closePos = getCloseButtonPosition(panelY);
 		if (auto* closeBg = getChild<UI::Rectangle>(closeButtonBgHandle)) {
 			closeBg->visible = true;
-			closeBg->position = {closeX, closeY};
+			closeBg->position = closePos;
 		}
 		if (auto* closeText = getChild<UI::Text>(closeButtonTextHandle)) {
 			closeText->visible = true;
-			closeText->position = {closeX + kCloseButtonSize * 0.5F, closeY + kCloseButtonSize * 0.5F - 1.0F};
+			closeText->position = {closePos.x + kCloseButtonSize * 0.5F, closePos.y + kCloseButtonSize * 0.5F - 1.0F};
 		}
 
 		// Show and position title
@@ -425,6 +422,10 @@ namespace world_sim {
 
 	float EntityInfoPanel::renderSpacerSlot(const SpacerSlot& slot, float /*yOffset*/) {
 		return slot.height;
+	}
+
+	Foundation::Vec2 EntityInfoPanel::getCloseButtonPosition(float panelY) const {
+		return {panelX + panelWidth - kPadding - kCloseButtonSize, panelY + kPadding};
 	}
 
 	void EntityInfoPanel::updateValues(const PanelContent& content) {

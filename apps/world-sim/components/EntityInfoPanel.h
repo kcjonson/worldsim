@@ -90,6 +90,9 @@ class EntityInfoPanel : public UI::Component {
 	float renderTextListSlot(const TextListSlot& slot, float yOffset);
 	float renderSpacerSlot(const SpacerSlot& slot, float yOffset);
 
+	/// Get close button top-left position for current panel position
+	[[nodiscard]] Foundation::Vec2 getCloseButtonPosition(float panelY) const;
+
 	// Close button callback
 	std::function<void()> onCloseCallback;
 

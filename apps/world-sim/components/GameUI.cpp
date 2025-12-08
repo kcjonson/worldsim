@@ -62,13 +62,9 @@ bool GameUI::handleInput() {
 	if (input.isMouseButtonReleased(engine::MouseButton::Left)) {
 		auto mousePos = input.getMousePosition();
 
-		// Check if click is within info panel bounds when visible
-		if (infoPanel && infoPanel->isVisible()) {
-			if (mousePos.x >= infoPanelBounds.x && mousePos.x <= infoPanelBounds.x + infoPanelBounds.width &&
-				mousePos.y >= infoPanelBounds.y && mousePos.y <= infoPanelBounds.y + infoPanelBounds.height) {
-				// Click is over info panel - consume it
-				return true;
-			}
+		if (isPointOverInfoPanel(Foundation::Vec2{mousePos.x, mousePos.y})) {
+			// Click is over info panel - consume it
+			return true;
 		}
 	}
 
@@ -109,15 +105,15 @@ bool GameUI::isPointOverUI(Foundation::Vec2 screenPos) const {
 		return true;
 	}
 
-	// Check info panel bounds when visible
-	if (infoPanel && infoPanel->isVisible()) {
-		if (screenPos.x >= infoPanelBounds.x && screenPos.x <= infoPanelBounds.x + infoPanelBounds.width &&
-			screenPos.y >= infoPanelBounds.y && screenPos.y <= infoPanelBounds.y + infoPanelBounds.height) {
-			return true;
-		}
-	}
+	return isPointOverInfoPanel(screenPos);
+}
 
-	return false;
+bool GameUI::isPointOverInfoPanel(Foundation::Vec2 screenPos) const {
+	if (!infoPanel || !infoPanel->isVisible()) {
+		return false;
+	}
+	return screenPos.x >= infoPanelBounds.x && screenPos.x <= infoPanelBounds.x + infoPanelBounds.width &&
+		   screenPos.y >= infoPanelBounds.y && screenPos.y <= infoPanelBounds.y + infoPanelBounds.height;
 }
 
 } // namespace world_sim

@@ -125,9 +125,9 @@ namespace {
 			int viewportW = 0;
 			int viewportH = 0;
 			Renderer::Primitives::getViewport(viewportW, viewportH);
-			// Note: getViewport returns framebuffer dimensions, divide by 2 for logical coordinates on Retina
-			float logicalViewportW = static_cast<float>(viewportW) / 2.0F;
-			float logicalViewportH = static_cast<float>(viewportH) / 2.0F;
+			// Note: getViewport returns framebuffer dimensions, divide by kRetinaScale for logical coordinates
+			float logicalViewportW = static_cast<float>(viewportW) / kRetinaScale;
+			float logicalViewportH = static_cast<float>(viewportH) / kRetinaScale;
 			gameUI->layout(Foundation::Rect{0, 0, logicalViewportW, logicalViewportH});
 
 			// Initialize ECS World
@@ -183,10 +183,7 @@ namespace {
 			// with the input state machine's Pressed→Down transition
 			if (!uiConsumedInput && input.isMouseButtonReleased(engine::MouseButton::Left)) {
 				auto mousePos = input.getMousePosition();
-				// Additional check: don't process clicks over UI elements
-				if (!gameUI->isPointOverUI(Foundation::Vec2{mousePos.x, mousePos.y})) {
-					handleEntitySelection(mousePos);
-				}
+				handleEntitySelection(mousePos);
 			}
 		}
 
@@ -271,6 +268,9 @@ namespace {
 		const char* getName() const override { return kSceneName; }
 
 	  private:
+		// DPI scaling factor for Retina/HiDPI displays
+		// getViewport() returns framebuffer dimensions, divide by this for logical coordinates
+		static constexpr float kRetinaScale = 2.0F;
 		/// Initialize ECS world with systems and spawn initial entities.
 		void initializeECS() {
 			LOG_INFO(Game, "Initializing ECS World");
@@ -361,10 +361,10 @@ namespace {
 			int viewportH = 0;
 			Renderer::Primitives::getViewport(viewportW, viewportH);
 
-			// Note: getViewport returns framebuffer dimensions, divide by 2 for logical coordinates on Retina
+			// Note: getViewport returns framebuffer dimensions, divide by kRetinaScale for logical coordinates
 			// Mouse position from GLFW is in logical/window coordinates, so we need to match
-			int logicalW = viewportW / 2;
-			int logicalH = viewportH / 2;
+			int logicalW = static_cast<int>(static_cast<float>(viewportW) / kRetinaScale);
+			int logicalH = static_cast<int>(static_cast<float>(viewportH) / kRetinaScale);
 
 			// Convert screen position to world position
 			auto worldPos = m_camera->screenToWorld(screenPos.x, screenPos.y, logicalW, logicalH, kPixelsPerMeter);

@@ -15,6 +15,9 @@ namespace {
 	constexpr std::array<const char*, 4> kNeedLabels = {"Hunger", "Thirst", "Energy", "Bladder"};
 	constexpr size_t					 kNeedCount = 4;
 
+	// Visual spacing between need bars and status section
+	constexpr float kStatusSectionSpacing = 8.0F;
+
 	// Format action description with progress
 	std::string formatAction(const ecs::Action& action) {
 		if (!action.isActive()) {
@@ -108,7 +111,7 @@ PanelContent adaptColonist(const ecs::World& world, ecs::EntityID entityId) {
 	}
 
 	// Add spacer before status
-	content.slots.push_back(SpacerSlot{.height = 8.0F});
+	content.slots.push_back(SpacerSlot{.height = kStatusSectionSpacing});
 
 	// Add task status
 	if (auto* task = world.getComponent<ecs::Task>(entityId)) {
