@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2025-12-08 (AI Decision System merged, Actions System next)
+Last Updated: 2025-12-08 (Actions System merged, Player Observation UI next)
 
 ## Epic/Story/Task Template
 
@@ -365,42 +365,40 @@ Use this template for all work items:
 
 ---
 
-### 🔄 MVP: Actions System
+### ✅ MVP: Actions System
 **Spec/Documentation:** `/docs/design/game-systems/colonists/needs.md`, `/docs/design/mvp-entities.md`
 **Dependencies:** Movement & Pathfinding ✅, World Entities ✅, Needs System ✅
-**Status:** in progress
+**Status:** complete
 
 **Goal:** Colonist performs actions that fulfill needs (Eat, Drink, Sleep, Toilet).
 
-**Tasks:**
-- [ ] Action Framework
-  - [ ] Action state machine (starting, in_progress, complete)
-  - [ ] Action duration/progress tracking
-  - [ ] Action completion callbacks
-- [ ] Eat Action
-  - [ ] Move to Edible entity (Berry Bush)
-  - [ ] Consume over time
-  - [ ] Restore Hunger based on nutrition value
-- [ ] Drink Action
-  - [ ] Move to Drinkable entity (Pond)
-  - [ ] Drink over time
-  - [ ] Restore Thirst
-  - [ ] Increase Bladder need (biological loop)
-- [ ] Sleep Action
-  - [ ] Move to Sleepable location (ground for MVP)
-  - [ ] Enter sleep state
-  - [ ] Restore Energy over time (quality affects rate)
-- [ ] Toilet Action
-  - [ ] Find suitable outdoor spot (not near water, prefer near existing Bio Piles)
-  - [ ] Relieve bladder
-  - [ ] Spawn Bio Pile entity at location
+**Completed Tasks:**
+- [x] Action Framework
+  - [x] Action component with ActionType enum (Eat, Drink, Sleep, Toilet)
+  - [x] Action state machine (Starting, InProgress, Complete)
+  - [x] Action duration/progress tracking with elapsed time
+  - [x] std::variant-based polymorphic effect system (NeedEffect, ProductionEffect)
+  - [x] Action interruption policy documentation
+- [x] Need Fulfillment Actions (all 4 MVP actions)
+  - [x] Eat: Restores Hunger from Edible entities
+  - [x] Drink: Restores Thirst from Drinkable, increases Bladder (side effect)
+  - [x] Sleep: Restores Energy over time (ground for MVP)
+  - [x] Toilet: Relieves Bladder
+- [x] ActionSystem Integration
+  - [x] ActionSystem (priority 70) processes actions and applies effects
+  - [x] Updates NeedsComponent based on NeedEffect data
+  - [x] Registered in GameScene with proper priority ordering
+- [x] Unit Tests
+  - [x] Comprehensive test suite for ActionSystem
+
+**Result:** Colonists can now perform actions to fulfill their needs, completing the need-fulfillment loop ✅
 
 ---
 
 ### 🔄 MVP: Player Observation UI
 **Spec/Documentation:** `/docs/design/mvp-scope.md`
-**Dependencies:** Needs System, AI Decision System
-**Status:** ready
+**Dependencies:** Needs System ✅, AI Decision System ✅, Actions System ✅
+**Status:** in progress
 
 **Goal:** Player can observe colonist status and task queue (observation only, no control).
 
