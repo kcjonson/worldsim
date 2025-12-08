@@ -320,16 +320,20 @@ namespace engine {
 
 	bool InputManager::isMouseButtonPressed(MouseButton button) const {
 		int glfwButton = ToGLFW(button);
-		auto it = mouseButtonStates.find(glfwButton);
-		if (it == mouseButtonStates.end())
+		// Check previous state because updateButtonStates() transitions Pressed→Down
+		// before handleInput() is called. The previous state captures the one-frame event.
+		auto it = mouseButtonPreviousStates.find(glfwButton);
+		if (it == mouseButtonPreviousStates.end())
 			return false;
 		return it->second == ButtonState::Pressed;
 	}
 
 	bool InputManager::isMouseButtonReleased(MouseButton button) const {
 		int glfwButton = ToGLFW(button);
-		auto it = mouseButtonStates.find(glfwButton);
-		if (it == mouseButtonStates.end())
+		// Check previous state because updateButtonStates() transitions Released→Up
+		// before handleInput() is called. The previous state captures the one-frame event.
+		auto it = mouseButtonPreviousStates.find(glfwButton);
+		if (it == mouseButtonPreviousStates.end())
 			return false;
 		return it->second == ButtonState::Released;
 	}
@@ -344,16 +348,20 @@ namespace engine {
 
 	bool InputManager::isKeyPressed(Key key) const {
 		int glfwKey = ToGLFW(key);
-		auto it = keyStates.find(glfwKey);
-		if (it == keyStates.end())
+		// Check previous state because updateButtonStates() transitions Pressed→Down
+		// before handleInput() is called. The previous state captures the one-frame event.
+		auto it = keyPreviousStates.find(glfwKey);
+		if (it == keyPreviousStates.end())
 			return false;
 		return it->second == ButtonState::Pressed;
 	}
 
 	bool InputManager::isKeyReleased(Key key) const {
 		int glfwKey = ToGLFW(key);
-		auto it = keyStates.find(glfwKey);
-		if (it == keyStates.end())
+		// Check previous state because updateButtonStates() transitions Released→Up
+		// before handleInput() is called. The previous state captures the one-frame event.
+		auto it = keyPreviousStates.find(glfwKey);
+		if (it == keyPreviousStates.end())
 			return false;
 		return it->second == ButtonState::Released;
 	}

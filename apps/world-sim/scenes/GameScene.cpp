@@ -1,6 +1,8 @@
 // Game Scene - Main gameplay with chunk-based world rendering
 
 #include "../GameWorldState.h"
+#include "../components/EntityInfoPanel.h"
+#include "../components/Selection.h"
 #include "../components/GameOverlay.h"
 #include "SceneTypes.h"
 
@@ -8,6 +10,7 @@
 
 #include <application/AppLauncher.h>
 #include <chrono>
+#include <cmath>
 #include <graphics/Rect.h>
 #include <input/InputManager.h>
 #include <metrics/MetricsCollector.h>
@@ -124,6 +127,18 @@ namespace {
 			Renderer::Primitives::getViewport(viewportW, viewportH);
 			m_overlay->layout(Foundation::Rect{0, 0, static_cast<float>(viewportW), static_cast<float>(viewportH)});
 
+			// Create entity info panel (bottom-left corner with padding)
+			constexpr float kPanelWidth = 180.0F;
+			constexpr float kPanelPadding = 10.0F;
+			constexpr float kPanelHeight = 148.0F;
+			// Note: getViewport returns framebuffer dimensions, divide by 2 for logical coordinates on Retina
+			float logicalViewportH = static_cast<float>(viewportH) / 2.0F;
+			entityInfoPanel = std::make_unique<world_sim::EntityInfoPanel>(world_sim::EntityInfoPanel::Args{
+				.position = {kPanelPadding, logicalViewportH - kPanelHeight - kPanelPadding},
+				.width = kPanelWidth,
+				.id = "entity_panel",
+				.onClose = [this]() { selection = world_sim::NoSelection{}; }});
+
 			// Initialize ECS World
 			initializeECS();
 		}
@@ -171,6 +186,13 @@ namespace {
 
 			// Handle overlay input (zoom buttons)
 			m_overlay->handleInput();
+
+			// Handle entity selection on left click release
+			// Note: Use isMouseButtonReleased (not Pressed) to avoid timing issues
+			// with the input state machine's Pressed→Down transition
+			if (input.isMouseButtonReleased(engine::MouseButton::Left)) {
+				handleEntitySelection(input.getMousePosition());
+			}
 		}
 
 		void update(float dt) override {
@@ -189,6 +211,12 @@ namespace {
 			ecsWorld->update(dt);
 
 			m_overlay->update(*m_camera, *m_chunkManager);
+
+			// Update entity info panel with current selection
+			if (entityInfoPanel) {
+				auto& assetRegistry = engine::assets::AssetRegistry::Get();
+				entityInfoPanel->update(*ecsWorld, assetRegistry, selection);
+			}
 
 			m_lastUpdateMs = elapsedMs(updateStart, Clock::now());
 		}
@@ -215,6 +243,11 @@ namespace {
 
 			m_overlay->render();
 
+			// Render entity info panel if visible
+			if (entityInfoPanel && entityInfoPanel->isVisible()) {
+				entityInfoPanel->render();
+			}
+
 			// Report timing breakdown to metrics system
 			auto* metrics = engine::AppLauncher::getMetrics();
 			if (metrics != nullptr) {
@@ -233,6 +266,7 @@ namespace {
 			}
 
 			m_asyncProcessor.reset();
+			entityInfoPanel.reset();
 			m_overlay.reset();
 			ecsWorld.reset();
 			m_placementExecutor.reset();
@@ -333,12 +367,99 @@ namespace {
 			}
 		}
 
+		/// Handle entity selection via mouse click.
+		/// Selection priority: 1) ECS colonists, 2) World entities with capabilities
+		/// @param screenPos Mouse position in screen coordinates (logical/window coordinates)
+		void handleEntitySelection(glm::vec2 screenPos) {
+			int viewportW = 0;
+			int viewportH = 0;
+			Renderer::Primitives::getViewport(viewportW, viewportH);
+
+			// Note: getViewport returns framebuffer dimensions, divide by 2 for logical coordinates on Retina
+			// Mouse position from GLFW is in logical/window coordinates, so we need to match
+			int logicalW = viewportW / 2;
+			int logicalH = viewportH / 2;
+
+			// Convert screen position to world position
+			auto worldPos = m_camera->screenToWorld(screenPos.x, screenPos.y, logicalW, logicalH, kPixelsPerMeter);
+
+			LOG_DEBUG(Game, "Click at screen (%.1f, %.1f) -> world (%.2f, %.2f)", screenPos.x, screenPos.y, worldPos.x, worldPos.y);
+
+			constexpr float kSelectionRadius = 2.0F; // meters
+
+			// Priority 1: Check ECS colonists first (dynamic, moving entities)
+			float closestColonistDist = kSelectionRadius;
+			ecs::EntityID closestColonist = 0;
+
+			for (auto [entity, pos, colonist] : ecsWorld->view<ecs::Position, ecs::Colonist>()) {
+				float dx = pos.value.x - worldPos.x;
+				float dy = pos.value.y - worldPos.y;
+				float dist = std::sqrt(dx * dx + dy * dy);
+
+				if (dist < closestColonistDist) {
+					closestColonistDist = dist;
+					closestColonist = entity;
+				}
+			}
+
+			if (closestColonist != 0) {
+				selection = world_sim::ColonistSelection{closestColonist};
+				if (auto* colonist = ecsWorld->getComponent<ecs::Colonist>(closestColonist)) {
+					LOG_INFO(Game, "Selected colonist: %s", colonist->name.c_str());
+				}
+				return;
+			}
+
+			// Priority 2: Check world entities (static placed assets)
+			auto& assetRegistry = engine::assets::AssetRegistry::Get();
+			engine::world::ChunkCoordinate chunkCoord = engine::world::worldToChunk(engine::world::WorldPosition{worldPos.x, worldPos.y});
+			const auto* spatialIndex = m_placementExecutor->getChunkIndex(chunkCoord);
+			if (spatialIndex == nullptr) {
+				// Chunk not loaded, deselect
+				selection = world_sim::NoSelection{};
+				LOG_DEBUG(Game, "No selectable entity found (chunk not loaded), deselecting");
+				return;
+			}
+			auto nearbyEntities = spatialIndex->queryRadius({worldPos.x, worldPos.y}, kSelectionRadius);
+
+			float closestEntityDist = kSelectionRadius;
+			const engine::assets::PlacedEntity* closestWorldEntity = nullptr;
+
+			for (const auto* placedEntity : nearbyEntities) {
+				// Only select entities with capabilities (not grass/decorative)
+				const auto* def = assetRegistry.getDefinition(placedEntity->defName);
+				if (def == nullptr || !def->capabilities.hasAny()) {
+					continue; // Skip entities without capabilities
+				}
+
+				float dx = placedEntity->position.x - worldPos.x;
+				float dy = placedEntity->position.y - worldPos.y;
+				float dist = std::sqrt(dx * dx + dy * dy);
+
+				if (dist < closestEntityDist) {
+					closestEntityDist = dist;
+					closestWorldEntity = placedEntity;
+				}
+			}
+
+			if (closestWorldEntity != nullptr) {
+				selection = world_sim::WorldEntitySelection{closestWorldEntity->defName, closestWorldEntity->position};
+				LOG_INFO(Game, "Selected world entity: %s at (%.1f, %.1f)", closestWorldEntity->defName.c_str(), closestWorldEntity->position.x, closestWorldEntity->position.y);
+				return;
+			}
+
+			// Nothing found - deselect
+			selection = world_sim::NoSelection{};
+			LOG_DEBUG(Game, "No selectable entity found, deselecting");
+		}
+
 		std::unique_ptr<engine::world::ChunkManager>	   m_chunkManager;
 		std::unique_ptr<engine::world::WorldCamera>		   m_camera;
 		std::unique_ptr<engine::world::ChunkRenderer>	   m_renderer;
 		std::unique_ptr<engine::world::EntityRenderer>	   m_entityRenderer;
 		std::unique_ptr<engine::assets::PlacementExecutor> m_placementExecutor;
 		std::unique_ptr<world_sim::GameOverlay>			   m_overlay;
+		std::unique_ptr<world_sim::EntityInfoPanel>		   entityInfoPanel;
 
 		// ECS World containing all dynamic entities
 		std::unique_ptr<ecs::World> ecsWorld;
@@ -351,6 +472,9 @@ namespace {
 
 		// Timing for metrics
 		float m_lastUpdateMs = 0.0F;
+
+		// Current selection for info panel (NoSelection = panel hidden)
+		world_sim::Selection selection = world_sim::NoSelection{};
 	};
 
 } // namespace

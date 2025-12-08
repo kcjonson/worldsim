@@ -4,6 +4,7 @@
 #include "layer/Layer.h"
 
 #include <graphics/Rect.h>
+#include <math/Types.h>
 
 #include <algorithm>
 #include <cstddef>
@@ -135,6 +136,9 @@ namespace UI {
 
 	class Component : public ILayer {
 	  public:
+		// Position (for manual propagation - derived classes override setPosition if needed)
+		Foundation::Vec2 position{0.0F, 0.0F};
+
 		Component() = default;
 		virtual ~Component() = default;
 
