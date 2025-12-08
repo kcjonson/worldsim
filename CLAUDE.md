@@ -9,7 +9,7 @@ World-sim is a C++20 game with 3D procedural world generation, 2D tile-based gam
 **Critical Architectural Decisions:**
 - Vector assets (SVG) with procedural variation → `/docs/technical/vector-graphics/INDEX.md`
 - Custom ECS in engine → `/docs/technical/cpp-coding-standards.md#ecs`
-- Roll our own core systems (not external libraries)
+- Roll our own core systems where appropriate
 
 ## Development Standards
 
@@ -95,12 +95,10 @@ World-sim is a C++20 game with 3D procedural world generation, 2D tile-based gam
 **Naming:**
 - Classes/Functions: PascalCase (`Shader`, `LoadTexture`)
 - Variables: camelCase (`frameCount`, `deltaTime`)
-- Members: `m_` prefix (`m_shader`, `m_isInitialized`)
 - Constants: `k` prefix (`kMaxTextures`)
 
 **Terminology:**
 - Use "scene" not "screen" (`SplashScene`, not `SplashScreen`)
-- Assets are "SVG files" not "images" or "textures"
 
 **Memory:**
 - Prefer stack allocation
@@ -143,7 +141,7 @@ When you make code changes and need to verify visually:
    - No sleep needed - curl will block until screenshot is captured
 
 **Key Points:**
-- **NO sleeps anywhere** - the exit is blocking and screenshot waits for startup
+- **avoid sleeps** - the exit is blocking and screenshot waits for startup
 - **NEVER skip the rebuild step!** An old instance will not reflect your changes
 - **Always use `run_in_background: true`** for launching - shell `&` doesn't work properly
 
