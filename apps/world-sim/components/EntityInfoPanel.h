@@ -2,13 +2,12 @@
 
 // EntityInfoPanel - UI panel showing selected entity information
 //
-// Displays information for different selection types:
-// - NoSelection: Panel is hidden
-// - ColonistSelection: Name, 4 need bars, task, action
-// - WorldEntitySelection: DefName, position, capabilities
-//
-// Uses Container-based UI tree pattern (extends Component, uses addChild).
+// Uses a slot-based architecture for flexible content display:
+// - Receives PanelContent from SelectionAdapter
+// - Dynamically renders slots (TextSlot, ProgressBarSlot, TextListSlot)
+// - Panel handles only rendering, not data transformation
 
+#include "InfoSlot.h"
 #include "NeedBar.h"
 #include "Selection.h"
 
@@ -19,13 +18,13 @@
 #include <layer/Layer.h>
 #include <shapes/Shapes.h>
 
-#include <array>
 #include <functional>
 #include <string>
+#include <vector>
 
 namespace world_sim {
 
-/// UI panel for displaying selected entity information
+/// UI panel for displaying selected entity information via slots
 class EntityInfoPanel : public UI::Component {
   public:
 	struct Args {
@@ -38,8 +37,8 @@ class EntityInfoPanel : public UI::Component {
 	explicit EntityInfoPanel(const Args& args);
 
 	/// Update panel with current selection
-	/// @param world ECS world to query for colonist data
-	/// @param registry Asset registry to look up world entity capabilities
+	/// @param world ECS world (for adapter)
+	/// @param registry Asset registry (for adapter)
 	/// @param selection Current selection state
 	void update(const ecs::World& world, const engine::assets::AssetRegistry& registry, const Selection& selection);
 
@@ -47,20 +46,20 @@ class EntityInfoPanel : public UI::Component {
 	[[nodiscard]] bool isVisible() const { return visible; }
 
   private:
-	/// Update display for colonist selection
-	void updateColonistDisplay(const ecs::World& world, ecs::EntityID entityId);
+	/// Render PanelContent by laying out slots
+	void renderContent(const PanelContent& content);
 
-	/// Update display for world entity selection
-	void updateWorldEntityDisplay(const engine::assets::AssetRegistry& registry, const WorldEntitySelection& sel);
+	/// Clear all slot UI elements (position offscreen)
+	void clearSlots();
 
-	/// Hide all UI elements (position offscreen)
-	void hideAllElements();
+	/// Render an individual slot at given Y offset, returns height consumed
+	float renderSlot(const InfoSlot& slot, float yOffset);
 
-	/// Show colonist-specific UI elements
-	void showColonistUI();
-
-	/// Show world entity-specific UI elements
-	void showWorldEntityUI();
+	// Slot type rendering helpers
+	float renderTextSlot(const TextSlot& slot, float yOffset);
+	float renderProgressBarSlot(const ProgressBarSlot& slot, float yOffset);
+	float renderTextListSlot(const TextListSlot& slot, float yOffset);
+	float renderSpacerSlot(const SpacerSlot& slot, float yOffset);
 
 	// Close button callback
 	std::function<void()> onCloseCallback;
@@ -72,42 +71,45 @@ class EntityInfoPanel : public UI::Component {
 	UI::LayerHandle closeButtonBgHandle;
 	UI::LayerHandle closeButtonTextHandle;
 
-	// Header text (entity name)
-	UI::LayerHandle nameHandle;
+	// Header text (entity name/title)
+	UI::LayerHandle titleHandle;
 
-	// Need bars (colonist only, indexed by NeedType)
-	static constexpr size_t kNeedCount = 4;
-	std::array<UI::LayerHandle, kNeedCount> needBarHandles;
+	// Pool of reusable slot UI elements
+	// Text elements (for TextSlot label:value pairs)
+	static constexpr size_t kMaxTextSlots = 8;
+	std::vector<UI::LayerHandle> textHandles;
 
-	// Status text handles (colonist only)
-	UI::LayerHandle taskHandle;
-	UI::LayerHandle actionHandle;
+	// Progress bars (for ProgressBarSlot)
+	static constexpr size_t kMaxProgressBars = 6;
+	std::vector<UI::LayerHandle> progressBarHandles;
 
-	// World entity info handles
-	UI::LayerHandle positionHandle;
-	UI::LayerHandle capabilitiesHeaderHandle;
-	std::array<UI::LayerHandle, 4> capabilityHandles; // Max 4 capabilities
+	// List items (for TextListSlot)
+	static constexpr size_t kMaxListItems = 8;
+	UI::LayerHandle listHeaderHandle;
+	std::vector<UI::LayerHandle> listItemHandles;
+
+	// Pool indices (track which elements are in use)
+	size_t usedTextSlots = 0;
+	size_t usedProgressBars = 0;
+	size_t usedListItems = 0;
 
 	// State
-	bool  visible = false; // Panel hidden by default (no selection)
+	bool  visible = false;
 	float panelWidth;
 	float panelHeight;
+	float contentWidth;
 
 	// Cached position for layout
 	Foundation::Vec2 panelPosition;
 
-	// Cached Y offsets for content sections (set during construction)
-	float colonistContentY = 0.0F;
-	float worldEntityContentY = 0.0F;
-
 	// Layout constants
 	static constexpr float kPadding = 8.0F;
-	static constexpr float kHeaderFontSize = 14.0F;
-	static constexpr float kStatusFontSize = 11.0F;
-	static constexpr float kNeedBarHeight = 14.0F;
-	static constexpr float kNeedBarSpacing = 4.0F;
-	static constexpr float kSectionSpacing = 8.0F;
+	static constexpr float kTitleFontSize = 14.0F;
+	static constexpr float kTextFontSize = 11.0F;
+	static constexpr float kProgressBarHeight = 14.0F;
+	static constexpr float kLineSpacing = 4.0F;
 	static constexpr float kCloseButtonSize = 16.0F;
+	static constexpr float kHiddenY = -10000.0F;
 };
 
 } // namespace world_sim

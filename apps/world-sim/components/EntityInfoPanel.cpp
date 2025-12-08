@@ -1,83 +1,20 @@
 #include "EntityInfoPanel.h"
 
-#include <ecs/components/Action.h>
-#include <ecs/components/Colonist.h>
-#include <ecs/components/Needs.h>
-#include <ecs/components/Task.h>
+#include "SelectionAdapter.h"
+
 #include <input/InputManager.h>
 
-#include <iomanip>
-#include <sstream>
-
 namespace world_sim {
-
-	namespace {
-		// Need labels matching NeedType order
-		constexpr std::array<const char*, 4> kNeedLabels = {"Hunger", "Thirst", "Energy", "Bladder"};
-
-		// Format action description with progress
-		std::string formatAction(const ecs::Action& action) {
-			if (!action.isActive()) {
-				return "Idle";
-			}
-
-			std::ostringstream oss;
-			oss << ecs::actionTypeName(action.type);
-
-			// Add progress percentage
-			int progressPercent = static_cast<int>(action.progress() * 100.0F);
-			oss << " (" << progressPercent << "%)";
-
-			return oss.str();
-		}
-
-		// Format task description
-		std::string formatTask(const ecs::Task& task) {
-			if (!task.isActive()) {
-				return "No task";
-			}
-
-			if (!task.reason.empty()) {
-				return task.reason;
-			}
-
-			// Fallback to task type name
-			switch (task.type) {
-				case ecs::TaskType::None:
-					return "None";
-				case ecs::TaskType::FulfillNeed:
-					return "Fulfilling need";
-				case ecs::TaskType::Wander:
-					return "Wandering";
-			}
-			return "Unknown";
-		}
-
-		// Format position for display
-		std::string formatPosition(Foundation::Vec2 pos) {
-			std::ostringstream oss;
-			oss << std::fixed << std::setprecision(1);
-			oss << "(" << pos.x << ", " << pos.y << ")";
-			return oss.str();
-		}
-
-		// Y position to "hide" elements offscreen
-		constexpr float kHiddenY = -10000.0F;
-	} // namespace
 
 	EntityInfoPanel::EntityInfoPanel(const Args& args)
 		: panelWidth(args.width),
 		  panelPosition(args.position),
 		  onCloseCallback(args.onClose) {
 
-		float contentWidth = panelWidth - (2.0F * kPadding);
-		float yOffset = args.position.y + kPadding;
+		contentWidth = panelWidth - (2.0F * kPadding);
 
-		// Calculate total panel height for colonist view (max height)
-		float headerHeight = kHeaderFontSize + kSectionSpacing;
-		float needsHeight = (kNeedBarHeight + kNeedBarSpacing) * kNeedCount;
-		float statusHeight = kSectionSpacing + (kStatusFontSize + 4.0F) * 2.0F; // Task + Action
-		panelHeight = kPadding + headerHeight + needsHeight + statusHeight + kPadding;
+		// Estimate max panel height (will resize dynamically based on content)
+		panelHeight = 160.0F;
 
 		// Add background panel (semi-transparent dark)
 		backgroundHandle = addChild(
@@ -130,470 +67,313 @@ namespace world_sim {
 			)
 		);
 
-		// Add entity name header
-		nameHandle = addChild(
+		// Add title text
+		titleHandle = addChild(
 			UI::Text(
 				UI::Text::Args{
-					.position = {args.position.x + kPadding, yOffset},
+					.position = {args.position.x + kPadding, args.position.y + kPadding},
 					.text = "Select Entity",
 					.style =
 						{
 							.color = Foundation::Color(0.9F, 0.9F, 0.95F, 1.0F),
-							.fontSize = kHeaderFontSize,
+							.fontSize = kTitleFontSize,
 							.hAlign = Foundation::HorizontalAlign::Left,
 							.vAlign = Foundation::VerticalAlign::Top,
 						},
 					.zIndex = 1,
-					.id = (args.id + "_name").c_str()
+					.id = (args.id + "_title").c_str()
 				}
 			)
 		);
 
-		yOffset += kHeaderFontSize + kSectionSpacing;
-
-		// Store base Y offset for colonist-specific elements
-		colonistContentY = yOffset;
-
-		// Add need bars (colonist only)
-		for (size_t i = 0; i < kNeedCount; ++i) {
-			needBarHandles[i] = addChild(NeedBar(
-				NeedBar::Args{
-					.position = {args.position.x + kPadding, yOffset},
-					.width = contentWidth,
-					.height = kNeedBarHeight,
-					.label = kNeedLabels[i],
-					.id = args.id + "_need_" + std::to_string(i)
-				}
-			));
-
-			yOffset += kNeedBarHeight + kNeedBarSpacing;
-		}
-
-		yOffset += kSectionSpacing;
-
-		// Add task text (colonist only)
-		taskHandle = addChild(
-			UI::Text(
-				UI::Text::Args{
-					.position = {args.position.x + kPadding, yOffset},
-					.text = "Task: None",
-					.style =
-						{
-							.color = Foundation::Color(0.7F, 0.7F, 0.75F, 1.0F),
-							.fontSize = kStatusFontSize,
-							.hAlign = Foundation::HorizontalAlign::Left,
-							.vAlign = Foundation::VerticalAlign::Top,
-						},
-					.zIndex = 1,
-					.id = (args.id + "_task").c_str()
-				}
-			)
-		);
-
-		yOffset += kStatusFontSize + 4.0F;
-
-		// Add action text (colonist only)
-		actionHandle = addChild(
-			UI::Text(
-				UI::Text::Args{
-					.position = {args.position.x + kPadding, yOffset},
-					.text = "Action: Idle",
-					.style =
-						{
-							.color = Foundation::Color(0.7F, 0.7F, 0.75F, 1.0F),
-							.fontSize = kStatusFontSize,
-							.hAlign = Foundation::HorizontalAlign::Left,
-							.vAlign = Foundation::VerticalAlign::Top,
-						},
-					.zIndex = 1,
-					.id = (args.id + "_action").c_str()
-				}
-			)
-		);
-
-		// World entity info elements (position below header)
-		float worldInfoY = args.position.y + kPadding + kHeaderFontSize + kSectionSpacing;
-		worldEntityContentY = worldInfoY;
-
-		positionHandle = addChild(
-			UI::Text(
-				UI::Text::Args{
-					.position = {args.position.x + kPadding, worldInfoY},
-					.text = "Position: (0, 0)",
-					.style =
-						{
-							.color = Foundation::Color(0.7F, 0.7F, 0.75F, 1.0F),
-							.fontSize = kStatusFontSize,
-							.hAlign = Foundation::HorizontalAlign::Left,
-							.vAlign = Foundation::VerticalAlign::Top,
-						},
-					.zIndex = 1,
-					.id = (args.id + "_position").c_str()
-				}
-			)
-		);
-
-		worldInfoY += kStatusFontSize + kSectionSpacing;
-
-		capabilitiesHeaderHandle = addChild(
-			UI::Text(
-				UI::Text::Args{
-					.position = {args.position.x + kPadding, worldInfoY},
-					.text = "Capabilities:",
-					.style =
-						{
-							.color = Foundation::Color(0.8F, 0.8F, 0.85F, 1.0F),
-							.fontSize = kStatusFontSize,
-							.hAlign = Foundation::HorizontalAlign::Left,
-							.vAlign = Foundation::VerticalAlign::Top,
-						},
-					.zIndex = 1,
-					.id = (args.id + "_cap_header").c_str()
-				}
-			)
-		);
-
-		worldInfoY += kStatusFontSize + 2.0F;
-
-		// Capability text elements
-		for (size_t i = 0; i < capabilityHandles.size(); ++i) {
-			capabilityHandles[i] = addChild(
+		// Create text slot pool
+		textHandles.reserve(kMaxTextSlots);
+		for (size_t i = 0; i < kMaxTextSlots; ++i) {
+			textHandles.push_back(addChild(
 				UI::Text(
 					UI::Text::Args{
-						.position = {args.position.x + kPadding + 8.0F, worldInfoY + static_cast<float>(i) * (kStatusFontSize + 2.0F)},
+						.position = {args.position.x + kPadding, kHiddenY},
 						.text = "",
 						.style =
 							{
-								.color = Foundation::Color(0.6F, 0.8F, 0.6F, 1.0F),
-								.fontSize = kStatusFontSize,
+								.color = Foundation::Color(0.7F, 0.7F, 0.75F, 1.0F),
+								.fontSize = kTextFontSize,
 								.hAlign = Foundation::HorizontalAlign::Left,
 								.vAlign = Foundation::VerticalAlign::Top,
 							},
 						.zIndex = 1,
-						.id = (args.id + "_cap_" + std::to_string(i)).c_str()
+						.id = (args.id + "_text_" + std::to_string(i)).c_str()
 					}
 				)
-			);
+			));
 		}
 
-		// Start hidden (no selection) - position elements offscreen
-		hideAllElements();
+		// Create progress bar pool (using NeedBar component)
+		progressBarHandles.reserve(kMaxProgressBars);
+		for (size_t i = 0; i < kMaxProgressBars; ++i) {
+			progressBarHandles.push_back(addChild(NeedBar(
+				NeedBar::Args{
+					.position = {args.position.x + kPadding, kHiddenY},
+					.width = contentWidth,
+					.height = kProgressBarHeight,
+					.label = "",
+					.id = args.id + "_bar_" + std::to_string(i)
+				}
+			)));
+		}
 
-		// IMPORTANT: Disable child sorting to preserve LayerHandle indices.
-		// Component::render() sorts children by zIndex, which invalidates all handles.
-		// We rely on insertion order for rendering instead.
+		// Create list header
+		listHeaderHandle = addChild(
+			UI::Text(
+				UI::Text::Args{
+					.position = {args.position.x + kPadding, kHiddenY},
+					.text = "",
+					.style =
+						{
+							.color = Foundation::Color(0.8F, 0.8F, 0.85F, 1.0F),
+							.fontSize = kTextFontSize,
+							.hAlign = Foundation::HorizontalAlign::Left,
+							.vAlign = Foundation::VerticalAlign::Top,
+						},
+					.zIndex = 1,
+					.id = (args.id + "_list_header").c_str()
+				}
+			)
+		);
+
+		// Create list item pool
+		listItemHandles.reserve(kMaxListItems);
+		for (size_t i = 0; i < kMaxListItems; ++i) {
+			listItemHandles.push_back(addChild(
+				UI::Text(
+					UI::Text::Args{
+						.position = {args.position.x + kPadding + 8.0F, kHiddenY},
+						.text = "",
+						.style =
+							{
+								.color = Foundation::Color(0.6F, 0.8F, 0.6F, 1.0F),
+								.fontSize = kTextFontSize,
+								.hAlign = Foundation::HorizontalAlign::Left,
+								.vAlign = Foundation::VerticalAlign::Top,
+							},
+						.zIndex = 1,
+						.id = (args.id + "_list_" + std::to_string(i)).c_str()
+					}
+				)
+			));
+		}
+
+		// Disable child sorting to preserve LayerHandle indices
 		childrenNeedSorting = false;
+
+		// Start hidden
+		clearSlots();
 	}
 
 	void EntityInfoPanel::update(const ecs::World& world, const engine::assets::AssetRegistry& registry, const Selection& selection) {
-		// Early return if not visible - avoid unnecessary input processing
-		if (!visible) {
-			// Still process selection changes to show panel when something is selected
-			std::visit(
-				[this](auto&& sel) {
-					using T = std::decay_t<decltype(sel)>;
-					if constexpr (!std::is_same_v<T, NoSelection>) {
-						visible = true;
+		// Use adapter to convert selection to panel content
+		auto content = adaptSelection(selection, world, registry);
+
+		if (!content.has_value()) {
+			// No selection - hide panel
+			visible = false;
+			clearSlots();
+			return;
+		}
+
+		// Handle close button click (only when visible)
+		if (visible) {
+			auto& input = engine::InputManager::Get();
+			if (input.isMouseButtonReleased(engine::MouseButton::Left)) {
+				auto mousePos = input.getMousePosition();
+
+				// Check if click is within close button bounds
+				float closeX = panelPosition.x + panelWidth - kPadding - kCloseButtonSize;
+				float closeY = panelPosition.y + kPadding;
+
+				if (mousePos.x >= closeX && mousePos.x <= closeX + kCloseButtonSize && mousePos.y >= closeY &&
+					mousePos.y <= closeY + kCloseButtonSize) {
+					if (onCloseCallback) {
+						onCloseCallback();
 					}
-				},
-				selection
-			);
-			if (!visible) {
-				return;
+					return;
+				}
 			}
 		}
 
-		// Handle close button click
-		auto& input = engine::InputManager::Get();
-		if (input.isMouseButtonReleased(engine::MouseButton::Left)) {
-			auto mousePos = input.getMousePosition();
-
-			// Check if click is within close button bounds
-			float closeX = panelPosition.x + panelWidth - kPadding - kCloseButtonSize;
-			float closeY = panelPosition.y + kPadding;
-
-			if (mousePos.x >= closeX && mousePos.x <= closeX + kCloseButtonSize && mousePos.y >= closeY &&
-				mousePos.y <= closeY + kCloseButtonSize) {
-				if (onCloseCallback) {
-					onCloseCallback();
-				}
-				return;
-			}
-		}
-
-		// Handle selection type
-		std::visit(
-			[this, &world, &registry](auto&& sel) {
-				using T = std::decay_t<decltype(sel)>;
-				if constexpr (std::is_same_v<T, NoSelection>) {
-					// Hide panel
-					visible = false;
-					hideAllElements();
-				} else if constexpr (std::is_same_v<T, ColonistSelection>) {
-					visible = true;
-					showColonistUI();
-					updateColonistDisplay(world, sel.entityId);
-				} else if constexpr (std::is_same_v<T, WorldEntitySelection>) {
-					visible = true;
-					showWorldEntityUI();
-					updateWorldEntityDisplay(registry, sel);
-				}
-			},
-			selection
-		);
+		// Show panel and render content
+		visible = true;
+		renderContent(content.value());
 	}
 
-	void EntityInfoPanel::updateColonistDisplay(const ecs::World& world, ecs::EntityID entityId) {
-		if (entityId == 0) {
-			return;
+	void EntityInfoPanel::renderContent(const PanelContent& content) {
+		// Reset slot usage counters
+		usedTextSlots = 0;
+		usedProgressBars = 0;
+		usedListItems = 0;
+
+		// Clear all slots first
+		clearSlots();
+
+		// Show background at proper position
+		if (auto* bg = getChild<UI::Rectangle>(backgroundHandle)) {
+			bg->position.y = panelPosition.y;
 		}
 
-		// Validate entity still exists - colonists can be deleted
-		if (!world.isAlive(entityId)) {
-			// Entity was deleted, trigger close to deselect
-			if (onCloseCallback) {
-				onCloseCallback();
-			}
-			return;
+		// Show close button
+		float closeX = panelPosition.x + panelWidth - kPadding - kCloseButtonSize;
+		float closeY = panelPosition.y + kPadding;
+		if (auto* closeBg = getChild<UI::Rectangle>(closeButtonBgHandle)) {
+			closeBg->position = {closeX, closeY};
+		}
+		if (auto* closeText = getChild<UI::Text>(closeButtonTextHandle)) {
+			closeText->position = {closeX + kCloseButtonSize * 0.5F, closeY + kCloseButtonSize * 0.5F - 1.0F};
 		}
 
-		// Get colonist name
-		if (auto* colonist = world.getComponent<ecs::Colonist>(entityId)) {
-			if (auto* nameText = getChild<UI::Text>(nameHandle)) {
-				nameText->text = colonist->name;
-			}
+		// Show title
+		if (auto* title = getChild<UI::Text>(titleHandle)) {
+			title->position = {panelPosition.x + kPadding, panelPosition.y + kPadding};
+			title->text = content.title;
 		}
 
-		// Get needs and update bars
-		if (auto* needs = world.getComponent<ecs::NeedsComponent>(entityId)) {
-			for (size_t i = 0; i < kNeedCount; ++i) {
-				auto needType = static_cast<ecs::NeedType>(i);
-				if (auto* needBar = getChild<NeedBar>(needBarHandles[i])) {
-					needBar->setValue(needs->get(needType).value);
-				}
-			}
+		// Render slots
+		float yOffset = panelPosition.y + kPadding + kTitleFontSize + kLineSpacing * 2.0F;
+
+		for (const auto& slot : content.slots) {
+			yOffset += renderSlot(slot, yOffset);
 		}
 
-		// Get task status
-		if (auto* task = world.getComponent<ecs::Task>(entityId)) {
-			if (auto* taskText = getChild<UI::Text>(taskHandle)) {
-				taskText->text = "Task: " + formatTask(*task);
-			}
+		// Update panel height based on content
+		float newHeight = yOffset - panelPosition.y + kPadding;
+		if (auto* bg = getChild<UI::Rectangle>(backgroundHandle)) {
+			bg->size.y = newHeight;
 		}
-
-		// Get action status
-		if (auto* action = world.getComponent<ecs::Action>(entityId)) {
-			if (auto* actionText = getChild<UI::Text>(actionHandle)) {
-				actionText->text = "Action: " + formatAction(*action);
-			}
-		}
+		panelHeight = newHeight;
 	}
 
-	void EntityInfoPanel::updateWorldEntityDisplay(const engine::assets::AssetRegistry& registry, const WorldEntitySelection& sel) {
-		// Set entity name (defName)
-		if (auto* nameText = getChild<UI::Text>(nameHandle)) {
-			nameText->text = sel.defName;
-		}
-
-		// Set position
-		if (auto* posText = getChild<UI::Text>(positionHandle)) {
-			posText->text = "Position: " + formatPosition(sel.position);
-		}
-
-		// Look up asset definition for capabilities
-		const auto* def = registry.getDefinition(sel.defName);
-		if (def == nullptr) {
-			// No definition found - clear capabilities
-			for (auto& capHandle : capabilityHandles) {
-				if (auto* capText = getChild<UI::Text>(capHandle)) {
-					capText->text = "";
-				}
-			}
-			return;
-		}
-
-		// Build capability list
-		std::vector<std::string> caps;
-		const auto&				 capabilities = def->capabilities;
-
-		if (capabilities.edible.has_value()) {
-			std::ostringstream oss;
-			oss << "Edible (nutrition: " << std::fixed << std::setprecision(1) << capabilities.edible->nutrition << ")";
-			caps.push_back(oss.str());
-		}
-		if (capabilities.drinkable.has_value()) {
-			caps.push_back("Drinkable");
-		}
-		if (capabilities.sleepable.has_value()) {
-			std::ostringstream oss;
-			oss << "Sleepable (recovery: " << std::fixed << std::setprecision(1) << capabilities.sleepable->recoveryMultiplier << "x)";
-			caps.push_back(oss.str());
-		}
-		if (capabilities.toilet.has_value()) {
-			caps.push_back("Toilet");
-		}
-
-		// Update capability text elements
-		for (size_t i = 0; i < capabilityHandles.size(); ++i) {
-			if (auto* capText = getChild<UI::Text>(capabilityHandles[i])) {
-				if (i < caps.size()) {
-					capText->text = "- " + caps[i];
-				} else {
-					capText->text = "";
-				}
-			}
-		}
-	}
-
-	void EntityInfoPanel::hideAllElements() {
-		// Position all elements offscreen by setting their Y to kHiddenY
+	void EntityInfoPanel::clearSlots() {
+		// Hide background
 		if (auto* bg = getChild<UI::Rectangle>(backgroundHandle)) {
 			bg->position.y = kHiddenY;
 		}
+
+		// Hide close button
 		if (auto* closeBg = getChild<UI::Rectangle>(closeButtonBgHandle)) {
 			closeBg->position.y = kHiddenY;
 		}
 		if (auto* closeText = getChild<UI::Text>(closeButtonTextHandle)) {
 			closeText->position.y = kHiddenY;
 		}
-		if (auto* name = getChild<UI::Text>(nameHandle)) {
-			name->position.y = kHiddenY;
+
+		// Hide title
+		if (auto* title = getChild<UI::Text>(titleHandle)) {
+			title->position.y = kHiddenY;
 		}
 
-		// Colonist-specific
-		for (auto& handle : needBarHandles) {
+		// Hide all text slots
+		for (auto& handle : textHandles) {
+			if (auto* text = getChild<UI::Text>(handle)) {
+				text->position.y = kHiddenY;
+			}
+		}
+
+		// Hide all progress bars
+		for (auto& handle : progressBarHandles) {
 			if (auto* bar = getChild<NeedBar>(handle)) {
 				bar->setPosition({panelPosition.x + kPadding, kHiddenY});
 			}
 		}
-		if (auto* task = getChild<UI::Text>(taskHandle)) {
-			task->position.y = kHiddenY;
-		}
-		if (auto* action = getChild<UI::Text>(actionHandle)) {
-			action->position.y = kHiddenY;
+
+		// Hide list header
+		if (auto* header = getChild<UI::Text>(listHeaderHandle)) {
+			header->position.y = kHiddenY;
 		}
 
-		// World entity-specific
-		if (auto* pos = getChild<UI::Text>(positionHandle)) {
-			pos->position.y = kHiddenY;
-		}
-		if (auto* capHeader = getChild<UI::Text>(capabilitiesHeaderHandle)) {
-			capHeader->position.y = kHiddenY;
-		}
-		for (auto& handle : capabilityHandles) {
-			if (auto* cap = getChild<UI::Text>(handle)) {
-				cap->position.y = kHiddenY;
+		// Hide all list items
+		for (auto& handle : listItemHandles) {
+			if (auto* item = getChild<UI::Text>(handle)) {
+				item->position.y = kHiddenY;
 			}
 		}
 	}
 
-	void EntityInfoPanel::showColonistUI() {
-		// Start by hiding everything, then show only what we need
-		hideAllElements();
-
-		// Reset text content to prevent stale data from previous selection type
-		if (auto* nameText = getChild<UI::Text>(nameHandle)) {
-			nameText->text = "Colonist";
-		}
-
-		// Show common elements at proper positions
-		if (auto* bg = getChild<UI::Rectangle>(backgroundHandle)) {
-			bg->position.y = panelPosition.y;
-		}
-		float closeY = panelPosition.y + kPadding;
-		if (auto* closeBg = getChild<UI::Rectangle>(closeButtonBgHandle)) {
-			closeBg->position.y = closeY;
-		}
-		if (auto* closeText = getChild<UI::Text>(closeButtonTextHandle)) {
-			closeText->position.y = closeY + kCloseButtonSize * 0.5F - 1.0F;
-		}
-		if (auto* name = getChild<UI::Text>(nameHandle)) {
-			name->position.y = panelPosition.y + kPadding;
-		}
-
-		// Show colonist-specific at proper positions
-		float yOffset = colonistContentY;
-		for (size_t i = 0; i < needBarHandles.size(); ++i) {
-			if (auto* bar = getChild<NeedBar>(needBarHandles[i])) {
-				bar->setPosition({panelPosition.x + kPadding, yOffset});
-			}
-			yOffset += kNeedBarHeight + kNeedBarSpacing;
-		}
-		yOffset += kSectionSpacing;
-		if (auto* task = getChild<UI::Text>(taskHandle)) {
-			task->position.y = yOffset;
-		}
-		yOffset += kStatusFontSize + 4.0F;
-		if (auto* action = getChild<UI::Text>(actionHandle)) {
-			action->position.y = yOffset;
-		}
-
-		// Hide world entity-specific (move offscreen)
-		if (auto* pos = getChild<UI::Text>(positionHandle)) {
-			pos->position.y = kHiddenY;
-		}
-		if (auto* capHeader = getChild<UI::Text>(capabilitiesHeaderHandle)) {
-			capHeader->position.y = kHiddenY;
-		}
-		for (auto& handle : capabilityHandles) {
-			if (auto* cap = getChild<UI::Text>(handle)) {
-				cap->position.y = kHiddenY;
-			}
-		}
+	float EntityInfoPanel::renderSlot(const InfoSlot& slot, float yOffset) {
+		return std::visit(
+			[this, yOffset](const auto& s) -> float {
+				using T = std::decay_t<decltype(s)>;
+				if constexpr (std::is_same_v<T, TextSlot>) {
+					return renderTextSlot(s, yOffset);
+				} else if constexpr (std::is_same_v<T, ProgressBarSlot>) {
+					return renderProgressBarSlot(s, yOffset);
+				} else if constexpr (std::is_same_v<T, TextListSlot>) {
+					return renderTextListSlot(s, yOffset);
+				} else if constexpr (std::is_same_v<T, SpacerSlot>) {
+					return renderSpacerSlot(s, yOffset);
+				}
+				return 0.0F;
+			},
+			slot
+		);
 	}
 
-	void EntityInfoPanel::showWorldEntityUI() {
-		// Start by hiding everything, then show only what we need
-		hideAllElements();
-
-		// Reset text content to prevent stale data from previous selection type
-		if (auto* nameText = getChild<UI::Text>(nameHandle)) {
-			nameText->text = "Entity";
+	float EntityInfoPanel::renderTextSlot(const TextSlot& slot, float yOffset) {
+		if (usedTextSlots >= textHandles.size()) {
+			return 0.0F;
 		}
 
-		// Show common elements at proper positions
-		if (auto* bg = getChild<UI::Rectangle>(backgroundHandle)) {
-			bg->position.y = panelPosition.y;
-		}
-		float closeY = panelPosition.y + kPadding;
-		if (auto* closeBg = getChild<UI::Rectangle>(closeButtonBgHandle)) {
-			closeBg->position.y = closeY;
-		}
-		if (auto* closeText = getChild<UI::Text>(closeButtonTextHandle)) {
-			closeText->position.y = closeY + kCloseButtonSize * 0.5F - 1.0F;
-		}
-		if (auto* name = getChild<UI::Text>(nameHandle)) {
-			name->position.y = panelPosition.y + kPadding;
+		if (auto* text = getChild<UI::Text>(textHandles[usedTextSlots])) {
+			text->position = {panelPosition.x + kPadding, yOffset};
+			text->text = slot.label + ": " + slot.value;
 		}
 
-		// Hide colonist-specific (move offscreen)
-		for (auto& handle : needBarHandles) {
-			if (auto* bar = getChild<NeedBar>(handle)) {
-				bar->setPosition({panelPosition.x + kPadding, kHiddenY});
+		++usedTextSlots;
+		return kTextFontSize + kLineSpacing;
+	}
+
+	float EntityInfoPanel::renderProgressBarSlot(const ProgressBarSlot& slot, float yOffset) {
+		if (usedProgressBars >= progressBarHandles.size()) {
+			return 0.0F;
+		}
+
+		if (auto* bar = getChild<NeedBar>(progressBarHandles[usedProgressBars])) {
+			bar->setPosition({panelPosition.x + kPadding, yOffset});
+			bar->setValue(slot.value);
+
+			// Update label via the label child
+			// Note: NeedBar doesn't expose label updating, but we can work around
+			// by setting the initial label. For dynamic labels we'd need to extend NeedBar.
+			// For now, the adapter provides the correct label at construction.
+		}
+
+		++usedProgressBars;
+		return kProgressBarHeight + kLineSpacing;
+	}
+
+	float EntityInfoPanel::renderTextListSlot(const TextListSlot& slot, float yOffset) {
+		float height = 0.0F;
+
+		// Render header
+		if (auto* header = getChild<UI::Text>(listHeaderHandle)) {
+			header->position = {panelPosition.x + kPadding, yOffset};
+			header->text = slot.header + ":";
+		}
+		height += kTextFontSize + 2.0F;
+
+		// Render items
+		for (size_t i = 0; i < slot.items.size() && usedListItems < listItemHandles.size(); ++i) {
+			if (auto* item = getChild<UI::Text>(listItemHandles[usedListItems])) {
+				item->position = {panelPosition.x + kPadding + 8.0F, yOffset + height};
+				item->text = "- " + slot.items[i];
 			}
-		}
-		if (auto* task = getChild<UI::Text>(taskHandle)) {
-			task->position.y = kHiddenY;
-		}
-		if (auto* action = getChild<UI::Text>(actionHandle)) {
-			action->position.y = kHiddenY;
+			++usedListItems;
+			height += kTextFontSize + 2.0F;
 		}
 
-		// Show world entity-specific at proper positions
-		float yOffset = worldEntityContentY;
-		if (auto* pos = getChild<UI::Text>(positionHandle)) {
-			pos->position.y = yOffset;
-		}
-		yOffset += kStatusFontSize + kSectionSpacing;
-		if (auto* capHeader = getChild<UI::Text>(capabilitiesHeaderHandle)) {
-			capHeader->position.y = yOffset;
-		}
-		yOffset += kStatusFontSize + 2.0F;
-		for (size_t i = 0; i < capabilityHandles.size(); ++i) {
-			if (auto* cap = getChild<UI::Text>(capabilityHandles[i])) {
-				cap->position.y = yOffset + static_cast<float>(i) * (kStatusFontSize + 2.0F);
-			}
-		}
+		return height + kLineSpacing;
+	}
+
+	float EntityInfoPanel::renderSpacerSlot(const SpacerSlot& slot, float /*yOffset*/) {
+		return slot.height;
 	}
 
 } // namespace world_sim

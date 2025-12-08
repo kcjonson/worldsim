@@ -35,6 +35,9 @@ class NeedBar : public UI::Component {
 	/// Update the bar value (0.0 - 100.0)
 	void setValue(float newValue);
 
+	/// Update the label text
+	void setLabel(const std::string& newLabel);
+
 	/// Update position (moves all child elements)
 	void setPosition(Foundation::Vec2 newPos);
 

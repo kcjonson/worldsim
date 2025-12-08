@@ -62,6 +62,12 @@ void NeedBar::setValue(float newValue) {
 	}
 }
 
+void NeedBar::setLabel(const std::string& newLabel) {
+	if (auto* label = getChild<UI::Text>(labelHandle)) {
+		label->text = newLabel;
+	}
+}
+
 float NeedBar::getTotalHeight() const {
 	return height;
 }
