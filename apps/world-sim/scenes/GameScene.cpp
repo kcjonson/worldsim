@@ -29,6 +29,7 @@
 
 // ECS
 #include <ecs/World.h>
+#include <ecs/components/Action.h>
 #include <ecs/components/Appearance.h>
 #include <ecs/components/Colonist.h>
 #include <ecs/components/Memory.h>
@@ -37,6 +38,7 @@
 #include <ecs/components/Task.h>
 #include <ecs/components/Transform.h>
 #include <ecs/systems/AIDecisionSystem.h>
+#include <ecs/systems/ActionSystem.h>
 #include <ecs/systems/DynamicEntityRenderSystem.h>
 #include <ecs/systems/MovementSystem.h>
 #include <ecs/systems/NeedsDecaySystem.h>
@@ -262,6 +264,7 @@ namespace {
 			ecsWorld->registerSystem<ecs::AIDecisionSystem>(assetRegistry); // Priority 60
 			ecsWorld->registerSystem<ecs::MovementSystem>();				// Priority 100
 			ecsWorld->registerSystem<ecs::PhysicsSystem>();					// Priority 200
+			ecsWorld->registerSystem<ecs::ActionSystem>();					// Priority 350
 			ecsWorld->registerSystem<ecs::DynamicEntityRenderSystem>();		// Priority 900
 
 			// Wire up VisionSystem with placement data for entity queries
@@ -287,6 +290,7 @@ namespace {
 			ecsWorld->addComponent<ecs::NeedsComponent>(entity, ecs::NeedsComponent::createDefault());
 			ecsWorld->addComponent<ecs::Memory>(entity, ecs::Memory{});
 			ecsWorld->addComponent<ecs::Task>(entity, ecs::Task{});
+			ecsWorld->addComponent<ecs::Action>(entity, ecs::Action{});
 
 			LOG_INFO(Game, "Spawned colonist '%s' at (%.1f, %.1f)", newName.c_str(), newPosition.x, newPosition.y);
 			return entity;

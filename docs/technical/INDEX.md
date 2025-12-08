@@ -64,6 +64,7 @@ Applications:
 
 | Document | Description | Priority |
 |----------|-------------|----------|
+| [ECS Patterns](./ecs-patterns.md) | std::variant for polymorphic components | Active |
 | [String Hashing](./string-hashing.md) | Fast string→int conversion | Implement Now |
 | [Logging System](./logging-system.md) | Structured logging with categories | Implement Now |
 | [Memory Arenas](./memory-arenas.md) | Fast temporary allocations | Implement Soon |

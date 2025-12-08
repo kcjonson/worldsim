@@ -16,6 +16,7 @@ add_library(engine
     ecs/systems/NeedsDecaySystem.cpp
     ecs/systems/VisionSystem.cpp
     ecs/systems/AIDecisionSystem.cpp
+    ecs/systems/ActionSystem.cpp
     ecs/components/MemoryQueries.cpp
 )
 
