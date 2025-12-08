@@ -11,6 +11,7 @@
 #include "../ISystem.h"
 
 #include <glm/vec2.hpp>
+#include <optional>
 #include <random>
 
 namespace engine::assets {
@@ -21,7 +22,10 @@ namespace ecs {
 
 class AIDecisionSystem : public ISystem {
 public:
-	explicit AIDecisionSystem(const engine::assets::AssetRegistry& registry);
+	/// Construct with optional RNG seed (defaults to random_device for non-determinism)
+	explicit AIDecisionSystem(
+		const engine::assets::AssetRegistry& registry,
+		std::optional<uint32_t> rngSeed = std::nullopt);
 
 	void update(float deltaTime) override;
 
@@ -51,10 +55,7 @@ private:
 	[[nodiscard]] glm::vec2 generateWanderTarget(const glm::vec2& currentPos);
 
 	/// Check if entity should re-evaluate its current task
-	[[nodiscard]] bool shouldReEvaluate(
-		const struct Task& task,
-		const struct NeedsComponent& needs,
-		float deltaTime);
+	[[nodiscard]] bool shouldReEvaluate(const struct Task& task, const struct NeedsComponent& needs);
 
 	const engine::assets::AssetRegistry& m_registry;
 
@@ -64,8 +65,8 @@ private:
 	/// Maximum distance for wander targets
 	static constexpr float kWanderRadius = 8.0F;
 
-	/// Random number generator for wander behavior
-	std::mt19937 m_rng{std::random_device{}()};
+	/// Random number generator for wander behavior (seeded from random_device by default)
+	std::mt19937 m_rng;
 };
 
 } // namespace ecs

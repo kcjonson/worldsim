@@ -46,13 +46,13 @@ struct Task {
 	/// Check if a task is currently assigned
 	[[nodiscard]] bool isActive() const { return type != TaskType::None; }
 
-	/// Reset task to default state
+	/// Reset task to default state (caller responsible for resetting timeSinceEvaluation)
 	void clear() {
 		type = TaskType::None;
 		state = TaskState::Pending;
 		targetPosition = glm::vec2{0.0F, 0.0F};
 		needToFulfill = NeedType::Count;
-		timeSinceEvaluation = 0.0F;
+		// Note: timeSinceEvaluation NOT reset here - caller handles timer logic
 		reason.clear();
 	}
 };

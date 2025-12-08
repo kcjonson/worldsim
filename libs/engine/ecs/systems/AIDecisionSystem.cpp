@@ -27,8 +27,11 @@ namespace {
 		case NeedType::Thirst: return engine::assets::CapabilityType::Drinkable;
 		case NeedType::Energy: return engine::assets::CapabilityType::Sleepable;
 		case NeedType::Bladder: return engine::assets::CapabilityType::Toilet;
-		default: return engine::assets::CapabilityType::Edible; // Fallback
+		case NeedType::Count: break;
 	}
+	// All valid NeedTypes must be handled above - hitting this is a bug
+	LOG_ERROR(Engine, "needToCapability: unhandled NeedType %d", static_cast<int>(need));
+	return engine::assets::CapabilityType::Edible;
 }
 
 /// Get a human-readable name for a need type (for debug logging)
@@ -38,38 +41,51 @@ namespace {
 		case NeedType::Thirst: return "Thirst";
 		case NeedType::Energy: return "Energy";
 		case NeedType::Bladder: return "Bladder";
-		default: return "Unknown";
+		case NeedType::Count: break;
 	}
+	// All valid NeedTypes must be handled above - hitting this is a bug
+	LOG_ERROR(Engine, "needTypeName: unhandled NeedType %d", static_cast<int>(need));
+	return "Unknown";
 }
 
 } // namespace
 
-AIDecisionSystem::AIDecisionSystem(const engine::assets::AssetRegistry& registry)
-	: m_registry(registry) {}
+AIDecisionSystem::AIDecisionSystem(const engine::assets::AssetRegistry& registry, std::optional<uint32_t> rngSeed)
+	: m_registry(registry)
+	, m_rng(rngSeed.value_or(std::random_device{}())) {}
 
 void AIDecisionSystem::update(float deltaTime) {
 	// Process all entities with the required components
 	for (auto [entity, position, needs, memory, task, movementTarget] :
 		 world->view<Position, NeedsComponent, Memory, Task, MovementTarget>()) {
 
-		// Update re-evaluation timer
-		task.timeSinceEvaluation += deltaTime;
-
-		// Check if we should re-evaluate
-		if (!shouldReEvaluate(task, needs, deltaTime)) {
+		// Check if we should re-evaluate (uses current timer value)
+		if (!shouldReEvaluate(task, needs)) {
+			// Only increment timer when NOT re-evaluating (timer tracks time since last eval)
+			task.timeSinceEvaluation += deltaTime;
 			continue;
 		}
 
 		// Clear current task and evaluate from scratch
 		task.clear();
-		task.timeSinceEvaluation = 0.0F;
+		task.timeSinceEvaluation = 0.0F; // Reset timer after re-evaluation
+
+		// Helper to check if task uses ground fallback (target == current position)
+		auto isGroundFallback = [&position](const Task& t) {
+			return t.targetPosition == position.value;
+		};
 
 		// Tier 3: Critical needs (highest priority)
 		if (evaluateCriticalNeeds(entity, needs, memory, task, position)) {
-			// Set movement target
 			movementTarget.target = task.targetPosition;
-			movementTarget.active = true;
-			task.state = TaskState::Moving;
+			// Ground fallback: already at target, set Arrived to avoid infinite re-eval loop
+			if (isGroundFallback(task)) {
+				movementTarget.active = false;
+				task.state = TaskState::Arrived;
+			} else {
+				movementTarget.active = true;
+				task.state = TaskState::Moving;
+			}
 			LOG_INFO(
 				Engine,
 				"[AI] Entity %llu: CRITICAL NEED - %s → (%.1f, %.1f)",
@@ -83,8 +99,14 @@ void AIDecisionSystem::update(float deltaTime) {
 		// Tier 5: Actionable needs
 		if (evaluateActionableNeeds(entity, needs, memory, task, position)) {
 			movementTarget.target = task.targetPosition;
-			movementTarget.active = true;
-			task.state = TaskState::Moving;
+			// Ground fallback: already at target, set Arrived to avoid infinite re-eval loop
+			if (isGroundFallback(task)) {
+				movementTarget.active = false;
+				task.state = TaskState::Arrived;
+			} else {
+				movementTarget.active = true;
+				task.state = TaskState::Moving;
+			}
 			LOG_INFO(
 				Engine,
 				"[AI] Entity %llu: NEED - %s → (%.1f, %.1f)",
@@ -109,10 +131,7 @@ void AIDecisionSystem::update(float deltaTime) {
 	}
 }
 
-bool AIDecisionSystem::shouldReEvaluate(
-	const Task& task,
-	const NeedsComponent& needs,
-	float /*deltaTime*/) {
+bool AIDecisionSystem::shouldReEvaluate(const Task& task, const NeedsComponent& needs) {
 	// Always re-evaluate if no active task
 	if (!task.isActive()) {
 		return true;
@@ -128,18 +147,19 @@ bool AIDecisionSystem::shouldReEvaluate(
 		return true;
 	}
 
-	// Re-evaluate if a critical need emerged
+	// Re-evaluate if a critical need emerged (only if not already handling a critical need)
+	if (task.type == TaskType::FulfillNeed) {
+		const auto& currentNeed = needs.get(task.needToFulfill);
+		if (currentNeed.isCritical()) {
+			// Already handling a critical need - don't interrupt for other critical needs
+			return false;
+		}
+	}
+
+	// Check if any critical need requires immediate attention
 	for (size_t i = 0; i < static_cast<size_t>(NeedType::Count); ++i) {
 		if (needs.get(static_cast<NeedType>(i)).isCritical()) {
-			// Only interrupt for critical needs if not already addressing a critical need
-			if (task.type == TaskType::FulfillNeed) {
-				const auto& currentNeed = needs.get(task.needToFulfill);
-				if (!currentNeed.isCritical()) {
-					return true; // Interrupt non-critical task for critical need
-				}
-			} else {
-				return true; // Interrupt wander for critical need
-			}
+			return true; // Interrupt non-critical task or wander for critical need
 		}
 	}
 

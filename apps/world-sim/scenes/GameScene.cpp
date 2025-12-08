@@ -279,7 +279,7 @@ namespace {
 			auto entity = ecsWorld->createEntity();
 
 			ecsWorld->addComponent<ecs::Position>(entity, ecs::Position{newPosition});
-			// Note: No Rotation component - colonists should not rotate with velocity
+			ecsWorld->addComponent<ecs::Rotation>(entity, ecs::Rotation{0.0F}); // Fixed rotation (no velocity-based facing)
 			ecsWorld->addComponent<ecs::Velocity>(entity, ecs::Velocity{{0.0F, 0.0F}});
 			ecsWorld->addComponent<ecs::MovementTarget>(entity, ecs::MovementTarget{{0.0F, 0.0F}, 2.0F, false});
 			ecsWorld->addComponent<ecs::Appearance>(entity, ecs::Appearance{"Colonist", 1.0F, {1.0F, 1.0F, 1.0F, 1.0F}});
