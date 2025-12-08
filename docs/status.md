@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2025-12-08 (Actions System merged, Player Observation UI next)
+Last Updated: 2025-12-08 (UI visibility system and EntityInfoPanel optimization complete)
 
 ## Epic/Story/Task Template
 
@@ -403,6 +403,16 @@ Use this template for all work items:
 **Goal:** Player can observe colonist status and task queue (observation only, no control).
 
 **Tasks:**
+- [x] UI Framework Visibility System
+  - [x] Add `visible` flag to IComponent interface
+  - [x] Component::render() skips invisible children
+  - [x] Component::handleInput() skips invisible children
+  - [x] Component::update() skips invisible children
+- [x] EntityInfoPanel Performance Optimization
+  - [x] CachedSelection for detecting structure vs value changes
+  - [x] Three-tier update system (visibility/structure/value)
+  - [x] Replace position-offscreen hiding with visibility flags
+  - [x] Value-only updates for progress bar changes
 - [ ] Colonist Selection
   - [ ] Click on colonist to select
   - [ ] Visual indicator for selected colonist
@@ -473,6 +483,37 @@ Use this template for all work items:
 **Spec/Documentation:** `/docs/technical/ui-framework/sdf-rendering.md`
 **Dependencies:** None
 **Status:** planned
+
+---
+
+### UI Event System
+**Spec/Documentation:** `/docs/technical/ui-framework/event-system.md`
+**Dependencies:** None
+**Status:** planned
+
+**Goal:** Implement event propagation with consumption (like HTML DOM) and debug introspection via HTTP.
+
+**Tasks:**
+- [ ] Event Infrastructure
+  - [ ] Create InputEvent struct with type, position, consumed flag
+  - [ ] Add handleEvent() to IComponent interface
+  - [ ] Create HitTestResult and HitTestEntry types
+- [ ] Component Updates
+  - [ ] Update Button to use handleEvent() and consume clicks
+  - [ ] Update TextInput similarly
+  - [ ] Add bounds tracking for hit testing
+- [ ] Dispatch System
+  - [ ] Create z-index sorted event dispatch
+  - [ ] Wire up to InputManager in main loop
+  - [ ] Short-circuit on consumed events
+- [ ] Debug Integration
+  - [ ] Add /api/ui/hit-test endpoint to Developer Server
+  - [ ] Add click events with layer stack to SSE stream
+  - [ ] Update Developer Client to display layer stack
+- [ ] QUICKFIX Cleanup
+  - [ ] Remove isPointOverUI() from GameUI, GameOverlay
+  - [ ] Remove isPointOver() from ZoomControl
+  - [ ] Migrate manual handleInput() to handleEvent()
 
 ---
 

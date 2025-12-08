@@ -39,17 +39,17 @@ void GameUI::layout(const Foundation::Rect& newBounds) {
 	// Layout overlay to full viewport
 	overlay->layout(newBounds);
 
-	// Position info panel in bottom-left corner
-	float panelX = kPanelPadding;
+	// Position info panel in bottom-left corner (flush with edges)
+	float panelX = 0.0F;
 	float panelY = newBounds.height - kPanelHeight - kPanelPadding;
 
 	// Cache panel bounds for hit testing
 	infoPanelBounds = Foundation::Rect{panelX, panelY, kPanelWidth, kPanelHeight};
 
-	// Note: EntityInfoPanel position is set at construction time and uses
-	// offscreen positioning to hide/show. For a full refactor, we'd want
-	// to update the panel's position here, but the current implementation
-	// handles visibility via Y positioning.
+	// Update panel position with bottom-left alignment (panel computes Y from viewport height)
+	if (infoPanel) {
+		infoPanel->setBottomLeftPosition(panelX, newBounds.height);
+	}
 }
 
 bool GameUI::handleInput() {
@@ -102,6 +102,13 @@ void GameUI::render() {
 }
 
 bool GameUI::isPointOverUI(Foundation::Vec2 screenPos) const {
+	// QUICKFIX: Check overlay elements (zoom control)
+	// This manual delegation should be replaced by the InputEvent consumption system.
+	// See /docs/technical/ui-framework/event-system.md
+	if (overlay && overlay->isPointOverUI(screenPos)) {
+		return true;
+	}
+
 	// Check info panel bounds when visible
 	if (infoPanel && infoPanel->isVisible()) {
 		if (screenPos.x >= infoPanelBounds.x && screenPos.x <= infoPanelBounds.x + infoPanelBounds.width &&
@@ -110,7 +117,6 @@ bool GameUI::isPointOverUI(Foundation::Vec2 screenPos) const {
 		}
 	}
 
-	// Could add overlay bounds check here if needed
 	return false;
 }
 

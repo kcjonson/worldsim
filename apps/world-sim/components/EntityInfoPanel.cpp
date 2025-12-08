@@ -6,9 +6,56 @@
 
 namespace world_sim {
 
+	// ============================================================================
+	// CachedSelection implementation
+	// ============================================================================
+
+	bool CachedSelection::matches(const Selection& selection) const {
+		return std::visit(
+			[this](const auto& sel) -> bool {
+				using T = std::decay_t<decltype(sel)>;
+				if constexpr (std::is_same_v<T, NoSelection>) {
+					return type == Type::None;
+				} else if constexpr (std::is_same_v<T, ColonistSelection>) {
+					return type == Type::Colonist && colonistId == sel.entityId;
+				} else if constexpr (std::is_same_v<T, WorldEntitySelection>) {
+					return type == Type::WorldEntity && worldEntityDef == sel.defName && worldEntityPos.x == sel.position.x &&
+						   worldEntityPos.y == sel.position.y;
+				}
+				return false;
+			},
+			selection
+		);
+	}
+
+	void CachedSelection::update(const Selection& selection) {
+		std::visit(
+			[this](const auto& sel) {
+				using T = std::decay_t<decltype(sel)>;
+				if constexpr (std::is_same_v<T, NoSelection>) {
+					type = Type::None;
+					colonistId = ecs::EntityID{0};
+					worldEntityDef.clear();
+					worldEntityPos = {};
+				} else if constexpr (std::is_same_v<T, ColonistSelection>) {
+					type = Type::Colonist;
+					colonistId = sel.entityId;
+					worldEntityDef.clear();
+					worldEntityPos = {};
+				} else if constexpr (std::is_same_v<T, WorldEntitySelection>) {
+					type = Type::WorldEntity;
+					colonistId = ecs::EntityID{0};
+					worldEntityDef = sel.defName;
+					worldEntityPos = sel.position;
+				}
+			},
+			selection
+		);
+	}
+
 	EntityInfoPanel::EntityInfoPanel(const Args& args)
 		: panelWidth(args.width),
-		  panelPosition(args.position),
+		  panelX(args.position.x),
 		  onCloseCallback(args.onClose) {
 
 		contentWidth = panelWidth - (2.0F * kPadding);
@@ -86,13 +133,13 @@ namespace world_sim {
 			)
 		);
 
-		// Create text slot pool
+		// Create text slot pool (positions set when shown via renderContent)
 		textHandles.reserve(kMaxTextSlots);
 		for (size_t i = 0; i < kMaxTextSlots; ++i) {
 			textHandles.push_back(addChild(
 				UI::Text(
 					UI::Text::Args{
-						.position = {args.position.x + kPadding, kHiddenY},
+						.position = {args.position.x + kPadding, args.position.y},
 						.text = "",
 						.style =
 							{
@@ -108,12 +155,12 @@ namespace world_sim {
 			));
 		}
 
-		// Create progress bar pool (using NeedBar component)
+		// Create progress bar pool (positions set when shown via renderContent)
 		progressBarHandles.reserve(kMaxProgressBars);
 		for (size_t i = 0; i < kMaxProgressBars; ++i) {
 			progressBarHandles.push_back(addChild(NeedBar(
 				NeedBar::Args{
-					.position = {args.position.x + kPadding, kHiddenY},
+					.position = {args.position.x + kPadding, args.position.y},
 					.width = contentWidth,
 					.height = kProgressBarHeight,
 					.label = "",
@@ -122,11 +169,11 @@ namespace world_sim {
 			)));
 		}
 
-		// Create list header
+		// Create list header (position set when shown via renderContent)
 		listHeaderHandle = addChild(
 			UI::Text(
 				UI::Text::Args{
-					.position = {args.position.x + kPadding, kHiddenY},
+					.position = {args.position.x + kPadding, args.position.y},
 					.text = "",
 					.style =
 						{
@@ -141,13 +188,13 @@ namespace world_sim {
 			)
 		);
 
-		// Create list item pool
+		// Create list item pool (positions set when shown via renderContent)
 		listItemHandles.reserve(kMaxListItems);
 		for (size_t i = 0; i < kMaxListItems; ++i) {
 			listItemHandles.push_back(addChild(
 				UI::Text(
 					UI::Text::Args{
-						.position = {args.position.x + kPadding + 8.0F, kHiddenY},
+						.position = {args.position.x + kPadding + 8.0F, args.position.y},
 						.text = "",
 						.style =
 							{
@@ -167,7 +214,7 @@ namespace world_sim {
 		childrenNeedSorting = false;
 
 		// Start hidden
-		clearSlots();
+		hideSlots();
 	}
 
 	void EntityInfoPanel::update(const ecs::World& world, const engine::assets::AssetRegistry& registry, const Selection& selection) {
@@ -175,9 +222,12 @@ namespace world_sim {
 		auto content = adaptSelection(selection, world, registry);
 
 		if (!content.has_value()) {
-			// No selection - hide panel
-			visible = false;
-			clearSlots();
+			// Tier 1: Visibility change - hide panel
+			if (visible) {
+				visible = false;
+				m_cachedSelection.update(selection);
+				hideSlots();
+			}
 			return;
 		}
 
@@ -188,8 +238,9 @@ namespace world_sim {
 				auto mousePos = input.getMousePosition();
 
 				// Check if click is within close button bounds
-				float closeX = panelPosition.x + panelWidth - kPadding - kCloseButtonSize;
-				float closeY = panelPosition.y + kPadding;
+				float panelY = m_viewportHeight - panelHeight;
+				float closeX = panelX + panelWidth - kPadding - kCloseButtonSize;
+				float closeY = panelY + kPadding;
 
 				if (mousePos.x >= closeX && mousePos.x <= closeX + kCloseButtonSize && mousePos.y >= closeY &&
 					mousePos.y <= closeY + kCloseButtonSize) {
@@ -201,9 +252,20 @@ namespace world_sim {
 			}
 		}
 
-		// Show panel and render content
-		visible = true;
-		renderContent(content.value());
+		// Tier 1: Visibility change - show panel if hidden
+		if (!visible) {
+			visible = true;
+		}
+
+		// Check if selection identity changed
+		if (m_cachedSelection.matches(selection)) {
+			// Tier 3: Value-only update - same entity, just update dynamic values
+			updateValues(content.value());
+		} else {
+			// Tier 2: Structure change - different entity, full relayout
+			m_cachedSelection.update(selection);
+			renderContent(content.value());
+		}
 	}
 
 	void EntityInfoPanel::renderContent(const PanelContent& content) {
@@ -212,87 +274,117 @@ namespace world_sim {
 		usedProgressBars = 0;
 		usedListItems = 0;
 
-		// Clear all slots first
-		clearSlots();
+		// Hide all pool elements first (will show ones we use)
+		hideSlots();
 
-		// Show background at proper position
+		// First pass: compute content height to determine panel position
+		// (panel bottom aligns with viewport bottom)
+		float contentHeight = kPadding + kTitleFontSize + kLineSpacing * 2.0F;
+		for (const auto& slot : content.slots) {
+			contentHeight += std::visit(
+				[this](const auto& s) -> float {
+					using T = std::decay_t<decltype(s)>;
+					if constexpr (std::is_same_v<T, TextSlot>) {
+						return kTextFontSize + kLineSpacing;
+					} else if constexpr (std::is_same_v<T, ProgressBarSlot>) {
+						return kProgressBarHeight + kLineSpacing;
+					} else if constexpr (std::is_same_v<T, TextListSlot>) {
+						float  h = kTextFontSize + 2.0F; // header
+						size_t itemCount = std::min(s.items.size(), kMaxListItems);
+						h += static_cast<float>(itemCount) * (kTextFontSize + 2.0F);
+						return h + kLineSpacing;
+					} else if constexpr (std::is_same_v<T, SpacerSlot>) {
+						return s.height;
+					}
+					return 0.0F;
+				},
+				slot
+			);
+		}
+		contentHeight += kPadding; // bottom padding
+
+		panelHeight = contentHeight;
+		float panelY = m_viewportHeight - panelHeight;
+
+		// Show and position background
 		if (auto* bg = getChild<UI::Rectangle>(backgroundHandle)) {
-			bg->position.y = panelPosition.y;
+			bg->visible = true;
+			bg->position = {panelX, panelY};
+			bg->size.y = panelHeight;
 		}
 
-		// Show close button
-		float closeX = panelPosition.x + panelWidth - kPadding - kCloseButtonSize;
-		float closeY = panelPosition.y + kPadding;
+		// Show and position close button
+		float closeX = panelX + panelWidth - kPadding - kCloseButtonSize;
+		float closeY = panelY + kPadding;
 		if (auto* closeBg = getChild<UI::Rectangle>(closeButtonBgHandle)) {
+			closeBg->visible = true;
 			closeBg->position = {closeX, closeY};
 		}
 		if (auto* closeText = getChild<UI::Text>(closeButtonTextHandle)) {
+			closeText->visible = true;
 			closeText->position = {closeX + kCloseButtonSize * 0.5F, closeY + kCloseButtonSize * 0.5F - 1.0F};
 		}
 
-		// Show title
+		// Show and position title
 		if (auto* title = getChild<UI::Text>(titleHandle)) {
-			title->position = {panelPosition.x + kPadding, panelPosition.y + kPadding};
+			title->visible = true;
+			title->position = {panelX + kPadding, panelY + kPadding};
 			title->text = content.title;
 		}
 
-		// Render slots
-		float yOffset = panelPosition.y + kPadding + kTitleFontSize + kLineSpacing * 2.0F;
+		// Render slots (each slot renderer sets visible=true on used elements)
+		float yOffset = panelY + kPadding + kTitleFontSize + kLineSpacing * 2.0F;
 
 		for (const auto& slot : content.slots) {
 			yOffset += renderSlot(slot, yOffset);
 		}
-
-		// Update panel height based on content
-		float newHeight = yOffset - panelPosition.y + kPadding;
-		if (auto* bg = getChild<UI::Rectangle>(backgroundHandle)) {
-			bg->size.y = newHeight;
-		}
-		panelHeight = newHeight;
 	}
 
-	void EntityInfoPanel::clearSlots() {
+	void EntityInfoPanel::hideSlots() {
+		// Use visibility flags instead of positioning offscreen
+		// This allows the GPU to skip these elements entirely during render
+
 		// Hide background
 		if (auto* bg = getChild<UI::Rectangle>(backgroundHandle)) {
-			bg->position.y = kHiddenY;
+			bg->visible = false;
 		}
 
 		// Hide close button
 		if (auto* closeBg = getChild<UI::Rectangle>(closeButtonBgHandle)) {
-			closeBg->position.y = kHiddenY;
+			closeBg->visible = false;
 		}
 		if (auto* closeText = getChild<UI::Text>(closeButtonTextHandle)) {
-			closeText->position.y = kHiddenY;
+			closeText->visible = false;
 		}
 
 		// Hide title
 		if (auto* title = getChild<UI::Text>(titleHandle)) {
-			title->position.y = kHiddenY;
+			title->visible = false;
 		}
 
 		// Hide all text slots
 		for (auto& handle : textHandles) {
 			if (auto* text = getChild<UI::Text>(handle)) {
-				text->position.y = kHiddenY;
+				text->visible = false;
 			}
 		}
 
 		// Hide all progress bars
 		for (auto& handle : progressBarHandles) {
 			if (auto* bar = getChild<NeedBar>(handle)) {
-				bar->setPosition({panelPosition.x + kPadding, kHiddenY});
+				bar->visible = false;
 			}
 		}
 
 		// Hide list header
 		if (auto* header = getChild<UI::Text>(listHeaderHandle)) {
-			header->position.y = kHiddenY;
+			header->visible = false;
 		}
 
 		// Hide all list items
 		for (auto& handle : listItemHandles) {
 			if (auto* item = getChild<UI::Text>(handle)) {
-				item->position.y = kHiddenY;
+				item->visible = false;
 			}
 		}
 	}
@@ -322,7 +414,8 @@ namespace world_sim {
 		}
 
 		if (auto* text = getChild<UI::Text>(textHandles[usedTextSlots])) {
-			text->position = {panelPosition.x + kPadding, yOffset};
+			text->visible = true;
+			text->position = {panelX + kPadding, yOffset};
 			text->text = slot.label + ": " + slot.value;
 		}
 
@@ -336,13 +429,10 @@ namespace world_sim {
 		}
 
 		if (auto* bar = getChild<NeedBar>(progressBarHandles[usedProgressBars])) {
-			bar->setPosition({panelPosition.x + kPadding, yOffset});
+			bar->visible = true;
+			bar->setPosition({panelX + kPadding, yOffset});
 			bar->setValue(slot.value);
-
-			// Update label via the label child
-			// Note: NeedBar doesn't expose label updating, but we can work around
-			// by setting the initial label. For dynamic labels we'd need to extend NeedBar.
-			// For now, the adapter provides the correct label at construction.
+			bar->setLabel(slot.label);
 		}
 
 		++usedProgressBars;
@@ -354,7 +444,8 @@ namespace world_sim {
 
 		// Render header
 		if (auto* header = getChild<UI::Text>(listHeaderHandle)) {
-			header->position = {panelPosition.x + kPadding, yOffset};
+			header->visible = true;
+			header->position = {panelX + kPadding, yOffset};
 			header->text = slot.header + ":";
 		}
 		height += kTextFontSize + 2.0F;
@@ -362,7 +453,8 @@ namespace world_sim {
 		// Render items
 		for (size_t i = 0; i < slot.items.size() && usedListItems < listItemHandles.size(); ++i) {
 			if (auto* item = getChild<UI::Text>(listItemHandles[usedListItems])) {
-				item->position = {panelPosition.x + kPadding + 8.0F, yOffset + height};
+				item->visible = true;
+				item->position = {panelX + kPadding + 8.0F, yOffset + height};
 				item->text = "- " + slot.items[i];
 			}
 			++usedListItems;
@@ -374,6 +466,39 @@ namespace world_sim {
 
 	float EntityInfoPanel::renderSpacerSlot(const SpacerSlot& slot, float /*yOffset*/) {
 		return slot.height;
+	}
+
+	void EntityInfoPanel::updateValues(const PanelContent& content) {
+		// Tier 3: Value-only update - same entity, just update dynamic slot values
+		// Only updates progress bars since those are the main dynamic elements
+		// Skips all position calculations for significant performance savings
+
+		size_t barIndex = 0;
+		for (const auto& slot : content.slots) {
+			if (const auto* barSlot = std::get_if<ProgressBarSlot>(&slot)) {
+				if (barIndex < progressBarHandles.size()) {
+					if (auto* bar = getChild<NeedBar>(progressBarHandles[barIndex])) {
+						bar->setValue(barSlot->value);
+					}
+				}
+				++barIndex;
+			}
+		}
+	}
+
+	void EntityInfoPanel::setBottomLeftPosition(float x, float viewportHeight) {
+		if (panelX == x && m_viewportHeight == viewportHeight) {
+			return; // No change
+		}
+
+		panelX = x;
+		m_viewportHeight = viewportHeight;
+
+		// Force structure re-render on next update if currently visible
+		// This ensures all child elements get repositioned correctly
+		if (visible) {
+			m_cachedSelection.type = CachedSelection::Type::None;
+		}
 	}
 
 } // namespace world_sim

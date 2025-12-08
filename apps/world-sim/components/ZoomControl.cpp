@@ -119,4 +119,13 @@ namespace world_sim {
 		}
 	}
 
+	bool ZoomControl::isPointOver(Foundation::Vec2 point) const {
+		// Total width: button + spacing + text + spacing + button
+		constexpr float totalWidth = kButtonSize + kSpacing + kTextWidth + kSpacing + kButtonSize;
+		constexpr float totalHeight = kButtonSize;
+
+		return point.x >= position.x && point.x <= position.x + totalWidth && point.y >= position.y &&
+			   point.y <= position.y + totalHeight;
+	}
+
 } // namespace world_sim

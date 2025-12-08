@@ -6,6 +6,11 @@
 // - Receives PanelContent from SelectionAdapter
 // - Dynamically renders slots (TextSlot, ProgressBarSlot, TextListSlot)
 // - Panel handles only rendering, not data transformation
+//
+// Performance optimization: Three-tier update system
+// - Visibility tier: O(1) toggle when selection changes to/from NoSelection
+// - Structure tier: Full relayout when different entity selected
+// - Value tier: O(dynamic) update only for progress bars when same entity
 
 #include "InfoSlot.h"
 #include "NeedBar.h"
@@ -23,6 +28,22 @@
 #include <vector>
 
 namespace world_sim {
+
+/// Cached selection identity for detecting structural vs value-only updates
+struct CachedSelection {
+	enum class Type { None, Colonist, WorldEntity };
+
+	Type			  type = Type::None;
+	ecs::EntityID	  colonistId{0};	 // For Colonist selection
+	std::string		  worldEntityDef;	 // For WorldEntity selection
+	Foundation::Vec2 worldEntityPos;	 // For WorldEntity selection
+
+	/// Check if this cache matches the given selection
+	[[nodiscard]] bool matches(const Selection& selection) const;
+
+	/// Update cache to match the given selection
+	void update(const Selection& selection);
+};
 
 /// UI panel for displaying selected entity information via slots
 class EntityInfoPanel : public UI::Component {
@@ -45,12 +66,20 @@ class EntityInfoPanel : public UI::Component {
 	/// Check if panel is visible
 	[[nodiscard]] bool isVisible() const { return visible; }
 
+	/// Update panel position with bottom-left alignment
+	/// @param x Left edge X coordinate
+	/// @param viewportHeight Total viewport height (panel bottom will align to this)
+	void setBottomLeftPosition(float x, float viewportHeight);
+
   private:
-	/// Render PanelContent by laying out slots
+	/// Render PanelContent by laying out slots (structure tier update)
 	void renderContent(const PanelContent& content);
 
-	/// Clear all slot UI elements (position offscreen)
-	void clearSlots();
+	/// Update only dynamic values (progress bars) without relayout (value tier update)
+	void updateValues(const PanelContent& content);
+
+	/// Hide all slot UI elements via visibility flag
+	void hideSlots();
 
 	/// Render an individual slot at given Y offset, returns height consumed
 	float renderSlot(const InfoSlot& slot, float yOffset);
@@ -99,8 +128,12 @@ class EntityInfoPanel : public UI::Component {
 	float panelHeight;
 	float contentWidth;
 
-	// Cached position for layout
-	Foundation::Vec2 panelPosition;
+	// Cached position for layout (X is left edge, Y computed from viewportHeight)
+	float panelX{0.0F};
+	float m_viewportHeight{0.0F};
+
+	// Cached selection for detecting structure vs value updates
+	CachedSelection m_cachedSelection;
 
 	// Layout constants
 	static constexpr float kPadding = 8.0F;
@@ -109,7 +142,6 @@ class EntityInfoPanel : public UI::Component {
 	static constexpr float kProgressBarHeight = 14.0F;
 	static constexpr float kLineSpacing = 4.0F;
 	static constexpr float kCloseButtonSize = 16.0F;
-	static constexpr float kHiddenY = -10000.0F;
 };
 
 } // namespace world_sim

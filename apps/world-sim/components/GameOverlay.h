@@ -39,11 +39,16 @@ class GameOverlay {
 	/// Render the overlay
 	void render();
 
+	/// Check if a point is over any interactive overlay elements
+	/// QUICKFIX: This is a temporary solution until the UI event system is implemented.
+	/// See /docs/technical/ui-framework/event-system.md for the proper design.
+	/// Remove this method when InputEvent consumption is implemented.
+	[[nodiscard]] bool isPointOverUI(Foundation::Vec2 screenPos) const;
+
   private:
 	std::unique_ptr<UI::Text> chunksText;
 	std::unique_ptr<UI::Text> positionText;
 	std::unique_ptr<UI::Text> biomeText;
-	std::unique_ptr<UI::Text> controlsText;
 	std::unique_ptr<ZoomControl> zoomControl;
 	Foundation::Rect viewportBounds;
 

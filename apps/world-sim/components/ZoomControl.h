@@ -35,6 +35,9 @@ class ZoomControl {
 	/// Render the control
 	void render();
 
+	/// Check if a point is within the control bounds
+	[[nodiscard]] bool isPointOver(Foundation::Vec2 point) const;
+
   private:
 	Foundation::Vec2 position;
 	int zoomPercent = 100;
