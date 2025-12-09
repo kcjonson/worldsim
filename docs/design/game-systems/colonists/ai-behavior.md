@@ -85,15 +85,16 @@ Nothing else to do. Colonist moves randomly through known areas, which:
 
 ## The Task Queue
 
-Each colonist has a visible queue showing current and pending tasks.
+Each colonist has a visible queue showing current and pending tasks. The queue is **computed on-demand** from the colonist's current needs and memory — it's not a pre-planned schedule.
 
 **Shows:**
 - Current task with progress
 - Pending tasks in priority order
 - Reason each task was selected
-- Recent completed tasks
 
-**Player Value:** "Why isn't Bob building?" → Check queue → "Oh, he's prioritizing farming and there are crops ready."
+**Implementation:** See [Decision Trace](./decision-trace.md) for the system that powers this display.
+
+**Player Value:** "Why isn't Bob eating?" → Check queue → "Oh, he's drinking first because Thirst is at 35%."
 
 ---
 
@@ -140,6 +141,7 @@ def select_task(colonist, world):
 
 - [Needs System](./needs.md) — What triggers Tiers 3 and 5
 - [Memory System](./memory.md) — What colonists know about
+- [Decision Trace](./decision-trace.md) — Task queue display system
 - [Work Priorities](./work-priorities.md) — Tier 6 behavior
 - [Player Control](../features/player-control.md) — Tier 4 behavior
 - [Entity Capabilities](../world/entity-capabilities.md) — How needs are fulfilled

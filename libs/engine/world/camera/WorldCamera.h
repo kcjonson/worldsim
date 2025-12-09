@@ -133,6 +133,29 @@ class WorldCamera {
 		};
 	}
 
+	/// Convert world coordinates to screen coordinates
+	/// @param worldX World X position
+	/// @param worldY World Y position
+	/// @param viewportWidth Viewport width in pixels
+	/// @param viewportHeight Viewport height in pixels
+	/// @param pixelsPerMeter Scale factor (pixels per world unit)
+	[[nodiscard]] Foundation::Vec2 worldToScreen(float worldX, float worldY, int viewportWidth, int viewportHeight, float pixelsPerMeter) const {
+		Foundation::Rect rect = getVisibleRect(viewportWidth, viewportHeight, pixelsPerMeter);
+		float normalizedX = (worldX - rect.x) / rect.width;
+		float normalizedY = (worldY - rect.y) / rect.height;
+		return Foundation::Vec2{
+			normalizedX * static_cast<float>(viewportWidth),
+			normalizedY * static_cast<float>(viewportHeight)
+		};
+	}
+
+	/// Convert a world-space distance to screen pixels
+	/// @param worldDistance Distance in world units (meters)
+	/// @param pixelsPerMeter Scale factor (pixels per world unit)
+	[[nodiscard]] float worldDistanceToScreen(float worldDistance, float pixelsPerMeter) const {
+		return worldDistance * pixelsPerMeter * m_zoom;
+	}
+
   private:
 	WorldPosition m_position{0.0F, 0.0F};
 	WorldPosition m_targetPosition{0.0F, 0.0F};

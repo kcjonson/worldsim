@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2025-12-08 (UI visibility system and EntityInfoPanel optimization complete)
+Last Updated: 2025-12-09 (DecisionTrace system for task queue display)
 
 ## Epic/Story/Task Template
 
@@ -413,17 +413,18 @@ Use this template for all work items:
   - [x] Three-tier update system (visibility/structure/value)
   - [x] Replace position-offscreen hiding with visibility flags
   - [x] Value-only updates for progress bar changes
-- [ ] Colonist Selection
-  - [ ] Click on colonist to select
-  - [ ] Visual indicator for selected colonist
-- [ ] Colonist Info Panel
-  - [ ] Display colonist name
-  - [ ] Show all 4 need bars (Hunger, Thirst, Energy, Bladder)
-  - [ ] Color coding for need urgency (green → yellow → red)
+- [x] Colonist Selection
+  - [x] Click on colonist to select (GameScene::handleEntitySelection)
+  - [x] Visual indicator for selected colonist (gold circle via drawCircle)
+- [x] Colonist Info Panel
+  - [x] Display colonist name (EntityInfoPanel with SelectionAdapter)
+  - [x] Show all 4 need bars (Hunger, Thirst, Energy, Bladder)
+  - [x] Color coding for need urgency (green → yellow → red)
 - [ ] Task Queue Display
-  - [ ] Show current task with progress
-  - [ ] Show pending tasks in priority order
-  - [ ] Show reason for each task selection
+  - [x] Show current task with progress (Task/Action in panel)
+  - [x] DecisionTrace component and AIDecisionSystem integration (backend complete)
+  - [ ] EntityInfoPanel: Show pending tasks in priority order
+  - [ ] EntityInfoPanel: Show reason for each task selection
 
 ---
 

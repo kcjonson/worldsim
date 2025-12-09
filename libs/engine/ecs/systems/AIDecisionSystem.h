@@ -6,6 +6,7 @@
 // - Tier 5: Actionable Needs (below seek threshold, varies by need type) - seek fulfillment
 // - Tier 7: Wander - random exploration when all needs satisfied
 // See /docs/design/game-systems/colonists/ai-behavior.md for design details.
+// See /docs/design/game-systems/colonists/decision-trace.md for task queue display.
 
 #include "../EntityID.h"
 #include "../ISystem.h"
@@ -56,6 +57,27 @@ private:
 
 	/// Check if entity should re-evaluate its current task
 	[[nodiscard]] bool shouldReEvaluate(const struct Task& task, const struct NeedsComponent& needs);
+
+	/// Build decision trace by evaluating all options
+	/// Populates the trace with all needs + wander, sorted by priority
+	void buildDecisionTrace(
+		EntityID entity,
+		const struct Position& position,
+		const struct NeedsComponent& needs,
+		const struct Memory& memory,
+		struct DecisionTrace& trace);
+
+	/// Select task from the decision trace (picks first Selected option)
+	void selectTaskFromTrace(
+		struct Task& task,
+		struct MovementTarget& movementTarget,
+		const struct DecisionTrace& trace,
+		const struct Position& position);
+
+	/// Format a human-readable reason for an option
+	[[nodiscard]] static std::string formatOptionReason(
+		const struct EvaluatedOption& option,
+		const char* needName);
 
 	const engine::assets::AssetRegistry& m_registry;
 
