@@ -125,8 +125,7 @@ class EntityInfoPanel : public UI::Component {
 	size_t usedProgressBars = 0;
 	size_t usedListItems = 0;
 
-	// State
-	bool  visible = false;
+	// State (note: visible is inherited from IComponent)
 	float panelWidth;
 	float panelHeight;
 	float contentWidth;

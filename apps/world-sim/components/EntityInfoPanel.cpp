@@ -212,7 +212,8 @@ namespace world_sim {
 		// Disable child sorting to preserve LayerHandle indices
 		childrenNeedSorting = false;
 
-		// Start hidden
+		// Start hidden (inherited IComponent::visible defaults to true)
+		visible = false;
 		hideSlots();
 	}
 
