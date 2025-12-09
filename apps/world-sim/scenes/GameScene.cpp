@@ -34,6 +34,7 @@
 #include <ecs/components/Action.h>
 #include <ecs/components/Appearance.h>
 #include <ecs/components/Colonist.h>
+#include <ecs/components/DecisionTrace.h>
 #include <ecs/components/Memory.h>
 #include <ecs/components/Movement.h>
 #include <ecs/components/Needs.h>
@@ -119,7 +120,8 @@ namespace {
 			gameUI = std::make_unique<world_sim::GameUI>(world_sim::GameUI::Args{
 				.onZoomIn = [this]() { m_camera->zoomIn(); },
 				.onZoomOut = [this]() { m_camera->zoomOut(); },
-				.onSelectionCleared = [this]() { selection = world_sim::NoSelection{}; }});
+				.onSelectionCleared = [this]() { selection = world_sim::NoSelection{}; }
+			});
 
 			// Initial layout pass with consistent DPI scaling
 			int viewportW = 0;
@@ -202,7 +204,7 @@ namespace {
 			// Update ECS world (movement, physics, render system)
 			ecsWorld->update(dt);
 
-				// Update unified game UI (overlay + info panel)
+			// Update unified game UI (overlay + info panel)
 			auto& assetRegistry = engine::assets::AssetRegistry::Get();
 			gameUI->update(*m_camera, *m_chunkManager, *ecsWorld, assetRegistry, selection);
 
@@ -228,6 +230,9 @@ namespace {
 			const auto& dynamicEntities = renderSystem.getRenderData();
 			m_entityRenderer->render(*m_placementExecutor, m_processedChunks, dynamicEntities, *m_camera, w, h);
 			float entityMs = elapsedMs(entityStart, Clock::now());
+
+			// Render selection indicator in world-space (after entities, before UI)
+			renderSelectionIndicator(w, h);
 
 			// Render unified game UI (overlay + info panel)
 			gameUI->render();
@@ -310,6 +315,7 @@ namespace {
 			ecsWorld->addComponent<ecs::NeedsComponent>(entity, ecs::NeedsComponent::createDefault());
 			ecsWorld->addComponent<ecs::Memory>(entity, ecs::Memory{});
 			ecsWorld->addComponent<ecs::Task>(entity, ecs::Task{});
+			ecsWorld->addComponent<ecs::DecisionTrace>(entity, ecs::DecisionTrace{});
 			ecsWorld->addComponent<ecs::Action>(entity, ecs::Action{});
 
 			LOG_INFO(Game, "Spawned colonist '%s' at (%.1f, %.1f)", newName.c_str(), newPosition.x, newPosition.y);
@@ -353,6 +359,54 @@ namespace {
 			}
 		}
 
+		/// Render selection indicator around selected colonist.
+		/// Draws a circle outline in screen-space at the entity's position.
+		/// @param viewportWidth Framebuffer width in pixels
+		/// @param viewportHeight Framebuffer height in pixels
+		void renderSelectionIndicator(int viewportWidth, int viewportHeight) {
+			// Only render for colonist selections (world entities don't need in-world highlight)
+			auto* colonistSel = std::get_if<world_sim::ColonistSelection>(&selection);
+			if (colonistSel == nullptr) {
+				return;
+			}
+
+			// Get entity position
+			auto* pos = ecsWorld->getComponent<ecs::Position>(colonistSel->entityId);
+			if (pos == nullptr) {
+				return;
+			}
+
+			// Convert to logical viewport dimensions (for Retina/HiDPI)
+			int logicalW = static_cast<int>(static_cast<float>(viewportWidth) / kRetinaScale);
+			int logicalH = static_cast<int>(static_cast<float>(viewportHeight) / kRetinaScale);
+
+			// Convert world position to screen position
+			auto screenPos = m_camera->worldToScreen(pos->value.x, pos->value.y, logicalW, logicalH, kPixelsPerMeter);
+
+			// Convert selection radius from world units to screen pixels
+			constexpr float kSelectionRadiusWorld = 1.0F; // 1 meter radius
+			float			screenRadius = m_camera->worldDistanceToScreen(kSelectionRadiusWorld, kPixelsPerMeter);
+
+			// Draw selection circle with border-only style (transparent fill)
+			Renderer::Primitives::drawCircle(
+				Renderer::Primitives::CircleArgs{
+					.center = Foundation::Vec2{screenPos.x, screenPos.y},
+					.radius = screenRadius,
+					.style =
+						Foundation::CircleStyle{
+							.fill = Foundation::Color(0.0F, 0.0F, 0.0F, 0.0F), // Transparent fill
+							.border =
+								Foundation::BorderStyle{
+									.color = Foundation::Color(1.0F, 0.85F, 0.0F, 0.8F), // Gold color with slight transparency
+									.width = 2.0F,
+								},
+						},
+					.id = "selection-indicator",
+					.zIndex = 100, // Above entities
+				}
+			);
+		}
+
 		/// Handle entity selection via mouse click.
 		/// Selection priority: 1) ECS colonists, 2) World entities with capabilities
 		/// @param screenPos Mouse position in screen coordinates (logical/window coordinates)
@@ -374,7 +428,7 @@ namespace {
 			constexpr float kSelectionRadius = 2.0F; // meters
 
 			// Priority 1: Check ECS colonists first (dynamic, moving entities)
-			float closestColonistDist = kSelectionRadius;
+			float		  closestColonistDist = kSelectionRadius;
 			ecs::EntityID closestColonist = 0;
 
 			for (auto [entity, pos, colonist] : ecsWorld->view<ecs::Position, ecs::Colonist>()) {
@@ -397,9 +451,9 @@ namespace {
 			}
 
 			// Priority 2: Check world entities (static placed assets)
-			auto& assetRegistry = engine::assets::AssetRegistry::Get();
+			auto&						   assetRegistry = engine::assets::AssetRegistry::Get();
 			engine::world::ChunkCoordinate chunkCoord = engine::world::worldToChunk(engine::world::WorldPosition{worldPos.x, worldPos.y});
-			const auto* spatialIndex = m_placementExecutor->getChunkIndex(chunkCoord);
+			const auto*					   spatialIndex = m_placementExecutor->getChunkIndex(chunkCoord);
 			if (spatialIndex == nullptr) {
 				// Chunk not loaded, deselect
 				selection = world_sim::NoSelection{};
@@ -408,7 +462,7 @@ namespace {
 			}
 			auto nearbyEntities = spatialIndex->queryRadius({worldPos.x, worldPos.y}, kSelectionRadius);
 
-			float closestEntityDist = kSelectionRadius;
+			float								closestEntityDist = kSelectionRadius;
 			const engine::assets::PlacedEntity* closestWorldEntity = nullptr;
 
 			for (const auto* placedEntity : nearbyEntities) {
@@ -430,7 +484,13 @@ namespace {
 
 			if (closestWorldEntity != nullptr) {
 				selection = world_sim::WorldEntitySelection{closestWorldEntity->defName, closestWorldEntity->position};
-				LOG_INFO(Game, "Selected world entity: %s at (%.1f, %.1f)", closestWorldEntity->defName.c_str(), closestWorldEntity->position.x, closestWorldEntity->position.y);
+				LOG_INFO(
+					Game,
+					"Selected world entity: %s at (%.1f, %.1f)",
+					closestWorldEntity->defName.c_str(),
+					closestWorldEntity->position.x,
+					closestWorldEntity->position.y
+				);
 				return;
 			}
 

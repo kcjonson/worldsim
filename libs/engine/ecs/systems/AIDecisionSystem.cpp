@@ -1,6 +1,7 @@
 #include "AIDecisionSystem.h"
 
 #include "../World.h"
+#include "../components/DecisionTrace.h"
 #include "../components/Memory.h"
 #include "../components/MemoryQueries.h"
 #include "../components/Movement.h"
@@ -13,6 +14,7 @@
 
 #include <utils/Log.h>
 
+#include <algorithm>
 #include <cmath>
 #include <numbers>
 
@@ -80,6 +82,25 @@ namespace ecs {
 			task.clear();
 			task.timeSinceEvaluation = 0.0F; // Reset timer after re-evaluation
 
+			// Check if entity has DecisionTrace component for trace-based selection
+			auto* trace = world->getComponent<DecisionTrace>(entity);
+			if (trace != nullptr) {
+				// Build full decision trace and select from it
+				buildDecisionTrace(entity, position, needs, memory, *trace);
+				selectTaskFromTrace(task, movementTarget, *trace, position);
+
+				LOG_INFO(
+					Engine,
+					"[AI] Entity %llu: %s → (%.1f, %.1f)",
+					static_cast<unsigned long long>(entity),
+					task.reason.c_str(),
+					task.targetPosition.x,
+					task.targetPosition.y
+				);
+				continue;
+			}
+
+			// Fallback: Legacy tier-by-tier evaluation for entities without DecisionTrace
 			// Helper to check if task uses ground fallback (target == current position)
 			auto isGroundFallback = [&position](const Task& t) {
 				return t.targetPosition == position.value;
@@ -288,6 +309,135 @@ namespace ecs {
 		float distance = distDist(m_rng);
 
 		return currentPos + glm::vec2{std::cos(angle) * distance, std::sin(angle) * distance};
+	}
+
+	void AIDecisionSystem::buildDecisionTrace(
+		EntityID /*entity*/,
+		const Position&		  position,
+		const NeedsComponent& needs,
+		const Memory&		  memory,
+		DecisionTrace&		  trace
+	) {
+		trace.clear();
+
+		// Evaluate each need type
+		for (size_t i = 0; i < static_cast<size_t>(NeedType::Count); ++i) {
+			auto		needType = static_cast<NeedType>(i);
+			const auto& need = needs.get(needType);
+
+			EvaluatedOption option;
+			option.taskType = TaskType::FulfillNeed;
+			option.needType = needType;
+			option.needValue = need.value;
+			option.threshold = need.seekThreshold;
+
+			// Check memory for fulfillment source
+			auto capability = needToCapability(needType);
+			auto nearest = findNearestWithCapability(memory, m_registry, capability, position.value);
+
+			if (nearest.has_value()) {
+				option.targetPosition = nearest->position;
+				option.targetDefNameId = nearest->defNameId;
+				option.distanceToTarget = glm::distance(position.value, nearest->position);
+
+				if (need.needsAttention()) {
+					option.status = OptionStatus::Available;
+				} else {
+					option.status = OptionStatus::Satisfied;
+				}
+			} else if (needType == NeedType::Energy || needType == NeedType::Bladder) {
+				// Ground fallback for sleep and toilet
+				option.targetPosition = position.value;
+				option.distanceToTarget = 0.0F;
+				option.status = need.needsAttention() ? OptionStatus::Available : OptionStatus::Satisfied;
+			} else {
+				// No source and no fallback
+				option.status = need.needsAttention() ? OptionStatus::NoSource : OptionStatus::Satisfied;
+			}
+
+			option.reason = formatOptionReason(option, needTypeName(needType));
+			trace.options.push_back(option);
+		}
+
+		// Add wander option
+		EvaluatedOption wanderOption;
+		wanderOption.taskType = TaskType::Wander;
+		wanderOption.needType = NeedType::Count; // N/A
+		wanderOption.status = OptionStatus::Available;
+		wanderOption.reason = "All needs satisfied";
+		wanderOption.targetPosition = generateWanderTarget(position.value);
+		trace.options.push_back(wanderOption);
+
+		// Sort by priority (highest first)
+		std::sort(trace.options.begin(), trace.options.end(), [](const auto& a, const auto& b) {
+			return a.calculatePriority() > b.calculatePriority();
+		});
+
+		// Mark the first actionable option as Selected
+		for (auto& option : trace.options) {
+			if (option.status == OptionStatus::Available) {
+				option.status = OptionStatus::Selected;
+				trace.selectionSummary = "Selected: " + option.reason;
+				break;
+			}
+		}
+	}
+
+	void AIDecisionSystem::selectTaskFromTrace(
+		Task&				   task,
+		MovementTarget&		   movementTarget,
+		const DecisionTrace&   trace,
+		const Position&		   position
+	) {
+		const auto* selected = trace.getSelected();
+		if (selected == nullptr) {
+			// No actionable option - shouldn't happen, but fallback to wander
+			task.type = TaskType::Wander;
+			task.reason = "No actionable options";
+			return;
+		}
+
+		task.type = selected->taskType;
+		task.needToFulfill = selected->needType;
+		task.targetPosition = selected->targetPosition.value_or(position.value);
+		task.reason = selected->reason;
+
+		movementTarget.target = task.targetPosition;
+
+		// Check if ground fallback (already at target)
+		bool isGroundFallback = (task.targetPosition == position.value);
+		if (isGroundFallback) {
+			movementTarget.active = false;
+			task.state = TaskState::Arrived;
+		} else {
+			movementTarget.active = true;
+			task.state = TaskState::Moving;
+		}
+	}
+
+	std::string AIDecisionSystem::formatOptionReason(const EvaluatedOption& option, const char* needName) {
+		if (option.taskType == TaskType::Wander) {
+			return "All needs satisfied";
+		}
+
+		std::string reason = needName;
+		reason += " at " + std::to_string(static_cast<int>(option.needValue)) + "%";
+
+		if (option.status == OptionStatus::NoSource) {
+			reason += " (no known source)";
+		} else if (option.needValue < 10.0F) {
+			reason += " (critical)";
+		} else if (option.status == OptionStatus::Available || option.status == OptionStatus::Selected) {
+			if (option.distanceToTarget > 0.0F) {
+				reason += " (" + std::to_string(static_cast<int>(option.distanceToTarget)) + "m away)";
+			} else if (option.targetPosition.has_value()) {
+				reason += " (using ground)";
+			}
+		} else if (option.status == OptionStatus::Satisfied) {
+			reason += " (satisfied)";
+		}
+
+		return reason;
 	}
 
 } // namespace ecs

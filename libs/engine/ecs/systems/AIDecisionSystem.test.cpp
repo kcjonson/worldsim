@@ -1,9 +1,11 @@
 // Tests for AIDecisionSystem - Colonist autonomous decision making
-// Tests tier-based priority, re-evaluation logic, wander behavior, and memory dependency.
+// Tests tier-based priority, re-evaluation logic, wander behavior, memory dependency,
+// and DecisionTrace generation for task queue display.
 
 #include "AIDecisionSystem.h"
 
 #include "../World.h"
+#include "../components/DecisionTrace.h"
 #include "../components/Memory.h"
 #include "../components/Movement.h"
 #include "../components/Needs.h"
@@ -46,6 +48,16 @@ namespace ecs::test {
 			world->addComponent<Task>(entity, Task{});
 			return entity;
 		}
+
+		/// Create a colonist with DecisionTrace component for trace-based testing
+		EntityID createColonistWithTrace(glm::vec2 position = {0.0F, 0.0F}) {
+			auto entity = createColonist(position);
+			world->addComponent<DecisionTrace>(entity, DecisionTrace{});
+			return entity;
+		}
+
+		/// Get the decision trace for an entity
+		DecisionTrace* getTrace(EntityID entity) { return world->getComponent<DecisionTrace>(entity); }
 
 		/// Set a specific need value (0-100)
 		void setNeedValue(EntityID entity, NeedType need, float value) {
@@ -658,6 +670,399 @@ namespace ecs::test {
 		auto* task = getTask(colonist);
 		ASSERT_NE(task, nullptr);
 		EXPECT_EQ(task->type, TaskType::FulfillNeed);
+	}
+
+	// =============================================================================
+	// DecisionTrace Generation Tests
+	// =============================================================================
+
+	TEST_F(AIDecisionSystemTest, TraceContainsAllNeedsPlusWander) {
+		auto colonist = createColonistWithTrace({0.0F, 0.0F});
+
+		// All needs satisfied
+		setNeedValue(colonist, NeedType::Hunger, 100.0F);
+		setNeedValue(colonist, NeedType::Thirst, 100.0F);
+		setNeedValue(colonist, NeedType::Energy, 100.0F);
+		setNeedValue(colonist, NeedType::Bladder, 100.0F);
+
+		world->update(0.016F);
+
+		auto* trace = getTrace(colonist);
+		ASSERT_NE(trace, nullptr);
+
+		// Should have 5 options: 4 needs + wander
+		EXPECT_EQ(trace->options.size(), 5u);
+
+		// Verify all need types are present
+		bool hasHunger = false, hasThirst = false, hasEnergy = false, hasBladder = false, hasWander = false;
+		for (const auto& option : trace->options) {
+			if (option.taskType == TaskType::Wander) {
+				hasWander = true;
+			} else if (option.taskType == TaskType::FulfillNeed) {
+				switch (option.needType) {
+					case NeedType::Hunger:
+						hasHunger = true;
+						break;
+					case NeedType::Thirst:
+						hasThirst = true;
+						break;
+					case NeedType::Energy:
+						hasEnergy = true;
+						break;
+					case NeedType::Bladder:
+						hasBladder = true;
+						break;
+					default:
+						break;
+				}
+			}
+		}
+
+		EXPECT_TRUE(hasHunger);
+		EXPECT_TRUE(hasThirst);
+		EXPECT_TRUE(hasEnergy);
+		EXPECT_TRUE(hasBladder);
+		EXPECT_TRUE(hasWander);
+	}
+
+	TEST_F(AIDecisionSystemTest, TraceOptionsSortedByPriority) {
+		auto colonist = createColonistWithTrace({0.0F, 0.0F});
+
+		// Add berry bush for hunger
+		addKnownEntity(colonist, {5.0F, 0.0F}, kBerryBushDefId, engine::assets::CapabilityType::Edible);
+
+		// Set up varying need levels
+		setNeedValue(colonist, NeedType::Hunger, 40.0F);   // Actionable
+		setNeedValue(colonist, NeedType::Thirst, 100.0F);  // Satisfied
+		setNeedValue(colonist, NeedType::Energy, 100.0F);  // Satisfied
+		setNeedValue(colonist, NeedType::Bladder, 100.0F); // Satisfied
+
+		world->update(0.016F);
+
+		auto* trace = getTrace(colonist);
+		ASSERT_NE(trace, nullptr);
+		ASSERT_GE(trace->options.size(), 2u);
+
+		// Verify options are sorted by priority (descending)
+		for (size_t i = 1; i < trace->options.size(); ++i) {
+			float prevPriority = trace->options[i - 1].calculatePriority();
+			float currPriority = trace->options[i].calculatePriority();
+			EXPECT_GE(prevPriority, currPriority) << "Options not sorted at index " << i;
+		}
+	}
+
+	TEST_F(AIDecisionSystemTest, TraceMarksFirstActionableAsSelected) {
+		auto colonist = createColonistWithTrace({0.0F, 0.0F});
+
+		// Add berry bush
+		addKnownEntity(colonist, {5.0F, 0.0F}, kBerryBushDefId, engine::assets::CapabilityType::Edible);
+
+		// Hunger needs attention
+		setNeedValue(colonist, NeedType::Hunger, 40.0F);
+		setNeedValue(colonist, NeedType::Thirst, 100.0F);
+		setNeedValue(colonist, NeedType::Energy, 100.0F);
+		setNeedValue(colonist, NeedType::Bladder, 100.0F);
+
+		world->update(0.016F);
+
+		auto* trace = getTrace(colonist);
+		ASSERT_NE(trace, nullptr);
+
+		// Should have exactly one Selected option
+		int					   selectedCount = 0;
+		const EvaluatedOption* selected = nullptr;
+		for (const auto& option : trace->options) {
+			if (option.status == OptionStatus::Selected) {
+				selectedCount++;
+				selected = &option;
+			}
+		}
+
+		EXPECT_EQ(selectedCount, 1);
+		ASSERT_NE(selected, nullptr);
+
+		// Selected option should be the first in sorted order (highest priority)
+		EXPECT_EQ(selected, &trace->options[0]);
+	}
+
+	TEST_F(AIDecisionSystemTest, TraceShowsNoSourceWhenNotInMemory) {
+		auto colonist = createColonistWithTrace({0.0F, 0.0F});
+
+		// Hunger needs attention, but NO food in memory
+		setNeedValue(colonist, NeedType::Hunger, 40.0F);
+		setNeedValue(colonist, NeedType::Thirst, 100.0F);
+		setNeedValue(colonist, NeedType::Energy, 100.0F);
+		setNeedValue(colonist, NeedType::Bladder, 100.0F);
+
+		world->update(0.016F);
+
+		auto* trace = getTrace(colonist);
+		ASSERT_NE(trace, nullptr);
+
+		// Find the hunger option
+		const EvaluatedOption* hungerOption = nullptr;
+		for (const auto& option : trace->options) {
+			if (option.taskType == TaskType::FulfillNeed && option.needType == NeedType::Hunger) {
+				hungerOption = &option;
+				break;
+			}
+		}
+
+		ASSERT_NE(hungerOption, nullptr);
+		EXPECT_EQ(hungerOption->status, OptionStatus::NoSource);
+		EXPECT_TRUE(hungerOption->reason.find("no known source") != std::string::npos);
+	}
+
+	TEST_F(AIDecisionSystemTest, TraceShowsSatisfiedForHighNeeds) {
+		auto colonist = createColonistWithTrace({0.0F, 0.0F});
+
+		// All needs fully satisfied
+		setNeedValue(colonist, NeedType::Hunger, 100.0F);
+		setNeedValue(colonist, NeedType::Thirst, 100.0F);
+		setNeedValue(colonist, NeedType::Energy, 100.0F);
+		setNeedValue(colonist, NeedType::Bladder, 100.0F);
+
+		world->update(0.016F);
+
+		auto* trace = getTrace(colonist);
+		ASSERT_NE(trace, nullptr);
+
+		// All need options should be Satisfied
+		for (const auto& option : trace->options) {
+			if (option.taskType == TaskType::FulfillNeed) {
+				EXPECT_EQ(option.status, OptionStatus::Satisfied)
+					<< "Need type " << static_cast<int>(option.needType) << " should be Satisfied";
+			}
+		}
+	}
+
+	TEST_F(AIDecisionSystemTest, TraceGroundFallbackForEnergyAndBladder) {
+		auto colonist = createColonistWithTrace({5.0F, 5.0F});
+
+		// Energy and Bladder need attention, no entities in memory
+		// Note: Energy/Bladder seek threshold is 30%, so values must be < 30% to be actionable
+		setNeedValue(colonist, NeedType::Hunger, 100.0F);
+		setNeedValue(colonist, NeedType::Thirst, 100.0F);
+		setNeedValue(colonist, NeedType::Energy, 25.0F);  // Actionable (below 30% threshold)
+		setNeedValue(colonist, NeedType::Bladder, 20.0F); // Actionable (below 30% threshold)
+
+		world->update(0.016F);
+
+		auto* trace = getTrace(colonist);
+		ASSERT_NE(trace, nullptr);
+
+		// Find energy and bladder options
+		const EvaluatedOption* energyOption = nullptr;
+		const EvaluatedOption* bladderOption = nullptr;
+		for (const auto& option : trace->options) {
+			if (option.taskType == TaskType::FulfillNeed) {
+				if (option.needType == NeedType::Energy) {
+					energyOption = &option;
+				} else if (option.needType == NeedType::Bladder) {
+					bladderOption = &option;
+				}
+			}
+		}
+
+		// Both should be Available (ground fallback), not NoSource
+		ASSERT_NE(energyOption, nullptr);
+		ASSERT_NE(bladderOption, nullptr);
+
+		// One is Selected, other is Available (both are actionable with ground fallback)
+		bool energyActionable = energyOption->status == OptionStatus::Selected || energyOption->status == OptionStatus::Available;
+		bool bladderActionable = bladderOption->status == OptionStatus::Selected || bladderOption->status == OptionStatus::Available;
+		EXPECT_TRUE(energyActionable) << "Energy should be actionable with ground fallback";
+		EXPECT_TRUE(bladderActionable) << "Bladder should be actionable with ground fallback";
+
+		// Both should have current position as target (ground fallback)
+		ASSERT_TRUE(energyOption->targetPosition.has_value());
+		ASSERT_TRUE(bladderOption->targetPosition.has_value());
+		EXPECT_FLOAT_EQ(energyOption->targetPosition->x, 5.0F);
+		EXPECT_FLOAT_EQ(energyOption->targetPosition->y, 5.0F);
+		EXPECT_FLOAT_EQ(bladderOption->targetPosition->x, 5.0F);
+		EXPECT_FLOAT_EQ(bladderOption->targetPosition->y, 5.0F);
+	}
+
+	TEST_F(AIDecisionSystemTest, TraceTaskMatchesSelectedOption) {
+		auto colonist = createColonistWithTrace({0.0F, 0.0F});
+
+		// Add berry bush
+		glm::vec2 berryPosition = {8.0F, 3.0F};
+		addKnownEntity(colonist, berryPosition, kBerryBushDefId, engine::assets::CapabilityType::Edible);
+
+		// Hunger needs attention
+		setNeedValue(colonist, NeedType::Hunger, 40.0F);
+		setNeedValue(colonist, NeedType::Thirst, 100.0F);
+		setNeedValue(colonist, NeedType::Energy, 100.0F);
+		setNeedValue(colonist, NeedType::Bladder, 100.0F);
+
+		world->update(0.016F);
+
+		auto* trace = getTrace(colonist);
+		auto* task = getTask(colonist);
+		ASSERT_NE(trace, nullptr);
+		ASSERT_NE(task, nullptr);
+
+		// Get selected option from trace
+		const auto* selected = trace->getSelected();
+		ASSERT_NE(selected, nullptr);
+
+		// Task should match selected option
+		EXPECT_EQ(task->type, selected->taskType);
+		EXPECT_EQ(task->needToFulfill, selected->needType);
+		if (selected->targetPosition.has_value()) {
+			EXPECT_FLOAT_EQ(task->targetPosition.x, selected->targetPosition->x);
+			EXPECT_FLOAT_EQ(task->targetPosition.y, selected->targetPosition->y);
+		}
+	}
+
+	TEST_F(AIDecisionSystemTest, TraceDisplayCountRespectsCap) {
+		auto colonist = createColonistWithTrace({0.0F, 0.0F});
+
+		world->update(0.016F);
+
+		auto* trace = getTrace(colonist);
+		ASSERT_NE(trace, nullptr);
+
+		// displayCount should be at most kMaxDisplayedOptions
+		EXPECT_LE(trace->displayCount(), kMaxDisplayedOptions);
+		// And equal to actual size when below cap
+		EXPECT_EQ(trace->displayCount(), trace->options.size());
+	}
+
+	TEST_F(AIDecisionSystemTest, TraceClearedOnReEvaluation) {
+		auto colonist = createColonistWithTrace({0.0F, 0.0F});
+
+		setNeedValue(colonist, NeedType::Hunger, 100.0F);
+		setNeedValue(colonist, NeedType::Thirst, 100.0F);
+		setNeedValue(colonist, NeedType::Energy, 100.0F);
+		setNeedValue(colonist, NeedType::Bladder, 100.0F);
+
+		world->update(0.016F);
+
+		auto* trace = getTrace(colonist);
+		ASSERT_NE(trace, nullptr);
+		auto* task = getTask(colonist);
+		ASSERT_NE(task, nullptr);
+
+		// Store initial selection summary
+		std::string initialSummary = trace->selectionSummary;
+		EXPECT_FALSE(initialSummary.empty());
+
+		// Trigger re-evaluation by simulating arrival
+		task->state = TaskState::Arrived;
+		world->update(0.016F);
+
+		// Trace should be rebuilt (may have same or different summary)
+		// The key is that it's still valid
+		EXPECT_FALSE(trace->selectionSummary.empty());
+		EXPECT_EQ(trace->options.size(), 5u); // Still has all options
+	}
+
+	// =============================================================================
+	// EvaluatedOption Priority Calculation Tests
+	// =============================================================================
+
+	TEST_F(AIDecisionSystemTest, PriorityCalculationCriticalNeeds) {
+		EvaluatedOption option;
+		option.taskType = TaskType::FulfillNeed;
+		option.needType = NeedType::Hunger;
+		option.threshold = 50.0F;
+		option.status = OptionStatus::Available;
+
+		// Critical need at 5% should give priority 305
+		option.needValue = 5.0F;
+		EXPECT_FLOAT_EQ(option.calculatePriority(), 305.0F);
+
+		// Critical need at 9% should give priority 301
+		option.needValue = 9.0F;
+		EXPECT_FLOAT_EQ(option.calculatePriority(), 301.0F);
+
+		// Edge case: exactly 10% is NOT critical, falls to actionable
+		option.needValue = 10.0F;
+		float priority = option.calculatePriority();
+		EXPECT_LT(priority, 300.0F); // Not in critical range
+		EXPECT_GE(priority, 100.0F); // In actionable range
+	}
+
+	TEST_F(AIDecisionSystemTest, PriorityCalculationActionableNeeds) {
+		EvaluatedOption option;
+		option.taskType = TaskType::FulfillNeed;
+		option.needType = NeedType::Hunger;
+		option.threshold = 50.0F;
+		option.status = OptionStatus::Available;
+
+		// Actionable at 40% with threshold 50 should give priority 110
+		option.needValue = 40.0F;
+		EXPECT_FLOAT_EQ(option.calculatePriority(), 110.0F);
+
+		// Actionable at 30% with threshold 50 should give priority 120
+		option.needValue = 30.0F;
+		EXPECT_FLOAT_EQ(option.calculatePriority(), 120.0F);
+	}
+
+	TEST_F(AIDecisionSystemTest, PriorityCalculationWander) {
+		EvaluatedOption option;
+		option.taskType = TaskType::Wander;
+		option.status = OptionStatus::Available;
+
+		// Wander always has priority 10
+		EXPECT_FLOAT_EQ(option.calculatePriority(), 10.0F);
+	}
+
+	TEST_F(AIDecisionSystemTest, PriorityCalculationSatisfied) {
+		EvaluatedOption option;
+		option.taskType = TaskType::FulfillNeed;
+		option.needType = NeedType::Hunger;
+		option.needValue = 80.0F; // Above threshold
+		option.threshold = 50.0F;
+		option.status = OptionStatus::Satisfied;
+
+		// Satisfied needs have zero priority
+		EXPECT_FLOAT_EQ(option.calculatePriority(), 0.0F);
+	}
+
+	TEST_F(AIDecisionSystemTest, IsActionableReturnsCorrectly) {
+		EvaluatedOption option;
+
+		option.status = OptionStatus::Selected;
+		EXPECT_TRUE(option.isActionable());
+
+		option.status = OptionStatus::Available;
+		EXPECT_TRUE(option.isActionable());
+
+		option.status = OptionStatus::NoSource;
+		EXPECT_FALSE(option.isActionable());
+
+		option.status = OptionStatus::Satisfied;
+		EXPECT_FALSE(option.isActionable());
+	}
+
+	TEST_F(AIDecisionSystemTest, TraceCriticalNeedHasHighestPriority) {
+		auto colonist = createColonistWithTrace({0.0F, 0.0F});
+
+		// Add entities for all needs
+		addKnownEntity(colonist, {5.0F, 0.0F}, kBerryBushDefId, engine::assets::CapabilityType::Edible);
+		addKnownEntity(colonist, {0.0F, 5.0F}, kWaterDefId, engine::assets::CapabilityType::Drinkable);
+
+		// Critical hunger, actionable thirst
+		setNeedValue(colonist, NeedType::Hunger, 5.0F);	 // Critical
+		setNeedValue(colonist, NeedType::Thirst, 40.0F); // Actionable
+		setNeedValue(colonist, NeedType::Energy, 100.0F);
+		setNeedValue(colonist, NeedType::Bladder, 100.0F);
+
+		world->update(0.016F);
+
+		auto* trace = getTrace(colonist);
+		ASSERT_NE(trace, nullptr);
+		ASSERT_FALSE(trace->options.empty());
+
+		// First option (highest priority) should be the critical hunger
+		const auto& first = trace->options[0];
+		EXPECT_EQ(first.taskType, TaskType::FulfillNeed);
+		EXPECT_EQ(first.needType, NeedType::Hunger);
+		EXPECT_EQ(first.status, OptionStatus::Selected);
+		EXPECT_GE(first.calculatePriority(), 300.0F); // In critical range
 	}
 
 } // namespace ecs::test
