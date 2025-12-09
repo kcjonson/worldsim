@@ -53,19 +53,6 @@ namespace world_sim {
 			.id = "overlay_biome"
 		});
 
-		controlsText = std::make_unique<UI::Text>(UI::Text::Args{
-			.position = {10.0F, 0.0F}, // Y will be set by layout()
-			.text = "WASD to move, Scroll to zoom, ESC for menu",
-			.style =
-				{
-					.color = Foundation::Color(0.6F, 0.6F, 0.6F, 1.0F),
-					.fontSize = 14.0F,
-					.hAlign = Foundation::HorizontalAlign::Left,
-					.vAlign = Foundation::VerticalAlign::Bottom,
-				},
-			.id = "overlay_controls"
-		});
-
 		zoomControl = std::make_unique<ZoomControl>(
 			ZoomControl::Args{.position = {10.0F, 75.0F}, .onZoomIn = onZoomIn, .onZoomOut = onZoomOut, .id = "zoom_control"}
 		);
@@ -73,11 +60,6 @@ namespace world_sim {
 
 	void GameOverlay::layout(const Foundation::Rect& newBounds) {
 		viewportBounds = newBounds;
-
-		// Position controls text at bottom of viewport
-		if (controlsText) {
-			controlsText->position.y = viewportBounds.height - 30.0F;
-		}
 	}
 
 	void GameOverlay::update(const engine::world::WorldCamera& camera, const engine::world::ChunkManager& chunkManager) {
@@ -124,12 +106,19 @@ namespace world_sim {
 		if (biomeText) {
 			biomeText->render();
 		}
-		if (controlsText) {
-			controlsText->render();
-		}
 		if (zoomControl) {
 			zoomControl->render();
 		}
+	}
+
+	bool GameOverlay::isPointOverUI(Foundation::Vec2 screenPos) const {
+		// QUICKFIX: Check zoom control bounds
+		// This manual check should be replaced by the InputEvent consumption system.
+		// See /docs/technical/ui-framework/event-system.md
+		if (zoomControl && zoomControl->isPointOver(screenPos)) {
+			return true;
+		}
+		return false;
 	}
 
 } // namespace world_sim

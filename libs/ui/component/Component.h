@@ -4,6 +4,7 @@
 #include "layer/Layer.h"
 
 #include <graphics/Rect.h>
+#include <math/Types.h>
 
 #include <algorithm>
 #include <cstddef>
@@ -29,6 +30,10 @@ namespace UI {
 		// Valid range: -32768 to 32767 (signed 16-bit)
 		// Set via Args in derived classes, e.g.: Rectangle::Args{.zIndex = 5}
 		short zIndex{0};
+
+		// Visibility flag - when false, this component and all descendants are skipped
+		// during render, handleInput, and update. Use this instead of positioning offscreen.
+		bool visible{true};
 	};
 
 	// ============================================================================
@@ -135,6 +140,9 @@ namespace UI {
 
 	class Component : public ILayer {
 	  public:
+		// Position (for manual propagation - derived classes override setPosition if needed)
+		Foundation::Vec2 position{0.0F, 0.0F};
+
 		Component() = default;
 		virtual ~Component() = default;
 
@@ -172,9 +180,12 @@ namespace UI {
 			return dynamic_cast<T*>(children[index]);
 		}
 
-		// ILayer implementation - propagates to children
+		// ILayer implementation - propagates to children (skips invisible)
 		void handleInput() override {
 			for (auto* child : children) {
+				if (!child->visible) {
+					continue;
+				}
 				if (auto* layer = dynamic_cast<ILayer*>(child)) {
 					layer->handleInput();
 				}
@@ -183,6 +194,9 @@ namespace UI {
 
 		void update(float deltaTime) override {
 			for (auto* child : children) {
+				if (!child->visible) {
+					continue;
+				}
 				if (auto* layer = dynamic_cast<ILayer*>(child)) {
 					layer->update(deltaTime);
 				}
@@ -208,6 +222,9 @@ namespace UI {
 			}
 
 			for (auto* child : children) {
+				if (!child->visible) {
+					continue;
+				}
 				RenderContext::setZIndex(child->zIndex);
 				child->render();
 			}

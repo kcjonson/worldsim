@@ -117,6 +117,22 @@ class WorldCamera {
 		};
 	}
 
+	/// Convert screen coordinates to world coordinates
+	/// @param screenX Screen X position in pixels (0 = left)
+	/// @param screenY Screen Y position in pixels (0 = top)
+	/// @param viewportWidth Viewport width in pixels
+	/// @param viewportHeight Viewport height in pixels
+	/// @param pixelsPerMeter Scale factor (pixels per world unit)
+	[[nodiscard]] WorldPosition screenToWorld(float screenX, float screenY, int viewportWidth, int viewportHeight, float pixelsPerMeter) const {
+		Foundation::Rect rect = getVisibleRect(viewportWidth, viewportHeight, pixelsPerMeter);
+		float normalizedX = screenX / static_cast<float>(viewportWidth);
+		float normalizedY = screenY / static_cast<float>(viewportHeight);
+		return WorldPosition{
+			rect.x + normalizedX * rect.width,
+			rect.y + normalizedY * rect.height
+		};
+	}
+
   private:
 	WorldPosition m_position{0.0F, 0.0F};
 	WorldPosition m_targetPosition{0.0F, 0.0F};

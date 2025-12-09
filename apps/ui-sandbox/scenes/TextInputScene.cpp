@@ -1,24 +1,24 @@
 // Text Input Scene - TextInput Component Testing and Demonstration
 // Tests TextInput with focus management, Tab navigation, selection, and clipboard
 
-#include "components/button/Button.h"
+#include "SceneTypes.h"
 #include "components/TextInput/TextInput.h"
+#include "components/button/Button.h"
 #include "primitives/Primitives.h"
 #include "shapes/Shapes.h"
 #include <GL/glew.h>
 #include <application/Application.h>
 #include <scene/Scene.h>
 #include <scene/SceneManager.h>
-#include "SceneTypes.h"
 #include <sstream>
 #include <utils/Log.h>
 #include <vector>
 
 namespace {
 
-constexpr const char* kSceneName = "text_input";
+	constexpr const char* kSceneName = "text_input";
 
-class TextInputScene : public engine::IScene {
+	class TextInputScene : public engine::IScene {
 	  public:
 		void onEnter() override {
 
@@ -28,22 +28,24 @@ class TextInputScene : public engine::IScene {
 			Renderer::Primitives::getViewport(viewportWidth, viewportHeight);
 
 			// Create title text
-			title = UI::Text(UI::Text::Args{
-				.position = {50.0F, 40.0F},
-				.text = "TextInput Component Demo",
-				.style = {.color = {1.0F, 1.0F, 1.0F, 1.0F}, .fontSize = 24.0F},
-				.visible = true,
-				.id = "title"
-			});
+			title = UI::Text(
+				UI::Text::Args{
+					.position = {50.0F, 40.0F},
+					.text = "TextInput Component Demo",
+					.style = {.color = {1.0F, 1.0F, 1.0F, 1.0F}, .fontSize = 24.0F},
+					.id = "title"
+				}
+			);
 
 			// Create instructions
-			instructions = UI::Text(UI::Text::Args{
-				.position = {50.0F, 80.0F},
-				.text = "Use Tab to navigate between fields. Try selection (Shift+Arrow, mouse drag) and clipboard (Ctrl+C/X/V/A)",
-				.style = {.color = {0.7F, 0.7F, 0.7F, 1.0F}, .fontSize = 14.0F},
-				.visible = true,
-				.id = "instructions"
-			});
+			instructions = UI::Text(
+				UI::Text::Args{
+					.position = {50.0F, 80.0F},
+					.text = "Use Tab to navigate between fields. Try selection (Shift+Arrow, mouse drag) and clipboard (Ctrl+C/X/V/A)",
+					.style = {.color = {0.7F, 0.7F, 0.7F, 1.0F}, .fontSize = 14.0F},
+					.id = "instructions"
+				}
+			);
 
 			// Create text input components with different configurations
 			float		yPos = 140.0F;
@@ -131,13 +133,14 @@ class TextInputScene : public engine::IScene {
 			});
 
 			// Create output display area
-			outputLabel = UI::Text(UI::Text::Args{
-				.position = {500.0F, 140.0F},
-				.text = "Output (onChange callbacks):",
-				.style = {.color = {1.0F, 1.0F, 1.0F, 1.0F}, .fontSize = 16.0F},
-				.visible = true,
-				.id = "output_label"
-			});
+			outputLabel = UI::Text(
+				UI::Text::Args{
+					.position = {500.0F, 140.0F},
+					.text = "Output (onChange callbacks):",
+					.style = {.color = {1.0F, 1.0F, 1.0F, 1.0F}, .fontSize = 16.0F},
+					.id = "output_label"
+				}
+			);
 		}
 
 		void handleInput(float /*dt*/) override {
@@ -191,32 +194,34 @@ class TextInputScene : public engine::IScene {
 			std::vector<std::string> outputs = {output1, output2, output3, output4};
 			for (const auto& output : outputs) {
 				if (!output.empty()) {
-					UI::Text outputText(UI::Text::Args{
-						.position = {500.0F, outputY},
-						.text = output,
-						.style = {.color = {0.8F, 0.9F, 1.0F, 1.0F}, .fontSize = 14.0F},
-						.visible = true,
-						.id = "output"
-					});
+					UI::Text outputText(
+						UI::Text::Args{
+							.position = {500.0F, outputY},
+							.text = output,
+							.style = {.color = {0.8F, 0.9F, 1.0F, 1.0F}, .fontSize = 14.0F},
+							.id = "output"
+						}
+					);
 					outputText.render();
 					outputY += outputSpacing;
 				}
 			}
 
 			// Render help text
-			UI::Text helpText(UI::Text::Args{
-				.position = {500.0F, 400.0F},
-				.text = "Keyboard Shortcuts:\n"
-						"  Ctrl+C: Copy\n"
-						"  Ctrl+X: Cut\n"
-						"  Ctrl+V: Paste\n"
-						"  Ctrl+A: Select All\n"
-						"  Shift+Arrows: Extend selection\n"
-						"  Tab: Next field",
-				.style = {.color = {0.6F, 0.6F, 0.6F, 1.0F}, .fontSize = 13.0F},
-				.visible = true,
-				.id = "help"
-			});
+			UI::Text helpText(
+				UI::Text::Args{
+					.position = {500.0F, 400.0F},
+					.text = "Keyboard Shortcuts:\n"
+							"  Ctrl+C: Copy\n"
+							"  Ctrl+X: Cut\n"
+							"  Ctrl+V: Paste\n"
+							"  Ctrl+A: Select All\n"
+							"  Shift+Arrows: Extend selection\n"
+							"  Tab: Next field",
+					.style = {.color = {0.6F, 0.6F, 0.6F, 1.0F}, .fontSize = 13.0F},
+					.id = "help"
+				}
+			);
 			helpText.render();
 		}
 
@@ -253,4 +258,4 @@ class TextInputScene : public engine::IScene {
 // Export scene info for registry
 namespace ui_sandbox::scenes {
 	extern const ui_sandbox::SceneInfo TextInput = {kSceneName, []() { return std::make_unique<TextInputScene>(); }};
-}
+} // namespace ui_sandbox::scenes

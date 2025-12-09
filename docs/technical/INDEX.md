@@ -71,6 +71,13 @@ Applications:
 | [Resource Handles](./resource-handles.md) | Safe resource references | Implement Soon |
 | [Diagnostic Drawing](./diagnostic-drawing.md) | Immediate mode debug draw | Implement Later |
 
+### UI Framework
+
+| Document | Description |
+|----------|-------------|
+| [Event System](./ui-framework/event-system.md) | Input event propagation and consumption |
+| [SDF Rendering](./ui-framework/sdf-rendering.md) | GPU-based primitive rendering (planned) |
+
 ### Networking & Multiplayer
 
 | Document | Description |

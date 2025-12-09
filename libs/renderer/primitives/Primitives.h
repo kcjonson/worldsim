@@ -43,6 +43,16 @@ namespace Renderer {
 		// Set the coordinate system (must be called after Init)
 		void setCoordinateSystem(CoordinateSystem* coordSystem);
 
+		// Get viewport dimensions in logical pixels.
+		//
+		// Returns window size in logical (DPI-independent) coordinates, suitable for
+		// UI layout and mouse coordinate conversion. On Retina displays, this returns
+		// half the framebuffer dimensions; on standard displays, it matches getViewport().
+		//
+		// Use this instead of getViewport() when you need dimensions that match GLFW's
+		// window coordinates (what mouse events report, what UI layout uses).
+		void getLogicalViewport(int& width, int& height);
+
 		// Set the font renderer for text rendering.
 		//
 		// This function stores a FontRenderer instance that Text shapes can retrieve
