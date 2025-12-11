@@ -177,6 +177,25 @@ ctest --test-dir build
 
 ## Debugging Workflows
 
+### Quick Debugging
+For simple, isolated bugs:
+- Add targeted logging
+- Fix and verify
+- Remove logging
+
+### Complex Bug Investigation
+For bugs involving multiple systems, coordinate issues, or multi-session investigation:
+
+**Use the `/debug <issue-name>` command** to start a formal session.
+
+Full protocol: `/docs/technical/debugging-strategy.md`
+
+Key points:
+- Create debug branch and tracking doc
+- One hypothesis at a time
+- Never remove debug code until user confirms fix
+- Prefer logs over screenshots
+
 ### Using the Developer Client
 
 1. **Start application** (ui-sandbox or world-sim)

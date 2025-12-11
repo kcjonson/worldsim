@@ -70,6 +70,7 @@ Applications:
 | [Memory Arenas](./memory-arenas.md) | Fast temporary allocations | Implement Soon |
 | [Resource Handles](./resource-handles.md) | Safe resource references | Implement Soon |
 | [Diagnostic Drawing](./diagnostic-drawing.md) | Immediate mode debug draw | Implement Later |
+| [Debugging Strategy](./debugging-strategy.md) | Protocol for complex bug investigation | Active |
 
 ### UI Framework
 
