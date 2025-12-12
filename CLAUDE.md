@@ -53,11 +53,11 @@ For bugs involving multiple systems, coordinate/rendering issues, or multi-sessi
 
 **Use the `/debug <issue-name>` command** to start a formal debugging session.
 
-This activates the protocol from `/docs/technical/debugging-strategy.md` which enforces:
-- One hypothesis at a time
-- User-only confirmation of fixes
-- No premature removal of debug code
-- Logs over screenshots
+This activates the protocol from `/docs/technical/debugging-strategy.md` which uses:
+- **Multi-agent scouting** — 3 parallel agents explore different hypothesis areas
+- **Hypothesis synthesis** — Rank by consensus and evidence before deep investigation
+- **Disciplined investigation** — One hypothesis at a time, user-only confirmation
+- **Evidence preservation** — No premature removal of debug code, logs over screenshots
 
 
 ### Code Quality

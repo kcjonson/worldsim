@@ -190,9 +190,14 @@ For bugs involving multiple systems, coordinate issues, or multi-session investi
 
 Full protocol: `/docs/technical/debugging-strategy.md`
 
-Key points:
+**Three-Phase Approach:**
+1. **Scout** — 3 parallel agents explore independently, generating diverse hypotheses
+2. **Synthesize** — Rank hypotheses by consensus and evidence strength
+3. **Investigate** — Deep single-hypothesis work with disciplined protocol
+
+**Key Rules:**
 - Create debug branch and tracking doc
-- One hypothesis at a time
+- One hypothesis at a time (in Phase 3)
 - Never remove debug code until user confirms fix
 - Prefer logs over screenshots
 

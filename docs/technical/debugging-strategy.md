@@ -16,6 +16,20 @@ This document defines the debugging protocol for complex bugs. Following this pr
 
 ---
 
+## Protocol Overview: Three Phases
+
+The `/debug` command follows a three-phase approach:
+
+| Phase | Purpose | Method |
+|-------|---------|--------|
+| **Phase 1: Scout** | Generate diverse hypotheses | 3 parallel agents explore independently |
+| **Phase 2: Synthesize** | Rank and deduplicate | Main agent merges findings |
+| **Phase 3: Investigate** | Deep single-hypothesis work | Disciplined protocol (the 5 rules) |
+
+This approach prevents "tunnel vision" by ensuring multiple perspectives explore the problem before committing to deep investigation.
+
+---
+
 ## When to Use This Protocol
 
 **Invoke with:** `/debug <issue-name>`
@@ -53,10 +67,16 @@ When using full protocol:
 ## Key Facts Established
 [Numbered list - only CONFIRMED facts]
 
-## Hypotheses
+## Scout Agent Findings
+**Explored by:** 3 parallel agents
+**Total hypotheses generated:** N
+**After deduplication:** M
+
+## Hypotheses (Ranked)
 
 ### H1: [Name]
 - **Status:** untested | testing | invalidated | promising
+- **Suggested by:** [N agents / which focus areas]
 - **Evidence for:**
 - **Evidence against:**
 - **Test approach:**
@@ -76,9 +96,53 @@ When using full protocol:
 
 ---
 
-## Hypothesis Testing Protocol
+## Phase 1: Multi-Agent Scouting
 
-### Status Transitions
+Before deep investigation, spawn **3 parallel agents** to explore the codebase independently. Each agent focuses on a different area:
+
+| Agent | Focus Area | Looking For |
+|-------|------------|-------------|
+| **Agent 1** | Data flow & state | Race conditions, stale state, missing updates |
+| **Agent 2** | Coordinates & math | Transform errors, off-by-one, unit mismatches |
+| **Agent 3** | Timing & edge cases | Initialization order, async issues, boundary conditions |
+
+### Why Multi-Agent Scouting Works
+
+1. **Diverse perspectives** — Different agents frame the problem differently
+2. **Avoids tunnel vision** — No single agent commits too early to one hypothesis
+3. **Consensus signal** — If multiple agents independently suggest the same cause, it's likely correct
+4. **Parallel exploration** — 3x coverage in the same wall-clock time
+
+### Scout Agent Output Format
+
+Each agent returns 2-3 hypotheses in this format:
+```
+### Hypothesis: [Name]
+**Location:** [file:line]
+**Evidence:** [specific code/behavior found]
+**Why it could cause this:** [explanation]
+**Quick test:** [how to validate/invalidate]
+```
+
+### Synthesis Rules
+
+After scouts return:
+1. **Collect** all hypotheses from all agents
+2. **Deduplicate** — Merge substantially similar hypotheses
+3. **Rank** by:
+   - Number of agents who suggested it (consensus)
+   - Strength of evidence cited
+   - How well it explains observed behavior
+4. **Record** all hypotheses in tracking doc (even low-ranked ones)
+5. **Present** ranked list to user for selection
+
+---
+
+## Phase 3: Deep Investigation
+
+Once the user selects a hypothesis to investigate, proceed with the disciplined single-hypothesis protocol.
+
+### Hypothesis Status Transitions
 ```
 untested -> testing -> invalidated (with evidence)
                    -> promising (needs user confirmation)
