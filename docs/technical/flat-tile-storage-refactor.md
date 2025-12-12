@@ -93,17 +93,25 @@ struct Chunk {
     ChunkCoordinate coordinate;
     std::array<TileData, kChunkSize * kChunkSize> tiles;  // 512×512 = 262,144 tiles
 
+    // Biome blending data — KEEP for ecotone support
+    ChunkSampleResult biomeData;  // Sector grid for BiomeWeights queries
+
+    // Thread safety
+    std::atomic<bool> generationComplete{false};
+
     // Sparse storage for player modifications (unchanged)
     HashMap<TileLocalCoord, ModifiedTileData> modifications;
 };
 
 struct TileData {
-    Surface surface;      // THE definitive surface type (1 byte) — renamed from GroundCover
-    Biome biome;          // Primary biome (1 byte)
-    uint16_t elevation;   // Fixed-point elevation in cm (2 bytes)
-    uint8_t moisture;     // 0-255 normalized (1 byte)
-    uint8_t flags;        // Reserved for future use (1 byte)
-    // Total: 6 bytes/tile (can pack to 4 if needed)
+    Surface surface;          // THE definitive surface type (1 byte)
+    Biome primaryBiome;       // Dominant biome (1 byte)
+    Biome secondaryBiome;     // For ecotones, or same as primary (1 byte)
+    uint8_t biomeBlend;       // 0-255: weight of primary (255 = 100% primary) (1 byte)
+    uint16_t elevation;       // Fixed-point elevation in cm (2 bytes)
+    uint8_t moisture;         // 0-255 normalized (1 byte)
+    uint8_t flags;            // Reserved for future use (1 byte)
+    // Total: 8 bytes/tile
 };
 
 enum class Surface : uint8_t {
@@ -116,185 +124,172 @@ enum class Surface : uint8_t {
 };
 ```
 
-### Key Changes
+### Key Design Decisions
 
-1. **Rename `GroundCover` → `Surface`**
-   - Reflects actual meaning (terrain material, not plants)
-   - Clears up conceptual confusion
+#### 1. Rename `GroundCover` → `Surface`
+- Reflects actual meaning (terrain material, not plants)
+- Clears up conceptual confusion
 
-2. **Tile generation moves to chunk load time**
-   - `Chunk::generate()` runs once, populates entire `tiles` array
-   - All noise sampling (ponds, dirt patches, variation) happens here
-   - Result is stored, not recomputed
+#### 2. Keep Sector Grid for Biome Blending
+The `ChunkSampleResult` with its sector grid is **retained** for:
+- Ecotone entity spawning (future: probabilistic spawning based on biome blend)
+- Visual ground color blending at biome boundaries
+- The sector grid efficiently provides BiomeWeights for any tile
 
-3. **Tile queries become simple array access**
-   ```cpp
-   TileData Chunk::getTile(uint16_t localX, uint16_t localY) const {
-       return tiles[localY * kChunkSize + localX];
-   }
-   ```
+The flat array stores the **result** of biome blending (primary/secondary + weight), while the sector grid remains available for more detailed queries if needed.
 
-4. **Single source of truth**
-   - Renderer reads `tiles[]` — sees ponds
-   - PlacementExecutor reads `tiles[]` — avoids water (fixes flora-on-water bug!)
-   - VisionSystem reads `tiles[]` — correct LOS
-   - AIDecisionSystem reads `tiles[]` — accurate pathfinding
+#### 3. Store Biome Blend Information
+Each tile stores:
+- `primaryBiome`: The dominant biome
+- `secondaryBiome`: The secondary biome (for ecotones), or same as primary if pure
+- `biomeBlend`: Weight of primary (255 = 100% primary, 128 = 50/50 blend)
 
-5. **Correct ordering: Surface THEN Flora**
-   - Chunk generates surface array
-   - PlacementExecutor queries definitive surface
-   - Flora only placed on compatible surfaces
+This preserves ecotone information for future probabilistic entity spawning:
+```cpp
+// Future ecotone spawning logic
+if (tile.biomeBlend < 255) {
+    // This is an ecotone tile
+    float primaryChance = tile.biomeBlend / 255.0f;
+    if (rng.Float() < primaryChance) {
+        // Spawn primary biome entity
+    } else {
+        // Spawn secondary biome entity
+    }
+}
+```
 
-## How Biome Blending Fits In
-
-Biome blending and surface selection are related but distinct:
-
-### Biome Blending (Unchanged)
-- **Source**: 3D spherical world sampling
-- **Stored in**: `ChunkSampleResult` (corner biomes + sector grid)
-- **Purpose**: Smooth transitions at biome boundaries
-- **Data**: `BiomeWeights` — percentages like "70% Grassland, 30% Forest"
-
-### Surface Selection (This Refactor)
-- **Source**: Biome + procedural noise
-- **Stored in**: `tiles[]` array (new)
-- **Purpose**: Definitive terrain material per tile
-- **Data**: `Surface` enum — single value, not percentages
-
-### Single-Pass Generation
-
-Surface selection happens in ONE pass at chunk generation, using biome as input:
+#### 4. Deterministic Generation from Seed
+All tile generation MUST be deterministic for multiplayer sync:
 
 ```cpp
-void Chunk::generate() {
+void Chunk::generate(uint64_t worldSeed) {
     for (uint16_t y = 0; y < kChunkSize; ++y) {
         for (uint16_t x = 0; x < kChunkSize; ++x) {
             TileData& tile = tiles[y * kChunkSize + x];
 
-            // Step 1: Get biome from 3D sampling (already computed)
-            BiomeWeights biomeWeights = m_biomeData.getTileBiome(x, y);
-            tile.biome = biomeWeights.primary();
+            // World position for deterministic noise
+            float worldX = static_cast<float>(m_coord.x * kChunkSize + x);
+            float worldY = static_cast<float>(m_coord.y * kChunkSize + y);
 
-            // Step 2: Select surface based on biome + noise
-            tile.surface = selectSurface(tile.biome, x, y);
+            // Step 1: Get biome weights from sector grid
+            BiomeWeights weights = m_biomeData.getTileBiome(x, y);
+            tile.primaryBiome = weights.primary();
+            tile.secondaryBiome = weights.secondary();  // New method needed
+            tile.biomeBlend = static_cast<uint8_t>(weights.get(tile.primaryBiome) * 255.0f);
 
-            // Step 3: Interpolate elevation
+            // Step 2: Select surface (deterministic noise based on world position + seed)
+            tile.surface = selectSurface(tile.primaryBiome, worldX, worldY, worldSeed);
+
+            // Step 3: Elevation (interpolated from corners)
             tile.elevation = computeElevation(x, y);
 
-            // Step 4: Generate moisture
-            tile.moisture = computeMoisture(x, y);
+            // Step 4: Moisture (deterministic hash)
+            tile.moisture = computeMoisture(worldX, worldY, worldSeed);
         }
     }
+
+    // Mark generation complete for thread safety
+    generationComplete.store(true, std::memory_order_release);
 }
+```
 
-Surface Chunk::selectSurface(Biome biome, uint16_t x, uint16_t y) {
-    // Ocean biome is always water
-    if (biome == Biome::Ocean) {
-        return Surface::Water;
+**Determinism requirements:**
+- All noise functions use `worldSeed + offset` (already true)
+- Integer-based hashing, no floating-point platform variance
+- Same seed + same coordinates = identical tiles everywhere
+
+#### 5. Thread Safety
+
+Chunks may be generated on background threads while the main thread renders. Solution:
+
+```cpp
+class Chunk {
+public:
+    // Called by background thread
+    void generate(uint64_t worldSeed);
+
+    // Called by main thread — safe to call during/after generation
+    [[nodiscard]] bool isReady() const {
+        return generationComplete.load(std::memory_order_acquire);
     }
 
-    float worldX = static_cast<float>(m_coord.x * kChunkSize + x);
-    float worldY = static_cast<float>(m_coord.y * kChunkSize + y);
-
-    // Ponds in Grassland/Forest
-    if (biome == Biome::Grassland || biome == Biome::Forest) {
-        float waterNoise = fractalNoise(worldX * 0.08F, worldY * 0.08F,
-                                         m_worldSeed + 100000, 2, 0.5F);
-        if (waterNoise > 0.82F) {
-            return Surface::Water;
-        }
+    // Only call after isReady() returns true
+    [[nodiscard]] const TileData& getTile(uint16_t x, uint16_t y) const {
+        assert(isReady());
+        return tiles[y * kChunkSize + x];
     }
 
-    // Biome-specific surface with variation noise
-    // ... rest of selection logic ...
+private:
+    std::atomic<bool> generationComplete{false};
+    std::array<TileData, kChunkSize * kChunkSize> tiles;
+};
+```
+
+**Usage in renderer:**
+```cpp
+void ChunkRenderer::render(const Chunk& chunk) {
+    if (!chunk.isReady()) {
+        renderPlaceholder(chunk.coordinate());  // Or skip
+        return;
+    }
+    // Safe to access tiles
+    for (/* visible tiles */) {
+        const TileData& tile = chunk.getTile(x, y);
+        // render...
+    }
 }
 ```
 
 ## Memory Analysis
 
-### Current System (Layered)
-
-From `chunk-management-system.md`:
-```
-Per Chunk:
-- Pure chunk (pristine): ~200 bytes
-- Boundary chunk (pristine): ~4 KB
-- Typical Load (25 chunks): 5 KB to 178 KB
-```
-
 ### Proposed System (Flat Array)
 
 ```
 Per Chunk:
-- TileData: 6 bytes/tile × 262,144 tiles = 1.57 MB
-- With modifications: +30 bytes per modified tile
+- TileData: 8 bytes/tile × 262,144 tiles = 2.1 MB
+- ChunkSampleResult (sector grid): ~4 KB
+- Total: ~2.1 MB per chunk
 
-Typical Load (25 chunks): 39 MB
-Maximum Load (100 chunks): 157 MB
+Typical Load (25 chunks): ~52 MB
+Maximum Load (100 chunks): ~210 MB
 ```
-
-### Memory Comparison
-
-| Scenario | Current | Proposed | Increase |
-|----------|---------|----------|----------|
-| 25 chunks (pristine) | ~100 KB | ~39 MB | 390× |
-| 100 chunks (pristine) | ~400 KB | ~157 MB | 392× |
 
 ### Is This Acceptable?
 
-**Yes.** Modern games routinely use gigabytes of RAM. 157 MB for the worst-case chunk load is:
-- Less than a single 4K texture
-- ~1% of a typical gaming PC's RAM (16 GB)
-- Negligible compared to entity data, audio, etc.
+**Yes, absolutely.** Modern games routinely use gigabytes of RAM:
+- AAA games: 8-16 GB typical
+- A single 4K texture: 32-64 MB
+- Our entire loaded world: ~52 MB
 
-The original design optimized for memory that doesn't need optimization.
+52 MB for the entire visible world is **tiny** by modern standards. This is not worth optimizing.
 
-## Performance Analysis
+## How Biome Blending Works
 
-### Generation Cost (One-Time at Chunk Load)
+### The Sector Grid (Kept)
 
-**Current**: Deferred — tiles generated on first access
-**Proposed**: Upfront — all 262,144 tiles generated at load
-
-```
-Per tile:
-- Biome lookup: ~5 cycles (array access)
-- Noise sampling: ~200 cycles (fractalNoise with 2 octaves)
-- Surface selection: ~50 cycles
-- Total: ~255 cycles/tile
-
-Per chunk:
-- 262,144 tiles × 255 cycles = ~67M cycles
-- At 3 GHz: ~22ms per chunk
-```
-
-This is acceptable because:
-1. Chunk loading already happens on background threads
-2. 22ms is faster than disk I/O for saved chunks
-3. Only ~5 chunks load when moving (not 25 at once)
-
-### Query Cost
-
-**Current**: O(1) but with noise computation
-**Proposed**: O(1) pure array access
+The sector grid in `ChunkSampleResult` provides efficient biome weight queries:
 
 ```cpp
-// Current: ~50-200 cycles (noise + conditionals)
-TileData Chunk::getTile(x, y) const {
-    TileData tile;
-    tile.biome = m_biomeData.getTileBiome(x, y);  // sector lookup
-    tile.groundCover = selectGroundCover(...);    // NOISE COMPUTATION
-    // ...
-    return tile;
-}
+// 32×32 grid covering 512×512 tiles
+// Each sector covers 16×16 tiles
+std::array<BiomeWeights, 32 * 32> sectorGrid;
 
-// Proposed: ~5 cycles (array access)
-TileData Chunk::getTile(x, y) const {
-    return tiles[y * kChunkSize + x];
+BiomeWeights getTileBiome(uint16_t x, uint16_t y) {
+    int sectorX = x / 16;
+    int sectorY = y / 16;
+    return sectorGrid[sectorY * 32 + sectorX];
 }
 ```
 
-**Query speedup: 10-40×**
+At chunk generation, we query this grid and store the results in TileData. The grid remains available for any future systems that need full BiomeWeights.
+
+### Ecotone Support
+
+With `primaryBiome`, `secondaryBiome`, and `biomeBlend` stored per tile:
+
+1. **Entity Spawning**: PlacementExecutor can use blend weight for probabilistic spawning
+2. **Visual Blending**: Renderer can interpolate ground colors based on blend
+3. **Gameplay**: Movement speed, resource availability can factor in blend
 
 ## Implementation Plan
 
@@ -302,57 +297,64 @@ TileData Chunk::getTile(x, y) const {
 
 1. **Rename `GroundCover` → `Surface`**
    - Update enum and all references
+   - Rename `Grass` → `Soil`
    - Rename `selectGroundCover()` → `selectSurface()`
    - Update comments and documentation
 
 ### Phase 1: Data Structure Changes
 
-2. **Add `tiles` array to Chunk**
+2. **Update `TileData` struct**
+   - Add `Surface surface`
+   - Add `Biome primaryBiome`, `Biome secondaryBiome`, `uint8_t biomeBlend`
+   - Total 8 bytes per tile
+
+3. **Add `tiles` array to Chunk**
    - `std::array<TileData, kChunkSize * kChunkSize> tiles`
-   - Keep existing lazy system working in parallel initially
+   - Add `std::atomic<bool> generationComplete`
+   - Keep `ChunkSampleResult biomeData` (don't remove!)
 
-3. **Create `Chunk::generate()` method**
-   - Move `selectSurface()` logic here
-   - Move `generateTile()` logic here
+4. **Create `Chunk::generate()` method**
+   - Move surface selection logic here
    - Populate entire array at construction
+   - Set `generationComplete` flag when done
+   - Ensure all noise is deterministic from seed
 
-4. **Update `TileData` struct**
-   - Use `Surface` enum (renamed)
-   - Add packed representation (6 bytes)
-   - Ensure deterministic generation for multiplayer
+5. **Add `BiomeWeights::secondary()` method**
+   - Returns second-highest weighted biome
+   - For ecotone blend storage
 
 ### Phase 2: System Updates
 
-5. **Update `ChunkRenderer`**
+6. **Update `ChunkRenderer`**
+   - Check `chunk.isReady()` before accessing tiles
    - Read from `tiles[]` array directly
    - Remove pure chunk optimization (no longer needed)
-   - Simplify rendering path
 
-6. **Update `PlacementExecutor`**
+7. **Update `PlacementExecutor`**
    - Query `tiles[]` for surface checks
-   - Remove independent noise sampling
    - **This fixes flora-on-water bug!**
+   - Future: use biome blend for probabilistic spawning
 
-7. **Update `VisionSystem`**
-   - Query `tiles[]` for terrain visibility
-   - Simplify line-of-sight checks
+8. **Update `VisionSystem`**
+   - Query `tiles[]` for terrain checks
+   - Check `isReady()` for thread safety
 
-8. **Update `AIDecisionSystem`**
+9. **Update `AIDecisionSystem`**
    - Query `tiles[]` for water detection
    - Pathfinding uses definitive tile data
 
 ### Phase 3: Cleanup
 
-9. **Remove layered infrastructure**
-   - Delete `selectSurface()` from query path (keep in generate())
-   - Simplify `ChunkSampleResult` (corners still useful for biome sampling)
-   - Remove sector grid (no longer needed for per-tile queries)
+10. **Simplify but don't remove ChunkSampleResult**
+    - Keep sector grid (for future BiomeWeights queries)
+    - Remove pure chunk optimization flag (no longer needed)
+    - Keep corner elevations
 
-10. **Update tests**
-    - Add generation tests (verify determinism)
-    - Update existing tile query tests
-    - Add memory usage benchmarks
-    - Add test: no flora entities on Water surface
+11. **Update tests**
+    - Add generation determinism tests (same seed = same tiles)
+    - Add thread safety tests
+    - Add test: no flora entities on Surface::Water
+    - Test biome blend values at ecotones
 
 ## Files to Modify
 
@@ -361,56 +363,55 @@ TileData Chunk::getTile(x, y) const {
 - All files referencing `GroundCover`
 
 ### Core Changes (Phase 1)
-- `libs/engine/world/chunk/Chunk.h` — Add `tiles` array, `generate()` method
-- `libs/engine/world/chunk/Chunk.cpp` — Implement generation, update queries
-- `libs/engine/world/chunk/TileData.h` — Packed struct with Surface
+- `libs/engine/world/chunk/Chunk.h` — Add `tiles` array, `generate()`, `isReady()`
+- `libs/engine/world/chunk/Chunk.cpp` — Implement generation
+- `libs/engine/world/chunk/TileData.h` — New/updated struct
+- `libs/engine/world/BiomeWeights.h` — Add `secondary()` method
 
 ### System Updates (Phase 2)
-- `libs/engine/world/rendering/ChunkRenderer.cpp` — Read from array
+- `libs/engine/world/rendering/ChunkRenderer.cpp` — Thread safety, read from array
 - `libs/engine/assets/placement/PlacementExecutor.cpp` — Query tiles, fix flora-on-water
 - `libs/engine/ecs/systems/VisionSystem.cpp` — Query tiles
 - `libs/engine/ecs/systems/AIDecisionSystem.cpp` — Query tiles
 
-### Cleanup (Phase 3)
-- `libs/engine/world/chunk/ChunkSampleResult.h` — Simplify (keep corner data)
-- `libs/engine/world/chunk/MockWorldSampler.cpp` — Remove pure chunk logic
+### Kept (not removed)
+- `libs/engine/world/chunk/ChunkSampleResult.h` — Keep sector grid for biome queries
 
 ## Risks and Mitigations
 
 ### Risk: Increased Chunk Load Time
-**Mitigation**: Generation is parallelizable and faster than disk I/O. Profile before/after.
-
-### Risk: Memory Pressure on Low-End Systems
 **Mitigation**:
-- Reduce load radius (3×3 instead of 5×5)
-- Stream chunks more aggressively
-- Consider compression for distant chunks
+- Generation is parallelizable on background threads
+- 22ms per chunk is faster than typical disk I/O
+- Profile before/after to verify
+
+### Risk: Thread Safety Bugs
+**Mitigation**:
+- Simple atomic flag pattern (`generationComplete`)
+- All systems check `isReady()` before tile access
+- No partial reads possible — entire array or nothing
 
 ### Risk: Determinism Bugs in Multiplayer
 **Mitigation**:
-- All noise uses integer-based hash (already true)
-- Add determinism tests comparing generation across platforms
+- All noise uses integer-based hash from `worldSeed`
+- Add determinism tests: generate same chunk twice, verify identical
+- Test across platforms if targeting cross-play
+
+### Risk: Breaking Biome Blending
+**Mitigation**:
+- Keep sector grid (ChunkSampleResult)
+- Store blend info in TileData for common queries
+- Full BiomeWeights available via sector grid if needed
 
 ## Success Criteria
 
 1. **No more layered misalignment bugs** — All systems read same data
 2. **No flora on water** — PlacementExecutor checks definitive surface
-3. **Simpler debugging** — Can inspect `tiles[]` array directly
-4. **Equivalent or better performance** — Query time reduced
-5. **Memory usage < 200 MB** for typical 25-chunk load
-6. **All existing tests pass** — No behavioral regressions
-
-## Alternatives Considered
-
-### Keep Layered System, Fix Bugs Individually
-**Rejected**: Each fix is a band-aid. The architecture enables the bug class.
-
-### Hybrid: Flat Array for Surface Only
-**Considered**: Could store only `Surface` in array (262 KB/chunk).
-**Rejected**: Partial solution, still has some layering complexity.
-
-### Compression (RLE, etc.)
-**Deferred**: Add only if memory becomes a real problem. Premature optimization.
+3. **Deterministic generation** — Same seed = identical tiles
+4. **Thread safe** — No crashes or data races during chunk streaming
+5. **Biome blending preserved** — Ecotone tiles have blend information
+6. **Memory usage < 250 MB** for typical 25-chunk load (with headroom)
+7. **All existing tests pass** — No behavioral regressions
 
 ## Related Documentation
 
@@ -421,5 +422,6 @@ TileData Chunk::getTile(x, y) const {
 
 ## Revision History
 
+- 2025-12-11: Added thread safety, determinism requirements, biome blend storage, kept sector grid
 - 2025-12-11: Added GroundCover→Surface rename, clarified conceptual model, added flora-on-water fix
 - 2025-12-11: Initial proposal based on water detection debugging session

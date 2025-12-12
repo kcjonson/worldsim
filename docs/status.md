@@ -545,28 +545,32 @@ Use this template for all work items:
   - [ ] Rename `selectGroundCover()` → `selectSurface()`
   - [ ] Update all references and documentation
 - [ ] Phase 1: Data Structure Changes
-  - [ ] Add `tiles` array to Chunk struct (262,144 TileData)
-  - [ ] Create packed TileData struct (6 bytes: surface, biome, elevation, moisture, flags)
-  - [ ] Implement `Chunk::generate()` method that populates array at construction
-  - [ ] Move `selectSurface()` and noise sampling into generate()
+  - [ ] Update TileData struct (8 bytes: surface, primaryBiome, secondaryBiome, biomeBlend, elevation, moisture, flags)
+  - [ ] Add `tiles` array to Chunk struct (262,144 TileData = ~2.1 MB/chunk)
+  - [ ] Add `std::atomic<bool> generationComplete` for thread safety
+  - [ ] Keep `ChunkSampleResult biomeData` (sector grid for ecotone queries)
+  - [ ] Implement `Chunk::generate(worldSeed)` — deterministic from seed
+  - [ ] Add `BiomeWeights::secondary()` method for ecotone blend storage
 - [ ] Phase 2: System Updates
-  - [ ] Update ChunkRenderer to read from tiles[] array
+  - [ ] Update ChunkRenderer: check `isReady()`, read from tiles[] array
   - [ ] Remove pure chunk optimization (no longer needed)
   - [ ] Update PlacementExecutor to query tiles[] for surface (**fixes flora-on-water bug**)
   - [ ] Update VisionSystem to query tiles[] for terrain
   - [ ] Update AIDecisionSystem to use definitive tile data
-- [ ] Phase 3: Cleanup
+- [ ] Phase 3: Cleanup & Testing
   - [ ] Remove selectSurface() from query path (keep in generate())
-  - [ ] Simplify ChunkSampleResult (remove sector grid)
-  - [ ] Update MockWorldSampler (remove pure chunk special cases)
-  - [ ] Update/add unit tests for generation determinism
+  - [ ] Simplify ChunkSampleResult (keep sector grid, remove isPure flag)
+  - [ ] Add determinism tests (same seed = identical tiles)
+  - [ ] Add thread safety tests
   - [ ] Add test: no flora entities placed on Surface::Water
 
 **Success Criteria:**
 - All systems read tile data from single source (tiles[] array)
 - No flora spawning on water (flora-on-water bug fixed)
-- Water detection bug class eliminated
-- Memory usage < 200 MB for 25-chunk load
+- Deterministic generation from world seed
+- Thread-safe chunk streaming (isReady() pattern)
+- Biome blending preserved (primaryBiome, secondaryBiome, biomeBlend)
+- Memory usage < 250 MB for 25-chunk load (~52 MB expected)
 - All existing tests pass
 
 ---
