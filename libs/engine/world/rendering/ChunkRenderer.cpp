@@ -60,11 +60,13 @@ namespace engine::world {
 
 		// Accumulate geometry for all visible tiles
 		for (const Chunk* chunk : visibleChunks) {
-			if (chunk->isPure()) {
-				addPureChunk(*chunk, camera, viewportWidth, viewportHeight);
-			} else {
-				addChunkTiles(*chunk, camera, visibleRect, viewportWidth, viewportHeight);
+			// Skip chunks that haven't finished generating
+			if (!chunk->isReady()) {
+				continue;
 			}
+			// Render all tiles - no pure chunk shortcut since surfaces vary within biomes
+			// (e.g., grassland has water ponds, soil vs dirt patches)
+			addChunkTiles(*chunk, camera, visibleRect, viewportWidth, viewportHeight);
 		}
 
 		// Final flush for remaining geometry
@@ -162,52 +164,6 @@ namespace engine::world {
 				m_lastTileCount++;
 			}
 		}
-	}
-
-	void ChunkRenderer::addPureChunk(const Chunk& chunk, const WorldCamera& camera, int viewportWidth, int viewportHeight) {
-		// Flush batch if approaching uint16_t index limit (each chunk adds 4 vertices)
-		if (m_vertices.size() + 4 > kMaxVerticesPerBatch) {
-			flushBatch();
-		}
-
-		WorldPosition	  chunkOrigin = chunk.worldOrigin();
-		Foundation::Color color = Chunk::getBiomeColor(chunk.primaryBiome());
-
-		float halfViewW = static_cast<float>(viewportWidth) * 0.5F;
-		float halfViewH = static_cast<float>(viewportHeight) * 0.5F;
-		float scale = m_pixelsPerMeter * camera.zoom();
-		float camX = camera.position().x;
-		float camY = camera.position().y;
-
-		// Calculate screen position
-		float screenX = (chunkOrigin.x - camX) * scale + halfViewW;
-		float screenY = (chunkOrigin.y - camY) * scale + halfViewH;
-		float chunkScreenSize = static_cast<float>(kChunkSize) * kTileSize * scale;
-
-		// Current vertex index for indices (safe after flush check)
-		auto baseVertex = static_cast<uint16_t>(m_vertices.size());
-
-		// Add 4 vertices for chunk quad
-		m_vertices.emplace_back(screenX, screenY);									   // Top-left
-		m_vertices.emplace_back(screenX + chunkScreenSize, screenY);				   // Top-right
-		m_vertices.emplace_back(screenX + chunkScreenSize, screenY + chunkScreenSize); // Bottom-right
-		m_vertices.emplace_back(screenX, screenY + chunkScreenSize);				   // Bottom-left
-
-		// Add colors
-		m_colors.emplace_back(color);
-		m_colors.emplace_back(color);
-		m_colors.emplace_back(color);
-		m_colors.emplace_back(color);
-
-		// Add indices for 2 triangles
-		m_indices.push_back(baseVertex);
-		m_indices.push_back(baseVertex + 1);
-		m_indices.push_back(baseVertex + 2);
-		m_indices.push_back(baseVertex);
-		m_indices.push_back(baseVertex + 2);
-		m_indices.push_back(baseVertex + 3);
-
-		m_lastTileCount++; // Count as 1 tile (the whole chunk)
 	}
 
 } // namespace engine::world
