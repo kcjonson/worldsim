@@ -548,8 +548,7 @@ Use this template for all work items:
   - [ ] Update TileData struct (8 bytes: surface, primaryBiome, secondaryBiome, biomeBlend, elevation, moisture, flags)
   - [ ] Add `tiles` array to Chunk struct (262,144 TileData = ~2.1 MB/chunk)
   - [ ] Add `std::atomic<bool> generationComplete` for thread safety
-  - [ ] Keep `ChunkSampleResult biomeData` (sector grid for ecotone queries)
-  - [ ] Implement `Chunk::generate(worldSeed)` — deterministic from seed
+  - [ ] Change `Chunk::generate(worldSeed, sampleResult)` — sampleResult is temporary, discarded after
   - [ ] Add `BiomeWeights::secondary()` method for ecotone blend storage
 - [ ] Phase 2: System Updates
   - [ ] Update ChunkRenderer: check `isReady()`, read from tiles[] array
@@ -559,10 +558,11 @@ Use this template for all work items:
   - [ ] Update AIDecisionSystem to use definitive tile data
 - [ ] Phase 3: Cleanup & Testing
   - [ ] Remove selectSurface() from query path (keep in generate())
-  - [ ] Simplify ChunkSampleResult (keep sector grid, remove isPure flag)
+  - [ ] Simplify ChunkSampleResult (remove isPure flag, sector grid is now temporary)
   - [ ] Add determinism tests (same seed = identical tiles)
   - [ ] Add thread safety tests
   - [ ] Add test: no flora entities placed on Surface::Water
+  - [ ] Add test: adjacent chunk edges match (seamless ecotones)
 
 **Success Criteria:**
 - All systems read tile data from single source (tiles[] array)

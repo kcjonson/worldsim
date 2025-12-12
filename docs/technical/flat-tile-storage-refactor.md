@@ -55,30 +55,38 @@ You plant ground cover **on** a surface. They're different layers.
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  BIOME (large scale, from 3D world sampling)                │
-│  "This region is Grassland" or "70% Grassland, 30% Forest"  │
-│  - Sampled at chunk corners from spherical world            │
-│  - Interpolated via sector grid for boundary chunks         │
+│  3D SPHERICAL WORLD (the ultimate source of truth)          │
+│  - Sampled via IWorldSampler at chunk corners               │
+│  - Deterministic from world seed                            │
+│  - Adjacent chunks share corner positions → seamless edges  │
 └─────────────────────────────────────────────────────────────┘
                               ↓
-                    influences surface selection
+              IWorldSampler::sampleChunk() returns
+              ChunkSampleResult (temporary input)
                               ↓
 ┌─────────────────────────────────────────────────────────────┐
-│  SURFACE (per tile, stored in flat array) ← THIS REFACTOR  │
-│  What IS this tile? Soil, Dirt, Sand, Rock, Water, Snow     │
-│  - Computed ONCE at chunk generation                        │
-│  - Single source of truth for all systems                   │
-│  - Affects walkability, buildability, flora placement       │
+│  CHUNK GENERATION (one-time computation)                    │
+│  - Iterates all 262,144 tiles                               │
+│  - Queries ChunkSampleResult for biome weights              │
+│  - Applies noise for surface variation (ponds, etc.)        │
+│  - Stores results in tiles[] array                          │
+│  - ChunkSampleResult discarded after generation             │
 └─────────────────────────────────────────────────────────────┘
                               ↓
-                    constrains what can grow
+┌─────────────────────────────────────────────────────────────┐
+│  TILES[] ARRAY (the chunk's source of truth)                │
+│  What IS each tile? Surface, biome, elevation, moisture     │
+│  - Single source of truth for all systems                   │
+│  - Fast O(1) array access                                   │
+│  - Affects walkability, buildability, flora placement       │
+└─────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────┐
 │  FLORA / GROUND COVER (entities placed on surface)          │
 │  Grass blades, flowers, moss, shrubs, trees                 │
-│  - Placed by PlacementExecutor AFTER surface is known       │
-│  - Requires compatible surface (grass needs Soil, not Water)│
-│  - Visual variety via Lua procedural generation             │
+│  - Placed by PlacementExecutor AFTER tiles are generated    │
+│  - Queries tiles[] to check surface type                    │
+│  - Skips Water surfaces (fixes flora-on-water bug!)         │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -93,14 +101,13 @@ struct Chunk {
     ChunkCoordinate coordinate;
     std::array<TileData, kChunkSize * kChunkSize> tiles;  // 512×512 = 262,144 tiles
 
-    // Biome blending data — KEEP for ecotone support
-    ChunkSampleResult biomeData;  // Sector grid for BiomeWeights queries
-
     // Thread safety
     std::atomic<bool> generationComplete{false};
 
     // Sparse storage for player modifications (unchanged)
     HashMap<TileLocalCoord, ModifiedTileData> modifications;
+
+    // NOTE: No ChunkSampleResult stored — it's temporary during generate()
 };
 
 struct TileData {
@@ -130,13 +137,35 @@ enum class Surface : uint8_t {
 - Reflects actual meaning (terrain material, not plants)
 - Clears up conceptual confusion
 
-#### 2. Keep Sector Grid for Biome Blending
-The `ChunkSampleResult` with its sector grid is **retained** for:
-- Ecotone entity spawning (future: probabilistic spawning based on biome blend)
-- Visual ground color blending at biome boundaries
-- The sector grid efficiently provides BiomeWeights for any tile
+#### 2. ChunkSampleResult is Temporary (Not Stored)
 
-The flat array stores the **result** of biome blending (primary/secondary + weight), while the sector grid remains available for more detailed queries if needed.
+> **Design History Note:** We initially considered keeping the sector grid (from `ChunkSampleResult`) permanently in each chunk for potential future BiomeWeights queries. After analysis, we determined this is unnecessary because:
+>
+> 1. **Seed-based regeneration**: Any chunk can be regenerated from `worldSeed + chunkCoordinate` at any time
+> 2. **No neighbor dependencies**: Adjacent chunks don't need each other's data — they share corner positions in the 3D world, so edges match automatically
+> 3. **Biome info stored in tiles**: `primaryBiome`, `secondaryBiome`, and `biomeBlend` capture what we need for ecotones
+> 4. **Memory savings**: ~32 KB per chunk (1,024 BiomeWeights × 32 bytes each)
+>
+> If we ever need full BiomeWeights (all 8 biome percentages) for a tile, we can re-sample the 3D world. This is rare and acceptable.
+
+The generation flow:
+
+```cpp
+// In ChunkManager
+void loadChunk(ChunkCoordinate coord) {
+    // 1. Sample 3D world (creates temporary ChunkSampleResult)
+    ChunkSampleResult sampleResult = m_worldSampler->sampleChunk(coord);
+
+    // 2. Create chunk and generate tiles
+    auto chunk = std::make_unique<Chunk>(coord);
+    chunk->generate(m_worldSeed, sampleResult);
+
+    // 3. sampleResult goes out of scope — sector grid discarded
+    //    Only tiles[] array persists
+
+    m_chunks[coord] = std::move(chunk);
+}
+```
 
 #### 3. Store Biome Blend Information
 Each tile stores:
@@ -162,7 +191,7 @@ if (tile.biomeBlend < 255) {
 All tile generation MUST be deterministic for multiplayer sync:
 
 ```cpp
-void Chunk::generate(uint64_t worldSeed) {
+void Chunk::generate(uint64_t worldSeed, const ChunkSampleResult& sampleResult) {
     for (uint16_t y = 0; y < kChunkSize; ++y) {
         for (uint16_t x = 0; x < kChunkSize; ++x) {
             TileData& tile = tiles[y * kChunkSize + x];
@@ -171,8 +200,8 @@ void Chunk::generate(uint64_t worldSeed) {
             float worldX = static_cast<float>(m_coord.x * kChunkSize + x);
             float worldY = static_cast<float>(m_coord.y * kChunkSize + y);
 
-            // Step 1: Get biome weights from sector grid
-            BiomeWeights weights = m_biomeData.getTileBiome(x, y);
+            // Step 1: Get biome weights from sample result (temporary)
+            BiomeWeights weights = sampleResult.getTileBiome(x, y);
             tile.primaryBiome = weights.primary();
             tile.secondaryBiome = weights.secondary();  // New method needed
             tile.biomeBlend = static_cast<uint8_t>(weights.get(tile.primaryBiome) * 255.0f);
@@ -180,8 +209,8 @@ void Chunk::generate(uint64_t worldSeed) {
             // Step 2: Select surface (deterministic noise based on world position + seed)
             tile.surface = selectSurface(tile.primaryBiome, worldX, worldY, worldSeed);
 
-            // Step 3: Elevation (interpolated from corners)
-            tile.elevation = computeElevation(x, y);
+            // Step 3: Elevation (interpolated from sample result corners)
+            tile.elevation = sampleResult.getTileElevation(x, y);
 
             // Step 4: Moisture (deterministic hash)
             tile.moisture = computeMoisture(worldX, worldY, worldSeed);
@@ -198,6 +227,12 @@ void Chunk::generate(uint64_t worldSeed) {
 - Integer-based hashing, no floating-point platform variance
 - Same seed + same coordinates = identical tiles everywhere
 
+**Why adjacent chunks match at edges:**
+- Chunk A's NE corner and Chunk B's NW corner sample the **same 3D world position**
+- Because 3D sampling is deterministic, they get identical biome data
+- Interpolation across each chunk produces seamless ecotones
+- No chunk needs to "know about" its neighbors
+
 #### 5. Thread Safety
 
 Chunks may be generated on background threads while the main thread renders. Solution:
@@ -206,7 +241,7 @@ Chunks may be generated on background threads while the main thread renders. Sol
 class Chunk {
 public:
     // Called by background thread
-    void generate(uint64_t worldSeed);
+    void generate(uint64_t worldSeed, const ChunkSampleResult& sampleResult);
 
     // Called by main thread — safe to call during/after generation
     [[nodiscard]] bool isReady() const {
@@ -247,7 +282,7 @@ void ChunkRenderer::render(const Chunk& chunk) {
 ```
 Per Chunk:
 - TileData: 8 bytes/tile × 262,144 tiles = 2.1 MB
-- ChunkSampleResult (sector grid): ~4 KB
+- No sector grid stored (temporary during generation)
 - Total: ~2.1 MB per chunk
 
 Typical Load (25 chunks): ~52 MB
@@ -263,33 +298,31 @@ Maximum Load (100 chunks): ~210 MB
 
 52 MB for the entire visible world is **tiny** by modern standards. This is not worth optimizing.
 
-## How Biome Blending Works
+## Why No Neighbor Dependencies?
 
-### The Sector Grid (Kept)
+A key property of the architecture: **chunks are independently generatable**.
 
-The sector grid in `ChunkSampleResult` provides efficient biome weight queries:
-
-```cpp
-// 32×32 grid covering 512×512 tiles
-// Each sector covers 16×16 tiles
-std::array<BiomeWeights, 32 * 32> sectorGrid;
-
-BiomeWeights getTileBiome(uint16_t x, uint16_t y) {
-    int sectorX = x / 16;
-    int sectorY = y / 16;
-    return sectorGrid[sectorY * 32 + sectorX];
-}
+```
+┌─────────────────┬─────────────────┐
+│    Chunk A      │    Chunk B      │
+│   (generated)   │  (not yet)      │
+│                 │                 │
+│      NE corner ─┼─ NW corner      │  ← Same 3D world position!
+│                 │                 │
+└─────────────────┴─────────────────┘
 ```
 
-At chunk generation, we query this grid and store the results in TileData. The grid remains available for any future systems that need full BiomeWeights.
+When Chunk B is eventually generated:
+1. `IWorldSampler::sampleChunk(B)` queries the 3D world at B's corners
+2. B's NW corner = A's NE corner (same coordinates)
+3. Deterministic sampling → same biome weights
+4. Seamless edge, no communication needed
 
-### Ecotone Support
-
-With `primaryBiome`, `secondaryBiome`, and `biomeBlend` stored per tile:
-
-1. **Entity Spawning**: PlacementExecutor can use blend weight for probabilistic spawning
-2. **Visual Blending**: Renderer can interpolate ground colors based on blend
-3. **Gameplay**: Movement speed, resource availability can factor in blend
+This enables:
+- Infinite streaming in any direction
+- Parallel chunk generation
+- No ordering constraints
+- Player can teleport anywhere
 
 ## Implementation Plan
 
@@ -311,11 +344,11 @@ With `primaryBiome`, `secondaryBiome`, and `biomeBlend` stored per tile:
 3. **Add `tiles` array to Chunk**
    - `std::array<TileData, kChunkSize * kChunkSize> tiles`
    - Add `std::atomic<bool> generationComplete`
-   - Keep `ChunkSampleResult biomeData` (don't remove!)
+   - Remove `ChunkSampleResult` member (becomes parameter to generate())
 
-4. **Create `Chunk::generate()` method**
+4. **Create `Chunk::generate(worldSeed, sampleResult)` method**
    - Move surface selection logic here
-   - Populate entire array at construction
+   - Populate entire array
    - Set `generationComplete` flag when done
    - Ensure all noise is deterministic from seed
 
@@ -325,36 +358,41 @@ With `primaryBiome`, `secondaryBiome`, and `biomeBlend` stored per tile:
 
 ### Phase 2: System Updates
 
-6. **Update `ChunkRenderer`**
+6. **Update `ChunkManager`**
+   - Sample 3D world, pass result to generate(), discard after
+   - Handle `isReady()` checks for in-progress chunks
+
+7. **Update `ChunkRenderer`**
    - Check `chunk.isReady()` before accessing tiles
    - Read from `tiles[]` array directly
    - Remove pure chunk optimization (no longer needed)
 
-7. **Update `PlacementExecutor`**
+8. **Update `PlacementExecutor`**
    - Query `tiles[]` for surface checks
    - **This fixes flora-on-water bug!**
    - Future: use biome blend for probabilistic spawning
 
-8. **Update `VisionSystem`**
+9. **Update `VisionSystem`**
    - Query `tiles[]` for terrain checks
    - Check `isReady()` for thread safety
 
-9. **Update `AIDecisionSystem`**
-   - Query `tiles[]` for water detection
-   - Pathfinding uses definitive tile data
+10. **Update `AIDecisionSystem`**
+    - Query `tiles[]` for water detection
+    - Pathfinding uses definitive tile data
 
-### Phase 3: Cleanup
+### Phase 3: Cleanup & Testing
 
-10. **Simplify but don't remove ChunkSampleResult**
-    - Keep sector grid (for future BiomeWeights queries)
-    - Remove pure chunk optimization flag (no longer needed)
-    - Keep corner elevations
+11. **Remove ChunkSampleResult from Chunk**
+    - It's now a temporary parameter to generate()
+    - Keep the class itself (IWorldSampler still returns it)
+    - Remove `isPure` flag (no longer needed)
 
-11. **Update tests**
+12. **Update tests**
     - Add generation determinism tests (same seed = same tiles)
     - Add thread safety tests
     - Add test: no flora entities on Surface::Water
     - Test biome blend values at ecotones
+    - Test edge matching between adjacent chunks
 
 ## Files to Modify
 
@@ -363,19 +401,20 @@ With `primaryBiome`, `secondaryBiome`, and `biomeBlend` stored per tile:
 - All files referencing `GroundCover`
 
 ### Core Changes (Phase 1)
-- `libs/engine/world/chunk/Chunk.h` — Add `tiles` array, `generate()`, `isReady()`
+- `libs/engine/world/chunk/Chunk.h` — Add `tiles` array, `generate()`, `isReady()`, remove stored biomeData
 - `libs/engine/world/chunk/Chunk.cpp` — Implement generation
 - `libs/engine/world/chunk/TileData.h` — New/updated struct
 - `libs/engine/world/BiomeWeights.h` — Add `secondary()` method
 
 ### System Updates (Phase 2)
+- `libs/engine/world/chunk/ChunkManager.cpp` — Pass sampleResult to generate()
 - `libs/engine/world/rendering/ChunkRenderer.cpp` — Thread safety, read from array
 - `libs/engine/assets/placement/PlacementExecutor.cpp` — Query tiles, fix flora-on-water
 - `libs/engine/ecs/systems/VisionSystem.cpp` — Query tiles
 - `libs/engine/ecs/systems/AIDecisionSystem.cpp` — Query tiles
 
-### Kept (not removed)
-- `libs/engine/world/chunk/ChunkSampleResult.h` — Keep sector grid for biome queries
+### Simplified (not removed)
+- `libs/engine/world/chunk/ChunkSampleResult.h` — Remove `isPure`, keep as temporary data structure
 
 ## Risks and Mitigations
 
@@ -397,11 +436,11 @@ With `primaryBiome`, `secondaryBiome`, and `biomeBlend` stored per tile:
 - Add determinism tests: generate same chunk twice, verify identical
 - Test across platforms if targeting cross-play
 
-### Risk: Breaking Biome Blending
+### Risk: Edge Mismatch Between Chunks
 **Mitigation**:
-- Keep sector grid (ChunkSampleResult)
-- Store blend info in TileData for common queries
-- Full BiomeWeights available via sector grid if needed
+- Adjacent chunks share corner coordinates in 3D world
+- Deterministic sampling guarantees identical biome data at shared corners
+- Add test: generate two adjacent chunks, verify edge tiles have compatible biomes
 
 ## Success Criteria
 
@@ -410,8 +449,9 @@ With `primaryBiome`, `secondaryBiome`, and `biomeBlend` stored per tile:
 3. **Deterministic generation** — Same seed = identical tiles
 4. **Thread safe** — No crashes or data races during chunk streaming
 5. **Biome blending preserved** — Ecotone tiles have blend information
-6. **Memory usage < 250 MB** for typical 25-chunk load (with headroom)
-7. **All existing tests pass** — No behavioral regressions
+6. **Seamless chunk edges** — Adjacent chunks match at boundaries
+7. **Memory usage < 250 MB** for typical 25-chunk load (~52 MB expected)
+8. **All existing tests pass** — No behavioral regressions
 
 ## Related Documentation
 
@@ -422,6 +462,7 @@ With `primaryBiome`, `secondaryBiome`, and `biomeBlend` stored per tile:
 
 ## Revision History
 
+- 2025-12-11: Clarified ChunkSampleResult is temporary (discarded after generation), added neighbor independence explanation
 - 2025-12-11: Added thread safety, determinism requirements, biome blend storage, kept sector grid
 - 2025-12-11: Added GroundCover→Surface rename, clarified conceptual model, added flora-on-water fix
 - 2025-12-11: Initial proposal based on water detection debugging session
