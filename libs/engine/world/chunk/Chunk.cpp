@@ -7,40 +7,66 @@ namespace engine::world {
 	Chunk::Chunk(ChunkCoordinate coord, ChunkSampleResult biomeData, uint64_t worldSeed)
 		: m_coord(coord),
 		  m_biomeData(std::move(biomeData)),
-		  m_worldSeed(worldSeed) {
+		  m_worldSeed(worldSeed),
+		  m_tiles{},
+		  m_generationComplete(false) {
 		touch();
 	}
 
-	TileData Chunk::getTile(uint16_t localX, uint16_t localY) const {
-		return generateTile(localX, localY);
+	void Chunk::generate() {
+		// Pre-compute all tiles in the chunk
+		for (uint16_t y = 0; y < kChunkSize; ++y) {
+			for (uint16_t x = 0; x < kChunkSize; ++x) {
+				m_tiles[y * kChunkSize + x] = computeTile(x, y);
+			}
+		}
+
+		// Mark generation complete (release semantics for thread safety)
+		m_generationComplete.store(true, std::memory_order_release);
 	}
 
-	TileData Chunk::generateTile(uint16_t localX, uint16_t localY) const {
+	const TileData& Chunk::getTile(uint16_t localX, uint16_t localY) const {
+		return m_tiles[localY * kChunkSize + localX];
+	}
+
+	TileData Chunk::computeTile(uint16_t localX, uint16_t localY) const {
 		TileData tile;
 
-		// Get biome from pre-computed data
-		tile.biome = m_biomeData.getTileBiome(localX, localY);
+		// Get biome weights from pre-computed sample data
+		BiomeWeights biomeWeights = m_biomeData.getTileBiome(localX, localY);
 
-		// Get elevation from interpolation
-		tile.elevation = m_biomeData.getTileElevation(localX, localY);
+		// Store primary and secondary biomes with blend weight
+		tile.primaryBiome = biomeWeights.primary();
+		tile.secondaryBiome = biomeWeights.secondary();
 
-		// Select surface type based on biome (uses spatial clustering)
-		tile.surface = selectSurface(tile.biome.primary(), localX, localY);
+		// Convert float weight (0.0-1.0) to uint8_t (0-255)
+		float primaryWeight = biomeWeights.primaryWeight();
+		tile.biomeBlend = static_cast<uint8_t>(std::min(255.0F, primaryWeight * 255.0F));
 
-		// Generate deterministic properties from hash
+		// Get elevation from interpolation (convert meters to centimeters, clamped to uint16_t)
+		float elevMeters = m_biomeData.getTileElevation(localX, localY);
+		float elevCm = elevMeters * 100.0F;
+		tile.elevation = static_cast<uint16_t>(std::clamp(elevCm, 0.0F, 65535.0F));
+
+		// Select surface type based on primary biome (uses spatial clustering)
+		tile.surface = selectSurface(tile.primaryBiome, localX, localY);
+
+		// Generate deterministic moisture from hash
 		uint32_t hash = tileHash(m_coord, localX, localY, m_worldSeed);
-
-		// Generate moisture (normalized hash + biome influence)
 		constexpr float kNormalize = 1.0F / static_cast<float>(UINT32_MAX);
-		tile.moisture = static_cast<float>(hash) * kNormalize;
+		float moistureBase = static_cast<float>(hash) * kNormalize;
 
 		// Adjust moisture based on biome
-		Biome primary = tile.biome.primary();
-		if (primary == Biome::Desert) {
-			tile.moisture *= 0.2F;
-		} else if (primary == Biome::Wetland || primary == Biome::Ocean) {
-			tile.moisture = 0.8F + tile.moisture * 0.2F;
+		if (tile.primaryBiome == Biome::Desert) {
+			moistureBase *= 0.2F;
+		} else if (tile.primaryBiome == Biome::Wetland || tile.primaryBiome == Biome::Ocean) {
+			moistureBase = 0.8F + moistureBase * 0.2F;
 		}
+
+		// Convert to uint8_t (0-255)
+		tile.moisture = static_cast<uint8_t>(std::min(255.0F, moistureBase * 255.0F));
+
+		tile.flags = 0; // Reserved for future use
 
 		return tile;
 	}

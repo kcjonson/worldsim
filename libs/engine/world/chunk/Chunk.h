@@ -10,6 +10,8 @@
 
 #include <graphics/Color.h>
 
+#include <array>
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <string>
@@ -48,20 +50,44 @@ enum class Surface : uint8_t {
 	}
 }
 
-/// Tile data generated from biome + seed
+/// Compact tile data - 8 bytes, stored in flat array per chunk.
+/// Designed for single source of truth: computed once, read by all systems.
 struct TileData {
-	BiomeWeights biome;
-	Surface surface = Surface::Soil;
-	float elevation = 0.0F;
-	float moisture = 0.5F;
+	Surface surface = Surface::Soil;    ///< 1 byte - THE definitive terrain type
+	Biome primaryBiome = Biome::Grassland;   ///< 1 byte - dominant biome
+	Biome secondaryBiome = Biome::Grassland; ///< 1 byte - for ecotones (may equal primary)
+	uint8_t biomeBlend = 255;           ///< 1 byte - weight of primary (255 = 100% primary)
+	uint16_t elevation = 0;             ///< 2 bytes - centimeters above sea level
+	uint8_t moisture = 128;             ///< 1 byte - normalized 0-255
+	uint8_t flags = 0;                  ///< 1 byte - reserved for future use
+
+	/// Get biome weights as BiomeWeights (for compatibility during migration)
+	[[nodiscard]] BiomeWeights biome() const {
+		if (biomeBlend == 255 || primaryBiome == secondaryBiome) {
+			return BiomeWeights::single(primaryBiome);
+		}
+		BiomeWeights bw;
+		float primaryWeight = static_cast<float>(biomeBlend) / 255.0F;
+		bw.set(primaryBiome, primaryWeight);
+		bw.set(secondaryBiome, 1.0F - primaryWeight);
+		return bw;
+	}
 };
 
 /// A 512×512 region of the world.
-/// Holds biome data sampled from the 3D world and generates tiles on-demand.
+/// Tiles are pre-computed during generate() and stored in a flat array.
+/// All systems read from the same definitive tile data.
 class Chunk {
   public:
 	/// Create a chunk with sampled biome data
 	Chunk(ChunkCoordinate coord, ChunkSampleResult biomeData, uint64_t worldSeed);
+
+	/// Pre-compute all tiles in this chunk. Call once after construction.
+	/// Thread-safe: sets atomic flag when complete.
+	void generate();
+
+	/// Check if tiles have been generated (thread-safe)
+	[[nodiscard]] bool isReady() const { return m_generationComplete.load(std::memory_order_acquire); }
 
 	/// Get the chunk's grid coordinate
 	[[nodiscard]] ChunkCoordinate coordinate() const { return m_coord; }
@@ -70,8 +96,8 @@ class Chunk {
 	[[nodiscard]] WorldPosition worldOrigin() const { return m_coord.origin(); }
 
 	/// Get tile data at local coordinates (0-511, 0-511)
-	/// Generates tile procedurally if not cached
-	[[nodiscard]] TileData getTile(uint16_t localX, uint16_t localY) const;
+	/// Returns pre-computed tile from flat array (requires isReady() == true)
+	[[nodiscard]] const TileData& getTile(uint16_t localX, uint16_t localY) const;
 
 	/// Get the biome data for this chunk
 	[[nodiscard]] const ChunkSampleResult& biomeData() const { return m_biomeData; }
@@ -108,8 +134,14 @@ class Chunk {
 	uint64_t m_worldSeed;
 	mutable std::chrono::steady_clock::time_point m_lastAccessed;
 
-	/// Generate tile data procedurally
-	[[nodiscard]] TileData generateTile(uint16_t localX, uint16_t localY) const;
+	/// Flat array of pre-computed tiles (512×512 = 262,144 tiles × 8 bytes = 2.1 MB)
+	std::array<TileData, kChunkSize * kChunkSize> m_tiles;
+
+	/// Thread-safe flag indicating generation is complete
+	std::atomic<bool> m_generationComplete{false};
+
+	/// Compute tile data for a single tile during generation
+	[[nodiscard]] TileData computeTile(uint16_t localX, uint16_t localY) const;
 
 	/// Select surface type based on biome using organic noise-based patches
 	[[nodiscard]] Surface selectSurface(Biome biome, uint16_t localX, uint16_t localY) const;

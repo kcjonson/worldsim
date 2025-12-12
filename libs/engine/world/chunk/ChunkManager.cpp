@@ -92,6 +92,9 @@ void ChunkManager::loadChunk(ChunkCoordinate coord) {
 	// Create chunk with sampled data
 	auto chunk = std::make_unique<Chunk>(coord, std::move(sampleResult), m_sampler->getWorldSeed());
 
+	// Pre-compute all tiles (fills the flat array)
+	chunk->generate();
+
 	LOG_DEBUG(Engine, "Loaded chunk (%d, %d) - %s", coord.x, coord.y, chunk->isPure() ? "pure" : "boundary");
 
 	m_chunks[coord] = std::move(chunk);

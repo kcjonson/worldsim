@@ -38,7 +38,7 @@ namespace engine::assets {
 		for (uint16_t y = 0; y < world::kChunkSize; ++y) {
 			for (uint16_t x = 0; x < world::kChunkSize; ++x) {
 				const auto& tile = chunk->getTile(x, y);
-				snapshot.biomes.push_back(tile.biome.primary());
+				snapshot.biomes.push_back(tile.primaryBiome);
 				snapshot.surfaces.push_back(world::surfaceToString(tile.surface));
 			}
 		}
