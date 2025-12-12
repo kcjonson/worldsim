@@ -534,28 +534,37 @@ Use this template for all work items:
 **Dependencies:** None
 **Status:** ready
 
-**Goal:** Replace layered/lazy tile generation with flat tile array per chunk. Eliminates class of bugs where systems disagree about tile state (e.g., ponds existing in data but not rendering).
+**Goal:** Replace layered/lazy tile generation with flat tile array per chunk. Fixes flora-on-water bug and eliminates class of bugs where systems disagree about tile state.
+
+**Key Insight:** `GroundCover` is misnamed — it's actually `Surface` (terrain material). Real ground cover (plants) are entities placed ON surfaces. Surface must be computed FIRST, then flora placement can reliably skip water tiles.
 
 **Tasks:**
+- [ ] Phase 0: Terminology Fix (Prerequisite)
+  - [ ] Rename `GroundCover` enum → `Surface`
+  - [ ] Rename `Grass` → `Soil` (plants grow on soil, grass IS a plant)
+  - [ ] Rename `selectGroundCover()` → `selectSurface()`
+  - [ ] Update all references and documentation
 - [ ] Phase 1: Data Structure Changes
   - [ ] Add `tiles` array to Chunk struct (262,144 TileData)
-  - [ ] Create packed TileData struct (6 bytes: groundCover, biome, elevation, moisture, flags)
+  - [ ] Create packed TileData struct (6 bytes: surface, biome, elevation, moisture, flags)
   - [ ] Implement `Chunk::generate()` method that populates array at construction
-  - [ ] Move `selectGroundCover()` and noise sampling into generate()
+  - [ ] Move `selectSurface()` and noise sampling into generate()
 - [ ] Phase 2: System Updates
   - [ ] Update ChunkRenderer to read from tiles[] array
   - [ ] Remove pure chunk optimization (no longer needed)
-  - [ ] Update PlacementExecutor to query tiles[] for ground cover
+  - [ ] Update PlacementExecutor to query tiles[] for surface (**fixes flora-on-water bug**)
   - [ ] Update VisionSystem to query tiles[] for terrain
   - [ ] Update AIDecisionSystem to use definitive tile data
 - [ ] Phase 3: Cleanup
-  - [ ] Remove selectGroundCover() from query path
+  - [ ] Remove selectSurface() from query path (keep in generate())
   - [ ] Simplify ChunkSampleResult (remove sector grid)
   - [ ] Update MockWorldSampler (remove pure chunk special cases)
   - [ ] Update/add unit tests for generation determinism
+  - [ ] Add test: no flora entities placed on Surface::Water
 
 **Success Criteria:**
 - All systems read tile data from single source (tiles[] array)
+- No flora spawning on water (flora-on-water bug fixed)
 - Water detection bug class eliminated
 - Memory usage < 200 MB for 25-chunk load
 - All existing tests pass
@@ -573,9 +582,9 @@ Use this template for all work items:
 ### Entities Spawning on Water Tiles
 **Impact:** Flora entities (grass, berry bushes, trees) spawn on water tiles instead of being restricted to land
 **Workaround:** None currently - visual issue only, doesn't affect gameplay
-**Root Cause:** PlacementExecutor doesn't check tile ground cover type when spawning entities
-**Fix Needed:** Add ground cover filtering to PlacementExecutor that checks tile type at spawn position
-**Attempted:** Added `groundCovers` field to BiomePlacement and checks in PlacementExecutor, but filtering didn't work as expected
+**Root Cause:** Surface type (water vs soil) is computed lazily via noise, not stored. PlacementExecutor can't reliably check surface because it would need to recompute the same noise with exact same parameters.
+**Fix:** The **Flat Tile Storage Refactor** epic solves this architecturally — surface is computed FIRST and stored in `tiles[]` array, then PlacementExecutor queries definitive surface data.
+**Attempted (failed):** Added `groundCovers` field to BiomePlacement and checks in PlacementExecutor, but filtering didn't work because of the lazy computation mismatch.
 
 ---
 
