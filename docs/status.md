@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2025-12-09 (DecisionTrace system for task queue display)
+Last Updated: 2025-12-11 (Added Flat Tile Storage Refactor epic)
 
 ## Epic/Story/Task Template
 
@@ -395,14 +395,14 @@ Use this template for all work items:
 
 ---
 
-### 🔄 MVP: Player Observation UI
+### ✅ MVP: Player Observation UI
 **Spec/Documentation:** `/docs/design/mvp-scope.md`
 **Dependencies:** Needs System ✅, AI Decision System ✅, Actions System ✅
-**Status:** in progress
+**Status:** complete
 
 **Goal:** Player can observe colonist status and task queue (observation only, no control).
 
-**Tasks:**
+**Completed Tasks:**
 - [x] UI Framework Visibility System
   - [x] Add `visible` flag to IComponent interface
   - [x] Component::render() skips invisible children
@@ -420,11 +420,13 @@ Use this template for all work items:
   - [x] Display colonist name (EntityInfoPanel with SelectionAdapter)
   - [x] Show all 4 need bars (Hunger, Thirst, Energy, Bladder)
   - [x] Color coding for need urgency (green → yellow → red)
-- [ ] Task Queue Display
+- [x] Task Queue Display
   - [x] Show current task with progress (Task/Action in panel)
   - [x] DecisionTrace component and AIDecisionSystem integration (backend complete)
-  - [ ] EntityInfoPanel: Show pending tasks in priority order
-  - [ ] EntityInfoPanel: Show reason for each task selection
+  - [x] TaskListPanel: Expanded view showing full task queue
+  - [x] ClickableTextSlot for toggle affordance in EntityInfoPanel
+
+**Result:** Player can select colonists, view their need bars, and expand a full task queue showing DecisionTrace priorities ✅
 
 ---
 
@@ -522,6 +524,41 @@ Use this template for all work items:
 **Spec/Documentation:** `/docs/technical/asset-system/mod-metadata.md`, `/docs/technical/asset-system/patching-system.md`
 **Dependencies:** Folder-Based Asset Migration, Variant Cache System
 **Status:** planned (post-MVP)
+
+---
+
+## Planned Epics (Ready)
+
+### Flat Tile Storage Refactor
+**Spec/Documentation:** `/docs/technical/flat-tile-storage-refactor.md`
+**Dependencies:** None
+**Status:** ready
+
+**Goal:** Replace layered/lazy tile generation with flat tile array per chunk. Eliminates class of bugs where systems disagree about tile state (e.g., ponds existing in data but not rendering).
+
+**Tasks:**
+- [ ] Phase 1: Data Structure Changes
+  - [ ] Add `tiles` array to Chunk struct (262,144 TileData)
+  - [ ] Create packed TileData struct (6 bytes: groundCover, biome, elevation, moisture, flags)
+  - [ ] Implement `Chunk::generate()` method that populates array at construction
+  - [ ] Move `selectGroundCover()` and noise sampling into generate()
+- [ ] Phase 2: System Updates
+  - [ ] Update ChunkRenderer to read from tiles[] array
+  - [ ] Remove pure chunk optimization (no longer needed)
+  - [ ] Update PlacementExecutor to query tiles[] for ground cover
+  - [ ] Update VisionSystem to query tiles[] for terrain
+  - [ ] Update AIDecisionSystem to use definitive tile data
+- [ ] Phase 3: Cleanup
+  - [ ] Remove selectGroundCover() from query path
+  - [ ] Simplify ChunkSampleResult (remove sector grid)
+  - [ ] Update MockWorldSampler (remove pure chunk special cases)
+  - [ ] Update/add unit tests for generation determinism
+
+**Success Criteria:**
+- All systems read tile data from single source (tiles[] array)
+- Water detection bug class eliminated
+- Memory usage < 200 MB for 25-chunk load
+- All existing tests pass
 
 ---
 
