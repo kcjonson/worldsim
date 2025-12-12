@@ -5,6 +5,7 @@
 
 #include "PlacementExecutor.h"
 
+#include <utils/Log.h>
 #include <world/chunk/Chunk.h>
 #include <world/chunk/ChunkCoordinate.h>
 
@@ -17,11 +18,11 @@
 namespace engine::assets {
 
 	/// Snapshot of chunk tile data for thread-safe async processing.
-	/// Captures biome/ground cover data so async tasks don't access Chunk directly.
+	/// Captures biome/surface data so async tasks don't access Chunk directly.
 	struct ChunkDataSnapshot {
 		world::ChunkCoordinate	  coord;
 		std::vector<world::Biome> biomes;
-		std::vector<std::string>  groundCovers;
+		std::vector<std::string>  surfaces;
 	};
 
 	/// Capture chunk tile data for thread-safe async processing.
@@ -32,13 +33,13 @@ namespace engine::assets {
 
 		const size_t tileCount = world::kChunkSize * world::kChunkSize;
 		snapshot.biomes.reserve(tileCount);
-		snapshot.groundCovers.reserve(tileCount);
+		snapshot.surfaces.reserve(tileCount);
 
 		for (uint16_t y = 0; y < world::kChunkSize; ++y) {
 			for (uint16_t x = 0; x < world::kChunkSize; ++x) {
 				const auto& tile = chunk->getTile(x, y);
 				snapshot.biomes.push_back(tile.biome.primary());
-				snapshot.groundCovers.push_back(world::groundCoverToString(tile.groundCover));
+				snapshot.surfaces.push_back(world::surfaceToString(tile.surface));
 			}
 		}
 
@@ -87,8 +88,8 @@ namespace engine::assets {
 				ctx.getBiome = [&chunkData](uint16_t x, uint16_t y) {
 					return chunkData.biomes[y * world::kChunkSize + x];
 				};
-				ctx.getGroundCover = [&chunkData](uint16_t x, uint16_t y) {
-					return chunkData.groundCovers[y * world::kChunkSize + x];
+				ctx.getSurface = [&chunkData](uint16_t x, uint16_t y) {
+					return chunkData.surfaces[y * world::kChunkSize + x];
 				};
 
 				return executor->computeChunkEntities(ctx, executor);

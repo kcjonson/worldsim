@@ -17,30 +17,31 @@
 
 namespace engine::world {
 
-/// Ground cover types for rendering
-enum class GroundCover : uint8_t {
-	Grass,
-	Dirt,
-	Sand,
-	Rock,
-	Water,
-	Snow
+/// Surface types for terrain rendering
+/// Note: These are surface MATERIALS, not flora. "Soil" is what grass grows ON.
+enum class Surface : uint8_t {
+	Soil,   // Dirt/earth suitable for vegetation (was "Grass")
+	Dirt,   // Exposed dirt/mud
+	Sand,   // Sandy terrain
+	Rock,   // Rocky/stone surface
+	Water,  // Water bodies
+	Snow    // Snow-covered ground
 };
 
-/// Convert GroundCover enum to string for placement rules and debugging
-[[nodiscard]] inline std::string groundCoverToString(GroundCover cover) {
-	switch (cover) {
-		case GroundCover::Grass:
-			return "Grass";
-		case GroundCover::Dirt:
+/// Convert Surface enum to string for placement rules and debugging
+[[nodiscard]] inline std::string surfaceToString(Surface surface) {
+	switch (surface) {
+		case Surface::Soil:
+			return "Soil";
+		case Surface::Dirt:
 			return "Dirt";
-		case GroundCover::Sand:
+		case Surface::Sand:
 			return "Sand";
-		case GroundCover::Rock:
+		case Surface::Rock:
 			return "Rock";
-		case GroundCover::Water:
+		case Surface::Water:
 			return "Water";
-		case GroundCover::Snow:
+		case Surface::Snow:
 			return "Snow";
 		default:
 			return "Unknown";
@@ -50,7 +51,7 @@ enum class GroundCover : uint8_t {
 /// Tile data generated from biome + seed
 struct TileData {
 	BiomeWeights biome;
-	GroundCover groundCover = GroundCover::Grass;
+	Surface surface = Surface::Soil;
 	float elevation = 0.0F;
 	float moisture = 0.5F;
 };
@@ -90,8 +91,8 @@ class Chunk {
 	/// Get color for a biome (for ground rendering)
 	[[nodiscard]] static Foundation::Color getBiomeColor(Biome biome);
 
-	/// Get color for ground cover
-	[[nodiscard]] static Foundation::Color getGroundCoverColor(GroundCover cover);
+	/// Get color for surface type
+	[[nodiscard]] static Foundation::Color getSurfaceColor(Surface surface);
 
 	/// Update last accessed time (for LRU eviction)
 	/// Note: touch() is const because m_lastAccessed is mutable - LRU timestamp
@@ -110,8 +111,8 @@ class Chunk {
 	/// Generate tile data procedurally
 	[[nodiscard]] TileData generateTile(uint16_t localX, uint16_t localY) const;
 
-	/// Select ground cover based on biome using organic noise-based patches
-	[[nodiscard]] GroundCover selectGroundCover(Biome biome, uint16_t localX, uint16_t localY) const;
+	/// Select surface type based on biome using organic noise-based patches
+	[[nodiscard]] Surface selectSurface(Biome biome, uint16_t localX, uint16_t localY) const;
 
 	/// Hash function for deterministic tile generation
 	[[nodiscard]] static uint32_t tileHash(ChunkCoordinate chunk, uint16_t localX, uint16_t localY, uint64_t seed);

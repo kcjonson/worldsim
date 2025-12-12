@@ -26,8 +26,17 @@ namespace engine::world {
 
 		// Check if chunk is pure (all corners same primary biome)
 		if (isChunkPure(result.cornerBiomes[0], result.cornerBiomes[1], result.cornerBiomes[2], result.cornerBiomes[3])) {
-			result.isPure = true;
-			result.singleBiome = result.cornerBiomes[0].primary();
+			Biome primary = result.cornerBiomes[0].primary();
+			// Grassland and Forest biomes can have water ponds generated via noise
+			// in Chunk::selectSurface(). Mark these chunks as NOT pure to ensure
+			// per-tile rendering, otherwise water tiles won't be visible.
+			if (primary == Biome::Grassland || primary == Biome::Forest) {
+				result.isPure = false;
+				result.computeSectorGrid();
+			} else {
+				result.isPure = true;
+				result.singleBiome = primary;
+			}
 		} else {
 			result.isPure = false;
 			result.computeSectorGrid();

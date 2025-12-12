@@ -1,6 +1,7 @@
 #include "ChunkRenderer.h"
 
 #include <primitives/Primitives.h>
+#include <utils/Log.h>
 
 namespace engine::world {
 
@@ -125,7 +126,7 @@ namespace engine::world {
 
 				// Get tile data and color
 				TileData		  tile = chunk.getTile(static_cast<uint16_t>(tileX), static_cast<uint16_t>(tileY));
-				Foundation::Color color = Chunk::getGroundCoverColor(tile.groundCover);
+				Foundation::Color color = Chunk::getSurfaceColor(tile.surface);
 
 				// Calculate world position of tile
 				float worldX = chunkMinX + static_cast<float>(tileX) * kTileSize;
