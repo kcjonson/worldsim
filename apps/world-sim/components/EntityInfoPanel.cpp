@@ -56,7 +56,8 @@ namespace world_sim {
 	EntityInfoPanel::EntityInfoPanel(const Args& args)
 		: panelWidth(args.width),
 		  panelX(args.position.x),
-		  onCloseCallback(args.onClose) {
+		  onCloseCallback(args.onClose),
+		  onTaskListToggleCallback(args.onTaskListToggle) {
 
 		contentWidth = panelWidth - (2.0F * kPadding);
 
@@ -209,6 +210,25 @@ namespace world_sim {
 			));
 		}
 
+		// Create clickable text element (for ClickableTextSlot)
+		clickableTextHandle = addChild(
+			UI::Text(
+				UI::Text::Args{
+					.position = {args.position.x + kPadding, args.position.y},
+					.text = "",
+					.style =
+						{
+							.color = Foundation::Color(0.5F, 0.7F, 0.9F, 1.0F), // Blue for clickable
+							.fontSize = kTextFontSize,
+							.hAlign = Foundation::HorizontalAlign::Left,
+							.vAlign = Foundation::VerticalAlign::Top,
+						},
+					.zIndex = 1,
+					.id = (args.id + "_clickable").c_str()
+				}
+			)
+		);
+
 		// Disable child sorting to preserve LayerHandle indices
 		childrenNeedSorting = false;
 
@@ -219,7 +239,7 @@ namespace world_sim {
 
 	void EntityInfoPanel::update(const ecs::World& world, const engine::assets::AssetRegistry& registry, const Selection& selection) {
 		// Use adapter to convert selection to panel content
-		auto content = adaptSelection(selection, world, registry);
+		auto content = adaptSelection(selection, world, registry, onTaskListToggleCallback);
 
 		if (!content.has_value()) {
 			// Tier 1: Visibility change - hide panel
@@ -231,7 +251,7 @@ namespace world_sim {
 			return;
 		}
 
-		// Handle close button click (only when visible)
+		// Handle close button and clickable slot clicks (only when visible)
 		if (visible) {
 			auto& input = engine::InputManager::Get();
 			if (input.isMouseButtonReleased(engine::MouseButton::Left)) {
@@ -246,6 +266,13 @@ namespace world_sim {
 					if (onCloseCallback) {
 						onCloseCallback();
 					}
+					return;
+				}
+
+				// Check if click is within clickable slot bounds
+				if (clickableCallback && mousePos.x >= clickableBoundsMin.x && mousePos.x <= clickableBoundsMax.x &&
+					mousePos.y >= clickableBoundsMin.y && mousePos.y <= clickableBoundsMax.y) {
+					clickableCallback();
 					return;
 				}
 			}
@@ -273,6 +300,11 @@ namespace world_sim {
 		usedProgressBars = 0;
 		usedListItems = 0;
 
+		// Clear clickable slot state (will be set if content has ClickableTextSlot)
+		clickableCallback = nullptr;
+		clickableBoundsMin = {};
+		clickableBoundsMax = {};
+
 		// Hide all pool elements first (will show ones we use)
 		hideSlots();
 
@@ -294,6 +326,8 @@ namespace world_sim {
 						return h + kLineSpacing;
 					} else if constexpr (std::is_same_v<T, SpacerSlot>) {
 						return s.height;
+					} else if constexpr (std::is_same_v<T, ClickableTextSlot>) {
+						return kTextFontSize + kLineSpacing;
 					}
 					return 0.0F;
 				},
@@ -358,6 +392,8 @@ namespace world_sim {
 					return renderTextListSlot(s, yOffset);
 				} else if constexpr (std::is_same_v<T, SpacerSlot>) {
 					return renderSpacerSlot(s, yOffset);
+				} else if constexpr (std::is_same_v<T, ClickableTextSlot>) {
+					return renderClickableTextSlot(s, yOffset);
 				}
 				return 0.0F;
 			},
@@ -423,6 +459,20 @@ namespace world_sim {
 
 	float EntityInfoPanel::renderSpacerSlot(const SpacerSlot& slot, float /*yOffset*/) {
 		return slot.height;
+	}
+
+	float EntityInfoPanel::renderClickableTextSlot(const ClickableTextSlot& slot, float yOffset) {
+		if (auto* text = getChild<UI::Text>(clickableTextHandle)) {
+			text->visible = true;
+			text->position = {panelX + kPadding, yOffset};
+			text->text = slot.label + ": " + slot.value;
+
+			// Store callback and bounds for click handling
+			clickableCallback = slot.onClick;
+			clickableBoundsMin = {panelX + kPadding, yOffset};
+			clickableBoundsMax = {panelX + contentWidth, yOffset + kTextFontSize};
+		}
+		return kTextFontSize + kLineSpacing;
 	}
 
 	Foundation::Vec2 EntityInfoPanel::getCloseButtonPosition(float panelY) const {

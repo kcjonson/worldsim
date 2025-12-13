@@ -7,6 +7,7 @@ add_executable(world-sim
     components/ZoomControl.cpp
     components/NeedBar.cpp
     components/EntityInfoPanel.cpp
+    components/TaskListPanel.cpp
     components/SelectionAdapter.cpp
     scenes/SplashScene.cpp
     scenes/MainMenuScene.cpp

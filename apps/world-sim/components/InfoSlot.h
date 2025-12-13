@@ -6,6 +6,7 @@
 // Each slot type represents a different kind of UI element.
 // Adapters convert domain data (colonist, world entity) into slots.
 
+#include <functional>
 #include <string>
 #include <variant>
 #include <vector>
@@ -35,8 +36,15 @@ struct SpacerSlot {
 	float height;
 };
 
+/// Clickable text with callback: "Tasks: ▸ Show"
+struct ClickableTextSlot {
+	std::string			  label;
+	std::string			  value;
+	std::function<void()> onClick;
+};
+
 /// Union of all slot types - adapters return vectors of these
-using InfoSlot = std::variant<TextSlot, ProgressBarSlot, TextListSlot, SpacerSlot>;
+using InfoSlot = std::variant<TextSlot, ProgressBarSlot, TextListSlot, SpacerSlot, ClickableTextSlot>;
 
 /// Complete panel content description produced by adapters
 struct PanelContent {

@@ -5,6 +5,8 @@
 #include "CoordinateSystem/CoordinateSystem.h"
 #include "graphics/ClipTypes.h"
 #include "primitives/BatchRenderer.h"
+#include <font/FontRenderer.h>
+#include <utils/Log.h>
 #include <GL/glew.h>
 #include <algorithm>
 #include <cmath>
@@ -176,6 +178,20 @@ namespace Renderer::Primitives {
 
 	void getViewport(int& width, int& height) {
 		if (g_batchRenderer != nullptr) {
+			g_batchRenderer->getViewport(width, height);
+		} else {
+			width = 800;
+			height = 600;
+		}
+	}
+
+	void getLogicalViewport(int& width, int& height) {
+		if (g_coordinateSystem != nullptr) {
+			glm::vec2 windowSize = g_coordinateSystem->getWindowSize();
+			width = static_cast<int>(windowSize.x);
+			height = static_cast<int>(windowSize.y);
+		} else if (g_batchRenderer != nullptr) {
+			// Fallback to physical viewport if no coordinate system
 			g_batchRenderer->getViewport(width, height);
 		} else {
 			width = 800;
@@ -356,19 +372,32 @@ namespace Renderer::Primitives {
 	}
 
 	void drawText(const TextArgs& args) {
-		// TODO: Implement Primitives::DrawText
-		//
-		// Currently a stub. Text rendering requires FontRenderer (in ui library) to generate
-		// glyph quads. The renderer library cannot depend on ui (would create circular dep).
-		//
-		// Options to implement:
-		// 1. Move FontRenderer to renderer library (cleanest, but significant refactor)
-		// 2. Add PRIVATE include path to ui in renderer CMake (include-only, no link dep)
-		// 3. Create abstract IGlyphGenerator interface in renderer, implement in ui
-		//
-		// For now, use UI::Text component for text rendering.
-		// See development-log.md for detailed analysis.
-		(void)args;
+		if (g_fontRenderer == nullptr || g_batchRenderer == nullptr) {
+			LOG_WARNING(Engine, "drawText called but renderer not initialized (font=%p, batch=%p)",
+				static_cast<void*>(g_fontRenderer), static_cast<void*>(g_batchRenderer.get()));
+			return;
+		}
+
+		// Generate glyph quads from the font renderer
+		std::vector<ui::FontRenderer::GlyphQuad> quads;
+		g_fontRenderer->generateGlyphQuads(
+			args.text,
+			glm::vec2(args.position.x, args.position.y),
+			args.scale,
+			glm::vec4(args.color.r, args.color.g, args.color.b, args.color.a),
+			quads
+		);
+
+		// Add each glyph quad to the batch renderer
+		for (const auto& quad : quads) {
+			g_batchRenderer->addTextQuad(
+				Foundation::Vec2(quad.position.x, quad.position.y),
+				Foundation::Vec2(quad.size.x, quad.size.y),
+				Foundation::Vec2(quad.uvMin.x, quad.uvMin.y),
+				Foundation::Vec2(quad.uvMax.x, quad.uvMax.y),
+				Foundation::Color(quad.color.r, quad.color.g, quad.color.b, quad.color.a)
+			);
+		}
 	}
 
 	// --- Clip Stack (Shader-based, batching-friendly) ---

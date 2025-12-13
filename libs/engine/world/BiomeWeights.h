@@ -45,6 +45,39 @@ struct BiomeWeights {
 		return best;
 	}
 
+	/// Get secondary biome - second highest weight, for ecotone blending.
+	/// Returns primary() if only one biome has weight (pure tile).
+	[[nodiscard]] Biome secondary() const {
+		Biome best = Biome::Grassland;
+		Biome secondBest = Biome::Grassland;
+		float bestWeight = 0.0F;
+		float secondBestWeight = 0.0F;
+		for (size_t i = 0; i < weights.size(); ++i) {
+			if (weights[i] > bestWeight) {
+				secondBestWeight = bestWeight;
+				secondBest = best;
+				bestWeight = weights[i];
+				best = static_cast<Biome>(i);
+			} else if (weights[i] > secondBestWeight) {
+				secondBestWeight = weights[i];
+				secondBest = static_cast<Biome>(i);
+			}
+		}
+		// If no secondary has weight, return primary
+		return (secondBestWeight > 0.0F) ? secondBest : best;
+	}
+
+	/// Get the weight of the primary biome (0.0-1.0).
+	[[nodiscard]] float primaryWeight() const {
+		float bestWeight = 0.0F;
+		for (float w : weights) {
+			if (w > bestWeight) {
+				bestWeight = w;
+			}
+		}
+		return bestWeight;
+	}
+
 	/// Check if a biome is present (weight > 0)
 	[[nodiscard]] bool has(Biome biome) const { return weights[static_cast<size_t>(biome)] > 0.0F; }
 

@@ -126,11 +126,8 @@ namespace {
 			// Initial layout pass with consistent DPI scaling
 			int viewportW = 0;
 			int viewportH = 0;
-			Renderer::Primitives::getViewport(viewportW, viewportH);
-			// Note: getViewport returns framebuffer dimensions, divide by kRetinaScale for logical coordinates
-			float logicalViewportW = static_cast<float>(viewportW) / kRetinaScale;
-			float logicalViewportH = static_cast<float>(viewportH) / kRetinaScale;
-			gameUI->layout(Foundation::Rect{0, 0, logicalViewportW, logicalViewportH});
+			Renderer::Primitives::getLogicalViewport(viewportW, viewportH);
+			gameUI->layout(Foundation::Rect{0, 0, static_cast<float>(viewportW), static_cast<float>(viewportH)});
 
 			// Initialize ECS World
 			initializeECS();
@@ -217,7 +214,9 @@ namespace {
 
 			int w = 0;
 			int h = 0;
-			Renderer::Primitives::getViewport(w, h);
+			// Use logical viewport (DPI-independent) for consistent world-to-screen transforms
+			// Physical viewport is 2x on Retina displays, which causes coordinate mismatches
+			Renderer::Primitives::getLogicalViewport(w, h);
 
 			// Time tile rendering
 			auto tileStart = Clock::now();
@@ -273,9 +272,6 @@ namespace {
 		const char* getName() const override { return kSceneName; }
 
 	  private:
-		// DPI scaling factor for Retina/HiDPI displays
-		// getViewport() returns framebuffer dimensions, divide by this for logical coordinates
-		static constexpr float kRetinaScale = 2.0F;
 		/// Initialize ECS world with systems and spawn initial entities.
 		void initializeECS() {
 			LOG_INFO(Game, "Initializing ECS World");
@@ -295,6 +291,7 @@ namespace {
 			// Wire up VisionSystem with placement data for entity queries
 			auto& visionSystem = ecsWorld->getSystem<ecs::VisionSystem>();
 			visionSystem.setPlacementData(m_placementExecutor.get(), &m_processedChunks);
+			visionSystem.setChunkManager(m_chunkManager.get());
 
 			// Spawn initial colonist at map center (0, 0)
 			spawnColonist({0.0F, 0.0F}, "Bob");
@@ -361,8 +358,8 @@ namespace {
 
 		/// Render selection indicator around selected colonist.
 		/// Draws a circle outline in screen-space at the entity's position.
-		/// @param viewportWidth Framebuffer width in pixels
-		/// @param viewportHeight Framebuffer height in pixels
+		/// @param viewportWidth Logical viewport width in pixels
+		/// @param viewportHeight Logical viewport height in pixels
 		void renderSelectionIndicator(int viewportWidth, int viewportHeight) {
 			// Only render for colonist selections (world entities don't need in-world highlight)
 			auto* colonistSel = std::get_if<world_sim::ColonistSelection>(&selection);
@@ -376,12 +373,8 @@ namespace {
 				return;
 			}
 
-			// Convert to logical viewport dimensions (for Retina/HiDPI)
-			int logicalW = static_cast<int>(static_cast<float>(viewportWidth) / kRetinaScale);
-			int logicalH = static_cast<int>(static_cast<float>(viewportHeight) / kRetinaScale);
-
-			// Convert world position to screen position
-			auto screenPos = m_camera->worldToScreen(pos->value.x, pos->value.y, logicalW, logicalH, kPixelsPerMeter);
+			// Convert world position to screen position (viewport is already in logical coordinates)
+			auto screenPos = m_camera->worldToScreen(pos->value.x, pos->value.y, viewportWidth, viewportHeight, kPixelsPerMeter);
 
 			// Convert selection radius from world units to screen pixels
 			constexpr float kSelectionRadiusWorld = 1.0F; // 1 meter radius
@@ -411,14 +404,11 @@ namespace {
 		/// Selection priority: 1) ECS colonists, 2) World entities with capabilities
 		/// @param screenPos Mouse position in screen coordinates (logical/window coordinates)
 		void handleEntitySelection(glm::vec2 screenPos) {
-			int viewportW = 0;
-			int viewportH = 0;
-			Renderer::Primitives::getViewport(viewportW, viewportH);
-
-			// Note: getViewport returns framebuffer dimensions, divide by kRetinaScale for logical coordinates
-			// Mouse position from GLFW is in logical/window coordinates, so we need to match
-			int logicalW = static_cast<int>(static_cast<float>(viewportW) / kRetinaScale);
-			int logicalH = static_cast<int>(static_cast<float>(viewportH) / kRetinaScale);
+			int logicalW = 0;
+			int logicalH = 0;
+			// Use logical viewport for consistent world-to-screen transforms
+			// (mouse input is in logical/window coordinates)
+			Renderer::Primitives::getLogicalViewport(logicalW, logicalH);
 
 			// Convert screen position to world position
 			auto worldPos = m_camera->screenToWorld(screenPos.x, screenPos.y, logicalW, logicalH, kPixelsPerMeter);

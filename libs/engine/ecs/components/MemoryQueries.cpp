@@ -3,7 +3,9 @@
 #include "assets/AssetRegistry.h"
 
 #include <glm/geometric.hpp>
+#include <utils/Log.h>
 
+#include <cmath>
 #include <limits>
 
 namespace ecs {
@@ -46,6 +48,7 @@ namespace ecs {
 			if (entity != nullptr) {
 				glm::vec2 diff = entity->position - fromPosition;
 				float	  distSq = glm::dot(diff, diff); // Squared distance avoids sqrt
+
 				if (distSq < minDistSq) {
 					minDistSq = distSq;
 					nearest = *entity;

@@ -5,6 +5,8 @@
 #include "../components/Task.h"
 #include "../components/Transform.h"
 
+#include <utils/Log.h>
+
 #include <cmath>
 #include <glm/geometric.hpp>
 

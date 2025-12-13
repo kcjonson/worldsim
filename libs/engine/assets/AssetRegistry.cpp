@@ -931,4 +931,22 @@ namespace engine::assets {
 		return (mask & (1 << static_cast<uint8_t>(capability))) != 0;
 	}
 
+	uint32_t AssetRegistry::registerSyntheticDefinition(const std::string& defName, uint8_t capabilityMask) {
+		// Check if already registered
+		auto it = m_defNameToId.find(defName);
+		if (it != m_defNameToId.end()) {
+			return it->second; // Already registered, return existing ID
+		}
+
+		// Assign new ID
+		auto newId = static_cast<uint32_t>(m_idToDefName.size());
+		m_defNameToId[defName] = newId;
+		m_idToDefName.push_back(defName);
+		m_capabilityMasks.push_back(capabilityMask);
+
+		LOG_DEBUG(Engine, "Registered synthetic definition '%s' with ID %u, capabilities 0x%02X", defName.c_str(), newId, capabilityMask);
+
+		return newId;
+	}
+
 } // namespace engine::assets

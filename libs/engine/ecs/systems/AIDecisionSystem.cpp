@@ -181,20 +181,32 @@ namespace ecs {
 			return true;
 		}
 
-		// Re-evaluate if a critical need emerged (only if not already handling a critical need)
-		if (task.type == TaskType::FulfillNeed) {
-			const auto& currentNeed = needs.get(task.needToFulfill);
-			if (currentNeed.isCritical()) {
-				// Already handling a critical need - don't interrupt for other critical needs
-				return false;
+		// Check if any critical need requires immediate attention (Tier 3 interrupts all lower tiers)
+		// This must be checked BEFORE the "don't interrupt" logic below
+		bool hasCriticalNeed = false;
+		for (size_t i = 0; i < static_cast<size_t>(NeedType::Count); ++i) {
+			if (needs.get(static_cast<NeedType>(i)).isCritical()) {
+				hasCriticalNeed = true;
+				break;
 			}
 		}
 
-		// Check if any critical need requires immediate attention
-		for (size_t i = 0; i < static_cast<size_t>(NeedType::Count); ++i) {
-			if (needs.get(static_cast<NeedType>(i)).isCritical()) {
-				return true; // Interrupt non-critical task or wander for critical need
+		if (hasCriticalNeed) {
+			// If already handling a critical need, don't interrupt for other critical needs
+			if (task.type == TaskType::FulfillNeed) {
+				const auto& currentNeed = needs.get(task.needToFulfill);
+				if (currentNeed.isCritical()) {
+					return false;
+				}
 			}
+			// Critical need interrupts non-critical tasks and wander
+			return true;
+		}
+
+		// No critical needs - don't interrupt wander while moving
+		// Wandering gives the colonist a chance to discover new sources (water, food)
+		if (task.type == TaskType::Wander && task.state == TaskState::Moving) {
+			return false;
 		}
 
 		return false;

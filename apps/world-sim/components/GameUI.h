@@ -5,12 +5,14 @@
 // Contains all game UI elements as children:
 // - GameOverlay: status display, zoom controls
 // - EntityInfoPanel: selected entity information
+// - TaskListPanel: expanded task queue (toggle from info panel)
 //
 // Handles input consumption to prevent click-through to world.
 
 #include "EntityInfoPanel.h"
 #include "GameOverlay.h"
 #include "Selection.h"
+#include "TaskListPanel.h"
 
 #include <assets/AssetRegistry.h>
 #include <ecs/World.h>
@@ -65,13 +67,22 @@ class GameUI {
 
 	std::unique_ptr<GameOverlay> overlay;
 	std::unique_ptr<EntityInfoPanel> infoPanel;
+	std::unique_ptr<TaskListPanel> taskListPanel;
+
+	// Task list expansion state
+	bool taskListExpanded = false;
+	ecs::EntityID selectedColonistId{0};
 
 	// Cached bounds for hit testing
 	Foundation::Rect viewportBounds;
 	Foundation::Rect infoPanelBounds;
+	Foundation::Rect taskListPanelBounds;
 
 	// Callbacks
 	std::function<void()> onSelectionCleared;
+
+	// Toggle task list panel visibility
+	void toggleTaskList();
 };
 
 } // namespace world_sim

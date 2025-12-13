@@ -17,6 +17,10 @@ target_include_directories(renderer
     PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
         $<INSTALL_INTERFACE:include>
+    PRIVATE
+        # Include ui headers for FontRenderer (used in Primitives::drawText)
+        # This is include-only, not a link dependency, to avoid circular deps
+        ${CMAKE_CURRENT_SOURCE_DIR}/../ui
 )
 
 target_compile_features(renderer PUBLIC cxx_std_20)

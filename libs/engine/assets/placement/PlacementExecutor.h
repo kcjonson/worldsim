@@ -37,11 +37,11 @@ namespace engine::assets {
 		/// @return Primary biome at this tile
 		std::function<world::Biome(uint16_t localX, uint16_t localY)> getBiome;
 
-		/// Get ground cover type at local tile coordinates (for "near Water" etc)
+		/// Get surface type at local tile coordinates (for "near Water" etc)
 		/// @param localX Tile X within chunk (0 to kChunkSize-1)
 		/// @param localY Tile Y within chunk (0 to kChunkSize-1)
-		/// @return Ground cover type name (e.g., "Water", "Rock")
-		std::function<std::string(uint16_t localX, uint16_t localY)> getGroundCover;
+		/// @return Surface type name (e.g., "Water", "Rock", "Soil")
+		std::function<std::string(uint16_t localX, uint16_t localY)> getSurface;
 	};
 
 	/// Result of placing entities in a chunk

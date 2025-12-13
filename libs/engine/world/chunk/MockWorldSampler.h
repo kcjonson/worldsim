@@ -42,10 +42,6 @@ class MockWorldSampler : public IWorldSampler {
 	/// Calculate distance from position to nearest spherical tile boundary
 	[[nodiscard]] float distanceToTileBoundary(WorldPosition pos) const;
 
-	/// Check if a chunk is "pure" (all corners have the same primary biome)
-	[[nodiscard]] static bool isChunkPure(const BiomeWeights& nw, const BiomeWeights& ne, const BiomeWeights& sw,
-										  const BiomeWeights& se);
-
 	/// Hash function for deterministic noise
 	[[nodiscard]] static uint32_t hash(int32_t x, int32_t y, uint64_t seed);
 

@@ -70,6 +70,7 @@ Applications:
 | [Memory Arenas](./memory-arenas.md) | Fast temporary allocations | Implement Soon |
 | [Resource Handles](./resource-handles.md) | Safe resource references | Implement Soon |
 | [Diagnostic Drawing](./diagnostic-drawing.md) | Immediate mode debug draw | Implement Later |
+| [Debugging Strategy](./debugging-strategy.md) | Multi-agent hypothesis exploration + disciplined investigation | Active |
 
 ### UI Framework
 
@@ -125,6 +126,7 @@ Applications:
 | [World Generation Architecture](./world-generation-architecture.md) | Pluggable world generators |
 | [Chunk Management System](./chunk-management-system.md) | Infinite 2D world from 3D sphere |
 | [3D to 2D Sampling](./3d-to-2d-sampling.md) | Converting spherical world to tiles |
+| [Flat Tile Storage Refactor](./flat-tile-storage-refactor.md) | Proposed: Replace layered tiles with flat array |
 
 ### Graphics & Rendering
 
