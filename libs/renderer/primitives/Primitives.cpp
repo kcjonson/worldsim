@@ -6,6 +6,7 @@
 #include "graphics/ClipTypes.h"
 #include "primitives/BatchRenderer.h"
 #include <font/FontRenderer.h>
+#include <utils/Log.h>
 #include <GL/glew.h>
 #include <algorithm>
 #include <cmath>
@@ -372,6 +373,8 @@ namespace Renderer::Primitives {
 
 	void drawText(const TextArgs& args) {
 		if (g_fontRenderer == nullptr || g_batchRenderer == nullptr) {
+			LOG_WARNING(Engine, "drawText called but renderer not initialized (font=%p, batch=%p)",
+				static_cast<void*>(g_fontRenderer), static_cast<void*>(g_batchRenderer.get()));
 			return;
 		}
 

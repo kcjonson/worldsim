@@ -2,8 +2,8 @@
 
 #include "assets/AssetRegistry.h"
 
-#include <utils/Log.h>
 #include <glm/geometric.hpp>
+#include <utils/Log.h>
 
 #include <cmath>
 #include <limits>
@@ -43,69 +43,17 @@ namespace ecs {
 		// Use capability index for O(1) set access
 		const auto& entityKeys = memory.getEntitiesWithCapability(capability);
 
-		// Log capability search for Drinkable (for debugging coordinate issues)
-		const bool isDrinkableSearch = (capability == engine::assets::CapabilityType::Drinkable);
-		static int s_drinkSearchCount = 0;
-		if (isDrinkableSearch && !entityKeys.empty() && s_drinkSearchCount++ < 5) {
-			LOG_INFO(
-				Engine,
-				"[DrinkSearch] from=(%.1f, %.1f), candidates=%zu",
-				fromPosition.x,
-				fromPosition.y,
-				entityKeys.size()
-			);
-		}
-
-		int candidateIndex = 0;
 		for (uint64_t key : entityKeys) {
 			const auto* entity = memory.getWorldEntity(key);
 			if (entity != nullptr) {
 				glm::vec2 diff = entity->position - fromPosition;
 				float	  distSq = glm::dot(diff, diff); // Squared distance avoids sqrt
 
-				// DEBUG: Log each drinkable candidate with direction info
-				if (isDrinkableSearch) {
-					float dist = std::sqrt(distSq);
-					// Calculate cardinal direction (for human-readable debugging)
-					const char* direction = "UNKNOWN";
-					if (std::abs(diff.x) > std::abs(diff.y)) {
-						direction = (diff.x > 0) ? "EAST" : "WEST";
-					} else {
-						// NOTE: In our world, +Y = SOUTH (Y-down convention)
-						direction = (diff.y > 0) ? "SOUTH" : "NORTH";
-					}
-
-					LOG_DEBUG(
-						Engine,
-						"[MemoryQuery]   #%d: pos=(%.2f, %.2f), diff=(%.2f, %.2f), dist=%.2f, dir=%s%s",
-						candidateIndex,
-						entity->position.x,
-						entity->position.y,
-						diff.x,
-						diff.y,
-						dist,
-						direction,
-						(distSq < minDistSq) ? " *NEAREST*" : ""
-					);
-				}
-
 				if (distSq < minDistSq) {
 					minDistSq = distSq;
 					nearest = *entity;
 				}
-				candidateIndex++;
 			}
-		}
-
-		// Log final selection for drinkable searches (for debugging coordinate issues)
-		if (isDrinkableSearch && nearest.has_value() && s_drinkSearchCount <= 5) {
-			LOG_INFO(
-				Engine,
-				"[DrinkTarget] target=(%.1f, %.1f) dist=%.1f",
-				nearest->position.x,
-				nearest->position.y,
-				std::sqrt(minDistSq)
-			);
 		}
 
 		return nearest;
