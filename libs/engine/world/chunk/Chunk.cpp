@@ -1,5 +1,7 @@
 #include "Chunk.h"
 
+#include "world/chunk/TilePostProcessor.h"
+
 #include <cmath>
 
 namespace engine::world {
@@ -7,45 +9,75 @@ namespace engine::world {
 	Chunk::Chunk(ChunkCoordinate coord, ChunkSampleResult biomeData, uint64_t worldSeed)
 		: m_coord(coord),
 		  m_biomeData(std::move(biomeData)),
-		  m_worldSeed(worldSeed) {
+		  m_worldSeed(worldSeed),
+		  m_tiles{},
+		  m_generationComplete(false) {
 		touch();
 	}
 
-	TileData Chunk::getTile(uint16_t localX, uint16_t localY) const {
-		return generateTile(localX, localY);
+	void Chunk::generate() {
+		// Pre-compute all tiles in the chunk
+		for (uint16_t y = 0; y < kChunkSize; ++y) {
+			for (uint16_t x = 0; x < kChunkSize; ++x) {
+				m_tiles[y * kChunkSize + x] = computeTile(x, y);
+			}
+		}
+
+		// Post-process tiles: generate mud near water, compute adjacency
+		TilePostProcessor::process(m_tiles, m_worldSeed);
+
+		// Mark generation complete (release semantics for thread safety)
+		m_generationComplete.store(true, std::memory_order_release);
 	}
 
-	TileData Chunk::generateTile(uint16_t localX, uint16_t localY) const {
+	const TileData& Chunk::getTile(uint16_t localX, uint16_t localY) const {
+		return m_tiles[localY * kChunkSize + localX];
+	}
+
+	TileData Chunk::computeTile(uint16_t localX, uint16_t localY) const {
 		TileData tile;
 
-		// Get biome from pre-computed data
-		tile.biome = m_biomeData.getTileBiome(localX, localY);
+		// Get biome weights from pre-computed sample data
+		BiomeWeights biomeWeights = m_biomeData.getTileBiome(localX, localY);
 
-		// Get elevation from interpolation
-		tile.elevation = m_biomeData.getTileElevation(localX, localY);
+		// Store primary and secondary biomes with blend weight
+		tile.primaryBiome = biomeWeights.primary();
+		tile.secondaryBiome = biomeWeights.secondary();
 
-		// Select ground cover based on biome (uses spatial clustering)
-		tile.groundCover = selectGroundCover(tile.biome.primary(), localX, localY);
+		// Convert float weight (0.0-1.0) to uint8_t (0-255)
+		float primaryWeight = biomeWeights.primaryWeight();
+		tile.biomeBlend = static_cast<uint8_t>(std::min(255.0F, primaryWeight * 255.0F));
 
-		// Generate deterministic properties from hash
+		// Get elevation from interpolation (convert meters to centimeters, clamped to uint16_t)
+		float elevMeters = m_biomeData.getTileElevation(localX, localY);
+		float elevCm = elevMeters * 100.0F;
+		tile.elevation = static_cast<uint16_t>(std::clamp(elevCm, 0.0F, 65535.0F));
+
+		// Select surface type based on primary biome (uses spatial clustering)
+		tile.surface = selectSurface(tile.primaryBiome, localX, localY);
+
+		// Generate deterministic moisture from hash
 		uint32_t hash = tileHash(m_coord, localX, localY, m_worldSeed);
-
-		// Generate moisture (normalized hash + biome influence)
 		constexpr float kNormalize = 1.0F / static_cast<float>(UINT32_MAX);
-		tile.moisture = static_cast<float>(hash) * kNormalize;
+		float moistureBase = static_cast<float>(hash) * kNormalize;
 
 		// Adjust moisture based on biome
-		Biome primary = tile.biome.primary();
-		if (primary == Biome::Desert) {
-			tile.moisture *= 0.2F;
-		} else if (primary == Biome::Wetland || primary == Biome::Ocean) {
-			tile.moisture = 0.8F + tile.moisture * 0.2F;
+		if (tile.primaryBiome == Biome::Desert) {
+			moistureBase *= 0.2F;
+		} else if (tile.primaryBiome == Biome::Wetland || tile.primaryBiome == Biome::Ocean) {
+			moistureBase = 0.8F + moistureBase * 0.2F;
 		}
+
+		// Convert to uint8_t (0-255)
+		tile.moisture = static_cast<uint8_t>(std::min(255.0F, moistureBase * 255.0F));
+
+		tile.attributes = 0; // Reserved for future use
+		tile.adjacency = 0;  // Computed by TilePostProcessor after all tiles generated
 
 		return tile;
 	}
 
-	GroundCover Chunk::selectGroundCover(Biome biome, uint16_t localX, uint16_t localY) const {
+	Surface Chunk::selectSurface(Biome biome, uint16_t localX, uint16_t localY) const {
 		// Natural terrain approach using continuous noise:
 		// - Sample fractal noise at world position (creates organic blob shapes)
 		// - Use high threshold (0.92+) for sparse distribution
@@ -54,7 +86,7 @@ namespace engine::world {
 
 		// Ocean is always water
 		if (biome == Biome::Ocean) {
-			return GroundCover::Water;
+			return Surface::Water;
 		}
 
 		// Calculate world position in tile units
@@ -63,7 +95,7 @@ namespace engine::world {
 
 		// ========== POND/WATER GENERATION FOR GRASSLAND AND FOREST ==========
 		// Water clusters (ponds) use lower frequency noise for larger, pond-shaped blobs
-		// Separate seed offset ensures independent from ground cover variation
+		// Separate seed offset ensures independent from surface variation
 		if (biome == Biome::Grassland || biome == Biome::Forest) {
 			// Lower frequency = larger pond clusters (~3-8 tiles across)
 			constexpr float kWaterScale = 0.08F;
@@ -77,7 +109,7 @@ namespace engine::world {
 			// This creates scattered pond-like clusters
 			constexpr float kWaterThreshold = 0.82F;
 			if (waterNoise > kWaterThreshold) {
-				return GroundCover::Water;
+				return Surface::Water;
 			}
 		}
 
@@ -87,40 +119,40 @@ namespace engine::world {
 		float			noiseX = worldX * kPatchScale;
 		float			noiseY = worldY * kPatchScale;
 
-		// Sample noise for ground cover variation
+		// Sample noise for surface variation
 		// Use 2 octaves for organic but not too complex shapes
 		float variationNoise = fractalNoise(noiseX, noiseY, m_worldSeed + 50000, 2, 0.5F);
 
-		// Helper to get primary and variation ground covers for a biome
-		auto getCovers = [](Biome b) -> std::pair<GroundCover, GroundCover> {
+		// Helper to get primary and variation surfaces for a biome
+		auto getSurfaces = [](Biome b) -> std::pair<Surface, Surface> {
 			switch (b) {
 				case Biome::Grassland:
-					return {GroundCover::Grass, GroundCover::Dirt};
+					return {Surface::Soil, Surface::Dirt};
 				case Biome::Forest:
-					return {GroundCover::Grass, GroundCover::Dirt};
+					return {Surface::Soil, Surface::Dirt};
 				case Biome::Desert:
-					return {GroundCover::Sand, GroundCover::Rock};
+					return {Surface::Sand, Surface::Rock};
 				case Biome::Tundra:
-					return {GroundCover::Snow, GroundCover::Rock};
+					return {Surface::Snow, Surface::Rock};
 				case Biome::Wetland:
-					return {GroundCover::Water, GroundCover::Grass};
+					return {Surface::Water, Surface::Soil};
 				case Biome::Mountain:
-					return {GroundCover::Rock, GroundCover::Snow};
+					return {Surface::Rock, Surface::Snow};
 				case Biome::Beach:
-					return {GroundCover::Sand, GroundCover::Rock};
+					return {Surface::Sand, Surface::Rock};
 				case Biome::Ocean:
-					return {GroundCover::Water, GroundCover::Water};
+					return {Surface::Water, Surface::Water};
 				default:
-					return {GroundCover::Grass, GroundCover::Dirt};
+					return {Surface::Soil, Surface::Dirt};
 			}
 		};
 
-		auto [primary, variation] = getCovers(biome);
+		auto [primary, variation] = getSurfaces(biome);
 
 		// Threshold for sparse patches - fractal noise clusters around 0.5
-		// 0.72 captures ~5-8% of area with organic blob shapes
-		// Mountains get lower threshold for more variation
-		float threshold = (biome == Biome::Mountain) ? 0.62F : 0.72F;
+		// 0.88 captures ~2-3% of area with sparse dirt patches
+		// Mountains get lower threshold for more rock variation
+		float threshold = (biome == Biome::Mountain) ? 0.70F : 0.88F;
 
 		if (variationNoise > threshold) {
 			return variation;
@@ -221,25 +253,28 @@ namespace engine::world {
 		}
 	}
 
-	Foundation::Color Chunk::getGroundCoverColor(GroundCover cover) {
-		switch (cover) {
-			case GroundCover::Grass:
+	Foundation::Color Chunk::getSurfaceColor(Surface surface) {
+		switch (surface) {
+			case Surface::Soil:
 				return Foundation::Color(0.29F, 0.49F, 0.25F, 1.0F);
 
-			case GroundCover::Dirt:
+			case Surface::Dirt:
 				return Foundation::Color(0.45F, 0.35F, 0.25F, 1.0F);
 
-			case GroundCover::Sand:
+			case Surface::Sand:
 				return Foundation::Color(0.82F, 0.71F, 0.47F, 1.0F);
 
-			case GroundCover::Rock:
+			case Surface::Rock:
 				return Foundation::Color(0.42F, 0.42F, 0.42F, 1.0F);
 
-			case GroundCover::Water:
+			case Surface::Water:
 				return Foundation::Color(0.10F, 0.30F, 0.48F, 1.0F);
 
-			case GroundCover::Snow:
+			case Surface::Snow:
 				return Foundation::Color(0.95F, 0.97F, 1.0F, 1.0F);
+
+			case Surface::Mud:
+				return Foundation::Color(0.35F, 0.25F, 0.15F, 1.0F); // Darker brown than Dirt
 
 			default:
 				return Foundation::Color(0.5F, 0.5F, 0.5F, 1.0F);

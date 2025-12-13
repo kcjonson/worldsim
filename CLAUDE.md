@@ -47,6 +47,18 @@ World-sim is a C++20 game with 3D procedural world generation, 2D tile-based gam
 5. **Prepare for Coding**
    - Create a new branch to do work in
 
+### Complex Bug Investigation
+
+For bugs involving multiple systems, coordinate/rendering issues, or multi-session investigation:
+
+**Use the `/debug <issue-name>` command** to start a formal debugging session.
+
+This activates the protocol from `/docs/technical/debugging-strategy.md` which uses:
+- **Multi-agent scouting** — 3 parallel agents explore different hypothesis areas
+- **Hypothesis synthesis** — Rank by consensus and evidence before deep investigation
+- **Disciplined investigation** — One hypothesis at a time, user-only confirmation
+- **Evidence preservation** — No premature removal of debug code, logs over screenshots
+
 
 ### Code Quality
 

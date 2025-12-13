@@ -24,14 +24,8 @@ namespace engine::world {
 		result.cornerElevations[2] = sampleElevation(coord.corner(ChunkCorner::SouthWest));
 		result.cornerElevations[3] = sampleElevation(coord.corner(ChunkCorner::SouthEast));
 
-		// Check if chunk is pure (all corners same primary biome)
-		if (isChunkPure(result.cornerBiomes[0], result.cornerBiomes[1], result.cornerBiomes[2], result.cornerBiomes[3])) {
-			result.isPure = true;
-			result.singleBiome = result.cornerBiomes[0].primary();
-		} else {
-			result.isPure = false;
-			result.computeSectorGrid();
-		}
+		// Pre-compute sector grid for O(1) tile biome lookup during generation
+		result.computeSectorGrid();
 
 		return result;
 	}
@@ -125,11 +119,6 @@ namespace engine::world {
 		//    when BiomeWeights supports multiple biomes
 		//    The important fix is that we're sampling at tile centers now
 		return BiomeWeights::single(primaryBiome);
-	}
-
-	bool MockWorldSampler::isChunkPure(const BiomeWeights& nw, const BiomeWeights& ne, const BiomeWeights& sw, const BiomeWeights& se) {
-		Biome primary = nw.primary();
-		return ne.primary() == primary && sw.primary() == primary && se.primary() == primary;
 	}
 
 	uint32_t MockWorldSampler::hash(int32_t x, int32_t y, uint64_t seed) {

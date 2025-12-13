@@ -39,8 +39,8 @@ ChunkPlacementContext createTestContext(engine::world::ChunkCoordinate coord,
 	ctx.getBiome = [defaultBiome](uint16_t /*localX*/, uint16_t /*localY*/) {
 		return defaultBiome;
 	};
-	ctx.getGroundCover = [](uint16_t /*localX*/, uint16_t /*localY*/) {
-		return std::string("Grass");
+	ctx.getSurface = [](uint16_t /*localX*/, uint16_t /*localY*/) {
+		return std::string("Soil");
 	};
 	return ctx;
 }
@@ -331,10 +331,10 @@ TEST(PlacementExecutorTests, NegativeChunkCoordinates) {
 }
 
 // ============================================================================
-// Ground Cover Function Tests
+// Surface Function Tests
 // ============================================================================
 
-TEST(PlacementExecutorTests, NullGroundCoverFunction) {
+TEST(PlacementExecutorTests, NullSurfaceFunction) {
 	auto& registry = AssetRegistry::Get();
 	registry.clear();
 
@@ -345,7 +345,7 @@ TEST(PlacementExecutorTests, NullGroundCoverFunction) {
 	ctx.coord = {0, 0};
 	ctx.worldSeed = 12345;
 	ctx.getBiome = [](uint16_t, uint16_t) { return engine::world::Biome::Grassland; };
-	ctx.getGroundCover = nullptr; // Explicitly null
+	ctx.getSurface = nullptr; // Explicitly null
 
 	// Should not crash
 	auto result = executor.processChunk(ctx);

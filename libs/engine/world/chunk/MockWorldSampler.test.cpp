@@ -145,29 +145,28 @@ TEST(MockWorldSamplerTests, BiomeWeightsAreValid) {
 	}
 }
 
-TEST(MockWorldSamplerTests, PureChunkDetection) {
+TEST(MockWorldSamplerTests, SectorGridAlwaysComputed) {
 	MockWorldSampler sampler(12345);
 
-	// Sample many chunks to find both pure and mixed
-	int pureCount = 0;
-	int mixedCount = 0;
-
-	for (int x = -20; x <= 20; x++) {
-		for (int y = -20; y <= 20; y++) {
+	// All chunks should have their sector grid computed for tile biome lookup
+	for (int x = -5; x <= 5; x++) {
+		for (int y = -5; y <= 5; y++) {
 			ChunkSampleResult result = sampler.sampleChunk(ChunkCoordinate(x, y));
 
-			if (result.isPure) {
-				pureCount++;
-			} else {
-				mixedCount++;
-			}
+			// Verify sector grid is valid - getTileBiome should work for all tiles
+			// Check corner tiles
+			auto nwBiome = result.getTileBiome(0, 0);
+			auto neBiome = result.getTileBiome(511, 0);
+			auto swBiome = result.getTileBiome(0, 511);
+			auto seBiome = result.getTileBiome(511, 511);
+
+			// All should have valid weights summing to 1
+			EXPECT_NEAR(nwBiome.total(), 1.0F, 0.01F);
+			EXPECT_NEAR(neBiome.total(), 1.0F, 0.01F);
+			EXPECT_NEAR(swBiome.total(), 1.0F, 0.01F);
+			EXPECT_NEAR(seBiome.total(), 1.0F, 0.01F);
 		}
 	}
-
-	// Should have some of both types
-	EXPECT_GT(pureCount, 0) << "Expected to find some pure chunks";
-	// Mixed chunks at biome boundaries are less common with spherical tiling
-	// so we don't require them, just verify the logic works
 }
 
 // ============================================================================

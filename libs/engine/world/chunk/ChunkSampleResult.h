@@ -2,7 +2,7 @@
 
 // ChunkSampleResult - Biome data sampled from the 3D world for a chunk.
 // This is the result of sampling the spherical world at chunk corners.
-// Pure chunks (>500m from biome boundaries) can skip interpolation.
+// Used temporarily during Chunk::generate(), then tile data is stored in flat array.
 
 #include "world/Biome.h"
 #include "world/BiomeWeights.h"
@@ -13,21 +13,14 @@
 
 namespace engine::world {
 
-/// Size of the sector grid for biome interpolation in boundary chunks
+/// Size of the sector grid for biome interpolation
 inline constexpr int32_t kSectorGridSize = 32;
 
 /// Result of sampling the 3D world for a chunk.
-/// Contains all biome and elevation data needed to generate tiles.
+/// Contains biome and elevation data needed to generate tiles.
+/// This is temporary data - after Chunk::generate(), tiles are stored in flat array.
 struct ChunkSampleResult {
-	/// Is this a "pure" chunk? (entirely within one biome, >500m from boundaries)
-	/// If true, singleBiome is the biome for all tiles.
-	/// If false, use sectorGrid for tile lookups.
-	bool isPure = true;
-
-	/// For pure chunks: the single biome for all tiles
-	Biome singleBiome = Biome::Grassland;
-
-	/// Biome weights at each corner (for boundary chunk interpolation)
+	/// Biome weights at each corner (for interpolation)
 	/// Order: NW, NE, SW, SE (matches ChunkCorner enum)
 	std::array<BiomeWeights, 4> cornerBiomes{};
 
@@ -37,11 +30,10 @@ struct ChunkSampleResult {
 
 	/// Pre-computed 32×32 sector grid for O(1) tile biome lookup.
 	/// Each sector covers 16×16 tiles (512/32 = 16).
-	/// Only populated for boundary chunks (!isPure).
 	std::array<BiomeWeights, kSectorGridSize * kSectorGridSize> sectorGrid{};
 
 	/// Compute sector grid from corner biomes via bilinear interpolation.
-	/// Call this after setting cornerBiomes for boundary chunks.
+	/// Call this after setting cornerBiomes.
 	void computeSectorGrid() {
 		for (int32_t sy = 0; sy < kSectorGridSize; ++sy) {
 			for (int32_t sx = 0; sx < kSectorGridSize; ++sx) {
@@ -53,12 +45,7 @@ struct ChunkSampleResult {
 	}
 
 	/// Get biome weights for a tile at local coordinates (0-511, 0-511).
-	/// For pure chunks, returns singleBiome. For boundary chunks, looks up sector grid.
 	[[nodiscard]] BiomeWeights getTileBiome(uint16_t localX, uint16_t localY) const {
-		if (isPure) {
-			return BiomeWeights::single(singleBiome);
-		}
-
 		// Map tile coordinate to sector (16 tiles per sector)
 		int32_t sectorX = localX / 16;
 		int32_t sectorY = localY / 16;

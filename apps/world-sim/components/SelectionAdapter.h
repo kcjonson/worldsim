@@ -18,14 +18,21 @@ namespace world_sim {
 
 /// Convert a Selection variant into panel content.
 /// Returns std::nullopt for NoSelection (panel should hide).
+/// @param onTaskListToggle Optional callback for toggling task list panel (only used for colonists)
 [[nodiscard]] std::optional<PanelContent> adaptSelection(
 	const Selection& selection,
 	const ecs::World& world,
-	const engine::assets::AssetRegistry& registry
+	const engine::assets::AssetRegistry& registry,
+	std::function<void()> onTaskListToggle = nullptr
 );
 
 /// Convert colonist data into panel content
-[[nodiscard]] PanelContent adaptColonist(const ecs::World& world, ecs::EntityID entityId);
+/// @param onTaskListToggle Optional callback for toggling task list panel
+[[nodiscard]] PanelContent adaptColonist(
+	const ecs::World& world,
+	ecs::EntityID entityId,
+	std::function<void()> onTaskListToggle = nullptr
+);
 
 /// Convert world entity data into panel content
 [[nodiscard]] PanelContent adaptWorldEntity(

@@ -165,6 +165,14 @@ namespace engine::assets {
 				world::Biome biome = context.getBiome(localX, localY);
 				std::string	 biomeName = world::biomeToString(biome);
 
+				// Skip water tiles - entities should not spawn in water
+				if (context.getSurface) {
+					std::string surface = context.getSurface(localX, localY);
+					if (surface == "Water") {
+						continue;
+					}
+				}
+
 				// Find placement config for this biome
 				const BiomePlacement* bp = def->placement.findBiome(biomeName);
 				if (bp == nullptr) {
@@ -172,7 +180,7 @@ namespace engine::assets {
 				}
 
 				// Check tile-type proximity ("near Water" etc)
-				if (!bp->nearTileType.empty() && context.getGroundCover) {
+				if (!bp->nearTileType.empty() && context.getSurface) {
 					bool foundNearby = false;
 					int	 searchRadius = static_cast<int>(bp->nearDistance);
 					if (searchRadius < 1) {
@@ -185,9 +193,9 @@ namespace engine::assets {
 							int checkY = static_cast<int>(localY) + dy;
 
 							if (checkX >= 0 && checkX < world::kChunkSize && checkY >= 0 && checkY < world::kChunkSize) {
-								std::string groundCover =
-									context.getGroundCover(static_cast<uint16_t>(checkX), static_cast<uint16_t>(checkY));
-								if (groundCover == bp->nearTileType) {
+								std::string surface =
+									context.getSurface(static_cast<uint16_t>(checkX), static_cast<uint16_t>(checkY));
+								if (surface == bp->nearTileType) {
 									foundNearby = true;
 								}
 							}
@@ -227,6 +235,32 @@ namespace engine::assets {
 							std::uniform_real_distribution<float> clumpOffsetDist(-clumpRadius, clumpRadius);
 							glm::vec2 position{clumpCenter.x + clumpOffsetDist(rng), clumpCenter.y + clumpOffsetDist(rng)};
 
+							// Skip entities that would be placed on water
+							// Convert world position back to local tile coordinates
+							if (context.getSurface) {
+								int entityLocalX = static_cast<int>(std::floor(position.x - origin.x));
+								int entityLocalY = static_cast<int>(std::floor(position.y - origin.y));
+
+								// Skip if outside chunk bounds - entity would be in adjacent chunk
+								if (entityLocalX < 0 || entityLocalX >= world::kChunkSize ||
+									entityLocalY < 0 || entityLocalY >= world::kChunkSize) {
+									// Entity outside chunk bounds, skip it
+									continue;
+								}
+
+								// Check for water at entity position
+								std::string surface = context.getSurface(
+									static_cast<uint16_t>(entityLocalX),
+									static_cast<uint16_t>(entityLocalY)
+								);
+								if (surface == "Water") {
+									LOG_DEBUG(Engine, "[Placement] Skipping clumped entity at (%d,%d) - Water surface", entityLocalX, entityLocalY);
+									continue;
+								}
+							} else {
+								LOG_WARNING(Engine, "[Placement] getSurface is NULL in clumped check!");
+							}
+
 							// Check relationship modifiers for this position
 							float modifier = calculateRelationshipModifier(*def, position, chunkIndex, adjacentProvider);
 							if (modifier <= 0.0F) {
@@ -259,6 +293,28 @@ namespace engine::assets {
 					default: {
 						// Single entity at random position within tile
 						glm::vec2 position{tileWorldX + offsetDist(rng), tileWorldY + offsetDist(rng)};
+
+						// Skip entities that would be placed on water
+						// Convert world position back to local tile coordinates
+						if (context.getSurface) {
+							int entityLocalX = static_cast<int>(std::floor(position.x - origin.x));
+							int entityLocalY = static_cast<int>(std::floor(position.y - origin.y));
+
+							// Skip if outside chunk bounds - entity would be in adjacent chunk
+							if (entityLocalX < 0 || entityLocalX >= world::kChunkSize ||
+								entityLocalY < 0 || entityLocalY >= world::kChunkSize) {
+								break;
+							}
+
+							// Check for water at entity position
+							std::string surface = context.getSurface(
+								static_cast<uint16_t>(entityLocalX),
+								static_cast<uint16_t>(entityLocalY)
+							);
+							if (surface == "Water") {
+								break;
+							}
+						}
 
 						// Check relationship modifiers
 						float modifier = calculateRelationshipModifier(*def, position, chunkIndex, adjacentProvider);

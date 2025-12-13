@@ -18,15 +18,15 @@ Colonists are autonomous agents who make their own decisions. The player influen
 
 Colonists always evaluate what to do in this fixed order. Higher tiers interrupt lower tiers.
 
-| Tier | Name | Trigger | Example |
-|------|------|---------|---------|
-| 1 | Panic | Active threat | Being chased by predator |
-| 2 | Breakdown | Low mood | Mental break at <20% mood |
-| 3 | Critical Needs | Need below ~10% | Bladder emergency |
-| 4 | Player Control | Player takes control | Direct movement mode |
-| 5 | Actionable Needs | Need below threshold | Hungry, seeks food |
-| 6 | Work | Needs satisfied | Farming, building, hauling |
-| 7 | Wander | Nothing to do | Idle exploration |
+| Tier | Name             | Trigger              | Example                    |
+| ---- | ---------------- | -------------------- | -------------------------- |
+| 1    | Panic            | Active threat        | Being chased by predator   |
+| 2    | Breakdown        | Low mood             | Mental break at <20% mood  |
+| 3    | Critical Needs   | Need below ~10%      | Bladder emergency          |
+| 4    | Player Control   | Player takes control | Direct movement mode       |
+| 5    | Actionable Needs | Need below threshold | Hungry, seeks food         |
+| 6    | Work             | Needs satisfied      | Farming, building, hauling |
+| 7    | Wander           | Nothing to do        | Idle exploration           |
 
 ### Tier 1: Panic (Flee)
 

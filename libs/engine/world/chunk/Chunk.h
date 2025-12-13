@@ -10,6 +10,8 @@
 
 #include <graphics/Color.h>
 
+#include <array>
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <string>
@@ -17,50 +19,79 @@
 
 namespace engine::world {
 
-/// Ground cover types for rendering
-enum class GroundCover : uint8_t {
-	Grass,
-	Dirt,
-	Sand,
-	Rock,
-	Water,
-	Snow
+/// Surface types for terrain rendering
+/// Note: These are surface MATERIALS, not flora. "Soil" is what grass grows ON.
+enum class Surface : uint8_t {
+	Soil,   // Dirt/earth suitable for vegetation (was "Grass")
+	Dirt,   // Exposed dirt/mud
+	Sand,   // Sandy terrain
+	Rock,   // Rocky/stone surface
+	Water,  // Water bodies
+	Snow,   // Snow-covered ground
+	Mud     // Wet mud (darker than Dirt, appears near water)
 };
 
-/// Convert GroundCover enum to string for placement rules and debugging
-[[nodiscard]] inline std::string groundCoverToString(GroundCover cover) {
-	switch (cover) {
-		case GroundCover::Grass:
-			return "Grass";
-		case GroundCover::Dirt:
+/// Convert Surface enum to string for placement rules and debugging
+[[nodiscard]] inline std::string surfaceToString(Surface surface) {
+	switch (surface) {
+		case Surface::Soil:
+			return "Soil";
+		case Surface::Dirt:
 			return "Dirt";
-		case GroundCover::Sand:
+		case Surface::Sand:
 			return "Sand";
-		case GroundCover::Rock:
+		case Surface::Rock:
 			return "Rock";
-		case GroundCover::Water:
+		case Surface::Water:
 			return "Water";
-		case GroundCover::Snow:
+		case Surface::Snow:
 			return "Snow";
+		case Surface::Mud:
+			return "Mud";
 		default:
 			return "Unknown";
 	}
 }
 
-/// Tile data generated from biome + seed
+/// Tile data - 16 bytes, stored in flat array per chunk.
+/// Designed for single source of truth: computed once, read by all systems.
 struct TileData {
-	BiomeWeights biome;
-	GroundCover groundCover = GroundCover::Grass;
-	float elevation = 0.0F;
-	float moisture = 0.5F;
+	Surface surface = Surface::Soil;    ///< 1 byte - THE definitive terrain type
+	Biome primaryBiome = Biome::Grassland;   ///< 1 byte - dominant biome
+	Biome secondaryBiome = Biome::Grassland; ///< 1 byte - for ecotones (may equal primary)
+	uint8_t biomeBlend = 255;           ///< 1 byte - weight of primary (255 = 100% primary)
+	uint16_t elevation = 0;             ///< 2 bytes - centimeters above sea level
+	uint8_t moisture = 128;             ///< 1 byte - normalized 0-255
+	uint8_t attributes = 0;             ///< 1 byte - reserved for future non-adjacency flags
+	uint64_t adjacency = 0;             ///< 8 bytes - neighbor surface types (8 dirs × 6 bits)
+
+	/// Get biome weights as BiomeWeights (for compatibility during migration)
+	[[nodiscard]] BiomeWeights biome() const {
+		if (biomeBlend == 255 || primaryBiome == secondaryBiome) {
+			return BiomeWeights::single(primaryBiome);
+		}
+		BiomeWeights bw;
+		float primaryWeight = static_cast<float>(biomeBlend) / 255.0F;
+		bw.set(primaryBiome, primaryWeight);
+		bw.set(secondaryBiome, 1.0F - primaryWeight);
+		return bw;
+	}
 };
 
 /// A 512×512 region of the world.
-/// Holds biome data sampled from the 3D world and generates tiles on-demand.
+/// Tiles are pre-computed during generate() and stored in a flat array.
+/// All systems read from the same definitive tile data.
 class Chunk {
   public:
 	/// Create a chunk with sampled biome data
 	Chunk(ChunkCoordinate coord, ChunkSampleResult biomeData, uint64_t worldSeed);
+
+	/// Pre-compute all tiles in this chunk. Call once after construction.
+	/// Thread-safe: sets atomic flag when complete.
+	void generate();
+
+	/// Check if tiles have been generated (thread-safe)
+	[[nodiscard]] bool isReady() const { return m_generationComplete.load(std::memory_order_acquire); }
 
 	/// Get the chunk's grid coordinate
 	[[nodiscard]] ChunkCoordinate coordinate() const { return m_coord; }
@@ -69,29 +100,23 @@ class Chunk {
 	[[nodiscard]] WorldPosition worldOrigin() const { return m_coord.origin(); }
 
 	/// Get tile data at local coordinates (0-511, 0-511)
-	/// Generates tile procedurally if not cached
-	[[nodiscard]] TileData getTile(uint16_t localX, uint16_t localY) const;
+	/// Returns pre-computed tile from flat array (requires isReady() == true)
+	[[nodiscard]] const TileData& getTile(uint16_t localX, uint16_t localY) const;
 
-	/// Get the biome data for this chunk
+	/// Get the biome data for this chunk (used during generation)
 	[[nodiscard]] const ChunkSampleResult& biomeData() const { return m_biomeData; }
 
-	/// Check if chunk is pure (single biome)
-	[[nodiscard]] bool isPure() const { return m_biomeData.isPure; }
-
-	/// Get primary biome (for pure chunks or dominant biome for boundary chunks)
+	/// Get primary biome (dominant biome at chunk center)
 	[[nodiscard]] Biome primaryBiome() const {
-		if (m_biomeData.isPure) {
-			return m_biomeData.singleBiome;
-		}
-		// Return the biome of the center sector
-		return m_biomeData.getTileBiome(256, 256).primary();
+		// Return the biome of the center tile
+		return m_tiles[256 * kChunkSize + 256].primaryBiome;
 	}
 
 	/// Get color for a biome (for ground rendering)
 	[[nodiscard]] static Foundation::Color getBiomeColor(Biome biome);
 
-	/// Get color for ground cover
-	[[nodiscard]] static Foundation::Color getGroundCoverColor(GroundCover cover);
+	/// Get color for surface type
+	[[nodiscard]] static Foundation::Color getSurfaceColor(Surface surface);
 
 	/// Update last accessed time (for LRU eviction)
 	/// Note: touch() is const because m_lastAccessed is mutable - LRU timestamp
@@ -107,11 +132,17 @@ class Chunk {
 	uint64_t m_worldSeed;
 	mutable std::chrono::steady_clock::time_point m_lastAccessed;
 
-	/// Generate tile data procedurally
-	[[nodiscard]] TileData generateTile(uint16_t localX, uint16_t localY) const;
+	/// Flat array of pre-computed tiles (512×512 = 262,144 tiles × 16 bytes = 4.0 MB)
+	std::array<TileData, kChunkSize * kChunkSize> m_tiles;
 
-	/// Select ground cover based on biome using organic noise-based patches
-	[[nodiscard]] GroundCover selectGroundCover(Biome biome, uint16_t localX, uint16_t localY) const;
+	/// Thread-safe flag indicating generation is complete
+	std::atomic<bool> m_generationComplete{false};
+
+	/// Compute tile data for a single tile during generation
+	[[nodiscard]] TileData computeTile(uint16_t localX, uint16_t localY) const;
+
+	/// Select surface type based on biome using organic noise-based patches
+	[[nodiscard]] Surface selectSurface(Biome biome, uint16_t localX, uint16_t localY) const;
 
 	/// Hash function for deterministic tile generation
 	[[nodiscard]] static uint32_t tileHash(ChunkCoordinate chunk, uint16_t localX, uint16_t localY, uint64_t seed);

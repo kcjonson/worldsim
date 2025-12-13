@@ -52,7 +52,8 @@ class EntityInfoPanel : public UI::Component {
 		Foundation::Vec2	  position{0.0F, 0.0F};
 		float				  width = 180.0F;
 		std::string			  id = "entity_info";
-		std::function<void()> onClose; // Called when close button clicked
+		std::function<void()> onClose;			// Called when close button clicked
+		std::function<void()> onTaskListToggle; // Called when task list toggle clicked
 	};
 
 	explicit EntityInfoPanel(const Args& args);
@@ -89,12 +90,14 @@ class EntityInfoPanel : public UI::Component {
 	float renderProgressBarSlot(const ProgressBarSlot& slot, float yOffset);
 	float renderTextListSlot(const TextListSlot& slot, float yOffset);
 	float renderSpacerSlot(const SpacerSlot& slot, float yOffset);
+	float renderClickableTextSlot(const ClickableTextSlot& slot, float yOffset);
 
 	/// Get close button top-left position for current panel position
 	[[nodiscard]] Foundation::Vec2 getCloseButtonPosition(float panelY) const;
 
-	// Close button callback
+	// Callbacks
 	std::function<void()> onCloseCallback;
+	std::function<void()> onTaskListToggleCallback;
 
 	// Background panel
 	UI::LayerHandle backgroundHandle;
@@ -119,6 +122,12 @@ class EntityInfoPanel : public UI::Component {
 	static constexpr size_t kMaxListItems = 8;
 	UI::LayerHandle listHeaderHandle;
 	std::vector<UI::LayerHandle> listItemHandles;
+
+	// Clickable text (for ClickableTextSlot)
+	UI::LayerHandle clickableTextHandle;
+	std::function<void()> clickableCallback;
+	Foundation::Vec2 clickableBoundsMin;
+	Foundation::Vec2 clickableBoundsMax;
 
 	// Pool indices (track which elements are in use)
 	size_t usedTextSlots = 0;
