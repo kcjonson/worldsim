@@ -2,7 +2,7 @@
 
 // Vision System for Colonist Observation
 // Updates colonist Memory components by observing nearby world entities.
-// Also discovers terrain features (water tiles) that can fulfill needs.
+// Also discovers shore tiles (land adjacent to water) that can fulfill needs.
 // See /docs/design/game-systems/colonists/memory.md for design details.
 
 #include "../ISystem.h"
@@ -23,7 +23,7 @@ namespace ecs {
 
 /// Updates colonist Memory by observing nearby world entities and terrain features.
 /// Queries PlacementExecutor for PlacedEntities within each colonist's sight radius.
-/// Also scans chunks for water tiles and registers them with Drinkable capability.
+/// Also scans chunks for shore tiles (land adjacent to water) with Drinkable capability.
 /// Priority: 45 (runs early, before needs decay and AI decisions)
 class VisionSystem : public ISystem {
   public:
@@ -40,7 +40,7 @@ class VisionSystem : public ISystem {
 		m_processedChunks = processedChunks;
 	}
 
-	/// Set the chunk manager for terrain tile queries (water discovery)
+	/// Set the chunk manager for terrain tile queries (shore discovery)
 	void setChunkManager(engine::world::ChunkManager* chunkManager) { m_chunkManager = chunkManager; }
 
   private:
@@ -51,9 +51,9 @@ class VisionSystem : public ISystem {
 	const std::unordered_set<engine::world::ChunkCoordinate>*	  m_processedChunks = nullptr;
 	engine::world::ChunkManager*								  m_chunkManager = nullptr;
 
-	// Cached defNameId for water tiles (registered on first update)
-	uint32_t m_waterTileDefNameId = 0;
-	uint8_t	 m_waterTileCapabilityMask = 0;
+	// Cached defNameId for shore tiles (registered on first update)
+	uint32_t m_shoreTileDefNameId = 0;
+	uint8_t	 m_shoreTileCapabilityMask = 0;
 	bool	 m_terrainDefsRegistered = false;
 };
 

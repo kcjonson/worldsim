@@ -27,7 +27,8 @@ enum class Surface : uint8_t {
 	Sand,   // Sandy terrain
 	Rock,   // Rocky/stone surface
 	Water,  // Water bodies
-	Snow    // Snow-covered ground
+	Snow,   // Snow-covered ground
+	Mud     // Wet mud (darker than Dirt, appears near water)
 };
 
 /// Convert Surface enum to string for placement rules and debugging
@@ -45,12 +46,14 @@ enum class Surface : uint8_t {
 			return "Water";
 		case Surface::Snow:
 			return "Snow";
+		case Surface::Mud:
+			return "Mud";
 		default:
 			return "Unknown";
 	}
 }
 
-/// Compact tile data - 8 bytes, stored in flat array per chunk.
+/// Tile data - 16 bytes, stored in flat array per chunk.
 /// Designed for single source of truth: computed once, read by all systems.
 struct TileData {
 	Surface surface = Surface::Soil;    ///< 1 byte - THE definitive terrain type
@@ -59,7 +62,8 @@ struct TileData {
 	uint8_t biomeBlend = 255;           ///< 1 byte - weight of primary (255 = 100% primary)
 	uint16_t elevation = 0;             ///< 2 bytes - centimeters above sea level
 	uint8_t moisture = 128;             ///< 1 byte - normalized 0-255
-	uint8_t flags = 0;                  ///< 1 byte - reserved for future use
+	uint8_t attributes = 0;             ///< 1 byte - reserved for future non-adjacency flags
+	uint64_t adjacency = 0;             ///< 8 bytes - neighbor surface types (8 dirs × 6 bits)
 
 	/// Get biome weights as BiomeWeights (for compatibility during migration)
 	[[nodiscard]] BiomeWeights biome() const {
@@ -128,7 +132,7 @@ class Chunk {
 	uint64_t m_worldSeed;
 	mutable std::chrono::steady_clock::time_point m_lastAccessed;
 
-	/// Flat array of pre-computed tiles (512×512 = 262,144 tiles × 8 bytes = 2.1 MB)
+	/// Flat array of pre-computed tiles (512×512 = 262,144 tiles × 16 bytes = 4.0 MB)
 	std::array<TileData, kChunkSize * kChunkSize> m_tiles;
 
 	/// Thread-safe flag indicating generation is complete

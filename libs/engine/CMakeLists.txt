@@ -7,6 +7,7 @@ add_library(engine
     world/TileGrid.cpp
     world/chunk/Chunk.cpp
     world/chunk/ChunkManager.cpp
+    world/chunk/TilePostProcessor.cpp
     world/chunk/MockWorldSampler.cpp
     world/rendering/ChunkRenderer.cpp
     world/rendering/EntityRenderer.cpp

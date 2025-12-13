@@ -9,6 +9,7 @@
 #include "assets/placement/PlacementExecutor.h"
 #include "world/chunk/Chunk.h"
 #include "world/chunk/ChunkManager.h"
+#include "world/chunk/TileAdjacency.h"
 
 #include <utils/Log.h>
 
@@ -17,13 +18,9 @@
 namespace ecs {
 
 	namespace {
-		// Synthetic definition name for water tiles (not a placed entity, but a terrain feature)
-		constexpr const char* kWaterTileDefName = "Terrain_Water";
-
-		// Scan every tile for water edges (stride=1 needed for accurate shore detection)
-		// With stride>1, we might skip edge tiles and land on interior tiles whose
-		// neighbors are all water, causing us to miss registering shore positions.
-		constexpr int kWaterScanStride = 1;
+		// Synthetic definition name for shore tiles (land adjacent to water)
+		// Shore tiles are where colonists stand to drink from water
+		constexpr const char* kShoreTileDefName = "Terrain_Shore";
 	} // namespace
 
 	void VisionSystem::ensureTerrainDefinitionsRegistered() {
@@ -33,11 +30,11 @@ namespace ecs {
 
 		auto& registry = engine::assets::AssetRegistry::Get();
 
-		// Create capability mask for water (Drinkable)
-		m_waterTileCapabilityMask = (1 << static_cast<uint8_t>(engine::assets::CapabilityType::Drinkable));
+		// Create capability mask for shore (Drinkable - colonists drink AT the shore)
+		m_shoreTileCapabilityMask = (1 << static_cast<uint8_t>(engine::assets::CapabilityType::Drinkable));
 
-		// Register synthetic water tile definition
-		m_waterTileDefNameId = registry.registerSyntheticDefinition(kWaterTileDefName, m_waterTileCapabilityMask);
+		// Register synthetic shore tile definition
+		m_shoreTileDefNameId = registry.registerSyntheticDefinition(kShoreTileDefName, m_shoreTileCapabilityMask);
 
 		m_terrainDefsRegistered = true;
 	}
@@ -94,9 +91,12 @@ namespace ecs {
 				}
 			}
 
-			// Scan for water tiles in ALL visible chunks (not just processed ones)
-			// Water is a terrain feature, not a placed entity
-			if (m_chunkManager != nullptr && m_waterTileDefNameId != 0) {
+			// Scan for shore tiles using pre-computed adjacency data
+			// Shore = land tile with water in any cardinal direction (N/E/S/W)
+			// Much simpler than the old approach of scanning water tiles and checking neighbors
+			if (m_chunkManager != nullptr && m_shoreTileDefNameId != 0) {
+				constexpr uint8_t kWaterSurfaceId = static_cast<uint8_t>(engine::world::Surface::Water);
+
 				for (int32_t cy = chunkMinY; cy <= chunkMaxY; ++cy) {
 					for (int32_t cx = chunkMinX; cx <= chunkMaxX; ++cx) {
 						engine::world::ChunkCoordinate coord{cx, cy};
@@ -106,7 +106,6 @@ namespace ecs {
 							continue;
 						}
 
-						// Calculate the tile range to scan within this chunk
 						auto origin = chunk->worldOrigin();
 
 						// Calculate visible tile range within this chunk
@@ -117,71 +116,28 @@ namespace ecs {
 						int tileMaxY =
 							std::min(static_cast<int>(engine::world::kChunkSize) - 1, static_cast<int>(std::floor(maxY - origin.y)));
 
-						// Scan tiles with stride for performance (water bodies are large)
-						// We look for water tiles at the EDGE (adjacent to non-water) and register
-						// the shore position (the adjacent land tile) so colonists drink from shore
-						for (int ty = tileMinY; ty <= tileMaxY; ty += kWaterScanStride) {
-							for (int tx = tileMinX; tx <= tileMaxX; tx += kWaterScanStride) {
+						// Scan tiles - check adjacency data for water neighbors
+						for (int ty = tileMinY; ty <= tileMaxY; ++ty) {
+							for (int tx = tileMinX; tx <= tileMaxX; ++tx) {
 								auto tile = chunk->getTile(static_cast<uint16_t>(tx), static_cast<uint16_t>(ty));
 
+								// Skip water tiles - we want land tiles adjacent to water
 								if (tile.surface == engine::world::Surface::Water) {
-									// Calculate the world position of this water tile
-									glm::vec2 waterWorldPos{
+									continue;
+								}
+
+								// Check if this land tile has water in any cardinal direction
+								if (engine::world::TileAdjacency::hasAdjacentSurface(tile.adjacency, kWaterSurfaceId)) {
+									// This is a shore tile!
+									glm::vec2 shoreWorldPos{
 										origin.x + static_cast<float>(tx) + 0.5F, origin.y + static_cast<float>(ty) + 0.5F
 									};
 
-									// Find any adjacent non-water tile as the shore position
-									// (where colonist stands to drink from this water tile)
-									// Uses world coordinates to handle cross-chunk boundaries
-									static const int kNeighborOffsets[4][2] = {{-1, 0}, {1, 0}, {0, -1}, {0, 1}};
-
-									for (const auto& offset : kNeighborOffsets) {
-										// Calculate neighbor world position
-										float neighborWorldX = waterWorldPos.x - 0.5F + static_cast<float>(offset[0]);
-										float neighborWorldY = waterWorldPos.y - 0.5F + static_cast<float>(offset[1]);
-
-										// Find which chunk this neighbor is in
-										engine::world::ChunkCoordinate neighborChunkCoord{
-											static_cast<int32_t>(
-												std::floor(neighborWorldX / static_cast<float>(engine::world::kChunkSize))
-											),
-											static_cast<int32_t>(std::floor(neighborWorldY / static_cast<float>(engine::world::kChunkSize)))
-										};
-
-										const auto* neighborChunk = m_chunkManager->getChunk(neighborChunkCoord);
-										if (neighborChunk == nullptr || !neighborChunk->isReady()) {
-											continue; // Chunk not loaded or not ready
-										}
-
-										// Calculate local tile coordinates within that chunk
-										auto neighborOrigin = neighborChunk->worldOrigin();
-										int	 neighborTileX = static_cast<int>(std::floor(neighborWorldX - neighborOrigin.x));
-										int	 neighborTileY = static_cast<int>(std::floor(neighborWorldY - neighborOrigin.y));
-
-										// Clamp to valid range (should already be valid, but be safe)
-										neighborTileX =
-											std::max(0, std::min(neighborTileX, static_cast<int>(engine::world::kChunkSize) - 1));
-										neighborTileY =
-											std::max(0, std::min(neighborTileY, static_cast<int>(engine::world::kChunkSize) - 1));
-
-										auto neighborTile = neighborChunk->getTile(
-											static_cast<uint16_t>(neighborTileX), static_cast<uint16_t>(neighborTileY)
-										);
-
-										if (neighborTile.surface == engine::world::Surface::Water) {
-											continue;
-										}
-
-										// Found a non-water neighbor - this is a shore!
-										glm::vec2 shoreWorldPos{neighborWorldX + 0.5F, neighborWorldY + 0.5F};
-
-										// Check if within sight radius
-										float dx = shoreWorldPos.x - pos.value.x;
-										float dy = shoreWorldPos.y - pos.value.y;
-										if (dx * dx + dy * dy <= sightRadiusSq) {
-											memory.rememberWorldEntity(shoreWorldPos, m_waterTileDefNameId, m_waterTileCapabilityMask);
-										}
-										break; // Only register one shore per water tile
+									// Check if within sight radius
+									float dx = shoreWorldPos.x - pos.value.x;
+									float dy = shoreWorldPos.y - pos.value.y;
+									if (dx * dx + dy * dy <= sightRadiusSq) {
+										memory.rememberWorldEntity(shoreWorldPos, m_shoreTileDefNameId, m_shoreTileCapabilityMask);
 									}
 								}
 							}

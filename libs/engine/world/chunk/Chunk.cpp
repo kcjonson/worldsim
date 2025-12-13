@@ -1,5 +1,7 @@
 #include "Chunk.h"
 
+#include "world/chunk/TilePostProcessor.h"
+
 #include <cmath>
 
 namespace engine::world {
@@ -20,6 +22,9 @@ namespace engine::world {
 				m_tiles[y * kChunkSize + x] = computeTile(x, y);
 			}
 		}
+
+		// Post-process tiles: generate mud near water, compute adjacency
+		TilePostProcessor::process(m_tiles, m_worldSeed);
 
 		// Mark generation complete (release semantics for thread safety)
 		m_generationComplete.store(true, std::memory_order_release);
@@ -66,7 +71,8 @@ namespace engine::world {
 		// Convert to uint8_t (0-255)
 		tile.moisture = static_cast<uint8_t>(std::min(255.0F, moistureBase * 255.0F));
 
-		tile.flags = 0; // Reserved for future use
+		tile.attributes = 0; // Reserved for future use
+		tile.adjacency = 0;  // Computed by TilePostProcessor after all tiles generated
 
 		return tile;
 	}
@@ -144,9 +150,9 @@ namespace engine::world {
 		auto [primary, variation] = getSurfaces(biome);
 
 		// Threshold for sparse patches - fractal noise clusters around 0.5
-		// 0.72 captures ~5-8% of area with organic blob shapes
-		// Mountains get lower threshold for more variation
-		float threshold = (biome == Biome::Mountain) ? 0.62F : 0.72F;
+		// 0.88 captures ~2-3% of area with sparse dirt patches
+		// Mountains get lower threshold for more rock variation
+		float threshold = (biome == Biome::Mountain) ? 0.70F : 0.88F;
 
 		if (variationNoise > threshold) {
 			return variation;
@@ -267,6 +273,8 @@ namespace engine::world {
 			case Surface::Snow:
 				return Foundation::Color(0.95F, 0.97F, 1.0F, 1.0F);
 
+			case Surface::Mud:
+				return Foundation::Color(0.35F, 0.25F, 0.15F, 1.0F); // Darker brown than Dirt
 
 			default:
 				return Foundation::Color(0.5F, 0.5F, 0.5F, 1.0F);
