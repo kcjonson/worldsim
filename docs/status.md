@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2025-12-12 (Completed Flat Tile Storage Refactor + Retina Coordinate Fix)
+Last Updated: 2025-12-13 (Completed Shore Tiles + Surface Edge Rendering)
 
 ## Epic/Story/Task Template
 
@@ -27,6 +27,35 @@ Use this template for all work items:
 ---
 
 ## Recently Completed Epics (Last 4)
+
+### ✅ Shore Tiles + Surface Edge Rendering
+**Spec/Documentation:** `/Users/kcjonson/.claude/plans/tranquil-discovering-globe.md`
+**Dependencies:** Flat Tile Storage Refactor
+**Status:** complete
+
+**Goal:** Pre-compute tile adjacency for fast shore detection, add visual edge decorations at surface transitions, and generate organic mud around water bodies.
+
+**Completed Tasks:**
+- [x] TileAdjacency System
+  - [x] Create TileAdjacency.h with 64-bit packed neighbor data (8 directions × 6 bits)
+  - [x] Direction enum (NW, W, SW, S, SE, E, NE, N) with getNeighbor/setNeighbor helpers
+  - [x] Surface stacking order (Water < Mud < Sand < Dirt < Soil < Rock < Snow)
+  - [x] getEdgeMaskByStack() and getCornerMaskByStack() for edge rendering
+- [x] TilePostProcessor
+  - [x] Flood-fill mud generation around water bodies (contiguous rings, 3-tile max)
+  - [x] Adjacency computation for all tiles after initial surface assignment
+  - [x] Tunable parameters (kMudMaxDistance=3, kMudProbability=0.95)
+- [x] Surface Edge Rendering
+  - [x] Higher-stacked surfaces draw darkened edges when adjacent to lower surfaces
+  - [x] Asymmetric stroke widths for depth effect (1px light N/W, 2px shadow S/E)
+  - [x] Corner rectangles sized to match adjacent edges (NW=1×1, SE=2×2, etc.)
+- [x] Surface::Mud Type
+  - [x] Add Mud to Surface enum with darker brown color
+  - [x] Reduced dirt threshold (0.88) for less random dirt in grassland
+
+**Result:** Tiles have pre-computed adjacency for O(1) shore detection. Visual depth effect on all surface transitions. Organic mud rings around water bodies. ✅
+
+---
 
 ### ✅ Flat Tile Storage Refactor
 **Spec/Documentation:** `/Users/kcjonson/.claude/plans/fluffy-cooking-russell.md`
