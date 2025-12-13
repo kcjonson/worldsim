@@ -254,10 +254,11 @@ namespace engine::assets {
 									static_cast<uint16_t>(entityLocalY)
 								);
 								if (surface == "Water") {
+									LOG_DEBUG(Engine, "[Placement] Skipping clumped entity at (%d,%d) - Water surface", entityLocalX, entityLocalY);
 									continue;
 								}
 							} else {
-								LOG_WARNING(Engine, "[Placement] getSurface is NULL - cannot check water!");
+								LOG_WARNING(Engine, "[Placement] getSurface is NULL in clumped check!");
 							}
 
 							// Check relationship modifiers for this position

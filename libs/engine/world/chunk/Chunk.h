@@ -99,19 +99,13 @@ class Chunk {
 	/// Returns pre-computed tile from flat array (requires isReady() == true)
 	[[nodiscard]] const TileData& getTile(uint16_t localX, uint16_t localY) const;
 
-	/// Get the biome data for this chunk
+	/// Get the biome data for this chunk (used during generation)
 	[[nodiscard]] const ChunkSampleResult& biomeData() const { return m_biomeData; }
 
-	/// Check if chunk is pure (single biome)
-	[[nodiscard]] bool isPure() const { return m_biomeData.isPure; }
-
-	/// Get primary biome (for pure chunks or dominant biome for boundary chunks)
+	/// Get primary biome (dominant biome at chunk center)
 	[[nodiscard]] Biome primaryBiome() const {
-		if (m_biomeData.isPure) {
-			return m_biomeData.singleBiome;
-		}
-		// Return the biome of the center sector
-		return m_biomeData.getTileBiome(256, 256).primary();
+		// Return the biome of the center tile
+		return m_tiles[256 * kChunkSize + 256].primaryBiome;
 	}
 
 	/// Get color for a biome (for ground rendering)

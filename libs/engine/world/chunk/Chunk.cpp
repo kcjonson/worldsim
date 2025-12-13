@@ -267,6 +267,7 @@ namespace engine::world {
 			case Surface::Snow:
 				return Foundation::Color(0.95F, 0.97F, 1.0F, 1.0F);
 
+
 			default:
 				return Foundation::Color(0.5F, 0.5F, 0.5F, 1.0F);
 		}

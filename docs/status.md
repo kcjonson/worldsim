@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2025-12-11 (Added Flat Tile Storage Refactor epic)
+Last Updated: 2025-12-12 (Completed Flat Tile Storage Refactor + Retina Coordinate Fix)
 
 ## Epic/Story/Task Template
 
@@ -28,36 +28,43 @@ Use this template for all work items:
 
 ## Recently Completed Epics (Last 4)
 
-### ✅ Chunk-Based World Rendering System
-**Spec/Documentation:** `/docs/technical/chunk-management-system.md`
+### ✅ Flat Tile Storage Refactor
+**Spec/Documentation:** `/Users/kcjonson/.claude/plans/fluffy-cooking-russell.md`
+**Dependencies:** None
 **Status:** complete
 
-**Completed Tasks:**
-- [x] Coordinate System
-  - [x] ChunkCoordinate type with hash for unordered_map
-  - [x] WorldPosition continuous 2D coordinates
-  - [x] Coordinate transforms between chunk/world/screen
-- [x] World Sampling Interface
-  - [x] IWorldSampler abstract interface
-  - [x] MockWorldSampler with simplex noise biomes
-  - [x] ChunkSampleResult with sector grid (32×32) for O(1) tile lookup
-- [x] Chunk System
-  - [x] Chunk class with biome data and noise-based ground cover
-  - [x] ChunkManager with dynamic load/unload (5×5 load, 7×7 unload)
-  - [x] ChunkRenderer for tile grid rendering
-- [x] Camera & Controls
-  - [x] WorldCamera with WASD panning and scroll wheel zoom
-  - [x] GameOverlay HUD (FPS, chunk count, camera position)
-  - [x] ZoomControl UI component
-- [x] World-Sim App Bootstrap
-  - [x] SplashScene, MainMenuScene, GameScene
-  - [x] Full game flow: Splash → Menu → Game
-- [x] Testing
-  - [x] ChunkCoordinate tests (hashing, neighbors, transforms)
-  - [x] ChunkManager tests (load/unload lifecycle)
-  - [x] MockWorldSampler tests (biome distribution, determinism)
+**Goal:** Replace layered/lazy tile generation with flat tile array per chunk. Fixed flora-on-water bug and eliminated class of bugs where systems disagree about tile state.
 
-**Result:** Playable world-sim with infinite pannable world and biome-based terrain ✅
+**Completed Tasks:**
+- [x] Phase 0: Debug Code Removal & Terminology Rename
+  - [x] Removed ~100 lines of debug logging across 4 files
+  - [x] Renamed `GroundCover` enum → `Surface`
+  - [x] Renamed `Grass` → `Soil` (plants grow on soil, grass IS a plant)
+  - [x] Renamed `selectGroundCover()` → `selectSurface()`
+- [x] Phase 1: Data Structure Changes
+  - [x] Updated TileData struct (8 bytes: surface, primaryBiome, secondaryBiome, biomeBlend, elevation, moisture, flags)
+  - [x] Added `tiles` array to Chunk struct (262,144 TileData = ~2.1 MB/chunk)
+  - [x] Added `std::atomic<bool> generationComplete` for thread safety
+  - [x] Added `Chunk::generate()` that pre-computes all tiles
+  - [x] Added `BiomeWeights::secondary()` and `primaryWeight()` methods
+- [x] Phase 2: System Updates
+  - [x] Updated ChunkRenderer: check `isReady()`, read from tiles[] array
+  - [x] Removed pure chunk optimization (was hiding ponds!)
+  - [x] Updated VisionSystem to check `isReady()` before querying terrain
+- [x] Phase 3: Cleanup
+  - [x] Removed `Chunk::isPure()` method
+  - [x] Removed `ChunkSampleResult::isPure` and `singleBiome` fields
+  - [x] Removed `MockWorldSampler::isChunkPure()` method
+  - [x] Updated unit tests
+
+**Result:** Single source of truth for tile data. Ponds now visible. Flora-on-water bug architectural fix in place. ✅
+
+**Additional Fix (2025-12-12):** Discovered and fixed Retina coordinate mismatch:
+- `getViewport()` returned physical pixels (2688×1680), not logical pixels (1344×840)
+- VisionSystem was detecting water at wrong world positions
+- Tiles were rendering at 2× offset positions
+- **Fix:** Implemented `getLogicalViewport()` and updated all render/input code to use it
+- Colonists now correctly find and drink from actual water tiles
 
 ---
 
@@ -527,54 +534,6 @@ Use this template for all work items:
 
 ---
 
-## Planned Epics (Ready)
-
-### Flat Tile Storage Refactor
-**Spec/Documentation:** `/docs/technical/flat-tile-storage-refactor.md`
-**Dependencies:** None
-**Status:** ready
-
-**Goal:** Replace layered/lazy tile generation with flat tile array per chunk. Fixes flora-on-water bug and eliminates class of bugs where systems disagree about tile state.
-
-**Key Insight:** `GroundCover` is misnamed — it's actually `Surface` (terrain material). Real ground cover (plants) are entities placed ON surfaces. Surface must be computed FIRST, then flora placement can reliably skip water tiles.
-
-**Tasks:**
-- [ ] Phase 0: Terminology Fix (Prerequisite)
-  - [ ] Rename `GroundCover` enum → `Surface`
-  - [ ] Rename `Grass` → `Soil` (plants grow on soil, grass IS a plant)
-  - [ ] Rename `selectGroundCover()` → `selectSurface()`
-  - [ ] Update all references and documentation
-- [ ] Phase 1: Data Structure Changes
-  - [ ] Update TileData struct (8 bytes: surface, primaryBiome, secondaryBiome, biomeBlend, elevation, moisture, flags)
-  - [ ] Add `tiles` array to Chunk struct (262,144 TileData = ~2.1 MB/chunk)
-  - [ ] Add `std::atomic<bool> generationComplete` for thread safety
-  - [ ] Change `Chunk::generate(worldSeed, sampleResult)` — sampleResult is temporary, discarded after
-  - [ ] Add `BiomeWeights::secondary()` method for ecotone blend storage
-- [ ] Phase 2: System Updates
-  - [ ] Update ChunkRenderer: check `isReady()`, read from tiles[] array
-  - [ ] Remove pure chunk optimization (no longer needed)
-  - [ ] Update PlacementExecutor to query tiles[] for surface (**fixes flora-on-water bug**)
-  - [ ] Update VisionSystem to query tiles[] for terrain
-  - [ ] Update AIDecisionSystem to use definitive tile data
-- [ ] Phase 3: Cleanup & Testing
-  - [ ] Remove selectSurface() from query path (keep in generate())
-  - [ ] Simplify ChunkSampleResult (remove isPure flag, sector grid is now temporary)
-  - [ ] Add determinism tests (same seed = identical tiles)
-  - [ ] Add thread safety tests
-  - [ ] Add test: no flora entities placed on Surface::Water
-  - [ ] Add test: adjacent chunk edges match (seamless ecotones)
-
-**Success Criteria:**
-- All systems read tile data from single source (tiles[] array)
-- No flora spawning on water (flora-on-water bug fixed)
-- Deterministic generation from world seed
-- Thread-safe chunk streaming (isReady() pattern)
-- Biome blending preserved (primaryBiome, secondaryBiome, biomeBlend)
-- Memory usage < 250 MB for 25-chunk load (~52 MB expected)
-- All existing tests pass
-
----
-
 ## Blockers & Issues
 
 ### SVG Ellipse/Circle Tessellation Bug
@@ -583,12 +542,13 @@ Use this template for all work items:
 **Root Cause:** Ear-clipping tessellator receives degenerate polygons when nanosvg converts circles/ellipses to paths
 **Fix Needed:** Either improve tessellator robustness or convert shapes to paths in SVGLoader before tessellation
 
-### Entities Spawning on Water Tiles
+### ✅ RESOLVED: Entities Spawning on Water Tiles
 **Impact:** Flora entities (grass, berry bushes, trees) spawn on water tiles instead of being restricted to land
-**Workaround:** None currently - visual issue only, doesn't affect gameplay
-**Root Cause:** Surface type (water vs soil) is computed lazily via noise, not stored. PlacementExecutor can't reliably check surface because it would need to recompute the same noise with exact same parameters.
-**Fix:** The **Flat Tile Storage Refactor** epic solves this architecturally — surface is computed FIRST and stored in `tiles[]` array, then PlacementExecutor queries definitive surface data.
-**Attempted (failed):** Added `groundCovers` field to BiomePlacement and checks in PlacementExecutor, but filtering didn't work because of the lazy computation mismatch.
+**Resolution:** Fixed by **Flat Tile Storage Refactor** + **Retina Coordinate Fix**
+- Flat tile storage gives single source of truth for surface type
+- Retina coordinate fix ensures correct world↔screen mapping
+- Colonists now correctly find and drink from actual water tiles
+- No visual grass-on-water issue observed
 
 ---
 

@@ -5,6 +5,8 @@
 #include "../components/Task.h"
 #include "../components/Transform.h"
 
+#include <utils/Log.h>
+
 #include <cmath>
 #include <glm/geometric.hpp>
 
@@ -43,6 +45,30 @@ void MovementSystem::update(float deltaTime) {
         // Set velocity toward target at movement speed
         glm::vec2 direction = toTarget / distance;  // Normalize
         vel.value = direction * target.speed;
+
+        // DEBUG: Log movement direction (only occasionally to avoid spam)
+        static int frameCounter = 0;
+        if (frameCounter++ % 60 == 0) {  // Log once per second at 60fps
+            // Calculate cardinal direction for human-readable output
+            const char* dirLabel = "UNKNOWN";
+            if (std::abs(toTarget.x) > std::abs(toTarget.y)) {
+                dirLabel = (toTarget.x > 0) ? "EAST" : "WEST";
+            } else {
+                // NOTE: In our world, +Y = SOUTH (Y-down convention)
+                dirLabel = (toTarget.y > 0) ? "SOUTH" : "NORTH";
+            }
+            LOG_DEBUG(
+                Engine,
+                "[Movement] Entity %llu: pos=(%.2f, %.2f) -> target=(%.2f, %.2f), "
+                "delta=(%.2f, %.2f), dist=%.2f, dir=%s",
+                static_cast<unsigned long long>(entity),
+                pos.value.x, pos.value.y,
+                target.target.x, target.target.y,
+                toTarget.x, toTarget.y,
+                distance,
+                dirLabel
+            );
+        }
     }
 
     // Update facing direction based on velocity

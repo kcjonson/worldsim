@@ -63,15 +63,17 @@ namespace {
 		oss << "(" << pos.x << ", " << pos.y << ")";
 		return oss.str();
 	}
+
 } // namespace
 
 std::optional<PanelContent> adaptSelection(
 	const Selection& selection,
 	const ecs::World& world,
-	const engine::assets::AssetRegistry& registry
+	const engine::assets::AssetRegistry& registry,
+	std::function<void()> onTaskListToggle
 ) {
 	return std::visit(
-		[&world, &registry](auto&& sel) -> std::optional<PanelContent> {
+		[&world, &registry, &onTaskListToggle](auto&& sel) -> std::optional<PanelContent> {
 			using T = std::decay_t<decltype(sel)>;
 			if constexpr (std::is_same_v<T, NoSelection>) {
 				return std::nullopt;
@@ -80,7 +82,7 @@ std::optional<PanelContent> adaptSelection(
 				if (!world.isAlive(sel.entityId)) {
 					return std::nullopt;
 				}
-				return adaptColonist(world, sel.entityId);
+				return adaptColonist(world, sel.entityId, onTaskListToggle);
 			} else if constexpr (std::is_same_v<T, WorldEntitySelection>) {
 				return adaptWorldEntity(registry, sel);
 			}
@@ -89,7 +91,7 @@ std::optional<PanelContent> adaptSelection(
 	);
 }
 
-PanelContent adaptColonist(const ecs::World& world, ecs::EntityID entityId) {
+PanelContent adaptColonist(const ecs::World& world, ecs::EntityID entityId, std::function<void()> onTaskListToggle) {
 	PanelContent content;
 
 	// Get colonist name for title
@@ -126,6 +128,15 @@ PanelContent adaptColonist(const ecs::World& world, ecs::EntityID entityId) {
 		content.slots.push_back(TextSlot{
 			.label = "Action",
 			.value = formatAction(*action),
+		});
+	}
+
+	// Add clickable task list toggle (if callback provided)
+	if (onTaskListToggle) {
+		content.slots.push_back(ClickableTextSlot{
+			.label = "Tasks",
+			.value = "> Show",
+			.onClick = onTaskListToggle,
 		});
 	}
 

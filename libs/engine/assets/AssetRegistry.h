@@ -100,6 +100,13 @@ namespace engine::assets {
 		/// Check if a defName ID has a specific capability
 		[[nodiscard]] bool hasCapability(uint32_t id, CapabilityType capability) const;
 
+		/// Register a synthetic definition for terrain features (water tiles, etc.)
+		/// These don't have XML definitions but need to participate in the capability system.
+		/// @param defName The definition name (e.g., "Terrain_Water")
+		/// @param capabilityMask Bitmask of capabilities
+		/// @return The assigned defNameId, or 0 if registration failed
+		uint32_t registerSyntheticDefinition(const std::string& defName, uint8_t capabilityMask);
+
 		/// Get the total number of capability types
 		static constexpr size_t kCapabilityTypeCount = 4;
 
