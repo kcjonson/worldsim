@@ -157,6 +157,7 @@ See [/docs/design/features/vector-graphics/](../../design/features/vector-graphi
 - [/docs/technical/renderer-architecture.md](../renderer-architecture.md) - OpenGL renderer design
 - [/docs/technical/cpp-coding-standards.md](../cpp-coding-standards.md) - ECS integration patterns
 - [/docs/technical/memory-arenas.md](../memory-arenas.md) - Memory allocators for tessellation
+- [/docs/technical/ground-textures.md](../ground-textures.md) - Tier 1 tile texture implementation (SVG patterns → GPU atlas)
 
 ### Research Sources
 Key research findings documented in each comparative analysis document, including:

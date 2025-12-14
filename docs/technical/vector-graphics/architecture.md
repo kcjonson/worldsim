@@ -60,6 +60,11 @@ SVG Source → Pre-Rasterize (multiple LODs) → Texture Atlas → Static Quad R
 - Generate mipmaps for smooth LOD transitions
 - UV coordinates stored per tile type
 
+**Detailed Specification**: See [Ground Textures](../ground-textures.md) for the complete implementation design, including:
+- SVG tile pattern format (micro-detail: grass stubble, dirt speckles, color variation)
+- GPU render-to-texture pipeline (SVG → tessellate → FBO → atlas)
+- Integration with Tier 3 vector grass entities for hybrid rendering
+
 ### Tier 2: Semi-Static Structures
 
 **What**: Objects that don't change shape but move/rotate (buildings, rocks, non-animated trees, fences)

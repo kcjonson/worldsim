@@ -38,6 +38,15 @@ SVG File → Parser → Vector Data → Variation → Tessellation → Raster Ca
                                  Visual Blending
 ```
 
+**Tier 1 Ground Texture Pipeline** (separate path for tile backgrounds):
+```
+SVG Pattern → Parser → Tessellation → Render-to-Texture (FBO) → Texture Atlas → GPU
+     ↓
+Micro-detail (grass stubble, dirt speckles, color variation)
+```
+
+See [Ground Textures](../ground-textures.md) for complete Tier 1 implementation specification.
+
 ## Implementation Strategy
 
 ### 1. SVG Loading and Parsing

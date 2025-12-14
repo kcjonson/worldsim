@@ -127,6 +127,7 @@ Applications:
 | [Chunk Management System](./chunk-management-system.md) | Infinite 2D world from 3D sphere |
 | [3D to 2D Sampling](./3d-to-2d-sampling.md) | Converting spherical world to tiles |
 | [Flat Tile Storage Refactor](./flat-tile-storage-refactor.md) | Proposed: Replace layered tiles with flat array |
+| [Ground Textures](./ground-textures.md) | SVG tile patterns with GPU rasterization cache |
 
 ### Graphics & Rendering
 

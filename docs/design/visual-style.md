@@ -173,6 +173,8 @@ This document establishes the visual aesthetic direction for World-Sim. All tech
 - Water: flat color vs ripple/wave patterns
 - Sand: smooth vs grain texture
 
+**Implementation Reference**: See [Ground Textures](/docs/technical/ground-textures.md) for the technical approach to tile texture patterns. The system uses SVG patterns with dense micro-detail (100+ elements per pattern) rasterized to a texture atlas, combined with fewer larger vector grass blades for animation.
+
 ## Edge and Transition Visual Goals
 
 ### Coastlines (Water/Land)

@@ -563,6 +563,54 @@ Use this template for all work items:
 
 ---
 
+### Ground Texture System (Rimworld-Style)
+**Spec/Documentation:** `/docs/technical/ground-textures.md`
+**Dependencies:** None
+**Status:** ready
+
+**Goal:** Replace solid-color tiles with rich, earth-like terrain using hybrid Tier 1 (rasterized texture) + Tier 3 (vector grass) approach, with proper hard/soft edge rendering.
+
+**Key Design Decisions:**
+- **Three Surface Families**: Ground (traversable), Water (impassable), Rock (impassable cliffs)
+- **Hard edges between families**: Shorelines, cliff edges render crisp (vector precision)
+- **Soft edges within families**: Natural ground transitions blend smoothly
+- **Snow as overlay**: Seasonal attribute, not a surface type
+- **Built/flooring**: Handled as entities, not tiles
+
+**Tasks:**
+- [ ] Render-to-Texture Infrastructure
+  - [ ] Create RenderToTexture class (FBO wrapper)
+  - [ ] Test rendering SVG asset to texture
+- [ ] Tile Pattern Assets
+  - [ ] Create Soil pattern SVG (prototype with stubble + speckles)
+  - [ ] Define asset XML format for tile patterns
+- [ ] Atlas Builder
+  - [ ] Create TileTextureAtlas class
+  - [ ] Rasterize patterns to atlas slots
+- [ ] Shader Integration
+  - [ ] Add tile texture render mode to uber shader
+  - [ ] Update TileVertex struct with surface type
+  - [ ] Update ChunkRenderer to pass world position + surface
+- [ ] Surface Family + Hard Edge Mask
+  - [ ] Implement SurfaceFamily enum and getFamily() lookup
+  - [ ] Extend TileAdjacency with hardEdgeMask (8 bits, pre-computed)
+  - [ ] Add hardEdgeMask to TileVertex struct
+- [ ] Hard Edge Rendering
+  - [ ] Pass hardEdgeMask to shader as vertex attribute
+  - [ ] Implement edge shadow rendering (read mask, darken near edge)
+- [ ] All Surface Types (16 total)
+  - [ ] Ground family patterns (10 surfaces)
+  - [ ] Water family patterns (3 surfaces)
+  - [ ] Rock family patterns (3 surfaces)
+- [ ] Grass Entity Tuning
+  - [ ] Reduce density, increase blade size
+  - [ ] Visual balance between texture and vector layers
+- [ ] Soft Edge Blending (optional enhancement)
+  - [ ] Pass neighbor surface info to shader
+  - [ ] Alpha gradient blending for same-family transitions
+
+---
+
 ## Blockers & Issues
 
 ### ✅ RESOLVED: SVG Ellipse/Circle Tessellation Bug
