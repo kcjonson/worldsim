@@ -12,8 +12,8 @@ namespace world_sim {
 
 namespace {
 	// Need labels matching NeedType order
-	constexpr std::array<const char*, 4> kNeedLabels = {"Hunger", "Thirst", "Energy", "Bladder"};
-	constexpr size_t					 kNeedCount = 4;
+	constexpr std::array<const char*, 5> kNeedLabels = {"Hunger", "Thirst", "Energy", "Bladder", "Digestion"};
+	constexpr size_t					 kNeedCount = 5;
 
 	// Visual spacing between need bars and status section
 	constexpr float kStatusSectionSpacing = 8.0F;

@@ -127,6 +127,14 @@ namespace ecs {
 		/// Target position (used for location-based effects like spawning)
 		glm::vec2 targetPosition{0.0F, 0.0F};
 
+		/// Whether this action can be interrupted by higher-priority tasks.
+		/// Biological needs (Eat, Drink, Toilet) are NOT interruptable.
+		/// Sleep can be interrupted for critical needs.
+		bool interruptable = true;
+
+		/// Whether this action spawns a Bio Pile on completion (for Toilet/poop)
+		bool spawnBioPile = false;
+
 		// --- Effect data (variant - contains type-specific data) ---
 
 		ActionEffect effect;
@@ -169,38 +177,44 @@ namespace ecs {
 			duration = 0.0F;
 			elapsed = 0.0F;
 			targetPosition = glm::vec2{0.0F, 0.0F};
+			interruptable = true;
+			spawnBioPile = false;
 			effect = std::monostate{};
 		}
 
 		// --- Factory methods for creating actions ---
 
-		/// Factory: Eat action - restores hunger
+		/// Factory: Eat action - restores hunger, fills digestion
 		/// @param nutrition Amount of hunger to restore (0.0-1.0 maps to 0-100%)
 		static Action Eat(float nutrition) {
 			Action action;
 			action.type = ActionType::Eat;
 			action.state = ActionState::Starting;
-			action.duration = 2.0F; // 2 seconds to eat
+			action.duration = 2.0F;		  // 2 seconds to eat
+			action.interruptable = false; // Can't stop mid-bite!
 
 			NeedEffect needEff;
 			needEff.need = NeedType::Hunger;
 			needEff.restoreAmount = nutrition * 100.0F;
+			needEff.sideEffectNeed = NeedType::Digestion;
+			needEff.sideEffectAmount = -20.0F; // Eating DECREASES digestion (fills gut)
 			action.effect = needEff;
 
 			return action;
 		}
 
-		/// Factory: Drink action - restores thirst, increases bladder
-		/// @param quality Water quality (affects thirst restoration)
-		static Action Drink(float quality = 1.0F) {
+		/// Factory: Drink action - restores thirst fully, fills bladder
+		/// Water tiles are inexhaustible, so drinking always fully restores thirst.
+		static Action Drink() {
 			Action action;
 			action.type = ActionType::Drink;
 			action.state = ActionState::Starting;
-			action.duration = 1.5F; // 1.5 seconds to drink
+			action.duration = 1.5F;		  // 1.5 seconds to drink
+			action.interruptable = false; // Can't stop mid-gulp!
 
 			NeedEffect needEff;
 			needEff.need = NeedType::Thirst;
-			needEff.restoreAmount = 40.0F * quality; // Base 40% thirst restoration
+			needEff.restoreAmount = 100.0F; // Full thirst restoration from water tiles
 			needEff.sideEffectNeed = NeedType::Bladder;
 			needEff.sideEffectAmount = -15.0F; // Drinking DECREASES bladder (fills it up)
 			action.effect = needEff;
@@ -214,7 +228,8 @@ namespace ecs {
 			Action action;
 			action.type = ActionType::Sleep;
 			action.state = ActionState::Starting;
-			action.duration = 8.0F; // 8 seconds of sleep (game time scaled)
+			action.duration = 8.0F;		 // 8 seconds of sleep (game time scaled)
+			action.interruptable = true; // Can be woken for emergencies
 
 			NeedEffect needEff;
 			needEff.need = NeedType::Energy;
@@ -224,21 +239,58 @@ namespace ecs {
 			return action;
 		}
 
-		/// Factory: Toilet action - restores bladder, spawns Bio Pile
-		/// @param position Position to spawn Bio Pile
-		static Action Toilet(glm::vec2 position) {
+		/// Factory: Smart Toilet action - handles peeing and/or pooping based on needs
+		/// @param position Position for Bio Pile if pooping
+		/// @param doPee Whether to relieve bladder (peeing)
+		/// @param doPoop Whether to relieve digestion (pooping, creates Bio Pile)
+		///
+		/// Duration logic:
+		///   - Both pee and poop: 5.0s (combined action takes longest)
+		///   - Poop only: 4.0s (pooping takes longer than peeing)
+		///   - Pee only: 2.0s (quick action)
+		static Action Toilet(glm::vec2 position, bool doPee, bool doPoop) {
 			Action action;
 			action.type = ActionType::Toilet;
 			action.state = ActionState::Starting;
-			action.duration = 3.0F;			  // 3 seconds
-			action.targetPosition = position; // Also store in common field for convenience
+			action.targetPosition = position;
+			action.interruptable = false; // Definitely can't stop this!
 
-			// Toilet has both a need effect AND a spawn effect
-			// For MVP, we use NeedEffect and handle spawn in system
+			// Duration depends on what we're doing
+			if (doPee && doPoop) {
+				action.duration = 5.0F; // Both takes longer
+			} else if (doPoop) {
+				action.duration = 4.0F; // Pooping takes longer
+			} else {
+				action.duration = 2.0F; // Just peeing is quick
+			}
+
+			// Store what we're doing in effect
+			// We'll use NeedEffect for the primary action, and flags for secondary
 			NeedEffect needEff;
-			needEff.need = NeedType::Bladder;
-			needEff.restoreAmount = 100.0F; // Full bladder relief
+			if (doPee && doPoop) {
+				// Both - primary is bladder, side effect is digestion
+				needEff.need = NeedType::Bladder;
+				needEff.restoreAmount = 100.0F;
+				needEff.sideEffectNeed = NeedType::Digestion;
+				needEff.sideEffectAmount = 100.0F; // Positive = restore (relief)
+			} else if (doPoop) {
+				// Just pooping
+				needEff.need = NeedType::Digestion;
+				needEff.restoreAmount = 100.0F;
+			} else if (doPee) {
+				// Just peeing
+				needEff.need = NeedType::Bladder;
+				needEff.restoreAmount = 100.0F;
+			} else {
+				// Neither pee nor poop - shouldn't happen, but return a no-op action
+				// This is a programming error; caller should ensure at least one is true
+				needEff.need = NeedType::Bladder;
+				needEff.restoreAmount = 0.0F;
+			}
 			action.effect = needEff;
+
+			// Store poop flag for Bio Pile spawning (checked in ActionSystem)
+			action.spawnBioPile = doPoop;
 
 			return action;
 		}

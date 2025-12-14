@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2025-12-13 (Completed Shore Tiles + Surface Edge Rendering)
+Last Updated: 2025-12-14 (Implemented smart toilet location selection)
 
 ## Epic/Story/Task Template
 
@@ -565,11 +565,13 @@ Use this template for all work items:
 
 ## Blockers & Issues
 
-### SVG Ellipse/Circle Tessellation Bug
+### ✅ RESOLVED: SVG Ellipse/Circle Tessellation Bug
 **Impact:** Berry Bush and other assets using `<ellipse>` or `<circle>` SVG elements fail to render
-**Workaround:** Convert ellipse/circle elements to `<path>` bezier approximations (done for Berry Bush)
-**Root Cause:** Ear-clipping tessellator receives degenerate polygons when nanosvg converts circles/ellipses to paths
-**Fix Needed:** Either improve tessellator robustness or convert shapes to paths in SVGLoader before tessellation
+**Resolution:** Fixed in commit `e246fc0` (Dec 7, 2025) by adding convex polygon detection + fan tessellation
+- Added `isConvexPolygon()` to detect circles/ellipses (inherently convex)
+- Convex polygons use O(n) fan tessellation, bypassing the problematic ear-clipping algorithm
+- Unit tests added in `Tessellator.test.cpp` to prevent regression
+- Berry Bush SVG now renders correctly with native `<circle>` elements
 
 ### ✅ RESOLVED: Entities Spawning on Water Tiles
 **Impact:** Flora entities (grass, berry bushes, trees) spawn on water tiles instead of being restricted to land

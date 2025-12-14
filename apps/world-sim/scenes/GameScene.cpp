@@ -293,6 +293,10 @@ namespace {
 			visionSystem.setPlacementData(m_placementExecutor.get(), &m_processedChunks);
 			visionSystem.setChunkManager(m_chunkManager.get());
 
+			// Wire up AIDecisionSystem with chunk manager for toilet location queries
+			auto& aiDecisionSystem = ecsWorld->getSystem<ecs::AIDecisionSystem>();
+			aiDecisionSystem.setChunkManager(m_chunkManager.get());
+
 			// Spawn initial colonist at map center (0, 0)
 			spawnColonist({0.0F, 0.0F}, "Bob");
 

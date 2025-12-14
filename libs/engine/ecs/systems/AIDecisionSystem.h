@@ -19,6 +19,10 @@ namespace engine::assets {
 class AssetRegistry;
 }
 
+namespace engine::world {
+class ChunkManager;
+}
+
 namespace ecs {
 
 class AIDecisionSystem : public ISystem {
@@ -29,6 +33,9 @@ public:
 		std::optional<uint32_t> rngSeed = std::nullopt);
 
 	void update(float deltaTime) override;
+
+	/// Set the ChunkManager for terrain queries (required for smart toilet location)
+	void setChunkManager(engine::world::ChunkManager* chunkManager) { m_chunkManager = chunkManager; }
 
 	[[nodiscard]] int priority() const override { return 60; }
 
@@ -56,15 +63,20 @@ private:
 	[[nodiscard]] glm::vec2 generateWanderTarget(const glm::vec2& currentPos);
 
 	/// Check if entity should re-evaluate its current task
-	[[nodiscard]] bool shouldReEvaluate(const struct Task& task, const struct NeedsComponent& needs);
+	/// @param task Current task
+	/// @param needs Current needs component
+	/// @param action Optional action component (nullptr if entity has no Action component)
+	[[nodiscard]] bool shouldReEvaluate(const struct Task& task, const struct NeedsComponent& needs, const struct Action* action);
 
 	/// Build decision trace by evaluating all options
 	/// Populates the trace with all needs + wander, sorted by priority
+	/// @param currentTask Current task (used to preserve target when already pursuing a need)
 	void buildDecisionTrace(
 		EntityID entity,
 		const struct Position& position,
 		const struct NeedsComponent& needs,
 		const struct Memory& memory,
+		const struct Task& currentTask,
 		struct DecisionTrace& trace);
 
 	/// Select task from the decision trace (picks first Selected option)
@@ -81,8 +93,18 @@ private:
 
 	const engine::assets::AssetRegistry& m_registry;
 
+	/// ChunkManager for terrain queries (optional, fallback to current position if null)
+	engine::world::ChunkManager* m_chunkManager = nullptr;
+
 	/// How often to re-evaluate tasks (seconds)
 	static constexpr float kReEvalInterval = 0.5F;
+
+	/// Minimum priority gap required to switch tasks while an action is in progress.
+	/// This prevents minor priority fluctuations from causing task switches, but allows
+	/// emergencies (fires, critical needs ~300 vs actionable ~100) to interrupt.
+	/// Example: Current task priority 110, new task 115 (gap 5) → NO switch
+	/// Example: Current task priority 110, new task 305 (gap 195) → SWITCH
+	static constexpr float kPrioritySwitchThreshold = 50.0F;
 
 	/// Maximum distance for wander targets
 	static constexpr float kWanderRadius = 8.0F;

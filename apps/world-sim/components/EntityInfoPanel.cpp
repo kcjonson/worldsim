@@ -481,10 +481,11 @@ namespace world_sim {
 
 	void EntityInfoPanel::updateValues(const PanelContent& content) {
 		// Tier 3: Value-only update - same entity, just update dynamic slot values
-		// Only updates progress bars since those are the main dynamic elements
+		// Updates progress bars and text slots (for action/task status changes)
 		// Skips all position calculations for significant performance savings
 
 		size_t barIndex = 0;
+		size_t textIndex = 0;
 		for (const auto& slot : content.slots) {
 			if (const auto* barSlot = std::get_if<ProgressBarSlot>(&slot)) {
 				if (barIndex < progressBarHandles.size()) {
@@ -493,6 +494,14 @@ namespace world_sim {
 					}
 				}
 				++barIndex;
+			} else if (const auto* textSlot = std::get_if<TextSlot>(&slot)) {
+				// Update text slots (for Task/Action status that changes frequently)
+				if (textIndex < textHandles.size()) {
+					if (auto* text = getChild<UI::Text>(textHandles[textIndex])) {
+						text->text = textSlot->label + ": " + textSlot->value;
+					}
+				}
+				++textIndex;
 			}
 		}
 	}
