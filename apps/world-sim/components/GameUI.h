@@ -4,11 +4,13 @@
 //
 // Contains all game UI elements as children:
 // - GameOverlay: status display, zoom controls
+// - ColonistListPanel: left-side colonist portraits
 // - EntityInfoPanel: selected entity information
 // - TaskListPanel: expanded task queue (toggle from info panel)
 //
 // Handles input consumption to prevent click-through to world.
 
+#include "ColonistListPanel.h"
 #include "EntityInfoPanel.h"
 #include "GameOverlay.h"
 #include "Selection.h"
@@ -32,6 +34,7 @@ class GameUI {
 		std::function<void()> onZoomIn;
 		std::function<void()> onZoomOut;
 		std::function<void()> onSelectionCleared;
+		std::function<void(ecs::EntityID)> onColonistSelected;
 	};
 
 	explicit GameUI(const Args& args);
@@ -48,7 +51,7 @@ class GameUI {
 	void update(
 		const engine::world::WorldCamera& camera,
 		const engine::world::ChunkManager& chunkManager,
-		const ecs::World& ecsWorld,
+		ecs::World& ecsWorld,
 		const engine::assets::AssetRegistry& registry,
 		const Selection& selection
 	);
@@ -66,6 +69,7 @@ class GameUI {
 	[[nodiscard]] bool isPointOverInfoPanel(Foundation::Vec2 screenPos) const;
 
 	std::unique_ptr<GameOverlay> overlay;
+	std::unique_ptr<ColonistListPanel> colonistList;
 	std::unique_ptr<EntityInfoPanel> infoPanel;
 	std::unique_ptr<TaskListPanel> taskListPanel;
 

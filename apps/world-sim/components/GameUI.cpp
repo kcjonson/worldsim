@@ -22,6 +22,13 @@ GameUI::GameUI(const Args& args)
 		.onZoomOut = args.onZoomOut,
 	});
 
+	// Create colonist list panel (left side)
+	colonistList = std::make_unique<ColonistListPanel>(ColonistListPanel::Args{
+		.width = 60.0F,
+		.itemHeight = 50.0F,
+		.onColonistSelected = args.onColonistSelected,
+		.id = "colonist_list"});
+
 	// Create info panel (position set in layout())
 	// Initial position at (0,0) - will be updated in layout()
 	infoPanel = std::make_unique<EntityInfoPanel>(EntityInfoPanel::Args{
@@ -49,6 +56,11 @@ void GameUI::layout(const Foundation::Rect& newBounds) {
 
 	// Layout overlay to full viewport
 	overlay->layout(newBounds);
+
+	// Position colonist list on left side, below overlay and zoom controls
+	if (colonistList) {
+		colonistList->setPosition(0.0F, 130.0F);
+	}
 
 	// Position info panel in bottom-left corner (flush with edges)
 	float panelX = 0.0F;
@@ -83,6 +95,11 @@ bool GameUI::handleInput() {
 	// Handle overlay input first (zoom buttons)
 	overlay->handleInput();
 
+	// Handle colonist list input
+	if (colonistList && colonistList->handleInput()) {
+		return true;
+	}
+
 	// Check if click is over UI elements
 	if (input.isMouseButtonReleased(engine::MouseButton::Left)) {
 		auto mousePos = input.getMousePosition();
@@ -108,12 +125,21 @@ bool GameUI::handleInput() {
 void GameUI::update(
 	const engine::world::WorldCamera& camera,
 	const engine::world::ChunkManager& chunkManager,
-	const ecs::World& ecsWorld,
+	ecs::World& ecsWorld,
 	const engine::assets::AssetRegistry& registry,
 	const Selection& selection
 ) {
 	// Update overlay display values
 	overlay->update(camera, chunkManager);
+
+	// Update colonist list
+	if (colonistList) {
+		ecs::EntityID currentlySelected{0};
+		if (auto* colonistSel = std::get_if<ColonistSelection>(&selection)) {
+			currentlySelected = colonistSel->entityId;
+		}
+		colonistList->update(ecsWorld, currentlySelected);
+	}
 
 	// Track selected colonist for task list panel
 	ecs::EntityID newColonistId{0};
@@ -147,6 +173,11 @@ void GameUI::render() {
 	// Render overlay
 	overlay->render();
 
+	// Render colonist list
+	if (colonistList) {
+		colonistList->render();
+	}
+
 	// Render info panel if visible
 	if (infoPanel && infoPanel->isVisible()) {
 		infoPanel->render();
@@ -164,6 +195,15 @@ bool GameUI::isPointOverUI(Foundation::Vec2 screenPos) const {
 	// See /docs/technical/ui-framework/event-system.md
 	if (overlay && overlay->isPointOverUI(screenPos)) {
 		return true;
+	}
+
+	// Check colonist list bounds
+	if (colonistList) {
+		Foundation::Rect bounds = colonistList->getBounds();
+		if (screenPos.x >= bounds.x && screenPos.x <= bounds.x + bounds.width &&
+			screenPos.y >= bounds.y && screenPos.y <= bounds.y + bounds.height) {
+			return true;
+		}
 	}
 
 	// Check task list panel (if expanded)

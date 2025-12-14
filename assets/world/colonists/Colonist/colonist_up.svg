@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Colonist facing UP (away from camera) - sees back of head -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 60 100">
+  <!-- Head at top (back of head, no eyes) -->
+  <polygon points="30,5 40,8 44,15 40,22 30,25 20,22 16,15 20,8" fill="#9CA3AF"/>
+
+  <!-- Body -->
+  <polygon points="30,24 46,36 46,65 30,80 14,65 14,36" fill="#6B7280"/>
+
+  <!-- Left arm -->
+  <polygon points="12,40 5,50 9,54 16,46" fill="#9CA3AF"/>
+  <!-- Right arm -->
+  <polygon points="48,40 55,50 51,54 44,46" fill="#9CA3AF"/>
+
+  <!-- Feet at bottom -->
+  <polygon points="24,78 20,92 28,92" fill="#4B5563"/>
+  <polygon points="36,78 40,92 32,92" fill="#4B5563"/>
+</svg>
