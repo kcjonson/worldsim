@@ -39,8 +39,7 @@ class ColonistListPanel {
 	void setPosition(float x, float y);
 
 	/// Update colonist list from ECS world
-	/// Note: Uses const_cast internally since ecs::World::view() is not const
-	void update(const ecs::World& world, ecs::EntityID selectedColonistId);
+	void update(ecs::World& world, ecs::EntityID selectedColonistId);
 
 	/// Handle input (clicks on portraits)
 	/// @return true if input was consumed
@@ -73,6 +72,20 @@ class ColonistListPanel {
 	static constexpr float kPadding = 4.0F;
 	static constexpr float kItemSpacing = 2.0F;
 	static constexpr size_t kMaxColonists = 20;
+
+	// Cached portrait mesh data (computed once, reused per frame)
+	struct CachedMeshData {
+		float minX = 0.0F;
+		float maxX = 0.0F;
+		float minY = 0.0F;
+		float maxY = 0.0F;
+		float width = 0.0F;
+		float height = 0.0F;
+		float scale = 0.0F;
+		bool valid = false;
+	};
+	CachedMeshData cachedMesh;
+	std::vector<Foundation::Vec2> screenVerts;  // Reused buffer for vertex transforms
 };
 
 }  // namespace world_sim

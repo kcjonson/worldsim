@@ -125,7 +125,7 @@ bool GameUI::handleInput() {
 void GameUI::update(
 	const engine::world::WorldCamera& camera,
 	const engine::world::ChunkManager& chunkManager,
-	const ecs::World& ecsWorld,
+	ecs::World& ecsWorld,
 	const engine::assets::AssetRegistry& registry,
 	const Selection& selection
 ) {

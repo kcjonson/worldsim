@@ -41,7 +41,7 @@ void DynamicEntityRenderSystem::update(float /*deltaTime*/) {
         // SVG coords start at (0,0) top-left, so we need to:
         // - Shift X left by half width to center horizontally
         // - Shift Y to place feet at entity position
-        // Colonist: 60x87 SVG units, scaled to ~0.69x1.0m world units
+        // Colonist: 60x100 SVG units, scaled to ~0.69x1.0m world units
         constexpr float kSpriteWidthOffset = -0.35f;   // Half of ~0.69m width
         constexpr float kSpriteHeightOffset = -0.5f;   // Adjust for feet position
         placed.position = glm::vec2(pos.value.x + kSpriteWidthOffset, pos.value.y + kSpriteHeightOffset);

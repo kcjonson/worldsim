@@ -26,14 +26,12 @@ namespace world_sim {
 		panelY = y;
 	}
 
-	void ColonistListPanel::update(const ecs::World& world, ecs::EntityID selectedColonistId) {
+	void ColonistListPanel::update(ecs::World& world, ecs::EntityID selectedColonistId) {
 		selectedId = selectedColonistId;
 
 		// Query ECS for all colonists
-		// Note: const_cast needed since view() is not marked const (but doesn't modify)
-		auto& mutableWorld = const_cast<ecs::World&>(world);
 		colonists.clear();
-		for (auto [entity, colonist] : mutableWorld.view<ecs::Colonist>()) {
+		for (auto [entity, colonist] : world.view<ecs::Colonist>()) {
 			colonists.push_back({entity, colonist.name});
 		}
 
@@ -172,35 +170,35 @@ namespace world_sim {
 				float portraitX = panelX + kPadding + kPortraitMargin;
 				float portraitY = yOffset + (itemHeight - kItemSpacing - kPortraitSize) / 2.0F;
 
-				// Calculate mesh bounds for scaling
-				float minX = colonistMesh->vertices[0].x;
-				float maxX = colonistMesh->vertices[0].x;
-				float minY = colonistMesh->vertices[0].y;
-				float maxY = colonistMesh->vertices[0].y;
-				for (const auto& v : colonistMesh->vertices) {
-					minX = std::min(minX, v.x);
-					maxX = std::max(maxX, v.x);
-					minY = std::min(minY, v.y);
-					maxY = std::max(maxY, v.y);
+				// Cache mesh bounds (computed once, reused for all portraits)
+				if (!cachedMesh.valid) {
+					cachedMesh.minX = colonistMesh->vertices[0].x;
+					cachedMesh.maxX = colonistMesh->vertices[0].x;
+					cachedMesh.minY = colonistMesh->vertices[0].y;
+					cachedMesh.maxY = colonistMesh->vertices[0].y;
+					for (const auto& v : colonistMesh->vertices) {
+						cachedMesh.minX = std::min(cachedMesh.minX, v.x);
+						cachedMesh.maxX = std::max(cachedMesh.maxX, v.x);
+						cachedMesh.minY = std::min(cachedMesh.minY, v.y);
+						cachedMesh.maxY = std::max(cachedMesh.maxY, v.y);
+					}
+					cachedMesh.width = cachedMesh.maxX - cachedMesh.minX;
+					cachedMesh.height = cachedMesh.maxY - cachedMesh.minY;
+
+					// Show upper 55% of sprite (head and shoulders)
+					constexpr float kCropRatio = 0.55F;
+					float			displayHeight = cachedMesh.height * kCropRatio;
+					cachedMesh.scale = kPortraitSize / std::max(cachedMesh.width, displayHeight);
+					cachedMesh.valid = true;
 				}
 
-				float meshWidth = maxX - minX;
-				float meshHeight = maxY - minY;
-
-				// Show upper 55% of sprite (head and shoulders)
-				constexpr float kCropRatio = 0.55F;
-
-				// Scale to fit portrait area
-				float displayHeight = meshHeight * kCropRatio;
-				float scale = kPortraitSize / std::max(meshWidth, displayHeight);
-
-				// Transform vertices to screen space
-				std::vector<Foundation::Vec2> screenVerts;
+				// Transform vertices to screen space (reuse buffer)
+				screenVerts.clear();
 				screenVerts.reserve(colonistMesh->vertices.size());
 				for (const auto& v : colonistMesh->vertices) {
 					// Center horizontally, align to top
-					float sx = portraitX + (v.x - minX - meshWidth * 0.5F) * scale + kPortraitSize * 0.5F;
-					float sy = portraitY + (v.y - minY) * scale;
+					float sx = portraitX + (v.x - cachedMesh.minX - cachedMesh.width * 0.5F) * cachedMesh.scale + kPortraitSize * 0.5F;
+					float sy = portraitY + (v.y - cachedMesh.minY) * cachedMesh.scale;
 					screenVerts.push_back({sx, sy});
 				}
 
