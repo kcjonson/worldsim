@@ -66,6 +66,7 @@ class ColonistListPanel {
 	// UI elements
 	std::unique_ptr<UI::Rectangle> backgroundRect;
 	std::vector<std::unique_ptr<UI::Rectangle>> itemBackgrounds;
+	std::vector<std::unique_ptr<UI::Rectangle>> itemMoodBars;
 	std::vector<std::unique_ptr<UI::Text>> itemNames;
 
 	// Layout constants

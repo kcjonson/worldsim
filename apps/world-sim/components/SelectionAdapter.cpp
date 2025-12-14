@@ -2,6 +2,7 @@
 
 #include <ecs/components/Action.h>
 #include <ecs/components/Colonist.h>
+#include <ecs/components/Mood.h>
 #include <ecs/components/Needs.h>
 #include <ecs/components/Task.h>
 
@@ -12,8 +13,10 @@ namespace world_sim {
 
 namespace {
 	// Need labels matching NeedType order
-	constexpr std::array<const char*, 5> kNeedLabels = {"Hunger", "Thirst", "Energy", "Bladder", "Digestion"};
-	constexpr size_t					 kNeedCount = 5;
+	constexpr std::array<const char*, static_cast<size_t>(ecs::NeedType::Count)> kNeedLabels = {
+		"Hunger", "Thirst", "Energy", "Bladder", "Digestion", "Hygiene", "Recreation", "Temperature"
+	};
+	constexpr size_t kNeedCount = kNeedLabels.size();
 
 	// Visual spacing between need bars and status section
 	constexpr float kStatusSectionSpacing = 8.0F;
@@ -101,8 +104,14 @@ PanelContent adaptColonist(const ecs::World& world, ecs::EntityID entityId, std:
 		content.title = "Colonist";
 	}
 
-	// Add need bars
+	// Add mood first, then need bars
 	if (auto* needs = world.getComponent<ecs::NeedsComponent>(entityId)) {
+		float mood = ecs::computeMood(*needs);
+		content.slots.push_back(ProgressBarSlot{
+			.label = "Mood",
+			.value = mood,
+		});
+
 		for (size_t i = 0; i < kNeedCount; ++i) {
 			auto needType = static_cast<ecs::NeedType>(i);
 			content.slots.push_back(ProgressBarSlot{

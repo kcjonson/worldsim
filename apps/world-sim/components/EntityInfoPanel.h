@@ -115,7 +115,7 @@ class EntityInfoPanel : public UI::Component {
 	std::vector<UI::LayerHandle> textHandles;
 
 	// Progress bars (for ProgressBarSlot)
-	static constexpr size_t kMaxProgressBars = 6;
+	static constexpr size_t kMaxProgressBars = 12; // Mood + all needs
 	std::vector<UI::LayerHandle> progressBarHandles;
 
 	// List items (for TextListSlot)

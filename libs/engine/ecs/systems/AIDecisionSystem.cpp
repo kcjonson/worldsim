@@ -38,6 +38,10 @@ namespace ecs {
 				case NeedType::Digestion:
 					// Both bladder and digestion use Toilet capability
 					return engine::assets::CapabilityType::Toilet;
+				case NeedType::Hygiene:
+				case NeedType::Recreation:
+				case NeedType::Temperature:
+					break; // Non-actionable for now
 				case NeedType::Count:
 					break;
 			}
@@ -238,8 +242,8 @@ namespace ecs {
 
 		// Check if any critical need requires immediate attention (Tier 3 interrupts all lower tiers)
 		bool hasCriticalNeed = false;
-		for (size_t i = 0; i < static_cast<size_t>(NeedType::Count); ++i) {
-			if (needs.get(static_cast<NeedType>(i)).isCritical()) {
+		for (auto needType : NeedsComponent::kActionableNeeds) {
+			if (needs.get(needType).isCritical()) {
 				hasCriticalNeed = true;
 				break;
 			}
@@ -277,8 +281,7 @@ namespace ecs {
 		NeedType mostCritical = NeedType::Count;
 		float	 lowestValue = 100.0F;
 
-		for (size_t i = 0; i < static_cast<size_t>(NeedType::Count); ++i) {
-			auto		needType = static_cast<NeedType>(i);
+		for (auto needType : NeedsComponent::kActionableNeeds) {
 			const auto& need = needs.get(needType);
 
 			if (need.isCritical() && need.value < lowestValue) {
@@ -413,9 +416,8 @@ namespace ecs {
 	) {
 		trace.clear();
 
-		// Evaluate each need type
-		for (size_t i = 0; i < static_cast<size_t>(NeedType::Count); ++i) {
-			auto		needType = static_cast<NeedType>(i);
+		// Evaluate each actionable need type
+		for (auto needType : NeedsComponent::kActionableNeeds) {
 			const auto& need = needs.get(needType);
 
 			// Check if we're already pursuing this need - if so, preserve the target

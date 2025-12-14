@@ -5,13 +5,16 @@
 
 namespace ecs {
 
-/// MVP needs: Hunger, Thirst, Energy, Bladder, Digestion
+/// Needs: Hunger, Thirst, Energy, Bladder, Digestion, Hygiene, Recreation, Temperature
 enum class NeedType : uint8_t {
     Hunger = 0,
     Thirst,
     Energy,
     Bladder,    // Filled by drinking, relieved by peeing
     Digestion,  // Filled by eating, relieved by pooping
+    Hygiene,    // Cleanliness / washing
+    Recreation, // Fun / leisure
+    Temperature, // Thermal comfort placeholder (environmental)
     Count  // Sentinel for array sizing
 };
 
@@ -49,6 +52,15 @@ struct Need {
 struct NeedsComponent {
     std::array<Need, static_cast<size_t>(NeedType::Count)> needs;
 
+    /// Actionable needs the AI can currently fulfill (others are tracked but not acted on yet)
+    static constexpr std::array<NeedType, 5> kActionableNeeds = {
+        NeedType::Hunger,
+        NeedType::Thirst,
+        NeedType::Energy,
+        NeedType::Bladder,
+        NeedType::Digestion,
+    };
+
     /// Access need by type
     [[nodiscard]] Need& get(NeedType type) {
         return needs[static_cast<size_t>(type)];
@@ -64,12 +76,18 @@ struct NeedsComponent {
     [[nodiscard]] Need& energy() { return get(NeedType::Energy); }
     [[nodiscard]] Need& bladder() { return get(NeedType::Bladder); }
     [[nodiscard]] Need& digestion() { return get(NeedType::Digestion); }
+    [[nodiscard]] Need& hygiene() { return get(NeedType::Hygiene); }
+    [[nodiscard]] Need& recreation() { return get(NeedType::Recreation); }
+    [[nodiscard]] Need& temperature() { return get(NeedType::Temperature); }
 
     [[nodiscard]] const Need& hunger() const { return get(NeedType::Hunger); }
     [[nodiscard]] const Need& thirst() const { return get(NeedType::Thirst); }
     [[nodiscard]] const Need& energy() const { return get(NeedType::Energy); }
     [[nodiscard]] const Need& bladder() const { return get(NeedType::Bladder); }
     [[nodiscard]] const Need& digestion() const { return get(NeedType::Digestion); }
+    [[nodiscard]] const Need& hygiene() const { return get(NeedType::Hygiene); }
+    [[nodiscard]] const Need& recreation() const { return get(NeedType::Recreation); }
+    [[nodiscard]] const Need& temperature() const { return get(NeedType::Temperature); }
 
     /// Create with default MVP configuration
     static NeedsComponent createDefault() {
@@ -92,6 +110,15 @@ struct NeedsComponent {
         // (food takes longer to process than liquids)
         comp.digestion() = Need{100.0f, 0.2f, 30.0f, 10.0f};
 
+        // Hygiene: ~40% seek, ~15% critical (washing deferred, keep decay modest for now)
+        comp.hygiene() = Need{100.0f, 0.15f, 40.0f, 15.0f};
+
+        // Recreation: ~30% seek, ~10% critical (leisure deferred, modest decay)
+        comp.recreation() = Need{100.0f, 0.1f, 30.0f, 10.0f};
+
+        // Temperature: placeholder tracked value (no decay until environment model plugs in)
+        comp.temperature() = Need{100.0f, 0.0f, 40.0f, 15.0f};
+
         return comp;
     }
 
@@ -101,11 +128,11 @@ struct NeedsComponent {
         NeedType urgent = NeedType::Count;
         float lowestValue = 100.0f;
 
-        for (size_t i = 0; i < static_cast<size_t>(NeedType::Count); ++i) {
-            const auto& need = needs[i];
+        for (auto needType : kActionableNeeds) {
+            const auto& need = get(needType);
             if (need.needsAttention() && need.value < lowestValue) {
                 lowestValue = need.value;
-                urgent = static_cast<NeedType>(i);
+                urgent = needType;
             }
         }
 

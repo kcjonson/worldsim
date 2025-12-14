@@ -87,6 +87,8 @@ Sleep quality affects recovery rate. Better sleeping spots = faster recovery + m
 
 Drops to zero on bathroom accident. Low hygiene = others like you less.
 
+**Implementation Note:** Tracked in code now; AI does not seek washing yet (no fulfillment sources).
+
 **MVP Status:** Deferred to Phase 2
 
 ### Recreation
@@ -100,18 +102,23 @@ Drops to zero on bathroom accident. Low hygiene = others like you less.
 
 Decays while working, recovers while idle or recreating.
 
+**Implementation Note:** Tracked in code now; AI does not seek recreation yet (no fulfillment sources).
+
 **MVP Status:** Deferred to Phase 2
 
-### Shelter
+### Temperature / Thermal Comfort (Environmental)
 
 | Property | Value |
 |----------|-------|
-| Trigger | Dangerous weather |
-| Fulfilled By | Going indoors |
+| Comfort Band | Colonist-specific range (e.g., 15-25°C)
+| Effects | Outside band increases Energy decay, reduces sleep recovery, and can apply mood/health penalties when extreme |
+| Fulfilled By | Warmer/colder locations, shelter/indoors, fires, clothing (future) |
 
-Not a percentage bar — binary trigger based on weather conditions.
+Not a need bar; it is an environmental modifier. Good shelter improves temperature stability and therefore boosts sleep quality rather than being its own need.
 
-**MVP Status:** Deferred to Phase 2
+**Implementation Note:** Tracked in code as a Temperature need placeholder; AI does not act on it yet, and there is no fulfillment source until the temperature field exists.
+
+**MVP Status:** Deferred to Phase 2 (framework introduced when temperature field lands; no separate Shelter need)
 
 ### Flee
 
@@ -130,6 +137,8 @@ Highest priority. See Panic in [AI Behavior](./ai-behavior.md).
 
 Mood is a composite score from all contributors. Range 0-100%.
 
+**Implementation Status:** Mood is computed in code from needs using weighted penalties (see table below) and shown near the colonist portrait/sidebar. Needs above ~70% contribute no penalty; below ~30% the penalty ramps quickly.
+
 ### Mood Contributors
 
 | Contributor | Source | Type |
@@ -142,6 +151,21 @@ Mood is a composite score from all contributors. Range 0-100%.
 | Fulfillment | Using preferred skills | Work |
 | Purpose | Completing meaningful tasks | Work |
 | Thoughts | Temporary event modifiers | Events |
+
+### Need-to-Mood Weights (current tuning)
+
+| Need | Weight | Notes |
+|------|--------|-------|
+| Hygiene | 1.0 | Biggest comfort/social driver |
+| Temperature | 1.0 | Thermal comfort is critical to morale |
+| Recreation | 0.9 | Fun/leisure strongly affects mood |
+| Energy | 0.7 | Tiredness hurts mood meaningfully |
+| Hunger | 0.6 | Survival need, medium mood impact |
+| Thirst | 0.6 | Survival need, medium mood impact |
+| Bladder | 0.3 | Minor mood hit unless accidents |
+| Digestion | 0.3 | Minor mood hit unless accidents |
+
+Penalty curve per need: 0 when value ≥ ~70%; mild up to ~0.3 penalty down to 30%; steep to 1.0 below 30%. Mood = 100 × (1 − weightedPenalty/totalWeight), clamped 0-100.
 
 ### Thoughts (Temporary Modifiers)
 
