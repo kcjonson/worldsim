@@ -190,7 +190,7 @@ namespace ecs {
 			Action action;
 			action.type = ActionType::Eat;
 			action.state = ActionState::Starting;
-			action.duration = 2.0F; // 2 seconds to eat
+			action.duration = 2.0F;		  // 2 seconds to eat
 			action.interruptable = false; // Can't stop mid-bite!
 
 			NeedEffect needEff;
@@ -209,7 +209,7 @@ namespace ecs {
 			Action action;
 			action.type = ActionType::Drink;
 			action.state = ActionState::Starting;
-			action.duration = 1.5F; // 1.5 seconds to drink
+			action.duration = 1.5F;		  // 1.5 seconds to drink
 			action.interruptable = false; // Can't stop mid-gulp!
 
 			NeedEffect needEff;
@@ -228,7 +228,7 @@ namespace ecs {
 			Action action;
 			action.type = ActionType::Sleep;
 			action.state = ActionState::Starting;
-			action.duration = 8.0F; // 8 seconds of sleep (game time scaled)
+			action.duration = 8.0F;		 // 8 seconds of sleep (game time scaled)
 			action.interruptable = true; // Can be woken for emergencies
 
 			NeedEffect needEff;
@@ -243,6 +243,11 @@ namespace ecs {
 		/// @param position Position for Bio Pile if pooping
 		/// @param doPee Whether to relieve bladder (peeing)
 		/// @param doPoop Whether to relieve digestion (pooping, creates Bio Pile)
+		///
+		/// Duration logic:
+		///   - Both pee and poop: 5.0s (combined action takes longest)
+		///   - Poop only: 4.0s (pooping takes longer than peeing)
+		///   - Pee only: 2.0s (quick action)
 		static Action Toilet(glm::vec2 position, bool doPee, bool doPoop) {
 			Action action;
 			action.type = ActionType::Toilet;
@@ -272,10 +277,15 @@ namespace ecs {
 				// Just pooping
 				needEff.need = NeedType::Digestion;
 				needEff.restoreAmount = 100.0F;
-			} else {
-				// Just peeing (or nothing, but shouldn't happen)
+			} else if (doPee) {
+				// Just peeing
 				needEff.need = NeedType::Bladder;
 				needEff.restoreAmount = 100.0F;
+			} else {
+				// Neither pee nor poop - shouldn't happen, but return a no-op action
+				// This is a programming error; caller should ensure at least one is true
+				needEff.need = NeedType::Bladder;
+				needEff.restoreAmount = 0.0F;
 			}
 			action.effect = needEff;
 

@@ -215,7 +215,10 @@ namespace ecs {
 		}
 	}
 
-	bool AIDecisionSystem::shouldReEvaluate(const Task& task, const NeedsComponent& needs, const Action* /*action*/) {
+	bool AIDecisionSystem::shouldReEvaluate(
+		const Task& task,
+		const NeedsComponent& needs,
+		const Action* /*action (reserved for future interruptability checks)*/) {
 		// Always re-evaluate if no active task
 		if (!task.isActive()) {
 			return true;
@@ -417,10 +420,11 @@ namespace ecs {
 
 			// Check if we're already pursuing this need - if so, preserve the target
 			// This prevents "chasing a moving target" when toilet/sleep location is recalculated
+			// Also preserve when Arrived to prevent recalculation while action is starting
 			bool alreadyPursuingThisNeed = currentTask.isActive() &&
 										   currentTask.type == TaskType::FulfillNeed &&
 										   currentTask.needToFulfill == needType &&
-										   currentTask.state == TaskState::Moving;
+										   (currentTask.state == TaskState::Moving || currentTask.state == TaskState::Arrived);
 
 			EvaluatedOption option;
 			option.taskType = TaskType::FulfillNeed;

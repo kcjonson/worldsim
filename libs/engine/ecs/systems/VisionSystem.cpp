@@ -92,8 +92,8 @@ namespace ecs {
 				}
 			}
 
-			// Scan for dynamic ECS entities with Appearance (bio piles, etc.)
-			// These are entities spawned at runtime, not from chunk placement
+			// Scan for ECS entities with Appearance (e.g., bio piles created by ActionSystem)
+			// These are runtime-spawned entities, as opposed to those placed during world generation
 			auto& registry = engine::assets::AssetRegistry::Get();
 			for (auto [otherEntity, otherPos, appearance] : world->view<Position, Appearance>()) {
 				// Don't "see" yourself

@@ -408,12 +408,13 @@ TEST_F(ActionSystemTest, PoopingSpawnsBioPile) {
 	}
 	EXPECT_EQ(entitiesAfter, 2); // Colonist + Bio Pile
 
-	// Verify bio pile has correct appearance
+	// Verify bio pile has correct appearance and position
 	bool foundBioPile = false;
 	for (auto [entity, pos, appearance] : world->view<Position, Appearance>()) {
 		if (appearance.defName == "Misc_BioPile") {
 			foundBioPile = true;
-			// Bio pile should be at the colonist's position
+			// Bio pile should be at the action's target position (colonist position in this test)
+			// The colonist was set up at (0.0, 0.0) which becomes the action's target
 			EXPECT_FLOAT_EQ(pos.value.x, 0.0F);
 			EXPECT_FLOAT_EQ(pos.value.y, 0.0F);
 		}

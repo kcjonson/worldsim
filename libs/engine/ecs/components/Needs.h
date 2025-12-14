@@ -88,7 +88,8 @@ struct NeedsComponent {
         comp.bladder() = Need{100.0f, 0.3f, 30.0f, 10.0f};
 
         // Digestion: ~30% seek, ~10% critical (filled by eating, relieved by pooping)
-        // Slower decay than bladder since food takes longer to digest
+        // Decay rate 0.2f is lower than bladder's 0.3f, meaning digestion depletes more slowly
+        // (food takes longer to process than liquids)
         comp.digestion() = Need{100.0f, 0.2f, 30.0f, 10.0f};
 
         return comp;

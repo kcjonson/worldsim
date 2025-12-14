@@ -135,13 +135,14 @@ namespace ecs {
 				bool needsPee = needs.bladder().needsAttention();
 				bool needsPoop = needs.digestion().needsAttention();
 
-				// If the task was for one specific need but the other doesn't need attention,
-				// still do at least what was asked
-				if (task.needToFulfill == NeedType::Bladder && !needsPee) {
-					needsPee = true; // Do what was asked
+				// Honor the committed task even if need value fluctuated above threshold.
+				// The colonist traveled to this location for a reason; complete the action.
+				// Also opportunistically handle the other need if it also needs attention.
+				if (task.needToFulfill == NeedType::Bladder) {
+					needsPee = true; // Always do what we came for
 				}
-				if (task.needToFulfill == NeedType::Digestion && !needsPoop) {
-					needsPoop = true; // Do what was asked
+				if (task.needToFulfill == NeedType::Digestion) {
+					needsPoop = true; // Always do what we came for
 				}
 
 				action = Action::Toilet(position.value, needsPee, needsPoop);
