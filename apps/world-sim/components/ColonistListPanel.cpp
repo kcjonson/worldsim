@@ -1,6 +1,9 @@
 #include "ColonistListPanel.h"
 
+#include <algorithm>
 #include <assets/AssetRegistry.h>
+#include <ecs/components/Mood.h>
+#include <ecs/components/Needs.h>
 #include <graphics/ClipTypes.h>
 #include <input/InputManager.h>
 #include <primitives/Primitives.h>
@@ -38,6 +41,7 @@ namespace world_sim {
 		// Ensure we have enough UI elements
 		while (itemBackgrounds.size() < colonists.size() && itemBackgrounds.size() < kMaxColonists) {
 			itemBackgrounds.push_back(std::make_unique<UI::Rectangle>());
+			itemMoodBars.push_back(std::make_unique<UI::Rectangle>());
 			itemNames.push_back(std::make_unique<UI::Text>());
 		}
 
@@ -76,6 +80,32 @@ namespace world_sim {
 			};
 			nameText->visible = true;
 
+			// Mood bar (thin) below name
+			auto& moodBar = itemMoodBars[i];
+			float moodBarWidth = panelWidth - kPadding * 2 - kPortraitSize - kPortraitMargin;
+			float moodBarX = panelX + kPadding + kPortraitSize + kPortraitMargin;
+			float moodBarY = yOffset + itemHeight - kItemSpacing - 6.0F; // near bottom of item
+
+			float moodValue = 100.0F;
+			if (auto* needs = world.getComponent<ecs::NeedsComponent>(colonist.entityId)) {
+				moodValue = ecs::computeMood(*needs);
+			}
+			float moodRatio = std::clamp(moodValue / 100.0F, 0.0F, 1.0F);
+			moodBar->position = {moodBarX, moodBarY};
+			moodBar->size = {moodBarWidth * moodRatio, 4.0F};
+			// Simple green->yellow->red gradient based on value
+			float r = moodRatio < 0.5F ? 1.0F : 1.0F - (moodRatio - 0.5F) * 2.0F * 0.2F; // stay mostly green until mid
+			float g = moodRatio > 0.5F ? 1.0F : 0.5F + moodRatio;						 // rise with value
+			moodBar->style = {
+				.fill = Foundation::Color(r, g, 0.2F, 0.9F),
+				.border = Foundation::BorderStyle{
+					.color = Foundation::Color(0.0F, 0.0F, 0.0F, 0.7F),
+					.width = 1.0F,
+					.cornerRadius = 2.0F,
+				}
+			};
+			moodBar->visible = true;
+
 			yOffset += itemHeight;
 		}
 
@@ -83,6 +113,9 @@ namespace world_sim {
 		for (size_t i = colonists.size(); i < itemBackgrounds.size(); ++i) {
 			itemBackgrounds[i]->visible = false;
 			itemNames[i]->visible = false;
+			if (i < itemMoodBars.size()) {
+				itemMoodBars[i]->visible = false;
+			}
 		}
 
 		// Create/update background panel
@@ -162,6 +195,9 @@ namespace world_sim {
 		for (size_t i = 0; i < colonists.size() && i < kMaxColonists; ++i) {
 			if (itemBackgrounds[i]->visible) {
 				itemBackgrounds[i]->render();
+			}
+			if (i < itemMoodBars.size() && itemMoodBars[i]->visible) {
+				itemMoodBars[i]->render();
 			}
 
 			// Render portrait (colonist sprite, showing upper portion - head and shoulders)

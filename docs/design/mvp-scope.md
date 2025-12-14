@@ -52,7 +52,8 @@ This document is the **single source of truth** for MVP scope. All other documen
 ### Colonist Systems
 - Panic / Breakdown tiers
 - Player control modes (Command, Direct Control)
-- Hygiene, Recreation, Shelter needs
+- Hygiene, Recreation needs
+- Temperature/thermal comfort (environmental modifier; affects sleep/energy, no separate Shelter need)
 - Mood system (beyond basic need satisfaction)
 - Social interactions
 - Memory sharing between colonists
@@ -80,6 +81,7 @@ As defined above.
 
 ### Phase 2
 - Hygiene, Recreation needs
+- Temperature/thermal comfort hooked into sleep quality and energy decay
 - Beds, Toilets, Washing
 - Hauling work type
 - Basic mood with thoughts
