@@ -19,6 +19,7 @@ add_library(engine
     ecs/systems/AIDecisionSystem.cpp
     ecs/systems/ActionSystem.cpp
     ecs/components/MemoryQueries.cpp
+    ecs/components/ToiletLocationFinder.cpp
 )
 
 target_include_directories(engine

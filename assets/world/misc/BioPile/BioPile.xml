@@ -17,27 +17,13 @@
       <tier>instanced</tier>
     </rendering>
 
-    <!-- No capabilities - this is just a marker entity -->
-    <!-- Future work may add: mood_penalty, decay, cleanup -->
+    <!-- Waste capability - used for clustering toilet locations -->
+    <capabilities>
+      <waste/>
+    </capabilities>
 
-    <!-- Placement configuration - Bio Piles are spawned by colonists, not world gen -->
-    <!-- These rules are for colonist AI to find suitable spots -->
-    <placement>
-      <!-- Bio Piles cluster together (colonists prefer existing spots) -->
-      <groups>
-        <group>waste</group>
-        <group>cleanable</group>
-      </groups>
-
-      <!-- Relationships - colonists should prefer placing near existing bio piles -->
-      <relationships>
-        <!-- Bio piles cluster together -->
-        <affinity type="same" distance="3.0" strength="2.0"/>
-        <!-- Avoid water sources (handled via tile checks, not entity group) -->
-        <!-- Avoid food sources -->
-        <avoids group="food_sources" distance="4.0" penalty="0.5"/>
-      </relationships>
-    </placement>
+    <!-- Bio Pile placement is handled by hard-coded AI rules in ToiletLocationFinder.cpp -->
+    <!-- Rules: not water, not shore, prefer clustering near existing piles, avoid food -->
 
     <variantCount>1</variantCount>
   </AssetDef>

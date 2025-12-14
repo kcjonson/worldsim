@@ -1,6 +1,7 @@
 #include "VisionSystem.h"
 
 #include "../World.h"
+#include "../components/Appearance.h"
 #include "../components/Memory.h"
 #include "../components/Transform.h"
 
@@ -87,6 +88,28 @@ namespace ecs {
 					// Remember each discovered entity
 					for (const auto* placedEntity : nearbyEntities) {
 						memory.rememberWorldEntity(placedEntity->position, placedEntity->defName);
+					}
+				}
+			}
+
+			// Scan for dynamic ECS entities with Appearance (bio piles, etc.)
+			// These are entities spawned at runtime, not from chunk placement
+			auto& registry = engine::assets::AssetRegistry::Get();
+			for (auto [otherEntity, otherPos, appearance] : world->view<Position, Appearance>()) {
+				// Don't "see" yourself
+				if (otherEntity == entity) {
+					continue;
+				}
+
+				// Check if within sight radius
+				float dx = otherPos.value.x - pos.value.x;
+				float dy = otherPos.value.y - pos.value.y;
+				if (dx * dx + dy * dy <= sightRadiusSq) {
+					// Get defNameId and capability mask from registry
+					uint32_t defNameId = registry.getDefNameId(appearance.defName);
+					if (defNameId != 0) {
+						uint8_t capabilityMask = registry.getCapabilityMask(defNameId);
+						memory.rememberWorldEntity(otherPos.value, defNameId, capabilityMask);
 					}
 				}
 			}

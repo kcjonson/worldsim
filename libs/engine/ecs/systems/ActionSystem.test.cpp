@@ -5,6 +5,7 @@
 
 #include "../World.h"
 #include "../components/Action.h"
+#include "../components/Appearance.h"
 #include "../components/Memory.h"
 #include "../components/Movement.h"
 #include "../components/Needs.h"
@@ -35,7 +36,7 @@ TEST(ActionFactoryTest, EatActionCreation) {
 }
 
 TEST(ActionFactoryTest, DrinkActionCreation) {
-	auto action = Action::Drink(1.0F);
+	auto action = Action::Drink();
 
 	EXPECT_EQ(action.type, ActionType::Drink);
 	EXPECT_EQ(action.state, ActionState::Starting);
@@ -45,7 +46,7 @@ TEST(ActionFactoryTest, DrinkActionCreation) {
 	ASSERT_TRUE(action.hasNeedEffect());
 	const auto& effect = action.needEffect();
 	EXPECT_EQ(effect.need, NeedType::Thirst);
-	EXPECT_FLOAT_EQ(effect.restoreAmount, 40.0F); // 40% base
+	EXPECT_FLOAT_EQ(effect.restoreAmount, 100.0F); // Full thirst restoration from water tiles
 	EXPECT_EQ(effect.sideEffectNeed, NeedType::Bladder);
 	EXPECT_FLOAT_EQ(effect.sideEffectAmount, -15.0F); // negative = drains bladder
 }
@@ -64,22 +65,51 @@ TEST(ActionFactoryTest, SleepActionCreation) {
 	EXPECT_FLOAT_EQ(effect.restoreAmount, 30.0F); // 60% * 0.5 quality
 }
 
-TEST(ActionFactoryTest, ToiletActionCreation) {
+TEST(ActionFactoryTest, ToiletActionCreation_PeeOnly) {
 	glm::vec2 spawnPos{5.0F, 10.0F};
-	auto action = Action::Toilet(spawnPos);
+	auto action = Action::Toilet(spawnPos, true, false); // Pee only
 
 	EXPECT_EQ(action.type, ActionType::Toilet);
 	EXPECT_EQ(action.state, ActionState::Starting);
-	EXPECT_FLOAT_EQ(action.duration, 3.0F);
-	// Spawn position stored in common targetPosition field
+	EXPECT_FLOAT_EQ(action.duration, 2.0F); // Pee only is quick
 	EXPECT_FLOAT_EQ(action.targetPosition.x, 5.0F);
 	EXPECT_FLOAT_EQ(action.targetPosition.y, 10.0F);
+	EXPECT_FALSE(action.spawnBioPile); // Pee doesn't create bio pile
 
-	// Check variant-based effect
 	ASSERT_TRUE(action.hasNeedEffect());
 	const auto& effect = action.needEffect();
 	EXPECT_EQ(effect.need, NeedType::Bladder);
-	EXPECT_FLOAT_EQ(effect.restoreAmount, 100.0F); // Full relief
+	EXPECT_FLOAT_EQ(effect.restoreAmount, 100.0F);
+}
+
+TEST(ActionFactoryTest, ToiletActionCreation_PoopOnly) {
+	glm::vec2 spawnPos{5.0F, 10.0F};
+	auto action = Action::Toilet(spawnPos, false, true); // Poop only
+
+	EXPECT_EQ(action.type, ActionType::Toilet);
+	EXPECT_FLOAT_EQ(action.duration, 4.0F); // Poop takes longer
+	EXPECT_TRUE(action.spawnBioPile); // Poop creates bio pile
+
+	ASSERT_TRUE(action.hasNeedEffect());
+	const auto& effect = action.needEffect();
+	EXPECT_EQ(effect.need, NeedType::Digestion);
+	EXPECT_FLOAT_EQ(effect.restoreAmount, 100.0F);
+}
+
+TEST(ActionFactoryTest, ToiletActionCreation_Both) {
+	glm::vec2 spawnPos{5.0F, 10.0F};
+	auto action = Action::Toilet(spawnPos, true, true); // Both
+
+	EXPECT_EQ(action.type, ActionType::Toilet);
+	EXPECT_FLOAT_EQ(action.duration, 5.0F); // Both takes longest
+	EXPECT_TRUE(action.spawnBioPile); // Poop creates bio pile
+
+	ASSERT_TRUE(action.hasNeedEffect());
+	const auto& effect = action.needEffect();
+	EXPECT_EQ(effect.need, NeedType::Bladder); // Primary is bladder
+	EXPECT_FLOAT_EQ(effect.restoreAmount, 100.0F);
+	EXPECT_EQ(effect.sideEffectNeed, NeedType::Digestion); // Side effect is digestion
+	EXPECT_FLOAT_EQ(effect.sideEffectAmount, 100.0F); // Full relief
 }
 
 TEST(ActionFactoryTest, ActionClear) {
@@ -282,9 +312,9 @@ TEST_F(ActionSystemTest, NeedRestoredOnCompletion) {
 	world->update(1.5F);
 
 	auto* needs = world->getComponent<NeedsComponent>(colonist);
-	// Thirst should be restored by 40% (drink base amount)
+	// Thirst should be fully restored (water tiles are inexhaustible)
 	EXPECT_GT(needs->thirst().value, 50.0F);
-	EXPECT_FLOAT_EQ(needs->thirst().value, 90.0F); // 50 + 40
+	EXPECT_FLOAT_EQ(needs->thirst().value, 100.0F); // Full restoration
 }
 
 TEST_F(ActionSystemTest, DrinkFillsBladder) {
@@ -349,6 +379,75 @@ TEST_F(ActionSystemTest, SleepRestorationAffectedByQuality) {
 	auto* needs = world->getComponent<NeedsComponent>(colonist);
 	// Ground sleep restores 30% (60 * 0.5 quality)
 	EXPECT_FLOAT_EQ(needs->energy().value, 70.0F); // 40 + 30
+}
+
+TEST_F(ActionSystemTest, PoopingSpawnsBioPile) {
+	auto colonist = createColonist({0.0F, 0.0F});
+	setupArrivedForNeed(colonist, NeedType::Digestion);
+	setNeedValue(colonist, NeedType::Digestion, 20.0F); // Low digestion
+
+	// Count entities before (just the colonist)
+	int entitiesBefore = 0;
+	for (auto [entity, pos] : world->view<Position>()) {
+		(void)entity;
+		(void)pos;
+		++entitiesBefore;
+	}
+	EXPECT_EQ(entitiesBefore, 1); // Just the colonist
+
+	// Complete the toilet/poop action (4s for poop-only)
+	world->update(0.1F);
+	world->update(4.0F);
+
+	// Count entities after (colonist + bio pile)
+	int entitiesAfter = 0;
+	for (auto [entity, pos] : world->view<Position>()) {
+		(void)entity;
+		(void)pos;
+		++entitiesAfter;
+	}
+	EXPECT_EQ(entitiesAfter, 2); // Colonist + Bio Pile
+
+	// Verify bio pile has correct appearance
+	bool foundBioPile = false;
+	for (auto [entity, pos, appearance] : world->view<Position, Appearance>()) {
+		if (appearance.defName == "Misc_BioPile") {
+			foundBioPile = true;
+			// Bio pile should be at the colonist's position
+			EXPECT_FLOAT_EQ(pos.value.x, 0.0F);
+			EXPECT_FLOAT_EQ(pos.value.y, 0.0F);
+		}
+	}
+	EXPECT_TRUE(foundBioPile);
+}
+
+TEST_F(ActionSystemTest, PeeingDoesNotSpawnBioPile) {
+	auto colonist = createColonist({0.0F, 0.0F});
+	setupArrivedForNeed(colonist, NeedType::Bladder);
+	setNeedValue(colonist, NeedType::Bladder, 20.0F);	// Low bladder
+	setNeedValue(colonist, NeedType::Digestion, 100.0F); // Full digestion (no poop needed)
+
+	// Count entities before
+	int entitiesBefore = 0;
+	for (auto [entity, pos] : world->view<Position>()) {
+		(void)entity;
+		(void)pos;
+		++entitiesBefore;
+	}
+	EXPECT_EQ(entitiesBefore, 1);
+
+	// Complete the toilet/pee action (2s for pee-only)
+	world->update(0.1F);
+	world->update(2.0F);
+
+	// Count entities after (should still be just colonist)
+	int entitiesAfter = 0;
+	for (auto [entity, pos] : world->view<Position>()) {
+		(void)entity;
+		(void)pos;
+		++entitiesAfter;
+	}
+	EXPECT_EQ(entitiesAfter, 1); // Just the colonist, no bio pile
 }
 
 } // namespace ecs::test

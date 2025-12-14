@@ -40,6 +40,9 @@ struct Task {
 	/// Time since last decision re-evaluation (seconds)
 	float timeSinceEvaluation = 0.0F;
 
+	/// Priority score when this task was selected (used for switch threshold comparison)
+	float priority = 0.0F;
+
 	/// Debug reason for task selection (e.g., "Hunger at 45%")
 	std::string reason;
 
@@ -52,6 +55,7 @@ struct Task {
 		state = TaskState::Pending;
 		targetPosition = glm::vec2{0.0F, 0.0F};
 		needToFulfill = NeedType::Count;
+		priority = 0.0F;
 		// Note: timeSinceEvaluation NOT reset here - caller handles timer logic
 		reason.clear();
 	}

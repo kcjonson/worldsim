@@ -2,6 +2,7 @@
 
 #include "../World.h"
 #include "../components/Action.h"
+#include "../components/Appearance.h"
 #include "../components/Memory.h"
 #include "../components/MemoryQueries.h"
 #include "../components/Needs.h"
@@ -54,7 +55,7 @@ namespace ecs {
 
 			// Start action if not already active
 			if (!action.isActive()) {
-				startAction(task, action, position, memory);
+				startAction(task, action, position, memory, needs);
 				LOG_INFO(
 					Engine,
 					"[Action] Entity %llu: Started %s action (%.1fs duration)",
@@ -85,7 +86,13 @@ namespace ecs {
 		}
 	}
 
-	void ActionSystem::startAction(Task& task, Action& action, const Position& position, const Memory& memory) {
+	void ActionSystem::startAction(
+		Task& task,
+		Action& action,
+		const Position& position,
+		const Memory& memory,
+		const NeedsComponent& needs
+	) {
 		auto& registry = engine::assets::AssetRegistry::Get();
 
 		switch (task.needToFulfill) {
@@ -108,8 +115,8 @@ namespace ecs {
 			}
 
 			case NeedType::Thirst: {
-				// Water is tile-based, use default quality
-				action = Action::Drink(kDefaultWaterQuality);
+				// Water tiles are inexhaustible - drinking fully restores thirst
+				action = Action::Drink();
 				break;
 			}
 
@@ -121,9 +128,23 @@ namespace ecs {
 				break;
 			}
 
-			case NeedType::Bladder: {
-				// Use current position for Bio Pile spawn location
-				action = Action::Toilet(position.value);
+			case NeedType::Bladder:
+			case NeedType::Digestion: {
+				// Smart Toilet: check both bladder and digestion needs
+				// If both need attention, handle both efficiently
+				bool needsPee = needs.bladder().needsAttention();
+				bool needsPoop = needs.digestion().needsAttention();
+
+				// If the task was for one specific need but the other doesn't need attention,
+				// still do at least what was asked
+				if (task.needToFulfill == NeedType::Bladder && !needsPee) {
+					needsPee = true; // Do what was asked
+				}
+				if (task.needToFulfill == NeedType::Digestion && !needsPoop) {
+					needsPoop = true; // Do what was asked
+				}
+
+				action = Action::Toilet(position.value, needsPee, needsPoop);
 				break;
 			}
 
@@ -178,11 +199,19 @@ namespace ecs {
 			}
 		}
 
-		// Handle spawn effects (e.g., Toilet creates Bio Pile)
-		if (action.type == ActionType::Toilet) {
-			// TODO: Spawn Bio Pile entity at action.targetPosition
-			// For MVP, just log that it would happen
-			LOG_DEBUG(Engine, "[Action] Would spawn Bio Pile at (%.1f, %.1f)", action.targetPosition.x, action.targetPosition.y);
+		// Handle spawn effects (pooping creates Bio Pile, peeing does not)
+		if (action.spawnBioPile) {
+			// Spawn Bio Pile entity at action.targetPosition
+			auto bioPile = world->createEntity();
+			world->addComponent<Position>(bioPile, Position{action.targetPosition});
+			world->addComponent<Rotation>(bioPile, Rotation{0.0F});
+			world->addComponent<Appearance>(bioPile, Appearance{"Misc_BioPile", 1.0F, {1.0F, 1.0F, 1.0F, 1.0F}});
+			LOG_INFO(
+				Engine,
+				"[Action] Spawned Bio Pile at (%.1f, %.1f)",
+				action.targetPosition.x,
+				action.targetPosition.y
+			);
 		}
 
 		// Clear the action and task

@@ -528,6 +528,12 @@ namespace engine::assets {
 					toilet.hygieneBonus = toiletNode.attribute("hygieneBonus").as_bool(false);
 					def.capabilities.toilet = toilet;
 				}
+
+				// Waste capability (marker for bio piles)
+				pugi::xml_node wasteNode = capabilitiesNode.child("waste");
+				if (wasteNode) {
+					def.capabilities.waste = WasteCapability{};
+				}
 			}
 
 			// Store base folder for relative path resolution
@@ -894,6 +900,9 @@ namespace engine::assets {
 			}
 			if (def.capabilities.toilet.has_value()) {
 				mask |= (1 << static_cast<uint8_t>(CapabilityType::Toilet));
+			}
+			if (def.capabilities.waste.has_value()) {
+				mask |= (1 << static_cast<uint8_t>(CapabilityType::Waste));
 			}
 			m_capabilityMasks.push_back(mask);
 

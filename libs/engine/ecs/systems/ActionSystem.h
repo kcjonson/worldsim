@@ -23,7 +23,8 @@ private:
 		struct Task& task,
 		struct Action& action,
 		const struct Position& position,
-		const struct Memory& memory
+		const struct Memory& memory,
+		const struct NeedsComponent& needs
 	);
 
 	/// Process an in-progress action

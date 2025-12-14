@@ -27,7 +27,8 @@ namespace engine::assets {
 		Edible,	   // Entity can be eaten to restore hunger
 		Drinkable, // Entity can be drunk from to restore thirst
 		Sleepable, // Entity can be slept on to restore energy
-		Toilet	   // Entity can be used to relieve bladder
+		Toilet,	   // Entity can be used to relieve bladder
+		Waste	   // Entity is waste (bio pile) - used for clustering toilet locations
 	};
 
 	/// Quality level for capabilities (affects mood, health effects)
@@ -62,16 +63,23 @@ namespace engine::assets {
 		bool hygieneBonus = false; // Does using this improve hygiene?
 	};
 
+	/// Waste capability - entity is waste (bio pile) for clustering toilet locations
+	struct WasteCapability {
+		// No properties yet - just a marker capability
+	};
+
 	/// Container for all capabilities an entity may have
 	struct EntityCapabilities {
 		std::optional<EdibleCapability>	   edible;
 		std::optional<DrinkableCapability> drinkable;
 		std::optional<SleepableCapability> sleepable;
 		std::optional<ToiletCapability>	   toilet;
+		std::optional<WasteCapability>	   waste;
 
 		/// Check if entity has any capabilities
 		[[nodiscard]] bool hasAny() const {
-			return edible.has_value() || drinkable.has_value() || sleepable.has_value() || toilet.has_value();
+			return edible.has_value() || drinkable.has_value() || sleepable.has_value() ||
+				   toilet.has_value() || waste.has_value();
 		}
 
 		/// Check if entity has a specific capability type
@@ -85,6 +93,8 @@ namespace engine::assets {
 					return sleepable.has_value();
 				case CapabilityType::Toilet:
 					return toilet.has_value();
+				case CapabilityType::Waste:
+					return waste.has_value();
 			}
 			return false;
 		}

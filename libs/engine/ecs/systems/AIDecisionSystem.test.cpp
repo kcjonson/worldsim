@@ -3,8 +3,10 @@
 // and DecisionTrace generation for task queue display.
 
 #include "AIDecisionSystem.h"
+#include "ActionSystem.h"
 
 #include "../World.h"
+#include "../components/Action.h"
 #include "../components/DecisionTrace.h"
 #include "../components/Memory.h"
 #include "../components/Movement.h"
@@ -684,17 +686,19 @@ namespace ecs::test {
 		setNeedValue(colonist, NeedType::Thirst, 100.0F);
 		setNeedValue(colonist, NeedType::Energy, 100.0F);
 		setNeedValue(colonist, NeedType::Bladder, 100.0F);
+		setNeedValue(colonist, NeedType::Digestion, 100.0F);
 
 		world->update(0.016F);
 
 		auto* trace = getTrace(colonist);
 		ASSERT_NE(trace, nullptr);
 
-		// Should have 5 options: 4 needs + wander
-		EXPECT_EQ(trace->options.size(), 5u);
+		// Should have 6 options: 5 needs + wander
+		EXPECT_EQ(trace->options.size(), 6u);
 
 		// Verify all need types are present
-		bool hasHunger = false, hasThirst = false, hasEnergy = false, hasBladder = false, hasWander = false;
+		bool hasHunger = false, hasThirst = false, hasEnergy = false, hasBladder = false, hasDigestion = false,
+			 hasWander = false;
 		for (const auto& option : trace->options) {
 			if (option.taskType == TaskType::Wander) {
 				hasWander = true;
@@ -712,6 +716,9 @@ namespace ecs::test {
 					case NeedType::Bladder:
 						hasBladder = true;
 						break;
+					case NeedType::Digestion:
+						hasDigestion = true;
+						break;
 					default:
 						break;
 				}
@@ -722,6 +729,7 @@ namespace ecs::test {
 		EXPECT_TRUE(hasThirst);
 		EXPECT_TRUE(hasEnergy);
 		EXPECT_TRUE(hasBladder);
+		EXPECT_TRUE(hasDigestion);
 		EXPECT_TRUE(hasWander);
 	}
 
@@ -937,6 +945,7 @@ namespace ecs::test {
 		setNeedValue(colonist, NeedType::Thirst, 100.0F);
 		setNeedValue(colonist, NeedType::Energy, 100.0F);
 		setNeedValue(colonist, NeedType::Bladder, 100.0F);
+		setNeedValue(colonist, NeedType::Digestion, 100.0F);
 
 		world->update(0.016F);
 
@@ -956,7 +965,7 @@ namespace ecs::test {
 		// Trace should be rebuilt (may have same or different summary)
 		// The key is that it's still valid
 		EXPECT_FALSE(trace->selectionSummary.empty());
-		EXPECT_EQ(trace->options.size(), 5u); // Still has all options
+		EXPECT_EQ(trace->options.size(), 6u); // Still has all options (5 needs + wander)
 	}
 
 	// =============================================================================
@@ -1063,6 +1072,183 @@ namespace ecs::test {
 		EXPECT_EQ(first.needType, NeedType::Hunger);
 		EXPECT_EQ(first.status, OptionStatus::Selected);
 		EXPECT_GE(first.calculatePriority(), 300.0F); // In critical range
+	}
+
+	// =============================================================================
+	// Integration Tests with ActionSystem - Bug Reproduction
+	// =============================================================================
+
+	// Test fixture that includes both AI and Action systems
+	class AIActionIntegrationTest : public ::testing::Test {
+	  protected:
+		void SetUp() override {
+			world = std::make_unique<World>();
+
+			auto& registry = engine::assets::AssetRegistry::Get();
+
+			// Register BOTH systems to test their interaction
+			// This is critical - the bug only manifests when both systems run
+			world->registerSystem<AIDecisionSystem>(registry, kTestRngSeed);
+			world->registerSystem<ActionSystem>();
+		}
+
+		void TearDown() override { world.reset(); }
+
+		/// Create a colonist with all components needed for full task→action flow
+		EntityID createColonist(glm::vec2 position = {0.0F, 0.0F}) {
+			auto entity = world->createEntity();
+			world->addComponent<Position>(entity, Position{position});
+			world->addComponent<Velocity>(entity, Velocity{{0.0F, 0.0F}});
+			world->addComponent<MovementTarget>(entity, MovementTarget{{0.0F, 0.0F}, 2.0F, false});
+			world->addComponent<NeedsComponent>(entity, NeedsComponent::createDefault());
+			world->addComponent<Memory>(entity, Memory{});
+			world->addComponent<Task>(entity, Task{});
+			world->addComponent<Action>(entity, Action{});		   // Required for ActionSystem
+			world->addComponent<DecisionTrace>(entity, DecisionTrace{}); // Required for priority-based switching
+			return entity;
+		}
+
+		void setNeedValue(EntityID entity, NeedType need, float value) {
+			auto* needs = world->getComponent<NeedsComponent>(entity);
+			ASSERT_NE(needs, nullptr);
+			needs->get(need).value = value;
+		}
+
+		Task* getTask(EntityID entity) { return world->getComponent<Task>(entity); }
+		Action* getAction(EntityID entity) { return world->getComponent<Action>(entity); }
+		NeedsComponent* getNeeds(EntityID entity) { return world->getComponent<NeedsComponent>(entity); }
+
+		std::unique_ptr<World> world;
+		static constexpr uint32_t kTestRngSeed = 42;
+	};
+
+	/// This test demonstrates the bug: action should complete without being interrupted
+	/// by AIDecisionSystem re-evaluation when task.state == Arrived.
+	TEST_F(AIActionIntegrationTest, ActionCompletesWithoutReEvaluationInterrupt) {
+		auto colonist = createColonist({0.0F, 0.0F});
+
+		// Set up low bladder need (uses ground fallback, so arrives immediately)
+		setNeedValue(colonist, NeedType::Hunger, 100.0F);
+		setNeedValue(colonist, NeedType::Thirst, 100.0F);
+		setNeedValue(colonist, NeedType::Energy, 100.0F);
+		setNeedValue(colonist, NeedType::Bladder, 20.0F); // Actionable - will use ground fallback
+
+		// Frame 1: AI assigns task, state = Arrived (ground fallback)
+		// Action system starts the toilet action
+		world->update(0.016F);
+
+		auto* task = getTask(colonist);
+		auto* action = getAction(colonist);
+
+		ASSERT_NE(task, nullptr);
+		ASSERT_NE(action, nullptr);
+
+		// Verify action started
+		EXPECT_TRUE(action->isActive()) << "Action should have started";
+		EXPECT_EQ(action->type, ActionType::Toilet);
+		EXPECT_EQ(task->state, TaskState::Arrived);
+		EXPECT_EQ(task->type, TaskType::FulfillNeed);
+
+		// Frame 2-N: Continue processing
+		// The action duration is 3 seconds (Toilet action)
+		// We'll update in small increments to observe behavior
+
+		// Store initial state
+		float initialElapsed = action->elapsed;
+		TaskType initialTaskType = task->type;
+		ActionType initialActionType = action->type;
+
+		// Run several frames to complete the action
+		// Toilet action is 3.0s, so we need at least 3.5s to ensure completion
+		for (int i = 0; i < 20; ++i) {
+			world->update(0.2F);
+
+			// BUG CHECK: If the task was re-evaluated and cleared while action in progress,
+			// the action would stop progressing or be replaced
+			if (action->isActive()) {
+				EXPECT_EQ(action->type, initialActionType)
+					<< "Action type changed mid-execution at frame " << i;
+			}
+		}
+
+		// After 4 seconds total (20 * 0.2), action should be complete (Toilet is 3s)
+
+		// The critical check: the action should have been able to complete
+		// and the need should have been restored
+		auto* needs = getNeeds(colonist);
+		ASSERT_NE(needs, nullptr);
+
+		// If the bug exists, bladder won't be restored because the action was interrupted
+		// If fixed, bladder should be 100% (toilet fully relieves bladder)
+		EXPECT_GT(needs->bladder().value, 20.0F)
+			<< "Bladder should have been restored by completed toilet action, but action was interrupted";
+	}
+
+	/// Test that eat action completes successfully and restores hunger
+	TEST_F(AIActionIntegrationTest, EatActionCompletesAndRestoresHunger) {
+		auto colonist = createColonist({0.0F, 0.0F});
+
+		// Add berry bush to memory at current position (so no movement needed)
+		auto* memory = world->getComponent<Memory>(colonist);
+		// CapabilityType::Edible = 0
+		memory->rememberWorldEntity(
+			{0.0F, 0.0F}, 1001, static_cast<uint8_t>(1 << static_cast<size_t>(engine::assets::CapabilityType::Edible))
+		);
+
+		// Set up low hunger
+		setNeedValue(colonist, NeedType::Hunger, 30.0F); // Actionable
+		setNeedValue(colonist, NeedType::Thirst, 100.0F);
+		setNeedValue(colonist, NeedType::Energy, 100.0F);
+		setNeedValue(colonist, NeedType::Bladder, 100.0F);
+
+		float initialHunger = 30.0F;
+
+		// Run updates to complete the eat action (2.0s duration)
+		for (int i = 0; i < 30; ++i) {
+			world->update(0.1F);
+		}
+
+		auto* needs = getNeeds(colonist);
+		EXPECT_GT(needs->hunger().value, initialHunger)
+			<< "Hunger should have been restored by eat action";
+	}
+
+	/// Test that a colonist can complete a full need-fulfill cycle:
+	/// task assigned → movement → arrival → action → completion → new task
+	TEST_F(AIActionIntegrationTest, FullNeedFulfillmentCycle) {
+		auto colonist = createColonist({0.0F, 0.0F});
+
+		// Use ground fallback (Energy) to simplify - no movement needed
+		setNeedValue(colonist, NeedType::Hunger, 100.0F);
+		setNeedValue(colonist, NeedType::Thirst, 100.0F);
+		setNeedValue(colonist, NeedType::Energy, 20.0F); // Low energy - will sleep on ground
+		setNeedValue(colonist, NeedType::Bladder, 100.0F);
+
+		// Frame 1: Should assign sleep task with ground fallback (immediate arrival)
+		world->update(0.016F);
+
+		auto* task = getTask(colonist);
+		auto* action = getAction(colonist);
+
+		EXPECT_EQ(task->type, TaskType::FulfillNeed);
+		EXPECT_EQ(task->needToFulfill, NeedType::Energy);
+		EXPECT_EQ(task->state, TaskState::Arrived);
+		EXPECT_TRUE(action->isActive());
+		EXPECT_EQ(action->type, ActionType::Sleep);
+
+		// Sleep action takes 8 seconds
+		// Run updates to complete it
+		for (int i = 0; i < 100; ++i) {
+			world->update(0.1F);
+		}
+
+		// After sleep completes, energy should be restored
+		auto* needs = getNeeds(colonist);
+		EXPECT_GT(needs->energy().value, 20.0F)
+			<< "Energy should have been restored by sleep action";
+
+		// And a new task should be assigned (wander, since all needs satisfied)
+		EXPECT_TRUE(task->isActive());
 	}
 
 } // namespace ecs::test

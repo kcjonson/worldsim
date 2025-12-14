@@ -1,16 +1,19 @@
 #include "AIDecisionSystem.h"
 
 #include "../World.h"
+#include "../components/Action.h"
 #include "../components/DecisionTrace.h"
 #include "../components/Memory.h"
 #include "../components/MemoryQueries.h"
 #include "../components/Movement.h"
 #include "../components/Needs.h"
 #include "../components/Task.h"
+#include "../components/ToiletLocationFinder.h"
 #include "../components/Transform.h"
 
 #include "assets/AssetDefinition.h"
 #include "assets/AssetRegistry.h"
+#include "world/chunk/ChunkManager.h"
 
 #include <utils/Log.h>
 
@@ -32,6 +35,8 @@ namespace ecs {
 				case NeedType::Energy:
 					return engine::assets::CapabilityType::Sleepable;
 				case NeedType::Bladder:
+				case NeedType::Digestion:
+					// Both bladder and digestion use Toilet capability
 					return engine::assets::CapabilityType::Toilet;
 				case NeedType::Count:
 					break;
@@ -52,6 +57,8 @@ namespace ecs {
 					return "Energy";
 				case NeedType::Bladder:
 					return "Bladder";
+				case NeedType::Digestion:
+					return "Digestion";
 				case NeedType::Count:
 					break;
 			}
@@ -71,36 +78,76 @@ namespace ecs {
 		for (auto [entity, position, needs, memory, task, movementTarget] :
 			 world->view<Position, NeedsComponent, Memory, Task, MovementTarget>()) {
 
+			// Get optional Action component (may be nullptr if entity doesn't have one)
+			auto* action = world->getComponent<Action>(entity);
+
 			// Check if we should re-evaluate (uses current timer value)
-			if (!shouldReEvaluate(task, needs)) {
+			if (!shouldReEvaluate(task, needs, action)) {
 				// Only increment timer when NOT re-evaluating (timer tracks time since last eval)
 				task.timeSinceEvaluation += deltaTime;
 				continue;
 			}
 
-			// Clear current task and evaluate from scratch
-			task.clear();
-			task.timeSinceEvaluation = 0.0F; // Reset timer after re-evaluation
+			// Store current task state for priority comparison
+			float	  currentPriority = task.priority;
+			bool	  hasActiveAction = (action != nullptr && action->isActive());
+			TaskState previousState = task.state;
 
 			// Check if entity has DecisionTrace component for trace-based selection
 			auto* trace = world->getComponent<DecisionTrace>(entity);
 			if (trace != nullptr) {
-				// Build full decision trace and select from it
-				buildDecisionTrace(entity, position, needs, memory, *trace);
-				selectTaskFromTrace(task, movementTarget, *trace, position);
+				// Build full decision trace (always, for UI updates)
+				buildDecisionTrace(entity, position, needs, memory, task, *trace);
 
-				LOG_INFO(
-					Engine,
-					"[AI] Entity %llu: %s → (%.1f, %.1f)",
-					static_cast<unsigned long long>(entity),
-					task.reason.c_str(),
-					task.targetPosition.x,
-					task.targetPosition.y
-				);
+				// Get the best option's priority
+				const auto* selected = trace->getSelected();
+				float		newPriority = (selected != nullptr) ? selected->calculatePriority() : 0.0F;
+
+				// Decision: Should we switch tasks?
+				// If action in progress, check if we can/should interrupt
+				bool shouldSwitch = true;
+				if (hasActiveAction && previousState == TaskState::Arrived) {
+					// Check if action is interruptable at all
+					if (!action->interruptable) {
+						// Biological necessities (Eat, Drink, Toilet) cannot be interrupted
+						shouldSwitch = false;
+						task.timeSinceEvaluation = 0.0F; // Reset timer, we did evaluate
+					} else {
+						// Action is interruptable - use priority gap threshold
+						float priorityGap = newPriority - currentPriority;
+						if (priorityGap < kPrioritySwitchThreshold) {
+							// Priority gap too small - don't interrupt current action
+							shouldSwitch = false;
+							task.timeSinceEvaluation = 0.0F; // Reset timer, we did evaluate
+						}
+					}
+				}
+
+				if (shouldSwitch) {
+					// Clear and assign new task
+					task.clear();
+					task.timeSinceEvaluation = 0.0F;
+					selectTaskFromTrace(task, movementTarget, *trace, position);
+					task.priority = newPriority; // Store priority for future comparisons
+
+					LOG_INFO(
+						Engine,
+						"[AI] Entity %llu: %s (priority %.0f) → (%.1f, %.1f)",
+						static_cast<unsigned long long>(entity),
+						task.reason.c_str(),
+						task.priority,
+						task.targetPosition.x,
+						task.targetPosition.y
+					);
+				}
 				continue;
 			}
 
 			// Fallback: Legacy tier-by-tier evaluation for entities without DecisionTrace
+			// Clear current task and evaluate from scratch
+			task.clear();
+			task.timeSinceEvaluation = 0.0F;
+
 			// Helper to check if task uses ground fallback (target == current position)
 			auto isGroundFallback = [&position](const Task& t) {
 				return t.targetPosition == position.value;
@@ -109,6 +156,7 @@ namespace ecs {
 			// Tier 3: Critical needs (highest priority)
 			if (evaluateCriticalNeeds(entity, needs, memory, task, position)) {
 				movementTarget.target = task.targetPosition;
+				task.priority = 300.0F; // Approximate critical priority
 				// Ground fallback: already at target, set Arrived to avoid infinite re-eval loop
 				if (isGroundFallback(task)) {
 					movementTarget.active = false;
@@ -131,6 +179,7 @@ namespace ecs {
 			// Tier 5: Actionable needs
 			if (evaluateActionableNeeds(entity, needs, memory, task, position)) {
 				movementTarget.target = task.targetPosition;
+				task.priority = 100.0F; // Approximate actionable priority
 				// Ground fallback: already at target, set Arrived to avoid infinite re-eval loop
 				if (isGroundFallback(task)) {
 					movementTarget.active = false;
@@ -155,6 +204,7 @@ namespace ecs {
 			movementTarget.target = task.targetPosition;
 			movementTarget.active = true;
 			task.state = TaskState::Moving;
+			task.priority = 10.0F; // Wander priority
 			LOG_INFO(
 				Engine,
 				"[AI] Entity %llu: WANDER → (%.1f, %.1f)",
@@ -165,13 +215,15 @@ namespace ecs {
 		}
 	}
 
-	bool AIDecisionSystem::shouldReEvaluate(const Task& task, const NeedsComponent& needs) {
+	bool AIDecisionSystem::shouldReEvaluate(const Task& task, const NeedsComponent& needs, const Action* /*action*/) {
 		// Always re-evaluate if no active task
 		if (!task.isActive()) {
 			return true;
 		}
 
 		// Re-evaluate if task has arrived (completed movement)
+		// Note: We still re-evaluate even with action in progress to update DecisionTrace for UI
+		// The actual task switch decision is made AFTER re-evaluation based on priority gap
 		if (task.state == TaskState::Arrived) {
 			return true;
 		}
@@ -182,7 +234,6 @@ namespace ecs {
 		}
 
 		// Check if any critical need requires immediate attention (Tier 3 interrupts all lower tiers)
-		// This must be checked BEFORE the "don't interrupt" logic below
 		bool hasCriticalNeed = false;
 		for (size_t i = 0; i < static_cast<size_t>(NeedType::Count); ++i) {
 			if (needs.get(static_cast<NeedType>(i)).isCritical()) {
@@ -251,11 +302,24 @@ namespace ecs {
 			return true;
 		}
 
-		// For Energy and Bladder, use ground as fallback (current position)
-		if (mostCritical == NeedType::Energy || mostCritical == NeedType::Bladder) {
+		// For Energy and Bladder/Digestion, use ground as fallback
+		if (mostCritical == NeedType::Energy || mostCritical == NeedType::Bladder || mostCritical == NeedType::Digestion) {
 			task.type = TaskType::FulfillNeed;
 			task.needToFulfill = mostCritical;
-			task.targetPosition = position.value; // Use current position (ground)
+
+			// For toilet needs, use smart location finder
+			if ((mostCritical == NeedType::Bladder || mostCritical == NeedType::Digestion) && m_chunkManager != nullptr) {
+				auto location = findToiletLocation(position.value, *m_chunkManager, *world, memory, m_registry);
+				if (location.has_value()) {
+					task.targetPosition = *location;
+					task.reason = std::string(needTypeName(mostCritical)) + " CRITICAL - smart location at " +
+								  std::to_string(static_cast<int>(need.value)) + "%";
+					return true;
+				}
+			}
+
+			// Fallback: use current position (ground)
+			task.targetPosition = position.value;
 			task.reason = std::string(needTypeName(mostCritical)) + " CRITICAL - using ground at " +
 						  std::to_string(static_cast<int>(need.value)) + "%";
 			return true;
@@ -292,11 +356,24 @@ namespace ecs {
 			return true;
 		}
 
-		// For Energy and Bladder, use ground as fallback (current position)
-		if (urgentNeed == NeedType::Energy || urgentNeed == NeedType::Bladder) {
+		// For Energy and Bladder/Digestion, use ground as fallback
+		if (urgentNeed == NeedType::Energy || urgentNeed == NeedType::Bladder || urgentNeed == NeedType::Digestion) {
 			task.type = TaskType::FulfillNeed;
 			task.needToFulfill = urgentNeed;
-			task.targetPosition = position.value; // Use current position (ground)
+
+			// For toilet needs, use smart location finder
+			if ((urgentNeed == NeedType::Bladder || urgentNeed == NeedType::Digestion) && m_chunkManager != nullptr) {
+				auto location = findToiletLocation(position.value, *m_chunkManager, *world, memory, m_registry);
+				if (location.has_value()) {
+					task.targetPosition = *location;
+					task.reason = std::string(needTypeName(urgentNeed)) + " - smart location at " +
+								  std::to_string(static_cast<int>(need.value)) + "%";
+					return true;
+				}
+			}
+
+			// Fallback: use current position (ground)
+			task.targetPosition = position.value;
 			task.reason =
 				std::string(needTypeName(urgentNeed)) + " - using ground at " + std::to_string(static_cast<int>(need.value)) + "%";
 			return true;
@@ -328,6 +405,7 @@ namespace ecs {
 		const Position&		  position,
 		const NeedsComponent& needs,
 		const Memory&		  memory,
+		const Task&			  currentTask,
 		DecisionTrace&		  trace
 	) {
 		trace.clear();
@@ -336,6 +414,13 @@ namespace ecs {
 		for (size_t i = 0; i < static_cast<size_t>(NeedType::Count); ++i) {
 			auto		needType = static_cast<NeedType>(i);
 			const auto& need = needs.get(needType);
+
+			// Check if we're already pursuing this need - if so, preserve the target
+			// This prevents "chasing a moving target" when toilet/sleep location is recalculated
+			bool alreadyPursuingThisNeed = currentTask.isActive() &&
+										   currentTask.type == TaskType::FulfillNeed &&
+										   currentTask.needToFulfill == needType &&
+										   currentTask.state == TaskState::Moving;
 
 			EvaluatedOption option;
 			option.taskType = TaskType::FulfillNeed;
@@ -357,11 +442,31 @@ namespace ecs {
 				} else {
 					option.status = OptionStatus::Satisfied;
 				}
-			} else if (needType == NeedType::Energy || needType == NeedType::Bladder) {
+			} else if (needType == NeedType::Energy || needType == NeedType::Bladder || needType == NeedType::Digestion) {
 				// Ground fallback for sleep and toilet
-				option.targetPosition = position.value;
-				option.distanceToTarget = 0.0F;
-				option.status = need.needsAttention() ? OptionStatus::Available : OptionStatus::Satisfied;
+				// If already pursuing this need, preserve the existing target to avoid "chasing"
+				if (alreadyPursuingThisNeed) {
+					option.targetPosition = currentTask.targetPosition;
+					option.distanceToTarget = glm::distance(position.value, currentTask.targetPosition);
+					option.status = need.needsAttention() ? OptionStatus::Available : OptionStatus::Satisfied;
+				} else if ((needType == NeedType::Bladder || needType == NeedType::Digestion) && m_chunkManager != nullptr) {
+					// For toilet needs, try smart location finder
+					auto location = findToiletLocation(position.value, *m_chunkManager, *world, memory, m_registry);
+					if (location.has_value()) {
+						option.targetPosition = *location;
+						option.distanceToTarget = glm::distance(position.value, *location);
+						option.status = need.needsAttention() ? OptionStatus::Available : OptionStatus::Satisfied;
+					} else {
+						// Fallback to current position
+						option.targetPosition = position.value;
+						option.distanceToTarget = 0.0F;
+						option.status = need.needsAttention() ? OptionStatus::Available : OptionStatus::Satisfied;
+					}
+				} else {
+					option.targetPosition = position.value;
+					option.distanceToTarget = 0.0F;
+					option.status = need.needsAttention() ? OptionStatus::Available : OptionStatus::Satisfied;
+				}
 			} else {
 				// No source and no fallback
 				option.status = need.needsAttention() ? OptionStatus::NoSource : OptionStatus::Satisfied;

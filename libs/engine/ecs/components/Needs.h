@@ -5,12 +5,13 @@
 
 namespace ecs {
 
-/// MVP needs: Hunger, Thirst, Energy, Bladder
+/// MVP needs: Hunger, Thirst, Energy, Bladder, Digestion
 enum class NeedType : uint8_t {
     Hunger = 0,
     Thirst,
     Energy,
-    Bladder,
+    Bladder,    // Filled by drinking, relieved by peeing
+    Digestion,  // Filled by eating, relieved by pooping
     Count  // Sentinel for array sizing
 };
 
@@ -62,11 +63,13 @@ struct NeedsComponent {
     [[nodiscard]] Need& thirst() { return get(NeedType::Thirst); }
     [[nodiscard]] Need& energy() { return get(NeedType::Energy); }
     [[nodiscard]] Need& bladder() { return get(NeedType::Bladder); }
+    [[nodiscard]] Need& digestion() { return get(NeedType::Digestion); }
 
     [[nodiscard]] const Need& hunger() const { return get(NeedType::Hunger); }
     [[nodiscard]] const Need& thirst() const { return get(NeedType::Thirst); }
     [[nodiscard]] const Need& energy() const { return get(NeedType::Energy); }
     [[nodiscard]] const Need& bladder() const { return get(NeedType::Bladder); }
+    [[nodiscard]] const Need& digestion() const { return get(NeedType::Digestion); }
 
     /// Create with default MVP configuration
     static NeedsComponent createDefault() {
@@ -81,8 +84,12 @@ struct NeedsComponent {
         // Energy: ~30% seek, ~10% critical (need sleep earlier)
         comp.energy() = Need{100.0f, 0.5f, 30.0f, 10.0f};
 
-        // Bladder: ~30% seek, ~10% critical (accelerated by drinking)
+        // Bladder: ~30% seek, ~10% critical (filled by drinking, relieved by peeing)
         comp.bladder() = Need{100.0f, 0.3f, 30.0f, 10.0f};
+
+        // Digestion: ~30% seek, ~10% critical (filled by eating, relieved by pooping)
+        // Slower decay than bladder since food takes longer to digest
+        comp.digestion() = Need{100.0f, 0.2f, 30.0f, 10.0f};
 
         return comp;
     }
