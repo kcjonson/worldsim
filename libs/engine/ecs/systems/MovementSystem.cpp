@@ -1,9 +1,12 @@
 #include "MovementSystem.h"
 
 #include "../World.h"
+#include "../components/FacingDirection.h"
 #include "../components/Movement.h"
 #include "../components/Task.h"
 #include "../components/Transform.h"
+
+#include <numbers>
 
 #include <utils/Log.h>
 
@@ -51,6 +54,29 @@ void MovementSystem::update(float deltaTime) {
     for (auto [entity, rot, vel] : world->view<Rotation, Velocity>()) {
         if (glm::length(vel.value) > 0.01f) {
             rot.radians = std::atan2(vel.value.y, vel.value.x);
+        }
+    }
+
+    // Update FacingDirection for directional sprite selection (4-way quantization)
+    for (auto [entity, facing, vel] : world->view<FacingDirection, Velocity>()) {
+        if (glm::length(vel.value) > 0.01f) {
+            // Quantize angle to 4 cardinal directions
+            float angle = std::atan2(vel.value.y, vel.value.x);
+            constexpr float kQuarterPi = 0.25f * std::numbers::pi_v<float>;
+
+            // Right: -45° to 45° (-0.25π to 0.25π)
+            // Up: 45° to 135° (0.25π to 0.75π)
+            // Left: 135° to -135° (0.75π to -0.75π, wrapping)
+            // Down: -135° to -45° (-0.75π to -0.25π)
+            if (angle >= -kQuarterPi && angle < kQuarterPi) {
+                facing.direction = CardinalDirection::Right;
+            } else if (angle >= kQuarterPi && angle < 3.0f * kQuarterPi) {
+                facing.direction = CardinalDirection::Up;
+            } else if (angle >= -3.0f * kQuarterPi && angle < -kQuarterPi) {
+                facing.direction = CardinalDirection::Down;
+            } else {
+                facing.direction = CardinalDirection::Left;
+            }
         }
     }
 }

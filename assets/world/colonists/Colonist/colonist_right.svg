@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Colonist facing RIGHT - right arm forward -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 60 100">
+  <!-- Head at top -->
+  <polygon points="30,5 40,8 44,15 40,22 30,25 20,22 16,15 20,8" fill="#9CA3AF"/>
+  <!-- Right eye visible -->
+  <polygon points="36,14 33,12 33,16 36,14" fill="#374151"/>
+
+  <!-- Body -->
+  <polygon points="30,24 46,36 46,65 30,80 14,65 14,36" fill="#6B7280"/>
+
+  <!-- Right arm forward (reaching right) -->
+  <polygon points="48,40 60,40 60,47 48,47" fill="#9CA3AF"/>
+  <!-- Left arm back -->
+  <polygon points="12,40 5,50 9,54 16,46" fill="#9CA3AF"/>
+
+  <!-- Feet -->
+  <polygon points="24,78 20,92 28,92" fill="#4B5563"/>
+  <polygon points="36,78 40,92 32,92" fill="#4B5563"/>
+</svg>

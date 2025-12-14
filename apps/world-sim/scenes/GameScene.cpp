@@ -35,6 +35,7 @@
 #include <ecs/components/Appearance.h>
 #include <ecs/components/Colonist.h>
 #include <ecs/components/DecisionTrace.h>
+#include <ecs/components/FacingDirection.h>
 #include <ecs/components/Memory.h>
 #include <ecs/components/Movement.h>
 #include <ecs/components/Needs.h>
@@ -120,7 +121,10 @@ namespace {
 			gameUI = std::make_unique<world_sim::GameUI>(world_sim::GameUI::Args{
 				.onZoomIn = [this]() { m_camera->zoomIn(); },
 				.onZoomOut = [this]() { m_camera->zoomOut(); },
-				.onSelectionCleared = [this]() { selection = world_sim::NoSelection{}; }
+				.onSelectionCleared = [this]() { selection = world_sim::NoSelection{}; },
+				.onColonistSelected = [this](ecs::EntityID entityId) {
+					selection = world_sim::ColonistSelection{entityId};
+				}
 			});
 
 			// Initial layout pass with consistent DPI scaling
@@ -308,9 +312,10 @@ namespace {
 			auto entity = ecsWorld->createEntity();
 
 			ecsWorld->addComponent<ecs::Position>(entity, ecs::Position{newPosition});
-			ecsWorld->addComponent<ecs::Rotation>(entity, ecs::Rotation{0.0F}); // Fixed rotation (no velocity-based facing)
+			ecsWorld->addComponent<ecs::Rotation>(entity, ecs::Rotation{0.0F});
 			ecsWorld->addComponent<ecs::Velocity>(entity, ecs::Velocity{{0.0F, 0.0F}});
 			ecsWorld->addComponent<ecs::MovementTarget>(entity, ecs::MovementTarget{{0.0F, 0.0F}, 2.0F, false});
+			ecsWorld->addComponent<ecs::FacingDirection>(entity, ecs::FacingDirection{});  // Default: Down
 			ecsWorld->addComponent<ecs::Appearance>(entity, ecs::Appearance{"Colonist", 1.0F, {1.0F, 1.0F, 1.0F, 1.0F}});
 			ecsWorld->addComponent<ecs::Colonist>(entity, ecs::Colonist{newName});
 			ecsWorld->addComponent<ecs::NeedsComponent>(entity, ecs::NeedsComponent::createDefault());

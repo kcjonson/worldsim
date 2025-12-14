@@ -2,6 +2,7 @@ add_executable(world-sim
     Main.cpp
     SceneTypes.cpp
     GameWorldState.cpp
+    components/ColonistListPanel.cpp
     components/GameOverlay.cpp
     components/GameUI.cpp
     components/ZoomControl.cpp

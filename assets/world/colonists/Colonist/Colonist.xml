@@ -1,29 +1,40 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- Colonist Asset Definition
-     Top-down humanoid silhouette for dynamic entities.
-     Spawned by ECS, not by world generation placement rules.
--->
+<!-- Colonist Asset Definition - Directional sprites for 4-way movement -->
 <AssetDefinitions>
+  <!-- Base colonist (legacy) -->
   <AssetDef>
     <defName>Colonist</defName>
-    <label>Colonist</label>
-    <description>A human colonist that can move, work, and interact with the world</description>
-
     <assetType>simple</assetType>
-
-    <!-- Path relative to this asset folder -->
     <svgPath>colonist.svg</svgPath>
-    <!-- World height in meters - approximately 1m diameter for top-down view -->
     <worldHeight>1.0</worldHeight>
+  </AssetDef>
 
-    <rendering>
-      <!-- Simple = GPU instanced rendering -->
-      <complexity>simple</complexity>
-      <tier>instanced</tier>
-      <!-- Colonists are dynamic entities, typically low count -->
-      <maxInstances>1000</maxInstances>
-    </rendering>
+  <!-- Directional variants -->
+  <AssetDef>
+    <defName>Colonist_up</defName>
+    <assetType>simple</assetType>
+    <svgPath>colonist_up.svg</svgPath>
+    <worldHeight>1.0</worldHeight>
+  </AssetDef>
 
-    <!-- No placement rules - colonists are spawned dynamically by ECS -->
+  <AssetDef>
+    <defName>Colonist_down</defName>
+    <assetType>simple</assetType>
+    <svgPath>colonist_down.svg</svgPath>
+    <worldHeight>1.0</worldHeight>
+  </AssetDef>
+
+  <AssetDef>
+    <defName>Colonist_left</defName>
+    <assetType>simple</assetType>
+    <svgPath>colonist_left.svg</svgPath>
+    <worldHeight>1.0</worldHeight>
+  </AssetDef>
+
+  <AssetDef>
+    <defName>Colonist_right</defName>
+    <assetType>simple</assetType>
+    <svgPath>colonist_right.svg</svgPath>
+    <worldHeight>1.0</worldHeight>
   </AssetDef>
 </AssetDefinitions>
