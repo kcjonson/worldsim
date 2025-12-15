@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- Base soil tone -->
+  <rect width="512" height="512" fill="#4b7c3f" />
+
+  <!-- Subtle color variation patches (tileable organic blobs) -->
+  <g opacity="0.22" fill="#538547">
+    <ellipse cx="110" cy="120" rx="70" ry="50"/>
+    <ellipse cx="360" cy="190" rx="60" ry="45"/>
+    <ellipse cx="240" cy="380" rx="80" ry="55"/>
+    <ellipse cx="470" cy="60" rx="60" ry="40"/>
+    <ellipse cx="40" cy="440" rx="55" ry="35"/>
+  </g>
+  <g opacity="0.18" fill="#3f6c34">
+    <ellipse cx="170" cy="300" rx="65" ry="45"/>
+    <ellipse cx="320" cy="420" rx="70" ry="40"/>
+    <ellipse cx="90" cy="210" rx="55" ry="35"/>
+  </g>
+
+  <!-- Dirt speckles -->
+  <g fill="#6f583c" opacity="0.55">
+    <circle cx="60" cy="80" r="4"/>
+    <circle cx="180" cy="60" r="3"/>
+    <circle cx="420" cy="110" r="5"/>
+    <circle cx="300" cy="260" r="3.5"/>
+    <circle cx="200" cy="200" r="2.5"/>
+    <circle cx="470" cy="300" r="4"/>
+    <circle cx="380" cy="360" r="3"/>
+    <circle cx="120" cy="360" r="3.5"/>
+    <circle cx="60" cy="470" r="4"/>
+    <circle cx="460" cy="470" r="4"/>
+  </g>
+
+  <!-- Fine grass stubble strokes -->
+  <g stroke-linecap="round" opacity="0.45">
+    <path d="M60 230 l2 -9" stroke="#5d8e52" stroke-width="2"/>
+    <path d="M72 240 l-1 -8" stroke="#507b45" stroke-width="1.6"/>
+    <path d="M85 225 l2 -7" stroke="#5d8e52" stroke-width="1.6"/>
+    <path d="M190 190 l1 -8" stroke="#4f7d44" stroke-width="1.4"/>
+    <path d="M205 205 l-1 -7" stroke="#5b8a50" stroke-width="1.6"/>
+    <path d="M220 195 l2 -8" stroke="#4f7d44" stroke-width="1.5"/>
+    <path d="M320 340 l-1 -7" stroke="#5d8e52" stroke-width="1.5"/>
+    <path d="M335 350 l1 -9" stroke="#4f7d44" stroke-width="1.7"/>
+    <path d="M350 335 l-1 -8" stroke="#5b8a50" stroke-width="1.6"/>
+    <path d="M430 250 l1 -7" stroke="#4f7d44" stroke-width="1.5"/>
+    <path d="M450 235 l-2 -8" stroke="#5d8e52" stroke-width="1.6"/>
+    <path d="M460 255 l1 -7" stroke="#4f7d44" stroke-width="1.5"/>
+    <path d="M120 430 l2 -8" stroke="#4f7d44" stroke-width="1.5"/>
+    <path d="M135 445 l-1 -7" stroke="#5b8a50" stroke-width="1.6"/>
+    <path d="M150 430 l1 -9" stroke="#5d8e52" stroke-width="1.8"/>
+  </g>
+
+  <!-- Occasional pebbles -->
+  <g fill="#8a8a8a" opacity="0.35">
+    <ellipse cx="250" cy="150" rx="6" ry="4"/>
+    <ellipse cx="420" cy="210" rx="7" ry="5"/>
+    <ellipse cx="180" cy="420" rx="6" ry="4"/>
+    <ellipse cx="60" cy="300" rx="5" ry="4"/>
+    <ellipse cx="340" cy="70" rx="6" ry="4"/>
+  </g>
+</svg>

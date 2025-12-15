@@ -16,7 +16,10 @@
 #include "graphics/PrimitiveStyles.h"
 #include "graphics/Rect.h"
 #include "math/Types.h"
+#include <cstdint>
 #include <string>
+#include <vector>
+#include <glm/vec4.hpp>
 
 namespace Renderer { // NOLINT(readability-identifier-naming)
 
@@ -87,6 +90,9 @@ namespace Renderer {
 		//   - atlasTexture: OpenGL texture ID of the MSDF font atlas
 		//   - pixelRange: Distance field pixel range (default 4.0, from atlas generation)
 		void setFontAtlas(unsigned int atlasTexture, float pixelRange = 4.0F);
+
+		// Set tile atlas texture (GL texture) and UV rects per surface index.
+		void setTileAtlas(unsigned int atlasTexture, const std::vector<glm::vec4>& rects);
 
 		// Get the internal batch renderer for direct text rendering.
 		//
@@ -169,6 +175,19 @@ namespace Renderer {
 
 		// Draw triangles from a mesh (for vector graphics tessellation)
 		void drawTriangles(const TrianglesArgs& args);
+
+		// Arguments for DrawTile (tile-specific packing for adjacency data)
+		struct TileArgs {
+			Foundation::Rect  bounds;      // Screen-space quad
+			Foundation::Color color;       // Base color
+			uint8_t          edgeMask = 0; // N,E,S,W bits (0-3)
+			uint8_t          cornerMask = 0; // NW,NE,SE,SW bits (0-3)
+			uint8_t          surfaceId = 0;  // Surface type id (0-255)
+			uint8_t          hardEdgeMask = 0; // Family-based hard edges (8 dirs)
+		};
+
+		// Draw a tile quad with adjacency-packed data for shader use
+		void drawTile(const TileArgs& args);
 
 		// Arguments for DrawCircle
 		struct CircleArgs {

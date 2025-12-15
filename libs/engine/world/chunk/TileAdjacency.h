@@ -16,6 +16,25 @@
 
 namespace engine::world::TileAdjacency {
 
+/// Surface family classification for hard-edge detection
+enum class SurfaceFamily : uint8_t {
+	Ground,
+	Water,
+	Rock
+};
+
+/// Map surface id to family. Defaults to Ground for unknown ids.
+[[nodiscard]] inline SurfaceFamily getSurfaceFamily(uint8_t surfaceId) {
+	switch (surfaceId) {
+		case 4: // Surface::Water
+			return SurfaceFamily::Water;
+		case 3: // Surface::Rock
+			return SurfaceFamily::Rock;
+		default:
+			return SurfaceFamily::Ground;
+	}
+}
+
 /// Bits allocated per direction (supports up to 64 tile types)
 constexpr int kBitsPerDirection = 6;
 
@@ -187,6 +206,29 @@ namespace CornerBit {
 	// SW corner: diagonal is lower, but S and W are not lower
 	if (isLower(SW) && !isLower(S) && !isLower(W)) {
 		mask |= CornerBit::SW;
+	}
+
+	return mask;
+}
+
+/// Get a mask indicating which neighbors belong to a different surface family *and* are lower in the stack.
+/// Bits match Direction order (0=NW,1=W,2=SW,3=S,4=SE,5=E,6=NE,7=N).
+/// This prevents double-stroking across chunk boundaries (e.g., both water and mud would previously draw).
+[[nodiscard]] inline uint8_t getHardEdgeMaskByFamily(uint64_t adj, uint8_t thisSurfaceId) {
+	uint8_t mask = 0;
+	SurfaceFamily thisFamily = getSurfaceFamily(thisSurfaceId);
+	int thisStack = getSurfaceStackOrder(thisSurfaceId);
+
+	for (int dir = 0; dir < kDirectionCount; ++dir) {
+		auto neighborDir = static_cast<Direction>(dir);
+		uint8_t neighborId = getNeighbor(adj, neighborDir);
+		SurfaceFamily neighborFamily = getSurfaceFamily(neighborId);
+		int neighborStack = getSurfaceStackOrder(neighborId);
+
+		// Only draw hard edges when this tile sits above a different family.
+		if (neighborFamily != thisFamily && neighborStack < thisStack) {
+			mask |= static_cast<uint8_t>(1U << dir);
+		}
 	}
 
 	return mask;

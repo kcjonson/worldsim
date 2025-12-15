@@ -37,7 +37,7 @@ target_link_libraries(world-sim
         assets
 )
 
-# Copy shaders to executable directory
+# Copy shaders after build as well (kept for redundancy during full rebuilds)
 add_custom_command(TARGET world-sim POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
     ${CMAKE_BINARY_DIR}/shaders
@@ -61,5 +61,5 @@ add_custom_target(world-sim-assets ALL
     COMMENT "Syncing assets to world-sim directory"
 )
 
-# Make world-sim depend on assets so they're copied before running
-add_dependencies(world-sim world-sim-assets)
+# Make world-sim depend on shader and asset sync so they are copied before running
+add_dependencies(world-sim world-sim-assets renderer-shaders)

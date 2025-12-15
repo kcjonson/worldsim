@@ -103,6 +103,9 @@ class Chunk {
 	/// Returns pre-computed tile from flat array (requires isReady() == true)
 	[[nodiscard]] const TileData& getTile(uint16_t localX, uint16_t localY) const;
 
+	/// Update adjacency for a single tile (used when neighbor chunks arrive)
+	void setAdjacency(uint16_t localX, uint16_t localY, uint64_t adjacency);
+
 	/// Get the biome data for this chunk (used during generation)
 	[[nodiscard]] const ChunkSampleResult& biomeData() const { return m_biomeData; }
 

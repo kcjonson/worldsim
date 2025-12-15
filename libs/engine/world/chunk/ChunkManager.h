@@ -78,6 +78,12 @@ class ChunkManager {
 
 	/// Unload chunks outside the unload radius
 	void unloadDistantChunks(ChunkCoordinate center);
+
+	/// Recompute boundary adjacency for a chunk using any loaded neighbor chunks
+	void refreshAdjacencyForChunkBoundary(ChunkCoordinate coord);
+
+	/// Refresh adjacency for the chunk and its immediate neighbors (3x3 area)
+	void refreshAdjacencyAround(ChunkCoordinate coord);
 };
 
 }  // namespace engine::world

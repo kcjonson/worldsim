@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- Base water tone -->
+  <rect width="512" height="512" fill="#2f6f9a" />
+
+  <!-- Depth variation bands (soft waves) -->
+  <g fill="#2a648b" opacity="0.35">
+    <ellipse cx="100" cy="80" rx="140" ry="60"/>
+    <ellipse cx="360" cy="160" rx="180" ry="70"/>
+    <ellipse cx="260" cy="320" rx="190" ry="80"/>
+    <ellipse cx="420" cy="420" rx="130" ry="60"/>
+    <ellipse cx="80" cy="360" rx="150" ry="65"/>
+  </g>
+  <g fill="#3a7faf" opacity="0.28">
+    <ellipse cx="200" cy="140" rx="110" ry="45"/>
+    <ellipse cx="440" cy="240" rx="120" ry="55"/>
+    <ellipse cx="120" cy="260" rx="130" ry="55"/>
+    <ellipse cx="320" cy="420" rx="150" ry="65"/>
+  </g>
+
+  <!-- Ripple lines -->
+  <g fill="none" stroke="#64a8d4" stroke-width="2" opacity="0.35" stroke-linecap="round">
+    <path d="M40 180 q40 20 80 0 q40 -20 80 0 q40 20 80 0" />
+    <path d="M100 260 q50 18 100 0 q50 -18 100 0 q50 18 100 0" />
+    <path d="M60 340 q45 16 90 0 q45 -16 90 0 q45 16 90 0" />
+    <path d="M140 420 q55 18 110 0 q55 -18 110 0" />
+  </g>
+
+  <!-- Light glints -->
+  <g fill="#9fd4ff" opacity="0.45">
+    <ellipse cx="90" cy="110" rx="14" ry="6"/>
+    <ellipse cx="220" cy="90" rx="12" ry="5"/>
+    <ellipse cx="330" cy="200" rx="15" ry="7"/>
+    <ellipse cx="440" cy="150" rx="13" ry="6"/>
+    <ellipse cx="170" cy="360" rx="14" ry="6"/>
+    <ellipse cx="360" cy="330" rx="13" ry="5"/>
+    <ellipse cx="260" cy="260" rx="12" ry="5"/>
+    <ellipse cx="430" cy="400" rx="14" ry="6"/>
+  </g>
+</svg>

@@ -16,8 +16,10 @@
 #include "shader/Shader.h"
 #include "vector/Tessellator.h"
 #include <GL/glew.h>
+#include <cstdint>
 #include <optional>
 #include <vector>
+#include <glm/vec4.hpp>
 
 namespace Renderer { // NOLINT(readability-identifier-naming)
 
@@ -78,6 +80,16 @@ namespace Renderer { // NOLINT(readability-identifier-naming)
 			const Foundation::Color*  inputColors = nullptr
 		);
 
+		// Add a tile quad with adjacency-packed data
+		void addTileQuad(
+			const Foundation::Rect&  bounds,
+			const Foundation::Color& color,
+			uint8_t				 edgeMask,
+			uint8_t				 cornerMask,
+			uint8_t				 surfaceId,
+			uint8_t				 hardEdgeMask
+		);
+
 		// --- Text rendering (MSDF) ---
 
 		// Add text glyph quad to batch
@@ -95,6 +107,9 @@ namespace Renderer { // NOLINT(readability-identifier-naming)
 
 		// Set the MSDF font atlas texture (call once per font)
 		void setFontAtlas(GLuint atlasTexture, float pixelRange = 4.0F);
+
+		// Set tile atlas texture and rects (uvMin.xy, uvMax.xy per surface id).
+		void setTileAtlas(GLuint atlasTexture, const std::vector<glm::vec4>& rects);
 
 		// --- Rendering ---
 
@@ -203,6 +218,9 @@ namespace Renderer { // NOLINT(readability-identifier-naming)
 		GLint atlasLoc = -1;
 		GLint viewportHeightLoc = -1;
 		GLint pixelRatioLoc = -1;
+		GLint tileAtlasLoc = -1;
+		GLint tileAtlasRectsLoc = -1;
+		GLint tileAtlasCountLoc = -1;
 
 		// Uniform locations (instanced rendering)
 		GLint cameraPositionLoc = -1;
@@ -221,6 +239,10 @@ namespace Renderer { // NOLINT(readability-identifier-naming)
 		// Font atlas for text rendering
 		GLuint fontAtlas = 0;
 		float  fontPixelRange = 4.0F;
+
+		// Tile atlas for ground textures
+		GLuint tileAtlas = 0;
+		std::vector<glm::vec4> tileAtlasRects;
 
 		// Current clip bounds (applied to all vertices)
 		// (0,0,0,0) means no clipping

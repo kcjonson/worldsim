@@ -4,6 +4,8 @@
 
 #include <algorithm>
 
+#include "world/chunk/TileAdjacency.h"
+
 namespace engine::world {
 
 	ChunkManager::ChunkManager(std::unique_ptr<IWorldSampler> sampler)
@@ -99,6 +101,9 @@ namespace engine::world {
 		LOG_DEBUG(Engine, "Loaded chunk (%d, %d)", coord.x, coord.y);
 
 		m_chunks[coord] = std::move(chunk);
+
+		// Now that the chunk exists, refresh adjacency for it and its neighbors so edges cross chunk boundaries
+		refreshAdjacencyAround(coord);
 	}
 
 	void ChunkManager::unloadDistantChunks(ChunkCoordinate center) {
@@ -115,6 +120,77 @@ namespace engine::world {
 		for (const auto& coord : toUnload) {
 			LOG_DEBUG(Engine, "Unloaded chunk (%d, %d)", coord.x, coord.y);
 			m_chunks.erase(coord);
+		}
+	}
+
+	void ChunkManager::refreshAdjacencyForChunkBoundary(ChunkCoordinate coord) {
+		Chunk* chunk = getChunk(coord);
+		if (chunk == nullptr || !chunk->isReady()) {
+			return;
+		}
+
+		auto sampleSurface = [&](int localX, int localY) -> uint8_t {
+			ChunkCoordinate target = coord;
+			int tx = localX;
+			int ty = localY;
+
+			if (tx < 0) {
+				target.x -= 1;
+				tx += kChunkSize;
+			} else if (tx >= kChunkSize) {
+				target.x += 1;
+				tx -= kChunkSize;
+			}
+
+			if (ty < 0) {
+				target.y -= 1;
+				ty += kChunkSize;
+			} else if (ty >= kChunkSize) {
+				target.y += 1;
+				ty -= kChunkSize;
+			}
+
+			const Chunk* neighbor = getChunk(target);
+			if (neighbor == nullptr || !neighbor->isReady()) {
+				// Fallback: use the current chunk's edge tile to avoid fake edge strokes
+				tx = std::clamp(localX, 0, kChunkSize - 1);
+				ty = std::clamp(localY, 0, kChunkSize - 1);
+				return static_cast<uint8_t>(chunk->getTile(static_cast<uint16_t>(tx), static_cast<uint16_t>(ty)).surface);
+			}
+
+			return static_cast<uint8_t>(neighbor->getTile(static_cast<uint16_t>(tx), static_cast<uint16_t>(ty)).surface);
+		};
+
+		auto recomputeTileAdjacency = [&](int x, int y) {
+			uint64_t adj = 0;
+			TileAdjacency::setNeighbor(adj, TileAdjacency::NW, sampleSurface(x - 1, y - 1));
+			TileAdjacency::setNeighbor(adj, TileAdjacency::W, sampleSurface(x - 1, y));
+			TileAdjacency::setNeighbor(adj, TileAdjacency::SW, sampleSurface(x - 1, y + 1));
+			TileAdjacency::setNeighbor(adj, TileAdjacency::S, sampleSurface(x, y + 1));
+			TileAdjacency::setNeighbor(adj, TileAdjacency::SE, sampleSurface(x + 1, y + 1));
+			TileAdjacency::setNeighbor(adj, TileAdjacency::E, sampleSurface(x + 1, y));
+			TileAdjacency::setNeighbor(adj, TileAdjacency::NE, sampleSurface(x + 1, y - 1));
+			TileAdjacency::setNeighbor(adj, TileAdjacency::N, sampleSurface(x, y - 1));
+
+			chunk->setAdjacency(static_cast<uint16_t>(x), static_cast<uint16_t>(y), adj);
+		};
+
+		for (int y = 0; y < kChunkSize; ++y) {
+			for (int x = 0; x < kChunkSize; ++x) {
+				// Only boundary tiles depend on external neighbors; interior is already correct.
+				if (x > 0 && x < kChunkSize - 1 && y > 0 && y < kChunkSize - 1) {
+					continue;
+				}
+				recomputeTileAdjacency(x, y);
+			}
+		}
+	}
+
+	void ChunkManager::refreshAdjacencyAround(ChunkCoordinate coord) {
+		for (int dy = -1; dy <= 1; ++dy) {
+			for (int dx = -1; dx <= 1; ++dx) {
+				refreshAdjacencyForChunkBoundary({coord.x + dx, coord.y + dy});
+			}
 		}
 	}
 

@@ -13,6 +13,11 @@ out vec4 FragColor;
 
 // MSDF font atlas texture (bound once per frame, ignored for shapes)
 uniform sampler2D u_atlas;
+// Tile atlas (optional). Rects specify uvMin.xy, uvMax.xy per surface id.
+uniform sampler2D u_tileAtlas;
+uniform int u_tileAtlasRectCount;
+uniform vec4 u_tileAtlasRects[64];
+uniform int u_softBlendMode; // 0 = off, 1 = placeholder (future)
 
 // Viewport height for Y-coordinate flip (OpenGL origin is bottom-left, UI is top-left)
 // NOTE: This is the PHYSICAL framebuffer height in physical pixels
@@ -58,6 +63,7 @@ float screenPxRange(float pixelRange) {
 // ============================================================================
 const float kRenderModeText = -1.0;      // MSDF text rendering
 const float kRenderModeInstanced = -2.0; // Simple solid color (instanced entities)
+const float kRenderModeTile = -3.0;      // Tile rendering with adjacency mask
 
 // ============================================================================
 // MAIN - Branch on render mode
@@ -68,6 +74,104 @@ void main() {
 	// - Shapes:    v_data2.w >= 0 (borderPosition: 0=Inside, 1=Center, 2=Outside)
 	// - Text:      v_data2.w == -1.0
 	// - Instanced: v_data2.w == -2.0
+	// - Tiles:     v_data2.w == -3.0
+
+	// ========== TILE RENDERING (adjacency mask driven) ==========
+	if (v_data2.w < -2.5) {
+		// Unpack mask data (packed as integers in data1.xyw)
+		uint edgeMask = uint(v_data1.x + 0.5);
+		uint cornerMask = uint(v_data1.y + 0.5);
+		uint surfaceId = uint(v_data1.z + 0.5);
+		uint hardEdgeMask = uint(v_data1.w + 0.5);
+
+		// Rect-local coordinates map -halfSize..+halfSize → 0..1
+		vec2 halfSize = max(v_data2.xy, vec2(0.0001));
+		vec2 uv = (v_texCoord / halfSize) * 0.5 + 0.5; // uv.y=0 top
+
+		// Base color from atlas if available, otherwise vertex color
+		vec4 color = v_color;
+		if (u_tileAtlasRectCount > 0) {
+			int idx = int(surfaceId);
+			if (idx < u_tileAtlasRectCount) {
+				vec4 rect = u_tileAtlasRects[idx];
+				vec2 atlasUV = rect.xy + uv * (rect.zw - rect.xy);
+				color = texture(u_tileAtlas, atlasUV) * v_color;
+			}
+		}
+
+		// Placeholder soft blend hook (future: neighbor sampling or surface map).
+		if (u_softBlendMode != 0) {
+			// Minimal subtle vignette to indicate hook is active without requiring neighbors.
+			float blend = smoothstep(0.0, 0.4, min(min(uv.x, uv.y), min(1.0 - uv.x, 1.0 - uv.y)));
+			color.rgb = mix(color.rgb * 0.96, color.rgb, blend);
+		}
+		const float edgeWidth = 0.025;    // Thin edge band
+		const float cornerSize = edgeWidth; // Corner nib matches stroke thickness
+		const float darken = 0.60;
+		const float cornerDarken = darken;  // Same intensity as edges
+
+		// Edge darkening: bits 0=N, 1=E, 2=S, 3=W. Prefer hard edges when present.
+		uint edgeBits = edgeMask;
+		const float hardDarken = 0.55;
+		// Precompute edge membership so corners can avoid double hits.
+		bool inN = uv.y < edgeWidth;
+		bool inE = (1.0 - uv.x) < edgeWidth;
+		bool inS = (1.0 - uv.y) < edgeWidth;
+		bool inW = uv.x < edgeWidth;
+		bool inAnyEdge = inN || inE || inS || inW;
+
+		// Accumulate a single darkening factor to avoid double-multiplying where regions overlap.
+		float darkenFactor = 1.0;
+		if (inN) {
+			if ((hardEdgeMask & 0x80u) != 0u) {
+				darkenFactor = min(darkenFactor, hardDarken);
+			} else if ((edgeBits & 0x1u) != 0u) {
+				darkenFactor = min(darkenFactor, darken);
+			}
+		}
+		if (inE) {
+			if ((hardEdgeMask & 0x20u) != 0u) {
+				darkenFactor = min(darkenFactor, hardDarken);
+			} else if ((edgeBits & 0x2u) != 0u) {
+				darkenFactor = min(darkenFactor, darken);
+			}
+		}
+		if (inS) {
+			if ((hardEdgeMask & 0x08u) != 0u) {
+				darkenFactor = min(darkenFactor, hardDarken);
+			} else if ((edgeBits & 0x4u) != 0u) {
+				darkenFactor = min(darkenFactor, darken);
+			}
+		}
+		if (inW) {
+			if ((hardEdgeMask & 0x02u) != 0u) {
+				darkenFactor = min(darkenFactor, hardDarken);
+			} else if ((edgeBits & 0x8u) != 0u) {
+				darkenFactor = min(darkenFactor, darken);
+			}
+		}
+
+		// Corner darkening: bits 0=NW, 1=NE, 2=SE, 3=SW. Allow inside edge bands but clamp with stronger nib.
+		if (cornerSize > 0.0) {
+			if ((cornerMask & 0x1u) != 0u && uv.x < cornerSize && uv.y < cornerSize) { // NW
+				darkenFactor = min(darkenFactor, cornerDarken);
+			}
+			if ((cornerMask & 0x2u) != 0u && (1.0 - uv.x) < cornerSize && uv.y < cornerSize) { // NE
+				darkenFactor = min(darkenFactor, cornerDarken);
+			}
+			if ((cornerMask & 0x4u) != 0u && (1.0 - uv.x) < cornerSize && (1.0 - uv.y) < cornerSize) { // SE
+				darkenFactor = min(darkenFactor, cornerDarken);
+			}
+			if ((cornerMask & 0x8u) != 0u && uv.x < cornerSize && (1.0 - uv.y) < cornerSize) { // SW
+				darkenFactor = min(darkenFactor, cornerDarken);
+			}
+		}
+
+		color.rgb *= darkenFactor;
+
+		FragColor = color;
+		return;
+	}
 
 	// ========== INSTANCED ENTITY RENDERING (simple solid color) ==========
 	if (v_data2.w < -1.5) {
