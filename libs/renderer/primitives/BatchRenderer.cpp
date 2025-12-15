@@ -5,10 +5,16 @@
 #include "CoordinateSystem/CoordinateSystem.h"
 #include <glm/gtc/type_ptr.hpp>
 #include <iostream>
+#include <algorithm>
 
 namespace Renderer {
 
 	namespace {
+		// Render mode constant for tile rendering. Must match uber.vert:31 and uber.frag:66.
+		constexpr float kRenderModeTile = -3.0F;
+		// Maximum number of tile atlas UV rects. Must match uber.frag:19 (u_tileAtlasRects[64]).
+		constexpr int kMaxTileAtlasRects = 64;
+
 		// Helper to transform a 2D position by a 4x4 matrix
 		// isIdentity flag is pre-computed in setTransform() to avoid per-vertex checks
 		inline Foundation::Vec2 TransformPosition(const Foundation::Vec2& pos, const Foundation::Mat4& transform, bool isIdentity) {
@@ -44,6 +50,9 @@ namespace Renderer {
 		atlasLoc = glGetUniformLocation(shader.getProgram(), "u_atlas");
 		viewportHeightLoc = glGetUniformLocation(shader.getProgram(), "u_viewportHeight");
 		pixelRatioLoc = glGetUniformLocation(shader.getProgram(), "u_pixelRatio");
+		tileAtlasLoc = glGetUniformLocation(shader.getProgram(), "u_tileAtlas");
+		tileAtlasRectsLoc = glGetUniformLocation(shader.getProgram(), "u_tileAtlasRects");
+		tileAtlasCountLoc = glGetUniformLocation(shader.getProgram(), "u_tileAtlasRectCount");
 
 		// Get uniform locations (instanced rendering)
 		cameraPositionLoc = glGetUniformLocation(shader.getProgram(), "u_cameraPosition");
@@ -236,6 +245,75 @@ namespace Renderer {
 		indices.push_back(baseIndex + 3);
 	}
 
+
+	void BatchRenderer::addTileQuad(
+		const Foundation::Rect&  bounds,
+		const Foundation::Color& color,
+		uint8_t				 edgeMask,
+		uint8_t				 cornerMask,
+		uint8_t			 surfaceId,
+		uint8_t			 hardEdgeMask
+	) { // NOLINT(readability-convert-member-functions-to-static)
+		uint32_t baseIndex = static_cast<uint32_t>(vertices.size());
+
+		float halfW = bounds.width * 0.5F;
+		float halfH = bounds.height * 0.5F;
+		float centerX = bounds.x + halfW;
+		float centerY = bounds.y + halfH;
+
+		Foundation::Vec4 colorVec = color.toVec4();
+		Foundation::Vec4 data1(static_cast<float>(edgeMask), static_cast<float>(cornerMask), static_cast<float>(surfaceId), static_cast<float>(hardEdgeMask));
+		Foundation::Vec4 data2(halfW, halfH, 0.0F, kRenderModeTile);
+
+		// Top-left
+		vertices.push_back({
+			TransformPosition(Foundation::Vec2(centerX - halfW, centerY - halfH), currentTransform, transformIsIdentity),
+			Foundation::Vec2(-halfW, -halfH),
+			colorVec,
+			data1,
+			data2,
+			currentClipBounds
+		});
+
+		// Top-right
+		vertices.push_back({
+			TransformPosition(Foundation::Vec2(centerX + halfW, centerY - halfH), currentTransform, transformIsIdentity),
+			Foundation::Vec2(halfW, -halfH),
+			colorVec,
+			data1,
+			data2,
+			currentClipBounds
+		});
+
+		// Bottom-right
+		vertices.push_back({
+			TransformPosition(Foundation::Vec2(centerX + halfW, centerY + halfH), currentTransform, transformIsIdentity),
+			Foundation::Vec2(halfW, halfH),
+			colorVec,
+			data1,
+			data2,
+			currentClipBounds
+		});
+
+		// Bottom-left
+		vertices.push_back({
+			TransformPosition(Foundation::Vec2(centerX - halfW, centerY + halfH), currentTransform, transformIsIdentity),
+			Foundation::Vec2(-halfW, halfH),
+			colorVec,
+			data1,
+			data2,
+			currentClipBounds
+		});
+
+		indices.push_back(baseIndex + 0);
+		indices.push_back(baseIndex + 1);
+		indices.push_back(baseIndex + 2);
+
+		indices.push_back(baseIndex + 0);
+		indices.push_back(baseIndex + 2);
+		indices.push_back(baseIndex + 3);
+	}
+
 	void BatchRenderer::addTriangles( // NOLINT(readability-convert-member-functions-to-static)
 		const Foundation::Vec2*	  inputVertices,
 		const uint16_t*			  inputIndices,
@@ -352,6 +430,11 @@ namespace Renderer {
 		fontPixelRange = pixelRange;
 	}
 
+	void BatchRenderer::setTileAtlas(GLuint atlasTexture, const std::vector<glm::vec4>& rects) {
+		tileAtlas = atlasTexture;
+		tileAtlasRects = rects;
+	}
+
 	void BatchRenderer::flush() {
 		if (vertices.empty()) {
 			return;
@@ -416,8 +499,33 @@ namespace Renderer {
 			glUniform1i(atlasLoc, 0);
 		}
 
+		// Bind tile atlas texture and rects if provided (texture unit 1)
+		int rectCount = static_cast<int>(std::min<size_t>(tileAtlasRects.size(), kMaxTileAtlasRects));
+		if (tileAtlas != 0 && rectCount > 0) {
+			glActiveTexture(GL_TEXTURE1);
+			glBindTexture(GL_TEXTURE_2D, tileAtlas);
+			if (tileAtlasLoc >= 0) {
+				glUniform1i(tileAtlasLoc, 1);
+			}
+			if (tileAtlasRectsLoc >= 0) {
+				glUniform4fv(tileAtlasRectsLoc, rectCount, reinterpret_cast<const float*>(tileAtlasRects.data()));
+			}
+			if (tileAtlasCountLoc >= 0) {
+				glUniform1i(tileAtlasCountLoc, rectCount);
+			}
+		} else {
+			if (tileAtlasCountLoc >= 0) {
+				glUniform1i(tileAtlasCountLoc, 0);
+			}
+		}
+
 		// Set instanced = false for standard batched rendering path
 		glUniform1i(instancedLoc, 0);
+
+		// Soft blend placeholder uniform (off by default)
+		if (auto loc = glGetUniformLocation(shader.getProgram(), "u_softBlendMode"); loc >= 0) {
+			glUniform1i(loc, 0);
+		}
 
 		// Draw
 		glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(indices.size()), GL_UNSIGNED_INT, nullptr);
@@ -428,6 +536,11 @@ namespace Renderer {
 		glBindVertexArray(0);
 		if (fontAtlas != 0) {
 			glBindTexture(GL_TEXTURE_2D, 0);
+		}
+		if (tileAtlas != 0 && rectCount > 0) {
+			glActiveTexture(GL_TEXTURE1);
+			glBindTexture(GL_TEXTURE_2D, 0);
+			glActiveTexture(GL_TEXTURE0);
 		}
 		glDisable(GL_BLEND);
 

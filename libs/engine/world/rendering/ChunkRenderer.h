@@ -14,7 +14,6 @@
 
 #include <algorithm>
 #include <cstdint>
-#include <vector>
 
 namespace engine::world {
 
@@ -51,17 +50,9 @@ class ChunkRenderer {
 	int32_t m_tileResolution = 1;
 	uint32_t m_lastTileCount = 0;
 
-	/// Per-frame geometry buffers (reused each frame, cleared at start)
-	std::vector<Foundation::Vec2> m_vertices;    // Screen-space positions
-	std::vector<Foundation::Color> m_colors;     // Per-vertex colors
-	std::vector<uint16_t> m_indices;             // Triangle indices
-
 	/// Add visible tiles from a chunk to the frame buffers
 	void addChunkTiles(const Chunk& chunk, const WorldCamera& camera, const Foundation::Rect& visibleRect,
 					   int viewportWidth, int viewportHeight);
-
-	/// Flush current batch to GPU (handles uint16_t index overflow)
-	void flushBatch();
 };
 
 }  // namespace engine::world

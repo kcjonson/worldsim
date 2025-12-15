@@ -10,6 +10,10 @@ add_library(renderer
     shader/Shader.cpp
     shader/ShaderLoader.cpp
     shader/ShaderPreprocessor.cpp
+    resources/RenderToTexture.cpp
+    resources/TileTextureAtlas.cpp
+    resources/TilePatternBaker.cpp
+    resources/TileAtlasBuilder.cpp
     CoordinateSystem/CoordinateSystem.cpp
 )
 
@@ -39,13 +43,32 @@ target_link_libraries(renderer
         NanoSVG::nanosvg
 )
 
-# Copy shaders to build directory
-add_custom_command(TARGET renderer POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-    ${CMAKE_CURRENT_SOURCE_DIR}/shaders
-    ${CMAKE_BINARY_DIR}/shaders
-    COMMENT "Copying shader files to build directory"
+# Copy shaders to build and runtime directories whenever shader sources change.
+file(GLOB_RECURSE RENDERER_SHADER_SOURCES
+    "${CMAKE_CURRENT_SOURCE_DIR}/shaders/*"
 )
+
+set(RENDERER_SHADERS_STAMP "${CMAKE_BINARY_DIR}/shaders/.renderer_shaders_copied")
+
+add_custom_command(
+    OUTPUT ${RENDERER_SHADERS_STAMP}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/shaders
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/apps/world-sim/shaders
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        ${CMAKE_CURRENT_SOURCE_DIR}/shaders
+        ${CMAKE_BINARY_DIR}/shaders
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        ${CMAKE_CURRENT_SOURCE_DIR}/shaders
+        ${CMAKE_BINARY_DIR}/apps/world-sim/shaders
+    COMMAND ${CMAKE_COMMAND} -E touch ${RENDERER_SHADERS_STAMP}
+    DEPENDS ${RENDERER_SHADER_SOURCES}
+    COMMENT "Syncing renderer shaders to build and runtime directories"
+    VERBATIM
+)
+
+add_custom_target(renderer-shaders ALL DEPENDS ${RENDERER_SHADERS_STAMP})
+
+add_dependencies(renderer renderer-shaders)
 
 # Tests
 if(BUILD_TESTING)

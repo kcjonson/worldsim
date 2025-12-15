@@ -28,7 +28,8 @@ enum class Surface : uint8_t {
 	Rock,   // Rocky/stone surface
 	Water,  // Water bodies
 	Snow,   // Snow-covered ground
-	Mud     // Wet mud (darker than Dirt, appears near water)
+	Mud,    // Wet mud (darker than Dirt, appears near water)
+	Count   // Sentinel value for iteration (must be last)
 };
 
 /// Convert Surface enum to string for placement rules and debugging
@@ -102,6 +103,9 @@ class Chunk {
 	/// Get tile data at local coordinates (0-511, 0-511)
 	/// Returns pre-computed tile from flat array (requires isReady() == true)
 	[[nodiscard]] const TileData& getTile(uint16_t localX, uint16_t localY) const;
+
+	/// Update adjacency for a single tile (used when neighbor chunks arrive)
+	void setAdjacency(uint16_t localX, uint16_t localY, uint64_t adjacency);
 
 	/// Get the biome data for this chunk (used during generation)
 	[[nodiscard]] const ChunkSampleResult& biomeData() const { return m_biomeData; }

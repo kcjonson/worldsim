@@ -34,6 +34,10 @@ namespace engine::world {
 		return m_tiles[localY * kChunkSize + localX];
 	}
 
+	void Chunk::setAdjacency(uint16_t localX, uint16_t localY, uint64_t adjacency) {
+		m_tiles[localY * kChunkSize + localX].adjacency = adjacency;
+	}
+
 	TileData Chunk::computeTile(uint16_t localX, uint16_t localY) const {
 		TileData tile;
 

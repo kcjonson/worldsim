@@ -28,6 +28,8 @@ out vec4 v_clipBounds;
 // Render mode constant for instanced entities (matches uber.frag)
 // Stored in v_data2.w to signal fragment shader to use simple solid color output
 const float kRenderModeInstanced = -2.0;
+// Tile rendering mode constant. Must match BatchRenderer.cpp kRenderModeTile and uber.frag:68.
+const float kRenderModeTile = -3.0;
 
 void main() {
 	vec2 finalPosition;

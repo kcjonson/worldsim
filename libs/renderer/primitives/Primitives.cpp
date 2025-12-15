@@ -120,6 +120,12 @@ namespace Renderer::Primitives {
 		}
 	}
 
+	void setTileAtlas(unsigned int atlasTexture, const std::vector<glm::vec4>& rects) {
+		if (g_batchRenderer != nullptr) {
+			g_batchRenderer->setTileAtlas(atlasTexture, rects);
+		}
+	}
+
 	BatchRenderer* getBatchRenderer() {
 		return g_batchRenderer.get();
 	}
@@ -303,6 +309,14 @@ namespace Renderer::Primitives {
 		g_batchRenderer->addTriangles(
 			args.vertices, args.indices, args.vertexCount, args.indexCount, args.color, args.colors
 		);
+	}
+
+	void drawTile(const TileArgs& args) {
+		if (g_batchRenderer == nullptr) {
+			return;
+		}
+
+		g_batchRenderer->addTileQuad(args.bounds, args.color, args.edgeMask, args.cornerMask, args.surfaceId, args.hardEdgeMask);
 	}
 
 	void drawCircle(const CircleArgs& args) {
