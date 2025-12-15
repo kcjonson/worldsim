@@ -7,16 +7,29 @@
 #include <vector>
 
 // Basic integration test: clear into an FBO and verify texture contents.
+// Note: This test requires OpenGL and will be skipped in headless CI environments.
 TEST(RenderToTextureTest, ClearsToColor) {
-	ASSERT_EQ(glfwInit(), GLFW_TRUE);
+	// Skip test gracefully if GLFW can't initialize (headless CI environment)
+	if (glfwInit() != GLFW_TRUE) {
+		GTEST_SKIP() << "GLFW initialization failed (no display available in CI)";
+	}
+
 	glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
 	GLFWwindow* window = glfwCreateWindow(32, 32, "offscreen", nullptr, nullptr);
-	ASSERT_NE(window, nullptr);
+	if (window == nullptr) {
+		glfwTerminate();
+		GTEST_SKIP() << "Could not create GLFW window (no OpenGL context available)";
+	}
+
 	glfwMakeContextCurrent(window);
-	ASSERT_EQ(glewInit(), GLEW_OK);
+	if (glewInit() != GLEW_OK) {
+		glfwDestroyWindow(window);
+		glfwTerminate();
+		GTEST_SKIP() << "GLEW initialization failed";
+	}
 
 	Renderer::RenderToTexture rtt(4, 4);
-	std::vector<uint8_t> pixels(static_cast<size_t>(4 * 4 * 4), 0);
+	std::vector<uint8_t>	  pixels(static_cast<size_t>(4 * 4 * 4), 0);
 
 	rtt.begin();
 	glClearColor(1.0F, 0.0F, 0.0F, 1.0F);
