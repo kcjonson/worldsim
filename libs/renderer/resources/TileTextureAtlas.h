@@ -30,7 +30,8 @@ class TileTextureAtlas {
 	AtlasRegion allocate(int width, int height);
 
 	// Upload RGBA8 data into a reserved region.
-	void upload(const AtlasRegion& region, const uint8_t* rgbaData);
+	// Returns true if upload succeeded, false if parameters are invalid.
+	bool upload(const AtlasRegion& region, const uint8_t* rgbaData);
 
 	[[nodiscard]] GLuint texture() const { return texture_; }
 	[[nodiscard]] int size() const { return size_; }

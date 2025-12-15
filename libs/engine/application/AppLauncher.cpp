@@ -10,8 +10,7 @@
 #include <font/FontRenderer.h>
 #include <metrics/MetricsCollector.h>
 #include <primitives/Primitives.h>
-#include <resources/TilePatternBaker.h>
-#include <resources/TileTextureAtlas.h>
+#include <resources/TileAtlasBuilder.h>
 #include <scene/SceneManager.h>
 #include <utils/Log.h>
 #include <utils/ResourcePath.h>
@@ -21,13 +20,10 @@
 
 #include "world/chunk/Chunk.h"
 
-#include <algorithm>
 #include <cstring>
-#include <glm/vec4.hpp>
 #include <memory>
 #include <span>
 #include <stdexcept>
-#include <vector>
 
 namespace engine {
 
@@ -36,72 +32,13 @@ namespace engine {
 		// Global systems (accessed by GLFW callbacks)
 		Renderer::CoordinateSystem*					g_coordinateSystem = nullptr;
 		std::unique_ptr<ui::FontRenderer>			g_fontRenderer = nullptr;
-		std::unique_ptr<Renderer::TileTextureAtlas> g_tileAtlas = nullptr;
+		std::unique_ptr<Renderer::TileAtlasBuilder> g_tileAtlasBuilder = nullptr;
 		std::function<void()>						g_windowResizeCallback; // App-specific resize handler
 
 		// Owned resources that persist between initialize() and run()
 		std::unique_ptr<Foundation::DebugServer>	g_debugServer;
 		std::unique_ptr<Renderer::MetricsCollector> g_metrics;
 		std::unique_ptr<Application>				g_app;
-
-		std::vector<glm::vec4> buildDefaultTileAtlas() {
-			constexpr int kPatternSize = 512;
-			const int	  surfaceCount = static_cast<int>(engine::world::Surface::Mud) + 1; // enum is sequential
-
-			g_tileAtlas = std::make_unique<Renderer::TileTextureAtlas>(2048);
-			std::vector<glm::vec4> rects;
-			rects.reserve(surfaceCount);
-
-			for (int i = 0; i < surfaceCount; ++i) {
-				auto region = g_tileAtlas->allocate(kPatternSize, kPatternSize);
-				if (!region.valid) {
-					LOG_WARNING(Renderer, "Tile atlas ran out of space at surface %d", i);
-					break;
-				}
-
-				std::vector<uint8_t> pixels;
-				bool				 baked = false;
-
-				// Attempt to bake SVG if present (named by Surface string)
-				std::string surfaceName = engine::world::surfaceToString(static_cast<engine::world::Surface>(i));
-				std::string svgPath = Foundation::findResourceString("assets/tiles/surfaces/" + surfaceName + "/pattern.svg");
-				if (!svgPath.empty()) {
-					baked = Renderer::bakeSvgToRgba(svgPath, kPatternSize, kPatternSize, pixels);
-				}
-
-				if (!baked) {
-					// Fallback checker if SVG missing or bake failed
-					pixels.assign(static_cast<size_t>(region.width * region.height * 4), 255);
-					Foundation::Color c = engine::world::Chunk::getSurfaceColor(static_cast<engine::world::Surface>(i));
-					uint8_t			  r = static_cast<uint8_t>(std::clamp(c.r, 0.0F, 1.0F) * 255.0F);
-					uint8_t			  g = static_cast<uint8_t>(std::clamp(c.g, 0.0F, 1.0F) * 255.0F);
-					uint8_t			  b = static_cast<uint8_t>(std::clamp(c.b, 0.0F, 1.0F) * 255.0F);
-					uint8_t			  a = static_cast<uint8_t>(std::clamp(c.a, 0.0F, 1.0F) * 255.0F);
-					for (int y = 0; y < region.height; ++y) {
-						for (int x = 0; x < region.width; ++x) {
-							size_t idx = static_cast<size_t>((y * region.width + x) * 4);
-							bool   checker = ((x / 8) + (y / 8)) % 2 == 0;
-							float  shade = checker ? 1.05F : 0.85F;
-							pixels[idx + 0] = static_cast<uint8_t>(std::clamp(r * shade, 0.0F, 255.0F));
-							pixels[idx + 1] = static_cast<uint8_t>(std::clamp(g * shade, 0.0F, 255.0F));
-							pixels[idx + 2] = static_cast<uint8_t>(std::clamp(b * shade, 0.0F, 255.0F));
-							pixels[idx + 3] = a;
-						}
-					}
-				}
-
-				g_tileAtlas->upload(region, pixels.data());
-
-				float invSize = 1.0F / static_cast<float>(g_tileAtlas->size());
-				float u0 = static_cast<float>(region.x) * invSize;
-				float v0 = static_cast<float>(region.y) * invSize;
-				float u1 = static_cast<float>(region.x + region.width) * invSize;
-				float v1 = static_cast<float>(region.y + region.height) * invSize;
-				rects.emplace_back(u0, v0, u1, v1);
-			}
-
-			return rects;
-		}
 
 		void errorCallback(int error, const char* description) {
 			LOG_ERROR(Engine, "GLFW Error (%d): %s", error, description);
@@ -215,9 +152,17 @@ namespace engine {
 
 			// Bootstrap a default tile atlas (solid colors per surface) to exercise tile mode.
 			{
-				auto rects = buildDefaultTileAtlas();
-				if (!rects.empty() && g_tileAtlas != nullptr) {
-					Renderer::Primitives::setTileAtlas(g_tileAtlas->texture(), rects);
+				constexpr int kSurfaceCount = static_cast<int>(engine::world::Surface::Count);
+
+				g_tileAtlasBuilder = std::make_unique<Renderer::TileAtlasBuilder>();
+				auto rects = g_tileAtlasBuilder->buildForSurfaces(
+					kSurfaceCount,
+					[](int surfaceId) { return engine::world::surfaceToString(static_cast<engine::world::Surface>(surfaceId)); },
+					[](int surfaceId) { return engine::world::Chunk::getSurfaceColor(static_cast<engine::world::Surface>(surfaceId)); }
+				);
+
+				if (!rects.empty()) {
+					Renderer::Primitives::setTileAtlas(g_tileAtlasBuilder->texture(), rects);
 					LOG_INFO(Renderer, "Initialized default tile atlas with %zu entries", rects.size());
 				} else {
 					LOG_WARNING(Renderer, "Tile atlas not initialized (no rects)");
@@ -264,6 +209,7 @@ namespace engine {
 
 			Renderer::Primitives::setFontRenderer(nullptr);
 			g_fontRenderer.reset();
+			g_tileAtlasBuilder.reset();
 			g_coordinateSystem = nullptr;
 
 			Renderer::Primitives::shutdown();

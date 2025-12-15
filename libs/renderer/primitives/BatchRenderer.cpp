@@ -10,7 +10,9 @@
 namespace Renderer {
 
 	namespace {
+		// Render mode constant for tile rendering. Must match uber.vert:31 and uber.frag:66.
 		constexpr float kRenderModeTile = -3.0F;
+		// Maximum number of tile atlas UV rects. Must match uber.frag:19 (u_tileAtlasRects[64]).
 		constexpr int kMaxTileAtlasRects = 64;
 
 		// Helper to transform a 2D position by a 4x4 matrix
@@ -519,15 +521,7 @@ namespace Renderer {
 
 		// Set instanced = false for standard batched rendering path
 		glUniform1i(instancedLoc, 0);
-		if (tileAtlasCountLoc >= 0) {
-			glUniform1i(tileAtlasCountLoc, rectCount);
-		}
-		if (tileAtlasLoc >= 0) {
-			glUniform1i(tileAtlasLoc, 1);
-		}
-		if (tileAtlasRectsLoc >= 0 && rectCount > 0) {
-			glUniform4fv(tileAtlasRectsLoc, rectCount, reinterpret_cast<const float*>(tileAtlasRects.data()));
-		}
+
 		// Soft blend placeholder uniform (off by default)
 		if (auto loc = glGetUniformLocation(shader.getProgram(), "u_softBlendMode"); loc >= 0) {
 			glUniform1i(loc, 0);

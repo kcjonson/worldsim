@@ -63,9 +63,9 @@ AtlasRegion TileTextureAtlas::allocate(int width, int height) {
 	return region;
 }
 
-void TileTextureAtlas::upload(const AtlasRegion& region, const uint8_t* rgbaData) {
+bool TileTextureAtlas::upload(const AtlasRegion& region, const uint8_t* rgbaData) {
 	if (!region.valid || texture_ == 0 || rgbaData == nullptr) {
-		return;
+		return false;
 	}
 	glBindTexture(GL_TEXTURE_2D, texture_);
 	glTexSubImage2D(
@@ -79,6 +79,7 @@ void TileTextureAtlas::upload(const AtlasRegion& region, const uint8_t* rgbaData
 		GL_UNSIGNED_BYTE,
 		rgbaData);
 	glBindTexture(GL_TEXTURE_2D, 0);
+	return true;
 }
 
 void TileTextureAtlas::destroy() {

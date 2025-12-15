@@ -28,7 +28,8 @@ enum class Surface : uint8_t {
 	Rock,   // Rocky/stone surface
 	Water,  // Water bodies
 	Snow,   // Snow-covered ground
-	Mud     // Wet mud (darker than Dirt, appears near water)
+	Mud,    // Wet mud (darker than Dirt, appears near water)
+	Count   // Sentinel value for iteration (must be last)
 };
 
 /// Convert Surface enum to string for placement rules and debugging

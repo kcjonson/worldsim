@@ -175,14 +175,22 @@ namespace engine::world {
 			chunk->setAdjacency(static_cast<uint16_t>(x), static_cast<uint16_t>(y), adj);
 		};
 
-		for (int y = 0; y < kChunkSize; ++y) {
-			for (int x = 0; x < kChunkSize; ++x) {
-				// Only boundary tiles depend on external neighbors; interior is already correct.
-				if (x > 0 && x < kChunkSize - 1 && y > 0 && y < kChunkSize - 1) {
-					continue;
-				}
-				recomputeTileAdjacency(x, y);
-			}
+		// Iterate only boundary tiles directly (more efficient than checking every tile)
+		// Top row (y=0)
+		for (int x = 0; x < kChunkSize; ++x) {
+			recomputeTileAdjacency(x, 0);
+		}
+		// Bottom row (y=kChunkSize-1)
+		for (int x = 0; x < kChunkSize; ++x) {
+			recomputeTileAdjacency(x, kChunkSize - 1);
+		}
+		// Left column (excluding corners already handled)
+		for (int y = 1; y < kChunkSize - 1; ++y) {
+			recomputeTileAdjacency(0, y);
+		}
+		// Right column (excluding corners already handled)
+		for (int y = 1; y < kChunkSize - 1; ++y) {
+			recomputeTileAdjacency(kChunkSize - 1, y);
 		}
 	}
 

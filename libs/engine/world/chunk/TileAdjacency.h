@@ -215,8 +215,11 @@ namespace engine::world::TileAdjacency {
 
 	/// Get a mask indicating which neighbors belong to a different surface family.
 	/// Bits match Direction order (0=NW,1=W,2=SW,3=S,4=SE,5=E,6=NE,7=N).
-	/// We intentionally ignore stack order here—family differences always get a hard edge so rock vs. soil and
-	/// water vs. ground both render consistently (matching PR feedback and tests).
+	///
+	/// Hard edges are drawn when families differ (e.g., Water vs Ground, Rock vs Ground).
+	/// Only one tile draws the edge (preventing double-stroking): the tile with the
+	/// different-family neighbor draws on that side. Both tiles see the family difference,
+	/// but each side only renders its own edges based on its adjacency data.
 	[[nodiscard]] inline uint8_t getHardEdgeMaskByFamily(uint64_t adj, uint8_t thisSurfaceId) {
 		uint8_t		  mask = 0;
 		SurfaceFamily thisFamily = getSurfaceFamily(thisSurfaceId);

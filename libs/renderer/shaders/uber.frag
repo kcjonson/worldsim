@@ -16,6 +16,7 @@ uniform sampler2D u_atlas;
 // Tile atlas (optional). Rects specify uvMin.xy, uvMax.xy per surface id.
 uniform sampler2D u_tileAtlas;
 uniform int u_tileAtlasRectCount;
+// Array size must match kMaxTileAtlasRects in BatchRenderer.cpp (currently 64)
 uniform vec4 u_tileAtlasRects[64];
 uniform int u_softBlendMode; // 0 = off, 1 = placeholder (future)
 
@@ -63,7 +64,8 @@ float screenPxRange(float pixelRange) {
 // ============================================================================
 const float kRenderModeText = -1.0;      // MSDF text rendering
 const float kRenderModeInstanced = -2.0; // Simple solid color (instanced entities)
-const float kRenderModeTile = -3.0;      // Tile rendering with adjacency mask
+// Tile rendering mode constant. Must match BatchRenderer.cpp kRenderModeTile and uber.vert:31.
+const float kRenderModeTile = -3.0;
 
 // ============================================================================
 // MAIN - Branch on render mode
@@ -99,55 +101,55 @@ void main() {
 			}
 		}
 
-		// Placeholder soft blend hook (future: neighbor sampling or surface map).
+		// Subtle vignette effect for soft blend mode (intentional visual enhancement).
+		// Future: could be enhanced with neighbor sampling for texture transitions.
 		if (u_softBlendMode != 0) {
-			// Minimal subtle vignette to indicate hook is active without requiring neighbors.
 			float blend = smoothstep(0.0, 0.4, min(min(uv.x, uv.y), min(1.0 - uv.x, 1.0 - uv.y)));
 			color.rgb = mix(color.rgb * 0.96, color.rgb, blend);
 		}
-		const float edgeWidth = 0.025;    // Thin edge band
-		const float cornerSize = edgeWidth; // Corner nib matches stroke thickness
-		const float darken = 0.60;
-		const float cornerDarken = darken;  // Same intensity as edges
+		const float kEdgeWidthRatio = 0.025;        // Thin edge band as ratio of tile size
+		const float cornerSize = kEdgeWidthRatio;   // Corner nib matches stroke thickness
+		const float kEdgeDarkenFactor = 0.60;       // Darkening multiplier for edges
+		const float cornerDarken = kEdgeDarkenFactor;  // Same intensity as edges
 
 		// Edge darkening: bits 0=N, 1=E, 2=S, 3=W. Prefer hard edges when present.
 		uint edgeBits = edgeMask;
-		const float hardDarken = 0.55;
+		const float kHardEdgeDarkenFactor = 0.55;   // Stronger darkening for hard edges
 		// Precompute edge membership so corners can avoid double hits.
-		bool inN = uv.y < edgeWidth;
-		bool inE = (1.0 - uv.x) < edgeWidth;
-		bool inS = (1.0 - uv.y) < edgeWidth;
-		bool inW = uv.x < edgeWidth;
+		bool inN = uv.y < kEdgeWidthRatio;
+		bool inE = (1.0 - uv.x) < kEdgeWidthRatio;
+		bool inS = (1.0 - uv.y) < kEdgeWidthRatio;
+		bool inW = uv.x < kEdgeWidthRatio;
 		bool inAnyEdge = inN || inE || inS || inW;
 
 		// Accumulate a single darkening factor to avoid double-multiplying where regions overlap.
 		float darkenFactor = 1.0;
 		if (inN) {
 			if ((hardEdgeMask & 0x80u) != 0u) {
-				darkenFactor = min(darkenFactor, hardDarken);
+				darkenFactor = min(darkenFactor, kHardEdgeDarkenFactor);
 			} else if ((edgeBits & 0x1u) != 0u) {
-				darkenFactor = min(darkenFactor, darken);
+				darkenFactor = min(darkenFactor, kEdgeDarkenFactor);
 			}
 		}
 		if (inE) {
 			if ((hardEdgeMask & 0x20u) != 0u) {
-				darkenFactor = min(darkenFactor, hardDarken);
+				darkenFactor = min(darkenFactor, kHardEdgeDarkenFactor);
 			} else if ((edgeBits & 0x2u) != 0u) {
-				darkenFactor = min(darkenFactor, darken);
+				darkenFactor = min(darkenFactor, kEdgeDarkenFactor);
 			}
 		}
 		if (inS) {
 			if ((hardEdgeMask & 0x08u) != 0u) {
-				darkenFactor = min(darkenFactor, hardDarken);
+				darkenFactor = min(darkenFactor, kHardEdgeDarkenFactor);
 			} else if ((edgeBits & 0x4u) != 0u) {
-				darkenFactor = min(darkenFactor, darken);
+				darkenFactor = min(darkenFactor, kEdgeDarkenFactor);
 			}
 		}
 		if (inW) {
 			if ((hardEdgeMask & 0x02u) != 0u) {
-				darkenFactor = min(darkenFactor, hardDarken);
+				darkenFactor = min(darkenFactor, kHardEdgeDarkenFactor);
 			} else if ((edgeBits & 0x8u) != 0u) {
-				darkenFactor = min(darkenFactor, darken);
+				darkenFactor = min(darkenFactor, kEdgeDarkenFactor);
 			}
 		}
 

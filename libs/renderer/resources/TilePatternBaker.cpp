@@ -5,6 +5,8 @@
 #include <nanosvg.h>
 #include <utils/Log.h>
 
+#include <algorithm>
+
 namespace Renderer {
 
 bool bakeSvgToRgba(const std::string& filepath, int width, int height, std::vector<uint8_t>& outPixels) {
@@ -28,7 +30,12 @@ bool bakeSvgToRgba(const std::string& filepath, int width, int height, std::vect
 
 	outPixels.resize(static_cast<size_t>(width * height * 4), 0);
 
-	nsvgRasterize(rast, image, 0.0F, 0.0F, static_cast<float>(width) / image->width, outPixels.data(), width, height, width * 4);
+	// Use min scale to preserve aspect ratio (avoids distortion for non-square SVGs)
+	float scaleX = static_cast<float>(width) / image->width;
+	float scaleY = static_cast<float>(height) / image->height;
+	float scale = std::min(scaleX, scaleY);
+
+	nsvgRasterize(rast, image, 0.0F, 0.0F, scale, outPixels.data(), width, height, width * 4);
 
 	nsvgDeleteRasterizer(rast);
 	nsvgDelete(image);

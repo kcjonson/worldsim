@@ -13,6 +13,7 @@ add_library(renderer
     resources/RenderToTexture.cpp
     resources/TileTextureAtlas.cpp
     resources/TilePatternBaker.cpp
+    resources/TileAtlasBuilder.cpp
     CoordinateSystem/CoordinateSystem.cpp
 )
 
