@@ -21,7 +21,7 @@ Use this template for all work items:
 **Notes:**
 - Max 3 levels of nesting (Story → Task → Sub-task)
 - Only last 4 completed epics + in-progress + planned epics shown here
-- Completed epics move to development-log.md with context
+- Completed epics get a development log entry in `/docs/development-log/entries/`
 - An epic is only complete when ALL tasks are [x]
 
 ---
