@@ -1,8 +1,46 @@
 #pragma once
 
 // Placement Executor - Entity Placement Engine
-// Orchestrates entity placement using dependency graph for spawn ordering
-// and spatial index for relationship-based spawn probability modifiers.
+//
+// This is the central orchestrator for procedural entity placement in chunks.
+// It transforms asset definitions (trees, bushes, stones, etc.) into actual
+// placed entities in the world, respecting biome rules, spawn probabilities,
+// and inter-entity relationships.
+//
+// Key Responsibilities:
+// 1. DEPENDENCY-ORDERED SPAWNING: Entities are spawned in dependency order
+//    (e.g., trees before mushrooms that "require nearby Tree"). Built from
+//    asset definitions using DependencyGraph for topological sorting.
+//
+// 2. RELATIONSHIP-BASED PROBABILITY: Spawn probability is modified by
+//    relationships defined in asset XML (e.g., "near Tree" → 2x probability,
+//    "requires nearby Water" → must have water tile within radius).
+//
+// 3. CROSS-CHUNK QUERIES: Entities near chunk edges can query adjacent
+//    chunks via IAdjacentChunkProvider for relationship checks.
+//
+// 4. ENTITY REMOVAL: Supports removing entities when harvested/destroyed.
+//    Called by ActionSystem when collection actions complete.
+//
+// 5. COOLDOWN TRACKING: Non-destructive harvests (berry bushes) put entities
+//    on cooldown. Tracks remaining time and exposes query for AI/Vision.
+//
+// Thread Safety:
+// - processChunk() modifies internal state - NOT thread-safe
+// - computeChunkEntities() is const and thread-safe for parallel chunk gen
+// - storeChunkResult() must be called from main thread after async compute
+//
+// Usage Flow:
+// 1. Create PlacementExecutor with AssetRegistry reference
+// 2. Call initialize() after assets are loaded (builds dependency graph)
+// 3. For each chunk: processChunk() or computeChunkEntities()+storeChunkResult()
+// 4. Query getChunkIndex() for spatial lookups
+// 5. Call updateCooldowns() each frame for regrowth timing
+//
+// Related Documentation:
+// - /docs/design/game-systems/world/entity-placement.md (design spec)
+// - /docs/technical/procedural-generation.md (algorithm details)
+// - AssetDefinition.h for PlacementRelationship struct
 
 #include "DependencyGraph.h"
 #include "PlacementTypes.h"
@@ -112,6 +150,33 @@ namespace engine::assets {
 		/// Remove chunk data (call when chunk is unloaded)
 		void unloadChunk(world::ChunkCoordinate coord);
 
+		/// Remove an entity at the specified position
+		/// @param coord Chunk coordinate containing the entity
+		/// @param position World position of the entity
+		/// @param defName DefName of the entity to remove
+		/// @return true if entity was found and removed
+		bool removeEntity(world::ChunkCoordinate coord, glm::vec2 position, const std::string& defName);
+
+		/// Set an entity on cooldown (for regrowth after non-destructive harvest)
+		/// @param coord Chunk coordinate containing the entity
+		/// @param position World position of the entity
+		/// @param defName DefName of the entity
+		/// @param cooldownSeconds Time until entity can be harvested again
+		void setEntityCooldown(world::ChunkCoordinate coord, glm::vec2 position,
+							   const std::string& defName, float cooldownSeconds);
+
+		/// Check if an entity is currently on cooldown
+		/// @param coord Chunk coordinate containing the entity
+		/// @param position World position of the entity
+		/// @param defName DefName of the entity
+		/// @return true if entity is on cooldown (not harvestable)
+		[[nodiscard]] bool isEntityOnCooldown(world::ChunkCoordinate coord, glm::vec2 position,
+											  const std::string& defName) const;
+
+		/// Update cooldown timers (call once per frame)
+		/// @param deltaTime Time elapsed since last update
+		void updateCooldowns(float deltaTime);
+
 		/// Get spawn order (for debugging/testing)
 		[[nodiscard]] const std::vector<std::string>& getSpawnOrder() const { return m_spawnOrder; }
 
@@ -129,6 +194,17 @@ namespace engine::assets {
 
 		// Per-chunk spatial indices
 		std::unordered_map<world::ChunkCoordinate, SpatialIndex> m_chunkIndices;
+
+		/// Entity cooldown tracking
+		/// Key: (chunkCoord hash, position hash, defName hash) combined
+		/// Value: remaining cooldown time in seconds
+		struct EntityCooldown {
+			world::ChunkCoordinate coord;
+			glm::vec2			   position;
+			std::string			   defName;
+			float				   remainingTime;
+		};
+		std::vector<EntityCooldown> m_cooldowns;
 
 		/// Build dependency graph from asset definitions
 		void buildDependencyGraph();

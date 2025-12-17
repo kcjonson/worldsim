@@ -20,6 +20,7 @@
 #include <glm/vec2.hpp>
 
 #include <cstdint>
+#include <string>
 #include <variant>
 
 namespace ecs {
@@ -32,14 +33,18 @@ namespace ecs {
 	enum class ActionType : uint8_t {
 		None = 0,
 
-		// Need Fulfillment Actions (Phase 1 MVP)
-		Eat,	// Consuming Edible entity (Berry Bush)
-		Drink,	// Drinking from water tile (Pond)
-		Sleep,	// Sleeping on ground or bed
-		Toilet, // Using toilet or ground relief
+		// Need Fulfillment Actions
+		Eat,			   // DEPRECATED: Direct eating from world entity (being phased out)
+		Drink,			   // Drinking from water tile (Pond)
+		Sleep,			   // Sleeping on ground or bed
+		Toilet,			   // Using toilet or ground relief
+		EatFromInventory,  // Consuming food item from inventory
+
+		// Resource Collection Actions
+		Pickup,	   // Pick up ground item directly into inventory
+		Harvest,   // Harvest from entity (bush, plant) into inventory
 
 		// Work Actions (Phase 2+)
-		// Harvest,  // Gathering from harvestable entity
 		// Craft,    // Creating items at workbench
 		// Build,    // Constructing structures
 		// Repair,   // Fixing damaged structures
@@ -74,15 +79,42 @@ namespace ecs {
 		float sideEffectAmount = 0.0F;
 	};
 
-	/// Effect for production actions (Harvest, Craft)
-	/// Will produce items when complete. Stub for Phase 2+.
-	struct ProductionEffect {
-		// TODO: When inventory system exists:
-		// std::string recipeId;
-		// std::vector<ItemStack> outputs;
+	/// Effect for item collection actions (Pickup, Harvest)
+	/// Adds items to inventory and optionally affects the source entity.
+	struct CollectionEffect {
+		/// Item definition name to add to inventory
+		std::string itemDefName;
 
-		/// Source entity being harvested/consumed (if applicable)
-		uint64_t sourceEntityId = 0;
+		/// Quantity of items to collect
+		uint32_t quantity = 1;
+
+		/// Position of the source entity (for removal/cooldown)
+		glm::vec2 sourcePosition{0.0F, 0.0F};
+
+		/// DefName of the source entity (for removal/cooldown)
+		std::string sourceDefName;
+
+		/// If true, source entity is destroyed after collection
+		bool destroySource = true;
+
+		/// If destroySource is false and this > 0, entity enters cooldown (regrowth)
+		float regrowthTime = 0.0F;
+	};
+
+	/// Effect for consuming items from inventory (EatFromInventory)
+	/// Removes item from inventory and restores a need.
+	struct ConsumptionEffect {
+		/// Item definition name to consume from inventory
+		std::string itemDefName;
+
+		/// Quantity to consume
+		uint32_t quantity = 1;
+
+		/// Which need to restore
+		NeedType need = NeedType::Hunger;
+
+		/// Amount to restore (0-100 scale)
+		float restoreAmount = 30.0F;
 	};
 
 	/// Effect for progress actions (Build, Repair)
@@ -105,7 +137,7 @@ namespace ecs {
 	};
 
 	/// Variant holding the effect data for the current action
-	using ActionEffect = std::variant<std::monostate, NeedEffect, ProductionEffect, ProgressEffect, SpawnEffect>;
+	using ActionEffect = std::variant<std::monostate, NeedEffect, CollectionEffect, ConsumptionEffect, ProgressEffect, SpawnEffect>;
 
 	// ============================================================================
 	// Action Component
@@ -167,6 +199,20 @@ namespace ecs {
 
 		/// Get the spawn effect
 		[[nodiscard]] const SpawnEffect& spawnEffect() const { return std::get<SpawnEffect>(effect); }
+
+		/// Check if this action has a collection effect
+		[[nodiscard]] bool hasCollectionEffect() const { return std::holds_alternative<CollectionEffect>(effect); }
+
+		/// Get the collection effect
+		[[nodiscard]] const CollectionEffect& collectionEffect() const { return std::get<CollectionEffect>(effect); }
+		[[nodiscard]] CollectionEffect&		  collectionEffect() { return std::get<CollectionEffect>(effect); }
+
+		/// Check if this action has a consumption effect
+		[[nodiscard]] bool hasConsumptionEffect() const { return std::holds_alternative<ConsumptionEffect>(effect); }
+
+		/// Get the consumption effect
+		[[nodiscard]] const ConsumptionEffect& consumptionEffect() const { return std::get<ConsumptionEffect>(effect); }
+		[[nodiscard]] ConsumptionEffect&	   consumptionEffect() { return std::get<ConsumptionEffect>(effect); }
 
 		// --- Mutation methods ---
 
@@ -294,6 +340,82 @@ namespace ecs {
 
 			return action;
 		}
+
+		/// Factory: Pickup action - instantly pick up a ground item
+		/// @param itemDefName Item definition to add to inventory
+		/// @param quantity Number of items to pick up
+		/// @param sourcePos Position of the source entity
+		/// @param sourceDefName DefName of the source entity (for removal)
+		static Action Pickup(const std::string& itemDefName, uint32_t quantity, glm::vec2 sourcePos,
+							 const std::string& sourceDefName) {
+			Action action;
+			action.type = ActionType::Pickup;
+			action.state = ActionState::Starting;
+			action.duration = 0.5F;		  // Quick pickup
+			action.targetPosition = sourcePos;
+			action.interruptable = false; // Don't interrupt mid-pickup
+
+			CollectionEffect collEff;
+			collEff.itemDefName = itemDefName;
+			collEff.quantity = quantity;
+			collEff.sourcePosition = sourcePos;
+			collEff.sourceDefName = sourceDefName;
+			collEff.destroySource = true; // Picking up removes the ground item
+			collEff.regrowthTime = 0.0F;
+			action.effect = collEff;
+
+			return action;
+		}
+
+		/// Factory: Harvest action - harvest items from an entity
+		/// @param itemDefName Item definition to yield
+		/// @param quantity Number of items to harvest
+		/// @param harvestDuration Time to complete harvest
+		/// @param sourcePos Position of the source entity
+		/// @param sourceDefName DefName of the source entity
+		/// @param destructive If true, entity is destroyed after harvest
+		/// @param regrowthTime If not destructive, time until harvestable again
+		static Action Harvest(const std::string& itemDefName, uint32_t quantity, float harvestDuration,
+							  glm::vec2 sourcePos, const std::string& sourceDefName, bool destructive,
+							  float regrowthTime) {
+			Action action;
+			action.type = ActionType::Harvest;
+			action.state = ActionState::Starting;
+			action.duration = harvestDuration;
+			action.targetPosition = sourcePos;
+			action.interruptable = false; // Don't interrupt mid-harvest
+
+			CollectionEffect collEff;
+			collEff.itemDefName = itemDefName;
+			collEff.quantity = quantity;
+			collEff.sourcePosition = sourcePos;
+			collEff.sourceDefName = sourceDefName;
+			collEff.destroySource = destructive;
+			collEff.regrowthTime = regrowthTime;
+			action.effect = collEff;
+
+			return action;
+		}
+
+		/// Factory: EatFromInventory action - consume food from inventory
+		/// @param itemDefName Item to consume from inventory
+		/// @param nutrition Amount of hunger to restore (0-1 scale)
+		static Action EatFromInventory(const std::string& itemDefName, float nutrition) {
+			Action action;
+			action.type = ActionType::EatFromInventory;
+			action.state = ActionState::Starting;
+			action.duration = 2.0F;		  // Same as regular eating
+			action.interruptable = false; // Can't stop mid-bite
+
+			ConsumptionEffect consumeEff;
+			consumeEff.itemDefName = itemDefName;
+			consumeEff.quantity = 1;
+			consumeEff.need = NeedType::Hunger;
+			consumeEff.restoreAmount = nutrition * 100.0F;
+			action.effect = consumeEff;
+
+			return action;
+		}
 	};
 
 	/// Get human-readable name for action type (for debug logging)
@@ -309,6 +431,12 @@ namespace ecs {
 				return "Sleep";
 			case ActionType::Toilet:
 				return "Toilet";
+			case ActionType::EatFromInventory:
+				return "EatFromInventory";
+			case ActionType::Pickup:
+				return "Pickup";
+			case ActionType::Harvest:
+				return "Harvest";
 		}
 		return "Unknown";
 	}

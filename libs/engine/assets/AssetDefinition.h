@@ -24,11 +24,13 @@ namespace engine::assets {
 
 	/// Capability type - what kind of interaction an entity supports
 	enum class CapabilityType {
-		Edible,	   // Entity can be eaten to restore hunger
-		Drinkable, // Entity can be drunk from to restore thirst
-		Sleepable, // Entity can be slept on to restore energy
-		Toilet,	   // Entity can be used to relieve bladder
-		Waste	   // Entity is waste (bio pile) - used for clustering toilet locations
+		Edible,		 // Entity can be eaten to restore hunger
+		Drinkable,	 // Entity can be drunk from to restore thirst
+		Sleepable,	 // Entity can be slept on to restore energy
+		Toilet,		 // Entity can be used to relieve bladder
+		Waste,		 // Entity is waste (bio pile) - used for clustering toilet locations
+		Pickupable,	 // Entity can be picked up directly (ground items like stones)
+		Harvestable	 // Entity can be harvested for items (bushes, plants)
 	};
 
 	/// Quality level for capabilities (affects mood, health effects)
@@ -68,18 +70,39 @@ namespace engine::assets {
 		// No properties yet - just a marker capability
 	};
 
+	/// Pickupable capability - entity can be picked up directly into inventory
+	/// Used for ground items like stones, dropped resources, etc.
+	struct PickupableCapability {
+		std::string itemDefName;	// Item definition name to add to inventory (e.g., "Stone")
+		uint32_t	quantity = 1;	// How many items to add when picked up
+	};
+
+	/// Harvestable capability - entity yields items when harvested
+	/// Used for plants, bushes, trees that produce resources
+	struct HarvestableCapability {
+		std::string yieldDefName;	  // Item definition name to yield (e.g., "Stick", "Berry")
+		uint32_t	amountMin = 1;	  // Minimum items yielded per harvest
+		uint32_t	amountMax = 3;	  // Maximum items yielded per harvest
+		float		duration = 4.0F;  // Seconds to complete harvest action
+		bool		destructive = true;		// If true, entity is removed after harvest
+		float		regrowthTime = 0.0F;	// Seconds until harvestable again (0 = never, only if not destructive)
+	};
+
 	/// Container for all capabilities an entity may have
 	struct EntityCapabilities {
-		std::optional<EdibleCapability>	   edible;
-		std::optional<DrinkableCapability> drinkable;
-		std::optional<SleepableCapability> sleepable;
-		std::optional<ToiletCapability>	   toilet;
-		std::optional<WasteCapability>	   waste;
+		std::optional<EdibleCapability>		 edible;
+		std::optional<DrinkableCapability>	 drinkable;
+		std::optional<SleepableCapability>	 sleepable;
+		std::optional<ToiletCapability>		 toilet;
+		std::optional<WasteCapability>		 waste;
+		std::optional<PickupableCapability>	 pickupable;
+		std::optional<HarvestableCapability> harvestable;
 
 		/// Check if entity has any capabilities
 		[[nodiscard]] bool hasAny() const {
 			return edible.has_value() || drinkable.has_value() || sleepable.has_value() ||
-				   toilet.has_value() || waste.has_value();
+				   toilet.has_value() || waste.has_value() || pickupable.has_value() ||
+				   harvestable.has_value();
 		}
 
 		/// Check if entity has a specific capability type
@@ -95,6 +118,10 @@ namespace engine::assets {
 					return toilet.has_value();
 				case CapabilityType::Waste:
 					return waste.has_value();
+				case CapabilityType::Pickupable:
+					return pickupable.has_value();
+				case CapabilityType::Harvestable:
+					return harvestable.has_value();
 			}
 			return false;
 		}

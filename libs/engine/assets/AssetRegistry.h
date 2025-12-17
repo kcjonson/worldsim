@@ -108,7 +108,7 @@ namespace engine::assets {
 		uint32_t registerSyntheticDefinition(const std::string& defName, uint8_t capabilityMask);
 
 		/// Get the total number of capability types
-		static constexpr size_t kCapabilityTypeCount = 5;
+		static constexpr size_t kCapabilityTypeCount = 7;
 
 	  private:
 		AssetRegistry() = default;

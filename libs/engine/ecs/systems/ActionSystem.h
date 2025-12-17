@@ -24,7 +24,8 @@ private:
 		struct Action& action,
 		const struct Position& position,
 		const struct Memory& memory,
-		const struct NeedsComponent& needs
+		const struct NeedsComponent& needs,
+		const struct Inventory& inventory
 	);
 
 	/// Process an in-progress action
@@ -36,7 +37,12 @@ private:
 	);
 
 	/// Complete an action and apply effects
-	void completeAction(struct Action& action, struct NeedsComponent& needs, struct Task& task);
+	void completeAction(
+		struct Action& action,
+		struct NeedsComponent& needs,
+		struct Task& task,
+		struct Inventory& inventory
+	);
 };
 
 } // namespace ecs

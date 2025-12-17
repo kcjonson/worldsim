@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Woody Bush (Stick Bush) Asset Definition
+     Living bush with sparse foliage and prominent woody branches.
+     Future: harvests for sticks (wood crafting material).
+-->
+<AssetDefinitions>
+  <AssetDef>
+    <defName>Flora_WoodyBush</defName>
+    <label>Woody Bush</label>
+    <assetType>simple</assetType>
+    <svgPath>woody_bush.svg</svgPath>
+    <worldHeight>0.6</worldHeight>
+
+    <rendering>
+      <complexity>simple</complexity>
+      <tier>instanced</tier>
+    </rendering>
+
+    <animation>
+      <type>parametric</type>
+      <windResponse>0.25</windResponse>
+      <swayFrequency>0.4,0.8</swayFrequency>
+    </animation>
+
+    <!-- Entity capabilities - harvested for sticks (destructive) -->
+    <capabilities>
+      <harvestable yield="Stick" amountMin="1" amountMax="3" duration="4.0" destructive="true"/>
+    </capabilities>
+
+    <!-- Per-biome placement configuration -->
+    <placement>
+      <!-- Forest: Moderate density, prefers edges and clearings -->
+      <biome name="Forest">
+        <spawnChance>0.02</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>1,3</clumpSize>
+          <clumpRadius>0.8,1.5</clumpRadius>
+          <clumpSpacing>10.0,18.0</clumpSpacing>
+        </clumping>
+      </biome>
+
+      <!-- Grassland: Sparse, isolated or small groups -->
+      <biome name="Grassland">
+        <spawnChance>0.012</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>1,2</clumpSize>
+          <clumpRadius>0.5,1.0</clumpRadius>
+          <clumpSpacing>15.0,25.0</clumpSpacing>
+        </clumping>
+      </biome>
+
+      <!-- Groups this asset belongs to -->
+      <groups>
+        <group>bushes</group>
+        <group>wood_sources</group>
+        <group>small_flora</group>
+      </groups>
+
+      <!-- Relationships with other entities -->
+      <relationships>
+        <!-- Woody bushes have slight affinity with each other (thickets) -->
+        <affinity type="same" distance="2.5" strength="1.3"/>
+        <!-- Avoid spawning directly under trees -->
+        <avoids group="trees" distance="2.5" penalty="0.4"/>
+        <!-- Avoid berry bushes (different ecological niche) -->
+        <avoids group="food_sources" distance="2.0" penalty="0.5"/>
+      </relationships>
+    </placement>
+
+    <variantCount>3</variantCount>
+  </AssetDef>
+</AssetDefinitions>

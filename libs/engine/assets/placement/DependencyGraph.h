@@ -1,8 +1,31 @@
 #pragma once
 
 // Dependency Graph for Entity Placement
-// Performs topological sort to determine spawn order based on "requires" relationships.
-// Entities that require others must spawn after their dependencies.
+//
+// Computes spawn order for entities based on "requires" relationships defined
+// in asset XMLs. For example, if mushrooms "require nearby Tree", trees must
+// spawn first so the spatial index contains them when mushrooms are placed.
+//
+// Algorithm: Topological sort via depth-first search (Kahn's algorithm variant)
+// - Build graph from asset relationship data
+// - DFS from each unvisited node, pushing to stack on backtrack
+// - Reverse stack gives dependency-respecting spawn order
+// - Cycle detection via "in-stack" tracking during DFS
+//
+// Example:
+//   Mushroom requires Tree → spawn order: [Tree, ..., Mushroom]
+//   Moss requires Rock → spawn order: [Rock, ..., Moss]
+//   Tree requires nothing → can spawn first
+//
+// Error Handling:
+// - Circular dependencies throw CyclicDependencyError
+// - Missing dependencies are silently added as nodes (allows forward refs)
+//
+// Complexity:
+// - Build: O(E) where E = number of dependency edges
+// - getSpawnOrder(): O(V + E) where V = number of entity types
+//
+// Used exclusively by PlacementExecutor::initialize() to compute m_spawnOrder.
 
 #include <stdexcept>
 #include <string>
@@ -49,7 +72,7 @@ namespace engine::assets {
 		void clear();
 
 	  private:
-		std::unordered_set<std::string>								m_nodes;
+		std::unordered_set<std::string>									 m_nodes;
 		std::unordered_map<std::string, std::unordered_set<std::string>> m_edges; // node → dependencies
 
 		/// DFS helper for topological sort
@@ -58,10 +81,11 @@ namespace engine::assets {
 		/// @param inStack Nodes currently in recursion stack (for cycle detection)
 		/// @param order Output order (reverse topological)
 		/// @returns false if cycle detected
-		bool dfs(const std::string& node,
-				 std::unordered_set<std::string>& visited,
-				 std::unordered_set<std::string>& inStack,
-				 std::vector<std::string>& order) const;
+		bool
+		dfs(const std::string&				 node,
+			std::unordered_set<std::string>& visited,
+			std::unordered_set<std::string>& inStack,
+			std::vector<std::string>&		 order) const;
 	};
 
 } // namespace engine::assets

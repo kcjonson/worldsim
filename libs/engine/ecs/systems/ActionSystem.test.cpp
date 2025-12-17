@@ -6,6 +6,7 @@
 #include "../World.h"
 #include "../components/Action.h"
 #include "../components/Appearance.h"
+#include "../components/Inventory.h"
 #include "../components/Memory.h"
 #include "../components/Movement.h"
 #include "../components/Needs.h"
@@ -166,6 +167,7 @@ class ActionSystemTest : public ::testing::Test {
 		world->addComponent<MovementTarget>(entity, MovementTarget{{0.0F, 0.0F}, 2.0F, false});
 		world->addComponent<NeedsComponent>(entity, NeedsComponent::createDefault());
 		world->addComponent<Memory>(entity, Memory{});
+		world->addComponent<Inventory>(entity, Inventory::createForColonist());
 		world->addComponent<Task>(entity, Task{});
 		world->addComponent<Action>(entity, Action{});
 		return entity;
@@ -222,17 +224,15 @@ TEST_F(ActionSystemTest, StartsEatActionOnArrival) {
 	auto colonist = createColonist();
 	setupArrivedForNeed(colonist, NeedType::Hunger);
 
-	// Add edible entity to memory at target position
-	auto* memory = world->getComponent<Memory>(colonist);
-	memory->rememberWorldEntity(
-		{5.0F, 5.0F}, 1001, static_cast<uint8_t>(1 << static_cast<size_t>(engine::assets::CapabilityType::Edible))
-	);
+	// Give the colonist berries in inventory - primary way to eat now
+	auto* inventory = world->getComponent<Inventory>(colonist);
+	inventory->addItem("Berry", 3);
 
 	world->update(0.1F);
 
 	auto* action = world->getComponent<Action>(colonist);
 	EXPECT_TRUE(action->isActive());
-	EXPECT_EQ(action->type, ActionType::Eat);
+	EXPECT_EQ(action->type, ActionType::EatFromInventory);
 }
 
 TEST_F(ActionSystemTest, StartsDrinkActionOnArrival) {

@@ -13,6 +13,38 @@ namespace engine::assets {
 		++m_entityCount;
 	}
 
+	bool SpatialIndex::remove(glm::vec2 position, const std::string& defName) {
+		int64_t key = getCellKey(position);
+		auto	cellIt = m_cells.find(key);
+		if (cellIt == m_cells.end()) {
+			return false;
+		}
+
+		auto& entities = cellIt->second;
+		// Small tolerance for floating point comparison
+		constexpr float kEpsilon = 0.001F;
+
+		for (auto it = entities.begin(); it != entities.end(); ++it) {
+			// Match by defName and approximate position
+			if (it->defName == defName) {
+				glm::vec2 diff = it->position - position;
+				float	  distSq = diff.x * diff.x + diff.y * diff.y;
+				if (distSq < kEpsilon * kEpsilon) {
+					entities.erase(it);
+					--m_entityCount;
+
+					// Remove empty cell to keep map clean
+					if (entities.empty()) {
+						m_cells.erase(cellIt);
+					}
+					return true;
+				}
+			}
+		}
+
+		return false;
+	}
+
 	void SpatialIndex::clear() {
 		m_cells.clear();
 		m_entityCount = 0;

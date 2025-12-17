@@ -534,6 +534,28 @@ namespace engine::assets {
 				if (wasteNode) {
 					def.capabilities.waste = WasteCapability{};
 				}
+
+				// Pickupable capability (ground items like stones)
+				pugi::xml_node pickupableNode = capabilitiesNode.child("pickupable");
+				if (pickupableNode) {
+					PickupableCapability pickupable;
+					pickupable.itemDefName = pickupableNode.attribute("item").as_string("");
+					pickupable.quantity = pickupableNode.attribute("quantity").as_uint(1);
+					def.capabilities.pickupable = pickupable;
+				}
+
+				// Harvestable capability (bushes, plants that yield resources)
+				pugi::xml_node harvestableNode = capabilitiesNode.child("harvestable");
+				if (harvestableNode) {
+					HarvestableCapability harvestable;
+					harvestable.yieldDefName = harvestableNode.attribute("yield").as_string("");
+					harvestable.amountMin = harvestableNode.attribute("amountMin").as_uint(1);
+					harvestable.amountMax = harvestableNode.attribute("amountMax").as_uint(3);
+					harvestable.duration = harvestableNode.attribute("duration").as_float(4.0F);
+					harvestable.destructive = harvestableNode.attribute("destructive").as_bool(true);
+					harvestable.regrowthTime = harvestableNode.attribute("regrowthTime").as_float(0.0F);
+					def.capabilities.harvestable = harvestable;
+				}
 			}
 
 			// Store base folder for relative path resolution
@@ -903,6 +925,12 @@ namespace engine::assets {
 			}
 			if (def.capabilities.waste.has_value()) {
 				mask |= (1 << static_cast<uint8_t>(CapabilityType::Waste));
+			}
+			if (def.capabilities.pickupable.has_value()) {
+				mask |= (1 << static_cast<uint8_t>(CapabilityType::Pickupable));
+			}
+			if (def.capabilities.harvestable.has_value()) {
+				mask |= (1 << static_cast<uint8_t>(CapabilityType::Harvestable));
 			}
 			m_capabilityMasks.push_back(mask);
 

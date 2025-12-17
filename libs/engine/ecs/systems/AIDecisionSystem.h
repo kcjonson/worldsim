@@ -71,12 +71,14 @@ private:
 	/// Build decision trace by evaluating all options
 	/// Populates the trace with all needs + wander, sorted by priority
 	/// @param currentTask Current task (used to preserve target when already pursuing a need)
+	/// @param inventory Colonist inventory (for checking food availability)
 	void buildDecisionTrace(
 		EntityID entity,
 		const struct Position& position,
 		const struct NeedsComponent& needs,
 		const struct Memory& memory,
 		const struct Task& currentTask,
+		const struct Inventory& inventory,
 		struct DecisionTrace& trace);
 
 	/// Select task from the decision trace (picks first Selected option)

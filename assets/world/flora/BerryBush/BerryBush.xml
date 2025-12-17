@@ -16,9 +16,10 @@
       <tier>instanced</tier>
     </rendering>
 
-    <!-- Entity capabilities - what actions can be performed on this entity -->
+    <!-- Entity capabilities - harvested for berries (non-destructive, regrows) -->
     <capabilities>
-      <edible nutrition="0.3" quality="normal" spoilable="true"/>
+      <harvestable yield="Berry" amountMin="2" amountMax="5" duration="2.0"
+                   destructive="false" regrowthTime="60.0"/>
     </capabilities>
 
     <!-- Per-biome placement configuration -->

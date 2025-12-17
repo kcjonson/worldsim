@@ -1,8 +1,31 @@
 #pragma once
 
 // Spatial Index for Entity Placement
-// Grid-based spatial hash for O(1) neighbor queries during entity placement.
-// Used to check nearby entities for relationship-based spawn probability.
+//
+// A grid-based spatial hash that provides O(1) average-case neighbor queries.
+// This is a critical performance optimization for entity placement, where each
+// potential spawn position must check for nearby entities to evaluate
+// relationship-based probability modifiers.
+//
+// How It Works:
+// - World space is divided into a grid of cells (default 4x4 tiles each)
+// - Entities are stored in the cell containing their position
+// - Queries check only cells that could contain entities within the radius
+// - Cell size should be >= max relationship radius for best performance
+//
+// Key Operations:
+// - insert(): O(1) - add entity to appropriate cell
+// - remove(): O(n) within cell - remove specific entity by position+defName
+// - hasNearby(): O(k) - check if any entity of type exists in radius (k = cells checked)
+// - queryRadius(): O(k*m) - get all entities in radius (m = entities per cell)
+//
+// Used By:
+// - PlacementExecutor: relationship checks during spawning
+// - VisionSystem: entity discovery queries
+// - AI systems: finding nearest resource of type
+//
+// Memory: One vector per occupied cell. Empty cells use no memory.
+// Thread Safety: NOT thread-safe. Use separate instances per thread for parallel generation.
 
 #include <cstdint>
 #include <string>
@@ -34,6 +57,12 @@ namespace engine::assets {
 
 		/// Insert an entity into the index
 		void insert(const PlacedEntity& entity);
+
+		/// Remove an entity at specific position with matching defName
+		/// @param position Entity position to remove
+		/// @param defName Asset definition name to match
+		/// @return true if entity was found and removed
+		bool remove(glm::vec2 position, const std::string& defName);
 
 		/// Clear all entities from the index
 		void clear();
