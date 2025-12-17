@@ -7,6 +7,8 @@
 
 #include <glm/vec2.hpp>
 
+#include <cmath>
+
 namespace engine::assets {
 
 	PlacementExecutor::PlacementExecutor(const AssetRegistry& registry)
@@ -574,8 +576,23 @@ namespace engine::assets {
 		m_dependencyGraph.clear();
 		m_spawnOrder.clear();
 		m_chunkIndices.clear();
-		cooldowns.clear();
+		m_cooldowns.clear();
 		m_initialized = false;
+	}
+
+	PlacementExecutor::CooldownKey PlacementExecutor::makeCooldownKey(
+		world::ChunkCoordinate coord,
+		glm::vec2 position,
+		const std::string& defName
+	) {
+		// Quantize position to tile coordinates for reliable hashing
+		// Using floor to ensure consistent quantization
+		return CooldownKey{
+			coord,
+			static_cast<int32_t>(std::floor(position.x)),
+			static_cast<int32_t>(std::floor(position.y)),
+			defName
+		};
 	}
 
 	bool PlacementExecutor::removeEntity(world::ChunkCoordinate coord, glm::vec2 position, const std::string& defName) {
@@ -602,68 +619,51 @@ namespace engine::assets {
 
 	void PlacementExecutor::setEntityCooldown(world::ChunkCoordinate coord, glm::vec2 position,
 											  const std::string& defName, float cooldownSeconds) {
-		// Check if entity already has a cooldown (update it)
-		for (auto& cd : cooldowns) {
-			if (cd.coord == coord && cd.defName == defName) {
-				// Check position match with small tolerance
-				glm::vec2 diff = cd.position - position;
-				float	  distSq = diff.x * diff.x + diff.y * diff.y;
-				if (distSq < 0.001F * 0.001F) {
-					cd.remainingTime = cooldownSeconds;
-					LOG_DEBUG(
-						Engine,
-						"PlacementExecutor: Updated cooldown for %s at (%.1f, %.1f) to %.1fs",
-						defName.c_str(),
-						position.x,
-						position.y,
-						cooldownSeconds
-					);
-					return;
-				}
-			}
-		}
+		auto key = makeCooldownKey(coord, position, defName);
 
-		// Add new cooldown entry
-		cooldowns.push_back({coord, position, defName, cooldownSeconds});
-		LOG_DEBUG(
-			Engine,
-			"PlacementExecutor: Set cooldown for %s at (%.1f, %.1f) for %.1fs",
-			defName.c_str(),
-			position.x,
-			position.y,
-			cooldownSeconds
-		);
+		// O(1) insert or update
+		auto [iter, inserted] = m_cooldowns.insert_or_assign(key, cooldownSeconds);
+
+		if (inserted) {
+			LOG_DEBUG(
+				Engine,
+				"PlacementExecutor: Set cooldown for %s at (%.1f, %.1f) for %.1fs",
+				defName.c_str(),
+				position.x,
+				position.y,
+				cooldownSeconds
+			);
+		} else {
+			LOG_DEBUG(
+				Engine,
+				"PlacementExecutor: Updated cooldown for %s at (%.1f, %.1f) to %.1fs",
+				defName.c_str(),
+				position.x,
+				position.y,
+				cooldownSeconds
+			);
+		}
 	}
 
 	bool PlacementExecutor::isEntityOnCooldown(world::ChunkCoordinate coord, glm::vec2 position,
 											   const std::string& defName) const {
-		for (const auto& cd : cooldowns) {
-			if (cd.coord == coord && cd.defName == defName) {
-				// Check position match with small tolerance
-				glm::vec2 diff = cd.position - position;
-				float	  distSq = diff.x * diff.x + diff.y * diff.y;
-				if (distSq < 0.001F * 0.001F) {
-					return true;
-				}
-			}
-		}
-		return false;
+		auto key = makeCooldownKey(coord, position, defName);
+		return m_cooldowns.find(key) != m_cooldowns.end();  // O(1) lookup
 	}
 
 	void PlacementExecutor::updateCooldowns(float deltaTime) {
 		// Update all cooldowns and remove expired ones
-		auto it = cooldowns.begin();
-		while (it != cooldowns.end()) {
-			it->remainingTime -= deltaTime;
-			if (it->remainingTime <= 0.0F) {
+		for (auto it = m_cooldowns.begin(); it != m_cooldowns.end(); ) {
+			it->second -= deltaTime;
+			if (it->second <= 0.0F) {
 				LOG_DEBUG(
 					Engine,
-					"PlacementExecutor: Cooldown expired for %s at (%.1f, %.1f)",
-					it->defName.c_str(),
-					it->position.x,
-					it->position.y
+					"PlacementExecutor: Cooldown expired for %s at tile (%d, %d)",
+					it->first.defName.c_str(),
+					it->first.tileX,
+					it->first.tileY
 				);
-				it = cooldowns.erase(it);
+				it = m_cooldowns.erase(it);
 			} else {
 				++it;
 			}

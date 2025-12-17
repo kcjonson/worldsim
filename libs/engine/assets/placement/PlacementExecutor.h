@@ -195,16 +195,44 @@ namespace engine::assets {
 		// Per-chunk spatial indices
 		std::unordered_map<world::ChunkCoordinate, SpatialIndex> m_chunkIndices;
 
-		/// Entity cooldown tracking
-		/// Key: (chunkCoord hash, position hash, defName hash) combined
-		/// Value: remaining cooldown time in seconds
-		struct EntityCooldown {
+		/// Entity cooldown key - uniquely identifies an entity for cooldown tracking
+		/// Uses quantized position (integer tile coordinates) for reliable hashing
+		struct CooldownKey {
 			world::ChunkCoordinate coord;
-			glm::vec2			   position;
+			int32_t				   tileX;  // Position quantized to tile
+			int32_t				   tileY;
 			std::string			   defName;
-			float				   remainingTime;
+
+			bool operator==(const CooldownKey& other) const {
+				return coord == other.coord &&
+					   tileX == other.tileX &&
+					   tileY == other.tileY &&
+					   defName == other.defName;
+			}
 		};
-		std::vector<EntityCooldown> cooldowns;
+
+		/// Hash function for CooldownKey
+		struct CooldownKeyHash {
+			std::size_t operator()(const CooldownKey& key) const {
+				std::size_t h1 = std::hash<int32_t>{}(key.coord.x);
+				std::size_t h2 = std::hash<int32_t>{}(key.coord.y);
+				std::size_t h3 = std::hash<int32_t>{}(key.tileX);
+				std::size_t h4 = std::hash<int32_t>{}(key.tileY);
+				std::size_t h5 = std::hash<std::string>{}(key.defName);
+				// Combine hashes using a standard technique
+				return h1 ^ (h2 << 1) ^ (h3 << 2) ^ (h4 << 3) ^ (h5 << 4);
+			}
+		};
+
+		/// Entity cooldown tracking using hash map for O(1) lookup
+		/// Key: (chunk coord, quantized position, defName)
+		/// Value: remaining cooldown time in seconds
+		std::unordered_map<CooldownKey, float, CooldownKeyHash> m_cooldowns;
+
+		/// Convert world position to cooldown key
+		[[nodiscard]] static CooldownKey makeCooldownKey(world::ChunkCoordinate coord,
+														  glm::vec2 position,
+														  const std::string& defName);
 
 		/// Build dependency graph from asset definitions
 		void buildDependencyGraph();

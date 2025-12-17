@@ -11,8 +11,11 @@
 #include "../components/Transform.h"
 
 #include "assets/AssetRegistry.h"
+#include "assets/ItemProperties.h"
 
 #include <utils/Log.h>
+
+#include <random>
 
 namespace ecs {
 
@@ -24,14 +27,8 @@ namespace ecs {
 		/// Default water quality for drinking
 		constexpr float kDefaultWaterQuality = 1.0F;
 
-		/// Default nutrition when no edible entity found (shouldn't happen in practice)
-		constexpr float kDefaultNutrition = 0.3F;
-
-		/// Food item name for inventory-based eating
-		constexpr const char* kFoodItemBerry = "Berry";
-
-		/// Nutrition value for berries eaten from inventory
-		constexpr float kBerryNutrition = 0.3F;
+		/// Position tolerance for matching entities at target location (in tiles)
+		constexpr float kPositionTolerance = 0.1F;
 
 	} // namespace
 
@@ -106,21 +103,32 @@ namespace ecs {
 
 		switch (task.needToFulfill) {
 			case NeedType::Hunger: {
-				// Priority 1: Check inventory for food
-				if (inventory.hasItem(kFoodItemBerry)) {
-					action = Action::Eat(kFoodItemBerry, kBerryNutrition);
-					LOG_DEBUG(Engine, "[Action] Creating Eat action (has %u berries)",
-							  inventory.getQuantity(kFoodItemBerry));
+				// Priority 1: Check inventory for any edible food (data-driven)
+				for (const auto& edibleItemName : engine::assets::getEdibleItemNames()) {
+					if (inventory.hasItem(edibleItemName)) {
+						// Get nutrition from item properties
+						auto edibleInfo = engine::assets::getEdibleItemInfo(edibleItemName);
+						float nutrition = edibleInfo ? edibleInfo->nutrition : 0.3F;
+						action = Action::Eat(edibleItemName, nutrition);
+						LOG_DEBUG(Engine, "[Action] Creating Eat action for %s (nutrition %.2f, qty %u)",
+								  edibleItemName.c_str(), nutrition,
+								  inventory.getQuantity(edibleItemName));
+						break;
+					}
+				}
+
+				// If we already created an eat action from inventory, we're done
+				if (action.type == ActionType::Eat) {
 					break;
 				}
 
 				// Priority 2: Check if we're at a harvestable food source
 				// Look for harvestable entities at target position
 				for (const auto& [key, entity] : memory.knownWorldEntities) {
-					// Check if entity is at target position (with small tolerance)
+					// Check if entity is at target position (with tolerance)
 					glm::vec2 diff = entity.position - task.targetPosition;
 					float	  distSq = diff.x * diff.x + diff.y * diff.y;
-					if (distSq > 0.1F * 0.1F) {
+					if (distSq > kPositionTolerance * kPositionTolerance) {
 						continue;
 					}
 
@@ -135,13 +143,17 @@ namespace ecs {
 					if (def != nullptr && def->capabilities.harvestable.has_value()) {
 						const auto& harvestCap = def->capabilities.harvestable.value();
 
-						// Calculate random yield within range
+						// Only consider harvestables that yield edible items
+						if (!engine::assets::isItemEdible(harvestCap.yieldDefName)) {
+							continue;
+						}
+
+						// Calculate random yield within range using proper RNG
 						uint32_t yield = harvestCap.amountMin;
 						if (harvestCap.amountMax > harvestCap.amountMin) {
-							// Simple random in range [min, max]
-							yield = harvestCap.amountMin +
-									(static_cast<uint32_t>(std::rand()) %
-									 (harvestCap.amountMax - harvestCap.amountMin + 1));
+							std::uniform_int_distribution<uint32_t> yieldDist(
+								harvestCap.amountMin, harvestCap.amountMax);
+							yield = yieldDist(m_rng);
 						}
 
 						action = Action::Harvest(
@@ -169,11 +181,13 @@ namespace ecs {
 					break;
 				}
 
-				// No food in inventory and no harvestable at target - this shouldn't happen
-				// but create a no-op action to avoid getting stuck
+				// No food in inventory and no harvestable at target
+				// This indicates a desync between AI decision and world state.
+				// Possible causes: entity was harvested by another colonist, or memory is stale.
 				LOG_WARNING(
 					Engine,
-					"[Action] No food in inventory and no harvestable at target (%.1f, %.1f)",
+					"[Action] Hunger action failed at (%.1f, %.1f) - no food in inventory and no "
+					"harvestable food source at target. Colonist will re-evaluate next tick.",
 					task.targetPosition.x,
 					task.targetPosition.y
 				);

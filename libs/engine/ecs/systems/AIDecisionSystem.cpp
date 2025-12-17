@@ -14,6 +14,7 @@
 
 #include "assets/AssetDefinition.h"
 #include "assets/AssetRegistry.h"
+#include "assets/ItemProperties.h"
 #include "world/chunk/ChunkManager.h"
 
 #include <utils/Log.h>
@@ -25,13 +26,6 @@
 namespace ecs {
 
 	namespace {
-
-		/// Food item names that can be eaten from inventory
-		/// TODO: This should come from data definitions eventually
-		constexpr const char* kFoodItemBerry = "Berry";
-
-		/// Default nutrition value for berries eaten from inventory
-		constexpr float kBerryNutrition = 0.3F;
 
 		/// Map NeedType to the CapabilityType that fulfills it
 		[[nodiscard]] engine::assets::CapabilityType needToCapability(NeedType need) {
@@ -445,8 +439,17 @@ namespace ecs {
 
 			// Special handling for hunger: check inventory first
 			if (needType == NeedType::Hunger) {
-				// First priority: eat from inventory if we have food
-				if (inventory.hasItem(kFoodItemBerry)) {
+				// First priority: eat from inventory if we have any edible food
+				// Check all known edible items (data-driven, not hardcoded to Berry)
+				bool hasFood = false;
+				for (const auto& edibleItemName : engine::assets::getEdibleItemNames()) {
+					if (inventory.hasItem(edibleItemName)) {
+						hasFood = true;
+						break;
+					}
+				}
+
+				if (hasFood) {
 					// Food in inventory - eat at current position (no movement needed)
 					option.targetPosition = position.value;
 					option.distanceToTarget = 0.0F;
@@ -460,17 +463,17 @@ namespace ecs {
 					continue;
 				}
 
-				// Second priority: find harvestable food source (berry bush)
+				// Second priority: find harvestable food source
 				auto harvestable = findNearestWithCapability(
 					memory, m_registry, engine::assets::CapabilityType::Harvestable, position.value);
 				if (harvestable.has_value()) {
-					// Check if this harvestable yields food
+					// Check if this harvestable yields edible food
 					const auto& defName = m_registry.getDefName(harvestable->defNameId);
 					const auto* def = m_registry.getDefinition(defName);
 					if (def != nullptr && def->capabilities.harvestable.has_value()) {
 						const auto& harvestCap = def->capabilities.harvestable.value();
-						// Check if yield is a food item (Berry)
-						if (harvestCap.yieldDefName == kFoodItemBerry) {
+						// Check if yield is any edible item (data-driven check)
+						if (engine::assets::isItemEdible(harvestCap.yieldDefName)) {
 							option.targetPosition = harvestable->position;
 							option.targetDefNameId = harvestable->defNameId;
 							option.distanceToTarget = glm::distance(position.value, harvestable->position);
