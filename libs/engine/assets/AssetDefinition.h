@@ -71,10 +71,9 @@ namespace engine::assets {
 	};
 
 	/// Carryable capability - entity can be picked up directly into inventory
-	/// Used for ground items like stones, dropped resources, etc.
+	/// The entity itself goes into inventory (unified entity/item model)
 	struct CarryableCapability {
-		std::string itemDefName;  // Item definition name to add to inventory (e.g., "Stone")
-		uint32_t	quantity = 1; // How many items to add when picked up
+		uint32_t quantity = 1; // How many to add when picked up
 	};
 
 	/// Harvestable capability - entity yields items when harvested
@@ -86,6 +85,33 @@ namespace engine::assets {
 		float		duration = 4.0F;	 // Seconds to complete harvest action
 		bool		destructive = true;	 // If true, entity is removed after harvest
 		float		regrowthTime = 0.0F; // Seconds until harvestable again (0 = never, only if not destructive)
+	};
+
+	// ─────────────────────────────────────────────────────────────────────────
+	// Item Properties (for entities that can exist in inventory)
+	// Unified model: entities can be "in world" or "in inventory"
+	// ─────────────────────────────────────────────────────────────────────────
+
+	/// Item properties for entities that can be carried/stored in inventory
+	/// If an entity has ItemProperties, it can exist in inventory.
+	struct ItemProperties {
+		uint32_t stackSize = 1; // Max stack size in inventory
+
+		/// Edible properties (if item can be eaten from inventory)
+		std::optional<EdibleCapability> edible;
+
+		/// Check if this item is edible
+		[[nodiscard]] bool isEdible() const { return edible.has_value(); }
+
+		/// Get nutrition value (0 if not edible)
+		[[nodiscard]] float getNutrition() const {
+			return edible.has_value() ? edible->nutrition : 0.0F;
+		}
+
+		/// Get quality (Normal if not edible)
+		[[nodiscard]] CapabilityQuality getQuality() const {
+			return edible.has_value() ? edible->quality : CapabilityQuality::Normal;
+		}
 	};
 
 	/// Container for all capabilities an entity may have
@@ -261,11 +287,20 @@ namespace engine::assets {
 		float				  worldHeight = 1.0F; // World height in meters (for SVG normalization)
 		GeneratorParams		  params;			  // Parameters for generator
 		AnimationParams		  animation;
-		PlacementParams		  placement;	// Where this asset spawns
-		EntityCapabilities	  capabilities; // What actions can be performed on/with this entity
-		AssetComplexity		  complexity = AssetComplexity::Simple;
-		RenderingTier		  renderingTier = RenderingTier::Instanced;
-		uint32_t			  variantCount = 1; // Number of variants to pre-generate
+		PlacementParams					  placement;	   // Where this asset spawns
+		EntityCapabilities				  capabilities;	   // What actions can be performed on/with this entity
+		std::optional<ItemProperties>	  itemProperties;  // Properties when in inventory (if carryable)
+		AssetComplexity					  complexity = AssetComplexity::Simple;
+		RenderingTier					  renderingTier = RenderingTier::Instanced;
+		uint32_t						  variantCount = 1; // Number of variants to pre-generate
+
+		/// Check if this entity can exist in inventory
+		[[nodiscard]] bool isCarryable() const { return itemProperties.has_value(); }
+
+		/// Check if this entity is edible when in inventory
+		[[nodiscard]] bool isEdible() const {
+			return itemProperties.has_value() && itemProperties->isEdible();
+		}
 
 		/// Check if this definition uses a Lua script generator
 		[[nodiscard]] bool isLuaGenerator() const { return !scriptPath.empty(); }
@@ -280,35 +315,6 @@ namespace engine::assets {
 				return rel;
 			}
 			return baseFolder / rel;
-		}
-	};
-
-	// ─────────────────────────────────────────────────────────────────────────
-	// Item Definition System
-	// Item definitions are separate from world entity definitions.
-	// Items exist in inventories and have properties like edible, stackable, etc.
-	// ─────────────────────────────────────────────────────────────────────────
-
-	/// Item definition - defines properties of inventory items
-	/// Items are separate from world entities (Flora_BerryBush vs "Berry" item)
-	struct ItemDefinition {
-		std::string defName; // Unique identifier (e.g., "Berry", "Stick", "Stone")
-		std::string label;	 // Human-readable name
-
-		/// Edible properties (if item can be eaten)
-		std::optional<EdibleCapability> edible;
-
-		/// Check if this item is edible
-		[[nodiscard]] bool isEdible() const { return edible.has_value(); }
-
-		/// Get nutrition value (0 if not edible)
-		[[nodiscard]] float getNutrition() const {
-			return edible.has_value() ? edible->nutrition : 0.0F;
-		}
-
-		/// Get quality (Normal if not edible)
-		[[nodiscard]] CapabilityQuality getQuality() const {
-			return edible.has_value() ? edible->quality : CapabilityQuality::Normal;
 		}
 	};
 

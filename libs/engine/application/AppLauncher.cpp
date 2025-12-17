@@ -190,13 +190,9 @@ namespace engine {
 			}
 
 			// Load all asset definitions from the root folder
+			// Item properties are now part of unified entity definitions (itemProperties section)
 			size_t loaded = engine::assets::AssetRegistry::Get().loadDefinitionsFromFolder(fullPath);
 			LOG_INFO(Engine, "Loaded %zu asset definitions from %s", loaded, fullPath.c_str());
-
-			// Load item definitions from items subfolder
-			std::string itemsPath = fullPath + "/items";
-			size_t		itemsLoaded = engine::assets::AssetRegistry::Get().loadItemDefinitionsFromFolder(itemsPath);
-			LOG_INFO(Engine, "Loaded %zu item definitions from %s", itemsLoaded, itemsPath.c_str());
 		}
 
 		void cleanup(GLFWwindow* window) {

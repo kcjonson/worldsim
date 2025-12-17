@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Berry - Harvested from berry bushes, edible food item
+     Unified entity: exists in world (when dropped) or inventory (when carried)
+     Source: Harvested from Flora_BerryBush
+-->
+<AssetDefinitions>
+  <AssetDef>
+    <defName>Berry</defName>
+    <label>Berry</label>
+    <assetType>simple</assetType>
+    <svgPath>berry.svg</svgPath>
+    <worldHeight>0.08</worldHeight>
+
+    <rendering>
+      <complexity>simple</complexity>
+      <tier>instanced</tier>
+    </rendering>
+
+    <!-- Item properties (when in inventory) -->
+    <item>
+      <stackSize>20</stackSize>
+      <edible nutrition="0.3" quality="normal" spoilable="true"/>
+    </item>
+
+    <!-- Entity capabilities -->
+    <capabilities>
+      <carryable quantity="1"/>
+    </capabilities>
+
+    <!-- No placement - berries don't spawn naturally, they're harvested -->
+  </AssetDef>
+</AssetDefinitions>

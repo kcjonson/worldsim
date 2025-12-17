@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- Small Stone Asset Definition
-     Decorative ground scatter for visual variety.
-     Future: crafting material (stone tools, construction).
+<!-- Small Stone - Ground scatter that can be picked up
+     Unified entity: exists in world (spawned) or inventory (carried)
+     Future: crafting material (stone tools, construction)
 -->
 <AssetDefinitions>
   <AssetDef>
-    <defName>Misc_SmallStone</defName>
+    <defName>SmallStone</defName>
     <label>Small Stone</label>
     <assetType>simple</assetType>
     <svgPath>small_stone.svg</svgPath>
@@ -18,9 +18,15 @@
 
     <!-- No animation - stones don't sway -->
 
+    <!-- Item properties (when in inventory) -->
+    <item>
+      <stackSize>10</stackSize>
+      <!-- Not edible -->
+    </item>
+
     <!-- Entity capabilities -->
     <capabilities>
-      <carryable item="Stone" quantity="1"/>
+      <carryable quantity="1"/>
     </capabilities>
 
     <!-- Per-biome placement configuration -->

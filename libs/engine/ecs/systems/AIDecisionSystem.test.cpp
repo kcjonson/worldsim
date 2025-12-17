@@ -34,20 +34,22 @@ namespace ecs::test {
 			// Initialize AssetRegistry (singleton) - needed for capability lookups
 			auto& registry = engine::assets::AssetRegistry::Get();
 
-			// Register item definitions for testing (Berry is edible)
-			engine::assets::ItemDefinition berryDef;
+			// Register Berry as edible entity for testing (unified entity/item model)
+			engine::assets::AssetDefinition berryDef;
 			berryDef.defName = "Berry";
 			berryDef.label = "Berry";
-			berryDef.edible = engine::assets::EdibleCapability{0.3F, engine::assets::CapabilityQuality::Normal, true};
-			registry.registerItemDefinition(std::move(berryDef));
+			berryDef.itemProperties = engine::assets::ItemProperties{};
+			berryDef.itemProperties->stackSize = 20;
+			berryDef.itemProperties->edible = engine::assets::EdibleCapability{0.3F, engine::assets::CapabilityQuality::Normal, true};
+			registry.registerTestDefinition(std::move(berryDef));
 
 			// Register system with deterministic RNG seed for reproducible tests
 			world->registerSystem<AIDecisionSystem>(registry, kTestRngSeed);
 		}
 
 		void TearDown() override {
-			// Clean up item definitions
-			engine::assets::AssetRegistry::Get().clearItemDefinitions();
+			// Clean up test definitions
+			engine::assets::AssetRegistry::Get().clearDefinitions();
 			world.reset();
 		}
 
@@ -1098,12 +1100,14 @@ namespace ecs::test {
 
 			auto& registry = engine::assets::AssetRegistry::Get();
 
-			// Register item definitions for testing (Berry is edible)
-			engine::assets::ItemDefinition berryDef;
+			// Register Berry as edible entity for testing (unified entity/item model)
+			engine::assets::AssetDefinition berryDef;
 			berryDef.defName = "Berry";
 			berryDef.label = "Berry";
-			berryDef.edible = engine::assets::EdibleCapability{0.3F, engine::assets::CapabilityQuality::Normal, true};
-			registry.registerItemDefinition(std::move(berryDef));
+			berryDef.itemProperties = engine::assets::ItemProperties{};
+			berryDef.itemProperties->stackSize = 20;
+			berryDef.itemProperties->edible = engine::assets::EdibleCapability{0.3F, engine::assets::CapabilityQuality::Normal, true};
+			registry.registerTestDefinition(std::move(berryDef));
 
 			// Register BOTH systems to test their interaction
 			// This is critical - the bug only manifests when both systems run
@@ -1112,8 +1116,8 @@ namespace ecs::test {
 		}
 
 		void TearDown() override {
-			// Clean up item definitions
-			engine::assets::AssetRegistry::Get().clearItemDefinitions();
+			// Clean up test definitions
+			engine::assets::AssetRegistry::Get().clearDefinitions();
 			world.reset();
 		}
 

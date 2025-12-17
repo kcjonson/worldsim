@@ -491,6 +491,25 @@ namespace engine::assets {
 			// Variant count
 			def.variantCount = static_cast<uint32_t>(defNode.child("variantCount").text().as_uint(1));
 
+			// Item properties (for entities that can be carried/stored)
+			pugi::xml_node itemNode = defNode.child("item");
+			if (itemNode) {
+				ItemProperties itemProps;
+				itemProps.stackSize = itemNode.child("stackSize").text().as_uint(1);
+
+				// Parse edible capability within item
+				pugi::xml_node edibleNode = itemNode.child("edible");
+				if (edibleNode) {
+					EdibleCapability edible;
+					edible.nutrition = edibleNode.attribute("nutrition").as_float(0.3F);
+					edible.quality = parseCapabilityQuality(edibleNode.attribute("quality").as_string());
+					edible.spoilable = edibleNode.attribute("spoilable").as_bool(false);
+					itemProps.edible = edible;
+				}
+
+				def.itemProperties = itemProps;
+			}
+
 			// Capabilities - what actions can be performed on/with this entity
 			pugi::xml_node capabilitiesNode = defNode.child("capabilities");
 			if (capabilitiesNode) {
@@ -536,10 +555,10 @@ namespace engine::assets {
 				}
 
 				// Carryable capability (ground items like stones)
+				// In unified model, the entity's defName IS the item - no separate itemDefName needed
 				pugi::xml_node carryableNode = capabilitiesNode.child("carryable");
 				if (carryableNode) {
 					CarryableCapability carryable;
-					carryable.itemDefName = carryableNode.attribute("item").as_string("");
 					carryable.quantity = carryableNode.attribute("quantity").as_uint(1);
 					def.capabilities.carryable = carryable;
 				}
@@ -987,139 +1006,27 @@ namespace engine::assets {
 	}
 
 	// ============================================================================
-	// Item Definition Loading
+	// Testing API
 	// ============================================================================
 
-	size_t AssetRegistry::loadItemDefinitionsFromFolder(const std::string& folderPath) {
-		namespace fs = std::filesystem;
-
-		if (!fs::exists(folderPath)) {
-			LOG_ERROR(Engine, "Item definitions folder not found: %s", folderPath.c_str());
-			return 0;
-		}
-
-		if (!fs::is_directory(folderPath)) {
-			LOG_ERROR(Engine, "Path is not a directory: %s", folderPath.c_str());
-			return 0;
-		}
-
-		size_t totalLoaded = 0;
-		size_t filesProcessed = 0;
-
-		try {
-			for (const auto& entry : fs::recursive_directory_iterator(folderPath)) {
-				if (!entry.is_regular_file()) {
-					continue;
-				}
-
-				// Only process .xml files
-				if (entry.path().extension() != ".xml") {
-					continue;
-				}
-
-				// Check if this is a primary XML file (FolderName/FolderName.xml pattern)
-				std::string filename = entry.path().stem().string();
-				std::string parentFolder = entry.path().parent_path().filename().string();
-				if (filename != parentFolder) {
-					continue;
-				}
-
-				filesProcessed++;
-
-				// Load the XML file
-				pugi::xml_document	   doc;
-				pugi::xml_parse_result result = doc.load_file(entry.path().string().c_str());
-
-				if (!result) {
-					LOG_ERROR(Engine, "Failed to load item XML: %s - %s", entry.path().string().c_str(), result.description());
-					continue;
-				}
-
-				pugi::xml_node root = doc.child("ItemDefinitions");
-				if (!root) {
-					LOG_ERROR(Engine, "Missing <ItemDefinitions> root element in %s", entry.path().string().c_str());
-					continue;
-				}
-
-				for (pugi::xml_node defNode : root.children("ItemDef")) {
-					ItemDefinition def;
-
-					// Required: defName
-					def.defName = defNode.child_value("defName");
-					if (def.defName.empty()) {
-						LOG_WARNING(Engine, "Skipping item definition with empty defName");
-						continue;
-					}
-
-					// Optional: label
-					def.label = defNode.child_value("label");
-					if (def.label.empty()) {
-						def.label = def.defName;
-					}
-
-					// Parse edible capability
-					pugi::xml_node edibleNode = defNode.child("edible");
-					if (edibleNode) {
-						EdibleCapability edible;
-						edible.nutrition = edibleNode.attribute("nutrition").as_float(0.3F);
-						edible.quality = parseCapabilityQuality(edibleNode.attribute("quality").as_string());
-						edible.spoilable = edibleNode.attribute("spoilable").as_bool(false);
-						def.edible = edible;
-					}
-
-					// Store definition
-					m_itemDefinitions[def.defName] = std::move(def);
-					totalLoaded++;
-				}
-			}
-		} catch (const fs::filesystem_error& e) {
-			LOG_ERROR(Engine, "Filesystem error scanning '%s': %s", folderPath.c_str(), e.what());
-			return totalLoaded;
-		}
-
-		LOG_INFO(
-			Engine, "Item folder scan complete: %zu items from %zu XML files in %s", totalLoaded, filesProcessed, folderPath.c_str()
-		);
-
-		return totalLoaded;
-	}
-
-	const ItemDefinition* AssetRegistry::getItemDefinition(const std::string& defName) const {
-		auto it = m_itemDefinitions.find(defName);
-		if (it != m_itemDefinitions.end()) {
-			return &it->second;
-		}
-		return nullptr;
-	}
-
-	std::vector<std::string> AssetRegistry::getItemDefinitionNames() const {
-		std::vector<std::string> names;
-		names.reserve(m_itemDefinitions.size());
-		for (const auto& [name, _] : m_itemDefinitions) {
-			names.push_back(name);
-		}
-		return names;
-	}
-
-	std::vector<std::string> AssetRegistry::getEdibleItemNames() const {
-		std::vector<std::string> names;
-		for (const auto& [name, def] : m_itemDefinitions) {
-			if (def.isEdible()) {
-				names.push_back(name);
-			}
-		}
-		return names;
-	}
-
-	void AssetRegistry::registerItemDefinition(ItemDefinition def) {
+	void AssetRegistry::registerTestDefinition(AssetDefinition def) {
 		std::string defName = def.defName;
-		m_itemDefinitions[defName] = std::move(def);
-		LOG_DEBUG(Engine, "Registered item definition: %s", defName.c_str());
+		definitions[defName] = std::move(def);
+
+		// Rebuild indices to include new definition
+		buildDefNameIndex();
+
+		LOG_DEBUG(Engine, "Registered test definition: %s", defName.c_str());
 	}
 
-	void AssetRegistry::clearItemDefinitions() {
-		m_itemDefinitions.clear();
-		LOG_DEBUG(Engine, "Cleared all item definitions");
+	void AssetRegistry::clearDefinitions() {
+		definitions.clear();
+		templateCache.clear();
+		groupIndex.clear();
+		m_defNameToId.clear();
+		m_idToDefName.clear();
+		m_capabilityMasks.clear();
+		LOG_DEBUG(Engine, "Cleared all definitions");
 	}
 
 } // namespace engine::assets

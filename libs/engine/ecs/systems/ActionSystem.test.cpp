@@ -158,19 +158,21 @@ class ActionSystemTest : public ::testing::Test {
 	void SetUp() override {
 		world = std::make_unique<World>();
 
-		// Register item definitions for testing (Berry is edible)
-		engine::assets::ItemDefinition berryDef;
+		// Register Berry as edible entity for testing (unified entity/item model)
+		engine::assets::AssetDefinition berryDef;
 		berryDef.defName = "Berry";
 		berryDef.label = "Berry";
-		berryDef.edible = engine::assets::EdibleCapability{0.3F, engine::assets::CapabilityQuality::Normal, true};
-		engine::assets::AssetRegistry::Get().registerItemDefinition(std::move(berryDef));
+		berryDef.itemProperties = engine::assets::ItemProperties{};
+		berryDef.itemProperties->stackSize = 20;
+		berryDef.itemProperties->edible = engine::assets::EdibleCapability{0.3F, engine::assets::CapabilityQuality::Normal, true};
+		engine::assets::AssetRegistry::Get().registerTestDefinition(std::move(berryDef));
 
 		world->registerSystem<ActionSystem>();
 	}
 
 	void TearDown() override {
-		// Clean up item definitions
-		engine::assets::AssetRegistry::Get().clearItemDefinitions();
+		// Clean up test definitions
+		engine::assets::AssetRegistry::Get().clearDefinitions();
 		world.reset();
 	}
 
