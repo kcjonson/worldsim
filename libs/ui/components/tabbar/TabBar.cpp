@@ -20,14 +20,21 @@ namespace UI {
 
 		// Find initial selected index
 		m_selectedIndex = findTabIndex(m_selectedId);
-		if (m_selectedIndex < 0 && !m_tabs.empty()) {
-			// Default to first non-disabled tab
-			for (size_t i = 0; i < m_tabs.size(); ++i) {
-				if (!m_tabs[i].disabled) {
-					m_selectedIndex = static_cast<int>(i);
-					m_selectedId = m_tabs[i].id;
-					break;
+		if (m_selectedIndex < 0) {
+			// Provided selectedId not found (or empty), try to find first non-disabled tab
+			if (!m_tabs.empty()) {
+				for (size_t i = 0; i < m_tabs.size(); ++i) {
+					if (!m_tabs[i].disabled) {
+						m_selectedIndex = static_cast<int>(i);
+						m_selectedId = m_tabs[i].id;
+						break;
+					}
 				}
+			}
+
+			// If still no valid selection (all tabs disabled or empty), clear the ID
+			if (m_selectedIndex < 0) {
+				m_selectedId.clear();
 			}
 		}
 
@@ -216,9 +223,11 @@ namespace UI {
 				}
 			}
 		} else if (key == engine::Key::Enter || key == engine::Key::Space) {
-			// Confirm current selection (fires callback even if already selected)
-			if (m_onSelect && m_selectedIndex >= 0) {
-				m_onSelect(m_selectedId);
+			// Confirm current selection - fires callback if valid tab selected
+			// Uses selectTabByIndex for consistency, but note that it won't fire
+			// if the tab is already selected (same behavior as arrow keys)
+			if (m_selectedIndex >= 0) {
+				selectTabByIndex(m_selectedIndex);
 			}
 		}
 	}
@@ -301,16 +310,23 @@ namespace UI {
 	}
 
 	Foundation::Rect TabBar::getTabBounds(int tabIndex) const {
-		if (tabIndex < 0 || tabIndex >= static_cast<int>(m_tabOffsets.size())) {
+		if (tabIndex < 0) {
+			return {0.0F, 0.0F, 0.0F, 0.0F};
+		}
+
+		auto index = static_cast<size_t>(tabIndex);
+
+		// Check all vectors for bounds safety (they're resized together in recomputeLayout)
+		if (index >= m_tabs.size() || index >= m_tabOffsets.size() || index >= m_tabWidths.size()) {
 			return {0.0F, 0.0F, 0.0F, 0.0F};
 		}
 
 		float tabHeight = m_height - 2.0F * m_appearance.barPadding;
 
 		return {
-			position.x + m_appearance.barPadding + m_tabOffsets[static_cast<size_t>(tabIndex)],
+			position.x + m_appearance.barPadding + m_tabOffsets[index],
 			position.y + m_appearance.barPadding,
-			m_tabWidths[static_cast<size_t>(tabIndex)],
+			m_tabWidths[index],
 			tabHeight};
 	}
 

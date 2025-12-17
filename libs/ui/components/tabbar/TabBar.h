@@ -19,7 +19,7 @@
 //   TabBar tabBar({
 //       .position = {50.0F, 50.0F},
 //       .width = 300.0F,
-//       .tabs = {{"status", "Status"}, {"inventory", "Inventory"}},
+//       .tabs = {{.id = "status", .label = "Status"}, {.id = "inventory", .label = "Inventory"}},
 //       .selectedId = "status",
 //       .onSelect = [](const std::string& id) { /* handle tab change */ }
 //   });
@@ -90,7 +90,9 @@ namespace UI {
 		bool canReceiveFocus() const override;
 
 		// Tab API
-		void					   setSelected(const std::string& tabId);
+		void setSelected(const std::string& tabId);
+		// Note: Returns the currently selected tab ID. May be empty if no enabled tab
+		// was found during initialization (e.g., all tabs disabled or empty tab list).
 		[[nodiscard]] const std::string& getSelected() const { return m_selectedId; }
 
 		// Query methods
