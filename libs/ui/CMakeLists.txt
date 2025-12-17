@@ -5,6 +5,7 @@ add_library(ui
     font/FontRenderer.cpp
     shapes/Shapes.cpp
     components/button/Button.cpp
+    components/tabbar/TabBar.cpp
     components/TextInput/TextInput.cpp
     focus/FocusManager.cpp
 )
