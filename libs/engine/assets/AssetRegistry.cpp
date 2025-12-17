@@ -566,14 +566,36 @@ namespace engine::assets {
 				// Harvestable capability (bushes, plants that yield resources)
 				pugi::xml_node harvestableNode = capabilitiesNode.child("harvestable");
 				if (harvestableNode) {
-					HarvestableCapability harvestable;
-					harvestable.yieldDefName = harvestableNode.attribute("yield").as_string("");
-					harvestable.amountMin = harvestableNode.attribute("amountMin").as_uint(1);
-					harvestable.amountMax = harvestableNode.attribute("amountMax").as_uint(3);
-					harvestable.duration = harvestableNode.attribute("duration").as_float(4.0F);
-					harvestable.destructive = harvestableNode.attribute("destructive").as_bool(true);
-					harvestable.regrowthTime = harvestableNode.attribute("regrowthTime").as_float(0.0F);
-					def.capabilities.harvestable = harvestable;
+					std::string yieldName = harvestableNode.attribute("yield").as_string("");
+					if (yieldName.empty()) {
+						LOG_WARNING(
+							Engine,
+							"AssetDef '%s' has <harvestable> without valid 'yield' attribute; skipping capability",
+							def.defName.c_str()
+						);
+					} else {
+						HarvestableCapability harvestable;
+						harvestable.yieldDefName = yieldName;
+						harvestable.amountMin = harvestableNode.attribute("amountMin").as_uint(1);
+						harvestable.amountMax = harvestableNode.attribute("amountMax").as_uint(3);
+
+						// Validate amountMax >= amountMin (swap if reversed to avoid invalid distribution)
+						if (harvestable.amountMax < harvestable.amountMin) {
+							LOG_WARNING(
+								Engine,
+								"AssetDef '%s' harvestable: amountMax (%u) < amountMin (%u); swapping values",
+								def.defName.c_str(),
+								harvestable.amountMax,
+								harvestable.amountMin
+							);
+							std::swap(harvestable.amountMin, harvestable.amountMax);
+						}
+
+						harvestable.duration = harvestableNode.attribute("duration").as_float(4.0F);
+						harvestable.destructive = harvestableNode.attribute("destructive").as_bool(true);
+						harvestable.regrowthTime = harvestableNode.attribute("regrowthTime").as_float(0.0F);
+						def.capabilities.harvestable = harvestable;
+					}
 				}
 			}
 

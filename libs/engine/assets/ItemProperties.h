@@ -55,15 +55,20 @@ namespace engine::assets {
 
 	/// Get all known edible item names (for AI to check inventory)
 	/// Returns all entities with edible itemProperties from the AssetRegistry.
-	[[nodiscard]] inline std::vector<std::string> getEdibleItemNames() {
-		std::vector<std::string> names;
-		for (const auto& defName : AssetRegistry::Get().getDefinitionNames()) {
-			const auto* def = AssetRegistry::Get().getDefinition(defName);
-			if (def != nullptr && def->isEdible()) {
-				names.push_back(defName);
+	/// Result is cached after first call since asset definitions don't change at runtime.
+	[[nodiscard]] inline const std::vector<std::string>& getEdibleItemNames() {
+		// Cache the list after first computation - definitions are static after loading
+		static std::vector<std::string> cachedNames = []() {
+			std::vector<std::string> names;
+			for (const auto& defName : AssetRegistry::Get().getDefinitionNames()) {
+				const auto* def = AssetRegistry::Get().getDefinition(defName);
+				if (def != nullptr && def->isEdible()) {
+					names.push_back(defName);
+				}
 			}
-		}
-		return names;
+			return names;
+		}();
+		return cachedNames;
 	}
 
 } // namespace engine::assets

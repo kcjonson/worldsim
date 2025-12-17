@@ -51,10 +51,16 @@ struct Inventory {
 
 	/// Check if there's room for a specific item (existing stack or new slot)
 	[[nodiscard]] bool canAdd(const std::string& defName, uint32_t quantity = 1) const {
+		// First check if quantity alone exceeds max stack (prevents underflow in later checks)
+		if (quantity > maxStackSize) {
+			return false;
+		}
+
 		auto iter = items.find(defName);
 		if (iter != items.end()) {
 			// Item exists - check if stack has room
-			return iter->second + quantity <= maxStackSize;
+			// Safe from underflow since quantity <= maxStackSize
+			return iter->second <= maxStackSize - quantity;
 		}
 		// New item - check if we have a free slot
 		return hasSpace();

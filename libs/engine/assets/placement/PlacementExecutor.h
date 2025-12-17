@@ -212,6 +212,7 @@ namespace engine::assets {
 		};
 
 		/// Hash function for CooldownKey
+		/// Uses multiplicative hash combining for better avalanche properties
 		struct CooldownKeyHash {
 			std::size_t operator()(const CooldownKey& key) const {
 				std::size_t h1 = std::hash<int32_t>{}(key.coord.x);
@@ -219,8 +220,14 @@ namespace engine::assets {
 				std::size_t h3 = std::hash<int32_t>{}(key.tileX);
 				std::size_t h4 = std::hash<int32_t>{}(key.tileY);
 				std::size_t h5 = std::hash<std::string>{}(key.defName);
-				// Combine hashes using a standard technique
-				return h1 ^ (h2 << 1) ^ (h3 << 2) ^ (h4 << 3) ^ (h5 << 4);
+				// Combine hashes using multiplicative method for better distribution
+				std::size_t seed = 0;
+				seed = seed * 31 + h1;
+				seed = seed * 31 + h2;
+				seed = seed * 31 + h3;
+				seed = seed * 31 + h4;
+				seed = seed * 31 + h5;
+				return seed;
 			}
 		};
 

@@ -148,6 +148,11 @@ namespace ecs {
 							continue;
 						}
 
+						// TODO: Check if entity is on cooldown before creating harvest action.
+						// Proper fix: VisionSystem should filter entities on cooldown so they
+						// don't appear as harvestable in Memory. Until then, colonists may
+						// arrive at recently-harvested bushes expecting to harvest again.
+
 						// Calculate random yield within range using proper RNG
 						uint32_t yield = harvestCap.amountMin;
 						if (harvestCap.amountMax > harvestCap.amountMin) {
@@ -287,13 +292,27 @@ namespace ecs {
 
 			// Add items to inventory
 			uint32_t added = inventory.addItem(collEff.itemDefName, collEff.quantity);
-			LOG_INFO(
-				Engine,
-				"[Action] Collected %u x %s (added %u to inventory)",
-				collEff.quantity,
-				collEff.itemDefName.c_str(),
-				added
-			);
+
+			// Warn if not all items could be stored (inventory full or stack limit)
+			if (added < collEff.quantity) {
+				uint32_t lost = collEff.quantity - added;
+				LOG_WARNING(
+					Engine,
+					"[Action] Inventory full: collected %u x %s but only %u added, %u lost",
+					collEff.quantity,
+					collEff.itemDefName.c_str(),
+					added,
+					lost
+				);
+			} else {
+				LOG_INFO(
+					Engine,
+					"[Action] Collected %u x %s (added %u to inventory)",
+					collEff.quantity,
+					collEff.itemDefName.c_str(),
+					added
+				);
+			}
 
 			// Entity removal/cooldown handled in Phase 5
 			// TODO: Call PlacementExecutor to remove or set cooldown on source entity
@@ -328,6 +347,21 @@ namespace ecs {
 				if (consumeEff.need < NeedType::Count) {
 					needs.get(consumeEff.need).restore(consumeEff.restoreAmount);
 				}
+
+				// Apply side effect (e.g., eating fills digestion)
+				if (consumeEff.sideEffectNeed < NeedType::Count) {
+					if (consumeEff.sideEffectAmount > 0.0F) {
+						needs.get(consumeEff.sideEffectNeed).restore(consumeEff.sideEffectAmount);
+					} else {
+						// Negative amount means drain (e.g., eating fills gut)
+						auto& need = needs.get(consumeEff.sideEffectNeed);
+						need.value += consumeEff.sideEffectAmount; // sideEffectAmount is already negative
+						if (need.value < 0.0F) {
+							need.value = 0.0F;
+						}
+					}
+				}
+
 				LOG_INFO(
 					Engine,
 					"[Action] Consumed %u x %s from inventory, restored %.1f%% %s",

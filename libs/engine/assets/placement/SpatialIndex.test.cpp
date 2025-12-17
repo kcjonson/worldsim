@@ -286,3 +286,72 @@ TEST(SpatialIndexTests, EntitiesAtSamePosition) {
 	auto results = index.queryRadius({10.0F, 10.0F}, 1.0F);
 	EXPECT_EQ(results.size(), 3);
 }
+
+// ============================================================================
+// Remove Tests
+// ============================================================================
+
+TEST(SpatialIndexTests, RemoveExistingEntity) {
+	SpatialIndex index;
+	index.insert({"Tree", {10.0F, 20.0F}});
+
+	EXPECT_EQ(index.size(), 1);
+
+	bool removed = index.remove({10.0F, 20.0F}, "Tree");
+	EXPECT_TRUE(removed);
+	EXPECT_EQ(index.size(), 0);
+}
+
+TEST(SpatialIndexTests, RemoveNonExistentEntity) {
+	SpatialIndex index;
+	index.insert({"Tree", {10.0F, 20.0F}});
+
+	bool removed = index.remove({100.0F, 200.0F}, "Tree");
+	EXPECT_FALSE(removed);
+	EXPECT_EQ(index.size(), 1);
+}
+
+TEST(SpatialIndexTests, RemoveWrongDefName) {
+	SpatialIndex index;
+	index.insert({"Tree", {10.0F, 20.0F}});
+
+	bool removed = index.remove({10.0F, 20.0F}, "Flower");
+	EXPECT_FALSE(removed);
+	EXPECT_EQ(index.size(), 1);
+}
+
+TEST(SpatialIndexTests, RemoveFromEmpty) {
+	SpatialIndex index;
+
+	bool removed = index.remove({10.0F, 20.0F}, "Tree");
+	EXPECT_FALSE(removed);
+}
+
+TEST(SpatialIndexTests, RemoveOneOfMultiple) {
+	SpatialIndex index;
+	index.insert({"Tree", {10.0F, 20.0F}});
+	index.insert({"Tree", {10.0F, 20.0F}}); // Same position
+	index.insert({"Flower", {15.0F, 25.0F}});
+
+	EXPECT_EQ(index.size(), 3);
+
+	// Should remove only one Tree at that position
+	bool removed = index.remove({10.0F, 20.0F}, "Tree");
+	EXPECT_TRUE(removed);
+	EXPECT_EQ(index.size(), 2);
+}
+
+TEST(SpatialIndexTests, RemoveVerifyQueryUpdated) {
+	SpatialIndex index;
+	index.insert({"Tree", {10.0F, 10.0F}});
+	index.insert({"Flower", {10.0F, 10.0F}});
+
+	auto results1 = index.queryRadius({10.0F, 10.0F}, 1.0F);
+	EXPECT_EQ(results1.size(), 2);
+
+	index.remove({10.0F, 10.0F}, "Tree");
+
+	auto results2 = index.queryRadius({10.0F, 10.0F}, 1.0F);
+	EXPECT_EQ(results2.size(), 1);
+	EXPECT_EQ(results2[0]->defName, "Flower");
+}

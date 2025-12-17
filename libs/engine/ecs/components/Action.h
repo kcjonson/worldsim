@@ -101,7 +101,7 @@ namespace ecs {
 	};
 
 	/// Effect for consuming items from inventory (Eat action)
-	/// Removes item from inventory and restores a need.
+	/// Removes item from inventory and restores a need, with optional side effect.
 	struct ConsumptionEffect {
 		/// Item definition name to consume from inventory
 		std::string itemDefName;
@@ -114,6 +114,12 @@ namespace ecs {
 
 		/// Amount to restore (0-100 scale)
 		float restoreAmount = 30.0F;
+
+		/// Optional side effect need (e.g., eating fills digestion)
+		NeedType sideEffectNeed = NeedType::Count;
+
+		/// Side effect amount (positive = restore, negative = drain)
+		float sideEffectAmount = 0.0F;
 	};
 
 	/// Effect for progress actions (Build, Repair)
@@ -231,6 +237,7 @@ namespace ecs {
 
 		/// Factory: Eat action - consume food from inventory
 		/// Colonists always eat from inventory. Food must be harvested/collected first.
+		/// Eating restores hunger and fills digestion (food enters gut).
 		/// @param itemDefName Item to consume from inventory
 		/// @param nutrition Amount of hunger to restore (0-1 scale)
 		static Action Eat(const std::string& itemDefName, float nutrition) {
@@ -245,6 +252,9 @@ namespace ecs {
 			consumeEff.quantity = 1;
 			consumeEff.need = NeedType::Hunger;
 			consumeEff.restoreAmount = nutrition * 100.0F;
+			// Eating fills the gut - digestion need DECREASES (becomes more urgent over time)
+			consumeEff.sideEffectNeed = NeedType::Digestion;
+			consumeEff.sideEffectAmount = -nutrition * 100.0F; // Negative = drain (fill gut)
 			action.effect = consumeEff;
 
 			return action;
