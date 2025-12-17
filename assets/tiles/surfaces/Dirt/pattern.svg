@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Dirt Pattern - Brown dirt/earth surface texture
+     512x512 SVG covering 8x8 game tiles (64px per tile)
+     Contains: base color, color variation, pebbles, dried grass bits, small cracks
+     Must tile seamlessly (elements at edges wrap)
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- Base dirt color: rgb(115, 89, 64) = #735940 matching Chunk::getSurfaceColor(Dirt) -->
+  <rect width="512" height="512" fill="#735940"/>
+
+  <!-- Color variation patches (organic, not geometric) -->
+  <ellipse cx="90" cy="70" rx="60" ry="40" fill="#7a6048" opacity="0.25"/>
+  <ellipse cx="340" cy="100" rx="70" ry="50" fill="#654a35" opacity="0.3"/>
+  <ellipse cx="190" cy="250" rx="55" ry="38" fill="#7a6048" opacity="0.25"/>
+  <ellipse cx="440" cy="320" rx="65" ry="45" fill="#654a35" opacity="0.3"/>
+  <ellipse cx="80" cy="400" rx="50" ry="35" fill="#7a6048" opacity="0.25"/>
+  <ellipse cx="320" cy="450" rx="60" ry="40" fill="#654a35" opacity="0.28"/>
+  <ellipse cx="480" cy="180" rx="45" ry="55" fill="#7a6048" opacity="0.22"/>
+  <ellipse cx="250" cy="380" rx="50" ry="35" fill="#654a35" opacity="0.25"/>
+
+  <!-- Pebbles and small stones (varied sizes and colors) -->
+  <ellipse cx="60" cy="120" rx="5" ry="4" fill="#8a8a7a" opacity="0.4"/>
+  <ellipse cx="180" cy="60" rx="4" ry="3" fill="#7a7a6a" opacity="0.45"/>
+  <ellipse cx="300" cy="150" rx="6" ry="4.5" fill="#8a8a7a" opacity="0.35"/>
+  <ellipse cx="420" cy="80" rx="4.5" ry="3.5" fill="#7a7a6a" opacity="0.4"/>
+  <ellipse cx="500" cy="130" rx="5" ry="4" fill="#8a8a7a" opacity="0.45"/>
+  <ellipse cx="40" cy="220" rx="4" ry="3" fill="#7a7a6a" opacity="0.4"/>
+  <ellipse cx="150" cy="180" rx="5.5" ry="4" fill="#8a8a7a" opacity="0.35"/>
+  <ellipse cx="280" cy="220" rx="4" ry="3" fill="#7a7a6a" opacity="0.45"/>
+  <ellipse cx="380" cy="260" rx="6" ry="4.5" fill="#8a8a7a" opacity="0.4"/>
+  <ellipse cx="480" cy="290" rx="4.5" ry="3.5" fill="#7a7a6a" opacity="0.35"/>
+  <ellipse cx="70" cy="330" rx="5" ry="4" fill="#8a8a7a" opacity="0.4"/>
+  <ellipse cx="200" cy="300" rx="4" ry="3" fill="#7a7a6a" opacity="0.45"/>
+  <ellipse cx="320" cy="350" rx="5.5" ry="4" fill="#8a8a7a" opacity="0.35"/>
+  <ellipse cx="450" cy="400" rx="4" ry="3" fill="#7a7a6a" opacity="0.4"/>
+  <ellipse cx="30" cy="470" rx="5" ry="4" fill="#8a8a7a" opacity="0.45"/>
+  <ellipse cx="140" cy="420" rx="4.5" ry="3.5" fill="#7a7a6a" opacity="0.4"/>
+  <ellipse cx="260" cy="480" rx="6" ry="4.5" fill="#8a8a7a" opacity="0.35"/>
+  <ellipse cx="380" cy="500" rx="4" ry="3" fill="#7a7a6a" opacity="0.45"/>
+  <ellipse cx="490" cy="450" rx="5" ry="4" fill="#8a8a7a" opacity="0.4"/>
+
+  <!-- Dried grass bits (short tan/yellow strokes) -->
+  <path d="M55,90 l2,-6" stroke="#9a8a6a" stroke-width="1" stroke-linecap="round" opacity="0.35"/>
+  <path d="M120,40 l1.5,-5" stroke="#8a7a5a" stroke-width="0.8" stroke-linecap="round" opacity="0.4"/>
+  <path d="M210,100 l-1,-5.5" stroke="#9a8a6a" stroke-width="1" stroke-linecap="round" opacity="0.35"/>
+  <path d="M350,70 l2,-6" stroke="#8a7a5a" stroke-width="0.8" stroke-linecap="round" opacity="0.4"/>
+  <path d="M460,120 l1,-5" stroke="#9a8a6a" stroke-width="1" stroke-linecap="round" opacity="0.35"/>
+  <path d="M80,200 l-1.5,-5.5" stroke="#8a7a5a" stroke-width="0.8" stroke-linecap="round" opacity="0.4"/>
+  <path d="M200,160 l2,-6" stroke="#9a8a6a" stroke-width="1" stroke-linecap="round" opacity="0.35"/>
+  <path d="M310,240 l1,-5" stroke="#8a7a5a" stroke-width="0.8" stroke-linecap="round" opacity="0.4"/>
+  <path d="M420,190 l-2,-6" stroke="#9a8a6a" stroke-width="1" stroke-linecap="round" opacity="0.35"/>
+  <path d="M500,230 l1.5,-5.5" stroke="#8a7a5a" stroke-width="0.8" stroke-linecap="round" opacity="0.4"/>
+  <path d="M40,340 l2,-6" stroke="#9a8a6a" stroke-width="1" stroke-linecap="round" opacity="0.35"/>
+  <path d="M170,290 l-1,-5" stroke="#8a7a5a" stroke-width="0.8" stroke-linecap="round" opacity="0.4"/>
+  <path d="M290,360 l1.5,-5.5" stroke="#9a8a6a" stroke-width="1" stroke-linecap="round" opacity="0.35"/>
+  <path d="M400,310 l-1.5,-6" stroke="#8a7a5a" stroke-width="0.8" stroke-linecap="round" opacity="0.4"/>
+  <path d="M480,370 l2,-5" stroke="#9a8a6a" stroke-width="1" stroke-linecap="round" opacity="0.35"/>
+  <path d="M60,450 l1,-5.5" stroke="#8a7a5a" stroke-width="0.8" stroke-linecap="round" opacity="0.4"/>
+  <path d="M180,480 l-2,-6" stroke="#9a8a6a" stroke-width="1" stroke-linecap="round" opacity="0.35"/>
+  <path d="M330,410 l1.5,-5" stroke="#8a7a5a" stroke-width="0.8" stroke-linecap="round" opacity="0.4"/>
+  <path d="M450,470 l-1,-5.5" stroke="#9a8a6a" stroke-width="1" stroke-linecap="round" opacity="0.35"/>
+
+  <!-- Small cracks (thin dark lines) -->
+  <path d="M100,150 L105,160 L100,170" stroke="#5a4530" stroke-width="0.6" fill="none" opacity="0.3"/>
+  <path d="M250,80 L260,90 L255,100" stroke="#5a4530" stroke-width="0.6" fill="none" opacity="0.25"/>
+  <path d="M380,200 L390,215 L385,225" stroke="#5a4530" stroke-width="0.6" fill="none" opacity="0.3"/>
+  <path d="M50,280 L55,295 L48,305" stroke="#5a4530" stroke-width="0.6" fill="none" opacity="0.25"/>
+  <path d="M220,340 L230,350 L225,365" stroke="#5a4530" stroke-width="0.6" fill="none" opacity="0.3"/>
+  <path d="M420,420 L430,435 L425,450" stroke="#5a4530" stroke-width="0.6" fill="none" opacity="0.25"/>
+  <path d="M100,490 L110,500 L105,510" stroke="#5a4530" stroke-width="0.6" fill="none" opacity="0.3"/>
+  <path d="M340,280 L350,290 L345,305" stroke="#5a4530" stroke-width="0.6" fill="none" opacity="0.25"/>
+
+  <!-- Dust/fine particles (tiny dots) -->
+  <circle cx="75" cy="50" r="1" fill="#8a7a6a" opacity="0.25"/>
+  <circle cx="160" cy="130" r="1.2" fill="#9a8a7a" opacity="0.2"/>
+  <circle cx="280" cy="30" r="1" fill="#8a7a6a" opacity="0.25"/>
+  <circle cx="400" cy="160" r="1.2" fill="#9a8a7a" opacity="0.2"/>
+  <circle cx="490" cy="50" r="1" fill="#8a7a6a" opacity="0.25"/>
+  <circle cx="30" cy="180" r="1.2" fill="#9a8a7a" opacity="0.2"/>
+  <circle cx="130" cy="260" r="1" fill="#8a7a6a" opacity="0.25"/>
+  <circle cx="360" cy="330" r="1.2" fill="#9a8a7a" opacity="0.2"/>
+  <circle cx="240" cy="420" r="1" fill="#8a7a6a" opacity="0.25"/>
+  <circle cx="470" cy="500" r="1.2" fill="#9a8a7a" opacity="0.2"/>
+</svg>
