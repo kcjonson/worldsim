@@ -87,7 +87,9 @@ namespace Renderer { // NOLINT(readability-identifier-naming)
 			uint8_t				 edgeMask,
 			uint8_t				 cornerMask,
 			uint8_t				 surfaceId,
-			uint8_t				 hardEdgeMask
+			uint8_t				 hardEdgeMask,
+			int32_t				 tileX,
+			int32_t				 tileY
 		);
 
 		// --- Text rendering (MSDF) ---

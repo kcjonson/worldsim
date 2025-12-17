@@ -252,7 +252,9 @@ namespace Renderer {
 		uint8_t				 edgeMask,
 		uint8_t				 cornerMask,
 		uint8_t			 surfaceId,
-		uint8_t			 hardEdgeMask
+		uint8_t			 hardEdgeMask,
+		int32_t			 tileX,
+		int32_t			 tileY
 	) { // NOLINT(readability-convert-member-functions-to-static)
 		uint32_t baseIndex = static_cast<uint32_t>(vertices.size());
 
@@ -261,9 +263,17 @@ namespace Renderer {
 		float centerX = bounds.x + halfW;
 		float centerY = bounds.y + halfH;
 
+		// Pack tile coordinates into a single float for shader use.
+		// Offset by 32768 to handle negative coordinates, then pack X in lower 16 bits, Y in upper 16 bits.
+		// This supports world coordinates from -32768 to +32767 tiles in each dimension.
+		auto packedTileCoord = static_cast<float>(
+			(static_cast<uint32_t>(tileX + 32768) & 0xFFFFU) |
+			((static_cast<uint32_t>(tileY + 32768) & 0xFFFFU) << 16U)
+		);
+
 		Foundation::Vec4 colorVec = color.toVec4();
 		Foundation::Vec4 data1(static_cast<float>(edgeMask), static_cast<float>(cornerMask), static_cast<float>(surfaceId), static_cast<float>(hardEdgeMask));
-		Foundation::Vec4 data2(halfW, halfH, 0.0F, kRenderModeTile);
+		Foundation::Vec4 data2(halfW, halfH, packedTileCoord, kRenderModeTile);
 
 		// Top-left
 		vertices.push_back({

@@ -2,8 +2,8 @@
 
 #include "world/chunk/TileAdjacency.h"
 
-#include <primitives/Primitives.h>
 #include <algorithm>
+#include <primitives/Primitives.h>
 #include <vector>
 
 namespace engine::world {
@@ -28,13 +28,14 @@ namespace engine::world {
 	}
 
 	void ChunkRenderer::addChunkTiles(
-		const Chunk& chunk,
-		const WorldCamera& camera,
+		const Chunk&			chunk,
+		const WorldCamera&		camera,
 		const Foundation::Rect& visibleRect,
-		int viewportWidth,
-		int viewportHeight
+		int						viewportWidth,
+		int						viewportHeight
 	) {
-		WorldPosition chunkOrigin = chunk.worldOrigin();
+		WorldPosition	chunkOrigin = chunk.worldOrigin();
+		ChunkCoordinate chunkCoord = chunk.coordinate();
 
 		float chunkMinX = chunkOrigin.x;
 		float chunkMaxX = chunkOrigin.x + static_cast<float>(kChunkSize) * kTileSize;
@@ -72,7 +73,7 @@ namespace engine::world {
 				TileData tile = chunk.getTile(static_cast<uint16_t>(tileX), static_cast<uint16_t>(tileY));
 				// Tile textures carry their own coloration; use neutral tint to avoid double-darkening.
 				Foundation::Color color = Foundation::Color::white();
-				uint8_t surfaceId = static_cast<uint8_t>(tile.surface);
+				uint8_t			  surfaceId = static_cast<uint8_t>(tile.surface);
 
 				float worldX = chunkMinX + static_cast<float>(tileX) * kTileSize;
 				float worldY = chunkMinY + static_cast<float>(tileY) * kTileSize;
@@ -80,14 +81,20 @@ namespace engine::world {
 				float screenX = (worldX - camX) * scale + halfViewW;
 				float screenY = (worldY - camY) * scale + halfViewH;
 
-				Renderer::Primitives::drawTile({
-					.bounds = Foundation::Rect{screenX, screenY, tileScreenSize, tileScreenSize},
-					.color = color,
-					.edgeMask = TileAdjacency::getEdgeMaskByStack(tile.adjacency, surfaceId),
-					.cornerMask = TileAdjacency::getCornerMaskByStack(tile.adjacency, surfaceId),
-					.surfaceId = surfaceId,
-					.hardEdgeMask = TileAdjacency::getHardEdgeMaskByFamily(tile.adjacency, surfaceId)
-				});
+				// World tile coordinates for procedural edge variation
+				int32_t worldTileX = chunkCoord.x * kChunkSize + tileX;
+				int32_t worldTileY = chunkCoord.y * kChunkSize + tileY;
+
+				Renderer::Primitives::drawTile(
+					{.bounds = Foundation::Rect{screenX, screenY, tileScreenSize, tileScreenSize},
+					 .color = color,
+					 .edgeMask = TileAdjacency::getEdgeMaskByStack(tile.adjacency, surfaceId),
+					 .cornerMask = TileAdjacency::getCornerMaskByStack(tile.adjacency, surfaceId),
+					 .surfaceId = surfaceId,
+					 .hardEdgeMask = TileAdjacency::getHardEdgeMaskByFamily(tile.adjacency, surfaceId),
+					 .tileX = worldTileX,
+					 .tileY = worldTileY}
+				);
 
 				m_lastTileCount++;
 			}
