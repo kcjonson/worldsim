@@ -283,4 +283,33 @@ namespace engine::assets {
 		}
 	};
 
+	// ─────────────────────────────────────────────────────────────────────────
+	// Item Definition System
+	// Item definitions are separate from world entity definitions.
+	// Items exist in inventories and have properties like edible, stackable, etc.
+	// ─────────────────────────────────────────────────────────────────────────
+
+	/// Item definition - defines properties of inventory items
+	/// Items are separate from world entities (Flora_BerryBush vs "Berry" item)
+	struct ItemDefinition {
+		std::string defName; // Unique identifier (e.g., "Berry", "Stick", "Stone")
+		std::string label;	 // Human-readable name
+
+		/// Edible properties (if item can be eaten)
+		std::optional<EdibleCapability> edible;
+
+		/// Check if this item is edible
+		[[nodiscard]] bool isEdible() const { return edible.has_value(); }
+
+		/// Get nutrition value (0 if not edible)
+		[[nodiscard]] float getNutrition() const {
+			return edible.has_value() ? edible->nutrition : 0.0F;
+		}
+
+		/// Get quality (Normal if not edible)
+		[[nodiscard]] CapabilityQuality getQuality() const {
+			return edible.has_value() ? edible->quality : CapabilityQuality::Normal;
+		}
+	};
+
 } // namespace engine::assets

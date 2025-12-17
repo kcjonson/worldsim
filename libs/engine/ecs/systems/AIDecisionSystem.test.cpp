@@ -34,11 +34,22 @@ namespace ecs::test {
 			// Initialize AssetRegistry (singleton) - needed for capability lookups
 			auto& registry = engine::assets::AssetRegistry::Get();
 
+			// Register item definitions for testing (Berry is edible)
+			engine::assets::ItemDefinition berryDef;
+			berryDef.defName = "Berry";
+			berryDef.label = "Berry";
+			berryDef.edible = engine::assets::EdibleCapability{0.3F, engine::assets::CapabilityQuality::Normal, true};
+			registry.registerItemDefinition(std::move(berryDef));
+
 			// Register system with deterministic RNG seed for reproducible tests
 			world->registerSystem<AIDecisionSystem>(registry, kTestRngSeed);
 		}
 
-		void TearDown() override { world.reset(); }
+		void TearDown() override {
+			// Clean up item definitions
+			engine::assets::AssetRegistry::Get().clearItemDefinitions();
+			world.reset();
+		}
 
 		/// Create a colonist entity with all required components for AI decision making
 		/// Note: Includes DecisionTrace which is required for the inventory-aware hunger path
@@ -1087,13 +1098,24 @@ namespace ecs::test {
 
 			auto& registry = engine::assets::AssetRegistry::Get();
 
+			// Register item definitions for testing (Berry is edible)
+			engine::assets::ItemDefinition berryDef;
+			berryDef.defName = "Berry";
+			berryDef.label = "Berry";
+			berryDef.edible = engine::assets::EdibleCapability{0.3F, engine::assets::CapabilityQuality::Normal, true};
+			registry.registerItemDefinition(std::move(berryDef));
+
 			// Register BOTH systems to test their interaction
 			// This is critical - the bug only manifests when both systems run
 			world->registerSystem<AIDecisionSystem>(registry, kTestRngSeed);
 			world->registerSystem<ActionSystem>();
 		}
 
-		void TearDown() override { world.reset(); }
+		void TearDown() override {
+			// Clean up item definitions
+			engine::assets::AssetRegistry::Get().clearItemDefinitions();
+			world.reset();
+		}
 
 		/// Create a colonist with all components needed for full task→action flow
 		EntityID createColonist(glm::vec2 position = {0.0F, 0.0F}) {

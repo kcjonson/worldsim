@@ -110,6 +110,32 @@ namespace engine::assets {
 		/// Get the total number of capability types
 		static constexpr size_t kCapabilityTypeCount = 7;
 
+		// --- Item Definition API ---
+
+		/// Load item definitions from a folder recursively
+		/// Scans for all ItemDef/*.xml files in the folder and subfolders.
+		/// @param folderPath Path to the items folder
+		/// @return Number of item definitions loaded
+		size_t loadItemDefinitionsFromFolder(const std::string& folderPath);
+
+		/// Get an item definition by name
+		/// @param defName The item name (e.g., "Berry", "Stick")
+		/// @return Pointer to definition, or nullptr if not found
+		[[nodiscard]] const ItemDefinition* getItemDefinition(const std::string& defName) const;
+
+		/// Get all item definition names
+		[[nodiscard]] std::vector<std::string> getItemDefinitionNames() const;
+
+		/// Get all edible item names (convenience method for AI)
+		[[nodiscard]] std::vector<std::string> getEdibleItemNames() const;
+
+		/// Register an item definition programmatically (for testing)
+		/// @param def The item definition to register
+		void registerItemDefinition(ItemDefinition def);
+
+		/// Clear all item definitions (for testing)
+		void clearItemDefinitions();
+
 	  private:
 		AssetRegistry() = default;
 
@@ -124,6 +150,9 @@ namespace engine::assets {
 
 		std::unordered_map<std::string, AssetDefinition>		   definitions;
 		std::unordered_map<std::string, renderer::TessellatedMesh> templateCache;
+
+		// Item definitions storage
+		std::unordered_map<std::string, ItemDefinition> m_itemDefinitions;
 
 		// Group index: group name → list of defNames that belong to it
 		std::unordered_map<std::string, std::vector<std::string>> groupIndex;

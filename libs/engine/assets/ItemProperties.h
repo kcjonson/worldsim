@@ -2,63 +2,60 @@
 
 // Item Properties Lookup
 //
-// Provides edible/consumable properties for inventory items.
-// This is a transitional solution until full item definitions are implemented.
+// Provides edible/consumable properties for inventory items by querying
+// the AssetRegistry for ItemDefinition data loaded from XML files.
 //
-// Current items and their sources:
+// Item XML files are located in: assets/world/items/{ItemName}/{ItemName}.xml
+//
+// Current items:
 // - "Berry" → Harvested from BerryBush (edible, nutrition 0.3)
 // - "Stick" → Harvested from WoodyBush (not edible, crafting material)
 // - "Stone" → Picked up from SmallStone (not edible, crafting material)
-//
-// Future: Replace with proper item definitions parsed from XML (Items/Berry.xml, etc.)
 
 #include "AssetDefinition.h"
+#include "AssetRegistry.h"
 
 #include <optional>
 #include <string>
-#include <unordered_map>
+#include <vector>
 
 namespace engine::assets {
 
-	/// Properties of an edible item
+	/// Properties of an edible item (extracted from ItemDefinition)
 	struct EdibleItemInfo {
 		float			  nutrition = 0.3F; // 0-1 scale, how much hunger is restored
 		CapabilityQuality quality = CapabilityQuality::Normal;
 	};
 
 	/// Lookup edible properties for an item by defName.
-	/// Returns std::nullopt if item is not edible.
+	/// Queries the AssetRegistry for ItemDefinition data loaded from XML.
+	/// Returns std::nullopt if item is not edible or not found.
 	///
 	/// @param itemDefName Item definition name (e.g., "Berry", "Stick")
 	/// @return Edible properties if item is edible, nullopt otherwise
 	[[nodiscard]] inline std::optional<EdibleItemInfo> getEdibleItemInfo(const std::string& itemDefName) {
-		// Known edible items and their properties
-		// TODO: Replace with parsed item definitions (Items/*.xml)
-		static const std::unordered_map<std::string, EdibleItemInfo> kEdibleItems = {
-			{"Berry", {0.3F, CapabilityQuality::Normal}},
-			// Future edible items:
-			// {"Apple", {0.4F, CapabilityQuality::Good}},
-			// {"CookedMeat", {0.6F, CapabilityQuality::Good}},
-			// {"RawMeat", {0.3F, CapabilityQuality::Poor}},
-		};
-
-		auto iter = kEdibleItems.find(itemDefName);
-		if (iter != kEdibleItems.end()) {
-			return iter->second;
+		const auto* itemDef = AssetRegistry::Get().getItemDefinition(itemDefName);
+		if (itemDef == nullptr || !itemDef->isEdible()) {
+			return std::nullopt;
 		}
-		return std::nullopt;
+
+		EdibleItemInfo info;
+		info.nutrition = itemDef->getNutrition();
+		info.quality = itemDef->getQuality();
+		return info;
 	}
 
 	/// Check if an item is edible (convenience wrapper)
+	/// Queries the AssetRegistry for ItemDefinition data.
 	[[nodiscard]] inline bool isItemEdible(const std::string& itemDefName) {
-		return getEdibleItemInfo(itemDefName).has_value();
+		const auto* itemDef = AssetRegistry::Get().getItemDefinition(itemDefName);
+		return itemDef != nullptr && itemDef->isEdible();
 	}
 
 	/// Get all known edible item names (for AI to check inventory)
+	/// Returns all items with EdibleCapability from the AssetRegistry.
 	[[nodiscard]] inline std::vector<std::string> getEdibleItemNames() {
-		// Return list of all edible items
-		// TODO: Replace with dynamic lookup from parsed item definitions
-		return {"Berry"};
+		return AssetRegistry::Get().getEdibleItemNames();
 	}
 
 } // namespace engine::assets

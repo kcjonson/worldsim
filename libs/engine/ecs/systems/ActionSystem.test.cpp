@@ -13,6 +13,8 @@
 #include "../components/Task.h"
 #include "../components/Transform.h"
 
+#include "assets/AssetRegistry.h"
+
 #include <gtest/gtest.h>
 
 namespace ecs::test {
@@ -155,10 +157,22 @@ class ActionSystemTest : public ::testing::Test {
   protected:
 	void SetUp() override {
 		world = std::make_unique<World>();
+
+		// Register item definitions for testing (Berry is edible)
+		engine::assets::ItemDefinition berryDef;
+		berryDef.defName = "Berry";
+		berryDef.label = "Berry";
+		berryDef.edible = engine::assets::EdibleCapability{0.3F, engine::assets::CapabilityQuality::Normal, true};
+		engine::assets::AssetRegistry::Get().registerItemDefinition(std::move(berryDef));
+
 		world->registerSystem<ActionSystem>();
 	}
 
-	void TearDown() override { world.reset(); }
+	void TearDown() override {
+		// Clean up item definitions
+		engine::assets::AssetRegistry::Get().clearItemDefinitions();
+		world.reset();
+	}
 
 	/// Create a colonist entity with all required components for action processing
 	EntityID createColonist(glm::vec2 position = {0.0F, 0.0F}) {
