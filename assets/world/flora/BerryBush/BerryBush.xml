@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- Berry Bush Asset Definition
-     Food source with Edible capability.
-     Used by colonists to restore hunger.
+     Harvestable food source - colonists harvest berries into inventory.
+     Non-destructive harvest with 60s regrowth.
 -->
 <AssetDefinitions>
   <AssetDef>

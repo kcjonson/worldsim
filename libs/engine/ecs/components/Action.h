@@ -34,11 +34,10 @@ namespace ecs {
 		None = 0,
 
 		// Need Fulfillment Actions
-		Eat,			   // DEPRECATED: Direct eating from world entity (being phased out)
-		Drink,			   // Drinking from water tile (Pond)
-		Sleep,			   // Sleeping on ground or bed
-		Toilet,			   // Using toilet or ground relief
-		EatFromInventory,  // Consuming food item from inventory
+		Eat,	 // Consuming food item from inventory
+		Drink,	 // Drinking from water tile (Pond)
+		Sleep,	 // Sleeping on ground or bed
+		Toilet,	 // Using toilet or ground relief
 
 		// Resource Collection Actions
 		Pickup,	   // Pick up ground item directly into inventory
@@ -101,7 +100,7 @@ namespace ecs {
 		float regrowthTime = 0.0F;
 	};
 
-	/// Effect for consuming items from inventory (EatFromInventory)
+	/// Effect for consuming items from inventory (Eat action)
 	/// Removes item from inventory and restores a need.
 	struct ConsumptionEffect {
 		/// Item definition name to consume from inventory
@@ -230,21 +229,23 @@ namespace ecs {
 
 		// --- Factory methods for creating actions ---
 
-		/// Factory: Eat action - restores hunger, fills digestion
-		/// @param nutrition Amount of hunger to restore (0.0-1.0 maps to 0-100%)
-		static Action Eat(float nutrition) {
+		/// Factory: Eat action - consume food from inventory
+		/// Colonists always eat from inventory. Food must be harvested/collected first.
+		/// @param itemDefName Item to consume from inventory
+		/// @param nutrition Amount of hunger to restore (0-1 scale)
+		static Action Eat(const std::string& itemDefName, float nutrition) {
 			Action action;
 			action.type = ActionType::Eat;
 			action.state = ActionState::Starting;
 			action.duration = 2.0F;		  // 2 seconds to eat
 			action.interruptable = false; // Can't stop mid-bite!
 
-			NeedEffect needEff;
-			needEff.need = NeedType::Hunger;
-			needEff.restoreAmount = nutrition * 100.0F;
-			needEff.sideEffectNeed = NeedType::Digestion;
-			needEff.sideEffectAmount = -20.0F; // Eating DECREASES digestion (fills gut)
-			action.effect = needEff;
+			ConsumptionEffect consumeEff;
+			consumeEff.itemDefName = itemDefName;
+			consumeEff.quantity = 1;
+			consumeEff.need = NeedType::Hunger;
+			consumeEff.restoreAmount = nutrition * 100.0F;
+			action.effect = consumeEff;
 
 			return action;
 		}
@@ -397,25 +398,6 @@ namespace ecs {
 			return action;
 		}
 
-		/// Factory: EatFromInventory action - consume food from inventory
-		/// @param itemDefName Item to consume from inventory
-		/// @param nutrition Amount of hunger to restore (0-1 scale)
-		static Action EatFromInventory(const std::string& itemDefName, float nutrition) {
-			Action action;
-			action.type = ActionType::EatFromInventory;
-			action.state = ActionState::Starting;
-			action.duration = 2.0F;		  // Same as regular eating
-			action.interruptable = false; // Can't stop mid-bite
-
-			ConsumptionEffect consumeEff;
-			consumeEff.itemDefName = itemDefName;
-			consumeEff.quantity = 1;
-			consumeEff.need = NeedType::Hunger;
-			consumeEff.restoreAmount = nutrition * 100.0F;
-			action.effect = consumeEff;
-
-			return action;
-		}
 	};
 
 	/// Get human-readable name for action type (for debug logging)
@@ -431,8 +413,6 @@ namespace ecs {
 				return "Sleep";
 			case ActionType::Toilet:
 				return "Toilet";
-			case ActionType::EatFromInventory:
-				return "EatFromInventory";
 			case ActionType::Pickup:
 				return "Pickup";
 			case ActionType::Harvest:

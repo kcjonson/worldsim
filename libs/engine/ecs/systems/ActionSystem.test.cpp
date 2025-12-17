@@ -22,16 +22,17 @@ namespace ecs::test {
 // =============================================================================
 
 TEST(ActionFactoryTest, EatActionCreation) {
-	auto action = Action::Eat(0.5F);
+	auto action = Action::Eat("Berry", 0.5F);
 
 	EXPECT_EQ(action.type, ActionType::Eat);
 	EXPECT_EQ(action.state, ActionState::Starting);
 	EXPECT_FLOAT_EQ(action.duration, 2.0F);
 	EXPECT_FLOAT_EQ(action.elapsed, 0.0F);
 
-	// Check variant-based effect
-	ASSERT_TRUE(action.hasNeedEffect());
-	const auto& effect = action.needEffect();
+	// Check variant-based effect - Eat now uses ConsumptionEffect
+	ASSERT_TRUE(action.hasConsumptionEffect());
+	const auto& effect = action.consumptionEffect();
+	EXPECT_EQ(effect.itemDefName, "Berry");
 	EXPECT_EQ(effect.need, NeedType::Hunger);
 	EXPECT_FLOAT_EQ(effect.restoreAmount, 50.0F); // 0.5 * 100
 }
@@ -114,7 +115,7 @@ TEST(ActionFactoryTest, ToiletActionCreation_Both) {
 }
 
 TEST(ActionFactoryTest, ActionClear) {
-	auto action = Action::Eat(0.8F);
+	auto action = Action::Eat("Berry", 0.8F);
 	action.elapsed = 1.5F;
 	action.state = ActionState::InProgress;
 
@@ -124,19 +125,19 @@ TEST(ActionFactoryTest, ActionClear) {
 	EXPECT_EQ(action.state, ActionState::Starting);
 	EXPECT_FLOAT_EQ(action.duration, 0.0F);
 	EXPECT_FLOAT_EQ(action.elapsed, 0.0F);
-	EXPECT_FALSE(action.hasNeedEffect()); // Effect variant reset to monostate
+	EXPECT_FALSE(action.hasConsumptionEffect()); // Effect variant reset to monostate
 }
 
 TEST(ActionFactoryTest, ActionIsActive) {
 	Action action{};
 	EXPECT_FALSE(action.isActive());
 
-	action = Action::Eat(0.5F);
+	action = Action::Eat("Berry", 0.5F);
 	EXPECT_TRUE(action.isActive());
 }
 
 TEST(ActionFactoryTest, ActionProgress) {
-	auto action = Action::Eat(0.5F);
+	auto action = Action::Eat("Berry", 0.5F);
 	EXPECT_FLOAT_EQ(action.progress(), 0.0F);
 
 	action.elapsed = 1.0F;
@@ -232,7 +233,7 @@ TEST_F(ActionSystemTest, StartsEatActionOnArrival) {
 
 	auto* action = world->getComponent<Action>(colonist);
 	EXPECT_TRUE(action->isActive());
-	EXPECT_EQ(action->type, ActionType::EatFromInventory);
+	EXPECT_EQ(action->type, ActionType::Eat);
 }
 
 TEST_F(ActionSystemTest, StartsDrinkActionOnArrival) {

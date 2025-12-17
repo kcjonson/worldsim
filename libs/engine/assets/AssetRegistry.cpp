@@ -535,13 +535,13 @@ namespace engine::assets {
 					def.capabilities.waste = WasteCapability{};
 				}
 
-				// Pickupable capability (ground items like stones)
-				pugi::xml_node pickupableNode = capabilitiesNode.child("pickupable");
-				if (pickupableNode) {
-					PickupableCapability pickupable;
-					pickupable.itemDefName = pickupableNode.attribute("item").as_string("");
-					pickupable.quantity = pickupableNode.attribute("quantity").as_uint(1);
-					def.capabilities.pickupable = pickupable;
+				// Carryable capability (ground items like stones)
+				pugi::xml_node carryableNode = capabilitiesNode.child("carryable");
+				if (carryableNode) {
+					CarryableCapability carryable;
+					carryable.itemDefName = carryableNode.attribute("item").as_string("");
+					carryable.quantity = carryableNode.attribute("quantity").as_uint(1);
+					def.capabilities.carryable = carryable;
 				}
 
 				// Harvestable capability (bushes, plants that yield resources)
@@ -926,8 +926,8 @@ namespace engine::assets {
 			if (def.capabilities.waste.has_value()) {
 				mask |= (1 << static_cast<uint8_t>(CapabilityType::Waste));
 			}
-			if (def.capabilities.pickupable.has_value()) {
-				mask |= (1 << static_cast<uint8_t>(CapabilityType::Pickupable));
+			if (def.capabilities.carryable.has_value()) {
+				mask |= (1 << static_cast<uint8_t>(CapabilityType::Carryable));
 			}
 			if (def.capabilities.harvestable.has_value()) {
 				mask |= (1 << static_cast<uint8_t>(CapabilityType::Harvestable));

@@ -219,12 +219,12 @@ Actions use static factory methods instead of constructors:
 
 ```cpp
 // Good - factory with meaningful name and clear parameters
-auto action = Action::Eat(nutrition);
+auto action = Action::Eat(itemDefName, nutrition);
 auto action = Action::Sleep(quality);
 auto action = Action::Craft(recipeId, ingredients);
 
-// Avoid - constructor with many parameters
-Action action(ActionType::Eat, 2.0F, NeedType::Hunger, nutrition * 100.0F, ...);
+// Avoid - constructor with many parameters (no longer valid)
+// Action action(ActionType::Eat, ...);
 ```
 
 **Benefits:**

@@ -13,7 +13,7 @@
 // - Future: weight-based capacity can replace slot-based if needed
 //
 // Related docs:
-// - /docs/design/game-systems/colonists/inventory.md (when created)
+// - /docs/design/game-systems/colonists/inventory.md (TODO: create)
 
 #include <cstdint>
 #include <string>
@@ -34,9 +34,12 @@ struct Inventory {
 	std::unordered_map<std::string, uint32_t> items;
 
 	/// Maximum number of distinct item types (slots)
+	/// NOTE: Temporary default. Future: modified by equipment (backpacks),
+	/// colonist attributes (strength), and entity type.
 	uint32_t maxCapacity = 10;
 
 	/// Maximum quantity per item stack
+	/// NOTE: Temporary default. Future: may vary by item type (heavy vs light).
 	uint32_t maxStackSize = 99;
 
 	// ============================================================================

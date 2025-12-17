@@ -108,8 +108,8 @@ namespace ecs {
 			case NeedType::Hunger: {
 				// Priority 1: Check inventory for food
 				if (inventory.hasItem(kFoodItemBerry)) {
-					action = Action::EatFromInventory(kFoodItemBerry, kBerryNutrition);
-					LOG_DEBUG(Engine, "[Action] Creating EatFromInventory action (has %u berries)",
+					action = Action::Eat(kFoodItemBerry, kBerryNutrition);
+					LOG_DEBUG(Engine, "[Action] Creating Eat action (has %u berries)",
 							  inventory.getQuantity(kFoodItemBerry));
 					break;
 				}
@@ -303,7 +303,7 @@ namespace ecs {
 			}
 		}
 
-		// Handle consumption effects (EatFromInventory)
+		// Handle consumption effects (Eat action)
 		if (action.hasConsumptionEffect()) {
 			const auto& consumeEff = action.consumptionEffect();
 

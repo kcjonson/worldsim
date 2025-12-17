@@ -20,7 +20,7 @@
 
     <!-- Entity capabilities -->
     <capabilities>
-      <pickupable item="Stone" quantity="1"/>
+      <carryable item="Stone" quantity="1"/>
     </capabilities>
 
     <!-- Per-biome placement configuration -->
@@ -33,7 +33,7 @@
 
       <!-- Grassland: Very sparse, scattered naturally -->
       <biome name="Grassland">
-        <spawnChance>0.008</spawnChance>
+        <spawnChance>0.02</spawnChance>
         <distribution>uniform</distribution>
       </biome>
 

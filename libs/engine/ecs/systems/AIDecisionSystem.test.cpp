@@ -55,12 +55,6 @@ namespace ecs::test {
 			return entity;
 		}
 
-		/// Create a colonist with DecisionTrace component for trace-based testing
-		/// Note: Same as createColonist() now that DecisionTrace is always added
-		EntityID createColonistWithTrace(glm::vec2 position = {0.0F, 0.0F}) {
-			return createColonist(position);
-		}
-
 		/// Get the decision trace for an entity
 		DecisionTrace* getTrace(EntityID entity) { return world->getComponent<DecisionTrace>(entity); }
 
@@ -682,7 +676,7 @@ namespace ecs::test {
 	// =============================================================================
 
 	TEST_F(AIDecisionSystemTest, TraceContainsAllNeedsPlusWander) {
-		auto colonist = createColonistWithTrace({0.0F, 0.0F});
+		auto colonist = createColonist({0.0F, 0.0F});
 
 		// All needs satisfied
 		setNeedValue(colonist, NeedType::Hunger, 100.0F);
@@ -737,7 +731,7 @@ namespace ecs::test {
 	}
 
 	TEST_F(AIDecisionSystemTest, TraceOptionsSortedByPriority) {
-		auto colonist = createColonistWithTrace({0.0F, 0.0F});
+		auto colonist = createColonist({0.0F, 0.0F});
 
 		// Add berry bush for hunger - uses Harvestable
 		addKnownEntity(colonist, {5.0F, 0.0F}, kBerryBushDefId, engine::assets::CapabilityType::Harvestable);
@@ -763,7 +757,7 @@ namespace ecs::test {
 	}
 
 	TEST_F(AIDecisionSystemTest, TraceMarksFirstActionableAsSelected) {
-		auto colonist = createColonistWithTrace({0.0F, 0.0F});
+		auto colonist = createColonist({0.0F, 0.0F});
 
 		// Give colonist berries so hunger has a valid fulfillment path
 		auto* inventory = world->getComponent<Inventory>(colonist);
@@ -798,7 +792,7 @@ namespace ecs::test {
 	}
 
 	TEST_F(AIDecisionSystemTest, TraceShowsNoSourceWhenNotInMemory) {
-		auto colonist = createColonistWithTrace({0.0F, 0.0F});
+		auto colonist = createColonist({0.0F, 0.0F});
 
 		// Hunger needs attention, but NO food in memory
 		setNeedValue(colonist, NeedType::Hunger, 40.0F);
@@ -826,7 +820,7 @@ namespace ecs::test {
 	}
 
 	TEST_F(AIDecisionSystemTest, TraceShowsSatisfiedForHighNeeds) {
-		auto colonist = createColonistWithTrace({0.0F, 0.0F});
+		auto colonist = createColonist({0.0F, 0.0F});
 
 		// All needs fully satisfied
 		setNeedValue(colonist, NeedType::Hunger, 100.0F);
@@ -849,7 +843,7 @@ namespace ecs::test {
 	}
 
 	TEST_F(AIDecisionSystemTest, TraceGroundFallbackForEnergyAndBladder) {
-		auto colonist = createColonistWithTrace({5.0F, 5.0F});
+		auto colonist = createColonist({5.0F, 5.0F});
 
 		// Energy and Bladder need attention, no entities in memory
 		// Note: Energy/Bladder seek threshold is 30%, so values must be < 30% to be actionable
@@ -896,7 +890,7 @@ namespace ecs::test {
 	}
 
 	TEST_F(AIDecisionSystemTest, TraceTaskMatchesSelectedOption) {
-		auto colonist = createColonistWithTrace({0.0F, 0.0F});
+		auto colonist = createColonist({0.0F, 0.0F});
 
 		// Add berry bush - uses Harvestable
 		glm::vec2 berryPosition = {8.0F, 3.0F};
@@ -929,7 +923,7 @@ namespace ecs::test {
 	}
 
 	TEST_F(AIDecisionSystemTest, TraceDisplayCountRespectsCap) {
-		auto colonist = createColonistWithTrace({0.0F, 0.0F});
+		auto colonist = createColonist({0.0F, 0.0F});
 
 		world->update(0.016F);
 
@@ -943,7 +937,7 @@ namespace ecs::test {
 	}
 
 	TEST_F(AIDecisionSystemTest, TraceClearedOnReEvaluation) {
-		auto colonist = createColonistWithTrace({0.0F, 0.0F});
+		auto colonist = createColonist({0.0F, 0.0F});
 
 		setNeedValue(colonist, NeedType::Hunger, 100.0F);
 		setNeedValue(colonist, NeedType::Thirst, 100.0F);
@@ -1052,7 +1046,7 @@ namespace ecs::test {
 	}
 
 	TEST_F(AIDecisionSystemTest, TraceCriticalNeedHasHighestPriority) {
-		auto colonist = createColonistWithTrace({0.0F, 0.0F});
+		auto colonist = createColonist({0.0F, 0.0F});
 
 		// Give colonist berries so hunger has a valid fulfillment path
 		auto* inventory = world->getComponent<Inventory>(colonist);
@@ -1208,7 +1202,7 @@ namespace ecs::test {
 
 		float initialHunger = 30.0F;
 
-		// Run updates to complete the eat action (EatFromInventory is ~2.0s duration)
+		// Run updates to complete the eat action (Eat is ~2.0s duration)
 		for (int i = 0; i < 30; ++i) {
 			world->update(0.1F);
 		}

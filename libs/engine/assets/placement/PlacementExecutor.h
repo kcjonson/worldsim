@@ -204,7 +204,7 @@ namespace engine::assets {
 			std::string			   defName;
 			float				   remainingTime;
 		};
-		std::vector<EntityCooldown> m_cooldowns;
+		std::vector<EntityCooldown> cooldowns;
 
 		/// Build dependency graph from asset definitions
 		void buildDependencyGraph();
