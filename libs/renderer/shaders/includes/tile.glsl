@@ -162,14 +162,16 @@ float computeTileEdgeDarkening(
     // Interior corners are quarter-circles that smoothly connect adjacent edges.
     // The corner radius uses the average of the two edge widths meeting at that corner.
     // Corner bits: 0=NW, 1=NE, 2=SE, 3=SW
+    // Use kHardEdgeDarkenFactor if either adjacent edge is a hard edge for visual consistency.
 
     // NW corner (top-left): connects north edge (at x=0) and west edge (at y=0)
     if ((cornerMask & 0x1u) != 0u) {
-        // Get edge widths at the corner point (uv near 0,0)
         float nwRadius = (nThreshold + wThreshold) * 0.5;
         float distNW = length(uv);  // distance from corner (0,0)
         if (distNW < nwRadius) {
-            darkenFactor = min(darkenFactor, kEdgeDarkenFactor);
+            // Use hard darken if either N (0x80) or W (0x02) is a hard edge
+            bool nwHard = ((hardEdgeMask & 0x80u) != 0u) || ((hardEdgeMask & 0x02u) != 0u);
+            darkenFactor = min(darkenFactor, nwHard ? kHardEdgeDarkenFactor : kEdgeDarkenFactor);
         }
     }
 
@@ -178,7 +180,9 @@ float computeTileEdgeDarkening(
         float neRadius = (nThreshold + eThreshold) * 0.5;
         float distNE = length(vec2(1.0 - uv.x, uv.y));  // distance from corner (1,0)
         if (distNE < neRadius) {
-            darkenFactor = min(darkenFactor, kEdgeDarkenFactor);
+            // Use hard darken if either N (0x80) or E (0x20) is a hard edge
+            bool neHard = ((hardEdgeMask & 0x80u) != 0u) || ((hardEdgeMask & 0x20u) != 0u);
+            darkenFactor = min(darkenFactor, neHard ? kHardEdgeDarkenFactor : kEdgeDarkenFactor);
         }
     }
 
@@ -187,7 +191,9 @@ float computeTileEdgeDarkening(
         float seRadius = (sThreshold + eThreshold) * 0.5;
         float distSE = length(vec2(1.0 - uv.x, 1.0 - uv.y));  // distance from corner (1,1)
         if (distSE < seRadius) {
-            darkenFactor = min(darkenFactor, kEdgeDarkenFactor);
+            // Use hard darken if either S (0x08) or E (0x20) is a hard edge
+            bool seHard = ((hardEdgeMask & 0x08u) != 0u) || ((hardEdgeMask & 0x20u) != 0u);
+            darkenFactor = min(darkenFactor, seHard ? kHardEdgeDarkenFactor : kEdgeDarkenFactor);
         }
     }
 
@@ -196,7 +202,9 @@ float computeTileEdgeDarkening(
         float swRadius = (sThreshold + wThreshold) * 0.5;
         float distSW = length(vec2(uv.x, 1.0 - uv.y));  // distance from corner (0,1)
         if (distSW < swRadius) {
-            darkenFactor = min(darkenFactor, kEdgeDarkenFactor);
+            // Use hard darken if either S (0x08) or W (0x02) is a hard edge
+            bool swHard = ((hardEdgeMask & 0x08u) != 0u) || ((hardEdgeMask & 0x02u) != 0u);
+            darkenFactor = min(darkenFactor, swHard ? kHardEdgeDarkenFactor : kEdgeDarkenFactor);
         }
     }
 
