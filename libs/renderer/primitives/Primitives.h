@@ -184,6 +184,8 @@ namespace Renderer {
 			uint8_t          cornerMask = 0; // NW,NE,SE,SW bits (0-3)
 			uint8_t          surfaceId = 0;  // Surface type id (0-255)
 			uint8_t          hardEdgeMask = 0; // Family-based hard edges (8 dirs)
+			int32_t          tileX = 0;    // World tile coordinate X (for procedural edge variation)
+			int32_t          tileY = 0;    // World tile coordinate Y (for procedural edge variation)
 		};
 
 		// Draw a tile quad with adjacency-packed data for shader use

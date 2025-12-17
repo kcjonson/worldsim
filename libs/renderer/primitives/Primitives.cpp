@@ -316,7 +316,11 @@ namespace Renderer::Primitives {
 			return;
 		}
 
-		g_batchRenderer->addTileQuad(args.bounds, args.color, args.edgeMask, args.cornerMask, args.surfaceId, args.hardEdgeMask);
+		g_batchRenderer->addTileQuad(
+			args.bounds, args.color,
+			args.edgeMask, args.cornerMask, args.surfaceId, args.hardEdgeMask,
+			args.tileX, args.tileY
+		);
 	}
 
 	void drawCircle(const CircleArgs& args) {
