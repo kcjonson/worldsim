@@ -131,15 +131,15 @@ namespace engine::world {
 		auto getSurfaces = [](Biome b) -> std::pair<Surface, Surface> {
 			switch (b) {
 				case Biome::Grassland:
-					return {Surface::Soil, Surface::Dirt};
+					return {Surface::Grass, Surface::Dirt};
 				case Biome::Forest:
-					return {Surface::Soil, Surface::Dirt};
+					return {Surface::Grass, Surface::Dirt};
 				case Biome::Desert:
 					return {Surface::Sand, Surface::Rock};
 				case Biome::Tundra:
 					return {Surface::Snow, Surface::Rock};
 				case Biome::Wetland:
-					return {Surface::Water, Surface::Soil};
+					return {Surface::Water, Surface::Grass};
 				case Biome::Mountain:
 					return {Surface::Rock, Surface::Snow};
 				case Biome::Beach:
@@ -147,7 +147,7 @@ namespace engine::world {
 				case Biome::Ocean:
 					return {Surface::Water, Surface::Water};
 				default:
-					return {Surface::Soil, Surface::Dirt};
+					return {Surface::Grass, Surface::Dirt};
 			}
 		};
 
@@ -259,8 +259,8 @@ namespace engine::world {
 
 	Foundation::Color Chunk::getSurfaceColor(Surface surface) {
 		switch (surface) {
-			case Surface::Soil:
-				return Foundation::Color(0.29F, 0.49F, 0.25F, 1.0F);
+			case Surface::Grass:
+				return Foundation::Color(0.29F, 0.49F, 0.25F, 1.0F); // #4a7c3f
 
 			case Surface::Dirt:
 				return Foundation::Color(0.45F, 0.35F, 0.25F, 1.0F);
@@ -279,6 +279,15 @@ namespace engine::world {
 
 			case Surface::Mud:
 				return Foundation::Color(0.35F, 0.25F, 0.15F, 1.0F); // Darker brown than Dirt
+
+			case Surface::GrassTall:
+				return Foundation::Color(0.25F, 0.45F, 0.22F, 1.0F); // Slightly darker green
+
+			case Surface::GrassShort:
+				return Foundation::Color(0.35F, 0.45F, 0.28F, 1.0F); // Yellow-green, drier
+
+			case Surface::GrassMeadow:
+				return Foundation::Color(0.22F, 0.42F, 0.20F, 1.0F); // Lush deep green
 
 			default:
 				return Foundation::Color(0.5F, 0.5F, 0.5F, 1.0F);

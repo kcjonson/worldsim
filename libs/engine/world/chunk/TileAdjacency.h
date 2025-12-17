@@ -128,8 +128,8 @@ namespace engine::world::TileAdjacency {
 	/// Surface stacking order - higher values are "on top" and draw edges over lower surfaces.
 	/// When a tile is adjacent to a lower-stacked surface, it draws an edge on that side.
 	[[nodiscard]] inline int getSurfaceStackOrder(uint8_t surfaceId) {
-		// Stack order from bottom to top:
-		// Water (0) < Mud (1) < Sand (2) < Dirt (3) < Soil (4) < Rock (5) < Snow (6)
+		// Stack order from bottom to top (by visual priority):
+		// Water < Mud < Sand < Dirt < Grass variants < Rock < Snow
 		switch (surfaceId) {
 			case 4:
 				return 0; // Water - lowest
@@ -139,14 +139,17 @@ namespace engine::world::TileAdjacency {
 				return 2; // Sand
 			case 1:
 				return 3; // Dirt
-			case 0:
-				return 4; // Soil
+			case 0:  // Grass
+			case 7:  // GrassTall
+			case 8:  // GrassShort
+			case 9:  // GrassMeadow
+				return 4; // All grass types at same level
 			case 3:
 				return 5; // Rock
 			case 5:
 				return 6; // Snow - highest
 			default:
-				return 4; // Default to Soil level
+				return 4; // Default to Grass level
 		}
 	}
 

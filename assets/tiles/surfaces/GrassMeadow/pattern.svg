@@ -1,0 +1,143 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- GrassMeadow Pattern - Lush meadow variant, thick coverage (Rimworld-style)
+     512x512 SVG covering 8x8 game tiles (64px per tile)
+     VISUAL STYLE: Darker, richer earth base with dense grass (~60-70% coverage)
+     Deeper green hues, healthy-looking meadow grass
+     Must tile seamlessly (elements at edges wrap)
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- Darker, richer earth base: #7A6345 (fertile soil) -->
+  <rect width="512" height="512" fill="#7A6345"/>
+
+  <!-- Earth tone variation patches - darker fertile soil areas -->
+  <ellipse cx="70" cy="70" rx="55" ry="40" fill="#6A5335" opacity="0.3"/>
+  <ellipse cx="320" cy="100" rx="65" ry="45" fill="#8A7355" opacity="0.25"/>
+  <ellipse cx="180" cy="280" rx="60" ry="45" fill="#6A5335" opacity="0.25"/>
+  <ellipse cx="440" cy="360" rx="55" ry="40" fill="#8A7355" opacity="0.2"/>
+  <ellipse cx="100" cy="430" rx="50" ry="35" fill="#6A5335" opacity="0.25"/>
+  <ellipse cx="490" cy="70" rx="45" ry="50" fill="#8A7355" opacity="0.22"/>
+
+  <!-- Fewer dirt speckles - mostly covered by grass -->
+  <circle cx="150" cy="50" r="2.5" fill="#5a4a3a" opacity="0.25"/>
+  <circle cx="350" cy="220" r="2" fill="#4a3a2a" opacity="0.3"/>
+  <circle cx="30" cy="320" r="2.5" fill="#5a4a3a" opacity="0.25"/>
+  <circle cx="260" cy="500" r="2" fill="#4a3a2a" opacity="0.3"/>
+
+  <!-- DENSE GRASS BLADES - High density (~60-70% coverage) -->
+  <!-- Cluster 1 (top-left) - Dense with deeper greens -->
+  <path d="M30,50 l1,-8" stroke="#3a6c32" stroke-width="2.5" stroke-linecap="round" opacity="0.9"/>
+  <path d="M38,55 l0.5,-7" stroke="#2d5b28" stroke-width="2.2" stroke-linecap="round" opacity="0.85"/>
+  <path d="M45,48 l-0.5,-8" stroke="#4a7c3f" stroke-width="2.5" stroke-linecap="round" opacity="0.9"/>
+  <path d="M52,58 l0,-7" stroke="#3a6c32" stroke-width="2.2" stroke-linecap="round" opacity="0.85"/>
+  <path d="M60,45 l1,-8" stroke="#2d5b28" stroke-width="2.5" stroke-linecap="round" opacity="0.9"/>
+  <path d="M68,52 l-0.5,-7" stroke="#4a7c3f" stroke-width="2.2" stroke-linecap="round" opacity="0.85"/>
+  <path d="M78,48 l0,-8" stroke="#3a6c32" stroke-width="2.5" stroke-linecap="round" opacity="0.9"/>
+  <path d="M85,58 l0.5,-7" stroke="#2d5b28" stroke-width="2.2" stroke-linecap="round" opacity="0.85"/>
+  <path d="M95,50 l-0.5,-8" stroke="#4a7c3f" stroke-width="2.5" stroke-linecap="round" opacity="0.9"/>
+
+  <!-- Cluster 2 (top-center) -->
+  <path d="M170,35 l0,-8" stroke="#3a6c32" stroke-width="2.5" stroke-linecap="round" opacity="0.9"/>
+  <path d="M178,42 l0.5,-7" stroke="#2d5b28" stroke-width="2.2" stroke-linecap="round" opacity="0.85"/>
+  <path d="M188,38 l-0.5,-8" stroke="#4a7c3f" stroke-width="2.5" stroke-linecap="round" opacity="0.9"/>
+  <path d="M196,48 l0,-7" stroke="#3a6c32" stroke-width="2.2" stroke-linecap="round" opacity="0.85"/>
+  <path d="M205,35 l1,-8" stroke="#2d5b28" stroke-width="2.5" stroke-linecap="round" opacity="0.9"/>
+  <path d="M215,45 l-0.5,-7" stroke="#4a7c3f" stroke-width="2.2" stroke-linecap="round" opacity="0.85"/>
+  <path d="M225,40 l0,-8" stroke="#3a6c32" stroke-width="2.5" stroke-linecap="round" opacity="0.9"/>
+
+  <!-- Cluster 3 (top-right) -->
+  <path d="M380,38 l0,-8" stroke="#3a6c32" stroke-width="2.5" stroke-linecap="round" opacity="0.9"/>
+  <path d="M388,45 l0.5,-7" stroke="#2d5b28" stroke-width="2.2" stroke-linecap="round" opacity="0.85"/>
+  <path d="M398,35 l-0.5,-8" stroke="#4a7c3f" stroke-width="2.5" stroke-linecap="round" opacity="0.9"/>
+  <path d="M408,48 l0,-7" stroke="#3a6c32" stroke-width="2.2" stroke-linecap="round" opacity="0.85"/>
+  <path d="M418,40 l1,-8" stroke="#2d5b28" stroke-width="2.5" stroke-linecap="round" opacity="0.9"/>
+  <path d="M428,52 l-0.5,-7" stroke="#4a7c3f" stroke-width="2.2" stroke-linecap="round" opacity="0.85"/>
+  <path d="M440,45 l0,-8" stroke="#3a6c32" stroke-width="2.5" stroke-linecap="round" opacity="0.9"/>
+  <path d="M450,55 l0.5,-7" stroke="#2d5b28" stroke-width="2.2" stroke-linecap="round" opacity="0.85"/>
+  <path d="M460,48 l-0.5,-8" stroke="#4a7c3f" stroke-width="2.5" stroke-linecap="round" opacity="0.9"/>
+
+  <!-- Cluster 4 (center-left) -->
+  <path d="M35,175 l0,-8" stroke="#3a6c32" stroke-width="2.5" stroke-linecap="round" opacity="0.9"/>
+  <path d="M43,182 l0.5,-7" stroke="#2d5b28" stroke-width="2.2" stroke-linecap="round" opacity="0.85"/>
+  <path d="M52,170 l-0.5,-8" stroke="#4a7c3f" stroke-width="2.5" stroke-linecap="round" opacity="0.9"/>
+  <path d="M62,185 l0,-7" stroke="#3a6c32" stroke-width="2.2" stroke-linecap="round" opacity="0.85"/>
+  <path d="M72,175 l1,-8" stroke="#2d5b28" stroke-width="2.5" stroke-linecap="round" opacity="0.9"/>
+  <path d="M82,188 l-0.5,-7" stroke="#4a7c3f" stroke-width="2.2" stroke-linecap="round" opacity="0.85"/>
+  <path d="M92,180 l0,-8" stroke="#3a6c32" stroke-width="2.5" stroke-linecap="round" opacity="0.9"/>
+  <path d="M102,190 l0.5,-7" stroke="#2d5b28" stroke-width="2.2" stroke-linecap="round" opacity="0.85"/>
+
+  <!-- Cluster 5 (center) - Dense meadow -->
+  <path d="M220,195 l0,-8" stroke="#3a6c32" stroke-width="2.5" stroke-linecap="round" opacity="0.9"/>
+  <path d="M228,202 l0.5,-7" stroke="#2d5b28" stroke-width="2.2" stroke-linecap="round" opacity="0.85"/>
+  <path d="M238,190 l-0.5,-8" stroke="#4a7c3f" stroke-width="2.5" stroke-linecap="round" opacity="0.9"/>
+  <path d="M248,205 l0,-7" stroke="#3a6c32" stroke-width="2.2" stroke-linecap="round" opacity="0.85"/>
+  <path d="M258,195 l1,-8" stroke="#2d5b28" stroke-width="2.5" stroke-linecap="round" opacity="0.9"/>
+  <path d="M268,208 l-0.5,-7" stroke="#4a7c3f" stroke-width="2.2" stroke-linecap="round" opacity="0.85"/>
+  <path d="M278,200 l0,-8" stroke="#3a6c32" stroke-width="2.5" stroke-linecap="round" opacity="0.9"/>
+  <path d="M288,210 l0.5,-7" stroke="#2d5b28" stroke-width="2.2" stroke-linecap="round" opacity="0.85"/>
+  <path d="M298,198 l-0.5,-8" stroke="#4a7c3f" stroke-width="2.5" stroke-linecap="round" opacity="0.9"/>
+
+  <!-- Cluster 6 (center-right) -->
+  <path d="M370,180 l0,-8" stroke="#3a6c32" stroke-width="2.5" stroke-linecap="round" opacity="0.9"/>
+  <path d="M378,188 l0.5,-7" stroke="#2d5b28" stroke-width="2.2" stroke-linecap="round" opacity="0.85"/>
+  <path d="M388,175 l-0.5,-8" stroke="#4a7c3f" stroke-width="2.5" stroke-linecap="round" opacity="0.9"/>
+  <path d="M398,190 l0,-7" stroke="#3a6c32" stroke-width="2.2" stroke-linecap="round" opacity="0.85"/>
+  <path d="M408,182 l1,-8" stroke="#2d5b28" stroke-width="2.5" stroke-linecap="round" opacity="0.9"/>
+  <path d="M420,195 l-0.5,-7" stroke="#4a7c3f" stroke-width="2.2" stroke-linecap="round" opacity="0.85"/>
+  <path d="M430,185 l0,-8" stroke="#3a6c32" stroke-width="2.5" stroke-linecap="round" opacity="0.9"/>
+  <path d="M442,192 l0.5,-7" stroke="#2d5b28" stroke-width="2.2" stroke-linecap="round" opacity="0.85"/>
+
+  <!-- Cluster 7 (bottom-left) -->
+  <path d="M40,380 l0,-8" stroke="#3a6c32" stroke-width="2.5" stroke-linecap="round" opacity="0.9"/>
+  <path d="M48,388 l0.5,-7" stroke="#2d5b28" stroke-width="2.2" stroke-linecap="round" opacity="0.85"/>
+  <path d="M58,375 l-0.5,-8" stroke="#4a7c3f" stroke-width="2.5" stroke-linecap="round" opacity="0.9"/>
+  <path d="M68,390 l0,-7" stroke="#3a6c32" stroke-width="2.2" stroke-linecap="round" opacity="0.85"/>
+  <path d="M78,382 l1,-8" stroke="#2d5b28" stroke-width="2.5" stroke-linecap="round" opacity="0.9"/>
+  <path d="M90,395 l-0.5,-7" stroke="#4a7c3f" stroke-width="2.2" stroke-linecap="round" opacity="0.85"/>
+  <path d="M100,385 l0,-8" stroke="#3a6c32" stroke-width="2.5" stroke-linecap="round" opacity="0.9"/>
+  <path d="M112,392 l0.5,-7" stroke="#2d5b28" stroke-width="2.2" stroke-linecap="round" opacity="0.85"/>
+
+  <!-- Cluster 8 (bottom-center) -->
+  <path d="M215,400 l0,-8" stroke="#3a6c32" stroke-width="2.5" stroke-linecap="round" opacity="0.9"/>
+  <path d="M225,408 l0.5,-7" stroke="#2d5b28" stroke-width="2.2" stroke-linecap="round" opacity="0.85"/>
+  <path d="M235,395 l-0.5,-8" stroke="#4a7c3f" stroke-width="2.5" stroke-linecap="round" opacity="0.9"/>
+  <path d="M248,412 l0,-7" stroke="#3a6c32" stroke-width="2.2" stroke-linecap="round" opacity="0.85"/>
+  <path d="M258,402 l1,-8" stroke="#2d5b28" stroke-width="2.5" stroke-linecap="round" opacity="0.9"/>
+  <path d="M270,415 l-0.5,-7" stroke="#4a7c3f" stroke-width="2.2" stroke-linecap="round" opacity="0.85"/>
+  <path d="M282,405 l0,-8" stroke="#3a6c32" stroke-width="2.5" stroke-linecap="round" opacity="0.9"/>
+  <path d="M292,418 l0.5,-7" stroke="#2d5b28" stroke-width="2.2" stroke-linecap="round" opacity="0.85"/>
+
+  <!-- Cluster 9 (bottom-right) -->
+  <path d="M400,415 l0,-8" stroke="#3a6c32" stroke-width="2.5" stroke-linecap="round" opacity="0.9"/>
+  <path d="M410,422 l0.5,-7" stroke="#2d5b28" stroke-width="2.2" stroke-linecap="round" opacity="0.85"/>
+  <path d="M420,410 l-0.5,-8" stroke="#4a7c3f" stroke-width="2.5" stroke-linecap="round" opacity="0.9"/>
+  <path d="M432,428 l0,-7" stroke="#3a6c32" stroke-width="2.2" stroke-linecap="round" opacity="0.85"/>
+  <path d="M442,418 l1,-8" stroke="#2d5b28" stroke-width="2.5" stroke-linecap="round" opacity="0.9"/>
+  <path d="M455,430 l-0.5,-7" stroke="#4a7c3f" stroke-width="2.2" stroke-linecap="round" opacity="0.85"/>
+  <path d="M468,420 l0,-8" stroke="#3a6c32" stroke-width="2.5" stroke-linecap="round" opacity="0.9"/>
+  <path d="M480,432 l0.5,-7" stroke="#2d5b28" stroke-width="2.2" stroke-linecap="round" opacity="0.85"/>
+
+  <!-- Additional dense grass throughout for high coverage -->
+  <path d="M130,90 l0,-7" stroke="#3a6c32" stroke-width="2.2" stroke-linecap="round" opacity="0.85"/>
+  <path d="M140,85 l0.5,-8" stroke="#2d5b28" stroke-width="2.5" stroke-linecap="round" opacity="0.9"/>
+  <path d="M310,70 l-0.5,-7" stroke="#4a7c3f" stroke-width="2.2" stroke-linecap="round" opacity="0.85"/>
+  <path d="M320,78 l0,-8" stroke="#3a6c32" stroke-width="2.5" stroke-linecap="round" opacity="0.9"/>
+  <path d="M490,150 l0.5,-7" stroke="#2d5b28" stroke-width="2.2" stroke-linecap="round" opacity="0.85"/>
+  <path d="M20,250 l-0.5,-8" stroke="#4a7c3f" stroke-width="2.5" stroke-linecap="round" opacity="0.9"/>
+  <path d="M160,265 l0,-7" stroke="#3a6c32" stroke-width="2.2" stroke-linecap="round" opacity="0.85"/>
+  <path d="M170,272 l0.5,-8" stroke="#2d5b28" stroke-width="2.5" stroke-linecap="round" opacity="0.9"/>
+  <path d="M350,290 l-0.5,-7" stroke="#4a7c3f" stroke-width="2.2" stroke-linecap="round" opacity="0.85"/>
+  <path d="M360,285 l0,-8" stroke="#3a6c32" stroke-width="2.5" stroke-linecap="round" opacity="0.9"/>
+  <path d="M490,310 l0.5,-7" stroke="#2d5b28" stroke-width="2.2" stroke-linecap="round" opacity="0.85"/>
+  <path d="M30,450 l-0.5,-8" stroke="#4a7c3f" stroke-width="2.5" stroke-linecap="round" opacity="0.9"/>
+  <path d="M145,470 l0,-7" stroke="#3a6c32" stroke-width="2.2" stroke-linecap="round" opacity="0.85"/>
+  <path d="M335,485 l0.5,-8" stroke="#2d5b28" stroke-width="2.5" stroke-linecap="round" opacity="0.9"/>
+  <path d="M500,455 l-0.5,-7" stroke="#4a7c3f" stroke-width="2.2" stroke-linecap="round" opacity="0.85"/>
+
+  <!-- Occasional darker patches for depth -->
+  <ellipse cx="120" cy="140" rx="30" ry="20" fill="#2d5b28" opacity="0.15"/>
+  <ellipse cx="340" cy="350" rx="25" ry="18" fill="#2d5b28" opacity="0.12"/>
+  <ellipse cx="460" cy="240" rx="28" ry="22" fill="#2d5b28" opacity="0.13"/>
+
+  <!-- Very few pebbles - mostly grass -->
+  <ellipse cx="200" cy="320" rx="3" ry="2" fill="#6a6a6a" opacity="0.18"/>
+</svg>

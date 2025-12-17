@@ -10,6 +10,7 @@ in vec4 v_color;
 in vec4 v_data1;
 in vec4 v_data2;
 in vec4 v_clipBounds;  // Clip rect (minX, minY, maxX, maxY) or (0,0,0,0) for no clip
+in vec4 v_data3;       // Diagonal neighbors for tiles (NW, NE, SE, SW)
 
 out vec4 FragColor;
 
@@ -89,6 +90,19 @@ void main() {
 		uint surfaceId = uint(v_data1.z + 0.5);
 		uint hardEdgeMask = uint(v_data1.w + 0.5);
 
+		// Unpack cardinal neighbor surface IDs from v_clipBounds (repurposed for tiles)
+		// Tiles don't use per-vertex clipping, so this slot carries neighbor data
+		uint neighborN = uint(v_clipBounds.x + 0.5);
+		uint neighborE = uint(v_clipBounds.y + 0.5);
+		uint neighborS = uint(v_clipBounds.z + 0.5);
+		uint neighborW = uint(v_clipBounds.w + 0.5);
+
+		// Unpack diagonal neighbor surface IDs from v_data3
+		uint neighborNW = uint(v_data3.x + 0.5);
+		uint neighborNE = uint(v_data3.y + 0.5);
+		uint neighborSE = uint(v_data3.z + 0.5);
+		uint neighborSW = uint(v_data3.w + 0.5);
+
 		// Unpack tile world coordinates from data2.z
 		// Packed as: (tileX + 32768) | ((tileY + 32768) << 16)
 		uint packedCoord = uint(v_data2.z);
@@ -110,10 +124,40 @@ void main() {
 			}
 		}
 
-		// Subtle vignette effect for soft blend mode
-		if (u_softBlendMode != 0) {
-			float blend = smoothstep(0.0, 0.4, min(min(uv.x, uv.y), min(1.0 - uv.x, 1.0 - uv.y)));
-			color.rgb = mix(color.rgb * 0.96, color.rgb, blend);
+		// ========== SOFT EDGE BLENDING - "Higher Bleeds Onto Lower" ==========
+		// Higher-priority surfaces (e.g., Grass) bleed onto lower-priority surfaces (e.g., Dirt).
+		// This creates natural "grass growing over dirt" appearance at terrain boundaries.
+		if (u_tileAtlasRectCount > 0) {
+			vec4 blendWeights = computeHigherBleedWeights(uv, tileX, tileY, surfaceId, neighborN, neighborE, neighborS, neighborW, hardEdgeMask);
+
+			// Sample and blend higher-priority neighbor textures onto this tile's edges
+			#define SAMPLE_NEIGHBOR(neighborId, weight) \
+				if (weight > 0.001 && int(neighborId) < u_tileAtlasRectCount) { \
+					vec4 nRect = u_tileAtlasRects[int(neighborId)]; \
+					vec2 nAtlasUV = nRect.xy + uv * (nRect.zw - nRect.xy); \
+					vec4 nColor = texture(u_tileAtlas, nAtlasUV) * v_color; \
+					color = mix(color, nColor, weight); \
+				}
+
+			SAMPLE_NEIGHBOR(neighborN, blendWeights.x)
+			SAMPLE_NEIGHBOR(neighborE, blendWeights.y)
+			SAMPLE_NEIGHBOR(neighborS, blendWeights.z)
+			SAMPLE_NEIGHBOR(neighborW, blendWeights.w)
+
+			// ========== DIAGONAL CORNER BLENDING ==========
+			// Handle corners where the diagonal neighbor is higher priority but
+			// NEITHER cardinal neighbor is (the "diagonal-only" case).
+			// E.g., mud tile with grass diagonally at NE but mud at N and E.
+			vec4 diagWeights = computeDiagonalCornerWeights(uv, surfaceId,
+				neighborN, neighborE, neighborS, neighborW,
+				neighborNW, neighborNE, neighborSE, neighborSW);
+
+			SAMPLE_NEIGHBOR(neighborNW, diagWeights.x)
+			SAMPLE_NEIGHBOR(neighborNE, diagWeights.y)
+			SAMPLE_NEIGHBOR(neighborSE, diagWeights.z)
+			SAMPLE_NEIGHBOR(neighborSW, diagWeights.w)
+
+			#undef SAMPLE_NEIGHBOR
 		}
 
 		// Apply procedural edge/corner darkening (from includes/tile.glsl)

@@ -162,7 +162,7 @@ When you make code changes and need to verify visually:
 | When You Need... | Check... |
 |------------------|----------|
 | Current project status | `/docs/status.md` |
-| Detailed implementation notes | `/docs/development-log.md` |
+| Detailed implementation notes | `/docs/development-log/` (individual entry files) |
 | Game design & requirements | `/docs/design/INDEX.md` |
 | How to add a new library | `/docs/workflows.md` |
 | Project structure | `/docs/technical/monorepo-structure.md` |
@@ -214,14 +214,11 @@ When you make code changes and need to verify visually:
 
 **When Epic is complete:**
 1. Move Epic to "Recently Completed Epics" section
-2. If more than 4 completed epics, move oldest to development-log.md
-3. Add development-log.md entry with:
-   - Date and title
-   - What was accomplished
-   - Files created/modified
-   - Technical decisions made
-   - Lessons learned
-   - Next steps
+2. If more than 4 completed epics, remove oldest from status.md (archived in development log)
+3. Create a new entry file in `/docs/development-log/entries/`:
+   - Filename: `YYYY-MM-DD-epic-name-slug.md`
+   - Include: summary, what was accomplished, files modified, technical decisions, next steps
+   - See `/docs/development-log/README.md` for template
 
 ### Content Placement Rules
 
@@ -233,17 +230,17 @@ When you make code changes and need to verify visually:
 - ✅ Blockers & issues
 
 **status.md does NOT contain:**
-- ❌ Architectural decisions (→ development-log.md if short, technical docs if long)
-- ❌ Implementation rationale (→ development-log.md or technical docs)
+- ❌ Architectural decisions (→ development log entry if short, technical docs if long)
+- ❌ Implementation rationale (→ development log entry or technical docs)
 - ❌ Detailed technical discussion (→ technical docs)
-- ❌ Long-form content or paragraphs (→ development-log.md or technical docs)
-- ❌ Historical "Recent Decisions" lists (→ development-log.md)
+- ❌ Long-form content or paragraphs (→ development log entry or technical docs)
+- ❌ Historical "Recent Decisions" lists (→ development log entries)
 - ❌ Notes section (→ notes go in the spec/documentation for each epic)
 
 **Where architectural content goes:**
-- **Short decisions** (<1 paragraph): development-log.md
+- **Short decisions** (<1 paragraph): Development log entry
 - **Long decisions** (>1 paragraph): Relevant technical doc (e.g., `/docs/technical/architecture.md`)
-- **Rationale and context**: development-log.md or technical docs
+- **Rationale and context**: Development log entry or technical docs
 - **Performance targets**: Can stay in status.md as success criteria for epics
 
 ## After Significant Work
@@ -252,19 +249,19 @@ When you make code changes and need to verify visually:
 - Mark completed tasks with `[x]`
 - Update "Blockers & Issues" if any
 - Update "Last Updated" timestamp
-- When Epic complete, move to "Recently Completed" and create development-log.md entry
+- When Epic complete, move to "Recently Completed" and create a development log entry
 - Notes belong in the spec/documentation for each epic, NOT in status.md
 
-### Add entry to `/docs/development-log.md`:
-Add a new timestamped section (newest at top) with:
-- **Date and title** (`### 2025-MM-DD - Title`)
-- **What was accomplished** - Brief summary
-- **Files created/modified** - List of changed files
-- **Technical details** - Implementation notes, decisions made
-- **Lessons learned** - What worked, what didn't
-- **Next steps** - What comes next
+### Create development log entry (for significant work):
+Create a new file in `/docs/development-log/entries/` with format `YYYY-MM-DD-topic-slug.md`:
+- **Summary** - What was accomplished
+- **Details** - Files created/modified, technical decisions made
+- **Related Documentation** - Links to specs
+- **Next Steps** - What comes next (if applicable)
 
-**IMPORTANT**: Detailed implementation decisions, technical rationale, and design choices go in development-log.md, NOT status.md. The development log is the detailed historical record; status.md is only the current snapshot of project state.
+See `/docs/development-log/README.md` for the full template.
+
+**IMPORTANT**: Detailed implementation decisions, technical rationale, and design choices go in development log entries, NOT status.md. The development log is the detailed historical record; status.md is only the current snapshot of project state.
 
 
 ### Workflow: After Writing Code
