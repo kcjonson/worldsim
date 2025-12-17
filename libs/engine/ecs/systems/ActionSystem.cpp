@@ -3,6 +3,7 @@
 #include "../World.h"
 #include "../components/Action.h"
 #include "../components/Appearance.h"
+#include "../components/Inventory.h"
 #include "../components/Memory.h"
 #include "../components/MemoryQueries.h"
 #include "../components/Needs.h"
@@ -10,8 +11,11 @@
 #include "../components/Transform.h"
 
 #include "assets/AssetRegistry.h"
+#include "assets/ItemProperties.h"
 
 #include <utils/Log.h>
+
+#include <random>
 
 namespace ecs {
 
@@ -23,8 +27,8 @@ namespace ecs {
 		/// Default water quality for drinking
 		constexpr float kDefaultWaterQuality = 1.0F;
 
-		/// Default nutrition when no edible entity found (shouldn't happen in practice)
-		constexpr float kDefaultNutrition = 0.3F;
+		/// Position tolerance for matching entities at target location (in tiles)
+		constexpr float kPositionTolerance = 0.1F;
 
 	} // namespace
 
@@ -38,7 +42,8 @@ namespace ecs {
 		// Arrived again. This is intentional - colonists "commit" to actions rather
 		// than abandoning half-eaten food or interrupted sleep. Future work may add
 		// explicit action cancellation for emergencies (e.g., flee from danger).
-		for (auto [entity, position, task, action, needs, memory] : world->view<Position, Task, Action, NeedsComponent, Memory>()) {
+		for (auto [entity, position, task, action, needs, memory, inventory] :
+			 world->view<Position, Task, Action, NeedsComponent, Memory, Inventory>()) {
 
 			// Only process entities that have arrived at their destination
 			if (task.state != TaskState::Arrived) {
@@ -55,7 +60,7 @@ namespace ecs {
 
 			// Start action if not already active
 			if (!action.isActive()) {
-				startAction(task, action, position, memory, needs);
+				startAction(task, action, position, memory, needs, inventory);
 				LOG_INFO(
 					Engine,
 					"[Action] Entity %llu: Started %s action (%.1fs duration)",
@@ -81,7 +86,7 @@ namespace ecs {
 					actionTypeName(action.type),
 					restoreAmount
 				);
-				completeAction(action, needs, task);
+				completeAction(action, needs, task, inventory);
 			}
 		}
 	}
@@ -91,26 +96,107 @@ namespace ecs {
 		Action& action,
 		const Position& position,
 		const Memory& memory,
-		const NeedsComponent& needs
+		const NeedsComponent& needs,
+		const Inventory& inventory
 	) {
 		auto& registry = engine::assets::AssetRegistry::Get();
 
 		switch (task.needToFulfill) {
 			case NeedType::Hunger: {
-				// Find nutrition value from the target entity using MemoryQueries
-				auto  maybeNutrition = findNutritionAtPosition(memory, registry, task.targetPosition);
-				float nutrition = kDefaultNutrition;
-				if (maybeNutrition.has_value()) {
-					nutrition = maybeNutrition.value();
-				} else {
-					LOG_WARNING(
-						Engine,
-						"[Action] No edible entity found at target (%.1f, %.1f), using default nutrition",
-						task.targetPosition.x,
-						task.targetPosition.y
-					);
+				// Priority 1: Check inventory for any edible food (data-driven)
+				for (const auto& edibleItemName : engine::assets::getEdibleItemNames()) {
+					if (inventory.hasItem(edibleItemName)) {
+						// Get nutrition from item properties
+						auto edibleInfo = engine::assets::getEdibleItemInfo(edibleItemName);
+						float nutrition = edibleInfo ? edibleInfo->nutrition : 0.3F;
+						action = Action::Eat(edibleItemName, nutrition);
+						LOG_DEBUG(Engine, "[Action] Creating Eat action for %s (nutrition %.2f, qty %u)",
+								  edibleItemName.c_str(), nutrition,
+								  inventory.getQuantity(edibleItemName));
+						break;
+					}
 				}
-				action = Action::Eat(nutrition);
+
+				// If we already created an eat action from inventory, we're done
+				if (action.type == ActionType::Eat) {
+					break;
+				}
+
+				// Priority 2: Check if we're at a harvestable food source
+				// Look for harvestable entities at target position
+				for (const auto& [key, entity] : memory.knownWorldEntities) {
+					// Check if entity is at target position (with tolerance)
+					glm::vec2 diff = entity.position - task.targetPosition;
+					float	  distSq = diff.x * diff.x + diff.y * diff.y;
+					if (distSq > kPositionTolerance * kPositionTolerance) {
+						continue;
+					}
+
+					// Check if entity has harvestable capability via registry
+					if (!registry.hasCapability(entity.defNameId, engine::assets::CapabilityType::Harvestable)) {
+						continue;
+					}
+
+					// Found harvestable entity at target - get harvest details
+					const auto& defName = registry.getDefName(entity.defNameId);
+					const auto* def = registry.getDefinition(defName);
+					if (def != nullptr && def->capabilities.harvestable.has_value()) {
+						const auto& harvestCap = def->capabilities.harvestable.value();
+
+						// Only consider harvestables that yield edible items
+						if (!engine::assets::isItemEdible(harvestCap.yieldDefName)) {
+							continue;
+						}
+
+						// TODO: Check if entity is on cooldown before creating harvest action.
+						// Proper fix: VisionSystem should filter entities on cooldown so they
+						// don't appear as harvestable in Memory. Until then, colonists may
+						// arrive at recently-harvested bushes expecting to harvest again.
+
+						// Calculate random yield within range using proper RNG
+						uint32_t yield = harvestCap.amountMin;
+						if (harvestCap.amountMax > harvestCap.amountMin) {
+							std::uniform_int_distribution<uint32_t> yieldDist(
+								harvestCap.amountMin, harvestCap.amountMax);
+							yield = yieldDist(m_rng);
+						}
+
+						action = Action::Harvest(
+							harvestCap.yieldDefName,
+							yield,
+							harvestCap.duration,
+							entity.position,
+							def->defName,
+							harvestCap.destructive,
+							harvestCap.regrowthTime
+						);
+						LOG_DEBUG(
+							Engine,
+							"[Action] Creating Harvest action for %s → %u x %s",
+							def->defName.c_str(),
+							yield,
+							harvestCap.yieldDefName.c_str()
+						);
+						break;
+					}
+				}
+
+				// If we created a harvest action, we're done
+				if (action.type == ActionType::Harvest) {
+					break;
+				}
+
+				// No food in inventory and no harvestable at target
+				// This indicates a desync between AI decision and world state.
+				// Possible causes: entity was harvested by another colonist, or memory is stale.
+				LOG_WARNING(
+					Engine,
+					"[Action] Hunger action failed at (%.1f, %.1f) - no food in inventory and no "
+					"harvestable food source at target. Colonist will re-evaluate next tick.",
+					task.targetPosition.x,
+					task.targetPosition.y
+				);
+				action.clear();
 				break;
 			}
 
@@ -174,7 +260,7 @@ namespace ecs {
 		}
 	}
 
-	void ActionSystem::completeAction(Action& action, NeedsComponent& needs, Task& task) {
+	void ActionSystem::completeAction(Action& action, NeedsComponent& needs, Task& task, Inventory& inventory) {
 		// Apply effects based on variant type
 		if (action.hasNeedEffect()) {
 			const auto& needEff = action.needEffect();
@@ -197,6 +283,99 @@ namespace ecs {
 						need.value = 0.0F;
 					}
 				}
+			}
+		}
+
+		// Handle collection effects (Pickup, Harvest)
+		if (action.hasCollectionEffect()) {
+			const auto& collEff = action.collectionEffect();
+
+			// Add items to inventory
+			uint32_t added = inventory.addItem(collEff.itemDefName, collEff.quantity);
+
+			// Warn if not all items could be stored (inventory full or stack limit)
+			if (added < collEff.quantity) {
+				uint32_t lost = collEff.quantity - added;
+				LOG_WARNING(
+					Engine,
+					"[Action] Inventory full: collected %u x %s but only %u added, %u lost",
+					collEff.quantity,
+					collEff.itemDefName.c_str(),
+					added,
+					lost
+				);
+			} else {
+				LOG_INFO(
+					Engine,
+					"[Action] Collected %u x %s (added %u to inventory)",
+					collEff.quantity,
+					collEff.itemDefName.c_str(),
+					added
+				);
+			}
+
+			// Entity removal/cooldown handled in Phase 5
+			// TODO: Call PlacementExecutor to remove or set cooldown on source entity
+			if (collEff.destroySource) {
+				LOG_DEBUG(
+					Engine,
+					"[Action] Source entity %s at (%.1f, %.1f) should be removed",
+					collEff.sourceDefName.c_str(),
+					collEff.sourcePosition.x,
+					collEff.sourcePosition.y
+				);
+			} else if (collEff.regrowthTime > 0.0F) {
+				LOG_DEBUG(
+					Engine,
+					"[Action] Source entity %s at (%.1f, %.1f) should enter %.1fs cooldown",
+					collEff.sourceDefName.c_str(),
+					collEff.sourcePosition.x,
+					collEff.sourcePosition.y,
+					collEff.regrowthTime
+				);
+			}
+		}
+
+		// Handle consumption effects (Eat action)
+		if (action.hasConsumptionEffect()) {
+			const auto& consumeEff = action.consumptionEffect();
+
+			// Remove item from inventory
+			uint32_t removed = inventory.removeItem(consumeEff.itemDefName, consumeEff.quantity);
+			if (removed > 0) {
+				// Restore the need
+				if (consumeEff.need < NeedType::Count) {
+					needs.get(consumeEff.need).restore(consumeEff.restoreAmount);
+				}
+
+				// Apply side effect (e.g., eating fills digestion)
+				if (consumeEff.sideEffectNeed < NeedType::Count) {
+					if (consumeEff.sideEffectAmount > 0.0F) {
+						needs.get(consumeEff.sideEffectNeed).restore(consumeEff.sideEffectAmount);
+					} else {
+						// Negative amount means drain (e.g., eating fills gut)
+						auto& need = needs.get(consumeEff.sideEffectNeed);
+						need.value += consumeEff.sideEffectAmount; // sideEffectAmount is already negative
+						if (need.value < 0.0F) {
+							need.value = 0.0F;
+						}
+					}
+				}
+
+				LOG_INFO(
+					Engine,
+					"[Action] Consumed %u x %s from inventory, restored %.1f%% %s",
+					removed,
+					consumeEff.itemDefName.c_str(),
+					consumeEff.restoreAmount,
+					consumeEff.need == NeedType::Hunger ? "hunger" : "need"
+				);
+			} else {
+				LOG_WARNING(
+					Engine,
+					"[Action] Failed to consume %s from inventory (not found)",
+					consumeEff.itemDefName.c_str()
+				);
 			}
 		}
 

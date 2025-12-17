@@ -6,11 +6,14 @@
 #include "../World.h"
 #include "../components/Action.h"
 #include "../components/Appearance.h"
+#include "../components/Inventory.h"
 #include "../components/Memory.h"
 #include "../components/Movement.h"
 #include "../components/Needs.h"
 #include "../components/Task.h"
 #include "../components/Transform.h"
+
+#include "assets/AssetRegistry.h"
 
 #include <gtest/gtest.h>
 
@@ -21,16 +24,17 @@ namespace ecs::test {
 // =============================================================================
 
 TEST(ActionFactoryTest, EatActionCreation) {
-	auto action = Action::Eat(0.5F);
+	auto action = Action::Eat("Berry", 0.5F);
 
 	EXPECT_EQ(action.type, ActionType::Eat);
 	EXPECT_EQ(action.state, ActionState::Starting);
 	EXPECT_FLOAT_EQ(action.duration, 2.0F);
 	EXPECT_FLOAT_EQ(action.elapsed, 0.0F);
 
-	// Check variant-based effect
-	ASSERT_TRUE(action.hasNeedEffect());
-	const auto& effect = action.needEffect();
+	// Check variant-based effect - Eat now uses ConsumptionEffect
+	ASSERT_TRUE(action.hasConsumptionEffect());
+	const auto& effect = action.consumptionEffect();
+	EXPECT_EQ(effect.itemDefName, "Berry");
 	EXPECT_EQ(effect.need, NeedType::Hunger);
 	EXPECT_FLOAT_EQ(effect.restoreAmount, 50.0F); // 0.5 * 100
 }
@@ -113,7 +117,7 @@ TEST(ActionFactoryTest, ToiletActionCreation_Both) {
 }
 
 TEST(ActionFactoryTest, ActionClear) {
-	auto action = Action::Eat(0.8F);
+	auto action = Action::Eat("Berry", 0.8F);
 	action.elapsed = 1.5F;
 	action.state = ActionState::InProgress;
 
@@ -123,19 +127,19 @@ TEST(ActionFactoryTest, ActionClear) {
 	EXPECT_EQ(action.state, ActionState::Starting);
 	EXPECT_FLOAT_EQ(action.duration, 0.0F);
 	EXPECT_FLOAT_EQ(action.elapsed, 0.0F);
-	EXPECT_FALSE(action.hasNeedEffect()); // Effect variant reset to monostate
+	EXPECT_FALSE(action.hasConsumptionEffect()); // Effect variant reset to monostate
 }
 
 TEST(ActionFactoryTest, ActionIsActive) {
 	Action action{};
 	EXPECT_FALSE(action.isActive());
 
-	action = Action::Eat(0.5F);
+	action = Action::Eat("Berry", 0.5F);
 	EXPECT_TRUE(action.isActive());
 }
 
 TEST(ActionFactoryTest, ActionProgress) {
-	auto action = Action::Eat(0.5F);
+	auto action = Action::Eat("Berry", 0.5F);
 	EXPECT_FLOAT_EQ(action.progress(), 0.0F);
 
 	action.elapsed = 1.0F;
@@ -153,10 +157,24 @@ class ActionSystemTest : public ::testing::Test {
   protected:
 	void SetUp() override {
 		world = std::make_unique<World>();
+
+		// Register Berry as edible entity for testing (unified entity/item model)
+		engine::assets::AssetDefinition berryDef;
+		berryDef.defName = "Berry";
+		berryDef.label = "Berry";
+		berryDef.itemProperties = engine::assets::ItemProperties{};
+		berryDef.itemProperties->stackSize = 20;
+		berryDef.itemProperties->edible = engine::assets::EdibleCapability{0.3F, engine::assets::CapabilityQuality::Normal, true};
+		engine::assets::AssetRegistry::Get().registerTestDefinition(std::move(berryDef));
+
 		world->registerSystem<ActionSystem>();
 	}
 
-	void TearDown() override { world.reset(); }
+	void TearDown() override {
+		// Clean up test definitions
+		engine::assets::AssetRegistry::Get().clearDefinitions();
+		world.reset();
+	}
 
 	/// Create a colonist entity with all required components for action processing
 	EntityID createColonist(glm::vec2 position = {0.0F, 0.0F}) {
@@ -166,6 +184,7 @@ class ActionSystemTest : public ::testing::Test {
 		world->addComponent<MovementTarget>(entity, MovementTarget{{0.0F, 0.0F}, 2.0F, false});
 		world->addComponent<NeedsComponent>(entity, NeedsComponent::createDefault());
 		world->addComponent<Memory>(entity, Memory{});
+		world->addComponent<Inventory>(entity, Inventory::createForColonist());
 		world->addComponent<Task>(entity, Task{});
 		world->addComponent<Action>(entity, Action{});
 		return entity;
@@ -222,11 +241,9 @@ TEST_F(ActionSystemTest, StartsEatActionOnArrival) {
 	auto colonist = createColonist();
 	setupArrivedForNeed(colonist, NeedType::Hunger);
 
-	// Add edible entity to memory at target position
-	auto* memory = world->getComponent<Memory>(colonist);
-	memory->rememberWorldEntity(
-		{5.0F, 5.0F}, 1001, static_cast<uint8_t>(1 << static_cast<size_t>(engine::assets::CapabilityType::Edible))
-	);
+	// Give the colonist berries in inventory - primary way to eat now
+	auto* inventory = world->getComponent<Inventory>(colonist);
+	inventory->addItem("Berry", 3);
 
 	world->update(0.1F);
 

@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100">
+  <!-- Stick - Top-down view (~0.4m length) -->
+
+  <!-- Main stick body (elongated shape) -->
+  <path d="M15,45
+           L85,42
+           Q90,50 85,58
+           L15,55
+           Q10,50 15,45 Z"
+        fill="#6B4423"/>
+
+  <!-- Darker bark texture -->
+  <path d="M20,48 L80,46" stroke="#4A3018" stroke-width="2" fill="none"/>
+  <path d="M25,52 L75,51" stroke="#4A3018" stroke-width="1.5" fill="none"/>
+
+  <!-- Light highlight -->
+  <path d="M20,47 L78,45" stroke="#8B5A2B" stroke-width="1" fill="none" opacity="0.6"/>
+
+  <!-- End knots -->
+  <circle cx="17" cy="50" r="4" fill="#5A3A1A"/>
+  <circle cx="83" cy="50" r="3" fill="#5A3A1A"/>
+</svg>

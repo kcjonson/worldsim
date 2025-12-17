@@ -190,6 +190,7 @@ namespace engine {
 			}
 
 			// Load all asset definitions from the root folder
+			// Item properties are now part of unified entity definitions (itemProperties section)
 			size_t loaded = engine::assets::AssetRegistry::Get().loadDefinitionsFromFolder(fullPath);
 			LOG_INFO(Engine, "Loaded %zu asset definitions from %s", loaded, fullPath.c_str());
 		}

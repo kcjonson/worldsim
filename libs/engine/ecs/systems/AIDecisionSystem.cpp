@@ -3,6 +3,7 @@
 #include "../World.h"
 #include "../components/Action.h"
 #include "../components/DecisionTrace.h"
+#include "../components/Inventory.h"
 #include "../components/Memory.h"
 #include "../components/MemoryQueries.h"
 #include "../components/Movement.h"
@@ -13,6 +14,7 @@
 
 #include "assets/AssetDefinition.h"
 #include "assets/AssetRegistry.h"
+#include "assets/ItemProperties.h"
 #include "world/chunk/ChunkManager.h"
 
 #include <utils/Log.h>
@@ -79,8 +81,8 @@ namespace ecs {
 
 	void AIDecisionSystem::update(float deltaTime) {
 		// Process all entities with the required components
-		for (auto [entity, position, needs, memory, task, movementTarget] :
-			 world->view<Position, NeedsComponent, Memory, Task, MovementTarget>()) {
+		for (auto [entity, position, needs, memory, task, movementTarget, inventory] :
+			 world->view<Position, NeedsComponent, Memory, Task, MovementTarget, Inventory>()) {
 
 			// Get optional Action component (may be nullptr if entity doesn't have one)
 			auto* action = world->getComponent<Action>(entity);
@@ -101,7 +103,7 @@ namespace ecs {
 			auto* trace = world->getComponent<DecisionTrace>(entity);
 			if (trace != nullptr) {
 				// Build full decision trace (always, for UI updates)
-				buildDecisionTrace(entity, position, needs, memory, task, *trace);
+				buildDecisionTrace(entity, position, needs, memory, task, inventory, *trace);
 
 				// Get the best option's priority
 				const auto* selected = trace->getSelected();
@@ -412,6 +414,7 @@ namespace ecs {
 		const NeedsComponent& needs,
 		const Memory&		  memory,
 		const Task&			  currentTask,
+		const Inventory&	  inventory,
 		DecisionTrace&		  trace
 	) {
 		trace.clear();
@@ -434,7 +437,65 @@ namespace ecs {
 			option.needValue = need.value;
 			option.threshold = need.seekThreshold;
 
-			// Check memory for fulfillment source
+			// Special handling for hunger: check inventory first
+			if (needType == NeedType::Hunger) {
+				// First priority: eat from inventory if we have any edible food
+				// Check all known edible items (data-driven, not hardcoded to Berry)
+				bool hasFood = false;
+				for (const auto& edibleItemName : engine::assets::getEdibleItemNames()) {
+					if (inventory.hasItem(edibleItemName)) {
+						hasFood = true;
+						break;
+					}
+				}
+
+				if (hasFood) {
+					// Food in inventory - eat at current position (no movement needed)
+					option.targetPosition = position.value;
+					option.distanceToTarget = 0.0F;
+					option.status = need.needsAttention() ? OptionStatus::Available : OptionStatus::Satisfied;
+					option.reason = formatOptionReason(option, needTypeName(needType));
+					// Add special marker to indicate this is from inventory
+					if (option.status == OptionStatus::Available) {
+						option.reason += " (from inventory)";
+					}
+					trace.options.push_back(option);
+					continue;
+				}
+
+				// Second priority: find harvestable food source
+				auto harvestable = findNearestWithCapability(
+					memory, m_registry, engine::assets::CapabilityType::Harvestable, position.value);
+				if (harvestable.has_value()) {
+					// Check if this harvestable yields edible food
+					const auto& defName = m_registry.getDefName(harvestable->defNameId);
+					const auto* def = m_registry.getDefinition(defName);
+					if (def != nullptr && def->capabilities.harvestable.has_value()) {
+						const auto& harvestCap = def->capabilities.harvestable.value();
+						// Check if yield is any edible item (data-driven check)
+						if (engine::assets::isItemEdible(harvestCap.yieldDefName)) {
+							option.targetPosition = harvestable->position;
+							option.targetDefNameId = harvestable->defNameId;
+							option.distanceToTarget = glm::distance(position.value, harvestable->position);
+							option.status = need.needsAttention() ? OptionStatus::Available : OptionStatus::Satisfied;
+							option.reason = formatOptionReason(option, needTypeName(needType));
+							if (option.status == OptionStatus::Available) {
+								option.reason += " (harvest)";
+							}
+							trace.options.push_back(option);
+							continue;
+						}
+					}
+				}
+
+				// No food in inventory and no harvestable food source found
+				option.status = need.needsAttention() ? OptionStatus::NoSource : OptionStatus::Satisfied;
+				option.reason = formatOptionReason(option, needTypeName(needType));
+				trace.options.push_back(option);
+				continue;
+			}
+
+			// Standard handling for other needs
 			auto capability = needToCapability(needType);
 			auto nearest = findNearestWithCapability(memory, m_registry, capability, position.value);
 

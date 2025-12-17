@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Small Stone - Ground scatter that can be picked up
+     Unified entity: exists in world (spawned) or inventory (carried)
+     Future: crafting material (stone tools, construction)
+-->
+<AssetDefinitions>
+  <AssetDef>
+    <defName>SmallStone</defName>
+    <label>Small Stone</label>
+    <assetType>simple</assetType>
+    <svgPath>small_stone.svg</svgPath>
+    <worldHeight>0.15</worldHeight>
+
+    <rendering>
+      <complexity>simple</complexity>
+      <tier>instanced</tier>
+    </rendering>
+
+    <!-- No animation - stones don't sway -->
+
+    <!-- Item properties (when in inventory) -->
+    <item>
+      <stackSize>10</stackSize>
+      <!-- Not edible -->
+    </item>
+
+    <!-- Entity capabilities -->
+    <capabilities>
+      <carryable quantity="1"/>
+    </capabilities>
+
+    <!-- Per-biome placement configuration -->
+    <placement>
+      <!-- Forest: Sparse scatter in clearings -->
+      <biome name="Forest">
+        <spawnChance>0.015</spawnChance>
+        <distribution>uniform</distribution>
+      </biome>
+
+      <!-- Grassland: Very sparse, scattered naturally -->
+      <biome name="Grassland">
+        <spawnChance>0.02</spawnChance>
+        <distribution>uniform</distribution>
+      </biome>
+
+      <!-- Groups this asset belongs to -->
+      <groups>
+        <group>ground_scatter</group>
+        <group>stone_sources</group>
+      </groups>
+
+      <!-- Relationships with other entities -->
+      <relationships>
+        <!-- Stones avoid each other to prevent unnatural clustering -->
+        <avoids type="same" distance="1.5" penalty="0.2"/>
+        <!-- Stones don't spawn under dense tree canopy -->
+        <avoids group="trees" distance="2.0" penalty="0.4"/>
+      </relationships>
+    </placement>
+
+    <!-- Multiple variants for visual variety -->
+    <variantCount>4</variantCount>
+  </AssetDef>
+</AssetDefinitions>

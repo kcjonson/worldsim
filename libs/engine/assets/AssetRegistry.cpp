@@ -491,6 +491,25 @@ namespace engine::assets {
 			// Variant count
 			def.variantCount = static_cast<uint32_t>(defNode.child("variantCount").text().as_uint(1));
 
+			// Item properties (for entities that can be carried/stored)
+			pugi::xml_node itemNode = defNode.child("item");
+			if (itemNode) {
+				ItemProperties itemProps;
+				itemProps.stackSize = itemNode.child("stackSize").text().as_uint(1);
+
+				// Parse edible capability within item
+				pugi::xml_node edibleNode = itemNode.child("edible");
+				if (edibleNode) {
+					EdibleCapability edible;
+					edible.nutrition = edibleNode.attribute("nutrition").as_float(0.3F);
+					edible.quality = parseCapabilityQuality(edibleNode.attribute("quality").as_string());
+					edible.spoilable = edibleNode.attribute("spoilable").as_bool(false);
+					itemProps.edible = edible;
+				}
+
+				def.itemProperties = itemProps;
+			}
+
 			// Capabilities - what actions can be performed on/with this entity
 			pugi::xml_node capabilitiesNode = defNode.child("capabilities");
 			if (capabilitiesNode) {
@@ -533,6 +552,50 @@ namespace engine::assets {
 				pugi::xml_node wasteNode = capabilitiesNode.child("waste");
 				if (wasteNode) {
 					def.capabilities.waste = WasteCapability{};
+				}
+
+				// Carryable capability (ground items like stones)
+				// In unified model, the entity's defName IS the item - no separate itemDefName needed
+				pugi::xml_node carryableNode = capabilitiesNode.child("carryable");
+				if (carryableNode) {
+					CarryableCapability carryable;
+					carryable.quantity = carryableNode.attribute("quantity").as_uint(1);
+					def.capabilities.carryable = carryable;
+				}
+
+				// Harvestable capability (bushes, plants that yield resources)
+				pugi::xml_node harvestableNode = capabilitiesNode.child("harvestable");
+				if (harvestableNode) {
+					std::string yieldName = harvestableNode.attribute("yield").as_string("");
+					if (yieldName.empty()) {
+						LOG_WARNING(
+							Engine,
+							"AssetDef '%s' has <harvestable> without valid 'yield' attribute; skipping capability",
+							def.defName.c_str()
+						);
+					} else {
+						HarvestableCapability harvestable;
+						harvestable.yieldDefName = yieldName;
+						harvestable.amountMin = harvestableNode.attribute("amountMin").as_uint(1);
+						harvestable.amountMax = harvestableNode.attribute("amountMax").as_uint(3);
+
+						// Validate amountMax >= amountMin (swap if reversed to avoid invalid distribution)
+						if (harvestable.amountMax < harvestable.amountMin) {
+							LOG_WARNING(
+								Engine,
+								"AssetDef '%s' harvestable: amountMax (%u) < amountMin (%u); swapping values",
+								def.defName.c_str(),
+								harvestable.amountMax,
+								harvestable.amountMin
+							);
+							std::swap(harvestable.amountMin, harvestable.amountMax);
+						}
+
+						harvestable.duration = harvestableNode.attribute("duration").as_float(4.0F);
+						harvestable.destructive = harvestableNode.attribute("destructive").as_bool(true);
+						harvestable.regrowthTime = harvestableNode.attribute("regrowthTime").as_float(0.0F);
+						def.capabilities.harvestable = harvestable;
+					}
 				}
 			}
 
@@ -904,6 +967,12 @@ namespace engine::assets {
 			if (def.capabilities.waste.has_value()) {
 				mask |= (1 << static_cast<uint8_t>(CapabilityType::Waste));
 			}
+			if (def.capabilities.carryable.has_value()) {
+				mask |= (1 << static_cast<uint8_t>(CapabilityType::Carryable));
+			}
+			if (def.capabilities.harvestable.has_value()) {
+				mask |= (1 << static_cast<uint8_t>(CapabilityType::Harvestable));
+			}
 			m_capabilityMasks.push_back(mask);
 
 			nextId++;
@@ -956,6 +1025,30 @@ namespace engine::assets {
 		LOG_DEBUG(Engine, "Registered synthetic definition '%s' with ID %u, capabilities 0x%02X", defName.c_str(), newId, capabilityMask);
 
 		return newId;
+	}
+
+	// ============================================================================
+	// Testing API
+	// ============================================================================
+
+	void AssetRegistry::registerTestDefinition(AssetDefinition def) {
+		std::string defName = def.defName;
+		definitions[defName] = std::move(def);
+
+		// Rebuild indices to include new definition
+		buildDefNameIndex();
+
+		LOG_DEBUG(Engine, "Registered test definition: %s", defName.c_str());
+	}
+
+	void AssetRegistry::clearDefinitions() {
+		definitions.clear();
+		templateCache.clear();
+		groupIndex.clear();
+		m_defNameToId.clear();
+		m_idToDefName.clear();
+		m_capabilityMasks.clear();
+		LOG_DEBUG(Engine, "Cleared all definitions");
 	}
 
 } // namespace engine::assets

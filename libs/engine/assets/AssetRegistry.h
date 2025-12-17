@@ -108,7 +108,16 @@ namespace engine::assets {
 		uint32_t registerSyntheticDefinition(const std::string& defName, uint8_t capabilityMask);
 
 		/// Get the total number of capability types
-		static constexpr size_t kCapabilityTypeCount = 5;
+		static constexpr size_t kCapabilityTypeCount = 7;
+
+		// --- Testing API ---
+
+		/// Register an asset definition programmatically (for testing)
+		/// @param def The asset definition to register
+		void registerTestDefinition(AssetDefinition def);
+
+		/// Clear all registered definitions (for testing cleanup)
+		void clearDefinitions();
 
 	  private:
 		AssetRegistry() = default;

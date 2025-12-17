@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Stick - Harvested from woody bushes, crafting material
+     Unified entity: exists in world (when dropped) or inventory (when carried)
+     Source: Harvested from Flora_WoodyBush
+-->
+<AssetDefinitions>
+  <AssetDef>
+    <defName>Stick</defName>
+    <label>Stick</label>
+    <assetType>simple</assetType>
+    <svgPath>stick.svg</svgPath>
+    <worldHeight>0.4</worldHeight>
+
+    <rendering>
+      <complexity>simple</complexity>
+      <tier>instanced</tier>
+    </rendering>
+
+    <!-- Item properties (when in inventory) -->
+    <item>
+      <stackSize>10</stackSize>
+      <!-- Not edible -->
+    </item>
+
+    <!-- Entity capabilities -->
+    <capabilities>
+      <carryable quantity="1"/>
+    </capabilities>
+
+    <!-- No placement - sticks don't spawn naturally, they're harvested -->
+  </AssetDef>
+</AssetDefinitions>

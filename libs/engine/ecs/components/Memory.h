@@ -63,7 +63,7 @@ namespace ecs {
 		static constexpr size_t kMaxWorldEntities = 10000;
 
 		/// Number of capability types (must match AssetRegistry::kCapabilityTypeCount)
-		static constexpr size_t kCapabilityTypeCount = 5;
+		static constexpr size_t kCapabilityTypeCount = 7;
 
 		// --- Primary Storage ---
 

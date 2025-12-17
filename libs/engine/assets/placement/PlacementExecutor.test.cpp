@@ -352,3 +352,222 @@ TEST(PlacementExecutorTests, NullSurfaceFunction) {
 	EXPECT_EQ(result.coord.x, 0);
 }
 
+// ============================================================================
+// Entity Cooldown Tests
+// ============================================================================
+
+TEST(PlacementExecutorTests, IsEntityOnCooldownReturnsFalseInitially) {
+	auto& registry = AssetRegistry::Get();
+	registry.clear();
+
+	PlacementExecutor executor(registry);
+	executor.initialize();
+
+	// Entity not on cooldown initially
+	EXPECT_FALSE(executor.isEntityOnCooldown({0, 0}, {10.0F, 20.0F}, "BerryBush"));
+}
+
+TEST(PlacementExecutorTests, SetEntityCooldownMakesEntityOnCooldown) {
+	auto& registry = AssetRegistry::Get();
+	registry.clear();
+
+	PlacementExecutor executor(registry);
+	executor.initialize();
+
+	executor.setEntityCooldown({0, 0}, {10.0F, 20.0F}, "BerryBush", 60.0F);
+
+	EXPECT_TRUE(executor.isEntityOnCooldown({0, 0}, {10.0F, 20.0F}, "BerryBush"));
+}
+
+TEST(PlacementExecutorTests, DifferentPositionsAreIndependentCooldowns) {
+	auto& registry = AssetRegistry::Get();
+	registry.clear();
+
+	PlacementExecutor executor(registry);
+	executor.initialize();
+
+	executor.setEntityCooldown({0, 0}, {10.0F, 20.0F}, "BerryBush", 60.0F);
+
+	// Same chunk, different position
+	EXPECT_FALSE(executor.isEntityOnCooldown({0, 0}, {15.0F, 25.0F}, "BerryBush"));
+}
+
+TEST(PlacementExecutorTests, DifferentDefNamesAreIndependentCooldowns) {
+	auto& registry = AssetRegistry::Get();
+	registry.clear();
+
+	PlacementExecutor executor(registry);
+	executor.initialize();
+
+	executor.setEntityCooldown({0, 0}, {10.0F, 20.0F}, "BerryBush", 60.0F);
+
+	// Same position, different defName
+	EXPECT_FALSE(executor.isEntityOnCooldown({0, 0}, {10.0F, 20.0F}, "WoodyBush"));
+}
+
+TEST(PlacementExecutorTests, DifferentChunksAreIndependentCooldowns) {
+	auto& registry = AssetRegistry::Get();
+	registry.clear();
+
+	PlacementExecutor executor(registry);
+	executor.initialize();
+
+	executor.setEntityCooldown({0, 0}, {10.0F, 20.0F}, "BerryBush", 60.0F);
+
+	// Same position and defName, different chunk
+	EXPECT_FALSE(executor.isEntityOnCooldown({1, 0}, {10.0F, 20.0F}, "BerryBush"));
+}
+
+TEST(PlacementExecutorTests, UpdateCooldownsDecrementsCooldownTime) {
+	auto& registry = AssetRegistry::Get();
+	registry.clear();
+
+	PlacementExecutor executor(registry);
+	executor.initialize();
+
+	executor.setEntityCooldown({0, 0}, {10.0F, 20.0F}, "BerryBush", 5.0F);
+	EXPECT_TRUE(executor.isEntityOnCooldown({0, 0}, {10.0F, 20.0F}, "BerryBush"));
+
+	// Update with 2 seconds
+	executor.updateCooldowns(2.0F);
+
+	// Still on cooldown (5 - 2 = 3 seconds remaining)
+	EXPECT_TRUE(executor.isEntityOnCooldown({0, 0}, {10.0F, 20.0F}, "BerryBush"));
+}
+
+TEST(PlacementExecutorTests, UpdateCooldownsRemovesExpiredCooldowns) {
+	auto& registry = AssetRegistry::Get();
+	registry.clear();
+
+	PlacementExecutor executor(registry);
+	executor.initialize();
+
+	executor.setEntityCooldown({0, 0}, {10.0F, 20.0F}, "BerryBush", 5.0F);
+	EXPECT_TRUE(executor.isEntityOnCooldown({0, 0}, {10.0F, 20.0F}, "BerryBush"));
+
+	// Update with 6 seconds (cooldown expires)
+	executor.updateCooldowns(6.0F);
+
+	// No longer on cooldown
+	EXPECT_FALSE(executor.isEntityOnCooldown({0, 0}, {10.0F, 20.0F}, "BerryBush"));
+}
+
+TEST(PlacementExecutorTests, UpdateCooldownsExactExpiration) {
+	auto& registry = AssetRegistry::Get();
+	registry.clear();
+
+	PlacementExecutor executor(registry);
+	executor.initialize();
+
+	executor.setEntityCooldown({0, 0}, {10.0F, 20.0F}, "BerryBush", 5.0F);
+
+	// Update with exactly 5 seconds
+	executor.updateCooldowns(5.0F);
+
+	// Should be expired at exactly 0 or slightly negative
+	EXPECT_FALSE(executor.isEntityOnCooldown({0, 0}, {10.0F, 20.0F}, "BerryBush"));
+}
+
+TEST(PlacementExecutorTests, MultipleCooldownsUpdateIndependently) {
+	auto& registry = AssetRegistry::Get();
+	registry.clear();
+
+	PlacementExecutor executor(registry);
+	executor.initialize();
+
+	executor.setEntityCooldown({0, 0}, {10.0F, 20.0F}, "BerryBush", 3.0F);
+	executor.setEntityCooldown({0, 0}, {30.0F, 40.0F}, "BerryBush", 10.0F);
+
+	// Update with 5 seconds
+	executor.updateCooldowns(5.0F);
+
+	// First cooldown expired, second still active
+	EXPECT_FALSE(executor.isEntityOnCooldown({0, 0}, {10.0F, 20.0F}, "BerryBush"));
+	EXPECT_TRUE(executor.isEntityOnCooldown({0, 0}, {30.0F, 40.0F}, "BerryBush"));
+}
+
+TEST(PlacementExecutorTests, ResetCooldownOverwritesExisting) {
+	auto& registry = AssetRegistry::Get();
+	registry.clear();
+
+	PlacementExecutor executor(registry);
+	executor.initialize();
+
+	executor.setEntityCooldown({0, 0}, {10.0F, 20.0F}, "BerryBush", 5.0F);
+
+	// Reset cooldown to longer time
+	executor.setEntityCooldown({0, 0}, {10.0F, 20.0F}, "BerryBush", 100.0F);
+
+	// Update with 10 seconds (would have expired with original 5s cooldown)
+	executor.updateCooldowns(10.0F);
+
+	// Still on cooldown due to reset
+	EXPECT_TRUE(executor.isEntityOnCooldown({0, 0}, {10.0F, 20.0F}, "BerryBush"));
+}
+
+TEST(PlacementExecutorTests, ZeroCooldownExpiresOnFirstUpdate) {
+	auto& registry = AssetRegistry::Get();
+	registry.clear();
+
+	PlacementExecutor executor(registry);
+	executor.initialize();
+
+	// Set zero cooldown - still registered as on cooldown initially
+	executor.setEntityCooldown({0, 0}, {10.0F, 20.0F}, "BerryBush", 0.0F);
+
+	// Zero cooldown expires immediately on first update
+	executor.updateCooldowns(0.001F);
+
+	// Now it should be expired
+	EXPECT_FALSE(executor.isEntityOnCooldown({0, 0}, {10.0F, 20.0F}, "BerryBush"));
+}
+
+TEST(PlacementExecutorTests, NegativeChunkCooldowns) {
+	auto& registry = AssetRegistry::Get();
+	registry.clear();
+
+	PlacementExecutor executor(registry);
+	executor.initialize();
+
+	executor.setEntityCooldown({-5, -10}, {10.0F, 20.0F}, "BerryBush", 60.0F);
+
+	EXPECT_TRUE(executor.isEntityOnCooldown({-5, -10}, {10.0F, 20.0F}, "BerryBush"));
+	EXPECT_FALSE(executor.isEntityOnCooldown({5, 10}, {10.0F, 20.0F}, "BerryBush"));
+}
+
+TEST(PlacementExecutorTests, ClearRemovesCooldowns) {
+	auto& registry = AssetRegistry::Get();
+	registry.clear();
+
+	PlacementExecutor executor(registry);
+	executor.initialize();
+
+	executor.setEntityCooldown({0, 0}, {10.0F, 20.0F}, "BerryBush", 60.0F);
+	EXPECT_TRUE(executor.isEntityOnCooldown({0, 0}, {10.0F, 20.0F}, "BerryBush"));
+
+	executor.clear();
+
+	// After clear, cooldown should be gone
+	EXPECT_FALSE(executor.isEntityOnCooldown({0, 0}, {10.0F, 20.0F}, "BerryBush"));
+}
+
+TEST(PlacementExecutorTests, CooldownPositionQuantization) {
+	auto& registry = AssetRegistry::Get();
+	registry.clear();
+
+	PlacementExecutor executor(registry);
+	executor.initialize();
+
+	// Set cooldown at position 10.3, 20.7
+	executor.setEntityCooldown({0, 0}, {10.3F, 20.7F}, "BerryBush", 60.0F);
+
+	// Query with slightly different position that quantizes to same tile
+	// Position is quantized to integer tile coordinates (floor)
+	EXPECT_TRUE(executor.isEntityOnCooldown({0, 0}, {10.1F, 20.9F}, "BerryBush"));
+	EXPECT_TRUE(executor.isEntityOnCooldown({0, 0}, {10.9F, 20.0F}, "BerryBush"));
+
+	// Different tile should not be on cooldown
+	EXPECT_FALSE(executor.isEntityOnCooldown({0, 0}, {11.0F, 20.0F}, "BerryBush"));
+	EXPECT_FALSE(executor.isEntityOnCooldown({0, 0}, {10.0F, 21.0F}, "BerryBush"));
+}
+

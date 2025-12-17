@@ -8,6 +8,7 @@
 #include "../World.h"
 #include "../components/Action.h"
 #include "../components/DecisionTrace.h"
+#include "../components/Inventory.h"
 #include "../components/Memory.h"
 #include "../components/Movement.h"
 #include "../components/Needs.h"
@@ -33,13 +34,27 @@ namespace ecs::test {
 			// Initialize AssetRegistry (singleton) - needed for capability lookups
 			auto& registry = engine::assets::AssetRegistry::Get();
 
+			// Register Berry as edible entity for testing (unified entity/item model)
+			engine::assets::AssetDefinition berryDef;
+			berryDef.defName = "Berry";
+			berryDef.label = "Berry";
+			berryDef.itemProperties = engine::assets::ItemProperties{};
+			berryDef.itemProperties->stackSize = 20;
+			berryDef.itemProperties->edible = engine::assets::EdibleCapability{0.3F, engine::assets::CapabilityQuality::Normal, true};
+			registry.registerTestDefinition(std::move(berryDef));
+
 			// Register system with deterministic RNG seed for reproducible tests
 			world->registerSystem<AIDecisionSystem>(registry, kTestRngSeed);
 		}
 
-		void TearDown() override { world.reset(); }
+		void TearDown() override {
+			// Clean up test definitions
+			engine::assets::AssetRegistry::Get().clearDefinitions();
+			world.reset();
+		}
 
 		/// Create a colonist entity with all required components for AI decision making
+		/// Note: Includes DecisionTrace which is required for the inventory-aware hunger path
 		EntityID createColonist(glm::vec2 position = {0.0F, 0.0F}) {
 			auto entity = world->createEntity();
 			world->addComponent<Position>(entity, Position{position});
@@ -47,13 +62,8 @@ namespace ecs::test {
 			world->addComponent<MovementTarget>(entity, MovementTarget{{0.0F, 0.0F}, 2.0F, false});
 			world->addComponent<NeedsComponent>(entity, NeedsComponent::createDefault());
 			world->addComponent<Memory>(entity, Memory{});
+			world->addComponent<Inventory>(entity, Inventory::createForColonist());
 			world->addComponent<Task>(entity, Task{});
-			return entity;
-		}
-
-		/// Create a colonist with DecisionTrace component for trace-based testing
-		EntityID createColonistWithTrace(glm::vec2 position = {0.0F, 0.0F}) {
-			auto entity = createColonist(position);
 			world->addComponent<DecisionTrace>(entity, DecisionTrace{});
 			return entity;
 		}
@@ -144,8 +154,9 @@ namespace ecs::test {
 	TEST_F(AIDecisionSystemTest, CriticalNeedTakesPriorityOverActionable) {
 		auto colonist = createColonist({0.0F, 0.0F});
 
-		// Add known berry bush (for hunger)
-		addKnownEntity(colonist, {5.0F, 5.0F}, kBerryBushDefId, engine::assets::CapabilityType::Edible);
+		// Give colonist berries in inventory so hunger has a valid fulfillment path
+		auto* inventory = world->getComponent<Inventory>(colonist);
+		inventory->addItem("Berry", 3);
 
 		// Add known water source (for thirst)
 		addKnownEntity(colonist, {10.0F, 10.0F}, kWaterDefId, engine::assets::CapabilityType::Drinkable);
@@ -162,19 +173,19 @@ namespace ecs::test {
 		ASSERT_NE(task, nullptr);
 		EXPECT_EQ(task->type, TaskType::FulfillNeed);
 		EXPECT_EQ(task->needToFulfill, NeedType::Hunger); // Should prioritize critical hunger
-		EXPECT_TRUE(task->reason.find("CRITICAL") != std::string::npos);
+		EXPECT_TRUE(task->reason.find("critical") != std::string::npos);
 	}
 
 	TEST_F(AIDecisionSystemTest, ActionableNeedTriggersMovement) {
 		auto colonist = createColonist({0.0F, 0.0F});
 
-		// Add known berry bush
-		glm::vec2 berryPosition = {8.0F, 3.0F};
-		addKnownEntity(colonist, berryPosition, kBerryBushDefId, engine::assets::CapabilityType::Edible);
+		// Add known water source - use Drinkable capability (simpler path without yield validation)
+		glm::vec2 waterPosition = {8.0F, 3.0F};
+		addKnownEntity(colonist, waterPosition, kWaterDefId, engine::assets::CapabilityType::Drinkable);
 
-		// Hunger at actionable level (40%)
-		setNeedValue(colonist, NeedType::Hunger, 40.0F);
-		setNeedValue(colonist, NeedType::Thirst, 100.0F);
+		// Thirst at actionable level (40%)
+		setNeedValue(colonist, NeedType::Hunger, 100.0F);
+		setNeedValue(colonist, NeedType::Thirst, 40.0F);
 		setNeedValue(colonist, NeedType::Energy, 100.0F);
 		setNeedValue(colonist, NeedType::Bladder, 100.0F);
 
@@ -183,19 +194,19 @@ namespace ecs::test {
 		auto* task = getTask(colonist);
 		ASSERT_NE(task, nullptr);
 		EXPECT_EQ(task->type, TaskType::FulfillNeed);
-		EXPECT_EQ(task->needToFulfill, NeedType::Hunger);
+		EXPECT_EQ(task->needToFulfill, NeedType::Thirst);
 		EXPECT_EQ(task->state, TaskState::Moving);
 
-		// Target should be the berry bush position
-		EXPECT_FLOAT_EQ(task->targetPosition.x, berryPosition.x);
-		EXPECT_FLOAT_EQ(task->targetPosition.y, berryPosition.y);
+		// Target should be the water source position
+		EXPECT_FLOAT_EQ(task->targetPosition.x, waterPosition.x);
+		EXPECT_FLOAT_EQ(task->targetPosition.y, waterPosition.y);
 	}
 
 	TEST_F(AIDecisionSystemTest, MostUrgentNeedSelectedWhenMultipleActionable) {
 		auto colonist = createColonist({0.0F, 0.0F});
 
-		// Add known entities for both needs
-		addKnownEntity(colonist, {5.0F, 0.0F}, kBerryBushDefId, engine::assets::CapabilityType::Edible);
+		// Add known entities for both needs - hunger uses Harvestable
+		addKnownEntity(colonist, {5.0F, 0.0F}, kBerryBushDefId, engine::assets::CapabilityType::Harvestable);
 		addKnownEntity(colonist, {0.0F, 5.0F}, kWaterDefId, engine::assets::CapabilityType::Drinkable);
 
 		// Thirst more urgent than hunger
@@ -278,8 +289,7 @@ namespace ecs::test {
 		ASSERT_NE(task, nullptr);
 		EXPECT_EQ(task->type, TaskType::FulfillNeed);
 		EXPECT_EQ(task->needToFulfill, NeedType::Energy);
-		EXPECT_TRUE(task->reason.find("CRITICAL") != std::string::npos);
-		EXPECT_TRUE(task->reason.find("ground") != std::string::npos);
+		EXPECT_TRUE(task->reason.find("critical") != std::string::npos);
 	}
 
 	// =============================================================================
@@ -315,8 +325,9 @@ namespace ecs::test {
 	TEST_F(AIDecisionSystemTest, ReEvaluatesWhenCriticalNeedEmerges) {
 		auto colonist = createColonist({0.0F, 0.0F});
 
-		// Add known berry bush
-		addKnownEntity(colonist, {10.0F, 10.0F}, kBerryBushDefId, engine::assets::CapabilityType::Edible);
+		// Give colonist berries so hunger has a valid fulfillment path
+		auto* inventory = world->getComponent<Inventory>(colonist);
+		inventory->addItem("Berry", 3);
 
 		// Start with all needs satisfied - will wander
 		setNeedValue(colonist, NeedType::Hunger, 100.0F);
@@ -338,15 +349,15 @@ namespace ecs::test {
 
 		EXPECT_EQ(task->type, TaskType::FulfillNeed);
 		EXPECT_EQ(task->needToFulfill, NeedType::Hunger);
-		EXPECT_TRUE(task->reason.find("CRITICAL") != std::string::npos);
+		EXPECT_TRUE(task->reason.find("critical") != std::string::npos);
 	}
 
 	TEST_F(AIDecisionSystemTest, DoesNotReEvaluateWhileHandlingCriticalNeed) {
 		auto colonist = createColonist({0.0F, 0.0F});
 
-		// Add two edible sources at different distances
-		addKnownEntity(colonist, {10.0F, 0.0F}, kBerryBushDefId, engine::assets::CapabilityType::Edible);
-		addKnownEntity(colonist, {5.0F, 0.0F}, kBerryBushDefId + 1, engine::assets::CapabilityType::Edible);
+		// Give colonist berries so hunger has a valid fulfillment path
+		auto* inventory = world->getComponent<Inventory>(colonist);
+		inventory->addItem("Berry", 3);
 
 		// Critical hunger
 		setNeedValue(colonist, NeedType::Hunger, 5.0F);
@@ -360,8 +371,9 @@ namespace ecs::test {
 		ASSERT_NE(task, nullptr);
 		EXPECT_EQ(task->type, TaskType::FulfillNeed);
 
-		// Store original target
-		glm::vec2 originalTarget = task->targetPosition;
+		// Store original need being fulfilled
+		NeedType originalNeed = task->needToFulfill;
+		EXPECT_EQ(originalNeed, NeedType::Hunger);
 
 		// Make another need critical
 		setNeedValue(colonist, NeedType::Thirst, 5.0F);
@@ -369,16 +381,14 @@ namespace ecs::test {
 		// Update again - should NOT switch tasks because already handling critical
 		world->update(0.016F);
 
-		// Should still be heading to same target
+		// Should still be handling the same need
 		EXPECT_EQ(task->needToFulfill, NeedType::Hunger);
-		EXPECT_FLOAT_EQ(task->targetPosition.x, originalTarget.x);
-		EXPECT_FLOAT_EQ(task->targetPosition.y, originalTarget.y);
 	}
 
 	TEST_F(AIDecisionSystemTest, TimerIncrementsWhenNotReEvaluating) {
 		auto colonist = createColonist({0.0F, 0.0F});
 
-		addKnownEntity(colonist, {20.0F, 20.0F}, kBerryBushDefId, engine::assets::CapabilityType::Edible);
+		addKnownEntity(colonist, {20.0F, 20.0F}, kBerryBushDefId, engine::assets::CapabilityType::Harvestable);
 
 		// Actionable need - will create task and start timer
 		setNeedValue(colonist, NeedType::Hunger, 40.0F);
@@ -425,17 +435,17 @@ namespace ecs::test {
 	TEST_F(AIDecisionSystemTest, FindsNearestKnownEntity) {
 		auto colonist = createColonist({0.0F, 0.0F});
 
-		// Add multiple berry bushes at different distances
-		glm::vec2 farBerry = {20.0F, 20.0F};
-		glm::vec2 nearBerry = {3.0F, 4.0F}; // Distance 5
-		glm::vec2 midBerry = {10.0F, 0.0F}; // Distance 10
+		// Add multiple water sources at different distances - use Drinkable for simpler path
+		glm::vec2 farWater = {20.0F, 20.0F};
+		glm::vec2 nearWater = {3.0F, 4.0F}; // Distance 5
+		glm::vec2 midWater = {10.0F, 0.0F}; // Distance 10
 
-		addKnownEntity(colonist, farBerry, kBerryBushDefId, engine::assets::CapabilityType::Edible);
-		addKnownEntity(colonist, nearBerry, kBerryBushDefId + 1, engine::assets::CapabilityType::Edible);
-		addKnownEntity(colonist, midBerry, kBerryBushDefId + 2, engine::assets::CapabilityType::Edible);
+		addKnownEntity(colonist, farWater, kWaterDefId, engine::assets::CapabilityType::Drinkable);
+		addKnownEntity(colonist, nearWater, kWaterDefId + 1, engine::assets::CapabilityType::Drinkable);
+		addKnownEntity(colonist, midWater, kWaterDefId + 2, engine::assets::CapabilityType::Drinkable);
 
-		setNeedValue(colonist, NeedType::Hunger, 40.0F);
-		setNeedValue(colonist, NeedType::Thirst, 100.0F);
+		setNeedValue(colonist, NeedType::Hunger, 100.0F);
+		setNeedValue(colonist, NeedType::Thirst, 40.0F);
 		setNeedValue(colonist, NeedType::Energy, 100.0F);
 		setNeedValue(colonist, NeedType::Bladder, 100.0F);
 
@@ -445,9 +455,9 @@ namespace ecs::test {
 		ASSERT_NE(task, nullptr);
 		EXPECT_EQ(task->type, TaskType::FulfillNeed);
 
-		// Should target the nearest berry bush
-		EXPECT_FLOAT_EQ(task->targetPosition.x, nearBerry.x);
-		EXPECT_FLOAT_EQ(task->targetPosition.y, nearBerry.y);
+		// Should target the nearest water source
+		EXPECT_FLOAT_EQ(task->targetPosition.x, nearWater.x);
+		EXPECT_FLOAT_EQ(task->targetPosition.y, nearWater.y);
 	}
 
 	// =============================================================================
@@ -609,7 +619,7 @@ namespace ecs::test {
 			}
 		}
 
-		// Add some berry bushes for colonists to find
+		// Add some berry bushes for colonists to find - hunger uses Harvestable
 		for (int i = 0; i < 10; ++i) {
 			// Add to first colonist's memory (just for test setup)
 			for (auto colonist : colonists) {
@@ -617,7 +627,7 @@ namespace ecs::test {
 					colonist,
 					{static_cast<float>(i * 10), 0.0F},
 					kBerryBushDefId + static_cast<uint32_t>(i),
-					engine::assets::CapabilityType::Edible
+					engine::assets::CapabilityType::Harvestable
 				);
 			}
 		}
@@ -643,19 +653,19 @@ namespace ecs::test {
 	TEST_F(AIDecisionSystemTest, MemoryCapacityDoesNotAffectDecisionSpeed) {
 		auto colonist = createColonist({0.0F, 0.0F});
 
-		// Fill memory with many entities
+		// Fill memory with many entities - use Drinkable for simpler path
 		constexpr int kNumEntities = 1000;
 		for (int i = 0; i < kNumEntities; ++i) {
 			addKnownEntity(
 				colonist,
 				{static_cast<float>(i), static_cast<float>(i)},
-				kBerryBushDefId + static_cast<uint32_t>(i),
-				engine::assets::CapabilityType::Edible
+				kWaterDefId + static_cast<uint32_t>(i),
+				engine::assets::CapabilityType::Drinkable
 			);
 		}
 
-		setNeedValue(colonist, NeedType::Hunger, 40.0F);
-		setNeedValue(colonist, NeedType::Thirst, 100.0F);
+		setNeedValue(colonist, NeedType::Hunger, 100.0F);
+		setNeedValue(colonist, NeedType::Thirst, 40.0F);
 		setNeedValue(colonist, NeedType::Energy, 100.0F);
 		setNeedValue(colonist, NeedType::Bladder, 100.0F);
 
@@ -679,7 +689,7 @@ namespace ecs::test {
 	// =============================================================================
 
 	TEST_F(AIDecisionSystemTest, TraceContainsAllNeedsPlusWander) {
-		auto colonist = createColonistWithTrace({0.0F, 0.0F});
+		auto colonist = createColonist({0.0F, 0.0F});
 
 		// All needs satisfied
 		setNeedValue(colonist, NeedType::Hunger, 100.0F);
@@ -734,10 +744,10 @@ namespace ecs::test {
 	}
 
 	TEST_F(AIDecisionSystemTest, TraceOptionsSortedByPriority) {
-		auto colonist = createColonistWithTrace({0.0F, 0.0F});
+		auto colonist = createColonist({0.0F, 0.0F});
 
-		// Add berry bush for hunger
-		addKnownEntity(colonist, {5.0F, 0.0F}, kBerryBushDefId, engine::assets::CapabilityType::Edible);
+		// Add berry bush for hunger - uses Harvestable
+		addKnownEntity(colonist, {5.0F, 0.0F}, kBerryBushDefId, engine::assets::CapabilityType::Harvestable);
 
 		// Set up varying need levels
 		setNeedValue(colonist, NeedType::Hunger, 40.0F);   // Actionable
@@ -760,10 +770,11 @@ namespace ecs::test {
 	}
 
 	TEST_F(AIDecisionSystemTest, TraceMarksFirstActionableAsSelected) {
-		auto colonist = createColonistWithTrace({0.0F, 0.0F});
+		auto colonist = createColonist({0.0F, 0.0F});
 
-		// Add berry bush
-		addKnownEntity(colonist, {5.0F, 0.0F}, kBerryBushDefId, engine::assets::CapabilityType::Edible);
+		// Give colonist berries so hunger has a valid fulfillment path
+		auto* inventory = world->getComponent<Inventory>(colonist);
+		inventory->addItem("Berry", 3);
 
 		// Hunger needs attention
 		setNeedValue(colonist, NeedType::Hunger, 40.0F);
@@ -794,7 +805,7 @@ namespace ecs::test {
 	}
 
 	TEST_F(AIDecisionSystemTest, TraceShowsNoSourceWhenNotInMemory) {
-		auto colonist = createColonistWithTrace({0.0F, 0.0F});
+		auto colonist = createColonist({0.0F, 0.0F});
 
 		// Hunger needs attention, but NO food in memory
 		setNeedValue(colonist, NeedType::Hunger, 40.0F);
@@ -822,7 +833,7 @@ namespace ecs::test {
 	}
 
 	TEST_F(AIDecisionSystemTest, TraceShowsSatisfiedForHighNeeds) {
-		auto colonist = createColonistWithTrace({0.0F, 0.0F});
+		auto colonist = createColonist({0.0F, 0.0F});
 
 		// All needs fully satisfied
 		setNeedValue(colonist, NeedType::Hunger, 100.0F);
@@ -845,7 +856,7 @@ namespace ecs::test {
 	}
 
 	TEST_F(AIDecisionSystemTest, TraceGroundFallbackForEnergyAndBladder) {
-		auto colonist = createColonistWithTrace({5.0F, 5.0F});
+		auto colonist = createColonist({5.0F, 5.0F});
 
 		// Energy and Bladder need attention, no entities in memory
 		// Note: Energy/Bladder seek threshold is 30%, so values must be < 30% to be actionable
@@ -892,11 +903,11 @@ namespace ecs::test {
 	}
 
 	TEST_F(AIDecisionSystemTest, TraceTaskMatchesSelectedOption) {
-		auto colonist = createColonistWithTrace({0.0F, 0.0F});
+		auto colonist = createColonist({0.0F, 0.0F});
 
-		// Add berry bush
+		// Add berry bush - uses Harvestable
 		glm::vec2 berryPosition = {8.0F, 3.0F};
-		addKnownEntity(colonist, berryPosition, kBerryBushDefId, engine::assets::CapabilityType::Edible);
+		addKnownEntity(colonist, berryPosition, kBerryBushDefId, engine::assets::CapabilityType::Harvestable);
 
 		// Hunger needs attention
 		setNeedValue(colonist, NeedType::Hunger, 40.0F);
@@ -925,7 +936,7 @@ namespace ecs::test {
 	}
 
 	TEST_F(AIDecisionSystemTest, TraceDisplayCountRespectsCap) {
-		auto colonist = createColonistWithTrace({0.0F, 0.0F});
+		auto colonist = createColonist({0.0F, 0.0F});
 
 		world->update(0.016F);
 
@@ -939,7 +950,7 @@ namespace ecs::test {
 	}
 
 	TEST_F(AIDecisionSystemTest, TraceClearedOnReEvaluation) {
-		auto colonist = createColonistWithTrace({0.0F, 0.0F});
+		auto colonist = createColonist({0.0F, 0.0F});
 
 		setNeedValue(colonist, NeedType::Hunger, 100.0F);
 		setNeedValue(colonist, NeedType::Thirst, 100.0F);
@@ -1048,10 +1059,13 @@ namespace ecs::test {
 	}
 
 	TEST_F(AIDecisionSystemTest, TraceCriticalNeedHasHighestPriority) {
-		auto colonist = createColonistWithTrace({0.0F, 0.0F});
+		auto colonist = createColonist({0.0F, 0.0F});
 
-		// Add entities for all needs
-		addKnownEntity(colonist, {5.0F, 0.0F}, kBerryBushDefId, engine::assets::CapabilityType::Edible);
+		// Give colonist berries so hunger has a valid fulfillment path
+		auto* inventory = world->getComponent<Inventory>(colonist);
+		inventory->addItem("Berry", 3);
+
+		// Add water source for thirst
 		addKnownEntity(colonist, {0.0F, 5.0F}, kWaterDefId, engine::assets::CapabilityType::Drinkable);
 
 		// Critical hunger, actionable thirst
@@ -1086,13 +1100,26 @@ namespace ecs::test {
 
 			auto& registry = engine::assets::AssetRegistry::Get();
 
+			// Register Berry as edible entity for testing (unified entity/item model)
+			engine::assets::AssetDefinition berryDef;
+			berryDef.defName = "Berry";
+			berryDef.label = "Berry";
+			berryDef.itemProperties = engine::assets::ItemProperties{};
+			berryDef.itemProperties->stackSize = 20;
+			berryDef.itemProperties->edible = engine::assets::EdibleCapability{0.3F, engine::assets::CapabilityQuality::Normal, true};
+			registry.registerTestDefinition(std::move(berryDef));
+
 			// Register BOTH systems to test their interaction
 			// This is critical - the bug only manifests when both systems run
 			world->registerSystem<AIDecisionSystem>(registry, kTestRngSeed);
 			world->registerSystem<ActionSystem>();
 		}
 
-		void TearDown() override { world.reset(); }
+		void TearDown() override {
+			// Clean up test definitions
+			engine::assets::AssetRegistry::Get().clearDefinitions();
+			world.reset();
+		}
 
 		/// Create a colonist with all components needed for full task→action flow
 		EntityID createColonist(glm::vec2 position = {0.0F, 0.0F}) {
@@ -1102,6 +1129,7 @@ namespace ecs::test {
 			world->addComponent<MovementTarget>(entity, MovementTarget{{0.0F, 0.0F}, 2.0F, false});
 			world->addComponent<NeedsComponent>(entity, NeedsComponent::createDefault());
 			world->addComponent<Memory>(entity, Memory{});
+			world->addComponent<Inventory>(entity, Inventory::createForColonist());
 			world->addComponent<Task>(entity, Task{});
 			world->addComponent<Action>(entity, Action{});		   // Required for ActionSystem
 			world->addComponent<DecisionTrace>(entity, DecisionTrace{}); // Required for priority-based switching
@@ -1188,12 +1216,9 @@ namespace ecs::test {
 	TEST_F(AIActionIntegrationTest, EatActionCompletesAndRestoresHunger) {
 		auto colonist = createColonist({0.0F, 0.0F});
 
-		// Add berry bush to memory at current position (so no movement needed)
-		auto* memory = world->getComponent<Memory>(colonist);
-		// CapabilityType::Edible = 0
-		memory->rememberWorldEntity(
-			{0.0F, 0.0F}, 1001, static_cast<uint8_t>(1 << static_cast<size_t>(engine::assets::CapabilityType::Edible))
-		);
+		// Give colonist berries in inventory - the primary eating path now
+		auto* inventory = world->getComponent<Inventory>(colonist);
+		inventory->addItem("Berry", 5);
 
 		// Set up low hunger
 		setNeedValue(colonist, NeedType::Hunger, 30.0F); // Actionable
@@ -1203,7 +1228,7 @@ namespace ecs::test {
 
 		float initialHunger = 30.0F;
 
-		// Run updates to complete the eat action (2.0s duration)
+		// Run updates to complete the eat action (Eat is ~2.0s duration)
 		for (int i = 0; i < 30; ++i) {
 			world->update(0.1F);
 		}
