@@ -1,7 +1,5 @@
 #include "ChunkRenderer.h"
 
-#include "world/chunk/TileAdjacency.h"
-
 #include <algorithm>
 #include <primitives/Primitives.h>
 #include <vector>
@@ -72,10 +70,9 @@ namespace engine::world {
 
 		for (int32_t tileY = startTileY; tileY < endTileY; tileY += m_tileResolution) {
 			for (int32_t tileX = startTileX; tileX < endTileX; tileX += m_tileResolution) {
-				TileData tile = chunk.getTile(static_cast<uint16_t>(tileX), static_cast<uint16_t>(tileY));
-				// Tile textures carry their own coloration; use neutral tint to avoid double-darkening.
-				Foundation::Color color = Foundation::Color::white();
-				uint8_t			  surfaceId = static_cast<uint8_t>(tile.surface);
+				// Use pre-computed render data instead of extracting adjacency per-frame
+				const TileRenderData& render = chunk.getTileRenderData(
+					static_cast<uint16_t>(tileX), static_cast<uint16_t>(tileY));
 
 				float worldX = chunkMinX + static_cast<float>(tileX) * kTileSize;
 				float worldY = chunkMinY + static_cast<float>(tileY) * kTileSize;
@@ -87,35 +84,23 @@ namespace engine::world {
 				int32_t worldTileX = chunkCoord.x * kChunkSize + tileX;
 				int32_t worldTileY = chunkCoord.y * kChunkSize + tileY;
 
-				// Extract cardinal neighbor surface IDs for soft edge blending
-				uint8_t neighborN = TileAdjacency::getNeighbor(tile.adjacency, TileAdjacency::N);
-				uint8_t neighborE = TileAdjacency::getNeighbor(tile.adjacency, TileAdjacency::E);
-				uint8_t neighborS = TileAdjacency::getNeighbor(tile.adjacency, TileAdjacency::S);
-				uint8_t neighborW = TileAdjacency::getNeighbor(tile.adjacency, TileAdjacency::W);
-
-				// Extract diagonal neighbor surface IDs for corner blending
-				uint8_t neighborNW = TileAdjacency::getNeighbor(tile.adjacency, TileAdjacency::NW);
-				uint8_t neighborNE = TileAdjacency::getNeighbor(tile.adjacency, TileAdjacency::NE);
-				uint8_t neighborSE = TileAdjacency::getNeighbor(tile.adjacency, TileAdjacency::SE);
-				uint8_t neighborSW = TileAdjacency::getNeighbor(tile.adjacency, TileAdjacency::SW);
-
 				Renderer::Primitives::drawTile(
 					{.bounds = Foundation::Rect{screenX, screenY, tileScreenSize, tileScreenSize},
-					 .color = color,
-					 .edgeMask = TileAdjacency::getEdgeMaskByStack(tile.adjacency, surfaceId),
-					 .cornerMask = TileAdjacency::getCornerMaskByStack(tile.adjacency, surfaceId),
-					 .surfaceId = surfaceId,
-					 .hardEdgeMask = TileAdjacency::getHardEdgeMaskByFamily(tile.adjacency, surfaceId),
+					 .color = Foundation::Color::white(),
+					 .edgeMask = render.edgeMask,
+					 .cornerMask = render.cornerMask,
+					 .surfaceId = render.surfaceId,
+					 .hardEdgeMask = render.hardEdgeMask,
 					 .tileX = worldTileX,
 					 .tileY = worldTileY,
-					 .neighborN = neighborN,
-					 .neighborE = neighborE,
-					 .neighborS = neighborS,
-					 .neighborW = neighborW,
-					 .neighborNW = neighborNW,
-					 .neighborNE = neighborNE,
-					 .neighborSE = neighborSE,
-					 .neighborSW = neighborSW}
+					 .neighborN = render.neighborN,
+					 .neighborE = render.neighborE,
+					 .neighborS = render.neighborS,
+					 .neighborW = render.neighborW,
+					 .neighborNW = render.neighborNW,
+					 .neighborNE = render.neighborNE,
+					 .neighborSE = render.neighborSE,
+					 .neighborSW = render.neighborSW}
 				);
 
 				m_lastTileCount++;

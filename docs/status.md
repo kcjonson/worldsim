@@ -222,7 +222,9 @@ Use this template for all work items:
 - [x] VisionSystem optimization
   - [x] Shore tile caching (pre-compute during chunk generation)
   - [x] Throttle to every 5 frames (12x/sec instead of 60x/sec)
-- [ ] Chunk vertex buffer caching (reduce CPU iteration)
+- [x] Tile render data caching
+  - [x] Pre-compute adjacency masks and neighbors during chunk generation
+  - [x] ChunkRenderer uses cached data instead of extracting per-frame
 - [ ] Entity culling/LOD (skip offscreen entities)
 - [ ] Dynamic LOD for zoom levels
 

@@ -32,6 +32,10 @@ namespace engine::world {
 		// This avoids iterating all tiles every frame during vision updates
 		computeShoreTiles();
 
+		// Pre-compute rendering data (adjacency masks, neighbors) for ChunkRenderer
+		// This avoids per-frame extraction of adjacency data during rendering
+		computeRenderData();
+
 		// Mark generation complete (release semantics for thread safety)
 		m_generationComplete.store(true, std::memory_order_release);
 	}
@@ -59,6 +63,34 @@ namespace engine::world {
 
 		// Shrink to fit to minimize memory usage
 		m_shoreTiles.shrink_to_fit();
+	}
+
+	void Chunk::computeRenderData() {
+		for (uint16_t y = 0; y < kChunkSize; ++y) {
+			for (uint16_t x = 0; x < kChunkSize; ++x) {
+				size_t		idx = y * kChunkSize + x;
+				const auto& tile = m_tiles[idx];
+				auto&		render = m_renderData[idx];
+
+				uint8_t surfaceId = static_cast<uint8_t>(tile.surface);
+				render.surfaceId = surfaceId;
+
+				// Pre-compute edge and corner masks
+				render.edgeMask = TileAdjacency::getEdgeMaskByStack(tile.adjacency, surfaceId);
+				render.cornerMask = TileAdjacency::getCornerMaskByStack(tile.adjacency, surfaceId);
+				render.hardEdgeMask = TileAdjacency::getHardEdgeMaskByFamily(tile.adjacency, surfaceId);
+
+				// Pre-extract all neighbor surface IDs
+				render.neighborN = TileAdjacency::getNeighbor(tile.adjacency, TileAdjacency::N);
+				render.neighborE = TileAdjacency::getNeighbor(tile.adjacency, TileAdjacency::E);
+				render.neighborS = TileAdjacency::getNeighbor(tile.adjacency, TileAdjacency::S);
+				render.neighborW = TileAdjacency::getNeighbor(tile.adjacency, TileAdjacency::W);
+				render.neighborNW = TileAdjacency::getNeighbor(tile.adjacency, TileAdjacency::NW);
+				render.neighborNE = TileAdjacency::getNeighbor(tile.adjacency, TileAdjacency::NE);
+				render.neighborSE = TileAdjacency::getNeighbor(tile.adjacency, TileAdjacency::SE);
+				render.neighborSW = TileAdjacency::getNeighbor(tile.adjacency, TileAdjacency::SW);
+			}
+		}
 	}
 
 	const TileData& Chunk::getTile(uint16_t localX, uint16_t localY) const {

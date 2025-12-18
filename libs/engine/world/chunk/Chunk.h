@@ -88,6 +88,25 @@ struct TileData {
 	}
 };
 
+/// Pre-computed tile rendering data - 16 bytes per tile.
+/// Cached during chunk generation to avoid per-frame adjacency extraction.
+/// Used by ChunkRenderer for fast tile rendering.
+struct TileRenderData {
+	uint8_t surfaceId;     ///< Surface type (0-255)
+	uint8_t edgeMask;      ///< Edge shadow mask (N,E,S,W bits)
+	uint8_t cornerMask;    ///< Corner shadow mask (NW,NE,SE,SW bits)
+	uint8_t hardEdgeMask;  ///< Family-based hard edges (8 directions)
+	uint8_t neighborN;     ///< North neighbor surface ID
+	uint8_t neighborE;     ///< East neighbor surface ID
+	uint8_t neighborS;     ///< South neighbor surface ID
+	uint8_t neighborW;     ///< West neighbor surface ID
+	uint8_t neighborNW;    ///< Northwest neighbor surface ID
+	uint8_t neighborNE;    ///< Northeast neighbor surface ID
+	uint8_t neighborSE;    ///< Southeast neighbor surface ID
+	uint8_t neighborSW;    ///< Southwest neighbor surface ID
+	uint8_t padding[4];    ///< Pad to 16 bytes for cache alignment
+};
+
 /// A 512×512 region of the world.
 /// Tiles are pre-computed during generate() and stored in a flat array.
 /// All systems read from the same definitive tile data.
@@ -144,6 +163,12 @@ class Chunk {
 	/// Pre-computed during generation for O(1) lookup by VisionSystem
 	[[nodiscard]] const std::vector<std::pair<uint16_t, uint16_t>>& getShoreTiles() const { return m_shoreTiles; }
 
+	/// Get pre-computed tile rendering data for fast rendering
+	/// Use instead of extracting adjacency data per-frame
+	[[nodiscard]] const TileRenderData& getTileRenderData(uint16_t localX, uint16_t localY) const {
+		return m_renderData[localY * kChunkSize + localX];
+	}
+
   private:
 	ChunkCoordinate m_coord;
 	ChunkSampleResult m_biomeData;
@@ -152,6 +177,10 @@ class Chunk {
 
 	/// Flat array of pre-computed tiles (512×512 = 262,144 tiles × 16 bytes = 4.0 MB)
 	std::array<TileData, kChunkSize * kChunkSize> m_tiles;
+
+	/// Pre-computed rendering data (512×512 = 262,144 tiles × 16 bytes = 4.0 MB)
+	/// Caches adjacency extraction for ChunkRenderer to avoid per-frame computation
+	std::array<TileRenderData, kChunkSize * kChunkSize> m_renderData;
 
 	/// Thread-safe flag indicating generation is complete
 	std::atomic<bool> m_generationComplete{false};
@@ -165,6 +194,9 @@ class Chunk {
 
 	/// Pre-compute shore tiles (land adjacent to water) for VisionSystem
 	void computeShoreTiles();
+
+	/// Pre-compute rendering data (adjacency masks, neighbors) for ChunkRenderer
+	void computeRenderData();
 
 	/// Select surface type based on biome using organic noise-based patches
 	[[nodiscard]] Surface selectSurface(Biome biome, uint16_t localX, uint16_t localY) const;
