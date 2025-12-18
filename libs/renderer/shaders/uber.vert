@@ -10,6 +10,7 @@ layout(location = 2) in vec4 a_color;      // Fill color RGBA
 layout(location = 3) in vec4 a_data1;      // borderData for shapes, unused for text
 layout(location = 4) in vec4 a_data2;      // shapeParams for shapes, (pixelRange, 0, 0, renderMode) for text
 layout(location = 5) in vec4 a_clipBounds; // Clip rect (minX, minY, maxX, maxY) or (0,0,0,0) for no clip
+layout(location = 8) in vec4 a_data3;      // Diagonal neighbors for tiles (NW, NE, SE, SW)
 
 // Include instancing support (attributes 6-7, uniforms, helper functions)
 #include "includes/instancing.glsl"
@@ -24,6 +25,7 @@ out vec4 v_color;
 out vec4 v_data1;
 out vec4 v_data2;
 out vec4 v_clipBounds;
+out vec4 v_data3;
 
 // Render mode constant for instanced entities (matches uber.frag)
 // Stored in v_data2.w to signal fragment shader to use simple solid color output
@@ -52,6 +54,7 @@ void main() {
 		v_data1 = vec4(0.0, 0.0, 0.0, 0.0);
 		v_data2 = vec4(0.0, 0.0, 0.0, kRenderModeInstanced);
 		v_clipBounds = vec4(0.0, 0.0, 0.0, 0.0);  // No clipping for world entities
+		v_data3 = vec4(0.0, 0.0, 0.0, 0.0);       // No diagonal neighbors for instanced
 	} else {
 		// ========== STANDARD BATCHED PATH ==========
 		// a_position is already in screen space
@@ -66,6 +69,7 @@ void main() {
 		v_data1 = a_data1;
 		v_data2 = a_data2;
 		v_clipBounds = a_clipBounds;
+		v_data3 = a_data3;
 	}
 
 	// Color is always passed through

@@ -20,23 +20,26 @@
 namespace engine::world {
 
 /// Surface types for terrain rendering
-/// Note: These are surface MATERIALS, not flora. "Soil" is what grass grows ON.
+/// Ground family surfaces use soft blending; Water/Rock use hard edges.
 enum class Surface : uint8_t {
-	Soil,   // Dirt/earth suitable for vegetation (was "Grass")
-	Dirt,   // Exposed dirt/mud
-	Sand,   // Sandy terrain
-	Rock,   // Rocky/stone surface
-	Water,  // Water bodies
-	Snow,   // Snow-covered ground
-	Mud,    // Wet mud (darker than Dirt, appears near water)
-	Count   // Sentinel value for iteration (must be last)
+	Grass,       // 0 - Regular grassland (standard temperate grass)
+	Dirt,        // 1 - Exposed dirt/mud
+	Sand,        // 2 - Sandy terrain
+	Rock,        // 3 - Rocky/stone surface
+	Water,       // 4 - Water bodies
+	Snow,        // 5 - Snow-covered ground
+	Mud,         // 6 - Wet mud (darker than Dirt, appears near water)
+	GrassTall,   // 7 - Long grass with seed heads, meadow feel
+	GrassShort,  // 8 - Rocky/sparse grass, short stubble
+	GrassMeadow, // 9 - Lush meadow variant, thicker coverage
+	Count        // 10 - Sentinel value for iteration (must be last)
 };
 
 /// Convert Surface enum to string for placement rules and debugging
 [[nodiscard]] inline std::string surfaceToString(Surface surface) {
 	switch (surface) {
-		case Surface::Soil:
-			return "Soil";
+		case Surface::Grass:
+			return "Grass";
 		case Surface::Dirt:
 			return "Dirt";
 		case Surface::Sand:
@@ -49,6 +52,12 @@ enum class Surface : uint8_t {
 			return "Snow";
 		case Surface::Mud:
 			return "Mud";
+		case Surface::GrassTall:
+			return "GrassTall";
+		case Surface::GrassShort:
+			return "GrassShort";
+		case Surface::GrassMeadow:
+			return "GrassMeadow";
 		default:
 			return "Unknown";
 	}
@@ -57,7 +66,7 @@ enum class Surface : uint8_t {
 /// Tile data - 16 bytes, stored in flat array per chunk.
 /// Designed for single source of truth: computed once, read by all systems.
 struct TileData {
-	Surface surface = Surface::Soil;    ///< 1 byte - THE definitive terrain type
+	Surface surface = Surface::Grass;   ///< 1 byte - THE definitive terrain type
 	Biome primaryBiome = Biome::Grassland;   ///< 1 byte - dominant biome
 	Biome secondaryBiome = Biome::Grassland; ///< 1 byte - for ecotones (may equal primary)
 	uint8_t biomeBlend = 255;           ///< 1 byte - weight of primary (255 = 100% primary)

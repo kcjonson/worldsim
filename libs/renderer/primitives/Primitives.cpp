@@ -319,7 +319,9 @@ namespace Renderer::Primitives {
 		g_batchRenderer->addTileQuad(
 			args.bounds, args.color,
 			args.edgeMask, args.cornerMask, args.surfaceId, args.hardEdgeMask,
-			args.tileX, args.tileY
+			args.tileX, args.tileY,
+			args.neighborN, args.neighborE, args.neighborS, args.neighborW,
+			args.neighborNW, args.neighborNE, args.neighborSE, args.neighborSW
 		);
 	}
 

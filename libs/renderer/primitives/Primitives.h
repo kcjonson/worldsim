@@ -178,14 +178,24 @@ namespace Renderer {
 
 		// Arguments for DrawTile (tile-specific packing for adjacency data)
 		struct TileArgs {
-			Foundation::Rect  bounds;      // Screen-space quad
-			Foundation::Color color;       // Base color
-			uint8_t          edgeMask = 0; // N,E,S,W bits (0-3)
-			uint8_t          cornerMask = 0; // NW,NE,SE,SW bits (0-3)
-			uint8_t          surfaceId = 0;  // Surface type id (0-255)
-			uint8_t          hardEdgeMask = 0; // Family-based hard edges (8 dirs)
-			int32_t          tileX = 0;    // World tile coordinate X (for procedural edge variation)
-			int32_t          tileY = 0;    // World tile coordinate Y (for procedural edge variation)
+			Foundation::Rect  bounds;         // Screen-space quad
+			Foundation::Color color;          // Base color
+			uint8_t          edgeMask = 0;    // N,E,S,W bits (0-3)
+			uint8_t          cornerMask = 0;  // NW,NE,SE,SW bits (0-3)
+			uint8_t          surfaceId = 0;   // Surface type id (0-255)
+			uint8_t          hardEdgeMask = 0;// Family-based hard edges (8 dirs)
+			int32_t          tileX = 0;       // World tile coordinate X (for procedural edge variation)
+			int32_t          tileY = 0;       // World tile coordinate Y (for procedural edge variation)
+			// Cardinal neighbor surface IDs for soft edge blending (same-family surfaces)
+			uint8_t          neighborN = 0;   // North neighbor surface ID
+			uint8_t          neighborE = 0;   // East neighbor surface ID
+			uint8_t          neighborS = 0;   // South neighbor surface ID
+			uint8_t          neighborW = 0;   // West neighbor surface ID
+			// Diagonal neighbor surface IDs for corner blending
+			uint8_t          neighborNW = 0;  // Northwest neighbor surface ID
+			uint8_t          neighborNE = 0;  // Northeast neighbor surface ID
+			uint8_t          neighborSE = 0;  // Southeast neighbor surface ID
+			uint8_t          neighborSW = 0;  // Southwest neighbor surface ID
 		};
 
 		// Draw a tile quad with adjacency-packed data for shader use

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- GrassTall Pattern - Slightly darker/lusher grass
+     512x512 SVG covering 8x8 game tiles (64px per tile)
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <rect width="512" height="512" fill="#42683a"/>
+  <ellipse cx="90" cy="90" rx="110" ry="85" fill="#385830" opacity="0.22"/>
+  <ellipse cx="350" cy="130" rx="125" ry="95" fill="#4d7545" opacity="0.16"/>
+  <ellipse cx="200" cy="300" rx="115" ry="90" fill="#385830" opacity="0.2"/>
+  <ellipse cx="440" cy="380" rx="135" ry="105" fill="#4d7545" opacity="0.14"/>
+  <ellipse cx="270" cy="200" rx="85" ry="70" fill="#385830" opacity="0.16"/>
+</svg>

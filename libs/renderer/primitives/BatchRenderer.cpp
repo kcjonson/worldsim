@@ -105,6 +105,11 @@ namespace Renderer {
 		glEnableVertexAttribArray(5);
 		glVertexAttribPointer(5, 4, GL_FLOAT, GL_FALSE, sizeof(UberVertex), (void*)offsetof(UberVertex, clipBounds));
 
+		// Data3 attribute (location = 8) - diagonal neighbors for tiles (NW, NE, SE, SW)
+		// Note: locations 6-7 are reserved for instancing
+		glEnableVertexAttribArray(8);
+		glVertexAttribPointer(8, 4, GL_FLOAT, GL_FALSE, sizeof(UberVertex), (void*)offsetof(UberVertex, data3));
+
 		// Bind index buffer
 		glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ibo);
 
@@ -195,6 +200,8 @@ namespace Renderer {
 		// Add 4 vertices with expanded screen positions but rect-local coordinates
 		// that extend beyond the original shape bounds.
 		// Positions are transformed by currentTransform to support scrolling/offset.
+		Foundation::Vec4 noData3(0.0F, 0.0F, 0.0F, 0.0F); // Unused for shapes
+
 		// Top-left corner
 		vertices.push_back(
 			{TransformPosition(Foundation::Vec2(centerX - expandedHalfW, centerY - expandedHalfH), currentTransform, transformIsIdentity),
@@ -202,7 +209,8 @@ namespace Renderer {
 			 colorVec,
 			 borderData,
 			 shapeParams,
-			 currentClipBounds}
+			 currentClipBounds,
+			 noData3}
 		);
 
 		// Top-right corner
@@ -212,7 +220,8 @@ namespace Renderer {
 			 colorVec,
 			 borderData,
 			 shapeParams,
-			 currentClipBounds}
+			 currentClipBounds,
+			 noData3}
 		);
 
 		// Bottom-right corner
@@ -222,7 +231,8 @@ namespace Renderer {
 			 colorVec,
 			 borderData,
 			 shapeParams,
-			 currentClipBounds}
+			 currentClipBounds,
+			 noData3}
 		);
 
 		// Bottom-left corner
@@ -232,7 +242,8 @@ namespace Renderer {
 			 colorVec,
 			 borderData,
 			 shapeParams,
-			 currentClipBounds}
+			 currentClipBounds,
+			 noData3}
 		);
 
 		// Add 6 indices (2 triangles)
@@ -254,7 +265,15 @@ namespace Renderer {
 		uint8_t			 surfaceId,
 		uint8_t			 hardEdgeMask,
 		int32_t			 tileX,
-		int32_t			 tileY
+		int32_t			 tileY,
+		uint8_t			 neighborN,
+		uint8_t			 neighborE,
+		uint8_t			 neighborS,
+		uint8_t			 neighborW,
+		uint8_t			 neighborNW,
+		uint8_t			 neighborNE,
+		uint8_t			 neighborSE,
+		uint8_t			 neighborSW
 	) { // NOLINT(readability-convert-member-functions-to-static)
 		uint32_t baseIndex = static_cast<uint32_t>(vertices.size());
 
@@ -275,6 +294,24 @@ namespace Renderer {
 		Foundation::Vec4 data1(static_cast<float>(edgeMask), static_cast<float>(cornerMask), static_cast<float>(surfaceId), static_cast<float>(hardEdgeMask));
 		Foundation::Vec4 data2(halfW, halfH, packedTileCoord, kRenderModeTile);
 
+		// For tiles, repurpose clipBounds to store cardinal neighbor surface IDs for soft edge blending.
+		// Tiles don't use per-vertex clipping (the shader returns before the clip check for tiles).
+		// Each neighbor ID is a surface type (0-255), stored as float for shader compatibility.
+		Foundation::Vec4 neighborData(
+			static_cast<float>(neighborN),
+			static_cast<float>(neighborE),
+			static_cast<float>(neighborS),
+			static_cast<float>(neighborW)
+		);
+
+		// Diagonal neighbor surface IDs for corner blending
+		Foundation::Vec4 diagonalData(
+			static_cast<float>(neighborNW),
+			static_cast<float>(neighborNE),
+			static_cast<float>(neighborSE),
+			static_cast<float>(neighborSW)
+		);
+
 		// Top-left
 		vertices.push_back({
 			TransformPosition(Foundation::Vec2(centerX - halfW, centerY - halfH), currentTransform, transformIsIdentity),
@@ -282,7 +319,8 @@ namespace Renderer {
 			colorVec,
 			data1,
 			data2,
-			currentClipBounds
+			neighborData,
+			diagonalData
 		});
 
 		// Top-right
@@ -292,7 +330,8 @@ namespace Renderer {
 			colorVec,
 			data1,
 			data2,
-			currentClipBounds
+			neighborData,
+			diagonalData
 		});
 
 		// Bottom-right
@@ -302,7 +341,8 @@ namespace Renderer {
 			colorVec,
 			data1,
 			data2,
-			currentClipBounds
+			neighborData,
+			diagonalData
 		});
 
 		// Bottom-left
@@ -312,7 +352,8 @@ namespace Renderer {
 			colorVec,
 			data1,
 			data2,
-			currentClipBounds
+			neighborData,
+			diagonalData
 		});
 
 		indices.push_back(baseIndex + 0);
@@ -354,7 +395,8 @@ namespace Renderer {
 				colorVec,
 				zeroVec4,		  // data1 (unused)
 				shapeParams,	  // data2 with borderPos >= 0 marks as shape
-				currentClipBounds // clip bounds
+				currentClipBounds, // clip bounds
+				zeroVec4		  // data3 (unused for triangles)
 			});
 		}
 
@@ -392,7 +434,8 @@ namespace Renderer {
 			 colorVec,
 			 zeroVec4,
 			 textParams,
-			 currentClipBounds}
+			 currentClipBounds,
+			 zeroVec4} // data3 (unused for text)
 		);
 
 		// Top-right
@@ -402,7 +445,8 @@ namespace Renderer {
 			 colorVec,
 			 zeroVec4,
 			 textParams,
-			 currentClipBounds}
+			 currentClipBounds,
+			 zeroVec4} // data3 (unused for text)
 		);
 
 		// Bottom-right
@@ -412,7 +456,8 @@ namespace Renderer {
 			 colorVec,
 			 zeroVec4,
 			 textParams,
-			 currentClipBounds}
+			 currentClipBounds,
+			 zeroVec4} // data3 (unused for text)
 		);
 
 		// Bottom-left
@@ -422,7 +467,8 @@ namespace Renderer {
 			 colorVec,
 			 zeroVec4,
 			 textParams,
-			 currentClipBounds}
+			 currentClipBounds,
+			 zeroVec4} // data3 (unused for text)
 		);
 
 		// Add 6 indices (2 triangles)

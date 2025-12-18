@@ -1,7 +1,9 @@
-// tile.glsl - Tile rendering with procedural edge variation
+// tile.glsl - Tile rendering with procedural edge variation and soft blending
 //
-// Provides tile rendering with adjacency-based edge/corner darkening
-// and procedural variation for organic-looking tile boundaries.
+// Provides tile rendering with:
+// - Adjacency-based edge/corner darkening (hard edges between families)
+// - Soft texture blending between same-family surfaces (e.g., Grass↔Dirt)
+// - Procedural variation for organic-looking tile boundaries
 
 // ============================================================================
 // PROCEDURAL NOISE FUNCTIONS
@@ -81,8 +83,8 @@ float computeTileEdgeDarkening(
     const float kWidthVariation = 0.04;       // ±4% width variation
     const float kWaveAmplitude = 0.03;        // ±3% wave displacement
     const float kNoiseScale = 3.0;            // Scale for FBM noise sampling
-    const float kEdgeDarkenFactor = 0.75;     // Darkening multiplier for soft edges (closer to base color)
-    const float kHardEdgeDarkenFactor = 0.70; // Slightly stronger darkening for hard edges
+    const float kSoftEdgeDarkenFactor = 1.0;  // No darkening for same-family (texture blending handles this)
+    const float kHardEdgeDarkenFactor = 0.70; // Strong darkening for cross-family edges
 
     // World positions for deterministic variation
     float worldX = float(tileX) + uv.x;
@@ -125,36 +127,38 @@ float computeTileEdgeDarkening(
     bool inW = uv.x < wThreshold;
 
     // ========== EDGE DARKENING ==========
-    // Edge bits: 0=N, 1=E, 2=S, 3=W
-    // Hard edge mask uses different bit layout for 8 directions
+    // Hard edges (cross-family): strong darkening for visibility
+    // Soft edges (same-family): very subtle darkening just for wavy shape
+    // Edge mask bits: N=0, E=1, S=2, W=3
+    // Hard edge mask bits: NW=0, W=1, SW=2, S=3, SE=4, E=5, NE=6, N=7
     float darkenFactor = 1.0;
 
     if (inN) {
         if ((hardEdgeMask & 0x80u) != 0u) {
             darkenFactor = min(darkenFactor, kHardEdgeDarkenFactor);
         } else if ((edgeMask & 0x1u) != 0u) {
-            darkenFactor = min(darkenFactor, kEdgeDarkenFactor);
+            darkenFactor = min(darkenFactor, kSoftEdgeDarkenFactor);
         }
     }
     if (inE) {
         if ((hardEdgeMask & 0x20u) != 0u) {
             darkenFactor = min(darkenFactor, kHardEdgeDarkenFactor);
         } else if ((edgeMask & 0x2u) != 0u) {
-            darkenFactor = min(darkenFactor, kEdgeDarkenFactor);
+            darkenFactor = min(darkenFactor, kSoftEdgeDarkenFactor);
         }
     }
     if (inS) {
         if ((hardEdgeMask & 0x08u) != 0u) {
             darkenFactor = min(darkenFactor, kHardEdgeDarkenFactor);
         } else if ((edgeMask & 0x4u) != 0u) {
-            darkenFactor = min(darkenFactor, kEdgeDarkenFactor);
+            darkenFactor = min(darkenFactor, kSoftEdgeDarkenFactor);
         }
     }
     if (inW) {
         if ((hardEdgeMask & 0x02u) != 0u) {
             darkenFactor = min(darkenFactor, kHardEdgeDarkenFactor);
         } else if ((edgeMask & 0x8u) != 0u) {
-            darkenFactor = min(darkenFactor, kEdgeDarkenFactor);
+            darkenFactor = min(darkenFactor, kSoftEdgeDarkenFactor);
         }
     }
 
@@ -164,49 +168,293 @@ float computeTileEdgeDarkening(
     // Corner bits: 0=NW, 1=NE, 2=SE, 3=SW
     // Use kHardEdgeDarkenFactor if either adjacent edge is a hard edge for visual consistency.
 
-    // NW corner (top-left): connects north edge (at x=0) and west edge (at y=0)
+    // NW corner - hard or soft darkening based on adjacent edges
     if ((cornerMask & 0x1u) != 0u) {
         float nwRadius = (nThreshold + wThreshold) * 0.5;
-        float distNW = length(uv);  // distance from corner (0,0)
+        float distNW = length(uv);
         if (distNW < nwRadius) {
-            // Use hard darken if either N (0x80) or W (0x02) is a hard edge
             bool nwHard = ((hardEdgeMask & 0x80u) != 0u) || ((hardEdgeMask & 0x02u) != 0u);
-            darkenFactor = min(darkenFactor, nwHard ? kHardEdgeDarkenFactor : kEdgeDarkenFactor);
+            darkenFactor = min(darkenFactor, nwHard ? kHardEdgeDarkenFactor : kSoftEdgeDarkenFactor);
         }
     }
 
-    // NE corner (top-right): connects north edge (at x=1) and east edge (at y=0)
+    // NE corner
     if ((cornerMask & 0x2u) != 0u) {
         float neRadius = (nThreshold + eThreshold) * 0.5;
-        float distNE = length(vec2(1.0 - uv.x, uv.y));  // distance from corner (1,0)
+        float distNE = length(vec2(1.0 - uv.x, uv.y));
         if (distNE < neRadius) {
-            // Use hard darken if either N (0x80) or E (0x20) is a hard edge
             bool neHard = ((hardEdgeMask & 0x80u) != 0u) || ((hardEdgeMask & 0x20u) != 0u);
-            darkenFactor = min(darkenFactor, neHard ? kHardEdgeDarkenFactor : kEdgeDarkenFactor);
+            darkenFactor = min(darkenFactor, neHard ? kHardEdgeDarkenFactor : kSoftEdgeDarkenFactor);
         }
     }
 
-    // SE corner (bottom-right): connects south edge (at x=1) and east edge (at y=1)
+    // SE corner
     if ((cornerMask & 0x4u) != 0u) {
         float seRadius = (sThreshold + eThreshold) * 0.5;
-        float distSE = length(vec2(1.0 - uv.x, 1.0 - uv.y));  // distance from corner (1,1)
+        float distSE = length(vec2(1.0 - uv.x, 1.0 - uv.y));
         if (distSE < seRadius) {
-            // Use hard darken if either S (0x08) or E (0x20) is a hard edge
             bool seHard = ((hardEdgeMask & 0x08u) != 0u) || ((hardEdgeMask & 0x20u) != 0u);
-            darkenFactor = min(darkenFactor, seHard ? kHardEdgeDarkenFactor : kEdgeDarkenFactor);
+            darkenFactor = min(darkenFactor, seHard ? kHardEdgeDarkenFactor : kSoftEdgeDarkenFactor);
         }
     }
 
-    // SW corner (bottom-left): connects south edge (at x=0) and west edge (at y=1)
+    // SW corner
     if ((cornerMask & 0x8u) != 0u) {
         float swRadius = (sThreshold + wThreshold) * 0.5;
-        float distSW = length(vec2(uv.x, 1.0 - uv.y));  // distance from corner (0,1)
+        float distSW = length(vec2(uv.x, 1.0 - uv.y));
         if (distSW < swRadius) {
-            // Use hard darken if either S (0x08) or W (0x02) is a hard edge
             bool swHard = ((hardEdgeMask & 0x08u) != 0u) || ((hardEdgeMask & 0x02u) != 0u);
-            darkenFactor = min(darkenFactor, swHard ? kHardEdgeDarkenFactor : kEdgeDarkenFactor);
+            darkenFactor = min(darkenFactor, swHard ? kHardEdgeDarkenFactor : kSoftEdgeDarkenFactor);
         }
     }
 
     return darkenFactor;
+}
+
+// ============================================================================
+// SURFACE STACK ORDER (for blend direction)
+// ============================================================================
+
+/// Get the visual stack order for a surface type.
+/// Higher values = rendered on top. Higher surfaces bleed onto lower surfaces.
+/// Stack order: Water(0) < Mud(1) < Sand(2) < Dirt(3) < GrassShort(4) < Grass(5) < GrassMeadow(6) < GrassTall(7) < Rock(8) < Snow(9)
+/// Grass variants have distinct sub-levels to enable soft blending between them.
+int getSurfaceStackOrder(uint surfaceId) {
+    // Surface IDs: Grass=0, Dirt=1, Sand=2, Rock=3, Water=4, Snow=5, Mud=6, GrassTall=7, GrassShort=8, GrassMeadow=9
+    if (surfaceId == 4u) return 0;  // Water - lowest
+    if (surfaceId == 6u) return 1;  // Mud
+    if (surfaceId == 2u) return 2;  // Sand
+    if (surfaceId == 1u) return 3;  // Dirt
+    if (surfaceId == 8u) return 4;  // GrassShort - driest grass
+    if (surfaceId == 0u) return 5;  // Grass - standard
+    if (surfaceId == 9u) return 6;  // GrassMeadow - fertile
+    if (surfaceId == 7u) return 7;  // GrassTall - wettest grass
+    if (surfaceId == 3u) return 8;  // Rock
+    if (surfaceId == 5u) return 9;  // Snow - highest
+    return 5;  // Default to standard Grass level
+}
+
+// ============================================================================
+// SOFT EDGE BLENDING - "Higher Bleeds Onto Lower"
+// ============================================================================
+
+/// Compute soft blend weights for higher-priority neighbors bleeding onto this tile.
+/// Returns vec4(northWeight, eastWeight, southWeight, westWeight).
+///
+/// Simple approach:
+/// 1. For each edge, compute linear distance and blend weight
+/// 2. At corners (where two edges meet), use RADIAL distance from tile corner
+///    This naturally gives rounded corners without complex L-shape logic
+vec4 computeHigherBleedWeights(
+    vec2 uv,
+    int tileX,    // Reserved for future procedural edge variation
+    int tileY,    // Reserved for future procedural edge variation
+    uint surfaceId,
+    uint neighborN,
+    uint neighborE,
+    uint neighborS,
+    uint neighborW,
+    uint hardEdgeMask
+) {
+    const float kBlendWidth = 0.20;  // 20% blend width
+
+    int myStack = getSurfaceStackOrder(surfaceId);
+    vec4 weights = vec4(0.0);
+
+    // Check which cardinal neighbors are higher priority (and same family)
+    bool higherN = (neighborN != surfaceId) && (hardEdgeMask & 0x80u) == 0u &&
+                   (getSurfaceStackOrder(neighborN) > myStack);
+    bool higherE = (neighborE != surfaceId) && (hardEdgeMask & 0x20u) == 0u &&
+                   (getSurfaceStackOrder(neighborE) > myStack);
+    bool higherS = (neighborS != surfaceId) && (hardEdgeMask & 0x08u) == 0u &&
+                   (getSurfaceStackOrder(neighborS) > myStack);
+    bool higherW = (neighborW != surfaceId) && (hardEdgeMask & 0x02u) == 0u &&
+                   (getSurfaceStackOrder(neighborW) > myStack);
+
+    // Distance from each edge
+    float distN = uv.y;
+    float distE = 1.0 - uv.x;
+    float distS = 1.0 - uv.y;
+    float distW = uv.x;
+
+    // Distance from each corner
+    float distNW = length(uv);
+    float distNE = length(vec2(1.0 - uv.x, uv.y));
+    float distSE = length(vec2(1.0 - uv.x, 1.0 - uv.y));
+    float distSW = length(vec2(uv.x, 1.0 - uv.y));
+
+    // For corners: use radial distance from tile corner
+    // For edges (non-corner regions): use linear distance from edge
+    //
+    // A pixel is in the "corner region" if it's closer to the corner than to either edge.
+    // Corner region for NW: distNW < distN && distNW < distW
+
+    // NW corner region
+    if (higherN && higherW && distNW < kBlendWidth) {
+        float w = 1.0 - smoothstep(0.0, kBlendWidth, distNW);
+        weights.x = w;
+        weights.w = w;
+    }
+    // NE corner region
+    if (higherN && higherE && distNE < kBlendWidth) {
+        float w = 1.0 - smoothstep(0.0, kBlendWidth, distNE);
+        weights.x = max(weights.x, w);
+        weights.y = w;
+    }
+    // SE corner region
+    if (higherS && higherE && distSE < kBlendWidth) {
+        float w = 1.0 - smoothstep(0.0, kBlendWidth, distSE);
+        weights.z = w;
+        weights.y = max(weights.y, w);
+    }
+    // SW corner region
+    if (higherS && higherW && distSW < kBlendWidth) {
+        float w = 1.0 - smoothstep(0.0, kBlendWidth, distSW);
+        weights.z = max(weights.z, w);
+        weights.w = max(weights.w, w);
+    }
+
+    // Edge regions (only apply if not already handled by corner)
+    // North edge (excluding corners)
+    if (higherN && distN < kBlendWidth) {
+        float w = 1.0 - smoothstep(0.0, kBlendWidth, distN);
+        weights.x = max(weights.x, w);
+    }
+    // East edge
+    if (higherE && distE < kBlendWidth) {
+        float w = 1.0 - smoothstep(0.0, kBlendWidth, distE);
+        weights.y = max(weights.y, w);
+    }
+    // South edge
+    if (higherS && distS < kBlendWidth) {
+        float w = 1.0 - smoothstep(0.0, kBlendWidth, distS);
+        weights.z = max(weights.z, w);
+    }
+    // West edge
+    if (higherW && distW < kBlendWidth) {
+        float w = 1.0 - smoothstep(0.0, kBlendWidth, distW);
+        weights.w = max(weights.w, w);
+    }
+
+    return weights;
+}
+
+// ============================================================================
+// DIAGONAL CORNER BLENDING
+// ============================================================================
+
+/// Compute blend weights for diagonal-only corners.
+/// This handles the case where a diagonal neighbor is higher priority but
+/// NEITHER adjacent cardinal neighbor is higher priority.
+///
+/// Example: Mud tile at (1,1) with:
+///   - North neighbor: Mud (same priority)
+///   - East neighbor: Mud (same priority)
+///   - Northeast diagonal neighbor: Grass (higher priority)
+///
+/// The NE corner of the mud tile should have grass blended in, even though
+/// the cardinal edge blending doesn't apply (N and E are both mud).
+///
+/// Returns vec4(NW_weight, NE_weight, SE_weight, SW_weight)
+vec4 computeDiagonalCornerWeights(
+    vec2 uv,
+    uint surfaceId,
+    uint neighborN,
+    uint neighborE,
+    uint neighborS,
+    uint neighborW,
+    uint neighborNW,
+    uint neighborNE,
+    uint neighborSE,
+    uint neighborSW
+) {
+    // Corner blend radius - matches cardinal edge blend width for seamless connection
+    const float kCornerRadius = 0.18;
+
+    int myStack = getSurfaceStackOrder(surfaceId);
+    vec4 weights = vec4(0.0);
+
+    // Diagonal corner blending applies when:
+    // 1. The diagonal neighbor is higher priority than us (will bleed onto us)
+    // 2. AT MOST ONE adjacent cardinal is higher (not both)
+    //
+    // Cases:
+    // - Neither cardinal higher: pure diagonal-only case (grass diagonally, mud on both cardinals)
+    // - Exactly one cardinal higher: extends cardinal edge blend to reach the corner
+    // - Both cardinals higher: L-corner rounding handles this (skip diagonal blend)
+
+    // NW corner
+    {
+        int nwStack = getSurfaceStackOrder(neighborNW);
+        int nStack = getSurfaceStackOrder(neighborN);
+        int wStack = getSurfaceStackOrder(neighborW);
+
+        bool nHigher = nStack > myStack;
+        bool wHigher = wStack > myStack;
+        bool bothHigher = nHigher && wHigher;
+
+        // Blend if diagonal is higher AND not both cardinals are higher
+        if (nwStack > myStack && !bothHigher) {
+            float distFromCorner = length(uv);
+            if (distFromCorner < kCornerRadius) {
+                weights.x = 1.0 - smoothstep(0.0, kCornerRadius, distFromCorner);
+            }
+        }
+    }
+
+    // NE corner
+    {
+        int neStack = getSurfaceStackOrder(neighborNE);
+        int nStack = getSurfaceStackOrder(neighborN);
+        int eStack = getSurfaceStackOrder(neighborE);
+
+        bool nHigher = nStack > myStack;
+        bool eHigher = eStack > myStack;
+        bool bothHigher = nHigher && eHigher;
+
+        if (neStack > myStack && !bothHigher) {
+            float distFromCorner = length(vec2(1.0 - uv.x, uv.y));
+            if (distFromCorner < kCornerRadius) {
+                weights.y = 1.0 - smoothstep(0.0, kCornerRadius, distFromCorner);
+            }
+        }
+    }
+
+    // SE corner
+    {
+        int seStack = getSurfaceStackOrder(neighborSE);
+        int sStack = getSurfaceStackOrder(neighborS);
+        int eStack = getSurfaceStackOrder(neighborE);
+
+        bool sHigher = sStack > myStack;
+        bool eHigher = eStack > myStack;
+        bool bothHigher = sHigher && eHigher;
+
+        if (seStack > myStack && !bothHigher) {
+            float distFromCorner = length(vec2(1.0 - uv.x, 1.0 - uv.y));
+            if (distFromCorner < kCornerRadius) {
+                weights.z = 1.0 - smoothstep(0.0, kCornerRadius, distFromCorner);
+            }
+        }
+    }
+
+    // SW corner
+    {
+        int swStack = getSurfaceStackOrder(neighborSW);
+        int sStack = getSurfaceStackOrder(neighborS);
+        int wStack = getSurfaceStackOrder(neighborW);
+
+        bool sHigher = sStack > myStack;
+        bool wHigher = wStack > myStack;
+        bool bothHigher = sHigher && wHigher;
+
+        if (swStack > myStack && !bothHigher) {
+            float distFromCorner = length(vec2(uv.x, 1.0 - uv.y));
+            if (distFromCorner < kCornerRadius) {
+                weights.w = 1.0 - smoothstep(0.0, kCornerRadius, distFromCorner);
+            }
+        }
+    }
+
+    return weights;
 }

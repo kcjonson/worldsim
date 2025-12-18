@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- GrassMeadow Pattern - Slightly richer/deeper grass
+     512x512 SVG covering 8x8 game tiles (64px per tile)
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <rect width="512" height="512" fill="#3f6538"/>
+  <ellipse cx="90" cy="80" rx="115" ry="90" fill="#355530" opacity="0.22"/>
+  <ellipse cx="340" cy="120" rx="130" ry="100" fill="#4a7242" opacity="0.16"/>
+  <ellipse cx="200" cy="300" rx="120" ry="92" fill="#355530" opacity="0.2"/>
+  <ellipse cx="450" cy="380" rx="140" ry="108" fill="#4a7242" opacity="0.14"/>
+  <ellipse cx="270" cy="210" rx="90" ry="72" fill="#355530" opacity="0.16"/>
+</svg>
