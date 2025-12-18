@@ -78,23 +78,23 @@ namespace engine::assets {
 		/// Get surface type at local tile coordinates (for "near Water" etc)
 		/// @param localX Tile X within chunk (0 to kChunkSize-1)
 		/// @param localY Tile Y within chunk (0 to kChunkSize-1)
-		/// @return Surface type name (e.g., "Water", "Rock", "Soil")
+		/// @return Surface type name (e.g., "Water", "Rock", "Grass")
 		std::function<std::string(uint16_t localX, uint16_t localY)> getSurface;
 	};
 
 	/// Result of placing entities in a chunk
 	struct ChunkPlacementResult {
-		world::ChunkCoordinate		coord;
-		std::vector<PlacedEntity>	entities;
-		size_t						entitiesPlaced = 0;
+		world::ChunkCoordinate	  coord;
+		std::vector<PlacedEntity> entities;
+		size_t					  entitiesPlaced = 0;
 	};
 
 	/// Result of async chunk computation (includes spatial index for later storage)
 	struct AsyncChunkPlacementResult {
-		world::ChunkCoordinate		coord;
-		std::vector<PlacedEntity>	entities;
-		SpatialIndex				spatialIndex;
-		size_t						entitiesPlaced = 0;
+		world::ChunkCoordinate	  coord;
+		std::vector<PlacedEntity> entities;
+		SpatialIndex			  spatialIndex;
+		size_t					  entitiesPlaced = 0;
 	};
 
 	/// Interface for querying adjacent chunks during placement.
@@ -124,8 +124,7 @@ namespace engine::assets {
 		/// @param adjacentProvider Optional provider for cross-chunk queries (can be null)
 		/// @return Placement result with list of spawned entities
 		/// @note This method modifies internal state - NOT thread-safe
-		ChunkPlacementResult processChunk(const ChunkPlacementContext& context,
-										  const IAdjacentChunkProvider* adjacentProvider = nullptr);
+		ChunkPlacementResult processChunk(const ChunkPlacementContext& context, const IAdjacentChunkProvider* adjacentProvider = nullptr);
 
 		/// Compute entity placements without storing to internal state (thread-safe).
 		/// Use this for async/background processing, then call storeChunkResult() on main thread.
@@ -133,9 +132,8 @@ namespace engine::assets {
 		/// @param adjacentProvider Optional provider for cross-chunk queries (can be null)
 		/// @return Result including computed SpatialIndex for later storage
 		/// @note Thread-safe: does not modify internal state
-		[[nodiscard]] AsyncChunkPlacementResult computeChunkEntities(
-			const ChunkPlacementContext& context,
-			const IAdjacentChunkProvider* adjacentProvider = nullptr) const;
+		[[nodiscard]] AsyncChunkPlacementResult
+		computeChunkEntities(const ChunkPlacementContext& context, const IAdjacentChunkProvider* adjacentProvider = nullptr) const;
 
 		/// Store a pre-computed chunk result (main thread only).
 		/// Call this after computeChunkEntities() completes on a background thread.
@@ -162,16 +160,14 @@ namespace engine::assets {
 		/// @param position World position of the entity
 		/// @param defName DefName of the entity
 		/// @param cooldownSeconds Time until entity can be harvested again
-		void setEntityCooldown(world::ChunkCoordinate coord, glm::vec2 position,
-							   const std::string& defName, float cooldownSeconds);
+		void setEntityCooldown(world::ChunkCoordinate coord, glm::vec2 position, const std::string& defName, float cooldownSeconds);
 
 		/// Check if an entity is currently on cooldown
 		/// @param coord Chunk coordinate containing the entity
 		/// @param position World position of the entity
 		/// @param defName DefName of the entity
 		/// @return true if entity is on cooldown (not harvestable)
-		[[nodiscard]] bool isEntityOnCooldown(world::ChunkCoordinate coord, glm::vec2 position,
-											  const std::string& defName) const;
+		[[nodiscard]] bool isEntityOnCooldown(world::ChunkCoordinate coord, glm::vec2 position, const std::string& defName) const;
 
 		/// Update cooldown timers (call once per frame)
 		/// @param deltaTime Time elapsed since last update
@@ -187,10 +183,10 @@ namespace engine::assets {
 		void clear();
 
 	  private:
-		const AssetRegistry& m_registry;
-		DependencyGraph		 m_dependencyGraph;
+		const AssetRegistry&	 m_registry;
+		DependencyGraph			 m_dependencyGraph;
 		std::vector<std::string> m_spawnOrder; // Topologically sorted entity types
-		bool m_initialized = false;
+		bool					 m_initialized = false;
 
 		// Per-chunk spatial indices
 		std::unordered_map<world::ChunkCoordinate, SpatialIndex> m_chunkIndices;
@@ -199,15 +195,12 @@ namespace engine::assets {
 		/// Uses quantized position (integer tile coordinates) for reliable hashing
 		struct CooldownKey {
 			world::ChunkCoordinate coord;
-			int32_t				   tileX;  // Position quantized to tile
+			int32_t				   tileX; // Position quantized to tile
 			int32_t				   tileY;
 			std::string			   defName;
 
 			bool operator==(const CooldownKey& other) const {
-				return coord == other.coord &&
-					   tileX == other.tileX &&
-					   tileY == other.tileY &&
-					   defName == other.defName;
+				return coord == other.coord && tileX == other.tileX && tileY == other.tileY && defName == other.defName;
 			}
 		};
 
@@ -237,20 +230,20 @@ namespace engine::assets {
 		std::unordered_map<CooldownKey, float, CooldownKeyHash> m_cooldowns;
 
 		/// Convert world position to cooldown key
-		[[nodiscard]] static CooldownKey makeCooldownKey(world::ChunkCoordinate coord,
-														  glm::vec2 position,
-														  const std::string& defName);
+		[[nodiscard]] static CooldownKey makeCooldownKey(world::ChunkCoordinate coord, glm::vec2 position, const std::string& defName);
 
 		/// Build dependency graph from asset definitions
 		void buildDependencyGraph();
 
 		/// Place all entities of a given type in a chunk
-		void placeEntityType(const std::string& defName,
-							 const ChunkPlacementContext& context,
-							 SpatialIndex& chunkIndex,
-							 const IAdjacentChunkProvider* adjacentProvider,
-							 std::mt19937& rng,
-							 std::vector<PlacedEntity>& outEntities) const;
+		void placeEntityType(
+			const std::string&			  defName,
+			const ChunkPlacementContext&  context,
+			SpatialIndex&				  chunkIndex,
+			const IAdjacentChunkProvider* adjacentProvider,
+			std::mt19937&				  rng,
+			std::vector<PlacedEntity>&	  outEntities
+		) const;
 
 		/// Calculate spawn probability modifier from relationships
 		/// @param def Asset definition with relationships
@@ -258,33 +251,41 @@ namespace engine::assets {
 		/// @param chunkIndex Current chunk's spatial index
 		/// @param adjacentProvider Provider for adjacent chunk indices
 		/// @return Probability multiplier (1.0 = no change, 0 = don't spawn)
-		float calculateRelationshipModifier(const AssetDefinition& def,
-											glm::vec2 position,
-											const SpatialIndex& chunkIndex,
-											const IAdjacentChunkProvider* adjacentProvider) const;
+		float calculateRelationshipModifier(
+			const AssetDefinition&		  def,
+			glm::vec2					  position,
+			const SpatialIndex&			  chunkIndex,
+			const IAdjacentChunkProvider* adjacentProvider
+		) const;
 
 		/// Check if a "requires" relationship is satisfied
-		bool isRequirementSatisfied(const PlacementRelationship& rel,
-									const std::string& defName,
-									glm::vec2 position,
-									const SpatialIndex& chunkIndex,
-									const IAdjacentChunkProvider* adjacentProvider) const;
+		bool isRequirementSatisfied(
+			const PlacementRelationship&  rel,
+			const std::string&			  defName,
+			glm::vec2					  position,
+			const SpatialIndex&			  chunkIndex,
+			const IAdjacentChunkProvider* adjacentProvider
+		) const;
 
 		/// Get group members as a set for efficient lookup
 		[[nodiscard]] std::unordered_set<std::string> getGroupMembersSet(const std::string& groupName) const;
 
 		/// Query nearby entities across chunk boundaries
-		[[nodiscard]] bool hasNearbyAcrossChunks(glm::vec2 position,
-												 float radius,
-												 const std::string& defName,
-												 const SpatialIndex& chunkIndex,
-												 const IAdjacentChunkProvider* adjacentProvider) const;
+		[[nodiscard]] bool hasNearbyAcrossChunks(
+			glm::vec2					  position,
+			float						  radius,
+			const std::string&			  defName,
+			const SpatialIndex&			  chunkIndex,
+			const IAdjacentChunkProvider* adjacentProvider
+		) const;
 
-		[[nodiscard]] bool hasNearbyGroupAcrossChunks(glm::vec2 position,
-													  float radius,
-													  const std::unordered_set<std::string>& defNames,
-													  const SpatialIndex& chunkIndex,
-													  const IAdjacentChunkProvider* adjacentProvider) const;
+		[[nodiscard]] bool hasNearbyGroupAcrossChunks(
+			glm::vec2							   position,
+			float								   radius,
+			const std::unordered_set<std::string>& defNames,
+			const SpatialIndex&					   chunkIndex,
+			const IAdjacentChunkProvider*		   adjacentProvider
+		) const;
 	};
 
 } // namespace engine::assets

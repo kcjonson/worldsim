@@ -40,7 +40,7 @@ ChunkPlacementContext createTestContext(engine::world::ChunkCoordinate coord,
 		return defaultBiome;
 	};
 	ctx.getSurface = [](uint16_t /*localX*/, uint16_t /*localY*/) {
-		return std::string("Soil");
+		return std::string("Grass");
 	};
 	return ctx;
 }

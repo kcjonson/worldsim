@@ -85,6 +85,18 @@ namespace engine::world {
 				int32_t worldTileX = chunkCoord.x * kChunkSize + tileX;
 				int32_t worldTileY = chunkCoord.y * kChunkSize + tileY;
 
+				// Extract cardinal neighbor surface IDs for soft edge blending
+				uint8_t neighborN = TileAdjacency::getNeighbor(tile.adjacency, TileAdjacency::N);
+				uint8_t neighborE = TileAdjacency::getNeighbor(tile.adjacency, TileAdjacency::E);
+				uint8_t neighborS = TileAdjacency::getNeighbor(tile.adjacency, TileAdjacency::S);
+				uint8_t neighborW = TileAdjacency::getNeighbor(tile.adjacency, TileAdjacency::W);
+
+				// Extract diagonal neighbor surface IDs for corner blending
+				uint8_t neighborNW = TileAdjacency::getNeighbor(tile.adjacency, TileAdjacency::NW);
+				uint8_t neighborNE = TileAdjacency::getNeighbor(tile.adjacency, TileAdjacency::NE);
+				uint8_t neighborSE = TileAdjacency::getNeighbor(tile.adjacency, TileAdjacency::SE);
+				uint8_t neighborSW = TileAdjacency::getNeighbor(tile.adjacency, TileAdjacency::SW);
+
 				Renderer::Primitives::drawTile(
 					{.bounds = Foundation::Rect{screenX, screenY, tileScreenSize, tileScreenSize},
 					 .color = color,
@@ -93,7 +105,15 @@ namespace engine::world {
 					 .surfaceId = surfaceId,
 					 .hardEdgeMask = TileAdjacency::getHardEdgeMaskByFamily(tile.adjacency, surfaceId),
 					 .tileX = worldTileX,
-					 .tileY = worldTileY}
+					 .tileY = worldTileY,
+					 .neighborN = neighborN,
+					 .neighborE = neighborE,
+					 .neighborS = neighborS,
+					 .neighborW = neighborW,
+					 .neighborNW = neighborNW,
+					 .neighborNE = neighborNE,
+					 .neighborSE = neighborSE,
+					 .neighborSW = neighborSW}
 				);
 
 				m_lastTileCount++;

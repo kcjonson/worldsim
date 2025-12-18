@@ -31,7 +31,9 @@ void TilePostProcessor::generateMud(std::array<TileData, kChunkSize * kChunkSize
 			return false;  // Already mud
 		}
 		Surface s = tiles[idx].surface;
-		return s == Surface::Soil || s == Surface::Dirt;
+		// Mud can form on any grass variant or dirt
+		return s == Surface::Grass || s == Surface::Dirt ||
+		       s == Surface::GrassTall || s == Surface::GrassShort || s == Surface::GrassMeadow;
 	};
 
 	// Helper to check if tile at (x,y) is water
