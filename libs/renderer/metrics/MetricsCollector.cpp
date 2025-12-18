@@ -1,6 +1,7 @@
 // Metrics collector implementation.
 
 #include "metrics/MetricsCollector.h"
+#include "metrics/SystemResources.h"
 #include <algorithm>
 #include <numeric>
 
@@ -70,6 +71,13 @@ namespace Renderer {
 
 		// GPU timing
 		metrics.gpuRenderMs = gpuRenderMs;
+
+		// System resources
+		auto resources = Foundation::SystemResources::sample();
+		metrics.memoryUsedBytes = resources.memoryUsedBytes;
+		metrics.memoryPeakBytes = resources.memoryPeakBytes;
+		metrics.cpuUsagePercent = resources.cpuUsagePercent;
+		metrics.cpuCoreCount = resources.cpuCoreCount;
 
 		return metrics;
 	}

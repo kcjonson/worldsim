@@ -58,6 +58,12 @@ interface MetricsData {
   ecsSystems: EcsSystemTiming[];
   // GPU timing
   gpuRenderMs: number;
+  // System resources
+  memoryUsedBytes: number;
+  memoryPeakBytes: number;
+  cpuUsagePercent: number;
+  cpuCoreCount: number;
+  inputLatencyMs: number;
 }
 
 type Tab = 'performance' | 'logs';
@@ -87,7 +93,12 @@ function App() {
     spikeCount16ms: 0,
     spikeCount33ms: 0,
     ecsSystems: [],
-    gpuRenderMs: 0
+    gpuRenderMs: 0,
+    memoryUsedBytes: 0,
+    memoryPeakBytes: 0,
+    cpuUsagePercent: 0,
+    cpuCoreCount: 1,
+    inputLatencyMs: 0
   });
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [connectionStatus, setConnectionStatus] = useState<'connecting' | 'connected' | 'error'>('connecting');
@@ -139,7 +150,12 @@ function App() {
         metricsBufferRef.current?.push({
           ...sample,
           ecsSystems: sample.ecsSystems || [],
-          gpuRenderMs: sample.gpuRenderMs || 0
+          gpuRenderMs: sample.gpuRenderMs || 0,
+          memoryUsedBytes: sample.memoryUsedBytes || 0,
+          memoryPeakBytes: sample.memoryPeakBytes || 0,
+          cpuUsagePercent: sample.cpuUsagePercent || 0,
+          cpuCoreCount: sample.cpuCoreCount || 1,
+          inputLatencyMs: sample.inputLatencyMs || 0
         });
       });
       setMetricsHistory(metricsBufferRef.current?.getAll() || []);
@@ -267,6 +283,8 @@ function App() {
   const entityRenderValues = metricsHistory.map(m => m.entityRenderMs);
   const updateValues = metricsHistory.map(m => m.updateMs);
   const gpuRenderValues = metricsHistory.map(m => m.gpuRenderMs);
+  const memoryValues = metricsHistory.map(m => m.memoryUsedBytes / (1024 * 1024)); // MB
+  const cpuValues = metricsHistory.map(m => m.cpuUsagePercent);
 
   return (
     <div className={styles.appContainer}>
@@ -381,6 +399,32 @@ function App() {
               ]} />
             </div>
 
+            {/* System Resources */}
+            <div className={styles.section}>
+              <h3 className={styles.sectionHeader}>System ({metrics.cpuCoreCount} cores, max {metrics.cpuCoreCount * 100}%)</h3>
+              <StatsRow stats={[
+                {
+                  label: 'Memory',
+                  value: (metrics.memoryUsedBytes / (1024 * 1024)).toFixed(0),
+                  unit: 'MB',
+                  status: metrics.memoryUsedBytes < 500 * 1024 * 1024 ? 'ok' :
+                          metrics.memoryUsedBytes < 1000 * 1024 * 1024 ? 'warning' : 'bad'
+                },
+                {
+                  label: 'Peak',
+                  value: (metrics.memoryPeakBytes / (1024 * 1024)).toFixed(0),
+                  unit: 'MB'
+                },
+                {
+                  label: 'CPU',
+                  value: `${metrics.cpuUsagePercent.toFixed(0)}/${metrics.cpuCoreCount * 100}`,
+                  unit: '%',
+                  status: metrics.cpuUsagePercent < metrics.cpuCoreCount * 25 ? 'ok' :
+                          metrics.cpuUsagePercent < metrics.cpuCoreCount * 50 ? 'warning' : 'bad'
+                },
+              ]} />
+            </div>
+
             {/* Trends */}
             <div className={styles.section}>
               <h3 className={styles.sectionHeader}>Trends</h3>
@@ -430,6 +474,20 @@ function App() {
                 <Sparkline
                   label="Draws"
                   values={drawCallsValues}
+                />
+                <Sparkline
+                  label="Memory"
+                  values={memoryValues}
+                  unit="MB"
+                  warningThreshold={500}
+                  badThreshold={1000}
+                />
+                <Sparkline
+                  label="CPU"
+                  values={cpuValues}
+                  unit="%"
+                  warningThreshold={50}
+                  badThreshold={100}
                 />
               </div>
             </div>

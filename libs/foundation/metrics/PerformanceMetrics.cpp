@@ -39,13 +39,20 @@ namespace Foundation {
 		// ECS system timings
 		json << "\"ecsSystems\":[";
 		for (size_t i = 0; i < ecsSystems.size(); ++i) {
-			if (i > 0) json << ",";
+			if (i > 0)
+				json << ",";
 			json << "{\"name\":\"" << (ecsSystems[i].name ? ecsSystems[i].name : "Unknown")
 				 << "\",\"durationMs\":" << ecsSystems[i].durationMs << "}";
 		}
 		json << "],";
 		// GPU timing
-		json << "\"gpuRenderMs\":" << gpuRenderMs;
+		json << "\"gpuRenderMs\":" << gpuRenderMs << ",";
+		// System resources
+		json << "\"memoryUsedBytes\":" << memoryUsedBytes << ",";
+		json << "\"memoryPeakBytes\":" << memoryPeakBytes << ",";
+		json << "\"cpuUsagePercent\":" << cpuUsagePercent << ",";
+		json << "\"cpuCoreCount\":" << cpuCoreCount << ",";
+		json << "\"inputLatencyMs\":" << inputLatencyMs;
 		json << "}";
 
 		return json.str();

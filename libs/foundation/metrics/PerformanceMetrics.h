@@ -51,6 +51,13 @@ namespace Foundation { // NOLINT(readability-identifier-naming)
 		// GPU timing
 		float gpuRenderMs{}; // Time GPU spent rendering (from previous frame)
 
+		// System resources
+		uint64_t memoryUsedBytes{};	   // Process resident memory (RSS)
+		uint64_t memoryPeakBytes{};	   // Peak memory usage
+		float	 cpuUsagePercent{};	   // CPU usage (0-100%, may exceed 100% on multi-core)
+		uint32_t cpuCoreCount{};	   // Number of CPU cores (max CPU% = 100 * cores)
+		float	 inputLatencyMs{};	   // Time from input event to frame start
+
 		// Serialize to JSON for HTTP API
 		std::string toJSON() const;
 	};
