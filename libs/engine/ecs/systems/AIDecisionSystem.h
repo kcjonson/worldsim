@@ -39,6 +39,7 @@ public:
 	void setChunkManager(engine::world::ChunkManager* chunkManager) { m_chunkManager = chunkManager; }
 
 	[[nodiscard]] int priority() const override { return 60; }
+	[[nodiscard]] const char* name() const override { return "AIDecision"; }
 
 private:
 	/// Evaluate critical needs (Tier 3) - returns true if a task was assigned

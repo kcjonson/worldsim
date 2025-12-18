@@ -2,7 +2,11 @@ import { useEffect, useState, useRef, useCallback } from 'react';
 import { ServerConnection } from './services/ServerConnection';
 import { LocalStorageService, PersistedState, SceneSession } from './services/LocalStorageService';
 import { CircularBuffer } from './utils/CircularBuffer';
-import TimeSeriesChart from './components/TimeSeriesChart';
+import FrameBudgetBar from './components/FrameBudgetBar';
+import EcsSystemsBar from './components/EcsSystemsBar';
+import FrameHistogram from './components/FrameHistogram';
+import StatsRow from './components/StatsRow';
+import Sparkline from './components/Sparkline';
 import LogViewer from './components/LogViewer';
 import { ScenePerformanceLog } from './components/ScenePerformanceLog';
 import styles from './App.module.css';
@@ -18,6 +22,11 @@ interface LogEntry {
   line?: number;
 }
 
+interface EcsSystemTiming {
+  name: string;
+  durationMs: number;
+}
+
 interface MetricsData {
   timestamp: number;
   fps: number;
@@ -28,6 +37,27 @@ interface MetricsData {
   vertexCount: number;
   triangleCount: number;
   sceneName?: string;
+  // Timing breakdown
+  tileRenderMs: number;
+  entityRenderMs: number;
+  updateMs: number;
+  tileCount: number;
+  entityCount: number;
+  visibleChunkCount: number;
+  // Histogram
+  histogram0to8ms: number;
+  histogram8to16ms: number;
+  histogram16to33ms: number;
+  histogram33plusMs: number;
+  histogramTotal: number;
+  // Spike detection
+  frameTime1PercentLow: number;
+  spikeCount16ms: number;
+  spikeCount33ms: number;
+  // ECS system timings
+  ecsSystems: EcsSystemTiming[];
+  // GPU timing
+  gpuRenderMs: number;
 }
 
 type Tab = 'performance' | 'logs';
@@ -41,7 +71,23 @@ function App() {
     frameTimeMaxMs: 0,
     drawCalls: 0,
     vertexCount: 0,
-    triangleCount: 0
+    triangleCount: 0,
+    tileRenderMs: 0,
+    entityRenderMs: 0,
+    updateMs: 0,
+    tileCount: 0,
+    entityCount: 0,
+    visibleChunkCount: 0,
+    histogram0to8ms: 0,
+    histogram8to16ms: 0,
+    histogram16to33ms: 0,
+    histogram33plusMs: 0,
+    histogramTotal: 0,
+    frameTime1PercentLow: 0,
+    spikeCount16ms: 0,
+    spikeCount33ms: 0,
+    ecsSystems: [],
+    gpuRenderMs: 0
   });
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [connectionStatus, setConnectionStatus] = useState<'connecting' | 'connected' | 'error'>('connecting');
@@ -88,9 +134,13 @@ function App() {
       setLogsMaxEntries(persisted.logs.maxEntries);
       setLogLevelFilter(persisted.preferences.logLevelFilter);
 
-      // Restore metrics history
+      // Restore metrics history (ensure optional fields have defaults)
       persisted.metrics.history.forEach(sample => {
-        metricsBufferRef.current?.push(sample);
+        metricsBufferRef.current?.push({
+          ...sample,
+          ecsSystems: sample.ecsSystems || [],
+          gpuRenderMs: sample.gpuRenderMs || 0
+        });
       });
       setMetricsHistory(metricsBufferRef.current?.getAll() || []);
 
@@ -209,12 +259,14 @@ function App() {
     setSceneSessions(sessions);
   }, []);
 
-  // Extract values for each metric
+  // Extract values for each metric (for sparklines)
   const fpsValues = metricsHistory.map(m => m.fps);
   const frameTimeValues = metricsHistory.map(m => m.frameTimeMs);
   const drawCallsValues = metricsHistory.map(m => m.drawCalls);
-  const vertexValues = metricsHistory.map(m => m.vertexCount);
-  const triangleValues = metricsHistory.map(m => m.triangleCount);
+  const tileRenderValues = metricsHistory.map(m => m.tileRenderMs);
+  const entityRenderValues = metricsHistory.map(m => m.entityRenderMs);
+  const updateValues = metricsHistory.map(m => m.updateMs);
+  const gpuRenderValues = metricsHistory.map(m => m.gpuRenderMs);
 
   return (
     <div className={styles.appContainer}>
@@ -251,13 +303,12 @@ function App() {
         {activeTab === 'performance' && (
           <div className={styles.metricsPanel}>
             <div className={styles.metricsHeader}>
-              <h2>Performance Metrics</h2>
               <div className={styles.metricsControls}>
                 <button
                   onClick={() => setIsRecording(!isRecording)}
                   className={`${styles.recordButton} ${isRecording ? styles.recording : styles.paused}`}
                 >
-                  {isRecording ? '⏸ Pause' : '▶ Record'}
+                  {isRecording ? '⏸' : '▶'}
                 </button>
                 <select
                   value={metricsRetention}
@@ -271,37 +322,117 @@ function App() {
                 </select>
               </div>
             </div>
-            <div className={styles.chartsColumn}>
-              <TimeSeriesChart
-                label="FPS"
-                values={fpsValues}
-                className="fps"
+
+            {/* Frame Budget - the hero component */}
+            <FrameBudgetBar
+              tileRenderMs={metrics.tileRenderMs}
+              entityRenderMs={metrics.entityRenderMs}
+              updateMs={metrics.updateMs}
+              frameTimeMs={metrics.frameTimeMs}
+            />
+
+            {/* ECS System Breakdown */}
+            {metrics.ecsSystems.length > 0 && (
+              <EcsSystemsBar
+                systems={metrics.ecsSystems}
+                totalUpdateMs={metrics.updateMs}
               />
-              <TimeSeriesChart
-                label="Frame Time"
-                values={frameTimeValues}
-                unit="ms"
-                className="frameTime"
-              />
-              <TimeSeriesChart
-                label="Draw Calls"
-                values={drawCallsValues}
-                className="drawCalls"
-              />
-              <TimeSeriesChart
-                label="Vertices"
-                values={vertexValues}
-                className="vertices"
-              />
-              <TimeSeriesChart
-                label="Triangles"
-                values={triangleValues}
-                className="triangles"
+            )}
+
+            {/* Frame Distribution Histogram */}
+            <div className={styles.section}>
+              <FrameHistogram
+                histogram0to8ms={metrics.histogram0to8ms}
+                histogram8to16ms={metrics.histogram8to16ms}
+                histogram16to33ms={metrics.histogram16to33ms}
+                histogram33plusMs={metrics.histogram33plusMs}
+                histogramTotal={metrics.histogramTotal}
+                frameTime1PercentLow={metrics.frameTime1PercentLow}
+                spikeCount16ms={metrics.spikeCount16ms}
+                spikeCount33ms={metrics.spikeCount33ms}
               />
             </div>
-            <div className={styles.statsRow}>
-              <span>Min/Max Frame: {metrics.frameTimeMinMs.toFixed(2)} / {metrics.frameTimeMaxMs.toFixed(2)}ms</span>
+
+            {/* Key Stats */}
+            <div className={styles.section}>
+              <StatsRow stats={[
+                {
+                  label: 'FPS',
+                  value: metrics.fps,
+                  status: metrics.fps >= 55 ? 'ok' : metrics.fps >= 30 ? 'warning' : 'bad'
+                },
+                {
+                  label: 'Frame',
+                  value: metrics.frameTimeMs,
+                  unit: 'ms',
+                  status: metrics.frameTimeMs <= 16.67 ? 'ok' : metrics.frameTimeMs <= 33.33 ? 'warning' : 'bad'
+                },
+                {
+                  label: 'GPU',
+                  value: metrics.gpuRenderMs,
+                  unit: 'ms',
+                  status: metrics.gpuRenderMs <= 10 ? 'ok' : metrics.gpuRenderMs <= 16 ? 'warning' : 'bad'
+                },
+                { label: 'Chunks', value: metrics.visibleChunkCount },
+                { label: 'Tiles', value: metrics.tileCount },
+                { label: 'Entities', value: metrics.entityCount },
+                { label: 'Draw Calls', value: metrics.drawCalls },
+                { label: 'Vertices', value: (metrics.vertexCount / 1000).toFixed(1), unit: 'k' },
+              ]} />
             </div>
+
+            {/* Trends */}
+            <div className={styles.section}>
+              <h3 className={styles.sectionHeader}>Trends</h3>
+              <div className={styles.sparklineGrid}>
+                <Sparkline
+                  label="FPS"
+                  values={fpsValues}
+                  warningThreshold={55}
+                  badThreshold={30}
+                />
+                <Sparkline
+                  label="Frame"
+                  values={frameTimeValues}
+                  unit="ms"
+                  warningThreshold={16.67}
+                  badThreshold={33.33}
+                />
+                <Sparkline
+                  label="Tiles"
+                  values={tileRenderValues}
+                  unit="ms"
+                  warningThreshold={8}
+                  badThreshold={12}
+                />
+                <Sparkline
+                  label="Entities"
+                  values={entityRenderValues}
+                  unit="ms"
+                  warningThreshold={4}
+                  badThreshold={8}
+                />
+                <Sparkline
+                  label="Update"
+                  values={updateValues}
+                  unit="ms"
+                  warningThreshold={4}
+                  badThreshold={8}
+                />
+                <Sparkline
+                  label="GPU"
+                  values={gpuRenderValues}
+                  unit="ms"
+                  warningThreshold={10}
+                  badThreshold={16}
+                />
+                <Sparkline
+                  label="Draws"
+                  values={drawCallsValues}
+                />
+              </div>
+            </div>
+
             <ScenePerformanceLog
               currentSceneName={metrics.sceneName}
               fps={metrics.fps}

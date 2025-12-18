@@ -45,10 +45,14 @@ class ChunkRenderer {
 	/// Get number of tiles rendered in last frame (for profiling)
 	[[nodiscard]] uint32_t lastTileCount() const { return m_lastTileCount; }
 
+	/// Get number of chunks rendered in last frame (for profiling)
+	[[nodiscard]] uint32_t lastChunkCount() const { return m_lastChunkCount; }
+
   private:
 	float m_pixelsPerMeter = 16.0F;
 	int32_t m_tileResolution = 1;
 	uint32_t m_lastTileCount = 0;
+	uint32_t m_lastChunkCount = 0;
 
 	/// Add visible tiles from a chunk to the frame buffers
 	void addChunkTiles(const Chunk& chunk, const WorldCamera& camera, const Foundation::Rect& visibleRect,

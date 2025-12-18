@@ -1,0 +1,59 @@
+.container {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.4rem 0.6rem;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.info {
+  display: flex;
+  flex-direction: column;
+  min-width: 70px;
+}
+
+.label {
+  font-size: 0.6rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-secondary);
+}
+
+.value {
+  font-family: monospace;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.value.ok {
+  color: var(--text-primary);
+}
+
+.value.warning {
+  color: #f59e0b;
+}
+
+.value.bad {
+  color: #ef4444;
+}
+
+.svg {
+  width: 80px;
+  height: 24px;
+  flex-shrink: 0;
+}
+
+.svg polyline {
+  stroke: var(--accent-green);
+  stroke-width: 1.5px;
+}
+
+.svg.warning polyline {
+  stroke: #f59e0b;
+}
+
+.svg.bad polyline {
+  stroke: #ef4444;
+}

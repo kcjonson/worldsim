@@ -30,6 +30,7 @@ class VisionSystem : public ISystem {
 	void update(float deltaTime) override;
 
 	[[nodiscard]] int priority() const override { return 45; }
+	[[nodiscard]] const char* name() const override { return "Vision"; }
 
 	/// Set the placement executor and processed chunks for entity queries
 	/// Must be called before update() can function

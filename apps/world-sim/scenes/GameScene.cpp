@@ -14,7 +14,9 @@
 #include <cmath>
 #include <graphics/Rect.h>
 #include <input/InputManager.h>
+#include <metrics/GPUTimer.h>
 #include <metrics/MetricsCollector.h>
+#include <metrics/PerformanceMetrics.h>
 #include <primitives/Primitives.h>
 #include <scene/Scene.h>
 #include <scene/SceneManager.h>
@@ -262,6 +264,9 @@ namespace {
 			glClearColor(0.05F, 0.08F, 0.12F, 1.0F);
 			glClear(GL_COLOR_BUFFER_BIT);
 
+			// Begin GPU timing (measures from here to end(), result from previous frame)
+			m_gpuTimer.begin();
+
 			int w = 0;
 			int h = 0;
 			// Use logical viewport (DPI-independent) for consistent world-to-screen transforms
@@ -298,12 +303,31 @@ namespace {
 			// Render unified game UI (overlay + info panel)
 			gameUI->render();
 
+			// End GPU timing (query result will be available next frame)
+			m_gpuTimer.end();
+
 			// Report timing breakdown to metrics system
 			auto* metrics = engine::AppLauncher::getMetrics();
 			if (metrics != nullptr) {
 				metrics->setTimingBreakdown(
-					tileMs, entityMs, m_lastUpdateMs, m_renderer->lastTileCount(), m_entityRenderer->lastEntityCount()
+					tileMs,
+					entityMs,
+					m_lastUpdateMs,
+					m_renderer->lastTileCount(),
+					m_entityRenderer->lastEntityCount(),
+					m_renderer->lastChunkCount()
 				);
+
+				// Convert ECS system timings to Foundation format (reuse cache to avoid allocation)
+				const auto& ecsTimings = ecsWorld->getSystemTimings();
+				m_ecsTimingsCache.clear(); // Clear but keep capacity
+				for (const auto& timing : ecsTimings) {
+					m_ecsTimingsCache.push_back({timing.name, timing.durationMs});
+				}
+				metrics->setEcsSystemTimings(m_ecsTimingsCache);
+
+				// GPU timing (from previous frame due to async query)
+				metrics->setGpuRenderTime(m_gpuTimer.getTimeMs());
 			}
 		}
 
@@ -632,8 +656,10 @@ namespace {
 		// Track processed chunk coordinates for cleanup detection
 		std::unordered_set<engine::world::ChunkCoordinate> m_processedChunks;
 
-		// Timing for metrics
-		float m_lastUpdateMs = 0.0F;
+		// Timing for metrics (persistent vectors to avoid per-frame heap allocation)
+		float									 m_lastUpdateMs = 0.0F;
+		Renderer::GPUTimer						 m_gpuTimer;		// GPU timing via OpenGL queries
+		std::vector<Foundation::EcsSystemTiming> m_ecsTimingsCache; // Reused each frame
 
 		// Current selection for info panel (NoSelection = panel hidden)
 		world_sim::Selection selection = world_sim::NoSelection{};

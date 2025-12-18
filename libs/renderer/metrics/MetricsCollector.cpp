@@ -53,6 +53,23 @@ namespace Renderer {
 		metrics.updateMs = updateMs;
 		metrics.tileCount = tileCount;
 		metrics.entityCount = entityCount;
+		metrics.visibleChunkCount = visibleChunkCount;
+
+		// Histogram
+		computeHistogram(metrics.histogram0to8ms, metrics.histogram8to16ms, metrics.histogram16to33ms,
+						 metrics.histogram33plusMs);
+		metrics.histogramTotal = static_cast<uint32_t>(frameTimeSamples.size());
+
+		// Spike detection
+		metrics.frameTime1PercentLow = compute1PercentLow();
+		metrics.spikeCount16ms = countSpikes(16.67F);
+		metrics.spikeCount33ms = countSpikes(33.33F);
+
+		// ECS system timings
+		metrics.ecsSystems = ecsSystemTimings;
+
+		// GPU timing
+		metrics.gpuRenderMs = gpuRenderMs;
 
 		return metrics;
 	}
@@ -64,12 +81,21 @@ namespace Renderer {
 	}
 
 	void MetricsCollector::setTimingBreakdown(float inTileRenderMs, float inEntityRenderMs, float inUpdateMs,
-											  uint32_t inTileCount, uint32_t inEntityCount) {
+											  uint32_t inTileCount, uint32_t inEntityCount, uint32_t inVisibleChunkCount) {
 		tileRenderMs = inTileRenderMs;
 		entityRenderMs = inEntityRenderMs;
 		updateMs = inUpdateMs;
 		tileCount = inTileCount;
 		entityCount = inEntityCount;
+		visibleChunkCount = inVisibleChunkCount;
+	}
+
+	void MetricsCollector::setEcsSystemTimings(const std::vector<Foundation::EcsSystemTiming>& timings) {
+		ecsSystemTimings = timings;
+	}
+
+	void MetricsCollector::setGpuRenderTime(float gpuMs) {
+		gpuRenderMs = gpuMs;
 	}
 
 	uint64_t MetricsCollector::getCurrentTimestamp() const { // NOLINT(readability-convert-member-functions-to-static)
@@ -97,6 +123,54 @@ namespace Renderer {
 		auto minmax = std::minmax_element(frameTimeSamples.begin(), frameTimeSamples.end());
 		outMin = *minmax.first;
 		outMax = *minmax.second;
+	}
+
+	void MetricsCollector::computeHistogram(uint32_t& out0to8, uint32_t& out8to16, uint32_t& out16to33,
+											uint32_t& out33plus) const {
+		out0to8 = 0;
+		out8to16 = 0;
+		out16to33 = 0;
+		out33plus = 0;
+
+		for (float sample : frameTimeSamples) {
+			if (sample < 8.0F) {
+				out0to8++;
+			} else if (sample < 16.67F) {
+				out8to16++;
+			} else if (sample < 33.33F) {
+				out16to33++;
+			} else {
+				out33plus++;
+			}
+		}
+	}
+
+	float MetricsCollector::compute1PercentLow() const {
+		if (frameTimeSamples.empty()) {
+			return 0.0F;
+		}
+
+		// Use nth_element for O(n) instead of O(n log n) sort
+		std::vector<float> samples = frameTimeSamples;
+
+		// 99th percentile index (1% from the top = worst frames)
+		size_t index = static_cast<size_t>(samples.size() * 0.99F);
+		if (index >= samples.size()) {
+			index = samples.size() - 1;
+		}
+
+		std::nth_element(samples.begin(), samples.begin() + static_cast<ptrdiff_t>(index), samples.end());
+		return samples[index];
+	}
+
+	uint32_t MetricsCollector::countSpikes(float thresholdMs) const {
+		uint32_t count = 0;
+		for (float sample : frameTimeSamples) {
+			if (sample > thresholdMs) {
+				count++;
+			}
+		}
+		return count;
 	}
 
 } // namespace Renderer

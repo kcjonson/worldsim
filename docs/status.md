@@ -124,61 +124,41 @@ Use this template for all work items:
 
 ---
 
-### ✅ Asset System Architecture - Foundation
-**Spec/Documentation:** `/docs/technical/asset-system/README.md`
+### ✅ Enhanced Performance Metrics
+**Spec/Documentation:** `.claude/plans/performance-metrics-epic.md`
 **Dependencies:** None
 **Status:** complete
 
-**Phase 1: Core Infrastructure** ✅ COMPLETE
-- [x] 1.1 Asset Registry
-  - [x] Create `libs/engine/assets/` library
-  - [x] Implement XML definition parser (pugixml)
-  - [x] Create `AssetRegistry` class with `loadDefinitions()`, `getDefinition()`, `getTemplate()`
-  - [x] Create `GeneratorRegistry` for procedural generators
-  - [x] Template caching system
-- [x] 1.2 Asset Loading Infrastructure
-  - [x] SVG loading via nanosvg (SVGLoader)
-  - [x] Bezier curve flattening (flattenCubicBezier, flattenQuadraticBezier)
-  - [x] Tessellator (ear-clipping algorithm)
-  - [x] GrassBladeGenerator (procedural Bezier blade generation)
-  - [x] Asset definition XML format (grass.xml)
+**Goal:** Add comprehensive performance metrics to developer-client to diagnose performance issues.
 
-**Phase 1.5: Tile Integration** ✅ COMPLETE
-- [x] 1.5.1 Wire Up Asset System
-  - [x] Register GrassBlade generator at startup
-  - [x] Load asset definitions at startup
-- [x] 1.5.2 Tile System Foundation
-  - [x] Create Tile struct (position, biome, dimensions)
-  - [x] Create Biome enum (Grassland, Forest, etc.)
-  - [x] Add Placement parsing to AssetRegistry (spawn chance, clumping)
-- [x] 1.5.3 GrassScene Tile Integration
-  - [x] Convert GrassScene to use tile grid
-  - [x] Load grass via AssetRegistry::getTemplate()
-  - [x] Spawn grass per-tile based on XML placement rules
-  - [x] Test: verified 497 grass blades spawning via asset system
+**Tasks:**
+- [x] Story 1: Display Existing Timing Breakdown (Quick Win)
+  - [x] Update MetricsData interface to include tileRenderMs, entityRenderMs, updateMs
+  - [x] Add FrameBudgetBar hero component with timing breakdown
+  - [x] Display tileCount and entityCount in StatsRow
+- [x] Story 5: Visible Chunk Count
+  - [x] Add visibleChunkCount to PerformanceMetrics
+  - [x] Track in ChunkRenderer::m_lastChunkCount
+  - [x] Display in developer-client
+- [x] Story 4: Frame Histogram & Spike Detection
+  - [x] Add histogram buckets to PerformanceMetrics (0-8ms, 8-16ms, 16-33ms, 33ms+)
+  - [x] Add spike counters and 1% low FPS
+  - [x] Add FrameHistogram visualization to developer-client
+- [x] Story 2: Per-ECS-System Timing
+  - [x] Add name() pure virtual to ISystem, implemented in all 7 systems
+  - [x] Instrument World::update() to time each system
+  - [x] Add EcsSystemTiming to PerformanceMetrics
+  - [x] Add EcsSystemsBar component to developer-client
+- [x] Story 3: GPU Timing
+  - [x] Create GPUTimer class with GL_TIME_ELAPSED queries
+  - [x] Add gpuRenderMs to PerformanceMetrics
+  - [x] Display GPU time in developer-client (Note: May show 0 on macOS due to deprecated OpenGL)
 
-**Phase 2: Lua Scripting** ✅ COMPLETE
-- [x] 2.1 Lua Integration
-  - [x] Add sol2 (Lua 5.4.7) to vcpkg.json
-  - [x] Create `LuaEngine` class with sandbox and seeded randomness
-  - [x] Expose `Path`, `asset:addPath()` API to Lua
-  - [x] Create `LuaGenerator` implementing `IAssetGenerator` interface
-- [x] 2.2 Procedural Generator
-  - [x] Implement seed-based variant generation (math.randomseed from C++)
-  - [x] Demo: Deciduous tree generator in Lua (3/4 top-down Rimworld style)
-  - [x] TreeScene demo rendering 40 unique trees
-  - [x] XML definition format with scriptPath parameter
-
-**Phase 2.5: Coordinate System Standardization** ✅ COMPLETE
-- [x] Standardize all assets to meter-based coordinate system
-  - [x] Update grass.xml with meter dimensions (0.2-0.5m height)
-  - [x] Update trees.xml with meter dimensions (1.2-1.5m trunk heights, scaled for top-down view)
-  - [x] Fix EntityRenderer scale: `pixelsPerMeter * zoom`
-- [x] Fix BatchRenderer metrics
-  - [x] Add cumulative frame counters (frameVertexCount, frameTriangleCount)
-  - [x] Track stats before buffer clear, reset in beginFrame
-
-**Result:** Working asset system with Lua scripting, procedural trees, grass, and entity placement ✅
+**Result:** Developer-client now provides professional-grade performance profiling:
+- Frame budget visualization with component breakdown
+- Per-ECS-system timing (VisionSystem identified as dominant at ~1.5ms)
+- Frame time histogram and spike detection
+- Compact stat cards and sparkline trends ✅
 
 ---
 
@@ -223,6 +203,26 @@ Use this template for all work items:
   - [ ] "Aha" notifications when recipes unlock
   - [ ] Input validation before starting craft
   - [ ] Progress bar for active crafting
+
+---
+
+### Performance Optimization
+**Spec/Documentation:** `.claude/plans/performance-optimization-epic.md`
+**Dependencies:** Enhanced Performance Metrics (complete)
+**Status:** ready
+
+**Goal:** Improve game performance to eliminate lag and stuttering.
+
+**Confirmed bottlenecks (from metrics):**
+- **VisionSystem**: 1.5ms/frame (92% of update time) - scans chunks for entities
+- **Tile Rendering**: 3-5ms/frame - iterates all visible tiles each frame
+- **Entity Rendering**: 3-4ms/frame - renders 2000+ entities per frame
+
+**Tentative Tasks:**
+- [ ] VisionSystem optimization (spatial queries, caching)
+- [ ] Chunk vertex buffer caching (reduce CPU iteration)
+- [ ] Entity culling/LOD (skip offscreen entities)
+- [ ] Dynamic LOD for zoom levels
 
 ---
 
