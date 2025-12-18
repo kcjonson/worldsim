@@ -217,17 +217,21 @@ float computeTileEdgeDarkening(
 
 /// Get the visual stack order for a surface type.
 /// Higher values = rendered on top. Higher surfaces bleed onto lower surfaces.
-/// Stack order: Water(0) < Mud(1) < Sand(2) < Dirt(3) < Grass(4) < Rock(5) < Snow(6)
+/// Stack order: Water(0) < Mud(1) < Sand(2) < Dirt(3) < GrassShort(4) < Grass(5) < GrassMeadow(6) < GrassTall(7) < Rock(8) < Snow(9)
+/// Grass variants have distinct sub-levels to enable soft blending between them.
 int getSurfaceStackOrder(uint surfaceId) {
     // Surface IDs: Grass=0, Dirt=1, Sand=2, Rock=3, Water=4, Snow=5, Mud=6, GrassTall=7, GrassShort=8, GrassMeadow=9
     if (surfaceId == 4u) return 0;  // Water - lowest
     if (surfaceId == 6u) return 1;  // Mud
     if (surfaceId == 2u) return 2;  // Sand
     if (surfaceId == 1u) return 3;  // Dirt
-    if (surfaceId == 0u || surfaceId == 7u || surfaceId == 8u || surfaceId == 9u) return 4;  // All Grass variants
-    if (surfaceId == 3u) return 5;  // Rock
-    if (surfaceId == 5u) return 6;  // Snow - highest
-    return 3;  // Default to Dirt level
+    if (surfaceId == 8u) return 4;  // GrassShort - driest grass
+    if (surfaceId == 0u) return 5;  // Grass - standard
+    if (surfaceId == 9u) return 6;  // GrassMeadow - fertile
+    if (surfaceId == 7u) return 7;  // GrassTall - wettest grass
+    if (surfaceId == 3u) return 8;  // Rock
+    if (surfaceId == 5u) return 9;  // Snow - highest
+    return 5;  // Default to standard Grass level
 }
 
 // ============================================================================

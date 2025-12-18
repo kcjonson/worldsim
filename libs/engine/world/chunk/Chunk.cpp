@@ -1,6 +1,7 @@
 #include "Chunk.h"
 
 #include "world/chunk/TilePostProcessor.h"
+#include "world/generation/BiomeDispatcher.h"
 
 #include <cmath>
 
@@ -61,9 +62,9 @@ namespace engine::world {
 		tile.surface = selectSurface(tile.primaryBiome, localX, localY);
 
 		// Generate deterministic moisture from hash
-		uint32_t hash = tileHash(m_coord, localX, localY, m_worldSeed);
+		uint32_t		hash = tileHash(m_coord, localX, localY, m_worldSeed);
 		constexpr float kNormalize = 1.0F / static_cast<float>(UINT32_MAX);
-		float moistureBase = static_cast<float>(hash) * kNormalize;
+		float			moistureBase = static_cast<float>(hash) * kNormalize;
 
 		// Adjust moisture based on biome
 		if (tile.primaryBiome == Biome::Desert) {
@@ -76,92 +77,23 @@ namespace engine::world {
 		tile.moisture = static_cast<uint8_t>(std::min(255.0F, moistureBase * 255.0F));
 
 		tile.attributes = 0; // Reserved for future use
-		tile.adjacency = 0;  // Computed by TilePostProcessor after all tiles generated
+		tile.adjacency = 0;	 // Computed by TilePostProcessor after all tiles generated
 
 		return tile;
 	}
 
 	Surface Chunk::selectSurface(Biome biome, uint16_t localX, uint16_t localY) const {
-		// Natural terrain approach using continuous noise:
-		// - Sample fractal noise at world position (creates organic blob shapes)
-		// - Use high threshold (0.92+) for sparse distribution
-		// - Different seed offsets = independent feature layers
-		// - Low frequency = larger patches, varying sizes
-
-		// Ocean is always water
-		if (biome == Biome::Ocean) {
-			return Surface::Water;
-		}
-
-		// Calculate world position in tile units
-		float worldX = static_cast<float>(m_coord.x * kChunkSize + localX);
-		float worldY = static_cast<float>(m_coord.y * kChunkSize + localY);
-
-		// ========== POND/WATER GENERATION FOR GRASSLAND AND FOREST ==========
-		// Water clusters (ponds) use lower frequency noise for larger, pond-shaped blobs
-		// Separate seed offset ensures independent from surface variation
-		if (biome == Biome::Grassland || biome == Biome::Forest) {
-			// Lower frequency = larger pond clusters (~3-8 tiles across)
-			constexpr float kWaterScale = 0.08F;
-			float			waterNoiseX = worldX * kWaterScale;
-			float			waterNoiseY = worldY * kWaterScale;
-
-			// Sample water noise - 2 octaves for organic but cohesive shapes
-			float waterNoise = fractalNoise(waterNoiseX, waterNoiseY, m_worldSeed + 100000, 2, 0.5F);
-
-			// High threshold = sparse ponds (~2-5% coverage)
-			// This creates scattered pond-like clusters
-			constexpr float kWaterThreshold = 0.82F;
-			if (waterNoise > kWaterThreshold) {
-				return Surface::Water;
-			}
-		}
-
-		// Scale for patch size: ~0.15 means patches are roughly 5-10 tiles across
-		// Higher frequency = smaller, more natural-looking clusters
-		constexpr float kPatchScale = 0.15F;
-		float			noiseX = worldX * kPatchScale;
-		float			noiseY = worldY * kPatchScale;
-
-		// Sample noise for surface variation
-		// Use 2 octaves for organic but not too complex shapes
-		float variationNoise = fractalNoise(noiseX, noiseY, m_worldSeed + 50000, 2, 0.5F);
-
-		// Helper to get primary and variation surfaces for a biome
-		auto getSurfaces = [](Biome b) -> std::pair<Surface, Surface> {
-			switch (b) {
-				case Biome::Grassland:
-					return {Surface::Grass, Surface::Dirt};
-				case Biome::Forest:
-					return {Surface::Grass, Surface::Dirt};
-				case Biome::Desert:
-					return {Surface::Sand, Surface::Rock};
-				case Biome::Tundra:
-					return {Surface::Snow, Surface::Rock};
-				case Biome::Wetland:
-					return {Surface::Water, Surface::Grass};
-				case Biome::Mountain:
-					return {Surface::Rock, Surface::Snow};
-				case Biome::Beach:
-					return {Surface::Sand, Surface::Rock};
-				case Biome::Ocean:
-					return {Surface::Water, Surface::Water};
-				default:
-					return {Surface::Grass, Surface::Dirt};
-			}
+		// Delegate to biome-specific generators via dispatcher
+		generation::GenerationContext ctx{
+			.chunkCoord = m_coord,
+			.localX = localX,
+			.localY = localY,
+			.worldSeed = m_worldSeed,
+			.biome = biome,
+			.elevation = m_biomeData.getTileElevation(localX, localY)
 		};
 
-		auto [primary, variation] = getSurfaces(biome);
-
-		// Threshold for sparse patches - fractal noise clusters around 0.5
-		// 0.88 captures ~2-3% of area with sparse dirt patches
-		// Mountains get lower threshold for more rock variation
-		float threshold = (biome == Biome::Mountain) ? 0.70F : 0.88F;
-
-		if (variationNoise > threshold) {
-			return variation;
-		}
-		return primary;
+		return generation::BiomeDispatcher::generate(ctx).surface;
 	}
 
 	float Chunk::smoothstep(float t) {
