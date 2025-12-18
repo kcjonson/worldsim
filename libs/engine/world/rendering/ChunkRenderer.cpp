@@ -13,6 +13,7 @@ namespace engine::world {
 
 	void ChunkRenderer::render(const ChunkManager& chunkManager, const WorldCamera& camera, int viewportWidth, int viewportHeight) {
 		m_lastTileCount = 0;
+		m_lastChunkCount = 0;
 
 		Foundation::Rect visibleRect = camera.getVisibleRect(viewportWidth, viewportHeight, m_pixelsPerMeter);
 
@@ -24,6 +25,7 @@ namespace engine::world {
 				continue;
 			}
 			addChunkTiles(*chunk, camera, visibleRect, viewportWidth, viewportHeight);
+			m_lastChunkCount++;
 		}
 	}
 

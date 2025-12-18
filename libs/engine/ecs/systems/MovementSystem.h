@@ -10,9 +10,8 @@ class MovementSystem : public ISystem {
 public:
     void update(float deltaTime) override;
 
-    [[nodiscard]] int priority() const override {
-        return 100;
-    }
+    [[nodiscard]] int priority() const override { return 100; }
+    [[nodiscard]] const char* name() const override { return "Movement"; }
 };
 
 }  // namespace ecs

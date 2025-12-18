@@ -1,3 +1,8 @@
+interface EcsSystemTiming {
+  name: string;
+  durationMs: number;
+}
+
 interface MetricSample {
   timestamp: number;
   fps: number;
@@ -7,6 +12,27 @@ interface MetricSample {
   drawCalls: number;
   vertexCount: number;
   triangleCount: number;
+  // Timing breakdown
+  tileRenderMs: number;
+  entityRenderMs: number;
+  updateMs: number;
+  tileCount: number;
+  entityCount: number;
+  visibleChunkCount: number;
+  // Histogram
+  histogram0to8ms: number;
+  histogram8to16ms: number;
+  histogram16to33ms: number;
+  histogram33plusMs: number;
+  histogramTotal: number;
+  // Spike detection
+  frameTime1PercentLow: number;
+  spikeCount16ms: number;
+  spikeCount33ms: number;
+  // ECS system timings (optional in history to save space)
+  ecsSystems?: EcsSystemTiming[];
+  // GPU timing
+  gpuRenderMs?: number;
 }
 
 interface LogEntry {

@@ -23,6 +23,7 @@ public:
 
 	/// Priority 350: Runs after movement/physics, processes arrived colonists
 	[[nodiscard]] int priority() const override { return 350; }
+	[[nodiscard]] const char* name() const override { return "Action"; }
 
 private:
 	/// Random number generator for yield calculations

@@ -13,9 +13,8 @@ class DynamicEntityRenderSystem : public ISystem {
 public:
     void update(float deltaTime) override;
 
-    [[nodiscard]] int priority() const override {
-        return 900;
-    }
+    [[nodiscard]] int priority() const override { return 900; }
+    [[nodiscard]] const char* name() const override { return "DynamicEntityRender"; }
 
     /// Get the render data for this frame.
     /// Call this after update() to get entities for rendering.

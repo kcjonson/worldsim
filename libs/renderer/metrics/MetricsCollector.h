@@ -25,7 +25,13 @@ namespace Renderer { // NOLINT(readability-identifier-naming)
 
 		// Set timing breakdown (called by game scene for profiling)
 		void setTimingBreakdown(float tileRenderMs, float entityRenderMs, float updateMs,
-								uint32_t tileCount, uint32_t entityCount);
+								uint32_t tileCount, uint32_t entityCount, uint32_t visibleChunkCount);
+
+		// Set ECS system timings (called by game scene after ECS update)
+		void setEcsSystemTimings(const std::vector<Foundation::EcsSystemTiming>& timings);
+
+		// Set GPU render time (called by game scene after reading GPU timer)
+		void setGpuRenderTime(float gpuMs);
 
 	  private:
 		using Clock = std::chrono::high_resolution_clock;
@@ -46,6 +52,13 @@ namespace Renderer { // NOLINT(readability-identifier-naming)
 		float	 updateMs{};
 		uint32_t tileCount{};
 		uint32_t entityCount{};
+		uint32_t visibleChunkCount{};
+
+		// ECS system timings
+		std::vector<Foundation::EcsSystemTiming> ecsSystemTimings;
+
+		// GPU timing
+		float gpuRenderMs{};
 
 		// Helper: Get current Unix timestamp in milliseconds
 		uint64_t getCurrentTimestamp() const;
@@ -55,6 +68,18 @@ namespace Renderer { // NOLINT(readability-identifier-naming)
 
 		// Helper: Get min/max frame times from sample window
 		void getFrameTimeMinMax(float& outMin, float& outMax) const;
+
+		// Helper: Compute histogram buckets from sample window
+		void computeHistogram(uint32_t& out0to8, uint32_t& out8to16, uint32_t& out16to33, uint32_t& out33plus) const;
+
+		// Helper: Compute 1% low (99th percentile frame time)
+		float compute1PercentLow() const;
+
+		// Helper: Count frames exceeding threshold in sample window
+		uint32_t countSpikes(float thresholdMs) const;
+
+		// Scratch buffer for percentile calculation (avoids per-frame allocation)
+		mutable std::vector<float> percentileScratch;
 	};
 
 } // namespace Renderer

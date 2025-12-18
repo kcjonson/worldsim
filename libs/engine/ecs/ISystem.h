@@ -23,6 +23,9 @@ namespace ecs {
 		/// - 900-999: Rendering preparation
 		[[nodiscard]] virtual int priority() const = 0;
 
+		/// Get the name of this system (for debugging/profiling)
+		[[nodiscard]] virtual const char* name() const = 0;
+
 		/// Set the world reference (called by World::registerSystem)
 		void setWorld(World* newWorld) { world = newWorld; }
 
