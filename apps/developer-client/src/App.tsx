@@ -390,6 +390,7 @@ function App() {
                   values={fpsValues}
                   warningThreshold={55}
                   badThreshold={30}
+                  higherIsBetter={true}
                 />
                 <Sparkline
                   label="Frame"
