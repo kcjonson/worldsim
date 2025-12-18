@@ -44,6 +44,14 @@ namespace ecs {
 		std::optional<uint32_t>	 targetDefNameId; // For display name lookup
 		float					 distanceToTarget = 0.0F;
 
+		// Gathering-specific fields (for Gather tasks)
+		std::string gatherItemDefName;
+		uint64_t gatherTargetEntityId = 0;
+
+		// Crafting-specific fields (for Craft tasks)
+		std::string craftRecipeDefName;
+		uint64_t stationEntityId = 0;
+
 		// Human-readable explanation for UI
 		std::string reason;
 
@@ -60,8 +68,16 @@ namespace ecs {
 			}
 			// Tier 6: Work tasks (Gather Food) - when needValue=100 and threshold=0
 			// This indicates a work task, not a real need - priority 50
-			if (needValue >= 100.0F && threshold == 0.0F && status == OptionStatus::Available) {
+			if (taskType == TaskType::FulfillNeed && needValue >= 100.0F && threshold == 0.0F && status == OptionStatus::Available) {
 				return 50.0F;
+			}
+			// Tier 6.5: Crafting work - priority 40
+			if (taskType == TaskType::Craft && status == OptionStatus::Available) {
+				return 40.0F;
+			}
+			// Tier 6.6: Gathering materials for crafting - priority 35
+			if (taskType == TaskType::Gather && status == OptionStatus::Available) {
+				return 35.0F;
 			}
 			// Tier 7: Wander (lowest priority among active options)
 			if (taskType == TaskType::Wander) {

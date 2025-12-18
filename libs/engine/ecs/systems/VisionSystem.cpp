@@ -8,6 +8,7 @@
 
 #include "assets/AssetDefinition.h"
 #include "assets/AssetRegistry.h"
+#include "assets/RecipeRegistry.h"
 #include "assets/placement/PlacementExecutor.h"
 #include "world/chunk/Chunk.h"
 #include "world/chunk/ChunkManager.h"
@@ -23,6 +24,50 @@ namespace ecs {
 		// Synthetic definition name for shore tiles (land adjacent to water)
 		// Shore tiles are where colonists stand to drink from water
 		constexpr const char* kShoreTileDefName = "Terrain_Shore";
+
+		/// Check if learning a new defNameId unlocks any recipes
+		/// @param knowledge The colonist's knowledge (after learning)
+		/// @param newlyLearnedId The defNameId that was just learned
+		/// @param registry Asset registry for ID lookups
+		/// @param recipeRegistry Recipe registry to check recipes
+		/// @return Label of newly unlocked recipe, or empty if none
+		std::string checkForRecipeUnlock(
+			const Knowledge& knowledge,
+			uint32_t newlyLearnedId,
+			const engine::assets::AssetRegistry& registry,
+			const engine::assets::RecipeRegistry& recipeRegistry
+		) {
+			// Only check non-innate recipes (innate recipes are always available)
+			// A recipe is "newly unlocked" when the colonist now knows all inputs,
+			// and the newly-learned item was the final missing input
+			for (const auto& [defName, recipe] : recipeRegistry.allRecipes()) {
+				if (recipe.innate) {
+					continue;
+				}
+
+				// Check if this recipe has the newly learned item as an input
+				bool hasNewInput = false;
+				std::vector<uint32_t> inputIds;
+				for (const auto& input : recipe.inputs) {
+					uint32_t inputId = registry.getDefNameId(input.defName);
+					inputIds.push_back(inputId);
+					if (inputId == newlyLearnedId) {
+						hasNewInput = true;
+					}
+				}
+
+				// Skip recipes that don't involve the newly learned item
+				if (!hasNewInput) {
+					continue;
+				}
+
+				// Check if all inputs are now known
+				if (knowledge.knowsAll(inputIds)) {
+					return recipe.label;
+				}
+			}
+			return "";
+		}
 	} // namespace
 
 	void VisionSystem::ensureTerrainDefinitionsRegistered() {
@@ -53,6 +98,7 @@ namespace ecs {
 		constexpr float kChunkWorldSize = static_cast<float>(engine::world::kChunkSize);
 
 		auto& registry = engine::assets::AssetRegistry::Get();
+		auto& recipeRegistry = engine::assets::RecipeRegistry::Get();
 
 		// Iterate all entities with Position and Memory components
 		for (auto [entity, pos, memory] : world->view<Position, Memory>()) {
@@ -98,8 +144,12 @@ namespace ecs {
 						// Update permanent knowledge if Knowledge component exists
 						if (knowledge != nullptr) {
 							uint32_t defNameId = registry.getDefNameId(placedEntity->defName);
-							if (defNameId != 0) {
-								knowledge->learn(defNameId);
+							if (defNameId != 0 && knowledge->learn(defNameId)) {
+								// New discovery - check for recipe unlocks
+								std::string unlockedRecipe = checkForRecipeUnlock(*knowledge, defNameId, registry, recipeRegistry);
+								if (!unlockedRecipe.empty() && m_onRecipeDiscovery) {
+									m_onRecipeDiscovery(unlockedRecipe);
+								}
 							}
 						}
 					}
@@ -125,8 +175,12 @@ namespace ecs {
 						memory.rememberWorldEntity(otherPos.value, defNameId, capabilityMask);
 
 						// Update permanent knowledge if Knowledge component exists
-						if (knowledge != nullptr) {
-							knowledge->learn(defNameId);
+						if (knowledge != nullptr && knowledge->learn(defNameId)) {
+							// New discovery - check for recipe unlocks
+							std::string unlockedRecipe = checkForRecipeUnlock(*knowledge, defNameId, registry, recipeRegistry);
+							if (!unlockedRecipe.empty() && m_onRecipeDiscovery) {
+								m_onRecipeDiscovery(unlockedRecipe);
+							}
 						}
 					}
 				}
@@ -181,8 +235,12 @@ namespace ecs {
 										memory.rememberWorldEntity(shoreWorldPos, m_shoreTileDefNameId, m_shoreTileCapabilityMask);
 
 										// Update permanent knowledge for shore tiles
-										if (knowledge != nullptr) {
-											knowledge->learn(m_shoreTileDefNameId);
+										if (knowledge != nullptr && knowledge->learn(m_shoreTileDefNameId)) {
+											// New discovery - check for recipe unlocks (unlikely for shore tiles, but consistent)
+											std::string unlockedRecipe = checkForRecipeUnlock(*knowledge, m_shoreTileDefNameId, registry, recipeRegistry);
+											if (!unlockedRecipe.empty() && m_onRecipeDiscovery) {
+												m_onRecipeDiscovery(unlockedRecipe);
+											}
 										}
 									}
 								}

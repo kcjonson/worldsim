@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Reed (Cattail) Asset Definition
+     Wetland plant that grows near water in clumps.
+     Harvested for plant fiber (crafting material).
+-->
+<AssetDefinitions>
+  <AssetDef>
+    <defName>Flora_Reed</defName>
+    <label>Reed</label>
+    <assetType>simple</assetType>
+    <svgPath>reed.svg</svgPath>
+    <worldHeight>1.0</worldHeight>
+
+    <rendering>
+      <complexity>simple</complexity>
+      <tier>instanced</tier>
+    </rendering>
+
+    <animation>
+      <type>parametric</type>
+      <windResponse>0.5</windResponse>
+      <swayFrequency>0.3,0.6</swayFrequency>
+    </animation>
+
+    <!-- Entity capabilities - harvested for plant fiber (destructive) -->
+    <capabilities>
+      <harvestable yield="PlantFiber" amountMin="1" amountMax="3" duration="2.0" destructive="true"/>
+    </capabilities>
+
+    <!-- Per-biome placement configuration -->
+    <placement>
+      <!-- Wetland: Dense clumps near water -->
+      <biome name="Wetland" near="Water" distance="3">
+        <spawnChance>0.30</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>8,16</clumpSize>
+          <clumpRadius>1.0,2.0</clumpRadius>
+          <clumpSpacing>6.0,12.0</clumpSpacing>
+        </clumping>
+      </biome>
+
+      <!-- Grassland ponds: Moderate patches -->
+      <biome name="Grassland" near="Water" distance="3">
+        <spawnChance>0.15</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>5,10</clumpSize>
+          <clumpRadius>0.8,1.5</clumpRadius>
+          <clumpSpacing>8.0,15.0</clumpSpacing>
+        </clumping>
+      </biome>
+
+      <!-- Forest ponds: Sparse patches -->
+      <biome name="Forest" near="Water" distance="3">
+        <spawnChance>0.08</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>3,6</clumpSize>
+          <clumpRadius>0.5,1.0</clumpRadius>
+          <clumpSpacing>12.0,20.0</clumpSpacing>
+        </clumping>
+      </biome>
+
+      <!-- Groups this asset belongs to -->
+      <groups>
+        <group>water_plants</group>
+        <group>fiber_sources</group>
+        <group>small_flora</group>
+      </groups>
+
+      <!-- Relationships with other entities -->
+      <relationships>
+        <!-- Reeds cluster together naturally (form stands) -->
+        <affinity type="same" distance="3.0" strength="1.5"/>
+        <!-- Avoid spawning under trees -->
+        <avoids group="trees" distance="3.0" penalty="0.3"/>
+      </relationships>
+    </placement>
+
+    <variantCount>3</variantCount>
+  </AssetDef>
+</AssetDefinitions>

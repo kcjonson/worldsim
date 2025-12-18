@@ -16,6 +16,8 @@ namespace ecs {
 enum class TaskType : uint8_t {
 	None = 0,
 	FulfillNeed, // Tier 3/5: Moving to target for need fulfillment
+	Gather,		 // Tier 6.6: Gathering materials for crafting
+	Craft,		 // Tier 6.5: Crafting at a station
 	Wander		 // Tier 7: Random exploration
 };
 
@@ -37,6 +39,14 @@ struct Task {
 	/// For FulfillNeed tasks: which need is being addressed
 	NeedType needToFulfill = NeedType::Count;
 
+	/// For Gather tasks: item to collect and target entity
+	std::string gatherItemDefName;
+	uint64_t gatherTargetEntityId = 0;
+
+	/// For Craft tasks: recipe to craft and station entity ID
+	std::string craftRecipeDefName;
+	uint64_t targetStationId = 0;
+
 	/// Time since last decision re-evaluation (seconds)
 	float timeSinceEvaluation = 0.0F;
 
@@ -55,6 +65,10 @@ struct Task {
 		state = TaskState::Pending;
 		targetPosition = glm::vec2{0.0F, 0.0F};
 		needToFulfill = NeedType::Count;
+		gatherItemDefName.clear();
+		gatherTargetEntityId = 0;
+		craftRecipeDefName.clear();
+		targetStationId = 0;
 		priority = 0.0F;
 		// Note: timeSinceEvaluation NOT reset here - caller handles timer logic
 		reason.clear();
