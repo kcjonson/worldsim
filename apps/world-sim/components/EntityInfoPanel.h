@@ -18,6 +18,7 @@
 
 #include <assets/AssetRegistry.h>
 #include <component/Component.h>
+#include <components/tabbar/TabBar.h>
 #include <ecs/World.h>
 #include <graphics/Color.h>
 #include <layer/Layer.h>
@@ -67,6 +68,9 @@ class EntityInfoPanel : public UI::Component {
 	/// Check if panel is visible
 	[[nodiscard]] bool isVisible() const { return visible; }
 
+	/// Get current panel height (dynamic based on content)
+	[[nodiscard]] float getHeight() const { return panelHeight; }
+
 	/// Update panel position with bottom-left alignment
 	/// @param x Left edge X coordinate
 	/// @param viewportHeight Total viewport height (panel bottom will align to this)
@@ -95,6 +99,15 @@ class EntityInfoPanel : public UI::Component {
 	/// Get close button top-left position for current panel position
 	[[nodiscard]] Foundation::Vec2 getCloseButtonPosition(float panelY) const;
 
+	/// Tab change callback - updates content for selected tab
+	void onTabChanged(const std::string& tabId);
+
+	/// Get content for current active tab (colonist only)
+	[[nodiscard]] PanelContent getContentForActiveTab(
+		const ecs::World& world,
+		ecs::EntityID entityId
+	) const;
+
 	// Callbacks
 	std::function<void()> onCloseCallback;
 	std::function<void()> onTaskListToggleCallback;
@@ -108,6 +121,12 @@ class EntityInfoPanel : public UI::Component {
 
 	// Header text (entity name/title)
 	UI::LayerHandle titleHandle;
+
+	// Tab bar (only shown for colonists)
+	UI::LayerHandle tabBarHandle;
+	std::string m_activeTab = "status";	 // Current tab: "status" or "inventory"
+	bool m_showTabs = false;			 // True for colonists, false for world entities
+	bool m_tabChangeRequested = false;	 // Set by onTabChanged to trigger re-render
 
 	// Pool of reusable slot UI elements
 	// Text elements (for TextSlot label:value pairs)
@@ -153,6 +172,7 @@ class EntityInfoPanel : public UI::Component {
 	static constexpr float kProgressBarHeight = 14.0F;
 	static constexpr float kLineSpacing = 4.0F;
 	static constexpr float kCloseButtonSize = 16.0F;
+	static constexpr float kTabBarHeight = 24.0F;  // Height of tab bar when shown
 };
 
 } // namespace world_sim

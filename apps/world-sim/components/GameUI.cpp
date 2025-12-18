@@ -64,14 +64,15 @@ void GameUI::layout(const Foundation::Rect& newBounds) {
 
 	// Position info panel in bottom-left corner (flush with edges)
 	float panelX = 0.0F;
-	float panelY = newBounds.height - kPanelHeight - kPanelPadding;
-
-	// Cache panel bounds for hit testing
-	infoPanelBounds = Foundation::Rect{panelX, panelY, kPanelWidth, kPanelHeight};
 
 	// Update panel position with bottom-left alignment (panel computes Y from viewport height)
 	if (infoPanel) {
 		infoPanel->setBottomLeftPosition(panelX, newBounds.height);
+
+		// Cache panel bounds for hit testing using actual dynamic height
+		float actualHeight = infoPanel->getHeight();
+		float panelY = newBounds.height - actualHeight;
+		infoPanelBounds = Foundation::Rect{panelX, panelY, kPanelWidth, actualHeight};
 	}
 
 	// Position task list panel above info panel
@@ -111,6 +112,13 @@ bool GameUI::handleInput() {
 				pos.y >= taskListPanelBounds.y && pos.y <= taskListPanelBounds.y + taskListPanelBounds.height) {
 				return true;
 			}
+		}
+
+		// Update info panel bounds before hit testing (panel height is dynamic)
+		if (infoPanel && infoPanel->isVisible()) {
+			float actualHeight = infoPanel->getHeight();
+			float panelY = viewportBounds.height - actualHeight;
+			infoPanelBounds = Foundation::Rect{0.0F, panelY, kPanelWidth, actualHeight};
 		}
 
 		if (isPointOverInfoPanel(pos)) {

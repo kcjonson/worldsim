@@ -51,9 +51,9 @@ namespace UI {
 	}
 
 	TabBar::TabBar(TabBar&& other) noexcept
-		: position(other.position),
+		: Component(std::move(other)),
+		  position(other.position),
 		  width(other.width),
-		  visible(other.visible),
 		  id(other.id),
 		  m_tabs(std::move(other.m_tabs)),
 		  m_selectedId(std::move(other.m_selectedId)),
@@ -78,10 +78,12 @@ namespace UI {
 			// Unregister this from FocusManager
 			FocusManager::Get().unregisterFocusable(this);
 
+			// Move base class
+			Component::operator=(std::move(other));
+
 			// Move data
 			position = other.position;
 			width = other.width;
-			visible = other.visible;
 			id = other.id;
 			m_tabs = std::move(other.m_tabs);
 			m_selectedId = std::move(other.m_selectedId);

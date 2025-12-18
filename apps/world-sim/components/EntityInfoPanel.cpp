@@ -3,6 +3,7 @@
 #include "SelectionAdapter.h"
 
 #include <input/InputManager.h>
+#include <utils/Log.h>
 
 namespace world_sim {
 
@@ -229,6 +230,25 @@ namespace world_sim {
 			)
 		);
 
+		// Create tab bar for colonist selection (hidden initially)
+		// Capture 'this' for callback
+		tabBarHandle = addChild(
+			UI::TabBar(
+				UI::TabBar::Args{
+					.position = {args.position.x + kPadding, args.position.y + kPadding + kTitleFontSize + kLineSpacing},
+					.width = contentWidth,
+					.tabs =
+						{
+							{.id = "status", .label = "Status"},
+							{.id = "inventory", .label = "Inventory"},
+						},
+					.selectedId = "status",
+					.onSelect = [this](const std::string& tabId) { onTabChanged(tabId); },
+					.id = (args.id + "_tabbar").c_str(),
+				}
+			)
+		);
+
 		// Disable child sorting to preserve LayerHandle indices
 		childrenNeedSorting = false;
 
@@ -238,11 +258,18 @@ namespace world_sim {
 	}
 
 	void EntityInfoPanel::update(const ecs::World& world, const engine::assets::AssetRegistry& registry, const Selection& selection) {
-		// Use adapter to convert selection to panel content
-		auto content = adaptSelection(selection, world, registry, onTaskListToggleCallback);
+		// Check if this is a colonist selection
+		bool		  isColonist = std::holds_alternative<ColonistSelection>(selection);
+		ecs::EntityID colonistId{0};
+		if (isColonist) {
+			colonistId = std::get<ColonistSelection>(selection).entityId;
+			if (!world.isAlive(colonistId)) {
+				isColonist = false;
+			}
+		}
 
-		if (!content.has_value()) {
-			// Tier 1: Visibility change - hide panel
+		// Hide panel for no selection
+		if (std::holds_alternative<NoSelection>(selection) || (isColonist && colonistId == ecs::EntityID{0})) {
 			if (visible) {
 				visible = false;
 				m_cachedSelection.update(selection);
@@ -269,6 +296,24 @@ namespace world_sim {
 					return;
 				}
 
+				// Forward clicks in tab bar bounds to TabBar
+				if (m_showTabs) {
+					if (auto* tabBar = getChild<UI::TabBar>(tabBarHandle)) {
+						float tabBarY = panelY + kPadding + kTitleFontSize + kLineSpacing * 2.0F;
+						if (mousePos.x >= panelX + kPadding && mousePos.x <= panelX + kPadding + contentWidth && mousePos.y >= tabBarY &&
+							mousePos.y <= tabBarY + tabBar->getHeight()) {
+							// Click is on tab bar - determine which tab and select it
+							// We know a click happened, so directly select based on position
+							if (mousePos.x < panelX + kPadding + contentWidth * 0.5F) {
+								tabBar->setSelected("status");
+							} else {
+								tabBar->setSelected("inventory");
+							}
+							return;
+						}
+					}
+				}
+
 				// Check if click is within clickable slot bounds
 				if (clickableCallback && mousePos.x >= clickableBoundsMin.x && mousePos.x <= clickableBoundsMax.x &&
 					mousePos.y >= clickableBoundsMin.y && mousePos.y <= clickableBoundsMax.y) {
@@ -283,14 +328,47 @@ namespace world_sim {
 			visible = true;
 		}
 
+		// Update tab visibility based on selection type
+		bool wasShowingTabs = m_showTabs;
+		m_showTabs = isColonist;
+
 		// Check if selection identity changed
-		if (m_cachedSelection.matches(selection)) {
-			// Tier 3: Value-only update - same entity, just update dynamic values
-			updateValues(content.value());
-		} else {
-			// Tier 2: Structure change - different entity, full relayout
+		bool selectionChanged = !m_cachedSelection.matches(selection);
+		if (selectionChanged) {
 			m_cachedSelection.update(selection);
-			renderContent(content.value());
+
+			// Reset to status tab when selecting a different colonist
+			if (isColonist) {
+				m_activeTab = "status";
+				if (auto* tabBar = getChild<UI::TabBar>(tabBarHandle)) {
+					tabBar->setSelected("status");
+				}
+			}
+		}
+
+		// Check if tab change was requested (separate from selection change)
+		bool needsRerender = selectionChanged || wasShowingTabs != m_showTabs || m_tabChangeRequested;
+		m_tabChangeRequested = false; // Clear the flag
+
+		// Get content for display
+		PanelContent content;
+		if (isColonist) {
+			content = getContentForActiveTab(world, colonistId);
+		} else {
+			// World entity - use standard adapter
+			auto worldContent = adaptSelection(selection, world, registry, onTaskListToggleCallback);
+			if (worldContent.has_value()) {
+				content = std::move(worldContent.value());
+			}
+		}
+
+		// Decide update tier
+		if (needsRerender) {
+			// Tier 2: Structure change - full relayout
+			renderContent(content);
+		} else {
+			// Tier 3: Value-only update - same entity, just update dynamic values
+			updateValues(content);
 		}
 	}
 
@@ -308,35 +386,61 @@ namespace world_sim {
 		// Hide all pool elements first (will show ones we use)
 		hideSlots();
 
+		// Helper lambda to compute height for a set of slots
+		auto computeSlotsHeight = [this](const std::vector<InfoSlot>& slots) -> float {
+			float height = 0.0F;
+			for (const auto& slot : slots) {
+				height += std::visit(
+					[this](const auto& s) -> float {
+						using T = std::decay_t<decltype(s)>;
+						if constexpr (std::is_same_v<T, TextSlot>) {
+							return kTextFontSize + kLineSpacing;
+						} else if constexpr (std::is_same_v<T, ProgressBarSlot>) {
+							return kProgressBarHeight + kLineSpacing;
+						} else if constexpr (std::is_same_v<T, TextListSlot>) {
+							float  h = kTextFontSize + 2.0F; // header
+							size_t itemCount = std::min(s.items.size(), kMaxListItems);
+							h += static_cast<float>(itemCount) * (kTextFontSize + 2.0F);
+							return h + kLineSpacing;
+						} else if constexpr (std::is_same_v<T, SpacerSlot>) {
+							return s.height;
+						} else if constexpr (std::is_same_v<T, ClickableTextSlot>) {
+							return kTextFontSize + kLineSpacing;
+						}
+						return 0.0F;
+					},
+					slot
+				);
+			}
+			return height;
+		};
+
 		// First pass: compute content height to determine panel position
 		// (panel bottom aligns with viewport bottom)
-		float contentHeight = kPadding + kTitleFontSize + kLineSpacing * 2.0F;
-		for (const auto& slot : content.slots) {
-			contentHeight += std::visit(
-				[this](const auto& s) -> float {
-					using T = std::decay_t<decltype(s)>;
-					if constexpr (std::is_same_v<T, TextSlot>) {
-						return kTextFontSize + kLineSpacing;
-					} else if constexpr (std::is_same_v<T, ProgressBarSlot>) {
-						return kProgressBarHeight + kLineSpacing;
-					} else if constexpr (std::is_same_v<T, TextListSlot>) {
-						float  h = kTextFontSize + 2.0F; // header
-						size_t itemCount = std::min(s.items.size(), kMaxListItems);
-						h += static_cast<float>(itemCount) * (kTextFontSize + 2.0F);
-						return h + kLineSpacing;
-					} else if constexpr (std::is_same_v<T, SpacerSlot>) {
-						return s.height;
-					} else if constexpr (std::is_same_v<T, ClickableTextSlot>) {
-						return kTextFontSize + kLineSpacing;
-					}
-					return 0.0F;
-				},
-				slot
-			);
-		}
-		contentHeight += kPadding; // bottom padding
+		float baseHeight = kPadding + kTitleFontSize + kLineSpacing * 2.0F;
 
-		panelHeight = contentHeight;
+		// Add tab bar height if showing tabs (with extra spacing below)
+		if (m_showTabs) {
+			baseHeight += kTabBarHeight + kLineSpacing * 3.0F;
+		}
+
+		// For tabbed panels, use fixed height based on Status tab (which is typically tallest)
+		// This prevents the panel from jumping when switching tabs
+		float contentHeight = computeSlotsHeight(content.slots);
+
+		if (m_showTabs) {
+			// Use a fixed minimum content height for colonist panels
+			// Status tab has: Mood + 8 needs + spacer + Task + Action + Tasks clickable
+			// = 9 progress bars + 1 spacer + 3 text slots
+			constexpr float kMinColonistContentHeight = 9.0F * (kProgressBarHeight + kLineSpacing) + // 9 progress bars (mood + 8 needs)
+														8.0F +										 // spacer
+														3.0F * (kTextFontSize + kLineSpacing);		 // Task, Action, Tasks clickable
+			contentHeight = std::max(contentHeight, kMinColonistContentHeight);
+		}
+
+		float totalHeight = baseHeight + contentHeight + kPadding; // bottom padding
+
+		panelHeight = totalHeight;
 		float panelY = m_viewportHeight - panelHeight;
 
 		// Show and position background
@@ -364,9 +468,17 @@ namespace world_sim {
 			title->text = content.title;
 		}
 
-		// Render slots (each slot renderer sets visible=true on used elements)
+		// Show/hide and position tab bar
 		float yOffset = panelY + kPadding + kTitleFontSize + kLineSpacing * 2.0F;
+		if (auto* tabBar = getChild<UI::TabBar>(tabBarHandle)) {
+			tabBar->visible = m_showTabs;
+			if (m_showTabs) {
+				tabBar->position = {panelX + kPadding, yOffset};
+				yOffset += kTabBarHeight + kLineSpacing * 3.0F; // Extra spacing below tab bar
+			}
+		}
 
+		// Render slots (each slot renderer sets visible=true on used elements)
 		for (const auto& slot : content.slots) {
 			yOffset += renderSlot(slot, yOffset);
 		}
@@ -519,6 +631,23 @@ namespace world_sim {
 		if (visible) {
 			m_cachedSelection.type = CachedSelection::Type::None;
 		}
+	}
+
+	void EntityInfoPanel::onTabChanged(const std::string& tabId) {
+		if (m_activeTab == tabId) {
+			return; // No change
+		}
+
+		m_activeTab = tabId;
+		m_tabChangeRequested = true; // Signal update() to re-render without resetting tab
+	}
+
+	PanelContent EntityInfoPanel::getContentForActiveTab(const ecs::World& world, ecs::EntityID entityId) const {
+		if (m_activeTab == "inventory") {
+			return adaptColonistInventory(world, entityId);
+		}
+		// Default to status tab
+		return adaptColonistStatus(world, entityId, onTaskListToggleCallback);
 	}
 
 } // namespace world_sim

@@ -2,6 +2,7 @@
 
 #include <ecs/components/Action.h>
 #include <ecs/components/Colonist.h>
+#include <ecs/components/Inventory.h>
 #include <ecs/components/Mood.h>
 #include <ecs/components/Needs.h>
 #include <ecs/components/Task.h>
@@ -85,7 +86,7 @@ std::optional<PanelContent> adaptSelection(
 				if (!world.isAlive(sel.entityId)) {
 					return std::nullopt;
 				}
-				return adaptColonist(world, sel.entityId, onTaskListToggle);
+				return adaptColonistStatus(world, sel.entityId, onTaskListToggle);
 			} else if constexpr (std::is_same_v<T, WorldEntitySelection>) {
 				return adaptWorldEntity(registry, sel);
 			}
@@ -94,7 +95,7 @@ std::optional<PanelContent> adaptSelection(
 	);
 }
 
-PanelContent adaptColonist(const ecs::World& world, ecs::EntityID entityId, std::function<void()> onTaskListToggle) {
+PanelContent adaptColonistStatus(const ecs::World& world, ecs::EntityID entityId, std::function<void()> onTaskListToggle) {
 	PanelContent content;
 
 	// Get colonist name for title
@@ -146,6 +147,62 @@ PanelContent adaptColonist(const ecs::World& world, ecs::EntityID entityId, std:
 			.label = "Tasks",
 			.value = "> Show",
 			.onClick = onTaskListToggle,
+		});
+	}
+
+	return content;
+}
+
+PanelContent adaptColonistInventory(const ecs::World& world, ecs::EntityID entityId) {
+	PanelContent content;
+
+	// Get colonist name for title
+	if (auto* colonist = world.getComponent<ecs::Colonist>(entityId)) {
+		content.title = colonist->name;
+	} else {
+		content.title = "Colonist";
+	}
+
+	// Get inventory data
+	auto* inventory = world.getComponent<ecs::Inventory>(entityId);
+	if (inventory == nullptr) {
+		// No inventory component - show empty state
+		content.slots.push_back(TextSlot{
+			.label = "Inventory",
+			.value = "None",
+		});
+		return content;
+	}
+
+	// Show slot usage: "Slots: 2/10"
+	std::ostringstream slotsOss;
+	slotsOss << inventory->getSlotCount() << "/" << inventory->maxCapacity;
+	content.slots.push_back(TextSlot{
+		.label = "Slots",
+		.value = slotsOss.str(),
+	});
+
+	// Show items as list
+	auto items = inventory->getAllItems();
+	if (items.empty()) {
+		content.slots.push_back(SpacerSlot{.height = 4.0F});
+		content.slots.push_back(TextSlot{
+			.label = "Items",
+			.value = "Empty",
+		});
+	} else {
+		// Build item list: "Berry x5", "Stone x2"
+		std::vector<std::string> itemStrings;
+		itemStrings.reserve(items.size());
+		for (const auto& item : items) {
+			std::ostringstream itemOss;
+			itemOss << item.defName << " x" << item.quantity;
+			itemStrings.push_back(itemOss.str());
+		}
+
+		content.slots.push_back(TextListSlot{
+			.header = "Items",
+			.items = std::move(itemStrings),
 		});
 	}
 
