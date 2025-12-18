@@ -205,6 +205,23 @@ namespace ecs {
 				continue;
 			}
 
+			// Tier 6: Gather Food (proactive harvesting when no food in inventory)
+			if (evaluateGatherFood(entity, memory, inventory, task, position)) {
+				movementTarget.target = task.targetPosition;
+				movementTarget.active = true;
+				task.state = TaskState::Moving;
+				task.priority = 50.0F; // Work priority (between actionable needs and wander)
+				LOG_INFO(
+					Engine,
+					"[AI] Entity %llu: GATHER FOOD - %s → (%.1f, %.1f)",
+					static_cast<unsigned long long>(entity),
+					task.reason.c_str(),
+					task.targetPosition.x,
+					task.targetPosition.y
+				);
+				continue;
+			}
+
 			// Tier 7: Wander (lowest priority)
 			assignWander(entity, task, position);
 			movementTarget.target = task.targetPosition;
@@ -222,9 +239,10 @@ namespace ecs {
 	}
 
 	bool AIDecisionSystem::shouldReEvaluate(
-		const Task& task,
+		const Task&			  task,
 		const NeedsComponent& needs,
-		const Action* /*action (reserved for future interruptability checks)*/) {
+		const Action* /*action (reserved for future interruptability checks)*/
+	) {
 		// Always re-evaluate if no active task
 		if (!task.isActive()) {
 			return true;
@@ -397,6 +415,40 @@ namespace ecs {
 		task.reason = "Wandering (all needs satisfied)";
 	}
 
+	bool AIDecisionSystem::evaluateGatherFood(
+		EntityID /*entity*/,
+		const Memory&	 memory,
+		const Inventory& inventory,
+		Task&			 task,
+		const Position&	 position
+	) {
+		// Check if colonist already has any food in inventory
+		for (const auto& edibleItemName : engine::assets::getEdibleItemNames()) {
+			if (inventory.hasItem(edibleItemName)) {
+				// Already have food, no need to gather more
+				return false;
+			}
+		}
+
+		// No food in inventory - look for harvestable food sources
+		auto result = findNearestWithCapability(memory, m_registry, engine::assets::CapabilityType::Harvestable, position.value);
+
+		if (!result.has_value()) {
+			// No known harvestable source
+			return false;
+		}
+
+		// Found a harvestable source - assign task to go harvest it
+		// We use FulfillNeed with Hunger as the need type, but since there's no food
+		// in inventory, the ActionSystem will create a Harvest action (not Eat)
+		task.type = TaskType::FulfillNeed;
+		task.needToFulfill = NeedType::Hunger;
+		task.targetPosition = result->position;
+		task.reason = "Gathering food (inventory empty)";
+
+		return true;
+	}
+
 	glm::vec2 AIDecisionSystem::generateWanderTarget(const glm::vec2& currentPos) {
 		// Generate random angle and distance
 		std::uniform_real_distribution<float> angleDist(0.0F, 2.0F * std::numbers::pi_v<float>);
@@ -426,8 +478,7 @@ namespace ecs {
 			// Check if we're already pursuing this need - if so, preserve the target
 			// This prevents "chasing a moving target" when toilet/sleep location is recalculated
 			// Also preserve when Arrived to prevent recalculation while action is starting
-			bool alreadyPursuingThisNeed = currentTask.isActive() &&
-										   currentTask.type == TaskType::FulfillNeed &&
+			bool alreadyPursuingThisNeed = currentTask.isActive() && currentTask.type == TaskType::FulfillNeed &&
 										   currentTask.needToFulfill == needType &&
 										   (currentTask.state == TaskState::Moving || currentTask.state == TaskState::Arrived);
 
@@ -464,8 +515,8 @@ namespace ecs {
 				}
 
 				// Second priority: find harvestable food source
-				auto harvestable = findNearestWithCapability(
-					memory, m_registry, engine::assets::CapabilityType::Harvestable, position.value);
+				auto harvestable =
+					findNearestWithCapability(memory, m_registry, engine::assets::CapabilityType::Harvestable, position.value);
 				if (harvestable.has_value()) {
 					// Check if this harvestable yields edible food
 					const auto& defName = m_registry.getDefName(harvestable->defNameId);
@@ -543,6 +594,39 @@ namespace ecs {
 			trace.options.push_back(option);
 		}
 
+		// Add "Gather Food" work option (Tier 6)
+		// Check if colonist has no food in inventory
+		bool hasFood = false;
+		for (const auto& edibleItemName : engine::assets::getEdibleItemNames()) {
+			if (inventory.hasItem(edibleItemName)) {
+				hasFood = true;
+				break;
+			}
+		}
+
+		if (!hasFood) {
+			// Look for harvestable food sources
+			auto harvestResult = findNearestWithCapability(memory, m_registry, engine::assets::CapabilityType::Harvestable, position.value);
+
+			EvaluatedOption gatherOption;
+			gatherOption.taskType = TaskType::FulfillNeed; // Reuse FulfillNeed for now
+			gatherOption.needType = NeedType::Hunger;	   // Will trigger Harvest action
+			gatherOption.needValue = 100.0F;			   // Not a real need, just work
+			gatherOption.threshold = 0.0F;				   // Always available when no food
+
+			if (harvestResult.has_value()) {
+				gatherOption.targetPosition = harvestResult->position;
+				gatherOption.distanceToTarget = glm::distance(position.value, harvestResult->position);
+				gatherOption.status = OptionStatus::Available;
+				gatherOption.reason = "Gathering food (inventory empty)";
+			} else {
+				gatherOption.status = OptionStatus::NoSource;
+				gatherOption.reason = "No food source known";
+			}
+
+			trace.options.push_back(gatherOption);
+		}
+
 		// Add wander option
 		EvaluatedOption wanderOption;
 		wanderOption.taskType = TaskType::Wander;
@@ -568,10 +652,10 @@ namespace ecs {
 	}
 
 	void AIDecisionSystem::selectTaskFromTrace(
-		Task&				   task,
-		MovementTarget&		   movementTarget,
-		const DecisionTrace&   trace,
-		const Position&		   position
+		Task&				 task,
+		MovementTarget&		 movementTarget,
+		const DecisionTrace& trace,
+		const Position&		 position
 	) {
 		const auto* selected = trace.getSelected();
 		if (selected == nullptr) {

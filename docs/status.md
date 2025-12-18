@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2025-12-17 (Completed Tabbed Colonist Info Panel)
+Last Updated: 2025-12-17 (MVP Complete - Added Tier 6 Gather Food)
 
 ## Epic/Story/Task Template
 
@@ -401,10 +401,10 @@ Use this template for all work items:
   - [x] Task component added to colonist spawn
   - [x] MovementTarget wired up by AI system
 
-**Deferred to Post-MVP:**
-- Tier 6: Work - Harvest Wild (foraging) when needs satisfied
+**Completed:**
+- [x] Tier 6: Gather Food - proactive harvesting when inventory empty
 
-**Result:** Colonists autonomously navigate to entities based on need priorities ✅
+**Result:** Colonists autonomously navigate to entities based on need priorities and proactively gather food when idle ✅
 
 ---
 
