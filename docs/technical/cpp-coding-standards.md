@@ -791,6 +791,83 @@ Link to documentation if relevant:
 // See docs/technical/renderer-architecture.md for design
 ```
 
+## Code Cleanliness: Aggressive Deletion
+
+**Principle: Dead code is a liability. Delete it immediately.**
+
+### No Legacy Fallbacks
+
+When replacing functionality, delete the old code in the same commit:
+
+```cpp
+// ❌ WRONG: Keeping both paths
+void renderNew() { /* new implementation */ }
+void renderOld() { /* kept "just in case" */ }  // DELETE THIS
+
+// ✅ RIGHT: One implementation
+void render() { /* the only implementation */ }
+```
+
+### No Feature Flags for Internal Changes
+
+Feature flags add complexity. For internal refactoring, just change the code:
+
+```cpp
+// ❌ WRONG: Internal feature flag
+if (gUseNewRenderer) {
+    newRender();
+} else {
+    oldRender();
+}
+
+// ✅ RIGHT: Direct implementation
+void render() {
+    // Modern implementation, no alternatives
+}
+```
+
+### Delete Unused Code Immediately
+
+When you encounter dead code while working in a file, delete it:
+
+```cpp
+// ❌ WRONG: Commenting out instead of deleting
+// void unusedFunction() { ... }
+
+// ❌ WRONG: Marking as unused instead of removing
+void process([[maybe_unused]] int oldParam) { }
+
+// ✅ RIGHT: Just delete it
+void process() { }
+```
+
+### Refactoring Workflow
+
+1. **Read** and understand the old implementation
+2. **Write** the new implementation
+3. **Update** all call sites
+4. **Delete** the old code (same commit)
+5. **Test** and fix any issues in the new code
+
+Never keep both versions "temporarily"—this becomes permanent debt.
+
+### What to Delete
+
+When touching a file, look for and remove:
+- Unused `#include` directives
+- Unused function declarations and definitions
+- Commented-out code blocks
+- Unused member variables
+- Unused parameters (remove from signature, not just rename to `_unused`)
+- Dead branches in conditionals
+- Deprecated type aliases
+
+### What NOT to Delete
+
+- Code that's used but you don't recognize (search first)
+- Public API that external code might depend on (check usages)
+- Debug/logging code that's intentionally conditional
+
 ## Related Documentation
 
 - [Monorepo Structure](./monorepo-structure.md) - Library organization
