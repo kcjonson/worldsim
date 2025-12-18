@@ -73,6 +73,16 @@ namespace ecs {
 			return "Unknown";
 		}
 
+		/// Check if inventory contains any edible food item
+		[[nodiscard]] bool hasEdibleFood(const Inventory& inventory) {
+			for (const auto& edibleItemName : engine::assets::getEdibleItemNames()) {
+				if (inventory.hasItem(edibleItemName)) {
+					return true;
+				}
+			}
+			return false;
+		}
+
 	} // namespace
 
 	AIDecisionSystem::AIDecisionSystem(const engine::assets::AssetRegistry& registry, std::optional<uint32_t> rngSeed)
@@ -422,12 +432,9 @@ namespace ecs {
 		Task&			 task,
 		const Position&	 position
 	) {
-		// Check if colonist already has any food in inventory
-		for (const auto& edibleItemName : engine::assets::getEdibleItemNames()) {
-			if (inventory.hasItem(edibleItemName)) {
-				// Already have food, no need to gather more
-				return false;
-			}
+		// Already have food, no need to gather more
+		if (hasEdibleFood(inventory)) {
+			return false;
 		}
 
 		// No food in inventory - look for harvestable food sources
@@ -491,16 +498,7 @@ namespace ecs {
 			// Special handling for hunger: check inventory first
 			if (needType == NeedType::Hunger) {
 				// First priority: eat from inventory if we have any edible food
-				// Check all known edible items (data-driven, not hardcoded to Berry)
-				bool hasFood = false;
-				for (const auto& edibleItemName : engine::assets::getEdibleItemNames()) {
-					if (inventory.hasItem(edibleItemName)) {
-						hasFood = true;
-						break;
-					}
-				}
-
-				if (hasFood) {
+				if (hasEdibleFood(inventory)) {
 					// Food in inventory - eat at current position (no movement needed)
 					option.targetPosition = position.value;
 					option.distanceToTarget = 0.0F;
@@ -595,16 +593,8 @@ namespace ecs {
 		}
 
 		// Add "Gather Food" work option (Tier 6)
-		// Check if colonist has no food in inventory
-		bool hasFood = false;
-		for (const auto& edibleItemName : engine::assets::getEdibleItemNames()) {
-			if (inventory.hasItem(edibleItemName)) {
-				hasFood = true;
-				break;
-			}
-		}
-
-		if (!hasFood) {
+		// Only show if colonist has no food in inventory
+		if (!hasEdibleFood(inventory)) {
 			// Look for harvestable food sources
 			auto harvestResult = findNearestWithCapability(memory, m_registry, engine::assets::CapabilityType::Harvestable, position.value);
 
