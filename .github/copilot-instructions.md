@@ -21,7 +21,7 @@ foundation → renderer → (ui | world | game-systems) → engine
 
 ### 1. Coding Standards (CRITICAL - enforced by clang-tidy)
 
-**Naming**: Classes/Structs/Enums=`PascalCase`, Functions/Methods/Variables=`camelCase`, Members=`camelCase` (no prefix), Constants=`kPascalCase`, Namespaces=`lowercase`
+**Naming**: Classes/Structs/Enums=`PascalCase`, Functions/Methods/Variables=`camelCase`, Members=`camelCase` (NO prefix - not `m_`), Constants=`kPascalCase`, Namespaces=`lowercase`
 
 **Files**: .h/.cpp side-by-side, `#pragma once` only, one class per file, filename matches class
 
