@@ -59,8 +59,7 @@ namespace UI {
 		Foundation::Vec2 position{0.0F, 0.0F};
 		float			 width{200.0F};
 
-		// Properties
-		bool		visible{true};
+		// Properties (visible is inherited from Component)
 		const char* id = nullptr;
 
 		// --- Public Methods ---

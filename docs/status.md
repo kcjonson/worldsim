@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2025-12-14 (Implemented smart toilet location selection)
+Last Updated: 2025-12-17 (Completed Tabbed Colonist Info Panel)
 
 ## Epic/Story/Task Template
 
@@ -27,6 +27,33 @@ Use this template for all work items:
 ---
 
 ## Recently Completed Epics (Last 4)
+
+### ✅ Tabbed Colonist Info Panel
+**Spec/Documentation:** `/Users/kcjonson/.claude/plans/bubbly-sleeping-thompson.md`
+**Dependencies:** MVP: Player Observation UI
+**Status:** complete
+
+**Goal:** Add tabbed interface to EntityInfoPanel for colonists (Status, Inventory tabs).
+
+**Completed Tasks:**
+- [x] TabBar Component (PR #70)
+  - [x] TabBarStyle.h with 5-state styling (Normal, Hover, Active, Disabled, Focused)
+  - [x] TabBar component with IFocusable integration
+  - [x] Keyboard navigation (arrow keys, Enter)
+  - [x] TabBarScene demo in ui-sandbox
+- [x] EntityInfoPanel Integration (PR #71)
+  - [x] Add TabBar to colonist panels
+  - [x] Status tab with existing content (needs, task, action)
+  - [x] Inventory tab with slot count and item list
+  - [x] Fixed panel height to prevent layout jumping
+  - [x] Proper click event handling (tabs don't close panel)
+- [x] SelectionAdapter Updates
+  - [x] Split adaptColonist into adaptColonistStatus/adaptColonistInventory
+  - [x] Inventory content shows slot usage and item names
+
+**Result:** Colonist info panel has tabbed interface for organized display of growing colonist state ✅
+
+---
 
 ### ✅ Shore Tiles + Surface Edge Rendering
 **Spec/Documentation:** `/Users/kcjonson/.claude/plans/tranquil-discovering-globe.md`
