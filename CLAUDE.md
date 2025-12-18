@@ -270,6 +270,42 @@ See `/docs/development-log/README.md` for the full template.
 
 2. **Switch back to the main branch**
 
+## Worktree Management
+
+**IMPORTANT: Never remove worktrees.** They're valuable for future work.
+
+### When a PR is Merged
+
+After a worktree's branch has been merged, switch it to a temporary placeholder branch:
+
+```bash
+# From the worktree directory (e.g., /Volumes/Code/worldsim-treeA):
+git checkout -b worldsim-treeA-temp
+
+# Or from main checkout:
+git -C /Volumes/Code/worldsim-treeA checkout -b worldsim-treeA-temp
+```
+
+**Naming convention:** `{worktree-name}-temp` (e.g., `worldsim-treeA-temp`, `worldsim-treeB-temp`)
+
+### Rules for Temp Branches
+
+- **Never push temp branches** - they exist only as local placeholders
+- **Never do work on temp branches** - always create a new feature branch first
+- **Why this exists:** Git doesn't allow multiple worktrees to have the same branch checked out, so we can't have all worktrees on `main`
+
+### Starting New Work in a Worktree
+
+When reusing a worktree for new work:
+
+```bash
+# From the worktree directory:
+git fetch origin
+git checkout -b feature/new-feature-name origin/main
+```
+
+This creates a new feature branch based on latest main, ready for development.
+
 ## Plan File Archival
 
 When a plan file is confirmed complete (has `# COMPLETE` on first line), archive it to the development log:
