@@ -12,6 +12,7 @@ add_executable(ui-sandbox
     scenes/TextShapesScene.cpp
     scenes/LayerScene.cpp
     scenes/ButtonScene.cpp
+    scenes/TabBarScene.cpp
     scenes/InputTestScene.cpp
     scenes/SdfMinimalScene.cpp
     scenes/TextInputScene.cpp

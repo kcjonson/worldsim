@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2025-12-17 (Merged colonist inventory & item-based resource system)
+Last Updated: 2025-12-17 (BiomeGenerator system with grass variant blending)
 
 ## Epic/Story/Task Template
 
@@ -28,43 +28,30 @@ Use this template for all work items:
 
 ## Recently Completed Epics (Last 4)
 
-### ✅ Colonist Inventory & Item-Based Resource System
+### ✅ Tabbed Colonist Info Panel
 **Spec/Documentation:** `/Users/kcjonson/.claude/plans/bubbly-sleeping-thompson.md`
-**Dependencies:** Actions System, World Entities
+**Dependencies:** MVP: Player Observation UI
 **Status:** complete
 
-**Goal:** Refactor to inventory-based resource system where colonists harvest items into inventory, then consume from inventory.
+**Goal:** Add tabbed interface to EntityInfoPanel for colonists (Status, Inventory tabs).
 
 **Completed Tasks:**
-- [x] Inventory Component
-  - [x] Create generic Inventory component (slot-based with stack sizes)
-  - [x] Query methods: hasSpace(), canAdd(), hasItem(), getQuantity()
-  - [x] Mutation methods: addItem(), removeItem(), clear()
-  - [x] Factory methods for different entity types (colonist, pack animal, cart, storage)
-  - [x] 42 unit tests for Inventory component
-- [x] New Capabilities
-  - [x] Add Carryable capability (pickup ground items)
-  - [x] Add Harvestable capability (yield items, destructive/regrowth options)
-  - [x] XML parsing with validation (amountMin/Max, yieldDefName)
-- [x] New Actions
-  - [x] Harvest action (collect items from world entities)
-  - [x] Eat action refactored (consume from inventory, affects digestion)
-  - [x] CollectionEffect and ConsumptionEffect with side effects
-- [x] Entity Removal & Cooldown
-  - [x] SpatialIndex.remove() method with 7 unit tests
-  - [x] PlacementExecutor cooldown tracking (O(1) hash map lookup)
-  - [x] 14 unit tests for cooldown methods
-- [x] AI Decision Updates
-  - [x] Data-driven food system (getEdibleItemNames(), isItemEdible())
-  - [x] Check inventory first, then seek harvestable sources
-  - [x] Cached edible item list for performance
-- [x] Asset Updates
-  - [x] Berry Bush: non-destructive harvest, 60s regrowth, yields Berry items
-  - [x] Woody Bush: destructive harvest, yields Stick items
-  - [x] SmallStone: carryable capability
-  - [x] Berry, Stick item definitions with itemProperties
+- [x] TabBar Component (PR #70)
+  - [x] TabBarStyle.h with 5-state styling (Normal, Hover, Active, Disabled, Focused)
+  - [x] TabBar component with IFocusable integration
+  - [x] Keyboard navigation (arrow keys, Enter)
+  - [x] TabBarScene demo in ui-sandbox
+- [x] EntityInfoPanel Integration (PR #71)
+  - [x] Add TabBar to colonist panels
+  - [x] Status tab with existing content (needs, task, action)
+  - [x] Inventory tab with slot count and item list
+  - [x] Fixed panel height to prevent layout jumping
+  - [x] Proper click event handling (tabs don't close panel)
+- [x] SelectionAdapter Updates
+  - [x] Split adaptColonist into adaptColonistStatus/adaptColonistInventory
+  - [x] Inventory content shows slot usage and item names
 
-**Result:** Colonists harvest berries into inventory, eat from inventory when hungry. Non-destructive harvests support regrowth cooldowns. All 270 engine tests pass. ✅
+**Result:** Colonist info panel has tabbed interface for organized display of growing colonist state ✅
 
 ---
 

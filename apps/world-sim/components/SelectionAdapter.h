@@ -26,13 +26,29 @@ namespace world_sim {
 	std::function<void()> onTaskListToggle = nullptr
 );
 
-/// Convert colonist data into panel content
+/// Convert colonist status data into panel content (Status tab)
 /// @param onTaskListToggle Optional callback for toggling task list panel
-[[nodiscard]] PanelContent adaptColonist(
+[[nodiscard]] PanelContent adaptColonistStatus(
 	const ecs::World& world,
 	ecs::EntityID entityId,
 	std::function<void()> onTaskListToggle = nullptr
 );
+
+/// Convert colonist inventory data into panel content (Inventory tab)
+[[nodiscard]] PanelContent adaptColonistInventory(
+	const ecs::World& world,
+	ecs::EntityID entityId
+);
+
+/// Legacy adapter - returns status content (for backward compatibility)
+/// @deprecated Use adaptColonistStatus instead
+[[nodiscard]] inline PanelContent adaptColonist(
+	const ecs::World& world,
+	ecs::EntityID entityId,
+	std::function<void()> onTaskListToggle = nullptr
+) {
+	return adaptColonistStatus(world, entityId, onTaskListToggle);
+}
 
 /// Convert world entity data into panel content
 [[nodiscard]] PanelContent adaptWorldEntity(
