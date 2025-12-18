@@ -51,6 +51,20 @@ namespace Foundation { // NOLINT(readability-identifier-naming)
 		// GPU timing
 		float gpuRenderMs{}; // Time GPU spent rendering (from previous frame)
 
+		// System resources
+		uint64_t memoryUsedBytes{};	   // Process resident memory (RSS)
+		uint64_t memoryPeakBytes{};	   // Peak memory usage
+		float	 cpuUsagePercent{};	   // CPU usage (0-100%, may exceed 100% on multi-core)
+		uint32_t cpuCoreCount{};	   // Number of CPU cores (max CPU% = 100 * cores)
+		float	 inputLatencyMs{};	   // Time from input event to frame start
+
+		// Main loop timing breakdown (for diagnosing system-wide lag)
+		float pollEventsMs{};	// Time for glfwPollEvents
+		float inputHandleMs{};	// Time for input handling
+		float sceneUpdateMs{};	// Time for scene update
+		float sceneRenderMs{};	// Time for scene render
+		float swapBuffersMs{};	// Time for buffer swap (includes VSync wait)
+
 		// Serialize to JSON for HTTP API
 		std::string toJSON() const;
 	};

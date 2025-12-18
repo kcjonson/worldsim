@@ -33,6 +33,18 @@ interface MetricSample {
   ecsSystems?: EcsSystemTiming[];
   // GPU timing
   gpuRenderMs?: number;
+  // System resources (optional for backwards compatibility)
+  memoryUsedBytes?: number;
+  memoryPeakBytes?: number;
+  cpuUsagePercent?: number;
+  cpuCoreCount?: number;
+  inputLatencyMs?: number;
+  // Main loop timing breakdown
+  pollEventsMs?: number;
+  inputHandleMs?: number;
+  sceneUpdateMs?: number;
+  sceneRenderMs?: number;
+  swapBuffersMs?: number;
 }
 
 interface LogEntry {

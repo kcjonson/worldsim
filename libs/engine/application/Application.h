@@ -120,6 +120,19 @@ namespace engine {
 		/// @return Reference to the FocusManager
 		UI::FocusManager& getFocusManager();
 
+		/// @brief Frame timing breakdown (for performance diagnostics)
+		struct FrameTimings {
+			float pollEventsMs{};
+			float inputHandleMs{};
+			float sceneUpdateMs{};
+			float sceneRenderMs{};
+			float swapBuffersMs{};
+		};
+
+		/// @brief Get last frame's timing breakdown
+		/// @return Timing breakdown of main loop sections
+		const FrameTimings& getFrameTimings() const { return m_frameTimings; }
+
 	  private:
 		GLFWwindow* window{nullptr};	// GLFW window (not owned)
 		bool		isRunning{false}; // Main loop control flag
@@ -135,6 +148,8 @@ namespace engine {
 		OverlayRenderer	  overlayRenderer{};	 // Application-level UI
 		PreFrameCallback  preFrameCallback{};	 // Pre-frame callback
 		PostFrameCallback postFrameCallback{}; // Post-frame callback
+
+		FrameTimings m_frameTimings{}; // Last frame timing breakdown
 	};
 
 } // namespace engine

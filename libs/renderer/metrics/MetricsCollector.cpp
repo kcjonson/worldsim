@@ -1,6 +1,7 @@
 // Metrics collector implementation.
 
 #include "metrics/MetricsCollector.h"
+#include "metrics/SystemResources.h"
 #include <algorithm>
 #include <numeric>
 
@@ -71,6 +72,25 @@ namespace Renderer {
 		// GPU timing
 		metrics.gpuRenderMs = gpuRenderMs;
 
+		// System resources (sample every 10th call to reduce overhead)
+		static int sampleCounter = 0;
+		static Foundation::ResourceSnapshot cachedResources{};
+		if (++sampleCounter >= 10) {
+			sampleCounter = 0;
+			cachedResources = Foundation::SystemResources::sample();
+		}
+		metrics.memoryUsedBytes = cachedResources.memoryUsedBytes;
+		metrics.memoryPeakBytes = cachedResources.memoryPeakBytes;
+		metrics.cpuUsagePercent = cachedResources.cpuUsagePercent;
+		metrics.cpuCoreCount = cachedResources.cpuCoreCount;
+
+		// Main loop timing breakdown
+		metrics.pollEventsMs = m_pollEventsMs;
+		metrics.inputHandleMs = m_inputHandleMs;
+		metrics.sceneUpdateMs = m_sceneUpdateMs;
+		metrics.sceneRenderMs = m_sceneRenderMs;
+		metrics.swapBuffersMs = m_swapBuffersMs;
+
 		return metrics;
 	}
 
@@ -96,6 +116,15 @@ namespace Renderer {
 
 	void MetricsCollector::setGpuRenderTime(float gpuMs) {
 		gpuRenderMs = gpuMs;
+	}
+
+	void MetricsCollector::setMainLoopTimings(float pollEventsMs, float inputHandleMs, float sceneUpdateMs,
+											  float sceneRenderMs, float swapBuffersMs) {
+		m_pollEventsMs = pollEventsMs;
+		m_inputHandleMs = inputHandleMs;
+		m_sceneUpdateMs = sceneUpdateMs;
+		m_sceneRenderMs = sceneRenderMs;
+		m_swapBuffersMs = swapBuffersMs;
 	}
 
 	uint64_t MetricsCollector::getCurrentTimestamp() const { // NOLINT(readability-convert-member-functions-to-static)

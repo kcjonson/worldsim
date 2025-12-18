@@ -33,6 +33,10 @@ namespace Renderer { // NOLINT(readability-identifier-naming)
 		// Set GPU render time (called by game scene after reading GPU timer)
 		void setGpuRenderTime(float gpuMs);
 
+		// Set main loop timing breakdown (called by Application after each frame)
+		void setMainLoopTimings(float pollEventsMs, float inputHandleMs, float sceneUpdateMs,
+								float sceneRenderMs, float swapBuffersMs);
+
 	  private:
 		using Clock = std::chrono::high_resolution_clock;
 		using TimePoint = std::chrono::time_point<Clock>;
@@ -59,6 +63,13 @@ namespace Renderer { // NOLINT(readability-identifier-naming)
 
 		// GPU timing
 		float gpuRenderMs{};
+
+		// Main loop timing breakdown
+		float m_pollEventsMs{};
+		float m_inputHandleMs{};
+		float m_sceneUpdateMs{};
+		float m_sceneRenderMs{};
+		float m_swapBuffersMs{};
 
 		// Helper: Get current Unix timestamp in milliseconds
 		uint64_t getCurrentTimestamp() const;

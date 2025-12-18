@@ -58,6 +58,18 @@ interface MetricsData {
   ecsSystems: EcsSystemTiming[];
   // GPU timing
   gpuRenderMs: number;
+  // System resources
+  memoryUsedBytes: number;
+  memoryPeakBytes: number;
+  cpuUsagePercent: number;
+  cpuCoreCount: number;
+  inputLatencyMs: number;
+  // Main loop timing breakdown
+  pollEventsMs: number;
+  inputHandleMs: number;
+  sceneUpdateMs: number;
+  sceneRenderMs: number;
+  swapBuffersMs: number;
 }
 
 type Tab = 'performance' | 'logs';
@@ -87,7 +99,17 @@ function App() {
     spikeCount16ms: 0,
     spikeCount33ms: 0,
     ecsSystems: [],
-    gpuRenderMs: 0
+    gpuRenderMs: 0,
+    memoryUsedBytes: 0,
+    memoryPeakBytes: 0,
+    cpuUsagePercent: 0,
+    cpuCoreCount: 1,
+    inputLatencyMs: 0,
+    pollEventsMs: 0,
+    inputHandleMs: 0,
+    sceneUpdateMs: 0,
+    sceneRenderMs: 0,
+    swapBuffersMs: 0
   });
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [connectionStatus, setConnectionStatus] = useState<'connecting' | 'connected' | 'error'>('connecting');
@@ -139,7 +161,17 @@ function App() {
         metricsBufferRef.current?.push({
           ...sample,
           ecsSystems: sample.ecsSystems || [],
-          gpuRenderMs: sample.gpuRenderMs || 0
+          gpuRenderMs: sample.gpuRenderMs || 0,
+          memoryUsedBytes: sample.memoryUsedBytes || 0,
+          memoryPeakBytes: sample.memoryPeakBytes || 0,
+          cpuUsagePercent: sample.cpuUsagePercent || 0,
+          cpuCoreCount: sample.cpuCoreCount || 1,
+          inputLatencyMs: sample.inputLatencyMs || 0,
+          pollEventsMs: sample.pollEventsMs || 0,
+          inputHandleMs: sample.inputHandleMs || 0,
+          sceneUpdateMs: sample.sceneUpdateMs || 0,
+          sceneRenderMs: sample.sceneRenderMs || 0,
+          swapBuffersMs: sample.swapBuffersMs || 0
         });
       });
       setMetricsHistory(metricsBufferRef.current?.getAll() || []);
@@ -378,6 +410,69 @@ function App() {
                 { label: 'Entities', value: metrics.entityCount },
                 { label: 'Draw Calls', value: metrics.drawCalls },
                 { label: 'Vertices', value: (metrics.vertexCount / 1000).toFixed(1), unit: 'k' },
+              ]} />
+            </div>
+
+            {/* System Resources */}
+            <div className={styles.section}>
+              <h3 className={styles.sectionHeader}>System ({metrics.cpuCoreCount} cores, max {metrics.cpuCoreCount * 100}%)</h3>
+              <StatsRow stats={[
+                {
+                  label: 'Memory',
+                  value: (metrics.memoryUsedBytes / (1024 * 1024)).toFixed(0),
+                  unit: 'MB',
+                  status: metrics.memoryUsedBytes < 500 * 1024 * 1024 ? 'ok' :
+                          metrics.memoryUsedBytes < 1000 * 1024 * 1024 ? 'warning' : 'bad'
+                },
+                {
+                  label: 'Peak',
+                  value: (metrics.memoryPeakBytes / (1024 * 1024)).toFixed(0),
+                  unit: 'MB'
+                },
+                {
+                  label: 'CPU',
+                  value: `${metrics.cpuUsagePercent.toFixed(0)}/${metrics.cpuCoreCount * 100}`,
+                  unit: '%',
+                  status: metrics.cpuUsagePercent < metrics.cpuCoreCount * 25 ? 'ok' :
+                          metrics.cpuUsagePercent < metrics.cpuCoreCount * 50 ? 'warning' : 'bad'
+                },
+              ]} />
+            </div>
+
+            {/* Main Loop Timing Breakdown */}
+            <div className={styles.section}>
+              <h3 className={styles.sectionHeader}>Main Loop Breakdown</h3>
+              <StatsRow stats={[
+                {
+                  label: 'Poll',
+                  value: metrics.pollEventsMs.toFixed(2),
+                  unit: 'ms',
+                  status: metrics.pollEventsMs < 1 ? 'ok' : metrics.pollEventsMs < 5 ? 'warning' : 'bad'
+                },
+                {
+                  label: 'Input',
+                  value: metrics.inputHandleMs.toFixed(2),
+                  unit: 'ms',
+                  status: metrics.inputHandleMs < 2 ? 'ok' : metrics.inputHandleMs < 5 ? 'warning' : 'bad'
+                },
+                {
+                  label: 'Update',
+                  value: metrics.sceneUpdateMs.toFixed(2),
+                  unit: 'ms',
+                  status: metrics.sceneUpdateMs < 4 ? 'ok' : metrics.sceneUpdateMs < 8 ? 'warning' : 'bad'
+                },
+                {
+                  label: 'Render',
+                  value: metrics.sceneRenderMs.toFixed(2),
+                  unit: 'ms',
+                  status: metrics.sceneRenderMs < 8 ? 'ok' : metrics.sceneRenderMs < 16 ? 'warning' : 'bad'
+                },
+                {
+                  label: 'Swap',
+                  value: metrics.swapBuffersMs.toFixed(2),
+                  unit: 'ms',
+                  status: metrics.swapBuffersMs < 2 ? 'ok' : metrics.swapBuffersMs < 10 ? 'warning' : 'bad'
+                },
               ]} />
             </div>
 

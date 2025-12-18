@@ -394,6 +394,15 @@ namespace engine {
 			if (g_metrics) {
 				auto renderStats = Renderer::Primitives::getStats();
 				g_metrics->setRenderStats(renderStats.drawCalls, renderStats.vertexCount, renderStats.triangleCount);
+
+				// Get main loop timing breakdown from Application
+				if (g_app) {
+					const auto& timings = g_app->getFrameTimings();
+					g_metrics->setMainLoopTimings(
+						timings.pollEventsMs, timings.inputHandleMs, timings.sceneUpdateMs, timings.sceneRenderMs, timings.swapBuffersMs
+					);
+				}
+
 				g_metrics->endFrame();
 			}
 

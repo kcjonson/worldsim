@@ -45,7 +45,19 @@ namespace Foundation {
 		}
 		json << "],";
 		// GPU timing
-		json << "\"gpuRenderMs\":" << gpuRenderMs;
+		json << "\"gpuRenderMs\":" << gpuRenderMs << ",";
+		// System resources
+		json << "\"memoryUsedBytes\":" << memoryUsedBytes << ",";
+		json << "\"memoryPeakBytes\":" << memoryPeakBytes << ",";
+		json << "\"cpuUsagePercent\":" << cpuUsagePercent << ",";
+		json << "\"cpuCoreCount\":" << cpuCoreCount << ",";
+		json << "\"inputLatencyMs\":" << inputLatencyMs << ",";
+		// Main loop timing breakdown
+		json << "\"pollEventsMs\":" << pollEventsMs << ",";
+		json << "\"inputHandleMs\":" << inputHandleMs << ",";
+		json << "\"sceneUpdateMs\":" << sceneUpdateMs << ",";
+		json << "\"sceneRenderMs\":" << sceneRenderMs << ",";
+		json << "\"swapBuffersMs\":" << swapBuffersMs;
 		json << "}";
 
 		return json.str();
