@@ -25,7 +25,7 @@ Colonists always evaluate what to do in this fixed order. Higher tiers interrupt
 | 3    | Critical Needs   | Need below ~10%      | Bladder emergency          |
 | 4    | Player Control   | Player takes control | Direct movement mode       |
 | 5    | Actionable Needs | Need below threshold | Hungry, seeks food         |
-| 6    | Work             | Needs satisfied      | Farming, building, hauling |
+| 6    | Gather Food      | Needs satisfied, no food in inventory | Harvest from bushes |
 | 7    | Wander           | Nothing to do        | Idle exploration           |
 
 ### Tier 1: Panic (Flee)
@@ -66,11 +66,11 @@ Physical needs have dropped below comfortable thresholds. Colonist seeks entitie
 
 **MVP Status:** Included in Phase 1
 
-### Tier 6: Work
+### Tier 6: Gather Food
 
-All needs comfortable. Colonist performs work based on personal priority settings. See [Work Priorities](./work-priorities.md).
+All needs comfortable but inventory is empty. Colonist proactively harvests food from known bushes to stockpile in inventory. This creates a resource loop where colonists gather food while happy, then eat from inventory when hungry (avoiding travel).
 
-**MVP Status:** One work type (Harvest Wild) in Phase 1
+**MVP Status:** Implemented in Phase 1. Future phases will expand to full Work system with multiple work types (see [Work Priorities](./work-priorities.md)).
 
 ### Tier 7: Wander
 

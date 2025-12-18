@@ -698,12 +698,18 @@ namespace ecs::test {
 		setNeedValue(colonist, NeedType::Bladder, 100.0F);
 		setNeedValue(colonist, NeedType::Digestion, 100.0F);
 
+		// Give colonist food in inventory to suppress Gather Food option
+		// (otherwise we'd get 7 options: 5 needs + gather food + wander)
+		auto* inventory = world->getComponent<Inventory>(colonist);
+		ASSERT_NE(inventory, nullptr);
+		inventory->addItem("Berry", 1);
+
 		world->update(0.016F);
 
 		auto* trace = getTrace(colonist);
 		ASSERT_NE(trace, nullptr);
 
-		// Should have 6 options: 5 needs + wander
+		// Should have 6 options: 5 needs + wander (no Gather Food since inventory has food)
 		EXPECT_EQ(trace->options.size(), 6u);
 
 		// Verify all need types are present
@@ -745,6 +751,11 @@ namespace ecs::test {
 
 	TEST_F(AIDecisionSystemTest, TraceOptionsSortedByPriority) {
 		auto colonist = createColonist({0.0F, 0.0F});
+
+		// Give colonist food to suppress Gather Food option
+		auto* inventory = world->getComponent<Inventory>(colonist);
+		ASSERT_NE(inventory, nullptr);
+		inventory->addItem("Berry", 1);
 
 		// Add berry bush for hunger - uses Harvestable
 		addKnownEntity(colonist, {5.0F, 0.0F}, kBerryBushDefId, engine::assets::CapabilityType::Harvestable);
@@ -834,6 +845,11 @@ namespace ecs::test {
 
 	TEST_F(AIDecisionSystemTest, TraceShowsSatisfiedForHighNeeds) {
 		auto colonist = createColonist({0.0F, 0.0F});
+
+		// Give colonist food to suppress Gather Food option
+		auto* inventory = world->getComponent<Inventory>(colonist);
+		ASSERT_NE(inventory, nullptr);
+		inventory->addItem("Berry", 1);
 
 		// All needs fully satisfied
 		setNeedValue(colonist, NeedType::Hunger, 100.0F);
@@ -952,6 +968,11 @@ namespace ecs::test {
 	TEST_F(AIDecisionSystemTest, TraceClearedOnReEvaluation) {
 		auto colonist = createColonist({0.0F, 0.0F});
 
+		// Give colonist food to suppress Gather Food option
+		auto* inventory = world->getComponent<Inventory>(colonist);
+		ASSERT_NE(inventory, nullptr);
+		inventory->addItem("Berry", 1);
+
 		setNeedValue(colonist, NeedType::Hunger, 100.0F);
 		setNeedValue(colonist, NeedType::Thirst, 100.0F);
 		setNeedValue(colonist, NeedType::Energy, 100.0F);
@@ -976,7 +997,7 @@ namespace ecs::test {
 		// Trace should be rebuilt (may have same or different summary)
 		// The key is that it's still valid
 		EXPECT_FALSE(trace->selectionSummary.empty());
-		EXPECT_EQ(trace->options.size(), 6u); // Still has all options (5 needs + wander)
+		EXPECT_EQ(trace->options.size(), 6u); // Still has all options (5 needs + wander, no Gather Food since has food)
 	}
 
 	// =============================================================================

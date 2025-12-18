@@ -19,8 +19,8 @@ Minimum entities needed for the first playable prototype. Goal: watch a colonist
 
 **Behavior:**
 - Stationary flora
-- Colonist walks to bush, eats directly OR harvests berries (loose items)
-- For MVP: Eat directly, no harvesting/hauling
+- Colonist walks to bush, harvests berries into inventory, then eats from inventory
+- When inventory is empty and needs are satisfied, colonist proactively gathers food
 
 ### Water Tiles (Ponds)
 

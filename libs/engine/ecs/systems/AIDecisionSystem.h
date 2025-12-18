@@ -4,6 +4,7 @@
 // Evaluates colonist needs and assigns movement targets based on tier priority:
 // - Tier 3: Critical Needs (<10%) - immediate fulfillment
 // - Tier 5: Actionable Needs (below seek threshold, varies by need type) - seek fulfillment
+// - Tier 6: Gather Food - proactive harvesting when no food in inventory
 // - Tier 7: Wander - random exploration when all needs satisfied
 // See /docs/design/game-systems/colonists/ai-behavior.md for design details.
 // See /docs/design/game-systems/colonists/decision-trace.md for task queue display.
@@ -53,6 +54,15 @@ private:
 		EntityID entity,
 		const struct NeedsComponent& needs,
 		const struct Memory& memory,
+		struct Task& task,
+		const struct Position& position);
+
+	/// Evaluate gather food work (Tier 6) - returns true if a task was assigned
+	/// Proactively harvests food when colonist has no food in inventory
+	bool evaluateGatherFood(
+		EntityID entity,
+		const struct Memory& memory,
+		const struct Inventory& inventory,
 		struct Task& task,
 		const struct Position& position);
 

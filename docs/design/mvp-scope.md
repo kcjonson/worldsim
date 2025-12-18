@@ -18,10 +18,10 @@ This document is the **single source of truth** for MVP scope. All other documen
 ### Colonist Behavior
 - Autonomous operation (no player intervention needed)
 - **Four needs:** Hunger, Thirst, Energy, Bladder
-- Decision hierarchy: Critical Needs → Actionable Needs → Work → Wander
+- Decision hierarchy: Critical Needs → Actionable Needs → Gather Food → Wander
 - Sleep on ground (no beds yet)
 - Bathroom creates Bio Pile (no toilets yet)
-- One work type: Harvest Wild (foraging)
+- One work type: Gather Food (proactive harvesting when inventory empty)
 - Wander behavior when idle
 - Basic task queue display
 
