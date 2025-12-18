@@ -269,13 +269,20 @@ namespace world_sim {
 		}
 
 		// Hide panel for no selection
-		if (std::holds_alternative<NoSelection>(selection) || (isColonist && colonistId == ecs::EntityID{0})) {
+		if (std::holds_alternative<NoSelection>(selection)) {
 			if (visible) {
 				visible = false;
 				m_cachedSelection.update(selection);
 				hideSlots();
 			}
 			return;
+		}
+
+		// Let TabBar handle input every frame (needs to track mouse state)
+		if (visible && m_showTabs) {
+			if (auto* tabBar = getChild<UI::TabBar>(tabBarHandle)) {
+				tabBar->handleInput();
+			}
 		}
 
 		// Handle close button and clickable slot clicks (only when visible)
@@ -294,24 +301,6 @@ namespace world_sim {
 						onCloseCallback();
 					}
 					return;
-				}
-
-				// Forward clicks in tab bar bounds to TabBar
-				if (m_showTabs) {
-					if (auto* tabBar = getChild<UI::TabBar>(tabBarHandle)) {
-						float tabBarY = panelY + kPadding + kTitleFontSize + kLineSpacing * 2.0F;
-						if (mousePos.x >= panelX + kPadding && mousePos.x <= panelX + kPadding + contentWidth && mousePos.y >= tabBarY &&
-							mousePos.y <= tabBarY + tabBar->getHeight()) {
-							// Click is on tab bar - determine which tab and select it
-							// We know a click happened, so directly select based on position
-							if (mousePos.x < panelX + kPadding + contentWidth * 0.5F) {
-								tabBar->setSelected("status");
-							} else {
-								tabBar->setSelected("inventory");
-							}
-							return;
-						}
-					}
 				}
 
 				// Check if click is within clickable slot bounds
