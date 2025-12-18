@@ -2,14 +2,18 @@ add_executable(world-sim
     Main.cpp
     SceneTypes.cpp
     GameWorldState.cpp
+    components/BuildMenu.cpp
+    components/BuildToolbar.cpp
     components/ColonistListPanel.cpp
+    components/EntityInfoPanel.cpp
     components/GameOverlay.cpp
     components/GameUI.cpp
-    components/ZoomControl.cpp
+    components/GhostRenderer.cpp
     components/NeedBar.cpp
-    components/EntityInfoPanel.cpp
-    components/TaskListPanel.cpp
+    components/PlacementMode.cpp
     components/SelectionAdapter.cpp
+    components/TaskListPanel.cpp
+    components/ZoomControl.cpp
     scenes/SplashScene.cpp
     scenes/MainMenuScene.cpp
     scenes/WorldCreatorScene.cpp

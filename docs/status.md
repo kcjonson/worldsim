@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2025-12-18 (MVP Complete - Added Tier 6 Gather Food)
+Last Updated: 2025-12-18 (Basic Crafting Epic 1: Placement + Discovery)
 
 ## Epic/Story/Task Template
 
@@ -184,7 +184,45 @@ Use this template for all work items:
 
 ## In Progress Epics
 
-*No epics currently in progress.*
+### Basic Crafting System
+**Spec/Documentation:** `/Users/kcjonson/.claude/plans/melodic-chasing-ember.md`
+**Dependencies:** MVP Complete
+**Status:** in progress (Epic 1 complete, Epic 2 planned)
+
+**Goal:** Enable basic crafting so players can place a Crafting Spot and queue orders for items like a Primitive Axe.
+
+**Epic 1: Placement + Discovery** ✅ COMPLETE
+- [x] Phase 1: Foundation
+  - [x] Create Knowledge component (per-colonist permanent discovery tracking)
+  - [x] Create RecipeDef.h data structures (inputs, outputs, station, workAmount)
+  - [x] Create RecipeRegistry singleton (loads from XML, query by station/knowledge)
+  - [x] Create recipe XML files (CraftingSpot.xml innate, AxePrimitive.xml)
+- [x] Phase 2: Discovery Integration
+  - [x] Integrate Knowledge into VisionSystem (colonists learn when they see things)
+  - [x] Add Knowledge component to colonist initialization
+- [x] Phase 3: Placement Mode
+  - [x] Create PlacementMode state machine (None → MenuOpen → Placing → None)
+  - [x] Create BuildToolbar component (Build button in overlay)
+  - [x] Create BuildMenu popup (shows innate recipes)
+  - [x] Create GhostRenderer (semi-transparent placement preview)
+  - [x] Integrate placement into GameScene (B key, mouse click to place)
+  - [x] Create CraftingSpot asset definition (SVG + XML)
+
+**Epic 2: Crafting Execution** (Planned)
+- [ ] Phase 4: Work Queue + Crafting Menu
+  - [ ] WorkQueue component (per-station job queue)
+  - [ ] CraftingStationSelection variant
+  - [ ] CraftingAdapter for station panel content
+  - [ ] EntityInfoPanel updates for station selection
+- [ ] Phase 5: AI + Action Integration
+  - [ ] Add Craft task type to Task.h
+  - [ ] Add Craft action + CraftingEffect to Action.h
+  - [ ] AIDecisionSystem Tier 6.5 (evaluate crafting work)
+  - [ ] ActionSystem handles craft execution (consume inputs, produce outputs)
+- [ ] Phase 6: Polish
+  - [ ] "Aha" notifications when recipes unlock
+  - [ ] Input validation before starting craft
+  - [ ] Progress bar for active crafting
 
 ---
 

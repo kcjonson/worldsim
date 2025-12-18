@@ -2,6 +2,7 @@
 
 #include "../World.h"
 #include "../components/Appearance.h"
+#include "../components/Knowledge.h"
 #include "../components/Memory.h"
 #include "../components/Transform.h"
 
@@ -51,8 +52,13 @@ namespace ecs {
 		// Chunk size in world units (meters, since kTileSize = 1.0F)
 		constexpr float kChunkWorldSize = static_cast<float>(engine::world::kChunkSize);
 
+		auto& registry = engine::assets::AssetRegistry::Get();
+
 		// Iterate all entities with Position and Memory components
 		for (auto [entity, pos, memory] : world->view<Position, Memory>()) {
+			// Get optional Knowledge component for permanent discovery tracking
+			auto* knowledge = world->getComponent<Knowledge>(entity);
+
 			// Calculate bounding box of vision in world coordinates
 			float minX = pos.value.x - memory.sightRadius;
 			float maxX = pos.value.x + memory.sightRadius;
@@ -88,13 +94,20 @@ namespace ecs {
 					// Remember each discovered entity
 					for (const auto* placedEntity : nearbyEntities) {
 						memory.rememberWorldEntity(placedEntity->position, placedEntity->defName);
+
+						// Update permanent knowledge if Knowledge component exists
+						if (knowledge != nullptr) {
+							uint32_t defNameId = registry.getDefNameId(placedEntity->defName);
+							if (defNameId != 0) {
+								knowledge->learn(defNameId);
+							}
+						}
 					}
 				}
 			}
 
 			// Scan for ECS entities with Appearance (e.g., bio piles created by ActionSystem)
 			// These are runtime-spawned entities, as opposed to those placed during world generation
-			auto& registry = engine::assets::AssetRegistry::Get();
 			for (auto [otherEntity, otherPos, appearance] : world->view<Position, Appearance>()) {
 				// Don't "see" yourself
 				if (otherEntity == entity) {
@@ -110,6 +123,11 @@ namespace ecs {
 					if (defNameId != 0) {
 						uint8_t capabilityMask = registry.getCapabilityMask(defNameId);
 						memory.rememberWorldEntity(otherPos.value, defNameId, capabilityMask);
+
+						// Update permanent knowledge if Knowledge component exists
+						if (knowledge != nullptr) {
+							knowledge->learn(defNameId);
+						}
 					}
 				}
 			}
@@ -161,6 +179,11 @@ namespace ecs {
 									float dy = shoreWorldPos.y - pos.value.y;
 									if (dx * dx + dy * dy <= sightRadiusSq) {
 										memory.rememberWorldEntity(shoreWorldPos, m_shoreTileDefNameId, m_shoreTileCapabilityMask);
+
+										// Update permanent knowledge for shore tiles
+										if (knowledge != nullptr) {
+											knowledge->learn(m_shoreTileDefNameId);
+										}
 									}
 								}
 							}

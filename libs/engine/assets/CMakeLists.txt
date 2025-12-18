@@ -1,6 +1,7 @@
 add_library(assets
     AssetRegistry.cpp
     AssetBatcher.cpp
+    RecipeRegistry.cpp
     lua/LuaEngine.cpp
     lua/LuaGenerator.cpp
     placement/DependencyGraph.cpp

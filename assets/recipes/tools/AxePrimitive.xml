@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Primitive Axe - First tool in progression chain -->
+<RecipeDef>
+    <defName>Recipe_AxePrimitive</defName>
+    <label>Primitive Axe</label>
+    <description>A crude axe made from stone and sticks, bound with plant fiber. Used for chopping trees.</description>
+
+    <inputs>
+        <input thing="Rock" count="2"/>
+        <input thing="Stick" count="1"/>
+        <input thing="PlantFiber" count="1"/>
+    </inputs>
+
+    <station>CraftingSpot</station>
+
+    <outputs>
+        <output thing="AxePrimitive" count="1"/>
+    </outputs>
+
+    <skill>Woodworking</skill>
+    <workAmount>500</workAmount>
+
+    <innate>false</innate>
+</RecipeDef>

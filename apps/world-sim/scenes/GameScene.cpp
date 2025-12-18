@@ -2,6 +2,8 @@
 
 #include "../GameWorldState.h"
 #include "../components/GameUI.h"
+#include "../components/GhostRenderer.h"
+#include "../components/PlacementMode.h"
 #include "../components/Selection.h"
 #include "SceneTypes.h"
 
@@ -26,6 +28,7 @@
 #include <world/rendering/EntityRenderer.h>
 
 #include <assets/AssetRegistry.h>
+#include <assets/RecipeRegistry.h>
 #include <assets/placement/AsyncChunkProcessor.h>
 #include <assets/placement/PlacementExecutor.h>
 
@@ -37,6 +40,7 @@
 #include <ecs/components/DecisionTrace.h>
 #include <ecs/components/FacingDirection.h>
 #include <ecs/components/Inventory.h>
+#include <ecs/components/Knowledge.h>
 #include <ecs/components/Memory.h>
 #include <ecs/components/Movement.h>
 #include <ecs/components/Needs.h>
@@ -118,12 +122,21 @@ namespace {
 			m_asyncProcessor =
 				std::make_unique<engine::assets::AsyncChunkProcessor>(*m_placementExecutor, kDefaultWorldSeed, m_processedChunks);
 
+			// Initialize placement mode with callback to spawn entities
+			placementMode = world_sim::PlacementMode{world_sim::PlacementMode::Args{
+				.onPlace = [this](const std::string& defName, Foundation::Vec2 worldPos) {
+					spawnPlacedEntity(defName, worldPos);
+				}
+			}};
+
 			// Create unified game UI (contains overlay and info panel)
 			gameUI = std::make_unique<world_sim::GameUI>(world_sim::GameUI::Args{
 				.onZoomIn = [this]() { m_camera->zoomIn(); },
 				.onZoomOut = [this]() { m_camera->zoomOut(); },
 				.onSelectionCleared = [this]() { selection = world_sim::NoSelection{}; },
-				.onColonistSelected = [this](ecs::EntityID entityId) { selection = world_sim::ColonistSelection{entityId}; }
+				.onColonistSelected = [this](ecs::EntityID entityId) { selection = world_sim::ColonistSelection{entityId}; },
+				.onBuildToggle = [this]() { handleBuildToggle(); },
+				.onBuildItemSelected = [this](const std::string& defName) { handleBuildItemSelected(defName); }
 			});
 
 			// Initial layout pass with consistent DPI scaling
@@ -139,9 +152,21 @@ namespace {
 		void handleInput(float dt) override {
 			auto& input = engine::InputManager::Get();
 
+			// Handle Escape - cancel placement mode first, then exit to menu
 			if (input.isKeyPressed(engine::Key::Escape)) {
+				if (placementMode.isActive()) {
+					placementMode.cancel();
+					gameUI->setBuildModeActive(false);
+					gameUI->hideBuildMenu();
+					return;
+				}
 				sceneManager->switchTo(world_sim::toKey(world_sim::SceneType::MainMenu));
 				return;
+			}
+
+			// Handle B key - toggle build mode
+			if (input.isKeyPressed(engine::Key::B)) {
+				handleBuildToggle();
 			}
 
 			// Camera movement
@@ -180,7 +205,29 @@ namespace {
 			// Handle UI input first - returns true if UI consumed the click
 			bool uiConsumedInput = gameUI->handleInput();
 
-			// Handle entity selection on left click release (only if UI didn't consume it)
+			// Handle placement mode interaction
+			if (placementMode.state() == world_sim::PlacementState::Placing) {
+				auto mousePos = input.getMousePosition();
+				int logicalW = 0;
+				int logicalH = 0;
+				Renderer::Primitives::getLogicalViewport(logicalW, logicalH);
+
+				// Update ghost position from mouse
+				auto worldPos = m_camera->screenToWorld(mousePos.x, mousePos.y, logicalW, logicalH, kPixelsPerMeter);
+				placementMode.updateGhostPosition({worldPos.x, worldPos.y});
+
+				// Try to place on click (if not over UI)
+				if (!uiConsumedInput && input.isMouseButtonReleased(engine::MouseButton::Left)) {
+					if (placementMode.tryPlace()) {
+						// Successfully placed - update UI state
+						gameUI->setBuildModeActive(false);
+						gameUI->hideBuildMenu();
+					}
+				}
+				return;
+			}
+
+			// Handle entity selection on left click release (only if UI didn't consume it and not in placement mode)
 			// Note: Use isMouseButtonReleased (not Pressed) to avoid timing issues
 			// with the input state machine's Pressed→Down transition
 			if (!uiConsumedInput && input.isMouseButtonReleased(engine::MouseButton::Left)) {
@@ -235,6 +282,18 @@ namespace {
 
 			// Render selection indicator in world-space (after entities, before UI)
 			renderSelectionIndicator(w, h);
+
+			// Render placement ghost preview (if in placing mode)
+			if (placementMode.state() == world_sim::PlacementState::Placing) {
+				ghostRenderer.render(
+					placementMode.selectedDefName(),
+					placementMode.ghostPosition(),
+					*m_camera,
+					w,
+					h,
+					placementMode.isValidPlacement()
+				);
+			}
 
 			// Render unified game UI (overlay + info panel)
 			gameUI->render();
@@ -319,6 +378,7 @@ namespace {
 			ecsWorld->addComponent<ecs::Colonist>(entity, ecs::Colonist{newName});
 			ecsWorld->addComponent<ecs::NeedsComponent>(entity, ecs::NeedsComponent::createDefault());
 			ecsWorld->addComponent<ecs::Inventory>(entity, ecs::Inventory::createForColonist());
+			ecsWorld->addComponent<ecs::Knowledge>(entity, ecs::Knowledge{});
 			ecsWorld->addComponent<ecs::Memory>(entity, ecs::Memory{});
 			ecsWorld->addComponent<ecs::Task>(entity, ecs::Task{});
 			ecsWorld->addComponent<ecs::DecisionTrace>(entity, ecs::DecisionTrace{});
@@ -498,6 +558,64 @@ namespace {
 			LOG_DEBUG(Game, "No selectable entity found, deselecting");
 		}
 
+		/// Handle build button toggle / B key press.
+		/// Opens build menu when in normal mode, cancels when in placement mode.
+		void handleBuildToggle() {
+			switch (placementMode.state()) {
+				case world_sim::PlacementState::None: {
+					// Open build menu
+					placementMode.enterMenu();
+					gameUI->setBuildModeActive(true);
+
+					// Get innate recipes for the build menu
+					auto& recipeRegistry = engine::assets::RecipeRegistry::Get();
+					auto innateRecipes = recipeRegistry.getInnateRecipes();
+
+					std::vector<world_sim::BuildMenuItem> items;
+					for (const auto* recipe : innateRecipes) {
+						if (!recipe->outputs.empty()) {
+							items.push_back({recipe->outputs[0].defName, recipe->label});
+						}
+					}
+
+					gameUI->showBuildMenu(items);
+					break;
+				}
+
+				case world_sim::PlacementState::MenuOpen:
+				case world_sim::PlacementState::Placing:
+					// Cancel placement
+					placementMode.cancel();
+					gameUI->setBuildModeActive(false);
+					gameUI->hideBuildMenu();
+					break;
+			}
+		}
+
+		/// Handle item selection from build menu.
+		/// Transitions to Placing state with selected item.
+		void handleBuildItemSelected(const std::string& defName) {
+			placementMode.selectItem(defName);
+			gameUI->hideBuildMenu();
+			LOG_INFO(Game, "Selected '%s' for placement", defName.c_str());
+		}
+
+		/// Spawn a placed entity in the world.
+		/// Called when placement mode successfully places an item.
+		void spawnPlacedEntity(const std::string& defName, Foundation::Vec2 worldPos) {
+			// Create ECS entity with components needed for rendering:
+			// - Position: world location
+			// - Rotation: required by DynamicEntityRenderSystem
+			// - Appearance: defName for asset lookup
+			auto entity = ecsWorld->createEntity();
+
+			ecsWorld->addComponent<ecs::Position>(entity, ecs::Position{{worldPos.x, worldPos.y}});
+			ecsWorld->addComponent<ecs::Rotation>(entity, ecs::Rotation{0.0F});
+			ecsWorld->addComponent<ecs::Appearance>(entity, ecs::Appearance{defName, 1.0F, {1.0F, 1.0F, 1.0F, 1.0F}});
+
+			LOG_INFO(Game, "Spawned '%s' at (%.1f, %.1f)", defName.c_str(), worldPos.x, worldPos.y);
+		}
+
 		std::unique_ptr<engine::world::ChunkManager>	   m_chunkManager;
 		std::unique_ptr<engine::world::WorldCamera>		   m_camera;
 		std::unique_ptr<engine::world::ChunkRenderer>	   m_renderer;
@@ -519,6 +637,12 @@ namespace {
 
 		// Current selection for info panel (NoSelection = panel hidden)
 		world_sim::Selection selection = world_sim::NoSelection{};
+
+		// Placement mode state machine
+		world_sim::PlacementMode placementMode;
+
+		// Ghost renderer for placement preview
+		world_sim::GhostRenderer ghostRenderer;
 	};
 
 } // namespace

@@ -5,8 +5,8 @@
 Players should be able to understand the game through play, not wikis. The discovery system must teach itself - colonists visibly learn, experiment, and have insights that the player observes and learns from.
 
 Technology is not gated by arbitrary "research points." It's gated by:
-- **Material knowledge** - What resources the colonist has discovered
-- **Manufacturing ability** - What stations exist to transform materials  
+- **Discovery** - What things the colonist has seen in the world
+- **Manufacturing ability** - What stations exist to transform inputs
 - **Colonist skill** - Whether they can execute the recipe (see skills.md)
 
 ## Relationship to Skills System
@@ -15,51 +15,40 @@ This document covers **discovery** (how colonists learn what's possible). The sk
 
 | Concept | Discovery System | Skills System |
 |---------|------------------|---------------|
-| Recipe visibility | Unlock when materials known | - |
+| Recipe visibility | Unlock when all inputs known | - |
 | Recipe execution | Requires station | - |
 | Output quality | - | Determined by skill level |
-| Knowledge transfer | Found artifacts, observation | Manuals, teaching |
+| Knowledge transfer | Observation, found items | Manuals, teaching |
 
 ## Discovery Methods
 
-### 1. Material Discovery (Observation)
+### 1. Observation (Seeing Things)
 
-When a colonist **sees** a resource in the world, they learn that resource exists.
+When a colonist **sees** anything in the world, they learn that thing exists. This applies uniformly to all defs - raw resources, crafted items, structures, everything.
 
 **Example:**
-- Bob walks near a rock → Bob now knows "stone" as a material
-- Bob walks near a bush → Bob can harvest it → Bob now knows "stick" as a material
+- Bob walks near a rock → Bob now knows "Rock" exists
+- Bob walks near a bush → Bob now knows "Bush" exists
+- Bob finds a bronze axe in wreckage → Bob now knows "BronzeAxe" exists
 
 **Rules:**
-- Discovery is **per-colonist** - Bob knowing stone doesn't mean Alice knows stone
-- Proximity triggers discovery (exact range TBD)
-- Some resources may require closer examination vs. just line-of-sight
+- Discovery is **per-colonist** - Bob knowing Rock doesn't mean Alice knows Rock
+- Proximity triggers discovery (uses existing VisionSystem sight radius)
+- All defs are treated the same - no distinction between "materials" and "items"
 
 ### 2. Recipe Unlock ("Aha" Moment)
 
-When a colonist knows **all materials** required for a recipe, that recipe unlocks. This is the "Aha" - the colonist realizes they can now make something new.
+When a colonist knows **all inputs** required for a recipe, that recipe unlocks. This is the "Aha" - the colonist realizes they can now make something new.
 
 **Example:**
-- Bob knows stone (saw a rock)
-- Bob knows stick (harvested from bush)
-- Bob knows plant fiber (harvested from grass)
+- Bob knows Rock (saw one)
+- Bob knows Bush (saw one, can harvest sticks)
+- Bob knows Grass (saw it, can harvest plant fiber)
 - **Aha!** → "Primitive Axe" recipe unlocks for Bob
 
-The Aha is not a separate system - it's the natural result of material discovery. The player sees a notification: *"Bob realized he can craft: Primitive Axe"*
+The Aha is not a separate system - it's the natural result of discovery. The player sees a notification: *"Bob realized he can craft: Primitive Axe"*
 
-### 3. Found Artifacts
-
-Discovering a finished item proves that item **exists** without revealing how to make it.
-
-**Example:**
-- Bob finds a bronze axe in wreckage
-- Bob now knows: bronze axes exist, they cut better than stone
-- Bob does NOT know: what bronze is, how to make bronze, how to shape it into an axe
-
-**Rules:**
-- Finding an item ≠ knowing how to craft it
-- Artifacts can be studied/reverse-engineered (separate process, TBD)
-- Artifacts appear in player's tech tree as "known to exist" but not "craftable"
+**Note:** Knowing a crafted item (like BronzeAxe) doesn't automatically teach you how to make it. You must know all the *inputs* to that recipe. But if BronzeAxe is itself an input to another recipe, knowing it helps unlock that recipe.
 
 ## Recipe System
 
@@ -104,21 +93,21 @@ Note: Quality is computed from the colonist's skill level when they craft. Mater
 
 ### Recipe Unlock Rules
 
-**A recipe unlocks for a colonist when they know ALL required materials.**
+**A recipe unlocks for a colonist when they know ALL required inputs.**
 
-This is the core rule. No material knowledge → no recipe visibility.
+This is the core rule. Unknown inputs → recipe not visible to that colonist.
 
 **Example - Primitive Axe:**
-- Requires: stone + stick + plant_fiber
-- Bob knows stone only → no unlock
-- Bob knows stone + stick → no unlock  
-- Bob knows stone + stick + plant_fiber → "Primitive Axe" recipe unlocks for Bob
+- Requires: Rock + Bush (yields Stick) + Grass (yields PlantFiber)
+- Bob knows Rock only → no unlock
+- Bob knows Rock + Bush → no unlock
+- Bob knows Rock + Bush + Grass → "Primitive Axe" recipe unlocks for Bob
 
 ### Recipe Execution Requirements
 
 Knowing a recipe ≠ being able to make it. Execution requires:
 
-1. **All materials available** - In stockpile or world
+1. **All inputs available** - In stockpile or world
 2. **Required station exists** - Crafting spot, smelter, forge, etc.
 
 Output quality is determined by the colonist's skill level at craft time. A colonist can *conceive* of a recipe before they can *execute* it.
@@ -126,9 +115,9 @@ Output quality is determined by the colonist's skill level at craft time. A colo
 **Example - Copper Ingot:**
 ```
 Copper Ingot:
-  materials: [copper_ore]
+  inputs: [CopperOre]
   station: smelter
-  output: copper_ingot
+  output: CopperIngot
 ```
 
 - Bob sees copper ore → "Copper Ingot" recipe unlocks (he conceives of it)
@@ -141,49 +130,49 @@ Stations themselves are craftable items with their own recipes:
 
 ```
 Smelter:
-  materials: [stone, clay]
-  station: crafting_spot
-  output: smelter
+  inputs: [Rock, Clay]
+  station: CraftingSpot
+  output: Smelter
 ```
 
 This creates natural progression:
-1. Bob knows stone + clay → smelter recipe unlocks
-2. Colony builds smelter at crafting spot
-3. Bob knows copper ore → copper ingot recipe unlocks
+1. Bob knows Rock + Clay → Smelter recipe unlocks
+2. Colony builds Smelter at crafting spot
+3. Bob knows CopperOre → CopperIngot recipe unlocks
 4. Bob can now smelt (has recipe + has station)
 
 ## Progression Cascades
 
-Discovery cascades naturally through material chains:
+Discovery cascades naturally through crafting chains:
 
-1. **Start:** Bob knows stone + stick + plant fiber → unlocks primitive axe
-2. **Craft:** Bob makes primitive axe
-3. **Use:** Bob chops tree with axe → yields "wood"
-4. **Discover:** Bob now knows "wood" as material
-5. **Unlock:** New recipes requiring wood unlock
-6. **Repeat:** Each new material opens new possibilities
+1. **Start:** Bob knows Rock + Bush + Grass → unlocks Primitive Axe recipe
+2. **Craft:** Bob makes Primitive Axe
+3. **Use:** Bob chops tree with axe → yields "Wood"
+4. **Discover:** Bob now knows "Wood" (a new thing in the world)
+5. **Unlock:** Recipes requiring Wood as input unlock
+6. **Repeat:** Each new thing opens new possibilities
 
 ## Data Model
 
 ### On-Disk Storage (Moddable XML)
 
-Following the existing asset system pattern (see `/docs/technical/asset-system/`), all materials, recipes, and items are defined in XML for moddability.
+Following the existing asset system pattern (see `/docs/technical/asset-system/`), all things and recipes are defined in XML for moddability.
 
 #### Folder Structure
 
 ```
 assets/
-├── materials/
-│   ├── Stone/
-│   │   └── Stone.xml
-│   ├── Stick/
-│   │   └── Stick.xml
-│   ├── CopperOre/
-│   │   └── CopperOre.xml
-│   └── Wood/
-│       └── Wood.xml
-│
-├── items/
+├── things/
+│   ├── resources/
+│   │   ├── Stone/
+│   │   │   └── Stone.xml
+│   │   ├── Stick/
+│   │   │   └── Stick.xml
+│   │   ├── CopperOre/
+│   │   │   └── CopperOre.xml
+│   │   └── Wood/
+│   │       └── Wood.xml
+│   │
 │   ├── tools/
 │   │   ├── AxePrimitive/
 │   │   │   ├── AxePrimitive.xml
@@ -193,94 +182,86 @@ assets/
 │   │   │   └── axe_standard.svg
 │   │   └── HammerPrimitive/
 │   │       └── ...
-│   └── weapons/
-│       └── ...
-│
-├── stations/
-│   ├── CraftingSpot/
-│   │   └── CraftingSpot.xml
-│   ├── Smelter/
-│   │   └── Smelter.xml
-│   └── Forge/
-│       └── Forge.xml
+│   │
+│   └── stations/
+│       ├── CraftingSpot/
+│       │   └── CraftingSpot.xml
+│       ├── Smelter/
+│       │   └── Smelter.xml
+│       └── Forge/
+│           └── Forge.xml
 │
 └── recipes/
     ├── tools/
     │   ├── AxePrimitive.xml
     │   ├── AxeStandard.xml
     │   └── HammerPrimitive.xml
-    └── materials/
+    └── processing/
         └── CopperIngot.xml
 ```
 
-#### Material Definition
+**Note:** All things (resources, tools, stations, etc.) live under `things/` with subcategories for organization. There's no special `materials/` vs `items/` distinction - everything is a "thing" that can be an input or output of recipes.
+
+#### Thing Definition
+
+All things use the same `ThingDef` format. Categories organize them but don't affect the discovery/recipe system.
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- assets/materials/Stone/Stone.xml -->
-<MaterialDef>
+<!-- assets/things/resources/Stone/Stone.xml -->
+<ThingDef>
   <defName>Stone</defName>
   <label>Stone</label>
   <description>A common rock, useful for basic tools</description>
-  
-  <category>mineral</category>
+
+  <category>Resource</category>
   <stackLimit>50</stackLimit>
-  
-  <!-- How this material is discovered -->
-  <discovery>
-    <method>observation</method>
-    <range>10</range> <!-- tiles -->
-  </discovery>
-  
+
   <!-- Visual properties for rendering -->
   <appearance>
     <baseColor>#808080</baseColor>
     <colorVariation>0.1</colorVariation>
   </appearance>
-</MaterialDef>
+</ThingDef>
 ```
-
-#### Item Definition
-
-Items are tools, weapons, furniture, etc. Each grade of an item is a separate file.
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- assets/items/tools/AxePrimitive/AxePrimitive.xml -->
-<ItemDef>
+<!-- assets/things/tools/AxePrimitive/AxePrimitive.xml -->
+<ThingDef>
   <defName>AxePrimitive</defName>
   <label>Primitive Axe</label>
   <description>A crude axe made from stone and sticks</description>
-  
+
   <category>Tool</category>
   <function>Chopping</function>
-  
+
   <efficiency>0.5</efficiency>
   <durability>100</durability>
-  
+
   <svg>axe_primitive.svg</svg>
-</ItemDef>
+</ThingDef>
 ```
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- assets/items/tools/AxeStandard/AxeStandard.xml -->
-<ItemDef>
+<!-- assets/things/tools/AxeStandard/AxeStandard.xml -->
+<ThingDef>
   <defName>AxeStandard</defName>
   <label>Axe</label>
   <description>A proper metal axe with a wooden handle</description>
-  
+
   <category>Tool</category>
   <function>Chopping</function>
-  
+
   <efficiency>1.0</efficiency>
   <durability>250</durability>
-  
+
   <svg>axe_standard.svg</svg>
-</ItemDef>
+</ThingDef>
 ```
 
-Note: No abstract base class. Each item is self-contained. The material used (e.g., Granite vs Flint for a primitive axe) is stored on the item instance at craft time, affecting appearance and repair materials.
+Note: Each thing is self-contained. The input variant used (e.g., Granite vs Flint stone for a primitive axe) is stored on the thing instance at craft time, affecting appearance and repair inputs.
 
 #### Recipe Definition
 
@@ -291,25 +272,25 @@ Note: No abstract base class. Each item is self-contained. The material used (e.
   <defName>Recipe_AxePrimitive</defName>
   <label>Primitive Axe</label>
   <description>A crude axe made from stone and sticks</description>
-  
-  <!-- Materials required (ALL must be known to unlock) -->
-  <ingredients>
-    <ingredient material="Stone" count="2"/>
-    <ingredient material="Stick" count="1"/>
-    <ingredient material="PlantFiber" count="1"/>
-  </ingredients>
-  
+
+  <!-- Inputs required (ALL must be known to unlock recipe) -->
+  <inputs>
+    <input thing="Stone" count="2"/>
+    <input thing="Stick" count="1"/>
+    <input thing="PlantFiber" count="1"/>
+  </inputs>
+
   <!-- Station required to craft -->
   <station>CraftingSpot</station>
-  
-  <!-- Output item -->
+
+  <!-- Output thing -->
   <outputs>
-    <output item="AxePrimitive" count="1"/>
+    <output thing="AxePrimitive" count="1"/>
   </outputs>
-  
+
   <!-- Skill used (quality determined by colonist's level) -->
   <skill>Woodworking</skill>
-  
+
   <!-- Work amount in ticks -->
   <workAmount>500</workAmount>
 </RecipeDef>
@@ -321,18 +302,18 @@ Note: No abstract base class. Each item is self-contained. The material used (e.
 <RecipeDef>
   <defName>Recipe_AxeStandard</defName>
   <label>Axe</label>
-  
-  <ingredients>
-    <ingredient material="MetalIngot" count="2"/>
-    <ingredient material="Wood" count="1"/>
-  </ingredients>
-  
+
+  <inputs>
+    <input thing="MetalIngot" count="2"/>
+    <input thing="Wood" count="1"/>
+  </inputs>
+
   <station>Forge</station>
-  
+
   <outputs>
-    <output item="AxeStandard" count="1"/>
+    <output thing="AxeStandard" count="1"/>
   </outputs>
-  
+
   <skill>Smithing</skill>
   <workAmount>800</workAmount>
 </RecipeDef>
@@ -355,57 +336,77 @@ Quality outcomes are determined by skill level + random chance (see Output Quali
 
 #### Station Definition
 
+Stations are just things with extra properties for crafting:
+
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- assets/stations/Smelter/Smelter.xml -->
-<StationDef>
+<!-- assets/things/stations/Smelter/Smelter.xml -->
+<ThingDef>
   <defName>Smelter</defName>
   <label>Smelter</label>
   <description>A clay furnace for melting ore into metal</description>
-  
-  <!-- Recipe to build this station -->
-  <buildRecipe>
-    <ingredients>
-      <ingredient material="Stone" count="10"/>
-      <ingredient material="Clay" count="5"/>
-    </ingredients>
-    <station>CraftingSpot</station>
-    <workAmount>2000</workAmount>
-  </buildRecipe>
-  
+
+  <category>Station</category>
+
   <!-- What categories of recipes can be done here -->
   <allowedRecipeCategories>
     <category>Smelting</category>
   </allowedRecipeCategories>
-  
+
   <!-- Fuel requirements -->
   <fuel>
     <required>true</required>
     <acceptedTypes>
-      <material>Wood</material>
-      <material>Coal</material>
+      <thing>Wood</thing>
+      <thing>Coal</thing>
     </acceptedTypes>
   </fuel>
-</StationDef>
+</ThingDef>
+```
+
+And a recipe to build it:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- assets/recipes/stations/Smelter.xml -->
+<RecipeDef>
+  <defName>Recipe_Smelter</defName>
+  <label>Build Smelter</label>
+
+  <inputs>
+    <input thing="Stone" count="10"/>
+    <input thing="Clay" count="5"/>
+  </inputs>
+
+  <station>CraftingSpot</station>
+
+  <outputs>
+    <output thing="Smelter" count="1"/>
+  </outputs>
+
+  <workAmount>2000</workAmount>
+</RecipeDef>
 ```
 
 #### Innate Recipe Marker
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- assets/recipes/basics/CraftingSpotRecipe.xml -->
+<!-- assets/recipes/basics/CraftingSpot.xml -->
 <RecipeDef>
   <defName>Recipe_CraftingSpot</defName>
   <label>Crafting Spot</label>
-  
-  <!-- Empty ingredients = no materials needed -->
-  <ingredients />
-  
+
+  <!-- Empty inputs = nothing needed -->
+  <inputs />
+
   <!-- No station required = can be placed anywhere -->
   <station>none</station>
-  
-  <output><item>CraftingSpot</item></output>
-  
+
+  <outputs>
+    <output thing="CraftingSpot" count="1"/>
+  </outputs>
+
   <!-- Innate = all colonists know this from start -->
   <innate>true</innate>
 </RecipeDef>
@@ -418,20 +419,21 @@ Quality outcomes are determined by skill level + random chance (see Output Quali
 ```
 ColonistKnowledge:
   colonist_id: string
-  known_materials: Set<MaterialDef>
-  known_artifacts: Set<ItemDef>     # Seen but can't make
-  
+  knownDefs: Set<DefNameId>      # All things this colonist has ever seen
+
   # Computed at runtime:
-  available_recipes: Set<RecipeDef>  # All materials known
+  available_recipes: Set<RecipeDef>  # All inputs known for recipe
   # Note: Skill levels stored separately in colonist data, not here
 ```
+
+**Key insight:** There is no distinction between "materials" and "items" or "artifacts". Everything is a def. A microchip is both an output of one recipe and an input to another. The same `knownDefs` set handles all cases.
 
 #### Global Player Knowledge (Savegame)
 
 ```
 PlayerKnowledge:
-  discovered_items: Set<ItemDef>   # Any colonist can make
-  encountered_items: Set<ItemDef>  # Seen/found but can't make
+  knownDefs: Set<DefNameId>      # Union of all colonists' knownDefs
+  craftableDefs: Set<DefNameId>  # At least one colonist can craft this
   # Everything else is unknown/fog
 ```
 
@@ -439,9 +441,9 @@ PlayerKnowledge:
 
 Following the existing asset system patterns:
 
-**Adding new materials/recipes (modder):**
+**Adding new things/recipes (modder):**
 ```
-mods/MyMod/assets/materials/Unobtainium/
+mods/MyMod/assets/things/resources/Unobtainium/
 └── Unobtainium.xml
 ```
 
@@ -459,7 +461,7 @@ mods/MyMod/assets/materials/Unobtainium/
 <!-- mods/MyMod/patches/easier_smelter.xml -->
 <Patch>
   <Operation type="replace">
-    <xpath>/StationDef[defName="Smelter"]/buildRecipe/ingredients/ingredient[@material="Stone"]/@count</xpath>
+    <xpath>/RecipeDef[defName="Recipe_Smelter"]/inputs/input[@thing="Stone"]/@count</xpath>
     <value>5</value>  <!-- Half the stone needed -->
   </Operation>
 </Patch>
@@ -471,50 +473,50 @@ The tech tree is a **discovery map**, not a shopping list.
 
 ### Node States
 
-1. **Known (solid)** - At least one colonist knows how to craft this
-2. **Encountered (ghosted)** - Player has seen this item but no colonist can make it
-3. **Unknown (hidden)** - Player hasn't encountered this yet
+1. **Craftable (solid)** - At least one colonist can craft this (knows all inputs)
+2. **Known (ghosted)** - Colony has seen this but no colonist can craft it yet
+3. **Unknown (hidden)** - No colonist has encountered this yet
 
 ### Visibility Rules
 
 - Player sees nodes, not prerequisites
-- Finding a bronze axe shows "Bronze Axe" as encountered
+- Seeing a bronze axe shows "Bronze Axe" as known (ghosted)
 - Prerequisites remain hidden until discovered through play
 - Players must experiment/explore to find the path, not read it
 
 ### Per-Colonist vs Global View
 
 - **Global view:** "These things exist in the world" (for player planning)
-- **Colonist view:** "This colonist knows how to make these" (for work assignment)
+- **Colonist view:** "This colonist can craft these" (for work assignment)
 
-Player might know bronze axes exist, but if no colonist knows how to make one, it remains ghosted.
+Player might know bronze axes exist, but if no colonist has seen all the inputs to craft one, it remains ghosted.
 
 ## Example: First Tree
 
 Complete walkthrough of early game progression:
 
 ### Setup
-- Colonists spawn knowing one innate recipe: "crafting spot" (no materials required)
+- Colonists spawn knowing one innate recipe: "CraftingSpot" (no inputs required)
 - Player places crafting spot via build UI → builds instantly
 
 ### Progression
-1. Bob wanders, sees a rock → learns "stone"
-2. Bob wanders, sees a bush → can harvest → learns "stick"
-3. Bob wanders, sees grass → can harvest → learns "plant fiber"
-4. **Recipe unlock:** Bob now knows stone + stick + plant fiber → "Primitive Axe" unlocks
+1. Bob wanders, sees a rock → learns "Rock" (adds to knownDefs)
+2. Bob wanders, sees a bush → learns "Bush" (can harvest for Stick)
+3. Bob wanders, sees grass → learns "Grass" (can harvest for PlantFiber)
+4. **Recipe unlock:** Bob now knows Rock + Bush + Grass → "Primitive Axe" recipe unlocks
 5. Player creates work order: 1x Primitive Axe at crafting spot
-6. Bob gathers stone, harvests stick from bush, harvests plant fiber from grass
-7. Bob brings materials to crafting spot
+6. Bob gathers rock, harvests stick from bush, harvests plant fiber from grass
+7. Bob brings inputs to crafting spot
 8. Bob crafts primitive axe
 9. Player assigns Bob to chop tree
-10. Bob chops tree → yields "wood"
-11. Bob learns "wood" → new recipes unlock (wooden structures, etc.)
+10. Bob chops tree → yields "Wood"
+11. Bob learns "Wood" → recipes requiring Wood as input unlock
 
 ## Open Questions
 
 ### Resolved
 
-**Material subtypes:** Future consideration - stone → flint, granite, obsidian with different recipe unlocks. Data model supports this via separate MaterialDef entries.
+**Material vs Item distinction:** Resolved - there is no distinction. Everything is a def. A microchip can be both an output of one recipe and an input to another. The `knownDefs` set handles all cases uniformly.
 
 **Process knowledge:** Abstracted into station requirements. Knowing "heat transforms things" is implicit in having a smelter available.
 
@@ -522,30 +524,30 @@ Complete walkthrough of early game progression:
 
 ### Still Open
 
-**Reverse Engineering:**
-How does studying an artifact work?
+**Studying Found Items:**
+When a colonist finds a complex item they can't craft, can they study it to learn the recipe?
 - Time-based study at a research bench?
 - Skill-based (higher skill = faster insights)?
-- Chance-based with prerequisites (need to know related materials)?
-- Gradual revelation (first learn "it's metal," then "it's an alloy," then "copper + tin")?
+- Gradual revelation (first learn component types, then specific inputs)?
+- Or simply: finding an item doesn't help learn to make it - you must discover all inputs naturally?
 
 **Recipe Hints:**
 Should partially-known recipes show clues?
-- Option A: Hidden entirely until all materials known
-- Option B: Show "??? + Stick = ???" after seeing stick used with unknown material
-- Option C: Show "Stone + ??? = Primitive Axe" once you've seen a primitive axe
+- Option A: Hidden entirely until all inputs known
+- Option B: Show "??? + Bush = ???" after seeing bush used with unknown input
+- Option C: Show "Rock + ??? = Primitive Axe" once you've seen the output item
 
 **Discovery Radius:**
-How close must colonist be to "see" a material?
-- Line of sight only?
-- Fixed radius (10 tiles)?
-- Varies by material (hard to miss a boulder, easy to miss small ore)?
+How close must colonist be to "see" something?
+- Line of sight only? (Use existing VisionSystem)
+- Fixed radius?
+- Varies by thing (hard to miss a boulder, easy to miss small ore)?
 
 **Multi-Colonist Discovery:**
-When Alice discovers stone, does Bob see Alice's excited reaction and learn too?
+When Alice discovers Rock, does Bob see Alice's reaction and learn too?
 - Proximity-based knowledge spread?
 - Only through explicit teaching/manuals?
-- Shared "colony knowledge" for very basic materials?
+- Shared "colony knowledge" for very basic things?
 
 **Unlock Notification:**
 How does the player see that Bob just unlocked a recipe?
