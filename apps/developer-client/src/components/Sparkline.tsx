@@ -8,13 +8,13 @@ interface SparklineProps {
   badThreshold?: number;
 }
 
-const Sparkline: React.FC<SparklineProps> = ({
+function Sparkline({
   label,
   values,
   unit = '',
   warningThreshold,
   badThreshold
-}) => {
+}: SparklineProps) {
   const currentValue = values.length > 0 ? values[values.length - 1] : 0;
 
   // Determine status based on thresholds
@@ -65,6 +65,6 @@ const Sparkline: React.FC<SparklineProps> = ({
       </svg>
     </div>
   );
-};
+}
 
 export default Sparkline;

@@ -150,17 +150,20 @@ namespace Renderer {
 			return 0.0F;
 		}
 
-		// Use nth_element for O(n) instead of O(n log n) sort
-		std::vector<float> samples = frameTimeSamples;
+		// Reuse scratch buffer to avoid per-frame allocation
+		percentileScratch.clear();
+		percentileScratch.insert(percentileScratch.end(), frameTimeSamples.begin(), frameTimeSamples.end());
 
 		// 99th percentile index (1% from the top = worst frames)
-		size_t index = static_cast<size_t>(samples.size() * 0.99F);
-		if (index >= samples.size()) {
-			index = samples.size() - 1;
+		size_t index = static_cast<size_t>(percentileScratch.size() * 0.99F);
+		if (index >= percentileScratch.size()) {
+			index = percentileScratch.size() - 1;
 		}
 
-		std::nth_element(samples.begin(), samples.begin() + static_cast<ptrdiff_t>(index), samples.end());
-		return samples[index];
+		// Use nth_element for O(n) instead of O(n log n) sort
+		std::nth_element(percentileScratch.begin(), percentileScratch.begin() + static_cast<ptrdiff_t>(index),
+						 percentileScratch.end());
+		return percentileScratch[index];
 	}
 
 	uint32_t MetricsCollector::countSpikes(float thresholdMs) const {

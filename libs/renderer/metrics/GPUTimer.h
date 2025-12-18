@@ -19,8 +19,8 @@ class GPUTimer {
 	GPUTimer& operator=(const GPUTimer&) = delete;
 
 	/// Enable/disable GPU timing (disabled by default to avoid driver overhead)
-	void setEnabled(bool enabled) { m_enabled = enabled; }
-	[[nodiscard]] bool isEnabled() const { return m_enabled; }
+	void setEnabled(bool value) { enabled = value; }
+	[[nodiscard]] bool isEnabled() const { return enabled; }
 
 	/// Begin timing (call before rendering) - no-op if disabled or unsupported
 	void begin();
@@ -30,21 +30,21 @@ class GPUTimer {
 
 	/// Get the GPU time in milliseconds (from previous frame)
 	/// Returns 0.0 until at least one frame has completed
-	[[nodiscard]] float getTimeMs() const { return m_lastTimeMs; }
+	[[nodiscard]] float getTimeMs() const { return lastTimeMs; }
 
 	/// Check if GPU timer queries are supported on this platform
-	[[nodiscard]] bool isSupported() const { return m_supported; }
+	[[nodiscard]] bool isSupported() const { return supported; }
 
   private:
 	static constexpr int kQueryCount = 2; // Double-buffered
 
-	uint32_t m_queries[kQueryCount]{};
-	int m_currentQuery{0};
-	float m_lastTimeMs{0.0F};
-	bool m_supported{false};
-	bool m_enabled{false}; // Disabled by default to avoid driver overhead
-	bool m_inQuery{false};
-	bool m_hasResult{false};
+	uint32_t queries[kQueryCount]{};
+	int currentQuery{0};
+	float lastTimeMs{0.0F};
+	bool supported{false};
+	bool enabled{false}; // Disabled by default to avoid driver overhead
+	bool inQuery{false};
+	bool hasResult{false};
 };
 
 } // namespace Renderer

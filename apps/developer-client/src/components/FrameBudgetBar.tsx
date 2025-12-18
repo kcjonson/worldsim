@@ -8,13 +8,13 @@ interface FrameBudgetBarProps {
   targetMs?: number; // Default 16.67ms for 60fps
 }
 
-const FrameBudgetBar: React.FC<FrameBudgetBarProps> = ({
+function FrameBudgetBar({
   tileRenderMs,
   entityRenderMs,
   updateMs,
   frameTimeMs,
   targetMs = 16.67
-}) => {
+}: FrameBudgetBarProps) {
   // Calculate "other" time (frame overhead, GPU, vsync wait, etc.)
   const measuredMs = tileRenderMs + entityRenderMs + updateMs;
   const otherMs = Math.max(0, frameTimeMs - measuredMs);
@@ -103,6 +103,6 @@ const FrameBudgetBar: React.FC<FrameBudgetBarProps> = ({
       )}
     </div>
   );
-};
+}
 
 export default FrameBudgetBar;

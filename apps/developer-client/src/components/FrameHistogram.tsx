@@ -11,7 +11,7 @@ interface FrameHistogramProps {
   spikeCount33ms: number;
 }
 
-const FrameHistogram: React.FC<FrameHistogramProps> = ({
+function FrameHistogram({
   histogram0to8ms,
   histogram8to16ms,
   histogram16to33ms,
@@ -20,7 +20,7 @@ const FrameHistogram: React.FC<FrameHistogramProps> = ({
   frameTime1PercentLow,
   spikeCount16ms,
   spikeCount33ms,
-}) => {
+}: FrameHistogramProps) {
   // Calculate percentages
   const total = histogramTotal || 1;
   const pct0to8 = (histogram0to8ms / total) * 100;
@@ -43,7 +43,7 @@ const FrameHistogram: React.FC<FrameHistogramProps> = ({
         )}
         {!hasSpikes && hasWarnings && (
           <span className={styles.warning}>
-            {spikeCount16ms} slow frame{spikeCount16ms !== 1 ? 's' : ''}
+            {spikeCount16ms} slow frames
           </span>
         )}
       </div>
@@ -98,6 +98,6 @@ const FrameHistogram: React.FC<FrameHistogramProps> = ({
       </div>
     </div>
   );
-};
+}
 
 export default FrameHistogram;

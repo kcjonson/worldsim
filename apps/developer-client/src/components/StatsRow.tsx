@@ -11,7 +11,7 @@ interface StatsRowProps {
   stats: StatItem[];
 }
 
-const StatsRow: React.FC<StatsRowProps> = ({ stats }) => {
+function StatsRow({ stats }: StatsRowProps) {
   return (
     <div className={styles.container}>
       {stats.map((stat, i) => (
@@ -27,6 +27,6 @@ const StatsRow: React.FC<StatsRowProps> = ({ stats }) => {
       ))}
     </div>
   );
-};
+}
 
 export default StatsRow;

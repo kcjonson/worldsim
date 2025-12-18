@@ -77,6 +77,9 @@ namespace Renderer { // NOLINT(readability-identifier-naming)
 
 		// Helper: Count frames exceeding threshold in sample window
 		uint32_t countSpikes(float thresholdMs) const;
+
+		// Scratch buffer for percentile calculation (avoids per-frame allocation)
+		mutable std::vector<float> percentileScratch;
 	};
 
 } // namespace Renderer
