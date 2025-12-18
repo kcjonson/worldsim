@@ -81,6 +81,102 @@ This activates the protocol from `/docs/technical/debugging-strategy.md` which u
 - Create technical debt
 - **⚠️ NEVER provide time estimates or cost estimates for tasks** - You cannot accurately estimate how long work will take. Focus on clear task descriptions and deliverables instead.
 
+### ⚠️ Clean Code: No Legacy, No Fallbacks
+
+**This is critical. Aggressively delete old code. Never leave legacy fallbacks.**
+
+#### Core Principles
+
+1. **Replace, Don't Layer**
+   - When implementing a new approach, DELETE the old implementation in the same commit
+   - No `// legacy` comments, no `useNewSystem` flags, no fallback code paths
+   - If the new code works, the old code is dead—delete it immediately
+
+2. **One Path Rule**
+   - There must be exactly ONE way to accomplish each task in the codebase
+   - Multiple code paths for the same functionality = code smell requiring immediate cleanup
+   - If you're adding a second way to do something, you must delete the first
+
+3. **Delete First Workflow**
+   - Before adding new code, identify what it replaces
+   - Delete the old code FIRST, then add the new implementation
+   - This forces clean breaks rather than accumulation of dead code
+
+4. **No Feature Flags for Internal Changes**
+   - Feature flags are ONLY for user-facing features with gradual rollout requirements
+   - Internal refactors don't need flags—just change the code directly
+   - If something breaks, fix it—don't create parallel paths
+
+5. **Clean Up On Touch**
+   - When modifying any file, actively look for dead code to remove
+   - Delete: unused imports, unused functions, commented-out code, unreachable branches
+   - Leave every file cleaner than you found it
+
+#### Explicit Anti-Patterns (NEVER DO THESE)
+
+```cpp
+// ❌ NEVER: Conditional new/old paths
+if (useNewSystem) {
+    newImplementation();
+} else {
+    legacyImplementation();  // DELETE THIS
+}
+
+// ❌ NEVER: "Just in case" fallbacks
+result = tryNewApproach();
+if (!result) {
+    result = oldApproach();  // DELETE THIS
+}
+
+// ❌ NEVER: Keeping old functions "for reference"
+void oldFunction() { /* old implementation */ }  // DELETE THIS
+void newFunction() { /* new implementation */ }
+
+// ❌ NEVER: Renaming unused variables instead of deleting
+void process(int _unusedParam) { }  // DELETE THE PARAMETER
+
+// ❌ NEVER: Re-exporting removed types for "compatibility"
+using OldTypeName [[deprecated]] = NewTypeName;  // DELETE THIS
+
+// ❌ NEVER: TODO comments for removing legacy code
+// TODO: Remove this after testing the new system  // NO - DELETE NOW
+
+// ❌ NEVER: Version suffixes on functions
+void renderV2() { }  // Just name it render() and delete the old one
+```
+
+#### The Right Way
+
+```cpp
+// ✅ CORRECT: One implementation, no alternatives
+void render() {
+    // The only render implementation
+}
+
+// ✅ CORRECT: Delete parameters you don't need
+void process() {  // Removed unused parameter entirely
+    // ...
+}
+
+// ✅ CORRECT: Replace types directly
+using TypeName = NewImplementation;  // Old type is gone
+
+// ✅ CORRECT: Clean, single code path
+Result doOperation() {
+    return modernApproach();  // No fallback, this is THE way
+}
+```
+
+#### When Refactoring
+
+1. **Understand** the old code completely
+2. **Write** the new implementation
+3. **Update** all call sites to use the new code
+4. **Delete** the old implementation in the same commit
+5. **Test** to ensure nothing breaks
+
+If tests fail, fix the new code—don't revert to keeping both versions.
+
 ## Documentation System
 
 ### When Asked "What are we working on?" or "Where are we?"
