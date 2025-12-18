@@ -274,9 +274,9 @@ See `/docs/development-log/README.md` for the full template.
 
 When a plan file is confirmed complete (has `# COMPLETE` on first line), archive it to the development log:
 
-1. **Move the file** from `~/.claude/plans/` to `/docs/development-log/plans/`
+1. **Move the file** from `.claude/plans/` (or `~/.claude/plans/` for global plans) to `/docs/development-log/plans/`
 2. **Rename with date prefix**: `YYYY-MM-DD-{original-name}.md`
-   - Example: `worldsim-uber-shader.md` → `2025-12-18-worldsim-uber-shader.md`
+   - Example: `uber-shader.md` → `2025-12-18-uber-shader.md`
 3. **Create the plans directory** if it doesn't exist: `/docs/development-log/plans/`
 
-This keeps completed plans discoverable alongside the development log while cleaning up the global plans folder.
+This keeps completed plans discoverable alongside the development log while cleaning up the active plans folder.

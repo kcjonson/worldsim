@@ -40,5 +40,6 @@ tests/diffs/
 # Logs
 *.log
 
-# Claude plan archives (internal planning artifacts)
+# Claude plan files (internal planning artifacts)
+.claude/plans/
 docs/development-log/plans/
