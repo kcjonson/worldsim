@@ -25,12 +25,19 @@ namespace ecs {
 /// Queries PlacementExecutor for PlacedEntities within each colonist's sight radius.
 /// Also scans chunks for shore tiles (land adjacent to water) with Drinkable capability.
 /// Priority: 45 (runs early, before needs decay and AI decisions)
+///
+/// Performance: Throttled to run every N frames (default 5) since colonists don't
+/// move fast enough to need per-frame vision updates.
 class VisionSystem : public ISystem {
   public:
 	void update(float deltaTime) override;
 
 	[[nodiscard]] int priority() const override { return 45; }
 	[[nodiscard]] const char* name() const override { return "Vision"; }
+
+	/// Set how often vision updates run (default: every 5 frames)
+	/// At 60fps, 5 frames = 12 vision updates/second, which is plenty
+	void setUpdateInterval(uint32_t frames) { m_updateInterval = frames; }
 
 	/// Set the placement executor and processed chunks for entity queries
 	/// Must be called before update() can function
@@ -56,6 +63,10 @@ class VisionSystem : public ISystem {
 	uint32_t m_shoreTileDefNameId = 0;
 	uint8_t	 m_shoreTileCapabilityMask = 0;
 	bool	 m_terrainDefsRegistered = false;
+
+	// Throttling: only update every N frames to reduce CPU overhead
+	uint32_t m_frameCounter = 0;
+	uint32_t m_updateInterval = 5; // Default: update every 5 frames (12x/sec at 60fps)
 };
 
 } // namespace ecs

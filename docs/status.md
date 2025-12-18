@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2025-12-18 (Basic Crafting Epic 1: Placement + Discovery)
+Last Updated: 2025-12-18 (Performance Optimization: VisionSystem)
 
 ## Epic/Story/Task Template
 
@@ -209,7 +209,7 @@ Use this template for all work items:
 ### Performance Optimization
 **Spec/Documentation:** `.claude/plans/performance-optimization-epic.md`
 **Dependencies:** Enhanced Performance Metrics (complete)
-**Status:** ready
+**Status:** in progress
 
 **Goal:** Improve game performance to eliminate lag and stuttering.
 
@@ -218,8 +218,10 @@ Use this template for all work items:
 - **Tile Rendering**: 3-5ms/frame - iterates all visible tiles each frame
 - **Entity Rendering**: 3-4ms/frame - renders 2000+ entities per frame
 
-**Tentative Tasks:**
-- [ ] VisionSystem optimization (spatial queries, caching)
+**Tasks:**
+- [x] VisionSystem optimization
+  - [x] Shore tile caching (pre-compute during chunk generation)
+  - [x] Throttle to every 5 frames (12x/sec instead of 60x/sec)
 - [ ] Chunk vertex buffer caching (reduce CPU iteration)
 - [ ] Entity culling/LOD (skip offscreen entities)
 - [ ] Dynamic LOD for zoom levels

@@ -139,6 +139,11 @@ class Chunk {
 	/// Get last accessed time
 	[[nodiscard]] auto lastAccessed() const { return m_lastAccessed; }
 
+	/// Get cached shore tile positions (land tiles adjacent to water)
+	/// Positions are local chunk coordinates (0-511)
+	/// Pre-computed during generation for O(1) lookup by VisionSystem
+	[[nodiscard]] const std::vector<std::pair<uint16_t, uint16_t>>& getShoreTiles() const { return m_shoreTiles; }
+
   private:
 	ChunkCoordinate m_coord;
 	ChunkSampleResult m_biomeData;
@@ -151,8 +156,15 @@ class Chunk {
 	/// Thread-safe flag indicating generation is complete
 	std::atomic<bool> m_generationComplete{false};
 
+	/// Cached shore tile positions (land tiles adjacent to water)
+	/// Computed during generation, used by VisionSystem for fast shore discovery
+	std::vector<std::pair<uint16_t, uint16_t>> m_shoreTiles;
+
 	/// Compute tile data for a single tile during generation
 	[[nodiscard]] TileData computeTile(uint16_t localX, uint16_t localY) const;
+
+	/// Pre-compute shore tiles (land adjacent to water) for VisionSystem
+	void computeShoreTiles();
 
 	/// Select surface type based on biome using organic noise-based patches
 	[[nodiscard]] Surface selectSurface(Biome biome, uint16_t localX, uint16_t localY) const;
