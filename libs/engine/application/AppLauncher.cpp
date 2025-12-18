@@ -6,6 +6,7 @@
 
 #include <CoordinateSystem/CoordinateSystem.h>
 #include <assets/AssetRegistry.h>
+#include <assets/RecipeRegistry.h>
 #include <debug/DebugServer.h>
 #include <font/FontRenderer.h>
 #include <metrics/MetricsCollector.h>
@@ -193,6 +194,13 @@ namespace engine {
 			// Item properties are now part of unified entity definitions (itemProperties section)
 			size_t loaded = engine::assets::AssetRegistry::Get().loadDefinitionsFromFolder(fullPath);
 			LOG_INFO(Engine, "Loaded %zu asset definitions from %s", loaded, fullPath.c_str());
+
+			// Load recipes from the recipes folder
+			std::string recipesPath = Foundation::findResourceString("assets/recipes");
+			if (!recipesPath.empty()) {
+				size_t recipesLoaded = engine::assets::RecipeRegistry::Get().loadRecipesFromFolder(recipesPath);
+				LOG_INFO(Engine, "Loaded %zu recipes from %s", recipesLoaded, recipesPath.c_str());
+			}
 		}
 
 		void cleanup(GLFWwindow* window) {

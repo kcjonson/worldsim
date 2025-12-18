@@ -11,6 +11,14 @@ namespace {
 	constexpr float kPanelPadding = 10.0F;
 	constexpr float kPanelHeight = 148.0F;
 	constexpr float kTaskListMaxHeight = 400.0F;
+
+	// Build toolbar dimensions
+	constexpr float kBuildToolbarWidth = 70.0F;
+	constexpr float kBuildToolbarHeight = 28.0F;
+	constexpr float kBuildToolbarBottomMargin = 20.0F;
+
+	// Build menu dimensions
+	constexpr float kBuildMenuWidth = 180.0F;
 } // namespace
 
 GameUI::GameUI(const Args& args)
@@ -20,6 +28,21 @@ GameUI::GameUI(const Args& args)
 	overlay = std::make_unique<GameOverlay>(GameOverlay::Args{
 		.onZoomIn = args.onZoomIn,
 		.onZoomOut = args.onZoomOut,
+	});
+
+	// Create build toolbar (position set in layout())
+	buildToolbar = std::make_unique<BuildToolbar>(BuildToolbar::Args{
+		.position = {0.0F, 0.0F},  // Will be positioned in layout()
+		.onBuildClick = args.onBuildToggle,
+		.id = "build_toolbar"
+	});
+
+	// Create build menu (position set in layout())
+	buildMenu = std::make_unique<BuildMenu>(BuildMenu::Args{
+		.position = {0.0F, 0.0F},  // Will be positioned in layout()
+		.onSelect = args.onBuildItemSelected,
+		.onClose = [this]() { hideBuildMenu(); },
+		.id = "build_menu"
 	});
 
 	// Create colonist list panel (left side)
@@ -56,6 +79,20 @@ void GameUI::layout(const Foundation::Rect& newBounds) {
 
 	// Layout overlay to full viewport
 	overlay->layout(newBounds);
+
+	// Position build toolbar at bottom center
+	if (buildToolbar) {
+		float toolbarX = (newBounds.width - kBuildToolbarWidth) * 0.5F;
+		float toolbarY = newBounds.height - kBuildToolbarHeight - kBuildToolbarBottomMargin;
+		buildToolbar->setPosition({toolbarX, toolbarY});
+	}
+
+	// Position build menu above the toolbar, centered
+	if (buildMenu) {
+		float menuX = (newBounds.width - kBuildMenuWidth) * 0.5F;
+		float menuY = newBounds.height - kBuildToolbarHeight - kBuildToolbarBottomMargin - 10.0F - 150.0F; // Above toolbar
+		buildMenu->setPosition({menuX, menuY});
+	}
 
 	// Position colonist list on left side, below overlay and zoom controls
 	if (colonistList) {
@@ -95,6 +132,16 @@ bool GameUI::handleInput() {
 
 	// Handle overlay input first (zoom buttons)
 	overlay->handleInput();
+
+	// Handle build toolbar input
+	if (buildToolbar) {
+		buildToolbar->handleInput();
+	}
+
+	// Handle build menu input (if visible)
+	if (buildMenuVisible && buildMenu) {
+		buildMenu->handleInput();
+	}
 
 	// Handle colonist list input
 	if (colonistList && colonistList->handleInput()) {
@@ -181,6 +228,16 @@ void GameUI::render() {
 	// Render overlay
 	overlay->render();
 
+	// Render build toolbar
+	if (buildToolbar) {
+		buildToolbar->render();
+	}
+
+	// Render build menu if visible
+	if (buildMenuVisible && buildMenu) {
+		buildMenu->render();
+	}
+
 	// Render colonist list
 	if (colonistList) {
 		colonistList->render();
@@ -202,6 +259,16 @@ bool GameUI::isPointOverUI(Foundation::Vec2 screenPos) const {
 	// This manual delegation should be replaced by the InputEvent consumption system.
 	// See /docs/technical/ui-framework/event-system.md
 	if (overlay && overlay->isPointOverUI(screenPos)) {
+		return true;
+	}
+
+	// Check build toolbar
+	if (buildToolbar && buildToolbar->isPointOver(screenPos)) {
+		return true;
+	}
+
+	// Check build menu (if visible)
+	if (buildMenuVisible && buildMenu && buildMenu->isPointOver(screenPos)) {
 		return true;
 	}
 
@@ -238,6 +305,30 @@ void GameUI::toggleTaskList() {
 	if (taskListPanel) {
 		taskListPanel->visible = taskListExpanded;
 	}
+}
+
+// --- Build Mode API ---
+
+void GameUI::setBuildModeActive(bool active) {
+	if (buildToolbar) {
+		buildToolbar->setActive(active);
+	}
+}
+
+void GameUI::showBuildMenu(const std::vector<BuildMenuItem>& items) {
+	if (buildMenu) {
+		buildMenu->setItems(items);
+		buildMenuVisible = true;
+		buildMenuBounds = buildMenu->bounds();
+	}
+}
+
+void GameUI::hideBuildMenu() {
+	buildMenuVisible = false;
+}
+
+bool GameUI::isBuildMenuVisible() const {
+	return buildMenuVisible;
 }
 
 } // namespace world_sim

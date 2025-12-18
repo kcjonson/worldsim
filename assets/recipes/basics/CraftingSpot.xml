@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Crafting Spot - Innate recipe known by all colonists from start -->
+<RecipeDef>
+    <defName>Recipe_CraftingSpot</defName>
+    <label>Crafting Spot</label>
+    <description>A simple spot on the ground where basic items can be crafted.</description>
+
+    <!-- No inputs required -->
+    <inputs />
+
+    <!-- No station required - can be placed anywhere -->
+    <station>none</station>
+
+    <outputs>
+        <output thing="CraftingSpot" count="1"/>
+    </outputs>
+
+    <!-- Builds instantly -->
+    <workAmount>0</workAmount>
+
+    <!-- All colonists know this from start -->
+    <innate>true</innate>
+</RecipeDef>

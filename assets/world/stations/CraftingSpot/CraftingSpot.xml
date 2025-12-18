@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Crafting Spot - Simple crafting station that can be placed anywhere
+     The most basic crafting location - a flat cleared spot on the ground
+     No construction required, just designate the area
+-->
+<AssetDefinitions>
+  <AssetDef>
+    <defName>CraftingSpot</defName>
+    <label>Crafting Spot</label>
+    <assetType>simple</assetType>
+    <svgPath>crafting_spot.svg</svgPath>
+    <worldHeight>1.0</worldHeight>
+
+    <rendering>
+      <complexity>simple</complexity>
+      <tier>instanced</tier>
+    </rendering>
+
+    <!-- Entity capabilities -->
+    <capabilities>
+      <craftable/>
+    </capabilities>
+
+    <!-- Not placed by world generation - only player placement -->
+    <!-- No <placement> section means it won't spawn naturally -->
+
+    <variantCount>1</variantCount>
+  </AssetDef>
+</AssetDefinitions>
