@@ -80,7 +80,7 @@ public:
 		constexpr float kShortGrassThreshold = 0.35F;
 		if (moistureNoise < kShortGrassThreshold) {
 			result.surface = Surface::GrassShort;
-			result.moisture = static_cast<uint8_t>(moistureNoise * 180); // 0-63
+			result.moisture = static_cast<uint8_t>(moistureNoise * 180); // 0-62
 			return result;
 		}
 
@@ -99,7 +99,7 @@ public:
 		constexpr float kMeadowThreshold = 0.78F;
 		if (fertilityNoise > kMeadowThreshold) {
 			result.surface = Surface::GrassMeadow;
-			result.moisture = static_cast<uint8_t>(120 + fertilityNoise * 80); // 120-200
+			result.moisture = static_cast<uint8_t>(120 + fertilityNoise * 80); // 120-199
 			return result;
 		}
 

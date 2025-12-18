@@ -247,8 +247,8 @@ int getSurfaceStackOrder(uint surfaceId) {
 ///    This naturally gives rounded corners without complex L-shape logic
 vec4 computeHigherBleedWeights(
     vec2 uv,
-    int tileX,
-    int tileY,
+    int tileX,    // Reserved for future procedural edge variation
+    int tileY,    // Reserved for future procedural edge variation
     uint surfaceId,
     uint neighborN,
     uint neighborE,
