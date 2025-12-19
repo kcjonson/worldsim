@@ -9,6 +9,8 @@
 // 2. CPU Batching (fallback): All entities in one draw call, transforms on CPU
 
 #include "assets/placement/PlacementExecutor.h"
+#include "gl/GLBuffer.h"
+#include "gl/GLVertexArray.h"
 #include "primitives/InstanceData.h"
 #include "vector/Tessellator.h"
 #include "world/camera/WorldCamera.h"
@@ -78,6 +80,13 @@ class EntityRenderer {
   private:
 	float m_pixelsPerMeter = 16.0F;
 	uint32_t m_lastEntityCount = 0;
+	uint64_t m_frameCounter = 0;  // Incremented each render call (for LRU tracking)
+
+	// --- LRU Cache Configuration ---
+	// Keep recently-used chunks cached even when not visible, to avoid re-uploading
+	// when panning back and forth. Only evict oldest when cache exceeds threshold.
+	static constexpr size_t kMaxCachedChunks = 64;     // Max chunks to keep in cache
+	static constexpr size_t kEvictionBatchSize = 8;    // How many to evict when over limit
 
 	// --- Instancing Mode ---
 	bool m_useInstancing = true;
@@ -96,17 +105,19 @@ class EntityRenderer {
 
 	/// GPU resources for a single mesh type within a chunk.
 	/// The VAO references the shared mesh VBO/IBO but has its own instance VBO.
+	/// Uses RAII wrappers for automatic GPU resource cleanup.
 	struct CachedMeshData {
-		GLuint vao = 0;			  // VAO with shared mesh + chunk-specific instance buffer
-		GLuint instanceVBO = 0;	  // Per-chunk instance buffer (GL_STATIC_DRAW)
-		uint32_t instanceCount = 0;	  // Number of instances for draw call
-		uint32_t indexCount = 0;	  // Index count from mesh (for draw call)
+		Renderer::GLVertexArray vao;		 // VAO with shared mesh + chunk-specific instance buffer
+		Renderer::GLBuffer instanceVBO;		 // Per-chunk instance buffer (GL_STATIC_DRAW)
+		uint32_t instanceCount = 0;			 // Number of instances for draw call
+		uint32_t indexCount = 0;			 // Index count from mesh (for draw call)
 	};
 
 	/// Per-chunk cached GPU resources for all mesh types in that chunk.
 	struct ChunkInstanceCache {
 		std::unordered_map<std::string, CachedMeshData> meshes;
 		uint32_t totalEntityCount = 0;
+		uint64_t lastAccessFrame = 0;  // Frame number when last rendered (for LRU eviction)
 	};
 
 	/// Cache of per-chunk instance data, keyed by chunk coordinate.

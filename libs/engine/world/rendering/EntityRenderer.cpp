@@ -3,6 +3,7 @@
 #include "assets/AssetRegistry.h"
 #include "world/chunk/ChunkCoordinate.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <glm/gtc/matrix_transform.hpp>
@@ -27,20 +28,11 @@ namespace engine::world {
 		: m_pixelsPerMeter(pixelsPerMeter) {}
 
 	EntityRenderer::~EntityRenderer() {
-		// Release all per-chunk cached GPU resources
-		for (auto& [coord, cache] : m_chunkInstanceCache) {
-			for (auto& [defName, meshData] : cache.meshes) {
-				if (meshData.vao != 0) {
-					glDeleteVertexArrays(1, &meshData.vao);
-				}
-				if (meshData.instanceVBO != 0) {
-					glDeleteBuffers(1, &meshData.instanceVBO);
-				}
-			}
-		}
+		// Per-chunk cached GPU resources are automatically released by RAII wrappers
+		// when m_chunkInstanceCache is destroyed (GLVertexArray/GLBuffer destructors)
 		m_chunkInstanceCache.clear();
 
-		// Release all shared GPU mesh handles
+		// Release all shared GPU mesh handles (these use BatchRenderer's management)
 		auto* batchRenderer = Renderer::Primitives::getBatchRenderer();
 		if (batchRenderer != nullptr) {
 			for (auto& [defName, handle] : m_meshHandles) {
@@ -123,6 +115,9 @@ namespace engine::world {
 		int										   viewportWidth,
 		int										   viewportHeight
 	) {
+		// Increment frame counter for LRU tracking
+		m_frameCounter++;
+
 		// --- Phase 1: Build cache for any uncached chunks ---
 		// This happens once per chunk, then the cache is reused every frame.
 		for (const auto& coord : processedChunks) {
@@ -212,17 +207,28 @@ namespace engine::world {
 			}
 		}
 
-		// --- Phase 4: Cache eviction for chunks that are no longer visible ---
-		// Release GPU resources for chunks that weren't rendered this frame.
-		// Collect coordinates to evict first (can't modify map while iterating)
-		std::vector<ChunkCoordinate> toEvict;
-		for (const auto& [coord, cache] : m_chunkInstanceCache) {
-			if (processedChunks.find(coord) == processedChunks.end()) {
-				toEvict.push_back(coord);
+		// --- Phase 4: LRU cache eviction ---
+		// Keep recently-used chunks cached even when not visible, to avoid re-uploading
+		// when panning back and forth. Only evict oldest when cache exceeds threshold.
+		if (m_chunkInstanceCache.size() > kMaxCachedChunks) {
+			// Collect all chunks with their last access frame
+			std::vector<std::pair<ChunkCoordinate, uint64_t>> chunksByAge;
+			chunksByAge.reserve(m_chunkInstanceCache.size());
+			for (const auto& [coord, cache] : m_chunkInstanceCache) {
+				// Don't evict currently visible chunks
+				if (processedChunks.find(coord) == processedChunks.end()) {
+					chunksByAge.emplace_back(coord, cache.lastAccessFrame);
+				}
 			}
-		}
-		for (const auto& coord : toEvict) {
-			releaseChunkCache(coord);
+
+			// Sort by age (oldest first = lowest frame number)
+			std::sort(chunksByAge.begin(), chunksByAge.end(), [](const auto& a, const auto& b) { return a.second < b.second; });
+
+			// Evict oldest chunks to get back under limit
+			size_t toEvictCount = std::min(chunksByAge.size(), kEvictionBatchSize);
+			for (size_t i = 0; i < toEvictCount; ++i) {
+				releaseChunkCache(chunksByAge[i].first);
+			}
 		}
 	}
 
@@ -541,9 +547,9 @@ namespace engine::world {
 			meshData.instanceCount = static_cast<uint32_t>(instances.size());
 			meshData.indexCount = sharedHandle.indexCount;
 
-			// Create new VAO for this chunk's instances
-			glGenVertexArrays(1, &meshData.vao);
-			glBindVertexArray(meshData.vao);
+			// Create new VAO for this chunk's instances (RAII wrapper)
+			meshData.vao = Renderer::GLVertexArray::create();
+			meshData.vao.bind();
 
 			// Bind SHARED mesh VBO and set up mesh attributes (same as in BatchRenderer).
 			// Attribute locations 1, 3, 4, 5 are skipped because they're used by UberVertex
@@ -562,14 +568,13 @@ namespace engine::world {
 			// Bind SHARED mesh IBO
 			glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, sharedHandle.meshIBO);
 
-			// Create NEW instance VBO for this chunk (with actual data, GL_STATIC_DRAW)
-			glGenBuffers(1, &meshData.instanceVBO);
-			glBindBuffer(GL_ARRAY_BUFFER, meshData.instanceVBO);
-			glBufferData(
+			// Create NEW instance VBO for this chunk (RAII wrapper, GL_STATIC_DRAW)
+			// GLBuffer constructor creates, binds, and uploads data - buffer remains bound for attribute setup
+			meshData.instanceVBO = Renderer::GLBuffer(
 				GL_ARRAY_BUFFER,
 				static_cast<GLsizeiptr>(instances.size() * sizeof(Renderer::InstanceData)),
 				instances.data(),
-				GL_STATIC_DRAW // Key: static - data won't change
+				GL_STATIC_DRAW
 			);
 
 			// Set up instance attributes with divisor = 1
@@ -590,9 +595,9 @@ namespace engine::world {
 			);
 			glVertexAttribDivisor(7, 1);
 
-			glBindVertexArray(0);
+			Renderer::GLVertexArray::unbind();
 
-			cache.meshes[defName] = meshData;
+			cache.meshes[defName] = std::move(meshData);
 		}
 
 		cache.totalEntityCount = actualEntityCount;
@@ -600,22 +605,9 @@ namespace engine::world {
 	}
 
 	void EntityRenderer::releaseChunkCache(const ChunkCoordinate& coord) {
-		auto it = m_chunkInstanceCache.find(coord);
-		if (it == m_chunkInstanceCache.end()) {
-			return;
-		}
-
-		// Release GPU resources
-		for (auto& [defName, meshData] : it->second.meshes) {
-			if (meshData.vao != 0) {
-				glDeleteVertexArrays(1, &meshData.vao);
-			}
-			if (meshData.instanceVBO != 0) {
-				glDeleteBuffers(1, &meshData.instanceVBO);
-			}
-		}
-
-		m_chunkInstanceCache.erase(it);
+		// Simply erase from map - RAII wrappers in CachedMeshData
+		// automatically release GPU resources when destroyed
+		m_chunkInstanceCache.erase(coord);
 	}
 
 	void EntityRenderer::renderCachedChunks(
@@ -678,7 +670,8 @@ namespace engine::world {
 				continue; // Not cached yet - will be built next frame
 			}
 
-			const auto& cache = cacheIt->second;
+			auto& cache = cacheIt->second;
+			cache.lastAccessFrame = m_frameCounter; // Update LRU timestamp
 			m_lastEntityCount += cache.totalEntityCount;
 
 			// Draw each mesh type in this chunk
@@ -688,7 +681,7 @@ namespace engine::world {
 				}
 
 				// Bind cached VAO and draw - NO UPLOAD needed!
-				glBindVertexArray(meshData.vao);
+				meshData.vao.bind();
 				glDrawElementsInstanced(
 					GL_TRIANGLES,
 					static_cast<GLsizei>(meshData.indexCount),
@@ -699,7 +692,7 @@ namespace engine::world {
 			}
 		}
 
-		glBindVertexArray(0);
+		Renderer::GLVertexArray::unbind();
 
 		// Restore GL state
 		if (blendEnabled == GL_TRUE) {

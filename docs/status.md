@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2025-12-18 (Performance Optimization: GPU Instance Buffers)
+Last Updated: 2025-12-18 (Performance Optimization: RAII Wrappers + LRU Cache)
 
 ## Epic/Story/Task Template
 
@@ -227,14 +227,14 @@ Use this template for all work items:
   - [x] Implement per-chunk VAO/VBO caching
   - [x] Modify render path to use cached data
   - [x] Add cache eviction for unloaded chunks
-- [ ] RAII wrappers for OpenGL resources
-  - [ ] Create GLBuffer RAII wrapper
-  - [ ] Create GLVertexArray RAII wrapper
-  - [ ] Update CachedMeshData to use RAII wrappers
-- [ ] LRU cache for chunk eviction
-  - [ ] Add timestamp/access counter to ChunkInstanceCache
-  - [ ] Keep N recently-used chunks when not visible
-  - [ ] Evict oldest when cache exceeds threshold
+- [x] RAII wrappers for OpenGL resources
+  - [x] Create GLBuffer RAII wrapper
+  - [x] Create GLVertexArray RAII wrapper
+  - [x] Update CachedMeshData to use RAII wrappers
+- [x] LRU cache for chunk eviction
+  - [x] Add timestamp/access counter to ChunkInstanceCache
+  - [x] Keep N recently-used chunks when not visible (kMaxCachedChunks = 64)
+  - [x] Evict oldest when cache exceeds threshold
 
 ---
 
