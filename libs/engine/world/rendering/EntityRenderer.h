@@ -112,6 +112,22 @@ class EntityRenderer {
 	/// Cache of per-chunk instance data, keyed by chunk coordinate.
 	std::unordered_map<ChunkCoordinate, ChunkInstanceCache> m_chunkInstanceCache;
 
+	/// Cached uniform locations for instanced rendering (avoid glGetUniformLocation per frame).
+	struct CachedUniformLocations {
+		GLint projection = -1;
+		GLint transform = -1;
+		GLint instanced = -1;
+		GLint cameraPosition = -1;
+		GLint cameraZoom = -1;
+		GLint pixelsPerMeter = -1;
+		GLint viewportSize = -1;
+		bool initialized = false;
+	};
+	CachedUniformLocations m_uniformLocations;
+
+	/// Initialize cached uniform locations from shader program.
+	void initUniformLocations(GLuint shaderProgram);
+
 	/// Build cached VAO + instance data for a chunk (called once per chunk).
 	/// Creates per-chunk VAOs that reference shared mesh VBOs but have their own instance VBOs.
 	void buildChunkCache(const assets::PlacementExecutor& executor, const ChunkCoordinate& coord);
@@ -126,9 +142,6 @@ class EntityRenderer {
 		int viewportWidth,
 		int viewportHeight
 	);
-
-	/// Track which chunks were rendered last frame (for cache eviction).
-	std::unordered_set<ChunkCoordinate> m_lastFrameChunks;
 
 	/// Get or create GPU mesh handle for a template
 	Renderer::InstancedMeshHandle& getOrCreateMeshHandle(

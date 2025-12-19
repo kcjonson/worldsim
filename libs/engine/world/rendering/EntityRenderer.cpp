@@ -4,6 +4,7 @@
 #include "world/chunk/ChunkCoordinate.h"
 
 #include <cmath>
+#include <cstddef>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include <graphics/Color.h>
@@ -16,6 +17,11 @@ namespace engine::world {
 	// Maximum instances per mesh type for GPU instancing
 	// Set high enough to handle extreme zoom-out scenarios (observed 34k+ entities)
 	constexpr uint32_t kMaxInstancesPerMesh = 50000;
+
+	// VAO attribute constants for InstancedMeshVertex (matches BatchRenderer setup)
+	// sizeof(InstancedMeshVertex) = sizeof(Vec2) + sizeof(Color) = 8 + 16 = 24 bytes
+	constexpr GLsizei kInstancedMeshVertexStride = 24;
+	constexpr size_t  kInstancedMeshColorOffset = 8; // offsetof(InstancedMeshVertex, color)
 
 	EntityRenderer::EntityRenderer(float pixelsPerMeter)
 		: m_pixelsPerMeter(pixelsPerMeter) {}
@@ -75,6 +81,20 @@ namespace engine::world {
 
 	// --- GPU Instancing Path ---
 
+	void EntityRenderer::initUniformLocations(GLuint shaderProgram) {
+		if (m_uniformLocations.initialized) {
+			return;
+		}
+		m_uniformLocations.projection = glGetUniformLocation(shaderProgram, "u_projection");
+		m_uniformLocations.transform = glGetUniformLocation(shaderProgram, "u_transform");
+		m_uniformLocations.instanced = glGetUniformLocation(shaderProgram, "u_instanced");
+		m_uniformLocations.cameraPosition = glGetUniformLocation(shaderProgram, "u_cameraPosition");
+		m_uniformLocations.cameraZoom = glGetUniformLocation(shaderProgram, "u_cameraZoom");
+		m_uniformLocations.pixelsPerMeter = glGetUniformLocation(shaderProgram, "u_pixelsPerMeter");
+		m_uniformLocations.viewportSize = glGetUniformLocation(shaderProgram, "u_viewportSize");
+		m_uniformLocations.initialized = true;
+	}
+
 	Renderer::InstancedMeshHandle&
 	EntityRenderer::getOrCreateMeshHandle(const std::string& defName, const renderer::TessellatedMesh* mesh) {
 		auto it = m_meshHandles.find(defName);
@@ -117,6 +137,8 @@ namespace engine::world {
 
 		// --- Phase 3: Render dynamic entities (per-frame rebuild) ---
 		// Dynamic entities (from ECS) change position each frame, so we rebuild them.
+		// GL state note: BatchRenderer::drawInstanced() sets up its own GL state internally,
+		// so we don't need to carry state from renderCachedChunks() here.
 		if (dynamicEntities != nullptr && !dynamicEntities->empty()) {
 			// Clear per-frame instance batches (keep capacity for reuse)
 			for (auto& [defName, batch] : m_instanceBatches) {
@@ -192,21 +214,15 @@ namespace engine::world {
 
 		// --- Phase 4: Cache eviction for chunks that are no longer visible ---
 		// Release GPU resources for chunks that weren't rendered this frame.
-		for (auto it = m_chunkInstanceCache.begin(); it != m_chunkInstanceCache.end();) {
-			if (processedChunks.find(it->first) == processedChunks.end()) {
-				// Chunk is no longer visible - release its cache
-				for (auto& [defName, meshData] : it->second.meshes) {
-					if (meshData.vao != 0) {
-						glDeleteVertexArrays(1, &meshData.vao);
-					}
-					if (meshData.instanceVBO != 0) {
-						glDeleteBuffers(1, &meshData.instanceVBO);
-					}
-				}
-				it = m_chunkInstanceCache.erase(it);
-			} else {
-				++it;
+		// Collect coordinates to evict first (can't modify map while iterating)
+		std::vector<ChunkCoordinate> toEvict;
+		for (const auto& [coord, cache] : m_chunkInstanceCache) {
+			if (processedChunks.find(coord) == processedChunks.end()) {
+				toEvict.push_back(coord);
 			}
+		}
+		for (const auto& coord : toEvict) {
+			releaseChunkCache(coord);
 		}
 	}
 
@@ -485,7 +501,7 @@ namespace engine::world {
 		}
 
 		ChunkInstanceCache cache;
-		cache.totalEntityCount = static_cast<uint32_t>(allEntities.size());
+		uint32_t		   actualEntityCount = 0;
 
 		// Group entities by mesh type
 		std::unordered_map<std::string, std::vector<Renderer::InstanceData>> instancesByMesh;
@@ -506,6 +522,7 @@ namespace engine::world {
 				Foundation::Vec2(entity->position.x, entity->position.y), entity->rotation, entity->scale, entity->colorTint
 			);
 			instancesByMesh[entity->defName].push_back(instance);
+			actualEntityCount++;
 		}
 
 		// Create per-chunk VAOs for each mesh type
@@ -528,16 +545,19 @@ namespace engine::world {
 			glGenVertexArrays(1, &meshData.vao);
 			glBindVertexArray(meshData.vao);
 
-			// Bind SHARED mesh VBO and set up mesh attributes (same as in BatchRenderer)
+			// Bind SHARED mesh VBO and set up mesh attributes (same as in BatchRenderer).
+			// Attribute locations 1, 3, 4, 5 are skipped because they're used by UberVertex
+			// for text/shape data (texCoord, data1, data2, clipBounds) which instanced
+			// entities don't need. The uber shader ignores them when u_instanced = 1.
 			glBindBuffer(GL_ARRAY_BUFFER, sharedHandle.meshVBO);
 
 			// Location 0: position (vec2) - from InstancedMeshVertex
 			glEnableVertexAttribArray(0);
-			glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 24, reinterpret_cast<void*>(0)); // sizeof(InstancedMeshVertex) = 24
+			glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, kInstancedMeshVertexStride, reinterpret_cast<void*>(0));
 
 			// Location 2: color (vec4) - from InstancedMeshVertex
 			glEnableVertexAttribArray(2);
-			glVertexAttribPointer(2, 4, GL_FLOAT, GL_FALSE, 24, reinterpret_cast<void*>(8)); // offsetof color
+			glVertexAttribPointer(2, 4, GL_FLOAT, GL_FALSE, kInstancedMeshVertexStride, reinterpret_cast<void*>(kInstancedMeshColorOffset));
 
 			// Bind SHARED mesh IBO
 			glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, sharedHandle.meshIBO);
@@ -560,7 +580,14 @@ namespace engine::world {
 
 			// Location 7: instanceData2 (colorTint.rgba)
 			glEnableVertexAttribArray(7);
-			glVertexAttribPointer(7, 4, GL_FLOAT, GL_FALSE, sizeof(Renderer::InstanceData), reinterpret_cast<void*>(16));
+			glVertexAttribPointer(
+				7,
+				4,
+				GL_FLOAT,
+				GL_FALSE,
+				sizeof(Renderer::InstanceData),
+				reinterpret_cast<void*>(offsetof(Renderer::InstanceData, colorTint))
+			);
 			glVertexAttribDivisor(7, 1);
 
 			glBindVertexArray(0);
@@ -568,6 +595,7 @@ namespace engine::world {
 			cache.meshes[defName] = meshData;
 		}
 
+		cache.totalEntityCount = actualEntityCount;
 		m_chunkInstanceCache[coord] = std::move(cache);
 	}
 
@@ -596,6 +624,8 @@ namespace engine::world {
 		int										   viewportWidth,
 		int										   viewportHeight
 	) {
+		m_lastEntityCount = 0;
+
 		auto* batchRenderer = Renderer::Primitives::getBatchRenderer();
 		if (batchRenderer == nullptr) {
 			return;
@@ -607,6 +637,11 @@ namespace engine::world {
 		// Set viewport on BatchRenderer
 		batchRenderer->setViewport(viewportWidth, viewportHeight);
 
+		// Save GL state before modifying
+		GLboolean blendEnabled = glIsEnabled(GL_BLEND);
+		GLboolean depthTestEnabled = glIsEnabled(GL_DEPTH_TEST);
+		GLboolean cullFaceEnabled = glIsEnabled(GL_CULL_FACE);
+
 		// Enable blending for transparency
 		glEnable(GL_BLEND);
 		glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -617,25 +652,24 @@ namespace engine::world {
 		GLuint shaderProgram = batchRenderer->getShaderProgram();
 		glUseProgram(shaderProgram);
 
+		// Initialize cached uniform locations on first use
+		initUniformLocations(shaderProgram);
+
 		// Set up projection matrix
 		Foundation::Mat4 projection =
 			glm::ortho(0.0F, static_cast<float>(viewportWidth), static_cast<float>(viewportHeight), 0.0F, -1.0F, 1.0F);
-		glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "u_projection"), 1, GL_FALSE, glm::value_ptr(projection));
+		glUniformMatrix4fv(m_uniformLocations.projection, 1, GL_FALSE, glm::value_ptr(projection));
 
 		// Identity transform
 		Foundation::Mat4 identity(1.0F);
-		glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "u_transform"), 1, GL_FALSE, glm::value_ptr(identity));
+		glUniformMatrix4fv(m_uniformLocations.transform, 1, GL_FALSE, glm::value_ptr(identity));
 
 		// Set instancing uniforms
-		glUniform1i(glGetUniformLocation(shaderProgram, "u_instanced"), 1);
-		glUniform2f(glGetUniformLocation(shaderProgram, "u_cameraPosition"), camera.position().x, camera.position().y);
-		glUniform1f(glGetUniformLocation(shaderProgram, "u_cameraZoom"), camera.zoom());
-		glUniform1f(glGetUniformLocation(shaderProgram, "u_pixelsPerMeter"), m_pixelsPerMeter);
-		glUniform2f(
-			glGetUniformLocation(shaderProgram, "u_viewportSize"), static_cast<float>(viewportWidth), static_cast<float>(viewportHeight)
-		);
-
-		m_lastEntityCount = 0;
+		glUniform1i(m_uniformLocations.instanced, 1);
+		glUniform2f(m_uniformLocations.cameraPosition, camera.position().x, camera.position().y);
+		glUniform1f(m_uniformLocations.cameraZoom, camera.zoom());
+		glUniform1f(m_uniformLocations.pixelsPerMeter, m_pixelsPerMeter);
+		glUniform2f(m_uniformLocations.viewportSize, static_cast<float>(viewportWidth), static_cast<float>(viewportHeight));
 
 		// Draw each cached chunk
 		for (const auto& coord : processedChunks) {
@@ -666,7 +700,23 @@ namespace engine::world {
 		}
 
 		glBindVertexArray(0);
-		glDisable(GL_BLEND);
+
+		// Restore GL state
+		if (blendEnabled == GL_TRUE) {
+			glEnable(GL_BLEND);
+		} else {
+			glDisable(GL_BLEND);
+		}
+		if (depthTestEnabled == GL_TRUE) {
+			glEnable(GL_DEPTH_TEST);
+		} else {
+			glDisable(GL_DEPTH_TEST);
+		}
+		if (cullFaceEnabled == GL_TRUE) {
+			glEnable(GL_CULL_FACE);
+		} else {
+			glDisable(GL_CULL_FACE);
+		}
 	}
 
 	const renderer::TessellatedMesh* EntityRenderer::getTemplate(const std::string& defName) {
