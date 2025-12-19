@@ -34,21 +34,21 @@ namespace ecs {
 		None = 0,
 
 		// Need Fulfillment Actions
-		Eat,	 // Consuming food item from inventory
-		Drink,	 // Drinking from water tile (Pond)
-		Sleep,	 // Sleeping on ground or bed
-		Toilet,	 // Using toilet or ground relief
+		Eat,	// Consuming food item from inventory
+		Drink,	// Drinking from water tile (Pond)
+		Sleep,	// Sleeping on ground or bed
+		Toilet, // Using toilet or ground relief
 
 		// Resource Collection Actions
-		Pickup,	   // Pick up ground item directly into inventory
-		Harvest,   // Harvest from entity (bush, plant) into inventory
+		Pickup,	 // Pick up ground item directly into inventory
+		Harvest, // Harvest from entity (bush, plant) into inventory
 
 		// Work Actions
-		Craft,	   // Creating items at workbench
-		// Build,    // Constructing structures
-		// Repair,   // Fixing damaged structures
-		// Haul,     // Moving items
-		// Clean,    // Cleaning areas
+		Craft, // Creating items at workbench
+			   // Build,    // Constructing structures
+			   // Repair,   // Fixing damaged structures
+			   // Haul,     // Moving items
+			   // Clean,    // Cleaning areas
 	};
 
 	/// Action state machine
@@ -158,7 +158,8 @@ namespace ecs {
 	};
 
 	/// Variant holding the effect data for the current action
-	using ActionEffect = std::variant<std::monostate, NeedEffect, CollectionEffect, ConsumptionEffect, ProgressEffect, SpawnEffect, CraftingEffect>;
+	using ActionEffect =
+		std::variant<std::monostate, NeedEffect, CollectionEffect, ConsumptionEffect, ProgressEffect, SpawnEffect, CraftingEffect>;
 
 	// ============================================================================
 	// Action Component
@@ -380,12 +381,11 @@ namespace ecs {
 		/// @param quantity Number of items to pick up
 		/// @param sourcePos Position of the source entity
 		/// @param sourceDefName DefName of the source entity (for removal)
-		static Action Pickup(const std::string& itemDefName, uint32_t quantity, glm::vec2 sourcePos,
-							 const std::string& sourceDefName) {
+		static Action Pickup(const std::string& itemDefName, uint32_t quantity, glm::vec2 sourcePos, const std::string& sourceDefName) {
 			Action action;
 			action.type = ActionType::Pickup;
 			action.state = ActionState::Starting;
-			action.duration = 0.5F;		  // Quick pickup
+			action.duration = 0.5F; // Quick pickup
 			action.targetPosition = sourcePos;
 			action.interruptable = false; // Don't interrupt mid-pickup
 
@@ -409,9 +409,15 @@ namespace ecs {
 		/// @param sourceDefName DefName of the source entity
 		/// @param destructive If true, entity is destroyed after harvest
 		/// @param regrowthTime If not destructive, time until harvestable again
-		static Action Harvest(const std::string& itemDefName, uint32_t quantity, float harvestDuration,
-							  glm::vec2 sourcePos, const std::string& sourceDefName, bool destructive,
-							  float regrowthTime) {
+		static Action Harvest(
+			const std::string& itemDefName,
+			uint32_t		   quantity,
+			float			   harvestDuration,
+			glm::vec2		   sourcePos,
+			const std::string& sourceDefName,
+			bool			   destructive,
+			float			   regrowthTime
+		) {
 			Action action;
 			action.type = ActionType::Harvest;
 			action.state = ActionState::Starting;
@@ -439,18 +445,19 @@ namespace ecs {
 		/// @param inputs Input items to consume (defName -> count)
 		/// @param outputs Output items to produce (defName -> count)
 		static Action Craft(
-			const std::string& recipeDefName,
-			uint64_t stationEntityId,
-			glm::vec2 stationPos,
-			float workAmount,
+			const std::string&									 recipeDefName,
+			uint64_t											 stationEntityId,
+			glm::vec2											 stationPos,
+			float												 workAmount,
 			const std::vector<std::pair<std::string, uint32_t>>& inputs,
 			const std::vector<std::pair<std::string, uint32_t>>& outputs
 		) {
 			Action action;
 			action.type = ActionType::Craft;
 			action.state = ActionState::Starting;
-			// Convert work amount to duration (work ticks -> seconds, assuming 100 ticks/sec)
-			action.duration = workAmount / 100.0F;
+			// Convert work amount to duration (work ticks -> seconds)
+			constexpr float kWorkTicksPerSecond = 100.0F;
+			action.duration = workAmount / kWorkTicksPerSecond;
 			action.targetPosition = stationPos;
 			action.interruptable = false; // Don't interrupt mid-craft
 
@@ -463,7 +470,6 @@ namespace ecs {
 
 			return action;
 		}
-
 	};
 
 	/// Get human-readable name for action type (for debug logging)

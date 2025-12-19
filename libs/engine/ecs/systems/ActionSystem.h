@@ -77,7 +77,7 @@ private:
 	);
 
 	/// Callback for item crafted notifications
-	ItemCraftedCallback m_onItemCrafted;
+	ItemCraftedCallback m_onItemCrafted = nullptr;
 };
 
 } // namespace ecs

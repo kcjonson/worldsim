@@ -64,7 +64,7 @@ class VisionSystem : public ISystem {
 	bool	 m_terrainDefsRegistered = false;
 
 	// Callback for recipe discovery notifications
-	RecipeDiscoveryCallback m_onRecipeDiscovery;
+	RecipeDiscoveryCallback m_onRecipeDiscovery = nullptr;
 };
 
 } // namespace ecs
