@@ -1,7 +1,7 @@
 // Metrics collector implementation.
 
 #include "metrics/MetricsCollector.h"
-#include "metrics/SystemResources.h"
+#include <metrics/SystemResources.h>
 #include <algorithm>
 #include <numeric>
 

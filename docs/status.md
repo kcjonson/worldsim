@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2025-12-18 (Basic Crafting Epic 1: Placement + Discovery)
+Last Updated: 2025-12-18 (Performance Optimization: GPU Instance Buffers)
 
 ## Epic/Story/Task Template
 
@@ -209,20 +209,32 @@ Use this template for all work items:
 ### Performance Optimization
 **Spec/Documentation:** `.claude/plans/performance-optimization-epic.md`
 **Dependencies:** Enhanced Performance Metrics (complete)
-**Status:** ready
+**Status:** in progress
 
 **Goal:** Improve game performance to eliminate lag and stuttering.
 
 **Confirmed bottlenecks (from metrics):**
-- **VisionSystem**: 1.5ms/frame (92% of update time) - scans chunks for entities
-- **Tile Rendering**: 3-5ms/frame - iterates all visible tiles each frame
-- **Entity Rendering**: 3-4ms/frame - renders 2000+ entities per frame
+- ~~VisionSystem: 1.5ms/frame~~ → Fixed with shore caching + throttling
+- ~~Tile Rendering: 3-5ms/frame~~ → Fixed with render data caching
+- ~~swapBuffers: 100ms+~~ → Fixed with per-chunk instance caching (now <5ms)
 
-**Tentative Tasks:**
-- [ ] VisionSystem optimization (spatial queries, caching)
-- [ ] Chunk vertex buffer caching (reduce CPU iteration)
-- [ ] Entity culling/LOD (skip offscreen entities)
-- [ ] Dynamic LOD for zoom levels
+**Tasks:**
+- [x] VisionSystem optimization (shore tile caching, throttle to 12Hz)
+- [x] Tile render data caching (pre-compute adjacency masks)
+- [x] Main loop timing breakdown (diagnose swapBuffers bottleneck)
+- [x] Persistent GPU instance buffers (PR #79)
+  - [x] Add ChunkInstanceCache structure to EntityRenderer
+  - [x] Implement per-chunk VAO/VBO caching
+  - [x] Modify render path to use cached data
+  - [x] Add cache eviction for unloaded chunks
+- [ ] RAII wrappers for OpenGL resources
+  - [ ] Create GLBuffer RAII wrapper
+  - [ ] Create GLVertexArray RAII wrapper
+  - [ ] Update CachedMeshData to use RAII wrappers
+- [ ] LRU cache for chunk eviction
+  - [ ] Add timestamp/access counter to ChunkInstanceCache
+  - [ ] Keep N recently-used chunks when not visible
+  - [ ] Evict oldest when cache exceeds threshold
 
 ---
 
