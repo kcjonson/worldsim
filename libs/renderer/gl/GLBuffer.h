@@ -20,8 +20,8 @@ class GLBuffer {
 	/// @param target Buffer target (GL_ARRAY_BUFFER, GL_ELEMENT_ARRAY_BUFFER, etc.)
 	static GLBuffer create(GLenum target) {
 		GLBuffer buffer;
-		buffer.m_target = target;
-		glGenBuffers(1, &buffer.m_handle);
+		buffer.bufferTarget = target;
+		glGenBuffers(1, &buffer.bufferHandle);
 		return buffer;
 	}
 
@@ -33,9 +33,9 @@ class GLBuffer {
 	/// Note: Leaves the buffer BOUND after construction for vertex attribute setup.
 	/// Call unbind() explicitly if needed.
 	GLBuffer(GLenum target, GLsizeiptr size, const void* data, GLenum usage)
-		: m_target(target) {
-		glGenBuffers(1, &m_handle);
-		glBindBuffer(target, m_handle);
+		: bufferTarget(target) {
+		glGenBuffers(1, &bufferHandle);
+		glBindBuffer(target, bufferHandle);
 		glBufferData(target, size, data, usage);
 		// Note: buffer remains bound - this is intentional for VAO attribute setup
 	}
@@ -51,52 +51,52 @@ class GLBuffer {
 
 	/// Move constructor - transfers ownership
 	GLBuffer(GLBuffer&& other) noexcept
-		: m_handle(other.m_handle)
-		, m_target(other.m_target) {
-		other.m_handle = 0;
+		: bufferHandle(other.bufferHandle)
+		, bufferTarget(other.bufferTarget) {
+		other.bufferHandle = 0;
 	}
 
 	/// Move assignment - releases current resource and takes ownership
 	GLBuffer& operator=(GLBuffer&& other) noexcept {
 		if (this != &other) {
 			release();
-			m_handle = other.m_handle;
-			m_target = other.m_target;
-			other.m_handle = 0;
+			bufferHandle = other.bufferHandle;
+			bufferTarget = other.bufferTarget;
+			other.bufferHandle = 0;
 		}
 		return *this;
 	}
 
 	/// Get the raw OpenGL handle
-	[[nodiscard]] GLuint handle() const { return m_handle; }
+	[[nodiscard]] GLuint handle() const { return bufferHandle; }
 
 	/// Check if this buffer is valid (has a GPU resource)
-	[[nodiscard]] bool isValid() const { return m_handle != 0; }
+	[[nodiscard]] bool isValid() const { return bufferHandle != 0; }
 
 	/// Implicit conversion to GLuint for convenience with GL calls
-	operator GLuint() const { return m_handle; } // NOLINT(google-explicit-constructor)
+	operator GLuint() const { return bufferHandle; } // NOLINT(google-explicit-constructor)
 
 	/// Bind this buffer to its target
 	void bind() const {
-		glBindBuffer(m_target, m_handle);
+		glBindBuffer(bufferTarget, bufferHandle);
 	}
 
 	/// Unbind this buffer from its target
 	void unbind() const {
-		glBindBuffer(m_target, 0);
+		glBindBuffer(bufferTarget, 0);
 	}
 
 	/// Release the GPU resource (makes this buffer invalid)
 	void release() {
-		if (m_handle != 0) {
-			glDeleteBuffers(1, &m_handle);
-			m_handle = 0;
+		if (bufferHandle != 0) {
+			glDeleteBuffers(1, &bufferHandle);
+			bufferHandle = 0;
 		}
 	}
 
   private:
-	GLuint m_handle = 0;
-	GLenum m_target = GL_ARRAY_BUFFER;
+	GLuint bufferHandle = 0;
+	GLenum bufferTarget = GL_ARRAY_BUFFER;
 };
 
 } // namespace Renderer

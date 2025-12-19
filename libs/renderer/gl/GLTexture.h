@@ -23,10 +23,10 @@ class GLTexture {
 	/// @param type Data type (e.g., GL_UNSIGNED_BYTE)
 	/// @param data Pointer to pixel data (can be nullptr for uninitialized texture)
 	GLTexture(int width, int height, GLenum internalFormat, GLenum format, GLenum type, const void* data)
-		: m_width(width)
-		, m_height(height) {
-		glGenTextures(1, &m_handle);
-		glBindTexture(GL_TEXTURE_2D, m_handle);
+		: textureWidth(width)
+		, textureHeight(height) {
+		glGenTextures(1, &textureHandle);
+		glBindTexture(GL_TEXTURE_2D, textureHandle);
 		glTexImage2D(GL_TEXTURE_2D, 0, static_cast<GLint>(internalFormat), width, height, 0, format, type, data);
 		// Default filtering - caller can change after construction
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
@@ -47,44 +47,44 @@ class GLTexture {
 
 	/// Move constructor - transfers ownership
 	GLTexture(GLTexture&& other) noexcept
-		: m_handle(other.m_handle)
-		, m_width(other.m_width)
-		, m_height(other.m_height) {
-		other.m_handle = 0;
-		other.m_width = 0;
-		other.m_height = 0;
+		: textureHandle(other.textureHandle)
+		, textureWidth(other.textureWidth)
+		, textureHeight(other.textureHeight) {
+		other.textureHandle = 0;
+		other.textureWidth = 0;
+		other.textureHeight = 0;
 	}
 
 	/// Move assignment - releases current resource and takes ownership
 	GLTexture& operator=(GLTexture&& other) noexcept {
 		if (this != &other) {
 			release();
-			m_handle = other.m_handle;
-			m_width = other.m_width;
-			m_height = other.m_height;
-			other.m_handle = 0;
-			other.m_width = 0;
-			other.m_height = 0;
+			textureHandle = other.textureHandle;
+			textureWidth = other.textureWidth;
+			textureHeight = other.textureHeight;
+			other.textureHandle = 0;
+			other.textureWidth = 0;
+			other.textureHeight = 0;
 		}
 		return *this;
 	}
 
 	/// Get the raw OpenGL handle
-	[[nodiscard]] GLuint handle() const { return m_handle; }
+	[[nodiscard]] GLuint handle() const { return textureHandle; }
 
 	/// Check if this texture is valid (has a GPU resource)
-	[[nodiscard]] bool isValid() const { return m_handle != 0; }
+	[[nodiscard]] bool isValid() const { return textureHandle != 0; }
 
 	/// Get texture dimensions
-	[[nodiscard]] int width() const { return m_width; }
-	[[nodiscard]] int height() const { return m_height; }
+	[[nodiscard]] int width() const { return textureWidth; }
+	[[nodiscard]] int height() const { return textureHeight; }
 
 	/// Implicit conversion to GLuint for convenience with GL calls
-	operator GLuint() const { return m_handle; } // NOLINT(google-explicit-constructor)
+	operator GLuint() const { return textureHandle; } // NOLINT(google-explicit-constructor)
 
 	/// Bind this texture to GL_TEXTURE_2D
 	void bind() const {
-		glBindTexture(GL_TEXTURE_2D, m_handle);
+		glBindTexture(GL_TEXTURE_2D, textureHandle);
 	}
 
 	/// Unbind (bind texture 0)
@@ -94,18 +94,18 @@ class GLTexture {
 
 	/// Release the GPU resource (makes this texture invalid)
 	void release() {
-		if (m_handle != 0) {
-			glDeleteTextures(1, &m_handle);
-			m_handle = 0;
-			m_width = 0;
-			m_height = 0;
+		if (textureHandle != 0) {
+			glDeleteTextures(1, &textureHandle);
+			textureHandle = 0;
+			textureWidth = 0;
+			textureHeight = 0;
 		}
 	}
 
   private:
-	GLuint m_handle = 0;
-	int m_width = 0;
-	int m_height = 0;
+	GLuint textureHandle = 0;
+	int textureWidth = 0;
+	int textureHeight = 0;
 };
 
 } // namespace Renderer

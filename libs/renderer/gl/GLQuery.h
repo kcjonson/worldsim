@@ -19,7 +19,7 @@ class GLQuery {
 	/// Create a query object
 	static GLQuery create() {
 		GLQuery query;
-		glGenQueries(1, &query.m_handle);
+		glGenQueries(1, &query.queryHandle);
 		return query;
 	}
 
@@ -34,32 +34,32 @@ class GLQuery {
 
 	/// Move constructor - transfers ownership
 	GLQuery(GLQuery&& other) noexcept
-		: m_handle(other.m_handle) {
-		other.m_handle = 0;
+		: queryHandle(other.queryHandle) {
+		other.queryHandle = 0;
 	}
 
 	/// Move assignment - releases current resource and takes ownership
 	GLQuery& operator=(GLQuery&& other) noexcept {
 		if (this != &other) {
 			release();
-			m_handle = other.m_handle;
-			other.m_handle = 0;
+			queryHandle = other.queryHandle;
+			other.queryHandle = 0;
 		}
 		return *this;
 	}
 
 	/// Get the raw OpenGL handle
-	[[nodiscard]] GLuint handle() const { return m_handle; }
+	[[nodiscard]] GLuint handle() const { return queryHandle; }
 
 	/// Check if this query is valid (has a GPU resource)
-	[[nodiscard]] bool isValid() const { return m_handle != 0; }
+	[[nodiscard]] bool isValid() const { return queryHandle != 0; }
 
 	/// Implicit conversion to GLuint for convenience with GL calls
-	operator GLuint() const { return m_handle; } // NOLINT(google-explicit-constructor)
+	operator GLuint() const { return queryHandle; } // NOLINT(google-explicit-constructor)
 
 	/// Begin a query (e.g., GL_TIME_ELAPSED)
 	void begin(GLenum target) const {
-		glBeginQuery(target, m_handle);
+		glBeginQuery(target, queryHandle);
 	}
 
 	/// End a query
@@ -70,27 +70,27 @@ class GLQuery {
 	/// Check if result is available
 	[[nodiscard]] bool isResultAvailable() const {
 		GLint available = 0;
-		glGetQueryObjectiv(m_handle, GL_QUERY_RESULT_AVAILABLE, &available);
+		glGetQueryObjectiv(queryHandle, GL_QUERY_RESULT_AVAILABLE, &available);
 		return available != 0;
 	}
 
 	/// Get the query result (blocks if not yet available)
 	[[nodiscard]] GLuint64 getResult() const {
 		GLuint64 result = 0;
-		glGetQueryObjectui64v(m_handle, GL_QUERY_RESULT, &result);
+		glGetQueryObjectui64v(queryHandle, GL_QUERY_RESULT, &result);
 		return result;
 	}
 
 	/// Release the GPU resource (makes this query invalid)
 	void release() {
-		if (m_handle != 0) {
-			glDeleteQueries(1, &m_handle);
-			m_handle = 0;
+		if (queryHandle != 0) {
+			glDeleteQueries(1, &queryHandle);
+			queryHandle = 0;
 		}
 	}
 
   private:
-	GLuint m_handle = 0;
+	GLuint queryHandle = 0;
 };
 
 } // namespace Renderer

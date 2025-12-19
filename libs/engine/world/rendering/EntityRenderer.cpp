@@ -116,7 +116,7 @@ namespace engine::world {
 		int										   viewportHeight
 	) {
 		// Increment frame counter for LRU tracking
-		m_frameCounter++;
+		frameCounter++;
 
 		// --- Phase 1: Build cache for any uncached chunks ---
 		// This happens once per chunk, then the cache is reused every frame.
@@ -601,6 +601,7 @@ namespace engine::world {
 		}
 
 		cache.totalEntityCount = actualEntityCount;
+		cache.lastAccessFrame = frameCounter; // Initialize LRU timestamp for new entry
 		m_chunkInstanceCache[coord] = std::move(cache);
 	}
 
@@ -671,7 +672,7 @@ namespace engine::world {
 			}
 
 			auto& cache = cacheIt->second;
-			cache.lastAccessFrame = m_frameCounter; // Update LRU timestamp
+			cache.lastAccessFrame = frameCounter; // Update LRU timestamp
 			m_lastEntityCount += cache.totalEntityCount;
 
 			// Draw each mesh type in this chunk

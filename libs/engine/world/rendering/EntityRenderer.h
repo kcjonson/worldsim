@@ -80,7 +80,7 @@ class EntityRenderer {
   private:
 	float m_pixelsPerMeter = 16.0F;
 	uint32_t m_lastEntityCount = 0;
-	uint64_t m_frameCounter = 0;  // Incremented each render call (for LRU tracking)
+	uint64_t frameCounter = 0;  // Incremented each render call (for LRU tracking)
 
 	// --- LRU Cache Configuration ---
 	// Keep recently-used chunks cached even when not visible, to avoid re-uploading
