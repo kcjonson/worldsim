@@ -15,6 +15,16 @@ class GLBuffer {
 	/// Default constructor - creates an empty (invalid) buffer handle
 	GLBuffer() = default;
 
+	/// Create an empty buffer (allocates GL resource but doesn't upload data)
+	/// Use this for buffers that will be filled later via glBufferData.
+	/// @param target Buffer target (GL_ARRAY_BUFFER, GL_ELEMENT_ARRAY_BUFFER, etc.)
+	static GLBuffer create(GLenum target) {
+		GLBuffer buffer;
+		buffer.m_target = target;
+		glGenBuffers(1, &buffer.m_handle);
+		return buffer;
+	}
+
 	/// Create and initialize a buffer with data
 	/// @param target Buffer target (GL_ARRAY_BUFFER, GL_ELEMENT_ARRAY_BUFFER, etc.)
 	/// @param size Size of data in bytes

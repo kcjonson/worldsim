@@ -5,6 +5,8 @@
 // These structures define the per-instance data uploaded to the GPU
 // for instanced rendering of entities.
 
+#include "gl/GLBuffer.h"
+#include "gl/GLVertexArray.h"
 #include "graphics/Color.h"
 #include "math/Types.h"
 #include <GL/glew.h>
@@ -48,17 +50,30 @@ static_assert(alignof(InstanceData) == 16, "InstanceData must be 16-byte aligned
 
 /// Handle to a mesh uploaded for instanced rendering.
 /// Created by BatchRenderer::uploadInstancedMesh(), released by releaseInstancedMesh().
+/// Uses RAII for automatic GPU resource cleanup - resources are freed when the handle is destroyed.
+/// Movable but not copyable (GPU resources have single ownership).
 struct InstancedMeshHandle {
-	GLuint	 vao = 0;			 // VAO with mesh + instance attributes configured
-	GLuint	 meshVBO = 0;		 // Vertex buffer for mesh data (static)
-	GLuint	 meshIBO = 0;		 // Index buffer for mesh triangles
-	GLuint	 instanceVBO = 0;	 // Instance data buffer (per-instance, divisor=1)
-	uint32_t indexCount = 0;	 // Number of indices in mesh
-	uint32_t vertexCount = 0;	 // Number of vertices in mesh (for stats)
-	uint32_t maxInstances = 0;	 // Capacity of instance buffer
+	GLVertexArray vao;			 // VAO with mesh + instance attributes configured
+	GLBuffer	  meshVBO;		 // Vertex buffer for mesh data (static)
+	GLBuffer	  meshIBO;		 // Index buffer for mesh triangles
+	GLBuffer	  instanceVBO;	 // Instance data buffer (per-instance, divisor=1)
+	uint32_t	  indexCount = 0;	 // Number of indices in mesh
+	uint32_t	  vertexCount = 0;	 // Number of vertices in mesh (for stats)
+	uint32_t	  maxInstances = 0;	 // Capacity of instance buffer
+
+	// Default constructor - creates an invalid handle
+	InstancedMeshHandle() = default;
+
+	// Non-copyable (RAII wrappers are non-copyable)
+	InstancedMeshHandle(const InstancedMeshHandle&) = delete;
+	InstancedMeshHandle& operator=(const InstancedMeshHandle&) = delete;
+
+	// Movable
+	InstancedMeshHandle(InstancedMeshHandle&&) = default;
+	InstancedMeshHandle& operator=(InstancedMeshHandle&&) = default;
 
 	/// Check if this handle is valid (has GPU resources)
-	[[nodiscard]] bool isValid() const { return vao != 0; }
+	[[nodiscard]] bool isValid() const { return vao.isValid(); }
 };
 
 /// Vertex format for instanced meshes (simpler than UberVertex)

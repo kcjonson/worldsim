@@ -71,12 +71,12 @@ namespace Renderer {
 				  << " u_viewportSize=" << viewportSizeLoc << std::endl;
 #endif
 
-		// Create VAO/VBO/IBO
-		glGenVertexArrays(1, &vao);
-		glGenBuffers(1, &vbo);
-		glGenBuffers(1, &ibo);
+		// Create VAO/VBO/IBO using RAII wrappers
+		vao = GLVertexArray::create();
+		vbo = GLBuffer::create(GL_ARRAY_BUFFER);
+		ibo = GLBuffer::create(GL_ELEMENT_ARRAY_BUFFER);
 
-		glBindVertexArray(vao);
+		vao.bind();
 
 		// Set up vertex buffer
 		glBindBuffer(GL_ARRAY_BUFFER, vbo);
@@ -117,22 +117,11 @@ namespace Renderer {
 	}
 
 	void BatchRenderer::shutdown() {
-		if (vao != 0) {
-			glDeleteVertexArrays(1, &vao);
-			vao = 0;
-		}
-
-		if (vbo != 0) {
-			glDeleteBuffers(1, &vbo);
-			vbo = 0;
-		}
-
-		if (ibo != 0) {
-			glDeleteBuffers(1, &ibo);
-			ibo = 0;
-		}
-
-		// Shader cleanup handled by RAII destructor
+		// Release RAII wrappers (GPU resources freed automatically)
+		vao.release();
+		vbo.release();
+		ibo.release();
+		// Shader cleanup handled by its own RAII destructor
 	}
 
 	void BatchRenderer::addQuad( // NOLINT(readability-convert-member-functions-to-static)
@@ -703,12 +692,12 @@ namespace Renderer {
 			meshVertices.push_back(v);
 		}
 
-		// Create VAO for instanced rendering
-		glGenVertexArrays(1, &handle.vao);
-		glBindVertexArray(handle.vao);
+		// Create VAO for instanced rendering (RAII wrapper)
+		handle.vao = GLVertexArray::create();
+		handle.vao.bind();
 
 		// Create mesh VBO (static geometry - uploaded once, reused for all instances)
-		glGenBuffers(1, &handle.meshVBO);
+		handle.meshVBO = GLBuffer::create(GL_ARRAY_BUFFER);
 		glBindBuffer(GL_ARRAY_BUFFER, handle.meshVBO);
 		glBufferData(
 			GL_ARRAY_BUFFER,
@@ -735,8 +724,8 @@ namespace Renderer {
 		// Locations 1, 3, 4, 5 are not enabled - OpenGL provides default vertex attribute values (0,0,0,1)
 		// This is fine because the instanced path only uses position and color
 
-		// Create mesh IBO (index buffer for triangles)
-		glGenBuffers(1, &handle.meshIBO);
+		// Create mesh IBO (index buffer for triangles) - RAII wrapper
+		handle.meshIBO = GLBuffer::create(GL_ELEMENT_ARRAY_BUFFER);
 		glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, handle.meshIBO);
 		glBufferData(
 			GL_ELEMENT_ARRAY_BUFFER,
@@ -747,8 +736,8 @@ namespace Renderer {
 		handle.indexCount = static_cast<uint32_t>(mesh.indices.size());
 		handle.vertexCount = static_cast<uint32_t>(mesh.vertices.size());
 
-		// Create instance VBO (dynamic - updated each frame with per-instance data)
-		glGenBuffers(1, &handle.instanceVBO);
+		// Create instance VBO (dynamic - updated each frame with per-instance data) - RAII wrapper
+		handle.instanceVBO = GLBuffer::create(GL_ARRAY_BUFFER);
 		glBindBuffer(GL_ARRAY_BUFFER, handle.instanceVBO);
 		glBufferData(
 			GL_ARRAY_BUFFER,
@@ -778,21 +767,16 @@ namespace Renderer {
 	}
 
 	void BatchRenderer::releaseInstancedMesh(InstancedMeshHandle& handle) {
-		if (handle.vao != 0) {
-			glDeleteVertexArrays(1, &handle.vao);
-		}
-		if (handle.meshVBO != 0) {
-			glDeleteBuffers(1, &handle.meshVBO);
-		}
-		if (handle.meshIBO != 0) {
-			glDeleteBuffers(1, &handle.meshIBO);
-		}
-		if (handle.instanceVBO != 0) {
-			glDeleteBuffers(1, &handle.instanceVBO);
-		}
+		// RAII wrappers automatically release GPU resources when destroyed or reset
+		handle.vao.release();
+		handle.meshVBO.release();
+		handle.meshIBO.release();
+		handle.instanceVBO.release();
 
-		// Invalidate handle
-		handle = InstancedMeshHandle{};
+		// Reset other fields
+		handle.indexCount = 0;
+		handle.vertexCount = 0;
+		handle.maxInstances = 0;
 	}
 
 	void BatchRenderer::drawInstanced(
@@ -847,9 +831,9 @@ namespace Renderer {
 		}
 		glUniform2f(viewportSizeLoc, logicalWidth, logicalHeight);
 
-		// Bind the instanced mesh VAO
-		glBindVertexArray(handle.vao);
-		glBindBuffer(GL_ARRAY_BUFFER, handle.instanceVBO);
+		// Bind the instanced mesh VAO and instance buffer
+		handle.vao.bind();
+		handle.instanceVBO.bind();
 
 		// Handle overflow by batching multiple draw calls if needed
 		// This ensures all instances render even if count > maxInstances

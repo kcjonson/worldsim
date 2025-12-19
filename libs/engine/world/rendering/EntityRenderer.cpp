@@ -98,7 +98,7 @@ namespace engine::world {
 		auto* batchRenderer = Renderer::Primitives::getBatchRenderer();
 		if (batchRenderer != nullptr && mesh != nullptr) {
 			auto handle = batchRenderer->uploadInstancedMesh(*mesh, kMaxInstancesPerMesh);
-			auto [insertedIt, _] = m_meshHandles.emplace(defName, handle);
+			auto [insertedIt, _] = m_meshHandles.emplace(defName, std::move(handle));
 			return insertedIt->second;
 		}
 

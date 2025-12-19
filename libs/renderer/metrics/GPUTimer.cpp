@@ -9,13 +9,10 @@ namespace Renderer {
 		// Check if timer queries are supported
 		if (GLEW_ARB_timer_query || GLEW_VERSION_3_3) {
 			supported = true;
-			glGenQueries(kQueryCount, queries);
-		}
-	}
-
-	GPUTimer::~GPUTimer() {
-		if (supported && queries[0] != 0) {
-			glDeleteQueries(kQueryCount, queries);
+			// Create query objects using RAII wrappers
+			for (auto& query : queries) {
+				query = GLQuery::create();
+			}
 		}
 	}
 
@@ -28,18 +25,14 @@ namespace Renderer {
 		if (hasResult) {
 			int previousQuery = (currentQuery + 1) % kQueryCount;
 
-			GLint available = 0;
-			glGetQueryObjectiv(queries[previousQuery], GL_QUERY_RESULT_AVAILABLE, &available);
-
-			if (available != 0) {
-				GLuint64 timeNs = 0;
-				glGetQueryObjectui64v(queries[previousQuery], GL_QUERY_RESULT, &timeNs);
+			if (queries[previousQuery].isResultAvailable()) {
+				GLuint64 timeNs = queries[previousQuery].getResult();
 				lastTimeMs = static_cast<float>(timeNs) / 1000000.0F; // ns to ms
 			}
 		}
 
-		// Begin new query
-		glBeginQuery(GL_TIME_ELAPSED, queries[currentQuery]);
+		// Begin new query using RAII wrapper
+		queries[currentQuery].begin(GL_TIME_ELAPSED);
 		inQuery = true;
 	}
 
@@ -48,7 +41,7 @@ namespace Renderer {
 			return;
 		}
 
-		glEndQuery(GL_TIME_ELAPSED);
+		GLQuery::end(GL_TIME_ELAPSED);
 		inQuery = false;
 		hasResult = true;
 

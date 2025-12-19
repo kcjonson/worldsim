@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2025-12-18 (Performance Optimization: RAII Wrappers + LRU Cache)
+Last Updated: 2025-12-19 (Performance Optimization: Consistent RAII Wrappers)
 
 ## Epic/Story/Task Template
 
@@ -228,9 +228,13 @@ Use this template for all work items:
   - [x] Modify render path to use cached data
   - [x] Add cache eviction for unloaded chunks
 - [x] RAII wrappers for OpenGL resources
-  - [x] Create GLBuffer RAII wrapper
-  - [x] Create GLVertexArray RAII wrapper
-  - [x] Update CachedMeshData to use RAII wrappers
+  - [x] Create GLBuffer, GLVertexArray, GLTexture, GLFramebuffer, GLQuery wrappers
+  - [x] Refactor BatchRenderer to use RAII wrappers
+  - [x] Refactor InstancedMeshHandle to use RAII wrappers
+  - [x] Refactor RenderToTexture to use RAII wrappers
+  - [x] Refactor TileTextureAtlas to use RAII wrappers
+  - [x] Refactor GPUTimer to use RAII wrappers
+  - [x] Update EntityRenderer CachedMeshData to use RAII wrappers
 - [x] LRU cache for chunk eviction
   - [x] Add timestamp/access counter to ChunkInstanceCache
   - [x] Keep N recently-used chunks when not visible (kMaxCachedChunks = 64)

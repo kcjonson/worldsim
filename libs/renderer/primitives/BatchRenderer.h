@@ -8,6 +8,8 @@
 //
 // Also provides GPU instancing for efficient rendering of many identical meshes.
 
+#include "gl/GLBuffer.h"
+#include "gl/GLVertexArray.h"
 #include "graphics/Color.h"
 #include "graphics/PrimitiveStyles.h"
 #include "graphics/Rect.h"
@@ -218,10 +220,10 @@ namespace Renderer { // NOLINT(readability-identifier-naming)
 		std::vector<UberVertex>	 vertices;
 		std::vector<uint32_t>	 indices;
 
-		// OpenGL resources
-		GLuint vao = 0;
-		GLuint vbo = 0;
-		GLuint ibo = 0;
+		// OpenGL resources (RAII wrappers for automatic cleanup)
+		GLVertexArray vao;
+		GLBuffer vbo;
+		GLBuffer ibo;
 		Shader shader;
 
 		// Uniform locations (standard batched rendering)

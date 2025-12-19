@@ -2,21 +2,28 @@
 
 // GPUTimer - OpenGL GPU timing via GL_TIME_ELAPSED queries.
 // Uses double-buffering since GPU results are only available after the frame completes.
+// Uses RAII for automatic GPU resource cleanup.
 
-#include <cstdint>
+#include "gl/GLQuery.h"
+#include <array>
 
 namespace Renderer {
 
 /// GPU timer using OpenGL timer queries.
 /// Results are double-buffered - you get the previous frame's time.
+/// Uses RAII wrappers for automatic cleanup.
 class GPUTimer {
   public:
 	GPUTimer();
-	~GPUTimer();
+	~GPUTimer() = default;
 
-	// Non-copyable
+	// Non-copyable (RAII wrappers are non-copyable)
 	GPUTimer(const GPUTimer&) = delete;
 	GPUTimer& operator=(const GPUTimer&) = delete;
+
+	// Movable
+	GPUTimer(GPUTimer&&) noexcept = default;
+	GPUTimer& operator=(GPUTimer&&) noexcept = default;
 
 	/// Enable/disable GPU timing (disabled by default to avoid driver overhead)
 	void setEnabled(bool value) { enabled = value; }
@@ -38,7 +45,7 @@ class GPUTimer {
   private:
 	static constexpr int kQueryCount = 2; // Double-buffered
 
-	uint32_t queries[kQueryCount]{};
+	std::array<GLQuery, kQueryCount> queries;	// RAII query wrappers
 	int currentQuery{0};
 	float lastTimeMs{0.0F};
 	bool supported{false};
