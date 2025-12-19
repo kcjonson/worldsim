@@ -176,20 +176,10 @@ std::optional<glm::vec2> findToiletLocation(
 	if (bestPosition.has_value()) {
 		LOG_DEBUG(
 			Engine,
-			"[ToiletLocation] Found location at (%.1f, %.1f) with score %.1f (%.0f BioPiles, %.0f food sources nearby)",
+			"[ToiletLocation] Found at (%.1f, %.1f) score=%.1f",
 			bestPosition->x,
 			bestPosition->y,
-			bestScore,
-			static_cast<float>(bioPilePositions.size()),
-			static_cast<float>(foodPositions.size())
-		);
-	} else {
-		LOG_DEBUG(
-			Engine,
-			"[ToiletLocation] No valid location found within %.0fm of (%.1f, %.1f)",
-			searchRadius,
-			colonistPos.x,
-			colonistPos.y
+			bestScore
 		);
 	}
 

@@ -272,22 +272,8 @@ namespace {
 		/// Phase 3: Place entities asynchronously for responsive UI
 		void placeEntities() {
 			// Poll for completed futures (non-blocking)
-			size_t pendingBefore = m_asyncProcessor->pendingCount();
 			size_t completed = m_asyncProcessor->pollCompleted();
 			m_chunksProcessed += static_cast<int>(completed);
-
-			// Debug logging to track progress
-			if (completed > 0) {
-				LOG_DEBUG(
-					Game,
-					"placeEntities: completed=%zu, chunksProcessed=%d/%d, pendingBefore=%zu, pendingAfter=%zu",
-					completed,
-					m_chunksProcessed,
-					kTargetChunks,
-					pendingBefore,
-					m_asyncProcessor->pendingCount()
-				);
-			}
 
 			// Update progress (50-100% for entity placement)
 			m_progress = 0.5F + (static_cast<float>(m_chunksProcessed) / static_cast<float>(kTargetChunks * 2));

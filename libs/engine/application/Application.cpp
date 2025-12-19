@@ -193,7 +193,25 @@ namespace engine {
 			auto renderEnd = std::chrono::high_resolution_clock::now();
 			m_frameTimings.sceneRenderMs = std::chrono::duration<float, std::milli>(renderEnd - renderStart).count();
 
+			// Swap buffers first to submit work to GPU
+			auto swapStart = std::chrono::high_resolution_clock::now();
+			glfwSwapBuffers(window);
+			auto swapEnd = std::chrono::high_resolution_clock::now();
+			m_frameTimings.swapBuffersMs = std::chrono::duration<float, std::milli>(swapEnd - swapStart).count();
+
+			// Frame pacing: yield CPU to prevent starving other processes
+			// Must happen BEFORE postFrameCallback so metrics include sleep time
+			constexpr float kTargetFrameMs = 1000.0F / 120.0F;  // 8.33ms for 120 FPS cap
+			float workMs = m_frameTimings.pollEventsMs + m_frameTimings.inputHandleMs
+			             + m_frameTimings.sceneUpdateMs + m_frameTimings.sceneRenderMs
+			             + m_frameTimings.swapBuffersMs;
+			float sleepMs = kTargetFrameMs - workMs;
+			if (sleepMs > 1.0F) {  // Only sleep if meaningful amount
+				std::this_thread::sleep_for(std::chrono::microseconds(static_cast<int>(sleepMs * 1000.0F)));
+			}
+
 			// Post-frame callback (metrics, screenshot capture, etc.)
+			// Called AFTER sleep so metrics correctly include frame pacing time
 			if (postFrameCallback) {
 				try {
 					postFrameCallback();
@@ -203,27 +221,6 @@ namespace engine {
 					LOG_ERROR(Engine, "Unknown exception in post-frame callback");
 				}
 			}
-
-			// Swap buffers
-			auto swapStart = std::chrono::high_resolution_clock::now();
-			glfwSwapBuffers(window);
-			auto swapEnd = std::chrono::high_resolution_clock::now();
-			m_frameTimings.swapBuffersMs = std::chrono::duration<float, std::milli>(swapEnd - swapStart).count();
-
-			// Frame pacing: cap at 120 FPS to yield CPU to other processes
-			// Without this, the main loop spins at 100% CPU even with vsync,
-			// because the OpenGL driver busy-waits during swapBuffers.
-			constexpr float kTargetFrameMs = 1000.0F / 120.0F; // ~8.33ms
-			float			actualFrameMs = std::chrono::duration<float, std::milli>(swapEnd - pollStart).count();
-
-			// Always yield at least 1ms to prevent CPU starvation of other processes
-			// Then add more sleep if we're under the target frame time
-			constexpr float kMinYieldMs = 1.0F;
-			float			sleepMs = kMinYieldMs;
-			if (actualFrameMs < kTargetFrameMs) {
-				sleepMs = std::max(kMinYieldMs, kTargetFrameMs - actualFrameMs - 0.5F);
-			}
-			std::this_thread::sleep_for(std::chrono::microseconds(static_cast<int>(sleepMs * 1000.0F)));
 		}
 
 		LOG_INFO(Engine, "Application main loop ended");
