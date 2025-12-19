@@ -2,6 +2,11 @@
 
 // Uber Shader - Unified vertex shader for shapes, text, and instanced entities
 // Combines primitive.vert, msdf_text.vert, and GPU instancing functionality
+//
+// Three rendering modes (controlled by u_instanced uniform):
+//   0 = Standard batched path: screen-space positions, pass-through attributes
+//   1 = GPU instancing path: local mesh positions + per-instance transforms
+//   2 = Baked world-space path: pre-transformed world positions → screen space
 
 // Standard vertex attributes (per-vertex data)
 layout(location = 0) in vec2 a_position;   // Screen-space position (or local mesh pos for instancing)

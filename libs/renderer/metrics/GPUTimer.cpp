@@ -33,10 +33,6 @@ namespace Renderer {
 			if (queries[previousQuery].isResultAvailable()) {
 				GLuint64 timeNs = queries[previousQuery].getResult();
 				lastTimeMs = static_cast<float>(timeNs) / 1000000.0F; // ns to ms
-				// Debug: log non-zero times
-				if (lastTimeMs > 0.001F) {
-					LOG_DEBUG(Renderer, "GPUTimer: %0.3fms (query %d)", lastTimeMs, previousQuery);
-				}
 			}
 		}
 
