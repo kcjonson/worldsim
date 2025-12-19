@@ -17,18 +17,18 @@ namespace world_sim {
 
 		// Add input summary if recipe has inputs
 		if (!recipe.inputs.empty()) {
-			std::ostringstream oss;
-			oss << name << " (";
+			std::ostringstream stream;
+			stream << name << " (";
 			bool first = true;
 			for (const auto& input : recipe.inputs) {
 				if (!first) {
-					oss << ", ";
+					stream << ", ";
 				}
-				oss << input.count << "x " << input.defName;
+				stream << input.count << "x " << input.defName;
 				first = false;
 			}
-			oss << ")";
-			return oss.str();
+			stream << ")";
+			return stream.str();
 		}
 
 		return name;
@@ -63,13 +63,13 @@ namespace world_sim {
 			const auto* currentJob = workQueue->getNextJob();
 			if (currentJob != nullptr) {
 				// Show what's being crafted
-				std::ostringstream jobOss;
-				jobOss << currentJob->recipeDefName;
-				jobOss << " (" << currentJob->completed << "/" << currentJob->quantity << ")";
+				std::ostringstream jobStream;
+				jobStream << currentJob->recipeDefName;
+				jobStream << " (" << currentJob->completed << "/" << currentJob->quantity << ")";
 				content.slots.push_back(
 					TextSlot{
 						.label = "Crafting",
-						.value = jobOss.str(),
+						.value = jobStream.str(),
 					}
 				);
 
@@ -85,12 +85,12 @@ namespace world_sim {
 			// Show total pending if more than current job
 			uint32_t totalPending = workQueue->totalPending();
 			if (totalPending > 1 || (currentJob != nullptr && workQueue->jobs.size() > 1)) {
-				std::ostringstream queueOss;
-				queueOss << totalPending << " items in queue";
+				std::ostringstream queueStream;
+				queueStream << totalPending << " items in queue";
 				content.slots.push_back(
 					TextSlot{
 						.label = "Queue",
-						.value = queueOss.str(),
+						.value = queueStream.str(),
 					}
 				);
 			}
@@ -103,12 +103,12 @@ namespace world_sim {
 			std::vector<std::string> jobStrings;
 			jobStrings.reserve(workQueue->jobs.size());
 			for (const auto& job : workQueue->jobs) {
-				std::ostringstream oss;
-				oss << job.recipeDefName << " x" << job.remaining();
+				std::ostringstream itemStream;
+				itemStream << job.recipeDefName << " x" << job.remaining();
 				if (job.completed > 0) {
-					oss << " (" << job.completed << " done)";
+					itemStream << " (" << job.completed << " done)";
 				}
-				jobStrings.push_back(oss.str());
+				jobStrings.push_back(itemStream.str());
 			}
 
 			content.slots.push_back(

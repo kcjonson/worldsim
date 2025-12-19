@@ -537,9 +537,12 @@ namespace ecs {
 				if (def != nullptr && def->capabilities.harvestable.has_value()) {
 					const auto& harvestCap = def->capabilities.harvestable.value();
 
-					// Calculate yield amount
-					std::uniform_int_distribution<uint32_t> yieldDist(harvestCap.amountMin, harvestCap.amountMax);
-					uint32_t								yieldAmount = yieldDist(m_rng);
+					// Calculate yield amount (skip RNG if range is single value)
+					uint32_t yieldAmount = harvestCap.amountMin;
+					if (harvestCap.amountMax > harvestCap.amountMin) {
+						std::uniform_int_distribution<uint32_t> yieldDist(harvestCap.amountMin, harvestCap.amountMax);
+						yieldAmount = yieldDist(m_rng);
+					}
 
 					action = Action::Harvest(
 						harvestCap.yieldDefName,

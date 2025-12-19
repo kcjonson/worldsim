@@ -66,7 +66,7 @@ namespace ecs {
 			if (needValue < threshold && status != OptionStatus::Satisfied) {
 				return 100.0F + (threshold - needValue);
 			}
-			// Tier 6: Work tasks (Gather Food) - when needValue=100 and threshold=0
+			// Tier 6: Work tasks (Gather Food, Crafting, etc.) - when needValue=100 and threshold=0
 			// This indicates a work task, not a real need - priority 50
 			if (taskType == TaskType::FulfillNeed && needValue >= 100.0F && threshold == 0.0F && status == OptionStatus::Available) {
 				return 50.0F;

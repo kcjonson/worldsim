@@ -45,6 +45,8 @@ class NotificationManager {
 	static constexpr size_t kMaxVisible = 3;
 
 	/// Add a new notification
+	/// @param message The notification text to display
+	/// @param duration How long to show the notification in seconds (default: 4s)
 	void push(const std::string& message, float duration = 4.0F) {
 		m_notifications.push_back({message, std::chrono::steady_clock::now(), duration});
 	}
@@ -56,7 +58,7 @@ class NotificationManager {
 		}
 	}
 
-	/// Get active notifications (most recent first, limited to kMaxVisible)
+	/// Get active notifications (oldest first - FIFO order, limited to kMaxVisible)
 	[[nodiscard]] const std::deque<Notification>& notifications() const { return m_notifications; }
 
 	/// Check if there are any active notifications
