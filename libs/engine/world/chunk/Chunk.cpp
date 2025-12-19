@@ -1,5 +1,6 @@
 #include "Chunk.h"
 
+#include "world/chunk/TileAdjacency.h"
 #include "world/chunk/TilePostProcessor.h"
 #include "world/generation/BiomeDispatcher.h"
 
@@ -27,8 +28,71 @@ namespace engine::world {
 		// Post-process tiles: generate mud near water, compute adjacency
 		TilePostProcessor::process(m_tiles, m_worldSeed);
 
+		// Cache shore tiles (land tiles adjacent to water) for VisionSystem
+		// This avoids iterating all tiles every frame during vision updates
+		computeShoreTiles();
+
+		// Pre-compute rendering data (adjacency masks, neighbors) for ChunkRenderer
+		// This avoids per-frame extraction of adjacency data during rendering
+		computeRenderData();
+
 		// Mark generation complete (release semantics for thread safety)
 		m_generationComplete.store(true, std::memory_order_release);
+	}
+
+	void Chunk::computeShoreTiles() {
+		m_shoreTiles.clear();
+
+		constexpr uint8_t kWaterSurfaceId = static_cast<uint8_t>(Surface::Water);
+
+		for (uint16_t y = 0; y < kChunkSize; ++y) {
+			for (uint16_t x = 0; x < kChunkSize; ++x) {
+				const auto& tile = m_tiles[y * kChunkSize + x];
+
+				// Skip water tiles - we want land tiles adjacent to water
+				if (tile.surface == Surface::Water) {
+					continue;
+				}
+
+				// Check if this land tile has water in any cardinal direction
+				if (TileAdjacency::hasAdjacentSurface(tile.adjacency, kWaterSurfaceId)) {
+					m_shoreTiles.emplace_back(x, y);
+				}
+			}
+		}
+
+		// Shrink to fit to minimize memory usage. Note: this is a non-binding request
+		// but in practice chunks typically have 50-200 shore tiles (~400-1600 bytes),
+		// so the potential excess capacity per chunk is small and bounded.
+		m_shoreTiles.shrink_to_fit();
+	}
+
+	void Chunk::computeRenderData() {
+		for (uint16_t y = 0; y < kChunkSize; ++y) {
+			for (uint16_t x = 0; x < kChunkSize; ++x) {
+				size_t		idx = y * kChunkSize + x;
+				const auto& tile = m_tiles[idx];
+				auto&		render = m_renderData[idx];
+
+				uint8_t surfaceId = static_cast<uint8_t>(tile.surface);
+				render.surfaceId = surfaceId;
+
+				// Pre-compute edge and corner masks
+				render.edgeMask = TileAdjacency::getEdgeMaskByStack(tile.adjacency, surfaceId);
+				render.cornerMask = TileAdjacency::getCornerMaskByStack(tile.adjacency, surfaceId);
+				render.hardEdgeMask = TileAdjacency::getHardEdgeMaskByFamily(tile.adjacency, surfaceId);
+
+				// Pre-extract all neighbor surface IDs
+				render.neighborN = TileAdjacency::getNeighbor(tile.adjacency, TileAdjacency::N);
+				render.neighborE = TileAdjacency::getNeighbor(tile.adjacency, TileAdjacency::E);
+				render.neighborS = TileAdjacency::getNeighbor(tile.adjacency, TileAdjacency::S);
+				render.neighborW = TileAdjacency::getNeighbor(tile.adjacency, TileAdjacency::W);
+				render.neighborNW = TileAdjacency::getNeighbor(tile.adjacency, TileAdjacency::NW);
+				render.neighborNE = TileAdjacency::getNeighbor(tile.adjacency, TileAdjacency::NE);
+				render.neighborSE = TileAdjacency::getNeighbor(tile.adjacency, TileAdjacency::SE);
+				render.neighborSW = TileAdjacency::getNeighbor(tile.adjacency, TileAdjacency::SW);
+			}
+		}
 	}
 
 	const TileData& Chunk::getTile(uint16_t localX, uint16_t localY) const {
@@ -36,7 +100,26 @@ namespace engine::world {
 	}
 
 	void Chunk::setAdjacency(uint16_t localX, uint16_t localY, uint64_t adjacency) {
-		m_tiles[localY * kChunkSize + localX].adjacency = adjacency;
+		size_t idx = localY * kChunkSize + localX;
+		m_tiles[idx].adjacency = adjacency;
+
+		// Update pre-computed render data to match new adjacency
+		const auto& tile = m_tiles[idx];
+		auto&		render = m_renderData[idx];
+		uint8_t		surfaceId = static_cast<uint8_t>(tile.surface);
+
+		render.surfaceId = surfaceId;
+		render.edgeMask = TileAdjacency::getEdgeMaskByStack(adjacency, surfaceId);
+		render.cornerMask = TileAdjacency::getCornerMaskByStack(adjacency, surfaceId);
+		render.hardEdgeMask = TileAdjacency::getHardEdgeMaskByFamily(adjacency, surfaceId);
+		render.neighborN = TileAdjacency::getNeighbor(adjacency, TileAdjacency::N);
+		render.neighborE = TileAdjacency::getNeighbor(adjacency, TileAdjacency::E);
+		render.neighborS = TileAdjacency::getNeighbor(adjacency, TileAdjacency::S);
+		render.neighborW = TileAdjacency::getNeighbor(adjacency, TileAdjacency::W);
+		render.neighborNW = TileAdjacency::getNeighbor(adjacency, TileAdjacency::NW);
+		render.neighborNE = TileAdjacency::getNeighbor(adjacency, TileAdjacency::NE);
+		render.neighborSE = TileAdjacency::getNeighbor(adjacency, TileAdjacency::SE);
+		render.neighborSW = TileAdjacency::getNeighbor(adjacency, TileAdjacency::SW);
 	}
 
 	TileData Chunk::computeTile(uint16_t localX, uint16_t localY) const {

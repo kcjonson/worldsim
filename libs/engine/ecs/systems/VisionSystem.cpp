@@ -12,7 +12,6 @@
 #include "assets/placement/PlacementExecutor.h"
 #include "world/chunk/Chunk.h"
 #include "world/chunk/ChunkManager.h"
-#include "world/chunk/TileAdjacency.h"
 
 #include <utils/Log.h>
 
@@ -87,6 +86,14 @@ namespace ecs {
 	}
 
 	void VisionSystem::update(float /*deltaTime*/) {
+		// Throttle: only run every N frames to reduce CPU overhead
+		// Colonists move ~2-3 tiles/second, so 12 updates/sec is plenty
+		m_frameCounter++;
+		if (m_frameCounter < m_updateInterval) {
+			return;
+		}
+		m_frameCounter = 0;
+
 		if (m_placementExecutor == nullptr || m_processedChunks == nullptr) {
 			return;
 		}
@@ -186,12 +193,10 @@ namespace ecs {
 				}
 			}
 
-			// Scan for shore tiles using pre-computed adjacency data
-			// Shore = land tile with water in any cardinal direction (N/E/S/W)
-			// Much simpler than the old approach of scanning water tiles and checking neighbors
+			// Scan for shore tiles using pre-cached shore tile positions
+			// Shore tiles are pre-computed during chunk generation for O(N) lookup
+			// instead of iterating all ~3600 tiles in vision range every frame
 			if (m_chunkManager != nullptr && m_shoreTileDefNameId != 0) {
-				constexpr uint8_t kWaterSurfaceId = static_cast<uint8_t>(engine::world::Surface::Water);
-
 				for (int32_t cy = chunkMinY; cy <= chunkMaxY; ++cy) {
 					for (int32_t cx = chunkMinX; cx <= chunkMaxX; ++cx) {
 						engine::world::ChunkCoordinate coord{cx, cy};
@@ -203,45 +208,24 @@ namespace ecs {
 
 						auto origin = chunk->worldOrigin();
 
-						// Calculate visible tile range within this chunk
-						int tileMinX = std::max(0, static_cast<int>(std::floor(minX - origin.x)));
-						int tileMaxX =
-							std::min(static_cast<int>(engine::world::kChunkSize) - 1, static_cast<int>(std::floor(maxX - origin.x)));
-						int tileMinY = std::max(0, static_cast<int>(std::floor(minY - origin.y)));
-						int tileMaxY =
-							std::min(static_cast<int>(engine::world::kChunkSize) - 1, static_cast<int>(std::floor(maxY - origin.y)));
+						// Use cached shore tiles instead of iterating all tiles
+						for (const auto& [localX, localY] : chunk->getShoreTiles()) {
+							glm::vec2 shoreWorldPos{
+								origin.x + static_cast<float>(localX) + 0.5F, origin.y + static_cast<float>(localY) + 0.5F
+							};
 
-						// Scan tiles - check adjacency data for water neighbors
-						for (int ty = tileMinY; ty <= tileMaxY; ++ty) {
-							for (int tx = tileMinX; tx <= tileMaxX; ++tx) {
-								auto tile = chunk->getTile(static_cast<uint16_t>(tx), static_cast<uint16_t>(ty));
+							// Check if within sight radius
+							float dx = shoreWorldPos.x - pos.value.x;
+							float dy = shoreWorldPos.y - pos.value.y;
+							if (dx * dx + dy * dy <= sightRadiusSq) {
+								memory.rememberWorldEntity(shoreWorldPos, m_shoreTileDefNameId, m_shoreTileCapabilityMask);
 
-								// Skip water tiles - we want land tiles adjacent to water
-								if (tile.surface == engine::world::Surface::Water) {
-									continue;
-								}
-
-								// Check if this land tile has water in any cardinal direction
-								if (engine::world::TileAdjacency::hasAdjacentSurface(tile.adjacency, kWaterSurfaceId)) {
-									// This is a shore tile!
-									glm::vec2 shoreWorldPos{
-										origin.x + static_cast<float>(tx) + 0.5F, origin.y + static_cast<float>(ty) + 0.5F
-									};
-
-									// Check if within sight radius
-									float dx = shoreWorldPos.x - pos.value.x;
-									float dy = shoreWorldPos.y - pos.value.y;
-									if (dx * dx + dy * dy <= sightRadiusSq) {
-										memory.rememberWorldEntity(shoreWorldPos, m_shoreTileDefNameId, m_shoreTileCapabilityMask);
-
-										// Update permanent knowledge for shore tiles
-										if (knowledge != nullptr && knowledge->learn(m_shoreTileDefNameId)) {
-											// New discovery - check for recipe unlocks (unlikely for shore tiles, but consistent)
-											std::string unlockedRecipe = checkForRecipeUnlock(*knowledge, m_shoreTileDefNameId, registry, recipeRegistry);
-											if (!unlockedRecipe.empty() && m_onRecipeDiscovery) {
-												m_onRecipeDiscovery(unlockedRecipe);
-											}
-										}
+								// Update permanent knowledge for shore tiles
+								if (knowledge != nullptr && knowledge->learn(m_shoreTileDefNameId)) {
+									// New discovery - check for recipe unlocks (unlikely for shore tiles, but consistent)
+									std::string unlockedRecipe = checkForRecipeUnlock(*knowledge, m_shoreTileDefNameId, registry, recipeRegistry);
+									if (!unlockedRecipe.empty() && m_onRecipeDiscovery) {
+										m_onRecipeDiscovery(unlockedRecipe);
 									}
 								}
 							}

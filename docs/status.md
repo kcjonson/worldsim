@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2025-12-19 (Performance Optimization: Consistent RAII Wrappers)
+Last Updated: 2025-12-19 (Performance Optimization: Recover Lost Optimizations)
 
 ## Epic/Story/Task Template
 
@@ -239,6 +239,7 @@ Use this template for all work items:
   - [x] Add timestamp/access counter to ChunkInstanceCache
   - [x] Keep N recently-used chunks when not visible (kMaxCachedChunks = 64)
   - [x] Evict oldest when cache exceeds threshold
+- [x] 120 FPS frame cap (yield CPU to other processes)
 
 ---
 

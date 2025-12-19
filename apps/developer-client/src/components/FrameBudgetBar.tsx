@@ -96,11 +96,9 @@ function FrameBudgetBar({
         </span>
       </div>
 
-      {biggestOffender.ms > 1 && (
-        <div className={styles.insight}>
-          Biggest: <strong>{biggestOffender.name}</strong> ({biggestOffender.percent.toFixed(0)}% of budget)
-        </div>
-      )}
+      <div className={styles.insight} style={{ visibility: biggestOffender.ms > 1 ? 'visible' : 'hidden' }}>
+        Biggest: <strong>{biggestOffender.name}</strong> ({biggestOffender.percent.toFixed(0)}% of budget)
+      </div>
     </div>
   );
 }

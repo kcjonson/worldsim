@@ -127,10 +127,52 @@ namespace ecs {
 				const auto* selected = trace->getSelected();
 				float		newPriority = (selected != nullptr) ? selected->calculatePriority() : 0.0F;
 
+				// Check if the new task is actually different from current task
+				bool isSameTask = false;
+				if (selected != nullptr && task.isActive()) {
+					// Compare task type
+					bool sameType = (task.type == selected->taskType);
+
+					// For wander tasks, same type is enough - don't interrupt just because target changed
+					if (sameType && task.type == TaskType::Wander) {
+						isSameTask = true;
+					} else {
+						bool sameTarget = false;
+						if (selected->targetPosition.has_value()) {
+							const auto& selectedPos = selected->targetPosition.value();
+							// Check that at least one position is non-zero to avoid default (0,0) matches
+							const float selectedLen2 = glm::dot(selectedPos, selectedPos);
+							const float currentLen2 = glm::dot(task.targetPosition, task.targetPosition);
+							if (selectedLen2 > 0.0001F || currentLen2 > 0.0001F) {
+								// Use distance threshold for "same" position (within 0.5 meters)
+								float dist = glm::distance(task.targetPosition, selectedPos);
+								sameTarget = (dist < 0.5F);
+							}
+						}
+						// For gather tasks, also check if targeting same entity
+						bool sameGatherTarget = true;
+						if (selected->taskType == TaskType::Gather) {
+							// Both IDs must be valid (non-zero) to compare
+							if (task.gatherTargetEntityId != 0U && selected->gatherTargetEntityId != 0U) {
+								sameGatherTarget = (task.gatherTargetEntityId == selected->gatherTargetEntityId);
+							} else {
+								// At least one gather target is invalid/unset; treat as different targets
+								sameGatherTarget = false;
+							}
+						}
+						isSameTask = sameType && sameTarget && sameGatherTarget;
+					}
+				}
+
 				// Decision: Should we switch tasks?
+				// Don't switch if it's the same task we're already doing
+				bool shouldSwitch = !isSameTask;
+				if (isSameTask) {
+					task.timeSinceEvaluation = 0.0F; // Reset timer, we did evaluate
+				}
+
 				// If action in progress, check if we can/should interrupt
-				bool shouldSwitch = true;
-				if (hasActiveAction && previousState == TaskState::Arrived) {
+				if (shouldSwitch && hasActiveAction && previousState == TaskState::Arrived) {
 					// Check if action is interruptable at all
 					if (!action->interruptable) {
 						// Biological necessities (Eat, Drink, Toilet) cannot be interrupted
@@ -324,28 +366,33 @@ namespace ecs {
 				}
 			} else if (needType == NeedType::Energy || needType == NeedType::Bladder || needType == NeedType::Digestion) {
 				// Ground fallback for sleep and toilet
-				// If already pursuing this need, preserve the existing target to avoid "chasing"
-				if (alreadyPursuingThisNeed) {
+				// Only do expensive location finding if the need actually needs attention
+				if (!need.needsAttention()) {
+					option.status = OptionStatus::Satisfied;
+					option.targetPosition = position.value;
+					option.distanceToTarget = 0.0F;
+				} else if (alreadyPursuingThisNeed) {
+					// Preserve existing target to avoid "chasing" a moving target
 					option.targetPosition = currentTask.targetPosition;
 					option.distanceToTarget = glm::distance(position.value, currentTask.targetPosition);
-					option.status = need.needsAttention() ? OptionStatus::Available : OptionStatus::Satisfied;
+					option.status = OptionStatus::Available;
 				} else if ((needType == NeedType::Bladder || needType == NeedType::Digestion) && m_chunkManager != nullptr) {
 					// For toilet needs, try smart location finder
 					auto location = findToiletLocation(position.value, *m_chunkManager, *world, memory, m_registry);
 					if (location.has_value()) {
 						option.targetPosition = *location;
 						option.distanceToTarget = glm::distance(position.value, *location);
-						option.status = need.needsAttention() ? OptionStatus::Available : OptionStatus::Satisfied;
+						option.status = OptionStatus::Available;
 					} else {
 						// Fallback to current position
 						option.targetPosition = position.value;
 						option.distanceToTarget = 0.0F;
-						option.status = need.needsAttention() ? OptionStatus::Available : OptionStatus::Satisfied;
+						option.status = OptionStatus::Available;
 					}
 				} else {
 					option.targetPosition = position.value;
 					option.distanceToTarget = 0.0F;
-					option.status = need.needsAttention() ? OptionStatus::Available : OptionStatus::Satisfied;
+					option.status = OptionStatus::Available;
 				}
 			} else {
 				// No source and no fallback
