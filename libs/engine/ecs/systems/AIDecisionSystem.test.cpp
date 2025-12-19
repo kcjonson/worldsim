@@ -16,6 +16,7 @@
 #include "../components/Transform.h"
 
 #include "assets/AssetRegistry.h"
+#include "assets/RecipeRegistry.h"
 
 #include <gtest/gtest.h>
 
@@ -44,7 +45,8 @@ namespace ecs::test {
 			registry.registerTestDefinition(std::move(berryDef));
 
 			// Register system with deterministic RNG seed for reproducible tests
-			world->registerSystem<AIDecisionSystem>(registry, kTestRngSeed);
+			auto& recipeRegistry = engine::assets::RecipeRegistry::Get();
+			world->registerSystem<AIDecisionSystem>(registry, recipeRegistry, kTestRngSeed);
 		}
 
 		void TearDown() override {
@@ -505,7 +507,8 @@ namespace ecs::test {
 		world.reset();
 		world = std::make_unique<World>();
 		auto& registry = engine::assets::AssetRegistry::Get();
-		world->registerSystem<AIDecisionSystem>(registry, kTestRngSeed);
+		auto& recipeRegistry = engine::assets::RecipeRegistry::Get();
+		world->registerSystem<AIDecisionSystem>(registry, recipeRegistry, kTestRngSeed);
 
 		auto colonist2 = createColonist({0.0F, 0.0F});
 		setNeedValue(colonist2, NeedType::Hunger, 100.0F);
@@ -713,8 +716,7 @@ namespace ecs::test {
 		EXPECT_EQ(trace->options.size(), 6u);
 
 		// Verify all need types are present
-		bool hasHunger = false, hasThirst = false, hasEnergy = false, hasBladder = false, hasDigestion = false,
-			 hasWander = false;
+		bool hasHunger = false, hasThirst = false, hasEnergy = false, hasBladder = false, hasDigestion = false, hasWander = false;
 		for (const auto& option : trace->options) {
 			if (option.taskType == TaskType::Wander) {
 				hasWander = true;
@@ -1132,7 +1134,8 @@ namespace ecs::test {
 
 			// Register BOTH systems to test their interaction
 			// This is critical - the bug only manifests when both systems run
-			world->registerSystem<AIDecisionSystem>(registry, kTestRngSeed);
+			auto& recipeRegistry = engine::assets::RecipeRegistry::Get();
+			world->registerSystem<AIDecisionSystem>(registry, recipeRegistry, kTestRngSeed);
 			world->registerSystem<ActionSystem>();
 		}
 
@@ -1152,7 +1155,7 @@ namespace ecs::test {
 			world->addComponent<Memory>(entity, Memory{});
 			world->addComponent<Inventory>(entity, Inventory::createForColonist());
 			world->addComponent<Task>(entity, Task{});
-			world->addComponent<Action>(entity, Action{});		   // Required for ActionSystem
+			world->addComponent<Action>(entity, Action{});				 // Required for ActionSystem
 			world->addComponent<DecisionTrace>(entity, DecisionTrace{}); // Required for priority-based switching
 			return entity;
 		}
@@ -1163,11 +1166,11 @@ namespace ecs::test {
 			needs->get(need).value = value;
 		}
 
-		Task* getTask(EntityID entity) { return world->getComponent<Task>(entity); }
-		Action* getAction(EntityID entity) { return world->getComponent<Action>(entity); }
+		Task*			getTask(EntityID entity) { return world->getComponent<Task>(entity); }
+		Action*			getAction(EntityID entity) { return world->getComponent<Action>(entity); }
 		NeedsComponent* getNeeds(EntityID entity) { return world->getComponent<NeedsComponent>(entity); }
 
-		std::unique_ptr<World> world;
+		std::unique_ptr<World>	  world;
 		static constexpr uint32_t kTestRngSeed = 42;
 	};
 
@@ -1203,8 +1206,8 @@ namespace ecs::test {
 		// We'll update in small increments to observe behavior
 
 		// Store initial state
-		float initialElapsed = action->elapsed;
-		TaskType initialTaskType = task->type;
+		float	   initialElapsed = action->elapsed;
+		TaskType   initialTaskType = task->type;
 		ActionType initialActionType = action->type;
 
 		// Run several frames to complete the action
@@ -1215,8 +1218,7 @@ namespace ecs::test {
 			// BUG CHECK: If the task was re-evaluated and cleared while action in progress,
 			// the action would stop progressing or be replaced
 			if (action->isActive()) {
-				EXPECT_EQ(action->type, initialActionType)
-					<< "Action type changed mid-execution at frame " << i;
+				EXPECT_EQ(action->type, initialActionType) << "Action type changed mid-execution at frame " << i;
 			}
 		}
 
@@ -1255,8 +1257,7 @@ namespace ecs::test {
 		}
 
 		auto* needs = getNeeds(colonist);
-		EXPECT_GT(needs->hunger().value, initialHunger)
-			<< "Hunger should have been restored by eat action";
+		EXPECT_GT(needs->hunger().value, initialHunger) << "Hunger should have been restored by eat action";
 	}
 
 	/// Test that a colonist can complete a full need-fulfill cycle:
@@ -1290,8 +1291,7 @@ namespace ecs::test {
 
 		// After sleep completes, energy should be restored
 		auto* needs = getNeeds(colonist);
-		EXPECT_GT(needs->energy().value, 20.0F)
-			<< "Energy should have been restored by sleep action";
+		EXPECT_GT(needs->energy().value, 20.0F) << "Energy should have been restored by sleep action";
 
 		// And a new task should be assigned (wander, since all needs satisfied)
 		EXPECT_TRUE(task->isActive());
