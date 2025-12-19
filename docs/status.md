@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2025-12-19 (Performance Optimization: Recover Lost Optimizations)
+Last Updated: 2025-12-19 (Performance Optimization Epic Complete)
 
 ## Epic/Story/Task Template
 
@@ -124,41 +124,37 @@ Use this template for all work items:
 
 ---
 
-### ✅ Enhanced Performance Metrics
-**Spec/Documentation:** `.claude/plans/performance-metrics-epic.md`
-**Dependencies:** None
+### ✅ Performance Optimization
+**Spec/Documentation:** `.claude/plans/performance-optimization-epic.md`
+**Dependencies:** Enhanced Performance Metrics (complete)
 **Status:** complete
 
-**Goal:** Add comprehensive performance metrics to developer-client to diagnose performance issues.
+**Goal:** Improve game performance to eliminate lag and stuttering.
 
 **Tasks:**
-- [x] Story 1: Display Existing Timing Breakdown (Quick Win)
-  - [x] Update MetricsData interface to include tileRenderMs, entityRenderMs, updateMs
-  - [x] Add FrameBudgetBar hero component with timing breakdown
-  - [x] Display tileCount and entityCount in StatsRow
-- [x] Story 5: Visible Chunk Count
-  - [x] Add visibleChunkCount to PerformanceMetrics
-  - [x] Track in ChunkRenderer::m_lastChunkCount
-  - [x] Display in developer-client
-- [x] Story 4: Frame Histogram & Spike Detection
-  - [x] Add histogram buckets to PerformanceMetrics (0-8ms, 8-16ms, 16-33ms, 33ms+)
-  - [x] Add spike counters and 1% low FPS
-  - [x] Add FrameHistogram visualization to developer-client
-- [x] Story 2: Per-ECS-System Timing
-  - [x] Add name() pure virtual to ISystem, implemented in all 7 systems
-  - [x] Instrument World::update() to time each system
-  - [x] Add EcsSystemTiming to PerformanceMetrics
-  - [x] Add EcsSystemsBar component to developer-client
-- [x] Story 3: GPU Timing
-  - [x] Create GPUTimer class with GL_TIME_ELAPSED queries
-  - [x] Add gpuRenderMs to PerformanceMetrics
-  - [x] Display GPU time in developer-client (Note: May show 0 on macOS due to deprecated OpenGL)
+- [x] VisionSystem optimization (shore tile caching, throttle to 12Hz)
+- [x] Tile render data caching (pre-compute adjacency masks)
+- [x] Main loop timing breakdown (diagnose swapBuffers bottleneck)
+- [x] Persistent GPU instance buffers (PR #79)
+  - [x] Add ChunkInstanceCache structure to EntityRenderer
+  - [x] Implement per-chunk VAO/VBO caching
+  - [x] Modify render path to use cached data
+  - [x] Add cache eviction for unloaded chunks
+- [x] RAII wrappers for OpenGL resources
+  - [x] Create GLBuffer, GLVertexArray, GLTexture, GLFramebuffer, GLQuery wrappers
+  - [x] Refactor BatchRenderer to use RAII wrappers
+  - [x] Refactor InstancedMeshHandle to use RAII wrappers
+  - [x] Refactor RenderToTexture to use RAII wrappers
+  - [x] Refactor TileTextureAtlas to use RAII wrappers
+  - [x] Refactor GPUTimer to use RAII wrappers
+  - [x] Update EntityRenderer CachedMeshData to use RAII wrappers
+- [x] LRU cache for chunk eviction
+  - [x] Add timestamp/access counter to ChunkInstanceCache
+  - [x] Keep N recently-used chunks when not visible (kMaxCachedChunks = 64)
+  - [x] Evict oldest when cache exceeds threshold
+- [x] 120 FPS frame cap (yield CPU to other processes)
 
-**Result:** Developer-client now provides professional-grade performance profiling:
-- Frame budget visualization with component breakdown
-- Per-ECS-system timing (VisionSystem identified as dominant at ~1.5ms)
-- Frame time histogram and spike detection
-- Compact stat cards and sparkline trends ✅
+**Result:** Game runs smoothly with ~10% CPU usage instead of 100%. VisionSystem reduced from 2.5ms to 0.15ms. swapBuffers reduced from 100ms+ to <5ms. Other applications remain responsive while game runs. ✅
 
 ---
 
@@ -203,43 +199,6 @@ Use this template for all work items:
   - [ ] "Aha" notifications when recipes unlock
   - [ ] Input validation before starting craft
   - [ ] Progress bar for active crafting
-
----
-
-### Performance Optimization
-**Spec/Documentation:** `.claude/plans/performance-optimization-epic.md`
-**Dependencies:** Enhanced Performance Metrics (complete)
-**Status:** in progress
-
-**Goal:** Improve game performance to eliminate lag and stuttering.
-
-**Confirmed bottlenecks (from metrics):**
-- ~~VisionSystem: 1.5ms/frame~~ → Fixed with shore caching + throttling
-- ~~Tile Rendering: 3-5ms/frame~~ → Fixed with render data caching
-- ~~swapBuffers: 100ms+~~ → Fixed with per-chunk instance caching (now <5ms)
-
-**Tasks:**
-- [x] VisionSystem optimization (shore tile caching, throttle to 12Hz)
-- [x] Tile render data caching (pre-compute adjacency masks)
-- [x] Main loop timing breakdown (diagnose swapBuffers bottleneck)
-- [x] Persistent GPU instance buffers (PR #79)
-  - [x] Add ChunkInstanceCache structure to EntityRenderer
-  - [x] Implement per-chunk VAO/VBO caching
-  - [x] Modify render path to use cached data
-  - [x] Add cache eviction for unloaded chunks
-- [x] RAII wrappers for OpenGL resources
-  - [x] Create GLBuffer, GLVertexArray, GLTexture, GLFramebuffer, GLQuery wrappers
-  - [x] Refactor BatchRenderer to use RAII wrappers
-  - [x] Refactor InstancedMeshHandle to use RAII wrappers
-  - [x] Refactor RenderToTexture to use RAII wrappers
-  - [x] Refactor TileTextureAtlas to use RAII wrappers
-  - [x] Refactor GPUTimer to use RAII wrappers
-  - [x] Update EntityRenderer CachedMeshData to use RAII wrappers
-- [x] LRU cache for chunk eviction
-  - [x] Add timestamp/access counter to ChunkInstanceCache
-  - [x] Keep N recently-used chunks when not visible (kMaxCachedChunks = 64)
-  - [x] Evict oldest when cache exceeds threshold
-- [x] 120 FPS frame cap (yield CPU to other processes)
 
 ---
 
