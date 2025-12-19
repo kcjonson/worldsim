@@ -1,5 +1,6 @@
 add_library(foundation
     metrics/PerformanceMetrics.cpp
+    metrics/SystemResources.cpp
     debug/DebugServer.cpp
     utils/Log.cpp
     utils/ResourcePath.cpp

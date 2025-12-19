@@ -39,7 +39,8 @@ namespace Foundation {
 		// ECS system timings
 		json << "\"ecsSystems\":[";
 		for (size_t i = 0; i < ecsSystems.size(); ++i) {
-			if (i > 0) json << ",";
+			if (i > 0)
+				json << ",";
 			json << "{\"name\":\"" << (ecsSystems[i].name ? ecsSystems[i].name : "Unknown")
 				 << "\",\"durationMs\":" << ecsSystems[i].durationMs << "}";
 		}

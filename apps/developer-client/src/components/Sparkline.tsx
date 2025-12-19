@@ -6,6 +6,7 @@ interface SparklineProps {
   unit?: string;
   warningThreshold?: number;
   badThreshold?: number;
+  higherIsBetter?: boolean; // For metrics like FPS where higher = good
 }
 
 function Sparkline({
@@ -13,16 +14,27 @@ function Sparkline({
   values,
   unit = '',
   warningThreshold,
-  badThreshold
+  badThreshold,
+  higherIsBetter = false
 }: SparklineProps) {
   const currentValue = values.length > 0 ? values[values.length - 1] : 0;
 
   // Determine status based on thresholds
+  // For higherIsBetter (e.g., FPS): below bad is bad, below warning is warning
+  // For lowerIsBetter (e.g., frame time): above bad is bad, above warning is warning
   let status: 'ok' | 'warning' | 'bad' = 'ok';
-  if (badThreshold !== undefined && currentValue >= badThreshold) {
-    status = 'bad';
-  } else if (warningThreshold !== undefined && currentValue >= warningThreshold) {
-    status = 'warning';
+  if (higherIsBetter) {
+    if (badThreshold !== undefined && currentValue <= badThreshold) {
+      status = 'bad';
+    } else if (warningThreshold !== undefined && currentValue <= warningThreshold) {
+      status = 'warning';
+    }
+  } else {
+    if (badThreshold !== undefined && currentValue >= badThreshold) {
+      status = 'bad';
+    } else if (warningThreshold !== undefined && currentValue >= warningThreshold) {
+      status = 'warning';
+    }
   }
 
   // Calculate Y-axis range

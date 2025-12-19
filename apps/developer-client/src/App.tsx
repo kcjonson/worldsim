@@ -299,6 +299,8 @@ function App() {
   const entityRenderValues = metricsHistory.map(m => m.entityRenderMs);
   const updateValues = metricsHistory.map(m => m.updateMs);
   const gpuRenderValues = metricsHistory.map(m => m.gpuRenderMs);
+  const memoryValues = metricsHistory.map(m => m.memoryUsedBytes / (1024 * 1024)); // MB
+  const cpuValues = metricsHistory.map(m => m.cpuUsagePercent);
 
   return (
     <div className={styles.appContainer}>
@@ -485,6 +487,7 @@ function App() {
                   values={fpsValues}
                   warningThreshold={55}
                   badThreshold={30}
+                  higherIsBetter={true}
                 />
                 <Sparkline
                   label="Frame"
@@ -524,6 +527,20 @@ function App() {
                 <Sparkline
                   label="Draws"
                   values={drawCallsValues}
+                />
+                <Sparkline
+                  label="Memory"
+                  values={memoryValues}
+                  unit="MB"
+                  warningThreshold={500}
+                  badThreshold={1000}
+                />
+                <Sparkline
+                  label="CPU"
+                  values={cpuValues}
+                  unit="%"
+                  warningThreshold={50}
+                  badThreshold={100}
                 />
               </div>
             </div>

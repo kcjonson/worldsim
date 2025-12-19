@@ -8,6 +8,7 @@
 #include <chrono>
 #include <exception>
 #include <iostream>
+#include <thread>
 
 namespace engine {
 
@@ -208,6 +209,20 @@ namespace engine {
 			glfwSwapBuffers(window);
 			auto swapEnd = std::chrono::high_resolution_clock::now();
 			m_frameTimings.swapBuffersMs = std::chrono::duration<float, std::milli>(swapEnd - swapStart).count();
+
+			// Frame pacing: cap at 120 FPS to yield CPU to other processes
+			// Without this, the main loop spins at 100% CPU even with vsync,
+			// because the OpenGL driver busy-waits during swapBuffers.
+			constexpr float kTargetFrameMs = 1000.0F / 120.0F; // ~8.33ms
+			float			totalFrameMs = m_frameTimings.pollEventsMs + m_frameTimings.inputHandleMs + m_frameTimings.sceneUpdateMs +
+								 m_frameTimings.sceneRenderMs + m_frameTimings.swapBuffersMs;
+
+			if (totalFrameMs < kTargetFrameMs) {
+				float sleepMs = kTargetFrameMs - totalFrameMs - 0.5F; // 0.5ms buffer for scheduling jitter
+				if (sleepMs > 0.0F) {
+					std::this_thread::sleep_for(std::chrono::microseconds(static_cast<int>(sleepMs * 1000.0F)));
+				}
+			}
 		}
 
 		LOG_INFO(Engine, "Application main loop ended");
