@@ -30,7 +30,8 @@ namespace engine::assets {
 		Toilet,		// Entity can be used to relieve bladder
 		Waste,		// Entity is waste (bio pile) - used for clustering toilet locations
 		Carryable,	// Entity can be picked up directly (ground items like stones)
-		Harvestable // Entity can be harvested for items (bushes, plants)
+		Harvestable, // Entity can be harvested for items (bushes, plants)
+		Craftable	// Entity is a crafting station where items can be made
 	};
 
 	/// Quality level for capabilities (affects mood, health effects)
@@ -87,6 +88,13 @@ namespace engine::assets {
 		float		regrowthTime = 0.0F; // Seconds until harvestable again (0 = never, only if not destructive)
 	};
 
+	/// Craftable capability - entity is a crafting station
+	/// Used for workbenches, crafting spots, and other production stations
+	struct CraftableCapability {
+		// For now, this is just a marker capability
+		// Future: could include speed modifiers, quality bonuses, etc.
+	};
+
 	// ─────────────────────────────────────────────────────────────────────────
 	// Item Properties (for entities that can exist in inventory)
 	// Unified model: entities can be "in world" or "in inventory"
@@ -123,11 +131,12 @@ namespace engine::assets {
 		std::optional<WasteCapability>		 waste;
 		std::optional<CarryableCapability>	 carryable;
 		std::optional<HarvestableCapability> harvestable;
+		std::optional<CraftableCapability>	 craftable;
 
 		/// Check if entity has any capabilities
 		[[nodiscard]] bool hasAny() const {
 			return edible.has_value() || drinkable.has_value() || sleepable.has_value() || toilet.has_value() || waste.has_value() ||
-				   carryable.has_value() || harvestable.has_value();
+				   carryable.has_value() || harvestable.has_value() || craftable.has_value();
 		}
 
 		/// Check if entity has a specific capability type
@@ -147,6 +156,8 @@ namespace engine::assets {
 					return carryable.has_value();
 				case CapabilityType::Harvestable:
 					return harvestable.has_value();
+				case CapabilityType::Craftable:
+					return craftable.has_value();
 			}
 			return false;
 		}

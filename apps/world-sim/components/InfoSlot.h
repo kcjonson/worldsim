@@ -43,8 +43,20 @@ struct ClickableTextSlot {
 	std::function<void()> onClick;
 };
 
+/// Recipe card for crafting UI
+/// Displays as a visual card with name, ingredients, and queue button:
+/// ┌────────────────────────────────┐
+/// │ Primitive Axe             [+]  │
+/// │ 2× Stone, 1× Stick             │
+/// └────────────────────────────────┘
+struct RecipeSlot {
+	std::string			  name;		   // Recipe display name (e.g., "Primitive Axe")
+	std::string			  ingredients; // Required inputs (e.g., "2× Stone, 1× Stick")
+	std::function<void()> onQueue;	   // Called when [+] button clicked
+};
+
 /// Union of all slot types - adapters return vectors of these
-using InfoSlot = std::variant<TextSlot, ProgressBarSlot, TextListSlot, SpacerSlot, ClickableTextSlot>;
+using InfoSlot = std::variant<TextSlot, ProgressBarSlot, TextListSlot, SpacerSlot, ClickableTextSlot, RecipeSlot>;
 
 /// Complete panel content description produced by adapters
 struct PanelContent {

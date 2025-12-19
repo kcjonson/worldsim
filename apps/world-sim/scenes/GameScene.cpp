@@ -3,6 +3,7 @@
 #include "../GameWorldState.h"
 #include "../components/GameUI.h"
 #include "../components/GhostRenderer.h"
+#include "../components/NotificationManager.h"
 #include "../components/PlacementMode.h"
 #include "../components/Selection.h"
 #include "SceneTypes.h"
@@ -48,6 +49,7 @@
 #include <ecs/components/Needs.h>
 #include <ecs/components/Task.h>
 #include <ecs/components/Transform.h>
+#include <ecs/components/WorkQueue.h>
 #include <ecs/systems/AIDecisionSystem.h>
 #include <ecs/systems/ActionSystem.h>
 #include <ecs/systems/DynamicEntityRenderSystem.h>
@@ -126,9 +128,7 @@ namespace {
 
 			// Initialize placement mode with callback to spawn entities
 			placementMode = world_sim::PlacementMode{world_sim::PlacementMode::Args{
-				.onPlace = [this](const std::string& defName, Foundation::Vec2 worldPos) {
-					spawnPlacedEntity(defName, worldPos);
-				}
+				.onPlace = [this](const std::string& defName, Foundation::Vec2 worldPos) { spawnPlacedEntity(defName, worldPos); }
 			}};
 
 			// Create unified game UI (contains overlay and info panel)
@@ -138,7 +138,8 @@ namespace {
 				.onSelectionCleared = [this]() { selection = world_sim::NoSelection{}; },
 				.onColonistSelected = [this](ecs::EntityID entityId) { selection = world_sim::ColonistSelection{entityId}; },
 				.onBuildToggle = [this]() { handleBuildToggle(); },
-				.onBuildItemSelected = [this](const std::string& defName) { handleBuildItemSelected(defName); }
+				.onBuildItemSelected = [this](const std::string& defName) { handleBuildItemSelected(defName); },
+				.onQueueRecipe = [this](const std::string& recipeDefName) { handleQueueRecipe(recipeDefName); }
 			});
 
 			// Initial layout pass with consistent DPI scaling
@@ -210,8 +211,8 @@ namespace {
 			// Handle placement mode interaction
 			if (placementMode.state() == world_sim::PlacementState::Placing) {
 				auto mousePos = input.getMousePosition();
-				int logicalW = 0;
-				int logicalH = 0;
+				int	 logicalW = 0;
+				int	 logicalH = 0;
 				Renderer::Primitives::getLogicalViewport(logicalW, logicalH);
 
 				// Update ghost position from mouse
@@ -255,7 +256,11 @@ namespace {
 
 			// Update unified game UI (overlay + info panel)
 			auto& assetRegistry = engine::assets::AssetRegistry::Get();
-			gameUI->update(*m_camera, *m_chunkManager, *ecsWorld, assetRegistry, selection);
+			auto& recipeRegistry = engine::assets::RecipeRegistry::Get();
+			gameUI->update(*m_camera, *m_chunkManager, *ecsWorld, assetRegistry, recipeRegistry, selection);
+
+			// Update notifications (remove expired)
+			m_notifications.update();
 
 			m_lastUpdateMs = elapsedMs(updateStart, Clock::now());
 		}
@@ -291,17 +296,15 @@ namespace {
 			// Render placement ghost preview (if in placing mode)
 			if (placementMode.state() == world_sim::PlacementState::Placing) {
 				ghostRenderer.render(
-					placementMode.selectedDefName(),
-					placementMode.ghostPosition(),
-					*m_camera,
-					w,
-					h,
-					placementMode.isValidPlacement()
+					placementMode.selectedDefName(), placementMode.ghostPosition(), *m_camera, w, h, placementMode.isValidPlacement()
 				);
 			}
 
 			// Render unified game UI (overlay + info panel)
 			gameUI->render();
+
+			// Render notifications on top of everything
+			gameUI->renderNotifications(m_notifications);
 
 			// End GPU timing (query result will be available next frame)
 			m_gpuTimer.end();
@@ -366,22 +369,36 @@ namespace {
 
 			// Register systems in priority order (lower = runs first)
 			auto& assetRegistry = engine::assets::AssetRegistry::Get();
-			ecsWorld->registerSystem<ecs::VisionSystem>();					// Priority 45
-			ecsWorld->registerSystem<ecs::NeedsDecaySystem>();				// Priority 50
-			ecsWorld->registerSystem<ecs::AIDecisionSystem>(assetRegistry); // Priority 60
-			ecsWorld->registerSystem<ecs::MovementSystem>();				// Priority 100
-			ecsWorld->registerSystem<ecs::PhysicsSystem>();					// Priority 200
-			ecsWorld->registerSystem<ecs::ActionSystem>();					// Priority 350
-			ecsWorld->registerSystem<ecs::DynamicEntityRenderSystem>();		// Priority 900
+			auto& recipeRegistry = engine::assets::RecipeRegistry::Get();
+			ecsWorld->registerSystem<ecs::VisionSystem>();									// Priority 45
+			ecsWorld->registerSystem<ecs::NeedsDecaySystem>();								// Priority 50
+			ecsWorld->registerSystem<ecs::AIDecisionSystem>(assetRegistry, recipeRegistry); // Priority 60
+			ecsWorld->registerSystem<ecs::MovementSystem>();								// Priority 100
+			ecsWorld->registerSystem<ecs::PhysicsSystem>();									// Priority 200
+			ecsWorld->registerSystem<ecs::ActionSystem>();									// Priority 350
+			ecsWorld->registerSystem<ecs::DynamicEntityRenderSystem>();						// Priority 900
 
 			// Wire up VisionSystem with placement data for entity queries
 			auto& visionSystem = ecsWorld->getSystem<ecs::VisionSystem>();
 			visionSystem.setPlacementData(m_placementExecutor.get(), &m_processedChunks);
 			visionSystem.setChunkManager(m_chunkManager.get());
 
+			// Wire up "Aha!" notification callback for recipe discoveries
+			visionSystem.setRecipeDiscoveryCallback([this](const std::string& recipeLabel) {
+				m_notifications.push("Aha! Discovered: " + recipeLabel);
+				LOG_INFO(Game, "Recipe discovered: %s", recipeLabel.c_str());
+			});
+
 			// Wire up AIDecisionSystem with chunk manager for toilet location queries
 			auto& aiDecisionSystem = ecsWorld->getSystem<ecs::AIDecisionSystem>();
 			aiDecisionSystem.setChunkManager(m_chunkManager.get());
+
+			// Wire up ActionSystem for "item crafted" notifications
+			auto& actionSystem = ecsWorld->getSystem<ecs::ActionSystem>();
+			actionSystem.setItemCraftedCallback([this](const std::string& itemLabel) {
+				m_notifications.push("Crafted: " + itemLabel);
+				LOG_INFO(Game, "Item crafted notification: %s", itemLabel.c_str());
+			});
 
 			// Spawn initial colonist at map center (0, 0)
 			spawnColonist({0.0F, 0.0F}, "Bob");
@@ -454,20 +471,28 @@ namespace {
 		/// @param viewportWidth Logical viewport width in pixels
 		/// @param viewportHeight Logical viewport height in pixels
 		void renderSelectionIndicator(int viewportWidth, int viewportHeight) {
-			// Only render for colonist selections (world entities don't need in-world highlight)
-			auto* colonistSel = std::get_if<world_sim::ColonistSelection>(&selection);
-			if (colonistSel == nullptr) {
-				return;
+			// Get world position from selection (colonists and stations have ECS positions)
+			glm::vec2 worldPos{0.0F, 0.0F};
+			bool	  hasPosition = false;
+
+			if (auto* colonistSel = std::get_if<world_sim::ColonistSelection>(&selection)) {
+				if (auto* pos = ecsWorld->getComponent<ecs::Position>(colonistSel->entityId)) {
+					worldPos = pos->value;
+					hasPosition = true;
+				}
+			} else if (auto* stationSel = std::get_if<world_sim::CraftingStationSelection>(&selection)) {
+				if (auto* pos = ecsWorld->getComponent<ecs::Position>(stationSel->entityId)) {
+					worldPos = pos->value;
+					hasPosition = true;
+				}
 			}
 
-			// Get entity position
-			auto* pos = ecsWorld->getComponent<ecs::Position>(colonistSel->entityId);
-			if (pos == nullptr) {
+			if (!hasPosition) {
 				return;
 			}
 
 			// Convert world position to screen position (viewport is already in logical coordinates)
-			auto screenPos = m_camera->worldToScreen(pos->value.x, pos->value.y, viewportWidth, viewportHeight, kPixelsPerMeter);
+			auto screenPos = m_camera->worldToScreen(worldPos.x, worldPos.y, viewportWidth, viewportHeight, kPixelsPerMeter);
 
 			// Convert selection radius from world units to screen pixels
 			constexpr float kSelectionRadiusWorld = 1.0F; // 1 meter radius
@@ -494,7 +519,7 @@ namespace {
 		}
 
 		/// Handle entity selection via mouse click.
-		/// Selection priority: 1) ECS colonists, 2) World entities with capabilities
+		/// Selection priority: 1) ECS colonists, 2) ECS stations, 3) World entities with capabilities
 		/// @param screenPos Mouse position in screen coordinates (logical/window coordinates)
 		void handleEntitySelection(glm::vec2 screenPos) {
 			int logicalW = 0;
@@ -529,6 +554,33 @@ namespace {
 				selection = world_sim::ColonistSelection{closestColonist};
 				if (auto* colonist = ecsWorld->getComponent<ecs::Colonist>(closestColonist)) {
 					LOG_INFO(Game, "Selected colonist: %s", colonist->name.c_str());
+				}
+				return;
+			}
+
+			// Priority 1.5: Check ECS stations (entities with WorkQueue - player-placed crafting stations)
+			float		  closestStationDist = kSelectionRadius;
+			ecs::EntityID closestStation = 0;
+
+			for (auto [entity, pos, appearance, workQueue] : ecsWorld->view<ecs::Position, ecs::Appearance, ecs::WorkQueue>()) {
+				float dx = pos.value.x - worldPos.x;
+				float dy = pos.value.y - worldPos.y;
+				float dist = std::sqrt(dx * dx + dy * dy);
+
+				if (dist < closestStationDist) {
+					closestStationDist = dist;
+					closestStation = entity;
+				}
+			}
+
+			if (closestStation != 0) {
+				auto* pos = ecsWorld->getComponent<ecs::Position>(closestStation);
+				auto* appearance = ecsWorld->getComponent<ecs::Appearance>(closestStation);
+				if (pos != nullptr && appearance != nullptr) {
+					selection = world_sim::CraftingStationSelection{
+						closestStation, appearance->defName, Foundation::Vec2{pos->value.x, pos->value.y}
+					};
+					LOG_INFO(Game, "Selected station: %s at (%.1f, %.1f)", appearance->defName.c_str(), pos->value.x, pos->value.y);
 				}
 				return;
 			}
@@ -593,7 +645,7 @@ namespace {
 
 					// Get innate recipes for the build menu
 					auto& recipeRegistry = engine::assets::RecipeRegistry::Get();
-					auto innateRecipes = recipeRegistry.getInnateRecipes();
+					auto  innateRecipes = recipeRegistry.getInnateRecipes();
 
 					std::vector<world_sim::BuildMenuItem> items;
 					for (const auto* recipe : innateRecipes) {
@@ -624,6 +676,28 @@ namespace {
 			LOG_INFO(Game, "Selected '%s' for placement", defName.c_str());
 		}
 
+		/// Handle recipe queue request from crafting station UI.
+		/// Adds a crafting job to the selected station's WorkQueue.
+		void handleQueueRecipe(const std::string& recipeDefName) {
+			// Get currently selected station
+			auto* stationSel = std::get_if<world_sim::CraftingStationSelection>(&selection);
+			if (stationSel == nullptr) {
+				LOG_WARNING(Game, "Cannot queue recipe: no station selected");
+				return;
+			}
+
+			// Get the station's WorkQueue
+			auto* workQueue = ecsWorld->getComponent<ecs::WorkQueue>(stationSel->entityId);
+			if (workQueue == nullptr) {
+				LOG_WARNING(Game, "Cannot queue recipe: station has no WorkQueue");
+				return;
+			}
+
+			// Add the job
+			workQueue->addJob(recipeDefName, 1);
+			LOG_INFO(Game, "Queued recipe '%s' at station '%s'", recipeDefName.c_str(), stationSel->defName.c_str());
+		}
+
 		/// Spawn a placed entity in the world.
 		/// Called when placement mode successfully places an item.
 		void spawnPlacedEntity(const std::string& defName, Foundation::Vec2 worldPos) {
@@ -637,7 +711,16 @@ namespace {
 			ecsWorld->addComponent<ecs::Rotation>(entity, ecs::Rotation{0.0F});
 			ecsWorld->addComponent<ecs::Appearance>(entity, ecs::Appearance{defName, 1.0F, {1.0F, 1.0F, 1.0F, 1.0F}});
 
-			LOG_INFO(Game, "Spawned '%s' at (%.1f, %.1f)", defName.c_str(), worldPos.x, worldPos.y);
+			// Check if this is a crafting station (has craftable capability)
+			// If so, add WorkQueue component for job management
+			auto&		assetRegistry = engine::assets::AssetRegistry::Get();
+			const auto* assetDef = assetRegistry.getDefinition(defName);
+			if (assetDef != nullptr && assetDef->capabilities.craftable.has_value()) {
+				ecsWorld->addComponent<ecs::WorkQueue>(entity, ecs::WorkQueue{});
+				LOG_INFO(Game, "Spawned station '%s' at (%.1f, %.1f) with WorkQueue", defName.c_str(), worldPos.x, worldPos.y);
+			} else {
+				LOG_INFO(Game, "Spawned '%s' at (%.1f, %.1f)", defName.c_str(), worldPos.x, worldPos.y);
+			}
 		}
 
 		std::unique_ptr<engine::world::ChunkManager>	   m_chunkManager;
@@ -669,6 +752,9 @@ namespace {
 
 		// Ghost renderer for placement preview
 		world_sim::GhostRenderer ghostRenderer;
+
+		// Toast notifications for "Aha" moments
+		world_sim::NotificationManager m_notifications;
 	};
 
 } // namespace

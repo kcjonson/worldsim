@@ -11,6 +11,7 @@ add_executable(world-sim
     components/GhostRenderer.cpp
     components/NeedBar.cpp
     components/PlacementMode.cpp
+    components/CraftingAdapter.cpp
     components/SelectionAdapter.cpp
     components/TaskListPanel.cpp
     components/ZoomControl.cpp

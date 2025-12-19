@@ -22,6 +22,8 @@ namespace world_sim {
 				} else if constexpr (std::is_same_v<T, WorldEntitySelection>) {
 					return type == Type::WorldEntity && worldEntityDef == sel.defName && worldEntityPos.x == sel.position.x &&
 						   worldEntityPos.y == sel.position.y;
+				} else if constexpr (std::is_same_v<T, CraftingStationSelection>) {
+					return type == Type::CraftingStation && stationId == sel.entityId;
 				}
 				return false;
 			},
@@ -36,18 +38,31 @@ namespace world_sim {
 				if constexpr (std::is_same_v<T, NoSelection>) {
 					type = Type::None;
 					colonistId = ecs::EntityID{0};
+					stationId = ecs::EntityID{0};
 					worldEntityDef.clear();
+					stationDefName.clear();
 					worldEntityPos = {};
 				} else if constexpr (std::is_same_v<T, ColonistSelection>) {
 					type = Type::Colonist;
 					colonistId = sel.entityId;
+					stationId = ecs::EntityID{0};
 					worldEntityDef.clear();
+					stationDefName.clear();
 					worldEntityPos = {};
 				} else if constexpr (std::is_same_v<T, WorldEntitySelection>) {
 					type = Type::WorldEntity;
 					colonistId = ecs::EntityID{0};
+					stationId = ecs::EntityID{0};
 					worldEntityDef = sel.defName;
+					stationDefName.clear();
 					worldEntityPos = sel.position;
+				} else if constexpr (std::is_same_v<T, CraftingStationSelection>) {
+					type = Type::CraftingStation;
+					colonistId = ecs::EntityID{0};
+					stationId = sel.entityId;
+					worldEntityDef.clear();
+					stationDefName = sel.defName;
+					worldEntityPos = {};
 				}
 			},
 			selection
@@ -58,7 +73,8 @@ namespace world_sim {
 		: panelWidth(args.width),
 		  panelX(args.position.x),
 		  onCloseCallback(args.onClose),
-		  onTaskListToggleCallback(args.onTaskListToggle) {
+		  onTaskListToggleCallback(args.onTaskListToggle),
+		  onQueueRecipeCallback(args.onQueueRecipe) {
 
 		contentWidth = panelWidth - (2.0F * kPadding);
 
@@ -230,6 +246,103 @@ namespace world_sim {
 			)
 		);
 
+		// Create recipe card pool (for RecipeSlot)
+		recipeCardHandles.reserve(kMaxRecipeCards);
+		recipeCallbacks.resize(kMaxRecipeCards);
+		recipeButtonBounds.resize(kMaxRecipeCards);
+		for (size_t i = 0; i < kMaxRecipeCards; ++i) {
+			RecipeCardHandles card;
+
+			// Card background
+			card.background = addChild(
+				UI::Rectangle(
+					UI::Rectangle::Args{
+						.position = {args.position.x + kPadding, args.position.y},
+						.size = {contentWidth, kRecipeCardHeight},
+						.style =
+							{.fill = Foundation::Color(0.15F, 0.15F, 0.2F, 0.9F),
+							 .border = Foundation::BorderStyle{.color = Foundation::Color(0.3F, 0.3F, 0.4F, 0.8F), .width = 1.0F}},
+						.zIndex = 1,
+						.id = (args.id + "_recipe_bg_" + std::to_string(i)).c_str()
+					}
+				)
+			);
+
+			// Recipe name text
+			card.nameText = addChild(
+				UI::Text(
+					UI::Text::Args{
+						.position = {args.position.x + kPadding + kRecipeCardPadding, args.position.y},
+						.text = "",
+						.style =
+							{
+								.color = Foundation::Color(0.9F, 0.9F, 0.95F, 1.0F),
+								.fontSize = kRecipeNameFontSize,
+								.hAlign = Foundation::HorizontalAlign::Left,
+								.vAlign = Foundation::VerticalAlign::Top,
+							},
+						.zIndex = 2,
+						.id = (args.id + "_recipe_name_" + std::to_string(i)).c_str()
+					}
+				)
+			);
+
+			// Ingredients text
+			card.ingredientsText = addChild(
+				UI::Text(
+					UI::Text::Args{
+						.position = {args.position.x + kPadding + kRecipeCardPadding, args.position.y},
+						.text = "",
+						.style =
+							{
+								.color = Foundation::Color(0.6F, 0.6F, 0.65F, 1.0F),
+								.fontSize = kRecipeIngredientsFontSize,
+								.hAlign = Foundation::HorizontalAlign::Left,
+								.vAlign = Foundation::VerticalAlign::Top,
+							},
+						.zIndex = 2,
+						.id = (args.id + "_recipe_ingredients_" + std::to_string(i)).c_str()
+					}
+				)
+			);
+
+			// Queue button background [+]
+			card.queueButton = addChild(
+				UI::Rectangle(
+					UI::Rectangle::Args{
+						.position = {args.position.x + contentWidth - kRecipeQueueButtonSize, args.position.y},
+						.size = {kRecipeQueueButtonSize, kRecipeQueueButtonSize},
+						.style =
+							{.fill = Foundation::Color(0.2F, 0.4F, 0.3F, 0.9F),
+							 .border = Foundation::BorderStyle{.color = Foundation::Color(0.3F, 0.6F, 0.4F, 1.0F), .width = 1.0F}},
+						.zIndex = 2,
+						.id = (args.id + "_recipe_btn_" + std::to_string(i)).c_str()
+					}
+				)
+			);
+
+			// Queue button text
+			card.queueButtonText = addChild(
+				UI::Text(
+					UI::Text::Args{
+						.position = {args.position.x + contentWidth - kRecipeQueueButtonSize * 0.5F, args.position.y},
+						.text = "+",
+						.style =
+							{
+								.color = Foundation::Color(0.7F, 0.95F, 0.8F, 1.0F),
+								.fontSize = 14.0F,
+								.hAlign = Foundation::HorizontalAlign::Center,
+								.vAlign = Foundation::VerticalAlign::Middle,
+							},
+						.zIndex = 3,
+						.id = (args.id + "_recipe_btn_text_" + std::to_string(i)).c_str()
+					}
+				)
+			);
+
+			recipeCardHandles.push_back(card);
+		}
+
 		// Create tab bar for colonist selection (hidden initially)
 		// Capture 'this' for callback
 		tabBarHandle = addChild(
@@ -257,14 +370,31 @@ namespace world_sim {
 		hideSlots();
 	}
 
-	void EntityInfoPanel::update(const ecs::World& world, const engine::assets::AssetRegistry& registry, const Selection& selection) {
-		// Check if this is a colonist selection
+	void EntityInfoPanel::update(
+		const ecs::World& world,
+		const engine::assets::AssetRegistry& assetRegistry,
+		const engine::assets::RecipeRegistry& recipeRegistry,
+		const Selection& selection
+	) {
+		// Detect selection types
 		bool		  isColonist = std::holds_alternative<ColonistSelection>(selection);
+		bool		  isStation = std::holds_alternative<CraftingStationSelection>(selection);
 		ecs::EntityID colonistId{0};
+		ecs::EntityID stationId{0};
+		std::string   stationDefName;
+
 		if (isColonist) {
 			colonistId = std::get<ColonistSelection>(selection).entityId;
 			if (!world.isAlive(colonistId)) {
 				isColonist = false;
+			}
+		}
+		if (isStation) {
+			const auto& stationSel = std::get<CraftingStationSelection>(selection);
+			stationId = stationSel.entityId;
+			stationDefName = stationSel.defName;
+			if (!world.isAlive(stationId)) {
+				isStation = false;
 			}
 		}
 
@@ -309,6 +439,17 @@ namespace world_sim {
 					clickableCallback();
 					return;
 				}
+
+				// Check if click is within any recipe button bounds
+				for (size_t i = 0; i < usedRecipeCards; ++i) {
+					const auto& bounds = recipeButtonBounds[i];
+					if (recipeCallbacks[i] &&
+						mousePos.x >= bounds.x && mousePos.x <= bounds.x + bounds.width &&
+						mousePos.y >= bounds.y && mousePos.y <= bounds.y + bounds.height) {
+						recipeCallbacks[i]();
+						return;
+					}
+				}
 			}
 		}
 
@@ -318,6 +459,7 @@ namespace world_sim {
 		}
 
 		// Update tab visibility based on selection type
+		// Only colonists get tabs (Status/Inventory) - stations show combined view
 		bool wasShowingTabs = m_showTabs;
 		m_showTabs = isColonist;
 
@@ -342,10 +484,51 @@ namespace world_sim {
 		// Get content for display
 		PanelContent content;
 		if (isColonist) {
-			content = getContentForActiveTab(world, colonistId);
+			content = getContentForColonistTab(world, colonistId);
+		} else if (isStation) {
+			// Stations show combined status + recipes view (no tabs)
+			content = adaptCraftingStatus(world, stationId, stationDefName);
+			// Add recipes as card items
+			auto recipes = recipeRegistry.getRecipesForStation(stationDefName);
+			if (!recipes.empty()) {
+				content.slots.push_back(SpacerSlot{.height = 8.0F});
+				for (const auto* recipe : recipes) {
+					if (recipe == nullptr) {
+						continue;
+					}
+					// Format recipe name (use label if available)
+					std::string recipeName = recipe->label.empty() ? recipe->defName : recipe->label;
+
+					// Format ingredients list
+					std::string ingredients;
+					if (recipe->inputs.empty()) {
+						ingredients = "No materials required";
+					} else {
+						bool first = true;
+						for (const auto& input : recipe->inputs) {
+							if (!first) {
+								ingredients += ", ";
+							}
+							ingredients += std::to_string(input.count) + "x " + input.defName;
+							first = false;
+						}
+					}
+
+					std::string recipeDefName = recipe->defName;
+					content.slots.push_back(RecipeSlot{
+						.name = recipeName,
+						.ingredients = ingredients,
+						.onQueue = [this, recipeDefName]() {
+							if (onQueueRecipeCallback) {
+								onQueueRecipeCallback(recipeDefName);
+							}
+						},
+					});
+				}
+			}
 		} else {
 			// World entity - use standard adapter
-			auto worldContent = adaptSelection(selection, world, registry, onTaskListToggleCallback);
+			auto worldContent = adaptSelection(selection, world, assetRegistry, onTaskListToggleCallback);
 			if (worldContent.has_value()) {
 				content = std::move(worldContent.value());
 			}
@@ -366,11 +549,17 @@ namespace world_sim {
 		usedTextSlots = 0;
 		usedProgressBars = 0;
 		usedListItems = 0;
+		usedRecipeCards = 0;
 
 		// Clear clickable slot state (will be set if content has ClickableTextSlot)
 		clickableCallback = nullptr;
 		clickableBoundsMin = {};
 		clickableBoundsMax = {};
+
+		// Clear recipe callbacks
+		for (auto& cb : recipeCallbacks) {
+			cb = nullptr;
+		}
 
 		// Hide all pool elements first (will show ones we use)
 		hideSlots();
@@ -395,6 +584,8 @@ namespace world_sim {
 							return s.height;
 						} else if constexpr (std::is_same_v<T, ClickableTextSlot>) {
 							return kTextFontSize + kLineSpacing;
+						} else if constexpr (std::is_same_v<T, RecipeSlot>) {
+							return kRecipeCardHeight + kRecipeCardSpacing;
 						}
 						return 0.0F;
 					},
@@ -495,6 +686,8 @@ namespace world_sim {
 					return renderSpacerSlot(s, yOffset);
 				} else if constexpr (std::is_same_v<T, ClickableTextSlot>) {
 					return renderClickableTextSlot(s, yOffset);
+				} else if constexpr (std::is_same_v<T, RecipeSlot>) {
+					return renderRecipeSlot(s, yOffset);
 				}
 				return 0.0F;
 			},
@@ -576,6 +769,59 @@ namespace world_sim {
 		return kTextFontSize + kLineSpacing;
 	}
 
+	float EntityInfoPanel::renderRecipeSlot(const RecipeSlot& slot, float yOffset) {
+		if (usedRecipeCards >= recipeCardHandles.size()) {
+			return 0.0F;
+		}
+
+		auto& card = recipeCardHandles[usedRecipeCards];
+		float cardX = panelX + kPadding;
+		float buttonX = panelX + kPadding + contentWidth - kRecipeQueueButtonSize - kRecipeCardPadding;
+		float buttonY = yOffset + (kRecipeCardHeight - kRecipeQueueButtonSize) * 0.5F;
+
+		// Position card background
+		if (auto* bg = getChild<UI::Rectangle>(card.background)) {
+			bg->visible = true;
+			bg->position = {cardX, yOffset};
+			bg->size = {contentWidth, kRecipeCardHeight};
+		}
+
+		// Position recipe name (top-left inside card)
+		if (auto* name = getChild<UI::Text>(card.nameText)) {
+			name->visible = true;
+			name->position = {cardX + kRecipeCardPadding, yOffset + kRecipeCardPadding};
+			name->text = slot.name;
+		}
+
+		// Position ingredients (below name, smaller text)
+		if (auto* ingredients = getChild<UI::Text>(card.ingredientsText)) {
+			ingredients->visible = true;
+			ingredients->position = {cardX + kRecipeCardPadding, yOffset + kRecipeCardPadding + kRecipeNameFontSize + 2.0F};
+			ingredients->text = slot.ingredients;
+		}
+
+		// Position queue button [+] (right side, vertically centered)
+		if (auto* btn = getChild<UI::Rectangle>(card.queueButton)) {
+			btn->visible = true;
+			btn->position = {buttonX, buttonY};
+		}
+
+		// Position button text
+		if (auto* btnText = getChild<UI::Text>(card.queueButtonText)) {
+			btnText->visible = true;
+			btnText->position = {buttonX + kRecipeQueueButtonSize * 0.5F, buttonY + kRecipeQueueButtonSize * 0.5F};
+		}
+
+		// Store callback and bounds for click handling
+		recipeCallbacks[usedRecipeCards] = slot.onQueue;
+		recipeButtonBounds[usedRecipeCards] = Foundation::Rect{
+			buttonX, buttonY, kRecipeQueueButtonSize, kRecipeQueueButtonSize
+		};
+
+		++usedRecipeCards;
+		return kRecipeCardHeight + kRecipeCardSpacing;
+	}
+
 	Foundation::Vec2 EntityInfoPanel::getCloseButtonPosition(float panelY) const {
 		return {panelX + panelWidth - kPadding - kCloseButtonSize, panelY + kPadding};
 	}
@@ -631,7 +877,7 @@ namespace world_sim {
 		m_tabChangeRequested = true; // Signal update() to re-render without resetting tab
 	}
 
-	PanelContent EntityInfoPanel::getContentForActiveTab(const ecs::World& world, ecs::EntityID entityId) const {
+	PanelContent EntityInfoPanel::getContentForColonistTab(const ecs::World& world, ecs::EntityID entityId) const {
 		if (m_activeTab == "inventory") {
 			return adaptColonistInventory(world, entityId);
 		}

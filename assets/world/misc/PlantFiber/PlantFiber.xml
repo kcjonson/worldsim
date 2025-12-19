@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Plant Fiber - Harvested from reeds, crafting material
+     Unified entity: exists in world (when dropped) or inventory (when carried)
+     Source: Harvested from Flora_Reed
+-->
+<AssetDefinitions>
+  <AssetDef>
+    <defName>PlantFiber</defName>
+    <label>Plant Fiber</label>
+    <assetType>simple</assetType>
+    <svgPath>plant_fiber.svg</svgPath>
+    <worldHeight>0.2</worldHeight>
+
+    <rendering>
+      <complexity>simple</complexity>
+      <tier>instanced</tier>
+    </rendering>
+
+    <!-- Item properties (when in inventory) -->
+    <item>
+      <stackSize>20</stackSize>
+      <!-- Not edible -->
+    </item>
+
+    <!-- Entity capabilities -->
+    <capabilities>
+      <carryable quantity="1"/>
+    </capabilities>
+
+    <!-- No placement - plant fiber doesn't spawn naturally, it's harvested -->
+  </AssetDef>
+</AssetDefinitions>

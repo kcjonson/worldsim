@@ -34,21 +34,21 @@ namespace ecs {
 		None = 0,
 
 		// Need Fulfillment Actions
-		Eat,	 // Consuming food item from inventory
-		Drink,	 // Drinking from water tile (Pond)
-		Sleep,	 // Sleeping on ground or bed
-		Toilet,	 // Using toilet or ground relief
+		Eat,	// Consuming food item from inventory
+		Drink,	// Drinking from water tile (Pond)
+		Sleep,	// Sleeping on ground or bed
+		Toilet, // Using toilet or ground relief
 
 		// Resource Collection Actions
-		Pickup,	   // Pick up ground item directly into inventory
-		Harvest,   // Harvest from entity (bush, plant) into inventory
+		Pickup,	 // Pick up ground item directly into inventory
+		Harvest, // Harvest from entity (bush, plant) into inventory
 
-		// Work Actions (Phase 2+)
-		// Craft,    // Creating items at workbench
-		// Build,    // Constructing structures
-		// Repair,   // Fixing damaged structures
-		// Haul,     // Moving items
-		// Clean,    // Cleaning areas
+		// Work Actions
+		Craft, // Creating items at workbench
+			   // Build,    // Constructing structures
+			   // Repair,   // Fixing damaged structures
+			   // Haul,     // Moving items
+			   // Clean,    // Cleaning areas
 	};
 
 	/// Action state machine
@@ -141,8 +141,25 @@ namespace ecs {
 		// std::string entityDefName;
 	};
 
+	/// Effect for crafting actions (Craft at station)
+	/// Consumes inputs from inventory and produces outputs.
+	struct CraftingEffect {
+		/// Recipe being crafted
+		std::string recipeDefName;
+
+		/// Station entity ID (for updating WorkQueue)
+		uint64_t stationEntityId = 0;
+
+		/// Input items to consume (defName -> count)
+		std::vector<std::pair<std::string, uint32_t>> inputs;
+
+		/// Output items to produce (defName -> count)
+		std::vector<std::pair<std::string, uint32_t>> outputs;
+	};
+
 	/// Variant holding the effect data for the current action
-	using ActionEffect = std::variant<std::monostate, NeedEffect, CollectionEffect, ConsumptionEffect, ProgressEffect, SpawnEffect>;
+	using ActionEffect =
+		std::variant<std::monostate, NeedEffect, CollectionEffect, ConsumptionEffect, ProgressEffect, SpawnEffect, CraftingEffect>;
 
 	// ============================================================================
 	// Action Component
@@ -218,6 +235,13 @@ namespace ecs {
 		/// Get the consumption effect
 		[[nodiscard]] const ConsumptionEffect& consumptionEffect() const { return std::get<ConsumptionEffect>(effect); }
 		[[nodiscard]] ConsumptionEffect&	   consumptionEffect() { return std::get<ConsumptionEffect>(effect); }
+
+		/// Check if this action has a crafting effect
+		[[nodiscard]] bool hasCraftingEffect() const { return std::holds_alternative<CraftingEffect>(effect); }
+
+		/// Get the crafting effect
+		[[nodiscard]] const CraftingEffect& craftingEffect() const { return std::get<CraftingEffect>(effect); }
+		[[nodiscard]] CraftingEffect&		craftingEffect() { return std::get<CraftingEffect>(effect); }
 
 		// --- Mutation methods ---
 
@@ -357,12 +381,11 @@ namespace ecs {
 		/// @param quantity Number of items to pick up
 		/// @param sourcePos Position of the source entity
 		/// @param sourceDefName DefName of the source entity (for removal)
-		static Action Pickup(const std::string& itemDefName, uint32_t quantity, glm::vec2 sourcePos,
-							 const std::string& sourceDefName) {
+		static Action Pickup(const std::string& itemDefName, uint32_t quantity, glm::vec2 sourcePos, const std::string& sourceDefName) {
 			Action action;
 			action.type = ActionType::Pickup;
 			action.state = ActionState::Starting;
-			action.duration = 0.5F;		  // Quick pickup
+			action.duration = 0.5F; // Quick pickup
 			action.targetPosition = sourcePos;
 			action.interruptable = false; // Don't interrupt mid-pickup
 
@@ -386,9 +409,15 @@ namespace ecs {
 		/// @param sourceDefName DefName of the source entity
 		/// @param destructive If true, entity is destroyed after harvest
 		/// @param regrowthTime If not destructive, time until harvestable again
-		static Action Harvest(const std::string& itemDefName, uint32_t quantity, float harvestDuration,
-							  glm::vec2 sourcePos, const std::string& sourceDefName, bool destructive,
-							  float regrowthTime) {
+		static Action Harvest(
+			const std::string& itemDefName,
+			uint32_t		   quantity,
+			float			   harvestDuration,
+			glm::vec2		   sourcePos,
+			const std::string& sourceDefName,
+			bool			   destructive,
+			float			   regrowthTime
+		) {
 			Action action;
 			action.type = ActionType::Harvest;
 			action.state = ActionState::Starting;
@@ -408,6 +437,39 @@ namespace ecs {
 			return action;
 		}
 
+		/// Factory: Craft action - craft items at a station
+		/// @param recipeDefName Recipe to craft
+		/// @param stationEntityId Entity ID of the crafting station
+		/// @param stationPos Position of the station
+		/// @param workAmount Work ticks to complete (converted to seconds)
+		/// @param inputs Input items to consume (defName -> count)
+		/// @param outputs Output items to produce (defName -> count)
+		static Action Craft(
+			const std::string&									 recipeDefName,
+			uint64_t											 stationEntityId,
+			glm::vec2											 stationPos,
+			float												 workAmount,
+			const std::vector<std::pair<std::string, uint32_t>>& inputs,
+			const std::vector<std::pair<std::string, uint32_t>>& outputs
+		) {
+			Action action;
+			action.type = ActionType::Craft;
+			action.state = ActionState::Starting;
+			// Convert work amount to duration (work ticks -> seconds)
+			constexpr float kWorkTicksPerSecond = 100.0F;
+			action.duration = workAmount / kWorkTicksPerSecond;
+			action.targetPosition = stationPos;
+			action.interruptable = false; // Don't interrupt mid-craft
+
+			CraftingEffect craftEff;
+			craftEff.recipeDefName = recipeDefName;
+			craftEff.stationEntityId = stationEntityId;
+			craftEff.inputs = inputs;
+			craftEff.outputs = outputs;
+			action.effect = craftEff;
+
+			return action;
+		}
 	};
 
 	/// Get human-readable name for action type (for debug logging)
@@ -427,6 +489,8 @@ namespace ecs {
 				return "Pickup";
 			case ActionType::Harvest:
 				return "Harvest";
+			case ActionType::Craft:
+				return "Craft";
 		}
 		return "Unknown";
 	}

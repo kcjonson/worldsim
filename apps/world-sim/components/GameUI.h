@@ -17,10 +17,12 @@
 #include "ColonistListPanel.h"
 #include "EntityInfoPanel.h"
 #include "GameOverlay.h"
+#include "NotificationManager.h"
 #include "Selection.h"
 #include "TaskListPanel.h"
 
 #include <assets/AssetRegistry.h>
+#include <assets/RecipeRegistry.h>
 #include <ecs/World.h>
 #include <graphics/Rect.h>
 #include <world/camera/WorldCamera.h>
@@ -41,6 +43,7 @@ class GameUI {
 		std::function<void(ecs::EntityID)> onColonistSelected;
 		std::function<void()> onBuildToggle;							 ///< Called when build button clicked
 		std::function<void(const std::string&)> onBuildItemSelected; ///< Called when item selected from build menu
+		QueueRecipeCallback onQueueRecipe;								 ///< Called when recipe queued at station
 	};
 
 	explicit GameUI(const Args& args);
@@ -58,12 +61,16 @@ class GameUI {
 		const engine::world::WorldCamera& camera,
 		const engine::world::ChunkManager& chunkManager,
 		ecs::World& ecsWorld,
-		const engine::assets::AssetRegistry& registry,
+		const engine::assets::AssetRegistry& assetRegistry,
+		const engine::assets::RecipeRegistry& recipeRegistry,
 		const Selection& selection
 	);
 
 	/// Render all UI elements
 	void render();
+
+	/// Render notifications (call after render() for proper z-order)
+	void renderNotifications(const NotificationManager& notifications);
 
 	/// Check if a screen position is within any UI element bounds
 	/// @param screenPos Position in logical screen coordinates

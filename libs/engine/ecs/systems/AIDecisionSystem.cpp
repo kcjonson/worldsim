@@ -11,10 +11,13 @@
 #include "../components/Task.h"
 #include "../components/ToiletLocationFinder.h"
 #include "../components/Transform.h"
+#include "../components/WorkQueue.h"
 
 #include "assets/AssetDefinition.h"
 #include "assets/AssetRegistry.h"
 #include "assets/ItemProperties.h"
+#include "assets/RecipeDef.h"
+#include "assets/RecipeRegistry.h"
 #include "world/chunk/ChunkManager.h"
 
 #include <utils/Log.h>
@@ -85,8 +88,13 @@ namespace ecs {
 
 	} // namespace
 
-	AIDecisionSystem::AIDecisionSystem(const engine::assets::AssetRegistry& registry, std::optional<uint32_t> rngSeed)
+	AIDecisionSystem::AIDecisionSystem(
+		const engine::assets::AssetRegistry& registry,
+		const engine::assets::RecipeRegistry& recipeRegistry,
+		std::optional<uint32_t> rngSeed
+	)
 		: m_registry(registry),
+		  m_recipeRegistry(recipeRegistry),
 		  m_rng(rngSeed.value_or(std::random_device{}())) {}
 
 	void AIDecisionSystem::update(float deltaTime) {
@@ -156,95 +164,7 @@ namespace ecs {
 						task.targetPosition.y
 					);
 				}
-				continue;
 			}
-
-			// Fallback: Legacy tier-by-tier evaluation for entities without DecisionTrace
-			// Clear current task and evaluate from scratch
-			task.clear();
-			task.timeSinceEvaluation = 0.0F;
-
-			// Helper to check if task uses ground fallback (target == current position)
-			auto isGroundFallback = [&position](const Task& t) {
-				return t.targetPosition == position.value;
-			};
-
-			// Tier 3: Critical needs (highest priority)
-			if (evaluateCriticalNeeds(entity, needs, memory, task, position)) {
-				movementTarget.target = task.targetPosition;
-				task.priority = 300.0F; // Approximate critical priority
-				// Ground fallback: already at target, set Arrived to avoid infinite re-eval loop
-				if (isGroundFallback(task)) {
-					movementTarget.active = false;
-					task.state = TaskState::Arrived;
-				} else {
-					movementTarget.active = true;
-					task.state = TaskState::Moving;
-				}
-				LOG_INFO(
-					Engine,
-					"[AI] Entity %llu: CRITICAL NEED - %s → (%.1f, %.1f)",
-					static_cast<unsigned long long>(entity),
-					task.reason.c_str(),
-					task.targetPosition.x,
-					task.targetPosition.y
-				);
-				continue;
-			}
-
-			// Tier 5: Actionable needs
-			if (evaluateActionableNeeds(entity, needs, memory, task, position)) {
-				movementTarget.target = task.targetPosition;
-				task.priority = 100.0F; // Approximate actionable priority
-				// Ground fallback: already at target, set Arrived to avoid infinite re-eval loop
-				if (isGroundFallback(task)) {
-					movementTarget.active = false;
-					task.state = TaskState::Arrived;
-				} else {
-					movementTarget.active = true;
-					task.state = TaskState::Moving;
-				}
-				LOG_INFO(
-					Engine,
-					"[AI] Entity %llu: NEED - %s → (%.1f, %.1f)",
-					static_cast<unsigned long long>(entity),
-					task.reason.c_str(),
-					task.targetPosition.x,
-					task.targetPosition.y
-				);
-				continue;
-			}
-
-			// Tier 6: Gather Food (proactive harvesting when no food in inventory)
-			if (evaluateGatherFood(entity, memory, inventory, task, position)) {
-				movementTarget.target = task.targetPosition;
-				movementTarget.active = true;
-				task.state = TaskState::Moving;
-				task.priority = 50.0F; // Work priority (between actionable needs and wander)
-				LOG_INFO(
-					Engine,
-					"[AI] Entity %llu: GATHER FOOD - %s → (%.1f, %.1f)",
-					static_cast<unsigned long long>(entity),
-					task.reason.c_str(),
-					task.targetPosition.x,
-					task.targetPosition.y
-				);
-				continue;
-			}
-
-			// Tier 7: Wander (lowest priority)
-			assignWander(entity, task, position);
-			movementTarget.target = task.targetPosition;
-			movementTarget.active = true;
-			task.state = TaskState::Moving;
-			task.priority = 10.0F; // Wander priority
-			LOG_INFO(
-				Engine,
-				"[AI] Entity %llu: WANDER → (%.1f, %.1f)",
-				static_cast<unsigned long long>(entity),
-				task.targetPosition.x,
-				task.targetPosition.y
-			);
 		}
 	}
 
@@ -298,162 +218,6 @@ namespace ecs {
 		}
 
 		return false;
-	}
-
-	bool AIDecisionSystem::evaluateCriticalNeeds(
-		EntityID /*entity*/,
-		const NeedsComponent& needs,
-		const Memory&		  memory,
-		Task&				  task,
-		const Position&		  position
-	) {
-		// Find the most critical need (lowest value among all critical needs)
-		NeedType mostCritical = NeedType::Count;
-		float	 lowestValue = 100.0F;
-
-		for (auto needType : NeedsComponent::kActionableNeeds) {
-			const auto& need = needs.get(needType);
-
-			if (need.isCritical() && need.value < lowestValue) {
-				mostCritical = needType;
-				lowestValue = need.value;
-			}
-		}
-
-		if (mostCritical == NeedType::Count) {
-			return false; // No critical needs
-		}
-
-		const auto& need = needs.get(mostCritical);
-
-		// Find nearest entity that can fulfill this need
-		auto capability = needToCapability(mostCritical);
-		auto nearest = findNearestWithCapability(memory, m_registry, capability, position.value);
-
-		if (nearest.has_value()) {
-			task.type = TaskType::FulfillNeed;
-			task.needToFulfill = mostCritical;
-			task.targetPosition = nearest->position;
-			task.reason = std::string(needTypeName(mostCritical)) + " CRITICAL at " + std::to_string(static_cast<int>(need.value)) + "%";
-			return true;
-		}
-
-		// For Energy and Bladder/Digestion, use ground as fallback
-		if (mostCritical == NeedType::Energy || mostCritical == NeedType::Bladder || mostCritical == NeedType::Digestion) {
-			task.type = TaskType::FulfillNeed;
-			task.needToFulfill = mostCritical;
-
-			// For toilet needs, use smart location finder
-			if ((mostCritical == NeedType::Bladder || mostCritical == NeedType::Digestion) && m_chunkManager != nullptr) {
-				auto location = findToiletLocation(position.value, *m_chunkManager, *world, memory, m_registry);
-				if (location.has_value()) {
-					task.targetPosition = *location;
-					task.reason = std::string(needTypeName(mostCritical)) + " CRITICAL - smart location at " +
-								  std::to_string(static_cast<int>(need.value)) + "%";
-					return true;
-				}
-			}
-
-			// Fallback: use current position (ground)
-			task.targetPosition = position.value;
-			task.reason = std::string(needTypeName(mostCritical)) + " CRITICAL - using ground at " +
-						  std::to_string(static_cast<int>(need.value)) + "%";
-			return true;
-		}
-
-		return false;
-	}
-
-	bool AIDecisionSystem::evaluateActionableNeeds(
-		EntityID /*entity*/,
-		const NeedsComponent& needs,
-		const Memory&		  memory,
-		Task&				  task,
-		const Position&		  position
-	) {
-		// Find the most urgent need that needs attention
-		NeedType urgentNeed = needs.mostUrgentNeed();
-
-		if (urgentNeed == NeedType::Count) {
-			return false; // No needs require attention
-		}
-
-		const auto& need = needs.get(urgentNeed);
-
-		// Find nearest entity that can fulfill this need
-		auto capability = needToCapability(urgentNeed);
-		auto nearest = findNearestWithCapability(memory, m_registry, capability, position.value);
-
-		if (nearest.has_value()) {
-			task.type = TaskType::FulfillNeed;
-			task.needToFulfill = urgentNeed;
-			task.targetPosition = nearest->position;
-			task.reason = std::string(needTypeName(urgentNeed)) + " at " + std::to_string(static_cast<int>(need.value)) + "%";
-			return true;
-		}
-
-		// For Energy and Bladder/Digestion, use ground as fallback
-		if (urgentNeed == NeedType::Energy || urgentNeed == NeedType::Bladder || urgentNeed == NeedType::Digestion) {
-			task.type = TaskType::FulfillNeed;
-			task.needToFulfill = urgentNeed;
-
-			// For toilet needs, use smart location finder
-			if ((urgentNeed == NeedType::Bladder || urgentNeed == NeedType::Digestion) && m_chunkManager != nullptr) {
-				auto location = findToiletLocation(position.value, *m_chunkManager, *world, memory, m_registry);
-				if (location.has_value()) {
-					task.targetPosition = *location;
-					task.reason = std::string(needTypeName(urgentNeed)) + " - smart location at " +
-								  std::to_string(static_cast<int>(need.value)) + "%";
-					return true;
-				}
-			}
-
-			// Fallback: use current position (ground)
-			task.targetPosition = position.value;
-			task.reason =
-				std::string(needTypeName(urgentNeed)) + " - using ground at " + std::to_string(static_cast<int>(need.value)) + "%";
-			return true;
-		}
-
-		// Could not find fulfillment source, fall through to wander
-		return false;
-	}
-
-	void AIDecisionSystem::assignWander(EntityID /*entity*/, Task& task, const Position& position) {
-		task.type = TaskType::Wander;
-		task.targetPosition = generateWanderTarget(position.value);
-		task.reason = "Wandering (all needs satisfied)";
-	}
-
-	bool AIDecisionSystem::evaluateGatherFood(
-		EntityID /*entity*/,
-		const Memory&	 memory,
-		const Inventory& inventory,
-		Task&			 task,
-		const Position&	 position
-	) {
-		// Already have food, no need to gather more
-		if (hasEdibleFood(inventory)) {
-			return false;
-		}
-
-		// No food in inventory - look for harvestable food sources
-		auto result = findNearestWithCapability(memory, m_registry, engine::assets::CapabilityType::Harvestable, position.value);
-
-		if (!result.has_value()) {
-			// No known harvestable source
-			return false;
-		}
-
-		// Found a harvestable source - assign task to go harvest it
-		// We use FulfillNeed with Hunger as the need type, but since there's no food
-		// in inventory, the ActionSystem will create a Harvest action (not Eat)
-		task.type = TaskType::FulfillNeed;
-		task.needToFulfill = NeedType::Hunger;
-		task.targetPosition = result->position;
-		task.reason = "Gathering food (inventory empty)";
-
-		return true;
 	}
 
 	glm::vec2 AIDecisionSystem::generateWanderTarget(const glm::vec2& currentPos) {
@@ -595,8 +359,29 @@ namespace ecs {
 		// Add "Gather Food" work option (Tier 6)
 		// Only show if colonist has no food in inventory
 		if (!hasEdibleFood(inventory)) {
-			// Look for harvestable food sources
-			auto harvestResult = findNearestWithCapability(memory, m_registry, engine::assets::CapabilityType::Harvestable, position.value);
+			// Look for harvestable food sources that yield EDIBLE items
+			// (not all harvestables yield food - e.g., WoodyBush → Stick, Reed → PlantFiber)
+			std::optional<KnownWorldEntity> edibleHarvestable;
+			float nearestEdibleDist = std::numeric_limits<float>::max();
+
+			for (const auto& [key, entity] : memory.knownWorldEntities) {
+				if (!m_registry.hasCapability(entity.defNameId, engine::assets::CapabilityType::Harvestable)) {
+					continue;
+				}
+				// Check if this harvestable yields edible food
+				const auto& defName = m_registry.getDefName(entity.defNameId);
+				const auto* def = m_registry.getDefinition(defName);
+				if (def != nullptr && def->capabilities.harvestable.has_value()) {
+					const auto& harvestCap = def->capabilities.harvestable.value();
+					if (engine::assets::isItemEdible(harvestCap.yieldDefName)) {
+						float dist = glm::distance(position.value, entity.position);
+						if (dist < nearestEdibleDist) {
+							nearestEdibleDist = dist;
+							edibleHarvestable = KnownWorldEntity{entity.defNameId, entity.position};
+						}
+					}
+				}
+			}
 
 			EvaluatedOption gatherOption;
 			gatherOption.taskType = TaskType::FulfillNeed; // Reuse FulfillNeed for now
@@ -604,9 +389,9 @@ namespace ecs {
 			gatherOption.needValue = 100.0F;			   // Not a real need, just work
 			gatherOption.threshold = 0.0F;				   // Always available when no food
 
-			if (harvestResult.has_value()) {
-				gatherOption.targetPosition = harvestResult->position;
-				gatherOption.distanceToTarget = glm::distance(position.value, harvestResult->position);
+			if (edibleHarvestable.has_value()) {
+				gatherOption.targetPosition = edibleHarvestable->position;
+				gatherOption.distanceToTarget = nearestEdibleDist;
 				gatherOption.status = OptionStatus::Available;
 				gatherOption.reason = "Gathering food (inventory empty)";
 			} else {
@@ -615,6 +400,151 @@ namespace ecs {
 			}
 
 			trace.options.push_back(gatherOption);
+		}
+
+		// Add "Crafting Work" options (Tier 6.5) and "Gather" options (Tier 6.6)
+		// Find all stations with pending work that colonist can do
+		for (auto [stationEntity, stationPos, workQueue] : world->view<Position, WorkQueue>()) {
+			if (!workQueue.hasPendingWork()) {
+				continue;
+			}
+
+			const CraftingJob* nextJob = workQueue.getNextJob();
+			if (nextJob == nullptr) {
+				continue;
+			}
+
+			// Get the recipe
+			const auto* recipe = m_recipeRegistry.getRecipe(nextJob->recipeDefName);
+			if (recipe == nullptr) {
+				continue;
+			}
+
+			// Check if colonist has all required inputs and track missing ones
+			bool hasAllInputs = true;
+			std::vector<std::pair<std::string, uint32_t>> missingInputs; // defName, countNeeded
+			for (const auto& input : recipe->inputs) {
+				uint32_t have = inventory.getQuantity(input.defName);
+				if (have < input.count) {
+					hasAllInputs = false;
+					missingInputs.emplace_back(input.defName, input.count - have);
+				}
+			}
+
+			// PHASE 6.2: Input Validation using Memory
+			// Before adding gather options, verify ALL missing inputs have known sources in memory.
+			// Colonist should only "know" they can craft if they've seen sources for everything.
+			struct GatherSource {
+				std::string inputDefName;
+				KnownWorldEntity source;
+				bool isHarvestable; // true = harvest, false = pickup
+			};
+			std::vector<GatherSource> gatherSources;
+			bool allInputsObtainable = true;
+
+			if (!hasAllInputs) {
+				for (const auto& [inputDefName, countNeeded] : missingInputs) {
+					bool foundSource = false;
+					uint32_t inputDefNameId = m_registry.getDefNameId(inputDefName);
+
+					// Look for Carryable sources (e.g., SmallStone on ground)
+					float nearestCarryDist = std::numeric_limits<float>::max();
+					std::optional<KnownWorldEntity> matchingCarryable;
+					for (const auto& [key, entity] : memory.knownWorldEntities) {
+						if (entity.defNameId == inputDefNameId) {
+							if (m_registry.hasCapability(entity.defNameId, engine::assets::CapabilityType::Carryable)) {
+								float dist = glm::distance(position.value, entity.position);
+								if (dist < nearestCarryDist) {
+									nearestCarryDist = dist;
+									matchingCarryable = KnownWorldEntity{entity.defNameId, entity.position};
+								}
+							}
+						}
+					}
+
+					if (matchingCarryable.has_value()) {
+						gatherSources.push_back({inputDefName, *matchingCarryable, false});
+						foundSource = true;
+					} else {
+						// Look for Harvestable sources that yield this item
+						float nearestHarvestDist = std::numeric_limits<float>::max();
+						std::optional<KnownWorldEntity> harvestableSource;
+						for (const auto& [key, entity] : memory.knownWorldEntities) {
+							if (!m_registry.hasCapability(entity.defNameId, engine::assets::CapabilityType::Harvestable)) {
+								continue;
+							}
+							const auto& defName = m_registry.getDefName(entity.defNameId);
+							const auto* def = m_registry.getDefinition(defName);
+							if (def != nullptr && def->capabilities.harvestable.has_value()) {
+								const auto& harvestCap = def->capabilities.harvestable.value();
+								if (harvestCap.yieldDefName == inputDefName) {
+									float dist = glm::distance(position.value, entity.position);
+									if (dist < nearestHarvestDist) {
+										nearestHarvestDist = dist;
+										harvestableSource = KnownWorldEntity{entity.defNameId, entity.position};
+									}
+								}
+							}
+						}
+
+						if (harvestableSource.has_value()) {
+							gatherSources.push_back({inputDefName, *harvestableSource, true});
+							foundSource = true;
+						}
+					}
+
+					if (!foundSource) {
+						// This input has no known source - colonist can't obtain it
+						allInputsObtainable = false;
+						break; // No need to check further
+					}
+				}
+			}
+
+			// Add craft option
+			EvaluatedOption craftOption;
+			craftOption.taskType = TaskType::Craft;
+			craftOption.needType = NeedType::Count; // N/A for crafting
+			craftOption.needValue = 100.0F;			// Not a need
+			craftOption.threshold = 0.0F;
+			craftOption.targetPosition = stationPos.value;
+			craftOption.distanceToTarget = glm::distance(position.value, stationPos.value);
+			craftOption.craftRecipeDefName = nextJob->recipeDefName;
+			craftOption.stationEntityId = static_cast<uint64_t>(stationEntity);
+
+			if (hasAllInputs) {
+				craftOption.status = OptionStatus::Available;
+				craftOption.reason = "Crafting " + recipe->label;
+			} else if (allInputsObtainable) {
+				// Missing materials but colonist knows where to get them all
+				craftOption.status = OptionStatus::NoSource;
+				craftOption.reason = "Crafting " + recipe->label + " (gathering materials)";
+			} else {
+				// Missing materials and colonist doesn't know where to find some
+				craftOption.status = OptionStatus::NoSource;
+				craftOption.reason = "Crafting " + recipe->label + " (unknown sources)";
+			}
+
+			trace.options.push_back(craftOption);
+
+			// Only add gather options if ALL inputs are obtainable
+			// This prevents partial gathering when colonist can't complete the recipe
+			if (!hasAllInputs && allInputsObtainable) {
+				for (const auto& gatherSource : gatherSources) {
+					EvaluatedOption gatherOption;
+					gatherOption.taskType = TaskType::Gather;
+					gatherOption.needType = NeedType::Count;
+					gatherOption.needValue = 100.0F;
+					gatherOption.threshold = 0.0F;
+					gatherOption.targetPosition = gatherSource.source.position;
+					gatherOption.targetDefNameId = gatherSource.source.defNameId;
+					gatherOption.distanceToTarget = glm::distance(position.value, gatherSource.source.position);
+					gatherOption.gatherItemDefName = gatherSource.inputDefName;
+					gatherOption.status = OptionStatus::Available;
+					gatherOption.reason = "Gathering " + gatherSource.inputDefName + " for crafting";
+					trace.options.push_back(gatherOption);
+				}
+			}
 		}
 
 		// Add wander option
@@ -659,6 +589,18 @@ namespace ecs {
 		task.needToFulfill = selected->needType;
 		task.targetPosition = selected->targetPosition.value_or(position.value);
 		task.reason = selected->reason;
+
+		// Copy crafting-specific fields for Craft tasks
+		if (selected->taskType == TaskType::Craft) {
+			task.craftRecipeDefName = selected->craftRecipeDefName;
+			task.targetStationId = selected->stationEntityId;
+		}
+
+		// Copy gathering-specific fields for Gather tasks
+		if (selected->taskType == TaskType::Gather) {
+			task.gatherItemDefName = selected->gatherItemDefName;
+			task.gatherTargetEntityId = selected->gatherTargetEntityId;
+		}
 
 		movementTarget.target = task.targetPosition;
 

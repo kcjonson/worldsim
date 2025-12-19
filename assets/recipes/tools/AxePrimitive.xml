@@ -6,7 +6,7 @@
     <description>A crude axe made from stone and sticks, bound with plant fiber. Used for chopping trees.</description>
 
     <inputs>
-        <input thing="Rock" count="2"/>
+        <input thing="SmallStone" count="2"/>
         <input thing="Stick" count="1"/>
         <input thing="PlantFiber" count="1"/>
     </inputs>
