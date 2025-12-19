@@ -163,6 +163,10 @@ std::vector<std::string> RecipeRegistry::getRecipeNames() const {
     return names;
 }
 
+const std::unordered_map<std::string, RecipeDef>& RecipeRegistry::allRecipes() const {
+    return m_recipes;
+}
+
 size_t RecipeRegistry::size() const {
     return m_recipes.size();
 }

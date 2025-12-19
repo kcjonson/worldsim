@@ -1,12 +1,13 @@
 #include "GameUI.h"
 
 #include <input/InputManager.h>
+#include <primitives/Primitives.h>
 
 namespace world_sim {
 
 namespace {
 	// Layout constants
-	constexpr float kPanelWidth = 180.0F;
+	constexpr float kPanelWidth = 240.0F;
 	constexpr float kTaskListWidth = 360.0F; // 2x info panel
 	constexpr float kPanelPadding = 10.0F;
 	constexpr float kPanelHeight = 148.0F;
@@ -64,7 +65,8 @@ GameUI::GameUI(const Args& args)
 					onSelectionCleared();
 				}
 			},
-		.onTaskListToggle = [this]() { toggleTaskList(); }});
+		.onTaskListToggle = [this]() { toggleTaskList(); },
+		.onQueueRecipe = args.onQueueRecipe});
 
 	// Create task list panel (position set in layout())
 	taskListPanel = std::make_unique<TaskListPanel>(TaskListPanel::Args{
@@ -181,7 +183,8 @@ void GameUI::update(
 	const engine::world::WorldCamera& camera,
 	const engine::world::ChunkManager& chunkManager,
 	ecs::World& ecsWorld,
-	const engine::assets::AssetRegistry& registry,
+	const engine::assets::AssetRegistry& assetRegistry,
+	const engine::assets::RecipeRegistry& recipeRegistry,
 	const Selection& selection
 ) {
 	// Update overlay display values
@@ -215,7 +218,7 @@ void GameUI::update(
 
 	// Update info panel with selection
 	if (infoPanel) {
-		infoPanel->update(ecsWorld, registry, selection);
+		infoPanel->update(ecsWorld, assetRegistry, recipeRegistry, selection);
 	}
 
 	// Update task list panel if expanded
@@ -251,6 +254,72 @@ void GameUI::render() {
 	// Render task list panel if expanded
 	if (taskListExpanded && taskListPanel && taskListPanel->visible) {
 		taskListPanel->render();
+	}
+}
+
+void GameUI::renderNotifications(const NotificationManager& notifications) {
+	if (!notifications.hasNotifications()) {
+		return;
+	}
+
+	// Notification styling
+	constexpr float kPadding = 12.0F;
+	constexpr float kMargin = 8.0F;
+	constexpr float kFontScale = 0.875F; // 14px equivalent (14/16 base)
+	constexpr float kMaxWidth = 300.0F;
+	constexpr float kRightMargin = 20.0F;
+	constexpr float kBottomMargin = 20.0F;
+
+	// Position at bottom-right of screen, stacking upwards
+	float rightEdge = viewportBounds.x + viewportBounds.width - kRightMargin;
+	float currentY = viewportBounds.y + viewportBounds.height - kBottomMargin;
+
+	size_t count = 0;
+	for (const auto& notification : notifications.notifications()) {
+		if (count >= NotificationManager::kMaxVisible) {
+			break;
+		}
+
+		float opacity = notification.opacity();
+		if (opacity <= 0.0F) {
+			continue;
+		}
+
+		// Calculate text bounds
+		float textWidth = std::min(kMaxWidth, notification.message.length() * 7.0F); // Approximate
+		float boxWidth = textWidth + kPadding * 2.0F;
+		float boxHeight = 14.0F + kPadding * 2.0F; // 14px text height
+
+		// Position box at bottom-right, moving up for each notification
+		currentY -= boxHeight;
+
+		// Draw background
+		Foundation::Rect bgRect{
+			rightEdge - boxWidth,
+			currentY,
+			boxWidth,
+			boxHeight
+		};
+
+		Renderer::Primitives::drawRect({
+			.bounds = bgRect,
+			.style = {.fill = {0.15F, 0.15F, 0.2F, 0.9F * opacity}},
+			.id = "notification_bg",
+			.zIndex = 2000
+		});
+
+		// Draw text
+		Renderer::Primitives::drawText({
+			.text = notification.message,
+			.position = {bgRect.x + kPadding, bgRect.y + kPadding},
+			.scale = kFontScale,
+			.color = {1.0F, 1.0F, 0.8F, opacity}, // Warm yellow-white
+			.id = "notification_text",
+			.zIndex = 2001
+		});
+
+		currentY -= kMargin; // Add margin before next notification (stacking upwards)
+		count++;
 	}
 }
 

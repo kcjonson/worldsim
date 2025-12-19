@@ -25,12 +25,19 @@ struct ColonistSelection {
 
 /// A world entity (placed asset) is selected
 struct WorldEntitySelection {
-	std::string		  defName;	// Asset definition name
+	std::string		 defName;  // Asset definition name
+	Foundation::Vec2 position; // World position
+};
+
+/// A crafting station (ECS entity with WorkQueue) is selected
+struct CraftingStationSelection {
+	ecs::EntityID	 entityId; // ECS entity ID
+	std::string		 defName;  // Asset definition name (e.g., "CraftingSpot")
 	Foundation::Vec2 position; // World position
 };
 
 /// Selection variant - represents current selection state
-using Selection = std::variant<NoSelection, ColonistSelection, WorldEntitySelection>;
+using Selection = std::variant<NoSelection, ColonistSelection, WorldEntitySelection, CraftingStationSelection>;
 
 /// Helper to check if selection is empty
 [[nodiscard]] inline bool hasSelection(const Selection& sel) {

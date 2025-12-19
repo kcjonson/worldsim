@@ -12,11 +12,13 @@
 // - Structure tier: Full relayout when different entity selected
 // - Value tier: O(dynamic) update only for progress bars when same entity
 
+#include "CraftingAdapter.h"
 #include "InfoSlot.h"
 #include "NeedBar.h"
 #include "Selection.h"
 
 #include <assets/AssetRegistry.h>
+#include <assets/RecipeRegistry.h>
 #include <component/Component.h>
 #include <components/tabbar/TabBar.h>
 #include <ecs/World.h>
@@ -32,11 +34,13 @@ namespace world_sim {
 
 /// Cached selection identity for detecting structural vs value-only updates
 struct CachedSelection {
-	enum class Type { None, Colonist, WorldEntity };
+	enum class Type { None, Colonist, WorldEntity, CraftingStation };
 
 	Type			  type = Type::None;
 	ecs::EntityID	  colonistId{0};	 // For Colonist selection
+	ecs::EntityID	  stationId{0};		 // For CraftingStation selection
 	std::string		  worldEntityDef;	 // For WorldEntity selection
+	std::string		  stationDefName;	 // For CraftingStation selection
 	Foundation::Vec2 worldEntityPos;	 // For WorldEntity selection
 
 	/// Check if this cache matches the given selection
@@ -55,15 +59,22 @@ class EntityInfoPanel : public UI::Component {
 		std::string			  id = "entity_info";
 		std::function<void()> onClose;			// Called when close button clicked
 		std::function<void()> onTaskListToggle; // Called when task list toggle clicked
+		QueueRecipeCallback   onQueueRecipe;	// Called when recipe is queued at station
 	};
 
 	explicit EntityInfoPanel(const Args& args);
 
 	/// Update panel with current selection
 	/// @param world ECS world (for adapter)
-	/// @param registry Asset registry (for adapter)
+	/// @param assetRegistry Asset registry (for adapter)
+	/// @param recipeRegistry Recipe registry (for crafting stations)
 	/// @param selection Current selection state
-	void update(const ecs::World& world, const engine::assets::AssetRegistry& registry, const Selection& selection);
+	void update(
+		const ecs::World& world,
+		const engine::assets::AssetRegistry& assetRegistry,
+		const engine::assets::RecipeRegistry& recipeRegistry,
+		const Selection& selection
+	);
 
 	/// Check if panel is visible
 	[[nodiscard]] bool isVisible() const { return visible; }
@@ -95,6 +106,7 @@ class EntityInfoPanel : public UI::Component {
 	float renderTextListSlot(const TextListSlot& slot, float yOffset);
 	float renderSpacerSlot(const SpacerSlot& slot, float yOffset);
 	float renderClickableTextSlot(const ClickableTextSlot& slot, float yOffset);
+	float renderRecipeSlot(const RecipeSlot& slot, float yOffset);
 
 	/// Get close button top-left position for current panel position
 	[[nodiscard]] Foundation::Vec2 getCloseButtonPosition(float panelY) const;
@@ -102,8 +114,8 @@ class EntityInfoPanel : public UI::Component {
 	/// Tab change callback - updates content for selected tab
 	void onTabChanged(const std::string& tabId);
 
-	/// Get content for current active tab (colonist only)
-	[[nodiscard]] PanelContent getContentForActiveTab(
+	/// Get content for current active tab (colonist)
+	[[nodiscard]] PanelContent getContentForColonistTab(
 		const ecs::World& world,
 		ecs::EntityID entityId
 	) const;
@@ -111,6 +123,7 @@ class EntityInfoPanel : public UI::Component {
 	// Callbacks
 	std::function<void()> onCloseCallback;
 	std::function<void()> onTaskListToggleCallback;
+	QueueRecipeCallback   onQueueRecipeCallback;
 
 	// Background panel
 	UI::LayerHandle backgroundHandle;
@@ -148,10 +161,24 @@ class EntityInfoPanel : public UI::Component {
 	Foundation::Vec2 clickableBoundsMin;
 	Foundation::Vec2 clickableBoundsMax;
 
+	// Recipe cards (for RecipeSlot)
+	static constexpr size_t kMaxRecipeCards = 8;
+	struct RecipeCardHandles {
+		UI::LayerHandle background;
+		UI::LayerHandle nameText;
+		UI::LayerHandle ingredientsText;
+		UI::LayerHandle queueButton;
+		UI::LayerHandle queueButtonText;
+	};
+	std::vector<RecipeCardHandles> recipeCardHandles;
+	std::vector<std::function<void()>> recipeCallbacks;
+	std::vector<Foundation::Rect> recipeButtonBounds;
+
 	// Pool indices (track which elements are in use)
 	size_t usedTextSlots = 0;
 	size_t usedProgressBars = 0;
 	size_t usedListItems = 0;
+	size_t usedRecipeCards = 0;
 
 	// State (note: visible is inherited from IComponent)
 	float panelWidth;
@@ -173,6 +200,14 @@ class EntityInfoPanel : public UI::Component {
 	static constexpr float kLineSpacing = 4.0F;
 	static constexpr float kCloseButtonSize = 16.0F;
 	static constexpr float kTabBarHeight = 24.0F;  // Height of tab bar when shown
+
+	// Recipe card layout constants
+	static constexpr float kRecipeCardHeight = 58.0F;	  // Total height of recipe card
+	static constexpr float kRecipeCardPadding = 10.0F;	  // Padding inside card
+	static constexpr float kRecipeNameFontSize = 14.0F;	  // Recipe name text size
+	static constexpr float kRecipeIngredientsFontSize = 12.0F; // Ingredients text size
+	static constexpr float kRecipeQueueButtonSize = 32.0F;	  // [+] button size
+	static constexpr float kRecipeCardSpacing = 8.0F;	  // Space between cards
 };
 
 } // namespace world_sim

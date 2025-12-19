@@ -64,6 +64,10 @@ class RecipeRegistry {
     /// @return Vector of recipe names
     [[nodiscard]] std::vector<std::string> getRecipeNames() const;
 
+    /// Get all loaded recipes (for iteration)
+    /// @return Const reference to internal recipe map
+    [[nodiscard]] const std::unordered_map<std::string, RecipeDef>& allRecipes() const;
+
     /// Get count of loaded recipes
     [[nodiscard]] size_t size() const;
 

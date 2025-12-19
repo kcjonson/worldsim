@@ -9,6 +9,8 @@
 
 #include <world/chunk/ChunkCoordinate.h>
 
+#include <functional>
+#include <string>
 #include <unordered_set>
 
 namespace engine::assets {
@@ -44,6 +46,11 @@ class VisionSystem : public ISystem {
 	/// Set the chunk manager for terrain tile queries (shore discovery)
 	void setChunkManager(engine::world::ChunkManager* chunkManager) { m_chunkManager = chunkManager; }
 
+	/// Set callback for recipe discovery notifications ("Aha!" moments)
+	/// Called with recipe label when colonist learns something that unlocks a new recipe
+	using RecipeDiscoveryCallback = std::function<void(const std::string& recipeLabel)>;
+	void setRecipeDiscoveryCallback(RecipeDiscoveryCallback callback) { m_onRecipeDiscovery = std::move(callback); }
+
   private:
 	/// Ensure synthetic terrain definitions are registered (called once on first update)
 	void ensureTerrainDefinitionsRegistered();
@@ -56,6 +63,9 @@ class VisionSystem : public ISystem {
 	uint32_t m_shoreTileDefNameId = 0;
 	uint8_t	 m_shoreTileCapabilityMask = 0;
 	bool	 m_terrainDefsRegistered = false;
+
+	// Callback for recipe discovery notifications
+	RecipeDiscoveryCallback m_onRecipeDiscovery = nullptr;
 };
 
 } // namespace ecs

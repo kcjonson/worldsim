@@ -597,6 +597,12 @@ namespace engine::assets {
 						def.capabilities.harvestable = harvestable;
 					}
 				}
+
+				// Craftable capability (crafting stations)
+				pugi::xml_node craftableNode = capabilitiesNode.child("craftable");
+				if (craftableNode) {
+					def.capabilities.craftable = CraftableCapability{};
+				}
 			}
 
 			// Store base folder for relative path resolution
@@ -972,6 +978,9 @@ namespace engine::assets {
 			}
 			if (def.capabilities.harvestable.has_value()) {
 				mask |= (1 << static_cast<uint8_t>(CapabilityType::Harvestable));
+			}
+			if (def.capabilities.craftable.has_value()) {
+				mask |= (1 << static_cast<uint8_t>(CapabilityType::Craftable));
 			}
 			m_capabilityMasks.push_back(mask);
 

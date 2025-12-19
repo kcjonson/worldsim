@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100">
+  <!-- Plant Fiber - Top-down view (~0.2m bundle) -->
+  <!-- A small bundle of dried reed fibers -->
+
+  <!-- Background fiber strands (tan/dried) -->
+  <path d="M20,35 Q50,30 80,38" stroke="#C4A86B" stroke-width="3" fill="none"/>
+  <path d="M18,42 Q52,35 82,45" stroke="#B89B5E" stroke-width="2.5" fill="none"/>
+  <path d="M22,50 Q48,45 78,52" stroke="#C4A86B" stroke-width="3" fill="none"/>
+  <path d="M20,58 Q50,52 80,60" stroke="#B89B5E" stroke-width="2.5" fill="none"/>
+  <path d="M18,65 Q52,60 82,68" stroke="#C4A86B" stroke-width="3" fill="none"/>
+
+  <!-- Foreground fiber strands (slightly greener) -->
+  <path d="M25,38 Q50,33 75,40" stroke="#A8B86B" stroke-width="2" fill="none"/>
+  <path d="M23,55 Q50,50 77,57" stroke="#A8B86B" stroke-width="2" fill="none"/>
+
+  <!-- Binding cord around the bundle -->
+  <ellipse cx="35" cy="50" rx="4" ry="18" fill="none" stroke="#6B4423" stroke-width="2"/>
+  <ellipse cx="65" cy="50" rx="4" ry="18" fill="none" stroke="#6B4423" stroke-width="2"/>
+
+  <!-- Highlights -->
+  <path d="M28,40 Q50,36 72,42" stroke="#D4C87B" stroke-width="1" fill="none" opacity="0.5"/>
+</svg>

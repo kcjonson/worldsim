@@ -18,6 +18,7 @@
 
 namespace engine::assets {
 class AssetRegistry;
+class RecipeRegistry;
 }
 
 namespace engine::world {
@@ -31,6 +32,7 @@ public:
 	/// Construct with optional RNG seed (defaults to random_device for non-determinism)
 	explicit AIDecisionSystem(
 		const engine::assets::AssetRegistry& registry,
+		const engine::assets::RecipeRegistry& recipeRegistry,
 		std::optional<uint32_t> rngSeed = std::nullopt);
 
 	void update(float deltaTime) override;
@@ -42,34 +44,6 @@ public:
 	[[nodiscard]] const char* name() const override { return "AIDecision"; }
 
 private:
-	/// Evaluate critical needs (Tier 3) - returns true if a task was assigned
-	bool evaluateCriticalNeeds(
-		EntityID entity,
-		const struct NeedsComponent& needs,
-		const struct Memory& memory,
-		struct Task& task,
-		const struct Position& position);
-
-	/// Evaluate actionable needs (Tier 5) - returns true if a task was assigned
-	bool evaluateActionableNeeds(
-		EntityID entity,
-		const struct NeedsComponent& needs,
-		const struct Memory& memory,
-		struct Task& task,
-		const struct Position& position);
-
-	/// Evaluate gather food work (Tier 6) - returns true if a task was assigned
-	/// Proactively harvests food when colonist has no food in inventory
-	bool evaluateGatherFood(
-		EntityID entity,
-		const struct Memory& memory,
-		const struct Inventory& inventory,
-		struct Task& task,
-		const struct Position& position);
-
-	/// Assign wander behavior (Tier 7)
-	void assignWander(EntityID entity, struct Task& task, const struct Position& position);
-
 	/// Generate a random position within wander radius
 	[[nodiscard]] glm::vec2 generateWanderTarget(const glm::vec2& currentPos);
 
@@ -105,6 +79,7 @@ private:
 		const char* needName);
 
 	const engine::assets::AssetRegistry& m_registry;
+	const engine::assets::RecipeRegistry& m_recipeRegistry;
 
 	/// ChunkManager for terrain queries (optional, fallback to current position if null)
 	engine::world::ChunkManager* m_chunkManager = nullptr;

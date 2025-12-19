@@ -8,8 +8,10 @@
 
 #include "../ISystem.h"
 
+#include <functional>
 #include <optional>
 #include <random>
+#include <string>
 
 namespace ecs {
 
@@ -24,6 +26,11 @@ public:
 	/// Priority 350: Runs after movement/physics, processes arrived colonists
 	[[nodiscard]] int priority() const override { return 350; }
 	[[nodiscard]] const char* name() const override { return "Action"; }
+
+	/// Set callback for item crafted notifications
+	/// Called with item label when colonist finishes crafting something
+	using ItemCraftedCallback = std::function<void(const std::string& itemLabel)>;
+	void setItemCraftedCallback(ItemCraftedCallback callback) { m_onItemCrafted = std::move(callback); }
 
 private:
 	/// Random number generator for yield calculations
@@ -54,6 +61,24 @@ private:
 		struct Task& task,
 		struct Inventory& inventory
 	);
+
+	/// Start a crafting action based on the task's recipe
+	void startCraftAction(
+		struct Task& task,
+		struct Action& action,
+		const struct Inventory& inventory
+	);
+
+	/// Start a gather action (pickup or harvest) for crafting materials
+	void startGatherAction(
+		struct Task& task,
+		struct Action& action,
+		const struct Position& position,
+		const struct Memory& memory
+	);
+
+	/// Callback for item crafted notifications
+	ItemCraftedCallback m_onItemCrafted = nullptr;
 };
 
 } // namespace ecs

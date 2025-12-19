@@ -54,6 +54,10 @@ namespace {
 				return "None";
 			case ecs::TaskType::FulfillNeed:
 				return "Fulfilling need";
+			case ecs::TaskType::Gather:
+				return "Gathering";
+			case ecs::TaskType::Craft:
+				return "Crafting";
 			case ecs::TaskType::Wander:
 				return "Wandering";
 		}
@@ -89,6 +93,17 @@ std::optional<PanelContent> adaptSelection(
 				return adaptColonistStatus(world, sel.entityId, onTaskListToggle);
 			} else if constexpr (std::is_same_v<T, WorldEntitySelection>) {
 				return adaptWorldEntity(registry, sel);
+			} else if constexpr (std::is_same_v<T, CraftingStationSelection>) {
+				// Validate entity still exists
+				if (!world.isAlive(sel.entityId)) {
+					return std::nullopt;
+				}
+				// For now, show basic station info - will be expanded with CraftingAdapter
+				PanelContent content;
+				content.title = sel.defName;
+				content.slots.push_back(TextSlot{"Type", "Crafting Station"});
+				content.slots.push_back(TextSlot{"Status", "Ready"});
+				return content;
 			}
 		},
 		selection
