@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2025-12-19 (Performance Optimization Epic Complete)
+Last Updated: 2025-12-19 (Basic Crafting System Epic Complete)
 
 ## Epic/Story/Task Template
 
@@ -28,8 +28,41 @@ Use this template for all work items:
 
 ## Recently Completed Epics (Last 4)
 
+### ✅ Basic Crafting System
+**Spec/Documentation:** `/docs/development-log/plans/2025-12-19-basic-crafting-system.md`
+**Dependencies:** MVP Complete
+**Status:** complete
+
+**Goal:** Enable basic crafting so players can place a Crafting Spot and queue orders for items like a Primitive Axe.
+
+**Completed Tasks:**
+- [x] Epic 1: Placement + Discovery (PR #75)
+  - [x] Knowledge component for per-colonist discovery tracking
+  - [x] RecipeDef.h data structures and RecipeRegistry singleton
+  - [x] Recipe XML files (CraftingSpot innate, AxePrimitive)
+  - [x] VisionSystem integration (colonists learn when they see things)
+  - [x] PlacementMode state machine (B key, mouse click to place)
+  - [x] BuildToolbar, BuildMenu, GhostRenderer components
+  - [x] CraftingSpot asset definition
+- [x] Epic 2: Crafting Execution (PR #78)
+  - [x] WorkQueue component (per-station job queue)
+  - [x] CraftingAdapter for station panel content
+  - [x] EntityInfoPanel updates for station selection
+  - [x] Craft task type and CraftingEffect action
+  - [x] AIDecisionSystem Tier 6.5 (evaluate crafting work)
+  - [x] Tier 6.6 gathering logic (gather missing materials before crafting)
+  - [x] ActionSystem craft execution (consume inputs, produce outputs)
+  - [x] Reed plant and PlantFiber assets for Primitive Axe recipe
+  - [x] "Aha!" notifications when recipes unlock
+  - [x] "Crafted" notifications when items complete
+  - [x] Input validation using colonist Memory
+
+**Result:** Colonists can discover recipes by seeing ingredients, player can queue crafting orders at stations, colonists gather missing materials and craft items autonomously. ✅
+
+---
+
 ### ✅ Tabbed Colonist Info Panel
-**Spec/Documentation:** `/Users/kcjonson/.claude/plans/bubbly-sleeping-thompson.md`
+**Spec/Documentation:** `/docs/development-log/plans/2025-12-18-tabbed-colonist-info-panel.md`
 **Dependencies:** MVP: Player Observation UI
 **Status:** complete
 
@@ -56,7 +89,7 @@ Use this template for all work items:
 ---
 
 ### ✅ Shore Tiles + Surface Edge Rendering
-**Spec/Documentation:** `/Users/kcjonson/.claude/plans/tranquil-discovering-globe.md`
+**Spec/Documentation:** `/docs/development-log/plans/2025-12-18-shore-tiles-surface-edges.md`
 **Dependencies:** Flat Tile Storage Refactor
 **Status:** complete
 
@@ -81,46 +114,6 @@ Use this template for all work items:
   - [x] Reduced dirt threshold (0.88) for less random dirt in grassland
 
 **Result:** Tiles have pre-computed adjacency for O(1) shore detection. Visual depth effect on all surface transitions. Organic mud rings around water bodies. ✅
-
----
-
-### ✅ Flat Tile Storage Refactor
-**Spec/Documentation:** `/Users/kcjonson/.claude/plans/fluffy-cooking-russell.md`
-**Dependencies:** None
-**Status:** complete
-
-**Goal:** Replace layered/lazy tile generation with flat tile array per chunk. Fixed flora-on-water bug and eliminated class of bugs where systems disagree about tile state.
-
-**Completed Tasks:**
-- [x] Phase 0: Debug Code Removal & Terminology Rename
-  - [x] Removed ~100 lines of debug logging across 4 files
-  - [x] Renamed `GroundCover` enum → `Surface`
-  - [x] Renamed `Grass` → `Soil` (plants grow on soil, grass IS a plant)
-  - [x] Renamed `selectGroundCover()` → `selectSurface()`
-- [x] Phase 1: Data Structure Changes
-  - [x] Updated TileData struct (8 bytes: surface, primaryBiome, secondaryBiome, biomeBlend, elevation, moisture, flags)
-  - [x] Added `tiles` array to Chunk struct (262,144 TileData = ~2.1 MB/chunk)
-  - [x] Added `std::atomic<bool> generationComplete` for thread safety
-  - [x] Added `Chunk::generate()` that pre-computes all tiles
-  - [x] Added `BiomeWeights::secondary()` and `primaryWeight()` methods
-- [x] Phase 2: System Updates
-  - [x] Updated ChunkRenderer: check `isReady()`, read from tiles[] array
-  - [x] Removed pure chunk optimization (was hiding ponds!)
-  - [x] Updated VisionSystem to check `isReady()` before querying terrain
-- [x] Phase 3: Cleanup
-  - [x] Removed `Chunk::isPure()` method
-  - [x] Removed `ChunkSampleResult::isPure` and `singleBiome` fields
-  - [x] Removed `MockWorldSampler::isChunkPure()` method
-  - [x] Updated unit tests
-
-**Result:** Single source of truth for tile data. Ponds now visible. Flora-on-water bug architectural fix in place. ✅
-
-**Additional Fix (2025-12-12):** Discovered and fixed Retina coordinate mismatch:
-- `getViewport()` returned physical pixels (2688×1680), not logical pixels (1344×840)
-- VisionSystem was detecting water at wrong world positions
-- Tiles were rendering at 2× offset positions
-- **Fix:** Implemented `getLogicalViewport()` and updated all render/input code to use it
-- Colonists now correctly find and drink from actual water tiles
 
 ---
 
@@ -160,45 +153,7 @@ Use this template for all work items:
 
 ## In Progress Epics
 
-### Basic Crafting System
-**Spec/Documentation:** `/Users/kcjonson/.claude/plans/melodic-chasing-ember.md`
-**Dependencies:** MVP Complete
-**Status:** in progress (Epic 1 complete, Epic 2 planned)
-
-**Goal:** Enable basic crafting so players can place a Crafting Spot and queue orders for items like a Primitive Axe.
-
-**Epic 1: Placement + Discovery** ✅ COMPLETE
-- [x] Phase 1: Foundation
-  - [x] Create Knowledge component (per-colonist permanent discovery tracking)
-  - [x] Create RecipeDef.h data structures (inputs, outputs, station, workAmount)
-  - [x] Create RecipeRegistry singleton (loads from XML, query by station/knowledge)
-  - [x] Create recipe XML files (CraftingSpot.xml innate, AxePrimitive.xml)
-- [x] Phase 2: Discovery Integration
-  - [x] Integrate Knowledge into VisionSystem (colonists learn when they see things)
-  - [x] Add Knowledge component to colonist initialization
-- [x] Phase 3: Placement Mode
-  - [x] Create PlacementMode state machine (None → MenuOpen → Placing → None)
-  - [x] Create BuildToolbar component (Build button in overlay)
-  - [x] Create BuildMenu popup (shows innate recipes)
-  - [x] Create GhostRenderer (semi-transparent placement preview)
-  - [x] Integrate placement into GameScene (B key, mouse click to place)
-  - [x] Create CraftingSpot asset definition (SVG + XML)
-
-**Epic 2: Crafting Execution** (Planned)
-- [ ] Phase 4: Work Queue + Crafting Menu
-  - [ ] WorkQueue component (per-station job queue)
-  - [ ] CraftingStationSelection variant
-  - [ ] CraftingAdapter for station panel content
-  - [ ] EntityInfoPanel updates for station selection
-- [ ] Phase 5: AI + Action Integration
-  - [ ] Add Craft task type to Task.h
-  - [ ] Add Craft action + CraftingEffect to Action.h
-  - [ ] AIDecisionSystem Tier 6.5 (evaluate crafting work)
-  - [ ] ActionSystem handles craft execution (consume inputs, produce outputs)
-- [ ] Phase 6: Polish
-  - [ ] "Aha" notifications when recipes unlock
-  - [ ] Input validation before starting craft
-  - [ ] Progress bar for active crafting
+(None currently - all epics complete or planned)
 
 ---
 
