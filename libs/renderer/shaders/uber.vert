@@ -37,7 +37,7 @@ void main() {
 	vec2 finalPosition;
 	vec4 finalColor;
 
-	if (u_instanced != 0) {
+	if (u_instanced == 1) {
 		// ========== INSTANCED RENDERING PATH ==========
 		// a_position is in local mesh space (centered around origin)
 		// Transform using instance data (world position, rotation, scale)
@@ -55,6 +55,23 @@ void main() {
 		v_data2 = vec4(0.0, 0.0, 0.0, kRenderModeInstanced);
 		v_clipBounds = vec4(0.0, 0.0, 0.0, 0.0);  // No clipping for world entities
 		v_data3 = vec4(0.0, 0.0, 0.0, 0.0);       // No diagonal neighbors for instanced
+	} else if (u_instanced == 2) {
+		// ========== BAKED WORLD-SPACE PATH ==========
+		// a_position is already in world space (pre-transformed on CPU)
+		// a_color is already tinted (no per-instance color multiplication)
+		// Just apply world→screen transform
+		finalPosition = worldToScreen(a_position);
+		finalColor = a_color;
+
+		// Transform screen-space position to clip space
+		gl_Position = u_projection * u_transform * vec4(finalPosition, 0.0, 1.0);
+
+		// Same output as instanced path (simple solid color in fragment shader)
+		v_texCoord = vec2(0.0, 0.0);
+		v_data1 = vec4(0.0, 0.0, 0.0, 0.0);
+		v_data2 = vec4(0.0, 0.0, 0.0, kRenderModeInstanced);
+		v_clipBounds = vec4(0.0, 0.0, 0.0, 0.0);
+		v_data3 = vec4(0.0, 0.0, 0.0, 0.0);
 	} else {
 		// ========== STANDARD BATCHED PATH ==========
 		// a_position is already in screen space

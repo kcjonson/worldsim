@@ -189,19 +189,18 @@ namespace engine {
 			auto renderEnd = std::chrono::high_resolution_clock::now();
 			m_frameTimings.sceneRenderMs = std::chrono::duration<float, std::milli>(renderEnd - renderStart).count();
 
-			// Swap buffers to submit work to GPU
+			// Swap buffers
 			auto swapStart = std::chrono::high_resolution_clock::now();
 			glfwSwapBuffers(window);
 			auto swapEnd = std::chrono::high_resolution_clock::now();
 			m_frameTimings.swapBuffersMs = std::chrono::duration<float, std::milli>(swapEnd - swapStart).count();
 
 			// Frame pacing: yield CPU to prevent starving other processes
-			// Use actual wall-clock time for accurate sleep calculation
 			constexpr float kTargetFrameMs = 1000.0F / 120.0F; // 8.33ms for 120 FPS cap
 			double			frameNow = glfwGetTime();
 			float			elapsedMs = static_cast<float>((frameNow - lastTime) * 1000.0);
 			float			sleepMs = kTargetFrameMs - elapsedMs;
-			if (sleepMs > 1.0F) { // Only sleep if meaningful amount
+			if (sleepMs > 1.0F) {
 				std::this_thread::sleep_for(std::chrono::microseconds(static_cast<int>(sleepMs * 1000.0F)));
 			}
 

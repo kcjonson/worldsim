@@ -362,6 +362,7 @@ function App() {
               tileRenderMs={metrics.tileRenderMs}
               entityRenderMs={metrics.entityRenderMs}
               updateMs={metrics.updateMs}
+              swapBuffersMs={metrics.swapBuffersMs}
               frameTimeMs={metrics.frameTimeMs}
             />
 

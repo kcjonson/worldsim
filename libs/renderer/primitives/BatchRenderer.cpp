@@ -568,6 +568,7 @@ namespace Renderer {
 		glUniform1i(instancedLoc, 0);
 
 		// Soft blend placeholder uniform (off by default)
+		// H1 INVALIDATED: This is not the cause of 40ms swapBuffers
 		if (auto loc = glGetUniformLocation(shader.getProgram(), "u_softBlendMode"); loc >= 0) {
 			glUniform1i(loc, 0);
 		}

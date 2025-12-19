@@ -93,7 +93,7 @@ namespace engine {
 
 			glfwMakeContextCurrent(window);
 			glfwSetFramebufferSizeCallback(window, framebufferSizeCallback);
-			glfwSwapInterval(1);
+			glfwSwapInterval(0); // Disable VSync for performance testing
 
 			glewExperimental = GL_TRUE;
 			GLenum err = glewInit();

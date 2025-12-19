@@ -123,6 +123,26 @@ class EntityRenderer {
 	/// Cache of per-chunk instance data, keyed by chunk coordinate.
 	std::unordered_map<ChunkCoordinate, ChunkInstanceCache> m_chunkInstanceCache;
 
+	// --- Baked Static Mesh Path (replaces instancing for static entities) ---
+	// Pre-transforms all entity vertices on CPU once at chunk load time.
+	// Draws with glDrawElements instead of glDrawElementsInstanced.
+	// Much faster for 100K+ entities due to sequential memory access.
+
+	/// GPU resources for a chunk's baked entity mesh.
+	/// All entities in the chunk are combined into a single VBO/IBO.
+	struct BakedChunkData {
+		Renderer::GLVertexArray vao;     // VAO with baked vertex data
+		Renderer::GLBuffer vertexVBO;    // Pre-transformed vertices (world-space)
+		Renderer::GLBuffer indexIBO;     // Combined indices
+		uint32_t vertexCount = 0;        // Total vertices in VBO
+		uint32_t indexCount = 0;         // Total indices in IBO
+		uint32_t entityCount = 0;        // For debugging/metrics
+		uint64_t lastAccessFrame = 0;    // For LRU eviction
+	};
+
+	/// Cache of baked per-chunk meshes.
+	std::unordered_map<ChunkCoordinate, BakedChunkData> m_bakedChunkCache;
+
 	/// Cached uniform locations for instanced rendering (avoid glGetUniformLocation per frame).
 	struct CachedUniformLocations {
 		GLint projection = -1;
@@ -148,6 +168,23 @@ class EntityRenderer {
 
 	/// Render static entities using per-chunk cached VAOs (no per-frame upload).
 	void renderCachedChunks(
+		const std::unordered_set<ChunkCoordinate>& processedChunks,
+		const WorldCamera& camera,
+		int viewportWidth,
+		int viewportHeight
+	);
+
+	// --- Baked Static Mesh Methods ---
+
+	/// Build baked mesh for a chunk (pre-transform all entity vertices on CPU).
+	/// Called once per chunk when first rendered.
+	void buildBakedChunkMesh(const assets::PlacementExecutor& executor, const ChunkCoordinate& coord);
+
+	/// Release baked mesh GPU resources for a chunk.
+	void releaseBakedChunkCache(const ChunkCoordinate& coord);
+
+	/// Render static entities using baked per-chunk meshes (glDrawElements, no instancing).
+	void renderBakedChunks(
 		const std::unordered_set<ChunkCoordinate>& processedChunks,
 		const WorldCamera& camera,
 		int viewportWidth,
