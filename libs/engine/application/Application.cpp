@@ -214,15 +214,16 @@ namespace engine {
 			// Without this, the main loop spins at 100% CPU even with vsync,
 			// because the OpenGL driver busy-waits during swapBuffers.
 			constexpr float kTargetFrameMs = 1000.0F / 120.0F; // ~8.33ms
-			float			totalFrameMs = m_frameTimings.pollEventsMs + m_frameTimings.inputHandleMs + m_frameTimings.sceneUpdateMs +
-								 m_frameTimings.sceneRenderMs + m_frameTimings.swapBuffersMs;
+			float			actualFrameMs = std::chrono::duration<float, std::milli>(swapEnd - pollStart).count();
 
-			if (totalFrameMs < kTargetFrameMs) {
-				float sleepMs = kTargetFrameMs - totalFrameMs - 0.5F; // 0.5ms buffer for scheduling jitter
-				if (sleepMs > 0.0F) {
-					std::this_thread::sleep_for(std::chrono::microseconds(static_cast<int>(sleepMs * 1000.0F)));
-				}
+			// Always yield at least 1ms to prevent CPU starvation of other processes
+			// Then add more sleep if we're under the target frame time
+			constexpr float kMinYieldMs = 1.0F;
+			float			sleepMs = kMinYieldMs;
+			if (actualFrameMs < kTargetFrameMs) {
+				sleepMs = std::max(kMinYieldMs, kTargetFrameMs - actualFrameMs - 0.5F);
 			}
+			std::this_thread::sleep_for(std::chrono::microseconds(static_cast<int>(sleepMs * 1000.0F)));
 		}
 
 		LOG_INFO(Engine, "Application main loop ended");
