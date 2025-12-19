@@ -1,5 +1,6 @@
 #pragma once
 
+#include "gl/GLTexture.h"
 #include <GL/glew.h>
 #include <cstdint>
 #include <vector>
@@ -15,16 +16,17 @@ struct AtlasRegion {
 };
 
 // Simple shelf-packed 2D texture atlas for tile patterns.
+// Uses RAII for automatic GPU resource cleanup.
 class TileTextureAtlas {
   public:
 	explicit TileTextureAtlas(int atlasSize = 4096);
-	~TileTextureAtlas();
+	~TileTextureAtlas() = default;
 
 	TileTextureAtlas(const TileTextureAtlas&) = delete;
 	TileTextureAtlas& operator=(const TileTextureAtlas&) = delete;
 
-	TileTextureAtlas(TileTextureAtlas&& other) noexcept;
-	TileTextureAtlas& operator=(TileTextureAtlas&& other) noexcept;
+	TileTextureAtlas(TileTextureAtlas&&) noexcept = default;
+	TileTextureAtlas& operator=(TileTextureAtlas&&) noexcept = default;
 
 	// Reserve a region of the atlas; returns {valid=false} if it does not fit.
 	AtlasRegion allocate(int width, int height);
@@ -34,16 +36,13 @@ class TileTextureAtlas {
 	bool upload(const AtlasRegion& region, const uint8_t* rgbaData);
 
 	[[nodiscard]] GLuint texture() const { return texture_; }
-	[[nodiscard]] int size() const { return size_; }
+	[[nodiscard]] int size() const { return texture_.width(); }
 
   private:
-	int size_ = 0;
+	GLTexture texture_;		 // RAII texture wrapper
 	int cursorX_ = 0;
 	int cursorY_ = 0;
 	int currentRowHeight_ = 0;
-	GLuint texture_ = 0;
-
-	void destroy();
 };
 
 } // namespace Renderer

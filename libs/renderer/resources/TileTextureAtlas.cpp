@@ -1,59 +1,29 @@
 #include "resources/TileTextureAtlas.h"
 
 #include <algorithm>
-#include <stdexcept>
 
 namespace Renderer {
 
-TileTextureAtlas::TileTextureAtlas(int atlasSize) : size_(atlasSize) {
-	glGenTextures(1, &texture_);
-	glBindTexture(GL_TEXTURE_2D, texture_);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, size_, size_, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
-	glBindTexture(GL_TEXTURE_2D, 0);
-}
-
-TileTextureAtlas::~TileTextureAtlas() {
-	destroy();
-}
-
-TileTextureAtlas::TileTextureAtlas(TileTextureAtlas&& other) noexcept {
-	*this = std::move(other);
-}
-
-TileTextureAtlas& TileTextureAtlas::operator=(TileTextureAtlas&& other) noexcept {
-	if (this == &other) {
-		return *this;
-	}
-	destroy();
-	size_ = other.size_;
-	cursorX_ = other.cursorX_;
-	cursorY_ = other.cursorY_;
-	currentRowHeight_ = other.currentRowHeight_;
-	texture_ = other.texture_;
-	other.size_ = 0;
-	other.cursorX_ = 0;
-	other.cursorY_ = 0;
-	other.currentRowHeight_ = 0;
-	other.texture_ = 0;
-	return *this;
+TileTextureAtlas::TileTextureAtlas(int atlasSize)
+	// Create square texture using RAII wrapper (sets up filtering and wrapping)
+	: texture_(atlasSize, atlasSize, GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE, nullptr) {
+	// Unbind texture after GLTexture constructor (it leaves it bound)
+	GLTexture::unbind();
 }
 
 AtlasRegion TileTextureAtlas::allocate(int width, int height) {
-	if (width <= 0 || height <= 0 || width > size_ || height > size_) {
+	int atlasSize = texture_.width();
+	if (width <= 0 || height <= 0 || width > atlasSize || height > atlasSize) {
 		return {};
 	}
 
-	if (cursorX_ + width > size_) {
+	if (cursorX_ + width > atlasSize) {
 		cursorX_ = 0;
 		cursorY_ += currentRowHeight_;
 		currentRowHeight_ = 0;
 	}
 
-	if (cursorY_ + height > size_) {
+	if (cursorY_ + height > atlasSize) {
 		return {};
 	}
 
@@ -64,10 +34,10 @@ AtlasRegion TileTextureAtlas::allocate(int width, int height) {
 }
 
 bool TileTextureAtlas::upload(const AtlasRegion& region, const uint8_t* rgbaData) {
-	if (!region.valid || texture_ == 0 || rgbaData == nullptr) {
+	if (!region.valid || !texture_.isValid() || rgbaData == nullptr) {
 		return false;
 	}
-	glBindTexture(GL_TEXTURE_2D, texture_);
+	texture_.bind();
 	glTexSubImage2D(
 		GL_TEXTURE_2D,
 		0,
@@ -78,15 +48,8 @@ bool TileTextureAtlas::upload(const AtlasRegion& region, const uint8_t* rgbaData
 		GL_RGBA,
 		GL_UNSIGNED_BYTE,
 		rgbaData);
-	glBindTexture(GL_TEXTURE_2D, 0);
+	GLTexture::unbind();
 	return true;
-}
-
-void TileTextureAtlas::destroy() {
-	if (texture_ != 0) {
-		glDeleteTextures(1, &texture_);
-		texture_ = 0;
-	}
 }
 
 } // namespace Renderer
