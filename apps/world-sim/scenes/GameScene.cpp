@@ -15,7 +15,9 @@
 #include <cmath>
 #include <graphics/Rect.h>
 #include <input/InputManager.h>
+#include <metrics/GPUTimer.h>
 #include <metrics/MetricsCollector.h>
+#include <metrics/PerformanceMetrics.h>
 #include <primitives/Primitives.h>
 #include <scene/Scene.h>
 #include <scene/SceneManager.h>
@@ -126,9 +128,7 @@ namespace {
 
 			// Initialize placement mode with callback to spawn entities
 			placementMode = world_sim::PlacementMode{world_sim::PlacementMode::Args{
-				.onPlace = [this](const std::string& defName, Foundation::Vec2 worldPos) {
-					spawnPlacedEntity(defName, worldPos);
-				}
+				.onPlace = [this](const std::string& defName, Foundation::Vec2 worldPos) { spawnPlacedEntity(defName, worldPos); }
 			}};
 
 			// Create unified game UI (contains overlay and info panel)
@@ -211,8 +211,8 @@ namespace {
 			// Handle placement mode interaction
 			if (placementMode.state() == world_sim::PlacementState::Placing) {
 				auto mousePos = input.getMousePosition();
-				int logicalW = 0;
-				int logicalH = 0;
+				int	 logicalW = 0;
+				int	 logicalH = 0;
 				Renderer::Primitives::getLogicalViewport(logicalW, logicalH);
 
 				// Update ghost position from mouse
@@ -269,6 +269,9 @@ namespace {
 			glClearColor(0.05F, 0.08F, 0.12F, 1.0F);
 			glClear(GL_COLOR_BUFFER_BIT);
 
+			// Begin GPU timing (measures from here to end(), result from previous frame)
+			m_gpuTimer.begin();
+
 			int w = 0;
 			int h = 0;
 			// Use logical viewport (DPI-independent) for consistent world-to-screen transforms
@@ -293,12 +296,7 @@ namespace {
 			// Render placement ghost preview (if in placing mode)
 			if (placementMode.state() == world_sim::PlacementState::Placing) {
 				ghostRenderer.render(
-					placementMode.selectedDefName(),
-					placementMode.ghostPosition(),
-					*m_camera,
-					w,
-					h,
-					placementMode.isValidPlacement()
+					placementMode.selectedDefName(), placementMode.ghostPosition(), *m_camera, w, h, placementMode.isValidPlacement()
 				);
 			}
 
@@ -308,12 +306,31 @@ namespace {
 			// Render notifications on top of everything
 			gameUI->renderNotifications(m_notifications);
 
+			// End GPU timing (query result will be available next frame)
+			m_gpuTimer.end();
+
 			// Report timing breakdown to metrics system
 			auto* metrics = engine::AppLauncher::getMetrics();
 			if (metrics != nullptr) {
 				metrics->setTimingBreakdown(
-					tileMs, entityMs, m_lastUpdateMs, m_renderer->lastTileCount(), m_entityRenderer->lastEntityCount()
+					tileMs,
+					entityMs,
+					m_lastUpdateMs,
+					m_renderer->lastTileCount(),
+					m_entityRenderer->lastEntityCount(),
+					m_renderer->lastChunkCount()
 				);
+
+				// Convert ECS system timings to Foundation format (reuse cache to avoid allocation)
+				const auto& ecsTimings = ecsWorld->getSystemTimings();
+				m_ecsTimingsCache.clear(); // Clear but keep capacity
+				for (const auto& timing : ecsTimings) {
+					m_ecsTimingsCache.push_back({timing.name, timing.durationMs});
+				}
+				metrics->setEcsSystemTimings(m_ecsTimingsCache);
+
+				// GPU timing (from previous frame due to async query)
+				metrics->setGpuRenderTime(m_gpuTimer.getTimeMs());
 			}
 		}
 
@@ -353,13 +370,13 @@ namespace {
 			// Register systems in priority order (lower = runs first)
 			auto& assetRegistry = engine::assets::AssetRegistry::Get();
 			auto& recipeRegistry = engine::assets::RecipeRegistry::Get();
-			ecsWorld->registerSystem<ecs::VisionSystem>();							// Priority 45
-			ecsWorld->registerSystem<ecs::NeedsDecaySystem>();						// Priority 50
+			ecsWorld->registerSystem<ecs::VisionSystem>();									// Priority 45
+			ecsWorld->registerSystem<ecs::NeedsDecaySystem>();								// Priority 50
 			ecsWorld->registerSystem<ecs::AIDecisionSystem>(assetRegistry, recipeRegistry); // Priority 60
-			ecsWorld->registerSystem<ecs::MovementSystem>();				// Priority 100
-			ecsWorld->registerSystem<ecs::PhysicsSystem>();					// Priority 200
-			ecsWorld->registerSystem<ecs::ActionSystem>();					// Priority 350
-			ecsWorld->registerSystem<ecs::DynamicEntityRenderSystem>();		// Priority 900
+			ecsWorld->registerSystem<ecs::MovementSystem>();								// Priority 100
+			ecsWorld->registerSystem<ecs::PhysicsSystem>();									// Priority 200
+			ecsWorld->registerSystem<ecs::ActionSystem>();									// Priority 350
+			ecsWorld->registerSystem<ecs::DynamicEntityRenderSystem>();						// Priority 900
 
 			// Wire up VisionSystem with placement data for entity queries
 			auto& visionSystem = ecsWorld->getSystem<ecs::VisionSystem>();
@@ -456,7 +473,7 @@ namespace {
 		void renderSelectionIndicator(int viewportWidth, int viewportHeight) {
 			// Get world position from selection (colonists and stations have ECS positions)
 			glm::vec2 worldPos{0.0F, 0.0F};
-			bool hasPosition = false;
+			bool	  hasPosition = false;
 
 			if (auto* colonistSel = std::get_if<world_sim::ColonistSelection>(&selection)) {
 				if (auto* pos = ecsWorld->getComponent<ecs::Position>(colonistSel->entityId)) {
@@ -561,9 +578,7 @@ namespace {
 				auto* appearance = ecsWorld->getComponent<ecs::Appearance>(closestStation);
 				if (pos != nullptr && appearance != nullptr) {
 					selection = world_sim::CraftingStationSelection{
-						closestStation,
-						appearance->defName,
-						Foundation::Vec2{pos->value.x, pos->value.y}
+						closestStation, appearance->defName, Foundation::Vec2{pos->value.x, pos->value.y}
 					};
 					LOG_INFO(Game, "Selected station: %s at (%.1f, %.1f)", appearance->defName.c_str(), pos->value.x, pos->value.y);
 				}
@@ -630,7 +645,7 @@ namespace {
 
 					// Get innate recipes for the build menu
 					auto& recipeRegistry = engine::assets::RecipeRegistry::Get();
-					auto innateRecipes = recipeRegistry.getInnateRecipes();
+					auto  innateRecipes = recipeRegistry.getInnateRecipes();
 
 					std::vector<world_sim::BuildMenuItem> items;
 					for (const auto* recipe : innateRecipes) {
@@ -698,7 +713,7 @@ namespace {
 
 			// Check if this is a crafting station (has craftable capability)
 			// If so, add WorkQueue component for job management
-			auto& assetRegistry = engine::assets::AssetRegistry::Get();
+			auto&		assetRegistry = engine::assets::AssetRegistry::Get();
 			const auto* assetDef = assetRegistry.getDefinition(defName);
 			if (assetDef != nullptr && assetDef->capabilities.craftable.has_value()) {
 				ecsWorld->addComponent<ecs::WorkQueue>(entity, ecs::WorkQueue{});
@@ -724,8 +739,10 @@ namespace {
 		// Track processed chunk coordinates for cleanup detection
 		std::unordered_set<engine::world::ChunkCoordinate> m_processedChunks;
 
-		// Timing for metrics
-		float m_lastUpdateMs = 0.0F;
+		// Timing for metrics (persistent vectors to avoid per-frame heap allocation)
+		float									 m_lastUpdateMs = 0.0F;
+		Renderer::GPUTimer						 m_gpuTimer;		// GPU timing via OpenGL queries
+		std::vector<Foundation::EcsSystemTiming> m_ecsTimingsCache; // Reused each frame
 
 		// Current selection for info panel (NoSelection = panel hidden)
 		world_sim::Selection selection = world_sim::NoSelection{};

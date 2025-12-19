@@ -5,10 +5,26 @@
 #include "View.h"
 
 #include <algorithm>
+#include <chrono>
 #include <memory>
 #include <typeindex>
 #include <unordered_map>
 #include <vector>
+
+// Enable ECS system timing (set to 0 for release builds if profiling not needed)
+#ifndef ECS_ENABLE_SYSTEM_TIMING
+#define ECS_ENABLE_SYSTEM_TIMING 1
+#endif
+
+namespace ecs {
+
+/// Timing information for a single system
+struct SystemTiming {
+    const char* name;
+    float durationMs;
+};
+
+} // namespace ecs
 
 namespace ecs {
 
@@ -129,9 +145,31 @@ public:
     void update(float deltaTime) {
         sortSystemsIfNeeded();
 
+#if ECS_ENABLE_SYSTEM_TIMING
+        systemTimings.clear();
+        // Note: capacity is retained from previous frames, no allocation after first frame
+
+        for (auto& system : systems) {
+            auto start = std::chrono::high_resolution_clock::now();
+            system->update(deltaTime);
+            auto end = std::chrono::high_resolution_clock::now();
+
+            auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
+            systemTimings.push_back({
+                system->name(),
+                duration.count() / 1000.0F
+            });
+        }
+#else
         for (auto& system : systems) {
             system->update(deltaTime);
         }
+#endif
+    }
+
+    /// Get timing information from last update (for profiling)
+    [[nodiscard]] const std::vector<SystemTiming>& getSystemTimings() const {
+        return systemTimings;
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -165,6 +203,7 @@ private:
     Registry registry;
     std::vector<std::unique_ptr<ISystem>> systems;
     std::unordered_map<std::type_index, ISystem*> systemMap;
+    std::vector<SystemTiming> systemTimings;
     bool sorted = false;
 };
 

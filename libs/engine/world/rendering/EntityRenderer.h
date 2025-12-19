@@ -13,7 +13,9 @@
 #include "vector/Tessellator.h"
 #include "world/camera/WorldCamera.h"
 #include "world/chunk/Chunk.h"
+#include "world/chunk/ChunkCoordinate.h"
 
+#include <GL/glew.h>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -81,10 +83,65 @@ class EntityRenderer {
 	bool m_useInstancing = true;
 
 	// Cache for GPU mesh handles (keyed by defName)
+	// These hold the SHARED mesh geometry (VBO/IBO) that all chunks reference
 	std::unordered_map<std::string, Renderer::InstancedMeshHandle> m_meshHandles;
 
 	// Per-frame instance batches (grouped by mesh type, reused each frame)
+	// Used ONLY for dynamic entities that change per-frame
 	std::unordered_map<std::string, std::vector<Renderer::InstanceData>> m_instanceBatches;
+
+	// --- Per-Chunk Instance Caching (Static Entities) ---
+	// Upload instance data ONCE per chunk when first rendered, reuse every frame.
+	// This eliminates the 22MB/frame CPU→GPU upload for static flora.
+
+	/// GPU resources for a single mesh type within a chunk.
+	/// The VAO references the shared mesh VBO/IBO but has its own instance VBO.
+	struct CachedMeshData {
+		GLuint vao = 0;			  // VAO with shared mesh + chunk-specific instance buffer
+		GLuint instanceVBO = 0;	  // Per-chunk instance buffer (GL_STATIC_DRAW)
+		uint32_t instanceCount = 0;	  // Number of instances for draw call
+		uint32_t indexCount = 0;	  // Index count from mesh (for draw call)
+	};
+
+	/// Per-chunk cached GPU resources for all mesh types in that chunk.
+	struct ChunkInstanceCache {
+		std::unordered_map<std::string, CachedMeshData> meshes;
+		uint32_t totalEntityCount = 0;
+	};
+
+	/// Cache of per-chunk instance data, keyed by chunk coordinate.
+	std::unordered_map<ChunkCoordinate, ChunkInstanceCache> m_chunkInstanceCache;
+
+	/// Cached uniform locations for instanced rendering (avoid glGetUniformLocation per frame).
+	struct CachedUniformLocations {
+		GLint projection = -1;
+		GLint transform = -1;
+		GLint instanced = -1;
+		GLint cameraPosition = -1;
+		GLint cameraZoom = -1;
+		GLint pixelsPerMeter = -1;
+		GLint viewportSize = -1;
+		bool initialized = false;
+	};
+	CachedUniformLocations m_uniformLocations;
+
+	/// Initialize cached uniform locations from shader program.
+	void initUniformLocations(GLuint shaderProgram);
+
+	/// Build cached VAO + instance data for a chunk (called once per chunk).
+	/// Creates per-chunk VAOs that reference shared mesh VBOs but have their own instance VBOs.
+	void buildChunkCache(const assets::PlacementExecutor& executor, const ChunkCoordinate& coord);
+
+	/// Release GPU resources for a chunk (called when chunk is unloaded).
+	void releaseChunkCache(const ChunkCoordinate& coord);
+
+	/// Render static entities using per-chunk cached VAOs (no per-frame upload).
+	void renderCachedChunks(
+		const std::unordered_set<ChunkCoordinate>& processedChunks,
+		const WorldCamera& camera,
+		int viewportWidth,
+		int viewportHeight
+	);
 
 	/// Get or create GPU mesh handle for a template
 	Renderer::InstancedMeshHandle& getOrCreateMeshHandle(

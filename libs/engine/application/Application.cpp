@@ -5,6 +5,7 @@
 #include "scene/SceneManager.h"
 #include "utils/Log.h"
 
+#include <chrono>
 #include <exception>
 #include <iostream>
 
@@ -104,9 +105,13 @@ namespace engine {
 			}
 
 			// Poll GLFW events
+			auto pollStart = std::chrono::high_resolution_clock::now();
 			glfwPollEvents();
+			auto pollEnd = std::chrono::high_resolution_clock::now();
+			m_frameTimings.pollEventsMs = std::chrono::duration<float, std::milli>(pollEnd - pollStart).count();
 
 			// Update InputManager to capture input state for this frame
+			auto inputStart = std::chrono::high_resolution_clock::now();
 			if (inputManager) {
 				try {
 					inputManager->update(deltaTime);
@@ -134,6 +139,7 @@ namespace engine {
 			}
 
 			// Scene lifecycle (skip if paused)
+			auto updateStart = std::chrono::high_resolution_clock::now();
 			if (!paused) {
 				// Handle input
 				try {
@@ -153,8 +159,14 @@ namespace engine {
 					LOG_ERROR(Engine, "Unknown exception in Update");
 				}
 			}
+			auto updateEnd = std::chrono::high_resolution_clock::now();
+			// Input handling includes InputManager update through pre-frame callback
+			auto inputEnd = std::chrono::high_resolution_clock::now();
+			m_frameTimings.inputHandleMs = std::chrono::duration<float, std::milli>(inputEnd - inputStart).count();
+			m_frameTimings.sceneUpdateMs = std::chrono::duration<float, std::milli>(updateEnd - updateStart).count();
 
 			// Clear screen before rendering
+			auto renderStart = std::chrono::high_resolution_clock::now();
 			glClearColor(0.1F, 0.1F, 0.15F, 1.0F);
 			glClear(GL_COLOR_BUFFER_BIT);
 
@@ -177,6 +189,8 @@ namespace engine {
 					LOG_ERROR(Engine, "Unknown exception in overlay renderer");
 				}
 			}
+			auto renderEnd = std::chrono::high_resolution_clock::now();
+			m_frameTimings.sceneRenderMs = std::chrono::duration<float, std::milli>(renderEnd - renderStart).count();
 
 			// Post-frame callback (metrics, screenshot capture, etc.)
 			if (postFrameCallback) {
@@ -190,7 +204,10 @@ namespace engine {
 			}
 
 			// Swap buffers
+			auto swapStart = std::chrono::high_resolution_clock::now();
 			glfwSwapBuffers(window);
+			auto swapEnd = std::chrono::high_resolution_clock::now();
+			m_frameTimings.swapBuffersMs = std::chrono::duration<float, std::milli>(swapEnd - swapStart).count();
 		}
 
 		LOG_INFO(Engine, "Application main loop ended");

@@ -41,6 +41,7 @@ public:
 	void setChunkManager(engine::world::ChunkManager* chunkManager) { m_chunkManager = chunkManager; }
 
 	[[nodiscard]] int priority() const override { return 60; }
+	[[nodiscard]] const char* name() const override { return "AIDecision"; }
 
 private:
 	/// Generate a random position within wander radius

@@ -25,6 +25,7 @@ public:
 
 	/// Priority 350: Runs after movement/physics, processes arrived colonists
 	[[nodiscard]] int priority() const override { return 350; }
+	[[nodiscard]] const char* name() const override { return "Action"; }
 
 	/// Set callback for item crafted notifications
 	/// Called with item label when colonist finishes crafting something

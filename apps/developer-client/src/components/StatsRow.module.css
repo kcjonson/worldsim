@@ -1,0 +1,49 @@
+.container {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.stat {
+  display: flex;
+  flex-direction: column;
+  padding: 0.5rem 0.75rem;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  min-width: 80px;
+}
+
+.label {
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-secondary);
+  margin-bottom: 0.25rem;
+}
+
+.value {
+  font-family: monospace;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.value.ok {
+  color: #4ade80;
+}
+
+.value.warning {
+  color: #f59e0b;
+}
+
+.value.bad {
+  color: #ef4444;
+}
+
+.unit {
+  font-size: 0.75rem;
+  font-weight: normal;
+  color: var(--text-secondary);
+  margin-left: 0.15rem;
+}

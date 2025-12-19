@@ -4,6 +4,7 @@ add_library(renderer
     primitives/Primitives.cpp
     primitives/BatchRenderer.cpp
     metrics/MetricsCollector.cpp
+    metrics/GPUTimer.cpp
     vector/Tessellator.cpp
     vector/Bezier.cpp
     vector/SVGLoader.cpp
