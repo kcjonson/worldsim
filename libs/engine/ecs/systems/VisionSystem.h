@@ -75,7 +75,8 @@ class VisionSystem : public ISystem {
 	RecipeDiscoveryCallback m_onRecipeDiscovery = nullptr;
 
 	// Throttling: only update every N frames to reduce CPU overhead
-	uint32_t m_frameCounter = 0;
+	// Initialize to interval so first update() call executes immediately
+	uint32_t m_frameCounter = 5;
 	uint32_t m_updateInterval = 5; // Default: update every 5 frames (12x/sec at 60fps)
 };
 

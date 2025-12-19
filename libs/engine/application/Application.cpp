@@ -99,11 +99,7 @@ namespace engine {
 				LOG_DEBUG(Engine, "Large delta time detected (%.3fs), capping to 0.25s", deltaTime);
 				deltaTime = 0.25F;
 			}
-
-			// Calculate FPS
-			if (deltaTime > 0.0F) {
-				fps = 1.0F / deltaTime;
-			}
+			// Note: FPS is calculated at end of frame after frame pacing sleep
 
 			// Poll GLFW events
 			auto pollStart = std::chrono::high_resolution_clock::now();
@@ -193,25 +189,31 @@ namespace engine {
 			auto renderEnd = std::chrono::high_resolution_clock::now();
 			m_frameTimings.sceneRenderMs = std::chrono::duration<float, std::milli>(renderEnd - renderStart).count();
 
-			// Swap buffers first to submit work to GPU
+			// Swap buffers to submit work to GPU
 			auto swapStart = std::chrono::high_resolution_clock::now();
 			glfwSwapBuffers(window);
 			auto swapEnd = std::chrono::high_resolution_clock::now();
 			m_frameTimings.swapBuffersMs = std::chrono::duration<float, std::milli>(swapEnd - swapStart).count();
 
 			// Frame pacing: yield CPU to prevent starving other processes
-			// Must happen BEFORE postFrameCallback so metrics include sleep time
-			constexpr float kTargetFrameMs = 1000.0F / 120.0F;  // 8.33ms for 120 FPS cap
-			float workMs = m_frameTimings.pollEventsMs + m_frameTimings.inputHandleMs
-			             + m_frameTimings.sceneUpdateMs + m_frameTimings.sceneRenderMs
-			             + m_frameTimings.swapBuffersMs;
-			float sleepMs = kTargetFrameMs - workMs;
-			if (sleepMs > 1.0F) {  // Only sleep if meaningful amount
+			// Use actual wall-clock time for accurate sleep calculation
+			constexpr float kTargetFrameMs = 1000.0F / 120.0F; // 8.33ms for 120 FPS cap
+			double			frameNow = glfwGetTime();
+			float			elapsedMs = static_cast<float>((frameNow - lastTime) * 1000.0);
+			float			sleepMs = kTargetFrameMs - elapsedMs;
+			if (sleepMs > 1.0F) { // Only sleep if meaningful amount
 				std::this_thread::sleep_for(std::chrono::microseconds(static_cast<int>(sleepMs * 1000.0F)));
 			}
 
+			// Recalculate deltaTime/FPS after sleep so they reflect the capped frame duration
+			double frameEnd = glfwGetTime();
+			deltaTime = static_cast<float>(frameEnd - lastTime);
+			if (deltaTime > 0.0F) {
+				fps = 1.0F / deltaTime;
+			}
+
 			// Post-frame callback (metrics, screenshot capture, etc.)
-			// Called AFTER sleep so metrics correctly include frame pacing time
+			// Called after frame pacing so metrics include the full frame duration
 			if (postFrameCallback) {
 				try {
 					postFrameCallback();

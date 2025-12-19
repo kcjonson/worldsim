@@ -137,16 +137,28 @@ namespace ecs {
 					if (sameType && task.type == TaskType::Wander) {
 						isSameTask = true;
 					} else {
-						bool sameTarget = true;
+						bool sameTarget = false;
 						if (selected->targetPosition.has_value()) {
-							// Use distance threshold for "same" position (within 0.5 meters)
-							float dist = glm::distance(task.targetPosition, selected->targetPosition.value());
-							sameTarget = (dist < 0.5F);
+							const auto& selectedPos = selected->targetPosition.value();
+							// Check that at least one position is non-zero to avoid default (0,0) matches
+							const float selectedLen2 = glm::dot(selectedPos, selectedPos);
+							const float currentLen2 = glm::dot(task.targetPosition, task.targetPosition);
+							if (selectedLen2 > 0.0001F || currentLen2 > 0.0001F) {
+								// Use distance threshold for "same" position (within 0.5 meters)
+								float dist = glm::distance(task.targetPosition, selectedPos);
+								sameTarget = (dist < 0.5F);
+							}
 						}
 						// For gather tasks, also check if targeting same entity
 						bool sameGatherTarget = true;
 						if (selected->taskType == TaskType::Gather) {
-							sameGatherTarget = (task.gatherTargetEntityId == selected->gatherTargetEntityId);
+							// Both IDs must be valid (non-zero) to compare
+							if (task.gatherTargetEntityId != 0U && selected->gatherTargetEntityId != 0U) {
+								sameGatherTarget = (task.gatherTargetEntityId == selected->gatherTargetEntityId);
+							} else {
+								// At least one gather target is invalid/unset; treat as different targets
+								sameGatherTarget = false;
+							}
 						}
 						isSameTask = sameType && sameTarget && sameGatherTarget;
 					}

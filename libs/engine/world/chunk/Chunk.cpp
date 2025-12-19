@@ -61,7 +61,9 @@ namespace engine::world {
 			}
 		}
 
-		// Shrink to fit to minimize memory usage
+		// Shrink to fit to minimize memory usage. Note: this is a non-binding request
+		// but in practice chunks typically have 50-200 shore tiles (~400-1600 bytes),
+		// so the potential excess capacity per chunk is small and bounded.
 		m_shoreTiles.shrink_to_fit();
 	}
 
