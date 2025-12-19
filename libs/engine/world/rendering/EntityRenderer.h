@@ -123,20 +123,32 @@ class EntityRenderer {
 	/// Cache of per-chunk instance data, keyed by chunk coordinate.
 	std::unordered_map<ChunkCoordinate, ChunkInstanceCache> m_chunkInstanceCache;
 
-	// --- Baked Static Mesh Path (replaces instancing for static entities) ---
+	// --- Baked Static Mesh Path with Sub-Chunk Culling ---
 	// Pre-transforms all entity vertices on CPU once at chunk load time.
-	// Draws with glDrawElements instead of glDrawElementsInstanced.
-	// Much faster for 100K+ entities due to sequential memory access.
+	// Subdivides chunks into smaller regions for view frustum culling.
+	// Only draws sub-regions that intersect the viewport.
 
-	/// GPU resources for a chunk's baked entity mesh.
-	/// All entities in the chunk are combined into a single VBO/IBO.
-	struct BakedChunkData {
+	// Sub-chunk grid: 8×8 = 64 sub-regions per chunk
+	// Each sub-region is 64×64 tiles (512/8 = 64)
+	static constexpr int kSubChunkGridSize = 8;
+	static constexpr int kSubChunkTileSize = kChunkSize / kSubChunkGridSize;  // 64 tiles
+	static constexpr float kSubChunkWorldSize = static_cast<float>(kSubChunkTileSize) * kTileSize;  // 64 meters
+
+	/// GPU resources for a single sub-region's baked entity mesh.
+	struct BakedSubChunkData {
 		Renderer::GLVertexArray vao;     // VAO with baked vertex data
 		Renderer::GLBuffer vertexVBO;    // Pre-transformed vertices (world-space)
 		Renderer::GLBuffer indexIBO;     // Combined indices
-		uint32_t vertexCount = 0;        // Total vertices in VBO
 		uint32_t indexCount = 0;         // Total indices in IBO
 		uint32_t entityCount = 0;        // For debugging/metrics
+		float minX = 0, minY = 0;        // World-space bounds for culling
+		float maxX = 0, maxY = 0;
+	};
+
+	/// GPU resources for a chunk, subdivided into sub-regions.
+	struct BakedChunkData {
+		std::array<BakedSubChunkData, kSubChunkGridSize * kSubChunkGridSize> subChunks;
+		uint32_t totalEntityCount = 0;   // For debugging/metrics
 		uint64_t lastAccessFrame = 0;    // For LRU eviction
 	};
 

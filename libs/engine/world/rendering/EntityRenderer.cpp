@@ -728,7 +728,14 @@ namespace engine::world {
 		return mesh;
 	}
 
-	// --- Baked Static Mesh Implementation ---
+	// --- Baked Static Mesh Implementation with Sub-Chunk Culling ---
+
+	// Per-vertex data: position (Vec2) + color (Color) = 24 bytes
+	struct BakedVertex {
+		Foundation::Vec2  position; // World-space position
+		Foundation::Color color;	// Pre-tinted color
+	};
+	static_assert(sizeof(BakedVertex) == 24, "BakedVertex must be 24 bytes");
 
 	void EntityRenderer::buildBakedChunkMesh(const assets::PlacementExecutor& executor, const ChunkCoordinate& coord) {
 		// Get chunk index from executor
@@ -737,147 +744,145 @@ namespace engine::world {
 			return;
 		}
 
-		// Get chunk world bounds and query ALL entities in this chunk
-		WorldPosition chunkOrigin = coord.origin();
-		float		  chunkSize = static_cast<float>(kChunkSize) * kTileSize;
-		float		  minX = chunkOrigin.x;
-		float		  minY = chunkOrigin.y;
-		float		  maxX = chunkOrigin.x + chunkSize;
-		float		  maxY = chunkOrigin.y + chunkSize;
-		auto		  allEntities = index->queryRect(minX, minY, maxX, maxY);
-		if (allEntities.empty()) {
-			return;
-		}
-
-		// Estimate total vertices/indices for reservation
-		// Typical entity has ~4-10 vertices, ~6-15 indices
-		size_t estimatedVertices = allEntities.size() * 8;
-		size_t estimatedIndices = allEntities.size() * 12;
-
-		// Per-vertex data: position (Vec2) + color (Color) = 24 bytes
-		// Same layout as InstancedMeshVertex for VAO compatibility
-		struct BakedVertex {
-			Foundation::Vec2  position;  // World-space position
-			Foundation::Color color;     // Pre-tinted color
-		};
-		static_assert(sizeof(BakedVertex) == 24, "BakedVertex must be 24 bytes");
-
-		std::vector<BakedVertex> vertices;
-		std::vector<uint32_t> indices;  // 32-bit indices (may exceed 65K vertices)
-		vertices.reserve(estimatedVertices);
-		indices.reserve(estimatedIndices);
-
-		uint32_t entityCount = 0;
-		uint32_t vertexOffset = 0;
-
-		for (const auto* entity : allEntities) {
-			const auto* templateMesh = getTemplate(entity->defName);
-			if (templateMesh == nullptr) {
-				continue;
-			}
-
-			// Pre-compute transform
-			float entityScale = entity->scale;
-			float posX = entity->position.x;
-			float posY = entity->position.y;
-			bool hasMeshColors = templateMesh->hasColors();
-
-			// Check if we need rotation
-			constexpr float kRotationEpsilon = 0.0001F;
-			bool noRotation = std::abs(entity->rotation) < kRotationEpsilon;
-
-			float cosR = 1.0F;
-			float sinR = 0.0F;
-			if (!noRotation) {
-				cosR = std::cos(entity->rotation);
-				sinR = std::sin(entity->rotation);
-			}
-
-			// Transform and add vertices
-			for (size_t i = 0; i < templateMesh->vertices.size(); ++i) {
-				const auto& v = templateMesh->vertices[i];
-				BakedVertex baked;
-
-				// Scale
-				float sx = v.x * entityScale;
-				float sy = v.y * entityScale;
-
-				// Rotate + translate to world position
-				if (noRotation) {
-					baked.position.x = sx + posX;
-					baked.position.y = sy + posY;
-				} else {
-					baked.position.x = sx * cosR - sy * sinR + posX;
-					baked.position.y = sx * sinR + sy * cosR + posY;
-				}
-
-				// Apply color tint
-				if (hasMeshColors) {
-					const auto& meshColor = templateMesh->colors[i];
-					baked.color = Foundation::Color(
-						meshColor.r * entity->colorTint.r,
-						meshColor.g * entity->colorTint.g,
-						meshColor.b * entity->colorTint.b,
-						meshColor.a * entity->colorTint.a
-					);
-				} else {
-					baked.color = Foundation::Color(entity->colorTint);
-				}
-
-				vertices.push_back(baked);
-			}
-
-			// Add indices (offset by current vertex count)
-			for (const auto& idx : templateMesh->indices) {
-				indices.push_back(vertexOffset + idx);
-			}
-
-			vertexOffset += static_cast<uint32_t>(templateMesh->vertices.size());
-			entityCount++;
-		}
-
-		if (vertices.empty()) {
-			return;
-		}
-
-		// Create GPU resources
+		WorldPosition  chunkOrigin = coord.origin();
 		BakedChunkData bakedData;
-		bakedData.entityCount = entityCount;
-		bakedData.vertexCount = static_cast<uint32_t>(vertices.size());
-		bakedData.indexCount = static_cast<uint32_t>(indices.size());
 		bakedData.lastAccessFrame = frameCounter;
+		uint32_t totalEntityCount = 0;
 
-		// Create VAO
-		bakedData.vao = Renderer::GLVertexArray::create();
-		bakedData.vao.bind();
+		// Build each sub-chunk separately for view frustum culling
+		for (int subY = 0; subY < kSubChunkGridSize; ++subY) {
+			for (int subX = 0; subX < kSubChunkGridSize; ++subX) {
+				int	  subIndex = subY * kSubChunkGridSize + subX;
+				auto& subChunk = bakedData.subChunks[subIndex];
 
-		// Create and upload vertex buffer (GL_STATIC_DRAW - uploaded once)
-		bakedData.vertexVBO = Renderer::GLBuffer(
-			GL_ARRAY_BUFFER,
-			static_cast<GLsizeiptr>(vertices.size() * sizeof(BakedVertex)),
-			vertices.data(),
-			GL_STATIC_DRAW
-		);
+				// Calculate sub-chunk world bounds
+				float subMinX = chunkOrigin.x + static_cast<float>(subX) * kSubChunkWorldSize;
+				float subMinY = chunkOrigin.y + static_cast<float>(subY) * kSubChunkWorldSize;
+				float subMaxX = subMinX + kSubChunkWorldSize;
+				float subMaxY = subMinY + kSubChunkWorldSize;
 
-		// Set up vertex attributes (same layout as InstancedMeshVertex)
-		// Location 0: position (vec2)
-		glEnableVertexAttribArray(0);
-		glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(BakedVertex), reinterpret_cast<void*>(0));
+				// Store bounds for culling
+				subChunk.minX = subMinX;
+				subChunk.minY = subMinY;
+				subChunk.maxX = subMaxX;
+				subChunk.maxY = subMaxY;
 
-		// Location 2: color (vec4)
-		glEnableVertexAttribArray(2);
-		glVertexAttribPointer(2, 4, GL_FLOAT, GL_FALSE, sizeof(BakedVertex), reinterpret_cast<void*>(offsetof(BakedVertex, color)));
+				// Query entities in this sub-region
+				auto entities = index->queryRect(subMinX, subMinY, subMaxX, subMaxY);
+				if (entities.empty()) {
+					subChunk.indexCount = 0;
+					subChunk.entityCount = 0;
+					continue;
+				}
 
-		// Create and upload index buffer (32-bit indices)
-		bakedData.indexIBO = Renderer::GLBuffer(
-			GL_ELEMENT_ARRAY_BUFFER,
-			static_cast<GLsizeiptr>(indices.size() * sizeof(uint32_t)),
-			indices.data(),
-			GL_STATIC_DRAW
-		);
+				// Build vertex/index data for this sub-chunk
+				std::vector<BakedVertex> vertices;
+				std::vector<uint32_t>	 indices;
+				vertices.reserve(entities.size() * 8);
+				indices.reserve(entities.size() * 12);
 
-		Renderer::GLVertexArray::unbind();
+				uint32_t vertexOffset = 0;
 
+				for (const auto* entity : entities) {
+					const auto* templateMesh = getTemplate(entity->defName);
+					if (templateMesh == nullptr) {
+						continue;
+					}
+
+					// Pre-compute transform
+					float entityScale = entity->scale;
+					float posX = entity->position.x;
+					float posY = entity->position.y;
+					bool  hasMeshColors = templateMesh->hasColors();
+
+					// Check if we need rotation
+					constexpr float kRotationEpsilon = 0.0001F;
+					bool			noRotation = std::abs(entity->rotation) < kRotationEpsilon;
+
+					float cosR = 1.0F;
+					float sinR = 0.0F;
+					if (!noRotation) {
+						cosR = std::cos(entity->rotation);
+						sinR = std::sin(entity->rotation);
+					}
+
+					// Transform and add vertices
+					for (size_t i = 0; i < templateMesh->vertices.size(); ++i) {
+						const auto& v = templateMesh->vertices[i];
+						BakedVertex baked;
+
+						// Scale
+						float sx = v.x * entityScale;
+						float sy = v.y * entityScale;
+
+						// Rotate + translate to world position
+						if (noRotation) {
+							baked.position.x = sx + posX;
+							baked.position.y = sy + posY;
+						} else {
+							baked.position.x = sx * cosR - sy * sinR + posX;
+							baked.position.y = sx * sinR + sy * cosR + posY;
+						}
+
+						// Apply color tint
+						if (hasMeshColors) {
+							const auto& meshColor = templateMesh->colors[i];
+							baked.color = Foundation::Color(
+								meshColor.r * entity->colorTint.r,
+								meshColor.g * entity->colorTint.g,
+								meshColor.b * entity->colorTint.b,
+								meshColor.a * entity->colorTint.a
+							);
+						} else {
+							baked.color = Foundation::Color(entity->colorTint);
+						}
+
+						vertices.push_back(baked);
+					}
+
+					// Add indices (offset by current vertex count)
+					for (const auto& idx : templateMesh->indices) {
+						indices.push_back(vertexOffset + idx);
+					}
+
+					vertexOffset += static_cast<uint32_t>(templateMesh->vertices.size());
+					subChunk.entityCount++;
+				}
+
+				if (vertices.empty()) {
+					subChunk.indexCount = 0;
+					continue;
+				}
+
+				// Create GPU resources for this sub-chunk
+				subChunk.indexCount = static_cast<uint32_t>(indices.size());
+				totalEntityCount += subChunk.entityCount;
+
+				// Create VAO
+				subChunk.vao = Renderer::GLVertexArray::create();
+				subChunk.vao.bind();
+
+				// Create and upload vertex buffer
+				subChunk.vertexVBO = Renderer::GLBuffer(
+					GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(vertices.size() * sizeof(BakedVertex)), vertices.data(), GL_STATIC_DRAW
+				);
+
+				// Set up vertex attributes
+				glEnableVertexAttribArray(0);
+				glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(BakedVertex), reinterpret_cast<void*>(0));
+				glEnableVertexAttribArray(2);
+				glVertexAttribPointer(2, 4, GL_FLOAT, GL_FALSE, sizeof(BakedVertex), reinterpret_cast<void*>(offsetof(BakedVertex, color)));
+
+				// Create and upload index buffer
+				subChunk.indexIBO = Renderer::GLBuffer(
+					GL_ELEMENT_ARRAY_BUFFER, static_cast<GLsizeiptr>(indices.size() * sizeof(uint32_t)), indices.data(), GL_STATIC_DRAW
+				);
+
+				Renderer::GLVertexArray::unbind();
+			}
+		}
+
+		bakedData.totalEntityCount = totalEntityCount;
 		m_bakedChunkCache[coord] = std::move(bakedData);
 	}
 
@@ -904,6 +909,21 @@ namespace engine::world {
 
 		// Set viewport on BatchRenderer
 		batchRenderer->setViewport(viewportWidth, viewportHeight);
+
+		// Calculate visible world bounds for sub-chunk culling
+		float zoom = camera.zoom();
+		float camX = camera.position().x;
+		float camY = camera.position().y;
+		float scale = m_pixelsPerMeter * zoom;
+		float viewWorldW = static_cast<float>(viewportWidth) / scale;
+		float viewWorldH = static_cast<float>(viewportHeight) / scale;
+
+		// Visible world bounds with small margin for entities on edges
+		constexpr float kMargin = 2.0F;
+		float			visMinX = camX - (viewWorldW * 0.5F) - kMargin;
+		float			visMaxX = camX + (viewWorldW * 0.5F) + kMargin;
+		float			visMinY = camY - (viewWorldH * 0.5F) - kMargin;
+		float			visMaxY = camY + (viewWorldH * 0.5F) + kMargin;
 
 		// Save GL state before modifying
 		GLboolean blendEnabled = glIsEnabled(GL_BLEND);
@@ -934,12 +954,12 @@ namespace engine::world {
 
 		// Set baked world-space mode (u_instanced = 2)
 		glUniform1i(m_uniformLocations.instanced, 2);
-		glUniform2f(m_uniformLocations.cameraPosition, camera.position().x, camera.position().y);
-		glUniform1f(m_uniformLocations.cameraZoom, camera.zoom());
+		glUniform2f(m_uniformLocations.cameraPosition, camX, camY);
+		glUniform1f(m_uniformLocations.cameraZoom, zoom);
 		glUniform1f(m_uniformLocations.pixelsPerMeter, m_pixelsPerMeter);
 		glUniform2f(m_uniformLocations.viewportSize, static_cast<float>(viewportWidth), static_cast<float>(viewportHeight));
 
-		// Draw each baked chunk
+		// Draw visible sub-chunks from each cached chunk
 		for (const auto& coord : processedChunks) {
 			auto cacheIt = m_bakedChunkCache.find(coord);
 			if (cacheIt == m_bakedChunkCache.end()) {
@@ -948,20 +968,23 @@ namespace engine::world {
 
 			auto& cache = cacheIt->second;
 			cache.lastAccessFrame = frameCounter; // Update LRU timestamp
-			m_lastEntityCount += cache.entityCount;
 
-			if (cache.indexCount == 0) {
-				continue;
+			// Check each sub-chunk for visibility
+			for (const auto& subChunk : cache.subChunks) {
+				if (subChunk.indexCount == 0) {
+					continue; // Empty sub-chunk
+				}
+
+				// AABB intersection test: is sub-chunk visible?
+				if (subChunk.maxX < visMinX || subChunk.minX > visMaxX || subChunk.maxY < visMinY || subChunk.minY > visMaxY) {
+					continue; // Sub-chunk is completely off-screen
+				}
+
+				// Sub-chunk is visible - draw it
+				m_lastEntityCount += subChunk.entityCount;
+				subChunk.vao.bind();
+				glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(subChunk.indexCount), GL_UNSIGNED_INT, nullptr);
 			}
-
-			// Bind VAO and draw - single draw call per chunk, no instancing overhead!
-			cache.vao.bind();
-			glDrawElements(
-				GL_TRIANGLES,
-				static_cast<GLsizei>(cache.indexCount),
-				GL_UNSIGNED_INT,  // 32-bit indices
-				nullptr
-			);
 		}
 
 		Renderer::GLVertexArray::unbind();

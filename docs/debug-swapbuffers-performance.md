@@ -207,11 +207,16 @@ Baked static meshes successfully eliminated the CPU bottleneck, but 1.76M entiti
 
 To achieve 60 FPS (target: 16.67ms per frame), need ~45% reduction in GPU work:
 
-1. **Reduce flora density** - Use kTileStride=6 as compromise (~750K entities, ~45 FPS expected)
-2. **LOD (Level of Detail)** - Skip grass blades when zoomed out
-3. **View distance culling** - Only render flora within radius from camera
-4. **Reduce vertices per entity** - Simplify grass geometry (currently 4 verts each)
-5. **Zoom-based culling** - At lower zoom levels, skip smaller entities entirely
+1. **View frustum culling within chunks** - Subdivide chunks and cull off-screen regions
+2. **Billboard/impostor system** - Replace 3D geometry with textured quads
+3. **Spatial partitioning** - Better culling with quadtree or grid subdivision
+
+### OPTIONS RULED OUT (Do Not Implement)
+
+The following are OFF THE TABLE - visual quality must be preserved:
+- ❌ Zoom-based LOD (skipping grass when zoomed out)
+- ❌ Reducing grass clump size (3-12 blades per clump is intentional)
+- ❌ Simpler grass geometry (4 vertices per blade is minimal)
 
 ---
 
