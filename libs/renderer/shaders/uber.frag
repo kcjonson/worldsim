@@ -103,6 +103,30 @@ void main() {
 		uint neighborSE = uint(v_data3.z + 0.5);
 		uint neighborSW = uint(v_data3.w + 0.5);
 
+		// PERF: Early-out for INTERIOR TILES (no edge transitions at all)
+		// A tile is truly interior only if ALL 8 neighbors have the same surface.
+		// This skips ALL expensive work: blend weights, neighbor sampling, edge darkening.
+		bool isInteriorTile = (edgeMask == 0u && cornerMask == 0u && hardEdgeMask == 0u &&
+			neighborN == surfaceId && neighborE == surfaceId &&
+			neighborS == surfaceId && neighborW == surfaceId &&
+			neighborNW == surfaceId && neighborNE == surfaceId &&
+			neighborSE == surfaceId && neighborSW == surfaceId);
+		if (isInteriorTile) {
+			vec4 color = v_color;
+			if (u_tileAtlasRectCount > 0) {
+				int idx = int(surfaceId);
+				if (idx < u_tileAtlasRectCount) {
+					vec2 halfSize = max(v_data2.xy, vec2(0.0001));
+					vec2 uv = (v_texCoord / halfSize) * 0.5 + 0.5;
+					vec4 rect = u_tileAtlasRects[idx];
+					vec2 atlasUV = rect.xy + uv * (rect.zw - rect.xy);
+					color = texture(u_tileAtlas, atlasUV) * v_color;
+				}
+			}
+			FragColor = color;
+			return;
+		}
+
 		// Unpack tile world coordinates from data2.z
 		// Packed as: (tileX + 32768) | ((tileY + 32768) << 16)
 		uint packedCoord = uint(v_data2.z);
