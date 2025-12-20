@@ -137,7 +137,9 @@ namespace engine::assets {
 		std::uniform_real_distribution<float> colorDist(-0.08F, 0.08F);
 
 		// Tile stride optimization: with 512x512 chunks, sampling every 4th tile
-		// reduces iterations from 262K to ~16K per chunk while maintaining coverage
+		// Spawn point stride - samples one tile every N tiles in each dimension.
+		// At stride 4: 4096 spawn points per chunk (128×128 tiles / 4² = 1024, then ×4 for jitter)
+		// This reduces iterations from 262K to ~16K per chunk while maintaining coverage
 		constexpr uint16_t kTileStride = 4;
 
 		// Jitter distribution to break up grid pattern (random offset 0 to stride-1)

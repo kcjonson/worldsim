@@ -2,6 +2,7 @@
 
 #include "metrics/GPUTimer.h"
 #include <GL/glew.h>
+#include "utils/Log.h"
 
 namespace Renderer {
 
@@ -13,6 +14,10 @@ namespace Renderer {
 			for (auto& query : queries) {
 				query = GLQuery::create();
 			}
+			LOG_INFO(Renderer, "GPUTimer: timer queries supported (ARB=%d, GL3.3=%d)",
+					 GLEW_ARB_timer_query ? 1 : 0, GLEW_VERSION_3_3 ? 1 : 0);
+		} else {
+			LOG_WARNING(Renderer, "GPUTimer: timer queries NOT supported");
 		}
 	}
 

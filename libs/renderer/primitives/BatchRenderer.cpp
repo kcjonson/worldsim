@@ -567,7 +567,7 @@ namespace Renderer {
 		// Set instanced = false for standard batched rendering path
 		glUniform1i(instancedLoc, 0);
 
-		// Soft blend placeholder uniform (off by default)
+		// Soft blend mode uniform (currently disabled by default)
 		if (auto loc = glGetUniformLocation(shader.getProgram(), "u_softBlendMode"); loc >= 0) {
 			glUniform1i(loc, 0);
 		}

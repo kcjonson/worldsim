@@ -51,3 +51,12 @@ vec2 instanceToScreen(vec2 localPos) {
 vec4 getInstanceColorTint() {
     return a_instanceData2;
 }
+
+/// Transform world-space vertex to screen space.
+/// Used by baked mesh path (u_instanced == 2) where vertices are pre-transformed.
+/// @param worldPos Vertex position in world space (meters)
+/// @return Screen-space position
+vec2 worldToScreen(vec2 worldPos) {
+    float viewScale = u_pixelsPerMeter * u_cameraZoom;
+    return (worldPos - u_cameraPosition) * viewScale + u_viewportSize * 0.5;
+}

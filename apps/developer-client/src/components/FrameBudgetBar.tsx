@@ -4,25 +4,28 @@ interface FrameBudgetBarProps {
   tileRenderMs: number;
   entityRenderMs: number;
   updateMs: number;
+  swapBuffersMs: number;
   frameTimeMs: number;
-  targetMs?: number; // Default 16.67ms for 60fps
+  targetMs?: number; // Default 8.33ms for 120fps
 }
 
 function FrameBudgetBar({
   tileRenderMs,
   entityRenderMs,
   updateMs,
+  swapBuffersMs,
   frameTimeMs,
-  targetMs = 16.67
+  targetMs = 8.33
 }: FrameBudgetBarProps) {
-  // Calculate "other" time (frame overhead, GPU, vsync wait, etc.)
-  const measuredMs = tileRenderMs + entityRenderMs + updateMs;
+  // Calculate "other" time (frame overhead not accounted for elsewhere)
+  const measuredMs = tileRenderMs + entityRenderMs + updateMs + swapBuffersMs;
   const otherMs = Math.max(0, frameTimeMs - measuredMs);
 
   // Calculate percentages of target budget
   const tilePercent = (tileRenderMs / targetMs) * 100;
   const entityPercent = (entityRenderMs / targetMs) * 100;
   const updatePercent = (updateMs / targetMs) * 100;
+  const swapPercent = (swapBuffersMs / targetMs) * 100;
   const otherPercent = (otherMs / targetMs) * 100;
   const totalPercent = (frameTimeMs / targetMs) * 100;
 
@@ -35,6 +38,7 @@ function FrameBudgetBar({
     { name: 'Tiles', ms: tileRenderMs, percent: tilePercent },
     { name: 'Entities', ms: entityRenderMs, percent: entityPercent },
     { name: 'Update', ms: updateMs, percent: updatePercent },
+    { name: 'GPU', ms: swapBuffersMs, percent: swapPercent },
     { name: 'Other', ms: otherMs, percent: otherPercent },
   ];
   const biggestOffender = components.reduce((a, b) => a.ms > b.ms ? a : b);
@@ -67,6 +71,11 @@ function FrameBudgetBar({
           />
           <div
             className={styles.segment}
+            style={{ width: `${Math.min(swapPercent, 100)}%`, background: 'var(--color-gpu)' }}
+            title={`GPU: ${swapBuffersMs.toFixed(2)}ms`}
+          />
+          <div
+            className={styles.segment}
             style={{ width: `${Math.min(otherPercent, 100)}%`, background: 'var(--color-other)' }}
             title={`Other: ${otherMs.toFixed(2)}ms`}
           />
@@ -89,6 +98,10 @@ function FrameBudgetBar({
         <span className={styles.legendItem}>
           <span className={styles.legendColor} style={{ background: 'var(--color-update)' }} />
           Update {updateMs.toFixed(1)}ms
+        </span>
+        <span className={styles.legendItem}>
+          <span className={styles.legendColor} style={{ background: 'var(--color-gpu)' }} />
+          GPU {swapBuffersMs.toFixed(1)}ms
         </span>
         <span className={styles.legendItem}>
           <span className={styles.legendColor} style={{ background: 'var(--color-other)' }} />
