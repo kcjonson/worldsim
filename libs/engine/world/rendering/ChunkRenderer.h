@@ -1,29 +1,43 @@
 #pragma once
 
 // ChunkRenderer - Renders chunks as colored ground tiles.
-// Batches all visible tiles into a single draw call per frame.
-// Uses per-tile visibility culling for efficiency.
+// Uses FBO caching: tiles are rendered once to a texture per chunk,
+// then the cached texture is drawn each frame for massive performance gains.
 
 #include "world/chunk/Chunk.h"
 #include "world/chunk/ChunkManager.h"
 #include "world/camera/WorldCamera.h"
 
+#include <gl/GLBuffer.h>
+#include <gl/GLFramebuffer.h>
+#include <gl/GLTexture.h>
+#include <gl/GLVertexArray.h>
 #include <graphics/Color.h>
 #include <graphics/Rect.h>
 #include <math/Types.h>
 
 #include <algorithm>
 #include <cstdint>
+#include <unordered_map>
 
 namespace engine::world {
 
 /// Renders chunks as colored ground tiles.
-/// Batches visible tiles into single draw call for performance.
+/// Uses FBO caching for performance: tiles rendered once, reused every frame.
 class ChunkRenderer {
   public:
 	/// Create a chunk renderer
 	/// @param pixelsPerMeter Scale factor for world-to-screen conversion
-	ChunkRenderer(float pixelsPerMeter = 16.0F);
+	explicit ChunkRenderer(float pixelsPerMeter = 16.0F);
+
+	/// Destructor - releases GPU resources
+	~ChunkRenderer();
+
+	// Non-copyable, non-movable (owns GPU resources)
+	ChunkRenderer(const ChunkRenderer&) = delete;
+	ChunkRenderer& operator=(const ChunkRenderer&) = delete;
+	ChunkRenderer(ChunkRenderer&&) = delete;
+	ChunkRenderer& operator=(ChunkRenderer&&) = delete;
 
 	/// Render visible chunks
 	/// @param chunkManager Chunk manager with loaded chunks
@@ -54,7 +68,38 @@ class ChunkRenderer {
 	uint32_t m_lastTileCount = 0;
 	uint32_t m_lastChunkCount = 0;
 
-	/// Add visible tiles from a chunk to the frame buffers
+	// --- FBO Tile Cache ---
+	// Tiles are static, so we render them once to a texture and reuse.
+
+	/// Resolution of cached chunk textures (pixels per side)
+	static constexpr int kCacheTextureSize = 2048;
+
+	/// Cached chunk texture data
+	struct CachedChunkTexture {
+		Renderer::GLFramebuffer fbo;
+		Renderer::GLTexture texture;
+		bool valid = false;
+	};
+
+	/// Cache of rendered chunk textures, keyed by chunk coordinate
+	std::unordered_map<ChunkCoordinate, CachedChunkTexture> m_chunkCache;
+
+	/// VAO/VBO for drawing cached texture quads
+	Renderer::GLVertexArray m_quadVAO;
+	Renderer::GLBuffer m_quadVBO;
+	bool m_quadInitialized = false;
+
+	/// Initialize the quad geometry for cached texture rendering
+	void initQuadGeometry();
+
+	/// Render all tiles of a chunk to its cached texture (one-time per chunk)
+	void renderChunkToCache(const Chunk& chunk);
+
+	/// Draw a cached chunk texture to screen
+	void drawCachedChunk(const CachedChunkTexture& cache, const Chunk& chunk,
+	                     const WorldCamera& camera, int viewportWidth, int viewportHeight);
+
+	/// Fallback: Add visible tiles from a chunk directly (uncached path)
 	void addChunkTiles(const Chunk& chunk, const WorldCamera& camera, const Foundation::Rect& visibleRect,
 					   int viewportWidth, int viewportHeight);
 };
