@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2025-12-22 (Ground Texture System audit - marked complete)
+Last Updated: 2025-12-22 (Simple Asset Support audit - confirmed complete)
 
 ## Epic/Story/Task Template
 
@@ -117,8 +117,36 @@ Use this template for all work items:
 
 ---
 
+### ✅ Simple Asset Support (SVG-Only)
+**Spec/Documentation:** `/docs/technical/asset-system/asset-definitions.md`, `/docs/technical/asset-system/folder-based-assets.md`
+**Dependencies:** None (Folder-Based Asset Migration was done as part of this)
+**Status:** complete
+
+**Goal:** Support hand-crafted SVG assets without Lua scripts via data-driven XML definitions.
+
+**Completed Tasks:**
+- [x] Folder-per-asset structure (`FolderName/FolderName.xml` pattern)
+- [x] XML parsing with pugixml (defName, label, assetType, svgPath, worldHeight)
+- [x] Rendering settings (complexity, tier)
+- [x] Per-biome placement with spawn chance, distribution
+- [x] Clumping parameters (clumpSize, clumpRadius, clumpSpacing)
+- [x] Entity relationships (affinity, avoids, requires)
+- [x] Groups with group index for lookups
+- [x] Animation parameters (windResponse, swayFrequency)
+- [x] Capabilities (edible, drinkable, harvestable, carryable, craftable, etc.)
+- [x] Item properties (stackSize, nutrition, spoilable)
+- [x] `@shared/` prefix resolution for shared scripts
+- [x] Template caching (tessellated meshes cached)
+- [x] DefName → ID interning for runtime performance
+
+**Optional Future Enhancements:** Variation (colorRange, scaleRange), inheritance (parent attribute), LOD levels, shared SVG components (@components/).
+
+**Result:** Assets like Reed, BerryBush, Berry, Stick, SmallStone, CraftingSpot all use this system. New simple assets can be added by creating a folder with XML + SVG. ✅
+
+---
+
 ### ✅ Ground Texture System
-**Spec/Documentation:** `/docs/technical/ground-textures.md`, `.claude/plans/ground-texture-system.md`
+**Spec/Documentation:** `/docs/technical/ground-textures.md`, `/docs/development-log/plans/2025-12-22-ground-texture-system.md`
 **Dependencies:** None
 **Status:** complete
 
@@ -211,19 +239,10 @@ The following MVP epics have all been completed. Detailed task breakdowns are pr
 
 ## Planned Epics (Post-MVP)
 
-### Simple Asset Support (SVG-Only)
-**Spec/Documentation:** `/docs/technical/asset-system/asset-definitions.md`
-**Dependencies:** Folder-Based Asset Migration
-**Status:** planned
-
-**Goal:** Support hand-crafted SVG assets without Lua scripts (flowers, mushrooms, rocks).
-
----
-
 ### Flora Content Pack
 **Spec/Documentation:** `/docs/technical/asset-system/`
-**Dependencies:** Simple Asset Support
-**Status:** planned
+**Dependencies:** ~~Simple Asset Support~~ (complete)
+**Status:** ready
 
 **Goal:** Add visual variety with flowers, mushrooms, rocks, and bushes.
 

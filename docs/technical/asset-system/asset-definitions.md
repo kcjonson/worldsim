@@ -1,8 +1,10 @@
 # Asset Definition Schema
 
-**Status**: Design Phase
+**Status**: Implemented (Core Features)
 **Created**: 2025-11-30
-**Last Updated**: 2025-12-03
+**Last Updated**: 2025-12-22
+
+> **Implementation Note**: Core schema is fully implemented and in production use. Optional features (variation, inheritance, LOD) are spec'd but not yet implemented—they will be added when needed.
 
 ## Overview
 
