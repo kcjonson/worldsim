@@ -1,8 +1,8 @@
 #pragma once
 
 // ChunkRenderer - Renders chunks as colored ground tiles.
-// Uses FBO caching: tiles are rendered once to a texture per chunk,
-// then the cached texture is drawn each frame for massive performance gains.
+// Uses interior tile early-out optimization in shader for performance.
+// FBO caching infrastructure exists but is currently disabled due to quality issues.
 
 #include "world/chunk/Chunk.h"
 #include "world/chunk/ChunkManager.h"
@@ -23,7 +23,8 @@
 namespace engine::world {
 
 /// Renders chunks as colored ground tiles.
-/// Uses FBO caching for performance: tiles rendered once, reused every frame.
+/// Uses interior tile early-out in shader for performance.
+/// FBO caching infrastructure exists but is disabled due to quality issues (blur, lost edges).
 class ChunkRenderer {
   public:
 	/// Create a chunk renderer
@@ -99,7 +100,7 @@ class ChunkRenderer {
 	void drawCachedChunk(const CachedChunkTexture& cache, const Chunk& chunk,
 	                     const WorldCamera& camera, int viewportWidth, int viewportHeight);
 
-	/// Fallback: Add visible tiles from a chunk directly (uncached path)
+	/// Primary tile rendering method - adds visible tiles from a chunk directly
 	void addChunkTiles(const Chunk& chunk, const WorldCamera& camera, const Foundation::Rect& visibleRect,
 					   int viewportWidth, int viewportHeight);
 };

@@ -3,22 +3,19 @@
 #include <primitives/BatchRenderer.h>
 #include <primitives/Primitives.h>
 
+#include <algorithm>
+#include <vector>
+
 #include <GL/glew.h>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
-
-#include <algorithm>
-#include <vector>
 
 namespace engine::world {
 
 	ChunkRenderer::ChunkRenderer(float pixelsPerMeter)
 		: m_pixelsPerMeter(pixelsPerMeter) {}
 
-	ChunkRenderer::~ChunkRenderer() {
-		// RAII handles GPU resource cleanup
-		m_chunkCache.clear();
-	}
+	ChunkRenderer::~ChunkRenderer() = default;
 
 	void ChunkRenderer::initQuadGeometry() {
 		if (m_quadInitialized) {
@@ -70,6 +67,7 @@ namespace engine::world {
 			// Check FBO completeness
 			if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
 				Renderer::GLFramebuffer::unbind();
+				m_chunkCache.erase(coord); // Remove invalid entry
 				return;
 			}
 			Renderer::GLFramebuffer::unbind();
@@ -316,7 +314,7 @@ namespace engine::world {
 		int						viewportWidth,
 		int						viewportHeight
 	) {
-		// Fallback path - kept for reference but no longer used in normal operation
+		// Primary tile rendering path - relies on interior tile early-out in shader for performance
 		WorldPosition	chunkOrigin = chunk.worldOrigin();
 		ChunkCoordinate chunkCoord = chunk.coordinate();
 
