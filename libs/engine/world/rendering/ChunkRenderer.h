@@ -1,16 +1,13 @@
 #pragma once
 
 // ChunkRenderer - Renders chunks as colored ground tiles.
-// Batches all visible tiles into a single draw call per frame.
-// Uses per-tile visibility culling for efficiency.
+// Uses interior tile early-out optimization in shader for performance.
 
 #include "world/chunk/Chunk.h"
 #include "world/chunk/ChunkManager.h"
 #include "world/camera/WorldCamera.h"
 
-#include <graphics/Color.h>
 #include <graphics/Rect.h>
-#include <math/Types.h>
 
 #include <algorithm>
 #include <cstdint>
@@ -18,12 +15,12 @@
 namespace engine::world {
 
 /// Renders chunks as colored ground tiles.
-/// Batches visible tiles into single draw call for performance.
+/// Uses interior tile early-out in shader for performance.
 class ChunkRenderer {
   public:
 	/// Create a chunk renderer
 	/// @param pixelsPerMeter Scale factor for world-to-screen conversion
-	ChunkRenderer(float pixelsPerMeter = 16.0F);
+	explicit ChunkRenderer(float pixelsPerMeter = 16.0F);
 
 	/// Render visible chunks
 	/// @param chunkManager Chunk manager with loaded chunks
@@ -54,7 +51,7 @@ class ChunkRenderer {
 	uint32_t m_lastTileCount = 0;
 	uint32_t m_lastChunkCount = 0;
 
-	/// Add visible tiles from a chunk to the frame buffers
+	/// Render visible tiles from a chunk
 	void addChunkTiles(const Chunk& chunk, const WorldCamera& camera, const Foundation::Rect& visibleRect,
 					   int viewportWidth, int viewportHeight);
 };

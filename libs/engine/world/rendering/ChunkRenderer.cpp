@@ -1,7 +1,8 @@
 #include "ChunkRenderer.h"
 
-#include <algorithm>
 #include <primitives/Primitives.h>
+
+#include <algorithm>
 #include <vector>
 
 namespace engine::world {
@@ -14,7 +15,6 @@ namespace engine::world {
 		m_lastChunkCount = 0;
 
 		Foundation::Rect visibleRect = camera.getVisibleRect(viewportWidth, viewportHeight, m_pixelsPerMeter);
-
 		auto [minCorner, maxCorner] = camera.getVisibleCorners(viewportWidth, viewportHeight, m_pixelsPerMeter);
 		std::vector<const Chunk*> visibleChunks = chunkManager.getVisibleChunks(minCorner, maxCorner);
 
@@ -70,9 +70,7 @@ namespace engine::world {
 
 		for (int32_t tileY = startTileY; tileY < endTileY; tileY += m_tileResolution) {
 			for (int32_t tileX = startTileX; tileX < endTileX; tileX += m_tileResolution) {
-				// Use pre-computed render data instead of extracting adjacency per-frame
-				const TileRenderData& render = chunk.getTileRenderData(
-					static_cast<uint16_t>(tileX), static_cast<uint16_t>(tileY));
+				const TileRenderData& render = chunk.getTileRenderData(static_cast<uint16_t>(tileX), static_cast<uint16_t>(tileY));
 
 				float worldX = chunkMinX + static_cast<float>(tileX) * kTileSize;
 				float worldY = chunkMinY + static_cast<float>(tileY) * kTileSize;
@@ -80,7 +78,6 @@ namespace engine::world {
 				float screenX = (worldX - camX) * scale + halfViewW;
 				float screenY = (worldY - camY) * scale + halfViewH;
 
-				// World tile coordinates for procedural edge variation
 				int32_t worldTileX = chunkCoord.x * kChunkSize + tileX;
 				int32_t worldTileY = chunkCoord.y * kChunkSize + tileY;
 
