@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2025-12-19 (Basic Crafting System Epic Complete)
+Last Updated: 2025-12-22 (Ground Texture System audit - marked complete)
 
 ## Epic/Story/Task Template
 
@@ -117,37 +117,45 @@ Use this template for all work items:
 
 ---
 
-### ✅ Performance Optimization
-**Spec/Documentation:** `.claude/plans/performance-optimization-epic.md`
-**Dependencies:** Enhanced Performance Metrics (complete)
+### ✅ Ground Texture System
+**Spec/Documentation:** `/docs/technical/ground-textures.md`, `.claude/plans/ground-texture-system.md`
+**Dependencies:** None
 **Status:** complete
 
-**Goal:** Improve game performance to eliminate lag and stuttering.
+**Goal:** Replace flat-color tiles with textured terrain using hybrid Tier 1 (rasterized texture) + Tier 3 (vector grass) approach, with hard/soft edge blending.
 
-**Tasks:**
-- [x] VisionSystem optimization (shore tile caching, throttle to 12Hz)
-- [x] Tile render data caching (pre-compute adjacency masks)
-- [x] Main loop timing breakdown (diagnose swapBuffers bottleneck)
-- [x] Persistent GPU instance buffers (PR #79)
-  - [x] Add ChunkInstanceCache structure to EntityRenderer
-  - [x] Implement per-chunk VAO/VBO caching
-  - [x] Modify render path to use cached data
-  - [x] Add cache eviction for unloaded chunks
-- [x] RAII wrappers for OpenGL resources
-  - [x] Create GLBuffer, GLVertexArray, GLTexture, GLFramebuffer, GLQuery wrappers
-  - [x] Refactor BatchRenderer to use RAII wrappers
-  - [x] Refactor InstancedMeshHandle to use RAII wrappers
-  - [x] Refactor RenderToTexture to use RAII wrappers
-  - [x] Refactor TileTextureAtlas to use RAII wrappers
-  - [x] Refactor GPUTimer to use RAII wrappers
-  - [x] Update EntityRenderer CachedMeshData to use RAII wrappers
-- [x] LRU cache for chunk eviction
-  - [x] Add timestamp/access counter to ChunkInstanceCache
-  - [x] Keep N recently-used chunks when not visible (kMaxCachedChunks = 64)
-  - [x] Evict oldest when cache exceeds threshold
-- [x] 120 FPS frame cap (yield CPU to other processes)
+**Completed Tasks:**
+- [x] Render-to-Texture Infrastructure
+  - [x] Create RenderToTexture class (FBO wrapper with RAII)
+  - [x] Unit tests for RenderToTexture
+- [x] Tile Texture Atlas
+  - [x] TileTextureAtlas class (atlas allocator)
+  - [x] TileAtlasBuilder (builds atlas from SVG patterns)
+  - [x] TilePatternBaker (rasterizes SVG to RGBA)
+  - [x] Fallback checker pattern for missing SVGs
+- [x] Tile Pattern Assets (6 of 10 surfaces)
+  - [x] Grass, GrassShort, GrassTall, GrassMeadow (basic patterns)
+  - [x] Dirt (rich: pebbles, cracks, dried grass)
+  - [x] Water (rich: ripples, reflections, depth patches)
+- [x] Surface Family System
+  - [x] SurfaceFamily enum (Ground, Water, Rock)
+  - [x] getSurfaceFamily() and getHardEdgeMaskByFamily()
+  - [x] getSurfaceStackOrder() for blend direction
+- [x] Shader Integration
+  - [x] uber.frag tile render mode (kRenderModeTile = -3.0)
+  - [x] tile.glsl with blend weight functions
+  - [x] Early-out optimizations for interior tiles/pixels
+- [x] ChunkRenderer Integration
+  - [x] drawTile() with all 8 neighbor IDs + masks
+  - [x] World tile coordinates for procedural variation
+- [x] Soft Edge Blending
+  - [x] computeHigherBleedWeights() - cardinal blending
+  - [x] computeDiagonalCornerWeights() - diagonal corners
+  - [x] computeTileEdgeDarkening() - procedural edge noise
 
-**Result:** Game runs smoothly with ~10% CPU usage instead of 100%. VisionSystem reduced from 2.5ms to 0.15ms. swapBuffers reduced from 100ms+ to <5ms. Other applications remain responsive while game runs. ✅
+**Optional Future Work:** Add missing patterns (Sand, Rock, Snow, Mud), enrich grass patterns, tune grass entity density.
+
+**Result:** Tiles render with textured patterns, soft blending between same-family surfaces, hard edges at family boundaries (shorelines, cliffs). ✅
 
 ---
 
@@ -279,54 +287,6 @@ The following MVP epics have all been completed. Detailed task breakdowns are pr
 **Spec/Documentation:** `/docs/technical/asset-system/mod-metadata.md`, `/docs/technical/asset-system/patching-system.md`
 **Dependencies:** Folder-Based Asset Migration, Variant Cache System
 **Status:** planned (post-MVP)
-
----
-
-### Ground Texture System (Rimworld-Style)
-**Spec/Documentation:** `/docs/technical/ground-textures.md`
-**Dependencies:** None
-**Status:** ready
-
-**Goal:** Replace solid-color tiles with rich, earth-like terrain using hybrid Tier 1 (rasterized texture) + Tier 3 (vector grass) approach, with proper hard/soft edge rendering.
-
-**Key Design Decisions:**
-- **Three Surface Families**: Ground (traversable), Water (impassable), Rock (impassable cliffs)
-- **Hard edges between families**: Shorelines, cliff edges render crisp (vector precision)
-- **Soft edges within families**: Natural ground transitions blend smoothly
-- **Snow as overlay**: Seasonal attribute, not a surface type
-- **Built/flooring**: Handled as entities, not tiles
-
-**Tasks:**
-- [ ] Render-to-Texture Infrastructure
-  - [ ] Create RenderToTexture class (FBO wrapper)
-  - [ ] Test rendering SVG asset to texture
-- [ ] Tile Pattern Assets
-  - [ ] Create Soil pattern SVG (prototype with stubble + speckles)
-  - [ ] Define asset XML format for tile patterns
-- [ ] Atlas Builder
-  - [ ] Create TileTextureAtlas class
-  - [ ] Rasterize patterns to atlas slots
-- [ ] Shader Integration
-  - [ ] Add tile texture render mode to uber shader
-  - [ ] Update TileVertex struct with surface type
-  - [ ] Update ChunkRenderer to pass world position + surface
-- [ ] Surface Family + Hard Edge Mask
-  - [ ] Implement SurfaceFamily enum and getFamily() lookup
-  - [ ] Extend TileAdjacency with hardEdgeMask (8 bits, pre-computed)
-  - [ ] Add hardEdgeMask to TileVertex struct
-- [ ] Hard Edge Rendering
-  - [ ] Pass hardEdgeMask to shader as vertex attribute
-  - [ ] Implement edge shadow rendering (read mask, darken near edge)
-- [ ] All Surface Types (16 total)
-  - [ ] Ground family patterns (10 surfaces)
-  - [ ] Water family patterns (3 surfaces)
-  - [ ] Rock family patterns (3 surfaces)
-- [ ] Grass Entity Tuning
-  - [ ] Reduce density, increase blade size
-  - [ ] Visual balance between texture and vector layers
-- [ ] Soft Edge Blending (optional enhancement)
-  - [ ] Pass neighbor surface info to shader
-  - [ ] Alpha gradient blending for same-family transitions
 
 ---
 
