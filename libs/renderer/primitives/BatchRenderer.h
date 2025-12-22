@@ -144,9 +144,6 @@ namespace Renderer { // NOLINT(readability-identifier-naming)
 		// Set coordinate system (for DPI-aware projection matrices)
 		void setCoordinateSystem(CoordinateSystem* coordSystem);
 
-		// Get current coordinate system (may be nullptr)
-		[[nodiscard]] CoordinateSystem* getCoordinateSystem() const { return coordinateSystem; }
-
 		// --- Clipping ---
 
 		// Set current clip bounds (applied to all subsequent vertices)

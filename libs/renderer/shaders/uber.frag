@@ -69,7 +69,6 @@ const float kRenderModeText = -1.0;      // MSDF text rendering
 const float kRenderModeInstanced = -2.0; // Simple solid color (instanced entities)
 // Tile rendering mode constant. Must match BatchRenderer.cpp kRenderModeTile and uber.vert:31.
 const float kRenderModeTile = -3.0;
-const float kRenderModeCachedTexture = -4.0; // Simple texture sampling (FBO cached chunks)
 
 // ============================================================================
 // MAIN - Branch on render mode
@@ -77,18 +76,10 @@ const float kRenderModeCachedTexture = -4.0; // Simple texture sampling (FBO cac
 
 void main() {
 	// Render mode detection:
-	// - Shapes:        v_data2.w >= 0 (borderPosition: 0=Inside, 1=Center, 2=Outside)
-	// - Text:          v_data2.w == -1.0
-	// - Instanced:     v_data2.w == -2.0
-	// - Tiles:         v_data2.w == -3.0
-	// - CachedTexture: v_data2.w == -4.0
-
-	// ========== CACHED TEXTURE RENDERING (simple texture sample) ==========
-	// Used for FBO-cached chunk tiles - just sample and output
-	if (v_data2.w < -3.5) {
-		FragColor = texture(u_atlas, v_texCoord) * v_color;
-		return;
-	}
+	// - Shapes:    v_data2.w >= 0 (borderPosition: 0=Inside, 1=Center, 2=Outside)
+	// - Text:      v_data2.w == -1.0
+	// - Instanced: v_data2.w == -2.0
+	// - Tiles:     v_data2.w == -3.0
 
 	// ========== TILE RENDERING (adjacency mask driven) ==========
 	// Uses procedural edge variation from includes/tile.glsl
