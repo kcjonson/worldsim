@@ -71,6 +71,24 @@ const float kRenderModeInstanced = -2.0; // Simple solid color (instanced entiti
 const float kRenderModeTile = -3.0;
 
 // ============================================================================
+// TILE ATLAS SAMPLING
+// ============================================================================
+
+/// Sample the tile atlas for a given surface ID and UV coordinates.
+/// Returns the sampled color multiplied by the vertex color, or just vertex color if no atlas.
+vec4 sampleTileColor(vec2 uv, uint surfaceId, vec4 vertexColor) {
+	if (u_tileAtlasRectCount > 0) {
+		int idx = int(surfaceId);
+		if (idx < u_tileAtlasRectCount) {
+			vec4 rect = u_tileAtlasRects[idx];
+			vec2 atlasUV = rect.xy + uv * (rect.zw - rect.xy);
+			return texture(u_tileAtlas, atlasUV) * vertexColor;
+		}
+	}
+	return vertexColor;
+}
+
+// ============================================================================
 // MAIN - Branch on render mode
 // ============================================================================
 
@@ -112,18 +130,9 @@ void main() {
 			neighborNW == surfaceId && neighborNE == surfaceId &&
 			neighborSE == surfaceId && neighborSW == surfaceId);
 		if (isInteriorTile) {
-			vec4 color = v_color;
-			if (u_tileAtlasRectCount > 0) {
-				int idx = int(surfaceId);
-				if (idx < u_tileAtlasRectCount) {
-					vec2 halfSize = max(v_data2.xy, vec2(0.0001));
-					vec2 uv = (v_texCoord / halfSize) * 0.5 + 0.5;
-					vec4 rect = u_tileAtlasRects[idx];
-					vec2 atlasUV = rect.xy + uv * (rect.zw - rect.xy);
-					color = texture(u_tileAtlas, atlasUV) * v_color;
-				}
-			}
-			FragColor = color;
+			vec2 halfSize = max(v_data2.xy, vec2(0.0001));
+			vec2 uv = (v_texCoord / halfSize) * 0.5 + 0.5;
+			FragColor = sampleTileColor(uv, surfaceId, v_color);
 			return;
 		}
 
@@ -138,15 +147,7 @@ void main() {
 		vec2 uv = (v_texCoord / halfSize) * 0.5 + 0.5; // uv.y=0 top
 
 		// Base color from atlas if available, otherwise vertex color
-		vec4 color = v_color;
-		if (u_tileAtlasRectCount > 0) {
-			int idx = int(surfaceId);
-			if (idx < u_tileAtlasRectCount) {
-				vec4 rect = u_tileAtlasRects[idx];
-				vec2 atlasUV = rect.xy + uv * (rect.zw - rect.xy);
-				color = texture(u_tileAtlas, atlasUV) * v_color;
-			}
-		}
+		vec4 color = sampleTileColor(uv, surfaceId, v_color);
 
 		// PERF: Early-out for interior pixels (~31% of tile area)
 		// Blend width is 0.20, corner radius 0.18, edge darkening ~0.12
