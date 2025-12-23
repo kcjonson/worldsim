@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2025-12-23 (UI Architecture epics added - data binding, layout, input cleanup)
+Last Updated: 2025-12-23 (UI Architecture epics - dependencies corrected)
 
 ## Epic/Story/Task Template
 
@@ -244,7 +244,7 @@ The following MVP epics have all been completed. Detailed task breakdowns are pr
 
 ### UI Architecture: Input System Cleanup
 **Spec/Documentation:** `/docs/technical/ui-framework/event-system.md`
-**Dependencies:** None
+**Dependencies:** None (do before FocusManager Simplification - both touch same components)
 **Status:** ready
 
 **Goal:** Remove dual input system (polling + events) - keep only event-based `handleEvent()`.
@@ -268,7 +268,7 @@ The following MVP epics have all been completed. Detailed task breakdowns are pr
 
 ### UI Architecture: FocusManager Simplification
 **Spec/Documentation:** `/docs/technical/ui-framework/focus-management.md`
-**Dependencies:** None
+**Dependencies:** UI Architecture: Input System Cleanup (touches same files)
 **Status:** ready
 
 **Goal:** Reduce ~50 lines of FocusManager boilerplate per focusable component via CRTP base class.
@@ -353,9 +353,9 @@ The following MVP epics have all been completed. Detailed task breakdowns are pr
 ---
 
 ### UI Architecture: Animation System
-**Spec/Documentation:** `/docs/technical/ui-framework/` (spec to be written)
+**Spec/Documentation:** `/docs/technical/ui-framework/animation-system.md` (to be written)
 **Dependencies:** None
-**Status:** planned (can defer)
+**Status:** needs spec
 
 **Goal:** Add tweening system for smooth UI transitions.
 
@@ -455,7 +455,7 @@ The following MVP epics have all been completed. Detailed task breakdowns are pr
 
 ### Main Game UI: Core HUD
 **Spec/Documentation:** `/docs/design/main-game-ui-design.md` (Sections 1, 2, 5, 9)
-**Dependencies:** Main Game UI: Primitives Foundation
+**Dependencies:** Main Game UI: Primitives Foundation, UI Architecture: ViewModel Pattern
 **Status:** planned
 
 **Goal:** Implement main gameplay HUD (top bar, colonist list, gameplay bar, zoom).
@@ -483,7 +483,7 @@ The following MVP epics have all been completed. Detailed task breakdowns are pr
 
 ### Main Game UI: Information Systems
 **Spec/Documentation:** `/docs/design/main-game-ui-design.md` (Sections 3, 4, 6)
-**Dependencies:** Main Game UI: Complex Components
+**Dependencies:** Main Game UI: Complex Components, UI Architecture: ViewModel Pattern
 **Status:** planned
 
 **Goal:** Add minimap, resources panel, and notifications.
@@ -508,7 +508,7 @@ The following MVP epics have all been completed. Detailed task breakdowns are pr
 
 ### Main Game UI: Management Screens
 **Spec/Documentation:** `/docs/design/main-game-ui-design.md` (Section 11)
-**Dependencies:** Main Game UI: Interaction Components (Modal)
+**Dependencies:** Main Game UI: Interaction Components (Modal), UI Architecture: ViewModel Pattern
 **Status:** planned
 
 **Goal:** Full-screen management overlays.
@@ -534,7 +534,7 @@ The following MVP epics have all been completed. Detailed task breakdowns are pr
 
 ### Main Game UI: Colonist Details Modal
 **Spec/Documentation:** `/docs/design/main-game-ui-design.md` (Section 8)
-**Dependencies:** Main Game UI: Interaction Components, Main Game UI: Primitives Foundation
+**Dependencies:** Main Game UI: Interaction Components, Main Game UI: Primitives Foundation, UI Architecture: ViewModel Pattern
 **Status:** planned
 
 **Goal:** Full colonist information display with tabs.
