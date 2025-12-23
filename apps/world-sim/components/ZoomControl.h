@@ -4,6 +4,7 @@
 // Shows current zoom percentage and allows step-based zoom changes.
 
 #include <components/button/Button.h>
+#include <input/InputEvent.h>
 #include <shapes/Shapes.h>
 
 #include <functional>
@@ -29,14 +30,11 @@ class ZoomControl {
 	/// Update position (for viewport-relative positioning)
 	void setPosition(Foundation::Vec2 position);
 
-	/// Handle mouse input for buttons
-	void handleInput();
+	/// Dispatch an input event
+	bool handleEvent(UI::InputEvent& event);
 
 	/// Render the control
 	void render();
-
-	/// Check if a point is within the control bounds
-	[[nodiscard]] bool isPointOver(Foundation::Vec2 point) const;
 
   private:
 	Foundation::Vec2 position;

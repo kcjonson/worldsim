@@ -3,6 +3,7 @@
 #include "components/tabbar/TabBarStyle.h"
 #include "component/Component.h"
 #include "focus/Focusable.h"
+#include "input/InputEvent.h"
 #include "math/Types.h"
 #include "shapes/Shapes.h"
 #include <functional>
@@ -77,9 +78,11 @@ namespace UI {
 		TabBar& operator=(TabBar&& other) noexcept;
 
 		// ILayer implementation (overrides Component)
-		void handleInput() override;
 		void update(float deltaTime) override;
 		void render() override;
+
+		// Event handling
+		bool handleEvent(InputEvent& event) override;
 
 		// IFocusable implementation
 		void onFocusGained() override;

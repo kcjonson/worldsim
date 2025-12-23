@@ -2,7 +2,6 @@
 #include "focus/FocusManager.h"
 #include "font/FontRenderer.h"
 #include <glm/glm.hpp>
-#include <input/InputManager.h>
 #include <input/InputTypes.h>
 #include <primitives/Primitives.h>
 
@@ -106,31 +105,43 @@ namespace UI {
 		return *this;
 	}
 
-	void TabBar::handleInput() {
+	bool TabBar::handleEvent(InputEvent& event) {
 		if (!visible) {
-			return;
+			return false;
 		}
 
-		// Get input state from InputManager
-		auto&			 input = engine::InputManager::Get();
-		Foundation::Vec2 mousePos = input.getMousePosition();
+		// Update hover state on mouse move
+		if (event.type == InputEvent::Type::MouseMove) {
+			m_hoveredIndex = getTabIndexAtPosition(event.position);
+			// Don't consume mouse move - let it propagate for other components
+			return false;
+		}
 
-		// Update hovered tab
-		m_hoveredIndex = getTabIndexAtPosition(mousePos);
-
-		// Handle mouse button state
-		bool isLeftButtonDown = input.isMouseButtonDown(engine::MouseButton::Left);
-		bool wasMouseDown = m_mouseDown;
-
-		if (m_hoveredIndex >= 0) {
-			if (!isLeftButtonDown && wasMouseDown) {
-				// Mouse released while over a tab - select it
-				selectTabByIndex(m_hoveredIndex);
+		// Handle mouse down - start tracking
+		if (event.type == InputEvent::Type::MouseDown && event.button == engine::MouseButton::Left) {
+			int tabIndex = getTabIndexAtPosition(event.position);
+			if (tabIndex >= 0) {
+				m_mouseDown = true;
+				event.consume();
+				return true;
 			}
-			m_mouseDown = isLeftButtonDown;
-		} else {
-			m_mouseDown = false;
+			return false;
 		}
+
+		// Handle mouse up - select tab if still over it
+		if (event.type == InputEvent::Type::MouseUp && event.button == engine::MouseButton::Left) {
+			if (m_mouseDown) {
+				int tabIndex = getTabIndexAtPosition(event.position);
+				if (tabIndex >= 0) {
+					selectTabByIndex(tabIndex);
+				}
+				m_mouseDown = false;
+				event.consume();
+				return true;
+			}
+		}
+
+		return false;
 	}
 
 	void TabBar::update(float /*deltaTime*/) {

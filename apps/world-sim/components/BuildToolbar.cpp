@@ -46,21 +46,17 @@ void BuildToolbar::updateButtonStyle() {
 	// Future: could modify button appearance directly
 }
 
-void BuildToolbar::handleInput() {
+bool BuildToolbar::handleEvent(UI::InputEvent& event) {
 	if (m_buildButton) {
-		m_buildButton->handleInput();
+		return m_buildButton->handleEvent(event);
 	}
+	return false;
 }
 
 void BuildToolbar::render() {
 	if (m_buildButton) {
 		m_buildButton->render();
 	}
-}
-
-bool BuildToolbar::isPointOver(Foundation::Vec2 point) const {
-	return point.x >= m_position.x && point.x <= m_position.x + kButtonWidth && point.y >= m_position.y &&
-		   point.y <= m_position.y + kButtonHeight;
 }
 
 } // namespace world_sim

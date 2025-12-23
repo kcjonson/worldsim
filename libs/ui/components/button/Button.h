@@ -84,6 +84,10 @@ class Button : public Component, public IFocusable {
 	void update(float deltaTime) override;
 	void render() override;
 
+	// IComponent event handling (new event system)
+	bool handleEvent(InputEvent& event) override;
+	bool containsPoint(Foundation::Vec2 point) const override;
+
 	// State management
 	void setFocused(bool newFocused) { focused = newFocused; }
 	void setDisabled(bool newDisabled) { disabled = newDisabled; }
@@ -98,7 +102,6 @@ class Button : public Component, public IFocusable {
 	bool canReceiveFocus() const override;
 
 	// Geometry queries
-	bool			 containsPoint(const Foundation::Vec2& point) const;
 	Foundation::Vec2 getCenter() const {
 		return Foundation::Vec2{position.x + size.x * 0.5F, position.y + size.y * 0.5F};
 	}

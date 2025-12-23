@@ -5,6 +5,7 @@
 // Initially shows only innate recipes; will expand as colonists learn more.
 
 #include <components/button/Button.h>
+#include <input/InputEvent.h>
 #include <shapes/Shapes.h>
 
 #include <functional>
@@ -41,14 +42,11 @@ class BuildMenu {
 	/// Update position
 	void setPosition(Foundation::Vec2 position);
 
-	/// Handle mouse input
-	void handleInput();
+	/// Handle input event, returns true if consumed
+	bool handleEvent(UI::InputEvent& event);
 
 	/// Render the menu
 	void render();
-
-	/// Check if a point is within the menu bounds
-	[[nodiscard]] bool isPointOver(Foundation::Vec2 point) const;
 
 	/// Get menu bounds for layout calculations
 	[[nodiscard]] Foundation::Rect bounds() const;

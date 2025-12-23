@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2025-12-22 (Simple Asset Support audit - confirmed complete)
+Last Updated: 2025-12-23 (UI Event System complete)
 
 ## Epic/Story/Task Template
 
@@ -88,35 +88,6 @@ Use this template for all work items:
 
 ---
 
-### ✅ Shore Tiles + Surface Edge Rendering
-**Spec/Documentation:** `/docs/development-log/plans/2025-12-18-shore-tiles-surface-edges.md`
-**Dependencies:** Flat Tile Storage Refactor
-**Status:** complete
-
-**Goal:** Pre-compute tile adjacency for fast shore detection, add visual edge decorations at surface transitions, and generate organic mud around water bodies.
-
-**Completed Tasks:**
-- [x] TileAdjacency System
-  - [x] Create TileAdjacency.h with 64-bit packed neighbor data (8 directions × 6 bits)
-  - [x] Direction enum (NW, W, SW, S, SE, E, NE, N) with getNeighbor/setNeighbor helpers
-  - [x] Surface stacking order (Water < Mud < Sand < Dirt < Soil < Rock < Snow)
-  - [x] getEdgeMaskByStack() and getCornerMaskByStack() for edge rendering
-- [x] TilePostProcessor
-  - [x] Flood-fill mud generation around water bodies (contiguous rings, 3-tile max)
-  - [x] Adjacency computation for all tiles after initial surface assignment
-  - [x] Tunable parameters (kMudMaxDistance=3, kMudProbability=0.95)
-- [x] Surface Edge Rendering
-  - [x] Higher-stacked surfaces draw darkened edges when adjacent to lower surfaces
-  - [x] Asymmetric stroke widths for depth effect (1px light N/W, 2px shadow S/E)
-  - [x] Corner rectangles sized to match adjacent edges (NW=1×1, SE=2×2, etc.)
-- [x] Surface::Mud Type
-  - [x] Add Mud to Surface enum with darker brown color
-  - [x] Reduced dirt threshold (0.88) for less random dirt in grassland
-
-**Result:** Tiles have pre-computed adjacency for O(1) shore detection. Visual depth effect on all surface transitions. Organic mud rings around water bodies. ✅
-
----
-
 ### ✅ Simple Asset Support (SVG-Only)
 **Spec/Documentation:** `/docs/technical/asset-system/asset-definitions.md`, `/docs/technical/asset-system/folder-based-assets.md`
 **Dependencies:** None (Folder-Based Asset Migration was done as part of this)
@@ -184,6 +155,38 @@ Use this template for all work items:
 **Optional Future Work:** Add missing patterns (Sand, Rock, Snow, Mud), enrich grass patterns, tune grass entity density.
 
 **Result:** Tiles render with textured patterns, soft blending between same-family surfaces, hard edges at family boundaries (shorelines, cliffs). ✅
+
+---
+
+### ✅ UI Event System
+**Spec/Documentation:** `/docs/technical/ui-framework/event-system.md`
+**Dependencies:** None
+**Status:** complete
+
+**Goal:** Replace manual hit-testing boilerplate (~69 lines of QUICKFIX code) with event consumption. Components call `event.consume()` to stop propagation. MouseMove events handle hover state.
+
+**Completed Tasks:**
+- [x] Event Infrastructure
+  - [x] Create InputEvent struct with type, position, consumed flag
+  - [x] Add handleEvent() to IComponent interface
+  - [x] Add containsPoint() to IComponent for hit testing
+- [x] Component Updates
+  - [x] Update Button to use handleEvent() and consume clicks
+  - [x] Update TabBar to use handleEvent()
+  - [x] Migrate BuildToolbar, BuildMenu, ColonistListPanel
+  - [x] Migrate EntityInfoPanel, TaskListPanel
+- [x] Dispatch System
+  - [x] Add dispatchEvent() to Component base class
+  - [x] GameUI dispatches to all children in z-order
+  - [x] GameScene dispatches MouseMove, MouseDown, MouseUp events
+- [x] QUICKFIX Cleanup
+  - [x] Remove isPointOverUI() from GameUI, GameOverlay
+  - [x] Remove isPointOver() from ZoomControl, BuildToolbar, BuildMenu
+  - [x] Remove handleInput() polling from all migrated components
+
+**Deferred:** Debug Integration (hit-test endpoint, SSE events) - can be added when needed.
+
+**Result:** Clean event propagation model. Adding new UI panels no longer requires updating multiple files. Components consume events to prevent click-through. ✅
 
 ---
 
@@ -268,37 +271,6 @@ The following MVP epics have all been completed. Detailed task breakdowns are pr
 **Spec/Documentation:** `/docs/technical/ui-framework/sdf-rendering.md`
 **Dependencies:** None
 **Status:** planned
-
----
-
-### UI Event System
-**Spec/Documentation:** `/docs/technical/ui-framework/event-system.md`
-**Dependencies:** None
-**Status:** planned
-
-**Goal:** Implement event propagation with consumption (like HTML DOM) and debug introspection via HTTP.
-
-**Tasks:**
-- [ ] Event Infrastructure
-  - [ ] Create InputEvent struct with type, position, consumed flag
-  - [ ] Add handleEvent() to IComponent interface
-  - [ ] Create HitTestResult and HitTestEntry types
-- [ ] Component Updates
-  - [ ] Update Button to use handleEvent() and consume clicks
-  - [ ] Update TextInput similarly
-  - [ ] Add bounds tracking for hit testing
-- [ ] Dispatch System
-  - [ ] Create z-index sorted event dispatch
-  - [ ] Wire up to InputManager in main loop
-  - [ ] Short-circuit on consumed events
-- [ ] Debug Integration
-  - [ ] Add /api/ui/hit-test endpoint to Developer Server
-  - [ ] Add click events with layer stack to SSE stream
-  - [ ] Update Developer Client to display layer stack
-- [ ] QUICKFIX Cleanup
-  - [ ] Remove isPointOverUI() from GameUI, GameOverlay
-  - [ ] Remove isPointOver() from ZoomControl
-  - [ ] Migrate manual handleInput() to handleEvent()
 
 ---
 

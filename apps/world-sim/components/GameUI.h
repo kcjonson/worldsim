@@ -21,6 +21,8 @@
 #include "Selection.h"
 #include "TaskListPanel.h"
 
+#include <input/InputEvent.h>
+
 #include <assets/AssetRegistry.h>
 #include <assets/RecipeRegistry.h>
 #include <ecs/World.h>
@@ -52,9 +54,10 @@ class GameUI {
 	/// @param viewportBounds Logical viewport bounds (not framebuffer)
 	void layout(const Foundation::Rect& viewportBounds);
 
-	/// Handle input for UI elements
-	/// @return true if UI consumed the input (prevent world interaction)
-	bool handleInput();
+	/// Dispatch an input event to all UI children
+	/// @param event The event to dispatch - will have consumed flag set if any child handled it
+	/// @return true if any child consumed the event
+	bool dispatchEvent(UI::InputEvent& event);
 
 	/// Update UI state
 	void update(
@@ -72,11 +75,6 @@ class GameUI {
 	/// Render notifications (call after render() for proper z-order)
 	void renderNotifications(const NotificationManager& notifications);
 
-	/// Check if a screen position is within any UI element bounds
-	/// @param screenPos Position in logical screen coordinates
-	/// @return true if position is over a UI element
-	[[nodiscard]] bool isPointOverUI(Foundation::Vec2 screenPos) const;
-
 	// --- Build Mode API ---
 
 	/// Set whether build mode is active (updates toolbar button state)
@@ -92,9 +90,6 @@ class GameUI {
 	[[nodiscard]] bool isBuildMenuVisible() const;
 
   private:
-	/// Check if a point is within info panel bounds (when visible)
-	[[nodiscard]] bool isPointOverInfoPanel(Foundation::Vec2 screenPos) const;
-
 	std::unique_ptr<GameOverlay> overlay;
 	std::unique_ptr<BuildToolbar> buildToolbar;
 	std::unique_ptr<BuildMenu> buildMenu;

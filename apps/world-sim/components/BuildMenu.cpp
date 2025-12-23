@@ -86,12 +86,17 @@ namespace world_sim {
 		rebuildButtons();
 	}
 
-	void BuildMenu::handleInput() {
+	bool BuildMenu::handleEvent(UI::InputEvent& event) {
+		// Dispatch to all item buttons
 		for (auto& button : m_itemButtons) {
-			if (button) {
-				button->handleInput();
+			if (button && button->handleEvent(event)) {
+				return true;
+			}
+			if (event.isConsumed()) {
+				return true;
 			}
 		}
+		return false;
 	}
 
 	void BuildMenu::render() {
@@ -121,11 +126,6 @@ namespace world_sim {
 				button->render();
 			}
 		}
-	}
-
-	bool BuildMenu::isPointOver(Foundation::Vec2 point) const {
-		return point.x >= m_position.x && point.x <= m_position.x + m_menuWidth && point.y >= m_position.y &&
-			   point.y <= m_position.y + m_menuHeight;
 	}
 
 	Foundation::Rect BuildMenu::bounds() const {

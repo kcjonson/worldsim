@@ -5,7 +5,6 @@
 #include <ecs/components/Mood.h>
 #include <ecs/components/Needs.h>
 #include <graphics/ClipTypes.h>
-#include <input/InputManager.h>
 #include <primitives/Primitives.h>
 
 namespace world_sim {
@@ -136,24 +135,26 @@ namespace world_sim {
 		backgroundRect->zIndex = -1; // Behind items
 	}
 
-	bool ColonistListPanel::handleInput() {
+	bool ColonistListPanel::handleEvent(UI::InputEvent& event) {
 		if (colonists.empty()) {
 			return false;
 		}
 
-		auto& input = engine::InputManager::Get();
-		// Use isMouseButtonReleased to match GameScene's input handling
-		// This prevents the click from being processed twice
-		if (!input.isMouseButtonReleased(engine::MouseButton::Left)) {
+		// Only handle mouse up (click) events
+		if (event.type != UI::InputEvent::Type::MouseUp) {
 			return false;
 		}
 
-		glm::vec2 mousePos = input.getMousePosition();
+		if (event.button != engine::MouseButton::Left) {
+			return false;
+		}
+
+		auto pos = event.position;
 
 		// Check if click is within panel bounds
 		Foundation::Rect bounds = getBounds();
-		if (mousePos.x < bounds.x || mousePos.x > bounds.x + bounds.width || mousePos.y < bounds.y ||
-			mousePos.y > bounds.y + bounds.height) {
+		if (pos.x < bounds.x || pos.x > bounds.x + bounds.width || pos.y < bounds.y ||
+			pos.y > bounds.y + bounds.height) {
 			return false;
 		}
 
@@ -163,17 +164,20 @@ namespace world_sim {
 			float itemTop = yOffset;
 			float itemBottom = yOffset + itemHeight - kItemSpacing;
 
-			if (mousePos.y >= itemTop && mousePos.y < itemBottom) {
+			if (pos.y >= itemTop && pos.y < itemBottom) {
 				// This item was clicked
 				if (onSelectCallback) {
 					onSelectCallback(colonists[i].entityId);
 				}
+				event.consume();
 				return true;
 			}
 			yOffset += itemHeight;
 		}
 
-		return true; // Consumed (clicked in panel but not on item)
+		// Clicked in panel but not on any item - still consume to prevent world click
+		event.consume();
+		return true;
 	}
 
 	void ColonistListPanel::render() {

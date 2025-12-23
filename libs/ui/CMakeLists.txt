@@ -8,6 +8,7 @@ add_library(ui
     components/tabbar/TabBar.cpp
     components/TextInput/TextInput.cpp
     focus/FocusManager.cpp
+    input/InputEvent.cpp
 )
 
 target_include_directories(ui

@@ -66,12 +66,20 @@ namespace engine {
 		bool	  isCursorInWindow() const { return cursorInWindow; }
 		glm::vec2 getWindowSize() const { return windowSize; }
 
-		// Callbacks for external systems (e.g., FocusManager)
+		// Callbacks for external systems (e.g., FocusManager for keyboard, UI event system for mouse)
 		using KeyInputCallback = std::function<bool(Key key, int action, int mods)>;
 		using CharInputCallback = std::function<bool(char32_t codepoint)>;
 
+		// Mouse event callbacks - return true to consume the event
+		using MouseButtonInputCallback = std::function<bool(MouseButton button, int action, glm::vec2 position, int mods)>;
+		using MouseMoveInputCallback = std::function<bool(glm::vec2 position)>;
+		using ScrollInputCallback = std::function<bool(float delta, glm::vec2 position)>;
+
 		void setKeyInputCallback(KeyInputCallback callback) { keyInputCallback = callback; }
 		void setCharInputCallback(CharInputCallback callback) { charInputCallback = callback; }
+		void setMouseButtonInputCallback(MouseButtonInputCallback callback) { mouseButtonInputCallback = callback; }
+		void setMouseMoveInputCallback(MouseMoveInputCallback callback) { mouseMoveInputCallback = callback; }
+		void setScrollInputCallback(ScrollInputCallback callback) { scrollInputCallback = callback; }
 
 		// Configuration setters
 		void setPanSpeed(float speed) { panSpeed = speed; }
@@ -145,6 +153,11 @@ namespace engine {
 		// External callbacks (for FocusManager integration)
 		KeyInputCallback  keyInputCallback{};
 		CharInputCallback charInputCallback{};
+
+		// External callbacks (for UI event system)
+		MouseButtonInputCallback mouseButtonInputCallback{};
+		MouseMoveInputCallback	 mouseMoveInputCallback{};
+		ScrollInputCallback		 scrollInputCallback{};
 	};
 
 } // namespace engine

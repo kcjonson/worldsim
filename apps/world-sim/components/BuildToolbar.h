@@ -4,6 +4,7 @@
 // Follows the ZoomControl pattern: small interactive widget in bottom-left.
 
 #include <components/button/Button.h>
+#include <input/InputEvent.h>
 #include <shapes/Shapes.h>
 
 #include <functional>
@@ -28,14 +29,11 @@ class BuildToolbar {
 	/// Set whether build mode is currently active (changes button appearance)
 	void setActive(bool active);
 
-	/// Handle mouse input for button
-	void handleInput();
+	/// Handle input event, returns true if consumed
+	bool handleEvent(UI::InputEvent& event);
 
 	/// Render the control
 	void render();
-
-	/// Check if a point is within the control bounds
-	[[nodiscard]] bool isPointOver(Foundation::Vec2 point) const;
 
   private:
 	Foundation::Vec2 m_position;

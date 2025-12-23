@@ -98,13 +98,15 @@ namespace world_sim {
 		zoomText->position = {x + kTextWidth * 0.5F, y + kButtonSize * 0.5F};
 	}
 
-	void ZoomControl::handleInput() {
-		if (zoomOutButton) {
-			zoomOutButton->handleInput();
+	bool ZoomControl::handleEvent(UI::InputEvent& event) {
+		// Dispatch to buttons - order doesn't matter since they don't overlap
+		if (zoomInButton && zoomInButton->handleEvent(event)) {
+			return true;
 		}
-		if (zoomInButton) {
-			zoomInButton->handleInput();
+		if (zoomOutButton && zoomOutButton->handleEvent(event)) {
+			return true;
 		}
+		return event.isConsumed();
 	}
 
 	void ZoomControl::render() {
@@ -117,15 +119,6 @@ namespace world_sim {
 		if (zoomInButton) {
 			zoomInButton->render();
 		}
-	}
-
-	bool ZoomControl::isPointOver(Foundation::Vec2 point) const {
-		// Total width: button + spacing + text + spacing + button
-		constexpr float totalWidth = kButtonSize + kSpacing + kTextWidth + kSpacing + kButtonSize;
-		constexpr float totalHeight = kButtonSize;
-
-		return point.x >= position.x && point.x <= position.x + totalWidth && point.y >= position.y &&
-			   point.y <= position.y + totalHeight;
 	}
 
 } // namespace world_sim
