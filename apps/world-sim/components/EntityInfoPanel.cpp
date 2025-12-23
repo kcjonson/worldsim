@@ -2,7 +2,6 @@
 
 #include "SelectionAdapter.h"
 
-#include <input/InputManager.h>
 #include <utils/Log.h>
 
 namespace world_sim {
@@ -406,51 +405,6 @@ namespace world_sim {
 				hideSlots();
 			}
 			return;
-		}
-
-		// Let TabBar handle input every frame (needs to track mouse state)
-		if (visible && m_showTabs) {
-			if (auto* tabBar = getChild<UI::TabBar>(tabBarHandle)) {
-				tabBar->handleInput();
-			}
-		}
-
-		// Handle close button and clickable slot clicks (only when visible)
-		if (visible) {
-			auto& input = engine::InputManager::Get();
-			if (input.isMouseButtonReleased(engine::MouseButton::Left)) {
-				auto mousePos = input.getMousePosition();
-
-				// Check if click is within close button bounds
-				float panelY = m_viewportHeight - panelHeight;
-				auto  closePos = getCloseButtonPosition(panelY);
-
-				if (mousePos.x >= closePos.x && mousePos.x <= closePos.x + kCloseButtonSize && mousePos.y >= closePos.y &&
-					mousePos.y <= closePos.y + kCloseButtonSize) {
-					if (onCloseCallback) {
-						onCloseCallback();
-					}
-					return;
-				}
-
-				// Check if click is within clickable slot bounds
-				if (clickableCallback && mousePos.x >= clickableBoundsMin.x && mousePos.x <= clickableBoundsMax.x &&
-					mousePos.y >= clickableBoundsMin.y && mousePos.y <= clickableBoundsMax.y) {
-					clickableCallback();
-					return;
-				}
-
-				// Check if click is within any recipe button bounds
-				for (size_t i = 0; i < usedRecipeCards; ++i) {
-					const auto& bounds = recipeButtonBounds[i];
-					if (recipeCallbacks[i] &&
-						mousePos.x >= bounds.x && mousePos.x <= bounds.x + bounds.width &&
-						mousePos.y >= bounds.y && mousePos.y <= bounds.y + bounds.height) {
-						recipeCallbacks[i]();
-						return;
-					}
-				}
-			}
 		}
 
 		// Tier 1: Visibility change - show panel if hidden
@@ -883,6 +837,75 @@ namespace world_sim {
 		}
 		// Default to status tab
 		return adaptColonistStatus(world, entityId, onTaskListToggleCallback);
+	}
+
+	bool EntityInfoPanel::handleEvent(UI::InputEvent& event) {
+		if (!visible) {
+			return false;
+		}
+
+		// Handle TabBar events if showing tabs
+		if (m_showTabs) {
+			if (auto* tabBar = getChild<UI::TabBar>(tabBarHandle)) {
+				if (tabBar->handleEvent(event)) {
+					return true;
+				}
+			}
+		}
+
+		// Only handle mouse up (click) events for interactive elements
+		if (event.type != UI::InputEvent::Type::MouseUp) {
+			return false;
+		}
+
+		if (event.button != engine::MouseButton::Left) {
+			return false;
+		}
+
+		auto pos = event.position;
+
+		// Check close button
+		float panelY = m_viewportHeight - panelHeight;
+		auto closePos = getCloseButtonPosition(panelY);
+
+		if (pos.x >= closePos.x && pos.x <= closePos.x + kCloseButtonSize &&
+			pos.y >= closePos.y && pos.y <= closePos.y + kCloseButtonSize) {
+			if (onCloseCallback) {
+				onCloseCallback();
+			}
+			event.consume();
+			return true;
+		}
+
+		// Check clickable slot
+		if (clickableCallback &&
+			pos.x >= clickableBoundsMin.x && pos.x <= clickableBoundsMax.x &&
+			pos.y >= clickableBoundsMin.y && pos.y <= clickableBoundsMax.y) {
+			clickableCallback();
+			event.consume();
+			return true;
+		}
+
+		// Check recipe buttons
+		for (size_t i = 0; i < usedRecipeCards; ++i) {
+			const auto& bounds = recipeButtonBounds[i];
+			if (recipeCallbacks[i] &&
+				pos.x >= bounds.x && pos.x <= bounds.x + bounds.width &&
+				pos.y >= bounds.y && pos.y <= bounds.y + bounds.height) {
+				recipeCallbacks[i]();
+				event.consume();
+				return true;
+			}
+		}
+
+		// Check if click is within panel bounds - consume to prevent world click
+		if (pos.x >= panelX && pos.x <= panelX + panelWidth &&
+			pos.y >= panelY && pos.y <= panelY + panelHeight) {
+			event.consume();
+			return true;
+		}
+
+		return false;
 	}
 
 } // namespace world_sim

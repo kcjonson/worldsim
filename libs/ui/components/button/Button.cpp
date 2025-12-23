@@ -180,9 +180,56 @@ namespace UI {
 		labelText.render();
 	}
 
-	bool Button::containsPoint(const Foundation::Vec2& point) const {
+	bool Button::containsPoint(Foundation::Vec2 point) const {
 		return point.x >= position.x && point.x <= position.x + size.x && point.y >= position.y &&
 			   point.y <= position.y + size.y;
+	}
+
+	bool Button::handleEvent(InputEvent& event) {
+		if (disabled || !visible) {
+			return false;
+		}
+
+		switch (event.type) {
+			case InputEvent::Type::MouseDown:
+				if (containsPoint(event.position) && event.button == engine::MouseButton::Left) {
+					state = State::Pressed;
+					mouseDown = true;
+					event.consume();
+					return true;
+				}
+				break;
+
+			case InputEvent::Type::MouseUp:
+				if (mouseDown && event.button == engine::MouseButton::Left) {
+					if (containsPoint(event.position)) {
+						// Mouse released while over button - fire click!
+						if (onClick) {
+							onClick();
+						}
+						state = State::Hover;
+					} else {
+						state = State::Normal;
+					}
+					mouseDown = false;
+					event.consume();
+					return true;
+				}
+				break;
+
+			case InputEvent::Type::MouseMove:
+				// Update hover state - don't consume, allow other components to also update hover
+				mouseOver = containsPoint(event.position);
+				if (!mouseDown) {
+					state = mouseOver ? State::Hover : State::Normal;
+				}
+				break;
+
+			case InputEvent::Type::Scroll:
+				// Buttons don't handle scroll
+				break;
+		}
+		return false;
 	}
 
 	const ButtonStyle& Button::getCurrentStyle() const {

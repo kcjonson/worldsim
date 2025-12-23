@@ -1,6 +1,5 @@
 #include "GameUI.h"
 
-#include <input/InputManager.h>
 #include <primitives/Primitives.h>
 
 namespace world_sim {
@@ -129,54 +128,68 @@ void GameUI::layout(const Foundation::Rect& newBounds) {
 	}
 }
 
-bool GameUI::handleInput() {
-	auto& input = engine::InputManager::Get();
+bool GameUI::dispatchEvent(UI::InputEvent& event) {
+	// Dispatch to UI children in z-order (highest first)
+	// Panels that can overlap get priority
 
-	// Handle overlay input first (zoom buttons)
-	overlay->handleInput();
-
-	// Handle build toolbar input
-	if (buildToolbar) {
-		buildToolbar->handleInput();
-	}
-
-	// Handle build menu input (if visible)
-	if (buildMenuVisible && buildMenu) {
-		buildMenu->handleInput();
-	}
-
-	// Handle colonist list input
-	if (colonistList && colonistList->handleInput()) {
-		return true;
-	}
-
-	// Check if click is over UI elements
-	if (input.isMouseButtonReleased(engine::MouseButton::Left)) {
-		auto mousePos = input.getMousePosition();
-		auto pos = Foundation::Vec2{mousePos.x, mousePos.y};
-
-		// Check task list panel first (it's on top)
-		if (taskListExpanded && taskListPanel && taskListPanel->visible) {
-			if (pos.x >= taskListPanelBounds.x && pos.x <= taskListPanelBounds.x + taskListPanelBounds.width &&
-				pos.y >= taskListPanelBounds.y && pos.y <= taskListPanelBounds.y + taskListPanelBounds.height) {
-				return true;
-			}
+	// Task list panel (highest - appears on top of info panel)
+	if (taskListExpanded && taskListPanel && taskListPanel->visible) {
+		if (taskListPanel->handleEvent(event)) {
+			return true;
 		}
-
-		// Update info panel bounds before hit testing (panel height is dynamic)
-		if (infoPanel && infoPanel->isVisible()) {
-			float actualHeight = infoPanel->getHeight();
-			float panelY = viewportBounds.height - actualHeight;
-			infoPanelBounds = Foundation::Rect{0.0F, panelY, kPanelWidth, actualHeight};
-		}
-
-		if (isPointOverInfoPanel(pos)) {
-			// Click is over info panel - consume it
+		if (event.isConsumed()) {
 			return true;
 		}
 	}
 
-	return false;
+	// Build menu (high z-order - popup over other UI)
+	if (buildMenuVisible && buildMenu) {
+		if (buildMenu->handleEvent(event)) {
+			return true;
+		}
+		if (event.isConsumed()) {
+			return true;
+		}
+	}
+
+	// Info panel
+	if (infoPanel && infoPanel->isVisible()) {
+		if (infoPanel->handleEvent(event)) {
+			return true;
+		}
+		if (event.isConsumed()) {
+			return true;
+		}
+	}
+
+	// Colonist list panel
+	if (colonistList) {
+		if (colonistList->handleEvent(event)) {
+			return true;
+		}
+		if (event.isConsumed()) {
+			return true;
+		}
+	}
+
+	// Build toolbar
+	if (buildToolbar) {
+		if (buildToolbar->handleEvent(event)) {
+			return true;
+		}
+		if (event.isConsumed()) {
+			return true;
+		}
+	}
+
+	// Overlay (contains zoom control with buttons)
+	if (overlay) {
+		if (overlay->handleEvent(event)) {
+			return true;
+		}
+	}
+
+	return event.isConsumed();
 }
 
 void GameUI::update(
@@ -321,52 +334,6 @@ void GameUI::renderNotifications(const NotificationManager& notifications) {
 		currentY -= kMargin; // Add margin before next notification (stacking upwards)
 		count++;
 	}
-}
-
-bool GameUI::isPointOverUI(Foundation::Vec2 screenPos) const {
-	// QUICKFIX: Check overlay elements (zoom control)
-	// This manual delegation should be replaced by the InputEvent consumption system.
-	// See /docs/technical/ui-framework/event-system.md
-	if (overlay && overlay->isPointOverUI(screenPos)) {
-		return true;
-	}
-
-	// Check build toolbar
-	if (buildToolbar && buildToolbar->isPointOver(screenPos)) {
-		return true;
-	}
-
-	// Check build menu (if visible)
-	if (buildMenuVisible && buildMenu && buildMenu->isPointOver(screenPos)) {
-		return true;
-	}
-
-	// Check colonist list bounds
-	if (colonistList) {
-		Foundation::Rect bounds = colonistList->getBounds();
-		if (screenPos.x >= bounds.x && screenPos.x <= bounds.x + bounds.width &&
-			screenPos.y >= bounds.y && screenPos.y <= bounds.y + bounds.height) {
-			return true;
-		}
-	}
-
-	// Check task list panel (if expanded)
-	if (taskListExpanded && taskListPanel && taskListPanel->visible) {
-		if (screenPos.x >= taskListPanelBounds.x && screenPos.x <= taskListPanelBounds.x + taskListPanelBounds.width &&
-			screenPos.y >= taskListPanelBounds.y && screenPos.y <= taskListPanelBounds.y + taskListPanelBounds.height) {
-			return true;
-		}
-	}
-
-	return isPointOverInfoPanel(screenPos);
-}
-
-bool GameUI::isPointOverInfoPanel(Foundation::Vec2 screenPos) const {
-	if (!infoPanel || !infoPanel->isVisible()) {
-		return false;
-	}
-	return screenPos.x >= infoPanelBounds.x && screenPos.x <= infoPanelBounds.x + infoPanelBounds.width &&
-		   screenPos.y >= infoPanelBounds.y && screenPos.y <= infoPanelBounds.y + infoPanelBounds.height;
 }
 
 void GameUI::toggleTaskList() {

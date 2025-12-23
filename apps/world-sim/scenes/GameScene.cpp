@@ -14,6 +14,7 @@
 #include <chrono>
 #include <cmath>
 #include <graphics/Rect.h>
+#include <input/InputEvent.h>
 #include <input/InputManager.h>
 #include <metrics/GPUTimer.h>
 #include <metrics/MetricsCollector.h>
@@ -208,14 +209,39 @@ namespace {
 				m_camera->zoomOut();
 			}
 
-			// Handle UI input first - returns true if UI consumed the click
-			bool uiConsumedInput = gameUI->handleInput();
+			// --- Event-based UI input handling ---
+			auto mousePos = input.getMousePosition();
+			auto pos = Foundation::Vec2{mousePos.x, mousePos.y};
+
+			// Dispatch MouseMove for hover states (always, to keep UI responsive)
+			{
+				UI::InputEvent moveEvent = UI::InputEvent::mouseMove(pos);
+				gameUI->dispatchEvent(moveEvent);
+			}
+
+			// Track whether UI consumed mouse button events
+			bool uiConsumedInput = false;
+
+			// Dispatch MouseDown on press
+			if (input.isMouseButtonPressed(engine::MouseButton::Left)) {
+				UI::InputEvent downEvent = UI::InputEvent::mouseDown(pos, engine::MouseButton::Left);
+				gameUI->dispatchEvent(downEvent);
+				uiConsumedInput = downEvent.isConsumed();
+			}
+
+			// Dispatch MouseUp on release
+			if (input.isMouseButtonReleased(engine::MouseButton::Left)) {
+				UI::InputEvent upEvent = UI::InputEvent::mouseUp(pos, engine::MouseButton::Left);
+				gameUI->dispatchEvent(upEvent);
+				if (upEvent.isConsumed()) {
+					uiConsumedInput = true;
+				}
+			}
 
 			// Handle placement mode interaction
 			if (placementMode.state() == world_sim::PlacementState::Placing) {
-				auto mousePos = input.getMousePosition();
-				int	 logicalW = 0;
-				int	 logicalH = 0;
+				int logicalW = 0;
+				int logicalH = 0;
 				Renderer::Primitives::getLogicalViewport(logicalW, logicalH);
 
 				// Update ghost position from mouse
@@ -237,7 +263,6 @@ namespace {
 			// Note: Use isMouseButtonReleased (not Pressed) to avoid timing issues
 			// with the input state machine's Pressed→Down transition
 			if (!uiConsumedInput && input.isMouseButtonReleased(engine::MouseButton::Left)) {
-				auto mousePos = input.getMousePosition();
 				handleEntitySelection(mousePos);
 			}
 		}

@@ -5,6 +5,8 @@
 
 #include "ZoomControl.h"
 
+#include <input/InputEvent.h>
+
 #include <graphics/Rect.h>
 #include <shapes/Shapes.h>
 #include <world/camera/WorldCamera.h>
@@ -33,17 +35,11 @@ class GameOverlay {
 	/// Update displayed values
 	void update(const engine::world::WorldCamera& camera, const engine::world::ChunkManager& chunkManager);
 
-	/// Handle input for interactive elements
-	void handleInput();
+	/// Dispatch an input event
+	bool handleEvent(UI::InputEvent& event);
 
 	/// Render the overlay
 	void render();
-
-	/// Check if a point is over any interactive overlay elements
-	/// QUICKFIX: This is a temporary solution until the UI event system is implemented.
-	/// See /docs/technical/ui-framework/event-system.md for the proper design.
-	/// Remove this method when InputEvent consumption is implemented.
-	[[nodiscard]] bool isPointOverUI(Foundation::Vec2 screenPos) const;
 
   private:
 	std::unique_ptr<UI::Text> chunksText;

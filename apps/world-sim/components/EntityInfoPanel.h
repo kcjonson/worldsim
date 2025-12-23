@@ -23,6 +23,7 @@
 #include <components/tabbar/TabBar.h>
 #include <ecs/World.h>
 #include <graphics/Color.h>
+#include <input/InputEvent.h>
 #include <layer/Layer.h>
 #include <shapes/Shapes.h>
 
@@ -86,6 +87,9 @@ class EntityInfoPanel : public UI::Component {
 	/// @param x Left edge X coordinate
 	/// @param viewportHeight Total viewport height (panel bottom will align to this)
 	void setBottomLeftPosition(float x, float viewportHeight);
+
+	/// Handle input event, returns true if consumed
+	bool handleEvent(UI::InputEvent& event) override;
 
   private:
 	/// Render PanelContent by laying out slots (structure tier update)

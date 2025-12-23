@@ -13,6 +13,7 @@
 #include <ecs/EntityID.h>
 #include <ecs/World.h>
 #include <graphics/Color.h>
+#include <input/InputEvent.h>
 #include <layer/Layer.h>
 #include <shapes/Shapes.h>
 
@@ -49,6 +50,9 @@ class TaskListPanel : public UI::Component {
 
 	/// Get current panel width
 	[[nodiscard]] float getWidth() const { return m_panelWidth; }
+
+	/// Handle input event, returns true if consumed
+	bool handleEvent(UI::InputEvent& event) override;
 
   private:
 	/// Rebuild panel content from decision trace

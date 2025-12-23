@@ -4,7 +4,6 @@
 #include <ecs/components/Colonist.h>
 #include <ecs/components/DecisionTrace.h>
 #include <ecs/components/Task.h>
-#include <input/InputManager.h>
 
 namespace world_sim {
 
@@ -167,26 +166,47 @@ TaskListPanel::TaskListPanel(const Args& args)
 }
 
 void TaskListPanel::update(const ecs::World& world, ecs::EntityID colonistId) {
-	// Handle close button click
-	auto& input = engine::InputManager::Get();
-	if (input.isMouseButtonReleased(engine::MouseButton::Left)) {
-		auto mousePos = input.getMousePosition();
-
-		// Close button bounds
-		float closeX = m_panelX + m_panelWidth - kPadding - kCloseButtonSize;
-		float closeY = m_panelY + kPadding;
-
-		if (mousePos.x >= closeX && mousePos.x <= closeX + kCloseButtonSize && mousePos.y >= closeY &&
-			mousePos.y <= closeY + kCloseButtonSize) {
-			if (m_onClose) {
-				m_onClose();
-			}
-			return;
-		}
-	}
-
 	// Rebuild content
 	renderContent(world, colonistId);
+}
+
+bool TaskListPanel::handleEvent(UI::InputEvent& event) {
+	if (!visible) {
+		return false;
+	}
+
+	// Only handle mouse up (click) events
+	if (event.type != UI::InputEvent::Type::MouseUp) {
+		return false;
+	}
+
+	if (event.button != engine::MouseButton::Left) {
+		return false;
+	}
+
+	auto pos = event.position;
+
+	// Check close button
+	float closeX = m_panelX + m_panelWidth - kPadding - kCloseButtonSize;
+	float closeY = m_panelY + kPadding;
+
+	if (pos.x >= closeX && pos.x <= closeX + kCloseButtonSize &&
+		pos.y >= closeY && pos.y <= closeY + kCloseButtonSize) {
+		if (m_onClose) {
+			m_onClose();
+		}
+		event.consume();
+		return true;
+	}
+
+	// Check if click is within panel bounds - consume to prevent world click
+	if (pos.x >= m_panelX && pos.x <= m_panelX + m_panelWidth &&
+		pos.y >= m_panelY && pos.y <= m_panelY + m_panelHeight) {
+		event.consume();
+		return true;
+	}
+
+	return false;
 }
 
 void TaskListPanel::setPosition(float x, float bottomY) {

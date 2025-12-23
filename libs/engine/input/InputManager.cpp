@@ -410,6 +410,15 @@ namespace engine {
 		if (s_instance) {
 			s_instance->handleMouseButton(button, action);
 
+			// Call external callback (e.g., UI event system) - can consume event
+			if (s_instance->mouseButtonInputCallback) {
+				auto btn = static_cast<MouseButton>(button);
+				bool consumed = s_instance->mouseButtonInputCallback(btn, action, s_instance->mousePosition, mods);
+				if (consumed) {
+					return;	 // Event consumed, don't chain
+				}
+			}
+
 			// Chain to previous callback (e.g., UI/menu handlers)
 			if (s_instance->previousMouseButtonCallback) {
 				s_instance->previousMouseButtonCallback(window, button, action, mods);
@@ -422,6 +431,14 @@ namespace engine {
 		if (s_instance) {
 			s_instance->handleMouseMove(xpos, ypos);
 
+			// Call external callback (e.g., UI event system for hover) - can consume event
+			if (s_instance->mouseMoveInputCallback) {
+				bool consumed = s_instance->mouseMoveInputCallback(s_instance->mousePosition);
+				if (consumed) {
+					return;	 // Event consumed, don't chain
+				}
+			}
+
 			// Chain to previous callback (e.g., UI/menu handlers)
 			if (s_instance->previousCursorPosCallback) {
 				s_instance->previousCursorPosCallback(window, xpos, ypos);
@@ -433,6 +450,14 @@ namespace engine {
 		// Process input for InputManager
 		if (s_instance) {
 			s_instance->handleScroll(xoffset, yoffset);
+
+			// Call external callback (e.g., UI event system for scroll) - can consume event
+			if (s_instance->scrollInputCallback) {
+				bool consumed = s_instance->scrollInputCallback(s_instance->scrollDelta, s_instance->mousePosition);
+				if (consumed) {
+					return;	 // Event consumed, don't chain
+				}
+			}
 
 			// Chain to previous callback (e.g., UI/menu handlers)
 			if (s_instance->previousScrollCallback) {

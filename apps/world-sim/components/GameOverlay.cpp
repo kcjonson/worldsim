@@ -90,10 +90,11 @@ namespace world_sim {
 		}
 	}
 
-	void GameOverlay::handleInput() {
+	bool GameOverlay::handleEvent(UI::InputEvent& event) {
 		if (zoomControl) {
-			zoomControl->handleInput();
+			return zoomControl->handleEvent(event);
 		}
+		return false;
 	}
 
 	void GameOverlay::render() {
@@ -109,16 +110,6 @@ namespace world_sim {
 		if (zoomControl) {
 			zoomControl->render();
 		}
-	}
-
-	bool GameOverlay::isPointOverUI(Foundation::Vec2 screenPos) const {
-		// QUICKFIX: Check zoom control bounds
-		// This manual check should be replaced by the InputEvent consumption system.
-		// See /docs/technical/ui-framework/event-system.md
-		if (zoomControl && zoomControl->isPointOver(screenPos)) {
-			return true;
-		}
-		return false;
 	}
 
 } // namespace world_sim

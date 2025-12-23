@@ -8,6 +8,7 @@
 #include <ecs/World.h>
 #include <ecs/components/Colonist.h>
 #include <graphics/Rect.h>
+#include <input/InputEvent.h>
 #include <shapes/Shapes.h>
 
 #include <functional>
@@ -41,14 +42,13 @@ class ColonistListPanel {
 	/// Update colonist list from ECS world
 	void update(ecs::World& world, ecs::EntityID selectedColonistId);
 
-	/// Handle input (clicks on portraits)
-	/// @return true if input was consumed
-	bool handleInput();
+	/// Handle input event, returns true if consumed
+	bool handleEvent(UI::InputEvent& event);
 
 	/// Render the panel
 	void render();
 
-	/// Get panel bounds for hit testing
+	/// Get panel bounds for layout calculations
 	[[nodiscard]] Foundation::Rect getBounds() const;
 
   private:

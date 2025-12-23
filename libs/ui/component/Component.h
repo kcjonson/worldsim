@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/RenderContext.h"
+#include "input/InputEvent.h"
 #include "layer/Layer.h"
 
 #include <graphics/Rect.h>
@@ -25,6 +26,15 @@ namespace UI {
 	struct IComponent {
 		virtual ~IComponent() = default;
 		virtual void render() = 0;
+
+		/// Handle an input event. Return true if the event was consumed.
+		/// Override in interactive components to handle mouse events.
+		/// Call event.consume() to stop propagation to lower z-index components.
+		virtual bool handleEvent(InputEvent& /*event*/) { return false; }
+
+		/// Check if a point (in screen coordinates) is within this component's bounds.
+		/// Override in interactive components to enable hit testing.
+		virtual bool containsPoint(Foundation::Vec2 /*point*/) const { return false; }
 
 		// Z-index for render ordering (higher values render on top)
 		// Valid range: -32768 to 32767 (signed 16-bit)
@@ -232,6 +242,39 @@ namespace UI {
 
 		// Mark children for re-sort (call when a child's zIndex changes)
 		void markChildrenNeedSorting() { childrenNeedSorting = true; }
+
+		/// Dispatch an event to children in z-order (highest first).
+		/// Returns true if any child consumed the event.
+		/// This is the core of the event system - call this from containers
+		/// instead of manually delegating to each child.
+		bool dispatchEvent(InputEvent& event) {
+			// Ensure children are sorted by zIndex
+			if (childrenNeedSorting) {
+				std::stable_sort(children.begin(), children.end(), [](const IComponent* a, const IComponent* b) {
+					return a->zIndex < b->zIndex;
+				});
+				childrenNeedSorting = false;
+			}
+
+			// Dispatch in reverse order (highest zIndex first)
+			for (auto it = children.rbegin(); it != children.rend(); ++it) {
+				IComponent* child = *it;
+				if (!child->visible) {
+					continue;
+				}
+
+				// Let the child handle the event
+				if (child->handleEvent(event)) {
+					return true;
+				}
+
+				// Short-circuit if event was consumed
+				if (event.isConsumed()) {
+					return true;
+				}
+			}
+			return false;
+		}
 
 	  protected:
 		MemoryArena				 arena;
