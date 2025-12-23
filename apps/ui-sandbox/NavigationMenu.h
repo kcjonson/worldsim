@@ -2,6 +2,7 @@
 
 #include "components/button/Button.h"
 #include "CoordinateSystem/CoordinateSystem.h"
+#include "input/InputEvent.h"
 #include "math/Types.h"
 #include "shapes/Shapes.h"
 #include <functional>
@@ -41,6 +42,7 @@ namespace UI {
 
 		// Standard lifecycle methods
 		void handleInput();
+		bool handleEvent(InputEvent& event);
 		void update(float deltaTime);
 		void render();
 

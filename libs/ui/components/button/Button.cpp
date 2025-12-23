@@ -102,52 +102,6 @@ namespace UI {
 		return *this;
 	}
 
-	void Button::handleInput() {
-		// Skip input processing if disabled
-		if (disabled) {
-			state = State::Normal;
-			mouseOver = false;
-			mouseDown = false;
-			return;
-		}
-
-		// Get input state from InputManager
-		auto&			 input = engine::InputManager::Get();
-		Foundation::Vec2 mousePos = input.getMousePosition();
-
-		// Update mouse-over state
-		bool wasMouseOver = mouseOver;
-		mouseOver = containsPoint(mousePos);
-
-		// Handle mouse button state
-		bool isLeftButtonDown = input.isMouseButtonDown(engine::MouseButton::Left);
-		bool wasMouseDown = mouseDown;
-
-		// State transitions based on mouse input
-		if (mouseOver) {
-			if (isLeftButtonDown) {
-				// Mouse pressed while over button
-				state = State::Pressed;
-				mouseDown = true;
-			} else if (wasMouseDown && !isLeftButtonDown) {
-				// Mouse released while over button - FIRE CLICK!
-				if (onClick) {
-					onClick();
-				}
-				state = State::Hover;
-				mouseDown = false;
-			} else {
-				// Just hovering
-				state = State::Hover;
-				mouseDown = false;
-			}
-		} else {
-			// Mouse not over button
-			state = State::Normal;
-			mouseDown = false;
-		}
-	}
-
 	void Button::update(float /*deltaTime*/) {
 		// Update text component to match current button style
 		const ButtonStyle& style = getCurrentStyle();

@@ -58,10 +58,6 @@ namespace engine {
 		/// @return true if there's a queued scene transition
 		bool hasPendingSwitch() const;
 
-		/// @brief Handle input for current scene
-		/// @param dt Delta time in seconds
-		void handleInput(float dt);
-
 		/// @brief Update current scene
 		/// @param dt Delta time in seconds
 		void update(float dt);

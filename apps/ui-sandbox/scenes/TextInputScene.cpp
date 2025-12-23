@@ -1,12 +1,15 @@
 // Text Input Scene - TextInput Component Testing and Demonstration
 // Tests TextInput with focus management, Tab navigation, selection, and clipboard
 
+#include <GL/glew.h>
+
 #include "SceneTypes.h"
 #include "components/TextInput/TextInput.h"
 #include "components/button/Button.h"
+#include "input/InputEvent.h"
+#include "input/InputManager.h"
 #include "primitives/Primitives.h"
 #include "shapes/Shapes.h"
-#include <GL/glew.h>
 #include <application/Application.h>
 #include <scene/Scene.h>
 #include <scene/SceneManager.h>
@@ -143,16 +146,17 @@ namespace {
 			);
 		}
 
-		void handleInput(float /*dt*/) override {
-			// Handle input for all text inputs
-			for (size_t i = 0; i < inputs.size(); i++) {
-				inputs[i]->handleInput();
+		bool handleInput(UI::InputEvent& event) override {
+			// Dispatch to inputs and button
+			for (auto& textInput : inputs) {
+				if (textInput->handleEvent(event)) {
+					return true;
+				}
 			}
-
-			// Handle button input
-			if (button) {
-				button->handleInput();
+			if (button && button->handleEvent(event)) {
+				return true;
 			}
+			return false;
 		}
 
 		void update(float dt) override {

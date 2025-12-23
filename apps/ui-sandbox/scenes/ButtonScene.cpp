@@ -5,6 +5,7 @@
 
 #include <components/button/Button.h>
 #include <graphics/Color.h>
+#include <input/InputEvent.h>
 #include <input/InputManager.h>
 #include <input/InputTypes.h>
 #include <memory>
@@ -184,11 +185,14 @@ class ButtonScene : public engine::IScene {
 			LOG_INFO(UI, "Button scene exited");
 		}
 
-		void handleInput(float /*deltaTime*/) override {
-			// Update all buttons' input state
-			for (auto& button : buttons) {
-				button->handleInput();
+		bool handleInput(UI::InputEvent& event) override {
+			// Dispatch to buttons (reverse order for proper z-ordering)
+			for (auto it = buttons.rbegin(); it != buttons.rend(); ++it) {
+				if ((*it)->handleEvent(event)) {
+					return true;
+				}
 			}
+			return false;
 		}
 
 		void update(float deltaTime) override {

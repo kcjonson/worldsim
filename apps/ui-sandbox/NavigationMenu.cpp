@@ -1,5 +1,7 @@
 #include "NavigationMenu.h"
 #include "graphics/Color.h"
+#include "input/InputEvent.h"
+#include "input/InputManager.h"
 #include "primitives/Primitives.h"
 #include "utils/Log.h"
 
@@ -127,17 +129,41 @@ namespace UI {
 	}
 
 	void NavigationMenu::handleInput() {
-		// Always handle the toggle button
-		if (toggleButton) {
-			toggleButton->handleInput();
+		// Legacy polling method - kept for overlay compatibility
+		// Overlays don't go through scene hierarchy, so they still poll
+		auto& input = engine::InputManager::Get();
+		auto  mousePos = input.getMousePosition();
+		auto  pos = Foundation::Vec2{mousePos.x, mousePos.y};
+
+		// Dispatch MouseMove for hover states
+		InputEvent moveEvent = InputEvent::mouseMove(pos);
+		handleEvent(moveEvent);
+
+		// Dispatch MouseDown on press
+		if (input.isMouseButtonPressed(engine::MouseButton::Left)) {
+			InputEvent downEvent = InputEvent::mouseDown(pos, engine::MouseButton::Left);
+			handleEvent(downEvent);
 		}
 
-		// Only handle menu buttons when expanded
+		// Dispatch MouseUp on release
+		if (input.isMouseButtonReleased(engine::MouseButton::Left)) {
+			InputEvent upEvent = InputEvent::mouseUp(pos, engine::MouseButton::Left);
+			handleEvent(upEvent);
+		}
+	}
+
+	bool NavigationMenu::handleEvent(InputEvent& event) {
+		if (toggleButton && toggleButton->handleEvent(event)) {
+			return true;
+		}
 		if (expanded) {
 			for (auto& button : menuButtons) {
-				button.handleInput();
+				if (button.handleEvent(event)) {
+					return true;
+				}
 			}
 		}
+		return false;
 	}
 
 	void NavigationMenu::update(float deltaTime) {

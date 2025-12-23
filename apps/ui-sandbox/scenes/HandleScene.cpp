@@ -50,11 +50,7 @@ constexpr const char* kSceneName = "handles";
 			LOG_INFO(UI, "");
 		}
 
-		void handleInput(float dt) override {
-			// No input handling needed - test scene
-		}
-
-		void update(float dt) override {
+		void update(float /*dt*/) override {
 			// No update logic needed - tests run on enter
 		}
 

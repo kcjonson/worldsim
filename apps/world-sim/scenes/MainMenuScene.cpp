@@ -6,6 +6,8 @@
 
 #include <components/button/Button.h>
 #include <graphics/Color.h>
+#include <input/InputEvent.h>
+#include <input/InputManager.h>
 #include <primitives/Primitives.h>
 #include <scene/Scene.h>
 #include <scene/SceneManager.h>
@@ -131,11 +133,13 @@ namespace {
 			});
 		}
 
-		void handleInput(float /*dt*/) override {
-			// Handle mouse input for buttons (keyboard input is routed via FocusManager)
-			for (const auto& button : buttons) {
-				button->handleInput();
+		bool handleInput(UI::InputEvent& event) override {
+			for (auto it = buttons.rbegin(); it != buttons.rend(); ++it) {
+				if ((*it)->handleEvent(event)) {
+					return true;
+				}
 			}
+			return false;
 		}
 
 		void update(float /*dt*/) override {

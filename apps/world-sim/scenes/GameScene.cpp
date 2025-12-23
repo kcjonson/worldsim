@@ -156,7 +156,42 @@ namespace {
 			m_gpuTimer.setEnabled(true);
 		}
 
-		void handleInput(float dt) override {
+		/// Handle UI input events dispatched from Application.
+		/// Forwards to gameUI and handles game-specific interactions (placement, selection).
+		bool handleInput(UI::InputEvent& event) override {
+			// Forward event to UI first
+			bool consumed = gameUI->dispatchEvent(event);
+
+			// Handle placement mode interaction
+			if (placementMode.state() == world_sim::PlacementState::Placing) {
+				if (event.type == UI::InputEvent::Type::MouseMove) {
+					// Update ghost position from mouse
+					int logicalW = 0;
+					int logicalH = 0;
+					Renderer::Primitives::getLogicalViewport(logicalW, logicalH);
+					auto worldPos = m_camera->screenToWorld(event.position.x, event.position.y, logicalW, logicalH, kPixelsPerMeter);
+					placementMode.updateGhostPosition({worldPos.x, worldPos.y});
+				} else if (!consumed && event.type == UI::InputEvent::Type::MouseUp) {
+					// Try to place on click (if not over UI)
+					if (placementMode.tryPlace()) {
+						// Successfully placed - update UI state
+						gameUI->setBuildModeActive(false);
+						gameUI->hideBuildMenu();
+					}
+					return true; // Consume click in placement mode
+				}
+				return consumed;
+			}
+
+			// Handle entity selection on left click release (only if UI didn't consume it)
+			if (!consumed && event.type == UI::InputEvent::Type::MouseUp) {
+				handleEntitySelection({event.position.x, event.position.y});
+			}
+
+			return consumed;
+		}
+
+		void update(float dt) override {
 			auto& input = engine::InputManager::Get();
 
 			// Handle Escape - cancel placement mode first, then exit to menu
@@ -165,10 +200,10 @@ namespace {
 					placementMode.cancel();
 					gameUI->setBuildModeActive(false);
 					gameUI->hideBuildMenu();
-					return;
+				} else {
+					sceneManager->switchTo(world_sim::toKey(world_sim::SceneType::MainMenu));
+					return; // Don't process rest of update when switching scenes
 				}
-				sceneManager->switchTo(world_sim::toKey(world_sim::SceneType::MainMenu));
-				return;
 			}
 
 			// Handle B key - toggle build mode
@@ -209,65 +244,6 @@ namespace {
 				m_camera->zoomOut();
 			}
 
-			// --- Event-based UI input handling ---
-			auto mousePos = input.getMousePosition();
-			auto pos = Foundation::Vec2{mousePos.x, mousePos.y};
-
-			// Dispatch MouseMove for hover states (always, to keep UI responsive)
-			{
-				UI::InputEvent moveEvent = UI::InputEvent::mouseMove(pos);
-				gameUI->dispatchEvent(moveEvent);
-			}
-
-			// Track whether UI consumed mouse button events
-			bool uiConsumedInput = false;
-
-			// Dispatch MouseDown on press
-			if (input.isMouseButtonPressed(engine::MouseButton::Left)) {
-				UI::InputEvent downEvent = UI::InputEvent::mouseDown(pos, engine::MouseButton::Left);
-				gameUI->dispatchEvent(downEvent);
-				uiConsumedInput = downEvent.isConsumed();
-			}
-
-			// Dispatch MouseUp on release
-			if (input.isMouseButtonReleased(engine::MouseButton::Left)) {
-				UI::InputEvent upEvent = UI::InputEvent::mouseUp(pos, engine::MouseButton::Left);
-				gameUI->dispatchEvent(upEvent);
-				if (upEvent.isConsumed()) {
-					uiConsumedInput = true;
-				}
-			}
-
-			// Handle placement mode interaction
-			if (placementMode.state() == world_sim::PlacementState::Placing) {
-				int logicalW = 0;
-				int logicalH = 0;
-				Renderer::Primitives::getLogicalViewport(logicalW, logicalH);
-
-				// Update ghost position from mouse
-				auto worldPos = m_camera->screenToWorld(mousePos.x, mousePos.y, logicalW, logicalH, kPixelsPerMeter);
-				placementMode.updateGhostPosition({worldPos.x, worldPos.y});
-
-				// Try to place on click (if not over UI)
-				if (!uiConsumedInput && input.isMouseButtonReleased(engine::MouseButton::Left)) {
-					if (placementMode.tryPlace()) {
-						// Successfully placed - update UI state
-						gameUI->setBuildModeActive(false);
-						gameUI->hideBuildMenu();
-					}
-				}
-				return;
-			}
-
-			// Handle entity selection on left click release (only if UI didn't consume it and not in placement mode)
-			// Note: Use isMouseButtonReleased (not Pressed) to avoid timing issues
-			// with the input state machine's Pressed→Down transition
-			if (!uiConsumedInput && input.isMouseButtonReleased(engine::MouseButton::Left)) {
-				handleEntitySelection(mousePos);
-			}
-		}
-
-		void update(float dt) override {
 			auto updateStart = Clock::now();
 
 			m_camera->update(dt);

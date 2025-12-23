@@ -55,7 +55,6 @@ namespace UI {
 	// Shapes do NOT implement ILayer - they only render.
 
 	struct ILayer : public IComponent {
-		virtual void handleInput() = 0;
 		virtual void update(float deltaTime) = 0;
 
 		/// Called when bounds change. Position children within the given bounds.
@@ -191,17 +190,6 @@ namespace UI {
 		}
 
 		// ILayer implementation - propagates to children (skips invisible)
-		void handleInput() override {
-			for (auto* child : children) {
-				if (!child->visible) {
-					continue;
-				}
-				if (auto* layer = dynamic_cast<ILayer*>(child)) {
-					layer->handleInput();
-				}
-			}
-		}
-
 		void update(float deltaTime) override {
 			for (auto* child : children) {
 				if (!child->visible) {

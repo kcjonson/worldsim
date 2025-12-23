@@ -96,12 +96,6 @@ namespace engine {
 		return true;
 	}
 
-	void SceneManager::handleInput(float dt) {
-		if (currentScene) {
-			currentScene->handleInput(dt);
-		}
-	}
-
 	void SceneManager::update(float dt) {
 		// Apply any pending scene change first (safe point after input handling)
 		applyPendingSceneChange();

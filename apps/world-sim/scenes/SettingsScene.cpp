@@ -53,15 +53,12 @@ class SettingsScene : public engine::IScene {
 		});
 	}
 
-	void handleInput(float /*dt*/) override {
+	void update(float /*dt*/) override {
+		// Check for ESC to return to main menu
 		if (engine::InputManager::Get().isKeyPressed(engine::Key::Escape)) {
 			LOG_INFO(Game, "Returning to main menu");
 			sceneManager->switchTo(world_sim::toKey(world_sim::SceneType::MainMenu));
 		}
-	}
-
-	void update(float /*dt*/) override {
-		// Will update settings UI
 	}
 
 	void render() override {

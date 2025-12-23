@@ -102,66 +102,58 @@ namespace UI {
 	// Lifecycle Methods
 	// ============================================================================
 
-	void TextInput::handleInput() {
-		if (!enabled) {
-			return;
+	bool TextInput::handleEvent(InputEvent& event) {
+		if (!enabled || !visible) {
+			return false;
 		}
 
-		auto& input = engine::InputManager::Get();
-
-		// Check for mouse click
-		// Use IsMouseButtonDown (not IsMouseButtonPressed) like Button does
-		if (input.isMouseButtonDown(engine::MouseButton::Left)) {
-			bool wasMouseDown = mouseDown;
-			if (!wasMouseDown) {
-				// Mouse just pressed - process initial click
-				Foundation::Vec2 mousePos = input.getMousePosition();
-
-				// Check if click is inside text input
-				if (containsPoint(mousePos)) {
+		switch (event.type) {
+			case InputEvent::Type::MouseDown:
+				if (containsPoint(event.position) && event.button == engine::MouseButton::Left) {
 					// Grab focus
 					FocusManager::Get().setFocus(this);
 
 					// Position cursor from mouse X
-					float localX = mousePos.x - position.x - style.paddingLeft + horizontalScroll;
+					float localX = event.position.x - position.x - style.paddingLeft + horizontalScroll;
 					cursorPosition = getCursorPositionFromMouse(localX);
+					selectionAnchor = cursorPosition; // Track anchor for drag selection
 					cursorBlinkTimer = 0.0F;
 
 					// Clear selection on click (will be recreated if dragging)
 					clearSelection();
 
-					// Track mouse down for drag selection
 					mouseDown = true;
+					event.consume();
+					return true;
 				}
-			}
+				break;
 
-			// Mouse drag selection
-			if (focused && mouseDown && input.isMouseButtonDown(engine::MouseButton::Left)) {
-				Foundation::Vec2 mousePos = input.getMousePosition();
-				float			 localX = mousePos.x - position.x - style.paddingLeft + horizontalScroll;
-				size_t			 dragPosition = getCursorPositionFromMouse(localX);
+			case InputEvent::Type::MouseMove:
+				if (focused && mouseDown) {
+					float  localX = event.position.x - position.x - style.paddingLeft + horizontalScroll;
+					size_t dragPosition = getCursorPositionFromMouse(localX);
 
-				// Create/update selection from original cursor position to drag position
-				if (dragPosition != cursorPosition) {
-					// Selection anchor is where mouse was first pressed (already set as cursorPosition)
-					// Selection head is current drag position
-					if (!selection.has_value()) {
-						// Start new selection
-						setSelection(cursorPosition, dragPosition);
-					} else {
-						// Update existing selection
-						selection->end = dragPosition;
+					// Create/update selection from anchor to drag position
+					if (dragPosition != selectionAnchor) {
+						setSelection(selectionAnchor, dragPosition);
+						cursorPosition = dragPosition;
+						updateHorizontalScroll();
 					}
-					cursorPosition = dragPosition; // Move cursor to drag position
-					updateHorizontalScroll();
 				}
-			}
-		}
+				break;
 
-		// Release mouse (outside the IsMouseButtonDown block)
-		if (mouseDown && !input.isMouseButtonDown(engine::MouseButton::Left)) {
-			mouseDown = false;
+			case InputEvent::Type::MouseUp:
+				if (mouseDown && event.button == engine::MouseButton::Left) {
+					mouseDown = false;
+					event.consume();
+					return true;
+				}
+				break;
+
+			default:
+				break;
 		}
+		return false;
 	}
 
 	void TextInput::update(float deltaTime) {
@@ -858,7 +850,7 @@ namespace UI {
 	// Geometry Queries
 	// ============================================================================
 
-	bool TextInput::containsPoint(const Foundation::Vec2& point) const {
+	bool TextInput::containsPoint(Foundation::Vec2 point) const {
 		return point.x >= position.x && point.x <= position.x + size.x && point.y >= position.y &&
 			   point.y <= position.y + size.y;
 	}

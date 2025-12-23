@@ -5,6 +5,9 @@
 #include "scene/SceneManager.h"
 #include "utils/Log.h"
 
+#include <input/InputEvent.h>
+#include <math/Types.h>
+
 #include <chrono>
 #include <exception>
 #include <iostream>
@@ -119,6 +122,32 @@ namespace engine {
 				}
 			}
 
+			// Dispatch UI input events to the current scene
+			// Events propagate: Application → Scene → Component hierarchy
+			if (!paused && inputManager) {
+				auto  mousePos = inputManager->getMousePosition();
+				auto  pos = Foundation::Vec2{mousePos.x, mousePos.y};
+				auto* scene = SceneManager::Get().getCurrentScene();
+
+				if (scene != nullptr) {
+					// MouseMove for hover states
+					UI::InputEvent moveEvent = UI::InputEvent::mouseMove(pos);
+					scene->handleInput(moveEvent);
+
+					// MouseDown on press
+					if (inputManager->isMouseButtonPressed(engine::MouseButton::Left)) {
+						UI::InputEvent downEvent = UI::InputEvent::mouseDown(pos, engine::MouseButton::Left);
+						scene->handleInput(downEvent);
+					}
+
+					// MouseUp on release
+					if (inputManager->isMouseButtonReleased(engine::MouseButton::Left)) {
+						UI::InputEvent upEvent = UI::InputEvent::mouseUp(pos, engine::MouseButton::Left);
+						scene->handleInput(upEvent);
+					}
+				}
+			}
+
 			// Pre-frame callback (debug server control, etc.)
 			// Can return false to request exit
 			if (preFrameCallback) {
@@ -138,15 +167,6 @@ namespace engine {
 			// Scene lifecycle (skip if paused)
 			auto updateStart = std::chrono::high_resolution_clock::now();
 			if (!paused) {
-				// Handle input
-				try {
-					SceneManager::Get().handleInput(deltaTime);
-				} catch (const std::exception& e) {
-					LOG_ERROR(Engine, "Exception in HandleInput: %s", e.what());
-				} catch (...) {
-					LOG_ERROR(Engine, "Unknown exception in HandleInput");
-				}
-
 				// Update
 				try {
 					SceneManager::Get().update(deltaTime);

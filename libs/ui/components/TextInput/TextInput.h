@@ -122,9 +122,12 @@ class TextInput : public Component, public IFocusable {
 	TextInput& operator=(TextInput&& other) noexcept;
 
 	// ILayer implementation (overrides Component)
-	void handleInput() override;	  // Mouse click detection (called before Update in scene)
 	void update(float deltaTime) override; // Update cursor blink, etc.
 	void render() override;			  // Draw text input
+
+	// IComponent event handling
+	bool handleEvent(InputEvent& event) override;
+	bool containsPoint(Foundation::Vec2 point) const override;
 
 	// State management
 	void setEnabled(bool newEnabled) { enabled = newEnabled; }
@@ -139,15 +142,13 @@ class TextInput : public Component, public IFocusable {
 	void handleCharInput(char32_t codepoint) override;
 	bool canReceiveFocus() const override;
 
-	// Geometry queries
-	bool containsPoint(const Foundation::Vec2& point) const;
-
   private:
 	// Focus management
 	int tabIndex{-1}; // Preserved for move operations
 
 	// Internal state tracking
 	bool mouseDown{false};
+	size_t selectionAnchor{0};  // Anchor point for drag selection
 
 	// --- Phase 1: Core Editing Operations ---
 

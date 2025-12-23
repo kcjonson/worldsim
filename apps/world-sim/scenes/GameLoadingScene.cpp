@@ -106,19 +106,15 @@ namespace {
 			m_needsLayout = false;
 		}
 
-		void handleInput(float /*dt*/) override {
+		void update(float /*dt*/) override {
+			// Check for ESC to cancel loading
 			auto& input = engine::InputManager::Get();
-
-			// Allow ESC to cancel and return to main menu
-			// Don't allow cancel if already cancelling or complete
 			if (input.isKeyPressed(engine::Key::Escape) && m_phase != LoadingPhase::Cancelling && m_phase != LoadingPhase::Complete) {
 				LOG_INFO(Game, "GameLoadingScene - Cancel requested");
 				m_phase = LoadingPhase::Cancelling;
 				updateStatusText("Cancelling...");
 			}
-		}
 
-		void update(float /*dt*/) override {
 			switch (m_phase) {
 				case LoadingPhase::Initializing:
 					initializeWorldSystems();
