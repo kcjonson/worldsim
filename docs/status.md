@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2025-12-23 (UI Event System complete)
+Last Updated: 2025-12-23 (UI Architecture epics added - data binding, layout, input cleanup)
 
 ## Epic/Story/Task Template
 
@@ -241,6 +241,348 @@ The following MVP epics have all been completed. Detailed task breakdowns are pr
 ---
 
 ## Planned Epics (Post-MVP)
+
+### UI Architecture: Input System Cleanup
+**Spec/Documentation:** `/docs/technical/ui-framework/event-system.md`
+**Dependencies:** None
+**Status:** ready
+
+**Goal:** Remove dual input system (polling + events) - keep only event-based `handleEvent()`.
+
+**Background:** Components currently implement BOTH `handleInput()` (polling InputManager) and `handleEvent()` (event consumption). This causes duplicate click handling, inconsistent behavior, and ~120 lines of boilerplate.
+
+**Tasks:**
+- [ ] Audit all components using handleInput()
+  - [ ] Button, TabBar, TextInput in libs/ui/
+  - [ ] Game panels in apps/world-sim/
+- [ ] Migrate remaining polling logic to handleEvent()
+  - [ ] Ensure all click/hover behavior works via events
+  - [ ] Test keyboard focus still works
+- [ ] Remove handleInput() from ILayer interface
+  - [ ] Remove handleInput() implementations
+  - [ ] Update Component base class
+  - [ ] Remove InputManager polling from components
+- [ ] Update scenes to only dispatch events (not call handleInput())
+
+---
+
+### UI Architecture: FocusManager Simplification
+**Spec/Documentation:** `/docs/technical/ui-framework/focus-management.md`
+**Dependencies:** None
+**Status:** ready
+
+**Goal:** Reduce ~50 lines of FocusManager boilerplate per focusable component via CRTP base class.
+
+**Background:** Every focusable component (Button, TabBar, TextInput) repeats identical registration/unregistration code in constructor, destructor, move constructor, and move assignment.
+
+**Tasks:**
+- [ ] Create Focusable<T> CRTP base class
+  - [ ] Auto-register in constructor
+  - [ ] Auto-unregister in destructor
+  - [ ] Handle move semantics correctly
+- [ ] Migrate Button to use Focusable<Button>
+  - [ ] Remove manual registration code
+  - [ ] Verify focus behavior unchanged
+- [ ] Migrate TabBar to use Focusable<TabBar>
+- [ ] Migrate TextInput to use Focusable<TextInput>
+- [ ] Update documentation
+
+---
+
+### UI Architecture: ViewModel Pattern
+**Spec/Documentation:** `/docs/technical/ui-framework/data-binding.md`
+**Dependencies:** None
+**Status:** ready
+
+**Goal:** Establish clear data ownership and efficient updates via ViewModel pattern.
+
+**Background:** Current UI has ad-hoc data flow - panels poll ECS every frame, state scattered across multiple classes. As we build 20+ screens, this leads to duplicated change detection and hard-to-debug state bugs.
+
+**Tasks:**
+- [ ] Create UIState struct
+  - [ ] Move Selection from GameScene to UIState
+  - [ ] Add shared state (multiSelection, hoveredEntity)
+  - [ ] Pass UIState& through GameUI
+- [ ] Create ColonistListViewModel
+  - [ ] Extract colonist data transformation from panel
+  - [ ] Implement change detection (returns bool from refresh())
+  - [ ] Own UI state (selectedId)
+  - [ ] Unit tests for change detection
+- [ ] Migrate ColonistListPanel to use ViewModel
+  - [ ] Panel becomes pure rendering
+  - [ ] Only rebuild UI when ViewModel signals change
+- [ ] Create EntityInfoViewModel
+  - [ ] Consolidate CachedSelection, m_activeTab, adapter calls
+  - [ ] Extract from EntityInfoPanel
+- [ ] Migrate remaining panels
+  - [ ] TaskListPanel → TaskListViewModel
+  - [ ] BuildMenu state extraction
+
+---
+
+### UI Architecture: Layout System
+**Spec/Documentation:** `/docs/technical/ui-framework/layout-system.md`
+**Dependencies:** None
+**Status:** ready
+
+**Goal:** Add VStack/HStack layout containers for automatic component positioning.
+
+**Background:** Current UI requires manual position calculation everywhere. This doesn't scale for complex panels with dynamic content, resizing, or scrollable lists.
+
+**Tasks:**
+- [ ] Create ILayoutable interface
+  - [ ] preferredSize(), minSize(), setBounds()
+  - [ ] Add to existing components (Button, Text, etc.)
+- [ ] Implement VStack
+  - [ ] Vertical stacking with spacing
+  - [ ] HAlign option (Left, Center, Right)
+  - [ ] Auto-height computation
+  - [ ] Layout caching (dirty flag)
+- [ ] Implement HStack
+  - [ ] Horizontal stacking with spacing
+  - [ ] VAlign option (Top, Center, Bottom)
+  - [ ] Auto-width computation
+- [ ] Implement Spacer
+  - [ ] Flexible space component
+  - [ ] Flex weight for proportional sizing
+- [ ] Create LayoutScene demo
+  - [ ] Common patterns (header+content, button row, form)
+  - [ ] Nested layouts
+- [ ] Unit tests for layout computation
+
+---
+
+### UI Architecture: Animation System
+**Spec/Documentation:** `/docs/technical/ui-framework/` (spec to be written)
+**Dependencies:** None
+**Status:** planned (can defer)
+
+**Goal:** Add tweening system for smooth UI transitions.
+
+**Background:** The main-game-ui-design spec calls for smooth animations (modal fade-in, expand/collapse, toast slide-up). Currently no animation support.
+
+**Tasks:**
+- [ ] Create Animator class
+  - [ ] animate(float& value, target, duration, easing)
+  - [ ] Per-frame update()
+  - [ ] Common easing functions (linear, easeOut, easeInOut)
+- [ ] Integrate with Component lifecycle
+  - [ ] Components can own Animator instance
+  - [ ] Update called during update() phase
+- [ ] Demo animations
+  - [ ] Fade in/out
+  - [ ] Slide transitions
+  - [ ] Progress bar value changes
+
+---
+
+### Main Game UI: Primitives Foundation
+**Spec/Documentation:** `/docs/design/main-game-ui-design.md` (Section 17)
+**Dependencies:** UI Architecture: Layout System (for ScrollContainer content sizing)
+**Status:** ready
+
+**Goal:** Complete scroll container and generalize progress bar for reuse across UI.
+
+**Existing Infrastructure:**
+- Container class with `setClip()` + `setContentOffset()` (scroll mechanics work)
+- NeedBar component (progress bar with label + color gradient)
+- ClipScene demo showing keyboard-controlled scrolling
+
+**Tasks:**
+- [ ] ScrollContainer Component
+  - [ ] Encapsulate scroll logic (content height, viewport, scroll bounds)
+  - [ ] Mouse wheel event handling
+  - [ ] Scrollbar visuals (track + thumb)
+  - [ ] Integration with VStack for auto content height
+  - [ ] Demo scene in ui-sandbox
+- [ ] ProgressBar Component (generalize NeedBar)
+  - [ ] Move to libs/ui/components/
+  - [ ] Configurable fill color (not just need-based gradient)
+  - [ ] Optional label (NeedBar always has label)
+  - [ ] Unit tests
+
+---
+
+### Main Game UI: Complex Components
+**Spec/Documentation:** `/docs/design/main-game-ui-design.md` (Section 17)
+**Dependencies:** Main Game UI: Primitives Foundation
+**Status:** planned
+
+**Goal:** Build components for information-dense screens (resources, dropdowns, notifications).
+
+**Tasks:**
+- [ ] Icon/Image Component
+  - [ ] Texture rendering for portraits, icons
+  - [ ] Tinting/colorization support
+- [ ] Tree View Component
+  - [ ] Expandable/collapsible nodes (▶/▼)
+  - [ ] Nested hierarchy with indentation
+  - [ ] Integrates with ScrollContainer
+- [ ] Dropdown Button Component
+  - [ ] Button with ▾ indicator
+  - [ ] Expands menu panel on click
+  - [ ] Closes on outside click
+- [ ] Toast + Toast Stack
+  - [ ] Notification popup with title, description, icon
+  - [ ] Auto-dismiss timer or persistent (click to dismiss)
+  - [ ] Severity styling (critical/warning/info colors)
+  - [ ] Stack container with vertical arrangement
+
+---
+
+### Main Game UI: Interaction Components
+**Spec/Documentation:** `/docs/design/main-game-ui-design.md` (Sections 8, 14, 17)
+**Dependencies:** Main Game UI: Primitives Foundation
+**Status:** planned
+
+**Goal:** Build modal, tooltip, and context menu systems.
+
+**Tasks:**
+- [ ] Modal Dialog Component
+  - [ ] Full-screen semi-transparent overlay
+  - [ ] Centered content panel
+  - [ ] Close via [X] button, Escape, or outside click
+- [ ] Tooltip System
+  - [ ] Global tooltip manager
+  - [ ] 0.5s hover delay
+  - [ ] Smart positioning (stay on screen)
+- [ ] Context Menu Component
+  - [ ] Right-click popup menu
+  - [ ] Menu items with optional icons
+  - [ ] Keyboard navigation
+
+---
+
+### Main Game UI: Core HUD
+**Spec/Documentation:** `/docs/design/main-game-ui-design.md` (Sections 1, 2, 5, 9)
+**Dependencies:** Main Game UI: Primitives Foundation
+**Status:** planned
+
+**Goal:** Implement main gameplay HUD (top bar, colonist list, gameplay bar, zoom).
+
+**Tasks:**
+- [ ] Top Bar
+  - [ ] Date/Time display (Day X, Season | HH:MM)
+  - [ ] Game speed controls ([⏸] [▶] [▶▶] [▶▶▶])
+  - [ ] Hotkeys (Space pause, 1/2/3 speed)
+  - [ ] Menu button
+- [ ] Zoom Controls
+  - [ ] Floating [+] [⟳] [-] buttons in viewport
+  - [ ] Home key to reset zoom
+- [ ] Colonist List Redesign
+  - [ ] Portrait Card (avatar + mood bar + name)
+  - [ ] Status tint (green/yellow/red/gray background)
+  - [ ] Vertical scrollable list (uses ScrollContainer)
+  - [ ] Click to select, double-click to follow
+- [ ] Gameplay Bar Enhancement
+  - [ ] Category dropdowns: [Actions▾] [Build▾] [Production] [Furniture]
+  - [ ] Sub-menu expansion above bar
+  - [ ] Hotkeys (A, B, Q, R)
+
+---
+
+### Main Game UI: Information Systems
+**Spec/Documentation:** `/docs/design/main-game-ui-design.md` (Sections 3, 4, 6)
+**Dependencies:** Main Game UI: Complex Components
+**Status:** planned
+
+**Goal:** Add minimap, resources panel, and notifications.
+
+**Tasks:**
+- [ ] Minimap
+  - [ ] Render-to-texture world overview
+  - [ ] Terrain, buildings, colonist dots, threat indicators
+  - [ ] Camera viewport rectangle
+  - [ ] Click to navigate
+  - [ ] Minimap zoom controls
+- [ ] Resources Panel
+  - [ ] Collapsed: [📦 Storage ▼] link
+  - [ ] Expanded: TreeView of storage by category
+  - [ ] Pin-to-always-show (★) functionality
+- [ ] Notifications System
+  - [ ] Toast Stack in bottom-right
+  - [ ] Auto-dismiss (research, construction) vs persistent (raids, danger)
+  - [ ] Click notification to navigate
+
+---
+
+### Main Game UI: Management Screens
+**Spec/Documentation:** `/docs/design/main-game-ui-design.md` (Section 11)
+**Dependencies:** Main Game UI: Interaction Components (Modal)
+**Status:** planned
+
+**Goal:** Full-screen management overlays.
+
+**Tasks:**
+- [ ] Work Priorities Screen (`W` key)
+  - [ ] Grid: colonists × work types
+  - [ ] Priority 1-4 or disabled (—)
+  - [ ] Click to cycle, right-click to disable
+- [ ] Schedule Screen (`S` key)
+  - [ ] Hour-by-hour grid (0-23)
+  - [ ] Block types: Sleep, Work, Recreation, Anything
+  - [ ] Drag to paint time blocks
+- [ ] Research Screen
+  - [ ] Tech tree visualization with dependencies
+  - [ ] Current research progress bar
+- [ ] History/Log Screen (`H` key)
+  - [ ] Scrollable event log
+  - [ ] Timestamped entries
+  - [ ] Filter by category
+
+---
+
+### Main Game UI: Colonist Details Modal
+**Spec/Documentation:** `/docs/design/main-game-ui-design.md` (Section 8)
+**Dependencies:** Main Game UI: Interaction Components, Main Game UI: Primitives Foundation
+**Status:** planned
+
+**Goal:** Full colonist information display with tabs.
+
+**Tasks:**
+- [ ] Modal Structure
+  - [ ] Full-screen modal opened from [📋 Details] button
+  - [ ] Tab bar: [Bio] [Health] [Social] [Gear] [Memory]
+- [ ] Bio Tab
+  - [ ] Portrait, age, background, traits
+  - [ ] Current mood with contributing factors
+- [ ] Health Tab
+  - [ ] Body diagram with injury indicators
+  - [ ] Current ailments and treatment status
+- [ ] Social Tab
+  - [ ] Relationships with other colonists
+  - [ ] Opinion modifiers (+/- reasons)
+- [ ] Gear Tab
+  - [ ] Equipped items and inventory
+- [ ] Memory Tab (worldsim-specific)
+  - [ ] Known entities by category
+  - [ ] Discovery source (observed vs told by whom)
+
+---
+
+### Main Game UI: Polish & worldsim Features
+**Spec/Documentation:** `/docs/design/main-game-ui-design.md` (Sections 12, 14, 16)
+**Dependencies:** Most other Main Game UI epics
+**Status:** planned
+
+**Goal:** Final polish and worldsim-unique visualization features.
+
+**Tasks:**
+- [ ] Camera & Selection
+  - [ ] Location bookmarks (Shift+1-9 to set, 1-9 to jump)
+  - [ ] Box selection, Shift/Ctrl-click multi-select
+  - [ ] Backspace to return to previous location
+- [ ] Tooltips Throughout
+  - [ ] Add tooltips to all interactive elements
+- [ ] Memory Visualization Mode (`M` key when colonist selected)
+  - [ ] Overlay: bright = entities colonist knows, dim = unknown
+- [ ] World-Space UI
+  - [ ] Selection indicators (white outline)
+  - [ ] Colonist labels toggle (`L` key)
+  - [ ] Threat indicators (red pulsing circles)
+  - [ ] Off-screen threat direction arrows
+
+---
 
 ### Flora Content Pack
 **Spec/Documentation:** `/docs/technical/asset-system/`

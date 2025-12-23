@@ -70,6 +70,22 @@ This directory contains technical documentation for the UI framework in world-si
   - Why we chose Pattern A initially for UI components
   - Future optimization paths
 
+### Data Flow and State Management
+
+**[data-binding.md](./data-binding.md)** - **NEW** - ViewModel Pattern for UI Data
+- Clear data ownership (ECS vs UI state)
+- ViewModel pattern for each panel
+- Change detection and efficient updates
+- UIState struct for shared state
+- Migration path from current adapters
+
+**[layout-system.md](./layout-system.md)** - **NEW** - Automatic Layout System
+- VStack/HStack layout containers
+- Spacer for flexible spacing
+- ILayoutable interface
+- Integration with ScrollContainer
+- Gradual migration from manual positioning
+
 ### Core Architecture
 
 **[architecture.md](./architecture.md)** - **FOUNDATIONAL** - Unified Layer Model
