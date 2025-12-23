@@ -96,6 +96,15 @@ namespace world_sim {
 				return true;
 			}
 		}
+
+		// Consume clicks within the menu bounds to prevent click-through to game world
+		const auto& pos = event.position;
+		if ((event.type == UI::InputEvent::Type::MouseDown || event.type == UI::InputEvent::Type::MouseUp) && pos.x >= m_position.x &&
+			pos.x <= m_position.x + m_menuWidth && pos.y >= m_position.y && pos.y <= m_position.y + m_menuHeight) {
+			event.consume();
+			return true;
+		}
+
 		return false;
 	}
 

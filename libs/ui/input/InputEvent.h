@@ -22,7 +22,7 @@ struct InputEvent {
 		// Note: Key events are handled by FocusManager, not this system
 	};
 
-	Type type;
+	Type type{Type::MouseMove};
 	Foundation::Vec2 position{0.0F, 0.0F};	  // Screen coordinates
 	engine::MouseButton button{};			  // For MouseDown/MouseUp
 	float scrollDelta{0.0F};				  // For Scroll (positive = up)

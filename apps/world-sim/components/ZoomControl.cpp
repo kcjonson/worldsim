@@ -106,7 +106,7 @@ namespace world_sim {
 		if (zoomOutButton && zoomOutButton->handleEvent(event)) {
 			return true;
 		}
-		return event.isConsumed();
+		return false;
 	}
 
 	void ZoomControl::render() {
