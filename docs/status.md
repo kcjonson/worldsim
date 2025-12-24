@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2025-12-23 (UI Architecture: Input System Cleanup complete)
+Last Updated: 2025-12-23 (UI Architecture: Input System Cleanup + Overlay Support complete)
 
 ## Epic/Story/Task Template
 
@@ -146,6 +146,8 @@ Use this template for all work items:
 - [x] Remove handleInput(float dt) from IScene (wrong pattern)
 - [x] Remove handleInput(float dt) from SceneManager
 - [x] Update all scenes to implement handleInput(InputEvent&)
+- [x] Add IOverlay interface for cross-scene UI (NavigationMenu, future ESC menu)
+- [x] SceneManager manages overlays as peers to scenes
 - [x] Test all scenes
 
 **Architecture (Industry Best Practice):**
