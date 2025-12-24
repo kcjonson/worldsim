@@ -135,10 +135,13 @@ TEST(FocusManagerTest, UnregisterFocusable) {
 	manager.setFocus(&component);
 	EXPECT_TRUE(manager.hasFocus(&component));
 
-	// Unregister should clear focus
+	// Unregister should clear focus but NOT call onFocusLost()
+	// This is intentional: unregisterFocusable() is often called from destructors
+	// (e.g., FocusableBase destructor), and calling virtual functions on a
+	// partially-destroyed object causes undefined behavior ("pure virtual called")
 	manager.unregisterFocusable(&component);
 	EXPECT_EQ(manager.getFocused(), nullptr);
-	EXPECT_EQ(component.focusLostCount, 1);
+	EXPECT_EQ(component.focusLostCount, 0);  // No callback - component may be destroying
 }
 
 TEST(FocusManagerTest, UnregisterUnregisteredComponent) {

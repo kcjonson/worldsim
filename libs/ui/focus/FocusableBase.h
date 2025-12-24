@@ -33,6 +33,10 @@ namespace UI {
  *   The derived class can use `= default` for move constructor/assignment.
  *   FocusableBase handles the FocusManager registration correctly.
  *
+ * Note: Move operations do not preserve focus state. If a focused component is
+ * moved, it will lose focus. This is acceptable because UI components are typically
+ * constructed in place and not moved after construction.
+ *
  * See: /docs/technical/ui-framework/focus-management.md
  */
 template <typename Derived>
