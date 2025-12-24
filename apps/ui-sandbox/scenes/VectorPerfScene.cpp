@@ -46,7 +46,7 @@ constexpr const char* kSceneName = "vector-perf";
 			LOG_INFO(UI, "Total vertices: %zu", CalculateTotalVertices());
 		}
 
-		void handleInput(float /*dt*/) override {
+		void update(float dt) override {
 			// Toggle clipping with 'C' key
 			static bool lastKeyState = false;
 			bool		currentKeyState = glfwGetKey(glfwGetCurrentContext(), GLFW_KEY_C) == GLFW_PRESS;
@@ -57,9 +57,7 @@ constexpr const char* kSceneName = "vector-perf";
 				LOG_INFO(UI, "Clipping %s", clippingEnabled ? "ENABLED" : "DISABLED");
 			}
 			lastKeyState = currentKeyState;
-		}
 
-		void update(float dt) override {
 			// Update FPS counter
 			frameCount++;
 			frameDeltaAccumulator += dt;

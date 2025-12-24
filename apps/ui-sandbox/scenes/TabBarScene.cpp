@@ -7,6 +7,7 @@
 #include <cctype>
 #include <components/tabbar/TabBar.h>
 #include <graphics/Color.h>
+#include <input/InputEvent.h>
 #include <input/InputManager.h>
 #include <input/InputTypes.h>
 #include <memory>
@@ -193,13 +194,14 @@ namespace {
 			LOG_INFO(UI, "TabBar scene exited");
 		}
 
-		void handleInput(float /*deltaTime*/) override {
-			if (tabBar1) {
-				tabBar1->handleInput();
+		bool handleInput(UI::InputEvent& event) override {
+			if (tabBar1 && tabBar1->handleEvent(event)) {
+				return true;
 			}
-			if (tabBar2) {
-				tabBar2->handleInput();
+			if (tabBar2 && tabBar2->handleEvent(event)) {
+				return true;
 			}
+			return false;
 		}
 
 		void update(float deltaTime) override {

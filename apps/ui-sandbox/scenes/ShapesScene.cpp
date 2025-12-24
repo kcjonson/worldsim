@@ -20,11 +20,7 @@ class ShapesScene : public engine::IScene {
 			// No initialization needed for shapes scene
 		}
 
-		void handleInput(float dt) override {
-			// No input handling needed - static scene
-		}
-
-		void update(float dt) override {
+		void update(float /*dt*/) override {
 			// No update logic needed - static shapes
 		}
 

@@ -1,140 +1,254 @@
 # UI Event System
 
-This document describes the planned event propagation and hit testing system for the UI framework, inspired by HTML DOM events but adapted for our game's needs.
+This document describes the event propagation and hit testing system for the UI framework.
 
-## Current State
+## Architecture
 
-The UI framework currently lacks a unified event system. Input handling is done through per-component polling of `InputManager`, which causes several issues:
+Based on the [Game Programming Patterns - Game Loop](https://gameprogrammingpatterns.com/game-loop.html) canonical pattern:
 
-1. **No event consumption** - When a UI element handles a click, underlying elements may also receive it
-2. **Manual bounds checking** - Each container must manually check if clicks are within child bounds
-3. **No hierarchical propagation** - Events don't flow through the component tree
-4. **No debugging tools** - Can't inspect what's under a click point
+```
+while (running) {
+    processInput();    // No delta time - discrete events
+    update(elapsed);   // Delta time here - advance simulation
+    render();
+}
+```
 
-### Current QUICKFIX Workarounds
+**Key insight:** Input handling does NOT need delta time. It captures discrete events ("what happened?"). Delta time belongs in `update()` where simulation advances ("how much time passed?").
 
-The following files contain temporary workarounds that should be removed when this system is implemented:
+### Event Flow
 
-| File | What to Remove |
-|------|----------------|
-| `libs/ui/component/Component.h` | N/A (no changes yet) |
-| `apps/world-sim/components/GameUI.cpp:104-121` | `isPointOverUI()` method |
-| `apps/world-sim/components/GameOverlay.h:42-46` | `isPointOverUI()` declaration |
-| `apps/world-sim/components/GameOverlay.cpp:114-122` | `isPointOverUI()` implementation |
-| `apps/world-sim/components/ZoomControl.h:38-39` | `isPointOver()` declaration |
-| `apps/world-sim/components/ZoomControl.cpp:122-129` | `isPointOver()` implementation |
-
-These methods implement manual point-in-bounds checking that will be replaced by the proper event consumption system described below.
-
----
-
-## Design Goals
-
-1. **Event consumption** - Components can stop events from propagating to elements below
-2. **Efficient hit testing** - O(visible components) traversal with early termination
-3. **Debug introspection** - Full layer stack available via HTTP for external debug app
-4. **Z-index aware** - Higher z-index elements receive events first
+```
+Application::run()
+    ↓
+Create InputEvents from InputManager (MouseMove, MouseDown, MouseUp)
+    ↓
+scene->handleInput(event)
+    ↓
+Scene dispatches to UI components via handleEvent()
+    ↓
+Component hierarchy handles propagation via dispatchEvent()
+```
 
 ---
 
-## Core Concepts
+## Core Types
 
 ### InputEvent
 
-An `InputEvent` wraps raw input data with propagation control:
+Located in `libs/ui/input/InputEvent.h`:
 
 ```cpp
 struct InputEvent {
-    enum class Type { MouseDown, MouseUp, MouseMove, KeyDown, KeyUp, Scroll };
+    enum class Type { MouseDown, MouseUp, MouseMove, Scroll };
 
     Type type;
     Foundation::Vec2 position;     // Screen coordinates
-    engine::MouseButton button;    // For mouse events
-    int keyCode;                   // For key events
-    float scrollDelta;             // For scroll events
+    engine::MouseButton button;    // For MouseDown/MouseUp
+    float scrollDelta;             // For Scroll
+    int modifiers;                 // GLFW modifier flags
 
     // Propagation control
     bool consumed{false};
 
     void consume() { consumed = true; }
     [[nodiscard]] bool isConsumed() const { return consumed; }
+
+    // Factory methods
+    static InputEvent mouseDown(Vec2 pos, MouseButton btn, int mods = 0);
+    static InputEvent mouseUp(Vec2 pos, MouseButton btn, int mods = 0);
+    static InputEvent mouseMove(Vec2 pos);
+    static InputEvent scroll(Vec2 pos, float delta);
 };
 ```
 
-### HitTestResult
+**Note:** Key events are handled separately by `FocusManager`, not this event system.
 
-When debugging, we want to know ALL components under a point, not just the topmost:
+### IComponent Interface
 
-```cpp
-struct HitTestEntry {
-    std::string componentId;       // e.g., "btn_zoom_in"
-    std::string componentType;     // e.g., "Button"
-    short zIndex;
-    Foundation::Rect bounds;
-    bool wouldConsume;             // Would this component consume a click?
-};
-
-struct HitTestResult {
-    std::vector<HitTestEntry> layers;  // Sorted by z-index, highest first
-    Foundation::Vec2 testPoint;
-};
-```
-
----
-
-## Event Flow
-
-### Dispatch Model (Simplified)
-
-Unlike HTML's capture/bubble phases, we use a single top-down dispatch:
-
-1. **Sort by z-index** - All visible components sorted highest-first
-2. **Hit test** - Filter to components containing the event point
-3. **Dispatch** - Iterate through sorted list, calling `handleEvent()`
-4. **Short-circuit** - Stop when `event.isConsumed()` returns true
-
-```cpp
-// In Component or Scene
-bool dispatchEvent(InputEvent& event) {
-    // Get all components under the event point, sorted by z-index (highest first)
-    auto hitComponents = hitTestPoint(event.position);
-
-    for (auto* component : hitComponents) {
-        component->handleEvent(event);
-        if (event.isConsumed()) {
-            return true;  // Event was handled
-        }
-    }
-    return false;  // Event reached bottom without being consumed
-}
-```
-
-### Component Interface
+Located in `libs/ui/component/Component.h`:
 
 ```cpp
 struct IComponent {
     virtual ~IComponent() = default;
     virtual void render() = 0;
 
-    // Event handling (return true to indicate consumption)
+    // Event handling - return true if event was consumed
     virtual bool handleEvent(InputEvent& event) { return false; }
 
     // Hit testing
     virtual bool containsPoint(Foundation::Vec2 point) const { return false; }
-    virtual void collectHitTestEntries(Foundation::Vec2 point,
-                                       std::vector<HitTestEntry>& outEntries) const {}
 
     short zIndex{0};
     bool visible{true};
-    std::string id;
+};
+```
+
+### IScene Interface
+
+Located in `libs/engine/scene/Scene.h`:
+
+```cpp
+class IScene {
+    // ... lifecycle methods ...
+
+    // Input event handling - receives events from Application
+    virtual bool handleInput(UI::InputEvent& event) { return false; }
 };
 ```
 
 ---
 
-## Debug Introspection via HTTP
+## Dispatch Model
 
-The debug layer stack is exposed through the existing Developer Server HTTP API, **not** a debug hotkey. This keeps debugging in the external Developer Client app.
+### Application Creates Events
+
+In `Application::run()`, after `InputManager::update()`:
+
+```cpp
+if (!paused && inputManager) {
+    auto mousePos = inputManager->getMousePosition();
+    auto pos = Foundation::Vec2{mousePos.x, mousePos.y};
+    auto* scene = SceneManager::Get().getCurrentScene();
+
+    if (scene) {
+        // MouseMove for hover states
+        UI::InputEvent moveEvent = UI::InputEvent::mouseMove(pos);
+        scene->handleInput(moveEvent);
+
+        // MouseDown on press
+        if (inputManager->isMouseButtonPressed(MouseButton::Left)) {
+            UI::InputEvent downEvent = UI::InputEvent::mouseDown(pos, MouseButton::Left);
+            scene->handleInput(downEvent);
+        }
+
+        // MouseUp on release
+        if (inputManager->isMouseButtonReleased(MouseButton::Left)) {
+            UI::InputEvent upEvent = UI::InputEvent::mouseUp(pos, MouseButton::Left);
+            scene->handleInput(upEvent);
+        }
+    }
+}
+```
+
+### Scene Dispatches to Components
+
+Scenes override `handleInput()` to dispatch to their UI:
+
+```cpp
+bool MyScene::handleInput(UI::InputEvent& event) override {
+    // Dispatch to components (reverse order for z-ordering)
+    for (auto it = components.rbegin(); it != components.rend(); ++it) {
+        if ((*it)->handleEvent(event)) {
+            return true;
+        }
+    }
+    return false;
+}
+```
+
+### Container Dispatches to Children
+
+The `Container` class (and `Component` base) provide `dispatchEvent()`:
+
+```cpp
+bool Container::handleEvent(InputEvent& event) override {
+    return dispatchEvent(event);  // Dispatch to children in z-order
+}
+
+bool Component::dispatchEvent(InputEvent& event) {
+    // Sort children by z-index if needed
+    // Dispatch in reverse order (highest z-index first)
+    for (auto it = children.rbegin(); it != children.rend(); ++it) {
+        if (!(*it)->visible) continue;
+        if ((*it)->handleEvent(event)) return true;
+        if (event.isConsumed()) return true;
+    }
+    return false;
+}
+```
+
+### Leaf Components Handle Events
+
+Interactive components like Button implement `handleEvent()`:
+
+```cpp
+bool Button::handleEvent(InputEvent& event) {
+    if (disabled || !visible) return false;
+
+    switch (event.type) {
+        case InputEvent::Type::MouseMove:
+            hovered = containsPoint(event.position);
+            break;
+
+        case InputEvent::Type::MouseDown:
+            if (containsPoint(event.position)) {
+                pressed = true;
+                event.consume();
+                return true;
+            }
+            break;
+
+        case InputEvent::Type::MouseUp:
+            if (pressed && containsPoint(event.position)) {
+                if (onClick) onClick();
+                pressed = false;
+                event.consume();
+                return true;
+            }
+            pressed = false;
+            break;
+    }
+    return false;
+}
+```
+
+---
+
+## Design Decisions
+
+### Why No Delta Time in handleInput()
+
+Input events are discrete - something happened or it didn't. No time component needed.
+
+- `handleInput(InputEvent&)` - "mouse clicked at position X"
+- `update(float dt)` - "advance world by dt seconds"
+
+For continuous game input (WASD camera movement), poll InputManager in `update(float dt)`:
+
+```cpp
+void GameScene::update(float dt) {
+    if (InputManager::Get().isKeyHeld(Key::W)) {
+        camera.move(speed * dt);  // Delta time belongs here
+    }
+}
+```
+
+### Why Scenes Have handleInput() Not handleEvent()
+
+Consistency. Everything that processes input calls it `handleInput`:
+- `IScene::handleInput(InputEvent&)` - scene receives input
+- `IComponent::handleEvent(InputEvent&)` - component handles event
+
+The distinction: scenes *receive* input from Application, components *handle* events dispatched by scenes.
+
+### Why Single Top-Down Pass (No Bubbling)
+
+Unlike HTML DOM's capture/bubble phases, we use a single top-down dispatch:
+
+1. Sort by z-index (highest first)
+2. Hit test each component
+3. Call `handleEvent()` until one consumes
+4. Stop propagation
+
+Simpler because:
+- Game UI is relatively flat, not deeply nested
+- No default browser actions to prevent
+- Z-index sorting gives natural layering
+
+---
+
+## Debug Integration (Future)
 
 ### Endpoint: `GET /api/ui/hit-test?x={x}&y={y}`
 
@@ -150,116 +264,24 @@ Returns the full layer stack under a screen coordinate:
             "zIndex": 100,
             "bounds": {"x": 140, "y": 190, "width": 28, "height": 28},
             "wouldConsume": true
-        },
-        {
-            "id": "game_overlay",
-            "type": "GameOverlay",
-            "zIndex": 50,
-            "bounds": {"x": 0, "y": 0, "width": 800, "height": 600},
-            "wouldConsume": false
-        },
-        {
-            "id": "game_scene",
-            "type": "GameScene",
-            "zIndex": 0,
-            "bounds": {"x": 0, "y": 0, "width": 800, "height": 600},
-            "wouldConsume": true
         }
     ]
 }
 ```
 
-### Event Stream: Click Events
-
-On each click, the full hit test result is sent via the existing SSE event stream:
-
-```json
-{
-    "event": "ui:click",
-    "data": {
-        "position": {"x": 150, "y": 200},
-        "button": "left",
-        "consumed": true,
-        "consumedBy": "btn_zoom_in",
-        "layerStack": [/* same as hit-test response */]
-    }
-}
-```
-
-This allows the Developer Client to show real-time click debugging without polling.
-
 ---
 
-## Implementation Plan
-
-### Phase 1: Event Infrastructure
-
-1. Create `InputEvent` struct in `libs/ui/input/InputEvent.h`
-2. Add `handleEvent(InputEvent&)` to `IComponent` interface
-3. Create `HitTestResult` and related types
-4. Add `containsPoint()` default implementation using bounds
-
-### Phase 2: Component Updates
-
-1. Update `Button` to use `handleEvent()` and call `consume()` on click
-2. Update `TextInput` similarly
-3. Add bounds tracking to components that need hit testing
-
-### Phase 3: Dispatch System
-
-1. Create `EventDispatcher` class (or add to existing manager)
-2. Implement z-index sorted dispatch
-3. Wire up to `InputManager` in main loop
-
-### Phase 4: Debug Integration
-
-1. Add `/api/ui/hit-test` endpoint to Developer Server
-2. Add click events to SSE stream
-3. Update Developer Client to display layer stack
-
-### Phase 5: Cleanup
-
-1. Remove all QUICKFIX methods listed above
-2. Migrate manual `handleInput()` implementations to `handleEvent()`
-3. Update documentation
-
----
-
-## Comparison with HTML DOM
-
-| Feature | HTML DOM | Our System |
-|---------|----------|------------|
-| Event phases | Capture → Target → Bubble | Single top-down pass |
-| Stop propagation | `stopPropagation()` | `event.consume()` |
-| Prevent default | `preventDefault()` | Not needed (no defaults) |
-| Event delegation | Common pattern | Native via z-index sorting |
-| Debug tools | Browser DevTools | External Developer Client via HTTP |
-
-We simplify the model since:
-- No capture phase needed (game UI is flat, not deeply nested)
-- No default actions to prevent
-- Z-index sorting gives us natural layering
-
----
-
-## Performance Considerations
-
-### Hit Testing Cost
+## Performance
 
 For N visible components:
-- **Naive**: O(N) bounds checks per event
-- **Optimized**: Spatial partitioning (quadtree) for O(log N)
+- **Current**: O(N) bounds checks per event
+- **Future**: Spatial partitioning (quadtree) for O(log N)
 
-For MVP, O(N) is acceptable. Game UI typically has < 100 visible components at once.
-
-### Memory
-
-- `InputEvent`: ~40 bytes (stack allocated, passed by reference)
-- `HitTestResult`: Heap allocated only for debug endpoint, not normal dispatch
+O(N) is acceptable for now. Game UI typically has < 100 visible components.
 
 ---
 
 ## Related Documentation
 
-- [UI Inspection](../observability/ui-inspection.md) - Developer Client UI debugging
-- [Developer Server](../observability/developer-server.md) - HTTP/SSE API
+- [Focus Management](./focus-management.md) - Keyboard focus and Tab navigation
+- [Component Architecture](./component-architecture.md) - Component base classes

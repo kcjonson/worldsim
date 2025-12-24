@@ -2,6 +2,11 @@
 
 #include <string>
 
+// Forward declaration for UI event dispatch
+namespace UI {
+	struct InputEvent;
+}
+
 namespace engine {
 
 	// Forward declaration
@@ -42,12 +47,6 @@ namespace engine {
 		/// Use for initialization, resource loading, state setup
 		virtual void onEnter() = 0;
 
-		/// @brief Called every frame to handle input
-		/// Separates input handling from game logic for better control
-		/// (e.g., can disable input during cutscenes while Update continues)
-		/// @param dt Delta time in seconds
-		virtual void handleInput(float dt) = 0;
-
 		/// @brief Called every frame while scene is active
 		/// @param dt Delta time in seconds
 		virtual void update(float dt) = 0;
@@ -71,6 +70,12 @@ namespace engine {
 		/// Should be lowercase with no spaces (e.g., "shapes", "main_menu")
 		/// @return Scene name
 		virtual const char* getName() const = 0;
+
+		/// @brief Handle UI input event
+		/// Application dispatches mouse events here. Override to forward to UI components.
+		/// @param event The input event to handle
+		/// @return true if the event was consumed
+		virtual bool handleInput(UI::InputEvent& /*event*/) { return false; }
 
 	  protected:
 		/// @brief SceneManager reference for scene transitions and exit requests

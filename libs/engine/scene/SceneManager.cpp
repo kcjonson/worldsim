@@ -1,5 +1,6 @@
 #include "SceneManager.h"
 #include <algorithm>
+#include <input/InputEvent.h>
 #include <utils/Log.h>
 
 namespace engine {
@@ -96,12 +97,6 @@ namespace engine {
 		return true;
 	}
 
-	void SceneManager::handleInput(float dt) {
-		if (currentScene) {
-			currentScene->handleInput(dt);
-		}
-	}
-
 	void SceneManager::update(float dt) {
 		// Apply any pending scene change first (safe point after input handling)
 		applyPendingSceneChange();
@@ -109,11 +104,21 @@ namespace engine {
 		if (currentScene) {
 			currentScene->update(dt);
 		}
+
+		// Update overlays after scene
+		for (auto* overlay : overlays) {
+			overlay->update(dt);
+		}
 	}
 
 	void SceneManager::render() {
 		if (currentScene) {
 			currentScene->render();
+		}
+
+		// Render overlays on top of scene
+		for (auto* overlay : overlays) {
+			overlay->render();
 		}
 	}
 
@@ -184,6 +189,49 @@ namespace engine {
 			return it->second;
 		}
 		return "";
+	}
+
+	// --- Overlay Management ---
+
+	void SceneManager::pushOverlay(IOverlay* overlay) {
+		if (overlay != nullptr) {
+			overlays.push_back(overlay);
+			LOG_DEBUG(Engine, "Pushed overlay, stack size: %zu", overlays.size());
+		}
+	}
+
+	void SceneManager::popOverlay() {
+		if (!overlays.empty()) {
+			overlays.pop_back();
+			LOG_DEBUG(Engine, "Popped overlay, stack size: %zu", overlays.size());
+		}
+	}
+
+	void SceneManager::clearOverlays() {
+		overlays.clear();
+		LOG_DEBUG(Engine, "Cleared all overlays");
+	}
+
+	bool SceneManager::handleInput(UI::InputEvent& event) {
+		// Overlays get input first (top to bottom, so iterate in reverse)
+		for (auto it = overlays.rbegin(); it != overlays.rend(); ++it) {
+			if ((*it)->handleEvent(event)) {
+				return true; // Event consumed by overlay
+			}
+		}
+
+		// If no overlay consumed, dispatch to scene
+		if (currentScene != nullptr) {
+			return currentScene->handleInput(event);
+		}
+
+		return false;
+	}
+
+	void SceneManager::onWindowResize() {
+		for (auto* overlay : overlays) {
+			overlay->onWindowResize();
+		}
 	}
 
 } // namespace engine

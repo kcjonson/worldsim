@@ -81,7 +81,7 @@ constexpr const char* kSceneName = "clip";
 			m_containerMaxScroll = std::max(0.0F, m_containerContentHeight - kContainerViewportHeight);
 		}
 
-		void handleInput(float /*dt*/) override {
+		void update(float dt) override {
 			GLFWwindow* window = glfwGetCurrentContext();
 
 			// Toggle clipping with 'C' key
@@ -108,9 +108,7 @@ constexpr const char* kSceneName = "clip";
 			// Children use local coordinates (e.g., {5, y}) which are then transformed
 			// to screen space by this offset. Subtracting scrollY moves content up.
 			m_scrollContainer->setContentOffset({400.0F, 410.0F - m_containerScrollY});
-		}
 
-		void update(float dt) override {
 			// Animate scroll position for demo
 			scrollY += dt * 30.0F;
 			if (scrollY > 150.0F) {

@@ -124,12 +124,6 @@ class LayerScene : public engine::IScene {
 			LOG_INFO(UI, "Layer scene initialized with Component hierarchy");
 		}
 
-		void handleInput(float /*dt*/) override {
-			if (root) {
-				root->handleInput();
-			}
-		}
-
 		void update(float /*dt*/) override {
 			if (root) {
 				root->update(0.0F);

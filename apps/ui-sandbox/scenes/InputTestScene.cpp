@@ -24,10 +24,6 @@ constexpr const char* kSceneName = "input_test";
 			LOG_INFO(UI, "InputTestScene::OnEnter()");
 		}
 
-		void handleInput(float /*dt*/) override {
-			// Just read input state - InputManager handles everything
-		}
-
 		void update(float /*dt*/) override {
 			// No update logic needed - input state is read in render()
 		}

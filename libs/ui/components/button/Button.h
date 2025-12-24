@@ -80,7 +80,6 @@ class Button : public Component, public IFocusable {
 	Button& operator=(Button&& other) noexcept;
 
 	// ILayer implementation (overrides Component)
-	void handleInput() override;
 	void update(float deltaTime) override;
 	void render() override;
 

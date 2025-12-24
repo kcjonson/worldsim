@@ -169,10 +169,6 @@ class TextShapesScene : public engine::IScene {
 			LOG_INFO(UI, "Text shapes scene initialized with {} shapes", shapes.size());
 		}
 
-		void handleInput(float /*dt*/) override {
-			// No input handling needed
-		}
-
 		void update(float /*dt*/) override {
 			// Static scene - no updates needed
 		}

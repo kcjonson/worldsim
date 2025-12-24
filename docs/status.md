@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2025-12-23 (UI Architecture epics - dependencies corrected)
+Last Updated: 2025-12-23 (UI Architecture: Input System Cleanup complete)
 
 ## Epic/Story/Task Template
 
@@ -27,66 +27,6 @@ Use this template for all work items:
 ---
 
 ## Recently Completed Epics (Last 4)
-
-### ✅ Basic Crafting System
-**Spec/Documentation:** `/docs/development-log/plans/2025-12-19-basic-crafting-system.md`
-**Dependencies:** MVP Complete
-**Status:** complete
-
-**Goal:** Enable basic crafting so players can place a Crafting Spot and queue orders for items like a Primitive Axe.
-
-**Completed Tasks:**
-- [x] Epic 1: Placement + Discovery (PR #75)
-  - [x] Knowledge component for per-colonist discovery tracking
-  - [x] RecipeDef.h data structures and RecipeRegistry singleton
-  - [x] Recipe XML files (CraftingSpot innate, AxePrimitive)
-  - [x] VisionSystem integration (colonists learn when they see things)
-  - [x] PlacementMode state machine (B key, mouse click to place)
-  - [x] BuildToolbar, BuildMenu, GhostRenderer components
-  - [x] CraftingSpot asset definition
-- [x] Epic 2: Crafting Execution (PR #78)
-  - [x] WorkQueue component (per-station job queue)
-  - [x] CraftingAdapter for station panel content
-  - [x] EntityInfoPanel updates for station selection
-  - [x] Craft task type and CraftingEffect action
-  - [x] AIDecisionSystem Tier 6.5 (evaluate crafting work)
-  - [x] Tier 6.6 gathering logic (gather missing materials before crafting)
-  - [x] ActionSystem craft execution (consume inputs, produce outputs)
-  - [x] Reed plant and PlantFiber assets for Primitive Axe recipe
-  - [x] "Aha!" notifications when recipes unlock
-  - [x] "Crafted" notifications when items complete
-  - [x] Input validation using colonist Memory
-
-**Result:** Colonists can discover recipes by seeing ingredients, player can queue crafting orders at stations, colonists gather missing materials and craft items autonomously. ✅
-
----
-
-### ✅ Tabbed Colonist Info Panel
-**Spec/Documentation:** `/docs/development-log/plans/2025-12-18-tabbed-colonist-info-panel.md`
-**Dependencies:** MVP: Player Observation UI
-**Status:** complete
-
-**Goal:** Add tabbed interface to EntityInfoPanel for colonists (Status, Inventory tabs).
-
-**Completed Tasks:**
-- [x] TabBar Component (PR #70)
-  - [x] TabBarStyle.h with 5-state styling (Normal, Hover, Active, Disabled, Focused)
-  - [x] TabBar component with IFocusable integration
-  - [x] Keyboard navigation (arrow keys, Enter)
-  - [x] TabBarScene demo in ui-sandbox
-- [x] EntityInfoPanel Integration (PR #71)
-  - [x] Add TabBar to colonist panels
-  - [x] Status tab with existing content (needs, task, action)
-  - [x] Inventory tab with slot count and item list
-  - [x] Fixed panel height to prevent layout jumping
-  - [x] Proper click event handling (tabs don't close panel)
-- [x] SelectionAdapter Updates
-  - [x] Split adaptColonist into adaptColonistStatus/adaptColonistInventory
-  - [x] Inventory content shows slot usage and item names
-
-**Result:** Colonist info panel has tabbed interface for organized display of growing colonist state ✅
-
----
 
 ### ✅ Simple Asset Support (SVG-Only)
 **Spec/Documentation:** `/docs/technical/asset-system/asset-definitions.md`, `/docs/technical/asset-system/folder-based-assets.md`
@@ -190,9 +130,42 @@ Use this template for all work items:
 
 ---
 
+### ✅ UI Architecture: Input System Cleanup
+**Spec/Documentation:** `/docs/technical/ui-framework/event-system.md`
+**Dependencies:** UI Event System
+**Status:** complete
+
+**Goal:** Complete the event-based input architecture. Remove `handleInput(float dt)` (wrong pattern per [Game Programming Patterns](https://gameprogrammingpatterns.com/game-loop.html)) in favor of `handleInput(InputEvent&)`.
+
+**Completed Tasks:**
+- [x] Remove handleInput() from ILayer/Component (components don't poll)
+- [x] Add handleEvent() to TextInput (was missing)
+- [x] Container::handleEvent() dispatches to children
+- [x] Application creates InputEvents and dispatches to scene
+- [x] Rename handleEvent to handleInput on IScene (consistency)
+- [x] Remove handleInput(float dt) from IScene (wrong pattern)
+- [x] Remove handleInput(float dt) from SceneManager
+- [x] Update all scenes to implement handleInput(InputEvent&)
+- [x] Test all scenes
+
+**Architecture (Industry Best Practice):**
+```
+while (running) {
+    processInput();    // No dt - discrete events
+    update(elapsed);   // dt here - advance simulation
+    render();
+}
+```
+
+**Key insight:** Input handling does NOT need delta time. It captures discrete events ("what happened?"). Delta time belongs in `update()` where simulation advances ("how much time passed?").
+
+**Result:** Clean separation between discrete input events and continuous simulation updates. Scenes receive `InputEvent&` from Application and forward to UI components. Keyboard polling (WASD, ESC) happens in `update()`. ✅
+
+---
+
 ## In Progress Epics
 
-(None currently - all epics complete or planned)
+*No epics currently in progress*
 
 ---
 
@@ -241,30 +214,6 @@ The following MVP epics have all been completed. Detailed task breakdowns are pr
 ---
 
 ## Planned Epics (Post-MVP)
-
-### UI Architecture: Input System Cleanup
-**Spec/Documentation:** `/docs/technical/ui-framework/event-system.md`
-**Dependencies:** None (do before FocusManager Simplification - both touch same components)
-**Status:** ready
-
-**Goal:** Remove dual input system (polling + events) - keep only event-based `handleEvent()`.
-
-**Background:** Components currently implement BOTH `handleInput()` (polling InputManager) and `handleEvent()` (event consumption). This causes duplicate click handling, inconsistent behavior, and ~120 lines of boilerplate.
-
-**Tasks:**
-- [ ] Audit all components using handleInput()
-  - [ ] Button, TabBar, TextInput in libs/ui/
-  - [ ] Game panels in apps/world-sim/
-- [ ] Migrate remaining polling logic to handleEvent()
-  - [ ] Ensure all click/hover behavior works via events
-  - [ ] Test keyboard focus still works
-- [ ] Remove handleInput() from ILayer interface
-  - [ ] Remove handleInput() implementations
-  - [ ] Update Component base class
-  - [ ] Remove InputManager polling from components
-- [ ] Update scenes to only dispatch events (not call handleInput())
-
----
 
 ### UI Architecture: FocusManager Simplification
 **Spec/Documentation:** `/docs/technical/ui-framework/focus-management.md`

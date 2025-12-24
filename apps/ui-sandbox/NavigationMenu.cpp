@@ -126,30 +126,30 @@ namespace UI {
 		initializeComponents();
 	}
 
-	void NavigationMenu::handleInput() {
-		// Always handle the toggle button
-		if (toggleButton) {
-			toggleButton->handleInput();
+	bool NavigationMenu::handleEvent(InputEvent& event) {
+		if (toggleButton && toggleButton->handleEvent(event)) {
+			return true;
 		}
-
-		// Only handle menu buttons when expanded
 		if (expanded) {
 			for (auto& button : menuButtons) {
-				button.handleInput();
+				if (button.handleEvent(event)) {
+					return true;
+				}
 			}
 		}
+		return false;
 	}
 
-	void NavigationMenu::update(float deltaTime) {
+	void NavigationMenu::update(float dt) {
 		// Update toggle button
 		if (toggleButton) {
-			toggleButton->update(deltaTime);
+			toggleButton->update(dt);
 		}
 
 		// Update menu buttons if expanded
 		if (expanded) {
 			for (auto& button : menuButtons) {
-				button.update(deltaTime);
+				button.update(dt);
 			}
 		}
 	}

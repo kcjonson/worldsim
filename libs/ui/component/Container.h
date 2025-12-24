@@ -32,6 +32,12 @@ class Container : public Component {
   public:
 	Container() = default;
 
+	// Handle input events by dispatching to children.
+	// This is the core of the container pattern - events flow down the tree.
+	bool handleEvent(InputEvent& event) override {
+		return dispatchEvent(event);
+	}
+
 	// Set clip region for this container.
 	// All children will be visually masked to this region.
 	// Pass std::nullopt to disable clipping.

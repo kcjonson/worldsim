@@ -84,8 +84,6 @@ namespace {
 			LOG_INFO(UI, "Generated %zu trees for rendering", m_trees.size());
 		}
 
-		void handleInput(float /*dt*/) override {}
-
 		void update(float /*dt*/) override {}
 
 		void render() override {

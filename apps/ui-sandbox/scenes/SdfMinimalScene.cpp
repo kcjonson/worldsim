@@ -42,9 +42,7 @@ class SDFMinimalScene : public engine::IScene {
 			LOG_INFO(UI, "SDF Minimal Scene initialized with uber shader");
 		}
 
-		void handleInput(float dt) override {}
-
-		void update(float dt) override {}
+		void update(float /*dt*/) override {}
 
 		void render() override {
 			// Clear to dark blue

@@ -54,10 +54,6 @@ class SplashScene : public engine::IScene {
 		});
 	}
 
-	void handleInput(float /*dt*/) override {
-		// No input handling - auto transitions
-	}
-
 	void update(float dt) override {
 		m_timer += dt;
 
