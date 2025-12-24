@@ -2,7 +2,7 @@
 
 #include "components/button/ButtonStyle.h"
 #include "component/Component.h"
-#include "focus/Focusable.h"
+#include "focus/FocusableBase.h"
 #include "math/Types.h"
 #include "shapes/Shapes.h"
 #include <functional>
@@ -18,11 +18,8 @@
 
 namespace UI {
 
-// Forward declarations
-class FocusManager;
-
-// Button component - extends Component and implements IFocusable
-class Button : public Component, public IFocusable {
+// Button component - extends Component and uses FocusableBase for auto-registration
+class Button : public Component, public FocusableBase<Button> {
   public:
 	// Button type enum for predefined styles
 	enum class Type { Primary, Secondary, Custom };
@@ -69,15 +66,15 @@ class Button : public Component, public IFocusable {
 
 	// Constructor & Destructor
 	explicit Button(const Args& args);
-	~Button() override;
+	~Button() override = default;
 
-	// Disable copy (Button owns arena memory and registers with FocusManager)
+	// Disable copy (Button owns arena memory and is registered with FocusManager)
 	Button(const Button&) = delete;
 	Button& operator=(const Button&) = delete;
 
-	// Allow move
-	Button(Button&& other) noexcept;
-	Button& operator=(Button&& other) noexcept;
+	// Allow move (FocusableBase handles FocusManager re-registration)
+	Button(Button&&) noexcept = default;
+	Button& operator=(Button&&) noexcept = default;
 
 	// ILayer implementation (overrides Component)
 	void update(float deltaTime) override;
@@ -112,9 +109,6 @@ class Button : public Component, public IFocusable {
 
 	// Text label (owned directly for simplicity)
 	Text labelText;
-
-	// Focus management
-	int tabIndex{-1};
 
 	// Get current style based on state/flags
 	const ButtonStyle& getCurrentStyle() const;

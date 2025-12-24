@@ -1,5 +1,4 @@
 #include "components/tabbar/TabBar.h"
-#include "focus/FocusManager.h"
 #include "font/FontRenderer.h"
 #include <glm/glm.hpp>
 #include <input/InputTypes.h>
@@ -8,14 +7,14 @@
 namespace UI {
 
 	TabBar::TabBar(const Args& args)
-		: position(args.position),
+		: FocusableBase<TabBar>(args.tabIndex),
+		  position(args.position),
 		  width(args.width),
 		  id(args.id),
 		  m_tabs(args.tabs),
 		  m_selectedId(args.selectedId),
 		  m_appearance(args.appearance),
-		  m_onSelect(args.onSelect),
-		  m_tabIndex(args.tabIndex) {
+		  m_onSelect(args.onSelect) {
 
 		// Find initial selected index
 		m_selectedIndex = findTabIndex(m_selectedId);
@@ -39,71 +38,11 @@ namespace UI {
 
 		// Compute layout
 		recomputeLayout();
-
-		// Register with global FocusManager singleton
-		FocusManager::Get().registerFocusable(this, m_tabIndex);
+		// FocusManager registration handled by FocusableBase constructor
 	}
 
-	TabBar::~TabBar() {
-		// Unregister from FocusManager
-		FocusManager::Get().unregisterFocusable(this);
-	}
-
-	TabBar::TabBar(TabBar&& other) noexcept
-		: Component(std::move(other)),
-		  position(other.position),
-		  width(other.width),
-		  id(other.id),
-		  m_tabs(std::move(other.m_tabs)),
-		  m_selectedId(std::move(other.m_selectedId)),
-		  m_selectedIndex(other.m_selectedIndex),
-		  m_hoveredIndex(other.m_hoveredIndex),
-		  m_focused(other.m_focused),
-		  m_appearance(other.m_appearance),
-		  m_onSelect(std::move(other.m_onSelect)),
-		  m_height(other.m_height),
-		  m_tabWidths(std::move(other.m_tabWidths)),
-		  m_tabOffsets(std::move(other.m_tabOffsets)),
-		  m_tabIndex(other.m_tabIndex),
-		  m_mouseDown(other.m_mouseDown) {
-		// Unregister other from its old address, register this at new address
-		FocusManager::Get().unregisterFocusable(&other);
-		FocusManager::Get().registerFocusable(this, m_tabIndex);
-		other.m_tabIndex = -2;	// Mark as moved-from to prevent double-unregister
-	}
-
-	TabBar& TabBar::operator=(TabBar&& other) noexcept {
-		if (this != &other) {
-			// Unregister this from FocusManager
-			FocusManager::Get().unregisterFocusable(this);
-
-			// Move base class
-			Component::operator=(std::move(other));
-
-			// Move data
-			position = other.position;
-			width = other.width;
-			id = other.id;
-			m_tabs = std::move(other.m_tabs);
-			m_selectedId = std::move(other.m_selectedId);
-			m_selectedIndex = other.m_selectedIndex;
-			m_hoveredIndex = other.m_hoveredIndex;
-			m_focused = other.m_focused;
-			m_appearance = other.m_appearance;
-			m_onSelect = std::move(other.m_onSelect);
-			m_height = other.m_height;
-			m_tabWidths = std::move(other.m_tabWidths);
-			m_tabOffsets = std::move(other.m_tabOffsets);
-			m_tabIndex = other.m_tabIndex;
-			m_mouseDown = other.m_mouseDown;
-
-			// Unregister other from its old address, register this at new address
-			FocusManager::Get().unregisterFocusable(&other);
-			FocusManager::Get().registerFocusable(this, m_tabIndex);
-			other.m_tabIndex = -2;	// Mark as moved-from
-		}
-		return *this;
-	}
+	// Destructor and move operations are = default in header.
+	// FocusableBase handles FocusManager registration/unregistration.
 
 	bool TabBar::handleEvent(InputEvent& event) {
 		if (!visible) {

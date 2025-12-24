@@ -2,7 +2,7 @@
 
 #include "components/tabbar/TabBarStyle.h"
 #include "component/Component.h"
-#include "focus/Focusable.h"
+#include "focus/FocusableBase.h"
 #include "input/InputEvent.h"
 #include "math/Types.h"
 #include "shapes/Shapes.h"
@@ -29,11 +29,8 @@
 
 namespace UI {
 
-	// Forward declarations
-	class FocusManager;
-
-	// TabBar component - extends Component and implements IFocusable
-	class TabBar : public Component, public IFocusable {
+	// TabBar component - extends Component and uses FocusableBase for auto-registration
+	class TabBar : public Component, public FocusableBase<TabBar> {
 	  public:
 		// Individual tab definition
 		struct Tab {
@@ -67,15 +64,15 @@ namespace UI {
 
 		// Constructor & Destructor
 		explicit TabBar(const Args& args);
-		~TabBar() override;
+		~TabBar() override = default;
 
-		// Disable copy (TabBar owns arena memory and registers with FocusManager)
+		// Disable copy (TabBar owns arena memory and is registered with FocusManager)
 		TabBar(const TabBar&) = delete;
 		TabBar& operator=(const TabBar&) = delete;
 
-		// Allow move
-		TabBar(TabBar&& other) noexcept;
-		TabBar& operator=(TabBar&& other) noexcept;
+		// Allow move (FocusableBase handles FocusManager re-registration)
+		TabBar(TabBar&&) noexcept = default;
+		TabBar& operator=(TabBar&&) noexcept = default;
 
 		// ILayer implementation (overrides Component)
 		void update(float deltaTime) override;
@@ -122,9 +119,6 @@ namespace UI {
 		float			  m_height{0.0F};
 		std::vector<float> m_tabWidths;	 // Width of each tab
 		std::vector<float> m_tabOffsets; // X offset of each tab from bar start
-
-		// Focus management
-		int m_tabIndex{-1};
 
 		// Internal state
 		bool m_mouseDown{false};
