@@ -62,6 +62,10 @@ Development log entries are **immutable history**. Don't update old entries — 
 
 ### 2025
 
+#### December 2025
+
+- [2025-12-24 - FocusManager Simplification (CRTP Pattern)](./entries/2025-12-24-focusmanager-simplification.md)
+
 #### October 2025
 
 - [2025-10-29 - Vector Graphics Validation Plan Updates](./entries/2025-10-29-vector-graphics-validation.md)
@@ -80,9 +84,10 @@ Development log entries are **immutable history**. Don't update old entries — 
 
 ## Quick Stats
 
-- **Total Entries:** 6
-- **Latest Entry:** 2024-12-04
+- **Total Entries:** 7
+- **Latest Entry:** 2025-12-24
 - **Major Milestones:**
+  - FocusManager CRTP simplification (2025-12-24)
   - Vector graphics research complete (2025-10-24)
   - Multiplayer architecture defined (2025-10-24)
   - Colonist systems designed (2024-12-04)
