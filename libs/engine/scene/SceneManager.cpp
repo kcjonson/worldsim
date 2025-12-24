@@ -106,7 +106,7 @@ namespace engine {
 		}
 
 		// Update overlays after scene
-		for (auto* overlay : m_overlays) {
+		for (auto* overlay : overlays) {
 			overlay->update(dt);
 		}
 	}
@@ -117,7 +117,7 @@ namespace engine {
 		}
 
 		// Render overlays on top of scene
-		for (auto* overlay : m_overlays) {
+		for (auto* overlay : overlays) {
 			overlay->render();
 		}
 	}
@@ -195,26 +195,26 @@ namespace engine {
 
 	void SceneManager::pushOverlay(IOverlay* overlay) {
 		if (overlay != nullptr) {
-			m_overlays.push_back(overlay);
-			LOG_DEBUG(Engine, "Pushed overlay, stack size: %zu", m_overlays.size());
+			overlays.push_back(overlay);
+			LOG_DEBUG(Engine, "Pushed overlay, stack size: %zu", overlays.size());
 		}
 	}
 
 	void SceneManager::popOverlay() {
-		if (!m_overlays.empty()) {
-			m_overlays.pop_back();
-			LOG_DEBUG(Engine, "Popped overlay, stack size: %zu", m_overlays.size());
+		if (!overlays.empty()) {
+			overlays.pop_back();
+			LOG_DEBUG(Engine, "Popped overlay, stack size: %zu", overlays.size());
 		}
 	}
 
 	void SceneManager::clearOverlays() {
-		m_overlays.clear();
+		overlays.clear();
 		LOG_DEBUG(Engine, "Cleared all overlays");
 	}
 
 	bool SceneManager::handleInput(UI::InputEvent& event) {
 		// Overlays get input first (top to bottom, so iterate in reverse)
-		for (auto it = m_overlays.rbegin(); it != m_overlays.rend(); ++it) {
+		for (auto it = overlays.rbegin(); it != overlays.rend(); ++it) {
 			if ((*it)->handleEvent(event)) {
 				return true; // Event consumed by overlay
 			}
@@ -229,7 +229,7 @@ namespace engine {
 	}
 
 	void SceneManager::onWindowResize() {
-		for (auto* overlay : m_overlays) {
+		for (auto* overlay : overlays) {
 			overlay->onWindowResize();
 		}
 	}

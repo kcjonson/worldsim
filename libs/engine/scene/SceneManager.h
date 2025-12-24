@@ -153,7 +153,7 @@ namespace engine {
 		bool exitRequested{false};
 
 		// Overlays (rendered on top of scenes, receive input first)
-		std::vector<IOverlay*> m_overlays;
+		std::vector<IOverlay*> overlays;
 	};
 
 } // namespace engine
