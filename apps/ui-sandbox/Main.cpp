@@ -34,7 +34,7 @@ int main(int argc, char* argv[]) {
 		return 1;
 	}
 
-	// Set up navigation menu (only when no --scene argument)
+	// Set up navigation menu overlay (only when no --scene argument)
 	if (!ctx.hasSceneArg) {
 		auto sceneNames = engine::SceneManager::Get().getAllSceneNames();
 		g_navigationMenu.emplace(
@@ -51,29 +51,22 @@ int main(int argc, char* argv[]) {
 				.coordinateSystem = ctx.coordinateSystem
 			}
 		);
-		LOG_INFO(UI, "Navigation menu enabled (%zu scenes available)", sceneNames.size());
+
+		// Register with SceneManager - it handles input/update/render lifecycle
+		engine::SceneManager::Get().pushOverlay(&(*g_navigationMenu));
+		LOG_INFO(UI, "Navigation menu overlay registered (%zu scenes available)", sceneNames.size());
 	}
 
-	// Set up overlay renderer with navigation menu
-	ctx.app->setOverlayRenderer([]() {
-		if (g_navigationMenu) {
-			g_navigationMenu->handleInput();
-			g_navigationMenu->update(0.0F);
-			g_navigationMenu->render();
-		}
-		Renderer::Primitives::endFrame();
-	});
+	// Overlay renderer just for Primitives::endFrame()
+	ctx.app->setOverlayRenderer([]() { Renderer::Primitives::endFrame(); });
 
-	// Set up window resize handler for navigation menu
-	engine::AppLauncher::setWindowResizeCallback([]() {
-		if (g_navigationMenu) {
-			g_navigationMenu->onWindowResize();
-		}
-	});
+	// Window resize notifies SceneManager which forwards to overlays
+	engine::AppLauncher::setWindowResizeCallback([]() { engine::SceneManager::Get().onWindowResize(); });
 
 	engine::AppLauncher::run(ctx);
 
-	// Cleanup navigation menu before engine shutdown (FocusManager still alive)
+	// Clear overlays before destroying navigation menu (avoid dangling pointers)
+	engine::SceneManager::Get().clearOverlays();
 	g_navigationMenu.reset();
 
 	return engine::AppLauncher::shutdown(ctx);

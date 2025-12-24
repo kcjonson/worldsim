@@ -122,29 +122,26 @@ namespace engine {
 				}
 			}
 
-			// Dispatch UI input events to the current scene
-			// Events propagate: Application → Scene → Component hierarchy
+			// Dispatch UI input events through SceneManager
+			// SceneManager dispatches to overlays first, then to scene
 			if (!paused && inputManager) {
-				auto  mousePos = inputManager->getMousePosition();
-				auto  pos = Foundation::Vec2{mousePos.x, mousePos.y};
-				auto* scene = SceneManager::Get().getCurrentScene();
+				auto mousePos = inputManager->getMousePosition();
+				auto pos = Foundation::Vec2{mousePos.x, mousePos.y};
 
-				if (scene != nullptr) {
-					// MouseMove for hover states
-					UI::InputEvent moveEvent = UI::InputEvent::mouseMove(pos);
-					scene->handleInput(moveEvent);
+				// MouseMove for hover states
+				UI::InputEvent moveEvent = UI::InputEvent::mouseMove(pos);
+				SceneManager::Get().handleInput(moveEvent);
 
-					// MouseDown on press
-					if (inputManager->isMouseButtonPressed(engine::MouseButton::Left)) {
-						UI::InputEvent downEvent = UI::InputEvent::mouseDown(pos, engine::MouseButton::Left);
-						scene->handleInput(downEvent);
-					}
+				// MouseDown on press
+				if (inputManager->isMouseButtonPressed(engine::MouseButton::Left)) {
+					UI::InputEvent downEvent = UI::InputEvent::mouseDown(pos, engine::MouseButton::Left);
+					SceneManager::Get().handleInput(downEvent);
+				}
 
-					// MouseUp on release
-					if (inputManager->isMouseButtonReleased(engine::MouseButton::Left)) {
-						UI::InputEvent upEvent = UI::InputEvent::mouseUp(pos, engine::MouseButton::Left);
-						scene->handleInput(upEvent);
-					}
+				// MouseUp on release
+				if (inputManager->isMouseButtonReleased(engine::MouseButton::Left)) {
+					UI::InputEvent upEvent = UI::InputEvent::mouseUp(pos, engine::MouseButton::Left);
+					SceneManager::Get().handleInput(upEvent);
 				}
 			}
 

@@ -4,22 +4,27 @@
 #include "CoordinateSystem/CoordinateSystem.h"
 #include "input/InputEvent.h"
 #include "math/Types.h"
+#include "scene/Overlay.h"
 #include "shapes/Shapes.h"
 #include <functional>
 #include <optional>
 #include <string>
 #include <vector>
 
-// NavigationMenu Component
+// NavigationMenu - Cross-Scene Overlay
 //
 // Collapsible scene navigation menu for the UI sandbox.
 // Displays as a small toggle button in the bottom-right corner.
 // Expands upward to show a list of available scenes when clicked.
-// Uses standard lifecycle: HandleInput() → Update() → Render()
+//
+// Implements IOverlay for SceneManager integration:
+// - Receives input events before scenes
+// - Persists across scene transitions
+// - Renders on top of scenes
 
 namespace UI {
 
-	struct NavigationMenu {
+	struct NavigationMenu : public engine::IOverlay {
 		// Constructor arguments struct (C++20 designated initializers)
 		struct Args {
 			std::vector<std::string>			  sceneNames;
@@ -40,14 +45,11 @@ namespace UI {
 		NavigationMenu(NavigationMenu&& other) noexcept;
 		NavigationMenu& operator=(NavigationMenu&& other) noexcept;
 
-		// Standard lifecycle methods
-		void handleInput();
-		bool handleEvent(InputEvent& event);
-		void update(float deltaTime);
-		void render();
-
-		// Window resize handling - recalculates all positions
-		void onWindowResize();
+		// IOverlay interface
+		bool handleEvent(InputEvent& event) override;
+		void update(float dt) override;
+		void render() override;
+		void onWindowResize() override;
 
 	  private:
 		// Layout constants

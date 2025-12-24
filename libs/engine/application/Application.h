@@ -49,7 +49,7 @@ namespace engine {
 	class Application {
 	  public:
 		/// @brief Overlay render callback type
-		/// Called after scene renders, for application-level UI (debug menu, etc.)
+		/// Called after SceneManager renders overlays, for Primitives::endFrame()
 		using OverlayRenderer = std::function<void()>;
 
 		/// @brief Pre-frame callback type
@@ -94,8 +94,8 @@ namespace engine {
 		bool isPaused() const;
 
 		/// @brief Set overlay renderer callback
-		/// Overlay is rendered after scene, for application-level UI
-		/// @param renderer Callback function to render overlay
+		/// Called after SceneManager renders, for Primitives::endFrame()
+		/// @param renderer Callback function
 		void setOverlayRenderer(OverlayRenderer renderer);
 
 		/// @brief Set pre-frame callback
@@ -145,7 +145,7 @@ namespace engine {
 		std::unique_ptr<ClipboardManager>	clipboardManager;	 // Clipboard management system
 		std::unique_ptr<UI::FocusManager>	focusManager;		 // Focus management system
 
-		OverlayRenderer	  overlayRenderer{};	 // Application-level UI
+		OverlayRenderer	  overlayRenderer{};	 // For Primitives::endFrame()
 		PreFrameCallback  preFrameCallback{};	 // Pre-frame callback
 		PostFrameCallback postFrameCallback{}; // Post-frame callback
 

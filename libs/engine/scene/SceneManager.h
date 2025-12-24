@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Overlay.h"
 #include "Scene.h"
 #include <cstddef>
 #include <functional>
@@ -108,6 +109,28 @@ namespace engine {
 		/// @return Current scene name or empty string if no scene active
 		std::string getCurrentSceneName() const;
 
+		// --- Overlay Management ---
+
+		/// @brief Push an overlay onto the stack
+		/// Overlays are rendered on top of scenes and receive input before scenes.
+		/// @param overlay Pointer to overlay (caller retains ownership)
+		void pushOverlay(IOverlay* overlay);
+
+		/// @brief Pop the top overlay from the stack
+		void popOverlay();
+
+		/// @brief Clear all overlays
+		void clearOverlays();
+
+		/// @brief Handle input event
+		/// Dispatches to overlays first (top to bottom), then to scene.
+		/// @param event The input event to handle
+		/// @return true if event was consumed
+		bool handleInput(UI::InputEvent& event);
+
+		/// @brief Notify overlays of window resize
+		void onWindowResize();
+
 	  private:
 		SceneManager() = default;
 		~SceneManager() = default;
@@ -128,6 +151,9 @@ namespace engine {
 		SceneKey currentSceneKey{};
 		std::optional<SceneKey> pendingSceneKey;
 		bool exitRequested{false};
+
+		// Overlays (rendered on top of scenes, receive input first)
+		std::vector<IOverlay*> m_overlays;
 	};
 
 } // namespace engine
