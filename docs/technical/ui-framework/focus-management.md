@@ -261,30 +261,41 @@ if (focused) {
 - Lives for entire application lifetime
 
 **Component Registration:**
-- Components register themselves in constructor (or when added to scene)
-- Components unregister in destructor (critical for cleanup)
+- Components inherit from `FocusableBase<T>` which handles registration automatically
+- FocusableBase registers in constructor, unregisters in destructor
+- Move semantics handled correctly (re-registers at new address)
 - FocusManager stores raw pointers (components responsible for lifetime)
 
 **Safety:**
-- Components MUST unregister before destruction
+- FocusableBase handles registration/unregistration automatically
 - FocusManager does not own components (no memory management)
-- If focused component is destroyed without unregistering, behavior is undefined
+- Move semantics properly update registration (old address unregistered, new address registered)
 
-**Example Component Pattern:**
+**Example Component Pattern (using FocusableBase CRTP):**
 
 ```cpp
-struct Button : IFocusable {
-    Button() {
-        Application::GetFocusManager().RegisterFocusable(this, -1);
-    }
+// Inherit from FocusableBase<T> instead of IFocusable directly
+class Button : public Component, public FocusableBase<Button> {
+public:
+    Button(const Args& args)
+        : FocusableBase<Button>(args.tabIndex),  // Pass tabIndex to base
+          position(args.position), ... { }
 
-    ~Button() {
-        Application::GetFocusManager().UnregisterFocusable(this);
-    }
+    // Destructor and move operations can be = default
+    ~Button() override = default;
+    Button(Button&&) noexcept = default;
+    Button& operator=(Button&&) noexcept = default;
 
-    // IFocusable implementation...
+    // IFocusable methods still required (differ per component):
+    void onFocusGained() override { focused = true; }
+    void onFocusLost() override { focused = false; }
+    void handleKeyInput(engine::Key key, bool shift, bool ctrl, bool alt) override;
+    void handleCharInput(char32_t codepoint) override;
+    bool canReceiveFocus() const override { return !disabled; }
 };
 ```
+
+**See:** `libs/ui/focus/FocusableBase.h` for the CRTP base class implementation.
 
 ---
 

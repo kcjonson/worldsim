@@ -1,7 +1,7 @@
 #pragma once
 
 #include "component/Component.h"
-#include "focus/Focusable.h"
+#include "focus/FocusableBase.h"
 #include "graphics/Color.h"
 #include "math/Types.h"
 #include <functional>
@@ -20,9 +20,6 @@
 // See: /docs/technical/ui-framework/architecture.md
 
 namespace UI {
-
-// Forward declarations
-class FocusManager;
 
 // Text selection range (Phase 2)
 struct TextSelection {
@@ -63,8 +60,8 @@ struct TextInputStyle {
 	float paddingBottom{6.0F};
 };
 
-// TextInput component - extends Component and implements IFocusable for keyboard focus
-class TextInput : public Component, public IFocusable {
+// TextInput component - extends Component and uses FocusableBase for auto-registration
+class TextInput : public Component, public FocusableBase<TextInput> {
   public:
 	// Constructor arguments struct
 	struct Args {
@@ -111,15 +108,15 @@ class TextInput : public Component, public IFocusable {
 
 	// Constructor & Destructor
 	explicit TextInput(const Args& args);
-	~TextInput();
+	~TextInput() override = default;
 
-	// Disable copy (TextInput registers with FocusManager)
+	// Disable copy (TextInput is registered with FocusManager)
 	TextInput(const TextInput&) = delete;
 	TextInput& operator=(const TextInput&) = delete;
 
-	// Allow move (must unregister from old address and re-register at new address)
-	TextInput(TextInput&& other) noexcept;
-	TextInput& operator=(TextInput&& other) noexcept;
+	// Allow move (FocusableBase handles FocusManager re-registration)
+	TextInput(TextInput&&) noexcept = default;
+	TextInput& operator=(TextInput&&) noexcept = default;
 
 	// ILayer implementation (overrides Component)
 	void update(float deltaTime) override; // Update cursor blink, etc.
@@ -143,9 +140,6 @@ class TextInput : public Component, public IFocusable {
 	bool canReceiveFocus() const override;
 
   private:
-	// Focus management
-	int tabIndex{-1}; // Preserved for move operations
-
 	// Internal state tracking
 	bool mouseDown{false};
 	size_t selectionAnchor{0};  // Anchor point for drag selection

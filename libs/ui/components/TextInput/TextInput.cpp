@@ -10,6 +10,8 @@
 #include <primitives/BatchRenderer.h>
 #include <primitives/Primitives.h>
 
+// Note: FocusManager.h is still included for FocusManager::Get().setFocus(this) in handleEvent
+
 namespace {
 	// Base font size for scale calculations (matches SDF atlas generation)
 	constexpr float kBaseFontSize = 16.0F;
@@ -22,81 +24,23 @@ namespace UI {
 	// ============================================================================
 
 	TextInput::TextInput(const Args& args)
-		: position(args.position),
+		: FocusableBase<TextInput>(args.tabIndex),
+		  position(args.position),
 		  size(args.size),
 		  text(args.text),
 		  placeholder(args.placeholder),
 		  style(args.style),
 		  onChange(args.onChange),
 		  id(args.id),
-		  enabled(args.enabled),
-		  tabIndex(args.tabIndex) {
+		  enabled(args.enabled) {
 
 		// Set cursor to end of text
 		cursorPosition = text.size();
-
-		// Register with global FocusManager singleton
-		FocusManager::Get().registerFocusable(this, tabIndex);
+		// FocusManager registration handled by FocusableBase constructor
 	}
 
-	TextInput::~TextInput() {
-		// Unregister from FocusManager
-		FocusManager::Get().unregisterFocusable(this);
-	}
-
-	TextInput::TextInput(TextInput&& other) noexcept
-		: position(other.position),
-		  size(other.size),
-		  text(std::move(other.text)),
-		  placeholder(std::move(other.placeholder)),
-		  style(other.style),
-		  onChange(std::move(other.onChange)),
-		  cursorPosition(other.cursorPosition),
-		  selection(other.selection),
-		  cursorBlinkTimer(other.cursorBlinkTimer),
-		  horizontalScroll(other.horizontalScroll),
-		  visible(other.visible),
-		  id(other.id),
-		  enabled(other.enabled),
-		  focused(other.focused),
-		  tabIndex(other.tabIndex),
-		  mouseDown(other.mouseDown) {
-		// Unregister other from its old address, register this at new address
-		FocusManager::Get().unregisterFocusable(&other);
-		FocusManager::Get().registerFocusable(this, tabIndex);
-		other.tabIndex = -2; // Mark as moved-from to prevent double-unregister
-	}
-
-	TextInput& TextInput::operator=(TextInput&& other) noexcept {
-		if (this != &other) {
-			// Unregister this from FocusManager
-			FocusManager::Get().unregisterFocusable(this);
-
-			// Move data
-			position = other.position;
-			size = other.size;
-			text = std::move(other.text);
-			placeholder = std::move(other.placeholder);
-			style = other.style;
-			onChange = std::move(other.onChange);
-			cursorPosition = other.cursorPosition;
-			selection = other.selection;
-			cursorBlinkTimer = other.cursorBlinkTimer;
-			horizontalScroll = other.horizontalScroll;
-			visible = other.visible;
-			id = other.id;
-			enabled = other.enabled;
-			focused = other.focused;
-			mouseDown = other.mouseDown;
-			tabIndex = other.tabIndex;
-
-			// Unregister other from its old address, register this at new address
-			FocusManager::Get().unregisterFocusable(&other);
-			FocusManager::Get().registerFocusable(this, tabIndex);
-			other.tabIndex = -2; // Mark as moved-from
-		}
-		return *this;
-	}
+	// Destructor and move operations are = default in header.
+	// FocusableBase handles FocusManager registration/unregistration.
 
 	// ============================================================================
 	// Lifecycle Methods
@@ -626,7 +570,7 @@ namespace UI {
 		float baselineY = position.y + (size.y - ascent) * 0.5F;
 
 		// Generate glyph quads using FontRenderer
-		glm::vec4 glyphColor(style.textColor.r, style.textColor.g, style.textColor.b, style.textColor.a);
+		glm::vec4								 glyphColor(style.textColor.r, style.textColor.g, style.textColor.b, style.textColor.a);
 		std::vector<ui::FontRenderer::GlyphQuad> glyphs;
 		fontRenderer->generateGlyphQuads(text, glm::vec2(textX, baselineY), scale, glyphColor, glyphs);
 
@@ -755,7 +699,9 @@ namespace UI {
 		fontRenderer->generateGlyphQuads(placeholder, glm::vec2(textX, baselineY), scale, glyphColor, glyphs);
 
 		// Add each glyph to the unified batch renderer
-		Foundation::Color placeholderColor(style.placeholderColor.r, style.placeholderColor.g, style.placeholderColor.b, style.placeholderColor.a);
+		Foundation::Color placeholderColor(
+			style.placeholderColor.r, style.placeholderColor.g, style.placeholderColor.b, style.placeholderColor.a
+		);
 		for (const auto& glyph : glyphs) {
 			batchRenderer->addTextQuad(
 				Foundation::Vec2(glyph.position.x, glyph.position.y),
@@ -851,8 +797,7 @@ namespace UI {
 	// ============================================================================
 
 	bool TextInput::containsPoint(Foundation::Vec2 point) const {
-		return point.x >= position.x && point.x <= position.x + size.x && point.y >= position.y &&
-			   point.y <= position.y + size.y;
+		return point.x >= position.x && point.x <= position.x + size.x && point.y >= position.y && point.y <= position.y + size.y;
 	}
 
 } // namespace UI

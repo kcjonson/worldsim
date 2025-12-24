@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2025-12-23 (UI Architecture: Input System Cleanup + Overlay Support complete)
+Last Updated: 2025-12-23 (FocusManager Simplification complete)
 
 ## Epic/Story/Task Template
 
@@ -165,6 +165,26 @@ while (running) {
 
 ---
 
+### ✅ UI Architecture: FocusManager Simplification
+**Spec/Documentation:** `/docs/technical/ui-framework/focus-management.md`
+**Dependencies:** UI Architecture: Input System Cleanup
+**Status:** complete
+
+**Goal:** Reduce ~40 lines of FocusManager boilerplate per focusable component via CRTP base class.
+
+**Completed Tasks:**
+- [x] Create FocusableBase<T> CRTP template (`libs/ui/focus/FocusableBase.h`)
+  - [x] Auto-register in constructor
+  - [x] Auto-unregister in destructor
+  - [x] Handle move semantics correctly (unregister old, register new)
+- [x] Migrate Button to use FocusableBase<Button>
+- [x] Migrate TabBar to use FocusableBase<TabBar>
+- [x] Migrate TextInput to use FocusableBase<TextInput>
+
+**Result:** Components now inherit from `FocusableBase<T>` and use `= default` for move constructor/assignment. FocusManager registration is automatic. ~120 lines of boilerplate removed across 3 components. ✅
+
+---
+
 ## In Progress Epics
 
 *No epics currently in progress*
@@ -216,29 +236,6 @@ The following MVP epics have all been completed. Detailed task breakdowns are pr
 ---
 
 ## Planned Epics (Post-MVP)
-
-### UI Architecture: FocusManager Simplification
-**Spec/Documentation:** `/docs/technical/ui-framework/focus-management.md`
-**Dependencies:** UI Architecture: Input System Cleanup (touches same files)
-**Status:** ready
-
-**Goal:** Reduce ~50 lines of FocusManager boilerplate per focusable component via CRTP base class.
-
-**Background:** Every focusable component (Button, TabBar, TextInput) repeats identical registration/unregistration code in constructor, destructor, move constructor, and move assignment.
-
-**Tasks:**
-- [ ] Create Focusable<T> CRTP base class
-  - [ ] Auto-register in constructor
-  - [ ] Auto-unregister in destructor
-  - [ ] Handle move semantics correctly
-- [ ] Migrate Button to use Focusable<Button>
-  - [ ] Remove manual registration code
-  - [ ] Verify focus behavior unchanged
-- [ ] Migrate TabBar to use Focusable<TabBar>
-- [ ] Migrate TextInput to use Focusable<TextInput>
-- [ ] Update documentation
-
----
 
 ### UI Architecture: ViewModel Pattern
 **Spec/Documentation:** `/docs/technical/ui-framework/data-binding.md`

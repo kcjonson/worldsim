@@ -1,5 +1,4 @@
 #include "components/button/Button.h"
-#include "focus/FocusManager.h"
 #include "font/FontRenderer.h"
 #include <input/InputManager.h>
 #include <input/InputTypes.h>
@@ -9,13 +8,13 @@
 namespace UI {
 
 	Button::Button(const Args& args)
-		: position(args.position),
+		: FocusableBase<Button>(args.tabIndex),
+		  position(args.position),
 		  size(args.size),
 		  label(args.label),
 		  disabled(args.disabled),
 		  onClick(args.onClick),
-		  id(args.id),
-		  tabIndex(args.tabIndex) {
+		  id(args.id) {
 
 		// Set appearance based on type
 		if (args.type == Type::Primary) {
@@ -42,65 +41,11 @@ namespace UI {
 		labelText.style.vAlign = Foundation::VerticalAlign::Middle;
 		labelText.visible = visible;
 		labelText.id = id;
-
-		// Register with global FocusManager singleton
-		FocusManager::Get().registerFocusable(this, tabIndex);
+		// FocusManager registration handled by FocusableBase constructor
 	}
 
-	Button::~Button() {
-		// Unregister from FocusManager
-		FocusManager::Get().unregisterFocusable(this);
-	}
-
-	Button::Button(Button&& other) noexcept
-		: position(other.position),
-		  size(other.size),
-		  label(std::move(other.label)),
-		  state(other.state),
-		  disabled(other.disabled),
-		  focused(other.focused),
-		  appearance(other.appearance),
-		  onClick(std::move(other.onClick)),
-		  visible(other.visible),
-		  id(other.id),
-		  mouseOver(other.mouseOver),
-		  mouseDown(other.mouseDown),
-		  labelText(other.labelText),
-		  tabIndex(other.tabIndex) {
-		// Unregister other from its old address, register this at new address
-		FocusManager::Get().unregisterFocusable(&other);
-		FocusManager::Get().registerFocusable(this, tabIndex);
-		other.tabIndex = -2; // Mark as moved-from to prevent double-unregister
-	}
-
-	Button& Button::operator=(Button&& other) noexcept {
-		if (this != &other) {
-			// Unregister this from FocusManager
-			FocusManager::Get().unregisterFocusable(this);
-
-			// Move data
-			position = other.position;
-			size = other.size;
-			label = std::move(other.label);
-			state = other.state;
-			disabled = other.disabled;
-			focused = other.focused;
-			appearance = other.appearance;
-			onClick = std::move(other.onClick);
-			visible = other.visible;
-			id = other.id;
-			mouseOver = other.mouseOver;
-			mouseDown = other.mouseDown;
-			labelText = other.labelText;
-			tabIndex = other.tabIndex;
-
-			// Unregister other from its old address, register this at new address
-			FocusManager::Get().unregisterFocusable(&other);
-			FocusManager::Get().registerFocusable(this, tabIndex);
-			other.tabIndex = -2; // Mark as moved-from
-		}
-		return *this;
-	}
+	// Destructor and move operations are = default in header.
+	// FocusableBase handles FocusManager registration/unregistration.
 
 	void Button::update(float /*deltaTime*/) {
 		// Update text component to match current button style

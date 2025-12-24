@@ -64,8 +64,10 @@ void FocusManager::unregisterFocusable(IFocusable* component) {
 	}
 
 	// Clear focus if this component has focus
+	// NOTE: Don't call onFocusLost() here - the component may be in the middle of
+	// destruction (called from FocusableBase destructor), and calling virtual
+	// functions on a partially-destroyed object causes undefined behavior.
 	if (currentFocus == component) {
-		currentFocus->onFocusLost();
 		currentFocus = nullptr;
 	}
 
