@@ -10,6 +10,7 @@ add_executable(world-sim
     scenes/game/ui/views/BuildToolbar.cpp
     scenes/game/ui/views/GameOverlay.cpp
     # Game scene UI - components
+    scenes/game/ui/components/ColonistListItem.cpp
     scenes/game/ui/components/NeedBar.cpp
     scenes/game/ui/components/ZoomControl.cpp
     # Game scene UI - adapters

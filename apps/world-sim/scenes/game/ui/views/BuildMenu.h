@@ -6,6 +6,7 @@
 
 #include <components/button/Button.h>
 #include <input/InputEvent.h>
+#include <layout/LayoutContainer.h>
 #include <shapes/Shapes.h>
 
 #include <functional>
@@ -57,7 +58,7 @@ class BuildMenu {
 	std::function<void()> m_onClose;
 
 	std::vector<BuildMenuItem> m_items;
-	std::vector<std::unique_ptr<UI::Button>> m_itemButtons;
+	std::unique_ptr<UI::LayoutContainer> m_buttonLayout;
 	std::unique_ptr<UI::Text> m_titleText;
 
 	float m_menuWidth = 180.0F;

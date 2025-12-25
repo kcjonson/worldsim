@@ -1,27 +1,17 @@
 #include "ColonistListView.h"
 
-#include <algorithm>
-#include <assets/AssetRegistry.h>
-#include <graphics/ClipTypes.h>
 #include <primitives/Primitives.h>
 #include <theme/PanelStyle.h>
 #include <theme/Theme.h>
 
 namespace world_sim {
 
-// Portrait layout constants
-constexpr float kPortraitSize = 32.0F;
-constexpr float kPortraitMargin = 4.0F;
-
 ColonistListView::ColonistListView(const Args& args)
 	: panelWidth(args.width),
 	  itemHeight(args.itemHeight),
 	  onSelectCallback(args.onColonistSelected) {
 
-	// Pre-allocate UI element pools
-	itemBackgrounds.reserve(kMaxColonists);
-	itemNames.reserve(kMaxColonists);
-	colonistIds.reserve(kMaxColonists);
+	itemHandles.reserve(kMaxColonists);
 }
 
 void ColonistListView::setPosition(float x, float y) {
@@ -47,75 +37,46 @@ void ColonistListView::update(ColonistListModel& model, ecs::World& world) {
 	}
 
 	// Always update mood bars (values may change even if structure doesn't)
-	// Note: This is already handled by change detection in the model,
-	// but mood bar visuals are cheap to update
 	updateMoodBars(model.colonists());
 }
 
 void ColonistListView::rebuildUI(const std::vector<adapters::ColonistData>& colonists) {
-	// Cache entity IDs for hit testing
-	colonistIds.clear();
-	for (const auto& colonist : colonists) {
-		colonistIds.push_back(colonist.id);
-	}
+	// Clear existing items
+	itemHandles.clear();
 
-	// Ensure we have enough UI elements
-	while (itemBackgrounds.size() < colonists.size() && itemBackgrounds.size() < kMaxColonists) {
-		itemBackgrounds.push_back(std::make_unique<UI::Rectangle>());
-		itemMoodBars.push_back(std::make_unique<UI::Rectangle>());
-		itemNames.push_back(std::make_unique<UI::Text>());
-	}
+	// Content width for items
+	float contentWidth = panelWidth - kPadding * 2;
 
-	// Update UI elements for each colonist
-	float yOffset = panelY + kPadding;
+	// Create layout container for items
+	itemLayout = std::make_unique<UI::LayoutContainer>(UI::LayoutContainer::Args{
+		.position = {panelX + kPadding, panelY + kPadding},
+		.size = {contentWidth, 0.0F},  // Height determined by children
+		.direction = UI::Direction::Vertical,
+		.hAlign = UI::HAlign::Left
+	});
+
+	// Add colonist items
 	for (size_t i = 0; i < colonists.size() && i < kMaxColonists; ++i) {
 		const auto& colonist = colonists[i];
-		bool isSelected = (colonist.id == selectedId);
 
-		// Item background
-		auto& bg = itemBackgrounds[i];
-		bg->position = {panelX + kPadding, yOffset};
-		bg->size = {panelWidth - kPadding * 2, itemHeight - kItemSpacing};
-		bg->style = {
-			.fill = isSelected ? UI::Theme::Colors::selectionBackground
-							   : UI::Theme::Colors::cardBackground,
-			.border = Foundation::BorderStyle{
-				.color = isSelected ? UI::Theme::Colors::selectionBorder
-									: UI::Theme::Colors::cardBorder,
-				.width = 1.0F,
-				.cornerRadius = 4.0F,
-			}
-		};
-		bg->visible = true;
+		auto handle = itemLayout->addChild(ColonistListItem(ColonistListItem::Args{
+			.colonist = colonist,
+			.width = contentWidth,
+			.height = itemHeight - kItemSpacing,
+			.isSelected = (colonist.id == selectedId),
+			.itemMargin = kItemSpacing * 0.5F,
+			.onSelect = onSelectCallback,
+			.id = "colonist_" + std::to_string(i)
+		}));
 
-		// Name text (right of portrait)
-		auto& nameText = itemNames[i];
-		float textX = panelX + kPadding + kPortraitSize + kPortraitMargin +
-					  (panelWidth - kPadding * 2 - kPortraitSize - kPortraitMargin) / 2.0F;
-		nameText->position = {textX, yOffset + (itemHeight - kItemSpacing) / 2.0F};
-		nameText->text = colonist.name;
-		nameText->style = {
-			.color = UI::Theme::Colors::textTitle,
-			.fontSize = 10.0F,
-			.hAlign = Foundation::HorizontalAlign::Center,
-			.vAlign = Foundation::VerticalAlign::Middle,
-		};
-		nameText->visible = true;
-
-		yOffset += itemHeight;
+		itemHandles.push_back(handle);
 	}
 
-	// Hide unused elements
-	for (size_t i = colonists.size(); i < itemBackgrounds.size(); ++i) {
-		itemBackgrounds[i]->visible = false;
-		itemNames[i]->visible = false;
-		if (i < itemMoodBars.size()) {
-			itemMoodBars[i]->visible = false;
-		}
-	}
+	// Calculate panel height from layout
+	float itemsHeight = static_cast<float>(colonists.size()) * itemHeight;
+	float panelHeight = kPadding * 2 + itemsHeight;
 
 	// Create/update background panel
-	float panelHeight = kPadding * 2 + static_cast<float>(colonists.size()) * itemHeight;
 	if (!backgroundRect) {
 		backgroundRect = std::make_unique<UI::Rectangle>();
 	}
@@ -126,97 +87,52 @@ void ColonistListView::rebuildUI(const std::vector<adapters::ColonistData>& colo
 }
 
 void ColonistListView::updateSelectionHighlight(ecs::EntityID newSelectedId) {
-	for (size_t i = 0; i < colonistIds.size() && i < kMaxColonists; ++i) {
-		bool isSelected = (colonistIds[i] == newSelectedId);
+	if (!itemLayout) {
+		return;
+	}
 
-		auto& bg = itemBackgrounds[i];
-		bg->style.fill = isSelected ? UI::Theme::Colors::selectionBackground
-									: UI::Theme::Colors::cardBackground;
-		bg->style.border->color = isSelected ? UI::Theme::Colors::selectionBorder
-											: UI::Theme::Colors::cardBorder;
+	for (auto& handle : itemHandles) {
+		if (auto* item = itemLayout->getChild<ColonistListItem>(handle)) {
+			item->setSelected(item->getEntityId() == newSelectedId);
+		}
 	}
 }
 
 void ColonistListView::updateMoodBars(const std::vector<adapters::ColonistData>& colonists) {
-	float yOffset = panelY + kPadding;
+	if (!itemLayout) {
+		return;
+	}
 
-	for (size_t i = 0; i < colonists.size() && i < kMaxColonists; ++i) {
-		const auto& colonist = colonists[i];
-
-		auto& moodBar = itemMoodBars[i];
-		float moodBarWidth = panelWidth - kPadding * 2 - kPortraitSize - kPortraitMargin;
-		float moodBarX = panelX + kPadding + kPortraitSize + kPortraitMargin;
-		float moodBarY = yOffset + itemHeight - kItemSpacing - 6.0F;
-
-		// Mood comes from adapter data (already computed)
-		float moodRatio = std::clamp(colonist.mood / 100.0F, 0.0F, 1.0F);
-		moodBar->position = {moodBarX, moodBarY};
-		moodBar->size = {moodBarWidth * moodRatio, 4.0F};
-
-		// Green->yellow->red gradient based on value
-		float r = moodRatio < 0.5F ? 1.0F : 1.0F - (moodRatio - 0.5F) * 2.0F * 0.2F;
-		float g = moodRatio > 0.5F ? 1.0F : 0.5F + moodRatio;
-		moodBar->style = {
-			.fill = Foundation::Color(r, g, 0.2F, 0.9F),
-			.border = Foundation::BorderStyle{
-				.color = Foundation::Color(0.0F, 0.0F, 0.0F, 0.7F),
-				.width = 1.0F,
-				.cornerRadius = 2.0F,
-			}
-		};
-		moodBar->visible = true;
-
-		yOffset += itemHeight;
+	for (size_t i = 0; i < colonists.size() && i < itemHandles.size(); ++i) {
+		if (auto* item = itemLayout->getChild<ColonistListItem>(itemHandles[i])) {
+			item->setMood(colonists[i].mood);
+		}
 	}
 }
 
 bool ColonistListView::handleEvent(UI::InputEvent& event) {
-	if (colonistIds.empty()) {
-		return false;
+	// Dispatch to layout container first
+	if (itemLayout && itemLayout->handleEvent(event)) {
+		return true;
 	}
 
-	// Only handle mouse up (click) events
-	if (event.type != UI::InputEvent::Type::MouseUp) {
-		return false;
-	}
-
-	if (event.button != engine::MouseButton::Left) {
-		return false;
-	}
-
-	auto pos = event.position;
-
-	// Check if click is within panel bounds
-	Foundation::Rect bounds = getBounds();
-	if (pos.x < bounds.x || pos.x > bounds.x + bounds.width ||
-		pos.y < bounds.y || pos.y > bounds.y + bounds.height) {
-		return false;
-	}
-
-	// Find which item was clicked
-	float yOffset = panelY + kPadding;
-	for (size_t i = 0; i < colonistIds.size() && i < kMaxColonists; ++i) {
-		float itemTop = yOffset;
-		float itemBottom = yOffset + itemHeight - kItemSpacing;
-
-		if (pos.y >= itemTop && pos.y < itemBottom) {
-			// This item was clicked
-			if (onSelectCallback) {
-				onSelectCallback(colonistIds[i]);
-			}
+	// Consume clicks within the panel bounds to prevent click-through
+	if (event.type == UI::InputEvent::Type::MouseDown ||
+		event.type == UI::InputEvent::Type::MouseUp) {
+		Foundation::Rect bounds = getBounds();
+		auto pos = event.position;
+		if (pos.x >= bounds.x && pos.x <= bounds.x + bounds.width &&
+			pos.y >= bounds.y && pos.y <= bounds.y + bounds.height) {
 			event.consume();
 			return true;
 		}
-		yOffset += itemHeight;
 	}
 
-	// Clicked in panel but not on any item - still consume to prevent world click
-	event.consume();
-	return true;
+	return false;
 }
 
 void ColonistListView::render() {
-	if (colonistIds.empty()) {
+	if (!itemLayout || itemHandles.empty()) {
 		return;
 	}
 
@@ -225,87 +141,15 @@ void ColonistListView::render() {
 		backgroundRect->render();
 	}
 
-	// Get colonist mesh template for portraits
-	auto& registry = engine::assets::AssetRegistry::Get();
-	const auto* colonistMesh = registry.getTemplate("Colonist_down");
-
-	// Render items
-	float yOffset = panelY + kPadding;
-	for (size_t i = 0; i < colonistIds.size() && i < kMaxColonists; ++i) {
-		if (itemBackgrounds[i]->visible) {
-			itemBackgrounds[i]->render();
-		}
-		if (i < itemMoodBars.size() && itemMoodBars[i]->visible) {
-			itemMoodBars[i]->render();
-		}
-
-		// Render portrait (colonist sprite, showing upper portion)
-		if (colonistMesh != nullptr && !colonistMesh->vertices.empty()) {
-			float portraitX = panelX + kPadding + kPortraitMargin;
-			float portraitY = yOffset + (itemHeight - kItemSpacing - kPortraitSize) / 2.0F;
-
-			// Cache mesh bounds (computed once, reused for all portraits)
-			if (!cachedMesh.valid) {
-				cachedMesh.minX = colonistMesh->vertices[0].x;
-				cachedMesh.maxX = colonistMesh->vertices[0].x;
-				cachedMesh.minY = colonistMesh->vertices[0].y;
-				cachedMesh.maxY = colonistMesh->vertices[0].y;
-				for (const auto& v : colonistMesh->vertices) {
-					cachedMesh.minX = std::min(cachedMesh.minX, v.x);
-					cachedMesh.maxX = std::max(cachedMesh.maxX, v.x);
-					cachedMesh.minY = std::min(cachedMesh.minY, v.y);
-					cachedMesh.maxY = std::max(cachedMesh.maxY, v.y);
-				}
-				cachedMesh.width = cachedMesh.maxX - cachedMesh.minX;
-				cachedMesh.height = cachedMesh.maxY - cachedMesh.minY;
-
-				constexpr float kCropRatio = 0.55F;
-				float displayHeight = cachedMesh.height * kCropRatio;
-				cachedMesh.scale = kPortraitSize / std::max(cachedMesh.width, displayHeight);
-				cachedMesh.valid = true;
-			}
-
-			// Transform vertices to screen space
-			screenVerts.clear();
-			screenVerts.reserve(colonistMesh->vertices.size());
-			for (const auto& v : colonistMesh->vertices) {
-				float sx = portraitX + (v.x - cachedMesh.minX - cachedMesh.width * 0.5F) *
-							   cachedMesh.scale + kPortraitSize * 0.5F;
-				float sy = portraitY + (v.y - cachedMesh.minY) * cachedMesh.scale;
-				screenVerts.push_back({sx, sy});
-			}
-
-			// Clip to show only upper portion
-			Foundation::ClipSettings clipSettings;
-			clipSettings.shape = Foundation::ClipRect{
-				.bounds = Foundation::Rect{portraitX, portraitY, kPortraitSize, kPortraitSize}
-			};
-			clipSettings.mode = Foundation::ClipMode::Inside;
-			Renderer::Primitives::pushClip(clipSettings);
-
-			Renderer::Primitives::drawTriangles(
-				Renderer::Primitives::TrianglesArgs{
-					.vertices = screenVerts.data(),
-					.indices = colonistMesh->indices.data(),
-					.vertexCount = screenVerts.size(),
-					.indexCount = colonistMesh->indices.size(),
-					.colors = colonistMesh->colors.data()
-				}
-			);
-
-			Renderer::Primitives::popClip();
-		}
-
-		if (itemNames[i]->visible) {
-			itemNames[i]->render();
-		}
-
-		yOffset += itemHeight;
+	// Render items via layout container
+	if (itemLayout) {
+		itemLayout->render();
 	}
 }
 
 Foundation::Rect ColonistListView::getBounds() const {
-	float panelHeight = kPadding * 2 + static_cast<float>(colonistIds.size()) * itemHeight;
+	float itemsHeight = static_cast<float>(itemHandles.size()) * itemHeight;
+	float panelHeight = kPadding * 2 + itemsHeight;
 	return {panelX, panelY, panelWidth, panelHeight};
 }
 

@@ -10,21 +10,20 @@
 namespace world_sim {
 
 namespace {
-	// Status indicator for decision trace display
-	std::string statusIndicator(ecs::OptionStatus status) {
+	// Convert OptionStatus to LineStatus
+	UI::LineStatus toLineStatus(ecs::OptionStatus status) {
 		switch (status) {
 			case ecs::OptionStatus::Selected:
-				return "> "; // Current task (arrow)
+				return UI::LineStatus::Active;
 			case ecs::OptionStatus::Available:
-				return "  "; // Could do this (indented)
+				return UI::LineStatus::Available;
 			case ecs::OptionStatus::NoSource:
-				return "x "; // Can't fulfill
+				return UI::LineStatus::Blocked;
 			case ecs::OptionStatus::Satisfied:
-				return ""; // Don't display
+				return UI::LineStatus::Idle;
 		}
-		return "";
+		return UI::LineStatus::Available;
 	}
-
 } // namespace
 
 TaskListView::TaskListView(const Args& args)
@@ -96,65 +95,6 @@ TaskListView::TaskListView(const Args& args)
 		)
 	);
 
-	// Section headers
-	m_currentTaskHeader = addChild(
-		UI::Text(
-			UI::Text::Args{
-				.position = {0.0F, 0.0F},
-				.text = "Current",
-				.style =
-					{
-						.color = UI::Theme::Colors::textHeader,
-						.fontSize = kHeaderFontSize,
-						.hAlign = Foundation::HorizontalAlign::Left,
-						.vAlign = Foundation::VerticalAlign::Top,
-					},
-				.zIndex = 1,
-				.id = (args.id + "_current_header").c_str()
-			}
-		)
-	);
-
-	m_upNextHeader = addChild(
-		UI::Text(
-			UI::Text::Args{
-				.position = {0.0F, 0.0F},
-				.text = "Task Queue",
-				.style =
-					{
-						.color = UI::Theme::Colors::textHeader,
-						.fontSize = kHeaderFontSize,
-						.hAlign = Foundation::HorizontalAlign::Left,
-						.vAlign = Foundation::VerticalAlign::Top,
-					},
-				.zIndex = 1,
-				.id = (args.id + "_upnext_header").c_str()
-			}
-		)
-	);
-
-	// Content text pool
-	m_textHandles.reserve(kMaxTextLines);
-	for (size_t i = 0; i < kMaxTextLines; ++i) {
-		m_textHandles.push_back(addChild(
-			UI::Text(
-				UI::Text::Args{
-					.position = {0.0F, 0.0F},
-					.text = "",
-					.style =
-						{
-							.color = UI::Theme::Colors::textBody,
-							.fontSize = kTextFontSize,
-							.hAlign = Foundation::HorizontalAlign::Left,
-							.vAlign = Foundation::VerticalAlign::Top,
-						},
-					.zIndex = 1,
-					.id = (args.id + "_text_" + std::to_string(i)).c_str()
-				}
-			)
-		));
-	}
-
 	// Disable child sorting
 	childrenNeedSorting = false;
 
@@ -164,8 +104,7 @@ TaskListView::TaskListView(const Args& args)
 }
 
 void TaskListView::update(const ecs::World& world, ecs::EntityID colonistId) {
-	// Rebuild content
-	renderContent(world, colonistId);
+	rebuildContent(world, colonistId);
 }
 
 bool TaskListView::handleEvent(UI::InputEvent& event) {
@@ -209,11 +148,11 @@ bool TaskListView::handleEvent(UI::InputEvent& event) {
 
 void TaskListView::setPosition(float x, float bottomY) {
 	m_panelX = x;
+	m_bottomY = bottomY;
 	m_panelY = bottomY - m_panelHeight; // Panel grows upward from bottomY
 }
 
-void TaskListView::renderContent(const ecs::World& world, ecs::EntityID colonistId) {
-	m_usedTextLines = 0;
+void TaskListView::rebuildContent(const ecs::World& world, ecs::EntityID colonistId) {
 	hideContent();
 
 	// Get colonist name for title
@@ -222,30 +161,109 @@ void TaskListView::renderContent(const ecs::World& world, ecs::EntityID colonist
 		title = colonist->name + " - Tasks";
 	}
 
-	// Calculate content height
-	float contentHeight = kPadding + kTitleFontSize + kLineSpacing; // Title
+	// Create content layout container
+	float contentWidth = m_panelWidth - kPadding * 2;
+	float contentY = kPadding + kTitleFontSize + kLineSpacing;
 
-	// Current task section
-	contentHeight += kSectionSpacing + kHeaderFontSize + kLineSpacing; // "Current" header
-	contentHeight += kTextFontSize + kLineSpacing;					   // Task text
-	contentHeight += kTextFontSize + kLineSpacing;					   // Action text
+	m_contentLayout = std::make_unique<UI::LayoutContainer>(UI::LayoutContainer::Args{
+		.position = {m_panelX + kPadding, 0.0F}, // Y will be set after height calculation
+		.size = {contentWidth, 0.0F},
+		.direction = UI::Direction::Vertical,
+		.hAlign = UI::HAlign::Left
+	});
 
-	// Task queue section
-	size_t queueItems = 0;
-	if (auto* trace = world.getComponent<ecs::DecisionTrace>(colonistId)) {
-		for (const auto& option : trace->options) {
-			if (option.status != ecs::OptionStatus::Satisfied) {
-				++queueItems;
-			}
+	// --- Current Task Section ---
+	m_contentLayout->addChild(UI::SectionHeader(UI::SectionHeader::Args{
+		.text = "Current",
+		.fontSize = kHeaderFontSize,
+		.margin = kSectionSpacing * 0.5F,
+		.id = "current_header"
+	}));
+
+	// Current task
+	if (auto* task = world.getComponent<ecs::Task>(colonistId)) {
+		if (task->isActive()) {
+			m_contentLayout->addChild(UI::StatusTextLine(UI::StatusTextLine::Args{
+				.text = task->reason,
+				.status = UI::LineStatus::Active,
+				.fontSize = kTextFontSize,
+				.margin = kLineSpacing * 0.5F,
+				.id = "current_task"
+			}));
+		} else {
+			m_contentLayout->addChild(UI::StatusTextLine(UI::StatusTextLine::Args{
+				.text = "(No active task)",
+				.status = UI::LineStatus::Idle,
+				.fontSize = kTextFontSize,
+				.margin = kLineSpacing * 0.5F,
+				.id = "current_task"
+			}));
 		}
 	}
-	contentHeight += kSectionSpacing + kHeaderFontSize + kLineSpacing;			   // "Task Queue" header
-	contentHeight += static_cast<float>(queueItems) * (kTextFontSize + kLineSpacing); // Queue items
 
-	contentHeight += kPadding; // Bottom padding
+	// Current action
+	if (auto* action = world.getComponent<ecs::Action>(colonistId)) {
+		if (action->isActive()) {
+			int progress = static_cast<int>(action->progress() * 100.0F);
+			std::string actionText = std::string(ecs::actionTypeName(action->type)) +
+									 " (" + std::to_string(progress) + "%)";
+			m_contentLayout->addChild(UI::StatusTextLine(UI::StatusTextLine::Args{
+				.text = actionText,
+				.status = UI::LineStatus::Pending,
+				.fontSize = kTextFontSize,
+				.margin = kLineSpacing * 0.5F,
+				.id = "current_action"
+			}));
+		} else {
+			m_contentLayout->addChild(UI::StatusTextLine(UI::StatusTextLine::Args{
+				.text = "Idle",
+				.status = UI::LineStatus::Idle,
+				.fontSize = kTextFontSize,
+				.margin = kLineSpacing * 0.5F,
+				.id = "current_action"
+			}));
+		}
+	}
 
-	m_panelHeight = std::min(contentHeight, m_maxHeight);
-	m_panelY = m_panelY + m_panelHeight - contentHeight; // Adjust for new height (grow upward)
+	// --- Task Queue Section ---
+	m_contentLayout->addChild(UI::SectionHeader(UI::SectionHeader::Args{
+		.text = "Task Queue",
+		.fontSize = kHeaderFontSize,
+		.margin = kSectionSpacing * 0.5F,
+		.id = "queue_header"
+	}));
+
+	// Queue items from DecisionTrace
+	if (auto* trace = world.getComponent<ecs::DecisionTrace>(colonistId)) {
+		size_t itemIndex = 0;
+		for (const auto& option : trace->options) {
+			if (option.status == ecs::OptionStatus::Satisfied) {
+				continue; // Skip satisfied needs
+			}
+
+			m_contentLayout->addChild(UI::StatusTextLine(UI::StatusTextLine::Args{
+				.text = option.reason,
+				.status = toLineStatus(option.status),
+				.fontSize = kTextFontSize,
+				.margin = kLineSpacing * 0.5F,
+				.id = "queue_item_" + std::to_string(itemIndex++)
+			}));
+		}
+	}
+
+	// Calculate panel height from content layout
+	// Header area: title + padding
+	float headerHeight = kPadding + kTitleFontSize + kLineSpacing;
+	// Content height computed from children (no render needed)
+	float contentHeight = m_contentLayout->getHeight();
+	// Total height
+	float totalHeight = headerHeight + contentHeight + kPadding;
+
+	m_panelHeight = std::min(totalHeight, m_maxHeight);
+	m_panelY = m_bottomY - m_panelHeight;
+
+	// Set content layout position (layout will be computed on first render)
+	m_contentLayout->setPosition(m_panelX + kPadding, m_panelY + headerHeight);
 
 	// Position background
 	if (auto* bg = getChild<UI::Rectangle>(m_backgroundHandle)) {
@@ -267,104 +285,24 @@ void TaskListView::renderContent(const ecs::World& world, ecs::EntityID colonist
 	}
 
 	// Position title
-	float yOffset = m_panelY + kPadding;
 	if (auto* titleText = getChild<UI::Text>(m_titleHandle)) {
 		titleText->visible = true;
-		titleText->position = {m_panelX + kPadding, yOffset};
+		titleText->position = {m_panelX + kPadding, m_panelY + kPadding};
 		titleText->text = title;
 	}
-	yOffset += kTitleFontSize + kLineSpacing;
+}
 
-	// Current task section
-	yOffset += kSectionSpacing;
-	if (auto* header = getChild<UI::Text>(m_currentTaskHeader)) {
-		header->visible = true;
-		header->position = {m_panelX + kPadding, yOffset};
+void TaskListView::render() {
+	if (!visible) {
+		return;
 	}
-	yOffset += kHeaderFontSize + kLineSpacing;
 
-	// Current task
-	if (auto* task = world.getComponent<ecs::Task>(colonistId)) {
-		if (m_usedTextLines < m_textHandles.size()) {
-			if (auto* text = getChild<UI::Text>(m_textHandles[m_usedTextLines])) {
-				text->visible = true;
-				text->position = {m_panelX + kPadding + 8.0F, yOffset};
-				if (task->isActive()) {
-					text->text = "> " + task->reason;
-					text->style.color = UI::Theme::Colors::statusActive;
-				} else {
-					text->text = "  (No active task)";
-					text->style.color = UI::Theme::Colors::statusIdle;
-				}
-			}
-			++m_usedTextLines;
-		}
-	}
-	yOffset += kTextFontSize + kLineSpacing;
+	// Render fixed children (background, close button, title)
+	Component::render();
 
-	// Current action
-	if (auto* action = world.getComponent<ecs::Action>(colonistId)) {
-		if (m_usedTextLines < m_textHandles.size()) {
-			if (auto* text = getChild<UI::Text>(m_textHandles[m_usedTextLines])) {
-				text->visible = true;
-				text->position = {m_panelX + kPadding + 8.0F, yOffset};
-				if (action->isActive()) {
-					int progress = static_cast<int>(action->progress() * 100.0F);
-					text->text = std::string("  ") + ecs::actionTypeName(action->type) + " (" + std::to_string(progress) + "%)";
-					text->style.color = UI::Theme::Colors::statusPending;
-				} else {
-					text->text = "  Idle";
-					text->style.color = UI::Theme::Colors::statusIdle;
-				}
-			}
-			++m_usedTextLines;
-		}
-	}
-	yOffset += kTextFontSize + kLineSpacing;
-
-	// Task queue section
-	yOffset += kSectionSpacing;
-	if (auto* header = getChild<UI::Text>(m_upNextHeader)) {
-		header->visible = true;
-		header->position = {m_panelX + kPadding, yOffset};
-	}
-	yOffset += kHeaderFontSize + kLineSpacing;
-
-	// Queue items from DecisionTrace
-	if (auto* trace = world.getComponent<ecs::DecisionTrace>(colonistId)) {
-		for (const auto& option : trace->options) {
-			if (option.status == ecs::OptionStatus::Satisfied) {
-				continue; // Skip satisfied needs
-			}
-
-			if (m_usedTextLines >= m_textHandles.size()) {
-				break;
-			}
-
-			if (auto* text = getChild<UI::Text>(m_textHandles[m_usedTextLines])) {
-				text->visible = true;
-				text->position = {m_panelX + kPadding + 8.0F, yOffset};
-				text->text = statusIndicator(option.status) + option.reason;
-
-				// Color by status
-				switch (option.status) {
-					case ecs::OptionStatus::Selected:
-						text->style.color = UI::Theme::Colors::statusActive;
-						break;
-					case ecs::OptionStatus::Available:
-						text->style.color = UI::Theme::Colors::textBody;
-						break;
-					case ecs::OptionStatus::NoSource:
-						text->style.color = UI::Theme::Colors::statusBlocked;
-						break;
-					default:
-						text->style.color = UI::Theme::Colors::statusIdle;
-						break;
-				}
-			}
-			++m_usedTextLines;
-			yOffset += kTextFontSize + kLineSpacing;
-		}
+	// Render content layout
+	if (m_contentLayout) {
+		m_contentLayout->render();
 	}
 }
 
@@ -372,6 +310,7 @@ void TaskListView::hideContent() {
 	for (auto* child : children) {
 		child->visible = false;
 	}
+	m_contentLayout.reset();
 }
 
 } // namespace world_sim

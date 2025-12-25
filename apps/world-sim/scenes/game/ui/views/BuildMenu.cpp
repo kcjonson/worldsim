@@ -41,38 +41,40 @@ namespace world_sim {
 	}
 
 	void BuildMenu::rebuildButtons() {
-		m_itemButtons.clear();
-
 		float buttonWidth = m_menuWidth - 2 * kPadding;
-		float y = m_position.y + kPadding + kTitleHeight + kPadding;
+		float layoutY = m_position.y + kPadding + kTitleHeight + kPadding;
 
-		for (size_t i = 0; i < m_items.size(); ++i) {
-			const auto& item = m_items[i];
+		// Create layout container for buttons
+		m_buttonLayout = std::make_unique<UI::LayoutContainer>(UI::LayoutContainer::Args{
+			.position = {m_position.x + kPadding, layoutY},
+			.size = {buttonWidth, 0.0F},  // Height determined by children
+			.direction = UI::Direction::Vertical,
+			.hAlign = UI::HAlign::Left
+		});
 
+		for (const auto& item : m_items) {
 			// Capture defName by value for the callback
 			std::string defName = item.defName;
-			auto		onClick = [this, defName]() {
-				   if (m_onSelect) {
-					   m_onSelect(defName);
-				   }
+			auto onClick = [this, defName]() {
+				if (m_onSelect) {
+					m_onSelect(defName);
+				}
 			};
 
-			auto button = std::make_unique<UI::Button>(UI::Button::Args{
+			// Add button with bottom margin for spacing (half on each side = kButtonSpacing/2)
+			m_buttonLayout->addChild(UI::Button(UI::Button::Args{
 				.label = item.label,
-				.position = {m_position.x + kPadding, y},
 				.size = {buttonWidth, kButtonHeight},
 				.type = UI::Button::Type::Secondary,
+				.margin = kButtonSpacing * 0.5F,
 				.onClick = onClick,
-				.id = "build_item" // ID doesn't need to be unique for MVP
-			});
-
-			m_itemButtons.push_back(std::move(button));
-			y += kButtonHeight + kButtonSpacing;
+				.id = "build_item"
+			}));
 		}
 
-		// Calculate menu height based on content
-		m_menuHeight =
-			kPadding + kTitleHeight + kPadding + static_cast<float>(m_items.size()) * (kButtonHeight + kButtonSpacing) + kPadding;
+		// Calculate menu height: title area + button layout height + padding
+		float buttonAreaHeight = static_cast<float>(m_items.size()) * (kButtonHeight + kButtonSpacing);
+		m_menuHeight = kPadding + kTitleHeight + kPadding + buttonAreaHeight + kPadding;
 
 		// Update title position
 		if (m_titleText) {
@@ -89,14 +91,9 @@ namespace world_sim {
 	}
 
 	bool BuildMenu::handleEvent(UI::InputEvent& event) {
-		// Dispatch to all item buttons
-		for (auto& button : m_itemButtons) {
-			if (button && button->handleEvent(event)) {
-				return true;
-			}
-			if (event.isConsumed()) {
-				return true;
-			}
+		// Dispatch to button layout
+		if (m_buttonLayout && m_buttonLayout->handleEvent(event)) {
+			return true;
 		}
 
 		// Consume clicks within the menu bounds to prevent click-through to game world
@@ -127,11 +124,9 @@ namespace world_sim {
 			m_titleText->render();
 		}
 
-		// Draw buttons
-		for (auto& button : m_itemButtons) {
-			if (button) {
-				button->render();
-			}
+		// Draw buttons via layout
+		if (m_buttonLayout) {
+			m_buttonLayout->render();
 		}
 	}
 

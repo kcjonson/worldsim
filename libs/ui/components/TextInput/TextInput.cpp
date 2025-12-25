@@ -25,14 +25,17 @@ namespace UI {
 
 	TextInput::TextInput(const Args& args)
 		: FocusableBase<TextInput>(args.tabIndex),
-		  position(args.position),
-		  size(args.size),
 		  text(args.text),
 		  placeholder(args.placeholder),
 		  style(args.style),
 		  onChange(args.onChange),
 		  id(args.id),
 		  enabled(args.enabled) {
+
+		// Initialize base class members (position, size, margin from Component/IComponent)
+		position = args.position;
+		size = args.size;
+		margin = args.margin;
 
 		// Set cursor to end of text
 		cursorPosition = text.size();
@@ -535,9 +538,11 @@ namespace UI {
 			.border = Foundation::BorderStyle{.color = borderColor, .width = style.borderWidth, .cornerRadius = style.cornerRadius}
 		};
 
-		short zIndex = RenderContext::getZIndex();
+		// Render at content position (accounting for margin)
+		Foundation::Vec2 contentPos = getContentPosition();
+		short			 zIndex = RenderContext::getZIndex();
 		Renderer::Primitives::drawRect(
-			{.bounds = {position.x, position.y, size.x, size.y}, .style = rectStyle, .id = id, .zIndex = zIndex}
+			{.bounds = {contentPos.x, contentPos.y, size.x, size.y}, .style = rectStyle, .id = id, .zIndex = zIndex}
 		);
 	}
 
@@ -797,7 +802,9 @@ namespace UI {
 	// ============================================================================
 
 	bool TextInput::containsPoint(Foundation::Vec2 point) const {
-		return point.x >= position.x && point.x <= position.x + size.x && point.y >= position.y && point.y <= position.y + size.y;
+		// Hit testing includes the margin area
+		return point.x >= position.x && point.x <= position.x + getWidth() &&
+			   point.y >= position.y && point.y <= position.y + getHeight();
 	}
 
 } // namespace UI

@@ -5,14 +5,16 @@
 //
 // Uses ColonistListModel for data and change detection.
 // Only rebuilds UI when model indicates data has changed.
+//
+// Now uses LayoutContainer + ColonistListItem for automatic layout.
 
-#include "scenes/game/ui/components/Selection.h"
+#include "scenes/game/ui/components/ColonistListItem.h"
 #include "scenes/game/ui/models/ColonistListModel.h"
 
 #include <ecs/World.h>
 #include <graphics/Rect.h>
 #include <input/InputEvent.h>
-#include <shapes/Shapes.h>
+#include <layout/LayoutContainer.h>
 
 #include <functional>
 #include <memory>
@@ -67,34 +69,20 @@ class ColonistListView {
 	float panelY = 80.0F;  // Below top overlay
 	std::function<void(ecs::EntityID)> onSelectCallback;
 
-	// Cached data for hit testing (from last rebuild)
-	std::vector<ecs::EntityID> colonistIds;
+	// Selection tracking
 	ecs::EntityID selectedId{0};
 
 	// UI elements
 	std::unique_ptr<UI::Rectangle> backgroundRect;
-	std::vector<std::unique_ptr<UI::Rectangle>> itemBackgrounds;
-	std::vector<std::unique_ptr<UI::Rectangle>> itemMoodBars;
-	std::vector<std::unique_ptr<UI::Text>> itemNames;
+	std::unique_ptr<UI::LayoutContainer> itemLayout;
+
+	// Handles to items for updates
+	std::vector<UI::LayerHandle> itemHandles;
 
 	// Layout constants
 	static constexpr float kPadding = 4.0F;
 	static constexpr float kItemSpacing = 2.0F;
 	static constexpr size_t kMaxColonists = 20;
-
-	// Cached portrait mesh data (computed once, reused per frame)
-	struct CachedMeshData {
-		float minX = 0.0F;
-		float maxX = 0.0F;
-		float minY = 0.0F;
-		float maxY = 0.0F;
-		float width = 0.0F;
-		float height = 0.0F;
-		float scale = 0.0F;
-		bool valid = false;
-	};
-	CachedMeshData cachedMesh;
-	std::vector<Foundation::Vec2> screenVerts;  // Reused buffer for vertex transforms
 };
 
 }  // namespace world_sim
