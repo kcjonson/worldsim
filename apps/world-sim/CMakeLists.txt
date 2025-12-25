@@ -2,13 +2,13 @@ add_executable(world-sim
     Main.cpp
     SceneTypes.cpp
     GameWorldState.cpp
-    # Game scene UI - panels
-    scenes/game/ui/panels/ColonistListPanel.cpp
-    scenes/game/ui/panels/EntityInfoPanel.cpp
-    scenes/game/ui/panels/TaskListPanel.cpp
-    scenes/game/ui/panels/BuildMenu.cpp
-    scenes/game/ui/panels/BuildToolbar.cpp
-    scenes/game/ui/panels/GameOverlay.cpp
+    # Game scene UI - views
+    scenes/game/ui/views/ColonistListView.cpp
+    scenes/game/ui/views/EntityInfoView.cpp
+    scenes/game/ui/views/TaskListView.cpp
+    scenes/game/ui/views/BuildMenu.cpp
+    scenes/game/ui/views/BuildToolbar.cpp
+    scenes/game/ui/views/GameOverlay.cpp
     # Game scene UI - components
     scenes/game/ui/components/NeedBar.cpp
     scenes/game/ui/components/ZoomControl.cpp

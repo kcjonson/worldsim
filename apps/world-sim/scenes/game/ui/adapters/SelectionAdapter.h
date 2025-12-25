@@ -3,7 +3,7 @@
 // SelectionAdapter - Converts selection data into InfoSlots for display
 //
 // Adapters transform domain-specific data (colonist components, world entities)
-// into generic slot descriptions that EntityInfoPanel can render.
+// into generic slot descriptions that EntityInfoView can render.
 // This decouples the panel from specific data sources.
 
 #include "scenes/game/ui/components/InfoSlot.h"

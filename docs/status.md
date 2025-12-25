@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2025-12-24 (ViewModel Pattern file reorganization complete)
+Last Updated: 2025-12-25 (UI Theme System - Complete: design tokens applied to all views)
 
 ## Epic/Story/Task Template
 
@@ -215,6 +215,39 @@ while (running) {
 - UpdateType enum: `None`, `Values`, `Structure`, `Show`, `Hide` for tiered updates
 
 **Result:** Clean separation between data (models), ECS queries (adapters), rendering (panels), and reusable UI elements (components). ✅
+
+---
+
+### ✅ UI Architecture: Theme System
+**Spec/Documentation:** `/docs/development-log/plans/2025-12-25-ui-theme-system.md`
+**Dependencies:** None
+**Status:** complete
+
+**Goal:** Centralize UI styling (colors, spacing, typography) via design tokens. Eliminate hardcoded color values across views.
+
+**Terminology:**
+- **Panel** (design) = Visual style (dark bg, 1px border, rounded corners)
+- **View** (structural) = Composite UI element (EntityInfoView, TaskListView)
+- **Component** = Base class for all UI elements (unchanged)
+
+**Completed Tasks:**
+- [x] Create `libs/ui/theme/` directory with `Theme.h` and `PanelStyle.h`
+- [x] Design tokens: Colors (panel, text, status), Spacing, Typography, Borders
+- [x] Panel style factories: `floating()`, `closeButton()`, `actionButton()`, `card()`, `selection()`
+- [x] Rename `panels/` folder → `views/`
+- [x] Rename `EntityInfoPanel` → `EntityInfoView`
+- [x] Rename `TaskListPanel` → `TaskListView`
+- [x] Rename `ColonistListPanel` → `ColonistListView`
+- [x] Apply theme tokens to EntityInfoView
+- [x] Apply theme tokens to TaskListView
+- [x] Apply theme tokens to ColonistListView
+- [x] Apply theme tokens to BuildMenu
+
+**Deferred (Phase 2):**
+- Edge mask support for docked panels (per-edge border control)
+- Per-corner radius when edges are removed
+
+**Result:** All views now use centralized theme tokens from `libs/ui/theme/`. Hardcoded colors eliminated. Consistent visual identity across all panels. ✅
 
 ---
 

@@ -1,6 +1,6 @@
 #pragma once
 
-// EntityInfoPanel - UI panel showing selected entity information
+// EntityInfoView - UI panel showing selected entity information
 //
 // Uses a slot-based architecture for flexible content display:
 // - Receives PanelContent from SelectionAdapter
@@ -35,7 +35,7 @@
 namespace world_sim {
 
 /// UI panel for displaying selected entity information via slots
-class EntityInfoPanel : public UI::Component {
+class EntityInfoView : public UI::Component {
   public:
 	struct Args {
 		Foundation::Vec2	  position{0.0F, 0.0F};
@@ -46,7 +46,7 @@ class EntityInfoPanel : public UI::Component {
 		QueueRecipeCallback   onQueueRecipe;	// Called when recipe is queued at station
 	};
 
-	explicit EntityInfoPanel(const Args& args);
+	explicit EntityInfoView(const Args& args);
 
 	/// Update panel with current selection
 	/// @param world ECS world (for adapter)

@@ -1,12 +1,14 @@
-#include "EntityInfoPanel.h"
+#include "EntityInfoView.h"
 
 #include "scenes/game/ui/adapters/SelectionAdapter.h"
 
+#include <theme/PanelStyle.h>
+#include <theme/Theme.h>
 #include <utils/Log.h>
 
 namespace world_sim {
 
-	EntityInfoPanel::EntityInfoPanel(const Args& args)
+	EntityInfoView::EntityInfoView(const Args& args)
 		: panelWidth(args.width),
 		  panelX(args.position.x),
 		  onCloseCallback(args.onClose),
@@ -24,9 +26,7 @@ namespace world_sim {
 				UI::Rectangle::Args{
 					.position = args.position,
 					.size = {panelWidth, panelHeight},
-					.style =
-						{.fill = Foundation::Color(0.1F, 0.1F, 0.15F, 0.85F),
-						 .border = Foundation::BorderStyle{.color = Foundation::Color(0.3F, 0.3F, 0.4F, 1.0F), .width = 1.0F}},
+					.style = UI::PanelStyles::floating(),
 					.zIndex = 0,
 					.id = (args.id + "_bg").c_str()
 				}
@@ -40,9 +40,7 @@ namespace world_sim {
 				UI::Rectangle::Args{
 					.position = closePos,
 					.size = {kCloseButtonSize, kCloseButtonSize},
-					.style =
-						{.fill = Foundation::Color(0.3F, 0.2F, 0.2F, 0.9F),
-						 .border = Foundation::BorderStyle{.color = Foundation::Color(0.5F, 0.3F, 0.3F, 1.0F), .width = 1.0F}},
+					.style = UI::PanelStyles::closeButton(),
 					.zIndex = 2,
 					.id = (args.id + "_close_bg").c_str()
 				}
@@ -57,7 +55,7 @@ namespace world_sim {
 					.text = "X",
 					.style =
 						{
-							.color = Foundation::Color(0.9F, 0.6F, 0.6F, 1.0F),
+							.color = UI::Theme::Colors::closeButtonText,
 							.fontSize = 10.0F,
 							.hAlign = Foundation::HorizontalAlign::Center,
 							.vAlign = Foundation::VerticalAlign::Middle,
@@ -76,7 +74,7 @@ namespace world_sim {
 					.text = "Select Entity",
 					.style =
 						{
-							.color = Foundation::Color(0.9F, 0.9F, 0.95F, 1.0F),
+							.color = UI::Theme::Colors::textTitle,
 							.fontSize = kTitleFontSize,
 							.hAlign = Foundation::HorizontalAlign::Left,
 							.vAlign = Foundation::VerticalAlign::Top,
@@ -97,7 +95,7 @@ namespace world_sim {
 						.text = "",
 						.style =
 							{
-								.color = Foundation::Color(0.7F, 0.7F, 0.75F, 1.0F),
+								.color = UI::Theme::Colors::textBody,
 								.fontSize = kTextFontSize,
 								.hAlign = Foundation::HorizontalAlign::Left,
 								.vAlign = Foundation::VerticalAlign::Top,
@@ -131,7 +129,7 @@ namespace world_sim {
 					.text = "",
 					.style =
 						{
-							.color = Foundation::Color(0.8F, 0.8F, 0.85F, 1.0F),
+							.color = UI::Theme::Colors::textBody,
 							.fontSize = kTextFontSize,
 							.hAlign = Foundation::HorizontalAlign::Left,
 							.vAlign = Foundation::VerticalAlign::Top,
@@ -152,7 +150,7 @@ namespace world_sim {
 						.text = "",
 						.style =
 							{
-								.color = Foundation::Color(0.6F, 0.8F, 0.6F, 1.0F),
+								.color = UI::Theme::Colors::statusActive,
 								.fontSize = kTextFontSize,
 								.hAlign = Foundation::HorizontalAlign::Left,
 								.vAlign = Foundation::VerticalAlign::Top,
@@ -172,7 +170,7 @@ namespace world_sim {
 					.text = "",
 					.style =
 						{
-							.color = Foundation::Color(0.5F, 0.7F, 0.9F, 1.0F), // Blue for clickable
+							.color = UI::Theme::Colors::textClickable,
 							.fontSize = kTextFontSize,
 							.hAlign = Foundation::HorizontalAlign::Left,
 							.vAlign = Foundation::VerticalAlign::Top,
@@ -196,9 +194,7 @@ namespace world_sim {
 					UI::Rectangle::Args{
 						.position = {args.position.x + kPadding, args.position.y},
 						.size = {contentWidth, kRecipeCardHeight},
-						.style =
-							{.fill = Foundation::Color(0.15F, 0.15F, 0.2F, 0.9F),
-							 .border = Foundation::BorderStyle{.color = Foundation::Color(0.3F, 0.3F, 0.4F, 0.8F), .width = 1.0F}},
+						.style = UI::PanelStyles::card(),
 						.zIndex = 1,
 						.id = (args.id + "_recipe_bg_" + std::to_string(i)).c_str()
 					}
@@ -213,7 +209,7 @@ namespace world_sim {
 						.text = "",
 						.style =
 							{
-								.color = Foundation::Color(0.9F, 0.9F, 0.95F, 1.0F),
+								.color = UI::Theme::Colors::textTitle,
 								.fontSize = kRecipeNameFontSize,
 								.hAlign = Foundation::HorizontalAlign::Left,
 								.vAlign = Foundation::VerticalAlign::Top,
@@ -232,7 +228,7 @@ namespace world_sim {
 						.text = "",
 						.style =
 							{
-								.color = Foundation::Color(0.6F, 0.6F, 0.65F, 1.0F),
+								.color = UI::Theme::Colors::textSecondary,
 								.fontSize = kRecipeIngredientsFontSize,
 								.hAlign = Foundation::HorizontalAlign::Left,
 								.vAlign = Foundation::VerticalAlign::Top,
@@ -249,9 +245,7 @@ namespace world_sim {
 					UI::Rectangle::Args{
 						.position = {args.position.x + contentWidth - kRecipeQueueButtonSize, args.position.y},
 						.size = {kRecipeQueueButtonSize, kRecipeQueueButtonSize},
-						.style =
-							{.fill = Foundation::Color(0.2F, 0.4F, 0.3F, 0.9F),
-							 .border = Foundation::BorderStyle{.color = Foundation::Color(0.3F, 0.6F, 0.4F, 1.0F), .width = 1.0F}},
+						.style = UI::PanelStyles::actionButton(),
 						.zIndex = 2,
 						.id = (args.id + "_recipe_btn_" + std::to_string(i)).c_str()
 					}
@@ -266,7 +260,7 @@ namespace world_sim {
 						.text = "+",
 						.style =
 							{
-								.color = Foundation::Color(0.7F, 0.95F, 0.8F, 1.0F),
+								.color = UI::Theme::Colors::actionButtonText,
 								.fontSize = 14.0F,
 								.hAlign = Foundation::HorizontalAlign::Center,
 								.vAlign = Foundation::VerticalAlign::Middle,
@@ -307,7 +301,7 @@ namespace world_sim {
 		hideSlots();
 	}
 
-	void EntityInfoPanel::update(
+	void EntityInfoView::update(
 		const ecs::World& world,
 		const engine::assets::AssetRegistry& assetRegistry,
 		const engine::assets::RecipeRegistry& recipeRegistry,
@@ -356,7 +350,7 @@ namespace world_sim {
 		}
 	}
 
-	void EntityInfoPanel::renderContent(const PanelContent& content) {
+	void EntityInfoView::renderContent(const PanelContent& content) {
 		// Reset slot usage counters
 		usedTextSlots = 0;
 		usedProgressBars = 0;
@@ -476,7 +470,7 @@ namespace world_sim {
 		}
 	}
 
-	void EntityInfoPanel::hideSlots() {
+	void EntityInfoView::hideSlots() {
 		// Hide all children via inherited Component::children vector
 		// This is O(n) but n is small (~30 elements) and avoids handle lookups
 		for (auto* child : children) {
@@ -484,7 +478,7 @@ namespace world_sim {
 		}
 	}
 
-	float EntityInfoPanel::renderSlot(const InfoSlot& slot, float yOffset) {
+	float EntityInfoView::renderSlot(const InfoSlot& slot, float yOffset) {
 		return std::visit(
 			[this, yOffset](const auto& s) -> float {
 				using T = std::decay_t<decltype(s)>;
@@ -507,7 +501,7 @@ namespace world_sim {
 		);
 	}
 
-	float EntityInfoPanel::renderTextSlot(const TextSlot& slot, float yOffset) {
+	float EntityInfoView::renderTextSlot(const TextSlot& slot, float yOffset) {
 		if (usedTextSlots >= textHandles.size()) {
 			return 0.0F;
 		}
@@ -522,7 +516,7 @@ namespace world_sim {
 		return kTextFontSize + kLineSpacing;
 	}
 
-	float EntityInfoPanel::renderProgressBarSlot(const ProgressBarSlot& slot, float yOffset) {
+	float EntityInfoView::renderProgressBarSlot(const ProgressBarSlot& slot, float yOffset) {
 		if (usedProgressBars >= progressBarHandles.size()) {
 			return 0.0F;
 		}
@@ -538,7 +532,7 @@ namespace world_sim {
 		return kProgressBarHeight + kLineSpacing;
 	}
 
-	float EntityInfoPanel::renderTextListSlot(const TextListSlot& slot, float yOffset) {
+	float EntityInfoView::renderTextListSlot(const TextListSlot& slot, float yOffset) {
 		float height = 0.0F;
 
 		// Render header
@@ -563,11 +557,11 @@ namespace world_sim {
 		return height + kLineSpacing;
 	}
 
-	float EntityInfoPanel::renderSpacerSlot(const SpacerSlot& slot, float /*yOffset*/) {
+	float EntityInfoView::renderSpacerSlot(const SpacerSlot& slot, float /*yOffset*/) {
 		return slot.height;
 	}
 
-	float EntityInfoPanel::renderClickableTextSlot(const ClickableTextSlot& slot, float yOffset) {
+	float EntityInfoView::renderClickableTextSlot(const ClickableTextSlot& slot, float yOffset) {
 		if (auto* text = getChild<UI::Text>(clickableTextHandle)) {
 			text->visible = true;
 			text->position = {panelX + kPadding, yOffset};
@@ -581,7 +575,7 @@ namespace world_sim {
 		return kTextFontSize + kLineSpacing;
 	}
 
-	float EntityInfoPanel::renderRecipeSlot(const RecipeSlot& slot, float yOffset) {
+	float EntityInfoView::renderRecipeSlot(const RecipeSlot& slot, float yOffset) {
 		if (usedRecipeCards >= recipeCardHandles.size()) {
 			return 0.0F;
 		}
@@ -634,11 +628,11 @@ namespace world_sim {
 		return kRecipeCardHeight + kRecipeCardSpacing;
 	}
 
-	Foundation::Vec2 EntityInfoPanel::getCloseButtonPosition(float panelY) const {
+	Foundation::Vec2 EntityInfoView::getCloseButtonPosition(float panelY) const {
 		return {panelX + panelWidth - kPadding - kCloseButtonSize, panelY + kPadding};
 	}
 
-	void EntityInfoPanel::updateValues(const PanelContent& content) {
+	void EntityInfoView::updateValues(const PanelContent& content) {
 		// Tier 3: Value-only update - same entity, just update dynamic slot values
 		// Updates progress bars and text slots (for action/task status changes)
 		// Skips all position calculations for significant performance savings
@@ -665,7 +659,7 @@ namespace world_sim {
 		}
 	}
 
-	void EntityInfoPanel::setBottomLeftPosition(float x, float viewportHeight) {
+	void EntityInfoView::setBottomLeftPosition(float x, float viewportHeight) {
 		if (panelX == x && m_viewportHeight == viewportHeight) {
 			return; // No change
 		}
@@ -680,12 +674,12 @@ namespace world_sim {
 		}
 	}
 
-	void EntityInfoPanel::onTabChanged(const std::string& tabId) {
+	void EntityInfoView::onTabChanged(const std::string& tabId) {
 		// Delegate to model - it will set the flag for next refresh()
 		m_model.setActiveTab(tabId);
 	}
 
-	bool EntityInfoPanel::handleEvent(UI::InputEvent& event) {
+	bool EntityInfoView::handleEvent(UI::InputEvent& event) {
 		if (!visible) {
 			return false;
 		}

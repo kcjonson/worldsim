@@ -1,9 +1,11 @@
-#include "ColonistListPanel.h"
+#include "ColonistListView.h"
 
 #include <algorithm>
 #include <assets/AssetRegistry.h>
 #include <graphics/ClipTypes.h>
 #include <primitives/Primitives.h>
+#include <theme/PanelStyle.h>
+#include <theme/Theme.h>
 
 namespace world_sim {
 
@@ -11,7 +13,7 @@ namespace world_sim {
 constexpr float kPortraitSize = 32.0F;
 constexpr float kPortraitMargin = 4.0F;
 
-ColonistListPanel::ColonistListPanel(const Args& args)
+ColonistListView::ColonistListView(const Args& args)
 	: panelWidth(args.width),
 	  itemHeight(args.itemHeight),
 	  onSelectCallback(args.onColonistSelected) {
@@ -22,12 +24,12 @@ ColonistListPanel::ColonistListPanel(const Args& args)
 	colonistIds.reserve(kMaxColonists);
 }
 
-void ColonistListPanel::setPosition(float x, float y) {
+void ColonistListView::setPosition(float x, float y) {
 	panelX = x;
 	panelY = y;
 }
 
-void ColonistListPanel::update(ColonistListModel& model, ecs::World& world) {
+void ColonistListView::update(ColonistListModel& model, ecs::World& world) {
 	// Update model and check if data changed
 	bool dataChanged = model.refresh(world);
 
@@ -50,7 +52,7 @@ void ColonistListPanel::update(ColonistListModel& model, ecs::World& world) {
 	updateMoodBars(model.colonists());
 }
 
-void ColonistListPanel::rebuildUI(const std::vector<adapters::ColonistData>& colonists) {
+void ColonistListView::rebuildUI(const std::vector<adapters::ColonistData>& colonists) {
 	// Cache entity IDs for hit testing
 	colonistIds.clear();
 	for (const auto& colonist : colonists) {
@@ -75,11 +77,11 @@ void ColonistListPanel::rebuildUI(const std::vector<adapters::ColonistData>& col
 		bg->position = {panelX + kPadding, yOffset};
 		bg->size = {panelWidth - kPadding * 2, itemHeight - kItemSpacing};
 		bg->style = {
-			.fill = isSelected ? Foundation::Color(0.3F, 0.5F, 0.7F, 0.9F)
-							   : Foundation::Color(0.2F, 0.2F, 0.2F, 0.8F),
+			.fill = isSelected ? UI::Theme::Colors::selectionBackground
+							   : UI::Theme::Colors::cardBackground,
 			.border = Foundation::BorderStyle{
-				.color = isSelected ? Foundation::Color(0.5F, 0.7F, 1.0F, 1.0F)
-									: Foundation::Color(0.4F, 0.4F, 0.4F, 0.6F),
+				.color = isSelected ? UI::Theme::Colors::selectionBorder
+									: UI::Theme::Colors::cardBorder,
 				.width = 1.0F,
 				.cornerRadius = 4.0F,
 			}
@@ -93,7 +95,7 @@ void ColonistListPanel::rebuildUI(const std::vector<adapters::ColonistData>& col
 		nameText->position = {textX, yOffset + (itemHeight - kItemSpacing) / 2.0F};
 		nameText->text = colonist.name;
 		nameText->style = {
-			.color = Foundation::Color::white(),
+			.color = UI::Theme::Colors::textTitle,
 			.fontSize = 10.0F,
 			.hAlign = Foundation::HorizontalAlign::Center,
 			.vAlign = Foundation::VerticalAlign::Middle,
@@ -119,30 +121,23 @@ void ColonistListPanel::rebuildUI(const std::vector<adapters::ColonistData>& col
 	}
 	backgroundRect->position = {panelX, panelY};
 	backgroundRect->size = {panelWidth, panelHeight};
-	backgroundRect->style = {
-		.fill = Foundation::Color(0.1F, 0.1F, 0.1F, 0.85F),
-		.border = Foundation::BorderStyle{
-			.color = Foundation::Color(0.3F, 0.3F, 0.3F, 1.0F),
-			.width = 1.0F,
-			.cornerRadius = 6.0F,
-		}
-	};
+	backgroundRect->style = UI::PanelStyles::floating();
 	backgroundRect->zIndex = -1;
 }
 
-void ColonistListPanel::updateSelectionHighlight(ecs::EntityID newSelectedId) {
+void ColonistListView::updateSelectionHighlight(ecs::EntityID newSelectedId) {
 	for (size_t i = 0; i < colonistIds.size() && i < kMaxColonists; ++i) {
 		bool isSelected = (colonistIds[i] == newSelectedId);
 
 		auto& bg = itemBackgrounds[i];
-		bg->style.fill = isSelected ? Foundation::Color(0.3F, 0.5F, 0.7F, 0.9F)
-									: Foundation::Color(0.2F, 0.2F, 0.2F, 0.8F);
-		bg->style.border->color = isSelected ? Foundation::Color(0.5F, 0.7F, 1.0F, 1.0F)
-											: Foundation::Color(0.4F, 0.4F, 0.4F, 0.6F);
+		bg->style.fill = isSelected ? UI::Theme::Colors::selectionBackground
+									: UI::Theme::Colors::cardBackground;
+		bg->style.border->color = isSelected ? UI::Theme::Colors::selectionBorder
+											: UI::Theme::Colors::cardBorder;
 	}
 }
 
-void ColonistListPanel::updateMoodBars(const std::vector<adapters::ColonistData>& colonists) {
+void ColonistListView::updateMoodBars(const std::vector<adapters::ColonistData>& colonists) {
 	float yOffset = panelY + kPadding;
 
 	for (size_t i = 0; i < colonists.size() && i < kMaxColonists; ++i) {
@@ -175,7 +170,7 @@ void ColonistListPanel::updateMoodBars(const std::vector<adapters::ColonistData>
 	}
 }
 
-bool ColonistListPanel::handleEvent(UI::InputEvent& event) {
+bool ColonistListView::handleEvent(UI::InputEvent& event) {
 	if (colonistIds.empty()) {
 		return false;
 	}
@@ -220,7 +215,7 @@ bool ColonistListPanel::handleEvent(UI::InputEvent& event) {
 	return true;
 }
 
-void ColonistListPanel::render() {
+void ColonistListView::render() {
 	if (colonistIds.empty()) {
 		return;
 	}
@@ -309,7 +304,7 @@ void ColonistListPanel::render() {
 	}
 }
 
-Foundation::Rect ColonistListPanel::getBounds() const {
+Foundation::Rect ColonistListView::getBounds() const {
 	float panelHeight = kPadding * 2 + static_cast<float>(colonistIds.size()) * itemHeight;
 	return {panelX, panelY, panelWidth, panelHeight};
 }

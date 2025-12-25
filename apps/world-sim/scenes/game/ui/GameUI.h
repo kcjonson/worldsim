@@ -6,21 +6,21 @@
 // - GameOverlay: status display, zoom controls
 // - BuildToolbar: build mode toggle button
 // - BuildMenu: popup for selecting items to place
-// - ColonistListPanel: left-side colonist portraits
-// - EntityInfoPanel: selected entity information
-// - TaskListPanel: expanded task queue (toggle from info panel)
+// - ColonistListView: left-side colonist portraits
+// - EntityInfoView: selected entity information
+// - TaskListView: expanded task queue (toggle from info panel)
 //
 // Handles input consumption to prevent click-through to world.
 
-#include "scenes/game/ui/panels/BuildMenu.h"
-#include "scenes/game/ui/panels/BuildToolbar.h"
-#include "scenes/game/ui/panels/ColonistListPanel.h"
+#include "scenes/game/ui/views/BuildMenu.h"
+#include "scenes/game/ui/views/BuildToolbar.h"
+#include "scenes/game/ui/views/ColonistListView.h"
 #include "scenes/game/ui/models/ColonistListModel.h"
-#include "scenes/game/ui/panels/EntityInfoPanel.h"
-#include "scenes/game/ui/panels/GameOverlay.h"
+#include "scenes/game/ui/views/EntityInfoView.h"
+#include "scenes/game/ui/views/GameOverlay.h"
 #include "scenes/game/world/NotificationManager.h"
 #include "scenes/game/ui/components/Selection.h"
-#include "scenes/game/ui/panels/TaskListPanel.h"
+#include "scenes/game/ui/views/TaskListView.h"
 
 #include <input/InputEvent.h>
 
@@ -94,9 +94,9 @@ class GameUI {
 	std::unique_ptr<GameOverlay> overlay;
 	std::unique_ptr<BuildToolbar> buildToolbar;
 	std::unique_ptr<BuildMenu> buildMenu;
-	std::unique_ptr<ColonistListPanel> colonistList;
-	std::unique_ptr<EntityInfoPanel> infoPanel;
-	std::unique_ptr<TaskListPanel> taskListPanel;
+	std::unique_ptr<ColonistListView> colonistList;
+	std::unique_ptr<EntityInfoView> infoPanel;
+	std::unique_ptr<TaskListView> taskListPanel;
 
 	// ViewModel for colonist list (owns data + change detection)
 	ColonistListModel colonistListModel;

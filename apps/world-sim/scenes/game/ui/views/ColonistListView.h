@@ -1,6 +1,6 @@
 #pragma once
 
-// ColonistListPanel - Left-side panel showing all colonists.
+// ColonistListView - Left-side panel showing all colonists.
 // Displays clickable portraits that select colonists.
 //
 // Uses ColonistListModel for data and change detection.
@@ -22,7 +22,7 @@
 namespace world_sim {
 
 /// Left-side panel showing all colonists with clickable portraits
-class ColonistListPanel {
+class ColonistListView {
   public:
 	struct Args {
 		float width = 60.0F;
@@ -31,7 +31,7 @@ class ColonistListPanel {
 		std::string id = "colonist_list";
 	};
 
-	explicit ColonistListPanel(const Args& args);
+	explicit ColonistListView(const Args& args);
 
 	/// Position the panel (top-left corner)
 	void setPosition(float x, float y);

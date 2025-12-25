@@ -1,6 +1,6 @@
 #pragma once
 
-// EntityInfoModel - ViewModel for EntityInfoPanel
+// EntityInfoModel - ViewModel for EntityInfoView
 //
 // Encapsulates:
 // - Selection identity tracking (change detection)
@@ -44,7 +44,7 @@ struct CachedSelection {
 	void update(const Selection& selection);
 };
 
-/// ViewModel for EntityInfoPanel
+/// ViewModel for EntityInfoView
 class EntityInfoModel {
   public:
 	/// Type of update needed after refresh()
