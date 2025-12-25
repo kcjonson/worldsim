@@ -1,6 +1,6 @@
 #pragma once
 
-// InfoSlot - Generic slot types for EntityInfoPanel
+// InfoSlot - Generic slot types for EntityInfoView
 //
 // Defines the building blocks for displaying entity information.
 // Each slot type represents a different kind of UI element.

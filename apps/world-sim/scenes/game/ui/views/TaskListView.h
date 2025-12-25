@@ -1,13 +1,13 @@
 #pragma once
 
-// TaskListPanel - Expanded task queue display
+// TaskListView - Expanded task queue display
 //
 // Shows the full decision trace for a colonist:
 // - Current task with details
 // - Up Next: prioritized tasks from DecisionTrace
 // - Recent Tasks: completed task history (future)
 //
-// Appears above EntityInfoPanel when user clicks "Tasks: Show"
+// Appears above EntityInfoView when user clicks "Tasks: Show"
 
 #include <component/Component.h>
 #include <ecs/EntityID.h>
@@ -24,7 +24,7 @@
 namespace world_sim {
 
 /// Expanded panel showing full task queue and decision trace
-class TaskListPanel : public UI::Component {
+class TaskListView : public UI::Component {
   public:
 	struct Args {
 		float				  width = 360.0F;	 // 2x info panel width
@@ -33,7 +33,7 @@ class TaskListPanel : public UI::Component {
 		std::string			  id = "task_list";
 	};
 
-	explicit TaskListPanel(const Args& args);
+	explicit TaskListView(const Args& args);
 
 	/// Update panel with colonist's decision trace
 	/// @param world ECS world for component queries

@@ -1,9 +1,11 @@
-#include "TaskListPanel.h"
+#include "TaskListView.h"
 
 #include <ecs/components/Action.h>
 #include <ecs/components/Colonist.h>
 #include <ecs/components/DecisionTrace.h>
 #include <ecs/components/Task.h>
+#include <theme/PanelStyle.h>
+#include <theme/Theme.h>
 
 namespace world_sim {
 
@@ -25,7 +27,7 @@ namespace {
 
 } // namespace
 
-TaskListPanel::TaskListPanel(const Args& args)
+TaskListView::TaskListView(const Args& args)
 	: m_onClose(args.onClose),
 	  m_panelWidth(args.width),
 	  m_maxHeight(args.maxHeight) {
@@ -36,9 +38,7 @@ TaskListPanel::TaskListPanel(const Args& args)
 			UI::Rectangle::Args{
 				.position = {0.0F, 0.0F},
 				.size = {m_panelWidth, m_panelHeight},
-				.style =
-					{.fill = Foundation::Color(0.08F, 0.08F, 0.12F, 0.92F),
-					 .border = Foundation::BorderStyle{.color = Foundation::Color(0.3F, 0.3F, 0.4F, 1.0F), .width = 1.0F}},
+				.style = UI::PanelStyles::floating(),
 				.zIndex = 0,
 				.id = (args.id + "_bg").c_str()
 			}
@@ -51,9 +51,7 @@ TaskListPanel::TaskListPanel(const Args& args)
 			UI::Rectangle::Args{
 				.position = {0.0F, 0.0F},
 				.size = {kCloseButtonSize, kCloseButtonSize},
-				.style =
-					{.fill = Foundation::Color(0.3F, 0.2F, 0.2F, 0.9F),
-					 .border = Foundation::BorderStyle{.color = Foundation::Color(0.5F, 0.3F, 0.3F, 1.0F), .width = 1.0F}},
+				.style = UI::PanelStyles::closeButton(),
 				.zIndex = 2,
 				.id = (args.id + "_close_bg").c_str()
 			}
@@ -68,7 +66,7 @@ TaskListPanel::TaskListPanel(const Args& args)
 				.text = "X",
 				.style =
 					{
-						.color = Foundation::Color(0.9F, 0.6F, 0.6F, 1.0F),
+						.color = UI::Theme::Colors::closeButtonText,
 						.fontSize = 10.0F,
 						.hAlign = Foundation::HorizontalAlign::Center,
 						.vAlign = Foundation::VerticalAlign::Middle,
@@ -87,7 +85,7 @@ TaskListPanel::TaskListPanel(const Args& args)
 				.text = "Task Queue",
 				.style =
 					{
-						.color = Foundation::Color(0.9F, 0.9F, 0.95F, 1.0F),
+						.color = UI::Theme::Colors::textTitle,
 						.fontSize = kTitleFontSize,
 						.hAlign = Foundation::HorizontalAlign::Left,
 						.vAlign = Foundation::VerticalAlign::Top,
@@ -106,7 +104,7 @@ TaskListPanel::TaskListPanel(const Args& args)
 				.text = "Current",
 				.style =
 					{
-						.color = Foundation::Color(0.7F, 0.8F, 0.9F, 1.0F),
+						.color = UI::Theme::Colors::textHeader,
 						.fontSize = kHeaderFontSize,
 						.hAlign = Foundation::HorizontalAlign::Left,
 						.vAlign = Foundation::VerticalAlign::Top,
@@ -124,7 +122,7 @@ TaskListPanel::TaskListPanel(const Args& args)
 				.text = "Task Queue",
 				.style =
 					{
-						.color = Foundation::Color(0.7F, 0.8F, 0.9F, 1.0F),
+						.color = UI::Theme::Colors::textHeader,
 						.fontSize = kHeaderFontSize,
 						.hAlign = Foundation::HorizontalAlign::Left,
 						.vAlign = Foundation::VerticalAlign::Top,
@@ -145,7 +143,7 @@ TaskListPanel::TaskListPanel(const Args& args)
 					.text = "",
 					.style =
 						{
-							.color = Foundation::Color(0.75F, 0.75F, 0.8F, 1.0F),
+							.color = UI::Theme::Colors::textBody,
 							.fontSize = kTextFontSize,
 							.hAlign = Foundation::HorizontalAlign::Left,
 							.vAlign = Foundation::VerticalAlign::Top,
@@ -165,12 +163,12 @@ TaskListPanel::TaskListPanel(const Args& args)
 	hideContent();
 }
 
-void TaskListPanel::update(const ecs::World& world, ecs::EntityID colonistId) {
+void TaskListView::update(const ecs::World& world, ecs::EntityID colonistId) {
 	// Rebuild content
 	renderContent(world, colonistId);
 }
 
-bool TaskListPanel::handleEvent(UI::InputEvent& event) {
+bool TaskListView::handleEvent(UI::InputEvent& event) {
 	if (!visible) {
 		return false;
 	}
@@ -209,12 +207,12 @@ bool TaskListPanel::handleEvent(UI::InputEvent& event) {
 	return false;
 }
 
-void TaskListPanel::setPosition(float x, float bottomY) {
+void TaskListView::setPosition(float x, float bottomY) {
 	m_panelX = x;
 	m_panelY = bottomY - m_panelHeight; // Panel grows upward from bottomY
 }
 
-void TaskListPanel::renderContent(const ecs::World& world, ecs::EntityID colonistId) {
+void TaskListView::renderContent(const ecs::World& world, ecs::EntityID colonistId) {
 	m_usedTextLines = 0;
 	hideContent();
 
@@ -293,10 +291,10 @@ void TaskListPanel::renderContent(const ecs::World& world, ecs::EntityID colonis
 				text->position = {m_panelX + kPadding + 8.0F, yOffset};
 				if (task->isActive()) {
 					text->text = "> " + task->reason;
-					text->style.color = Foundation::Color(0.5F, 0.9F, 0.5F, 1.0F); // Green for active
+					text->style.color = UI::Theme::Colors::statusActive;
 				} else {
 					text->text = "  (No active task)";
-					text->style.color = Foundation::Color(0.6F, 0.6F, 0.65F, 1.0F);
+					text->style.color = UI::Theme::Colors::statusIdle;
 				}
 			}
 			++m_usedTextLines;
@@ -313,10 +311,10 @@ void TaskListPanel::renderContent(const ecs::World& world, ecs::EntityID colonis
 				if (action->isActive()) {
 					int progress = static_cast<int>(action->progress() * 100.0F);
 					text->text = std::string("  ") + ecs::actionTypeName(action->type) + " (" + std::to_string(progress) + "%)";
-					text->style.color = Foundation::Color(0.9F, 0.9F, 0.5F, 1.0F); // Yellow for action
+					text->style.color = UI::Theme::Colors::statusPending;
 				} else {
 					text->text = "  Idle";
-					text->style.color = Foundation::Color(0.6F, 0.6F, 0.65F, 1.0F);
+					text->style.color = UI::Theme::Colors::statusIdle;
 				}
 			}
 			++m_usedTextLines;
@@ -351,16 +349,16 @@ void TaskListPanel::renderContent(const ecs::World& world, ecs::EntityID colonis
 				// Color by status
 				switch (option.status) {
 					case ecs::OptionStatus::Selected:
-						text->style.color = Foundation::Color(0.5F, 0.9F, 0.5F, 1.0F); // Green
+						text->style.color = UI::Theme::Colors::statusActive;
 						break;
 					case ecs::OptionStatus::Available:
-						text->style.color = Foundation::Color(0.75F, 0.75F, 0.8F, 1.0F); // Gray
+						text->style.color = UI::Theme::Colors::textBody;
 						break;
 					case ecs::OptionStatus::NoSource:
-						text->style.color = Foundation::Color(0.9F, 0.5F, 0.5F, 1.0F); // Red
+						text->style.color = UI::Theme::Colors::statusBlocked;
 						break;
 					default:
-						text->style.color = Foundation::Color(0.6F, 0.6F, 0.65F, 1.0F);
+						text->style.color = UI::Theme::Colors::statusIdle;
 						break;
 				}
 			}
@@ -370,7 +368,7 @@ void TaskListPanel::renderContent(const ecs::World& world, ecs::EntityID colonis
 	}
 }
 
-void TaskListPanel::hideContent() {
+void TaskListView::hideContent() {
 	for (auto* child : children) {
 		child->visible = false;
 	}
