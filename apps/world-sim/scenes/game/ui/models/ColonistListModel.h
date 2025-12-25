@@ -32,29 +32,29 @@ class ColonistListModel {
 	bool refresh(ecs::World& world);
 
 	/// Get the cached colonist data
-	[[nodiscard]] const std::vector<ColonistData>& colonists() const { return m_colonists; }
+	[[nodiscard]] const std::vector<ColonistData>& colonists() const { return colonistsData; }
 
 	/// Get the currently selected colonist ID
-	[[nodiscard]] ecs::EntityID selectedId() const { return m_selectedId; }
+	[[nodiscard]] ecs::EntityID selectedId() const { return selectedIdValue; }
 
 	/// Set the selected colonist ID (UI-only state)
-	void setSelectedId(ecs::EntityID id) { m_selectedId = id; }
+	void setSelectedId(ecs::EntityID id) { selectedIdValue = id; }
 
 	/// Check if a colonist is currently selected
-	[[nodiscard]] bool hasSelectedColonist() const { return m_selectedId != ecs::EntityID{0}; }
+	[[nodiscard]] bool hasSelectedColonist() const { return selectedIdValue != ecs::EntityID{0}; }
 
   private:
 	/// Compare new data with cached data
 	[[nodiscard]] bool hasChanged(const std::vector<ColonistData>& newData) const;
 
 	/// Cached colonist data from last refresh
-	std::vector<ColonistData> m_colonists;
+	std::vector<ColonistData> colonistsData;
 
 	/// Currently selected colonist (UI-only state, not stored in ECS)
-	ecs::EntityID m_selectedId{0};
+	ecs::EntityID selectedIdValue{0};
 
 	/// Track if this is the first refresh (always return true on first call)
-	bool m_firstRefresh = true;
+	bool isFirstRefresh = true;
 };
 
 } // namespace world_sim

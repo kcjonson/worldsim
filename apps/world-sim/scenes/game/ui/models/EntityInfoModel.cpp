@@ -101,47 +101,47 @@ EntityInfoModel::UpdateType EntityInfoModel::refresh(
 
 	// Handle NoSelection -> hide panel
 	if (std::holds_alternative<NoSelection>(selection)) {
-		if (m_visible) {
-			m_visible = false;
-			m_cachedSelection.update(selection);
+		if (visible) {
+			visible = false;
+			cachedSelection.update(selection);
 			return UpdateType::Hide;
 		}
 		return UpdateType::None;
 	}
 
 	// Determine if panel needs to show
-	bool wasVisible = m_visible;
-	m_visible = true;
+	bool wasVisible = visible;
+	visible = true;
 
 	// Track tab visibility change
-	bool wasShowingTabs = m_showTabs;
-	m_showTabs = isColonist;
+	bool wasShowingTabs = showsTabsFlag;
+	showsTabsFlag = isColonist;
 
 	// Check if selection identity changed
-	bool selectionChanged = !m_cachedSelection.matches(selection);
+	bool selectionChanged = !cachedSelection.matches(selection);
 	if (selectionChanged) {
-		m_cachedSelection.update(selection);
+		cachedSelection.update(selection);
 
 		// Reset to status tab when selecting a different colonist
 		if (isColonist) {
-			m_activeTab = "status";
+			activeTabId = "status";
 		}
 	}
 
 	// Determine update type
-	bool needsStructure = selectionChanged || wasShowingTabs != m_showTabs || m_tabChangeRequested;
-	m_tabChangeRequested = false;
+	bool needsStructure = selectionChanged || wasShowingTabs != showsTabsFlag || tabChangeRequested;
+	tabChangeRequested = false;
 
 	// Generate content
 	if (isColonist) {
-		m_content = getColonistContent(world, colonistId, callbacks.onTaskListToggle);
+		contentData = getColonistContent(world, colonistId, callbacks.onTaskListToggle);
 	} else if (isStation) {
-		m_content = getCraftingStationContent(world, stationId, stationDefName, recipeRegistry, callbacks.onQueueRecipe);
+		contentData = getCraftingStationContent(world, stationId, stationDefName, recipeRegistry, callbacks.onQueueRecipe);
 	} else {
 		// World entity - use standard adapter
 		auto worldContent = adaptSelection(selection, world, assetRegistry, callbacks.onTaskListToggle);
 		if (worldContent.has_value()) {
-			m_content = std::move(worldContent.value());
+			contentData = std::move(worldContent.value());
 		}
 	}
 
@@ -156,11 +156,11 @@ EntityInfoModel::UpdateType EntityInfoModel::refresh(
 }
 
 void EntityInfoModel::setActiveTab(const std::string& tabId) {
-	if (m_activeTab == tabId) {
+	if (activeTabId == tabId) {
 		return;
 	}
-	m_activeTab = tabId;
-	m_tabChangeRequested = true;
+	activeTabId = tabId;
+	tabChangeRequested = true;
 }
 
 PanelContent EntityInfoModel::getColonistContent(
@@ -168,7 +168,7 @@ PanelContent EntityInfoModel::getColonistContent(
 	ecs::EntityID entityId,
 	const std::function<void()>& onTaskListToggle
 ) const {
-	if (m_activeTab == "inventory") {
+	if (activeTabId == "inventory") {
 		return adaptColonistInventory(world, entityId);
 	}
 	// Default to status tab
