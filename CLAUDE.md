@@ -81,6 +81,15 @@ This activates the protocol from `/docs/technical/debugging-strategy.md` which u
 - Create technical debt
 - **⚠️ NEVER provide time estimates or cost estimates for tasks** - You cannot accurately estimate how long work will take. Focus on clear task descriptions and deliverables instead.
 
+### ⚠️ IMPORTANT: Documentation Over Existing Code
+
+**When evaluating code style, conventions, or PR feedback:**
+- **ALWAYS check `/docs/technical/cpp-coding-standards.md` FIRST** - This is the source of truth
+- **NEVER assume existing code patterns are correct** - Legacy code may contain violations that haven't been cleaned up
+- **Documented standards override observed patterns** - If code in the codebase contradicts the docs, the docs are correct
+
+Example: If you see `m_` prefixes on member variables in `libs/ui/`, but the coding standards say "camelCase with no prefix" - the standards are correct, the existing code is legacy that needs cleanup.
+
 ### ⚠️ Clean Code: No Legacy, No Fallbacks
 
 **This is critical. Aggressively delete old code. Never leave legacy fallbacks.**
