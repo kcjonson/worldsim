@@ -2,11 +2,14 @@
 
 // ColonistListPanel - Left-side panel showing all colonists.
 // Displays clickable portraits that select colonists.
+//
+// Uses ColonistListModel for data and change detection.
+// Only rebuilds UI when model indicates data has changed.
 
-#include "Selection.h"
+#include "scenes/game/ui/components/Selection.h"
+#include "scenes/game/ui/models/ColonistListModel.h"
 
 #include <ecs/World.h>
-#include <ecs/components/Colonist.h>
 #include <graphics/Rect.h>
 #include <input/InputEvent.h>
 #include <shapes/Shapes.h>
@@ -17,12 +20,6 @@
 #include <vector>
 
 namespace world_sim {
-
-/// Individual colonist portrait item
-struct ColonistItem {
-	ecs::EntityID entityId;
-	std::string name;
-};
 
 /// Left-side panel showing all colonists with clickable portraits
 class ColonistListPanel {
@@ -39,8 +36,10 @@ class ColonistListPanel {
 	/// Position the panel (top-left corner)
 	void setPosition(float x, float y);
 
-	/// Update colonist list from ECS world
-	void update(ecs::World& world, ecs::EntityID selectedColonistId);
+	/// Update panel using model data
+	/// @param model The colonist list model (will call refresh internally)
+	/// @param world ECS world for model refresh
+	void update(ColonistListModel& model, ecs::World& world);
 
 	/// Handle input event, returns true if consumed
 	bool handleEvent(UI::InputEvent& event);
@@ -52,6 +51,15 @@ class ColonistListPanel {
 	[[nodiscard]] Foundation::Rect getBounds() const;
 
   private:
+	/// Rebuild all UI elements from model data
+	void rebuildUI(const std::vector<adapters::ColonistData>& colonists);
+
+	/// Update only the selection highlight (cheap operation)
+	void updateSelectionHighlight(ecs::EntityID selectedId);
+
+	/// Update mood bars from current model data
+	void updateMoodBars(const std::vector<adapters::ColonistData>& colonists);
+
 	// Configuration
 	float panelWidth;
 	float itemHeight;
@@ -59,8 +67,8 @@ class ColonistListPanel {
 	float panelY = 80.0F;  // Below top overlay
 	std::function<void(ecs::EntityID)> onSelectCallback;
 
-	// Cached colonist data
-	std::vector<ColonistItem> colonists;
+	// Cached data for hit testing (from last rebuild)
+	std::vector<ecs::EntityID> colonistIds;
 	ecs::EntityID selectedId{0};
 
 	// UI elements

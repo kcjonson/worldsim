@@ -12,10 +12,11 @@
 // - Structure tier: Full relayout when different entity selected
 // - Value tier: O(dynamic) update only for progress bars when same entity
 
-#include "CraftingAdapter.h"
-#include "InfoSlot.h"
-#include "NeedBar.h"
-#include "Selection.h"
+#include "scenes/game/ui/adapters/CraftingAdapter.h"
+#include "scenes/game/ui/components/InfoSlot.h"
+#include "scenes/game/ui/components/NeedBar.h"
+#include "scenes/game/ui/components/Selection.h"
+#include "scenes/game/ui/models/EntityInfoModel.h"
 
 #include <assets/AssetRegistry.h>
 #include <assets/RecipeRegistry.h>
@@ -32,24 +33,6 @@
 #include <vector>
 
 namespace world_sim {
-
-/// Cached selection identity for detecting structural vs value-only updates
-struct CachedSelection {
-	enum class Type { None, Colonist, WorldEntity, CraftingStation };
-
-	Type			  type = Type::None;
-	ecs::EntityID	  colonistId{0};	 // For Colonist selection
-	ecs::EntityID	  stationId{0};		 // For CraftingStation selection
-	std::string		  worldEntityDef;	 // For WorldEntity selection
-	std::string		  stationDefName;	 // For CraftingStation selection
-	Foundation::Vec2 worldEntityPos;	 // For WorldEntity selection
-
-	/// Check if this cache matches the given selection
-	[[nodiscard]] bool matches(const Selection& selection) const;
-
-	/// Update cache to match the given selection
-	void update(const Selection& selection);
-};
 
 /// UI panel for displaying selected entity information via slots
 class EntityInfoPanel : public UI::Component {
@@ -118,11 +101,8 @@ class EntityInfoPanel : public UI::Component {
 	/// Tab change callback - updates content for selected tab
 	void onTabChanged(const std::string& tabId);
 
-	/// Get content for current active tab (colonist)
-	[[nodiscard]] PanelContent getContentForColonistTab(
-		const ecs::World& world,
-		ecs::EntityID entityId
-	) const;
+	// ViewModel (owns selection cache, tab state, content generation)
+	EntityInfoModel m_model;
 
 	// Callbacks
 	std::function<void()> onCloseCallback;
@@ -141,9 +121,6 @@ class EntityInfoPanel : public UI::Component {
 
 	// Tab bar (only shown for colonists)
 	UI::LayerHandle tabBarHandle;
-	std::string m_activeTab = "status";	 // Current tab: "status" or "inventory"
-	bool m_showTabs = false;			 // True for colonists, false for world entities
-	bool m_tabChangeRequested = false;	 // Set by onTabChanged to trigger re-render
 
 	// Pool of reusable slot UI elements
 	// Text elements (for TextSlot label:value pairs)
@@ -192,9 +169,6 @@ class EntityInfoPanel : public UI::Component {
 	// Cached position for layout (X is left edge, Y computed from viewportHeight)
 	float panelX{0.0F};
 	float m_viewportHeight{0.0F};
-
-	// Cached selection for detecting structure vs value updates
-	CachedSelection m_cachedSelection;
 
 	// Layout constants
 	static constexpr float kPadding = 8.0F;

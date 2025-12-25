@@ -1,0 +1,230 @@
+#include "EntityInfoModel.h"
+
+#include "scenes/game/ui/adapters/SelectionAdapter.h"
+
+namespace world_sim {
+
+// ============================================================================
+// CachedSelection implementation
+// ============================================================================
+
+bool CachedSelection::matches(const Selection& selection) const {
+	return std::visit(
+		[this](const auto& sel) -> bool {
+			using T = std::decay_t<decltype(sel)>;
+			if constexpr (std::is_same_v<T, NoSelection>) {
+				return type == Type::None;
+			} else if constexpr (std::is_same_v<T, ColonistSelection>) {
+				return type == Type::Colonist && colonistId == sel.entityId;
+			} else if constexpr (std::is_same_v<T, WorldEntitySelection>) {
+				return type == Type::WorldEntity && worldEntityDef == sel.defName && worldEntityPos.x == sel.position.x &&
+					   worldEntityPos.y == sel.position.y;
+			} else if constexpr (std::is_same_v<T, CraftingStationSelection>) {
+				return type == Type::CraftingStation && stationId == sel.entityId;
+			}
+			return false;
+		},
+		selection
+	);
+}
+
+void CachedSelection::update(const Selection& selection) {
+	std::visit(
+		[this](const auto& sel) {
+			using T = std::decay_t<decltype(sel)>;
+			if constexpr (std::is_same_v<T, NoSelection>) {
+				type = Type::None;
+				colonistId = ecs::EntityID{0};
+				stationId = ecs::EntityID{0};
+				worldEntityDef.clear();
+				stationDefName.clear();
+				worldEntityPos = {};
+			} else if constexpr (std::is_same_v<T, ColonistSelection>) {
+				type = Type::Colonist;
+				colonistId = sel.entityId;
+				stationId = ecs::EntityID{0};
+				worldEntityDef.clear();
+				stationDefName.clear();
+				worldEntityPos = {};
+			} else if constexpr (std::is_same_v<T, WorldEntitySelection>) {
+				type = Type::WorldEntity;
+				colonistId = ecs::EntityID{0};
+				stationId = ecs::EntityID{0};
+				worldEntityDef = sel.defName;
+				stationDefName.clear();
+				worldEntityPos = sel.position;
+			} else if constexpr (std::is_same_v<T, CraftingStationSelection>) {
+				type = Type::CraftingStation;
+				colonistId = ecs::EntityID{0};
+				stationId = sel.entityId;
+				worldEntityDef.clear();
+				stationDefName = sel.defName;
+				worldEntityPos = {};
+			}
+		},
+		selection
+	);
+}
+
+// ============================================================================
+// EntityInfoModel implementation
+// ============================================================================
+
+EntityInfoModel::UpdateType EntityInfoModel::refresh(
+	const Selection& selection,
+	const ecs::World& world,
+	const engine::assets::AssetRegistry& assetRegistry,
+	const engine::assets::RecipeRegistry& recipeRegistry,
+	const Callbacks& callbacks
+) {
+	// Detect selection types
+	bool		  isColonist = std::holds_alternative<ColonistSelection>(selection);
+	bool		  isStation = std::holds_alternative<CraftingStationSelection>(selection);
+	ecs::EntityID colonistId{0};
+	ecs::EntityID stationId{0};
+	std::string   stationDefName;
+
+	if (isColonist) {
+		colonistId = std::get<ColonistSelection>(selection).entityId;
+		if (!world.isAlive(colonistId)) {
+			isColonist = false;
+		}
+	}
+	if (isStation) {
+		const auto& stationSel = std::get<CraftingStationSelection>(selection);
+		stationId = stationSel.entityId;
+		stationDefName = stationSel.defName;
+		if (!world.isAlive(stationId)) {
+			isStation = false;
+		}
+	}
+
+	// Handle NoSelection -> hide panel
+	if (std::holds_alternative<NoSelection>(selection)) {
+		if (m_visible) {
+			m_visible = false;
+			m_cachedSelection.update(selection);
+			return UpdateType::Hide;
+		}
+		return UpdateType::None;
+	}
+
+	// Determine if panel needs to show
+	bool wasVisible = m_visible;
+	m_visible = true;
+
+	// Track tab visibility change
+	bool wasShowingTabs = m_showTabs;
+	m_showTabs = isColonist;
+
+	// Check if selection identity changed
+	bool selectionChanged = !m_cachedSelection.matches(selection);
+	if (selectionChanged) {
+		m_cachedSelection.update(selection);
+
+		// Reset to status tab when selecting a different colonist
+		if (isColonist) {
+			m_activeTab = "status";
+		}
+	}
+
+	// Determine update type
+	bool needsStructure = selectionChanged || wasShowingTabs != m_showTabs || m_tabChangeRequested;
+	m_tabChangeRequested = false;
+
+	// Generate content
+	if (isColonist) {
+		m_content = getColonistContent(world, colonistId, callbacks.onTaskListToggle);
+	} else if (isStation) {
+		m_content = getCraftingStationContent(world, stationId, stationDefName, recipeRegistry, callbacks.onQueueRecipe);
+	} else {
+		// World entity - use standard adapter
+		auto worldContent = adaptSelection(selection, world, assetRegistry, callbacks.onTaskListToggle);
+		if (worldContent.has_value()) {
+			m_content = std::move(worldContent.value());
+		}
+	}
+
+	// Return appropriate update type
+	if (!wasVisible) {
+		return UpdateType::Show;
+	}
+	if (needsStructure) {
+		return UpdateType::Structure;
+	}
+	return UpdateType::Values;
+}
+
+void EntityInfoModel::setActiveTab(const std::string& tabId) {
+	if (m_activeTab == tabId) {
+		return;
+	}
+	m_activeTab = tabId;
+	m_tabChangeRequested = true;
+}
+
+PanelContent EntityInfoModel::getColonistContent(
+	const ecs::World& world,
+	ecs::EntityID entityId,
+	const std::function<void()>& onTaskListToggle
+) const {
+	if (m_activeTab == "inventory") {
+		return adaptColonistInventory(world, entityId);
+	}
+	// Default to status tab
+	return adaptColonistStatus(world, entityId, onTaskListToggle);
+}
+
+PanelContent EntityInfoModel::getCraftingStationContent(
+	const ecs::World& world,
+	ecs::EntityID entityId,
+	const std::string& stationDefName,
+	const engine::assets::RecipeRegistry& recipeRegistry,
+	const QueueRecipeCallback& onQueueRecipe
+) const {
+	// Get base status content
+	PanelContent content = adaptCraftingStatus(world, entityId, stationDefName);
+
+	// Add recipes
+	auto recipes = recipeRegistry.getRecipesForStation(stationDefName);
+	if (!recipes.empty()) {
+		content.slots.push_back(SpacerSlot{.height = 8.0F});
+		for (const auto* recipe : recipes) {
+			if (recipe == nullptr) {
+				continue;
+			}
+			// Format recipe name (use label if available)
+			std::string recipeName = recipe->label.empty() ? recipe->defName : recipe->label;
+
+			// Format ingredients list
+			std::string ingredients;
+			if (recipe->inputs.empty()) {
+				ingredients = "No materials required";
+			} else {
+				bool first = true;
+				for (const auto& input : recipe->inputs) {
+					if (!first) {
+						ingredients += ", ";
+					}
+					ingredients += std::to_string(input.count) + "x " + input.defName;
+					first = false;
+				}
+			}
+
+			std::string recipeDefName = recipe->defName;
+			content.slots.push_back(RecipeSlot{
+				.name = recipeName,
+				.ingredients = ingredients,
+				.onQueue = [onQueueRecipe, recipeDefName]() {
+					if (onQueueRecipe) {
+						onQueueRecipe(recipeDefName);
+					}
+				},
+			});
+		}
+	}
+
+	return content;
+}
+
+} // namespace world_sim

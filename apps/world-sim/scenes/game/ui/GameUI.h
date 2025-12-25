@@ -12,14 +12,15 @@
 //
 // Handles input consumption to prevent click-through to world.
 
-#include "BuildMenu.h"
-#include "BuildToolbar.h"
-#include "ColonistListPanel.h"
-#include "EntityInfoPanel.h"
-#include "GameOverlay.h"
-#include "NotificationManager.h"
-#include "Selection.h"
-#include "TaskListPanel.h"
+#include "scenes/game/ui/panels/BuildMenu.h"
+#include "scenes/game/ui/panels/BuildToolbar.h"
+#include "scenes/game/ui/panels/ColonistListPanel.h"
+#include "scenes/game/ui/models/ColonistListModel.h"
+#include "scenes/game/ui/panels/EntityInfoPanel.h"
+#include "scenes/game/ui/panels/GameOverlay.h"
+#include "scenes/game/world/NotificationManager.h"
+#include "scenes/game/ui/components/Selection.h"
+#include "scenes/game/ui/panels/TaskListPanel.h"
 
 #include <input/InputEvent.h>
 
@@ -96,6 +97,9 @@ class GameUI {
 	std::unique_ptr<ColonistListPanel> colonistList;
 	std::unique_ptr<EntityInfoPanel> infoPanel;
 	std::unique_ptr<TaskListPanel> taskListPanel;
+
+	// ViewModel for colonist list (owns data + change detection)
+	ColonistListModel colonistListModel;
 
 	// Task list expansion state
 	bool taskListExpanded = false;
