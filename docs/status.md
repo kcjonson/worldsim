@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2025-12-24 (FocusManager Simplification merged)
+Last Updated: 2025-12-24 (ViewModel Pattern file reorganization complete)
 
 ## Epic/Story/Task Template
 
@@ -185,9 +185,42 @@ while (running) {
 
 ---
 
+### ✅ UI Architecture: ViewModel Pattern
+**Spec/Documentation:** `/docs/technical/ui-framework/data-binding.md`, `/docs/development-log/plans/2025-12-24-viewmodel-pattern.md`
+**Dependencies:** None
+**Status:** complete
+
+**Goal:** Establish clear data ownership and efficient updates via ViewModel pattern.
+
+**Completed Tasks:**
+- [x] Create directory structure (scenes/game/ui/{adapters,models,panels,components})
+- [x] Create UIState.h with Selection struct
+- [x] Create ColonistAdapter (ECS query layer)
+- [x] Create ColonistListModel with change detection
+- [x] Migrate ColonistListPanel to use ViewModel
+- [x] Move SelectionAdapter to adapters folder
+- [x] Move CraftingAdapter to adapters folder
+- [x] Create EntityInfoModel with UpdateType enum
+- [x] Migrate EntityInfoPanel to use ViewModel
+- [x] File reorganization
+  - [x] Move panels to panels/ (EntityInfoPanel, TaskListPanel, BuildMenu, BuildToolbar, GameOverlay)
+  - [x] Move reusable components to components/ (NeedBar, ZoomControl, InfoSlot, Selection)
+  - [x] Move world rendering to world/ (GhostRenderer, PlacementMode, NotificationManager)
+  - [x] Move GameUI to scenes/game/ui/
+  - [x] Delete old components/ directory
+
+**Architecture Notes:**
+- Pull-based models: `refresh(world)` returns bool for change detection
+- Adapter layer: Centralizes ECS queries (ColonistAdapter, SelectionAdapter, CraftingAdapter)
+- UpdateType enum: `None`, `Values`, `Structure`, `Show`, `Hide` for tiered updates
+
+**Result:** Clean separation between data (models), ECS queries (adapters), rendering (panels), and reusable UI elements (components). ✅
+
+---
+
 ## In Progress Epics
 
-*No epics currently in progress*
+(None currently)
 
 ---
 
@@ -236,37 +269,6 @@ The following MVP epics have all been completed. Detailed task breakdowns are pr
 ---
 
 ## Planned Epics (Post-MVP)
-
-### UI Architecture: ViewModel Pattern
-**Spec/Documentation:** `/docs/technical/ui-framework/data-binding.md`
-**Dependencies:** None
-**Status:** ready
-
-**Goal:** Establish clear data ownership and efficient updates via ViewModel pattern.
-
-**Background:** Current UI has ad-hoc data flow - panels poll ECS every frame, state scattered across multiple classes. As we build 20+ screens, this leads to duplicated change detection and hard-to-debug state bugs.
-
-**Tasks:**
-- [ ] Create UIState struct
-  - [ ] Move Selection from GameScene to UIState
-  - [ ] Add shared state (multiSelection, hoveredEntity)
-  - [ ] Pass UIState& through GameUI
-- [ ] Create ColonistListViewModel
-  - [ ] Extract colonist data transformation from panel
-  - [ ] Implement change detection (returns bool from refresh())
-  - [ ] Own UI state (selectedId)
-  - [ ] Unit tests for change detection
-- [ ] Migrate ColonistListPanel to use ViewModel
-  - [ ] Panel becomes pure rendering
-  - [ ] Only rebuild UI when ViewModel signals change
-- [ ] Create EntityInfoViewModel
-  - [ ] Consolidate CachedSelection, m_activeTab, adapter calls
-  - [ ] Extract from EntityInfoPanel
-- [ ] Migrate remaining panels
-  - [ ] TaskListPanel → TaskListViewModel
-  - [ ] BuildMenu state extraction
-
----
 
 ### UI Architecture: Layout System
 **Spec/Documentation:** `/docs/technical/ui-framework/layout-system.md`

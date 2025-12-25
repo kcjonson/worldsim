@@ -2,25 +2,35 @@ add_executable(world-sim
     Main.cpp
     SceneTypes.cpp
     GameWorldState.cpp
-    components/BuildMenu.cpp
-    components/BuildToolbar.cpp
-    components/ColonistListPanel.cpp
-    components/EntityInfoPanel.cpp
-    components/GameOverlay.cpp
-    components/GameUI.cpp
-    components/GhostRenderer.cpp
-    components/NeedBar.cpp
-    components/PlacementMode.cpp
-    components/CraftingAdapter.cpp
-    components/SelectionAdapter.cpp
-    components/TaskListPanel.cpp
-    components/ZoomControl.cpp
-    scenes/SplashScene.cpp
-    scenes/MainMenuScene.cpp
-    scenes/WorldCreatorScene.cpp
-    scenes/GameLoadingScene.cpp
-    scenes/GameScene.cpp
-    scenes/SettingsScene.cpp
+    # Game scene UI - panels
+    scenes/game/ui/panels/ColonistListPanel.cpp
+    scenes/game/ui/panels/EntityInfoPanel.cpp
+    scenes/game/ui/panels/TaskListPanel.cpp
+    scenes/game/ui/panels/BuildMenu.cpp
+    scenes/game/ui/panels/BuildToolbar.cpp
+    scenes/game/ui/panels/GameOverlay.cpp
+    # Game scene UI - components
+    scenes/game/ui/components/NeedBar.cpp
+    scenes/game/ui/components/ZoomControl.cpp
+    # Game scene UI - adapters
+    scenes/game/ui/adapters/ColonistAdapter.cpp
+    scenes/game/ui/adapters/CraftingAdapter.cpp
+    scenes/game/ui/adapters/SelectionAdapter.cpp
+    # Game scene UI - models
+    scenes/game/ui/models/ColonistListModel.cpp
+    scenes/game/ui/models/EntityInfoModel.cpp
+    # Game scene UI - main container
+    scenes/game/ui/GameUI.cpp
+    # Game scene - world rendering
+    scenes/game/world/GhostRenderer.cpp
+    scenes/game/world/PlacementMode.cpp
+    # Scenes
+    scenes/splash/SplashScene.cpp
+    scenes/menu/MainMenuScene.cpp
+    scenes/world-creator/WorldCreatorScene.cpp
+    scenes/loading/GameLoadingScene.cpp
+    scenes/game/GameScene.cpp
+    scenes/settings/SettingsScene.cpp
 )
 
 target_include_directories(world-sim

@@ -6,8 +6,8 @@
 // into generic slot descriptions that EntityInfoPanel can render.
 // This decouples the panel from specific data sources.
 
-#include "InfoSlot.h"
-#include "Selection.h"
+#include "scenes/game/ui/components/InfoSlot.h"
+#include "scenes/game/ui/components/Selection.h"
 
 #include <assets/AssetRegistry.h>
 #include <ecs/World.h>
@@ -39,16 +39,6 @@ namespace world_sim {
 	const ecs::World& world,
 	ecs::EntityID entityId
 );
-
-/// Legacy adapter - returns status content (for backward compatibility)
-/// @deprecated Use adaptColonistStatus instead
-[[nodiscard]] inline PanelContent adaptColonist(
-	const ecs::World& world,
-	ecs::EntityID entityId,
-	std::function<void()> onTaskListToggle = nullptr
-) {
-	return adaptColonistStatus(world, entityId, onTaskListToggle);
-}
 
 /// Convert world entity data into panel content
 [[nodiscard]] PanelContent adaptWorldEntity(

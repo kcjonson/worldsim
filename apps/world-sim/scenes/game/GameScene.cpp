@@ -1,11 +1,11 @@
 // Game Scene - Main gameplay with chunk-based world rendering
 
-#include "../GameWorldState.h"
-#include "../components/GameUI.h"
-#include "../components/GhostRenderer.h"
-#include "../components/NotificationManager.h"
-#include "../components/PlacementMode.h"
-#include "../components/Selection.h"
+#include "GameWorldState.h"
+#include "scenes/game/ui/GameUI.h"
+#include "scenes/game/world/GhostRenderer.h"
+#include "scenes/game/world/NotificationManager.h"
+#include "scenes/game/world/PlacementMode.h"
+#include "scenes/game/ui/components/Selection.h"
 #include "SceneTypes.h"
 
 #include <GL/glew.h>

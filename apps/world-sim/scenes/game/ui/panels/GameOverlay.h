@@ -3,7 +3,7 @@
 // GameOverlay - Status display overlay for the game scene.
 // Shows camera position, chunk count, zoom control, and hints.
 
-#include "ZoomControl.h"
+#include "scenes/game/ui/components/ZoomControl.h"
 
 #include <input/InputEvent.h>
 

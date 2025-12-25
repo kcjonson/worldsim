@@ -1,72 +1,10 @@
 #include "EntityInfoPanel.h"
 
-#include "SelectionAdapter.h"
+#include "scenes/game/ui/adapters/SelectionAdapter.h"
 
 #include <utils/Log.h>
 
 namespace world_sim {
-
-	// ============================================================================
-	// CachedSelection implementation
-	// ============================================================================
-
-	bool CachedSelection::matches(const Selection& selection) const {
-		return std::visit(
-			[this](const auto& sel) -> bool {
-				using T = std::decay_t<decltype(sel)>;
-				if constexpr (std::is_same_v<T, NoSelection>) {
-					return type == Type::None;
-				} else if constexpr (std::is_same_v<T, ColonistSelection>) {
-					return type == Type::Colonist && colonistId == sel.entityId;
-				} else if constexpr (std::is_same_v<T, WorldEntitySelection>) {
-					return type == Type::WorldEntity && worldEntityDef == sel.defName && worldEntityPos.x == sel.position.x &&
-						   worldEntityPos.y == sel.position.y;
-				} else if constexpr (std::is_same_v<T, CraftingStationSelection>) {
-					return type == Type::CraftingStation && stationId == sel.entityId;
-				}
-				return false;
-			},
-			selection
-		);
-	}
-
-	void CachedSelection::update(const Selection& selection) {
-		std::visit(
-			[this](const auto& sel) {
-				using T = std::decay_t<decltype(sel)>;
-				if constexpr (std::is_same_v<T, NoSelection>) {
-					type = Type::None;
-					colonistId = ecs::EntityID{0};
-					stationId = ecs::EntityID{0};
-					worldEntityDef.clear();
-					stationDefName.clear();
-					worldEntityPos = {};
-				} else if constexpr (std::is_same_v<T, ColonistSelection>) {
-					type = Type::Colonist;
-					colonistId = sel.entityId;
-					stationId = ecs::EntityID{0};
-					worldEntityDef.clear();
-					stationDefName.clear();
-					worldEntityPos = {};
-				} else if constexpr (std::is_same_v<T, WorldEntitySelection>) {
-					type = Type::WorldEntity;
-					colonistId = ecs::EntityID{0};
-					stationId = ecs::EntityID{0};
-					worldEntityDef = sel.defName;
-					stationDefName.clear();
-					worldEntityPos = sel.position;
-				} else if constexpr (std::is_same_v<T, CraftingStationSelection>) {
-					type = Type::CraftingStation;
-					colonistId = ecs::EntityID{0};
-					stationId = sel.entityId;
-					worldEntityDef.clear();
-					stationDefName = sel.defName;
-					worldEntityPos = {};
-				}
-			},
-			selection
-		);
-	}
 
 	EntityInfoPanel::EntityInfoPanel(const Args& args)
 		: panelWidth(args.width),
@@ -375,126 +313,46 @@ namespace world_sim {
 		const engine::assets::RecipeRegistry& recipeRegistry,
 		const Selection& selection
 	) {
-		// Detect selection types
-		bool		  isColonist = std::holds_alternative<ColonistSelection>(selection);
-		bool		  isStation = std::holds_alternative<CraftingStationSelection>(selection);
-		ecs::EntityID colonistId{0};
-		ecs::EntityID stationId{0};
-		std::string   stationDefName;
+		// Prepare callbacks for model
+		EntityInfoModel::Callbacks callbacks{
+			.onTaskListToggle = onTaskListToggleCallback,
+			.onQueueRecipe = onQueueRecipeCallback,
+		};
 
-		if (isColonist) {
-			colonistId = std::get<ColonistSelection>(selection).entityId;
-			if (!world.isAlive(colonistId)) {
-				isColonist = false;
-			}
-		}
-		if (isStation) {
-			const auto& stationSel = std::get<CraftingStationSelection>(selection);
-			stationId = stationSel.entityId;
-			stationDefName = stationSel.defName;
-			if (!world.isAlive(stationId)) {
-				isStation = false;
-			}
-		}
+		// Let model handle all the logic (selection detection, change detection, content generation)
+		auto updateType = m_model.refresh(selection, world, assetRegistry, recipeRegistry, callbacks);
 
-		// Hide panel for no selection
-		if (std::holds_alternative<NoSelection>(selection)) {
-			if (visible) {
+		// React based on update type
+		switch (updateType) {
+			case EntityInfoModel::UpdateType::None:
+				// No change needed
+				break;
+
+			case EntityInfoModel::UpdateType::Hide:
 				visible = false;
-				m_cachedSelection.update(selection);
 				hideSlots();
-			}
-			return;
-		}
+				break;
 
-		// Tier 1: Visibility change - show panel if hidden
-		if (!visible) {
-			visible = true;
-		}
-
-		// Update tab visibility based on selection type
-		// Only colonists get tabs (Status/Inventory) - stations show combined view
-		bool wasShowingTabs = m_showTabs;
-		m_showTabs = isColonist;
-
-		// Check if selection identity changed
-		bool selectionChanged = !m_cachedSelection.matches(selection);
-		if (selectionChanged) {
-			m_cachedSelection.update(selection);
-
-			// Reset to status tab when selecting a different colonist
-			if (isColonist) {
-				m_activeTab = "status";
+			case EntityInfoModel::UpdateType::Show:
+				visible = true;
+				// Sync tab bar with model's tab selection
 				if (auto* tabBar = getChild<UI::TabBar>(tabBarHandle)) {
-					tabBar->setSelected("status");
+					tabBar->setSelected(m_model.activeTab());
 				}
-			}
-		}
+				renderContent(m_model.content());
+				break;
 
-		// Check if tab change was requested (separate from selection change)
-		bool needsRerender = selectionChanged || wasShowingTabs != m_showTabs || m_tabChangeRequested;
-		m_tabChangeRequested = false; // Clear the flag
-
-		// Get content for display
-		PanelContent content;
-		if (isColonist) {
-			content = getContentForColonistTab(world, colonistId);
-		} else if (isStation) {
-			// Stations show combined status + recipes view (no tabs)
-			content = adaptCraftingStatus(world, stationId, stationDefName);
-			// Add recipes as card items
-			auto recipes = recipeRegistry.getRecipesForStation(stationDefName);
-			if (!recipes.empty()) {
-				content.slots.push_back(SpacerSlot{.height = 8.0F});
-				for (const auto* recipe : recipes) {
-					if (recipe == nullptr) {
-						continue;
-					}
-					// Format recipe name (use label if available)
-					std::string recipeName = recipe->label.empty() ? recipe->defName : recipe->label;
-
-					// Format ingredients list
-					std::string ingredients;
-					if (recipe->inputs.empty()) {
-						ingredients = "No materials required";
-					} else {
-						bool first = true;
-						for (const auto& input : recipe->inputs) {
-							if (!first) {
-								ingredients += ", ";
-							}
-							ingredients += std::to_string(input.count) + "x " + input.defName;
-							first = false;
-						}
-					}
-
-					std::string recipeDefName = recipe->defName;
-					content.slots.push_back(RecipeSlot{
-						.name = recipeName,
-						.ingredients = ingredients,
-						.onQueue = [this, recipeDefName]() {
-							if (onQueueRecipeCallback) {
-								onQueueRecipeCallback(recipeDefName);
-							}
-						},
-					});
+			case EntityInfoModel::UpdateType::Structure:
+				// Sync tab bar with model's tab selection (in case selection changed)
+				if (auto* tabBar = getChild<UI::TabBar>(tabBarHandle)) {
+					tabBar->setSelected(m_model.activeTab());
 				}
-			}
-		} else {
-			// World entity - use standard adapter
-			auto worldContent = adaptSelection(selection, world, assetRegistry, onTaskListToggleCallback);
-			if (worldContent.has_value()) {
-				content = std::move(worldContent.value());
-			}
-		}
+				renderContent(m_model.content());
+				break;
 
-		// Decide update tier
-		if (needsRerender) {
-			// Tier 2: Structure change - full relayout
-			renderContent(content);
-		} else {
-			// Tier 3: Value-only update - same entity, just update dynamic values
-			updateValues(content);
+			case EntityInfoModel::UpdateType::Values:
+				updateValues(m_model.content());
+				break;
 		}
 	}
 
@@ -554,7 +412,7 @@ namespace world_sim {
 		float baseHeight = kPadding + kTitleFontSize + kLineSpacing * 2.0F;
 
 		// Add tab bar height if showing tabs (with extra spacing below)
-		if (m_showTabs) {
+		if (m_model.showsTabs()) {
 			baseHeight += kTabBarHeight + kLineSpacing * 3.0F;
 		}
 
@@ -562,7 +420,7 @@ namespace world_sim {
 		// This prevents the panel from jumping when switching tabs
 		float contentHeight = computeSlotsHeight(content.slots);
 
-		if (m_showTabs) {
+		if (m_model.showsTabs()) {
 			// Use a fixed minimum content height for colonist panels
 			// Status tab has: Mood + 8 needs + spacer + Task + Action + Tasks clickable
 			// = 9 progress bars + 1 spacer + 3 text slots
@@ -605,8 +463,8 @@ namespace world_sim {
 		// Show/hide and position tab bar
 		float yOffset = panelY + kPadding + kTitleFontSize + kLineSpacing * 2.0F;
 		if (auto* tabBar = getChild<UI::TabBar>(tabBarHandle)) {
-			tabBar->visible = m_showTabs;
-			if (m_showTabs) {
+			tabBar->visible = m_model.showsTabs();
+			if (m_model.showsTabs()) {
 				tabBar->position = {panelX + kPadding, yOffset};
 				yOffset += kTabBarHeight + kLineSpacing * 3.0F; // Extra spacing below tab bar
 			}
@@ -815,28 +673,16 @@ namespace world_sim {
 		panelX = x;
 		m_viewportHeight = viewportHeight;
 
-		// Force structure re-render on next update if currently visible
+		// Force structure re-render if currently visible
 		// This ensures all child elements get repositioned correctly
-		if (visible) {
-			m_cachedSelection.type = CachedSelection::Type::None;
+		if (visible && m_model.isVisible()) {
+			renderContent(m_model.content());
 		}
 	}
 
 	void EntityInfoPanel::onTabChanged(const std::string& tabId) {
-		if (m_activeTab == tabId) {
-			return; // No change
-		}
-
-		m_activeTab = tabId;
-		m_tabChangeRequested = true; // Signal update() to re-render without resetting tab
-	}
-
-	PanelContent EntityInfoPanel::getContentForColonistTab(const ecs::World& world, ecs::EntityID entityId) const {
-		if (m_activeTab == "inventory") {
-			return adaptColonistInventory(world, entityId);
-		}
-		// Default to status tab
-		return adaptColonistStatus(world, entityId, onTaskListToggleCallback);
+		// Delegate to model - it will set the flag for next refresh()
+		m_model.setActiveTab(tabId);
 	}
 
 	bool EntityInfoPanel::handleEvent(UI::InputEvent& event) {
@@ -845,7 +691,7 @@ namespace world_sim {
 		}
 
 		// Handle TabBar events if showing tabs
-		if (m_showTabs) {
+		if (m_model.showsTabs()) {
 			if (auto* tabBar = getChild<UI::TabBar>(tabBarHandle)) {
 				if (tabBar->handleEvent(event)) {
 					return true;

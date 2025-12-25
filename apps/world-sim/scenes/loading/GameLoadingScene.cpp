@@ -1,7 +1,7 @@
 // Game Loading Scene - Pre-loads world chunks and entities with progress bar
 // Prevents asset "pop-in" by ensuring all initial content is ready before gameplay
 
-#include "../GameWorldState.h"
+#include "GameWorldState.h"
 #include "SceneTypes.h"
 
 #include <GL/glew.h>

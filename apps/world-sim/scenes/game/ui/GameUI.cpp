@@ -203,13 +203,14 @@ void GameUI::update(
 	// Update overlay display values
 	overlay->update(camera, chunkManager);
 
-	// Update colonist list
+	// Update colonist list with model-based change detection
 	if (colonistList) {
 		ecs::EntityID currentlySelected{0};
 		if (auto* colonistSel = std::get_if<ColonistSelection>(&selection)) {
 			currentlySelected = colonistSel->entityId;
 		}
-		colonistList->update(ecsWorld, currentlySelected);
+		colonistListModel.setSelectedId(currentlySelected);
+		colonistList->update(colonistListModel, ecsWorld);
 	}
 
 	// Track selected colonist for task list panel
