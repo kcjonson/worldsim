@@ -20,7 +20,9 @@ namespace UI::PanelStyles {
 				.color = Theme::Colors::panelBorder,
 				.width = Theme::Borders::defaultWidth,
 				.cornerRadius = Theme::Borders::defaultRadius,
-				.position = Foundation::BorderPosition::Inside}};
+				.position = Foundation::BorderPosition::Inside
+			}
+		};
 	}
 
 	// Sidebar panel (docked to screen edge)
@@ -32,7 +34,9 @@ namespace UI::PanelStyles {
 				.color = Theme::Colors::panelBorder,
 				.width = Theme::Borders::defaultWidth,
 				.cornerRadius = 0.0F, // No rounded corners for docked panels
-				.position = Foundation::BorderPosition::Inside}};
+				.position = Foundation::BorderPosition::Inside
+			}
+		};
 	}
 
 	// Close button (destructive action styling)
@@ -41,9 +45,11 @@ namespace UI::PanelStyles {
 			.fill = Theme::Colors::closeButtonBackground,
 			.border = Foundation::BorderStyle{
 				.color = Theme::Colors::closeButtonBorder,
-				.width = 1.0F,
+				.width = Theme::Borders::defaultWidth,
 				.cornerRadius = 0.0F,
-				.position = Foundation::BorderPosition::Inside}};
+				.position = Foundation::BorderPosition::Inside
+			}
+		};
 	}
 
 	// Action button (positive action styling)
@@ -52,9 +58,11 @@ namespace UI::PanelStyles {
 			.fill = Theme::Colors::actionButtonBackground,
 			.border = Foundation::BorderStyle{
 				.color = Theme::Colors::actionButtonBorder,
-				.width = 1.0F,
+				.width = Theme::Borders::defaultWidth,
 				.cornerRadius = 0.0F,
-				.position = Foundation::BorderPosition::Inside}};
+				.position = Foundation::BorderPosition::Inside
+			}
+		};
 	}
 
 	// Card within panel (recipe cards, list items, etc.)
@@ -63,9 +71,11 @@ namespace UI::PanelStyles {
 			.fill = Theme::Colors::cardBackground,
 			.border = Foundation::BorderStyle{
 				.color = Theme::Colors::cardBorder,
-				.width = 1.0F,
+				.width = Theme::Borders::defaultWidth,
 				.cornerRadius = 0.0F,
-				.position = Foundation::BorderPosition::Inside}};
+				.position = Foundation::BorderPosition::Inside
+			}
+		};
 	}
 
 	// Selection highlight
@@ -74,9 +84,11 @@ namespace UI::PanelStyles {
 			.fill = Theme::Colors::selectionBackground,
 			.border = Foundation::BorderStyle{
 				.color = Theme::Colors::selectionBorder,
-				.width = 1.0F,
+				.width = Theme::Borders::defaultWidth,
 				.cornerRadius = 0.0F,
-				.position = Foundation::BorderPosition::Inside}};
+				.position = Foundation::BorderPosition::Inside
+			}
+		};
 	}
 
 } // namespace UI::PanelStyles

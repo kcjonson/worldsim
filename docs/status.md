@@ -226,7 +226,7 @@ while (running) {
 **Goal:** Centralize UI styling (colors, spacing, typography) via design tokens. Eliminate hardcoded color values across views.
 
 **Terminology:**
-- **Panel** (design) = Visual style (dark bg, 1px border, rounded corners)
+- **Panel** (design) = Visual style (dark bg, 1px border)
 - **View** (structural) = Composite UI element (EntityInfoView, TaskListView)
 - **Component** = Base class for all UI elements (unchanged)
 
