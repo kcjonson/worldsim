@@ -10,47 +10,45 @@
 // - multiSelection: For box-select of multiple entities
 // - hoveredEntity: For tooltips and hover highlighting
 
-#include "components/Selection.h"
+#include "scenes/game/ui/components/Selection.h"
 
 #include <optional>
 #include <set>
 
 namespace world_sim {
 
-/// Shared UI state for the game scene
-struct UIState {
-	/// Current selection (single entity or none)
-	Selection selection = NoSelection{};
+	/// Shared UI state for the game scene
+	struct UIState {
+		/// Current selection (single entity or none)
+		Selection selection = NoSelection{};
 
-	/// Multi-selection for future box-select feature
-	/// When populated, overrides single selection for batch operations
-	std::set<ecs::EntityID> multiSelection;
+		/// Multi-selection for future box-select feature
+		/// When populated, overrides single selection for batch operations
+		std::set<ecs::EntityID> multiSelection;
 
-	/// Currently hovered entity (for tooltips, highlighting)
-	std::optional<ecs::EntityID> hoveredEntity;
+		/// Currently hovered entity (for tooltips, highlighting)
+		std::optional<ecs::EntityID> hoveredEntity;
 
-	// -------------------------------------------------------------------------
-	// Convenience accessors
-	// -------------------------------------------------------------------------
+		// -------------------------------------------------------------------------
+		// Convenience accessors
+		// -------------------------------------------------------------------------
 
-	/// Check if anything is selected
-	[[nodiscard]] bool hasSelection() const {
-		return world_sim::hasSelection(selection) || !multiSelection.empty();
-	}
+		/// Check if anything is selected
+		[[nodiscard]] bool hasSelection() const { return world_sim::hasSelection(selection) || !multiSelection.empty(); }
 
-	/// Get the single selected colonist ID, if any
-	[[nodiscard]] std::optional<ecs::EntityID> selectedColonistId() const {
-		if (auto* colonist = std::get_if<ColonistSelection>(&selection)) {
-			return colonist->entityId;
+		/// Get the single selected colonist ID, if any
+		[[nodiscard]] std::optional<ecs::EntityID> selectedColonistId() const {
+			if (auto* colonist = std::get_if<ColonistSelection>(&selection)) {
+				return colonist->entityId;
+			}
+			return std::nullopt;
 		}
-		return std::nullopt;
-	}
 
-	/// Clear all selection state
-	void clearSelection() {
-		selection = NoSelection{};
-		multiSelection.clear();
-	}
-};
+		/// Clear all selection state
+		void clearSelection() {
+			selection = NoSelection{};
+			multiSelection.clear();
+		}
+	};
 
 } // namespace world_sim
