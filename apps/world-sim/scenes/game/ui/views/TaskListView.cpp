@@ -104,6 +104,12 @@ TaskListView::TaskListView(const Args& args)
 }
 
 void TaskListView::update(const ecs::World& world, ecs::EntityID colonistId) {
+	// Only rebuild if colonist changed or content hasn't been built yet
+	if (m_contentBuilt && m_lastColonistId == colonistId) {
+		return;
+	}
+	m_lastColonistId = colonistId;
+	m_contentBuilt = true;
 	rebuildContent(world, colonistId);
 }
 
@@ -150,6 +156,7 @@ void TaskListView::setPosition(float x, float bottomY) {
 	m_panelX = x;
 	m_bottomY = bottomY;
 	m_panelY = bottomY - m_panelHeight; // Panel grows upward from bottomY
+	Component::setPosition(m_panelX, m_panelY);
 }
 
 void TaskListView::rebuildContent(const ecs::World& world, ecs::EntityID colonistId) {
@@ -311,6 +318,7 @@ void TaskListView::hideContent() {
 		child->visible = false;
 	}
 	m_contentLayout.reset();
+	m_contentBuilt = false;
 }
 
 } // namespace world_sim

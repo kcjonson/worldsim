@@ -83,6 +83,10 @@ class TaskListView : public UI::Component {
 	float m_panelY = 0.0F;
 	float m_bottomY = 0.0F; // Original bottom Y for recalculating position
 
+	// Cache to avoid rebuilding content every frame
+	ecs::EntityID m_lastColonistId{};
+	bool m_contentBuilt = false;
+
 	// Fixed UI elements (manually positioned)
 	UI::LayerHandle m_backgroundHandle;
 	UI::LayerHandle m_closeButtonBgHandle;
