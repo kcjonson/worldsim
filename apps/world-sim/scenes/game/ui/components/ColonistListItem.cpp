@@ -89,26 +89,26 @@ namespace world_sim {
 		);
 	}
 
-	void ColonistListItem::render() {
+	void ColonistListItem::setPosition(float x, float y) {
+		Component::setPosition(x, y);
+
+		// Immediately update child positions to avoid one-frame delay
 		Foundation::Vec2 contentPos = getContentPosition();
-
-		// Only update child positions if layout changed (content position differs from background)
 		if (auto* bg = getChild<UI::Rectangle>(backgroundHandle)) {
-			if (bg->position.x != contentPos.x || bg->position.y != contentPos.y) {
-				bg->position = contentPos;
-
-				if (auto* nameText = getChild<UI::Text>(nameTextHandle)) {
-					float textX = contentPos.x + kPortraitSize + kPortraitMargin + (size.x - kPortraitSize - kPortraitMargin) / 2.0F;
-					nameText->position = {textX, contentPos.y + size.y / 2.0F};
-				}
-				if (auto* moodBar = getChild<UI::Rectangle>(moodBarHandle)) {
-					float moodBarX = contentPos.x + kPortraitSize + kPortraitMargin;
-					float moodBarY = contentPos.y + size.y - kMoodBarOffset;
-					moodBar->position = {moodBarX, moodBarY};
-				}
-			}
+			bg->position = contentPos;
 		}
+		if (auto* nameText = getChild<UI::Text>(nameTextHandle)) {
+			float textX = contentPos.x + kPortraitSize + kPortraitMargin + (size.x - kPortraitSize - kPortraitMargin) / 2.0F;
+			nameText->position = {textX, contentPos.y + size.y / 2.0F};
+		}
+		if (auto* moodBar = getChild<UI::Rectangle>(moodBarHandle)) {
+			float moodBarX = contentPos.x + kPortraitSize + kPortraitMargin;
+			float moodBarY = contentPos.y + size.y - kMoodBarOffset;
+			moodBar->position = {moodBarX, moodBarY};
+		}
+	}
 
+	void ColonistListItem::render() {
 		// Render children (background, mood bar, name)
 		Component::render();
 

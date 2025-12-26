@@ -43,6 +43,7 @@ class ColonistListItem : public UI::Component {
 
 	// IComponent overrides
 	void render() override;
+	void setPosition(float x, float y) override;
 	bool handleEvent(UI::InputEvent& event) override;
 	bool containsPoint(Foundation::Vec2 point) const override;
 
