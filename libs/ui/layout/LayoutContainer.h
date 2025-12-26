@@ -77,13 +77,17 @@ class LayoutContainer : public Container {
 		if (size.x > 0.0F) {
 			return size.x + margin * 2.0F;
 		}
-		// Compute from children
-		float maxWidth = 0.0F;
+		// Compute from children based on direction
+		float totalWidth = 0.0F;
 		for (const auto* child : children) {
 			if (!child->visible) continue;
-			maxWidth = std::max(maxWidth, child->getWidth());
+			if (direction == Direction::Horizontal) {
+				totalWidth += child->getWidth();  // Sum for horizontal stacking
+			} else {
+				totalWidth = std::max(totalWidth, child->getWidth());  // Max for vertical
+			}
 		}
-		return maxWidth + margin * 2.0F;
+		return totalWidth + margin * 2.0F;
 	}
 
 	[[nodiscard]] float getHeight() const override {
@@ -95,9 +99,9 @@ class LayoutContainer : public Container {
 		for (const auto* child : children) {
 			if (!child->visible) continue;
 			if (direction == Direction::Vertical) {
-				totalHeight += child->getHeight();
+				totalHeight += child->getHeight();  // Sum for vertical stacking
 			} else {
-				totalHeight = std::max(totalHeight, child->getHeight());
+				totalHeight = std::max(totalHeight, child->getHeight());  // Max for horizontal
 			}
 		}
 		return totalHeight + margin * 2.0F;

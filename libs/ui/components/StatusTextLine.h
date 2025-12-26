@@ -47,7 +47,7 @@ class StatusTextLine : public Text {
 				  .hAlign = Foundation::HorizontalAlign::Left,
 				  .vAlign = Foundation::VerticalAlign::Top,
 			  },
-			  .id = args.id.c_str()
+			  // Note: id not passed to avoid dangling pointer (args.id is temporary)
 		  }),
 		  currentStatus(args.status),
 		  indentOffset(args.indent) {

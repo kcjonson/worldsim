@@ -37,7 +37,7 @@ class SectionHeader : public Text {
 				  .hAlign = Foundation::HorizontalAlign::Left,
 				  .vAlign = Foundation::VerticalAlign::Top,
 			  },
-			  .id = args.id.c_str()
+			  // Note: id not passed to avoid dangling pointer (args.id is temporary)
 		  }) {
 		margin = args.margin;
 	}
