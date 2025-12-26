@@ -82,6 +82,9 @@ class Button : public Component, public FocusableBase<Button> {
 	bool handleEvent(InputEvent& event) override;
 	bool containsPoint(Foundation::Vec2 point) const override;
 
+	// Position override to update text position
+	void setPosition(float x, float y) override;
+
 	// State management
 	void setFocused(bool newFocused) { focused = newFocused; }
 	void setDisabled(bool newDisabled) { disabled = newDisabled; }
@@ -111,6 +114,9 @@ class Button : public Component, public FocusableBase<Button> {
 
 	// Get current style based on state/flags
 	const ButtonStyle& getCurrentStyle() const;
+
+	// Update text position when button moves
+	void updateTextPosition();
 };
 
 } // namespace UI
