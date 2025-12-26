@@ -8,13 +8,16 @@ namespace UI {
 
 	TabBar::TabBar(const Args& args)
 		: FocusableBase<TabBar>(args.tabIndex),
-		  position(args.position),
-		  width(args.width),
 		  id(args.id),
 		  m_tabs(args.tabs),
 		  m_selectedId(args.selectedId),
 		  m_appearance(args.appearance),
 		  m_onSelect(args.onSelect) {
+
+		// Initialize base class members
+		position = args.position;
+		size.x = args.width;  // width stored in size.x
+		margin = args.margin;
 
 		// Find initial selected index
 		m_selectedIndex = findTabIndex(m_selectedId);
@@ -93,11 +96,12 @@ namespace UI {
 			return;
 		}
 
-		// Draw bar background
+		// Draw bar background at content position (accounting for margin)
+		Foundation::Vec2 contentPos = getContentPosition();
 		Foundation::Rect barBounds{
-			position.x,
-			position.y,
-			width,
+			contentPos.x,
+			contentPos.y,
+			size.x,
 			m_height};
 		Renderer::Primitives::drawRect({.bounds = barBounds, .style = m_appearance.barBackground, .id = id});
 
@@ -293,7 +297,7 @@ namespace UI {
 
 		// Calculate width for each tab based on text + padding
 		// For simplicity, we'll distribute width evenly for now
-		float availableWidth = width - 2.0F * m_appearance.barPadding;
+		float availableWidth = size.x - 2.0F * m_appearance.barPadding;
 		float totalSpacing = m_appearance.tabSpacing * static_cast<float>(m_tabs.size() - 1);
 		float tabWidth = (availableWidth - totalSpacing) / static_cast<float>(m_tabs.size());
 

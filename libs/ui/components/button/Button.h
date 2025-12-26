@@ -38,14 +38,13 @@ class Button : public Component, public FocusableBase<Button> {
 		std::function<void()> onClick = nullptr;
 		const char*			  id = nullptr;
 		int					  tabIndex = -1; // Tab order (-1 for auto-assign)
+		float				  margin{0.0F};
 	};
 
 	// --- Public Members ---
 
-	// Geometry
-	Foundation::Vec2 position{0.0F, 0.0F};
-	Foundation::Vec2 size{120.0F, 40.0F};
-	std::string		 label;
+	// Geometry: position and size inherited from Component base class
+	std::string label;
 
 	// State
 	State state{State::Normal};
@@ -58,8 +57,7 @@ class Button : public Component, public FocusableBase<Button> {
 	// Callback
 	std::function<void()> onClick;
 
-	// Properties
-	bool		visible{true};
+	// Properties: visible inherited from IComponent base class
 	const char* id = nullptr;
 
 	// --- Public Methods ---
@@ -99,7 +97,8 @@ class Button : public Component, public FocusableBase<Button> {
 
 	// Geometry queries
 	Foundation::Vec2 getCenter() const {
-		return Foundation::Vec2{position.x + size.x * 0.5F, position.y + size.y * 0.5F};
+		Foundation::Vec2 contentPos = getContentPosition();
+		return Foundation::Vec2{contentPos.x + size.x * 0.5F, contentPos.y + size.y * 0.5F};
 	}
 
   private:

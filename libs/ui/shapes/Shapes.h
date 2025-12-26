@@ -4,6 +4,9 @@
 #include "graphics/Color.h"
 #include "graphics/PrimitiveStyles.h"
 #include "math/Types.h"
+
+#include <algorithm>
+#include <cmath>
 #include <optional>
 #include <string>
 
@@ -25,6 +28,7 @@ namespace UI {
 			const char*			  id = nullptr;
 			short				  zIndex{0};
 			bool				  visible{true};
+			float				  margin{0.0F};
 		};
 
 		Foundation::Vec2	  position{0.0F, 0.0F};
@@ -40,7 +44,13 @@ namespace UI {
 			  id(args.id) {
 			zIndex = args.zIndex;
 			IComponent::visible = args.visible;
+			IComponent::margin = args.margin;
 		}
+
+		// Layout API
+		float getWidth() const override { return size.x + margin * 2.0F; }
+		float getHeight() const override { return size.y + margin * 2.0F; }
+		void  setPosition(float x, float y) override { position = {x + margin, y + margin}; }
 
 		void render() override;
 	};
@@ -55,6 +65,7 @@ namespace UI {
 			const char*				id = nullptr;
 			short					zIndex{0};
 			bool					visible{true};
+			float					margin{0.0F};
 		};
 
 		Foundation::Vec2		center{0.0F, 0.0F};
@@ -70,7 +81,13 @@ namespace UI {
 			  id(args.id) {
 			zIndex = args.zIndex;
 			IComponent::visible = args.visible;
+			IComponent::margin = args.margin;
 		}
+
+		// Layout API
+		float getWidth() const override { return radius * 2.0F + margin * 2.0F; }
+		float getHeight() const override { return radius * 2.0F + margin * 2.0F; }
+		void  setPosition(float x, float y) override { center = {x + margin + radius, y + margin + radius}; }
 
 		void render() override;
 	};
@@ -85,6 +102,7 @@ namespace UI {
 			const char*			  id = nullptr;
 			short				  zIndex{0};
 			bool				  visible{true};
+			float				  margin{0.0F};
 		};
 
 		Foundation::Vec2	  start{0.0F, 0.0F};
@@ -100,6 +118,26 @@ namespace UI {
 			  id(args.id) {
 			zIndex = args.zIndex;
 			IComponent::visible = args.visible;
+			IComponent::margin = args.margin;
+		}
+
+		// Layout API
+		float getWidth() const override {
+			return std::abs(end.x - start.x) + margin * 2.0F;
+		}
+		float getHeight() const override {
+			return std::abs(end.y - start.y) + margin * 2.0F;
+		}
+		void setPosition(float x, float y) override {
+			// Translate both endpoints by the delta from current top-left
+			float minX = std::min(start.x, end.x);
+			float minY = std::min(start.y, end.y);
+			float dx = (x + margin) - minX;
+			float dy = (y + margin) - minY;
+			start.x += dx;
+			start.y += dy;
+			end.x += dx;
+			end.y += dy;
 		}
 
 		void render() override;
@@ -117,6 +155,7 @@ namespace UI {
 			const char*			  id = nullptr;
 			short				  zIndex{0};
 			bool				  visible{true};
+			float				  margin{0.0F};
 		};
 
 		Foundation::Vec2	  position{0.0F, 0.0F};
@@ -136,7 +175,15 @@ namespace UI {
 			  id(args.id) {
 			zIndex = args.zIndex;
 			IComponent::visible = args.visible;
+			IComponent::margin = args.margin;
 		}
+
+		// Layout API
+		// Note: Returns explicit width/height if set, otherwise 0
+		// TODO: Compute from font metrics when width/height not specified
+		float getWidth() const override { return width.value_or(0.0F) + margin * 2.0F; }
+		float getHeight() const override { return height.value_or(0.0F) + margin * 2.0F; }
+		void  setPosition(float x, float y) override { position = {x + margin, y + margin}; }
 
 		void render() override;
 	};

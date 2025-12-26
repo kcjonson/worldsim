@@ -36,6 +36,26 @@ namespace UI {
 		/// Override in interactive components to enable hit testing.
 		virtual bool containsPoint(Foundation::Vec2 /*point*/) const { return false; }
 
+		// ========== Layout API ==========
+		// These methods enable automatic layout via LayoutContainer.
+		// Size getters return the element's size INCLUDING margin.
+		// setPosition is called by layout containers to position the element.
+
+		/// Get total width including margin (content width + margin * 2)
+		virtual float getWidth() const = 0;
+
+		/// Get total height including margin (content height + margin * 2)
+		virtual float getHeight() const = 0;
+
+		/// Set position (called by layout containers)
+		/// The element should render its content at position + margin
+		virtual void setPosition(float x, float y) = 0;
+
+		// Margin (CSS-like): adds space around the element
+		// - Reported size includes margin (getWidth/getHeight)
+		// - Content renders at position + margin
+		float margin{0.0F};
+
 		// Z-index for render ordering (higher values render on top)
 		// Valid range: -32768 to 32767 (signed 16-bit)
 		// Set via Args in derived classes, e.g.: Rectangle::Args{.zIndex = 5}
@@ -149,11 +169,26 @@ namespace UI {
 
 	class Component : public ILayer {
 	  public:
-		// Position (for manual propagation - derived classes override setPosition if needed)
+		// Position and size for layout
 		Foundation::Vec2 position{0.0F, 0.0F};
+		Foundation::Vec2 size{0.0F, 0.0F};
 
 		Component() = default;
 		virtual ~Component() = default;
+
+		// ========== IComponent Layout API Implementation ==========
+
+		/// Width including margin
+		float getWidth() const override { return size.x + margin * 2.0F; }
+
+		/// Height including margin
+		float getHeight() const override { return size.y + margin * 2.0F; }
+
+		/// Set position (layout containers call this)
+		void setPosition(float x, float y) override { position = {x, y}; }
+
+		/// Helper: get content position (position + margin) for rendering
+		[[nodiscard]] Foundation::Vec2 getContentPosition() const { return {position.x + margin, position.y + margin}; }
 
 		// Non-copyable (owns arena memory)
 		Component(const Component&) = delete;

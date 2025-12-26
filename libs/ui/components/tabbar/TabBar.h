@@ -49,15 +49,16 @@ namespace UI {
 			TabBarAppearance					   appearance = TabBarStyles::defaultStyle();
 			const char*							   id = nullptr;
 			int									   tabIndex = -1;  // Tab order (-1 for auto-assign)
+			float								   margin{0.0F};
 		};
 
 		// --- Public Members ---
 
-		// Geometry
-		Foundation::Vec2 position{0.0F, 0.0F};
-		float			 width{200.0F};
+		// Geometry: position inherited from Component, width stored separately
+		// Note: size.x stores width, size.y stores computed height
+		// Use getWidth()/getHeight() for layout (includes margin)
 
-		// Properties (visible is inherited from Component)
+		// Properties (visible is inherited from IComponent)
 		const char* id = nullptr;
 
 		// --- Public Methods ---
@@ -94,8 +95,9 @@ namespace UI {
 		// was found during initialization (e.g., all tabs disabled or empty tab list).
 		[[nodiscard]] const std::string& getSelected() const { return m_selectedId; }
 
-		// Query methods
-		[[nodiscard]] float getHeight() const { return m_height; }
+		// Query methods - override IComponent layout API
+		[[nodiscard]] float getWidth() const override { return size.x + margin * 2.0F; }
+		[[nodiscard]] float getHeight() const override { return m_height + margin * 2.0F; }
 		[[nodiscard]] size_t getTabCount() const { return m_tabs.size(); }
 
 	  private:

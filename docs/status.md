@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2025-12-25 (UI Theme System - Complete: design tokens applied to all views)
+Last Updated: 2025-12-25 (UI Composable Views - Complete: ColonistListView and TaskListView migrated to LayoutContainer)
 
 ## Epic/Story/Task Template
 
@@ -251,6 +251,47 @@ while (running) {
 
 ---
 
+### ✅ UI Architecture: Layout System
+**Spec/Documentation:** `/docs/development-log/plans/warm-honking-hedgehog.md`
+**Dependencies:** None
+**Status:** complete
+
+**Goal:** Add automatic layout containers for component positioning via uniform layout API on all UI elements.
+
+**Design Decisions:**
+- **Uniform API on IComponent** — All UI elements (components + shapes) participate in layout via `getWidth()`/`getHeight()`/`setPosition()` + `margin`
+- **CSS-like margin** — Margin adds to position (content draws inside) and adds to reported size
+- **Single LayoutContainer** — Direction attribute (Vertical/Horizontal) instead of separate VStack/HStack
+- **No Spacer, no flex** — Use margins for spacing between elements
+- **Hybrid sizing model:** Stacking axis is child-driven (query sizes), cross axis is parent-driven
+
+**Completed Tasks:**
+- [x] Add layout API to IComponent interface (getWidth/getHeight/setPosition/margin)
+- [x] Add default implementation to Component base class
+- [x] Implement layout API on all Shapes (Rectangle, Circle, Line, Text)
+- [x] Update Button to use base class size/position
+- [x] Update TextInput to use base class size/position
+- [x] Update TabBar to use base class size/position
+- [x] Create LayoutTypes.h (Direction, HAlign, VAlign enums)
+- [x] Implement LayoutContainer (extends Container)
+  - [x] Vertical stacking with HAlign (Left/Center/Right)
+  - [x] Horizontal stacking with VAlign (Top/Center/Bottom)
+  - [x] Dirty flag for layout caching
+  - [x] Container margin offsets children
+- [x] Update CMakeLists.txt
+- [x] Create LayoutScene demo in ui-sandbox
+- [x] Unit tests (14 tests covering all layout scenarios)
+- [x] View Migrations
+  - [x] Create ColonistListItem component (portrait + name + mood bar)
+  - [x] Migrate ColonistListView to use ColonistListItem + LayoutContainer
+  - [x] Create SectionHeader component (generic section title)
+  - [x] Create StatusTextLine component (status-colored task line)
+  - [x] Migrate TaskListView to use SectionHeader + StatusTextLine + LayoutContainer
+
+**Result:** LayoutContainer automatically positions children based on their reported sizes. Components use CSS-like margin for spacing. All UI elements participate in layout through uniform API. ColonistListView and TaskListView now use automatic layout instead of manual yOffset tracking. ✅
+
+---
+
 ## In Progress Epics
 
 (None currently)
@@ -303,38 +344,6 @@ The following MVP epics have all been completed. Detailed task breakdowns are pr
 
 ## Planned Epics (Post-MVP)
 
-### UI Architecture: Layout System
-**Spec/Documentation:** `/docs/technical/ui-framework/layout-system.md`
-**Dependencies:** None
-**Status:** ready
-
-**Goal:** Add VStack/HStack layout containers for automatic component positioning.
-
-**Background:** Current UI requires manual position calculation everywhere. This doesn't scale for complex panels with dynamic content, resizing, or scrollable lists.
-
-**Tasks:**
-- [ ] Create ILayoutable interface
-  - [ ] preferredSize(), minSize(), setBounds()
-  - [ ] Add to existing components (Button, Text, etc.)
-- [ ] Implement VStack
-  - [ ] Vertical stacking with spacing
-  - [ ] HAlign option (Left, Center, Right)
-  - [ ] Auto-height computation
-  - [ ] Layout caching (dirty flag)
-- [ ] Implement HStack
-  - [ ] Horizontal stacking with spacing
-  - [ ] VAlign option (Top, Center, Bottom)
-  - [ ] Auto-width computation
-- [ ] Implement Spacer
-  - [ ] Flexible space component
-  - [ ] Flex weight for proportional sizing
-- [ ] Create LayoutScene demo
-  - [ ] Common patterns (header+content, button row, form)
-  - [ ] Nested layouts
-- [ ] Unit tests for layout computation
-
----
-
 ### UI Architecture: Animation System
 **Spec/Documentation:** `/docs/technical/ui-framework/animation-system.md` (to be written)
 **Dependencies:** None
@@ -361,7 +370,7 @@ The following MVP epics have all been completed. Detailed task breakdowns are pr
 
 ### Main Game UI: Primitives Foundation
 **Spec/Documentation:** `/docs/design/main-game-ui-design.md` (Section 17)
-**Dependencies:** UI Architecture: Layout System (for ScrollContainer content sizing)
+**Dependencies:** ~~UI Architecture: Layout System~~ (complete)
 **Status:** ready
 
 **Goal:** Complete scroll container and generalize progress bar for reuse across UI.

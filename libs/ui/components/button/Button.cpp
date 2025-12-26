@@ -9,12 +9,15 @@ namespace UI {
 
 	Button::Button(const Args& args)
 		: FocusableBase<Button>(args.tabIndex),
-		  position(args.position),
-		  size(args.size),
 		  label(args.label),
 		  disabled(args.disabled),
 		  onClick(args.onClick),
 		  id(args.id) {
+
+		// Initialize base class members (position, size, margin from Component/IComponent)
+		position = args.position;
+		size = args.size;
+		margin = args.margin;
 
 		// Set appearance based on type
 		if (args.type == Type::Primary) {
@@ -29,8 +32,10 @@ namespace UI {
 		}
 
 		// Initialize text label component centered in button
-		const ButtonStyle& style = getCurrentStyle();
-		Foundation::Vec2   centerPos = Foundation::Vec2{position.x + size.x * 0.5F, position.y + size.y * 0.5F};
+		// Use getContentPosition() to account for margin
+		const ButtonStyle&	 style = getCurrentStyle();
+		Foundation::Vec2	 contentPos = getContentPosition();
+		Foundation::Vec2	 centerPos = {contentPos.x + size.x * 0.5F, contentPos.y + size.y * 0.5F};
 
 		// Two-phase init (Text is non-aggregate due to IComponent base class with virtual destructor)
 		labelText.position = centerPos;
@@ -51,8 +56,9 @@ namespace UI {
 		// Update text component to match current button style
 		const ButtonStyle& style = getCurrentStyle();
 
-		// Position text at center of button - Text::render() will handle Center/Middle alignment
-		Foundation::Vec2 centerPos = Foundation::Vec2{position.x + size.x * 0.5F, position.y + size.y * 0.5F};
+		// Position text at center of button content area (accounting for margin)
+		Foundation::Vec2 contentPos = getContentPosition();
+		Foundation::Vec2 centerPos = {contentPos.x + size.x * 0.5F, contentPos.y + size.y * 0.5F};
 
 		labelText.position = centerPos;
 		labelText.text = label;
@@ -71,8 +77,9 @@ namespace UI {
 		// Get current style based on state
 		const ButtonStyle& style = getCurrentStyle();
 
-		// Draw background rectangle (batched)
-		Foundation::Rect bounds{position.x, position.y, size.x, size.y};
+		// Draw background rectangle at content position (accounting for margin)
+		Foundation::Vec2 contentPos = getContentPosition();
+		Foundation::Rect bounds{contentPos.x, contentPos.y, size.x, size.y};
 		Renderer::Primitives::drawRect({.bounds = bounds, .style = style.background, .id = id});
 
 		// Draw label text using Text component
@@ -80,8 +87,9 @@ namespace UI {
 	}
 
 	bool Button::containsPoint(Foundation::Vec2 point) const {
-		return point.x >= position.x && point.x <= position.x + size.x && point.y >= position.y &&
-			   point.y <= position.y + size.y;
+		// Hit testing includes the margin area
+		return point.x >= position.x && point.x <= position.x + getWidth() && point.y >= position.y &&
+			   point.y <= position.y + getHeight();
 	}
 
 	bool Button::handleEvent(InputEvent& event) {

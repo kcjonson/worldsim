@@ -8,16 +8,22 @@
 // - Recent Tasks: completed task history (future)
 //
 // Appears above EntityInfoView when user clicks "Tasks: Show"
+//
+// Now uses LayoutContainer for automatic content layout.
 
 #include <component/Component.h>
+#include <components/SectionHeader.h>
+#include <components/StatusTextLine.h>
 #include <ecs/EntityID.h>
 #include <ecs/World.h>
 #include <graphics/Color.h>
 #include <input/InputEvent.h>
 #include <layer/Layer.h>
+#include <layout/LayoutContainer.h>
 #include <shapes/Shapes.h>
 
 #include <functional>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -27,10 +33,10 @@ namespace world_sim {
 class TaskListView : public UI::Component {
   public:
 	struct Args {
-		float				  width = 360.0F;	 // 2x info panel width
-		float				  maxHeight = 400.0F; // Maximum height before scrolling
-		std::function<void()> onClose;			 // Called when close button clicked
-		std::string			  id = "task_list";
+		float width = 360.0F;     // 2x info panel width
+		float maxHeight = 400.0F; // Maximum height before scrolling
+		std::function<void()> onClose; // Called when close button clicked
+		std::string id = "task_list";
 	};
 
 	explicit TaskListView(const Args& args);
@@ -43,26 +49,26 @@ class TaskListView : public UI::Component {
 	/// Set panel position (bottom-left alignment, appears above info panel)
 	/// @param x Left edge X coordinate
 	/// @param bottomY Bottom edge Y coordinate (top of info panel)
-	void setPosition(float x, float bottomY);
+	void setPosition(float x, float bottomY) override;
 
 	/// Get current panel height (for layout calculations)
-	[[nodiscard]] float getHeight() const { return m_panelHeight; }
+	[[nodiscard]] float getHeight() const override { return m_panelHeight + margin * 2.0F; }
 
 	/// Get current panel width
-	[[nodiscard]] float getWidth() const { return m_panelWidth; }
+	[[nodiscard]] float getWidth() const override { return m_panelWidth + margin * 2.0F; }
 
 	/// Handle input event, returns true if consumed
 	bool handleEvent(UI::InputEvent& event) override;
 
+	/// Render the panel
+	void render() override;
+
   private:
 	/// Rebuild panel content from decision trace
-	void renderContent(const ecs::World& world, ecs::EntityID colonistId);
+	void rebuildContent(const ecs::World& world, ecs::EntityID colonistId);
 
-	/// Hide all text elements
+	/// Hide all content elements
 	void hideContent();
-
-	/// Format a task option for display
-	[[nodiscard]] std::string formatOption(const struct EvaluatedOption& option) const;
 
 	// Close button callback
 	std::function<void()> m_onClose;
@@ -72,24 +78,23 @@ class TaskListView : public UI::Component {
 	float m_maxHeight;
 	float m_panelHeight = 200.0F;
 
-	// Position (X = left edge, Y = bottom edge)
+	// Position (X = left edge, Y = top edge after adjustment)
 	float m_panelX = 0.0F;
 	float m_panelY = 0.0F;
+	float m_bottomY = 0.0F; // Original bottom Y for recalculating position
 
-	// UI elements
+	// Cache to avoid rebuilding content every frame
+	ecs::EntityID lastColonistId{};
+	bool contentBuilt = false;
+
+	// Fixed UI elements (manually positioned)
 	UI::LayerHandle m_backgroundHandle;
 	UI::LayerHandle m_closeButtonBgHandle;
 	UI::LayerHandle m_closeButtonTextHandle;
 	UI::LayerHandle m_titleHandle;
 
-	// Section headers
-	UI::LayerHandle m_currentTaskHeader;
-	UI::LayerHandle m_upNextHeader;
-
-	// Content text elements (pooled)
-	static constexpr size_t kMaxTextLines = 12;
-	std::vector<UI::LayerHandle> m_textHandles;
-	size_t m_usedTextLines = 0;
+	// Content layout container
+	std::unique_ptr<UI::LayoutContainer> m_contentLayout;
 
 	// Layout constants
 	static constexpr float kPadding = 10.0F;

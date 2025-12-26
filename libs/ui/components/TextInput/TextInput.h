@@ -73,14 +73,13 @@ class TextInput : public Component, public FocusableBase<TextInput> {
 		int				  tabIndex = -1; // Tab order (-1 for auto-assign)
 		const char*		  id = nullptr;
 		bool			  enabled = true;
+		float			  margin{0.0F};
 		std::function<void(const std::string&)> onChange; // Called when text changes
 	};
 
 	// --- Public Members ---
 
-	// Geometry
-	Foundation::Vec2 position{0.0F, 0.0F};
-	Foundation::Vec2 size{200.0F, 32.0F};
+	// Geometry: position and size inherited from Component base class
 
 	// Text content
 	std::string text;
@@ -93,13 +92,12 @@ class TextInput : public Component, public FocusableBase<TextInput> {
 	std::function<void(const std::string&)> onChange;
 
 	// State
-	size_t						cursorPosition{0};	 // Byte offset in UTF-8 string
-	std::optional<TextSelection> selection;			 // Active selection (Phase 2)
-	float						cursorBlinkTimer{0.0F}; // For cursor blink animation
-	float						horizontalScroll{0.0F}; // Scroll offset for overflow text
+	size_t						 cursorPosition{0};		// Byte offset in UTF-8 string
+	std::optional<TextSelection> selection;				// Active selection (Phase 2)
+	float						 cursorBlinkTimer{0.0F};	// For cursor blink animation
+	float						 horizontalScroll{0.0F};	// Scroll offset for overflow text
 
-	// Properties
-	bool		visible{true};
+	// Properties: visible inherited from IComponent base class
 	const char* id = nullptr;
 	bool		enabled{true};
 	bool		focused{false};

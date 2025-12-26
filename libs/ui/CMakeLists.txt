@@ -9,6 +9,7 @@ add_library(ui
     components/TextInput/TextInput.cpp
     focus/FocusManager.cpp
     input/InputEvent.cpp
+    layout/LayoutContainer.cpp
 )
 
 target_include_directories(ui
