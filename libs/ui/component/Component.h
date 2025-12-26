@@ -185,13 +185,10 @@ namespace UI {
 		float getHeight() const override { return size.y + margin * 2.0F; }
 
 		/// Set position (layout containers call this)
-		/// Applies margin offset like shapes do for consistency
-		void setPosition(float x, float y) override { position = {x + margin, y + margin}; }
+		void setPosition(float x, float y) override { position = {x, y}; }
 
-		/// Helper: get content position (same as position since margin applied in setPosition)
-		[[nodiscard]] Foundation::Vec2 getContentPosition() const {
-			return position;
-		}
+		/// Helper: get content position (position + margin) for rendering
+		[[nodiscard]] Foundation::Vec2 getContentPosition() const { return {position.x + margin, position.y + margin}; }
 
 		// Non-copyable (owns arena memory)
 		Component(const Component&) = delete;
