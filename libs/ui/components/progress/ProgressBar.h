@@ -25,18 +25,18 @@ class ProgressBar : public Component {
 	struct Args {
 		Foundation::Vec2 position{0.0F, 0.0F};
 		Foundation::Vec2 size{100.0F, 12.0F};
-		float			 value = 1.0F; // 0.0 to 1.0 (normalized)
+		float			 value{1.0F}; // 0.0 to 1.0 (normalized)
 		Foundation::Color fillColor{Theme::Colors::statusActive};
 		Foundation::Color backgroundColor{0.2F, 0.2F, 0.25F, 1.0F};
 		Foundation::Color borderColor{0.3F, 0.3F, 0.35F, 1.0F};
-		float			  borderWidth = 1.0F;
+		float			  borderWidth{1.0F};
 
 		// Optional label (empty string = no label, bar takes full width)
-		std::string		  label = "";
-		float			  labelWidth = 60.0F;  // Width reserved for label
-		float			  labelGap = 5.0F;	   // Gap between label and bar
+		std::string		  label{};
+		float			  labelWidth{60.0F};  // Width reserved for label
+		float			  labelGap{5.0F};	   // Gap between label and bar
 		Foundation::Color labelColor{1.0F, 1.0F, 1.0F, 1.0F};
-		float			  labelFontSize = 12.0F;
+		float			  labelFontSize{12.0F};
 
 		const char* id = nullptr;
 		float		margin{0.0F};

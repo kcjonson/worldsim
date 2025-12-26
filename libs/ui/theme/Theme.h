@@ -58,6 +58,11 @@ namespace UI::Theme {
 		inline constexpr Foundation::Color statusBlocked{0.90F, 0.50F, 0.50F, 1.0F};
 		inline constexpr Foundation::Color statusIdle{0.60F, 0.60F, 0.65F, 1.0F};
 
+		// Scrollbar
+		inline constexpr Foundation::Color scrollbarTrack{0.15F, 0.15F, 0.20F, 0.8F};
+		inline constexpr Foundation::Color scrollbarThumb{0.4F, 0.4F, 0.5F, 0.9F};
+		inline constexpr Foundation::Color scrollbarThumbActive{0.6F, 0.6F, 0.7F, 1.0F};
+
 	} // namespace Colors
 
 	// === Spacing ===

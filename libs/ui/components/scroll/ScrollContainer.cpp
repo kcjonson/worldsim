@@ -98,15 +98,15 @@ void ScrollContainer::render() {
 				viewportSize.y
 			},
 			.style = {
-				.fill = Foundation::Color(0.15F, 0.15F, 0.20F, 0.8F)
+				.fill = Theme::Colors::scrollbarTrack
 			}
 		});
 
 		// Thumb
 		float currentThumbY = contentPos.y + thumbY;
 		Foundation::Color thumbColor = isDraggingThumb
-			? Foundation::Color(0.6F, 0.6F, 0.7F, 1.0F)	 // Brighter when dragging
-			: Foundation::Color(0.4F, 0.4F, 0.5F, 0.9F); // Normal
+			? Theme::Colors::scrollbarThumbActive
+			: Theme::Colors::scrollbarThumb;
 
 		Renderer::Primitives::drawRect({
 			.bounds = Foundation::Rect{
@@ -151,8 +151,9 @@ bool ScrollContainer::handleEvent(InputEvent& event) {
 
 	// Handle scroll wheel
 	if (event.type == InputEvent::Type::Scroll) {
-		// Negative scrollDelta means scroll up (content moves down)
-		// We want natural scrolling: scroll up = see content higher up
+		// scrollDelta < 0: scroll wheel up   -> see higher content (scroll position decreases)
+		// scrollDelta > 0: scroll wheel down -> see lower content  (scroll position increases)
+		// Negation implements natural scrolling direction
 		scrollBy(-event.scrollDelta * kScrollSpeed);
 		event.consume();
 		return true;

@@ -28,16 +28,16 @@ class NeedBar : public UI::Component {
 
 	explicit NeedBar(const Args& args);
 
-	// Update the bar value (0.0 - 100.0)
+	/// Update the bar value (0.0 - 100.0)
 	void setValue(float newValue);
 
-	// Update the label text
+	/// Update the label text
 	void setLabel(const std::string& newLabel);
 
-	// Update position (moves all child elements)
+	/// Update position (moves all child elements)
 	void setPosition(Foundation::Vec2 newPos);
 
-	// Get the total height including label
+	/// Get the total height including label
 	[[nodiscard]] float getTotalHeight() const;
 
   private:
