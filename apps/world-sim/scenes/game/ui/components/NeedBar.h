@@ -2,24 +2,20 @@
 
 // NeedBar - Progress bar for displaying colonist need values
 //
-// Displays a horizontal bar with:
-// - Label text (left)
-// - Background bar
-// - Fill bar (width proportional to value 0-100%)
-// - Color coding (green → yellow → red based on value)
+// Wraps ProgressBar with need-specific coloring:
+// - Red (0%) → Yellow (50%) → Green (100%)
+// - Low values indicate depleted need (bad), high values indicate satisfied (good)
 //
-// Uses Container-based UI tree pattern (extends Component, uses addChild).
+// Uses 0-100 scale for API compatibility (internally converts to 0-1).
 
-#include <component/Component.h>
+#include <components/progress/ProgressBar.h>
 #include <graphics/Color.h>
-#include <layer/Layer.h>
-#include <shapes/Shapes.h>
+#include <math/Types.h>
 
 #include <string>
 
 namespace world_sim {
 
-/// A horizontal progress bar for displaying need values
 class NeedBar : public UI::Component {
   public:
 	struct Args {
@@ -32,34 +28,29 @@ class NeedBar : public UI::Component {
 
 	explicit NeedBar(const Args& args);
 
-	/// Update the bar value (0.0 - 100.0)
+	// Update the bar value (0.0 - 100.0)
 	void setValue(float newValue);
 
-	/// Update the label text
+	// Update the label text
 	void setLabel(const std::string& newLabel);
 
-	/// Update position (moves all child elements)
+	// Update position (moves all child elements)
 	void setPosition(Foundation::Vec2 newPos);
 
-	/// Get the total height including label
+	// Get the total height including label
 	[[nodiscard]] float getTotalHeight() const;
 
   private:
-	/// Calculate fill color based on value (green → yellow → red)
+	// Calculate fill color based on value (green → yellow → red)
 	[[nodiscard]] static Foundation::Color valueToColor(float newValue);
 
-	// Handles to child shapes for dynamic updates
-	UI::LayerHandle labelHandle;
-	UI::LayerHandle backgroundHandle;
-	UI::LayerHandle fillHandle;
+	// Handle to the progress bar child
+	UI::LayerHandle progressBarHandle;
 
 	float value = 100.0F;
-	float width;
 	float height;
-	float barWidth; // Cached bar width for setValue updates
-	Foundation::Vec2 currentPosition; // Current position for setPosition updates
 
-	// Layout constants
+	// Layout constants (same as before for API compatibility)
 	static constexpr float kLabelWidth = 60.0F;
 	static constexpr float kBarGap = 5.0F;
 	static constexpr float kLabelFontSize = 12.0F;

@@ -5,66 +5,44 @@
 namespace world_sim {
 
 NeedBar::NeedBar(const Args& args)
-	: width(args.width)
-	, height(args.height)
-	, currentPosition(args.position) {
+	: height(args.height) {
 
-	// Calculate bar width (total width minus label space)
-	barWidth = width - kLabelWidth - kBarGap;
+	// Set base class members
+	position = args.position;
+	size = {args.width, args.height};
 
-	// Add label as child
-	labelHandle = addChild(UI::Text(UI::Text::Args{
+	// Create ProgressBar as child with label support
+	progressBarHandle = addChild(UI::ProgressBar(UI::ProgressBar::Args{
 		.position = args.position,
-		.text = args.label,
-		.style =
-			{
-				.color = Foundation::Color::white(),
-				.fontSize = kLabelFontSize,
-				.hAlign = Foundation::HorizontalAlign::Left,
-				.vAlign = Foundation::VerticalAlign::Top,
-			},
-		.id = (args.id + "_label").c_str()}));
-
-	// Bar position (after label)
-	float barX = args.position.x + kLabelWidth + kBarGap;
-	float barY = args.position.y;
-
-	// Add background bar (dark gray) as child
-	backgroundHandle = addChild(UI::Rectangle(UI::Rectangle::Args{
-		.position = {barX, barY},
-		.size = {barWidth, height},
-		.style =
-			{
-				.fill = Foundation::Color(0.2F, 0.2F, 0.25F, 1.0F),
-				.border = Foundation::BorderStyle{.color = Foundation::Color(0.3F, 0.3F, 0.35F, 1.0F), .width = 1.0F}},
-		.id = (args.id + "_bg").c_str()}));
-
-	// Add fill bar (starts at full width, colored green) as child
-	fillHandle = addChild(UI::Rectangle(UI::Rectangle::Args{
-		.position = {barX + 1.0F, barY + 1.0F}, // Inset by border
-		.size = {barWidth - 2.0F, height - 2.0F},
-		.style = {.fill = valueToColor(value)},
-		.id = (args.id + "_fill").c_str()}));
+		.size = {args.width, args.height},
+		.value = value / 100.0F, // Convert 0-100 to 0-1
+		.fillColor = valueToColor(value),
+		.backgroundColor = Foundation::Color(0.2F, 0.2F, 0.25F, 1.0F),
+		.borderColor = Foundation::Color(0.3F, 0.3F, 0.35F, 1.0F),
+		.borderWidth = 1.0F,
+		.label = args.label,
+		.labelWidth = kLabelWidth,
+		.labelGap = kBarGap,
+		.labelColor = Foundation::Color::white(),
+		.labelFontSize = kLabelFontSize,
+	}));
 }
 
 void NeedBar::setValue(float newValue) {
 	value = std::clamp(newValue, 0.0F, 100.0F);
 
-	// Update fill rectangle via handle
-	auto* fill = getChild<UI::Rectangle>(fillHandle);
-	if (fill != nullptr) {
-		// Update fill width based on value
-		float fillWidth = (barWidth - 2.0F) * (value / 100.0F);
-		fill->size.x = std::max(0.0F, fillWidth);
-
-		// Update color based on value
-		fill->style.fill = valueToColor(value);
+	// Update progress bar via handle
+	auto* progressBar = getChild<UI::ProgressBar>(progressBarHandle);
+	if (progressBar != nullptr) {
+		progressBar->setValue(value / 100.0F);		 // Convert 0-100 to 0-1
+		progressBar->setFillColor(valueToColor(value)); // Apply need-specific gradient
 	}
 }
 
 void NeedBar::setLabel(const std::string& newLabel) {
-	if (auto* label = getChild<UI::Text>(labelHandle)) {
-		label->text = newLabel;
+	auto* progressBar = getChild<UI::ProgressBar>(progressBarHandle);
+	if (progressBar != nullptr) {
+		progressBar->setLabel(newLabel);
 	}
 }
 
@@ -73,26 +51,11 @@ float NeedBar::getTotalHeight() const {
 }
 
 void NeedBar::setPosition(Foundation::Vec2 newPos) {
-	currentPosition = newPos;
-	position = newPos; // Also update base class position for consistency
+	position = newPos;
 
-	// Update label position
-	if (auto* label = getChild<UI::Text>(labelHandle)) {
-		label->position = newPos;
-	}
-
-	// Bar position (after label)
-	float barX = newPos.x + kLabelWidth + kBarGap;
-	float barY = newPos.y;
-
-	// Update background position
-	if (auto* bg = getChild<UI::Rectangle>(backgroundHandle)) {
-		bg->position = {barX, barY};
-	}
-
-	// Update fill position (inset by border)
-	if (auto* fill = getChild<UI::Rectangle>(fillHandle)) {
-		fill->position = {barX + 1.0F, barY + 1.0F};
+	auto* progressBar = getChild<UI::ProgressBar>(progressBarHandle);
+	if (progressBar != nullptr) {
+		progressBar->setPosition(newPos);
 	}
 }
 

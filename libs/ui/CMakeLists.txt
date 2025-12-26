@@ -7,6 +7,8 @@ add_library(ui
     components/button/Button.cpp
     components/tabbar/TabBar.cpp
     components/TextInput/TextInput.cpp
+    components/progress/ProgressBar.cpp
+    components/scroll/ScrollContainer.cpp
     focus/FocusManager.cpp
     input/InputEvent.cpp
     layout/LayoutContainer.cpp
