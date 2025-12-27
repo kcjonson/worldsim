@@ -41,6 +41,7 @@ class ContextMenu : public Component, public FocusableBase<ContextMenu> {
 	struct Args {
 		std::vector<ContextMenuItem> items;
 		std::function<void()>		 onClose;
+		int							 tabIndex = -1;
 	};
 
 	explicit ContextMenu(const Args& args);

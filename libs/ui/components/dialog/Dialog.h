@@ -97,6 +97,7 @@ class Dialog : public Component, public FocusableBase<Dialog> {
 	float				  opacity{0.0F};
 	float				  stateTimer{0.0F};
 	bool				  closeButtonHovered{false};
+	bool				  cleanupPerformed{false};
 
 	// Screen dimensions (set on open)
 	float				  screenWidth{800.0F};

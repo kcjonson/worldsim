@@ -12,7 +12,7 @@ namespace UI {
 	constexpr float kItemFontSize = 12.0F;
 
 	ContextMenu::ContextMenu(const Args& args)
-		: FocusableBase<ContextMenu>(-1), // Auto-assign tab index
+		: FocusableBase<ContextMenu>(args.tabIndex),
 		  items(args.items),
 		  onClose(args.onClose) {
 		visible = false;

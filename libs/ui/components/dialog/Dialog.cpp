@@ -29,6 +29,12 @@ Dialog::~Dialog() {
 }
 
 void Dialog::performCleanup() {
+	// Prevent double cleanup (destructor + close animation completion)
+	if (cleanupPerformed) {
+		return;
+	}
+	cleanupPerformed = true;
+
 	if (!contentFocusables.empty()) {
 		FocusManager::Get().popFocusScope();
 	}
@@ -50,6 +56,7 @@ void Dialog::open(float width, float height) {
 	stateTimer = 0.0F;
 	opacity = 0.0F;
 	visible = true;
+	cleanupPerformed = false; // Reset for new open/close cycle
 
 	// Take focus so we receive keyboard input (Escape to close)
 	FocusManager::Get().setFocus(this);

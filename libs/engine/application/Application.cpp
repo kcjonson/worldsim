@@ -15,6 +15,11 @@
 
 namespace engine {
 
+	// GLFW modifier bit flags (matches GLFW_MOD_* values)
+	constexpr int kModShift = 0x0001;
+	constexpr int kModControl = 0x0002;
+	constexpr int kModAlt = 0x0004;
+
 	Application::Application(GLFWwindow* window)
 		: window(window) {
 		if (window == nullptr) {
@@ -131,13 +136,13 @@ namespace engine {
 				// Build modifier flags from current key state (GLFW modifier bit values)
 				int mods = 0;
 				if (inputManager->isKeyDown(engine::Key::LeftShift) || inputManager->isKeyDown(engine::Key::RightShift)) {
-					mods |= 0x0001; // GLFW_MOD_SHIFT
+					mods |= kModShift;
 				}
 				if (inputManager->isKeyDown(engine::Key::LeftControl) || inputManager->isKeyDown(engine::Key::RightControl)) {
-					mods |= 0x0002; // GLFW_MOD_CONTROL
+					mods |= kModControl;
 				}
 				if (inputManager->isKeyDown(engine::Key::LeftAlt) || inputManager->isKeyDown(engine::Key::RightAlt)) {
-					mods |= 0x0004; // GLFW_MOD_ALT
+					mods |= kModAlt;
 				}
 
 				// MouseMove for hover states
