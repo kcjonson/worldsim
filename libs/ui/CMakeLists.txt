@@ -16,6 +16,10 @@ add_library(ui
     components/select/Select.cpp
     components/toast/Toast.cpp
     components/toast/ToastStack.cpp
+    components/dialog/Dialog.cpp
+    components/tooltip/Tooltip.cpp
+    components/tooltip/TooltipManager.cpp
+    components/contextmenu/ContextMenu.cpp
     focus/FocusManager.cpp
     input/InputEvent.cpp
     layout/LayoutContainer.cpp

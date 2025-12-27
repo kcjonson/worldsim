@@ -892,7 +892,7 @@ These are the fundamental building blocks:
 | Component | Description | Used In |
 |-----------|-------------|---------|
 | **Panel** | Rectangular container with optional border/background | Inspect panel, resources panel, debug info |
-| **Modal Dialog** | Full-screen overlay with centered content, blocks input behind | Colonist Details Modal, management screens |
+| **Dialog** | Full-screen overlay with centered content, blocks input behind | Colonist Details, management screens |
 | **Scrollable Container** | Container with vertical scrollbar when content overflows | Colonist list, resources tree, bill lists |
 | **Tab Container** | Container with tab buttons that switch visible content | Colonist modal tabs (Bio/Health/Social/Gear/Memory) |
 
