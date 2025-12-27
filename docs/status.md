@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2025-12-27 (Main Game UI: Primitives Foundation - Complete: ProgressBar + ScrollContainer with 25 tests, NeedBar refactored)
+Last Updated: 2025-12-27 (Main Game UI: Complex Components - Complete)
 
 ## Epic/Story/Task Template
 
@@ -292,9 +292,52 @@ while (running) {
 
 ---
 
+### ✅ Main Game UI: Complex Components
+**Spec/Documentation:** `/docs/design/main-game-ui-design.md` (Section 17)
+**Dependencies:** ~~Main Game UI: Primitives Foundation~~ (complete)
+**Status:** complete
+
+**Goal:** Build components for information-dense screens (resources, dropdowns, notifications).
+
+**Completed Tasks:**
+- [x] Icon Component
+  - [x] SVG rendering with tessellation pipeline (loadSVG → Tessellator → drawTriangles)
+  - [x] Tinting/colorization support
+  - [x] Unit tests (11)
+  - [x] IconScene demo
+- [x] Tree View Component
+  - [x] Expandable/collapsible nodes (▶/▼)
+  - [x] Nested hierarchy with indentation
+  - [x] Flattened rows pattern for efficient iteration
+  - [x] Unit tests (16)
+  - [x] TreeViewScene demo
+- [x] Dropdown Button Component
+  - [x] Button with ▾ indicator
+  - [x] Expands menu panel on click
+  - [x] Closes on focus lost via FocusableBase
+  - [x] Keyboard navigation (Up/Down/Enter/Escape)
+  - [x] Disabled item support
+  - [x] Unit tests (17)
+  - [x] DropdownScene demo
+- [x] Toast + Toast Stack
+  - [x] Notification popup with title, message, dismiss button
+  - [x] Auto-dismiss timer with countdown display
+  - [x] Persistent mode (autoDismissTime = 0)
+  - [x] Severity styling (Info/Warning/Critical colors)
+  - [x] Fade in/out animation
+  - [x] ToastStack container with vertical stacking
+  - [x] Anchor positions (TopRight, TopLeft, BottomRight, BottomLeft)
+  - [x] Max toasts limit with oldest removal
+  - [x] Unit tests (23: 14 Toast + 9 ToastStack)
+  - [x] ToastScene demo
+
+**Result:** All complex components implemented with theme-based styling, layout integration, and comprehensive test coverage (67 new tests total). Components use minimal constructors with sensible defaults. ✅
+
+---
+
 ## In Progress Epics
 
-(None currently)
+*No epics currently in progress*
 
 ---
 
@@ -399,33 +442,6 @@ The following MVP epics have all been completed. Detailed task breakdowns are pr
   - [x] ProgressBar showcase with different colors
 
 **Result:** Generic progress bars and scrollable containers available in `libs/ui/` for reuse across all UI. NeedBar simplified to thin wrapper. ✅
-
----
-
-### Main Game UI: Complex Components
-**Spec/Documentation:** `/docs/design/main-game-ui-design.md` (Section 17)
-**Dependencies:** ~~Main Game UI: Primitives Foundation~~ (complete)
-**Status:** ready
-
-**Goal:** Build components for information-dense screens (resources, dropdowns, notifications).
-
-**Tasks:**
-- [ ] Icon/Image Component
-  - [ ] Texture rendering for portraits, icons
-  - [ ] Tinting/colorization support
-- [ ] Tree View Component
-  - [ ] Expandable/collapsible nodes (▶/▼)
-  - [ ] Nested hierarchy with indentation
-  - [ ] Integrates with ScrollContainer
-- [ ] Dropdown Button Component
-  - [ ] Button with ▾ indicator
-  - [ ] Expands menu panel on click
-  - [ ] Closes on outside click
-- [ ] Toast + Toast Stack
-  - [ ] Notification popup with title, description, icon
-  - [ ] Auto-dismiss timer or persistent (click to dismiss)
-  - [ ] Severity styling (critical/warning/info colors)
-  - [ ] Stack container with vertical arrangement
 
 ---
 

@@ -9,6 +9,13 @@ add_library(ui
     components/TextInput/TextInput.cpp
     components/progress/ProgressBar.cpp
     components/scroll/ScrollContainer.cpp
+    components/icon/Icon.cpp
+    components/treeview/TreeView.cpp
+    components/dropdown/DropdownButton.cpp
+    components/menu/Menu.cpp
+    components/select/Select.cpp
+    components/toast/Toast.cpp
+    components/toast/ToastStack.cpp
     focus/FocusManager.cpp
     input/InputEvent.cpp
     layout/LayoutContainer.cpp

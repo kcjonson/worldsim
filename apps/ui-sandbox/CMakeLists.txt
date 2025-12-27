@@ -20,6 +20,10 @@ add_executable(ui-sandbox
     scenes/SvgScene.cpp
     scenes/LayoutScene.cpp
     scenes/ScrollScene.cpp
+    scenes/IconScene.cpp
+    scenes/TreeViewScene.cpp
+    scenes/DropdownScene.cpp
+    scenes/ToastScene.cpp
 )
 
 target_include_directories(ui-sandbox
