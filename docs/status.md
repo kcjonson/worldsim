@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2025-12-25 (UI Composable Views - Complete: ColonistListView and TaskListView migrated to LayoutContainer)
+Last Updated: 2025-12-26 (Main Game UI: Primitives Foundation - Complete: ProgressBar, ScrollContainer, NeedBar refactored)
 
 ## Epic/Story/Task Template
 
@@ -368,37 +368,43 @@ The following MVP epics have all been completed. Detailed task breakdowns are pr
 
 ---
 
-### Main Game UI: Primitives Foundation
+### ✅ Main Game UI: Primitives Foundation
 **Spec/Documentation:** `/docs/design/main-game-ui-design.md` (Section 17)
 **Dependencies:** ~~UI Architecture: Layout System~~ (complete)
-**Status:** ready
+**Status:** complete
 
 **Goal:** Complete scroll container and generalize progress bar for reuse across UI.
 
-**Existing Infrastructure:**
-- Container class with `setClip()` + `setContentOffset()` (scroll mechanics work)
-- NeedBar component (progress bar with label + color gradient)
-- ClipScene demo showing keyboard-controlled scrolling
+**Completed Tasks:**
+- [x] ProgressBar Component (`libs/ui/components/progress/`)
+  - [x] Generic progress bar with normalized 0-1 value
+  - [x] Configurable fill color (not value-based gradient)
+  - [x] Optional label support (label left, bar right)
+  - [x] 10 unit tests covering construction, value clamping, positioning
+- [x] NeedBar Refactor
+  - [x] NeedBar now wraps ProgressBar internally
+  - [x] API unchanged (0-100 scale, valueToColor gradient)
+  - [x] Visual appearance identical
+- [x] ScrollContainer Component (`libs/ui/components/scroll/`)
+  - [x] Encapsulates scroll logic (content height, viewport, scroll bounds)
+  - [x] Mouse wheel event handling
+  - [x] Scrollbar visuals (track + thumb)
+  - [x] Scrollbar thumb dragging
+  - [x] Click track to jump to position
+  - [x] Auto content height detection from LayoutContainer child
+- [x] ScrollScene Demo in ui-sandbox
+  - [x] Basic scrollable list
+  - [x] Scrollable button list with LayoutContainer
+  - [x] ProgressBar showcase with different colors
 
-**Tasks:**
-- [ ] ScrollContainer Component
-  - [ ] Encapsulate scroll logic (content height, viewport, scroll bounds)
-  - [ ] Mouse wheel event handling
-  - [ ] Scrollbar visuals (track + thumb)
-  - [ ] Integration with VStack for auto content height
-  - [ ] Demo scene in ui-sandbox
-- [ ] ProgressBar Component (generalize NeedBar)
-  - [ ] Move to libs/ui/components/
-  - [ ] Configurable fill color (not just need-based gradient)
-  - [ ] Optional label (NeedBar always has label)
-  - [ ] Unit tests
+**Result:** Generic progress bars and scrollable containers available in `libs/ui/` for reuse across all UI. NeedBar simplified to thin wrapper. ✅
 
 ---
 
 ### Main Game UI: Complex Components
 **Spec/Documentation:** `/docs/design/main-game-ui-design.md` (Section 17)
-**Dependencies:** Main Game UI: Primitives Foundation
-**Status:** planned
+**Dependencies:** ~~Main Game UI: Primitives Foundation~~ (complete)
+**Status:** ready
 
 **Goal:** Build components for information-dense screens (resources, dropdowns, notifications).
 
@@ -424,8 +430,8 @@ The following MVP epics have all been completed. Detailed task breakdowns are pr
 
 ### Main Game UI: Interaction Components
 **Spec/Documentation:** `/docs/design/main-game-ui-design.md` (Sections 8, 14, 17)
-**Dependencies:** Main Game UI: Primitives Foundation
-**Status:** planned
+**Dependencies:** ~~Main Game UI: Primitives Foundation~~ (complete)
+**Status:** ready
 
 **Goal:** Build modal, tooltip, and context menu systems.
 

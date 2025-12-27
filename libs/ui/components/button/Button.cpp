@@ -33,9 +33,9 @@ namespace UI {
 
 		// Initialize text label component centered in button
 		// Use getContentPosition() to account for margin
-		const ButtonStyle&	 style = getCurrentStyle();
-		Foundation::Vec2	 contentPos = getContentPosition();
-		Foundation::Vec2	 centerPos = {contentPos.x + size.x * 0.5F, contentPos.y + size.y * 0.5F};
+		const ButtonStyle& style = getCurrentStyle();
+		Foundation::Vec2   contentPos = getContentPosition();
+		Foundation::Vec2   centerPos = {contentPos.x + size.x * 0.5F, contentPos.y + size.y * 0.5F};
 
 		// Two-phase init (Text is non-aggregate due to IComponent base class with virtual destructor)
 		labelText.position = centerPos;
@@ -52,8 +52,16 @@ namespace UI {
 	// Destructor and move operations are = default in header.
 	// FocusableBase handles FocusManager registration/unregistration.
 
+	void Button::setPosition(float x, float y) {
+		position = {x, y};
+		updateTextPosition();
+	}
+
 	void Button::update(float /*deltaTime*/) {
-		// Update text component to match current button style
+		// Text position is updated in setPosition() - no per-frame work needed
+	}
+
+	void Button::updateTextPosition() {
 		const ButtonStyle& style = getCurrentStyle();
 
 		// Position text at center of button content area (accounting for margin)
@@ -88,8 +96,7 @@ namespace UI {
 
 	bool Button::containsPoint(Foundation::Vec2 point) const {
 		// Hit testing includes the margin area
-		return point.x >= position.x && point.x <= position.x + getWidth() && point.y >= position.y &&
-			   point.y <= position.y + getHeight();
+		return point.x >= position.x && point.x <= position.x + getWidth() && point.y >= position.y && point.y <= position.y + getHeight();
 	}
 
 	bool Button::handleEvent(InputEvent& event) {

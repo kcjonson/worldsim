@@ -32,7 +32,8 @@ namespace ui_sandbox {
 	X(SdfMinimal)  \
 	X(InputTest)   \
 	X(Tree)        \
-	X(Layout)
+	X(Layout)      \
+	X(Scroll)
 	// clang-format on
 
 	/// @brief Scene types for ui-sandbox application (auto-generated from SCENE_LIST)

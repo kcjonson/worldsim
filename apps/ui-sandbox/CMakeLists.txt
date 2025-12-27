@@ -19,6 +19,7 @@ add_executable(ui-sandbox
     scenes/ClipScene.cpp
     scenes/SvgScene.cpp
     scenes/LayoutScene.cpp
+    scenes/ScrollScene.cpp
 )
 
 target_include_directories(ui-sandbox

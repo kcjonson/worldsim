@@ -64,6 +64,7 @@ Development log entries are **immutable history**. Don't update old entries — 
 
 #### December 2025
 
+- [2025-12-26 - Main Game UI: Primitives Foundation](./entries/2025-12-26-primitives-foundation.md)
 - [2025-12-24 - FocusManager Simplification (CRTP Pattern)](./entries/2025-12-24-focusmanager-simplification.md)
 
 #### October 2025
@@ -84,9 +85,10 @@ Development log entries are **immutable history**. Don't update old entries — 
 
 ## Quick Stats
 
-- **Total Entries:** 7
-- **Latest Entry:** 2025-12-24
+- **Total Entries:** 8
+- **Latest Entry:** 2025-12-26
 - **Major Milestones:**
+  - UI Primitives Foundation (ProgressBar, ScrollContainer) (2025-12-26)
   - FocusManager CRTP simplification (2025-12-24)
   - Vector graphics research complete (2025-10-24)
   - Multiplayer architecture defined (2025-10-24)
