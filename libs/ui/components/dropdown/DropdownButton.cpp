@@ -7,342 +7,353 @@
 
 namespace UI {
 
-DropdownButton::DropdownButton(const Args& args)
-	: FocusableBase<DropdownButton>(args.tabIndex),
-	  label(args.label),
-	  buttonSize(args.buttonSize),
-	  items(args.items) {
-	position = args.position;
-	size = args.buttonSize;
-	margin = args.margin;
+	DropdownButton::DropdownButton(const Args& args)
+		: FocusableBase<DropdownButton>(args.tabIndex),
+		  label(args.label),
+		  buttonSize(args.buttonSize),
+		  items(args.items) {
+		position = args.position;
+		size = args.buttonSize;
+		margin = args.margin;
 
-	// Create Menu child component (initially hidden)
-	menuHandle = addChild(Menu(Menu::Args{
-		.position = {0.0F, 0.0F}, // Will be updated in updateMenuPosition
-		.width = buttonSize.x,
-		.items = convertToMenuItems(),
-	}));
+		// Create Menu child component (initially hidden)
+		menuHandle = addChild(Menu(
+			Menu::Args{
+				.position = {0.0F, 0.0F}, // Will be updated in updateMenuPosition
+				.width = buttonSize.x,
+				.items = convertToMenuItems(),
+			}
+		));
 
-	// Hide menu initially
-	if (auto* menu = getChild<Menu>(menuHandle)) {
-		menu->visible = false;
-		// Set high z-index for menu to render above other content
-		menu->zIndex = 1000;
+		// Hide menu initially
+		if (auto* menu = getChild<Menu>(menuHandle)) {
+			menu->visible = false;
+			// Set high z-index for menu to render above other content
+			menu->zIndex = 1000;
+		}
+
+		updateMenuPosition();
 	}
 
-	updateMenuPosition();
-}
+	std::vector<MenuItem> DropdownButton::convertToMenuItems() const {
+		std::vector<MenuItem> menuItems;
+		menuItems.reserve(items.size());
 
-std::vector<MenuItem> DropdownButton::convertToMenuItems() const {
-	std::vector<MenuItem> menuItems;
-	menuItems.reserve(items.size());
-
-	for (size_t i = 0; i < items.size(); ++i) {
-		const auto& dropdownItem = items[i];
-		menuItems.push_back(MenuItem{
-			.label = dropdownItem.label,
-			.onSelect = [this, i]() {
-				// Call the original onSelect callback
-				if (items[i].onSelect) {
-					items[i].onSelect();
+		for (const auto& dropdownItem : items) {
+			// Capture callback by value to avoid stale index if items are modified
+			auto callback = dropdownItem.onSelect;
+			menuItems.push_back(
+				MenuItem{
+					.label = dropdownItem.label,
+					.onSelect =
+						[callback]() {
+							if (callback) {
+								callback();
+							}
+						},
+					.enabled = dropdownItem.enabled,
 				}
-			},
-			.enabled = dropdownItem.enabled,
-		});
+			);
+		}
+
+		return menuItems;
 	}
 
-	return menuItems;
-}
-
-void DropdownButton::updateMenuPosition() {
-	if (auto* menu = getChild<Menu>(menuHandle)) {
-		Foundation::Vec2 contentPos = getContentPosition();
-		// Position menu directly below the button
-		menu->setPosition(contentPos.x, contentPos.y + buttonSize.y);
+	void DropdownButton::updateMenuPosition() {
+		if (auto* menu = getChild<Menu>(menuHandle)) {
+			Foundation::Vec2 contentPos = getContentPosition();
+			// Position menu directly below the button
+			menu->setPosition(contentPos.x, contentPos.y + buttonSize.y);
+		}
 	}
-}
 
-void DropdownButton::openMenu() {
-	if (!open && !items.empty()) {
-		open = true;
+	void DropdownButton::openMenu() {
+		if (!open && !items.empty()) {
+			open = true;
+			hoveredItemIndex = -1;
+
+			if (auto* menu = getChild<Menu>(menuHandle)) {
+				menu->visible = true;
+				menu->setHoveredIndex(-1);
+			}
+		}
+	}
+
+	void DropdownButton::closeMenu() {
+		open = false;
 		hoveredItemIndex = -1;
 
 		if (auto* menu = getChild<Menu>(menuHandle)) {
-			menu->visible = true;
+			menu->visible = false;
 			menu->setHoveredIndex(-1);
 		}
 	}
-}
 
-void DropdownButton::closeMenu() {
-	open = false;
-	hoveredItemIndex = -1;
-
-	if (auto* menu = getChild<Menu>(menuHandle)) {
-		menu->visible = false;
-		menu->setHoveredIndex(-1);
-	}
-}
-
-void DropdownButton::toggle() {
-	if (open) {
-		closeMenu();
-	} else {
-		openMenu();
-	}
-}
-
-void DropdownButton::setItems(std::vector<DropdownItem> newItems) {
-	items = std::move(newItems);
-
-	// Update menu items
-	if (auto* menu = getChild<Menu>(menuHandle)) {
-		menu->setItems(convertToMenuItems());
-	}
-
-	if (open && items.empty()) {
-		closeMenu();
-	}
-}
-
-void DropdownButton::setPosition(float x, float y) {
-	position = {x, y};
-	updateMenuPosition();
-}
-
-bool DropdownButton::containsPoint(Foundation::Vec2 point) const {
-	if (isPointInButton(point)) {
-		return true;
-	}
-	if (open) {
-		if (auto* menu = getChild<Menu>(menuHandle)) {
-			return menu->containsPoint(point);
+	void DropdownButton::toggle() {
+		if (open) {
+			closeMenu();
+		} else {
+			openMenu();
 		}
 	}
-	return false;
-}
 
-Foundation::Rect DropdownButton::getButtonBounds() const {
-	Foundation::Vec2 contentPos = getContentPosition();
-	return {contentPos.x, contentPos.y, buttonSize.x, buttonSize.y};
-}
+	void DropdownButton::setItems(std::vector<DropdownItem> newItems) {
+		items = std::move(newItems);
 
-bool DropdownButton::isPointInButton(Foundation::Vec2 point) const {
-	Foundation::Rect bounds = getButtonBounds();
-	return point.x >= bounds.x && point.x < bounds.x + bounds.width && point.y >= bounds.y &&
-		   point.y < bounds.y + bounds.height;
-}
+		// Update menu items
+		if (auto* menu = getChild<Menu>(menuHandle)) {
+			menu->setItems(convertToMenuItems());
+		}
 
-void DropdownButton::selectItem(size_t index) {
-	if (index >= items.size()) {
-		return;
+		if (open && items.empty()) {
+			closeMenu();
+		}
 	}
 
-	const DropdownItem& item = items[index];
-	if (item.enabled && item.onSelect) {
-		item.onSelect();
+	void DropdownButton::setPosition(float x, float y) {
+		position = {x, y};
+		updateMenuPosition();
 	}
 
-	closeMenu();
-}
-
-bool DropdownButton::handleEvent(InputEvent& event) {
-	if (!visible) {
+	bool DropdownButton::containsPoint(Foundation::Vec2 point) const {
+		if (isPointInButton(point)) {
+			return true;
+		}
+		if (open) {
+			if (auto* menu = getChild<Menu>(menuHandle)) {
+				return menu->containsPoint(point);
+			}
+		}
 		return false;
 	}
 
-	// Get menu pointer for delegation
-	auto* menu = getChild<Menu>(menuHandle);
+	Foundation::Rect DropdownButton::getButtonBounds() const {
+		Foundation::Vec2 contentPos = getContentPosition();
+		return {contentPos.x, contentPos.y, buttonSize.x, buttonSize.y};
+	}
 
-	switch (event.type) {
-		case InputEvent::Type::MouseMove: {
-			buttonHovered = isPointInButton(event.position);
+	bool DropdownButton::isPointInButton(Foundation::Vec2 point) const {
+		Foundation::Rect bounds = getButtonBounds();
+		return point.x >= bounds.x && point.x < bounds.x + bounds.width && point.y >= bounds.y && point.y < bounds.y + bounds.height;
+	}
 
-			if (open && menu) {
-				// Delegate hover tracking to menu
-				menu->handleEvent(event);
-				hoveredItemIndex = menu->getHoveredIndex();
-			}
+	void DropdownButton::selectItem(size_t index) {
+		if (index >= items.size()) {
+			return;
+		}
 
-			// Don't consume mouse move
+		const DropdownItem& item = items[index];
+		if (item.enabled && item.onSelect) {
+			item.onSelect();
+		}
+
+		closeMenu();
+	}
+
+	bool DropdownButton::handleEvent(InputEvent& event) {
+		if (!visible) {
 			return false;
 		}
 
-		case InputEvent::Type::MouseDown: {
-			// Check if clicking on button
-			if (isPointInButton(event.position)) {
-				buttonPressed = true;
-				// Request focus - this will close other dropdowns via onFocusLost
-				FocusManager::Get().setFocus(this);
-				event.consume();
-				return true;
-			}
+		// Get menu pointer for delegation
+		auto* menu = getChild<Menu>(menuHandle);
 
-			// Check if clicking on menu
-			if (open && menu && menu->containsPoint(event.position)) {
-				// Let menu handle it (consume on MouseDown, select on MouseUp)
-				menu->handleEvent(event);
-				event.consume();
-				return true;
-			}
+		switch (event.type) {
+			case InputEvent::Type::MouseMove: {
+				buttonHovered = isPointInButton(event.position);
 
-			// Click outside both button and menu - close menu
-			if (open) {
-				closeMenu();
-				event.consume();
-				return true;
-			}
-
-			break;
-		}
-
-		case InputEvent::Type::MouseUp: {
-			if (buttonPressed) {
-				buttonPressed = false;
-				if (isPointInButton(event.position)) {
-					toggle();
+				if (open && menu) {
+					// Delegate hover tracking to menu
+					menu->handleEvent(event);
+					hoveredItemIndex = menu->getHoveredIndex();
 				}
-				event.consume();
-				return true;
+
+				// Don't consume mouse move
+				return false;
 			}
 
-			if (open && menu && menu->containsPoint(event.position)) {
-				int itemIndex = menu->getItemAtPoint(event.position);
-				if (itemIndex >= 0 && items[static_cast<size_t>(itemIndex)].enabled) {
-					selectItem(static_cast<size_t>(itemIndex));
+			case InputEvent::Type::MouseDown: {
+				// Check if clicking on button
+				if (isPointInButton(event.position)) {
+					buttonPressed = true;
+					// Request focus - this will close other dropdowns via onFocusLost
+					FocusManager::Get().setFocus(this);
 					event.consume();
 					return true;
 				}
+
+				// Check if clicking on menu
+				if (open && menu && menu->containsPoint(event.position)) {
+					// Let menu handle it (consume on MouseDown, select on MouseUp)
+					menu->handleEvent(event);
+					event.consume();
+					return true;
+				}
+
+				// Click outside both button and menu - close menu
+				if (open) {
+					closeMenu();
+					event.consume();
+					return true;
+				}
+
+				break;
 			}
 
-			break;
+			case InputEvent::Type::MouseUp: {
+				if (buttonPressed) {
+					buttonPressed = false;
+					if (isPointInButton(event.position)) {
+						toggle();
+					}
+					event.consume();
+					return true;
+				}
+
+				if (open && menu && menu->containsPoint(event.position)) {
+					int itemIndex = menu->getItemAtPoint(event.position);
+					if (itemIndex >= 0 && items[static_cast<size_t>(itemIndex)].enabled) {
+						selectItem(static_cast<size_t>(itemIndex));
+						event.consume();
+						return true;
+					}
+				}
+
+				break;
+			}
+
+			default:
+				break;
 		}
 
-		default:
-			break;
+		return false;
 	}
 
-	return false;
-}
-
-void DropdownButton::update(float deltaTime) {
-	// Update menu child
-	if (auto* menu = getChild<Menu>(menuHandle)) {
-		menu->update(deltaTime);
-	}
-}
-
-void DropdownButton::render() {
-	if (!visible) {
-		return;
-	}
-
-	// Get button bounds
-	Foundation::Rect bounds = getButtonBounds();
-
-	// Determine button style based on state
-	Foundation::Color buttonBg;
-	Foundation::Color buttonBorder;
-	if (open || buttonPressed) {
-		buttonBg = Foundation::Color(0.25F, 0.35F, 0.50F, 0.95F);
-		buttonBorder = Foundation::Color(0.40F, 0.55F, 0.75F, 1.0F);
-	} else if (buttonHovered) {
-		buttonBg = Foundation::Color(0.20F, 0.30F, 0.45F, 0.95F);
-		buttonBorder = Foundation::Color(0.35F, 0.50F, 0.70F, 1.0F);
-	} else {
-		buttonBg = Foundation::Color(0.15F, 0.20F, 0.30F, 0.95F);
-		buttonBorder = Foundation::Color(0.30F, 0.40F, 0.55F, 1.0F);
-	}
-
-	// Focus ring
-	if (focused) {
-		Renderer::Primitives::drawRect(Renderer::Primitives::RectArgs{
-			.bounds = {bounds.x - 2, bounds.y - 2, bounds.width + 4, bounds.height + 4},
-			.style = {.fill = Foundation::Color(0.0F, 0.0F, 0.0F, 0.0F),
-					  .border = Foundation::BorderStyle{.color = Foundation::Color(0.4F, 0.6F, 1.0F, 1.0F), .width = 2.0F}},
-			.zIndex = zIndex,
-		});
-	}
-
-	// Draw button background
-	Renderer::Primitives::drawRect(Renderer::Primitives::RectArgs{
-		.bounds = bounds,
-		.style = {.fill = buttonBg, .border = Foundation::BorderStyle{.color = buttonBorder, .width = 1.0F}},
-		.zIndex = zIndex,
-	});
-
-	// Draw label + indicator
-	std::string displayText = label + " v";
-	float		textX = bounds.x + (bounds.width - static_cast<float>(displayText.length()) * 7.0F) / 2.0F;
-	float		textY = bounds.y + (bounds.height - 12.0F) / 2.0F;
-
-	Renderer::Primitives::drawText(Renderer::Primitives::TextArgs{
-		.text = displayText,
-		.position = {textX, textY},
-		.scale = 12.0F / 16.0F,
-		.color = Foundation::Color::white(),
-		.zIndex = static_cast<float>(zIndex) + 0.1F,
-	});
-
-	// Render menu if open (Menu handles its own rendering)
-	if (open) {
+	void DropdownButton::update(float deltaTime) {
+		// Update menu child
 		if (auto* menu = getChild<Menu>(menuHandle)) {
-			menu->render();
+			menu->update(deltaTime);
 		}
 	}
-}
 
-// IFocusable implementation
-void DropdownButton::onFocusGained() {
-	focused = true;
-}
+	void DropdownButton::render() {
+		if (!visible) {
+			return;
+		}
 
-void DropdownButton::onFocusLost() {
-	focused = false;
-	// Close menu when losing focus
-	closeMenu();
-}
+		// Get button bounds
+		Foundation::Rect bounds = getButtonBounds();
 
-void DropdownButton::handleKeyInput(engine::Key key, bool /*shift*/, bool /*ctrl*/, bool /*alt*/) {
-	auto* menu = getChild<Menu>(menuHandle);
-
-	if (key == engine::Key::Enter || key == engine::Key::Space) {
-		if (open && hoveredItemIndex >= 0) {
-			selectItem(static_cast<size_t>(hoveredItemIndex));
+		// Determine button style based on state
+		Foundation::Color buttonBg;
+		Foundation::Color buttonBorder;
+		if (open || buttonPressed) {
+			buttonBg = Foundation::Color(0.25F, 0.35F, 0.50F, 0.95F);
+			buttonBorder = Foundation::Color(0.40F, 0.55F, 0.75F, 1.0F);
+		} else if (buttonHovered) {
+			buttonBg = Foundation::Color(0.20F, 0.30F, 0.45F, 0.95F);
+			buttonBorder = Foundation::Color(0.35F, 0.50F, 0.70F, 1.0F);
 		} else {
-			toggle();
+			buttonBg = Foundation::Color(0.15F, 0.20F, 0.30F, 0.95F);
+			buttonBorder = Foundation::Color(0.30F, 0.40F, 0.55F, 1.0F);
 		}
-	} else if (key == engine::Key::Escape) {
-		closeMenu();
-	} else if (key == engine::Key::Down) {
-		if (!open) {
-			openMenu();
-			hoveredItemIndex = 0;
-			if (menu) {
-				menu->setHoveredIndex(0);
-			}
-		} else if (hoveredItemIndex < static_cast<int>(items.size()) - 1) {
-			hoveredItemIndex++;
-			if (menu) {
-				menu->setHoveredIndex(hoveredItemIndex);
-			}
+
+		// Focus ring
+		if (focused) {
+			Renderer::Primitives::drawRect(
+				Renderer::Primitives::RectArgs{
+					.bounds = {bounds.x - 2, bounds.y - 2, bounds.width + 4, bounds.height + 4},
+					.style =
+						{.fill = Foundation::Color(0.0F, 0.0F, 0.0F, 0.0F),
+						 .border = Foundation::BorderStyle{.color = Foundation::Color(0.4F, 0.6F, 1.0F, 1.0F), .width = 2.0F}},
+					.zIndex = zIndex,
+				}
+			);
 		}
-	} else if (key == engine::Key::Up) {
-		if (open && hoveredItemIndex > 0) {
-			hoveredItemIndex--;
-			if (menu) {
-				menu->setHoveredIndex(hoveredItemIndex);
+
+		// Draw button background
+		Renderer::Primitives::drawRect(
+			Renderer::Primitives::RectArgs{
+				.bounds = bounds,
+				.style = {.fill = buttonBg, .border = Foundation::BorderStyle{.color = buttonBorder, .width = 1.0F}},
+				.zIndex = zIndex,
+			}
+		);
+
+		// Draw label + indicator
+		std::string displayText = label + " v";
+		float		textX = bounds.x + (bounds.width - static_cast<float>(displayText.length()) * 7.0F) / 2.0F;
+		float		textY = bounds.y + (bounds.height - 12.0F) / 2.0F;
+
+		Renderer::Primitives::drawText(
+			Renderer::Primitives::TextArgs{
+				.text = displayText,
+				.position = {textX, textY},
+				.scale = 12.0F / 16.0F,
+				.color = Foundation::Color::white(),
+				.zIndex = static_cast<float>(zIndex) + 0.1F,
+			}
+		);
+
+		// Render menu if open (Menu handles its own rendering)
+		if (open) {
+			if (auto* menu = getChild<Menu>(menuHandle)) {
+				menu->render();
 			}
 		}
 	}
-}
 
-void DropdownButton::handleCharInput(char32_t /*codepoint*/) {
-	// No text input handling
-}
+	// IFocusable implementation
+	void DropdownButton::onFocusGained() {
+		focused = true;
+	}
 
-bool DropdownButton::canReceiveFocus() const {
-	return visible;
-}
+	void DropdownButton::onFocusLost() {
+		focused = false;
+		// Close menu when losing focus
+		closeMenu();
+	}
+
+	void DropdownButton::handleKeyInput(engine::Key key, bool /*shift*/, bool /*ctrl*/, bool /*alt*/) {
+		auto* menu = getChild<Menu>(menuHandle);
+
+		if (key == engine::Key::Enter || key == engine::Key::Space) {
+			if (open && hoveredItemIndex >= 0) {
+				selectItem(static_cast<size_t>(hoveredItemIndex));
+			} else {
+				toggle();
+			}
+		} else if (key == engine::Key::Escape) {
+			closeMenu();
+		} else if (key == engine::Key::Down) {
+			if (!open) {
+				openMenu();
+				hoveredItemIndex = 0;
+				if (menu) {
+					menu->setHoveredIndex(0);
+				}
+			} else if (hoveredItemIndex < static_cast<int>(items.size()) - 1) {
+				hoveredItemIndex++;
+				if (menu) {
+					menu->setHoveredIndex(hoveredItemIndex);
+				}
+			}
+		} else if (key == engine::Key::Up) {
+			if (open && hoveredItemIndex > 0) {
+				hoveredItemIndex--;
+				if (menu) {
+					menu->setHoveredIndex(hoveredItemIndex);
+				}
+			}
+		}
+	}
+
+	void DropdownButton::handleCharInput(char32_t /*codepoint*/) {
+		// No text input handling
+	}
+
+	bool DropdownButton::canReceiveFocus() const {
+		return visible;
+	}
 
 } // namespace UI

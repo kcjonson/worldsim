@@ -77,11 +77,12 @@ std::vector<MenuItem> Select::convertToMenuItems() {
 	std::vector<MenuItem> menuItems;
 	menuItems.reserve(options.size());
 
-	for (size_t i = 0; i < options.size(); ++i) {
-		const auto& option = options[i];
+	for (const auto& option : options) {
+		// Capture value by copy to avoid stale index if options are modified
+		std::string capturedValue = option.value;
 		menuItems.push_back(MenuItem{
 			.label = option.label,
-			.onSelect = [this, i]() { selectOption(i); },
+			.onSelect = [this, capturedValue]() { selectOptionByValue(capturedValue); },
 			.enabled = true,
 		});
 	}
@@ -138,6 +139,18 @@ void Select::selectOption(size_t index) {
 	// Only fire onChange if value actually changed
 	if (newValue != value) {
 		value = newValue;
+		if (onChange) {
+			onChange(value);
+		}
+	}
+
+	closeMenu();
+}
+
+void Select::selectOptionByValue(const std::string& optionValue) {
+	// Only fire onChange if value actually changed
+	if (optionValue != value) {
+		value = optionValue;
 		if (onChange) {
 			onChange(value);
 		}

@@ -199,7 +199,7 @@ void TreeView::render() {
 			.text = displayText,
 			.position = {labelX, rowY + (rowHeight - 12.0F) / 2.0F},
 			.scale = 12.0F / 16.0F,
-			.color = row.node->count.has_value() ? Theme::Colors::textBody : Theme::Colors::textBody,
+			.color = Theme::Colors::textBody,
 			.zIndex = static_cast<float>(zIndex) + 0.1F,
 		});
 	}

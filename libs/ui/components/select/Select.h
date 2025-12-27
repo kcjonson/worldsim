@@ -126,6 +126,9 @@ class Select : public Component, public FocusableBase<Select> {
 
 	// Select option by index (fires onChange if different)
 	void selectOption(size_t index);
+
+	// Select option by value (fires onChange if different)
+	void selectOptionByValue(const std::string& optionValue);
 };
 
 } // namespace UI

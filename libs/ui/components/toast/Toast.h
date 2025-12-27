@@ -104,7 +104,7 @@ class Toast : public Component {
 	State				   state{State::Appearing};
 	float				   opacity{0.0F};
 	float				   stateTimer{0.0F};
-	float				   dismissButtonHovered{false};
+	bool				   dismissButtonHovered{false};
 
 	// Animation constants
 	static constexpr float kFadeInDuration = 0.2F;
