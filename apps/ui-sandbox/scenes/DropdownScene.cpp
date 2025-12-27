@@ -40,7 +40,8 @@ namespace {
 				.position = {50.0F, 30.0F},
 				.text = "DropdownButton & Select Component Demo",
 				.style = {.color = Color::white(), .fontSize = 20.0F},
-				.id = "title"});
+				.id = "title"
+			});
 
 			// ================================================================
 			// Demo 1: Basic Dropdown
@@ -49,7 +50,8 @@ namespace {
 				.position = {50.0F, 70.0F},
 				.text = "1. Actions Menu:",
 				.style = {.color = Color::yellow(), .fontSize = 14.0F},
-				.id = "label_1"});
+				.id = "label_1"
+			});
 
 			dropdown1 = std::make_unique<DropdownButton>(DropdownButton::Args{
 				.label = "Actions",
@@ -62,7 +64,8 @@ namespace {
 						DropdownItem{.label = "Build", .onSelect = []() { LOG_INFO(UI, "Build selected"); }},
 						DropdownItem{.label = "Cancel", .onSelect = []() { LOG_INFO(UI, "Cancel selected"); }, .enabled = false},
 					},
-				.id = "dropdown_actions"});
+				.id = "dropdown_actions"
+			});
 
 			// ================================================================
 			// Demo 2: Build Menu
@@ -71,7 +74,8 @@ namespace {
 				.position = {200.0F, 70.0F},
 				.text = "2. Build Menu:",
 				.style = {.color = Color::yellow(), .fontSize = 14.0F},
-				.id = "label_2"});
+				.id = "label_2"
+			});
 
 			dropdown2 = std::make_unique<DropdownButton>(DropdownButton::Args{
 				.label = "Build",
@@ -85,7 +89,8 @@ namespace {
 						DropdownItem{.label = "Furniture", .onSelect = []() { LOG_INFO(UI, "Furniture selected"); }},
 						DropdownItem{.label = "Production", .onSelect = []() { LOG_INFO(UI, "Production selected"); }},
 					},
-				.id = "dropdown_build"});
+				.id = "dropdown_build"
+			});
 
 			// ================================================================
 			// Demo 3: Dropdowns in Layout
@@ -94,52 +99,60 @@ namespace {
 				.position = {50.0F, 200.0F},
 				.text = "3. Dropdowns in Horizontal Layout:",
 				.style = {.color = Color::yellow(), .fontSize = 14.0F},
-				.id = "label_3"});
+				.id = "label_3"
+			});
 
 			layoutContainer = std::make_unique<LayoutContainer>(LayoutContainer::Args{
 				.position = {50.0F, 225.0F},
 				.size = {0.0F, 0.0F}, // Auto-size
 				.direction = Direction::Horizontal,
 				.vAlign = VAlign::Top,
-				.id = "dropdown_layout"});
+				.id = "dropdown_layout"
+			});
 
-			layoutContainer->addChild(DropdownButton(DropdownButton::Args{
-				.label = "File",
-				.buttonSize = {80.0F, 32.0F},
-				.items =
-					{
-						DropdownItem{.label = "New", .onSelect = []() { LOG_INFO(UI, "New selected"); }},
-						DropdownItem{.label = "Open", .onSelect = []() { LOG_INFO(UI, "Open selected"); }},
-						DropdownItem{.label = "Save", .onSelect = []() { LOG_INFO(UI, "Save selected"); }},
-					},
-				.margin = 4.0F,
-			}));
+			layoutContainer->addChild(DropdownButton(
+				DropdownButton::Args{
+					.label = "File",
+					.buttonSize = {80.0F, 32.0F},
+					.items =
+						{
+							DropdownItem{.label = "New", .onSelect = []() { LOG_INFO(UI, "New selected"); }},
+							DropdownItem{.label = "Open", .onSelect = []() { LOG_INFO(UI, "Open selected"); }},
+							DropdownItem{.label = "Save", .onSelect = []() { LOG_INFO(UI, "Save selected"); }},
+						},
+					.margin = 4.0F,
+				}
+			));
 
-			layoutContainer->addChild(DropdownButton(DropdownButton::Args{
-				.label = "Edit",
-				.buttonSize = {80.0F, 32.0F},
-				.items =
-					{
-						DropdownItem{.label = "Undo", .onSelect = []() { LOG_INFO(UI, "Undo selected"); }},
-						DropdownItem{.label = "Redo", .onSelect = []() { LOG_INFO(UI, "Redo selected"); }},
-						DropdownItem{.label = "Cut", .onSelect = []() { LOG_INFO(UI, "Cut selected"); }},
-						DropdownItem{.label = "Copy", .onSelect = []() { LOG_INFO(UI, "Copy selected"); }},
-						DropdownItem{.label = "Paste", .onSelect = []() { LOG_INFO(UI, "Paste selected"); }},
-					},
-				.margin = 4.0F,
-			}));
+			layoutContainer->addChild(DropdownButton(
+				DropdownButton::Args{
+					.label = "Edit",
+					.buttonSize = {80.0F, 32.0F},
+					.items =
+						{
+							DropdownItem{.label = "Undo", .onSelect = []() { LOG_INFO(UI, "Undo selected"); }},
+							DropdownItem{.label = "Redo", .onSelect = []() { LOG_INFO(UI, "Redo selected"); }},
+							DropdownItem{.label = "Cut", .onSelect = []() { LOG_INFO(UI, "Cut selected"); }},
+							DropdownItem{.label = "Copy", .onSelect = []() { LOG_INFO(UI, "Copy selected"); }},
+							DropdownItem{.label = "Paste", .onSelect = []() { LOG_INFO(UI, "Paste selected"); }},
+						},
+					.margin = 4.0F,
+				}
+			));
 
-			layoutContainer->addChild(DropdownButton(DropdownButton::Args{
-				.label = "View",
-				.buttonSize = {80.0F, 32.0F},
-				.items =
-					{
-						DropdownItem{.label = "Zoom In", .onSelect = []() { LOG_INFO(UI, "Zoom In selected"); }},
-						DropdownItem{.label = "Zoom Out", .onSelect = []() { LOG_INFO(UI, "Zoom Out selected"); }},
-						DropdownItem{.label = "Reset", .onSelect = []() { LOG_INFO(UI, "Reset selected"); }},
-					},
-				.margin = 4.0F,
-			}));
+			layoutContainer->addChild(DropdownButton(
+				DropdownButton::Args{
+					.label = "View",
+					.buttonSize = {80.0F, 32.0F},
+					.items =
+						{
+							DropdownItem{.label = "Zoom In", .onSelect = []() { LOG_INFO(UI, "Zoom In selected"); }},
+							DropdownItem{.label = "Zoom Out", .onSelect = []() { LOG_INFO(UI, "Zoom Out selected"); }},
+							DropdownItem{.label = "Reset", .onSelect = []() { LOG_INFO(UI, "Reset selected"); }},
+						},
+					.margin = 4.0F,
+				}
+			));
 
 			// Force layout calculation
 			layoutContainer->layout(Rect{50.0F, 225.0F, 400.0F, 100.0F});
@@ -151,7 +164,8 @@ namespace {
 				.position = {50.0F, 320.0F},
 				.text = "4. Controlled Select (form element):",
 				.style = {.color = Color::yellow(), .fontSize = 14.0F},
-				.id = "label_4"});
+				.id = "label_4"
+			});
 
 			// Color picker select
 			colorSelect = std::make_unique<Select>(Select::Args{
@@ -168,10 +182,11 @@ namespace {
 				.placeholder = "Choose color...",
 				.onChange =
 					[this](const std::string& value) {
-						LOG_INFO(UI, "Color selected: {}", value);
+						LOG_INFO(UI, "Color selected: {}", value.c_str());
 						selectedColor = value;
 					},
-				.id = "select_color"});
+				.id = "select_color"
+			});
 
 			// Size select
 			sizeSelect = std::make_unique<Select>(Select::Args{
@@ -185,15 +200,17 @@ namespace {
 						SelectOption{.label = "X-Large", .value = "xl"},
 					},
 				.placeholder = "Size...",
-				.onChange = [](const std::string& value) { LOG_INFO(UI, "Size selected: {}", value); },
-				.id = "select_size"});
+				.onChange = [](const std::string& value) { LOG_INFO(UI, "Size selected: {}", value.c_str()); },
+				.id = "select_size"
+			});
 
 			// Selection display
 			selectionDisplay = std::make_unique<Text>(Text::Args{
 				.position = {350.0F, 355.0F},
 				.text = "Selected: blue",
 				.style = {.color = Color(0.7F, 0.8F, 1.0F, 1.0F), .fontSize = 12.0F},
-				.id = "selection_display"});
+				.id = "selection_display"
+			});
 
 			// ================================================================
 			// Instructions
@@ -202,7 +219,8 @@ namespace {
 				.position = {50.0F, 420.0F},
 				.text = "Click to open | Arrow keys to navigate | Enter to select | Escape to close",
 				.style = {.color = Color(0.6F, 0.6F, 0.7F, 1.0F), .fontSize = 12.0F},
-				.id = "instructions"});
+				.id = "instructions"
+			});
 
 			LOG_INFO(UI, "Dropdown scene initialized");
 		}
