@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2025-12-27 (Main Game UI: Complex Components - Complete)
+Last Updated: 2025-12-27 (Main Game UI: Interaction Components - Complete)
 
 ## Epic/Story/Task Template
 
@@ -445,26 +445,37 @@ The following MVP epics have all been completed. Detailed task breakdowns are pr
 
 ---
 
-### Main Game UI: Interaction Components
+### ✅ Main Game UI: Interaction Components
 **Spec/Documentation:** `/docs/design/main-game-ui-design.md` (Sections 8, 14, 17)
 **Dependencies:** ~~Main Game UI: Primitives Foundation~~ (complete)
-**Status:** ready
+**Status:** complete
 
-**Goal:** Build modal, tooltip, and context menu systems.
+**Goal:** Build dialog, tooltip, and context menu systems.
 
-**Tasks:**
-- [ ] Modal Dialog Component
-  - [ ] Full-screen semi-transparent overlay
-  - [ ] Centered content panel
-  - [ ] Close via [X] button, Escape, or outside click
-- [ ] Tooltip System
-  - [ ] Global tooltip manager
-  - [ ] 0.5s hover delay
-  - [ ] Smart positioning (stay on screen)
-- [ ] Context Menu Component
-  - [ ] Right-click popup menu
-  - [ ] Menu items with optional icons
-  - [ ] Keyboard navigation
+**Completed Tasks:**
+- [x] Dialog Component
+  - [x] Full-screen semi-transparent overlay
+  - [x] Centered content panel with title bar
+  - [x] Close via [X] button, Escape, or outside click
+  - [x] Fade in/out animation
+  - [x] Focus scope for keyboard capture
+  - [x] Unit tests (18)
+- [x] Tooltip System
+  - [x] TooltipManager singleton for global coordination
+  - [x] 0.5s hover delay (Theme.Tooltip.hoverDelay)
+  - [x] Smart positioning (stay on screen)
+  - [x] Fade in/out animation
+  - [x] Content: title, description, hotkey
+  - [x] Unit tests (19: 9 Tooltip + 10 TooltipManager)
+- [x] Context Menu Component
+  - [x] Right-click popup menu
+  - [x] Menu items with enabled/disabled state
+  - [x] Keyboard navigation (Up/Down/Enter/Escape)
+  - [x] Click-outside-to-close
+  - [x] Screen edge clamping
+  - [x] Unit tests (17)
+
+**Result:** All interaction components implemented with minimal APIs, theme-based styling, and comprehensive test coverage (54 new tests). Components use FocusableBase for keyboard handling. ✅
 
 ---
 

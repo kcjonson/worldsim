@@ -144,4 +144,49 @@ namespace UI::Theme {
 
 	} // namespace Toast
 
+	// === Dialog ===
+	// Modal dialog styling
+
+	namespace Dialog {
+
+		inline constexpr Foundation::Color overlayBackground{0.0F, 0.0F, 0.0F, 0.60F};
+		inline constexpr Foundation::Color panelBackground{0.12F, 0.12F, 0.15F, 0.98F};
+		inline constexpr Foundation::Color panelBorder{0.35F, 0.35F, 0.45F, 1.0F};
+		inline constexpr Foundation::Color titleBackground{0.15F, 0.15F, 0.20F, 1.0F};
+		inline constexpr float			   defaultWidth = 600.0F;
+		inline constexpr float			   defaultHeight = 400.0F;
+		inline constexpr float			   titleBarHeight = 40.0F;
+		inline constexpr float			   contentPadding = 16.0F;
+
+	} // namespace Dialog
+
+	// === Tooltip ===
+	// Tooltip styling
+
+	namespace Tooltip {
+
+		inline constexpr Foundation::Color background{0.10F, 0.10F, 0.12F, 0.95F};
+		inline constexpr Foundation::Color border{0.35F, 0.35F, 0.45F, 1.0F};
+		inline constexpr float			   hoverDelay = 0.5F;
+		inline constexpr float			   padding = 8.0F;
+		inline constexpr float			   maxWidth = 280.0F;
+		inline constexpr float			   cursorOffset = 16.0F;
+
+	} // namespace Tooltip
+
+	// === ContextMenu ===
+	// Context menu styling
+
+	namespace ContextMenu {
+
+		inline constexpr Foundation::Color background{0.12F, 0.12F, 0.15F, 0.98F};
+		inline constexpr Foundation::Color border{0.35F, 0.35F, 0.45F, 1.0F};
+		inline constexpr Foundation::Color itemHover{0.25F, 0.35F, 0.50F, 0.8F};
+		inline constexpr Foundation::Color itemDisabled{0.40F, 0.40F, 0.45F, 0.6F};
+		inline constexpr float			   itemHeight = 28.0F;
+		inline constexpr float			   minWidth = 150.0F;
+		inline constexpr float			   padding = 4.0F;
+
+	} // namespace ContextMenu
+
 } // namespace UI::Theme
