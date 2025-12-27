@@ -61,6 +61,15 @@ void TooltipManager::endHover() {
 }
 
 void TooltipManager::updateCursorPosition(Foundation::Vec2 newCursor) {
+	// Only update if cursor moved beyond threshold (reduces repositioning overhead)
+	float dx = newCursor.x - cursorPosition.x;
+	float dy = newCursor.y - cursorPosition.y;
+	float distanceSquared = dx * dx + dy * dy;
+
+	if (distanceSquared < kMinCursorMoveDistance * kMinCursorMoveDistance) {
+		return; // Cursor hasn't moved enough to warrant repositioning
+	}
+
 	cursorPosition = newCursor;
 
 	// Update tooltip position if visible
@@ -88,8 +97,11 @@ void TooltipManager::update(float deltaTime) {
 			// Wait for hover delay
 			if (stateTimer >= Theme::Tooltip::hoverDelay) {
 				// Create and show tooltip
+				// Use estimated dimensions for initial positioning
+				float estimatedWidth = estimateTooltipWidth(pendingContent);
+				float estimatedHeight = estimateTooltipHeight(pendingContent);
 				Foundation::Vec2 pos = calculateTooltipPosition(
-					cursorPosition, Theme::Tooltip::maxWidth, 50.0F); // Approximate height
+					cursorPosition, estimatedWidth, estimatedHeight);
 
 				activeTooltip = std::make_unique<Tooltip>(Tooltip::Args{
 					.content = pendingContent,
@@ -179,6 +191,46 @@ Foundation::Vec2 TooltipManager::calculateTooltipPosition(
 	y = std::max(0.0F, y);
 
 	return {x, y};
+}
+
+float TooltipManager::estimateTooltipHeight(const TooltipContent& content) const {
+	float height = Theme::Tooltip::padding * 2;
+
+	// Title is always present
+	height += kTitleFontSize;
+
+	// Description (optional)
+	if (!content.description.empty()) {
+		height += kLineSpacing + kDescFontSize;
+	}
+
+	// Hotkey (optional)
+	if (!content.hotkey.empty()) {
+		height += kLineSpacing + kHotkeyFontSize;
+	}
+
+	return height;
+}
+
+float TooltipManager::estimateTooltipWidth(const TooltipContent& content) const {
+	// Find the longest line
+	size_t maxChars = content.title.length();
+
+	if (!content.description.empty()) {
+		maxChars = std::max(maxChars, content.description.length());
+	}
+
+	if (!content.hotkey.empty()) {
+		// Hotkey is displayed as "[hotkey]", so add 2 for brackets
+		maxChars = std::max(maxChars, content.hotkey.length() + 2);
+	}
+
+	// Estimate width: padding + chars * estimated char width
+	float estimatedWidth = Theme::Tooltip::padding * 2 +
+						   static_cast<float>(maxChars) * kEstimatedCharWidth;
+
+	// Clamp to max width
+	return std::min(estimatedWidth, Theme::Tooltip::maxWidth);
 }
 
 } // namespace UI

@@ -87,6 +87,23 @@ class TooltipManager {
 	static constexpr float kFadeInDuration = 0.1F;
 	static constexpr float kFadeOutDuration = 0.08F;
 
+	// Performance: minimum cursor movement before repositioning
+	static constexpr float kMinCursorMoveDistance = 4.0F;
+	Foundation::Vec2	   lastTooltipPosition{0.0F, 0.0F};
+
+	// Height estimation constants (match Tooltip.cpp layout)
+	static constexpr float kTitleFontSize = 13.0F;
+	static constexpr float kDescFontSize = 11.0F;
+	static constexpr float kHotkeyFontSize = 10.0F;
+	static constexpr float kLineSpacing = 4.0F;
+	static constexpr float kEstimatedCharWidth = 7.0F; // Approximate pixels per character
+
+	/// Estimate tooltip height based on content
+	[[nodiscard]] float estimateTooltipHeight(const TooltipContent& content) const;
+
+	/// Estimate tooltip width based on content
+	[[nodiscard]] float estimateTooltipWidth(const TooltipContent& content) const;
+
 	/// Calculate tooltip position to stay on screen
 	[[nodiscard]] Foundation::Vec2 calculateTooltipPosition(
 		Foundation::Vec2 cursor, float tooltipWidth, float tooltipHeight) const;

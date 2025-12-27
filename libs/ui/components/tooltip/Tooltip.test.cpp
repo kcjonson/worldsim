@@ -83,14 +83,15 @@ TEST(TooltipTest, SetContentUpdatesContent) {
 }
 
 TEST(TooltipTest, ContainsPointReturnsCorrectly) {
+	// Use longer content to get sufficient width for hit testing
 	Tooltip tooltip(Tooltip::Args{
-		.content = {.title = "Test"},
+		.content = {.title = "This is a longer tooltip title"},
 		.position = {100.0F, 100.0F},
 	});
 
 	EXPECT_TRUE(tooltip.containsPoint({100.0F, 100.0F}));
-	EXPECT_TRUE(tooltip.containsPoint({150.0F, 110.0F}));
-	EXPECT_FALSE(tooltip.containsPoint({50.0F, 50.0F}));
+	EXPECT_TRUE(tooltip.containsPoint({150.0F, 110.0F})); // Inside estimated width
+	EXPECT_FALSE(tooltip.containsPoint({50.0F, 50.0F}));  // Outside bounds
 }
 
 // === TooltipManager Tests ===
