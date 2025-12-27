@@ -128,19 +128,43 @@ namespace engine {
 				auto mousePos = inputManager->getMousePosition();
 				auto pos = Foundation::Vec2{mousePos.x, mousePos.y};
 
+				// Build modifier flags from current key state (GLFW modifier bit values)
+				int mods = 0;
+				if (inputManager->isKeyDown(engine::Key::LeftShift) || inputManager->isKeyDown(engine::Key::RightShift)) {
+					mods |= 0x0001; // GLFW_MOD_SHIFT
+				}
+				if (inputManager->isKeyDown(engine::Key::LeftControl) || inputManager->isKeyDown(engine::Key::RightControl)) {
+					mods |= 0x0002; // GLFW_MOD_CONTROL
+				}
+				if (inputManager->isKeyDown(engine::Key::LeftAlt) || inputManager->isKeyDown(engine::Key::RightAlt)) {
+					mods |= 0x0004; // GLFW_MOD_ALT
+				}
+
 				// MouseMove for hover states
 				UI::InputEvent moveEvent = UI::InputEvent::mouseMove(pos);
 				SceneManager::Get().handleInput(moveEvent);
 
-				// MouseDown on press
+				// MouseDown on press (left button)
 				if (inputManager->isMouseButtonPressed(engine::MouseButton::Left)) {
-					UI::InputEvent downEvent = UI::InputEvent::mouseDown(pos, engine::MouseButton::Left);
+					UI::InputEvent downEvent = UI::InputEvent::mouseDown(pos, engine::MouseButton::Left, mods);
 					SceneManager::Get().handleInput(downEvent);
 				}
 
-				// MouseUp on release
+				// MouseDown on press (right button)
+				if (inputManager->isMouseButtonPressed(engine::MouseButton::Right)) {
+					UI::InputEvent downEvent = UI::InputEvent::mouseDown(pos, engine::MouseButton::Right, mods);
+					SceneManager::Get().handleInput(downEvent);
+				}
+
+				// MouseUp on release (left button)
 				if (inputManager->isMouseButtonReleased(engine::MouseButton::Left)) {
-					UI::InputEvent upEvent = UI::InputEvent::mouseUp(pos, engine::MouseButton::Left);
+					UI::InputEvent upEvent = UI::InputEvent::mouseUp(pos, engine::MouseButton::Left, mods);
+					SceneManager::Get().handleInput(upEvent);
+				}
+
+				// MouseUp on release (right button)
+				if (inputManager->isMouseButtonReleased(engine::MouseButton::Right)) {
+					UI::InputEvent upEvent = UI::InputEvent::mouseUp(pos, engine::MouseButton::Right, mods);
 					SceneManager::Get().handleInput(upEvent);
 				}
 			}

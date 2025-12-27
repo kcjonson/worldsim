@@ -92,6 +92,7 @@ class ContextMenu : public Component, public FocusableBase<ContextMenu> {
 	enum class State { Closed, Open };
 	State state{State::Closed};
 	int	  hoveredIndex{-1};
+	bool  ignoreNextMouseUp{false}; // Prevents closing from the opening click's MouseUp
 
 	// Screen bounds for edge clamping
 	float screenW{0.0F};

@@ -28,6 +28,7 @@ namespace UI {
 		state = State::Open;
 		visible = true;
 		hoveredIndex = -1;
+		ignoreNextMouseUp = true; // Ignore the MouseUp from the opening click
 
 		// Take focus to receive keyboard input
 		FocusManager::Get().setFocus(this);
@@ -155,6 +156,13 @@ namespace UI {
 			}
 
 			case InputEvent::Type::MouseUp: {
+				// Ignore the MouseUp from the click that opened the menu
+				if (ignoreNextMouseUp) {
+					ignoreNextMouseUp = false;
+					event.consume();
+					return true;
+				}
+
 				int itemIndex = getItemAtPoint(event.position);
 				if (itemIndex >= 0 && items[static_cast<size_t>(itemIndex)].enabled) {
 					selectItem(static_cast<size_t>(itemIndex));
