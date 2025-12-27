@@ -58,8 +58,7 @@ namespace UI {
 	}
 
 	void Button::update(float /*deltaTime*/) {
-		// Update text component to match current button style
-		updateTextPosition();
+		// Text position is updated in setPosition() - no per-frame work needed
 	}
 
 	void Button::updateTextPosition() {
