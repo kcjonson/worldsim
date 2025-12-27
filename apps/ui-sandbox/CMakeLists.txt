@@ -24,6 +24,9 @@ add_executable(ui-sandbox
     scenes/TreeViewScene.cpp
     scenes/DropdownScene.cpp
     scenes/ToastScene.cpp
+    scenes/DialogScene.cpp
+    scenes/TooltipScene.cpp
+    scenes/ContextMenuScene.cpp
 )
 
 target_include_directories(ui-sandbox

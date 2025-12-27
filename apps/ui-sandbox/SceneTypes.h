@@ -37,7 +37,10 @@ namespace ui_sandbox {
 	X(Icon)        \
 	X(TreeView_)   \
 	X(Dropdown)    \
-	X(Toast_)
+	X(Toast_)      \
+	X(Dialog_)     \
+	X(Tooltip_)    \
+	X(ContextMenu_)
 	// clang-format on
 
 	/// @brief Scene types for ui-sandbox application (auto-generated from SCENE_LIST)
