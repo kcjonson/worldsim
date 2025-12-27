@@ -99,4 +99,49 @@ namespace UI::Theme {
 
 	} // namespace Borders
 
+	// === Icons ===
+	// Icon sizing defaults
+
+	namespace Icons {
+
+		inline constexpr float smallSize = 12.0F;
+		inline constexpr float defaultSize = 16.0F;
+		inline constexpr float largeSize = 24.0F;
+
+	} // namespace Icons
+
+	// === TreeView ===
+	// Tree view styling
+
+	namespace TreeView {
+
+		inline constexpr float			  rowHeight = 24.0F;
+		inline constexpr float			  indentWidth = 16.0F;
+		inline constexpr Foundation::Color rowHover{0.25F, 0.25F, 0.30F, 0.5F};
+
+	} // namespace TreeView
+
+	// === Dropdown ===
+	// Dropdown menu styling
+
+	namespace Dropdown {
+
+		inline constexpr float			  menuItemHeight = 30.0F;
+		inline constexpr Foundation::Color menuItemHover{0.25F, 0.35F, 0.50F, 0.8F};
+
+	} // namespace Dropdown
+
+	// === Toast ===
+	// Toast notification styling
+
+	namespace Toast {
+
+		inline constexpr Foundation::Color infoBackground{0.20F, 0.30F, 0.45F, 0.95F};
+		inline constexpr Foundation::Color warningBackground{0.50F, 0.40F, 0.15F, 0.95F};
+		inline constexpr Foundation::Color criticalBackground{0.50F, 0.20F, 0.20F, 0.95F};
+		inline constexpr float			   defaultWidth = 300.0F;
+		inline constexpr float			   defaultAutoDismiss = 5.0F;
+
+	} // namespace Toast
+
 } // namespace UI::Theme

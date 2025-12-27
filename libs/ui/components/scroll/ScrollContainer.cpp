@@ -182,7 +182,21 @@ bool ScrollContainer::handleEvent(InputEvent& event) {
 	}
 
 	// Dispatch to children for other events
-	return Container::handleEvent(event);
+	// Transform event coordinates to account for content offset
+	Foundation::Vec2 contentPos = getContentPosition();
+	Foundation::Vec2 originalPos = event.position;
+
+	// Transform: subtract container position and add scroll offset
+	event.position.x -= contentPos.x;
+	event.position.y -= contentPos.y;
+	event.position.y += scrollY; // Add back scroll offset
+
+	bool handled = Container::handleEvent(event);
+
+	// Restore original position
+	event.position = originalPos;
+
+	return handled;
 }
 
 bool ScrollContainer::containsPoint(Foundation::Vec2 point) const {

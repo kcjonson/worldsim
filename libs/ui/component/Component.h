@@ -224,6 +224,19 @@ namespace UI {
 			return dynamic_cast<T*>(children[index]);
 		}
 
+		// Get child by handle (const version)
+		template <typename T>
+		const T* getChild(LayerHandle handle) const {
+			if (!handle.isValid() || handle.getGeneration() != generation) {
+				return nullptr;
+			}
+			uint16_t index = handle.getIndex();
+			if (index >= children.size()) {
+				return nullptr;
+			}
+			return dynamic_cast<const T*>(children[index]);
+		}
+
 		// ILayer implementation - propagates to children (skips invisible)
 		void update(float deltaTime) override {
 			for (auto* child : children) {

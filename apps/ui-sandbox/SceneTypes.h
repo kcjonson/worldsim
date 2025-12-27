@@ -33,7 +33,11 @@ namespace ui_sandbox {
 	X(InputTest)   \
 	X(Tree)        \
 	X(Layout)      \
-	X(Scroll)
+	X(Scroll)      \
+	X(Icon)        \
+	X(TreeView_)   \
+	X(Dropdown)    \
+	X(Toast_)
 	// clang-format on
 
 	/// @brief Scene types for ui-sandbox application (auto-generated from SCENE_LIST)
