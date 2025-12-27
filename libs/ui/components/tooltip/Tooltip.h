@@ -48,7 +48,7 @@ class Tooltip : public Component {
 	Tooltip& operator=(Tooltip&&) noexcept = default;
 
 	// Content
-	void setContent(const TooltipContent& content);
+	void setContent(const TooltipContent& tooltipContent);
 	[[nodiscard]] const TooltipContent& getContent() const { return content; }
 
 	// Opacity (controlled by TooltipManager for fade animation)
@@ -68,16 +68,17 @@ class Tooltip : public Component {
 	// ILayer overrides
 	void update(float deltaTime) override {}
 
-  private:
-	TooltipContent content;
-	float		   maxWidth;
-	float		   opacity{1.0F};
-
-	// Layout constants
+	// Layout constants (public for TooltipManager estimation)
 	static constexpr float kTitleFontSize = 13.0F;
 	static constexpr float kDescFontSize = 11.0F;
 	static constexpr float kHotkeyFontSize = 10.0F;
 	static constexpr float kLineSpacing = 4.0F;
+	static constexpr float kEstimatedCharWidth = 7.0F;
+
+  private:
+	TooltipContent content;
+	float		   maxWidth;
+	float		   opacity{1.0F};
 
 	[[nodiscard]] float calculateHeight() const;
 };

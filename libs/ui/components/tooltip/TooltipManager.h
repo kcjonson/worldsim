@@ -42,7 +42,7 @@ class TooltipManager {
 	TooltipManager& operator=(TooltipManager&&) = delete;
 
 	/// Called when mouse hovers over a component with tooltip
-	void startHover(const TooltipContent& content, Foundation::Vec2 newCursor);
+	void startHover(const TooltipContent& tooltipContent, Foundation::Vec2 newCursor);
 
 	/// Called when mouse leaves the component
 	void endHover();
@@ -91,12 +91,7 @@ class TooltipManager {
 	static constexpr float kMinCursorMoveDistance = 4.0F;
 	Foundation::Vec2	   lastTooltipPosition{0.0F, 0.0F};
 
-	// Height estimation constants (match Tooltip.cpp layout)
-	static constexpr float kTitleFontSize = 13.0F;
-	static constexpr float kDescFontSize = 11.0F;
-	static constexpr float kHotkeyFontSize = 10.0F;
-	static constexpr float kLineSpacing = 4.0F;
-	static constexpr float kEstimatedCharWidth = 7.0F; // Approximate pixels per character
+	// Note: Font size and layout constants are defined in Tooltip class
 
 	/// Estimate tooltip height based on content
 	[[nodiscard]] float estimateTooltipHeight(const TooltipContent& content) const;

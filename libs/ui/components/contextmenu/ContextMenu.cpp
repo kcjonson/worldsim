@@ -208,6 +208,11 @@ namespace UI {
 			return;
 		}
 
+		// No keyboard navigation if there are no items
+		if (items.empty()) {
+			return;
+		}
+
 		if (key == engine::Key::Up) {
 			// Move selection up
 			if (hoveredIndex <= 0) {

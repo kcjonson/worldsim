@@ -13,15 +13,13 @@ namespace UI {
 		size = {getTooltipWidth(), getTooltipHeight()};
 	}
 
-	void Tooltip::setContent(const TooltipContent& newContent) {
-		content = newContent;
+	void Tooltip::setContent(const TooltipContent& tooltipContent) {
+		content = tooltipContent;
 		size = {getTooltipWidth(), getTooltipHeight()};
 	}
 
 	float Tooltip::getTooltipWidth() const {
 		// Estimate width based on longest content line
-		constexpr float kEstimatedCharWidth = 7.0F;
-
 		size_t maxChars = content.title.length();
 
 		if (!content.description.empty()) {

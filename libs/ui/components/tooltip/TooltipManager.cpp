@@ -20,7 +20,7 @@ void TooltipManager::setInstance(TooltipManager* instance) {
 	s_instance = instance;
 }
 
-void TooltipManager::startHover(const TooltipContent& content, Foundation::Vec2 newCursor) {
+void TooltipManager::startHover(const TooltipContent& tooltipContent, Foundation::Vec2 newCursor) {
 	// Warn once if screen bounds haven't been properly initialized
 	static bool warnedAboutBounds = false;
 	if (!warnedAboutBounds && screenWidth == 800.0F && screenHeight == 600.0F) {
@@ -28,7 +28,7 @@ void TooltipManager::startHover(const TooltipContent& content, Foundation::Vec2 
 		warnedAboutBounds = true;
 	}
 
-	pendingContent = content;
+	pendingContent = tooltipContent;
 	cursorPosition = newCursor;
 
 	if (state == State::Idle || state == State::Hiding) {
@@ -38,7 +38,7 @@ void TooltipManager::startHover(const TooltipContent& content, Foundation::Vec2 
 	} else if (state == State::Showing || state == State::Visible) {
 		// Already showing a tooltip, update content immediately
 		if (activeTooltip) {
-			activeTooltip->setContent(content);
+			activeTooltip->setContent(tooltipContent);
 			// Reposition for new content size
 			Foundation::Vec2 pos = calculateTooltipPosition(
 				cursorPosition, activeTooltip->getTooltipWidth(), activeTooltip->getTooltipHeight());
@@ -193,41 +193,41 @@ Foundation::Vec2 TooltipManager::calculateTooltipPosition(
 	return {x, y};
 }
 
-float TooltipManager::estimateTooltipHeight(const TooltipContent& content) const {
+float TooltipManager::estimateTooltipHeight(const TooltipContent& tooltipContent) const {
 	float height = Theme::Tooltip::padding * 2;
 
 	// Title is always present
-	height += kTitleFontSize;
+	height += Tooltip::kTitleFontSize;
 
 	// Description (optional)
-	if (!content.description.empty()) {
-		height += kLineSpacing + kDescFontSize;
+	if (!tooltipContent.description.empty()) {
+		height += Tooltip::kLineSpacing + Tooltip::kDescFontSize;
 	}
 
 	// Hotkey (optional)
-	if (!content.hotkey.empty()) {
-		height += kLineSpacing + kHotkeyFontSize;
+	if (!tooltipContent.hotkey.empty()) {
+		height += Tooltip::kLineSpacing + Tooltip::kHotkeyFontSize;
 	}
 
 	return height;
 }
 
-float TooltipManager::estimateTooltipWidth(const TooltipContent& content) const {
+float TooltipManager::estimateTooltipWidth(const TooltipContent& tooltipContent) const {
 	// Find the longest line
-	size_t maxChars = content.title.length();
+	size_t maxChars = tooltipContent.title.length();
 
-	if (!content.description.empty()) {
-		maxChars = std::max(maxChars, content.description.length());
+	if (!tooltipContent.description.empty()) {
+		maxChars = std::max(maxChars, tooltipContent.description.length());
 	}
 
-	if (!content.hotkey.empty()) {
+	if (!tooltipContent.hotkey.empty()) {
 		// Hotkey is displayed as "[hotkey]", so add 2 for brackets
-		maxChars = std::max(maxChars, content.hotkey.length() + 2);
+		maxChars = std::max(maxChars, tooltipContent.hotkey.length() + 2);
 	}
 
 	// Estimate width: padding + chars * estimated char width
 	float estimatedWidth = Theme::Tooltip::padding * 2 +
-						   static_cast<float>(maxChars) * kEstimatedCharWidth;
+						   static_cast<float>(maxChars) * Tooltip::kEstimatedCharWidth;
 
 	// Clamp to max width
 	return std::min(estimatedWidth, Theme::Tooltip::maxWidth);
