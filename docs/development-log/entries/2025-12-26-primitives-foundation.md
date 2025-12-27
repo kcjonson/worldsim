@@ -77,13 +77,16 @@ Added demo scene showing:
 **New Files:**
 - `libs/ui/components/progress/ProgressBar.h`
 - `libs/ui/components/progress/ProgressBar.cpp`
-- `libs/ui/components/progress/ProgressBar.test.cpp`
+- `libs/ui/components/progress/ProgressBar.test.cpp` (10 tests)
 - `libs/ui/components/scroll/ScrollContainer.h`
 - `libs/ui/components/scroll/ScrollContainer.cpp`
+- `libs/ui/components/scroll/ScrollContainer.test.cpp` (15 tests)
 - `apps/ui-sandbox/scenes/ScrollScene.cpp`
 
 **Modified Files:**
 - `libs/ui/CMakeLists.txt` - Added new source files
+- `libs/ui/theme/Theme.h` - Added scrollbar colors (scrollbarTrack, scrollbarThumb, scrollbarThumbActive)
+- `libs/ui/components/button/Button.h/.cpp` - Added setPosition() override to fix text positioning in layouts
 - `apps/ui-sandbox/CMakeLists.txt` - Added ScrollScene.cpp
 - `apps/ui-sandbox/SceneTypes.h` - Added Scroll to scene list
 - `apps/world-sim/scenes/game/ui/components/NeedBar.h` - Refactored to use ProgressBar

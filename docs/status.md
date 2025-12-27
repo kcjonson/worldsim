@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2025-12-26 (Main Game UI: Primitives Foundation - Complete: ProgressBar, ScrollContainer, NeedBar refactored)
+Last Updated: 2025-12-27 (Main Game UI: Primitives Foundation - Complete: ProgressBar + ScrollContainer with 25 tests, NeedBar refactored)
 
 ## Epic/Story/Task Template
 
@@ -388,10 +388,11 @@ The following MVP epics have all been completed. Detailed task breakdowns are pr
 - [x] ScrollContainer Component (`libs/ui/components/scroll/`)
   - [x] Encapsulates scroll logic (content height, viewport, scroll bounds)
   - [x] Mouse wheel event handling
-  - [x] Scrollbar visuals (track + thumb)
+  - [x] Scrollbar visuals (track + thumb using Theme colors)
   - [x] Scrollbar thumb dragging
   - [x] Click track to jump to position
   - [x] Auto content height detection from LayoutContainer child
+  - [x] 15 unit tests covering construction, scroll bounds, position, viewport resize, hit testing
 - [x] ScrollScene Demo in ui-sandbox
   - [x] Basic scrollable list
   - [x] Scrollable button list with LayoutContainer
