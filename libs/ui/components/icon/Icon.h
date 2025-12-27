@@ -51,7 +51,7 @@ class Icon : public Component {
 	[[nodiscard]] const std::string&  getSvgPath() const { return svgPath; }
 	[[nodiscard]] Foundation::Color	  getTint() const { return tint; }
 	[[nodiscard]] float				  getIconSize() const { return iconSize; }
-	[[nodiscard]] bool				  isLoaded() const { return !vertices.empty(); }
+	[[nodiscard]] bool				  isLoaded() const { return !originalVertices.empty(); }
 
 	// IComponent overrides
 	void render() override;
@@ -68,13 +68,15 @@ class Icon : public Component {
 	float originalWidth{0.0F};
 	float originalHeight{0.0F};
 
-	// Cached tessellated mesh
-	std::vector<Foundation::Vec2> vertices;
-	std::vector<uint16_t>		  indices;
-	bool						  meshDirty{true};
+	// Cached tessellated mesh (original scale for reuse)
+	std::vector<Foundation::Vec2> originalVertices; // Unscaled vertices from tessellation
+	std::vector<uint16_t>		  indices;			// Indices don't change with scale
+
+	// Scaled vertices for rendering
+	std::vector<Foundation::Vec2> vertices; // Scaled/offset vertices ready for render
 
 	void rebuildMesh();
-	void scaleVertices();
+	void applyScaleToVertices();
 };
 
 } // namespace UI
