@@ -145,7 +145,7 @@ namespace UI::Theme {
 	} // namespace Toast
 
 	// === Dialog ===
-	// Modal dialog styling
+	// Dialog styling
 
 	namespace Dialog {
 

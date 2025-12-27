@@ -123,6 +123,9 @@ class Dialog : public Component, public FocusableBase<Dialog> {
 	[[nodiscard]] bool isPointInPanel(Foundation::Vec2 point) const;
 	[[nodiscard]] bool isPointInCloseButton(Foundation::Vec2 point) const;
 	[[nodiscard]] bool isPointInTitleBar(Foundation::Vec2 point) const;
+
+	// Cleanup helpers
+	void performCleanup();
 };
 
 } // namespace UI

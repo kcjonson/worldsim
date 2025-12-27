@@ -2,7 +2,14 @@
 
 #include "primitives/Primitives.h"
 
+#include <algorithm>
+
 namespace UI {
+
+// Constants for close button X text centering (approximate glyph dimensions)
+constexpr float kCloseButtonTextWidth = 10.0F;
+constexpr float kCloseButtonTextHeight = 14.0F;
+constexpr float kSeparatorOpacityMultiplier = 0.5F;
 
 Dialog::Dialog(const Args& args)
 	: FocusableBase<Dialog>(args.tabIndex),
@@ -17,9 +24,16 @@ Dialog::Dialog(const Args& args)
 Dialog::~Dialog() {
 	// Ensure focus scope is popped if we're destroyed while open
 	if (state == State::Open || state == State::Closing) {
-		if (!contentFocusables.empty()) {
-			FocusManager::Get().popFocusScope();
-		}
+		performCleanup();
+	}
+}
+
+void Dialog::performCleanup() {
+	if (!contentFocusables.empty()) {
+		FocusManager::Get().popFocusScope();
+	}
+	if (onClose) {
+		onClose();
 	}
 }
 
@@ -131,8 +145,8 @@ bool Dialog::handleEvent(InputEvent& event) {
 	switch (event.type) {
 		case InputEvent::Type::MouseMove: {
 			closeButtonHovered = isPointInCloseButton(event.position);
-			// Don't consume - allow hover tracking in content
-			return false;
+			// Return true to block hover events from reaching content behind the dialog
+			return true;
 		}
 
 		case InputEvent::Type::MouseDown: {
@@ -202,16 +216,7 @@ void Dialog::update(float deltaTime) {
 				state = State::Closed;
 				opacity = 0.0F;
 				visible = false;
-
-				// Pop focus scope
-				if (!contentFocusables.empty()) {
-					FocusManager::Get().popFocusScope();
-				}
-
-				// Call onClose callback
-				if (onClose) {
-					onClose();
-				}
+				performCleanup();
 			}
 			break;
 
@@ -293,20 +298,20 @@ void Dialog::render() {
 												  : Theme::Colors::textSecondary;
 	xColor.a *= opacity;
 
-	float xTextX = closeBounds.x + (kCloseButtonSize - 10.0F) / 2.0F;
-	float xTextY = closeBounds.y + (kCloseButtonSize - 14.0F) / 2.0F;
+	float xTextX = closeBounds.x + (kCloseButtonSize - kCloseButtonTextWidth) / 2.0F;
+	float xTextY = closeBounds.y + (kCloseButtonSize - kCloseButtonTextHeight) / 2.0F;
 
 	Renderer::Primitives::drawText(Renderer::Primitives::TextArgs{
 		.text = "X",
 		.position = {xTextX, xTextY},
-		.scale = 14.0F / 16.0F,
+		.scale = kCloseButtonTextHeight / 16.0F,
 		.color = xColor,
 		.zIndex = static_cast<float>(zIndex) + 3.1F,
 	});
 
 	// Draw separator line below title bar
 	Foundation::Color lineColor = panelBorder;
-	lineColor.a *= opacity * 0.5F;
+	lineColor.a *= opacity * kSeparatorOpacityMultiplier;
 
 	Renderer::Primitives::drawRect(Renderer::Primitives::RectArgs{
 		.bounds = {panelBounds.x, titleBarBounds.y + titleBarBounds.height,

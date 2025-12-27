@@ -42,13 +42,13 @@ class TooltipManager {
 	TooltipManager& operator=(TooltipManager&&) = delete;
 
 	/// Called when mouse hovers over a component with tooltip
-	void startHover(const TooltipContent& content, Foundation::Vec2 cursorPosition);
+	void startHover(const TooltipContent& content, Foundation::Vec2 newCursor);
 
 	/// Called when mouse leaves the component
 	void endHover();
 
 	/// Called when cursor moves while hovering
-	void updateCursorPosition(Foundation::Vec2 cursorPosition);
+	void updateCursorPosition(Foundation::Vec2 newCursor);
 
 	/// Set screen bounds for tooltip positioning
 	void setScreenBounds(float width, float height);

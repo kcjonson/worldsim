@@ -87,7 +87,11 @@ TEST_F(ContextMenuTest, ClickInsideSelectsItem) {
 
 	menu.openAt({100.0F, 100.0F}, 800.0F, 600.0F);
 
-	// Click on first item (inside menu at position after padding)
+	// First MouseUp is ignored (it's from the opening click)
+	InputEvent openingMouseUp{.type = InputEvent::Type::MouseUp, .position = {100.0F, 100.0F}};
+	menu.handleEvent(openingMouseUp);
+
+	// Now click on first item (inside menu at position after padding)
 	InputEvent mouseDown{.type = InputEvent::Type::MouseDown,
 						 .position = {110.0F, 110.0F}}; // Inside first item
 	menu.handleEvent(mouseDown);
@@ -106,6 +110,10 @@ TEST_F(ContextMenuTest, DisabledItemNotSelectable) {
 	});
 
 	menu.openAt({100.0F, 100.0F}, 800.0F, 600.0F);
+
+	// First MouseUp is ignored (it's from the opening click)
+	InputEvent openingMouseUp{.type = InputEvent::Type::MouseUp, .position = {100.0F, 100.0F}};
+	menu.handleEvent(openingMouseUp);
 
 	// Click on disabled item
 	InputEvent mouseDown{.type = InputEvent::Type::MouseDown, .position = {110.0F, 110.0F}};

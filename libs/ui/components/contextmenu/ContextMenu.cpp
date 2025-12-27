@@ -3,7 +3,13 @@
 #include "focus/FocusManager.h"
 #include "primitives/Primitives.h"
 
+#include <algorithm>
+
 namespace UI {
+
+	// Constants for menu item text rendering
+	constexpr float kItemTextPadding = 8.0F;
+	constexpr float kItemFontSize = 12.0F;
 
 	ContextMenu::ContextMenu(const Args& args)
 		: FocusableBase<ContextMenu>(-1), // Auto-assign tab index
@@ -217,7 +223,9 @@ namespace UI {
 					hoveredIndex = static_cast<int>(items.size()) - 1;
 				}
 				if (hoveredIndex == startIndex) {
-					break; // All disabled
+					// All items are disabled - reset to no selection
+					hoveredIndex = -1;
+					break;
 				}
 			}
 			return;
@@ -238,7 +246,9 @@ namespace UI {
 					hoveredIndex = 0;
 				}
 				if (hoveredIndex == startIndex) {
-					break; // All disabled
+					// All items are disabled - reset to no selection
+					hoveredIndex = -1;
+					break;
 				}
 			}
 			return;
@@ -304,8 +314,8 @@ namespace UI {
 			Renderer::Primitives::drawText(
 				Renderer::Primitives::TextArgs{
 					.text = item.label,
-					.position = {itemBounds.x + 8.0F, itemBounds.y + (Theme::ContextMenu::itemHeight - 12.0F) / 2.0F},
-					.scale = 12.0F / 16.0F,
+					.position = {itemBounds.x + kItemTextPadding, itemBounds.y + (Theme::ContextMenu::itemHeight - kItemFontSize) / 2.0F},
+					.scale = kItemFontSize / 16.0F,
 					.color = textColor,
 					.zIndex = static_cast<float>(zIndex + 2),
 				}

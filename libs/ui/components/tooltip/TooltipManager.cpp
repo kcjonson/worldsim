@@ -1,5 +1,6 @@
 #include "TooltipManager.h"
 
+#include <algorithm>
 #include <stdexcept>
 #include <utils/Log.h>
 
@@ -19,9 +20,16 @@ void TooltipManager::setInstance(TooltipManager* instance) {
 	s_instance = instance;
 }
 
-void TooltipManager::startHover(const TooltipContent& content, Foundation::Vec2 cursor) {
+void TooltipManager::startHover(const TooltipContent& content, Foundation::Vec2 newCursor) {
+	// Warn once if screen bounds haven't been properly initialized
+	static bool warnedAboutBounds = false;
+	if (!warnedAboutBounds && screenWidth == 800.0F && screenHeight == 600.0F) {
+		LOG_WARNING(UI, "TooltipManager: using default screen bounds (800x600). Call setScreenBounds() for proper positioning.");
+		warnedAboutBounds = true;
+	}
+
 	pendingContent = content;
-	cursorPosition = cursor;
+	cursorPosition = newCursor;
 
 	if (state == State::Idle || state == State::Hiding) {
 		// Start the hover delay
@@ -52,8 +60,8 @@ void TooltipManager::endHover() {
 	}
 }
 
-void TooltipManager::updateCursorPosition(Foundation::Vec2 cursor) {
-	cursorPosition = cursor;
+void TooltipManager::updateCursorPosition(Foundation::Vec2 newCursor) {
+	cursorPosition = newCursor;
 
 	// Update tooltip position if visible
 	if (activeTooltip && (state == State::Showing || state == State::Visible)) {
