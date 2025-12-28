@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2025-12-27 (Main Game UI: Interaction Components - Complete)
+Last Updated: 2025-12-28 (Main Game UI: Core HUD - Complete)
 
 ## Epic/Story/Task Template
 
@@ -27,6 +27,49 @@ Use this template for all work items:
 ---
 
 ## Recently Completed Epics (Last 4)
+
+### ✅ Main Game UI: Core HUD
+**Spec/Documentation:** `/docs/design/main-game-ui-design.md` (Sections 1, 2, 5, 9)
+**Dependencies:** Main Game UI: Primitives Foundation, UI Architecture: ViewModel Pattern
+**Status:** complete
+
+**Goal:** Implement main gameplay HUD (top bar, colonist list, gameplay bar, zoom).
+
+**Completed Tasks:**
+- [x] TimeSystem Foundation
+  - [x] GameSpeed enum (Paused, Normal, Fast, VeryFast)
+  - [x] Season enum with advancement
+  - [x] effectiveTimeScale() for time-scaled systems
+  - [x] NeedsDecaySystem uses TimeSystem
+- [x] Top Bar
+  - [x] Date/Time display (Day X, Season | HH:MM)
+  - [x] Game speed controls ([⏸] [▶] [▶▶] [▶▶▶])
+  - [x] Hotkeys (Space pause, 1/2/3 speed)
+  - [x] Menu button
+- [x] Zoom Controls
+  - [x] Floating [+] [⟳] [-] buttons in viewport
+  - [x] Home key to reset zoom
+- [x] Colonist List Enhancements
+  - [x] Portrait Card (avatar + mood bar + name)
+  - [x] Status tint (green/yellow/red background based on mood)
+  - [x] Click to select, double-click to follow
+- [x] Gameplay Bar
+  - [x] Category dropdowns: [Actions▾] [Build▾] [Production▾] [Furniture▾]
+  - [x] Upward menu expansion (openUpward flag)
+  - [x] B key for build toggle
+- [x] UI Restructure
+  - [x] Created DebugOverlay (extracted from GameOverlay)
+  - [x] Created ZoomControlPanel (wrapper for ZoomControl)
+  - [x] Deleted GameOverlay and BuildToolbar
+  - [x] Layer system refactor for all new components
+
+**Deferred:**
+- Vertical scrollable colonist list (works fine at current scale, can add if needed)
+- A/Q/R hotkeys (conflict with WASD camera movement)
+
+**Result:** Full HUD implementation with TimeSystem, TopBar with speed controls, GameplayBar with category dropdowns, enhanced colonist list with mood tints and double-click to follow, and floating zoom controls. ✅
+
+---
 
 ### ✅ Simple Asset Support (SVG-Only)
 **Spec/Documentation:** `/docs/technical/asset-system/asset-definitions.md`, `/docs/technical/asset-system/folder-based-assets.md`
@@ -476,34 +519,6 @@ The following MVP epics have all been completed. Detailed task breakdowns are pr
   - [x] Unit tests (17)
 
 **Result:** All interaction components implemented with minimal APIs, theme-based styling, and comprehensive test coverage (54 new tests). Components use FocusableBase for keyboard handling. ✅
-
----
-
-### Main Game UI: Core HUD
-**Spec/Documentation:** `/docs/design/main-game-ui-design.md` (Sections 1, 2, 5, 9)
-**Dependencies:** Main Game UI: Primitives Foundation, UI Architecture: ViewModel Pattern
-**Status:** planned
-
-**Goal:** Implement main gameplay HUD (top bar, colonist list, gameplay bar, zoom).
-
-**Tasks:**
-- [ ] Top Bar
-  - [ ] Date/Time display (Day X, Season | HH:MM)
-  - [ ] Game speed controls ([⏸] [▶] [▶▶] [▶▶▶])
-  - [ ] Hotkeys (Space pause, 1/2/3 speed)
-  - [ ] Menu button
-- [ ] Zoom Controls
-  - [ ] Floating [+] [⟳] [-] buttons in viewport
-  - [ ] Home key to reset zoom
-- [ ] Colonist List Redesign
-  - [ ] Portrait Card (avatar + mood bar + name)
-  - [ ] Status tint (green/yellow/red/gray background)
-  - [ ] Vertical scrollable list (uses ScrollContainer)
-  - [ ] Click to select, double-click to follow
-- [ ] Gameplay Bar Enhancement
-  - [ ] Category dropdowns: [Actions▾] [Build▾] [Production] [Furniture]
-  - [ ] Sub-menu expansion above bar
-  - [ ] Hotkeys (A, B, Q, R)
 
 ---
 
