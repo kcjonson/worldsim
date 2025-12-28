@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2025-12-28 (Main Game UI: Information Systems - Complete)
+Last Updated: 2025-12-28 (EntityInfoView two-column rebuild - PR #95)
 
 ## Epic/Story/Task Template
 
@@ -607,6 +607,8 @@ The following MVP epics have all been completed. Detailed task breakdowns are pr
 **Spec/Documentation:** `/docs/design/main-game-ui-design.md` (Section 8)
 **Dependencies:** Main Game UI: Interaction Components, Main Game UI: Primitives Foundation, UI Architecture: ViewModel Pattern
 **Status:** planned
+
+**Groundwork Complete:** EntityInfoView has [Details] button ready - just needs onDetails callback wired up.
 
 **Goal:** Full colonist information display with tabs.
 
