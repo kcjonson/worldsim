@@ -522,28 +522,34 @@ The following MVP epics have all been completed. Detailed task breakdowns are pr
 
 ---
 
-### Main Game UI: Information Systems
+### ✅ Main Game UI: Information Systems
 **Spec/Documentation:** `/docs/design/main-game-ui-design.md` (Sections 4, 6)
 **Dependencies:** Main Game UI: Complex Components, UI Architecture: ViewModel Pattern
 **Status:** complete
 
-**Goal:** Add resources panel and notifications system.
+**Goal:** Add resources panel and notifications to the game UI.
 
-**Tasks:**
-- [x] Notifications System
-  - [x] Add onClick callback to Toast for click-to-navigate
-  - [x] Delete old NotificationManager, integrate ToastStack directly
-  - [x] Position ToastStack in GameUI (bottom-right)
-  - [x] Auto-dismiss with countdown display
-  - [x] Click notification dismisses (onClick callback available for navigation)
+**Completed Tasks:**
 - [x] Resources Panel
-  - [x] Create ResourcesPanel component (collapsed/expanded states)
-  - [x] Empty state: "No stockpiles built" message
-  - [x] Integrate into GameUI (top-right)
-  - [ ] StorageAdapter + TreeView (deferred - requires stockpile implementation)
-  - [ ] Pin-to-always-show (★) functionality (deferred)
+  - [x] Collapsed: [Storage ▼] button
+  - [x] Expanded: Empty state message (stockpiles not yet implemented)
+  - [x] Position below zoom controls in top-right
+  - [x] Uses Component pattern with addChild for layering
+- [x] Notifications System
+  - [x] ToastStack integration in GameUI
+  - [x] Position bottom-right, above gameplay bar
+  - [x] Click-to-navigate callback support (onClick)
+  - [x] pushNotification() API on GameUI
+  - [x] Deleted old NotificationManager (replaced by ToastStack)
+- [x] Z-Order Fix
+  - [x] Remove explicit zIndex from TopBar/GameplayBar backgrounds
+  - [x] Use insertion order for parent/child layering
 
-**Result:** Notifications system uses ToastStack with proper theming, animations, and click support. Resources Panel shows empty state placeholder - ready for stockpile system integration. ✅
+**Deferred:**
+- Resources Panel TreeView population (requires stockpile system)
+- Pin-to-always-show functionality
+
+**Result:** Notification toasts appear in bottom-right with click-to-navigate. Resources panel shows collapsible "Storage" button with empty state. Z-order rendering fixed across all bars. ✅
 
 ---
 
@@ -552,15 +558,22 @@ The following MVP epics have all been completed. Detailed task breakdowns are pr
 **Dependencies:** Main Game UI: Information Systems
 **Status:** planned
 
-**Goal:** World overview with terrain, entities, and camera navigation.
+**Goal:** Add minimap for world overview and navigation.
 
 **Tasks:**
-- [ ] Render-to-texture world overview (requires GPU performance work)
-- [ ] Terrain color sampling at low resolution
-- [ ] Colonist dots, building markers, threat indicators
-- [ ] Camera viewport rectangle overlay
-- [ ] Click to navigate (jump camera)
-- [ ] Minimap-specific zoom controls ([+] [-] [⟳])
+- [ ] Minimap Rendering
+  - [ ] Render-to-texture world overview
+  - [ ] Terrain colors by surface type
+  - [ ] Building indicators
+  - [ ] Colonist dots
+  - [ ] Threat indicators (red)
+- [ ] Minimap Interaction
+  - [ ] Camera viewport rectangle overlay
+  - [ ] Click to navigate camera
+  - [ ] Minimap zoom controls (+/-)
+- [ ] Position in top-right, above Resources Panel
+
+**Notes:** Deferred from Information Systems epic due to GPU complexity. May require significant render-to-texture optimization work.
 
 ---
 
