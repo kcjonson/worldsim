@@ -88,11 +88,10 @@ namespace {
 std::optional<PanelContent> adaptSelection(
 	const Selection& selection,
 	const ecs::World& world,
-	const engine::assets::AssetRegistry& registry,
-	std::function<void()> onTaskListToggle
+	const engine::assets::AssetRegistry& registry
 ) {
 	return std::visit(
-		[&world, &registry, &onTaskListToggle](auto&& sel) -> std::optional<PanelContent> {
+		[&world, &registry](auto&& sel) -> std::optional<PanelContent> {
 			using T = std::decay_t<decltype(sel)>;
 			if constexpr (std::is_same_v<T, NoSelection>) {
 				return std::nullopt;
@@ -101,7 +100,7 @@ std::optional<PanelContent> adaptSelection(
 				if (!world.isAlive(sel.entityId)) {
 					return std::nullopt;
 				}
-				return adaptColonistStatus(world, sel.entityId, onTaskListToggle);
+				return adaptColonistStatus(world, sel.entityId);
 			} else if constexpr (std::is_same_v<T, WorldEntitySelection>) {
 				return adaptWorldEntity(registry, sel);
 			} else if constexpr (std::is_same_v<T, CraftingStationSelection>) {
@@ -124,7 +123,6 @@ std::optional<PanelContent> adaptSelection(
 PanelContent adaptColonistStatus(
 	const ecs::World& world,
 	ecs::EntityID entityId,
-	std::function<void()> /*onTaskListToggle*/, // Not used - task list is in Details modal
 	std::function<void()> onDetails
 ) {
 	PanelContent content;
@@ -196,7 +194,7 @@ PanelContent adaptColonistStatus(
 		for (size_t i = 0; i < kNeedCount; ++i) {
 			auto needType = static_cast<ecs::NeedType>(i);
 			content.rightColumn.push_back(ProgressBarSlot{
-				.label = ecs::kNeedLabels[i],
+				.label = ecs::needLabel(needType), // Uses bounds-checked helper
 				.value = needs->get(needType).value,
 			});
 		}
@@ -215,9 +213,9 @@ PanelContent adaptWorldEntity(
 	// HEADER: Same slot as colonist portrait - icon placeholder + name
 	content.header.name = selection.defName;
 
-	// Resource bar in mood slot (placeholder for now - TODO: hook up to actual resource data)
-	// Could be: growth %, health %, remaining yield, stack quantity, etc.
-	content.header.moodValue = 100.0F; // Full resource for now
+	// NOTE: Resource bar shows placeholder values until entity component data is available.
+	// Future: growth %, health %, remaining yield, stack quantity based on entity type.
+	content.header.moodValue = 100.0F;
 	content.header.moodLabel = "Full";
 
 	// Look up asset definition for properties
@@ -225,8 +223,7 @@ PanelContent adaptWorldEntity(
 	if (def != nullptr) {
 		const auto& capabilities = def->capabilities;
 
-		// TODO: Get actual resource data from entity components
-		// For now, show placeholder based on capabilities
+		// Show placeholder labels based on capabilities
 		if (capabilities.edible.has_value()) {
 			content.header.moodLabel = "Harvestable";
 		} else if (capabilities.drinkable.has_value()) {

@@ -4,24 +4,23 @@
 
 namespace world_sim {
 
-NeedBar::NeedBar(const Args& args) {
-	// Select size-specific constants
-	bool isCompact = (args.size == NeedBarSize::Compact);
-	float barHeight = (args.height > 0.0F) ? args.height
-		: (isCompact ? kCompactHeight : kNormalHeight);
-	labelWidth = isCompact ? kCompactLabelWidth : kNormalLabelWidth;
-	float fontSize = isCompact ? kCompactFontSize : kNormalFontSize;
+NeedBar::NeedBar(const Args& args)
+	: height((args.height > 0.0F) ? args.height
+				: ((args.size == NeedBarSize::Compact) ? kCompactHeight : kNormalHeight)),
+	  labelWidth((args.size == NeedBarSize::Compact) ? kCompactLabelWidth : kNormalLabelWidth) {
 
-	height = barHeight;
+	// Select size-specific constants
+	bool  isCompact = (args.size == NeedBarSize::Compact);
+	float fontSize = isCompact ? kCompactFontSize : kNormalFontSize;
 
 	// Set base class members
 	position = args.position;
-	size = {args.width, barHeight};
+	size = {args.width, height};
 
 	// Create ProgressBar as child with label support
 	progressBarHandle = addChild(UI::ProgressBar(UI::ProgressBar::Args{
 		.position = args.position,
-		.size = {args.width, barHeight},
+		.size = {args.width, height},
 		.value = value / 100.0F, // Convert 0-100 to 0-1
 		.fillColor = valueToColor(value),
 		.backgroundColor = Foundation::Color(0.2F, 0.2F, 0.25F, 1.0F),

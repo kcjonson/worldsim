@@ -66,7 +66,6 @@ namespace world_sim {
 						onSelectionCleared();
 					}
 				},
-			.onTaskListToggle = [this]() { toggleTaskList(); },
 			.onQueueRecipe = args.onQueueRecipe
 		});
 

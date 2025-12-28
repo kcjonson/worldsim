@@ -41,7 +41,6 @@ class EntityInfoView : public UI::Component {
 		float				  width = 340.0F;		// Per plan: 340px for two-column layout
 		std::string			  id = "entity_info";
 		std::function<void()> onClose;				// Called when close button clicked
-		std::function<void()> onTaskListToggle;		// Not used (task list is in Details modal)
 		std::function<void()> onDetails;			// Called when Details button clicked
 		QueueRecipeCallback   onQueueRecipe;		// Called when recipe is queued at station
 	};
@@ -115,7 +114,6 @@ class EntityInfoView : public UI::Component {
 
 	// Callbacks
 	std::function<void()> onCloseCallback;
-	std::function<void()> onTaskListToggleCallback;
 	std::function<void()> onDetailsCallback;
 	QueueRecipeCallback   onQueueRecipeCallback;
 
@@ -217,6 +215,12 @@ class EntityInfoView : public UI::Component {
 	// Details button layout
 	static constexpr float kDetailsButtonWidth = 56.0F;
 	static constexpr float kDetailsButtonHeight = 20.0F;
+	static constexpr float kButtonGap = 4.0F;			  // Gap between buttons (e.g., Details and Close)
+
+	// Spacing constants
+	static constexpr float kIconLabelGap = 8.0F;		  // Gap between icon and label below it
+	static constexpr float kHeaderMoodBarOffset = 8.0F;   // Vertical offset for mood bar below name
+	static constexpr float kBorderWidth = 1.0F;			  // Standard border width for UI elements
 
 	// Recipe card layout constants
 	static constexpr float kRecipeCardHeight = 58.0F;	  // Total height of recipe card

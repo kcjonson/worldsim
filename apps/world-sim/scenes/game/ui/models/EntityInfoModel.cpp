@@ -128,12 +128,12 @@ EntityInfoModel::UpdateType EntityInfoModel::refresh(
 
 	// Generate content
 	if (isColonist) {
-		contentData = getColonistContent(world, colonistId, callbacks.onTaskListToggle, callbacks.onDetails);
+		contentData = getColonistContent(world, colonistId, callbacks.onDetails);
 	} else if (isStation) {
 		contentData = getCraftingStationContent(world, stationId, stationDefName, recipeRegistry, callbacks.onQueueRecipe);
 	} else {
 		// World entity - use standard adapter
-		auto worldContent = adaptSelection(selection, world, assetRegistry, callbacks.onTaskListToggle);
+		auto worldContent = adaptSelection(selection, world, assetRegistry);
 		if (worldContent.has_value()) {
 			contentData = std::move(worldContent.value());
 		}
@@ -152,11 +152,10 @@ EntityInfoModel::UpdateType EntityInfoModel::refresh(
 PanelContent EntityInfoModel::getColonistContent(
 	const ecs::World& world,
 	ecs::EntityID entityId,
-	const std::function<void()>& onTaskListToggle,
 	const std::function<void()>& onDetails
 ) const {
 	// Generate two-column colonist content with onDetails callback
-	return adaptColonistStatus(world, entityId, onTaskListToggle, onDetails);
+	return adaptColonistStatus(world, entityId, onDetails);
 }
 
 PanelContent EntityInfoModel::getCraftingStationContent(

@@ -61,9 +61,9 @@ class NeedBar : public UI::Component {
 	// Handle to the progress bar child
 	UI::LayerHandle progressBarHandle;
 
-	float value = 100.0F;
-	float height;
-	float labelWidth;
+	float		value = 100.0F;
+	const float height;		// Set once in constructor, immutable
+	const float labelWidth; // Set once based on size variant, immutable
 
 	// Layout constants - Normal size (needs panel)
 	static constexpr float kNormalHeight = 16.0F;

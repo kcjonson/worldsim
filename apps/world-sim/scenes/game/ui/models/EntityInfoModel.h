@@ -57,9 +57,8 @@ class EntityInfoModel {
 
 	/// Callbacks needed for content generation
 	struct Callbacks {
-		std::function<void()> onTaskListToggle;	 // Toggle task list panel
-		std::function<void()> onDetails;		 // Open colonist details modal
-		QueueRecipeCallback onQueueRecipe;		 // Queue recipe at station
+		std::function<void()> onDetails;	 // Open colonist details modal
+		QueueRecipeCallback onQueueRecipe;	 // Queue recipe at station
 	};
 
 	/// Refresh model with current selection state
@@ -86,7 +85,6 @@ class EntityInfoModel {
 	[[nodiscard]] PanelContent getColonistContent(
 		const ecs::World& world,
 		ecs::EntityID entityId,
-		const std::function<void()>& onTaskListToggle,
 		const std::function<void()>& onDetails
 	) const;
 

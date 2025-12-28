@@ -13,7 +13,6 @@ namespace world_sim {
 		: panelWidth(args.width),
 		  panelX(args.position.x),
 		  onCloseCallback(args.onClose),
-		  onTaskListToggleCallback(args.onTaskListToggle),
 		  onDetailsCallback(args.onDetails),
 		  onQueueRecipeCallback(args.onQueueRecipe) {
 
@@ -141,8 +140,8 @@ namespace world_sim {
 			UI::Text(
 				UI::Text::Args{
 					.position =
-						{args.position.x + kPadding + kPortraitSize + kSectionGap + kHeaderMoodBarWidth + 8.0F,
-						 args.position.y + kPadding + kNameFontSize + 4.0F},
+						{args.position.x + kPadding + kPortraitSize + kSectionGap + kHeaderMoodBarWidth + kIconLabelGap,
+						 args.position.y + kPadding + kNameFontSize + kItemGap},
 					.text = "",
 					.style =
 						{
@@ -197,7 +196,7 @@ namespace world_sim {
 		centeredLabelHandle = addChild(
 			UI::Text(
 				UI::Text::Args{
-					.position = {args.position.x + panelWidth * 0.5F, args.position.y + kPadding + kEntityIconSize + 8.0F},
+					.position = {args.position.x + panelWidth * 0.5F, args.position.y + kPadding + kEntityIconSize + kIconLabelGap},
 					.text = "",
 					.style =
 						{
@@ -235,11 +234,13 @@ namespace world_sim {
 		}
 
 		// Create progress bar pool for needs (positions set when shown via renderContent)
-		// Labels come from ecs::kNeedLabels - single source of truth for need names
+		// Labels come from ecs::needLabel() - single source of truth with bounds checking
 		progressBarHandles.reserve(kMaxProgressBars);
 		for (size_t i = 0; i < kMaxProgressBars; ++i) {
-			// Use actual need label for first 8, empty for extras
-			const char* label = (i < ecs::kNeedLabels.size()) ? ecs::kNeedLabels[i] : "";
+			// Use actual need label for first N needs, empty for extras
+			const char* label = (i < static_cast<size_t>(ecs::NeedType::Count))
+									? ecs::needLabel(static_cast<ecs::NeedType>(i))
+									: "";
 			progressBarHandles.push_back(addChild(NeedBar(
 				NeedBar::Args{
 					.position = {args.position.x + kPadding, args.position.y},
@@ -452,7 +453,6 @@ namespace world_sim {
 	) {
 		// Prepare callbacks for model
 		EntityInfoModel::Callbacks callbacks{
-			.onTaskListToggle = onTaskListToggleCallback,
 			.onDetails = onDetailsCallback,
 			.onQueueRecipe = onQueueRecipeCallback,
 		};
@@ -507,10 +507,11 @@ namespace world_sim {
 		hideSlots();
 
 		// Fixed panel height for all entity types - ensures visual consistency
-		// Header: padding(12) + portrait(64) + gap(12) = 88px
-		// Column: "Needs:" label(16) + 8 needs * 20px = 176px
-		// Bottom: padding(12) = 12px
-		// Total = 88 + 176 + 12 = 276px (round up to 280 for breathing room)
+		// Header: kPadding(12) + kPortraitSize(64) + kSectionGap(12) = 88px
+		//         Name text and mood bar are positioned within the portrait band
+		// Column: kHeaderFontSize(12) + kItemGap(4) + 8 needs * (kNeedBarHeight(16) + kItemGap(4)) = 16 + 160 = 176px
+		// Bottom: kPadding(12) = 12px
+		// Total = 88 + 176 + 12 = 276px, plus 4px extra padding for breathing room -> 280px
 		constexpr float kFixedPanelHeight = 280.0F;
 		float			totalHeight = kFixedPanelHeight;
 
@@ -635,19 +636,21 @@ namespace world_sim {
 
 		// Compact mood bar (8px height) below name with spacing
 		// Uses NeedBar component which handles color gradient automatically
-		float moodBarY = panelY + kPadding + kNameFontSize + 8.0F;
+		float moodBarY = panelY + kPadding + kNameFontSize + kHeaderMoodBarOffset;
 		if (auto* moodBar = getChild<NeedBar>(headerMoodBarHandle)) {
 			moodBar->visible = true;
 			moodBar->setPosition({headerTextX, moodBarY});
 			moodBar->setValue(content.header.moodValue); // NeedBar handles color gradient
 		}
 
-		// Mood label: "72% Content" - vertically centered with 8px bar
+		// Mood label: "72% Content" - vertically centered with mood bar
 		std::string moodText = std::to_string(static_cast<int>(content.header.moodValue)) + "% " + content.header.moodLabel;
 		if (auto* moodLabel = getChild<UI::Text>(headerMoodLabelHandle)) {
 			moodLabel->visible = true;
-			// Center text with bar: bar is 8px, text ~11px, offset by (8-11)/2 = -1.5
-			moodLabel->position = {headerTextX + kHeaderMoodBarWidth + 8.0F, moodBarY - 1.5F};
+			// Center text with bar: compute offset from bar height and font size
+			constexpr float kMoodLabelFontSize = 11.0F;
+			const float moodLabelVerticalOffset = (kHeaderMoodBarHeight - kMoodLabelFontSize) * 0.5F;
+			moodLabel->position = {headerTextX + kHeaderMoodBarWidth + kIconLabelGap, moodBarY + moodLabelVerticalOffset};
 			moodLabel->text = moodText;
 		}
 
@@ -873,7 +876,7 @@ namespace world_sim {
 
 	Foundation::Vec2 EntityInfoView::getDetailsButtonPosition(float panelY) const {
 		// Position to left of close button with a small gap
-		return {panelX + panelWidth - kPadding - kCloseButtonSize - 4.0F - kDetailsButtonWidth, panelY + kPadding};
+		return {panelX + panelWidth - kPadding - kCloseButtonSize - kButtonGap - kDetailsButtonWidth, panelY + kPadding};
 	}
 
 	void EntityInfoView::updateValues(const PanelContent& content) {
@@ -911,7 +914,13 @@ namespace world_sim {
 					// Update text slots (for Task/Action status that changes frequently)
 					if (textIndex < textHandles.size()) {
 						if (auto* text = getChild<UI::Text>(textHandles[textIndex])) {
-							text->text = textSlot->label + ": " + textSlot->value;
+							// Pre-reserve to avoid multiple allocations
+							std::string combined;
+							combined.reserve(textSlot->label.size() + 2U + textSlot->value.size());
+							combined.append(textSlot->label);
+							combined.append(": ");
+							combined.append(textSlot->value);
+							text->text = std::move(combined);
 						}
 					}
 					++textIndex;
