@@ -205,8 +205,10 @@ class EntityInfoView : public UI::Component {
 	static constexpr float kEntityIconSize = 48.0F;	  // Item/flora/fauna icon
 
 	// Header mood bar (compact summary, next to name)
+	// Note: Height intentionally differs from NeedBar::kCompactHeight (10px) for tighter header layout
 	static constexpr float kHeaderMoodBarWidth = 50.0F;   // Half width - it's a summary
 	static constexpr float kHeaderMoodBarHeight = 8.0F;
+	static constexpr float kMoodLabelFontSize = 11.0F;	  // Slightly smaller for mood percentage text
 
 	// Two-column layout constants (colonists)
 	static constexpr float kColumnGap = 16.0F;			 // Gap between columns

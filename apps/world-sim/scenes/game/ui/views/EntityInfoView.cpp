@@ -126,7 +126,8 @@ namespace world_sim {
 		// No label (label is rendered separately on the right side)
 		headerMoodBarHandle = addChild(NeedBar(
 			NeedBar::Args{
-				.position = {args.position.x + kPadding + kPortraitSize + kSectionGap, args.position.y + kPadding + kNameFontSize + 4.0F},
+				.position =
+					{args.position.x + kPadding + kPortraitSize + kSectionGap, args.position.y + kPadding + kNameFontSize + kItemGap},
 				.width = kHeaderMoodBarWidth,
 				.height = kHeaderMoodBarHeight,
 				.size = NeedBarSize::Compact,
@@ -238,9 +239,7 @@ namespace world_sim {
 		progressBarHandles.reserve(kMaxProgressBars);
 		for (size_t i = 0; i < kMaxProgressBars; ++i) {
 			// Use actual need label for first N needs, empty for extras
-			const char* label = (i < static_cast<size_t>(ecs::NeedType::Count))
-									? ecs::needLabel(static_cast<ecs::NeedType>(i))
-									: "";
+			const char* label = (i < static_cast<size_t>(ecs::NeedType::Count)) ? ecs::needLabel(static_cast<ecs::NeedType>(i)) : "";
 			progressBarHandles.push_back(addChild(NeedBar(
 				NeedBar::Args{
 					.position = {args.position.x + kPadding, args.position.y},
@@ -644,14 +643,21 @@ namespace world_sim {
 		}
 
 		// Mood label: "72% Content" - vertically centered with mood bar
-		std::string moodText = std::to_string(static_cast<int>(content.header.moodValue)) + "% " + content.header.moodLabel;
+		// Pre-allocate string to avoid temporary allocations
+		std::string moodText;
+		{
+			auto valueStr = std::to_string(static_cast<int>(content.header.moodValue));
+			moodText.reserve(valueStr.size() + 2U + content.header.moodLabel.size());
+			moodText.append(valueStr);
+			moodText.append("% ");
+			moodText.append(content.header.moodLabel);
+		}
 		if (auto* moodLabel = getChild<UI::Text>(headerMoodLabelHandle)) {
 			moodLabel->visible = true;
 			// Center text with bar: compute offset from bar height and font size
-			constexpr float kMoodLabelFontSize = 11.0F;
 			const float moodLabelVerticalOffset = (kHeaderMoodBarHeight - kMoodLabelFontSize) * 0.5F;
 			moodLabel->position = {headerTextX + kHeaderMoodBarWidth + kIconLabelGap, moodBarY + moodLabelVerticalOffset};
-			moodLabel->text = moodText;
+			moodLabel->text = std::move(moodText);
 		}
 
 		// [Details] button at top-right (only for colonists - check if callback is set)
@@ -741,7 +747,13 @@ namespace world_sim {
 		if (auto* text = getChild<UI::Text>(textHandles[usedTextSlots])) {
 			text->visible = true;
 			text->position = {panelX + kPadding + xOffset, yOffset};
-			text->text = slot.label + ": " + slot.value;
+			// Pre-allocate string to avoid temporary allocations
+			std::string combined;
+			combined.reserve(slot.label.size() + 2U + slot.value.size());
+			combined.append(slot.label);
+			combined.append(": ");
+			combined.append(slot.value);
+			text->text = std::move(combined);
 		}
 
 		++usedTextSlots;
@@ -890,10 +902,17 @@ namespace world_sim {
 				moodBar->setValue(content.header.moodValue);
 			}
 
-			// Update mood label
-			std::string moodText = std::to_string(static_cast<int>(content.header.moodValue)) + "% " + content.header.moodLabel;
+			// Update mood label with pre-allocated string
+			std::string moodText;
+			{
+				auto valueStr = std::to_string(static_cast<int>(content.header.moodValue));
+				moodText.reserve(valueStr.size() + 2U + content.header.moodLabel.size());
+				moodText.append(valueStr);
+				moodText.append("% ");
+				moodText.append(content.header.moodLabel);
+			}
 			if (auto* moodLabel = getChild<UI::Text>(headerMoodLabelHandle)) {
-				moodLabel->text = moodText;
+				moodLabel->text = std::move(moodText);
 			}
 		}
 
