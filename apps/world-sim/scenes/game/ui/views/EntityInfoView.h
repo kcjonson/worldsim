@@ -21,7 +21,6 @@
 #include <assets/AssetRegistry.h>
 #include <assets/RecipeRegistry.h>
 #include <component/Component.h>
-#include <components/tabbar/TabBar.h>
 #include <ecs/World.h>
 #include <graphics/Color.h>
 #include <input/InputEvent.h>
@@ -39,11 +38,11 @@ class EntityInfoView : public UI::Component {
   public:
 	struct Args {
 		Foundation::Vec2	  position{0.0F, 0.0F};
-		float				  width = 180.0F;
+		float				  width = 340.0F;		// Per plan: 340px for two-column layout
 		std::string			  id = "entity_info";
-		std::function<void()> onClose;			// Called when close button clicked
-		std::function<void()> onTaskListToggle; // Called when task list toggle clicked
-		QueueRecipeCallback   onQueueRecipe;	// Called when recipe is queued at station
+		std::function<void()> onClose;				// Called when close button clicked
+		std::function<void()> onDetails;			// Called when Details button clicked
+		QueueRecipeCallback   onQueueRecipe;		// Called when recipe is queued at station
 	};
 
 	explicit EntityInfoView(const Args& args);
@@ -78,6 +77,12 @@ class EntityInfoView : public UI::Component {
 	/// Render PanelContent by laying out slots (structure tier update)
 	void renderContent(const PanelContent& content);
 
+	/// Render single-column layout (items, flora, fauna, crafting stations)
+	void renderSingleColumnLayout(const PanelContent& content, float panelY);
+
+	/// Render two-column layout (colonists)
+	void renderTwoColumnLayout(const PanelContent& content, float panelY);
+
 	/// Update only dynamic values (progress bars) without relayout (value tier update)
 	void updateValues(const PanelContent& content);
 
@@ -85,28 +90,31 @@ class EntityInfoView : public UI::Component {
 	void hideSlots();
 
 	/// Render an individual slot at given Y offset, returns height consumed
-	float renderSlot(const InfoSlot& slot, float yOffset);
+	/// @param xOffset X offset from panel left edge (for column layouts)
+	/// @param maxWidth Max width for this slot (0 = use contentWidth)
+	float renderSlot(const InfoSlot& slot, float yOffset, float xOffset = 0.0F, float maxWidth = 0.0F);
 
 	// Slot type rendering helpers
-	float renderTextSlot(const TextSlot& slot, float yOffset);
-	float renderProgressBarSlot(const ProgressBarSlot& slot, float yOffset);
-	float renderTextListSlot(const TextListSlot& slot, float yOffset);
+	float renderTextSlot(const TextSlot& slot, float yOffset, float xOffset);
+	float renderProgressBarSlot(const ProgressBarSlot& slot, float yOffset, float xOffset, float maxWidth);
+	float renderTextListSlot(const TextListSlot& slot, float yOffset, float xOffset);
 	float renderSpacerSlot(const SpacerSlot& slot, float yOffset);
-	float renderClickableTextSlot(const ClickableTextSlot& slot, float yOffset);
+	float renderClickableTextSlot(const ClickableTextSlot& slot, float yOffset, float xOffset);
 	float renderRecipeSlot(const RecipeSlot& slot, float yOffset);
+	float renderIconSlot(const IconSlot& slot, float yOffset);
 
 	/// Get close button top-left position for current panel position
 	[[nodiscard]] Foundation::Vec2 getCloseButtonPosition(float panelY) const;
 
-	/// Tab change callback - updates content for selected tab
-	void onTabChanged(const std::string& tabId);
+	/// Get details button top-left position for current panel position
+	[[nodiscard]] Foundation::Vec2 getDetailsButtonPosition(float panelY) const;
 
-	// ViewModel (owns selection cache, tab state, content generation)
+	// ViewModel (owns selection cache, content generation)
 	EntityInfoModel m_model;
 
 	// Callbacks
 	std::function<void()> onCloseCallback;
-	std::function<void()> onTaskListToggleCallback;
+	std::function<void()> onDetailsCallback;
 	QueueRecipeCallback   onQueueRecipeCallback;
 
 	// Background panel
@@ -116,11 +124,23 @@ class EntityInfoView : public UI::Component {
 	UI::LayerHandle closeButtonBgHandle;
 	UI::LayerHandle closeButtonTextHandle;
 
-	// Header text (entity name/title)
+	// Header text (entity name/title) - used for single-column layout
 	UI::LayerHandle titleHandle;
 
-	// Tab bar (only shown for colonists)
-	UI::LayerHandle tabBarHandle;
+	// Colonist header elements (two-column layout)
+	UI::LayerHandle portraitHandle;			 // Gray placeholder rectangle (64×64)
+	UI::LayerHandle headerNameHandle;		 // "Sarah Chen, 28"
+	UI::LayerHandle headerMoodBarHandle;	 // Mood bar (NeedBar with no label, uses color gradient)
+	UI::LayerHandle headerMoodLabelHandle;	 // "72% Content" (right of bar)
+	UI::LayerHandle needsLabelHandle;		 // "Needs:" section header
+
+	// Centered icon (single-column layout for items/flora)
+	UI::LayerHandle centeredIconHandle;	 // Icon placeholder (48×48)
+	UI::LayerHandle centeredLabelHandle; // Entity name below icon
+
+	// Details button [Details] (only shown for colonists)
+	UI::LayerHandle detailsButtonBgHandle;
+	UI::LayerHandle detailsButtonTextHandle;
 
 	// Pool of reusable slot UI elements
 	// Text elements (for TextSlot label:value pairs)
@@ -170,14 +190,39 @@ class EntityInfoView : public UI::Component {
 	float panelX{0.0F};
 	float m_viewportHeight{0.0F};
 
-	// Layout constants
-	static constexpr float kPadding = 8.0F;
-	static constexpr float kTitleFontSize = 14.0F;
-	static constexpr float kTextFontSize = 11.0F;
-	static constexpr float kProgressBarHeight = 14.0F;
-	static constexpr float kLineSpacing = 4.0F;
+	// Layout constants (per plan)
+	static constexpr float kPadding = 12.0F;		  // Outer padding
+	static constexpr float kSectionGap = 12.0F;		  // Gap between sections
+	static constexpr float kItemGap = 4.0F;			  // Gap between items
+	static constexpr float kNameFontSize = 14.0F;	  // Entity name (colonist name can be bigger)
+	static constexpr float kLabelFontSize = 12.0F;	  // Property labels (match NeedBar)
+	static constexpr float kHeaderFontSize = 12.0F;	  // Section headers
+	static constexpr float kNeedBarHeight = 16.0F;	  // Need bars (slightly taller)
 	static constexpr float kCloseButtonSize = 16.0F;
-	static constexpr float kTabBarHeight = 24.0F;  // Height of tab bar when shown
+
+	// Portrait/Icon sizes
+	static constexpr float kPortraitSize = 64.0F;	  // Colonist portrait
+	static constexpr float kEntityIconSize = 48.0F;	  // Item/flora/fauna icon
+
+	// Header mood bar (compact summary, next to name)
+	// Note: Height intentionally differs from NeedBar::kCompactHeight (10px) for tighter header layout
+	static constexpr float kHeaderMoodBarWidth = 50.0F;   // Half width - it's a summary
+	static constexpr float kHeaderMoodBarHeight = 8.0F;
+	static constexpr float kMoodLabelFontSize = 11.0F;	  // Slightly smaller for mood percentage text
+
+	// Two-column layout constants (colonists)
+	static constexpr float kColumnGap = 16.0F;			 // Gap between columns
+	static constexpr float kLeftColumnWidth = 140.0F;	 // Fixed left column width
+
+	// Details button layout
+	static constexpr float kDetailsButtonWidth = 56.0F;
+	static constexpr float kDetailsButtonHeight = 20.0F;
+	static constexpr float kButtonGap = 4.0F;			  // Gap between buttons (e.g., Details and Close)
+
+	// Spacing constants
+	static constexpr float kIconLabelGap = 8.0F;		  // Gap between icon and label below it
+	static constexpr float kHeaderMoodBarOffset = 8.0F;   // Vertical offset for mood bar below name
+	static constexpr float kBorderWidth = 1.0F;			  // Standard border width for UI elements
 
 	// Recipe card layout constants
 	static constexpr float kRecipeCardHeight = 58.0F;	  // Total height of recipe card

@@ -2,6 +2,7 @@
 
 #include "scenes/game/ui/adapters/SelectionAdapter.h"
 
+#include <ecs/components/Needs.h>
 #include <theme/PanelStyle.h>
 #include <theme/Theme.h>
 #include <utils/Log.h>
@@ -12,7 +13,7 @@ namespace world_sim {
 		: panelWidth(args.width),
 		  panelX(args.position.x),
 		  onCloseCallback(args.onClose),
-		  onTaskListToggleCallback(args.onTaskListToggle),
+		  onDetailsCallback(args.onDetails),
 		  onQueueRecipeCallback(args.onQueueRecipe) {
 
 		contentWidth = panelWidth - (2.0F * kPadding);
@@ -66,21 +67,147 @@ namespace world_sim {
 			)
 		);
 
-		// Add title text
+		// Title text (used for single-column layout)
 		titleHandle = addChild(
 			UI::Text(
 				UI::Text::Args{
 					.position = {args.position.x + kPadding, args.position.y + kPadding},
-					.text = "Select Entity",
+					.text = "",
 					.style =
 						{
 							.color = UI::Theme::Colors::textTitle,
-							.fontSize = kTitleFontSize,
+							.fontSize = kNameFontSize,
 							.hAlign = Foundation::HorizontalAlign::Left,
 							.vAlign = Foundation::VerticalAlign::Top,
 						},
 					.zIndex = 1,
 					.id = (args.id + "_title").c_str()
+				}
+			)
+		);
+
+		// ========== Colonist header elements (two-column layout) ==========
+
+		// Portrait placeholder (gray rectangle)
+		portraitHandle = addChild(
+			UI::Rectangle(
+				UI::Rectangle::Args{
+					.position = {args.position.x + kPadding, args.position.y + kPadding},
+					.size = {kPortraitSize, kPortraitSize},
+					.style =
+						{.fill = Foundation::Color(0.20F, 0.20F, 0.25F, 1.0F),
+						 .border = Foundation::BorderStyle{.color = Foundation::Color(0.30F, 0.30F, 0.35F, 1.0F), .width = 1.0F}},
+					.zIndex = 1,
+					.id = (args.id + "_portrait").c_str()
+				}
+			)
+		);
+
+		// Header name "Sarah Chen, 28"
+		headerNameHandle = addChild(
+			UI::Text(
+				UI::Text::Args{
+					.position = {args.position.x + kPadding + kPortraitSize + kSectionGap, args.position.y + kPadding},
+					.text = "",
+					.style =
+						{
+							.color = UI::Theme::Colors::textTitle,
+							.fontSize = kNameFontSize,
+							.hAlign = Foundation::HorizontalAlign::Left,
+							.vAlign = Foundation::VerticalAlign::Top,
+						},
+					.zIndex = 1,
+					.id = (args.id + "_header_name").c_str()
+				}
+			)
+		);
+
+		// Header mood bar - uses NeedBar component for consistent color gradient
+		// No label (label is rendered separately on the right side)
+		headerMoodBarHandle = addChild(NeedBar(
+			NeedBar::Args{
+				.position =
+					{args.position.x + kPadding + kPortraitSize + kSectionGap, args.position.y + kPadding + kNameFontSize + kItemGap},
+				.width = kHeaderMoodBarWidth,
+				.height = kHeaderMoodBarHeight,
+				.size = NeedBarSize::Compact,
+				.label = "", // No label - we render "72% Content" separately on the right
+				.id = args.id + "_mood_bar"
+			}
+		));
+
+		// Header mood label "72% Content"
+		headerMoodLabelHandle = addChild(
+			UI::Text(
+				UI::Text::Args{
+					.position =
+						{args.position.x + kPadding + kPortraitSize + kSectionGap + kHeaderMoodBarWidth + kIconLabelGap,
+						 args.position.y + kPadding + kNameFontSize + kItemGap},
+					.text = "",
+					.style =
+						{
+							.color = UI::Theme::Colors::textSecondary,
+							.fontSize = kLabelFontSize,
+							.hAlign = Foundation::HorizontalAlign::Left,
+							.vAlign = Foundation::VerticalAlign::Top,
+						},
+					.zIndex = 1,
+					.id = (args.id + "_mood_label").c_str()
+				}
+			)
+		);
+
+		// "Needs:" section header (right column)
+		needsLabelHandle = addChild(
+			UI::Text(
+				UI::Text::Args{
+					.position = {args.position.x + kPadding, args.position.y},
+					.text = "Needs:",
+					.style =
+						{
+							.color = UI::Theme::Colors::textHeader,
+							.fontSize = kHeaderFontSize,
+							.hAlign = Foundation::HorizontalAlign::Left,
+							.vAlign = Foundation::VerticalAlign::Top,
+						},
+					.zIndex = 1,
+					.id = (args.id + "_needs_label").c_str()
+				}
+			)
+		);
+
+		// ========== Single-column layout elements (items/flora) ==========
+
+		// Centered icon placeholder
+		centeredIconHandle = addChild(
+			UI::Rectangle(
+				UI::Rectangle::Args{
+					.position = {args.position.x + (panelWidth - kEntityIconSize) * 0.5F, args.position.y + kPadding},
+					.size = {kEntityIconSize, kEntityIconSize},
+					.style =
+						{.fill = Foundation::Color(0.25F, 0.25F, 0.30F, 1.0F),
+						 .border = Foundation::BorderStyle{.color = Foundation::Color(0.35F, 0.35F, 0.40F, 1.0F), .width = 1.0F}},
+					.zIndex = 1,
+					.id = (args.id + "_centered_icon").c_str()
+				}
+			)
+		);
+
+		// Centered entity label
+		centeredLabelHandle = addChild(
+			UI::Text(
+				UI::Text::Args{
+					.position = {args.position.x + panelWidth * 0.5F, args.position.y + kPadding + kEntityIconSize + kIconLabelGap},
+					.text = "",
+					.style =
+						{
+							.color = UI::Theme::Colors::textTitle,
+							.fontSize = kNameFontSize,
+							.hAlign = Foundation::HorizontalAlign::Center,
+							.vAlign = Foundation::VerticalAlign::Top,
+						},
+					.zIndex = 1,
+					.id = (args.id + "_centered_label").c_str()
 				}
 			)
 		);
@@ -96,7 +223,7 @@ namespace world_sim {
 						.style =
 							{
 								.color = UI::Theme::Colors::textBody,
-								.fontSize = kTextFontSize,
+								.fontSize = kLabelFontSize,
 								.hAlign = Foundation::HorizontalAlign::Left,
 								.vAlign = Foundation::VerticalAlign::Top,
 							},
@@ -107,15 +234,18 @@ namespace world_sim {
 			));
 		}
 
-		// Create progress bar pool (positions set when shown via renderContent)
+		// Create progress bar pool for needs (positions set when shown via renderContent)
+		// Labels come from ecs::needLabel() - single source of truth with bounds checking
 		progressBarHandles.reserve(kMaxProgressBars);
 		for (size_t i = 0; i < kMaxProgressBars; ++i) {
+			// Use actual need label for first N needs, empty for extras
+			const char* label = (i < static_cast<size_t>(ecs::NeedType::Count)) ? ecs::needLabel(static_cast<ecs::NeedType>(i)) : "";
 			progressBarHandles.push_back(addChild(NeedBar(
 				NeedBar::Args{
 					.position = {args.position.x + kPadding, args.position.y},
 					.width = contentWidth,
-					.height = kProgressBarHeight,
-					.label = "",
+					.height = kNeedBarHeight,
+					.label = label,
 					.id = args.id + "_bar_" + std::to_string(i)
 				}
 			)));
@@ -130,7 +260,7 @@ namespace world_sim {
 					.style =
 						{
 							.color = UI::Theme::Colors::textBody,
-							.fontSize = kTextFontSize,
+							.fontSize = kLabelFontSize,
 							.hAlign = Foundation::HorizontalAlign::Left,
 							.vAlign = Foundation::VerticalAlign::Top,
 						},
@@ -151,7 +281,7 @@ namespace world_sim {
 						.style =
 							{
 								.color = UI::Theme::Colors::statusActive,
-								.fontSize = kTextFontSize,
+								.fontSize = kLabelFontSize,
 								.hAlign = Foundation::HorizontalAlign::Left,
 								.vAlign = Foundation::VerticalAlign::Top,
 							},
@@ -171,7 +301,7 @@ namespace world_sim {
 					.style =
 						{
 							.color = UI::Theme::Colors::textClickable,
-							.fontSize = kTextFontSize,
+							.fontSize = kLabelFontSize,
 							.hAlign = Foundation::HorizontalAlign::Left,
 							.vAlign = Foundation::VerticalAlign::Top,
 						},
@@ -274,21 +404,34 @@ namespace world_sim {
 			recipeCardHandles.push_back(card);
 		}
 
-		// Create tab bar for colonist selection (hidden initially)
-		// Capture 'this' for callback
-		tabBarHandle = addChild(
-			UI::TabBar(
-				UI::TabBar::Args{
-					.position = {args.position.x + kPadding, args.position.y + kPadding + kTitleFontSize + kLineSpacing},
-					.width = contentWidth,
-					.tabs =
+		// Create details button [Details] (hidden initially, shown for colonists)
+		auto detailsPos = getDetailsButtonPosition(args.position.y);
+		detailsButtonBgHandle = addChild(
+			UI::Rectangle(
+				UI::Rectangle::Args{
+					.position = detailsPos,
+					.size = {kDetailsButtonWidth, kDetailsButtonHeight},
+					.style = UI::PanelStyles::actionButton(),
+					.zIndex = 2,
+					.id = (args.id + "_details_bg").c_str()
+				}
+			)
+		);
+
+		detailsButtonTextHandle = addChild(
+			UI::Text(
+				UI::Text::Args{
+					.position = {detailsPos.x + kDetailsButtonWidth * 0.5F, detailsPos.y + kDetailsButtonHeight * 0.5F},
+					.text = "Details",
+					.style =
 						{
-							{.id = "status", .label = "Status"},
-							{.id = "inventory", .label = "Inventory"},
+							.color = UI::Theme::Colors::actionButtonText,
+							.fontSize = 10.0F,
+							.hAlign = Foundation::HorizontalAlign::Center,
+							.vAlign = Foundation::VerticalAlign::Middle,
 						},
-					.selectedId = "status",
-					.onSelect = [this](const std::string& tabId) { onTabChanged(tabId); },
-					.id = (args.id + "_tabbar").c_str(),
+					.zIndex = 3,
+					.id = (args.id + "_details_text").c_str()
 				}
 			)
 		);
@@ -302,14 +445,14 @@ namespace world_sim {
 	}
 
 	void EntityInfoView::update(
-		const ecs::World& world,
-		const engine::assets::AssetRegistry& assetRegistry,
+		const ecs::World&					  world,
+		const engine::assets::AssetRegistry&  assetRegistry,
 		const engine::assets::RecipeRegistry& recipeRegistry,
-		const Selection& selection
+		const Selection&					  selection
 	) {
 		// Prepare callbacks for model
 		EntityInfoModel::Callbacks callbacks{
-			.onTaskListToggle = onTaskListToggleCallback,
+			.onDetails = onDetailsCallback,
 			.onQueueRecipe = onQueueRecipeCallback,
 		};
 
@@ -329,18 +472,10 @@ namespace world_sim {
 
 			case EntityInfoModel::UpdateType::Show:
 				visible = true;
-				// Sync tab bar with model's tab selection
-				if (auto* tabBar = getChild<UI::TabBar>(tabBarHandle)) {
-					tabBar->setSelected(m_model.activeTab());
-				}
 				renderContent(m_model.content());
 				break;
 
 			case EntityInfoModel::UpdateType::Structure:
-				// Sync tab bar with model's tab selection (in case selection changed)
-				if (auto* tabBar = getChild<UI::TabBar>(tabBarHandle)) {
-					tabBar->setSelected(m_model.activeTab());
-				}
 				renderContent(m_model.content());
 				break;
 
@@ -370,61 +505,14 @@ namespace world_sim {
 		// Hide all pool elements first (will show ones we use)
 		hideSlots();
 
-		// Helper lambda to compute height for a set of slots
-		auto computeSlotsHeight = [this](const std::vector<InfoSlot>& slots) -> float {
-			float height = 0.0F;
-			for (const auto& slot : slots) {
-				height += std::visit(
-					[this](const auto& s) -> float {
-						using T = std::decay_t<decltype(s)>;
-						if constexpr (std::is_same_v<T, TextSlot>) {
-							return kTextFontSize + kLineSpacing;
-						} else if constexpr (std::is_same_v<T, ProgressBarSlot>) {
-							return kProgressBarHeight + kLineSpacing;
-						} else if constexpr (std::is_same_v<T, TextListSlot>) {
-							float  h = kTextFontSize + 2.0F; // header
-							size_t itemCount = std::min(s.items.size(), kMaxListItems);
-							h += static_cast<float>(itemCount) * (kTextFontSize + 2.0F);
-							return h + kLineSpacing;
-						} else if constexpr (std::is_same_v<T, SpacerSlot>) {
-							return s.height;
-						} else if constexpr (std::is_same_v<T, ClickableTextSlot>) {
-							return kTextFontSize + kLineSpacing;
-						} else if constexpr (std::is_same_v<T, RecipeSlot>) {
-							return kRecipeCardHeight + kRecipeCardSpacing;
-						}
-						return 0.0F;
-					},
-					slot
-				);
-			}
-			return height;
-		};
-
-		// First pass: compute content height to determine panel position
-		// (panel bottom aligns with viewport bottom)
-		float baseHeight = kPadding + kTitleFontSize + kLineSpacing * 2.0F;
-
-		// Add tab bar height if showing tabs (with extra spacing below)
-		if (m_model.showsTabs()) {
-			baseHeight += kTabBarHeight + kLineSpacing * 3.0F;
-		}
-
-		// For tabbed panels, use fixed height based on Status tab (which is typically tallest)
-		// This prevents the panel from jumping when switching tabs
-		float contentHeight = computeSlotsHeight(content.slots);
-
-		if (m_model.showsTabs()) {
-			// Use a fixed minimum content height for colonist panels
-			// Status tab has: Mood + 8 needs + spacer + Task + Action + Tasks clickable
-			// = 9 progress bars + 1 spacer + 3 text slots
-			constexpr float kMinColonistContentHeight = 9.0F * (kProgressBarHeight + kLineSpacing) + // 9 progress bars (mood + 8 needs)
-														8.0F +										 // spacer
-														3.0F * (kTextFontSize + kLineSpacing);		 // Task, Action, Tasks clickable
-			contentHeight = std::max(contentHeight, kMinColonistContentHeight);
-		}
-
-		float totalHeight = baseHeight + contentHeight + kPadding; // bottom padding
+		// Fixed panel height for all entity types - ensures visual consistency
+		// Header: kPadding(12) + kPortraitSize(64) + kSectionGap(12) = 88px
+		//         Name text and mood bar are positioned within the portrait band
+		// Column: kHeaderFontSize(12) + kItemGap(4) + 8 needs * (kNeedBarHeight(16) + kItemGap(4)) = 16 + 160 = 176px
+		// Bottom: kPadding(12) = 12px
+		// Total = 88 + 176 + 12 = 276px, plus 4px extra padding for breathing room -> 280px
+		constexpr float kFixedPanelHeight = 280.0F;
+		float			totalHeight = kFixedPanelHeight;
 
 		panelHeight = totalHeight;
 		float panelY = m_viewportHeight - panelHeight;
@@ -447,26 +535,174 @@ namespace world_sim {
 			closeText->position = {closePos.x + kCloseButtonSize * 0.5F, closePos.y + kCloseButtonSize * 0.5F - 1.0F};
 		}
 
-		// Show and position title
+		// Dispatch to appropriate layout renderer
+		if (content.layout == PanelLayout::TwoColumn) {
+			renderTwoColumnLayout(content, panelY);
+		} else {
+			renderSingleColumnLayout(content, panelY);
+		}
+	}
+
+	void EntityInfoView::renderSingleColumnLayout(const PanelContent& content, float panelY) {
+		// Hide colonist-specific header elements
+		if (auto* portrait = getChild<UI::Rectangle>(portraitHandle)) {
+			portrait->visible = false;
+		}
+		if (auto* headerName = getChild<UI::Text>(headerNameHandle)) {
+			headerName->visible = false;
+		}
+		if (auto* moodBar = getChild<NeedBar>(headerMoodBarHandle)) {
+			moodBar->visible = false;
+		}
+		if (auto* moodLabel = getChild<UI::Text>(headerMoodLabelHandle)) {
+			moodLabel->visible = false;
+		}
+		if (auto* needsLabel = getChild<UI::Text>(needsLabelHandle)) {
+			needsLabel->visible = false;
+		}
 		if (auto* title = getChild<UI::Text>(titleHandle)) {
-			title->visible = true;
-			title->position = {panelX + kPadding, panelY + kPadding};
-			title->text = content.title;
+			title->visible = false;
 		}
 
-		// Show/hide and position tab bar
-		float yOffset = panelY + kPadding + kTitleFontSize + kLineSpacing * 2.0F;
-		if (auto* tabBar = getChild<UI::TabBar>(tabBarHandle)) {
-			tabBar->visible = m_model.showsTabs();
-			if (m_model.showsTabs()) {
-				tabBar->position = {panelX + kPadding, yOffset};
-				yOffset += kTabBarHeight + kLineSpacing * 3.0F; // Extra spacing below tab bar
+		// Hide details button for non-colonist selections
+		if (auto* detailsBg = getChild<UI::Rectangle>(detailsButtonBgHandle)) {
+			detailsBg->visible = false;
+		}
+		if (auto* detailsText = getChild<UI::Text>(detailsButtonTextHandle)) {
+			detailsText->visible = false;
+		}
+
+		// Show centered icon placeholder
+		float iconX = panelX + (panelWidth - kEntityIconSize) * 0.5F;
+		if (auto* icon = getChild<UI::Rectangle>(centeredIconHandle)) {
+			icon->visible = true;
+			icon->position = {iconX, panelY + kPadding};
+		}
+
+		// Get entity name from first IconSlot if present
+		std::string entityName = content.title;
+		for (const auto& slot : content.slots) {
+			if (const auto* iconSlot = std::get_if<IconSlot>(&slot)) {
+				entityName = iconSlot->label;
+				break;
 			}
 		}
 
-		// Render slots (each slot renderer sets visible=true on used elements)
+		// Show centered entity label below icon
+		if (auto* label = getChild<UI::Text>(centeredLabelHandle)) {
+			label->visible = true;
+			label->position = {panelX + panelWidth * 0.5F, panelY + kPadding + kEntityIconSize + kItemGap};
+			label->text = entityName;
+		}
+
+		// Render remaining slots below the centered icon/label
+		float yOffset = panelY + kPadding + kEntityIconSize + kItemGap + kNameFontSize + kSectionGap;
 		for (const auto& slot : content.slots) {
-			yOffset += renderSlot(slot, yOffset);
+			// Skip IconSlot (already rendered as centered icon)
+			if (std::holds_alternative<IconSlot>(slot)) {
+				continue;
+			}
+			yOffset += renderSlot(slot, yOffset, 0.0F, 0.0F);
+		}
+	}
+
+	void EntityInfoView::renderTwoColumnLayout(const PanelContent& content, float panelY) {
+		// Hide single-column elements
+		if (auto* centeredIcon = getChild<UI::Rectangle>(centeredIconHandle)) {
+			centeredIcon->visible = false;
+		}
+		if (auto* centeredLabel = getChild<UI::Text>(centeredLabelHandle)) {
+			centeredLabel->visible = false;
+		}
+		if (auto* title = getChild<UI::Text>(titleHandle)) {
+			title->visible = false;
+		}
+
+		// ========== HEADER AREA ==========
+		// Portrait placeholder (64×64)
+		if (auto* portrait = getChild<UI::Rectangle>(portraitHandle)) {
+			portrait->visible = true;
+			portrait->position = {panelX + kPadding, panelY + kPadding};
+		}
+
+		// Name to right of portrait: "Sarah Chen"
+		float headerTextX = panelX + kPadding + kPortraitSize + kSectionGap;
+		if (auto* headerName = getChild<UI::Text>(headerNameHandle)) {
+			headerName->visible = true;
+			headerName->position = {headerTextX, panelY + kPadding};
+			headerName->text = content.header.name;
+		}
+
+		// Compact mood bar (8px height) below name with spacing
+		// Uses NeedBar component which handles color gradient automatically
+		float moodBarY = panelY + kPadding + kNameFontSize + kHeaderMoodBarOffset;
+		if (auto* moodBar = getChild<NeedBar>(headerMoodBarHandle)) {
+			moodBar->visible = true;
+			moodBar->setPosition({headerTextX, moodBarY});
+			moodBar->setValue(content.header.moodValue); // NeedBar handles color gradient
+		}
+
+		// Mood label: "72% Content" - vertically centered with mood bar
+		// Pre-allocate string to avoid temporary allocations
+		std::string moodText;
+		{
+			auto valueStr = std::to_string(static_cast<int>(content.header.moodValue));
+			moodText.reserve(valueStr.size() + 2U + content.header.moodLabel.size());
+			moodText.append(valueStr);
+			moodText.append("% ");
+			moodText.append(content.header.moodLabel);
+		}
+		if (auto* moodLabel = getChild<UI::Text>(headerMoodLabelHandle)) {
+			moodLabel->visible = true;
+			// Center text with bar: compute offset from bar height and font size
+			const float moodLabelVerticalOffset = (kHeaderMoodBarHeight - kMoodLabelFontSize) * 0.5F;
+			moodLabel->position = {headerTextX + kHeaderMoodBarWidth + kIconLabelGap, moodBarY + moodLabelVerticalOffset};
+			moodLabel->text = std::move(moodText);
+		}
+
+		// [Details] button at top-right (only for colonists - check if callback is set)
+		bool showDetailsButton = (content.onDetails != nullptr);
+		auto detailsPos = getDetailsButtonPosition(panelY);
+		if (auto* detailsBg = getChild<UI::Rectangle>(detailsButtonBgHandle)) {
+			detailsBg->visible = showDetailsButton;
+			detailsBg->position = detailsPos;
+		}
+		if (auto* detailsText = getChild<UI::Text>(detailsButtonTextHandle)) {
+			detailsText->visible = showDetailsButton;
+			detailsText->position = {detailsPos.x + kDetailsButtonWidth * 0.5F, detailsPos.y + kDetailsButtonHeight * 0.5F};
+		}
+
+		// ========== TWO-COLUMN CONTENT AREA ==========
+		float columnsY = panelY + kPadding + kPortraitSize + kSectionGap;
+
+		// Column widths (left is fixed, right fills remaining)
+		float rightColumnWidth = contentWidth - kLeftColumnWidth - kColumnGap;
+		float rightColumnX = kLeftColumnWidth + kColumnGap;
+
+		// LEFT COLUMN: Current task, Next task, Gear list (may be empty for world entities)
+		float leftY = columnsY;
+		for (const auto& slot : content.leftColumn) {
+			leftY += renderSlot(slot, leftY, 0.0F, kLeftColumnWidth);
+		}
+
+		// RIGHT COLUMN: "Needs:" header + need bars (only if has content)
+		float rightY = columnsY;
+		bool  hasNeedsContent = !content.rightColumn.empty();
+
+		// "Needs:" section header (only show if we have needs)
+		if (auto* needsLabel = getChild<UI::Text>(needsLabelHandle)) {
+			needsLabel->visible = hasNeedsContent;
+			if (hasNeedsContent) {
+				needsLabel->position = {panelX + kPadding + rightColumnX, rightY};
+			}
+		}
+		if (hasNeedsContent) {
+			rightY += kHeaderFontSize + kItemGap;
+		}
+
+		// Need bars
+		for (const auto& slot : content.rightColumn) {
+			rightY += renderSlot(slot, rightY, rightColumnX, rightColumnWidth);
 		}
 	}
 
@@ -478,22 +714,24 @@ namespace world_sim {
 		}
 	}
 
-	float EntityInfoView::renderSlot(const InfoSlot& slot, float yOffset) {
+	float EntityInfoView::renderSlot(const InfoSlot& slot, float yOffset, float xOffset, float maxWidth) {
 		return std::visit(
-			[this, yOffset](const auto& s) -> float {
+			[this, yOffset, xOffset, maxWidth](const auto& s) -> float {
 				using T = std::decay_t<decltype(s)>;
 				if constexpr (std::is_same_v<T, TextSlot>) {
-					return renderTextSlot(s, yOffset);
+					return renderTextSlot(s, yOffset, xOffset);
 				} else if constexpr (std::is_same_v<T, ProgressBarSlot>) {
-					return renderProgressBarSlot(s, yOffset);
+					return renderProgressBarSlot(s, yOffset, xOffset, maxWidth);
 				} else if constexpr (std::is_same_v<T, TextListSlot>) {
-					return renderTextListSlot(s, yOffset);
+					return renderTextListSlot(s, yOffset, xOffset);
 				} else if constexpr (std::is_same_v<T, SpacerSlot>) {
 					return renderSpacerSlot(s, yOffset);
 				} else if constexpr (std::is_same_v<T, ClickableTextSlot>) {
-					return renderClickableTextSlot(s, yOffset);
+					return renderClickableTextSlot(s, yOffset, xOffset);
 				} else if constexpr (std::is_same_v<T, RecipeSlot>) {
 					return renderRecipeSlot(s, yOffset);
+				} else if constexpr (std::is_same_v<T, IconSlot>) {
+					return renderIconSlot(s, yOffset);
 				}
 				return 0.0F;
 			},
@@ -501,78 +739,88 @@ namespace world_sim {
 		);
 	}
 
-	float EntityInfoView::renderTextSlot(const TextSlot& slot, float yOffset) {
+	float EntityInfoView::renderTextSlot(const TextSlot& slot, float yOffset, float xOffset) {
 		if (usedTextSlots >= textHandles.size()) {
 			return 0.0F;
 		}
 
 		if (auto* text = getChild<UI::Text>(textHandles[usedTextSlots])) {
 			text->visible = true;
-			text->position = {panelX + kPadding, yOffset};
-			text->text = slot.label + ": " + slot.value;
+			text->position = {panelX + kPadding + xOffset, yOffset};
+			// Pre-allocate string to avoid temporary allocations
+			std::string combined;
+			combined.reserve(slot.label.size() + 2U + slot.value.size());
+			combined.append(slot.label);
+			combined.append(": ");
+			combined.append(slot.value);
+			text->text = std::move(combined);
 		}
 
 		++usedTextSlots;
-		return kTextFontSize + kLineSpacing;
+		return kLabelFontSize + kItemGap;
 	}
 
-	float EntityInfoView::renderProgressBarSlot(const ProgressBarSlot& slot, float yOffset) {
+	float EntityInfoView::renderProgressBarSlot(const ProgressBarSlot& slot, float yOffset, float xOffset, float maxWidth) {
 		if (usedProgressBars >= progressBarHandles.size()) {
 			return 0.0F;
 		}
 
+		float barWidth = (maxWidth > 0.0F) ? maxWidth : contentWidth;
+
 		if (auto* bar = getChild<NeedBar>(progressBarHandles[usedProgressBars])) {
 			bar->visible = true;
-			bar->setPosition({panelX + kPadding, yOffset});
+			bar->setPosition({panelX + kPadding + xOffset, yOffset});
+			bar->setWidth(barWidth);
 			bar->setValue(slot.value);
 			bar->setLabel(slot.label);
 		}
 
 		++usedProgressBars;
-		return kProgressBarHeight + kLineSpacing;
+		return kNeedBarHeight + kItemGap;
 	}
 
-	float EntityInfoView::renderTextListSlot(const TextListSlot& slot, float yOffset) {
+	float EntityInfoView::renderTextListSlot(const TextListSlot& slot, float yOffset, float xOffset) {
 		float height = 0.0F;
 
 		// Render header
 		if (auto* header = getChild<UI::Text>(listHeaderHandle)) {
 			header->visible = true;
-			header->position = {panelX + kPadding, yOffset};
+			header->position = {panelX + kPadding + xOffset, yOffset};
 			header->text = slot.header + ":";
 		}
-		height += kTextFontSize + 2.0F;
+		height += kLabelFontSize + 2.0F;
 
 		// Render items
+		// TODO: Replace text dash with small item icon rects once we have item icons
 		for (size_t i = 0; i < slot.items.size() && usedListItems < listItemHandles.size(); ++i) {
 			if (auto* item = getChild<UI::Text>(listItemHandles[usedListItems])) {
 				item->visible = true;
-				item->position = {panelX + kPadding + 8.0F, yOffset + height};
+				item->position = {panelX + kPadding + xOffset + 8.0F, yOffset + height};
 				item->text = "- " + slot.items[i];
 			}
 			++usedListItems;
-			height += kTextFontSize + 2.0F;
+			height += kLabelFontSize + 2.0F;
 		}
 
-		return height + kLineSpacing;
+		return height + kItemGap;
 	}
 
 	float EntityInfoView::renderSpacerSlot(const SpacerSlot& slot, float /*yOffset*/) {
 		return slot.height;
 	}
 
-	float EntityInfoView::renderClickableTextSlot(const ClickableTextSlot& slot, float yOffset) {
+	float EntityInfoView::renderClickableTextSlot(const ClickableTextSlot& slot, float yOffset, float xOffset) {
 		if (auto* text = getChild<UI::Text>(clickableTextHandle)) {
 			text->visible = true;
-			text->position = {panelX + kPadding, yOffset};
+			text->position = {panelX + kPadding + xOffset, yOffset};
 			text->text = slot.label + ": " + slot.value;
 
 			// Store callback and bounds for click handling
 			clickableCallback = slot.onClick;
-			clickableBoundsMin = {panelX + kPadding, yOffset};
-			clickableBoundsMax = {panelX + contentWidth, yOffset + kTextFontSize};
+			clickableBoundsMin = {panelX + kPadding + xOffset, yOffset};
+			clickableBoundsMax = {panelX + contentWidth, yOffset + kLabelFontSize};
 		}
-		return kTextFontSize + kLineSpacing;
+		return kLabelFontSize + kItemGap;
 	}
 
 	float EntityInfoView::renderRecipeSlot(const RecipeSlot& slot, float yOffset) {
@@ -620,42 +868,92 @@ namespace world_sim {
 
 		// Store callback and bounds for click handling
 		recipeCallbacks[usedRecipeCards] = slot.onQueue;
-		recipeButtonBounds[usedRecipeCards] = Foundation::Rect{
-			buttonX, buttonY, kRecipeQueueButtonSize, kRecipeQueueButtonSize
-		};
+		recipeButtonBounds[usedRecipeCards] = Foundation::Rect{buttonX, buttonY, kRecipeQueueButtonSize, kRecipeQueueButtonSize};
 
 		++usedRecipeCards;
 		return kRecipeCardHeight + kRecipeCardSpacing;
+	}
+
+	float EntityInfoView::renderIconSlot(const IconSlot& slot, float yOffset) {
+		// IconSlot is primarily rendered via centeredIconHandle/centeredLabelHandle in
+		// renderSingleColumnLayout. This method returns the height consumed for layout.
+		// The centered icon is already positioned there; this just returns height for
+		// any additional rendering in a slot list context.
+		return slot.size + kLabelFontSize + kSectionGap;
 	}
 
 	Foundation::Vec2 EntityInfoView::getCloseButtonPosition(float panelY) const {
 		return {panelX + panelWidth - kPadding - kCloseButtonSize, panelY + kPadding};
 	}
 
+	Foundation::Vec2 EntityInfoView::getDetailsButtonPosition(float panelY) const {
+		// Position to left of close button with a small gap
+		return {panelX + panelWidth - kPadding - kCloseButtonSize - kButtonGap - kDetailsButtonWidth, panelY + kPadding};
+	}
+
 	void EntityInfoView::updateValues(const PanelContent& content) {
 		// Tier 3: Value-only update - same entity, just update dynamic slot values
-		// Updates progress bars and text slots (for action/task status changes)
+		// Updates progress bars, text slots, and header mood bar
 		// Skips all position calculations for significant performance savings
+
+		// Update header mood bar for colonists (NeedBar handles color gradient)
+		if (content.layout == PanelLayout::TwoColumn) {
+			if (auto* moodBar = getChild<NeedBar>(headerMoodBarHandle)) {
+				moodBar->setValue(content.header.moodValue);
+			}
+
+			// Update mood label with pre-allocated string
+			std::string moodText;
+			{
+				auto valueStr = std::to_string(static_cast<int>(content.header.moodValue));
+				moodText.reserve(valueStr.size() + 2U + content.header.moodLabel.size());
+				moodText.append(valueStr);
+				moodText.append("% ");
+				moodText.append(content.header.moodLabel);
+			}
+			if (auto* moodLabel = getChild<UI::Text>(headerMoodLabelHandle)) {
+				moodLabel->text = std::move(moodText);
+			}
+		}
 
 		size_t barIndex = 0;
 		size_t textIndex = 0;
-		for (const auto& slot : content.slots) {
-			if (const auto* barSlot = std::get_if<ProgressBarSlot>(&slot)) {
-				if (barIndex < progressBarHandles.size()) {
-					if (auto* bar = getChild<NeedBar>(progressBarHandles[barIndex])) {
-						bar->setValue(barSlot->value);
+
+		// Helper to update slots from a vector
+		auto updateSlots = [&](const std::vector<InfoSlot>& slots) {
+			for (const auto& slot : slots) {
+				if (const auto* barSlot = std::get_if<ProgressBarSlot>(&slot)) {
+					if (barIndex < progressBarHandles.size()) {
+						if (auto* bar = getChild<NeedBar>(progressBarHandles[barIndex])) {
+							bar->setValue(barSlot->value);
+						}
 					}
-				}
-				++barIndex;
-			} else if (const auto* textSlot = std::get_if<TextSlot>(&slot)) {
-				// Update text slots (for Task/Action status that changes frequently)
-				if (textIndex < textHandles.size()) {
-					if (auto* text = getChild<UI::Text>(textHandles[textIndex])) {
-						text->text = textSlot->label + ": " + textSlot->value;
+					++barIndex;
+				} else if (const auto* textSlot = std::get_if<TextSlot>(&slot)) {
+					// Update text slots (for Task/Action status that changes frequently)
+					if (textIndex < textHandles.size()) {
+						if (auto* text = getChild<UI::Text>(textHandles[textIndex])) {
+							// Pre-reserve to avoid multiple allocations
+							std::string combined;
+							combined.reserve(textSlot->label.size() + 2U + textSlot->value.size());
+							combined.append(textSlot->label);
+							combined.append(": ");
+							combined.append(textSlot->value);
+							text->text = std::move(combined);
+						}
 					}
+					++textIndex;
 				}
-				++textIndex;
 			}
+		};
+
+		// Update header slots
+		updateSlots(content.slots);
+
+		// Update column slots (for two-column layout)
+		if (content.layout == PanelLayout::TwoColumn) {
+			updateSlots(content.leftColumn);
+			updateSlots(content.rightColumn);
 		}
 	}
 
@@ -674,23 +972,9 @@ namespace world_sim {
 		}
 	}
 
-	void EntityInfoView::onTabChanged(const std::string& tabId) {
-		// Delegate to model - it will set the flag for next refresh()
-		m_model.setActiveTab(tabId);
-	}
-
 	bool EntityInfoView::handleEvent(UI::InputEvent& event) {
 		if (!visible) {
 			return false;
-		}
-
-		// Handle TabBar events if showing tabs
-		if (m_model.showsTabs()) {
-			if (auto* tabBar = getChild<UI::TabBar>(tabBarHandle)) {
-				if (tabBar->handleEvent(event)) {
-					return true;
-				}
-			}
 		}
 
 		// Only handle mouse up (click) events for interactive elements
@@ -702,14 +986,13 @@ namespace world_sim {
 			return false;
 		}
 
-		auto pos = event.position;
+		auto  pos = event.position;
+		float panelY = m_viewportHeight - panelHeight;
 
 		// Check close button
-		float panelY = m_viewportHeight - panelHeight;
 		auto closePos = getCloseButtonPosition(panelY);
-
-		if (pos.x >= closePos.x && pos.x <= closePos.x + kCloseButtonSize &&
-			pos.y >= closePos.y && pos.y <= closePos.y + kCloseButtonSize) {
+		if (pos.x >= closePos.x && pos.x <= closePos.x + kCloseButtonSize && pos.y >= closePos.y &&
+			pos.y <= closePos.y + kCloseButtonSize) {
 			if (onCloseCallback) {
 				onCloseCallback();
 			}
@@ -717,10 +1000,22 @@ namespace world_sim {
 			return true;
 		}
 
+		// Check details button (only visible for colonists)
+		if (m_model.isColonist()) {
+			auto detailsPos = getDetailsButtonPosition(panelY);
+			if (pos.x >= detailsPos.x && pos.x <= detailsPos.x + kDetailsButtonWidth && pos.y >= detailsPos.y &&
+				pos.y <= detailsPos.y + kDetailsButtonHeight) {
+				if (onDetailsCallback) {
+					onDetailsCallback();
+				}
+				event.consume();
+				return true;
+			}
+		}
+
 		// Check clickable slot
-		if (clickableCallback &&
-			pos.x >= clickableBoundsMin.x && pos.x <= clickableBoundsMax.x &&
-			pos.y >= clickableBoundsMin.y && pos.y <= clickableBoundsMax.y) {
+		if (clickableCallback && pos.x >= clickableBoundsMin.x && pos.x <= clickableBoundsMax.x && pos.y >= clickableBoundsMin.y &&
+			pos.y <= clickableBoundsMax.y) {
 			clickableCallback();
 			event.consume();
 			return true;
@@ -729,9 +1024,8 @@ namespace world_sim {
 		// Check recipe buttons
 		for (size_t i = 0; i < usedRecipeCards; ++i) {
 			const auto& bounds = recipeButtonBounds[i];
-			if (recipeCallbacks[i] &&
-				pos.x >= bounds.x && pos.x <= bounds.x + bounds.width &&
-				pos.y >= bounds.y && pos.y <= bounds.y + bounds.height) {
+			if (recipeCallbacks[i] && pos.x >= bounds.x && pos.x <= bounds.x + bounds.width && pos.y >= bounds.y &&
+				pos.y <= bounds.y + bounds.height) {
 				recipeCallbacks[i]();
 				event.consume();
 				return true;
@@ -739,8 +1033,7 @@ namespace world_sim {
 		}
 
 		// Check if click is within panel bounds - consume to prevent world click
-		if (pos.x >= panelX && pos.x <= panelX + panelWidth &&
-			pos.y >= panelY && pos.y <= panelY + panelHeight) {
+		if (pos.x >= panelX && pos.x <= panelX + panelWidth && pos.y >= panelY && pos.y <= panelY + panelHeight) {
 			event.consume();
 			return true;
 		}

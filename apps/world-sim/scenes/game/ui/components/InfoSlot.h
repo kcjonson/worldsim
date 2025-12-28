@@ -55,13 +55,52 @@ struct RecipeSlot {
 	std::function<void()> onQueue;	   // Called when [+] button clicked
 };
 
+/// Centered icon for items/flora/fauna
+/// Displays as centered icon with entity name below:
+/// ┌────────────────────────────────┐
+/// │         [Icon 48×48]           │
+/// │         Berry Bush             │
+/// └────────────────────────────────┘
+struct IconSlot {
+	std::string iconPath;	 // Path to SVG asset (empty = placeholder)
+	float		size{48.0F}; // Icon size (width and height)
+	std::string label;		 // Entity name displayed below icon
+};
+
 /// Union of all slot types - adapters return vectors of these
-using InfoSlot = std::variant<TextSlot, ProgressBarSlot, TextListSlot, SpacerSlot, ClickableTextSlot, RecipeSlot>;
+using InfoSlot = std::variant<TextSlot, ProgressBarSlot, TextListSlot, SpacerSlot, ClickableTextSlot, RecipeSlot, IconSlot>;
+
+/// Panel layout mode
+enum class PanelLayout {
+	SingleColumn, // Items, flora, fauna, crafting stations - simple vertical layout
+	TwoColumn	  // Colonists - left column (task/gear) + right column (needs)
+};
+
+/// Colonist header data (portrait area)
+struct ColonistHeader {
+	std::string name;		  // "Sarah Chen"
+	float		moodValue{0}; // 0-100
+	std::string moodLabel;	  // "Content", "Happy", "Stressed"
+};
 
 /// Complete panel content description produced by adapters
 struct PanelContent {
-	std::string			  title;
+	std::string title; // Used for single-column layout title
+	PanelLayout layout{PanelLayout::SingleColumn};
+
+	// For SingleColumn layout: all content in 'slots'
 	std::vector<InfoSlot> slots;
+
+	// For TwoColumn layout (colonists only):
+	// - header: portrait area with name/age/mood
+	// - leftColumn: Current task, Next task, Gear list
+	// - rightColumn: "Needs:" header + need bars
+	ColonistHeader		  header;
+	std::vector<InfoSlot> leftColumn;
+	std::vector<InfoSlot> rightColumn;
+
+	// Colonist-specific: callback for Details button
+	std::function<void()> onDetails;
 };
 
 } // namespace world_sim

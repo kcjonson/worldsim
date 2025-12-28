@@ -116,4 +116,27 @@ void ProgressBar::setPosition(Foundation::Vec2 newPos) {
 	}
 }
 
+void ProgressBar::setWidth(float newWidth) {
+	size.x = newWidth;
+
+	// Recalculate bar width based on whether we have a label
+	if (hasLabel) {
+		barWidth = newWidth - labelWidth - labelGap;
+	} else {
+		barWidth = newWidth;
+	}
+	barWidth = std::max(barWidth, borderWidth * 2.0F + 1.0F);
+
+	// Update background size
+	if (auto* bg = getChild<Rectangle>(backgroundHandle)) {
+		bg->size.x = barWidth;
+	}
+
+	// Update fill width based on current value
+	if (auto* fill = getChild<Rectangle>(fillHandle)) {
+		float fillWidth = (barWidth - borderWidth * 2.0F) * value;
+		fill->size.x = std::max(0.0F, fillWidth);
+	}
+}
+
 } // namespace UI

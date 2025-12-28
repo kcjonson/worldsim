@@ -6,7 +6,7 @@ namespace world_sim {
 
 	namespace {
 		// Layout constants
-		constexpr float kPanelWidth = 240.0F;
+		constexpr float kPanelWidth = 340.0F;	 // Per plan: 340px for two-column colonist layout
 		constexpr float kTaskListWidth = 360.0F; // 2x info panel
 		constexpr float kPanelPadding = 10.0F;
 		constexpr float kPanelHeight = 148.0F;
@@ -66,7 +66,6 @@ namespace world_sim {
 						onSelectionCleared();
 					}
 				},
-			.onTaskListToggle = [this]() { toggleTaskList(); },
 			.onQueueRecipe = args.onQueueRecipe
 		});
 
