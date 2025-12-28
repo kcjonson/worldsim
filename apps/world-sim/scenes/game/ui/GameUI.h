@@ -18,13 +18,15 @@
 #include "scenes/game/ui/views/ColonistListView.h"
 #include "scenes/game/ui/views/DebugOverlay.h"
 #include "scenes/game/ui/views/TopBar.h"
+#include "scenes/game/ui/views/ResourcesPanel.h"
 #include "scenes/game/ui/models/ColonistListModel.h"
 #include "scenes/game/ui/models/TimeModel.h"
 #include "scenes/game/ui/views/EntityInfoView.h"
 #include "scenes/game/ui/views/ZoomControlPanel.h"
-#include "scenes/game/world/NotificationManager.h"
 #include "scenes/game/ui/components/Selection.h"
 #include "scenes/game/ui/views/TaskListView.h"
+
+#include <components/toast/ToastStack.h>
 
 #include <ecs/systems/TimeSystem.h>
 
@@ -73,6 +75,7 @@ class GameUI {
 
 	/// Update UI state
 	void update(
+		float deltaTime,
 		const engine::world::WorldCamera& camera,
 		const engine::world::ChunkManager& chunkManager,
 		ecs::World& ecsWorld,
@@ -84,8 +87,16 @@ class GameUI {
 	/// Render all UI elements
 	void render();
 
-	/// Render notifications (call after render() for proper z-order)
-	void renderNotifications(const NotificationManager& notifications);
+	/// Push a notification to the toast stack
+	/// @param title Short title for the notification
+	/// @param message Detailed message
+	/// @param severity Info, Warning, or Critical (affects styling)
+	/// @param autoDismissTime Seconds before auto-dismiss (0 = persistent)
+	/// @param onClick Optional callback when notification is clicked (for navigation)
+	void pushNotification(const std::string& title, const std::string& message,
+						  UI::ToastSeverity severity = UI::ToastSeverity::Info,
+						  float autoDismissTime = 5.0F,
+						  std::function<void()> onClick = nullptr);
 
 	// --- Build Mode API ---
 
@@ -110,6 +121,8 @@ class GameUI {
 	std::unique_ptr<ColonistListView> colonistList;
 	std::unique_ptr<EntityInfoView> infoPanel;
 	std::unique_ptr<TaskListView> taskListPanel;
+	std::unique_ptr<ResourcesPanel> resourcesPanel;
+	std::unique_ptr<UI::ToastStack> toastStack;
 
 	// ViewModels (own data + change detection)
 	TimeModel timeModel;

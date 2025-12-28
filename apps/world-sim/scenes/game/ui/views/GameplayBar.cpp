@@ -10,7 +10,7 @@ GameplayBar::GameplayBar(const Args& args)
 	, onProductionSelected(args.onProductionSelected)
 	, onFurnitureSelected(args.onFurnitureSelected) {
 
-	// Create background rectangle
+	// Create background rectangle (added first so it renders behind other children)
 	backgroundHandle = addChild(UI::Rectangle(UI::Rectangle::Args{
 		.position = {0.0F, 0.0F},
 		.size = {400.0F, kBarHeight},  // Width will be set in layout()
@@ -23,8 +23,7 @@ GameplayBar::GameplayBar(const Args& args)
 						.width = 1.0F,
 						.position = Foundation::BorderPosition::Inside},
 			},
-		.id = "gameplay_bar_background",
-		.zIndex = 400}));
+		.id = "gameplay_bar_background"}));
 
 	// Create Actions dropdown (stub items for now)
 	actionsDropdownHandle = addChild(UI::DropdownButton(UI::DropdownButton::Args{

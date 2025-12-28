@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2025-12-28 (Main Game UI: Core HUD - Complete)
+Last Updated: 2025-12-28 (Main Game UI: Information Systems - Complete)
 
 ## Epic/Story/Task Template
 
@@ -523,27 +523,44 @@ The following MVP epics have all been completed. Detailed task breakdowns are pr
 ---
 
 ### Main Game UI: Information Systems
-**Spec/Documentation:** `/docs/design/main-game-ui-design.md` (Sections 3, 4, 6)
+**Spec/Documentation:** `/docs/design/main-game-ui-design.md` (Sections 4, 6)
 **Dependencies:** Main Game UI: Complex Components, UI Architecture: ViewModel Pattern
-**Status:** planned
+**Status:** complete
 
-**Goal:** Add minimap, resources panel, and notifications.
+**Goal:** Add resources panel and notifications system.
 
 **Tasks:**
-- [ ] Minimap
-  - [ ] Render-to-texture world overview
-  - [ ] Terrain, buildings, colonist dots, threat indicators
-  - [ ] Camera viewport rectangle
-  - [ ] Click to navigate
-  - [ ] Minimap zoom controls
-- [ ] Resources Panel
-  - [ ] Collapsed: [📦 Storage ▼] link
-  - [ ] Expanded: TreeView of storage by category
-  - [ ] Pin-to-always-show (★) functionality
-- [ ] Notifications System
-  - [ ] Toast Stack in bottom-right
-  - [ ] Auto-dismiss (research, construction) vs persistent (raids, danger)
-  - [ ] Click notification to navigate
+- [x] Notifications System
+  - [x] Add onClick callback to Toast for click-to-navigate
+  - [x] Delete old NotificationManager, integrate ToastStack directly
+  - [x] Position ToastStack in GameUI (bottom-right)
+  - [x] Auto-dismiss with countdown display
+  - [x] Click notification dismisses (onClick callback available for navigation)
+- [x] Resources Panel
+  - [x] Create ResourcesPanel component (collapsed/expanded states)
+  - [x] Empty state: "No stockpiles built" message
+  - [x] Integrate into GameUI (top-right)
+  - [ ] StorageAdapter + TreeView (deferred - requires stockpile implementation)
+  - [ ] Pin-to-always-show (★) functionality (deferred)
+
+**Result:** Notifications system uses ToastStack with proper theming, animations, and click support. Resources Panel shows empty state placeholder - ready for stockpile system integration. ✅
+
+---
+
+### Main Game UI: Minimap
+**Spec/Documentation:** `/docs/design/main-game-ui-design.md` (Section 3)
+**Dependencies:** Main Game UI: Information Systems
+**Status:** planned
+
+**Goal:** World overview with terrain, entities, and camera navigation.
+
+**Tasks:**
+- [ ] Render-to-texture world overview (requires GPU performance work)
+- [ ] Terrain color sampling at low resolution
+- [ ] Colonist dots, building markers, threat indicators
+- [ ] Camera viewport rectangle overlay
+- [ ] Click to navigate (jump camera)
+- [ ] Minimap-specific zoom controls ([+] [-] [⟳])
 
 ---
 

@@ -12,6 +12,7 @@ Toast::Toast(const Args& args)
 	  autoDismissTime(args.autoDismissTime),
 	  iconPath(args.iconPath),
 	  onDismiss(args.onDismiss),
+	  onClick(args.onClick),
 	  toastWidth(args.width) {
 	position = args.position;
 	size = {toastWidth, calculateHeight()};
@@ -89,7 +90,8 @@ bool Toast::handleEvent(InputEvent& event) {
 		}
 
 		case InputEvent::Type::MouseDown: {
-			if (isPointInDismissButton(event.position)) {
+			// Consume click on toast body or dismiss button
+			if (containsPoint(event.position)) {
 				event.consume();
 				return true;
 			}
@@ -98,6 +100,16 @@ bool Toast::handleEvent(InputEvent& event) {
 
 		case InputEvent::Type::MouseUp: {
 			if (isPointInDismissButton(event.position)) {
+				// Clicking dismiss button just dismisses
+				dismiss();
+				event.consume();
+				return true;
+			}
+			if (containsPoint(event.position)) {
+				// Clicking toast body triggers onClick callback and dismisses
+				if (onClick) {
+					onClick();
+				}
 				dismiss();
 				event.consume();
 				return true;
