@@ -95,13 +95,9 @@ namespace world_sim {
 				UI::Rectangle::Args{
 					.position = {args.position.x + kPadding, args.position.y + kPadding},
 					.size = {kPortraitSize, kPortraitSize},
-					.style = {
-						.fill = Foundation::Color(0.20F, 0.20F, 0.25F, 1.0F),
-						.border = Foundation::BorderStyle{
-							.color = Foundation::Color(0.30F, 0.30F, 0.35F, 1.0F),
-							.width = 1.0F
-						}
-					},
+					.style =
+						{.fill = Foundation::Color(0.20F, 0.20F, 0.25F, 1.0F),
+						 .border = Foundation::BorderStyle{.color = Foundation::Color(0.30F, 0.30F, 0.35F, 1.0F), .width = 1.0F}},
 					.zIndex = 1,
 					.id = (args.id + "_portrait").c_str()
 				}
@@ -127,45 +123,26 @@ namespace world_sim {
 			)
 		);
 
-		// Header mood bar background
-		headerMoodBarBgHandle = addChild(
-			UI::Rectangle(
-				UI::Rectangle::Args{
-					.position = {args.position.x + kPadding + kPortraitSize + kSectionGap, args.position.y + kPadding + kNameFontSize + 4.0F},
-					.size = {kHeaderMoodBarWidth, kHeaderMoodBarHeight},
-					.style = {
-						.fill = Foundation::Color(0.15F, 0.15F, 0.18F, 1.0F),
-						.border = Foundation::BorderStyle{
-							.color = Foundation::Color(0.25F, 0.25F, 0.30F, 1.0F),
-							.width = 1.0F
-						}
-					},
-					.zIndex = 1,
-					.id = (args.id + "_mood_bg").c_str()
-				}
-			)
-		);
-
-		// Header mood bar fill
-		headerMoodBarFillHandle = addChild(
-			UI::Rectangle(
-				UI::Rectangle::Args{
-					.position = {args.position.x + kPadding + kPortraitSize + kSectionGap + 1.0F, args.position.y + kPadding + kNameFontSize + 5.0F},
-					.size = {(kHeaderMoodBarWidth - 2.0F) * 0.72F, kHeaderMoodBarHeight - 2.0F}, // Example: 72%
-					.style = {
-						.fill = Foundation::Color(0.2F, 0.8F, 0.3F, 1.0F) // Green (will be updated dynamically)
-					},
-					.zIndex = 2,
-					.id = (args.id + "_mood_fill").c_str()
-				}
-			)
-		);
+		// Header mood bar - uses NeedBar component for consistent color gradient
+		// No label (label is rendered separately on the right side)
+		headerMoodBarHandle = addChild(NeedBar(
+			NeedBar::Args{
+				.position = {args.position.x + kPadding + kPortraitSize + kSectionGap, args.position.y + kPadding + kNameFontSize + 4.0F},
+				.width = kHeaderMoodBarWidth,
+				.height = kHeaderMoodBarHeight,
+				.size = NeedBarSize::Compact,
+				.label = "", // No label - we render "72% Content" separately on the right
+				.id = args.id + "_mood_bar"
+			}
+		));
 
 		// Header mood label "72% Content"
 		headerMoodLabelHandle = addChild(
 			UI::Text(
 				UI::Text::Args{
-					.position = {args.position.x + kPadding + kPortraitSize + kSectionGap + kHeaderMoodBarWidth + 8.0F, args.position.y + kPadding + kNameFontSize + 4.0F},
+					.position =
+						{args.position.x + kPadding + kPortraitSize + kSectionGap + kHeaderMoodBarWidth + 8.0F,
+						 args.position.y + kPadding + kNameFontSize + 4.0F},
 					.text = "",
 					.style =
 						{
@@ -207,13 +184,9 @@ namespace world_sim {
 				UI::Rectangle::Args{
 					.position = {args.position.x + (panelWidth - kEntityIconSize) * 0.5F, args.position.y + kPadding},
 					.size = {kEntityIconSize, kEntityIconSize},
-					.style = {
-						.fill = Foundation::Color(0.25F, 0.25F, 0.30F, 1.0F),
-						.border = Foundation::BorderStyle{
-							.color = Foundation::Color(0.35F, 0.35F, 0.40F, 1.0F),
-							.width = 1.0F
-						}
-					},
+					.style =
+						{.fill = Foundation::Color(0.25F, 0.25F, 0.30F, 1.0F),
+						 .border = Foundation::BorderStyle{.color = Foundation::Color(0.35F, 0.35F, 0.40F, 1.0F), .width = 1.0F}},
 					.zIndex = 1,
 					.id = (args.id + "_centered_icon").c_str()
 				}
@@ -472,10 +445,10 @@ namespace world_sim {
 	}
 
 	void EntityInfoView::update(
-		const ecs::World& world,
-		const engine::assets::AssetRegistry& assetRegistry,
+		const ecs::World&					  world,
+		const engine::assets::AssetRegistry&  assetRegistry,
 		const engine::assets::RecipeRegistry& recipeRegistry,
-		const Selection& selection
+		const Selection&					  selection
 	) {
 		// Prepare callbacks for model
 		EntityInfoModel::Callbacks callbacks{
@@ -539,7 +512,7 @@ namespace world_sim {
 		// Bottom: padding(12) = 12px
 		// Total = 88 + 176 + 12 = 276px (round up to 280 for breathing room)
 		constexpr float kFixedPanelHeight = 280.0F;
-		float totalHeight = kFixedPanelHeight;
+		float			totalHeight = kFixedPanelHeight;
 
 		panelHeight = totalHeight;
 		float panelY = m_viewportHeight - panelHeight;
@@ -578,11 +551,8 @@ namespace world_sim {
 		if (auto* headerName = getChild<UI::Text>(headerNameHandle)) {
 			headerName->visible = false;
 		}
-		if (auto* moodBg = getChild<UI::Rectangle>(headerMoodBarBgHandle)) {
-			moodBg->visible = false;
-		}
-		if (auto* moodFill = getChild<UI::Rectangle>(headerMoodBarFillHandle)) {
-			moodFill->visible = false;
+		if (auto* moodBar = getChild<NeedBar>(headerMoodBarHandle)) {
+			moodBar->visible = false;
 		}
 		if (auto* moodLabel = getChild<UI::Text>(headerMoodLabelHandle)) {
 			moodLabel->visible = false;
@@ -664,31 +634,12 @@ namespace world_sim {
 		}
 
 		// Compact mood bar (8px height) below name with spacing
+		// Uses NeedBar component which handles color gradient automatically
 		float moodBarY = panelY + kPadding + kNameFontSize + 8.0F;
-		if (auto* moodBg = getChild<UI::Rectangle>(headerMoodBarBgHandle)) {
-			moodBg->visible = true;
-			moodBg->position = {headerTextX, moodBarY};
-		}
-
-		// Mood bar fill (percentage-based width)
-		float moodFillWidth = (kHeaderMoodBarWidth - 2.0F) * (content.header.moodValue / 100.0F);
-		if (auto* moodFill = getChild<UI::Rectangle>(headerMoodBarFillHandle)) {
-			moodFill->visible = true;
-			moodFill->position = {headerTextX + 1.0F, moodBarY + 1.0F};
-			moodFill->size = {moodFillWidth, kHeaderMoodBarHeight - 2.0F};
-			// Color based on mood value (green → yellow → red)
-			float hue = content.header.moodValue / 100.0F; // 0=red, 1=green
-			Foundation::Color moodColor;
-			if (hue > 0.5F) {
-				// Green to yellow
-				float t = (hue - 0.5F) * 2.0F;
-				moodColor = Foundation::Color(0.2F + 0.6F * (1.0F - t), 0.8F, 0.3F, 1.0F);
-			} else {
-				// Yellow to red
-				float t = hue * 2.0F;
-				moodColor = Foundation::Color(0.9F, 0.3F + 0.5F * t, 0.2F, 1.0F);
-			}
-			moodFill->style.fill = moodColor;
+		if (auto* moodBar = getChild<NeedBar>(headerMoodBarHandle)) {
+			moodBar->visible = true;
+			moodBar->setPosition({headerTextX, moodBarY});
+			moodBar->setValue(content.header.moodValue); // NeedBar handles color gradient
 		}
 
 		// Mood label: "72% Content" - vertically centered with 8px bar
@@ -727,7 +678,7 @@ namespace world_sim {
 
 		// RIGHT COLUMN: "Needs:" header + need bars (only if has content)
 		float rightY = columnsY;
-		bool hasNeedsContent = !content.rightColumn.empty();
+		bool  hasNeedsContent = !content.rightColumn.empty();
 
 		// "Needs:" section header (only show if we have needs)
 		if (auto* needsLabel = getChild<UI::Text>(needsLabelHandle)) {
@@ -902,9 +853,7 @@ namespace world_sim {
 
 		// Store callback and bounds for click handling
 		recipeCallbacks[usedRecipeCards] = slot.onQueue;
-		recipeButtonBounds[usedRecipeCards] = Foundation::Rect{
-			buttonX, buttonY, kRecipeQueueButtonSize, kRecipeQueueButtonSize
-		};
+		recipeButtonBounds[usedRecipeCards] = Foundation::Rect{buttonX, buttonY, kRecipeQueueButtonSize, kRecipeQueueButtonSize};
 
 		++usedRecipeCards;
 		return kRecipeCardHeight + kRecipeCardSpacing;
@@ -932,23 +881,10 @@ namespace world_sim {
 		// Updates progress bars, text slots, and header mood bar
 		// Skips all position calculations for significant performance savings
 
-		// Update header mood bar for colonists
+		// Update header mood bar for colonists (NeedBar handles color gradient)
 		if (content.layout == PanelLayout::TwoColumn) {
-			// Update mood bar fill width
-			float moodFillWidth = (kHeaderMoodBarWidth - 2.0F) * (content.header.moodValue / 100.0F);
-			if (auto* moodFill = getChild<UI::Rectangle>(headerMoodBarFillHandle)) {
-				moodFill->size.x = moodFillWidth;
-				// Update color based on mood value
-				float hue = content.header.moodValue / 100.0F;
-				Foundation::Color moodColor;
-				if (hue > 0.5F) {
-					float t = (hue - 0.5F) * 2.0F;
-					moodColor = Foundation::Color(0.2F + 0.6F * (1.0F - t), 0.8F, 0.3F, 1.0F);
-				} else {
-					float t = hue * 2.0F;
-					moodColor = Foundation::Color(0.9F, 0.3F + 0.5F * t, 0.2F, 1.0F);
-				}
-				moodFill->style.fill = moodColor;
+			if (auto* moodBar = getChild<NeedBar>(headerMoodBarHandle)) {
+				moodBar->setValue(content.header.moodValue);
 			}
 
 			// Update mood label
@@ -1022,13 +958,13 @@ namespace world_sim {
 			return false;
 		}
 
-		auto pos = event.position;
+		auto  pos = event.position;
 		float panelY = m_viewportHeight - panelHeight;
 
 		// Check close button
 		auto closePos = getCloseButtonPosition(panelY);
-		if (pos.x >= closePos.x && pos.x <= closePos.x + kCloseButtonSize &&
-			pos.y >= closePos.y && pos.y <= closePos.y + kCloseButtonSize) {
+		if (pos.x >= closePos.x && pos.x <= closePos.x + kCloseButtonSize && pos.y >= closePos.y &&
+			pos.y <= closePos.y + kCloseButtonSize) {
 			if (onCloseCallback) {
 				onCloseCallback();
 			}
@@ -1039,8 +975,8 @@ namespace world_sim {
 		// Check details button (only visible for colonists)
 		if (m_model.isColonist()) {
 			auto detailsPos = getDetailsButtonPosition(panelY);
-			if (pos.x >= detailsPos.x && pos.x <= detailsPos.x + kDetailsButtonWidth &&
-				pos.y >= detailsPos.y && pos.y <= detailsPos.y + kDetailsButtonHeight) {
+			if (pos.x >= detailsPos.x && pos.x <= detailsPos.x + kDetailsButtonWidth && pos.y >= detailsPos.y &&
+				pos.y <= detailsPos.y + kDetailsButtonHeight) {
 				if (onDetailsCallback) {
 					onDetailsCallback();
 				}
@@ -1050,9 +986,8 @@ namespace world_sim {
 		}
 
 		// Check clickable slot
-		if (clickableCallback &&
-			pos.x >= clickableBoundsMin.x && pos.x <= clickableBoundsMax.x &&
-			pos.y >= clickableBoundsMin.y && pos.y <= clickableBoundsMax.y) {
+		if (clickableCallback && pos.x >= clickableBoundsMin.x && pos.x <= clickableBoundsMax.x && pos.y >= clickableBoundsMin.y &&
+			pos.y <= clickableBoundsMax.y) {
 			clickableCallback();
 			event.consume();
 			return true;
@@ -1061,9 +996,8 @@ namespace world_sim {
 		// Check recipe buttons
 		for (size_t i = 0; i < usedRecipeCards; ++i) {
 			const auto& bounds = recipeButtonBounds[i];
-			if (recipeCallbacks[i] &&
-				pos.x >= bounds.x && pos.x <= bounds.x + bounds.width &&
-				pos.y >= bounds.y && pos.y <= bounds.y + bounds.height) {
+			if (recipeCallbacks[i] && pos.x >= bounds.x && pos.x <= bounds.x + bounds.width && pos.y >= bounds.y &&
+				pos.y <= bounds.y + bounds.height) {
 				recipeCallbacks[i]();
 				event.consume();
 				return true;
@@ -1071,8 +1005,7 @@ namespace world_sim {
 		}
 
 		// Check if click is within panel bounds - consume to prevent world click
-		if (pos.x >= panelX && pos.x <= panelX + panelWidth &&
-			pos.y >= panelY && pos.y <= panelY + panelHeight) {
+		if (pos.x >= panelX && pos.x <= panelX + panelWidth && pos.y >= panelY && pos.y <= panelY + panelHeight) {
 			event.consume();
 			return true;
 		}

@@ -132,9 +132,8 @@ class EntityInfoView : public UI::Component {
 	// Colonist header elements (two-column layout)
 	UI::LayerHandle portraitHandle;			 // Gray placeholder rectangle (64×64)
 	UI::LayerHandle headerNameHandle;		 // "Sarah Chen, 28"
-	UI::LayerHandle headerMoodBarBgHandle;	 // Mood bar background
-	UI::LayerHandle headerMoodBarFillHandle; // Mood bar fill
-	UI::LayerHandle headerMoodLabelHandle;	 // "72% Content"
+	UI::LayerHandle headerMoodBarHandle;	 // Mood bar (NeedBar with no label, uses color gradient)
+	UI::LayerHandle headerMoodLabelHandle;	 // "72% Content" (right of bar)
 	UI::LayerHandle needsLabelHandle;		 // "Needs:" section header
 
 	// Centered icon (single-column layout for items/flora)
