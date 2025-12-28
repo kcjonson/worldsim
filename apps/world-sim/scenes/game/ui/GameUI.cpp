@@ -12,11 +12,6 @@ namespace world_sim {
 		constexpr float kPanelHeight = 148.0F;
 		constexpr float kTaskListMaxHeight = 400.0F;
 
-		// Build toolbar dimensions
-		constexpr float kBuildToolbarWidth = 70.0F;
-		constexpr float kBuildToolbarHeight = 28.0F;
-		constexpr float kBuildToolbarBottomMargin = 20.0F;
-
 		// Build menu dimensions
 		constexpr float kBuildMenuWidth = 180.0F;
 	} // namespace
@@ -24,18 +19,23 @@ namespace world_sim {
 	GameUI::GameUI(const Args& args)
 		: onSelectionCleared(args.onSelectionCleared) {
 
-		// Create overlay with zoom callbacks
-		overlay = std::make_unique<GameOverlay>(GameOverlay::Args{
+		// Create top bar (date/time and speed controls)
+		topBar = std::make_unique<TopBar>(
+			TopBar::Args{.onPause = args.onPause, .onSpeedChange = args.onSpeedChange, .onMenuClick = args.onMenuClick, .id = "top_bar"}
+		);
+
+		// Create debug overlay (below top bar)
+		debugOverlay = std::make_unique<DebugOverlay>(DebugOverlay::Args{});
+
+		// Create zoom control panel (floating on right side)
+		zoomControlPanel = std::make_unique<ZoomControlPanel>(ZoomControlPanel::Args{
 			.onZoomIn = args.onZoomIn,
 			.onZoomOut = args.onZoomOut,
+			.onZoomReset = args.onZoomReset,
 		});
 
-		// Create build toolbar (position set in layout())
-		buildToolbar = std::make_unique<BuildToolbar>(BuildToolbar::Args{
-			.position = {0.0F, 0.0F}, // Will be positioned in layout()
-			.onBuildClick = args.onBuildToggle,
-			.id = "build_toolbar"
-		});
+		// Create gameplay bar (replaces build toolbar)
+		gameplayBar = std::make_unique<GameplayBar>(GameplayBar::Args{.onBuildClick = args.onBuildToggle, .id = "gameplay_bar"});
 
 		// Create build menu (position set in layout())
 		buildMenu = std::make_unique<BuildMenu>(BuildMenu::Args{
@@ -47,7 +47,11 @@ namespace world_sim {
 
 		// Create colonist list view (left side)
 		colonistList = std::make_unique<ColonistListView>(ColonistListView::Args{
-			.width = 60.0F, .itemHeight = 50.0F, .onColonistSelected = args.onColonistSelected, .id = "colonist_list"
+			.width = 60.0F,
+			.itemHeight = 50.0F,
+			.onColonistSelected = args.onColonistSelected,
+			.onColonistFollowed = args.onColonistFollowed,
+			.id = "colonist_list"
 		});
 
 		// Create info view (position set in layout())
@@ -75,26 +79,50 @@ namespace world_sim {
 	void GameUI::layout(const Foundation::Rect& newBounds) {
 		viewportBounds = newBounds;
 
-		// Layout overlay to full viewport
-		overlay->layout(newBounds);
-
-		// Position build toolbar at bottom center
-		if (buildToolbar) {
-			float toolbarX = (newBounds.width - kBuildToolbarWidth) * 0.5F;
-			float toolbarY = newBounds.height - kBuildToolbarHeight - kBuildToolbarBottomMargin;
-			buildToolbar->setPosition({toolbarX, toolbarY});
+		// Layout top bar (full width at top)
+		float topBarHeight = 0.0F;
+		if (topBar) {
+			topBar->layout(newBounds);
+			topBarHeight = topBar->getHeight();
 		}
 
-		// Position build menu above the toolbar, centered
+		// Create bounds for content below top bar
+		Foundation::Rect contentBounds{newBounds.x, newBounds.y + topBarHeight, newBounds.width, newBounds.height - topBarHeight};
+
+		// Layout debug overlay at bottom-left (below colonist list)
+		// Per spec: Debug info appears in bottom-left corner
+		if (debugOverlay) {
+			// Position above the gameplay bar, leaving room for colonist list
+			float			 debugY = newBounds.height - 100.0F; // Above bottom
+			Foundation::Rect debugBounds{
+				newBounds.x,
+				debugY,
+				200.0F, // Width for debug text
+				80.0F	// Height for 3 lines of text
+			};
+			debugOverlay->layout(debugBounds);
+		}
+
+		// Layout zoom control panel (floating right side)
+		if (zoomControlPanel) {
+			zoomControlPanel->layout(newBounds);
+		}
+
+		// Layout gameplay bar at bottom center
+		if (gameplayBar) {
+			gameplayBar->layout(newBounds);
+		}
+
+		// Position build menu above the gameplay bar, centered
 		if (buildMenu) {
 			float menuX = (newBounds.width - kBuildMenuWidth) * 0.5F;
-			float menuY = newBounds.height - kBuildToolbarHeight - kBuildToolbarBottomMargin - 10.0F - 150.0F; // Above toolbar
+			float menuY = newBounds.height - gameplayBar->getHeight() - 12.0F - 10.0F - 150.0F; // Above bar
 			buildMenu->setPosition({menuX, menuY});
 		}
 
-		// Position colonist list on left side, below overlay and zoom controls
+		// Position colonist list on left side, below top bar and debug overlay
 		if (colonistList) {
-			colonistList->setPosition(0.0F, 130.0F);
+			colonistList->setPosition(0.0F, topBarHeight + 100.0F);
 		}
 
 		// Position info panel in bottom-left corner (flush with edges)
@@ -129,7 +157,17 @@ namespace world_sim {
 		// Dispatch to UI children in z-order (highest first)
 		// Panels that can overlap get priority
 
-		// Task list panel (highest - appears on top of info panel)
+		// Top bar (highest z-order at top of screen)
+		if (topBar) {
+			if (topBar->handleEvent(event)) {
+				return true;
+			}
+			if (event.isConsumed()) {
+				return true;
+			}
+		}
+
+		// Task list panel (high z-order - appears on top of info panel)
 		if (taskListExpanded && taskListPanel && taskListPanel->visible) {
 			if (taskListPanel->handleEvent(event)) {
 				return true;
@@ -169,9 +207,9 @@ namespace world_sim {
 			}
 		}
 
-		// Build toolbar
-		if (buildToolbar) {
-			if (buildToolbar->handleEvent(event)) {
+		// Gameplay bar
+		if (gameplayBar) {
+			if (gameplayBar->handleEvent(event)) {
 				return true;
 			}
 			if (event.isConsumed()) {
@@ -179,12 +217,14 @@ namespace world_sim {
 			}
 		}
 
-		// Overlay (contains zoom control with buttons)
-		if (overlay) {
-			if (overlay->handleEvent(event)) {
+		// Zoom control panel (floating controls)
+		if (zoomControlPanel) {
+			if (zoomControlPanel->handleEvent(event)) {
 				return true;
 			}
 		}
+
+		// Debug overlay doesn't handle events (text only)
 
 		return event.isConsumed();
 	}
@@ -197,8 +237,21 @@ namespace world_sim {
 		const engine::assets::RecipeRegistry& recipeRegistry,
 		const Selection&					  selection
 	) {
-		// Update overlay display values
-		overlay->update(camera, chunkManager);
+		// Update time model and top bar
+		if (topBar) {
+			timeModel.refresh(ecsWorld);
+			topBar->updateData(timeModel);
+		}
+
+		// Update debug overlay display values
+		if (debugOverlay) {
+			debugOverlay->updateData(camera, chunkManager);
+		}
+
+		// Update zoom control panel
+		if (zoomControlPanel) {
+			zoomControlPanel->setZoomPercent(camera.zoomPercent());
+		}
 
 		// Update colonist list with model-based change detection
 		if (colonistList) {
@@ -239,12 +292,24 @@ namespace world_sim {
 	}
 
 	void GameUI::render() {
-		// Render overlay
-		overlay->render();
+		// Render top bar (date/time and speed controls)
+		if (topBar) {
+			topBar->render();
+		}
 
-		// Render build toolbar
-		if (buildToolbar) {
-			buildToolbar->render();
+		// Render debug overlay (below top bar)
+		if (debugOverlay) {
+			debugOverlay->render();
+		}
+
+		// Render zoom control panel
+		if (zoomControlPanel) {
+			zoomControlPanel->render();
+		}
+
+		// Render gameplay bar
+		if (gameplayBar) {
+			gameplayBar->render();
 		}
 
 		// Render build menu if visible
@@ -335,10 +400,8 @@ namespace world_sim {
 
 	// --- Build Mode API ---
 
-	void GameUI::setBuildModeActive(bool active) {
-		if (buildToolbar) {
-			buildToolbar->setActive(active);
-		}
+	void GameUI::setBuildModeActive(bool /*active*/) {
+		// GameplayBar doesn't track active state - build menu visibility is enough
 	}
 
 	void GameUI::showBuildMenu(const std::vector<BuildMenuItem>& items) {

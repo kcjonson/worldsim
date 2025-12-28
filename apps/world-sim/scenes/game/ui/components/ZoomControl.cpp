@@ -4,121 +4,111 @@
 
 namespace world_sim {
 
-	namespace {
-		constexpr float kButtonSize = 28.0F;
-		constexpr float kTextWidth = 50.0F;
-		constexpr float kSpacing = 4.0F;
-		constexpr float kFontSize = 14.0F;
-	} // namespace
+ZoomControl::ZoomControl(const Args& args) {
+	position = args.position;
 
-	ZoomControl::ZoomControl(const Args& args)
-		: position(args.position) {
-		float x = position.x;
-		float y = position.y;
+	// Zoom out button (-)
+	zoomOutButtonHandle = addChild(UI::Button(UI::Button::Args{
+		.label = "",  // Icon-only
+		.position = {0.0F, 0.0F},
+		.size = {kButtonSize, kButtonSize},
+		.type = UI::Button::Type::Primary,
+		.onClick = args.onZoomOut,
+		.id = "btn_zoom_out",
+		.iconPath = "assets/ui/icons/zoom_out.svg",
+		.iconSize = kIconSize}));
 
-		// Zoom out button (-)
-		zoomOutButton = std::make_unique<UI::Button>(UI::Button::Args{
-			.label = "-",
-			.position = {x, y},
-			.size = {kButtonSize, kButtonSize},
-			.type = UI::Button::Type::Primary,
-			.onClick = args.onZoomOut,
-			.id = "btn_zoom_out"
-		});
-		x += kButtonSize + kSpacing;
+	// Zoom percentage text (centered between buttons)
+	zoomTextHandle = addChild(UI::Text(UI::Text::Args{
+		.position = {0.0F, 0.0F},
+		.text = "100%",
+		.style =
+			{
+				.color = Foundation::Color::white(),
+				.fontSize = kFontSize,
+				.hAlign = Foundation::HorizontalAlign::Center,
+				.vAlign = Foundation::VerticalAlign::Middle,
+			},
+		.id = "zoom_text"}));
 
-		// Zoom percentage text (centered between buttons)
-		zoomText = std::make_unique<UI::Text>(UI::Text::Args{
-			.position = {x + kTextWidth * 0.5F, y + kButtonSize * 0.5F},
-			.text = "100%",
-			.style =
-				{
-					.color = Foundation::Color::white(),
-					.fontSize = kFontSize,
-					.hAlign = Foundation::HorizontalAlign::Center,
-					.vAlign = Foundation::VerticalAlign::Middle,
-				},
-			.id = "zoom_text"
-		});
-		x += kTextWidth + kSpacing;
+	// Zoom in button (+)
+	zoomInButtonHandle = addChild(UI::Button(UI::Button::Args{
+		.label = "",  // Icon-only
+		.position = {0.0F, 0.0F},
+		.size = {kButtonSize, kButtonSize},
+		.type = UI::Button::Type::Primary,
+		.onClick = args.onZoomIn,
+		.id = "btn_zoom_in",
+		.iconPath = "assets/ui/icons/zoom_in.svg",
+		.iconSize = kIconSize}));
 
-		// Zoom in button (+)
-		zoomInButton = std::make_unique<UI::Button>(UI::Button::Args{
-			.label = "+",
-			.position = {x, y},
-			.size = {kButtonSize, kButtonSize},
-			.type = UI::Button::Type::Primary,
-			.onClick = args.onZoomIn,
-			.id = "btn_zoom_in"
-		});
-	}
+	// Zoom reset button
+	zoomResetButtonHandle = addChild(UI::Button(UI::Button::Args{
+		.label = "",  // Icon-only
+		.position = {0.0F, 0.0F},
+		.size = {kButtonSize, kButtonSize},
+		.type = UI::Button::Type::Primary,
+		.onClick = args.onZoomReset,
+		.id = "btn_zoom_reset",
+		.iconPath = "assets/ui/icons/zoom_reset.svg",
+		.iconSize = kIconSize}));
 
-	void ZoomControl::setZoomPercent(int percent) {
-		if (zoomPercent != percent) {
-			zoomPercent = percent;
-			updateZoomText();
-		}
-	}
+	// Position all elements
+	positionElements();
+}
 
-	void ZoomControl::setPosition(Foundation::Vec2 newPosition) {
-		if (position.x == newPosition.x && position.y == newPosition.y) {
-			return;
-		}
-		position = newPosition;
-
-		float x = position.x;
-		float y = position.y;
-
-		// Update button positions
-		if (zoomOutButton) {
-			zoomOutButton->position = {x, y};
-		}
-		x += kButtonSize + kSpacing;
-
-		// Text is recreated in updateZoomText(), just update position reference
-		x += kTextWidth + kSpacing;
-
-		if (zoomInButton) {
-			zoomInButton->position = {x, y};
-		}
-
-		// Update text position
+void ZoomControl::setZoomPercent(int percent) {
+	if (zoomPercent != percent) {
+		zoomPercent = percent;
 		updateZoomText();
 	}
+}
 
-	void ZoomControl::updateZoomText() {
+void ZoomControl::setPosition(float x, float y) {
+	if (position.x == x && position.y == y) {
+		return;
+	}
+	Component::setPosition(x, y);
+	positionElements();
+}
+
+void ZoomControl::positionElements() {
+	float x = position.x;
+	float y = position.y;
+
+	if (auto* btn = getChild<UI::Button>(zoomOutButtonHandle)) {
+		btn->setPosition(x, y);
+	}
+	x += kButtonSize + kSpacing;
+
+	if (auto* text = getChild<UI::Text>(zoomTextHandle)) {
+		text->setPosition(x + kTextWidth * 0.5F, y + kButtonSize * 0.5F);
+	}
+	x += kTextWidth + kSpacing;
+
+	if (auto* btn = getChild<UI::Button>(zoomInButtonHandle)) {
+		btn->setPosition(x, y);
+	}
+	x += kButtonSize + kSpacing;
+
+	if (auto* btn = getChild<UI::Button>(zoomResetButtonHandle)) {
+		btn->setPosition(x, y);
+	}
+}
+
+void ZoomControl::updateZoomText() {
+	if (auto* text = getChild<UI::Text>(zoomTextHandle)) {
 		std::ostringstream oss;
 		oss << zoomPercent << "%";
-
-		float x = position.x + kButtonSize + kSpacing;
-		float y = position.y;
-
-		// Update existing text in-place (created in constructor)
-		zoomText->text = oss.str();
-		zoomText->position = {x + kTextWidth * 0.5F, y + kButtonSize * 0.5F};
+		text->text = oss.str();
 	}
+}
 
-	bool ZoomControl::handleEvent(UI::InputEvent& event) {
-		// Dispatch to buttons - order doesn't matter since they don't overlap
-		if (zoomInButton && zoomInButton->handleEvent(event)) {
-			return true;
-		}
-		if (zoomOutButton && zoomOutButton->handleEvent(event)) {
-			return true;
-		}
-		return false;
-	}
+bool ZoomControl::handleEvent(UI::InputEvent& event) {
+	// Use dispatchEvent to route to children in z-order
+	return dispatchEvent(event);
+}
 
-	void ZoomControl::render() {
-		if (zoomOutButton) {
-			zoomOutButton->render();
-		}
-		if (zoomText) {
-			zoomText->render();
-		}
-		if (zoomInButton) {
-			zoomInButton->render();
-		}
-	}
+// render() inherited from Component - automatically renders all children
 
 } // namespace world_sim

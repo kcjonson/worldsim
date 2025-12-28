@@ -8,6 +8,17 @@
 
 namespace world_sim {
 
+	namespace {
+		// Mood thresholds for visual tinting
+		constexpr float kHappyMoodThreshold = 70.0F;    // Above this: green tint
+		constexpr float kNeutralMoodThreshold = 40.0F;  // Above this: yellow tint, below: red tint
+
+		// Color tint adjustments (added to base background color)
+		constexpr float kHappyGreenTint = 0.05F;
+		constexpr float kNeutralYellowTint = 0.03F;
+		constexpr float kStressedRedTint = 0.08F;
+	}  // namespace
+
 	// Static member definition
 	ColonistListItem::CachedMeshData ColonistListItem::cachedMesh;
 
@@ -214,6 +225,7 @@ namespace world_sim {
 	void ColonistListItem::setMood(float newMood) {
 		mood = newMood;
 		updateMoodBar();
+		updateBackgroundStyle();  // Mood affects background tint
 	}
 
 	void ColonistListItem::setColonistData(const adapters::ColonistData& data) {
@@ -225,15 +237,49 @@ namespace world_sim {
 			nameText->text = name;
 		}
 		updateMoodBar();
+		updateBackgroundStyle();  // Mood affects background tint
 	}
 
 	void ColonistListItem::updateBackgroundStyle() {
 		if (auto* bg = getChild<UI::Rectangle>(backgroundHandle)) {
-			bg->style.fill = selected ? UI::Theme::Colors::selectionBackground : UI::Theme::Colors::cardBackground;
+			if (selected) {
+				bg->style.fill = UI::Theme::Colors::selectionBackground;
+			} else {
+				// Apply mood-based tint to background
+				bg->style.fill = getMoodTintedBackground();
+			}
 			if (bg->style.border) {
 				bg->style.border->color = selected ? UI::Theme::Colors::selectionBorder : UI::Theme::Colors::cardBorder;
 			}
 		}
+	}
+
+	Foundation::Color ColonistListItem::getMoodTintedBackground() const {
+		// Subtle mood-based tinting of the card background
+		Foundation::Color base = UI::Theme::Colors::cardBackground;
+
+		if (mood > kHappyMoodThreshold) {
+			// Green tint - happy
+			return Foundation::Color{
+				base.r,
+				base.g + kHappyGreenTint,
+				base.b,
+				base.a};
+		}
+		if (mood > kNeutralMoodThreshold) {
+			// Yellow tint - neutral
+			return Foundation::Color{
+				base.r + kNeutralYellowTint,
+				base.g + kNeutralYellowTint,
+				base.b,
+				base.a};
+		}
+		// Red tint - stressed
+		return Foundation::Color{
+			base.r + kStressedRedTint,
+			base.g,
+			base.b,
+			base.a};
 	}
 
 	void ColonistListItem::updateMoodBar() {

@@ -3,8 +3,9 @@
 // GameUI - Main UI container for the game scene.
 //
 // Contains all game UI elements as children:
-// - GameOverlay: status display, zoom controls
-// - BuildToolbar: build mode toggle button
+// - DebugOverlay: chunk/position/biome display (top-left)
+// - ZoomControlPanel: floating zoom controls (right side)
+// - BuildToolbar: build mode toggle button (temporary, will be replaced by GameplayBar)
 // - BuildMenu: popup for selecting items to place
 // - ColonistListView: left-side colonist portraits
 // - EntityInfoView: selected entity information
@@ -13,14 +14,19 @@
 // Handles input consumption to prevent click-through to world.
 
 #include "scenes/game/ui/views/BuildMenu.h"
-#include "scenes/game/ui/views/BuildToolbar.h"
+#include "scenes/game/ui/views/GameplayBar.h"
 #include "scenes/game/ui/views/ColonistListView.h"
+#include "scenes/game/ui/views/DebugOverlay.h"
+#include "scenes/game/ui/views/TopBar.h"
 #include "scenes/game/ui/models/ColonistListModel.h"
+#include "scenes/game/ui/models/TimeModel.h"
 #include "scenes/game/ui/views/EntityInfoView.h"
-#include "scenes/game/ui/views/GameOverlay.h"
+#include "scenes/game/ui/views/ZoomControlPanel.h"
 #include "scenes/game/world/NotificationManager.h"
 #include "scenes/game/ui/components/Selection.h"
 #include "scenes/game/ui/views/TaskListView.h"
+
+#include <ecs/systems/TimeSystem.h>
 
 #include <input/InputEvent.h>
 
@@ -42,11 +48,16 @@ class GameUI {
 	struct Args {
 		std::function<void()> onZoomIn;
 		std::function<void()> onZoomOut;
+		std::function<void()> onZoomReset;
 		std::function<void()> onSelectionCleared;
 		std::function<void(ecs::EntityID)> onColonistSelected;
+		std::function<void(ecs::EntityID)> onColonistFollowed;		 ///< Called on double-click to follow
 		std::function<void()> onBuildToggle;							 ///< Called when build button clicked
 		std::function<void(const std::string&)> onBuildItemSelected; ///< Called when item selected from build menu
 		QueueRecipeCallback onQueueRecipe;								 ///< Called when recipe queued at station
+		std::function<void()> onPause;									 ///< Called when pause button clicked
+		std::function<void(ecs::GameSpeed)> onSpeedChange;			 ///< Called when speed changed
+		std::function<void()> onMenuClick;								 ///< Called when menu button clicked
 	};
 
 	explicit GameUI(const Args& args);
@@ -91,14 +102,17 @@ class GameUI {
 	[[nodiscard]] bool isBuildMenuVisible() const;
 
   private:
-	std::unique_ptr<GameOverlay> overlay;
-	std::unique_ptr<BuildToolbar> buildToolbar;
+	std::unique_ptr<TopBar> topBar;
+	std::unique_ptr<DebugOverlay> debugOverlay;
+	std::unique_ptr<ZoomControlPanel> zoomControlPanel;
+	std::unique_ptr<GameplayBar> gameplayBar;
 	std::unique_ptr<BuildMenu> buildMenu;
 	std::unique_ptr<ColonistListView> colonistList;
 	std::unique_ptr<EntityInfoView> infoPanel;
 	std::unique_ptr<TaskListView> taskListPanel;
 
-	// ViewModel for colonist list (owns data + change detection)
+	// ViewModels (own data + change detection)
+	TimeModel timeModel;
 	ColonistListModel colonistListModel;
 
 	// Task list expansion state
