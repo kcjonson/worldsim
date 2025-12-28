@@ -44,8 +44,7 @@ class ResourcesPanel : public UI::Component {
 	/// Get current bounds (for layout calculations)
 	[[nodiscard]] Foundation::Rect getBounds() const;
 
-	/// Render the panel
-	void render() override;
+	// render() inherited from Component - auto-renders children
 
   private:
 	// Layout constants

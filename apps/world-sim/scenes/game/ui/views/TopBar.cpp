@@ -9,7 +9,7 @@ TopBar::TopBar(const Args& args)
 	, onSpeedChange(args.onSpeedChange)
 	, onMenuClick(args.onMenuClick) {
 
-	// Create background rectangle with high z-index to render above game world
+	// Create background rectangle (added first so it renders behind other children)
 	backgroundHandle = addChild(UI::Rectangle(UI::Rectangle::Args{
 		.position = {0.0F, 0.0F},
 		.size = {100.0F, kBarHeight},  // Width will be set in layout()
@@ -22,8 +22,7 @@ TopBar::TopBar(const Args& args)
 						.width = 1.0F,
 						.position = Foundation::BorderPosition::Inside},
 			},
-		.id = "top_bar_background",
-		.zIndex = 500}));
+		.id = "top_bar_background"}));
 
 	// Create date/time display
 	dateTimeDisplayHandle = addChild(DateTimeDisplay(DateTimeDisplay::Args{

@@ -98,59 +98,10 @@ Foundation::Rect ResourcesPanel::getBounds() const {
 }
 
 bool ResourcesPanel::handleEvent(UI::InputEvent& event) {
-	if (!visible) {
-		return false;
-	}
-
-	// Dispatch to header button
-	auto* header = getChild<UI::Button>(headerButtonHandle);
-	if (header && header->handleEvent(event)) {
-		return true;
-	}
-
-	// If expanded, consume clicks in content area
-	if (expanded && event.type == UI::InputEvent::Type::MouseDown) {
-		Foundation::Rect contentBounds{
-			position.x,
-			position.y + kHeaderHeight,
-			panelWidth,
-			kExpandedHeight - kHeaderHeight
-		};
-		if (event.position.x >= contentBounds.x &&
-			event.position.x < contentBounds.x + contentBounds.width &&
-			event.position.y >= contentBounds.y &&
-			event.position.y < contentBounds.y + contentBounds.height) {
-			event.consume();
-			return true;
-		}
-	}
-
-	return event.isConsumed();
+	// Use Component's dispatchEvent to properly handle children
+	return dispatchEvent(event);
 }
 
-void ResourcesPanel::render() {
-	if (!visible) {
-		return;
-	}
-
-	// Render header button
-	auto* header = getChild<UI::Button>(headerButtonHandle);
-	if (header) {
-		header->render();
-	}
-
-	// Render expanded content if visible
-	if (expanded) {
-		auto* contentBg = getChild<UI::Rectangle>(contentBackgroundHandle);
-		if (contentBg) {
-			contentBg->render();
-		}
-
-		auto* emptyMsg = getChild<UI::Text>(emptyMessageHandle);
-		if (emptyMsg) {
-			emptyMsg->render();
-		}
-	}
-}
+// render() inherited from Component - automatically renders all children
 
 }  // namespace world_sim

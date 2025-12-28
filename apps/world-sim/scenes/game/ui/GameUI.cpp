@@ -76,10 +76,7 @@ namespace world_sim {
 		});
 
 		// Create resources panel (top-right, below where minimap will be)
-		resourcesPanel = std::make_unique<ResourcesPanel>(ResourcesPanel::Args{
-			.width = 160.0F,
-			.id = "resources_panel"
-		});
+		resourcesPanel = std::make_unique<ResourcesPanel>(ResourcesPanel::Args{.width = 160.0F, .id = "resources_panel"});
 
 		// Create toast stack for notifications (bottom-right)
 		toastStack = std::make_unique<UI::ToastStack>(UI::ToastStack::Args{
@@ -177,11 +174,11 @@ namespace world_sim {
 			toastStack->setPosition(newBounds.width - rightMargin, newBounds.height - bottomMargin);
 		}
 
-		// Position resources panel in top-right corner
-		// Per design spec: Below minimap (which doesn't exist yet)
+		// Position resources panel in top-right corner, below zoom controls
+		// Zoom controls are at Y=80, height=28, so start at Y=120
 		if (resourcesPanel) {
-			float rightMargin = 10.0F;
-			float topMargin = 50.0F; // Below top bar, room for future minimap
+			float rightMargin = 20.0F; // Match zoom control margin
+			float topMargin = 120.0F;  // Below zoom controls (80 + 28 + 12 margin)
 			resourcesPanel->setAnchorPosition(newBounds.width - rightMargin, topMargin);
 		}
 	}
@@ -283,7 +280,7 @@ namespace world_sim {
 	}
 
 	void GameUI::update(
-		float deltaTime,
+		float								  deltaTime,
 		const engine::world::WorldCamera&	  camera,
 		const engine::world::ChunkManager&	  chunkManager,
 		ecs::World&							  ecsWorld,
@@ -402,9 +399,13 @@ namespace world_sim {
 		}
 	}
 
-	void GameUI::pushNotification(const std::string& title, const std::string& message,
-								   UI::ToastSeverity severity, float autoDismissTime,
-								   std::function<void()> onClick) {
+	void GameUI::pushNotification(
+		const std::string&	  title,
+		const std::string&	  message,
+		UI::ToastSeverity	  severity,
+		float				  autoDismissTime,
+		std::function<void()> onClick
+	) {
 		if (toastStack) {
 			if (onClick) {
 				toastStack->addToast(title, message, severity, autoDismissTime, std::move(onClick));
