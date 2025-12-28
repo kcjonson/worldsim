@@ -8,24 +8,26 @@
 // └─────────────────────────────────────────────────────────────────┘
 //
 // Positioned at the top of the screen, full width.
+// Extends UI::Component to use the Layer system for child management.
 
 #include "scenes/game/ui/components/DateTimeDisplay.h"
 #include "scenes/game/ui/components/SpeedButton.h"
 #include "scenes/game/ui/models/TimeModel.h"
 
+#include <component/Component.h>
 #include <components/button/Button.h>
 #include <ecs/systems/TimeSystem.h>
 #include <graphics/Rect.h>
 #include <input/InputEvent.h>
+#include <layer/Layer.h>
 #include <shapes/Shapes.h>
 
 #include <functional>
-#include <memory>
 
 namespace world_sim {
 
 /// Top bar containing time display and speed controls.
-class TopBar {
+class TopBar : public UI::Component {
   public:
 	struct Args {
 		std::function<void()> onPause = nullptr;
@@ -37,19 +39,18 @@ class TopBar {
 	explicit TopBar(const Args& args);
 
 	/// Layout the top bar within viewport bounds
-	void layout(const Foundation::Rect& viewportBounds);
+	void layout(const Foundation::Rect& bounds) override;
 
 	/// Update from time model (call each frame)
-	void update(const TimeModel& timeModel);
+	void updateData(const TimeModel& timeModel);
 
-	/// Handle input events
-	bool handleEvent(UI::InputEvent& event);
+	/// Handle input events - delegates to children via dispatchEvent
+	bool handleEvent(UI::InputEvent& event) override;
 
-	/// Render the top bar
-	void render();
+	// render() inherited from Component - auto-renders children
 
 	/// Get height of the top bar
-	[[nodiscard]] float getHeight() const { return kBarHeight; }
+	[[nodiscard]] float getHeight() const override { return kBarHeight; }
 
   private:
 	// Layout constants
@@ -57,24 +58,19 @@ class TopBar {
 	static constexpr float kLeftPadding = 12.0F;
 	static constexpr float kButtonSpacing = 4.0F;
 
-	// Background
-	std::unique_ptr<UI::Rectangle> background;
-
-	// Components
-	std::unique_ptr<DateTimeDisplay> dateTimeDisplay;
-	std::unique_ptr<SpeedButton> pauseButton;
-	std::unique_ptr<SpeedButton> speed1Button;
-	std::unique_ptr<SpeedButton> speed2Button;
-	std::unique_ptr<SpeedButton> speed3Button;
-	std::unique_ptr<UI::Button> menuButton;
+	// Child handles
+	UI::LayerHandle backgroundHandle;
+	UI::LayerHandle dateTimeDisplayHandle;
+	UI::LayerHandle pauseButtonHandle;
+	UI::LayerHandle speed1ButtonHandle;
+	UI::LayerHandle speed2ButtonHandle;
+	UI::LayerHandle speed3ButtonHandle;
+	UI::LayerHandle menuButtonHandle;
 
 	// Callbacks
 	std::function<void()> onPause;
 	std::function<void(ecs::GameSpeed)> onSpeedChange;
 	std::function<void()> onMenuClick;
-
-	// Cached viewport
-	Foundation::Rect viewportBounds;
 
 	/// Update speed button active states
 	void updateSpeedButtonStates(ecs::GameSpeed currentSpeed);

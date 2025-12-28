@@ -7,6 +7,15 @@
 
 namespace UI {
 
+	namespace {
+		// Approximate average character width for simple text layout calculations.
+		// This is a rough estimate - for precise layout, use FontRenderer::measureText().
+		constexpr float kApproxCharWidth = 7.0F;
+
+		// Chevron icon size for dropdown indicator
+		constexpr float kChevronSize = 12.0F;
+	}  // namespace
+
 	DropdownButton::DropdownButton(const Args& args)
 		: FocusableBase<DropdownButton>(args.tabIndex),
 		  label(args.label),
@@ -38,7 +47,7 @@ namespace UI {
 		chevronHandle = addChild(Icon(
 			Icon::Args{
 				.position = {0.0F, 0.0F}, // Will be updated in updateChevronPosition
-				.size = 12.0F,
+				.size = kChevronSize,
 				.svgPath = chevronPath,
 				.tint = Foundation::Color::white(),
 			}
@@ -90,7 +99,6 @@ namespace UI {
 		if (auto* chevron = getChild<Icon>(chevronHandle)) {
 			Foundation::Vec2 contentPos = getContentPosition();
 			// Position chevron on the right side of the button, vertically centered
-			constexpr float kChevronSize = 12.0F;
 			constexpr float kRightPadding = 8.0F;
 			float chevronX = contentPos.x + buttonSize.x - kChevronSize - kRightPadding;
 			float chevronY = contentPos.y + (buttonSize.y - kChevronSize) / 2.0F;
@@ -317,7 +325,7 @@ namespace UI {
 
 		// Draw label (centered, leaving space for chevron icon on right)
 		constexpr float kChevronSpace = 20.0F;  // Space for chevron icon on right
-		float labelWidth = static_cast<float>(label.length()) * 7.0F;
+		float labelWidth = static_cast<float>(label.length()) * kApproxCharWidth;
 		float textX = bounds.x + (bounds.width - kChevronSpace - labelWidth) / 2.0F;
 		float textY = bounds.y + (bounds.height - 12.0F) / 2.0F;
 

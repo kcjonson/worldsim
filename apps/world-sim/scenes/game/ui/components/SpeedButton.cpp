@@ -1,17 +1,18 @@
 #include "SpeedButton.h"
 
-#include <core/RenderContext.h>
 #include <theme/Theme.h>
 
 namespace world_sim {
 
 SpeedButton::SpeedButton(const Args& args)
-	: position(args.position)
-	, onClick(args.onClick)
+	: onClick(args.onClick)
 	, id(args.id) {
+	position = args.position;
+	size = {kButtonSize, kButtonSize};
+
 	// Create background rectangle
-	background = std::make_unique<UI::Rectangle>(UI::Rectangle::Args{
-		.position = position,
+	backgroundHandle = addChild(UI::Rectangle(UI::Rectangle::Args{
+		.position = {0.0F, 0.0F},
 		.size = {kButtonSize, kButtonSize},
 		.style =
 			{
@@ -24,17 +25,21 @@ SpeedButton::SpeedButton(const Args& args)
 						.position = Foundation::BorderPosition::Inside},
 			},
 		.id = id.c_str(),
-		.zIndex = 501});
+		.zIndex = 501}));
 
 	// Create icon centered in button
-	float iconOffset = (kButtonSize - kIconSize) / 2.0F;
-	icon = std::make_unique<UI::Icon>(UI::Icon::Args{
-		.position = {position.x + iconOffset, position.y + iconOffset},
+	iconHandle = addChild(UI::Icon(UI::Icon::Args{
+		.position = {0.0F, 0.0F},
 		.size = kIconSize,
 		.svgPath = "assets/" + args.iconPath,
 		.tint = UI::Theme::Colors::textBody,
-		.id = (id + "_icon").c_str()});
-	icon->zIndex = 502;
+		.id = (id + "_icon").c_str()}));
+
+	if (auto* iconPtr = getChild<UI::Icon>(iconHandle)) {
+		iconPtr->zIndex = 502;
+	}
+
+	positionElements();
 }
 
 void SpeedButton::setActive(bool newActive) {
@@ -45,14 +50,18 @@ void SpeedButton::setActive(bool newActive) {
 	updateAppearance();
 }
 
-void SpeedButton::setPosition(Foundation::Vec2 pos) {
-	position = pos;
-	if (background) {
-		background->setPosition(pos.x, pos.y);
+void SpeedButton::setPosition(float x, float y) {
+	Component::setPosition(x, y);
+	positionElements();
+}
+
+void SpeedButton::positionElements() {
+	if (auto* bg = getChild<UI::Rectangle>(backgroundHandle)) {
+		bg->setPosition(position.x, position.y);
 	}
-	if (icon) {
+	if (auto* iconPtr = getChild<UI::Icon>(iconHandle)) {
 		float iconOffset = (kButtonSize - kIconSize) / 2.0F;
-		icon->setPosition(pos.x + iconOffset, pos.y + iconOffset);
+		iconPtr->setPosition(position.x + iconOffset, position.y + iconOffset);
 	}
 }
 
@@ -88,27 +97,10 @@ bool SpeedButton::handleEvent(UI::InputEvent& event) {
 	return false;
 }
 
-void SpeedButton::render() {
-	if (background) {
-		UI::RenderContext::setZIndex(background->zIndex);
-		background->render();
-	}
-	if (icon) {
-		UI::RenderContext::setZIndex(icon->zIndex);
-		icon->render();
-	}
-}
-
-float SpeedButton::getWidth() const {
-	return kButtonSize;
-}
-
-float SpeedButton::getHeight() const {
-	return kButtonSize;
-}
-
 void SpeedButton::updateAppearance() {
-	if (!background || !icon) {
+	auto* bg = getChild<UI::Rectangle>(backgroundHandle);
+	auto* iconPtr = getChild<UI::Icon>(iconHandle);
+	if (!bg || !iconPtr) {
 		return;
 	}
 
@@ -146,19 +138,21 @@ void SpeedButton::updateAppearance() {
 		iconColor = UI::Theme::Colors::textBody;
 	}
 
-	background->style.fill = bgColor;
-	background->style.border = Foundation::BorderStyle{
+	bg->style.fill = bgColor;
+	bg->style.border = Foundation::BorderStyle{
 		.color = borderColor,
 		.width = 1.0F,
 		.cornerRadius = 4.0F,
 		.position = Foundation::BorderPosition::Inside};
 
-	icon->setTint(iconColor);
+	iconPtr->setTint(iconColor);
 }
 
 bool SpeedButton::containsPoint(Foundation::Vec2 point) const {
 	return point.x >= position.x && point.x < position.x + kButtonSize &&
 		   point.y >= position.y && point.y < position.y + kButtonSize;
 }
+
+// render() inherited from Component - automatically renders all children
 
 }  // namespace world_sim

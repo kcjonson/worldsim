@@ -9,21 +9,22 @@
 //
 // Each dropdown expands to show relevant options.
 // Replaces the simple BuildToolbar with full category access.
+// Extends UI::Component to use the Layer system for child management.
 
+#include <component/Component.h>
 #include <components/dropdown/DropdownButton.h>
 #include <graphics/Rect.h>
 #include <input/InputEvent.h>
+#include <layer/Layer.h>
 #include <shapes/Shapes.h>
 
 #include <functional>
-#include <memory>
 #include <string>
-#include <vector>
 
 namespace world_sim {
 
 /// Main gameplay action bar with category dropdowns.
-class GameplayBar {
+class GameplayBar : public UI::Component {
   public:
 	struct Args {
 		std::function<void()> onBuildClick = nullptr;  ///< Opens build menu
@@ -36,16 +37,15 @@ class GameplayBar {
 	explicit GameplayBar(const Args& args);
 
 	/// Layout the bar within viewport bounds
-	void layout(const Foundation::Rect& viewportBounds);
+	void layout(const Foundation::Rect& viewportBounds) override;
 
 	/// Handle input events
-	bool handleEvent(UI::InputEvent& event);
+	bool handleEvent(UI::InputEvent& event) override;
 
-	/// Render the bar
-	void render();
+	// render() inherited from Component - auto-renders children
 
 	/// Get height of the bar
-	[[nodiscard]] float getHeight() const { return kBarHeight; }
+	[[nodiscard]] float getHeight() const override { return kBarHeight; }
 
 	/// Close all open dropdowns
 	void closeAllDropdowns();
@@ -57,24 +57,25 @@ class GameplayBar {
 	static constexpr float kButtonHeight = 28.0F;
 	static constexpr float kButtonSpacing = 8.0F;
 	static constexpr float kBottomMargin = 12.0F;
+	static constexpr float kHorizontalPadding = 12.0F;  // Padding on each side of buttons
 
-	// Background
-	std::unique_ptr<UI::Rectangle> background;
+	// Cached layout values (computed once in layout())
+	float cachedBarWidth = 0.0F;
+	float cachedBarX = 0.0F;
+	float cachedBarY = 0.0F;
 
-	// Dropdown buttons
-	std::unique_ptr<UI::DropdownButton> actionsDropdown;
-	std::unique_ptr<UI::DropdownButton> buildDropdown;
-	std::unique_ptr<UI::DropdownButton> productionDropdown;
-	std::unique_ptr<UI::DropdownButton> furnitureDropdown;
+	// Child handles
+	UI::LayerHandle backgroundHandle;
+	UI::LayerHandle actionsDropdownHandle;
+	UI::LayerHandle buildDropdownHandle;
+	UI::LayerHandle productionDropdownHandle;
+	UI::LayerHandle furnitureDropdownHandle;
 
 	// Callbacks
 	std::function<void()> onBuildClick;
 	std::function<void(const std::string&)> onActionSelected;
 	std::function<void(const std::string&)> onProductionSelected;
 	std::function<void(const std::string&)> onFurnitureSelected;
-
-	// Cached viewport
-	Foundation::Rect viewportBounds;
 
 	/// Position all elements
 	void positionElements();

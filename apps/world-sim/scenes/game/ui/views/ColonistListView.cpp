@@ -21,18 +21,18 @@ namespace {
 ColonistListView::ColonistListView(const Args& args)
 	: panelWidth(args.width),
 	  itemHeight(args.itemHeight),
-	  onFollowCallback(args.onColonistFollowed) {
+	  onColonistFollowed(args.onColonistFollowed) {
 
 	// Wrap onColonistSelected with double-click detection
 	auto originalCallback = args.onColonistSelected;
-	onSelectCallback = [this, originalCallback](ecs::EntityID id) {
+	onColonistSelected = [this, originalCallback](ecs::EntityID id) {
 		float currentTime = getCurrentTime();
 
 		// Check for double-click
 		if (id == lastClickedId && (currentTime - lastClickTime) < kDoubleClickThreshold) {
 			// Double-click detected - trigger follow
-			if (onFollowCallback) {
-				onFollowCallback(id);
+			if (onColonistFollowed) {
+				onColonistFollowed(id);
 			}
 			// Reset to prevent triple-click triggering another follow
 			lastClickedId = ecs::EntityID{0};
@@ -103,7 +103,7 @@ void ColonistListView::rebuildUI(const std::vector<adapters::ColonistData>& colo
 			.height = itemHeight - kItemSpacing,
 			.isSelected = (colonist.id == selectedId),
 			.itemMargin = kItemSpacing * 0.5F,
-			.onSelect = onSelectCallback,
+			.onSelect = onColonistSelected,
 			.id = "colonist_" + std::to_string(i)
 		}));
 

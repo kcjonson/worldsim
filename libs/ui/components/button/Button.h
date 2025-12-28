@@ -126,7 +126,6 @@ class Button : public Component, public FocusableBase<Button> {
 	// Update text and icon positions when button moves
 	void updateTextPosition();
 	void updateIconPosition();
-	void updateIconTint();
 };
 
 } // namespace UI

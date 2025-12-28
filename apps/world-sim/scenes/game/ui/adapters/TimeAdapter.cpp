@@ -18,9 +18,11 @@ TimeData getTimeData(const ecs::World& world) {
 	const auto& timeSystem = world.getSystem<ecs::TimeSystem>();
 	auto snapshot = timeSystem.snapshot();
 
-	// Convert float timeOfDay to hour:minute
-	int hour = static_cast<int>(snapshot.timeOfDay);
-	int minute = static_cast<int>(std::fmod(snapshot.timeOfDay, 1.0F) * 60.0F);
+	// Convert float timeOfDay (in hours) to hour:minute using integer arithmetic
+	// to avoid floating-point precision issues with fmod
+	int totalMinutes = static_cast<int>(snapshot.timeOfDay * 60.0F);
+	int hour = totalMinutes / 60;
+	int minute = totalMinutes % 60;
 
 	return TimeData{
 		.day = snapshot.day,

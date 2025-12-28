@@ -1,13 +1,22 @@
 #include "DateTimeDisplay.h"
 
-#include <core/RenderContext.h>
 #include <theme/Theme.h>
 
 namespace world_sim {
 
-DateTimeDisplay::DateTimeDisplay(const Args& args)
-	: position(args.position) {
-	timeText = std::make_unique<UI::Text>(UI::Text::Args{
+namespace {
+	// Approximate average character width for simple text layout calculations.
+	// This is a rough estimate - for precise layout, use FontRenderer::measureText().
+	constexpr float kApproxCharWidth = 7.0F;
+
+	// Expected max character count for date/time string (e.g., "Day 999, Winter | 23:59")
+	constexpr size_t kExpectedMaxChars = 24;
+}  // namespace
+
+DateTimeDisplay::DateTimeDisplay(const Args& args) {
+	position = args.position;
+
+	timeTextHandle = addChild(UI::Text(UI::Text::Args{
 		.position = position,
 		.text = "Day 1, Spring | 06:00",
 		.style =
@@ -18,38 +27,32 @@ DateTimeDisplay::DateTimeDisplay(const Args& args)
 				.vAlign = Foundation::VerticalAlign::Top,
 			},
 		.id = args.id.c_str(),
-		.zIndex = 501
-	});
+		.zIndex = 501}));
 }
 
 void DateTimeDisplay::setDateTime(const std::string& formattedTime) {
-	if (timeText) {
-		timeText->text = formattedTime;
+	if (auto* text = getChild<UI::Text>(timeTextHandle)) {
+		text->text = formattedTime;
 	}
 }
 
-void DateTimeDisplay::setPosition(Foundation::Vec2 pos) {
-	position = pos;
-	if (timeText) {
-		timeText->setPosition(pos.x, pos.y);
-	}
-}
-
-void DateTimeDisplay::render() {
-	if (timeText) {
-		UI::RenderContext::setZIndex(timeText->zIndex);
-		timeText->render();
+void DateTimeDisplay::setPosition(float x, float y) {
+	Component::setPosition(x, y);
+	if (auto* text = getChild<UI::Text>(timeTextHandle)) {
+		text->setPosition(x, y);
 	}
 }
 
 float DateTimeDisplay::getWidth() const {
-	// Approximate width based on typical text length
-	// "Day 15, Summer | 14:32" is about 22 characters
-	return 180.0F;
+	// Calculate width based on expected max text length and font size.
+	// Uses approximate character width since the format is predictable.
+	return static_cast<float>(kExpectedMaxChars) * kApproxCharWidth;
 }
 
 float DateTimeDisplay::getHeight() const {
 	return UI::Theme::Typography::bodySize + 4.0F;  // Font size + padding
 }
+
+// render() inherited from Component - automatically renders all children
 
 }  // namespace world_sim

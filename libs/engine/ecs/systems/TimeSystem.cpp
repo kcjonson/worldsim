@@ -1,6 +1,13 @@
 #include "TimeSystem.h"
 
+#include <cassert>
+
 namespace ecs {
+
+namespace {
+	// Number of valid GameSpeed enum values
+	constexpr int kSpeedMultiplierCount = 4;
+}  // namespace
 
 const char* seasonName(Season season) {
 	switch (season) {
@@ -13,6 +20,8 @@ const char* seasonName(Season season) {
 		case Season::Winter:
 			return "Winter";
 	}
+	// All enum values are handled above. This should be unreachable
+	// unless the enum value is corrupted or cast from an invalid int.
 	return "Unknown";
 }
 
@@ -21,7 +30,9 @@ void TimeSystem::update(float deltaTime) {
 		return;	 // Time frozen
 	}
 
-	float speedMultiplier = kSpeedMultipliers[static_cast<int>(currentSpeed)];
+	int speedIndex = static_cast<int>(currentSpeed);
+	assert(speedIndex >= 0 && speedIndex < kSpeedMultiplierCount && "Invalid GameSpeed enum value");
+	float speedMultiplier = kSpeedMultipliers[speedIndex];
 	float gameMinutes = deltaTime * baseTimeScale * speedMultiplier;
 	advanceTime(gameMinutes);
 }
@@ -74,7 +85,9 @@ void TimeSystem::togglePause() {
 }
 
 float TimeSystem::effectiveTimeScale() const {
-	return baseTimeScale * kSpeedMultipliers[static_cast<int>(currentSpeed)];
+	int speedIndex = static_cast<int>(currentSpeed);
+	assert(speedIndex >= 0 && speedIndex < kSpeedMultiplierCount && "Invalid GameSpeed enum value");
+	return baseTimeScale * kSpeedMultipliers[speedIndex];
 }
 
 GameTimeSnapshot TimeSystem::snapshot() const {

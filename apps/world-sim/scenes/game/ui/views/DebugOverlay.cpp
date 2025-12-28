@@ -7,13 +7,9 @@
 namespace world_sim {
 
 DebugOverlay::DebugOverlay(const Args& /*args*/) {
-	createElements();
-}
-
-void DebugOverlay::createElements() {
-	// Create elements with default positions in top-left corner
-	chunksText = std::make_unique<UI::Text>(UI::Text::Args{
-		.position = {10.0F, 10.0F},
+	// Add text children to the layer system
+	chunksTextHandle = addChild(UI::Text(UI::Text::Args{
+		.position = {kPadding, kPadding},
 		.text = "Chunks: 0",
 		.style =
 			{
@@ -22,11 +18,10 @@ void DebugOverlay::createElements() {
 				.hAlign = Foundation::HorizontalAlign::Left,
 				.vAlign = Foundation::VerticalAlign::Top,
 			},
-		.id = "debug_chunks"
-	});
+		.id = "debug_chunks"}));
 
-	positionText = std::make_unique<UI::Text>(UI::Text::Args{
-		.position = {10.0F, 30.0F},
+	positionTextHandle = addChild(UI::Text(UI::Text::Args{
+		.position = {kPadding, kPadding + kLineSpacing},
 		.text = "Position: (0, 0)",
 		.style =
 			{
@@ -35,11 +30,10 @@ void DebugOverlay::createElements() {
 				.hAlign = Foundation::HorizontalAlign::Left,
 				.vAlign = Foundation::VerticalAlign::Top,
 			},
-		.id = "debug_position"
-	});
+		.id = "debug_position"}));
 
-	biomeText = std::make_unique<UI::Text>(UI::Text::Args{
-		.position = {10.0F, 50.0F},
+	biomeTextHandle = addChild(UI::Text(UI::Text::Args{
+		.position = {kPadding, kPadding + kLineSpacing * 2.0F},
 		.text = "Biome: Unknown",
 		.style =
 			{
@@ -48,64 +42,61 @@ void DebugOverlay::createElements() {
 				.hAlign = Foundation::HorizontalAlign::Left,
 				.vAlign = Foundation::VerticalAlign::Top,
 			},
-		.id = "debug_biome"
-	});
+		.id = "debug_biome"}));
 }
 
-void DebugOverlay::layout(const Foundation::Rect& bounds) {
-	// Position debug overlay below the TopBar
-	float x = bounds.x + 10.0F;
-	float y = bounds.y + 10.0F;
-	constexpr float kLineSpacing = 20.0F;
+void DebugOverlay::layout(const Foundation::Rect& newBounds) {
+	// Store bounds for Component base class
+	Component::layout(newBounds);
 
-	if (chunksText) {
-		chunksText->setPosition(x, y);
+	// Position text elements within bounds
+	float x = newBounds.x + kPadding;
+	float y = newBounds.y + kPadding;
+
+	if (auto* text = getChild<UI::Text>(chunksTextHandle)) {
+		text->setPosition(x, y);
 	}
-	if (positionText) {
-		positionText->setPosition(x, y + kLineSpacing);
+	if (auto* text = getChild<UI::Text>(positionTextHandle)) {
+		text->setPosition(x, y + kLineSpacing);
 	}
-	if (biomeText) {
-		biomeText->setPosition(x, y + kLineSpacing * 2.0F);
+	if (auto* text = getChild<UI::Text>(biomeTextHandle)) {
+		text->setPosition(x, y + kLineSpacing * 2.0F);
 	}
 }
 
-void DebugOverlay::update(
+void DebugOverlay::updateData(
 	const engine::world::WorldCamera& camera,
 	const engine::world::ChunkManager& chunkManager
 ) {
 	// Update chunk count
-	std::ostringstream chunkStr;
-	chunkStr << "Chunks: " << chunkManager.loadedChunkCount();
-	chunksText->text = chunkStr.str();
+	if (auto* text = getChild<UI::Text>(chunksTextHandle)) {
+		std::ostringstream oss;
+		oss << "Chunks: " << chunkManager.loadedChunkCount();
+		text->text = oss.str();
+	}
 
 	// Update position and chunk
-	std::ostringstream posStr;
-	posStr << "Position: (" << static_cast<int>(camera.position().x) << ", "
-		   << static_cast<int>(camera.position().y) << ") Chunk: (" << camera.currentChunk().x
-		   << ", " << camera.currentChunk().y << ")";
-	positionText->text = posStr.str();
+	if (auto* text = getChild<UI::Text>(positionTextHandle)) {
+		std::ostringstream oss;
+		oss << "Position: (" << static_cast<int>(camera.position().x) << ", "
+			<< static_cast<int>(camera.position().y) << ") Chunk: (" << camera.currentChunk().x
+			<< ", " << camera.currentChunk().y << ")";
+		text->text = oss.str();
+	}
 
 	// Update biome from current chunk
-	std::ostringstream biomeStr;
-	const auto* currentChunk = chunkManager.getChunk(camera.currentChunk());
-	if (currentChunk != nullptr) {
-		biomeStr << "Biome: " << engine::world::biomeToString(currentChunk->primaryBiome());
-	} else {
-		biomeStr << "Biome: Loading...";
+	if (auto* text = getChild<UI::Text>(biomeTextHandle)) {
+		std::ostringstream oss;
+		const auto* currentChunk = chunkManager.getChunk(camera.currentChunk());
+		if (currentChunk != nullptr) {
+			oss << "Biome: " << engine::world::biomeToString(currentChunk->primaryBiome());
+		} else {
+			oss << "Biome: Loading...";
+		}
+		text->text = oss.str();
 	}
-	biomeText->text = biomeStr.str();
 }
 
-void DebugOverlay::render() {
-	if (chunksText) {
-		chunksText->render();
-	}
-	if (positionText) {
-		positionText->render();
-	}
-	if (biomeText) {
-		biomeText->render();
-	}
-}
+// render() is inherited from Component - automatically renders all children
 
 }  // namespace world_sim

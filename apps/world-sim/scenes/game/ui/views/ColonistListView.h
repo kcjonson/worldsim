@@ -68,8 +68,8 @@ class ColonistListView {
 	float itemHeight;
 	float panelX = 0.0F;
 	float panelY = 80.0F;  // Below top overlay
-	std::function<void(ecs::EntityID)> onSelectCallback;
-	std::function<void(ecs::EntityID)> onFollowCallback;
+	std::function<void(ecs::EntityID)> onColonistSelected;
+	std::function<void(ecs::EntityID)> onColonistFollowed;
 
 	// Selection tracking
 	ecs::EntityID selectedId{0};

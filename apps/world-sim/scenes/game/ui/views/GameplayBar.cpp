@@ -11,7 +11,7 @@ GameplayBar::GameplayBar(const Args& args)
 	, onFurnitureSelected(args.onFurnitureSelected) {
 
 	// Create background rectangle
-	background = std::make_unique<UI::Rectangle>(UI::Rectangle::Args{
+	backgroundHandle = addChild(UI::Rectangle(UI::Rectangle::Args{
 		.position = {0.0F, 0.0F},
 		.size = {400.0F, kBarHeight},  // Width will be set in layout()
 		.style =
@@ -24,10 +24,10 @@ GameplayBar::GameplayBar(const Args& args)
 						.position = Foundation::BorderPosition::Inside},
 			},
 		.id = "gameplay_bar_background",
-		.zIndex = 400});
+		.zIndex = 400}));
 
 	// Create Actions dropdown (stub items for now)
-	actionsDropdown = std::make_unique<UI::DropdownButton>(UI::DropdownButton::Args{
+	actionsDropdownHandle = addChild(UI::DropdownButton(UI::DropdownButton::Args{
 		.label = "Actions",
 		.position = {0.0F, 0.0F},
 		.buttonSize = {kButtonWidth, kButtonHeight},
@@ -50,10 +50,10 @@ GameplayBar::GameplayBar(const Args& args)
 					}},
 			},
 		.id = "actions_dropdown",
-		.openUpward = true});
+		.openUpward = true}));
 
 	// Create Build dropdown
-	buildDropdown = std::make_unique<UI::DropdownButton>(UI::DropdownButton::Args{
+	buildDropdownHandle = addChild(UI::DropdownButton(UI::DropdownButton::Args{
 		.label = "Build",
 		.position = {0.0F, 0.0F},
 		.buttonSize = {kButtonWidth, kButtonHeight},
@@ -66,10 +66,10 @@ GameplayBar::GameplayBar(const Args& args)
 					}},
 			},
 		.id = "build_dropdown",
-		.openUpward = true});
+		.openUpward = true}));
 
 	// Create Production dropdown (stub items for now)
-	productionDropdown = std::make_unique<UI::DropdownButton>(UI::DropdownButton::Args{
+	productionDropdownHandle = addChild(UI::DropdownButton(UI::DropdownButton::Args{
 		.label = "Production",
 		.position = {0.0F, 0.0F},
 		.buttonSize = {kButtonWidth, kButtonHeight},
@@ -87,10 +87,10 @@ GameplayBar::GameplayBar(const Args& args)
 					}},
 			},
 		.id = "production_dropdown",
-		.openUpward = true});
+		.openUpward = true}));
 
 	// Create Furniture dropdown (stub items for now)
-	furnitureDropdown = std::make_unique<UI::DropdownButton>(UI::DropdownButton::Args{
+	furnitureDropdownHandle = addChild(UI::DropdownButton(UI::DropdownButton::Args{
 		.label = "Furniture",
 		.position = {0.0F, 0.0F},
 		.buttonSize = {kButtonWidth, kButtonHeight},
@@ -113,110 +113,70 @@ GameplayBar::GameplayBar(const Args& args)
 					}},
 			},
 		.id = "furniture_dropdown",
-		.openUpward = true});
+		.openUpward = true}));
 }
 
-void GameplayBar::layout(const Foundation::Rect& bounds) {
-	viewportBounds = bounds;
+void GameplayBar::layout(const Foundation::Rect& newBounds) {
+	Component::layout(newBounds);
 
-	// Calculate total width of all buttons
+	// Calculate and cache bar layout (used by positionElements)
 	float totalButtonWidth = (kButtonWidth * 4.0F) + (kButtonSpacing * 3.0F);
-	float barWidth = totalButtonWidth + 24.0F;  // Add padding
+	cachedBarWidth = totalButtonWidth + (kHorizontalPadding * 2.0F);
+	cachedBarX = bounds.x + (bounds.width - cachedBarWidth) / 2.0F;
+	cachedBarY = bounds.y + bounds.height - kBarHeight - kBottomMargin;
 
-	// Position bar at bottom center
-	float barX = bounds.x + (bounds.width - barWidth) / 2.0F;
-	float barY = bounds.y + bounds.height - kBarHeight - kBottomMargin;
-
-	if (background) {
-		background->size = {barWidth, kBarHeight};
-		background->setPosition(barX, barY);
+	if (auto* bg = getChild<UI::Rectangle>(backgroundHandle)) {
+		bg->size = {cachedBarWidth, kBarHeight};
+		bg->setPosition(cachedBarX, cachedBarY);
 	}
 
 	positionElements();
 }
 
 void GameplayBar::positionElements() {
-	// Calculate total width and starting position
-	float totalButtonWidth = (kButtonWidth * 4.0F) + (kButtonSpacing * 3.0F);
-	float barWidth = totalButtonWidth + 24.0F;
+	// Use cached layout values from layout()
+	float buttonY = cachedBarY + (kBarHeight - kButtonHeight) / 2.0F;
+	float x = cachedBarX + kHorizontalPadding;
 
-	float barX = viewportBounds.x + (viewportBounds.width - barWidth) / 2.0F;
-	float barY = viewportBounds.y + viewportBounds.height - kBarHeight - kBottomMargin;
-
-	// Center buttons within bar
-	float buttonY = barY + (kBarHeight - kButtonHeight) / 2.0F;
-	float x = barX + 12.0F;  // Left padding
-
-	if (actionsDropdown) {
-		actionsDropdown->setPosition(x, buttonY);
+	if (auto* dropdown = getChild<UI::DropdownButton>(actionsDropdownHandle)) {
+		dropdown->setPosition(x, buttonY);
 		x += kButtonWidth + kButtonSpacing;
 	}
 
-	if (buildDropdown) {
-		buildDropdown->setPosition(x, buttonY);
+	if (auto* dropdown = getChild<UI::DropdownButton>(buildDropdownHandle)) {
+		dropdown->setPosition(x, buttonY);
 		x += kButtonWidth + kButtonSpacing;
 	}
 
-	if (productionDropdown) {
-		productionDropdown->setPosition(x, buttonY);
+	if (auto* dropdown = getChild<UI::DropdownButton>(productionDropdownHandle)) {
+		dropdown->setPosition(x, buttonY);
 		x += kButtonWidth + kButtonSpacing;
 	}
 
-	if (furnitureDropdown) {
-		furnitureDropdown->setPosition(x, buttonY);
+	if (auto* dropdown = getChild<UI::DropdownButton>(furnitureDropdownHandle)) {
+		dropdown->setPosition(x, buttonY);
 	}
 }
 
 bool GameplayBar::handleEvent(UI::InputEvent& event) {
-	// Try dropdowns in order (right to left so topmost gets priority)
-	if (furnitureDropdown && furnitureDropdown->handleEvent(event)) {
-		return true;
-	}
-	if (productionDropdown && productionDropdown->handleEvent(event)) {
-		return true;
-	}
-	if (buildDropdown && buildDropdown->handleEvent(event)) {
-		return true;
-	}
-	if (actionsDropdown && actionsDropdown->handleEvent(event)) {
-		return true;
-	}
-
-	return false;
-}
-
-void GameplayBar::render() {
-	if (background) {
-		background->render();
-	}
-
-	if (actionsDropdown) {
-		actionsDropdown->render();
-	}
-	if (buildDropdown) {
-		buildDropdown->render();
-	}
-	if (productionDropdown) {
-		productionDropdown->render();
-	}
-	if (furnitureDropdown) {
-		furnitureDropdown->render();
-	}
+	return dispatchEvent(event);
 }
 
 void GameplayBar::closeAllDropdowns() {
-	if (actionsDropdown) {
-		actionsDropdown->closeMenu();
+	if (auto* dropdown = getChild<UI::DropdownButton>(actionsDropdownHandle)) {
+		dropdown->closeMenu();
 	}
-	if (buildDropdown) {
-		buildDropdown->closeMenu();
+	if (auto* dropdown = getChild<UI::DropdownButton>(buildDropdownHandle)) {
+		dropdown->closeMenu();
 	}
-	if (productionDropdown) {
-		productionDropdown->closeMenu();
+	if (auto* dropdown = getChild<UI::DropdownButton>(productionDropdownHandle)) {
+		dropdown->closeMenu();
 	}
-	if (furnitureDropdown) {
-		furnitureDropdown->closeMenu();
+	if (auto* dropdown = getChild<UI::DropdownButton>(furnitureDropdownHandle)) {
+		dropdown->closeMenu();
 	}
 }
+
+// render() inherited from Component - automatically renders all children
 
 }  // namespace world_sim

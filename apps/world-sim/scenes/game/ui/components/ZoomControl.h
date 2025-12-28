@@ -3,18 +3,20 @@
 // ZoomControl - Compact zoom level display with +/- buttons.
 // Shows current zoom percentage and allows step-based zoom changes.
 // Uses Button with SVG icons.
+// Extends UI::Component to use the Layer system for child management.
 
+#include <component/Component.h>
 #include <components/button/Button.h>
 #include <input/InputEvent.h>
+#include <layer/Layer.h>
 #include <shapes/Shapes.h>
 
 #include <functional>
-#include <memory>
 
 namespace world_sim {
 
 /// Compact zoom control widget for the game overlay.
-class ZoomControl {
+class ZoomControl : public UI::Component {
   public:
 	struct Args {
 		Foundation::Vec2 position{0.0F, 0.0F};
@@ -30,24 +32,30 @@ class ZoomControl {
 	void setZoomPercent(int percent);
 
 	/// Update position (for viewport-relative positioning)
-	void setPosition(Foundation::Vec2 position);
+	void setPosition(float x, float y) override;
 
-	/// Dispatch an input event
-	bool handleEvent(UI::InputEvent& event);
+	/// Dispatch an input event - delegates to children via dispatchEvent
+	bool handleEvent(UI::InputEvent& event) override;
 
-	/// Render the control
-	void render();
+	// render() inherited from Component - auto-renders children
 
   private:
-	Foundation::Vec2 position;
 	int zoomPercent = 100;
 
-	std::unique_ptr<UI::Button> zoomOutButton;
-	std::unique_ptr<UI::Text> zoomText;
-	std::unique_ptr<UI::Button> zoomInButton;
-	std::unique_ptr<UI::Button> zoomResetButton;
+	UI::LayerHandle zoomOutButtonHandle;
+	UI::LayerHandle zoomTextHandle;
+	UI::LayerHandle zoomInButtonHandle;
+	UI::LayerHandle zoomResetButtonHandle;
 
 	void updateZoomText();
+	void positionElements();
+
+	// Layout constants
+	static constexpr float kButtonSize = 28.0F;
+	static constexpr float kIconSize = 16.0F;
+	static constexpr float kTextWidth = 50.0F;
+	static constexpr float kSpacing = 4.0F;
+	static constexpr float kFontSize = 14.0F;
 };
 
 }  // namespace world_sim

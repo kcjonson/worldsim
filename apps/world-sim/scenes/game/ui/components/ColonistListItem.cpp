@@ -8,6 +8,17 @@
 
 namespace world_sim {
 
+	namespace {
+		// Mood thresholds for visual tinting
+		constexpr float kHappyMoodThreshold = 70.0F;    // Above this: green tint
+		constexpr float kNeutralMoodThreshold = 40.0F;  // Above this: yellow tint, below: red tint
+
+		// Color tint adjustments (added to base background color)
+		constexpr float kHappyGreenTint = 0.05F;
+		constexpr float kNeutralYellowTint = 0.03F;
+		constexpr float kStressedRedTint = 0.08F;
+	}  // namespace
+
 	// Static member definition
 	ColonistListItem::CachedMeshData ColonistListItem::cachedMesh;
 
@@ -247,28 +258,28 @@ namespace world_sim {
 		// Subtle mood-based tinting of the card background
 		Foundation::Color base = UI::Theme::Colors::cardBackground;
 
-		if (mood > 70.0F) {
+		if (mood > kHappyMoodThreshold) {
 			// Green tint - happy
 			return Foundation::Color{
 				base.r,
-				base.g + 0.05F,
-				base.b,
-				base.a};
-		} else if (mood > 40.0F) {
-			// Yellow tint - neutral
-			return Foundation::Color{
-				base.r + 0.03F,
-				base.g + 0.03F,
-				base.b,
-				base.a};
-		} else {
-			// Red tint - stressed
-			return Foundation::Color{
-				base.r + 0.08F,
-				base.g,
+				base.g + kHappyGreenTint,
 				base.b,
 				base.a};
 		}
+		if (mood > kNeutralMoodThreshold) {
+			// Yellow tint - neutral
+			return Foundation::Color{
+				base.r + kNeutralYellowTint,
+				base.g + kNeutralYellowTint,
+				base.b,
+				base.a};
+		}
+		// Red tint - stressed
+		return Foundation::Color{
+			base.r + kStressedRedTint,
+			base.g,
+			base.b,
+			base.a};
 	}
 
 	void ColonistListItem::updateMoodBar() {

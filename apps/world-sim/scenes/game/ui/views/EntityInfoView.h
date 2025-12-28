@@ -64,7 +64,7 @@ class EntityInfoView : public UI::Component {
 	[[nodiscard]] bool isVisible() const { return visible; }
 
 	/// Get current panel height (dynamic based on content)
-	[[nodiscard]] float getHeight() const { return panelHeight; }
+	[[nodiscard]] float getHeight() const override { return panelHeight; }
 
 	/// Update panel position with bottom-left alignment
 	/// @param x Left edge X coordinate

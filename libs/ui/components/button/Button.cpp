@@ -7,6 +7,12 @@
 
 namespace UI {
 
+	namespace {
+		// Approximate average character width for simple text layout calculations.
+		// This is a rough estimate - for precise layout, use FontRenderer::measureText().
+		constexpr float kApproxCharWidth = 7.0F;
+	}  // namespace
+
 	Button::Button(const Args& args)
 		: FocusableBase<Button>(args.tabIndex),
 		  label(args.label),
@@ -84,9 +90,10 @@ namespace UI {
 		if (icon) {
 			// Icon + Label: position text to the right of icon
 			constexpr float kIconLabelGap = 6.0F;
-			float totalWidth = iconSize + kIconLabelGap + static_cast<float>(label.length()) * 7.0F;
+			float labelWidth = static_cast<float>(label.length()) * kApproxCharWidth;
+			float totalWidth = iconSize + kIconLabelGap + labelWidth;
 			float startX = contentPos.x + (size.x - totalWidth) / 2.0F;
-			float textX = startX + iconSize + kIconLabelGap + static_cast<float>(label.length()) * 3.5F;
+			float textX = startX + iconSize + kIconLabelGap + labelWidth * 0.5F;
 			float centerY = contentPos.y + size.y * 0.5F;
 
 			labelText.position = {textX, centerY};
@@ -119,18 +126,11 @@ namespace UI {
 		} else {
 			// Icon + Label: position icon to the left
 			constexpr float kIconLabelGap = 6.0F;
-			float totalWidth = iconSize + kIconLabelGap + static_cast<float>(label.length()) * 7.0F;
+			float labelWidth = static_cast<float>(label.length()) * kApproxCharWidth;
+			float totalWidth = iconSize + kIconLabelGap + labelWidth;
 			float startX = contentPos.x + (size.x - totalWidth) / 2.0F;
 			icon->setPosition(startX, centerY);
 		}
-	}
-
-	void Button::updateIconTint() {
-		if (!icon) {
-			return;
-		}
-		const ButtonStyle& style = getCurrentStyle();
-		icon->setTint(style.textColor);
 	}
 
 	void Button::render() {

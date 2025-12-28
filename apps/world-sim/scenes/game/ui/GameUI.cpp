@@ -20,12 +20,9 @@ namespace world_sim {
 		: onSelectionCleared(args.onSelectionCleared) {
 
 		// Create top bar (date/time and speed controls)
-		topBar = std::make_unique<TopBar>(TopBar::Args{
-			.onPause = args.onPause,
-			.onSpeedChange = args.onSpeedChange,
-			.onMenuClick = args.onMenuClick,
-			.id = "top_bar"
-		});
+		topBar = std::make_unique<TopBar>(
+			TopBar::Args{.onPause = args.onPause, .onSpeedChange = args.onSpeedChange, .onMenuClick = args.onMenuClick, .id = "top_bar"}
+		);
 
 		// Create debug overlay (below top bar)
 		debugOverlay = std::make_unique<DebugOverlay>(DebugOverlay::Args{});
@@ -38,10 +35,7 @@ namespace world_sim {
 		});
 
 		// Create gameplay bar (replaces build toolbar)
-		gameplayBar = std::make_unique<GameplayBar>(GameplayBar::Args{
-			.onBuildClick = args.onBuildToggle,
-			.id = "gameplay_bar"
-		});
+		gameplayBar = std::make_unique<GameplayBar>(GameplayBar::Args{.onBuildClick = args.onBuildToggle, .id = "gameplay_bar"});
 
 		// Create build menu (position set in layout())
 		buildMenu = std::make_unique<BuildMenu>(BuildMenu::Args{
@@ -93,23 +87,18 @@ namespace world_sim {
 		}
 
 		// Create bounds for content below top bar
-		Foundation::Rect contentBounds{
-			newBounds.x,
-			newBounds.y + topBarHeight,
-			newBounds.width,
-			newBounds.height - topBarHeight
-		};
+		Foundation::Rect contentBounds{newBounds.x, newBounds.y + topBarHeight, newBounds.width, newBounds.height - topBarHeight};
 
 		// Layout debug overlay at bottom-left (below colonist list)
 		// Per spec: Debug info appears in bottom-left corner
 		if (debugOverlay) {
 			// Position above the gameplay bar, leaving room for colonist list
-			float debugY = newBounds.height - 100.0F;  // Above bottom
+			float			 debugY = newBounds.height - 100.0F; // Above bottom
 			Foundation::Rect debugBounds{
 				newBounds.x,
 				debugY,
-				200.0F,  // Width for debug text
-				80.0F    // Height for 3 lines of text
+				200.0F, // Width for debug text
+				80.0F	// Height for 3 lines of text
 			};
 			debugOverlay->layout(debugBounds);
 		}
@@ -251,12 +240,12 @@ namespace world_sim {
 		// Update time model and top bar
 		if (topBar) {
 			timeModel.refresh(ecsWorld);
-			topBar->update(timeModel);
+			topBar->updateData(timeModel);
 		}
 
 		// Update debug overlay display values
 		if (debugOverlay) {
-			debugOverlay->update(camera, chunkManager);
+			debugOverlay->updateData(camera, chunkManager);
 		}
 
 		// Update zoom control panel
