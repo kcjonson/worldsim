@@ -11,6 +11,7 @@ add_library(engine
     world/chunk/MockWorldSampler.cpp
     world/rendering/ChunkRenderer.cpp
     world/rendering/EntityRenderer.cpp
+    ecs/systems/TimeSystem.cpp
     ecs/systems/MovementSystem.cpp
     ecs/systems/PhysicsSystem.cpp
     ecs/systems/DynamicEntityRenderSystem.cpp

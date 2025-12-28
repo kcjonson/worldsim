@@ -60,6 +60,7 @@ class ColonistListItem : public UI::Component {
 	void updateBackgroundStyle();
 	void updateMoodBar();
 	void renderPortrait();
+	[[nodiscard]] Foundation::Color getMoodTintedBackground() const;
 
 	// Cached mesh data for portrait rendering
 	struct CachedMeshData {

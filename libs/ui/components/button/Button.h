@@ -1,11 +1,13 @@
 #pragma once
 
 #include "components/button/ButtonStyle.h"
+#include "components/icon/Icon.h"
 #include "component/Component.h"
 #include "focus/FocusableBase.h"
 #include "math/Types.h"
 #include "shapes/Shapes.h"
 #include <functional>
+#include <memory>
 #include <string>
 
 // Button Component
@@ -29,16 +31,18 @@ class Button : public Component, public FocusableBase<Button> {
 
 	// Constructor arguments struct (C++20 designated initializers)
 	struct Args {
-		std::string			  label;
+		std::string			  label;						 // Text label (can be empty for icon-only)
 		Foundation::Vec2	  position{0.0F, 0.0F};
 		Foundation::Vec2	  size{120.0F, 40.0F};
 		Type				  type = Type::Primary;
-		ButtonAppearance*	  customAppearance = nullptr; // Only used if type == Custom
+		ButtonAppearance*	  customAppearance = nullptr;	 // Only used if type == Custom
 		bool				  disabled = false;
 		std::function<void()> onClick = nullptr;
 		const char*			  id = nullptr;
-		int					  tabIndex = -1; // Tab order (-1 for auto-assign)
+		int					  tabIndex = -1;				 // Tab order (-1 for auto-assign)
 		float				  margin{0.0F};
+		std::string			  iconPath;						 // Optional SVG icon path
+		float				  iconSize{16.0F};				 // Icon size (default 16px)
 	};
 
 	// --- Public Members ---
@@ -112,11 +116,16 @@ class Button : public Component, public FocusableBase<Button> {
 	// Text label (owned directly for simplicity)
 	Text labelText;
 
+	// Optional icon
+	std::unique_ptr<Icon> icon;
+	float				  iconSize{16.0F};
+
 	// Get current style based on state/flags
 	const ButtonStyle& getCurrentStyle() const;
 
-	// Update text position when button moves
+	// Update text and icon positions when button moves
 	void updateTextPosition();
+	void updateIconPosition();
 };
 
 } // namespace UI

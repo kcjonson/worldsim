@@ -16,6 +16,7 @@
 // - Keyboard navigation when focused
 
 #include "component/Component.h"
+#include "components/icon/Icon.h"
 #include "components/menu/Menu.h"
 #include "focus/FocusableBase.h"
 #include "graphics/Color.h"
@@ -45,6 +46,7 @@ class DropdownButton : public Component, public FocusableBase<DropdownButton> {
 		const char*				 id = nullptr;
 		int						 tabIndex = -1;
 		float					 margin{0.0F};
+		bool					 openUpward{false};  ///< If true, menu opens above button
 	};
 
 	explicit DropdownButton(const Args& args);
@@ -97,9 +99,13 @@ class DropdownButton : public Component, public FocusableBase<DropdownButton> {
 	int						  hoveredItemIndex{-1};
 	bool					  buttonHovered{false};
 	bool					  buttonPressed{false};
+	bool					  openUpward{false};
 
 	// Menu component (embedded child)
 	LayerHandle menuHandle;
+
+	// Chevron icon (embedded child)
+	LayerHandle chevronHandle;
 
 	// Get bounds for the button
 	[[nodiscard]] Foundation::Rect getButtonBounds() const;
@@ -110,8 +116,11 @@ class DropdownButton : public Component, public FocusableBase<DropdownButton> {
 	// Convert DropdownItems to MenuItems
 	[[nodiscard]] std::vector<MenuItem> convertToMenuItems() const;
 
-	// Update menu position (below button)
+	// Update menu position (below or above button)
 	void updateMenuPosition();
+
+	// Update chevron icon position
+	void updateChevronPosition();
 
 	// Select item and close menu
 	void selectItem(size_t index);

@@ -7,19 +7,25 @@ add_executable(world-sim
     scenes/game/ui/views/EntityInfoView.cpp
     scenes/game/ui/views/TaskListView.cpp
     scenes/game/ui/views/BuildMenu.cpp
-    scenes/game/ui/views/BuildToolbar.cpp
-    scenes/game/ui/views/GameOverlay.cpp
+    scenes/game/ui/views/GameplayBar.cpp
+    scenes/game/ui/views/DebugOverlay.cpp
+    scenes/game/ui/views/ZoomControlPanel.cpp
+    scenes/game/ui/views/TopBar.cpp
     # Game scene UI - components
     scenes/game/ui/components/ColonistListItem.cpp
     scenes/game/ui/components/NeedBar.cpp
     scenes/game/ui/components/ZoomControl.cpp
+    scenes/game/ui/components/DateTimeDisplay.cpp
+    scenes/game/ui/components/SpeedButton.cpp
     # Game scene UI - adapters
     scenes/game/ui/adapters/ColonistAdapter.cpp
     scenes/game/ui/adapters/CraftingAdapter.cpp
     scenes/game/ui/adapters/SelectionAdapter.cpp
+    scenes/game/ui/adapters/TimeAdapter.cpp
     # Game scene UI - models
     scenes/game/ui/models/ColonistListModel.cpp
     scenes/game/ui/models/EntityInfoModel.cpp
+    scenes/game/ui/models/TimeModel.cpp
     # Game scene UI - main container
     scenes/game/ui/GameUI.cpp
     # Game scene - world rendering
