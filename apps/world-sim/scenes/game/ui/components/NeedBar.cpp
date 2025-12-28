@@ -4,27 +4,34 @@
 
 namespace world_sim {
 
-NeedBar::NeedBar(const Args& args)
-	: height(args.height) {
+NeedBar::NeedBar(const Args& args) {
+	// Select size-specific constants
+	bool isCompact = (args.size == NeedBarSize::Compact);
+	float barHeight = (args.height > 0.0F) ? args.height
+		: (isCompact ? kCompactHeight : kNormalHeight);
+	labelWidth = isCompact ? kCompactLabelWidth : kNormalLabelWidth;
+	float fontSize = isCompact ? kCompactFontSize : kNormalFontSize;
+
+	height = barHeight;
 
 	// Set base class members
 	position = args.position;
-	size = {args.width, args.height};
+	size = {args.width, barHeight};
 
 	// Create ProgressBar as child with label support
 	progressBarHandle = addChild(UI::ProgressBar(UI::ProgressBar::Args{
 		.position = args.position,
-		.size = {args.width, args.height},
+		.size = {args.width, barHeight},
 		.value = value / 100.0F, // Convert 0-100 to 0-1
 		.fillColor = valueToColor(value),
 		.backgroundColor = Foundation::Color(0.2F, 0.2F, 0.25F, 1.0F),
 		.borderColor = Foundation::Color(0.3F, 0.3F, 0.35F, 1.0F),
 		.borderWidth = 1.0F,
 		.label = args.label,
-		.labelWidth = kLabelWidth,
+		.labelWidth = labelWidth,
 		.labelGap = kBarGap,
 		.labelColor = Foundation::Color::white(),
-		.labelFontSize = kLabelFontSize,
+		.labelFontSize = fontSize,
 	}));
 }
 
@@ -56,6 +63,15 @@ void NeedBar::setPosition(Foundation::Vec2 newPos) {
 	auto* progressBar = getChild<UI::ProgressBar>(progressBarHandle);
 	if (progressBar != nullptr) {
 		progressBar->setPosition(newPos);
+	}
+}
+
+void NeedBar::setWidth(float newWidth) {
+	size.x = newWidth;
+
+	auto* progressBar = getChild<UI::ProgressBar>(progressBarHandle);
+	if (progressBar != nullptr) {
+		progressBar->setWidth(newWidth);
 	}
 }
 

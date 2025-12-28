@@ -18,6 +18,17 @@ enum class NeedType : uint8_t {
     Count  // Sentinel for array sizing
 };
 
+/// Human-readable labels for each need type (for UI display)
+constexpr std::array<const char*, static_cast<size_t>(NeedType::Count)> kNeedLabels = {
+    "Hunger", "Thirst", "Energy", "Bladder", "Digestion", "Hygiene", "Recreation", "Temperature"
+};
+
+/// Get the human-readable label for a need type
+[[nodiscard]] inline const char* needLabel(NeedType type) {
+    auto index = static_cast<size_t>(type);
+    return (index < kNeedLabels.size()) ? kNeedLabels[index] : "Unknown";
+}
+
 /// Individual need state
 struct Need {
     float value = 100.0f;         // Current value 0-100%

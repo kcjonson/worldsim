@@ -13,14 +13,25 @@
 namespace world_sim {
 
 namespace {
-	// Need labels matching NeedType order
-	constexpr std::array<const char*, static_cast<size_t>(ecs::NeedType::Count)> kNeedLabels = {
-		"Hunger", "Thirst", "Energy", "Bladder", "Digestion", "Hygiene", "Recreation", "Temperature"
-	};
-	constexpr size_t kNeedCount = kNeedLabels.size();
+	// Use ecs::kNeedLabels from Needs.h - single source of truth
+	constexpr size_t kNeedCount = ecs::kNeedLabels.size();
 
-	// Visual spacing between need bars and status section
-	constexpr float kStatusSectionSpacing = 8.0F;
+	// Convert mood value (0-100) to descriptive label
+	std::string moodToLabel(float moodValue) {
+		if (moodValue >= 80.0F) {
+			return "Happy";
+		}
+		if (moodValue >= 60.0F) {
+			return "Content";
+		}
+		if (moodValue >= 40.0F) {
+			return "Neutral";
+		}
+		if (moodValue >= 20.0F) {
+			return "Stressed";
+		}
+		return "Miserable";
+	}
 
 	// Format action description with progress
 	std::string formatAction(const ecs::Action& action) {
@@ -110,115 +121,85 @@ std::optional<PanelContent> adaptSelection(
 	);
 }
 
-PanelContent adaptColonistStatus(const ecs::World& world, ecs::EntityID entityId, std::function<void()> onTaskListToggle) {
+PanelContent adaptColonistStatus(
+	const ecs::World& world,
+	ecs::EntityID entityId,
+	std::function<void()> /*onTaskListToggle*/, // Not used - task list is in Details modal
+	std::function<void()> onDetails
+) {
 	PanelContent content;
+	content.layout = PanelLayout::TwoColumn;
 
-	// Get colonist name for title
-	if (auto* colonist = world.getComponent<ecs::Colonist>(entityId)) {
-		content.title = colonist->name;
-	} else {
-		content.title = "Colonist";
+	// Store onDetails callback for the Details button
+	content.onDetails = onDetails;
+
+	// HEADER: Portrait area with name and mood
+	auto* colonist = world.getComponent<ecs::Colonist>(entityId);
+	content.header.name = colonist ? colonist->name : "Colonist";
+
+	// Get mood value and label
+	float moodValue = 50.0F;
+	if (auto* needs = world.getComponent<ecs::NeedsComponent>(entityId)) {
+		moodValue = ecs::computeMood(*needs);
+	}
+	content.header.moodValue = moodValue;
+	content.header.moodLabel = moodToLabel(moodValue);
+
+	// LEFT COLUMN: Current task, Next task, Gear list
+	// Current task
+	std::string currentTask = "Idle";
+	if (auto* task = world.getComponent<ecs::Task>(entityId)) {
+		currentTask = formatTask(*task);
+	}
+	content.leftColumn.push_back(TextSlot{
+		.label = "Current",
+		.value = currentTask,
+	});
+
+	// Next task (placeholder - would need task queue to implement properly)
+	std::string nextTask = "--";
+	if (auto* action = world.getComponent<ecs::Action>(entityId)) {
+		if (action->isActive()) {
+			nextTask = formatAction(*action);
+		}
+	}
+	content.leftColumn.push_back(TextSlot{
+		.label = "Next",
+		.value = nextTask,
+	});
+
+	// Gear list (from inventory)
+	auto* inventory = world.getComponent<ecs::Inventory>(entityId);
+	auto  items = inventory ? inventory->getAllItems() : std::vector<ecs::ItemStack>{};
+	if (!items.empty()) {
+		content.leftColumn.push_back(SpacerSlot{.height = 8.0F});
+
+		std::vector<std::string> gearItems;
+		gearItems.reserve(items.size());
+		for (const auto& item : items) {
+			std::ostringstream oss;
+			oss << item.defName;
+			if (item.quantity > 1) {
+				oss << " x" << item.quantity;
+			}
+			gearItems.push_back(oss.str());
+		}
+		content.leftColumn.push_back(TextListSlot{
+			.header = "Gear",
+			.items = std::move(gearItems),
+		});
 	}
 
-	// Add mood first, then need bars
+	// RIGHT COLUMN: "Needs:" header + need bars
+	// The "Needs:" header is rendered by the view, not as a slot
 	if (auto* needs = world.getComponent<ecs::NeedsComponent>(entityId)) {
-		float mood = ecs::computeMood(*needs);
-		content.slots.push_back(ProgressBarSlot{
-			.label = "Mood",
-			.value = mood,
-		});
-
 		for (size_t i = 0; i < kNeedCount; ++i) {
 			auto needType = static_cast<ecs::NeedType>(i);
-			content.slots.push_back(ProgressBarSlot{
-				.label = kNeedLabels[i],
+			content.rightColumn.push_back(ProgressBarSlot{
+				.label = ecs::kNeedLabels[i],
 				.value = needs->get(needType).value,
 			});
 		}
-	}
-
-	// Add spacer before status
-	content.slots.push_back(SpacerSlot{.height = kStatusSectionSpacing});
-
-	// Add task status
-	if (auto* task = world.getComponent<ecs::Task>(entityId)) {
-		content.slots.push_back(TextSlot{
-			.label = "Task",
-			.value = formatTask(*task),
-		});
-	}
-
-	// Add action status
-	if (auto* action = world.getComponent<ecs::Action>(entityId)) {
-		content.slots.push_back(TextSlot{
-			.label = "Action",
-			.value = formatAction(*action),
-		});
-	}
-
-	// Add clickable task list toggle (if callback provided)
-	if (onTaskListToggle) {
-		content.slots.push_back(ClickableTextSlot{
-			.label = "Tasks",
-			.value = "> Show",
-			.onClick = onTaskListToggle,
-		});
-	}
-
-	return content;
-}
-
-PanelContent adaptColonistInventory(const ecs::World& world, ecs::EntityID entityId) {
-	PanelContent content;
-
-	// Get colonist name for title
-	if (auto* colonist = world.getComponent<ecs::Colonist>(entityId)) {
-		content.title = colonist->name;
-	} else {
-		content.title = "Colonist";
-	}
-
-	// Get inventory data
-	auto* inventory = world.getComponent<ecs::Inventory>(entityId);
-	if (inventory == nullptr) {
-		// No inventory component - show empty state
-		content.slots.push_back(TextSlot{
-			.label = "Inventory",
-			.value = "None",
-		});
-		return content;
-	}
-
-	// Show slot usage: "Slots: 2/10"
-	std::ostringstream slotsOss;
-	slotsOss << inventory->getSlotCount() << "/" << inventory->maxCapacity;
-	content.slots.push_back(TextSlot{
-		.label = "Slots",
-		.value = slotsOss.str(),
-	});
-
-	// Show items as list
-	auto items = inventory->getAllItems();
-	if (items.empty()) {
-		content.slots.push_back(SpacerSlot{.height = 4.0F});
-		content.slots.push_back(TextSlot{
-			.label = "Items",
-			.value = "Empty",
-		});
-	} else {
-		// Build item list: "Berry x5", "Stone x2"
-		std::vector<std::string> itemStrings;
-		itemStrings.reserve(items.size());
-		for (const auto& item : items) {
-			std::ostringstream itemOss;
-			itemOss << item.defName << " x" << item.quantity;
-			itemStrings.push_back(itemOss.str());
-		}
-
-		content.slots.push_back(TextListSlot{
-			.header = "Items",
-			.items = std::move(itemStrings),
-		});
 	}
 
 	return content;
@@ -229,49 +210,32 @@ PanelContent adaptWorldEntity(
 	const WorldEntitySelection& selection
 ) {
 	PanelContent content;
-	content.title = selection.defName;
+	content.layout = PanelLayout::TwoColumn; // Same layout as colonists
 
-	// Add position
-	content.slots.push_back(TextSlot{
-		.label = "Position",
-		.value = formatPosition(selection.position),
-	});
+	// HEADER: Same slot as colonist portrait - icon placeholder + name
+	content.header.name = selection.defName;
 
-	// Look up asset definition for capabilities
+	// Resource bar in mood slot (placeholder for now - TODO: hook up to actual resource data)
+	// Could be: growth %, health %, remaining yield, stack quantity, etc.
+	content.header.moodValue = 100.0F; // Full resource for now
+	content.header.moodLabel = "Full";
+
+	// Look up asset definition for properties
 	const auto* def = registry.getDefinition(selection.defName);
-	if (def == nullptr) {
-		return content;
+	if (def != nullptr) {
+		const auto& capabilities = def->capabilities;
+
+		// TODO: Get actual resource data from entity components
+		// For now, show placeholder based on capabilities
+		if (capabilities.edible.has_value()) {
+			content.header.moodLabel = "Harvestable";
+		} else if (capabilities.drinkable.has_value()) {
+			content.header.moodLabel = "Available";
+		}
 	}
 
-	// Build capability list
-	std::vector<std::string> caps;
-	const auto&				 capabilities = def->capabilities;
-
-	if (capabilities.edible.has_value()) {
-		std::ostringstream oss;
-		oss << "Edible (nutrition: " << std::fixed << std::setprecision(1) << capabilities.edible->nutrition << ")";
-		caps.push_back(oss.str());
-	}
-	if (capabilities.drinkable.has_value()) {
-		caps.push_back("Drinkable");
-	}
-	if (capabilities.sleepable.has_value()) {
-		std::ostringstream oss;
-		oss << "Sleepable (recovery: " << std::fixed << std::setprecision(1) << capabilities.sleepable->recoveryMultiplier
-			<< "x)";
-		caps.push_back(oss.str());
-	}
-	if (capabilities.toilet.has_value()) {
-		caps.push_back("Toilet");
-	}
-
-	// Add capabilities list if any
-	if (!caps.empty()) {
-		content.slots.push_back(TextListSlot{
-			.header = "Capabilities",
-			.items = std::move(caps),
-		});
-	}
+	// LEFT/RIGHT COLUMNS: Empty for now (same height as colonist, just unused space)
+	// Will be populated with entity-specific info in future updates
 
 	return content;
 }

@@ -26,18 +26,16 @@ namespace world_sim {
 	std::function<void()> onTaskListToggle = nullptr
 );
 
-/// Convert colonist status data into panel content (Status tab)
+/// Convert colonist data into two-column panel content
+/// Left column: task info, gear list
+/// Right column: needs bars
 /// @param onTaskListToggle Optional callback for toggling task list panel
+/// @param onDetails Optional callback for opening colonist details modal
 [[nodiscard]] PanelContent adaptColonistStatus(
 	const ecs::World& world,
 	ecs::EntityID entityId,
-	std::function<void()> onTaskListToggle = nullptr
-);
-
-/// Convert colonist inventory data into panel content (Inventory tab)
-[[nodiscard]] PanelContent adaptColonistInventory(
-	const ecs::World& world,
-	ecs::EntityID entityId
+	std::function<void()> onTaskListToggle = nullptr,
+	std::function<void()> onDetails = nullptr
 );
 
 /// Convert world entity data into panel content

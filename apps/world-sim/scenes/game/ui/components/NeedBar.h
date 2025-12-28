@@ -7,6 +7,10 @@
 // - Low values indicate depleted need (bad), high values indicate satisfied (good)
 //
 // Uses 0-100 scale for API compatibility (internally converts to 0-1).
+//
+// Supports two sizes:
+// - Normal: Standard need bar for the needs panel (16px height, 75px label)
+// - Compact: Smaller bar for header mood display (10px height, 45px label)
 
 #include <components/progress/ProgressBar.h>
 #include <graphics/Color.h>
@@ -16,12 +20,19 @@
 
 namespace world_sim {
 
+/// Size variants for NeedBar
+enum class NeedBarSize {
+	Normal,	 // Standard needs panel bar (16px height)
+	Compact	 // Smaller header mood bar (10px height)
+};
+
 class NeedBar : public UI::Component {
   public:
 	struct Args {
 		Foundation::Vec2 position{0.0F, 0.0F};
 		float			 width = 120.0F;
-		float			 height = 12.0F;
+		float			 height = 0.0F;	 // 0 = use size default (16px normal, 10px compact)
+		NeedBarSize		 size = NeedBarSize::Normal;
 		std::string		 label;
 		std::string		 id = "need_bar";
 	};
@@ -37,6 +48,9 @@ class NeedBar : public UI::Component {
 	/// Update position (moves all child elements)
 	void setPosition(Foundation::Vec2 newPos);
 
+	/// Update width (for dynamic resizing in layouts)
+	void setWidth(float newWidth);
+
 	/// Get the total height including label
 	[[nodiscard]] float getTotalHeight() const;
 
@@ -49,11 +63,20 @@ class NeedBar : public UI::Component {
 
 	float value = 100.0F;
 	float height;
+	float labelWidth;
 
-	// Layout constants (same as before for API compatibility)
-	static constexpr float kLabelWidth = 60.0F;
+	// Layout constants - Normal size (needs panel)
+	static constexpr float kNormalHeight = 16.0F;
+	static constexpr float kNormalLabelWidth = 75.0F;  // Wide enough for "Temperature"
+	static constexpr float kNormalFontSize = 12.0F;
+
+	// Layout constants - Compact size (header mood bar)
+	static constexpr float kCompactHeight = 10.0F;
+	static constexpr float kCompactLabelWidth = 45.0F;  // Enough for "Mood"
+	static constexpr float kCompactFontSize = 10.0F;
+
+	// Shared constants
 	static constexpr float kBarGap = 5.0F;
-	static constexpr float kLabelFontSize = 12.0F;
 };
 
 } // namespace world_sim

@@ -113,28 +113,22 @@ EntityInfoModel::UpdateType EntityInfoModel::refresh(
 	bool wasVisible = visible;
 	visible = true;
 
-	// Track tab visibility change
-	bool wasShowingTabs = showsTabsFlag;
-	showsTabsFlag = isColonist;
+	// Track layout mode change
+	bool wasColonist = isColonistFlag;
+	isColonistFlag = isColonist;
 
 	// Check if selection identity changed
 	bool selectionChanged = !cachedSelection.matches(selection);
 	if (selectionChanged) {
 		cachedSelection.update(selection);
-
-		// Reset to status tab when selecting a different colonist
-		if (isColonist) {
-			activeTabId = "status";
-		}
 	}
 
-	// Determine update type
-	bool needsStructure = selectionChanged || wasShowingTabs != showsTabsFlag || tabChangeRequested;
-	tabChangeRequested = false;
+	// Determine update type (structure update if selection changed or layout mode changed)
+	bool needsStructure = selectionChanged || wasColonist != isColonistFlag;
 
 	// Generate content
 	if (isColonist) {
-		contentData = getColonistContent(world, colonistId, callbacks.onTaskListToggle);
+		contentData = getColonistContent(world, colonistId, callbacks.onTaskListToggle, callbacks.onDetails);
 	} else if (isStation) {
 		contentData = getCraftingStationContent(world, stationId, stationDefName, recipeRegistry, callbacks.onQueueRecipe);
 	} else {
@@ -155,24 +149,14 @@ EntityInfoModel::UpdateType EntityInfoModel::refresh(
 	return UpdateType::Values;
 }
 
-void EntityInfoModel::setActiveTab(const std::string& tabId) {
-	if (activeTabId == tabId) {
-		return;
-	}
-	activeTabId = tabId;
-	tabChangeRequested = true;
-}
-
 PanelContent EntityInfoModel::getColonistContent(
 	const ecs::World& world,
 	ecs::EntityID entityId,
-	const std::function<void()>& onTaskListToggle
+	const std::function<void()>& onTaskListToggle,
+	const std::function<void()>& onDetails
 ) const {
-	if (activeTabId == "inventory") {
-		return adaptColonistInventory(world, entityId);
-	}
-	// Default to status tab
-	return adaptColonistStatus(world, entityId, onTaskListToggle);
+	// Generate two-column colonist content with onDetails callback
+	return adaptColonistStatus(world, entityId, onTaskListToggle, onDetails);
 }
 
 PanelContent EntityInfoModel::getCraftingStationContent(

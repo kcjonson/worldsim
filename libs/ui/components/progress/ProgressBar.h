@@ -65,6 +65,9 @@ class ProgressBar : public Component {
 	void setPosition(Foundation::Vec2 newPos);
 	void setPosition(float x, float y) override { setPosition({x, y}); }
 
+	// Width update (for dynamic resizing in layouts)
+	void setWidth(float newWidth);
+
   private:
 	float value;
 	bool  hasLabel;
