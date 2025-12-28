@@ -1,12 +1,12 @@
 // Game Scene - Main gameplay with chunk-based world rendering
 
 #include "GameWorldState.h"
+#include "SceneTypes.h"
 #include "scenes/game/ui/GameUI.h"
+#include "scenes/game/ui/components/Selection.h"
 #include "scenes/game/world/GhostRenderer.h"
 #include "scenes/game/world/NotificationManager.h"
 #include "scenes/game/world/PlacementMode.h"
-#include "scenes/game/ui/components/Selection.h"
-#include "SceneTypes.h"
 
 #include <GL/glew.h>
 
@@ -57,6 +57,7 @@
 #include <ecs/systems/MovementSystem.h>
 #include <ecs/systems/NeedsDecaySystem.h>
 #include <ecs/systems/PhysicsSystem.h>
+#include <ecs/systems/TimeSystem.h>
 #include <ecs/systems/VisionSystem.h>
 
 #include <memory>
@@ -136,11 +137,30 @@ namespace {
 			gameUI = std::make_unique<world_sim::GameUI>(world_sim::GameUI::Args{
 				.onZoomIn = [this]() { m_camera->zoomIn(); },
 				.onZoomOut = [this]() { m_camera->zoomOut(); },
+				.onZoomReset = [this]() { m_camera->setZoomIndex(engine::world::kDefaultZoomIndex); },
 				.onSelectionCleared = [this]() { selection = world_sim::NoSelection{}; },
 				.onColonistSelected = [this](ecs::EntityID entityId) { selection = world_sim::ColonistSelection{entityId}; },
+				.onColonistFollowed =
+					[this](ecs::EntityID entityId) {
+						// Center camera on colonist position
+						if (auto* pos = ecsWorld->getComponent<ecs::Position>(entityId)) {
+							m_camera->setPosition({pos->value.x, pos->value.y});
+						}
+					},
 				.onBuildToggle = [this]() { handleBuildToggle(); },
 				.onBuildItemSelected = [this](const std::string& defName) { handleBuildItemSelected(defName); },
-				.onQueueRecipe = [this](const std::string& recipeDefName) { handleQueueRecipe(recipeDefName); }
+				.onQueueRecipe = [this](const std::string& recipeDefName) { handleQueueRecipe(recipeDefName); },
+				.onPause =
+					[this]() {
+						auto& timeSystem = ecsWorld->getSystem<ecs::TimeSystem>();
+						timeSystem.togglePause();
+					},
+				.onSpeedChange =
+					[this](ecs::GameSpeed speed) {
+						auto& timeSystem = ecsWorld->getSystem<ecs::TimeSystem>();
+						timeSystem.setSpeed(speed);
+					},
+				.onMenuClick = [this]() { sceneManager->switchTo(world_sim::toKey(world_sim::SceneType::MainMenu)); }
 			});
 
 			// Initial layout pass with consistent DPI scaling
@@ -209,6 +229,26 @@ namespace {
 			// Handle B key - toggle build mode
 			if (input.isKeyPressed(engine::Key::B)) {
 				handleBuildToggle();
+			}
+
+			// Handle time controls
+			auto& timeSystem = ecsWorld->getSystem<ecs::TimeSystem>();
+			if (input.isKeyPressed(engine::Key::Space)) {
+				timeSystem.togglePause();
+			}
+			if (input.isKeyPressed(engine::Key::Num1)) {
+				timeSystem.setSpeed(ecs::GameSpeed::Normal);
+			}
+			if (input.isKeyPressed(engine::Key::Num2)) {
+				timeSystem.setSpeed(ecs::GameSpeed::Fast);
+			}
+			if (input.isKeyPressed(engine::Key::Num3)) {
+				timeSystem.setSpeed(ecs::GameSpeed::VeryFast);
+			}
+
+			// Zoom reset
+			if (input.isKeyPressed(engine::Key::Home)) {
+				m_camera->setZoomIndex(engine::world::kDefaultZoomIndex);
 			}
 
 			// Camera movement
@@ -374,6 +414,7 @@ namespace {
 			// Register systems in priority order (lower = runs first)
 			auto& assetRegistry = engine::assets::AssetRegistry::Get();
 			auto& recipeRegistry = engine::assets::RecipeRegistry::Get();
+			ecsWorld->registerSystem<ecs::TimeSystem>();									// Priority 10 - runs first
 			ecsWorld->registerSystem<ecs::VisionSystem>();									// Priority 45
 			ecsWorld->registerSystem<ecs::NeedsDecaySystem>();								// Priority 50
 			ecsWorld->registerSystem<ecs::AIDecisionSystem>(assetRegistry, recipeRegistry); // Priority 60

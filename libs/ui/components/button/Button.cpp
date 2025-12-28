@@ -12,7 +12,8 @@ namespace UI {
 		  label(args.label),
 		  disabled(args.disabled),
 		  onClick(args.onClick),
-		  id(args.id) {
+		  id(args.id),
+		  iconSize(args.iconSize) {
 
 		// Initialize base class members (position, size, margin from Component/IComponent)
 		position = args.position;
@@ -31,21 +32,29 @@ namespace UI {
 			appearance = ButtonStyles::primary();
 		}
 
-		// Initialize text label component centered in button
-		// Use getContentPosition() to account for margin
-		const ButtonStyle& style = getCurrentStyle();
-		Foundation::Vec2   contentPos = getContentPosition();
-		Foundation::Vec2   centerPos = {contentPos.x + size.x * 0.5F, contentPos.y + size.y * 0.5F};
+		// Create icon if path provided
+		if (!args.iconPath.empty()) {
+			icon = std::make_unique<Icon>(Icon::Args{
+				.position = {0.0F, 0.0F},  // Will be positioned in updateIconPosition
+				.size = iconSize,
+				.svgPath = args.iconPath,
+				.tint = getCurrentStyle().textColor,
+			});
+		}
 
-		// Two-phase init (Text is non-aggregate due to IComponent base class with virtual destructor)
-		labelText.position = centerPos;
+		// Initialize text label component
+		const ButtonStyle& style = getCurrentStyle();
 		labelText.text = label;
 		labelText.style.color = style.textColor;
 		labelText.style.fontSize = style.fontSize;
 		labelText.style.hAlign = Foundation::HorizontalAlign::Center;
 		labelText.style.vAlign = Foundation::VerticalAlign::Middle;
-		labelText.visible = visible;
+		labelText.visible = visible && !label.empty();
 		labelText.id = id;
+
+		// Position text and icon
+		updateTextPosition();
+		updateIconPosition();
 		// FocusManager registration handled by FocusableBase constructor
 	}
 
@@ -55,6 +64,7 @@ namespace UI {
 	void Button::setPosition(float x, float y) {
 		position = {x, y};
 		updateTextPosition();
+		updateIconPosition();
 	}
 
 	void Button::update(float /*deltaTime*/) {
@@ -63,18 +73,64 @@ namespace UI {
 
 	void Button::updateTextPosition() {
 		const ButtonStyle& style = getCurrentStyle();
-
-		// Position text at center of button content area (accounting for margin)
 		Foundation::Vec2 contentPos = getContentPosition();
-		Foundation::Vec2 centerPos = {contentPos.x + size.x * 0.5F, contentPos.y + size.y * 0.5F};
 
-		labelText.position = centerPos;
+		if (label.empty()) {
+			// Icon-only button - no text to position
+			labelText.visible = false;
+			return;
+		}
+
+		if (icon) {
+			// Icon + Label: position text to the right of icon
+			constexpr float kIconLabelGap = 6.0F;
+			float totalWidth = iconSize + kIconLabelGap + static_cast<float>(label.length()) * 7.0F;
+			float startX = contentPos.x + (size.x - totalWidth) / 2.0F;
+			float textX = startX + iconSize + kIconLabelGap + static_cast<float>(label.length()) * 3.5F;
+			float centerY = contentPos.y + size.y * 0.5F;
+
+			labelText.position = {textX, centerY};
+		} else {
+			// Label-only: center text
+			Foundation::Vec2 centerPos = {contentPos.x + size.x * 0.5F, contentPos.y + size.y * 0.5F};
+			labelText.position = centerPos;
+		}
+
 		labelText.text = label;
 		labelText.style.color = style.textColor;
 		labelText.style.fontSize = style.fontSize;
 		labelText.style.hAlign = Foundation::HorizontalAlign::Center;
 		labelText.style.vAlign = Foundation::VerticalAlign::Middle;
 		labelText.visible = visible;
+	}
+
+	void Button::updateIconPosition() {
+		if (!icon) {
+			return;
+		}
+
+		Foundation::Vec2 contentPos = getContentPosition();
+		float centerY = contentPos.y + (size.y - iconSize) / 2.0F;
+
+		if (label.empty()) {
+			// Icon-only: center the icon
+			float centerX = contentPos.x + (size.x - iconSize) / 2.0F;
+			icon->setPosition(centerX, centerY);
+		} else {
+			// Icon + Label: position icon to the left
+			constexpr float kIconLabelGap = 6.0F;
+			float totalWidth = iconSize + kIconLabelGap + static_cast<float>(label.length()) * 7.0F;
+			float startX = contentPos.x + (size.x - totalWidth) / 2.0F;
+			icon->setPosition(startX, centerY);
+		}
+	}
+
+	void Button::updateIconTint() {
+		if (!icon) {
+			return;
+		}
+		const ButtonStyle& style = getCurrentStyle();
+		icon->setTint(style.textColor);
 	}
 
 	void Button::render() {
@@ -90,8 +146,16 @@ namespace UI {
 		Foundation::Rect bounds{contentPos.x, contentPos.y, size.x, size.y};
 		Renderer::Primitives::drawRect({.bounds = bounds, .style = style.background, .id = id});
 
-		// Draw label text using Text component
-		labelText.render();
+		// Draw icon if present
+		if (icon) {
+			icon->setTint(style.textColor);
+			icon->render();
+		}
+
+		// Draw label text using Text component (if visible)
+		if (!label.empty()) {
+			labelText.render();
+		}
 	}
 
 	bool Button::containsPoint(Foundation::Vec2 point) const {

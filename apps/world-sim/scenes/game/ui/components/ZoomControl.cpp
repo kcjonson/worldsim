@@ -6,6 +6,7 @@ namespace world_sim {
 
 	namespace {
 		constexpr float kButtonSize = 28.0F;
+		constexpr float kIconSize = 16.0F;
 		constexpr float kTextWidth = 50.0F;
 		constexpr float kSpacing = 4.0F;
 		constexpr float kFontSize = 14.0F;
@@ -18,12 +19,14 @@ namespace world_sim {
 
 		// Zoom out button (-)
 		zoomOutButton = std::make_unique<UI::Button>(UI::Button::Args{
-			.label = "-",
+			.label = "",  // Icon-only
 			.position = {x, y},
 			.size = {kButtonSize, kButtonSize},
 			.type = UI::Button::Type::Primary,
 			.onClick = args.onZoomOut,
-			.id = "btn_zoom_out"
+			.id = "btn_zoom_out",
+			.iconPath = "assets/ui/icons/zoom_out.svg",
+			.iconSize = kIconSize
 		});
 		x += kButtonSize + kSpacing;
 
@@ -44,12 +47,27 @@ namespace world_sim {
 
 		// Zoom in button (+)
 		zoomInButton = std::make_unique<UI::Button>(UI::Button::Args{
-			.label = "+",
+			.label = "",  // Icon-only
 			.position = {x, y},
 			.size = {kButtonSize, kButtonSize},
 			.type = UI::Button::Type::Primary,
 			.onClick = args.onZoomIn,
-			.id = "btn_zoom_in"
+			.id = "btn_zoom_in",
+			.iconPath = "assets/ui/icons/zoom_in.svg",
+			.iconSize = kIconSize
+		});
+		x += kButtonSize + kSpacing;
+
+		// Zoom reset button
+		zoomResetButton = std::make_unique<UI::Button>(UI::Button::Args{
+			.label = "",  // Icon-only
+			.position = {x, y},
+			.size = {kButtonSize, kButtonSize},
+			.type = UI::Button::Type::Primary,
+			.onClick = args.onZoomReset,
+			.id = "btn_zoom_reset",
+			.iconPath = "assets/ui/icons/zoom_reset.svg",
+			.iconSize = kIconSize
 		});
 	}
 
@@ -71,7 +89,7 @@ namespace world_sim {
 
 		// Update button positions
 		if (zoomOutButton) {
-			zoomOutButton->position = {x, y};
+			zoomOutButton->setPosition(x, y);
 		}
 		x += kButtonSize + kSpacing;
 
@@ -79,7 +97,12 @@ namespace world_sim {
 		x += kTextWidth + kSpacing;
 
 		if (zoomInButton) {
-			zoomInButton->position = {x, y};
+			zoomInButton->setPosition(x, y);
+		}
+		x += kButtonSize + kSpacing;
+
+		if (zoomResetButton) {
+			zoomResetButton->setPosition(x, y);
 		}
 
 		// Update text position
@@ -106,6 +129,9 @@ namespace world_sim {
 		if (zoomOutButton && zoomOutButton->handleEvent(event)) {
 			return true;
 		}
+		if (zoomResetButton && zoomResetButton->handleEvent(event)) {
+			return true;
+		}
 		return false;
 	}
 
@@ -118,6 +144,9 @@ namespace world_sim {
 		}
 		if (zoomInButton) {
 			zoomInButton->render();
+		}
+		if (zoomResetButton) {
+			zoomResetButton->render();
 		}
 	}
 

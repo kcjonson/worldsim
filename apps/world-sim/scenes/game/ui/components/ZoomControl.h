@@ -2,6 +2,7 @@
 
 // ZoomControl - Compact zoom level display with +/- buttons.
 // Shows current zoom percentage and allows step-based zoom changes.
+// Uses Button with SVG icons.
 
 #include <components/button/Button.h>
 #include <input/InputEvent.h>
@@ -19,6 +20,7 @@ class ZoomControl {
 		Foundation::Vec2 position{0.0F, 0.0F};
 		std::function<void()> onZoomIn = nullptr;
 		std::function<void()> onZoomOut = nullptr;
+		std::function<void()> onZoomReset = nullptr;
 		std::string id = "zoom_control";
 	};
 
@@ -43,6 +45,7 @@ class ZoomControl {
 	std::unique_ptr<UI::Button> zoomOutButton;
 	std::unique_ptr<UI::Text> zoomText;
 	std::unique_ptr<UI::Button> zoomInButton;
+	std::unique_ptr<UI::Button> zoomResetButton;
 
 	void updateZoomText();
 };

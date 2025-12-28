@@ -30,6 +30,7 @@ class ColonistListView {
 		float width = 60.0F;
 		float itemHeight = 50.0F;
 		std::function<void(ecs::EntityID)> onColonistSelected;
+		std::function<void(ecs::EntityID)> onColonistFollowed;  ///< Double-click to follow
 		std::string id = "colonist_list";
 	};
 
@@ -68,9 +69,15 @@ class ColonistListView {
 	float panelX = 0.0F;
 	float panelY = 80.0F;  // Below top overlay
 	std::function<void(ecs::EntityID)> onSelectCallback;
+	std::function<void(ecs::EntityID)> onFollowCallback;
 
 	// Selection tracking
 	ecs::EntityID selectedId{0};
+
+	// Double-click detection
+	ecs::EntityID lastClickedId{0};
+	float lastClickTime = 0.0F;
+	static constexpr float kDoubleClickThreshold = 0.4F;  // 400ms
 
 	// UI elements
 	std::unique_ptr<UI::Rectangle> backgroundRect;

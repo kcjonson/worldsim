@@ -214,6 +214,7 @@ namespace world_sim {
 	void ColonistListItem::setMood(float newMood) {
 		mood = newMood;
 		updateMoodBar();
+		updateBackgroundStyle();  // Mood affects background tint
 	}
 
 	void ColonistListItem::setColonistData(const adapters::ColonistData& data) {
@@ -225,14 +226,48 @@ namespace world_sim {
 			nameText->text = name;
 		}
 		updateMoodBar();
+		updateBackgroundStyle();  // Mood affects background tint
 	}
 
 	void ColonistListItem::updateBackgroundStyle() {
 		if (auto* bg = getChild<UI::Rectangle>(backgroundHandle)) {
-			bg->style.fill = selected ? UI::Theme::Colors::selectionBackground : UI::Theme::Colors::cardBackground;
+			if (selected) {
+				bg->style.fill = UI::Theme::Colors::selectionBackground;
+			} else {
+				// Apply mood-based tint to background
+				bg->style.fill = getMoodTintedBackground();
+			}
 			if (bg->style.border) {
 				bg->style.border->color = selected ? UI::Theme::Colors::selectionBorder : UI::Theme::Colors::cardBorder;
 			}
+		}
+	}
+
+	Foundation::Color ColonistListItem::getMoodTintedBackground() const {
+		// Subtle mood-based tinting of the card background
+		Foundation::Color base = UI::Theme::Colors::cardBackground;
+
+		if (mood > 70.0F) {
+			// Green tint - happy
+			return Foundation::Color{
+				base.r,
+				base.g + 0.05F,
+				base.b,
+				base.a};
+		} else if (mood > 40.0F) {
+			// Yellow tint - neutral
+			return Foundation::Color{
+				base.r + 0.03F,
+				base.g + 0.03F,
+				base.b,
+				base.a};
+		} else {
+			// Red tint - stressed
+			return Foundation::Color{
+				base.r + 0.08F,
+				base.g,
+				base.b,
+				base.a};
 		}
 	}
 

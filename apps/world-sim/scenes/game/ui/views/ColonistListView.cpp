@@ -4,12 +4,50 @@
 #include <theme/PanelStyle.h>
 #include <theme/Theme.h>
 
+#include <chrono>
+
 namespace world_sim {
+
+namespace {
+	// Get current time in seconds
+	float getCurrentTime() {
+		using namespace std::chrono;
+		auto now = steady_clock::now();
+		auto duration = now.time_since_epoch();
+		return duration_cast<milliseconds>(duration).count() / 1000.0F;
+	}
+}  // namespace
 
 ColonistListView::ColonistListView(const Args& args)
 	: panelWidth(args.width),
 	  itemHeight(args.itemHeight),
-	  onSelectCallback(args.onColonistSelected) {
+	  onFollowCallback(args.onColonistFollowed) {
+
+	// Wrap onColonistSelected with double-click detection
+	auto originalCallback = args.onColonistSelected;
+	onSelectCallback = [this, originalCallback](ecs::EntityID id) {
+		float currentTime = getCurrentTime();
+
+		// Check for double-click
+		if (id == lastClickedId && (currentTime - lastClickTime) < kDoubleClickThreshold) {
+			// Double-click detected - trigger follow
+			if (onFollowCallback) {
+				onFollowCallback(id);
+			}
+			// Reset to prevent triple-click triggering another follow
+			lastClickedId = ecs::EntityID{0};
+			lastClickTime = 0.0F;
+		} else {
+			// Single click - update tracking
+			lastClickedId = id;
+			lastClickTime = currentTime;
+		}
+
+		// Always call original selection callback
+		if (originalCallback) {
+			originalCallback(id);
+		}
+	};
 
 	itemHandles.reserve(kMaxColonists);
 }

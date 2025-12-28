@@ -11,7 +11,8 @@ namespace UI {
 		: FocusableBase<DropdownButton>(args.tabIndex),
 		  label(args.label),
 		  buttonSize(args.buttonSize),
-		  items(args.items) {
+		  items(args.items),
+		  openUpward(args.openUpward) {
 		position = args.position;
 		size = args.buttonSize;
 		margin = args.margin;
@@ -32,7 +33,19 @@ namespace UI {
 			menu->zIndex = 1000;
 		}
 
+		// Create chevron icon
+		std::string chevronPath = openUpward ? "assets/ui/icons/chevron_up.svg" : "assets/ui/icons/chevron_down.svg";
+		chevronHandle = addChild(Icon(
+			Icon::Args{
+				.position = {0.0F, 0.0F}, // Will be updated in updateChevronPosition
+				.size = 12.0F,
+				.svgPath = chevronPath,
+				.tint = Foundation::Color::white(),
+			}
+		));
+
 		updateMenuPosition();
+		updateChevronPosition();
 	}
 
 	std::vector<MenuItem> DropdownButton::convertToMenuItems() const {
@@ -62,8 +75,26 @@ namespace UI {
 	void DropdownButton::updateMenuPosition() {
 		if (auto* menu = getChild<Menu>(menuHandle)) {
 			Foundation::Vec2 contentPos = getContentPosition();
-			// Position menu directly below the button
-			menu->setPosition(contentPos.x, contentPos.y + buttonSize.y);
+			if (openUpward) {
+				// Position menu above the button
+				float menuHeight = menu->getMenuHeight();
+				menu->setPosition(contentPos.x, contentPos.y - menuHeight);
+			} else {
+				// Position menu directly below the button
+				menu->setPosition(contentPos.x, contentPos.y + buttonSize.y);
+			}
+		}
+	}
+
+	void DropdownButton::updateChevronPosition() {
+		if (auto* chevron = getChild<Icon>(chevronHandle)) {
+			Foundation::Vec2 contentPos = getContentPosition();
+			// Position chevron on the right side of the button, vertically centered
+			constexpr float kChevronSize = 12.0F;
+			constexpr float kRightPadding = 8.0F;
+			float chevronX = contentPos.x + buttonSize.x - kChevronSize - kRightPadding;
+			float chevronY = contentPos.y + (buttonSize.y - kChevronSize) / 2.0F;
+			chevron->setPosition(chevronX, chevronY);
 		}
 	}
 
@@ -71,6 +102,9 @@ namespace UI {
 		if (!open && !items.empty()) {
 			open = true;
 			hoveredItemIndex = -1;
+
+			// Update menu position before showing (height may have changed)
+			updateMenuPosition();
 
 			if (auto* menu = getChild<Menu>(menuHandle)) {
 				menu->visible = true;
@@ -113,6 +147,7 @@ namespace UI {
 	void DropdownButton::setPosition(float x, float y) {
 		position = {x, y};
 		updateMenuPosition();
+		updateChevronPosition();
 	}
 
 	bool DropdownButton::containsPoint(Foundation::Vec2 point) const {
@@ -280,20 +315,27 @@ namespace UI {
 			}
 		);
 
-		// Draw label + indicator
-		std::string displayText = label + " v";
-		float		textX = bounds.x + (bounds.width - static_cast<float>(displayText.length()) * 7.0F) / 2.0F;
-		float		textY = bounds.y + (bounds.height - 12.0F) / 2.0F;
+		// Draw label (centered, leaving space for chevron icon on right)
+		constexpr float kChevronSpace = 20.0F;  // Space for chevron icon on right
+		float labelWidth = static_cast<float>(label.length()) * 7.0F;
+		float textX = bounds.x + (bounds.width - kChevronSpace - labelWidth) / 2.0F;
+		float textY = bounds.y + (bounds.height - 12.0F) / 2.0F;
 
 		Renderer::Primitives::drawText(
 			Renderer::Primitives::TextArgs{
-				.text = displayText,
+				.text = label,
 				.position = {textX, textY},
 				.scale = 12.0F / 16.0F,
 				.color = Foundation::Color::white(),
 				.zIndex = static_cast<float>(zIndex) + 0.1F,
 			}
 		);
+
+		// Render chevron icon
+		if (auto* chevron = getChild<Icon>(chevronHandle)) {
+			chevron->zIndex = zIndex + 1;
+			chevron->render();
+		}
 
 		// Render menu if open (Menu handles its own rendering)
 		if (open) {
