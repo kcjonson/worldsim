@@ -5,8 +5,9 @@
 #include "scenes/game/ui/GameUI.h"
 #include "scenes/game/ui/components/Selection.h"
 #include "scenes/game/world/GhostRenderer.h"
-#include "scenes/game/world/NotificationManager.h"
 #include "scenes/game/world/PlacementMode.h"
+
+#include <components/toast/Toast.h> // For ToastSeverity
 
 #include <GL/glew.h>
 
@@ -301,10 +302,7 @@ namespace {
 			// Update unified game UI (overlay + info panel)
 			auto& assetRegistry = engine::assets::AssetRegistry::Get();
 			auto& recipeRegistry = engine::assets::RecipeRegistry::Get();
-			gameUI->update(*m_camera, *m_chunkManager, *ecsWorld, assetRegistry, recipeRegistry, selection);
-
-			// Update notifications (remove expired)
-			m_notifications.update();
+			gameUI->update(dt, *m_camera, *m_chunkManager, *ecsWorld, assetRegistry, recipeRegistry, selection);
 
 			m_lastUpdateMs = elapsedMs(updateStart, Clock::now());
 		}
@@ -346,9 +344,6 @@ namespace {
 
 			// Render unified game UI (overlay + info panel)
 			gameUI->render();
-
-			// Render notifications on top of everything
-			gameUI->renderNotifications(m_notifications);
 
 			// End GPU timing (query result will be available next frame)
 			m_gpuTimer.end();
@@ -430,7 +425,7 @@ namespace {
 
 			// Wire up "Aha!" notification callback for recipe discoveries
 			visionSystem.setRecipeDiscoveryCallback([this](const std::string& recipeLabel) {
-				m_notifications.push("Aha! Discovered: " + recipeLabel);
+				gameUI->pushNotification("Aha!", "Discovered: " + recipeLabel, UI::ToastSeverity::Info);
 				LOG_INFO(Game, "Recipe discovered: %s", recipeLabel.c_str());
 			});
 
@@ -441,7 +436,7 @@ namespace {
 			// Wire up ActionSystem for "item crafted" notifications
 			auto& actionSystem = ecsWorld->getSystem<ecs::ActionSystem>();
 			actionSystem.setItemCraftedCallback([this](const std::string& itemLabel) {
-				m_notifications.push("Crafted: " + itemLabel);
+				gameUI->pushNotification("Crafted", itemLabel, UI::ToastSeverity::Info);
 				LOG_INFO(Game, "Item crafted notification: %s", itemLabel.c_str());
 			});
 
@@ -797,9 +792,6 @@ namespace {
 
 		// Ghost renderer for placement preview
 		world_sim::GhostRenderer ghostRenderer;
-
-		// Toast notifications for "Aha" moments
-		world_sim::NotificationManager m_notifications;
 	};
 
 } // namespace

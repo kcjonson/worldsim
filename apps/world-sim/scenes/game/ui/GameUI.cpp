@@ -74,6 +74,23 @@ namespace world_sim {
 		taskListPanel = std::make_unique<TaskListView>(TaskListView::Args{
 			.width = kTaskListWidth, .maxHeight = kTaskListMaxHeight, .onClose = [this]() { toggleTaskList(); }, .id = "task_list"
 		});
+
+		// Create resources panel (top-right, below where minimap will be)
+		resourcesPanel = std::make_unique<ResourcesPanel>(ResourcesPanel::Args{
+			.width = 160.0F,
+			.id = "resources_panel"
+		});
+
+		// Create toast stack for notifications (bottom-right)
+		toastStack = std::make_unique<UI::ToastStack>(UI::ToastStack::Args{
+			.position = {0.0F, 0.0F}, // Will be positioned in layout()
+			.anchor = UI::ToastAnchor::BottomRight,
+			.spacing = 8.0F,
+			.maxToasts = 5,
+			.toastWidth = 300.0F,
+			.id = "toast_stack"
+		});
+		toastStack->zIndex = 2000; // Above other UI
 	}
 
 	void GameUI::layout(const Foundation::Rect& newBounds) {
@@ -151,11 +168,47 @@ namespace world_sim {
 			taskListPanelBounds = Foundation::Rect{panelX, taskListY, kTaskListWidth, taskListHeight};
 			taskListPanel->setPosition(panelX, taskListBottomY);
 		}
+
+		// Position toast stack in bottom-right corner
+		// Per design spec: Notifications appear bottom-right, stacking upward
+		if (toastStack) {
+			float rightMargin = 20.0F;
+			float bottomMargin = 60.0F; // Above gameplay bar
+			toastStack->setPosition(newBounds.width - rightMargin, newBounds.height - bottomMargin);
+		}
+
+		// Position resources panel in top-right corner
+		// Per design spec: Below minimap (which doesn't exist yet)
+		if (resourcesPanel) {
+			float rightMargin = 10.0F;
+			float topMargin = 50.0F; // Below top bar, room for future minimap
+			resourcesPanel->setAnchorPosition(newBounds.width - rightMargin, topMargin);
+		}
 	}
 
 	bool GameUI::dispatchEvent(UI::InputEvent& event) {
 		// Dispatch to UI children in z-order (highest first)
 		// Panels that can overlap get priority
+
+		// Toast stack (highest z-order - notifications)
+		if (toastStack) {
+			if (toastStack->handleEvent(event)) {
+				return true;
+			}
+			if (event.isConsumed()) {
+				return true;
+			}
+		}
+
+		// Resources panel (top-right)
+		if (resourcesPanel) {
+			if (resourcesPanel->handleEvent(event)) {
+				return true;
+			}
+			if (event.isConsumed()) {
+				return true;
+			}
+		}
 
 		// Top bar (highest z-order at top of screen)
 		if (topBar) {
@@ -230,6 +283,7 @@ namespace world_sim {
 	}
 
 	void GameUI::update(
+		float deltaTime,
 		const engine::world::WorldCamera&	  camera,
 		const engine::world::ChunkManager&	  chunkManager,
 		ecs::World&							  ecsWorld,
@@ -289,6 +343,11 @@ namespace world_sim {
 		if (taskListExpanded && taskListPanel && selectedColonistId != 0) {
 			taskListPanel->update(ecsWorld, selectedColonistId);
 		}
+
+		// Update toast stack animations
+		if (toastStack) {
+			toastStack->update(deltaTime);
+		}
 	}
 
 	void GameUI::render() {
@@ -331,63 +390,27 @@ namespace world_sim {
 		if (taskListExpanded && taskListPanel && taskListPanel->visible) {
 			taskListPanel->render();
 		}
-	}
 
-	void GameUI::renderNotifications(const NotificationManager& notifications) {
-		if (!notifications.hasNotifications()) {
-			return;
+		// Render resources panel (top-right)
+		if (resourcesPanel) {
+			resourcesPanel->render();
 		}
 
-		// Notification styling
-		constexpr float kPadding = 12.0F;
-		constexpr float kMargin = 8.0F;
-		constexpr float kFontScale = 0.875F; // 14px equivalent (14/16 base)
-		constexpr float kMaxWidth = 300.0F;
-		constexpr float kRightMargin = 20.0F;
-		constexpr float kBottomMargin = 20.0F;
+		// Render toast notifications (highest z-order)
+		if (toastStack) {
+			toastStack->render();
+		}
+	}
 
-		// Position at bottom-right of screen, stacking upwards
-		float rightEdge = viewportBounds.x + viewportBounds.width - kRightMargin;
-		float currentY = viewportBounds.y + viewportBounds.height - kBottomMargin;
-
-		size_t count = 0;
-		for (const auto& notification : notifications.notifications()) {
-			if (count >= NotificationManager::kMaxVisible) {
-				break;
+	void GameUI::pushNotification(const std::string& title, const std::string& message,
+								   UI::ToastSeverity severity, float autoDismissTime,
+								   std::function<void()> onClick) {
+		if (toastStack) {
+			if (onClick) {
+				toastStack->addToast(title, message, severity, autoDismissTime, std::move(onClick));
+			} else {
+				toastStack->addToast(title, message, severity, autoDismissTime);
 			}
-
-			float opacity = notification.opacity();
-			if (opacity <= 0.0F) {
-				continue;
-			}
-
-			// Calculate text bounds
-			float textWidth = std::min(kMaxWidth, notification.message.length() * 7.0F); // Approximate
-			float boxWidth = textWidth + kPadding * 2.0F;
-			float boxHeight = 14.0F + kPadding * 2.0F; // 14px text height
-
-			// Position box at bottom-right, moving up for each notification
-			currentY -= boxHeight;
-
-			// Draw background
-			Foundation::Rect bgRect{rightEdge - boxWidth, currentY, boxWidth, boxHeight};
-
-			Renderer::Primitives::drawRect(
-				{.bounds = bgRect, .style = {.fill = {0.15F, 0.15F, 0.2F, 0.9F * opacity}}, .id = "notification_bg", .zIndex = 2000}
-			);
-
-			// Draw text
-			Renderer::Primitives::drawText(
-				{.text = notification.message,
-				 .position = {bgRect.x + kPadding, bgRect.y + kPadding},
-				 .scale = kFontScale,
-				 .color = {1.0F, 1.0F, 0.8F, opacity}, // Warm yellow-white
-				 .id = "notification_text",
-				 .zIndex = 2001}
-			);
-
-			currentY -= kMargin; // Add margin before next notification (stacking upwards)
-			count++;
 		}
 	}
 

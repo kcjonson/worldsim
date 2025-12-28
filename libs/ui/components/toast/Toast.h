@@ -38,6 +38,7 @@ class Toast : public Component {
 		float					  autoDismissTime{Theme::Toast::defaultAutoDismiss}; // 0 = persistent
 		std::string				  iconPath;											 // Optional SVG icon
 		std::function<void()>	  onDismiss;
+		std::function<void()>	  onClick; // Called when toast body is clicked (for navigation)
 		Foundation::Vec2		  position{0.0F, 0.0F};
 		float					  width{Theme::Toast::defaultWidth};
 		const char*				  id = nullptr;
@@ -99,6 +100,7 @@ class Toast : public Component {
 	float				   autoDismissTime;
 	std::string			   iconPath;
 	std::function<void()>  onDismiss;
+	std::function<void()>  onClick;
 	float				   toastWidth;
 
 	State				   state{State::Appearing};

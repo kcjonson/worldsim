@@ -55,6 +55,11 @@ class ToastStack : public Component {
 				  ToastSeverity severity = ToastSeverity::Info,
 				  float autoDismissTime = Theme::Toast::defaultAutoDismiss);
 
+	// Add a toast with click-to-navigate callback
+	void addToast(const std::string& title, const std::string& message,
+				  ToastSeverity severity, float autoDismissTime,
+				  std::function<void()> onClick);
+
 	// Add a toast with full configuration
 	void addToast(Toast::Args args);
 

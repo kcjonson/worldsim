@@ -23,6 +23,19 @@ void ToastStack::addToast(const std::string& title, const std::string& message,
 	});
 }
 
+void ToastStack::addToast(const std::string& title, const std::string& message,
+						   ToastSeverity severity, float autoDismissTime,
+						   std::function<void()> onClick) {
+	addToast(Toast::Args{
+		.title = title,
+		.message = message,
+		.severity = severity,
+		.autoDismissTime = autoDismissTime,
+		.onClick = std::move(onClick),
+		.width = toastWidth,
+	});
+}
+
 void ToastStack::addToast(Toast::Args args) {
 	// If at max capacity, dismiss the oldest toast
 	if (toasts.size() >= maxToasts) {
