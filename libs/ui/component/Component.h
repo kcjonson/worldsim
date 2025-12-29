@@ -279,6 +279,9 @@ namespace UI {
 		// Mark children for re-sort (call when a child's zIndex changes)
 		void markChildrenNeedSorting() { childrenNeedSorting = true; }
 
+		// Read-only access to children for inspection; mutations must go through container APIs.
+		[[nodiscard]] const std::vector<IComponent*>& getChildren() const { return children; }
+
 		/// Dispatch an event to children in z-order (highest first).
 		/// Returns true if any child consumed the event.
 		/// This is the core of the event system - call this from containers

@@ -25,6 +25,7 @@
     <!-- Entity capabilities -->
     <capabilities>
       <carryable quantity="1"/>
+      <edible nutrition="0.3" quality="normal"/>
     </capabilities>
 
     <!-- No placement - berries don't spawn naturally, they're harvested -->

@@ -109,6 +109,9 @@ class EntityInfoView : public UI::Component {
 	/// Get details button top-left position for current panel position
 	[[nodiscard]] Foundation::Vec2 getDetailsButtonPosition(float panelY) const;
 
+	/// Update details icon line positions (avoids duplication between constructor and renderContent)
+	void updateDetailsIcon(bool visible, const Foundation::Vec2& buttonPos);
+
 	// ViewModel (owns selection cache, content generation)
 	EntityInfoModel m_model;
 
@@ -138,9 +141,15 @@ class EntityInfoView : public UI::Component {
 	UI::LayerHandle centeredIconHandle;	 // Icon placeholder (48×48)
 	UI::LayerHandle centeredLabelHandle; // Entity name below icon
 
-	// Details button [Details] (only shown for colonists)
+	// Details button icon (only shown for colonists)
+	// Icon: "open in new window" - a small rectangle with arrow pointing out
 	UI::LayerHandle detailsButtonBgHandle;
-	UI::LayerHandle detailsButtonTextHandle;
+	UI::LayerHandle detailsIconLine1Handle; // Top-left to bottom-left
+	UI::LayerHandle detailsIconLine2Handle; // Bottom-left to bottom-right
+	UI::LayerHandle detailsIconLine3Handle; // Top-left to top-mid
+	UI::LayerHandle detailsIconLine4Handle; // Arrow diagonal
+	UI::LayerHandle detailsIconLine5Handle; // Arrow head part 1
+	UI::LayerHandle detailsIconLine6Handle; // Arrow head part 2
 
 	// Pool of reusable slot UI elements
 	// Text elements (for TextSlot label:value pairs)
@@ -214,9 +223,8 @@ class EntityInfoView : public UI::Component {
 	static constexpr float kColumnGap = 16.0F;			 // Gap between columns
 	static constexpr float kLeftColumnWidth = 140.0F;	 // Fixed left column width
 
-	// Details button layout
-	static constexpr float kDetailsButtonWidth = 56.0F;
-	static constexpr float kDetailsButtonHeight = 20.0F;
+	// Details button layout (square icon button, same size as close button)
+	static constexpr float kDetailsButtonSize = 16.0F;
 	static constexpr float kButtonGap = 4.0F;			  // Gap between buttons (e.g., Details and Close)
 
 	// Spacing constants

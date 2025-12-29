@@ -113,19 +113,16 @@ void LayoutContainer::computeLayout() {
 		}
 	}
 
-	// Propagate layout to children that need it (nested containers)
+	// Propagate layout to nested containers
+	// Note: We only call layout() for size updates, position was already set via setPosition()
 	for (auto* child : children) {
 		if (!child->visible) {
 			continue;
 		}
-		if (auto* layer = dynamic_cast<ILayer*>(child)) {
-			// Get the child's actual content bounds for nested layout
-			// The child's position was just set, and it knows its own size
-			Foundation::Rect childBounds{
-				0, 0, // Position is already set on the child
-				child->getWidth() - child->margin * 2.0F,
-				child->getHeight() - child->margin * 2.0F};
-			layer->layout(childBounds);
+		if (auto* nestedContainer = dynamic_cast<LayoutContainer*>(child)) {
+			// For nested LayoutContainers, just mark them dirty so they recompute their children
+			// The position was already set via setPosition() above - don't overwrite it
+			nestedContainer->layoutDirty = true;
 		}
 	}
 }

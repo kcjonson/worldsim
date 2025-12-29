@@ -25,6 +25,7 @@
 #include "scenes/game/ui/views/ZoomControlPanel.h"
 #include "scenes/game/ui/components/Selection.h"
 #include "scenes/game/ui/views/TaskListView.h"
+#include "scenes/game/ui/dialogs/ColonistDetailsDialog.h"
 
 #include <components/toast/ToastStack.h>
 
@@ -112,6 +113,17 @@ class GameUI {
 	/// Check if build menu is visible
 	[[nodiscard]] bool isBuildMenuVisible() const;
 
+	// --- Colonist Details Dialog API ---
+
+	/// Show colonist details dialog for a specific colonist
+	void showColonistDetails(ecs::EntityID colonistId);
+
+	/// Hide colonist details dialog
+	void hideColonistDetails();
+
+	/// Check if colonist details dialog is visible
+	[[nodiscard]] bool isColonistDetailsVisible() const;
+
   private:
 	std::unique_ptr<TopBar> topBar;
 	std::unique_ptr<DebugOverlay> debugOverlay;
@@ -123,6 +135,7 @@ class GameUI {
 	std::unique_ptr<TaskListView> taskListPanel;
 	std::unique_ptr<ResourcesPanel> resourcesPanel;
 	std::unique_ptr<UI::ToastStack> toastStack;
+	std::unique_ptr<ColonistDetailsDialog> colonistDetailsDialog;
 
 	// ViewModels (own data + change detection)
 	TimeModel timeModel;

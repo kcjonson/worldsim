@@ -28,7 +28,6 @@ namespace world_sim {
 					.position = args.position,
 					.size = {panelWidth, panelHeight},
 					.style = UI::PanelStyles::floating(),
-					.zIndex = 0,
 					.id = (args.id + "_bg").c_str()
 				}
 			)
@@ -42,7 +41,6 @@ namespace world_sim {
 					.position = closePos,
 					.size = {kCloseButtonSize, kCloseButtonSize},
 					.style = UI::PanelStyles::closeButton(),
-					.zIndex = 2,
 					.id = (args.id + "_close_bg").c_str()
 				}
 			)
@@ -61,7 +59,6 @@ namespace world_sim {
 							.hAlign = Foundation::HorizontalAlign::Center,
 							.vAlign = Foundation::VerticalAlign::Middle,
 						},
-					.zIndex = 3,
 					.id = (args.id + "_close_text").c_str()
 				}
 			)
@@ -80,7 +77,6 @@ namespace world_sim {
 							.hAlign = Foundation::HorizontalAlign::Left,
 							.vAlign = Foundation::VerticalAlign::Top,
 						},
-					.zIndex = 1,
 					.id = (args.id + "_title").c_str()
 				}
 			)
@@ -97,7 +93,6 @@ namespace world_sim {
 					.style =
 						{.fill = Foundation::Color(0.20F, 0.20F, 0.25F, 1.0F),
 						 .border = Foundation::BorderStyle{.color = Foundation::Color(0.30F, 0.30F, 0.35F, 1.0F), .width = 1.0F}},
-					.zIndex = 1,
 					.id = (args.id + "_portrait").c_str()
 				}
 			)
@@ -116,7 +111,6 @@ namespace world_sim {
 							.hAlign = Foundation::HorizontalAlign::Left,
 							.vAlign = Foundation::VerticalAlign::Top,
 						},
-					.zIndex = 1,
 					.id = (args.id + "_header_name").c_str()
 				}
 			)
@@ -151,7 +145,6 @@ namespace world_sim {
 							.hAlign = Foundation::HorizontalAlign::Left,
 							.vAlign = Foundation::VerticalAlign::Top,
 						},
-					.zIndex = 1,
 					.id = (args.id + "_mood_label").c_str()
 				}
 			)
@@ -170,7 +163,6 @@ namespace world_sim {
 							.hAlign = Foundation::HorizontalAlign::Left,
 							.vAlign = Foundation::VerticalAlign::Top,
 						},
-					.zIndex = 1,
 					.id = (args.id + "_needs_label").c_str()
 				}
 			)
@@ -187,7 +179,6 @@ namespace world_sim {
 					.style =
 						{.fill = Foundation::Color(0.25F, 0.25F, 0.30F, 1.0F),
 						 .border = Foundation::BorderStyle{.color = Foundation::Color(0.35F, 0.35F, 0.40F, 1.0F), .width = 1.0F}},
-					.zIndex = 1,
 					.id = (args.id + "_centered_icon").c_str()
 				}
 			)
@@ -206,7 +197,6 @@ namespace world_sim {
 							.hAlign = Foundation::HorizontalAlign::Center,
 							.vAlign = Foundation::VerticalAlign::Top,
 						},
-					.zIndex = 1,
 					.id = (args.id + "_centered_label").c_str()
 				}
 			)
@@ -227,7 +217,6 @@ namespace world_sim {
 								.hAlign = Foundation::HorizontalAlign::Left,
 								.vAlign = Foundation::VerticalAlign::Top,
 							},
-						.zIndex = 1,
 						.id = (args.id + "_text_" + std::to_string(i)).c_str()
 					}
 				)
@@ -264,7 +253,6 @@ namespace world_sim {
 							.hAlign = Foundation::HorizontalAlign::Left,
 							.vAlign = Foundation::VerticalAlign::Top,
 						},
-					.zIndex = 1,
 					.id = (args.id + "_list_header").c_str()
 				}
 			)
@@ -285,7 +273,6 @@ namespace world_sim {
 								.hAlign = Foundation::HorizontalAlign::Left,
 								.vAlign = Foundation::VerticalAlign::Top,
 							},
-						.zIndex = 1,
 						.id = (args.id + "_list_" + std::to_string(i)).c_str()
 					}
 				)
@@ -305,7 +292,6 @@ namespace world_sim {
 							.hAlign = Foundation::HorizontalAlign::Left,
 							.vAlign = Foundation::VerticalAlign::Top,
 						},
-					.zIndex = 1,
 					.id = (args.id + "_clickable").c_str()
 				}
 			)
@@ -325,7 +311,6 @@ namespace world_sim {
 						.position = {args.position.x + kPadding, args.position.y},
 						.size = {contentWidth, kRecipeCardHeight},
 						.style = UI::PanelStyles::card(),
-						.zIndex = 1,
 						.id = (args.id + "_recipe_bg_" + std::to_string(i)).c_str()
 					}
 				)
@@ -344,7 +329,6 @@ namespace world_sim {
 								.hAlign = Foundation::HorizontalAlign::Left,
 								.vAlign = Foundation::VerticalAlign::Top,
 							},
-						.zIndex = 2,
 						.id = (args.id + "_recipe_name_" + std::to_string(i)).c_str()
 					}
 				)
@@ -363,7 +347,6 @@ namespace world_sim {
 								.hAlign = Foundation::HorizontalAlign::Left,
 								.vAlign = Foundation::VerticalAlign::Top,
 							},
-						.zIndex = 2,
 						.id = (args.id + "_recipe_ingredients_" + std::to_string(i)).c_str()
 					}
 				)
@@ -376,7 +359,6 @@ namespace world_sim {
 						.position = {args.position.x + contentWidth - kRecipeQueueButtonSize, args.position.y},
 						.size = {kRecipeQueueButtonSize, kRecipeQueueButtonSize},
 						.style = UI::PanelStyles::actionButton(),
-						.zIndex = 2,
 						.id = (args.id + "_recipe_btn_" + std::to_string(i)).c_str()
 					}
 				)
@@ -395,7 +377,6 @@ namespace world_sim {
 								.hAlign = Foundation::HorizontalAlign::Center,
 								.vAlign = Foundation::VerticalAlign::Middle,
 							},
-						.zIndex = 3,
 						.id = (args.id + "_recipe_btn_text_" + std::to_string(i)).c_str()
 					}
 				)
@@ -404,37 +385,37 @@ namespace world_sim {
 			recipeCardHandles.push_back(card);
 		}
 
-		// Create details button [Details] (hidden initially, shown for colonists)
+		// Create details button icon (hidden initially, shown for colonists)
+		// Icon: "open in new window" - rectangle outline + arrow
 		auto detailsPos = getDetailsButtonPosition(args.position.y);
 		detailsButtonBgHandle = addChild(
 			UI::Rectangle(
 				UI::Rectangle::Args{
 					.position = detailsPos,
-					.size = {kDetailsButtonWidth, kDetailsButtonHeight},
+					.size = {kDetailsButtonSize, kDetailsButtonSize},
 					.style = UI::PanelStyles::actionButton(),
-					.zIndex = 2,
 					.id = (args.id + "_details_bg").c_str()
 				}
 			)
 		);
 
-		detailsButtonTextHandle = addChild(
-			UI::Text(
-				UI::Text::Args{
-					.position = {detailsPos.x + kDetailsButtonWidth * 0.5F, detailsPos.y + kDetailsButtonHeight * 0.5F},
-					.text = "Details",
-					.style =
-						{
-							.color = UI::Theme::Colors::actionButtonText,
-							.fontSize = 10.0F,
-							.hAlign = Foundation::HorizontalAlign::Center,
-							.vAlign = Foundation::VerticalAlign::Middle,
-						},
-					.zIndex = 3,
-					.id = (args.id + "_details_text").c_str()
-				}
-			)
-		);
+		// Create icon line elements (positions set by updateDetailsIcon)
+		Foundation::Color iconColor = UI::Theme::Colors::actionButtonText;
+		constexpr float	  lineWidth = 1.5F;
+		auto			  createLine = [&]() {
+			 return addChild(
+				 UI::Line(UI::Line::Args{.start = {0.0F, 0.0F}, .end = {0.0F, 0.0F}, .style = {.color = iconColor, .width = lineWidth}})
+			 );
+		};
+		detailsIconLine1Handle = createLine();
+		detailsIconLine2Handle = createLine();
+		detailsIconLine3Handle = createLine();
+		detailsIconLine4Handle = createLine();
+		detailsIconLine5Handle = createLine();
+		detailsIconLine6Handle = createLine();
+
+		// Set initial positions (icon starts hidden)
+		updateDetailsIcon(false, detailsPos);
 
 		// Disable child sorting to preserve LayerHandle indices
 		childrenNeedSorting = false;
@@ -568,9 +549,19 @@ namespace world_sim {
 		if (auto* detailsBg = getChild<UI::Rectangle>(detailsButtonBgHandle)) {
 			detailsBg->visible = false;
 		}
-		if (auto* detailsText = getChild<UI::Text>(detailsButtonTextHandle)) {
-			detailsText->visible = false;
-		}
+		// Hide all icon lines
+		if (auto* line = getChild<UI::Line>(detailsIconLine1Handle))
+			line->visible = false;
+		if (auto* line = getChild<UI::Line>(detailsIconLine2Handle))
+			line->visible = false;
+		if (auto* line = getChild<UI::Line>(detailsIconLine3Handle))
+			line->visible = false;
+		if (auto* line = getChild<UI::Line>(detailsIconLine4Handle))
+			line->visible = false;
+		if (auto* line = getChild<UI::Line>(detailsIconLine5Handle))
+			line->visible = false;
+		if (auto* line = getChild<UI::Line>(detailsIconLine6Handle))
+			line->visible = false;
 
 		// Show centered icon placeholder
 		float iconX = panelX + (panelWidth - kEntityIconSize) * 0.5F;
@@ -660,17 +651,14 @@ namespace world_sim {
 			moodLabel->text = std::move(moodText);
 		}
 
-		// [Details] button at top-right (only for colonists - check if callback is set)
+		// Details icon button at top-right (only for colonists - check if callback is set)
 		bool showDetailsButton = (content.onDetails != nullptr);
 		auto detailsPos = getDetailsButtonPosition(panelY);
 		if (auto* detailsBg = getChild<UI::Rectangle>(detailsButtonBgHandle)) {
 			detailsBg->visible = showDetailsButton;
 			detailsBg->position = detailsPos;
 		}
-		if (auto* detailsText = getChild<UI::Text>(detailsButtonTextHandle)) {
-			detailsText->visible = showDetailsButton;
-			detailsText->position = {detailsPos.x + kDetailsButtonWidth * 0.5F, detailsPos.y + kDetailsButtonHeight * 0.5F};
-		}
+		updateDetailsIcon(showDetailsButton, detailsPos);
 
 		// ========== TWO-COLUMN CONTENT AREA ==========
 		float columnsY = panelY + kPadding + kPortraitSize + kSectionGap;
@@ -888,7 +876,7 @@ namespace world_sim {
 
 	Foundation::Vec2 EntityInfoView::getDetailsButtonPosition(float panelY) const {
 		// Position to left of close button with a small gap
-		return {panelX + panelWidth - kPadding - kCloseButtonSize - kButtonGap - kDetailsButtonWidth, panelY + kPadding};
+		return {panelX + panelWidth - kPadding - kCloseButtonSize - kButtonGap - kDetailsButtonSize, panelY + kPadding};
 	}
 
 	void EntityInfoView::updateValues(const PanelContent& content) {
@@ -1003,8 +991,8 @@ namespace world_sim {
 		// Check details button (only visible for colonists)
 		if (m_model.isColonist()) {
 			auto detailsPos = getDetailsButtonPosition(panelY);
-			if (pos.x >= detailsPos.x && pos.x <= detailsPos.x + kDetailsButtonWidth && pos.y >= detailsPos.y &&
-				pos.y <= detailsPos.y + kDetailsButtonHeight) {
+			if (pos.x >= detailsPos.x && pos.x <= detailsPos.x + kDetailsButtonSize && pos.y >= detailsPos.y &&
+				pos.y <= detailsPos.y + kDetailsButtonSize) {
 				if (onDetailsCallback) {
 					onDetailsCallback();
 				}
@@ -1039,6 +1027,62 @@ namespace world_sim {
 		}
 
 		return false;
+	}
+
+	void EntityInfoView::updateDetailsIcon(bool visible, const Foundation::Vec2& buttonPos) {
+		// Icon geometry: "open in new window" symbol
+		// Rectangle with missing top-right corner + diagonal arrow pointing out
+		constexpr float iconPad = 3.0F;
+		float			iconSize = kDetailsButtonSize - 2.0F * iconPad;
+		float			ix = buttonPos.x + iconPad;
+		float			iy = buttonPos.y + iconPad;
+
+		// Left side of rectangle (top to bottom)
+		if (auto* line = getChild<UI::Line>(detailsIconLine1Handle)) {
+			line->visible = visible;
+			line->start = {ix, iy};
+			line->end = {ix, iy + iconSize};
+		}
+
+		// Bottom of rectangle (left to right, partial)
+		if (auto* line = getChild<UI::Line>(detailsIconLine2Handle)) {
+			line->visible = visible;
+			line->start = {ix, iy + iconSize};
+			line->end = {ix + iconSize * 0.6F, iy + iconSize};
+		}
+
+		// Top of rectangle (left to middle, partial)
+		if (auto* line = getChild<UI::Line>(detailsIconLine3Handle)) {
+			line->visible = visible;
+			line->start = {ix, iy};
+			line->end = {ix + iconSize * 0.4F, iy};
+		}
+
+		// Diagonal arrow (from center to top-right)
+		float arrowStartX = ix + iconSize * 0.35F;
+		float arrowStartY = iy + iconSize * 0.65F;
+		float arrowEndX = ix + iconSize;
+		float arrowEndY = iy;
+
+		if (auto* line = getChild<UI::Line>(detailsIconLine4Handle)) {
+			line->visible = visible;
+			line->start = {arrowStartX, arrowStartY};
+			line->end = {arrowEndX, arrowEndY};
+		}
+
+		// Arrow head - horizontal part
+		if (auto* line = getChild<UI::Line>(detailsIconLine5Handle)) {
+			line->visible = visible;
+			line->start = {arrowEndX, arrowEndY};
+			line->end = {arrowEndX - iconSize * 0.3F, arrowEndY};
+		}
+
+		// Arrow head - vertical part
+		if (auto* line = getChild<UI::Line>(detailsIconLine6Handle)) {
+			line->visible = visible;
+			line->start = {arrowEndX, arrowEndY};
+			line->end = {arrowEndX, arrowEndY + iconSize * 0.3F};
+		}
 	}
 
 } // namespace world_sim
