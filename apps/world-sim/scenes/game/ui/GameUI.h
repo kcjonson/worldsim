@@ -23,7 +23,7 @@
 #include "scenes/game/ui/models/TimeModel.h"
 #include "scenes/game/ui/views/EntityInfoView.h"
 #include "scenes/game/ui/views/ZoomControlPanel.h"
-#include "scenes/game/ui/components/Selection.h"
+#include "scenes/game/world/selection/SelectionTypes.h"
 #include "scenes/game/ui/views/TaskListView.h"
 #include "scenes/game/ui/dialogs/ColonistDetailsDialog.h"
 

@@ -4,6 +4,8 @@
 // Shows items the player can place in the world (e.g., CraftingSpot).
 // Initially shows only innate recipes; will expand as colonists learn more.
 
+#include "scenes/game/world/placement/PlacementTypes.h"
+
 #include <components/button/Button.h>
 #include <input/InputEvent.h>
 #include <layout/LayoutContainer.h>
@@ -15,12 +17,6 @@
 #include <vector>
 
 namespace world_sim {
-
-/// A single item that can be built/placed
-struct BuildMenuItem {
-	std::string defName; ///< Definition name (e.g., "CraftingSpot")
-	std::string label;	 ///< Display name (e.g., "Crafting Spot")
-};
 
 /// Popup menu for selecting items to build.
 class BuildMenu {

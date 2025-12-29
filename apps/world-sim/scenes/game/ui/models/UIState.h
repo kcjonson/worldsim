@@ -10,7 +10,7 @@
 // - multiSelection: For box-select of multiple entities
 // - hoveredEntity: For tooltips and hover highlighting
 
-#include "scenes/game/ui/components/Selection.h"
+#include "scenes/game/world/selection/SelectionTypes.h"
 
 #include <optional>
 #include <set>

@@ -9,7 +9,7 @@
 // Follows the same adapter pattern as SelectionAdapter.
 
 #include "scenes/game/ui/components/InfoSlot.h"
-#include "scenes/game/ui/components/Selection.h"
+#include "scenes/game/world/selection/SelectionTypes.h"
 
 #include <assets/RecipeRegistry.h>
 #include <ecs/World.h>

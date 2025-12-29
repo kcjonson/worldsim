@@ -7,7 +7,7 @@
 // This decouples the panel from specific data sources.
 
 #include "scenes/game/ui/components/InfoSlot.h"
-#include "scenes/game/ui/components/Selection.h"
+#include "scenes/game/world/selection/SelectionTypes.h"
 
 #include <assets/AssetRegistry.h>
 #include <ecs/World.h>
