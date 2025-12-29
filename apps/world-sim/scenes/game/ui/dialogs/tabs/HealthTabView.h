@@ -38,6 +38,9 @@ class HealthTabView : public UI::Component {
 
   private:
 	UI::LayerHandle layoutHandle;
+	UI::LayerHandle leftColumnHandle;					  // Left column container
+	UI::LayerHandle moodHeaderHandle;					  // "Mood: X% (label)"
+	std::array<UI::LayerHandle, 8> needBarHandles{};	  // One per need type
 };
 
 } // namespace world_sim

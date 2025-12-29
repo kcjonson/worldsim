@@ -41,6 +41,9 @@ class MemoryTabView : public UI::Component {
 
   private:
 	UI::LayerHandle layoutHandle;
+	UI::LayerHandle headerTextHandle;	   // "Known Entities: X total"
+	UI::LayerHandle scrollContainerHandle; // ScrollContainer
+	UI::LayerHandle treeViewHandle;		   // TreeView inside ScrollContainer
 };
 
 } // namespace world_sim

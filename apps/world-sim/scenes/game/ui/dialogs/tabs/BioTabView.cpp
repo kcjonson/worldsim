@@ -87,7 +87,7 @@ void BioTabView::update(const BioData& bio) {
 	auto* layout = getChild<UI::LayoutContainer>(layoutHandle);
 	if (layout == nullptr) return;
 
-	auto& children = layout->getChildren();
+	const auto& children = layout->getChildren();
 	size_t idx = 0;
 
 	// Name (idx 0)

@@ -231,8 +231,12 @@ namespace world_sim {
 			}
 		}
 
-		// Dialog consumes all events when open
-		return true;
+		// Only consume events within dialog bounds (non-modal allows click-through)
+		if (dialog != nullptr && dialog->containsPoint(event.position)) {
+			return true;
+		}
+
+		return false;
 	}
 
 	bool ColonistDetailsDialog::containsPoint(Foundation::Vec2 point) const {

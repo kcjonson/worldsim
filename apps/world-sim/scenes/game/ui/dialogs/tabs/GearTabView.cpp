@@ -37,21 +37,23 @@ void GearTabView::create(const Foundation::Rect& contentBounds) {
 		}));
 	}
 
-	// Inventory section
-	layout.addChild(UI::Text(UI::Text::Args{
+	// Inventory section - store handle for dynamic updates
+	auto inventoryHeader = UI::Text(UI::Text::Args{
 		.height = kLabelSize,
 		.text = "Inventory: 0/0 slots",
 		.style = {.color = labelColor(), .fontSize = kLabelSize},
 		.margin = 6.0F
-	}));
+	});
+	inventoryHeaderHandle = layout.addChild(std::move(inventoryHeader));
 
-	// Empty state / items list
-	layout.addChild(UI::Text(UI::Text::Args{
+	// Empty state / items list - store handle for dynamic updates
+	auto itemsText = UI::Text(UI::Text::Args{
 		.height = kBodySize,
 		.text = "Empty",
 		.style = {.color = mutedColor(), .fontSize = kBodySize},
 		.margin = 2.0F
-	}));
+	});
+	itemsTextHandle = layout.addChild(std::move(itemsText));
 
 	layoutHandle = addChild(std::move(layout));
 }
@@ -60,35 +62,23 @@ void GearTabView::update(const GearData& gear) {
 	auto* layout = getChild<UI::LayoutContainer>(layoutHandle);
 	if (layout == nullptr) return;
 
-	auto& children = layout->getChildren();
-
-	// Structure:
-	// idx 0: Attire header
-	// idx 1-5: Attire slots
-	// idx 6: Inventory header
-	// idx 7: Items text
-
-	// Update inventory header (idx 6)
-	if (children.size() > 6) {
-		if (auto* text = dynamic_cast<UI::Text*>(children[6])) {
-			std::ostringstream ss;
-			ss << "Inventory: " << gear.slotCount << "/" << gear.maxSlots << " slots";
-			text->text = ss.str();
-		}
+	// Update inventory header using stored handle
+	if (auto* text = layout->getChild<UI::Text>(inventoryHeaderHandle)) {
+		std::ostringstream ss;
+		ss << "Inventory: " << gear.slotCount << "/" << gear.maxSlots << " slots";
+		text->text = ss.str();
 	}
 
-	// Update items text (idx 7)
-	if (children.size() > 7) {
-		if (auto* text = dynamic_cast<UI::Text*>(children[7])) {
-			if (gear.items.empty()) {
-				text->text = "Empty";
-			} else {
-				std::ostringstream ss;
-				for (const auto& item : gear.items) {
-					ss << item.defName << " x" << item.quantity << "\n";
-				}
-				text->text = ss.str();
+	// Update items text using stored handle
+	if (auto* text = layout->getChild<UI::Text>(itemsTextHandle)) {
+		if (gear.items.empty()) {
+			text->text = "Empty";
+		} else {
+			std::ostringstream ss;
+			for (const auto& item : gear.items) {
+				ss << item.defName << " x" << item.quantity << "\n";
 			}
+			text->text = ss.str();
 		}
 	}
 }

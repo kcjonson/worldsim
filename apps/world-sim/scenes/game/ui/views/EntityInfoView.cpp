@@ -419,66 +419,26 @@ namespace world_sim {
 			)
 		);
 
-		// Icon geometry: 10x10 centered in 16x16 button
-		// Rectangle with missing top-right corner + diagonal arrow
-		float iconPad = 3.0F;
-		float iconSize = kDetailsButtonSize - 2.0F * iconPad;
-		float ix = detailsPos.x + iconPad;
-		float iy = detailsPos.y + iconPad;
+		// Create icon line elements (positions set by updateDetailsIcon)
 		Foundation::Color iconColor = UI::Theme::Colors::actionButtonText;
-		float lineWidth = 1.5F;
+		constexpr float	  lineWidth = 1.5F;
+		auto			  createLine = [&]() {
+			 return addChild(UI::Line(UI::Line::Args{
+				 .start = {0.0F, 0.0F},
+				 .end = {0.0F, 0.0F},
+				 .style = {.color = iconColor, .width = lineWidth},
+				 .zIndex = 3
+			 }));
+		};
+		detailsIconLine1Handle = createLine();
+		detailsIconLine2Handle = createLine();
+		detailsIconLine3Handle = createLine();
+		detailsIconLine4Handle = createLine();
+		detailsIconLine5Handle = createLine();
+		detailsIconLine6Handle = createLine();
 
-		// Left side of rectangle (top to bottom)
-		detailsIconLine1Handle = addChild(UI::Line(UI::Line::Args{
-			.start = {ix, iy},
-			.end = {ix, iy + iconSize},
-			.style = {.color = iconColor, .width = lineWidth},
-			.zIndex = 3
-		}));
-
-		// Bottom of rectangle (left to right)
-		detailsIconLine2Handle = addChild(UI::Line(UI::Line::Args{
-			.start = {ix, iy + iconSize},
-			.end = {ix + iconSize * 0.6F, iy + iconSize},
-			.style = {.color = iconColor, .width = lineWidth},
-			.zIndex = 3
-		}));
-
-		// Top of rectangle (left to middle)
-		detailsIconLine3Handle = addChild(UI::Line(UI::Line::Args{
-			.start = {ix, iy},
-			.end = {ix + iconSize * 0.4F, iy},
-			.style = {.color = iconColor, .width = lineWidth},
-			.zIndex = 3
-		}));
-
-		// Diagonal arrow (from center to top-right)
-		float arrowStartX = ix + iconSize * 0.35F;
-		float arrowStartY = iy + iconSize * 0.65F;
-		float arrowEndX = ix + iconSize;
-		float arrowEndY = iy;
-		detailsIconLine4Handle = addChild(UI::Line(UI::Line::Args{
-			.start = {arrowStartX, arrowStartY},
-			.end = {arrowEndX, arrowEndY},
-			.style = {.color = iconColor, .width = lineWidth},
-			.zIndex = 3
-		}));
-
-		// Arrow head - horizontal part
-		detailsIconLine5Handle = addChild(UI::Line(UI::Line::Args{
-			.start = {arrowEndX, arrowEndY},
-			.end = {arrowEndX - iconSize * 0.3F, arrowEndY},
-			.style = {.color = iconColor, .width = lineWidth},
-			.zIndex = 3
-		}));
-
-		// Arrow head - vertical part
-		detailsIconLine6Handle = addChild(UI::Line(UI::Line::Args{
-			.start = {arrowEndX, arrowEndY},
-			.end = {arrowEndX, arrowEndY + iconSize * 0.3F},
-			.style = {.color = iconColor, .width = lineWidth},
-			.zIndex = 3
-		}));
+		// Set initial positions (icon starts hidden)
+		updateDetailsIcon(false, detailsPos);
 
 		// Disable child sorting to preserve LayerHandle indices
 		childrenNeedSorting = false;
@@ -715,47 +675,7 @@ namespace world_sim {
 			detailsBg->visible = showDetailsButton;
 			detailsBg->position = detailsPos;
 		}
-
-		// Update icon line positions
-		float iconPad = 3.0F;
-		float iconSize = kDetailsButtonSize - 2.0F * iconPad;
-		float ix = detailsPos.x + iconPad;
-		float iy = detailsPos.y + iconPad;
-
-		if (auto* line = getChild<UI::Line>(detailsIconLine1Handle)) {
-			line->visible = showDetailsButton;
-			line->start = {ix, iy};
-			line->end = {ix, iy + iconSize};
-		}
-		if (auto* line = getChild<UI::Line>(detailsIconLine2Handle)) {
-			line->visible = showDetailsButton;
-			line->start = {ix, iy + iconSize};
-			line->end = {ix + iconSize * 0.6F, iy + iconSize};
-		}
-		if (auto* line = getChild<UI::Line>(detailsIconLine3Handle)) {
-			line->visible = showDetailsButton;
-			line->start = {ix, iy};
-			line->end = {ix + iconSize * 0.4F, iy};
-		}
-		float arrowStartX = ix + iconSize * 0.35F;
-		float arrowStartY = iy + iconSize * 0.65F;
-		float arrowEndX = ix + iconSize;
-		float arrowEndY = iy;
-		if (auto* line = getChild<UI::Line>(detailsIconLine4Handle)) {
-			line->visible = showDetailsButton;
-			line->start = {arrowStartX, arrowStartY};
-			line->end = {arrowEndX, arrowEndY};
-		}
-		if (auto* line = getChild<UI::Line>(detailsIconLine5Handle)) {
-			line->visible = showDetailsButton;
-			line->start = {arrowEndX, arrowEndY};
-			line->end = {arrowEndX - iconSize * 0.3F, arrowEndY};
-		}
-		if (auto* line = getChild<UI::Line>(detailsIconLine6Handle)) {
-			line->visible = showDetailsButton;
-			line->start = {arrowEndX, arrowEndY};
-			line->end = {arrowEndX, arrowEndY + iconSize * 0.3F};
-		}
+		updateDetailsIcon(showDetailsButton, detailsPos);
 
 		// ========== TWO-COLUMN CONTENT AREA ==========
 		float columnsY = panelY + kPadding + kPortraitSize + kSectionGap;
@@ -1124,6 +1044,62 @@ namespace world_sim {
 		}
 
 		return false;
+	}
+
+	void EntityInfoView::updateDetailsIcon(bool visible, const Foundation::Vec2& buttonPos) {
+		// Icon geometry: "open in new window" symbol
+		// Rectangle with missing top-right corner + diagonal arrow pointing out
+		constexpr float iconPad = 3.0F;
+		float			iconSize = kDetailsButtonSize - 2.0F * iconPad;
+		float			ix = buttonPos.x + iconPad;
+		float			iy = buttonPos.y + iconPad;
+
+		// Left side of rectangle (top to bottom)
+		if (auto* line = getChild<UI::Line>(detailsIconLine1Handle)) {
+			line->visible = visible;
+			line->start = {ix, iy};
+			line->end = {ix, iy + iconSize};
+		}
+
+		// Bottom of rectangle (left to right, partial)
+		if (auto* line = getChild<UI::Line>(detailsIconLine2Handle)) {
+			line->visible = visible;
+			line->start = {ix, iy + iconSize};
+			line->end = {ix + iconSize * 0.6F, iy + iconSize};
+		}
+
+		// Top of rectangle (left to middle, partial)
+		if (auto* line = getChild<UI::Line>(detailsIconLine3Handle)) {
+			line->visible = visible;
+			line->start = {ix, iy};
+			line->end = {ix + iconSize * 0.4F, iy};
+		}
+
+		// Diagonal arrow (from center to top-right)
+		float arrowStartX = ix + iconSize * 0.35F;
+		float arrowStartY = iy + iconSize * 0.65F;
+		float arrowEndX = ix + iconSize;
+		float arrowEndY = iy;
+
+		if (auto* line = getChild<UI::Line>(detailsIconLine4Handle)) {
+			line->visible = visible;
+			line->start = {arrowStartX, arrowStartY};
+			line->end = {arrowEndX, arrowEndY};
+		}
+
+		// Arrow head - horizontal part
+		if (auto* line = getChild<UI::Line>(detailsIconLine5Handle)) {
+			line->visible = visible;
+			line->start = {arrowEndX, arrowEndY};
+			line->end = {arrowEndX - iconSize * 0.3F, arrowEndY};
+		}
+
+		// Arrow head - vertical part
+		if (auto* line = getChild<UI::Line>(detailsIconLine6Handle)) {
+			line->visible = visible;
+			line->start = {arrowEndX, arrowEndY};
+			line->end = {arrowEndX, arrowEndY + iconSize * 0.3F};
+		}
 	}
 
 } // namespace world_sim

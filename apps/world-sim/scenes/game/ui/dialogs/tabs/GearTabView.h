@@ -28,6 +28,8 @@ class GearTabView : public UI::Component {
 
   private:
 	UI::LayerHandle layoutHandle;
+	UI::LayerHandle inventoryHeaderHandle;  // "Inventory: X/Y slots"
+	UI::LayerHandle itemsTextHandle;		// Items list or "Empty"
 };
 
 } // namespace world_sim

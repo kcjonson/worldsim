@@ -34,13 +34,14 @@ void HealthTabView::create(const Foundation::Rect& contentBounds) {
 		.id = "health_left"
 	});
 
-	// Mood header
-	leftColumn.addChild(UI::Text(UI::Text::Args{
+	// Mood header - store handle for dynamic updates
+	auto moodHeader = UI::Text(UI::Text::Args{
 		.height = kTitleSize,
 		.text = "Mood: -- (Unknown)",
 		.style = {.color = titleColor(), .fontSize = kTitleSize},
 		.margin = 2.0F
-	}));
+	});
+	moodHeaderHandle = leftColumn.addChild(std::move(moodHeader));
 
 	// Needs section header
 	leftColumn.addChild(UI::Text(UI::Text::Args{
@@ -50,16 +51,17 @@ void HealthTabView::create(const Foundation::Rect& contentBounds) {
 		.margin = 4.0F
 	}));
 
-	// Need bars
+	// Need bars - store handles for dynamic updates
 	for (size_t i = 0; i < static_cast<size_t>(ecs::NeedType::Count); ++i) {
-		leftColumn.addChild(UI::ProgressBar(UI::ProgressBar::Args{
+		auto bar = UI::ProgressBar(UI::ProgressBar::Args{
 			.size = {needBarWidth, needBarHeight},
 			.value = 1.0F,
 			.fillColor = UI::Theme::Colors::statusActive,
 			.label = ecs::kNeedLabels[i],
 			.labelWidth = 50.0F,
 			.margin = 1.0F
-		}));
+		});
+		needBarHandles[i] = leftColumn.addChild(std::move(bar));
 	}
 
 	// Mood modifiers section
@@ -77,7 +79,7 @@ void HealthTabView::create(const Foundation::Rect& contentBounds) {
 		.margin = 2.0F
 	}));
 
-	layout.addChild(std::move(leftColumn));
+	leftColumnHandle = layout.addChild(std::move(leftColumn));
 
 	// RIGHT COLUMN: Body & Ailments
 	auto rightColumn = UI::LayoutContainer(UI::LayoutContainer::Args{
@@ -120,32 +122,20 @@ void HealthTabView::update(const HealthData& health) {
 	auto* layout = getChild<UI::LayoutContainer>(layoutHandle);
 	if (layout == nullptr) return;
 
-	auto& columns = layout->getChildren();
-	if (columns.empty()) return;
-
-	// Left column
-	auto* leftColumn = dynamic_cast<UI::LayoutContainer*>(columns[0]);
+	// Get left column using stored handle
+	auto* leftColumn = layout->getChild<UI::LayoutContainer>(leftColumnHandle);
 	if (leftColumn == nullptr) return;
 
-	auto& leftChildren = leftColumn->getChildren();
-	size_t idx = 0;
-
-	// Mood header (idx 0)
-	if (idx < leftChildren.size()) {
-		if (auto* text = dynamic_cast<UI::Text*>(leftChildren[idx])) {
-			std::ostringstream ss;
-			ss << "Mood: " << static_cast<int>(health.mood) << "% (" << health.moodLabel << ")";
-			text->text = ss.str();
-		}
-		++idx;
+	// Update mood header using stored handle
+	if (auto* text = leftColumn->getChild<UI::Text>(moodHeaderHandle)) {
+		std::ostringstream ss;
+		ss << "Mood: " << static_cast<int>(health.mood) << "% (" << health.moodLabel << ")";
+		text->text = ss.str();
 	}
 
-	// Skip "Needs" header (idx 1)
-	++idx;
-
-	// Need bars (idx 2+)
-	for (size_t i = 0; i < static_cast<size_t>(ecs::NeedType::Count) && idx < leftChildren.size(); ++i) {
-		if (auto* bar = dynamic_cast<UI::ProgressBar*>(leftChildren[idx])) {
+	// Update need bars using stored handles
+	for (size_t i = 0; i < static_cast<size_t>(ecs::NeedType::Count); ++i) {
+		if (auto* bar = leftColumn->getChild<UI::ProgressBar>(needBarHandles[i])) {
 			bar->setValue(health.needValues[i] / 100.0F);
 
 			// Color based on status
@@ -157,7 +147,6 @@ void HealthTabView::update(const HealthData& health) {
 				bar->setFillColor({0.2F, 0.8F, 0.4F, 1.0F}); // Green
 			}
 		}
-		++idx;
 	}
 }
 

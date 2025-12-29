@@ -109,6 +109,9 @@ class EntityInfoView : public UI::Component {
 	/// Get details button top-left position for current panel position
 	[[nodiscard]] Foundation::Vec2 getDetailsButtonPosition(float panelY) const;
 
+	/// Update details icon line positions (avoids duplication between constructor and renderContent)
+	void updateDetailsIcon(bool visible, const Foundation::Vec2& buttonPos);
+
 	// ViewModel (owns selection cache, content generation)
 	EntityInfoModel m_model;
 
