@@ -21,6 +21,8 @@ bool CachedSelection::matches(const Selection& selection) const {
 					   worldEntityPos.y == sel.position.y;
 			} else if constexpr (std::is_same_v<T, CraftingStationSelection>) {
 				return type == Type::CraftingStation && stationId == sel.entityId;
+			} else if constexpr (std::is_same_v<T, FurnitureSelection>) {
+				return type == Type::Furniture && furnitureId == sel.entityId && furniturePackaged == sel.isPackaged;
 			}
 			return false;
 		},
@@ -36,30 +38,52 @@ void CachedSelection::update(const Selection& selection) {
 				type = Type::None;
 				colonistId = ecs::EntityID{0};
 				stationId = ecs::EntityID{0};
+				furnitureId = ecs::EntityID{0};
 				worldEntityDef.clear();
 				stationDefName.clear();
+				furnitureDefName.clear();
 				worldEntityPos = {};
+				furniturePackaged = false;
 			} else if constexpr (std::is_same_v<T, ColonistSelection>) {
 				type = Type::Colonist;
 				colonistId = sel.entityId;
 				stationId = ecs::EntityID{0};
+				furnitureId = ecs::EntityID{0};
 				worldEntityDef.clear();
 				stationDefName.clear();
+				furnitureDefName.clear();
 				worldEntityPos = {};
+				furniturePackaged = false;
 			} else if constexpr (std::is_same_v<T, WorldEntitySelection>) {
 				type = Type::WorldEntity;
 				colonistId = ecs::EntityID{0};
 				stationId = ecs::EntityID{0};
+				furnitureId = ecs::EntityID{0};
 				worldEntityDef = sel.defName;
 				stationDefName.clear();
+				furnitureDefName.clear();
 				worldEntityPos = sel.position;
+				furniturePackaged = false;
 			} else if constexpr (std::is_same_v<T, CraftingStationSelection>) {
 				type = Type::CraftingStation;
 				colonistId = ecs::EntityID{0};
 				stationId = sel.entityId;
+				furnitureId = ecs::EntityID{0};
 				worldEntityDef.clear();
 				stationDefName = sel.defName;
+				furnitureDefName.clear();
 				worldEntityPos = {};
+				furniturePackaged = false;
+			} else if constexpr (std::is_same_v<T, FurnitureSelection>) {
+				type = Type::Furniture;
+				colonistId = ecs::EntityID{0};
+				stationId = ecs::EntityID{0};
+				furnitureId = sel.entityId;
+				worldEntityDef.clear();
+				stationDefName.clear();
+				furnitureDefName = sel.defName;
+				worldEntityPos = {};
+				furniturePackaged = sel.isPackaged;
 			}
 		},
 		selection
@@ -80,6 +104,7 @@ EntityInfoModel::UpdateType EntityInfoModel::refresh(
 	// Detect selection types
 	bool		  isColonist = std::holds_alternative<ColonistSelection>(selection);
 	bool		  isStation = std::holds_alternative<CraftingStationSelection>(selection);
+	bool		  isFurniture = std::holds_alternative<FurnitureSelection>(selection);
 	ecs::EntityID colonistId{0};
 	ecs::EntityID stationId{0};
 	std::string   stationDefName;
@@ -96,6 +121,12 @@ EntityInfoModel::UpdateType EntityInfoModel::refresh(
 		stationDefName = stationSel.defName;
 		if (!world.isAlive(stationId)) {
 			isStation = false;
+		}
+	}
+	if (isFurniture) {
+		const auto& furnitureSel = std::get<FurnitureSelection>(selection);
+		if (!world.isAlive(furnitureSel.entityId)) {
+			isFurniture = false;
 		}
 	}
 
@@ -131,6 +162,9 @@ EntityInfoModel::UpdateType EntityInfoModel::refresh(
 		contentData = getColonistContent(world, colonistId, callbacks.onDetails);
 	} else if (isStation) {
 		contentData = getCraftingStationContent(world, stationId, stationDefName, recipeRegistry, callbacks.onQueueRecipe);
+	} else if (isFurniture) {
+		const auto& furnitureSel = std::get<FurnitureSelection>(selection);
+		contentData = adaptFurniture(assetRegistry, furnitureSel, callbacks.onPlace);
 	} else {
 		// World entity - use standard adapter
 		auto worldContent = adaptSelection(selection, world, assetRegistry);

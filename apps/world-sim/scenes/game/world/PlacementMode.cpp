@@ -17,7 +17,8 @@ void PlacementMode::enterMenu() {
 }
 
 void PlacementMode::selectItem(const std::string& defName) {
-	if (m_state != PlacementState::MenuOpen) {
+	// Allow selection from None (direct dropdown) or MenuOpen (build menu flow)
+	if (m_state != PlacementState::None && m_state != PlacementState::MenuOpen) {
 		return;
 	}
 	if (defName.empty()) {
@@ -26,7 +27,6 @@ void PlacementMode::selectItem(const std::string& defName) {
 	m_selectedDefName = defName;
 	m_state = PlacementState::Placing;
 	m_isValidPlacement = true;
-	m_skipNextPlacement = true; // Prevent immediate placement from same click
 	LOG_DEBUG(Game, "PlacementMode: selected '%s' for placement", defName.c_str());
 }
 
@@ -49,13 +49,6 @@ void PlacementMode::updateGhostPosition(Foundation::Vec2 worldPos) {
 
 bool PlacementMode::tryPlace() {
 	if (m_state != PlacementState::Placing) {
-		return false;
-	}
-
-	// Skip placement if this is the same frame as item selection
-	// (prevents the menu click from also triggering placement)
-	if (m_skipNextPlacement) {
-		m_skipNextPlacement = false;
 		return false;
 	}
 

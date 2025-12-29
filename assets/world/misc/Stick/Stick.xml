@@ -16,6 +16,9 @@
       <tier>instanced</tier>
     </rendering>
 
+    <!-- Item category: raw crafting material -->
+    <category>RawMaterial</category>
+
     <!-- Item properties (when in inventory) -->
     <item>
       <stackSize>10</stackSize>

@@ -40,4 +40,15 @@ namespace world_sim {
 	const WorldEntitySelection& selection
 );
 
+/// Convert furniture entity data into panel content
+/// Shows [Place] button for packaged furniture, [Package] button for placed furniture
+/// @param onPlace Callback for placing packaged furniture
+/// @param onPackage Callback for re-packaging placed furniture
+[[nodiscard]] PanelContent adaptFurniture(
+	const engine::assets::AssetRegistry& registry,
+	const FurnitureSelection& selection,
+	std::function<void()> onPlace = nullptr,
+	std::function<void()> onPackage = nullptr
+);
+
 } // namespace world_sim

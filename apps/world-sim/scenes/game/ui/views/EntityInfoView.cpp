@@ -14,7 +14,8 @@ namespace world_sim {
 		  panelX(args.position.x),
 		  onCloseCallback(args.onClose),
 		  onDetailsCallback(args.onDetails),
-		  onQueueRecipeCallback(args.onQueueRecipe) {
+		  onQueueRecipeCallback(args.onQueueRecipe),
+		  onPlaceCallback(args.onPlace) {
 
 		contentWidth = panelWidth - (2.0F * kPadding);
 
@@ -385,6 +386,46 @@ namespace world_sim {
 			recipeCardHandles.push_back(card);
 		}
 
+		// Create action button pool (for ActionButtonSlot - Place/Package)
+		actionButtonHandles.reserve(kMaxActionButtons);
+		actionButtonCallbacks.resize(kMaxActionButtons);
+		actionButtonBounds.resize(kMaxActionButtons);
+		for (size_t i = 0; i < kMaxActionButtons; ++i) {
+			ActionButtonHandles button;
+
+			// Button background
+			button.background = addChild(
+				UI::Rectangle(
+					UI::Rectangle::Args{
+						.position = {args.position.x + kPadding, args.position.y},
+						.size = {contentWidth, kActionButtonHeight},
+						.style = UI::PanelStyles::actionButton(),
+						.id = (args.id + "_action_bg_" + std::to_string(i)).c_str()
+					}
+				)
+			);
+
+			// Button text
+			button.text = addChild(
+				UI::Text(
+					UI::Text::Args{
+						.position = {args.position.x + contentWidth * 0.5F, args.position.y + kActionButtonHeight * 0.5F},
+						.text = "",
+						.style =
+							{
+								.color = UI::Theme::Colors::actionButtonText,
+								.fontSize = kActionButtonFontSize,
+								.hAlign = Foundation::HorizontalAlign::Center,
+								.vAlign = Foundation::VerticalAlign::Middle,
+							},
+						.id = (args.id + "_action_text_" + std::to_string(i)).c_str()
+					}
+				)
+			);
+
+			actionButtonHandles.push_back(button);
+		}
+
 		// Create details button icon (hidden initially, shown for colonists)
 		// Icon: "open in new window" - rectangle outline + arrow
 		auto detailsPos = getDetailsButtonPosition(args.position.y);
@@ -435,6 +476,7 @@ namespace world_sim {
 		EntityInfoModel::Callbacks callbacks{
 			.onDetails = onDetailsCallback,
 			.onQueueRecipe = onQueueRecipeCallback,
+			.onPlace = onPlaceCallback,
 		};
 
 		// Let model handle all the logic (selection detection, change detection, content generation)
@@ -472,6 +514,7 @@ namespace world_sim {
 		usedProgressBars = 0;
 		usedListItems = 0;
 		usedRecipeCards = 0;
+		usedActionButtons = 0;
 
 		// Clear clickable slot state (will be set if content has ClickableTextSlot)
 		clickableCallback = nullptr;
@@ -480,6 +523,11 @@ namespace world_sim {
 
 		// Clear recipe callbacks
 		for (auto& cb : recipeCallbacks) {
+			cb = nullptr;
+		}
+
+		// Clear action button callbacks
+		for (auto& cb : actionButtonCallbacks) {
 			cb = nullptr;
 		}
 
@@ -720,6 +768,8 @@ namespace world_sim {
 					return renderRecipeSlot(s, yOffset);
 				} else if constexpr (std::is_same_v<T, IconSlot>) {
 					return renderIconSlot(s, yOffset);
+				} else if constexpr (std::is_same_v<T, ActionButtonSlot>) {
+					return renderActionButtonSlot(s, yOffset);
 				}
 				return 0.0F;
 			},
@@ -870,6 +920,36 @@ namespace world_sim {
 		return slot.size + kLabelFontSize + kSectionGap;
 	}
 
+	float EntityInfoView::renderActionButtonSlot(const ActionButtonSlot& slot, float yOffset) {
+		if (usedActionButtons >= actionButtonHandles.size()) {
+			return 0.0F;
+		}
+
+		auto& button = actionButtonHandles[usedActionButtons];
+		float buttonX = panelX + kPadding;
+
+		// Position button background
+		if (auto* bg = getChild<UI::Rectangle>(button.background)) {
+			bg->visible = true;
+			bg->position = {buttonX, yOffset};
+			bg->size = {contentWidth, kActionButtonHeight};
+		}
+
+		// Position button text (centered)
+		if (auto* text = getChild<UI::Text>(button.text)) {
+			text->visible = true;
+			text->position = {buttonX + contentWidth * 0.5F, yOffset + kActionButtonHeight * 0.5F};
+			text->text = slot.label;
+		}
+
+		// Store callback and bounds for click handling
+		actionButtonCallbacks[usedActionButtons] = slot.onClick;
+		actionButtonBounds[usedActionButtons] = Foundation::Rect{buttonX, yOffset, contentWidth, kActionButtonHeight};
+
+		++usedActionButtons;
+		return kActionButtonHeight + kItemGap;
+	}
+
 	Foundation::Vec2 EntityInfoView::getCloseButtonPosition(float panelY) const {
 		return {panelX + panelWidth - kPadding - kCloseButtonSize, panelY + kPadding};
 	}
@@ -1015,6 +1095,17 @@ namespace world_sim {
 			if (recipeCallbacks[i] && pos.x >= bounds.x && pos.x <= bounds.x + bounds.width && pos.y >= bounds.y &&
 				pos.y <= bounds.y + bounds.height) {
 				recipeCallbacks[i]();
+				event.consume();
+				return true;
+			}
+		}
+
+		// Check action buttons (Place/Package)
+		for (size_t i = 0; i < usedActionButtons; ++i) {
+			const auto& bounds = actionButtonBounds[i];
+			if (actionButtonCallbacks[i] && pos.x >= bounds.x && pos.x <= bounds.x + bounds.width && pos.y >= bounds.y &&
+				pos.y <= bounds.y + bounds.height) {
+				actionButtonCallbacks[i]();
 				event.consume();
 				return true;
 			}

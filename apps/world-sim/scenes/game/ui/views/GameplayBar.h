@@ -50,6 +50,10 @@ class GameplayBar : public UI::Component {
 	/// Close all open dropdowns
 	void closeAllDropdowns();
 
+	/// Set the items in the Production dropdown
+	/// @param items Vector of {defName, label} pairs for placeable production stations
+	void setProductionItems(const std::vector<std::pair<std::string, std::string>>& items);
+
   private:
 	// Layout constants
 	static constexpr float kBarHeight = 40.0F;

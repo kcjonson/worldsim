@@ -18,6 +18,7 @@ enum class TaskType : uint8_t {
 	FulfillNeed, // Tier 3/5: Moving to target for need fulfillment
 	Gather,		 // Tier 6.6: Gathering materials for crafting
 	Craft,		 // Tier 6.5: Crafting at a station
+	Haul,		 // Tier 6.4: Moving loose items to storage containers
 	Wander		 // Tier 7: Random exploration
 };
 
@@ -47,6 +48,12 @@ struct Task {
 	std::string craftRecipeDefName;
 	uint64_t targetStationId = 0;
 
+	/// For Haul tasks: item to haul and storage container target
+	std::string haulItemDefName;				   // Item being hauled
+	uint64_t	haulTargetStorageId = 0;		   // Entity ID of the storage container (destination)
+	glm::vec2	haulSourcePosition{0.0F, 0.0F};	   // Position of the source item
+	glm::vec2	haulTargetPosition{0.0F, 0.0F};	   // Position of the storage container
+
 	/// Time since last decision re-evaluation (seconds)
 	float timeSinceEvaluation = 0.0F;
 
@@ -69,6 +76,10 @@ struct Task {
 		gatherTargetEntityId = 0;
 		craftRecipeDefName.clear();
 		targetStationId = 0;
+		haulItemDefName.clear();
+		haulTargetStorageId = 0;
+		haulSourcePosition = glm::vec2{0.0F, 0.0F};
+		haulTargetPosition = glm::vec2{0.0F, 0.0F};
 		priority = 0.0F;
 		// Note: timeSinceEvaluation NOT reset here - caller handles timer logic
 		reason.clear();

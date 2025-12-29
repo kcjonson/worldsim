@@ -2,6 +2,7 @@
 
 #include "../World.h"
 #include "../components/Action.h"
+#include "../components/Appearance.h"
 #include "../components/DecisionTrace.h"
 #include "../components/Inventory.h"
 #include "../components/Memory.h"
@@ -594,6 +595,90 @@ namespace ecs {
 			}
 		}
 
+		// Add "Haul" work options (Tier 6.4)
+		// Find loose items (Carryable) and match them to storage containers
+		for (const auto& [key, looseItem] : memory.knownWorldEntities) {
+			// Check if entity is Carryable (loose item on ground)
+			if (!m_registry.hasCapability(looseItem.defNameId, engine::assets::CapabilityType::Carryable)) {
+				continue;
+			}
+
+			const auto& itemDefName = m_registry.getDefName(looseItem.defNameId);
+			const auto* itemDef = m_registry.getDefinition(itemDefName);
+			if (itemDef == nullptr) {
+				continue;
+			}
+
+			// Get item category for storage matching
+			engine::assets::ItemCategory itemCategory = itemDef->category;
+
+			// Find a storage container that accepts this item category
+			// Use ECS view to get actual entity IDs for storage containers with Inventory
+			glm::vec2 nearestStoragePos{0.0F, 0.0F};
+			float	  nearestStorageDist = std::numeric_limits<float>::max();
+			uint64_t  nearestStorageEntityId = 0;
+			bool	  foundStorage = false;
+
+			for (auto [storageEntity, storagePos, storageInv, storageAppearance] :
+				 world->view<Position, Inventory, Appearance>()) {
+				// Check if this is a storage container (has Storage capability)
+				const auto* storageDef = m_registry.getDefinition(storageAppearance.defName);
+				if (storageDef == nullptr || !storageDef->capabilities.storage.has_value()) {
+					continue;
+				}
+
+				const auto& storageCap = storageDef->capabilities.storage.value();
+
+				// Check if storage accepts this category
+				bool accepts = storageCap.acceptedCategories.empty(); // Empty = accepts all
+				if (!accepts) {
+					for (auto cat : storageCap.acceptedCategories) {
+						if (cat == itemCategory) {
+							accepts = true;
+							break;
+						}
+					}
+				}
+
+				if (!accepts) {
+					continue;
+				}
+
+				// TODO: Check if storage has capacity remaining
+				// For now, assume storage always has room
+				(void)storageInv; // Suppress unused warning
+
+				float dist = glm::distance(looseItem.position, storagePos.value);
+				if (dist < nearestStorageDist) {
+					nearestStorageDist = dist;
+					nearestStoragePos = storagePos.value;
+					nearestStorageEntityId = static_cast<uint64_t>(storageEntity);
+					foundStorage = true;
+				}
+			}
+
+			if (!foundStorage) {
+				continue; // No storage container accepts this item
+			}
+
+			// Create haul option
+			EvaluatedOption haulOption;
+			haulOption.taskType = TaskType::Haul;
+			haulOption.needType = NeedType::Count; // N/A for work tasks
+			haulOption.needValue = 100.0F;
+			haulOption.threshold = 0.0F;
+			haulOption.targetPosition = looseItem.position; // Initial target is the loose item
+			haulOption.targetDefNameId = looseItem.defNameId;
+			haulOption.distanceToTarget = glm::distance(position.value, looseItem.position);
+			haulOption.haulItemDefName = itemDefName;
+			haulOption.haulSourcePosition = looseItem.position;
+			haulOption.haulTargetStorageId = nearestStorageEntityId;
+			haulOption.haulTargetPosition = nearestStoragePos;
+			haulOption.status = OptionStatus::Available;
+			haulOption.reason = "Hauling " + itemDefName + " to storage";
+			trace.options.push_back(haulOption);
+		}
+
 		// Add wander option
 		EvaluatedOption wanderOption;
 		wanderOption.taskType = TaskType::Wander;
@@ -647,6 +732,16 @@ namespace ecs {
 		if (selected->taskType == TaskType::Gather) {
 			task.gatherItemDefName = selected->gatherItemDefName;
 			task.gatherTargetEntityId = selected->gatherTargetEntityId;
+		}
+
+		// Copy hauling-specific fields for Haul tasks
+		if (selected->taskType == TaskType::Haul) {
+			task.haulItemDefName = selected->haulItemDefName;
+			task.haulSourcePosition = selected->haulSourcePosition.value_or(glm::vec2{0.0F, 0.0F});
+			task.haulTargetStorageId = selected->haulTargetStorageId;
+			task.haulTargetPosition = selected->haulTargetPosition.value_or(glm::vec2{0.0F, 0.0F});
+			// For haul tasks, target is initially the source position (pickup first)
+			task.targetPosition = task.haulSourcePosition;
 		}
 
 		movementTarget.target = task.targetPosition;

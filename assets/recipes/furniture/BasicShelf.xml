@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- BasicShelf Recipe - Craft a simple wooden shelf for tool storage -->
+<RecipeDef>
+    <defName>Recipe_BasicShelf</defName>
+    <label>Basic Shelf</label>
+    <description>A simple wooden shelf for storing tools and equipment. Keeps your workspace organized.</description>
+
+    <!-- Required materials -->
+    <inputs>
+        <input thing="Stick" count="10"/>
+        <input thing="PlantFiber" count="5"/>
+    </inputs>
+
+    <!-- Requires a crafting station -->
+    <station>CraftingSpot</station>
+
+    <outputs>
+        <output thing="BasicShelf" count="1"/>
+    </outputs>
+
+    <!-- Takes some time to build -->
+    <workAmount>120</workAmount>
+
+    <!-- All colonists know this from start -->
+    <innate>true</innate>
+</RecipeDef>

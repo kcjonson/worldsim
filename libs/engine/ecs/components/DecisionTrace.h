@@ -52,6 +52,12 @@ namespace ecs {
 		std::string craftRecipeDefName;
 		uint64_t stationEntityId = 0;
 
+		// Hauling-specific fields (for Haul tasks)
+		std::string					 haulItemDefName;		// Item to haul
+		std::optional<glm::vec2>	 haulSourcePosition;	// Where to pick up from
+		uint64_t					 haulTargetStorageId = 0;  // Storage container entity ID
+		std::optional<glm::vec2>	 haulTargetPosition;	// Where to deposit
+
 		// Human-readable explanation for UI
 		std::string reason;
 
@@ -70,6 +76,10 @@ namespace ecs {
 			// This indicates a work task, not a real need - priority 50
 			if (taskType == TaskType::FulfillNeed && needValue >= 100.0F && threshold == 0.0F && status == OptionStatus::Available) {
 				return 50.0F;
+			}
+			// Tier 6.4: Hauling loose items to storage - priority 37
+			if (taskType == TaskType::Haul && status == OptionStatus::Available) {
+				return 37.0F;
 			}
 			// Tier 6.5: Crafting work - priority 40
 			if (taskType == TaskType::Craft && status == OptionStatus::Available) {

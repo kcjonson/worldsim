@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- BasicBox - Simple wooden box for storing raw materials
+     Craftable furniture that provides storage for loose resources.
+     When crafted, spawns as packaged item that player places via ghost preview.
+-->
+<AssetDefinitions>
+  <AssetDef>
+    <defName>BasicBox</defName>
+    <label>Basic Box</label>
+    <assetType>simple</assetType>
+    <svgPath>basic_box.svg</svgPath>
+    <worldHeight>0.6</worldHeight>
+
+    <rendering>
+      <complexity>simple</complexity>
+      <tier>batched</tier>
+    </rendering>
+
+    <!-- Item category: this is furniture -->
+    <category>Furniture</category>
+
+    <!-- Carrying: requires 2 hands (can't fit in backpack) -->
+    <handsRequired>2</handsRequired>
+
+    <!-- Entity capabilities -->
+    <capabilities>
+      <!-- Storage container for raw materials -->
+      <storage>
+        <acceptedCategories>
+          <category>RawMaterial</category>
+        </acceptedCategories>
+        <capacity>50</capacity>
+        <stackSize>999</stackSize>
+      </storage>
+    </capabilities>
+
+    <!-- No placement - only created via crafting -->
+
+    <variantCount>1</variantCount>
+  </AssetDef>
+</AssetDefinitions>

@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Basic Box - Simple wooden storage box -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 28">
+  <!-- Box body -->
+  <rect x="2" y="6" width="36" height="20" fill="#8b5a2b" rx="2"/>
+
+  <!-- Box lid (slightly raised) -->
+  <rect x="1" y="2" width="38" height="6" fill="#a0703c" rx="2"/>
+
+  <!-- Lid edges -->
+  <line x1="2" y1="8" x2="38" y2="8" stroke="#5c4a3a" stroke-width="1"/>
+
+  <!-- Wood plank lines on body -->
+  <line x1="14" y1="8" x2="14" y2="26" stroke="#6b4423" stroke-width="0.5"/>
+  <line x1="26" y1="8" x2="26" y2="26" stroke="#6b4423" stroke-width="0.5"/>
+
+  <!-- Metal clasp/handle -->
+  <rect x="17" y="4" width="6" height="2" fill="#555" rx="0.5"/>
+
+  <!-- Corner reinforcements -->
+  <rect x="2" y="6" width="3" height="20" fill="#6b4423"/>
+  <rect x="35" y="6" width="3" height="20" fill="#6b4423"/>
+</svg>

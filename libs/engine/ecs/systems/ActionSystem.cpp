@@ -53,8 +53,9 @@ namespace ecs {
 				continue;
 			}
 
-			// Only process actionable tasks (FulfillNeed, Gather, and Craft)
-			if (task.type != TaskType::FulfillNeed && task.type != TaskType::Gather && task.type != TaskType::Craft) {
+			// Only process actionable tasks (FulfillNeed, Gather, Craft, and Haul)
+			if (task.type != TaskType::FulfillNeed && task.type != TaskType::Gather && task.type != TaskType::Craft &&
+				task.type != TaskType::Haul) {
 				// For non-actionable tasks like Wander, just clear when arrived
 				task.clear();
 				task.timeSinceEvaluation = 0.0F;
@@ -122,6 +123,12 @@ namespace ecs {
 		// Handle Gather tasks - pickup or harvest materials for crafting
 		if (task.type == TaskType::Gather) {
 			startGatherAction(task, action, position, memory);
+			return;
+		}
+
+		// Handle Haul tasks - pickup from source, then deposit to storage
+		if (task.type == TaskType::Haul) {
+			startHaulAction(task, action, position, memory);
 			return;
 		}
 
@@ -421,10 +428,26 @@ namespace ecs {
 				}
 			}
 
-			// Add outputs to inventory
+			// Add outputs to inventory (or drop on ground if non-backpackable)
+			auto& assetRegistry = engine::assets::AssetRegistry::Get();
 			for (const auto& [itemName, count] : craftEff.outputs) {
-				uint32_t added = inventory.addItem(itemName, count);
-				LOG_INFO(Engine, "[Action] Crafted %u x %s", added, itemName.c_str());
+				const auto* itemDef = assetRegistry.getDefinition(itemName);
+				bool canBackpack = (itemDef == nullptr) || (itemDef->handsRequired < 2);
+
+				if (canBackpack) {
+					uint32_t added = inventory.addItem(itemName, count);
+					LOG_INFO(Engine, "[Action] Crafted %u x %s (added to inventory)", added, itemName.c_str());
+				} else {
+					// Non-backpackable item - drop on ground at crafting station
+					if (m_onDropItem) {
+						for (uint32_t i = 0; i < count; ++i) {
+							m_onDropItem(itemName, action.targetPosition.x, action.targetPosition.y);
+						}
+						LOG_INFO(Engine, "[Action] Crafted %u x %s (dropped on ground)", count, itemName.c_str());
+					} else {
+						LOG_WARNING(Engine, "[Action] Crafted non-backpackable item %s but no drop callback set", itemName.c_str());
+					}
+				}
 			}
 
 			// Fire notification callback for crafted item
@@ -457,6 +480,60 @@ namespace ecs {
 				// Reset progress for next item (or 0 if queue empty)
 				workQueue->progress = 0.0F;
 			}
+		}
+
+		// Handle deposit effects (put items into storage)
+		if (action.hasDepositEffect()) {
+			const auto& depEff = action.depositEffect();
+
+			// Remove item from colonist inventory
+			uint32_t removed = inventory.removeItem(depEff.itemDefName, depEff.quantity);
+			if (removed > 0) {
+				// Add to storage container's inventory
+				auto* storageInv = world->getComponent<Inventory>(static_cast<EntityID>(depEff.storageEntityId));
+				if (storageInv != nullptr) {
+					uint32_t added = storageInv->addItem(depEff.itemDefName, removed);
+					if (added < removed) {
+						// Storage full - put remaining back in colonist inventory
+						uint32_t leftover = removed - added;
+						inventory.addItem(depEff.itemDefName, leftover);
+						LOG_WARNING(Engine, "[Action] Storage full: deposited %u of %u x %s", added, removed, depEff.itemDefName.c_str());
+					} else {
+						LOG_INFO(
+							Engine,
+							"[Action] Deposited %u x %s into storage %llu",
+							added,
+							depEff.itemDefName.c_str(),
+							static_cast<unsigned long long>(depEff.storageEntityId)
+						);
+					}
+				} else {
+					// Storage entity not found - put items back
+					inventory.addItem(depEff.itemDefName, removed);
+					LOG_WARNING(
+						Engine,
+						"[Action] Storage entity %llu not found, items returned to inventory",
+						static_cast<unsigned long long>(depEff.storageEntityId)
+					);
+				}
+			} else {
+				LOG_WARNING(Engine, "[Action] Deposit failed: %s not in inventory", depEff.itemDefName.c_str());
+			}
+		}
+
+		// Special handling for Haul tasks - may need to continue to deposit phase
+		if (task.type == TaskType::Haul && action.type == ActionType::Pickup) {
+			// Phase 1 complete (Pickup) - move to phase 2 (Deposit)
+			task.targetPosition = task.haulTargetPosition;
+			task.state = TaskState::Pending;
+			action.clear();
+			LOG_DEBUG(
+				Engine,
+				"[Action] Haul phase 1 complete, moving to storage at (%.1f, %.1f)",
+				task.haulTargetPosition.x,
+				task.haulTargetPosition.y
+			);
+			return; // Don't clear the task, continue with phase 2
 		}
 
 		// Clear the action and task
@@ -574,6 +651,80 @@ namespace ecs {
 			task.gatherItemDefName.c_str()
 		);
 		action.clear();
+	}
+
+	void ActionSystem::startHaulAction(Task& task, Action& action, const Position& position, const Memory& memory) {
+		auto& registry = engine::assets::AssetRegistry::Get();
+
+		// Haul is a two-phase task:
+		// Phase 1: At source position → Pickup the item
+		// Phase 2: At storage position → Deposit the item
+		// We determine which phase by checking which position we're closer to
+
+		constexpr float kPositionTolerance = 0.5F;
+
+		glm::vec2 diffToSource = position.value - task.haulSourcePosition;
+		float	  distSqToSource = diffToSource.x * diffToSource.x + diffToSource.y * diffToSource.y;
+		bool	  atSource = distSqToSource <= kPositionTolerance * kPositionTolerance;
+
+		glm::vec2 diffToTarget = position.value - task.haulTargetPosition;
+		float	  distSqToTarget = diffToTarget.x * diffToTarget.x + diffToTarget.y * diffToTarget.y;
+		bool	  atTarget = distSqToTarget <= kPositionTolerance * kPositionTolerance;
+
+		if (atSource && !atTarget) {
+			// Phase 1: At source - do Pickup
+			// Look for a carryable entity at the source position matching the item we want to haul
+			for (const auto& [key, entity] : memory.knownWorldEntities) {
+				// Check if entity is at the source position
+				glm::vec2 diff = entity.position - task.haulSourcePosition;
+				float	  distSq = diff.x * diff.x + diff.y * diff.y;
+				if (distSq > kPositionTolerance * kPositionTolerance) {
+					continue;
+				}
+
+				const auto& defName = registry.getDefName(entity.defNameId);
+
+				// Check if this is the item we want to haul
+				if (defName != task.haulItemDefName) {
+					continue;
+				}
+
+				const auto* def = registry.getDefinition(defName);
+				if (def != nullptr && def->capabilities.carryable.has_value()) {
+					const auto& carryableCap = def->capabilities.carryable.value();
+					action = Action::Pickup(defName, carryableCap.quantity, entity.position, defName);
+					LOG_DEBUG(
+						Engine,
+						"[Action] Haul phase 1: Pickup %s at (%.1f, %.1f)",
+						defName.c_str(),
+						entity.position.x,
+						entity.position.y
+					);
+					return;
+				}
+			}
+
+			LOG_WARNING(
+				Engine,
+				"[Action] Haul failed: item %s not found at (%.1f, %.1f)",
+				task.haulItemDefName.c_str(),
+				task.haulSourcePosition.x,
+				task.haulSourcePosition.y
+			);
+			action.clear();
+		} else if (atTarget) {
+			// Phase 2: At storage target - do Deposit
+			action = Action::Deposit(task.haulItemDefName, 1, task.haulTargetStorageId, task.haulTargetPosition);
+			LOG_DEBUG(
+				Engine,
+				"[Action] Haul phase 2: Deposit %s into storage %llu",
+				task.haulItemDefName.c_str(),
+				static_cast<unsigned long long>(task.haulTargetStorageId)
+			);
+		} else {
+			LOG_WARNING(Engine, "[Action] Haul started but not at source or target position");
+			action.clear();
+		}
 	}
 
 } // namespace ecs

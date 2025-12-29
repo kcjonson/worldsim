@@ -67,8 +67,15 @@ struct IconSlot {
 	std::string label;		 // Entity name displayed below icon
 };
 
+/// Action button for entity actions
+/// Displays as a prominent button: [Place] or [Package]
+struct ActionButtonSlot {
+	std::string			  label;   // Button text (e.g., "Place", "Package")
+	std::function<void()> onClick; // Callback when button clicked
+};
+
 /// Union of all slot types - adapters return vectors of these
-using InfoSlot = std::variant<TextSlot, ProgressBarSlot, TextListSlot, SpacerSlot, ClickableTextSlot, RecipeSlot, IconSlot>;
+using InfoSlot = std::variant<TextSlot, ProgressBarSlot, TextListSlot, SpacerSlot, ClickableTextSlot, RecipeSlot, IconSlot, ActionButtonSlot>;
 
 /// Panel layout mode
 enum class PanelLayout {
@@ -101,6 +108,10 @@ struct PanelContent {
 
 	// Colonist-specific: callback for Details button
 	std::function<void()> onDetails;
+
+	// Furniture-specific: callbacks for Place/Package actions
+	std::function<void()> onPlace;	 // Called when [Place] button clicked (for packaged furniture)
+	std::function<void()> onPackage; // Called when [Package] button clicked (for placed furniture)
 };
 
 } // namespace world_sim

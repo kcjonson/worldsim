@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2025-12-28 (Colonist Details Dialog refactoring - PR #96)
+Last Updated: 2025-12-29 (Storage and Hauling System - Complete)
 
 ## Epic/Story/Task Template
 
@@ -380,42 +380,64 @@ while (running) {
 
 ## In Progress Epics
 
-### Main Game UI: Colonist Details Dialog
-**Spec/Documentation:** `/docs/design/main-game-ui-design.md` (Section 8), `.claude/plans/colonist-details-dialog.md`
+### ✅ Storage and Hauling System
+**Spec/Documentation:** `/docs/design/features/storage-system.md`, `.claude/plans/storage-and-hauling.md`
+**Dependencies:** ~~Main Game UI: Colonist Details Dialog~~ (complete)
+**Status:** complete
+
+**Goal:** Allow crafting furniture (shelves, boxes), automatic hauling of loose items to storage.
+
+**Completed Tasks (All Phases):**
+- [x] Phase 1+3: ItemCategory, StorageCapability, handsRequired parsing
+  - [x] ItemCategory enum (None, RawMaterial, Food, Tool, Furniture)
+  - [x] StorageCapability struct (acceptedCategories, maxCapacity, maxStackSize)
+  - [x] handsRequired field on AssetDefinition (1 or 2 hands)
+  - [x] XML parsing for category, handsRequired, storage capability
+- [x] Phase 2: Inventory hand slots
+  - [x] leftHand/rightHand optional ItemStack
+  - [x] Hand query methods (freeHandCount, hasHandsFree, isHolding)
+  - [x] Hand mutation methods (pickUp, putDown, stowToBackpack, takeFromBackpack)
+  - [x] Two-handed items can't fit in backpack (enforced by stowToBackpack)
+- [x] Phase 4: Packaged component + Place/Package UI
+  - [x] Packaged ECS component (marker for unplaced furniture)
+  - [x] FurnitureSelection type with isPackaged flag
+  - [x] ActionButtonSlot for [Place]/[Package] buttons
+  - [x] Selection adapter and UI rendering support
+- [x] Phase 5: Container assets & recipes
+  - [x] BasicShelf asset (Tool storage, 20 slots)
+  - [x] BasicBox asset (RawMaterial storage, 50 slots)
+  - [x] Placeholder SVGs for both
+  - [x] Recipes (10 Sticks + 5 PlantFiber for shelf, 8 Sticks + 3 PlantFiber for box)
+  - [x] Added category to Stick, SmallStone, PlantFiber (RawMaterial) and Berry (Food)
+- [x] Phase 6-7: Haul task/action + ground item spawning
+  - [x] TaskType::Haul in TaskType enum
+  - [x] ActionType::Deposit for storage deposits
+  - [x] Two-phase haul action (Pickup at source → Deposit at storage)
+  - [x] Haul task fields (haulItemDefName, haulSourcePosition, haulTargetStorageId, haulTargetPosition)
+  - [x] Storage containers get Inventory component when spawned
+- [x] Phase 8: AI haul evaluation
+  - [x] evaluateHaulTask in AIDecisionSystem::buildDecisionTrace
+  - [x] Priority Tier 6.4 (between crafting and gathering)
+  - [x] Find loose Carryable items and match to storage containers by ItemCategory
+  - [x] ECS view for storage containers with actual entity IDs
+
+---
+
+### ✅ Main Game UI: Colonist Details Dialog
+**Spec/Documentation:** `/docs/design/main-game-ui-design.md` (Section 8)
 **Dependencies:** ~~Main Game UI: Interaction Components~~ (complete), ~~Main Game UI: Primitives Foundation~~ (complete), ~~UI Architecture: ViewModel Pattern~~ (complete)
-**Status:** in progress (PR #96)
+**Status:** complete (merged PR #96)
 
 **Goal:** Full colonist information display with 5 tabs, live updates while game runs.
 
-**Tasks:**
-- [x] Dialog Structure
-  - [x] ColonistDetailsModel (extracts ECS data with change detection)
-  - [x] ColonistDetailsDialog shell with Dialog + TabBar
-  - [x] Wire to GameUI (showColonistDetails/hideColonistDetails)
-  - [x] onDetails callback from EntityInfoView [Details] button
-- [x] Bio Tab
-  - [x] Name, age placeholder, traits placeholder, background placeholder
-  - [x] Current mood with label
-  - [x] Current task display
-- [x] Health Tab
-  - [x] All 8 needs as ProgressBars (Hunger, Thirst, Energy, Bladder, Social, Comfort, Fun, Hygiene)
-  - [x] Mood summary
-- [x] Social Tab
-  - [x] Placeholder message (future implementation)
-- [x] Gear Tab
-  - [x] Inventory items from Inventory component
-  - [x] Item type → display name mapping
-- [x] Memory Tab
-  - [x] TreeView with collapsible categories (Food, Water, Resources, Threats, Colonists)
-  - [x] Entity counts per category
-  - [x] 3-level hierarchy (Category > Entity Type > Location)
-  - [x] Scrollable TreeView
-  - [x] Filter decorative entities (grass) from memory storage
-- [x] Refactoring
-  - [x] Split into tabs/ subfolder (BioTabView, HealthTabView, SocialTabView, GearTabView, MemoryTabView)
-  - [x] Move data structs to respective tab view headers
-  - [x] Create TabStyles.h for shared typography
-- [ ] PR Review & Merge
+**Completed Tasks:**
+- [x] Dialog Structure (ColonistDetailsModel, ColonistDetailsDialog, GameUI integration)
+- [x] Bio Tab (name, mood, current task)
+- [x] Health Tab (8 needs as ProgressBars, mood summary)
+- [x] Social Tab (placeholder)
+- [x] Gear Tab (inventory items)
+- [x] Memory Tab (TreeView with collapsible categories, scrollable)
+- [x] Refactoring (tabs/ subfolder, TabStyles.h)
 
 ---
 

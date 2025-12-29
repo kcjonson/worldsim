@@ -74,7 +74,6 @@ class PlacementMode {
 	std::string m_selectedDefName;
 	Foundation::Vec2 m_ghostPosition{0.0F, 0.0F};
 	bool m_isValidPlacement = true; // Always valid for now
-	bool m_skipNextPlacement = false; // Prevents same-frame placement after item selection
 
 	PlaceCallback m_onPlace;
 };
