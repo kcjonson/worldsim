@@ -12,6 +12,11 @@
 // Game continues running while dialog is open - data refreshes per-frame.
 
 #include "ColonistDetailsModel.h"
+#include "tabs/BioTabView.h"
+#include "tabs/GearTabView.h"
+#include "tabs/HealthTabView.h"
+#include "tabs/MemoryTabView.h"
+#include "tabs/SocialTabView.h"
 
 #include <component/Component.h>
 #include <components/dialog/Dialog.h>
@@ -88,30 +93,12 @@ class ColonistDetailsDialog : public UI::Component {
 	UI::LayerHandle dialogHandle;
 	UI::LayerHandle tabBarHandle;
 
-	// Tab content handles (one per tab)
-	UI::LayerHandle bioContentHandle;
-	UI::LayerHandle healthContentHandle;
-	UI::LayerHandle socialContentHandle;
-	UI::LayerHandle gearContentHandle;
-	UI::LayerHandle memoryContentHandle;
-
-	// Bio tab element handles (for updating)
-	UI::LayerHandle bioNameHandle;
-	UI::LayerHandle bioAgeHandle;
-	UI::LayerHandle bioTaskHandle;
-	UI::LayerHandle bioMoodHandle;
-
-	// Health tab element handles
-	UI::LayerHandle healthMoodHandle;
-	std::array<UI::LayerHandle, 8> needBarHandles;
-
-	// Gear tab element handles
-	UI::LayerHandle gearHeaderHandle;
-	UI::LayerHandle gearItemsHandle;
-
-	// Memory tab element handles
-	UI::LayerHandle memoryHeaderHandle;
-	UI::LayerHandle memoryTreeHandle;
+	// Tab views
+	UI::LayerHandle bioTabHandle;
+	UI::LayerHandle healthTabHandle;
+	UI::LayerHandle socialTabHandle;
+	UI::LayerHandle gearTabHandle;
+	UI::LayerHandle memoryTabHandle;
 
 	// Internal methods
 	void createDialog();
@@ -119,13 +106,6 @@ class ColonistDetailsDialog : public UI::Component {
 	void createTabContent();
 	void switchToTab(const std::string& tabId);
 	void updateTabContent();
-
-	// Update individual tab content from model
-	void updateBioTab();
-	void updateHealthTab();
-	void updateSocialTab();
-	void updateGearTab();
-	void updateMemoryTab();
 };
 
 } // namespace world_sim
