@@ -1,6 +1,6 @@
 #pragma once
 
-#include <component/Component.h>
+#include <component/Container.h>
 #include <graphics/Rect.h>
 #include <layer/Layer.h>
 
@@ -28,7 +28,7 @@ struct HealthData {
 /// Two-column layout:
 /// - Left: Mood + Need bars + Mood modifiers
 /// - Right: Body parts & ailments
-class HealthTabView : public UI::Component {
+class HealthTabView : public UI::Container {
   public:
 	/// Create the tab view with content bounds from parent dialog
 	void create(const Foundation::Rect& contentBounds);

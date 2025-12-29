@@ -1,6 +1,6 @@
 #pragma once
 
-#include <component/Component.h>
+#include <component/Container.h>
 #include <graphics/Rect.h>
 #include <layer/Layer.h>
 
@@ -31,7 +31,7 @@ struct MemoryData {
 
 /// Memory tab content for ColonistDetailsDialog
 /// Shows: Known entities grouped by category in a scrollable TreeView
-class MemoryTabView : public UI::Component {
+class MemoryTabView : public UI::Container {
   public:
 	/// Create the tab view with content bounds from parent dialog
 	void create(const Foundation::Rect& contentBounds);

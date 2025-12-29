@@ -1,6 +1,6 @@
 #pragma once
 
-#include <component/Component.h>
+#include <component/Container.h>
 #include <ecs/components/Inventory.h>
 #include <graphics/Rect.h>
 #include <layer/Layer.h>
@@ -18,7 +18,7 @@ struct GearData {
 
 /// Gear tab content for ColonistDetailsDialog
 /// Shows: Attire slots, inventory items
-class GearTabView : public UI::Component {
+class GearTabView : public UI::Container {
   public:
 	/// Create the tab view with content bounds from parent dialog
 	void create(const Foundation::Rect& contentBounds);

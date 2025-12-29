@@ -1,6 +1,6 @@
 #pragma once
 
-#include <component/Component.h>
+#include <component/Container.h>
 #include <graphics/Rect.h>
 #include <layer/Layer.h>
 
@@ -15,7 +15,7 @@ struct SocialData {
 
 /// Social tab content for ColonistDetailsDialog
 /// Placeholder for future relationship tracking
-class SocialTabView : public UI::Component {
+class SocialTabView : public UI::Container {
   public:
 	/// Create the tab view with content bounds from parent dialog
 	void create(const Foundation::Rect& contentBounds);
