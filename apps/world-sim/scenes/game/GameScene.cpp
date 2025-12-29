@@ -49,6 +49,7 @@
 #include <ecs/components/Memory.h>
 #include <ecs/components/Movement.h>
 #include <ecs/components/Needs.h>
+#include <ecs/components/Packaged.h>
 #include <ecs/components/Task.h>
 #include <ecs/components/Transform.h>
 #include <ecs/components/WorkQueue.h>
@@ -129,10 +130,25 @@ namespace {
 			m_asyncProcessor =
 				std::make_unique<engine::assets::AsyncChunkProcessor>(*m_placementExecutor, kDefaultWorldSeed, m_processedChunks);
 
-			// Initialize placement mode with callback to spawn entities
-			placementMode = world_sim::PlacementMode{world_sim::PlacementMode::Args{
-				.onPlace = [this](const std::string& defName, Foundation::Vec2 worldPos) { spawnPlacedEntity(defName, worldPos); }
-			}};
+			// Initialize placement mode with callback to spawn/relocate entities
+			placementMode = world_sim::PlacementMode{
+				world_sim::PlacementMode::Args{.onPlace = [this](const std::string& defName, Foundation::Vec2 worldPos) {
+					if (m_relocatingEntityId != ecs::EntityID{0}) {
+						// Relocating existing furniture - move it and remove Packaged component
+						if (auto* pos = ecsWorld->getComponent<ecs::Position>(m_relocatingEntityId)) {
+							pos->value = {worldPos.x, worldPos.y};
+							ecsWorld->removeComponent<ecs::Packaged>(m_relocatingEntityId);
+							LOG_INFO(Game, "Placed furniture at (%.1f, %.1f)", worldPos.x, worldPos.y);
+						}
+						// Clear selection after placing
+						selection = world_sim::NoSelection{};
+						m_relocatingEntityId = ecs::EntityID{0};
+					} else {
+						// Spawning new entity
+						spawnPlacedEntity(defName, worldPos);
+					}
+				}}
+			};
 
 			// Create unified game UI (contains overlay and info panel)
 			gameUI = std::make_unique<world_sim::GameUI>(world_sim::GameUI::Args{
@@ -150,7 +166,9 @@ namespace {
 					},
 				.onBuildToggle = [this]() { handleBuildToggle(); },
 				.onBuildItemSelected = [this](const std::string& defName) { handleBuildItemSelected(defName); },
+				.onProductionSelected = [this](const std::string& defName) { handleBuildItemSelected(defName); },
 				.onQueueRecipe = [this](const std::string& recipeDefName) { handleQueueRecipe(recipeDefName); },
+				.onPlaceFurniture = [this]() { handlePlaceFurniture(); },
 				.onPause =
 					[this]() {
 						auto& timeSystem = ecsWorld->getSystem<ecs::TimeSystem>();
@@ -163,6 +181,21 @@ namespace {
 					},
 				.onMenuClick = [this]() { sceneManager->switchTo(world_sim::toKey(world_sim::SceneType::MainMenu)); }
 			});
+
+			// Populate Production dropdown with placeable stations (recipes where station="none")
+			{
+				auto& recipeRegistry = engine::assets::RecipeRegistry::Get();
+				auto  innateRecipes = recipeRegistry.getInnateRecipes();
+
+				std::vector<std::pair<std::string, std::string>> productionItems;
+				for (const auto* recipe : innateRecipes) {
+					// Only include recipes that don't require a station (directly placeable)
+					if (recipe->isStationless() && !recipe->outputs.empty()) {
+						productionItems.emplace_back(recipe->outputs[0].defName, recipe->label);
+					}
+				}
+				gameUI->setProductionItems(productionItems);
+			}
 
 			// Initial layout pass with consistent DPI scaling
 			int viewportW = 0;
@@ -440,6 +473,16 @@ namespace {
 				LOG_INFO(Game, "Item crafted notification: %s", itemLabel.c_str());
 			});
 
+			// Wire up ActionSystem to drop non-backpackable items on the ground as packaged
+			// Offset from crafting station so items don't stack on top (2x typical station size)
+			constexpr float kDropOffset = 2.0F;
+			actionSystem.setDropItemCallback([this](const std::string& defName, float x, float y) {
+				auto entity = spawnPlacedEntity(defName, {x + kDropOffset, y});
+				// Mark as packaged - player needs to place it via ghost preview
+				ecsWorld->addComponent<ecs::Packaged>(entity, ecs::Packaged{});
+				LOG_INFO(Game, "Spawned packaged '%s' - awaiting placement", defName.c_str());
+			});
+
 			// Spawn initial colonist at map center (0, 0)
 			spawnColonist({0.0F, 0.0F}, "Bob");
 
@@ -511,7 +554,7 @@ namespace {
 		/// @param viewportWidth Logical viewport width in pixels
 		/// @param viewportHeight Logical viewport height in pixels
 		void renderSelectionIndicator(int viewportWidth, int viewportHeight) {
-			// Get world position from selection (colonists and stations have ECS positions)
+			// Get world position from selection (colonists, stations, and furniture have ECS positions)
 			glm::vec2 worldPos{0.0F, 0.0F};
 			bool	  hasPosition = false;
 
@@ -522,6 +565,11 @@ namespace {
 				}
 			} else if (auto* stationSel = std::get_if<world_sim::CraftingStationSelection>(&selection)) {
 				if (auto* pos = ecsWorld->getComponent<ecs::Position>(stationSel->entityId)) {
+					worldPos = pos->value;
+					hasPosition = true;
+				}
+			} else if (auto* furnitureSel = std::get_if<world_sim::FurnitureSelection>(&selection)) {
+				if (auto* pos = ecsWorld->getComponent<ecs::Position>(furnitureSel->entityId)) {
 					worldPos = pos->value;
 					hasPosition = true;
 				}
@@ -625,6 +673,50 @@ namespace {
 				return;
 			}
 
+			// Priority 1.6: Check ECS storage containers (entities with Inventory but no WorkQueue)
+			float		  closestStorageDist = kSelectionRadius;
+			ecs::EntityID closestStorage = 0;
+
+			for (auto [entity, pos, appearance, inventory] : ecsWorld->view<ecs::Position, ecs::Appearance, ecs::Inventory>()) {
+				// Skip entities that also have WorkQueue (those are crafting stations)
+				if (ecsWorld->getComponent<ecs::WorkQueue>(entity) != nullptr) {
+					continue;
+				}
+				// Skip colonists (they have Inventory for carrying items)
+				if (ecsWorld->getComponent<ecs::Colonist>(entity) != nullptr) {
+					continue;
+				}
+
+				float dx = pos.value.x - worldPos.x;
+				float dy = pos.value.y - worldPos.y;
+				float dist = std::sqrt(dx * dx + dy * dy);
+
+				if (dist < closestStorageDist) {
+					closestStorageDist = dist;
+					closestStorage = entity;
+				}
+			}
+
+			if (closestStorage != 0) {
+				auto* pos = ecsWorld->getComponent<ecs::Position>(closestStorage);
+				auto* appearance = ecsWorld->getComponent<ecs::Appearance>(closestStorage);
+				if (pos != nullptr && appearance != nullptr) {
+					bool isPackaged = ecsWorld->getComponent<ecs::Packaged>(closestStorage) != nullptr;
+					selection = world_sim::FurnitureSelection{
+						closestStorage, appearance->defName, Foundation::Vec2{pos->value.x, pos->value.y}, isPackaged
+					};
+					LOG_INFO(
+						Game,
+						"Selected storage: %s at (%.1f, %.1f)%s",
+						appearance->defName.c_str(),
+						pos->value.x,
+						pos->value.y,
+						isPackaged ? " (packaged)" : ""
+					);
+				}
+				return;
+			}
+
 			// Priority 2: Check world entities (static placed assets)
 			auto&						   assetRegistry = engine::assets::AssetRegistry::Get();
 			engine::world::ChunkCoordinate chunkCoord = engine::world::worldToChunk(engine::world::WorldPosition{worldPos.x, worldPos.y});
@@ -716,6 +808,26 @@ namespace {
 			LOG_INFO(Game, "Selected '%s' for placement", defName.c_str());
 		}
 
+		/// Handle furniture placement request from info panel.
+		/// Enters placement mode to relocate the selected packaged furniture.
+		void handlePlaceFurniture() {
+			// Get currently selected furniture
+			auto* furnitureSel = std::get_if<world_sim::FurnitureSelection>(&selection);
+			if (furnitureSel == nullptr || !furnitureSel->isPackaged) {
+				LOG_WARNING(Game, "Cannot place furniture: no packaged furniture selected");
+				return;
+			}
+
+			// Store the entity ID we're relocating
+			m_relocatingEntityId = furnitureSel->entityId;
+
+			// Enter placement mode with the furniture's def name
+			placementMode.selectItem(furnitureSel->defName);
+			LOG_INFO(
+				Game, "Placing furniture '%s' (entity %u)", furnitureSel->defName.c_str(), static_cast<uint32_t>(furnitureSel->entityId)
+			);
+		}
+
 		/// Handle recipe queue request from crafting station UI.
 		/// Adds a crafting job to the selected station's WorkQueue.
 		void handleQueueRecipe(const std::string& recipeDefName) {
@@ -740,7 +852,8 @@ namespace {
 
 		/// Spawn a placed entity in the world.
 		/// Called when placement mode successfully places an item.
-		void spawnPlacedEntity(const std::string& defName, Foundation::Vec2 worldPos) {
+		/// Returns the entity ID so callers can add additional components.
+		ecs::EntityID spawnPlacedEntity(const std::string& defName, Foundation::Vec2 worldPos) {
 			// Create ECS entity with components needed for rendering:
 			// - Position: world location
 			// - Rotation: required by DynamicEntityRenderSystem
@@ -758,9 +871,26 @@ namespace {
 			if (assetDef != nullptr && assetDef->capabilities.craftable.has_value()) {
 				ecsWorld->addComponent<ecs::WorkQueue>(entity, ecs::WorkQueue{});
 				LOG_INFO(Game, "Spawned station '%s' at (%.1f, %.1f) with WorkQueue", defName.c_str(), worldPos.x, worldPos.y);
+			} else if (assetDef != nullptr && assetDef->capabilities.storage.has_value()) {
+				// Storage container - add Inventory configured from StorageCapability
+				const auto&	   storageCap = assetDef->capabilities.storage.value();
+				ecs::Inventory inventory{};
+				inventory.maxCapacity = storageCap.maxCapacity;
+				inventory.maxStackSize = storageCap.maxStackSize;
+				ecsWorld->addComponent<ecs::Inventory>(entity, inventory);
+				LOG_INFO(
+					Game,
+					"Spawned storage '%s' at (%.1f, %.1f) with Inventory (capacity=%u)",
+					defName.c_str(),
+					worldPos.x,
+					worldPos.y,
+					storageCap.maxCapacity
+				);
 			} else {
 				LOG_INFO(Game, "Spawned '%s' at (%.1f, %.1f)", defName.c_str(), worldPos.x, worldPos.y);
 			}
+
+			return entity;
 		}
 
 		std::unique_ptr<engine::world::ChunkManager>	   m_chunkManager;
@@ -786,6 +916,9 @@ namespace {
 
 		// Current selection for info panel (NoSelection = panel hidden)
 		world_sim::Selection selection = world_sim::NoSelection{};
+
+		// Furniture entity being relocated (0 = spawning new entity, non-zero = relocating existing)
+		ecs::EntityID m_relocatingEntityId{0};
 
 		// Placement mode state machine
 		world_sim::PlacementMode placementMode;

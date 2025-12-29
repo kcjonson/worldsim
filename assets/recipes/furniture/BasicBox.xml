@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- BasicBox Recipe - Craft a simple wooden box for material storage -->
+<RecipeDef>
+    <defName>Recipe_BasicBox</defName>
+    <label>Basic Box</label>
+    <description>A simple wooden box for storing raw materials. Keeps your resources tidy and organized.</description>
+
+    <!-- Required materials -->
+    <inputs>
+        <input thing="Stick" count="8"/>
+        <input thing="PlantFiber" count="3"/>
+    </inputs>
+
+    <!-- Requires a crafting station -->
+    <station>CraftingSpot</station>
+
+    <outputs>
+        <output thing="BasicBox" count="1"/>
+    </outputs>
+
+    <!-- Takes some time to build -->
+    <workAmount>90</workAmount>
+
+    <!-- All colonists know this from start -->
+    <innate>true</innate>
+</RecipeDef>

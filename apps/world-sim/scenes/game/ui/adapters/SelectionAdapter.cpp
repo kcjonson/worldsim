@@ -69,6 +69,8 @@ namespace {
 				return "Gathering";
 			case ecs::TaskType::Craft:
 				return "Crafting";
+			case ecs::TaskType::Haul:
+				return "Hauling";
 			case ecs::TaskType::Wander:
 				return "Wandering";
 		}
@@ -114,6 +116,12 @@ std::optional<PanelContent> adaptSelection(
 				content.slots.push_back(TextSlot{"Type", "Crafting Station"});
 				content.slots.push_back(TextSlot{"Status", "Ready"});
 				return content;
+			} else if constexpr (std::is_same_v<T, FurnitureSelection>) {
+				// Validate entity still exists
+				if (!world.isAlive(sel.entityId)) {
+					return std::nullopt;
+				}
+				return adaptFurniture(registry, sel);
 			}
 		},
 		selection
@@ -123,7 +131,7 @@ std::optional<PanelContent> adaptSelection(
 PanelContent adaptColonistStatus(
 	const ecs::World& world,
 	ecs::EntityID entityId,
-	std::function<void()> onDetails
+	const std::function<void()>& onDetails
 ) {
 	PanelContent content;
 	content.layout = PanelLayout::TwoColumn;
@@ -236,6 +244,56 @@ PanelContent adaptWorldEntity(
 
 	// LEFT/RIGHT COLUMNS: Empty for now (same height as colonist, just unused space)
 	// Will be populated with entity-specific info in future updates
+
+	return content;
+}
+
+PanelContent adaptFurniture(
+	const engine::assets::AssetRegistry& registry,
+	const FurnitureSelection& selection,
+	const std::function<void()>& onPlace,
+	const std::function<void()>& onPackage
+) {
+	PanelContent content;
+	content.layout = PanelLayout::SingleColumn;
+	content.title = selection.defName;
+
+	// Store callbacks for UI
+	content.onPlace = onPlace;
+	content.onPackage = onPackage;
+
+	// Look up asset definition for properties
+	const auto* def = registry.getDefinition(selection.defName);
+
+	// Show type info
+	if (selection.isPackaged) {
+		content.slots.push_back(TextSlot{"Status", "Packaged (ready to place)"});
+	} else {
+		content.slots.push_back(TextSlot{"Status", "Placed"});
+	}
+
+	// Show storage info if it's a storage container
+	if (def != nullptr && def->capabilities.storage.has_value()) {
+		const auto& storage = def->capabilities.storage.value();
+		std::ostringstream oss;
+		oss << storage.maxCapacity << " slots";
+		content.slots.push_back(TextSlot{"Capacity", oss.str()});
+	}
+
+	// Add action button based on state
+	if (selection.isPackaged) {
+		content.slots.push_back(SpacerSlot{.height = 8.0F});
+		content.slots.push_back(ActionButtonSlot{
+			.label = "Place",
+			.onClick = onPlace,
+		});
+	} else {
+		content.slots.push_back(SpacerSlot{.height = 8.0F});
+		content.slots.push_back(ActionButtonSlot{
+			.label = "Package",
+			.onClick = onPackage,
+		});
+	}
 
 	return content;
 }

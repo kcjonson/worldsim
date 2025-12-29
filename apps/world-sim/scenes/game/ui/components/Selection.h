@@ -36,8 +36,17 @@ struct CraftingStationSelection {
 	Foundation::Vec2 position; // World position
 };
 
+/// A furniture item (shelf, box, etc.) is selected
+/// Furniture can be packaged (needs placement) or placed (can be re-packaged)
+struct FurnitureSelection {
+	ecs::EntityID	 entityId;	  // ECS entity ID
+	std::string		 defName;	  // Asset definition name (e.g., "BasicShelf")
+	Foundation::Vec2 position;	  // World position
+	bool			 isPackaged;  // True if has Packaged component
+};
+
 /// Selection variant - represents current selection state
-using Selection = std::variant<NoSelection, ColonistSelection, WorldEntitySelection, CraftingStationSelection>;
+using Selection = std::variant<NoSelection, ColonistSelection, WorldEntitySelection, CraftingStationSelection, FurnitureSelection>;
 
 /// Helper to check if selection is empty
 [[nodiscard]] inline bool hasSelection(const Selection& sel) {

@@ -16,6 +16,9 @@
       <tier>instanced</tier>
     </rendering>
 
+    <!-- Item category: food -->
+    <category>Food</category>
+
     <!-- Item properties (when in inventory) -->
     <item>
       <stackSize>20</stackSize>

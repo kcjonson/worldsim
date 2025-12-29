@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- BasicShelf - Simple wooden shelf for storing tools and equipment
+     Craftable furniture that provides organized storage for tools.
+     When crafted, spawns as packaged item that player places via ghost preview.
+-->
+<AssetDefinitions>
+  <AssetDef>
+    <defName>BasicShelf</defName>
+    <label>Basic Shelf</label>
+    <assetType>simple</assetType>
+    <svgPath>basic_shelf.svg</svgPath>
+    <worldHeight>1.5</worldHeight>
+
+    <rendering>
+      <complexity>simple</complexity>
+      <tier>batched</tier>
+    </rendering>
+
+    <!-- Item category: this is furniture -->
+    <category>Furniture</category>
+
+    <!-- Carrying: requires 2 hands (can't fit in backpack) -->
+    <handsRequired>2</handsRequired>
+
+    <!-- Entity capabilities -->
+    <capabilities>
+      <!-- Storage container for tools -->
+      <storage>
+        <acceptedCategories>
+          <category>Tool</category>
+        </acceptedCategories>
+        <capacity>20</capacity>
+        <stackSize>99</stackSize>
+      </storage>
+    </capabilities>
+
+    <!-- No placement - only created via crafting -->
+
+    <variantCount>1</variantCount>
+  </AssetDef>
+</AssetDefinitions>

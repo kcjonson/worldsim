@@ -31,7 +31,24 @@ namespace engine::assets {
 		Waste,		// Entity is waste (bio pile) - used for clustering toilet locations
 		Carryable,	// Entity can be picked up directly (ground items like stones)
 		Harvestable, // Entity can be harvested for items (bushes, plants)
-		Craftable	// Entity is a crafting station where items can be made
+		Craftable,	// Entity is a crafting station where items can be made
+		Storage		// Entity is a storage container that holds items
+	};
+
+	// ─────────────────────────────────────────────────────────────────────────
+	// Item Category System
+	// Categories define what TYPE of thing an entity is (for storage matching
+	// and UI grouping). Different from capabilities which define ACTIONS.
+	// ─────────────────────────────────────────────────────────────────────────
+
+	/// Item category - what type of thing this is
+	enum class ItemCategory : uint8_t {
+		None = 0,
+		RawMaterial, // Sticks, stones, plant fiber
+		Food,		 // Berries, meals
+		Tool,		 // Axes, hammers, weapons
+		Furniture,	 // Shelves, boxes, crafting stations
+		Count
 	};
 
 	/// Quality level for capabilities (affects mood, health effects)
@@ -95,6 +112,14 @@ namespace engine::assets {
 		// Future: could include speed modifiers, quality bonuses, etc.
 	};
 
+	/// Storage capability - entity is a storage container
+	/// Used for shelves, boxes, stockpiles that hold items
+	struct StorageCapability {
+		std::vector<ItemCategory> acceptedCategories; // Empty = accepts all categories
+		uint32_t				  maxCapacity = 50;	  // Max distinct item types
+		uint32_t				  maxStackSize = 999; // Max quantity per stack
+	};
+
 	// ─────────────────────────────────────────────────────────────────────────
 	// Item Properties (for entities that can exist in inventory)
 	// Unified model: entities can be "in world" or "in inventory"
@@ -132,11 +157,12 @@ namespace engine::assets {
 		std::optional<CarryableCapability>	 carryable;
 		std::optional<HarvestableCapability> harvestable;
 		std::optional<CraftableCapability>	 craftable;
+		std::optional<StorageCapability>	 storage;
 
 		/// Check if entity has any capabilities
 		[[nodiscard]] bool hasAny() const {
 			return edible.has_value() || drinkable.has_value() || sleepable.has_value() || toilet.has_value() || waste.has_value() ||
-				   carryable.has_value() || harvestable.has_value() || craftable.has_value();
+				   carryable.has_value() || harvestable.has_value() || craftable.has_value() || storage.has_value();
 		}
 
 		/// Check if entity has a specific capability type
@@ -158,6 +184,8 @@ namespace engine::assets {
 					return harvestable.has_value();
 				case CapabilityType::Craftable:
 					return craftable.has_value();
+				case CapabilityType::Storage:
+					return storage.has_value();
 			}
 			return false;
 		}
@@ -304,6 +332,10 @@ namespace engine::assets {
 		AssetComplexity					  complexity = AssetComplexity::Simple;
 		RenderingTier					  renderingTier = RenderingTier::Instanced;
 		uint32_t						  variantCount = 1; // Number of variants to pre-generate
+
+		// Item category and carrying
+		ItemCategory category = ItemCategory::None; // What type of item (for storage matching, UI grouping)
+		uint8_t		 handsRequired = 1;				// Hands needed to carry (1 or 2). 2-hand items can't fit in backpack.
 
 		/// Check if this entity can exist in inventory
 		[[nodiscard]] bool isCarryable() const { return itemProperties.has_value(); }

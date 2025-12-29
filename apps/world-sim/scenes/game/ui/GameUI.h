@@ -57,10 +57,12 @@ class GameUI {
 		std::function<void(ecs::EntityID)> onColonistFollowed;		 ///< Called on double-click to follow
 		std::function<void()> onBuildToggle;							 ///< Called when build button clicked
 		std::function<void(const std::string&)> onBuildItemSelected; ///< Called when item selected from build menu
+		std::function<void(const std::string&)> onProductionSelected; ///< Called when production item selected (e.g., CraftingSpot)
 		QueueRecipeCallback onQueueRecipe;								 ///< Called when recipe queued at station
 		std::function<void()> onPause;									 ///< Called when pause button clicked
 		std::function<void(ecs::GameSpeed)> onSpeedChange;			 ///< Called when speed changed
 		std::function<void()> onMenuClick;								 ///< Called when menu button clicked
+		std::function<void()> onPlaceFurniture;						 ///< Called when Place button clicked for packaged furniture
 	};
 
 	explicit GameUI(const Args& args);
@@ -112,6 +114,10 @@ class GameUI {
 
 	/// Check if build menu is visible
 	[[nodiscard]] bool isBuildMenuVisible() const;
+
+	/// Set the production station items in the Production dropdown
+	/// @param items Vector of {defName, label} pairs for placeable production stations
+	void setProductionItems(const std::vector<std::pair<std::string, std::string>>& items);
 
 	// --- Colonist Details Dialog API ---
 

@@ -491,6 +491,25 @@ namespace engine::assets {
 			// Variant count
 			def.variantCount = static_cast<uint32_t>(defNode.child("variantCount").text().as_uint(1));
 
+			// Item category (for storage matching and UI grouping)
+			std::string categoryStr = defNode.child_value("category");
+			if (!categoryStr.empty()) {
+				if (categoryStr == "RawMaterial") {
+					def.category = ItemCategory::RawMaterial;
+				} else if (categoryStr == "Food") {
+					def.category = ItemCategory::Food;
+				} else if (categoryStr == "Tool") {
+					def.category = ItemCategory::Tool;
+				} else if (categoryStr == "Furniture") {
+					def.category = ItemCategory::Furniture;
+				} else {
+					LOG_WARNING(Engine, "Unknown item category '%s' in %s", categoryStr.c_str(), def.defName.c_str());
+				}
+			}
+
+			// Hands required to carry (default 1, use 2 for large items like furniture)
+			def.handsRequired = static_cast<uint8_t>(defNode.child("handsRequired").text().as_uint(1));
+
 			// Item properties (for entities that can be carried/stored)
 			pugi::xml_node itemNode = defNode.child("item");
 			if (itemNode) {
@@ -602,6 +621,34 @@ namespace engine::assets {
 				pugi::xml_node craftableNode = capabilitiesNode.child("craftable");
 				if (craftableNode) {
 					def.capabilities.craftable = CraftableCapability{};
+				}
+
+				// Storage capability (containers)
+				pugi::xml_node storageNode = capabilitiesNode.child("storage");
+				if (storageNode) {
+					StorageCapability storage;
+					storage.maxCapacity = storageNode.child("capacity").text().as_uint(50);
+					storage.maxStackSize = storageNode.child("stackSize").text().as_uint(999);
+
+					// Parse accepted categories
+					pugi::xml_node acceptsNode = storageNode.child("acceptsCategories");
+					if (acceptsNode) {
+						for (pugi::xml_node catNode : acceptsNode.children("category")) {
+							std::string catName = catNode.text().as_string();
+							if (catName == "RawMaterial") {
+								storage.acceptedCategories.push_back(ItemCategory::RawMaterial);
+							} else if (catName == "Food") {
+								storage.acceptedCategories.push_back(ItemCategory::Food);
+							} else if (catName == "Tool") {
+								storage.acceptedCategories.push_back(ItemCategory::Tool);
+							} else if (catName == "Furniture") {
+								storage.acceptedCategories.push_back(ItemCategory::Furniture);
+							} else if (!catName.empty()) {
+								LOG_WARNING(Engine, "Unknown storage category '%s' in %s", catName.c_str(), def.defName.c_str());
+							}
+						}
+					}
+					def.capabilities.storage = storage;
 				}
 			}
 
@@ -981,6 +1028,9 @@ namespace engine::assets {
 			}
 			if (def.capabilities.craftable.has_value()) {
 				mask |= (1 << static_cast<uint8_t>(CapabilityType::Craftable));
+			}
+			if (def.capabilities.storage.has_value()) {
+				mask |= (1 << static_cast<uint8_t>(CapabilityType::Storage));
 			}
 			m_capabilityMasks.push_back(mask);
 

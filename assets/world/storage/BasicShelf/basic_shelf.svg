@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Basic Shelf - Simple wooden storage shelf -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 64">
+  <!-- Back panel -->
+  <rect x="4" y="4" width="40" height="56" fill="#6b4423" rx="2"/>
+
+  <!-- Shelves (3 horizontal planks) -->
+  <rect x="2" y="12" width="44" height="4" fill="#8b5a2b" rx="1"/>
+  <rect x="2" y="32" width="44" height="4" fill="#8b5a2b" rx="1"/>
+  <rect x="2" y="52" width="44" height="4" fill="#8b5a2b" rx="1"/>
+
+  <!-- Side supports -->
+  <rect x="2" y="8" width="4" height="52" fill="#5c4a3a"/>
+  <rect x="42" y="8" width="4" height="52" fill="#5c4a3a"/>
+
+  <!-- Wood grain details on shelves -->
+  <line x1="8" y1="14" x2="24" y2="14" stroke="#6b4423" stroke-width="0.5"/>
+  <line x1="28" y1="14" x2="40" y2="14" stroke="#6b4423" stroke-width="0.5"/>
+  <line x1="10" y1="34" x2="20" y2="34" stroke="#6b4423" stroke-width="0.5"/>
+  <line x1="26" y1="34" x2="38" y2="34" stroke="#6b4423" stroke-width="0.5"/>
+</svg>

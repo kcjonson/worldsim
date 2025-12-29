@@ -1,6 +1,7 @@
 #include "GameplayBar.h"
 
 #include <theme/Theme.h>
+#include <utils/Log.h>
 
 namespace world_sim {
 
@@ -51,7 +52,8 @@ GameplayBar::GameplayBar(const Args& args)
 		.id = "actions_dropdown",
 		.openUpward = true}));
 
-	// Create Build dropdown
+	// Create Build dropdown - shows directly placeable structures (walls, floors, etc.)
+	// Currently empty as we don't have those yet
 	buildDropdownHandle = addChild(UI::DropdownButton(UI::DropdownButton::Args{
 		.label = "Build",
 		.position = {0.0F, 0.0F},
@@ -59,32 +61,20 @@ GameplayBar::GameplayBar(const Args& args)
 		.items =
 			{
 				UI::DropdownItem{
-					.label = "Structures...",
-					.onSelect = [this]() {
-						if (onBuildClick) onBuildClick();
-					}},
+					.label = "(Coming Soon)",
+					.enabled = false,
+					.onSelect = []() {}},
 			},
 		.id = "build_dropdown",
 		.openUpward = true}));
 
-	// Create Production dropdown (stub items for now)
+	// Create Production dropdown - production stations that can be placed
+	// Items are populated dynamically via setProductionItems()
 	productionDropdownHandle = addChild(UI::DropdownButton(UI::DropdownButton::Args{
 		.label = "Production",
 		.position = {0.0F, 0.0F},
 		.buttonSize = {kButtonWidth, kButtonHeight},
-		.items =
-			{
-				UI::DropdownItem{
-					.label = "Crafting",
-					.onSelect = [this]() {
-						if (onProductionSelected) onProductionSelected("crafting");
-					}},
-				UI::DropdownItem{
-					.label = "Cooking",
-					.onSelect = [this]() {
-						if (onProductionSelected) onProductionSelected("cooking");
-					}},
-			},
+		.items = {}, // Populated dynamically
 		.id = "production_dropdown",
 		.openUpward = true}));
 
@@ -174,6 +164,33 @@ void GameplayBar::closeAllDropdowns() {
 	if (auto* dropdown = getChild<UI::DropdownButton>(furnitureDropdownHandle)) {
 		dropdown->closeMenu();
 	}
+}
+
+void GameplayBar::setProductionItems(const std::vector<std::pair<std::string, std::string>>& items) {
+	auto* dropdown = getChild<UI::DropdownButton>(productionDropdownHandle);
+	if (dropdown == nullptr) {
+		LOG_WARNING(Game, "[GameplayBar] Production dropdown not found");
+		return;
+	}
+
+	LOG_INFO(Game, "[GameplayBar] Setting %zu production items", items.size());
+
+	std::vector<UI::DropdownItem> dropdownItems;
+	for (const auto& [defName, label] : items) {
+		LOG_INFO(Game, "[GameplayBar] Adding production item: %s (%s)", label.c_str(), defName.c_str());
+		dropdownItems.push_back(UI::DropdownItem{
+			.label = label,
+			.onSelect = [this, defName]() {
+				LOG_INFO(Game, "[GameplayBar] Production item selected: %s", defName.c_str());
+				if (onProductionSelected) {
+					onProductionSelected(defName);
+				} else {
+					LOG_WARNING(Game, "[GameplayBar] onProductionSelected callback is null!");
+				}
+			}});
+	}
+
+	dropdown->setItems(std::move(dropdownItems));
 }
 
 // render() inherited from Component - automatically renders all children

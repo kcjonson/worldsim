@@ -35,7 +35,10 @@ namespace world_sim {
 		});
 
 		// Create gameplay bar (replaces build toolbar)
-		gameplayBar = std::make_unique<GameplayBar>(GameplayBar::Args{.onBuildClick = args.onBuildToggle, .id = "gameplay_bar"});
+		gameplayBar = std::make_unique<GameplayBar>(GameplayBar::Args{
+			.onBuildClick = args.onBuildToggle,
+			.onProductionSelected = args.onProductionSelected,
+			.id = "gameplay_bar"});
 
 		// Create build menu (position set in layout())
 		buildMenu = std::make_unique<BuildMenu>(BuildMenu::Args{
@@ -73,7 +76,8 @@ namespace world_sim {
 						showColonistDetails(selectedColonistId);
 					}
 				},
-			.onQueueRecipe = args.onQueueRecipe
+			.onQueueRecipe = args.onQueueRecipe,
+			.onPlace = args.onPlaceFurniture
 		});
 
 		// Create colonist details dialog
@@ -472,6 +476,12 @@ namespace world_sim {
 
 	bool GameUI::isBuildMenuVisible() const {
 		return buildMenuVisible;
+	}
+
+	void GameUI::setProductionItems(const std::vector<std::pair<std::string, std::string>>& items) {
+		if (gameplayBar) {
+			gameplayBar->setProductionItems(items);
+		}
 	}
 
 	// --- Colonist Details Dialog API ---

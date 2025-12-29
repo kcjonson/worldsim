@@ -44,11 +44,11 @@ namespace ecs {
 		Harvest, // Harvest from entity (bush, plant) into inventory
 
 		// Work Actions
-		Craft, // Creating items at workbench
-			   // Build,    // Constructing structures
-			   // Repair,   // Fixing damaged structures
-			   // Haul,     // Moving items
-			   // Clean,    // Cleaning areas
+		Craft,	 // Creating items at workbench
+		Deposit, // Depositing items into storage container
+				 // Build,    // Constructing structures
+				 // Repair,   // Fixing damaged structures
+				 // Clean,    // Cleaning areas
 	};
 
 	/// Action state machine
@@ -157,9 +157,22 @@ namespace ecs {
 		std::vector<std::pair<std::string, uint32_t>> outputs;
 	};
 
+	/// Effect for deposit actions (putting items into storage containers)
+	/// Moves item from colonist inventory to storage container inventory.
+	struct DepositEffect {
+		/// Item definition name to deposit
+		std::string itemDefName;
+
+		/// Quantity to deposit
+		uint32_t quantity = 1;
+
+		/// Target storage container entity ID
+		uint64_t storageEntityId = 0;
+	};
+
 	/// Variant holding the effect data for the current action
 	using ActionEffect =
-		std::variant<std::monostate, NeedEffect, CollectionEffect, ConsumptionEffect, ProgressEffect, SpawnEffect, CraftingEffect>;
+		std::variant<std::monostate, NeedEffect, CollectionEffect, ConsumptionEffect, ProgressEffect, SpawnEffect, CraftingEffect, DepositEffect>;
 
 	// ============================================================================
 	// Action Component
@@ -242,6 +255,13 @@ namespace ecs {
 		/// Get the crafting effect
 		[[nodiscard]] const CraftingEffect& craftingEffect() const { return std::get<CraftingEffect>(effect); }
 		[[nodiscard]] CraftingEffect&		craftingEffect() { return std::get<CraftingEffect>(effect); }
+
+		/// Check if this action has a deposit effect
+		[[nodiscard]] bool hasDepositEffect() const { return std::holds_alternative<DepositEffect>(effect); }
+
+		/// Get the deposit effect
+		[[nodiscard]] const DepositEffect& depositEffect() const { return std::get<DepositEffect>(effect); }
+		[[nodiscard]] DepositEffect&	   depositEffect() { return std::get<DepositEffect>(effect); }
 
 		// --- Mutation methods ---
 
@@ -470,6 +490,33 @@ namespace ecs {
 
 			return action;
 		}
+
+		/// Factory: Deposit action - deposit items into a storage container
+		/// @param itemDefName Item to deposit from inventory
+		/// @param quantity Number of items to deposit
+		/// @param storageEntityId Entity ID of the target storage container
+		/// @param storagePos Position of the storage container
+		static Action Deposit(
+			const std::string& itemDefName,
+			uint32_t		   quantity,
+			uint64_t		   storageEntityId,
+			glm::vec2		   storagePos
+		) {
+			Action action;
+			action.type = ActionType::Deposit;
+			action.state = ActionState::Starting;
+			action.duration = 1.0F; // 1 second to deposit items
+			action.targetPosition = storagePos;
+			action.interruptable = false; // Don't interrupt mid-deposit
+
+			DepositEffect depEff;
+			depEff.itemDefName = itemDefName;
+			depEff.quantity = quantity;
+			depEff.storageEntityId = storageEntityId;
+			action.effect = depEff;
+
+			return action;
+		}
 	};
 
 	/// Get human-readable name for action type (for debug logging)
@@ -491,6 +538,8 @@ namespace ecs {
 				return "Harvest";
 			case ActionType::Craft:
 				return "Craft";
+			case ActionType::Deposit:
+				return "Deposit";
 		}
 		return "Unknown";
 	}

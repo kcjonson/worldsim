@@ -43,6 +43,7 @@ class EntityInfoView : public UI::Component {
 		std::function<void()> onClose;				// Called when close button clicked
 		std::function<void()> onDetails;			// Called when Details button clicked
 		QueueRecipeCallback   onQueueRecipe;		// Called when recipe is queued at station
+		std::function<void()> onPlace;				// Called when Place button clicked for packaged furniture
 	};
 
 	explicit EntityInfoView(const Args& args);
@@ -102,6 +103,7 @@ class EntityInfoView : public UI::Component {
 	float renderClickableTextSlot(const ClickableTextSlot& slot, float yOffset, float xOffset);
 	float renderRecipeSlot(const RecipeSlot& slot, float yOffset);
 	float renderIconSlot(const IconSlot& slot, float yOffset);
+	float renderActionButtonSlot(const ActionButtonSlot& slot, float yOffset);
 
 	/// Get close button top-left position for current panel position
 	[[nodiscard]] Foundation::Vec2 getCloseButtonPosition(float panelY) const;
@@ -119,6 +121,7 @@ class EntityInfoView : public UI::Component {
 	std::function<void()> onCloseCallback;
 	std::function<void()> onDetailsCallback;
 	QueueRecipeCallback   onQueueRecipeCallback;
+	std::function<void()> onPlaceCallback;
 
 	// Background panel
 	UI::LayerHandle backgroundHandle;
@@ -184,11 +187,22 @@ class EntityInfoView : public UI::Component {
 	std::vector<std::function<void()>> recipeCallbacks;
 	std::vector<Foundation::Rect> recipeButtonBounds;
 
+	// Action buttons (for ActionButtonSlot - Place/Package)
+	static constexpr size_t kMaxActionButtons = 2;
+	struct ActionButtonHandles {
+		UI::LayerHandle background;
+		UI::LayerHandle text;
+	};
+	std::vector<ActionButtonHandles> actionButtonHandles;
+	std::vector<std::function<void()>> actionButtonCallbacks;
+	std::vector<Foundation::Rect> actionButtonBounds;
+
 	// Pool indices (track which elements are in use)
 	size_t usedTextSlots = 0;
 	size_t usedProgressBars = 0;
 	size_t usedListItems = 0;
 	size_t usedRecipeCards = 0;
+	size_t usedActionButtons = 0;
 
 	// State (note: visible is inherited from IComponent)
 	float panelWidth;
@@ -239,6 +253,10 @@ class EntityInfoView : public UI::Component {
 	static constexpr float kRecipeIngredientsFontSize = 12.0F; // Ingredients text size
 	static constexpr float kRecipeQueueButtonSize = 32.0F;	  // [+] button size
 	static constexpr float kRecipeCardSpacing = 8.0F;	  // Space between cards
+
+	// Action button layout constants (for Place/Package buttons)
+	static constexpr float kActionButtonHeight = 32.0F;	  // Button height
+	static constexpr float kActionButtonFontSize = 14.0F; // Button text size
 };
 
 } // namespace world_sim

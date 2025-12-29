@@ -31,13 +31,24 @@ namespace world_sim {
 [[nodiscard]] PanelContent adaptColonistStatus(
 	const ecs::World& world,
 	ecs::EntityID entityId,
-	std::function<void()> onDetails = nullptr
+	const std::function<void()>& onDetails = {}
 );
 
 /// Convert world entity data into panel content
 [[nodiscard]] PanelContent adaptWorldEntity(
 	const engine::assets::AssetRegistry& registry,
 	const WorldEntitySelection& selection
+);
+
+/// Convert furniture entity data into panel content
+/// Shows [Place] button for packaged furniture, [Package] button for placed furniture
+/// @param onPlace Callback for placing packaged furniture
+/// @param onPackage Callback for re-packaging placed furniture
+[[nodiscard]] PanelContent adaptFurniture(
+	const engine::assets::AssetRegistry& registry,
+	const FurnitureSelection& selection,
+	const std::function<void()>& onPlace = {},
+	const std::function<void()>& onPackage = {}
 );
 
 } // namespace world_sim

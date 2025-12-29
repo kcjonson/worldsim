@@ -27,14 +27,17 @@ namespace world_sim {
 
 /// Cached selection identity for detecting structural vs value-only updates
 struct CachedSelection {
-	enum class Type { None, Colonist, WorldEntity, CraftingStation };
+	enum class Type { None, Colonist, WorldEntity, CraftingStation, Furniture };
 
 	Type			  type = Type::None;
 	ecs::EntityID	  colonistId{0};	 // For Colonist selection
 	ecs::EntityID	  stationId{0};		 // For CraftingStation selection
+	ecs::EntityID	  furnitureId{0};	 // For Furniture selection
 	std::string		  worldEntityDef;	 // For WorldEntity selection
 	std::string		  stationDefName;	 // For CraftingStation selection
+	std::string		  furnitureDefName;	 // For Furniture selection
 	Foundation::Vec2 worldEntityPos;	 // For WorldEntity selection
+	bool			  furniturePackaged{false}; // For Furniture selection
 
 	/// Check if this cache matches the given selection
 	[[nodiscard]] bool matches(const Selection& selection) const;
@@ -59,6 +62,7 @@ class EntityInfoModel {
 	struct Callbacks {
 		std::function<void()> onDetails;	 // Open colonist details modal
 		QueueRecipeCallback onQueueRecipe;	 // Queue recipe at station
+		std::function<void()> onPlace;		 // Place packaged furniture
 	};
 
 	/// Refresh model with current selection state

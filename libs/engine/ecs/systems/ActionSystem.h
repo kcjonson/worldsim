@@ -32,6 +32,11 @@ public:
 	using ItemCraftedCallback = std::function<void(const std::string& itemLabel)>;
 	void setItemCraftedCallback(ItemCraftedCallback callback) { m_onItemCrafted = std::move(callback); }
 
+	/// Set callback for dropping items on the ground
+	/// Called when colonist crafts an item that can't fit in inventory (handsRequired >= 2)
+	using DropItemCallback = std::function<void(const std::string& defName, float x, float y)>;
+	void setDropItemCallback(DropItemCallback callback) { m_onDropItem = std::move(callback); }
+
 private:
 	/// Random number generator for yield calculations
 	std::mt19937 m_rng;
@@ -77,8 +82,19 @@ private:
 		const struct Memory& memory
 	);
 
+	/// Start a haul action (pickup from source, then deposit to storage)
+	void startHaulAction(
+		struct Task& task,
+		struct Action& action,
+		const struct Position& position,
+		const struct Memory& memory
+	);
+
 	/// Callback for item crafted notifications
 	ItemCraftedCallback m_onItemCrafted = nullptr;
+
+	/// Callback for dropping items on the ground (non-backpackable items)
+	DropItemCallback m_onDropItem = nullptr;
 };
 
 } // namespace ecs
