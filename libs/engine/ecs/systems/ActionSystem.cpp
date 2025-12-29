@@ -33,6 +33,9 @@ namespace ecs {
 		/// Position tolerance for matching entities at target location (in tiles)
 		constexpr float kPositionTolerance = 0.1F;
 
+		/// Threshold for items requiring two hands (items with handsRequired >= this are two-handed)
+		constexpr uint8_t kTwoHandedThreshold = 2;
+
 	} // namespace
 
 	void ActionSystem::update(float deltaTime) {
@@ -432,7 +435,7 @@ namespace ecs {
 			auto& assetRegistry = engine::assets::AssetRegistry::Get();
 			for (const auto& [itemName, count] : craftEff.outputs) {
 				const auto* itemDef = assetRegistry.getDefinition(itemName);
-				bool canBackpack = (itemDef == nullptr) || (itemDef->handsRequired < 2);
+				bool canBackpack = (itemDef == nullptr) || (itemDef->handsRequired < kTwoHandedThreshold);
 
 				if (canBackpack) {
 					uint32_t added = inventory.addItem(itemName, count);
@@ -522,6 +525,10 @@ namespace ecs {
 		}
 
 		// Special handling for Haul tasks - may need to continue to deposit phase
+		// NOTE: This intentionally returns early WITHOUT clearing the task. Haul is a
+		// two-phase task (Pickup→Deposit), so after phase 1 we set up phase 2 and return.
+		// The action is cleared but the task persists. This differs from single-phase
+		// tasks that clear both action and task at the end of this function.
 		if (task.type == TaskType::Haul && action.type == ActionType::Pickup) {
 			// Phase 1 complete (Pickup) - move to phase 2 (Deposit)
 			task.targetPosition = task.haulTargetPosition;
@@ -533,7 +540,7 @@ namespace ecs {
 				task.haulTargetPosition.x,
 				task.haulTargetPosition.y
 			);
-			return; // Don't clear the task, continue with phase 2
+			return;
 		}
 
 		// Clear the action and task

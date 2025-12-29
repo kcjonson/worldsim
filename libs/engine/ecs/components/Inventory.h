@@ -295,6 +295,9 @@ namespace ecs {
 		/// Stow item from hands to backpack
 		/// @param defName Item to stow (must be in hands)
 		/// @return true if successfully stowed
+		/// @note Two-handed items (held in both hands) cannot be stowed - they must be
+		///       placed on the ground. This is intentional as large items like furniture
+		///       shouldn't fit in a backpack.
 		bool stowToBackpack(const std::string& defName) {
 			// Check if we're holding this item
 			bool inRight = rightHand.has_value() && rightHand->defName == defName;

@@ -133,16 +133,16 @@ namespace {
 			// Initialize placement mode with callback to spawn/relocate entities
 			placementMode = world_sim::PlacementMode{
 				world_sim::PlacementMode::Args{.onPlace = [this](const std::string& defName, Foundation::Vec2 worldPos) {
-					if (m_relocatingFurnitureId != ecs::EntityID{0}) {
+					if (m_relocatingEntityId != ecs::EntityID{0}) {
 						// Relocating existing furniture - move it and remove Packaged component
-						if (auto* pos = ecsWorld->getComponent<ecs::Position>(m_relocatingFurnitureId)) {
+						if (auto* pos = ecsWorld->getComponent<ecs::Position>(m_relocatingEntityId)) {
 							pos->value = {worldPos.x, worldPos.y};
-							ecsWorld->removeComponent<ecs::Packaged>(m_relocatingFurnitureId);
+							ecsWorld->removeComponent<ecs::Packaged>(m_relocatingEntityId);
 							LOG_INFO(Game, "Placed furniture at (%.1f, %.1f)", worldPos.x, worldPos.y);
 						}
 						// Clear selection after placing
 						selection = world_sim::NoSelection{};
-						m_relocatingFurnitureId = ecs::EntityID{0};
+						m_relocatingEntityId = ecs::EntityID{0};
 					} else {
 						// Spawning new entity
 						spawnPlacedEntity(defName, worldPos);
@@ -819,7 +819,7 @@ namespace {
 			}
 
 			// Store the entity ID we're relocating
-			m_relocatingFurnitureId = furnitureSel->entityId;
+			m_relocatingEntityId = furnitureSel->entityId;
 
 			// Enter placement mode with the furniture's def name
 			placementMode.selectItem(furnitureSel->defName);
@@ -918,7 +918,7 @@ namespace {
 		world_sim::Selection selection = world_sim::NoSelection{};
 
 		// Furniture entity being relocated (0 = spawning new entity, non-zero = relocating existing)
-		ecs::EntityID m_relocatingFurnitureId{0};
+		ecs::EntityID m_relocatingEntityId{0};
 
 		// Placement mode state machine
 		world_sim::PlacementMode placementMode;

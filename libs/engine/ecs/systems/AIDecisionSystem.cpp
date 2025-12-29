@@ -624,7 +624,7 @@ namespace ecs {
 
 			for (auto [storageEntity, storagePos, storageInv, storageAppearance] :
 				 world->view<Position, Inventory, Appearance>()) {
-				(void)storageInv; // Inventory component required for query, but not used directly yet
+				(void)storageInv; // Required in view query; capacity checking planned for future
 				// Check if this is a storage container (has Storage capability)
 				const auto* storageDef = m_registry.getDefinition(storageAppearance.defName);
 				if (storageDef == nullptr || !storageDef->capabilities.storage.has_value()) {
