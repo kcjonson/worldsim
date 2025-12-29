@@ -131,7 +131,7 @@ std::optional<PanelContent> adaptSelection(
 PanelContent adaptColonistStatus(
 	const ecs::World& world,
 	ecs::EntityID entityId,
-	std::function<void()> onDetails
+	const std::function<void()>& onDetails
 ) {
 	PanelContent content;
 	content.layout = PanelLayout::TwoColumn;
@@ -251,8 +251,8 @@ PanelContent adaptWorldEntity(
 PanelContent adaptFurniture(
 	const engine::assets::AssetRegistry& registry,
 	const FurnitureSelection& selection,
-	std::function<void()> onPlace,
-	std::function<void()> onPackage
+	const std::function<void()>& onPlace,
+	const std::function<void()>& onPackage
 ) {
 	PanelContent content;
 	content.layout = PanelLayout::SingleColumn;

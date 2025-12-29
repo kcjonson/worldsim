@@ -31,7 +31,7 @@ namespace world_sim {
 [[nodiscard]] PanelContent adaptColonistStatus(
 	const ecs::World& world,
 	ecs::EntityID entityId,
-	std::function<void()> onDetails = nullptr
+	const std::function<void()>& onDetails = {}
 );
 
 /// Convert world entity data into panel content
@@ -47,8 +47,8 @@ namespace world_sim {
 [[nodiscard]] PanelContent adaptFurniture(
 	const engine::assets::AssetRegistry& registry,
 	const FurnitureSelection& selection,
-	std::function<void()> onPlace = nullptr,
-	std::function<void()> onPackage = nullptr
+	const std::function<void()>& onPlace = {},
+	const std::function<void()>& onPackage = {}
 );
 
 } // namespace world_sim

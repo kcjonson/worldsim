@@ -713,11 +713,12 @@ namespace ecs {
 			);
 			action.clear();
 		} else if (atTarget) {
-			// Phase 2: At storage target - do Deposit
-			action = Action::Deposit(task.haulItemDefName, 1, task.haulTargetStorageId, task.haulTargetPosition);
+			// Phase 2: At storage target - do Deposit (use same quantity as pickup)
+			action = Action::Deposit(task.haulItemDefName, task.haulQuantity, task.haulTargetStorageId, task.haulTargetPosition);
 			LOG_DEBUG(
 				Engine,
-				"[Action] Haul phase 2: Deposit %s into storage %llu",
+				"[Action] Haul phase 2: Deposit %u x %s into storage %llu",
+				task.haulQuantity,
 				task.haulItemDefName.c_str(),
 				static_cast<unsigned long long>(task.haulTargetStorageId)
 			);

@@ -54,6 +54,7 @@ namespace ecs {
 
 		// Hauling-specific fields (for Haul tasks)
 		std::string					 haulItemDefName;		// Item to haul
+		uint32_t					 haulQuantity = 1;		// Quantity to haul
 		std::optional<glm::vec2>	 haulSourcePosition;	// Where to pick up from
 		uint64_t					 haulTargetStorageId = 0;  // Storage container entity ID
 		std::optional<glm::vec2>	 haulTargetPosition;	// Where to deposit

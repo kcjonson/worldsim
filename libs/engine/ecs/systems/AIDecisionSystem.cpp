@@ -611,6 +611,9 @@ namespace ecs {
 
 			// Get item category for storage matching
 			engine::assets::ItemCategory itemCategory = itemDef->category;
+			if (itemCategory == engine::assets::ItemCategory::None) {
+				LOG_WARNING(Game, "Carryable item '%s' has no category - can only go to universal storage", itemDefName.c_str());
+			}
 
 			// Find a storage container that accepts this item category
 			// Use ECS view to get actual entity IDs for storage containers with Inventory
@@ -621,6 +624,7 @@ namespace ecs {
 
 			for (auto [storageEntity, storagePos, storageInv, storageAppearance] :
 				 world->view<Position, Inventory, Appearance>()) {
+				(void)storageInv; // Inventory component required for query, but not used directly yet
 				// Check if this is a storage container (has Storage capability)
 				const auto* storageDef = m_registry.getDefinition(storageAppearance.defName);
 				if (storageDef == nullptr || !storageDef->capabilities.storage.has_value()) {
@@ -644,9 +648,7 @@ namespace ecs {
 					continue;
 				}
 
-				// TODO: Check if storage has capacity remaining
-				// For now, assume storage always has room
-				(void)storageInv; // Suppress unused warning
+				// TODO: Check if storage has capacity remaining (query Inventory component)
 
 				float dist = glm::distance(looseItem.position, storagePos.value);
 				if (dist < nearestStorageDist) {
@@ -671,6 +673,10 @@ namespace ecs {
 			haulOption.targetDefNameId = looseItem.defNameId;
 			haulOption.distanceToTarget = glm::distance(position.value, looseItem.position);
 			haulOption.haulItemDefName = itemDefName;
+			// Get quantity from carryable capability (ensures deposit matches pickup)
+			if (itemDef->capabilities.carryable.has_value()) {
+				haulOption.haulQuantity = itemDef->capabilities.carryable.value().quantity;
+			}
 			haulOption.haulSourcePosition = looseItem.position;
 			haulOption.haulTargetStorageId = nearestStorageEntityId;
 			haulOption.haulTargetPosition = nearestStoragePos;
@@ -737,6 +743,7 @@ namespace ecs {
 		// Copy hauling-specific fields for Haul tasks
 		if (selected->taskType == TaskType::Haul) {
 			task.haulItemDefName = selected->haulItemDefName;
+			task.haulQuantity = selected->haulQuantity;
 			task.haulSourcePosition = selected->haulSourcePosition.value_or(glm::vec2{0.0F, 0.0F});
 			task.haulTargetStorageId = selected->haulTargetStorageId;
 			task.haulTargetPosition = selected->haulTargetPosition.value_or(glm::vec2{0.0F, 0.0F});

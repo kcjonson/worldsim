@@ -50,6 +50,7 @@ struct Task {
 
 	/// For Haul tasks: item to haul and storage container target
 	std::string haulItemDefName;				   // Item being hauled
+	uint32_t	haulQuantity = 1;				   // Quantity to haul
 	uint64_t	haulTargetStorageId = 0;		   // Entity ID of the storage container (destination)
 	glm::vec2	haulSourcePosition{0.0F, 0.0F};	   // Position of the source item
 	glm::vec2	haulTargetPosition{0.0F, 0.0F};	   // Position of the storage container
@@ -77,6 +78,7 @@ struct Task {
 		craftRecipeDefName.clear();
 		targetStationId = 0;
 		haulItemDefName.clear();
+		haulQuantity = 1;
 		haulTargetStorageId = 0;
 		haulSourcePosition = glm::vec2{0.0F, 0.0F};
 		haulTargetPosition = glm::vec2{0.0F, 0.0F};

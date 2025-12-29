@@ -872,9 +872,20 @@ namespace {
 				ecsWorld->addComponent<ecs::WorkQueue>(entity, ecs::WorkQueue{});
 				LOG_INFO(Game, "Spawned station '%s' at (%.1f, %.1f) with WorkQueue", defName.c_str(), worldPos.x, worldPos.y);
 			} else if (assetDef != nullptr && assetDef->capabilities.storage.has_value()) {
-				// Storage container - add Inventory for storing items
-				ecsWorld->addComponent<ecs::Inventory>(entity, ecs::Inventory{});
-				LOG_INFO(Game, "Spawned storage '%s' at (%.1f, %.1f) with Inventory", defName.c_str(), worldPos.x, worldPos.y);
+				// Storage container - add Inventory configured from StorageCapability
+				const auto&	   storageCap = assetDef->capabilities.storage.value();
+				ecs::Inventory inventory{};
+				inventory.maxCapacity = storageCap.maxCapacity;
+				inventory.maxStackSize = storageCap.maxStackSize;
+				ecsWorld->addComponent<ecs::Inventory>(entity, inventory);
+				LOG_INFO(
+					Game,
+					"Spawned storage '%s' at (%.1f, %.1f) with Inventory (capacity=%u)",
+					defName.c_str(),
+					worldPos.x,
+					worldPos.y,
+					storageCap.maxCapacity
+				);
 			} else {
 				LOG_INFO(Game, "Spawned '%s' at (%.1f, %.1f)", defName.c_str(), worldPos.x, worldPos.y);
 			}

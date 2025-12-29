@@ -502,6 +502,8 @@ namespace engine::assets {
 					def.category = ItemCategory::Tool;
 				} else if (categoryStr == "Furniture") {
 					def.category = ItemCategory::Furniture;
+				} else {
+					LOG_WARNING(Engine, "Unknown item category '%s' in %s", categoryStr.c_str(), def.defName.c_str());
 				}
 			}
 
@@ -641,6 +643,8 @@ namespace engine::assets {
 								storage.acceptedCategories.push_back(ItemCategory::Tool);
 							} else if (catName == "Furniture") {
 								storage.acceptedCategories.push_back(ItemCategory::Furniture);
+							} else if (!catName.empty()) {
+								LOG_WARNING(Engine, "Unknown storage category '%s' in %s", catName.c_str(), def.defName.c_str());
 							}
 						}
 					}
