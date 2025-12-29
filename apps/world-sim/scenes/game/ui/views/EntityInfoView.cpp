@@ -28,7 +28,6 @@ namespace world_sim {
 					.position = args.position,
 					.size = {panelWidth, panelHeight},
 					.style = UI::PanelStyles::floating(),
-					.zIndex = 0,
 					.id = (args.id + "_bg").c_str()
 				}
 			)
@@ -42,7 +41,6 @@ namespace world_sim {
 					.position = closePos,
 					.size = {kCloseButtonSize, kCloseButtonSize},
 					.style = UI::PanelStyles::closeButton(),
-					.zIndex = 2,
 					.id = (args.id + "_close_bg").c_str()
 				}
 			)
@@ -61,7 +59,6 @@ namespace world_sim {
 							.hAlign = Foundation::HorizontalAlign::Center,
 							.vAlign = Foundation::VerticalAlign::Middle,
 						},
-					.zIndex = 3,
 					.id = (args.id + "_close_text").c_str()
 				}
 			)
@@ -80,7 +77,6 @@ namespace world_sim {
 							.hAlign = Foundation::HorizontalAlign::Left,
 							.vAlign = Foundation::VerticalAlign::Top,
 						},
-					.zIndex = 1,
 					.id = (args.id + "_title").c_str()
 				}
 			)
@@ -97,7 +93,6 @@ namespace world_sim {
 					.style =
 						{.fill = Foundation::Color(0.20F, 0.20F, 0.25F, 1.0F),
 						 .border = Foundation::BorderStyle{.color = Foundation::Color(0.30F, 0.30F, 0.35F, 1.0F), .width = 1.0F}},
-					.zIndex = 1,
 					.id = (args.id + "_portrait").c_str()
 				}
 			)
@@ -116,7 +111,6 @@ namespace world_sim {
 							.hAlign = Foundation::HorizontalAlign::Left,
 							.vAlign = Foundation::VerticalAlign::Top,
 						},
-					.zIndex = 1,
 					.id = (args.id + "_header_name").c_str()
 				}
 			)
@@ -151,7 +145,6 @@ namespace world_sim {
 							.hAlign = Foundation::HorizontalAlign::Left,
 							.vAlign = Foundation::VerticalAlign::Top,
 						},
-					.zIndex = 1,
 					.id = (args.id + "_mood_label").c_str()
 				}
 			)
@@ -170,7 +163,6 @@ namespace world_sim {
 							.hAlign = Foundation::HorizontalAlign::Left,
 							.vAlign = Foundation::VerticalAlign::Top,
 						},
-					.zIndex = 1,
 					.id = (args.id + "_needs_label").c_str()
 				}
 			)
@@ -187,7 +179,6 @@ namespace world_sim {
 					.style =
 						{.fill = Foundation::Color(0.25F, 0.25F, 0.30F, 1.0F),
 						 .border = Foundation::BorderStyle{.color = Foundation::Color(0.35F, 0.35F, 0.40F, 1.0F), .width = 1.0F}},
-					.zIndex = 1,
 					.id = (args.id + "_centered_icon").c_str()
 				}
 			)
@@ -206,7 +197,6 @@ namespace world_sim {
 							.hAlign = Foundation::HorizontalAlign::Center,
 							.vAlign = Foundation::VerticalAlign::Top,
 						},
-					.zIndex = 1,
 					.id = (args.id + "_centered_label").c_str()
 				}
 			)
@@ -227,7 +217,6 @@ namespace world_sim {
 								.hAlign = Foundation::HorizontalAlign::Left,
 								.vAlign = Foundation::VerticalAlign::Top,
 							},
-						.zIndex = 1,
 						.id = (args.id + "_text_" + std::to_string(i)).c_str()
 					}
 				)
@@ -264,7 +253,6 @@ namespace world_sim {
 							.hAlign = Foundation::HorizontalAlign::Left,
 							.vAlign = Foundation::VerticalAlign::Top,
 						},
-					.zIndex = 1,
 					.id = (args.id + "_list_header").c_str()
 				}
 			)
@@ -285,7 +273,6 @@ namespace world_sim {
 								.hAlign = Foundation::HorizontalAlign::Left,
 								.vAlign = Foundation::VerticalAlign::Top,
 							},
-						.zIndex = 1,
 						.id = (args.id + "_list_" + std::to_string(i)).c_str()
 					}
 				)
@@ -305,7 +292,6 @@ namespace world_sim {
 							.hAlign = Foundation::HorizontalAlign::Left,
 							.vAlign = Foundation::VerticalAlign::Top,
 						},
-					.zIndex = 1,
 					.id = (args.id + "_clickable").c_str()
 				}
 			)
@@ -325,7 +311,6 @@ namespace world_sim {
 						.position = {args.position.x + kPadding, args.position.y},
 						.size = {contentWidth, kRecipeCardHeight},
 						.style = UI::PanelStyles::card(),
-						.zIndex = 1,
 						.id = (args.id + "_recipe_bg_" + std::to_string(i)).c_str()
 					}
 				)
@@ -344,7 +329,6 @@ namespace world_sim {
 								.hAlign = Foundation::HorizontalAlign::Left,
 								.vAlign = Foundation::VerticalAlign::Top,
 							},
-						.zIndex = 2,
 						.id = (args.id + "_recipe_name_" + std::to_string(i)).c_str()
 					}
 				)
@@ -363,7 +347,6 @@ namespace world_sim {
 								.hAlign = Foundation::HorizontalAlign::Left,
 								.vAlign = Foundation::VerticalAlign::Top,
 							},
-						.zIndex = 2,
 						.id = (args.id + "_recipe_ingredients_" + std::to_string(i)).c_str()
 					}
 				)
@@ -376,7 +359,6 @@ namespace world_sim {
 						.position = {args.position.x + contentWidth - kRecipeQueueButtonSize, args.position.y},
 						.size = {kRecipeQueueButtonSize, kRecipeQueueButtonSize},
 						.style = UI::PanelStyles::actionButton(),
-						.zIndex = 2,
 						.id = (args.id + "_recipe_btn_" + std::to_string(i)).c_str()
 					}
 				)
@@ -395,7 +377,6 @@ namespace world_sim {
 								.hAlign = Foundation::HorizontalAlign::Center,
 								.vAlign = Foundation::VerticalAlign::Middle,
 							},
-						.zIndex = 3,
 						.id = (args.id + "_recipe_btn_text_" + std::to_string(i)).c_str()
 					}
 				)
@@ -413,7 +394,6 @@ namespace world_sim {
 					.position = detailsPos,
 					.size = {kDetailsButtonSize, kDetailsButtonSize},
 					.style = UI::PanelStyles::actionButton(),
-					.zIndex = 2,
 					.id = (args.id + "_details_bg").c_str()
 				}
 			)
@@ -423,12 +403,9 @@ namespace world_sim {
 		Foundation::Color iconColor = UI::Theme::Colors::actionButtonText;
 		constexpr float	  lineWidth = 1.5F;
 		auto			  createLine = [&]() {
-			 return addChild(UI::Line(UI::Line::Args{
-				 .start = {0.0F, 0.0F},
-				 .end = {0.0F, 0.0F},
-				 .style = {.color = iconColor, .width = lineWidth},
-				 .zIndex = 3
-			 }));
+			 return addChild(
+				 UI::Line(UI::Line::Args{.start = {0.0F, 0.0F}, .end = {0.0F, 0.0F}, .style = {.color = iconColor, .width = lineWidth}})
+			 );
 		};
 		detailsIconLine1Handle = createLine();
 		detailsIconLine2Handle = createLine();
@@ -573,12 +550,18 @@ namespace world_sim {
 			detailsBg->visible = false;
 		}
 		// Hide all icon lines
-		if (auto* line = getChild<UI::Line>(detailsIconLine1Handle)) line->visible = false;
-		if (auto* line = getChild<UI::Line>(detailsIconLine2Handle)) line->visible = false;
-		if (auto* line = getChild<UI::Line>(detailsIconLine3Handle)) line->visible = false;
-		if (auto* line = getChild<UI::Line>(detailsIconLine4Handle)) line->visible = false;
-		if (auto* line = getChild<UI::Line>(detailsIconLine5Handle)) line->visible = false;
-		if (auto* line = getChild<UI::Line>(detailsIconLine6Handle)) line->visible = false;
+		if (auto* line = getChild<UI::Line>(detailsIconLine1Handle))
+			line->visible = false;
+		if (auto* line = getChild<UI::Line>(detailsIconLine2Handle))
+			line->visible = false;
+		if (auto* line = getChild<UI::Line>(detailsIconLine3Handle))
+			line->visible = false;
+		if (auto* line = getChild<UI::Line>(detailsIconLine4Handle))
+			line->visible = false;
+		if (auto* line = getChild<UI::Line>(detailsIconLine5Handle))
+			line->visible = false;
+		if (auto* line = getChild<UI::Line>(detailsIconLine6Handle))
+			line->visible = false;
 
 		// Show centered icon placeholder
 		float iconX = panelX + (panelWidth - kEntityIconSize) * 0.5F;
