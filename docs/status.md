@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2025-12-29 (Added GameScene refactoring epic)
+Last Updated: 2025-12-29 (Completed GameScene Subsystem Extraction)
 
 ## Epic/Story/Task Template
 
@@ -27,6 +27,36 @@ Use this template for all work items:
 ---
 
 ## Recently Completed Epics (Last 4)
+
+### ✅ GameScene Subsystem Extraction
+**Spec/Documentation:** `/docs/technical/gamescene-refactoring.md`
+**Dependencies:** None
+**Status:** complete
+
+**Goal:** Extract placement and selection logic from GameScene into dedicated subsystems. Prevent god-class anti-pattern as gameplay systems grow.
+
+**Completed Tasks:**
+- [x] PlacementSystem Extraction
+  - [x] Create `scenes/game/world/placement/PlacementSystem.h/cpp`
+  - [x] Create `scenes/game/world/placement/PlacementTypes.h` (shared BuildMenuItem)
+  - [x] Move PlacementMode and GhostRenderer ownership
+  - [x] Move spawning/relocation logic (spawnEntity, m_relocatingEntityId)
+  - [x] Move UI callbacks (toggleBuildMenu, selectBuildItem, beginRelocation)
+- [x] SelectionSystem Extraction
+  - [x] Create `scenes/game/world/selection/SelectionSystem.h/cpp`
+  - [x] Create `scenes/game/world/selection/SelectionTypes.h` (moved from Selection.h)
+  - [x] Move Selection state ownership
+  - [x] Move handleClick with priority logic
+  - [x] Move renderIndicator
+  - [x] Selection priority constants in header
+- [x] GameScene Cleanup
+  - [x] GameScene is now thin coordinator
+  - [x] Subsystems initialized with dependency injection
+  - [x] All UI files updated to use new include paths
+
+**Result:** GameScene reduced from ~900 lines to ~620 lines (placement: ~180 lines, selection: ~100 lines extracted). Subsystems now own their own state and logic. ✅
+
+---
 
 ### ✅ Main Game UI: Core HUD
 **Spec/Documentation:** `/docs/design/main-game-ui-design.md` (Sections 1, 2, 5, 9)
@@ -486,35 +516,6 @@ The following MVP epics have all been completed. Detailed task breakdowns are pr
 ---
 
 ## Planned Epics (Post-MVP)
-
-### GameScene Subsystem Extraction
-**Spec/Documentation:** `/docs/technical/gamescene-refactoring.md`
-**Dependencies:** None
-**Status:** ready
-
-**Goal:** Extract placement and selection logic from GameScene into dedicated subsystems. Prevent god-class anti-pattern as gameplay systems grow.
-
-**Tasks:**
-- [ ] PlacementSystem Extraction
-  - [ ] Create `scenes/game/world/placement/PlacementSystem.h/cpp`
-  - [ ] Move PlacementMode and GhostRenderer ownership
-  - [ ] Move spawning/relocation logic (spawnPlacedEntity, m_relocatingEntityId)
-  - [ ] Move UI callbacks (handleBuildToggle, handleBuildItemSelected, handlePlacePackaged)
-  - [ ] Generic naming (works for stations, furniture, walls, machines, etc.)
-- [ ] SelectionSystem Extraction
-  - [ ] Create `scenes/game/world/selection/SelectionSystem.h/cpp`
-  - [ ] Move Selection state ownership
-  - [ ] Move handleEntityClick with priority logic
-  - [ ] Move renderSelectionIndicator
-  - [ ] Create SelectionPriorities.h for priority constants
-- [ ] GameScene Cleanup
-  - [ ] GameScene becomes thin coordinator (<400 lines)
-  - [ ] Subsystems are testable in isolation
-
-**Future (separate epic):**
-- AI System reorganization (libs/engine/ecs/systems/ai/)
-
----
 
 ### UI Architecture: Animation System
 **Spec/Documentation:** `/docs/technical/ui-framework/animation-system.md` (to be written)

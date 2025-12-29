@@ -13,7 +13,7 @@
 // - Values: just update progress bars (same entity, values changed)
 
 #include "scenes/game/ui/components/InfoSlot.h"
-#include "scenes/game/ui/components/Selection.h"
+#include "scenes/game/world/selection/SelectionTypes.h"
 #include "scenes/game/ui/adapters/CraftingAdapter.h"
 
 #include <assets/AssetRegistry.h>

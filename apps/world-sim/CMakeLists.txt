@@ -37,9 +37,11 @@ add_executable(world-sim
     scenes/game/ui/dialogs/tabs/MemoryTabView.cpp
     # Game scene UI - main container
     scenes/game/ui/GameUI.cpp
-    # Game scene - world rendering
-    scenes/game/world/GhostRenderer.cpp
-    scenes/game/world/PlacementMode.cpp
+    # Game scene - world subsystems
+    scenes/game/world/placement/GhostRenderer.cpp
+    scenes/game/world/placement/PlacementMode.cpp
+    scenes/game/world/placement/PlacementSystem.cpp
+    scenes/game/world/selection/SelectionSystem.cpp
     # Scenes
     scenes/splash/SplashScene.cpp
     scenes/menu/MainMenuScene.cpp

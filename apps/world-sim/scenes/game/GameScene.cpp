@@ -3,9 +3,8 @@
 #include "GameWorldState.h"
 #include "SceneTypes.h"
 #include "scenes/game/ui/GameUI.h"
-#include "scenes/game/ui/components/Selection.h"
-#include "scenes/game/world/GhostRenderer.h"
-#include "scenes/game/world/PlacementMode.h"
+#include "scenes/game/world/placement/PlacementSystem.h"
+#include "scenes/game/world/selection/SelectionSystem.h"
 
 #include <components/toast/Toast.h> // For ToastSeverity
 
@@ -130,33 +129,14 @@ namespace {
 			m_asyncProcessor =
 				std::make_unique<engine::assets::AsyncChunkProcessor>(*m_placementExecutor, kDefaultWorldSeed, m_processedChunks);
 
-			// Initialize placement mode with callback to spawn/relocate entities
-			placementMode = world_sim::PlacementMode{
-				world_sim::PlacementMode::Args{.onPlace = [this](const std::string& defName, Foundation::Vec2 worldPos) {
-					if (m_relocatingEntityId != ecs::EntityID{0}) {
-						// Relocating existing furniture - move it and remove Packaged component
-						if (auto* pos = ecsWorld->getComponent<ecs::Position>(m_relocatingEntityId)) {
-							pos->value = {worldPos.x, worldPos.y};
-							ecsWorld->removeComponent<ecs::Packaged>(m_relocatingEntityId);
-							LOG_INFO(Game, "Placed furniture at (%.1f, %.1f)", worldPos.x, worldPos.y);
-						}
-						// Clear selection after placing
-						selection = world_sim::NoSelection{};
-						m_relocatingEntityId = ecs::EntityID{0};
-					} else {
-						// Spawning new entity
-						spawnPlacedEntity(defName, worldPos);
-					}
-				}}
-			};
-
 			// Create unified game UI (contains overlay and info panel)
+			// Note: Callbacks for placement/selection are set up after systems are created below
 			gameUI = std::make_unique<world_sim::GameUI>(world_sim::GameUI::Args{
 				.onZoomIn = [this]() { m_camera->zoomIn(); },
 				.onZoomOut = [this]() { m_camera->zoomOut(); },
 				.onZoomReset = [this]() { m_camera->setZoomIndex(engine::world::kDefaultZoomIndex); },
-				.onSelectionCleared = [this]() { selection = world_sim::NoSelection{}; },
-				.onColonistSelected = [this](ecs::EntityID entityId) { selection = world_sim::ColonistSelection{entityId}; },
+				.onSelectionCleared = [this]() { m_selectionSystem->clearSelection(); },
+				.onColonistSelected = [this](ecs::EntityID entityId) { m_selectionSystem->selectColonist(entityId); },
 				.onColonistFollowed =
 					[this](ecs::EntityID entityId) {
 						// Center camera on colonist position
@@ -164,9 +144,9 @@ namespace {
 							m_camera->setPosition({pos->value.x, pos->value.y});
 						}
 					},
-				.onBuildToggle = [this]() { handleBuildToggle(); },
-				.onBuildItemSelected = [this](const std::string& defName) { handleBuildItemSelected(defName); },
-				.onProductionSelected = [this](const std::string& defName) { handleBuildItemSelected(defName); },
+				.onBuildToggle = [this]() { m_placementSystem->toggleBuildMenu(); },
+				.onBuildItemSelected = [this](const std::string& defName) { m_placementSystem->selectBuildItem(defName); },
+				.onProductionSelected = [this](const std::string& defName) { m_placementSystem->selectBuildItem(defName); },
 				.onQueueRecipe = [this](const std::string& recipeDefName) { handleQueueRecipe(recipeDefName); },
 				.onPlaceFurniture = [this]() { handlePlaceFurniture(); },
 				.onPause =
@@ -206,6 +186,28 @@ namespace {
 			// Initialize ECS World
 			initializeECS();
 
+			// Initialize PlacementSystem (after ECS so we have the world)
+			m_placementSystem = std::make_unique<world_sim::PlacementSystem>(world_sim::PlacementSystem::Args{
+				.world = ecsWorld.get(),
+				.camera = m_camera.get(),
+				.callbacks = {
+					.onBuildMenuVisibility = [this](bool active) { gameUI->setBuildModeActive(active); },
+					.onShowBuildMenu = [this](const std::vector<world_sim::BuildMenuItem>& items) { gameUI->showBuildMenu(items); },
+					.onHideBuildMenu = [this]() { gameUI->hideBuildMenu(); },
+					.onSelectionCleared = [this]() { m_selectionSystem->clearSelection(); }
+				}
+			});
+
+			// Initialize SelectionSystem (after ECS and PlacementExecutor)
+			m_selectionSystem = std::make_unique<world_sim::SelectionSystem>(world_sim::SelectionSystem::Args{
+				.world = ecsWorld.get(),
+				.camera = m_camera.get(),
+				.placementExecutor = m_placementExecutor.get(),
+				.callbacks = {.onSelectionChanged = [](const world_sim::Selection&) {
+					// Selection state is queried each frame - no action needed on change
+				}}
+			});
+
 			// Enable GPU timing for performance monitoring
 			m_gpuTimer.setEnabled(true);
 		}
@@ -216,30 +218,26 @@ namespace {
 			// Forward event to UI first
 			bool consumed = gameUI->dispatchEvent(event);
 
+			// Get viewport dimensions for coordinate transforms
+			int logicalW = 0;
+			int logicalH = 0;
+			Renderer::Primitives::getLogicalViewport(logicalW, logicalH);
+
 			// Handle placement mode interaction
-			if (placementMode.state() == world_sim::PlacementState::Placing) {
+			if (m_placementSystem->isActive()) {
 				if (event.type == UI::InputEvent::Type::MouseMove) {
-					// Update ghost position from mouse
-					int logicalW = 0;
-					int logicalH = 0;
-					Renderer::Primitives::getLogicalViewport(logicalW, logicalH);
-					auto worldPos = m_camera->screenToWorld(event.position.x, event.position.y, logicalW, logicalH, kPixelsPerMeter);
-					placementMode.updateGhostPosition({worldPos.x, worldPos.y});
+					m_placementSystem->handleMouseMove(event.position.x, event.position.y, logicalW, logicalH);
 				} else if (!consumed && event.type == UI::InputEvent::Type::MouseUp) {
-					// Try to place on click (if not over UI)
-					if (placementMode.tryPlace()) {
-						// Successfully placed - update UI state
-						gameUI->setBuildModeActive(false);
-						gameUI->hideBuildMenu();
+					if (m_placementSystem->handleClick()) {
+						return true; // Consume click after successful placement
 					}
-					return true; // Consume click in placement mode
 				}
 				return consumed;
 			}
 
 			// Handle entity selection on left click release (only if UI didn't consume it)
 			if (!consumed && event.type == UI::InputEvent::Type::MouseUp) {
-				handleEntitySelection({event.position.x, event.position.y});
+				m_selectionSystem->handleClick(event.position.x, event.position.y, logicalW, logicalH);
 			}
 
 			return consumed;
@@ -250,10 +248,8 @@ namespace {
 
 			// Handle Escape - cancel placement mode first, then exit to menu
 			if (input.isKeyPressed(engine::Key::Escape)) {
-				if (placementMode.isActive()) {
-					placementMode.cancel();
-					gameUI->setBuildModeActive(false);
-					gameUI->hideBuildMenu();
+				if (m_placementSystem->isActive()) {
+					m_placementSystem->cancel();
 				} else {
 					sceneManager->switchTo(world_sim::toKey(world_sim::SceneType::MainMenu));
 					return; // Don't process rest of update when switching scenes
@@ -262,7 +258,7 @@ namespace {
 
 			// Handle B key - toggle build mode
 			if (input.isKeyPressed(engine::Key::B)) {
-				handleBuildToggle();
+				m_placementSystem->toggleBuildMenu();
 			}
 
 			// Handle time controls
@@ -335,7 +331,7 @@ namespace {
 			// Update unified game UI (overlay + info panel)
 			auto& assetRegistry = engine::assets::AssetRegistry::Get();
 			auto& recipeRegistry = engine::assets::RecipeRegistry::Get();
-			gameUI->update(dt, *m_camera, *m_chunkManager, *ecsWorld, assetRegistry, recipeRegistry, selection);
+			gameUI->update(dt, *m_camera, *m_chunkManager, *ecsWorld, assetRegistry, recipeRegistry, m_selectionSystem->current());
 
 			m_lastUpdateMs = elapsedMs(updateStart, Clock::now());
 		}
@@ -366,14 +362,10 @@ namespace {
 			float entityMs = elapsedMs(entityStart, Clock::now());
 
 			// Render selection indicator in world-space (after entities, before UI)
-			renderSelectionIndicator(w, h);
+			m_selectionSystem->renderIndicator(w, h);
 
 			// Render placement ghost preview (if in placing mode)
-			if (placementMode.state() == world_sim::PlacementState::Placing) {
-				ghostRenderer.render(
-					placementMode.selectedDefName(), placementMode.ghostPosition(), *m_camera, w, h, placementMode.isValidPlacement()
-				);
-			}
+			m_placementSystem->render(w, h);
 
 			// Render unified game UI (overlay + info panel)
 			gameUI->render();
@@ -413,6 +405,10 @@ namespace {
 			if (m_asyncProcessor) {
 				m_asyncProcessor->clear();
 			}
+
+			// Clean up subsystems (order matters - systems may reference ECS/Camera)
+			m_placementSystem.reset();
+			m_selectionSystem.reset();
 
 			m_asyncProcessor.reset();
 			gameUI.reset();
@@ -474,10 +470,11 @@ namespace {
 			});
 
 			// Wire up ActionSystem to drop non-backpackable items on the ground as packaged
+			// Note: m_placementSystem is created after initializeECS, but callback is invoked at runtime
 			// Offset from crafting station so items don't stack on top (2x typical station size)
 			constexpr float kDropOffset = 2.0F;
-			actionSystem.setDropItemCallback([this](const std::string& defName, float x, float y) {
-				auto entity = spawnPlacedEntity(defName, {x + kDropOffset, y});
+			actionSystem.setDropItemCallback([this, kDropOffset](const std::string& defName, float x, float y) {
+				auto entity = m_placementSystem->spawnEntity(defName, {x + kDropOffset, y});
 				// Mark as packaged - player needs to place it via ghost preview
 				ecsWorld->addComponent<ecs::Packaged>(entity, ecs::Packaged{});
 				LOG_INFO(Game, "Spawned packaged '%s' - awaiting placement", defName.c_str());
@@ -549,290 +546,27 @@ namespace {
 			}
 		}
 
-		/// Render selection indicator around selected colonist.
-		/// Draws a circle outline in screen-space at the entity's position.
-		/// @param viewportWidth Logical viewport width in pixels
-		/// @param viewportHeight Logical viewport height in pixels
-		void renderSelectionIndicator(int viewportWidth, int viewportHeight) {
-			// Get world position from selection (colonists, stations, and furniture have ECS positions)
-			glm::vec2 worldPos{0.0F, 0.0F};
-			bool	  hasPosition = false;
-
-			if (auto* colonistSel = std::get_if<world_sim::ColonistSelection>(&selection)) {
-				if (auto* pos = ecsWorld->getComponent<ecs::Position>(colonistSel->entityId)) {
-					worldPos = pos->value;
-					hasPosition = true;
-				}
-			} else if (auto* stationSel = std::get_if<world_sim::CraftingStationSelection>(&selection)) {
-				if (auto* pos = ecsWorld->getComponent<ecs::Position>(stationSel->entityId)) {
-					worldPos = pos->value;
-					hasPosition = true;
-				}
-			} else if (auto* furnitureSel = std::get_if<world_sim::FurnitureSelection>(&selection)) {
-				if (auto* pos = ecsWorld->getComponent<ecs::Position>(furnitureSel->entityId)) {
-					worldPos = pos->value;
-					hasPosition = true;
-				}
-			}
-
-			if (!hasPosition) {
-				return;
-			}
-
-			// Convert world position to screen position (viewport is already in logical coordinates)
-			auto screenPos = m_camera->worldToScreen(worldPos.x, worldPos.y, viewportWidth, viewportHeight, kPixelsPerMeter);
-
-			// Convert selection radius from world units to screen pixels
-			constexpr float kSelectionRadiusWorld = 1.0F; // 1 meter radius
-			float			screenRadius = m_camera->worldDistanceToScreen(kSelectionRadiusWorld, kPixelsPerMeter);
-
-			// Draw selection circle with border-only style (transparent fill)
-			Renderer::Primitives::drawCircle(
-				Renderer::Primitives::CircleArgs{
-					.center = Foundation::Vec2{screenPos.x, screenPos.y},
-					.radius = screenRadius,
-					.style =
-						Foundation::CircleStyle{
-							.fill = Foundation::Color(0.0F, 0.0F, 0.0F, 0.0F), // Transparent fill
-							.border =
-								Foundation::BorderStyle{
-									.color = Foundation::Color(1.0F, 0.85F, 0.0F, 0.8F), // Gold color with slight transparency
-									.width = 2.0F,
-								},
-						},
-					.id = "selection-indicator",
-					.zIndex = 100, // Above entities
-				}
-			);
-		}
-
-		/// Handle entity selection via mouse click.
-		/// Selection priority: 1) ECS colonists, 2) ECS stations, 3) World entities with capabilities
-		/// @param screenPos Mouse position in screen coordinates (logical/window coordinates)
-		void handleEntitySelection(glm::vec2 screenPos) {
-			int logicalW = 0;
-			int logicalH = 0;
-			// Use logical viewport for consistent world-to-screen transforms
-			// (mouse input is in logical/window coordinates)
-			Renderer::Primitives::getLogicalViewport(logicalW, logicalH);
-
-			// Convert screen position to world position
-			auto worldPos = m_camera->screenToWorld(screenPos.x, screenPos.y, logicalW, logicalH, kPixelsPerMeter);
-
-			LOG_DEBUG(Game, "Click at screen (%.1f, %.1f) -> world (%.2f, %.2f)", screenPos.x, screenPos.y, worldPos.x, worldPos.y);
-
-			constexpr float kSelectionRadius = 2.0F; // meters
-
-			// Priority 1: Check ECS colonists first (dynamic, moving entities)
-			float		  closestColonistDist = kSelectionRadius;
-			ecs::EntityID closestColonist = 0;
-
-			for (auto [entity, pos, colonist] : ecsWorld->view<ecs::Position, ecs::Colonist>()) {
-				float dx = pos.value.x - worldPos.x;
-				float dy = pos.value.y - worldPos.y;
-				float dist = std::sqrt(dx * dx + dy * dy);
-
-				if (dist < closestColonistDist) {
-					closestColonistDist = dist;
-					closestColonist = entity;
-				}
-			}
-
-			if (closestColonist != 0) {
-				selection = world_sim::ColonistSelection{closestColonist};
-				if (auto* colonist = ecsWorld->getComponent<ecs::Colonist>(closestColonist)) {
-					LOG_INFO(Game, "Selected colonist: %s", colonist->name.c_str());
-				}
-				return;
-			}
-
-			// Priority 1.5: Check ECS stations (entities with WorkQueue - player-placed crafting stations)
-			float		  closestStationDist = kSelectionRadius;
-			ecs::EntityID closestStation = 0;
-
-			for (auto [entity, pos, appearance, workQueue] : ecsWorld->view<ecs::Position, ecs::Appearance, ecs::WorkQueue>()) {
-				float dx = pos.value.x - worldPos.x;
-				float dy = pos.value.y - worldPos.y;
-				float dist = std::sqrt(dx * dx + dy * dy);
-
-				if (dist < closestStationDist) {
-					closestStationDist = dist;
-					closestStation = entity;
-				}
-			}
-
-			if (closestStation != 0) {
-				auto* pos = ecsWorld->getComponent<ecs::Position>(closestStation);
-				auto* appearance = ecsWorld->getComponent<ecs::Appearance>(closestStation);
-				if (pos != nullptr && appearance != nullptr) {
-					selection = world_sim::CraftingStationSelection{
-						closestStation, appearance->defName, Foundation::Vec2{pos->value.x, pos->value.y}
-					};
-					LOG_INFO(Game, "Selected station: %s at (%.1f, %.1f)", appearance->defName.c_str(), pos->value.x, pos->value.y);
-				}
-				return;
-			}
-
-			// Priority 1.6: Check ECS storage containers (entities with Inventory but no WorkQueue)
-			float		  closestStorageDist = kSelectionRadius;
-			ecs::EntityID closestStorage = 0;
-
-			for (auto [entity, pos, appearance, inventory] : ecsWorld->view<ecs::Position, ecs::Appearance, ecs::Inventory>()) {
-				// Skip entities that also have WorkQueue (those are crafting stations)
-				if (ecsWorld->getComponent<ecs::WorkQueue>(entity) != nullptr) {
-					continue;
-				}
-				// Skip colonists (they have Inventory for carrying items)
-				if (ecsWorld->getComponent<ecs::Colonist>(entity) != nullptr) {
-					continue;
-				}
-
-				float dx = pos.value.x - worldPos.x;
-				float dy = pos.value.y - worldPos.y;
-				float dist = std::sqrt(dx * dx + dy * dy);
-
-				if (dist < closestStorageDist) {
-					closestStorageDist = dist;
-					closestStorage = entity;
-				}
-			}
-
-			if (closestStorage != 0) {
-				auto* pos = ecsWorld->getComponent<ecs::Position>(closestStorage);
-				auto* appearance = ecsWorld->getComponent<ecs::Appearance>(closestStorage);
-				if (pos != nullptr && appearance != nullptr) {
-					bool isPackaged = ecsWorld->getComponent<ecs::Packaged>(closestStorage) != nullptr;
-					selection = world_sim::FurnitureSelection{
-						closestStorage, appearance->defName, Foundation::Vec2{pos->value.x, pos->value.y}, isPackaged
-					};
-					LOG_INFO(
-						Game,
-						"Selected storage: %s at (%.1f, %.1f)%s",
-						appearance->defName.c_str(),
-						pos->value.x,
-						pos->value.y,
-						isPackaged ? " (packaged)" : ""
-					);
-				}
-				return;
-			}
-
-			// Priority 2: Check world entities (static placed assets)
-			auto&						   assetRegistry = engine::assets::AssetRegistry::Get();
-			engine::world::ChunkCoordinate chunkCoord = engine::world::worldToChunk(engine::world::WorldPosition{worldPos.x, worldPos.y});
-			const auto*					   spatialIndex = m_placementExecutor->getChunkIndex(chunkCoord);
-			if (spatialIndex == nullptr) {
-				// Chunk not loaded, deselect
-				selection = world_sim::NoSelection{};
-				LOG_DEBUG(Game, "No selectable entity found (chunk not loaded), deselecting");
-				return;
-			}
-			auto nearbyEntities = spatialIndex->queryRadius({worldPos.x, worldPos.y}, kSelectionRadius);
-
-			float								closestEntityDist = kSelectionRadius;
-			const engine::assets::PlacedEntity* closestWorldEntity = nullptr;
-
-			for (const auto* placedEntity : nearbyEntities) {
-				// Only select entities with capabilities (not grass/decorative)
-				const auto* def = assetRegistry.getDefinition(placedEntity->defName);
-				if (def == nullptr || !def->capabilities.hasAny()) {
-					continue; // Skip entities without capabilities
-				}
-
-				float dx = placedEntity->position.x - worldPos.x;
-				float dy = placedEntity->position.y - worldPos.y;
-				float dist = std::sqrt(dx * dx + dy * dy);
-
-				if (dist < closestEntityDist) {
-					closestEntityDist = dist;
-					closestWorldEntity = placedEntity;
-				}
-			}
-
-			if (closestWorldEntity != nullptr) {
-				selection = world_sim::WorldEntitySelection{closestWorldEntity->defName, closestWorldEntity->position};
-				LOG_INFO(
-					Game,
-					"Selected world entity: %s at (%.1f, %.1f)",
-					closestWorldEntity->defName.c_str(),
-					closestWorldEntity->position.x,
-					closestWorldEntity->position.y
-				);
-				return;
-			}
-
-			// Nothing found - deselect
-			selection = world_sim::NoSelection{};
-			LOG_DEBUG(Game, "No selectable entity found, deselecting");
-		}
-
-		/// Handle build button toggle / B key press.
-		/// Opens build menu when in normal mode, cancels when in placement mode.
-		void handleBuildToggle() {
-			switch (placementMode.state()) {
-				case world_sim::PlacementState::None: {
-					// Open build menu
-					placementMode.enterMenu();
-					gameUI->setBuildModeActive(true);
-
-					// Get innate recipes for the build menu
-					auto& recipeRegistry = engine::assets::RecipeRegistry::Get();
-					auto  innateRecipes = recipeRegistry.getInnateRecipes();
-
-					std::vector<world_sim::BuildMenuItem> items;
-					for (const auto* recipe : innateRecipes) {
-						if (!recipe->outputs.empty()) {
-							items.push_back({recipe->outputs[0].defName, recipe->label});
-						}
-					}
-
-					gameUI->showBuildMenu(items);
-					break;
-				}
-
-				case world_sim::PlacementState::MenuOpen:
-				case world_sim::PlacementState::Placing:
-					// Cancel placement
-					placementMode.cancel();
-					gameUI->setBuildModeActive(false);
-					gameUI->hideBuildMenu();
-					break;
-			}
-		}
-
-		/// Handle item selection from build menu.
-		/// Transitions to Placing state with selected item.
-		void handleBuildItemSelected(const std::string& defName) {
-			placementMode.selectItem(defName);
-			gameUI->hideBuildMenu();
-			LOG_INFO(Game, "Selected '%s' for placement", defName.c_str());
-		}
-
 		/// Handle furniture placement request from info panel.
 		/// Enters placement mode to relocate the selected packaged furniture.
 		void handlePlaceFurniture() {
-			// Get currently selected furniture
-			auto* furnitureSel = std::get_if<world_sim::FurnitureSelection>(&selection);
+			// Get currently selected furniture from selection system
+			const auto& sel = m_selectionSystem->current();
+			auto*		furnitureSel = std::get_if<world_sim::FurnitureSelection>(&sel);
 			if (furnitureSel == nullptr || !furnitureSel->isPackaged) {
 				LOG_WARNING(Game, "Cannot place furniture: no packaged furniture selected");
 				return;
 			}
 
-			// Store the entity ID we're relocating
-			m_relocatingEntityId = furnitureSel->entityId;
-
-			// Enter placement mode with the furniture's def name
-			placementMode.selectItem(furnitureSel->defName);
-			LOG_INFO(
-				Game, "Placing furniture '%s' (entity %u)", furnitureSel->defName.c_str(), static_cast<uint32_t>(furnitureSel->entityId)
-			);
+			// Begin relocation via PlacementSystem
+			m_placementSystem->beginRelocation(furnitureSel->entityId, furnitureSel->defName);
 		}
 
 		/// Handle recipe queue request from crafting station UI.
 		/// Adds a crafting job to the selected station's WorkQueue.
 		void handleQueueRecipe(const std::string& recipeDefName) {
-			// Get currently selected station
-			auto* stationSel = std::get_if<world_sim::CraftingStationSelection>(&selection);
+			// Get currently selected station from selection system
+			const auto& sel = m_selectionSystem->current();
+			auto*		stationSel = std::get_if<world_sim::CraftingStationSelection>(&sel);
 			if (stationSel == nullptr) {
 				LOG_WARNING(Game, "Cannot queue recipe: no station selected");
 				return;
@@ -848,49 +582,6 @@ namespace {
 			// Add the job
 			workQueue->addJob(recipeDefName, 1);
 			LOG_INFO(Game, "Queued recipe '%s' at station '%s'", recipeDefName.c_str(), stationSel->defName.c_str());
-		}
-
-		/// Spawn a placed entity in the world.
-		/// Called when placement mode successfully places an item.
-		/// Returns the entity ID so callers can add additional components.
-		ecs::EntityID spawnPlacedEntity(const std::string& defName, Foundation::Vec2 worldPos) {
-			// Create ECS entity with components needed for rendering:
-			// - Position: world location
-			// - Rotation: required by DynamicEntityRenderSystem
-			// - Appearance: defName for asset lookup
-			auto entity = ecsWorld->createEntity();
-
-			ecsWorld->addComponent<ecs::Position>(entity, ecs::Position{{worldPos.x, worldPos.y}});
-			ecsWorld->addComponent<ecs::Rotation>(entity, ecs::Rotation{0.0F});
-			ecsWorld->addComponent<ecs::Appearance>(entity, ecs::Appearance{defName, 1.0F, {1.0F, 1.0F, 1.0F, 1.0F}});
-
-			// Check if this is a crafting station (has craftable capability)
-			// If so, add WorkQueue component for job management
-			auto&		assetRegistry = engine::assets::AssetRegistry::Get();
-			const auto* assetDef = assetRegistry.getDefinition(defName);
-			if (assetDef != nullptr && assetDef->capabilities.craftable.has_value()) {
-				ecsWorld->addComponent<ecs::WorkQueue>(entity, ecs::WorkQueue{});
-				LOG_INFO(Game, "Spawned station '%s' at (%.1f, %.1f) with WorkQueue", defName.c_str(), worldPos.x, worldPos.y);
-			} else if (assetDef != nullptr && assetDef->capabilities.storage.has_value()) {
-				// Storage container - add Inventory configured from StorageCapability
-				const auto&	   storageCap = assetDef->capabilities.storage.value();
-				ecs::Inventory inventory{};
-				inventory.maxCapacity = storageCap.maxCapacity;
-				inventory.maxStackSize = storageCap.maxStackSize;
-				ecsWorld->addComponent<ecs::Inventory>(entity, inventory);
-				LOG_INFO(
-					Game,
-					"Spawned storage '%s' at (%.1f, %.1f) with Inventory (capacity=%u)",
-					defName.c_str(),
-					worldPos.x,
-					worldPos.y,
-					storageCap.maxCapacity
-				);
-			} else {
-				LOG_INFO(Game, "Spawned '%s' at (%.1f, %.1f)", defName.c_str(), worldPos.x, worldPos.y);
-			}
-
-			return entity;
 		}
 
 		std::unique_ptr<engine::world::ChunkManager>	   m_chunkManager;
@@ -914,17 +605,9 @@ namespace {
 		Renderer::GPUTimer						 m_gpuTimer;		// GPU timing via OpenGL queries
 		std::vector<Foundation::EcsSystemTiming> m_ecsTimingsCache; // Reused each frame
 
-		// Current selection for info panel (NoSelection = panel hidden)
-		world_sim::Selection selection = world_sim::NoSelection{};
-
-		// Furniture entity being relocated (0 = spawning new entity, non-zero = relocating existing)
-		ecs::EntityID m_relocatingEntityId{0};
-
-		// Placement mode state machine
-		world_sim::PlacementMode placementMode;
-
-		// Ghost renderer for placement preview
-		world_sim::GhostRenderer ghostRenderer;
+		// World interaction subsystems (extracted from GameScene)
+		std::unique_ptr<world_sim::PlacementSystem> m_placementSystem;
+		std::unique_ptr<world_sim::SelectionSystem> m_selectionSystem;
 	};
 
 } // namespace
