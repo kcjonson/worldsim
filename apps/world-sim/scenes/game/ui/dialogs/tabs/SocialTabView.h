@@ -1,12 +1,17 @@
 #pragma once
 
-#include "../ColonistDetailsModel.h"
-
 #include <component/Component.h>
 #include <graphics/Rect.h>
 #include <layer/Layer.h>
 
+#include <string>
+
 namespace world_sim {
+
+/// Data for Social tab (placeholder)
+struct SocialData {
+	std::string placeholder = "Relationships not yet tracked";
+};
 
 /// Social tab content for ColonistDetailsDialog
 /// Placeholder for future relationship tracking

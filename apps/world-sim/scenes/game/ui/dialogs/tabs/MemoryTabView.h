@@ -1,12 +1,33 @@
 #pragma once
 
-#include "../ColonistDetailsModel.h"
-
 #include <component/Component.h>
 #include <graphics/Rect.h>
 #include <layer/Layer.h>
 
+#include <string>
+#include <vector>
+
 namespace world_sim {
+
+/// A single known entity for Memory tab display
+struct MemoryEntity {
+	std::string name;     // e.g., "Berry Bush"
+	float x = 0.0F;       // Position
+	float y = 0.0F;
+};
+
+/// A category of known entities
+struct MemoryCategory {
+	std::string name;                    // e.g., "Food Sources"
+	std::vector<MemoryEntity> entities;
+	size_t count = 0;                    // Total count (may differ if truncated)
+};
+
+/// Data for Memory tab
+struct MemoryData {
+	std::vector<MemoryCategory> categories;
+	size_t totalKnown = 0;
+};
 
 /// Memory tab content for ColonistDetailsDialog
 /// Shows: Known entities grouped by category in a scrollable TreeView
