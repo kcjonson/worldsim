@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2025-12-28 (Colonist Details Dialog implementation)
+Last Updated: 2025-12-28 (Colonist Details Dialog refactoring - PR #96)
 
 ## Epic/Story/Task Template
 
@@ -383,7 +383,7 @@ while (running) {
 ### Main Game UI: Colonist Details Dialog
 **Spec/Documentation:** `/docs/design/main-game-ui-design.md` (Section 8), `.claude/plans/colonist-details-dialog.md`
 **Dependencies:** ~~Main Game UI: Interaction Components~~ (complete), ~~Main Game UI: Primitives Foundation~~ (complete), ~~UI Architecture: ViewModel Pattern~~ (complete)
-**Status:** in progress
+**Status:** in progress (PR #96)
 
 **Goal:** Full colonist information display with 5 tabs, live updates while game runs.
 
@@ -408,9 +408,14 @@ while (running) {
 - [x] Memory Tab
   - [x] TreeView with collapsible categories (Food, Water, Resources, Threats, Colonists)
   - [x] Entity counts per category
-- [ ] Testing & Polish
-  - [ ] Visual verification in game
-  - [ ] Create PR
+  - [x] 3-level hierarchy (Category > Entity Type > Location)
+  - [x] Scrollable TreeView
+  - [x] Filter decorative entities (grass) from memory storage
+- [x] Refactoring
+  - [x] Split into tabs/ subfolder (BioTabView, HealthTabView, SocialTabView, GearTabView, MemoryTabView)
+  - [x] Move data structs to respective tab view headers
+  - [x] Create TabStyles.h for shared typography
+- [ ] PR Review & Merge
 
 ---
 
