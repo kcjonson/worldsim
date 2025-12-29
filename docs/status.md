@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2025-12-29 (Storage and Hauling System - Complete)
+Last Updated: 2025-12-29 (Added GameScene refactoring epic)
 
 ## Epic/Story/Task Template
 
@@ -486,6 +486,35 @@ The following MVP epics have all been completed. Detailed task breakdowns are pr
 ---
 
 ## Planned Epics (Post-MVP)
+
+### GameScene Subsystem Extraction
+**Spec/Documentation:** `/docs/technical/gamescene-refactoring.md`
+**Dependencies:** None
+**Status:** ready
+
+**Goal:** Extract placement and selection logic from GameScene into dedicated subsystems. Prevent god-class anti-pattern as gameplay systems grow.
+
+**Tasks:**
+- [ ] PlacementSystem Extraction
+  - [ ] Create `scenes/game/world/placement/PlacementSystem.h/cpp`
+  - [ ] Move PlacementMode and GhostRenderer ownership
+  - [ ] Move spawning/relocation logic (spawnPlacedEntity, m_relocatingEntityId)
+  - [ ] Move UI callbacks (handleBuildToggle, handleBuildItemSelected, handlePlacePackaged)
+  - [ ] Generic naming (works for stations, furniture, walls, machines, etc.)
+- [ ] SelectionSystem Extraction
+  - [ ] Create `scenes/game/world/selection/SelectionSystem.h/cpp`
+  - [ ] Move Selection state ownership
+  - [ ] Move handleEntityClick with priority logic
+  - [ ] Move renderSelectionIndicator
+  - [ ] Create SelectionPriorities.h for priority constants
+- [ ] GameScene Cleanup
+  - [ ] GameScene becomes thin coordinator (<400 lines)
+  - [ ] Subsystems are testable in isolation
+
+**Future (separate epic):**
+- AI System reorganization (libs/engine/ecs/systems/ai/)
+
+---
 
 ### UI Architecture: Animation System
 **Spec/Documentation:** `/docs/technical/ui-framework/animation-system.md` (to be written)
