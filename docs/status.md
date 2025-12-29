@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2025-12-28 (EntityInfoView two-column rebuild - PR #95)
+Last Updated: 2025-12-28 (Colonist Details Dialog implementation)
 
 ## Epic/Story/Task Template
 
@@ -380,7 +380,37 @@ while (running) {
 
 ## In Progress Epics
 
-*No epics currently in progress*
+### Main Game UI: Colonist Details Dialog
+**Spec/Documentation:** `/docs/design/main-game-ui-design.md` (Section 8), `.claude/plans/colonist-details-dialog.md`
+**Dependencies:** ~~Main Game UI: Interaction Components~~ (complete), ~~Main Game UI: Primitives Foundation~~ (complete), ~~UI Architecture: ViewModel Pattern~~ (complete)
+**Status:** in progress
+
+**Goal:** Full colonist information display with 5 tabs, live updates while game runs.
+
+**Tasks:**
+- [x] Dialog Structure
+  - [x] ColonistDetailsModel (extracts ECS data with change detection)
+  - [x] ColonistDetailsDialog shell with Dialog + TabBar
+  - [x] Wire to GameUI (showColonistDetails/hideColonistDetails)
+  - [x] onDetails callback from EntityInfoView [Details] button
+- [x] Bio Tab
+  - [x] Name, age placeholder, traits placeholder, background placeholder
+  - [x] Current mood with label
+  - [x] Current task display
+- [x] Health Tab
+  - [x] All 8 needs as ProgressBars (Hunger, Thirst, Energy, Bladder, Social, Comfort, Fun, Hygiene)
+  - [x] Mood summary
+- [x] Social Tab
+  - [x] Placeholder message (future implementation)
+- [x] Gear Tab
+  - [x] Inventory items from Inventory component
+  - [x] Item type → display name mapping
+- [x] Memory Tab
+  - [x] TreeView with collapsible categories (Food, Water, Resources, Threats, Colonists)
+  - [x] Entity counts per category
+- [ ] Testing & Polish
+  - [ ] Visual verification in game
+  - [ ] Create PR
 
 ---
 
@@ -603,35 +633,6 @@ The following MVP epics have all been completed. Detailed task breakdowns are pr
 
 ---
 
-### Main Game UI: Colonist Details Modal
-**Spec/Documentation:** `/docs/design/main-game-ui-design.md` (Section 8)
-**Dependencies:** Main Game UI: Interaction Components, Main Game UI: Primitives Foundation, UI Architecture: ViewModel Pattern
-**Status:** planned
-
-**Groundwork Complete:** EntityInfoView has [Details] button ready - just needs onDetails callback wired up.
-
-**Goal:** Full colonist information display with tabs.
-
-**Tasks:**
-- [ ] Modal Structure
-  - [ ] Full-screen modal opened from [📋 Details] button
-  - [ ] Tab bar: [Bio] [Health] [Social] [Gear] [Memory]
-- [ ] Bio Tab
-  - [ ] Portrait, age, background, traits
-  - [ ] Current mood with contributing factors
-- [ ] Health Tab
-  - [ ] Body diagram with injury indicators
-  - [ ] Current ailments and treatment status
-- [ ] Social Tab
-  - [ ] Relationships with other colonists
-  - [ ] Opinion modifiers (+/- reasons)
-- [ ] Gear Tab
-  - [ ] Equipped items and inventory
-- [ ] Memory Tab (worldsim-specific)
-  - [ ] Known entities by category
-  - [ ] Discovery source (observed vs told by whom)
-
----
 
 ### Main Game UI: Polish & worldsim Features
 **Spec/Documentation:** `/docs/design/main-game-ui-design.md` (Sections 12, 14, 16)

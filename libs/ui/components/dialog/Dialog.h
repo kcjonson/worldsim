@@ -31,6 +31,7 @@ class Dialog : public Component, public FocusableBase<Dialog> {
 		Foundation::Vec2	  size{Theme::Dialog::defaultWidth, Theme::Dialog::defaultHeight};
 		std::function<void()> onClose;
 		int					  tabIndex = -1;
+		bool				  modal = true; ///< When false, no overlay and clicks inside don't auto-consume
 	};
 
 	explicit Dialog(const Args& args);
@@ -92,6 +93,7 @@ class Dialog : public Component, public FocusableBase<Dialog> {
 	std::string			  title;
 	Foundation::Vec2	  dialogSize;
 	std::function<void()> onClose;
+	bool				  modal{true};
 
 	State				  state{State::Closed};
 	float				  opacity{0.0F};

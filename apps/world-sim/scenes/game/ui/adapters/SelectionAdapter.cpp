@@ -166,13 +166,16 @@ PanelContent adaptColonistStatus(
 		.value = nextTask,
 	});
 
-	// Gear list (from inventory)
+	// Gear list (from inventory) - always show, even if empty
+	content.leftColumn.push_back(SpacerSlot{.height = 8.0F});
+
 	auto* inventory = world.getComponent<ecs::Inventory>(entityId);
 	auto  items = inventory ? inventory->getAllItems() : std::vector<ecs::ItemStack>{};
-	if (!items.empty()) {
-		content.leftColumn.push_back(SpacerSlot{.height = 8.0F});
 
-		std::vector<std::string> gearItems;
+	std::vector<std::string> gearItems;
+	if (items.empty()) {
+		gearItems.push_back("(empty)");
+	} else {
 		gearItems.reserve(items.size());
 		for (const auto& item : items) {
 			std::ostringstream oss;
@@ -182,11 +185,11 @@ PanelContent adaptColonistStatus(
 			}
 			gearItems.push_back(oss.str());
 		}
-		content.leftColumn.push_back(TextListSlot{
-			.header = "Gear",
-			.items = std::move(gearItems),
-		});
 	}
+	content.leftColumn.push_back(TextListSlot{
+		.header = "Gear",
+		.items = std::move(gearItems),
+	});
 
 	// RIGHT COLUMN: "Needs:" header + need bars
 	// The "Needs:" header is rendered by the view, not as a slot

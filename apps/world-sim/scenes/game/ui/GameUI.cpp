@@ -66,8 +66,19 @@ namespace world_sim {
 						onSelectionCleared();
 					}
 				},
+			.onDetails =
+				[this]() {
+					// Open colonist details dialog for currently selected colonist
+					if (selectedColonistId != 0) {
+						showColonistDetails(selectedColonistId);
+					}
+				},
 			.onQueueRecipe = args.onQueueRecipe
 		});
+
+		// Create colonist details dialog
+		colonistDetailsDialog =
+			std::make_unique<ColonistDetailsDialog>(ColonistDetailsDialog::Args{.onClose = [this]() { hideColonistDetails(); }});
 
 		// Create task list view (position set in layout())
 		taskListPanel = std::make_unique<TaskListView>(TaskListView::Args{
@@ -185,6 +196,16 @@ namespace world_sim {
 	bool GameUI::dispatchEvent(UI::InputEvent& event) {
 		// Dispatch to UI children in z-order (highest first)
 		// Panels that can overlap get priority
+
+		// Colonist details dialog (highest z-order - modal overlay)
+		if (colonistDetailsDialog && colonistDetailsDialog->isOpen()) {
+			if (colonistDetailsDialog->handleEvent(event)) {
+				return true;
+			}
+			if (event.isConsumed()) {
+				return true;
+			}
+		}
 
 		// Toast stack (highest z-order - notifications)
 		if (toastStack) {
@@ -344,6 +365,11 @@ namespace world_sim {
 		if (toastStack) {
 			toastStack->update(deltaTime);
 		}
+
+		// Update colonist details dialog if open
+		if (colonistDetailsDialog && colonistDetailsDialog->isOpen()) {
+			colonistDetailsDialog->update(ecsWorld, deltaTime);
+		}
 	}
 
 	void GameUI::render() {
@@ -396,6 +422,11 @@ namespace world_sim {
 		if (toastStack) {
 			toastStack->render();
 		}
+
+		// Render colonist details dialog (highest z-order - modal overlay)
+		if (colonistDetailsDialog && colonistDetailsDialog->isOpen()) {
+			colonistDetailsDialog->render();
+		}
 	}
 
 	void GameUI::pushNotification(
@@ -441,6 +472,24 @@ namespace world_sim {
 
 	bool GameUI::isBuildMenuVisible() const {
 		return buildMenuVisible;
+	}
+
+	// --- Colonist Details Dialog API ---
+
+	void GameUI::showColonistDetails(ecs::EntityID colonistId) {
+		if (colonistDetailsDialog) {
+			colonistDetailsDialog->open(colonistId, viewportBounds.width, viewportBounds.height);
+		}
+	}
+
+	void GameUI::hideColonistDetails() {
+		if (colonistDetailsDialog) {
+			colonistDetailsDialog->close();
+		}
+	}
+
+	bool GameUI::isColonistDetailsVisible() const {
+		return colonistDetailsDialog && colonistDetailsDialog->isOpen();
 	}
 
 } // namespace world_sim

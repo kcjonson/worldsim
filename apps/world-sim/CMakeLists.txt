@@ -27,6 +27,9 @@ add_executable(world-sim
     scenes/game/ui/models/ColonistListModel.cpp
     scenes/game/ui/models/EntityInfoModel.cpp
     scenes/game/ui/models/TimeModel.cpp
+    # Game scene UI - dialogs
+    scenes/game/ui/dialogs/ColonistDetailsDialog.cpp
+    scenes/game/ui/dialogs/ColonistDetailsModel.cpp
     # Game scene UI - main container
     scenes/game/ui/GameUI.cpp
     # Game scene - world rendering

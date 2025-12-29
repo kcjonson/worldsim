@@ -139,6 +139,12 @@ namespace ecs {
 		/// @param defNameId Asset definition ID from AssetRegistry::getDefNameId()
 		/// @param capabilityMask Bitmask of capabilities from AssetRegistry::getCapabilityMask()
 		void rememberWorldEntity(const glm::vec2& position, uint32_t defNameId, uint8_t capabilityMask) {
+			// Skip entities with no capabilities - they're purely decorative (grass, etc.)
+			// and have no gameplay relevance for colonist decision-making
+			if (capabilityMask == 0) {
+				return;
+			}
+
 			uint64_t key = ecs::hashWorldEntity(position, defNameId);
 
 			// Check if already known - if so, just update LRU position

@@ -15,7 +15,8 @@ Dialog::Dialog(const Args& args)
 	: FocusableBase<Dialog>(args.tabIndex),
 	  title(args.title),
 	  dialogSize(args.size),
-	  onClose(args.onClose) {
+	  onClose(args.onClose),
+	  modal(args.modal) {
 	// Dialog covers entire screen when open
 	position = {0.0F, 0.0F};
 	size = {0.0F, 0.0F}; // Set properly when open() is called
@@ -136,12 +137,16 @@ void Dialog::setPosition(float x, float y) {
 }
 
 bool Dialog::containsPoint(Foundation::Vec2 point) const {
-	// When open, the dialog contains the entire screen (to block clicks)
-	if (state != State::Closed) {
+	if (state == State::Closed) {
+		return false;
+	}
+	// Modal dialogs contain the entire screen (to block clicks)
+	if (modal) {
 		return point.x >= 0 && point.x < screenWidth && point.y >= 0 &&
 			   point.y < screenHeight;
 	}
-	return false;
+	// Non-modal only contains the panel
+	return isPointInPanel(point);
 }
 
 bool Dialog::handleEvent(InputEvent& event) {
@@ -152,8 +157,11 @@ bool Dialog::handleEvent(InputEvent& event) {
 	switch (event.type) {
 		case InputEvent::Type::MouseMove: {
 			closeButtonHovered = isPointInCloseButton(event.position);
-			// Return true to block hover events from reaching content behind the dialog
-			return true;
+			// In modal mode, block all hover events; in non-modal, only block if in panel
+			if (modal) {
+				return true;
+			}
+			return isPointInPanel(event.position);
 		}
 
 		case InputEvent::Type::MouseDown: {
@@ -163,14 +171,24 @@ bool Dialog::handleEvent(InputEvent& event) {
 				return true;
 			}
 
-			// Check if click is outside panel (close on overlay click)
+			// Check if click is outside panel
 			if (!isPointInPanel(event.position)) {
+				// Close dialog when clicking outside (both modal and non-modal)
 				close();
-				event.consume();
-				return true;
+				if (modal) {
+					// Modal: consume the event (block game interaction)
+					event.consume();
+					return true;
+				}
+				// Non-modal: let click pass through to game
+				return false;
 			}
 
-			// Click is inside panel - consume to prevent click-through
+			// Click is inside panel - in non-modal mode, don't consume
+			// so child components can handle the event
+			if (!modal) {
+				return false;
+			}
 			event.consume();
 			return true;
 		}
@@ -182,18 +200,25 @@ bool Dialog::handleEvent(InputEvent& event) {
 				return true;
 			}
 
-			// Consume all mouse up events when open
-			event.consume();
-			return true;
+			// In modal mode, consume all mouse up events
+			if (modal) {
+				event.consume();
+				return true;
+			}
+			// Non-modal: don't consume inside panel
+			return false;
 		}
 
 		default:
 			break;
 	}
 
-	// Consume all events to block interaction with content behind
-	event.consume();
-	return true;
+	// In modal mode, consume all events to block interaction
+	if (modal) {
+		event.consume();
+		return true;
+	}
+	return false;
 }
 
 void Dialog::update(float deltaTime) {
@@ -237,15 +262,17 @@ void Dialog::render() {
 		return;
 	}
 
-	// Draw semi-transparent overlay covering entire screen
-	Foundation::Color overlayColor = Theme::Dialog::overlayBackground;
-	overlayColor.a *= opacity;
+	// Draw semi-transparent overlay covering entire screen (only in modal mode)
+	if (modal) {
+		Foundation::Color overlayColor = Theme::Dialog::overlayBackground;
+		overlayColor.a *= opacity;
 
-	Renderer::Primitives::drawRect(Renderer::Primitives::RectArgs{
-		.bounds = {0.0F, 0.0F, screenWidth, screenHeight},
-		.style = {.fill = overlayColor},
-		.zIndex = zIndex,
-	});
+		Renderer::Primitives::drawRect(Renderer::Primitives::RectArgs{
+			.bounds = {0.0F, 0.0F, screenWidth, screenHeight},
+			.style = {.fill = overlayColor},
+			.zIndex = zIndex,
+		});
+	}
 
 	// Draw dialog panel
 	Foundation::Rect  panelBounds = getPanelBounds();
