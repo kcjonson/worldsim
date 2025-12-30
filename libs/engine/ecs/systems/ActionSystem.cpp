@@ -356,25 +356,82 @@ namespace ecs {
 				);
 			}
 
-			// Entity removal/cooldown handled in Phase 5
-			// TODO: Call PlacementExecutor to remove or set cooldown on source entity
-			if (collEff.destroySource) {
-				LOG_DEBUG(
-					Engine,
-					"[Action] Source entity %s at (%.1f, %.1f) should be removed",
-					collEff.sourceDefName.c_str(),
-					collEff.sourcePosition.x,
-					collEff.sourcePosition.y
+			// Handle entity removal or cooldown for harvested sources
+			// Check if entity has a resource pool (totalResourceMin > 0)
+			auto& harvestRegistry = engine::assets::AssetRegistry::Get();
+			const auto* sourceDef = harvestRegistry.getDefinition(collEff.sourceDefName);
+			bool hasResourcePool = false;
+			if (sourceDef != nullptr && sourceDef->capabilities.harvestable.has_value()) {
+				const auto& harv = sourceDef->capabilities.harvestable.value();
+				hasResourcePool = harv.totalResourceMin > 0 && harv.totalResourceMax > 0;
+			}
+
+			if (hasResourcePool && m_onDecrementResource) {
+				// Entity has resource pool - decrement and check if depleted
+				bool resourcesRemain = m_onDecrementResource(
+					collEff.sourceDefName, collEff.sourcePosition.x, collEff.sourcePosition.y
 				);
+				if (resourcesRemain) {
+					LOG_DEBUG(
+						Engine,
+						"[Action] Harvested %s at (%.1f, %.1f) - resources remain",
+						collEff.sourceDefName.c_str(),
+						collEff.sourcePosition.x,
+						collEff.sourcePosition.y
+					);
+				} else {
+					// Depleted - remove the entity
+					if (m_onRemoveEntity) {
+						m_onRemoveEntity(collEff.sourceDefName, collEff.sourcePosition.x, collEff.sourcePosition.y);
+						LOG_DEBUG(
+							Engine,
+							"[Action] Resource depleted - removed %s at (%.1f, %.1f)",
+							collEff.sourceDefName.c_str(),
+							collEff.sourcePosition.x,
+							collEff.sourcePosition.y
+						);
+					}
+				}
+			} else if (collEff.destroySource) {
+				// No resource pool - use destructive flag
+				if (m_onRemoveEntity) {
+					m_onRemoveEntity(collEff.sourceDefName, collEff.sourcePosition.x, collEff.sourcePosition.y);
+					LOG_DEBUG(
+						Engine,
+						"[Action] Removed source entity %s at (%.1f, %.1f)",
+						collEff.sourceDefName.c_str(),
+						collEff.sourcePosition.x,
+						collEff.sourcePosition.y
+					);
+				} else {
+					LOG_WARNING(
+						Engine,
+						"[Action] No removal callback set - source entity %s at (%.1f, %.1f) was NOT removed",
+						collEff.sourceDefName.c_str(),
+						collEff.sourcePosition.x,
+						collEff.sourcePosition.y
+					);
+				}
 			} else if (collEff.regrowthTime > 0.0F) {
-				LOG_DEBUG(
-					Engine,
-					"[Action] Source entity %s at (%.1f, %.1f) should enter %.1fs cooldown",
-					collEff.sourceDefName.c_str(),
-					collEff.sourcePosition.x,
-					collEff.sourcePosition.y,
-					collEff.regrowthTime
-				);
+				if (m_onSetCooldown) {
+					m_onSetCooldown(collEff.sourceDefName, collEff.sourcePosition.x, collEff.sourcePosition.y, collEff.regrowthTime);
+					LOG_DEBUG(
+						Engine,
+						"[Action] Set cooldown on %s at (%.1f, %.1f) for %.1fs",
+						collEff.sourceDefName.c_str(),
+						collEff.sourcePosition.x,
+						collEff.sourcePosition.y,
+						collEff.regrowthTime
+					);
+				} else {
+					LOG_WARNING(
+						Engine,
+						"[Action] No cooldown callback set - source entity %s at (%.1f, %.1f) cooldown NOT applied",
+						collEff.sourceDefName.c_str(),
+						collEff.sourcePosition.x,
+						collEff.sourcePosition.y
+					);
+				}
 			}
 		}
 

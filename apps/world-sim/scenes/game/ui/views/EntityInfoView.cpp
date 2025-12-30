@@ -15,7 +15,8 @@ namespace world_sim {
 		  onCloseCallback(args.onClose),
 		  onDetailsCallback(args.onDetails),
 		  onQueueRecipeCallback(args.onQueueRecipe),
-		  onPlaceCallback(args.onPlace) {
+		  onPlaceCallback(args.onPlace),
+		  queryResourcesCallback(args.queryResources) {
 
 		contentWidth = panelWidth - (2.0F * kPadding);
 
@@ -477,6 +478,7 @@ namespace world_sim {
 			.onDetails = onDetailsCallback,
 			.onQueueRecipe = onQueueRecipeCallback,
 			.onPlace = onPlaceCallback,
+			.queryResources = queryResourcesCallback,
 		};
 
 		// Let model handle all the logic (selection detection, change detection, content generation)

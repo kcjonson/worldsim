@@ -159,7 +159,11 @@ namespace {
 						auto& timeSystem = ecsWorld->getSystem<ecs::TimeSystem>();
 						timeSystem.setSpeed(speed);
 					},
-				.onMenuClick = [this]() { sceneManager->switchTo(world_sim::toKey(world_sim::SceneType::MainMenu)); }
+				.onMenuClick = [this]() { sceneManager->switchTo(world_sim::toKey(world_sim::SceneType::MainMenu)); },
+				.queryResources = [this](const std::string& defName, Foundation::Vec2 position) -> std::optional<uint32_t> {
+					auto coord = engine::world::worldToChunk({position.x, position.y});
+					return m_placementExecutor->getResourceCount(coord, {position.x, position.y}, defName);
+				}
 			});
 
 			// Populate Production dropdown with placeable stations (recipes where station="none")
@@ -478,6 +482,27 @@ namespace {
 				// Mark as packaged - player needs to place it via ghost preview
 				ecsWorld->addComponent<ecs::Packaged>(entity, ecs::Packaged{});
 				LOG_INFO(Game, "Spawned packaged '%s' - awaiting placement", defName.c_str());
+			});
+
+			// Wire up ActionSystem to remove harvested entities (destructive harvest)
+			actionSystem.setRemoveEntityCallback([this](const std::string& defName, float x, float y) {
+				auto coord = engine::world::worldToChunk({x, y});
+				bool removed = m_placementExecutor->removeEntity(coord, {x, y}, defName);
+				if (!removed) {
+					LOG_WARNING(Game, "Failed to remove harvested entity %s at (%.1f, %.1f)", defName.c_str(), x, y);
+				}
+			});
+
+			// Wire up ActionSystem to set cooldown on harvested entities (regrowth)
+			actionSystem.setEntityCooldownCallback([this](const std::string& defName, float x, float y, float cooldownSeconds) {
+				auto coord = engine::world::worldToChunk({x, y});
+				m_placementExecutor->setEntityCooldown(coord, {x, y}, defName, cooldownSeconds);
+			});
+
+			// Wire up ActionSystem to decrement resource count for harvestable entities with resource pools
+			actionSystem.setDecrementResourceCallback([this](const std::string& defName, float x, float y) -> bool {
+				auto coord = engine::world::worldToChunk({x, y});
+				return m_placementExecutor->decrementResourceCount(coord, {x, y}, defName);
 			});
 
 			// Spawn initial colonist at map center (0, 0)

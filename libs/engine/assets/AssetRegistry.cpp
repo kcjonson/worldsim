@@ -613,6 +613,21 @@ namespace engine::assets {
 						harvestable.duration = harvestableNode.attribute("duration").as_float(4.0F);
 						harvestable.destructive = harvestableNode.attribute("destructive").as_bool(true);
 						harvestable.regrowthTime = harvestableNode.attribute("regrowthTime").as_float(0.0F);
+						harvestable.totalResourceMin = harvestableNode.attribute("totalResourceMin").as_uint(0);
+						harvestable.totalResourceMax = harvestableNode.attribute("totalResourceMax").as_uint(0);
+
+						// Validate totalResourceMax >= totalResourceMin
+						if (harvestable.totalResourceMax < harvestable.totalResourceMin) {
+							LOG_WARNING(
+								Engine,
+								"AssetDef '%s' harvestable: totalResourceMax (%u) < totalResourceMin (%u); swapping",
+								def.defName.c_str(),
+								harvestable.totalResourceMax,
+								harvestable.totalResourceMin
+							);
+							std::swap(harvestable.totalResourceMin, harvestable.totalResourceMax);
+						}
+
 						def.capabilities.harvestable = harvestable;
 					}
 				}

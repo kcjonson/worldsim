@@ -102,6 +102,19 @@ namespace engine::assets {
 			placeEntityType(defName, context, chunkIndex, adjacentProvider, rng, result.entities);
 		}
 
+		// Initialize resource counts for harvestable entities with resource pools
+		for (const auto& entity : result.entities) {
+			const auto* def = m_registry.getDefinition(entity.defName);
+			if (def != nullptr && def->capabilities.harvestable.has_value()) {
+				const auto& harv = def->capabilities.harvestable.value();
+				if (harv.totalResourceMin > 0 && harv.totalResourceMax > 0) {
+					std::uniform_int_distribution<uint32_t> resourceDist(harv.totalResourceMin, harv.totalResourceMax);
+					uint32_t initialCount = resourceDist(rng);
+					initResourceCount(context.coord, entity.position, entity.defName, initialCount);
+				}
+			}
+		}
+
 		result.entitiesPlaced = result.entities.size();
 		LOG_DEBUG(
 			Engine,
@@ -548,6 +561,24 @@ namespace engine::assets {
 	}
 
 	void PlacementExecutor::storeChunkResult(AsyncChunkPlacementResult&& result) {
+		// Initialize resource counts for harvestable entities with resource pools
+		// Create RNG from chunk coordinates for deterministic results
+		uint64_t chunkSeed = static_cast<uint64_t>(result.coord.x) * 0x9E3779B97F4A7C15ULL;
+		chunkSeed ^= static_cast<uint64_t>(result.coord.y) * 0x6C62272E07BB0143ULL;
+		std::mt19937 rng(static_cast<uint32_t>(chunkSeed));
+
+		for (const auto& entity : result.entities) {
+			const auto* def = m_registry.getDefinition(entity.defName);
+			if (def != nullptr && def->capabilities.harvestable.has_value()) {
+				const auto& harv = def->capabilities.harvestable.value();
+				if (harv.totalResourceMin > 0 && harv.totalResourceMax > 0) {
+					std::uniform_int_distribution<uint32_t> resourceDist(harv.totalResourceMin, harv.totalResourceMax);
+					uint32_t initialCount = resourceDist(rng);
+					initResourceCount(result.coord, entity.position, entity.defName, initialCount);
+				}
+			}
+		}
+
 		m_chunkIndices[result.coord] = std::move(result.spatialIndex);
 	}
 
@@ -556,6 +587,7 @@ namespace engine::assets {
 		m_spawnOrder.clear();
 		m_chunkIndices.clear();
 		m_cooldowns.clear();
+		m_resourceCounts.clear();
 		m_initialized = false;
 	}
 
@@ -647,6 +679,65 @@ namespace engine::assets {
 				++it;
 			}
 		}
+	}
+
+	void PlacementExecutor::initResourceCount(world::ChunkCoordinate coord, glm::vec2 position,
+											  const std::string& defName, uint32_t count) {
+		auto key = makeCooldownKey(coord, position, defName);
+		m_resourceCounts[key] = count;
+		LOG_DEBUG(
+			Engine,
+			"PlacementExecutor: Initialized resource count for %s at (%.1f, %.1f) = %u",
+			defName.c_str(),
+			position.x,
+			position.y,
+			count
+		);
+	}
+
+	std::optional<uint32_t> PlacementExecutor::getResourceCount(world::ChunkCoordinate coord, glm::vec2 position,
+																const std::string& defName) const {
+		auto key = makeCooldownKey(coord, position, defName);
+		auto it = m_resourceCounts.find(key);
+		if (it != m_resourceCounts.end()) {
+			return it->second;
+		}
+		return std::nullopt;
+	}
+
+	bool PlacementExecutor::decrementResourceCount(world::ChunkCoordinate coord, glm::vec2 position,
+												   const std::string& defName) {
+		auto key = makeCooldownKey(coord, position, defName);
+		auto it = m_resourceCounts.find(key);
+		if (it == m_resourceCounts.end()) {
+			// No resource tracking for this entity - treat as single-harvest
+			return false;
+		}
+
+		if (it->second <= 1) {
+			// Last resource - remove tracking and signal depletion
+			m_resourceCounts.erase(it);
+			LOG_DEBUG(
+				Engine,
+				"PlacementExecutor: Resource depleted for %s at (%.1f, %.1f)",
+				defName.c_str(),
+				position.x,
+				position.y
+			);
+			return false;  // Depleted - caller should destroy entity
+		}
+
+		// Decrement and keep tracking
+		it->second--;
+		LOG_DEBUG(
+			Engine,
+			"PlacementExecutor: Resource decremented for %s at (%.1f, %.1f), remaining = %u",
+			defName.c_str(),
+			position.x,
+			position.y,
+			it->second
+		);
+		return true;  // Resources remain
 	}
 
 } // namespace engine::assets

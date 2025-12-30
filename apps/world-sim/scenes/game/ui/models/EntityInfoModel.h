@@ -58,11 +58,16 @@ class EntityInfoModel {
 		Hide,		 // Panel was visible, now needs to hide
 	};
 
+	/// Callback to query remaining resource count for a world entity
+	/// Returns std::nullopt if entity has no resource pool
+	using ResourceQueryCallback = std::function<std::optional<uint32_t>(const std::string& defName, Foundation::Vec2 position)>;
+
 	/// Callbacks needed for content generation
 	struct Callbacks {
-		std::function<void()> onDetails;	 // Open colonist details modal
-		QueueRecipeCallback onQueueRecipe;	 // Queue recipe at station
-		std::function<void()> onPlace;		 // Place packaged furniture
+		std::function<void()> onDetails;		// Open colonist details modal
+		QueueRecipeCallback onQueueRecipe;		// Queue recipe at station
+		std::function<void()> onPlace;			// Place packaged furniture
+		ResourceQueryCallback queryResources;	// Query remaining resource count for harvestable entities
 	};
 
 	/// Refresh model with current selection state

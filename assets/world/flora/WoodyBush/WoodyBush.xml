@@ -22,9 +22,10 @@
       <swayFrequency>0.4,0.8</swayFrequency>
     </animation>
 
-    <!-- Entity capabilities - harvested for sticks (destructive) -->
+    <!-- Entity capabilities - harvested for sticks with resource pool -->
     <capabilities>
-      <harvestable yield="Stick" amountMin="1" amountMax="3" duration="4.0" destructive="true"/>
+      <harvestable yield="Stick" amountMin="1" amountMax="1" duration="4.0"
+                   totalResourceMin="3" totalResourceMax="5"/>
     </capabilities>
 
     <!-- Per-biome placement configuration -->
