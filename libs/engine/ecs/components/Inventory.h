@@ -50,6 +50,16 @@ namespace ecs {
 		std::optional<ItemStack> rightHand;
 
 		// ============================================================================
+		// Large Entity Carrying
+		// ============================================================================
+
+		/// Entity ID of a packaged entity being carried (requires both hands)
+		/// This is separate from hand ItemStacks because packaged entities are
+		/// full ECS entities (with Position, components, etc.), not simple items.
+		/// When set, leftHand/rightHand should show the entity's defName for UI display.
+		std::optional<uint64_t> carryingPackagedEntity;
+
+		// ============================================================================
 		// Backpack Storage
 		// ============================================================================
 
@@ -123,8 +133,10 @@ namespace ecs {
 		/// Check if backpack is empty
 		[[nodiscard]] bool isEmpty() const { return items.empty(); }
 
-		/// Check if completely empty (no items in hands or backpack)
-		[[nodiscard]] bool isCompletelyEmpty() const { return items.empty() && !leftHand.has_value() && !rightHand.has_value(); }
+		/// Check if completely empty (no items in hands, backpack, or carrying entity)
+		[[nodiscard]] bool isCompletelyEmpty() const {
+			return items.empty() && !leftHand.has_value() && !rightHand.has_value() && !carryingPackagedEntity.has_value();
+		}
 
 		// ============================================================================
 		// Hand Query Methods
@@ -212,11 +224,12 @@ namespace ecs {
 		/// Clear all items from inventory (backpack only)
 		void clear() { items.clear(); }
 
-		/// Clear everything including hands
+		/// Clear everything including hands and carried entity
 		void clearAll() {
 			items.clear();
 			leftHand.reset();
 			rightHand.reset();
+			carryingPackagedEntity.reset();
 		}
 
 		// ============================================================================

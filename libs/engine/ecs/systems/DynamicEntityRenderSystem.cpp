@@ -3,6 +3,7 @@
 #include "../World.h"
 #include "../components/Appearance.h"
 #include "../components/FacingDirection.h"
+#include "../components/Packaged.h"
 #include "../components/Transform.h"
 
 namespace ecs {
@@ -28,6 +29,14 @@ void DynamicEntityRenderSystem::update(float /*deltaTime*/) {
     // Collect all entities with position and appearance
     for (auto [entity, pos, rot, appearance] :
          world->view<Position, Rotation, Appearance>()) {
+        // Skip entities that are being carried by a colonist
+        // These will reappear when placed at their destination
+        if (auto* packaged = world->getComponent<Packaged>(entity)) {
+            if (packaged->beingCarried) {
+                continue;
+            }
+        }
+
         engine::assets::PlacedEntity placed;
 
         // Check if entity has FacingDirection for directional sprite selection

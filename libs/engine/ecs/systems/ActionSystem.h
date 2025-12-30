@@ -6,7 +6,10 @@
 // Actions have duration and apply effects when complete.
 // See /docs/design/game-systems/colonists/needs.md for design details.
 
+#include "../EntityID.h"
 #include "../ISystem.h"
+
+#include <glm/vec2.hpp>
 
 #include <functional>
 #include <optional>
@@ -61,6 +64,7 @@ private:
 
 	/// Complete an action and apply effects
 	void completeAction(
+		EntityID entity,
 		struct Action& action,
 		struct NeedsComponent& needs,
 		struct Task& task,
@@ -88,6 +92,23 @@ private:
 		struct Action& action,
 		const struct Position& position,
 		const struct Memory& memory
+	);
+
+	/// Start a place packaged action (pickup packaged item, then place at target)
+	/// Two-phase task like Haul: Phase 1 = PickupPackaged at source, Phase 2 = PlacePackaged at target
+	void startPlacePackagedAction(
+		struct Task& task,
+		struct Action& action,
+		const struct Position& position
+	);
+
+	/// Clear colonist hands for two-handed pickup
+	/// Stows items to backpack if possible, drops if not (2-handed or full backpack)
+	/// @param inventory Colonist's inventory to modify
+	/// @param dropPosition Position to drop items that can't be stowed
+	void clearHandsForTwoHandedPickup(
+		struct Inventory& inventory,
+		glm::vec2 dropPosition
 	);
 
 	/// Callback for item crafted notifications

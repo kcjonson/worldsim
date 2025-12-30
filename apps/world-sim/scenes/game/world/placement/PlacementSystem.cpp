@@ -19,13 +19,21 @@ namespace world_sim {
 		// Initialize placement mode with callback to handle placement
 		placementMode = PlacementMode{PlacementMode::Args{.onPlace = [this](const std::string& defName, Foundation::Vec2 worldPos) {
 			if (relocatingEntityId != ecs::EntityID{0}) {
-				// Relocating existing furniture - move it and remove Packaged component
-				if (auto* pos = ecsWorld->getComponent<ecs::Position>(relocatingEntityId)) {
-					pos->value = {worldPos.x, worldPos.y};
-					ecsWorld->removeComponent<ecs::Packaged>(relocatingEntityId);
-					LOG_INFO(Game, "Placed furniture at (%.1f, %.1f)", worldPos.x, worldPos.y);
+				// Set target position on packaged item - colonist will carry it there
+				auto* packaged = ecsWorld->getComponent<ecs::Packaged>(relocatingEntityId);
+				if (packaged != nullptr) {
+					packaged->targetPosition = glm::vec2{worldPos.x, worldPos.y};
+					LOG_INFO(
+						Game,
+						"Set placement target (%.1f, %.1f) for entity %u - awaiting colonist delivery",
+						worldPos.x,
+						worldPos.y,
+						static_cast<uint32_t>(relocatingEntityId)
+					);
+				} else {
+					LOG_WARNING(Game, "Entity %u no longer has Packaged component", static_cast<uint32_t>(relocatingEntityId));
 				}
-				// Clear selection after placing
+				// Clear selection after setting target
 				if (callbacks.onSelectionCleared) {
 					callbacks.onSelectionCleared();
 				}
@@ -132,13 +140,34 @@ namespace world_sim {
 	}
 
 	void PlacementSystem::render(int viewportW, int viewportH) {
-		if (placementMode.state() != PlacementState::Placing || camera == nullptr) {
+		if (camera == nullptr) {
 			return;
 		}
 
-		ghostRenderer.render(
-			placementMode.selectedDefName(), placementMode.ghostPosition(), *camera, viewportW, viewportH, placementMode.isValidPlacement()
-		);
+		// Render active placement ghost (during placement mode)
+		if (placementMode.state() == PlacementState::Placing) {
+			ghostRenderer.render(
+				placementMode.selectedDefName(), placementMode.ghostPosition(), *camera, viewportW, viewportH, placementMode.isValidPlacement()
+			);
+		}
+
+		// Render ghosts for all packaged items awaiting colonist delivery
+		// (Skip items already being carried - they'll be placed shortly)
+		if (ecsWorld != nullptr) {
+			for (auto [entity, packaged, appearance] : ecsWorld->view<ecs::Packaged, ecs::Appearance>()) {
+				if (packaged.targetPosition.has_value() && !packaged.beingCarried) {
+					const auto& target = packaged.targetPosition.value();
+					ghostRenderer.render(
+						appearance.defName,
+						{target.x, target.y},
+						*camera,
+						viewportW,
+						viewportH,
+						true // Valid placement (already confirmed)
+					);
+				}
+			}
+		}
 	}
 
 	ecs::EntityID PlacementSystem::spawnEntity(const std::string& defName, Foundation::Vec2 worldPos) {

@@ -59,6 +59,11 @@ namespace ecs {
 		uint64_t					 haulTargetStorageId = 0;  // Storage container entity ID
 		std::optional<glm::vec2>	 haulTargetPosition;	// Where to deposit
 
+		// PlacePackaged-specific fields (for PlacePackaged tasks)
+		uint64_t				 placePackagedEntityId = 0;	// Entity ID of packaged item
+		std::optional<glm::vec2> placeSourcePosition;		// Where the packaged item is
+		std::optional<glm::vec2> placeTargetPosition;		// Where to place it
+
 		// Human-readable explanation for UI
 		std::string reason;
 
@@ -77,6 +82,16 @@ namespace ecs {
 			// This indicates a work task, not a real need - priority 50
 			if (taskType == TaskType::FulfillNeed && needValue >= 100.0F && threshold == 0.0F && status == OptionStatus::Available) {
 				return 50.0F;
+			}
+			// Tier 6.35: Placing packaged items at target locations
+			// Base priority 38, but if colonist is already carrying (needValue > 100),
+			// use the needValue directly as priority to ensure delivery completes
+			if (taskType == TaskType::PlacePackaged && status == OptionStatus::Available) {
+				if (needValue > 100.0F) {
+					// In-progress delivery - use high priority to finish before other tasks
+					return needValue;
+				}
+				return 38.0F;
 			}
 			// Tier 6.4: Hauling loose items to storage - priority 37
 			if (taskType == TaskType::Haul && status == OptionStatus::Available) {

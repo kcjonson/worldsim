@@ -46,9 +46,10 @@ namespace ecs {
 		// Work Actions
 		Craft,	 // Creating items at workbench
 		Deposit, // Depositing items into storage container
-				 // Build,    // Constructing structures
-				 // Repair,   // Fixing damaged structures
-				 // Clean,    // Cleaning areas
+
+		// Placement Actions
+		PickupPackaged, // Clear hands + pick up 2-handed packaged item
+		PlacePackaged,	// Place packaged item at target location
 	};
 
 	/// Action state machine
@@ -170,9 +171,19 @@ namespace ecs {
 		uint64_t storageEntityId = 0;
 	};
 
+	/// Effect for placing packaged items at target locations.
+	/// Moves entity to target position and removes Packaged component.
+	struct PlacePackagedEffect {
+		/// Entity ID of the packaged item being placed
+		uint64_t packagedEntityId = 0;
+
+		/// Target position for placement (from Packaged.targetPosition)
+		glm::vec2 targetPosition{0.0F, 0.0F};
+	};
+
 	/// Variant holding the effect data for the current action
 	using ActionEffect =
-		std::variant<std::monostate, NeedEffect, CollectionEffect, ConsumptionEffect, ProgressEffect, SpawnEffect, CraftingEffect, DepositEffect>;
+		std::variant<std::monostate, NeedEffect, CollectionEffect, ConsumptionEffect, ProgressEffect, SpawnEffect, CraftingEffect, DepositEffect, PlacePackagedEffect>;
 
 	// ============================================================================
 	// Action Component
@@ -262,6 +273,13 @@ namespace ecs {
 		/// Get the deposit effect
 		[[nodiscard]] const DepositEffect& depositEffect() const { return std::get<DepositEffect>(effect); }
 		[[nodiscard]] DepositEffect&	   depositEffect() { return std::get<DepositEffect>(effect); }
+
+		/// Check if this action has a place packaged effect
+		[[nodiscard]] bool hasPlacePackagedEffect() const { return std::holds_alternative<PlacePackagedEffect>(effect); }
+
+		/// Get the place packaged effect
+		[[nodiscard]] const PlacePackagedEffect& placePackagedEffect() const { return std::get<PlacePackagedEffect>(effect); }
+		[[nodiscard]] PlacePackagedEffect&		 placePackagedEffect() { return std::get<PlacePackagedEffect>(effect); }
 
 		// --- Mutation methods ---
 
@@ -517,6 +535,46 @@ namespace ecs {
 
 			return action;
 		}
+
+		/// Factory: PickupPackaged action - clear hands and pick up a 2-handed packaged item
+		/// Phase 1 of PlacePackaged task. Colonist clears hands first, then picks up.
+		/// @param packagedEntityId Entity ID of the packaged item
+		/// @param sourcePos Position of the packaged item
+		static Action PickupPackaged(uint64_t packagedEntityId, glm::vec2 sourcePos) {
+			Action action;
+			action.type = ActionType::PickupPackaged;
+			action.state = ActionState::Starting;
+			action.duration = 1.5F; // Time to clear hands + pick up
+			action.targetPosition = sourcePos;
+			action.interruptable = false; // Don't interrupt mid-pickup
+
+			PlacePackagedEffect placeEff;
+			placeEff.packagedEntityId = packagedEntityId;
+			// targetPosition not set yet - will be set during phase 2
+			action.effect = placeEff;
+
+			return action;
+		}
+
+		/// Factory: PlacePackaged action - place a packaged item at target location
+		/// Phase 2 of PlacePackaged task. Colonist puts down the item and it becomes placed.
+		/// @param packagedEntityId Entity ID of the packaged item being placed
+		/// @param targetPos Position to place the item (from Packaged.targetPosition)
+		static Action PlacePackaged(uint64_t packagedEntityId, glm::vec2 targetPos) {
+			Action action;
+			action.type = ActionType::PlacePackaged;
+			action.state = ActionState::Starting;
+			action.duration = 2.0F; // Time to carefully place the item
+			action.targetPosition = targetPos;
+			action.interruptable = false; // Don't interrupt mid-placement
+
+			PlacePackagedEffect placeEff;
+			placeEff.packagedEntityId = packagedEntityId;
+			placeEff.targetPosition = targetPos;
+			action.effect = placeEff;
+
+			return action;
+		}
 	};
 
 	/// Get human-readable name for action type (for debug logging)
@@ -540,6 +598,10 @@ namespace ecs {
 				return "Craft";
 			case ActionType::Deposit:
 				return "Deposit";
+			case ActionType::PickupPackaged:
+				return "PickupPackaged";
+			case ActionType::PlacePackaged:
+				return "PlacePackaged";
 		}
 		return "Unknown";
 	}

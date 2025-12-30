@@ -15,11 +15,12 @@ namespace ecs {
 /// Task types that colonists can perform
 enum class TaskType : uint8_t {
 	None = 0,
-	FulfillNeed, // Tier 3/5: Moving to target for need fulfillment
-	Gather,		 // Tier 6.6: Gathering materials for crafting
-	Craft,		 // Tier 6.5: Crafting at a station
-	Haul,		 // Tier 6.4: Moving loose items to storage containers
-	Wander		 // Tier 7: Random exploration
+	FulfillNeed,   // Tier 3/5: Moving to target for need fulfillment
+	Gather,		   // Tier 6.6: Gathering materials for crafting
+	Craft,		   // Tier 6.5: Crafting at a station
+	Haul,		   // Tier 6.4: Moving loose items to storage containers
+	PlacePackaged, // Tier 6.35: Carrying packaged items to placement locations
+	Wander		   // Tier 7: Random exploration
 };
 
 /// Task state machine
@@ -55,6 +56,11 @@ struct Task {
 	glm::vec2	haulSourcePosition{0.0F, 0.0F};	   // Position of the source item
 	glm::vec2	haulTargetPosition{0.0F, 0.0F};	   // Position of the storage container
 
+	/// For PlacePackaged tasks: packaged entity to carry and placement target
+	uint64_t  placePackagedEntityId = 0;		   // Entity ID of the packaged item to carry
+	glm::vec2 placeSourcePosition{0.0F, 0.0F};	   // Where the packaged item currently is
+	glm::vec2 placeTargetPosition{0.0F, 0.0F};	   // Where to place it (from Packaged.targetPosition)
+
 	/// Time since last decision re-evaluation (seconds)
 	float timeSinceEvaluation = 0.0F;
 
@@ -82,6 +88,9 @@ struct Task {
 		haulTargetStorageId = 0;
 		haulSourcePosition = glm::vec2{0.0F, 0.0F};
 		haulTargetPosition = glm::vec2{0.0F, 0.0F};
+		placePackagedEntityId = 0;
+		placeSourcePosition = glm::vec2{0.0F, 0.0F};
+		placeTargetPosition = glm::vec2{0.0F, 0.0F};
 		priority = 0.0F;
 		// Note: timeSinceEvaluation NOT reset here - caller handles timer logic
 		reason.clear();

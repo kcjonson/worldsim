@@ -101,31 +101,32 @@ struct NeedsComponent {
     [[nodiscard]] const Need& temperature() const { return get(NeedType::Temperature); }
 
     /// Create with default MVP configuration
+    /// Decay rates are percent per game-minute (reduced by 10x for playable pacing)
     static NeedsComponent createDefault() {
         NeedsComponent comp;
 
         // Hunger: ~50% seek, ~10% critical, moderate decay
-        comp.hunger() = Need{100.0f, 0.8f, 50.0f, 10.0f};
+        comp.hunger() = Need{100.0f, 0.08f, 50.0f, 10.0f};
 
         // Thirst: ~50% seek, ~10% critical, faster decay than hunger
-        comp.thirst() = Need{100.0f, 1.2f, 50.0f, 10.0f};
+        comp.thirst() = Need{100.0f, 0.12f, 50.0f, 10.0f};
 
         // Energy: ~30% seek, ~10% critical (need sleep earlier)
-        comp.energy() = Need{100.0f, 0.5f, 30.0f, 10.0f};
+        comp.energy() = Need{100.0f, 0.05f, 30.0f, 10.0f};
 
         // Bladder: ~30% seek, ~10% critical (filled by drinking, relieved by peeing)
-        comp.bladder() = Need{100.0f, 0.3f, 30.0f, 10.0f};
+        comp.bladder() = Need{100.0f, 0.03f, 30.0f, 10.0f};
 
         // Digestion: ~30% seek, ~10% critical (filled by eating, relieved by pooping)
-        // Decay rate 0.2f is lower than bladder's 0.3f, meaning digestion depletes more slowly
+        // Decay rate is lower than bladder's, meaning digestion depletes more slowly
         // (food takes longer to process than liquids)
-        comp.digestion() = Need{100.0f, 0.2f, 30.0f, 10.0f};
+        comp.digestion() = Need{100.0f, 0.02f, 30.0f, 10.0f};
 
         // Hygiene: ~40% seek, ~15% critical (washing deferred, keep decay modest for now)
-        comp.hygiene() = Need{100.0f, 0.15f, 40.0f, 15.0f};
+        comp.hygiene() = Need{100.0f, 0.015f, 40.0f, 15.0f};
 
         // Recreation: ~30% seek, ~10% critical (leisure deferred, modest decay)
-        comp.recreation() = Need{100.0f, 0.1f, 30.0f, 10.0f};
+        comp.recreation() = Need{100.0f, 0.01f, 30.0f, 10.0f};
 
         // Temperature: placeholder tracked value (no decay until environment model plugs in)
         comp.temperature() = Need{100.0f, 0.0f, 40.0f, 15.0f};
