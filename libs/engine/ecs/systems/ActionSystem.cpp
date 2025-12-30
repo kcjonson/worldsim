@@ -6,7 +6,9 @@
 #include "../components/Inventory.h"
 #include "../components/Memory.h"
 #include "../components/MemoryQueries.h"
+#include "../components/Movement.h"
 #include "../components/Needs.h"
+#include "../components/Packaged.h"
 #include "../components/Task.h"
 #include "../components/Transform.h"
 #include "../components/WorkQueue.h"
@@ -56,9 +58,9 @@ namespace ecs {
 				continue;
 			}
 
-			// Only process actionable tasks (FulfillNeed, Gather, Craft, and Haul)
+			// Only process actionable tasks (FulfillNeed, Gather, Craft, Haul, PlacePackaged)
 			if (task.type != TaskType::FulfillNeed && task.type != TaskType::Gather && task.type != TaskType::Craft &&
-				task.type != TaskType::Haul) {
+				task.type != TaskType::Haul && task.type != TaskType::PlacePackaged) {
 				// For non-actionable tasks like Wander, just clear when arrived
 				task.clear();
 				task.timeSinceEvaluation = 0.0F;
@@ -102,7 +104,7 @@ namespace ecs {
 					actionTypeName(action.type),
 					restoreAmount
 				);
-				completeAction(action, needs, task, inventory);
+				completeAction(entity, action, needs, task, inventory);
 			}
 		}
 	}
@@ -132,6 +134,12 @@ namespace ecs {
 		// Handle Haul tasks - pickup from source, then deposit to storage
 		if (task.type == TaskType::Haul) {
 			startHaulAction(task, action, position, memory);
+			return;
+		}
+
+		// Handle PlacePackaged tasks - pickup packaged item, then place at target
+		if (task.type == TaskType::PlacePackaged) {
+			startPlacePackagedAction(task, action, position, inventory);
 			return;
 		}
 
@@ -298,7 +306,7 @@ namespace ecs {
 		}
 	}
 
-	void ActionSystem::completeAction(Action& action, NeedsComponent& needs, Task& task, Inventory& inventory) {
+	void ActionSystem::completeAction(EntityID entity, Action& action, NeedsComponent& needs, Task& task, Inventory& inventory) {
 		// Apply effects based on variant type
 		if (action.hasNeedEffect()) {
 			const auto& needEff = action.needEffect();
@@ -543,6 +551,114 @@ namespace ecs {
 			return;
 		}
 
+		// Special handling for PlacePackaged tasks - two-phase (PickupPackaged→PlacePackaged)
+		if (task.type == TaskType::PlacePackaged && action.type == ActionType::PickupPackaged) {
+			// Phase 1 complete (PickupPackaged) - clear hands, pick up entity, then move to phase 2
+			// Hand clearing: stow items to backpack, drop if can't fit
+			clearHandsForTwoHandedPickup(inventory, action.targetPosition);
+
+			// Get the packaged entity from the effect
+			if (action.hasPlacePackagedEffect()) {
+				const auto& placeEff = action.placePackagedEffect();
+				auto		packagedEntity = static_cast<EntityID>(placeEff.packagedEntityId);
+
+				// Mark the entity as being carried (hides from world rendering)
+				auto* packaged = world->getComponent<Packaged>(packagedEntity);
+				if (packaged != nullptr) {
+					packaged->beingCarried = true;
+				}
+
+				// Track the carried entity in inventory
+				inventory.carryingPackagedEntity = placeEff.packagedEntityId;
+
+				// Put the entity's defName in both hands (for UI display)
+				auto* appearance = world->getComponent<Appearance>(packagedEntity);
+				if (appearance != nullptr && !appearance->defName.empty()) {
+					inventory.leftHand = ItemStack{appearance->defName, 1};
+					inventory.rightHand = ItemStack{appearance->defName, 1};
+					LOG_INFO(
+						Engine,
+						"[Action] Picked up %s (entity %llu) - now carrying in both hands",
+						appearance->defName.c_str(),
+						static_cast<unsigned long long>(placeEff.packagedEntityId)
+					);
+				} else {
+					LOG_WARNING(
+						Engine,
+						"[Action] Could not set hands: appearance=%p, defName=%s",
+						static_cast<void*>(appearance),
+						appearance ? appearance->defName.c_str() : "(null)"
+					);
+				}
+			}
+
+			// Transition to phase 2 - walk to placement target
+			task.targetPosition = task.placeTargetPosition;
+			task.state = TaskState::Moving;  // Must be Moving for MovementSystem to set Arrived
+
+			// Update MovementTarget to the new destination
+			// This is critical - without this, the movement system won't know where to go
+			auto* movementTarget = world->getComponent<MovementTarget>(entity);
+			if (movementTarget != nullptr) {
+				movementTarget->target = task.placeTargetPosition;
+				movementTarget->active = true;
+			}
+
+			action.clear();
+			LOG_DEBUG(
+				Engine,
+				"[Action] PlacePackaged phase 1 complete, moving to target at (%.1f, %.1f)",
+				task.placeTargetPosition.x,
+				task.placeTargetPosition.y
+			);
+			return;
+		}
+
+		// Handle PlacePackaged completion (phase 2) - move entity to target and remove Packaged component
+		if (action.type == ActionType::PlacePackaged && action.hasPlacePackagedEffect()) {
+			const auto& placeEff = action.placePackagedEffect();
+
+			// Get the packaged entity
+			auto packagedEntity = static_cast<EntityID>(placeEff.packagedEntityId);
+
+			// Clear the colonist's carrying state and hands
+			// Log warning if hands were already empty (indicates pickup phase may have failed)
+			if (!inventory.leftHand.has_value() && !inventory.rightHand.has_value()) {
+				LOG_WARNING(
+					Engine,
+					"[Action] Colonist completed PlacePackaged but hands were already empty - pickup phase may have failed"
+				);
+			}
+			inventory.carryingPackagedEntity.reset();
+			inventory.leftHand.reset();
+			inventory.rightHand.reset();
+
+			// Verify entity still exists before manipulating it
+			if (!world->isAlive(packagedEntity)) {
+				LOG_WARNING(
+					Engine,
+					"[Action] Packaged entity %llu no longer alive at placement time",
+					static_cast<unsigned long long>(placeEff.packagedEntityId)
+				);
+			} else {
+				// Move entity to target position
+				auto* entityPos = world->getComponent<Position>(packagedEntity);
+				if (entityPos != nullptr) {
+					entityPos->value = placeEff.targetPosition;
+					LOG_INFO(
+						Engine,
+						"[Action] Placed entity %llu at (%.1f, %.1f)",
+						static_cast<unsigned long long>(placeEff.packagedEntityId),
+						placeEff.targetPosition.x,
+						placeEff.targetPosition.y
+					);
+				}
+
+				// Remove Packaged component - entity is now placed
+				world->removeComponent<Packaged>(packagedEntity);
+			}
+		}
+
 		// Clear the action and task
 		action.clear();
 		task.clear();
@@ -733,6 +849,135 @@ namespace ecs {
 			LOG_WARNING(Engine, "[Action] Haul started but not at source or target position");
 			action.clear();
 		}
+	}
+
+	void ActionSystem::startPlacePackagedAction(
+		Task& task,
+		Action& action,
+		const Position& position,
+		const Inventory& inventory
+	) {
+		// PlacePackaged is a two-phase task:
+		// Phase 1: At source position → PickupPackaged (clear hands + pick up 2-handed item)
+		// Phase 2: At target position → PlacePackaged (put down item at destination)
+		//
+		// Primary phase detection uses position, but we also check inventory state for
+		// robustness in edge cases (e.g., colonist not exactly at expected position).
+
+		constexpr float kPlacementPositionTolerance = 0.5F;
+
+		glm::vec2 diffToSource = position.value - task.placeSourcePosition;
+		float	  distSqToSource = diffToSource.x * diffToSource.x + diffToSource.y * diffToSource.y;
+		bool	  atSource = distSqToSource <= kPlacementPositionTolerance * kPlacementPositionTolerance;
+
+		glm::vec2 diffToTarget = position.value - task.placeTargetPosition;
+		float	  distSqToTarget = diffToTarget.x * diffToTarget.x + diffToTarget.y * diffToTarget.y;
+		bool	  atTarget = distSqToTarget <= kPlacementPositionTolerance * kPlacementPositionTolerance;
+
+		// Check inventory to determine if we're already carrying the item (phase 2)
+		bool alreadyCarrying = inventory.carryingPackagedEntity.has_value() &&
+							   inventory.carryingPackagedEntity.value() == task.placePackagedEntityId;
+
+		if (atSource && !atTarget && !alreadyCarrying) {
+			// Phase 1: At source and not yet carrying - do PickupPackaged
+			action = Action::PickupPackaged(task.placePackagedEntityId, task.placeSourcePosition);
+			LOG_DEBUG(
+				Engine,
+				"[Action] PlacePackaged phase 1: PickupPackaged entity %llu at (%.1f, %.1f)",
+				static_cast<unsigned long long>(task.placePackagedEntityId),
+				task.placeSourcePosition.x,
+				task.placeSourcePosition.y
+			);
+		} else if (atTarget || alreadyCarrying) {
+			// Phase 2: At target OR already carrying - do PlacePackaged
+			// If already carrying but not at target, this will still start the action
+			// (movement system should get us to target)
+			action = Action::PlacePackaged(task.placePackagedEntityId, task.placeTargetPosition);
+			LOG_DEBUG(
+				Engine,
+				"[Action] PlacePackaged phase 2: PlacePackaged entity %llu at (%.1f, %.1f)%s",
+				static_cast<unsigned long long>(task.placePackagedEntityId),
+				task.placeTargetPosition.x,
+				task.placeTargetPosition.y,
+				alreadyCarrying && !atTarget ? " (carrying, not yet at target)" : ""
+			);
+		} else {
+			// Fallback: Not at either position and not carrying
+			// Default to phase 1 (pickup) since that's the logical starting point
+			LOG_WARNING(
+				Engine,
+				"[Action] PlacePackaged: not at source or target, defaulting to phase 1 (pickup)"
+			);
+			action = Action::PickupPackaged(task.placePackagedEntityId, task.placeSourcePosition);
+		}
+	}
+
+	void ActionSystem::clearHandItem(
+		std::optional<ItemStack>& handSlot,
+		Inventory&				  inventory,
+		glm::vec2				  dropPosition,
+		const char*				  handName
+	) {
+		if (!handSlot.has_value()) {
+			return;
+		}
+
+		auto& assetRegistry = engine::assets::AssetRegistry::Get();
+
+		const auto& itemName = handSlot->defName;
+		uint32_t	quantity = handSlot->quantity;
+
+		// Check if item can go in backpack (1-handed items only)
+		const auto* itemDef = assetRegistry.getDefinition(itemName);
+		bool		canBackpack = (itemDef == nullptr) || (itemDef->handsRequired < kTwoHandedThreshold);
+
+		if (canBackpack) {
+			// Try to stow in backpack
+			uint32_t added = inventory.addItem(itemName, quantity);
+			if (added == quantity) {
+				LOG_DEBUG(Engine, "[Action] Stowed %u x %s from %s hand to backpack", quantity, itemName.c_str(), handName);
+			} else {
+				// Backpack full - drop what couldn't fit
+				uint32_t toDrop = quantity - added;
+				if (m_onDropItem) {
+					for (uint32_t i = 0; i < toDrop; ++i) {
+						m_onDropItem(itemName, dropPosition.x, dropPosition.y);
+					}
+					LOG_DEBUG(Engine, "[Action] Dropped %u x %s from %s hand (backpack full)", toDrop, itemName.c_str(), handName);
+				} else {
+					LOG_WARNING(
+						Engine,
+						"[Action] Cannot drop %u x %s from %s hand - drop callback not configured (items lost)",
+						toDrop,
+						itemName.c_str(),
+						handName
+					);
+				}
+			}
+		} else {
+			// 2-handed item in hand - must drop
+			if (m_onDropItem) {
+				for (uint32_t i = 0; i < quantity; ++i) {
+					m_onDropItem(itemName, dropPosition.x, dropPosition.y);
+				}
+				LOG_DEBUG(Engine, "[Action] Dropped %u x %s from %s hand (2-handed item)", quantity, itemName.c_str(), handName);
+			} else {
+				LOG_WARNING(
+					Engine,
+					"[Action] Cannot drop %u x %s from %s hand - drop callback not configured (items lost)",
+					quantity,
+					itemName.c_str(),
+					handName
+				);
+			}
+		}
+
+		handSlot.reset();
+	}
+
+	void ActionSystem::clearHandsForTwoHandedPickup(Inventory& inventory, glm::vec2 dropPosition) {
+		clearHandItem(inventory.leftHand, inventory, dropPosition, "left");
+		clearHandItem(inventory.rightHand, inventory, dropPosition, "right");
 	}
 
 } // namespace ecs

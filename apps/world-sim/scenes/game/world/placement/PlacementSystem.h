@@ -81,6 +81,8 @@ class PlacementSystem {
 	// --- Rendering ---
 
 	/// Render ghost preview (call during render phase)
+	/// Renders both the active placement ghost AND ghosts for all packaged
+	/// items awaiting colonist delivery (those with targetPosition set).
 	void render(int viewportW, int viewportH);
 
 	// --- State Queries ---

@@ -9,6 +9,7 @@
 #include "../components/MemoryQueries.h"
 #include "../components/Movement.h"
 #include "../components/Needs.h"
+#include "../components/Packaged.h"
 #include "../components/Task.h"
 #include "../components/ToiletLocationFinder.h"
 #include "../components/Transform.h"
@@ -161,7 +162,23 @@ namespace ecs {
 								sameGatherTarget = false;
 							}
 						}
-						isSameTask = sameType && sameTarget && sameGatherTarget;
+
+						// For PlacePackaged tasks, check entity ID instead of position
+						// (position changes mid-task from source to target after phase 1)
+						bool samePlaceTarget = true;
+						if (selected->taskType == TaskType::PlacePackaged) {
+							if (task.placePackagedEntityId != 0U && selected->placePackagedEntityId != 0U) {
+								samePlaceTarget = (task.placePackagedEntityId == selected->placePackagedEntityId);
+							} else {
+								samePlaceTarget = false;
+							}
+							// For PlacePackaged, entity ID match is sufficient - skip position check
+							if (samePlaceTarget) {
+								sameTarget = true;
+							}
+						}
+
+						isSameTask = sameType && sameTarget && sameGatherTarget && samePlaceTarget;
 					}
 				}
 
@@ -170,6 +187,9 @@ namespace ecs {
 				bool shouldSwitch = !isSameTask;
 				if (isSameTask) {
 					task.timeSinceEvaluation = 0.0F; // Reset timer, we did evaluate
+					// Update priority even when staying on same task
+					// (priority can change, e.g., PlacePackaged goes from 38 to 150 when carrying)
+					task.priority = newPriority;
 				}
 
 				// If action in progress, check if we can/should interrupt
@@ -625,6 +645,12 @@ namespace ecs {
 			for (auto [storageEntity, storagePos, storageInv, storageAppearance] :
 				 world->view<Position, Inventory, Appearance>()) {
 				(void)storageInv; // Required in view query; capacity checking planned for future
+
+				// Skip packaged storage containers - they're being moved and can't receive items
+				if (world->hasComponent<Packaged>(storageEntity)) {
+					continue;
+				}
+
 				// Check if this is a storage container (has Storage capability)
 				const auto* storageDef = m_registry.getDefinition(storageAppearance.defName);
 				if (storageDef == nullptr || !storageDef->capabilities.storage.has_value()) {
@@ -683,6 +709,62 @@ namespace ecs {
 			haulOption.status = OptionStatus::Available;
 			haulOption.reason = "Hauling " + itemDefName + " to storage";
 			trace.options.push_back(haulOption);
+		}
+
+		// =====================================================================
+		// Tier 6.35: Place Packaged Items
+		// Find packaged items with targetPosition set (awaiting colonist delivery)
+		// =====================================================================
+		for (auto [packagedEntity, packagedPos, packaged, packagedAppearance] :
+			 world->view<Position, Packaged, Appearance>()) {
+			// Only consider items with a target position set
+			if (!packaged.targetPosition.has_value()) {
+				continue;
+			}
+
+			// Skip items being carried by a DIFFERENT colonist
+			if (packaged.beingCarried) {
+				// Check if THIS colonist is carrying it
+				bool thisColonistCarrying =
+					inventory.carryingPackagedEntity.has_value() &&
+					inventory.carryingPackagedEntity.value() == static_cast<uint64_t>(packagedEntity);
+				if (!thisColonistCarrying) {
+					continue; // Someone else is carrying it
+				}
+			}
+
+			const auto& targetPos = packaged.targetPosition.value();
+
+			// After the filter above, if carryingPackagedEntity has a value it must be this entity
+			// (otherwise we would have continued). So we can simplify the check.
+			bool isCarryingThis = inventory.carryingPackagedEntity.has_value();
+
+			// Create place packaged option
+			EvaluatedOption placeOption;
+			placeOption.taskType = TaskType::PlacePackaged;
+			placeOption.needType = NeedType::Count; // N/A for work tasks
+			placeOption.needValue = 100.0F;
+			placeOption.threshold = 0.0F;
+
+			if (isCarryingThis) {
+				// Phase 2: Already carrying - go to placement target
+				// High priority (150) to ensure colonist finishes delivery before other tasks
+				placeOption.targetPosition = targetPos;
+				placeOption.distanceToTarget = glm::distance(position.value, targetPos);
+				placeOption.needValue = 150.0F; // Higher priority than most needs
+			} else {
+				// Phase 1: Need to pick up - go to source
+				placeOption.targetPosition = packagedPos.value;
+				placeOption.distanceToTarget = glm::distance(position.value, packagedPos.value);
+			}
+
+			placeOption.placePackagedEntityId = static_cast<uint64_t>(packagedEntity);
+			placeOption.placeSourcePosition = packagedPos.value;
+			placeOption.placeTargetPosition = targetPos;
+			placeOption.status = OptionStatus::Available;
+			placeOption.reason = isCarryingThis ? "Delivering " + packagedAppearance.defName
+												: "Placing " + packagedAppearance.defName;
+			trace.options.push_back(placeOption);
 		}
 
 		// Add wander option
@@ -749,6 +831,15 @@ namespace ecs {
 			task.haulTargetPosition = selected->haulTargetPosition.value_or(glm::vec2{0.0F, 0.0F});
 			// For haul tasks, target is initially the source position (pickup first)
 			task.targetPosition = task.haulSourcePosition;
+		}
+
+		// Copy placement-specific fields for PlacePackaged tasks
+		if (selected->taskType == TaskType::PlacePackaged) {
+			task.placePackagedEntityId = selected->placePackagedEntityId;
+			task.placeSourcePosition = selected->placeSourcePosition.value_or(glm::vec2{0.0F, 0.0F});
+			task.placeTargetPosition = selected->placeTargetPosition.value_or(glm::vec2{0.0F, 0.0F});
+			// For place tasks, target is initially the source position (pickup first)
+			task.targetPosition = task.placeSourcePosition;
 		}
 
 		movementTarget.target = task.targetPosition;
