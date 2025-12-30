@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Packaging Crate - Open-top crate for packaged items -->
+<!-- ViewBox: 100x20 for 5:1 aspect ratio (1m width, 0.2m height) -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 20">
+  <!-- Back panel (visible above sides) -->
+  <rect x="2" y="0" width="96" height="4" fill="#8b7355"/>
+
+  <!-- Bottom of crate -->
+  <rect x="5" y="12" width="90" height="6" fill="#6b5344"/>
+
+  <!-- Left side panel -->
+  <polygon points="0,2 5,4 5,18 0,20" fill="#9b8365"/>
+
+  <!-- Right side panel -->
+  <polygon points="100,2 95,4 95,18 100,20" fill="#7b6355"/>
+
+  <!-- Front panel (lower) -->
+  <rect x="5" y="14" width="90" height="6" fill="#8b7355"/>
+
+  <!-- Wood plank lines (front) -->
+  <line x1="25" y1="14" x2="25" y2="20" stroke="#5b4334" stroke-width="0.5"/>
+  <line x1="50" y1="14" x2="50" y2="20" stroke="#5b4334" stroke-width="0.5"/>
+  <line x1="75" y1="14" x2="75" y2="20" stroke="#5b4334" stroke-width="0.5"/>
+
+  <!-- Corner posts -->
+  <rect x="3" y="2" width="4" height="18" fill="#5b4334"/>
+  <rect x="93" y="2" width="4" height="18" fill="#5b4334"/>
+</svg>

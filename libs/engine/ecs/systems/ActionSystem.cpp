@@ -837,6 +837,19 @@ namespace ecs {
 			action.clear();
 		} else if (atTarget) {
 			// Phase 2: At storage target - do Deposit (use same quantity as pickup)
+			// First validate storage is still valid (not packaged/being moved)
+			auto storageEntity = static_cast<EntityID>(task.haulTargetStorageId);
+			if (world->hasComponent<Packaged>(storageEntity)) {
+				LOG_WARNING(
+					Engine,
+					"[Action] Haul aborted: storage %llu is packaged (being moved)",
+					static_cast<unsigned long long>(task.haulTargetStorageId)
+				);
+				task.clear();
+				action.clear();
+				return;
+			}
+
 			action = Action::Deposit(task.haulItemDefName, task.haulQuantity, task.haulTargetStorageId, task.haulTargetPosition);
 			LOG_DEBUG(
 				Engine,
