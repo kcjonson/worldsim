@@ -576,11 +576,18 @@ namespace ecs {
 				if (appearance != nullptr && !appearance->defName.empty()) {
 					inventory.leftHand = ItemStack{appearance->defName, 1};
 					inventory.rightHand = ItemStack{appearance->defName, 1};
-					LOG_DEBUG(
+					LOG_INFO(
 						Engine,
 						"[Action] Picked up %s (entity %llu) - now carrying in both hands",
 						appearance->defName.c_str(),
 						static_cast<unsigned long long>(placeEff.packagedEntityId)
+					);
+				} else {
+					LOG_WARNING(
+						Engine,
+						"[Action] Could not set hands: appearance=%p, defName=%s",
+						static_cast<void*>(appearance),
+						appearance ? appearance->defName.c_str() : "(null)"
 					);
 				}
 			}

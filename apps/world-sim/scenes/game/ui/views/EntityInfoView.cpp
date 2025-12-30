@@ -961,7 +961,7 @@ namespace world_sim {
 
 	void EntityInfoView::updateValues(const PanelContent& content) {
 		// Tier 3: Value-only update - same entity, just update dynamic slot values
-		// Updates progress bars, text slots, and header mood bar
+		// Updates progress bars, text slots, list items, and header mood bar
 		// Skips all position calculations for significant performance savings
 
 		// Update header mood bar for colonists (NeedBar handles color gradient)
@@ -986,6 +986,7 @@ namespace world_sim {
 
 		size_t barIndex = 0;
 		size_t textIndex = 0;
+		size_t listItemIndex = 0;
 
 		// Helper to update slots from a vector
 		auto updateSlots = [&](const std::vector<InfoSlot>& slots) {
@@ -1011,6 +1012,22 @@ namespace world_sim {
 						}
 					}
 					++textIndex;
+				} else if (const auto* listSlot = std::get_if<TextListSlot>(&slot)) {
+					// Update list items (for Gear that changes when carrying items)
+					for (size_t i = 0; i < listSlot->items.size() && listItemIndex < listItemHandles.size(); ++i) {
+						if (auto* text = getChild<UI::Text>(listItemHandles[listItemIndex])) {
+							text->text = listSlot->items[i];
+							text->visible = true;
+						}
+						++listItemIndex;
+					}
+					// Hide unused list item slots
+					for (size_t i = listItemIndex; i < usedListItems && i < listItemHandles.size(); ++i) {
+						if (auto* text = getChild<UI::Text>(listItemHandles[i])) {
+							text->visible = false;
+						}
+					}
+					usedListItems = listItemIndex;
 				}
 			}
 		};

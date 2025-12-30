@@ -177,21 +177,41 @@ namespace world_sim {
 		content.leftColumn.push_back(SpacerSlot{.height = 8.0F});
 
 		auto* inventory = world.getComponent<ecs::Inventory>(entityId);
-		auto  items = inventory ? inventory->getAllItems() : std::vector<ecs::ItemStack>{};
 
 		std::vector<std::string> gearItems;
-		if (items.empty()) {
-			gearItems.push_back("(empty)");
-		} else {
-			gearItems.reserve(items.size());
-			for (const auto& item : items) {
-				std::ostringstream oss;
-				oss << item.defName;
-				if (item.quantity > 1) {
-					oss << " x" << item.quantity;
+
+		// Hand items first (what colonist is holding)
+		if (inventory != nullptr) {
+			bool hasLeft = inventory->leftHand.has_value();
+			bool hasRight = inventory->rightHand.has_value();
+
+			if (hasLeft && hasRight && inventory->leftHand->defName == inventory->rightHand->defName) {
+				// Same item in both hands (2-handed carry)
+				gearItems.push_back("[Holding] " + inventory->leftHand->defName);
+			} else if (hasLeft || hasRight) {
+				if (hasLeft) {
+					gearItems.push_back("[L] " + inventory->leftHand->defName);
 				}
-				gearItems.push_back(oss.str());
+				if (hasRight) {
+					gearItems.push_back("[R] " + inventory->rightHand->defName);
+				}
 			}
+		}
+
+		// Backpack items
+		auto backpackItems = inventory ? inventory->getAllItems() : std::vector<ecs::ItemStack>{};
+		for (const auto& item : backpackItems) {
+			std::ostringstream oss;
+			oss << item.defName;
+			if (item.quantity > 1) {
+				oss << " x" << item.quantity;
+			}
+			gearItems.push_back(oss.str());
+		}
+
+		// Show "(empty)" only if nothing in hands or backpack
+		if (gearItems.empty()) {
+			gearItems.push_back("(empty)");
 		}
 		content.leftColumn.push_back(
 			TextListSlot{

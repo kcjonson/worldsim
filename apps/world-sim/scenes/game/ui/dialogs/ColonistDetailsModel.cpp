@@ -157,10 +157,17 @@ void ColonistDetailsModel::extractSocialData() {
 void ColonistDetailsModel::extractGearData(const ecs::World& world, ecs::EntityID colonistId) {
 	const auto* inventory = world.getComponent<ecs::Inventory>(colonistId);
 	if (inventory != nullptr) {
+		// Hand items
+		gearData.leftHand = inventory->leftHand;
+		gearData.rightHand = inventory->rightHand;
+
+		// Backpack items
 		gearData.items = inventory->getAllItems();
 		gearData.slotCount = inventory->getSlotCount();
 		gearData.maxSlots = inventory->maxCapacity;
 	} else {
+		gearData.leftHand.reset();
+		gearData.rightHand.reset();
 		gearData.items.clear();
 		gearData.slotCount = 0;
 		gearData.maxSlots = 0;
