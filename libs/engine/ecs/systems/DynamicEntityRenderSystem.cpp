@@ -98,14 +98,28 @@ void DynamicEntityRenderSystem::update(float /*deltaTime*/) {
         }
 
         placed.defName = defName;
-        // Offset sprite so entity position is at feet (bottom-center)
-        // SVG coords start at (0,0) top-left, so we need to:
-        // - Shift X left by half width to center horizontally
-        // - Shift Y to place feet at entity position
-        // Colonist: 60x100 SVG units, scaled to ~0.69x1.0m world units
-        constexpr float kSpriteWidthOffset = -0.35F;   // Half of ~0.69m width
-        constexpr float kSpriteHeightOffset = -0.5F;   // Adjust for feet position
-        placed.position = glm::vec2(pos.value.x + kSpriteWidthOffset, pos.value.y + kSpriteHeightOffset);
+
+        // Calculate centering offset from mesh bounds
+        // Entity position is the center - we need to offset so the mesh renders centered
+        float centerOffsetX = 0.0F;
+        float centerOffsetY = 0.0F;
+        const auto* mesh = assetRegistry.getTemplate(defName);
+        if (mesh != nullptr && !mesh->vertices.empty()) {
+            float minX = mesh->vertices[0].x;
+            float maxX = mesh->vertices[0].x;
+            float minY = mesh->vertices[0].y;
+            float maxY = mesh->vertices[0].y;
+            for (const auto& v : mesh->vertices) {
+                minX = std::min(minX, v.x);
+                maxX = std::max(maxX, v.x);
+                minY = std::min(minY, v.y);
+                maxY = std::max(maxY, v.y);
+            }
+            centerOffsetX = -(minX + maxX) * 0.5F;
+            centerOffsetY = -(minY + maxY) * 0.5F;
+        }
+
+        placed.position = glm::vec2(pos.value.x + centerOffsetX, pos.value.y + centerOffsetY);
         placed.rotation = 0.0F;  // Dynamic entities don't rotate - use FacingDirection for sprites
         placed.scale = appearance.scale;
         placed.colorTint = appearance.colorTint;

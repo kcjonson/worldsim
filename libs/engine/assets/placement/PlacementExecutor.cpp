@@ -276,15 +276,16 @@ namespace engine::assets {
 								continue;
 							}
 
-							// Generate visual variation
-							float greenVar = colorDist(rng);
+							// Generate visual variation (brightness only, let SVG color show through)
+							float brightnessVar = colorDist(rng);
+							float brightness = 0.9F + brightnessVar; // Range ~0.82 to 0.98
 
 							PlacedEntity entity;
 							entity.defName = defName;
 							entity.position = position;
 							entity.rotation = rotationDist(rng);
 							entity.scale = scaleDist(rng);
-							entity.colorTint = glm::vec4(0.15F + greenVar, 0.35F + greenVar * 2.0F, 0.1F + greenVar * 0.5F, 1.0F);
+							entity.colorTint = glm::vec4(brightness, brightness, brightness, 1.0F);
 
 							chunkIndex.insert(entity);
 							outEntities.push_back(entity);
@@ -331,15 +332,16 @@ namespace engine::assets {
 							continue;
 						}
 
-						// Generate visual variation
-						float greenVar = colorDist(rng);
+						// Generate visual variation (brightness only, let SVG color show through)
+						float brightnessVar = colorDist(rng);
+						float brightness = 0.9F + brightnessVar; // Range ~0.82 to 0.98
 
 						PlacedEntity entity;
 						entity.defName = defName;
 						entity.position = position;
 						entity.rotation = rotationDist(rng);
 						entity.scale = scaleDist(rng);
-						entity.colorTint = glm::vec4(0.15F + greenVar, 0.35F + greenVar * 2.0F, 0.1F + greenVar * 0.5F, 1.0F);
+						entity.colorTint = glm::vec4(brightness, brightness, brightness, 1.0F);
 
 						chunkIndex.insert(entity);
 						outEntities.push_back(entity);
