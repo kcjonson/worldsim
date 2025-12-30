@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Packaging Crate - Visual overlay for packaged items awaiting placement -->
+<AssetDefinitions>
+  <AssetDef>
+    <defName>PackagingCrate</defName>
+    <label>Packaging Crate</label>
+    <assetType>simple</assetType>
+    <svgPath>packaging_crate.svg</svgPath>
+    <worldHeight>0.2</worldHeight>
+
+    <rendering>
+      <complexity>simple</complexity>
+      <tier>batched</tier>
+    </rendering>
+
+    <variantCount>1</variantCount>
+  </AssetDef>
+</AssetDefinitions>

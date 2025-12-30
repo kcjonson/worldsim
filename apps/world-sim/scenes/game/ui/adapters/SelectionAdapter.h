@@ -12,16 +12,21 @@
 #include <assets/AssetRegistry.h>
 #include <ecs/World.h>
 
+#include <functional>
 #include <optional>
 
 namespace world_sim {
+
+/// Callback to query remaining resource count for a world entity
+using ResourceQueryCallback = std::function<std::optional<uint32_t>(const std::string& defName, Foundation::Vec2 position)>;
 
 /// Convert a Selection variant into panel content.
 /// Returns std::nullopt for NoSelection (panel should hide).
 [[nodiscard]] std::optional<PanelContent> adaptSelection(
 	const Selection& selection,
 	const ecs::World& world,
-	const engine::assets::AssetRegistry& registry
+	const engine::assets::AssetRegistry& registry,
+	const ResourceQueryCallback& queryResources = {}
 );
 
 /// Convert colonist data into two-column panel content
@@ -35,9 +40,11 @@ namespace world_sim {
 );
 
 /// Convert world entity data into panel content
+/// @param queryResources Optional callback to query remaining resource count
 [[nodiscard]] PanelContent adaptWorldEntity(
 	const engine::assets::AssetRegistry& registry,
-	const WorldEntitySelection& selection
+	const WorldEntitySelection& selection,
+	const ResourceQueryCallback& queryResources = {}
 );
 
 /// Convert furniture entity data into panel content

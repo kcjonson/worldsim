@@ -516,44 +516,39 @@ namespace ecs {
 					uint32_t inputDefNameId = m_registry.getDefNameId(inputDefName);
 
 					// Look for Carryable sources (e.g., SmallStone on ground)
-					float nearestCarryDist = std::numeric_limits<float>::max();
-					std::optional<KnownWorldEntity> matchingCarryable;
-					for (const auto& [key, entity] : memory.knownWorldEntities) {
-						if (entity.defNameId == inputDefNameId) {
-							if (m_registry.hasCapability(entity.defNameId, engine::assets::CapabilityType::Carryable)) {
-								float dist = glm::distance(position.value, entity.position);
-								if (dist < nearestCarryDist) {
-									nearestCarryDist = dist;
-									matchingCarryable = KnownWorldEntity{entity.defNameId, entity.position};
-								}
-							}
+					// Optimize for total trip: colonist -> resource -> crafting station
+					auto matchingCarryable = findOptimalForTrip(
+						memory,
+						position.value,
+						stationPos.value,
+						[&](const KnownWorldEntity& entity) {
+							return entity.defNameId == inputDefNameId
+								&& m_registry.hasCapability(entity.defNameId, engine::assets::CapabilityType::Carryable);
 						}
-					}
+					);
 
 					if (matchingCarryable.has_value()) {
 						gatherSources.push_back({inputDefName, *matchingCarryable, false});
 						foundSource = true;
 					} else {
 						// Look for Harvestable sources that yield this item
-						float nearestHarvestDist = std::numeric_limits<float>::max();
-						std::optional<KnownWorldEntity> harvestableSource;
-						for (const auto& [key, entity] : memory.knownWorldEntities) {
-							if (!m_registry.hasCapability(entity.defNameId, engine::assets::CapabilityType::Harvestable)) {
-								continue;
-							}
-							const auto& defName = m_registry.getDefName(entity.defNameId);
-							const auto* def = m_registry.getDefinition(defName);
-							if (def != nullptr && def->capabilities.harvestable.has_value()) {
-								const auto& harvestCap = def->capabilities.harvestable.value();
-								if (harvestCap.yieldDefName == inputDefName) {
-									float dist = glm::distance(position.value, entity.position);
-									if (dist < nearestHarvestDist) {
-										nearestHarvestDist = dist;
-										harvestableSource = KnownWorldEntity{entity.defNameId, entity.position};
-									}
+						// Optimize for total trip: colonist -> resource -> crafting station
+						auto harvestableSource = findOptimalForTrip(
+							memory,
+							position.value,
+							stationPos.value,
+							[&](const KnownWorldEntity& entity) {
+								if (!m_registry.hasCapability(entity.defNameId, engine::assets::CapabilityType::Harvestable)) {
+									return false;
 								}
+								const auto& defName = m_registry.getDefName(entity.defNameId);
+								const auto* def = m_registry.getDefinition(defName);
+								if (def == nullptr || !def->capabilities.harvestable.has_value()) {
+									return false;
+								}
+								return def->capabilities.harvestable->yieldDefName == inputDefName;
 							}
-						}
+						);
 
 						if (harvestableSource.has_value()) {
 							gatherSources.push_back({inputDefName, *harvestableSource, true});
@@ -676,9 +671,11 @@ namespace ecs {
 
 				// TODO: Check if storage has capacity remaining (query Inventory component)
 
-				float dist = glm::distance(looseItem.position, storagePos.value);
-				if (dist < nearestStorageDist) {
-					nearestStorageDist = dist;
+				// Optimize for total trip: colonist -> item -> storage
+				float totalTrip = glm::distance(position.value, looseItem.position)
+								+ glm::distance(looseItem.position, storagePos.value);
+				if (totalTrip < nearestStorageDist) {
+					nearestStorageDist = totalTrip;
 					nearestStoragePos = storagePos.value;
 					nearestStorageEntityId = static_cast<uint64_t>(storageEntity);
 					foundStorage = true;
@@ -697,7 +694,7 @@ namespace ecs {
 			haulOption.threshold = 0.0F;
 			haulOption.targetPosition = looseItem.position; // Initial target is the loose item
 			haulOption.targetDefNameId = looseItem.defNameId;
-			haulOption.distanceToTarget = glm::distance(position.value, looseItem.position);
+			haulOption.distanceToTarget = nearestStorageDist; // Total trip for fair priority comparison
 			haulOption.haulItemDefName = itemDefName;
 			// Get quantity from carryable capability (ensures deposit matches pickup)
 			if (itemDef->capabilities.carryable.has_value()) {

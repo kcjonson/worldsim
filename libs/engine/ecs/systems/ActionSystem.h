@@ -40,6 +40,21 @@ public:
 	using DropItemCallback = std::function<void(const std::string& defName, float x, float y)>;
 	void setDropItemCallback(DropItemCallback callback) { m_onDropItem = std::move(callback); }
 
+	/// Set callback for removing harvested entities from the world
+	/// Called when a destructive harvest completes (entity should be removed)
+	using RemoveEntityCallback = std::function<void(const std::string& defName, float x, float y)>;
+	void setRemoveEntityCallback(RemoveEntityCallback callback) { m_onRemoveEntity = std::move(callback); }
+
+	/// Set callback for setting harvest cooldown on entities
+	/// Called when a non-destructive harvest completes (entity enters regrowth)
+	using SetCooldownCallback = std::function<void(const std::string& defName, float x, float y, float cooldownSeconds)>;
+	void setEntityCooldownCallback(SetCooldownCallback callback) { m_onSetCooldown = std::move(callback); }
+
+	/// Set callback for decrementing entity resource count
+	/// Called when harvesting an entity with resource pool. Returns true if resources remain.
+	using DecrementResourceCallback = std::function<bool(const std::string& defName, float x, float y)>;
+	void setDecrementResourceCallback(DecrementResourceCallback callback) { m_onDecrementResource = std::move(callback); }
+
 private:
 	/// Random number generator for yield calculations
 	std::mt19937 m_rng;
@@ -131,6 +146,15 @@ private:
 
 	/// Callback for dropping items on the ground (non-backpackable items)
 	DropItemCallback m_onDropItem = nullptr;
+
+	/// Callback for removing harvested entities from world
+	RemoveEntityCallback m_onRemoveEntity = nullptr;
+
+	/// Callback for setting harvest cooldown on entities
+	SetCooldownCallback m_onSetCooldown = nullptr;
+
+	/// Callback for decrementing entity resource count
+	DecrementResourceCallback m_onDecrementResource = nullptr;
 };
 
 } // namespace ecs

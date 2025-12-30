@@ -613,6 +613,37 @@ namespace engine::assets {
 						harvestable.duration = harvestableNode.attribute("duration").as_float(4.0F);
 						harvestable.destructive = harvestableNode.attribute("destructive").as_bool(true);
 						harvestable.regrowthTime = harvestableNode.attribute("regrowthTime").as_float(0.0F);
+						harvestable.totalResourceMin = harvestableNode.attribute("totalResourceMin").as_uint(0);
+						harvestable.totalResourceMax = harvestableNode.attribute("totalResourceMax").as_uint(0);
+
+						// Validate totalResourceMax >= totalResourceMin
+						if (harvestable.totalResourceMax < harvestable.totalResourceMin) {
+							LOG_WARNING(
+								Engine,
+								"AssetDef '%s' harvestable: totalResourceMax (%u) < totalResourceMin (%u); swapping",
+								def.defName.c_str(),
+								harvestable.totalResourceMax,
+								harvestable.totalResourceMin
+							);
+							std::swap(harvestable.totalResourceMin, harvestable.totalResourceMax);
+						}
+
+						// Validate mutually exclusive harvesting modes:
+						// - Resource pool: totalResourceMin/Max > 0
+						// - Destructive: destructive = true
+						// - Regrowth: regrowthTime > 0
+						// Combinations are ambiguous - resource pool takes priority at runtime
+						const bool hasResourcePool = (harvestable.totalResourceMin > 0U) || (harvestable.totalResourceMax > 0U);
+						const bool hasDestructiveOrRegrowth = harvestable.destructive || (harvestable.regrowthTime > 0.0F);
+						if (hasResourcePool && hasDestructiveOrRegrowth) {
+							LOG_WARNING(
+								Engine,
+								"AssetDef '%s' harvestable: totalResourceMin/Max specified with destructive=true "
+								"or regrowthTime>0; these modes are mutually exclusive (resource pool takes priority)",
+								def.defName.c_str()
+							);
+						}
+
 						def.capabilities.harvestable = harvestable;
 					}
 				}

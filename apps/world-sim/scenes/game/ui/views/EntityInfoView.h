@@ -33,6 +33,9 @@
 
 namespace world_sim {
 
+/// Callback to query remaining resource count for a world entity
+using ResourceQueryCallback = std::function<std::optional<uint32_t>(const std::string& defName, Foundation::Vec2 position)>;
+
 /// UI panel for displaying selected entity information via slots
 class EntityInfoView : public UI::Component {
   public:
@@ -44,6 +47,7 @@ class EntityInfoView : public UI::Component {
 		std::function<void()> onDetails;			// Called when Details button clicked
 		QueueRecipeCallback   onQueueRecipe;		// Called when recipe is queued at station
 		std::function<void()> onPlace;				// Called when Place button clicked for packaged furniture
+		ResourceQueryCallback queryResources;		// Query remaining resource count for harvestable entities
 	};
 
 	explicit EntityInfoView(const Args& args);
@@ -122,6 +126,7 @@ class EntityInfoView : public UI::Component {
 	std::function<void()> onDetailsCallback;
 	QueueRecipeCallback   onQueueRecipeCallback;
 	std::function<void()> onPlaceCallback;
+	ResourceQueryCallback queryResourcesCallback;
 
 	// Background panel
 	UI::LayerHandle backgroundHandle;

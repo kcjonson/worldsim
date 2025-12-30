@@ -166,8 +166,8 @@ EntityInfoModel::UpdateType EntityInfoModel::refresh(
 		const auto& furnitureSel = std::get<FurnitureSelection>(selection);
 		contentData = adaptFurniture(assetRegistry, furnitureSel, callbacks.onPlace);
 	} else {
-		// World entity - use standard adapter
-		auto worldContent = adaptSelection(selection, world, assetRegistry);
+		// World entity - use standard adapter with resource query callback
+		auto worldContent = adaptSelection(selection, world, assetRegistry, callbacks.queryResources);
 		if (worldContent.has_value()) {
 			contentData = std::move(worldContent.value());
 		}

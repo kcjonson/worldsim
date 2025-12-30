@@ -45,6 +45,9 @@
 
 namespace world_sim {
 
+/// Callback to query remaining resource count for a world entity
+using ResourceQueryCallback = std::function<std::optional<uint32_t>(const std::string& defName, Foundation::Vec2 position)>;
+
 /// Main UI container for the game scene
 class GameUI {
   public:
@@ -63,6 +66,7 @@ class GameUI {
 		std::function<void(ecs::GameSpeed)> onSpeedChange;			 ///< Called when speed changed
 		std::function<void()> onMenuClick;								 ///< Called when menu button clicked
 		std::function<void()> onPlaceFurniture;						 ///< Called when Place button clicked for packaged furniture
+		ResourceQueryCallback queryResources;							 ///< Query remaining resource count for harvestable entities
 	};
 
 	explicit GameUI(const Args& args);

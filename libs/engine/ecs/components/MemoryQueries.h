@@ -8,6 +8,7 @@
 
 #include "assets/AssetDefinition.h"
 
+#include <functional>
 #include <optional>
 #include <vector>
 
@@ -38,6 +39,19 @@ namespace ecs {
 	const engine::assets::AssetRegistry&  registry,
 	engine::assets::CapabilityType		  capability,
 	const glm::vec2&					  fromPosition);
+
+/// Find the entity that minimizes total trip: start -> entity -> destination
+/// For multi-leg tasks (gather then deliver, pickup then haul)
+/// @param memory The colonist's memory to search
+/// @param fromPosition The starting position (colonist)
+/// @param destination The final destination (crafting bench, storage, etc.)
+/// @param candidateFilter Function returning true for valid candidate entities
+/// @returns The optimal entity minimizing totalTrip, or nullopt if none found
+[[nodiscard]] std::optional<KnownWorldEntity> findOptimalForTrip(
+	const Memory&										  memory,
+	const glm::vec2&									  fromPosition,
+	const glm::vec2&									  destination,
+	const std::function<bool(const KnownWorldEntity&)>&	  candidateFilter);
 
 /// Count how many known entities have a specific capability
 [[nodiscard]] size_t countKnownWithCapability(

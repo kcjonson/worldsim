@@ -103,6 +103,8 @@ namespace engine::assets {
 		float		duration = 4.0F;	 // Seconds to complete harvest action
 		bool		destructive = true;	 // If true, entity is removed after harvest
 		float		regrowthTime = 0.0F; // Seconds until harvestable again (0 = never, only if not destructive)
+		uint32_t	totalResourceMin = 0; // Min initial resource pool (0 = single harvest, use destructive flag)
+		uint32_t	totalResourceMax = 0; // Max initial resource pool (0 = single harvest, use destructive flag)
 	};
 
 	/// Craftable capability - entity is a crafting station

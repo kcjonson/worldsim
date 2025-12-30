@@ -77,7 +77,8 @@ namespace world_sim {
 					}
 				},
 			.onQueueRecipe = args.onQueueRecipe,
-			.onPlace = args.onPlaceFurniture
+			.onPlace = args.onPlaceFurniture,
+			.queryResources = args.queryResources
 		});
 
 		// Create colonist details dialog

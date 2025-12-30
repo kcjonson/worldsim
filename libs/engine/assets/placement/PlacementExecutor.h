@@ -54,6 +54,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <random>
 #include <string>
 #include <unordered_map>
@@ -92,6 +93,7 @@ namespace engine::assets {
 	/// Result of async chunk computation (includes spatial index for later storage)
 	struct AsyncChunkPlacementResult {
 		world::ChunkCoordinate	  coord;
+		uint64_t				  worldSeed = 0;	///< World seed for deterministic resource count init
 		std::vector<PlacedEntity> entities;
 		SpatialIndex			  spatialIndex;
 		size_t					  entitiesPlaced = 0;
@@ -173,6 +175,21 @@ namespace engine::assets {
 		/// @param deltaTime Time elapsed since last update
 		void updateCooldowns(float deltaTime);
 
+		/// Initialize resource count for an entity (called during spawn)
+		/// @param coord Chunk coordinate containing the entity
+		/// @param position World position of the entity
+		/// @param defName DefName of the entity
+		/// @param count Initial resource count
+		void initResourceCount(world::ChunkCoordinate coord, glm::vec2 position, const std::string& defName, uint32_t count);
+
+		/// Get the current resource count for an entity
+		/// @return Resource count, or nullopt if entity has no resource tracking
+		[[nodiscard]] std::optional<uint32_t> getResourceCount(world::ChunkCoordinate coord, glm::vec2 position, const std::string& defName) const;
+
+		/// Decrement resource count for an entity after harvest
+		/// @return true if resources remain, false if depleted (should destroy entity)
+		bool decrementResourceCount(world::ChunkCoordinate coord, glm::vec2 position, const std::string& defName);
+
 		/// Get spawn order (for debugging/testing)
 		[[nodiscard]] const std::vector<std::string>& getSpawnOrder() const { return m_spawnOrder; }
 
@@ -228,6 +245,11 @@ namespace engine::assets {
 		/// Key: (chunk coord, quantized position, defName)
 		/// Value: remaining cooldown time in seconds
 		std::unordered_map<CooldownKey, float, CooldownKeyHash> m_cooldowns;
+
+		/// Entity resource count tracking using same key pattern
+		/// Key: (chunk coord, quantized position, defName)
+		/// Value: remaining resource count (number of harvests left)
+		std::unordered_map<CooldownKey, uint32_t, CooldownKeyHash> m_resourceCounts;
 
 		/// Convert world position to cooldown key
 		[[nodiscard]] static CooldownKey makeCooldownKey(world::ChunkCoordinate coord, glm::vec2 position, const std::string& defName);
