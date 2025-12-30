@@ -96,10 +96,12 @@ private:
 
 	/// Start a place packaged action (pickup packaged item, then place at target)
 	/// Two-phase task like Haul: Phase 1 = PickupPackaged at source, Phase 2 = PlacePackaged at target
+	/// Uses both position and inventory state to determine which phase to execute
 	void startPlacePackagedAction(
 		struct Task& task,
 		struct Action& action,
-		const struct Position& position
+		const struct Position& position,
+		const struct Inventory& inventory
 	);
 
 	/// Clear colonist hands for two-handed pickup
@@ -109,6 +111,19 @@ private:
 	void clearHandsForTwoHandedPickup(
 		struct Inventory& inventory,
 		glm::vec2 dropPosition
+	);
+
+	/// Clear a single hand slot
+	/// Helper for clearHandsForTwoHandedPickup - stows to backpack or drops
+	/// @param handSlot The hand slot to clear (leftHand or rightHand)
+	/// @param inventory Colonist's inventory for backpack storage
+	/// @param dropPosition Position to drop items that can't be stowed
+	/// @param handName Name for logging ("left" or "right")
+	void clearHandItem(
+		std::optional<struct ItemStack>& handSlot,
+		struct Inventory& inventory,
+		glm::vec2 dropPosition,
+		const char* handName
 	);
 
 	/// Callback for item crafted notifications

@@ -139,7 +139,7 @@ namespace ecs {
 
 		// Handle PlacePackaged tasks - pickup packaged item, then place at target
 		if (task.type == TaskType::PlacePackaged) {
-			startPlacePackagedAction(task, action, position);
+			startPlacePackagedAction(task, action, position, inventory);
 			return;
 		}
 
@@ -622,25 +622,41 @@ namespace ecs {
 			auto packagedEntity = static_cast<EntityID>(placeEff.packagedEntityId);
 
 			// Clear the colonist's carrying state and hands
+			// Log warning if hands were already empty (indicates pickup phase may have failed)
+			if (!inventory.leftHand.has_value() && !inventory.rightHand.has_value()) {
+				LOG_WARNING(
+					Engine,
+					"[Action] Colonist completed PlacePackaged but hands were already empty - pickup phase may have failed"
+				);
+			}
 			inventory.carryingPackagedEntity.reset();
 			inventory.leftHand.reset();
 			inventory.rightHand.reset();
 
-			// Move entity to target position
-			auto* entityPos = world->getComponent<Position>(packagedEntity);
-			if (entityPos != nullptr) {
-				entityPos->value = placeEff.targetPosition;
-				LOG_INFO(
+			// Verify entity still exists before manipulating it
+			if (!world->isAlive(packagedEntity)) {
+				LOG_WARNING(
 					Engine,
-					"[Action] Placed entity %llu at (%.1f, %.1f)",
-					static_cast<unsigned long long>(placeEff.packagedEntityId),
-					placeEff.targetPosition.x,
-					placeEff.targetPosition.y
+					"[Action] Packaged entity %llu no longer alive at placement time",
+					static_cast<unsigned long long>(placeEff.packagedEntityId)
 				);
-			}
+			} else {
+				// Move entity to target position
+				auto* entityPos = world->getComponent<Position>(packagedEntity);
+				if (entityPos != nullptr) {
+					entityPos->value = placeEff.targetPosition;
+					LOG_INFO(
+						Engine,
+						"[Action] Placed entity %llu at (%.1f, %.1f)",
+						static_cast<unsigned long long>(placeEff.packagedEntityId),
+						placeEff.targetPosition.x,
+						placeEff.targetPosition.y
+					);
+				}
 
-			// Remove Packaged component - entity is now placed
-			world->removeComponent<Packaged>(packagedEntity);
+				// Remove Packaged component - entity is now placed
+				world->removeComponent<Packaged>(packagedEntity);
+			}
 		}
 
 		// Clear the action and task
@@ -835,24 +851,35 @@ namespace ecs {
 		}
 	}
 
-	void ActionSystem::startPlacePackagedAction(Task& task, Action& action, const Position& position) {
+	void ActionSystem::startPlacePackagedAction(
+		Task& task,
+		Action& action,
+		const Position& position,
+		const Inventory& inventory
+	) {
 		// PlacePackaged is a two-phase task:
 		// Phase 1: At source position → PickupPackaged (clear hands + pick up 2-handed item)
 		// Phase 2: At target position → PlacePackaged (put down item at destination)
-		// We determine which phase by checking which position we're closer to
+		//
+		// Primary phase detection uses position, but we also check inventory state for
+		// robustness in edge cases (e.g., colonist not exactly at expected position).
 
-		constexpr float kPositionTolerance = 0.5F;
+		constexpr float kPlacementPositionTolerance = 0.5F;
 
 		glm::vec2 diffToSource = position.value - task.placeSourcePosition;
 		float	  distSqToSource = diffToSource.x * diffToSource.x + diffToSource.y * diffToSource.y;
-		bool	  atSource = distSqToSource <= kPositionTolerance * kPositionTolerance;
+		bool	  atSource = distSqToSource <= kPlacementPositionTolerance * kPlacementPositionTolerance;
 
 		glm::vec2 diffToTarget = position.value - task.placeTargetPosition;
 		float	  distSqToTarget = diffToTarget.x * diffToTarget.x + diffToTarget.y * diffToTarget.y;
-		bool	  atTarget = distSqToTarget <= kPositionTolerance * kPositionTolerance;
+		bool	  atTarget = distSqToTarget <= kPlacementPositionTolerance * kPlacementPositionTolerance;
 
-		if (atSource && !atTarget) {
-			// Phase 1: At source - do PickupPackaged
+		// Check inventory to determine if we're already carrying the item (phase 2)
+		bool alreadyCarrying = inventory.carryingPackagedEntity.has_value() &&
+							   inventory.carryingPackagedEntity.value() == task.placePackagedEntityId;
+
+		if (atSource && !atTarget && !alreadyCarrying) {
+			// Phase 1: At source and not yet carrying - do PickupPackaged
 			action = Action::PickupPackaged(task.placePackagedEntityId, task.placeSourcePosition);
 			LOG_DEBUG(
 				Engine,
@@ -861,106 +888,96 @@ namespace ecs {
 				task.placeSourcePosition.x,
 				task.placeSourcePosition.y
 			);
-		} else if (atTarget) {
-			// Phase 2: At target - do PlacePackaged
+		} else if (atTarget || alreadyCarrying) {
+			// Phase 2: At target OR already carrying - do PlacePackaged
+			// If already carrying but not at target, this will still start the action
+			// (movement system should get us to target)
 			action = Action::PlacePackaged(task.placePackagedEntityId, task.placeTargetPosition);
 			LOG_DEBUG(
 				Engine,
-				"[Action] PlacePackaged phase 2: PlacePackaged entity %llu at (%.1f, %.1f)",
+				"[Action] PlacePackaged phase 2: PlacePackaged entity %llu at (%.1f, %.1f)%s",
 				static_cast<unsigned long long>(task.placePackagedEntityId),
 				task.placeTargetPosition.x,
-				task.placeTargetPosition.y
+				task.placeTargetPosition.y,
+				alreadyCarrying && !atTarget ? " (carrying, not yet at target)" : ""
 			);
 		} else {
-			LOG_WARNING(Engine, "[Action] PlacePackaged started but not at source or target position");
-			action.clear();
+			// Fallback: Not at either position and not carrying
+			// Default to phase 1 (pickup) since that's the logical starting point
+			LOG_WARNING(
+				Engine,
+				"[Action] PlacePackaged: not at source or target, defaulting to phase 1 (pickup)"
+			);
+			action = Action::PickupPackaged(task.placePackagedEntityId, task.placeSourcePosition);
 		}
 	}
 
-	void ActionSystem::clearHandsForTwoHandedPickup(Inventory& inventory, glm::vec2 dropPosition) {
+	void ActionSystem::clearHandItem(
+		std::optional<ItemStack>& handSlot,
+		Inventory&				  inventory,
+		glm::vec2				  dropPosition,
+		const char*				  handName
+	) {
+		if (!handSlot.has_value()) {
+			return;
+		}
+
 		auto& assetRegistry = engine::assets::AssetRegistry::Get();
 
-		// Process left hand
-		if (inventory.leftHand.has_value()) {
-			const auto& itemName = inventory.leftHand->defName;
-			uint32_t	quantity = inventory.leftHand->quantity;
+		const auto& itemName = handSlot->defName;
+		uint32_t	quantity = handSlot->quantity;
 
-			// Check if item can go in backpack (1-handed items only)
-			const auto* itemDef = assetRegistry.getDefinition(itemName);
-			bool		canBackpack = (itemDef == nullptr) || (itemDef->handsRequired < kTwoHandedThreshold);
+		// Check if item can go in backpack (1-handed items only)
+		const auto* itemDef = assetRegistry.getDefinition(itemName);
+		bool		canBackpack = (itemDef == nullptr) || (itemDef->handsRequired < kTwoHandedThreshold);
 
-			if (canBackpack) {
-				// Try to stow in backpack
-				uint32_t added = inventory.addItem(itemName, quantity);
-				if (added == quantity) {
-					LOG_DEBUG(Engine, "[Action] Stowed %u x %s from left hand to backpack", quantity, itemName.c_str());
-					inventory.leftHand.reset();
-				} else {
-					// Backpack full - drop what couldn't fit
-					uint32_t toDrop = quantity - added;
-					if (m_onDropItem) {
-						for (uint32_t i = 0; i < toDrop; ++i) {
-							m_onDropItem(itemName, dropPosition.x, dropPosition.y);
-						}
-						LOG_DEBUG(
-							Engine,
-							"[Action] Dropped %u x %s from left hand (backpack full)",
-							toDrop,
-							itemName.c_str()
-						);
-					}
-					inventory.leftHand.reset();
-				}
+		if (canBackpack) {
+			// Try to stow in backpack
+			uint32_t added = inventory.addItem(itemName, quantity);
+			if (added == quantity) {
+				LOG_DEBUG(Engine, "[Action] Stowed %u x %s from %s hand to backpack", quantity, itemName.c_str(), handName);
 			} else {
-				// 2-handed item in hand - must drop
+				// Backpack full - drop what couldn't fit
+				uint32_t toDrop = quantity - added;
 				if (m_onDropItem) {
-					for (uint32_t i = 0; i < quantity; ++i) {
+					for (uint32_t i = 0; i < toDrop; ++i) {
 						m_onDropItem(itemName, dropPosition.x, dropPosition.y);
 					}
-					LOG_DEBUG(Engine, "[Action] Dropped %u x %s from left hand (2-handed item)", quantity, itemName.c_str());
+					LOG_DEBUG(Engine, "[Action] Dropped %u x %s from %s hand (backpack full)", toDrop, itemName.c_str(), handName);
+				} else {
+					LOG_WARNING(
+						Engine,
+						"[Action] Cannot drop %u x %s from %s hand - drop callback not configured (items lost)",
+						toDrop,
+						itemName.c_str(),
+						handName
+					);
 				}
-				inventory.leftHand.reset();
+			}
+		} else {
+			// 2-handed item in hand - must drop
+			if (m_onDropItem) {
+				for (uint32_t i = 0; i < quantity; ++i) {
+					m_onDropItem(itemName, dropPosition.x, dropPosition.y);
+				}
+				LOG_DEBUG(Engine, "[Action] Dropped %u x %s from %s hand (2-handed item)", quantity, itemName.c_str(), handName);
+			} else {
+				LOG_WARNING(
+					Engine,
+					"[Action] Cannot drop %u x %s from %s hand - drop callback not configured (items lost)",
+					quantity,
+					itemName.c_str(),
+					handName
+				);
 			}
 		}
 
-		// Process right hand
-		if (inventory.rightHand.has_value()) {
-			const auto& itemName = inventory.rightHand->defName;
-			uint32_t	quantity = inventory.rightHand->quantity;
+		handSlot.reset();
+	}
 
-			const auto* itemDef = assetRegistry.getDefinition(itemName);
-			bool		canBackpack = (itemDef == nullptr) || (itemDef->handsRequired < kTwoHandedThreshold);
-
-			if (canBackpack) {
-				uint32_t added = inventory.addItem(itemName, quantity);
-				if (added == quantity) {
-					LOG_DEBUG(Engine, "[Action] Stowed %u x %s from right hand to backpack", quantity, itemName.c_str());
-					inventory.rightHand.reset();
-				} else {
-					uint32_t toDrop = quantity - added;
-					if (m_onDropItem) {
-						for (uint32_t i = 0; i < toDrop; ++i) {
-							m_onDropItem(itemName, dropPosition.x, dropPosition.y);
-						}
-						LOG_DEBUG(
-							Engine,
-							"[Action] Dropped %u x %s from right hand (backpack full)",
-							toDrop,
-							itemName.c_str()
-						);
-					}
-					inventory.rightHand.reset();
-				}
-			} else {
-				if (m_onDropItem) {
-					for (uint32_t i = 0; i < quantity; ++i) {
-						m_onDropItem(itemName, dropPosition.x, dropPosition.y);
-					}
-					LOG_DEBUG(Engine, "[Action] Dropped %u x %s from right hand (2-handed item)", quantity, itemName.c_str());
-				}
-				inventory.rightHand.reset();
-			}
-		}
+	void ActionSystem::clearHandsForTwoHandedPickup(Inventory& inventory, glm::vec2 dropPosition) {
+		clearHandItem(inventory.leftHand, inventory, dropPosition, "left");
+		clearHandItem(inventory.rightHand, inventory, dropPosition, "right");
 	}
 
 } // namespace ecs

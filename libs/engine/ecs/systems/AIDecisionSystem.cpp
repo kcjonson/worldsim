@@ -735,10 +735,9 @@ namespace ecs {
 
 			const auto& targetPos = packaged.targetPosition.value();
 
-			// Check if this colonist is already carrying this entity (phase 2)
-			bool isCarryingThis =
-				inventory.carryingPackagedEntity.has_value() &&
-				inventory.carryingPackagedEntity.value() == static_cast<uint64_t>(packagedEntity);
+			// After the filter above, if carryingPackagedEntity has a value it must be this entity
+			// (otherwise we would have continued). So we can simplify the check.
+			bool isCarryingThis = inventory.carryingPackagedEntity.has_value();
 
 			// Create place packaged option
 			EvaluatedOption placeOption;

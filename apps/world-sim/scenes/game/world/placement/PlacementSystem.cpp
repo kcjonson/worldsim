@@ -30,14 +30,21 @@ namespace world_sim {
 						worldPos.y,
 						static_cast<uint32_t>(relocatingEntityId)
 					);
+					// Clear selection after successfully setting target
+					if (callbacks.onSelectionCleared) {
+						callbacks.onSelectionCleared();
+					}
+					relocatingEntityId = ecs::EntityID{0};
 				} else {
-					LOG_WARNING(Game, "Entity %u no longer has Packaged component", static_cast<uint32_t>(relocatingEntityId));
+					// Entity no longer has Packaged component - placement failed
+					// Don't clear selection so user can see the issue and retry
+					LOG_WARNING(
+						Game,
+						"Entity %u no longer has Packaged component - placement failed",
+						static_cast<uint32_t>(relocatingEntityId)
+					);
+					relocatingEntityId = ecs::EntityID{0};
 				}
-				// Clear selection after setting target
-				if (callbacks.onSelectionCleared) {
-					callbacks.onSelectionCleared();
-				}
-				relocatingEntityId = ecs::EntityID{0};
 			} else {
 				// Spawning new entity
 				spawnEntity(defName, worldPos);
