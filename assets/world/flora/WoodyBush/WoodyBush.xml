@@ -25,7 +25,7 @@
     <!-- Entity capabilities - harvested for sticks with resource pool -->
     <capabilities>
       <harvestable yield="Stick" amountMin="1" amountMax="1" duration="4.0"
-                   totalResourceMin="3" totalResourceMax="5"/>
+                   destructive="false" totalResourceMin="3" totalResourceMax="5"/>
     </capabilities>
 
     <!-- Per-biome placement configuration -->

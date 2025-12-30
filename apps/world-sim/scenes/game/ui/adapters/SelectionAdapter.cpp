@@ -89,9 +89,12 @@ namespace world_sim {
 
 	} // namespace
 
-	std::optional<PanelContent>
-	adaptSelection(const Selection& selection, const ecs::World& world, const engine::assets::AssetRegistry& registry,
-				   const ResourceQueryCallback& queryResources) {
+	std::optional<PanelContent> adaptSelection(
+		const Selection&					 selection,
+		const ecs::World&					 world,
+		const engine::assets::AssetRegistry& registry,
+		const ResourceQueryCallback&		 queryResources
+	) {
 		return std::visit(
 			[&world, &registry, &queryResources](auto&& sel) -> std::optional<PanelContent> {
 				using T = std::decay_t<decltype(sel)>;
@@ -238,8 +241,11 @@ namespace world_sim {
 		return content;
 	}
 
-	PanelContent adaptWorldEntity(const engine::assets::AssetRegistry& registry, const WorldEntitySelection& selection,
-								  const ResourceQueryCallback& queryResources) {
+	PanelContent adaptWorldEntity(
+		const engine::assets::AssetRegistry& registry,
+		const WorldEntitySelection&			 selection,
+		const ResourceQueryCallback&		 queryResources
+	) {
 		PanelContent content;
 		content.layout = PanelLayout::TwoColumn; // Same layout as colonists
 
@@ -264,17 +270,15 @@ namespace world_sim {
 					auto resourceCount = queryResources(selection.defName, selection.position);
 					if (resourceCount.has_value()) {
 						// Show remaining count with yield item name
+						// Use format "X remaining (ItemName)" to avoid naive pluralization issues
 						std::string yieldName = harvestable.yieldDefName;
-						// Make it plural if > 1
-						if (resourceCount.value() != 1) {
-							yieldName += "s";
-						}
-						content.header.moodLabel = std::to_string(resourceCount.value()) + " " + yieldName + " remaining";
+						content.header.moodLabel = std::to_string(resourceCount.value()) + " remaining (" + yieldName + ")";
 
 						// Calculate percentage based on max possible resources
 						uint32_t maxResources = harvestable.totalResourceMax;
 						if (maxResources > 0) {
-							content.header.moodValue = (static_cast<float>(resourceCount.value()) / static_cast<float>(maxResources)) * 100.0F;
+							content.header.moodValue =
+								(static_cast<float>(resourceCount.value()) / static_cast<float>(maxResources)) * 100.0F;
 						}
 					} else {
 						// No resource pool - just show as harvestable

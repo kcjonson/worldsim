@@ -29,10 +29,10 @@ void DynamicEntityRenderSystem::update(float /*deltaTime*/) {
     renderData.clear();
 
     // Constants for packaged item rendering
-    constexpr float kPackagedScaleFactor = 0.85f;  // Scale packaged items to 85% of tile size
-    constexpr float kCrateWorldHeight = 0.2f;      // PackagingCrate's worldHeight
-    constexpr float kCrateWidth = 1.0f;            // PackagingCrate is 1m wide
-    constexpr float kItemLiftOffset = 0.03f;       // Lift item up slightly (~2px at typical zoom)
+    constexpr float kPackagedScaleFactor = 0.85F;  // Scale packaged items to 85% of tile size
+    constexpr float kCrateWorldHeight = 0.2F;      // PackagingCrate's worldHeight
+    constexpr float kCrateWidth = 1.0F;            // PackagingCrate is 1m wide
+    constexpr float kItemLiftOffset = 0.03F;       // Lift item up slightly (~2px at typical zoom)
 
     auto& assetRegistry = engine::assets::AssetRegistry::Get();
 
@@ -50,7 +50,7 @@ void DynamicEntityRenderSystem::update(float /*deltaTime*/) {
         // For packaged entities (not being carried), render with crate overlay
         if (packaged != nullptr) {
             // Get item's worldHeight for proper bottom alignment
-            float itemWorldHeight = 0.6f;  // Default fallback
+            float itemWorldHeight = 0.6F;  // Default fallback
             if (const auto* itemDef = assetRegistry.getDefinition(appearance.defName)) {
                 itemWorldHeight = itemDef->worldHeight;
             }
@@ -62,26 +62,26 @@ void DynamicEntityRenderSystem::update(float /*deltaTime*/) {
 
             // Crate is centered on entity position
             float crateCenterX = pos.value.x;
-            float crateLeftX = crateCenterX - kCrateWidth * 0.5f;
+            float crateLeftX = crateCenterX - kCrateWidth * 0.5F;
 
             // First render the crate (so it appears behind the item)
             engine::assets::PlacedEntity crate;
             crate.defName = "PackagingCrate";
             crate.position = glm::vec2(crateLeftX, bottomY - kCrateWorldHeight);
-            crate.rotation = 0.0f;
-            crate.scale = 1.0f;
-            crate.colorTint = glm::vec4(1.0f, 1.0f, 1.0f, 1.0f);
+            crate.rotation = 0.0F;
+            crate.scale = 1.0F;
+            crate.colorTint = glm::vec4(1.0F, 1.0F, 1.0F, 1.0F);
             renderData.push_back(std::move(crate));
 
             // Then render the packaged item (shrunk, centered in crate)
             engine::assets::PlacedEntity item;
             item.defName = appearance.defName;
             // Estimate item width from height (assume ~1.4:1 aspect ratio like BasicBox 40x28)
-            constexpr float kItemAspectRatio = 1.4f;
+            constexpr float kItemAspectRatio = 1.4F;
             float scaledItemWidth = itemWorldHeight * kItemAspectRatio * kPackagedScaleFactor;
-            float itemLeftX = crateCenterX - scaledItemWidth * 0.5f;
+            float itemLeftX = crateCenterX - scaledItemWidth * 0.5F;
             item.position = glm::vec2(itemLeftX, bottomY - scaledItemHeight - kItemLiftOffset);
-            item.rotation = 0.0f;
+            item.rotation = 0.0F;
             item.scale = appearance.scale * kPackagedScaleFactor;
             item.colorTint = appearance.colorTint;
             renderData.push_back(std::move(item));
@@ -103,10 +103,10 @@ void DynamicEntityRenderSystem::update(float /*deltaTime*/) {
         // - Shift X left by half width to center horizontally
         // - Shift Y to place feet at entity position
         // Colonist: 60x100 SVG units, scaled to ~0.69x1.0m world units
-        constexpr float kSpriteWidthOffset = -0.35f;   // Half of ~0.69m width
-        constexpr float kSpriteHeightOffset = -0.5f;   // Adjust for feet position
+        constexpr float kSpriteWidthOffset = -0.35F;   // Half of ~0.69m width
+        constexpr float kSpriteHeightOffset = -0.5F;   // Adjust for feet position
         placed.position = glm::vec2(pos.value.x + kSpriteWidthOffset, pos.value.y + kSpriteHeightOffset);
-        placed.rotation = 0.0f;  // Dynamic entities don't rotate - use FacingDirection for sprites
+        placed.rotation = 0.0F;  // Dynamic entities don't rotate - use FacingDirection for sprites
         placed.scale = appearance.scale;
         placed.colorTint = appearance.colorTint;
 

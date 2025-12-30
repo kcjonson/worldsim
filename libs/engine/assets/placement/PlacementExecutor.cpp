@@ -536,6 +536,7 @@ namespace engine::assets {
 	PlacementExecutor::computeChunkEntities(const ChunkPlacementContext& context, const IAdjacentChunkProvider* adjacentProvider) const {
 		AsyncChunkPlacementResult result;
 		result.coord = context.coord;
+		result.worldSeed = context.worldSeed;
 
 		if (!m_initialized) {
 			LOG_WARNING(Engine, "PlacementExecutor::computeChunkEntities called before initialize()");
@@ -562,8 +563,10 @@ namespace engine::assets {
 
 	void PlacementExecutor::storeChunkResult(AsyncChunkPlacementResult&& result) {
 		// Initialize resource counts for harvestable entities with resource pools
-		// Create RNG from chunk coordinates for deterministic results
-		uint64_t chunkSeed = static_cast<uint64_t>(result.coord.x) * 0x9E3779B97F4A7C15ULL;
+		// Create RNG from world seed and chunk coordinates for deterministic results
+		// (must match the seeding in processChunk for consistency)
+		uint64_t chunkSeed = result.worldSeed;
+		chunkSeed ^= static_cast<uint64_t>(result.coord.x) * 0x9E3779B97F4A7C15ULL;
 		chunkSeed ^= static_cast<uint64_t>(result.coord.y) * 0x6C62272E07BB0143ULL;
 		std::mt19937 rng(static_cast<uint32_t>(chunkSeed));
 

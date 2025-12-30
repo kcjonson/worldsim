@@ -93,6 +93,7 @@ namespace engine::assets {
 	/// Result of async chunk computation (includes spatial index for later storage)
 	struct AsyncChunkPlacementResult {
 		world::ChunkCoordinate	  coord;
+		uint64_t				  worldSeed = 0;	///< World seed for deterministic resource count init
 		std::vector<PlacedEntity> entities;
 		SpatialIndex			  spatialIndex;
 		size_t					  entitiesPlaced = 0;

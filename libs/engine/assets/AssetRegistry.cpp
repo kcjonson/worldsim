@@ -628,6 +628,22 @@ namespace engine::assets {
 							std::swap(harvestable.totalResourceMin, harvestable.totalResourceMax);
 						}
 
+						// Validate mutually exclusive harvesting modes:
+						// - Resource pool: totalResourceMin/Max > 0
+						// - Destructive: destructive = true
+						// - Regrowth: regrowthTime > 0
+						// Combinations are ambiguous - resource pool takes priority at runtime
+						const bool hasResourcePool = (harvestable.totalResourceMin > 0U) || (harvestable.totalResourceMax > 0U);
+						const bool hasDestructiveOrRegrowth = harvestable.destructive || (harvestable.regrowthTime > 0.0F);
+						if (hasResourcePool && hasDestructiveOrRegrowth) {
+							LOG_WARNING(
+								Engine,
+								"AssetDef '%s' harvestable: totalResourceMin/Max specified with destructive=true "
+								"or regrowthTime>0; these modes are mutually exclusive (resource pool takes priority)",
+								def.defName.c_str()
+							);
+						}
+
 						def.capabilities.harvestable = harvestable;
 					}
 				}
