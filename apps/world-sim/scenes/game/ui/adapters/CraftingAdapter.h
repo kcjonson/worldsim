@@ -19,7 +19,7 @@
 namespace world_sim {
 
 /// Callback type for queuing a recipe at a station
-using QueueRecipeCallback = std::function<void(const std::string& recipeDefName)>;
+using QueueRecipeCallback = std::function<void(const std::string& recipeDefName, uint32_t quantity)>;
 
 /// Adapt crafting station status to panel content
 /// Shows: station name, current job, progress, pending work count

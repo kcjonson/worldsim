@@ -59,6 +59,9 @@ namespace UI {
 		visible = true;
 		cleanupPerformed = false; // Reset for new open/close cycle
 
+		// Set up content area clipping and offset
+		updateContentArea();
+
 		// Take focus so we receive keyboard input (Escape to close)
 		FocusManager::Get().setFocus(this);
 
@@ -151,6 +154,12 @@ namespace UI {
 			return false;
 		}
 
+		// Dispatch to content children FIRST (they get priority over chrome)
+		if (dispatchEvent(event)) {
+			return true;
+		}
+
+		// If event wasn't consumed by children, handle chrome
 		switch (event.type) {
 			case InputEvent::Type::MouseMove: {
 				closeButtonHovered = isPointInCloseButton(event.position);
@@ -356,8 +365,8 @@ namespace UI {
 			}
 		);
 
-		// Render children (dialog content)
-		Component::render();
+		// Render content children (Container handles clipping and offset)
+		Container::render();
 	}
 
 	// IFocusable implementation
@@ -383,6 +392,18 @@ namespace UI {
 
 	bool Dialog::canReceiveFocus() const {
 		return state == State::Open;
+	}
+
+	void Dialog::updateContentArea() {
+		auto bounds = getContentBounds();
+
+		// Clip children to content area
+		setClip(Foundation::ClipSettings{
+			.shape = Foundation::ClipRect{.bounds = bounds}
+		});
+
+		// Offset children so (0,0) is top-left of content area
+		setContentOffset({bounds.x, bounds.y});
 	}
 
 } // namespace UI

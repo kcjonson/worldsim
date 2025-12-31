@@ -30,6 +30,8 @@ add_executable(world-sim
     # Game scene UI - dialogs
     scenes/game/ui/dialogs/ColonistDetailsDialog.cpp
     scenes/game/ui/dialogs/ColonistDetailsModel.cpp
+    scenes/game/ui/dialogs/CraftingDialog.cpp
+    scenes/game/ui/dialogs/CraftingDialogModel.cpp
     scenes/game/ui/dialogs/tabs/BioTabView.cpp
     scenes/game/ui/dialogs/tabs/HealthTabView.cpp
     scenes/game/ui/dialogs/tabs/SocialTabView.cpp

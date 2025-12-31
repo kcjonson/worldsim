@@ -39,13 +39,17 @@ using ResourceQueryCallback = std::function<std::optional<uint32_t>(const std::s
 /// UI panel for displaying selected entity information via slots
 class EntityInfoView : public UI::Component {
   public:
+	/// Callback to open crafting dialog for a station
+	using OpenCraftingDialogCallback = std::function<void(ecs::EntityID, const std::string&)>;
+
 	struct Args {
 		Foundation::Vec2	  position{0.0F, 0.0F};
 		float				  width = 340.0F;		// Per plan: 340px for two-column layout
 		std::string			  id = "entity_info";
 		std::function<void()> onClose;				// Called when close button clicked
 		std::function<void()> onDetails;			// Called when Details button clicked
-		QueueRecipeCallback   onQueueRecipe;		// Called when recipe is queued at station
+		QueueRecipeCallback   onQueueRecipe;		// Called when recipe is queued at station (legacy, kept for compatibility)
+		OpenCraftingDialogCallback onOpenCraftingDialog; // Called to open crafting dialog
 		std::function<void()> onPlace;				// Called when Place button clicked for packaged furniture
 		ResourceQueryCallback queryResources;		// Query remaining resource count for harvestable entities
 	};
@@ -125,6 +129,7 @@ class EntityInfoView : public UI::Component {
 	std::function<void()> onCloseCallback;
 	std::function<void()> onDetailsCallback;
 	QueueRecipeCallback   onQueueRecipeCallback;
+	OpenCraftingDialogCallback onOpenCraftingDialogCallback;
 	std::function<void()> onPlaceCallback;
 	ResourceQueryCallback queryResourcesCallback;
 

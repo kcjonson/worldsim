@@ -26,6 +26,7 @@
 #include "scenes/game/world/selection/SelectionTypes.h"
 #include "scenes/game/ui/views/TaskListView.h"
 #include "scenes/game/ui/dialogs/ColonistDetailsDialog.h"
+#include "scenes/game/ui/dialogs/CraftingDialog.h"
 
 #include <components/toast/ToastStack.h>
 
@@ -62,6 +63,8 @@ class GameUI {
 		std::function<void(const std::string&)> onBuildItemSelected; ///< Called when item selected from build menu
 		std::function<void(const std::string&)> onProductionSelected; ///< Called when production item selected (e.g., CraftingSpot)
 		QueueRecipeCallback onQueueRecipe;								 ///< Called when recipe queued at station
+		std::function<void(const std::string&)> onCancelJob;			 ///< Called when job canceled from queue
+		std::function<void(ecs::EntityID, const std::string&)> onOpenCraftingDialog; ///< Called to open crafting dialog
 		std::function<void()> onPause;									 ///< Called when pause button clicked
 		std::function<void(ecs::GameSpeed)> onSpeedChange;			 ///< Called when speed changed
 		std::function<void()> onMenuClick;								 ///< Called when menu button clicked
@@ -134,6 +137,17 @@ class GameUI {
 	/// Check if colonist details dialog is visible
 	[[nodiscard]] bool isColonistDetailsVisible() const;
 
+	// --- Crafting Dialog API ---
+
+	/// Show crafting dialog for a specific station
+	void showCraftingDialog(ecs::EntityID stationId, const std::string& stationDefName);
+
+	/// Hide crafting dialog
+	void hideCraftingDialog();
+
+	/// Check if crafting dialog is visible
+	[[nodiscard]] bool isCraftingDialogVisible() const;
+
   private:
 	std::unique_ptr<TopBar> topBar;
 	std::unique_ptr<DebugOverlay> debugOverlay;
@@ -146,6 +160,7 @@ class GameUI {
 	std::unique_ptr<ResourcesPanel> resourcesPanel;
 	std::unique_ptr<UI::ToastStack> toastStack;
 	std::unique_ptr<ColonistDetailsDialog> colonistDetailsDialog;
+	std::unique_ptr<CraftingDialog> craftingDialog;
 
 	// ViewModels (own data + change detection)
 	TimeModel timeModel;

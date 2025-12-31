@@ -28,16 +28,36 @@ namespace world_sim {
 		dialogHandle = addChild(std::move(dialog));
 	}
 
-	void ColonistDetailsDialog::createTabBar() {
+	// Helper to access content layout
+	UI::LayoutContainer* ColonistDetailsDialog::getContentLayout() {
+		auto* dialog = getChild<UI::Dialog>(dialogHandle);
+		if (dialog == nullptr) {
+			return nullptr;
+		}
+		return dialog->getChild<UI::LayoutContainer>(contentLayoutHandle);
+	}
+
+	void ColonistDetailsDialog::createContent() {
 		auto* dialog = getChild<UI::Dialog>(dialogHandle);
 		if (dialog == nullptr)
 			return;
 
 		auto contentBounds = dialog->getContentBounds();
 
-		auto tabBar = UI::TabBar(
+		// Create vertical layout for TabBar + tab content
+		auto contentLayout = UI::LayoutContainer(UI::LayoutContainer::Args{
+			.position = {0, 0},  // Relative to content area (Dialog applies offset)
+			.size = {contentBounds.width, contentBounds.height},
+			.direction = UI::Direction::Vertical,
+			.hAlign = UI::HAlign::Left,
+			.vAlign = UI::VAlign::Top,
+			.id = "content-layout"
+		});
+
+		// Add TabBar at top
+		tabBarHandle = contentLayout.addChild(UI::TabBar(
 			UI::TabBar::Args{
-				.position = {contentBounds.x, contentBounds.y},
+				.position = {0, 0},
 				.width = contentBounds.width,
 				.tabs =
 					{{.id = kTabBio, .label = "Bio"},
@@ -48,51 +68,46 @@ namespace world_sim {
 				.selectedId = kTabBio,
 				.onSelect = [this](const std::string& tabId) { switchToTab(tabId); }
 			}
-		);
-		tabBarHandle = addChild(std::move(tabBar));
-	}
+		));
 
-	void ColonistDetailsDialog::createTabContent() {
-		auto* dialog = getChild<UI::Dialog>(dialogHandle);
-		if (dialog == nullptr)
-			return;
-
-		auto			 contentBounds = dialog->getContentBounds();
+		// Tab content bounds (below TabBar)
 		Foundation::Rect tabContentBounds{
-			contentBounds.x,
-			contentBounds.y + kTabBarHeight + kContentPadding,
+			0, 0,  // Relative positions
 			contentBounds.width,
 			contentBounds.height - kTabBarHeight - kContentPadding
 		};
 
-		// Create Bio tab
+		// Create Bio tab (visible by default)
 		auto bioTab = BioTabView();
 		bioTab.create(tabContentBounds);
-		bioTabHandle = addChild(std::move(bioTab));
+		bioTabHandle = contentLayout.addChild(std::move(bioTab));
 
 		// Create Health tab (initially hidden)
 		auto healthTab = HealthTabView();
 		healthTab.create(tabContentBounds);
 		healthTab.visible = false;
-		healthTabHandle = addChild(std::move(healthTab));
+		healthTabHandle = contentLayout.addChild(std::move(healthTab));
 
 		// Create Social tab (initially hidden)
 		auto socialTab = SocialTabView();
 		socialTab.create(tabContentBounds);
 		socialTab.visible = false;
-		socialTabHandle = addChild(std::move(socialTab));
+		socialTabHandle = contentLayout.addChild(std::move(socialTab));
 
 		// Create Gear tab (initially hidden)
 		auto gearTab = GearTabView();
 		gearTab.create(tabContentBounds);
 		gearTab.visible = false;
-		gearTabHandle = addChild(std::move(gearTab));
+		gearTabHandle = contentLayout.addChild(std::move(gearTab));
 
 		// Create Memory tab (initially hidden)
 		auto memoryTab = MemoryTabView();
 		memoryTab.create(tabContentBounds);
 		memoryTab.visible = false;
-		memoryTabHandle = addChild(std::move(memoryTab));
+		memoryTabHandle = contentLayout.addChild(std::move(memoryTab));
+
+		// Add content layout to Dialog
+		contentLayoutHandle = dialog->addChild(std::move(contentLayout));
 	}
 
 	void ColonistDetailsDialog::open(ecs::EntityID newColonistId, float screenWidth, float screenHeight) {
@@ -103,10 +118,9 @@ namespace world_sim {
 		if (dialog != nullptr) {
 			dialog->open(screenWidth, screenHeight);
 
-			// Create tab bar and content after dialog opens (needs content bounds)
-			if (tabBarHandle == UI::LayerHandle{}) {
-				createTabBar();
-				createTabContent();
+			// Create content after dialog opens (needs content bounds)
+			if (contentLayoutHandle == UI::LayerHandle{}) {
+				createContent();
 			}
 		}
 	}
@@ -151,39 +165,10 @@ namespace world_sim {
 		if (!isOpen())
 			return;
 
-		// Render dialog
+		// Render dialog (includes TabBar and tabs via content children)
 		auto* dialog = getChild<UI::Dialog>(dialogHandle);
 		if (dialog != nullptr) {
 			dialog->render();
-		}
-
-		// Render tab bar
-		auto* tabBar = getChild<UI::TabBar>(tabBarHandle);
-		if (tabBar != nullptr) {
-			tabBar->render();
-		}
-
-		// Render active tab
-		if (currentTab == kTabBio) {
-			if (auto* tab = getChild<BioTabView>(bioTabHandle)) {
-				tab->render();
-			}
-		} else if (currentTab == kTabHealth) {
-			if (auto* tab = getChild<HealthTabView>(healthTabHandle)) {
-				tab->render();
-			}
-		} else if (currentTab == kTabSocial) {
-			if (auto* tab = getChild<SocialTabView>(socialTabHandle)) {
-				tab->render();
-			}
-		} else if (currentTab == kTabGear) {
-			if (auto* tab = getChild<GearTabView>(gearTabHandle)) {
-				tab->render();
-			}
-		} else if (currentTab == kTabMemory) {
-			if (auto* tab = getChild<MemoryTabView>(memoryTabHandle)) {
-				tab->render();
-			}
 		}
 	}
 
@@ -191,48 +176,9 @@ namespace world_sim {
 		if (!isOpen())
 			return false;
 
-		// Let dialog handle events first
+		// Let Dialog handle all events (content children, chrome)
 		auto* dialog = getChild<UI::Dialog>(dialogHandle);
 		if (dialog != nullptr && dialog->handleEvent(event)) {
-			return true;
-		}
-
-		// Tab bar
-		auto* tabBar = getChild<UI::TabBar>(tabBarHandle);
-		if (tabBar != nullptr && tabBar->handleEvent(event)) {
-			return true;
-		}
-
-		// Active tab
-		if (currentTab == kTabBio) {
-			if (auto* tab = getChild<BioTabView>(bioTabHandle)) {
-				if (tab->handleEvent(event))
-					return true;
-			}
-		} else if (currentTab == kTabHealth) {
-			if (auto* tab = getChild<HealthTabView>(healthTabHandle)) {
-				if (tab->handleEvent(event))
-					return true;
-			}
-		} else if (currentTab == kTabSocial) {
-			if (auto* tab = getChild<SocialTabView>(socialTabHandle)) {
-				if (tab->handleEvent(event))
-					return true;
-			}
-		} else if (currentTab == kTabGear) {
-			if (auto* tab = getChild<GearTabView>(gearTabHandle)) {
-				if (tab->handleEvent(event))
-					return true;
-			}
-		} else if (currentTab == kTabMemory) {
-			if (auto* tab = getChild<MemoryTabView>(memoryTabHandle)) {
-				if (tab->handleEvent(event))
-					return true;
-			}
-		}
-
-		// Only consume events within dialog bounds (non-modal allows click-through)
-		if (dialog != nullptr && dialog->containsPoint(event.position)) {
 			return true;
 		}
 
@@ -249,20 +195,24 @@ namespace world_sim {
 	void ColonistDetailsDialog::switchToTab(const std::string& tabId) {
 		currentTab = tabId;
 
+		auto* contentLayout = getContentLayout();
+		if (contentLayout == nullptr)
+			return;
+
 		// Update visibility
-		if (auto* tab = getChild<BioTabView>(bioTabHandle)) {
+		if (auto* tab = contentLayout->getChild<BioTabView>(bioTabHandle)) {
 			tab->visible = (tabId == kTabBio);
 		}
-		if (auto* tab = getChild<HealthTabView>(healthTabHandle)) {
+		if (auto* tab = contentLayout->getChild<HealthTabView>(healthTabHandle)) {
 			tab->visible = (tabId == kTabHealth);
 		}
-		if (auto* tab = getChild<SocialTabView>(socialTabHandle)) {
+		if (auto* tab = contentLayout->getChild<SocialTabView>(socialTabHandle)) {
 			tab->visible = (tabId == kTabSocial);
 		}
-		if (auto* tab = getChild<GearTabView>(gearTabHandle)) {
+		if (auto* tab = contentLayout->getChild<GearTabView>(gearTabHandle)) {
 			tab->visible = (tabId == kTabGear);
 		}
-		if (auto* tab = getChild<MemoryTabView>(memoryTabHandle)) {
+		if (auto* tab = contentLayout->getChild<MemoryTabView>(memoryTabHandle)) {
 			tab->visible = (tabId == kTabMemory);
 		}
 	}
@@ -271,20 +221,24 @@ namespace world_sim {
 		if (!model.isValid())
 			return;
 
+		auto* contentLayout = getContentLayout();
+		if (contentLayout == nullptr)
+			return;
+
 		// Update all tabs (only visible one will be rendered)
-		if (auto* tab = getChild<BioTabView>(bioTabHandle)) {
+		if (auto* tab = contentLayout->getChild<BioTabView>(bioTabHandle)) {
 			tab->update(model.bio());
 		}
-		if (auto* tab = getChild<HealthTabView>(healthTabHandle)) {
+		if (auto* tab = contentLayout->getChild<HealthTabView>(healthTabHandle)) {
 			tab->update(model.health());
 		}
-		if (auto* tab = getChild<SocialTabView>(socialTabHandle)) {
+		if (auto* tab = contentLayout->getChild<SocialTabView>(socialTabHandle)) {
 			tab->update(model.social());
 		}
-		if (auto* tab = getChild<GearTabView>(gearTabHandle)) {
+		if (auto* tab = contentLayout->getChild<GearTabView>(gearTabHandle)) {
 			tab->update(model.gear());
 		}
-		if (auto* tab = getChild<MemoryTabView>(memoryTabHandle)) {
+		if (auto* tab = contentLayout->getChild<MemoryTabView>(memoryTabHandle)) {
 			tab->update(model.memory());
 		}
 	}

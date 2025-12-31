@@ -62,10 +62,14 @@ class EntityInfoModel {
 	/// Returns std::nullopt if entity has no resource pool
 	using ResourceQueryCallback = std::function<std::optional<uint32_t>(const std::string& defName, Foundation::Vec2 position)>;
 
+	/// Callback to open crafting dialog for a station
+	using OpenCraftingDialogCallback = std::function<void(ecs::EntityID, const std::string&)>;
+
 	/// Callbacks needed for content generation
 	struct Callbacks {
 		std::function<void()> onDetails;		// Open colonist details modal
 		QueueRecipeCallback onQueueRecipe;		// Queue recipe at station
+		OpenCraftingDialogCallback onOpenCraftingDialog; // Open crafting dialog for station
 		std::function<void()> onPlace;			// Place packaged furniture
 		ResourceQueryCallback queryResources;	// Query remaining resource count for harvestable entities
 	};
@@ -97,13 +101,12 @@ class EntityInfoModel {
 		const std::function<void()>& onDetails
 	) const;
 
-	/// Generate content for crafting station (status + recipes)
+	/// Generate content for crafting station (status + "Open Crafting Menu" button)
 	[[nodiscard]] PanelContent getCraftingStationContent(
 		const ecs::World& world,
 		ecs::EntityID entityId,
 		const std::string& stationDefName,
-		const engine::assets::RecipeRegistry& recipeRegistry,
-		const QueueRecipeCallback& onQueueRecipe
+		const OpenCraftingDialogCallback& onOpenCraftingDialog
 	) const;
 
 	// State

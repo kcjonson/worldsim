@@ -161,7 +161,7 @@ EntityInfoModel::UpdateType EntityInfoModel::refresh(
 	if (isColonist) {
 		contentData = getColonistContent(world, colonistId, callbacks.onDetails);
 	} else if (isStation) {
-		contentData = getCraftingStationContent(world, stationId, stationDefName, recipeRegistry, callbacks.onQueueRecipe);
+		contentData = getCraftingStationContent(world, stationId, stationDefName, callbacks.onOpenCraftingDialog);
 	} else if (isFurniture) {
 		const auto& furnitureSel = std::get<FurnitureSelection>(selection);
 		contentData = adaptFurniture(assetRegistry, furnitureSel, callbacks.onPlace);
@@ -196,50 +196,21 @@ PanelContent EntityInfoModel::getCraftingStationContent(
 	const ecs::World& world,
 	ecs::EntityID entityId,
 	const std::string& stationDefName,
-	const engine::assets::RecipeRegistry& recipeRegistry,
-	const QueueRecipeCallback& onQueueRecipe
+	const OpenCraftingDialogCallback& onOpenCraftingDialog
 ) const {
-	// Get base status content
+	// Get base status content (shows queue status, not recipes)
 	PanelContent content = adaptCraftingStatus(world, entityId, stationDefName);
 
-	// Add recipes
-	auto recipes = recipeRegistry.getRecipesForStation(stationDefName);
-	if (!recipes.empty()) {
-		content.slots.push_back(SpacerSlot{.height = 8.0F});
-		for (const auto* recipe : recipes) {
-			if (recipe == nullptr) {
-				continue;
+	// Add "Open Crafting Menu" button
+	content.slots.push_back(SpacerSlot{.height = 12.0F});
+	content.slots.push_back(ActionButtonSlot{
+		.label = "Open Crafting Menu",
+		.onClick = [onOpenCraftingDialog, entityId, stationDefName]() {
+			if (onOpenCraftingDialog) {
+				onOpenCraftingDialog(entityId, stationDefName);
 			}
-			// Format recipe name (use label if available)
-			std::string recipeName = recipe->label.empty() ? recipe->defName : recipe->label;
-
-			// Format ingredients list
-			std::string ingredients;
-			if (recipe->inputs.empty()) {
-				ingredients = "No materials required";
-			} else {
-				bool first = true;
-				for (const auto& input : recipe->inputs) {
-					if (!first) {
-						ingredients += ", ";
-					}
-					ingredients += std::to_string(input.count) + "x " + input.defName;
-					first = false;
-				}
-			}
-
-			std::string recipeDefName = recipe->defName;
-			content.slots.push_back(RecipeSlot{
-				.name = recipeName,
-				.ingredients = ingredients,
-				.onQueue = [onQueueRecipe, recipeDefName]() {
-					if (onQueueRecipe) {
-						onQueueRecipe(recipeDefName);
-					}
-				},
-			});
 		}
-	}
+	});
 
 	return content;
 }
