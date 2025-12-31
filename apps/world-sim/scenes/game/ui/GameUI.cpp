@@ -77,6 +77,7 @@ namespace world_sim {
 					}
 				},
 			.onQueueRecipe = args.onQueueRecipe,
+			.onOpenCraftingDialog = args.onOpenCraftingDialog,
 			.onPlace = args.onPlaceFurniture,
 			.queryResources = args.queryResources
 		});
@@ -84,6 +85,13 @@ namespace world_sim {
 		// Create colonist details dialog
 		colonistDetailsDialog =
 			std::make_unique<ColonistDetailsDialog>(ColonistDetailsDialog::Args{.onClose = [this]() { hideColonistDetails(); }});
+
+		// Create crafting dialog
+		craftingDialog = std::make_unique<CraftingDialog>(CraftingDialog::Args{
+			.onClose = [this]() { hideCraftingDialog(); },
+			.onQueueRecipe = args.onQueueRecipe,
+			.onCancelJob = args.onCancelJob
+		});
 
 		// Create task list view (position set in layout())
 		taskListPanel = std::make_unique<TaskListView>(TaskListView::Args{
@@ -201,6 +209,16 @@ namespace world_sim {
 	bool GameUI::dispatchEvent(UI::InputEvent& event) {
 		// Dispatch to UI children in z-order (highest first)
 		// Panels that can overlap get priority
+
+		// Crafting dialog (highest z-order - modal overlay)
+		if (craftingDialog && craftingDialog->isOpen()) {
+			if (craftingDialog->handleEvent(event)) {
+				return true;
+			}
+			if (event.isConsumed()) {
+				return true;
+			}
+		}
 
 		// Colonist details dialog (highest z-order - modal overlay)
 		if (colonistDetailsDialog && colonistDetailsDialog->isOpen()) {
@@ -375,6 +393,11 @@ namespace world_sim {
 		if (colonistDetailsDialog && colonistDetailsDialog->isOpen()) {
 			colonistDetailsDialog->update(ecsWorld, deltaTime);
 		}
+
+		// Update crafting dialog if open
+		if (craftingDialog && craftingDialog->isOpen()) {
+			craftingDialog->update(ecsWorld, recipeRegistry, deltaTime);
+		}
 	}
 
 	void GameUI::render() {
@@ -431,6 +454,11 @@ namespace world_sim {
 		// Render colonist details dialog (highest z-order - modal overlay)
 		if (colonistDetailsDialog && colonistDetailsDialog->isOpen()) {
 			colonistDetailsDialog->render();
+		}
+
+		// Render crafting dialog (highest z-order - modal overlay)
+		if (craftingDialog && craftingDialog->isOpen()) {
+			craftingDialog->render();
 		}
 	}
 
@@ -501,6 +529,24 @@ namespace world_sim {
 
 	bool GameUI::isColonistDetailsVisible() const {
 		return colonistDetailsDialog && colonistDetailsDialog->isOpen();
+	}
+
+	// --- Crafting Dialog API ---
+
+	void GameUI::showCraftingDialog(ecs::EntityID stationId, const std::string& stationDefName) {
+		if (craftingDialog) {
+			craftingDialog->open(stationId, stationDefName, viewportBounds.width, viewportBounds.height);
+		}
+	}
+
+	void GameUI::hideCraftingDialog() {
+		if (craftingDialog) {
+			craftingDialog->close();
+		}
+	}
+
+	bool GameUI::isCraftingDialogVisible() const {
+		return craftingDialog && craftingDialog->isOpen();
 	}
 
 } // namespace world_sim

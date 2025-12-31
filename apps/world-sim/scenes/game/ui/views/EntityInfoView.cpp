@@ -15,6 +15,7 @@ namespace world_sim {
 		  onCloseCallback(args.onClose),
 		  onDetailsCallback(args.onDetails),
 		  onQueueRecipeCallback(args.onQueueRecipe),
+		  onOpenCraftingDialogCallback(args.onOpenCraftingDialog),
 		  onPlaceCallback(args.onPlace),
 		  queryResourcesCallback(args.queryResources) {
 
@@ -477,6 +478,7 @@ namespace world_sim {
 		EntityInfoModel::Callbacks callbacks{
 			.onDetails = onDetailsCallback,
 			.onQueueRecipe = onQueueRecipeCallback,
+			.onOpenCraftingDialog = onOpenCraftingDialogCallback,
 			.onPlace = onPlaceCallback,
 			.queryResources = queryResourcesCallback,
 		};

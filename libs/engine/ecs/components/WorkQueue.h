@@ -6,6 +6,7 @@
 //
 // See /docs/design/game-systems/colonists/technology-discovery.md for design details.
 
+#include <algorithm>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -83,6 +84,27 @@ struct WorkQueue {
 			std::remove_if(jobs.begin(), jobs.end(), [](const CraftingJob& job) { return job.isComplete(); }),
 			jobs.end()
 		);
+	}
+
+	/// Remove a job by recipe defName
+	/// If the job is in progress (first incomplete job), removes it and resets progress.
+	/// @return true if a job was removed
+	bool removeJob(const std::string& recipeDefName) {
+		for (auto it = jobs.begin(); it != jobs.end(); ++it) {
+			if (it->recipeDefName == recipeDefName && !it->isComplete()) {
+				// Check if this was the current job (first incomplete)
+				bool wasCurrentJob = (it == jobs.begin() || std::all_of(jobs.begin(), it, [](const CraftingJob& j) { return j.isComplete(); }));
+
+				jobs.erase(it);
+
+				// Reset progress if we removed the current job
+				if (wasCurrentJob) {
+					progress = 0.0F;
+				}
+				return true;
+			}
+		}
+		return false;
 	}
 };
 

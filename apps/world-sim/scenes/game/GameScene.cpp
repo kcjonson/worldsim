@@ -148,6 +148,9 @@ namespace {
 				.onBuildItemSelected = [this](const std::string& defName) { m_placementSystem->selectBuildItem(defName); },
 				.onProductionSelected = [this](const std::string& defName) { m_placementSystem->selectBuildItem(defName); },
 				.onQueueRecipe = [this](const std::string& recipeDefName) { handleQueueRecipe(recipeDefName); },
+				.onCancelJob = [this](const std::string& recipeDefName) { handleCancelJob(recipeDefName); },
+				.onOpenCraftingDialog =
+					[this](ecs::EntityID stationId, const std::string& defName) { gameUI->showCraftingDialog(stationId, defName); },
 				.onPlaceFurniture = [this]() { handlePlaceFurniture(); },
 				.onPause =
 					[this]() {
@@ -616,6 +619,35 @@ namespace {
 			// Add the job
 			workQueue->addJob(recipeDefName, 1);
 			LOG_INFO(Game, "Queued recipe '%s' at station '%s'", recipeDefName.c_str(), stationSel->defName.c_str());
+		}
+
+		/// Handle cancel job request from crafting dialog.
+		/// Removes a job from the crafting dialog's station WorkQueue.
+		void handleCancelJob(const std::string& recipeDefName) {
+			// The crafting dialog tracks which station it's open for
+			if (!gameUI->isCraftingDialogVisible()) {
+				LOG_WARNING(Game, "Cannot cancel job: crafting dialog not open");
+				return;
+			}
+
+			// Get currently selected station from selection system (should match dialog)
+			const auto& sel = m_selectionSystem->current();
+			auto*		stationSel = std::get_if<world_sim::CraftingStationSelection>(&sel);
+			if (stationSel == nullptr) {
+				LOG_WARNING(Game, "Cannot cancel job: no station selected");
+				return;
+			}
+
+			// Get the station's WorkQueue
+			auto* workQueue = ecsWorld->getComponent<ecs::WorkQueue>(stationSel->entityId);
+			if (workQueue == nullptr) {
+				LOG_WARNING(Game, "Cannot cancel job: station has no WorkQueue");
+				return;
+			}
+
+			// Remove the job
+			workQueue->removeJob(recipeDefName);
+			LOG_INFO(Game, "Canceled job '%s' at station '%s'", recipeDefName.c_str(), stationSel->defName.c_str());
 		}
 
 		std::unique_ptr<engine::world::ChunkManager>	   m_chunkManager;
