@@ -3,14 +3,14 @@
 
 #pragma once
 
+#include "graphics/PrimitiveStyles.h"
+#include "shader/Shader.h"
+#include <GL/glew.h>
 #include <glm/glm.hpp>
 #include <map>
 #include <string>
 #include <unordered_map>
 #include <vector>
-#include "shader/Shader.h"
-#include <GL/glew.h>
-#include "graphics/PrimitiveStyles.h"
 
 namespace ui {
 
@@ -45,7 +45,6 @@ namespace ui {
 		 * @return true if initialization was successful
 		 */
 		bool Initialize();
-
 
 		/**
 		 * Calculate the dimensions of a text string with the given scale
@@ -84,11 +83,11 @@ namespace ui {
 		 * Result of text wrapping operation (cached for performance)
 		 */
 		struct WrappedTextResult {
-			std::vector<std::string> lines;		 // Each line of wrapped text
-			std::vector<float>		 lineWidths; // Width of each line in pixels
-			float					 totalWidth; // Max line width (for alignment)
+			std::vector<std::string> lines;		  // Each line of wrapped text
+			std::vector<float>		 lineWidths;  // Width of each line in pixels
+			float					 totalWidth;  // Max line width (for alignment)
 			float					 totalHeight; // Sum of line heights
-			float					 lineHeight; // Height per line in pixels
+			float					 lineHeight;  // Height per line in pixels
 		};
 
 		/**
@@ -144,7 +143,7 @@ namespace ui {
 			float							scale,
 			const glm::vec4&				color,
 			float							lineHeight,
-			Foundation::HorizontalAlign	hAlign,
+			Foundation::HorizontalAlign		hAlign,
 			float							containerWidth,
 			std::vector<GlyphQuad>&			outQuads
 		) const;
@@ -216,9 +215,7 @@ namespace ui {
 			std::string text;
 			float		scale;
 
-			bool operator==(const CacheKey& other) const {
-				return text == other.text && std::abs(scale - other.scale) < 0.001F;
-			}
+			bool operator==(const CacheKey& other) const { return text == other.text && std::abs(scale - other.scale) < 0.001F; }
 		};
 
 		/**
@@ -240,15 +237,15 @@ namespace ui {
 			uint64_t			   lastAccessFrame;
 		};
 
-		std::map<char, SDFGlyph> sdfGlyphs;					  // Map of SDF glyphs
-		SDFAtlasMetadata		 atlasMetadata{};			  // SDF atlas metadata
-		GLuint					 atlasTexture = 0;			  // SDF atlas texture
-		float					 scaledAscender = 0.0F;		  // Stores the ascender for the base font size
+		std::map<char, SDFGlyph> sdfGlyphs;						// Map of SDF glyphs
+		SDFAtlasMetadata		 atlasMetadata{};				// SDF atlas metadata
+		GLuint					 atlasTexture = 0;				// SDF atlas texture
+		float					 scaledAscender = 0.0F;			// Stores the ascender for the base font size
 		float					 maxGlyphHeightUnscaled = 0.0F; // Unscaled maximum glyph height
 
 		// Glyph quad cache (mutable for const GenerateGlyphQuads)
 		mutable std::unordered_map<CacheKey, CacheEntry, CacheKeyHash> glyphQuadCache;
-		mutable uint64_t												currentFrame = 0;
+		mutable uint64_t											   currentFrame = 0;
 
 		/**
 		 * Cache key for text wrapping (text + scale + wrap width)
@@ -259,19 +256,24 @@ namespace ui {
 			float		wrapWidth;
 
 			bool operator==(const WrapCacheKey& other) const {
-				return text == other.text && std::abs(scale - other.scale) < 0.001F &&
-					   std::abs(wrapWidth - other.wrapWidth) < 0.1F;
+				return text == other.text && std::abs(scale - other.scale) < 0.001F && std::abs(wrapWidth - other.wrapWidth) < 0.1F;
 			}
 		};
 
 		/**
 		 * Hash function for WrapCacheKey
+		 * Rounds floats to match the precision used in operator== to maintain hash invariant
 		 */
 		struct WrapCacheKeyHash {
 			size_t operator()(const WrapCacheKey& key) const {
+				// Round to same precision as equality comparison
+				// scale uses 0.001 precision, wrapWidth uses 0.1 precision
+				auto roundedScale = std::round(key.scale * 1000.0F) / 1000.0F;
+				auto roundedWidth = std::round(key.wrapWidth * 10.0F) / 10.0F;
+
 				size_t h1 = std::hash<std::string>{}(key.text);
-				size_t h2 = std::hash<float>{}(key.scale);
-				size_t h3 = std::hash<float>{}(key.wrapWidth);
+				size_t h2 = std::hash<float>{}(roundedScale);
+				size_t h3 = std::hash<float>{}(roundedWidth);
 				return h1 ^ (h2 << 1) ^ (h3 << 2);
 			}
 		};
