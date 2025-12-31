@@ -55,6 +55,7 @@ namespace Foundation { // NOLINT(readability-identifier-naming)
 		float			fontSize = 16.0F;
 		HorizontalAlign hAlign = HorizontalAlign::Left;
 		VerticalAlign	vAlign = VerticalAlign::Top;
+		bool			wordWrap = false; // CSS word-wrap: when true and width is set, text wraps
 	};
 
 } // namespace Foundation

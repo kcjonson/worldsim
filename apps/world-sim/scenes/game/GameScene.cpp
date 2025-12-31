@@ -315,20 +315,23 @@ namespace {
 			m_camera->move(dx, dy, dt);
 
 			// Zoom with scroll wheel (snaps to discrete levels)
-			// Accumulate scroll deltas to handle high-precision input devices (Magic Mouse, trackpad)
-			// These devices generate many small fractional scroll events per gesture
-			constexpr float kScrollThreshold = 1.0F; // Trigger zoom after ~1 "notch" of scrolling
-			float			scrollDelta = input.consumeScrollDelta();
-			m_scrollAccumulator += scrollDelta;
+			// Skip scroll handling when a modal dialog is open (dialog scrolls instead)
+			if (!gameUI->isCraftingDialogVisible() && !gameUI->isColonistDetailsVisible()) {
+				// Accumulate scroll deltas to handle high-precision input devices (Magic Mouse, trackpad)
+				// These devices generate many small fractional scroll events per gesture
+				constexpr float kScrollThreshold = 1.0F; // Trigger zoom after ~1 "notch" of scrolling
+				float			scrollDelta = input.consumeScrollDelta();
+				m_scrollAccumulator += scrollDelta;
 
-			// Trigger zoom steps when accumulated scroll crosses threshold
-			while (m_scrollAccumulator >= kScrollThreshold) {
-				m_camera->zoomIn();
-				m_scrollAccumulator -= kScrollThreshold;
-			}
-			while (m_scrollAccumulator <= -kScrollThreshold) {
-				m_camera->zoomOut();
-				m_scrollAccumulator += kScrollThreshold;
+				// Trigger zoom steps when accumulated scroll crosses threshold
+				while (m_scrollAccumulator >= kScrollThreshold) {
+					m_camera->zoomIn();
+					m_scrollAccumulator -= kScrollThreshold;
+				}
+				while (m_scrollAccumulator <= -kScrollThreshold) {
+					m_camera->zoomOut();
+					m_scrollAccumulator += kScrollThreshold;
+				}
 			}
 
 			auto updateStart = Clock::now();

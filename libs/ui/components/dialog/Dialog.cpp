@@ -155,7 +155,8 @@ namespace UI {
 		}
 
 		// Dispatch to content children FIRST (they get priority over chrome)
-		if (dispatchEvent(event)) {
+		// Use Container::handleEvent to properly transform coordinates for content offset
+		if (Container::handleEvent(event)) {
 			return true;
 		}
 
