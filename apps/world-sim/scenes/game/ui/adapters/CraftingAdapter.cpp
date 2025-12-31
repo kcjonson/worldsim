@@ -158,7 +158,7 @@ PanelContent adaptCraftingRecipes(
 				.value = "> Queue",
 				.onClick = [onQueueRecipe, recipeDefName]() {
 					if (onQueueRecipe) {
-						onQueueRecipe(recipeDefName);
+						onQueueRecipe(recipeDefName, 1);
 					}
 				},
 			}

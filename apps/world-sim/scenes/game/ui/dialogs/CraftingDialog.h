@@ -31,7 +31,7 @@ class CraftingDialog : public UI::Component {
   public:
 	struct Args {
 		std::function<void()> onClose;
-		QueueRecipeCallback onQueueRecipe;  ///< Called for each item to add to queue
+		QueueRecipeCallback onQueueRecipe;  ///< Called with recipe and quantity to add to queue
 		std::function<void(const std::string& recipeDefName)> onCancelJob;
 	};
 
@@ -89,6 +89,7 @@ class CraftingDialog : public UI::Component {
 
 	// Child component handles
 	UI::LayerHandle dialogHandle;
+	UI::LayerHandle contentLayoutHandle;  // Horizontal layout for columns
 
 	// Left column - recipe list (rendered directly like TabBar)
 	UI::LayerHandle leftColumnHandle;
@@ -125,6 +126,9 @@ class CraftingDialog : public UI::Component {
 	void handleQuantityChange(int delta);
 	void handleAddToQueue();
 	void handleCancelJob(const std::string& recipeDefName);
+
+	// Helper to access content layout (columns are children of this)
+	UI::LayoutContainer* getContentLayout();
 };
 
 } // namespace world_sim

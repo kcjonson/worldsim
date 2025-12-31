@@ -3,6 +3,7 @@
 #include <ecs/components/WorkQueue.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 
 namespace world_sim {
@@ -13,9 +14,9 @@ void CraftingDialogModel::setStation(ecs::EntityID stationId, const std::string&
 
 	// Create human-readable label from defName
 	// e.g., "CraftingSpot" -> "Crafting Spot"
-	stationLabel = stationDefName;
 	// Simple conversion: insert space before capitals (except first)
 	std::string result;
+	result.reserve(stationDefName.size() + 4); // Room for a few spaces
 	for (size_t i = 0; i < stationDefName.size(); ++i) {
 		char c = stationDefName[i];
 		if (i > 0 && std::isupper(c) != 0) {
@@ -23,7 +24,7 @@ void CraftingDialogModel::setStation(ecs::EntityID stationId, const std::string&
 		}
 		result += c;
 	}
-	stationLabel = result;
+	stationLabel = std::move(result);
 
 	// Reset selection
 	selectedRecipe.clear();

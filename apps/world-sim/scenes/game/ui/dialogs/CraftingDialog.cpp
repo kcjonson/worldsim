@@ -46,40 +46,47 @@ void CraftingDialog::createColumns() {
 	}
 
 	auto bounds = dialog->getContentBounds();
-
-	// Calculate column positions
-	float leftX = bounds.x;
-	float centerX = leftX + kLeftColumnWidth + kColumnGap;
 	float centerWidth = bounds.width - kLeftColumnWidth - kRightColumnWidth - kColumnGap * 2;
-	float rightX = centerX + centerWidth + kColumnGap;
-	float columnHeight = bounds.height;
+
+	// Create horizontal layout for the 3 columns (fills dialog content area)
+	auto contentLayout = UI::LayoutContainer(UI::LayoutContainer::Args{
+		.position = {0, 0},  // Relative to content area (Dialog applies offset)
+		.size = {bounds.width, bounds.height},
+		.direction = UI::Direction::Horizontal,
+		.hAlign = UI::HAlign::Left,
+		.vAlign = UI::VAlign::Top,
+		.id = "content-layout"
+	});
 
 	// Left column - Recipe list (scrollable)
-	auto leftScroll = UI::ScrollContainer(UI::ScrollContainer::Args{
-		.position = {leftX, bounds.y},
-		.size = {kLeftColumnWidth, columnHeight},
-		.id = "recipe-list"
-	});
-	leftColumnHandle = addChild(std::move(leftScroll));
+	leftColumnHandle = contentLayout.addChild(UI::ScrollContainer(UI::ScrollContainer::Args{
+		.position = {0, 0},
+		.size = {kLeftColumnWidth, bounds.height},
+		.id = "recipe-list",
+		.margin = 0
+	}));
 
-	// Center column - Recipe details
-	auto centerLayout = UI::LayoutContainer(UI::LayoutContainer::Args{
-		.position = {centerX, bounds.y},
-		.size = {centerWidth, columnHeight},
+	// Center column - Recipe details (add gap via margin)
+	centerColumnHandle = contentLayout.addChild(UI::LayoutContainer(UI::LayoutContainer::Args{
+		.position = {0, 0},
+		.size = {centerWidth, bounds.height},
 		.direction = UI::Direction::Vertical,
 		.hAlign = UI::HAlign::Left,
 		.vAlign = UI::VAlign::Top,
-		.id = "recipe-details"
-	});
-	centerColumnHandle = addChild(std::move(centerLayout));
+		.id = "recipe-details",
+		.margin = kColumnGap / 2  // Half gap on each side
+	}));
 
 	// Right column - Queue (scrollable)
-	auto rightScroll = UI::ScrollContainer(UI::ScrollContainer::Args{
-		.position = {rightX, bounds.y},
-		.size = {kRightColumnWidth, columnHeight},
-		.id = "queue-list"
-	});
-	rightColumnHandle = addChild(std::move(rightScroll));
+	rightColumnHandle = contentLayout.addChild(UI::ScrollContainer(UI::ScrollContainer::Args{
+		.position = {0, 0},
+		.size = {kRightColumnWidth, bounds.height},
+		.id = "queue-list",
+		.margin = 0
+	}));
+
+	// Add content layout to Dialog (Dialog handles clipping and offset)
+	contentLayoutHandle = dialog->addChild(std::move(contentLayout));
 
 	contentCreated = true;
 }
@@ -132,7 +139,7 @@ void CraftingDialog::update(const ecs::World& world,
 
 	// Refresh model data (for queue progress updates)
 	// This also updates selectedDetails() based on the current selection
-	model.refresh(world, registry);
+	auto updateType = model.refresh(world, registry);
 
 	// Build initial content after first model refresh
 	// We can't do this in open() because we don't have world/registry there
@@ -145,6 +152,12 @@ void CraftingDialog::update(const ecs::World& world,
 		}
 		rebuildCenterColumn();
 		rebuildQueueColumn();
+	} else {
+		// Update queue column when queue changes (progress, completions)
+		if (updateType == CraftingDialogModel::UpdateType::Queue ||
+		    updateType == CraftingDialogModel::UpdateType::Full) {
+			rebuildQueueColumn();
+		}
 	}
 
 	// Rebuild center column after selection changed (model now has updated details)
@@ -154,27 +167,29 @@ void CraftingDialog::update(const ecs::World& world,
 	}
 }
 
+// Helper to get the content layout from Dialog
+UI::LayoutContainer* CraftingDialog::getContentLayout() {
+	auto* dialog = getChild<UI::Dialog>(dialogHandle);
+	if (dialog == nullptr) {
+		return nullptr;
+	}
+	return dialog->getChild<UI::LayoutContainer>(contentLayoutHandle);
+}
+
 void CraftingDialog::render() {
 	if (!isOpen()) {
 		return;
 	}
 
-	// Render dialog (includes overlay)
+	// Render dialog (includes overlay and content children)
 	auto* dialog = getChild<UI::Dialog>(dialogHandle);
 	if (dialog != nullptr) {
 		dialog->render();
 	}
 
-	// Render recipe list (direct rendering like TabBar)
+	// Render recipe list primitives (direct rendering like TabBar)
+	// This is rendered AFTER Dialog so it appears on top of the scroll container
 	renderRecipeList();
-
-	// Render other columns
-	if (auto* centerCol = getChild<UI::LayoutContainer>(centerColumnHandle)) {
-		centerCol->render();
-	}
-	if (auto* rightCol = getChild<UI::ScrollContainer>(rightColumnHandle)) {
-		rightCol->render();
-	}
 }
 
 bool CraftingDialog::handleEvent(UI::InputEvent& event) {
@@ -182,15 +197,11 @@ bool CraftingDialog::handleEvent(UI::InputEvent& event) {
 		return false;
 	}
 
-	auto* dialog = getChild<UI::Dialog>(dialogHandle);
-
-	// IMPORTANT: For modal dialogs, we must let content handle events BEFORE
-	// the dialog, because Dialog::handleEvent consumes all mouse events for modals.
-
-	// Recipe list - direct hit testing like TabBar
+	// Recipe list - direct hit testing for primitives (like TabBar)
+	// Must be checked BEFORE Dialog handles events
 	if (event.type == UI::InputEvent::Type::MouseMove) {
 		recipeHoveredIndex = getRecipeIndexAtPosition(event.position);
-		// Don't consume mouse move
+		// Don't consume mouse move - let Dialog handle it
 	} else if (event.type == UI::InputEvent::Type::MouseDown &&
 	           event.button == engine::MouseButton::Left) {
 		int index = getRecipeIndexAtPosition(event.position);
@@ -202,27 +213,9 @@ bool CraftingDialog::handleEvent(UI::InputEvent& event) {
 		}
 	}
 
-	// Center column - quantity buttons, add button
-	if (auto* centerCol = getChild<UI::LayoutContainer>(centerColumnHandle)) {
-		if (centerCol->handleEvent(event)) {
-			return true;
-		}
-	}
-
-	// Right column - cancel buttons
-	if (auto* rightCol = getChild<UI::ScrollContainer>(rightColumnHandle)) {
-		if (rightCol->handleEvent(event)) {
-			return true;
-		}
-	}
-
-	// Now let dialog handle remaining events (close button, overlay click, escape)
+	// Let Dialog handle all other events (content children, chrome, modal)
+	auto* dialog = getChild<UI::Dialog>(dialogHandle);
 	if (dialog != nullptr && dialog->handleEvent(event)) {
-		return true;
-	}
-
-	// Consume events within dialog bounds
-	if (dialog != nullptr && dialog->containsPoint(event.position)) {
 		return true;
 	}
 
@@ -254,9 +247,15 @@ Foundation::Rect CraftingDialog::getRecipeItemBounds(int index) const {
 	float leftX = bounds.x;
 	float leftY = bounds.y;
 
-	// Get scroll offset from the scroll container
-	auto* leftCol = getChild<UI::ScrollContainer>(leftColumnHandle);
-	float scrollOffset = (leftCol != nullptr) ? leftCol->getScrollPosition() : 0.0F;
+	// Get scroll offset from the scroll container (now a child of content layout)
+	float scrollOffset = 0.0F;
+	auto* contentLayout = const_cast<CraftingDialog*>(this)->getContentLayout();
+	if (contentLayout != nullptr) {
+		auto* leftCol = contentLayout->getChild<UI::ScrollContainer>(leftColumnHandle);
+		if (leftCol != nullptr) {
+			scrollOffset = leftCol->getScrollPosition();
+		}
+	}
 
 	// Calculate item Y position (header + items above)
 	float itemY = leftY + kRecipeHeaderHeight + (static_cast<float>(index) * kRecipeItemHeight) - scrollOffset;
@@ -285,7 +284,11 @@ int CraftingDialog::getRecipeIndexAtPosition(Foundation::Vec2 pos) const {
 
 // Direct rendering of recipe list (like TabBar::render)
 void CraftingDialog::renderRecipeList() {
-	auto* leftCol = getChild<UI::ScrollContainer>(leftColumnHandle);
+	auto* contentLayout = getContentLayout();
+	if (contentLayout == nullptr) {
+		return;
+	}
+	auto* leftCol = contentLayout->getChild<UI::ScrollContainer>(leftColumnHandle);
 	if (leftCol == nullptr) {
 		return;
 	}
@@ -385,30 +388,31 @@ void CraftingDialog::renderRecipeList() {
 }
 
 void CraftingDialog::rebuildCenterColumn() {
-	// Get dialog for bounds
+	auto* contentLayout = getContentLayout();
+	if (contentLayout == nullptr) {
+		return;
+	}
+	auto* centerCol = contentLayout->getChild<UI::LayoutContainer>(centerColumnHandle);
+	if (centerCol == nullptr) {
+		return;
+	}
+
+	// Clear previous content before rebuilding
+	centerCol->clearChildren();
+
+	// Get dialog for bounds (needed for button sizing)
 	auto* dialog = getChild<UI::Dialog>(dialogHandle);
 	if (dialog == nullptr) {
 		return;
 	}
 	auto bounds = dialog->getContentBounds();
 	float centerWidth = bounds.width - kLeftColumnWidth - kRightColumnWidth - kColumnGap * 2;
-	float centerX = bounds.x + kLeftColumnWidth + kColumnGap;
-
-	// Create center column layout with proper LayoutContainer pattern
-	auto newCenter = UI::LayoutContainer(UI::LayoutContainer::Args{
-		.position = {centerX, bounds.y},
-		.size = {centerWidth, bounds.height},
-		.direction = UI::Direction::Vertical,
-		.hAlign = UI::HAlign::Left,
-		.vAlign = UI::VAlign::Top,
-		.id = "recipe-details"
-	});
 
 	const auto& details = model.selectedDetails();
 
 	if (details.name.empty()) {
 		// No recipe selected - use proper layout child (height, no position)
-		newCenter.addChild(UI::Text(UI::Text::Args{
+		centerCol->addChild(UI::Text(UI::Text::Args{
 			.height = 20,
 			.text = "Select a recipe",
 			.style = {.color = UI::Theme::Colors::textMuted, .fontSize = 14},
@@ -416,7 +420,7 @@ void CraftingDialog::rebuildCenterColumn() {
 		}));
 	} else {
 		// Recipe name header
-		newCenter.addChild(UI::Text(UI::Text::Args{
+		centerCol->addChild(UI::Text(UI::Text::Args{
 			.height = 20,
 			.text = details.name,
 			.style = {.color = UI::Theme::Colors::textTitle, .fontSize = 16},
@@ -425,7 +429,7 @@ void CraftingDialog::rebuildCenterColumn() {
 
 		// Description
 		if (!details.description.empty()) {
-			newCenter.addChild(UI::Text(UI::Text::Args{
+			centerCol->addChild(UI::Text(UI::Text::Args{
 				.height = 16,
 				.text = details.description,
 				.style = {.color = UI::Theme::Colors::textBody, .fontSize = 12},
@@ -435,7 +439,7 @@ void CraftingDialog::rebuildCenterColumn() {
 
 		// REQUIRES section
 		if (!details.materials.empty()) {
-			newCenter.addChild(UI::Text(UI::Text::Args{
+			centerCol->addChild(UI::Text(UI::Text::Args{
 				.height = 14,
 				.text = "REQUIRES",
 				.style = {.color = UI::Theme::Colors::textMuted, .fontSize = 11},
@@ -447,7 +451,7 @@ void CraftingDialog::rebuildCenterColumn() {
 				std::string matLine = std::to_string(mat.required) + "x " + mat.label;
 				matLine += mat.hasEnough ? " [OK]" : " [X]";
 
-				newCenter.addChild(UI::Text(UI::Text::Args{
+				centerCol->addChild(UI::Text(UI::Text::Args{
 					.height = 14,
 					.text = matLine,
 					.style = {.color = mat.hasEnough ? UI::Theme::Colors::statusActive : UI::Theme::Colors::statusBlocked, .fontSize = 12},
@@ -458,7 +462,7 @@ void CraftingDialog::rebuildCenterColumn() {
 
 		// PRODUCES section
 		if (!details.outputs.empty()) {
-			newCenter.addChild(UI::Text(UI::Text::Args{
+			centerCol->addChild(UI::Text(UI::Text::Args{
 				.height = 14,
 				.text = "PRODUCES",
 				.style = {.color = UI::Theme::Colors::textMuted, .fontSize = 11},
@@ -467,7 +471,7 @@ void CraftingDialog::rebuildCenterColumn() {
 
 			for (const auto& output : details.outputs) {
 				std::string outLine = std::to_string(output.count) + "x " + output.label;
-				newCenter.addChild(UI::Text(UI::Text::Args{
+				centerCol->addChild(UI::Text(UI::Text::Args{
 					.height = 14,
 					.text = outLine,
 					.style = {.color = UI::Theme::Colors::textBody, .fontSize = 12},
@@ -477,7 +481,7 @@ void CraftingDialog::rebuildCenterColumn() {
 		}
 
 		// WORK TIME
-		newCenter.addChild(UI::Text(UI::Text::Args{
+		centerCol->addChild(UI::Text(UI::Text::Args{
 			.height = 14,
 			.text = "WORK TIME",
 			.style = {.color = UI::Theme::Colors::textMuted, .fontSize = 11},
@@ -485,7 +489,7 @@ void CraftingDialog::rebuildCenterColumn() {
 		}));
 
 		std::string timeStr = "~" + std::to_string(static_cast<int>(details.workTime)) + " seconds";
-		newCenter.addChild(UI::Text(UI::Text::Args{
+		centerCol->addChild(UI::Text(UI::Text::Args{
 			.height = 14,
 			.text = timeStr,
 			.style = {.color = UI::Theme::Colors::textBody, .fontSize = 12},
@@ -493,7 +497,7 @@ void CraftingDialog::rebuildCenterColumn() {
 		}));
 
 		// Quantity label
-		newCenter.addChild(UI::Text(UI::Text::Args{
+		centerCol->addChild(UI::Text(UI::Text::Args{
 			.height = 14,
 			.text = "Quantity: " + std::to_string(model.quantity()),
 			.style = {.color = UI::Theme::Colors::textBody, .fontSize = 12},
@@ -502,7 +506,7 @@ void CraftingDialog::rebuildCenterColumn() {
 
 		// Quantity buttons in a row - these need explicit positioning within layout
 		// For simplicity, use separate buttons with margin
-		quantityMinusHandle = newCenter.addChild(UI::Button(UI::Button::Args{
+		quantityMinusHandle = centerCol->addChild(UI::Button(UI::Button::Args{
 			.label = " - ",
 			.size = {40, 28},
 			.type = UI::Button::Type::Secondary,
@@ -511,7 +515,7 @@ void CraftingDialog::rebuildCenterColumn() {
 			.margin = 2.0F
 		}));
 
-		quantityPlusHandle = newCenter.addChild(UI::Button(UI::Button::Args{
+		quantityPlusHandle = centerCol->addChild(UI::Button(UI::Button::Args{
 			.label = " + ",
 			.size = {40, 28},
 			.type = UI::Button::Type::Secondary,
@@ -520,7 +524,7 @@ void CraftingDialog::rebuildCenterColumn() {
 		}));
 
 		// Add to Queue button
-		addToQueueHandle = newCenter.addChild(UI::Button(UI::Button::Args{
+		addToQueueHandle = centerCol->addChild(UI::Button(UI::Button::Args{
 			.label = "Add to Queue",
 			.size = {centerWidth - 16, 36},
 			.type = UI::Button::Type::Primary,
@@ -528,16 +532,20 @@ void CraftingDialog::rebuildCenterColumn() {
 			.margin = 8.0F
 		}));
 	}
-
-	// Replace the center column handle
-	centerColumnHandle = addChild(std::move(newCenter));
 }
 
 void CraftingDialog::rebuildQueueColumn() {
-	auto* rightCol = getChild<UI::ScrollContainer>(rightColumnHandle);
+	auto* contentLayout = getContentLayout();
+	if (contentLayout == nullptr) {
+		return;
+	}
+	auto* rightCol = contentLayout->getChild<UI::ScrollContainer>(rightColumnHandle);
 	if (rightCol == nullptr) {
 		return;
 	}
+
+	// Clear previous content before rebuilding
+	rightCol->clearChildren();
 
 	// Create layout for queue items with proper LayoutContainer pattern
 	auto queueLayout = UI::LayoutContainer(UI::LayoutContainer::Args{
@@ -677,13 +685,9 @@ void CraftingDialog::handleAddToQueue() {
 		return;
 	}
 
-	// Call the callback once for each item in quantity
-	// The WorkQueue::addJob will merge them if the same recipe is already queued
+	// Pass quantity to callback - WorkQueue::addJob handles merging with existing jobs
 	if (onQueueRecipeCallback) {
-		uint32_t qty = model.quantity();
-		for (uint32_t i = 0; i < qty; ++i) {
-			onQueueRecipeCallback(model.selectedRecipeDefName());
-		}
+		onQueueRecipeCallback(model.selectedRecipeDefName(), model.quantity());
 	}
 
 	// Reset quantity after adding

@@ -12,9 +12,10 @@
 // - Focus trapping (Tab stays within dialog content)
 // - Fade in/out animation
 
-#include "component/Component.h"
+#include "component/Container.h"
 #include "focus/FocusableBase.h"
 #include "focus/FocusManager.h"
+#include "graphics/ClipTypes.h"
 #include "graphics/Color.h"
 #include "theme/Theme.h"
 
@@ -24,7 +25,7 @@
 
 namespace UI {
 
-class Dialog : public Component, public FocusableBase<Dialog> {
+class Dialog : public Container, public FocusableBase<Dialog> {
   public:
 	struct Args {
 		std::string			  title;
@@ -129,6 +130,9 @@ class Dialog : public Component, public FocusableBase<Dialog> {
 
 	// Cleanup helpers
 	void performCleanup();
+
+	// Content area setup
+	void updateContentArea();
 };
 
 } // namespace UI

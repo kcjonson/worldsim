@@ -21,6 +21,7 @@
 #include <component/Component.h>
 #include <components/dialog/Dialog.h>
 #include <components/tabbar/TabBar.h>
+#include <layout/LayoutContainer.h>
 #include <ecs/EntityID.h>
 #include <ecs/World.h>
 
@@ -91,9 +92,10 @@ class ColonistDetailsDialog : public UI::Component {
 
 	// Child components
 	UI::LayerHandle dialogHandle;
+	UI::LayerHandle contentLayoutHandle;  // Vertical layout: TabBar + tabs
 	UI::LayerHandle tabBarHandle;
 
-	// Tab views
+	// Tab views (children of content layout)
 	UI::LayerHandle bioTabHandle;
 	UI::LayerHandle healthTabHandle;
 	UI::LayerHandle socialTabHandle;
@@ -102,10 +104,12 @@ class ColonistDetailsDialog : public UI::Component {
 
 	// Internal methods
 	void createDialog();
-	void createTabBar();
-	void createTabContent();
+	void createContent();  // Creates TabBar and tab views
 	void switchToTab(const std::string& tabId);
 	void updateTabContent();
+
+	// Helper to access content layout
+	UI::LayoutContainer* getContentLayout();
 };
 
 } // namespace world_sim

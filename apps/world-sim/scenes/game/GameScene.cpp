@@ -147,7 +147,8 @@ namespace {
 				.onBuildToggle = [this]() { m_placementSystem->toggleBuildMenu(); },
 				.onBuildItemSelected = [this](const std::string& defName) { m_placementSystem->selectBuildItem(defName); },
 				.onProductionSelected = [this](const std::string& defName) { m_placementSystem->selectBuildItem(defName); },
-				.onQueueRecipe = [this](const std::string& recipeDefName) { handleQueueRecipe(recipeDefName); },
+				.onQueueRecipe =
+					[this](const std::string& recipeDefName, uint32_t quantity) { handleQueueRecipe(recipeDefName, quantity); },
 				.onCancelJob = [this](const std::string& recipeDefName) { handleCancelJob(recipeDefName); },
 				.onOpenCraftingDialog =
 					[this](ecs::EntityID stationId, const std::string& defName) { gameUI->showCraftingDialog(stationId, defName); },
@@ -600,7 +601,7 @@ namespace {
 
 		/// Handle recipe queue request from crafting station UI.
 		/// Adds a crafting job to the selected station's WorkQueue.
-		void handleQueueRecipe(const std::string& recipeDefName) {
+		void handleQueueRecipe(const std::string& recipeDefName, uint32_t quantity) {
 			// Get currently selected station from selection system
 			const auto& sel = m_selectionSystem->current();
 			auto*		stationSel = std::get_if<world_sim::CraftingStationSelection>(&sel);
@@ -616,9 +617,9 @@ namespace {
 				return;
 			}
 
-			// Add the job
-			workQueue->addJob(recipeDefName, 1);
-			LOG_INFO(Game, "Queued recipe '%s' at station '%s'", recipeDefName.c_str(), stationSel->defName.c_str());
+			// Add the job with specified quantity
+			workQueue->addJob(recipeDefName, quantity);
+			LOG_INFO(Game, "Queued recipe '%s' x%u at station '%s'", recipeDefName.c_str(), quantity, stationSel->defName.c_str());
 		}
 
 		/// Handle cancel job request from crafting dialog.

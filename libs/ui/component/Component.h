@@ -282,6 +282,16 @@ namespace UI {
 		// Read-only access to children for inspection; mutations must go through container APIs.
 		[[nodiscard]] const std::vector<IComponent*>& getChildren() const { return children; }
 
+		/// Clear all children and reset the arena.
+		/// Use this when rebuilding content dynamically (e.g., dialog columns that update).
+		/// After calling this, all existing LayerHandles become invalid.
+		void clearChildren() {
+			children.clear();
+			arena.clear();
+			generation++; // Invalidate all existing handles
+			childrenNeedSorting = false;
+		}
+
 		/// Dispatch an event to children in z-order (highest first).
 		/// Returns true if any child consumed the event.
 		/// This is the core of the event system - call this from containers
