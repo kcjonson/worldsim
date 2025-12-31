@@ -23,7 +23,7 @@
     - Z : Close path back to start
   -->
   <path
-    fill="#2d5016"
+    fill="#456535"
     d="M 0,0
        C -2,-4 -0.5,-10 1,-12
        C 2.5,-10 4,-4 2,0

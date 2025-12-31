@@ -77,8 +77,11 @@ class WorldCamera {
 	/// @param dy Vertical movement (-1 = down, +1 = up)
 	/// @param dt Delta time in seconds
 	void move(float dx, float dy, float dt) {
-		m_targetPosition.x += dx * m_panSpeed * dt;
-		m_targetPosition.y += dy * m_panSpeed * dt;
+		// Scale pan speed inversely with zoom so screen distance feels consistent
+		// When zoomed in at 20x, pan slower; when zoomed out at 0.25x, pan faster
+		float effectiveSpeed = m_panSpeed / m_zoom;
+		m_targetPosition.x += dx * effectiveSpeed * dt;
+		m_targetPosition.y += dy * effectiveSpeed * dt;
 	}
 
 	/// Update camera position with smoothing

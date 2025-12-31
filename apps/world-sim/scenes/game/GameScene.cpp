@@ -311,11 +311,20 @@ namespace {
 			m_camera->move(dx, dy, dt);
 
 			// Zoom with scroll wheel (snaps to discrete levels)
-			float scrollDelta = input.consumeScrollDelta();
-			if (scrollDelta > 0.0F) {
+			// Accumulate scroll deltas to handle high-precision input devices (Magic Mouse, trackpad)
+			// These devices generate many small fractional scroll events per gesture
+			constexpr float kScrollThreshold = 1.0F; // Trigger zoom after ~1 "notch" of scrolling
+			float			scrollDelta = input.consumeScrollDelta();
+			m_scrollAccumulator += scrollDelta;
+
+			// Trigger zoom steps when accumulated scroll crosses threshold
+			while (m_scrollAccumulator >= kScrollThreshold) {
 				m_camera->zoomIn();
-			} else if (scrollDelta < 0.0F) {
+				m_scrollAccumulator -= kScrollThreshold;
+			}
+			while (m_scrollAccumulator <= -kScrollThreshold) {
 				m_camera->zoomOut();
+				m_scrollAccumulator += kScrollThreshold;
 			}
 
 			auto updateStart = Clock::now();
@@ -629,6 +638,10 @@ namespace {
 		float									 m_lastUpdateMs = 0.0F;
 		Renderer::GPUTimer						 m_gpuTimer;		// GPU timing via OpenGL queries
 		std::vector<Foundation::EcsSystemTiming> m_ecsTimingsCache; // Reused each frame
+
+		// Scroll accumulator for smooth zoom on high-precision input devices (Magic Mouse, trackpad)
+		// Accumulates fractional scroll deltas and triggers zoom only when threshold is crossed
+		float m_scrollAccumulator = 0.0F;
 
 		// World interaction subsystems (extracted from GameScene)
 		std::unique_ptr<world_sim::PlacementSystem> m_placementSystem;
