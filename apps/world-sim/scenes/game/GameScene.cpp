@@ -152,6 +152,9 @@ namespace {
 				.onCancelJob = [this](const std::string& recipeDefName) { handleCancelJob(recipeDefName); },
 				.onOpenCraftingDialog =
 					[this](ecs::EntityID stationId, const std::string& defName) { gameUI->showCraftingDialog(stationId, defName); },
+				.onOpenStorageConfig = [this](
+										   ecs::EntityID containerId, const std::string& defName
+									   ) { gameUI->showStorageConfigDialog(containerId, defName); },
 				.onPlaceFurniture = [this]() { handlePlaceFurniture(); },
 				.onPause =
 					[this]() {

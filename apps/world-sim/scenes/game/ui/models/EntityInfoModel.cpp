@@ -164,7 +164,16 @@ EntityInfoModel::UpdateType EntityInfoModel::refresh(
 		contentData = getCraftingStationContent(world, stationId, stationDefName, callbacks.onOpenCraftingDialog);
 	} else if (isFurniture) {
 		const auto& furnitureSel = std::get<FurnitureSelection>(selection);
-		contentData = adaptFurniture(assetRegistry, furnitureSel, callbacks.onPlace);
+		// Create onConfigure callback that captures entity info for storage config dialog
+		std::function<void()> onConfigure;
+		if (callbacks.onOpenStorageConfig) {
+			auto entityId = furnitureSel.entityId;
+			auto defName = furnitureSel.defName;
+			onConfigure = [cb = callbacks.onOpenStorageConfig, entityId, defName]() {
+				cb(entityId, defName);
+			};
+		}
+		contentData = adaptFurniture(assetRegistry, furnitureSel, callbacks.onPlace, callbacks.onPackage, onConfigure);
 	} else {
 		// World entity - use standard adapter with resource query callback
 		auto worldContent = adaptSelection(selection, world, assetRegistry, callbacks.queryResources);

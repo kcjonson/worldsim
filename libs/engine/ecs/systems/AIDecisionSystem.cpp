@@ -10,6 +10,7 @@
 #include "../components/Movement.h"
 #include "../components/Needs.h"
 #include "../components/Packaged.h"
+#include "../components/StorageConfiguration.h"
 #include "../components/Task.h"
 #include "../components/ToiletLocationFinder.h"
 #include "../components/Transform.h"
@@ -637,8 +638,8 @@ namespace ecs {
 			uint64_t  nearestStorageEntityId = 0;
 			bool	  foundStorage = false;
 
-			for (auto [storageEntity, storagePos, storageInv, storageAppearance] :
-				 world->view<Position, Inventory, Appearance>()) {
+			for (auto [storageEntity, storagePos, storageInv, storageConfig] :
+				 world->view<Position, Inventory, StorageConfiguration>()) {
 				(void)storageInv; // Required in view query; capacity checking planned for future
 
 				// Skip packaged storage containers - they're being moved and can't receive items
@@ -646,26 +647,9 @@ namespace ecs {
 					continue;
 				}
 
-				// Check if this is a storage container (has Storage capability)
-				const auto* storageDef = m_registry.getDefinition(storageAppearance.defName);
-				if (storageDef == nullptr || !storageDef->capabilities.storage.has_value()) {
-					continue;
-				}
-
-				const auto& storageCap = storageDef->capabilities.storage.value();
-
-				// Check if storage accepts this category
-				bool accepts = storageCap.acceptedCategories.empty(); // Empty = accepts all
-				if (!accepts) {
-					for (auto cat : storageCap.acceptedCategories) {
-						if (cat == itemCategory) {
-							accepts = true;
-							break;
-						}
-					}
-				}
-
-				if (!accepts) {
+				// Use StorageConfiguration to check if this container accepts the item
+				// This respects user-configured rules, not just static asset definitions
+				if (!storageConfig.acceptsItem(itemDefName, itemCategory)) {
 					continue;
 				}
 

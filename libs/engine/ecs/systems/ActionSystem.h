@@ -83,7 +83,8 @@ private:
 		struct Action& action,
 		struct NeedsComponent& needs,
 		struct Task& task,
-		struct Inventory& inventory
+		struct Inventory& inventory,
+		struct Memory& memory
 	);
 
 	/// Start a crafting action based on the task's recipe

@@ -112,6 +112,9 @@ struct PanelContent {
 	// Furniture-specific: callbacks for Place/Package actions
 	std::function<void()> onPlace;	 // Called when [Place] button clicked (for packaged furniture)
 	std::function<void()> onPackage; // Called when [Package] button clicked (for placed furniture)
+
+	// Storage-specific: callback for Configure button (opens StorageConfigDialog)
+	std::function<void()> onConfigure;
 };
 
 } // namespace world_sim
