@@ -34,8 +34,24 @@ class Container : public Component {
 
 	// Handle input events by dispatching to children.
 	// This is the core of the container pattern - events flow down the tree.
+	// Coordinates are transformed to account for content offset (reverse of render transform).
 	bool handleEvent(InputEvent& event) override {
-		return dispatchEvent(event);
+		bool hasOffset = (m_contentOffset.x != 0.0F || m_contentOffset.y != 0.0F);
+		Foundation::Vec2 originalPos = event.position;
+
+		if (hasOffset) {
+			// Reverse the render transform: subtract content offset to get child coords
+			// Render translates by +offset, so events need -offset
+			event.position.x -= m_contentOffset.x;
+			event.position.y -= m_contentOffset.y;
+		}
+
+		bool handled = dispatchEvent(event);
+
+		// Restore original position for parent/sibling event handling
+		event.position = originalPos;
+
+		return handled;
 	}
 
 	// Set clip region for this container.

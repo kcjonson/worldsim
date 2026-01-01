@@ -411,28 +411,26 @@ void CraftingDialog::rebuildCenterColumn() {
 	const auto& details = model.selectedDetails();
 
 	if (details.name.empty()) {
-		// No recipe selected - use proper layout child (height, no position)
+		// No recipe selected - auto-sized text
 		centerCol->addChild(UI::Text(UI::Text::Args{
-			.height = 20,
 			.text = "Select a recipe",
 			.style = {.color = UI::Theme::Colors::textMuted, .fontSize = 14},
 			.margin = 8.0F
 		}));
 	} else {
-		// Recipe name header
+		// Recipe name header - auto-sized
 		centerCol->addChild(UI::Text(UI::Text::Args{
-			.height = 20,
 			.text = details.name,
 			.style = {.color = UI::Theme::Colors::textTitle, .fontSize = 16},
 			.margin = 4.0F
 		}));
 
-		// Description
+		// Description - auto-sized with word wrap for longer descriptions
 		if (!details.description.empty()) {
 			centerCol->addChild(UI::Text(UI::Text::Args{
-				.height = 16,
+				.width = centerWidth - 16,  // Set width for wrapping
 				.text = details.description,
-				.style = {.color = UI::Theme::Colors::textBody, .fontSize = 12},
+				.style = {.color = UI::Theme::Colors::textBody, .fontSize = 12, .wordWrap = true},
 				.margin = 2.0F
 			}));
 		}
@@ -440,7 +438,6 @@ void CraftingDialog::rebuildCenterColumn() {
 		// REQUIRES section
 		if (!details.materials.empty()) {
 			centerCol->addChild(UI::Text(UI::Text::Args{
-				.height = 14,
 				.text = "REQUIRES",
 				.style = {.color = UI::Theme::Colors::textMuted, .fontSize = 11},
 				.margin = 6.0F
@@ -452,7 +449,6 @@ void CraftingDialog::rebuildCenterColumn() {
 				matLine += mat.hasEnough ? " [OK]" : " [X]";
 
 				centerCol->addChild(UI::Text(UI::Text::Args{
-					.height = 14,
 					.text = matLine,
 					.style = {.color = mat.hasEnough ? UI::Theme::Colors::statusActive : UI::Theme::Colors::statusBlocked, .fontSize = 12},
 					.margin = 1.0F
@@ -463,7 +459,6 @@ void CraftingDialog::rebuildCenterColumn() {
 		// PRODUCES section
 		if (!details.outputs.empty()) {
 			centerCol->addChild(UI::Text(UI::Text::Args{
-				.height = 14,
 				.text = "PRODUCES",
 				.style = {.color = UI::Theme::Colors::textMuted, .fontSize = 11},
 				.margin = 6.0F
@@ -472,7 +467,6 @@ void CraftingDialog::rebuildCenterColumn() {
 			for (const auto& output : details.outputs) {
 				std::string outLine = std::to_string(output.count) + "x " + output.label;
 				centerCol->addChild(UI::Text(UI::Text::Args{
-					.height = 14,
 					.text = outLine,
 					.style = {.color = UI::Theme::Colors::textBody, .fontSize = 12},
 					.margin = 1.0F
@@ -482,7 +476,6 @@ void CraftingDialog::rebuildCenterColumn() {
 
 		// WORK TIME
 		centerCol->addChild(UI::Text(UI::Text::Args{
-			.height = 14,
 			.text = "WORK TIME",
 			.style = {.color = UI::Theme::Colors::textMuted, .fontSize = 11},
 			.margin = 6.0F
@@ -490,38 +483,63 @@ void CraftingDialog::rebuildCenterColumn() {
 
 		std::string timeStr = "~" + std::to_string(static_cast<int>(details.workTime)) + " seconds";
 		centerCol->addChild(UI::Text(UI::Text::Args{
-			.height = 14,
 			.text = timeStr,
 			.style = {.color = UI::Theme::Colors::textBody, .fontSize = 12},
 			.margin = 2.0F
 		}));
 
-		// Quantity label
-		centerCol->addChild(UI::Text(UI::Text::Args{
-			.height = 14,
-			.text = "Quantity: " + std::to_string(model.quantity()),
-			.style = {.color = UI::Theme::Colors::textBody, .fontSize = 12},
+		// Quantity controls in horizontal row: [-10] [-1] [value] [+1] [+10]
+		auto quantityRow = UI::LayoutContainer(UI::LayoutContainer::Args{
+			.size = {0, 32},  // Auto-width from children
+			.direction = UI::Direction::Horizontal,
+			.hAlign = UI::HAlign::Left,
+			.vAlign = UI::VAlign::Center,
 			.margin = 8.0F
+		});
+
+		quantityRow.addChild(UI::Button(UI::Button::Args{
+			.label = "-10",
+			.size = {40, 28},
+			.type = UI::Button::Type::Secondary,
+			.disabled = (model.quantity() <= 10),
+			.onClick = [this]() { handleQuantityChange(-10); },
+			.margin = 2.0F
 		}));
 
-		// Quantity buttons in a row - these need explicit positioning within layout
-		// For simplicity, use separate buttons with margin
-		quantityMinusHandle = centerCol->addChild(UI::Button(UI::Button::Args{
-			.label = " - ",
-			.size = {40, 28},
+		quantityRow.addChild(UI::Button(UI::Button::Args{
+			.label = "-1",
+			.size = {36, 28},
 			.type = UI::Button::Type::Secondary,
 			.disabled = (model.quantity() <= 1),
 			.onClick = [this]() { handleQuantityChange(-1); },
 			.margin = 2.0F
 		}));
 
-		quantityPlusHandle = centerCol->addChild(UI::Button(UI::Button::Args{
-			.label = " + ",
-			.size = {40, 28},
+		// Current quantity display
+		quantityRow.addChild(UI::Text(UI::Text::Args{
+			.width = 40,
+			.text = std::to_string(model.quantity()),
+			.style = {.color = UI::Theme::Colors::textBody, .fontSize = 16, .hAlign = Foundation::HorizontalAlign::Center},
+			.margin = 4.0F
+		}));
+
+		quantityRow.addChild(UI::Button(UI::Button::Args{
+			.label = "+1",
+			.size = {36, 28},
 			.type = UI::Button::Type::Secondary,
 			.onClick = [this]() { handleQuantityChange(1); },
 			.margin = 2.0F
 		}));
+
+		quantityRow.addChild(UI::Button(UI::Button::Args{
+			.label = "+10",
+			.size = {40, 28},
+			.type = UI::Button::Type::Secondary,
+			.onClick = [this]() { handleQuantityChange(10); },
+			.margin = 2.0F
+		}));
+
+		centerCol->addChild(std::move(quantityRow));
 
 		// Add to Queue button
 		addToQueueHandle = centerCol->addChild(UI::Button(UI::Button::Args{
@@ -547,18 +565,17 @@ void CraftingDialog::rebuildQueueColumn() {
 	// Clear previous content before rebuilding
 	rightCol->clearChildren();
 
-	// Create layout for queue items with proper LayoutContainer pattern
+	// Create layout for queue items - height computed from children (size.y = 0)
 	auto queueLayout = UI::LayoutContainer(UI::LayoutContainer::Args{
 		.position = {0, 0},
-		.size = {kRightColumnWidth - 16, 400},  // Fixed height for layout
+		.size = {kRightColumnWidth - 16, 0},  // Height auto-computed from children
 		.direction = UI::Direction::Vertical,
 		.hAlign = UI::HAlign::Left,
 		.vAlign = UI::VAlign::Top
 	});
 
-	// Header - use .height, no .position
+	// Header - auto-sized
 	queueLayout.addChild(UI::Text(UI::Text::Args{
-		.height = 16,
 		.text = "QUEUE",
 		.style = {.color = UI::Theme::Colors::textMuted, .fontSize = 11},
 		.margin = 4.0F
@@ -566,16 +583,13 @@ void CraftingDialog::rebuildQueueColumn() {
 
 	queueItemHandles.clear();
 	const auto& queue = model.queue();
-	float totalHeight = 24;
 
 	if (queue.empty()) {
 		queueLayout.addChild(UI::Text(UI::Text::Args{
-			.height = 14,
 			.text = "No items queued",
 			.style = {.color = UI::Theme::Colors::textMuted, .fontSize = 12},
 			.margin = 4.0F
 		}));
-		totalHeight += 22;
 	} else {
 		bool firstItem = true;
 		for (const auto& item : queue) {
@@ -583,12 +597,10 @@ void CraftingDialog::rebuildQueueColumn() {
 			if (firstItem) {
 				std::string sectionLabel = item.isInProgress ? "In Progress:" : "Queued:";
 				queueLayout.addChild(UI::Text(UI::Text::Args{
-					.height = 12,
 					.text = sectionLabel,
 					.style = {.color = UI::Theme::Colors::textMuted, .fontSize = 10},
 					.margin = 2.0F
 				}));
-				totalHeight += 16;
 			}
 
 			// Item name with quantity
@@ -599,9 +611,8 @@ void CraftingDialog::rebuildQueueColumn() {
 			}
 
 			if (item.isInProgress) {
-				// Show item name
+				// Show item name - auto-sized
 				queueLayout.addChild(UI::Text(UI::Text::Args{
-					.height = 14,
 					.text = itemLabel,
 					.style = {.color = UI::Theme::Colors::textBody, .fontSize = 12},
 					.margin = 2.0F
@@ -614,22 +625,18 @@ void CraftingDialog::rebuildQueueColumn() {
 					.fillColor = UI::Theme::Colors::statusActive,
 					.margin = 2.0F
 				}));
-				totalHeight += 32;
 
 				// Add "Queued:" header after in-progress item if there are more
 				if (queue.size() > 1) {
 					queueLayout.addChild(UI::Text(UI::Text::Args{
-						.height = 12,
 						.text = "Queued:",
 						.style = {.color = UI::Theme::Colors::textMuted, .fontSize = 10},
 						.margin = 4.0F
 					}));
-					totalHeight += 20;
 				}
 			} else {
-				// Queued item - show name and cancel button
+				// Queued item - show name and cancel button - auto-sized
 				queueLayout.addChild(UI::Text(UI::Text::Args{
-					.height = 14,
 					.text = itemLabel,
 					.style = {.color = UI::Theme::Colors::textBody, .fontSize = 12},
 					.margin = 2.0F
@@ -644,15 +651,14 @@ void CraftingDialog::rebuildQueueColumn() {
 					},
 					.margin = 2.0F
 				})));
-				totalHeight += 44;
 			}
 
 			firstItem = false;
 		}
 	}
 
-	// Set scroll content height
-	rightCol->setContentHeight(totalHeight + 10);
+	// Set scroll content height from layout's computed height
+	rightCol->setContentHeight(queueLayout.getHeight() + 10);
 
 	// Add layout to scroll container
 	rightCol->addChild(std::move(queueLayout));

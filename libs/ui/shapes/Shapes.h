@@ -159,7 +159,7 @@ namespace UI {
 		};
 
 		Foundation::Vec2	  position{0.0F, 0.0F};
-		std::optional<float>  width = std::nullopt;	 // Optional bounding box width
+		std::optional<float>  width = std::nullopt;	 // Optional bounding box width (also max wrap width)
 		std::optional<float>  height = std::nullopt; // Optional bounding box height
 		std::string			  text;
 		Foundation::TextStyle style;
@@ -179,13 +179,24 @@ namespace UI {
 		}
 
 		// Layout API
-		// Note: Returns explicit width/height if set, otherwise 0
-		// TODO: Compute from font metrics when width/height not specified
-		float getWidth() const override { return width.value_or(0.0F) + margin * 2.0F; }
-		float getHeight() const override { return height.value_or(0.0F) + margin * 2.0F; }
+		// Returns explicit width/height if set, otherwise computes from text measurement
+		float getWidth() const override;
+		float getHeight() const override;
 		void  setPosition(float x, float y) override { position = {x + margin, y + margin}; }
 
 		void render() override;
+
+	  private:
+		// Mutable cache for lazy dimension computation (allows const getWidth/getHeight)
+		mutable std::optional<float> cachedWidth;
+		mutable std::optional<float> cachedHeight;
+		mutable std::string			 cachedText;
+		mutable float				 cachedFontSize{0.0F};
+		mutable std::optional<float> cachedWrapWidth;
+		mutable bool				 cachedWordWrap{false};
+
+		// Ensure cache is valid, recompute if needed
+		void ensureCacheValid() const;
 	};
 
 } // namespace UI

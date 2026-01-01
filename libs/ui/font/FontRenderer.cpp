@@ -367,6 +367,188 @@ namespace ui {
 		}
 	}
 
+	const FontRenderer::WrappedTextResult&
+	FontRenderer::wrapText(const std::string& text, float scale, float maxWidth) const {
+		// Check cache first
+		WrapCacheKey key{text, scale, maxWidth};
+		auto		 cacheIt = wrappedTextCache.find(key);
+		if (cacheIt != wrappedTextCache.end()) {
+			cacheIt->second.lastAccessFrame = currentFrame;
+			return cacheIt->second.result;
+		}
+
+		// Cache miss - compute wrapped text
+		WrappedTextResult result;
+
+		constexpr float BASE_FONT_SIZE = 16.0F;
+		float			fontSize = BASE_FONT_SIZE * scale;
+		result.lineHeight = atlasMetadata.lineHeight * fontSize;
+
+		// Handle empty text
+		if (text.empty()) {
+			result.lines.push_back("");
+			result.lineWidths.push_back(0.0F);
+			result.totalWidth = 0.0F;
+			result.totalHeight = result.lineHeight;
+
+			// Cache and return
+			WrapCacheEntry entry{result, currentFrame};
+			wrappedTextCache[key] = std::move(entry);
+			return wrappedTextCache[key].result;
+		}
+
+		// No wrapping case (maxWidth <= 0)
+		if (maxWidth <= 0.0F) {
+			result.lines.push_back(text);
+			glm::vec2 size = MeasureText(text, scale);
+			result.lineWidths.push_back(size.x);
+			result.totalWidth = size.x;
+			result.totalHeight = size.y;
+
+			// Cache and return
+			WrapCacheEntry entry{result, currentFrame};
+			wrappedTextCache[key] = std::move(entry);
+			return wrappedTextCache[key].result;
+		}
+
+		// Word-based wrapping algorithm
+		std::string currentLine;
+		float		currentLineWidth = 0.0F;
+		float		spaceWidth = MeasureText(" ", scale).x;
+
+		size_t i = 0;
+		while (i < text.size()) {
+			// Handle explicit newlines
+			if (text[i] == '\n') {
+				result.lines.push_back(currentLine);
+				result.lineWidths.push_back(currentLineWidth);
+				currentLine.clear();
+				currentLineWidth = 0.0F;
+				++i;
+				continue;
+			}
+
+			// Skip leading whitespace at line start (except first line)
+			if (currentLine.empty() && !result.lines.empty() && text[i] == ' ') {
+				++i;
+				continue;
+			}
+
+			// Extract next word (sequence of non-space, non-newline characters)
+			size_t wordStart = i;
+			while (i < text.size() && text[i] != ' ' && text[i] != '\n') {
+				++i;
+			}
+			std::string word = text.substr(wordStart, i - wordStart);
+			float		wordWidth = MeasureText(word, scale).x;
+
+			// Check if word fits on current line
+			float neededWidth = currentLine.empty() ? wordWidth : (currentLineWidth + spaceWidth + wordWidth);
+
+			if (neededWidth <= maxWidth || currentLine.empty()) {
+				// Word fits, or line is empty (must add word even if too long)
+				if (!currentLine.empty()) {
+					currentLine += ' ';
+					currentLineWidth += spaceWidth;
+				}
+				currentLine += word;
+				currentLineWidth += wordWidth;
+			} else {
+				// Word doesn't fit - start new line
+				result.lines.push_back(currentLine);
+				result.lineWidths.push_back(currentLineWidth);
+				currentLine = word;
+				currentLineWidth = wordWidth;
+			}
+
+			// Skip single space after word (will be handled by next iteration)
+			if (i < text.size() && text[i] == ' ') {
+				++i;
+			}
+		}
+
+		// Add final line if not empty
+		if (!currentLine.empty() || result.lines.empty()) {
+			result.lines.push_back(currentLine);
+			result.lineWidths.push_back(currentLineWidth);
+		}
+
+		// Calculate totals
+		result.totalWidth = 0.0F;
+		for (float lineWidth : result.lineWidths) {
+			result.totalWidth = std::max(result.totalWidth, lineWidth);
+		}
+		result.totalHeight = static_cast<float>(result.lines.size()) * result.lineHeight;
+
+		// Evict oldest entry if cache is full
+		if (wrappedTextCache.size() >= FontRendererConfig::kMaxGlyphQuadCacheEntries) {
+			auto oldestIt = wrappedTextCache.begin();
+			for (auto it = wrappedTextCache.begin(); it != wrappedTextCache.end(); ++it) {
+				if (it->second.lastAccessFrame < oldestIt->second.lastAccessFrame) {
+					oldestIt = it;
+				}
+			}
+			wrappedTextCache.erase(oldestIt);
+		}
+
+		// Cache and return
+		WrapCacheEntry entry{result, currentFrame};
+		wrappedTextCache[key] = std::move(entry);
+		return wrappedTextCache[key].result;
+	}
+
+	glm::vec2 FontRenderer::measureTextWithWrapping(const std::string& text, float scale, float maxWidth) const {
+		if (maxWidth <= 0.0F) {
+			// No wrapping - use simple measurement
+			return MeasureText(text, scale);
+		}
+
+		const WrappedTextResult& wrapped = wrapText(text, scale, maxWidth);
+		return glm::vec2(wrapped.totalWidth, wrapped.totalHeight);
+	}
+
+	void FontRenderer::generateWrappedGlyphQuads(
+		const std::vector<std::string>& lines,
+		const glm::vec2&				position,
+		float							scale,
+		const glm::vec4&				color,
+		float							lineHeight,
+		Foundation::HorizontalAlign		hAlign,
+		float							containerWidth,
+		std::vector<GlyphQuad>&			outQuads
+	) const {
+		float currentY = position.y;
+
+		for (size_t lineIdx = 0; lineIdx < lines.size(); ++lineIdx) {
+			const std::string& line = lines[lineIdx];
+
+			// Calculate X offset for alignment
+			float lineX = position.x;
+			if (containerWidth > 0.0F && !line.empty()) {
+				glm::vec2 lineSize = MeasureText(line, scale);
+				switch (hAlign) {
+					case Foundation::HorizontalAlign::Center:
+						lineX += (containerWidth - lineSize.x) * 0.5F;
+						break;
+					case Foundation::HorizontalAlign::Right:
+						lineX += containerWidth - lineSize.x;
+						break;
+					case Foundation::HorizontalAlign::Left:
+					default:
+						// No offset
+						break;
+				}
+			}
+
+			// Generate quads for this line
+			if (!line.empty()) {
+				generateGlyphQuads(line, glm::vec2(lineX, currentY), scale, color, outQuads);
+			}
+
+			currentY += lineHeight;
+		}
+	}
+
 	GLuint FontRenderer::getAtlasTexture() const {
 		return atlasTexture;
 	}
@@ -377,7 +559,8 @@ namespace ui {
 
 	void FontRenderer::clearGlyphQuadCache() {
 		glyphQuadCache.clear();
-		LOG_DEBUG(UI, "Cleared glyph quad cache");
+		wrappedTextCache.clear();
+		LOG_DEBUG(UI, "Cleared glyph quad cache and wrapped text cache");
 	}
 
 	size_t FontRenderer::getGlyphQuadCacheSize() const {

@@ -40,7 +40,8 @@ namespace ui_sandbox {
 	X(Toast_)      \
 	X(Dialog_)     \
 	X(Tooltip_)    \
-	X(ContextMenu_)
+	X(ContextMenu_) \
+	X(TextWrap)
 	// clang-format on
 
 	/// @brief Scene types for ui-sandbox application (auto-generated from SCENE_LIST)

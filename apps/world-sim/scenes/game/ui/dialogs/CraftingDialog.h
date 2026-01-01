@@ -98,8 +98,6 @@ class CraftingDialog : public UI::Component {
 
 	// Center column - recipe details
 	UI::LayerHandle centerColumnHandle;
-	UI::LayerHandle quantityMinusHandle;
-	UI::LayerHandle quantityPlusHandle;
 	UI::LayerHandle addToQueueHandle;
 
 	// Right column - queue

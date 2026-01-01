@@ -3,13 +3,14 @@
 
 #pragma once
 
+#include "graphics/PrimitiveStyles.h"
+#include "shader/Shader.h"
+#include <GL/glew.h>
 #include <glm/glm.hpp>
 #include <map>
 #include <string>
 #include <unordered_map>
 #include <vector>
-#include "shader/Shader.h"
-#include <GL/glew.h>
 
 namespace ui {
 
@@ -45,7 +46,6 @@ namespace ui {
 		 */
 		bool Initialize();
 
-
 		/**
 		 * Calculate the dimensions of a text string with the given scale
 		 * @param text The text to measure
@@ -80,6 +80,17 @@ namespace ui {
 		};
 
 		/**
+		 * Result of text wrapping operation (cached for performance)
+		 */
+		struct WrappedTextResult {
+			std::vector<std::string> lines;		  // Each line of wrapped text
+			std::vector<float>		 lineWidths;  // Width of each line in pixels
+			float					 totalWidth;  // Max line width (for alignment)
+			float					 totalHeight; // Sum of line heights
+			float					 lineHeight;  // Height per line in pixels
+		};
+
+		/**
 		 * Generate glyph quads for batched rendering (does not render immediately)
 		 * @param text The string to generate quads for
 		 * @param position Top-left position of the text in screen space
@@ -93,6 +104,48 @@ namespace ui {
 			float					scale,
 			const glm::vec4&		color,
 			std::vector<GlyphQuad>& outQuads
+		) const;
+
+		/**
+		 * Wrap text to fit within a maximum width
+		 * Uses word-based wrapping (breaks at spaces/punctuation, not mid-word)
+		 * Handles explicit \n as hard line breaks
+		 * @param text The text to wrap
+		 * @param scale Scaling factor (fontSize / 16.0)
+		 * @param maxWidth Maximum line width in pixels (0 = no wrapping, single line)
+		 * @return Cached reference to wrapped result (lines, dimensions)
+		 */
+		const WrappedTextResult& wrapText(const std::string& text, float scale, float maxWidth) const;
+
+		/**
+		 * Measure text with optional wrapping
+		 * @param text The text to measure
+		 * @param scale Scaling factor
+		 * @param maxWidth Maximum line width (0 = no wrapping, returns single-line size)
+		 * @return Width and height of the text block in pixels
+		 */
+		glm::vec2 measureTextWithWrapping(const std::string& text, float scale, float maxWidth) const;
+
+		/**
+		 * Generate glyph quads for wrapped/multi-line text
+		 * @param lines Pre-wrapped lines (from wrapText)
+		 * @param position Top-left position of the text block
+		 * @param scale Scaling factor
+		 * @param color Text color (RGBA 0-1 range)
+		 * @param lineHeight Height per line in pixels
+		 * @param hAlign Horizontal alignment per line
+		 * @param containerWidth Container width for alignment (0 = use line width)
+		 * @param outQuads Output vector to append generated quads to
+		 */
+		void generateWrappedGlyphQuads(
+			const std::vector<std::string>& lines,
+			const glm::vec2&				position,
+			float							scale,
+			const glm::vec4&				color,
+			float							lineHeight,
+			Foundation::HorizontalAlign		hAlign,
+			float							containerWidth,
+			std::vector<GlyphQuad>&			outQuads
 		) const;
 
 		/**
@@ -162,9 +215,7 @@ namespace ui {
 			std::string text;
 			float		scale;
 
-			bool operator==(const CacheKey& other) const {
-				return text == other.text && std::abs(scale - other.scale) < 0.001F;
-			}
+			bool operator==(const CacheKey& other) const { return text == other.text && std::abs(scale - other.scale) < 0.001F; }
 		};
 
 		/**
@@ -186,15 +237,57 @@ namespace ui {
 			uint64_t			   lastAccessFrame;
 		};
 
-		std::map<char, SDFGlyph> sdfGlyphs;					  // Map of SDF glyphs
-		SDFAtlasMetadata		 atlasMetadata{};			  // SDF atlas metadata
-		GLuint					 atlasTexture = 0;			  // SDF atlas texture
-		float					 scaledAscender = 0.0F;		  // Stores the ascender for the base font size
+		std::map<char, SDFGlyph> sdfGlyphs;						// Map of SDF glyphs
+		SDFAtlasMetadata		 atlasMetadata{};				// SDF atlas metadata
+		GLuint					 atlasTexture = 0;				// SDF atlas texture
+		float					 scaledAscender = 0.0F;			// Stores the ascender for the base font size
 		float					 maxGlyphHeightUnscaled = 0.0F; // Unscaled maximum glyph height
 
 		// Glyph quad cache (mutable for const GenerateGlyphQuads)
 		mutable std::unordered_map<CacheKey, CacheEntry, CacheKeyHash> glyphQuadCache;
-		mutable uint64_t												currentFrame = 0;
+		mutable uint64_t											   currentFrame = 0;
+
+		/**
+		 * Cache key for text wrapping (text + scale + wrap width)
+		 */
+		struct WrapCacheKey {
+			std::string text;
+			float		scale;
+			float		wrapWidth;
+
+			bool operator==(const WrapCacheKey& other) const {
+				return text == other.text && std::abs(scale - other.scale) < 0.001F && std::abs(wrapWidth - other.wrapWidth) < 0.1F;
+			}
+		};
+
+		/**
+		 * Hash function for WrapCacheKey
+		 * Rounds floats to match the precision used in operator== to maintain hash invariant
+		 */
+		struct WrapCacheKeyHash {
+			size_t operator()(const WrapCacheKey& key) const {
+				// Round to same precision as equality comparison
+				// scale uses 0.001 precision, wrapWidth uses 0.1 precision
+				auto roundedScale = std::round(key.scale * 1000.0F) / 1000.0F;
+				auto roundedWidth = std::round(key.wrapWidth * 10.0F) / 10.0F;
+
+				size_t h1 = std::hash<std::string>{}(key.text);
+				size_t h2 = std::hash<float>{}(roundedScale);
+				size_t h3 = std::hash<float>{}(roundedWidth);
+				return h1 ^ (h2 << 1) ^ (h3 << 2);
+			}
+		};
+
+		/**
+		 * Cached wrapping result with LRU tracking
+		 */
+		struct WrapCacheEntry {
+			WrappedTextResult result;
+			uint64_t		  lastAccessFrame;
+		};
+
+		// Wrapped text cache (mutable for const wrapText)
+		mutable std::unordered_map<WrapCacheKey, WrapCacheEntry, WrapCacheKeyHash> wrappedTextCache;
 	};
 
 } // namespace ui
