@@ -19,7 +19,7 @@ void StorageConfigDialogModel::setContainer(ecs::EntityID containerId,
 	result.reserve(containerDefName.size() + 4);
 	for (size_t i = 0; i < containerDefName.size(); ++i) {
 		char c = containerDefName[i];
-		if (i > 0 && std::isupper(c) != 0) {
+		if (i > 0 && std::isupper(static_cast<unsigned char>(c)) != 0) {
 			result += ' ';
 		}
 		result += c;
@@ -162,13 +162,13 @@ bool StorageConfigDialogModel::addRule(ecs::World& world) {
 		return false;
 	}
 
-	// Auto-remove category wildcard when adding a specific item rule
+	// Auto-remove category wildcards when adding a specific item rule
 	// This provides better UX: adding "Stone: max 10" removes "All Raw Materials: unlimited"
-	for (size_t i = 0; i < config->rules.size(); ++i) {
-		const auto& existingRule = config->rules[i];
+	// Iterate backwards to safely remove multiple wildcards if they exist
+	for (size_t i = config->rules.size(); i > 0; --i) {
+		const auto& existingRule = config->rules[i - 1];
 		if (existingRule.isWildcard() && existingRule.category == itemData->category) {
-			config->removeRule(i);
-			break; // Only one wildcard per category
+			config->removeRule(i - 1);
 		}
 	}
 
