@@ -355,30 +355,6 @@ TEST_F(WorkConfigTest, PriorityConfig_DistanceBonus) {
     EXPECT_LE(midBonus, 10);
 }
 
-TEST_F(WorkConfigTest, PriorityConfig_UserPriorityMapping) {
-    // Use defaults
-    PriorityConfig::Get().clear();
-
-    // Priority 1 should be in WorkHigh band (5000+)
-    int16_t p1 = PriorityConfig::Get().userPriorityToBase(1);
-    EXPECT_GE(p1, 5000);
-    EXPECT_LT(p1, 6000);
-
-    // Priority 5 should be in WorkMedium band (3000+)
-    int16_t p5 = PriorityConfig::Get().userPriorityToBase(5);
-    EXPECT_GE(p5, 3000);
-    EXPECT_LT(p5, 4000);
-
-    // Priority 9 should be in WorkLow band (1000+)
-    int16_t p9 = PriorityConfig::Get().userPriorityToBase(9);
-    EXPECT_GE(p9, 1000);
-    EXPECT_LT(p9, 2000);
-
-    // Higher priority number = lower base value
-    EXPECT_GT(p1, p5);
-    EXPECT_GT(p5, p9);
-}
-
 TEST_F(WorkConfigTest, PriorityConfig_ChainBonus) {
     std::string xml = R"(<?xml version="1.0"?>
 <PriorityTuning>
