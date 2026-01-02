@@ -3,6 +3,22 @@
   Priority Tuning Configuration
   Tunable weights for task priority calculations.
 
+  TWO PRIORITY CONCEPTS (don't confuse them):
+
+  1. Colonist Work Type Preference (1-9):
+     Each colonist has a 1-9 preference per work category.
+     "Bob prefers Farming (2) over Hauling (7)"
+     See UserPriorityMapping below.
+
+  2. Goal Priority (set on buildings/entities):
+     Storage containers, crafting stations can be marked urgent.
+     "This storage needs filling NOW"
+     Adds bonus to all tasks targeting that goal (not in this config).
+
+  Players do NOT set priority on individual tasks.
+  Tasks inherit priority from: goals + colonist preferences + situational bonuses.
+
+  Full formula:
   Priority = basePriority + distanceBonus + skillBonus + chainBonus + inProgressBonus + taskAgeBonus
 
   See /docs/design/game-systems/colonists/priority-config.md for details.
@@ -33,7 +49,12 @@
     </Band>
   </Bands>
 
-  <!-- User priority (1-9) to band mapping -->
+  <!--
+    Colonist Work Type Preference (1-9) to band mapping.
+    This is per-colonist preference for work categories, NOT per-task priority.
+    Example: Bob has Farming=2 (prefers), Hauling=7 (avoids).
+    Lower number = colonist prefers this work type.
+  -->
   <UserPriorityMapping>
     <bandAssignment priority="1-3" band="WorkHigh"/>
     <bandAssignment priority="4-6" band="WorkMedium"/>
