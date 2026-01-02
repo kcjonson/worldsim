@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Action Types Configuration
+  Defines all action types and whether they require free hands.
+
+  When a colonist is interrupted mid-chain:
+  - If needsHands="false": Can continue carrying item while doing action
+  - If needsHands="true": Must stow (1-hand items) or drop (2-hand items) first
+
+  See /docs/design/game-systems/colonists/task-chains.md for details.
+-->
+<ActionTypes>
+  <!-- Need Fulfillment Actions -->
+  <Action defName="Eat" needsHands="true">
+    <description>Consuming food</description>
+  </Action>
+
+  <Action defName="Drink" needsHands="true">
+    <description>Drinking water</description>
+  </Action>
+
+  <Action defName="Sleep" needsHands="false">
+    <description>Resting on a sleepable surface</description>
+  </Action>
+
+  <Action defName="Toilet" needsHands="false">
+    <description>Relieving bladder</description>
+  </Action>
+
+  <!-- Work Actions -->
+  <Action defName="Harvest" needsHands="true">
+    <description>Gathering from harvestable entity</description>
+  </Action>
+
+  <Action defName="Craft" needsHands="true">
+    <description>Working at a crafting station</description>
+  </Action>
+
+  <Action defName="Build" needsHands="true">
+    <description>Constructing a structure</description>
+  </Action>
+
+  <Action defName="Pickup" needsHands="true">
+    <description>Picking up an item</description>
+  </Action>
+
+  <Action defName="Deposit" needsHands="true">
+    <description>Placing item in storage</description>
+  </Action>
+
+  <Action defName="Place" needsHands="true">
+    <description>Placing item at designated location</description>
+  </Action>
+
+  <Action defName="Gather" needsHands="true">
+    <description>Gathering materials for crafting</description>
+  </Action>
+
+  <!-- Social/Movement Actions -->
+  <Action defName="Talk" needsHands="false">
+    <description>Conversation with another colonist</description>
+  </Action>
+
+  <Action defName="Wander" needsHands="false">
+    <description>Idle exploration</description>
+  </Action>
+
+  <Action defName="Flee" needsHands="false">
+    <description>Running from danger</description>
+  </Action>
+
+  <!-- Combat Actions -->
+  <Action defName="MeleeAttack" needsHands="true">
+    <description>Melee combat</description>
+  </Action>
+
+  <Action defName="RangedAttack" needsHands="true">
+    <description>Ranged combat</description>
+  </Action>
+</ActionTypes>
