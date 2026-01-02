@@ -85,6 +85,11 @@ class PriorityConfig {
     /// @return Base priority value, or 0 if not found
     [[nodiscard]] int16_t getBandBase(const std::string& bandName) const;
 
+    /// Convert user priority (1-9) to base priority
+    /// @param userPriority User-facing priority (1=highest, 9=lowest)
+    /// @return Base priority in Work bands
+    [[nodiscard]] int16_t userPriorityToBase(uint8_t userPriority) const;
+
     // --- Bonus Calculations ---
 
     /// Calculate distance bonus/penalty
@@ -156,6 +161,9 @@ class PriorityConfig {
 
     /// Priority bands by name
     std::unordered_map<std::string, int16_t> m_bands;
+
+    /// User priority step size
+    int16_t m_userPriorityStep = 100;
 
     /// Bonus configs
     DistanceBonusConfig m_distance;

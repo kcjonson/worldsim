@@ -49,6 +49,12 @@ namespace engine::assets {
 			parseBands(&bandsNode);
 		}
 
+		if (auto userPriorityNode = root.child("UserPriorityMapping")) {
+			if (auto stepNode = userPriorityNode.child("stepSize")) {
+				m_userPriorityStep = static_cast<int16_t>(stepNode.text().as_int(100));
+			}
+		}
+
 		if (auto bonusesNode = root.child("Bonuses")) {
 			parseBonuses(&bonusesNode);
 		}
@@ -79,6 +85,7 @@ namespace engine::assets {
 		m_bands["WorkLow"] = 1000;
 		m_bands["Idle"] = 0;
 
+		m_userPriorityStep = 100;
 		m_distance = DistanceBonusConfig{};
 		m_skill = SkillBonusConfig{};
 		m_chain = ChainBonusConfig{};
@@ -96,6 +103,31 @@ namespace engine::assets {
 			return it->second;
 		}
 		return 0;
+	}
+
+	int16_t PriorityConfig::userPriorityToBase(uint8_t userPriority) const {
+		// User priority 1-3 → WorkHigh, 4-6 → WorkMedium, 7-9 → WorkLow
+		// Within each band, higher priority = higher value
+		if (userPriority < 1)
+			userPriority = 1;
+		if (userPriority > 9)
+			userPriority = 9;
+
+		int16_t bandBase;
+		int16_t offset;
+
+		if (userPriority <= 3) {
+			bandBase = getBandBase("WorkHigh");
+			offset = static_cast<int16_t>((4 - userPriority) * m_userPriorityStep);
+		} else if (userPriority <= 6) {
+			bandBase = getBandBase("WorkMedium");
+			offset = static_cast<int16_t>((7 - userPriority) * m_userPriorityStep);
+		} else {
+			bandBase = getBandBase("WorkLow");
+			offset = static_cast<int16_t>((10 - userPriority) * m_userPriorityStep);
+		}
+
+		return bandBase + offset;
 	}
 
 	int16_t PriorityConfig::calculateDistanceBonus(float distance) const {

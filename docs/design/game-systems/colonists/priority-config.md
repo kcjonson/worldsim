@@ -41,34 +41,35 @@ displayPriority = basePriority - (distance * distancePenaltyMultiplier)
 
 ## Priority Bands (int16)
 
-Tasks are grouped into priority bands based on urgency and source.
+Tasks are grouped into priority bands. User-configurable priorities (1-9) map into these bands.
 
 | Band Name | Base Value | Description |
 |-----------|------------|-------------|
 | Critical | 30000 | Life-threatening (< 10% need) |
-| PlayerDraft | 20000 | Direct player command to colonist |
+| PlayerDraft | 20000 | Direct player control |
 | Needs | 10000 | Actionable needs (below threshold) |
-| WorkHigh | 5000 | High priority goals (player marked urgent) |
-| WorkMedium | 3000 | Normal priority goals (default) |
-| WorkLow | 1000 | Low priority goals (background) |
+| WorkHigh | 5000 | User priority 1-3 |
+| WorkMedium | 3000 | User priority 4-6 |
+| WorkLow | 1000 | User priority 7-9 |
 | Idle | 0 | Wander (fallback) |
 
-### Goal-Driven Priority Model
+### User Priority Mapping
 
-Unlike per-colonist work type priorities, this game uses **goal-driven** priority:
+The UI's 1-9 priority maps into the Work bands:
 
-1. **Player defines outcomes**: "Fill this container with stone", "Craft 10 axes"
-2. **Buildings/entities have priority**: Storage containers, crafting stations, construction blueprints
-3. **System generates tasks**: The AI creates tasks to achieve goals
-4. **Task priority inherits from goal**: A haul task's priority comes from the destination container
+```
+User Priority 1 → WorkHigh + 800 = 5800
+User Priority 2 → WorkHigh + 700 = 5700
+User Priority 3 → WorkHigh + 600 = 5600
+User Priority 4 → WorkMedium + 500 = 3500
+User Priority 5 → WorkMedium + 400 = 3400
+User Priority 6 → WorkMedium + 300 = 3300
+User Priority 7 → WorkLow + 200 = 1200
+User Priority 8 → WorkLow + 100 = 1100
+User Priority 9 → WorkLow + 0 = 1000
+```
 
-**Priority sources:**
-- **Work category tier**: Emergency > Medical > Farming > ... > Cleaning
-- **Goal priority**: The priority set on the building/entity (High/Medium/Low)
-- **Situational bonuses**: Distance, skill, chain continuation, perishables
-
-**Direct player override:**
-When a player selects a colonist and commands them directly ("pick this up NOW"), that task gets `PlayerDraft` priority (20000), overriding all automated priority calculations.
+Formula: `bandBase + (10 - userPriority) * step`
 
 ---
 
@@ -91,20 +92,28 @@ When a player selects a colonist and commands them directly ("pick this up NOW")
       <description>Actionable needs below seek threshold</description>
     </Band>
     <Band name="WorkHigh" base="5000">
-      <description>High priority goals (player marked urgent)</description>
+      <description>User priority 1-3 work tasks</description>
     </Band>
     <Band name="WorkMedium" base="3000">
-      <description>Normal priority goals (default)</description>
+      <description>User priority 4-6 work tasks</description>
     </Band>
     <Band name="WorkLow" base="1000">
-      <description>Low priority goals (background tasks)</description>
+      <description>User priority 7-9 work tasks</description>
     </Band>
     <Band name="Idle" base="0">
       <description>Wander and idle behaviors</description>
     </Band>
   </Bands>
 
-  <!-- Work category tier ordering -->
+  <!-- User priority (1-9) to band mapping -->
+  <UserPriorityMapping>
+    <bandAssignment priority="1-3" band="WorkHigh"/>
+    <bandAssignment priority="4-6" band="WorkMedium"/>
+    <bandAssignment priority="7-9" band="WorkLow"/>
+    <stepSize>100</stepSize>
+  </UserPriorityMapping>
+
+  <!-- Work category tier ordering (for simple mode) -->
   <WorkCategoryOrder>
     <Category name="Emergency" tier="1"/>
     <Category name="Medical" tier="2"/>
@@ -341,6 +350,7 @@ public:
 
     // Band queries
     int16_t getBandBase(const std::string& bandName) const;
+    int16_t userPriorityToBase(uint8_t userPriority) const;
 
     // Bonus calculations
     int16_t calculateDistanceBonus(float distance) const;
