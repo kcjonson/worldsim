@@ -65,12 +65,17 @@ class EntityInfoModel {
 	/// Callback to open crafting dialog for a station
 	using OpenCraftingDialogCallback = std::function<void(ecs::EntityID, const std::string&)>;
 
+	/// Callback to open storage config dialog for a container
+	using OpenStorageConfigCallback = std::function<void(ecs::EntityID, const std::string&)>;
+
 	/// Callbacks needed for content generation
 	struct Callbacks {
 		std::function<void()> onDetails;		// Open colonist details modal
 		QueueRecipeCallback onQueueRecipe;		// Queue recipe at station
 		OpenCraftingDialogCallback onOpenCraftingDialog; // Open crafting dialog for station
 		std::function<void()> onPlace;			// Place packaged furniture
+		std::function<void()> onPackage;		// Package placed furniture
+		OpenStorageConfigCallback onOpenStorageConfig;	// Open storage config dialog for containers
 		ResourceQueryCallback queryResources;	// Query remaining resource count for harvestable entities
 	};
 

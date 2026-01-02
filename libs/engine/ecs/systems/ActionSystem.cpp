@@ -104,7 +104,7 @@ namespace ecs {
 					actionTypeName(action.type),
 					restoreAmount
 				);
-				completeAction(entity, action, needs, task, inventory);
+				completeAction(entity, action, needs, task, inventory, memory);
 			}
 		}
 	}
@@ -306,7 +306,7 @@ namespace ecs {
 		}
 	}
 
-	void ActionSystem::completeAction(EntityID entity, Action& action, NeedsComponent& needs, Task& task, Inventory& inventory) {
+	void ActionSystem::completeAction(EntityID entity, Action& action, NeedsComponent& needs, Task& task, Inventory& inventory, Memory& memory) {
 		// Apply effects based on variant type
 		if (action.hasNeedEffect()) {
 			const auto& needEff = action.needEffect();
@@ -380,38 +380,36 @@ namespace ecs {
 						collEff.sourcePosition.y
 					);
 				} else {
-					// Depleted - remove the entity
+					// Depleted - remove the entity from world AND colonist's memory
 					if (m_onRemoveEntity) {
 						m_onRemoveEntity(collEff.sourceDefName, collEff.sourcePosition.x, collEff.sourcePosition.y);
-						LOG_DEBUG(
-							Engine,
-							"[Action] Resource depleted - removed %s at (%.1f, %.1f)",
-							collEff.sourceDefName.c_str(),
-							collEff.sourcePosition.x,
-							collEff.sourcePosition.y
-						);
 					}
-				}
-			} else if (collEff.destroySource) {
-				// No resource pool - use destructive flag
-				if (m_onRemoveEntity) {
-					m_onRemoveEntity(collEff.sourceDefName, collEff.sourcePosition.x, collEff.sourcePosition.y);
+					// Forget the entity so AI doesn't try to interact with it again
+					uint32_t defNameId = harvestRegistry.getDefNameId(collEff.sourceDefName);
+					memory.forgetWorldEntity({collEff.sourcePosition.x, collEff.sourcePosition.y}, defNameId);
 					LOG_DEBUG(
 						Engine,
-						"[Action] Removed source entity %s at (%.1f, %.1f)",
-						collEff.sourceDefName.c_str(),
-						collEff.sourcePosition.x,
-						collEff.sourcePosition.y
-					);
-				} else {
-					LOG_WARNING(
-						Engine,
-						"[Action] No removal callback set - source entity %s at (%.1f, %.1f) was NOT removed",
+						"[Action] Resource depleted - removed %s at (%.1f, %.1f)",
 						collEff.sourceDefName.c_str(),
 						collEff.sourcePosition.x,
 						collEff.sourcePosition.y
 					);
 				}
+			} else if (collEff.destroySource) {
+				// No resource pool - use destructive flag (e.g., picking up a ground item)
+				if (m_onRemoveEntity) {
+					m_onRemoveEntity(collEff.sourceDefName, collEff.sourcePosition.x, collEff.sourcePosition.y);
+				}
+				// Forget the entity so AI doesn't try to interact with it again
+				uint32_t defNameId = harvestRegistry.getDefNameId(collEff.sourceDefName);
+				memory.forgetWorldEntity({collEff.sourcePosition.x, collEff.sourcePosition.y}, defNameId);
+				LOG_DEBUG(
+					Engine,
+					"[Action] Removed source entity %s at (%.1f, %.1f)",
+					collEff.sourceDefName.c_str(),
+					collEff.sourcePosition.x,
+					collEff.sourcePosition.y
+				);
 			} else if (collEff.regrowthTime > 0.0F) {
 				if (m_onSetCooldown) {
 					m_onSetCooldown(collEff.sourceDefName, collEff.sourcePosition.x, collEff.sourcePosition.y, collEff.regrowthTime);

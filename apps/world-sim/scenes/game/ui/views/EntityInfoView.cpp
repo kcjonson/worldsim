@@ -17,6 +17,8 @@ namespace world_sim {
 		  onQueueRecipeCallback(args.onQueueRecipe),
 		  onOpenCraftingDialogCallback(args.onOpenCraftingDialog),
 		  onPlaceCallback(args.onPlace),
+		  onPackageCallback(args.onPackage),
+		  onOpenStorageConfigCallback(args.onOpenStorageConfig),
 		  queryResourcesCallback(args.queryResources) {
 
 		contentWidth = panelWidth - (2.0F * kPadding);
@@ -480,6 +482,8 @@ namespace world_sim {
 			.onQueueRecipe = onQueueRecipeCallback,
 			.onOpenCraftingDialog = onOpenCraftingDialogCallback,
 			.onPlace = onPlaceCallback,
+			.onPackage = onPackageCallback,
+			.onOpenStorageConfig = onOpenStorageConfigCallback,
 			.queryResources = queryResourcesCallback,
 		};
 

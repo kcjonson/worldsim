@@ -27,6 +27,7 @@
 #include "scenes/game/ui/views/TaskListView.h"
 #include "scenes/game/ui/dialogs/ColonistDetailsDialog.h"
 #include "scenes/game/ui/dialogs/CraftingDialog.h"
+#include "scenes/game/ui/dialogs/StorageConfigDialog.h"
 
 #include <components/toast/ToastStack.h>
 
@@ -65,6 +66,7 @@ class GameUI {
 		QueueRecipeCallback onQueueRecipe;								 ///< Called when recipe queued at station
 		std::function<void(const std::string&)> onCancelJob;			 ///< Called when job canceled from queue
 		std::function<void(ecs::EntityID, const std::string&)> onOpenCraftingDialog; ///< Called to open crafting dialog
+		std::function<void(ecs::EntityID, const std::string&)> onOpenStorageConfig; ///< Called to open storage config dialog
 		std::function<void()> onPause;									 ///< Called when pause button clicked
 		std::function<void(ecs::GameSpeed)> onSpeedChange;			 ///< Called when speed changed
 		std::function<void()> onMenuClick;								 ///< Called when menu button clicked
@@ -148,6 +150,17 @@ class GameUI {
 	/// Check if crafting dialog is visible
 	[[nodiscard]] bool isCraftingDialogVisible() const;
 
+	// --- Storage Config Dialog API ---
+
+	/// Show storage config dialog for a specific container
+	void showStorageConfigDialog(ecs::EntityID containerId, const std::string& containerDefName);
+
+	/// Hide storage config dialog
+	void hideStorageConfigDialog();
+
+	/// Check if storage config dialog is visible
+	[[nodiscard]] bool isStorageConfigVisible() const;
+
   private:
 	std::unique_ptr<TopBar> topBar;
 	std::unique_ptr<DebugOverlay> debugOverlay;
@@ -161,6 +174,7 @@ class GameUI {
 	std::unique_ptr<UI::ToastStack> toastStack;
 	std::unique_ptr<ColonistDetailsDialog> colonistDetailsDialog;
 	std::unique_ptr<CraftingDialog> craftingDialog;
+	std::unique_ptr<StorageConfigDialog> storageConfigDialog;
 
 	// ViewModels (own data + change detection)
 	TimeModel timeModel;

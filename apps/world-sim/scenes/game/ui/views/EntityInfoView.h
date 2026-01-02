@@ -42,6 +42,9 @@ class EntityInfoView : public UI::Component {
 	/// Callback to open crafting dialog for a station
 	using OpenCraftingDialogCallback = std::function<void(ecs::EntityID, const std::string&)>;
 
+	/// Callback to open storage config dialog for a container
+	using OpenStorageConfigCallback = std::function<void(ecs::EntityID, const std::string&)>;
+
 	struct Args {
 		Foundation::Vec2	  position{0.0F, 0.0F};
 		float				  width = 340.0F;		// Per plan: 340px for two-column layout
@@ -51,6 +54,8 @@ class EntityInfoView : public UI::Component {
 		QueueRecipeCallback   onQueueRecipe;		// Called when recipe is queued at station (legacy, kept for compatibility)
 		OpenCraftingDialogCallback onOpenCraftingDialog; // Called to open crafting dialog
 		std::function<void()> onPlace;				// Called when Place button clicked for packaged furniture
+		std::function<void()> onPackage;			// Called when Package button clicked for placed furniture
+		OpenStorageConfigCallback onOpenStorageConfig;	// Called to open storage config dialog for containers
 		ResourceQueryCallback queryResources;		// Query remaining resource count for harvestable entities
 	};
 
@@ -131,6 +136,8 @@ class EntityInfoView : public UI::Component {
 	QueueRecipeCallback   onQueueRecipeCallback;
 	OpenCraftingDialogCallback onOpenCraftingDialogCallback;
 	std::function<void()> onPlaceCallback;
+	std::function<void()> onPackageCallback;
+	OpenStorageConfigCallback onOpenStorageConfigCallback;
 	ResourceQueryCallback queryResourcesCallback;
 
 	// Background panel

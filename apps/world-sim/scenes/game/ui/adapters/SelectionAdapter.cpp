@@ -305,7 +305,8 @@ namespace world_sim {
 		const engine::assets::AssetRegistry& registry,
 		const FurnitureSelection&			 selection,
 		const std::function<void()>&		 onPlace,
-		const std::function<void()>&		 onPackage
+		const std::function<void()>&		 onPackage,
+		const std::function<void()>&		 onConfigure
 	) {
 		PanelContent content;
 		content.layout = PanelLayout::SingleColumn;
@@ -314,6 +315,7 @@ namespace world_sim {
 		// Store callbacks for UI
 		content.onPlace = onPlace;
 		content.onPackage = onPackage;
+		content.onConfigure = onConfigure;
 
 		// Look up asset definition for properties
 		const auto* def = registry.getDefinition(selection.defName);
@@ -325,17 +327,32 @@ namespace world_sim {
 			content.slots.push_back(TextSlot{"Status", "Placed"});
 		}
 
+		// Check if this is a storage container
+		bool isStorage = (def != nullptr && def->capabilities.storage.has_value());
+
 		// Show storage info if it's a storage container
-		if (def != nullptr && def->capabilities.storage.has_value()) {
+		if (isStorage) {
 			const auto&		   storage = def->capabilities.storage.value();
 			std::ostringstream oss;
 			oss << storage.maxCapacity << " slots";
 			content.slots.push_back(TextSlot{"Capacity", oss.str()});
 		}
 
-		// Add action button based on state
+		// Add action buttons
+		content.slots.push_back(SpacerSlot{.height = 8.0F});
+
+		// Configure button for storage containers (only when placed)
+		if (isStorage && !selection.isPackaged && onConfigure) {
+			content.slots.push_back(
+				ActionButtonSlot{
+					.label = "Configure",
+					.onClick = onConfigure,
+				}
+			);
+		}
+
+		// Place/Package button based on state
 		if (selection.isPackaged) {
-			content.slots.push_back(SpacerSlot{.height = 8.0F});
 			content.slots.push_back(
 				ActionButtonSlot{
 					.label = "Place",
@@ -343,7 +360,6 @@ namespace world_sim {
 				}
 			);
 		} else {
-			content.slots.push_back(SpacerSlot{.height = 8.0F});
 			content.slots.push_back(
 				ActionButtonSlot{
 					.label = "Package",

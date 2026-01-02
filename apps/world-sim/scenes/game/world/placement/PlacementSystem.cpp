@@ -5,6 +5,7 @@
 #include <ecs/components/Appearance.h>
 #include <ecs/components/Inventory.h>
 #include <ecs/components/Packaged.h>
+#include <ecs/components/StorageConfiguration.h>
 #include <ecs/components/Transform.h>
 #include <ecs/components/WorkQueue.h>
 #include <primitives/Primitives.h>
@@ -205,13 +206,26 @@ namespace world_sim {
 			inventory.maxCapacity = storageCap.maxCapacity;
 			inventory.maxStackSize = storageCap.maxStackSize;
 			ecsWorld->addComponent<ecs::Inventory>(entity, inventory);
+
+			// Add StorageConfiguration - default to accepting all categories the container supports
+			// If acceptedCategories is empty (accepts all), use createAcceptEverything()
+			// Otherwise, create config from the specific categories
+			ecs::StorageConfiguration config;
+			if (storageCap.acceptedCategories.empty()) {
+				config = ecs::StorageConfiguration::createAcceptEverything();
+			} else {
+				config = ecs::StorageConfiguration::createAcceptAll(storageCap.acceptedCategories);
+			}
+			ecsWorld->addComponent<ecs::StorageConfiguration>(entity, config);
+
 			LOG_INFO(
 				Game,
-				"Spawned storage '%s' at (%.1f, %.1f) with Inventory (capacity=%u)",
+				"Spawned storage '%s' at (%.1f, %.1f) with Inventory (capacity=%u) and %zu storage rules",
 				defName.c_str(),
 				worldPos.x,
 				worldPos.y,
-				storageCap.maxCapacity
+				storageCap.maxCapacity,
+				config.getRuleCount()
 			);
 		} else {
 			LOG_INFO(Game, "Spawned '%s' at (%.1f, %.1f)", defName.c_str(), worldPos.x, worldPos.y);

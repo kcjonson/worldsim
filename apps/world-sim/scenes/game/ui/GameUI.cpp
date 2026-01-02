@@ -79,6 +79,7 @@ namespace world_sim {
 			.onQueueRecipe = args.onQueueRecipe,
 			.onOpenCraftingDialog = args.onOpenCraftingDialog,
 			.onPlace = args.onPlaceFurniture,
+			.onOpenStorageConfig = args.onOpenStorageConfig,
 			.queryResources = args.queryResources
 		});
 
@@ -91,6 +92,11 @@ namespace world_sim {
 			.onClose = [this]() { hideCraftingDialog(); },
 			.onQueueRecipe = args.onQueueRecipe,
 			.onCancelJob = args.onCancelJob
+		});
+
+		// Create storage config dialog
+		storageConfigDialog = std::make_unique<StorageConfigDialog>(StorageConfigDialog::Args{
+			.onClose = [this]() { hideStorageConfigDialog(); }
 		});
 
 		// Create task list view (position set in layout())
@@ -209,6 +215,16 @@ namespace world_sim {
 	bool GameUI::dispatchEvent(UI::InputEvent& event) {
 		// Dispatch to UI children in z-order (highest first)
 		// Panels that can overlap get priority
+
+		// Storage config dialog (highest z-order - modal overlay)
+		if (storageConfigDialog && storageConfigDialog->isOpen()) {
+			if (storageConfigDialog->handleEvent(event)) {
+				return true;
+			}
+			if (event.isConsumed()) {
+				return true;
+			}
+		}
 
 		// Crafting dialog (highest z-order - modal overlay)
 		if (craftingDialog && craftingDialog->isOpen()) {
@@ -398,6 +414,11 @@ namespace world_sim {
 		if (craftingDialog && craftingDialog->isOpen()) {
 			craftingDialog->update(ecsWorld, recipeRegistry, deltaTime);
 		}
+
+		// Update storage config dialog if open
+		if (storageConfigDialog && storageConfigDialog->isOpen()) {
+			storageConfigDialog->update(ecsWorld, assetRegistry, deltaTime);
+		}
 	}
 
 	void GameUI::render() {
@@ -459,6 +480,11 @@ namespace world_sim {
 		// Render crafting dialog (highest z-order - modal overlay)
 		if (craftingDialog && craftingDialog->isOpen()) {
 			craftingDialog->render();
+		}
+
+		// Render storage config dialog (highest z-order - modal overlay)
+		if (storageConfigDialog && storageConfigDialog->isOpen()) {
+			storageConfigDialog->render();
 		}
 	}
 
@@ -547,6 +573,24 @@ namespace world_sim {
 
 	bool GameUI::isCraftingDialogVisible() const {
 		return craftingDialog && craftingDialog->isOpen();
+	}
+
+	// --- Storage Config Dialog API ---
+
+	void GameUI::showStorageConfigDialog(ecs::EntityID containerId, const std::string& containerDefName) {
+		if (storageConfigDialog) {
+			storageConfigDialog->open(containerId, containerDefName, viewportBounds.width, viewportBounds.height);
+		}
+	}
+
+	void GameUI::hideStorageConfigDialog() {
+		if (storageConfigDialog) {
+			storageConfigDialog->close();
+		}
+	}
+
+	bool GameUI::isStorageConfigVisible() const {
+		return storageConfigDialog && storageConfigDialog->isOpen();
 	}
 
 } // namespace world_sim
