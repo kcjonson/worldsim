@@ -1,7 +1,12 @@
 add_library(assets
+    ActionTypeRegistry.cpp
     AssetRegistry.cpp
     AssetBatcher.cpp
+    ConfigValidator.cpp
+    PriorityConfig.cpp
     RecipeRegistry.cpp
+    TaskChainRegistry.cpp
+    WorkTypeRegistry.cpp
     lua/LuaEngine.cpp
     lua/LuaGenerator.cpp
     placement/DependencyGraph.cpp

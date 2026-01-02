@@ -1,0 +1,138 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Priority Tuning Configuration
+  Tunable weights for task priority calculations.
+
+  TWO PRIORITY CONCEPTS (don't confuse them):
+
+  1. Colonist Work Type Preference (1-9):
+     Each colonist has a 1-9 preference per work category.
+     "Bob prefers Farming (2) over Hauling (7)"
+     See UserPriorityMapping below.
+
+  2. Goal Priority (set on buildings/entities):
+     Storage containers, crafting stations can be marked urgent.
+     "This storage needs filling NOW"
+     Adds bonus to all tasks targeting that goal (not in this config).
+
+  Players do NOT set priority on individual tasks.
+  Tasks inherit priority from: goals + colonist preferences + situational bonuses.
+
+  Full formula:
+  Priority = basePriority + distanceBonus + skillBonus + chainBonus + inProgressBonus + taskAgeBonus
+
+  See /docs/design/game-systems/colonists/priority-config.md for details.
+-->
+<PriorityTuning>
+  <!-- Priority bands define the int16 ranges for each tier -->
+  <Bands>
+    <Band name="Critical" base="30000">
+      <description>Life-threatening situations (critical needs)</description>
+    </Band>
+    <Band name="PlayerDraft" base="20000">
+      <description>Direct player control overrides</description>
+    </Band>
+    <Band name="Needs" base="10000">
+      <description>Actionable needs below seek threshold</description>
+    </Band>
+    <Band name="WorkHigh" base="5000">
+      <description>User priority 1-3 work tasks</description>
+    </Band>
+    <Band name="WorkMedium" base="3000">
+      <description>User priority 4-6 work tasks</description>
+    </Band>
+    <Band name="WorkLow" base="1000">
+      <description>User priority 7-9 work tasks</description>
+    </Band>
+    <Band name="Idle" base="0">
+      <description>Wander and idle behaviors</description>
+    </Band>
+  </Bands>
+
+  <!--
+    Colonist Work Type Preference (1-9) to band mapping.
+    This is per-colonist preference for work categories, NOT per-task priority.
+    Example: Bob has Farming=2 (prefers), Hauling=7 (avoids).
+    Lower number = colonist prefers this work type.
+  -->
+  <UserPriorityMapping>
+    <bandAssignment priority="1-3" band="WorkHigh"/>
+    <bandAssignment priority="4-6" band="WorkMedium"/>
+    <bandAssignment priority="7-9" band="WorkLow"/>
+    <stepSize>100</stepSize>
+  </UserPriorityMapping>
+
+  <!-- Work category tier ordering (for simple mode) -->
+  <WorkCategoryOrder>
+    <Category name="Emergency" tier="1"/>
+    <Category name="Medical" tier="2"/>
+    <Category name="Farming" tier="3"/>
+    <Category name="Crafting" tier="4"/>
+    <Category name="Construction" tier="5"/>
+    <Category name="Hauling" tier="6"/>
+    <Category name="Cleaning" tier="7"/>
+  </WorkCategoryOrder>
+
+  <!-- Bonus calculations -->
+  <Bonuses>
+    <!-- Distance bonus: closer tasks score higher -->
+    <Distance>
+      <optimalDistance>5.0</optimalDistance>
+      <maxPenaltyDistance>50.0</maxPenaltyDistance>
+      <maxBonus>50</maxBonus>
+      <maxPenalty>50</maxPenalty>
+    </Distance>
+
+    <!-- Skill bonus: skilled colonists prefer work they're good at -->
+    <Skill>
+      <multiplier>10</multiplier>
+      <maxBonus>100</maxBonus>
+    </Skill>
+
+    <!-- Chain continuation: strongly prefer finishing multi-step tasks -->
+    <ChainContinuation>
+      <bonus>2000</bonus>
+    </ChainContinuation>
+
+    <!-- In-progress: resist switching away from current task -->
+    <InProgress>
+      <bonus>200</bonus>
+    </InProgress>
+
+    <!-- Task age: old unclaimed tasks slowly rise in priority -->
+    <TaskAge>
+      <bonusPerMinute>1</bonusPerMinute>
+      <maxBonus>100</maxBonus>
+    </TaskAge>
+  </Bonuses>
+
+  <!-- Thresholds and timings -->
+  <Thresholds>
+    <!-- Minimum priority gap to switch tasks while action in progress -->
+    <taskSwitchThreshold>50</taskSwitchThreshold>
+
+    <!-- How often colonists re-evaluate tasks (seconds) -->
+    <reEvalInterval>0.5</reEvalInterval>
+
+    <!-- Reservation timeout: release if no progress (seconds) -->
+    <reservationTimeout>10.0</reservationTimeout>
+  </Thresholds>
+
+  <!-- Hauling-specific tuning to avoid the "hauling problem" -->
+  <HaulingTuning>
+    <!-- Boost haul priority when storage is critically low -->
+    <storageCriticalThreshold>0.2</storageCriticalThreshold>
+    <storageCriticalBonus>500</storageCriticalBonus>
+
+    <!-- Boost if loose item is blocking construction -->
+    <blockingConstructionBonus>1000</blockingConstructionBonus>
+
+    <!-- Boost if item is perishable and will spoil soon -->
+    <perishableSpoilThreshold>60.0</perishableSpoilThreshold>
+    <perishableBonus>800</perishableBonus>
+
+    <!-- Batch nearby items to reduce task spam -->
+    <batchRadius>8.0</batchRadius>
+    <maxBatchSize>5</maxBatchSize>
+  </HaulingTuning>
+</PriorityTuning>
