@@ -68,32 +68,35 @@ struct DecisionTrace {
 
 ### Priority Calculation
 
-Options are sorted by a priority score that matches the existing tier system:
+Options are sorted by a priority score using the int16 priority band system (see [Priority Config](./priority-config.md)):
 
 ```cpp
-float calculateOptionPriority(const EvaluatedOption& option) {
-    float priority = 0.0f;
+int16_t calculateOptionPriority(const EvaluatedOption& option) {
+    // Priority bands from priority-config.md
+    constexpr int16_t kCriticalBand = 30000;
+    constexpr int16_t kNeedsBand = 10000;
+    constexpr int16_t kIdleBand = 0;
 
-    // Tier 3: Critical needs get highest priority
+    // Critical needs (< 10%) get highest priority
     if (option.needValue < 10.0f) {
-        priority = 300.0f + (10.0f - option.needValue);  // 300-310
+        return kCriticalBand + static_cast<int16_t>(10.0f - option.needValue);  // 30000-30010
     }
-    // Tier 5: Actionable needs
+    // Actionable needs (below seek threshold)
     else if (option.needValue < option.threshold) {
-        priority = 100.0f + (option.threshold - option.needValue);  // 100-150ish
+        return kNeedsBand + static_cast<int16_t>(option.threshold - option.needValue);  // 10000-10050ish
     }
-    // Tier 7: Wander (only if no needs require attention)
+    // Wander (only if no needs require attention)
     else if (option.taskType == TaskType::Wander) {
-        priority = 10.0f;
+        return kIdleBand;  // 0
     }
     // Satisfied needs
     else {
-        priority = 0.0f;
+        return -1;  // Won't be selected
     }
-
-    return priority;
 }
 ```
+
+**Note:** When work tasks are available, they use the WorkHigh/WorkMedium/WorkLow bands (5000/3000/1000). Needs above threshold don't compete with work.
 
 ---
 
@@ -381,3 +384,5 @@ The trace will show "Berry Bush (reserved by Alice)" to explain why Bob didn't p
 - [Memory System](./memory.md) — Constrains what colonists know about
 - [Needs System](./needs.md) — Need thresholds and decay
 - [MVP Scope](../../mvp-scope.md) — Task queue display requirements
+- [Priority Config](./priority-config.md) — int16 priority bands and bonus formulas
+- [Task Registry](./task-registry.md) — Global task list (future: GlobalTaskListView)

@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2025-12-29 (Completed GameScene Subsystem Extraction)
+Last Updated: 2025-01-02 (Added Task Ordering System epic)
 
 ## Epic/Story/Task Template
 
@@ -515,7 +515,57 @@ The following MVP epics have all been completed. Detailed task breakdowns are pr
 
 ---
 
-## Planned Epics (Post-MVP)
+## Planned Epics
+
+### Task Ordering System
+**Spec/Documentation:** `/docs/design/game-systems/colonists/task-registry.md`, `.claude/plans/task-ordering-system.md`
+**Dependencies:** ~~Storage and Hauling System~~ (complete)
+**Status:** ready
+
+**Goal:** Global task prioritization where all colony tasks are computed with numerical priority (int16), each colonist filters/modifies priorities based on skills/preferences, and in-progress/follow-up tasks receive priority bonuses.
+
+**Tasks:**
+- [ ] Phase 1: Config Infrastructure
+  - [ ] Create `assets/config/work/` folder structure
+  - [ ] Implement ActionTypeRegistry (action-types.xml)
+  - [ ] Implement TaskChainRegistry (task-chains.xml)
+  - [ ] Implement WorkTypeRegistry (work-types.xml)
+  - [ ] Implement PriorityConfig (priority-tuning.xml)
+  - [ ] Implement ConfigValidator (fail-fast validation)
+  - [ ] Unit tests for config loading and validation
+- [ ] Phase 2: Global Task Registry
+  - [ ] Create GlobalTask struct (entityId, type, position, reserved, chainId)
+  - [ ] Implement GlobalTaskRegistry with memory-sourced tasks
+  - [ ] Wire Memory events (onEntityDiscovered, onEntityForgotten)
+  - [ ] Implement reservation system with timeout
+  - [ ] Spatial indexing for radius queries
+- [ ] Phase 3: Skills Component
+  - [ ] Create Skills component with skill→level map
+  - [ ] Add skill bonus calculation to priority formula
+  - [ ] Wire skill requirements to work type filtering
+- [ ] Phase 4: Priority Scoring Integration
+  - [ ] Modify AIDecisionSystem to use GlobalTaskRegistry
+  - [ ] Implement full priority formula (base + distance + skill + chain + in-progress)
+  - [ ] Add task age bonus for unclaimed tasks
+- [ ] Phase 5: Task Chaining
+  - [ ] Add chainId, chainStep fields to Task component
+  - [ ] Implement chain continuation bonus (+2000)
+  - [ ] Handle interruption based on handsRequired
+  - [ ] Refactor Haul to use Chain_PickupDeposit
+- [ ] Phase 6: UI Global Task List
+  - [ ] Create GlobalTaskListModel
+  - [ ] Create GlobalTaskListView panel
+  - [ ] Implement 4-10Hz throttled refresh
+  - [ ] Toggle between colonist view and global view
+
+**Related Specs:**
+- [Task Registry](./design/game-systems/colonists/task-registry.md) — Core architecture
+- [Priority Config](./design/game-systems/colonists/priority-config.md) — Tunable weights
+- [Work Types Config](./design/game-systems/colonists/work-types-config.md) — Work type definitions
+- [Task Chains](./design/game-systems/colonists/task-chains.md) — Multi-step tasks
+- [Task Generation Architecture](./technical/task-generation-architecture.md) — Technical deep-dive
+
+---
 
 ### UI Architecture: Animation System
 **Spec/Documentation:** `/docs/technical/ui-framework/animation-system.md` (to be written)

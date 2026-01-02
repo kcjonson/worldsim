@@ -150,23 +150,52 @@ As colonists learn skills (see [Skills System](./skills.md)), new work types unl
 
 ## Task Selection Algorithm
 
+The task selection uses the [Global Task Registry](./task-registry.md) with per-colonist priority scoring:
+
 ```python
-def select_work_task(colonist, world):
-    enabled_work = colonist.get_enabled_work_types()
-    sorted_work = sort_by_priority(enabled_work)
-    
-    for work_type in sorted_work:
-        tasks = world.get_tasks_of_type(work_type)
-        known_tasks = filter_by_memory(tasks, colonist)
-        unreserved = filter_unreserved(known_tasks)
-        reachable = filter_reachable(unreserved, colonist)
-        
-        if reachable:
-            nearest = sort_by_distance(reachable, colonist.position)[0]
-            return nearest
-    
+def select_work_task(colonist, registry, config):
+    # Get all tasks from memory-sourced global registry
+    # (only entities at least one colonist has seen)
+    all_tasks = registry.get_unreserved_tasks()
+
+    # Filter to tasks this colonist can do
+    candidate_tasks = []
+    for task in all_tasks:
+        work_type = WorkTypeRegistry.get(task.workTypeDefName)
+
+        # Check if work type is enabled for this colonist
+        if not colonist.work_priorities.is_enabled(work_type):
+            continue
+
+        # Check skill requirement
+        if work_type.skillRequired:
+            if not colonist.skills.meets_requirement(work_type.skillRequired, work_type.minSkillLevel):
+                continue
+
+        candidate_tasks.append(task)
+
+    # Score each candidate (see priority-config.md for formula)
+    scored_tasks = []
+    for task in candidate_tasks:
+        priority = task.basePriority                              # From work type band
+        priority += config.calculate_distance_bonus(colonist.position, task.position)
+        priority += config.calculate_skill_bonus(colonist.skills.get(task.skillRequired))
+        priority += config.calculate_chain_bonus(colonist.current_chain, task)
+        priority += config.calculate_in_progress_bonus(colonist.current_task, task)
+        scored_tasks.append((task, priority))
+
+    # Sort by priority (highest first)
+    scored_tasks.sort(key=lambda x: x[1], reverse=True)
+
+    if scored_tasks:
+        best_task, _ = scored_tasks[0]
+        registry.reserve(best_task, colonist)
+        return best_task
+
     return None  # No work available → Wander
 ```
+
+See [Task Registry](./task-registry.md) for the global registry architecture and [Priority Config](./priority-config.md) for bonus calculations.
 
 ---
 
@@ -187,6 +216,10 @@ Player can always override.
 - [Skills System](./skills.md) — Skill-based work unlocking
 - [Memory System](./memory.md) — Constrains available tasks
 - [Attributes](./attributes.md) — Backstory affects defaults
+- [Task Registry](./task-registry.md) — Global task list architecture
+- [Work Types Config](./work-types-config.md) — XML format for defining work types
+- [Priority Config](./priority-config.md) — Tunable priority weights and bonuses
+- [Task Chains](./task-chains.md) — Multi-step tasks like haul
 
 ---
 

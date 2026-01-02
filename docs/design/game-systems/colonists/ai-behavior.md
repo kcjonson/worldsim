@@ -107,33 +107,36 @@ When a colonist decides to use a resource, they "reserve" it. Others skip reserv
 ## Task Selection Algorithm
 
 ```python
-def select_task(colonist, world):
+def select_task(colonist, task_registry, priority_config):
     # Evaluate tiers in order
     if is_threatened(colonist):
         return flee_to_safety()  # Tier 1
-    
+
     if colonist.mood < breakdown_threshold:
         return breakdown_behavior()  # Tier 2
-    
+
     for need in colonist.needs:
         if need.value < need.critical_threshold:
-            return fulfill_need_urgently(need)  # Tier 3
-    
+            return fulfill_need_urgently(need)  # Tier 3 (priority 30000+)
+
     if colonist.under_player_control:
-        return await_player_input()  # Tier 4
-    
+        return await_player_input()  # Tier 4 (priority 20000)
+
     for need in colonist.needs:
         if need.value < need.seek_threshold:
             task = find_fulfillment(need, colonist.memory)
             if task:
-                return task  # Tier 5
-    
-    work_task = find_work(colonist.work_priorities, colonist.memory)
+                return task  # Tier 5 (priority 10000+)
+
+    # Tier 6: Work - query GlobalTaskRegistry with per-colonist scoring
+    work_task = select_work_from_registry(colonist, task_registry, priority_config)
     if work_task:
-        return work_task  # Tier 6
-    
-    return wander()  # Tier 7
+        return work_task  # Tier 6 (priority 1000-6000)
+
+    return wander()  # Tier 7 (priority 0)
 ```
+
+See [Task Registry](./task-registry.md) for GlobalTaskRegistry architecture and [Work Priorities](./work-priorities.md) for detailed work selection algorithm.
 
 ---
 
@@ -145,6 +148,9 @@ def select_task(colonist, world):
 - [Work Priorities](./work-priorities.md) — Tier 6 behavior
 - [Player Control](../features/player-control.md) — Tier 4 behavior
 - [Entity Capabilities](../world/entity-capabilities.md) — How needs are fulfilled
+- [Task Registry](./task-registry.md) — Global task list architecture for Tier 6
+- [Priority Config](./priority-config.md) — Priority bands and bonus calculations
+- [Task Chains](./task-chains.md) — Multi-step task continuation
 
 ---
 

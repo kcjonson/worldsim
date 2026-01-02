@@ -1,5 +1,12 @@
 # Skills and Talents
 
+**Status:** Design
+**Created:** 2024-12-04
+**Updated:** 2025-01-02 (Added technical implementation for task priority)
+**MVP Status:** Basic skill component in Phase 2, full learning system Phase 3+
+
+---
+
 ## High Level Concepts
 
 - **Learn by doing**: Most things can be learned by performing the task, many will have prerequisites
@@ -96,3 +103,129 @@ Colonists can gain skill points through:
 - Skilled labor (at workbenches and items) - includes farming and ranching
 - Clean
 - Haul (organize)
+
+---
+
+## Technical Implementation: Skills Component
+
+### Overview
+
+For the task priority system, colonists need a Skills component that tracks their proficiency in each skill area. This affects:
+1. **Task Priority:** Skilled colonists prefer work they're good at (+skill bonus)
+2. **Work Access:** Some work types require minimum skill levels
+3. **Efficiency:** Higher skill = faster completion, better quality (future)
+
+### Skills Component (ECS)
+
+```cpp
+struct Skills {
+    // Skill levels: 0.0 (untrained) to 20.0 (master)
+    std::unordered_map<std::string, float> levels;
+
+    // Get skill level (0.0 if not in map)
+    float getLevel(const std::string& skillDefName) const {
+        auto it = levels.find(skillDefName);
+        return it != levels.end() ? it->second : 0.0f;
+    }
+
+    // Check if colonist meets skill requirement
+    bool meetsRequirement(const std::string& skillDefName, float minLevel) const {
+        return getLevel(skillDefName) >= minLevel;
+    }
+};
+```
+
+### Skill Level Ranges
+
+| Level | Description | Unlock |
+|-------|-------------|--------|
+| 0.0 | Untrained | Basic work (improvised items) |
+| 1.0-4.0 | Novice | Tier 1 recipes |
+| 5.0-9.0 | Competent | Tier 2 recipes |
+| 10.0-14.0 | Skilled | Tier 3 recipes |
+| 15.0-19.0 | Expert | Tier 4 recipes |
+| 20.0 | Master | All recipes, teaching bonus |
+
+### Skill Bonus for Task Priority
+
+From [Priority Config](./priority-config.md):
+
+```cpp
+int16_t calculateSkillBonus(float skillLevel, const SkillConfig& config) {
+    // config.multiplier = 10 (default)
+    // config.maxBonus = 100 (default)
+    return std::min(
+        static_cast<int16_t>(skillLevel * config.multiplier),
+        config.maxBonus
+    );
+}
+```
+
+**Examples:**
+- Level 0 (untrained): +0 priority
+- Level 5 (competent): +50 priority
+- Level 10 (skilled): +100 priority (capped)
+- Level 20 (master): +100 priority (capped)
+
+**Effect:** A skilled farmer has +100 priority bonus for farming tasks. They'll naturally prefer farming over other work they're less skilled at.
+
+### Skill Requirements for Work Types
+
+Defined in `assets/config/work/work-types.xml`:
+
+```xml
+<WorkType defName="Work_Doctoring">
+  <label>Doctoring</label>
+  <skillRequired>Medicine</skillRequired>
+  <minSkillLevel>1.0</minSkillLevel>
+</WorkType>
+
+<WorkType defName="Work_Surgery">
+  <label>Surgery</label>
+  <skillRequired>Medicine</skillRequired>
+  <minSkillLevel>10.0</minSkillLevel>
+</WorkType>
+```
+
+If colonist doesn't meet `minSkillLevel`, the work type is **locked** (cannot enable in work priorities UI).
+
+### Default Skills by Backstory
+
+Colonists start with skills based on backstory:
+
+```xml
+<!-- assets/config/colonists/backstories.xml -->
+<Backstory defName="Backstory_Farmer">
+  <label>Farmer</label>
+  <description>Grew up on a farm...</description>
+  <startingSkills>
+    <Skill name="Farming" level="5.0"/>
+    <Skill name="Ranching" level="2.0"/>
+    <Skill name="Cooking" level="1.0"/>
+  </startingSkills>
+</Backstory>
+```
+
+### MVP Scope
+
+**Phase 2 (Basic):**
+- Skills component with level tracking
+- Skill bonus for task priority
+- Skill requirements for work types
+- Starting skills from backstory
+
+**Phase 3+ (Full System):**
+- XP gain from performing tasks
+- Tier unlocks (inspiration moments)
+- Knowledge transfer (manuals, teaching)
+- Skill decay over time
+- Passion system (learning rate bonus)
+
+---
+
+## Related Documents
+
+- [Priority Config](./priority-config.md) — Skill bonus formula
+- [Work Types Config](./work-types-config.md) — Skill requirements per work type
+- [Task Registry](./task-registry.md) — How skills affect task filtering
+- [Technology Discovery](./technology-discovery.md) — How skills unlock recipes

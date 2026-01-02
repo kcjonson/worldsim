@@ -87,9 +87,22 @@ Capabilities can have properties that affect how well they fulfill needs:
 
 | Capability | Meaning | Examples |
 |------------|---------|----------|
-| Haulable | Can be picked up and moved | Resources, items |
+| Carryable | Can be picked up and moved | Resources, items |
 | Storable | Can go in storage containers | Most items |
 | Stackable | Multiple can occupy same slot | Resources |
+| Storage | Can hold other items | Boxes, stockpiles |
+
+#### Carryable Properties
+
+The `Carryable` capability includes properties that affect hauling behavior:
+
+```xml
+<capabilities>
+  <carryable handsRequired="1"/>  <!-- 0=pocket, 1=one-hand, 2=two-hand -->
+</capabilities>
+```
+
+See [Task Chains](../colonists/task-chains.md) for how `handsRequired` affects chain interruption.
 
 ---
 
@@ -125,11 +138,41 @@ This supports modding — modders can create entities with new capability combin
 
 ---
 
-## TODO: Technical Implementation
+## Technical Implementation
 
-> **Note:** The relationship between capabilities (game design concept) and ECS components (technical implementation) needs clarification. Are capabilities implemented AS ECS components, or as a separate system?
->
-> This is tracked as a design task.
+Capabilities are defined in asset XML files and loaded by the AssetRegistry. They are **not** ECS components themselves — instead, they're metadata attached to entity definitions that the task system queries.
+
+### Asset Definition
+
+```xml
+<!-- assets/world/flora/BerryBush/BerryBush.xml -->
+<AssetDef>
+  <defName>Flora_BerryBush</defName>
+  <capabilities>
+    <edible nutrition="0.2"/>
+    <harvestable yield="Berry" amount="3"/>
+  </capabilities>
+</AssetDef>
+```
+
+### Task Generation
+
+The [Task Registry](../colonists/task-registry.md) uses capabilities to generate tasks:
+
+1. Entity with `Harvestable` capability → generates harvest task
+2. Entity with `Carryable` capability + loose on ground → generates haul task
+3. Work types in [Work Types Config](../colonists/work-types-config.md) map `triggerCapability` to work
+
+### Capability Queries
+
+```cpp
+// Check if entity type has capability
+bool hasCapability = AssetRegistry::Get().hasCapability(defNameId, CapabilityType::Edible);
+
+// Get capability properties
+auto edibleProps = AssetRegistry::Get().getEdibleProperties(defNameId);
+float nutrition = edibleProps.nutrition;
+```
 
 ---
 
@@ -138,6 +181,9 @@ This supports modding — modders can create entities with new capability combin
 - [Needs System](../colonists/needs.md) — What drives colonists to seek capabilities
 - [AI Behavior](../colonists/ai-behavior.md) — How colonists select entities
 - [Memory System](../colonists/memory.md) — What entities colonists know about
+- [Task Registry](../colonists/task-registry.md) — How capabilities trigger task generation
+- [Work Types Config](../colonists/work-types-config.md) — Mapping capabilities to work types
+- [Task Chains](../colonists/task-chains.md) — Multi-step tasks using Carryable entities
 
 ---
 
