@@ -1,5 +1,6 @@
 #include "VisionSystem.h"
 
+#include "../GlobalTaskRegistry.h"
 #include "../World.h"
 #include "../components/Appearance.h"
 #include "../components/Knowledge.h"
@@ -23,6 +24,39 @@ namespace ecs {
 		// Synthetic definition name for shore tiles (land adjacent to water)
 		// Shore tiles are where colonists stand to drink from water
 		constexpr const char* kShoreTileDefName = "Terrain_Shore";
+
+		/// Get the TaskType for an entity based on its capabilities
+		/// Returns None if no work task should be generated
+		[[nodiscard]] TaskType getTaskTypeForCapabilities(uint8_t capabilityMask) {
+			// Priority order: Carryable (haul) > Harvestable (gather)
+			// Only work-related capabilities generate tasks
+			if ((capabilityMask & (1 << static_cast<uint8_t>(engine::assets::CapabilityType::Carryable))) != 0) {
+				return TaskType::Haul;
+			}
+			if ((capabilityMask & (1 << static_cast<uint8_t>(engine::assets::CapabilityType::Harvestable))) != 0) {
+				return TaskType::Gather;
+			}
+			// Drinkable, Edible, Sleepable, Toilet → These are need fulfillment, not work tasks
+			// They're handled separately by AIDecisionSystem
+			return TaskType::None;
+		}
+
+		/// Notify the GlobalTaskRegistry about a discovered entity (if it generates work)
+		void notifyTaskRegistry(
+			EntityID colonist,
+			uint64_t worldEntityKey,
+			uint32_t defNameId,
+			uint8_t	 capabilityMask,
+			const glm::vec2& position,
+			float currentTime
+		) {
+			TaskType taskType = getTaskTypeForCapabilities(capabilityMask);
+			if (taskType == TaskType::None) {
+				return; // No work task for this entity
+			}
+
+			GlobalTaskRegistry::Get().onEntityDiscovered(colonist, worldEntityKey, defNameId, position, taskType, currentTime);
+		}
 
 		/// Check if learning a new defNameId unlocks any recipes
 		/// @param knowledge The colonist's knowledge (after learning)
@@ -146,17 +180,26 @@ namespace ecs {
 
 					// Remember each discovered entity
 					for (const auto* placedEntity : nearbyEntities) {
-						memory.rememberWorldEntity(placedEntity->position, placedEntity->defName);
+						// Get defNameId and capability mask for registry notification
+						uint32_t defNameId = registry.getDefNameId(placedEntity->defName);
+						if (defNameId == 0) {
+							continue;
+						}
+						uint8_t capabilityMask = registry.getCapabilityMask(defNameId);
+
+						// Remember in colonist's memory
+						memory.rememberWorldEntity(placedEntity->position, defNameId, capabilityMask);
+
+						// Notify task registry for work-related entities
+						uint64_t worldEntityKey = hashWorldEntity(placedEntity->position, defNameId);
+						notifyTaskRegistry(entity, worldEntityKey, defNameId, capabilityMask, placedEntity->position, 0.0F);
 
 						// Update permanent knowledge if Knowledge component exists
-						if (knowledge != nullptr) {
-							uint32_t defNameId = registry.getDefNameId(placedEntity->defName);
-							if (defNameId != 0 && knowledge->learn(defNameId)) {
-								// New discovery - check for recipe unlocks
-								std::string unlockedRecipe = checkForRecipeUnlock(*knowledge, defNameId, registry, recipeRegistry);
-								if (!unlockedRecipe.empty() && m_onRecipeDiscovery) {
-									m_onRecipeDiscovery(unlockedRecipe);
-								}
+						if (knowledge != nullptr && knowledge->learn(defNameId)) {
+							// New discovery - check for recipe unlocks
+							std::string unlockedRecipe = checkForRecipeUnlock(*knowledge, defNameId, registry, recipeRegistry);
+							if (!unlockedRecipe.empty() && m_onRecipeDiscovery) {
+								m_onRecipeDiscovery(unlockedRecipe);
 							}
 						}
 					}
@@ -180,6 +223,10 @@ namespace ecs {
 					if (defNameId != 0) {
 						uint8_t capabilityMask = registry.getCapabilityMask(defNameId);
 						memory.rememberWorldEntity(otherPos.value, defNameId, capabilityMask);
+
+						// Notify task registry for work-related entities
+						uint64_t worldEntityKey = hashWorldEntity(otherPos.value, defNameId);
+						notifyTaskRegistry(entity, worldEntityKey, defNameId, capabilityMask, otherPos.value, 0.0F);
 
 						// Update permanent knowledge if Knowledge component exists
 						if (knowledge != nullptr && knowledge->learn(defNameId)) {

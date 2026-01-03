@@ -14,6 +14,7 @@
 #include <assets/WorkTypeRegistry.h>
 #include <assets/placement/AsyncChunkProcessor.h>
 #include <assets/placement/PlacementExecutor.h>
+#include <ecs/GlobalTaskRegistry.h>
 #include <graphics/Color.h>
 #include <input/InputManager.h>
 #include <primitives/Primitives.h>
@@ -353,12 +354,13 @@ namespace {
 		bool loadWorkConfigs() {
 			using namespace engine::assets;
 
-			// Clear any previous configs (supports menu → new game cycle)
+			// Clear any previous state (supports menu → new game cycle)
 			ActionTypeRegistry::Get().clear();
 			TaskChainRegistry::Get().clear();
 			WorkTypeRegistry::Get().clear();
 			PriorityConfig::Get().clear();
 			ConfigValidator::clearErrors();
+			ecs::GlobalTaskRegistry::Get().clear();
 
 			// Load in dependency order
 			std::string basePath = "assets/config/";
