@@ -544,7 +544,7 @@ namespace {
 			ecsWorld->addComponent<ecs::NeedsComponent>(entity, ecs::NeedsComponent::createDefault());
 			ecsWorld->addComponent<ecs::Inventory>(entity, ecs::Inventory::createForColonist());
 			ecsWorld->addComponent<ecs::Knowledge>(entity, ecs::Knowledge{});
-			ecsWorld->addComponent<ecs::Memory>(entity, ecs::Memory{});
+			ecsWorld->addComponent<ecs::Memory>(entity, ecs::Memory{.owner = entity});
 			ecsWorld->addComponent<ecs::Task>(entity, ecs::Task{});
 			ecsWorld->addComponent<ecs::DecisionTrace>(entity, ecs::DecisionTrace{});
 			ecsWorld->addComponent<ecs::Action>(entity, ecs::Action{});

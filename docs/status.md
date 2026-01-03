@@ -539,12 +539,13 @@ The following MVP epics have all been completed. Detailed task breakdowns are pr
   - [x] Update status text ("Loading configuration...")
   - [x] Test reload cycle (menu → game → menu → game)
   - [x] Refactor GameLoadingScene.cpp to remove m_ prefixes (coding standards)
-- [ ] Phase 2: Global Task Registry
-  - [ ] Create GlobalTask struct (entityId, type, position, reserved, chainId)
-  - [ ] Implement GlobalTaskRegistry with memory-sourced tasks
-  - [ ] Wire Memory events (onEntityDiscovered, onEntityForgotten)
-  - [ ] Implement reservation system with timeout
-  - [ ] Spatial indexing for radius queries
+- [x] Phase 2: Global Task Registry
+  - [x] Create GlobalTask struct (worldEntityKey, type, position, knownBy, reserved, chainId)
+  - [x] Implement GlobalTaskRegistry with memory-sourced tasks
+  - [x] Wire VisionSystem to notify registry on entity discovery
+  - [x] Implement reservation system with timeout
+  - [x] Spatial indexing for radius queries
+  - [x] Unit tests (10 tests passing)
 - [ ] Phase 3: Skills Component
   - [ ] Create Skills component with skill→level map
   - [ ] Add skill bonus calculation to priority formula

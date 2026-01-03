@@ -51,6 +51,12 @@ namespace ecs {
 		return posHash ^ (static_cast<uint64_t>(defNameId) * 0x9e3779b97f4a7c15ULL);
 	}
 
+	/// Callback type for entity eviction notifications
+	/// Called when a colonist forgets an entity due to LRU eviction
+	/// @param ownerEntity The colonist who forgot
+	/// @param worldEntityKey The hash key of the forgotten entity
+	using EvictionCallback = void (*)(EntityID ownerEntity, uint64_t worldEntityKey);
+
 	/// Memory component - stores a colonist's knowledge of the world.
 	/// Colonists can only interact with entities they know about.
 	///
@@ -64,6 +70,18 @@ namespace ecs {
 
 		/// Number of capability types (must match AssetRegistry::kCapabilityTypeCount)
 		static constexpr size_t kCapabilityTypeCount = 7;
+
+		// --- Owner & Callbacks ---
+
+		/// Entity ID of the colonist that owns this memory (for eviction callbacks)
+		EntityID owner = 0;
+
+		/// Callback invoked when an entity is evicted from memory (LRU)
+		/// Set globally via setEvictionCallback() - shared by all Memory instances
+		static inline EvictionCallback evictionCallback = nullptr;
+
+		/// Set the global eviction callback (called when any colonist forgets an entity)
+		static void setEvictionCallback(EvictionCallback callback) { evictionCallback = callback; }
 
 		// --- Primary Storage ---
 
@@ -138,11 +156,12 @@ namespace ecs {
 		/// @param position World position of the entity
 		/// @param defNameId Asset definition ID from AssetRegistry::getDefNameId()
 		/// @param capabilityMask Bitmask of capabilities from AssetRegistry::getCapabilityMask()
-		void rememberWorldEntity(const glm::vec2& position, uint32_t defNameId, uint8_t capabilityMask) {
+		/// @return true if this was a NEW discovery, false if already known (just touched LRU)
+		bool rememberWorldEntity(const glm::vec2& position, uint32_t defNameId, uint8_t capabilityMask) {
 			// Skip entities with no capabilities - they're purely decorative (grass, etc.)
 			// and have no gameplay relevance for colonist decision-making
 			if (capabilityMask == 0) {
-				return;
+				return false;
 			}
 
 			uint64_t key = ecs::hashWorldEntity(position, defNameId);
@@ -151,7 +170,7 @@ namespace ecs {
 			auto it = knownWorldEntities.find(key);
 			if (it != knownWorldEntities.end()) {
 				touchLRU(key);
-				return;
+				return false; // Already known
 			}
 
 			// Evict oldest entries if at capacity
@@ -172,6 +191,7 @@ namespace ecs {
 			// Add to LRU list (back = newest)
 			lruOrder.push_back(key);
 			lruMap[key] = std::prev(lruOrder.end());
+			return true; // New discovery
 		}
 
 		/// Add a world entity to memory (string version, converts to ID)
@@ -192,8 +212,15 @@ namespace ecs {
 		}
 
 		/// Forget a world entity (e.g., when it's destroyed)
+		/// Also notifies the eviction callback so task registry can update
 		void forgetWorldEntity(const glm::vec2& position, uint32_t defNameId) {
 			uint64_t key = ecs::hashWorldEntity(position, defNameId);
+
+			// Notify callback before removing (so task registry can clean up)
+			if (evictionCallback != nullptr && owner != 0) {
+				evictionCallback(owner, key);
+			}
+
 			removeEntity(key);
 		}
 
@@ -267,6 +294,12 @@ namespace ecs {
 				return;
 			}
 			uint64_t oldestKey = lruOrder.front();
+
+			// Notify callback before removing (so task registry can clean up)
+			if (evictionCallback != nullptr && owner != 0) {
+				evictionCallback(owner, oldestKey);
+			}
+
 			removeEntity(oldestKey);
 		}
 
