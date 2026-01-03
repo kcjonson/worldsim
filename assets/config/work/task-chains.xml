@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Task Chains Configuration
+  Defines multi-step task sequences where colonists receive priority bonuses
+  for completing the next step (+2000 chain continuation bonus).
+
+  Each step references an action from action-types.xml.
+
+  See /docs/design/game-systems/colonists/task-chains.md for details.
+-->
+<TaskChains>
+  <Chain defName="Chain_PickupDeposit">
+    <label>Haul Item</label>
+    <description>Pick up a loose item and carry it to storage</description>
+    <steps>
+      <Step order="0" action="Pickup" target="source"/>
+      <Step order="1" action="Deposit" target="destination" requiresPreviousStep="true"/>
+    </steps>
+  </Chain>
+
+  <Chain defName="Chain_PlaceItem">
+    <label>Place Item</label>
+    <description>Carry an item to its designated placement location</description>
+    <steps>
+      <Step order="0" action="Pickup" target="item"/>
+      <Step order="1" action="Place" target="placementLocation" requiresPreviousStep="true"/>
+    </steps>
+  </Chain>
+
+  <Chain defName="Chain_Rescue">
+    <label>Rescue</label>
+    <description>Carry an incapacitated colonist to medical care</description>
+    <steps>
+      <Step order="0" action="Pickup" target="patient"/>
+      <Step order="1" action="Deposit" target="medicalBed" requiresPreviousStep="true"/>
+    </steps>
+  </Chain>
+
+  <Chain defName="Chain_CraftWithGather">
+    <label>Craft with Gathering</label>
+    <description>Gather materials, craft item, deposit output</description>
+    <steps>
+      <Step order="0" action="Gather" target="materialSource" optional="true"/>
+      <Step order="1" action="Craft" target="station"/>
+      <Step order="2" action="Deposit" target="outputStorage" optional="true"/>
+    </steps>
+  </Chain>
+</TaskChains>

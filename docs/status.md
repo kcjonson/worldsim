@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2025-01-02 (Added Task Ordering System epic)
+Last Updated: 2025-01-02 (Task Ordering System Phase 1: Config Infrastructure - in progress)
 
 ## Epic/Story/Task Template
 
@@ -520,19 +520,19 @@ The following MVP epics have all been completed. Detailed task breakdowns are pr
 ### Task Ordering System
 **Spec/Documentation:** `/docs/design/game-systems/colonists/task-registry.md`, `.claude/plans/task-ordering-system.md`
 **Dependencies:** ~~Storage and Hauling System~~ (complete)
-**Status:** ready
+**Status:** in progress
 
 **Goal:** Global task prioritization where all colony tasks are computed with numerical priority (int16), each colonist filters/modifies priorities based on skills/preferences, and in-progress/follow-up tasks receive priority bonuses.
 
 **Tasks:**
-- [ ] Phase 1: Config Infrastructure
-  - [ ] Create `assets/config/work/` folder structure
-  - [ ] Implement ActionTypeRegistry (action-types.xml)
-  - [ ] Implement TaskChainRegistry (task-chains.xml)
-  - [ ] Implement WorkTypeRegistry (work-types.xml)
-  - [ ] Implement PriorityConfig (priority-tuning.xml)
-  - [ ] Implement ConfigValidator (fail-fast validation)
-  - [ ] Unit tests for config loading and validation
+- [x] Phase 1: Config Infrastructure
+  - [x] Create `assets/config/work/` folder structure
+  - [x] Implement ActionTypeRegistry (action-types.xml)
+  - [x] Implement TaskChainRegistry (task-chains.xml)
+  - [x] Implement WorkTypeRegistry (work-types.xml)
+  - [x] Implement PriorityConfig (priority-tuning.xml)
+  - [x] Implement ConfigValidator (fail-fast validation)
+  - [x] Unit tests for config loading and validation (19 tests)
 - [ ] Phase 2: Global Task Registry
   - [ ] Create GlobalTask struct (entityId, type, position, reserved, chainId)
   - [ ] Implement GlobalTaskRegistry with memory-sourced tasks

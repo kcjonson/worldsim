@@ -1,0 +1,171 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Work Types Configuration
+  Defines work categories and work types that map capabilities to tasks.
+
+  Work types specify which entity capabilities trigger task generation.
+  For example, any entity with "Harvestable" capability generates a harvest task.
+
+  See /docs/design/game-systems/colonists/work-types-config.md for details.
+-->
+<WorkTypes>
+  <!-- TIER 1: Emergency (cannot disable) -->
+  <Category defName="Emergency" tier="1" canDisable="false">
+    <label>Emergency</label>
+    <description>Urgent actions that cannot be disabled</description>
+
+    <WorkType defName="Work_Rescue">
+      <label>Rescue</label>
+      <description>Carry incapacitated colonists to safety</description>
+      <triggerCapability>Incapacitated</triggerCapability>
+      <taskChain>Chain_Rescue</taskChain>
+    </WorkType>
+
+    <WorkType defName="Work_Firefight">
+      <label>Firefight</label>
+      <description>Extinguish fires</description>
+      <triggerCapability>OnFire</triggerCapability>
+    </WorkType>
+  </Category>
+
+  <!-- TIER 2: Medical -->
+  <Category defName="Medical" tier="2">
+    <label>Medical</label>
+    <description>Healthcare tasks</description>
+
+    <WorkType defName="Work_PatientCare">
+      <label>Patient Care</label>
+      <description>Bring food to bedridden colonists</description>
+      <triggerCapability>Bedridden</triggerCapability>
+    </WorkType>
+
+    <WorkType defName="Work_Doctoring">
+      <label>Doctoring</label>
+      <description>Treat injuries and illnesses</description>
+      <triggerCapability>NeedsTreatment</triggerCapability>
+      <skillRequired>Medicine</skillRequired>
+      <minSkillLevel>1.0</minSkillLevel>
+    </WorkType>
+  </Category>
+
+  <!-- TIER 3: Farming -->
+  <Category defName="Farming" tier="3">
+    <label>Farming</label>
+    <description>Growing and harvesting food</description>
+
+    <WorkType defName="Work_HarvestCrops">
+      <label>Harvest Crops</label>
+      <description>Gather mature crops</description>
+      <triggerCapability>Harvestable</triggerCapability>
+      <filter>
+        <entityGroup>crops</entityGroup>
+      </filter>
+      <skillRequired>Farming</skillRequired>
+    </WorkType>
+
+    <WorkType defName="Work_HarvestWild">
+      <label>Harvest Wild</label>
+      <description>Forage wild plants</description>
+      <triggerCapability>Harvestable</triggerCapability>
+      <filter>
+        <entityGroup>wild_plants</entityGroup>
+      </filter>
+      <!-- No skill required - anyone can forage -->
+    </WorkType>
+  </Category>
+
+  <!-- TIER 4: Crafting -->
+  <Category defName="Crafting" tier="4">
+    <label>Crafting</label>
+    <description>Creating items at workstations</description>
+
+    <WorkType defName="Work_CraftGeneral">
+      <label>Craft</label>
+      <description>Craft items at a crafting station</description>
+      <triggerCapability>Craftable</triggerCapability>
+      <taskChain>Chain_CraftWithGather</taskChain>
+    </WorkType>
+  </Category>
+
+  <!-- TIER 5: Construction -->
+  <Category defName="Construction" tier="5">
+    <label>Construction</label>
+    <description>Building structures</description>
+
+    <WorkType defName="Work_Build">
+      <label>Build</label>
+      <description>Construct new structures</description>
+      <triggerCapability>Constructable</triggerCapability>
+      <skillRequired>Construction</skillRequired>
+    </WorkType>
+
+    <WorkType defName="Work_Deconstruct">
+      <label>Deconstruct</label>
+      <description>Tear down structures</description>
+      <triggerCapability>Deconstructable</triggerCapability>
+      <skillRequired>Construction</skillRequired>
+    </WorkType>
+  </Category>
+
+  <!-- TIER 6: Hauling -->
+  <Category defName="Hauling" tier="6">
+    <label>Hauling</label>
+    <description>Moving items around</description>
+
+    <WorkType defName="Work_HaulToStorage">
+      <label>Haul to Storage</label>
+      <description>Move loose items to storage containers</description>
+      <triggerCapability>Carryable</triggerCapability>
+      <targetCapability>Storage</targetCapability>
+      <filter>
+        <looseItem>true</looseItem>
+      </filter>
+      <taskChain>Chain_PickupDeposit</taskChain>
+    </WorkType>
+
+    <WorkType defName="Work_HaulToWorkbench">
+      <label>Haul to Workbench</label>
+      <description>Deliver materials to crafting stations</description>
+      <triggerCapability>Carryable</triggerCapability>
+      <targetCapability>Craftable</targetCapability>
+      <filter>
+        <neededByRecipe>true</neededByRecipe>
+      </filter>
+      <taskChain>Chain_PickupDeposit</taskChain>
+    </WorkType>
+
+    <WorkType defName="Work_PlaceItem">
+      <label>Place Item</label>
+      <description>Carry items to their designated placement</description>
+      <triggerCapability>Carryable</triggerCapability>
+      <filter>
+        <hasPlacementTarget>true</hasPlacementTarget>
+      </filter>
+      <taskChain>Chain_PlaceItem</taskChain>
+    </WorkType>
+  </Category>
+
+  <!-- TIER 7: Cleaning -->
+  <Category defName="Cleaning" tier="7">
+    <label>Cleaning</label>
+    <description>Tidying up the colony</description>
+
+    <WorkType defName="Work_CleanIndoor">
+      <label>Clean Indoor</label>
+      <description>Clean indoor floors and remove debris</description>
+      <triggerCapability>Cleanable</triggerCapability>
+      <filter>
+        <indoor>true</indoor>
+      </filter>
+    </WorkType>
+
+    <WorkType defName="Work_CleanOutdoor">
+      <label>Clean Outdoor</label>
+      <description>Clear outdoor areas</description>
+      <triggerCapability>Cleanable</triggerCapability>
+      <filter>
+        <indoor>false</indoor>
+      </filter>
+    </WorkType>
+  </Category>
+</WorkTypes>

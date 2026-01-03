@@ -14,6 +14,49 @@ Task priority is calculated using a formula with tunable weights. All weights ar
 
 ---
 
+## Two Priority Concepts
+
+**Important:** There are two distinct priority concepts. Don't confuse them.
+
+### 1. Colonist Work Type Preference (1-9)
+
+Each colonist has a personal preference for each work category:
+
+| Colonist | Farming | Hauling | Crafting |
+|----------|---------|---------|----------|
+| Bob | 2 (prefers) | 7 (avoids) | 5 (neutral) |
+| Alice | 6 | 3 | 2 |
+
+- **Lower number = colonist prefers this work**
+- Set per-colonist in the work priorities UI
+- Maps to Work bands via `UserPriorityMapping` (see below)
+- Affects which *type* of work a colonist gravitates toward
+
+### 2. Goal Priority (Buildings/Entities)
+
+Buildings and entities can be marked with urgency:
+
+- Storage container marked "Urgent" → all haul tasks to it get +bonus
+- Crafting station marked "High" → crafting orders there score higher
+- Construction blueprint marked "Critical" → builds it first
+
+- **Set on the goal (building/entity), not on individual tasks**
+- Affects all tasks that target that goal
+- Players define outcomes ("fill this with stone"), not individual tasks
+
+### How They Combine
+
+```
+taskPriority = colonistWorkTypePreference  // Bob prefers Farming
+             + goalPriority                // This storage is urgent
+             + distanceBonus               // It's nearby
+             + skillBonus                  // Bob is skilled at this
+             + chainBonus                  // Continuing previous step
+             + situationalBonuses          // Perishable, blocking, etc.
+```
+
+---
+
 ## Priority Formula
 
 ### Full Formula (Colonist Selection)
@@ -41,21 +84,22 @@ displayPriority = basePriority - (distance * distancePenaltyMultiplier)
 
 ## Priority Bands (int16)
 
-Tasks are grouped into priority bands. User-configurable priorities (1-9) map into these bands.
+Tasks are grouped into priority bands. Colonist work type preferences (1-9) map into the Work bands.
 
 | Band Name | Base Value | Description |
 |-----------|------------|-------------|
 | Critical | 30000 | Life-threatening (< 10% need) |
-| PlayerDraft | 20000 | Direct player control |
+| PlayerDraft | 20000 | Direct player command to colonist |
 | Needs | 10000 | Actionable needs (below threshold) |
-| WorkHigh | 5000 | User priority 1-3 |
-| WorkMedium | 3000 | User priority 4-6 |
-| WorkLow | 1000 | User priority 7-9 |
+| WorkHigh | 5000 | Colonist preference 1-3 (prefers) |
+| WorkMedium | 3000 | Colonist preference 4-6 (neutral) |
+| WorkLow | 1000 | Colonist preference 7-9 (avoids) |
 | Idle | 0 | Wander (fallback) |
 
-### User Priority Mapping
+### Colonist Work Type Preference Mapping
 
-The UI's 1-9 priority maps into the Work bands:
+Each colonist's 1-9 work type preference maps into the Work bands.
+This is NOT per-task priority — it's the colonist's preference for work categories.
 
 ```
 User Priority 1 → WorkHigh + 800 = 5800
