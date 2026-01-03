@@ -207,4 +207,59 @@ TEST_F(GlobalTaskRegistryTest, StaleReservationsReleased) {
 	EXPECT_FALSE(task->isReserved());
 }
 
+TEST_F(GlobalTaskRegistryTest, OnEntityDestroyedRemovesTask) {
+	auto& registry = GlobalTaskRegistry::Get();
+
+	EntityID colonist1 = 1;
+	EntityID colonist2 = 2;
+	uint64_t worldEntityKey = 12345;
+
+	// Both colonists discover the same entity
+	uint64_t taskId = registry.onEntityDiscovered(colonist1, worldEntityKey, 100, glm::vec2{10.0F, 20.0F}, TaskType::Gather, 0.0F);
+	registry.onEntityDiscovered(colonist2, worldEntityKey, 100, glm::vec2{10.0F, 20.0F}, TaskType::Gather, 0.0F);
+
+	EXPECT_EQ(registry.taskCount(), 1);
+	EXPECT_NE(registry.getTask(taskId), nullptr);
+
+	// Entity is destroyed
+	registry.onEntityDestroyed(worldEntityKey);
+
+	// Task should be completely removed regardless of how many colonists knew about it
+	EXPECT_EQ(registry.taskCount(), 0);
+	EXPECT_EQ(registry.getTask(taskId), nullptr);
+
+	// Both colonists should have no tasks
+	EXPECT_EQ(registry.getTasksFor(colonist1).size(), 0);
+	EXPECT_EQ(registry.getTasksFor(colonist2).size(), 0);
+}
+
+TEST_F(GlobalTaskRegistryTest, GetTasksMatchingWithFilter) {
+	auto& registry = GlobalTaskRegistry::Get();
+
+	EntityID colonist = 1;
+
+	// Create tasks with different types and defNameIds
+	registry.onEntityDiscovered(colonist, 1, 100, glm::vec2{0.0F, 0.0F}, TaskType::Gather, 0.0F);
+	registry.onEntityDiscovered(colonist, 2, 101, glm::vec2{5.0F, 0.0F}, TaskType::Haul, 0.0F);
+	registry.onEntityDiscovered(colonist, 3, 100, glm::vec2{10.0F, 0.0F}, TaskType::Gather, 0.0F);
+	registry.onEntityDiscovered(colonist, 4, 102, glm::vec2{15.0F, 0.0F}, TaskType::Haul, 0.0F);
+
+	EXPECT_EQ(registry.taskCount(), 4);
+
+	// Filter by defNameId
+	auto matchingDefName = registry.getTasksMatching([](const GlobalTask& task) { return task.defNameId == 100; });
+	EXPECT_EQ(matchingDefName.size(), 2);
+
+	// Filter by type and position
+	auto farHaulTasks = registry.getTasksMatching(
+		[](const GlobalTask& task) { return task.type == TaskType::Haul && task.position.x > 10.0F; }
+	);
+	EXPECT_EQ(farHaulTasks.size(), 1);
+	EXPECT_EQ(farHaulTasks[0]->defNameId, 102);
+
+	// Filter that matches nothing
+	auto noMatch = registry.getTasksMatching([](const GlobalTask& task) { return task.defNameId == 999; });
+	EXPECT_EQ(noMatch.size(), 0);
+}
+
 } // namespace ecs
