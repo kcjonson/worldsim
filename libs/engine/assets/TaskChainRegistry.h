@@ -63,7 +63,7 @@ class TaskChainRegistry {
     // --- Storage ---
 
     /// All loaded chains by defName
-    std::unordered_map<std::string, TaskChainDef> m_chains;
+    std::unordered_map<std::string, TaskChainDef> chains;
 };
 
 } // namespace engine::assets

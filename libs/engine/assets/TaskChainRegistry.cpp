@@ -39,43 +39,43 @@ bool TaskChainRegistry::loadFromFile(const std::string& xmlPath) {
     }
 
     if (anyLoaded) {
-        LOG_INFO(Engine, "Loaded %zu task chains from %s", m_chains.size(), xmlPath.c_str());
+        LOG_INFO(Engine, "Loaded %zu task chains from %s", chains.size(), xmlPath.c_str());
     }
 
     return anyLoaded;
 }
 
 void TaskChainRegistry::clear() {
-    m_chains.clear();
+    chains.clear();
 }
 
 const TaskChainDef* TaskChainRegistry::getChain(const std::string& defName) const {
-    auto it = m_chains.find(defName);
-    if (it != m_chains.end()) {
+    auto it = chains.find(defName);
+    if (it != chains.end()) {
         return &it->second;
     }
     return nullptr;
 }
 
 bool TaskChainRegistry::hasChain(const std::string& defName) const {
-    return m_chains.find(defName) != m_chains.end();
+    return chains.find(defName) != chains.end();
 }
 
 std::vector<std::string> TaskChainRegistry::getChainNames() const {
     std::vector<std::string> names;
-    names.reserve(m_chains.size());
-    for (const auto& [name, _] : m_chains) {
+    names.reserve(chains.size());
+    for (const auto& [name, _] : chains) {
         names.push_back(name);
     }
     return names;
 }
 
 const std::unordered_map<std::string, TaskChainDef>& TaskChainRegistry::getAllChains() const {
-    return m_chains;
+    return chains;
 }
 
 size_t TaskChainRegistry::size() const {
-    return m_chains.size();
+    return chains.size();
 }
 
 bool TaskChainRegistry::parseChainFromNode(const void* nodePtr) {
@@ -151,9 +151,9 @@ bool TaskChainRegistry::parseChainFromNode(const void* nodePtr) {
     }
 
     // Store chain
-    auto [it, inserted] = m_chains.emplace(chain.defName, std::move(chain));
+    auto [it, inserted] = chains.emplace(chain.defName, std::move(chain));
     if (!inserted) {
-        LOG_WARNING(Engine, "Duplicate chain defName: %s (ignoring)", chain.defName.c_str());
+        LOG_WARNING(Engine, "Duplicate chain defName: %s (ignoring)", it->first.c_str());
         return false;
     }
 

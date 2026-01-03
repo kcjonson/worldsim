@@ -11,7 +11,7 @@
 
 namespace engine::assets {
 
-std::vector<ValidationError> ConfigValidator::s_errors;
+std::vector<ValidationError> ConfigValidator::errors;
 
 bool ConfigValidator::validateActionTypes() {
     // ActionTypes has no dependencies - just check it's loaded
@@ -136,7 +136,7 @@ bool ConfigValidator::validateAll() {
     }
 
     // Log all errors
-    for (const auto& error : s_errors) {
+    for (const auto& error : errors) {
         LOG_ERROR(Engine, "[%s] %s\n  %s",
                  error.source.c_str(),
                  error.message.c_str(),
@@ -146,27 +146,27 @@ bool ConfigValidator::validateAll() {
     if (valid) {
         LOG_INFO(Engine, "All work configs validated successfully");
     } else {
-        LOG_ERROR(Engine, "Work config validation failed with %zu error(s)", s_errors.size());
+        LOG_ERROR(Engine, "Work config validation failed with %zu error(s)", errors.size());
     }
 
     return valid;
 }
 
 const std::vector<ValidationError>& ConfigValidator::getErrors() {
-    return s_errors;
+    return errors;
 }
 
 size_t ConfigValidator::getErrorCount() {
-    return s_errors.size();
+    return errors.size();
 }
 
 void ConfigValidator::clearErrors() {
-    s_errors.clear();
+    errors.clear();
 }
 
 void ConfigValidator::addError(const std::string& source, const std::string& message,
                               const std::string& context) {
-    s_errors.push_back({source, message, context});
+    errors.push_back({source, message, context});
 }
 
 } // namespace engine::assets

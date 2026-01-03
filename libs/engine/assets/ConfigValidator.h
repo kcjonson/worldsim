@@ -68,7 +68,7 @@ class ConfigValidator {
                         const std::string& context = "");
 
     /// Error storage
-    static std::vector<ValidationError> s_errors;
+    static std::vector<ValidationError> errors;
 };
 
 } // namespace engine::assets

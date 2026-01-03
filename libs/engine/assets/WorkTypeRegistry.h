@@ -100,13 +100,13 @@ class WorkTypeRegistry {
     // --- Storage ---
 
     /// All categories by defName
-    std::unordered_map<std::string, WorkCategoryDef> m_categories;
+    std::unordered_map<std::string, WorkCategoryDef> categories;
 
     /// All work types by defName
-    std::unordered_map<std::string, WorkTypeDef> m_workTypes;
+    std::unordered_map<std::string, WorkTypeDef> workTypes;
 
     /// Work types indexed by trigger capability
-    std::unordered_map<std::string, std::vector<const WorkTypeDef*>> m_byCapability;
+    std::unordered_map<std::string, std::vector<const WorkTypeDef*>> byCapability;
 };
 
 } // namespace engine::assets

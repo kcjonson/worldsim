@@ -68,7 +68,7 @@ class ActionTypeRegistry {
     // --- Storage ---
 
     /// All loaded action types by defName
-    std::unordered_map<std::string, ActionTypeDef> m_actions;
+    std::unordered_map<std::string, ActionTypeDef> actions;
 };
 
 } // namespace engine::assets

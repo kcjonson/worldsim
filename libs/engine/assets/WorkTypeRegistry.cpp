@@ -42,7 +42,7 @@ bool WorkTypeRegistry::loadFromFile(const std::string& xmlPath) {
     if (anyLoaded) {
         buildCapabilityIndex();
         LOG_INFO(Engine, "Loaded %zu work types in %zu categories from %s",
-                m_workTypes.size(), m_categories.size(), xmlPath.c_str());
+                workTypes.size(), categories.size(), xmlPath.c_str());
     }
 
     return anyLoaded;
@@ -56,7 +56,7 @@ size_t WorkTypeRegistry::loadFromFolder(const std::string& folderPath) {
         return 0;
     }
 
-    size_t loadedBefore = m_workTypes.size();
+    size_t loadedBefore = workTypes.size();
 
     try {
         for (const auto& entry : fs::recursive_directory_iterator(folderPath)) {
@@ -75,31 +75,31 @@ size_t WorkTypeRegistry::loadFromFolder(const std::string& folderPath) {
     }
 
     buildCapabilityIndex();
-    return m_workTypes.size() - loadedBefore;
+    return workTypes.size() - loadedBefore;
 }
 
 void WorkTypeRegistry::clear() {
-    m_categories.clear();
-    m_workTypes.clear();
-    m_byCapability.clear();
+    categories.clear();
+    workTypes.clear();
+    byCapability.clear();
 }
 
 const WorkCategoryDef* WorkTypeRegistry::getCategory(const std::string& defName) const {
-    auto it = m_categories.find(defName);
-    if (it != m_categories.end()) {
+    auto it = categories.find(defName);
+    if (it != categories.end()) {
         return &it->second;
     }
     return nullptr;
 }
 
 bool WorkTypeRegistry::hasCategory(const std::string& defName) const {
-    return m_categories.find(defName) != m_categories.end();
+    return categories.find(defName) != categories.end();
 }
 
 std::vector<const WorkCategoryDef*> WorkTypeRegistry::getAllCategories() const {
     std::vector<const WorkCategoryDef*> result;
-    result.reserve(m_categories.size());
-    for (const auto& [_, cat] : m_categories) {
+    result.reserve(categories.size());
+    for (const auto& [_, cat] : categories) {
         result.push_back(&cat);
     }
     // Sort by tier (ascending = highest priority first)
@@ -112,30 +112,30 @@ std::vector<const WorkCategoryDef*> WorkTypeRegistry::getAllCategories() const {
 
 std::vector<std::string> WorkTypeRegistry::getCategoryNames() const {
     std::vector<std::string> names;
-    names.reserve(m_categories.size());
-    for (const auto& [name, _] : m_categories) {
+    names.reserve(categories.size());
+    for (const auto& [name, _] : categories) {
         names.push_back(name);
     }
     return names;
 }
 
 const WorkTypeDef* WorkTypeRegistry::getWorkType(const std::string& defName) const {
-    auto it = m_workTypes.find(defName);
-    if (it != m_workTypes.end()) {
+    auto it = workTypes.find(defName);
+    if (it != workTypes.end()) {
         return &it->second;
     }
     return nullptr;
 }
 
 bool WorkTypeRegistry::hasWorkType(const std::string& defName) const {
-    return m_workTypes.find(defName) != m_workTypes.end();
+    return workTypes.find(defName) != workTypes.end();
 }
 
 std::vector<const WorkTypeDef*> WorkTypeRegistry::getWorkTypesInCategory(
     const std::string& categoryDefName) const {
     std::vector<const WorkTypeDef*> result;
-    auto catIt = m_categories.find(categoryDefName);
-    if (catIt == m_categories.end()) {
+    auto catIt = categories.find(categoryDefName);
+    if (catIt == categories.end()) {
         return result;
     }
 
@@ -149,8 +149,8 @@ std::vector<const WorkTypeDef*> WorkTypeRegistry::getWorkTypesInCategory(
 
 std::vector<const WorkTypeDef*> WorkTypeRegistry::getWorkTypesForCapability(
     const std::string& capabilityName) const {
-    auto it = m_byCapability.find(capabilityName);
-    if (it != m_byCapability.end()) {
+    auto it = byCapability.find(capabilityName);
+    if (it != byCapability.end()) {
         return it->second;
     }
     return {};
@@ -158,19 +158,19 @@ std::vector<const WorkTypeDef*> WorkTypeRegistry::getWorkTypesForCapability(
 
 std::vector<std::string> WorkTypeRegistry::getWorkTypeNames() const {
     std::vector<std::string> names;
-    names.reserve(m_workTypes.size());
-    for (const auto& [name, _] : m_workTypes) {
+    names.reserve(workTypes.size());
+    for (const auto& [name, _] : workTypes) {
         names.push_back(name);
     }
     return names;
 }
 
 size_t WorkTypeRegistry::categoryCount() const {
-    return m_categories.size();
+    return categories.size();
 }
 
 size_t WorkTypeRegistry::workTypeCount() const {
-    return m_workTypes.size();
+    return workTypes.size();
 }
 
 bool WorkTypeRegistry::parseCategoryFromNode(const void* nodePtr) {
@@ -211,10 +211,10 @@ bool WorkTypeRegistry::parseCategoryFromNode(const void* nodePtr) {
 
     // Store category first (need it for work type parsing)
     std::string categoryDefName = category.defName;
-    auto [catIt, catInserted] = m_categories.emplace(categoryDefName, std::move(category));
+    auto [catIt, catInserted] = categories.emplace(categoryDefName, std::move(category));
     if (!catInserted) {
         // Category already exists (from another file) - merge work types into it
-        catIt = m_categories.find(categoryDefName);
+        catIt = categories.find(categoryDefName);
     }
 
     // Parse work types
@@ -293,15 +293,15 @@ bool WorkTypeRegistry::parseWorkTypeFromNode(const void* nodePtr, const std::str
     }
 
     // Store work type
-    auto [it, inserted] = m_workTypes.emplace(workType.defName, std::move(workType));
+    auto [it, inserted] = workTypes.emplace(workType.defName, std::move(workType));
     if (!inserted) {
-        LOG_WARNING(Engine, "Duplicate work type defName: %s (ignoring)", workType.defName.c_str());
+        LOG_WARNING(Engine, "Duplicate work type defName: %s (ignoring)", it->first.c_str());
         return false;
     }
 
     // Add to category's work type list
-    auto catIt = m_categories.find(categoryDefName);
-    if (catIt != m_categories.end()) {
+    auto catIt = categories.find(categoryDefName);
+    if (catIt != categories.end()) {
         catIt->second.workTypeDefNames.push_back(it->first);
     }
 
@@ -348,11 +348,11 @@ WorkTypeFilter WorkTypeRegistry::parseFilter(const void* nodePtr) {
 }
 
 void WorkTypeRegistry::buildCapabilityIndex() {
-    m_byCapability.clear();
+    byCapability.clear();
 
-    for (const auto& [_, workType] : m_workTypes) {
+    for (const auto& [_, workType] : workTypes) {
         if (!workType.triggerCapability.empty()) {
-            m_byCapability[workType.triggerCapability].push_back(&workType);
+            byCapability[workType.triggerCapability].push_back(&workType);
         }
     }
 }

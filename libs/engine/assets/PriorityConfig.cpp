@@ -20,13 +20,13 @@ namespace engine::assets {
 
 	PriorityConfig::PriorityConfig() {
 		// Initialize default bands
-		m_bands["Critical"] = 30000;
-		m_bands["PlayerDraft"] = 20000;
-		m_bands["Needs"] = 10000;
-		m_bands["WorkHigh"] = 5000;
-		m_bands["WorkMedium"] = 3000;
-		m_bands["WorkLow"] = 1000;
-		m_bands["Idle"] = 0;
+		bands["Critical"] = 30000;
+		bands["PlayerDraft"] = 20000;
+		bands["Needs"] = 10000;
+		bands["WorkHigh"] = 5000;
+		bands["WorkMedium"] = 3000;
+		bands["WorkLow"] = 1000;
+		bands["Idle"] = 0;
 	}
 
 	bool PriorityConfig::loadFromFile(const std::string& xmlPath) {
@@ -51,7 +51,7 @@ namespace engine::assets {
 
 		if (auto userPriorityNode = root.child("UserPriorityMapping")) {
 			if (auto stepNode = userPriorityNode.child("stepSize")) {
-				m_userPriorityStep = static_cast<int16_t>(stepNode.text().as_int(100));
+				userPriorityStep = static_cast<int16_t>(stepNode.text().as_int(100));
 			}
 		}
 
@@ -76,30 +76,30 @@ namespace engine::assets {
 	}
 
 	void PriorityConfig::clear() {
-		m_bands.clear();
-		m_bands["Critical"] = 30000;
-		m_bands["PlayerDraft"] = 20000;
-		m_bands["Needs"] = 10000;
-		m_bands["WorkHigh"] = 5000;
-		m_bands["WorkMedium"] = 3000;
-		m_bands["WorkLow"] = 1000;
-		m_bands["Idle"] = 0;
+		bands.clear();
+		bands["Critical"] = 30000;
+		bands["PlayerDraft"] = 20000;
+		bands["Needs"] = 10000;
+		bands["WorkHigh"] = 5000;
+		bands["WorkMedium"] = 3000;
+		bands["WorkLow"] = 1000;
+		bands["Idle"] = 0;
 
-		m_userPriorityStep = 100;
-		m_distance = DistanceBonusConfig{};
-		m_skill = SkillBonusConfig{};
-		m_chain = ChainBonusConfig{};
-		m_inProgress = InProgressBonusConfig{};
-		m_taskAge = TaskAgeBonusConfig{};
-		m_hauling = HaulingTuningConfig{};
-		m_timing = TimingConfig{};
-		m_categoryOrder.clear();
-		m_categoryTiers.clear();
+		userPriorityStep = 100;
+		distanceConfig = DistanceBonusConfig{};
+		skillConfig = SkillBonusConfig{};
+		chainConfig = ChainBonusConfig{};
+		inProgressConfig = InProgressBonusConfig{};
+		taskAgeConfig = TaskAgeBonusConfig{};
+		haulingConfig = HaulingTuningConfig{};
+		timingConfig = TimingConfig{};
+		categoryOrder.clear();
+		categoryTiers.clear();
 	}
 
 	int16_t PriorityConfig::getBandBase(const std::string& bandName) const {
-		auto it = m_bands.find(bandName);
-		if (it != m_bands.end()) {
+		auto it = bands.find(bandName);
+		if (it != bands.end()) {
 			return it->second;
 		}
 		return 0;
@@ -118,58 +118,58 @@ namespace engine::assets {
 
 		if (userPriority <= 3) {
 			bandBase = getBandBase("WorkHigh");
-			offset = static_cast<int16_t>((4 - userPriority) * m_userPriorityStep);
+			offset = static_cast<int16_t>((4 - userPriority) * userPriorityStep);
 		} else if (userPriority <= 6) {
 			bandBase = getBandBase("WorkMedium");
-			offset = static_cast<int16_t>((7 - userPriority) * m_userPriorityStep);
+			offset = static_cast<int16_t>((7 - userPriority) * userPriorityStep);
 		} else {
 			bandBase = getBandBase("WorkLow");
-			offset = static_cast<int16_t>((10 - userPriority) * m_userPriorityStep);
+			offset = static_cast<int16_t>((10 - userPriority) * userPriorityStep);
 		}
 
 		return bandBase + offset;
 	}
 
 	int16_t PriorityConfig::calculateDistanceBonus(float distance) const {
-		if (distance <= m_distance.optimalDistance) {
-			return m_distance.maxBonus;
+		if (distance <= distanceConfig.optimalDistance) {
+			return distanceConfig.maxBonus;
 		}
 
-		if (distance >= m_distance.maxPenaltyDistance) {
-			return -m_distance.maxPenalty;
+		if (distance >= distanceConfig.maxPenaltyDistance) {
+			return -distanceConfig.maxPenalty;
 		}
 
 		// Linear interpolation
-		float range = m_distance.maxPenaltyDistance - m_distance.optimalDistance;
-		float normalized = (distance - m_distance.optimalDistance) / range;
+		float range = distanceConfig.maxPenaltyDistance - distanceConfig.optimalDistance;
+		float normalized = (distance - distanceConfig.optimalDistance) / range;
 		float bonus =
-			static_cast<float>(m_distance.maxBonus) - normalized * static_cast<float>(m_distance.maxBonus + m_distance.maxPenalty);
+			static_cast<float>(distanceConfig.maxBonus) - normalized * static_cast<float>(distanceConfig.maxBonus + distanceConfig.maxPenalty);
 
 		return static_cast<int16_t>(std::round(bonus));
 	}
 
 	int16_t PriorityConfig::calculateSkillBonus(float skillLevel) const {
-		int16_t bonus = static_cast<int16_t>(skillLevel * static_cast<float>(m_skill.multiplier));
-		return std::min(bonus, m_skill.maxBonus);
+		int16_t bonus = static_cast<int16_t>(skillLevel * static_cast<float>(skillConfig.multiplier));
+		return std::min(bonus, skillConfig.maxBonus);
 	}
 
 	int16_t PriorityConfig::getChainBonus() const {
-		return m_chain.bonus;
+		return chainConfig.bonus;
 	}
 
 	int16_t PriorityConfig::getInProgressBonus() const {
-		return m_inProgress.bonus;
+		return inProgressConfig.bonus;
 	}
 
 	int16_t PriorityConfig::calculateTaskAgeBonus(float taskAge) const {
 		float	minutes = taskAge / 60.0F;
-		int16_t bonus = static_cast<int16_t>(minutes * static_cast<float>(m_taskAge.bonusPerMinute));
-		return std::min(bonus, m_taskAge.maxBonus);
+		int16_t bonus = static_cast<int16_t>(minutes * static_cast<float>(taskAgeConfig.bonusPerMinute));
+		return std::min(bonus, taskAgeConfig.maxBonus);
 	}
 
 	float PriorityConfig::getCategoryTier(const std::string& categoryName) const {
-		auto it = m_categoryTiers.find(categoryName);
-		if (it != m_categoryTiers.end()) {
+		auto it = categoryTiers.find(categoryName);
+		if (it != categoryTiers.end()) {
 			return it->second;
 		}
 		return 999.0F; // Unknown categories go last
@@ -183,7 +183,7 @@ namespace engine::assets {
 			int16_t		base = static_cast<int16_t>(bandNode.attribute("base").as_int(0));
 
 			if (!name.empty()) {
-				m_bands[name] = base;
+				bands[name] = base;
 				LOG_DEBUG(Engine, "Priority band: %s = %d", name.c_str(), base);
 			}
 		}
@@ -195,50 +195,50 @@ namespace engine::assets {
 		// Distance
 		if (auto distNode = node.child("Distance")) {
 			if (auto n = distNode.child("optimalDistance")) {
-				m_distance.optimalDistance = n.text().as_float(5.0F);
+				distanceConfig.optimalDistance = n.text().as_float(5.0F);
 			}
 			if (auto n = distNode.child("maxPenaltyDistance")) {
-				m_distance.maxPenaltyDistance = n.text().as_float(50.0F);
+				distanceConfig.maxPenaltyDistance = n.text().as_float(50.0F);
 			}
 			if (auto n = distNode.child("maxBonus")) {
-				m_distance.maxBonus = static_cast<int16_t>(n.text().as_int(50));
+				distanceConfig.maxBonus = static_cast<int16_t>(n.text().as_int(50));
 			}
 			if (auto n = distNode.child("maxPenalty")) {
-				m_distance.maxPenalty = static_cast<int16_t>(n.text().as_int(50));
+				distanceConfig.maxPenalty = static_cast<int16_t>(n.text().as_int(50));
 			}
 		}
 
 		// Skill
 		if (auto skillNode = node.child("Skill")) {
 			if (auto n = skillNode.child("multiplier")) {
-				m_skill.multiplier = static_cast<int16_t>(n.text().as_int(10));
+				skillConfig.multiplier = static_cast<int16_t>(n.text().as_int(10));
 			}
 			if (auto n = skillNode.child("maxBonus")) {
-				m_skill.maxBonus = static_cast<int16_t>(n.text().as_int(100));
+				skillConfig.maxBonus = static_cast<int16_t>(n.text().as_int(100));
 			}
 		}
 
 		// Chain continuation
 		if (auto chainNode = node.child("ChainContinuation")) {
 			if (auto n = chainNode.child("bonus")) {
-				m_chain.bonus = static_cast<int16_t>(n.text().as_int(2000));
+				chainConfig.bonus = static_cast<int16_t>(n.text().as_int(2000));
 			}
 		}
 
 		// In-progress
 		if (auto ipNode = node.child("InProgress")) {
 			if (auto n = ipNode.child("bonus")) {
-				m_inProgress.bonus = static_cast<int16_t>(n.text().as_int(200));
+				inProgressConfig.bonus = static_cast<int16_t>(n.text().as_int(200));
 			}
 		}
 
 		// Task age
 		if (auto ageNode = node.child("TaskAge")) {
 			if (auto n = ageNode.child("bonusPerMinute")) {
-				m_taskAge.bonusPerMinute = static_cast<int16_t>(n.text().as_int(1));
+				taskAgeConfig.bonusPerMinute = static_cast<int16_t>(n.text().as_int(1));
 			}
 			if (auto n = ageNode.child("maxBonus")) {
-				m_taskAge.maxBonus = static_cast<int16_t>(n.text().as_int(100));
+				taskAgeConfig.maxBonus = static_cast<int16_t>(n.text().as_int(100));
 			}
 		}
 	}
@@ -247,13 +247,13 @@ namespace engine::assets {
 		const pugi::xml_node& node = *static_cast<const pugi::xml_node*>(nodePtr);
 
 		if (auto n = node.child("taskSwitchThreshold")) {
-			m_timing.taskSwitchThreshold = static_cast<int16_t>(n.text().as_int(50));
+			timingConfig.taskSwitchThreshold = static_cast<int16_t>(n.text().as_int(50));
 		}
 		if (auto n = node.child("reEvalInterval")) {
-			m_timing.reEvalInterval = n.text().as_float(0.5F);
+			timingConfig.reEvalInterval = n.text().as_float(0.5F);
 		}
 		if (auto n = node.child("reservationTimeout")) {
-			m_timing.reservationTimeout = n.text().as_float(10.0F);
+			timingConfig.reservationTimeout = n.text().as_float(10.0F);
 		}
 	}
 
@@ -261,25 +261,25 @@ namespace engine::assets {
 		const pugi::xml_node& node = *static_cast<const pugi::xml_node*>(nodePtr);
 
 		if (auto n = node.child("storageCriticalThreshold")) {
-			m_hauling.storageCriticalThreshold = n.text().as_float(0.2F);
+			haulingConfig.storageCriticalThreshold = n.text().as_float(0.2F);
 		}
 		if (auto n = node.child("storageCriticalBonus")) {
-			m_hauling.storageCriticalBonus = static_cast<int16_t>(n.text().as_int(500));
+			haulingConfig.storageCriticalBonus = static_cast<int16_t>(n.text().as_int(500));
 		}
 		if (auto n = node.child("blockingConstructionBonus")) {
-			m_hauling.blockingConstructionBonus = static_cast<int16_t>(n.text().as_int(1000));
+			haulingConfig.blockingConstructionBonus = static_cast<int16_t>(n.text().as_int(1000));
 		}
 		if (auto n = node.child("perishableSpoilThreshold")) {
-			m_hauling.perishableSpoilThreshold = n.text().as_float(60.0F);
+			haulingConfig.perishableSpoilThreshold = n.text().as_float(60.0F);
 		}
 		if (auto n = node.child("perishableBonus")) {
-			m_hauling.perishableBonus = static_cast<int16_t>(n.text().as_int(800));
+			haulingConfig.perishableBonus = static_cast<int16_t>(n.text().as_int(800));
 		}
 		if (auto n = node.child("batchRadius")) {
-			m_hauling.batchRadius = n.text().as_float(8.0F);
+			haulingConfig.batchRadius = n.text().as_float(8.0F);
 		}
 		if (auto n = node.child("maxBatchSize")) {
-			m_hauling.maxBatchSize = static_cast<int16_t>(n.text().as_int(5));
+			haulingConfig.maxBatchSize = static_cast<int16_t>(n.text().as_int(5));
 		}
 	}
 
@@ -298,16 +298,16 @@ namespace engine::assets {
 
 			if (!name.empty()) {
 				categories.push_back({name, tier});
-				m_categoryTiers[name] = tier;
+				categoryTiers[name] = tier;
 			}
 		}
 
 		// Sort by tier
 		std::sort(categories.begin(), categories.end(), [](const CategoryTier& a, const CategoryTier& b) { return a.tier < b.tier; });
 
-		m_categoryOrder.clear();
+		categoryOrder.clear();
 		for (const auto& cat : categories) {
-			m_categoryOrder.push_back(cat.name);
+			categoryOrder.push_back(cat.name);
 		}
 	}
 

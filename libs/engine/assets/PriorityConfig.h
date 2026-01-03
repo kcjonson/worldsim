@@ -135,24 +135,24 @@ namespace engine::assets {
 
 		// --- Config Getters ---
 
-		[[nodiscard]] const DistanceBonusConfig&   getDistanceConfig() const { return m_distance; }
-		[[nodiscard]] const SkillBonusConfig&	   getSkillConfig() const { return m_skill; }
-		[[nodiscard]] const ChainBonusConfig&	   getChainConfig() const { return m_chain; }
-		[[nodiscard]] const InProgressBonusConfig& getInProgressConfig() const { return m_inProgress; }
-		[[nodiscard]] const TaskAgeBonusConfig&	   getTaskAgeConfig() const { return m_taskAge; }
-		[[nodiscard]] const HaulingTuningConfig&   getHaulingConfig() const { return m_hauling; }
-		[[nodiscard]] const TimingConfig&		   getTimingConfig() const { return m_timing; }
+		[[nodiscard]] const DistanceBonusConfig&   getDistanceConfig() const { return distanceConfig; }
+		[[nodiscard]] const SkillBonusConfig&	   getSkillConfig() const { return skillConfig; }
+		[[nodiscard]] const ChainBonusConfig&	   getChainConfig() const { return chainConfig; }
+		[[nodiscard]] const InProgressBonusConfig& getInProgressConfig() const { return inProgressConfig; }
+		[[nodiscard]] const TaskAgeBonusConfig&	   getTaskAgeConfig() const { return taskAgeConfig; }
+		[[nodiscard]] const HaulingTuningConfig&   getHaulingConfig() const { return haulingConfig; }
+		[[nodiscard]] const TimingConfig&		   getTimingConfig() const { return timingConfig; }
 
 		// --- Thresholds ---
 
-		[[nodiscard]] int16_t getTaskSwitchThreshold() const { return m_timing.taskSwitchThreshold; }
-		[[nodiscard]] float	  getReEvalInterval() const { return m_timing.reEvalInterval; }
-		[[nodiscard]] float	  getReservationTimeout() const { return m_timing.reservationTimeout; }
+		[[nodiscard]] int16_t getTaskSwitchThreshold() const { return timingConfig.taskSwitchThreshold; }
+		[[nodiscard]] float	  getReEvalInterval() const { return timingConfig.reEvalInterval; }
+		[[nodiscard]] float	  getReservationTimeout() const { return timingConfig.reservationTimeout; }
 
 		// --- Work Category Order ---
 
 		/// Get all category names sorted by tier order
-		[[nodiscard]] const std::vector<std::string>& getCategoryOrder() const { return m_categoryOrder; }
+		[[nodiscard]] const std::vector<std::string>& getCategoryOrder() const { return categoryOrder; }
 
 		/// Get tier for a category (or 999 if not found)
 		[[nodiscard]] float getCategoryTier(const std::string& categoryName) const;
@@ -178,23 +178,23 @@ namespace engine::assets {
 		// --- Storage ---
 
 		/// Priority bands by name
-		std::unordered_map<std::string, int16_t> m_bands;
+		std::unordered_map<std::string, int16_t> bands;
 
 		/// User priority step size
-		int16_t m_userPriorityStep = 100;
+		int16_t userPriorityStep = 100;
 
 		/// Bonus configs
-		DistanceBonusConfig	  m_distance;
-		SkillBonusConfig	  m_skill;
-		ChainBonusConfig	  m_chain;
-		InProgressBonusConfig m_inProgress;
-		TaskAgeBonusConfig	  m_taskAge;
-		HaulingTuningConfig	  m_hauling;
-		TimingConfig		  m_timing;
+		DistanceBonusConfig	  distanceConfig;
+		SkillBonusConfig	  skillConfig;
+		ChainBonusConfig	  chainConfig;
+		InProgressBonusConfig inProgressConfig;
+		TaskAgeBonusConfig	  taskAgeConfig;
+		HaulingTuningConfig	  haulingConfig;
+		TimingConfig		  timingConfig;
 
 		/// Work category order (sorted by tier)
-		std::vector<std::string>			   m_categoryOrder;
-		std::unordered_map<std::string, float> m_categoryTiers;
+		std::vector<std::string>			   categoryOrder;
+		std::unordered_map<std::string, float> categoryTiers;
 	};
 
 } // namespace engine::assets
