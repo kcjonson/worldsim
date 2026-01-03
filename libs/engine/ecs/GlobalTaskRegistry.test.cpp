@@ -233,6 +233,38 @@ TEST_F(GlobalTaskRegistryTest, OnEntityDestroyedRemovesTask) {
 	EXPECT_EQ(registry.getTasksFor(colonist2).size(), 0);
 }
 
+TEST_F(GlobalTaskRegistryTest, ForgettingReleasesReservation) {
+	auto& registry = GlobalTaskRegistry::Get();
+
+	EntityID colonist1 = 1;
+	EntityID colonist2 = 2;
+	uint64_t worldEntityKey = 12345;
+
+	// Both colonists discover the entity
+	uint64_t taskId = registry.onEntityDiscovered(colonist1, worldEntityKey, 100, glm::vec2{10.0F, 20.0F}, TaskType::Gather, 0.0F);
+	registry.onEntityDiscovered(colonist2, worldEntityKey, 100, glm::vec2{10.0F, 20.0F}, TaskType::Gather, 0.0F);
+
+	// Colonist1 reserves the task
+	EXPECT_TRUE(registry.reserve(taskId, colonist1, 0.0F));
+
+	const auto* task = registry.getTask(taskId);
+	EXPECT_TRUE(task->isReservedBy(colonist1));
+
+	// Colonist1 forgets the entity - reservation should be released
+	registry.onEntityForgotten(colonist1, worldEntityKey);
+
+	// Task should still exist (colonist2 knows)
+	EXPECT_EQ(registry.taskCount(), 1);
+
+	// But reservation should be released
+	task = registry.getTask(taskId);
+	ASSERT_NE(task, nullptr);
+	EXPECT_FALSE(task->isReserved());
+
+	// Colonist2 should now be able to reserve
+	EXPECT_TRUE(registry.reserve(taskId, colonist2, 1.0F));
+}
+
 TEST_F(GlobalTaskRegistryTest, GetTasksMatchingWithFilter) {
 	auto& registry = GlobalTaskRegistry::Get();
 
