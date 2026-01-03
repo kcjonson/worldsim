@@ -49,6 +49,7 @@
 #include <ecs/components/Movement.h>
 #include <ecs/components/Needs.h>
 #include <ecs/components/Packaged.h>
+#include <ecs/components/Skills.h>
 #include <ecs/components/Task.h>
 #include <ecs/components/Transform.h>
 #include <ecs/components/WorkQueue.h>
@@ -548,6 +549,15 @@ namespace {
 			ecsWorld->addComponent<ecs::Task>(entity, ecs::Task{});
 			ecsWorld->addComponent<ecs::DecisionTrace>(entity, ecs::DecisionTrace{});
 			ecsWorld->addComponent<ecs::Action>(entity, ecs::Action{});
+
+			// Add skills with default starting values
+			// Skills range 0-20 (see SkillLevels in Skills.h)
+			ecs::Skills skills;
+			skills.setLevel("Farming", 3.0F);	   // Novice farmer
+			skills.setLevel("Crafting", 2.0F);	   // Novice crafter
+			skills.setLevel("Construction", 1.0F); // Barely trained builder
+			// Medicine: 0 (untrained) - omitted from map
+			ecsWorld->addComponent<ecs::Skills>(entity, std::move(skills));
 
 			LOG_INFO(Game, "Spawned colonist '%s' at (%.1f, %.1f)", newName.c_str(), newPosition.x, newPosition.y);
 			return entity;
