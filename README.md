@@ -11,6 +11,15 @@ A C++20 game project featuring 3D procedural world generation and 2D tile-based 
 - Testable UI framework with inspection capabilities
 - Custom Entity Component System (ECS)
 
+## Project Stats
+
+**Codebase Size** (as of 2026-01-03):
+- **~72,000 lines** of source code (C++, CMake, shaders, scripts)
+- **398 C++ files** (.cpp, .h, .hpp)
+- **~61,000 lines** of documentation (markdown)
+
+To generate current stats, run: `./scripts/count-loc.sh`
+
 ## Prerequisites
 
 - **C++20 compiler** (Clang, GCC, or MSVC)
