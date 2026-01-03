@@ -97,7 +97,7 @@ void initializeWorldSystems() {
     updateStatusText("Loading configuration...");
     if (!loadWorkConfigs()) {
         // Error already logged, transition to error state
-        m_phase = LoadingPhase::ConfigError;
+        phase = LoadingPhase::ConfigError;
         return;
     }
 
@@ -164,7 +164,7 @@ enum class LoadingPhase {
 };
 
 void update(float dt) override {
-    switch (m_phase) {
+    switch (phase) {
         case LoadingPhase::ConfigError:
             handleConfigError();
             break;

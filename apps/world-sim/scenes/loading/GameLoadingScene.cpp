@@ -395,19 +395,10 @@ namespace {
 
 		/// Handle config error state - show error and wait for ESC
 		void handleConfigError() {
-			// Only log errors once
+			// Only update UI once (errors are already logged by ConfigValidator::validateAll)
 			if (!configErrorLogged) {
 				configErrorLogged = true;
-
 				updateStatusText("Configuration Error - Press ESC to return to menu");
-
-				// Log detailed error info
-				for (const auto& error : engine::assets::ConfigValidator::getErrors()) {
-					LOG_ERROR(Game, "[%s] %s", error.source.c_str(), error.message.c_str());
-					if (!error.context.empty()) {
-						LOG_ERROR(Game, "  %s", error.context.c_str());
-					}
-				}
 			}
 			// ESC handling is done in update() before the switch
 		}
