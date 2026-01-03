@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2025-01-02 (Task Ordering System Phase 1: Config Infrastructure - in progress)
+Last Updated: 2025-01-03 (Task Ordering System Phase 1.5: Config Loading Integration - complete)
 
 ## Epic/Story/Task Template
 
@@ -533,6 +533,12 @@ The following MVP epics have all been completed. Detailed task breakdowns are pr
   - [x] Implement PriorityConfig (priority-tuning.xml)
   - [x] Implement ConfigValidator (fail-fast validation)
   - [x] Unit tests for config loading and validation (19 tests)
+- [x] Phase 1.5: Config Loading Integration
+  - [x] Add loadWorkConfigs() to GameLoadingScene::initializeWorldSystems()
+  - [x] Add ConfigError loading phase with error display
+  - [x] Update status text ("Loading configuration...")
+  - [x] Test reload cycle (menu → game → menu → game)
+  - [x] Refactor GameLoadingScene.cpp to remove m_ prefixes (coding standards)
 - [ ] Phase 2: Global Task Registry
   - [ ] Create GlobalTask struct (entityId, type, position, reserved, chainId)
   - [ ] Implement GlobalTaskRegistry with memory-sourced tasks
@@ -564,6 +570,7 @@ The following MVP epics have all been completed. Detailed task breakdowns are pr
 - [Work Types Config](./design/game-systems/colonists/work-types-config.md) — Work type definitions
 - [Task Chains](./design/game-systems/colonists/task-chains.md) — Multi-step tasks
 - [Task Generation Architecture](./technical/task-generation-architecture.md) — Technical deep-dive
+- [Config Loading](./technical/config-loading.md) — When/how configs load (mod support)
 
 ---
 
