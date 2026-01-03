@@ -187,19 +187,21 @@ namespace ecs {
 						}
 						uint8_t capabilityMask = registry.getCapabilityMask(defNameId);
 
-						// Remember in colonist's memory
-						memory.rememberWorldEntity(placedEntity->position, defNameId, capabilityMask);
+						// Remember in colonist's memory (returns true only for NEW discoveries)
+						bool isNewDiscovery = memory.rememberWorldEntity(placedEntity->position, defNameId, capabilityMask);
 
-						// Notify task registry for work-related entities
-						uint64_t worldEntityKey = hashWorldEntity(placedEntity->position, defNameId);
-						notifyTaskRegistry(entity, worldEntityKey, defNameId, capabilityMask, placedEntity->position, 0.0F);
+						// Only notify task registry for NEW discoveries (performance critical!)
+						if (isNewDiscovery) {
+							uint64_t worldEntityKey = hashWorldEntity(placedEntity->position, defNameId);
+							notifyTaskRegistry(entity, worldEntityKey, defNameId, capabilityMask, placedEntity->position, 0.0F);
 
-						// Update permanent knowledge if Knowledge component exists
-						if (knowledge != nullptr && knowledge->learn(defNameId)) {
-							// New discovery - check for recipe unlocks
-							std::string unlockedRecipe = checkForRecipeUnlock(*knowledge, defNameId, registry, recipeRegistry);
-							if (!unlockedRecipe.empty() && m_onRecipeDiscovery) {
-								m_onRecipeDiscovery(unlockedRecipe);
+							// Update permanent knowledge if Knowledge component exists
+							if (knowledge != nullptr && knowledge->learn(defNameId)) {
+								// New discovery - check for recipe unlocks
+								std::string unlockedRecipe = checkForRecipeUnlock(*knowledge, defNameId, registry, recipeRegistry);
+								if (!unlockedRecipe.empty() && m_onRecipeDiscovery) {
+									m_onRecipeDiscovery(unlockedRecipe);
+								}
 							}
 						}
 					}
@@ -222,18 +224,22 @@ namespace ecs {
 					uint32_t defNameId = registry.getDefNameId(appearance.defName);
 					if (defNameId != 0) {
 						uint8_t capabilityMask = registry.getCapabilityMask(defNameId);
-						memory.rememberWorldEntity(otherPos.value, defNameId, capabilityMask);
 
-						// Notify task registry for work-related entities
-						uint64_t worldEntityKey = hashWorldEntity(otherPos.value, defNameId);
-						notifyTaskRegistry(entity, worldEntityKey, defNameId, capabilityMask, otherPos.value, 0.0F);
+						// Remember in colonist's memory (returns true only for NEW discoveries)
+						bool isNewDiscovery = memory.rememberWorldEntity(otherPos.value, defNameId, capabilityMask);
 
-						// Update permanent knowledge if Knowledge component exists
-						if (knowledge != nullptr && knowledge->learn(defNameId)) {
-							// New discovery - check for recipe unlocks
-							std::string unlockedRecipe = checkForRecipeUnlock(*knowledge, defNameId, registry, recipeRegistry);
-							if (!unlockedRecipe.empty() && m_onRecipeDiscovery) {
-								m_onRecipeDiscovery(unlockedRecipe);
+						// Only notify task registry for NEW discoveries (performance critical!)
+						if (isNewDiscovery) {
+							uint64_t worldEntityKey = hashWorldEntity(otherPos.value, defNameId);
+							notifyTaskRegistry(entity, worldEntityKey, defNameId, capabilityMask, otherPos.value, 0.0F);
+
+							// Update permanent knowledge if Knowledge component exists
+							if (knowledge != nullptr && knowledge->learn(defNameId)) {
+								// New discovery - check for recipe unlocks
+								std::string unlockedRecipe = checkForRecipeUnlock(*knowledge, defNameId, registry, recipeRegistry);
+								if (!unlockedRecipe.empty() && m_onRecipeDiscovery) {
+									m_onRecipeDiscovery(unlockedRecipe);
+								}
 							}
 						}
 					}
