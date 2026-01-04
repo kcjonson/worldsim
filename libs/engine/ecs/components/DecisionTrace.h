@@ -88,15 +88,16 @@ namespace ecs {
 			if (taskType == TaskType::FulfillNeed && needValue >= 100.0F && threshold == 0.0F && status == OptionStatus::Available) {
 				return 50.0F + static_cast<float>(skillBonus);
 			}
-			// Placing packaged items at target locations (priority 38 + skill bonus)
+			// Placing packaged items at target locations (priority 38)
 			// If colonist is already carrying (needValue > 100), use needValue directly
 			// as priority (typically 150) to ensure delivery completes before other tasks
+			// Note: No skill bonus - this is carrying/placement, not skilled work
 			if (taskType == TaskType::PlacePackaged && status == OptionStatus::Available) {
 				if (needValue > 100.0F) {
 					// In-progress delivery - use high priority to finish before other tasks
 					return needValue;
 				}
-				return 38.0F + static_cast<float>(skillBonus);
+				return 38.0F;
 			}
 			// Tier 6.4: Hauling loose items to storage - priority 37 (no skill bonus - strength-based)
 			if (taskType == TaskType::Haul && status == OptionStatus::Available) {

@@ -60,7 +60,7 @@ struct Skills {
 	/// Get total skill points across all skills (for display/comparison)
 	[[nodiscard]] float totalSkillPoints() const {
 		float total = 0.0F;
-		for (const auto& [skill, level] : levels) {
+		for (const auto& [_, level] : levels) {
 			total += level;
 		}
 		return total;
