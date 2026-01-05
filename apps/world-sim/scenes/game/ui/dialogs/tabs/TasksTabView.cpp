@@ -1,6 +1,8 @@
 #include "TasksTabView.h"
 #include "TabStyles.h"
 
+#include "scenes/game/ui/components/GlobalTaskRow.h"
+
 #include <components/scroll/ScrollContainer.h>
 #include <layout/LayoutContainer.h>
 #include <shapes/Shapes.h>
@@ -14,46 +16,6 @@ namespace {
 
 // Layout constants
 constexpr float kRowHeight = 36.0F;
-constexpr float kRowPadding = 4.0F;
-
-/// Get color for task status
-Foundation::Color getStatusColor(const TasksTabItem& task) {
-	if (task.isMine) {
-		return UI::Theme::Colors::textClickable;  // Blue for "In Progress"
-	}
-	if (task.status.find("Reserved") != std::string::npos) {
-		return UI::Theme::Colors::statusPending;  // Yellow for reserved
-	}
-	if (task.status == "Far") {
-		return UI::Theme::Colors::textMuted;  // Gray for far
-	}
-	return UI::Theme::Colors::statusActive;  // Green for available
-}
-
-/// Create a task row component (two lines of text)
-UI::Container createTaskRow(const TasksTabItem& task, float width) {
-	using namespace tabs;
-
-	UI::Container row;
-	row.size = {width, kRowHeight};
-
-	// Line 1: Description + position + distance
-	std::string line1 = std::format("{}  {}  {}", task.description, task.position, task.distance);
-	row.addChild(UI::Text(UI::Text::Args{
-		.position = {kRowPadding, kRowPadding},
-		.text = line1,
-		.style = {.color = bodyColor(), .fontSize = kBodySize}
-	}));
-
-	// Line 2: Status (colored)
-	row.addChild(UI::Text(UI::Text::Args{
-		.position = {kRowPadding, kRowPadding + 16.0F},
-		.text = task.status,
-		.style = {.color = getStatusColor(task), .fontSize = kSmallSize}
-	}));
-
-	return row;
-}
 
 } // anonymous namespace
 
@@ -132,11 +94,16 @@ void TasksTabView::rebuildTaskRows(const TasksTabData& data) {
 	taskLayout->clearChildren();
 	taskRowHandles.clear();
 
-	// Create new rows
+	// Create new rows using GlobalTaskRow component
+	// showKnownBy=false for colonist-specific view (no "Known by: X" line)
 	float rowWidth = tabWidth - 32.0F;  // Account for padding and scrollbar
 	for (size_t i = 0; i < data.tasks.size(); ++i) {
-		auto row = createTaskRow(data.tasks[i], rowWidth);
-		auto handle = taskLayout->addChild(std::move(row));
+		auto handle = taskLayout->addChild(GlobalTaskRow(GlobalTaskRow::Args{
+			.task = data.tasks[i],
+			.width = rowWidth,
+			.showKnownBy = false,  // Colonist view doesn't show "Known by"
+			.id = std::format("colonist_task_row_{}", i)
+		}));
 		taskRowHandles.push_back(handle);
 	}
 
@@ -155,14 +122,12 @@ void TasksTabView::updateTaskRows(const TasksTabData& data) {
 	auto* taskLayout = scroll->getChild<UI::LayoutContainer>(taskLayoutHandle);
 	if (taskLayout == nullptr) return;
 
-	// Update each row's text content
+	// Update each row's data using GlobalTaskRow::setTaskData()
 	for (size_t i = 0; i < data.tasks.size() && i < taskRowHandles.size(); ++i) {
-		auto* row = taskLayout->getChild<UI::Container>(taskRowHandles[i]);
-		if (row == nullptr) continue;
-
-		// Get children by index (line1 is child 0, line2 is child 1)
-		// Note: This is a simplified update - in practice we'd store text handles
-		// For now, the rebuild happens when count changes which handles most cases
+		auto* row = taskLayout->getChild<GlobalTaskRow>(taskRowHandles[i]);
+		if (row != nullptr) {
+			row->setTaskData(data.tasks[i]);
+		}
 	}
 }
 

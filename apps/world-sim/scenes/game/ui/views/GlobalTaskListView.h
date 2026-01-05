@@ -20,6 +20,7 @@
 
 #include <component/Component.h>
 #include <components/button/Button.h>
+#include <components/icon/Icon.h>
 #include <components/scroll/ScrollContainer.h>
 #include <graphics/Rect.h>
 #include <layer/Layer.h>
@@ -76,6 +77,7 @@ class GlobalTaskListView : public UI::Component {
 
 	// Child handles (managed by Component tree)
 	UI::LayerHandle headerButtonHandle;
+	UI::LayerHandle chevronHandle;
 	UI::LayerHandle contentBackgroundHandle;
 	UI::LayerHandle scrollContainerHandle;
 	UI::LayerHandle layoutHandle;
@@ -88,6 +90,9 @@ class GlobalTaskListView : public UI::Component {
 
 	/// Update header button text with count
 	void updateHeaderText();
+
+	/// Update chevron icon direction (up when expanded, down when collapsed)
+	void updateChevron();
 
 	/// Update child positions after state change
 	void updateLayout();

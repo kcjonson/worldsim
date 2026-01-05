@@ -9,17 +9,32 @@
 
 namespace world_sim {
 
+namespace {
+// Chevron icon size and positioning
+constexpr float kChevronSize = 12.0F;
+constexpr float kChevronRightPadding = 8.0F;
+} // namespace
+
 GlobalTaskListView::GlobalTaskListView(const Args& args)
 	: panelWidth(args.width) {
 
-	// Create header button
+	// Create header button (chevron icon is separate)
 	headerButtonHandle = addChild(UI::Button(UI::Button::Args{
-		.label = "Tasks (0) \xE2\x96\xBC",
+		.label = "Tasks (0)",
 		.position = {0.0F, 0.0F},
 		.size = {panelWidth, kCollapsedHeight},
 		.type = UI::Button::Type::Secondary,
 		.onClick = [this]() { toggle(); },
 		.id = "tasks_header"
+	}));
+
+	// Create chevron icon (down arrow when collapsed, up when expanded)
+	chevronHandle = addChild(UI::Icon(UI::Icon::Args{
+		.position = {0.0F, 0.0F},  // Will be updated in updateLayout
+		.size = kChevronSize,
+		.svgPath = "assets/ui/icons/chevron_down.svg",
+		.tint = Foundation::Color::white(),
+		.id = "tasks_chevron"
 	}));
 
 	// Create content background (only visible when expanded)
@@ -66,6 +81,7 @@ void GlobalTaskListView::setAnchorPosition(float x, float y) {
 void GlobalTaskListView::toggle() {
 	expanded = !expanded;
 	updateHeaderText();
+	updateChevron();
 
 	auto* contentBg = getChild<UI::Rectangle>(contentBackgroundHandle);
 	auto* scroll = getChild<UI::ScrollContainer>(scrollContainerHandle);
@@ -81,8 +97,16 @@ void GlobalTaskListView::toggle() {
 void GlobalTaskListView::updateHeaderText() {
 	auto* header = getChild<UI::Button>(headerButtonHandle);
 	if (header) {
-		std::string arrow = expanded ? "\xE2\x96\xB2" : "\xE2\x96\xBC";
-		header->label = std::format("Tasks ({}) {}", cachedTaskCount, arrow);
+		header->label = std::format("Tasks ({})", cachedTaskCount);
+	}
+}
+
+void GlobalTaskListView::updateChevron() {
+	auto* chevron = getChild<UI::Icon>(chevronHandle);
+	if (chevron) {
+		// Up arrow when expanded (click to collapse), down arrow when collapsed (click to expand)
+		std::string path = expanded ? "assets/ui/icons/chevron_up.svg" : "assets/ui/icons/chevron_down.svg";
+		chevron->setSvgPath(path);
 	}
 }
 
@@ -91,6 +115,14 @@ void GlobalTaskListView::updateLayout() {
 	auto* header = getChild<UI::Button>(headerButtonHandle);
 	if (header) {
 		header->setPosition(position.x, position.y);
+	}
+
+	// Position chevron on the right side of the header button, vertically centered
+	auto* chevron = getChild<UI::Icon>(chevronHandle);
+	if (chevron) {
+		float chevronX = position.x + panelWidth - kChevronSize - kChevronRightPadding;
+		float chevronY = position.y + (kCollapsedHeight - kChevronSize) / 2.0F;
+		chevron->setPosition(chevronX, chevronY);
 	}
 
 	// Position content background

@@ -5,28 +5,22 @@
 // Displays a scrollable list of tasks that this colonist knows about.
 // Unlike the global task list, this shows tasks from the colonist's perspective
 // (distance from colonist, "In Progress" for their own tasks).
+//
+// Reuses GlobalTaskRow component (with showKnownBy=false) for consistent layout.
+
+#include "scenes/game/ui/adapters/GlobalTaskAdapter.h"
 
 #include <component/Container.h>
 #include <graphics/Rect.h>
 #include <layer/Layer.h>
 
-#include <string>
 #include <vector>
 
 namespace world_sim {
 
-/// A single task for Tasks tab display
-struct TasksTabItem {
-	std::string description;  // "Harvest Berry Bush"
-	std::string position;     // "(10, 15)"
-	std::string distance;     // "5m"
-	std::string status;       // "Available" / "Reserved by Bob" / "In Progress"
-	bool isMine = false;      // This colonist owns this task
-};
-
-/// Data for Tasks tab
+/// Data for Tasks tab - uses adapter's GlobalTaskDisplayData for consistency
 struct TasksTabData {
-	std::vector<TasksTabItem> tasks;
+	std::vector<adapters::GlobalTaskDisplayData> tasks;
 	size_t totalCount = 0;
 };
 
