@@ -556,6 +556,8 @@ The following MVP epics have all been completed. Detailed task breakdowns are pr
   - [x] Implement full priority formula using PriorityConfig
   - [x] Wire AIDecisionSystem to use GlobalTaskRegistry for task age lookup
   - [x] Add in-progress bonus for current task (+200)
+  - [x] Performance: TaskCache for O(1) registry lookup (batch query + hash map)
+  - Note: GlobalTaskRegistry used for task age only; full integration (registry as task source) in Phase 5/6
 - [ ] Phase 5: Task Chaining
   - [ ] Implement chain continuation bonus (+2000)
   - [ ] Handle interruption based on handsRequired
