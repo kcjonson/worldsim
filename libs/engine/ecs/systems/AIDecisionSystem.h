@@ -11,7 +11,10 @@
 
 #include "../EntityID.h"
 #include "../ISystem.h"
+#include "../components/Needs.h"
+#include "../components/Task.h"
 
+#include <functional>
 #include <glm/vec2.hpp>
 #include <optional>
 #include <random>
@@ -40,6 +43,11 @@ public:
 
 	/// Set the ChunkManager for terrain queries (required for smart toilet location)
 	void setChunkManager(engine::world::ChunkManager* chunkManager) { m_chunkManager = chunkManager; }
+
+	/// Set callback for dropping items on the ground (when chain is interrupted)
+	/// Same signature as ActionSystem's drop callback for consistency
+	using DropItemCallback = std::function<void(const std::string& defName, float x, float y)>;
+	void setDropItemCallback(DropItemCallback callback) { m_onDropItem = std::move(callback); }
 
 	[[nodiscard]] int priority() const override { return 60; }
 	[[nodiscard]] const char* name() const override { return "AIDecision"; }
@@ -81,6 +89,22 @@ private:
 		const struct EvaluatedOption& option,
 		const char* needName);
 
+	/// Handle chain interruption when switching away from a mid-chain task
+	/// Stows 1-handed items to backpack, drops 2-handed items or packaged entities.
+	/// @param entity Entity ID for logging
+	/// @param task Current task (must be mid-chain: chainId set, chainStep > 0)
+	/// @param inventory Colonist inventory to modify
+	/// @param position Colonist position (for dropping items)
+	/// @param newTaskType Type of new task being switched to
+	/// @param newNeedType Need type for FulfillNeed tasks
+	void handleChainInterruption(
+		EntityID entity,
+		const Task& task,
+		struct Inventory& inventory,
+		const struct Position& position,
+		TaskType newTaskType,
+		NeedType newNeedType);
+
 	const engine::assets::AssetRegistry& m_registry;
 	const engine::assets::RecipeRegistry& m_recipeRegistry;
 
@@ -102,6 +126,9 @@ private:
 
 	/// Random number generator for wander behavior (seeded from random_device by default)
 	std::mt19937 m_rng;
+
+	/// Callback for dropping items on the ground (when chain is interrupted)
+	DropItemCallback m_onDropItem = nullptr;
 };
 
 } // namespace ecs

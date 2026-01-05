@@ -596,10 +596,12 @@ namespace ecs {
 			// Phase 1 complete (Pickup) - move to phase 2 (Deposit)
 			task.targetPosition = task.haulTargetPosition;
 			task.state = TaskState::Pending;
+			task.chainStep++; // Advance chain: step 0 (Pickup) → step 1 (Deposit)
 			action.clear();
 			LOG_DEBUG(
 				Engine,
-				"[Action] Haul phase 1 complete, moving to storage at (%.1f, %.1f)",
+				"[Action] Haul phase 1 complete (chain step %u), moving to storage at (%.1f, %.1f)",
+				task.chainStep,
 				task.haulTargetPosition.x,
 				task.haulTargetPosition.y
 			);
@@ -650,6 +652,7 @@ namespace ecs {
 			// Transition to phase 2 - walk to placement target
 			task.targetPosition = task.placeTargetPosition;
 			task.state = TaskState::Moving;  // Must be Moving for MovementSystem to set Arrived
+			task.chainStep++; // Advance chain: step 0 (PickupPackaged) → step 1 (Place)
 
 			// Update MovementTarget to the new destination
 			// This is critical - without this, the movement system won't know where to go
