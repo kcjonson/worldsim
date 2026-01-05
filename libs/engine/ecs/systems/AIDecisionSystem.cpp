@@ -10,6 +10,7 @@
 #include "../components/Movement.h"
 #include "../components/Needs.h"
 #include "../components/Packaged.h"
+#include "../components/Skills.h"
 #include "../components/StorageConfiguration.h"
 #include "../components/Task.h"
 #include "../components/ToiletLocationFinder.h"
@@ -19,6 +20,7 @@
 #include "assets/AssetDefinition.h"
 #include "assets/AssetRegistry.h"
 #include "assets/ItemProperties.h"
+#include "assets/PriorityConfig.h"
 #include "assets/RecipeDef.h"
 #include "assets/RecipeRegistry.h"
 #include "world/chunk/ChunkManager.h"
@@ -89,6 +91,29 @@ namespace ecs {
 			return false;
 		}
 
+		/// Skill names for work types
+		constexpr const char* kSkillFarming = "Farming";
+		constexpr const char* kSkillCrafting = "Crafting";
+		constexpr const char* kSkillConstruction = "Construction";
+		constexpr const char* kSkillMedicine = "Medicine";
+
+		/// Skill bonus calculation constants (from priority-config.md)
+		constexpr float kSkillBonusMultiplier = 10.0F;
+		constexpr int16_t kSkillBonusMax = 100;
+
+		/// Calculate skill bonus for priority scoring
+		/// @param skills The colonist's skills (may be nullptr if no Skills component)
+		/// @param skillName The skill to look up
+		/// @return {skillLevel, skillBonus} pair
+		[[nodiscard]] std::pair<float, int16_t> calculateSkillBonus(const Skills* skills, const char* skillName) {
+			if (skills == nullptr || skillName == nullptr) {
+				return {0.0F, 0};
+			}
+			float skillLevel = skills->getLevel(skillName);
+			int16_t bonus = static_cast<int16_t>(std::min(skillLevel * kSkillBonusMultiplier, static_cast<float>(kSkillBonusMax)));
+			return {skillLevel, bonus};
+		}
+
 	} // namespace
 
 	AIDecisionSystem::AIDecisionSystem(
@@ -123,8 +148,11 @@ namespace ecs {
 			// Check if entity has DecisionTrace component for trace-based selection
 			auto* trace = world->getComponent<DecisionTrace>(entity);
 			if (trace != nullptr) {
+				// Get optional Skills component for skill bonus calculation
+				auto* skills = world->getComponent<Skills>(entity);
+
 				// Build full decision trace (always, for UI updates)
-				buildDecisionTrace(entity, position, needs, memory, task, inventory, *trace);
+				buildDecisionTrace(entity, position, needs, memory, task, inventory, skills, *trace);
 
 				// Get the best option's priority
 				const auto* selected = trace->getSelected();
@@ -302,6 +330,7 @@ namespace ecs {
 		const Memory&		  memory,
 		const Task&			  currentTask,
 		const Inventory&	  inventory,
+		const Skills*		  skills,
 		DecisionTrace&		  trace
 	) {
 		trace.clear();
@@ -458,6 +487,11 @@ namespace ecs {
 			gatherOption.needValue = 100.0F;			   // Not a real need, just work
 			gatherOption.threshold = 0.0F;				   // Always available when no food
 
+			// Harvesting uses Farming skill
+			auto [farmSkillLevel, farmSkillBonus] = calculateSkillBonus(skills, kSkillFarming);
+			gatherOption.skillLevel = farmSkillLevel;
+			gatherOption.skillBonus = farmSkillBonus;
+
 			if (edibleHarvestable.has_value()) {
 				gatherOption.targetPosition = edibleHarvestable->position;
 				gatherOption.distanceToTarget = nearestEdibleDist;
@@ -565,7 +599,7 @@ namespace ecs {
 				}
 			}
 
-			// Add craft option
+			// Add craft option with skill bonus
 			EvaluatedOption craftOption;
 			craftOption.taskType = TaskType::Craft;
 			craftOption.needType = NeedType::Count; // N/A for crafting
@@ -575,6 +609,11 @@ namespace ecs {
 			craftOption.distanceToTarget = glm::distance(position.value, stationPos.value);
 			craftOption.craftRecipeDefName = nextJob->recipeDefName;
 			craftOption.stationEntityId = static_cast<uint64_t>(stationEntity);
+
+			// Calculate skill bonus for crafting
+			auto [craftSkillLevel, craftSkillBonus] = calculateSkillBonus(skills, kSkillCrafting);
+			craftOption.skillLevel = craftSkillLevel;
+			craftOption.skillBonus = craftSkillBonus;
 
 			if (hasAllInputs) {
 				craftOption.status = OptionStatus::Available;
@@ -606,6 +645,14 @@ namespace ecs {
 					gatherOption.gatherItemDefName = gatherSource.inputDefName;
 					gatherOption.status = OptionStatus::Available;
 					gatherOption.reason = "Gathering " + gatherSource.inputDefName + " for crafting";
+
+					// For harvestable sources, use Farming skill; pickups don't need skill
+					if (gatherSource.isHarvestable) {
+						auto [gatherSkillLevel, gatherSkillBonus] = calculateSkillBonus(skills, kSkillFarming);
+						gatherOption.skillLevel = gatherSkillLevel;
+						gatherOption.skillBonus = gatherSkillBonus;
+					}
+
 					trace.options.push_back(gatherOption);
 				}
 			}

@@ -46,29 +46,34 @@ namespace ecs {
 
 		// Gathering-specific fields (for Gather tasks)
 		std::string gatherItemDefName;
-		uint64_t gatherTargetEntityId = 0;
+		uint64_t	gatherTargetEntityId = 0;
 
 		// Crafting-specific fields (for Craft tasks)
 		std::string craftRecipeDefName;
-		uint64_t stationEntityId = 0;
+		uint64_t	stationEntityId = 0;
 
 		// Hauling-specific fields (for Haul tasks)
-		std::string					 haulItemDefName;		// Item to haul
-		uint32_t					 haulQuantity = 1;		// Quantity to haul
-		std::optional<glm::vec2>	 haulSourcePosition;	// Where to pick up from
-		uint64_t					 haulTargetStorageId = 0;  // Storage container entity ID
-		std::optional<glm::vec2>	 haulTargetPosition;	// Where to deposit
+		std::string				 haulItemDefName;		  // Item to haul
+		uint32_t				 haulQuantity = 1;		  // Quantity to haul
+		std::optional<glm::vec2> haulSourcePosition;	  // Where to pick up from
+		uint64_t				 haulTargetStorageId = 0; // Storage container entity ID
+		std::optional<glm::vec2> haulTargetPosition;	  // Where to deposit
 
 		// PlacePackaged-specific fields (for PlacePackaged tasks)
-		uint64_t				 placePackagedEntityId = 0;	// Entity ID of packaged item
+		uint64_t				 placePackagedEntityId = 0; // Entity ID of packaged item
 		std::optional<glm::vec2> placeSourcePosition;		// Where the packaged item is
 		std::optional<glm::vec2> placeTargetPosition;		// Where to place it
+
+		// Skill-related fields (for work tasks with skill requirements)
+		float	skillLevel = 0.0F; // Colonist's skill level for this work
+		int16_t skillBonus = 0;	   // Calculated skill bonus for priority
 
 		// Human-readable explanation for UI
 		std::string reason;
 
 		/// Calculate priority score for sorting
 		/// Higher score = higher priority
+		/// Work tasks include skill bonus (skilled colonists prefer their specialty)
 		[[nodiscard]] float calculatePriority() const {
 			// Tier 3: Critical needs get highest priority (300-310)
 			if (needValue < 10.0F && status != OptionStatus::Satisfied) {
@@ -79,13 +84,14 @@ namespace ecs {
 				return 100.0F + (threshold - needValue);
 			}
 			// Tier 6: Work tasks (Gather Food, Crafting, etc.) - when needValue=100 and threshold=0
-			// This indicates a work task, not a real need - priority 50
+			// This indicates a work task, not a real need - priority 50 + skill bonus
 			if (taskType == TaskType::FulfillNeed && needValue >= 100.0F && threshold == 0.0F && status == OptionStatus::Available) {
-				return 50.0F;
+				return 50.0F + static_cast<float>(skillBonus);
 			}
 			// Placing packaged items at target locations (priority 38)
 			// If colonist is already carrying (needValue > 100), use needValue directly
 			// as priority (typically 150) to ensure delivery completes before other tasks
+			// Note: No skill bonus - this is carrying/placement, not skilled work
 			if (taskType == TaskType::PlacePackaged && status == OptionStatus::Available) {
 				if (needValue > 100.0F) {
 					// In-progress delivery - use high priority to finish before other tasks
@@ -93,17 +99,17 @@ namespace ecs {
 				}
 				return 38.0F;
 			}
-			// Tier 6.4: Hauling loose items to storage - priority 37
+			// Tier 6.4: Hauling loose items to storage - priority 37 (no skill bonus - strength-based)
 			if (taskType == TaskType::Haul && status == OptionStatus::Available) {
 				return 37.0F;
 			}
-			// Tier 6.5: Crafting work - priority 40
+			// Tier 6.5: Crafting work - priority 40 + skill bonus
 			if (taskType == TaskType::Craft && status == OptionStatus::Available) {
-				return 40.0F;
+				return 40.0F + static_cast<float>(skillBonus);
 			}
-			// Tier 6.6: Gathering materials for crafting - priority 35
+			// Tier 6.6: Gathering materials for crafting - priority 35 + skill bonus
 			if (taskType == TaskType::Gather && status == OptionStatus::Available) {
-				return 35.0F;
+				return 35.0F + static_cast<float>(skillBonus);
 			}
 			// Tier 7: Wander (lowest priority among active options)
 			if (taskType == TaskType::Wander) {
