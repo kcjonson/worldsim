@@ -11,6 +11,7 @@
 #include "tabs/HealthTabView.h"
 #include "tabs/MemoryTabView.h"
 #include "tabs/SocialTabView.h"
+#include "tabs/TasksTabView.h"
 
 #include <ecs/EntityID.h>
 #include <ecs/World.h>
@@ -31,20 +32,21 @@ namespace world_sim {
 		};
 
 		/// Refresh model with current colonist data
-		/// @param world ECS world
+		/// @param world ECS world (non-const for task queries via GlobalTaskRegistry)
 		/// @param colonistId Entity ID of the colonist
 		/// @return Type of update needed
-		[[nodiscard]] UpdateType refresh(const ecs::World& world, ecs::EntityID colonistId);
+		[[nodiscard]] UpdateType refresh(ecs::World& world, ecs::EntityID colonistId);
 
 		/// Check if model has valid data
 		[[nodiscard]] bool isValid() const { return valid; }
 
 		/// Get data for each tab
-		[[nodiscard]] const BioData&	bio() const { return bioData; }
-		[[nodiscard]] const HealthData& health() const { return healthData; }
-		[[nodiscard]] const SocialData& social() const { return socialData; }
-		[[nodiscard]] const GearData&	gear() const { return gearData; }
-		[[nodiscard]] const MemoryData& memory() const { return memoryData; }
+		[[nodiscard]] const BioData&	 bio() const { return bioData; }
+		[[nodiscard]] const HealthData&  health() const { return healthData; }
+		[[nodiscard]] const SocialData&  social() const { return socialData; }
+		[[nodiscard]] const GearData&	 gear() const { return gearData; }
+		[[nodiscard]] const MemoryData&  memory() const { return memoryData; }
+		[[nodiscard]] const TasksTabData& tasks() const { return tasksData; }
 
 	  private:
 		/// Extract Bio tab data
@@ -62,6 +64,9 @@ namespace world_sim {
 		/// Extract Memory tab data
 		void extractMemoryData(const ecs::World& world, ecs::EntityID colonistId);
 
+		/// Extract Tasks tab data
+		void extractTasksData(ecs::World& world, ecs::EntityID colonistId);
+
 		/// Get mood label from mood value
 		[[nodiscard]] static std::string getMoodLabel(float mood);
 
@@ -70,17 +75,19 @@ namespace world_sim {
 		bool		  valid = false;
 
 		// Cached data for each tab
-		BioData	   bioData;
-		HealthData healthData;
-		SocialData socialData;
-		GearData   gearData;
-		MemoryData memoryData;
+		BioData		 bioData;
+		HealthData	 healthData;
+		SocialData	 socialData;
+		GearData	 gearData;
+		MemoryData	 memoryData;
+		TasksTabData tasksData;
 
 		// Previous values for change detection
 		std::array<float, 8> prevNeedValues{};
 		float				 prevMood = 0.0F;
 		size_t				 prevInventorySize = 0;
 		size_t				 prevMemoryCount = 0;
+		size_t				 prevTaskCount = 0;
 	};
 
 } // namespace world_sim

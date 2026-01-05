@@ -319,8 +319,8 @@ namespace {
 			m_camera->move(dx, dy, dt);
 
 			// Zoom with scroll wheel (snaps to discrete levels)
-			// Skip scroll handling when a modal dialog is open (dialog scrolls instead)
-			if (!gameUI->isCraftingDialogVisible() && !gameUI->isColonistDetailsVisible()) {
+			// Skip scroll handling when a modal dialog is open or task list expanded (they scroll instead)
+			if (!gameUI->isCraftingDialogVisible() && !gameUI->isColonistDetailsVisible() && !gameUI->isGlobalTaskListExpanded()) {
 				// Accumulate scroll deltas to handle high-precision input devices (Magic Mouse, trackpad)
 				// These devices generate many small fractional scroll events per gesture
 				constexpr float kScrollThreshold = 1.0F; // Trigger zoom after ~1 "notch" of scrolling

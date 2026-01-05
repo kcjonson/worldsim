@@ -19,7 +19,9 @@
 #include "scenes/game/ui/views/DebugOverlay.h"
 #include "scenes/game/ui/views/TopBar.h"
 #include "scenes/game/ui/views/ResourcesPanel.h"
+#include "scenes/game/ui/views/GlobalTaskListView.h"
 #include "scenes/game/ui/models/ColonistListModel.h"
+#include "scenes/game/ui/models/GlobalTaskListModel.h"
 #include "scenes/game/ui/models/TimeModel.h"
 #include "scenes/game/ui/views/EntityInfoView.h"
 #include "scenes/game/ui/views/ZoomControlPanel.h"
@@ -161,6 +163,9 @@ class GameUI {
 	/// Check if storage config dialog is visible
 	[[nodiscard]] bool isStorageConfigVisible() const;
 
+	/// Check if global task list is expanded (for blocking scroll zoom)
+	[[nodiscard]] bool isGlobalTaskListExpanded() const;
+
   private:
 	std::unique_ptr<TopBar> topBar;
 	std::unique_ptr<DebugOverlay> debugOverlay;
@@ -171,6 +176,7 @@ class GameUI {
 	std::unique_ptr<EntityInfoView> infoPanel;
 	std::unique_ptr<TaskListView> taskListPanel;
 	std::unique_ptr<ResourcesPanel> resourcesPanel;
+	std::unique_ptr<GlobalTaskListView> globalTaskList;
 	std::unique_ptr<UI::ToastStack> toastStack;
 	std::unique_ptr<ColonistDetailsDialog> colonistDetailsDialog;
 	std::unique_ptr<CraftingDialog> craftingDialog;
@@ -179,6 +185,7 @@ class GameUI {
 	// ViewModels (own data + change detection)
 	TimeModel timeModel;
 	ColonistListModel colonistListModel;
+	GlobalTaskListModel globalTaskListModel;
 
 	// Task list expansion state
 	bool taskListExpanded = false;

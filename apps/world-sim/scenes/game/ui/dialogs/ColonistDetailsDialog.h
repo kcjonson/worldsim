@@ -2,12 +2,13 @@
 
 // ColonistDetailsDialog - Full-screen dialog showing detailed colonist information
 //
-// Displays 5 tabs:
+// Displays 6 tabs:
 // - Bio: name, placeholder age/traits/background, current task
 // - Health: all 8 needs as progress bars, mood
 // - Social: placeholder for future relationships
 // - Gear: inventory items
 // - Memory: TreeView of known entities by category
+// - Tasks: tasks known by this colonist
 //
 // Game continues running while dialog is open - data refreshes per-frame.
 
@@ -17,6 +18,7 @@
 #include "tabs/HealthTabView.h"
 #include "tabs/MemoryTabView.h"
 #include "tabs/SocialTabView.h"
+#include "tabs/TasksTabView.h"
 
 #include <component/Component.h>
 #include <components/dialog/Dialog.h>
@@ -59,7 +61,8 @@ class ColonistDetailsDialog : public UI::Component {
 	[[nodiscard]] ecs::EntityID getColonistId() const { return colonistId; }
 
 	// Per-frame update with ECS world for live data
-	void update(const ecs::World& world, float deltaTime);
+	// Note: non-const world required for GlobalTaskRegistry queries
+	void update(ecs::World& world, float deltaTime);
 
 	// IComponent overrides
 	void render() override;
@@ -73,6 +76,7 @@ class ColonistDetailsDialog : public UI::Component {
 	static constexpr const char* kTabSocial = "social";
 	static constexpr const char* kTabGear = "gear";
 	static constexpr const char* kTabMemory = "memory";
+	static constexpr const char* kTabTasks = "tasks";
 
 	// Dialog dimensions
 	static constexpr float kDialogWidth = 600.0F;
@@ -101,6 +105,7 @@ class ColonistDetailsDialog : public UI::Component {
 	UI::LayerHandle socialTabHandle;
 	UI::LayerHandle gearTabHandle;
 	UI::LayerHandle memoryTabHandle;
+	UI::LayerHandle tasksTabHandle;
 
 	// Internal methods
 	void createDialog();

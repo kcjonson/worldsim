@@ -172,6 +172,19 @@ namespace engine {
 					UI::InputEvent upEvent = UI::InputEvent::mouseUp(pos, engine::MouseButton::Right, mods);
 					SceneManager::Get().handleInput(upEvent);
 				}
+
+				// Scroll events (for scroll containers in UI)
+				// Check if there's scroll input, dispatch to UI, and consume only if UI handled it
+				float scrollDelta = inputManager->getScrollDelta();
+				if (scrollDelta != 0.0F) {
+					UI::InputEvent scrollEvent = UI::InputEvent::scroll(pos, scrollDelta);
+					bool consumed = SceneManager::Get().handleInput(scrollEvent);
+					if (consumed || scrollEvent.isConsumed()) {
+						// UI handled the scroll, consume it so scene doesn't also use it for camera zoom
+						inputManager->consumeScrollDelta();
+					}
+					// If not consumed, leave scrollDelta for scene's update() to use (e.g., camera zoom)
+				}
 			}
 
 			// Pre-frame callback (debug server control, etc.)

@@ -1,17 +1,21 @@
 #include "ColonistDetailsModel.h"
 
+#include "scenes/game/ui/adapters/GlobalTaskAdapter.h"
+
+#include <ecs/GlobalTaskRegistry.h>
 #include <ecs/components/Colonist.h>
 #include <ecs/components/Inventory.h>
 #include <ecs/components/Memory.h>
 #include <ecs/components/Mood.h>
 #include <ecs/components/Needs.h>
+#include <ecs/components/Transform.h>
 #include <ecs/components/Task.h>
 
 #include <cmath>
 
 namespace world_sim {
 
-ColonistDetailsModel::UpdateType ColonistDetailsModel::refresh(const ecs::World& world, ecs::EntityID colonistId) {
+ColonistDetailsModel::UpdateType ColonistDetailsModel::refresh(ecs::World& world, ecs::EntityID colonistId) {
 	// Check if colonist changed
 	bool colonistChanged = (colonistId != currentColonistId);
 	currentColonistId = colonistId;
@@ -31,6 +35,7 @@ ColonistDetailsModel::UpdateType ColonistDetailsModel::refresh(const ecs::World&
 	extractSocialData();
 	extractGearData(world, colonistId);
 	extractMemoryData(world, colonistId);
+	extractTasksData(world, colonistId);
 
 	// Detect what changed
 	if (colonistChanged) {
@@ -39,6 +44,7 @@ ColonistDetailsModel::UpdateType ColonistDetailsModel::refresh(const ecs::World&
 		prevMood = healthData.mood;
 		prevInventorySize = gearData.items.size();
 		prevMemoryCount = memoryData.totalKnown;
+		prevTaskCount = tasksData.totalCount;
 		return UpdateType::Structure;
 	}
 
@@ -68,11 +74,17 @@ ColonistDetailsModel::UpdateType ColonistDetailsModel::refresh(const ecs::World&
 		valuesChanged = true;
 	}
 
+	// Check task count
+	if (tasksData.totalCount != prevTaskCount) {
+		valuesChanged = true;
+	}
+
 	// Update previous values
 	prevNeedValues = healthData.needValues;
 	prevMood = healthData.mood;
 	prevInventorySize = gearData.items.size();
 	prevMemoryCount = memoryData.totalKnown;
+	prevTaskCount = tasksData.totalCount;
 
 	return valuesChanged ? UpdateType::Values : UpdateType::None;
 }
@@ -267,6 +279,35 @@ std::string ColonistDetailsModel::getMoodLabel(float mood) {
 		return "Stressed";
 	}
 	return "Miserable";
+}
+
+void ColonistDetailsModel::extractTasksData(ecs::World& world, ecs::EntityID colonistId) {
+	tasksData.tasks.clear();
+	tasksData.totalCount = 0;
+
+	// Get colonist position for distance calculations
+	glm::vec2 colonistPosition{0.0F, 0.0F};
+	const auto* position = world.getComponent<ecs::Position>(colonistId);
+	if (position != nullptr) {
+		colonistPosition = position->value;
+	}
+
+	// Get tasks known by this colonist via the adapter
+	auto displayData = adapters::getTasksForColonist(world, colonistId, colonistPosition);
+	adapters::sortTasksForDisplay(displayData);
+
+	// Convert to TasksTabItem format
+	for (const auto& task : displayData) {
+		TasksTabItem item;
+		item.description = task.description;
+		item.position = task.position;
+		item.distance = task.distance;
+		item.status = task.status;
+		item.isMine = task.isMine;
+		tasksData.tasks.push_back(item);
+	}
+
+	tasksData.totalCount = tasksData.tasks.size();
 }
 
 } // namespace world_sim
