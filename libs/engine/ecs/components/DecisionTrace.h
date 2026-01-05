@@ -93,7 +93,7 @@ namespace ecs {
 			};
 
 			// Tier 3: Critical needs get highest priority (300-310)
-			// Needs are exempt from most bonuses (distance matters, others don't)
+			// Needs only apply distance bonus (skill, chain, age bonuses don't apply to survival needs)
 			if (needValue < 10.0F && status != OptionStatus::Satisfied) {
 				return 300.0F + (10.0F - needValue) + static_cast<float>(distanceBonus);
 			}
@@ -112,6 +112,7 @@ namespace ecs {
 			if (taskType == TaskType::PlacePackaged && status == OptionStatus::Available) {
 				if (needValue > 100.0F) {
 					// In-progress delivery - use high priority plus bonuses
+					// Note: taskAgeBonus excluded since it's already claimed (in progress)
 					return needValue + static_cast<float>(distanceBonus + chainBonus + inProgressBonus);
 				}
 				return 38.0F + static_cast<float>(distanceBonus + chainBonus + inProgressBonus + taskAgeBonus);

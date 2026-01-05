@@ -63,9 +63,9 @@ struct Task {
 	glm::vec2 placeSourcePosition{0.0F, 0.0F};	   // Where the packaged item currently is
 	glm::vec2 placeTargetPosition{0.0F, 0.0F};	   // Where to place it (from Packaged.targetPosition)
 
-	/// Task chain tracking (for multi-step tasks like pickup→deposit)
-	/// When colonist completes a chain step and selects next task, if the candidate
-	/// is the next step in the same chain, it gets a +2000 priority bonus.
+	/// Task chain tracking (for multi-step tasks like pickup→deposit) - Phase 5 infrastructure
+	/// Planned behavior: when a colonist completes a chain step and selects the next task,
+	/// if the candidate is the next step in the same chain, it receives a +2000 priority bonus.
 	std::optional<uint64_t> chainId;  // Which chain this task belongs to (nullopt = not part of chain)
 	uint8_t chainStep = 0;			  // Step index within the chain (0 = first step)
 

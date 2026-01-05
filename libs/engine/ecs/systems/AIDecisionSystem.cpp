@@ -179,10 +179,8 @@ namespace ecs {
 		void populatePriorityBonuses(EvaluatedOption& option, const Task& currentTask, const TaskCache& taskCache, float currentTime) {
 			const auto& priorityConfig = engine::assets::PriorityConfig::Get();
 
-			// Distance bonus: closer targets get higher priority
-			if (option.distanceToTarget > 0.0F) {
-				option.distanceBonus = priorityConfig.calculateDistanceBonus(option.distanceToTarget);
-			}
+			// Distance bonus: closer targets get higher priority (0 distance = max bonus)
+			option.distanceBonus = priorityConfig.calculateDistanceBonus(option.distanceToTarget);
 
 			// In-progress bonus: current task gets priority to resist switching
 			if (isOptionCurrentTask(option, currentTask)) {
