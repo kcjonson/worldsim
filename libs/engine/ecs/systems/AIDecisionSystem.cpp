@@ -38,8 +38,11 @@ namespace ecs {
 
 	namespace {
 
-		/// Global chain ID counter for generating unique chain identifiers
-		/// Starts at 1 so that 0 can represent "no chain" in optional contexts
+		/// Global chain ID counter for generating unique chain identifiers.
+		/// Starts at 1 so that 0 can represent "no chain" in optional contexts.
+		/// NOTE: This variable intentionally has internal linkage by living in an anonymous
+		/// namespace inside this .cpp file. Do not move this definition into a header, or
+		/// each translation unit would get its own counter and chain IDs could collide.
 		std::atomic<uint64_t> g_nextChainId{1};
 
 		/// Generate a unique chain ID for multi-step tasks
@@ -136,7 +139,16 @@ namespace ecs {
 		[[nodiscard]] bool taskFirstActionNeedsHands(TaskType taskType, NeedType needType) {
 			std::string_view actionDefName = getFirstActionDefName(taskType, needType);
 			if (actionDefName.empty()) {
-				return true; // Assume needs hands if unknown (safe default)
+				// No first action or unknown task/need combination; assume it does not require hands.
+				// Log a warning because this may indicate a missing case in getFirstActionDefName.
+				LOG_WARNING(
+					Engine,
+					"taskFirstActionNeedsHands: empty first action for TaskType %d, NeedType %d; assuming no "
+					"hands needed",
+					static_cast<int>(taskType),
+					static_cast<int>(needType)
+				);
+				return false;
 			}
 			return engine::assets::ActionTypeRegistry::Get().actionNeedsHands(std::string(actionDefName));
 		}

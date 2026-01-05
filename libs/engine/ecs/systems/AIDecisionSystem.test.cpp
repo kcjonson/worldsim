@@ -15,6 +15,7 @@
 #include "../components/Task.h"
 #include "../components/Transform.h"
 
+#include "assets/ActionTypeRegistry.h"
 #include "assets/AssetRegistry.h"
 #include "assets/RecipeRegistry.h"
 
@@ -1302,61 +1303,77 @@ namespace ecs::test {
 	// ========================================================================
 
 	TEST_F(AIDecisionSystemTest, ChainIdAssignedToHaulTask) {
-		// Test that Haul tasks get assigned a chainId when selected
+		// Unit test: Verify Task component supports chainId and chainStep fields.
+		// NOTE: This tests the data structure, not the integration path. The actual
+		// chainId assignment happens in selectTaskFromTrace(), which is tested through
+		// full system update cycles in integration tests.
 		auto colonist = createColonist({0.0F, 0.0F});
 
-		// Manually set up a Haul task (simulating what evaluateHaulOptions does)
 		auto* task = getTask(colonist);
 		ASSERT_NE(task, nullptr);
 
 		// Initially no chainId
 		EXPECT_FALSE(task->chainId.has_value());
+		EXPECT_EQ(task->chainStep, 0);
 
-		// Simulate selecting a Haul task via the decision trace
-		// (In reality, evaluateHaulOptions creates the option and selectTaskFromTrace assigns)
-		// For this test, directly set up the task to verify chainId assignment
+		// Verify the Task struct can store chain data correctly
 		task->type = TaskType::Haul;
+		task->chainId = 42ULL;
+		task->chainStep = 0;
 		task->haulItemDefName = "Berry";
 		task->haulQuantity = 1;
 		task->haulSourcePosition = {5.0F, 5.0F};
 		task->haulTargetPosition = {10.0F, 10.0F};
-		task->targetPosition = task->haulSourcePosition; // First phase: go to source
+		task->targetPosition = task->haulSourcePosition;
 		task->state = TaskState::Moving;
 
-		// Chain ID and step should be set when task is first assigned
-		// For now, we can only verify the data structure exists
+		// Verify chain data is stored correctly
+		EXPECT_TRUE(task->chainId.has_value());
+		EXPECT_EQ(task->chainId.value(), 42ULL);
 		EXPECT_EQ(task->chainStep, 0);
-		// Note: chainId is assigned in selectTaskFromTrace, not here
 	}
 
 	TEST_F(AIDecisionSystemTest, ChainBonusNotAppliedForNewTask) {
-		// Chain bonus should NOT be applied for chainStep == 0 (just started)
+		// Unit test: Verify chainStep field correctly distinguishes new vs mid-chain tasks.
+		// The chain bonus (+2000) is only applied when chainStep > 0, meaning the colonist
+		// has already picked up an item and is mid-delivery.
+		// NOTE: The actual bonus calculation is in populatePriorityBonuses(); this test
+		// verifies the data structure supports the required semantics.
 		auto colonist = createColonist({0.0F, 0.0F});
 
 		auto* task = getTask(colonist);
-		auto* trace = getTrace(colonist);
 		ASSERT_NE(task, nullptr);
-		ASSERT_NE(trace, nullptr);
 
-		// Set up a mid-chain Haul task (chainStep > 0 means already picked up)
+		// Set up task with chainId but chainStep=0 (just selected, not yet picked up)
 		task->type = TaskType::Haul;
-		task->chainId = 1ULL; // Has chain ID
-		task->chainStep = 0;  // But just started (step 0)
+		task->chainId = 1ULL;
+		task->chainStep = 0;
 		task->state = TaskState::Moving;
 		task->haulItemDefName = "Berry";
 		task->targetPosition = {10.0F, 10.0F};
 
-		// The chain bonus logic checks chainStep > 0
-		// At step 0, no chain bonus should be applied
-		// This is verified by the implementation in populatePriorityBonuses
+		// Chain bonus condition: chainStep > 0
+		// At step 0, this condition is false → no bonus applied
+		EXPECT_EQ(task->chainStep, 0);
+		EXPECT_FALSE(task->chainStep > 0) << "chainStep=0 should NOT qualify for chain bonus";
+
+		// After pickup phase, chainStep advances to 1
+		task->chainStep = 1;
+		EXPECT_TRUE(task->chainStep > 0) << "chainStep=1 SHOULD qualify for chain bonus";
 	}
 
 	TEST_F(AIDecisionSystemTest, ChainStepTracksCurrent) {
-		// Verify chainStep starts at 0 and can be incremented
+		// Unit test: Verify chainStep tracks phase transitions correctly.
+		// In the full system, ActionSystem increments chainStep when:
+		// - Haul: Pickup completes → chainStep 0→1
+		// - PlacePackaged: PickupPackaged completes → chainStep 0→1
 		auto colonist = createColonist({0.0F, 0.0F});
 
 		auto* task = getTask(colonist);
 		ASSERT_NE(task, nullptr);
+
+		// Initial state: chainStep defaults to 0
+		EXPECT_EQ(task->chainStep, 0);
 
 		// Set up Haul task at step 0 (pickup phase)
 		task->type = TaskType::Haul;
@@ -1364,13 +1381,20 @@ namespace ecs::test {
 		task->chainStep = 0;
 		EXPECT_EQ(task->chainStep, 0);
 
-		// Simulate phase transition (ActionSystem does this)
+		// Simulate ActionSystem phase transition
 		task->chainStep++;
-		EXPECT_EQ(task->chainStep, 1);
+		EXPECT_EQ(task->chainStep, 1) << "After pickup, chainStep should be 1 (delivery phase)";
+
+		// Verify uint8_t type can track multiple phases if needed
+		task->chainStep++;
+		EXPECT_EQ(task->chainStep, 2);
 	}
 
 	TEST_F(AIDecisionSystemTest, ChainInterruptionStowsOneHandedItem) {
-		// Test that chain interruption stows 1-handed items to backpack when possible
+		// Unit test: Verify Inventory component supports stowing 1-handed items.
+		// In the full system, handleChainInterruption() calls stowToBackpack() for 1-handed
+		// items when a chain is interrupted by a higher-priority task that needs hands.
+		// This test verifies the underlying Inventory behavior that the handler relies on.
 		auto colonist = createColonist({5.0F, 5.0F});
 
 		auto* task = getTask(colonist);
@@ -1389,13 +1413,11 @@ namespace ecs::test {
 		// Put Berry in hand (simulating what Pickup action does)
 		inventory->pickUp("Berry", 1); // 1-handed item
 
-		// Verify setup: Berry is in hand
+		// Verify setup: Berry is in hand, not backpack
 		EXPECT_TRUE(inventory->isHolding("Berry"));
-		EXPECT_FALSE(inventory->hasItem("Berry")); // Not in backpack yet
+		EXPECT_FALSE(inventory->hasItem("Berry"));
 
-		// When chain is interrupted by higher priority task that needs hands,
-		// the implementation should try to stow the item to backpack
-		// This is tested by checking that stowToBackpack works
+		// Verify stowToBackpack works for 1-handed items (used by handleChainInterruption)
 		bool stowed = inventory->stowToBackpack("Berry");
 		EXPECT_TRUE(stowed) << "1-handed item should be stowable to backpack";
 		EXPECT_FALSE(inventory->isHolding("Berry")) << "Item should no longer be in hands";
@@ -1403,7 +1425,10 @@ namespace ecs::test {
 	}
 
 	TEST_F(AIDecisionSystemTest, ChainInterruptionDropsTwoHandedItem) {
-		// Test that chain interruption drops 2-handed items (can't stow)
+		// Unit test: Verify Inventory component behavior for 2-handed items.
+		// In the full system, handleChainInterruption() tries stowToBackpack() first,
+		// and when that fails for 2-handed items, it calls putDown() + m_onDropItem callback.
+		// This test verifies the underlying Inventory behavior that the handler relies on.
 		auto colonist = createColonist({5.0F, 5.0F});
 
 		auto* task = getTask(colonist);
@@ -1428,58 +1453,59 @@ namespace ecs::test {
 		EXPECT_EQ(inventory->leftHand->defName, "LargeRock");
 		EXPECT_EQ(inventory->rightHand->defName, "LargeRock");
 
-		// 2-handed items cannot be stowed to backpack
+		// 2-handed items cannot be stowed to backpack (this is what handleChainInterruption checks)
 		bool stowed = inventory->stowToBackpack("LargeRock");
 		EXPECT_FALSE(stowed) << "2-handed items cannot be stowed to backpack";
 
-		// Must use putDown (which the interruption handler does)
+		// Must use putDown (which handleChainInterruption falls back to)
 		auto dropped = inventory->putDown("LargeRock");
 		EXPECT_TRUE(dropped.has_value()) << "Item should be put down";
+		EXPECT_EQ(dropped->defName, "LargeRock");
 		EXPECT_FALSE(inventory->leftHand.has_value()) << "Left hand should be empty";
 		EXPECT_FALSE(inventory->rightHand.has_value()) << "Right hand should be empty";
 	}
 
 	TEST_F(AIDecisionSystemTest, TaskFirstActionNeedsHandsMapping) {
-		// Verify the task-to-action mapping for hands requirement
-		// This tests the helper function logic
+		// Unit test: Verify ActionTypeRegistry returns expected needsHands values.
+		// The getFirstActionDefName() helper maps TaskType→ActionDefName, and
+		// ActionTypeRegistry provides the needsHands property from XML config.
 
-		// Create an EvaluatedOption for each task type and verify hands requirement
-		EvaluatedOption haulOption;
-		haulOption.taskType = TaskType::Haul;
-		// Haul first action is Pickup → needsHands=true
+		auto& actionRegistry = engine::assets::ActionTypeRegistry::Get();
 
-		EvaluatedOption craftOption;
-		craftOption.taskType = TaskType::Craft;
-		// Craft first action is Craft → needsHands=true
+		// Check if action types are loaded (they should be from game config)
+		// If not loaded in test environment, we verify the registry API works
+		if (actionRegistry.size() == 0) {
+			// Registry not loaded - just verify the API exists and doesn't crash
+			// The actual values are tested in WorkConfig.test.cpp
+			EXPECT_FALSE(actionRegistry.actionNeedsHands("NonExistent"));
+			return;
+		}
 
-		EvaluatedOption gatherOption;
-		gatherOption.taskType = TaskType::Gather;
-		// Gather first action is Harvest → needsHands=true
+		// If registry is loaded, verify expected mappings from action-types.xml:
+		// - Pickup: needsHands=true (picking up items)
+		// - Craft: needsHands=true (crafting actions)
+		// - Harvest: needsHands=true (gathering actions)
+		// - Sleep: needsHands=false (sleeping doesn't need hands)
+		// - Wander: needsHands=false (walking around)
+		// - Toilet: needsHands=false (using toilet)
+		// - Eat: needsHands=true (eating food)
 
-		EvaluatedOption wanderOption;
-		wanderOption.taskType = TaskType::Wander;
-		// Wander action doesn't need hands → needsHands=false
-
-		EvaluatedOption sleepOption;
-		sleepOption.taskType = TaskType::FulfillNeed;
-		sleepOption.needType = NeedType::Energy;
-		// Sleep action → needsHands=false
-
-		EvaluatedOption eatOption;
-		eatOption.taskType = TaskType::FulfillNeed;
-		eatOption.needType = NeedType::Hunger;
-		// Eat action → needsHands=true
-
-		EvaluatedOption toiletOption;
-		toiletOption.taskType = TaskType::FulfillNeed;
-		toiletOption.needType = NeedType::Bladder;
-		// Toilet action → needsHands=false
-
-		// The actual hands requirement check is done via ActionTypeRegistry
-		// This test verifies the data structures are set up correctly
-		EXPECT_EQ(haulOption.taskType, TaskType::Haul);
-		EXPECT_EQ(sleepOption.needType, NeedType::Energy);
-		EXPECT_EQ(toiletOption.needType, NeedType::Bladder);
+		if (actionRegistry.hasAction("Pickup")) {
+			EXPECT_TRUE(actionRegistry.actionNeedsHands("Pickup"))
+			    << "Pickup action should need hands";
+		}
+		if (actionRegistry.hasAction("Sleep")) {
+			EXPECT_FALSE(actionRegistry.actionNeedsHands("Sleep"))
+			    << "Sleep action should NOT need hands";
+		}
+		if (actionRegistry.hasAction("Wander")) {
+			EXPECT_FALSE(actionRegistry.actionNeedsHands("Wander"))
+			    << "Wander action should NOT need hands";
+		}
+		if (actionRegistry.hasAction("Eat")) {
+			EXPECT_TRUE(actionRegistry.actionNeedsHands("Eat"))
+			    << "Eat action should need hands";
+		}
 	}
 
 } // namespace ecs::test

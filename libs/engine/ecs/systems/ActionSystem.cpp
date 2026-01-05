@@ -665,7 +665,8 @@ namespace ecs {
 			action.clear();
 			LOG_DEBUG(
 				Engine,
-				"[Action] PlacePackaged phase 1 complete, moving to target at (%.1f, %.1f)",
+				"[Action] PlacePackaged phase 1 complete (chain step %u), moving to target at (%.1f, %.1f)",
+				task.chainStep,
 				task.placeTargetPosition.x,
 				task.placeTargetPosition.y
 			);
