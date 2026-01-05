@@ -18,6 +18,7 @@
 #include "../components/Transform.h"
 #include "../components/WorkQueue.h"
 
+#include "assets/ActionTypeRegistry.h"
 #include "assets/AssetDefinition.h"
 #include "assets/AssetRegistry.h"
 #include "assets/ItemProperties.h"
@@ -29,12 +30,25 @@
 #include <utils/Log.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <numbers>
 
 namespace ecs {
 
 	namespace {
+
+		/// Global chain ID counter for generating unique chain identifiers.
+		/// Starts at 1 so that 0 can represent "no chain" in optional contexts.
+		/// NOTE: This variable intentionally has internal linkage by living in an anonymous
+		/// namespace inside this .cpp file. Do not move this definition into a header, or
+		/// each translation unit would get its own counter and chain IDs could collide.
+		std::atomic<uint64_t> g_nextChainId{1};
+
+		/// Generate a unique chain ID for multi-step tasks
+		[[nodiscard]] uint64_t generateChainId() {
+			return g_nextChainId.fetch_add(1, std::memory_order_relaxed);
+		}
 
 		/// Map NeedType to the CapabilityType that fulfills it
 		[[nodiscard]] engine::assets::CapabilityType needToCapability(NeedType need) {
@@ -80,6 +94,63 @@ namespace ecs {
 			// All valid NeedTypes must be handled above - hitting this is a bug
 			LOG_ERROR(Engine, "needTypeName: unhandled NeedType %d", static_cast<int>(need));
 			return "Unknown";
+		}
+
+		/// Get the first action defName for a task type (for chain interruption checks)
+		/// Maps TaskType (+ NeedType for FulfillNeed) to the action that will be triggered first.
+		/// Returns string_view to avoid allocation - all values are compile-time constants.
+		[[nodiscard]] std::string_view getFirstActionDefName(TaskType taskType, NeedType needType) {
+			switch (taskType) {
+				case TaskType::Haul:
+				case TaskType::PlacePackaged:
+					return "Pickup"; // Both start with picking something up
+				case TaskType::Craft:
+					return "Craft";
+				case TaskType::Gather:
+					return "Harvest";
+				case TaskType::FulfillNeed:
+					switch (needType) {
+						case NeedType::Hunger:
+							return "Eat";
+						case NeedType::Thirst:
+							return "Drink";
+						case NeedType::Energy:
+							return "Sleep";
+						case NeedType::Bladder:
+						case NeedType::Digestion:
+							return "Toilet";
+						case NeedType::Hygiene:
+						case NeedType::Recreation:
+						case NeedType::Temperature:
+						case NeedType::Count:
+							return ""; // Non-actionable needs
+					}
+					return ""; // Unreachable but satisfies compiler
+				case TaskType::Wander:
+					return "Wander";
+				case TaskType::None:
+					return "";
+			}
+			return "";
+		}
+
+		/// Check if a task's first action requires free hands
+		/// Uses ActionTypeRegistry for config-driven behavior per task-chains.md spec.
+		[[nodiscard]] bool taskFirstActionNeedsHands(TaskType taskType, NeedType needType) {
+			std::string_view actionDefName = getFirstActionDefName(taskType, needType);
+			if (actionDefName.empty()) {
+				// No first action or unknown task/need combination; assume it does not require hands.
+				// Log a warning because this may indicate a missing case in getFirstActionDefName.
+				LOG_WARNING(
+					Engine,
+					"taskFirstActionNeedsHands: empty first action for TaskType %d, NeedType %d; assuming no "
+					"hands needed",
+					static_cast<int>(taskType),
+					static_cast<int>(needType)
+				);
+				return false;
+			}
+			return engine::assets::ActionTypeRegistry::Get().actionNeedsHands(std::string(actionDefName));
 		}
 
 		/// Check if inventory contains any edible food item
@@ -183,8 +254,16 @@ namespace ecs {
 			option.distanceBonus = priorityConfig.calculateDistanceBonus(option.distanceToTarget);
 
 			// In-progress bonus: current task gets priority to resist switching
-			if (isOptionCurrentTask(option, currentTask)) {
+			bool isCurrentTask = isOptionCurrentTask(option, currentTask);
+			if (isCurrentTask) {
 				option.inProgressBonus = priorityConfig.getInProgressBonus();
+			}
+
+			// Chain continuation bonus: large bonus for continuing a multi-step task
+			// Applied when colonist is mid-chain (has completed step 0) and option is the same task
+			// This makes colonists strongly prefer finishing chains (e.g., depositing after pickup)
+			if (isCurrentTask && currentTask.chainId.has_value() && currentTask.chainStep > 0) {
+				option.chainBonus = priorityConfig.getChainBonus();
 			}
 
 			// Task age bonus: old unclaimed tasks rise in priority
@@ -199,9 +278,6 @@ namespace ecs {
 					option.taskAgeBonus = priorityConfig.calculateTaskAgeBonus(taskAge);
 				}
 			}
-
-			// Chain bonus: handled separately when task chains are fully implemented (Phase 5)
-			// For now, chainBonus stays at 0
 		}
 
 		/// Evaluate haul options for loose items to storage containers
@@ -470,6 +546,11 @@ namespace ecs {
 				}
 
 				if (shouldSwitch) {
+					// Handle chain interruption if mid-chain and new task needs hands
+					if (task.chainId.has_value() && task.chainStep > 0 && selected != nullptr) {
+						handleChainInterruption(entity, task, inventory, position, selected->taskType, selected->needType);
+					}
+
 					// Clear and assign new task
 					task.clear();
 					task.timeSinceEvaluation = 0.0F;
@@ -953,6 +1034,7 @@ namespace ecs {
 		}
 
 		// Copy hauling-specific fields for Haul tasks
+		// Haul is a two-step chain: Pickup (step 0) → Deposit (step 1)
 		if (selected->taskType == TaskType::Haul) {
 			task.haulItemDefName = selected->haulItemDefName;
 			task.haulQuantity = selected->haulQuantity;
@@ -961,15 +1043,22 @@ namespace ecs {
 			task.haulTargetPosition = selected->haulTargetPosition.value_or(glm::vec2{0.0F, 0.0F});
 			// For haul tasks, target is initially the source position (pickup first)
 			task.targetPosition = task.haulSourcePosition;
+			// Assign chain ID and start at step 0 (Pickup phase)
+			task.chainId = generateChainId();
+			task.chainStep = 0;
 		}
 
 		// Copy placement-specific fields for PlacePackaged tasks
+		// PlacePackaged is a two-step chain: PickupPackaged (step 0) → Place (step 1)
 		if (selected->taskType == TaskType::PlacePackaged) {
 			task.placePackagedEntityId = selected->placePackagedEntityId;
 			task.placeSourcePosition = selected->placeSourcePosition.value_or(glm::vec2{0.0F, 0.0F});
 			task.placeTargetPosition = selected->placeTargetPosition.value_or(glm::vec2{0.0F, 0.0F});
 			// For place tasks, target is initially the source position (pickup first)
 			task.targetPosition = task.placeSourcePosition;
+			// Assign chain ID and start at step 0 (Pickup phase)
+			task.chainId = generateChainId();
+			task.chainStep = 0;
 		}
 
 		movementTarget.target = task.targetPosition;
@@ -1008,6 +1097,82 @@ namespace ecs {
 		}
 
 		return reason;
+	}
+
+	void AIDecisionSystem::handleChainInterruption(
+		EntityID		entity,
+		const Task&		task,
+		Inventory&		inventory,
+		const Position& position,
+		TaskType		newTaskType,
+		NeedType		newNeedType
+	) {
+		// Check if new task's first action needs hands
+		if (!taskFirstActionNeedsHands(newTaskType, newNeedType)) {
+			// New task doesn't need hands - colonist can keep carrying
+			return;
+		}
+
+		// New task needs hands - must handle carried item
+		const auto entityId = static_cast<unsigned long long>(entity);
+
+		// For Haul tasks: item is in hands
+		if (task.type == TaskType::Haul && !task.haulItemDefName.empty()) {
+			// Verify item is actually in hands before operating
+			if (!inventory.isHolding(task.haulItemDefName)) {
+				LOG_WARNING(Engine, "[AI] Entity %llu: chain interrupted but not holding %s", entityId, task.haulItemDefName.c_str());
+				return;
+			}
+
+			const auto* assetDef = m_registry.getDefinition(task.haulItemDefName);
+			uint8_t		handsRequired = (assetDef != nullptr) ? assetDef->handsRequired : 1;
+
+			if (handsRequired == 1) {
+				// 1-handed item: try to stow to backpack
+				if (inventory.stowToBackpack(task.haulItemDefName)) {
+					LOG_INFO(Engine, "[AI] Entity %llu: chain interrupted, stowed %s to backpack", entityId, task.haulItemDefName.c_str());
+					return;
+				}
+				// Backpack full - fall through to drop
+				LOG_INFO(
+					Engine, "[AI] Entity %llu: chain interrupted, dropping %s (backpack full)", entityId, task.haulItemDefName.c_str()
+				);
+			} else {
+				LOG_INFO(Engine, "[AI] Entity %llu: chain interrupted, dropping %s (2-handed)", entityId, task.haulItemDefName.c_str());
+			}
+
+			// Drop the item
+			inventory.putDown(task.haulItemDefName);
+			if (m_onDropItem) {
+				m_onDropItem(task.haulItemDefName, position.value.x, position.value.y);
+			}
+			return;
+		}
+
+		// For PlacePackaged tasks: packaged entity is being carried
+		if (task.type == TaskType::PlacePackaged && inventory.carryingPackagedEntity.has_value()) {
+			uint64_t packagedEntityId = inventory.carryingPackagedEntity.value();
+
+			// Update packaged entity's position to colonist's position (drop it here)
+			auto* packagedPos = world->getComponent<Position>(packagedEntityId);
+			if (packagedPos != nullptr) {
+				packagedPos->value = position.value;
+			}
+
+			// Clear carrying state
+			inventory.carryingPackagedEntity.reset();
+			inventory.leftHand.reset();
+			inventory.rightHand.reset();
+
+			LOG_INFO(
+				Engine,
+				"[AI] Entity %llu: chain interrupted, dropped packaged entity %llu at (%.1f, %.1f)",
+				entityId,
+				static_cast<unsigned long long>(packagedEntityId),
+				position.value.x,
+				position.value.y
+			);
+		}
 	}
 
 } // namespace ecs
