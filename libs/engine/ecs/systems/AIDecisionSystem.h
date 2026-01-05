@@ -18,6 +18,7 @@
 
 namespace engine::assets {
 class AssetRegistry;
+class PriorityConfig;
 class RecipeRegistry;
 }
 

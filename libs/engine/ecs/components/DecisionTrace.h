@@ -68,50 +68,68 @@ namespace ecs {
 		float	skillLevel = 0.0F; // Colonist's skill level for this work
 		int16_t skillBonus = 0;	   // Calculated skill bonus for priority
 
+		// Priority bonuses (from PriorityConfig calculations)
+		int16_t distanceBonus = 0;	 // Distance-based bonus/penalty (-50 to +50)
+		int16_t chainBonus = 0;		 // Chain continuation bonus (+2000 if continuing chain)
+		int16_t inProgressBonus = 0; // Bonus for current task (+200)
+		int16_t taskAgeBonus = 0;	 // Bonus for old unclaimed tasks (0 to +100)
+
 		// Human-readable explanation for UI
 		std::string reason;
 
 		/// Calculate priority score for sorting
 		/// Higher score = higher priority
-		/// Work tasks include skill bonus (skilled colonists prefer their specialty)
+		/// Full priority formula includes:
+		/// - Base priority (by tier/task type)
+		/// - Distance bonus (-50 to +50)
+		/// - Skill bonus (0 to +100)
+		/// - Chain continuation bonus (+2000 for next step in chain)
+		/// - In-progress bonus (+200 for current task)
+		/// - Task age bonus (0 to +100 for old unclaimed tasks)
 		[[nodiscard]] float calculatePriority() const {
+			// Helper to compute total bonus for work tasks
+			auto workBonus = [this]() {
+				return static_cast<float>(distanceBonus + skillBonus + chainBonus + inProgressBonus + taskAgeBonus);
+			};
+
 			// Tier 3: Critical needs get highest priority (300-310)
+			// Needs only apply distance bonus (skill, chain, age bonuses don't apply to survival needs)
 			if (needValue < 10.0F && status != OptionStatus::Satisfied) {
-				return 300.0F + (10.0F - needValue);
+				return 300.0F + (10.0F - needValue) + static_cast<float>(distanceBonus);
 			}
 			// Tier 5: Actionable needs (100-150ish based on urgency)
 			if (needValue < threshold && status != OptionStatus::Satisfied) {
-				return 100.0F + (threshold - needValue);
+				return 100.0F + (threshold - needValue) + static_cast<float>(distanceBonus);
 			}
 			// Tier 6: Work tasks (Gather Food, Crafting, etc.) - when needValue=100 and threshold=0
-			// This indicates a work task, not a real need - priority 50 + skill bonus
+			// This indicates a work task, not a real need - priority 50 + all bonuses
 			if (taskType == TaskType::FulfillNeed && needValue >= 100.0F && threshold == 0.0F && status == OptionStatus::Available) {
-				return 50.0F + static_cast<float>(skillBonus);
+				return 50.0F + workBonus();
 			}
-			// Placing packaged items at target locations (priority 38)
+			// Placing packaged items at target locations (priority 38 + distance/in-progress/chain)
 			// If colonist is already carrying (needValue > 100), use needValue directly
 			// as priority (typically 150) to ensure delivery completes before other tasks
-			// Note: No skill bonus - this is carrying/placement, not skilled work
 			if (taskType == TaskType::PlacePackaged && status == OptionStatus::Available) {
 				if (needValue > 100.0F) {
-					// In-progress delivery - use high priority to finish before other tasks
-					return needValue;
+					// In-progress delivery - use high priority plus bonuses
+					// Note: taskAgeBonus excluded since it's already claimed (in progress)
+					return needValue + static_cast<float>(distanceBonus + chainBonus + inProgressBonus);
 				}
-				return 38.0F;
+				return 38.0F + static_cast<float>(distanceBonus + chainBonus + inProgressBonus + taskAgeBonus);
 			}
-			// Tier 6.4: Hauling loose items to storage - priority 37 (no skill bonus - strength-based)
+			// Tier 6.4: Hauling loose items to storage - priority 37 + bonuses (no skill bonus)
 			if (taskType == TaskType::Haul && status == OptionStatus::Available) {
-				return 37.0F;
+				return 37.0F + static_cast<float>(distanceBonus + chainBonus + inProgressBonus + taskAgeBonus);
 			}
-			// Tier 6.5: Crafting work - priority 40 + skill bonus
+			// Tier 6.5: Crafting work - priority 40 + all bonuses
 			if (taskType == TaskType::Craft && status == OptionStatus::Available) {
-				return 40.0F + static_cast<float>(skillBonus);
+				return 40.0F + workBonus();
 			}
-			// Tier 6.6: Gathering materials for crafting - priority 35 + skill bonus
+			// Tier 6.6: Gathering materials for crafting - priority 35 + all bonuses
 			if (taskType == TaskType::Gather && status == OptionStatus::Available) {
-				return 35.0F + static_cast<float>(skillBonus);
+				return 35.0F + workBonus();
 			}
-			// Tier 7: Wander (lowest priority among active options)
+			// Tier 7: Wander (lowest priority among active options - no bonuses)
 			if (taskType == TaskType::Wander) {
 				return 10.0F;
 			}

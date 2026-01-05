@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2025-01-04 (Task Ordering System Phase 3: Skills Component - complete)
+Last Updated: 2025-01-05 (Task Ordering System Phase 4: Priority Scoring Integration - complete)
 
 ## Epic/Story/Task Template
 
@@ -550,12 +550,15 @@ The following MVP epics have all been completed. Detailed task breakdowns are pr
   - [x] Create Skills component with skill→level map
   - [x] Add skill bonus calculation to priority formula
   - [x] Wire skill requirements to work type filtering
-- [ ] Phase 4: Priority Scoring Integration
-  - [ ] Modify AIDecisionSystem to use GlobalTaskRegistry
-  - [ ] Implement full priority formula (base + distance + skill + chain + in-progress)
-  - [ ] Add task age bonus for unclaimed tasks
+- [x] Phase 4: Priority Scoring Integration
+  - [x] Add chainId, chainStep fields to Task component (moved from Phase 5)
+  - [x] Add priority bonus fields to EvaluatedOption (distance, chain, inProgress, taskAge)
+  - [x] Implement full priority formula using PriorityConfig
+  - [x] Wire AIDecisionSystem to use GlobalTaskRegistry for task age lookup
+  - [x] Add in-progress bonus for current task (+200)
+  - [x] Performance: TaskCache for O(1) registry lookup (batch query + hash map)
+  - Note: GlobalTaskRegistry used for task age only; full integration (registry as task source) in Phase 5/6
 - [ ] Phase 5: Task Chaining
-  - [ ] Add chainId, chainStep fields to Task component
   - [ ] Implement chain continuation bonus (+2000)
   - [ ] Handle interruption based on handsRequired
   - [ ] Refactor Haul to use Chain_PickupDeposit

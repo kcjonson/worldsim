@@ -1,5 +1,6 @@
 #include "AIDecisionSystem.h"
 
+#include "../GlobalTaskRegistry.h"
 #include "../World.h"
 #include "../components/Action.h"
 #include "../components/Appearance.h"
@@ -98,7 +99,7 @@ namespace ecs {
 		constexpr const char* kSkillMedicine = "Medicine";
 
 		/// Skill bonus calculation constants (from priority-config.md)
-		constexpr float kSkillBonusMultiplier = 10.0F;
+		constexpr float	  kSkillBonusMultiplier = 10.0F;
 		constexpr int16_t kSkillBonusMax = 100;
 
 		/// Calculate skill bonus for priority scoring
@@ -109,17 +110,246 @@ namespace ecs {
 			if (skills == nullptr || skillName == nullptr) {
 				return {0.0F, 0};
 			}
-			float skillLevel = skills->getLevel(skillName);
+			float	skillLevel = skills->getLevel(skillName);
 			int16_t bonus = static_cast<int16_t>(std::min(skillLevel * kSkillBonusMultiplier, static_cast<float>(kSkillBonusMax)));
 			return {skillLevel, bonus};
+		}
+
+		/// Check if an option matches the current task (for in-progress bonus)
+		[[nodiscard]] bool isOptionCurrentTask(const EvaluatedOption& option, const Task& currentTask) {
+			if (!currentTask.isActive() || option.status != OptionStatus::Available) {
+				return false;
+			}
+			if (option.taskType != currentTask.type) {
+				return false;
+			}
+
+			switch (option.taskType) {
+				case TaskType::FulfillNeed:
+					return option.needType == currentTask.needToFulfill;
+				case TaskType::Craft:
+					return option.craftRecipeDefName == currentTask.craftRecipeDefName &&
+						   option.stationEntityId == currentTask.targetStationId;
+				case TaskType::Gather:
+					return option.gatherTargetEntityId == currentTask.gatherTargetEntityId;
+				case TaskType::Haul:
+					return option.haulItemDefName == currentTask.haulItemDefName &&
+						   option.haulTargetStorageId == currentTask.haulTargetStorageId;
+				case TaskType::PlacePackaged:
+					return option.placePackagedEntityId == currentTask.placePackagedEntityId;
+				default:
+					return false;
+			}
+		}
+
+		/// Task cache for efficient task age lookup
+		/// Key: position hash (x * 10000 + y), Value: pointer to GlobalTask
+		using TaskCache = std::unordered_map<int64_t, const GlobalTask*>;
+
+		/// Hash a position for task cache lookup (quantized to 0.1 tile resolution)
+		[[nodiscard]] int64_t hashPosition(const glm::vec2& pos) {
+			// Quantize to 0.1 resolution to handle floating point imprecision
+			auto qx = static_cast<int64_t>(std::round(pos.x * 10.0F));
+			auto qy = static_cast<int64_t>(std::round(pos.y * 10.0F));
+			return qx * 1000000 + qy;
+		}
+
+		/// Build a cache of tasks near the colonist for efficient lookup
+		/// @param center Colonist position
+		/// @param radius Search radius
+		/// @return Map of position hash to task pointer
+		[[nodiscard]] TaskCache buildTaskCache(const glm::vec2& center, float radius) {
+			TaskCache	cache;
+			const auto& registry = GlobalTaskRegistry::Get();
+			auto		nearbyTasks = registry.getTasksInRadius(center, radius);
+			for (const auto* task : nearbyTasks) {
+				if (task != nullptr) {
+					cache[hashPosition(task->position)] = task;
+				}
+			}
+			return cache;
+		}
+
+		/// Populate priority bonuses for an evaluated option
+		/// Uses PriorityConfig for calculations and pre-built task cache for age bonus
+		/// @param option The option to populate bonuses for
+		/// @param currentTask Current colonist task (for in-progress bonus)
+		/// @param taskCache Pre-built cache of nearby tasks (for task age lookup)
+		/// @param currentTime Current game time (for task age calculation)
+		void populatePriorityBonuses(EvaluatedOption& option, const Task& currentTask, const TaskCache& taskCache, float currentTime) {
+			const auto& priorityConfig = engine::assets::PriorityConfig::Get();
+
+			// Distance bonus: closer targets get higher priority (0 distance = max bonus)
+			option.distanceBonus = priorityConfig.calculateDistanceBonus(option.distanceToTarget);
+
+			// In-progress bonus: current task gets priority to resist switching
+			if (isOptionCurrentTask(option, currentTask)) {
+				option.inProgressBonus = priorityConfig.getInProgressBonus();
+			}
+
+			// Task age bonus: old unclaimed tasks rise in priority
+			// Only for work tasks with valid target positions
+			if (option.taskType != TaskType::FulfillNeed && option.taskType != TaskType::Wander &&
+				option.status == OptionStatus::Available && option.targetPosition.has_value()) {
+				// Look up task in pre-built cache by position hash (O(1) instead of O(n))
+				int64_t posHash = hashPosition(*option.targetPosition);
+				auto	it = taskCache.find(posHash);
+				if (it != taskCache.end() && it->second != nullptr && it->second->type == option.taskType) {
+					float taskAge = currentTime - it->second->createdAt;
+					option.taskAgeBonus = priorityConfig.calculateTaskAgeBonus(taskAge);
+				}
+			}
+
+			// Chain bonus: handled separately when task chains are fully implemented (Phase 5)
+			// For now, chainBonus stays at 0
+		}
+
+		/// Evaluate haul options for loose items to storage containers
+		/// @param world ECS world for entity queries
+		/// @param registry Asset registry for capability lookups
+		/// @param memory Colonist memory (known entities)
+		/// @param position Colonist position
+		/// @param trace Output decision trace
+		void evaluateHaulOptions(
+			World*								 world,
+			const engine::assets::AssetRegistry& registry,
+			const Memory&						 memory,
+			const glm::vec2&					 position,
+			DecisionTrace&						 trace
+		) {
+			// Find loose items (Carryable) and match them to storage containers
+			for (const auto& [key, looseItem] : memory.knownWorldEntities) {
+				// Check if entity is Carryable (loose item on ground)
+				if (!registry.hasCapability(looseItem.defNameId, engine::assets::CapabilityType::Carryable)) {
+					continue;
+				}
+
+				const auto& itemDefName = registry.getDefName(looseItem.defNameId);
+				const auto* itemDef = registry.getDefinition(itemDefName);
+				if (itemDef == nullptr) {
+					continue;
+				}
+
+				// Get item category for storage matching
+				engine::assets::ItemCategory itemCategory = itemDef->category;
+				if (itemCategory == engine::assets::ItemCategory::None) {
+					LOG_WARNING(Game, "Carryable item '%s' has no category - can only go to universal storage", itemDefName.c_str());
+				}
+
+				// Find a storage container that accepts this item category
+				glm::vec2 nearestStoragePos{0.0F, 0.0F};
+				float	  nearestStorageDist = std::numeric_limits<float>::max();
+				uint64_t  nearestStorageEntityId = 0;
+				bool	  foundStorage = false;
+
+				for (auto [storageEntity, storagePos, storageInv, storageConfig] :
+					 world->view<Position, Inventory, StorageConfiguration>()) {
+					(void)storageInv; // Required in view query; capacity checking planned for future
+
+					// Skip packaged storage containers - they're being moved and can't receive items
+					if (world->hasComponent<Packaged>(storageEntity)) {
+						continue;
+					}
+
+					// Use StorageConfiguration to check if this container accepts the item
+					if (!storageConfig.acceptsItem(itemDefName, itemCategory)) {
+						continue;
+					}
+
+					// Optimize for total trip: colonist -> item -> storage
+					float totalTrip = glm::distance(position, looseItem.position) + glm::distance(looseItem.position, storagePos.value);
+					if (totalTrip < nearestStorageDist) {
+						nearestStorageDist = totalTrip;
+						nearestStoragePos = storagePos.value;
+						nearestStorageEntityId = static_cast<uint64_t>(storageEntity);
+						foundStorage = true;
+					}
+				}
+
+				if (!foundStorage) {
+					continue; // No storage container accepts this item
+				}
+
+				// Create haul option
+				EvaluatedOption haulOption;
+				haulOption.taskType = TaskType::Haul;
+				haulOption.needType = NeedType::Count;
+				haulOption.needValue = 100.0F;
+				haulOption.threshold = 0.0F;
+				haulOption.targetPosition = looseItem.position;
+				haulOption.targetDefNameId = looseItem.defNameId;
+				haulOption.distanceToTarget = nearestStorageDist;
+				haulOption.haulItemDefName = itemDefName;
+				if (itemDef->capabilities.carryable.has_value()) {
+					haulOption.haulQuantity = itemDef->capabilities.carryable.value().quantity;
+				}
+				haulOption.haulSourcePosition = looseItem.position;
+				haulOption.haulTargetStorageId = nearestStorageEntityId;
+				haulOption.haulTargetPosition = nearestStoragePos;
+				haulOption.status = OptionStatus::Available;
+				haulOption.reason = "Hauling " + itemDefName + " to storage";
+				trace.options.push_back(haulOption);
+			}
+		}
+
+		/// Evaluate place packaged options for furniture delivery
+		/// @param world ECS world for entity queries
+		/// @param position Colonist position
+		/// @param inventory Colonist inventory (to check if carrying)
+		/// @param trace Output decision trace
+		void evaluatePlacePackagedOptions(World* world, const glm::vec2& position, const Inventory& inventory, DecisionTrace& trace) {
+			// Find packaged items with targetPosition set (awaiting colonist delivery)
+			for (auto [packagedEntity, packagedPos, packaged, packagedAppearance] : world->view<Position, Packaged, Appearance>()) {
+				// Only consider items with a target position set
+				if (!packaged.targetPosition.has_value()) {
+					continue;
+				}
+
+				// Skip items being carried by a DIFFERENT colonist
+				if (packaged.beingCarried) {
+					bool thisColonistCarrying = inventory.carryingPackagedEntity.has_value() &&
+												inventory.carryingPackagedEntity.value() == static_cast<uint64_t>(packagedEntity);
+					if (!thisColonistCarrying) {
+						continue;
+					}
+				}
+
+				const auto& targetPos = packaged.targetPosition.value();
+				bool		isCarryingThis = inventory.carryingPackagedEntity.has_value();
+
+				// Create place packaged option
+				EvaluatedOption placeOption;
+				placeOption.taskType = TaskType::PlacePackaged;
+				placeOption.needType = NeedType::Count;
+				placeOption.needValue = 100.0F;
+				placeOption.threshold = 0.0F;
+
+				if (isCarryingThis) {
+					// Phase 2: Already carrying - go to placement target
+					placeOption.targetPosition = targetPos;
+					placeOption.distanceToTarget = glm::distance(position, targetPos);
+					placeOption.needValue = 150.0F; // Higher priority than most needs
+				} else {
+					// Phase 1: Need to pick up - go to source
+					placeOption.targetPosition = packagedPos.value;
+					placeOption.distanceToTarget = glm::distance(position, packagedPos.value);
+				}
+
+				placeOption.placePackagedEntityId = static_cast<uint64_t>(packagedEntity);
+				placeOption.placeSourcePosition = packagedPos.value;
+				placeOption.placeTargetPosition = targetPos;
+				placeOption.status = OptionStatus::Available;
+				placeOption.reason = isCarryingThis ? "Delivering " + packagedAppearance.defName : "Placing " + packagedAppearance.defName;
+				trace.options.push_back(placeOption);
+			}
 		}
 
 	} // namespace
 
 	AIDecisionSystem::AIDecisionSystem(
-		const engine::assets::AssetRegistry& registry,
+		const engine::assets::AssetRegistry&  registry,
 		const engine::assets::RecipeRegistry& recipeRegistry,
-		std::optional<uint32_t> rngSeed
+		std::optional<uint32_t>				  rngSeed
 	)
 		: m_registry(registry),
 		  m_recipeRegistry(recipeRegistry),
@@ -460,7 +690,7 @@ namespace ecs {
 			// Look for harvestable food sources that yield EDIBLE items
 			// (not all harvestables yield food - e.g., WoodyBush → Stick, Reed → PlantFiber)
 			std::optional<KnownWorldEntity> edibleHarvestable;
-			float nearestEdibleDist = std::numeric_limits<float>::max();
+			float							nearestEdibleDist = std::numeric_limits<float>::max();
 
 			for (const auto& [key, entity] : memory.knownWorldEntities) {
 				if (!m_registry.hasCapability(entity.defNameId, engine::assets::CapabilityType::Harvestable)) {
@@ -524,7 +754,7 @@ namespace ecs {
 			}
 
 			// Check if colonist has all required inputs and track missing ones
-			bool hasAllInputs = true;
+			bool										  hasAllInputs = true;
 			std::vector<std::pair<std::string, uint32_t>> missingInputs; // defName, countNeeded
 			for (const auto& input : recipe->inputs) {
 				uint32_t have = inventory.getQuantity(input.defName);
@@ -538,29 +768,25 @@ namespace ecs {
 			// Before adding gather options, verify ALL missing inputs have known sources in memory.
 			// Colonist should only "know" they can craft if they've seen sources for everything.
 			struct GatherSource {
-				std::string inputDefName;
+				std::string		 inputDefName;
 				KnownWorldEntity source;
-				bool isHarvestable; // true = harvest, false = pickup
+				bool			 isHarvestable; // true = harvest, false = pickup
 			};
 			std::vector<GatherSource> gatherSources;
-			bool allInputsObtainable = true;
+			bool					  allInputsObtainable = true;
 
 			if (!hasAllInputs) {
 				for (const auto& [inputDefName, countNeeded] : missingInputs) {
-					bool foundSource = false;
+					bool	 foundSource = false;
 					uint32_t inputDefNameId = m_registry.getDefNameId(inputDefName);
 
 					// Look for Carryable sources (e.g., SmallStone on ground)
 					// Optimize for total trip: colonist -> resource -> crafting station
-					auto matchingCarryable = findOptimalForTrip(
-						memory,
-						position.value,
-						stationPos.value,
-						[&](const KnownWorldEntity& entity) {
-							return entity.defNameId == inputDefNameId
-								&& m_registry.hasCapability(entity.defNameId, engine::assets::CapabilityType::Carryable);
-						}
-					);
+					auto matchingCarryable =
+						findOptimalForTrip(memory, position.value, stationPos.value, [&](const KnownWorldEntity& entity) {
+							return entity.defNameId == inputDefNameId &&
+								   m_registry.hasCapability(entity.defNameId, engine::assets::CapabilityType::Carryable);
+						});
 
 					if (matchingCarryable.has_value()) {
 						gatherSources.push_back({inputDefName, *matchingCarryable, false});
@@ -568,11 +794,8 @@ namespace ecs {
 					} else {
 						// Look for Harvestable sources that yield this item
 						// Optimize for total trip: colonist -> resource -> crafting station
-						auto harvestableSource = findOptimalForTrip(
-							memory,
-							position.value,
-							stationPos.value,
-							[&](const KnownWorldEntity& entity) {
+						auto harvestableSource =
+							findOptimalForTrip(memory, position.value, stationPos.value, [&](const KnownWorldEntity& entity) {
 								if (!m_registry.hasCapability(entity.defNameId, engine::assets::CapabilityType::Harvestable)) {
 									return false;
 								}
@@ -582,8 +805,7 @@ namespace ecs {
 									return false;
 								}
 								return def->capabilities.harvestable->yieldDefName == inputDefName;
-							}
-						);
+							});
 
 						if (harvestableSource.has_value()) {
 							gatherSources.push_back({inputDefName, *harvestableSource, true});
@@ -658,142 +880,11 @@ namespace ecs {
 			}
 		}
 
-		// Add "Haul" work options (Tier 6.4)
-		// Find loose items (Carryable) and match them to storage containers
-		for (const auto& [key, looseItem] : memory.knownWorldEntities) {
-			// Check if entity is Carryable (loose item on ground)
-			if (!m_registry.hasCapability(looseItem.defNameId, engine::assets::CapabilityType::Carryable)) {
-				continue;
-			}
+		// Tier 6.4: Haul loose items to storage containers
+		evaluateHaulOptions(world, m_registry, memory, position.value, trace);
 
-			const auto& itemDefName = m_registry.getDefName(looseItem.defNameId);
-			const auto* itemDef = m_registry.getDefinition(itemDefName);
-			if (itemDef == nullptr) {
-				continue;
-			}
-
-			// Get item category for storage matching
-			engine::assets::ItemCategory itemCategory = itemDef->category;
-			if (itemCategory == engine::assets::ItemCategory::None) {
-				LOG_WARNING(Game, "Carryable item '%s' has no category - can only go to universal storage", itemDefName.c_str());
-			}
-
-			// Find a storage container that accepts this item category
-			// Use ECS view to get actual entity IDs for storage containers with Inventory
-			glm::vec2 nearestStoragePos{0.0F, 0.0F};
-			float	  nearestStorageDist = std::numeric_limits<float>::max();
-			uint64_t  nearestStorageEntityId = 0;
-			bool	  foundStorage = false;
-
-			for (auto [storageEntity, storagePos, storageInv, storageConfig] :
-				 world->view<Position, Inventory, StorageConfiguration>()) {
-				(void)storageInv; // Required in view query; capacity checking planned for future
-
-				// Skip packaged storage containers - they're being moved and can't receive items
-				if (world->hasComponent<Packaged>(storageEntity)) {
-					continue;
-				}
-
-				// Use StorageConfiguration to check if this container accepts the item
-				// This respects user-configured rules, not just static asset definitions
-				if (!storageConfig.acceptsItem(itemDefName, itemCategory)) {
-					continue;
-				}
-
-				// TODO: Check if storage has capacity remaining (query Inventory component)
-
-				// Optimize for total trip: colonist -> item -> storage
-				float totalTrip = glm::distance(position.value, looseItem.position)
-								+ glm::distance(looseItem.position, storagePos.value);
-				if (totalTrip < nearestStorageDist) {
-					nearestStorageDist = totalTrip;
-					nearestStoragePos = storagePos.value;
-					nearestStorageEntityId = static_cast<uint64_t>(storageEntity);
-					foundStorage = true;
-				}
-			}
-
-			if (!foundStorage) {
-				continue; // No storage container accepts this item
-			}
-
-			// Create haul option
-			EvaluatedOption haulOption;
-			haulOption.taskType = TaskType::Haul;
-			haulOption.needType = NeedType::Count; // N/A for work tasks
-			haulOption.needValue = 100.0F;
-			haulOption.threshold = 0.0F;
-			haulOption.targetPosition = looseItem.position; // Initial target is the loose item
-			haulOption.targetDefNameId = looseItem.defNameId;
-			haulOption.distanceToTarget = nearestStorageDist; // Total trip for fair priority comparison
-			haulOption.haulItemDefName = itemDefName;
-			// Get quantity from carryable capability (ensures deposit matches pickup)
-			if (itemDef->capabilities.carryable.has_value()) {
-				haulOption.haulQuantity = itemDef->capabilities.carryable.value().quantity;
-			}
-			haulOption.haulSourcePosition = looseItem.position;
-			haulOption.haulTargetStorageId = nearestStorageEntityId;
-			haulOption.haulTargetPosition = nearestStoragePos;
-			haulOption.status = OptionStatus::Available;
-			haulOption.reason = "Hauling " + itemDefName + " to storage";
-			trace.options.push_back(haulOption);
-		}
-
-		// =====================================================================
-		// Tier 6.35: Place Packaged Items
-		// Find packaged items with targetPosition set (awaiting colonist delivery)
-		// =====================================================================
-		for (auto [packagedEntity, packagedPos, packaged, packagedAppearance] :
-			 world->view<Position, Packaged, Appearance>()) {
-			// Only consider items with a target position set
-			if (!packaged.targetPosition.has_value()) {
-				continue;
-			}
-
-			// Skip items being carried by a DIFFERENT colonist
-			if (packaged.beingCarried) {
-				// Check if THIS colonist is carrying it
-				bool thisColonistCarrying =
-					inventory.carryingPackagedEntity.has_value() &&
-					inventory.carryingPackagedEntity.value() == static_cast<uint64_t>(packagedEntity);
-				if (!thisColonistCarrying) {
-					continue; // Someone else is carrying it
-				}
-			}
-
-			const auto& targetPos = packaged.targetPosition.value();
-
-			// After the filter above, if carryingPackagedEntity has a value it must be this entity
-			// (otherwise we would have continued). So we can simplify the check.
-			bool isCarryingThis = inventory.carryingPackagedEntity.has_value();
-
-			// Create place packaged option
-			EvaluatedOption placeOption;
-			placeOption.taskType = TaskType::PlacePackaged;
-			placeOption.needType = NeedType::Count; // N/A for work tasks
-			placeOption.needValue = 100.0F;
-			placeOption.threshold = 0.0F;
-
-			if (isCarryingThis) {
-				// Phase 2: Already carrying - go to placement target
-				// High priority (150) to ensure colonist finishes delivery before other tasks
-				placeOption.targetPosition = targetPos;
-				placeOption.distanceToTarget = glm::distance(position.value, targetPos);
-				placeOption.needValue = 150.0F; // Higher priority than most needs
-			} else {
-				// Phase 1: Need to pick up - go to source
-				placeOption.targetPosition = packagedPos.value;
-				placeOption.distanceToTarget = glm::distance(position.value, packagedPos.value);
-			}
-
-			placeOption.placePackagedEntityId = static_cast<uint64_t>(packagedEntity);
-			placeOption.placeSourcePosition = packagedPos.value;
-			placeOption.placeTargetPosition = targetPos;
-			placeOption.status = OptionStatus::Available;
-			placeOption.reason = isCarryingThis ? "Delivering " + packagedAppearance.defName
-												: "Placing " + packagedAppearance.defName;
-			trace.options.push_back(placeOption);
-		}
+		// Tier 6.35: Place packaged items at target locations
+		evaluatePlacePackagedOptions(world, position.value, inventory, trace);
 
 		// Add wander option
 		EvaluatedOption wanderOption;
@@ -803,6 +894,17 @@ namespace ecs {
 		wanderOption.reason = "All needs satisfied";
 		wanderOption.targetPosition = generateWanderTarget(position.value);
 		trace.options.push_back(wanderOption);
+
+		// Build task cache once for O(1) lookups (instead of O(n) per option)
+		constexpr float kTaskCacheRadius = 100.0F; // Search radius for task age lookup
+		auto			taskCache = buildTaskCache(position.value, kTaskCacheRadius);
+
+		// Populate priority bonuses for all options using PriorityConfig
+		// This includes: distance bonus, in-progress bonus, task age bonus
+		// Note: Using 0.0F for currentTime as task age tracking is refined in later phases
+		for (auto& option : trace.options) {
+			populatePriorityBonuses(option, currentTask, taskCache, 0.0F);
+		}
 
 		// Sort by priority (highest first)
 		std::sort(trace.options.begin(), trace.options.end(), [](const auto& a, const auto& b) {
