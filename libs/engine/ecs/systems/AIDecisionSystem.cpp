@@ -16,6 +16,7 @@
 #include "../components/ToiletLocationFinder.h"
 #include "../components/Transform.h"
 #include "../components/WorkQueue.h"
+#include "../GlobalTaskRegistry.h"
 
 #include "assets/AssetDefinition.h"
 #include "assets/AssetRegistry.h"
@@ -112,6 +113,79 @@ namespace ecs {
 			float skillLevel = skills->getLevel(skillName);
 			int16_t bonus = static_cast<int16_t>(std::min(skillLevel * kSkillBonusMultiplier, static_cast<float>(kSkillBonusMax)));
 			return {skillLevel, bonus};
+		}
+
+		/// Populate priority bonuses for an evaluated option
+		/// Uses PriorityConfig for calculations and checks GlobalTaskRegistry for task age
+		/// @param option The option to populate bonuses for
+		/// @param currentTask Current colonist task (for in-progress bonus)
+		/// @param currentTime Current game time (for task age calculation)
+		void populatePriorityBonuses(
+			EvaluatedOption& option,
+			const Task& currentTask,
+			float currentTime
+		) {
+			const auto& priorityConfig = engine::assets::PriorityConfig::Get();
+
+			// Distance bonus: closer targets get higher priority
+			if (option.distanceToTarget > 0.0F) {
+				option.distanceBonus = priorityConfig.calculateDistanceBonus(option.distanceToTarget);
+			}
+
+			// In-progress bonus: current task gets priority to resist switching
+			// Check if this option matches the current task
+			bool isCurrentTask = false;
+			if (currentTask.isActive() && option.status == OptionStatus::Available) {
+				if (option.taskType == currentTask.type) {
+					// For needs, check if same need type
+					if (option.taskType == TaskType::FulfillNeed) {
+						isCurrentTask = (option.needType == currentTask.needToFulfill);
+					}
+					// For crafting, check if same recipe and station
+					else if (option.taskType == TaskType::Craft) {
+						isCurrentTask = (option.craftRecipeDefName == currentTask.craftRecipeDefName &&
+										 option.stationEntityId == currentTask.targetStationId);
+					}
+					// For gathering, check if same target
+					else if (option.taskType == TaskType::Gather) {
+						isCurrentTask = (option.gatherTargetEntityId == currentTask.gatherTargetEntityId);
+					}
+					// For hauling, check if same item and storage
+					else if (option.taskType == TaskType::Haul) {
+						isCurrentTask = (option.haulItemDefName == currentTask.haulItemDefName &&
+										 option.haulTargetStorageId == currentTask.haulTargetStorageId);
+					}
+					// For placing packaged, check if same entity
+					else if (option.taskType == TaskType::PlacePackaged) {
+						isCurrentTask = (option.placePackagedEntityId == currentTask.placePackagedEntityId);
+					}
+				}
+			}
+			if (isCurrentTask) {
+				option.inProgressBonus = priorityConfig.getInProgressBonus();
+			}
+
+			// Task age bonus: old unclaimed tasks rise in priority
+			// Only for work tasks, and only if we have a GlobalTaskRegistry entry
+			// For now, check if this is a work task and use createdAt from registry
+			if (option.taskType != TaskType::FulfillNeed && option.taskType != TaskType::Wander &&
+				option.status == OptionStatus::Available) {
+				// Look up task in registry by target position (approximate match)
+				// This is a simplified approach - full integration would use task IDs
+				const auto& registry = GlobalTaskRegistry::Get();
+				auto tasks = registry.getTasksInRadius(
+					option.targetPosition.value_or(glm::vec2{0.0F, 0.0F}), 0.5F);
+				for (const auto* task : tasks) {
+					if (task != nullptr && task->type == option.taskType) {
+						float taskAge = currentTime - task->createdAt;
+						option.taskAgeBonus = priorityConfig.calculateTaskAgeBonus(taskAge);
+						break;
+					}
+				}
+			}
+
+			// Chain bonus: handled separately when task chains are fully implemented (Phase 5)
+			// For now, chainBonus stays at 0
 		}
 
 	} // namespace
@@ -803,6 +877,13 @@ namespace ecs {
 		wanderOption.reason = "All needs satisfied";
 		wanderOption.targetPosition = generateWanderTarget(position.value);
 		trace.options.push_back(wanderOption);
+
+		// Populate priority bonuses for all options using PriorityConfig
+		// This includes: distance bonus, in-progress bonus, task age bonus
+		// Note: Using 0.0F for currentTime as task age tracking is refined in later phases
+		for (auto& option : trace.options) {
+			populatePriorityBonuses(option, currentTask, 0.0F);
+		}
 
 		// Sort by priority (highest first)
 		std::sort(trace.options.begin(), trace.options.end(), [](const auto& a, const auto& b) {

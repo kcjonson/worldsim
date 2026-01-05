@@ -8,6 +8,8 @@
 
 #include <glm/vec2.hpp>
 
+#include <cstdint>
+#include <optional>
 #include <string>
 
 namespace ecs {
@@ -61,6 +63,12 @@ struct Task {
 	glm::vec2 placeSourcePosition{0.0F, 0.0F};	   // Where the packaged item currently is
 	glm::vec2 placeTargetPosition{0.0F, 0.0F};	   // Where to place it (from Packaged.targetPosition)
 
+	/// Task chain tracking (for multi-step tasks like pickup→deposit)
+	/// When colonist completes a chain step and selects next task, if the candidate
+	/// is the next step in the same chain, it gets a +2000 priority bonus.
+	std::optional<uint64_t> chainId;  // Which chain this task belongs to (nullopt = not part of chain)
+	uint8_t chainStep = 0;			  // Step index within the chain (0 = first step)
+
 	/// Time since last decision re-evaluation (seconds)
 	float timeSinceEvaluation = 0.0F;
 
@@ -91,6 +99,8 @@ struct Task {
 		placePackagedEntityId = 0;
 		placeSourcePosition = glm::vec2{0.0F, 0.0F};
 		placeTargetPosition = glm::vec2{0.0F, 0.0F};
+		chainId.reset();
+		chainStep = 0;
 		priority = 0.0F;
 		// Note: timeSinceEvaluation NOT reset here - caller handles timer logic
 		reason.clear();
