@@ -75,14 +75,23 @@ We need to answer two questions:
 1. **What tasks exist?** (Task Existence)
 2. **What priority should each task have?** (Task Scoring — differs by context!)
 
-These have different characteristics:
+### Critical: Goal-Driven Task Generation
+
+**Tasks are NOT generated from discovery. Tasks are generated from GOALS.**
+
+- **Discovery** → Updates **Memory** (what colonists know about)
+- **Goals** → Generate **Tasks** (what needs to be done)
+
+A task requires BOTH:
+1. A **GOAL** that needs achieving (storage wanting items, hungry colonist, etc.)
+2. **Knowledge** of how to achieve it (colonist knows item location in Memory)
 
 | Aspect | Task Existence | UI Display Priority | Colonist Selection Priority |
 |--------|----------------|---------------------|----------------------------|
-| Source | Memory (discovered) | Task + reference point | Task + colonist state |
-| Changes when | Discovery/forget | Reference point moves | Colonist moves/changes |
+| Source | Goal systems (Storage, Needs, Crafting) | Task + reference point | Task + colonist state |
+| Changes when | Goal created/fulfilled | Reference point moves | Colonist moves/changes |
 | Includes colonist bonuses | N/A | No | Yes |
-| Update frequency | Rare | 4-10 Hz | 0.5s per colonist |
+| Update frequency | On goal events | 4-10 Hz | 0.5s per colonist |
 
 ---
 
@@ -258,33 +267,61 @@ Player can choose:
 
 ## Event Wiring Requirements
 
-### Events That Update Registry
+### Goal Sources (What Creates Tasks)
+
+| Goal System | Task Type | Creates Task When | Removes Task When |
+|-------------|-----------|-------------------|-------------------|
+| StorageSystem | Haul | Storage has capacity | Storage filled completely |
+| CraftingSystem | Gather | Recipe queued, needs materials | Recipe completed/cancelled |
+| NeedsSystem | FulfillNeed | Need below threshold | Need satisfied |
+| BuildSystem | Haul/Place | Build order placed, needs materials | Build completed/cancelled |
+
+### Events That Update Task Availability
 
 | Source System | Event | Registry Action |
 |---------------|-------|-----------------|
-| Memory | Entity discovered | Add to task.knownBy, create task if needed |
-| Memory | Entity forgotten | Remove from task.knownBy, delete if empty |
-| ActionSystem | Harvest complete | Remove harvest task |
-| ActionSystem | Deposit complete | Remove haul task |
-| Entity destruction | Entity removed | Remove task, notify memories |
+| Memory | Entity discovered | Update task availability (more fulfillment options) |
+| Memory | Entity forgotten | Update task availability (fewer options) |
+| ActionSystem | Item reserved | Mark item unavailable for other colonists |
+| ActionSystem | Item delivered | Release reservation, update goal progress |
+| Goal system | Goal fulfilled | Remove task entirely |
 
 ### Implementation Pattern
 
 ```cpp
+// Goal systems CREATE tasks
+class StorageSystem {
+    void onStorageCapacityAvailable(EntityID storage, const std::vector<uint32_t>& acceptedTypes) {
+        // Storage wants items - create goal-level task
+        TaskRegistry::Get().createGoalTask(GoalTask{
+            .destination = storage,
+            .type = TaskType::Haul,
+            .acceptsDefNameIds = acceptedTypes
+        });
+    }
+
+    void onStorageFilled(EntityID storage) {
+        // Storage full - remove the task (goal achieved)
+        TaskRegistry::Get().removeGoalTask(storage, TaskType::Haul);
+    }
+};
+
+// Memory updates task AVAILABILITY (not existence)
 class Memory {
     void addWorldEntity(uint64_t posHash, const DiscoveredEntity& entity) {
         // Existing logic...
         worldEntities[posHash].push_back(entity);
 
-        // NEW: Notify task registry
-        TaskRegistry::Get().onEntityDiscovered(ownerEntityId, entity);
+        // Notify registry: colonist now knows about potential fulfillment option
+        // This does NOT create a task - it makes existing tasks more fulfillable
+        TaskRegistry::Get().onFulfillmentOptionDiscovered(ownerEntityId, entity);
     }
 
     void forgetEntity(uint64_t posHash, uint32_t defNameId) {
         // Existing logic...
 
-        // NEW: Notify task registry
-        TaskRegistry::Get().onEntityForgotten(ownerEntityId, posHash, defNameId);
+        // Notify registry: colonist forgot about this fulfillment option
+        TaskRegistry::Get().onFulfillmentOptionForgotten(ownerEntityId, posHash, defNameId);
     }
 };
 ```
@@ -293,22 +330,38 @@ class Memory {
 
 ## Performance Analysis
 
-### Bounded by Memory
+### Bounded by Goals (Not Entities)
+
+With goal-driven task generation, task count is bounded by **active goals**, not discovered entities:
 
 | Factor | Bound |
 |--------|-------|
-| Entities per colonist memory | ~10,000 (LRU limit) |
-| Colonists | ~50 (typical colony) |
-| Max known entities (union) | ~50,000 (with overlap) |
-| **Max tasks in registry** | **~100,000** |
+| Storage containers | ~50 (typical colony) |
+| Active crafting queues | ~10-20 |
+| Colonists with needs | ~50 |
+| Build orders | ~10-50 |
+| **Max tasks in registry** | **~200** |
+
+Compare to old discovery-driven model:
+- Old: ~100,000 tasks (one per discovered entity)
+- New: ~200 tasks (one per goal)
+
+### What Scales with Exploration
+
+| System | Scales With | Bound |
+|--------|-------------|-------|
+| Memory | Discovered entities | ~10,000 per colonist (LRU) |
+| Tasks | Active goals | ~200 (storage + crafting + needs) |
+| Reservations | Colonists actively working | ~50 (one per colonist max) |
 
 ### Per-Frame Costs
 
 | Operation | Frequency | Cost |
 |-----------|-----------|------|
+| Goal event processing | Per storage/craft/need change | O(1) |
 | Memory event processing | Per discovery | O(1) |
-| Per-colonist scoring | 0.5s per colonist | O(T_known) |
-| UI aggregation | 10 Hz | O(T_total) sort |
+| Per-colonist scoring | 0.5s per colonist | O(T_goals) — now ~200, not ~100,000 |
+| UI aggregation | 10 Hz | O(T_goals) sort — trivial at ~200 tasks |
 
 ---
 
@@ -345,12 +398,14 @@ Alice also picks harvest (tier wins), but with less skill bonus.
 
 | Question | Answer |
 |----------|--------|
-| How do we know what tasks exist? | Memory events (discovery/forget) |
-| Where do we store task existence? | GlobalTaskRegistry |
+| How do we know what tasks exist? | Goal systems create tasks (Storage, Crafting, Needs, Build) |
+| What role does Memory play? | Provides fulfillment options for goals (what items colonists know about) |
+| Where do we store task existence? | GlobalTaskRegistry (goal-level tasks) |
+| How many tasks can exist? | ~200 (bounded by goals, not discovered entities) |
 | Does UI include colonist bonuses? | **No** — just base priority + distance |
 | When do we calculate colonist priority? | At selection time (0.5s interval) |
 | How does UI stay ordered? | Throttled refresh (4-10 Hz) by tier + distance |
-| How do we scale to infinite world? | Tasks bounded by Memory, not world size |
+| How do we scale to infinite world? | Tasks bounded by goals; Memory bounded by LRU per colonist |
 
 ---
 
