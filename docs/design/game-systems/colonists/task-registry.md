@@ -228,38 +228,145 @@ The UI shows tasks from Layer 1 (all known tasks), with annotations:
 
 ---
 
-## Task Generation from Capabilities
+## Task Generation: Goal-Driven Model
 
-Tasks are generated when colonists **discover** entities with capabilities:
+**Critical:** Tasks are NOT generated from discovery. Tasks are generated from GOALS.
 
-| Capability | When Discovered | Generated Task |
-|------------|-----------------|----------------|
-| `Harvestable` | Colonist sees berry bush | Harvest task |
-| `Carryable` (on ground) | Colonist sees loose item | Haul task |
-| `Craftable` + queued recipe | Colonist knows station | Craft task |
-| `Constructable` | Colonist sees blueprint | Build task |
-| `Packaged` | Colonist sees furniture | PlacePackaged task |
+- **Discovery** → Updates **Memory** (what colonists know about)
+- **Goals** → Generate **Tasks** (what needs to be done)
 
-### Discovery Lifecycle
+### Goal Sources
+
+| Goal Source | Task Type | Validity Condition |
+|-------------|-----------|-------------------|
+| Storage with capacity | Haul | Storage accepts item type + colonist knows loose item location |
+| Crafting recipe queued | Gather | Recipe needs material + colonist knows source |
+| Need below threshold | FulfillNeed | Colonist knows resource that fulfills need |
+| Build order placed | Haul/PlacePackaged | Structure needs materials + colonist knows source |
+
+### Discovery vs Goals
 
 ```
-Entity spawns in unexplored area
-         │
-         ▼ (no colonist sees it)
-    [NO TASK EXISTS]
-         │
-         ▼ (colonist walks nearby, enters sight radius)
-Colonist discovers entity → Memory updated
-         │
-         ▼
-TaskRegistry creates task (knownBy: [colonist])
-         │
-         ▼ (second colonist discovers same entity)
-TaskRegistry updates task (knownBy: [colonist, colonist2])
-         │
-         ▼ (both colonists forget due to LRU)
-TaskRegistry removes task
+DISCOVERY (VisionSystem)              GOALS (Various Systems)
+─────────────────────────             ─────────────────────────
+Colonist sees berry bush              Storage has empty capacity
+         │                                      │
+         ▼                                      ▼
+Memory updated                        Task created: "Fill Storage"
+(colonist knows bush location)        (references Memory for fulfillment)
+         │                                      │
+         ▼                                      ▼
+NO TASK CREATED                       Colonist checks Memory:
+(just knowledge)                      "Do I know any items Storage accepts?"
 ```
+
+### Why Goal-Driven?
+
+A Haul task requires BOTH:
+1. A **destination** (storage that wants items) — the GOAL
+2. A **source** (loose item the colonist knows about) — from MEMORY
+
+Without a destination, a Haul task is meaningless.
+
+---
+
+## Task Granularity
+
+**Problem:** Storage that holds 10,000 rocks should NOT generate 10,000 tasks.
+
+**Solution:** Tasks exist at the GOAL level, not the ITEM level.
+
+### Two-Level Model: Tasks vs Reservations
+
+| Level | Scope | Count | Purpose |
+|-------|-------|-------|---------|
+| **Task** | Goal | O(goals) | "Storage X wants rocks" |
+| **Reservation** | Item | O(colonists working) | "Bob is hauling rock@(5,3)" |
+
+### How 5 Colonists Work in Parallel
+
+```
+Task: "Fill Storage with rocks" (1 task, goal-level)
+                │
+     ┌──────────┼──────────┬──────────┐
+     ▼          ▼          ▼          ▼
+   Bob       Alice       Carol      Dave
+     │          │          │          │
+     ▼          ▼          ▼          ▼
+ Checks      Checks      Checks     Checks
+ Memory      Memory      Memory     Memory
+ (50 rocks)  (49 avail)  (48 avail) (47 avail)
+     │          │          │          │
+     ▼          ▼          ▼          ▼
+ Reserves    Reserves    Reserves   Reserves
+ rock@(5,3)  rock@(8,7)  rock@(12,4) rock@(3,9)
+```
+
+**Key insight:**
+- The **TASK** is shared (1 per storage, goal-level)
+- The **RESERVATION** is per-item (prevents conflicts)
+- Memory tracks what's known; reservations track what's claimed
+
+### Data Model
+
+```cpp
+struct GoalTask {
+    EntityID destination;           // Storage entity
+    TaskType type;                  // Haul, Gather, etc.
+    std::vector<uint32_t> acceptsDefNameIds;  // Item types accepted
+
+    // Reservations: which items are currently being worked
+    // Key = item location hash, Value = colonist working it
+    std::unordered_map<uint64_t, EntityID> reservations;
+
+    // Computed: how many items are available (known - reserved)
+    size_t availableCount() const;
+};
+```
+
+### Task Resolution Flow
+
+```
+1. Storage X has capacity → GoalTask exists: "Fill Storage"
+                │
+                ▼
+2. Bob considers task → checks his Memory for matching items
+                │
+                ▼
+3. Finds 50 rocks known, 2 already reserved by others → 48 available
+                │
+                ▼
+4. Bob picks closest available rock → adds reservation
+                │
+                ▼
+5. Bob hauls rock, deposits → removes reservation
+                │
+                ▼
+6. Task still exists if storage still has capacity
+```
+
+### UI Display
+
+The task list shows GOALS with availability status:
+
+```
+┌────────────────────────────────────────────┐
+│ Fill Storage Crate              (5, 10)    │
+│ ✓ Rocks: 48 available (2 in progress)      │
+│ ⚠ Wood: blocked (none known)               │
+└────────────────────────────────────────────┘
+```
+
+### Task Lifecycle
+
+| Event | Task State |
+|-------|------------|
+| Storage created with capacity | Task created |
+| Storage filled completely | Task removed |
+| Colonist reserves item | Reservation added, available count decreases |
+| Colonist deposits item | Reservation removed, storage capacity decreases |
+| All known items reserved/hauled | Task shows "blocked" until more discovered |
+| New item discovered | Available count increases |
 
 ---
 
@@ -289,23 +396,38 @@ If a colonist reserves a task then forgets the target (LRU eviction while moving
 
 ## Performance Considerations
 
-### Bounded by Memory
+### Bounded by Goals (Not Entities)
+
+With goal-driven task generation, task count is bounded by GOALS, not discovered entities:
 
 | Factor | Bound |
 |--------|-------|
-| Entities per colonist memory | ~10,000 (LRU limit) |
-| Colonists | ~50 (typical colony) |
-| Max known entities (union) | ~50,000 (with overlap) |
-| Tasks per entity | 1-2 average |
-| **Max tasks in registry** | **~100,000** |
+| Storage containers | ~50 (typical colony) |
+| Active crafting queues | ~10-20 |
+| Colonists with needs | ~50 |
+| Build orders | ~10-50 |
+| **Max tasks in registry** | **~200** |
+
+Compare to old discovery-driven model:
+- Old: ~100,000 tasks (one per discovered entity)
+- New: ~200 tasks (one per goal)
+
+### What Scales with Exploration
+
+| System | Scales With | Bound |
+|--------|-------------|-------|
+| Memory | Discovered entities | ~10,000 per colonist (LRU) |
+| Tasks | Active goals | ~200 (storage + crafting + needs) |
+| Reservations | Colonists working | ~50 (one per colonist) |
 
 ### Practical Numbers
 
 Most colonies will have:
 - 5-20 colonists
-- 2,000-10,000 known entities per colonist
-- Heavy overlap (colonists share knowledge via social)
-- **~5,000-20,000 active tasks**
+- 10-50 storage containers
+- 5-20 active crafting recipes
+- **~50-100 active tasks** (goal-level)
+- **~5-20 active reservations** (item-level)
 
 ### Spatial Indexing
 
