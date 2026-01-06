@@ -13,6 +13,7 @@
 
 #include <component/Component.h>
 #include <components/button/Button.h>
+#include <components/icon/Icon.h>
 #include <graphics/Rect.h>
 #include <input/InputEvent.h>
 #include <layer/Layer.h>
@@ -59,11 +60,15 @@ class ResourcesPanel : public UI::Component {
 
 	// Child handles
 	UI::LayerHandle headerButtonHandle;
+	UI::LayerHandle chevronHandle;
 	UI::LayerHandle contentBackgroundHandle;
 	UI::LayerHandle emptyMessageHandle;
 
 	/// Toggle expanded state
 	void toggle();
+
+	/// Update chevron icon direction
+	void updateChevron();
 
 	/// Update child positions after state change
 	void updateLayout();

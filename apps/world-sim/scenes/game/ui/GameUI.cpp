@@ -107,6 +107,9 @@ namespace world_sim {
 		// Create resources panel (top-right, below where minimap will be)
 		resourcesPanel = std::make_unique<ResourcesPanel>(ResourcesPanel::Args{.width = 160.0F, .id = "resources_panel"});
 
+		// Create global task list panel (top-right, below resources panel)
+		globalTaskList = std::make_unique<GlobalTaskListView>(GlobalTaskListView::Args{.width = 300.0F});
+
 		// Create toast stack for notifications (bottom-right)
 		toastStack = std::make_unique<UI::ToastStack>(UI::ToastStack::Args{
 			.position = {0.0F, 0.0F}, // Will be positioned in layout()
@@ -210,6 +213,17 @@ namespace world_sim {
 			float topMargin = 120.0F;  // Below zoom controls (80 + 28 + 12 margin)
 			resourcesPanel->setAnchorPosition(newBounds.width - rightMargin, topMargin);
 		}
+
+		// Position global task list below resources panel
+		if (globalTaskList) {
+			float rightMargin = 20.0F;
+			float taskListY = 120.0F; // Start at resources panel position
+			if (resourcesPanel) {
+				// Position below resources panel bounds
+				taskListY = resourcesPanel->getBounds().y + resourcesPanel->getBounds().height + 8.0F;
+			}
+			globalTaskList->setAnchorPosition(newBounds.width - rightMargin, taskListY);
+		}
 	}
 
 	bool GameUI::dispatchEvent(UI::InputEvent& event) {
@@ -259,6 +273,16 @@ namespace world_sim {
 		// Resources panel (top-right)
 		if (resourcesPanel) {
 			if (resourcesPanel->handleEvent(event)) {
+				return true;
+			}
+			if (event.isConsumed()) {
+				return true;
+			}
+		}
+
+		// Global task list (top-right, below resources panel)
+		if (globalTaskList) {
+			if (globalTaskList->handleEvent(event)) {
 				return true;
 			}
 			if (event.isConsumed()) {
@@ -373,6 +397,16 @@ namespace world_sim {
 			colonistList->update(colonistListModel, ecsWorld);
 		}
 
+		// Update global task list (throttled 5Hz refresh)
+		if (globalTaskList) {
+			globalTaskList->update(deltaTime);
+			glm::vec2 cameraCenter{camera.position().x, camera.position().y};
+			if (globalTaskListModel.refresh(ecsWorld, cameraCenter, deltaTime)) {
+				globalTaskList->setTasks(globalTaskListModel.tasks());
+			}
+			globalTaskList->setTaskCount(globalTaskListModel.taskCount());
+		}
+
 		// Track selected colonist for task list panel
 		ecs::EntityID newColonistId{0};
 		if (auto* colonistSel = std::get_if<ColonistSelection>(&selection)) {
@@ -465,6 +499,11 @@ namespace world_sim {
 		// Render resources panel (top-right)
 		if (resourcesPanel) {
 			resourcesPanel->render();
+		}
+
+		// Render global task list (top-right, below resources panel)
+		if (globalTaskList) {
+			globalTaskList->render();
 		}
 
 		// Render toast notifications (highest z-order)
@@ -591,6 +630,10 @@ namespace world_sim {
 
 	bool GameUI::isStorageConfigVisible() const {
 		return storageConfigDialog && storageConfigDialog->isOpen();
+	}
+
+	bool GameUI::isGlobalTaskListExpanded() const {
+		return globalTaskList && globalTaskList->isExpanded();
 	}
 
 } // namespace world_sim

@@ -64,7 +64,8 @@ namespace world_sim {
 					 {.id = kTabHealth, .label = "Health"},
 					 {.id = kTabSocial, .label = "Social"},
 					 {.id = kTabGear, .label = "Gear"},
-					 {.id = kTabMemory, .label = "Memory"}},
+					 {.id = kTabMemory, .label = "Memory"},
+					 {.id = kTabTasks, .label = "Tasks"}},
 				.selectedId = kTabBio,
 				.onSelect = [this](const std::string& tabId) { switchToTab(tabId); }
 			}
@@ -106,6 +107,12 @@ namespace world_sim {
 		memoryTab.visible = false;
 		memoryTabHandle = contentLayout.addChild(std::move(memoryTab));
 
+		// Create Tasks tab (initially hidden)
+		auto tasksTab = TasksTabView();
+		tasksTab.create(tabContentBounds);
+		tasksTab.visible = false;
+		tasksTabHandle = contentLayout.addChild(std::move(tasksTab));
+
 		// Add content layout to Dialog
 		contentLayoutHandle = dialog->addChild(std::move(contentLayout));
 	}
@@ -137,7 +144,7 @@ namespace world_sim {
 		return dialog != nullptr && dialog->isOpen();
 	}
 
-	void ColonistDetailsDialog::update(const ecs::World& world, float deltaTime) {
+	void ColonistDetailsDialog::update(ecs::World& world, float deltaTime) {
 		if (!isOpen())
 			return;
 
@@ -215,6 +222,9 @@ namespace world_sim {
 		if (auto* tab = contentLayout->getChild<MemoryTabView>(memoryTabHandle)) {
 			tab->visible = (tabId == kTabMemory);
 		}
+		if (auto* tab = contentLayout->getChild<TasksTabView>(tasksTabHandle)) {
+			tab->visible = (tabId == kTabTasks);
+		}
 	}
 
 	void ColonistDetailsDialog::updateTabContent() {
@@ -240,6 +250,9 @@ namespace world_sim {
 		}
 		if (auto* tab = contentLayout->getChild<MemoryTabView>(memoryTabHandle)) {
 			tab->update(model.memory());
+		}
+		if (auto* tab = contentLayout->getChild<TasksTabView>(tasksTabHandle)) {
+			tab->update(model.tasks());
 		}
 	}
 

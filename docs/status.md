@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2025-01-05 (Goal-Driven Task Generation requirements documented)
+Last Updated: 2025-01-05 (Task Ordering System Phase 6: Task List UI - complete)
 
 ## Epic/Story/Task Template
 
@@ -519,7 +519,7 @@ The following MVP epics have all been completed. Detailed task breakdowns are pr
 
 ### Goal-Driven Task Generation
 **Spec/Documentation:** `/docs/design/game-systems/colonists/task-registry.md`, `/docs/technical/task-generation-architecture.md`
-**Dependencies:** Task Ordering System
+**Dependencies:** ~~Task Ordering System~~ (complete)
 **Status:** ready (requirements documented)
 
 **Goal:** Refactor task generation from discovery-driven (see item → create task) to goal-driven (goal exists → create task using Memory for fulfillment). This fixes the issue of thousands of invalid tasks appearing in the global task list.
@@ -555,10 +555,10 @@ The following MVP epics have all been completed. Detailed task breakdowns are pr
 
 ---
 
-### Task Ordering System
+### ✅ Task Ordering System
 **Spec/Documentation:** `/docs/design/game-systems/colonists/task-registry.md`, `.claude/plans/task-ordering-system.md`
 **Dependencies:** ~~Storage and Hauling System~~ (complete)
-**Status:** in progress
+**Status:** complete
 
 **Goal:** Global task prioritization where all colony tasks are computed with numerical priority (int16), each colonist filters/modifies priorities based on skills/preferences, and in-progress/follow-up tasks receive priority bonuses.
 
@@ -603,11 +603,17 @@ The following MVP epics have all been completed. Detailed task breakdowns are pr
   - [x] Handle chain interruption based on handsRequired (stow 1-hand, drop 2-hand)
   - [x] Add 6 unit tests for chain scenarios
   - Note: "Refactor Haul to use Chain_PickupDeposit" deferred - current implementation works correctly with chainId/chainStep
-- [ ] Phase 6: UI Global Task List
-  - [ ] Create GlobalTaskListModel
-  - [ ] Create GlobalTaskListView panel
-  - [ ] Implement 4-10Hz throttled refresh
-  - [ ] Toggle between colonist view and global view
+- [x] Phase 6: Task List UI
+  - [x] Part A: Global Task List Panel (top-right, collapsible, all tasks)
+    - [x] GlobalTaskAdapter (ECS query layer)
+    - [x] GlobalTaskListModel (cache + 5Hz throttle)
+    - [x] GlobalTaskRow component (two-line display)
+    - [x] GlobalTaskListView (collapsible panel with scroll)
+    - [x] GameUI integration
+  - [x] Part B: Tasks Tab in Colonist Details Dialog
+    - [x] TasksTabView (scrollable task list for colonist)
+    - [x] ColonistDetailsModel.extractTasksData()
+    - [x] ColonistDetailsDialog integration (6th tab)
 
 **Related Specs:**
 - [Task Registry](./design/game-systems/colonists/task-registry.md) — Core architecture

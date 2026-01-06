@@ -1,17 +1,21 @@
 #include "ColonistDetailsModel.h"
 
+#include "scenes/game/ui/adapters/GlobalTaskAdapter.h"
+
+#include <ecs/GlobalTaskRegistry.h>
 #include <ecs/components/Colonist.h>
 #include <ecs/components/Inventory.h>
 #include <ecs/components/Memory.h>
 #include <ecs/components/Mood.h>
 #include <ecs/components/Needs.h>
 #include <ecs/components/Task.h>
+#include <ecs/components/Transform.h>
 
 #include <cmath>
 
 namespace world_sim {
 
-ColonistDetailsModel::UpdateType ColonistDetailsModel::refresh(const ecs::World& world, ecs::EntityID colonistId) {
+ColonistDetailsModel::UpdateType ColonistDetailsModel::refresh(ecs::World& world, ecs::EntityID colonistId) {
 	// Check if colonist changed
 	bool colonistChanged = (colonistId != currentColonistId);
 	currentColonistId = colonistId;
@@ -31,6 +35,7 @@ ColonistDetailsModel::UpdateType ColonistDetailsModel::refresh(const ecs::World&
 	extractSocialData();
 	extractGearData(world, colonistId);
 	extractMemoryData(world, colonistId);
+	extractTasksData(world, colonistId);
 
 	// Detect what changed
 	if (colonistChanged) {
@@ -39,6 +44,7 @@ ColonistDetailsModel::UpdateType ColonistDetailsModel::refresh(const ecs::World&
 		prevMood = healthData.mood;
 		prevInventorySize = gearData.items.size();
 		prevMemoryCount = memoryData.totalKnown;
+		prevTaskCount = tasksData.totalCount;
 		return UpdateType::Structure;
 	}
 
@@ -68,11 +74,17 @@ ColonistDetailsModel::UpdateType ColonistDetailsModel::refresh(const ecs::World&
 		valuesChanged = true;
 	}
 
+	// Check task count
+	if (tasksData.totalCount != prevTaskCount) {
+		valuesChanged = true;
+	}
+
 	// Update previous values
 	prevNeedValues = healthData.needValues;
 	prevMood = healthData.mood;
 	prevInventorySize = gearData.items.size();
 	prevMemoryCount = memoryData.totalKnown;
+	prevTaskCount = tasksData.totalCount;
 
 	return valuesChanged ? UpdateType::Values : UpdateType::None;
 }
@@ -104,25 +116,25 @@ void ColonistDetailsModel::extractBioData(const ecs::World& world, ecs::EntityID
 	const auto* task = world.getComponent<ecs::Task>(colonistId);
 	if (task != nullptr && task->isActive()) {
 		switch (task->type) {
-		case ecs::TaskType::FulfillNeed:
-			if (task->needToFulfill != ecs::NeedType::Count) {
-				bioData.currentTask = std::string("Fulfilling ") + ecs::needLabel(task->needToFulfill);
-			} else {
-				bioData.currentTask = "Fulfilling need";
-			}
-			break;
-		case ecs::TaskType::Gather:
-			bioData.currentTask = "Gathering " + task->gatherItemDefName;
-			break;
-		case ecs::TaskType::Craft:
-			bioData.currentTask = "Crafting " + task->craftRecipeDefName;
-			break;
-		case ecs::TaskType::Wander:
-			bioData.currentTask = "Wandering";
-			break;
-		default:
-			bioData.currentTask = "Idle";
-			break;
+			case ecs::TaskType::FulfillNeed:
+				if (task->needToFulfill != ecs::NeedType::Count) {
+					bioData.currentTask = std::string("Fulfilling ") + ecs::needLabel(task->needToFulfill);
+				} else {
+					bioData.currentTask = "Fulfilling need";
+				}
+				break;
+			case ecs::TaskType::Gather:
+				bioData.currentTask = "Gathering " + task->gatherItemDefName;
+				break;
+			case ecs::TaskType::Craft:
+				bioData.currentTask = "Crafting " + task->craftRecipeDefName;
+				break;
+			case ecs::TaskType::Wander:
+				bioData.currentTask = "Wandering";
+				break;
+			default:
+				bioData.currentTask = "Idle";
+				break;
 		}
 	} else {
 		bioData.currentTask = "Idle";
@@ -195,7 +207,7 @@ void ColonistDetailsModel::extractMemoryData(const ecs::World& world, ecs::Entit
 
 		// Limit displayed entities to avoid performance issues
 		constexpr size_t kMaxDisplayedEntities = 100;
-		size_t displayed = 0;
+		size_t			 displayed = 0;
 
 		for (uint64_t key : entityKeys) {
 			if (displayed >= kMaxDisplayedEntities) {
@@ -233,7 +245,7 @@ void ColonistDetailsModel::extractMemoryData(const ecs::World& world, ecs::Entit
 	colonists.count = memory->knownDynamicEntities.size();
 	for (const auto& [entityId, knownEntity] : memory->knownDynamicEntities) {
 		// Try to get colonist name
-		const auto* colonist = world.getComponent<ecs::Colonist>(entityId);
+		const auto*	 colonist = world.getComponent<ecs::Colonist>(entityId);
 		MemoryEntity memEntity;
 		if (colonist != nullptr) {
 			memEntity.name = colonist->name;
@@ -267,6 +279,21 @@ std::string ColonistDetailsModel::getMoodLabel(float mood) {
 		return "Stressed";
 	}
 	return "Miserable";
+}
+
+void ColonistDetailsModel::extractTasksData(ecs::World& world, ecs::EntityID colonistId) {
+	// Get colonist position for distance calculations
+	glm::vec2	colonistPosition{0.0F, 0.0F};
+	const auto* position = world.getComponent<ecs::Position>(colonistId);
+	if (position != nullptr) {
+		colonistPosition = position->value;
+	}
+
+	// Get tasks known by this colonist via the adapter
+	// Uses GlobalTaskDisplayData directly for consistency with GlobalTaskRow
+	tasksData.tasks = adapters::getTasksForColonist(world, colonistId, colonistPosition);
+	adapters::sortTasksForDisplay(tasksData.tasks);
+	tasksData.totalCount = tasksData.tasks.size();
 }
 
 } // namespace world_sim
