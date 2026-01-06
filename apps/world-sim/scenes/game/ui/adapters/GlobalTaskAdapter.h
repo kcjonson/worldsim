@@ -23,15 +23,19 @@ namespace world_sim::adapters {
 /// Display data for a single task
 struct GlobalTaskDisplayData {
 	uint64_t id = 0;				// Task ID (for sorting stability)
-	std::string description;		// "Harvest Berry Bush"
-	std::string position;			// "(10, 15)"
-	std::string distance;			// "5m"
-	std::string status;				// "Available" / colonist name / "Far"
+	std::string description;		// "Cut Tree (for Axe)"
+	std::string position;			// "(10, 15)" or empty if no specific location
+	std::string distance;			// "5m" or empty if no specific location
+	std::string status;				// "Available" / "Waiting for harvest" / "Blocked"
+	std::string statusDetail;		// "Alice working" / "0/3 materials"
 	std::string knownBy;			// "Bob, Alice" (empty for colonist-specific view)
 	float distanceValue = 0.0F;		// For sorting (meters)
 	uint8_t taskTypePriority = 255; // For sorting by type (lower = higher priority)
 	bool isReserved = false;		// For sorting (reserved first)
 	bool isMine = false;			// For colonist view: this colonist owns it
+	bool isBlocked = false;			// Goal is blocked (waiting for dependencies)
+	bool isUnassigned = false;		// Work pool entry (no colonist assigned yet)
+	uint32_t quantity = 1;			// Amount: "Cut 2 Trees" or "Haul 3 Wood"
 };
 
 /// Query all tasks from GlobalTaskRegistry (for colony-wide view)

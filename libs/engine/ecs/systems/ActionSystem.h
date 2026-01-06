@@ -102,6 +102,15 @@ private:
 		const struct Memory& memory
 	);
 
+	/// Start a harvest action for goal-driven harvesting (crafting materials)
+	/// Finds harvestable at target position that yields the required item type
+	void startHarvestAction(
+		struct Task& task,
+		struct Action& action,
+		const struct Position& position,
+		const struct Memory& memory
+	);
+
 	/// Start a haul action (pickup from source, then deposit to storage)
 	void startHaulAction(
 		struct Task& task,
