@@ -517,6 +517,44 @@ The following MVP epics have all been completed. Detailed task breakdowns are pr
 
 ## Planned Epics
 
+### Goal-Driven Task Generation
+**Spec/Documentation:** `/docs/design/game-systems/colonists/task-registry.md`, `/docs/technical/task-generation-architecture.md`
+**Dependencies:** ~~Task Ordering System~~ (complete)
+**Status:** ready (requirements documented)
+
+**Goal:** Refactor task generation from discovery-driven (see item → create task) to goal-driven (goal exists → create task using Memory for fulfillment). This fixes the issue of thousands of invalid tasks appearing in the global task list.
+
+**Architecture Change:**
+- Discovery → Updates **Memory** (what colonists know about)
+- Goals → Generate **Tasks** (what needs to be done)
+- Tasks exist at goal-level (~200), not item-level (~100,000)
+- Reservations are item-level (allows parallel work by multiple colonists)
+
+**Tasks:**
+- [ ] Phase 1: Remove Discovery-Based Task Generation
+  - [ ] Remove VisionSystem task creation for Carryable items
+  - [ ] Remove VisionSystem task creation for Harvestable items
+  - [ ] Clean up GlobalTaskRegistry discovery-driven methods
+- [ ] Phase 2: Goal Source Integration
+  - [ ] StorageSystem creates Haul tasks when capacity available
+  - [ ] CraftingSystem creates Gather tasks when recipe queued
+  - [ ] NeedsSystem creates FulfillNeed tasks when need below threshold (already correct)
+  - [ ] BuildSystem creates Haul/Place tasks when build order placed
+- [ ] Phase 3: Two-Level Task/Reservation Model
+  - [ ] GoalTask struct (destination, type, acceptedTypes, reservations map)
+  - [ ] Reservation system at item-level (prevents conflicts)
+  - [ ] availableCount() computation (known items minus reserved)
+- [ ] Phase 4: Memory Integration
+  - [ ] Memory notifies registry of fulfillment options (not tasks)
+  - [ ] Task availability updates based on Memory changes
+  - [ ] Colonist filtering by what they know
+- [ ] Phase 5: UI Updates
+  - [ ] GlobalTaskListView shows goal-level tasks
+  - [ ] "Blocked" status when no fulfillment options known
+  - [ ] Sub-demand display for multi-type storage
+
+---
+
 ### ✅ Task Ordering System
 **Spec/Documentation:** `/docs/design/game-systems/colonists/task-registry.md`, `.claude/plans/task-ordering-system.md`
 **Dependencies:** ~~Storage and Hauling System~~ (complete)
