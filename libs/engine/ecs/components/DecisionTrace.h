@@ -58,11 +58,17 @@ namespace ecs {
 		std::optional<glm::vec2> haulSourcePosition;	  // Where to pick up from
 		uint64_t				 haulTargetStorageId = 0; // Storage container entity ID
 		std::optional<glm::vec2> haulTargetPosition;	  // Where to deposit
+		uint64_t				 haulGoalId = 0;		  // Goal being fulfilled (for reservation)
 
 		// PlacePackaged-specific fields (for PlacePackaged tasks)
 		uint64_t				 placePackagedEntityId = 0; // Entity ID of packaged item
 		std::optional<glm::vec2> placeSourcePosition;		// Where the packaged item is
 		std::optional<glm::vec2> placeTargetPosition;		// Where to place it
+
+		// Harvest-specific fields (for Harvest tasks)
+		uint64_t harvestTargetEntityId = 0;	 // Entity ID of harvestable (tree, bush)
+		uint64_t harvestGoalId = 0;			 // Goal being fulfilled (for reservation)
+		uint32_t harvestYieldDefNameId = 0;	 // What item will be yielded
 
 		// Skill-related fields (for work tasks with skill requirements)
 		float	skillLevel = 0.0F; // Colonist's skill level for this work
@@ -128,6 +134,10 @@ namespace ecs {
 			// Tier 6.6: Gathering materials for crafting - priority 35 + all bonuses
 			if (taskType == TaskType::Gather && status == OptionStatus::Available) {
 				return 35.0F + workBonus();
+			}
+			// Tier 6.7: Harvesting resources (cutting trees, etc.) - priority 36 + all bonuses
+			if (taskType == TaskType::Harvest && status == OptionStatus::Available) {
+				return 36.0F + workBonus();
 			}
 			// Tier 7: Wander (lowest priority among active options - no bonuses)
 			if (taskType == TaskType::Wander) {

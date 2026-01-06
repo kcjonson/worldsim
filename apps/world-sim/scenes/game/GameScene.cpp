@@ -55,10 +55,13 @@
 #include <ecs/components/WorkQueue.h>
 #include <ecs/systems/AIDecisionSystem.h>
 #include <ecs/systems/ActionSystem.h>
+#include <ecs/systems/BuildGoalSystem.h>
+#include <ecs/systems/CraftingGoalSystem.h>
 #include <ecs/systems/DynamicEntityRenderSystem.h>
 #include <ecs/systems/MovementSystem.h>
 #include <ecs/systems/NeedsDecaySystem.h>
 #include <ecs/systems/PhysicsSystem.h>
+#include <ecs/systems/StorageGoalSystem.h>
 #include <ecs/systems/TimeSystem.h>
 #include <ecs/systems/VisionSystem.h>
 
@@ -465,6 +468,9 @@ namespace {
 			ecsWorld->registerSystem<ecs::TimeSystem>();									// Priority 10 - runs first
 			ecsWorld->registerSystem<ecs::VisionSystem>();									// Priority 45
 			ecsWorld->registerSystem<ecs::NeedsDecaySystem>();								// Priority 50
+			ecsWorld->registerSystem<ecs::StorageGoalSystem>();								// Priority 55 - goals before AI
+			ecsWorld->registerSystem<ecs::CraftingGoalSystem>();							// Priority 56 - goals before AI
+			ecsWorld->registerSystem<ecs::BuildGoalSystem>();								// Priority 57 - goals before AI
 			ecsWorld->registerSystem<ecs::AIDecisionSystem>(assetRegistry, recipeRegistry); // Priority 60
 			ecsWorld->registerSystem<ecs::MovementSystem>();								// Priority 100
 			ecsWorld->registerSystem<ecs::PhysicsSystem>();									// Priority 200

@@ -31,12 +31,13 @@ GlobalTaskRow::GlobalTaskRow(const Args& args)
 		.id = (args.id + "_line1").c_str()
 	}));
 
-	// Line 2: "Available • Known by: Bob, Alice"
-	std::string line2Text;
+	// Line 2: "Available • Need 3 • Known by: Bob, Alice" or "Blocked • 0/3 materials"
+	std::string line2Text = args.task.status;
+	if (!args.task.statusDetail.empty()) {
+		line2Text += " \xE2\x80\xA2 " + args.task.statusDetail;
+	}
 	if (showKnownBy && !args.task.knownBy.empty()) {
-		line2Text = args.task.status + " \xE2\x80\xA2 Known by: " + args.task.knownBy;
-	} else {
-		line2Text = args.task.status;
+		line2Text += " \xE2\x80\xA2 Known by: " + args.task.knownBy;
 	}
 
 	line2Handle = addChild(UI::Text(UI::Text::Args{
@@ -72,11 +73,14 @@ void GlobalTaskRow::setTaskData(const adapters::GlobalTaskDisplayData& task) {
 	}
 
 	if (auto* text2 = getChild<UI::Text>(line2Handle)) {
-		if (showKnownBy && !task.knownBy.empty()) {
-			text2->text = task.status + " \xE2\x80\xA2 Known by: " + task.knownBy;
-		} else {
-			text2->text = task.status;
+		std::string line2Text = task.status;
+		if (!task.statusDetail.empty()) {
+			line2Text += " \xE2\x80\xA2 " + task.statusDetail;
 		}
+		if (showKnownBy && !task.knownBy.empty()) {
+			line2Text += " \xE2\x80\xA2 Known by: " + task.knownBy;
+		}
+		text2->text = line2Text;
 		text2->style.color = getStatusColor(task);
 	}
 }
@@ -85,10 +89,13 @@ Foundation::Color GlobalTaskRow::getStatusColor(const adapters::GlobalTaskDispla
 	if (task.isMine) {
 		return UI::Theme::Colors::textClickable;
 	}
+	if (task.isBlocked) {
+		return UI::Theme::Colors::textMuted; // Blocked tasks shown in muted color
+	}
 	if (task.isReserved) {
 		return UI::Theme::Colors::statusPending;
 	}
-	if (task.status == "Far") {
+	if (task.status == "Far" || task.status == "Waiting for harvest") {
 		return UI::Theme::Colors::textMuted;
 	}
 	return UI::Theme::Colors::statusActive;
