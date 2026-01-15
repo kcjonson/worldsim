@@ -1,5 +1,6 @@
 #include "ActionSystem.h"
 
+#include "../GoalTaskRegistry.h"
 #include "../World.h"
 #include "../components/Action.h"
 #include "../components/Appearance.h"
@@ -58,9 +59,9 @@ namespace ecs {
 				continue;
 			}
 
-			// Only process actionable tasks (FulfillNeed, Gather, Craft, Haul, PlacePackaged)
+			// Only process actionable tasks (FulfillNeed, Gather, Craft, Haul, PlacePackaged, Harvest)
 			if (task.type != TaskType::FulfillNeed && task.type != TaskType::Gather && task.type != TaskType::Craft &&
-				task.type != TaskType::Haul && task.type != TaskType::PlacePackaged) {
+				task.type != TaskType::Haul && task.type != TaskType::PlacePackaged && task.type != TaskType::Harvest) {
 				// For non-actionable tasks like Wander, just clear when arrived
 				task.clear();
 				task.timeSinceEvaluation = 0.0F;
@@ -140,6 +141,12 @@ namespace ecs {
 		// Handle PlacePackaged tasks - pickup packaged item, then place at target
 		if (task.type == TaskType::PlacePackaged) {
 			startPlacePackagedAction(task, action, position, inventory);
+			return;
+		}
+
+		// Handle Harvest tasks (goal-driven harvesting for crafting materials)
+		if (task.type == TaskType::Harvest) {
+			startHarvestAction(task, action, position, memory);
 			return;
 		}
 
@@ -431,6 +438,30 @@ namespace ecs {
 					);
 				}
 			}
+
+			// For goal-driven Harvest tasks, update the GoalTaskRegistry
+			// This notifies dependent goals (e.g., Haul goals waiting for harvest) that items are now available
+			if (task.type == TaskType::Harvest && task.harvestGoalId != 0) {
+				auto& goalRegistry = GoalTaskRegistry::Get();
+
+				// Record delivery to the harvest goal (items yielded)
+				uint64_t worldEntityKey = static_cast<uint64_t>(std::hash<float>{}(collEff.sourcePosition.x)) ^
+										  (static_cast<uint64_t>(std::hash<float>{}(collEff.sourcePosition.y)) << 32);
+				goalRegistry.recordDelivery(task.harvestGoalId, worldEntityKey);
+
+				// Check if goal is now complete
+				const auto* goal = goalRegistry.getGoal(task.harvestGoalId);
+				if (goal != nullptr && goal->availableCapacity() == 0) {
+					// Harvest goal complete - notify dependent goals then remove
+					goalRegistry.notifyGoalCompleted(task.harvestGoalId);
+					goalRegistry.removeGoal(task.harvestGoalId);
+					LOG_INFO(
+						Engine,
+						"[Action] Harvest goal %llu complete - removed",
+						static_cast<unsigned long long>(task.harvestGoalId)
+					);
+				}
+			}
 		}
 
 		// Handle consumption effects (Eat action)
@@ -581,6 +612,23 @@ namespace ecs {
 						"[Action] Storage entity %llu not found, items returned to inventory",
 						static_cast<unsigned long long>(depEff.storageEntityId)
 					);
+				}
+
+				// For goal-driven Haul tasks, update and clean up the goal
+				if (task.type == TaskType::Haul && task.haulGoalId != 0) {
+					auto& goalRegistry = GoalTaskRegistry::Get();
+					goalRegistry.recordDelivery(task.haulGoalId, 0); // Record delivery
+
+					const auto* goal = goalRegistry.getGoal(task.haulGoalId);
+					if (goal != nullptr && goal->availableCapacity() == 0) {
+						// Haul goal complete - remove it
+						goalRegistry.removeGoal(task.haulGoalId);
+						LOG_INFO(
+							Engine,
+							"[Action] Haul goal %llu complete - removed",
+							static_cast<unsigned long long>(task.haulGoalId)
+						);
+					}
 				}
 			} else {
 				LOG_WARNING(Engine, "[Action] Deposit failed: %s not in inventory", depEff.itemDefName.c_str());
@@ -831,6 +879,79 @@ namespace ecs {
 			task.targetPosition.x,
 			task.targetPosition.y,
 			task.gatherItemDefName.c_str()
+		);
+		action.clear();
+	}
+
+	void ActionSystem::startHarvestAction(Task& task, Action& action, const Position& position, const Memory& memory) {
+		auto& registry = engine::assets::AssetRegistry::Get();
+
+		// Goal-driven harvest: Find a harvestable entity at the target position that yields
+		// the item type specified by the Harvest goal (harvestYieldDefNameId)
+		constexpr float kPositionTolerance = 0.5F;
+
+		for (const auto& [key, entity] : memory.knownWorldEntities) {
+			// Check if entity is at target position
+			glm::vec2 diff = entity.position - task.targetPosition;
+			float	  distSq = diff.x * diff.x + diff.y * diff.y;
+			if (distSq > kPositionTolerance * kPositionTolerance) {
+				continue;
+			}
+
+			// Check if entity has Harvestable capability
+			if (!registry.hasCapability(entity.defNameId, engine::assets::CapabilityType::Harvestable)) {
+				continue;
+			}
+
+			const auto& defName = registry.getDefName(entity.defNameId);
+			const auto* def = registry.getDefinition(defName);
+			if (def == nullptr || !def->capabilities.harvestable.has_value()) {
+				continue;
+			}
+
+			const auto& harvestCap = def->capabilities.harvestable.value();
+
+			// Verify this harvestable yields the item we need
+			uint32_t yieldDefNameId = registry.getDefNameId(harvestCap.yieldDefName);
+			if (yieldDefNameId != task.harvestYieldDefNameId) {
+				continue; // Wrong yield type
+			}
+
+			// Calculate yield amount
+			uint32_t yieldAmount = harvestCap.amountMin;
+			if (harvestCap.amountMax > harvestCap.amountMin) {
+				std::uniform_int_distribution<uint32_t> yieldDist(harvestCap.amountMin, harvestCap.amountMax);
+				yieldAmount = yieldDist(m_rng);
+			}
+
+			action = Action::Harvest(
+				harvestCap.yieldDefName,
+				yieldAmount,
+				harvestCap.duration,
+				entity.position,
+				defName,
+				harvestCap.destructive,
+				harvestCap.regrowthTime
+			);
+			LOG_DEBUG(
+				Engine,
+				"[Action] Starting goal-driven Harvest action for %s from %s (duration %.1fs, goal %llu)",
+				harvestCap.yieldDefName.c_str(),
+				defName.c_str(),
+				harvestCap.duration,
+				static_cast<unsigned long long>(task.harvestGoalId)
+			);
+			return;
+		}
+
+		// No valid harvestable found at target
+		LOG_WARNING(
+			Engine,
+			"[Action] No harvestable entity found at (%.1f, %.1f) for yield %u (goal %llu)",
+			task.targetPosition.x,
+			task.targetPosition.y,
+			task.harvestYieldDefNameId,
+			static_cast<unsigned long long>(task.harvestGoalId)
 		);
 		action.clear();
 	}

@@ -19,7 +19,11 @@ add_library(engine
     ecs/systems/VisionSystem.cpp
     ecs/systems/AIDecisionSystem.cpp
     ecs/systems/ActionSystem.cpp
+    ecs/systems/StorageGoalSystem.cpp
+    ecs/systems/CraftingGoalSystem.cpp
+    ecs/systems/BuildGoalSystem.cpp
     ecs/GlobalTaskRegistry.cpp
+    ecs/GoalTaskRegistry.cpp
     ecs/components/MemoryQueries.cpp
     ecs/components/ToiletLocationFinder.cpp
 )

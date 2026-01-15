@@ -1,8 +1,10 @@
 #include "GlobalTaskAdapter.h"
 
 #include <assets/AssetRegistry.h>
-#include <ecs/GlobalTaskRegistry.h>
+#include <ecs/GoalTaskRegistry.h>
 #include <ecs/components/Colonist.h>
+
+#include <utils/Log.h>
 
 #include <algorithm>
 #include <cmath>
@@ -18,27 +20,31 @@ namespace world_sim::adapters {
 			switch (type) {
 				case ecs::TaskType::FulfillNeed:
 					return 0; // Highest priority - active survival
+				case ecs::TaskType::Harvest:
+					return 1; // Harvesting for crafting
 				case ecs::TaskType::Craft:
-					return 1;
-				case ecs::TaskType::Haul:
 					return 2;
-				case ecs::TaskType::PlacePackaged:
+				case ecs::TaskType::Haul:
 					return 3;
-				case ecs::TaskType::Gather:
+				case ecs::TaskType::PlacePackaged:
 					return 4;
-				case ecs::TaskType::Wander:
+				case ecs::TaskType::Gather:
 					return 5;
+				case ecs::TaskType::Wander:
+					return 6;
 				case ecs::TaskType::None:
 				default:
 					return 255;
 			}
 		}
 
-		/// Get task type display prefix (e.g., "Harvest", "Haul")
+		/// Get task type display prefix (e.g., "Cut", "Haul")
 		std::string getTaskTypePrefix(ecs::TaskType type) {
 			switch (type) {
+				case ecs::TaskType::Harvest:
+					return "Cut"; // "Cut Tree", "Harvest Bush"
 				case ecs::TaskType::Gather:
-					return "Harvest";
+					return "Gather";
 				case ecs::TaskType::Haul:
 					return "Haul";
 				case ecs::TaskType::Craft:
@@ -53,6 +59,21 @@ namespace world_sim::adapters {
 				default:
 					return "";
 			}
+		}
+
+		/// Get parent context string (e.g., "(for Axe)")
+		std::string getParentContext(const ecs::GoalTaskRegistry& registry, const ecs::GoalTask& goal) {
+			if (!goal.parentGoalId.has_value()) {
+				return "";
+			}
+
+			const auto* parentGoal = registry.getGoal(goal.parentGoalId.value());
+			if (parentGoal == nullptr || parentGoal->type != ecs::TaskType::Craft) {
+				return "";
+			}
+
+			// For now, just show generic context - could be enhanced with recipe name
+			return " (for crafting)";
 		}
 
 		/// Get display label for an asset from its defNameId
@@ -85,71 +106,134 @@ namespace world_sim::adapters {
 			return "Unknown";
 		}
 
-		/// Build "Known by: X, Y, Z" string from knownBy set
-		std::string buildKnownByString(ecs::World& world, const std::unordered_set<ecs::EntityID>& knownBy) {
-			if (knownBy.empty()) {
-				return "";
+		/// Build description for a goal based on type and accepted items
+		std::string buildGoalDescription(const ecs::GoalTask& goal, const ecs::GoalTaskRegistry& goalRegistry) {
+			std::string prefix = getTaskTypePrefix(goal.type);
+			std::string context = getParentContext(goalRegistry, goal);
+
+			// For Harvest goals, describe what's being harvested
+			if (goal.type == ecs::TaskType::Harvest) {
+				if (goal.yieldDefNameId != 0) {
+					// Show what item this harvest yields (e.g., "Cut Tree" for Wood)
+					return prefix + " for " + getAssetLabel(goal.yieldDefNameId) + context;
+				}
+				return prefix + context;
 			}
 
-			std::ostringstream oss;
-			bool			   first = true;
-			for (ecs::EntityID colonistId : knownBy) {
-				if (!first) {
-					oss << ", ";
+			// For Haul goals, describe what's being hauled
+			if (goal.type == ecs::TaskType::Haul) {
+				if (!goal.acceptedDefNameIds.empty()) {
+					// Specific item types (e.g., "Haul Wood")
+					return prefix + " " + getAssetLabel(goal.acceptedDefNameIds[0]) + context;
 				}
-				oss << getColonistName(world, colonistId);
-				first = false;
+				if (goal.acceptedCategory != engine::assets::ItemCategory::None) {
+					// Category-based storage
+					std::string catName;
+					switch (goal.acceptedCategory) {
+						case engine::assets::ItemCategory::Food:
+							catName = "Food";
+							break;
+						case engine::assets::ItemCategory::RawMaterial:
+							catName = "Materials";
+							break;
+						case engine::assets::ItemCategory::Tool:
+							catName = "Tools";
+							break;
+						case engine::assets::ItemCategory::Furniture:
+							catName = "Furniture";
+							break;
+						default:
+							catName = "Items";
+					}
+					return prefix + " " + catName + context;
+				}
+				return prefix + context;
 			}
-			return oss.str();
+
+			// For Craft goals, show crafting
+			if (goal.type == ecs::TaskType::Craft) {
+				return "Craft";
+			}
+
+			// For PlacePackaged, show generic placement
+			if (goal.type == ecs::TaskType::PlacePackaged) {
+				return "Place Item";
+			}
+
+			// For destination-based goals, use the destination name
+			if (goal.destinationDefNameId != 0) {
+				return prefix + " " + getAssetLabel(goal.destinationDefNameId);
+			}
+
+			return prefix;
 		}
 
-		/// Convert task to display data
-		GlobalTaskDisplayData taskToDisplayData(
-			ecs::World&					 world,
-			const ecs::GlobalTask&		 task,
-			const glm::vec2&			 referencePosition,
-			bool						 includeKnownBy,
-			std::optional<ecs::EntityID> viewingColonist = std::nullopt
+		/// Convert goal to display data
+		GlobalTaskDisplayData goalToDisplayData(
+			ecs::World&					  world,
+			const ecs::GoalTaskRegistry& goalRegistry,
+			const ecs::GoalTask&		  goal,
+			const glm::vec2&			  referencePosition
 		) {
 			GlobalTaskDisplayData data;
-			data.id = task.id;
+			data.id = goal.id;
+			data.quantity = goal.targetAmount > 0 ? goal.targetAmount : 1;
 
-			// Build description: "Harvest Berry Bush"
-			std::string prefix = getTaskTypePrefix(task.type);
-			std::string label = getAssetLabel(task.defNameId);
-			data.description = prefix.empty() ? label : prefix + " " + label;
+			// Build description with parent context
+			data.description = buildGoalDescription(goal, goalRegistry);
 
-			// Format position: "(10, 15)"
-			data.position = std::format("({}, {})", static_cast<int>(task.position.x), static_cast<int>(task.position.y));
+			// Format position (destination position)
+			data.position = std::format("({}, {})",
+										static_cast<int>(goal.destinationPosition.x),
+										static_cast<int>(goal.destinationPosition.y));
 
-			// Calculate distance
-			float dx = task.position.x - referencePosition.x;
-			float dy = task.position.y - referencePosition.y;
+			// Calculate distance to destination
+			float dx = goal.destinationPosition.x - referencePosition.x;
+			float dy = goal.destinationPosition.y - referencePosition.y;
 			data.distanceValue = std::sqrt(dx * dx + dy * dy);
 			data.distance = std::format("{}m", static_cast<int>(data.distanceValue));
 
-			// Status
-			data.isReserved = task.isReserved();
-			if (task.isReserved()) {
-				if (viewingColonist.has_value() && task.isReservedBy(*viewingColonist)) {
-					data.status = "In Progress";
-					data.isMine = true;
+			// Status based on GoalStatus and reservations
+			size_t	 reservationCount = goal.itemReservations.size();
+			uint32_t available = goal.availableCapacity();
+
+			// First check goal status for blocking conditions
+			if (goal.status == ecs::GoalStatus::Blocked) {
+				data.status = "Blocked";
+				data.statusDetail = std::format("{}/{} materials", goal.deliveredAmount, goal.targetAmount);
+				data.isBlocked = true;
+			} else if (goal.status == ecs::GoalStatus::WaitingForItems) {
+				data.status = "Waiting for harvest";
+				data.statusDetail = "";
+				data.isBlocked = true;
+			} else if (reservationCount > 0) {
+				// Show who's working on it
+				auto		it = goal.itemReservations.begin();
+				std::string workerName = getColonistName(world, it->second);
+				if (reservationCount == 1) {
+					data.status = workerName;
+					data.statusDetail = "working";
 				} else {
-					std::string reserverName = getColonistName(world, *task.reservedBy);
-					data.status = "Reserved by " + reserverName;
+					data.status = workerName;
+					data.statusDetail = std::format("+ {} more", reservationCount - 1);
 				}
-			} else if (data.distanceValue > 30.0F) {
-				data.status = "Far";
-			} else {
+				data.isReserved = true;
+			} else if (available == 0) {
+				data.status = "Complete";
+				data.statusDetail = "";
+			} else if (data.distanceValue > 50.0F) {
 				data.status = "Available";
+				data.statusDetail = "far";
+			} else {
+				data.status = "Unassigned";
+				data.statusDetail = "";
+				data.isUnassigned = true;
 			}
 
-			// Known by (only for global view)
-			if (includeKnownBy) {
-				data.knownBy = buildKnownByString(world, task.knownBy);
-			}
+			// Known by - for goals, all colonists who know items that can fulfill
+			data.knownBy = ""; // Goal-driven: fulfilled by Memory queries, not tracked per-goal
 
-			data.taskTypePriority = getTaskTypePriority(task.type);
+			data.taskTypePriority = getTaskTypePriority(goal.type);
 
 			return data;
 		}
@@ -157,32 +241,74 @@ namespace world_sim::adapters {
 	} // anonymous namespace
 
 	std::vector<GlobalTaskDisplayData> getGlobalTasks(ecs::World& world, const glm::vec2& cameraCenter) {
-		auto& registry = ecs::GlobalTaskRegistry::Get();
-
-		// Get all tasks
-		auto allTasks = registry.getTasksMatching([](const ecs::GlobalTask&) { return true; });
+		auto& registry = ecs::GoalTaskRegistry::Get();
 
 		std::vector<GlobalTaskDisplayData> result;
-		result.reserve(allTasks.size());
 
-		for (const ecs::GlobalTask* task : allTasks) {
-			result.push_back(taskToDisplayData(world, *task, cameraCenter, true));
+		// Get all goals (Harvest, Haul, Craft, PlacePackaged) - skip completed ones
+		for (const auto* goal : registry.getGoalsOfType(ecs::TaskType::Harvest)) {
+			if (goal->availableCapacity() > 0) {
+				result.push_back(goalToDisplayData(world, registry, *goal, cameraCenter));
+			}
+		}
+		for (const auto* goal : registry.getGoalsOfType(ecs::TaskType::Haul)) {
+			if (goal->availableCapacity() > 0) {
+				result.push_back(goalToDisplayData(world, registry, *goal, cameraCenter));
+			}
+		}
+		for (const auto* goal : registry.getGoalsOfType(ecs::TaskType::Craft)) {
+			if (goal->availableCapacity() > 0) {
+				result.push_back(goalToDisplayData(world, registry, *goal, cameraCenter));
+			}
+		}
+		for (const auto* goal : registry.getGoalsOfType(ecs::TaskType::PlacePackaged)) {
+			if (goal->availableCapacity() > 0) {
+				result.push_back(goalToDisplayData(world, registry, *goal, cameraCenter));
+			}
 		}
 
 		return result;
 	}
 
 	std::vector<GlobalTaskDisplayData> getTasksForColonist(ecs::World& world, ecs::EntityID colonistId, const glm::vec2& colonistPosition) {
-		auto& registry = ecs::GlobalTaskRegistry::Get();
-
-		// Get tasks known by this colonist
-		auto colonistTasks = registry.getTasksFor(colonistId);
+		auto& registry = ecs::GoalTaskRegistry::Get();
 
 		std::vector<GlobalTaskDisplayData> result;
-		result.reserve(colonistTasks.size());
 
-		for (const ecs::GlobalTask* task : colonistTasks) {
-			result.push_back(taskToDisplayData(world, *task, colonistPosition, false, colonistId));
+		// For colonist view, show goals where this colonist has a reservation
+		auto checkReservation = [colonistId](const ecs::GoalTask& goal, GlobalTaskDisplayData& data) {
+			for (const auto& [itemKey, reserver] : goal.itemReservations) {
+				if (reserver == colonistId) {
+					data.isMine = true;
+					data.status = "In Progress";
+					break;
+				}
+			}
+		};
+
+		for (const auto* goal : registry.getGoalsOfType(ecs::TaskType::Harvest)) {
+			if (goal->availableCapacity() == 0) continue;
+			auto data = goalToDisplayData(world, registry, *goal, colonistPosition);
+			checkReservation(*goal, data);
+			result.push_back(data);
+		}
+		for (const auto* goal : registry.getGoalsOfType(ecs::TaskType::Haul)) {
+			if (goal->availableCapacity() == 0) continue;
+			auto data = goalToDisplayData(world, registry, *goal, colonistPosition);
+			checkReservation(*goal, data);
+			result.push_back(data);
+		}
+		for (const auto* goal : registry.getGoalsOfType(ecs::TaskType::Craft)) {
+			if (goal->availableCapacity() == 0) continue;
+			auto data = goalToDisplayData(world, registry, *goal, colonistPosition);
+			checkReservation(*goal, data);
+			result.push_back(data);
+		}
+		for (const auto* goal : registry.getGoalsOfType(ecs::TaskType::PlacePackaged)) {
+			if (goal->availableCapacity() == 0) continue;
+			auto data = goalToDisplayData(world, registry, *goal, colonistPosition);
+			checkReservation(*goal, data);
+			result.push_back(data);
 		}
 
 		return result;

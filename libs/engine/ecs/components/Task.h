@@ -18,6 +18,7 @@ namespace ecs {
 enum class TaskType : uint8_t {
 	None = 0,
 	FulfillNeed,   // Tier 3/5: Moving to target for need fulfillment
+	Harvest,	   // Tier 6.7: Harvesting resources (cutting trees, harvesting bushes)
 	Gather,		   // Tier 6.6: Gathering materials for crafting
 	Craft,		   // Tier 6.5: Crafting at a station
 	Haul,		   // Tier 6.4: Moving loose items to storage containers
@@ -43,6 +44,11 @@ struct Task {
 	/// For FulfillNeed tasks: which need is being addressed
 	NeedType needToFulfill = NeedType::Count;
 
+	/// For Harvest tasks: target to harvest and goal context
+	uint64_t harvestTargetEntityId = 0;	   // Entity ID of the harvestable (tree, bush, etc.)
+	uint64_t harvestGoalId = 0;			   // Goal ID this harvest is contributing to
+	uint32_t harvestYieldDefNameId = 0;	   // What item type will be yielded
+
 	/// For Gather tasks: item to collect and target entity
 	std::string gatherItemDefName;
 	uint64_t gatherTargetEntityId = 0;
@@ -55,6 +61,7 @@ struct Task {
 	std::string haulItemDefName;				   // Item being hauled
 	uint32_t	haulQuantity = 1;				   // Quantity to haul
 	uint64_t	haulTargetStorageId = 0;		   // Entity ID of the storage container (destination)
+	uint64_t	haulGoalId = 0;					   // Goal ID being fulfilled (for cleanup on completion)
 	glm::vec2	haulSourcePosition{0.0F, 0.0F};	   // Position of the source item
 	glm::vec2	haulTargetPosition{0.0F, 0.0F};	   // Position of the storage container
 
@@ -87,6 +94,9 @@ struct Task {
 		state = TaskState::Pending;
 		targetPosition = glm::vec2{0.0F, 0.0F};
 		needToFulfill = NeedType::Count;
+		harvestTargetEntityId = 0;
+		harvestGoalId = 0;
+		harvestYieldDefNameId = 0;
 		gatherItemDefName.clear();
 		gatherTargetEntityId = 0;
 		craftRecipeDefName.clear();
@@ -94,6 +104,7 @@ struct Task {
 		haulItemDefName.clear();
 		haulQuantity = 1;
 		haulTargetStorageId = 0;
+		haulGoalId = 0;
 		haulSourcePosition = glm::vec2{0.0F, 0.0F};
 		haulTargetPosition = glm::vec2{0.0F, 0.0F};
 		placePackagedEntityId = 0;
