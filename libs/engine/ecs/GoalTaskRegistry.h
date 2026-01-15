@@ -33,6 +33,15 @@ namespace ecs {
 		Complete		 // Done
 	};
 
+	/// Systems that can own/create goals
+	/// Used to track which system is responsible for a goal's lifecycle
+	enum class GoalOwner : uint8_t {
+		None = 0,			// Unowned (legacy compatibility)
+		StorageGoalSystem,	// Haul goals for storage containers
+		CraftingGoalSystem, // Craft + child Harvest/Haul goals
+		BuildGoalSystem,	// PlacePackaged goals
+	};
+
 	/// A goal-level task (e.g., "Storage wants rocks", "Crafting needs wood")
 	///
 	/// Key difference from old item-level tasks:
@@ -64,7 +73,8 @@ namespace ecs {
 		uint32_t deliveredAmount = 0; // How many have been delivered
 
 		// Metadata
-		float createdAt = 0.0F;
+		float	  createdAt = 0.0F;
+		GoalOwner owner = GoalOwner::None; // Which system created/owns this goal
 
 		// Parent-child hierarchy (for craft → harvest/haul relationships)
 		std::optional<uint64_t> parentGoalId;	 // Parent goal (e.g., Harvest/Haul → Craft)
@@ -181,6 +191,12 @@ namespace ecs {
 		/// Get count of goals by type
 		[[nodiscard]] size_t goalCount(TaskType type) const;
 
+		/// Get all goals owned by a specific system
+		[[nodiscard]] std::vector<const GoalTask*> getGoalsByOwner(GoalOwner owner) const;
+
+		/// Get count of goals by owner
+		[[nodiscard]] size_t goalCount(GoalOwner owner) const;
+
 		/// Check if an item is reserved by any goal
 		/// @return The goal ID if reserved, nullopt if not
 		[[nodiscard]] std::optional<uint64_t> findItemReservation(uint64_t worldEntityKey) const;
@@ -211,6 +227,9 @@ namespace ecs {
 
 		// Index: TaskType → set of goalIds
 		std::unordered_map<TaskType, std::unordered_set<uint64_t>> typeToGoals;
+
+		// Index: GoalOwner → set of goalIds
+		std::unordered_map<GoalOwner, std::unordered_set<uint64_t>> ownerToGoals;
 
 		// Index: worldEntityKey → goalId (for finding which goal has an item reserved)
 		std::unordered_map<uint64_t, uint64_t> itemToGoal;

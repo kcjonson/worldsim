@@ -16,6 +16,7 @@ namespace ecs {
 		goals.clear();
 		destinationToGoal.clear();
 		typeToGoals.clear();
+		ownerToGoals.clear();
 		itemToGoal.clear();
 		parentToChildren.clear();
 		goalToDependents.clear();
@@ -264,6 +265,31 @@ namespace ecs {
 		return 0;
 	}
 
+	std::vector<const GoalTask*> GoalTaskRegistry::getGoalsByOwner(GoalOwner owner) const {
+		std::vector<const GoalTask*> result;
+
+		auto it = ownerToGoals.find(owner);
+		if (it != ownerToGoals.end()) {
+			result.reserve(it->second.size());
+			for (uint64_t goalId : it->second) {
+				auto goalIt = goals.find(goalId);
+				if (goalIt != goals.end()) {
+					result.push_back(&goalIt->second);
+				}
+			}
+		}
+
+		return result;
+	}
+
+	size_t GoalTaskRegistry::goalCount(GoalOwner owner) const {
+		auto it = ownerToGoals.find(owner);
+		if (it != ownerToGoals.end()) {
+			return it->second.size();
+		}
+		return 0;
+	}
+
 	std::optional<uint64_t> GoalTaskRegistry::findItemReservation(uint64_t worldEntityKey) const {
 		auto it = itemToGoal.find(worldEntityKey);
 		if (it != itemToGoal.end()) {
@@ -285,6 +311,11 @@ namespace ecs {
 
 		// Type index
 		typeToGoals[goal.type].insert(goal.id);
+
+		// Owner index
+		if (goal.owner != GoalOwner::None) {
+			ownerToGoals[goal.owner].insert(goal.id);
+		}
 
 		// Parent-child index
 		if (goal.parentGoalId.has_value()) {
@@ -315,6 +346,17 @@ namespace ecs {
 			typeIt->second.erase(goal.id);
 			if (typeIt->second.empty()) {
 				typeToGoals.erase(typeIt);
+			}
+		}
+
+		// Owner index
+		if (goal.owner != GoalOwner::None) {
+			auto ownerIt = ownerToGoals.find(goal.owner);
+			if (ownerIt != ownerToGoals.end()) {
+				ownerIt->second.erase(goal.id);
+				if (ownerIt->second.empty()) {
+					ownerToGoals.erase(ownerIt);
+				}
 			}
 		}
 

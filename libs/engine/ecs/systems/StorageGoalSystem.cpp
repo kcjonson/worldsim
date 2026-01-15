@@ -26,8 +26,9 @@ namespace ecs {
 		auto& assetRegistry = engine::assets::AssetRegistry::Get();
 
 		// Track existing goals to detect removed storages
+		// Using ownership: only track goals that StorageGoalSystem created
 		std::unordered_set<EntityID> storagesWithGoals;
-		for (const auto* goal : registry.getGoalsOfType(TaskType::Haul)) {
+		for (const auto* goal : registry.getGoalsByOwner(GoalOwner::StorageGoalSystem)) {
 			storagesWithGoals.insert(goal->destinationEntity);
 		}
 
@@ -96,6 +97,7 @@ namespace ecs {
 			// Create new goal
 			GoalTask goal;
 			goal.type = TaskType::Haul;
+			goal.owner = GoalOwner::StorageGoalSystem;
 			goal.destinationEntity = entity;
 			goal.destinationPosition = position.value;
 			goal.destinationDefNameId = 0; // Could be set from storage's defName if available

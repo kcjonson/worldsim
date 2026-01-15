@@ -57,9 +57,12 @@ namespace ecs {
 		auto& recipeRegistry = engine::assets::RecipeRegistry::Get();
 
 		// Track existing Craft goals to detect removed stations
+		// Using ownership: only track root goals (Craft type) that we created
 		std::unordered_set<EntityID> stationsWithGoals;
-		for (const auto* goal : goalRegistry.getGoalsOfType(TaskType::Craft)) {
-			stationsWithGoals.insert(goal->destinationEntity);
+		for (const auto* goal : goalRegistry.getGoalsByOwner(GoalOwner::CraftingGoalSystem)) {
+			if (goal->type == TaskType::Craft) {
+				stationsWithGoals.insert(goal->destinationEntity);
+			}
 		}
 
 		activeGoalCount = 0;
@@ -132,6 +135,7 @@ namespace ecs {
 			// 1. Create Craft goal (blocked until materials delivered)
 			GoalTask craftGoal;
 			craftGoal.type = TaskType::Craft;
+			craftGoal.owner = GoalOwner::CraftingGoalSystem;
 			craftGoal.destinationEntity = entity;
 			craftGoal.destinationPosition = position.value;
 			craftGoal.destinationDefNameId = 0;
@@ -165,6 +169,7 @@ namespace ecs {
 					// Create Harvest goal
 					GoalTask harvestGoal;
 					harvestGoal.type = TaskType::Harvest;
+					harvestGoal.owner = GoalOwner::CraftingGoalSystem;
 					harvestGoal.destinationEntity = entity;
 					harvestGoal.destinationPosition = position.value;
 					harvestGoal.destinationDefNameId = 0;
@@ -184,6 +189,7 @@ namespace ecs {
 				// Create Haul goal
 				GoalTask haulGoal;
 				haulGoal.type = TaskType::Haul;
+				haulGoal.owner = GoalOwner::CraftingGoalSystem;
 				haulGoal.destinationEntity = entity;
 				haulGoal.destinationPosition = position.value;
 				haulGoal.destinationDefNameId = 0;

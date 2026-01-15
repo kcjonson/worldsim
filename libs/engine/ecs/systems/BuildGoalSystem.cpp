@@ -22,8 +22,9 @@ void BuildGoalSystem::update(float /*deltaTime*/) {
 	auto& registry = GoalTaskRegistry::Get();
 
 	// Track existing goals to detect removed/completed packaged items
+	// Using ownership: only track goals that BuildGoalSystem created
 	std::unordered_set<EntityID> packagesWithGoals;
-	for (const auto* goal : registry.getGoalsOfType(TaskType::PlacePackaged)) {
+	for (const auto* goal : registry.getGoalsByOwner(GoalOwner::BuildGoalSystem)) {
 		packagesWithGoals.insert(goal->destinationEntity);
 	}
 
@@ -56,6 +57,7 @@ void BuildGoalSystem::update(float /*deltaTime*/) {
 		// Create new goal for this packaged item
 		GoalTask goal;
 		goal.type = TaskType::PlacePackaged;
+		goal.owner = GoalOwner::BuildGoalSystem;
 		goal.destinationEntity = entity; // The packaged item entity
 		goal.destinationPosition = targetPos;
 		goal.destinationDefNameId = 0; // Could get from Appearance if available
