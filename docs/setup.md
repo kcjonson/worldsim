@@ -6,7 +6,7 @@ recipe see the main [README](../README.md); this doc covers the details and the 
 ## Prerequisites
 
 - **C++20 compiler**: Clang (macOS/Linux), or MSVC via Visual Studio 2022 (Windows)
-- **CMake 3.20+**
+- **CMake 3.20+** for the raw-cmake build; **3.21+** to use the `CMakePresets.json` presets below
 - **vcpkg** for dependencies
 - **Node.js / npm** (optional, only for the developer-client web app in Debug builds)
 

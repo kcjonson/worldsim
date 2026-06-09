@@ -29,7 +29,14 @@ A C++20 game project featuring 3D procedural world generation and 2D tile-based 
 git clone https://github.com/Microsoft/vcpkg.git
 cd vcpkg
 ./bootstrap-vcpkg.sh  # or bootstrap-vcpkg.bat on Windows
-export VCPKG_ROOT=/path/to/vcpkg  # Add to your shell profile (PowerShell: $env:VCPKG_ROOT)
+export VCPKG_ROOT=/path/to/vcpkg  # Add to your shell profile
+```
+
+On Windows (PowerShell), set it with an assignment, and persist it for future sessions:
+
+```powershell
+$env:VCPKG_ROOT = "C:\vcpkg"                                    # current session
+[Environment]::SetEnvironmentVariable("VCPKG_ROOT", "C:\vcpkg", "User")  # persisted
 ```
 
 > **Keep vcpkg current.** Dependencies are pinned in `vcpkg.json` via `builtin-baseline`

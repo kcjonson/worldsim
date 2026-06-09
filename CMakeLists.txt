@@ -6,15 +6,21 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-# Treat out-of-order designated initializers as an error on Clang/GCC.
-# MSVC enforces C++20 declaration-order for designators (C7560); this makes
-# Clang/GCC builds fail the same way so portability breaks are caught locally.
-if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
-    add_compile_options(-Werror=reorder-init-list)
-elseif(MSVC)
+# Treat out-of-order designated initializers as an error where supported.
+# MSVC enforces C++20 declaration-order for designators (C7560); enabling the
+# matching warning-as-error on Clang/GCC catches the same portability breaks
+# locally. Feature-detect the flag so this is safe on AppleClang and on
+# compilers that don't recognize the warning group (e.g. some GCC versions).
+if(MSVC)
     # Sources are UTF-8 (authored on macOS/Clang). Tell MSVC so Unicode character
     # literals compile instead of erroring as multibyte constants (C2015).
     add_compile_options(/utf-8)
+else()
+    include(CheckCXXCompilerFlag)
+    check_cxx_compiler_flag("-Werror=reorder-init-list" HAS_WERROR_REORDER_INIT_LIST)
+    if(HAS_WERROR_REORDER_INIT_LIST)
+        add_compile_options(-Werror=reorder-init-list)
+    endif()
 endif()
 
 # Force use of LLVM's libc++ on macOS
@@ -67,7 +73,7 @@ add_subdirectory(tools/generate_sdf_atlas)
 # source font changes; the JSON metadata regenerates deterministically.
 add_custom_command(
     OUTPUT ${CMAKE_SOURCE_DIR}/fonts/Roboto-SDF.png ${CMAKE_SOURCE_DIR}/fonts/Roboto-SDF.json
-    COMMAND generate_sdf_atlas
+    COMMAND $<TARGET_FILE:generate_sdf_atlas>
         --font ${CMAKE_SOURCE_DIR}/fonts/Roboto-Regular.ttf
         --output ${CMAKE_SOURCE_DIR}/fonts/Roboto-SDF.png
         --metadata ${CMAKE_SOURCE_DIR}/fonts/Roboto-SDF.json
@@ -75,7 +81,8 @@ add_custom_command(
     COMMENT "Generating SDF font atlas (fonts/Roboto-SDF.png)"
     VERBATIM
 )
-add_custom_target(font-atlas DEPENDS ${CMAKE_SOURCE_DIR}/fonts/Roboto-SDF.png)
+add_custom_target(font-atlas
+    DEPENDS ${CMAKE_SOURCE_DIR}/fonts/Roboto-SDF.png ${CMAKE_SOURCE_DIR}/fonts/Roboto-SDF.json)
 add_dependencies(world-sim font-atlas)
 add_dependencies(ui-sandbox font-atlas)
 
