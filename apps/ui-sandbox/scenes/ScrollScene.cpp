@@ -74,8 +74,8 @@ namespace {
 					Rectangle::Args{
 						.size = {180.0F, 30.0F},
 						.style = {.fill = itemColor, .border = BorderStyle{.color = Color(0.4F, 0.5F, 0.6F, 1.0F), .width = 1.0F}},
-						.margin = 2.0F,
-						.id = nullptr
+						.id = nullptr,
+						.margin = 2.0F
 					}
 				));
 			}
@@ -112,9 +112,9 @@ namespace {
 						.label = "Button " + std::to_string(i + 1),
 						.size = {180.0F, 35.0F},
 						.type = (i % 3 == 0) ? Button::Type::Secondary : Button::Type::Primary,
-						.margin = 3.0F,
 						.onClick = [i]() { LOG_INFO(UI, "Button %d clicked!", i + 1); },
-						.id = nullptr
+						.id = nullptr,
+						.margin = 3.0F
 					}
 				));
 			}

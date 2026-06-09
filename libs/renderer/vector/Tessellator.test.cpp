@@ -2,7 +2,9 @@
 #include "SVGLoader.h"
 #include "Types.h"
 #include <cmath>
+#include <filesystem>
 #include <fstream>
+#include <numbers>
 #include <gtest/gtest.h>
 
 using namespace renderer;
@@ -14,7 +16,7 @@ namespace {
 		VectorPath path;
 		path.isClosed = true;
 		for (int i = 0; i < numVertices; ++i) {
-			float angle = 2.0F * M_PI * static_cast<float>(i) / static_cast<float>(numVertices);
+			float angle = 2.0F * std::numbers::pi_v<float> * static_cast<float>(i) / static_cast<float>(numVertices);
 			path.vertices.push_back({cx + radius * std::cos(angle), cy + radius * std::sin(angle)});
 		}
 		return path;
@@ -25,7 +27,7 @@ namespace {
 		VectorPath path;
 		path.isClosed = true;
 		for (int i = 0; i < numVertices; ++i) {
-			float angle = 2.0F * M_PI * static_cast<float>(i) / static_cast<float>(numVertices);
+			float angle = 2.0F * std::numbers::pi_v<float> * static_cast<float>(i) / static_cast<float>(numVertices);
 			path.vertices.push_back({cx + rx * std::cos(angle), cy + ry * std::sin(angle)});
 		}
 		return path;
@@ -166,7 +168,11 @@ class SVGTessellationTest : public ::testing::Test {
 	Tessellator tessellator;
 	std::string tempDir;
 
-	void SetUp() override { tempDir = "/tmp/svg_test_" + std::to_string(::testing::UnitTest::GetInstance()->random_seed()); }
+	void SetUp() override {
+		tempDir = (std::filesystem::temp_directory_path() /
+				   ("svg_test_" + std::to_string(::testing::UnitTest::GetInstance()->random_seed())))
+					  .string();
+	}
 
 	void TearDown() override {
 		// Clean up temp files

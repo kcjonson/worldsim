@@ -10,7 +10,9 @@
 
 #include <gtest/gtest.h>
 
+#include <atomic>
 #include <cstdio>
+#include <filesystem>
 #include <fstream>
 #include <string>
 
@@ -41,20 +43,16 @@ class WorkConfigTest : public ::testing::Test {
 
     // Write content to a temp file and return path
     std::string writeTempFile(const std::string& content, const std::string& suffix) {
-        char nameTemplate[] = "/tmp/workconfig_XXXXXX";
-        int fd = mkstemp(nameTemplate);
-        if (fd == -1) return "";
-        close(fd);
-
-        std::string path = std::string(nameTemplate) + suffix;
-        std::rename(nameTemplate, path.c_str());
+        static std::atomic<int> counter{0};
+        std::filesystem::path path =
+            std::filesystem::temp_directory_path() / ("workconfig_" + std::to_string(counter++) + suffix);
 
         std::ofstream file(path);
         file << content;
         file.close();
 
-        tempFiles.push_back(path);
-        return path;
+        tempFiles.push_back(path.string());
+        return path.string();
     }
 
     std::vector<std::string> tempFiles;

@@ -38,8 +38,8 @@ namespace world_sim {
 					.position = {0.0F, 0.0F},
 					.size = {m_panelWidth, m_panelHeight},
 					.style = UI::PanelStyles::floating(),
-					.zIndex = 0,
-					.id = (args.id + "_bg").c_str()
+					.id = (args.id + "_bg").c_str(),
+					.zIndex = 0
 				}
 			)
 		);
@@ -51,8 +51,8 @@ namespace world_sim {
 					.position = {0.0F, 0.0F},
 					.size = {kCloseButtonSize, kCloseButtonSize},
 					.style = UI::PanelStyles::closeButton(),
-					.zIndex = 2,
-					.id = (args.id + "_close_bg").c_str()
+					.id = (args.id + "_close_bg").c_str(),
+					.zIndex = 2
 				}
 			)
 		);
@@ -70,8 +70,8 @@ namespace world_sim {
 							.hAlign = Foundation::HorizontalAlign::Center,
 							.vAlign = Foundation::VerticalAlign::Middle,
 						},
-					.zIndex = 3,
-					.id = (args.id + "_close_text").c_str()
+					.id = (args.id + "_close_text").c_str(),
+					.zIndex = 3
 				}
 			)
 		);
@@ -89,8 +89,8 @@ namespace world_sim {
 							.hAlign = Foundation::HorizontalAlign::Left,
 							.vAlign = Foundation::VerticalAlign::Top,
 						},
-					.zIndex = 1,
-					.id = (args.id + "_title").c_str()
+					.id = (args.id + "_title").c_str(),
+					.zIndex = 1
 				}
 			)
 		);

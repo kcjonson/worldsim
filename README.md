@@ -29,10 +29,18 @@ A C++20 game project featuring 3D procedural world generation and 2D tile-based 
 git clone https://github.com/Microsoft/vcpkg.git
 cd vcpkg
 ./bootstrap-vcpkg.sh  # or bootstrap-vcpkg.bat on Windows
-export VCPKG_ROOT=/path/to/vcpkg  # Add to your shell profile
+export VCPKG_ROOT=/path/to/vcpkg  # Add to your shell profile (PowerShell: $env:VCPKG_ROOT)
 ```
 
+> **Keep vcpkg current.** Dependencies are pinned in `vcpkg.json` via `builtin-baseline`
+> (a vcpkg commit). If your local vcpkg checkout is older than that commit, configure fails
+> with `no version database entry for <pkg> at <version>`. Fix it by updating vcpkg:
+> `git -C $VCPKG_ROOT fetch && git -C $VCPKG_ROOT checkout <builtin-baseline> && $VCPKG_ROOT/bootstrap-vcpkg.{sh,bat}`,
+> or just pull the latest master (the version database only grows).
+
 ### 2. Configure and Build
+
+**macOS / Linux** (single-config generator):
 
 ```bash
 # Configure
@@ -44,6 +52,25 @@ cmake --build build
 # Run
 ./build/apps/world-sim/world-sim
 ```
+
+**Windows** (Visual Studio 2022 + MSVC), from PowerShell:
+
+```powershell
+# Configure (multi-config generator)
+cmake -S . -B build -G "Visual Studio 17 2022" -A x64 `
+  -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake"
+
+# Build (pick a config)
+cmake --build build --config Debug
+
+# Run (note the per-config subdirectory)
+./build/apps/world-sim/Debug/world-sim.exe
+```
+
+The build generates the SDF font atlas (`fonts/Roboto-SDF.png`) automatically, so a fresh
+checkout needs no manual asset steps. On multi-config generators (MSVC) binaries land in a
+per-config subdirectory (`Debug/`, `Release/`); on single-config (Make/Ninja) they're in the
+target directory directly.
 
 ### 3. VSCode Setup
 
