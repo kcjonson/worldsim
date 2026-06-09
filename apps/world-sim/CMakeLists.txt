@@ -95,11 +95,13 @@ add_custom_command(TARGET world-sim POST_BUILD
     COMMENT "Copying fonts to world-sim directory"
 )
 
-# Create a custom target that always syncs assets (runs every build)
+# Create a custom target that always syncs assets (runs every build).
+# Use the target's actual output dir (TARGET_FILE_DIR) so this is correct under
+# multi-config generators (e.g. MSVC, where the exe lives in a Debug/ subdir).
 add_custom_target(world-sim-assets ALL
     COMMAND ${CMAKE_COMMAND} -E copy_directory
     ${CMAKE_SOURCE_DIR}/assets
-    ${CMAKE_CURRENT_BINARY_DIR}/assets
+    $<TARGET_FILE_DIR:world-sim>/assets
     COMMENT "Syncing assets to world-sim directory"
 )
 

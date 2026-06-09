@@ -40,6 +40,7 @@ tests/diffs/
 # Logs
 *.log
 
-# Claude plan files (internal planning artifacts)
-.claude/plans/
+# Claude Code local files (settings, plans, sessions). Shared commands stay tracked.
+.claude/*
+!.claude/commands/
 docs/development-log/plans/

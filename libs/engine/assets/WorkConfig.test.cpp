@@ -10,8 +10,11 @@
 
 #include <gtest/gtest.h>
 
+#include <atomic>
 #include <cstdio>
+#include <filesystem>
 #include <fstream>
+#include <random>
 #include <string>
 
 using namespace engine::assets;
@@ -39,22 +42,25 @@ class WorkConfigTest : public ::testing::Test {
         tempFiles.clear();
     }
 
-    // Write content to a temp file and return path
+    // Write content to a temp file and return path. The name includes a
+    // process-unique random token so the two test binaries that compile this
+    // file (assets-tests, engine-tests) don't collide if ctest runs them in
+    // parallel, and so stale files from a prior crashed run aren't reused.
     std::string writeTempFile(const std::string& content, const std::string& suffix) {
-        char nameTemplate[] = "/tmp/workconfig_XXXXXX";
-        int fd = mkstemp(nameTemplate);
-        if (fd == -1) return "";
-        close(fd);
-
-        std::string path = std::string(nameTemplate) + suffix;
-        std::rename(nameTemplate, path.c_str());
+        static const std::string token = [] {
+            std::random_device rd;
+            return std::to_string(rd()) + "_" + std::to_string(rd());
+        }();
+        static std::atomic<int> counter{0};
+        std::filesystem::path	path = std::filesystem::temp_directory_path() /
+                                    ("workconfig_" + token + "_" + std::to_string(counter++) + suffix);
 
         std::ofstream file(path);
         file << content;
         file.close();
 
-        tempFiles.push_back(path);
-        return path;
+        tempFiles.push_back(path.string());
+        return path.string();
     }
 
     std::vector<std::string> tempFiles;

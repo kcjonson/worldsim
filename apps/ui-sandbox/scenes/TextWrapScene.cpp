@@ -56,26 +56,26 @@ class TextWrapScene : public engine::IScene {
 		autoSizeLayout->addChild(Text(Text::Args{
 			.text = "Short text",
 			.style = {.color = Color::white(), .fontSize = 16.0F},
-			.margin = 4.0F,
-			.id = "text_short"}));
+			.id = "text_short",
+			.margin = 4.0F}));
 
 		autoSizeLayout->addChild(Text(Text::Args{
 			.text = "This is a longer piece of text that should auto-size",
 			.style = {.color = Color(0.7F, 0.9F, 1.0F), .fontSize = 16.0F},
-			.margin = 4.0F,
-			.id = "text_long"}));
+			.id = "text_long",
+			.margin = 4.0F}));
 
 		autoSizeLayout->addChild(Text(Text::Args{
 			.text = "Different font size",
 			.style = {.color = Color(1.0F, 0.8F, 0.6F), .fontSize = 20.0F},
-			.margin = 4.0F,
-			.id = "text_large"}));
+			.id = "text_large",
+			.margin = 4.0F}));
 
 		autoSizeLayout->addChild(Text(Text::Args{
 			.text = "Smaller text",
 			.style = {.color = Color(0.8F, 1.0F, 0.8F), .fontSize = 12.0F},
-			.margin = 4.0F,
-			.id = "text_small"}));
+			.id = "text_small",
+			.margin = 4.0F}));
 
 		// ================================================================
 		// Demo 2: Word-wrapped Text

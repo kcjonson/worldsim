@@ -62,8 +62,8 @@ GameplayBar::GameplayBar(const Args& args)
 			{
 				UI::DropdownItem{
 					.label = "(Coming Soon)",
-					.enabled = false,
-					.onSelect = []() {}},
+					.onSelect = []() {},
+					.enabled = false},
 			},
 		.id = "build_dropdown",
 		.openUpward = true}));

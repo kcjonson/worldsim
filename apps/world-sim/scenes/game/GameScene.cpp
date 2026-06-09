@@ -156,7 +156,6 @@ namespace {
 				.onOpenStorageConfig = [this](
 										   ecs::EntityID containerId, const std::string& defName
 									   ) { gameUI->showStorageConfigDialog(containerId, defName); },
-				.onPlaceFurniture = [this]() { handlePlaceFurniture(); },
 				.onPause =
 					[this]() {
 						auto& timeSystem = ecsWorld->getSystem<ecs::TimeSystem>();
@@ -168,6 +167,7 @@ namespace {
 						timeSystem.setSpeed(speed);
 					},
 				.onMenuClick = [this]() { sceneManager->switchTo(world_sim::toKey(world_sim::SceneType::MainMenu)); },
+				.onPlaceFurniture = [this]() { handlePlaceFurniture(); },
 				.queryResources = [this](const std::string& defName, Foundation::Vec2 position) -> std::optional<uint32_t> {
 					auto coord = engine::world::worldToChunk({position.x, position.y});
 					return m_placementExecutor->getResourceCount(coord, {position.x, position.y}, defName);
