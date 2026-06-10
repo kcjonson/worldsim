@@ -1,5 +1,6 @@
 add_library(world
     generation/Placeholder.cpp
+    generation/PlanetGenerator.cpp
 )
 
 target_include_directories(world
