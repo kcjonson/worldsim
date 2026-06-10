@@ -28,7 +28,9 @@ add_executable(ui-sandbox
     scenes/TooltipScene.cpp
     scenes/ContextMenuScene.cpp
     scenes/TextWrapScene.cpp
+    scenes/SliderScene.cpp
 )
+
 
 target_include_directories(ui-sandbox
     PRIVATE

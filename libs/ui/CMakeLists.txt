@@ -19,6 +19,7 @@ add_library(ui
     components/dialog/Dialog.cpp
     components/tooltip/Tooltip.cpp
     components/tooltip/TooltipManager.cpp
+    components/slider/Slider.cpp
     components/contextmenu/ContextMenu.cpp
     focus/FocusManager.cpp
     input/InputEvent.cpp
