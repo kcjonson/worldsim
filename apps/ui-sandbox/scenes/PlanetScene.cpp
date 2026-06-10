@@ -1,6 +1,6 @@
 // Planet Scene - 3D Globe Viewer (M3f milestone)
 // Renders a procedurally generated planet as a shaded 3D globe using the real
-// worldgen pipeline. Color modes 1-7; drag to orbit; scroll to zoom; click to pick.
+// worldgen pipeline. Color modes 0-6 (right-click cycles); drag to orbit; scroll to zoom; click to pick.
 
 #include "SceneTypes.h"
 
@@ -23,6 +23,7 @@
 #include <input/InputTypes.h>
 #include <ui/input/InputEvent.h>
 
+#include <cstdio>
 #include <memory>
 #include <optional>
 #include <string>
@@ -184,6 +185,7 @@ class PlanetScene : public engine::IScene {
                 }
             }
             camera.beginDrag(event.position.x, event.position.y);
+            draggingLeft = true;
             event.consume();
             return true;
         }

@@ -180,10 +180,10 @@ void PlanetColorizer::update(const worldgen::GeneratedWorld& world, ColorMode mo
         for (uint32_t j = 0; j < texSize; ++j) {
             for (uint32_t i = 0; i < texSize; ++i) {
                 // Map texel (i,j) → tile indices within rhombus r.
-                uint32_t ti = std::min(static_cast<uint32_t>(
-                    static_cast<float>(i) / static_cast<float>(texSize) * static_cast<float>(n)), n - 1U);
-                uint32_t tj = std::min(static_cast<uint32_t>(
-                    static_cast<float>(j) / static_cast<float>(texSize) * static_cast<float>(n)), n - 1U);
+                // Inclusive endpoint: texel texSize-1 maps to tile n-1 exactly.
+                // When texSize == n this is identity: (i*(n-1))/(n-1) == i.
+                uint32_t ti = (texSize > 1) ? (i * (n - 1U)) / (texSize - 1U) : 0U;
+                uint32_t tj = (texSize > 1) ? (j * (n - 1U)) / (texSize - 1U) : 0U;
                 // TileId encoding from SphereGrid: r*n*n + j*n + i
                 uint32_t tileId = r * n * n + tj * n + ti;
                 buf[j * texSize + i] = colorForTile(tileId, mode, data,

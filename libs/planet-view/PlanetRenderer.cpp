@@ -47,6 +47,8 @@ bool PlanetRenderer::init(const char* shaderDir, int widthPx, int heightPx) {
 
     sunDir = glm::normalize(glm::vec3(0.6F, 0.4F, 0.7F));
 
+    cacheUniforms();
+
     return createFbo(widthPx, heightPx);
 }
 
@@ -93,6 +95,16 @@ bool PlanetRenderer::createFbo(int w, int h) {
     return true;
 }
 
+void PlanetRenderer::cacheUniforms() {
+    planetUniforms.mvp       = glGetUniformLocation(planetShader, "u_mvp");
+    planetUniforms.model     = glGetUniformLocation(planetShader, "u_model");
+    planetUniforms.sunDir    = glGetUniformLocation(planetShader, "u_sunDir");
+    planetUniforms.cameraPos = glGetUniformLocation(planetShader, "u_cameraPos");
+    planetUniforms.colorTex  = glGetUniformLocation(planetShader, "u_colorTex");
+
+    blitUniforms.tex = glGetUniformLocation(blitShader, "u_tex");
+}
+
 void PlanetRenderer::destroyFbo() {
     if (fbo)      { glDeleteFramebuffers(1,  &fbo);      fbo      = 0; }
     if (colorTex) { glDeleteTextures(1,      &colorTex); colorTex = 0; }
@@ -117,6 +129,8 @@ void PlanetRenderer::render(const PlanetMesh& mesh, const PlanetColorizer& color
     glGetIntegerv(GL_DEPTH_FUNC, &prevDepthFunc);
     GLint prevProgram        = 0;
     glGetIntegerv(GL_CURRENT_PROGRAM, &prevProgram);
+    GLint prevVao            = 0;
+    glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &prevVao);
     GLint prevActiveTexture  = 0;
     glGetIntegerv(GL_ACTIVE_TEXTURE, &prevActiveTexture);
     glActiveTexture(GL_TEXTURE0);
@@ -137,8 +151,11 @@ void PlanetRenderer::render(const PlanetMesh& mesh, const PlanetColorizer& color
     glDisable(GL_SCISSOR_TEST); // FBO is fullscreen; scissor would clip incorrectly
     glFrontFace(GL_CCW);        // mesh assumes CCW winding
 
-    glClearColor(0.0F, 0.0F, 0.02F, 1.0F); // near-black space
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    // Use glClearBuffer* to avoid touching global clear-color state.
+    const GLfloat clearColor[] = {0.0F, 0.0F, 0.02F, 1.0F}; // near-black space
+    glClearBufferfv(GL_COLOR, 0, clearColor);
+    const GLfloat clearDepth = 1.0F;
+    glClearBufferfv(GL_DEPTH, 0, &clearDepth);
 
     float aspect = (fboHeight > 0) ? (static_cast<float>(fboWidth) / static_cast<float>(fboHeight)) : 1.0F;
     glm::mat4 mvp   = camera.mvpMatrix(aspect);
@@ -155,11 +172,11 @@ void PlanetRenderer::render(const PlanetMesh& mesh, const PlanetColorizer& color
 
     glUseProgram(planetShader);
 
-    glUniformMatrix4fv(glGetUniformLocation(planetShader, "u_mvp"),   1, GL_FALSE, glm::value_ptr(mvp));
-    glUniformMatrix4fv(glGetUniformLocation(planetShader, "u_model"), 1, GL_FALSE, glm::value_ptr(model));
-    glUniform3fv(glGetUniformLocation(planetShader, "u_sunDir"),    1, glm::value_ptr(sunDir));
-    glUniform3fv(glGetUniformLocation(planetShader, "u_cameraPos"), 1, glm::value_ptr(camPos));
-    glUniform1i(glGetUniformLocation(planetShader, "u_colorTex"), 0);
+    glUniformMatrix4fv(planetUniforms.mvp,       1, GL_FALSE, glm::value_ptr(mvp));
+    glUniformMatrix4fv(planetUniforms.model,     1, GL_FALSE, glm::value_ptr(model));
+    glUniform3fv(planetUniforms.sunDir,       1, glm::value_ptr(sunDir));
+    glUniform3fv(planetUniforms.cameraPos,    1, glm::value_ptr(camPos));
+    glUniform1i(planetUniforms.colorTex, 0);
 
     for (uint32_t r = 0; r < 10U; ++r) {
         const auto& rm = mesh.rhombus(r);
@@ -172,7 +189,6 @@ void PlanetRenderer::render(const PlanetMesh& mesh, const PlanetColorizer& color
                        static_cast<GLsizei>(mesh.indexCount),
                        GL_UNSIGNED_INT, nullptr);
     }
-    glBindVertexArray(0);
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, 0);
 
@@ -186,6 +202,7 @@ void PlanetRenderer::render(const PlanetMesh& mesh, const PlanetColorizer& color
     glDepthFunc(static_cast<GLenum>(prevDepthFunc));
     glFrontFace(static_cast<GLenum>(prevFrontFace));
     glUseProgram(static_cast<GLuint>(prevProgram));
+    glBindVertexArray(static_cast<GLuint>(prevVao));
     // Restore unit-0 binding while unit 0 is active, then restore the active unit.
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(prevTex0Binding));
@@ -212,7 +229,7 @@ void PlanetRenderer::blitToScreen(int widthPx, int heightPx) {
     glDisable(GL_BLEND);
     glUseProgram(blitShader);
     glBindTexture(GL_TEXTURE_2D, colorTex);
-    glUniform1i(glGetUniformLocation(blitShader, "u_tex"), 0);
+    glUniform1i(blitUniforms.tex, 0);
 
     glBindVertexArray(blitVao);
     glDrawArrays(GL_TRIANGLES, 0, 3);

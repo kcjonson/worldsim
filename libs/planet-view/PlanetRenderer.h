@@ -61,8 +61,22 @@ class PlanetRenderer {
     // Sun direction (world space, unit vector).
     glm::vec3 sunDir{0.6F, 0.4F, 0.7F};
 
+    // Cached uniform locations (queried once after shader link).
+    struct PlanetUniforms {
+        GLint mvp      {-1};
+        GLint model    {-1};
+        GLint sunDir   {-1};
+        GLint cameraPos{-1};
+        GLint colorTex {-1};
+    } planetUniforms;
+
+    struct BlitUniforms {
+        GLint tex{-1};
+    } blitUniforms;
+
     void destroyFbo();
     bool createFbo(int w, int h);
+    void cacheUniforms();
 };
 
 } // namespace planetview
