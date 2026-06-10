@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2026-06-09 (M1 and M2 complete: foundation primitives + worldgen core)
+Last Updated: 2026-06-09 (render perf analysis complete; M1 and M2 worldgen complete)
 
 ## Epic/Story/Task Template
 
@@ -541,6 +541,38 @@ The following MVP epics have all been completed. Detailed task breakdowns are pr
 ---
 
 ## Planned Epics
+
+### 2D Render Performance Overhaul
+**Spec/Documentation:** `.claude/plans/render-performance-overhaul.md`, `/docs/development-log/entries/2026-06-09-render-performance-analysis.md`
+**Dependencies:** None
+**Status:** ready
+
+**Goal:** Fix the measured collapse at zoom-out (4 FPS at 0.25x) and scroll hitches (112-443ms). Persistent GPU tile geometry, async entity bake, far-zoom impostor handoff.
+
+**Tasks:**
+- [x] Profiling tooling (camera/vsync control endpoints, perf-capture.ps1, draw call metrics fix)
+- [ ] Phase 1: Persistent tile geometry (baked tile sub-chunk VBOs, delete per-frame drawTile loop)
+- [ ] Phase 2: Async entity mesh bake (TaskPool workers + budgeted uploads)
+- [ ] Phase 3: Far-zoom impostor handoff (height-bucketed sub-chunk meshes, zoom cutoff + cross-fade)
+- [ ] Phase 4: Pacing + metrics correctness (63 FPS cap, GPU timer, Windows SystemResources)
+- [ ] Phase 5: Small wins (AABB cache, LRU eviction, zoom-aware load radius, View smallest-pool)
+
+---
+
+### Living Environment Rendering
+**Spec/Documentation:** `.claude/plans/living-environment-rendering.md`
+**Dependencies:** 2D Render Performance Overhaul (Phases 1-3)
+**Status:** ready
+
+**Goal:** Wind-blown grass at scale, grass parting around colonists with footprint trails, animated reactive water. Vertex-shader animation + interaction displacement maps; no per-frame CPU tessellation.
+
+**Tasks:**
+- [ ] M-A: WindSystem + vertex-shader wind for instanced and baked flora
+- [ ] M-B: Interaction displacement map (trampling) + footprint persistence
+- [ ] M-C: Water ripple/foam/sparkle + interaction rings
+- [ ] M-D: Far-zoom wind sheen, tree sway, particles, blob shadows
+
+---
 
 ### Goal-Driven Task Generation
 **Spec/Documentation:** `/docs/design/game-systems/colonists/task-registry.md`, `/docs/technical/task-generation-architecture.md`

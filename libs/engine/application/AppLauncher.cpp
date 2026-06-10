@@ -378,6 +378,12 @@ namespace engine {
 							break;
 						}
 
+						case Foundation::ControlAction::SetVsync:
+							glfwSwapInterval(g_debugServer->getTargetVsync());
+							LOG_INFO(Engine, "Vsync set to %d via control endpoint", g_debugServer->getTargetVsync());
+							g_debugServer->clearControlAction();
+							break;
+
 						default:
 							break;
 					}
@@ -468,6 +474,10 @@ namespace engine {
 
 	Renderer::MetricsCollector* AppLauncher::getMetrics() {
 		return g_metrics.get();
+	}
+
+	Foundation::DebugServer* AppLauncher::getDebugServer() {
+		return g_debugServer.get();
 	}
 
 } // namespace engine

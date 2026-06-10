@@ -96,6 +96,10 @@ class AppLauncher {
 	/// @return Pointer to MetricsCollector, or nullptr if metrics disabled
 	static Renderer::MetricsCollector* getMetrics();
 
+	/// @brief Get the debug server (for scenes to consume remote control commands)
+	/// @return Pointer to DebugServer, or nullptr if debug server disabled
+	static Foundation::DebugServer* getDebugServer();
+
   private:
 	AppLauncher() = delete; // Static-only class
 };

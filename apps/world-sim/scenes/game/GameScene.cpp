@@ -11,6 +11,7 @@
 #include <GL/glew.h>
 
 #include <application/AppLauncher.h>
+#include <debug/DebugServer.h>
 #include <chrono>
 #include <cmath>
 #include <graphics/Rect.h>
@@ -316,6 +317,26 @@ namespace {
 				dy *= kDiagonalNormalizer;
 			}
 
+			// Remote camera control from the debug server (position/zoom set once,
+			// pan persists like held movement keys until cleared)
+			if (auto* debugServer = engine::AppLauncher::getDebugServer()) {
+				Foundation::CameraCommand cmd;
+				if (debugServer->consumeCameraCommand(cmd)) {
+					if (cmd.hasPosition) {
+						m_camera->setPosition({cmd.x, cmd.y});
+					}
+					if (cmd.hasZoom) {
+						m_camera->setZoom(cmd.zoom);
+					}
+					if (cmd.hasPan) {
+						m_debugPanX = cmd.panX;
+						m_debugPanY = cmd.panY;
+					}
+				}
+			}
+			dx += m_debugPanX;
+			dy += m_debugPanY;
+
 			m_camera->move(dx, dy, dt);
 
 			// Zoom with scroll wheel (snaps to discrete levels)
@@ -408,6 +429,7 @@ namespace {
 					m_entityRenderer->lastEntityCount(),
 					m_renderer->lastChunkCount()
 				);
+				metrics->setEntityRenderStats(m_entityRenderer->lastDrawCallCount(), m_entityRenderer->lastTriangleCount());
 
 				// Convert ECS system timings to Foundation format (reuse cache to avoid allocation)
 				const auto& ecsTimings = ecsWorld->getSystemTimings();
@@ -691,6 +713,10 @@ namespace {
 		// Scroll accumulator for smooth zoom on high-precision input devices (Magic Mouse, trackpad)
 		// Accumulates fractional scroll deltas and triggers zoom only when threshold is crossed
 		float m_scrollAccumulator = 0.0F;
+
+		// Persistent pan direction from debug server camera commands (held-key style)
+		float m_debugPanX = 0.0F;
+		float m_debugPanY = 0.0F;
 
 		// World interaction subsystems (extracted from GameScene)
 		std::unique_ptr<world_sim::PlacementSystem> m_placementSystem;

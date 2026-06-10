@@ -203,6 +203,8 @@ namespace engine::world {
 					batchRenderer->drawInstanced(
 						handleIt->second, instances.data(), static_cast<uint32_t>(instances.size()), cameraPos, zoom, m_pixelsPerMeter
 					);
+					m_lastDrawCallCount++;
+					m_lastTriangleCount += (handleIt->second.indexCount / 3) * static_cast<uint32_t>(instances.size());
 				}
 			}
 		}
@@ -243,6 +245,8 @@ namespace engine::world {
 		int										   viewportHeight
 	) {
 		m_lastEntityCount = 0;
+		m_lastDrawCallCount = 0;
+		m_lastTriangleCount = 0;
 
 		// Clear per-frame buffers (keep capacity for reuse)
 		m_vertices.clear();
@@ -669,6 +673,8 @@ namespace engine::world {
 		int										   viewportHeight
 	) {
 		m_lastEntityCount = 0;
+		m_lastDrawCallCount = 0;
+		m_lastTriangleCount = 0;
 
 		auto* batchRenderer = Renderer::Primitives::getBatchRenderer();
 		if (batchRenderer == nullptr) {
@@ -753,6 +759,8 @@ namespace engine::world {
 
 				// Sub-chunk is visible - draw it
 				m_lastEntityCount += subChunk.entityCount;
+				m_lastDrawCallCount++;
+				m_lastTriangleCount += subChunk.indexCount / 3;
 				subChunk.vao.bind();
 				glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(subChunk.indexCount), GL_UNSIGNED_INT, nullptr);
 			}

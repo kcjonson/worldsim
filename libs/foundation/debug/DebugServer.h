@@ -31,7 +31,22 @@ namespace httplib {
 namespace Foundation { // NOLINT(readability-identifier-naming)
 
 	// Control actions for sandbox control endpoint
-	enum class ControlAction : std::uint8_t { None, Exit, SceneChange, Pause, Resume, ReloadScene }; // NOLINT(performance-enum-size)
+	enum class ControlAction : std::uint8_t { None, Exit, SceneChange, Pause, Resume, ReloadScene, SetVsync }; // NOLINT(performance-enum-size)
+
+	// Remote camera command (set via /api/control?action=camera).
+	// Fields are optional: only the parameters present in the request are applied.
+	// Pan is a persistent direction (-1..1 per axis) applied every frame like held
+	// movement keys; send panx=0&pany=0 to stop.
+	struct CameraCommand {
+		bool  hasPosition = false;
+		float x = 0.0F;
+		float y = 0.0F;
+		bool  hasZoom = false;
+		float zoom = 0.0F;
+		bool  hasPan = false;
+		float panX = 0.0F;
+		float panY = 0.0F;
+	};
 
 	// Log levels (must match foundation::LogLevel enum)
 	enum class LogLevel : std::uint8_t { Debug, Info, Warning, Error }; // NOLINT(performance-enum-size)
@@ -106,6 +121,13 @@ namespace Foundation { // NOLINT(readability-identifier-naming)
 		// Get target scene name (for SceneChange action)
 		std::string getTargetSceneName() const;
 
+		// Get target vsync interval (for SetVsync action): 0 = off, 1 = on
+		int getTargetVsync() const { return targetVsync.load(); }
+
+		// Consume pending camera command (game thread). Returns true if a new
+		// command was written since the last consume.
+		bool consumeCameraCommand(CameraCommand& out);
+
 		// Set/get current scene name (for metrics streaming to frontend)
 		void		setCurrentSceneName(const std::string& name);
 		std::string getCurrentSceneName() const;
@@ -139,6 +161,14 @@ namespace Foundation { // NOLINT(readability-identifier-naming)
 		std::string				   targetSceneName;
 		std::string				   currentSceneName;
 		mutable std::mutex		   sceneNameMutex; // Protects targetSceneName and currentSceneName
+
+		// Camera command state (HTTP thread writes, game thread consumes)
+		CameraCommand	   cameraCommand;
+		std::atomic<bool>  cameraCommandPending{false};
+		mutable std::mutex cameraCommandMutex; // Protects cameraCommand
+
+		// Vsync target for SetVsync action (0 = off, 1 = on)
+		std::atomic<int> targetVsync{1};
 
 		// Shutdown synchronization (for blocking exit handler until cleanup done)
 		mutable std::mutex		shutdownMutex;

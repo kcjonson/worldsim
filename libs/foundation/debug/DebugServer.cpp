@@ -313,6 +313,16 @@ namespace Foundation {
 		return targetSceneName;
 	}
 
+	bool DebugServer::consumeCameraCommand(CameraCommand& out) {
+		if (!cameraCommandPending.load()) {
+			return false;
+		}
+		std::lock_guard<std::mutex> lock(cameraCommandMutex);
+		out = cameraCommand;
+		cameraCommandPending.store(false);
+		return true;
+	}
+
 	void DebugServer::setCurrentSceneName(const std::string& name) {
 		std::lock_guard<std::mutex> lock(sceneNameMutex);
 		currentSceneName = name;
@@ -492,10 +502,48 @@ namespace Foundation {
 			} else if (action == "reload") {
 				controlAction.store(ControlAction::ReloadScene);
 				res.set_content("{\"status\":\"ok\",\"action\":\"reload\"}", "application/json");
+			} else if (action == "camera") {
+				// Remote camera control: any of x, y (world position), zoom (factor),
+				// panx, pany (-1..1 held-key style direction) may be supplied.
+				CameraCommand cmd;
+				if (req.has_param("x") && req.has_param("y")) {
+					cmd.hasPosition = true;
+					cmd.x = std::stof(req.get_param_value("x"));
+					cmd.y = std::stof(req.get_param_value("y"));
+				}
+				if (req.has_param("zoom")) {
+					cmd.hasZoom = true;
+					cmd.zoom = std::stof(req.get_param_value("zoom"));
+				}
+				if (req.has_param("panx") || req.has_param("pany")) {
+					cmd.hasPan = true;
+					cmd.panX = req.has_param("panx") ? std::stof(req.get_param_value("panx")) : 0.0F;
+					cmd.panY = req.has_param("pany") ? std::stof(req.get_param_value("pany")) : 0.0F;
+				}
+				if (!cmd.hasPosition && !cmd.hasZoom && !cmd.hasPan) {
+					res.status = 400;
+					res.set_content("{\"error\":\"Camera action requires x+y, zoom, panx, or pany parameters\"}", "application/json");
+					return;
+				}
+				{
+					std::lock_guard<std::mutex> lock(cameraCommandMutex);
+					cameraCommand = cmd;
+					cameraCommandPending.store(true);
+				}
+				res.set_content("{\"status\":\"ok\",\"action\":\"camera\"}", "application/json");
+			} else if (action == "vsync") {
+				if (!req.has_param("value")) {
+					res.status = 400;
+					res.set_content("{\"error\":\"Vsync action requires 'value' parameter (0 or 1)\"}", "application/json");
+					return;
+				}
+				targetVsync.store(std::stoi(req.get_param_value("value")) != 0 ? 1 : 0);
+				controlAction.store(ControlAction::SetVsync);
+				res.set_content("{\"status\":\"ok\",\"action\":\"vsync\"}", "application/json");
 			} else {
 				res.status = 400;
 				std::ostringstream json;
-				json << "{\"error\":\"Invalid action '" << action << "'. Valid actions: exit, scene, pause, resume, reload\"}";
+				json << "{\"error\":\"Invalid action '" << action << "'. Valid actions: exit, scene, pause, resume, reload, camera, vsync\"}";
 				res.set_content(json.str(), "application/json");
 			}
 		});
