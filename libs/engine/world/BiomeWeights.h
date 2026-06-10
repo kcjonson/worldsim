@@ -1,107 +1,140 @@
 #pragma once
 
-// BiomeWeights - Percentage-based biome blending for tiles.
-// Supports future transition zones where tiles blend between biomes.
-// A tile at a grassland-forest boundary might be "70% grassland, 30% forest".
+// BiomeWeights - Sparse top-4 biome blend weights.
+// Stores at most 4 biome/weight pairs (Entry{ biome, weight255 }).
+// weight255 is quantized to [0,255] (1/255 steps); weights sum to 255 when normalised.
+// API is compatible with the old dense-array version: get/set/has/primary/secondary/
+// primaryWeight/normalize/total/single all behave identically from the caller's view.
 
 #include "world/Biome.h"
 
 #include <algorithm>
 #include <array>
-#include <cstddef>
+#include <cstdint>
 
 namespace engine::world {
 
-/// Biome blend weights - supports multi-biome tiles.
-/// Fixed array is cache-friendly and avoids heap allocations.
-/// 8 biomes × 4 bytes = 32 bytes per tile (acceptable overhead).
 struct BiomeWeights {
-	std::array<float, static_cast<size_t>(Biome::Count)> weights{};
+    static constexpr size_t kMaxEntries = 4;
 
-	/// Get weight for a specific biome (0.0 = absent, 1.0 = fully present)
-	[[nodiscard]] float get(Biome biome) const { return weights[static_cast<size_t>(biome)]; }
+    struct Entry {
+        uint8_t biome  = 0;    // cast of Biome enum
+        uint8_t weight = 0;    // 0–255
+    };
 
-	/// Set weight for a specific biome
-	void set(Biome biome, float weight) { weights[static_cast<size_t>(biome)] = weight; }
+    std::array<Entry, kMaxEntries> entries{};
+    uint8_t count = 0;
 
-	/// Create single-biome weights (100% one biome, 0% all others)
-	[[nodiscard]] static BiomeWeights single(Biome biome) {
-		BiomeWeights bw;
-		bw.set(biome, 1.0F);
-		return bw;
-	}
+    // ── read ────────────────────────────────────────────────────────────────
 
-	/// Get primary (dominant) biome - the one with highest weight.
-	/// Returns Biome::Grassland when all weights are zero (default behavior).
-	[[nodiscard]] Biome primary() const {
-		Biome best = Biome::Grassland;
-		float bestWeight = 0.0F;
-		for (size_t i = 0; i < weights.size(); ++i) {
-			if (weights[i] > bestWeight) {
-				bestWeight = weights[i];
-				best = static_cast<Biome>(i);
-			}
-		}
-		return best;
-	}
+    [[nodiscard]] float get(Biome biome) const {
+        for (uint8_t i = 0; i < count; ++i) {
+            if (entries[i].biome == static_cast<uint8_t>(biome))
+                return static_cast<float>(entries[i].weight) / 255.0F;
+        }
+        return 0.0F;
+    }
 
-	/// Get secondary biome - second highest weight, for ecotone blending.
-	/// Returns primary() if only one biome has weight (pure tile).
-	[[nodiscard]] Biome secondary() const {
-		Biome best = Biome::Grassland;
-		Biome secondBest = Biome::Grassland;
-		float bestWeight = 0.0F;
-		float secondBestWeight = 0.0F;
-		for (size_t i = 0; i < weights.size(); ++i) {
-			if (weights[i] > bestWeight) {
-				secondBestWeight = bestWeight;
-				secondBest = best;
-				bestWeight = weights[i];
-				best = static_cast<Biome>(i);
-			} else if (weights[i] > secondBestWeight) {
-				secondBestWeight = weights[i];
-				secondBest = static_cast<Biome>(i);
-			}
-		}
-		// If no secondary has weight, return primary
-		return (secondBestWeight > 0.0F) ? secondBest : best;
-	}
+    [[nodiscard]] bool has(Biome biome) const {
+        for (uint8_t i = 0; i < count; ++i) {
+            if (entries[i].biome == static_cast<uint8_t>(biome) && entries[i].weight > 0)
+                return true;
+        }
+        return false;
+    }
 
-	/// Get the weight of the primary biome (0.0-1.0).
-	[[nodiscard]] float primaryWeight() const {
-		float bestWeight = 0.0F;
-		for (float w : weights) {
-			if (w > bestWeight) {
-				bestWeight = w;
-			}
-		}
-		return bestWeight;
-	}
+    [[nodiscard]] Biome primary() const {
+        Biome best      = Biome::TemperateGrassland;
+        uint8_t bestW   = 0;
+        for (uint8_t i = 0; i < count; ++i) {
+            if (entries[i].weight > bestW) {
+                bestW = entries[i].weight;
+                best  = static_cast<Biome>(entries[i].biome);
+            }
+        }
+        return best;
+    }
 
-	/// Check if a biome is present (weight > 0)
-	[[nodiscard]] bool has(Biome biome) const { return weights[static_cast<size_t>(biome)] > 0.0F; }
+    [[nodiscard]] Biome secondary() const {
+        Biome best       = Biome::TemperateGrassland;
+        Biome second     = Biome::TemperateGrassland;
+        uint8_t bestW    = 0;
+        uint8_t secondW  = 0;
+        for (uint8_t i = 0; i < count; ++i) {
+            if (entries[i].weight > bestW) {
+                secondW = bestW;  second = best;
+                bestW   = entries[i].weight;
+                best    = static_cast<Biome>(entries[i].biome);
+            } else if (entries[i].weight > secondW) {
+                secondW = entries[i].weight;
+                second  = static_cast<Biome>(entries[i].biome);
+            }
+        }
+        return (secondW > 0) ? second : best;
+    }
 
-	/// Normalize weights to sum to 1.0 (for blended tiles)
-	void normalize() {
-		float sum = 0.0F;
-		for (float w : weights) {
-			sum += w;
-		}
-		if (sum > 0.0F) {
-			for (float& w : weights) {
-				w /= sum;
-			}
-		}
-	}
+    [[nodiscard]] float primaryWeight() const {
+        uint8_t best = 0;
+        for (uint8_t i = 0; i < count; ++i)
+            if (entries[i].weight > best) best = entries[i].weight;
+        return static_cast<float>(best) / 255.0F;
+    }
 
-	/// Get total of all weights (useful for validation)
-	[[nodiscard]] float total() const {
-		float sum = 0.0F;
-		for (float w : weights) {
-			sum += w;
-		}
-		return sum;
-	}
+    [[nodiscard]] float total() const {
+        uint32_t sum = 0;
+        for (uint8_t i = 0; i < count; ++i) sum += entries[i].weight;
+        return static_cast<float>(sum) / 255.0F;
+    }
+
+    // ── write ───────────────────────────────────────────────────────────────
+
+    void set(Biome biome, float weight) {
+        uint8_t w = static_cast<uint8_t>(weight * 255.0F + 0.5F);
+        uint8_t key = static_cast<uint8_t>(biome);
+
+        // Update existing entry.
+        for (uint8_t i = 0; i < count; ++i) {
+            if (entries[i].biome == key) {
+                entries[i].weight = w;
+                return;
+            }
+        }
+
+        if (w == 0) return; // Nothing to insert.
+
+        if (count < kMaxEntries) {
+            entries[count++] = { key, w };
+            return;
+        }
+
+        // Evict the entry with the smallest weight.
+        uint8_t minIdx = 0;
+        for (uint8_t i = 1; i < kMaxEntries; ++i)
+            if (entries[i].weight < entries[minIdx].weight) minIdx = i;
+
+        if (w > entries[minIdx].weight)
+            entries[minIdx] = { key, w };
+    }
+
+    void normalize() {
+        uint32_t sum = 0;
+        for (uint8_t i = 0; i < count; ++i) sum += entries[i].weight;
+        if (sum == 0) return;
+        // Scale so weights sum to 255.
+        for (uint8_t i = 0; i < count; ++i) {
+            uint32_t scaled = static_cast<uint32_t>(entries[i].weight) * 255 / sum;
+            entries[i].weight = static_cast<uint8_t>(scaled);
+        }
+    }
+
+    // ── factories ───────────────────────────────────────────────────────────
+
+    [[nodiscard]] static BiomeWeights single(Biome biome) {
+        BiomeWeights bw;
+        bw.entries[0] = { static_cast<uint8_t>(biome), 255 };
+        bw.count = 1;
+        return bw;
+    }
 };
 
-}  // namespace engine::world
+} // namespace engine::world

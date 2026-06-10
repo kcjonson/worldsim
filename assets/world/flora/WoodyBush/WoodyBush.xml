@@ -31,7 +31,7 @@
     <!-- Per-biome placement configuration -->
     <placement>
       <!-- Forest: Moderate density, prefers edges and clearings -->
-      <biome name="Forest">
+      <biome name="TemperateDeciduousForest">
         <spawnChance>0.02</spawnChance>
         <distribution>clumped</distribution>
         <clumping>
@@ -42,7 +42,7 @@
       </biome>
 
       <!-- Grassland: Sparse, isolated or small groups -->
-      <biome name="Grassland">
+      <biome name="TemperateGrassland">
         <spawnChance>0.012</spawnChance>
         <distribution>clumped</distribution>
         <clumping>

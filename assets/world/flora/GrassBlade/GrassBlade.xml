@@ -38,7 +38,7 @@
     <placement>
       <!-- Grassland: Dense, fairly uniform coverage -->
       <!-- With 512x512 tiles per chunk, spawnChance controls clump frequency -->
-      <biome name="Grassland">
+      <biome name="TemperateGrassland">
         <spawnChance>0.7</spawnChance>
         <distribution>clumped</distribution>
         <clumping>
@@ -49,7 +49,7 @@
       </biome>
 
       <!-- Forest: Sparse, small clumps in clearings -->
-      <biome name="Forest">
+      <biome name="TemperateDeciduousForest">
         <spawnChance>0.0003</spawnChance>
         <distribution>clumped</distribution>
         <clumping>
@@ -60,7 +60,7 @@
       </biome>
 
       <!-- Wetland: Moderate, taller grass in patches -->
-      <biome name="Wetland">
+      <biome name="TemperateWetland">
         <spawnChance>0.0006</spawnChance>
         <distribution>clumped</distribution>
         <clumping>
