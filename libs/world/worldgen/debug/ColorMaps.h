@@ -64,11 +64,21 @@ inline Rgb elevationColor(float elevMeters, float seaLevelMeters) {
                 static_cast<uint8_t>(140 - static_cast<int>(t * 60)),
                 static_cast<uint8_t>(30)};
     }
-    // >2000m: brown → white
-    float t = (e - 2000.0f) / 3000.0f;
-    if (t > 1.0f) t = 1.0f;
-    auto v = static_cast<uint8_t>(190 + static_cast<int>(t * 65));
-    return {v, v, v};
+    // 2000–4500m: brown → grey rock (no white yet, keeps belts readable)
+    if (e < 4500.0f) {
+        float t = (e - 2000.0f) / 2500.0f;
+        auto r = static_cast<uint8_t>(150 + static_cast<int>(t * 35));
+        auto g = static_cast<uint8_t>(115 + static_cast<int>(t * 65));
+        auto b = static_cast<uint8_t>(60  + static_cast<int>(t * 115));
+        return {r, g, b};
+    }
+    // 4500–7500m: grey rock → pure white (only true summits saturate)
+    {
+        float t = (e - 4500.0f) / 3000.0f;
+        if (t > 1.0f) t = 1.0f;
+        auto v = static_cast<uint8_t>(185 + static_cast<int>(t * 70));
+        return {v, v, v};
+    }
 }
 
 // Temperature: blue (cold, -50 C) → white (0 C) → red (hot, +50 C)

@@ -9,16 +9,21 @@
 namespace worldgen {
 
 enum class WorldFieldOrMode : uint32_t {
-    Elevation    = static_cast<uint32_t>(WorldField::Elevation),
-    Temperature  = static_cast<uint32_t>(WorldField::TemperatureMean),
-    Precipitation= static_cast<uint32_t>(WorldField::Precipitation),
-    Biome        = static_cast<uint32_t>(WorldField::Biome),
-    PlateId      = static_cast<uint32_t>(WorldField::PlateId),
-    Ocean        = static_cast<uint32_t>(WorldField::Flags),
+    Elevation       = static_cast<uint32_t>(WorldField::Elevation),
+    Temperature     = static_cast<uint32_t>(WorldField::TemperatureMean),
+    Precipitation   = static_cast<uint32_t>(WorldField::Precipitation),
+    Biome           = static_cast<uint32_t>(WorldField::Biome),
+    PlateId         = static_cast<uint32_t>(WorldField::PlateId),
+    Ocean           = static_cast<uint32_t>(WorldField::Flags),
     // Continental crust + plate boundaries:
     //   continental crust → dark green, oceanic → deep blue,
     //   plate boundary (neighbor with different plateId) → 1px black overlay.
-    Crust        = 0x8000u,
+    Crust           = 0x8000u,
+    // BoundaryType per-tile color:
+    //   None=grey, ConvergentCC=red, ConvergentCO=orange,
+    //   ConvergentOO=yellow, Divergent=blue, Transform=green.
+    // Interior tiles colored by continental (dark tan) or oceanic (dark navy).
+    BoundaryTypeMap = 0x8001u,
 };
 
 // Write a width x (width/2) 24-bit BMP equirectangular projection of the world.
