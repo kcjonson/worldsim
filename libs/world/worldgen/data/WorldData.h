@@ -18,6 +18,18 @@ inline constexpr uint8_t kFlagGlacier         = 0x20;
 // and small mixed-plate areas also carry this flag when within the craton growth radius.
 inline constexpr uint8_t kFlagContinentalCrust = 0x40;
 
+// Boundary type enum for data.boundaryType (uint8_t per tile).
+// Written by TerrainStage; read by any consumer that interprets plate boundaries.
+// Values are stored as uint8_t; cast via static_cast<BoundaryType>(data.boundaryType[t]).
+enum class BoundaryType : uint8_t {
+    None         = 0,  // interior tile — no plate boundary within BFS reach
+    ConvergentCC = 1,  // both sides continental crust (collision mountain belt)
+    ConvergentCO = 2,  // one continental, one oceanic (subduction zone + arc)
+    ConvergentOO = 3,  // both oceanic (island arc + trench)
+    Divergent    = 4,  // spreading center (oceanic ridge or continental rift)
+    Transform    = 5,  // strike-slip shear boundary
+};
+
 // Bit flags identifying which SoA arrays have valid data.
 // One bit per field; set by each stage after writing.
 enum class WorldField : uint32_t {
@@ -51,7 +63,10 @@ inline constexpr uint32_t kAllWorldFields = 0x7FFFu; // bits 0..14
 //   windDir:           uint8, 0=N, 64=E, 128=S, 192=W (256 = 360 deg)
 //   windSpeed:         uint8, m/s (0..255)
 //   plateId:           uint8, 0..254 (255 = unassigned)
-//   boundaryType:      uint8 (0=interior, 1=divergent, 2=convergent, 3=transform)
+//   boundaryType:      uint8 — BType enum from TerrainStage:
+//                       0=None (interior), 1=ConvergentCC, 2=ConvergentCO,
+//                       3=ConvergentOO, 4=Divergent, 5=Transform.
+//                       Written by TerrainStage; consumers must use the same enum values.
 //   boundaryDistance:  uint16, tiles from nearest plate boundary
 //   biome:             uint8, Biome enum value
 //   flags:             uint8, kFlag* bits

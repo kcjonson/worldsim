@@ -72,15 +72,8 @@ namespace worldgen {
 
 namespace {
 
-// BoundaryType enum values stored in data.boundaryType (uint8_t per tile).
-enum class BType : uint8_t {
-    None         = 0,
-    ConvergentCC = 1,
-    ConvergentCO = 2,
-    ConvergentOO = 3,
-    Divergent    = 4,
-    Transform    = 5,
-};
+// Local alias for brevity within this file.
+using BType = BoundaryType;
 
 constexpr uint8_t kSideOverriding = 1;
 constexpr uint8_t kSideSubducting = 2;
@@ -237,8 +230,25 @@ void TerrainStage::run(StageContext& ctx) {
             bool isApproaching = convergence > 0.0;
 
             bool tileIsCont    = (ctx.data.flags[t] & kFlagContinentalCrust) != 0;
-            bool foreignIsCont = (domPlate < static_cast<uint8_t>(K)) &&
-                                  ctx.world.plates[static_cast<size_t>(domPlate)].isContinental;
+            // Derive foreign crust type from the actual neighboring tiles of domPlate
+            // (majority vote of kFlagContinentalCrust), since crust is decoupled from
+            // plate identity — mixed-crust plates exist at continental margins.
+            // Fall back to plate.isContinental only when no domPlate neighbors are visible.
+            bool foreignIsCont = false;
+            if (domPlate < static_cast<uint8_t>(K)) {
+                uint32_t domCrustCount = 0u, domTileCount = 0u;
+                for (uint32_t k = 0; k < cnt; ++k) {
+                    if (ctx.data.plateId[nbrs[k]] == domPlate) {
+                        ++domTileCount;
+                        if ((ctx.data.flags[nbrs[k]] & kFlagContinentalCrust) != 0) ++domCrustCount;
+                    }
+                }
+                if (domTileCount > 0u) {
+                    foreignIsCont = (domCrustCount * 2u > domTileCount); // majority
+                } else {
+                    foreignIsCont = ctx.world.plates[static_cast<size_t>(domPlate)].isContinental;
+                }
+            }
 
             if (!isConvergent) {
                 bndTypeRaw[t] = BType::Transform;
@@ -266,17 +276,22 @@ void TerrainStage::run(StageContext& ctx) {
     throwIfCancelled(ctx);
 
     // ---- Smooth boundary classification (2 passes, mode filter) ----
+    // True double-buffered: each pass reads one buffer and writes the other,
+    // so the result is order-independent regardless of tile scan order.
     {
+        // Pass 0: raw → smooth.  Pass 1: smooth → smooth2.  Final result in smooth2.
         std::vector<BType>   smooth(N, BType::None);
         std::vector<uint8_t> smoothSide(N, kSideSymmetric);
+        std::vector<BType>   smooth2(N, BType::None);
+        std::vector<uint8_t> smoothSide2(N, kSideSymmetric);
 
-        for (int pass = 0; pass < 2; ++pass) {
-            const std::vector<BType>&   srcT = (pass == 0) ? bndTypeRaw : smooth;
-            const std::vector<uint8_t>& srcS = (pass == 0) ? bndSideRaw : smoothSide;
-
+        auto modePass = [&](const std::vector<BType>&   srcT,
+                            const std::vector<uint8_t>& srcS,
+                            std::vector<BType>&         dstT,
+                            std::vector<uint8_t>&       dstS) {
+            std::array<TileId, 8> nbrs{};
             for (uint32_t t = 0; t < N; ++t) {
-                if (!isBoundary[t]) { smooth[t] = BType::None; smoothSide[t] = kSideSymmetric; continue; }
-                std::array<TileId, 8> nbrs{};
+                if (!isBoundary[t]) { dstT[t] = BType::None; dstS[t] = kSideSymmetric; continue; }
                 uint32_t cnt = ctx.grid.neighbors(t, nbrs);
                 uint8_t freq[6] = {};
                 freq[static_cast<uint8_t>(srcT[t])]++;
@@ -288,13 +303,16 @@ void TerrainStage::run(StageContext& ctx) {
                 for (uint8_t b = 1; b <= 5; ++b) {
                     if (freq[b] > bestF) { bestF = freq[b]; best = b; }
                 }
-                smooth[t]     = static_cast<BType>(best);
-                smoothSide[t] = srcS[t];
+                dstT[t] = static_cast<BType>(best);
+                dstS[t] = srcS[t];
             }
-            if (pass == 0) { bndTypeRaw = smooth; bndSideRaw = smoothSide; }
-        }
-        bndTypeRaw = smooth;
-        bndSideRaw = smoothSide;
+        };
+
+        modePass(bndTypeRaw, bndSideRaw, smooth,  smoothSide);   // pass 0
+        modePass(smooth,     smoothSide,  smooth2, smoothSide2);  // pass 1
+
+        bndTypeRaw = std::move(smooth2);
+        bndSideRaw = std::move(smoothSide2);
     }
 
     // Write to data.boundaryType
@@ -331,13 +349,73 @@ void TerrainStage::run(StageContext& ctx) {
     throwIfCancelled(ctx);
 
     // =========================================================================
+    // 2c. Belt-end taper — compute per-boundary-tile amplitude taper BEFORE the
+    //     distance BFS so we can propagate it to interior tiles in section 2.
+    //     For each boundary tile, count same-type boundary neighbors within 4 hops
+    //     along the boundary graph; taper = smoothstep(count / kTaperMax).
+    //     Isolated segment ends taper to 0; interior belt tiles stay at 1.
+    //     BFS is seeded in ascending tile-id order → deterministic.
+    //     Interior tiles receive the propagated taper value from their nearest
+    //     boundary tile (via the multi-source BFS in section 2).
+    // =========================================================================
+
+    std::vector<float> beltTaper(N, 1.0f);
+    {
+        constexpr int32_t kTaperHops = 4;
+        constexpr float   kTaperMax  = 12.0f;
+
+        std::vector<int32_t> epoch(N, -1);
+        std::vector<uint32_t> bfsQ;
+        bfsQ.reserve(256);
+        std::array<TileId, 8> tbNbrs{};
+
+        int32_t baseEpoch = 0;
+        for (uint32_t t = 0; t < N; ++t) {
+            // Use bndTypeRaw (already smoothed at this point) rather than
+            // ctx.data.boundaryType, which isn't written until after this block.
+            BType myType = bndTypeRaw[t];
+            if (myType == BType::None) continue;
+
+            bfsQ.clear();
+            epoch[t] = baseEpoch;
+            bfsQ.push_back(t);
+            int32_t count = 0;
+
+            for (size_t qi = 0; qi < bfsQ.size(); ++qi) {
+                uint32_t cur = bfsQ[qi];
+                int32_t  hop = epoch[cur] - baseEpoch;
+                if (hop >= kTaperHops) continue;
+                ++count;
+
+                uint32_t cnt = ctx.grid.neighbors(cur, tbNbrs);
+                for (uint32_t k = 0; k < cnt; ++k) {
+                    TileId nb = tbNbrs[k];
+                    if (epoch[nb] >= baseEpoch) continue;
+                    if (bndTypeRaw[nb] != myType) continue;
+                    epoch[nb] = baseEpoch + hop + 1;
+                    bfsQ.push_back(nb);
+                }
+            }
+
+            float c = static_cast<float>(count) / kTaperMax;
+            if (c > 1.0f) c = 1.0f;
+            beltTaper[t] = c * c * (3.0f - 2.0f * c); // smoothstep
+
+            baseEpoch += kTaperHops + 1;
+        }
+    }
+
+    // =========================================================================
     // 2. Distance BFS — from all boundary tiles simultaneously.
     //    Seeds enqueued in ascending tile-id order → FIFO → deterministic.
+    //    bfsBndTaper propagated from the seed boundary tile to every interior
+    //    tile in its BFS region (same mechanism as bndType/bndSide/bndConv).
     // =========================================================================
 
     std::vector<BType>   bfsBndType(N, BType::None);
     std::vector<uint8_t> bfsBndSide(N, kSideSymmetric);
     std::vector<float>   bfsBndConv(N, 0.0f);
+    std::vector<float>   bfsBndTaper(N, 1.0f);
     std::vector<int32_t> bfsDist(N, -1);
 
     {
@@ -345,10 +423,11 @@ void TerrainStage::run(StageContext& ctx) {
         bfsQueue.reserve(N);
         for (uint32_t t = 0; t < N; ++t) {
             if (isBoundary[t]) {
-                bfsDist[t]    = 0;
-                bfsBndType[t] = bndTypeRaw[t];
-                bfsBndSide[t] = bndSideRaw[t];
-                bfsBndConv[t] = bndConvNorm[t];
+                bfsDist[t]      = 0;
+                bfsBndType[t]   = bndTypeRaw[t];
+                bfsBndSide[t]   = bndSideRaw[t];
+                bfsBndConv[t]   = bndConvNorm[t];
+                bfsBndTaper[t]  = beltTaper[t];
                 bfsQueue.push_back(t);
             }
         }
@@ -360,10 +439,11 @@ void TerrainStage::run(StageContext& ctx) {
             for (uint32_t k = 0; k < cnt; ++k) {
                 TileId nb = nbrs[k];
                 if (bfsDist[nb] < 0) {
-                    bfsDist[nb]    = nd;
-                    bfsBndType[nb] = bfsBndType[t];
-                    bfsBndSide[nb] = bfsBndSide[t];
-                    bfsBndConv[nb] = bfsBndConv[t];
+                    bfsDist[nb]     = nd;
+                    bfsBndType[nb]  = bfsBndType[t];
+                    bfsBndSide[nb]  = bfsBndSide[t];
+                    bfsBndConv[nb]  = bfsBndConv[t];
+                    bfsBndTaper[nb] = bfsBndTaper[t];
                     bfsQueue.push_back(nb);
                 }
             }
@@ -426,65 +506,7 @@ void TerrainStage::run(StageContext& ctx) {
     bndTypeRaw.clear();  bndTypeRaw.shrink_to_fit();
     bndSideRaw.clear();  bndSideRaw.shrink_to_fit();
     bndConvNorm.clear(); bndConvNorm.shrink_to_fit();
-
-    ctx.reportProgress(0.23f);
-    throwIfCancelled(ctx);
-
-    // =========================================================================
-    // 2c. Belt-end taper — count same-type boundary neighbors within 4 hops
-    //     along the boundary graph for each boundary tile.  Amplitude taper =
-    //     smoothstep(count / kTaperMax); isolated segment ends taper to 0,
-    //     interior belt tiles stay at 1.  BFS is seeded in ascending tile-id
-    //     order → deterministic.
-    // =========================================================================
-
-    std::vector<float> beltTaper(N, 1.0f);
-    {
-        constexpr int32_t kTaperHops = 4;
-        constexpr float   kTaperMax  = 12.0f;
-
-        // epoch[t] stores (baseEpoch + hop) when tile t was visited in the
-        // current BFS run (baseEpoch is unique per source tile).
-        std::vector<int32_t> epoch(N, -1);
-        std::vector<uint32_t> bfsQ;
-        bfsQ.reserve(256);
-        std::array<TileId, 8> tbNbrs{};
-
-        int32_t baseEpoch = 0;
-        for (uint32_t t = 0; t < N; ++t) {
-            BType myType = static_cast<BType>(ctx.data.boundaryType[t]);
-            if (myType == BType::None) continue;
-
-            bfsQ.clear();
-            epoch[t] = baseEpoch; // hop 0
-            bfsQ.push_back(t);
-            int32_t count = 0;
-
-            for (size_t qi = 0; qi < bfsQ.size(); ++qi) {
-                uint32_t cur = bfsQ[qi];
-                int32_t  hop = epoch[cur] - baseEpoch;
-                if (hop >= kTaperHops) continue;
-                ++count;
-
-                uint32_t cnt = ctx.grid.neighbors(cur, tbNbrs);
-                for (uint32_t k = 0; k < cnt; ++k) {
-                    TileId nb = tbNbrs[k];
-                    if (epoch[nb] >= baseEpoch) continue; // visited this run
-                    if (static_cast<BType>(ctx.data.boundaryType[nb]) != myType) continue;
-                    epoch[nb] = baseEpoch + hop + 1;
-                    bfsQ.push_back(nb);
-                }
-            }
-
-            float c = static_cast<float>(count) / kTaperMax;
-            if (c > 1.0f) c = 1.0f;
-            beltTaper[t] = c * c * (3.0f - 2.0f * c); // smoothstep
-
-            // Advance baseEpoch far enough that old epoch values can't collide.
-            // kTaperHops+1 is safe: each BFS tags at most kTaperHops+1 distinct hop levels.
-            baseEpoch += kTaperHops + 1;
-        }
-    }
+    beltTaper.clear();   beltTaper.shrink_to_fit();
 
     ctx.reportProgress(0.25f);
     throwIfCancelled(ctx);
@@ -522,13 +544,14 @@ void TerrainStage::run(StageContext& ctx) {
     throwIfCancelled(ctx);
 
     // =========================================================================
-    // 3. Hotspot chains — efficient approach:
-    //    For each plume chain, store the list of (centerTileId, amplitude) pairs.
-    //    Then do a SINGLE global BFS seeded from ALL chain centers simultaneously.
-    //    Each tile accumulates Gaussian contributions from whichever chain center
-    //    is closest in BFS distance.
+    // 3. Hotspot chains — per-chain-point bounded BFS with accumulation:
+    //    For each plume chain, store (centerTileId, amplitude) pairs.
+    //    For each chain point, run a bounded BFS limited to kHotspotMaxTiles hops;
+    //    accumulate Gaussian elevation contributions into hotspotElev[] per tile.
+    //    Tiles within range of multiple chain points accumulate all contributions.
     //
-    //    This avoids the O(N) per-center local BFS from iteration 1.
+    //    Each bounded BFS touches O(kHotspotMaxTiles^2) tiles; with ~nHotspots*kChainLen
+    //    centers this is much less than O(N) total, so it is efficient.
     //    BFS terminates when distance > kHotspotMaxTiles.
     // =========================================================================
 
@@ -703,7 +726,7 @@ void TerrainStage::run(StageContext& ctx) {
             const uint8_t side     = bfsBndSide[t];
             const float   distT    = smoothDist[t]; // smoothed float distance (Jacobi + jitter)
             const float   conv     = bfsBndConv[t];
-            const float   taperAmp = beltTaper[t];  // along-boundary end taper [0,1]
+            const float   taperAmp = bfsBndTaper[t]; // along-boundary end taper, propagated to interior tiles
 
             // ---- Base ----
             float base;
@@ -837,14 +860,14 @@ void TerrainStage::run(StageContext& ctx) {
     });
 
     // Free transient arrays
-    bfsBndType.clear();  bfsBndType.shrink_to_fit();
-    bfsBndSide.clear();  bfsBndSide.shrink_to_fit();
-    bfsBndConv.clear();  bfsBndConv.shrink_to_fit();
-    bfsDist.clear();     bfsDist.shrink_to_fit();
-    smoothDist.clear();  smoothDist.shrink_to_fit();
-    beltTaper.clear();   beltTaper.shrink_to_fit();
-    crustEdgeDist.clear();  crustEdgeDist.shrink_to_fit();
-    hotspotElev.clear(); hotspotElev.shrink_to_fit();
+    bfsBndType.clear();   bfsBndType.shrink_to_fit();
+    bfsBndSide.clear();   bfsBndSide.shrink_to_fit();
+    bfsBndConv.clear();   bfsBndConv.shrink_to_fit();
+    bfsBndTaper.clear();  bfsBndTaper.shrink_to_fit();
+    bfsDist.clear();      bfsDist.shrink_to_fit();
+    smoothDist.clear();   smoothDist.shrink_to_fit();
+    crustEdgeDist.clear(); crustEdgeDist.shrink_to_fit();
+    hotspotElev.clear();  hotspotElev.shrink_to_fit();
 
     ctx.reportProgress(0.90f);
     throwIfCancelled(ctx);
