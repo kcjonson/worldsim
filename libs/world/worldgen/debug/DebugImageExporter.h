@@ -15,6 +15,10 @@ enum class WorldFieldOrMode : uint32_t {
     Biome        = static_cast<uint32_t>(WorldField::Biome),
     PlateId      = static_cast<uint32_t>(WorldField::PlateId),
     Ocean        = static_cast<uint32_t>(WorldField::Flags),
+    // Continental crust + plate boundaries:
+    //   continental crust → dark green, oceanic → deep blue,
+    //   plate boundary (neighbor with different plateId) → 1px black overlay.
+    Crust        = 0x8000u,
 };
 
 // Write a width x (width/2) 24-bit BMP equirectangular projection of the world.

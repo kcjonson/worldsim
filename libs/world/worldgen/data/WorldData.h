@@ -7,12 +7,16 @@
 namespace worldgen {
 
 // Bit flags for the flags field (uint8_t per tile)
-inline constexpr uint8_t kFlagOcean         = 0x01;
-inline constexpr uint8_t kFlagLake          = 0x02;
-inline constexpr uint8_t kFlagRiver         = 0x04;
-inline constexpr uint8_t kFlagCoast         = 0x08;
-inline constexpr uint8_t kFlagPermanentSnow = 0x10;
-inline constexpr uint8_t kFlagGlacier       = 0x20;
+inline constexpr uint8_t kFlagOcean           = 0x01;
+inline constexpr uint8_t kFlagLake            = 0x02;
+inline constexpr uint8_t kFlagRiver           = 0x04;
+inline constexpr uint8_t kFlagCoast           = 0x08;
+inline constexpr uint8_t kFlagPermanentSnow   = 0x10;
+inline constexpr uint8_t kFlagGlacier         = 0x20;
+// Set by PlateStage on tiles with continental crust (including shelves).
+// Continental plates have craton cores; oceanic margins of continental plates
+// and small mixed-plate areas also carry this flag when within the craton growth radius.
+inline constexpr uint8_t kFlagContinentalCrust = 0x40;
 
 // Bit flags identifying which SoA arrays have valid data.
 // One bit per field; set by each stage after writing.
