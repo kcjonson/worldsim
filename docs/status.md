@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2026-06-09 (M1 and M2 complete: foundation primitives + worldgen core)
+Last Updated: 2026-06-10 (Worldgen foundation merged: M1, M2, M3a, M3b, M3f-1, M3g, M3h on main via PRs #118-#124)
 
 ## Epic/Story/Task Template
 
@@ -420,14 +420,14 @@ while (running) {
 **Tasks:**
 - [x] M1: Foundation primitives (TaskPool, RNG, HashNoise, DeterministicMath, WorldHash)
 - [x] M2: worldgen core + frozen contracts (SphereGrid, WorldData, pipeline skeleton, debug image exporter, technical doc)
-- [ ] M3a: Plates + plate movement (P1, P2)
-- [ ] M3b: Terrain + sea level (P3) — ends with USER screenshot review gate
+- [x] M3a: Plates + plate movement (P1, P2)
+- [x] M3b: Terrain + sea level (P3) — ends with USER screenshot review gate
 - [ ] M3c: Atmosphere + temperature (P4)
 - [ ] M3d: Precipitation + rivers (P5)
 - [ ] M3e: Oceans, biomes, snow, summary (P6–P9)
-- [ ] M3f: planet-view lib (renderer, camera, picker, chunked-LOD, colorizer)
-- [ ] M3g: UI Slider + WorldCreator shell
-- [ ] M3h: Biome taxonomy migration (engine, 8→21 biomes, sparse BiomeWeights)
+- [x] M3f: planet-view lib (renderer, camera, picker, colorizer; chunked-LOD deferred to M3f-2)
+- [x] M3g: UI Slider + WorldCreator shell
+- [x] M3h: Biome taxonomy migration (engine, 8→21 biomes, sparse BiomeWeights)
 - [ ] M4: PlanetSampler + GeneratedWorldSampler + GameLoading branch
 - [ ] M5: WorldCreator integration (real generator + planet view)
 - [ ] M6: Landing site + handoff + MainMenu rewire (e2e New Game)
