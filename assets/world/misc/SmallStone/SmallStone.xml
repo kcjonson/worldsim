@@ -35,13 +35,13 @@
     <!-- Per-biome placement configuration -->
     <placement>
       <!-- Forest: Sparse scatter in clearings -->
-      <biome name="Forest">
+      <biome name="TemperateDeciduousForest">
         <spawnChance>0.015</spawnChance>
         <distribution>uniform</distribution>
       </biome>
 
       <!-- Grassland: Very sparse, scattered naturally -->
-      <biome name="Grassland">
+      <biome name="TemperateGrassland">
         <spawnChance>0.02</spawnChance>
         <distribution>uniform</distribution>
       </biome>

@@ -32,7 +32,7 @@ class MockAdjacentProvider : public IAdjacentChunkProvider {
 /// Create a simple chunk placement context for testing
 ChunkPlacementContext createTestContext(engine::world::ChunkCoordinate coord,
 										uint64_t seed,
-										engine::world::Biome defaultBiome = engine::world::Biome::Grassland) {
+										engine::world::Biome defaultBiome = engine::world::Biome::TemperateGrassland) {
 	ChunkPlacementContext ctx;
 	ctx.coord = coord;
 	ctx.worldSeed = seed;
@@ -239,7 +239,7 @@ TEST(PlacementExecutorTests, BiomeFunctionIsCalled) {
 	ctx.worldSeed = 12345;
 	ctx.getBiome = [&callCount](uint16_t /*localX*/, uint16_t /*localY*/) {
 		++callCount;
-		return engine::world::Biome::Grassland;
+		return engine::world::Biome::TemperateGrassland;
 	};
 
 	executor.processChunk(ctx);
@@ -344,7 +344,7 @@ TEST(PlacementExecutorTests, NullSurfaceFunction) {
 	ChunkPlacementContext ctx;
 	ctx.coord = {0, 0};
 	ctx.worldSeed = 12345;
-	ctx.getBiome = [](uint16_t, uint16_t) { return engine::world::Biome::Grassland; };
+	ctx.getBiome = [](uint16_t, uint16_t) { return engine::world::Biome::TemperateGrassland; };
 	ctx.getSurface = nullptr; // Explicitly null
 
 	// Should not crash
