@@ -27,6 +27,9 @@ namespace Renderer { // NOLINT(readability-identifier-naming)
 		void setTimingBreakdown(float tileRenderMs, float entityRenderMs, float updateMs,
 								uint32_t tileCount, uint32_t entityCount, uint32_t visibleChunkCount);
 
+		// Set entity renderer stats (raw GL draws that bypass BatchRenderer counters)
+		void setEntityRenderStats(uint32_t drawCalls, uint32_t triangleCount);
+
 		// Set ECS system timings (called by game scene after ECS update)
 		void setEcsSystemTimings(const std::vector<Foundation::EcsSystemTiming>& timings);
 
@@ -49,6 +52,10 @@ namespace Renderer { // NOLINT(readability-identifier-naming)
 		uint32_t drawCalls;
 		uint32_t vertexCount;
 		uint32_t triangleCount;
+
+		// Entity renderer stats (raw GL draws outside the batch renderer)
+		uint32_t entityDrawCalls{};
+		uint32_t entityTriangleCount{};
 
 		// Timing breakdown
 		float	 tileRenderMs{};

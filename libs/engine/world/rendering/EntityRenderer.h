@@ -73,6 +73,11 @@ class EntityRenderer {
 	/// Get number of entities rendered in last frame (for profiling)
 	[[nodiscard]] uint32_t lastEntityCount() const { return m_lastEntityCount; }
 
+	/// Draw call / triangle counts from last frame (raw GL draws bypass the
+	/// BatchRenderer stats, so the metrics system reads them from here)
+	[[nodiscard]] uint32_t lastDrawCallCount() const { return m_lastDrawCallCount; }
+	[[nodiscard]] uint32_t lastTriangleCount() const { return m_lastTriangleCount; }
+
 	/// Enable/disable GPU instancing (for A/B testing and fallback)
 	void setInstancingEnabled(bool enabled) { m_useInstancing = enabled; }
 	[[nodiscard]] bool isInstancingEnabled() const { return m_useInstancing; }
@@ -80,6 +85,8 @@ class EntityRenderer {
   private:
 	float m_pixelsPerMeter = 16.0F;
 	uint32_t m_lastEntityCount = 0;
+	uint32_t m_lastDrawCallCount = 0;
+	uint32_t m_lastTriangleCount = 0;
 	uint64_t frameCounter = 0;  // Incremented each render call (for LRU tracking)
 
 	// --- LRU Cache Configuration ---

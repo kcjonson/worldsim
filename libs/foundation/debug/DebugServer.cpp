@@ -2,7 +2,10 @@
 
 #include "debug/DebugServer.h"
 #include "utils/Log.h"
+#include <algorithm>
 #include <chrono>
+#include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include <ctime>
 #include <httplib.h>
@@ -313,6 +316,16 @@ namespace Foundation {
 		return targetSceneName;
 	}
 
+	bool DebugServer::consumeCameraCommand(CameraCommand& out) {
+		if (!cameraCommandPending.load()) {
+			return false;
+		}
+		std::lock_guard<std::mutex> lock(cameraCommandMutex);
+		out = cameraCommand;
+		cameraCommandPending.store(false);
+		return true;
+	}
+
 	void DebugServer::setCurrentSceneName(const std::string& name) {
 		std::lock_guard<std::mutex> lock(sceneNameMutex);
 		currentSceneName = name;
@@ -492,10 +505,76 @@ namespace Foundation {
 			} else if (action == "reload") {
 				controlAction.store(ControlAction::ReloadScene);
 				res.set_content("{\"status\":\"ok\",\"action\":\"reload\"}", "application/json");
+			} else if (action == "camera") {
+				// Remote camera control: any of x, y (world position), zoom (factor),
+				// panx, pany (-1..1 held-key style direction) may be supplied.
+				// Parses with std::from_chars-style validation: malformed values are a 400,
+				// never an exception (this runs on the HTTP handler thread).
+				auto parseFloat = [&req](const char* name, float& out) -> bool {
+					if (!req.has_param(name)) {
+						return false;
+					}
+					const std::string& value = req.get_param_value(name);
+					char*			   end = nullptr;
+					float			   parsed = std::strtof(value.c_str(), &end);
+					if (end == value.c_str() || *end != '\0' || !std::isfinite(parsed)) {
+						return false;
+					}
+					out = parsed;
+					return true;
+				};
+
+				CameraCommand cmd;
+				bool		  malformed = false;
+				if (req.has_param("x") || req.has_param("y")) {
+					cmd.hasPosition = parseFloat("x", cmd.x) && parseFloat("y", cmd.y);
+					malformed |= !cmd.hasPosition;
+				}
+				if (req.has_param("zoom")) {
+					cmd.hasZoom = parseFloat("zoom", cmd.zoom);
+					malformed |= !cmd.hasZoom;
+				}
+				if (req.has_param("panx") || req.has_param("pany")) {
+					cmd.hasPan = true;
+					if (req.has_param("panx") && !parseFloat("panx", cmd.panX)) {
+						malformed = true;
+					}
+					if (req.has_param("pany") && !parseFloat("pany", cmd.panY)) {
+						malformed = true;
+					}
+					cmd.panX = std::clamp(cmd.panX, -1.0F, 1.0F);
+					cmd.panY = std::clamp(cmd.panY, -1.0F, 1.0F);
+				}
+				if (malformed) {
+					res.status = 400;
+					res.set_content("{\"error\":\"Camera parameters must be finite numbers (x+y together, zoom, panx, pany)\"}", "application/json");
+					return;
+				}
+				if (!cmd.hasPosition && !cmd.hasZoom && !cmd.hasPan) {
+					res.status = 400;
+					res.set_content("{\"error\":\"Camera action requires x+y, zoom, panx, or pany parameters\"}", "application/json");
+					return;
+				}
+				{
+					std::lock_guard<std::mutex> lock(cameraCommandMutex);
+					cameraCommand = cmd;
+					cameraCommandPending.store(true);
+				}
+				res.set_content("{\"status\":\"ok\",\"action\":\"camera\"}", "application/json");
+			} else if (action == "vsync") {
+				std::string value = req.has_param("value") ? req.get_param_value("value") : "";
+				if (value != "0" && value != "1") {
+					res.status = 400;
+					res.set_content("{\"error\":\"Vsync action requires 'value' parameter (0 or 1)\"}", "application/json");
+					return;
+				}
+				targetVsync.store(value == "1" ? 1 : 0);
+				controlAction.store(ControlAction::SetVsync);
+				res.set_content("{\"status\":\"ok\",\"action\":\"vsync\"}", "application/json");
 			} else {
 				res.status = 400;
 				std::ostringstream json;
-				json << "{\"error\":\"Invalid action '" << action << "'. Valid actions: exit, scene, pause, resume, reload\"}";
+				json << "{\"error\":\"Invalid action '" << action << "'. Valid actions: exit, scene, pause, resume, reload, camera, vsync\"}";
 				res.set_content(json.str(), "application/json");
 			}
 		});
