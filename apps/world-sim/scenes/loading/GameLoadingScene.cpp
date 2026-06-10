@@ -248,7 +248,6 @@ namespace {
 
 			// Create renderers
 			worldState->renderer = std::make_unique<engine::world::ChunkRenderer>(kPixelsPerMeter);
-			worldState->renderer->setTileResolution(1);
 			worldState->entityRenderer = std::make_unique<engine::world::EntityRenderer>(kPixelsPerMeter);
 
 			// Initialize placement executor

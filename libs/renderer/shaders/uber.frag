@@ -2,26 +2,18 @@
 
 // Uber Shader - Unified fragment shader for shapes and text
 // Combines primitive.frag (SDF shapes) and msdf_text.frag (MSDF text)
-
-#include "includes/tile.glsl"
+// (Ground tiles render in a dedicated pass: tile.vert/tile.frag)
 
 in vec2 v_texCoord;
 in vec4 v_color;
 in vec4 v_data1;
 in vec4 v_data2;
 in vec4 v_clipBounds;  // Clip rect (minX, minY, maxX, maxY) or (0,0,0,0) for no clip
-in vec4 v_data3;       // Diagonal neighbors for tiles (NW, NE, SE, SW)
 
 out vec4 FragColor;
 
 // MSDF font atlas texture (bound once per frame, ignored for shapes)
 uniform sampler2D u_atlas;
-// Tile atlas (optional). Rects specify uvMin.xy, uvMax.xy per surface id.
-uniform sampler2D u_tileAtlas;
-uniform int u_tileAtlasRectCount;
-// Array size must match kMaxTileAtlasRects in BatchRenderer.cpp (currently 64)
-uniform vec4 u_tileAtlasRects[64];
-uniform int u_softBlendMode; // 0 = off, 1 = placeholder (future)
 
 // Viewport height for Y-coordinate flip (OpenGL origin is bottom-left, UI is top-left)
 // NOTE: This is the PHYSICAL framebuffer height in physical pixels
@@ -67,26 +59,6 @@ float screenPxRange(float pixelRange) {
 // ============================================================================
 const float kRenderModeText = -1.0;      // MSDF text rendering
 const float kRenderModeInstanced = -2.0; // Simple solid color (instanced entities)
-// Tile rendering mode constant. Must match BatchRenderer.cpp kRenderModeTile and uber.vert:31.
-const float kRenderModeTile = -3.0;
-
-// ============================================================================
-// TILE ATLAS SAMPLING
-// ============================================================================
-
-/// Sample the tile atlas for a given surface ID and UV coordinates.
-/// Returns the sampled color multiplied by the vertex color, or just vertex color if no atlas.
-vec4 sampleTileColor(vec2 uv, uint surfaceId, vec4 vertexColor) {
-	if (u_tileAtlasRectCount > 0) {
-		int idx = int(surfaceId);
-		if (idx < u_tileAtlasRectCount) {
-			vec4 rect = u_tileAtlasRects[idx];
-			vec2 atlasUV = rect.xy + uv * (rect.zw - rect.xy);
-			return texture(u_tileAtlas, atlasUV) * vertexColor;
-		}
-	}
-	return vertexColor;
-}
 
 // ============================================================================
 // MAIN - Branch on render mode
@@ -97,104 +69,6 @@ void main() {
 	// - Shapes:    v_data2.w >= 0 (borderPosition: 0=Inside, 1=Center, 2=Outside)
 	// - Text:      v_data2.w == -1.0
 	// - Instanced: v_data2.w == -2.0
-	// - Tiles:     v_data2.w == -3.0
-
-	// ========== TILE RENDERING (adjacency mask driven) ==========
-	// Uses procedural edge variation from includes/tile.glsl
-	if (v_data2.w < -2.5) {
-		// Unpack mask data (packed as integers in data1.xyzw)
-		uint edgeMask = uint(v_data1.x + 0.5);
-		uint cornerMask = uint(v_data1.y + 0.5);
-		uint surfaceId = uint(v_data1.z + 0.5);
-		uint hardEdgeMask = uint(v_data1.w + 0.5);
-
-		// Unpack cardinal neighbor surface IDs from v_clipBounds (repurposed for tiles)
-		// Tiles don't use per-vertex clipping, so this slot carries neighbor data
-		uint neighborN = uint(v_clipBounds.x + 0.5);
-		uint neighborE = uint(v_clipBounds.y + 0.5);
-		uint neighborS = uint(v_clipBounds.z + 0.5);
-		uint neighborW = uint(v_clipBounds.w + 0.5);
-
-		// Unpack diagonal neighbor surface IDs from v_data3
-		uint neighborNW = uint(v_data3.x + 0.5);
-		uint neighborNE = uint(v_data3.y + 0.5);
-		uint neighborSE = uint(v_data3.z + 0.5);
-		uint neighborSW = uint(v_data3.w + 0.5);
-
-		// PERF: Early-out for INTERIOR TILES (no edge transitions at all)
-		// A tile is truly interior only if ALL 8 neighbors have the same surface.
-		// This skips ALL expensive work: blend weights, neighbor sampling, edge darkening.
-		bool isInteriorTile = (edgeMask == 0u && cornerMask == 0u && hardEdgeMask == 0u &&
-			neighborN == surfaceId && neighborE == surfaceId &&
-			neighborS == surfaceId && neighborW == surfaceId &&
-			neighborNW == surfaceId && neighborNE == surfaceId &&
-			neighborSE == surfaceId && neighborSW == surfaceId);
-		if (isInteriorTile) {
-			vec2 halfSize = max(v_data2.xy, vec2(0.0001));
-			vec2 uv = (v_texCoord / halfSize) * 0.5 + 0.5;
-			FragColor = sampleTileColor(uv, surfaceId, v_color);
-			return;
-		}
-
-		// Unpack tile world coordinates from data2.z
-		// Packed as: (tileX + 32768) | ((tileY + 32768) << 16)
-		uint packedCoord = uint(v_data2.z);
-		int tileX = int(packedCoord & 0xFFFFu) - 32768;
-		int tileY = int(packedCoord >> 16u) - 32768;
-
-		// Rect-local coordinates map -halfSize..+halfSize → 0..1
-		vec2 halfSize = max(v_data2.xy, vec2(0.0001));
-		vec2 uv = (v_texCoord / halfSize) * 0.5 + 0.5; // uv.y=0 top
-
-		// Base color from atlas if available, otherwise vertex color
-		vec4 color = sampleTileColor(uv, surfaceId, v_color);
-
-		// PERF: Early-out for interior pixels (~31% of tile area)
-		// Blend width is 0.20, corner radius 0.18, edge darkening ~0.12
-		// Interior pixels need no blending or edge processing
-		const float kEdgeMargin = 0.22;  // Slightly beyond max blend/edge width
-		bool isInterior = uv.x > kEdgeMargin && uv.x < (1.0 - kEdgeMargin) &&
-		                  uv.y > kEdgeMargin && uv.y < (1.0 - kEdgeMargin);
-
-		if (!isInterior) {
-			// ========== SOFT EDGE BLENDING - "Higher Bleeds Onto Lower" ==========
-			if (u_tileAtlasRectCount > 0) {
-				vec4 blendWeights = computeHigherBleedWeights(uv, tileX, tileY, surfaceId, neighborN, neighborE, neighborS, neighborW, hardEdgeMask);
-
-				#define SAMPLE_NEIGHBOR(neighborId, weight) \
-					if (weight > 0.001 && int(neighborId) < u_tileAtlasRectCount) { \
-						vec4 nRect = u_tileAtlasRects[int(neighborId)]; \
-						vec2 nAtlasUV = nRect.xy + uv * (nRect.zw - nRect.xy); \
-						vec4 nColor = texture(u_tileAtlas, nAtlasUV) * v_color; \
-						color = mix(color, nColor, weight); \
-					}
-
-				SAMPLE_NEIGHBOR(neighborN, blendWeights.x)
-				SAMPLE_NEIGHBOR(neighborE, blendWeights.y)
-				SAMPLE_NEIGHBOR(neighborS, blendWeights.z)
-				SAMPLE_NEIGHBOR(neighborW, blendWeights.w)
-
-				// Diagonal corner blending
-				vec4 diagWeights = computeDiagonalCornerWeights(uv, surfaceId,
-					neighborN, neighborE, neighborS, neighborW,
-					neighborNW, neighborNE, neighborSE, neighborSW);
-
-				SAMPLE_NEIGHBOR(neighborNW, diagWeights.x)
-				SAMPLE_NEIGHBOR(neighborNE, diagWeights.y)
-				SAMPLE_NEIGHBOR(neighborSE, diagWeights.z)
-				SAMPLE_NEIGHBOR(neighborSW, diagWeights.w)
-
-				#undef SAMPLE_NEIGHBOR
-			}
-
-			// Apply procedural edge/corner darkening
-			float darkenFactor = computeTileEdgeDarkening(uv, tileX, tileY, edgeMask, cornerMask, hardEdgeMask);
-			color.rgb *= darkenFactor;
-		}
-
-		FragColor = color;
-		return;
-	}
 
 	// ========== INSTANCED ENTITY RENDERING (simple solid color) ==========
 	if (v_data2.w < -1.5) {

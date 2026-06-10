@@ -111,7 +111,6 @@ namespace {
 				m_camera->setPanSpeed(200.0F);
 
 				m_renderer = std::make_unique<engine::world::ChunkRenderer>(kPixelsPerMeter);
-				m_renderer->setTileResolution(1); // Render every tile
 
 				m_entityRenderer = std::make_unique<engine::world::EntityRenderer>(kPixelsPerMeter);
 

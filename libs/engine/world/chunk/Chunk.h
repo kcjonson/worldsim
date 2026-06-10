@@ -169,6 +169,14 @@ class Chunk {
 		return m_renderData[localY * kChunkSize + localX];
 	}
 
+	/// Raw render data array (kChunkSize * kChunkSize entries, row-major).
+	/// Uploaded directly as a GPU tile-data texture by ChunkRenderer.
+	[[nodiscard]] const TileRenderData* renderData() const { return m_renderData.data(); }
+
+	/// Version counter for render data; bumped by generate() and setAdjacency().
+	/// GPU caches compare this to detect stale uploads.
+	[[nodiscard]] uint32_t renderDataVersion() const { return m_renderDataVersion.load(std::memory_order_acquire); }
+
   private:
 	ChunkCoordinate m_coord;
 	ChunkSampleResult m_biomeData;
@@ -184,6 +192,9 @@ class Chunk {
 
 	/// Thread-safe flag indicating generation is complete
 	std::atomic<bool> m_generationComplete{false};
+
+	/// Bumped whenever m_renderData changes (generation, adjacency updates)
+	std::atomic<uint32_t> m_renderDataVersion{0};
 
 	/// Cached shore tile positions (land tiles adjacent to water)
 	/// Computed during generation, used by VisionSystem for fast shore discovery

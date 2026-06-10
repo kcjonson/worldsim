@@ -44,6 +44,11 @@ target_link_libraries(engine
         glfw
 )
 
+# timeBeginPeriod/timeEndPeriod for frame-pacing timer resolution
+if(WIN32)
+    target_link_libraries(engine PRIVATE winmm)
+endif()
+
 # Tests
 if(BUILD_TESTING)
     # Discover test files using naming pattern
