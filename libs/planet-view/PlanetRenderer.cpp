@@ -117,6 +117,14 @@ void PlanetRenderer::render(const PlanetMesh& mesh, const PlanetColorizer& color
     glGetIntegerv(GL_DEPTH_FUNC, &prevDepthFunc);
     GLint prevProgram        = 0;
     glGetIntegerv(GL_CURRENT_PROGRAM, &prevProgram);
+    GLint prevActiveTexture  = 0;
+    glGetIntegerv(GL_ACTIVE_TEXTURE, &prevActiveTexture);
+    glActiveTexture(GL_TEXTURE0);
+    GLint prevTex0Binding    = 0;
+    glGetIntegerv(GL_TEXTURE_BINDING_2D, &prevTex0Binding);
+    GLboolean prevScissorTest = glIsEnabled(GL_SCISSOR_TEST);
+    GLint prevFrontFace      = 0;
+    glGetIntegerv(GL_FRONT_FACE, &prevFrontFace);
 
     // ── Planet pass ──
     glBindFramebuffer(GL_FRAMEBUFFER, fbo);
@@ -126,6 +134,8 @@ void PlanetRenderer::render(const PlanetMesh& mesh, const PlanetColorizer& color
     glDepthFunc(GL_LESS);
     glEnable(GL_CULL_FACE);
     glDisable(GL_BLEND);
+    glDisable(GL_SCISSOR_TEST); // FBO is fullscreen; scissor would clip incorrectly
+    glFrontFace(GL_CCW);        // mesh assumes CCW winding
 
     glClearColor(0.0F, 0.0F, 0.02F, 1.0F); // near-black space
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -169,28 +179,38 @@ void PlanetRenderer::render(const PlanetMesh& mesh, const PlanetColorizer& color
     // ── Restore state ──
     glBindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(prevFbo));
     glViewport(prevViewport[0], prevViewport[1], prevViewport[2], prevViewport[3]);
-    if (prevDepthTest) glEnable(GL_DEPTH_TEST); else glDisable(GL_DEPTH_TEST);
-    if (prevCullFace)  glEnable(GL_CULL_FACE);  else glDisable(GL_CULL_FACE);
-    if (prevBlend)     glEnable(GL_BLEND);       else glDisable(GL_BLEND);
+    if (prevDepthTest)   glEnable(GL_DEPTH_TEST);   else glDisable(GL_DEPTH_TEST);
+    if (prevCullFace)    glEnable(GL_CULL_FACE);    else glDisable(GL_CULL_FACE);
+    if (prevBlend)       glEnable(GL_BLEND);         else glDisable(GL_BLEND);
+    if (prevScissorTest) glEnable(GL_SCISSOR_TEST);  else glDisable(GL_SCISSOR_TEST);
     glDepthFunc(static_cast<GLenum>(prevDepthFunc));
+    glFrontFace(static_cast<GLenum>(prevFrontFace));
     glUseProgram(static_cast<GLuint>(prevProgram));
+    // Restore unit-0 binding while unit 0 is active, then restore the active unit.
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(prevTex0Binding));
+    glActiveTexture(static_cast<GLenum>(prevActiveTexture));
 }
 
 void PlanetRenderer::blitToScreen(int widthPx, int heightPx) {
     if (!isReady() || !colorTex) return;
 
     // Save relevant state.
-    GLboolean prevDepthTest = glIsEnabled(GL_DEPTH_TEST);
-    GLboolean prevBlend     = glIsEnabled(GL_BLEND);
-    GLint prevProgram       = 0;
+    GLboolean prevDepthTest     = glIsEnabled(GL_DEPTH_TEST);
+    GLboolean prevBlend         = glIsEnabled(GL_BLEND);
+    GLint prevProgram           = 0;
     glGetIntegerv(GL_CURRENT_PROGRAM, &prevProgram);
-    GLint prevVao = 0;
+    GLint prevVao               = 0;
     glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &prevVao);
+    GLint prevActiveTexture     = 0;
+    glGetIntegerv(GL_ACTIVE_TEXTURE, &prevActiveTexture);
+    glActiveTexture(GL_TEXTURE0);
+    GLint prevTex0Binding       = 0;
+    glGetIntegerv(GL_TEXTURE_BINDING_2D, &prevTex0Binding);
 
     glDisable(GL_DEPTH_TEST);
     glDisable(GL_BLEND);
     glUseProgram(blitShader);
-    glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, colorTex);
     glUniform1i(glGetUniformLocation(blitShader, "u_tex"), 0);
 
@@ -198,12 +218,14 @@ void PlanetRenderer::blitToScreen(int widthPx, int heightPx) {
     glDrawArrays(GL_TRIANGLES, 0, 3);
     glBindVertexArray(static_cast<GLuint>(prevVao));
 
-    glBindTexture(GL_TEXTURE_2D, 0);
-
     // Restore state.
     if (prevDepthTest) glEnable(GL_DEPTH_TEST); else glDisable(GL_DEPTH_TEST);
     if (prevBlend)     glEnable(GL_BLEND);       else glDisable(GL_BLEND);
     glUseProgram(static_cast<GLuint>(prevProgram));
+    // Restore unit-0 binding while unit 0 is active, then restore the active unit.
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(prevTex0Binding));
+    glActiveTexture(static_cast<GLenum>(prevActiveTexture));
 
     (void)widthPx; (void)heightPx; // viewport already set by caller
 }

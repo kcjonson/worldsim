@@ -36,6 +36,7 @@ constexpr uint32_t kSubdivision = 256;
 class PlanetScene : public engine::IScene {
   public:
     void onEnter() override {
+        timeSinceEnter = 0.0F;
         LOG_INFO(World, "PlanetScene: starting planet generation (n=%u)", kSubdivision);
         statusText = "Generating planet...";
 
@@ -48,6 +49,7 @@ class PlanetScene : public engine::IScene {
     }
 
     void update(float dt) override {
+        timeSinceEnter += dt;
         camera.update(dt);
 
         if (!generator) return;
@@ -146,6 +148,16 @@ class PlanetScene : public engine::IScene {
     }
 
     bool handleInput(UI::InputEvent& event) override {
+        // Ignore all mouse input for the first 0.25s after scene activation.
+        // Synthetic/buffered mouse events from scene switching can otherwise
+        // fire spurious right-clicks that cycle the color mode at startup.
+        if (timeSinceEnter < 0.25F &&
+            (event.type == UI::InputEvent::Type::MouseDown ||
+             event.type == UI::InputEvent::Type::MouseUp   ||
+             event.type == UI::InputEvent::Type::MouseMove)) {
+            return false;
+        }
+
         if (event.type == UI::InputEvent::Type::MouseDown &&
             event.button == engine::MouseButton::Left) {
 
@@ -218,6 +230,8 @@ class PlanetScene : public engine::IScene {
     const char* getName() const override { return kSceneName; }
 
   private:
+    float timeSinceEnter{0.0F};
+
     std::unique_ptr<worldgen::PlanetGenerator> generator;
     std::shared_ptr<const worldgen::GeneratedWorld> lastSnapshot;
     bool worldReady{false};
@@ -229,7 +243,7 @@ class PlanetScene : public engine::IScene {
     planetview::PlanetRenderer  renderer;
     planetview::OrbitCamera     camera;
 
-    int  colorModeIdx{static_cast<int>(planetview::ColorMode::Combined)};
+    int  colorModeIdx{static_cast<int>(planetview::ColorMode::Terrain)};
     bool draggingLeft{false};
 
     glm::vec3 markerPos{1.0F, 0.0F, 0.0F};
