@@ -53,6 +53,7 @@ add_subdirectory(libs/renderer)
 # Feature layers
 add_subdirectory(libs/ui)
 add_subdirectory(libs/world)
+add_subdirectory(libs/planet-view)
 add_subdirectory(libs/game-systems)
 
 # Engine layer
@@ -116,4 +117,11 @@ if(CMAKE_BUILD_TYPE STREQUAL "Development" OR CMAKE_BUILD_TYPE STREQUAL "Debug")
     else()
         message(WARNING "npm not found - skipping developer-client build. Install Node.js to enable developer tools.")
     endif()
+endif()
+
+# world-sim's POST_BUILD step copies the shared build/shaders directory but
+# does not link planet-view, so parallel MSBuild can schedule planet-view's
+# shader staging concurrently with that copy (Windows file locks fail it).
+if(TARGET world-sim AND TARGET planet-view-shaders)
+    add_dependencies(world-sim planet-view-shaders)
 endif()

@@ -28,6 +28,7 @@ add_executable(ui-sandbox
     scenes/TooltipScene.cpp
     scenes/ContextMenuScene.cpp
     scenes/TextWrapScene.cpp
+    scenes/PlanetScene.cpp
 )
 
 target_include_directories(ui-sandbox
@@ -45,6 +46,8 @@ target_link_libraries(ui-sandbox
         renderer
         foundation
         assets
+        planet-view
+        world
 )
 
 # Copy shaders to executable directory

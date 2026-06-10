@@ -45,6 +45,13 @@ class SphereGrid {
     // Convert a unit direction vector to the nearest tile.
     TileId fromUnitVector(Vec3d dir) const;
 
+    // Map (rhombus, u, v) in [0,1]^2 to a unit-sphere direction using the same
+    // icosahedral barycentric mapping used internally for tile placement.
+    // planet-view uses this to build vertex positions that share icosahedron-edge
+    // points across neighboring rhombi, eliminating seam artifacts.
+    // Contract: rhombusPointOnSphere(r, (i+0.5)/n, (j+0.5)/n) == tileCenter(r*n*n + j*n + i)
+    Vec3d rhombusPointOnSphere(uint32_t rhombus, double u, double v) const;
+
     // Return the unit vector pointing to the center of a tile.
     Vec3d tileCenter(TileId t) const;
 
