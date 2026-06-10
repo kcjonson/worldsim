@@ -47,6 +47,24 @@ void AtmosphereStage::run(StageContext& ctx) {
             double absLat = lat < 0.0 ? -lat : lat;
             double range = 5.0 + absLat * 0.3;
             ctx.data.temperatureRange[t] = static_cast<int16_t>(range * 10.0);
+
+            // Wind direction: latitude-band Hadley/Ferrel/polar cell approximation.
+            // 0=N, 64=E, 128=S, 192=W in 256-unit circle.
+            // Tropics (|lat|<30): easterlies (trade winds) -> from east, blowing west = 192
+            // Midlats (30-60): westerlies -> from west, blowing east = 64
+            // Polar (>60): polar easterlies -> from east = 192
+            uint8_t wdir;
+            if (absLat < 30.0) {
+                wdir = 192; // trade winds (easterly)
+            } else if (absLat < 60.0) {
+                wdir = 64;  // westerlies
+            } else {
+                wdir = 192; // polar easterlies
+            }
+            // Flip direction in southern hemisphere
+            if (lat < 0.0) wdir = static_cast<uint8_t>((wdir + 128u) & 0xFFu);
+            ctx.data.windDir[t]   = wdir;
+            ctx.data.windSpeed[t] = 5; // stub: 5 m/s everywhere
         }
         ctx.reportProgress(static_cast<float>(end) / static_cast<float>(totalTiles));
     });

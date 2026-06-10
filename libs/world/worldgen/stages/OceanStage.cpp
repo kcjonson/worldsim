@@ -26,10 +26,7 @@ void OceanStage::run(StageContext& ctx) {
         ctx.reportProgress(static_cast<float>(end) / static_cast<float>(totalTiles));
     });
 
-    ctx.world.validFields |= static_cast<uint32_t>(WorldField::Flags);
     ctx.world.validFields |= static_cast<uint32_t>(WorldField::WaterDepth);
-    ctx.world.validFields |= static_cast<uint32_t>(WorldField::FlowAccum);
-    ctx.world.validFields |= static_cast<uint32_t>(WorldField::Downhill);
 }
 
 } // namespace worldgen
