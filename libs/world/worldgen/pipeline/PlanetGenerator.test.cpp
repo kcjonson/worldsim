@@ -54,7 +54,7 @@ TEST(PlanetGenerator, ProgressMonotone) {
 
     while (std::chrono::steady_clock::now() < deadline) {
         auto prog = gen.progress();
-        if (prog.totalFraction < lastTotal - 0.001f) {
+        if (prog.totalFraction < lastTotal) {
             seenFail = true;
         }
         if (prog.totalFraction > lastTotal) lastTotal = prog.totalFraction;
@@ -232,6 +232,31 @@ TEST(PlanetGenerator, SnapshotImmutability) {
     }
 
     EXPECT_EQ(h1, h2) << "Snapshot plateId array was modified after publication";
+}
+
+// ============================================================================
+// Restart clears previous snapshot: snapshot() == nullptr right after start()
+// ============================================================================
+
+TEST(PlanetGenerator, RestartClearsSnapshot) {
+    PlanetParams params = PlanetParams::preset(Preset::EarthLike);
+    params.gridSubdivision = 16;
+
+    // Run once to completion so latestSnapshot is populated.
+    PlanetGenerator gen;
+    gen.start(params);
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
+    while (std::chrono::steady_clock::now() < deadline) {
+        if (gen.progress().state == GenerationProgress::State::Complete) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    ASSERT_EQ(gen.progress().state, GenerationProgress::State::Complete);
+    gen.takeResult(); // consume result
+
+    // Restart immediately and assert snapshot is cleared before any stage completes.
+    gen.start(params);
+    EXPECT_EQ(gen.snapshot(), nullptr)
+        << "snapshot() should be nullptr immediately after restart";
 }
 
 // ============================================================================
