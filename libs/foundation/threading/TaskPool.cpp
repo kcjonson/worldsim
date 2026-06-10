@@ -23,7 +23,6 @@ TaskPool::~TaskPool() {
         // jobReady is only true between parallelFor entry and exit.
         assert(!jobReady && "TaskPool destroyed during parallelFor");
         shutdown = true;
-        jobReady = true;
     }
     cv.notify_all();
     for (auto& t : workers) {
@@ -50,6 +49,7 @@ void TaskPool::parallelFor(size_t begin, size_t end, size_t grainSize,
         currentJob.end = end;
         currentJob.grainSize = grainSize;
         currentJob.fn = &fn;
+        ++jobSeq;
         jobReady = true;
     }
     cv.notify_all();
@@ -69,10 +69,15 @@ void TaskPool::parallelFor(size_t begin, size_t end, size_t grainSize,
         completedSlabs.fetch_add(1, std::memory_order_acq_rel);
     }
 
-    // Wait for background workers to finish their slabs.
+    // Wait until every slab is done AND no worker still holds a snapshot of
+    // this job. Without the participant count, a worker that snapshotted the
+    // job but was preempted before claiming a slab could outlive this call:
+    // the next parallelFor resets nextSlab, and the stale worker would claim
+    // a slab of the NEW job and invoke the DEAD fn pointer of the old one.
     std::unique_lock<std::mutex> lock(mutex);
     doneCv.wait(lock, [&] {
-        return completedSlabs.load(std::memory_order_acquire) == totalSlabs;
+        return completedSlabs.load(std::memory_order_acquire) == totalSlabs &&
+               activeParticipants == 0;
     });
     jobReady = false;
 
@@ -80,15 +85,25 @@ void TaskPool::parallelFor(size_t begin, size_t end, size_t grainSize,
 }
 
 void TaskPool::workerLoop() {
+    uint64_t lastSeenSeq = 0;
     while (true) {
         std::unique_lock<std::mutex> lock(mutex);
-        cv.wait(lock, [this] { return jobReady; });
+        // Each worker joins a given job at most once (jobSeq check) — without
+        // it, a worker finding no slabs left would deregister and immediately
+        // re-register for the same still-published job, livelocking the
+        // caller's wait for activeParticipants == 0.
+        cv.wait(lock, [&] { return shutdown || (jobReady && jobSeq != lastSeenSeq); });
 
         if (shutdown) break;
 
-        // Snapshot job parameters under lock, then release.
+        // Snapshot job parameters and register as a participant under the
+        // lock. parallelFor cannot return (and fn cannot die) while
+        // activeParticipants > 0, because its done-predicate is evaluated
+        // under this same mutex.
         Job job = currentJob;
         const auto* fn = job.fn;
+        lastSeenSeq = jobSeq;
+        ++activeParticipants;
         lock.unlock();
 
         size_t slabIdx{};
@@ -104,14 +119,13 @@ void TaskPool::workerLoop() {
             }
             completedSlabs.fetch_add(1, std::memory_order_acq_rel);
         }
-        // The final increment above is not under the mutex, so without this
-        // lock the calling thread can evaluate the doneCv predicate (seeing
-        // N-1), have us increment+notify while it still holds the mutex, and
-        // then sleep forever. Acquiring the mutex orders our increment before
-        // its predicate re-check.
-        {
-            std::lock_guard<std::mutex> doneLock(mutex);
-        }
+
+        // Deregister under the mutex, then notify. Holding the mutex here
+        // also orders our final completedSlabs increment before the calling
+        // thread's predicate re-check (lost-wakeup prevention).
+        lock.lock();
+        --activeParticipants;
+        lock.unlock();
         doneCv.notify_one();
     }
 }

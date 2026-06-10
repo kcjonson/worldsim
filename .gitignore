@@ -44,3 +44,4 @@ tests/diffs/
 .claude/*
 !.claude/commands/
 docs/development-log/plans/
+build-asan/

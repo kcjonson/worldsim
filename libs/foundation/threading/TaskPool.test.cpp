@@ -170,3 +170,40 @@ TEST(TaskPoolTests, SlabsCoverEntireRange) {
         EXPECT_EQ(hits[i], 1) << "element " << i << " hit " << hits[i] << " times";
     }
 }
+
+// ============================================================================
+// Regression: stale-worker ABA across rapid successive jobs.
+// A worker that snapshots job N but is preempted before claiming a slab must
+// not execute against job N+1's reset slab counter (it would call job N's
+// destroyed fn). Many tiny back-to-back jobs maximize the window.
+// ============================================================================
+
+TEST(TaskPoolTests, RapidSuccessiveJobsNoStaleWorkerCrash) {
+    TaskPool pool; // full thread count to maximize contention
+    constexpr int kJobs = 4000;
+    constexpr size_t kN = 64;
+
+    std::vector<uint64_t> out(kN, 0);
+    for (int j = 0; j < kJobs; ++j) {
+        const uint64_t sentinel = static_cast<uint64_t>(j) + 1;
+        pool.parallelFor(0, kN, 8, [&out, sentinel](size_t b, size_t e) {
+            for (size_t i = b; i < e; ++i) {
+                out[i] = sentinel; // NOLINT
+            }
+        });
+        for (size_t i = 0; i < kN; ++i) {
+            ASSERT_EQ(out[i], sentinel) << "job " << j << " element " << i;
+        }
+    }
+}
+
+TEST(TaskPoolTests, PoolChurnConstructDestroy) {
+    for (int i = 0; i < 50; ++i) {
+        TaskPool pool(8);
+        std::atomic<size_t> sum{0};
+        pool.parallelFor(0, 100, 7, [&](size_t b, size_t e) {
+            sum.fetch_add(e - b, std::memory_order_relaxed);
+        });
+        ASSERT_EQ(sum.load(), 100u);
+    }
+}

@@ -62,6 +62,8 @@ class TaskPool {
     std::atomic<size_t>      nextSlab{0};
     std::atomic<size_t>      completedSlabs{0};
     std::exception_ptr       firstException{};
+    int                      activeParticipants{0}; // guarded by mutex
+    uint64_t                 jobSeq{0};             // guarded by mutex
     bool                     shutdown{false};
     bool                     jobReady{false};
 };
