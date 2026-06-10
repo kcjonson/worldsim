@@ -84,9 +84,9 @@ if(BUILD_TESTING)
                 benchmark::benchmark
                 benchmark::benchmark_main
         )
-        if(MSVC)
-            target_compile_options(planet-view-benchmarks PRIVATE /O2)
-        else()
+        # MSVC: per-config defaults (/O2 in Release); forcing /O2 collides with
+        # Debug's /RTC1 (D8016).
+        if(NOT MSVC)
             target_compile_options(planet-view-benchmarks PRIVATE -O3)
         endif()
         add_test(NAME planet-view-benchmarks COMMAND planet-view-benchmarks)
