@@ -135,6 +135,14 @@ void PlanetRenderer::render(const PlanetMesh& mesh, const PlanetColorizer& color
     glm::mat4 model = glm::mat4(1.0F);
     glm::vec3 camPos = camera.position();
 
+    // Sun rides with the camera (offset up-right) so the facing hemisphere is
+    // always inspectable; the terminator stays near the limb for depth cues.
+    glm::vec3 toCam    = glm::normalize(camPos);
+    glm::vec3 worldUp  = glm::abs(toCam.y) > 0.95F ? glm::vec3{0.0F, 0.0F, 1.0F}
+                                                   : glm::vec3{0.0F, 1.0F, 0.0F};
+    glm::vec3 camRight = glm::normalize(glm::cross(worldUp, toCam));
+    sunDir = glm::normalize(toCam + 0.45F * camRight + 0.35F * worldUp);
+
     glUseProgram(planetShader);
 
     glUniformMatrix4fv(glGetUniformLocation(planetShader, "u_mvp"),   1, GL_FALSE, glm::value_ptr(mvp));

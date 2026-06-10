@@ -66,8 +66,8 @@ void PlanetMesh::build(uint32_t subdivision, const worldgen::SphereGrid& grid) {
             uint32_t tr = tl + 1;
             uint32_t bl = tl + vps;
             uint32_t br = bl + 1;
-            indices.push_back(tl); indices.push_back(bl); indices.push_back(tr);
-            indices.push_back(tr); indices.push_back(bl); indices.push_back(br);
+            indices.push_back(tl); indices.push_back(tr); indices.push_back(bl);
+            indices.push_back(tr); indices.push_back(br); indices.push_back(bl);
         }
     }
     indexCount = static_cast<uint32_t>(indices.size());
