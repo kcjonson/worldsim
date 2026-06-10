@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2026-06-09 (World Generation & Creator epic started, plan at .claude/plans/world-generation.md)
+Last Updated: 2026-06-09 (M1 and M2 complete: foundation primitives + worldgen core)
 
 ## Epic/Story/Task Template
 
@@ -418,8 +418,8 @@ while (running) {
 **Goal:** Real 8-phase world generation (plates → terrain → climate → biomes), WorldCreator scene with 3D planet view and landing site selection, wired into New Game → 2D gameplay sampling the generated world.
 
 **Tasks:**
-- [ ] M1: Foundation primitives (TaskPool, RNG, HashNoise, DeterministicMath, WorldHash)
-- [ ] M2: worldgen core + frozen contracts (SphereGrid, WorldData, pipeline skeleton, debug image exporter, technical doc)
+- [x] M1: Foundation primitives (TaskPool, RNG, HashNoise, DeterministicMath, WorldHash)
+- [x] M2: worldgen core + frozen contracts (SphereGrid, WorldData, pipeline skeleton, debug image exporter, technical doc)
 - [ ] M3a: Plates + plate movement (P1, P2)
 - [ ] M3b: Terrain + sea level (P3) — ends with USER screenshot review gate
 - [ ] M3c: Atmosphere + temperature (P4)
