@@ -26,6 +26,17 @@ inline constexpr int kSubChunkTileSize = kChunkSize / kSubChunkGridSize;
 inline constexpr float kSubChunkWorldSize = static_cast<float>(kSubChunkTileSize) * kTileSize;
 inline constexpr int kSubChunkCount = kSubChunkGridSize * kSubChunkGridSize;
 
+/// Baked meshes are split into height buckets so short flora (grass) can stop
+/// rendering as geometry once blades shrink below ~kImpostorCutoffPx on screen;
+/// the rasterized grass tile texture carries the appearance at that distance.
+/// Tall flora (bushes, trees) has no texture backup and always draws.
+/// This keeps far-zoom triangle count independent of grass density.
+inline constexpr int kFloraBucketCount = 2;
+inline constexpr int kShortFloraBucket = 0;
+inline constexpr int kTallFloraBucket = 1;
+inline constexpr float kShortFloraMaxHeight = 1.0F; // meters; bucket split point
+inline constexpr float kImpostorCutoffPx = 3.0F;	// on-screen height where short flora fades out
+
 /// Per-vertex data: position (Vec2) + color (Color) = 24 bytes
 struct BakedVertex {
 	Foundation::Vec2  position; // World-space position
@@ -33,12 +44,18 @@ struct BakedVertex {
 };
 static_assert(sizeof(BakedVertex) == 24, "BakedVertex must be 24 bytes");
 
-/// CPU-side mesh for one sub-region, ready for GL upload
-struct BakedSubChunkCPUData {
+/// CPU-side mesh for one height bucket of one sub-region
+struct BakedMeshCPU {
 	std::vector<BakedVertex> vertices;
 	std::vector<uint32_t>	 indices;
 	uint32_t				 entityCount = 0;
-	float					 minX = 0, minY = 0, maxX = 0, maxY = 0; // World-space bounds for culling
+	float					 maxEntityHeight = 0.0F; // tallest entity (meters), drives the zoom cutoff
+};
+
+/// CPU-side meshes for one sub-region, ready for GL upload
+struct BakedSubChunkCPUData {
+	std::array<BakedMeshCPU, kFloraBucketCount> buckets;
+	float										minX = 0, minY = 0, maxX = 0, maxY = 0; // World-space bounds for culling
 };
 
 /// CPU-side meshes for a whole chunk

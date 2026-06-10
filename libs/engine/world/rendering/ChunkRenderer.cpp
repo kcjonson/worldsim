@@ -79,6 +79,13 @@ namespace engine::world {
 			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
 			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 		} else {
+			// Stale re-uploads (adjacency stitching bumped the version) are 4MB
+			// each and several chunks can go stale together; cap one per frame.
+			// A frame of stale border blending is invisible.
+			if (m_staleReuploadsThisFrame >= kMaxStaleReuploadsPerFrame) {
+				return entry;
+			}
+			m_staleReuploadsThisFrame++;
 			entry.texture.bind();
 			glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, kChunkSize, kChunkSize, GL_RGBA_INTEGER, GL_UNSIGNED_INT, chunk.renderData());
 		}
@@ -109,6 +116,7 @@ namespace engine::world {
 	void ChunkRenderer::render(const ChunkManager& chunkManager, const WorldCamera& camera, int viewportWidth, int viewportHeight) {
 		m_lastTileCount = 0;
 		m_lastChunkCount = 0;
+		m_staleReuploadsThisFrame = 0;
 		m_frameCounter++;
 
 		Foundation::Rect visibleRect = camera.getVisibleRect(viewportWidth, viewportHeight, m_pixelsPerMeter);

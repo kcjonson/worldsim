@@ -15,6 +15,10 @@ out vec4 FragColor;
 // MSDF font atlas texture (bound once per frame, ignored for shapes)
 uniform sampler2D u_atlas;
 
+// Global alpha for baked entity meshes (far-zoom impostor cross-fade).
+// Only read by the instanced/baked branch; reset to 1.0 after baked draws.
+uniform float u_bakedAlpha;
+
 // Viewport height for Y-coordinate flip (OpenGL origin is bottom-left, UI is top-left)
 // NOTE: This is the PHYSICAL framebuffer height in physical pixels
 uniform float u_viewportHeight;
@@ -73,7 +77,7 @@ void main() {
 	// ========== INSTANCED ENTITY RENDERING (simple solid color) ==========
 	if (v_data2.w < -1.5) {
 		// Output the vertex color (includes instance color tint from SVG asset)
-		FragColor = v_color;
+		FragColor = vec4(v_color.rgb, v_color.a * u_bakedAlpha);
 		return;
 	}
 

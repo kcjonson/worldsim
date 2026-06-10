@@ -84,6 +84,7 @@ namespace engine::world {
 		m_uniformLocations.cameraZoom = glGetUniformLocation(shaderProgram, "u_cameraZoom");
 		m_uniformLocations.pixelsPerMeter = glGetUniformLocation(shaderProgram, "u_pixelsPerMeter");
 		m_uniformLocations.viewportSize = glGetUniformLocation(shaderProgram, "u_viewportSize");
+		m_uniformLocations.bakedAlpha = glGetUniformLocation(shaderProgram, "u_bakedAlpha");
 		m_uniformLocations.initialized = true;
 	}
 
@@ -119,8 +120,8 @@ namespace engine::world {
 		frameCounter++;
 
 		// --- Phase 1: Integrate baked meshes ---
-		// Budgeted upload of worker-baked chunks (a few sub-chunks per frame)
-		processPendingUploads(kUploadBudgetPerFrame);
+		// Budgeted upload of worker-baked chunks (capped bytes per frame)
+		processPendingUploads(kUploadBudgetBytesPerFrame);
 
 		// Synchronous re-bake only for processed chunks whose baked mesh was
 		// LRU-evicted and later revisited; new chunks arrive via the queue.
@@ -527,42 +528,56 @@ namespace engine::world {
 		uploadBakedChunk(coord, std::move(cpuData));
 	}
 
-	void EntityRenderer::uploadSubChunk(BakedChunkData& bakedData, BakedSubChunkCPUData& cpu, int subIndex) {
-		auto& subChunk = bakedData.subChunks[subIndex];
+	size_t EntityRenderer::uploadSubChunk(BakedChunkData& bakedData, BakedSubChunkCPUData& cpu, int subIndex) {
+		auto&  subChunk = bakedData.subChunks[subIndex];
+		size_t bytesUploaded = 0;
 
 		subChunk.minX = cpu.minX;
 		subChunk.minY = cpu.minY;
 		subChunk.maxX = cpu.maxX;
 		subChunk.maxY = cpu.maxY;
-		subChunk.entityCount = cpu.entityCount;
 
-		if (cpu.vertices.empty()) {
-			subChunk.indexCount = 0;
-			return;
+		for (int bucketIndex = 0; bucketIndex < kFloraBucketCount; ++bucketIndex) {
+			auto& cpuBucket = cpu.buckets[bucketIndex];
+			auto& gpuBucket = subChunk.buckets[bucketIndex];
+
+			gpuBucket.entityCount = cpuBucket.entityCount;
+			gpuBucket.maxEntityHeight = cpuBucket.maxEntityHeight;
+
+			if (cpuBucket.vertices.empty()) {
+				gpuBucket.indexCount = 0;
+				continue;
+			}
+			gpuBucket.indexCount = static_cast<uint32_t>(cpuBucket.indices.size());
+
+			gpuBucket.vao = Renderer::GLVertexArray::create();
+			gpuBucket.vao.bind();
+
+			gpuBucket.vertexVBO = Renderer::GLBuffer(
+				GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(cpuBucket.vertices.size() * sizeof(BakedVertex)), cpuBucket.vertices.data(),
+				GL_STATIC_DRAW
+			);
+
+			glEnableVertexAttribArray(0);
+			glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(BakedVertex), reinterpret_cast<void*>(0));
+			glEnableVertexAttribArray(2);
+			glVertexAttribPointer(2, 4, GL_FLOAT, GL_FALSE, sizeof(BakedVertex), reinterpret_cast<void*>(offsetof(BakedVertex, color)));
+
+			gpuBucket.indexIBO = Renderer::GLBuffer(
+				GL_ELEMENT_ARRAY_BUFFER, static_cast<GLsizeiptr>(cpuBucket.indices.size() * sizeof(uint32_t)), cpuBucket.indices.data(),
+				GL_STATIC_DRAW
+			);
+
+			Renderer::GLVertexArray::unbind();
+
+			bytesUploaded += cpuBucket.vertices.size() * sizeof(BakedVertex) + cpuBucket.indices.size() * sizeof(uint32_t);
+
+			// Release CPU-side arrays as they're consumed
+			cpuBucket.vertices = {};
+			cpuBucket.indices = {};
 		}
-		subChunk.indexCount = static_cast<uint32_t>(cpu.indices.size());
 
-		subChunk.vao = Renderer::GLVertexArray::create();
-		subChunk.vao.bind();
-
-		subChunk.vertexVBO = Renderer::GLBuffer(
-			GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(cpu.vertices.size() * sizeof(BakedVertex)), cpu.vertices.data(), GL_STATIC_DRAW
-		);
-
-		glEnableVertexAttribArray(0);
-		glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(BakedVertex), reinterpret_cast<void*>(0));
-		glEnableVertexAttribArray(2);
-		glVertexAttribPointer(2, 4, GL_FLOAT, GL_FALSE, sizeof(BakedVertex), reinterpret_cast<void*>(offsetof(BakedVertex, color)));
-
-		subChunk.indexIBO = Renderer::GLBuffer(
-			GL_ELEMENT_ARRAY_BUFFER, static_cast<GLsizeiptr>(cpu.indices.size() * sizeof(uint32_t)), cpu.indices.data(), GL_STATIC_DRAW
-		);
-
-		Renderer::GLVertexArray::unbind();
-
-		// Release CPU-side arrays as they're consumed
-		cpu.vertices = {};
-		cpu.indices = {};
+		return bytesUploaded;
 	}
 
 	void EntityRenderer::uploadBakedChunk(const ChunkCoordinate& coord, BakedChunkCPUData&& cpuData) {
@@ -588,8 +603,9 @@ namespace engine::world {
 		m_pendingUploads.push_back(PendingUpload{coord, std::move(cpuData), 0});
 	}
 
-	void EntityRenderer::processPendingUploads(int budget) {
-		while (budget > 0 && !m_pendingUploads.empty()) {
+	void EntityRenderer::processPendingUploads(size_t budgetBytes) {
+		size_t bytesUploaded = 0;
+		while (bytesUploaded < budgetBytes && !m_pendingUploads.empty()) {
 			auto& pending = m_pendingUploads.front();
 			auto  cacheIt = m_bakedChunkCache.find(pending.coord);
 			if (cacheIt == m_bakedChunkCache.end()) {
@@ -598,10 +614,9 @@ namespace engine::world {
 				continue;
 			}
 
-			while (budget > 0 && pending.nextSubChunk < kSubChunkCount) {
-				uploadSubChunk(cacheIt->second, pending.cpuData.subChunks[pending.nextSubChunk], pending.nextSubChunk);
+			while (bytesUploaded < budgetBytes && pending.nextSubChunk < kSubChunkCount) {
+				bytesUploaded += uploadSubChunk(cacheIt->second, pending.cpuData.subChunks[pending.nextSubChunk], pending.nextSubChunk);
 				pending.nextSubChunk++;
-				budget--;
 			}
 
 			if (pending.nextSubChunk >= kSubChunkCount) {
@@ -685,6 +700,15 @@ namespace engine::world {
 		glUniform1f(m_uniformLocations.pixelsPerMeter, m_pixelsPerMeter);
 		glUniform2f(m_uniformLocations.viewportSize, static_cast<float>(viewportWidth), static_cast<float>(viewportHeight));
 
+		// Far-zoom impostor handoff: pixels of on-screen height per meter of
+		// entity height; short flora fades out below kImpostorCutoffPx because
+		// the grass tile texture carries the appearance at that distance
+		float pixelsPerWorldMeter = m_pixelsPerMeter * zoom;
+		float currentAlpha = 1.0F;
+		if (m_uniformLocations.bakedAlpha >= 0) {
+			glUniform1f(m_uniformLocations.bakedAlpha, currentAlpha);
+		}
+
 		// Draw visible sub-chunks from each cached chunk
 		for (const auto& coord : processedChunks) {
 			auto cacheIt = m_bakedChunkCache.find(coord);
@@ -697,22 +721,41 @@ namespace engine::world {
 
 			// Check each sub-chunk for visibility
 			for (const auto& subChunk : cache.subChunks) {
-				if (subChunk.indexCount == 0) {
-					continue; // Empty sub-chunk
-				}
-
 				// AABB intersection test: is sub-chunk visible?
 				if (subChunk.maxX < visMinX || subChunk.minX > visMaxX || subChunk.maxY < visMinY || subChunk.minY > visMaxY) {
 					continue; // Sub-chunk is completely off-screen
 				}
 
-				// Sub-chunk is visible - draw it
-				m_lastEntityCount += subChunk.entityCount;
-				m_lastDrawCallCount++;
-				m_lastTriangleCount += subChunk.indexCount / 3;
-				subChunk.vao.bind();
-				glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(subChunk.indexCount), GL_UNSIGNED_INT, nullptr);
+				for (const auto& bucket : subChunk.buckets) {
+					if (bucket.indexCount == 0) {
+						continue; // Empty bucket
+					}
+
+					// Cutoff with a fade band from kImpostorCutoffPx to 2x that.
+					// Tall flora's maxEntityHeight keeps it drawn far past the
+					// zoom where grass hands off to the tile texture.
+					float screenHeightPx = bucket.maxEntityHeight * pixelsPerWorldMeter;
+					float alpha = std::clamp((screenHeightPx - kImpostorCutoffPx) / kImpostorCutoffPx, 0.0F, 1.0F);
+					if (alpha <= 0.0F) {
+						continue;
+					}
+					if (alpha != currentAlpha && m_uniformLocations.bakedAlpha >= 0) {
+						glUniform1f(m_uniformLocations.bakedAlpha, alpha);
+						currentAlpha = alpha;
+					}
+
+					m_lastEntityCount += bucket.entityCount;
+					m_lastDrawCallCount++;
+					m_lastTriangleCount += bucket.indexCount / 3;
+					bucket.vao.bind();
+					glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(bucket.indexCount), GL_UNSIGNED_INT, nullptr);
+				}
 			}
+		}
+
+		// Reset alpha so the dynamic instanced path (same shader branch) is unaffected
+		if (m_uniformLocations.bakedAlpha >= 0 && currentAlpha != 1.0F) {
+			glUniform1f(m_uniformLocations.bakedAlpha, 1.0F);
 		}
 
 		Renderer::GLVertexArray::unbind();

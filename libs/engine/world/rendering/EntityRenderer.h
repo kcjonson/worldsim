@@ -122,13 +122,19 @@ class EntityRenderer {
 	// evicted chunk is revisited). Sub-regions are culled against the viewport.
 	// CPU bake types/constants live in BakedEntityMesh.h.
 
-	/// GPU resources for a single sub-region's baked entity mesh.
-	struct BakedSubChunkData {
+	/// GPU resources for one height bucket of one sub-region.
+	struct BakedMeshGPU {
 		Renderer::GLVertexArray vao;     // VAO with baked vertex data
 		Renderer::GLBuffer vertexVBO;    // Pre-transformed vertices (world-space)
 		Renderer::GLBuffer indexIBO;     // Combined indices
 		uint32_t indexCount = 0;         // Total indices in IBO
 		uint32_t entityCount = 0;        // For debugging/metrics
+		float maxEntityHeight = 0.0F;    // Drives the far-zoom cutoff (short bucket)
+	};
+
+	/// GPU resources for a single sub-region's baked entity meshes.
+	struct BakedSubChunkData {
+		std::array<BakedMeshGPU, kFloraBucketCount> buckets;
 		float minX = 0, minY = 0;        // World-space bounds for culling
 		float maxX = 0, maxY = 0;
 	};
@@ -152,15 +158,17 @@ class EntityRenderer {
 	};
 	std::vector<PendingUpload> m_pendingUploads;
 
-	/// Max sub-chunk buffer uploads per frame (64 per chunk; 16 spreads a
-	/// chunk over 4 frames, ~33ms at 120 FPS, without visible frame spikes)
-	static constexpr int kUploadBudgetPerFrame = 16;
+	/// Max bytes of baked vertex/index data uploaded per frame. A byte budget
+	/// (rather than a sub-chunk count) keeps the per-frame cost flat as flora
+	/// density grows; 2MB is well under 1ms of PCIe transfer.
+	static constexpr size_t kUploadBudgetBytesPerFrame = 2 * 1024 * 1024;
 
-	/// Upload up to budget sub-chunks from the pending queue (render thread)
-	void processPendingUploads(int budget);
+	/// Upload pending sub-chunks until the byte budget is exhausted (render thread)
+	void processPendingUploads(size_t budgetBytes);
 
-	/// Upload a single sub-chunk's buffers into an existing cache entry
-	void uploadSubChunk(BakedChunkData& bakedData, BakedSubChunkCPUData& cpu, int subIndex);
+	/// Upload a single sub-chunk's buffers into an existing cache entry.
+	/// @return Bytes of vertex+index data uploaded
+	size_t uploadSubChunk(BakedChunkData& bakedData, BakedSubChunkCPUData& cpu, int subIndex);
 
 	/// Cached uniform locations for instanced rendering (avoid glGetUniformLocation per frame).
 	struct CachedUniformLocations {
@@ -171,6 +179,7 @@ class EntityRenderer {
 		GLint cameraZoom = -1;
 		GLint pixelsPerMeter = -1;
 		GLint viewportSize = -1;
+		GLint bakedAlpha = -1;
 		bool initialized = false;
 	};
 	CachedUniformLocations m_uniformLocations;

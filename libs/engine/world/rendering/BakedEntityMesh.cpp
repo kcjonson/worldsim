@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <unordered_map>
 
 namespace engine::world {
 
@@ -34,18 +35,36 @@ namespace engine::world {
 			bins[subY * kSubChunkGridSize + subX].push_back(entity);
 		}
 
-		// Transform each bin into world-space vertices
+		// Template mesh height cache (template Y extent, before entity scale)
+		std::unordered_map<const renderer::TessellatedMesh*, float> heightCache;
+		auto templateHeight = [&heightCache](const renderer::TessellatedMesh* mesh) {
+			auto it = heightCache.find(mesh);
+			if (it != heightCache.end()) {
+				return it->second;
+			}
+			float minY = 0.0F;
+			float maxY = 0.0F;
+			if (!mesh->vertices.empty()) {
+				minY = maxY = mesh->vertices[0].y;
+				for (const auto& v : mesh->vertices) {
+					minY = std::min(minY, v.y);
+					maxY = std::max(maxY, v.y);
+				}
+			}
+			float height = maxY - minY;
+			heightCache.emplace(mesh, height);
+			return height;
+		};
+
+		// Transform each bin into world-space vertices, split by height bucket
 		for (int subIndex = 0; subIndex < kSubChunkCount; ++subIndex) {
 			const auto& bin = bins[subIndex];
 			if (bin.empty()) {
 				continue;
 			}
 
-			auto& subChunk = data.subChunks[subIndex];
-			subChunk.vertices.reserve(bin.size() * 8);
-			subChunk.indices.reserve(bin.size() * 12);
-
-			uint32_t vertexOffset = 0;
+			auto&					subChunk = data.subChunks[subIndex];
+			std::array<uint32_t, 2> vertexOffsets{0, 0};
 
 			for (const auto* entity : bin) {
 				const auto* templateMesh = getTemplate(entity->defName);
@@ -54,6 +73,12 @@ namespace engine::world {
 				}
 
 				float entityScale = entity->scale;
+				float worldHeight = templateHeight(templateMesh) * entityScale;
+				int	  bucketIndex = (worldHeight < kShortFloraMaxHeight) ? kShortFloraBucket : kTallFloraBucket;
+				auto& bucket = subChunk.buckets[bucketIndex];
+				auto& vertexOffset = vertexOffsets[bucketIndex];
+				bucket.maxEntityHeight = std::max(bucket.maxEntityHeight, worldHeight);
+
 				float posX = entity->position.x;
 				float posY = entity->position.y;
 				bool  hasMeshColors = templateMesh->hasColors();
@@ -95,18 +120,18 @@ namespace engine::world {
 						baked.color = Foundation::Color(entity->colorTint);
 					}
 
-					subChunk.vertices.push_back(baked);
+					bucket.vertices.push_back(baked);
 				}
 
 				for (const auto& idx : templateMesh->indices) {
-					subChunk.indices.push_back(vertexOffset + idx);
+					bucket.indices.push_back(vertexOffset + idx);
 				}
 
 				vertexOffset += static_cast<uint32_t>(templateMesh->vertices.size());
-				subChunk.entityCount++;
+				bucket.entityCount++;
 			}
 
-			data.totalEntityCount += subChunk.entityCount;
+			data.totalEntityCount += subChunk.buckets[kShortFloraBucket].entityCount + subChunk.buckets[kTallFloraBucket].entityCount;
 		}
 
 		return data;

@@ -63,6 +63,10 @@ class ChunkRenderer {
 	static constexpr size_t kMaxCachedTextures = 32; // 128 MB cap
 	static constexpr size_t kEvictionBatchSize = 8;
 
+	// Cap stale-texture re-uploads (4 MB each) per frame; adjacency stitching
+	// can dirty several visible chunks in the same update
+	static constexpr int kMaxStaleReuploadsPerFrame = 1;
+
 	/// Lazily create shader + unit quad (requires GL context)
 	bool initGL();
 
@@ -76,6 +80,7 @@ class ChunkRenderer {
 	uint32_t m_lastTileCount = 0;
 	uint32_t m_lastChunkCount = 0;
 	uint64_t m_frameCounter = 0;
+	int m_staleReuploadsThisFrame = 0;
 
 	bool m_glInitAttempted = false;
 	Renderer::Shader m_shader;

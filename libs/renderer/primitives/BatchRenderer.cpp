@@ -53,6 +53,12 @@ namespace Renderer {
 		viewportSizeLoc = glGetUniformLocation(shader.getProgram(), "u_viewportSize");
 		instancedLoc = glGetUniformLocation(shader.getProgram(), "u_instanced");
 
+		// u_bakedAlpha defaults to 0.0 like all uniforms; initialize to opaque so
+		// instanced draws are visible before the baked path ever sets it
+		shader.use();
+		glUniform1f(glGetUniformLocation(shader.getProgram(), "u_bakedAlpha"), 1.0F);
+		shader.unbind();
+
 		// Debug: verify instancing uniforms are found (only in debug builds)
 #ifndef NDEBUG
 		std::cerr << "[BatchRenderer] Instancing uniforms: "
