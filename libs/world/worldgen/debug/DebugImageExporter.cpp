@@ -2,6 +2,7 @@
 
 #include "worldgen/debug/ColorMaps.h"
 
+#include <array>
 #include <cstdio>
 #include <cstring>
 #include <vector>
@@ -114,6 +115,22 @@ bool exportEquirectangularBmp(const GeneratedWorld& world,
                         color = {0, 80, 160};
                     } else {
                         color = {100, 160, 80};
+                    }
+                    break;
+                }
+                case WorldFieldOrMode::Crust: {
+                    bool isCrust = (world.data.flags[t] & kFlagContinentalCrust) != 0;
+                    color = isCrust ? Rgb{20, 100, 30} : Rgb{0, 30, 90};
+
+                    // Plate boundary: 1px black where any neighbor has a different plateId
+                    uint8_t pid = world.data.plateId[t];
+                    std::array<TileId, 8> bndNbrs{};
+                    uint32_t bndCount = world.grid->neighbors(t, bndNbrs);
+                    for (uint32_t bn = 0; bn < bndCount; ++bn) {
+                        if (world.data.plateId[bndNbrs[bn]] != pid) {
+                            color = {0, 0, 0};
+                            break;
+                        }
                     }
                     break;
                 }

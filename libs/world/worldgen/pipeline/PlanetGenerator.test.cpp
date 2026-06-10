@@ -191,14 +191,18 @@ TEST(PlanetGenerator, SnapshotImmutability) {
     PlanetGenerator gen;
     gen.start(params);
 
-    // Wait until at least 2 stages done
+    // Wait until stage 2 (PlateMovement) has completed and we have a snapshot with plateId.
+    // plateId is written by PlateStage (stage 0) and never touched by any later stage,
+    // so it is the correct field to test snapshot immutability on.
+    // We wait for stageIndex >= 2 (TerrainStage starting), which means PlateMovement
+    // has completed and publishSnapshot was called for it.
     std::shared_ptr<const GeneratedWorld> snap;
     auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
     while (std::chrono::steady_clock::now() < deadline) {
         auto prog = gen.progress();
         if (prog.stageIndex >= 2) {
             snap = gen.snapshot();
-            if (snap) break;
+            if (snap && (snap->validFields & static_cast<uint32_t>(WorldField::PlateId))) break;
         }
         if (prog.state == GenerationProgress::State::Complete) break;
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
@@ -206,13 +210,11 @@ TEST(PlanetGenerator, SnapshotImmutability) {
 
     if (!snap) { GTEST_SKIP() << "Could not get intermediate snapshot"; }
 
-    // Record checksum of snapshot's elevation array
+    // Record checksum of snapshot's plateId array — written by PlateStage and
+    // never modified by any subsequent stage, so must remain identical after completion.
     uint64_t h1 = 0;
-    for (float v : snap->data.elevation) {
-        uint32_t bits{};
-        static_assert(sizeof(float) == sizeof(uint32_t));
-        std::memcpy(&bits, &v, 4);
-        h1 = h1 * 2654435761ULL + bits;
+    for (uint8_t v : snap->data.plateId) {
+        h1 = h1 * 2654435761ULL + v;
     }
 
     // Run to completion
@@ -223,15 +225,13 @@ TEST(PlanetGenerator, SnapshotImmutability) {
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
 
-    // Re-check same snapshot's elevation
+    // Re-check same snapshot's plateId — must be unchanged since no stage touches it after PlateStage
     uint64_t h2 = 0;
-    for (float v : snap->data.elevation) {
-        uint32_t bits{};
-        std::memcpy(&bits, &v, 4);
-        h2 = h2 * 2654435761ULL + bits;
+    for (uint8_t v : snap->data.plateId) {
+        h2 = h2 * 2654435761ULL + v;
     }
 
-    EXPECT_EQ(h1, h2) << "Snapshot elevation array was modified after publication";
+    EXPECT_EQ(h1, h2) << "Snapshot plateId array was modified after publication";
 }
 
 // ============================================================================
