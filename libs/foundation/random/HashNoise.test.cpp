@@ -170,3 +170,29 @@ TEST(HashNoiseTests, RidgedNoise3NonNegativeTendency) {
     // Ridged noise should be positive more than 70% of the time (fBm weighting keeps it positive)
     EXPECT_GT(positiveCount, total * 7 / 10);
 }
+
+// ============================================================================
+// Negative-integer boundary continuity regression
+// Ensures the floor fix doesn't create discontinuities at negative integer inputs.
+// ============================================================================
+
+TEST(HashNoiseTests, ValueNoise3ContinuityAcrossNegativeInteger) {
+    // Sample at -3.0 and just either side; the difference must be small (< 0.05)
+    // A broken floor would assign -3.0 to cell -4 while -3.0+eps is in cell -3,
+    // causing a jump equal to the difference between two uncorrelated lattice values.
+    const uint32_t seed = 42;
+    float at  = valueNoise3(-3.0F,  0.5F, 0.5F, seed);
+    float low = valueNoise3(-3.0F - 1e-3F, 0.5F, 0.5F, seed);
+    float hi  = valueNoise3(-3.0F + 1e-3F, 0.5F, 0.5F, seed);
+    EXPECT_LT(std::abs(at - low), 0.05F) << "discontinuity at negative-integer boundary (low side)";
+    EXPECT_LT(std::abs(at - hi),  0.05F) << "discontinuity at negative-integer boundary (high side)";
+}
+
+TEST(HashNoiseTests, GradientNoise3ContinuityAcrossNegativeInteger) {
+    const uint32_t seed = 42;
+    float at  = gradientNoise3(-3.0F, 0.5F, 0.5F, seed);
+    float low = gradientNoise3(-3.0F - 1e-3F, 0.5F, 0.5F, seed);
+    float hi  = gradientNoise3(-3.0F + 1e-3F, 0.5F, 0.5F, seed);
+    EXPECT_LT(std::abs(at - low), 0.05F) << "discontinuity at negative-integer boundary (low side)";
+    EXPECT_LT(std::abs(at - hi),  0.05F) << "discontinuity at negative-integer boundary (high side)";
+}

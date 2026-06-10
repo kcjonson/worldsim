@@ -12,27 +12,23 @@ using namespace foundation;
 // ============================================================================
 
 TEST(WorldHashTests, KnownFnvVectors) {
-    // Empty string
-    EXPECT_EQ(hashBytes("", 0), kFnvOffset);
+    // Standard FNV-1a 64-bit test vectors from http://www.isthe.com/chongo/tech/comp/fnv/
+    // These are hardcoded literals — not derived from kFnvOffset/kFnvPrime — so they
+    // catch any accidental change to those constants.
 
-    // "a" — FNV-1a 64-bit known value
+    // Empty string: FNV-1a of "" is the offset basis itself
+    EXPECT_EQ(hashBytes("", 0), 0xcbf29ce484222325ULL);
+
+    // "a"
     {
         const uint8_t data[] = {'a'};
-        uint64_t expected = kFnvOffset;
-        expected ^= 'a';
-        expected *= kFnvPrime;
-        EXPECT_EQ(hashBytes(data, 1), expected);
+        EXPECT_EQ(hashBytes(data, 1), 0xaf63dc4c8601ec8cULL);
     }
 
-    // "foobar" — manual computation
+    // "foobar"
     {
         const char* s = "foobar";
-        uint64_t h = kFnvOffset;
-        for (const char* p = s; *p; ++p) {
-            h ^= static_cast<uint64_t>(static_cast<uint8_t>(*p));
-            h *= kFnvPrime;
-        }
-        EXPECT_EQ(hashBytes(s, std::strlen(s)), h);
+        EXPECT_EQ(hashBytes(s, std::strlen(s)), 0x85944171f73967e8ULL);
     }
 }
 
@@ -85,7 +81,8 @@ TEST(WorldHashTests, HashBytesEmpty) {
 TEST(WorldHashTests, Determinism) {
     const uint8_t data[] = {0x01, 0x02, 0x03, 0x04};
     uint64_t h1 = hashBytes(data, 4);
-    uint64_t h2 = hashBytes(data, 4);
+    const uint8_t data2[] = {0x01, 0x02, 0x03, 0x04};
+    uint64_t h2 = hashBytes(data2, 4);
     EXPECT_EQ(h1, h2);
 }
 
