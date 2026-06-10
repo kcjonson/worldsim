@@ -103,6 +103,7 @@ class Slider : public Component, public FocusableBase<Slider> {
 	bool									focused{false};
 	bool									dragging{false};
 	bool									handleHovered{false};
+	bool									inCallback{false};
 	SliderStyle								style;
 
 	// Computed layout (updated in computeLayout)

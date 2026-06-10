@@ -226,4 +226,56 @@ TEST_F(SliderTest, CannotReceiveFocusWhenDisabled) {
 	EXPECT_FALSE(slider.canReceiveFocus());
 }
 
+// === Log scale guard against invalid bounds ===
+
+// logScale=true with min=0 must fall back to linear and never produce NaN/inf.
+TEST_F(SliderTest, LogScaleInvalidBoundsFallsBackToLinear) {
+	Slider slider(Slider::Args{
+		.min = 0.0, .max = 10.0, .value = 0.0, .logScale = true,
+	});
+
+	for (double t : {0.0, 0.5, 1.0}) {
+		double v = slider.positionToValue(t);
+		EXPECT_FALSE(std::isnan(v)) << "NaN at t=" << t;
+		EXPECT_FALSE(std::isinf(v)) << "inf at t=" << t;
+		// Must lie within [min, max]
+		EXPECT_GE(v, 0.0);
+		EXPECT_LE(v, 10.0);
+	}
+}
+
+// === Reentrancy guard ===
+
+// onChanged calling setValue() on the same slider must not recurse infinitely.
+//
+// Which write wins: the guard blocks the *callback* from firing again, but the
+// reentrant setValue() still commits its value. So the sequence is:
+//   setValue(42) -> value=42 -> fireChanged() -> onChanged(42)
+//     -> setValue(99) -> value=99 -> fireChanged() [suppressed, inCallback=true]
+//   onChanged returns, fireChanged() clears inCallback
+// Final value: 99 (the reentrant write). onChanged fires exactly once.
+TEST_F(SliderTest, ReentrantSetValueDoesNotRecurse) {
+	int callCount = 0;
+	// Use a pointer so the lambda can reference the slider after construction.
+	Slider::Args args{.min = 0.0, .max = 100.0, .value = 0.0};
+
+	Slider* sliderPtr = nullptr;
+	args.onChanged = [&](double /*v*/) {
+		callCount++;
+		// Reentrant call — must not recurse infinitely.
+		// The callback fires exactly once; this setValue commits but doesn't re-fire.
+		sliderPtr->setValue(99.0);
+	};
+
+	Slider slider(args);
+	sliderPtr = &slider;
+
+	slider.setValue(42.0);
+
+	// onChanged fired exactly once (not infinitely — no stack overflow)
+	EXPECT_EQ(callCount, 1);
+	// Reentrant write wins: setValue(99) committed its value before fireChanged was suppressed.
+	EXPECT_DOUBLE_EQ(slider.getValue(), 99.0);
+}
+
 } // namespace UI

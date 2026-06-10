@@ -41,6 +41,9 @@ Slider::Slider(const Args& args)
 }
 
 double Slider::positionToValue(double t) const {
+	if (max <= min) {
+		return min;
+	}
 	t = std::clamp(t, 0.0, 1.0);
 	if (logScale && min > 0.0 && max > 0.0) {
 		return min * std::pow(max / min, t);
@@ -109,8 +112,13 @@ void Slider::setValueFromTrackX(float x) {
 }
 
 void Slider::fireChanged() {
+	if (inCallback) {
+		return;
+	}
 	if (onChanged) {
+		inCallback = true;
 		onChanged(value);
+		inCallback = false;
 	}
 }
 
