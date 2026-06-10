@@ -7,8 +7,9 @@
 //   Once a snapshot is published, its arrays for valid fields are READ-ONLY.
 //   A stage only writes arrays it is introducing (bits not yet set in validFields).
 //   Stages NEVER modify already-valid arrays.
-//   In debug builds the generator records per-field FNV checksums at publication
-//   and asserts they are unchanged before the next publication, catching violations.
+//   In debug builds the generator records a per-field FNV checksum at publication
+//   time (stored in lastPublishedChecksum). Immutability is NOT asserted inline;
+//   it is verified by the SnapshotImmutability test suite.
 //
 // Threading:
 //   - start() launches a std::jthread; progress/state are atomic.
