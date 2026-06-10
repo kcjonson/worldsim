@@ -615,7 +615,19 @@ namespace engine::world {
 			}
 
 			while (bytesUploaded < budgetBytes && pending.nextSubChunk < kSubChunkCount) {
-				bytesUploaded += uploadSubChunk(cacheIt->second, pending.cpuData.subChunks[pending.nextSubChunk], pending.nextSubChunk);
+				// Defer a sub-chunk that would blow the remaining budget, unless
+				// nothing was uploaded yet this frame (avoids starving oversized
+				// sub-chunks; worst-case overshoot is then one sub-chunk)
+				auto&  cpu = pending.cpuData.subChunks[pending.nextSubChunk];
+				size_t estimatedBytes = 0;
+				for (const auto& bucket : cpu.buckets) {
+					estimatedBytes += bucket.vertices.size() * sizeof(BakedVertex) + bucket.indices.size() * sizeof(uint32_t);
+				}
+				if (bytesUploaded > 0 && bytesUploaded + estimatedBytes > budgetBytes) {
+					return;
+				}
+
+				bytesUploaded += uploadSubChunk(cacheIt->second, cpu, pending.nextSubChunk);
 				pending.nextSubChunk++;
 			}
 

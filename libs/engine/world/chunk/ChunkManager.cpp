@@ -29,11 +29,12 @@ namespace engine::world {
 			}
 		}
 
-		// Unload distant chunks
-		if (newCenter != m_centerChunk) {
-			unloadDistantChunks(newCenter);
-			m_centerChunk = newCenter;
-		}
+		// Unload distant chunks. Runs every update (not just on center change):
+		// chunks are exempt from unloading while their generation worker is in
+		// flight, so a center-change-only sweep could strand finished chunks
+		// behind a camera that stopped moving.
+		unloadDistantChunks(newCenter);
+		m_centerChunk = newCenter;
 	}
 
 	Chunk* ChunkManager::getChunk(ChunkCoordinate coord) {
