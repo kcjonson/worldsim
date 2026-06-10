@@ -28,7 +28,15 @@ void SnowStage::run(StageContext& ctx) {
         ctx.reportProgress(static_cast<float>(end) / static_cast<float>(totalTiles));
     });
 
+    // SnowStage is the last writer of flags (adds kFlagPermanentSnow after OceanStage
+    // added kFlagOcean). It owns the Flags valid bit; no stage may write flags afterward.
+    ctx.world.validFields |= static_cast<uint32_t>(WorldField::Flags);
     ctx.world.validFields |= static_cast<uint32_t>(WorldField::SnowCover);
+    // FlowAccum and Downhill are stub-initialized by WorldData::allocate()
+    // (0.0 and 0xFF respectively) and owned by the M3 precipitation stage;
+    // claim the bits here so the pipeline's AllFieldsValid invariant holds.
+    ctx.world.validFields |= static_cast<uint32_t>(WorldField::FlowAccum);
+    ctx.world.validFields |= static_cast<uint32_t>(WorldField::Downhill);
 }
 
 } // namespace worldgen

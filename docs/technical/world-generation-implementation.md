@@ -126,16 +126,18 @@ At n=1024 on a 32-core 3.4 GHz machine (Release):
 | Field | Type | Description |
 |---|---|---|
 | starMass | double | Solar masses |
-| starTemperatureK | double | Kelvin |
-| starLuminosity | double | Solar luminosities |
-| orbitRadiusAU | double | Astronomical units |
-| planetMass | double | Earth masses |
+| starRadius | double | Solar radii |
+| starTemperature | double | Kelvin |
+| starAge | double | Years |
 | planetRadius | double | Earth radii |
-| rotationPeriodHours | double | Hours |
-| axialTiltDeg | double | Degrees |
-| atmosphericPressure | double | Earth atmospheres |
+| planetMass | double | Earth masses |
+| rotationRate | double | Earth days per rotation |
+| tectonicPlateCount | int | 2..30 |
 | waterAmount | double | 0..1, fraction of surface covered |
-| tectonicPlateCount | int | 1..20 |
+| atmosphereStrength | double | Earth atmospheres |
+| planetAge | double | Years |
+| semiMajorAxis | double | AU |
+| eccentricity | double | |
 | seed | uint64_t | |
 | gridSubdivision | uint32_t | n; tiles = 10·n·n |
 
@@ -151,13 +153,13 @@ Computed from PlanetParams by `derive()`:
 - `gravity` = G·M / r² (m/s²)
 - `solarConstant` = L_star / (4π d²) in W/m² (L_star from Stefan-Boltzmann)
 - `equilibriumTemperatureK` = (S·(1-0.3) / (4σ))^0.25
-- `rotationPeriodSeconds` = rotationPeriodHours × 3600
+- `rotationPeriodSeconds` = rotationRate × 86400 (rotationRate is in Earth days)
 - `lapseRateCPerKm` = 6.5 (fixed)
 
 All transcendental math uses `foundation::det_math::*`. No `std::sin`, `cos`,
-`exp`, `pow`, etc. in any worldgen code (`std::sqrt` is allowed and is used
-only in `SphereGrid.cpp` for the one normalize operation before the
-deterministic functions are ready).
+`tan`, `exp`, or `pow` anywhere in worldgen code. `std::sqrt` is allowed because
+IEEE-754 requires sqrt to be correctly rounded (same result on all conforming
+platforms); it appears in multiple geometry helpers across the library.
 
 ---
 
@@ -268,9 +270,9 @@ from `cancel()` to state=Cancelled is bounded by the slab grain size
 | TerrainStage | 0.25 | Elevation |
 | AtmosphereStage | 0.15 | TemperatureMean, TemperatureRange, WindDir, WindSpeed |
 | PrecipitationStage | 0.20 | Precipitation |
-| OceanStage | 0.05 | WaterDepth, Flags (kFlagOcean) |
+| OceanStage | 0.05 | WaterDepth (writes kFlagOcean into flags but does not set Flags bit) |
 | BiomeStage | 0.15 | Biome |
-| SnowStage | 0.05 | SnowCover, Flags (kFlagPermanentSnow) |
+| SnowStage | 0.05 | SnowCover, Flags (writes kFlagPermanentSnow, then sets Flags bit as last flags writer), FlowAccum, Downhill (stub defaults from allocate()) |
 
 Stub stages produce geographically plausible placeholder output using hash
 noise and latitude-band formulas. They will be replaced by M3 sub-stages with

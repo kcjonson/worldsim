@@ -121,6 +121,11 @@ std::shared_ptr<const GeneratedWorld> PlanetGenerator::takeResult() {
 
 void PlanetGenerator::runPipeline(PlanetParams params) {
     try {
+        // Clamp tectonicPlateCount to the documented valid range [2, 30].
+        // Plate count of 0 or 1 would produce modulo-by-zero or degenerate results.
+        if (params.tectonicPlateCount < 2)  params.tectonicPlateCount = 2;
+        if (params.tectonicPlateCount > 30) params.tectonicPlateCount = 30;
+
         // Build the GeneratedWorld
         auto world = std::make_shared<GeneratedWorld>();
         world->params  = params;
