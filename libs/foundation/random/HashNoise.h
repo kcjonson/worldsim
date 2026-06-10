@@ -85,9 +85,9 @@ inline void gradient(uint32_t h, float& gx, float& gy, float& gz) {
 // Lattice values from hash3; weights from quintic fade of the fractional part.
 // Range: [0, 1).
 inline float valueNoise3(float x, float y, float z, uint32_t seed) {
-    auto ix = static_cast<int32_t>(x >= 0.0F ? static_cast<int32_t>(x) : static_cast<int32_t>(x) - 1);
-    auto iy = static_cast<int32_t>(y >= 0.0F ? static_cast<int32_t>(y) : static_cast<int32_t>(y) - 1);
-    auto iz = static_cast<int32_t>(z >= 0.0F ? static_cast<int32_t>(z) : static_cast<int32_t>(z) - 1);
+    int32_t ix = static_cast<int32_t>(x); if (static_cast<float>(ix) > x) --ix;
+    int32_t iy = static_cast<int32_t>(y); if (static_cast<float>(iy) > y) --iy;
+    int32_t iz = static_cast<int32_t>(z); if (static_cast<float>(iz) > z) --iz;
 
     float fx = x - static_cast<float>(ix);
     float fy = y - static_cast<float>(iy);
@@ -122,9 +122,9 @@ inline float valueNoise3(float x, float y, float z, uint32_t seed) {
 // GradientNoise3: Perlin-style gradient noise with hash-selected gradients.
 // Range: approximately [-1, 1]; exact bounds depend on gradient table geometry.
 inline float gradientNoise3(float x, float y, float z, uint32_t seed) {
-    auto ix = static_cast<int32_t>(x >= 0.0F ? static_cast<int32_t>(x) : static_cast<int32_t>(x) - 1);
-    auto iy = static_cast<int32_t>(y >= 0.0F ? static_cast<int32_t>(y) : static_cast<int32_t>(y) - 1);
-    auto iz = static_cast<int32_t>(z >= 0.0F ? static_cast<int32_t>(z) : static_cast<int32_t>(z) - 1);
+    int32_t ix = static_cast<int32_t>(x); if (static_cast<float>(ix) > x) --ix;
+    int32_t iy = static_cast<int32_t>(y); if (static_cast<float>(iy) > y) --iy;
+    int32_t iz = static_cast<int32_t>(z); if (static_cast<float>(iz) > z) --iz;
 
     float fx = x - static_cast<float>(ix);
     float fy = y - static_cast<float>(iy);
