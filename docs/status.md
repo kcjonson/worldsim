@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2026-06-09 (render perf analysis complete; M1 and M2 worldgen complete)
+Last Updated: 2026-06-10 (Worldgen foundation merged: M1, M2, M3a, M3b, M3f-1, M3g, M3h on main via PRs #118-#124; render perf analysis complete)
 
 ## Epic/Story/Task Template
 
@@ -420,14 +420,14 @@ while (running) {
 **Tasks:**
 - [x] M1: Foundation primitives (TaskPool, RNG, HashNoise, DeterministicMath, WorldHash)
 - [x] M2: worldgen core + frozen contracts (SphereGrid, WorldData, pipeline skeleton, debug image exporter, technical doc)
-- [ ] M3a: Plates + plate movement (P1, P2)
-- [ ] M3b: Terrain + sea level (P3) — ends with USER screenshot review gate
+- [x] M3a: Plates + plate movement (P1, P2)
+- [x] M3b: Terrain + sea level (P3) — ends with USER screenshot review gate
 - [ ] M3c: Atmosphere + temperature (P4)
 - [ ] M3d: Precipitation + rivers (P5)
 - [ ] M3e: Oceans, biomes, snow, summary (P6–P9)
-- [ ] M3f: planet-view lib (renderer, camera, picker, chunked-LOD, colorizer)
-- [ ] M3g: UI Slider + WorldCreator shell
-- [ ] M3h: Biome taxonomy migration (engine, 8→21 biomes, sparse BiomeWeights)
+- [x] M3f: planet-view lib (renderer, camera, picker, colorizer; chunked-LOD deferred to M3f-2)
+- [x] M3g: UI Slider + WorldCreator shell
+- [x] M3h: Biome taxonomy migration (engine, 8→21 biomes, sparse BiomeWeights)
 - [ ] M4: PlanetSampler + GeneratedWorldSampler + GameLoading branch
 - [ ] M5: WorldCreator integration (real generator + planet view)
 - [ ] M6: Landing site + handoff + MainMenu rewire (e2e New Game)
@@ -547,7 +547,7 @@ The following MVP epics have all been completed. Detailed task breakdowns are pr
 **Dependencies:** None
 **Status:** ready
 
-**Goal:** Fix the measured collapse at zoom-out (4 FPS at 0.25x) and scroll hitches (112-443ms). Persistent GPU tile geometry, async entity bake, far-zoom impostor handoff.
+**Goal:** Fix the measured collapse at zoom-out (4 FPS at 0.25x) and scroll hitches (112-443ms). Persistent GPU tile geometry, async entity bake, far-zoom impostor handoff. Target 120 FPS at every zoom at current flora density (headroom for massively increased density later); 4x density stress must hold 60+.
 
 **Tasks:**
 - [x] Profiling tooling (camera/vsync control endpoints, perf-capture.ps1, draw call metrics fix)

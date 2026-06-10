@@ -20,9 +20,7 @@ TileGrid::TileGrid(const TileGridConfig& config) : m_config(config) {
 			};
 			tile.width = config.tileSize;
 			tile.height = config.tileSize;
-			// Initialize to Grassland explicitly (BiomeWeights defaults to all zeros,
-			// and primary() returns Grassland when all weights are zero)
-			tile.setBiome(Biome::Grassland);
+			tile.setBiome(Biome::TemperateGrassland);
 			m_tiles.push_back(tile);
 		}
 	}

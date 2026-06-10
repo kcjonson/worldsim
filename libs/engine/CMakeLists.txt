@@ -39,6 +39,7 @@ target_link_libraries(engine
         renderer
         ui
         assets
+        world
         nlohmann_json::nlohmann_json
         glfw
 )

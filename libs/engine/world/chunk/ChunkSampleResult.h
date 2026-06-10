@@ -1,8 +1,7 @@
 #pragma once
 
 // ChunkSampleResult - Biome data sampled from the 3D world for a chunk.
-// This is the result of sampling the spherical world at chunk corners.
-// Used temporarily during Chunk::generate(), then tile data is stored in flat array.
+// Used temporarily during Chunk::generate(); tile data is stored in a flat array.
 
 #include "world/Biome.h"
 #include "world/BiomeWeights.h"
@@ -13,86 +12,70 @@
 
 namespace engine::world {
 
-/// Size of the sector grid for biome interpolation
 inline constexpr int32_t kSectorGridSize = 32;
 
-/// Result of sampling the 3D world for a chunk.
-/// Contains biome and elevation data needed to generate tiles.
-/// This is temporary data - after Chunk::generate(), tiles are stored in flat array.
 struct ChunkSampleResult {
-	/// Biome weights at each corner (for interpolation)
-	/// Order: NW, NE, SW, SE (matches ChunkCorner enum)
-	std::array<BiomeWeights, 4> cornerBiomes{};
+    std::array<BiomeWeights, 4> cornerBiomes{};
+    std::array<float, 4>        cornerElevations{};
+    std::array<BiomeWeights, kSectorGridSize * kSectorGridSize> sectorGrid{};
 
-	/// Elevation at each corner (meters above sea level)
-	/// Used for bilinear interpolation within chunk
-	std::array<float, 4> cornerElevations{};
+    void computeSectorGrid() {
+        for (int32_t sy = 0; sy < kSectorGridSize; ++sy) {
+            for (int32_t sx = 0; sx < kSectorGridSize; ++sx) {
+                float u = static_cast<float>(sx) / static_cast<float>(kSectorGridSize - 1);
+                float v = static_cast<float>(sy) / static_cast<float>(kSectorGridSize - 1);
+                sectorGrid[static_cast<size_t>(sy * kSectorGridSize + sx)] = bilinearInterpolate(u, v);
+            }
+        }
+    }
 
-	/// Pre-computed 32×32 sector grid for O(1) tile biome lookup.
-	/// Each sector covers 16×16 tiles (512/32 = 16).
-	std::array<BiomeWeights, kSectorGridSize * kSectorGridSize> sectorGrid{};
+    [[nodiscard]] BiomeWeights getTileBiome(uint16_t localX, uint16_t localY) const {
+        int32_t sectorX = std::min(static_cast<int32_t>(localX / 16), kSectorGridSize - 1);
+        int32_t sectorY = std::min(static_cast<int32_t>(localY / 16), kSectorGridSize - 1);
+        return sectorGrid[static_cast<size_t>(sectorY * kSectorGridSize + sectorX)];
+    }
 
-	/// Compute sector grid from corner biomes via bilinear interpolation.
-	/// Call this after setting cornerBiomes.
-	void computeSectorGrid() {
-		for (int32_t sy = 0; sy < kSectorGridSize; ++sy) {
-			for (int32_t sx = 0; sx < kSectorGridSize; ++sx) {
-				float u = static_cast<float>(sx) / static_cast<float>(kSectorGridSize - 1);
-				float v = static_cast<float>(sy) / static_cast<float>(kSectorGridSize - 1);
-				sectorGrid[static_cast<size_t>(sy * kSectorGridSize + sx)] = bilinearInterpolate(u, v);
-			}
-		}
-	}
-
-	/// Get biome weights for a tile at local coordinates (0-511, 0-511).
-	[[nodiscard]] BiomeWeights getTileBiome(uint16_t localX, uint16_t localY) const {
-		// Map tile coordinate to sector (16 tiles per sector)
-		int32_t sectorX = localX / 16;
-		int32_t sectorY = localY / 16;
-		sectorX = std::min(sectorX, kSectorGridSize - 1);
-		sectorY = std::min(sectorY, kSectorGridSize - 1);
-		return sectorGrid[static_cast<size_t>(sectorY * kSectorGridSize + sectorX)];
-	}
-
-	/// Get interpolated elevation at a tile position (0-511, 0-511).
-	/// Uses bilinear interpolation from corner elevations.
-	[[nodiscard]] float getTileElevation(uint16_t localX, uint16_t localY) const {
-		float u = static_cast<float>(localX) / static_cast<float>(kChunkSize - 1);
-		float v = static_cast<float>(localY) / static_cast<float>(kChunkSize - 1);
-
-		// Bilinear interpolation
-		float top = cornerElevations[0] * (1.0F - u) + cornerElevations[1] * u;
-		float bottom = cornerElevations[2] * (1.0F - u) + cornerElevations[3] * u;
-		return top * (1.0F - v) + bottom * v;
-	}
+    [[nodiscard]] float getTileElevation(uint16_t localX, uint16_t localY) const {
+        float u = static_cast<float>(localX) / static_cast<float>(kChunkSize - 1);
+        float v = static_cast<float>(localY) / static_cast<float>(kChunkSize - 1);
+        float top    = cornerElevations[0] * (1.0F - u) + cornerElevations[1] * u;
+        float bottom = cornerElevations[2] * (1.0F - u) + cornerElevations[3] * u;
+        return top * (1.0F - v) + bottom * v;
+    }
 
   private:
-	/// Bilinear interpolation of biome weights from corners.
-	/// u = 0..1 (west to east), v = 0..1 (north to south)
-	[[nodiscard]] BiomeWeights bilinearInterpolate(float u, float v) const {
-		BiomeWeights result;
+    // Bilinear interpolation of sparse BiomeWeights.
+    // Merges all entries from the four corners and interpolates per unique biome key.
+    [[nodiscard]] BiomeWeights bilinearInterpolate(float u, float v) const {
+        // Collect the set of biome keys present across all 4 corners.
+        uint8_t keys[BiomeWeights::kMaxEntries * 4];
+        uint8_t keyCount = 0;
 
-		// Interpolate each biome weight separately
-		for (size_t i = 0; i < static_cast<size_t>(Biome::Count); ++i) {
-			Biome biome = static_cast<Biome>(i);
+        auto addKey = [&](uint8_t k) {
+            for (uint8_t i = 0; i < keyCount; ++i)
+                if (keys[i] == k) return;
+            if (keyCount < sizeof(keys)) keys[keyCount++] = k;
+        };
 
-			float nw = cornerBiomes[0].get(biome);
-			float ne = cornerBiomes[1].get(biome);
-			float sw = cornerBiomes[2].get(biome);
-			float se = cornerBiomes[3].get(biome);
+        for (const auto& bw : cornerBiomes)
+            for (uint8_t i = 0; i < bw.count; ++i)
+                addKey(bw.entries[i].biome);
 
-			float top = nw * (1.0F - u) + ne * u;
-			float bottom = sw * (1.0F - u) + se * u;
-			float weight = top * (1.0F - v) + bottom * v;
-
-			if (weight > 0.001F) {
-				result.set(biome, weight);
-			}
-		}
-
-		result.normalize();
-		return result;
-	}
+        BiomeWeights result;
+        for (uint8_t ki = 0; ki < keyCount; ++ki) {
+            auto b = static_cast<Biome>(keys[ki]);
+            float nw = cornerBiomes[0].get(b);
+            float ne = cornerBiomes[1].get(b);
+            float sw = cornerBiomes[2].get(b);
+            float se = cornerBiomes[3].get(b);
+            float top    = nw * (1.0F - u) + ne * u;
+            float bottom = sw * (1.0F - u) + se * u;
+            float w = top * (1.0F - v) + bottom * v;
+            if (w > 0.001F) result.set(b, w);
+        }
+        result.normalize();
+        return result;
+    }
 };
 
-}  // namespace engine::world
+} // namespace engine::world

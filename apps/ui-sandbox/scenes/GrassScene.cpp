@@ -58,7 +58,7 @@ namespace {
 				.width = kTileGridWidth, .height = kTileGridHeight, .tileSize = kTileSize, .origin = gridOrigin
 			};
 			m_grid = engine::world::TileGrid(gridConfig);
-			m_grid.setAllBiomes(engine::world::Biome::Grassland);
+			m_grid.setAllBiomes(engine::world::Biome::TemperateGrassland);
 
 			LOG_INFO(UI, "Created %dx%d tile grid (%zu tiles)", kTileGridWidth, kTileGridHeight, m_grid.tileCount());
 

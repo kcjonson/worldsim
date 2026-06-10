@@ -135,6 +135,29 @@ bool exportEquirectangularBmp(const GeneratedWorld& world,
                     }
                     break;
                 }
+                case WorldFieldOrMode::BoundaryTypeMap: {
+                    // BoundaryType color key:
+                    //   0 None          → interior tile; tinted by crust type
+                    //   1 ConvergentCC  → red    (220, 30, 30)
+                    //   2 ConvergentCO  → orange (220, 140, 30)
+                    //   3 ConvergentOO  → yellow (220, 210, 30)
+                    //   4 Divergent     → blue   (30, 80, 220)
+                    //   5 Transform     → green  (30, 180, 80)
+                    uint8_t bt = world.data.boundaryType[t];
+                    switch (bt) {
+                        case 1: color = {220, 30,  30};  break; // ConvergentCC
+                        case 2: color = {220, 140, 30};  break; // ConvergentCO
+                        case 3: color = {220, 210, 30};  break; // ConvergentOO
+                        case 4: color = {30,  80,  220}; break; // Divergent
+                        case 5: color = {30,  180, 80};  break; // Transform
+                        default: {
+                            bool isCrust = (world.data.flags[t] & kFlagContinentalCrust) != 0;
+                            color = isCrust ? Rgb{100, 90, 70} : Rgb{20, 30, 60};
+                            break;
+                        }
+                    }
+                    break;
+                }
             }
 
             size_t idx = static_cast<size_t>((py * width + px) * 3);

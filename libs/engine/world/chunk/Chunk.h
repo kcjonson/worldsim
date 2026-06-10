@@ -67,8 +67,8 @@ enum class Surface : uint8_t {
 /// Designed for single source of truth: computed once, read by all systems.
 struct TileData {
 	Surface surface = Surface::Grass;   ///< 1 byte - THE definitive terrain type
-	Biome primaryBiome = Biome::Grassland;   ///< 1 byte - dominant biome
-	Biome secondaryBiome = Biome::Grassland; ///< 1 byte - for ecotones (may equal primary)
+	Biome primaryBiome = Biome::TemperateGrassland;   ///< 1 byte - dominant biome
+	Biome secondaryBiome = Biome::TemperateGrassland; ///< 1 byte - for ecotones (may equal primary)
 	uint8_t biomeBlend = 255;           ///< 1 byte - weight of primary (255 = 100% primary)
 	uint16_t elevation = 0;             ///< 2 bytes - centimeters above sea level
 	uint8_t moisture = 128;             ///< 1 byte - normalized 0-255
