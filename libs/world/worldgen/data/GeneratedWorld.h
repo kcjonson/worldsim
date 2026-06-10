@@ -1,0 +1,53 @@
+#pragma once
+
+#include "worldgen/data/Biome.h"
+#include "worldgen/data/PlanetParams.h"
+#include "worldgen/data/WorldData.h"
+#include "worldgen/grid/SphereGrid.h"
+
+#include <array>
+#include <cstdint>
+#include <memory>
+#include <vector>
+
+namespace worldgen {
+
+// Per-plate metadata produced by PlateStage.
+struct PlateInfo {
+    Vec3d  eulerPole{};       // unit vector (rotation pole)
+    float  angularSpeed{};    // radians per million years
+    bool   isContinental{};
+};
+
+// High-level statistics computed after all stages complete.
+struct WorldSummary {
+    float landFraction{};
+    std::array<uint32_t, static_cast<size_t>(Biome::Count)> biomeHistogram{};
+    float meanTemperatureC{};
+    uint32_t riverTileCount{};
+    float habitability{}; // heuristic 0..1
+};
+
+// The complete output of a generation run.
+//
+// Snapshot immutability contract:
+//   Once a GeneratedWorld is published via PlanetGenerator::snapshot(), the
+//   arrays for all fields marked valid in validFields MUST NOT be written by
+//   any stage. Stages only write arrays for fields they are introducing (not
+//   yet valid), and never touch already-valid arrays.
+//   In debug builds, PlanetGenerator records per-field checksums at publication
+//   and asserts they are unchanged before the next publication.
+struct GeneratedWorld {
+    PlanetParams         params;
+    DerivedPlanetValues  derived;
+    // Shared so snapshots share the immutable grid object.
+    std::shared_ptr<const SphereGrid> grid;
+    WorldData            data;
+    float                seaLevelMeters{};
+    std::vector<PlateInfo> plates;
+    WorldSummary         summary;
+    uint32_t             validFields{};  // WorldField bits
+    uint64_t             worldHash{};
+};
+
+} // namespace worldgen

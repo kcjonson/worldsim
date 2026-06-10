@@ -4,6 +4,10 @@ Created: 2025-10-12
 Last Updated: 2025-10-12
 Status: Active
 
+**See also:** [World Generation Implementation](./world-generation-implementation.md) for the
+concrete M2 implementation: SphereGrid, PlanetParams, WorldData SoA, 8-stage pipeline, and
+frozen interface contracts.
+
 ## Context
 
 The world generation system needs to create 3D spherical planets with various terrain features. The initial implementation will use a simple Perlin noise generator, but this is temporary and will be replaced with more sophisticated generators in the future.
