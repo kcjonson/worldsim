@@ -2,6 +2,7 @@
 
 #include "worldgen/debug/ColorMaps.h"
 
+#include <cstddef>
 #include <cstdio>
 #include <cstring>
 #include <vector>

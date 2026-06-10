@@ -49,9 +49,7 @@ if(BUILD_TESTING)
                 GTest::gtest
                 GTest::gtest_main
         )
-        if(MSVC)
-            target_compile_options(world-tests PRIVATE /Od /Zi)
-        else()
+        if(NOT MSVC)
             target_compile_options(world-tests PRIVATE -O0 -g)
         endif()
         add_test(NAME world-tests COMMAND world-tests)
@@ -67,9 +65,9 @@ if(BUILD_TESTING)
                 benchmark::benchmark
                 benchmark::benchmark_main
         )
-        if(MSVC)
-            target_compile_options(world-benchmarks PRIVATE /O2)
-        else()
+        # MSVC: rely on per-config defaults (/O2 in Release); forcing /O2 here
+        # collides with Debug's /RTC1 (D8016).
+        if(NOT MSVC)
             target_compile_options(world-benchmarks PRIVATE -O3)
         endif()
         add_test(NAME world-benchmarks COMMAND world-benchmarks)
