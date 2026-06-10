@@ -551,11 +551,13 @@ The following MVP epics have all been completed. Detailed task breakdowns are pr
 
 **Tasks:**
 - [x] Profiling tooling (camera/vsync control endpoints, perf-capture.ps1, draw call metrics fix)
-- [ ] Phase 1: Persistent tile geometry (baked tile sub-chunk VBOs, delete per-frame drawTile loop)
-- [ ] Phase 2: Async entity mesh bake (TaskPool workers + budgeted uploads)
-- [ ] Phase 3: Far-zoom impostor handoff (height-bucketed sub-chunk meshes, zoom cutoff + cross-fade)
-- [ ] Phase 4: Pacing + metrics correctness (63 FPS cap, GPU timer, Windows SystemResources)
+- [x] Phase 1: Per-chunk tile-data textures (one quad per chunk; deleted per-frame drawTile path)
+- [x] Phase 2: Async chunk generation + worker entity mesh bake + budgeted GPU uploads
+- [x] Phase 3: Far-zoom impostor handoff (height-bucketed meshes, zoom cutoff + fade)
+- [x] Windows frame pacing fix (timeBeginPeriod + sleep-then-spin; was capped ~60 FPS)
+- [ ] Phase 4: Remaining metrics correctness (GPU timer, Windows SystemResources, per-window max breakdown)
 - [ ] Phase 5: Small wins (AABB cache, LRU eviction, zoom-aware load radius, View smallest-pool)
+- [ ] 4x-density scroll hitch attribution (p99 64ms at 4x; within criteria but worth chasing before density increase lands)
 
 ---
 

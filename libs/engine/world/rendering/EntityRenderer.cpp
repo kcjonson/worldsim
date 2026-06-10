@@ -84,6 +84,7 @@ namespace engine::world {
 		m_uniformLocations.cameraZoom = glGetUniformLocation(shaderProgram, "u_cameraZoom");
 		m_uniformLocations.pixelsPerMeter = glGetUniformLocation(shaderProgram, "u_pixelsPerMeter");
 		m_uniformLocations.viewportSize = glGetUniformLocation(shaderProgram, "u_viewportSize");
+		m_uniformLocations.bakedAlpha = glGetUniformLocation(shaderProgram, "u_bakedAlpha");
 		m_uniformLocations.initialized = true;
 	}
 
@@ -118,8 +119,12 @@ namespace engine::world {
 		// Increment frame counter for LRU tracking
 		frameCounter++;
 
-		// --- Phase 1: Build baked mesh for any uncached chunks ---
-		// This happens once per chunk, then the baked mesh is reused every frame.
+		// --- Phase 1: Integrate baked meshes ---
+		// Budgeted upload of worker-baked chunks (capped bytes per frame)
+		processPendingUploads(kUploadBudgetBytesPerFrame);
+
+		// Synchronous re-bake only for processed chunks whose baked mesh was
+		// LRU-evicted and later revisited; new chunks arrive via the queue.
 		for (const auto& coord : processedChunks) {
 			if (m_bakedChunkCache.find(coord) == m_bakedChunkCache.end()) {
 				buildBakedChunkMesh(executor, coord);
@@ -504,161 +509,132 @@ namespace engine::world {
 	}
 
 	// --- Baked Static Mesh Implementation with Sub-Chunk Culling ---
-
-	// Per-vertex data: position (Vec2) + color (Color) = 24 bytes
-	struct BakedVertex {
-		Foundation::Vec2  position; // World-space position
-		Foundation::Color color;	// Pre-tinted color
-	};
-	static_assert(sizeof(BakedVertex) == 24, "BakedVertex must be 24 bytes");
+	// CPU bake (vertex transform) lives in BakedEntityMesh.cpp so it can run on
+	// worker threads; this file owns only the GL upload and rendering.
 
 	void EntityRenderer::buildBakedChunkMesh(const assets::PlacementExecutor& executor, const ChunkCoordinate& coord) {
-		// Get chunk index from executor
 		const auto* index = executor.getChunkIndex(coord);
 		if (index == nullptr) {
 			return;
 		}
 
-		WorldPosition  chunkOrigin = coord.origin();
-		BakedChunkData bakedData;
-		bakedData.lastAccessFrame = frameCounter;
-		uint32_t totalEntityCount = 0;
+		WorldPosition chunkOrigin = coord.origin();
+		constexpr float kChunkWorldSize = static_cast<float>(kChunkSize) * kTileSize;
+		auto entities = index->queryRect(
+			chunkOrigin.x, chunkOrigin.y, chunkOrigin.x + kChunkWorldSize, chunkOrigin.y + kChunkWorldSize
+		);
 
-		// Build each sub-chunk separately for view frustum culling
-		for (int subY = 0; subY < kSubChunkGridSize; ++subY) {
-			for (int subX = 0; subX < kSubChunkGridSize; ++subX) {
-				int	  subIndex = subY * kSubChunkGridSize + subX;
-				auto& subChunk = bakedData.subChunks[subIndex];
+		auto cpuData = bakeChunkEntities(entities, coord, [this](const std::string& defName) { return getTemplate(defName); });
+		uploadBakedChunk(coord, std::move(cpuData));
+	}
 
-				// Calculate sub-chunk world bounds
-				float subMinX = chunkOrigin.x + static_cast<float>(subX) * kSubChunkWorldSize;
-				float subMinY = chunkOrigin.y + static_cast<float>(subY) * kSubChunkWorldSize;
-				float subMaxX = subMinX + kSubChunkWorldSize;
-				float subMaxY = subMinY + kSubChunkWorldSize;
+	size_t EntityRenderer::uploadSubChunk(BakedChunkData& bakedData, BakedSubChunkCPUData& cpu, int subIndex) {
+		auto&  subChunk = bakedData.subChunks[subIndex];
+		size_t bytesUploaded = 0;
 
-				// Store bounds for culling
-				subChunk.minX = subMinX;
-				subChunk.minY = subMinY;
-				subChunk.maxX = subMaxX;
-				subChunk.maxY = subMaxY;
+		subChunk.minX = cpu.minX;
+		subChunk.minY = cpu.minY;
+		subChunk.maxX = cpu.maxX;
+		subChunk.maxY = cpu.maxY;
 
-				// Query entities in this sub-region
-				auto entities = index->queryRect(subMinX, subMinY, subMaxX, subMaxY);
-				if (entities.empty()) {
-					subChunk.indexCount = 0;
-					subChunk.entityCount = 0;
-					continue;
-				}
+		for (int bucketIndex = 0; bucketIndex < kFloraBucketCount; ++bucketIndex) {
+			auto& cpuBucket = cpu.buckets[bucketIndex];
+			auto& gpuBucket = subChunk.buckets[bucketIndex];
 
-				// Build vertex/index data for this sub-chunk
-				std::vector<BakedVertex> vertices;
-				std::vector<uint32_t>	 indices;
-				vertices.reserve(entities.size() * 8);
-				indices.reserve(entities.size() * 12);
+			gpuBucket.entityCount = cpuBucket.entityCount;
+			gpuBucket.maxEntityHeight = cpuBucket.maxEntityHeight;
 
-				uint32_t vertexOffset = 0;
-
-				for (const auto* entity : entities) {
-					const auto* templateMesh = getTemplate(entity->defName);
-					if (templateMesh == nullptr) {
-						continue;
-					}
-
-					// Pre-compute transform
-					float entityScale = entity->scale;
-					float posX = entity->position.x;
-					float posY = entity->position.y;
-					bool  hasMeshColors = templateMesh->hasColors();
-
-					// Check if we need rotation
-					constexpr float kRotationEpsilon = 0.0001F;
-					bool			noRotation = std::abs(entity->rotation) < kRotationEpsilon;
-
-					float cosR = 1.0F;
-					float sinR = 0.0F;
-					if (!noRotation) {
-						cosR = std::cos(entity->rotation);
-						sinR = std::sin(entity->rotation);
-					}
-
-					// Transform and add vertices
-					for (size_t i = 0; i < templateMesh->vertices.size(); ++i) {
-						const auto& v = templateMesh->vertices[i];
-						BakedVertex baked;
-
-						// Scale
-						float sx = v.x * entityScale;
-						float sy = v.y * entityScale;
-
-						// Rotate + translate to world position
-						if (noRotation) {
-							baked.position.x = sx + posX;
-							baked.position.y = sy + posY;
-						} else {
-							baked.position.x = sx * cosR - sy * sinR + posX;
-							baked.position.y = sx * sinR + sy * cosR + posY;
-						}
-
-						// Apply color tint
-						if (hasMeshColors) {
-							const auto& meshColor = templateMesh->colors[i];
-							baked.color = Foundation::Color(
-								meshColor.r * entity->colorTint.r,
-								meshColor.g * entity->colorTint.g,
-								meshColor.b * entity->colorTint.b,
-								meshColor.a * entity->colorTint.a
-							);
-						} else {
-							baked.color = Foundation::Color(entity->colorTint);
-						}
-
-						vertices.push_back(baked);
-					}
-
-					// Add indices (offset by current vertex count)
-					for (const auto& idx : templateMesh->indices) {
-						indices.push_back(vertexOffset + idx);
-					}
-
-					vertexOffset += static_cast<uint32_t>(templateMesh->vertices.size());
-					subChunk.entityCount++;
-				}
-
-				if (vertices.empty()) {
-					subChunk.indexCount = 0;
-					continue;
-				}
-
-				// Create GPU resources for this sub-chunk
-				subChunk.indexCount = static_cast<uint32_t>(indices.size());
-				totalEntityCount += subChunk.entityCount;
-
-				// Create VAO
-				subChunk.vao = Renderer::GLVertexArray::create();
-				subChunk.vao.bind();
-
-				// Create and upload vertex buffer
-				subChunk.vertexVBO = Renderer::GLBuffer(
-					GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(vertices.size() * sizeof(BakedVertex)), vertices.data(), GL_STATIC_DRAW
-				);
-
-				// Set up vertex attributes
-				glEnableVertexAttribArray(0);
-				glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(BakedVertex), reinterpret_cast<void*>(0));
-				glEnableVertexAttribArray(2);
-				glVertexAttribPointer(2, 4, GL_FLOAT, GL_FALSE, sizeof(BakedVertex), reinterpret_cast<void*>(offsetof(BakedVertex, color)));
-
-				// Create and upload index buffer
-				subChunk.indexIBO = Renderer::GLBuffer(
-					GL_ELEMENT_ARRAY_BUFFER, static_cast<GLsizeiptr>(indices.size() * sizeof(uint32_t)), indices.data(), GL_STATIC_DRAW
-				);
-
-				Renderer::GLVertexArray::unbind();
+			if (cpuBucket.vertices.empty()) {
+				gpuBucket.indexCount = 0;
+				continue;
 			}
+			gpuBucket.indexCount = static_cast<uint32_t>(cpuBucket.indices.size());
+
+			gpuBucket.vao = Renderer::GLVertexArray::create();
+			gpuBucket.vao.bind();
+
+			gpuBucket.vertexVBO = Renderer::GLBuffer(
+				GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(cpuBucket.vertices.size() * sizeof(BakedVertex)), cpuBucket.vertices.data(),
+				GL_STATIC_DRAW
+			);
+
+			glEnableVertexAttribArray(0);
+			glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(BakedVertex), reinterpret_cast<void*>(0));
+			glEnableVertexAttribArray(2);
+			glVertexAttribPointer(2, 4, GL_FLOAT, GL_FALSE, sizeof(BakedVertex), reinterpret_cast<void*>(offsetof(BakedVertex, color)));
+
+			gpuBucket.indexIBO = Renderer::GLBuffer(
+				GL_ELEMENT_ARRAY_BUFFER, static_cast<GLsizeiptr>(cpuBucket.indices.size() * sizeof(uint32_t)), cpuBucket.indices.data(),
+				GL_STATIC_DRAW
+			);
+
+			Renderer::GLVertexArray::unbind();
+
+			bytesUploaded += cpuBucket.vertices.size() * sizeof(BakedVertex) + cpuBucket.indices.size() * sizeof(uint32_t);
+
+			// Release CPU-side arrays as they're consumed
+			cpuBucket.vertices = {};
+			cpuBucket.indices = {};
 		}
 
-		bakedData.totalEntityCount = totalEntityCount;
+		return bytesUploaded;
+	}
+
+	void EntityRenderer::uploadBakedChunk(const ChunkCoordinate& coord, BakedChunkCPUData&& cpuData) {
+		BakedChunkData bakedData;
+		bakedData.lastAccessFrame = frameCounter;
+		bakedData.totalEntityCount = cpuData.totalEntityCount;
+
+		for (int subIndex = 0; subIndex < kSubChunkCount; ++subIndex) {
+			uploadSubChunk(bakedData, cpuData.subChunks[subIndex], subIndex);
+		}
+
 		m_bakedChunkCache[coord] = std::move(bakedData);
+	}
+
+	void EntityRenderer::queueBakedChunk(const ChunkCoordinate& coord, BakedChunkCPUData&& cpuData) {
+		// Create the cache entry up front (bounds valid, buffers filled over the
+		// next few frames); renderBakedChunks skips sub-chunks with indexCount 0
+		BakedChunkData bakedData;
+		bakedData.lastAccessFrame = frameCounter;
+		bakedData.totalEntityCount = cpuData.totalEntityCount;
+		m_bakedChunkCache[coord] = std::move(bakedData);
+
+		m_pendingUploads.push_back(PendingUpload{coord, std::move(cpuData), 0});
+	}
+
+	void EntityRenderer::processPendingUploads(size_t budgetBytes) {
+		size_t bytesUploaded = 0;
+		while (bytesUploaded < budgetBytes && !m_pendingUploads.empty()) {
+			auto& pending = m_pendingUploads.front();
+			auto  cacheIt = m_bakedChunkCache.find(pending.coord);
+			if (cacheIt == m_bakedChunkCache.end()) {
+				// Cache entry evicted before upload finished; drop the bake
+				m_pendingUploads.erase(m_pendingUploads.begin());
+				continue;
+			}
+
+			while (bytesUploaded < budgetBytes && pending.nextSubChunk < kSubChunkCount) {
+				// Defer a sub-chunk that would blow the remaining budget, unless
+				// nothing was uploaded yet this frame (avoids starving oversized
+				// sub-chunks; worst-case overshoot is then one sub-chunk)
+				auto&  cpu = pending.cpuData.subChunks[pending.nextSubChunk];
+				size_t estimatedBytes = 0;
+				for (const auto& bucket : cpu.buckets) {
+					estimatedBytes += bucket.vertices.size() * sizeof(BakedVertex) + bucket.indices.size() * sizeof(uint32_t);
+				}
+				if (bytesUploaded > 0 && bytesUploaded + estimatedBytes > budgetBytes) {
+					return;
+				}
+
+				bytesUploaded += uploadSubChunk(cacheIt->second, cpu, pending.nextSubChunk);
+				pending.nextSubChunk++;
+			}
+
+			if (pending.nextSubChunk >= kSubChunkCount) {
+				m_pendingUploads.erase(m_pendingUploads.begin());
+			}
+		}
 	}
 
 	void EntityRenderer::releaseBakedChunkCache(const ChunkCoordinate& coord) {
@@ -736,6 +712,15 @@ namespace engine::world {
 		glUniform1f(m_uniformLocations.pixelsPerMeter, m_pixelsPerMeter);
 		glUniform2f(m_uniformLocations.viewportSize, static_cast<float>(viewportWidth), static_cast<float>(viewportHeight));
 
+		// Far-zoom impostor handoff: pixels of on-screen height per meter of
+		// entity height; short flora fades out below kImpostorCutoffPx because
+		// the grass tile texture carries the appearance at that distance
+		float pixelsPerWorldMeter = m_pixelsPerMeter * zoom;
+		float currentAlpha = 1.0F;
+		if (m_uniformLocations.bakedAlpha >= 0) {
+			glUniform1f(m_uniformLocations.bakedAlpha, currentAlpha);
+		}
+
 		// Draw visible sub-chunks from each cached chunk
 		for (const auto& coord : processedChunks) {
 			auto cacheIt = m_bakedChunkCache.find(coord);
@@ -748,22 +733,41 @@ namespace engine::world {
 
 			// Check each sub-chunk for visibility
 			for (const auto& subChunk : cache.subChunks) {
-				if (subChunk.indexCount == 0) {
-					continue; // Empty sub-chunk
-				}
-
 				// AABB intersection test: is sub-chunk visible?
 				if (subChunk.maxX < visMinX || subChunk.minX > visMaxX || subChunk.maxY < visMinY || subChunk.minY > visMaxY) {
 					continue; // Sub-chunk is completely off-screen
 				}
 
-				// Sub-chunk is visible - draw it
-				m_lastEntityCount += subChunk.entityCount;
-				m_lastDrawCallCount++;
-				m_lastTriangleCount += subChunk.indexCount / 3;
-				subChunk.vao.bind();
-				glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(subChunk.indexCount), GL_UNSIGNED_INT, nullptr);
+				for (const auto& bucket : subChunk.buckets) {
+					if (bucket.indexCount == 0) {
+						continue; // Empty bucket
+					}
+
+					// Cutoff with a fade band from kImpostorCutoffPx to 2x that.
+					// Tall flora's maxEntityHeight keeps it drawn far past the
+					// zoom where grass hands off to the tile texture.
+					float screenHeightPx = bucket.maxEntityHeight * pixelsPerWorldMeter;
+					float alpha = std::clamp((screenHeightPx - kImpostorCutoffPx) / kImpostorCutoffPx, 0.0F, 1.0F);
+					if (alpha <= 0.0F) {
+						continue;
+					}
+					if (alpha != currentAlpha && m_uniformLocations.bakedAlpha >= 0) {
+						glUniform1f(m_uniformLocations.bakedAlpha, alpha);
+						currentAlpha = alpha;
+					}
+
+					m_lastEntityCount += bucket.entityCount;
+					m_lastDrawCallCount++;
+					m_lastTriangleCount += bucket.indexCount / 3;
+					bucket.vao.bind();
+					glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(bucket.indexCount), GL_UNSIGNED_INT, nullptr);
+				}
 			}
+		}
+
+		// Reset alpha so the dynamic instanced path (same shader branch) is unaffected
+		if (m_uniformLocations.bakedAlpha >= 0 && currentAlpha != 1.0F) {
+			glUniform1f(m_uniformLocations.bakedAlpha, 1.0F);
 		}
 
 		Renderer::GLVertexArray::unbind();

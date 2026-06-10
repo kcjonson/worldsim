@@ -118,6 +118,9 @@ TEST_F(ChunkManagerTest, MovingCameraUnloadsDistantChunks) {
 	// Chunk at origin should be loaded
 	EXPECT_NE(manager->getChunk(ChunkCoordinate(0, 0)), nullptr);
 
+	// Chunks mid-generation are never unloaded; drain the workers first
+	manager->finishPendingGeneration();
+
 	// Move camera far away (beyond unload radius)
 	manager->update(WorldPosition(5000.0F, 5000.0F));
 
@@ -249,6 +252,11 @@ TEST_F(ChunkManagerTest, RapidCameraMovement) {
 		float x = static_cast<float>(i * 600);
 		manager->update(WorldPosition(x, 0.0F));
 	}
+
+	// Drain generation workers (in-flight chunks are exempt from unloading),
+	// then move once more so the unload pass runs without that exemption
+	manager->finishPendingGeneration();
+	manager->update(WorldPosition(6000.0F, 0.0F));
 
 	// Should still have a reasonable number of chunks
 	EXPECT_GT(manager->loadedChunkCount(), 0);

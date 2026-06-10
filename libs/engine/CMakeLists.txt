@@ -9,6 +9,7 @@ add_library(engine
     world/chunk/ChunkManager.cpp
     world/chunk/TilePostProcessor.cpp
     world/chunk/MockWorldSampler.cpp
+    world/rendering/BakedEntityMesh.cpp
     world/rendering/ChunkRenderer.cpp
     world/rendering/EntityRenderer.cpp
     ecs/systems/TimeSystem.cpp
@@ -43,6 +44,11 @@ target_link_libraries(engine
         nlohmann_json::nlohmann_json
         glfw
 )
+
+# timeBeginPeriod/timeEndPeriod for frame-pacing timer resolution
+if(WIN32)
+    target_link_libraries(engine PRIVATE winmm)
+endif()
 
 # Tests
 if(BUILD_TESTING)

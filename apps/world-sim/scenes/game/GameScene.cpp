@@ -111,7 +111,6 @@ namespace {
 				m_camera->setPanSpeed(200.0F);
 
 				m_renderer = std::make_unique<engine::world::ChunkRenderer>(kPixelsPerMeter);
-				m_renderer->setTileResolution(1); // Render every tile
 
 				m_entityRenderer = std::make_unique<engine::world::EntityRenderer>(kPixelsPerMeter);
 
@@ -591,6 +590,12 @@ namespace {
 		void processNewChunks() {
 			// First, poll and integrate any completed async tasks
 			m_asyncProcessor->pollCompleted();
+
+			// Queue worker-baked entity meshes for budgeted GPU upload (the bake
+			// itself ran on the placement worker)
+			for (auto& [coord, bake] : m_asyncProcessor->takeReadyBakes()) {
+				m_entityRenderer->queueBakedChunk(coord, std::move(bake));
+			}
 
 			// Then launch new async tasks for unprocessed chunks
 			for (auto* chunk : m_chunkManager->getLoadedChunks()) {

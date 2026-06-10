@@ -36,6 +36,8 @@ namespace engine::world {
 		// This avoids per-frame extraction of adjacency data during rendering
 		computeRenderData();
 
+		m_renderDataVersion.fetch_add(1, std::memory_order_release);
+
 		// Mark generation complete (release semantics for thread safety)
 		m_generationComplete.store(true, std::memory_order_release);
 	}
@@ -120,6 +122,8 @@ namespace engine::world {
 		render.neighborNE = TileAdjacency::getNeighbor(adjacency, TileAdjacency::NE);
 		render.neighborSE = TileAdjacency::getNeighbor(adjacency, TileAdjacency::SE);
 		render.neighborSW = TileAdjacency::getNeighbor(adjacency, TileAdjacency::SW);
+
+		m_renderDataVersion.fetch_add(1, std::memory_order_release);
 	}
 
 	TileData Chunk::computeTile(uint16_t localX, uint16_t localY) const {
