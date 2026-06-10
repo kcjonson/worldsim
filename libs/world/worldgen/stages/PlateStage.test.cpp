@@ -11,9 +11,11 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <array>
 #include <cassert>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -58,15 +60,17 @@ PlanetParams makeParams(uint32_t n, double waterAmount = 0.70, int K = 12,
     return p;
 }
 
-// Hash array for determinism tests
+// Hash array for determinism tests — hashes ALL bytes of each element.
 template<typename T>
 uint64_t arrayHash(const std::vector<T>& v) {
+    static_assert(sizeof(T) <= 8);
     uint64_t h = 0x517CC1B727220A95ULL;
     for (const T& x : v) {
-        uint32_t bits{};
-        static_assert(sizeof(T) <= 8);
-        std::memcpy(&bits, &x, sizeof(uint32_t) < sizeof(T) ? sizeof(uint32_t) : sizeof(T));
-        h = h * 6364136223846793005ULL + bits;
+        uint8_t buf[sizeof(T)];
+        std::memcpy(buf, &x, sizeof(T));
+        for (size_t b = 0; b < sizeof(T); ++b) {
+            h = h * 6364136223846793005ULL + buf[b];
+        }
     }
     return h;
 }

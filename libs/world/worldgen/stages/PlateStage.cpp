@@ -220,7 +220,7 @@ void PlateStage::run(StageContext& ctx) {
     std::vector<bool>   visited(N, false);
 
     // plateId[] starts at 255 (unassigned)
-    std::fill(ctx.data.plateId.begin(), ctx.data.plateId.end(), 255u);
+    std::fill(ctx.data.plateId.begin(), ctx.data.plateId.end(), uint8_t{255});
 
     std::priority_queue<HeapEntry, std::vector<HeapEntry>, std::greater<HeapEntry>> pq;
 
@@ -472,7 +472,8 @@ void PlateStage::run(StageContext& ctx) {
     }
 
     ctx.world.validFields |= static_cast<uint32_t>(WorldField::PlateId);
-    ctx.world.validFields |= static_cast<uint32_t>(WorldField::Flags);
+    // WorldField::Flags is owned by SnowStage (last flags writer); PlateStage writes
+    // kFlagContinentalCrust but does not claim validity here.
 
     ctx.reportProgress(1.0f);
 }
