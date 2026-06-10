@@ -127,6 +127,16 @@ namespace engine::world {
 		}
 	}
 
+	void ChunkManager::finishPendingGeneration() {
+		for (auto& [coord, future] : m_generating) {
+			if (future.valid()) {
+				future.get();
+				refreshAdjacencyAround(coord);
+			}
+		}
+		m_generating.clear();
+	}
+
 	bool ChunkManager::isGenerating(ChunkCoordinate coord) const {
 		for (const auto& [generatingCoord, future] : m_generating) {
 			if (generatingCoord == coord) {

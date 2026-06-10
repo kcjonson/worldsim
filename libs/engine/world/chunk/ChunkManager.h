@@ -36,8 +36,14 @@ class ChunkManager {
 
 	/// Update loaded chunks based on camera position.
 	/// Loads new chunks within load radius, unloads chunks outside unload radius.
+	/// Tile generation runs on worker threads; chunks become isReady() over the
+	/// next few updates and at most one is border-stitched per call.
 	/// @param cameraCenter World position of camera center
 	void update(WorldPosition cameraCenter);
+
+	/// Block until all in-flight generation completes and integrate the results.
+	/// For tests and loading flows; gameplay uses incremental polling in update().
+	void finishPendingGeneration();
 
 	/// Get a chunk by coordinate (returns nullptr if not loaded)
 	[[nodiscard]] Chunk* getChunk(ChunkCoordinate coord);
