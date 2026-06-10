@@ -92,18 +92,13 @@ GenerationProgress PlanetGenerator::progress() const {
 // ============================================================================
 
 void PlanetGenerator::publishSnapshot(std::shared_ptr<GeneratedWorld> world) {
-#ifndef NDEBUG
-    uint64_t checksum = computeFieldChecksums(*world);
-    if (lastPublishedChecksum != 0) {
-        // Only valid fields from BEFORE this publication must not have changed.
-        // We can't easily compare partial sets, so we just track the full checksum
-        // and assert it didn't decrease in valid fields. (Relaxed: any change is suspect.)
-        // A real implementation would track per-field checksums separately.
-        (void)checksum; // relaxed check — actual full verification is in tests
-    }
-    lastPublishedChecksum = checksum;
-#endif
     std::lock_guard<std::mutex> lock(snapshotMutex);
+#ifndef NDEBUG
+    // Under the lock so checksum and publication are one event from a
+    // reader's perspective. The immutability contract itself is verified
+    // by the SnapshotImmutability test.
+    lastPublishedChecksum = computeFieldChecksums(*world);
+#endif
     latestSnapshot = std::move(world);
 }
 
