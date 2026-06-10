@@ -775,6 +775,10 @@ namespace engine::assets {
 	}
 
 	const renderer::TessellatedMesh* AssetRegistry::getTemplate(const std::string& defName) {
+		// Guard the lazy tessellation cache: chunk workers baking entity meshes
+		// call this concurrently with the render thread
+		std::lock_guard<std::mutex> lock(templateCacheMutex);
+
 		// Check cache first
 		auto cacheIt = templateCache.find(defName);
 		if (cacheIt != templateCache.end()) {

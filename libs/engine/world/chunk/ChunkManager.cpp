@@ -3,6 +3,7 @@
 #include <utils/Log.h>
 
 #include <algorithm>
+#include <chrono>
 
 #include "world/chunk/TileAdjacency.h"
 
@@ -12,6 +13,9 @@ namespace engine::world {
 		: m_sampler(std::move(sampler)) {}
 
 	void ChunkManager::update(WorldPosition cameraCenter) {
+		// Integrate any chunks whose generation worker finished
+		pollGeneratedChunks();
+
 		// Convert camera position to chunk coordinate
 		ChunkCoordinate newCenter = worldToChunk(cameraCenter);
 
@@ -89,21 +93,47 @@ namespace engine::world {
 	}
 
 	void ChunkManager::loadChunk(ChunkCoordinate coord) {
-		// Sample world data for this chunk
+		// Sample world data for this chunk (cheap; stays on the main thread)
 		ChunkSampleResult sampleResult = m_sampler->sampleChunk(coord);
 
 		// Create chunk with sampled data
 		auto chunk = std::make_unique<Chunk>(coord, std::move(sampleResult), m_sampler->getWorldSeed());
 
-		// Pre-compute all tiles (fills the flat array)
-		chunk->generate();
-
-		LOG_DEBUG(Engine, "Loaded chunk (%d, %d)", coord.x, coord.y);
-
+		// Generate the 262k tiles on a worker thread: this takes tens of ms per
+		// chunk and used to hitch the frame when scrolling crossed a chunk row.
+		// Consumers gate on chunk->isReady(); adjacency refresh happens in
+		// pollGeneratedChunks() once the worker finishes.
+		Chunk* rawChunk = chunk.get();
 		m_chunks[coord] = std::move(chunk);
+		m_generating.emplace_back(coord, std::async(std::launch::async, [rawChunk]() { rawChunk->generate(); }));
 
-		// Now that the chunk exists, refresh adjacency for it and its neighbors so edges cross chunk boundaries
-		refreshAdjacencyAround(coord);
+		LOG_DEBUG(Engine, "Loading chunk (%d, %d)", coord.x, coord.y);
+	}
+
+	void ChunkManager::pollGeneratedChunks() {
+		// Integrate at most one chunk per update: border stitching costs a few
+		// ms per chunk, and several workers finishing at once (crossing a chunk
+		// row loads five) would otherwise spike a single frame
+		for (auto it = m_generating.begin(); it != m_generating.end(); ++it) {
+			auto& [coord, future] = *it;
+			if (future.valid() && future.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
+				future.get();
+				// Stitch borders with any ready neighbors (and theirs with this chunk)
+				refreshAdjacencyAround(coord);
+				LOG_DEBUG(Engine, "Loaded chunk (%d, %d)", coord.x, coord.y);
+				m_generating.erase(it);
+				return;
+			}
+		}
+	}
+
+	bool ChunkManager::isGenerating(ChunkCoordinate coord) const {
+		for (const auto& [generatingCoord, future] : m_generating) {
+			if (generatingCoord == coord) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	void ChunkManager::unloadDistantChunks(ChunkCoordinate center) {
@@ -111,7 +141,8 @@ namespace engine::world {
 		std::vector<ChunkCoordinate> toUnload;
 
 		for (const auto& [coord, chunk] : m_chunks) {
-			if (coord.chebyshevDistance(center) > m_unloadRadius) {
+			// Never unload a chunk whose generation worker still references it
+			if (coord.chebyshevDistance(center) > m_unloadRadius && !isGenerating(coord)) {
 				toUnload.push_back(coord);
 			}
 		}
@@ -129,29 +160,42 @@ namespace engine::world {
 			return;
 		}
 
+		// Cache the 3x3 neighborhood once: sampleSurface runs 8 times per border
+		// tile (~16k calls per refresh) and per-call getChunk map lookups dominated
+		std::array<const Chunk*, 9> neighborhood{};
+		for (int dy = -1; dy <= 1; ++dy) {
+			for (int dx = -1; dx <= 1; ++dx) {
+				const Chunk* candidate = getChunk({coord.x + dx, coord.y + dy});
+				if (candidate != nullptr && candidate->isReady()) {
+					neighborhood[(dy + 1) * 3 + (dx + 1)] = candidate;
+				}
+			}
+		}
+
 		auto sampleSurface = [&](int localX, int localY) -> uint8_t {
-			ChunkCoordinate target = coord;
+			int cx = 1;
+			int cy = 1;
 			int tx = localX;
 			int ty = localY;
 
 			if (tx < 0) {
-				target.x -= 1;
+				cx = 0;
 				tx += kChunkSize;
 			} else if (tx >= kChunkSize) {
-				target.x += 1;
+				cx = 2;
 				tx -= kChunkSize;
 			}
 
 			if (ty < 0) {
-				target.y -= 1;
+				cy = 0;
 				ty += kChunkSize;
 			} else if (ty >= kChunkSize) {
-				target.y += 1;
+				cy = 2;
 				ty -= kChunkSize;
 			}
 
-			const Chunk* neighbor = getChunk(target);
-			if (neighbor == nullptr || !neighbor->isReady()) {
+			const Chunk* neighbor = neighborhood[cy * 3 + cx];
+			if (neighbor == nullptr) {
 				// Fallback: use the current chunk's edge tile to avoid fake edge strokes
 				tx = std::clamp(localX, 0, kChunkSize - 1);
 				ty = std::clamp(localY, 0, kChunkSize - 1);

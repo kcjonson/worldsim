@@ -11,6 +11,7 @@
 #include "assets/placement/PlacementExecutor.h"
 #include "gl/GLBuffer.h"
 #include "gl/GLVertexArray.h"
+#include "world/rendering/BakedEntityMesh.h"
 #include "primitives/InstanceData.h"
 #include "vector/Tessellator.h"
 #include "world/camera/WorldCamera.h"
@@ -78,6 +79,15 @@ class EntityRenderer {
 	[[nodiscard]] uint32_t lastDrawCallCount() const { return m_lastDrawCallCount; }
 	[[nodiscard]] uint32_t lastTriangleCount() const { return m_lastTriangleCount; }
 
+	/// Upload a CPU-baked chunk mesh (from a worker thread bake) to the GPU.
+	/// Call on the render thread; replaces any existing baked data for the chunk.
+	void uploadBakedChunk(const ChunkCoordinate& coord, BakedChunkCPUData&& cpuData);
+
+	/// Queue a CPU-baked chunk mesh for budgeted upload (a few sub-chunks per
+	/// frame, processed inside render). Avoids multi-ms frame spikes when
+	/// several chunk bakes complete at once while scrolling.
+	void queueBakedChunk(const ChunkCoordinate& coord, BakedChunkCPUData&& cpuData);
+
 	/// Enable/disable GPU instancing (for A/B testing and fallback)
 	void setInstancingEnabled(bool enabled) { m_useInstancing = enabled; }
 	[[nodiscard]] bool isInstancingEnabled() const { return m_useInstancing; }
@@ -107,15 +117,10 @@ class EntityRenderer {
 	std::unordered_map<std::string, std::vector<Renderer::InstanceData>> m_instanceBatches;
 
 	// --- Baked Static Mesh Path with Sub-Chunk Culling ---
-	// Pre-transforms all entity vertices on CPU once at chunk load time.
-	// Subdivides chunks into smaller regions for view frustum culling.
-	// Only draws sub-regions that intersect the viewport.
-
-	// Sub-chunk grid: 8×8 = 64 sub-regions per chunk
-	// Each sub-region is 64×64 tiles (512/8 = 64)
-	static constexpr int kSubChunkGridSize = 8;
-	static constexpr int kSubChunkTileSize = kChunkSize / kSubChunkGridSize;  // 64 tiles
-	static constexpr float kSubChunkWorldSize = static_cast<float>(kSubChunkTileSize) * kTileSize;  // 64 meters
+	// Entity vertices are pre-transformed to world space once per chunk (on a
+	// worker thread via AsyncChunkProcessor, or on the render thread when an
+	// evicted chunk is revisited). Sub-regions are culled against the viewport.
+	// CPU bake types/constants live in BakedEntityMesh.h.
 
 	/// GPU resources for a single sub-region's baked entity mesh.
 	struct BakedSubChunkData {
@@ -130,13 +135,32 @@ class EntityRenderer {
 
 	/// GPU resources for a chunk, subdivided into sub-regions.
 	struct BakedChunkData {
-		std::array<BakedSubChunkData, kSubChunkGridSize * kSubChunkGridSize> subChunks;
+		std::array<BakedSubChunkData, kSubChunkCount> subChunks;
 		uint32_t totalEntityCount = 0;   // For debugging/metrics
 		uint64_t lastAccessFrame = 0;    // For LRU eviction
 	};
 
 	/// Cache of baked per-chunk meshes.
 	std::unordered_map<ChunkCoordinate, BakedChunkData> m_bakedChunkCache;
+
+	/// CPU bakes waiting for budgeted GPU upload (FIFO; partially uploaded
+	/// chunks track progress via nextSubChunk)
+	struct PendingUpload {
+		ChunkCoordinate coord;
+		BakedChunkCPUData cpuData;
+		int nextSubChunk = 0;
+	};
+	std::vector<PendingUpload> m_pendingUploads;
+
+	/// Max sub-chunk buffer uploads per frame (64 per chunk; 16 spreads a
+	/// chunk over 4 frames, ~33ms at 120 FPS, without visible frame spikes)
+	static constexpr int kUploadBudgetPerFrame = 16;
+
+	/// Upload up to budget sub-chunks from the pending queue (render thread)
+	void processPendingUploads(int budget);
+
+	/// Upload a single sub-chunk's buffers into an existing cache entry
+	void uploadSubChunk(BakedChunkData& bakedData, BakedSubChunkCPUData& cpu, int subIndex);
 
 	/// Cached uniform locations for instanced rendering (avoid glGetUniformLocation per frame).
 	struct CachedUniformLocations {
@@ -156,8 +180,9 @@ class EntityRenderer {
 
 	// --- Baked Static Mesh Methods ---
 
-	/// Build baked mesh for a chunk (pre-transform all entity vertices on CPU).
-	/// Called once per chunk when first rendered.
+	/// Re-bake a chunk from the executor's spatial index on the render thread.
+	/// Only used when a still-loaded chunk's baked mesh was LRU-evicted; new
+	/// chunks arrive pre-baked via uploadBakedChunk.
 	void buildBakedChunkMesh(const assets::PlacementExecutor& executor, const ChunkCoordinate& coord);
 
 	/// Release baked mesh GPU resources for a chunk.

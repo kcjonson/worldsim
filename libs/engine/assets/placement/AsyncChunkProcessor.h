@@ -2,12 +2,20 @@
 
 // AsyncChunkProcessor - Manages async entity placement tasks
 // Shared between GameLoadingScene (bulk initial loading) and GameScene (runtime streaming)
+//
+// Each worker task computes entity placement AND bakes the entities into
+// world-space vertex arrays (the expensive part of static entity rendering).
+// The render thread only uploads the finished arrays to the GPU, so chunks
+// scrolling into view never stall the frame on a synchronous bake.
 
 #include "PlacementExecutor.h"
+
+#include <assets/AssetRegistry.h>
 
 #include <utils/Log.h>
 #include <world/chunk/Chunk.h>
 #include <world/chunk/ChunkCoordinate.h>
+#include <world/rendering/BakedEntityMesh.h>
 
 #include <chrono>
 #include <future>
@@ -19,10 +27,13 @@ namespace engine::assets {
 
 	/// Snapshot of chunk tile data for thread-safe async processing.
 	/// Captures biome/surface data so async tasks don't access Chunk directly.
+	/// Surfaces stay as enums; the string conversion placement rules expect
+	/// happens lazily on the worker (a per-tile string here cost ~10ms of main
+	/// thread per chunk launch).
 	struct ChunkDataSnapshot {
-		world::ChunkCoordinate	  coord;
-		std::vector<world::Biome> biomes;
-		std::vector<std::string>  surfaces;
+		world::ChunkCoordinate		coord;
+		std::vector<world::Biome>	biomes;
+		std::vector<world::Surface> surfaces;
 	};
 
 	/// Capture chunk tile data for thread-safe async processing.
@@ -39,12 +50,18 @@ namespace engine::assets {
 			for (uint16_t x = 0; x < world::kChunkSize; ++x) {
 				const auto& tile = chunk->getTile(x, y);
 				snapshot.biomes.push_back(tile.primaryBiome);
-				snapshot.surfaces.push_back(world::surfaceToString(tile.surface));
+				snapshot.surfaces.push_back(tile.surface);
 			}
 		}
 
 		return snapshot;
 	}
+
+	/// Result of one worker task: placement plus the CPU-side entity mesh bake.
+	struct ChunkTaskResult {
+		AsyncChunkPlacementResult placement;
+		world::BakedChunkCPUData  bakedMesh;
+	};
 
 	/// Manages async entity placement tasks for chunk processing.
 	/// Handles launching, polling, and integrating async computation results.
@@ -62,6 +79,11 @@ namespace engine::assets {
 		/// Launch an async task for a single chunk
 		/// @param chunk The chunk to process
 		void launchTask(const world::Chunk* chunk) {
+			// Tile generation may still be running on a worker; try again next frame
+			if (!chunk->isReady()) {
+				return;
+			}
+
 			auto coord = chunk->coordinate();
 
 			// Skip if already processed or in progress
@@ -89,10 +111,26 @@ namespace engine::assets {
 					return chunkData.biomes[y * world::kChunkSize + x];
 				};
 				ctx.getSurface = [&chunkData](uint16_t x, uint16_t y) {
-					return chunkData.surfaces[y * world::kChunkSize + x];
+					return world::surfaceToString(chunkData.surfaces[y * world::kChunkSize + x]);
 				};
 
-				return executor->computeChunkEntities(ctx, executor);
+				ChunkTaskResult result;
+				result.placement = executor->computeChunkEntities(ctx, executor);
+
+				// Bake the entity meshes here on the worker: the entity list is
+				// task-local and AssetRegistry::getTemplate is thread-safe, so the
+				// render thread only has to upload the finished arrays.
+				std::vector<const PlacedEntity*> entityPtrs;
+				entityPtrs.reserve(result.placement.entities.size());
+				for (const auto& entity : result.placement.entities) {
+					entityPtrs.push_back(&entity);
+				}
+				result.bakedMesh = world::bakeChunkEntities(
+					entityPtrs, chunkData.coord,
+					[](const std::string& defName) { return AssetRegistry::Get().getTemplate(defName); }
+				);
+
+				return result;
 			});
 
 			m_pendingFutures.emplace_back(coord, std::move(future));
@@ -125,7 +163,8 @@ namespace engine::assets {
 				if (future.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
 					// Get result and store on main thread
 					auto result = future.get();
-					m_executor.storeChunkResult(std::move(result));
+					m_executor.storeChunkResult(std::move(result.placement));
+					m_readyBakes.emplace_back(coord, std::move(result.bakedMesh));
 					m_processedChunks.insert(coord);
 					m_chunksInProgress.erase(coord);
 					completed++;
@@ -144,12 +183,19 @@ namespace engine::assets {
 			for (auto& [coord, future] : m_pendingFutures) {
 				if (future.valid()) {
 					auto result = future.get();
-					m_executor.storeChunkResult(std::move(result));
+					m_executor.storeChunkResult(std::move(result.placement));
+					m_readyBakes.emplace_back(coord, std::move(result.bakedMesh));
 					m_processedChunks.insert(coord);
 					m_chunksInProgress.erase(coord);
 				}
 			}
 			m_pendingFutures.clear();
+		}
+
+		/// Take baked entity meshes ready for GPU upload (call on render thread,
+		/// hand each to EntityRenderer::uploadBakedChunk)
+		[[nodiscard]] std::vector<std::pair<world::ChunkCoordinate, world::BakedChunkCPUData>> takeReadyBakes() {
+			return std::exchange(m_readyBakes, {});
 		}
 
 		/// Clear all pending tasks (waits for completion to avoid dangling references)
@@ -175,8 +221,9 @@ namespace engine::assets {
 		std::unordered_set<world::ChunkCoordinate>& m_processedChunks;
 
 		// Async state
-		std::unordered_set<world::ChunkCoordinate>											   m_chunksInProgress;
-		std::vector<std::pair<world::ChunkCoordinate, std::future<AsyncChunkPlacementResult>>> m_pendingFutures;
+		std::unordered_set<world::ChunkCoordinate>									 m_chunksInProgress;
+		std::vector<std::pair<world::ChunkCoordinate, std::future<ChunkTaskResult>>> m_pendingFutures;
+		std::vector<std::pair<world::ChunkCoordinate, world::BakedChunkCPUData>>	 m_readyBakes;
 	};
 
 } // namespace engine::assets

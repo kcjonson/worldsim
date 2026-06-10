@@ -9,6 +9,7 @@ add_library(engine
     world/chunk/ChunkManager.cpp
     world/chunk/TilePostProcessor.cpp
     world/chunk/MockWorldSampler.cpp
+    world/rendering/BakedEntityMesh.cpp
     world/rendering/ChunkRenderer.cpp
     world/rendering/EntityRenderer.cpp
     ecs/systems/TimeSystem.cpp

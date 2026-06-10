@@ -262,11 +262,19 @@ namespace {
 			updateStatusText("Generating terrain...");
 		}
 
-		/// Phase 2: Load chunks (ChunkManager loads all needed chunks in one call)
+		/// Phase 2: Load chunks (generation runs on workers; keep polling until ready)
 		void loadChunks() {
-			// ChunkManager::update() loads the 5×5 grid around the camera position
+			// ChunkManager::update() starts loads for the grid around the camera
+			// and integrates finished generation workers each call
 			worldState->chunkManager->update(worldState->camera->position());
-			chunksLoaded = static_cast<int>(worldState->chunkManager->loadedChunkCount());
+
+			// Count chunks whose tile generation has completed
+			chunksLoaded = 0;
+			for (const auto* chunk : worldState->chunkManager->getLoadedChunks()) {
+				if (chunk->isReady()) {
+					chunksLoaded++;
+				}
+			}
 
 			// Calculate progress (0-50% for chunk loading)
 			progress = static_cast<float>(chunksLoaded) / static_cast<float>(kTargetChunks * 2);
@@ -293,9 +301,20 @@ namespace {
 
 		/// Phase 3: Place entities asynchronously for responsive UI
 		void placeEntities() {
+			// Chunks that finished generating after phase 2 still need placement
+			worldState->chunkManager->update(worldState->camera->position());
+			for (auto* chunk : worldState->chunkManager->getLoadedChunks()) {
+				asyncProcessor->launchTask(chunk);
+			}
+
 			// Poll for completed futures (non-blocking)
 			size_t completed = asyncProcessor->pollCompleted();
 			chunksProcessed += static_cast<int>(completed);
+
+			// Upload worker-baked entity meshes so gameplay starts pre-baked
+			for (auto& [coord, bake] : asyncProcessor->takeReadyBakes()) {
+				worldState->entityRenderer->uploadBakedChunk(coord, std::move(bake));
+			}
 
 			// Update progress (50-100% for entity placement)
 			progress = 0.5F + (static_cast<float>(chunksProcessed) / static_cast<float>(kTargetChunks * 2));
@@ -305,8 +324,10 @@ namespace {
 			std::string status = "Placing entities... " + std::to_string(percent) + "%";
 			updateStatusText(status);
 
-			// Check if all tasks are complete
-			if (!asyncProcessor->hasPending()) {
+			// Check if all tasks are complete (every loaded chunk processed and
+			// nothing in flight; chunks still generating haven't launched yet)
+			if (!asyncProcessor->hasPending() &&
+				worldState->processedChunks.size() >= worldState->chunkManager->loadedChunkCount()) {
 				LOG_INFO(Game, "placeEntities: All %d chunks completed!", chunksProcessed);
 				phase = LoadingPhase::Complete;
 				progress = 1.0F;

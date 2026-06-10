@@ -11,6 +11,7 @@
 
 #include <filesystem>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <unordered_map>
 
@@ -133,6 +134,10 @@ namespace engine::assets {
 
 		std::unordered_map<std::string, AssetDefinition>		   definitions;
 		std::unordered_map<std::string, renderer::TessellatedMesh> templateCache;
+
+		// getTemplate lazily tessellates into templateCache and is called from
+		// chunk worker threads (entity mesh baking) as well as the render thread
+		mutable std::mutex templateCacheMutex;
 
 		// Group index: group name → list of defNames that belong to it
 		std::unordered_map<std::string, std::vector<std::string>> groupIndex;

@@ -591,6 +591,12 @@ namespace {
 			// First, poll and integrate any completed async tasks
 			m_asyncProcessor->pollCompleted();
 
+			// Queue worker-baked entity meshes for budgeted GPU upload (the bake
+			// itself ran on the placement worker)
+			for (auto& [coord, bake] : m_asyncProcessor->takeReadyBakes()) {
+				m_entityRenderer->queueBakedChunk(coord, std::move(bake));
+			}
+
 			// Then launch new async tasks for unprocessed chunks
 			for (auto* chunk : m_chunkManager->getLoadedChunks()) {
 				m_asyncProcessor->launchTask(chunk);
