@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2025-01-05 (Task Ordering System Phase 6: Task List UI - complete)
+Last Updated: 2026-06-09 (M1 and M2 complete: foundation primitives + worldgen core)
 
 ## Epic/Story/Task Template
 
@@ -409,6 +409,31 @@ while (running) {
 ---
 
 ## In Progress Epics
+
+### World Generation & Creator
+**Spec/Documentation:** `/docs/design/features/world-generation/`, `.claude/plans/world-generation.md`
+**Dependencies:** None
+**Status:** in progress
+
+**Goal:** Real 8-phase world generation (plates → terrain → climate → biomes), WorldCreator scene with 3D planet view and landing site selection, wired into New Game → 2D gameplay sampling the generated world.
+
+**Tasks:**
+- [x] M1: Foundation primitives (TaskPool, RNG, HashNoise, DeterministicMath, WorldHash)
+- [x] M2: worldgen core + frozen contracts (SphereGrid, WorldData, pipeline skeleton, debug image exporter, technical doc)
+- [ ] M3a: Plates + plate movement (P1, P2)
+- [ ] M3b: Terrain + sea level (P3) — ends with USER screenshot review gate
+- [ ] M3c: Atmosphere + temperature (P4)
+- [ ] M3d: Precipitation + rivers (P5)
+- [ ] M3e: Oceans, biomes, snow, summary (P6–P9)
+- [ ] M3f: planet-view lib (renderer, camera, picker, chunked-LOD, colorizer)
+- [ ] M3g: UI Slider + WorldCreator shell
+- [ ] M3h: Biome taxonomy migration (engine, 8→21 biomes, sparse BiomeWeights)
+- [ ] M4: PlanetSampler + GeneratedWorldSampler + GameLoading branch
+- [ ] M5: WorldCreator integration (real generator + planet view)
+- [ ] M6: Landing site + handoff + MainMenu rewire (e2e New Game)
+- [ ] M7: Hardening, benchmark-gated default resolution, cross-platform determinism
+
+---
 
 ### ✅ Storage and Hauling System
 **Spec/Documentation:** `/docs/design/features/storage-system.md`, `.claude/plans/storage-and-hauling.md`

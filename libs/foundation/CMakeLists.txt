@@ -5,6 +5,7 @@ add_library(foundation
     utils/Log.cpp
     utils/ResourcePath.cpp
     utils/Utf8.cpp
+    threading/TaskPool.cpp
 )
 
 target_include_directories(foundation
