@@ -8,7 +8,7 @@
 //   2. Distance fields: multi-source BFS from all boundary tiles; produces boundaryDistance
 //      (uint16, saturating at 65535), plus transient arrays: bndType, bndSide (overriding
 //      or subducting) used only during elevation synthesis.
-//      2b. Distance smoothing: two Jacobi passes average each tile's integer BFS distance
+//      2b. Distance smoothing: three Jacobi passes average each tile's integer BFS distance
 //          with its neighbors → removes stair-step terracing on steep slopes.
 //          A per-tile fractional hash offset (hashNoise * 0.5 tiles) is added to further
 //          break discretization without introducing non-determinism.
@@ -376,7 +376,7 @@ void TerrainStage::run(StageContext& ctx) {
     }
 
     // =========================================================================
-    // 2b. Distance smoothing — two Jacobi passes to eliminate stair-step
+    // 2b. Distance smoothing — three Jacobi passes to eliminate stair-step
     //     terracing caused by integer BFS tile distances on steep slopes.
     //     Double-buffered: reads distA, writes distB, then swaps.
     //     Result is float to preserve sub-tile precision; a fractional hash
