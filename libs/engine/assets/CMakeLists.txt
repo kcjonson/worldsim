@@ -62,7 +62,11 @@ if(BUILD_TESTING)
                 GTest::gtest
                 GTest::gtest_main
         )
-        target_compile_options(assets-tests PRIVATE -O0 -g)
+        if(MSVC)
+            target_compile_options(assets-tests PRIVATE /Od /Zi)
+        else()
+            target_compile_options(assets-tests PRIVATE -O0 -g)
+        endif()
         add_test(NAME assets-tests COMMAND assets-tests)
     endif()
 endif()

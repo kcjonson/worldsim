@@ -40,7 +40,11 @@ if(BUILD_TESTING)
                 GTest::gtest
                 GTest::gtest_main
         )
-        target_compile_options(game-systems-tests PRIVATE -O0 -g)
+        if(MSVC)
+            target_compile_options(game-systems-tests PRIVATE /Od /Zi)
+        else()
+            target_compile_options(game-systems-tests PRIVATE -O0 -g)
+        endif()
         add_test(NAME game-systems-tests COMMAND game-systems-tests)
     endif()
 
@@ -54,7 +58,11 @@ if(BUILD_TESTING)
                 benchmark::benchmark
                 benchmark::benchmark_main
         )
-        target_compile_options(game-systems-benchmarks PRIVATE -O3)
+        # MSVC: per-config defaults (/O2 in Release); forcing /O2 collides with
+        # Debug's /RTC1 (D8016).
+        if(NOT MSVC)
+            target_compile_options(game-systems-benchmarks PRIVATE -O3)
+        endif()
         add_test(NAME game-systems-benchmarks COMMAND game-systems-benchmarks)
     endif()
 endif()

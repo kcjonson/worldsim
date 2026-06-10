@@ -88,8 +88,11 @@ add_dependencies(world-sim font-atlas)
 add_dependencies(ui-sandbox font-atlas)
 
 # Developer client (web app)
-# Only build in Development mode (builds React app with npm)
-if(CMAKE_BUILD_TYPE STREQUAL "Development" OR CMAKE_BUILD_TYPE STREQUAL "Debug")
+# Multi-config generators (Visual Studio) have no CMAKE_BUILD_TYPE at configure
+# time, so Windows/VS users opt in with -DBUILD_DEVELOPER_CLIENT=ON; single-config
+# Debug/Development builds keep auto-building it.
+option(BUILD_DEVELOPER_CLIENT "Build the React developer-client web app (requires npm)" OFF)
+if(BUILD_DEVELOPER_CLIENT OR CMAKE_BUILD_TYPE STREQUAL "Development" OR CMAKE_BUILD_TYPE STREQUAL "Debug")
     # Check if npm is available
     find_program(NPM_EXECUTABLE npm)
     if(NPM_EXECUTABLE)

@@ -17,10 +17,11 @@ target_include_directories(foundation
 target_compile_features(foundation PUBLIC cxx_std_20)
 
 # Define DEVELOPMENT_BUILD for Debug and RelWithDebInfo builds
-# This enables Debug, Info, and Warning log levels
-if(CMAKE_BUILD_TYPE MATCHES "Debug|RelWithDebInfo")
-    target_compile_definitions(foundation PUBLIC DEVELOPMENT_BUILD)
-endif()
+# This enables Debug, Info, and Warning log levels.
+# Generator expression (not if(CMAKE_BUILD_TYPE)): CMAKE_BUILD_TYPE is empty
+# under multi-config generators (Visual Studio), which silently compiled dev
+# logging out of every Windows build.
+target_compile_definitions(foundation PUBLIC $<$<CONFIG:Debug,RelWithDebInfo>:DEVELOPMENT_BUILD>)
 
 # Link dependencies
 target_link_libraries(foundation
@@ -57,8 +58,11 @@ if(BUILD_TESTING)
                 GTest::gtest
                 GTest::gtest_main
         )
-        # Debug builds with no optimization for accurate debugging
-        target_compile_options(foundation-tests PRIVATE -O0 -g)
+        if(MSVC)
+            target_compile_options(foundation-tests PRIVATE /Od /Zi)
+        else()
+            target_compile_options(foundation-tests PRIVATE -O0 -g)
+        endif()
 
         # Register with CTest
         add_test(NAME foundation-tests COMMAND foundation-tests)
@@ -74,8 +78,11 @@ if(BUILD_TESTING)
                 benchmark::benchmark
                 benchmark::benchmark_main
         )
-        # Release builds with full optimization for accurate performance measurement
-        target_compile_options(foundation-benchmarks PRIVATE -O3)
+        # MSVC: per-config defaults (/O2 in Release); forcing /O2 collides with
+        # Debug's /RTC1 (D8016).
+        if(NOT MSVC)
+            target_compile_options(foundation-benchmarks PRIVATE -O3)
+        endif()
 
         # Register with CTest (benchmarks can be run as tests too)
         add_test(NAME foundation-benchmarks COMMAND foundation-benchmarks)
