@@ -89,7 +89,8 @@ struct BiomeWeights {
     // ── write ───────────────────────────────────────────────────────────────
 
     void set(Biome biome, float weight) {
-        uint8_t w = static_cast<uint8_t>(weight * 255.0F + 0.5F);
+        float clamped = weight < 0.0F ? 0.0F : (weight > 1.0F ? 1.0F : weight);
+        uint8_t w = static_cast<uint8_t>(clamped * 255.0F + 0.5F);
         uint8_t key = static_cast<uint8_t>(biome);
 
         // Update existing entry.
@@ -120,11 +121,31 @@ struct BiomeWeights {
         uint32_t sum = 0;
         for (uint8_t i = 0; i < count; ++i) sum += entries[i].weight;
         if (sum == 0) return;
-        // Scale so weights sum to 255.
+
+        // Compute floors and remainders before overwriting any weights.
+        std::array<uint32_t, kMaxEntries> floors{};
+        std::array<uint32_t, kMaxEntries> remainders{};
+        uint32_t newTotal = 0;
         for (uint8_t i = 0; i < count; ++i) {
-            uint32_t scaled = static_cast<uint32_t>(entries[i].weight) * 255 / sum;
-            entries[i].weight = static_cast<uint8_t>(scaled);
+            uint32_t product  = static_cast<uint32_t>(entries[i].weight) * 255;
+            floors[i]         = product / sum;
+            remainders[i]     = product % sum;
+            newTotal         += floors[i];
         }
+
+        // Write the floor values.
+        for (uint8_t i = 0; i < count; ++i)
+            entries[i].weight = static_cast<uint8_t>(floors[i]);
+
+        // Distribute the deficit (255 - newTotal) one unit at a time to the entries
+        // with the largest remainders; ties broken by lower index (deterministic).
+        uint32_t deficit = 255 - newTotal;
+        std::array<uint8_t, kMaxEntries> order{};
+        for (uint8_t i = 0; i < count; ++i) order[i] = i;
+        std::stable_sort(order.begin(), order.begin() + count,
+            [&](uint8_t a, uint8_t b) { return remainders[a] > remainders[b]; });
+        for (uint32_t d = 0; d < deficit; ++d)
+            ++entries[order[d]].weight;
     }
 
     // ── factories ───────────────────────────────────────────────────────────
