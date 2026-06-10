@@ -55,6 +55,16 @@ void PlanetGenerator::start(const PlanetParams& params) {
     cancel();
     if (worker.joinable()) worker.join();
 
+    // Clear the snapshot from any previous run so snapshot() returns nullptr
+    // until the first stage of the new run completes (per API contract).
+    {
+        std::lock_guard<std::mutex> lock(snapshotMutex);
+        latestSnapshot.reset();
+#ifndef NDEBUG
+        lastPublishedChecksum = 0;
+#endif
+    }
+
     cancelFlag.store(false, std::memory_order_release);
     atomicState.store(static_cast<int>(GenerationProgress::State::Running),
                       std::memory_order_release);
@@ -146,11 +156,22 @@ void PlanetGenerator::runPipeline(PlanetParams params) {
 
             float stageWeightBase = weightPrefixSum[i];
 
-            // reportProgress lambda: maps [0,1] within stage to totalFraction
+            // reportProgress lambda: maps [0,1] within stage to totalFraction.
+            // Both stores are monotonic max via CAS loop so out-of-order slab
+            // completions from the thread pool never push progress backwards.
             auto reportProgress = [&, i, stageWeightBase](float frac) {
-                atomicStageFraction.store(frac, std::memory_order_relaxed);
+                // Monotonic-max store for stageFraction
+                float cur = atomicStageFraction.load(std::memory_order_relaxed);
+                while (frac > cur &&
+                       !atomicStageFraction.compare_exchange_weak(
+                           cur, frac, std::memory_order_relaxed)) {}
+
+                // Monotonic-max store for totalFraction
                 float total = (stageWeightBase + stages[i]->weight() * frac) / totalWeight;
-                atomicTotalFraction.store(total, std::memory_order_relaxed);
+                cur = atomicTotalFraction.load(std::memory_order_relaxed);
+                while (total > cur &&
+                       !atomicTotalFraction.compare_exchange_weak(
+                           cur, total, std::memory_order_relaxed)) {}
             };
 
             uint64_t stageSeed = foundation::deriveSeed(params.seed, static_cast<uint64_t>(i));
@@ -209,10 +230,12 @@ void PlanetGenerator::runPipeline(PlanetParams params) {
         // Compute worldHash: FNV-1a over all valid field arrays in fixed order
         world->worldHash = computeFieldChecksums(*world);
 
+        // Publish the final snapshot BEFORE marking Complete so a poller that
+        // sees Complete and calls takeResult() always finds a ready snapshot.
+        publishSnapshot(std::move(world));
         atomicTotalFraction.store(1.0f, std::memory_order_release);
         atomicState.store(static_cast<int>(GenerationProgress::State::Complete),
                           std::memory_order_release);
-        publishSnapshot(std::move(world));
 
     } catch (const CancelledException&) {
         atomicState.store(static_cast<int>(GenerationProgress::State::Cancelled),
