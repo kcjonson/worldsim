@@ -1,43 +1,12 @@
 #include "PlanetMesh.h"
 
+#include <world/worldgen/grid/SphereGrid.h>
+
 #include <algorithm>
 #include <cmath>
 #include <utility>
 
 namespace planetview {
-
-namespace {
-
-constexpr float kPi = 3.14159265358979F;
-
-struct Vec3f { float x, y, z; };
-
-// Maps (rhombus, u, v) in [0,1]^2 to a unit-sphere direction.
-// 10 rhombi in HEALPix-inspired layout: 4 north-polar, 4 equatorial, 2 south-polar.
-// This is the same mapping used by PlanetGenerator for tile placement.
-Vec3f rhombusPoint(uint32_t r, float u, float v) {
-    float lon{0.0F}, lat{0.0F};
-
-    if (r < 4) {
-        float baseLon = static_cast<float>(r) * 0.5F * kPi;
-        lon = baseLon + u * 0.5F * kPi;
-        lat = (0.5F - v * 0.5F) * kPi * 0.5F + 0.25F * kPi;
-        lon += v * 0.25F * kPi;
-    } else if (r < 8) {
-        float baseLon = static_cast<float>(r - 4) * 0.5F * kPi;
-        lon = baseLon + u * 0.5F * kPi;
-        lat = (1.0F - v) * kPi * 0.5F - 0.25F * kPi;
-    } else {
-        float baseLon = static_cast<float>(r - 8) * kPi;
-        lon = baseLon + u * kPi;
-        lat = -(0.5F * kPi * 0.5F + v * 0.25F * kPi);
-    }
-
-    float cosLat = std::cos(lat);
-    return { cosLat * std::cos(lon), cosLat * std::sin(lon), std::sin(lat) };
-}
-
-} // namespace
 
 PlanetMesh::PlanetMesh(PlanetMesh&& other) noexcept
     : ibo(other.ibo)
@@ -81,15 +50,14 @@ void PlanetMesh::release() {
     vertsPerSide = 0;
 }
 
-void PlanetMesh::build(uint32_t subdivision) {
+void PlanetMesh::build(uint32_t subdivision, const worldgen::SphereGrid& grid) {
     if (isBuilt()) release();
 
     uint32_t v = std::min(subdivision, 128U);
     vertsPerSide = v + 1;
     uint32_t vps = vertsPerSide;
 
-    // Build shared index buffer (same for all rhombi).
-    // Each quad = 2 triangles; (v)^2 quads.
+    // Shared index buffer — same topology for all 10 rhombi.
     std::vector<uint32_t> indices;
     indices.reserve(static_cast<size_t>(v) * v * 6U);
     for (uint32_t row = 0; row < v; ++row) {
@@ -111,21 +79,28 @@ void PlanetMesh::build(uint32_t subdivision) {
                  indices.data(), GL_STATIC_DRAW);
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
 
-    // Build per-rhombus VBOs. Vertex: vec3 position + vec2 uv = 5 floats.
+    // Per-rhombus VBOs. Vertex: vec3 position (unit sphere) + vec2 uv = 5 floats.
+    // Positions come from grid.rhombusPointOnSphere() — the icosahedral barycentric
+    // mapping — so edge vertices on neighboring rhombi are numerically identical,
+    // eliminating seam artifacts.
     struct Vertex { float px, py, pz, u, v; };
     std::vector<Vertex> verts(static_cast<size_t>(vps) * vps);
 
     for (uint32_t r = 0; r < 10U; ++r) {
         for (uint32_t row = 0; row < vps; ++row) {
             for (uint32_t col = 0; col < vps; ++col) {
-                float uCoord = static_cast<float>(col) / static_cast<float>(v);
-                float vCoord = static_cast<float>(row) / static_cast<float>(v);
-                Vec3f p = rhombusPoint(r, uCoord, vCoord);
-                // Normalise to unit sphere.
-                float len = std::sqrt(p.x*p.x + p.y*p.y + p.z*p.z);
-                if (len > 0.0F) { p.x /= len; p.y /= len; p.z /= len; }
+                double uCoord = static_cast<double>(col) / static_cast<double>(v);
+                double vCoord = static_cast<double>(row) / static_cast<double>(v);
+                worldgen::Vec3d p = grid.rhombusPointOnSphere(r, uCoord, vCoord);
+                // Already unit from rhombusPointOnSphere, but cast to float.
                 size_t idx = static_cast<size_t>(row) * vps + col;
-                verts[idx] = { p.x, p.y, p.z, uCoord, vCoord };
+                verts[idx] = {
+                    static_cast<float>(p.x),
+                    static_cast<float>(p.y),
+                    static_cast<float>(p.z),
+                    static_cast<float>(uCoord),
+                    static_cast<float>(vCoord)
+                };
             }
         }
 

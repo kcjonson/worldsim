@@ -2,6 +2,7 @@
 
 #include <GL/glew.h>
 #include <cstdint>
+#include <memory>
 
 namespace worldgen {
 struct GeneratedWorld;

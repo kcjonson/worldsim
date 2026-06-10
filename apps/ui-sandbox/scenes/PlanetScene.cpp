@@ -1,17 +1,16 @@
 // Planet Scene - 3D Globe Viewer (M3f milestone)
-// Renders a procedurally generated planet as a shaded 3D globe.
-// Number keys 1-7 switch color modes; drag to orbit; scroll to zoom; click to pick.
+// Renders a procedurally generated planet as a shaded 3D globe using the real
+// worldgen pipeline. Color modes 1-7; drag to orbit; scroll to zoom; click to pick.
 
 #include "SceneTypes.h"
 
 #include <planet-view/OrbitCamera.h>
 #include <planet-view/PlanetColorizer.h>
 #include <planet-view/PlanetMesh.h>
-#include <planet-view/PlanetMeshMath.h>
 #include <planet-view/PlanetPicker.h>
 #include <planet-view/PlanetRenderer.h>
-#include <world/generation/GeneratedWorld.h>
-#include <world/generation/PlanetGenerator.h>
+#include <world/worldgen/data/PlanetParams.h>
+#include <world/worldgen/pipeline/PlanetGenerator.h>
 
 #include <graphics/Color.h>
 #include <primitives/Primitives.h>
@@ -24,15 +23,15 @@
 #include <input/InputTypes.h>
 #include <ui/input/InputEvent.h>
 
-#include <atomic>
-#include <future>
+#include <memory>
 #include <optional>
 #include <string>
 
 namespace {
 
 constexpr const char* kSceneName = "planet";
-constexpr uint32_t   kSubdivision = 64; // quick for demo; raise to 256 for quality
+// 256 tiles/edge gives 655k tiles — full Earth-like detail with the stub pipeline.
+constexpr uint32_t kSubdivision = 256;
 
 class PlanetScene : public engine::IScene {
   public:
@@ -40,24 +39,46 @@ class PlanetScene : public engine::IScene {
         LOG_INFO(World, "PlanetScene: starting planet generation (n=%u)", kSubdivision);
         statusText = "Generating planet...";
 
-        // Run generation on a background thread.
-        generationFuture = std::async(std::launch::async, []() {
-            worldgen::PlanetGenerator gen;
-            return gen.generate({.seed = 42, .subdivision = kSubdivision});
-        });
+        worldgen::PlanetParams params = worldgen::PlanetParams::preset(worldgen::Preset::EarthLike);
+        params.gridSubdivision = kSubdivision;
+        params.seed = 42;
+
+        generator = std::make_unique<worldgen::PlanetGenerator>();
+        generator->start(params);
     }
 
     void update(float dt) override {
         camera.update(dt);
 
-        // Check if generation finished.
-        if (!worldReady && generationFuture.valid()) {
-            using namespace std::chrono_literals;
-            if (generationFuture.wait_for(0ms) == std::future_status::ready) {
-                world = generationFuture.get();
-                generationFuture = {};
-                onWorldReady();
-            }
+        if (!generator) return;
+
+        auto prog = generator->progress();
+
+        // Update progress text.
+        if (prog.state == worldgen::GenerationProgress::State::Running) {
+            char buf[128];
+            snprintf(buf, sizeof(buf), "Generating... %.0f%%  [%s]",
+                     static_cast<double>(prog.totalFraction * 100.0f),
+                     prog.stageName ? prog.stageName : "");
+            statusText = buf;
+        }
+
+        // Check for new snapshot and upload colors progressively.
+        auto snap = generator->snapshot();
+        if (snap && snap != lastSnapshot) {
+            lastSnapshot = snap;
+            onSnapshot(*snap);
+        }
+
+        // Generation complete.
+        if (prog.state == worldgen::GenerationProgress::State::Complete && !worldReady) {
+            worldReady = true;
+            statusText = "";
+            LOG_INFO(World, "PlanetScene: generation complete");
+        }
+
+        if (prog.state == worldgen::GenerationProgress::State::Failed && !worldReady) {
+            statusText = "ERROR: generation failed";
         }
     }
 
@@ -68,8 +89,7 @@ class PlanetScene : public engine::IScene {
         glClearColor(0.0F, 0.0F, 0.02F, 1.0F);
         glClear(GL_COLOR_BUFFER_BIT);
 
-        if (worldReady && renderer.isReady()) {
-            // Get actual framebuffer size (may differ on HiDPI).
+        if (meshBuilt && renderer.isReady() && colorizer.isReady()) {
             GLint vp[4] = {};
             glGetIntegerv(GL_VIEWPORT, vp);
             int fbW = vp[2], fbH = vp[3];
@@ -77,7 +97,6 @@ class PlanetScene : public engine::IScene {
             renderer.render(mesh, colorizer, camera, fbW, fbH);
             renderer.blitToScreen(fbW, fbH);
 
-            // Draw click marker if we have one.
             if (markerVisible) {
                 float aspect = (vpH > 0) ? (static_cast<float>(vpW) / static_cast<float>(vpH)) : 1.0F;
                 float sx = 0.0F, sy = 0.0F;
@@ -97,7 +116,6 @@ class PlanetScene : public engine::IScene {
             }
         }
 
-        // Status text drawn via 2D Primitives on top (no text in 3D pass).
         if (!statusText.empty()) {
             Renderer::Primitives::drawText({
                 .text     = statusText,
@@ -107,11 +125,10 @@ class PlanetScene : public engine::IScene {
             });
         }
 
-        // Mode label.
-        if (worldReady) {
+        if (meshBuilt) {
             std::string modeLabel = std::string("Mode: ") +
                 planetview::colorModeName(static_cast<planetview::ColorMode>(colorModeIdx));
-            modeLabel += "  [1-7 to switch]";
+            modeLabel += "  [right-click to cycle]";
             Renderer::Primitives::drawText({
                 .text     = modeLabel,
                 .position = {20.0F, 48.0F},
@@ -122,9 +139,9 @@ class PlanetScene : public engine::IScene {
     }
 
     void onExit() override {
-        // Wait for background generation to finish before destroying objects.
-        if (generationFuture.valid()) {
-            generationFuture.wait();
+        if (generator) {
+            generator->cancel();
+            generator.reset();
         }
     }
 
@@ -132,7 +149,7 @@ class PlanetScene : public engine::IScene {
         if (event.type == UI::InputEvent::Type::MouseDown &&
             event.button == engine::MouseButton::Left) {
 
-            if (worldReady) {
+            if (meshBuilt && lastSnapshot) {
                 int vpW = 0, vpH = 0;
                 Renderer::Primitives::getLogicalViewport(vpW, vpH);
                 float aspect = (vpH > 0) ? (static_cast<float>(vpW) / static_cast<float>(vpH)) : 1.0F;
@@ -145,9 +162,13 @@ class PlanetScene : public engine::IScene {
                     markerPos     = planetview::latLonToUnitSphere(latlon->latDeg, latlon->lonDeg);
                     markerVisible = true;
 
-                    LOG_INFO(World, "Picked: lat=%.2f lon=%.2f",
+                    // Log tile at picked location using the real grid.
+                    worldgen::Vec3d dir{markerPos.x, markerPos.y, markerPos.z};
+                    worldgen::TileId t = lastSnapshot->grid->fromUnitVector(dir);
+                    LOG_INFO(World, "Picked: lat=%.2f lon=%.2f tileId=%u",
                              static_cast<double>(latlon->latDeg),
-                             static_cast<double>(latlon->lonDeg));
+                             static_cast<double>(latlon->lonDeg),
+                             t);
                 }
             }
             camera.beginDrag(event.position.x, event.position.y);
@@ -172,6 +193,14 @@ class PlanetScene : public engine::IScene {
             return true;
         }
 
+        // Right-click cycles color mode (key events not available in this input system).
+        if (event.type == UI::InputEvent::Type::MouseDown &&
+            event.button == engine::MouseButton::Right) {
+            switchMode((colorModeIdx + 1) % static_cast<int>(planetview::ColorMode::Count));
+            event.consume();
+            return true;
+        }
+
         return false;
     }
 
@@ -189,12 +218,13 @@ class PlanetScene : public engine::IScene {
     const char* getName() const override { return kSceneName; }
 
   private:
-    worldgen::GeneratedWorld world;
-    std::future<worldgen::GeneratedWorld> generationFuture;
+    std::unique_ptr<worldgen::PlanetGenerator> generator;
+    std::shared_ptr<const worldgen::GeneratedWorld> lastSnapshot;
     bool worldReady{false};
+    bool meshBuilt{false};
     std::string statusText;
 
-    planetview::PlanetMesh     mesh;
+    planetview::PlanetMesh      mesh;
     planetview::PlanetColorizer colorizer;
     planetview::PlanetRenderer  renderer;
     planetview::OrbitCamera     camera;
@@ -205,58 +235,48 @@ class PlanetScene : public engine::IScene {
     glm::vec3 markerPos{1.0F, 0.0F, 0.0F};
     bool      markerVisible{false};
 
-    void onWorldReady() {
-        LOG_INFO(World, "PlanetScene: generation complete, building GPU resources");
+    // Called each time a new snapshot arrives (progressive phases).
+    void onSnapshot(const worldgen::GeneratedWorld& world) {
+        if (!meshBuilt && world.grid) {
+            // Build mesh on first snapshot so vertices use the real grid.
+            mesh.build(kSubdivision, *world.grid);
 
-        mesh.build(kSubdivision);
+            colorizer.init(kSubdivision);
 
-        colorizer.init(kSubdivision);
-        colorizer.update(world, static_cast<planetview::ColorMode>(colorModeIdx));
+            std::string shaderDir = Foundation::findResourceString("shaders");
+            if (shaderDir.empty()) shaderDir = "shaders";
 
-        std::string shaderDir = Foundation::findResourceString("shaders");
-        if (shaderDir.empty()) shaderDir = "shaders";
+            int vpW = 0, vpH = 0;
+            Renderer::Primitives::getLogicalViewport(vpW, vpH);
+            if (vpW <= 0) vpW = 1280;
+            if (vpH <= 0) vpH = 720;
 
-        int vpW = 0, vpH = 0;
-        Renderer::Primitives::getLogicalViewport(vpW, vpH);
-        if (vpW <= 0) vpW = 1280;
-        if (vpH <= 0) vpH = 720;
+            if (!renderer.init(shaderDir.c_str(), vpW, vpH)) {
+                LOG_ERROR(World, "PlanetScene: renderer init failed");
+                statusText = "ERROR: shader load failed";
+                return;
+            }
 
-        if (!renderer.init(shaderDir.c_str(), vpW, vpH)) {
-            LOG_ERROR(World, "PlanetScene: renderer init failed");
-            statusText = "ERROR: shader load failed";
-            return;
+            meshBuilt = true;
+            LOG_INFO(World, "PlanetScene: mesh and renderer ready");
         }
 
-        worldReady = true;
-        statusText = "";
-        LOG_INFO(World, "PlanetScene: ready");
+        // Re-upload colors whenever validFields grows (progressive stages).
+        if (meshBuilt && colorizer.isReady()) {
+            colorizer.update(world, static_cast<planetview::ColorMode>(colorModeIdx));
+        }
     }
 
     void switchMode(int idx) {
         colorModeIdx = idx % static_cast<int>(planetview::ColorMode::Count);
-        if (worldReady) {
-            colorizer.update(world, static_cast<planetview::ColorMode>(colorModeIdx));
+        if (lastSnapshot && colorizer.isReady()) {
+            colorizer.update(*lastSnapshot, static_cast<planetview::ColorMode>(colorModeIdx));
         }
     }
 };
 
 } // anonymous namespace
 
-// Number-key input is polled via update() since handleInput only fires for mouse.
-// We need keyboard — inject key polling via a thin wrapper.
-namespace {
-
-class PlanetSceneWithKeys : public PlanetScene {
-  public:
-    void update(float dt) override {
-        PlanetScene::update(dt);
-        // Key polling not available without GLFW; handled via handleInput below.
-    }
-};
-
-} // namespace
-
-// Export scene info.
 namespace ui_sandbox::scenes {
     extern const ui_sandbox::SceneInfo Planet = {
         kSceneName,

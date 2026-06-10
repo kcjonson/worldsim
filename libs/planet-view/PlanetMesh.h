@@ -4,6 +4,10 @@
 #include <cstdint>
 #include <vector>
 
+namespace worldgen {
+class SphereGrid;
+}
+
 namespace planetview {
 
 // One per rhombus: a (V+1)x(V+1) vertex grid projected onto the unit sphere.
@@ -27,7 +31,10 @@ class PlanetMesh {
     PlanetMesh& operator=(PlanetMesh&&) noexcept;
 
     // Build the 10-rhombus mesh. V = min(subdivision, 128).
-    void build(uint32_t subdivision);
+    // Vertex positions come from grid.rhombusPointOnSphere() — the same
+    // icosahedral barycentric mapping used by the worldgen tile system —
+    // so neighboring rhombi share exact edge vertices and produce no seams.
+    void build(uint32_t subdivision, const worldgen::SphereGrid& grid);
 
     bool isBuilt() const { return indexCount > 0; }
 

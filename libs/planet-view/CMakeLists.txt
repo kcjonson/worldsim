@@ -67,7 +67,11 @@ if(BUILD_TESTING)
                 GTest::gtest
                 GTest::gtest_main
         )
-        target_compile_options(planet-view-tests PRIVATE -O0 -g)
+        if(MSVC)
+            target_compile_options(planet-view-tests PRIVATE /Od /Zi)
+        else()
+            target_compile_options(planet-view-tests PRIVATE -O0 -g)
+        endif()
         add_test(NAME planet-view-tests COMMAND planet-view-tests)
     endif()
 
@@ -80,7 +84,11 @@ if(BUILD_TESTING)
                 benchmark::benchmark
                 benchmark::benchmark_main
         )
-        target_compile_options(planet-view-benchmarks PRIVATE -O3)
+        if(MSVC)
+            target_compile_options(planet-view-benchmarks PRIVATE /O2)
+        else()
+            target_compile_options(planet-view-benchmarks PRIVATE -O3)
+        endif()
         add_test(NAME planet-view-benchmarks COMMAND planet-view-benchmarks)
     endif()
 endif()
