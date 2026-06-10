@@ -21,6 +21,7 @@
 // Achieved accuracy measured against mpmath (arbitrary-precision reference); see
 // DeterministicMath.test.cpp for the golden-bit-pattern suite.
 
+#include <bit>
 #include <cmath>    // std::sqrt only
 #include <cstdint>
 
@@ -260,9 +261,8 @@ inline double exp(double x) {
     // Clamp n to valid exponent range
     if (n > 1023) n = 1023;
     if (n < -1022) n = -1022;
-    union { uint64_t u; double d; } scale{};
-    scale.u = static_cast<uint64_t>(n + 1023) << 52;
-    return er * scale.d;
+    double scale = std::bit_cast<double>(static_cast<uint64_t>(n + 1023) << 52);
+    return er * scale;
 }
 
 } // namespace det_math
