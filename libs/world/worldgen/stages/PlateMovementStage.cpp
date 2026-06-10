@@ -95,8 +95,8 @@ void PlateMovementStage::run(StageContext& ctx) {
     // Subtract the mean omega vector from each plate's omega.
     // New omega_p' = omega_p - mean_omega.
     // Decompose back into pole + speed (pole = normalized omega', speed = |omega'|).
-    // If speed drops to zero or negative (unlikely with physical parameters), clamp to a
-    // tiny positive value so the pole direction remains defined.
+    // If speed drops to zero (vanishingly rare with physical parameters), set angularSpeed
+    // to 0 and keep the original pole direction.
     for (int p = 0; p < K; ++p) {
         auto& pl = ctx.world.plates[static_cast<size_t>(p)];
         double omega = static_cast<double>(pl.angularSpeed);

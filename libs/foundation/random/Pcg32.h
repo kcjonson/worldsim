@@ -12,6 +12,7 @@
 // identical output on x64, ARM, WASM, etc. at any optimization level.
 
 #include "SplitMix64.h"
+#include <bit>
 #include <cstdint>
 
 namespace foundation {
@@ -38,11 +39,8 @@ class Pcg32 {
     // Returns a float in [0, 1). Uses 23 explicit mantissa bits so there are no gaps
     // from imprecise conversion of large uint32 values.
     constexpr float nextFloat() {
-        // Multiply by 2^-32 but keep result in [0,1) by using 0x2F800000 trick
-        // (equivalent to ldexp(nextUInt32(), -32) without calling a transcendental).
-        union { uint32_t u; float f; } bits{};
-        bits.u = 0x3F800000U | (nextUInt32() >> 9);
-        return bits.f - 1.0F;
+        uint32_t bits = 0x3F800000U | (nextUInt32() >> 9);
+        return std::bit_cast<float>(bits) - 1.0F;
     }
 
     // Returns a double in [0, 1) using 52 explicit mantissa bits.
@@ -50,9 +48,8 @@ class Pcg32 {
         uint64_t hi = nextUInt32();
         uint64_t lo = nextUInt32();
         uint64_t mantissa = (hi << 20) | (lo >> 12); // 52 bits
-        union { uint64_t u; double d; } bits{};
-        bits.u = 0x3FF0000000000000ULL | mantissa;
-        return bits.d - 1.0;
+        uint64_t bits = 0x3FF0000000000000ULL | mantissa;
+        return std::bit_cast<double>(bits) - 1.0;
     }
 
     // Lemire (2018) nearly-divisionless range: uniform in [0, bound) with at most one
@@ -62,7 +59,7 @@ class Pcg32 {
         uint64_t m = static_cast<uint64_t>(nextUInt32()) * static_cast<uint64_t>(bound);
         uint32_t lo = static_cast<uint32_t>(m);
         if (lo < bound) {
-            uint32_t threshold = static_cast<uint32_t>(-static_cast<int32_t>(bound)) % bound;
+            uint32_t threshold = (0u - bound) % bound;
             while (lo < threshold) {
                 m = static_cast<uint64_t>(nextUInt32()) * static_cast<uint64_t>(bound);
                 lo = static_cast<uint32_t>(m);
