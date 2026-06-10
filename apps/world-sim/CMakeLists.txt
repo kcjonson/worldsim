@@ -55,6 +55,8 @@ add_executable(world-sim
     scenes/splash/SplashScene.cpp
     scenes/menu/MainMenuScene.cpp
     scenes/world-creator/WorldCreatorScene.cpp
+    scenes/world-creator/WorldCreatorModel.cpp
+    scenes/world-creator/ui/ParameterPanel.cpp
     scenes/loading/GameLoadingScene.cpp
     scenes/game/GameScene.cpp
     scenes/settings/SettingsScene.cpp
