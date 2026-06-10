@@ -575,4 +575,12 @@ uint32_t SphereGrid::neighbors(TileId t, std::array<TileId, 8>& out) const {
     return count;
 }
 
+// ============================================================================
+// rhombusPointOnSphere — public forward mapping for planet-view
+// ============================================================================
+
+Vec3d SphereGrid::rhombusPointOnSphere(uint32_t r, double u, double v) const {
+    return uvToDir(r, u, v);
+}
+
 } // namespace worldgen

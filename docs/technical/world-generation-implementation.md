@@ -97,6 +97,17 @@ opposite direction, needed to correctly map the coordinate along that edge.
 boundaries. Interior tiles return 8 neighbors; boundary tiles 5–6; the 12
 icosahedron vertex tiles return 5 (one from each adjacent rhombus, deduplicated).
 
+### rhombusPointOnSphere (added M3f)
+
+`rhombusPointOnSphere(rhombus, u, v)` is a thin public wrapper around the
+internal `uvToDir()` forward mapping. It was added for `planet-view` so mesh
+vertex positions use the same icosahedral barycentric math as tile placement —
+neighboring rhombi share exact edge vertices, eliminating mesh seam artifacts.
+
+Contract: `rhombusPointOnSphere(r, (i+0.5)/n, (j+0.5)/n) == tileCenter(r*n*n + j*n + i)`
+
+Tested by `SphereGrid.RhombusPointMatchesTileCenter`.
+
 ### Performance
 
 At n=1024 on a 32-core 3.4 GHz machine (Release):

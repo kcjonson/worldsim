@@ -209,4 +209,36 @@ TEST(SphereGrid, LocateUVInRange) {
     }
 }
 
+// ============================================================================
+// rhombusPointOnSphere: at tile-center params equals tileCenter()
+// ============================================================================
+
+TEST(SphereGrid, RhombusPointMatchesTileCenter) {
+    SphereGrid g(16);
+    uint32_t n = g.subdivision();
+    double eps = 1e-10;
+
+    uint32_t failures = 0;
+    for (uint32_t r = 0; r < 10u; ++r) {
+        for (uint32_t j = 0; j < n; j += 4) {
+            for (uint32_t i = 0; i < n; i += 4) {
+                double u = (static_cast<double>(i) + 0.5) / static_cast<double>(n);
+                double v = (static_cast<double>(j) + 0.5) / static_cast<double>(n);
+                Vec3d p = g.rhombusPointOnSphere(r, u, v);
+                TileId t = r * n * n + j * n + i;
+                Vec3d c = g.tileCenter(t);
+                double dx = p.x - c.x, dy = p.y - c.y, dz = p.z - c.z;
+                double dist = std::sqrt(dx*dx + dy*dy + dz*dz);
+                if (dist > eps) {
+                    ++failures;
+                    if (failures <= 3)
+                        printf("[SphereGrid] rhombusPointOnSphere mismatch r=%u i=%u j=%u dist=%.2e\n",
+                               r, i, j, dist);
+                }
+            }
+        }
+    }
+    EXPECT_EQ(failures, 0u) << "rhombusPointOnSphere != tileCenter for " << failures << " sampled tiles";
+}
+
 } // namespace worldgen
