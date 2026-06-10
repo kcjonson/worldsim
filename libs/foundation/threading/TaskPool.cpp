@@ -19,6 +19,9 @@ TaskPool::TaskPool(unsigned threadCount) {
 TaskPool::~TaskPool() {
     {
         std::lock_guard<std::mutex> lock(mutex);
+        // Destroying the pool while a parallelFor is in flight is a caller bug;
+        // jobReady is only true between parallelFor entry and exit.
+        assert(!jobReady && "TaskPool destroyed during parallelFor");
         shutdown = true;
         jobReady = true;
     }
@@ -100,6 +103,14 @@ void TaskPool::workerLoop() {
                 if (!firstException) firstException = std::current_exception();
             }
             completedSlabs.fetch_add(1, std::memory_order_acq_rel);
+        }
+        // The final increment above is not under the mutex, so without this
+        // lock the calling thread can evaluate the doneCv predicate (seeing
+        // N-1), have us increment+notify while it still holds the mutex, and
+        // then sleep forever. Acquiring the mutex orders our increment before
+        // its predicate re-check.
+        {
+            std::lock_guard<std::mutex> doneLock(mutex);
         }
         doneCv.notify_one();
     }
