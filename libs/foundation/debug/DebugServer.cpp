@@ -2,7 +2,10 @@
 
 #include "debug/DebugServer.h"
 #include "utils/Log.h"
+#include <algorithm>
 #include <chrono>
+#include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include <ctime>
 #include <httplib.h>
@@ -505,20 +508,47 @@ namespace Foundation {
 			} else if (action == "camera") {
 				// Remote camera control: any of x, y (world position), zoom (factor),
 				// panx, pany (-1..1 held-key style direction) may be supplied.
+				// Parses with std::from_chars-style validation: malformed values are a 400,
+				// never an exception (this runs on the HTTP handler thread).
+				auto parseFloat = [&req](const char* name, float& out) -> bool {
+					if (!req.has_param(name)) {
+						return false;
+					}
+					const std::string& value = req.get_param_value(name);
+					char*			   end = nullptr;
+					float			   parsed = std::strtof(value.c_str(), &end);
+					if (end == value.c_str() || *end != '\0' || !std::isfinite(parsed)) {
+						return false;
+					}
+					out = parsed;
+					return true;
+				};
+
 				CameraCommand cmd;
-				if (req.has_param("x") && req.has_param("y")) {
-					cmd.hasPosition = true;
-					cmd.x = std::stof(req.get_param_value("x"));
-					cmd.y = std::stof(req.get_param_value("y"));
+				bool		  malformed = false;
+				if (req.has_param("x") || req.has_param("y")) {
+					cmd.hasPosition = parseFloat("x", cmd.x) && parseFloat("y", cmd.y);
+					malformed |= !cmd.hasPosition;
 				}
 				if (req.has_param("zoom")) {
-					cmd.hasZoom = true;
-					cmd.zoom = std::stof(req.get_param_value("zoom"));
+					cmd.hasZoom = parseFloat("zoom", cmd.zoom);
+					malformed |= !cmd.hasZoom;
 				}
 				if (req.has_param("panx") || req.has_param("pany")) {
 					cmd.hasPan = true;
-					cmd.panX = req.has_param("panx") ? std::stof(req.get_param_value("panx")) : 0.0F;
-					cmd.panY = req.has_param("pany") ? std::stof(req.get_param_value("pany")) : 0.0F;
+					if (req.has_param("panx") && !parseFloat("panx", cmd.panX)) {
+						malformed = true;
+					}
+					if (req.has_param("pany") && !parseFloat("pany", cmd.panY)) {
+						malformed = true;
+					}
+					cmd.panX = std::clamp(cmd.panX, -1.0F, 1.0F);
+					cmd.panY = std::clamp(cmd.panY, -1.0F, 1.0F);
+				}
+				if (malformed) {
+					res.status = 400;
+					res.set_content("{\"error\":\"Camera parameters must be finite numbers (x+y together, zoom, panx, pany)\"}", "application/json");
+					return;
 				}
 				if (!cmd.hasPosition && !cmd.hasZoom && !cmd.hasPan) {
 					res.status = 400;
@@ -532,12 +562,13 @@ namespace Foundation {
 				}
 				res.set_content("{\"status\":\"ok\",\"action\":\"camera\"}", "application/json");
 			} else if (action == "vsync") {
-				if (!req.has_param("value")) {
+				std::string value = req.has_param("value") ? req.get_param_value("value") : "";
+				if (value != "0" && value != "1") {
 					res.status = 400;
 					res.set_content("{\"error\":\"Vsync action requires 'value' parameter (0 or 1)\"}", "application/json");
 					return;
 				}
-				targetVsync.store(std::stoi(req.get_param_value("value")) != 0 ? 1 : 0);
+				targetVsync.store(value == "1" ? 1 : 0);
 				controlAction.store(ControlAction::SetVsync);
 				res.set_content("{\"status\":\"ok\",\"action\":\"vsync\"}", "application/json");
 			} else {

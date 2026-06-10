@@ -311,12 +311,6 @@ namespace {
 				dx += 1.0F;
 			}
 
-			if (dx != 0.0F && dy != 0.0F) {
-				constexpr float kDiagonalNormalizer = 0.7071F; // 1/sqrt(2), normalizes diagonal movement to unit length
-				dx *= kDiagonalNormalizer;
-				dy *= kDiagonalNormalizer;
-			}
-
 			// Remote camera control from the debug server (position/zoom set once,
 			// pan persists like held movement keys until cleared)
 			if (auto* debugServer = engine::AppLauncher::getDebugServer()) {
@@ -336,6 +330,13 @@ namespace {
 			}
 			dx += m_debugPanX;
 			dy += m_debugPanY;
+
+			// Normalize combined input so diagonal movement (keys or debug pan) is unit speed
+			float inputLength = std::sqrt(dx * dx + dy * dy);
+			if (inputLength > 1.0F) {
+				dx /= inputLength;
+				dy /= inputLength;
+			}
 
 			m_camera->move(dx, dy, dt);
 

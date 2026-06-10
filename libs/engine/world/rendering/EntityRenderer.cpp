@@ -200,11 +200,11 @@ namespace engine::world {
 						continue;
 					}
 
+					// Stats note: drawInstanced increments BatchRenderer's own counters,
+					// so these draws are NOT added to m_lastDrawCallCount (avoids double count)
 					batchRenderer->drawInstanced(
 						handleIt->second, instances.data(), static_cast<uint32_t>(instances.size()), cameraPos, zoom, m_pixelsPerMeter
 					);
-					m_lastDrawCallCount++;
-					m_lastTriangleCount += (handleIt->second.indexCount / 3) * static_cast<uint32_t>(instances.size());
 				}
 			}
 		}
