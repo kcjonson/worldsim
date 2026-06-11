@@ -39,6 +39,11 @@ class GlobeView {
 
 	bool isReady() const;
 
+	// True while an orbit drag is in progress. Scenes should route input to
+	// the globe FIRST while dragging so widget hover states don't react to
+	// drag mouse-moves.
+	bool isDragging() const { return dragging; }
+
 	void update(float dt) { camera.update(dt); }
 
 	// Render the globe into `rect` (logical UI coordinates, top-left origin).

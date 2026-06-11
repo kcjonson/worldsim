@@ -77,6 +77,11 @@ class LandingSiteScene : public engine::IScene {
 	bool handleInput(UI::InputEvent& event) override {
 		if (missingWorld) return false;
 
+		// Mid-drag the globe owns the mouse (see WorldCreatorScene)
+		if (globe.isDragging() && globe.handleInput(event, mainRect(), false)) {
+			return true;
+		}
+
 		if (confirmButton && confirmButton->handleEvent(event)) return true;
 		if (backButton && backButton->handleEvent(event)) return true;
 

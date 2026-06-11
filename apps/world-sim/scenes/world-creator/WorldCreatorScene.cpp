@@ -86,6 +86,11 @@ class WorldCreatorScene : public engine::IScene {
 	}
 
 	bool handleInput(UI::InputEvent& event) override {
+		// Mid-drag the globe owns the mouse: widgets must not see the moves
+		// (hover flicker) and the drag-ending MouseUp belongs to the camera
+		if (globe.isDragging() && globe.handleInput(event, mainRect(), true)) {
+			return true;
+		}
 		if (panel) {
 			if (panel->handleEvent(event)) return true;
 		}

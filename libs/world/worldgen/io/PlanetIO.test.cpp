@@ -185,6 +185,26 @@ TEST_F(PlanetIOTest, RoundtripPreservesAllFields) {
 	EXPECT_EQ(kTestTileCount, loaded->grid->tileCount());
 }
 
+// std::filesystem::rename must replace an existing destination on every
+// platform (overwriting a cached planet, e.g. regenerating quickstart)
+TEST_F(PlanetIOTest, SaveOverwritesExistingFile) {
+	GeneratedWorld first = makeTestWorld();
+	ASSERT_TRUE(savePlanet(first, filePath));
+
+	GeneratedWorld second = makeTestWorld();
+	second.params.seed = first.params.seed + 1;
+	for (auto& e : second.data.elevation) {
+		e += 100.0f;
+	}
+	second.worldHash = computeWorldDataHash(second.validFields, second.data);
+	ASSERT_TRUE(savePlanet(second, filePath));
+
+	auto loaded = loadPlanet(filePath);
+	ASSERT_NE(loaded, nullptr);
+	EXPECT_EQ(loaded->params.seed, second.params.seed);
+	EXPECT_EQ(loaded->data.elevation, second.data.elevation);
+}
+
 TEST_F(PlanetIOTest, LoadNonexistentFileReturnsNull) {
 	EXPECT_EQ(loadPlanet(filePath), nullptr);
 }
