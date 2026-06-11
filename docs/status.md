@@ -422,9 +422,9 @@ while (running) {
 - [x] M2: worldgen core + frozen contracts (SphereGrid, WorldData, pipeline skeleton, debug image exporter, technical doc)
 - [x] M3a: Plates + plate movement (P1, P2)
 - [x] M3b: Terrain + sea level (P3) — ends with USER screenshot review gate
-- [ ] M3c: Atmosphere + temperature (P4)
-- [ ] M3d: Precipitation + rivers (P5)
-- [ ] M3e: Oceans, biomes, snow, summary (P6–P9)
+- [x] M3c: Atmosphere + temperature (P4)
+- [x] M3d: Precipitation + rivers (P5)
+- [x] M3e: Oceans, biomes, snow, summary (P6–P9)
 - [x] M3f: planet-view lib (renderer, camera, picker, colorizer; chunked-LOD deferred to M3f-2)
 - [x] M3g: UI Slider + WorldCreator shell
 - [x] M3h: Biome taxonomy migration (engine, 8→21 biomes, sparse BiomeWeights)

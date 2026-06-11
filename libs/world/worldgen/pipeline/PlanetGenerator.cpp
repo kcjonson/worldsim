@@ -18,6 +18,32 @@
 
 namespace worldgen {
 
+namespace {
+
+float habitabilityWeight(Biome b) {
+    switch (b) {
+        case Biome::TropicalRainforest:
+        case Biome::TropicalSeasonalForest:
+        case Biome::TemperateDeciduousForest:
+        case Biome::TemperateRainforest:
+        case Biome::BorealForest:
+        case Biome::TropicalSavanna:
+        case Biome::TemperateGrassland:
+        case Biome::TemperateWetland:
+        case Biome::TropicalWetland:
+        case Biome::Beach:
+            return 1.0f;
+        case Biome::MontaneForest:
+        case Biome::AlpineGrassland:
+        case Biome::XericShrubland:
+            return 0.5f;
+        default:
+            return 0.0f;
+    }
+}
+
+} // namespace
+
 // ============================================================================
 // Construction
 // ============================================================================
@@ -198,32 +224,34 @@ void PlanetGenerator::runPipeline(PlanetParams params) {
         {
             uint32_t totalTiles = world->grid->tileCount();
             uint64_t landCount = 0;
+            uint32_t riverTiles = 0;
             double tempSum = 0.0;
             for (uint32_t t = 0; t < totalTiles; ++t) {
-                if ((world->data.flags[t] & kFlagOcean) == 0) {
-                    ++landCount;
-                    auto idx = static_cast<size_t>(world->data.biome[t]);
-                    if (idx < static_cast<size_t>(Biome::Count)) {
-                        world->summary.biomeHistogram[idx]++;
-                    }
+                auto idx = static_cast<size_t>(world->data.biome[t]);
+                if (idx < static_cast<size_t>(Biome::Count)) {
+                    world->summary.biomeHistogram[idx]++;
                 }
+                if ((world->data.flags[t] & kFlagOcean) == 0) ++landCount;
+                if (world->data.flowAccum[t] >= kRiverFlowThreshold) ++riverTiles;
                 tempSum += static_cast<double>(world->data.temperatureMean[t]) * 0.1;
             }
             world->summary.landFraction   = static_cast<float>(landCount) / static_cast<float>(totalTiles);
             world->summary.meanTemperatureC = static_cast<float>(tempSum / totalTiles);
-            world->summary.riverTileCount = 0;
+            world->summary.riverTileCount = riverTiles;
 
-            // Habitability: fraction of land in temperate/livable biomes
-            uint64_t habitable = 0;
-            habitable += world->summary.biomeHistogram[static_cast<size_t>(Biome::TropicalRainforest)];
-            habitable += world->summary.biomeHistogram[static_cast<size_t>(Biome::TropicalSeasonalForest)];
-            habitable += world->summary.biomeHistogram[static_cast<size_t>(Biome::TemperateDeciduousForest)];
-            habitable += world->summary.biomeHistogram[static_cast<size_t>(Biome::TemperateRainforest)];
-            habitable += world->summary.biomeHistogram[static_cast<size_t>(Biome::BorealForest)];
-            habitable += world->summary.biomeHistogram[static_cast<size_t>(Biome::TropicalSavanna)];
-            habitable += world->summary.biomeHistogram[static_cast<size_t>(Biome::TemperateGrassland)];
+            // Habitability: land-area average of per-biome livability.
+            // Weights — 1.0: forests, grasslands, savanna, wetlands, beach;
+            // 0.5: montane forest, alpine grassland, xeric shrubland
+            // (marginal); 0.0: deserts (hot/cold/semi/polar), tundra
+            // (arctic/alpine), and water biomes (lakes count toward the land
+            // denominator but contribute nothing).
+            double habitable = 0.0;
+            for (size_t i = 0; i < world->summary.biomeHistogram.size(); ++i) {
+                habitable += static_cast<double>(world->summary.biomeHistogram[i]) *
+                             habitabilityWeight(static_cast<Biome>(i));
+            }
             world->summary.habitability = landCount > 0
-                ? static_cast<float>(habitable) / static_cast<float>(landCount)
+                ? static_cast<float>(habitable / static_cast<double>(landCount))
                 : 0.0f;
         }
 

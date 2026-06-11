@@ -20,6 +20,13 @@ inline constexpr uint8_t kFlagGlacier         = 0x20;
 // and small mixed-plate areas also carry this flag when within the craton growth radius.
 inline constexpr uint8_t kFlagContinentalCrust = 0x40;
 
+// A tile is a river tile when flowAccum (accumulated upstream drainage,
+// seeded at precipitation/1000 per land tile) reaches this value — roughly a
+// drainage basin of a half-dozen wet tiles. Shared by WorldSummary's
+// riverTileCount and BiomeStage's wetland drainage test so "river" means the
+// same thing everywhere.
+inline constexpr float kRiverFlowThreshold = 5.0f;
+
 // Boundary type enum for data.boundaryType (uint8_t per tile).
 // Written by TerrainStage; read by any consumer that interprets plate boundaries.
 // Values are stored as uint8_t; cast via static_cast<BoundaryType>(data.boundaryType[t]).

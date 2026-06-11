@@ -1,4 +1,7 @@
-// STUB stage: replaced in M3e — produces placeholder data so downstream tracks can build.
+// OceanStage (pipeline phase P6): flag tiles below sea level as ocean and
+// record water depth. seaLevelMeters was chosen by TerrainStage to hit the
+// requested water fraction; this stage just materializes it per tile.
+// Claims only WaterDepth — the Flags valid bit is owned by SnowStage.
 
 #include "worldgen/stages/OceanStage.h"
 
