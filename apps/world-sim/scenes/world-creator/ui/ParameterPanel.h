@@ -64,13 +64,20 @@ class ParameterPanel {
 		uint64_t seed
 	);
 
-	// Return the seed currently displayed in the seed input (0 if non-numeric)
-	uint64_t getSeedValue() const;
+	// True when the seed field is blank (caller should pick a random seed)
+	bool seedIsEmpty() const;
+
+	// False while the seed text is non-empty and not a valid uint64
+	bool seedIsValid() const { return seedState != SeedState::Invalid; }
 
   private:
+	enum class SeedState { Empty, Valid, Invalid };
+
 	Foundation::Vec2 position;
 	ParameterPanelCallbacks callbacks;
 	bool generating{false};
+	SeedState seedState{SeedState::Empty};
+	float seedErrorY{0.0F};
 
 	static constexpr float kPanelWidth = 320.0F;
 	static constexpr float kLabelHeight = 16.0F;
@@ -99,6 +106,8 @@ class ParameterPanel {
 	std::vector<UI::Text> sectionLabels;
 
 	void buildWidgets();
+	void onSeedTextChanged(const std::string& text);
+	void applyGenerateEnabled();
 	float nextY{0.0F}; // layout cursor
 
 	UI::Text makeLabel(const std::string& text, float y);

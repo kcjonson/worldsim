@@ -79,6 +79,7 @@ target_link_libraries(world-sim
         renderer
         foundation
         assets
+        planet-view
 )
 
 # Copy shaders after build as well (kept for redundancy during full rebuilds)

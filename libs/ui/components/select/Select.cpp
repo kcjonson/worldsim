@@ -11,7 +11,8 @@ Select::Select(const Args& args)
 	  options(args.options),
 	  value(args.value),
 	  placeholder(args.placeholder),
-	  onChange(args.onChange) {
+	  onChange(args.onChange),
+	  disabled(args.disabled) {
 	position = args.position;
 	size = args.size;
 	margin = args.margin;
@@ -35,6 +36,15 @@ Select::Select(const Args& args)
 
 void Select::setValue(const std::string& newValue) {
 	value = newValue;
+}
+
+void Select::setDisabled(bool newDisabled) {
+	disabled = newDisabled;
+	if (disabled) {
+		closeMenu();
+		buttonHovered = false;
+		buttonPressed = false;
+	}
 }
 
 void Select::setOptions(std::vector<SelectOption> newOptions) {
@@ -188,7 +198,7 @@ bool Select::isPointInButton(Foundation::Vec2 point) const {
 }
 
 bool Select::handleEvent(InputEvent& event) {
-	if (!visible) {
+	if (!visible || disabled) {
 		return false;
 	}
 
@@ -274,7 +284,10 @@ void Select::render() {
 	// Determine button style based on state
 	Foundation::Color buttonBg;
 	Foundation::Color buttonBorder;
-	if (open || buttonPressed) {
+	if (disabled) {
+		buttonBg = Foundation::Color(0.13F, 0.15F, 0.19F, 0.95F);
+		buttonBorder = Foundation::Color(0.22F, 0.26F, 0.32F, 1.0F);
+	} else if (open || buttonPressed) {
 		buttonBg = Foundation::Color(0.25F, 0.35F, 0.50F, 0.95F);
 		buttonBorder = Foundation::Color(0.40F, 0.55F, 0.75F, 1.0F);
 	} else if (buttonHovered) {
@@ -305,7 +318,7 @@ void Select::render() {
 	// Draw selected label + dropdown indicator
 	std::string displayText = getSelectedLabel();
 	bool		hasValue = !value.empty() && findSelectedIndex() >= 0;
-	Foundation::Color textColor = hasValue ? Foundation::Color::white() : Theme::Colors::textMuted;
+	Foundation::Color textColor = (hasValue && !disabled) ? Foundation::Color::white() : Theme::Colors::textMuted;
 
 	// Calculate text position (left-aligned with padding)
 	float textX = bounds.x + 10.0F;
@@ -349,6 +362,10 @@ void Select::onFocusLost() {
 }
 
 void Select::handleKeyInput(engine::Key key, bool /*shift*/, bool /*ctrl*/, bool /*alt*/) {
+	if (disabled) {
+		return;
+	}
+
 	auto* menu = getChild<Menu>(menuHandle);
 
 	if (key == engine::Key::Enter || key == engine::Key::Space) {
@@ -383,7 +400,7 @@ void Select::handleCharInput(char32_t /*codepoint*/) {
 }
 
 bool Select::canReceiveFocus() const {
-	return visible;
+	return visible && !disabled;
 }
 
 } // namespace UI

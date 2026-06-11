@@ -93,7 +93,8 @@ worldgen::GenerationProgress WorldCreatorModel::pollProgress() {
 
 	if (prog.state == worldgen::GenerationProgress::State::Complete) {
 		result = generator.takeResult();
-		state = WorldCreatorState::Reviewing;
+		// Complete with no result is a failure, not a reviewable world
+		state = result ? WorldCreatorState::Reviewing : WorldCreatorState::Configuring;
 	} else if (prog.state == worldgen::GenerationProgress::State::Cancelled ||
 	           prog.state == worldgen::GenerationProgress::State::Failed) {
 		state = WorldCreatorState::Configuring;

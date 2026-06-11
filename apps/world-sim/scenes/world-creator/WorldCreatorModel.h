@@ -61,6 +61,9 @@ class WorldCreatorModel {
 	// Latest completed world (valid when state == Reviewing)
 	std::shared_ptr<const worldgen::GeneratedWorld> getResult() const { return result; }
 
+	// Latest progressive snapshot from the generator (updates during Generating)
+	std::shared_ptr<const worldgen::GeneratedWorld> snapshot() const { return generator.snapshot(); }
+
   private:
 	WorldCreatorState         state{WorldCreatorState::Configuring};
 	worldgen::PlanetParams    params;
