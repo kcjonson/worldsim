@@ -16,7 +16,8 @@ bool isWaterTile(const GeneratedWorld& world, TileId t) {
 }
 
 // Coast = land tile with at least one water neighbor. Computed from the grid
-// rather than kFlagCoast, which no pipeline stage currently sets.
+// rather than kFlagCoast so it also counts lake shores (the flag marks ocean
+// coasts only) and works on worlds saved before BiomeStage set the flag.
 bool isCoastTile(const GeneratedWorld& world, TileId t) {
     std::array<TileId, 8> nbrs{};
     uint32_t count = world.grid->neighbors(t, nbrs);

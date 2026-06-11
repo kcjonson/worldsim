@@ -16,7 +16,8 @@ struct LatLon {
 //   3. any land tile
 //   4. (0, 0)
 // Land = not ocean/lake-flagged and elevation >= sea level. Coast is
-// computed from grid neighbors (kFlagCoast is not produced by any stage yet).
+// computed from grid neighbors rather than kFlagCoast (the flag marks ocean
+// coasts only; this also counts lake shores).
 // Requires Elevation and Flags valid in world.validFields.
 LatLon findDefaultLandingSite(const GeneratedWorld& world);
 
