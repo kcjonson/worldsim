@@ -257,6 +257,12 @@ void ParameterPanel::syncValues(
 	if (seedInput)          { seedInput->setText(std::to_string(seed)); }
 }
 
+void ParameterPanel::setResolutionValue(const std::string& value) {
+	if (resolutionSelect) {
+		resolutionSelect->setValue(value);
+	}
+}
+
 bool ParameterPanel::seedIsEmpty() const {
 	return seedState == SeedState::Empty;
 }
@@ -343,7 +349,7 @@ void ParameterPanel::render() {
 	if (seedState == SeedState::Invalid) {
 		UI::Text seedError(UI::Text::Args{
 			.position = {position.x + kSliderX, seedErrorY},
-			.text = "Seed must be a number (max 20 digits)",
+			.text = "Seed must be a valid 64-bit number",
 			.style = {
 				.color = Foundation::Color{0.9F, 0.4F, 0.4F, 1.0F},
 				.fontSize = 11.0F,

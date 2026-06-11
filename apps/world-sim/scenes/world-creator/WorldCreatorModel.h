@@ -51,6 +51,11 @@ class WorldCreatorModel {
 	// Reset to Configuring state (from Reviewing, to allow regeneration)
 	void resetToConfiguring();
 
+	// Enter Reviewing with an existing world (returning from landing site
+	// selection; scenes are recreated on switch, so the world rides back via
+	// GameStartConfig). Adopts the world's params so the UI reflects it.
+	void restoreResult(std::shared_ptr<const worldgen::GeneratedWorld> world);
+
 	// Call from scene's update() - polls progress, drives state machine
 	worldgen::GenerationProgress pollProgress();
 

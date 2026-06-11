@@ -64,6 +64,10 @@ class ParameterPanel {
 		uint64_t seed
 	);
 
+	// Sync the resolution select (value is the subdivision as a string,
+	// e.g. "256"); syncValues does not cover it
+	void setResolutionValue(const std::string& value);
+
 	// True when the seed field is blank (caller should pick a random seed)
 	bool seedIsEmpty() const;
 

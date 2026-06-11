@@ -42,6 +42,7 @@
 #include <worldgen/sampling/LandingSite.h>
 
 #include <algorithm>
+#include <filesystem>
 #include <memory>
 #include <sstream>
 #include <vector>
@@ -262,11 +263,15 @@ namespace {
 			}
 
 			if (!planetGenerator) {
-				// First try the cache
-				if (auto cached = worldgen::loadPlanet(kQuickstartPlanetPath)) {
-					LOG_INFO(Game, "GameLoadingScene - Loaded quickstart planet from cache");
-					adoptQuickstartPlanet(std::move(cached));
-					return;
+				// First try the cache; a missing file is the expected first-run
+				// state, not an error worth logging
+				if (std::filesystem::exists(kQuickstartPlanetPath)) {
+					if (auto cached = worldgen::loadPlanet(kQuickstartPlanetPath)) {
+						LOG_INFO(Game, "GameLoadingScene - Loaded quickstart planet from cache");
+						adoptQuickstartPlanet(std::move(cached));
+						return;
+					}
+					// Corrupt/stale cache: loadPlanet logged why; regenerate
 				}
 
 				LOG_INFO(Game, "GameLoadingScene - No cached quickstart planet, generating (n=%u seed=%llu)",

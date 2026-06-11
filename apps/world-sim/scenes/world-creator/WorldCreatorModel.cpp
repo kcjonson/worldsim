@@ -90,6 +90,15 @@ void WorldCreatorModel::resetToConfiguring() {
 	result.reset();
 }
 
+void WorldCreatorModel::restoreResult(std::shared_ptr<const worldgen::GeneratedWorld> world) {
+	if (!world) {
+		return;
+	}
+	params = world->params;
+	result = std::move(world);
+	state = WorldCreatorState::Reviewing;
+}
+
 worldgen::GenerationProgress WorldCreatorModel::pollProgress() {
 	if (state != WorldCreatorState::Generating) {
 		return {};

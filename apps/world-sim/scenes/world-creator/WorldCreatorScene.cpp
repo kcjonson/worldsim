@@ -56,6 +56,24 @@ class WorldCreatorScene : public engine::IScene {
 		viewportH = static_cast<float>(vpH);
 
 		buildUI();
+
+		// Returning from landing site selection: restore the generated world
+		// into Reviewing instead of starting over
+		if (world_sim::GameStartConfig::HasPending()) {
+			auto config = world_sim::GameStartConfig::Take();
+			if (config && config->world) {
+				LOG_INFO(Game, "WorldCreatorScene: restoring generated world for review");
+				model.restoreResult(config->world);
+				syncPanelFromModel();
+				if (panel) {
+					panel->setResolutionValue(
+						std::to_string(model.getParams().gridSubdivision));
+				}
+				lastSnapshot = config->world;
+				globe.setWorld(config->world);
+				onStateChanged(world_sim::WorldCreatorState::Reviewing);
+			}
+		}
 	}
 
 	void onExit() override {

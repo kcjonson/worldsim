@@ -285,6 +285,11 @@ class LandingSiteScene : public engine::IScene {
 
 	void goBack() {
 		LOG_INFO(Game, "LandingSiteScene: back to world creator");
+		// Scenes are recreated on switch; re-pend the config so WorldCreator
+		// restores the generated world instead of forcing a regeneration
+		if (config && config->world) {
+			world_sim::GameStartConfig::SetPending(std::move(config));
+		}
 		sceneManager->switchTo(world_sim::toKey(world_sim::SceneType::WorldCreator));
 	}
 
