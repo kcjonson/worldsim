@@ -209,6 +209,9 @@ Full protocol: `/docs/technical/debugging-strategy.md`
    - Frame time graph
    - Memory usage
    - Log streaming
+4. **Shut the app down when done:** `curl "http://127.0.0.1:8081/api/control?action=exit"`
+   - The game renders every frame and burns GPU/CPU while idle - never leave an
+     instance running after your task finishes (unless the user is testing it)
 
 ### Using Tracy Profiler
 
