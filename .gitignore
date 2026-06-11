@@ -45,3 +45,6 @@ tests/diffs/
 !.claude/commands/
 docs/development-log/plans/
 build-asan/
+
+# Test artifacts (DebugImageExporter output from world-tests)
+test_debug_*.bmp
