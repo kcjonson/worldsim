@@ -42,7 +42,9 @@ void AtmosphereStage::run(StageContext& ctx) {
 
     const double atm      = ctx.params.atmosphereStrength;
     const double rot      = ctx.params.rotationRate;
-    const double ecc      = ctx.params.eccentricity;
+    // Clamp to the documented model range; the UI clamps too, but direct
+    // callers may not
+    const double ecc      = clampd(ctx.params.eccentricity, 0.0, 0.95);
     const double sqrtAtm  = foundation::det_math::sqrt(atm < 0.0 ? 0.0 : atm);
     const double sqrtRot  = foundation::det_math::sqrt(rot < 0.0 ? 0.0 : rot);
     const double seaLevel = static_cast<double>(ctx.world.seaLevelMeters);
