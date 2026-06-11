@@ -114,7 +114,12 @@ void BiomeStage::run(StageContext& ctx) {
     ctx.pool.parallelFor(0, totalTiles, kGrainSize, [&](size_t begin, size_t end) {
         throwIfCancelled(ctx);
         for (size_t t = begin; t < end; ++t) {
-            const uint8_t tileFlags = ctx.data.flags[t];
+            // Recompute kFlagCoast from scratch (idempotent on rerun; water
+            // tiles never carry it)
+            const uint8_t tileFlags =
+                ctx.data.flags[t] & static_cast<uint8_t>(~kFlagCoast);
+            ctx.data.flags[t] = tileFlags;
+
             if ((tileFlags & kFlagOcean) != 0) {
                 ctx.data.biome[t] = static_cast<uint8_t>(Biome::Ocean);
                 continue;
@@ -125,7 +130,7 @@ void BiomeStage::run(StageContext& ctx) {
             }
 
             // Neighbor ocean-ness by elevation < seaLevel — the exact
-            // predicate OceanStage applied. Slabs concurrently |= kFlagCoast
+            // predicate OceanStage applied. Slabs concurrently write kFlagCoast
             // into their own tiles' flags, so reading a neighbor's flags byte
             // here would be a data race.
             std::array<TileId, 8> nbs{};

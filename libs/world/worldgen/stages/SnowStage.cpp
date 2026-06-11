@@ -39,15 +39,24 @@ void SnowStage::run(StageContext& ctx) {
     ctx.pool.parallelFor(0, totalTiles, kGrainSize, [&](size_t begin, size_t end) {
         throwIfCancelled(ctx);
         for (size_t t = begin; t < end; ++t) {
+            // Recompute from scratch so the stage is idempotent: stale snow
+            // state never survives a warmer or ocean outcome
+            ctx.data.flags[t] &= static_cast<uint8_t>(~kFlagPermanentSnow);
+            ctx.data.snowCover[t] = 0;
+
             if ((ctx.data.flags[t] & kFlagOcean) != 0) continue;
 
             const float tempC =
                 static_cast<float>(ctx.data.temperatureMean[t]) * 0.1f;
             if (tempC < threshold) {
-                ctx.data.flags[t] |= kFlagPermanentSnow;
                 float coldness = (threshold - tempC) / kFullCoverDeltaC;
                 if (coldness > 1.0f) coldness = 1.0f;
-                ctx.data.snowCover[t] = static_cast<uint8_t>(coldness * 255.0f);
+                // Round up so any tile below threshold has nonzero cover;
+                // the flag and the coverage can never disagree
+                auto cover = static_cast<uint8_t>(coldness * 255.0f);
+                if (cover == 0) cover = 1;
+                ctx.data.snowCover[t] = cover;
+                ctx.data.flags[t] |= kFlagPermanentSnow;
             }
         }
         ctx.reportProgress(static_cast<float>(end) /
