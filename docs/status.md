@@ -428,10 +428,14 @@ while (running) {
 - [x] M3f: planet-view lib (renderer, camera, picker, colorizer; chunked-LOD deferred to M3f-2)
 - [x] M3g: UI Slider + WorldCreator shell
 - [x] M3h: Biome taxonomy migration (engine, 8→21 biomes, sparse BiomeWeights)
-- [ ] M4: PlanetSampler + GeneratedWorldSampler + GameLoading branch
-- [ ] M5: WorldCreator integration (real generator + planet view)
-- [ ] M6: Landing site + handoff + MainMenu rewire (e2e New Game)
+- [x] M4: PlanetSampler + GeneratedWorldSampler + GameLoading branch
+- [x] M5: WorldCreator integration (real generator + planet view)
+- [x] M6: Landing site + handoff + MainMenu rewire (e2e New Game)
+  - [x] Quick Start: cached pre-generated planet (PlanetIO save/load), bypasses generation
+  - [x] Persist accepted world on landing confirm
+  - [ ] Landing site local preview + difficulty rating (UX spec, deferred)
 - [ ] M7: Hardening, benchmark-gated default resolution, cross-platform determinism
+- [ ] Future: planet database — mmap/streamed reads from PlanetIO files for n>=4096 planets instead of whole-planet RAM residency (PlanetIO v1 SoA layout is already offset-addressable; see development log)
 
 ---
 

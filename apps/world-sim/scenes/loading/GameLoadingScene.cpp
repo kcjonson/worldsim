@@ -1,6 +1,11 @@
 // Game Loading Scene - Pre-loads world chunks and entities with progress bar
-// Prevents asset "pop-in" by ensuring all initial content is ready before gameplay
+// Prevents asset "pop-in" by ensuring all initial content is ready before gameplay.
+//
+// Always plays on a generated planet: the pending GameStartConfig either carries
+// a world from the creator flow, or (Quick Start / direct scene jump) the scene
+// loads the cached quickstart planet, generating and caching it on first run.
 
+#include "GameStartConfig.h"
 #include "GameWorldState.h"
 #include "SceneTypes.h"
 
@@ -27,10 +32,16 @@
 #include <world/chunk/Chunk.h>
 #include <world/chunk/ChunkCoordinate.h>
 #include <world/chunk/ChunkManager.h>
-#include <world/chunk/MockWorldSampler.h>
+#include <world/chunk/GeneratedWorldSampler.h>
 #include <world/rendering/ChunkRenderer.h>
 #include <world/rendering/EntityRenderer.h>
 
+#include <worldgen/data/PlanetParams.h>
+#include <worldgen/io/PlanetIO.h>
+#include <worldgen/pipeline/PlanetGenerator.h>
+#include <worldgen/sampling/LandingSite.h>
+
+#include <algorithm>
 #include <memory>
 #include <sstream>
 #include <vector>
@@ -38,29 +49,41 @@
 namespace {
 
 	constexpr const char* kSceneName = "gameloading";
-	constexpr uint64_t	  kDefaultWorldSeed = 12345;
 	constexpr float		  kPixelsPerMeter = 8.0F;
 	constexpr int		  kTargetChunks = 9; // 3×3 grid (center + 8 adjacent)
 
+	// Quickstart planet: fixed params so the cache file stays valid across runs.
+	constexpr uint64_t	  kQuickstartSeed = 424242;
+	constexpr uint32_t	  kQuickstartSubdivision = 256;
+	constexpr const char* kQuickstartPlanetPath = "planets/quickstart.wsplanet";
+
 	/// Loading phases
-	enum class LoadingPhase { Initializing, ConfigError, LoadingChunks, PlacingEntities, Complete, Cancelling };
+	enum class LoadingPhase { PreparingPlanet, Initializing, ConfigError, LoadingChunks, PlacingEntities, Complete, Cancelling };
 
 	class GameLoadingScene : public engine::IScene {
 	  public:
 		void onEnter() override {
 			LOG_INFO(Game, "GameLoadingScene - Entering");
 
-			phase = LoadingPhase::Initializing;
+			phase = LoadingPhase::PreparingPlanet;
 			progress = 0.0F;
 			chunksLoaded = 0;
 			chunksProcessed = 0;
 			configErrorLogged = false;
 			asyncProcessor.reset();
+			planetGenerator.reset();
 			needsLayout = true; // Defer position update until first render (viewport not ready in onEnter)
+
+			// Direct scene jumps (debug API, --scene=game) have no pending
+			// config; treat them as Quick Start.
+			startConfig = world_sim::GameStartConfig::Take();
+			if (!startConfig) {
+				startConfig = std::make_unique<world_sim::GameStartConfig>();
+				startConfig->source = world_sim::GameStartConfig::Source::QuickStart;
+			}
 
 			// Create the world state that will be transferred to GameScene
 			worldState = std::make_unique<world_sim::GameWorldState>();
-			worldState->worldSeed = kDefaultWorldSeed;
 
 			// Create UI elements once with initial positions (will be updated in layoutUI)
 			title = std::make_unique<UI::Text>(UI::Text::Args{
@@ -132,6 +155,10 @@ namespace {
 			}
 
 			switch (phase) {
+				case LoadingPhase::PreparingPlanet:
+					preparePlanet();
+					break;
+
 				case LoadingPhase::Initializing:
 					initializeWorldSystems();
 					break;
@@ -209,6 +236,7 @@ namespace {
 		void onExit() override {
 			LOG_INFO(Game, "GameLoadingScene - Exiting");
 			asyncProcessor.reset();
+			planetGenerator.reset();
 			title.reset();
 			statusText.reset();
 			// Note: worldState is moved to GameWorldState::SetPending() before exit
@@ -223,6 +251,73 @@ namespace {
 		const char* getName() const override { return kSceneName; }
 
 	  private:
+		/// Phase 0: ensure we have a planet to land on.
+		/// Creator flow already provides one; Quick Start loads the cached
+		/// planet or generates it once (progress 0-30%) and caches it.
+		void preparePlanet() {
+			if (startConfig->world) {
+				phase = LoadingPhase::Initializing;
+				progress = 0.3F;
+				return;
+			}
+
+			if (!planetGenerator) {
+				// First try the cache
+				if (auto cached = worldgen::loadPlanet(kQuickstartPlanetPath)) {
+					LOG_INFO(Game, "GameLoadingScene - Loaded quickstart planet from cache");
+					adoptQuickstartPlanet(std::move(cached));
+					return;
+				}
+
+				LOG_INFO(Game, "GameLoadingScene - No cached quickstart planet, generating (n=%u seed=%llu)",
+				         kQuickstartSubdivision,
+				         static_cast<unsigned long long>(kQuickstartSeed));
+				updateStatusText("Generating planet (first run)...");
+				worldgen::PlanetParams params = worldgen::PlanetParams::preset(worldgen::Preset::EarthLike);
+				params.gridSubdivision = kQuickstartSubdivision;
+				params.seed = kQuickstartSeed;
+				planetGenerator = std::make_unique<worldgen::PlanetGenerator>();
+				planetGenerator->start(params);
+				return;
+			}
+
+			auto prog = planetGenerator->progress();
+			progress = prog.totalFraction * 0.3F;
+
+			if (prog.state == worldgen::GenerationProgress::State::Complete) {
+				auto result = planetGenerator->takeResult();
+				planetGenerator.reset();
+				if (!result) {
+					LOG_ERROR(Game, "GameLoadingScene - Planet generation returned no result");
+					phase = LoadingPhase::ConfigError;
+					return;
+				}
+				if (worldgen::savePlanet(*result, kQuickstartPlanetPath)) {
+					LOG_INFO(Game, "GameLoadingScene - Cached quickstart planet to %s", kQuickstartPlanetPath);
+				}
+				adoptQuickstartPlanet(std::move(result));
+			} else if (prog.state == worldgen::GenerationProgress::State::Failed ||
+			           prog.state == worldgen::GenerationProgress::State::Cancelled) {
+				LOG_ERROR(Game, "GameLoadingScene - Planet generation failed/cancelled");
+				planetGenerator.reset();
+				phase = LoadingPhase::ConfigError;
+			} else {
+				int percent = static_cast<int>(prog.totalFraction * 100.0F);
+				updateStatusText("Generating planet (first run)... " + std::to_string(percent) + "%");
+			}
+		}
+
+		void adoptQuickstartPlanet(std::shared_ptr<const worldgen::GeneratedWorld> planet) {
+			auto site = worldgen::findDefaultLandingSite(*planet);
+			startConfig->world = std::move(planet);
+			startConfig->landingLatDeg = site.latDeg;
+			startConfig->landingLonDeg = site.lonDeg;
+			LOG_INFO(Game, "GameLoadingScene - Quickstart landing site lat=%.2f lon=%.2f",
+			         site.latDeg, site.lonDeg);
+			phase = LoadingPhase::Initializing;
+			progress = 0.3F;
+		}
+
 		/// Phase 1: Initialize world systems
 		void initializeWorldSystems() {
 			LOG_INFO(Game, "GameLoadingScene - Initializing world systems");
@@ -234,8 +329,11 @@ namespace {
 				return;
 			}
 
-			// Create world sampler and chunk manager
-			auto sampler = std::make_unique<engine::world::MockWorldSampler>(kDefaultWorldSeed);
+			// Create world sampler and chunk manager from the generated planet;
+			// the landing site maps to the 2D world origin
+			auto sampler = std::make_unique<engine::world::GeneratedWorldSampler>(
+				startConfig->world, startConfig->landingLatDeg, startConfig->landingLonDeg);
+			worldState->worldSeed = sampler->getWorldSeed();
 			worldState->chunkManager = std::make_unique<engine::world::ChunkManager>(std::move(sampler));
 
 			// Only load 3×3 grid (center + 8 adjacent) - chunks are large!
@@ -276,8 +374,8 @@ namespace {
 				}
 			}
 
-			// Calculate progress (0-50% for chunk loading)
-			progress = static_cast<float>(chunksLoaded) / static_cast<float>(kTargetChunks * 2);
+			// Chunk loading covers 30-65% of the bar (planet was 0-30%)
+			progress = 0.3F + 0.35F * (static_cast<float>(chunksLoaded) / static_cast<float>(kTargetChunks));
 
 			if (chunksLoaded >= kTargetChunks) {
 				LOG_INFO(Game, "GameLoadingScene - %d chunks loaded", chunksLoaded);
@@ -316,8 +414,9 @@ namespace {
 				worldState->entityRenderer->uploadBakedChunk(coord, std::move(bake));
 			}
 
-			// Update progress (50-100% for entity placement)
-			progress = 0.5F + (static_cast<float>(chunksProcessed) / static_cast<float>(kTargetChunks * 2));
+			// Entity placement covers 65-100%
+			progress = 0.65F + 0.35F * (static_cast<float>(chunksProcessed) / static_cast<float>(kTargetChunks));
+			progress = std::min(progress, 1.0F);
 
 			// Update status with progress
 			int			percent = static_cast<int>(progress * 100.0F);
@@ -348,6 +447,16 @@ namespace {
 
 		/// Cancel loading - waits for async tasks to complete with UI feedback
 		void cancelLoading() {
+			// Stop planet generation if it's still running
+			if (planetGenerator) {
+				planetGenerator->cancel();
+				auto prog = planetGenerator->progress();
+				if (prog.state == worldgen::GenerationProgress::State::Running) {
+					return; // Keep polling until the worker observes the cancel
+				}
+				planetGenerator.reset();
+			}
+
 			// Poll for completed tasks (non-blocking)
 			if (asyncProcessor) {
 				asyncProcessor->pollCompleted();
@@ -426,7 +535,7 @@ namespace {
 			// Only update UI once (errors are already logged by ConfigValidator::validateAll)
 			if (!configErrorLogged) {
 				configErrorLogged = true;
-				updateStatusText("Configuration Error - Press ESC to return to menu");
+				updateStatusText("Loading failed - Press ESC to return to menu");
 			}
 			// ESC handling is done in update() before the switch
 		}
@@ -443,6 +552,12 @@ namespace {
 
 		// World state being built (transferred to GameScene when complete)
 		std::unique_ptr<world_sim::GameWorldState> worldState;
+
+		// How this game starts (planet + landing site)
+		std::unique_ptr<world_sim::GameStartConfig> startConfig;
+
+		// Quickstart planet generation (only on cache miss)
+		std::unique_ptr<worldgen::PlanetGenerator> planetGenerator;
 
 		// UI elements
 		std::unique_ptr<UI::Text> title;

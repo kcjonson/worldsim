@@ -1,18 +1,14 @@
 // World Creator Scene
 // Three states: Configuring (parameter panel), Generating (progress + live globe),
-// Reviewing (final globe + stats). The 3D planet view renders into the main area
-// right of the parameter panel; 2D UI composites on top of it.
+// Reviewing (final globe + stats + continue to landing site selection).
 
+#include "GameStartConfig.h"
 #include "SceneTypes.h"
 #include "WorldCreatorModel.h"
+#include "scenes/shared/GlobeView.h"
 #include "ui/ParameterPanel.h"
 
 #include <GL/glew.h>
-
-#include <planet-view/OrbitCamera.h>
-#include <planet-view/PlanetColorizer.h>
-#include <planet-view/PlanetMesh.h>
-#include <planet-view/PlanetRenderer.h>
 
 #include <components/progress/ProgressBar.h>
 #include <components/button/Button.h>
@@ -24,9 +20,7 @@
 #include <scene/SceneManager.h>
 #include <shapes/Shapes.h>
 #include <utils/Log.h>
-#include <utils/ResourcePath.h>
 
-#include <algorithm>
 #include <format>
 #include <memory>
 #include <string>
@@ -37,9 +31,6 @@ namespace {
 constexpr const char* kSceneName = "world_creator";
 constexpr float kPanelWidth = 320.0F;
 constexpr float kProgressBarHeight = 16.0F;
-// Colorizer texel work scales with texSize^2 per snapshot; clamp so High-res
-// grids (1449) don't hitch the UI thread for seconds on every stage publish.
-constexpr uint32_t kMaxColorTexSize = 1024;
 
 class WorldCreatorScene : public engine::IScene {
   public:
@@ -48,7 +39,7 @@ class WorldCreatorScene : public engine::IScene {
 		return std::format(
 			R"({{"scene":"world_creator","state":{},"globe":{}}})",
 			static_cast<int>(model.getState()),
-			meshBuilt ? "true" : "false");
+			globe.isReady() ? "true" : "false");
 	}
 
 	void onEnter() override {
@@ -69,6 +60,7 @@ class WorldCreatorScene : public engine::IScene {
 		progressBar.reset();
 		stageText.reset();
 		regenButton.reset();
+		landingButton.reset();
 	}
 
 	bool handleInput(UI::InputEvent& event) override {
@@ -78,7 +70,10 @@ class WorldCreatorScene : public engine::IScene {
 		if (regenButton && regenButton->visible) {
 			if (regenButton->handleEvent(event)) return true;
 		}
-		return handleGlobeInput(event);
+		if (landingButton && landingButton->visible) {
+			if (landingButton->handleEvent(event)) return true;
+		}
+		return globe.handleInput(event, mainRect(), true);
 	}
 
 	void update(float dt) override {
@@ -92,7 +87,7 @@ class WorldCreatorScene : public engine::IScene {
 			return;
 		}
 
-		camera.update(dt);
+		globe.update(dt);
 
 		auto state = model.getState();
 
@@ -109,7 +104,7 @@ class WorldCreatorScene : public engine::IScene {
 			auto snap = model.snapshot();
 			if (snap && snap != lastSnapshot) {
 				lastSnapshot = snap;
-				onSnapshot(*snap);
+				globe.setWorld(snap);
 			}
 
 			// Re-check after poll (state may have changed)
@@ -128,6 +123,7 @@ class WorldCreatorScene : public engine::IScene {
 
 		if (panel) { panel->update(dt); }
 		if (regenButton) { regenButton->update(dt); }
+		if (landingButton) { landingButton->update(dt); }
 	}
 
 	void render() override {
@@ -135,12 +131,11 @@ class WorldCreatorScene : public engine::IScene {
 		glClear(GL_COLOR_BUFFER_BIT);
 
 		Foundation::Rect rect = mainRect();
-		bool globeVisible = meshBuilt && renderer.isReady() && colorizer.isReady();
 
 		// 3D pass first: Primitives batches flush after the scene, so all 2D
 		// UI composites on top of the blitted globe.
-		if (globeVisible) {
-			renderGlobe(rect);
+		if (globe.isReady()) {
+			globe.render(rect, viewportW, viewportH);
 		} else {
 			renderPlaceholder(rect);
 		}
@@ -169,7 +164,7 @@ class WorldCreatorScene : public engine::IScene {
 			err.render();
 		}
 
-		if (globeVisible) {
+		if (globe.isReady()) {
 			renderModeHint(rect);
 		}
 
@@ -186,28 +181,17 @@ class WorldCreatorScene : public engine::IScene {
 	std::unique_ptr<UI::ProgressBar> progressBar;
 	std::unique_ptr<UI::Text>        stageText;
 	std::unique_ptr<UI::Button>      regenButton;
+	std::unique_ptr<UI::Button>      landingButton;
 
-	planetview::PlanetMesh      mesh;
-	planetview::PlanetColorizer colorizer;
-	planetview::PlanetRenderer  renderer;
-	planetview::OrbitCamera     camera;
-
+	world_sim::GlobeView globe;
 	std::shared_ptr<const worldgen::GeneratedWorld> lastSnapshot;
-	bool meshBuilt{false};
-	bool draggingGlobe{false};
-	int  colorModeIdx{static_cast<int>(planetview::ColorMode::Terrain)};
 	std::string errorText;
 
 	// Main content area right of the parameter panel. Bottom strip (80px)
-	// holds the progress bar / stage text / stats / regenerate button.
+	// holds the progress bar / stage text / stats / action buttons.
 	Foundation::Rect mainRect() const {
 		float x = kPanelWidth + 20.0F;
 		return {x, 40.0F, viewportW - x - 20.0F, viewportH - 120.0F};
-	}
-
-	bool inMainRect(Foundation::Vec2 p) const {
-		Foundation::Rect r = mainRect();
-		return p.x >= r.x && p.x <= r.x + r.width && p.y >= r.y && p.y <= r.y + r.height;
 	}
 
 	void buildUI() {
@@ -276,7 +260,7 @@ class WorldCreatorScene : public engine::IScene {
 		});
 		stageText->visible = false;
 
-		// Regenerate button (only in Reviewing state)
+		// Reviewing-state actions
 		regenButton = std::make_unique<UI::Button>(UI::Button::Args{
 			.label = "Regenerate",
 			.position = {mainX, viewportH - 50.0F},
@@ -286,6 +270,16 @@ class WorldCreatorScene : public engine::IScene {
 			.id = "btn_regenerate",
 		});
 		regenButton->visible = false;
+
+		landingButton = std::make_unique<UI::Button>(UI::Button::Args{
+			.label = "Choose Landing Site",
+			.position = {mainX + 176.0F, viewportH - 50.0F},
+			.size = {200.0F, 36.0F},
+			.type = UI::Button::Type::Primary,
+			.onClick = [this]() { onChooseLandingSite(); },
+			.id = "btn_choose_landing",
+		});
+		landingButton->visible = false;
 	}
 
 	void syncPanelFromModel() {
@@ -318,150 +312,56 @@ class WorldCreatorScene : public engine::IScene {
 		}
 
 		errorText.clear();
-
-		// New generation means a new grid; rebuild mesh from the first snapshot
-		meshBuilt = false;
 		lastSnapshot.reset();
 
 		model.startGeneration();
 		if (panel) panel->setGenerating(true);
 		if (progressBar) { progressBar->setValue(0.0F); progressBar->visible = true; }
 		if (stageText)   { stageText->text = "Starting..."; stageText->visible = true; }
-		if (regenButton) regenButton->visible = false;
+		if (regenButton)   regenButton->visible = false;
+		if (landingButton) landingButton->visible = false;
 	}
 
 	void onStateChanged(world_sim::WorldCreatorState newState) {
 		if (newState == world_sim::WorldCreatorState::Reviewing) {
-			if (panel)       panel->setGenerating(false);
-			if (progressBar) progressBar->visible = false;
-			if (stageText)   stageText->visible = false;
-			if (regenButton) regenButton->visible = true;
+			if (panel)         panel->setGenerating(false);
+			if (progressBar)   progressBar->visible = false;
+			if (stageText)     stageText->visible = false;
+			if (regenButton)   regenButton->visible = true;
+			if (landingButton) landingButton->visible = true;
 
 			// Final colors from the completed world
 			if (auto result = model.getResult()) {
 				lastSnapshot = result;
-				onSnapshot(*result);
+				globe.setWorld(result);
 			}
 		} else if (newState == world_sim::WorldCreatorState::Configuring) {
-			if (panel)       panel->setGenerating(false);
-			if (progressBar) progressBar->visible = false;
-			if (stageText)   stageText->visible = false;
-			if (regenButton) regenButton->visible = false;
+			if (panel)         panel->setGenerating(false);
+			if (progressBar)   progressBar->visible = false;
+			if (stageText)     stageText->visible = false;
+			if (regenButton)   regenButton->visible = false;
+			if (landingButton) landingButton->visible = false;
 		}
 	}
 
 	void onRegenerate() {
 		model.resetToConfiguring();
-		if (regenButton) regenButton->visible = false;
-		if (panel)       panel->setGenerating(false);
+		if (regenButton)   regenButton->visible = false;
+		if (landingButton) landingButton->visible = false;
+		if (panel)         panel->setGenerating(false);
 	}
 
-	// Called for each progressive snapshot and the final result.
-	void onSnapshot(const worldgen::GeneratedWorld& world) {
-		if (!world.grid) return;
-
-		if (!meshBuilt) {
-			uint32_t subdiv = world.grid->subdivision();
-			mesh.build(subdiv, *world.grid);
-			colorizer.init(std::min(subdiv, kMaxColorTexSize));
-
-			if (!renderer.isReady()) {
-				std::string shaderDir = Foundation::findResourceString("shaders");
-				if (shaderDir.empty()) shaderDir = "shaders";
-
-				Foundation::Rect rect = mainRect();
-				if (!renderer.init(shaderDir.c_str(),
-				                   static_cast<int>(rect.width),
-				                   static_cast<int>(rect.height))) {
-					LOG_ERROR(Game, "WorldCreatorScene: planet renderer init failed");
-					return;
-				}
-			}
-
-			meshBuilt = true;
-			LOG_INFO(Game, "WorldCreatorScene: globe mesh ready (n=%u)", subdiv);
+	void onChooseLandingSite() {
+		auto result = model.getResult();
+		if (!result) {
+			return;
 		}
-
-		if (colorizer.isReady()) {
-			colorizer.update(world, static_cast<planetview::ColorMode>(colorModeIdx));
-		}
-	}
-
-	void switchColorMode(int idx) {
-		colorModeIdx = idx % static_cast<int>(planetview::ColorMode::Count);
-		if (lastSnapshot && colorizer.isReady()) {
-			colorizer.update(*lastSnapshot, static_cast<planetview::ColorMode>(colorModeIdx));
-		}
-	}
-
-	bool handleGlobeInput(UI::InputEvent& event) {
-		if (!meshBuilt) return false;
-
-		switch (event.type) {
-			case UI::InputEvent::Type::MouseDown:
-				if (!inMainRect(event.position)) break;
-				if (event.button == engine::MouseButton::Left) {
-					camera.beginDrag(event.position.x, event.position.y);
-					draggingGlobe = true;
-					event.consume();
-					return true;
-				}
-				if (event.button == engine::MouseButton::Right) {
-					switchColorMode(colorModeIdx + 1);
-					event.consume();
-					return true;
-				}
-				break;
-
-			case UI::InputEvent::Type::MouseMove:
-				if (draggingGlobe) {
-					camera.drag(event.position.x, event.position.y);
-					return true;
-				}
-				break;
-
-			case UI::InputEvent::Type::MouseUp:
-				if (draggingGlobe && event.button == engine::MouseButton::Left) {
-					camera.endDrag();
-					draggingGlobe = false;
-					event.consume();
-					return true;
-				}
-				break;
-
-			case UI::InputEvent::Type::Scroll:
-				if (inMainRect(event.position)) {
-					camera.scroll(event.scrollDelta);
-					event.consume();
-					return true;
-				}
-				break;
-
-			default:
-				break;
-		}
-		return false;
-	}
-
-	// Render the globe FBO and blit it into the main rect's viewport region.
-	void renderGlobe(const Foundation::Rect& rect) {
-		GLint vp[4] = {};
-		glGetIntegerv(GL_VIEWPORT, vp);
-
-		float sx = viewportW > 0.0F ? static_cast<float>(vp[2]) / viewportW : 1.0F;
-		float sy = viewportH > 0.0F ? static_cast<float>(vp[3]) / viewportH : 1.0F;
-		int px = static_cast<int>(rect.x * sx);
-		int py = static_cast<int>(rect.y * sy);
-		int pw = static_cast<int>(rect.width * sx);
-		int ph = static_cast<int>(rect.height * sy);
-		if (pw <= 0 || ph <= 0) return;
-
-		renderer.render(mesh, colorizer, camera, pw, ph);
-
-		// GL viewport origin is bottom-left; UI rect origin is top-left
-		glViewport(px, vp[3] - py - ph, pw, ph);
-		renderer.blitToScreen(pw, ph);
-		glViewport(vp[0], vp[1], vp[2], vp[3]);
+		LOG_INFO(Game, "WorldCreatorScene: continuing to landing site selection");
+		auto config = std::make_unique<world_sim::GameStartConfig>();
+		config->source = world_sim::GameStartConfig::Source::NewGame;
+		config->world = result;
+		world_sim::GameStartConfig::SetPending(std::move(config));
+		sceneManager->switchTo(world_sim::toKey(world_sim::SceneType::LandingSite));
 	}
 
 	void renderPlaceholder(const Foundation::Rect& rect) {
@@ -523,7 +423,7 @@ class WorldCreatorScene : public engine::IScene {
 
 	void renderModeHint(const Foundation::Rect& rect) {
 		std::string label = std::string("Mode: ") +
-			planetview::colorModeName(static_cast<planetview::ColorMode>(colorModeIdx)) +
+			planetview::colorModeName(globe.colorMode()) +
 			"   (right-click to cycle, drag to orbit, scroll to zoom)";
 		UI::Text hint(UI::Text::Args{
 			.position = {rect.x + 10.0F, rect.y + 10.0F},
@@ -581,7 +481,8 @@ class WorldCreatorScene : public engine::IScene {
 			stats.render();
 		}
 
-		if (regenButton) { regenButton->render(); }
+		if (regenButton)   { regenButton->render(); }
+		if (landingButton) { landingButton->render(); }
 	}
 };
 

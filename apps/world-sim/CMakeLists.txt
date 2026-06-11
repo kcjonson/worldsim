@@ -2,6 +2,7 @@ add_executable(world-sim
     Main.cpp
     SceneTypes.cpp
     GameWorldState.cpp
+    GameStartConfig.cpp
     # Game scene UI - views
     scenes/game/ui/views/ColonistListView.cpp
     scenes/game/ui/views/EntityInfoView.cpp
@@ -52,11 +53,13 @@ add_executable(world-sim
     scenes/game/world/placement/PlacementSystem.cpp
     scenes/game/world/selection/SelectionSystem.cpp
     # Scenes
+    scenes/shared/GlobeView.cpp
     scenes/splash/SplashScene.cpp
     scenes/menu/MainMenuScene.cpp
     scenes/world-creator/WorldCreatorScene.cpp
     scenes/world-creator/WorldCreatorModel.cpp
     scenes/world-creator/ui/ParameterPanel.cpp
+    scenes/landing/LandingSiteScene.cpp
     scenes/loading/GameLoadingScene.cpp
     scenes/game/GameScene.cpp
     scenes/settings/SettingsScene.cpp
