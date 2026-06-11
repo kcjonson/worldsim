@@ -63,15 +63,7 @@ GeneratedWorld makeTestWorld() {
 		world.summary.biomeHistogram[i] = static_cast<uint32_t>(i * 3 + 1);
 	}
 
-	// Same algorithm and field order as PlanetGenerator::computeFieldChecksums,
-	// so loadPlanet's integrity check passes.
-	uint64_t h = foundation::kFnvOffset;
-	h = foundation::hashCombine(h, foundation::hashSpan(world.data.elevation));
-	h = foundation::hashCombine(h, foundation::hashSpan(world.data.temperatureMean));
-	h = foundation::hashCombine(h, foundation::hashSpan(world.data.precipitation));
-	h = foundation::hashCombine(h, foundation::hashSpan(world.data.biome));
-	h = foundation::hashCombine(h, foundation::hashSpan(world.data.flags));
-	world.worldHash = h;
+	world.worldHash = computeWorldDataHash(world.validFields, world.data);
 
 	return world;
 }

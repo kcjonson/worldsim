@@ -541,7 +541,8 @@ namespace Foundation {
 				if (!parseInputEvent(ev, cmd, error)) {
 					res.status = 400;
 					std::ostringstream json;
-					json << "{\"error\":\"" << error << "\",\"ev\":\"" << ev << "\"}";
+					json << "{\"error\":\"" << escapeJsonString(error)
+						 << "\",\"ev\":\"" << escapeJsonString(ev) << "\"}";
 					res.set_content(json.str(), "application/json");
 					return;
 				}

@@ -25,43 +25,12 @@ namespace {
 
 constexpr char kMagic[4] = {'W', 'S', 'P', 'L'};
 constexpr uint32_t kFormatVersion = 1;
-// 10 * 4096^2 tiles is ~168M; anything larger is rejected as corrupt.
-constexpr uint32_t kMaxSubdivision = 4096;
+// loadPlanet allocates every WorldData array at tileCount (10*n^2) elements,
+// so the cap is bounded by what fits in memory today: 2048 is ~42M tiles
+// (~1.1 GB), headroom over the UI maximum of 1449. Raise only once the
+// mmap/streamed planet database exists (see status.md).
+constexpr uint32_t kMaxSubdivision = 2048;
 constexpr uint32_t kMaxPlateCount = 1u << 16;
-
-// Visit every SoA array with its WorldField bit, in ascending bit order.
-// This single list defines the on-disk array order, the load order, and the
-// hash order, so they can never drift apart.
-template <typename WorldDataT, typename Fn>
-void forEachFieldArray(WorldDataT& d, Fn&& fn) {
-	fn(WorldField::Elevation, d.elevation);
-	fn(WorldField::TemperatureMean, d.temperatureMean);
-	fn(WorldField::TemperatureRange, d.temperatureRange);
-	fn(WorldField::Precipitation, d.precipitation);
-	fn(WorldField::WindDir, d.windDir);
-	fn(WorldField::WindSpeed, d.windSpeed);
-	fn(WorldField::PlateId, d.plateId);
-	fn(WorldField::BoundaryType, d.boundaryType);
-	fn(WorldField::BoundaryDistance, d.boundaryDistance);
-	fn(WorldField::Biome, d.biome);
-	fn(WorldField::Flags, d.flags);
-	fn(WorldField::WaterDepth, d.waterDepth);
-	fn(WorldField::FlowAccum, d.flowAccum);
-	fn(WorldField::Downhill, d.downhill);
-	fn(WorldField::SnowCover, d.snowCover);
-}
-
-// Must match PlanetGenerator::computeFieldChecksums: FNV-1a over each valid
-// array in WorldField bit order, folded together with hashCombine.
-uint64_t computeWorldHash(uint32_t validFields, const WorldData& data) {
-	uint64_t h = foundation::kFnvOffset;
-	forEachFieldArray(data, [&](WorldField field, const auto& arr) {
-		if (validFields & static_cast<uint32_t>(field)) {
-			h = foundation::hashCombine(h, foundation::hashSpan(arr));
-		}
-	});
-	return h;
-}
 
 struct Writer {
 	std::ostream& out;
@@ -354,7 +323,7 @@ std::shared_ptr<const GeneratedWorld> loadPlanet(const std::filesystem::path& pa
 		return nullptr;
 	}
 
-	const uint64_t recomputed = computeWorldHash(world->validFields, world->data);
+	const uint64_t recomputed = computeWorldDataHash(world->validFields, world->data);
 	if (recomputed != world->worldHash) {
 		LOG_ERROR(World, "loadPlanet: %s hash mismatch (stored %llx, recomputed %llx)",
 			path.string().c_str(),

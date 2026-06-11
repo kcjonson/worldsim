@@ -1,5 +1,7 @@
 #pragma once
 
+#include <utils/WorldHash.h>
+
 #include <cstdint>
 #include <cstring>
 #include <vector>
@@ -109,5 +111,42 @@ struct WorldData {
         snowCover.assign(tileCount, 0);
     }
 };
+
+// Visit every SoA array with its WorldField bit, in ascending bit order.
+// Single source of truth for field iteration order: PlanetIO derives the
+// on-disk array layout from it and both PlanetIO and PlanetGenerator derive
+// the worldHash field order from it, so the two can never drift. Adding a
+// WorldField means adding it here (and bumping the planet file version).
+template <typename WorldDataT, typename Fn>
+void forEachFieldArray(WorldDataT& d, Fn&& fn) {
+    fn(WorldField::Elevation, d.elevation);
+    fn(WorldField::TemperatureMean, d.temperatureMean);
+    fn(WorldField::TemperatureRange, d.temperatureRange);
+    fn(WorldField::Precipitation, d.precipitation);
+    fn(WorldField::WindDir, d.windDir);
+    fn(WorldField::WindSpeed, d.windSpeed);
+    fn(WorldField::PlateId, d.plateId);
+    fn(WorldField::BoundaryType, d.boundaryType);
+    fn(WorldField::BoundaryDistance, d.boundaryDistance);
+    fn(WorldField::Biome, d.biome);
+    fn(WorldField::Flags, d.flags);
+    fn(WorldField::WaterDepth, d.waterDepth);
+    fn(WorldField::FlowAccum, d.flowAccum);
+    fn(WorldField::Downhill, d.downhill);
+    fn(WorldField::SnowCover, d.snowCover);
+}
+
+// worldHash: FNV-1a over each valid array in WorldField bit order, folded
+// with hashCombine. Computed by PlanetGenerator at publish and recomputed by
+// PlanetIO on load to validate file integrity.
+inline uint64_t computeWorldDataHash(uint32_t validFields, const WorldData& data) {
+    uint64_t h = foundation::kFnvOffset;
+    forEachFieldArray(data, [&](WorldField field, const auto& arr) {
+        if (validFields & static_cast<uint32_t>(field)) {
+            h = foundation::hashCombine(h, foundation::hashSpan(arr));
+        }
+    });
+    return h;
+}
 
 } // namespace worldgen
