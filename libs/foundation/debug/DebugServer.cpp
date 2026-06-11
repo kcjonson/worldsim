@@ -26,6 +26,69 @@
 
 namespace Foundation {
 
+	// Parse one /api/input 'ev' value: "type,x,y[,button][,delta]" (see endpoint
+	// comment). Returns false with a message in error on malformed input.
+	static bool parseInputEvent(const std::string& ev, InputCommand& cmd, std::string& error) {
+		std::vector<std::string> fields;
+		std::stringstream ss(ev);
+		std::string field;
+		while (std::getline(ss, field, ',')) {
+			fields.push_back(field);
+		}
+
+		if (fields.empty()) {
+			error = "empty event";
+			return false;
+		}
+
+		const std::string& type = fields[0];
+		if (type == "move")        cmd.type = InputCommand::Type::Move;
+		else if (type == "down")   cmd.type = InputCommand::Type::Down;
+		else if (type == "up")     cmd.type = InputCommand::Type::Up;
+		else if (type == "click")  cmd.type = InputCommand::Type::Click;
+		else if (type == "scroll") cmd.type = InputCommand::Type::Scroll;
+		else {
+			error = "unknown event type (expected move|down|up|click|scroll)";
+			return false;
+		}
+
+		if (fields.size() < 3) {
+			error = "event requires x,y coordinates";
+			return false;
+		}
+		try {
+			cmd.x = std::stof(fields[1]);
+			cmd.y = std::stof(fields[2]);
+		} catch (...) {
+			error = "non-numeric coordinates";
+			return false;
+		}
+
+		if (cmd.type == InputCommand::Type::Scroll) {
+			if (fields.size() < 4) {
+				error = "scroll requires a delta";
+				return false;
+			}
+			try {
+				cmd.scrollDelta = std::stof(fields[3]);
+			} catch (...) {
+				error = "non-numeric scroll delta";
+				return false;
+			}
+		} else if (fields.size() >= 4) {
+			const std::string& button = fields[3];
+			if (button == "left")        cmd.button = 0;
+			else if (button == "right")  cmd.button = 1;
+			else if (button == "middle") cmd.button = 2;
+			else {
+				error = "unknown button (expected left|right|middle)";
+				return false;
+			}
+		}
+
+		return true;
+	}
+
 	// Helper function to escape strings for JSON
 	static std::string escapeJsonString(const std::string& str) {
 		std::string escaped;
@@ -326,6 +389,17 @@ namespace Foundation {
 		return true;
 	}
 
+	bool DebugServer::consumeInputCommands(std::vector<InputCommand>& out) {
+		if (!inputCommandsPending.load()) {
+			return false;
+		}
+		std::lock_guard<std::mutex> lock(inputCommandsMutex);
+		out.insert(out.end(), inputCommands.begin(), inputCommands.end());
+		inputCommands.clear();
+		inputCommandsPending.store(false);
+		return true;
+	}
+
 	void DebugServer::setCurrentSceneName(const std::string& name) {
 		std::lock_guard<std::mutex> lock(sceneNameMutex);
 		currentSceneName = name;
@@ -438,6 +512,52 @@ namespace Foundation {
 				res.set_content("{\"error\":\"Screenshot capture timeout or failed\"}", "application/json");
 				res.set_header("Access-Control-Allow-Origin", "*");
 			}
+		});
+
+		// Input injection endpoint - queues synthetic UI input dispatched by the
+		// main loop through the same path as real mouse events. Coordinates are
+		// logical UI pixels. Accepts one or more 'ev' params, each a CSV:
+		//   click,x,y[,left|right|middle]   (expands to move+down+up)
+		//   move,x,y
+		//   down,x,y[,button]   up,x,y[,button]
+		//   scroll,x,y,delta
+		// Example: /api/input?ev=click,160,630&ev=scroll,1500,800,-2
+		server->Get("/api/input", [this](const httplib::Request& req, httplib::Response& res) {
+			res.set_header("Access-Control-Allow-Origin", "*");
+
+			size_t count = req.get_param_value_count("ev");
+			if (count == 0) {
+				res.status = 400;
+				res.set_content("{\"error\":\"Missing required parameter 'ev'\"}", "application/json");
+				return;
+			}
+
+			std::vector<InputCommand> parsed;
+			parsed.reserve(count);
+			for (size_t i = 0; i < count; ++i) {
+				std::string ev = req.get_param_value("ev", i);
+				InputCommand cmd;
+				std::string error;
+				if (!parseInputEvent(ev, cmd, error)) {
+					res.status = 400;
+					std::ostringstream json;
+					json << "{\"error\":\"" << escapeJsonString(error)
+						 << "\",\"ev\":\"" << escapeJsonString(ev) << "\"}";
+					res.set_content(json.str(), "application/json");
+					return;
+				}
+				parsed.push_back(cmd);
+			}
+
+			{
+				std::lock_guard<std::mutex> lock(inputCommandsMutex);
+				inputCommands.insert(inputCommands.end(), parsed.begin(), parsed.end());
+				inputCommandsPending.store(true);
+			}
+
+			std::ostringstream json;
+			json << "{\"status\":\"ok\",\"queued\":" << parsed.size() << "}";
+			res.set_content(json.str(), "application/json");
 		});
 
 		// Control endpoint - allows control of sandbox via HTTP GET with query params

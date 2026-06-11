@@ -12,6 +12,12 @@ namespace UI {
 namespace {
 	constexpr double kFineStep = 0.01;
 	constexpr float  kHandleHitRadius = 12.0F;
+	// Labeled sliders: name label on the left, value text on the right,
+	// track in between. Both reserve fixed-width columns.
+	constexpr float kLabelWidth = 90.0F;
+	constexpr float kLabelGap = 6.0F;
+	constexpr float kValueWidth = 60.0F;
+	constexpr float kValueGap = 6.0F;
 }
 
 Slider::Slider(const Args& args)
@@ -79,13 +85,10 @@ double Slider::clampValue(double val) const {
 void Slider::computeLayout() {
 	Foundation::Vec2 contentPos = getContentPosition();
 
-	// Label takes left portion if present
-	constexpr float kLabelWidth = 90.0F;
-	constexpr float kLabelGap = 6.0F;
-
 	float leftOffset = label.empty() ? 0.0F : kLabelWidth + kLabelGap;
+	float rightOffset = label.empty() ? 0.0F : kValueWidth + kValueGap;
 	trackLeft = contentPos.x + leftOffset + style.handleRadius;
-	trackRight = contentPos.x + size.x - style.handleRadius;
+	trackRight = contentPos.x + size.x - rightOffset - style.handleRadius;
 	trackY = contentPos.y + size.y * 0.5F;
 }
 
@@ -143,8 +146,6 @@ void Slider::render() {
 	}
 
 	Foundation::Vec2 contentPos = getContentPosition();
-	constexpr float  kLabelWidth = 90.0F;
-	constexpr float  kLabelGap = 6.0F;
 
 	// Label
 	if (!label.empty()) {
@@ -170,10 +171,8 @@ void Slider::render() {
 		} else {
 			valStr = std::format("{:.2f}", value);
 		}
-		float valX = contentPos.x + size.x;
-		constexpr float kValueWidth = 60.0F;
 		Text valShape(Text::Args{
-			.position = {valX - kValueWidth, trackY},
+			.position = {contentPos.x + size.x - kValueWidth, trackY},
 			.width = kValueWidth,
 			.text = valStr,
 			.style = {

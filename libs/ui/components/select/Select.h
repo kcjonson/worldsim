@@ -45,6 +45,7 @@ class Select : public Component, public FocusableBase<Select> {
 		const char*							  id = nullptr;
 		int									  tabIndex = -1;
 		float								  margin{0.0F};
+		bool								  disabled = false;
 	};
 
 	explicit Select(const Args& args);
@@ -68,6 +69,10 @@ class Select : public Component, public FocusableBase<Select> {
 
 	// UI State (read-only to external code)
 	[[nodiscard]] bool isOpen() const { return open; }
+
+	// Disabled selects ignore input and render muted; disabling closes the menu
+	void setDisabled(bool newDisabled);
+	[[nodiscard]] bool isDisabled() const { return disabled; }
 
 	// Get selected option label (for display)
 	[[nodiscard]] std::string getSelectedLabel() const;
@@ -97,6 +102,7 @@ class Select : public Component, public FocusableBase<Select> {
 	// UI state (internal)
 	bool open{false};
 	bool focused{false};
+	bool disabled{false};
 	int	 hoveredItemIndex{-1};
 	bool buttonHovered{false};
 	bool buttonPressed{false};

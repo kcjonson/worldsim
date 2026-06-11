@@ -238,9 +238,11 @@ If tests fail, fix the new code—don't revert to keeping both versions.
 - Start: `cd build/apps/ui-sandbox && ./ui-sandbox`
 - Control: `curl "http://127.0.0.1:8081/api/control?action={action}"`
 - Actions: `exit`, `scene&scene=name`, `pause`, `resume`, `reload`
+- Input injection: `curl "http://127.0.0.1:8081/api/input?ev=click,x,y"` — synthetic UI input in logical pixels (same space as screenshots); event types `move`/`down`/`up`/`click`/`scroll,x,y,delta` with optional button `left|right|middle`; repeat `ev=` to batch a sequence in one request
 - Screenshot: `curl http://127.0.0.1:8081/api/ui/screenshot > screenshot.png`
 - **IMPORTANT: Port 8081 is the DEFAULT - do NOT specify --http-port unless using a non-standard port**
 - **IMPORTANT: Only ONE instance can run at a time** - the app has built-in port conflict detection. Do not assume multiple instances exist.
+- **IMPORTANT: Close the game as soon as your task is done** - this is a native game rendering every frame, not a web app; an idle instance burns GPU/CPU continuously. When you finish verifying, immediately shut it down: `curl "http://127.0.0.1:8081/api/control?action=exit"`. Only leave it running if the user asked to test it themselves.
 
 **CRITICAL: Testing Visual Changes**
 When you make code changes and need to verify visually:

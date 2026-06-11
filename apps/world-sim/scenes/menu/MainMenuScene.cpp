@@ -1,6 +1,7 @@
 // Main Menu Scene - Game entry point
-// Menu with: New Game, Settings, Exit
+// Menu with: New Game, Quick Start, Settings, Exit
 
+#include "GameStartConfig.h"
 #include "SceneTypes.h"
 #include <GL/glew.h>
 
@@ -68,7 +69,7 @@ namespace {
 			float			buttonX = centerX - (kButtonWidth / 2.0F);
 			float			buttonY = centerY - 20.0F;
 
-			// New Game button - capture sceneManager for type-safe scene switch
+			// New Game: full flow through the World Creator
 			buttons.push_back(
 				std::make_unique<Button>(Button::Args{
 					.label = "New Game",
@@ -78,9 +79,29 @@ namespace {
 					.onClick =
 						[this]() {
 							LOG_INFO(Game, "Starting new game...");
-							sceneManager->switchTo(world_sim::toKey(world_sim::SceneType::GameLoading));
+							sceneManager->switchTo(world_sim::toKey(world_sim::SceneType::WorldCreator));
 						},
 					.id = "btn_new_game"
+				})
+			);
+			buttonY += kButtonHeight + kButtonSpacing;
+
+			// Quick Start: skip world creation, play on the cached default planet
+			buttons.push_back(
+				std::make_unique<Button>(Button::Args{
+					.label = "Quick Start",
+					.position = {buttonX, buttonY},
+					.size = {kButtonWidth, kButtonHeight},
+					.type = Button::Type::Secondary,
+					.onClick =
+						[this]() {
+							LOG_INFO(Game, "Quick start requested");
+							auto config = std::make_unique<world_sim::GameStartConfig>();
+							config->source = world_sim::GameStartConfig::Source::QuickStart;
+							world_sim::GameStartConfig::SetPending(std::move(config));
+							sceneManager->switchTo(world_sim::toKey(world_sim::SceneType::GameLoading));
+						},
+					.id = "btn_quick_start"
 				})
 			);
 			buttonY += kButtonHeight + kButtonSpacing;

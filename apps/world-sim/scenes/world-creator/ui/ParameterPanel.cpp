@@ -3,6 +3,7 @@
 #include "primitives/Primitives.h"
 
 #include <algorithm>
+#include <cctype>
 #include <format>
 #include <string>
 #include <vector>
@@ -101,7 +102,7 @@ void ParameterPanel::buildWidgets() {
 		[this](double v) { if (callbacks.onTectonicPlates) callbacks.onTectonicPlates(v); });
 
 	addSlider(radiusSlider, 0.1, 10.0, 0.0, 1.0, true,
-		"Radius (R⊕)",
+		"Radius (Re)",
 		[](double v) { return std::format("{:.2f}", v); },
 		callbacks.onPlanetRadius);
 
@@ -170,7 +171,7 @@ void ParameterPanel::buildWidgets() {
 		.size = {200.0F, 28.0F},
 		.placeholder = "Random seed...",
 		.id = "seed_input",
-		.onChange = callbacks.onSeedChanged,
+		.onChange = [this](const std::string& text) { onSeedTextChanged(text); },
 	});
 
 	randomizeButton = std::make_unique<UI::Button>(UI::Button::Args{
@@ -181,7 +182,9 @@ void ParameterPanel::buildWidgets() {
 		.onClick = callbacks.onRandomize,
 		.id = "btn_randomize",
 	});
-	nextY += 28.0F + kSectionSpacing;
+	nextY += 28.0F + 2.0F;
+	seedErrorY = position.y + nextY;
+	nextY += kLabelHeight + kSectionSpacing - 2.0F;
 
 	// Action buttons
 	float btnY = position.y + nextY;
@@ -210,12 +213,13 @@ void ParameterPanel::setGenerating(bool gen) {
 	generating = gen;
 
 	// Toggle which button is visible
-	if (generateButton) { generateButton->visible = !gen; }
+	if (generateButton) { generateButton->visible = !gen; applyGenerateEnabled(); }
 	if (cancelButton)   { cancelButton->visible = gen; }
 
 	// Disable all parameter controls during generation
 	bool dis = gen;
-	if (presetSelect)       { /* Select has no setDisabled yet - leave it */ }
+	if (presetSelect)       { presetSelect->setDisabled(dis); }
+	if (resolutionSelect)   { resolutionSelect->setDisabled(dis); }
 	if (waterSlider)        { waterSlider->setDisabled(dis); }
 	if (platesSlider)       { platesSlider->setDisabled(dis); }
 	if (radiusSlider)       { radiusSlider->setDisabled(dis); }
@@ -253,12 +257,48 @@ void ParameterPanel::syncValues(
 	if (seedInput)          { seedInput->setText(std::to_string(seed)); }
 }
 
-uint64_t ParameterPanel::getSeedValue() const {
-	if (!seedInput) return 0;
-	try {
-		return std::stoull(seedInput->getText());
-	} catch (...) {
-		return 0;
+void ParameterPanel::setResolutionValue(const std::string& value) {
+	if (resolutionSelect) {
+		resolutionSelect->setValue(value);
+	}
+}
+
+bool ParameterPanel::seedIsEmpty() const {
+	return seedState == SeedState::Empty;
+}
+
+void ParameterPanel::onSeedTextChanged(const std::string& text) {
+	if (text.empty()) {
+		seedState = SeedState::Empty;
+	} else {
+		bool digitsOnly = std::all_of(text.begin(), text.end(),
+			[](unsigned char c) { return std::isdigit(c); });
+		uint64_t parsed = 0;
+		bool parses = false;
+		if (digitsOnly) {
+			try {
+				parsed = std::stoull(text);
+				parses = true;
+			} catch (...) {}
+		}
+		seedState = parses ? SeedState::Valid : SeedState::Invalid;
+		if (parses && callbacks.onSeedChanged) {
+			callbacks.onSeedChanged(std::to_string(parsed));
+		}
+	}
+
+	// Red border while invalid
+	if (seedInput) {
+		seedInput->style.borderColor = (seedState == SeedState::Invalid)
+			? Foundation::Color{0.85F, 0.3F, 0.3F, 1.0F}
+			: UI::TextInputStyle{}.borderColor;
+	}
+	applyGenerateEnabled();
+}
+
+void ParameterPanel::applyGenerateEnabled() {
+	if (generateButton) {
+		generateButton->setDisabled(seedState == SeedState::Invalid);
 	}
 }
 
@@ -296,7 +336,6 @@ void ParameterPanel::render() {
 		label.render();
 	}
 
-	if (presetSelect)       { presetSelect->render(); }
 	if (waterSlider)        { waterSlider->render(); }
 	if (platesSlider)       { platesSlider->render(); }
 	if (radiusSlider)       { radiusSlider->render(); }
@@ -306,11 +345,29 @@ void ParameterPanel::render() {
 	if (starTempSlider)     { starTempSlider->render(); }
 	if (semiMajorSlider)    { semiMajorSlider->render(); }
 	if (eccentricitySlider) { eccentricitySlider->render(); }
-	if (resolutionSelect)   { resolutionSelect->render(); }
 	if (seedInput)          { seedInput->render(); }
+	if (seedState == SeedState::Invalid) {
+		UI::Text seedError(UI::Text::Args{
+			.position = {position.x + kSliderX, seedErrorY},
+			.text = "Seed must be a valid 64-bit number",
+			.style = {
+				.color = Foundation::Color{0.9F, 0.4F, 0.4F, 1.0F},
+				.fontSize = 11.0F,
+				.hAlign = Foundation::HorizontalAlign::Left,
+				.vAlign = Foundation::VerticalAlign::Top,
+			},
+		});
+		seedError.render();
+	}
 	if (randomizeButton)    { randomizeButton->render(); }
 	if (generateButton && generateButton->visible) { generateButton->render(); }
 	if (cancelButton && cancelButton->visible)     { cancelButton->render(); }
+
+	// Dropdowns last: the batch renderer draws in submission order, so open
+	// menus must be painted after the widgets they overlap (mirrors the
+	// reverse hit-test order in handleEvent).
+	if (presetSelect)       { presetSelect->render(); }
+	if (resolutionSelect)   { resolutionSelect->render(); }
 }
 
 bool ParameterPanel::handleEvent(UI::InputEvent& event) {

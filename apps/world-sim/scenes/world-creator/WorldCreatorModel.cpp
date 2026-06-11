@@ -10,7 +10,13 @@ WorldCreatorModel::WorldCreatorModel() {
 }
 
 void WorldCreatorModel::setPreset(worldgen::Preset preset) {
+	// Presets define the planet, not the generator: keep seed and resolution
+	// so switching presets doesn't silently diverge from what the UI shows
+	uint64_t seed = params.seed;
+	uint32_t subdivision = params.gridSubdivision;
 	params = worldgen::PlanetParams::preset(preset);
+	params.seed = seed;
+	params.gridSubdivision = subdivision;
 }
 
 void WorldCreatorModel::setWaterAmount(double percent) {
@@ -84,6 +90,15 @@ void WorldCreatorModel::resetToConfiguring() {
 	result.reset();
 }
 
+void WorldCreatorModel::restoreResult(std::shared_ptr<const worldgen::GeneratedWorld> world) {
+	if (!world) {
+		return;
+	}
+	params = world->params;
+	result = std::move(world);
+	state = WorldCreatorState::Reviewing;
+}
+
 worldgen::GenerationProgress WorldCreatorModel::pollProgress() {
 	if (state != WorldCreatorState::Generating) {
 		return {};
@@ -93,7 +108,8 @@ worldgen::GenerationProgress WorldCreatorModel::pollProgress() {
 
 	if (prog.state == worldgen::GenerationProgress::State::Complete) {
 		result = generator.takeResult();
-		state = WorldCreatorState::Reviewing;
+		// Complete with no result is a failure, not a reviewable world
+		state = result ? WorldCreatorState::Reviewing : WorldCreatorState::Configuring;
 	} else if (prog.state == worldgen::GenerationProgress::State::Cancelled ||
 	           prog.state == worldgen::GenerationProgress::State::Failed) {
 		state = WorldCreatorState::Configuring;

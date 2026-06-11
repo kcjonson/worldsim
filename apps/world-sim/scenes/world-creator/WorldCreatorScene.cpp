@@ -1,8 +1,11 @@
 // World Creator Scene
-// Three states: Configuring (parameter panel), Generating (progress), Reviewing (results).
+// Three states: Configuring (parameter panel), Generating (progress + live globe),
+// Reviewing (final globe + stats + continue to landing site selection).
 
+#include "GameStartConfig.h"
 #include "SceneTypes.h"
 #include "WorldCreatorModel.h"
+#include "scenes/shared/GlobeView.h"
 #include "ui/ParameterPanel.h"
 
 #include <GL/glew.h>
@@ -21,17 +24,27 @@
 #include <format>
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace {
 
 constexpr const char* kSceneName = "world_creator";
 constexpr float kPanelWidth = 320.0F;
 constexpr float kProgressBarHeight = 16.0F;
+// Creator opens at preview resolution for fast iteration; must match the
+// resolution select's initial value in ParameterPanel (PlanetParams defaults
+// to 1024, which the panel would otherwise misreport).
+constexpr uint32_t kInitialSubdivision = 256;
 
 class WorldCreatorScene : public engine::IScene {
   public:
 	const char* getName() const override { return kSceneName; }
-	std::string exportState() override { return R"({"scene":"world_creator"})"; }
+	std::string exportState() override {
+		return std::format(
+			R"({{"scene":"world_creator","state":{},"globe":{}}})",
+			static_cast<int>(model.getState()),
+			globe.isReady() ? "true" : "false");
+	}
 
 	void onEnter() override {
 		LOG_INFO(Game, "WorldCreatorScene - Entering");
@@ -43,6 +56,24 @@ class WorldCreatorScene : public engine::IScene {
 		viewportH = static_cast<float>(vpH);
 
 		buildUI();
+
+		// Returning from landing site selection: restore the generated world
+		// into Reviewing instead of starting over
+		if (world_sim::GameStartConfig::HasPending()) {
+			auto config = world_sim::GameStartConfig::Take();
+			if (config && config->world) {
+				LOG_INFO(Game, "WorldCreatorScene: restoring generated world for review");
+				model.restoreResult(config->world);
+				syncPanelFromModel();
+				if (panel) {
+					panel->setResolutionValue(
+						std::to_string(model.getParams().gridSubdivision));
+				}
+				lastSnapshot = config->world;
+				globe.setWorld(config->world);
+				onStateChanged(world_sim::WorldCreatorState::Reviewing);
+			}
+		}
 	}
 
 	void onExit() override {
@@ -51,16 +82,25 @@ class WorldCreatorScene : public engine::IScene {
 		progressBar.reset();
 		stageText.reset();
 		regenButton.reset();
+		landingButton.reset();
 	}
 
 	bool handleInput(UI::InputEvent& event) override {
+		// Mid-drag the globe owns the mouse: widgets must not see the moves
+		// (hover flicker) and the drag-ending MouseUp belongs to the camera
+		if (globe.isDragging() && globe.handleInput(event, mainRect(), true)) {
+			return true;
+		}
 		if (panel) {
 			if (panel->handleEvent(event)) return true;
 		}
 		if (regenButton && regenButton->visible) {
 			if (regenButton->handleEvent(event)) return true;
 		}
-		return false;
+		if (landingButton && landingButton->visible) {
+			if (landingButton->handleEvent(event)) return true;
+		}
+		return globe.handleInput(event, mainRect(), true);
 	}
 
 	void update(float dt) override {
@@ -74,6 +114,8 @@ class WorldCreatorScene : public engine::IScene {
 			return;
 		}
 
+		globe.update(dt);
+
 		auto state = model.getState();
 
 		if (state == world_sim::WorldCreatorState::Generating) {
@@ -85,34 +127,72 @@ class WorldCreatorScene : public engine::IScene {
 				stageText->text = prog.stageName ? prog.stageName : "";
 			}
 
+			// Upload colors progressively as stages publish snapshots
+			auto snap = model.snapshot();
+			if (snap && snap != lastSnapshot) {
+				lastSnapshot = snap;
+				globe.setWorld(snap);
+			}
+
 			// Re-check after poll (state may have changed)
 			auto newState = model.getState();
 			if (newState != state) {
+				// Anything other than a clean completion or a user cancel is an error
+				if (newState == world_sim::WorldCreatorState::Configuring &&
+				    prog.state != worldgen::GenerationProgress::State::Cancelled) {
+					errorText = "World generation failed. Adjust parameters and try again.";
+					LOG_ERROR(Game, "WorldCreatorScene: generation ended without a result (state=%d)",
+					          static_cast<int>(prog.state));
+				}
 				onStateChanged(newState);
 			}
 		}
 
 		if (panel) { panel->update(dt); }
 		if (regenButton) { regenButton->update(dt); }
+		if (landingButton) { landingButton->update(dt); }
 	}
 
 	void render() override {
 		glClearColor(0.08F, 0.07F, 0.12F, 1.0F);
 		glClear(GL_COLOR_BUFFER_BIT);
 
+		Foundation::Rect rect = mainRect();
+
+		// 3D pass first: Primitives batches flush after the scene, so all 2D
+		// UI composites on top of the blitted globe.
+		if (globe.isReady()) {
+			globe.render(rect, viewportW, viewportH);
+		} else {
+			renderPlaceholder(rect);
+		}
+
 		renderTitle();
 
-		auto state = model.getState();
-
-		// Parameter panel always visible
 		if (panel) { panel->render(); }
 
+		auto state = model.getState();
 		if (state == world_sim::WorldCreatorState::Generating) {
-			renderGeneratingOverlay();
+			if (stageText)   { stageText->render(); }
+			if (progressBar) { progressBar->render(); }
 		} else if (state == world_sim::WorldCreatorState::Reviewing) {
-			renderReviewingView();
-		} else {
-			renderConfigPlaceholder();
+			renderReviewingOverlay(rect);
+		} else if (!errorText.empty()) {
+			UI::Text err(UI::Text::Args{
+				.position = {rect.x, viewportH - 60.0F},
+				.text = errorText,
+				.style = {
+					.color = Foundation::Color{0.9F, 0.4F, 0.4F, 1.0F},
+					.fontSize = 14.0F,
+					.hAlign = Foundation::HorizontalAlign::Left,
+					.vAlign = Foundation::VerticalAlign::Middle,
+				},
+			});
+			err.render();
+		}
+
+		if (globe.isReady()) {
+			renderModeHint(rect);
 		}
 
 		renderEscHint();
@@ -128,6 +208,18 @@ class WorldCreatorScene : public engine::IScene {
 	std::unique_ptr<UI::ProgressBar> progressBar;
 	std::unique_ptr<UI::Text>        stageText;
 	std::unique_ptr<UI::Button>      regenButton;
+	std::unique_ptr<UI::Button>      landingButton;
+
+	world_sim::GlobeView globe;
+	std::shared_ptr<const worldgen::GeneratedWorld> lastSnapshot;
+	std::string errorText;
+
+	// Main content area right of the parameter panel. Bottom strip (80px)
+	// holds the progress bar / stage text / stats / action buttons.
+	Foundation::Rect mainRect() const {
+		float x = kPanelWidth + 20.0F;
+		return {x, 40.0F, viewportW - x - 20.0F, viewportH - 120.0F};
+	}
 
 	void buildUI() {
 		world_sim::ParameterPanelCallbacks cbs;
@@ -173,6 +265,7 @@ class WorldCreatorScene : public engine::IScene {
 
 		panel = std::make_unique<world_sim::ParameterPanel>(
 			Foundation::Vec2{0.0F, 30.0F}, std::move(cbs));
+		model.setGridSubdivision(kInitialSubdivision);
 
 		// Progress bar (hidden until Generating)
 		float mainX = kPanelWidth + 20.0F;
@@ -195,7 +288,7 @@ class WorldCreatorScene : public engine::IScene {
 		});
 		stageText->visible = false;
 
-		// Regenerate button (only in Reviewing state)
+		// Reviewing-state actions
 		regenButton = std::make_unique<UI::Button>(UI::Button::Args{
 			.label = "Regenerate",
 			.position = {mainX, viewportH - 50.0F},
@@ -205,34 +298,16 @@ class WorldCreatorScene : public engine::IScene {
 			.id = "btn_regenerate",
 		});
 		regenButton->visible = false;
-	}
 
-	void startGeneration() {
-		model.startGeneration();
-		if (panel) panel->setGenerating(true);
-		if (progressBar) { progressBar->setValue(0.0F); progressBar->visible = true; }
-		if (stageText)   { stageText->text = "Starting..."; stageText->visible = true; }
-		if (regenButton) regenButton->visible = false;
-	}
-
-	void onStateChanged(world_sim::WorldCreatorState newState) {
-		if (newState == world_sim::WorldCreatorState::Reviewing) {
-			if (panel)       panel->setGenerating(false);
-			if (progressBar) progressBar->visible = false;
-			if (stageText)   stageText->visible = false;
-			if (regenButton) regenButton->visible = true;
-		} else if (newState == world_sim::WorldCreatorState::Configuring) {
-			if (panel)       panel->setGenerating(false);
-			if (progressBar) progressBar->visible = false;
-			if (stageText)   stageText->visible = false;
-			if (regenButton) regenButton->visible = false;
-		}
-	}
-
-	void onRegenerate() {
-		model.resetToConfiguring();
-		if (regenButton) regenButton->visible = false;
-		if (panel)       panel->setGenerating(false);
+		landingButton = std::make_unique<UI::Button>(UI::Button::Args{
+			.label = "Choose Landing Site",
+			.position = {mainX + 176.0F, viewportH - 50.0F},
+			.size = {200.0F, 36.0F},
+			.type = UI::Button::Type::Primary,
+			.onClick = [this]() { onChooseLandingSite(); },
+			.id = "btn_choose_landing",
+		});
+		landingButton->visible = false;
 	}
 
 	void syncPanelFromModel() {
@@ -250,6 +325,100 @@ class WorldCreatorScene : public engine::IScene {
 				p.eccentricity,
 				p.seed);
 		}
+	}
+
+	void startGeneration() {
+		if (panel && !panel->seedIsValid()) {
+			return;
+		}
+
+		// Blank seed means "surprise me": pick a fresh seed each run so Regenerate
+		// doesn't silently reproduce the identical world from the preset default.
+		if (panel && panel->seedIsEmpty()) {
+			model.randomizeSeed();
+			syncPanelFromModel();
+		}
+
+		errorText.clear();
+		lastSnapshot.reset();
+
+		model.startGeneration();
+		if (panel) panel->setGenerating(true);
+		if (progressBar) { progressBar->setValue(0.0F); progressBar->visible = true; }
+		if (stageText)   { stageText->text = "Starting..."; stageText->visible = true; }
+		if (regenButton)   regenButton->visible = false;
+		if (landingButton) landingButton->visible = false;
+	}
+
+	void onStateChanged(world_sim::WorldCreatorState newState) {
+		if (newState == world_sim::WorldCreatorState::Reviewing) {
+			if (panel)         panel->setGenerating(false);
+			if (progressBar)   progressBar->visible = false;
+			if (stageText)     stageText->visible = false;
+			if (regenButton)   regenButton->visible = true;
+			if (landingButton) landingButton->visible = true;
+
+			// Final colors from the completed world
+			if (auto result = model.getResult()) {
+				lastSnapshot = result;
+				globe.setWorld(result);
+			}
+		} else if (newState == world_sim::WorldCreatorState::Configuring) {
+			if (panel)         panel->setGenerating(false);
+			if (progressBar)   progressBar->visible = false;
+			if (stageText)     stageText->visible = false;
+			if (regenButton)   regenButton->visible = false;
+			if (landingButton) landingButton->visible = false;
+		}
+	}
+
+	void onRegenerate() {
+		model.resetToConfiguring();
+		if (regenButton)   regenButton->visible = false;
+		if (landingButton) landingButton->visible = false;
+		if (panel)         panel->setGenerating(false);
+	}
+
+	void onChooseLandingSite() {
+		auto result = model.getResult();
+		if (!result) {
+			return;
+		}
+		LOG_INFO(Game, "WorldCreatorScene: continuing to landing site selection");
+		auto config = std::make_unique<world_sim::GameStartConfig>();
+		config->source = world_sim::GameStartConfig::Source::NewGame;
+		config->world = result;
+		world_sim::GameStartConfig::SetPending(std::move(config));
+		sceneManager->switchTo(world_sim::toKey(world_sim::SceneType::LandingSite));
+	}
+
+	void renderPlaceholder(const Foundation::Rect& rect) {
+		Renderer::Primitives::drawRect({
+			.bounds = rect,
+			.style = {
+				.fill = Foundation::Color{0.05F, 0.05F, 0.08F, 1.0F},
+				.border = Foundation::BorderStyle{
+					.color = Foundation::Color{0.2F, 0.2F, 0.25F, 1.0F},
+					.width = 1.0F,
+				},
+			},
+			.id = "planet_view_placeholder",
+		});
+
+		bool generating = model.getState() == world_sim::WorldCreatorState::Generating;
+		UI::Text placeholder(UI::Text::Args{
+			.position = {rect.x + rect.width * 0.5F, rect.y + rect.height * 0.5F},
+			.text = generating ? "Generating World..." : "Set parameters and press Generate",
+			.style = {
+				.color = generating
+					? Foundation::Color{0.7F, 0.75F, 1.0F, 1.0F}
+					: Foundation::Color{0.3F, 0.3F, 0.35F, 1.0F},
+				.fontSize = 18.0F,
+				.hAlign = Foundation::HorizontalAlign::Center,
+				.vAlign = Foundation::VerticalAlign::Middle,
+			},
+		});
+		placeholder.render();
 	}
 
 	void renderTitle() {
@@ -280,123 +449,68 @@ class WorldCreatorScene : public engine::IScene {
 		hint.render();
 	}
 
-	void renderConfigPlaceholder() {
-		float mainX = kPanelWidth + 20.0F;
-		float mainW = viewportW - mainX - 20.0F;
-		float mainH = viewportH - 80.0F;
-
-		Renderer::Primitives::drawRect({
-			.bounds = {mainX, 40.0F, mainW, mainH},
+	void renderModeHint(const Foundation::Rect& rect) {
+		std::string label = std::string("Mode: ") +
+			planetview::colorModeName(globe.colorMode()) +
+			"   (right-click to cycle, drag to orbit, scroll to zoom)";
+		UI::Text hint(UI::Text::Args{
+			.position = {rect.x + 10.0F, rect.y + 10.0F},
+			.text = label,
 			.style = {
-				.fill = Foundation::Color{0.05F, 0.05F, 0.08F, 1.0F},
-				.border = Foundation::BorderStyle{
-					.color = Foundation::Color{0.2F, 0.2F, 0.25F, 1.0F},
-					.width = 1.0F,
-				},
-			},
-			.id = "planet_view_placeholder",
-		});
-
-		UI::Text placeholder(UI::Text::Args{
-			.position = {mainX + mainW * 0.5F, 40.0F + mainH * 0.5F},
-			.text = "Planet view coming in M5",
-			.style = {
-				.color = Foundation::Color{0.3F, 0.3F, 0.35F, 1.0F},
-				.fontSize = 18.0F,
-				.hAlign = Foundation::HorizontalAlign::Center,
-				.vAlign = Foundation::VerticalAlign::Middle,
+				.color = Foundation::Color{0.8F, 0.8F, 0.8F, 0.9F},
+				.fontSize = 12.0F,
+				.hAlign = Foundation::HorizontalAlign::Left,
+				.vAlign = Foundation::VerticalAlign::Top,
 			},
 		});
-		placeholder.render();
+		hint.render();
 	}
 
-	void renderGeneratingOverlay() {
-		float mainX = kPanelWidth + 20.0F;
-		float mainW = viewportW - mainX - 20.0F;
-		float mainH = viewportH - 80.0F;
-
-		Renderer::Primitives::drawRect({
-			.bounds = {mainX, 40.0F, mainW, mainH},
-			.style = {
-				.fill = Foundation::Color{0.04F, 0.04F, 0.07F, 1.0F},
-				.border = Foundation::BorderStyle{
-					.color = Foundation::Color{0.2F, 0.2F, 0.25F, 1.0F},
-					.width = 1.0F,
-				},
-			},
-			.id = "generating_bg",
-		});
-
-		UI::Text genLabel(UI::Text::Args{
-			.position = {mainX + mainW * 0.5F, 40.0F + mainH * 0.5F - 20.0F},
-			.text = "Generating World...",
-			.style = {
-				.color = Foundation::Color{0.7F, 0.75F, 1.0F, 1.0F},
-				.fontSize = 22.0F,
-				.hAlign = Foundation::HorizontalAlign::Center,
-				.vAlign = Foundation::VerticalAlign::Middle,
-			},
-		});
-		genLabel.render();
-
-		if (stageText)   { stageText->render(); }
-		if (progressBar) { progressBar->render(); }
-	}
-
-	void renderReviewingView() {
-		float mainX = kPanelWidth + 20.0F;
-		float mainW = viewportW - mainX - 20.0F;
-		float mainH = viewportH - 120.0F;
-
-		Renderer::Primitives::drawRect({
-			.bounds = {mainX, 40.0F, mainW, mainH},
-			.style = {
-				.fill = Foundation::Color{0.05F, 0.05F, 0.08F, 1.0F},
-				.border = Foundation::BorderStyle{
-					.color = Foundation::Color{0.2F, 0.35F, 0.25F, 1.0F},
-					.width = 1.0F,
-				},
-			},
-			.id = "review_planet_placeholder",
-		});
-
-		UI::Text ready(UI::Text::Args{
-			.position = {mainX + mainW * 0.5F, 40.0F + mainH * 0.4F},
-			.text = "World Generated",
-			.style = {
-				.color = Foundation::Color{0.4F, 0.9F, 0.5F, 1.0F},
-				.fontSize = 26.0F,
-				.hAlign = Foundation::HorizontalAlign::Center,
-				.vAlign = Foundation::VerticalAlign::Middle,
-			},
-		});
-		ready.render();
-
-		// Stats from completed world summary
+	void renderReviewingOverlay(const Foundation::Rect& rect) {
+		// Only report stats whose underlying fields the pipeline actually
+		// produced; unimplemented stages must not masquerade as data.
 		auto worldResult = model.getResult();
-		std::string statsStr = "Generating...";
+		std::string statsStr;
 		if (worldResult) {
+			auto hasField = [&](worldgen::WorldField f) {
+				return (worldResult->validFields & static_cast<uint32_t>(f)) != 0;
+			};
 			const auto& summary = worldResult->summary;
-			statsStr = std::format(
-				"Land: {:.0f}%  |  Mean Temp: {:.1f}C  |  Habitability: {:.0f}%",
-				summary.landFraction * 100.0F,
-				summary.meanTemperatureC,
-				summary.habitability * 100.0F);
+			std::vector<std::string> parts;
+			if (hasField(worldgen::WorldField::Elevation)) {
+				parts.push_back(std::format("Land: {:.0f}%", summary.landFraction * 100.0F));
+			}
+			if (hasField(worldgen::WorldField::TemperatureMean)) {
+				parts.push_back(std::format("Mean Temp: {:.1f}C", summary.meanTemperatureC));
+			}
+			if (hasField(worldgen::WorldField::Biome)) {
+				parts.push_back(std::format("Habitability: {:.0f}%", summary.habitability * 100.0F));
+			}
+			for (size_t i = 0; i < parts.size(); ++i) {
+				if (i > 0) statsStr += "  |  ";
+				statsStr += parts[i];
+			}
+			if (statsStr.empty()) {
+				statsStr = "World generated (no summary stats yet)";
+			}
 		}
 
-		UI::Text stats(UI::Text::Args{
-			.position = {mainX + mainW * 0.5F, 40.0F + mainH * 0.4F + 36.0F},
-			.text = statsStr,
-			.style = {
-				.color = Foundation::Color{0.75F, 0.75F, 0.75F, 1.0F},
-				.fontSize = 15.0F,
-				.hAlign = Foundation::HorizontalAlign::Center,
-				.vAlign = Foundation::VerticalAlign::Middle,
-			},
-		});
-		stats.render();
+		if (!statsStr.empty()) {
+			UI::Text stats(UI::Text::Args{
+				.position = {rect.x + rect.width * 0.5F, rect.y + rect.height + 20.0F},
+				.text = statsStr,
+				.style = {
+					.color = Foundation::Color{0.75F, 0.75F, 0.75F, 1.0F},
+					.fontSize = 15.0F,
+					.hAlign = Foundation::HorizontalAlign::Center,
+					.vAlign = Foundation::VerticalAlign::Middle,
+				},
+			});
+			stats.render();
+		}
 
-		if (regenButton) { regenButton->render(); }
+		if (regenButton)   { regenButton->render(); }
+		if (landingButton) { landingButton->render(); }
 	}
 };
 

@@ -251,45 +251,7 @@ void PlanetGenerator::runPipeline(PlanetParams params) {
 // ============================================================================
 
 uint64_t PlanetGenerator::computeFieldChecksums(const GeneratedWorld& w) {
-    using foundation::hashSpan;
-    using foundation::hashCombine;
-    using foundation::kFnvOffset;
-
-    uint64_t h = kFnvOffset;
-    uint32_t vf = w.validFields;
-
-    if (vf & static_cast<uint32_t>(WorldField::Elevation))
-        h = hashCombine(h, hashSpan(w.data.elevation));
-    if (vf & static_cast<uint32_t>(WorldField::TemperatureMean))
-        h = hashCombine(h, hashSpan(w.data.temperatureMean));
-    if (vf & static_cast<uint32_t>(WorldField::TemperatureRange))
-        h = hashCombine(h, hashSpan(w.data.temperatureRange));
-    if (vf & static_cast<uint32_t>(WorldField::Precipitation))
-        h = hashCombine(h, hashSpan(w.data.precipitation));
-    if (vf & static_cast<uint32_t>(WorldField::WindDir))
-        h = hashCombine(h, hashSpan(w.data.windDir));
-    if (vf & static_cast<uint32_t>(WorldField::WindSpeed))
-        h = hashCombine(h, hashSpan(w.data.windSpeed));
-    if (vf & static_cast<uint32_t>(WorldField::PlateId))
-        h = hashCombine(h, hashSpan(w.data.plateId));
-    if (vf & static_cast<uint32_t>(WorldField::BoundaryType))
-        h = hashCombine(h, hashSpan(w.data.boundaryType));
-    if (vf & static_cast<uint32_t>(WorldField::BoundaryDistance))
-        h = hashCombine(h, hashSpan(w.data.boundaryDistance));
-    if (vf & static_cast<uint32_t>(WorldField::Biome))
-        h = hashCombine(h, hashSpan(w.data.biome));
-    if (vf & static_cast<uint32_t>(WorldField::Flags))
-        h = hashCombine(h, hashSpan(w.data.flags));
-    if (vf & static_cast<uint32_t>(WorldField::WaterDepth))
-        h = hashCombine(h, hashSpan(w.data.waterDepth));
-    if (vf & static_cast<uint32_t>(WorldField::FlowAccum))
-        h = hashCombine(h, hashSpan(w.data.flowAccum));
-    if (vf & static_cast<uint32_t>(WorldField::Downhill))
-        h = hashCombine(h, hashSpan(w.data.downhill));
-    if (vf & static_cast<uint32_t>(WorldField::SnowCover))
-        h = hashCombine(h, hashSpan(w.data.snowCover));
-
-    return h;
+    return computeWorldDataHash(w.validFields, w.data);
 }
 
 } // namespace worldgen

@@ -48,6 +48,19 @@ namespace Foundation { // NOLINT(readability-identifier-naming)
 		float panY = 0.0F;
 	};
 
+	// Synthetic input injected via /api/input. Coordinates are logical UI
+	// pixels (same space the screenshot endpoint captures). Click expands to
+	// move+down+up at dispatch so single-shot interactions are one request;
+	// multi-frame gestures (drags) use separate down/move/up requests.
+	struct InputCommand {
+		enum class Type : std::uint8_t { Move, Down, Up, Click, Scroll };
+		Type		 type{Type::Click};
+		float		 x = 0.0F;
+		float		 y = 0.0F;
+		std::uint8_t button = 0; // 0=left, 1=right, 2=middle
+		float		 scrollDelta = 0.0F;
+	};
+
 	// Log levels (must match foundation::LogLevel enum)
 	enum class LogLevel : std::uint8_t { Debug, Info, Warning, Error }; // NOLINT(performance-enum-size)
 
@@ -128,6 +141,10 @@ namespace Foundation { // NOLINT(readability-identifier-naming)
 		// command was written since the last consume.
 		bool consumeCameraCommand(CameraCommand& out);
 
+		// Consume queued synthetic input (game thread). Appends to out and
+		// returns true if any commands were pending.
+		bool consumeInputCommands(std::vector<InputCommand>& out);
+
 		// Set/get current scene name (for metrics streaming to frontend)
 		void		setCurrentSceneName(const std::string& name);
 		std::string getCurrentSceneName() const;
@@ -166,6 +183,11 @@ namespace Foundation { // NOLINT(readability-identifier-naming)
 		CameraCommand	   cameraCommand;
 		std::atomic<bool>  cameraCommandPending{false};
 		mutable std::mutex cameraCommandMutex; // Protects cameraCommand
+
+		// Synthetic input queue (HTTP thread writes, game thread consumes)
+		std::vector<InputCommand> inputCommands;
+		std::atomic<bool>		  inputCommandsPending{false};
+		mutable std::mutex		  inputCommandsMutex; // Protects inputCommands
 
 		// Vsync target for SetVsync action (0 = off, 1 = on)
 		std::atomic<int> targetVsync{1};
