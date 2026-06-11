@@ -67,9 +67,14 @@ and caching it on first run.
   (1449) grid resolution.
 - Landing-site coast detection from neighbors rather than kFlagCoast (not yet
   produced by any stage); revisit when OceanStage sets it.
-- `scripts/ui-click.ps1`: dev helper that synthesizes clicks at logical UI
-  coordinates in the running window (DPI-aware, foreground-verified); used to
-  drive the e2e verification.
+- Input injection routes through the debug server like all dev helpers:
+  `/api/input?ev=click,x,y` queues synthetic events (move/down/up/click/
+  scroll, logical UI coordinates) that the main loop dispatches through the
+  same SceneManager path as real mouse input. The endpoint accepts multiple
+  `ev` params per request, so sequences batch into one round trip; a
+  streaming (WebSocket) channel was considered and deferred until something
+  needs server push — HTTP keep-alive plus batching covers current usage,
+  and curl-ability is worth keeping.
 
 ## Verification
 

@@ -31,6 +31,10 @@ namespace {
 constexpr const char* kSceneName = "world_creator";
 constexpr float kPanelWidth = 320.0F;
 constexpr float kProgressBarHeight = 16.0F;
+// Creator opens at preview resolution for fast iteration; must match the
+// resolution select's initial value in ParameterPanel (PlanetParams defaults
+// to 1024, which the panel would otherwise misreport).
+constexpr uint32_t kInitialSubdivision = 256;
 
 class WorldCreatorScene : public engine::IScene {
   public:
@@ -238,6 +242,7 @@ class WorldCreatorScene : public engine::IScene {
 
 		panel = std::make_unique<world_sim::ParameterPanel>(
 			Foundation::Vec2{0.0F, 30.0F}, std::move(cbs));
+		model.setGridSubdivision(kInitialSubdivision);
 
 		// Progress bar (hidden until Generating)
 		float mainX = kPanelWidth + 20.0F;

@@ -10,7 +10,13 @@ WorldCreatorModel::WorldCreatorModel() {
 }
 
 void WorldCreatorModel::setPreset(worldgen::Preset preset) {
+	// Presets define the planet, not the generator: keep seed and resolution
+	// so switching presets doesn't silently diverge from what the UI shows
+	uint64_t seed = params.seed;
+	uint32_t subdivision = params.gridSubdivision;
 	params = worldgen::PlanetParams::preset(preset);
+	params.seed = seed;
+	params.gridSubdivision = subdivision;
 }
 
 void WorldCreatorModel::setWaterAmount(double percent) {
