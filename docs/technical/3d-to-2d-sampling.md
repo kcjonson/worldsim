@@ -832,3 +832,25 @@ void ProfileChunkSampling() {
 ## Revision History
 
 - 2025-10-26: Initial 3D to 2D sampling technical specification
+- 2026-06-12: Hex conversion supersedes the FindClosestNeighbor / quadtree sketch
+
+## Historical addendum: implemented spherical lookup (2026-06-12)
+
+The `SphericalTileIndex` / `FindClosestNeighbor` / quadtree design above was an
+early sketch. What shipped in `libs/world/worldgen/sampling/PlanetSampler.cpp` is:
+
+```
+SphereGrid::HexSample s = grid.locateHex(latDeg, lonDeg);
+// s.tile           — the containing hex (nearest Voronoi center)
+// s.neighbor       — second-nearest center (the blend partner)
+// s.edgeDistance   — 0.5*(d2-d1) in lattice units; 0 on the Voronoi edge
+distToBoundary = s.edgeDistance * 2 * grid.tileWidthMeters(s.tile, planetRadius);
+```
+
+`locateHex` does cube rounding in the unskewed triangular lattice metric — O(1)
+with no spatial index. It finds the containing tile and the true Voronoi neighbor
+(2nd-nearest center, tie-broken to the smaller TileId) in a single pass. The
+`edgeDistance` maps directly to the `distToBoundary` value the chunk sampling
+design uses, with no separate `CalculateDistanceToNearestBoundary` call.
+
+The quadtree / `GetTileAtPosition` path was never built. There is no `SphericalTileIndex` in the codebase. The `chunk-management-system.md` and `biome-influence-system.md` references in this doc describe design intent, not shipped code.

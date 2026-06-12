@@ -1,8 +1,8 @@
 # World Generation Implementation
 
 Created: 2026-06-09
-Last Updated: 2026-06-09
-Status: Active (M2 complete, stub stages only; full stages in M3)
+Last Updated: 2026-06-12
+Status: Active (M2 complete, full stages in M3; Goldberg hex conversion in feature/worldgen-hex-tiles)
 
 Implemented by M2. For the higher-level pluggable architecture see
 [world-generation-architecture.md](./world-generation-architecture.md).
@@ -31,9 +31,11 @@ Tests live in `*.test.cpp` files discovered by CMake glob. Benchmarks in `*.benc
 
 ### Grid structure
 
-20 icosahedron faces are paired into 10 rhombi. Each rhombus contributes n² tile
-centers at lattice vertices (Goldberg hex layout). Total tiles = 10·n·n + 2 (the +2
-are the north and south pole tiles).
+20 icosahedron faces are paired into 10 rhombi (true Goldberg polyhedron layout).
+Tile centers sit at chart vertices (i/n, j/n), not cell centers. Because chart
+vertices are shared exactly across rhombus seams, the hex lattice closes cleanly
+across all edges with no special-casing. Total tiles = 10·n·n + 2 (the +2 are the
+north and south pole tiles).
 
 5 northern rhombi (r = 0..4):
 
@@ -49,16 +51,34 @@ are the north and south pole tiles).
 - C = south pole (vertex 11)
 - D = lower ring vertex (r+1)%5
 
-Each rhombus is subdivided into two triangles by the diagonal AC:
+Rhombus corners in (u,v): A=(0,0), B=(1,0), C=(1,1), D=(0,1). The two triangles
+share the fold/short diagonal B-D:
 - T1 (u+v ≤ 1): corners A, B, D
 - T2 (u+v > 1): corners B, C, D
 
 ### TileId encoding
 
-`TileId = rhombus * n*n + j*n + i`
+**(Contract amendment, 2026-06-12)** The original M2 encoding `r*n^2 + j*n + i` used
+cell-centered tiles at (i+0.5)/n and counted 10n^2 tiles. The Goldberg vertex
+conversion changed the layout to vertex-centered tiles at i/n, added the two pole
+tiles, and adjusted ownership to avoid double-counting shared edges and corners:
 
-where `i` is the u-axis index (0 = A side, n-1 = B/D side) and `j` is the
-v-axis index (0 = A side, n-1 = D/C side).
+```
+owned vertex: rhombus * n*n + j*n + (i-1)
+  rhombus in [0..9], i in [1..n], j in [0..n-1]
+
+north pole:  10*n*n       (kNorthPole)
+south pole:  10*n*n + 1   (kSouthPole)
+```
+
+`i` is the u-axis index (A→B direction), `j` is the v-axis index (A→D direction).
+Each rhombus owns n² vertices (i in [1..n], j in [0..n-1]); the u=0 seam (i=0),
+the v=n seam (j=n), and corner C=(n,n) are all owned by a neighboring rhombus and
+canonicalize there. The poles sit outside every owned range and carry the special ids.
+
+This was a deliberate breaking change (old-format files are rejected at load time;
+see PlanetIO section). Downstream fields that index into the neighbor list (e.g.,
+`downhill`) changed range from 0..7 to 0..5 at the same time.
 
 ### Forward mapping (uvToDir)
 
@@ -91,21 +111,41 @@ Built by matching shared vertex pairs across rhombus edges:
 The `reversed` flag in `EdgeAdj` captures whether the shared edge runs in the
 opposite direction, needed to correctly map the coordinate along that edge.
 
+### Assignment
+
+`fromUnitVector` and `fromLatLon` cube-round the fractional axial coordinate
+(u·n, v·n) via `hexRound` — the same `floor(x+0.5)` tie-break that `planet.frag`
+mirrors exactly, keeping GPU rendering consistent with CPU picking. The result is
+then passed through `canonicalVertex` to resolve ownership across seams.
+
 ### Neighbor lookup
 
-`neighbors(t, out)` returns the 6 hex neighbors via axial offsets (+1,0), (-1,0),
-(0,+1), (0,-1), (+1,-1), (-1,+1), canonicalized across rhombus edges. Interior
-tiles return 6 neighbors. Exactly 12 pentagon tiles (the icosahedron vertices,
-including both poles) return 5 neighbors.
+`neighbors(t, out)` returns the 6 hex neighbors in the **fixed offset order**
+`(+1,0) (-1,0) (0,+1) (0,-1) (+1,-1) (-1,+1)`, canonicalized across rhombus
+edges, deduplicated, and `kInvalidTile`-free. The order is load-bearing:
+`WorldData::downhill` stores an index 0..5 into this list.
+
+Interior tiles return 6 neighbors. The 12 icosahedron-vertex tiles (including both
+poles) are pentagons with exactly 5 neighbors; no other tile count exists.
+
+### EdgeXform seam maps
+
+For each of the 40 (rhombus, edge) pairs, `edgeXform` stores an integer affine
+transform `(i', j') = M*(i,j) + t` that maps a vertex in the current chart to
+the identical physical vertex in the neighbor chart across that edge. The 2×2
+block M is a triangular-lattice automorphism (60° fold); the translation t scales
+with n. Used by `canonicalVertex` and `canonicalTile` to resolve out-of-range and
+unowned vertices without any floating-point geometry.
 
 ### rhombusPointOnSphere (added M3f)
 
 `rhombusPointOnSphere(rhombus, u, v)` is a thin public wrapper around the
-internal `uvToDir()` forward mapping. It was added for `planet-view` so mesh
-vertex positions use the same icosahedral barycentric math as tile placement —
-neighboring rhombi share exact edge vertices, eliminating mesh seam artifacts.
+internal `uvToDir()` forward mapping. Added for `planet-view` so mesh vertex
+positions use the same icosahedral barycentric math as tile placement — neighboring
+rhombi share exact edge vertices, eliminating mesh seam artifacts.
 
-Contract: `rhombusPointOnSphere(r, (i+0.5)/n, (j+0.5)/n) == tileCenter(r*n*n + j*n + i)`
+Contract: `rhombusPointOnSphere(r, i/n, j/n) == tileCenter(r*n*n + j*n + (i-1))`
+for owned vertices (i in [1..n], j in [0..n-1]).
 
 Tested by `SphereGrid.RhombusPointMatchesTileCenter`.
 
@@ -321,16 +361,41 @@ Benchmark files: `*.bench.cpp` (5 benchmarks).
 
 ---
 
+## PlanetIO format
+
+`libs/world/worldgen/io/PlanetIO.h` — binary format "WSPL", little-endian.
+
+**Format version 2** (current). Version 1 is rejected at load time; the
+`GameLoadingScene` auto-regenerates on any load failure, so old quickstart caches
+silently rebuild. Bumped when the Goldberg conversion changed the TileId encoding
+and the neighbor-derived `downhill` field range.
+
+The format spec table in the header documents all field offsets and sizes.
+`downhill` range is 0..5 (neighbor index into the 6-offset fixed order) or 0xFF
+for a sink tile.
+
+---
+
 ## Frozen contracts (M2 → M3 interface)
 
-These are the fixed interfaces that M3 sub-stages must respect:
+These are the fixed interfaces that M3 sub-stages must respect. Two deliberate
+amendments were made during the Goldberg hex conversion (2026-06-12); both are
+called out below.
 
-- **TileId encoding**: `rhombus * n*n + j*n + i`. Never changes.
+- **TileId encoding** *(amended)*: `rhombus * n*n + j*n + (i-1)` for owned
+  vertices; `10*n*n` / `10*n*n+1` for the poles. The original M2 encoding
+  (`r*n^2 + j*n + i`, cell-centered, 10n^2 tiles) was replaced wholesale when
+  vertex-centered Goldberg tiles were adopted. Old-format PlanetIO files are
+  rejected; all consumers updated in the same PR.
 - **WorldData field units**: as tabulated above. M3 writes within the same types/ranges.
 - **WorldField bits 0..14**: fixed allocation per field; do not reuse bits.
 - **kAllWorldFields = 0x7FFFu**: M3 does not add new fields without expanding this.
-- **worldHash**: FNV-1a in fixed field order, same as `computeFieldChecksums`. M3 must produce the same hash given the same seed.
+- **worldHash**: FNV-1a in fixed field order, same as `computeFieldChecksums`. M3 must produce the same hash given the same seed. Note: same seed yields a *different* world after the hex conversion (6-neighbor stages replace 8-neighbor stages).
 - **Snapshot immutability**: once a field bit is set in validFields, that array is read-only forever. M3 stages must not write fields already set by earlier stages.
-- **SphereGrid API**: `fromUnitVector`, `tileCenter`, `latLonOf`, `neighbors` (returns 6), `locateHex`, `tileWidthMeters` — signatures frozen. `locate()` was deleted (replaced by `locateHex`).
+- **SphereGrid API** *(amended)*: `fromUnitVector`, `tileCenter`, `latLonOf`,
+  `neighbors` (returns 6, fixed offset order), `locateHex`, `tileWidthMeters`,
+  `canonicalTile` — signatures frozen. `locate()` was deleted and replaced by
+  `locateHex` (returns `HexSample{tile, neighbor, edgeDistance}`); this was a
+  deliberate One-Path deletion, not a deprecation.
 - **PlanetParams fields**: all fields used by stubs are the same fields M3 uses; adding a new field requires updating `preset()` and `derive()`.
 - **8 stage pipeline order**: Plates → PlateMovement → Terrain → Atmosphere → Precipitation → Ocean → Biome → Snow. M3 replaces each stub in-place; the order and count do not change.

@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2026-06-12 (Hex conversion Phases 1-3 on feature/worldgen-hex-tiles: Goldberg grid + two-tier crisp hex rendering)
+Last Updated: 2026-06-12 (Hex conversion Phases 1-4 on feature/worldgen-hex-tiles: Goldberg grid, two-tier rendering, docs + dev log)
 
 ## Epic/Story/Task Template
 
@@ -430,7 +430,8 @@ while (running) {
   - [x] Phase 1: SphereGrid Goldberg hex semantics (vertex-centered tiles, 10n²+2, cube-round assignment, 6-neighbor offsets, locateHex)
   - [x] Phase 2: consumers re-baselined (neighbors=6, locateHex sampling, PlanetIO version bump)
   - [x] Phase 3: two-tier crisp rendering — base mips (async bake, dirty-flag coalescing) + detail page cache (130×130 pages, 2D-array atlas, LRU, page table), per-pixel hex assignment in planet.frag, camera deep-zoom near-plane + n-aware min distance. Supersedes the M3f-2 "chunked LOD" placeholder.
-  - [ ] Phase 4: docs + dev-log entry (rendering scaling table, contract amendments)
+  - [x] Phase 4: docs + dev-log entry — world-generation-implementation.md (Goldberg grid, TileId amendment, frozen-contract amendments, locateHex, diagonal B-D fix, PlanetIO v2); planet-view-rendering.md (two-tier architecture, scaling table, budgets); 3d-to-2d-sampling.md (locateHex addendum); data-model.md + technical-notes.md (hexes now literal); dev log 2026-06-12-worldgen-hex-goldberg.md
+  - [ ] Phase 5: end-to-end verification + PR (New Game flow, visual checks at zoom, color-mode switching, n=1449)
 - [x] M3g: UI Slider + WorldCreator shell
 - [x] M3h: Biome taxonomy migration (engine, 8→21 biomes, sparse BiomeWeights)
 - [x] M4: PlanetSampler + GeneratedWorldSampler + GameLoading branch
