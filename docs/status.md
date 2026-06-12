@@ -566,7 +566,7 @@ The following MVP epics have all been completed. Detailed task breakdowns are pr
 - [x] Phase 3: Far-zoom impostor handoff (height-bucketed meshes, zoom cutoff + fade)
 - [x] Windows frame pacing fix (timeBeginPeriod + sleep-then-spin; was capped ~60 FPS)
 - [ ] Phase 4: Remaining metrics correctness (GPU timer, Windows SystemResources, per-window max breakdown)
-- [ ] Phase 5: Small wins (AABB cache, LRU eviction, zoom-aware load radius, View smallest-pool)
+- [ ] Phase 5: Small wins (AABB cache, LRU eviction, zoom-aware load radius, View smallest-pool, uniform-chunk fast path: skip the full 512x512 computeTile loop when all 4 sampled corners agree, e.g. deep-ocean chunks)
 - [ ] 4x-density scroll hitch attribution (p99 64ms at 4x; within criteria but worth chasing before density increase lands)
 
 ---
