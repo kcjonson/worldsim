@@ -148,7 +148,7 @@ TEST(PlanetSampler, TileCenterIsPureAndBoundaryBlendsNeighbor) {
     TileId center = world->grid->fromLatLon(5.0, 5.0);
     world->data.elevation[center] = 400.0f;
 
-    std::array<TileId, 8> neighborIds{};
+    std::array<TileId, 6> neighborIds{};
     uint32_t neighborCount = world->grid->neighbors(center, neighborIds);
     ASSERT_GE(neighborCount, 5u);
     for (uint32_t i = 0; i < neighborCount; ++i) {
@@ -249,7 +249,7 @@ TEST(LandingSite, PicksTemperateCoastalLand) {
     EXPECT_EQ(world->data.flags[siteTile] & (kFlagOcean | kFlagLake), 0);
     EXPECT_GE(world->data.elevation[siteTile], world->seaLevelMeters);
 
-    std::array<TileId, 8> nbrs{};
+    std::array<TileId, 6> nbrs{};
     uint32_t count = world->grid->neighbors(siteTile, nbrs);
     bool hasWaterNeighbor = false;
     for (uint32_t i = 0; i < count; ++i) {

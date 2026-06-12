@@ -218,7 +218,7 @@ TEST(PlateStage, PassiveMarginsExist) {
     queue.reserve(N / 4);
 
     // Seed boundary tiles
-    std::array<uint32_t, 8> nbrs{};
+    std::array<TileId, 6> nbrs{};
     for (uint32_t t = 0; t < N; ++t) {
         uint8_t pid = world->data.plateId[t];
         uint32_t cnt = world->grid->neighbors(t, nbrs);

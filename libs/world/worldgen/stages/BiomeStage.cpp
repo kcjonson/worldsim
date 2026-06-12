@@ -133,7 +133,7 @@ void BiomeStage::run(StageContext& ctx) {
             // predicate OceanStage applied. Slabs concurrently write kFlagCoast
             // into their own tiles' flags, so reading a neighbor's flags byte
             // here would be a data race.
-            std::array<TileId, 8> nbs{};
+            std::array<TileId, 6> nbs{};
             const uint32_t cnt =
                 ctx.grid.neighbors(static_cast<TileId>(t), nbs);
             bool oceanNeighbor = false;

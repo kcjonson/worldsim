@@ -4,7 +4,7 @@
 
 #include <algorithm>
 #include <cassert>
-#include <cmath>    // std::sqrt only — permitted
+#include <cmath>    // std::sqrt/floor/abs only — exact IEEE ops, permitted
 #include <cstdlib>
 
 namespace worldgen {
@@ -234,6 +234,7 @@ SphereGrid::SphereGrid(uint32_t newN) : n(newN) {
     }
 
     buildEdgeAdj();
+    buildSeamCache();
 
 #ifndef NDEBUG
     double totalArea = 0.0;
@@ -279,9 +280,14 @@ void SphereGrid::buildEdgeAdj() {
                     uint8_t nva{}, nvb{};
                     edgeVerts(nrh, nedge, nva, nvb);
                     if ((va == nva && vb == nvb) || (va == nvb && vb == nva)) {
+                        // The hex-neighbor offset set is only closed across
+                        // seams when both sides parameterize the shared edge
+                        // in the same direction. True for this icosahedron
+                        // construction; if a future change reverses an edge,
+                        // canonicalize() needs a per-edge offset remap.
+                        assert(va == nva && "rhombus edge pairing must not be reversed");
                         edgeAdj[rh][edge].neighborRhombus = static_cast<uint8_t>(nrh);
                         edgeAdj[rh][edge].neighborEdge    = static_cast<uint8_t>(nedge);
-                        edgeAdj[rh][edge].reversed = (va == nvb);
                         found = true;
                     }
                 }
@@ -392,6 +398,28 @@ void SphereGrid::dirToRhombusUV(Vec3d dir, uint32_t& outRh,
 }
 
 // ============================================================================
+// Hex cell assignment
+// ============================================================================
+
+// Cube rounding in axial coords. floor()/abs() are exact IEEE operations,
+// bit-deterministic across platforms (no transcendentals involved).
+void SphereGrid::hexRound(double fq, double fr, int& outI, int& outJ) {
+    double q = std::floor(fq + 0.5);
+    double r = std::floor(fr + 0.5);
+    double s = std::floor(-fq - fr + 0.5);
+    double dq = std::abs(q - fq);
+    double dr = std::abs(r - fr);
+    double ds = std::abs(s + fq + fr);
+    if (dq > dr && dq > ds) {
+        q = -r - s;
+    } else if (dr > ds) {
+        r = -q - s;
+    }
+    outI = static_cast<int>(q);
+    outJ = static_cast<int>(r);
+}
+
+// ============================================================================
 // Public API
 // ============================================================================
 
@@ -399,11 +427,16 @@ TileId SphereGrid::fromUnitVector(Vec3d dir) const {
     uint32_t rh{};
     double u{}, v{};
     dirToRhombusUV(dir, rh, u, v);
-    auto i = static_cast<uint32_t>(u * static_cast<double>(n));
-    auto j = static_cast<uint32_t>(v * static_cast<double>(n));
-    if (i >= n) i = n - 1;
-    if (j >= n) j = n - 1;
-    return encode(rh, i, j);
+    double dn = static_cast<double>(n);
+    int i{}, j{};
+    hexRound(u * dn - 0.5, v * dn - 0.5, i, j);
+    TileId t = canonicalTile(rh, i, j);
+    if (t != kInvalidTile) return t;
+    // Unmappable only in degenerate cases; clamp into this rhombus.
+    int in = static_cast<int>(n);
+    i = std::clamp(i, 0, in - 1);
+    j = std::clamp(j, 0, in - 1);
+    return encode(rh, static_cast<uint32_t>(i), static_cast<uint32_t>(j));
 }
 
 TileId SphereGrid::fromLatLon(double latDeg, double lonDeg) const {
@@ -430,8 +463,7 @@ void SphereGrid::latLonOf(TileId t, double& latDeg, double& lonDeg) const {
     lonDeg = detAtan2(d.y, d.x) * k180OverPi;
 }
 
-void SphereGrid::locate(double latDeg, double lonDeg,
-                         TileId& tileOut, float& uOut, float& vOut) const {
+SphereGrid::HexSample SphereGrid::locateHex(double latDeg, double lonDeg) const {
     using foundation::det_math::cos;
     using foundation::det_math::sin;
     double lat = latDeg * kPiOver180;
@@ -443,20 +475,73 @@ void SphereGrid::locate(double latDeg, double lonDeg,
     double u{}, v{};
     dirToRhombusUV(dir, rh, u, v);
 
-    double tileU = u * static_cast<double>(n);
-    double tileV = v * static_cast<double>(n);
-    auto i = static_cast<uint32_t>(tileU);
-    auto j = static_cast<uint32_t>(tileV);
-    if (i >= n) i = n - 1;
-    if (j >= n) j = n - 1;
-    tileOut = encode(rh, i, j);
-    uOut = static_cast<float>(tileU - static_cast<double>(i));
-    vOut = static_cast<float>(tileV - static_cast<double>(j));
-    if (uOut < 0.0f) uOut = 0.0f; if (uOut >= 1.0f) uOut = 0.9999f;
-    if (vOut < 0.0f) vOut = 0.0f; if (vOut >= 1.0f) vOut = 0.9999f;
+    double dn = static_cast<double>(n);
+    double fq = u * dn - 0.5;
+    double fr = v * dn - 0.5;
+    int q{}, r{};
+    hexRound(fq, fr, q, r);
+
+    // Unskewed Cartesian for the 60-degree lattice basis:
+    // (x, y) = (a + 0.5*b, b*sqrt(3)/2). Pure IEEE arithmetic.
+    constexpr double kHalfSqrt3 = 0.86602540378443864676;
+    double px = fq + 0.5 * fr;
+    double py = fr * kHalfSqrt3;
+    auto distToCenter = [&](double ci, double cj) {
+        double dx = px - (ci + 0.5 * cj);
+        double dy = py - cj * kHalfSqrt3;
+        return std::sqrt(dx * dx + dy * dy);
+    };
+
+    TileId tile = canonicalTile(rh, q, r);
+    if (tile == kInvalidTile) tile = fromUnitVector(dir);
+
+    double d1 = distToCenter(q, r);
+
+    // The blend partner is the second-nearest cell center, drawn from the tile's
+    // actual neighbor set (which is seam-correct and symmetric). Rank candidates
+    // by 3D chord distance to the query direction; break ties on smaller TileId.
+    std::array<TileId, 6> nbrs{};
+    uint32_t cnt = neighbors(tile, nbrs);
+    TileId best = kInvalidTile;
+    double bestDot = -2.0;
+    for (uint32_t k = 0; k < cnt; ++k) {
+        double d = vecDot(dir, tileCenter(nbrs[k]));
+        if (d > bestDot || (d == bestDot && nbrs[k] < best)) {
+            bestDot = d;
+            best = nbrs[k];
+        }
+    }
+
+    // edgeDistance in lattice units: distance to the shared Voronoi edge with
+    // the chosen partner. Use the partner's lattice position relative to the
+    // assigned tile. For interior partners that is an integer offset; for seam
+    // partners fall back to the cube-round second-nearest in the home chart.
+    double d2 = 1e30;
+    static const int kDi[6] = { 1, -1, 0, 0, 1, -1};
+    static const int kDj[6] = { 0,  0, 1, -1, -1, 1};
+    int in = static_cast<int>(n);
+    for (int k = 0; k < 6; ++k) {
+        int ci = q + kDi[k];
+        int cj = r + kDj[k];
+        if (ci < 0 || ci >= in || cj < 0 || cj >= in) continue;
+        if (encode(rh, static_cast<uint32_t>(ci), static_cast<uint32_t>(cj)) == tile) continue;
+        double d = distToCenter(ci, cj);
+        if (d < d2) d2 = d;
+    }
+    if (d2 > 1e29) d2 = d1; // degenerate; clamp edgeDistance to 0 below
+
+    HexSample out{};
+    out.tile = tile;
+    out.neighbor = best;
+    // Cube rounding can disagree with exact Euclidean nearest by a hair at
+    // tri-corner points, making d2 < d1; clamp to keep the contract.
+    out.edgeDistance = static_cast<float>(std::max(0.0, 0.5 * (d2 - d1)));
+    return out;
 }
 
 float SphereGrid::tileWidthMeters(TileId t, double planetRadiusMeters) const {
+    // The (u,v) cell parallelogram is the lattice fundamental domain, which
+    // has the same area as the tile's hex Voronoi cell.
     uint32_t rh{}, i{}, j{};
     decode(t, rh, i, j);
     double u0 = static_cast<double>(i) / static_cast<double>(n);
@@ -490,7 +575,7 @@ bool SphereGrid::canonicalize(int rh, int i, int j,
         // Select the first out-of-range edge and hop
         if (i < 0) {
             const EdgeAdj& adj = edgeAdj[rh][0]; // u=0 edge, coord=j
-            int coord = adj.reversed ? (in - 1 - j) : j;
+            int coord = j;
             if (coord < 0) coord = 0;
             if (coord >= in) coord = in - 1;
             rh = adj.neighborRhombus;
@@ -503,7 +588,7 @@ bool SphereGrid::canonicalize(int rh, int i, int j,
             }
         } else if (i >= in) {
             const EdgeAdj& adj = edgeAdj[rh][1]; // u=1 edge
-            int coord = adj.reversed ? (in - 1 - j) : j;
+            int coord = j;
             if (coord < 0) coord = 0;
             if (coord >= in) coord = in - 1;
             rh = adj.neighborRhombus;
@@ -516,7 +601,7 @@ bool SphereGrid::canonicalize(int rh, int i, int j,
             }
         } else if (j < 0) {
             const EdgeAdj& adj = edgeAdj[rh][2]; // v=0 edge, coord=i
-            int coord = adj.reversed ? (in - 1 - i) : i;
+            int coord = i;
             if (coord < 0) coord = 0;
             if (coord >= in) coord = in - 1;
             rh = adj.neighborRhombus;
@@ -529,7 +614,7 @@ bool SphereGrid::canonicalize(int rh, int i, int j,
             }
         } else { // j >= in
             const EdgeAdj& adj = edgeAdj[rh][3]; // v=1 edge
-            int coord = adj.reversed ? (in - 1 - i) : i;
+            int coord = i;
             if (coord < 0) coord = 0;
             if (coord >= in) coord = in - 1;
             rh = adj.neighborRhombus;
@@ -549,30 +634,170 @@ bool SphereGrid::canonicalize(int rh, int i, int j,
 // neighbors
 // ============================================================================
 
-uint32_t SphereGrid::neighbors(TileId t, std::array<TileId, 8>& out) const {
-    uint32_t rh{}, i{}, j{};
-    decode(t, rh, i, j);
-    int si = static_cast<int>(i);
-    int sj = static_cast<int>(j);
-
-    static const int kDi[8] = {-1, 1, 0, 0, -1, -1, 1, 1};
-    static const int kDj[8] = { 0, 0,-1, 1, -1,  1,-1, 1};
-
+uint32_t SphereGrid::seamNeighborCandidates(uint32_t rh, uint32_t i, uint32_t j,
+                                            std::array<TileId, 6>& out) const {
+    TileId self = encode(rh, i, j);
     uint32_t count = 0;
-    for (int k = 0; k < 8; ++k) {
-        uint32_t nrh{}, ni{}, nj{};
-        if (canonicalize(static_cast<int>(rh), si + kDi[k], sj + kDj[k],
-                         nrh, ni, nj)) {
-            TileId cand = encode(nrh, ni, nj);
-            if (cand == t) continue;
-            bool dup = false;
-            for (uint32_t q = 0; q < count; ++q) {
-                if (out[q] == cand) { dup = true; break; }
-            }
-            if (!dup && count < 8) out[count++] = cand;
+    auto tryAdd = [&](TileId cand) {
+        if (cand == self || cand == kInvalidTile) return;
+        for (uint32_t q = 0; q < count; ++q)
+            if (out[q] == cand) return;
+        if (count < 6) out[count++] = cand;
+    };
+
+    constexpr double kHalfSqrt3 = 0.86602540378443864676;
+    constexpr int kSamples = 36;
+    int in = static_cast<int>(n);
+    double dn = static_cast<double>(n);
+    double cx = static_cast<double>(i) + 0.5;
+    double cy = static_cast<double>(j) + 0.5;
+    using foundation::det_math::cos;
+    using foundation::det_math::sin;
+    for (int s = 0; s < kSamples; ++s) {
+        double ang = (2.0 * kPi * s) / kSamples;
+        // Circle of radius 0.58 in unskewed Cartesian: just past the hex
+        // circumradius (0.577), so every sample lands outside this cell and
+        // resolves to whichever tile borders it in that direction. Dense
+        // angular sampling captures every edge; the mutual filter in
+        // buildSeamCache() then discards any vertex-only contacts.
+        double ox = 0.58 * cos(ang);
+        double oy = 0.58 * sin(ang);
+        double db = oy / kHalfSqrt3;
+        double da = ox - 0.5 * db;
+        // Fast path: if the sample stays inside this rhombus, cube-round here
+        // directly (no 10-rhombus search). Only samples that escape across the
+        // seam need the full assignment.
+        double fq = cx + da - 0.5;
+        double fr = cy + db - 0.5;
+        int ri{}, rj{};
+        hexRound(fq, fr, ri, rj);
+        if (ri >= 0 && ri < in && rj >= 0 && rj < in) {
+            tryAdd(encode(rh, static_cast<uint32_t>(ri), static_cast<uint32_t>(rj)));
+        } else {
+            tryAdd(fromUnitVector(uvToDir(rh, (cx + da) / dn, (cy + db) / dn)));
         }
     }
     return count;
+}
+
+void SphereGrid::buildSeamCache() {
+    int in = static_cast<int>(n);
+
+    auto isSeam = [&](uint32_t i, uint32_t j) {
+        int si = static_cast<int>(i), sj = static_cast<int>(j);
+        return si == 0 || si == in - 1 || sj == 0 || sj == in - 1;
+    };
+
+    // 1) Raw boundary-sampled candidates for every seam tile, indexed parallel
+    //    to seamCache. 2) Then keep only mutual pairs (B in A's list and A in
+    //    B's), making the graph symmetric.
+    std::vector<std::array<TileId, 6>> raw;
+    std::vector<uint8_t> rawCount;
+    for (uint32_t rh = 0; rh < 10; ++rh) {
+        for (uint32_t j = 0; j < n; ++j) {
+            for (uint32_t i = 0; i < n; ++i) {
+                if (!isSeam(i, j)) continue;
+                std::array<TileId, 6> cand{};
+                uint32_t cn = seamNeighborCandidates(rh, i, j, cand);
+                seamCache.push_back({encode(rh, i, j), 0, {}});
+                raw.push_back(cand);
+                rawCount.push_back(static_cast<uint8_t>(cn));
+            }
+        }
+    }
+    // seamCache is built in TileId-ascending order, so binary search is valid.
+
+    auto findRaw = [&](TileId t, const std::array<TileId, 6>*& list, uint8_t& cnt) {
+        // seamCache[k].tile is sorted ascending and parallel to raw.
+        size_t lo = 0, hi = seamCache.size();
+        while (lo < hi) {
+            size_t mid = (lo + hi) / 2;
+            if (seamCache[mid].tile < t) lo = mid + 1; else hi = mid;
+        }
+        if (lo < seamCache.size() && seamCache[lo].tile == t) {
+            list = &raw[lo]; cnt = rawCount[lo]; return true;
+        }
+        return false;
+    };
+
+    static const int kDi[6] = { 1, -1, 0, 0, 1, -1};
+    static const int kDj[6] = { 0,  0, 1, -1, -1, 1};
+
+    // Is t one of b's neighbors? Seam b uses its raw candidate list; interior b
+    // uses its 6 in-range lattice offsets (which include the seam tile t).
+    auto bHasT = [&](TileId b, TileId t) {
+        uint32_t brh{}, bi{}, bj{};
+        decode(b, brh, bi, bj);
+        if (isSeam(bi, bj)) {
+            const std::array<TileId, 6>* blist = nullptr;
+            uint8_t bcnt = 0;
+            if (!findRaw(b, blist, bcnt)) return false;
+            for (uint8_t k = 0; k < bcnt; ++k) if ((*blist)[k] == t) return true;
+            return false;
+        }
+        for (int k = 0; k < 6; ++k) {
+            TileId nb = encode(brh, static_cast<uint32_t>(static_cast<int>(bi) + kDi[k]),
+                               static_cast<uint32_t>(static_cast<int>(bj) + kDj[k]));
+            if (nb == t) return true;
+        }
+        return false;
+    };
+
+    for (size_t e = 0; e < seamCache.size(); ++e) {
+        TileId t = seamCache[e].tile;
+        uint8_t count = 0;
+        for (uint8_t c = 0; c < rawCount[e]; ++c) {
+            TileId b = raw[e][c];
+            if (bHasT(b, t) && count < 6) seamCache[e].nbrs[count++] = b;
+        }
+        seamCache[e].count = count;
+    }
+}
+
+uint32_t SphereGrid::neighbors(TileId t, std::array<TileId, 6>& out) const {
+    uint32_t rh{}, i{}, j{};
+    decode(t, rh, i, j);
+
+    // Hex lattice neighbors (distance 1 in the 60-degree metric), fixed
+    // order: WorldData::downhill indexes into the returned array.
+    static const int kDi[6] = { 1, -1, 0, 0, 1, -1};
+    static const int kDj[6] = { 0,  0, 1, -1, -1, 1};
+
+    int in = static_cast<int>(n);
+    int si = static_cast<int>(i), sj = static_cast<int>(j);
+    bool seam = si == 0 || si == in - 1 || sj == 0 || sj == in - 1;
+
+    if (seam) {
+        // Seam tiles: the rhombus lattices interlock, so neighbors come from
+        // the precomputed symmetric cache (binary search by TileId).
+        size_t lo = 0, hi = seamCache.size();
+        while (lo < hi) {
+            size_t mid = (lo + hi) / 2;
+            if (seamCache[mid].tile < t) lo = mid + 1; else hi = mid;
+        }
+        if (lo < seamCache.size() && seamCache[lo].tile == t) {
+            const SeamNeighbors& s = seamCache[lo];
+            for (uint8_t k = 0; k < s.count; ++k) out[k] = s.nbrs[k];
+            return s.count;
+        }
+        return 0; // unreachable for valid tiles
+    }
+
+    // Interior tiles: the 6 lattice offsets are all in range and exact.
+    uint32_t count = 0;
+    for (int k = 0; k < 6; ++k) {
+        out[count++] = encode(rh, static_cast<uint32_t>(si + kDi[k]),
+                              static_cast<uint32_t>(sj + kDj[k]));
+    }
+    return count;
+}
+
+TileId SphereGrid::canonicalTile(uint32_t rhombus, int i, int j) const {
+    uint32_t orh{}, oi{}, oj{};
+    if (!canonicalize(static_cast<int>(rhombus), i, j, orh, oi, oj)) {
+        return kInvalidTile;
+    }
+    return encode(orh, oi, oj);
 }
 
 // ============================================================================

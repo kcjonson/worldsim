@@ -19,7 +19,7 @@ bool isWaterTile(const GeneratedWorld& world, TileId t) {
 // rather than kFlagCoast so it also counts lake shores (the flag marks ocean
 // coasts only) and works on worlds saved before BiomeStage set the flag.
 bool isCoastTile(const GeneratedWorld& world, TileId t) {
-    std::array<TileId, 8> nbrs{};
+    std::array<TileId, 6> nbrs{};
     uint32_t count = world.grid->neighbors(t, nbrs);
     for (uint32_t i = 0; i < count; ++i) {
         if (isWaterTile(world, nbrs[i])) return true;

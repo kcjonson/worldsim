@@ -103,7 +103,7 @@ Biome biomeAt(const TestWorld& w, TileId t) {
 }
 
 bool hasOceanNeighbor(const TestWorld& w, TileId t) {
-    std::array<TileId, 8> nbs{};
+    std::array<TileId, 6> nbs{};
     const uint32_t cnt = w.grid.neighbors(t, nbs);
     for (uint32_t k = 0; k < cnt; ++k) {
         if (w.world.data.elevation[nbs[k]] < w.world.seaLevelMeters) return true;

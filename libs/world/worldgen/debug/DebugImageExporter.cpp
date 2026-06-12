@@ -125,7 +125,7 @@ bool exportEquirectangularBmp(const GeneratedWorld& world,
 
                     // Plate boundary: 1px black where any neighbor has a different plateId
                     uint8_t pid = world.data.plateId[t];
-                    std::array<TileId, 8> bndNbrs{};
+                    std::array<TileId, 6> bndNbrs{};
                     uint32_t bndCount = world.grid->neighbors(t, bndNbrs);
                     for (uint32_t bn = 0; bn < bndCount; ++bn) {
                         if (world.data.plateId[bndNbrs[bn]] != pid) {

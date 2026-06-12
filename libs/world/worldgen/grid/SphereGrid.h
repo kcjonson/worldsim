@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cstdint>
+#include <vector>
 
 namespace worldgen {
 
@@ -13,24 +14,34 @@ struct Vec3d {
     double x{}, y{}, z{};
 };
 
-// Icosahedral rhombus grid: 20 icosahedron faces paired into 10 rhombi,
-// each an n x n quad grid projected to the sphere. Total tiles = 10*n*n.
+// Icosahedral hex grid: 20 icosahedron faces paired into 10 rhombi, each an
+// n x n lattice of tile centers projected to the sphere. Total tiles = 10*n*n.
 //
-// TileId encoding: rhombus * n*n + j*n + i
+// Each rhombus is a pair of equilateral faces, so its (u,v) cell basis vectors
+// have equal length at 60 degrees: the tile centers form a triangular lattice
+// and a tile is the Voronoi cell of its center — a near-regular hexagon.
+// Assignment is nearest-center via cube rounding in axial coords (hexRound),
+// measured in the unskewed lattice metric; the fragment shader in planet-view
+// mirrors the same math so picking matches rendering.
+//
+// TileId encoding (frozen): rhombus * n*n + j*n + i
 //   rhombus in [0,10), i in [0,n), j in [0,n)
 //   i = u-axis (A->B direction), j = v-axis (A->D direction)
 //
 // Rhombus corners in (u,v) space:
 //   A=(0,0), B=(1,0), C=(1,1), D=(0,1)
 // Triangle T1 (u+v <= 1): vertices A,B,D
-// Triangle T2 (u+v >  1): vertices B,C,D
+// Triangle T2 (u+v >  1): vertices B,C,D — the fold/short diagonal is B-D.
 //
 // The 10 rhombi cover all 20 icosahedron faces exactly once.
 // 5 northern rhombi (r=0..4): pair north-cap + mid faces.
 // 5 southern rhombi (r=5..9): pair mid + south-cap faces.
 //
-// The 12 icosahedron vertex tiles (corners shared across rhombi) have 5
-// distinct neighbors rather than 8; neighbors() deduplicates them.
+// No tile center sits on the 12 icosahedron vertices (centers are at
+// half-integer lattice offsets), so there are no literal pentagon tiles;
+// each vertex is a degree-5 Voronoi vertex with a 5-cell pinwheel of
+// slightly pinched hexagons around it. Tiles in that pinwheel can have
+// 5 distinct neighbors; neighbors() deduplicates them.
 class SphereGrid {
   public:
     explicit SphereGrid(uint32_t newN);
@@ -58,20 +69,38 @@ class SphereGrid {
     // Return lat (degrees, -90..90) and lon (degrees, -180..180) of a tile center.
     void latLonOf(TileId t, double& latDeg, double& lonDeg) const;
 
-    // Locate a lat/lon within a tile, returning the containing TileId
-    // and fractional (u,v) within that tile in [0,1).
-    void locate(double latDeg, double lonDeg, TileId& tileOut,
-                float& uOut, float& vOut) const;
+    // Result of locating a position within the hex grid.
+    struct HexSample {
+        TileId tile;         // nearest tile center (the containing hex)
+        TileId neighbor;     // second-nearest center = the blend partner
+        float  edgeDistance; // 0.5*(d2-d1) in lattice units; 0 on the Voronoi
+                             // edge, ~0.5 at the cell center
+    };
+
+    // Locate a lat/lon in the hex grid: containing tile, second-nearest
+    // neighbor (deterministic tie-break: smaller TileId), and distance to
+    // the shared Voronoi edge in lattice units.
+    HexSample locateHex(double latDeg, double lonDeg) const;
 
     // Approximate tile width in meters on a sphere of the given radius.
-    // Uses sqrt of the tile's spherical area as a proxy for width.
-    // Area computed from 4 tile corner points via two spherical triangles.
+    // Uses sqrt of the tile's spherical area as a proxy for width. Area is
+    // computed from the (u,v) cell's 4 corners; the cell parallelogram is the
+    // lattice fundamental domain, which has the same area as the hex Voronoi
+    // cell, so this is exact-in-area for hexes too.
     float tileWidthMeters(TileId t, double planetRadiusMeters) const;
 
-    // Fill out[] with up to 8 neighbors (4 edge + up to 4 diagonal),
-    // deduplicated, kInvalidTile-free. Returns actual neighbor count.
-    // Interior tiles: 8. Edge tiles: 5 or 6. The 12 icosahedron vertex tiles: 5.
-    uint32_t neighbors(TileId t, std::array<TileId, 8>& out) const;
+    // Fill out[] with up to 6 hex lattice neighbors in the fixed offset order
+    // (+1,0)(-1,0)(0,+1)(0,-1)(+1,-1)(-1,+1), canonicalized across rhombus
+    // edges, deduplicated, kInvalidTile-free. Returns actual neighbor count.
+    // The order is load-bearing: WorldData::downhill indexes into it.
+    // Interior tiles: 6. Tiles in an icosahedron-vertex pinwheel: 5.
+    uint32_t neighbors(TileId t, std::array<TileId, 6>& out) const;
+
+    // Map a possibly out-of-range (rhombus, i, j) lattice coordinate to its
+    // canonical TileId by hopping across rhombus edges. Returns kInvalidTile
+    // if the position is unmappable. planet-view uses this to bake texture
+    // border texels that agree with CPU assignment across seams.
+    TileId canonicalTile(uint32_t rhombus, int i, int j) const;
 
   private:
     uint32_t n;
@@ -108,14 +137,27 @@ class SphereGrid {
     std::array<Rhombus, 10> rhombi;
 
     // Edge adjacency table: for each rhombus (10) and each edge (4),
-    // which neighbor rhombus + edge + whether the coord is reversed.
+    // which neighbor rhombus + edge. All 40 pairings share their edge
+    // parameterization direction (asserted in buildEdgeAdj); a reversed
+    // pairing would break the hex-neighbor offset closure across seams.
     // Edges: 0=u=0 (i=0), 1=u=1 (i=n-1), 2=v=0 (j=0), 3=v=1 (j=n-1)
     struct EdgeAdj {
         uint8_t neighborRhombus;
         uint8_t neighborEdge;
-        bool    reversed;
     };
     std::array<std::array<EdgeAdj, 4>, 10> edgeAdj;
+
+    // Precomputed neighbor lists for the seam tiles (i or j on a rhombus edge),
+    // where lattice offsets don't close cleanly and the live computation is
+    // expensive. Built once in the constructor, sorted by tile for binary
+    // search. Interior tiles never appear here; their neighbors are the 6 fixed
+    // lattice offsets computed on the fly.
+    struct SeamNeighbors {
+        TileId tile;
+        uint8_t count;
+        std::array<TileId, 6> nbrs;
+    };
+    std::vector<SeamNeighbors> seamCache;
 
     // --- private helpers ---
 
@@ -133,6 +175,11 @@ class SphereGrid {
     // Map (u,v) in [0,1]^2 to unit sphere direction via rhombus r
     Vec3d uvToDir(uint32_t r, double u, double v) const;
 
+    // Round fractional axial coords to the nearest hex center (cube rounding).
+    // Ties broken by floor(x+0.5) round-half-up — planet.frag mirrors this
+    // exactly so GPU cell assignment matches CPU.
+    static void hexRound(double fq, double fr, int& outI, int& outJ);
+
     // Find which rhombus contains dir, return rhombus index and u,v coords.
     // Tries rhombi sorted by center dot product; uses precomputed T1/T2 inverse
     // matrices for a direct barycentric solve with no face lookup.
@@ -145,6 +192,16 @@ class SphereGrid {
 
     // Build edge adjacency table from the icosahedron structure.
     void buildEdgeAdj();
+
+    // Boundary-sampled neighbor candidates for a tile whose hex crosses a
+    // rhombus seam (where the two triangular lattices interlock and no integer
+    // offset is correct). Returns up to 6 distinct tiles bordering this hex,
+    // before the mutual-adjacency filter applied when building the seam cache.
+    uint32_t seamNeighborCandidates(uint32_t rh, uint32_t i, uint32_t j,
+                                    std::array<TileId, 6>& out) const;
+
+    // Compute and store mutual neighbor lists for every seam tile (one-time).
+    void buildSeamCache();
 };
 
 } // namespace worldgen
