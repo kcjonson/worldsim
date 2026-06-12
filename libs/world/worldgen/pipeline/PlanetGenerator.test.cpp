@@ -7,6 +7,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <thread>
 
 namespace worldgen {
@@ -295,6 +296,55 @@ TEST(DebugImageExporter, WritesValidBmp) {
 
     EXPECT_TRUE(checkBmp(elevPath, 512));
     EXPECT_TRUE(checkBmp(biomePath, 512));
+}
+
+// ============================================================================
+// Debug BMP export at n=128 with a fixed seed.
+//
+// Disabled by default so it doesn't run in CI. Run explicitly with:
+//   world-tests --gtest_also_run_disabled_tests --gtest_filter=DebugExport.DISABLED_ExportBmps
+//
+// Output directory: build/debug-images/ (relative to the working directory,
+// typically the build tree). Create it first:
+//   mkdir build\debug-images
+// ============================================================================
+
+TEST(DebugExport, DISABLED_ExportBmps) {
+    PlanetParams params = PlanetParams::preset(Preset::EarthLike);
+    params.gridSubdivision = 128;
+    params.seed = 0xABCD1234ABCD1234ULL;
+
+    printf("[DebugExport] Generating n=128 planet (seed 0xABCD1234ABCD1234)...\n");
+    fflush(stdout);
+
+    auto world = runToCompletion(params, 300);
+    ASSERT_NE(world, nullptr) << "Planet generation failed or timed out";
+
+    const std::string dir = "debug-images/";
+    std::filesystem::create_directories(dir);
+
+    struct Export { WorldFieldOrMode mode; const char* name; };
+    const Export exports[] = {
+        {WorldFieldOrMode::Elevation,       "elevation.bmp"},
+        {WorldFieldOrMode::Biome,           "biome.bmp"},
+        {WorldFieldOrMode::PlateId,         "plates.bmp"},
+        {WorldFieldOrMode::Crust,           "crust.bmp"},
+        {WorldFieldOrMode::BoundaryTypeMap, "boundary_types.bmp"},
+        {WorldFieldOrMode::Temperature,     "temperature.bmp"},
+        {WorldFieldOrMode::Precipitation,   "precipitation.bmp"},
+    };
+
+    for (const auto& e : exports) {
+        std::string path = dir + e.name;
+        bool ok = exportEquirectangularBmp(*world, e.mode, path, 2048);
+        EXPECT_TRUE(ok) << "Failed to write " << path;
+        if (ok) {
+            auto sz = std::filesystem::file_size(path);
+            printf("[DebugExport] %s  %llu bytes\n", path.c_str(),
+                   static_cast<unsigned long long>(sz));
+        }
+    }
+    fflush(stdout);
 }
 
 } // namespace worldgen

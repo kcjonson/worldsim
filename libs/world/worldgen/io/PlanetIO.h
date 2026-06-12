@@ -1,6 +1,12 @@
 #pragma once
 
-// Binary planet file format ("WSPL"), version 1.
+// Binary planet file format ("WSPL"), version 2.
+//
+// Version history:
+//   1 — initial format (quad-cell grid, 8-neighbor downhill index, tile count 10*n*n)
+//   2 — Goldberg hex grid: tile count = 10*n*n + 2 (+ 2 pole tiles); downhill
+//       indexes the 6-neighbor order from SphereGrid::neighbors() (range 0..5,
+//       or 0xFF for sink). Version 1 files are rejected; no fallback path.
 //
 // All multi-byte values are little-endian. Every target platform is
 // little-endian; this is asserted at compile time in PlanetIO.cpp.
@@ -9,7 +15,7 @@
 //
 // Layout (offsets in bytes, sequential):
 //   magic               char[4]   "WSPL"
-//   formatVersion       uint32    = 1
+//   formatVersion       uint32    = 2
 //   --- PlanetParams ---
 //   starMass            float64
 //   starRadius          float64

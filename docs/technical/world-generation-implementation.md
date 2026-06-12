@@ -31,8 +31,9 @@ Tests live in `*.test.cpp` files discovered by CMake glob. Benchmarks in `*.benc
 
 ### Grid structure
 
-20 icosahedron faces are paired into 10 rhombi. Each rhombus is an n×n quad
-grid projected to the unit sphere. Total tiles = 10·n·n.
+20 icosahedron faces are paired into 10 rhombi. Each rhombus contributes n² tile
+centers at lattice vertices (Goldberg hex layout). Total tiles = 10·n·n + 2 (the +2
+are the north and south pole tiles).
 
 5 northern rhombi (r = 0..4):
 
@@ -92,10 +93,10 @@ opposite direction, needed to correctly map the coordinate along that edge.
 
 ### Neighbor lookup
 
-`neighbors(t, out)` generates all 8 Moore neighbors (4 edge + 4 diagonal) via
-`canonicalize()`, which follows the edge adjacency table to hop across rhombus
-boundaries. Interior tiles return 8 neighbors; boundary tiles 5–6; the 12
-icosahedron vertex tiles return 5 (one from each adjacent rhombus, deduplicated).
+`neighbors(t, out)` returns the 6 hex neighbors via axial offsets (+1,0), (-1,0),
+(0,+1), (0,-1), (+1,-1), (-1,+1), canonicalized across rhombus edges. Interior
+tiles return 6 neighbors. Exactly 12 pentagon tiles (the icosahedron vertices,
+including both poles) return 5 neighbors.
 
 ### rhombusPointOnSphere (added M3f)
 
@@ -150,7 +151,7 @@ At n=1024 on a 32-core 3.4 GHz machine (Release):
 | semiMajorAxis | double | AU |
 | eccentricity | double | |
 | seed | uint64_t | |
-| gridSubdivision | uint32_t | n; tiles = 10·n·n |
+| gridSubdivision | uint32_t | n; tiles = 10·n·n + 2 |
 
 ### 6 presets
 
@@ -195,7 +196,7 @@ SoA (structure of arrays) layout. 26 bytes per tile total:
 | flags | uint8 | 1 | kFlag* bits |
 | waterDepth | uint16 | 2 | meters (0 = land) |
 | flowAccum | float | 4 | upstream tile count |
-| downhill | uint8 | 1 | neighbor index 0..7; 0xFF = sink |
+| downhill | uint8 | 1 | neighbor index 0..5 (SphereGrid::neighbors() order); 0xFF = sink |
 | snowCover | uint8 | 1 | 0=bare, 255=full |
 
 `WorldField` is a `uint32_t` bitmask; `kAllWorldFields = 0x7FFFu` (bits 0..14,
@@ -330,6 +331,6 @@ These are the fixed interfaces that M3 sub-stages must respect:
 - **kAllWorldFields = 0x7FFFu**: M3 does not add new fields without expanding this.
 - **worldHash**: FNV-1a in fixed field order, same as `computeFieldChecksums`. M3 must produce the same hash given the same seed.
 - **Snapshot immutability**: once a field bit is set in validFields, that array is read-only forever. M3 stages must not write fields already set by earlier stages.
-- **SphereGrid API**: `fromUnitVector`, `tileCenter`, `latLonOf`, `neighbors`, `locate`, `tileWidthMeters` — signatures frozen.
+- **SphereGrid API**: `fromUnitVector`, `tileCenter`, `latLonOf`, `neighbors` (returns 6), `locateHex`, `tileWidthMeters` — signatures frozen. `locate()` was deleted (replaced by `locateHex`).
 - **PlanetParams fields**: all fields used by stubs are the same fields M3 uses; adding a new field requires updating `preset()` and `derive()`.
 - **8 stage pipeline order**: Plates → PlateMovement → Terrain → Atmosphere → Precipitation → Ocean → Biome → Snow. M3 replaces each stub in-place; the order and count do not change.
