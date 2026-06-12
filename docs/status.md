@@ -410,6 +410,24 @@ while (running) {
 
 ## In Progress Epics
 
+### Tectonic History Simulation (worldgen realism overhaul)
+**Spec/Documentation:** `.claude/plans/tectonic-history.md`, `/docs/design/features/world-generation/`
+**Dependencies:** World Generation & Creator (M1–M6 complete)
+**Status:** in progress
+
+**Goal:** Replace single-pass Voronoi plates + Gaussian-kernel terrain with a coarse time-stepped tectonic history (Euler-pole motion, subduction, ridges with crust age, collisions/sutures, rifting, hotspots) upsampled to full resolution; elevation from Airy isostasy + seafloor depth-age law. Fixes hexagonal continents and dome-shaped mountains; Earth-calibrated acceptance stats.
+
+**Tasks:**
+- [x] M-T0: headless worldgen-cli + WorldStats, baseline capture of current pipeline
+- [ ] M-T1: PlateSim core (quaternion motion, forward rasterize, subduction, ridge gap-fill, boundary scan)
+- [ ] M-T2: Wilson-cycle events (collision/suture, merge, suture-biased rifting, terrane accretion, hotspots, erosion proxy, plate-count controller)
+- [ ] M-T3: CrustStage upsampling + WorldData crustAge/orogenyAge + PlanetIO v3
+- [ ] M-T4: TerrainStage rewrite (isostasy + depth-age + orogeny-aged belts + boundary kernels) — ends with USER screenshot review gate
+- [ ] M-T5: delete PlateStage/PlateMovementStage, test re-baseline, edge cases, benchmark
+- [ ] M-T6: docs (concept.md, generation-phases.md, implementation contracts), dev log, PR
+
+---
+
 ### World Generation & Creator
 **Spec/Documentation:** `/docs/design/features/world-generation/`, `.claude/plans/world-generation.md`
 **Dependencies:** None

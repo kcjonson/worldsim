@@ -15,6 +15,7 @@ add_library(world
     worldgen/sampling/LandingSite.cpp
     worldgen/io/PlanetIO.cpp
     worldgen/debug/DebugImageExporter.cpp
+    worldgen/debug/WorldStats.cpp
 )
 
 target_include_directories(world
