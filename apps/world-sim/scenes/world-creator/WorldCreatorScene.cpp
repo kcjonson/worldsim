@@ -57,6 +57,11 @@ class WorldCreatorScene : public engine::IScene {
 
 		buildUI();
 
+		// Pre-fill a random seed so the field isn't blank on entry.
+		// Uses the same mechanism as the Random button.
+		model.randomizeSeed();
+		syncPanelFromModel();
+
 		// Returning from landing site selection: restore the generated world
 		// into Reviewing instead of starting over
 		if (world_sim::GameStartConfig::HasPending()) {
