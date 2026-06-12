@@ -419,7 +419,7 @@ while (running) {
 
 **Tasks:**
 - [x] M-T0: headless worldgen-cli + WorldStats, baseline capture of current pipeline
-- [ ] M-T1: PlateSim core (quaternion motion, forward rasterize, subduction, ridge gap-fill, boundary scan)
+- [x] M-T1: PlateSim core (quaternion motion, forward rasterize, subduction, ridge gap-fill, boundary scan)
 - [ ] M-T2: Wilson-cycle events (collision/suture, merge, suture-biased rifting, terrane accretion, hotspots, erosion proxy, plate-count controller)
 - [ ] M-T3: CrustStage upsampling + WorldData crustAge/orogenyAge + PlanetIO v3
 - [ ] M-T4: TerrainStage rewrite (isostasy + depth-age + orogeny-aged belts + boundary kernels) — ends with USER screenshot review gate
