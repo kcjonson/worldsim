@@ -115,6 +115,7 @@ class PlateSim {
     // --- per-step pipeline ---
     void advanceRotations();
     void evolvePoles();        // M-T2: slow pole/speed drift on a schedule
+    void slabPull();           // M-T2.6: scale omega by mean subducting-floor age
     void forwardRasterize();
     void resolveOwnership();
     void applyEraseList();
@@ -131,7 +132,10 @@ class PlateSim {
     void initHotspots(uint64_t seed);
     void mergePlates(uint32_t keep, uint32_t donor); // donor -> keep in keep's frame
     void pruneStaleCrust(uint32_t pid);              // drop subducted oceanic raster crust
-    bool tryRift(uint32_t pid, uint64_t stepSalt);   // split plate pid; returns true on success
+    // split plate pid; returns true on success. oversized=true forces the oceanic
+    // young/ridge-biased great-circle cut (a plate-motion reorganization of a runaway
+    // plate) even on a continental plate, and ignores the min-area-factor gate.
+    bool tryRift(uint32_t pid, uint64_t stepSalt, bool oversized = false);
     uint32_t allocPlateId();                          // reuse a dead id or grow the vector
     // World cell -> a plate's local baseline cell (inverse-rotate + nearest).
     TileId worldToLocal(uint32_t pid, TileId worldCell) const;
@@ -197,6 +201,12 @@ class PlateSim {
     // Per-plate next pole-evolution time (Myr). Staggered so plates don't all
     // re-pole on the same step.
     std::vector<double> nextPoleEvolveMyr_;
+
+    // M-T2.6 slab pull: per-plate applied speed multiplier, relaxed each step toward a
+    // target derived from the mean age of the plate's subducting oceanic floor. Old
+    // cold slabs pull hardest, so the plate accelerates trenchward and recycles old
+    // basins. Stored as state so the relaxation is smooth across steps.
+    std::vector<double> slabPull_;
 
     uint64_t poleEvolveStream_{0}; // base stream for per-plate pole re-draws
     uint64_t riftStream_{0};       // base stream for rift decisions/paths

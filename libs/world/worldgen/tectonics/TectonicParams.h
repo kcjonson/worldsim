@@ -46,10 +46,16 @@ inline constexpr double kContinentalSpeedMaxCmYr = 4.0;
 inline constexpr double kSpeedAgeMin = 0.5;
 inline constexpr double kSpeedAgeMax = 2.0;
 
-// Oceanic crust at sim start is pre-aged up to this cap so the initial seafloor
-// is not uniformly age 0. (Oldest in-situ ocean floor on Earth ~180-200 Myr; the
-// Parsons-Sclater / GDH1 depth-age law saturates past ~180 Myr.)
-inline constexpr int32_t kOceanInitMaxAgeMyr = 180;
+// Oceanic crust at sim start is pre-aged up to this cap so the initial seafloor is not
+// uniformly age 0. Earth's OLDEST in-situ floor is ~180-200 Myr, but that is a small tail
+// near a few passive margins; the bulk of the seafloor is far younger (global mean ~64
+// Myr). Pre-aging the start uniformly to 180 seeds a large old-floor population that the
+// recycling machinery then has to chew through over the whole run, which keeps the >220
+// Myr tail and the mean stubbornly high on geometry-unlucky seeds. We seed the bulk
+// younger (120 Myr cap) so the start already resembles a mature-but-not-ancient ocean;
+// active spreading + slab-pull recycling carry it from there. (Parsons-Sclater / GDH1
+// depth-age law saturates past ~180 Myr, so nothing visual is lost at 120.)
+inline constexpr int32_t kOceanInitMaxAgeMyr = 100;
 
 // Initial crustal thickness. Continental 38 +/- 6 km (global average ~39 km,
 // Mooney CRUST2.0); oceanic 7 km (White et al. 1992 normal ocean crust).
@@ -282,5 +288,99 @@ inline constexpr double kPoleEvolutionPeriodMyr = 90.0;
 inline constexpr double kPoleEvolutionMaxNudgeRad = 1.2;
 // Fractional speed random-walk bound each evolution (+/-).
 inline constexpr double kPoleEvolutionSpeedJitter = 0.45;
+
+// ============================================================================
+// M-T2.6 slab pull + oceanic plate reorganization
+// ============================================================================
+
+// --- Slab pull ---
+// Slab pull is the dominant plate driving force: a subducting slab's negative
+// buoyancy pulls the attached plate trenchward, and the pull scales with the slab's
+// age (older ocean floor is colder, thicker, and denser, so it sinks harder).
+// (Forsyth & Uyeda 1975; Conrad & Lithgow-Bertelloni 2002. Observed: slab-attached
+// plates move ~2-4x faster than slab-free ones.) Each step we scale a plate's omega
+// toward a target factor set by the mean crustAge of ITS oceanic cells that are
+// subducting at convergent boundaries (the slab it is feeding into trenches). Plates
+// with old subducting floor speed up trenchward -> old floor reaches the trench and is
+// consumed -> the basin's mean age drops, fixing the old-floor accumulation. The
+// factor is anchored at 1.0 for a reference-age slab and ramps linearly with age,
+// clamped; the relaxation keeps motion changes smooth and deterministic.
+//
+// Reference slab age where the factor is 1.0 (mature ocean, ~Earth mean seafloor age).
+inline constexpr double kSlabPullRefAgeMyr = 50.0;
+// Factor per Myr of slab age above/below the reference (before clamping). 0.012/Myr
+// makes a 180 Myr slab ~2.3x and a 20 Myr slab ~0.4x before the clamp bounds bite.
+inline constexpr double kSlabPullPerAgeMyr = 0.012;
+// Clamp on the slab-pull factor. Old cold slabs pull hardest (Conrad &
+// Lithgow-Bertelloni 2002 attribute ~slab-attached plates' 2-4x speedup to this).
+inline constexpr double kSlabPullFactorMin = 0.7;
+inline constexpr double kSlabPullFactorMax = 2.5;
+// Per-step relaxation toward the slab-pull target factor (exponential smoothing on the
+// applied multiplier). 0.25/step (~20 Myr e-fold at dt=5) keeps speed changes physical,
+// not lurchy, while still letting an old-floor plate accelerate within ~50-100 Myr.
+inline constexpr double kSlabPullRelax = 0.25;
+// Minimum number of subducting oceanic boundary cells a plate needs before slab pull
+// engages (avoids noise from one stray trench cell). A plate below this relaxes its
+// multiplier back toward 1.0 (no attached slab -> ridge-push-only, slower).
+inline constexpr uint32_t kSlabPullMinTrenchCells = 3;
+// Old-floor-toward-trench pole steering, applied EVERY step (M-T2.6). The plate's Euler
+// pole is rotated this fraction toward the pole that carries its oldest ocean floor to
+// its nearest trench, so stranded old basins are continuously aimed at a subduction zone
+// and recycled (slab pull supplies the speed, this supplies the direction). Small per
+// step so motion stays smooth and varied; over a ~90 Myr pole-evolution interval it
+// accumulates to a strong bias without funneling every plate onto one track. Lives in
+// slabPull(), not evolvePoles(), so the momentum rebalance does not clobber it.
+inline constexpr double kPoleSteerPerStep = 0.06;
+// Surface-speed clamp slack: after slab pull, the plate's surface speed is held within
+// the init cm/yr bounds times this factor (slab pull can exceed nominal ridge-push
+// rates, but not unboundedly). 1.6x of the oceanic max (10 cm/yr -> 16 cm/yr) bounds
+// the fastest slab-driven plates near observed peak rates (Nazca/Pacific ~7-10 cm/yr,
+// peak geologic rates ~15-20 cm/yr; Zahirovic et al. 2015).
+inline constexpr double kSlabSpeedSlack = 1.6;
+
+// --- Oceanic plate reorganization (oversized-plate rifting) ---
+// Plate rifting was gated to continental-majority plates (continents rift along old
+// sutures). But a purely oceanic plate can also grow until it dominates a hemisphere
+// and then break up in a plate-motion reorganization (Farallon breakup into Cocos/
+// Nazca; repeated Pacific reorganizations). Without an oceanic split path an oversized
+// ocean plate is immortal and runs away to ~half the sphere. When ANY plate (oceanic
+// included) exceeds this fraction of the sphere it becomes rift-eligible with high
+// priority, regardless of crust majority. (Largest present-day plate, the Pacific, is
+// ~20% of Earth's surface; we cap a bit higher to leave headroom.)
+inline constexpr double kMaxPlateAreaFrac = 0.22;
+// Per-step probability that an oversized plate rifts, independent of the plate-count
+// controller (an oversized plate must break up even when alive >= K). High so the
+// reorganization fires within a few tens of Myr of a plate going oversized.
+inline constexpr double kOversizedRiftProb = 0.50;
+// Minimum live-plate count for the oversized rift to engage. With very few plates each
+// one is necessarily huge (a degenerate / just-merged / contrived state), so "oversized"
+// is not a real imbalance there; breaking them would fight the merge + deficit dynamics.
+// Real runs sit at ~7-14 plates, well above this, so it never gates a genuine runaway.
+inline constexpr uint32_t kMinPlatesForOversizedRift = 3;
+// For an oceanic (no-suture) split, the cut follows a noisy great circle through the
+// plate centroid, biased to run through young/ridge-adjacent, high-stress crust rather
+// than an orogeny suture. This is the extra path-cost weight pulling the cut toward
+// young oceanic floor (fresh, weak lithosphere near ridges reorganizes preferentially).
+inline constexpr float kOceanicRiftYoungBias = 0.5f;
+
+// --- Stranded-floor resurfacing (intraplate ridge initiation) ---
+// Some ocean floor never reaches a trench within the run — it rides a plate with no
+// subduction zone on its margins, so neither slab pull nor pole steering can recycle it,
+// and it ages past Earth's ~180-200 Myr ceiling. The geometry-independent physical reset
+// is intraplate ridge initiation / a ridge jump: floor that has survived absurdly long
+// without recycling eventually gets resurfaced by a new spreading center opening through
+// it (ridge jumps and intraplate rifting are well recorded, e.g. the Pacific). Any
+// oceanic cell older than this (Myr) is a resurfacing candidate. Set near Earth's age
+// ceiling so only genuinely over-old, stranded floor resets — normal ridge/slab turnover
+// handles everything younger.
+inline constexpr int32_t kRidgeJumpResetAgeMyr = 150;
+// Base per-step resurface probability at the reset age. Small so resurfacing is gradual
+// (a typical candidate lingers tens of Myr before its ridge jump), not a visible wipe.
+inline constexpr double kStrandedResurfaceProb = 0.015;
+// The probability ramps by this much per Myr of age above the reset threshold, so the
+// very oldest stranded floor (which pushes the >220 Myr tail) resurfaces fastest.
+inline constexpr double kStrandedResurfaceAgeGain = 0.0004;
+// Cap on the per-step resurface probability (the ramp saturates here).
+inline constexpr double kStrandedResurfaceProbMax = 0.12;
 
 } // namespace worldgen::tectonics

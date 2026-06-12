@@ -193,6 +193,7 @@ PlateSim::PlateSim(const PlateSimParams& params, const PlateSimTestOverride* ove
     ringScratch_.assign(tileCount_, -1);
     bfsScratch_.reserve(tileCount_ / 2u);
     collisionBlock_.assign(static_cast<size_t>(params.plateCount), 0.0f);
+    slabPull_.assign(static_cast<size_t>(params.plateCount), 1.0);
 
     // Event RNG streams (independent of init streams).
     poleEvolveStream_ = deriveSeed(params.seed, 0x10);
@@ -220,6 +221,7 @@ PlateSim::PlateSim(const PlateSimParams& params, const PlateSimTestOverride* ove
         initHotspots(deriveSeed(params.seed, 0x12));
         nextPoleEvolveMyr_.assign(plates_.size(), kPoleEvolutionPeriodMyr);
         collisionBlock_.assign(plates_.size(), 0.0f);
+        slabPull_.assign(plates_.size(), 1.0);
         return;
     }
 
@@ -569,6 +571,11 @@ void PlateSim::initPlateRasters() {
 //   6. Gap fill ascending:   empty cells inherit majority neighbor owner and get
 //                            NEW oceanic crust at birth=now (spreading ridges).
 //   7. Boundary scan:        Euler-pole relative velocity, convergence, classify.
+//   7.5 Slab pull:           scale each plate's omega toward a target factor set by
+//                            the mean age of its subducting oceanic floor (old cold
+//                            slabs pull hardest), clamped to the surface-speed bounds.
+//                            Runs after the scan (needs boundary side) so the new omega
+//                            takes effect at next step's advanceRotations.
 //   8. Collision processing: CC thicken + orogeny stamp + per-pair score; CO/OO
 //                            arc volcanism + modest thickening (ascending order).
 //   9. Terrane accretion:    small continental fragments transfer at trenches.
@@ -585,6 +592,7 @@ void PlateSim::step(const CancelFn& cancel, const ProgressFn& progress) {
     applyEraseList();     // 5
     gapFill();            // 6
     boundaryScan();       // 7
+    slabPull();           // 7.5 (M-T2.6): scale omega by mean subducting-floor age
     collisionProcessing();// 8
     terraneAccretion();   // 9
     erosionProxy();       // 10
@@ -1446,6 +1454,179 @@ void PlateSim::evolvePoles() {
 }
 
 // ============================================================================
+// Slab pull (M-T2.6): scale each plate's omega by the age of its subducting slab.
+// ============================================================================
+//
+// Slab pull is the dominant plate driving force; the pull scales with slab age
+// because older ocean floor is colder, denser, and sinks harder (Forsyth & Uyeda
+// 1975; Conrad & Lithgow-Bertelloni 2002). For each plate we gather the crustAge of
+// its OWN oceanic cells that sit on the subducting side of a convergent boundary (the
+// slab it is feeding into a trench), take the mean, and map it to a target speed
+// factor anchored at 1.0 for a reference-age slab. The applied multiplier relaxes
+// toward the target each step (smooth, deterministic), then omega is rescaled and the
+// resulting surface speed clamped to the init cm/yr bounds times a slack. A plate with
+// old subducting floor accelerates trenchward, consuming that old floor — which is the
+// physical recycling that keeps basin ages near Earth's.
+//
+// Slab pull supplies SPEED; this pass also supplies DIRECTION. Fixed/random poles
+// strand basin interiors so seafloor ages past Earth's ceiling. Each step we steer each
+// plate's Euler pole a small amount so its OLDEST ocean floor drifts toward the nearest
+// trench it subducts into. The steer is small per step (continuous, deterministic) and
+// lives here rather than in evolvePoles so the momentum rebalance there does not clobber
+// it. Together: old floor is both sped up and aimed at a trench, so it recycles.
+void PlateSim::slabPull() {
+    const int K = static_cast<int>(plates_.size());
+    if (static_cast<int>(slabPull_.size()) < K) slabPull_.resize(K, 1.0);
+
+    const int32_t nowI = static_cast<int32_t>(nowMyr_ + dtMyr_ + 0.5);
+
+    // Per-plate accumulation of subducting-floor age (for slab pull) plus age-weighted
+    // oceanic-floor centroid and subducting-trench centroid (for steering).
+    std::vector<double>   ageSum(static_cast<size_t>(K), 0.0);
+    std::vector<uint32_t> ageCnt(static_cast<size_t>(K), 0u);
+    std::vector<Vec3d>    oldCtr(static_cast<size_t>(K), Vec3d{0, 0, 0});
+    std::vector<double>   oldW(static_cast<size_t>(K), 0.0);
+    std::vector<Vec3d>    trenchCtr(static_cast<size_t>(K), Vec3d{0, 0, 0});
+    std::vector<uint32_t> trenchN(static_cast<size_t>(K), 0u);
+    for (TileId t = 0; t < tileCount_; ++t) {
+        uint8_t pid = owner_[t];
+        if (pid >= static_cast<uint8_t>(K)) continue;
+        const CrustCell& cc = resolved_[t];
+        // Age-weighted oceanic-floor centroid (steering target source). Square the age
+        // so the centroid is pulled hard toward the OLDEST floor, the floor most in need
+        // of recycling.
+        if (cc.type == CrustType::Oceanic) {
+            int32_t age = nowI - cc.birthMyr;
+            if (age > 0) {
+                double w = static_cast<double>(age) * static_cast<double>(age);
+                oldCtr[pid].x += w * centers_[t].x;
+                oldCtr[pid].y += w * centers_[t].y;
+                oldCtr[pid].z += w * centers_[t].z;
+                oldW[pid] += w;
+            }
+        }
+        uint8_t bt = bndType_[t];
+        bool subducting = (bt == static_cast<uint8_t>(BoundaryType::ConvergentCO) ||
+                           bt == static_cast<uint8_t>(BoundaryType::ConvergentOO)) &&
+                          bndSide_[t] == kSideSubducting;
+        if (!subducting) continue;
+        trenchCtr[pid].x += centers_[t].x;
+        trenchCtr[pid].y += centers_[t].y;
+        trenchCtr[pid].z += centers_[t].z;
+        ++trenchN[pid];
+        if (cc.type != CrustType::Oceanic) continue; // only ocean slabs pull
+        int32_t age = nowI - cc.birthMyr;
+        if (age < 0) age = 0;
+        ageSum[pid] += static_cast<double>(age);
+        ageCnt[pid] += 1u;
+    }
+
+    // Normalize each plate's age-weighted old-floor centroid (steering source).
+    std::vector<Vec3d> oldDir(static_cast<size_t>(K), Vec3d{0, 0, 0});
+    std::vector<bool>  hasOld(static_cast<size_t>(K), false);
+    for (int p = 0; p < K; ++p) {
+        if (oldW[static_cast<size_t>(p)] <= 0.0) continue;
+        double oi = 1.0 / oldW[static_cast<size_t>(p)];
+        Vec3d O{oldCtr[static_cast<size_t>(p)].x * oi, oldCtr[static_cast<size_t>(p)].y * oi,
+                oldCtr[static_cast<size_t>(p)].z * oi};
+        double ol = foundation::det_math::sqrt(O.x*O.x + O.y*O.y + O.z*O.z);
+        if (ol < 1e-9) continue;
+        oldDir[static_cast<size_t>(p)] = {O.x/ol, O.y/ol, O.z/ol};
+        hasOld[static_cast<size_t>(p)] = true;
+    }
+
+    // Find each plate's subducting trench cell NEAREST its old-floor centroid. Averaging
+    // all trench cells can point to a meaningless mid-plate midpoint when a plate subducts
+    // on opposite margins; steering toward the closest trench is geometrically correct.
+    std::vector<Vec3d> nearTrench(static_cast<size_t>(K), Vec3d{0, 0, 0});
+    std::vector<double> nearDot(static_cast<size_t>(K), -2.0); // max dot = nearest on sphere
+    std::vector<bool>  hasTrench(static_cast<size_t>(K), false);
+    for (TileId t = 0; t < tileCount_; ++t) {
+        uint8_t pid = owner_[t];
+        if (pid >= static_cast<uint8_t>(K)) continue;
+        if (!hasOld[pid]) continue;
+        uint8_t bt = bndType_[t];
+        bool subducting = (bt == static_cast<uint8_t>(BoundaryType::ConvergentCO) ||
+                           bt == static_cast<uint8_t>(BoundaryType::ConvergentOO)) &&
+                          bndSide_[t] == kSideSubducting;
+        if (!subducting) continue;
+        const Vec3d& O = oldDir[pid];
+        double dot = O.x*centers_[t].x + O.y*centers_[t].y + O.z*centers_[t].z;
+        if (dot > nearDot[pid]) { nearDot[pid] = dot; nearTrench[pid] = centers_[t]; hasTrench[pid] = true; }
+    }
+
+    // Surface-speed clamp (rad/Myr) from the init cm/yr bounds times slack.
+    const double maxOmega = cmYrToRadPerMyr(kOceanicSpeedMaxCmYr * kSlabSpeedSlack,
+                                            cfg_.planetRadiusKm);
+
+    for (int p = 0; p < K; ++p) {
+        SimPlate& pl = plates_[static_cast<size_t>(p)];
+        if (!pl.alive) { slabPull_[static_cast<size_t>(p)] = 1.0; continue; }
+
+        // Target factor: 1.0 for a reference-age slab, ramps with the mean slab age.
+        // A plate with too few trench cells has no attached slab -> target 1.0.
+        double target;
+        if (ageCnt[static_cast<size_t>(p)] >= kSlabPullMinTrenchCells) {
+            double meanAge = ageSum[static_cast<size_t>(p)] /
+                             static_cast<double>(ageCnt[static_cast<size_t>(p)]);
+            target = 1.0 + kSlabPullPerAgeMyr * (meanAge - kSlabPullRefAgeMyr);
+            if (target < kSlabPullFactorMin) target = kSlabPullFactorMin;
+            if (target > kSlabPullFactorMax) target = kSlabPullFactorMax;
+        } else {
+            target = 1.0;
+        }
+
+        double& applied = slabPull_[static_cast<size_t>(p)];
+        double prev = applied;
+        applied += (target - applied) * kSlabPullRelax;
+
+        // Rescale omega by the change in the applied factor, then clamp surface speed.
+        if (prev > 1e-9) {
+            pl.omegaRadPerMyr *= applied / prev;
+        }
+        double mag = pl.omegaRadPerMyr < 0 ? -pl.omegaRadPerMyr : pl.omegaRadPerMyr;
+        if (mag > maxOmega) {
+            double s = pl.omegaRadPerMyr < 0 ? -1.0 : 1.0;
+            pl.omegaRadPerMyr = s * maxOmega;
+        }
+
+        // Steering: nudge the pole so the plate's oldest floor heads toward the nearest
+        // trench. Needs a real attached slab (>= min trench cells), an old-floor centroid,
+        // and a nearest-trench target.
+        if (trenchN[static_cast<size_t>(p)] < kSlabPullMinTrenchCells) continue;
+        if (!hasOld[static_cast<size_t>(p)] || !hasTrench[static_cast<size_t>(p)]) continue;
+        Vec3d O = oldDir[static_cast<size_t>(p)];
+        Vec3d T = nearTrench[static_cast<size_t>(p)];
+        double tl = foundation::det_math::sqrt(T.x*T.x + T.y*T.y + T.z*T.z);
+        if (tl < 1e-9) continue;
+        T = {T.x/tl, T.y/tl, T.z/tl};
+        // Desired surface direction at O: toward T, projected onto O's tangent plane.
+        Vec3d d{T.x - O.x, T.y - O.y, T.z - O.z};
+        double dn = d.x*O.x + d.y*O.y + d.z*O.z;
+        d = {d.x - dn*O.x, d.y - dn*O.y, d.z - dn*O.z};
+        double dl = foundation::det_math::sqrt(d.x*d.x + d.y*d.y + d.z*d.z);
+        if (dl < 1e-6) continue;
+        d = {d.x/dl, d.y/dl, d.z/dl};
+        // Pole carrying O toward d is axis = O x d. Align its hemisphere with the current
+        // omega sign so steering does not flip the plate's spin sense, then rotate the
+        // current pole a small bounded angle toward it (continuous, deterministic).
+        Vec3d tgt{O.y*d.z - O.z*d.y, O.z*d.x - O.x*d.z, O.x*d.y - O.y*d.x};
+        double gl = foundation::det_math::sqrt(tgt.x*tgt.x + tgt.y*tgt.y + tgt.z*tgt.z);
+        if (gl < 1e-9) continue;
+        tgt = {tgt.x/gl, tgt.y/gl, tgt.z/gl};
+        if (tgt.x*pl.eulerPole.x + tgt.y*pl.eulerPole.y + tgt.z*pl.eulerPole.z < 0.0)
+            tgt = {-tgt.x, -tgt.y, -tgt.z};
+        double a = kPoleSteerPerStep;
+        Vec3d blended{(1.0-a)*pl.eulerPole.x + a*tgt.x,
+                      (1.0-a)*pl.eulerPole.y + a*tgt.y,
+                      (1.0-a)*pl.eulerPole.z + a*tgt.z};
+        double bl = foundation::det_math::sqrt(blended.x*blended.x + blended.y*blended.y +
+                                               blended.z*blended.z);
+        if (bl > 1e-9) pl.eulerPole = {blended.x/bl, blended.y/bl, blended.z/bl};
+    }
+}
+
+// ============================================================================
 // Plate events: merge then rift.
 // ============================================================================
 
@@ -1570,10 +1751,13 @@ void PlateSim::mergePlates(uint32_t keep, uint32_t donor) {
     ++mergeCount_;
 }
 
-// Split plate pid into two. Picks a cost-min path between two boundary cells where
-// cost favors recent sutures (rifts re-open old weaknesses). The far side of the
-// path becomes a new plate with an opposing Euler pole.
-bool PlateSim::tryRift(uint32_t pid, uint64_t stepSalt) {
+// Split plate pid into two. A continental rift's cut favors recent sutures (rifts
+// re-open inherited weaknesses); an oversized-plate reorganization (oversized=true)
+// takes a noisy great-circle cut biased toward young/ridge-adjacent oceanic crust
+// instead (no sutures in ocean; reorganizations reactivate weak young lithosphere,
+// Farallon/Pacific breakups). The far side of the cut becomes a new plate with an
+// opposing Euler pole.
+bool PlateSim::tryRift(uint32_t pid, uint64_t stepSalt, bool oversized) {
     SimPlate& src = plates_[pid];
     if (!src.alive) return false;
 
@@ -1598,15 +1782,22 @@ bool PlateSim::tryRift(uint32_t pid, uint64_t stepSalt) {
     // suture line) so the rift re-opens the inherited weakness. The fit plane's
     // normal is the least-variance axis of the suture cells' scatter matrix (a band
     // along a great circle has its smallest spread along that circle's axis).
+    // Detect a recent suture. A normal (deficit-driven) continental rift re-opens it. An
+    // oversized reorganization skips suture detection entirely and takes a great-circle
+    // cut (young-biased for ocean): its job is to halve a runaway plate, and a stray
+    // orogeny stamp must not divert that cut into a lopsided sliver that leaves the plate
+    // oversized. So suture detection runs only for a normal rift, never an oversized one.
     Vec3d sutureMean{0, 0, 0};
     uint32_t sutureN = 0;
-    for (TileId c : owned) {
-        TileId local = worldToLocal(pid, c);
-        if (local == kInvalidTile) continue;
-        const CrustCell& cc = src.crust[local];
-        if (cc.orogenyMyr != kOrogenyNever && (nowI - cc.orogenyMyr) < kRiftSutureRecentMyr) {
-            sutureMean.x += centers_[c].x; sutureMean.y += centers_[c].y; sutureMean.z += centers_[c].z;
-            ++sutureN;
+    if (!oversized) {
+        for (TileId c : owned) {
+            TileId local = worldToLocal(pid, c);
+            if (local == kInvalidTile) continue;
+            const CrustCell& cc = src.crust[local];
+            if (cc.orogenyMyr != kOrogenyNever && (nowI - cc.orogenyMyr) < kRiftSutureRecentMyr) {
+                sutureMean.x += centers_[c].x; sutureMean.y += centers_[c].y; sutureMean.z += centers_[c].z;
+                ++sutureN;
+            }
         }
     }
 
@@ -1662,6 +1853,26 @@ bool PlateSim::tryRift(uint32_t pid, uint64_t stepSalt) {
                                 static_cast<float>(centers_[c].y) * kBoundaryNoiseFreq,
                                 static_cast<float>(centers_[c].z) * kBoundaryNoiseFreq, noiseSeed);
         s += static_cast<double>((n - 0.5f) * kRiftPathNoise) * 0.05; // jog the margin
+        // Oversized-plate (oceanic) reorganization: pull the cut margin toward young /
+        // ridge-adjacent crust so the split runs through weak, freshly-accreted floor
+        // rather than slicing old cratonic interior. A young cell near the plane gets
+        // its |s| reduced (more likely to flip across the cut), an old one stiffened.
+        // Only in the oceanic fallback (no suture); a suture-biased cut keeps its plane.
+        if (oversized && !sutureBiased) {
+            TileId local = worldToLocal(pid, c);
+            if (local != kInvalidTile) {
+                const CrustCell& cc = src.crust[local];
+                int32_t age = nowI - cc.birthMyr;
+                if (age < 0) age = 0;
+                // ageNorm in [0,1] over a typical basin span; young -> ~0, old -> ~1.
+                double ageNorm = static_cast<double>(age) / 200.0;
+                if (ageNorm > 1.0) ageNorm = 1.0;
+                // Bias toward 0 (the cut) for young crust: shift |s| by a young-weighted
+                // amount, sign-preserving so cells don't teleport across the plate.
+                double bias = static_cast<double>(kOceanicRiftYoungBias) * (1.0 - ageNorm) * 0.05;
+                s += (s >= 0.0 ? -bias : bias);
+            }
+        }
         if (s >= 0.0) { region[c] = 1; ++r1; } else { region[c] = 2; ++r2; }
     }
     std::array<TileId, 6> nbrs{};
@@ -1791,6 +2002,90 @@ void PlateSim::plateEvents() {
                        [](const auto& kv) { return kv.second <= 0.0; }),
         collisionScore_.end());
 
+    // Per-plate areas (owned world cells), computed once for both rift paths below.
+    uint64_t areaSum = 0; uint32_t aliveN = 0;
+    std::vector<uint32_t> areas(plates_.size(), 0u);
+    for (uint32_t p = 0; p < plates_.size(); ++p) {
+        if (!plates_[p].alive) continue;
+        areas[p] = plateArea(p);
+        areaSum += areas[p];
+        ++aliveN;
+    }
+
+    // ---- Oversized-plate reorganization (M-T2.6): any plate (oceanic or continental)
+    // larger than kMaxPlateAreaFrac of the sphere must break up, even when alive >= K.
+    // Without this an oceanic plate is never rift-eligible (rifting was continental-
+    // only) and runs away to ~half the sphere (Farallon/Pacific reorganizations are the
+    // Earth analog). High-priority, independent probability; oceanic young-biased cut. --
+    const uint32_t maxPlateTiles = static_cast<uint32_t>(kMaxPlateAreaFrac *
+                                                         static_cast<double>(tileCount_));
+    {
+        // Only reorganize when the world has enough plates that "oversized" is a real
+        // imbalance, not a necessity. With very few plates each one is huge by definition
+        // (a degenerate state, e.g. just after a supercontinent merge or in a contrived
+        // 2-plate case); breaking them there would fight the merge/deficit dynamics. Real
+        // runs sit at ~7-14 plates, so this never gates a genuine runaway.
+        uint32_t bigP = kUnowned; uint32_t bigA = 0;
+        if (aliveN >= kMinPlatesForOversizedRift) {
+            for (uint32_t p = 0; p < plates_.size(); ++p) {
+                if (!plates_[p].alive) continue;
+                if (areas[p] <= maxPlateTiles) continue;
+                if (areas[p] > bigA) { bigA = areas[p]; bigP = p; }
+            }
+        }
+        if (bigP != kUnowned) {
+            foundation::Pcg32 rng(deriveSeed(riftStream_,
+                0x05AB1EAF00000000ULL ^ (static_cast<uint64_t>(step_) * 0x100000001B3ULL)));
+            if (rng.nextDouble() < kOversizedRiftProb) {
+                if (tryRift(bigP, static_cast<uint64_t>(step_) * 0xD1B54A32D192ED03ULL + 11u,
+                            /*oversized=*/true)) {
+                    // Recompute the split plate's area; a successful rift invalidated it.
+                    if (bigP < plates_.size()) areas[bigP] = plateArea(bigP);
+                }
+            }
+        }
+    }
+
+    // ---- Stranded-floor resurfacing (M-T2.6): some ocean floor never reaches a trench
+    // within the run — it sits on a plate with no subduction zone on its margins, so
+    // neither slab pull nor pole steering can recycle it, and it ages past Earth's
+    // ~180-200 Myr ceiling. The geometry-independent physical reset is intraplate ridge
+    // initiation / a ridge jump: any floor that has survived absurdly long without
+    // recycling eventually gets resurfaced by a new spreading center opening through it
+    // (ridge jumps and intraplate rifting are well recorded, e.g. the Pacific). We reset
+    // any oceanic cell older than kRidgeJumpResetAgeMyr to age 0 with a small per-step
+    // probability, so the stranded tail drains gradually and the >220 Myr fraction stays
+    // bounded on every seed regardless of plate geometry — the part neither motion
+    // mechanism can reach. Operates on plate-local rasters; resolution catches up next
+    // rasterize. The rate ramps with age so the very oldest floor resets fastest. ----
+    {
+        const int32_t nowI = static_cast<int32_t>(nowMyr_ + 0.5);
+        const uint32_t jumpSeed = static_cast<uint32_t>(
+            deriveSeed(riftStream_, 0x91D3E7C0FFEEULL ^ static_cast<uint64_t>(step_)));
+        for (uint32_t p = 0; p < plates_.size(); ++p) {
+            SimPlate& pl = plates_[p];
+            if (!pl.alive) continue;
+            for (TileId local : pl.occupied) {
+                CrustCell& cc = pl.crust[local];
+                if (cc.type != CrustType::Oceanic) continue;
+                int32_t age = nowI - cc.birthMyr;
+                if (age < kRidgeJumpResetAgeMyr) continue;
+                // Resurface probability ramps from the base rate at the reset age up to
+                // the cap as age climbs, so the very oldest stranded floor (which pushes
+                // the >220 tail) resets fastest.
+                double over = static_cast<double>(age - kRidgeJumpResetAgeMyr);
+                double prob = kStrandedResurfaceProb + kStrandedResurfaceAgeGain * over;
+                if (prob > kStrandedResurfaceProbMax) prob = kStrandedResurfaceProbMax;
+                uint32_t roll = foundation::hash3(static_cast<int32_t>(local),
+                    static_cast<int32_t>(p), step_, jumpSeed);
+                if ((static_cast<double>(roll) * (1.0 / 4294967296.0)) < prob) {
+                    cc.birthMyr = nowI;          // resurfaced by a new spreading center
+                    cc.thicknessKm = static_cast<float>(kOceanicThicknessKm);
+                }
+            }
+        }
+    }
+
     // ---- Rift: when alive < K, with rising probability, split a big plate. ----
     uint32_t alive = aliveCount();
     int target = cfg_.plateCount;
@@ -1800,15 +2095,6 @@ void PlateSim::plateEvents() {
         foundation::Pcg32 rng(deriveSeed(riftStream_,
             0x9E37001F00000000ULL ^ (static_cast<uint64_t>(step_) * 0x100000001B3ULL)));
         if (rng.nextDouble() < prob) {
-            // Pick the largest continental-majority plate over 1.5x mean area.
-            uint64_t areaSum = 0; uint32_t aliveN = 0;
-            std::vector<uint32_t> areas(plates_.size(), 0u);
-            for (uint32_t p = 0; p < plates_.size(); ++p) {
-                if (!plates_[p].alive) continue;
-                areas[p] = plateArea(p);
-                areaSum += areas[p];
-                ++aliveN;
-            }
             double meanArea = aliveN ? static_cast<double>(areaSum) / aliveN : 0.0;
             uint32_t bestP = kUnowned; uint32_t bestA = 0;
             for (uint32_t p = 0; p < plates_.size(); ++p) {
