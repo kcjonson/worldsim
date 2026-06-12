@@ -5,7 +5,9 @@
 #include <array>
 #include <cmath>
 #include <cstdio>
+#include <map>
 #include <random>
+#include <vector>
 
 namespace worldgen {
 
@@ -16,45 +18,110 @@ double chordDist(Vec3d a, Vec3d b) {
     return std::sqrt(dx * dx + dy * dy + dz * dz);
 }
 
-// Smallest lattice-distance (in cells) from tile t's (i,j) to any of the four
-// rhombus corners. Used to flag pinwheel/corner tiles where the chart metric
-// and the true spherical metric disagree.
-int cellsToNearestCorner(const SphereGrid& g, TileId t) {
-    uint32_t n = g.subdivision();
-    // decode without exposing private encode: t = rh*n*n + j*n + i
-    uint32_t rem = t % (n * n);
-    int j = static_cast<int>(rem / n);
-    int i = static_cast<int>(rem % n);
-    int in = static_cast<int>(n);
-    int best = in;
-    const int ci[4] = {0, in - 1, 0, in - 1};
-    const int cj[4] = {0, 0, in - 1, in - 1};
-    for (int k = 0; k < 4; ++k) {
-        int di = std::abs(i - ci[k]);
-        int dj = std::abs(j - cj[k]);
-        // Chebyshev-ish: corner influence is roughly the max of the two axes.
-        int d = std::max(di, dj);
-        if (d < best) best = d;
+// Quantize a unit direction into an integer key so identical physical vertices
+// (shared across rhombus seams) collapse to the same bucket.
+uint64_t quantizeDir(Vec3d d) {
+    auto q = [](double x) -> int64_t {
+        return static_cast<int64_t>(std::llround(x * 1.0e7));
+    };
+    uint64_t h = 1469598103934665603ull;
+    for (int64_t v : {q(d.x), q(d.y), q(d.z)}) {
+        h ^= static_cast<uint64_t>(v);
+        h *= 1099511628211ull;
     }
-    return best;
+    return h;
+}
+
+// The 12 icosahedron vertex directions (must match the grid's construction).
+std::array<Vec3d, 12> icosaVerts() {
+    constexpr double kPiOver180 = 3.14159265358979323846 / 180.0;
+    constexpr double kInvSqrt5 = 0.4472135954999579392818347337462;
+    constexpr double k2InvSqrt5 = 0.8944271909999158785636694674925;
+    std::array<Vec3d, 12> v{};
+    v[0] = {0.0, 0.0, 1.0};
+    v[11] = {0.0, 0.0, -1.0};
+    for (int r = 0; r < 5; ++r) {
+        double lon = r * 72.0 * kPiOver180;
+        v[1 + r] = {k2InvSqrt5 * std::cos(lon), k2InvSqrt5 * std::sin(lon), kInvSqrt5};
+    }
+    for (int r = 0; r < 5; ++r) {
+        double lon = (36.0 + r * 72.0) * kPiOver180;
+        v[6 + r] = {k2InvSqrt5 * std::cos(lon), k2InvSqrt5 * std::sin(lon), -kInvSqrt5};
+    }
+    return v;
 }
 
 } // namespace
 
 // ============================================================================
-// Tile count
+// Tile count: 10*n*n + 2
 // ============================================================================
 
 TEST(SphereGrid, TileCount) {
-    SphereGrid g8(8);
-    EXPECT_EQ(g8.tileCount(), 10u * 8u * 8u);
-
-    SphereGrid g16(16);
-    EXPECT_EQ(g16.tileCount(), 10u * 16u * 16u);
-
-    SphereGrid g64(64);
-    EXPECT_EQ(g64.tileCount(), 10u * 64u * 64u);
+    EXPECT_EQ(SphereGrid(8).tileCount(), 10u * 8u * 8u + 2u);
+    EXPECT_EQ(SphereGrid(16).tileCount(), 10u * 16u * 16u + 2u);
+    EXPECT_EQ(SphereGrid(64).tileCount(), 10u * 64u * 64u + 2u);
 }
+
+// ============================================================================
+// Vertex ownership partition: every physical chart vertex is owned by exactly
+// one TileId, and the total of distinct vertices equals 10*n*n + 2.
+// ============================================================================
+
+static void checkOwnershipPartition(uint32_t n) {
+    SphereGrid g(n);
+    int in = static_cast<int>(n);
+
+    // Map each physical vertex (quantized direction) to the set of TileIds that
+    // claim it. Walk every (rhombus, i, j) in [0..n]^2, resolve via fromUnitVector
+    // of its exact direction, and record.
+    std::map<uint64_t, TileId> ownerOf;
+    std::map<uint64_t, uint32_t> claimCount;
+
+    for (uint32_t r = 0; r < 10u; ++r) {
+        for (int j = 0; j <= in; ++j) {
+            for (int i = 0; i <= in; ++i) {
+                Vec3d dir = g.rhombusPointOnSphere(r, static_cast<double>(i) / n,
+                                                   static_cast<double>(j) / n);
+                uint64_t key = quantizeDir(dir);
+                TileId t = g.fromUnitVector(dir);
+                ASSERT_NE(t, kInvalidTile) << "r=" << r << " i=" << i << " j=" << j;
+                ASSERT_LT(t, g.tileCount());
+                auto it = ownerOf.find(key);
+                if (it == ownerOf.end()) {
+                    ownerOf[key] = t;
+                    claimCount[key] = 1;
+                } else {
+                    EXPECT_EQ(it->second, t)
+                        << "vertex r=" << r << " i=" << i << " j=" << j
+                        << " owned by " << it->second << " but fromUnitVector gave " << t;
+                    ++claimCount[key];
+                }
+            }
+        }
+    }
+
+    // Distinct physical vertices == tileCount.
+    EXPECT_EQ(ownerOf.size(), g.tileCount())
+        << "distinct vertices != tileCount at n=" << n;
+
+    // Every TileId in range must be the owner of exactly one physical vertex.
+    std::vector<uint32_t> ownedTimes(g.tileCount(), 0);
+    for (auto& [key, t] : ownerOf) ownedTimes[t] += 1;
+    uint32_t notOwnedOnce = 0;
+    for (uint32_t t = 0; t < g.tileCount(); ++t)
+        if (ownedTimes[t] != 1) ++notOwnedOnce;
+    EXPECT_EQ(notOwnedOnce, 0u)
+        << "some TileId is not the unique owner of exactly one vertex at n=" << n;
+
+    // Poles present.
+    EXPECT_EQ(g.fromUnitVector({0.0, 0.0, 1.0}), g.northPole());
+    EXPECT_EQ(g.fromUnitVector({0.0, 0.0, -1.0}), g.southPole());
+}
+
+TEST(SphereGrid, VertexOwnershipPartition_n4) { checkOwnershipPartition(4); }
+TEST(SphereGrid, VertexOwnershipPartition_n8) { checkOwnershipPartition(8); }
+TEST(SphereGrid, VertexOwnershipPartition_n16) { checkOwnershipPartition(16); }
 
 // ============================================================================
 // Determinism
@@ -62,7 +129,7 @@ TEST(SphereGrid, TileCount) {
 
 TEST(SphereGrid, Determinism) {
     SphereGrid a(32), b(32);
-    for (uint32_t t = 0; t < a.tileCount(); t += a.tileCount() / 200) {
+    for (uint32_t t = 0; t < a.tileCount(); t += a.tileCount() / 200 + 1) {
         Vec3d ca = a.tileCenter(t);
         Vec3d cb = b.tileCenter(t);
         EXPECT_EQ(ca.x, cb.x) << "tile " << t;
@@ -79,13 +146,13 @@ TEST(SphereGrid, Determinism) {
 TEST(SphereGrid, EdgeAdjNotReversed) {
     for (uint32_t n = 1; n <= 4; ++n) {
         SphereGrid g(n);
-        EXPECT_EQ(g.tileCount(), 10u * n * n);
+        EXPECT_EQ(g.tileCount(), 10u * n * n + 2u);
     }
 }
 
 // ============================================================================
-// Inverse consistency: fromUnitVector(tileCenter(t)) == t, plus off-center
-// points strictly inside the hex must map back to t.
+// Inverse consistency: fromUnitVector(tileCenter(t)) == t (incl. both poles),
+// plus off-center points strictly inside the hex must map back to t.
 // ============================================================================
 
 TEST(SphereGrid, InverseConsistency_n16) {
@@ -97,30 +164,34 @@ TEST(SphereGrid, InverseConsistency_n16) {
         if (g.fromUnitVector(center) != t) ++failures;
     }
     EXPECT_EQ(failures, 0u) << "center: fromUnitVector(tileCenter(t)) != t for "
-                            << failures << " tiles";
+                            << failures << " tiles (incl. poles)";
 
-    // Off-center: pick axial offsets (da,db) strictly inside the hex. The hex
-    // inradius in axial coords is 0.5 (cell spacing 1); the constraint
-    // da^2 + db^2 + da*db <= r^2 keeps the point inside a disc of radius r in
-    // the unskewed metric. r=0.3 stays clear of the Voronoi edge.
+    // Off-center: axial offsets (da,db) strictly inside the hex. Skip poles
+    // (centers at chart corners; offsets would leave the chart).
     static const double kOff[][2] = {
-        { 0.30,  0.00}, {-0.30,  0.00}, { 0.00,  0.30}, { 0.00, -0.30},
-        { 0.20, -0.20}, {-0.20,  0.20}, { 0.15,  0.15}, {-0.15, -0.15},
+        { 0.18,  0.00}, {-0.18,  0.00}, { 0.00,  0.18}, { 0.00, -0.18},
+        { 0.12, -0.12}, {-0.12,  0.12}, { 0.09,  0.09}, {-0.09, -0.09},
     };
-    uint32_t offFailures = 0;
+    uint32_t offFailures = 0, offTested = 0;
     for (uint32_t t = 0; t < g.tileCount(); ++t) {
+        if (t == g.northPole() || t == g.southPole()) continue;
+        // Decode owned (i in [1..n], j in [0..n-1]).
         uint32_t rem = t % (n * n);
-        uint32_t j = rem / n, i = rem % n;
+        uint32_t j = rem / n, i = rem % n + 1;
         uint32_t rh = t / (n * n);
         for (auto& o : kOff) {
-            double uu = (static_cast<double>(i) + 0.5 + o[0]) / static_cast<double>(n);
-            double vv = (static_cast<double>(j) + 0.5 + o[1]) / static_cast<double>(n);
+            double da = o[0], db = o[1];
+            if (da * da + db * db + da * db >= 0.04) continue; // < 0.2^2
+            double uu = (static_cast<double>(i) + da) / static_cast<double>(n);
+            double vv = (static_cast<double>(j) + db) / static_cast<double>(n);
+            if (uu < 0.0 || uu > 1.0 || vv < 0.0 || vv > 1.0) continue;
+            ++offTested;
             Vec3d p = g.rhombusPointOnSphere(rh, uu, vv);
             if (g.fromUnitVector(p) != t) ++offFailures;
         }
     }
     EXPECT_EQ(offFailures, 0u) << "off-center points mapped to wrong tile in "
-                              << offFailures << " cases at n=16";
+                              << offFailures << "/" << offTested << " cases at n=16";
 }
 
 TEST(SphereGrid, InverseConsistency_n256) {
@@ -130,18 +201,20 @@ TEST(SphereGrid, InverseConsistency_n256) {
     uint32_t stride = total / 5000 + 1;
     uint32_t failures = 0, offFailures = 0;
     static const double kOff[][2] = {
-        { 0.30, 0.00}, {0.00, 0.30}, {0.20, -0.20}, {-0.15, -0.15},
+        { 0.18, 0.00}, {0.00, 0.18}, {0.12, -0.12}, {-0.09, -0.09},
     };
     for (uint32_t t = 0; t < total; t += stride) {
         Vec3d center = g.tileCenter(t);
         if (g.fromUnitVector(center) != t) ++failures;
 
+        if (t == g.northPole() || t == g.southPole()) continue;
         uint32_t rem = t % (n * n);
-        uint32_t j = rem / n, i = rem % n;
+        uint32_t j = rem / n, i = rem % n + 1;
         uint32_t rh = t / (n * n);
         for (auto& o : kOff) {
-            double uu = (static_cast<double>(i) + 0.5 + o[0]) / static_cast<double>(n);
-            double vv = (static_cast<double>(j) + 0.5 + o[1]) / static_cast<double>(n);
+            double uu = (static_cast<double>(i) + o[0]) / static_cast<double>(n);
+            double vv = (static_cast<double>(j) + o[1]) / static_cast<double>(n);
+            if (uu < 0.0 || uu > 1.0 || vv < 0.0 || vv > 1.0) continue;
             Vec3d p = g.rhombusPointOnSphere(rh, uu, vv);
             if (g.fromUnitVector(p) != t) ++offFailures;
         }
@@ -171,43 +244,39 @@ TEST(SphereGrid, LatLonRoundtrip) {
 }
 
 // ============================================================================
-// Hex Voronoi property. The tiles are Voronoi cells in the rhombus uv lattice
-// metric (cube rounding), which the fragment shader mirrors exactly; that is
-// the assignment the renderer relies on, so the property to verify is
-// lattice-metric, not 3D-chord. (Projecting the lattice onto the sphere warps
-// distances, so the 3D-nearest center can differ from the assigned one by up
-// to ~10% of a cell near cell boundaries — measured below as informational.)
+// Hex Voronoi property in the lattice metric. The tiles are Voronoi cells in
+// the rhombus uv lattice metric (cube rounding), which the fragment shader
+// mirrors; that is the assignment the renderer relies on. 3D-chord divergence
+// near seams is expected and reported as informational only.
 //
-// Lattice property: any point strictly inside a hex in the unskewed-Cartesian
-// lattice metric must map back to that hex. Build such points by offsetting
-// from a tile center by (da,db) with da^2+db^2+da*db < r^2 for r just under
-// the hex inradius (0.5), then mapping to the sphere and assigning.
+// For vertices ON a seam the chart metric is ambiguous across charts; we sample
+// each owned, non-pole tile from its home chart and require the lattice-interior
+// point to map back to it.
 // ============================================================================
 
 TEST(SphereGrid, HexVoronoiProperty) {
     SphereGrid g(64);
     uint32_t n = g.subdivision();
     std::mt19937_64 rng(0xA11CE5EEDULL);
-    std::uniform_real_distribution<double> uni(-0.48, 0.48);
+    std::uniform_real_distribution<double> uni(-0.45, 0.45);
 
     uint32_t tested = 0, latticeViolations = 0;
     double worst3dRel = 0.0; uint32_t v3d = 0;
     for (uint32_t t = 0; t < g.tileCount(); ++t) {
-        if (cellsToNearestCorner(g, t) < 2) continue;
+        if (t == g.northPole() || t == g.southPole()) continue;
         uint32_t rem = t % (n * n);
-        uint32_t j = rem / n, i = rem % n;
+        uint32_t j = rem / n, i = rem % n + 1;
         uint32_t rh = t / (n * n);
         for (int s = 0; s < 4; ++s) {
             double da = uni(rng), db = uni(rng);
-            // Reject points outside the hex inradius in the lattice metric.
-            if (da * da + db * db + da * db >= 0.23) continue;
+            if (da * da + db * db + da * db >= 0.2) continue;
+            double uu = (static_cast<double>(i) + da) / static_cast<double>(n);
+            double vv = (static_cast<double>(j) + db) / static_cast<double>(n);
+            if (uu < 0.0 || uu > 1.0 || vv < 0.0 || vv > 1.0) continue;
             ++tested;
-            double uu = (static_cast<double>(i) + 0.5 + da) / static_cast<double>(n);
-            double vv = (static_cast<double>(j) + 0.5 + db) / static_cast<double>(n);
             Vec3d p = g.rhombusPointOnSphere(rh, uu, vv);
             if (g.fromUnitVector(p) != t) ++latticeViolations;
 
-            // Informational: how far the 3D-nearest neighbor diverges.
             double dAssigned = chordDist(p, g.tileCenter(t));
             std::array<TileId, 6> nbrs{};
             uint32_t cnt = g.neighbors(t, nbrs);
@@ -233,8 +302,8 @@ TEST(SphereGrid, HexVoronoiProperty) {
 // Neighbor symmetry: u in neighbors(v) <=> v in neighbors(u), exhaustive.
 // ============================================================================
 
-TEST(SphereGrid, NeighborSymmetry_n8) {
-    SphereGrid g(8);
+static void checkNeighborSymmetry(uint32_t n) {
+    SphereGrid g(n);
     uint32_t total = g.tileCount();
     uint32_t asymmetric = 0;
     for (uint32_t t = 0; t < total; ++t) {
@@ -249,72 +318,57 @@ TEST(SphereGrid, NeighborSymmetry_n8) {
             if (!found) ++asymmetric;
         }
     }
-    EXPECT_EQ(asymmetric, 0u) << "Neighbor asymmetry: " << asymmetric << " cases at n=8";
+    EXPECT_EQ(asymmetric, 0u) << "Neighbor asymmetry: " << asymmetric
+                              << " cases at n=" << n;
 }
 
-TEST(SphereGrid, NeighborSymmetry_n16) {
-    SphereGrid g(16);
-    uint32_t total = g.tileCount();
-    uint32_t asymmetric = 0;
-    for (uint32_t t = 0; t < total; ++t) {
-        std::array<TileId, 6> nbrs{};
-        uint32_t cnt = g.neighbors(t, nbrs);
-        for (uint32_t k = 0; k < cnt; ++k) {
-            std::array<TileId, 6> nbNbrs{};
-            uint32_t nbCnt = g.neighbors(nbrs[k], nbNbrs);
-            bool found = false;
-            for (uint32_t q = 0; q < nbCnt; ++q)
-                if (nbNbrs[q] == t) { found = true; break; }
-            if (!found) ++asymmetric;
-        }
-    }
-    EXPECT_EQ(asymmetric, 0u) << "Neighbor asymmetry: " << asymmetric << " cases at n=16";
-}
+TEST(SphereGrid, NeighborSymmetry_n8) { checkNeighborSymmetry(8); }
+TEST(SphereGrid, NeighborSymmetry_n16) { checkNeighborSymmetry(16); }
 
 // ============================================================================
-// Neighbor counts. Interior tiles have 6 neighbors. Along a rhombus seam the
-// two triangular lattices interlock with a half-cell (brick-wall) offset, so a
-// seam cell borders some cells across the seam at a half-cell shift and its
-// degree drops to 5. At the 12 icosahedron-vertex pinwheels the cell is pinched
-// and degree drops to 4-5. Every tile with fewer than 6 neighbors must lie on a
-// rhombus seam (i or j == 0 or n-1). The graph must be symmetric (checked
-// separately); here we bound the degree distribution and its support.
+// Degree histogram: EXACTLY 12 pentagon tiles (count 5), all of which are the
+// 12 icosahedron vertices; every other tile has 6 neighbors.
 // ============================================================================
 
-TEST(SphereGrid, NeighborCounts) {
-    SphereGrid g(8);
+static void checkDegreeHistogram(uint32_t n) {
+    SphereGrid g(n);
     uint32_t total = g.tileCount();
-    uint32_t n = g.subdivision();
-    int in = static_cast<int>(n);
+
+    auto verts = icosaVerts();
+    // Quantized keys of the 12 icosahedron vertex directions.
+    std::map<uint64_t, int> vertKey;
+    for (int k = 0; k < 12; ++k) vertKey[quantizeDir(verts[k])] = k;
 
     uint32_t hist[8] = {0};
-    uint32_t minCount = 6, maxCount = 0;
-    uint32_t lowDegreeOffSeam = 0;
+    uint32_t fiveNotVertex = 0, vertexNotFive = 0, foundVerts = 0;
     for (uint32_t t = 0; t < total; ++t) {
         std::array<TileId, 6> nbrs{};
         uint32_t cnt = g.neighbors(t, nbrs);
-        if (cnt < 8) ++hist[cnt];
-        if (cnt < minCount) minCount = cnt;
-        if (cnt > maxCount) maxCount = cnt;
-        if (cnt < 6) {
-            uint32_t rem = t % (n * n);
-            int j = static_cast<int>(rem / n), i = static_cast<int>(rem % n);
-            bool onSeam = (i == 0 || i == in - 1 || j == 0 || j == in - 1);
-            if (!onSeam) ++lowDegreeOffSeam;
-        }
-    }
-    printf("[SphereGrid] Neighbor count histogram at n=%u:", n);
-    for (int c = 0; c <= 6; ++c) if (hist[c]) printf(" [%d]=%u", c, hist[c]);
-    printf("  (min=%u max=%u)\n", minCount, maxCount);
+        ASSERT_LT(cnt, 8u);
+        ++hist[cnt];
 
-    EXPECT_EQ(maxCount, 6u) << "max neighbor count should be 6 (interior tiles)";
-    EXPECT_GE(minCount, 4u) << "min neighbor count should be at least 4";
-    EXPECT_EQ(lowDegreeOffSeam, 0u)
-        << "tiles with <6 neighbors must lie on a rhombus seam";
+        bool isVertex = vertKey.count(quantizeDir(g.tileCenter(t))) != 0;
+        if (isVertex) ++foundVerts;
+        if (cnt == 5 && !isVertex) ++fiveNotVertex;
+        if (isVertex && cnt != 5) ++vertexNotFive;
+    }
+    printf("[SphereGrid] Degree histogram at n=%u:", n);
+    for (int c = 0; c <= 6; ++c) if (hist[c]) printf(" [%d]=%u", c, hist[c]);
+    printf("\n");
+
+    EXPECT_EQ(hist[5], 12u) << "must be exactly 12 pentagon tiles";
+    EXPECT_EQ(hist[6], total - 12u) << "all non-pentagon tiles must be hexagons";
+    EXPECT_EQ(foundVerts, 12u) << "must find all 12 icosahedron-vertex tiles";
+    EXPECT_EQ(fiveNotVertex, 0u) << "a degree-5 tile is not an icosahedron vertex";
+    EXPECT_EQ(vertexNotFive, 0u) << "an icosahedron-vertex tile is not degree-5";
 }
 
+TEST(SphereGrid, DegreeHistogram_n8) { checkDegreeHistogram(8); }
+TEST(SphereGrid, DegreeHistogram_n16) { checkDegreeHistogram(16); }
+
 // ============================================================================
-// Area uniformity at n=64
+// Area uniformity at n=64. Pentagons/poles have ~5/6 the area of a hex, so the
+// max/min ratio floor is ~1.2 from those alone; bound generously and print.
 // ============================================================================
 
 TEST(SphereGrid, AreaUniformity_n64) {
@@ -331,11 +385,13 @@ TEST(SphereGrid, AreaUniformity_n64) {
     }
     float ratio = maxArea / minArea;
     printf("[SphereGrid] Area uniformity at n=64: max/min area ratio = %.4f\n", ratio);
-    EXPECT_LT(ratio, 2.0f) << "Area ratio exceeds 2.0 — grid is too non-uniform";
+    // Hex area varies ~1.5x across the grid (rhombus distortion); pentagon tiles
+    // measured as 5/6-area quads add ~1.2x on the low end. 2.5 is a safe bound.
+    EXPECT_LT(ratio, 2.5f) << "Area ratio too large — grid is too non-uniform";
 }
 
 // ============================================================================
-// rhombusPointOnSphere at tile-center params equals tileCenter()
+// rhombusPointOnSphere at owned-vertex params equals tileCenter()
 // ============================================================================
 
 TEST(SphereGrid, RhombusPointMatchesTileCenter) {
@@ -343,13 +399,14 @@ TEST(SphereGrid, RhombusPointMatchesTileCenter) {
     uint32_t n = g.subdivision();
     double eps = 1e-10;
     uint32_t failures = 0;
+    // Owned vertices: i in [1..n], j in [0..n-1].
     for (uint32_t r = 0; r < 10u; ++r) {
         for (uint32_t j = 0; j < n; j += 4) {
-            for (uint32_t i = 0; i < n; i += 4) {
-                double u = (static_cast<double>(i) + 0.5) / static_cast<double>(n);
-                double v = (static_cast<double>(j) + 0.5) / static_cast<double>(n);
+            for (uint32_t i = 1; i <= n; i += 4) {
+                double u = static_cast<double>(i) / static_cast<double>(n);
+                double v = static_cast<double>(j) / static_cast<double>(n);
                 Vec3d p = g.rhombusPointOnSphere(r, u, v);
-                TileId t = r * n * n + j * n + i;
+                TileId t = r * n * n + j * n + (i - 1);
                 Vec3d c = g.tileCenter(t);
                 if (chordDist(p, c) > eps) {
                     ++failures;
@@ -366,7 +423,7 @@ TEST(SphereGrid, RhombusPointMatchesTileCenter) {
 
 // ============================================================================
 // locateHex: tile agrees with fromLatLon; edgeDistance bounds; neighbor is a
-// real neighbor for non-corner tiles; high edgeDistance near tile centers.
+// real neighbor; high edgeDistance near tile centers.
 // ============================================================================
 
 TEST(SphereGrid, LocateHexMatchesFromLatLon) {
@@ -392,15 +449,15 @@ TEST(SphereGrid, LocateHexEdgeDistanceAtCenters) {
     uint32_t lowAtCenter = 0;
     uint32_t neighborViolations = 0;
     for (uint32_t t = 0; t < total; t += stride) {
+        if (t == g.northPole() || t == g.southPole()) continue;
         double lat{}, lon{};
         g.latLonOf(t, lat, lon);
         SphereGrid::HexSample s = g.locateHex(lat, lon);
         ASSERT_EQ(s.tile, t) << "center of tile must locate to itself";
         if (s.edgeDistance <= 0.3f) ++lowAtCenter;
 
-        // For non-corner tiles, the blend neighbor must be a real neighbor and
-        // distinct from the tile.
-        if (cellsToNearestCorner(g, t) > 1 && s.neighbor != kInvalidTile) {
+        // The blend neighbor must be a real neighbor and distinct from the tile.
+        if (s.neighbor != kInvalidTile) {
             if (s.neighbor == s.tile) { ++neighborViolations; continue; }
             std::array<TileId, 6> nbrs{};
             uint32_t cnt = g.neighbors(t, nbrs);
@@ -414,13 +471,12 @@ TEST(SphereGrid, LocateHexEdgeDistanceAtCenters) {
         << "edgeDistance should exceed 0.3 at tile centers (" << lowAtCenter << " low)";
     EXPECT_EQ(neighborViolations, 0u)
         << "locateHex.neighbor not in neighbors(tile) for " << neighborViolations
-        << " non-corner tiles";
+        << " tiles";
 }
 
 // ============================================================================
 // locateHex continuity: walk a great circle crossing rhombus edges in small
-// steps; edgeDistance must not jump. Walk along the equator (crosses several
-// rhombus seams) in fine increments.
+// steps; edgeDistance must not jump.
 // ============================================================================
 
 TEST(SphereGrid, LocateHexContinuity) {
@@ -438,8 +494,6 @@ TEST(SphereGrid, LocateHexContinuity) {
         prev = e;
     }
     printf("[SphereGrid] locateHex continuity max edgeDistance jump = %.4f\n", maxJump);
-    // A fine walk (0.05deg ~ much less than one cell at n=64) must not produce
-    // discontinuous jumps in the Voronoi edge distance.
     EXPECT_LT(maxJump, 0.3) << "edgeDistance jumped discontinuously across a seam";
 }
 

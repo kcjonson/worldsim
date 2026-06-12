@@ -25,7 +25,7 @@ namespace {
 
 constexpr char kMagic[4] = {'W', 'S', 'P', 'L'};
 constexpr uint32_t kFormatVersion = 1;
-// loadPlanet allocates every WorldData array at tileCount (10*n^2) elements,
+// loadPlanet allocates every WorldData array at tileCount (10*n^2 + 2) elements,
 // so the cap is bounded by what fits in memory today: 2048 is ~42M tiles
 // (~1.1 GB), headroom over the UI maximum of 1449. Raise only once the
 // mmap/streamed planet database exists (see status.md).
@@ -84,7 +84,7 @@ bool savePlanet(const GeneratedWorld& world, const std::filesystem::path& path) 
 		LOG_ERROR(World, "savePlanet: invalid gridSubdivision %u", n);
 		return false;
 	}
-	const uint32_t tileCount = 10u * n * n;
+	const uint32_t tileCount = 10u * n * n + 2u; // Goldberg: + 2 poles
 
 	bool arraysValid = true;
 	forEachFieldArray(world.data, [&](WorldField field, const auto& arr) {
@@ -300,7 +300,7 @@ std::shared_ptr<const GeneratedWorld> loadPlanet(const std::filesystem::path& pa
 
 	uint32_t tileCount = 0;
 	r.scalar(tileCount);
-	const uint32_t expectedTiles = 10u * n * n;
+	const uint32_t expectedTiles = 10u * n * n + 2u; // Goldberg: + 2 poles
 	if (!r.good() || tileCount != expectedTiles) {
 		LOG_ERROR(World, "loadPlanet: %s tile count %u does not match subdivision %u (expected %u)",
 			path.string().c_str(), tileCount, n, expectedTiles);

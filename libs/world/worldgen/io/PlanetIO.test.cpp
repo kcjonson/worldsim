@@ -12,7 +12,8 @@ namespace worldgen {
 namespace {
 
 constexpr uint32_t kTestSubdivision = 8;
-constexpr uint32_t kTestTileCount = 10u * kTestSubdivision * kTestSubdivision; // 640
+// Goldberg grid: 10*n*n owned vertices + 2 poles.
+constexpr uint32_t kTestTileCount = 10u * kTestSubdivision * kTestSubdivision + 2u; // 642
 
 GeneratedWorld makeTestWorld() {
 	GeneratedWorld world;

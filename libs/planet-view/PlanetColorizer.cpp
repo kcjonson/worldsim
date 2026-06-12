@@ -170,7 +170,6 @@ void PlanetColorizer::update(const worldgen::GeneratedWorld& world, ColorMode mo
     const worldgen::WorldData& data = world.data;
     if (data.elevation.empty()) return; // nothing allocated yet
 
-    // n = grid subdivision; TileId = r*n*n + j*n + i
     uint32_t n = world.grid ? world.grid->subdivision() : 0;
     if (n == 0) return;
 
@@ -179,13 +178,16 @@ void PlanetColorizer::update(const worldgen::GeneratedWorld& world, ColorMode mo
     for (uint32_t r = 0; r < 10U; ++r) {
         for (uint32_t j = 0; j < texSize; ++j) {
             for (uint32_t i = 0; i < texSize; ++i) {
-                // Map texel (i,j) → tile indices within rhombus r.
-                // Inclusive endpoint: texel texSize-1 maps to tile n-1 exactly.
-                // When texSize == n this is identity: (i*(n-1))/(n-1) == i.
+                // Map texel (i,j) → an OWNED chart vertex of rhombus r. Goldberg
+                // ownership is i in [1..n], j in [0..n-1], so the texture column
+                // spans vertex i = ti+1 and row j = tj. canonicalTile resolves
+                // the encoding (and any pole/seam vertex) so the id is always in
+                // range. With texSize == n this samples each owned vertex once.
                 uint32_t ti = (texSize > 1) ? (i * (n - 1U)) / (texSize - 1U) : 0U;
                 uint32_t tj = (texSize > 1) ? (j * (n - 1U)) / (texSize - 1U) : 0U;
-                // TileId encoding from SphereGrid: r*n*n + j*n + i
-                uint32_t tileId = r * n * n + tj * n + ti;
+                uint32_t tileId = world.grid->canonicalTile(
+                    r, static_cast<int>(ti) + 1, static_cast<int>(tj));
+                if (tileId == worldgen::kInvalidTile) tileId = 0;
                 buf[j * texSize + i] = colorForTile(tileId, mode, data,
                                                     world.validFields,
                                                     world.seaLevelMeters);

@@ -25,7 +25,7 @@
 //   semiMajorAxis       float64
 //   eccentricity        float64
 //   seed                uint64
-//   gridSubdivision     uint32    (n; tile count = 10*n*n)
+//   gridSubdivision     uint32    (n; tile count = 10*n*n + 2)
 //   --- scalars ---
 //   seaLevelMeters      float32
 //   validFields         uint32    (WorldField bits)
@@ -44,7 +44,7 @@
 //     angularSpeed      float32
 //     isContinental     uint8     (0 or 1)
 //   --- WorldData ---
-//   tileCount           uint32    (must equal 10 * gridSubdivision^2)
+//   tileCount           uint32    (must equal 10 * gridSubdivision^2 + 2)
 //   per WorldField, ascending bit order, ONLY if its validFields bit is set:
 //     contiguous array of tileCount elements (element types from WorldData.h:
 //     elevation f32, temperatureMean i16, temperatureRange i16,
