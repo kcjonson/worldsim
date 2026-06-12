@@ -429,6 +429,28 @@ static worldgen::ExportRgb boundaryTypeColor(uint8_t bt) {
     }
 }
 
+// orogenyAge: young orogens (recent) bright red -> old scars dark; never = grey.
+static worldgen::ExportRgb orogenyAgeColor(int32_t ageMyr) {
+    if (ageMyr == worldgen::tectonics::kOrogenyNever) return {30, 35, 45};
+    float t = static_cast<float>(ageMyr) / 800.0f;
+    if (t > 1.0f) t = 1.0f;
+    // hot (recent) -> cool/dark (old): red->maroon.
+    auto r = static_cast<uint8_t>(240 - static_cast<int>(t * 150));
+    auto gg = static_cast<uint8_t>(180 - static_cast<int>(t * 150));
+    auto b = static_cast<uint8_t>(60  - static_cast<int>(t * 40));
+    return {r, gg, b};
+}
+
+// 0..1 field (orogeny intensity / volcanism) on a black->yellow->white ramp.
+static worldgen::ExportRgb fieldColor01(float v) {
+    if (v < 0.0f) v = 0.0f;
+    if (v > 1.0f) v = 1.0f;
+    auto r = static_cast<uint8_t>(static_cast<int>(v * 255));
+    auto gg = static_cast<uint8_t>(static_cast<int>(v * 220));
+    auto b = static_cast<uint8_t>(static_cast<int>(v * v * 120));
+    return {r, gg, b};
+}
+
 static int runSimOnly(const CliArgs& args) {
     using namespace worldgen;
     using namespace worldgen::tectonics;
@@ -483,6 +505,14 @@ static int runSimOnly(const CliArgs& args) {
             if (age > 65534) age = 65534;
             return crustAgeColor(static_cast<uint16_t>(age), static_cast<uint8_t>(cc.type));
         }, buf, 2048);
+        std::snprintf(buf, sizeof(buf), "%s/frame_%03d_orogenyage.bmp", args.outDir.c_str(), frameIdx);
+        exportEquirectangularBmp(g, [&](TileId t) -> ExportRgb {
+            const CrustCell& cc = crust[t];
+            if (cc.type != CrustType::Continental)
+                return {15, 20, 35}; // ocean: dark
+            int32_t oage = cc.orogenyMyr == kOrogenyNever ? kOrogenyNever : (nowI - cc.orogenyMyr);
+            return orogenyAgeColor(oage);
+        }, buf, 2048);
     };
 
     // Frame 0: initial state needs a rasterize. Run one finalize-style pass by
@@ -491,12 +521,20 @@ static int runSimOnly(const CliArgs& args) {
     double stepTotal = 0.0, stepMax = 0.0;
     int frameIdx = 0;
     int total = sim.stepCount();
+    uint32_t aliveMin = 0xFFFFFFFFu, aliveMax = 0;
+    uint64_t ccFirst = 0, ccLast = 0; bool ccFirstSet = false;
     for (int s = 0; s < total; ++s) {
         auto ts = Clock::now();
         sim.step();
         double dt = std::chrono::duration<double>(Clock::now() - ts).count();
         stepTotal += dt;
         if (dt > stepMax) stepMax = dt;
+        uint32_t al = sim.aliveCount();
+        if (al < aliveMin) aliveMin = al;
+        if (al > aliveMax) aliveMax = al;
+        uint64_t cc = sim.continentalContinentalOverlaps();
+        if (!ccFirstSet) { ccFirst = cc; ccFirstSet = true; }
+        ccLast = cc;
         if ((s % frameEvery) == 0 || s == total - 1) {
             dumpFrame(frameIdx++);
         }
@@ -505,12 +543,26 @@ static int runSimOnly(const CliArgs& args) {
     auto history = sim.finalize();
     double wall = std::chrono::duration<double>(Clock::now() - t0).count();
 
-    // Final boundaryType frame.
+    // Final boundaryType + orogeny + volcanism frames.
     {
         char buf[256];
         std::snprintf(buf, sizeof(buf), "%s/final_boundarytype.bmp", args.outDir.c_str());
         exportEquirectangularBmp(g, [&](TileId t) -> ExportRgb {
             return boundaryTypeColor(history->boundaryType[t]);
+        }, buf, 2048);
+        std::snprintf(buf, sizeof(buf), "%s/final_orogenyage.bmp", args.outDir.c_str());
+        exportEquirectangularBmp(g, [&](TileId t) -> ExportRgb {
+            if (history->crustType[t] != static_cast<uint8_t>(CrustType::Continental))
+                return {15, 20, 35};
+            return orogenyAgeColor(history->orogenyAge[t]);
+        }, buf, 2048);
+        std::snprintf(buf, sizeof(buf), "%s/final_orogenyintensity.bmp", args.outDir.c_str());
+        exportEquirectangularBmp(g, [&](TileId t) -> ExportRgb {
+            return fieldColor01(history->orogenyIntensity[t]);
+        }, buf, 2048);
+        std::snprintf(buf, sizeof(buf), "%s/final_volcanism.bmp", args.outDir.c_str());
+        exportEquirectangularBmp(g, [&](TileId t) -> ExportRgb {
+            return fieldColor01(history->volcanism[t]);
         }, buf, 2048);
     }
 
@@ -522,22 +574,41 @@ static int runSimOnly(const CliArgs& args) {
         uint8_t pid = history->plateId[t];
         if (pid < area.size()) area[pid]++;
     }
-    // Ocean age min/mean/max.
+    // Ocean age min/mean/max + how much exceeds the 220 Myr acceptance ceiling.
     uint32_t oceanCount = 0;
     uint64_t ageSum = 0;
     uint16_t ageMin = 65535, ageMax = 0;
     uint32_t contCount = 0;
+    uint32_t ageOver220 = 0;
+    std::vector<uint16_t> oceanAges;
+    oceanAges.reserve(N);
     for (TileId t = 0; t < N; ++t) {
         if (history->crustType[t] == static_cast<uint8_t>(CrustType::Oceanic)) {
             uint16_t a = history->crustAge[t];
             ++oceanCount; ageSum += a;
             if (a < ageMin) ageMin = a;
             if (a > ageMax) ageMax = a;
+            if (a > 220) ++ageOver220;
+            oceanAges.push_back(a);
         } else if (history->crustType[t] == static_cast<uint8_t>(CrustType::Continental)) {
             ++contCount;
         }
     }
     double ageMean = oceanCount ? static_cast<double>(ageSum) / oceanCount : 0.0;
+    uint16_t ageP99 = 0;
+    if (!oceanAges.empty()) {
+        std::sort(oceanAges.begin(), oceanAges.end());
+        ageP99 = oceanAges[static_cast<size_t>(oceanAges.size() * 0.99)];
+    }
+    double overFrac = oceanCount ? 100.0 * ageOver220 / oceanCount : 0.0;
+
+    // Orogeny coverage: fraction of continental tiles carrying an orogeny stamp.
+    uint32_t orogenyTiles = 0;
+    for (TileId t = 0; t < N; ++t) {
+        if (history->crustType[t] != static_cast<uint8_t>(CrustType::Continental)) continue;
+        if (history->orogenyAge[t] != kOrogenyNever) ++orogenyTiles;
+    }
+    double orogenyCoverage = contCount ? 100.0 * orogenyTiles / contCount : 0.0;
 
     // Continental drift: count vs. initial continental cell budget.
     uint32_t simContCells = sim.continentalCellCount();
@@ -562,13 +633,21 @@ static int runSimOnly(const CliArgs& args) {
     std::printf("  continental cells (in-raster) : %u  (target %.0f, drift %+.2f%%)\n",
                 simContCells, contTarget, driftPct);
     std::printf("  continental cells (resolved)  : %u\n", contCount);
-    std::printf("  cont-cont overlaps (last step): %llu\n",
-                static_cast<unsigned long long>(sim.continentalContinentalOverlaps()));
-    std::printf("  ocean age (Myr) : min %u  mean %.1f  max %u  (n=%u)\n",
-                ageMin == 65535 ? 0u : ageMin, ageMean, ageMax, oceanCount);
+    std::printf("  events          : merges %u  rifts %u  accretions %u\n",
+                sim.mergeCount(), sim.riftCount(), sim.accretionCount());
+    std::printf("  alive plates    : start %d  min %u  max %u  final %u\n",
+                args.plates, aliveMin == 0xFFFFFFFFu ? 0u : aliveMin, aliveMax,
+                static_cast<unsigned>(history->plates.size()));
+    std::printf("  CC overlap trend: first %llu -> last %llu\n",
+                static_cast<unsigned long long>(ccFirst),
+                static_cast<unsigned long long>(ccLast));
+    std::printf("  orogeny coverage: %.1f%% of continental tiles (%u stamped)\n",
+                orogenyCoverage, orogenyTiles);
+    std::printf("  ocean age (Myr) : min %u  mean %.1f  p99 %u  max %u  (>220: %.2f%%, n=%u)\n",
+                ageMin == 65535 ? 0u : ageMin, ageMean, ageP99, ageMax, overFrac, oceanCount);
     std::printf("  product hash    : 0x%016llx\n",
                 static_cast<unsigned long long>(computeTectonicHistoryHash(*history)));
-    std::printf("  frames written  : %d (plateid + crustage) + final_boundarytype\n", frameIdx);
+    std::printf("  frames written  : %d (plateid+crustage+orogenyage) + 4 final maps\n", frameIdx);
     std::fflush(stdout);
     return 0;
 }

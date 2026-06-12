@@ -21,9 +21,10 @@ namespace worldgen::tectonics {
 struct CrustCell {
     CrustType type{CrustType::None};
     int32_t   birthMyr{0};                 // can be negative for pre-aged ocean
-    int32_t   orogenyMyr{kOrogenyNever};   // M-T2
+    int32_t   orogenyMyr{kOrogenyNever};   // M-T2: time of last orogenic stamp
     float     thicknessKm{0.0f};
-    float     volcanism{0.0f};             // M-T2
+    float     orogenyIntensity{0.0f};      // M-T2: 0..1 accumulator, mountain-belt amplitude
+    float     volcanism{0.0f};             // M-T2: 0..1 accumulator, arc + hotspot magmatism
 };
 
 // One simulated plate.
@@ -98,6 +99,12 @@ class PlateSim {
     uint32_t continentalCellCount() const;
     uint64_t continentalContinentalOverlaps() const { return ccOverlaps_; }
 
+    // --- M-T2 event introspection / stats ---
+    uint32_t aliveCount() const;
+    uint32_t mergeCount() const { return mergeCount_; }
+    uint32_t riftCount() const { return riftCount_; }
+    uint32_t accretionCount() const { return accretionCount_; }
+
   private:
     // --- init helpers ---
     void seedAndGrowPlates(uint64_t seed);
@@ -107,11 +114,29 @@ class PlateSim {
 
     // --- per-step pipeline ---
     void advanceRotations();
+    void evolvePoles();        // M-T2: slow pole/speed drift on a schedule
     void forwardRasterize();
     void resolveOwnership();
     void applyEraseList();
     void gapFill();
     void boundaryScan();
+    void collisionProcessing();  // M-T2: CC thicken+orogeny, CO/OO arc volcanism
+    void terraneAccretion();     // M-T2: microcontinent transfer at trenches
+    void erosionProxy();         // M-T2: continental thickness relaxation
+    void hotspots();             // M-T2: plume volcanism
+    void plateEvents();          // M-T2: merge + rift
+    void rebalanceMomentum();    // area-weighted net-rotation cancel (init + post-event)
+
+    // M-T2 event helpers
+    void initHotspots(uint64_t seed);
+    void mergePlates(uint32_t keep, uint32_t donor); // donor -> keep in keep's frame
+    void pruneStaleCrust(uint32_t pid);              // drop subducted oceanic raster crust
+    bool tryRift(uint32_t pid, uint64_t stepSalt);   // split plate pid; returns true on success
+    uint32_t allocPlateId();                          // reuse a dead id or grow the vector
+    // World cell -> a plate's local baseline cell (inverse-rotate + nearest).
+    TileId worldToLocal(uint32_t pid, TileId worldCell) const;
+    // Per-plate occupied-tile count from its raster (for area-based decisions).
+    uint32_t plateArea(uint32_t pid) const;
 
     // quaternion helpers (doubles, fixed op order)
     static void quatFromAxisAngle(const Vec3d& axis, double angle, double q[4]);
@@ -154,6 +179,41 @@ class PlateSim {
     std::vector<bool> continentalMask_;
 
     uint64_t ccOverlaps_{0}; // continental-continental overlap count (stats)
+
+    // --- M-T2 state ---
+    // Previous-step ownership, used for the CC-tie stickiness rule (prev owner of a
+    // contested continental cell wins, so collision boundaries stay coherent while
+    // the per-pair collision score builds). Updated at the end of resolveOwnership.
+    std::vector<uint8_t> prevOwner_;
+
+    // Per-plate-pair collision score (key = packed (min<<8 | max) plate ids).
+    // Deterministic ascending iteration via a sorted-on-use vector of (key, score).
+    std::vector<std::pair<uint32_t, double>> collisionScore_;
+
+    // Hotspots: fixed plume unit vectors in the WORLD frame (plumes are mantle-
+    // anchored; plates drift over them, leaving chains).
+    std::vector<Vec3d> hotspots_;
+
+    // Per-plate next pole-evolution time (Myr). Staggered so plates don't all
+    // re-pole on the same step.
+    std::vector<double> nextPoleEvolveMyr_;
+
+    uint64_t poleEvolveStream_{0}; // base stream for per-plate pole re-draws
+    uint64_t riftStream_{0};       // base stream for rift decisions/paths
+
+    uint32_t mergeCount_{0};
+    uint32_t riftCount_{0};
+    uint32_t accretionCount_{0};
+
+    // Scratch reused across steps to avoid per-step allocation.
+    std::vector<int32_t> ringScratch_; // BFS ring distance buffer (per world cell)
+    std::vector<TileId>  bfsScratch_;   // BFS frontier
+
+    // Per-plate collision-block factor [0,1] from CC contact (set in
+    // collisionProcessing, applied in advanceRotations next step). Continental crust
+    // is buoyant: a plate deep in continent-continent collision slows so continents
+    // suture edge-to-edge instead of interpenetrating (conserves continental area).
+    std::vector<float> collisionBlock_;
 };
 
 } // namespace worldgen::tectonics

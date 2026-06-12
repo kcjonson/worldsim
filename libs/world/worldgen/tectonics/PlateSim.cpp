@@ -51,6 +51,58 @@ struct HeapEntry {
     }
 };
 
+// Smallest-eigenvalue eigenvector of a symmetric 3x3 matrix (column-major m[9],
+// m[0..8] = [a b c; b d e; c e f]). Used to find a great-circle band's axis: for
+// points lying near a plane through the origin, the band normal is the direction of
+// least variance (smallest eigenvalue of the scatter matrix). Analytic symmetric
+// eigen via trig (Smith 1961); deterministic, det_math only.
+Vec3d minEigenVector(const double m[9]) {
+    const double a = m[0], b = m[1], c = m[2], d = m[4], e = m[5], f = m[8];
+    // Eigenvalues of symmetric 3x3 (Smith's method).
+    double p1 = b*b + c*c + e*e;
+    Vec3d evals;
+    if (p1 < 1e-30) {
+        evals = {a, d, f};
+    } else {
+        double q = (a + d + f) / 3.0;
+        double p2 = (a-q)*(a-q) + (d-q)*(d-q) + (f-q)*(f-q) + 2.0*p1;
+        double p = foundation::det_math::sqrt(p2 / 6.0);
+        // B = (A - qI)/p
+        double b00=(a-q)/p, b11=(d-q)/p, b22=(f-q)/p, b01=b/p, b02=c/p, b12=e/p;
+        double detB = b00*(b11*b22 - b12*b12) - b01*(b01*b22 - b12*b02) + b02*(b01*b12 - b11*b02);
+        double r = detB / 2.0;
+        if (r < -1.0) r = -1.0; else if (r > 1.0) r = 1.0;
+        double phi = 0.0;
+        // acos via asin: acos(r) = pi/2 - asin(r)
+        phi = (1.5707963267948966 - foundation::det_math::asin(r)) / 3.0;
+        double e1 = q + 2.0*p*foundation::det_math::cos(phi);
+        double e3 = q + 2.0*p*foundation::det_math::cos(phi + 2.0943951023931953); // +2pi/3
+        double e2 = 3.0*q - e1 - e3;
+        evals = {e1, e2, e3};
+    }
+    // smallest eigenvalue
+    double lam = evals.x;
+    if (evals.y < lam) lam = evals.y;
+    if (evals.z < lam) lam = evals.z;
+    // Eigenvector of lam: null space of (A - lam I) via cross products of its rows.
+    double r0[3] = {a-lam, b, c};
+    double r1[3] = {b, d-lam, e};
+    double r2[3] = {c, e, f-lam};
+    auto cross = [](const double* u, const double* v) -> Vec3d {
+        return {u[1]*v[2]-u[2]*v[1], u[2]*v[0]-u[0]*v[2], u[0]*v[1]-u[1]*v[0]};
+    };
+    Vec3d c0 = cross(r0, r1), c1 = cross(r1, r2), c2 = cross(r2, r0);
+    double n0 = c0.x*c0.x+c0.y*c0.y+c0.z*c0.z;
+    double n1 = c1.x*c1.x+c1.y*c1.y+c1.z*c1.z;
+    double n2 = c2.x*c2.x+c2.y*c2.y+c2.z*c2.z;
+    Vec3d best = c0; double bn = n0;
+    if (n1 > bn) { best = c1; bn = n1; }
+    if (n2 > bn) { best = c2; bn = n2; }
+    if (bn < 1e-20) return {0, 0, 1};
+    double inv = 1.0 / foundation::det_math::sqrt(bn);
+    return {best.x*inv, best.y*inv, best.z*inv};
+}
+
 inline float boundaryNoise(float x, float y, float z, uint32_t seed) {
     float n = foundation::fractalNoise3(x, y, z, seed, 3, 2.0f, 0.5f);
     if (n < -1.0f) n = -1.0f;
@@ -137,6 +189,14 @@ PlateSim::PlateSim(const PlateSimParams& params, const PlateSimTestOverride* ove
     bndType_.assign(tileCount_, static_cast<uint8_t>(BoundaryType::None));
     bndSide_.assign(tileCount_, kSideSymmetric);
     bndConv_.assign(tileCount_, 0.0f);
+    prevOwner_.assign(tileCount_, static_cast<uint8_t>(kUnowned));
+    ringScratch_.assign(tileCount_, -1);
+    bfsScratch_.reserve(tileCount_ / 2u);
+    collisionBlock_.assign(static_cast<size_t>(params.plateCount), 0.0f);
+
+    // Event RNG streams (independent of init streams).
+    poleEvolveStream_ = deriveSeed(params.seed, 0x10);
+    riftStream_       = deriveSeed(params.seed, 0x11);
 
     if (override != nullptr) {
         plates_ = override->plates;
@@ -149,6 +209,10 @@ PlateSim::PlateSim(const PlateSimParams& params, const PlateSimTestOverride* ove
             for (TileId t = 0; t < tileCount_; ++t)
                 if (pl.crust[t].type != CrustType::None) pl.occupied.push_back(t);
         }
+        prevOwner_ = owner_;
+        initHotspots(deriveSeed(params.seed, 0x12));
+        nextPoleEvolveMyr_.assign(plates_.size(), kPoleEvolutionPeriodMyr);
+        collisionBlock_.assign(plates_.size(), 0.0f);
         return;
     }
 
@@ -159,6 +223,16 @@ PlateSim::PlateSim(const PlateSimParams& params, const PlateSimTestOverride* ove
     paintContinents(deriveSeed(params.seed, 0x02));
     assignEulerPoles(deriveSeed(params.seed, 0x03));
     initPlateRasters();
+    prevOwner_ = owner_;
+    initHotspots(deriveSeed(params.seed, 0x12));
+
+    // Stagger first pole-evolution per plate across the first period so they don't
+    // all re-pole on the same step.
+    nextPoleEvolveMyr_.assign(plates_.size(), 0.0);
+    foundation::Pcg32 prng(deriveSeed(params.seed, 0x13));
+    for (size_t i = 0; i < plates_.size(); ++i) {
+        nextPoleEvolveMyr_[i] = kPoleEvolutionPeriodMyr * (0.5 + 0.5 * prng.nextDouble());
+    }
 }
 
 // ---- K seed tiles + multi-source Dijkstra (compact port of PlateStage) ----
@@ -384,17 +458,23 @@ void PlateSim::assignEulerPoles(uint64_t seed) {
         plates_[static_cast<size_t>(p)].omegaRadPerMyr = omega;
     }
 
-    // Area-weighted momentum balance: subtract the area-weighted mean omega vector
-    // so net rotation is ~0. (Ports PlateMovementStage.)
+    rebalanceMomentum();
+}
+
+// Area-weighted momentum balance: subtract the area-weighted mean omega vector so
+// net rotation is ~0. (Ports PlateMovementStage; reused after merge/rift events.)
+void PlateSim::rebalanceMomentum() {
+    const int K = static_cast<int>(plates_.size());
     std::vector<uint32_t> area(static_cast<size_t>(K), 0u);
-    for (uint32_t t = 0; t < N; ++t) {
+    for (uint32_t t = 0; t < tileCount_; ++t) {
         uint8_t pid = owner_[t];
         if (pid < static_cast<uint8_t>(K)) area[pid]++;
     }
     double sumA = 0.0, mx = 0.0, my = 0.0, mz = 0.0;
     for (int p = 0; p < K; ++p) {
-        double a = static_cast<double>(area[static_cast<size_t>(p)]);
         const auto& pl = plates_[static_cast<size_t>(p)];
+        if (!pl.alive) continue;
+        double a = static_cast<double>(area[static_cast<size_t>(p)]);
         mx += a * pl.eulerPole.x * pl.omegaRadPerMyr;
         my += a * pl.eulerPole.y * pl.omegaRadPerMyr;
         mz += a * pl.eulerPole.z * pl.omegaRadPerMyr;
@@ -403,6 +483,7 @@ void PlateSim::assignEulerPoles(uint64_t seed) {
     if (sumA > 0.0) { mx /= sumA; my /= sumA; mz /= sumA; }
     for (int p = 0; p < K; ++p) {
         auto& pl = plates_[static_cast<size_t>(p)];
+        if (!pl.alive) continue;
         double ox = pl.eulerPole.x * pl.omegaRadPerMyr - mx;
         double oy = pl.eulerPole.y * pl.omegaRadPerMyr - my;
         double oz = pl.eulerPole.z * pl.omegaRadPerMyr - mz;
@@ -464,41 +545,60 @@ void PlateSim::initPlateRasters() {
 // ============================================================================
 //
 // step() order:
-//   1. Advance quaternions:  Qp = dQ(pole_p, omega_p*dt) * Qp.
-//   2. Forward rasterize:    each alive plate ascending id, each occupied local
+//   1. Evolve poles:         plates past their schedule re-draw pole + speed with
+//                            continuity, then momentum re-balance (fixes stranded
+//                            basins / runaway seafloor age).
+//   2. Advance quaternions:  Qp = dQ(pole_p, omega_p*dt) * Qp.
+//   3. Forward rasterize:    each alive plate ascending id, each occupied local
 //                            cell -> world cell candidate list. (Cell order within
 //                            a plate does not affect the result: the resolve
 //                            comparator is a total order and the erase list is
-//                            built in ascending world-cell order in step 3.)
-//   3. Resolve ownership:    per world cell ascending, sort candidates
-//                            (continental > oceanic; younger oceanic wins; tie
-//                            smaller plateId). Losing oceanic -> erase list.
-//   4. Apply erase list to plate-local rasters.
-//   5. Gap fill ascending:   empty cells inherit majority neighbor owner and get
+//                            built in ascending world-cell order in step 4.)
+//   4. Resolve ownership:    per world cell ascending, sort candidates
+//                            (continental > oceanic; younger oceanic wins; CC tie
+//                            previous-owner-sticky then smaller plateId). Losing
+//                            oceanic -> erase list. prevOwner_ updated at the end.
+//   5. Apply erase list to plate-local rasters.
+//   6. Gap fill ascending:   empty cells inherit majority neighbor owner and get
 //                            NEW oceanic crust at birth=now (spreading ridges).
-//   6. Boundary scan:        Euler-pole relative velocity, convergence, classify.
-//   7. (M-T2 events)         no-op in M-T1.
-//   8. cancel + progress callbacks.
+//   7. Boundary scan:        Euler-pole relative velocity, convergence, classify.
+//   8. Collision processing: CC thicken + orogeny stamp + per-pair score; CO/OO
+//                            arc volcanism + modest thickening (ascending order).
+//   9. Terrane accretion:    small continental fragments transfer at trenches.
+//  10. Erosion proxy:        continental thickness relaxes toward equilibrium.
+//  11. Hotspots:             fixed world-frame plumes deposit volcanism.
+//  12. Plate events:         merge (score > threshold) then rift (alive < K).
+//  13. cancel + progress callbacks.
 
 void PlateSim::step(const CancelFn& cancel, const ProgressFn& progress) {
-    advanceRotations();   // 1
-    forwardRasterize();   // 2
-    resolveOwnership();   // 3
-    applyEraseList();     // 4
-    gapFill();            // 5
-    boundaryScan();       // 6
-    // 7: M-T2 events placeholder.
+    evolvePoles();        // 1
+    advanceRotations();   // 2
+    forwardRasterize();   // 3
+    resolveOwnership();   // 4
+    applyEraseList();     // 5
+    gapFill();            // 6
+    boundaryScan();       // 7
+    collisionProcessing();// 8
+    terraneAccretion();   // 9
+    erosionProxy();       // 10
+    hotspots();           // 11
+    plateEvents();        // 12
     ++step_;
     nowMyr_ += dtMyr_;
-    if (cancel) cancel();                                            // 8
+    if (cancel) cancel();                                            // 13
     if (progress) progress(static_cast<float>(step_) / static_cast<float>(stepCount_));
 }
 
 void PlateSim::advanceRotations() {
-    for (auto& pl : plates_) {
+    for (size_t pi = 0; pi < plates_.size(); ++pi) {
+        SimPlate& pl = plates_[pi];
         if (!pl.alive || pl.omegaRadPerMyr == 0.0) continue;
+        // Continental collision damping: a plate deep in CC collision rotates slower
+        // (buoyant continents resist subduction and stop interpenetrating).
+        double block = (pi < collisionBlock_.size()) ? collisionBlock_[pi] : 0.0;
+        double eff = pl.omegaRadPerMyr * dtMyr_ * (1.0 - block);
         double dq[4];
-        quatFromAxisAngle(pl.eulerPole, pl.omegaRadPerMyr * dtMyr_, dq);
+        quatFromAxisAngle(pl.eulerPole, eff, dq);
         double out[4];
         quatMul(dq, pl.rotation, out);
         // Renormalize to keep the quaternion unit over many steps.
@@ -576,7 +676,11 @@ void PlateSim::resolveOwnership() {
     ccOverlaps_ = 0;
 
     // Candidate priority: continental beats oceanic; among oceanic, younger
-    // birthMyr wins (older subducts); final tie smaller plateId.
+    // birthMyr wins (older subducts); among continental, the cell's previous owner
+    // wins (CC-tie stickiness — keeps collision boundaries coherent so the per-pair
+    // collision score can build instead of the front dithering); final tie smaller
+    // plateId. `stickyPrev` is prevOwner_[w] for the cell being resolved.
+    uint8_t stickyPrev = kUnowned;
     auto better = [&](const Candidate& a, const Candidate& b) -> bool {
         const CrustCell& ca = plates_[a.plate].crust[a.localCell];
         const CrustCell& cb = plates_[b.plate].crust[b.localCell];
@@ -585,12 +689,17 @@ void PlateSim::resolveOwnership() {
         if (aCont != bCont) return aCont; // continental wins
         if (!aCont) {
             if (ca.birthMyr != cb.birthMyr) return ca.birthMyr > cb.birthMyr; // younger wins
+        } else {
+            bool aPrev = a.plate == stickyPrev;
+            bool bPrev = b.plate == stickyPrev;
+            if (aPrev != bPrev) return aPrev; // previous owner sticks
         }
         return a.plate < b.plate; // tie: smaller plateId
     };
 
     // No per-cell allocation: walk the intrusive candidate list twice.
     for (TileId w = 0; w < tileCount_; ++w) {
+        stickyPrev = prevOwner_[w];
         uint32_t head = candHead_[w];
         if (head == 0xFFFFFFFFu) {
             owner_[w] = static_cast<uint8_t>(kUnowned);
@@ -608,7 +717,11 @@ void PlateSim::resolveOwnership() {
         owner_[w] = static_cast<uint8_t>(win.plate);
         resolved_[w] = winCell;
 
-        // Pass 2: losers. Oceanic -> erase (subducts); CC overlap -> count.
+        // Pass 2: losers. Oceanic -> erase (subducts). Continental CC overlap -> count
+        // only (the loser keeps its crust; it is mostly coarse-rounding bleed from an
+        // adjacent plate's real margin, not duplicate material — erasing it would
+        // destroy real continent). Stickiness keeps the rendered boundary coherent;
+        // merge accounting handles genuine overlap via pruneStaleCrust at merge time.
         for (uint32_t idx = head; idx != 0xFFFFFFFFu; idx = candNext_[idx]) {
             if (idx == winIdx) continue;
             const Candidate& c = candPool_[idx];
@@ -671,6 +784,9 @@ void PlateSim::gapFill() {
         pl.occupied.push_back(localCell); // forwardRasterize re-sorts next step
         resolved_[w] = cell;
     }
+
+    // Snapshot final ownership for next step's CC-tie stickiness.
+    prevOwner_ = owner_;
 }
 
 void PlateSim::boundaryScan() {
@@ -759,6 +875,838 @@ void PlateSim::boundaryScan() {
 }
 
 // ============================================================================
+// M-T2 helpers
+// ============================================================================
+
+uint32_t PlateSim::aliveCount() const {
+    uint32_t n = 0;
+    for (const auto& pl : plates_) if (pl.alive) ++n;
+    return n;
+}
+
+uint32_t PlateSim::plateArea(uint32_t pid) const {
+    if (pid >= plates_.size()) return 0;
+    uint32_t n = 0;
+    for (const auto& c : plates_[pid].crust) if (c.type != CrustType::None) ++n;
+    return n;
+}
+
+// World cell -> the plate's local baseline cell (inverse-rotate world center).
+TileId PlateSim::worldToLocal(uint32_t pid, TileId worldCell) const {
+    const SimPlate& pl = plates_[pid];
+    double q[4] = {pl.rotation[0], -pl.rotation[1], -pl.rotation[2], -pl.rotation[3]};
+    Vec3d localPos = quatRotate(q, centers_[worldCell]);
+    return grid_->fromUnitVector(localPos);
+}
+
+// Look up (creating if absent) a per-pair collision score slot. Keys packed with
+// min plate id in the high byte so iteration over the vector is order-stable.
+static inline uint32_t packPair(uint8_t a, uint8_t b) {
+    uint8_t lo = a < b ? a : b, hi = a < b ? b : a;
+    return (static_cast<uint32_t>(lo) << 8) | static_cast<uint32_t>(hi);
+}
+
+// ============================================================================
+// Collision processing: CC thickening + orogeny, CO/OO arc volcanism.
+// ============================================================================
+//
+// Walks boundary tiles in ascending world-cell order (deterministic). For each
+// convergent boundary tile it finds the dominant foreign plate (same derivation
+// as boundaryScan) and acts within a small ring band:
+//   CC: thicken both sides, stamp orogeny + intensity, add to the pair score.
+//   CO/OO: deposit arc volcanism + modest thickening on the overriding side a few
+//          rings inland from the trench; ensure the subducting ocean keeps eroding.
+
+void PlateSim::collisionProcessing() {
+    const int K = static_cast<int>(plates_.size());
+    const int32_t nowI = static_cast<int32_t>(nowMyr_ + dtMyr_ + 0.5);
+
+    std::array<TileId, 6> nbrs{};
+
+    // Recompute the dominant foreign plate per boundary tile (boundaryScan only
+    // stored the classification, not the partner). Same majority rule as the scan.
+    auto domForeign = [&](TileId t, uint8_t pid) -> uint8_t {
+        uint32_t cnt = grid_->neighbors(t, nbrs);
+        uint8_t dom = static_cast<uint8_t>(kUnowned);
+        uint32_t domCnt = 0;
+        for (uint32_t k = 0; k < cnt; ++k) {
+            uint8_t np = owner_[nbrs[k]];
+            if (np != pid && np < static_cast<uint8_t>(K)) {
+                uint32_t c = 0;
+                for (uint32_t k2 = k; k2 < cnt; ++k2) if (owner_[nbrs[k2]] == np) ++c;
+                if (c > domCnt) { domCnt = c; dom = np; }
+            }
+        }
+        return dom;
+    };
+
+    // BFS ring distance from a set of seed world cells, restricted to one plate's
+    // territory, bounded to maxRing. ringScratch_ is reset for touched cells only.
+    // Returns the list of (worldCell, ring) reached, appended to `out`.
+    auto bandBFS = [&](const std::vector<TileId>& seeds, uint8_t plate, int maxRing,
+                       std::vector<std::pair<TileId,int>>& out) {
+        bfsScratch_.clear();
+        std::array<TileId, 6> nb{};
+        for (TileId s : seeds) {
+            if (owner_[s] != plate) continue;
+            if (ringScratch_[s] >= 0) continue;
+            ringScratch_[s] = 0;
+            bfsScratch_.push_back(s);
+            out.push_back({s, 0});
+        }
+        size_t head = 0;
+        while (head < bfsScratch_.size()) {
+            TileId cur = bfsScratch_[head++];
+            int d = ringScratch_[cur];
+            if (d >= maxRing) continue;
+            uint32_t cnt = grid_->neighbors(cur, nb);
+            for (uint32_t k = 0; k < cnt; ++k) {
+                TileId v = nb[k];
+                if (owner_[v] != plate) continue;
+                if (ringScratch_[v] >= 0) continue;
+                ringScratch_[v] = d + 1;
+                bfsScratch_.push_back(v);
+                out.push_back({v, d + 1});
+            }
+        }
+        // reset touched cells
+        for (auto& pr : out) ringScratch_[pr.first] = -1;
+    };
+
+    // ---- Collect convergent boundary tiles, grouped per (side plate). ----
+    // CC: thicken a band on BOTH plates around the boundary tile. To keep this
+    // O(N) we gather, per plate, the boundary seed cells, then BFS once per plate.
+    // Seeds + their convergence are accumulated; per-pair score is summed.
+
+    // Per-plate seed lists for CC bands and CO arc bands (overriding side).
+    std::vector<std::vector<TileId>> ccSeeds(static_cast<size_t>(K));
+    std::vector<std::vector<TileId>> arcSeeds(static_cast<size_t>(K));
+    // Per-plate accumulated convergence at the boundary (for thickening magnitude).
+    // We use the max boundary convergence touching the plate as the band's rate.
+    std::vector<float> ccConv(static_cast<size_t>(K), 0.0f);
+    std::vector<float> arcConv(static_cast<size_t>(K), 0.0f);
+
+    // This-step per-pair score contributions (key -> conv*dt summed over contact).
+    std::vector<std::pair<uint32_t, double>> stepScore;
+
+    for (TileId t = 0; t < tileCount_; ++t) {
+        uint8_t bt = bndType_[t];
+        if (bt != static_cast<uint8_t>(BoundaryType::ConvergentCC) &&
+            bt != static_cast<uint8_t>(BoundaryType::ConvergentCO) &&
+            bt != static_cast<uint8_t>(BoundaryType::ConvergentOO)) continue;
+        uint8_t pid = owner_[t];
+        if (pid >= static_cast<uint8_t>(K)) continue;
+        float conv = bndConv_[t];
+        if (conv <= 0.0f) conv = 0.0f;
+
+        if (bt == static_cast<uint8_t>(BoundaryType::ConvergentCC)) {
+            uint8_t dom = domForeign(t, pid);
+            ccSeeds[pid].push_back(t);
+            if (conv > ccConv[pid]) ccConv[pid] = conv;
+            // Per-pair collision score uses the PEAK convergence on the shared
+            // contact this step (scale-invariant: independent of coarse-grid contact
+            // length, so the same merge threshold works at any coarseN).
+            if (dom < static_cast<uint8_t>(K) && pid < dom) {
+                uint32_t key = packPair(pid, dom);
+                double add = static_cast<double>(conv) * dtMyr_;
+                bool found = false;
+                for (auto& kv : stepScore) {
+                    if (kv.first == key) { if (add > kv.second) kv.second = add; found = true; break; }
+                }
+                if (!found) stepScore.push_back({key, add});
+            }
+        } else {
+            // CO/OO: arc band only on the OVERRIDING side.
+            if (bndSide_[t] == kSideOverriding) {
+                arcSeeds[pid].push_back(t);
+                if (conv > arcConv[pid]) arcConv[pid] = conv;
+            }
+        }
+    }
+
+    // Fold this-step contributions into the persistent collision score. Pairs that
+    // collided this step grow; pairs that did NOT decay (only SUSTAINED collisions
+    // accumulate toward the merge threshold). A pair is removed once it decays out.
+    for (auto& kv : collisionScore_) {
+        bool touched = false;
+        for (const auto& sk : stepScore) {
+            if (sk.first == kv.first) { kv.second += sk.second; touched = true; break; }
+        }
+        if (!touched) kv.second *= kCollisionScoreDecay;
+    }
+    for (const auto& sk : stepScore) {
+        bool present = false;
+        for (const auto& kv : collisionScore_) if (kv.first == sk.first) { present = true; break; }
+        if (!present) collisionScore_.push_back(sk);
+    }
+    collisionScore_.erase(
+        std::remove_if(collisionScore_.begin(), collisionScore_.end(),
+                       [](const auto& kv) { return kv.second < 1e-6; }),
+        collisionScore_.end());
+
+    // ---- Apply CC bands ----
+    std::vector<std::pair<TileId,int>> band;
+    for (int p = 0; p < K; ++p) {
+        if (ccSeeds[static_cast<size_t>(p)].empty()) continue;
+        if (!plates_[static_cast<size_t>(p)].alive) continue;
+        band.clear();
+        bandBFS(ccSeeds[static_cast<size_t>(p)], static_cast<uint8_t>(p),
+                kCollisionBandRings, band);
+        float conv = ccConv[static_cast<size_t>(p)];
+        double thickenFull = kCcThickenPerConvMyr * static_cast<double>(conv) * dtMyr_;
+        for (const auto& pr : band) {
+            TileId w = pr.first;
+            int ring = pr.second;
+            // Falloff with ring: full at front, ~half at the band edge.
+            double falloff = 1.0 - 0.5 * (static_cast<double>(ring) /
+                             static_cast<double>(kCollisionBandRings + 1));
+            TileId local = worldToLocal(static_cast<uint32_t>(p), w);
+            if (local == kInvalidTile) continue;
+            CrustCell& cell = plates_[static_cast<size_t>(p)].crust[local];
+            if (cell.type != CrustType::Continental) continue;
+            double th = cell.thicknessKm + thickenFull * falloff;
+            if (th > kMaxCrustThicknessKm) th = kMaxCrustThicknessKm;
+            cell.thicknessKm = static_cast<float>(th);
+            cell.orogenyMyr = nowI;
+            float inten = cell.orogenyIntensity +
+                          kOrogenyIntensityPerStep * static_cast<float>(falloff);
+            cell.orogenyIntensity = inten > 1.0f ? 1.0f : inten;
+        }
+    }
+
+    // ---- Apply CO/OO arc bands (overriding side) ----
+    for (int p = 0; p < K; ++p) {
+        if (arcSeeds[static_cast<size_t>(p)].empty()) continue;
+        if (!plates_[static_cast<size_t>(p)].alive) continue;
+        band.clear();
+        bandBFS(arcSeeds[static_cast<size_t>(p)], static_cast<uint8_t>(p),
+                kArcBandRingMax, band);
+        for (const auto& pr : band) {
+            TileId w = pr.first;
+            int ring = pr.second;
+            if (ring < kArcBandRingMin) continue; // volcanic front sits inland
+            TileId local = worldToLocal(static_cast<uint32_t>(p), w);
+            if (local == kInvalidTile) continue;
+            CrustCell& cell = plates_[static_cast<size_t>(p)].crust[local];
+            if (cell.type == CrustType::None) continue;
+            float v = cell.volcanism + kArcVolcanismPerStep;
+            cell.volcanism = v > 1.0f ? 1.0f : v;
+            // Modest thickening (continental arc crust grows).
+            double th = cell.thicknessKm + kArcThickenKmPerStep;
+            if (th > kMaxCrustThicknessKm) th = kMaxCrustThicknessKm;
+            cell.thicknessKm = static_cast<float>(th);
+        }
+    }
+
+    // ---- Update per-plate collision-block factor from CC contact extent ----
+    // A plate's block rises with the fraction of its boundary in CC collision; deep
+    // collision (block -> kMaxCollisionBlock) nearly halts the plate so continents
+    // suture instead of interpenetrating. Decays when collision eases.
+    if (collisionBlock_.size() < plates_.size()) collisionBlock_.resize(plates_.size(), 0.0f);
+    for (int p = 0; p < K; ++p) {
+        if (!plates_[static_cast<size_t>(p)].alive) { collisionBlock_[static_cast<size_t>(p)] = 0.0f; continue; }
+        uint32_t ccTiles = static_cast<uint32_t>(ccSeeds[static_cast<size_t>(p)].size());
+        // Target block from contact extent (saturating).
+        float target = static_cast<float>(ccTiles) / static_cast<float>(kCollisionBlockRefTiles);
+        if (target > kMaxCollisionBlock) target = static_cast<float>(kMaxCollisionBlock);
+        float& b = collisionBlock_[static_cast<size_t>(p)];
+        // Smooth toward target (rise fast, fall slower).
+        b = (target > b) ? (b + (target - b) * 0.5f) : (b * 0.8f);
+    }
+}
+
+// ============================================================================
+// Terrane accretion: small continental fragments riding a subducting plate get
+// plastered onto the overriding plate when they reach a CO trench.
+// ============================================================================
+//
+// We identify continental connected components (in WORLD ownership) smaller than
+// kTerraneMaxAreaFraction*N that touch a CO boundary where their own plate is the
+// subducting side. Such a fragment transfers: its cells are copied into the
+// overriding plate's baseline frame and erased from the donor. Cells, not crust,
+// move — area is conserved.
+
+void PlateSim::terraneAccretion() {
+    const int K = static_cast<int>(plates_.size());
+    const uint32_t maxArea = static_cast<uint32_t>(kTerraneMaxAreaFraction *
+                                                   static_cast<double>(tileCount_));
+    if (maxArea < 1) return;
+    // The full continental flood-fill is the costliest event pass and terranes mature
+    // slowly; run it on a stride to stay in budget without changing the dynamics
+    // materially. Deterministic (driven by step index).
+    if ((step_ % kTerraneStride) != 0) return;
+
+    // Flood continental components over world ownership.
+    std::vector<int32_t> comp(tileCount_, -1);
+    std::array<TileId, 6> nbrs{};
+    std::vector<TileId> stack;
+    int compCount = 0;
+    for (TileId s = 0; s < tileCount_; ++s) {
+        if (comp[s] >= 0) continue;
+        if (resolved_[s].type != CrustType::Continental) continue;
+        // BFS this component.
+        int cid = compCount++;
+        comp[s] = cid;
+        stack.clear();
+        stack.push_back(s);
+        std::vector<TileId> cells;
+        uint8_t pid = owner_[s];
+        bool homogeneous = true;
+        while (!stack.empty()) {
+            TileId cur = stack.back(); stack.pop_back();
+            cells.push_back(cur);
+            if (owner_[cur] != pid) homogeneous = false;
+            uint32_t cnt = grid_->neighbors(cur, nbrs);
+            for (uint32_t k = 0; k < cnt; ++k) {
+                TileId v = nbrs[k];
+                if (comp[v] >= 0) continue;
+                if (resolved_[v].type != CrustType::Continental) continue;
+                comp[v] = cid;
+                stack.push_back(v);
+            }
+        }
+        if (cells.size() > maxArea) continue;     // too big to be a terrane
+        if (!homogeneous) continue;               // spans plates already; skip
+        if (pid >= static_cast<uint8_t>(K)) continue;
+
+        // Does any boundary cell sit on a CO trench where pid is subducting, and
+        // who is the overrider there? Take the first deterministic match.
+        uint8_t overrider = static_cast<uint8_t>(kUnowned);
+        for (TileId c : cells) {
+            if (bndType_[c] != static_cast<uint8_t>(BoundaryType::ConvergentCO)) continue;
+            if (bndSide_[c] != kSideSubducting) continue;
+            uint32_t cnt = grid_->neighbors(c, nbrs);
+            for (uint32_t k = 0; k < cnt; ++k) {
+                uint8_t np = owner_[nbrs[k]];
+                if (np != pid && np < static_cast<uint8_t>(K)) {
+                    if (overrider == kUnowned || np < overrider) overrider = np;
+                }
+            }
+        }
+        if (overrider == kUnowned || overrider == pid) continue;
+        if (!plates_[overrider].alive) continue;
+
+        // Transfer: copy each cell's crust into the overrider's baseline frame,
+        // erase from the donor. Area conserved.
+        SimPlate& donor = plates_[pid];
+        SimPlate& dst   = plates_[overrider];
+        bool moved = false;
+        for (TileId c : cells) {
+            TileId srcLocal = worldToLocal(pid, c);
+            if (srcLocal == kInvalidTile) continue;
+            CrustCell cc = donor.crust[srcLocal];
+            if (cc.type != CrustType::Continental) continue;
+            TileId dstLocal = worldToLocal(overrider, c);
+            if (dstLocal == kInvalidTile) continue;
+            if (dst.crust[dstLocal].type == CrustType::None) {
+                dst.crust[dstLocal] = cc;
+                dst.occupied.push_back(dstLocal);
+            }
+            donor.crust[srcLocal] = CrustCell{};
+            owner_[c] = overrider;
+            moved = true;
+        }
+        if (moved) ++accretionCount_;
+    }
+}
+
+// ============================================================================
+// Erosion proxy: continental thickness relaxes toward equilibrium.
+// ============================================================================
+
+void PlateSim::erosionProxy() {
+    // decay = exp(-dt/tau); precompute once.
+    const double decay = foundation::det_math::exp(-dtMyr_ / kErosionTauMyr);
+    const double eq = kErosionEqThicknessKm;
+    for (auto& pl : plates_) {
+        if (!pl.alive) continue;
+        for (TileId local : pl.occupied) {
+            CrustCell& cell = pl.crust[local];
+            if (cell.type != CrustType::Continental) continue;
+            double th = eq + (static_cast<double>(cell.thicknessKm) - eq) * decay;
+            cell.thicknessKm = static_cast<float>(th);
+        }
+    }
+}
+
+// ============================================================================
+// Hotspots: fixed world-frame plumes deposit volcanism on the owning plate.
+// ============================================================================
+
+void PlateSim::initHotspots(uint64_t seed) {
+    int H = kHotspotBase + cfg_.plateCount / kHotspotPerPlateDiv;
+    if (H > kHotspotCap) H = kHotspotCap;
+    if (H < 1) H = 1;
+    foundation::Pcg32 rng(seed);
+    hotspots_.clear();
+    hotspots_.reserve(static_cast<size_t>(H));
+    for (int i = 0; i < H; ++i) {
+        double x{}, y{}, z{};
+        for (;;) {
+            x = rng.nextDouble() * 2.0 - 1.0;
+            y = rng.nextDouble() * 2.0 - 1.0;
+            z = rng.nextDouble() * 2.0 - 1.0;
+            double r2 = x * x + y * y + z * z;
+            if (r2 > 1e-4 && r2 <= 1.0) {
+                double inv = 1.0 / foundation::det_math::sqrt(r2);
+                hotspots_.push_back({x * inv, y * inv, z * inv});
+                break;
+            }
+        }
+    }
+}
+
+void PlateSim::hotspots() {
+    std::array<TileId, 6> nbrs{};
+    for (const Vec3d& plume : hotspots_) {
+        TileId w = grid_->fromUnitVector(plume);
+        if (w == kInvalidTile) continue;
+        uint8_t pid = owner_[w];
+        if (pid >= static_cast<uint8_t>(plates_.size())) continue;
+        if (!plates_[pid].alive) continue;
+        auto deposit = [&](TileId worldCell, float rate) {
+            uint8_t op = owner_[worldCell];
+            if (op >= static_cast<uint8_t>(plates_.size()) || !plates_[op].alive) return;
+            TileId local = worldToLocal(op, worldCell);
+            if (local == kInvalidTile) return;
+            CrustCell& cell = plates_[op].crust[local];
+            if (cell.type == CrustType::None) return;
+            float v = cell.volcanism + rate;
+            cell.volcanism = v > 1.0f ? 1.0f : v;
+        };
+        deposit(w, kHotspotVolcPerStep);
+        uint32_t cnt = grid_->neighbors(w, nbrs);
+        for (uint32_t k = 0; k < cnt; ++k) deposit(nbrs[k], kHotspotVolcPerStep * 0.5f);
+    }
+}
+
+// ============================================================================
+// Slow Euler-pole evolution: re-draw pole + speed with continuity on a schedule.
+// ============================================================================
+
+void PlateSim::evolvePoles() {
+    const int K = static_cast<int>(plates_.size());
+    bool any = false;
+    for (int p = 0; p < K; ++p) {
+        SimPlate& pl = plates_[static_cast<size_t>(p)];
+        if (!pl.alive) continue;
+        if (static_cast<size_t>(p) >= nextPoleEvolveMyr_.size()) continue;
+        if (nowMyr_ < nextPoleEvolveMyr_[static_cast<size_t>(p)]) continue;
+
+        // Per-plate, per-event RNG derived from base stream, plate id, and the
+        // event index, so the sequence is deterministic and independent.
+        uint64_t evIdx = static_cast<uint64_t>(nowMyr_ / kPoleEvolutionPeriodMyr) + 1u;
+        foundation::Pcg32 rng(deriveSeed(poleEvolveStream_,
+            (static_cast<uint64_t>(p) << 32) ^ (evIdx * 0x9E3779B97F4A7C15ULL)));
+
+        // Bounded random rotation of the pole: build a random axis, rotate the
+        // pole by up to the max nudge. Continuity preserved (small angle).
+        double ax{}, ay{}, az{};
+        for (;;) {
+            ax = rng.nextDouble() * 2.0 - 1.0;
+            ay = rng.nextDouble() * 2.0 - 1.0;
+            az = rng.nextDouble() * 2.0 - 1.0;
+            double r2 = ax * ax + ay * ay + az * az;
+            if (r2 > 1e-4 && r2 <= 1.0) { double inv = 1.0 / foundation::det_math::sqrt(r2);
+                ax *= inv; ay *= inv; az *= inv; break; }
+        }
+        double angle = (rng.nextDouble() * 2.0 - 1.0) * kPoleEvolutionMaxNudgeRad;
+        double rq[4];
+        quatFromAxisAngle({ax, ay, az}, angle, rq);
+        Vec3d np = quatRotate(rq, pl.eulerPole);
+        double nl = foundation::det_math::sqrt(np.x * np.x + np.y * np.y + np.z * np.z);
+        if (nl > 1e-12) pl.eulerPole = {np.x / nl, np.y / nl, np.z / nl};
+
+        // Bounded fractional speed random-walk.
+        double jit = 1.0 + (rng.nextDouble() * 2.0 - 1.0) * kPoleEvolutionSpeedJitter;
+        pl.omegaRadPerMyr *= jit;
+
+        nextPoleEvolveMyr_[static_cast<size_t>(p)] += kPoleEvolutionPeriodMyr;
+        any = true;
+    }
+    if (any) rebalanceMomentum();
+}
+
+// ============================================================================
+// Plate events: merge then rift.
+// ============================================================================
+
+uint32_t PlateSim::allocPlateId() {
+    const int K = static_cast<int>(plates_.size());
+    for (int p = 0; p < K; ++p) {
+        if (!plates_[static_cast<size_t>(p)].alive) {
+            // Reuse a dead slot: reset it fully.
+            SimPlate fresh;
+            fresh.crust.assign(tileCount_, CrustCell{});
+            plates_[static_cast<size_t>(p)] = std::move(fresh);
+            if (static_cast<size_t>(p) < nextPoleEvolveMyr_.size())
+                nextPoleEvolveMyr_[static_cast<size_t>(p)] = nowMyr_ + kPoleEvolutionPeriodMyr;
+            return static_cast<uint32_t>(p);
+        }
+    }
+    if (plates_.size() >= 254) return kUnowned; // id space exhausted (u8, 255 reserved)
+    uint32_t id = static_cast<uint32_t>(plates_.size());
+    SimPlate fresh;
+    fresh.crust.assign(tileCount_, CrustCell{});
+    plates_.push_back(std::move(fresh));
+    nextPoleEvolveMyr_.push_back(nowMyr_ + kPoleEvolutionPeriodMyr);
+    return id;
+}
+
+// Merge/rift never rebaseline a plate to identity: forward-rotating a long-drifted
+// raster into the world frame would compress cells (many locals -> one world cell)
+// and lose crust. They map cells directly between plate frames via world
+// coordinates instead, so the only continental cells lost are genuine suture
+// overlaps.
+//
+// Drop ONLY oceanic crust from a plate's raster at local cells whose world position
+// the plate no longer owns (that ocean subducted under a neighbor). Continental
+// crust is never dropped here: it is buoyant and cannot subduct, and dropping it
+// would destroy continental cells (the conservation contract requires cells to move,
+// never vanish). Stale continental crust is harmless duplicate bookkeeping that the
+// merge logic deduplicates by world position.
+void PlateSim::pruneStaleCrust(uint32_t pid) {
+    SimPlate& pl = plates_[pid];
+    const double* q = pl.rotation;
+    auto& occ = pl.occupied;
+    size_t w2 = 0;
+    for (size_t i = 0; i < occ.size(); ++i) {
+        TileId local = occ[i];
+        CrustCell& cc = pl.crust[local];
+        if (cc.type == CrustType::None) continue;
+        if (cc.type == CrustType::Oceanic) {
+            Vec3d wp = quatRotate(q, centers_[local]);
+            TileId w = grid_->fromUnitVector(wp);
+            if (w == kInvalidTile || owner_[w] != static_cast<uint8_t>(pid)) {
+                cc = CrustCell{}; // subducted ocean
+                continue;
+            }
+        }
+        occ[w2++] = local;
+    }
+    occ.resize(w2);
+}
+
+// Merge donor into keep WITHOUT rebaselining. We map each donor OWNED world cell
+// into keep's frame and write donor's crust there. donor owns these cells so keep
+// does not — any crust keep already has at that keep-local index is STALE duplicate
+// bookkeeping (keep placed it once, then lost the world cell), so we overwrite it
+// rather than treating it as a suture; this dedups phantom crust without destroying
+// real donor cells. A genuine continent-continent suture is stamped where keep's and
+// donor's REAL footprints abut, detected via the resolved continental neighbor.
+void PlateSim::mergePlates(uint32_t keep, uint32_t donor) {
+    pruneStaleCrust(keep);
+    pruneStaleCrust(donor);
+    SimPlate& k = plates_[keep];
+    const int32_t nowI = static_cast<int32_t>(nowMyr_ + dtMyr_ + 0.5);
+
+    double kqInv[4] = {k.rotation[0], -k.rotation[1], -k.rotation[2], -k.rotation[3]};
+    std::array<TileId, 6> nbrs{};
+
+    for (TileId w = 0; w < tileCount_; ++w) {
+        if (owner_[w] != static_cast<uint8_t>(donor)) continue;
+        const CrustCell& dc = resolved_[w]; // donor's resolved crust at world cell w
+        if (dc.type == CrustType::None) continue;
+        Vec3d lp = quatRotate(kqInv, centers_[w]); // world -> keep-local
+        TileId kl = grid_->fromUnitVector(lp);
+        if (kl == kInvalidTile) continue;
+        CrustCell& kc = k.crust[kl];
+        bool wasOccupied = (kc.type != CrustType::None);
+        kc = dc;                       // donor real crust wins (keep's here was stale)
+        if (!wasOccupied) k.occupied.push_back(kl);
+        // Suture stamp: if a keep-owned continental cell neighbors this world cell,
+        // the two real footprints abut here — record an orogeny.
+        bool sutured = false;
+        uint32_t cnt = grid_->neighbors(w, nbrs);
+        for (uint32_t n = 0; n < cnt; ++n) {
+            if (owner_[nbrs[n]] == static_cast<uint8_t>(keep) &&
+                resolved_[nbrs[n]].type == CrustType::Continental &&
+                dc.type == CrustType::Continental) { sutured = true; break; }
+        }
+        if (sutured) {
+            kc.orogenyMyr = nowI;
+            float inten = kc.orogenyIntensity + kSutureOrogenyIntensity;
+            kc.orogenyIntensity = inten > 1.0f ? 1.0f : inten;
+        }
+    }
+
+    // keep's continentality may flip after absorbing the donor.
+    uint32_t cont = 0, tot = 0;
+    for (const auto& c : k.crust) {
+        if (c.type == CrustType::None) continue;
+        ++tot;
+        if (c.type == CrustType::Continental) ++cont;
+    }
+    k.isContinental = (tot > 0 && cont * 2u > tot);
+
+    SimPlate& d = plates_[donor];
+    d.alive = false;
+    d.crust.clear();
+    d.crust.shrink_to_fit();
+    d.occupied.clear();
+    d.occupied.shrink_to_fit();
+    // Reassign owner_ for donor cells to keep so subsequent passes are consistent.
+    for (TileId t = 0; t < tileCount_; ++t)
+        if (owner_[t] == static_cast<uint8_t>(donor)) owner_[t] = static_cast<uint8_t>(keep);
+
+    ++mergeCount_;
+}
+
+// Split plate pid into two. Picks a cost-min path between two boundary cells where
+// cost favors recent sutures (rifts re-open old weaknesses). The far side of the
+// path becomes a new plate with an opposing Euler pole.
+bool PlateSim::tryRift(uint32_t pid, uint64_t stepSalt) {
+    SimPlate& src = plates_[pid];
+    if (!src.alive) return false;
+
+    // Work in the plate's CURRENT world footprint. Collect owned world cells.
+    std::vector<TileId> owned;
+    owned.reserve(src.occupied.size());
+    for (TileId t = 0; t < tileCount_; ++t) if (owner_[t] == static_cast<uint8_t>(pid)) owned.push_back(t);
+    if (owned.size() < 16) return false;
+
+    foundation::Pcg32 rng(deriveSeed(riftStream_, stepSalt ^ (static_cast<uint64_t>(pid) << 40)));
+    const uint32_t N = tileCount_;
+    const int32_t nowI = static_cast<int32_t>(nowMyr_ + 0.5);
+
+    // Plate centroid (mean of owned cell centers, renormalized).
+    Vec3d centroid{0, 0, 0};
+    for (TileId c : owned) { centroid.x += centers_[c].x; centroid.y += centers_[c].y; centroid.z += centers_[c].z; }
+    { double l = foundation::det_math::sqrt(centroid.x*centroid.x + centroid.y*centroid.y + centroid.z*centroid.z);
+      if (l < 1e-9) return false; centroid.x/=l; centroid.y/=l; centroid.z/=l; }
+
+    // Recent-suture cells: owned cells carrying a recent orogeny stamp. If enough
+    // exist, the rift cut plane is set to the great circle that best fits them (the
+    // suture line) so the rift re-opens the inherited weakness. The fit plane's
+    // normal is the least-variance axis of the suture cells' scatter matrix (a band
+    // along a great circle has its smallest spread along that circle's axis).
+    Vec3d sutureMean{0, 0, 0};
+    uint32_t sutureN = 0;
+    for (TileId c : owned) {
+        TileId local = worldToLocal(pid, c);
+        if (local == kInvalidTile) continue;
+        const CrustCell& cc = src.crust[local];
+        if (cc.orogenyMyr != kOrogenyNever && (nowI - cc.orogenyMyr) < kRiftSutureRecentMyr) {
+            sutureMean.x += centers_[c].x; sutureMean.y += centers_[c].y; sutureMean.z += centers_[c].z;
+            ++sutureN;
+        }
+    }
+
+    Vec3d normal;
+    bool sutureBiased = false;
+    if (sutureN >= 4) {
+        double inv = 1.0 / static_cast<double>(sutureN);
+        Vec3d mu{sutureMean.x*inv, sutureMean.y*inv, sutureMean.z*inv};
+        double m[9] = {0,0,0,0,0,0,0,0,0};
+        for (TileId c : owned) {
+            TileId local = worldToLocal(pid, c);
+            if (local == kInvalidTile) continue;
+            const CrustCell& cc = src.crust[local];
+            if (cc.orogenyMyr == kOrogenyNever || (nowI - cc.orogenyMyr) >= kRiftSutureRecentMyr) continue;
+            Vec3d d{centers_[c].x - mu.x, centers_[c].y - mu.y, centers_[c].z - mu.z};
+            m[0]+=d.x*d.x; m[1]+=d.x*d.y; m[2]+=d.x*d.z;
+            m[4]+=d.y*d.y; m[5]+=d.y*d.z; m[8]+=d.z*d.z;
+        }
+        m[3]=m[1]; m[6]=m[2]; m[7]=m[5];
+        normal = minEigenVector(m);
+        sutureBiased = true;
+    }
+    if (!sutureBiased) {
+        // Random tangent normal at the centroid.
+        Vec3d r;
+        for (;;) {
+            r = {rng.nextDouble()*2.0-1.0, rng.nextDouble()*2.0-1.0, rng.nextDouble()*2.0-1.0};
+            double d = r.x*centroid.x + r.y*centroid.y + r.z*centroid.z;
+            r = {r.x - d*centroid.x, r.y - d*centroid.y, r.z - d*centroid.z};
+            double l = foundation::det_math::sqrt(r.x*r.x + r.y*r.y + r.z*r.z);
+            if (l > 1e-3) { normal = {r.x/l, r.y/l, r.z/l}; break; }
+        }
+    } else {
+        double l = foundation::det_math::sqrt(normal.x*normal.x + normal.y*normal.y + normal.z*normal.z);
+        if (l < 1e-9) return false;
+        normal = {normal.x/l, normal.y/l, normal.z/l};
+    }
+
+    // Plane point: the great-circle suture passes through the sphere center, so a
+    // suture-biased cut splits by sign of dot(center, normal) (plane through origin).
+    // An unbiased cut passes through the plate centroid.
+    Vec3d planePt = sutureBiased ? Vec3d{0, 0, 0} : centroid;
+
+    // Split owned cells by the plane, with a per-cell noise jog on the boundary so
+    // the rift margin is irregular (not a clean great circle).
+    const auto noiseSeed = static_cast<uint32_t>(deriveSeed(riftStream_, stepSalt) ^ 0xABCDu);
+    std::vector<int8_t> region(N, -1);
+    uint32_t r1 = 0, r2 = 0;
+    for (TileId c : owned) {
+        Vec3d rel{centers_[c].x - planePt.x, centers_[c].y - planePt.y, centers_[c].z - planePt.z};
+        double s = rel.x*normal.x + rel.y*normal.y + rel.z*normal.z;
+        float n = boundaryNoise(static_cast<float>(centers_[c].x) * kBoundaryNoiseFreq,
+                                static_cast<float>(centers_[c].y) * kBoundaryNoiseFreq,
+                                static_cast<float>(centers_[c].z) * kBoundaryNoiseFreq, noiseSeed);
+        s += static_cast<double>((n - 0.5f) * kRiftPathNoise) * 0.05; // jog the margin
+        if (s >= 0.0) { region[c] = 1; ++r1; } else { region[c] = 2; ++r2; }
+    }
+    std::array<TileId, 6> nbrs{};
+    if (r1 < 8 || r2 < 8) return false; // degenerate split
+    // Region 2 is the moved (new) plate; keep the larger side as src for stability.
+    int8_t moveRegion = (r2 <= r1) ? 2 : 1;
+
+    // Allocate the new plate; transfer region 2 cells. The new plate inherits src's
+    // CURRENT rotation, so for any world cell the src-local and new-local indices are
+    // identical (same frame) — no rebaseline, no rotation-rounding loss. The halves
+    // then drift apart via opposing Euler poles.
+    uint32_t nid = allocPlateId();
+    if (nid == kUnowned) return false;
+
+    // Re-fetch refs: allocPlateId may have grown plates_ and invalidated `src`.
+    SimPlate& s = plates_[pid];
+    SimPlate& nw = plates_[nid];
+    nw.alive = true;
+    nw.isContinental = s.isContinental;
+    nw.rotation[0] = s.rotation[0]; nw.rotation[1] = s.rotation[1];
+    nw.rotation[2] = s.rotation[2]; nw.rotation[3] = s.rotation[3];
+
+    for (TileId c : owned) {
+        if (region[c] != moveRegion) continue; // stays with src
+        // moved region -> new plate. Move the cell at its src-local index to the SAME
+        // local index in nw (shared frame).
+        TileId local = worldToLocal(pid, c);
+        if (local == kInvalidTile) continue;
+        CrustCell cc = s.crust[local];
+        if (cc.type == CrustType::None) continue;
+        if (nw.crust[local].type == CrustType::None) {
+            nw.crust[local] = cc;
+            nw.occupied.push_back(local);
+        }
+        s.crust[local] = CrustCell{};
+        owner_[c] = static_cast<uint8_t>(nid);
+    }
+    // Compact src.occupied (some entries now cleared).
+    {
+        auto& occ = s.occupied;
+        size_t w2 = 0;
+        for (size_t i = 0; i < occ.size(); ++i)
+            if (s.crust[occ[i]].type != CrustType::None) occ[w2++] = occ[i];
+        occ.resize(w2);
+    }
+    // Recompute continentality for both.
+    auto contMajority = [&](const SimPlate& pl) {
+        uint32_t cont = 0, tot = 0;
+        for (const auto& c : pl.crust) { if (c.type == CrustType::None) continue; ++tot;
+            if (c.type == CrustType::Continental) ++cont; }
+        return tot > 0 && cont * 2u > tot;
+    };
+    s.isContinental = contMajority(s);
+    nw.isContinental = contMajority(nw);
+
+    // New plate gets an Euler pole that drives it AWAY from src across the rift: a
+    // rotation about (centroid x normal) moves the new half along -normal, opening
+    // the rift. src keeps its pole. Speed scaled to a typical drift rate.
+    Vec3d axis{centroid.y*normal.z - centroid.z*normal.y,
+               centroid.z*normal.x - centroid.x*normal.z,
+               centroid.x*normal.y - centroid.y*normal.x};
+    double al = foundation::det_math::sqrt(axis.x*axis.x + axis.y*axis.y + axis.z*axis.z);
+    if (al > 1e-9) {
+        nw.eulerPole = {axis.x/al, axis.y/al, axis.z/al};
+        double sp = s.omegaRadPerMyr < 0 ? -s.omegaRadPerMyr : s.omegaRadPerMyr;
+        if (sp < 1e-9) sp = cmYrToRadPerMyr(4.0, cfg_.planetRadiusKm);
+        nw.omegaRadPerMyr = sp;
+    } else {
+        nw.eulerPole = {-s.eulerPole.x, -s.eulerPole.y, -s.eulerPole.z};
+        nw.omegaRadPerMyr = s.omegaRadPerMyr;
+    }
+    if (static_cast<size_t>(nid) < nextPoleEvolveMyr_.size())
+        nextPoleEvolveMyr_[nid] = nowMyr_ + kPoleEvolutionPeriodMyr;
+
+    ++riftCount_;
+    return true;
+}
+
+void PlateSim::plateEvents() {
+    const int K = static_cast<int>(plates_.size());
+
+    // ---- Reap plates squeezed to zero area (subducted/eroded away). They free
+    // their id for reuse and stop counting against the controller set-point. ----
+    {
+        std::vector<uint32_t> areaNow(static_cast<size_t>(K), 0u);
+        for (TileId t = 0; t < tileCount_; ++t) {
+            uint8_t pid = owner_[t];
+            if (pid < static_cast<uint8_t>(K)) areaNow[pid]++;
+        }
+        for (int p = 0; p < K; ++p) {
+            SimPlate& pl = plates_[static_cast<size_t>(p)];
+            if (pl.alive && areaNow[static_cast<size_t>(p)] == 0) {
+                pl.alive = false;
+                pl.crust.clear(); pl.crust.shrink_to_fit();
+                pl.occupied.clear(); pl.occupied.shrink_to_fit();
+            }
+        }
+    }
+
+    // ---- Merge: any pair whose collision score exceeds threshold. ----
+    // Iterate the score vector in a stable order (sort by key) so merges fire
+    // deterministically.
+    std::sort(collisionScore_.begin(), collisionScore_.end(),
+              [](const auto& x, const auto& y) { return x.first < y.first; });
+    for (auto& kv : collisionScore_) {
+        if (kv.second < kMergeScoreThreshold) continue;
+        uint8_t a = static_cast<uint8_t>(kv.first >> 8);
+        uint8_t b = static_cast<uint8_t>(kv.first & 0xFF);
+        if (a >= K || b >= K) { kv.second = 0.0; continue; }
+        if (!plates_[a].alive || !plates_[b].alive) { kv.second = 0.0; continue; }
+        // Merge smaller into larger.
+        uint32_t aa = plateArea(a), ab = plateArea(b);
+        uint32_t keep = aa >= ab ? a : b;
+        uint32_t donor = aa >= ab ? b : a;
+        mergePlates(keep, donor);
+        kv.second = 0.0; // consumed
+        // Drop any scores referencing the donor (it no longer exists).
+        for (auto& kv2 : collisionScore_) {
+            uint8_t x = static_cast<uint8_t>(kv2.first >> 8);
+            uint8_t y = static_cast<uint8_t>(kv2.first & 0xFF);
+            if (x == donor || y == donor) kv2.second = 0.0;
+        }
+    }
+    // Compact consumed/zero scores out occasionally to keep the vector small.
+    collisionScore_.erase(
+        std::remove_if(collisionScore_.begin(), collisionScore_.end(),
+                       [](const auto& kv) { return kv.second <= 0.0; }),
+        collisionScore_.end());
+
+    // ---- Rift: when alive < K, with rising probability, split a big plate. ----
+    uint32_t alive = aliveCount();
+    int target = cfg_.plateCount;
+    if (static_cast<int>(alive) < target) {
+        int deficit = target - static_cast<int>(alive);
+        double prob = kRiftBaseProb + kRiftDeficitProb * static_cast<double>(deficit);
+        foundation::Pcg32 rng(deriveSeed(riftStream_,
+            0x9E37001F00000000ULL ^ (static_cast<uint64_t>(step_) * 0x100000001B3ULL)));
+        if (rng.nextDouble() < prob) {
+            // Pick the largest continental-majority plate over 1.5x mean area.
+            uint64_t areaSum = 0; uint32_t aliveN = 0;
+            std::vector<uint32_t> areas(plates_.size(), 0u);
+            for (uint32_t p = 0; p < plates_.size(); ++p) {
+                if (!plates_[p].alive) continue;
+                areas[p] = plateArea(p);
+                areaSum += areas[p];
+                ++aliveN;
+            }
+            double meanArea = aliveN ? static_cast<double>(areaSum) / aliveN : 0.0;
+            uint32_t bestP = kUnowned; uint32_t bestA = 0;
+            for (uint32_t p = 0; p < plates_.size(); ++p) {
+                if (!plates_[p].alive) continue;
+                if (static_cast<double>(areas[p]) < kRiftMinAreaFactor * meanArea) continue;
+                bool prefer = areas[p] > bestA;
+                if (prefer) { bestA = areas[p]; bestP = p; }
+            }
+            if (bestP != kUnowned) {
+                tryRift(bestP, static_cast<uint64_t>(step_) * 0x9E3779B97F4A7C15ULL + 7u);
+            }
+        }
+    }
+}
+
+// ============================================================================
 // run + finalize
 // ============================================================================
 
@@ -792,10 +1740,23 @@ std::shared_ptr<TectonicHistory> PlateSim::finalize() {
 
     const int K = static_cast<int>(plates_.size());
 
-    // Compact plate ids ascending over alive plates.
+    // World-cell area per plate (current owner map).
+    std::vector<uint32_t> area(static_cast<size_t>(K), 0u);
+    for (TileId t = 0; t < tileCount_; ++t) {
+        uint8_t pid = owner_[t];
+        if (pid < static_cast<uint8_t>(K)) area[pid]++;
+    }
+
+    // Compact plate ids ascending over alive plates that still own tiles. A plate
+    // squeezed to zero area (subducted/eroded away while still flagged alive) is
+    // excluded from the output and its tiles, if any leaked, fall through to 255.
     std::vector<int> remap(static_cast<size_t>(K), -1);
     int next = 0;
-    for (int p = 0; p < K; ++p) if (plates_[static_cast<size_t>(p)].alive) remap[static_cast<size_t>(p)] = next++;
+    for (int p = 0; p < K; ++p) {
+        if (!plates_[static_cast<size_t>(p)].alive) continue;
+        if (area[static_cast<size_t>(p)] == 0) continue;
+        remap[static_cast<size_t>(p)] = next++;
+    }
 
     const int32_t nowI = static_cast<int32_t>(nowMyr_ + 0.5);
     for (TileId t = 0; t < tileCount_; ++t) {
@@ -812,9 +1773,16 @@ std::shared_ptr<TectonicHistory> PlateSim::finalize() {
         if (age > static_cast<int32_t>(kMaxStoredAgeMyr)) age = kMaxStoredAgeMyr;
         h->crustAge[t] = static_cast<uint16_t>(age);
         h->thicknessKm[t] = cell.thicknessKm;
-        h->orogenyAge[t] = kOrogenyNever; // M-T1: no orogeny
-        h->orogenyIntensity[t] = 0.0f;
-        h->volcanism[t] = 0.0f;
+        // orogenyAge = Myr since the last orogenic stamp (kOrogenyNever if never).
+        if (cell.orogenyMyr == kOrogenyNever) {
+            h->orogenyAge[t] = kOrogenyNever;
+        } else {
+            int32_t oage = nowI - cell.orogenyMyr;
+            if (oage < 0) oage = 0;
+            h->orogenyAge[t] = oage;
+        }
+        h->orogenyIntensity[t] = cell.orogenyIntensity;
+        h->volcanism[t] = cell.volcanism;
         h->boundaryType[t] = bndType_[t];
         h->boundarySide[t] = bndSide_[t];
         h->convergence[t] = bndConv_[t];
@@ -822,13 +1790,8 @@ std::shared_ptr<TectonicHistory> PlateSim::finalize() {
 
     // Per-plate summary, area-weighted majority crust.
     h->plates.reserve(static_cast<size_t>(next));
-    std::vector<uint32_t> area(static_cast<size_t>(K), 0u);
-    for (TileId t = 0; t < tileCount_; ++t) {
-        uint8_t pid = owner_[t];
-        if (pid < static_cast<uint8_t>(K)) area[pid]++;
-    }
     for (int p = 0; p < K; ++p) {
-        if (!plates_[static_cast<size_t>(p)].alive) continue;
+        if (remap[static_cast<size_t>(p)] < 0) continue;
         const SimPlate& pl = plates_[static_cast<size_t>(p)];
         TectonicPlate tp;
         tp.id = remap[static_cast<size_t>(p)];
