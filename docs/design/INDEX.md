@@ -58,6 +58,7 @@ World mechanics, rooms, resources, and entity interactions.
 | [Entity Capabilities](./game-systems/world/entity-capabilities.md) | How entities advertise what they do |
 | [Rooms](./game-systems/world/rooms.md) | Room types, detection, bonuses |
 | [Crafting](./game-systems/world/crafting.md) | Resource chains, recipes |
+| [Building & Construction](./game-systems/world/building-construction.md) | Freeform foundations, walls, doors/windows, rooms |
 
 ### Features
 

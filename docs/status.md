@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2026-06-12 (Hex conversion Phases 1-4 on feature/worldgen-hex-tiles: Goldberg grid, two-tier rendering, docs + dev log)
+Last Updated: 2026-06-12 (Building/Construction, Pathfinding, and Vision architecture specs drafted; memory design revised for belief-filtered navigation)
 
 ## Epic/Story/Task Template
 
@@ -889,6 +889,55 @@ The following MVP epics have all been completed. Detailed task breakdowns are pr
   - [ ] Colonist labels toggle (`L` key)
   - [ ] Threat indicators (red pulsing circles)
   - [ ] Off-screen threat direction arrows
+
+---
+
+### Vision System: Occlusion & Discovery
+**Spec/Documentation:** `/docs/technical/vision-architecture.md`
+**Dependencies:** Geometry Foundations (libs/geometry); consumes Building & Construction's structure publication for occluders
+**Status:** planned
+
+**Goal:** Honest sight: GeometryIndex shared with navigation, visibility polygons with an outdoor fast path, discovery/witnessing/stale-memory reconciliation through visibility, windows pass sight while blocking movement, structures discoverable per segment. Must land with or before Navigation P4 (belief filtering is hollow without it). **Fog of war explicitly excluded** — separate later epic alongside the overlay system; the polygon data it needs comes free from this work.
+
+**Tasks:**
+- [ ] GeometryIndex (segment store + transparency flags + version counter, shared with nav obstacle publication)
+- [ ] Visibility polygons (rotational sweep, outdoor fast path, per-observer caching)
+- [ ] Rewire discovery, witnessing, and stale-memory reconciliation through visibility
+- [ ] Structure-as-observable discovery + window transparency
+
+---
+
+### Navigation & Pathfinding
+**Spec/Documentation:** `/docs/technical/pathfinding-architecture.md`
+**Dependencies:** Geometry Foundations (shared integer-coordinate substrate, libs/geometry); consumes the construction obstacle/portal contract
+**Status:** planned (spec in review)
+
+**Goal:** Four-tier vector-native navigation: planet hex graph for cross-globe abstract parties, chunk connectivity components for reachability, dynamic CDT navmesh for exact local paths, collision circles + velocity-obstacle steering so agents take up space. Must land (through P4) before walls ship as player-facing gameplay; P6 unlocks raids.
+
+**Tasks:**
+- [ ] P1: Agents become physical (radius component, dynamic spatial hash, circle collision, separation)
+- [ ] P2: Local navmesh, static world (per-chunk CDT from terrain contours, triangle A* + corridor width + funnel, waypoint following; chunk anchoring fix)
+- [ ] P3: Regional layer (components, traversal-class reachability API, RRA* heuristic)
+- [ ] P4: Dynamic world + belief (construction obstacles/portals, door permission costs, memory-filtered planning, discovery replans, search primitives; requires Vision System: Occlusion & Discovery)
+- [ ] P5: Crowds (velocity-obstacle avoidance + mitigations, occupancy costs, door slot queues, regression rig)
+- [ ] P6: Global tier + raids (hex-graph A*, abstract party records, attention bubbles, materialization handoffs, raider belief seeding + scouting)
+
+---
+
+### Building & Construction System
+**Spec/Documentation:** `/docs/design/game-systems/world/building-construction.md` (design), `/docs/technical/building-construction-architecture.md` (architecture)
+**Dependencies:** Goal-Driven Task Generation (build/haul task sources); Navigation & Pathfinding before walls ship as gameplay (walls don't block movement until then); Material economy — extend the early crafting implementation with choppable trees and construction material items (axe/chop work in flight; chains grow as systems need them)
+**Status:** planned (specs in review)
+
+**Goal:** Freeform polygon building: foundation blueprints drawn on the map, walls on foundations with snapping and edge-fill, doors/windows as parameterized vector assets, automatic room detection. Deliver-then-build loop with work-driven procedural construction visuals.
+
+**Tasks:**
+- [ ] Epic A: Geometry foundations (libs/geometry, Clipper2 + earcut.hpp, planar graph + face extraction)
+- [ ] Epic C: Foundations end-to-end (ConstructionWorld, FoundationTool, blueprint lifecycle, goals, StructureRenderer, selection/panels, config)
+- [ ] Epic D: Walls (graph + junction splitting, WallTool, band rendering, nav integration, demolition)
+- [ ] Epic E: Rooms (face extraction on built/demolish events, room entities, notification)
+- [ ] Epic F: Openings (OpeningTool, parameterized assets, retrofit cuts, door nav nodes)
+- [ ] Epic G: Editing & polish (add/subtract, vertex editing, cascade demolish, multi-select)
 
 ---
 
