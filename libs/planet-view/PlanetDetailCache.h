@@ -14,9 +14,10 @@
 //   beginFrame()  — start a fresh visible/request set.
 //   requestPage() — scheduler calls this for each visible (+ prefetch) page;
 //                   resident pages are touched, others queued for bake.
-//   endFrame()    — bake queued pages on the TaskPool (async), upload <= 4
-//                   ready pages/frame to the atlas, push page-table updates.
-//   invalidate()  — drop all pages (snapshot or color-mode change).
+//   endFrame()    — bake + upload up to kPagesPerFrame (8) pages serially on
+//                   the render thread (each 130x130 page is sub-millisecond;
+//                   no TaskPool used here), then push page-table updates.
+// To drop all pages on a snapshot or color-mode change, call setWorld().
 
 #include "PlanetColorizer.h" // ColorMode
 #include "PlanetLru.h"

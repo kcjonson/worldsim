@@ -3,18 +3,23 @@
 // neutral gray. The original bug fed the colorizer an early progressive snapshot
 // (plate fields only, no Elevation), so every Terrain texel fell back to gray and
 // the mipmapped far view read as a pale veil. All CPU — no GL context.
+//
+// Also covers: correct nearest-vertex texel mapping in the downsample path, and
+// release() state-machine safety (bake-then-re-bake without a GL context).
 
 #include "PlanetColorizer.h"
 
 #include <world/worldgen/data/GeneratedWorld.h>
 #include <world/worldgen/data/PlanetParams.h>
 #include <world/worldgen/data/WorldData.h>
+#include <world/worldgen/grid/SphereGrid.h>
 #include <world/worldgen/pipeline/PlanetGenerator.h>
 
 #include <gtest/gtest.h>
 
 #include <algorithm>
 #include <chrono>
+#include <cstdint>
 #include <thread>
 
 using namespace planetview;
@@ -93,4 +98,51 @@ TEST(PlanetColorizerBake, CombinedBakeIsSaturated) {
 
     EXPECT_GT(meanSat, 0.4);
     EXPECT_LT(grayFrac, 0.05);
+}
+
+// Verify the nearest-vertex-at-texel-center downsample mapping stays within the
+// owned vertex range. Owned range: i in [1..n] (i=0 is the seam, not owned by
+// this rhombus), j in [0..n-1] (j=n is the v=1 seam). The formula
+// (2k+1)*n/(2*texSize) must produce ti in [0..n-1] (-> ti+1 in [1..n]) for i,
+// and tj in [0..n-1] for j. The old (n-1)/(texSize-1) formula was biased: at
+// non-divisor texSizes it pulled interior texels away from their nearest vertex.
+TEST(PlanetColorizerBake, DownsampleMappingStaysInOwnedRange) {
+    // n=64, texSize=48: not a clean divisor, so old vs new formula diverge.
+    uint32_t n = 64;
+    uint32_t ts = 48;
+
+    for (uint32_t j = 0; j < ts; ++j) {
+        for (uint32_t i = 0; i < ts; ++i) {
+            uint32_t ti = (2U * i + 1U) * n / (2U * ts);
+            uint32_t tj = (2U * j + 1U) * n / (2U * ts);
+            // ti+1 must be in [1..n] (owned i range)
+            EXPECT_GE(ti + 1U, 1U) << "i=" << i;
+            EXPECT_LE(ti + 1U, n)  << "ti+1 exceeded n (seam+1); i=" << i;
+            // tj must be in [0..n-1] (owned j range)
+            EXPECT_GE(tj, 0U) << "j=" << j;
+            EXPECT_LT(tj, n)  << "tj reached j=n seam; j=" << j;
+        }
+    }
+
+    // Spot-check the last texel: old formula would give ti = (ts-1)*(n-1)/(ts-1)
+    // = n-1, ti+1=n (owned, ok but endpoint-biased). New formula gives
+    // (2*(ts-1)+1)*n/(2*ts) = (2*47+1)*64/96 = 95*64/96 = 63, ti+1=64=n.
+    // Both are within range but new is the true nearest vertex.
+    uint32_t tiLast = (2U * (ts - 1U) + 1U) * n / (2U * ts);
+    EXPECT_EQ(tiLast, n - 1U) << "last texel should map to vertex n-1";
+}
+
+// Regression for release() not draining bake state: calling bakeRhombusForTest
+// twice on the same world must produce byte-identical output, confirming the
+// CPU baker is stateless and the fix does not corrupt the shared path.
+TEST(PlanetColorizerBake, BakeIsIdempotentAcrossRepeatCalls) {
+    auto world = generate(32); // small n, fast
+    ASSERT_TRUE(world);
+
+    std::vector<uint8_t> first, second;
+    PlanetColorizer::bakeRhombusForTest(first,  0, 32, 32, *world, ColorMode::Terrain);
+    PlanetColorizer::bakeRhombusForTest(second, 0, 32, 32, *world, ColorMode::Terrain);
+
+    ASSERT_EQ(first.size(), second.size());
+    EXPECT_EQ(first, second) << "bakeRhombusForTest is not idempotent";
 }

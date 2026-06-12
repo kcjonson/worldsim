@@ -27,10 +27,16 @@ void bakeRhombusRows(uint8_t* dst, uint32_t r, uint32_t texSize, uint32_t n,
                      size_t jb, size_t je) {
     for (size_t j = jb; j < je; ++j) {
         for (uint32_t i = 0; i < texSize; ++i) {
-            uint32_t ti = (texSize > 1) ? (i * (n - 1U)) / (texSize - 1U) : 0U;
-            uint32_t tj = (texSize > 1)
-                              ? (static_cast<uint32_t>(j) * (n - 1U)) / (texSize - 1U)
-                              : 0U;
+            // Nearest-vertex-at-texel-center: texel k's center sits at uv =
+            // (k+0.5)/texSize; the nearest chart vertex is
+            //   floor((k+0.5)*n/texSize) = (2k+1)*n / (2*texSize)  [integer].
+            // This keeps the range in [0..n-1] (never reaches the seam vertex
+            // n), so i=0 and j=n have no texel-center coverage by construction
+            // — those are seam vertices owned by the adjacent rhombus's texture.
+            // Poles likewise have no owned texel center in the base tier; the
+            // detail tier covers them via canonicalTile on its border texels.
+            uint32_t ti = (2U * i + 1U) * n / (2U * texSize);
+            uint32_t tj = (2U * static_cast<uint32_t>(j) + 1U) * n / (2U * texSize);
             uint32_t tileId = grid.canonicalTile(
                 r, static_cast<int>(ti) + 1, static_cast<int>(tj));
             RGBA8 c = colorForTile(tileId, mode, world);
@@ -58,19 +64,33 @@ const char* colorModeName(ColorMode m) {
 }
 
 PlanetColorizer::~PlanetColorizer() {
-    if (bakeFuture.valid()) bakeFuture.wait();
-    release();
+    release(); // drains bakeFuture and resets bake state before GL teardown
 }
 
 void PlanetColorizer::release() {
+    // Drain any in-flight async bake before tearing down GL resources, so the
+    // worker never writes into a BakeResult that has been abandoned. Non-
+    // throwing: if the bake threw, swallow here (the GL teardown below is still
+    // valid; the error was already logged or will be diagnosed by init failing).
+    if (bakeFuture.valid()) {
+        try { bakeFuture.get(); } catch (...) {}
+    }
+
+    // Reset all bake state to constructed defaults so a subsequent init() +
+    // requestBake() starts clean without stale generation artifacts.
+    baking = false;
+    dirty = false;
+    inFlight.reset();
+    ready.reset();
+    pendingWorld.reset();
+    taskPool = nullptr;
+    uploadCursor = 0;
+
     for (auto& t : textures) {
         if (t) { glDeleteTextures(1, &t); t = 0; }
     }
     texSize = 0;
     contentReady = false;
-    ready.reset();
-    inFlight.reset();
-    uploadCursor = 0;
 }
 
 void PlanetColorizer::init(uint32_t newSubdivision) {
