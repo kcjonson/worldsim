@@ -57,6 +57,11 @@ class WorldCreatorScene : public engine::IScene {
 
 		buildUI();
 
+		// Pre-fill a random seed so the field isn't blank on entry.
+		// Uses the same mechanism as the Random button.
+		model.randomizeSeed();
+		syncPanelFromModel();
+
 		// Returning from landing site selection: restore the generated world
 		// into Reviewing instead of starting over
 		if (world_sim::GameStartConfig::HasPending()) {
@@ -81,7 +86,6 @@ class WorldCreatorScene : public engine::IScene {
 		panel.reset();
 		progressBar.reset();
 		stageText.reset();
-		regenButton.reset();
 		landingButton.reset();
 	}
 
@@ -93,9 +97,6 @@ class WorldCreatorScene : public engine::IScene {
 		}
 		if (panel) {
 			if (panel->handleEvent(event)) return true;
-		}
-		if (regenButton && regenButton->visible) {
-			if (regenButton->handleEvent(event)) return true;
 		}
 		if (landingButton && landingButton->visible) {
 			if (landingButton->handleEvent(event)) return true;
@@ -149,7 +150,6 @@ class WorldCreatorScene : public engine::IScene {
 		}
 
 		if (panel) { panel->update(dt); }
-		if (regenButton) { regenButton->update(dt); }
 		if (landingButton) { landingButton->update(dt); }
 	}
 
@@ -207,7 +207,6 @@ class WorldCreatorScene : public engine::IScene {
 	std::unique_ptr<world_sim::ParameterPanel> panel;
 	std::unique_ptr<UI::ProgressBar> progressBar;
 	std::unique_ptr<UI::Text>        stageText;
-	std::unique_ptr<UI::Button>      regenButton;
 	std::unique_ptr<UI::Button>      landingButton;
 
 	world_sim::GlobeView globe;
@@ -288,20 +287,12 @@ class WorldCreatorScene : public engine::IScene {
 		});
 		stageText->visible = false;
 
-		// Reviewing-state actions
-		regenButton = std::make_unique<UI::Button>(UI::Button::Args{
-			.label = "Regenerate",
-			.position = {mainX, viewportH - 50.0F},
-			.size = {160.0F, 36.0F},
-			.type = UI::Button::Type::Secondary,
-			.onClick = [this]() { onRegenerate(); },
-			.id = "btn_regenerate",
-		});
-		regenButton->visible = false;
-
+		// Reviewing-state action. Regeneration is driven by the panel's Generate
+		// button (the single generate path), so the bottom strip only advances to
+		// landing-site selection.
 		landingButton = std::make_unique<UI::Button>(UI::Button::Args{
 			.label = "Choose Landing Site",
-			.position = {mainX + 176.0F, viewportH - 50.0F},
+			.position = {mainX, viewportH - 50.0F},
 			.size = {200.0F, 36.0F},
 			.type = UI::Button::Type::Primary,
 			.onClick = [this]() { onChooseLandingSite(); },
@@ -332,7 +323,7 @@ class WorldCreatorScene : public engine::IScene {
 			return;
 		}
 
-		// Blank seed means "surprise me": pick a fresh seed each run so Regenerate
+		// Blank seed means "surprise me": pick a fresh seed each run so regenerating
 		// doesn't silently reproduce the identical world from the preset default.
 		if (panel && panel->seedIsEmpty()) {
 			model.randomizeSeed();
@@ -346,7 +337,6 @@ class WorldCreatorScene : public engine::IScene {
 		if (panel) panel->setGenerating(true);
 		if (progressBar) { progressBar->setValue(0.0F); progressBar->visible = true; }
 		if (stageText)   { stageText->text = "Starting..."; stageText->visible = true; }
-		if (regenButton)   regenButton->visible = false;
 		if (landingButton) landingButton->visible = false;
 	}
 
@@ -355,7 +345,6 @@ class WorldCreatorScene : public engine::IScene {
 			if (panel)         panel->setGenerating(false);
 			if (progressBar)   progressBar->visible = false;
 			if (stageText)     stageText->visible = false;
-			if (regenButton)   regenButton->visible = true;
 			if (landingButton) landingButton->visible = true;
 
 			// Final colors from the completed world
@@ -367,16 +356,8 @@ class WorldCreatorScene : public engine::IScene {
 			if (panel)         panel->setGenerating(false);
 			if (progressBar)   progressBar->visible = false;
 			if (stageText)     stageText->visible = false;
-			if (regenButton)   regenButton->visible = false;
 			if (landingButton) landingButton->visible = false;
 		}
-	}
-
-	void onRegenerate() {
-		model.resetToConfiguring();
-		if (regenButton)   regenButton->visible = false;
-		if (landingButton) landingButton->visible = false;
-		if (panel)         panel->setGenerating(false);
 	}
 
 	void onChooseLandingSite() {
@@ -509,7 +490,6 @@ class WorldCreatorScene : public engine::IScene {
 			stats.render();
 		}
 
-		if (regenButton)   { regenButton->render(); }
 		if (landingButton) { landingButton->render(); }
 	}
 };

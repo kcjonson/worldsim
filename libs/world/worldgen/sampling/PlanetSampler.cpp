@@ -1,6 +1,5 @@
 #include "worldgen/sampling/PlanetSampler.h"
 
-#include <algorithm>
 #include <cassert>
 
 namespace worldgen {
@@ -9,10 +8,6 @@ namespace {
 
 // Biome blend half-width at spherical tile boundaries (3d-to-2d-sampling.md).
 constexpr float kBlendDistanceMeters = 500.0f;
-
-double vecDot(Vec3d a, Vec3d b) {
-    return a.x * b.x + a.y * b.y + a.z * b.z;
-}
 
 } // namespace
 
@@ -57,44 +52,31 @@ PlanetSampler::PositionSample PlanetSampler::sampleAt(double xMeters, double yMe
     const SphereGrid& grid = *world->grid;
 
     LatLon latLon = projection.worldToLatLon(xMeters, yMeters);
-    TileId tile = kInvalidTile;
-    float u = 0.0f;
-    float v = 0.0f;
-    grid.locate(latLon.latDeg, latLon.lonDeg, tile, u, v);
+    SphereGrid::HexSample hex = grid.locateHex(latLon.latDeg, latLon.lonDeg);
+    TileId tile = hex.tile;
 
     TileSample primary = resolveTile(tile);
 
-    float edgeFraction = std::min(std::min(u, 1.0f - u), std::min(v, 1.0f - v));
-    float distToBoundary = edgeFraction * grid.tileWidthMeters(tile, world->derived.planetRadiusMeters);
+    // edgeDistance is 0.5*(d2-d1) in lattice units (half-cell span center to
+    // edge); 2*edgeDistance*tileWidth is the metric distance to the Voronoi
+    // boundary.
+    float distToBoundary = hex.edgeDistance * 2.0f *
+                           grid.tileWidthMeters(tile, world->derived.planetRadiusMeters);
 
     PositionSample result;
     result.tile = tile;
     result.water = primary.water;
 
-    if (distToBoundary >= kBlendDistanceMeters) {
+    if (hex.neighbor == kInvalidTile || distToBoundary >= kBlendDistanceMeters) {
         result.weights[0] = {primary.biome, 1.0f};
         result.weightCount = 1;
         result.elevationMeters = primary.elevationMeters;
         return result;
     }
 
-    // Boundary path: blend with the tile across the nearest edge — the
-    // neighbor whose center is closest in direction to the query point.
-    Vec3d dir = projection.worldToUnitVector(xMeters, yMeters);
-    std::array<TileId, 8> neighborIds{};
-    uint32_t neighborCount = grid.neighbors(tile, neighborIds);
-
-    TileId nearestNeighbor = tile;
-    double bestDot = -2.0;
-    for (uint32_t i = 0; i < neighborCount; ++i) {
-        double d = vecDot(grid.tileCenter(neighborIds[i]), dir);
-        if (d > bestDot) {
-            bestDot = d;
-            nearestNeighbor = neighborIds[i];
-        }
-    }
-
-    TileSample secondary = resolveTile(nearestNeighbor);
+    // Boundary path: blend with the true second-nearest Voronoi center, which
+    // is continuous across rhombus edges.
+    TileSample secondary = resolveTile(hex.neighbor);
 
     // Continuous across the boundary: 50/50 on the edge itself, pure at the
     // blend distance. (The spec pseudocode assigns the primary t = d/blend,

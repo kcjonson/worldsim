@@ -143,7 +143,7 @@ void TerrainStage::run(StageContext& ctx) {
     std::vector<bool>    isBoundary(N, false);
 
     {
-        std::array<TileId, 8> nbrs{};
+        std::array<TileId, 6> nbrs{};
         for (uint32_t t = 0; t < N; ++t) {
             uint8_t pid = ctx.data.plateId[t];
             uint32_t cnt = ctx.grid.neighbors(t, nbrs);
@@ -289,7 +289,7 @@ void TerrainStage::run(StageContext& ctx) {
                             const std::vector<uint8_t>& srcS,
                             std::vector<BType>&         dstT,
                             std::vector<uint8_t>&       dstS) {
-            std::array<TileId, 8> nbrs{};
+            std::array<TileId, 6> nbrs{};
             for (uint32_t t = 0; t < N; ++t) {
                 if (!isBoundary[t]) { dstT[t] = BType::None; dstS[t] = kSideSymmetric; continue; }
                 uint32_t cnt = ctx.grid.neighbors(t, nbrs);
@@ -367,7 +367,7 @@ void TerrainStage::run(StageContext& ctx) {
         std::vector<int32_t> epoch(N, -1);
         std::vector<uint32_t> bfsQ;
         bfsQ.reserve(256);
-        std::array<TileId, 8> tbNbrs{};
+        std::array<TileId, 6> tbNbrs{};
 
         int32_t baseEpoch = 0;
         for (uint32_t t = 0; t < N; ++t) {
@@ -431,7 +431,7 @@ void TerrainStage::run(StageContext& ctx) {
                 bfsQueue.push_back(t);
             }
         }
-        std::array<TileId, 8> nbrs{};
+        std::array<TileId, 6> nbrs{};
         for (size_t qi = 0; qi < bfsQueue.size(); ++qi) {
             uint32_t t  = bfsQueue[qi];
             int32_t  nd = bfsDist[t] + 1;
@@ -482,7 +482,7 @@ void TerrainStage::run(StageContext& ctx) {
         }
 
         std::vector<float> distB(N);
-        std::array<TileId, 8> jNbrs{};
+        std::array<TileId, 6> jNbrs{};
 
         // Three Jacobi passes blend jittered shells into a continuous float field.
         for (int pass = 0; pass < 3; ++pass) {
@@ -519,7 +519,7 @@ void TerrainStage::run(StageContext& ctx) {
     {
         std::vector<uint32_t> bfsQueue;
         bfsQueue.reserve(N / 4);
-        std::array<TileId, 8> nbrs{};
+        std::array<TileId, 6> nbrs{};
         for (uint32_t t = 0; t < N; ++t) {
             bool isCrust = (ctx.data.flags[t] & kFlagContinentalCrust) != 0;
             uint32_t cnt = ctx.grid.neighbors(t, nbrs);
@@ -531,7 +531,7 @@ void TerrainStage::run(StageContext& ctx) {
         for (size_t qi = 0; qi < bfsQueue.size(); ++qi) {
             uint32_t t   = bfsQueue[qi];
             int32_t  nd  = crustEdgeDist[t] + 1;
-            std::array<TileId, 8> nbrs2{};
+            std::array<TileId, 6> nbrs2{};
             uint32_t cnt = ctx.grid.neighbors(t, nbrs2);
             for (uint32_t k = 0; k < cnt; ++k) {
                 TileId nb = nbrs2[k];
@@ -666,7 +666,7 @@ void TerrainStage::run(StageContext& ctx) {
             hotQueue.push_back(cp.tile);
             hotDist[cp.tile] = 0;
 
-            std::array<TileId, 8> hnbrs{};
+            std::array<TileId, 6> hnbrs{};
             for (size_t qi = 0; qi < hotQueue.size(); ++qi) {
                 uint32_t t  = hotQueue[qi];
                 int32_t  d  = hotDist[t];

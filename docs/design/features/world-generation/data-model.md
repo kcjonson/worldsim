@@ -36,17 +36,23 @@ This document describes **what data is produced** (conceptually) and **how the 2
 - Tiles are roughly equal in area (not perfectly geometric)
 - Higher resolution = more tiles = finer detail
 
-**Example Resolutions**:
-- Low: 500,000 tiles (~50km per tile on Earth-sized planet)
-- Medium: 21,000,000 tiles (~5km per tile)
-- High: 84,000,000 tiles (~2.5km per tile)
+**Example Resolutions** (tiles = 10n²+2 for subdivision n):
+- n=224: ~501,762 tiles (~50km per tile on Earth-sized planet)
+- n=1449: ~21,024,202 tiles (~5km per tile) — current design target
+- n=2048: ~41,943,042 tiles (~2.5km per tile)
 
 **Scale Perspective**:
-- Medium resolution spherical tile: ~5km across
+- Medium resolution spherical tile (n=1449): ~5km across
 - 2D gameplay tile: ~1m across
 - **One spherical tile contains ~25 million 2D tiles!**
 
-**Technical Note**: Actual implementation may use geodesic subdivision (icosahedron → subdivide → project to sphere) or other methods. From game design perspective, what matters is: "The sphere is divided into many tiles."
+**Technical implementation**: The sphere is divided using a Goldberg polyhedron
+grid — 20 icosahedron faces paired into 10 rhombi, each subdivided into an n×n
+lattice of vertex-centered hex tiles. This yields exactly 10n²+2 tiles: 10n²
+hexagons (from the rhombus interior vertices) plus exactly 12 pentagon tiles at
+the 12 icosahedron vertices (including both poles). The hex lattice closes cleanly
+across all rhombus edges with no seams. From the game design perspective: "the
+sphere is divided into many near-equal hexagonal tiles, with 12 pentagons."
 
 ### Tile as Fundamental Unit
 
@@ -689,3 +695,4 @@ Player moves to new area:
 
 - 2025-10-26: Initial data model documentation created
 - 2025-10-26: Updated to reflect single-biome architecture with boundary-based blending
+- 2026-06-12: Updated sphere subdivision to reflect the implemented Goldberg hex grid (10n²+2 tiles, 12 pentagons); removed "may use other methods" hedge

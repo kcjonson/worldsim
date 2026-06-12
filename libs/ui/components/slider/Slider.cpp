@@ -171,9 +171,14 @@ void Slider::render() {
 		} else {
 			valStr = std::format("{:.2f}", value);
 		}
+		// Bounding-box mode (width + height set) so Right align snaps the text
+		// flush to the box's right edge. Without an explicit height the Text falls
+		// into point mode, where the anchor x becomes the text's right edge and
+		// the value drifts left into the track, clipping its leading characters.
 		Text valShape(Text::Args{
-			.position = {contentPos.x + size.x - kValueWidth, trackY},
+			.position = {contentPos.x + size.x - kValueWidth, contentPos.y},
 			.width = kValueWidth,
+			.height = size.y,
 			.text = valStr,
 			.style = {
 				.color = disabled

@@ -81,7 +81,7 @@ inline constexpr uint32_t kAllWorldFields = 0x7FFFu; // bits 0..14
 //   flags:             uint8, kFlag* bits
 //   waterDepth:        uint16, meters (0 = land or dry)
 //   flowAccum:         float, accumulated upstream drainage area (tile count)
-//   downhill:          uint8, neighbor direction index 0..7 (0xFF = none/sink)
+//   downhill:          uint8, neighbor direction index 0..5 (0xFF = none/sink)
 //   snowCover:         uint8, 0..255 (0 = bare, 255 = full permanent snow)
 struct WorldData {
     std::vector<float>    elevation;

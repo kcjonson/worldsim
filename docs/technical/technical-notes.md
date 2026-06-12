@@ -65,6 +65,14 @@ This document contains research notes, open questions, and technical considerati
 
 ## Sphere Subdivision
 
+**Status (2026-06-12): Goldberg grid is now implemented.** The design below
+describes the research path that led to the current implementation. The actual
+grid is a true Goldberg polyhedron: 20 icosahedron faces paired into 10 rhombi,
+each an n×n chart with tile centers at lattice vertices (i/n, j/n). Total tiles
+= 10n²+2; exactly 12 pentagon tiles at the icosahedron vertices (including both
+poles); all others are hexagons. See `docs/technical/world-generation-implementation.md`
+and `libs/world/worldgen/grid/SphereGrid.h` for the authoritative description.
+
 ### Resources
 
 - [Goldberg polyhedron - Wikipedia](https://en.wikipedia.org/wiki/Goldberg_polyhedron)
@@ -83,16 +91,13 @@ From "Fractal Philosophy: Maps: Fractals, Tectonics and the Fourth Dimension":
 
 - **Result** - The effect applies to the dual of the triangles. This creates pentagons filled with hexagons
 
-- **Continued subdivision** - Subdividing more and more. There will still be 12 hexagons somewhere, you can find them in the Rimworld globe!
-  - **Note:** How is this becoming spherical? I think the 2D illustration here is a bit hard to understand
+- **Continued subdivision** - Subdividing more and more. There will still be 12 pentagons somewhere — you can find them in the Rimworld globe! *(Note: the text above originally said "12 hexagons"; it's 12 pentagons.)*
 
 - **Distortion** - If you apply some distortion to the original TRIANGLES, you get varied sizes
-  - **Note:** How do you subdivide these random shapes?
 
-- **Plate generation** - MORE ON PLATE GENERATION HERE
+- **Plate generation** - Implemented via multi-source Dijkstra Voronoi with per-plate growth rates, Euler poles, and craton passes. See development log 2026-06-10.
 
 - **Plate movement** - Via Euler rotation theorem ([Euler's rotation theorem - Wikipedia](https://en.wikipedia.org/wiki/Euler%27s_rotation_theorem))
-  - Need to understand "right hand rule" and "cross product"
 
 ## Pathfinding and Game AI
 

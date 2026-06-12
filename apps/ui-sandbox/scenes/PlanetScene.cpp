@@ -6,11 +6,15 @@
 
 #include <planet-view/OrbitCamera.h>
 #include <planet-view/PlanetColorizer.h>
+#include <planet-view/PlanetDetailCache.h>
 #include <planet-view/PlanetMesh.h>
 #include <planet-view/PlanetPicker.h>
 #include <planet-view/PlanetRenderer.h>
+#include <planet-view/PlanetScheduler.h>
 #include <world/worldgen/data/PlanetParams.h>
 #include <world/worldgen/pipeline/PlanetGenerator.h>
+
+#include <threading/TaskPool.h>
 
 #include <graphics/Color.h>
 #include <primitives/Primitives.h>
@@ -66,10 +70,14 @@ class PlanetScene : public engine::IScene {
             statusText = buf;
         }
 
-        // Check for new snapshot and upload colors progressively.
+        // Check for new snapshot and upload colors progressively. The generator
+        // publishes one growing GeneratedWorld object across stages (same pointer,
+        // validFields grows monotonically), so re-bake on field growth too, not
+        // just on a fresh pointer from a new run.
         auto snap = generator->snapshot();
-        if (snap && snap != lastSnapshot) {
+        if (snap && (snap != lastSnapshot || snap->validFields != lastValidFields)) {
             lastSnapshot = snap;
+            lastValidFields = snap->validFields;
             onSnapshot(*snap);
         }
 
@@ -97,7 +105,14 @@ class PlanetScene : public engine::IScene {
             glGetIntegerv(GL_VIEWPORT, vp);
             int fbW = vp[2], fbH = vp[3];
 
-            renderer.render(mesh, colorizer, camera, fbW, fbH);
+            colorizer.uploadPending();
+            if (lastSnapshot && lastSnapshot->grid && detailCache.isReady()) {
+                float aspect = (fbH > 0) ? (static_cast<float>(fbW) / fbH) : 1.0F;
+                planetview::schedulePages(detailCache, camera, aspect, fbW, fbH,
+                                          *lastSnapshot->grid, kSubdivision);
+            }
+
+            renderer.render(mesh, colorizer, detailCache, kSubdivision, camera, fbW, fbH);
             renderer.blitToScreen(fbW, fbH);
 
             if (markerVisible) {
@@ -236,12 +251,17 @@ class PlanetScene : public engine::IScene {
 
     std::unique_ptr<worldgen::PlanetGenerator> generator;
     std::shared_ptr<const worldgen::GeneratedWorld> lastSnapshot;
+    uint32_t lastValidFields{0};
     bool worldReady{false};
     bool meshBuilt{false};
     std::string statusText;
 
+    // pool declared first so it outlives colorizer/detailCache (they bake on it
+    // and wait on those bakes in their destructors).
+    foundation::TaskPool        pool;
     planetview::PlanetMesh      mesh;
     planetview::PlanetColorizer colorizer;
+    planetview::PlanetDetailCache detailCache;
     planetview::PlanetRenderer  renderer;
     planetview::OrbitCamera     camera;
 
@@ -258,6 +278,7 @@ class PlanetScene : public engine::IScene {
             mesh.build(kSubdivision, *world.grid);
 
             colorizer.init(kSubdivision);
+            detailCache.init(kSubdivision);
 
             std::string shaderDir = Foundation::findResourceString("shaders");
             if (shaderDir.empty()) shaderDir = "shaders";
@@ -277,16 +298,20 @@ class PlanetScene : public engine::IScene {
             LOG_INFO(World, "PlanetScene: mesh and renderer ready");
         }
 
-        // Re-upload colors whenever validFields grows (progressive stages).
-        if (meshBuilt && colorizer.isReady()) {
-            colorizer.update(world, static_cast<planetview::ColorMode>(colorModeIdx));
+        // Re-bake colors whenever validFields grows (progressive stages).
+        if (meshBuilt && colorizer.isReady() && lastSnapshot) {
+            auto mode = static_cast<planetview::ColorMode>(colorModeIdx);
+            colorizer.requestBake(lastSnapshot, mode, pool);
+            detailCache.setWorld(lastSnapshot, mode);
         }
     }
 
     void switchMode(int idx) {
         colorModeIdx = idx % static_cast<int>(planetview::ColorMode::Count);
         if (lastSnapshot && colorizer.isReady()) {
-            colorizer.update(*lastSnapshot, static_cast<planetview::ColorMode>(colorModeIdx));
+            auto mode = static_cast<planetview::ColorMode>(colorModeIdx);
+            colorizer.requestBake(lastSnapshot, mode, pool);
+            detailCache.setWorld(lastSnapshot, mode);
         }
     }
 };

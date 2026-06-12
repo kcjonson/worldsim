@@ -2,6 +2,7 @@
 
 #include "OrbitCamera.h"
 #include "PlanetColorizer.h"
+#include "PlanetDetailCache.h"
 #include "PlanetMesh.h"
 
 #include <shader/ShaderLoader.h>
@@ -96,11 +97,16 @@ bool PlanetRenderer::createFbo(int w, int h) {
 }
 
 void PlanetRenderer::cacheUniforms() {
-    planetUniforms.mvp       = glGetUniformLocation(planetShader, "u_mvp");
-    planetUniforms.model     = glGetUniformLocation(planetShader, "u_model");
-    planetUniforms.sunDir    = glGetUniformLocation(planetShader, "u_sunDir");
-    planetUniforms.cameraPos = glGetUniformLocation(planetShader, "u_cameraPos");
-    planetUniforms.colorTex  = glGetUniformLocation(planetShader, "u_colorTex");
+    planetUniforms.mvp          = glGetUniformLocation(planetShader, "u_mvp");
+    planetUniforms.model        = glGetUniformLocation(planetShader, "u_model");
+    planetUniforms.sunDir       = glGetUniformLocation(planetShader, "u_sunDir");
+    planetUniforms.cameraPos    = glGetUniformLocation(planetShader, "u_cameraPos");
+    planetUniforms.baseTex      = glGetUniformLocation(planetShader, "u_baseTex");
+    planetUniforms.pageTable    = glGetUniformLocation(planetShader, "u_pageTable");
+    planetUniforms.atlas        = glGetUniformLocation(planetShader, "u_atlas");
+    planetUniforms.n            = glGetUniformLocation(planetShader, "u_n");
+    planetUniforms.rhombus      = glGetUniformLocation(planetShader, "u_rhombus");
+    planetUniforms.pagesPerSide = glGetUniformLocation(planetShader, "u_pagesPerSide");
 
     blitUniforms.tex = glGetUniformLocation(blitShader, "u_tex");
 }
@@ -112,6 +118,7 @@ void PlanetRenderer::destroyFbo() {
 }
 
 void PlanetRenderer::render(const PlanetMesh& mesh, const PlanetColorizer& colorizer,
+                            const PlanetDetailCache& detail, uint32_t subdivision,
                             const OrbitCamera& camera, int widthPx, int heightPx) {
     if (!isReady() || !mesh.isBuilt() || !colorizer.isReady()) return;
 
@@ -176,19 +183,32 @@ void PlanetRenderer::render(const PlanetMesh& mesh, const PlanetColorizer& color
     glUniformMatrix4fv(planetUniforms.model,     1, GL_FALSE, glm::value_ptr(model));
     glUniform3fv(planetUniforms.sunDir,       1, glm::value_ptr(sunDir));
     glUniform3fv(planetUniforms.cameraPos,    1, glm::value_ptr(camPos));
-    glUniform1i(planetUniforms.colorTex, 0);
+    glUniform1i(planetUniforms.baseTex,   0);
+    glUniform1i(planetUniforms.pageTable, 1);
+    glUniform1i(planetUniforms.atlas,     2);
+    glUniform1f(planetUniforms.n, static_cast<float>(subdivision));
+    glUniform1i(planetUniforms.pagesPerSide,
+                static_cast<int>(detail.pagesPerSideValue()));
+
+    // Page table (unit 1) + atlas (unit 2) are shared across all 10 draws.
+    detail.bind(2, 1);
 
     for (uint32_t r = 0; r < 10U; ++r) {
         const auto& rm = mesh.rhombus(r);
         if (!rm.vao) continue;
 
         colorizer.bind(r, 0);
+        glUniform1i(planetUniforms.rhombus, static_cast<int>(r));
 
         glBindVertexArray(rm.vao);
         glDrawElements(GL_TRIANGLES,
                        static_cast<GLsizei>(mesh.indexCount),
                        GL_UNSIGNED_INT, nullptr);
     }
+    glActiveTexture(GL_TEXTURE0 + 2);
+    glBindTexture(GL_TEXTURE_2D_ARRAY, 0);
+    glActiveTexture(GL_TEXTURE0 + 1);
+    glBindTexture(GL_TEXTURE_2D_ARRAY, 0);
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, 0);
 

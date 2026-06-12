@@ -145,7 +145,7 @@ void PrecipitationStage::run(StageContext& ctx) {
             const double invProj = 1.0 / foundation::det_math::sqrt(projLen2);
             up = Vec3d{proj.x * invProj, proj.y * invProj, proj.z * invProj};
 
-            std::array<TileId, 8> nbs{};
+            std::array<TileId, 6> nbs{};
             const uint32_t cnt = ctx.grid.neighbors(cur, nbs);
             double bestScore = 0.0; // require positive upwind alignment
             TileId best = kInvalidTile;
@@ -248,7 +248,7 @@ void PrecipitationStage::run(StageContext& ctx) {
                 ctx.data.flowAccum[t] = 0.0f;
                 continue;
             }
-            std::array<TileId, 8> nbs{};
+            std::array<TileId, 6> nbs{};
             const uint32_t cnt = ctx.grid.neighbors(static_cast<TileId>(t), nbs);
             float    bestE   = ctx.data.elevation[t]; // strictly lower required
             uint32_t bestIdx = 0xFFu;

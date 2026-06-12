@@ -10,6 +10,7 @@
 
 #include <planet-view/OrbitCamera.h>
 #include <planet-view/PlanetColorizer.h>
+#include <planet-view/PlanetDetailCache.h>
 #include <planet-view/PlanetMesh.h>
 #include <planet-view/PlanetPicker.h>
 #include <planet-view/PlanetRenderer.h>
@@ -18,6 +19,7 @@
 #include <input/InputEvent.h>
 #include <math/Types.h>
 #include <shapes/Shapes.h>
+#include <threading/TaskPool.h>
 
 #include <memory>
 #include <optional>
@@ -63,8 +65,13 @@ class GlobeView {
 	const std::shared_ptr<const worldgen::GeneratedWorld>& world() const { return currentWorld; }
 
   private:
+	// pool must outlive colorizer/detailCache: they bake on it asynchronously and
+	// wait on those bakes in their destructors. Declaration order = construction
+	// order; reverse is destruction order, so pool is destroyed last.
+	foundation::TaskPool        pool;
 	planetview::PlanetMesh      mesh;
 	planetview::PlanetColorizer colorizer;
+	planetview::PlanetDetailCache detailCache;
 	planetview::PlanetRenderer  renderer;
 	planetview::OrbitCamera     camera;
 
@@ -72,6 +79,8 @@ class GlobeView {
 	const worldgen::SphereGrid* builtGrid{nullptr};
 	planetview::ColorMode       mode{planetview::ColorMode::Terrain};
 	bool dragging{false};
+
+	void chooseMinDistance(uint32_t n);
 
 	static bool contains(const Foundation::Rect& r, Foundation::Vec2 p) {
 		return p.x >= r.x && p.x <= r.x + r.width && p.y >= r.y && p.y <= r.y + r.height;

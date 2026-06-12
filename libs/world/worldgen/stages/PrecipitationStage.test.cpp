@@ -267,7 +267,7 @@ TEST(PrecipitationStage, DownhillSteepestNeighborAndSinks) {
 
     const auto& data = w.world.data;
     for (TileId t = 0; t < w.grid.tileCount(); ++t) {
-        std::array<TileId, 8> nbs{};
+        std::array<TileId, 6> nbs{};
         const uint32_t cnt = w.grid.neighbors(t, nbs);
 
         if (data.elevation[t] < w.world.seaLevelMeters) {
@@ -320,7 +320,7 @@ TEST(PrecipitationStage, FlowAccumMonotonicAlongChain) {
     ASSERT_GE(data.elevation[cur], w.world.seaLevelMeters);
     int steps = 0;
     while (data.downhill[cur] != 0xFFu) {
-        std::array<TileId, 8> nbs{};
+        std::array<TileId, 6> nbs{};
         const uint32_t cnt = w.grid.neighbors(cur, nbs);
         ASSERT_LT(data.downhill[cur], cnt);
         const TileId next = nbs[data.downhill[cur]];

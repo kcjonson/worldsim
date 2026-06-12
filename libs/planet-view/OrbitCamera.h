@@ -27,6 +27,10 @@ class OrbitCamera {
     // World-space camera position.
     glm::vec3 position() const;
 
+    // Set the closest orbit distance (planet radii). GlobeView picks this from
+    // the grid subdivision so a single tile can reach ~50 px even at high n.
+    void setMinDistance(float minDist);
+
     // Input feed methods — call each frame from the scene.
     void beginDrag(float mouseX, float mouseY);
     void drag(float mouseX, float mouseY);
@@ -46,10 +50,15 @@ class OrbitCamera {
 
     float idleTime{0.0F};
 
-    static constexpr float kMinDist = 1.05F;
+    // Runtime min distance (set by GlobeView from n). The hard floor keeps the
+    // camera just outside the unit sphere; high-n grids push closer.
+    float minDist{1.05F};
+
+    static constexpr float kMinDistFloor = 1.002F;
     static constexpr float kMaxDist = 8.0F;
     static constexpr float kFovDeg  = 45.0F;
-    static constexpr float kNear    = 0.05F;
+    static constexpr float kNearMin = 0.0005F;
+    static constexpr float kNearMax = 0.05F;
     static constexpr float kFar     = 20.0F;
     static constexpr float kInertia = 0.88F;
     static constexpr float kDragSens = 0.008F;

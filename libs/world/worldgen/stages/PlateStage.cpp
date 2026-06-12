@@ -233,7 +233,7 @@ void PlateStage::run(StageContext& ctx) {
     }
 
     uint32_t poppedTiles = 0;
-    std::array<TileId, 8> nbrs{};
+    std::array<TileId, 6> nbrs{};
 
     while (!pq.empty()) {
         HeapEntry cur = pq.top();
@@ -409,7 +409,7 @@ void PlateStage::run(StageContext& ctx) {
     }
 
     uint32_t cratonPopped = 0;
-    std::array<TileId, 8> cnbrs{};
+    std::array<TileId, 6> cnbrs{};
 
     while (!cq.empty()) {
         HeapEntry cur = cq.top();

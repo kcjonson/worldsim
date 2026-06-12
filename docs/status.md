@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2026-06-10 (Worldgen foundation merged: M1, M2, M3a, M3b, M3f-1, M3g, M3h on main via PRs #118-#124; render perf analysis complete)
+Last Updated: 2026-06-12 (Hex conversion Phases 1-4 on feature/worldgen-hex-tiles: Goldberg grid, two-tier rendering, docs + dev log)
 
 ## Epic/Story/Task Template
 
@@ -426,6 +426,12 @@ while (running) {
 - [x] M3d: Precipitation + rivers (P5)
 - [x] M3e: Oceans, biomes, snow, summary (P6–P9)
 - [x] M3f: planet-view lib (renderer, camera, picker, colorizer; chunked-LOD deferred to M3f-2)
+- [ ] Hex conversion + scalable crisp globe rendering (`.claude/plans/lets-work-on-the-serene-waterfall.md`)
+  - [x] Phase 1: SphereGrid Goldberg hex semantics (vertex-centered tiles, 10n²+2, cube-round assignment, 6-neighbor offsets, locateHex)
+  - [x] Phase 2: consumers re-baselined (neighbors=6, locateHex sampling, PlanetIO version bump)
+  - [x] Phase 3: two-tier crisp rendering — base mips (async bake, dirty-flag coalescing) + detail page cache (130×130 pages, 2D-array atlas, LRU, page table), per-pixel hex assignment in planet.frag, camera deep-zoom near-plane + n-aware min distance. Supersedes the M3f-2 "chunked LOD" placeholder.
+  - [x] Phase 4: docs + dev-log entry — world-generation-implementation.md (Goldberg grid, TileId amendment, frozen-contract amendments, locateHex, diagonal B-D fix, PlanetIO v2); planet-view-rendering.md (two-tier architecture, scaling table, budgets); 3d-to-2d-sampling.md (locateHex addendum); data-model.md + technical-notes.md (hexes now literal); dev log 2026-06-12-worldgen-hex-goldberg.md
+  - [x] Phase 5: end-to-end verification (New Game flow, far-tier washout fix, color-mode cycling, zoom crispness, Quick Start v2 cache save/load) + PR
 - [x] M3g: UI Slider + WorldCreator shell
 - [x] M3h: Biome taxonomy migration (engine, 8→21 biomes, sparse BiomeWeights)
 - [x] M4: PlanetSampler + GeneratedWorldSampler + GameLoading branch
@@ -560,7 +566,7 @@ The following MVP epics have all been completed. Detailed task breakdowns are pr
 - [x] Phase 3: Far-zoom impostor handoff (height-bucketed meshes, zoom cutoff + fade)
 - [x] Windows frame pacing fix (timeBeginPeriod + sleep-then-spin; was capped ~60 FPS)
 - [ ] Phase 4: Remaining metrics correctness (GPU timer, Windows SystemResources, per-window max breakdown)
-- [ ] Phase 5: Small wins (AABB cache, LRU eviction, zoom-aware load radius, View smallest-pool)
+- [ ] Phase 5: Small wins (AABB cache, LRU eviction, zoom-aware load radius, View smallest-pool, uniform-chunk fast path: skip the full 512x512 computeTile loop when all 4 sampled corners agree, e.g. deep-ocean chunks)
 - [ ] 4x-density scroll hitch attribution (p99 64ms at 4x; within criteria but worth chasing before density increase lands)
 
 ---

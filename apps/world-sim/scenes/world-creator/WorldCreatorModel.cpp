@@ -69,7 +69,10 @@ void WorldCreatorModel::randomizeSeed() {
 }
 
 void WorldCreatorModel::startGeneration() {
-	if (state != WorldCreatorState::Configuring) {
+	// Generate is the single regenerate path: valid from Configuring (first run)
+	// and from Reviewing (regenerate after tweaking params). Only an in-flight
+	// generation blocks a new start.
+	if (state == WorldCreatorState::Generating) {
 		return;
 	}
 	result.reset();
@@ -83,11 +86,6 @@ void WorldCreatorModel::cancelGeneration() {
 	}
 	generator.cancel();
 	// State will transition once poll sees Cancelled
-}
-
-void WorldCreatorModel::resetToConfiguring() {
-	state = WorldCreatorState::Configuring;
-	result.reset();
 }
 
 void WorldCreatorModel::restoreResult(std::shared_ptr<const worldgen::GeneratedWorld> world) {

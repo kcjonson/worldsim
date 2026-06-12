@@ -89,7 +89,7 @@ static void BM_Neighbors_n1024(benchmark::State& state) {
     uint32_t total = g.tileCount();
     uint32_t i = 0;
     for (auto _ : state) {
-        std::array<TileId, 8> nbrs{};
+        std::array<TileId, 6> nbrs{};
         uint32_t cnt = g.neighbors(i % total, nbrs);
         benchmark::DoNotOptimize(cnt);
         ++i;

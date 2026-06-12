@@ -12,7 +12,8 @@ namespace worldgen {
 namespace {
 
 constexpr uint32_t kTestSubdivision = 8;
-constexpr uint32_t kTestTileCount = 10u * kTestSubdivision * kTestSubdivision; // 640
+// Goldberg grid: 10*n*n owned vertices + 2 poles.
+constexpr uint32_t kTestTileCount = 10u * kTestSubdivision * kTestSubdivision + 2u; // 642
 
 GeneratedWorld makeTestWorld() {
 	GeneratedWorld world;
@@ -245,7 +246,25 @@ TEST_F(PlanetIOTest, BadMagicReturnsNull) {
 TEST_F(PlanetIOTest, UnsupportedVersionReturnsNull) {
 	GeneratedWorld world = makeTestWorld();
 	ASSERT_TRUE(savePlanet(world, filePath));
-	flipByteAt(filePath, 4); // low byte of the uint32 format version
+	flipByteAt(filePath, 4); // low byte of the uint32 format version (2 -> 3)
+	EXPECT_EQ(loadPlanet(filePath), nullptr);
+}
+
+// Version 1 files (pre-hex-grid) must be rejected — downhill semantics and tile
+// count changed incompatibly when converting to the Goldberg hex grid.
+TEST_F(PlanetIOTest, VersionOneFileReturnsNull) {
+	GeneratedWorld world = makeTestWorld();
+	ASSERT_TRUE(savePlanet(world, filePath));
+
+	// Overwrite the format version field (offset 4, uint32 LE) with 1.
+	std::fstream f(filePath, std::ios::binary | std::ios::in | std::ios::out);
+	ASSERT_TRUE(f.is_open());
+	f.seekp(4);
+	const uint8_t v1[4] = {1, 0, 0, 0};
+	f.write(reinterpret_cast<const char*>(v1), 4);
+	ASSERT_TRUE(f.good());
+	f.close();
+
 	EXPECT_EQ(loadPlanet(filePath), nullptr);
 }
 

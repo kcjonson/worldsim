@@ -20,7 +20,17 @@ glm::mat4 OrbitCamera::viewMatrix() const {
 }
 
 glm::mat4 OrbitCamera::projMatrix(float aspect) const {
-    return glm::perspective(glm::radians(kFovDeg), aspect, kNear, kFar);
+    // Pull the near plane in as we approach the surface so deep zoom keeps depth
+    // precision without clipping the globe. distance is in planet radii; the gap
+    // to the surface is (distance - 1).
+    float surfaceGap = std::max(distance - 1.0F, 0.0F);
+    float nearPlane = std::clamp(0.2F * surfaceGap, kNearMin, kNearMax);
+    return glm::perspective(glm::radians(kFovDeg), aspect, nearPlane, kFar);
+}
+
+void OrbitCamera::setMinDistance(float newMin) {
+    minDist = std::max(newMin, kMinDistFloor);
+    distance = std::clamp(distance, minDist, kMaxDist);
 }
 
 void OrbitCamera::beginDrag(float mouseX, float mouseY) {
@@ -51,7 +61,7 @@ void OrbitCamera::endDrag() {
 
 void OrbitCamera::scroll(float delta) {
     distance -= delta * kScrollSens * distance;
-    distance = std::clamp(distance, kMinDist, kMaxDist);
+    distance = std::clamp(distance, minDist, kMaxDist);
     idleTime = 0.0F;
 }
 
