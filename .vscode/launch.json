@@ -3,23 +3,45 @@
   "configurations": [
     {
       "name": "Debug world-sim",
-      "type": "cppdbg",
+      "type": "cppvsdbg",
       "request": "launch",
-      "program": "${workspaceFolder}/build/apps/world-sim/world-sim",
-      "cwd": "${workspaceFolder}/build/apps/world-sim",
-      "MIMode": "lldb",
+      "program": "${workspaceFolder}/build/apps/world-sim/Debug/world-sim.exe",
+      "cwd": "${workspaceFolder}/build/apps/world-sim/Debug",
       "externalConsole": false,
-      "preLaunchTask": "build world-sim"
+      "preLaunchTask": "CMake build world-sim",
+      "osx": {
+        "type": "cppdbg",
+        "MIMode": "lldb",
+        "program": "${workspaceFolder}/build/apps/world-sim/world-sim",
+        "cwd": "${workspaceFolder}/build/apps/world-sim"
+      },
+      "linux": {
+        "type": "cppdbg",
+        "MIMode": "gdb",
+        "program": "${workspaceFolder}/build/apps/world-sim/world-sim",
+        "cwd": "${workspaceFolder}/build/apps/world-sim"
+      }
     },
     {
       "name": "Debug ui-sandbox",
-      "type": "cppdbg",
+      "type": "cppvsdbg",
       "request": "launch",
-      "program": "${workspaceFolder}/build/apps/ui-sandbox/ui-sandbox",
-      "cwd": "${workspaceFolder}/build/apps/ui-sandbox",
-      "MIMode": "lldb",
+      "program": "${workspaceFolder}/build/apps/ui-sandbox/Debug/ui-sandbox.exe",
+      "cwd": "${workspaceFolder}/build/apps/ui-sandbox/Debug",
       "externalConsole": false,
-      "preLaunchTask": "build ui-sandbox"
+      "preLaunchTask": "CMake build ui-sandbox",
+      "osx": {
+        "type": "cppdbg",
+        "MIMode": "lldb",
+        "program": "${workspaceFolder}/build/apps/ui-sandbox/ui-sandbox",
+        "cwd": "${workspaceFolder}/build/apps/ui-sandbox"
+      },
+      "linux": {
+        "type": "cppdbg",
+        "MIMode": "gdb",
+        "program": "${workspaceFolder}/build/apps/ui-sandbox/ui-sandbox",
+        "cwd": "${workspaceFolder}/build/apps/ui-sandbox"
+      }
     }
   ]
 }
