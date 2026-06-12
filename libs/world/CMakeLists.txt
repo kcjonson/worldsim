@@ -4,7 +4,10 @@ add_library(world
     worldgen/pipeline/PlanetGenerator.cpp
     worldgen/stages/PlateStage.cpp
     worldgen/stages/PlateMovementStage.cpp
+    worldgen/stages/TectonicHistoryStage.cpp
     worldgen/stages/TerrainStage.cpp
+    worldgen/tectonics/PlateSim.cpp
+    worldgen/tectonics/TectonicHistory.cpp
     worldgen/stages/AtmosphereStage.cpp
     worldgen/stages/PrecipitationStage.cpp
     worldgen/stages/OceanStage.cpp

@@ -15,9 +15,12 @@
 #include "worldgen/data/GeneratedWorld.h"
 #include "worldgen/data/PlanetParams.h"
 #include "worldgen/data/WorldData.h"
+#include "worldgen/debug/ColorMaps.h"
 #include "worldgen/debug/DebugImageExporter.h"
 #include "worldgen/debug/WorldStats.h"
 #include "worldgen/pipeline/PlanetGenerator.h"
+#include "worldgen/tectonics/PlateSim.h"
+#include "worldgen/tectonics/TectonicHistory.h"
 
 #include <algorithm>
 #include <atomic>
@@ -51,6 +54,9 @@ struct CliArgs {
     std::string outDir;
     int      verifyA{0};        // --verify-threads a,b (0 = not set)
     int      verifyB{0};
+    bool     simOnly{false};    // --sim-only: run PlateSim directly, dump frames
+    uint32_t nCoarse{128};      // --n-coarse (sim-only)
+    int      frameEvery{10};    // --frame-every (sim-only)
 };
 
 static void printUsage() {
@@ -64,6 +70,10 @@ static void printUsage() {
         "  --threads <int>    thread pool size 0=hw default (default 0)\n"
         "  --verify-threads a,b  run twice with thread counts a and b;\n"
         "                        exit 2 on worldHash mismatch\n"
+        "  --sim-only            run the coarse PlateSim directly (no pipeline),\n"
+        "                        dump plateId + crustAge frames + final boundaryType\n"
+        "  --n-coarse <int>      sim-only coarse subdivision (default 128)\n"
+        "  --frame-every <int>   sim-only: dump a frame every N steps (default 10)\n"
     );
 }
 
@@ -106,6 +116,14 @@ static bool parseArgs(int argc, char** argv, CliArgs& out) {
             *comma = '\0';
             out.verifyA = static_cast<int>(std::strtol(v,      nullptr, 10));
             out.verifyB = static_cast<int>(std::strtol(comma+1, nullptr, 10));
+        } else if (eq("--sim-only")) {
+            out.simOnly = true;
+        } else if (eq("--n-coarse")) {
+            const char* v = next(); if (!v) return false;
+            out.nCoarse = static_cast<uint32_t>(std::strtoul(v, nullptr, 10));
+        } else if (eq("--frame-every")) {
+            const char* v = next(); if (!v) return false;
+            out.frameEvery = static_cast<int>(std::strtol(v, nullptr, 10));
         } else {
             std::fprintf(stderr, "Unknown option: %s\n", argv[i]);
             return false;
@@ -379,6 +397,183 @@ static bool exportAllBmps(const worldgen::GeneratedWorld& world,
 }
 
 // ============================================================================
+// --sim-only mode: run PlateSim directly, dump frames + stats
+// ============================================================================
+
+static worldgen::ExportRgb crustAgeColor(uint16_t ageMyr, uint8_t crustType) {
+    using CT = worldgen::tectonics::CrustType;
+    if (crustType == static_cast<uint8_t>(CT::Continental)) {
+        return {70, 110, 60}; // continental crust: muted green, age ramp is for ocean
+    }
+    if (crustType == static_cast<uint8_t>(CT::None)) {
+        return {0, 0, 0};
+    }
+    // Oceanic: young (age 0) bright/white near ridge -> old deep blue.
+    // Ramp over 0..200 Myr.
+    float t = static_cast<float>(ageMyr) / 200.0f;
+    if (t > 1.0f) t = 1.0f;
+    auto r = static_cast<uint8_t>(235 - static_cast<int>(t * 235));
+    auto g = static_cast<uint8_t>(245 - static_cast<int>(t * 165));
+    auto b = static_cast<uint8_t>(255 - static_cast<int>(t * 95));
+    return {r, g, b};
+}
+
+static worldgen::ExportRgb boundaryTypeColor(uint8_t bt) {
+    switch (bt) {
+        case 1: return {220, 30,  30};  // ConvergentCC
+        case 2: return {220, 140, 30};  // ConvergentCO
+        case 3: return {220, 210, 30};  // ConvergentOO
+        case 4: return {30,  80,  220}; // Divergent
+        case 5: return {30,  180, 80};  // Transform
+        default: return {40, 40, 50};
+    }
+}
+
+static int runSimOnly(const CliArgs& args) {
+    using namespace worldgen;
+    using namespace worldgen::tectonics;
+
+    PlanetParams params = PlanetParams::preset(Preset::EarthLike);
+    DerivedPlanetValues derived = derive(params);
+
+    PlateSimParams sp;
+    sp.coarseN        = args.nCoarse;
+    sp.seed           = args.seed;
+    sp.plateCount     = args.plates;
+    sp.waterAmount    = args.water;
+    sp.planetAge      = args.age;
+    sp.planetRadiusKm = derived.planetRadiusMeters / 1000.0;
+
+    std::printf("sim-only  n-coarse=%u  tiles=%u  seed=%llu  plates=%d  water=%.2f  age=%.3g\n",
+                args.nCoarse,
+                (10u * args.nCoarse * args.nCoarse + 2u),
+                static_cast<unsigned long long>(args.seed),
+                args.plates, args.water, args.age);
+    std::fflush(stdout);
+
+    auto t0 = Clock::now();
+    PlateSim sim(sp);
+    double initSec = std::chrono::duration<double>(Clock::now() - t0).count();
+    std::printf("  init: %.3f s  steps=%d  history=%.0f Myr\n",
+                initSec, sim.stepCount(), sim.historyMyr());
+    std::fflush(stdout);
+
+    const SphereGrid& g = sim.grid();
+    const int frameEvery = args.frameEvery < 1 ? 1 : args.frameEvery;
+
+    // Build a TectonicHistory-like view each frame via finalize() is too costly;
+    // instead dump directly from owner/resolvedCrust. crustAge = nowMyr - birthMyr.
+    auto dumpFrame = [&](int frameIdx) {
+        const auto& owner = sim.owner();
+        const auto& crust = sim.resolvedCrust();
+        int32_t nowI = static_cast<int32_t>(sim.nowMyr() + 0.5);
+        char buf[256];
+        std::snprintf(buf, sizeof(buf), "%s/frame_%03d_plateid.bmp", args.outDir.c_str(), frameIdx);
+        exportEquirectangularBmp(g, [&](TileId t) -> ExportRgb {
+            uint8_t pid = owner[t];
+            if (pid == 255) return {0, 0, 0};
+            Rgb c = plateColor(pid);
+            return {c.r, c.g, c.b};
+        }, buf, 2048);
+        std::snprintf(buf, sizeof(buf), "%s/frame_%03d_crustage.bmp", args.outDir.c_str(), frameIdx);
+        exportEquirectangularBmp(g, [&](TileId t) -> ExportRgb {
+            const CrustCell& cc = crust[t];
+            int32_t age = nowI - cc.birthMyr;
+            if (age < 0) age = 0;
+            if (age > 65534) age = 65534;
+            return crustAgeColor(static_cast<uint16_t>(age), static_cast<uint8_t>(cc.type));
+        }, buf, 2048);
+    };
+
+    // Frame 0: initial state needs a rasterize. Run one finalize-style pass by
+    // stepping zero times: rasterize via a private path is internal, so we dump
+    // after the first step instead and label frames by step index.
+    double stepTotal = 0.0, stepMax = 0.0;
+    int frameIdx = 0;
+    int total = sim.stepCount();
+    for (int s = 0; s < total; ++s) {
+        auto ts = Clock::now();
+        sim.step();
+        double dt = std::chrono::duration<double>(Clock::now() - ts).count();
+        stepTotal += dt;
+        if (dt > stepMax) stepMax = dt;
+        if ((s % frameEvery) == 0 || s == total - 1) {
+            dumpFrame(frameIdx++);
+        }
+    }
+
+    auto history = sim.finalize();
+    double wall = std::chrono::duration<double>(Clock::now() - t0).count();
+
+    // Final boundaryType frame.
+    {
+        char buf[256];
+        std::snprintf(buf, sizeof(buf), "%s/final_boundarytype.bmp", args.outDir.c_str());
+        exportEquirectangularBmp(g, [&](TileId t) -> ExportRgb {
+            return boundaryTypeColor(history->boundaryType[t]);
+        }, buf, 2048);
+    }
+
+    // ---- Stats ----
+    const uint32_t N = g.tileCount();
+    // Plate areas (final, compacted).
+    std::vector<uint32_t> area(history->plates.size(), 0u);
+    for (TileId t = 0; t < N; ++t) {
+        uint8_t pid = history->plateId[t];
+        if (pid < area.size()) area[pid]++;
+    }
+    // Ocean age min/mean/max.
+    uint32_t oceanCount = 0;
+    uint64_t ageSum = 0;
+    uint16_t ageMin = 65535, ageMax = 0;
+    uint32_t contCount = 0;
+    for (TileId t = 0; t < N; ++t) {
+        if (history->crustType[t] == static_cast<uint8_t>(CrustType::Oceanic)) {
+            uint16_t a = history->crustAge[t];
+            ++oceanCount; ageSum += a;
+            if (a < ageMin) ageMin = a;
+            if (a > ageMax) ageMax = a;
+        } else if (history->crustType[t] == static_cast<uint8_t>(CrustType::Continental)) {
+            ++contCount;
+        }
+    }
+    double ageMean = oceanCount ? static_cast<double>(ageSum) / oceanCount : 0.0;
+
+    // Continental drift: count vs. initial continental cell budget.
+    uint32_t simContCells = sim.continentalCellCount();
+    double contTarget = (1.0 - args.water) * 1.12 * static_cast<double>(N);
+    double driftPct = contTarget > 0.0
+        ? 100.0 * (static_cast<double>(simContCells) - contTarget) / contTarget : 0.0;
+
+    std::printf("\n=== sim-only stats ===\n");
+    std::printf("  wall            : %.3f s  (step total %.3f s, max step %.4f s)\n",
+                wall, stepTotal, stepMax);
+    std::printf("  plates (final)  : %u\n", static_cast<unsigned>(history->plates.size()));
+    std::printf("  plate areas     :");
+    {
+        std::vector<uint32_t> sorted = area;
+        std::sort(sorted.rbegin(), sorted.rend());
+        for (uint32_t a : sorted) std::printf(" %u", a);
+        std::printf("\n");
+        if (!sorted.empty() && sorted.back() > 0)
+            std::printf("  largest/smallest: %.1f\n",
+                        static_cast<double>(sorted.front()) / static_cast<double>(sorted.back()));
+    }
+    std::printf("  continental cells (in-raster) : %u  (target %.0f, drift %+.2f%%)\n",
+                simContCells, contTarget, driftPct);
+    std::printf("  continental cells (resolved)  : %u\n", contCount);
+    std::printf("  cont-cont overlaps (last step): %llu\n",
+                static_cast<unsigned long long>(sim.continentalContinentalOverlaps()));
+    std::printf("  ocean age (Myr) : min %u  mean %.1f  max %u  (n=%u)\n",
+                ageMin == 65535 ? 0u : ageMin, ageMean, ageMax, oceanCount);
+    std::printf("  product hash    : 0x%016llx\n",
+                static_cast<unsigned long long>(computeTectonicHistoryHash(*history)));
+    std::printf("  frames written  : %d (plateid + crustage) + final_boundarytype\n", frameIdx);
+    std::fflush(stdout);
+    return 0;
+}
+
+// ============================================================================
 // main
 // ============================================================================
 
@@ -390,6 +585,10 @@ int main(int argc, char** argv) {
     }
 
     mkdirP(args.outDir);
+
+    if (args.simOnly) {
+        return runSimOnly(args);
+    }
 
     worldgen::PlanetParams params = worldgen::PlanetParams::preset(worldgen::Preset::EarthLike);
     params.gridSubdivision    = args.n;

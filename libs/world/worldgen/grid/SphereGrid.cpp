@@ -428,6 +428,46 @@ Vec3d SphereGrid::uvToDir(uint32_t r, double u, double v) const {
 // dirToRhombusUV: direct per-rhombus barycentric solve
 // ============================================================================
 
+namespace {
+// Solve dir against a single rhombus's T1/T2 charts. Returns true + (u,v) on hit.
+// Pulled out so both the full search and the hinted fast path share exact math.
+inline bool tryRhombusSolve(const double* invT1, const double* invT2, Vec3d dir,
+                            double& outU, double& outV) {
+    constexpr double kEps = -1e-7;
+    {
+        double bA = invT1[0]*dir.x + invT1[1]*dir.y + invT1[2]*dir.z;
+        double bB = invT1[3]*dir.x + invT1[4]*dir.y + invT1[5]*dir.z;
+        double bD = invT1[6]*dir.x + invT1[7]*dir.y + invT1[8]*dir.z;
+        if (bA >= kEps && bB >= kEps && bD >= kEps) {
+            double sum = bA + bB + bD;
+            if (sum > 0.0) { bA /= sum; bB /= sum; bD /= sum; }
+            double u = bB, v = bD;
+            if (u < 0.0) u = 0.0; if (v < 0.0) v = 0.0;
+            if (u > 1.0) u = 1.0; if (v > 1.0) v = 1.0;
+            if (u + v > 1.0) { double s = u+v; u /= s; v /= s; }
+            outU = u; outV = v;
+            return true;
+        }
+    }
+    {
+        double bB = invT2[0]*dir.x + invT2[1]*dir.y + invT2[2]*dir.z;
+        double bC = invT2[3]*dir.x + invT2[4]*dir.y + invT2[5]*dir.z;
+        double bD = invT2[6]*dir.x + invT2[7]*dir.y + invT2[8]*dir.z;
+        if (bB >= kEps && bC >= kEps && bD >= kEps) {
+            double sum = bB + bC + bD;
+            if (sum > 0.0) { bB /= sum; bC /= sum; bD /= sum; }
+            double u = bB + bC, v = bC + bD;
+            if (u < 0.0) u = 0.0; if (v < 0.0) v = 0.0;
+            if (u > 1.0) u = 1.0; if (v > 1.0) v = 1.0;
+            if (u + v < 1.0) u = 1.0 - v;
+            outU = u; outV = v;
+            return true;
+        }
+    }
+    return false;
+}
+} // namespace
+
 void SphereGrid::dirToRhombusUV(Vec3d dir, uint32_t& outRh,
                                   double& outU, double& outV) const {
     // Fast path: sort rhombi by dot with center, try top-3 first
@@ -579,6 +619,25 @@ TileId SphereGrid::fromUnitVector(Vec3d dir) const {
     TileId t = canonicalVertex(static_cast<int>(rh), i, j);
     if (t != kInvalidTile) return t;
     // Unmappable only in degenerate cases; clamp into this rhombus's owned set.
+    int in = static_cast<int>(n);
+    i = std::clamp(i, 1, in);
+    j = std::clamp(j, 0, in - 1);
+    return encodeOwned(rh, static_cast<uint32_t>(i), static_cast<uint32_t>(j));
+}
+
+TileId SphereGrid::fromUnitVectorHinted(Vec3d dir, uint32_t& rhombusHint) const {
+    double dn = static_cast<double>(n);
+    uint32_t rh = rhombusHint < 10u ? rhombusHint : 0u;
+    double u{}, v{};
+    if (!tryRhombusSolve(rhombiInvT1[rh].m, rhombiInvT2[rh].m, dir, u, v)) {
+        // Miss: full search, then remember the rhombus it landed in.
+        dirToRhombusUV(dir, rh, u, v);
+        rhombusHint = rh;
+    }
+    int i{}, j{};
+    hexRound(u * dn, v * dn, i, j);
+    TileId t = canonicalVertex(static_cast<int>(rh), i, j);
+    if (t != kInvalidTile) return t;
     int in = static_cast<int>(n);
     i = std::clamp(i, 1, in);
     j = std::clamp(j, 0, in - 1);

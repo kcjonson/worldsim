@@ -2,11 +2,15 @@
 
 #include "worldgen/data/GeneratedWorld.h"
 #include "worldgen/data/WorldData.h"
+#include "worldgen/grid/SphereGrid.h"
 
 #include <cstdint>
+#include <functional>
 #include <string>
 
 namespace worldgen {
+
+struct ExportRgb { uint8_t r, g, b; };
 
 enum class WorldFieldOrMode : uint32_t {
     Elevation       = static_cast<uint32_t>(WorldField::Elevation),
@@ -31,6 +35,14 @@ enum class WorldFieldOrMode : uint32_t {
 // Returns true on success.
 bool exportEquirectangularBmp(const GeneratedWorld& world,
                               WorldFieldOrMode mode,
+                              const std::string& path,
+                              int width = 2048);
+
+// Generic equirectangular BMP writer: maps each pixel's lat/lon to the nearest
+// tile on `grid` and colors it via `colorOf(tile)`. Shared with worldgen-cli's
+// --sim-only mode so BMP plumbing lives in one place.
+bool exportEquirectangularBmp(const SphereGrid& grid,
+                              const std::function<ExportRgb(TileId)>& colorOf,
                               const std::string& path,
                               int width = 2048);
 
