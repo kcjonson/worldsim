@@ -122,27 +122,25 @@ TEST(PlateSim, GapFillCreatesAgeZeroCrust) {
 }
 
 // ============================================================================
-// Continental conservation WITH events.
+// Continental area is conserved near the physical target (M-T2.5).
 //
-// M-T2 amalgamates continents: when two continental plates collide and merge, the
-// stacked crust collapses onto fewer world cells (a thickened belt), so the
-// continental CELL count legitimately falls during assembly — that IS the epic's
-// goal (irregular sutured amalgamations), not a bug. The literal "<5% drift" target
-// from the plan cannot hold while continents assemble; we therefore test the real
-// invariants instead:
-//   1. No PHANTOM destruction: events move/merge cells, they never leak. The
-//      resolved (owned) continental area must track the in-raster continental
-//      material closely (within 12%); a large gap would mean stale duplicate crust
-//      or a leak. (Raster slightly exceeds resolved by the thin contested CC margin.)
-//   2. No catastrophic loss: continents must not VANISH. With strong amalgamation
-//      the cell count can drop substantially, but a floor catches a runaway that
-//      deletes most of the crust (which earlier bugs did).
-// Reported drift is logged for review; see the dev-log entry for the full seed sweep.
+// Collisional shortening (CC amalgamation thickens and stacks crust onto fewer world
+// cells) removes continental footprint; arc crust production (island-arc maturation +
+// continental-margin progradation, balanced by the continental-area feedback
+// controller) replaces it. With both in play the resolved continental area should land
+// near the area target the initial continents were painted to:
+//   target = (1 - water) * kCrustAreaFactor * N.
+// This replaces the M-2 "no-vanish floor" + raster/resolved-tracking checks with the
+// real acceptance property: final resolved fraction within +/-10% of target. The
+// raster/resolved closeness is still asserted (no phantom leak) since the controller
+// senses resolved area and a divergence would mean stale duplicate crust.
 // ============================================================================
 
-TEST(PlateSim, ContinentalConservationWithEvents) {
-    auto p = defaultParams(64, 0xABCDULL, 12, 0.70);
+TEST(PlateSim, ContinentalAreaTrackedToTarget) {
+    const double water = 0.70;
+    auto p = defaultParams(64, 0xABCDULL, 12, water);
     PlateSim sim(p);
+    const uint32_t N = sim.coarseTileCount();
     uint32_t before = countType(sim, CrustType::Continental);
     auto h = sim.run();
 
@@ -151,27 +149,27 @@ TEST(PlateSim, ContinentalConservationWithEvents) {
     for (TileId t = 0; t < h->grid->tileCount(); ++t)
         if (h->crustType[t] == static_cast<uint8_t>(CrustType::Continental)) ++afterResolved;
 
+    const double target = (1.0 - water) * kCrustAreaFactor * static_cast<double>(N);
     ASSERT_GT(before, 0u);
-    double drift = (static_cast<double>(afterRaster) - static_cast<double>(before)) /
-                   static_cast<double>(before);
-    std::printf("[PlateSim.ContinentalConservationWithEvents] before=%u rasterAfter=%u "
-                "resolvedAfter=%u drift=%.1f%%\n",
-                before, afterRaster, afterResolved, drift * 100.0);
-
-    // Invariant 1: resolved tracks raster (no phantom leak). raster >= resolved by
-    // the contested margin; their ratio stays close.
     ASSERT_GT(afterResolved, 0u);
+    double frac = (static_cast<double>(afterResolved) - target) / target;
+    std::printf("[PlateSim.ContinentalAreaTrackedToTarget] before=%u rasterAfter=%u "
+                "resolvedAfter=%u target=%.0f frac=%+.1f%%\n",
+                before, afterRaster, afterResolved, target, frac * 100.0);
+
+    // Acceptance: resolved continental area within +/-10% of the physical target — the
+    // arc-production controller balances collisional shortening, no net drain or runaway.
+    EXPECT_LT(std::abs(frac), 0.10)
+        << "resolved continental area off target by " << frac * 100.0
+        << "% (resolved " << afterResolved << " target " << target << ")";
+
+    // No phantom leak: raster (production bookkeeping) tracks resolved (owned) area.
     double rasterVsResolved = std::abs(static_cast<double>(afterRaster) -
                                        static_cast<double>(afterResolved)) /
                               static_cast<double>(afterRaster);
     EXPECT_LT(rasterVsResolved, 0.12)
         << "resolved continental area diverged from raster (leak/stale buildup): raster "
         << afterRaster << " resolved " << afterResolved;
-
-    // Invariant 2: continents do not vanish. Amalgamation shrinks area; a healthy run
-    // keeps well over half the continental material.
-    EXPECT_GT(afterRaster, before / 2u)
-        << "continental crust dropped below half — likely a destruction bug, not amalgamation";
 }
 
 // ============================================================================
@@ -196,6 +194,9 @@ TEST(PlateSim, DeterministicProductHash) {
 // Updated for M-T2 (Wilson-cycle events: collisions, sutures, merge, rift, terrane
 // accretion, hotspots, erosion proxy, pole evolution). The M-T1 value was
 // 0x802cfb2867a7f8bd.
+// Updated for M-T2.5 (arc crust production: island-arc maturation, continental-margin
+// progradation, continental-area feedback controller, volcanism decay, and the terrane
+// subducting-detection fix). The M-T2 value was 0x71eaa5f596bfbf77.
 // ============================================================================
 
 TEST(PlateSim, GoldenProductHash) {
@@ -203,7 +204,7 @@ TEST(PlateSim, GoldenProductHash) {
     PlateSim sim(p);
     auto h = sim.run();
     uint64_t hash = computeTectonicHistoryHash(*h);
-    constexpr uint64_t kGolden = 0x71eaa5f596bfbf77ULL;
+    constexpr uint64_t kGolden = 0xe4877d7fc02798f5ULL;
     // Print so a deliberate update is easy; assert against the pinned value.
     std::printf("[PlateSim.GoldenProductHash] coarseN=64 seed=0x1234567890ABCDEF "
                 "hash=0x%016llx\n", static_cast<unsigned long long>(hash));

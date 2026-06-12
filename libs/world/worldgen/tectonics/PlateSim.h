@@ -200,6 +200,18 @@ class PlateSim {
 
     uint64_t poleEvolveStream_{0}; // base stream for per-plate pole re-draws
     uint64_t riftStream_{0};       // base stream for rift decisions/paths
+    uint64_t marginStream_{0};     // base stream for margin-progradation rolls (M-T2.5)
+    uint64_t matureStream_{0};     // base stream for island-arc maturation rolls (M-T2.5)
+
+    // --- M-T2.5 continental-area feedback controller ---
+    // Resolved continental cell count from the last resolveOwnership (set there,
+    // read by collisionProcessing to compute the production-rate factor). The target
+    // is (1-water) * kCrustAreaFactor * tileCount, computed once.
+    uint32_t resolvedContinentalCount_{0};
+    double   continentalTarget_{0.0};
+    // Smooth bounded scale on the arc volcanism accumulation rate this step. >1 when
+    // continental area is below target (produce more juvenile crust), <1 when above.
+    double   areaControllerFactor_{1.0};
 
     uint32_t mergeCount_{0};
     uint32_t riftCount_{0};
@@ -208,6 +220,12 @@ class PlateSim {
     // Scratch reused across steps to avoid per-step allocation.
     std::vector<int32_t> ringScratch_; // BFS ring distance buffer (per world cell)
     std::vector<TileId>  bfsScratch_;   // BFS frontier
+
+    // Terrane-accretion flood-fill scratch, reused across stride-calls (M-T2.5: the
+    // pass now does real transfer work each call, so per-call heap churn matters).
+    std::vector<int32_t> terraneComp_;  // per-world-cell component id (-1 = unvisited)
+    std::vector<TileId>  terraneStack_; // BFS frontier
+    std::vector<TileId>  terraneCells_; // current component's cells
 
     // Per-plate collision-block factor [0,1] from CC contact (set in
     // collisionProcessing, applied in advanceRotations next step). Continental crust

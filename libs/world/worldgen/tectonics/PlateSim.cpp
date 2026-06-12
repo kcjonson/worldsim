@@ -197,6 +197,13 @@ PlateSim::PlateSim(const PlateSimParams& params, const PlateSimTestOverride* ove
     // Event RNG streams (independent of init streams).
     poleEvolveStream_ = deriveSeed(params.seed, 0x10);
     riftStream_       = deriveSeed(params.seed, 0x11);
+    marginStream_     = deriveSeed(params.seed, 0x14);
+    matureStream_     = deriveSeed(params.seed, 0x15);
+
+    // Continental-area controller set-point (M-T2.5): the same area target used to
+    // paint the initial continents. Arc crust production is nudged toward it.
+    continentalTarget_ = (1.0 - params.waterAmount) * kCrustAreaFactor *
+                         static_cast<double>(tileCount_);
 
     if (override != nullptr) {
         plates_ = override->plates;
@@ -674,6 +681,7 @@ void PlateSim::forwardRasterize() {
 void PlateSim::resolveOwnership() {
     eraseList_.clear();
     ccOverlaps_ = 0;
+    resolvedContinentalCount_ = 0;
 
     // Candidate priority: continental beats oceanic; among oceanic, younger
     // birthMyr wins (older subducts); among continental, the cell's previous owner
@@ -716,6 +724,7 @@ void PlateSim::resolveOwnership() {
         const bool winCont = winCell.type == CrustType::Continental;
         owner_[w] = static_cast<uint8_t>(win.plate);
         resolved_[w] = winCell;
+        if (winCont) ++resolvedContinentalCount_;
 
         // Pass 2: losers. Oceanic -> erase (subducts). Continental CC overlap -> count
         // only (the loser keeps its crust; it is mostly coarse-rounding bleed from an
@@ -921,6 +930,21 @@ void PlateSim::collisionProcessing() {
     const int K = static_cast<int>(plates_.size());
     const int32_t nowI = static_cast<int32_t>(nowMyr_ + dtMyr_ + 0.5);
 
+    // M-T2.5 continental-area controller: scale arc crust production toward the area
+    // set-point. error > 0 when below target -> factor > 1 (produce more juvenile
+    // crust); below 1 when in surplus. Linear in the fractional error, clamped.
+    {
+        double setPoint = continentalTarget_ * (1.0 - kAreaControllerSetpointBias);
+        double error = continentalTarget_ > 0.0
+            ? (setPoint - static_cast<double>(resolvedContinentalCount_)) /
+              continentalTarget_
+            : 0.0;
+        double f = 1.0 + kAreaControllerGain * error;
+        if (f < kAreaControllerFactorMin) f = kAreaControllerFactorMin;
+        if (f > kAreaControllerFactorMax) f = kAreaControllerFactorMax;
+        areaControllerFactor_ = f;
+    }
+
     std::array<TileId, 6> nbrs{};
 
     // Recompute the dominant foreign plate per boundary tile (boundaryScan only
@@ -1081,6 +1105,17 @@ void PlateSim::collisionProcessing() {
         band.clear();
         bandBFS(arcSeeds[static_cast<size_t>(p)], static_cast<uint8_t>(p),
                 kArcBandRingMax, band);
+        const float volcRate = kArcVolcanismPerStep *
+                               static_cast<float>(areaControllerFactor_);
+        // Deficit-driven arc crust production rates (0 at/above target). Production lives
+        // here, in the arc band, so juvenile continental crust is minted only at real
+        // subduction zones — never from mid-plate hotspot volcanism (which would speckle
+        // basin interiors with confetti).
+        const bool deficit = areaControllerFactor_ > 1.0;
+        const double matureProb = deficit
+            ? kArcMatureProbPerStep * (areaControllerFactor_ - 1.0) : 0.0;
+        const double marginProb = deficit
+            ? kMarginAccretionProb * (areaControllerFactor_ - 1.0) : 0.0;
         for (const auto& pr : band) {
             TileId w = pr.first;
             int ring = pr.second;
@@ -1089,9 +1124,47 @@ void PlateSim::collisionProcessing() {
             if (local == kInvalidTile) continue;
             CrustCell& cell = plates_[static_cast<size_t>(p)].crust[local];
             if (cell.type == CrustType::None) continue;
-            float v = cell.volcanism + kArcVolcanismPerStep;
+
+            float v = cell.volcanism + volcRate;
             cell.volcanism = v > 1.0f ? 1.0f : v;
-            // Modest thickening (continental arc crust grows).
+
+            if (deficit && cell.type == CrustType::Oceanic) {
+                // Island-arc maturation (dominant producer): an arc cell that has built
+                // up enough volcanism converts to juvenile continental crust. Eligibility
+                // is the volcanism floor; the flip is deficit-gated and probabilistic so
+                // an irreversible conversion drains a deficit gradually and settles near
+                // target instead of overshooting.
+                bool matured = false;
+                if (cell.volcanism >= kArcMatureVolcThreshold) {
+                    uint32_t roll = foundation::hash3(static_cast<int32_t>(w), p, step_,
+                        static_cast<uint32_t>(matureStream_ ^ (matureStream_ >> 32)));
+                    double u = static_cast<double>(roll) * (1.0 / 4294967296.0);
+                    if (u < matureProb) {
+                        cell.type = CrustType::Continental;
+                        cell.thicknessKm = kJuvenileArcThicknessKm;
+                        cell.birthMyr = nowI;            // juvenile crust, born now
+                        cell.orogenyMyr = kOrogenyNever; // an arc, not an orogen
+                        matured = true;                  // keep volcanism: stays active
+                    }
+                }
+                // Continental-margin progradation (secondary): right at the trench-
+                // adjacent forearc, a margin oceanic cell occasionally becomes thin
+                // juvenile continental crust, so established margins creep seaward.
+                if (!matured && ring <= kMarginAccretionMaxRing) {
+                    uint32_t roll = foundation::hash3(static_cast<int32_t>(w), p,
+                        step_ ^ 0x5A5A,
+                        static_cast<uint32_t>(marginStream_ ^ (marginStream_ >> 32)));
+                    double u = static_cast<double>(roll) * (1.0 / 4294967296.0);
+                    if (u < marginProb) {
+                        cell.type = CrustType::Continental;
+                        cell.thicknessKm = kJuvenileArcThicknessKm;
+                        cell.birthMyr = nowI;
+                        cell.orogenyMyr = kOrogenyNever;
+                    }
+                }
+            }
+
+            // Modest thickening (arc crust grows).
             double th = cell.thicknessKm + kArcThickenKmPerStep;
             if (th > kMaxCrustThicknessKm) th = kMaxCrustThicknessKm;
             cell.thicknessKm = static_cast<float>(th);
@@ -1136,10 +1209,13 @@ void PlateSim::terraneAccretion() {
     // materially. Deterministic (driven by step index).
     if ((step_ % kTerraneStride) != 0) return;
 
-    // Flood continental components over world ownership.
-    std::vector<int32_t> comp(tileCount_, -1);
+    // Flood continental components over world ownership. comp/stack/cells are reused
+    // across calls to avoid per-stride heap churn now that fragments actually dock.
+    terraneComp_.assign(tileCount_, -1);
+    std::vector<int32_t>& comp = terraneComp_;
     std::array<TileId, 6> nbrs{};
-    std::vector<TileId> stack;
+    std::vector<TileId>& stack = terraneStack_;
+    std::vector<TileId>& cells = terraneCells_;
     int compCount = 0;
     for (TileId s = 0; s < tileCount_; ++s) {
         if (comp[s] >= 0) continue;
@@ -1149,7 +1225,7 @@ void PlateSim::terraneAccretion() {
         comp[s] = cid;
         stack.clear();
         stack.push_back(s);
-        std::vector<TileId> cells;
+        cells.clear();
         uint8_t pid = owner_[s];
         bool homogeneous = true;
         while (!stack.empty()) {
@@ -1168,18 +1244,49 @@ void PlateSim::terraneAccretion() {
         if (cells.size() > maxArea) continue;     // too big to be a terrane
         if (!homogeneous) continue;               // spans plates already; skip
         if (pid >= static_cast<uint8_t>(K)) continue;
+        // Only exotic blocks riding an OCEANIC plate dock: a microcontinent or matured
+        // intra-oceanic arc that is a passenger on a down-going ocean plate. A coastal
+        // arc on a continental-majority plate is part of that continent's own margin and
+        // stays put.
+        if (plates_[pid].isContinental) continue;
+        // A live magmatic arc is still building in place; a terrane docks only once it
+        // has drifted clear and gone magmatically quiet. Require the fragment's mean
+        // volcanism to be low so freshly-matured arc cells don't shuttle the moment they
+        // form — they must age out of arc activity first. (Exotic terranes are old,
+        // amalgamated blocks by the time they suture, Coney et al. 1980.)
+        {
+            double volcSum = 0.0;
+            for (TileId c : cells) {
+                TileId lc = worldToLocal(pid, c);
+                if (lc != kInvalidTile) volcSum += plates_[pid].crust[lc].volcanism;
+            }
+            if (volcSum > kTerraneMaxMeanVolcanism * static_cast<double>(cells.size()))
+                continue; // still an active arc, not a docking terrane
+        }
 
-        // Does any boundary cell sit on a CO trench where pid is subducting, and
-        // who is the overrider there? Take the first deterministic match.
+        // Is the fragment riding a plate whose ocean is subducting at a CO trench, and
+        // who is the overrider there? A continental cell at a CO boundary is always the
+        // OVERRIDING side by classification, so the down-going trench sits on the
+        // fragment plate's OCEANIC margin: look one ring out from the fragment for a
+        // CO-subducting cell that pid still owns (its own subducting seafloor), and take
+        // the foreign overrider across that trench. (Without this, the fragment's own
+        // continental boundary cells are never tagged subducting and accretion can never
+        // fire — the matured island arcs that M-T2.5 produces would never dock.)
         uint8_t overrider = static_cast<uint8_t>(kUnowned);
+        std::array<TileId, 6> trenchNbrs{};
         for (TileId c : cells) {
-            if (bndType_[c] != static_cast<uint8_t>(BoundaryType::ConvergentCO)) continue;
-            if (bndSide_[c] != kSideSubducting) continue;
             uint32_t cnt = grid_->neighbors(c, nbrs);
             for (uint32_t k = 0; k < cnt; ++k) {
-                uint8_t np = owner_[nbrs[k]];
-                if (np != pid && np < static_cast<uint8_t>(K)) {
-                    if (overrider == kUnowned || np < overrider) overrider = np;
+                TileId trench = nbrs[k];
+                if (owner_[trench] != pid) continue; // pid's own oceanic margin
+                if (bndType_[trench] != static_cast<uint8_t>(BoundaryType::ConvergentCO)) continue;
+                if (bndSide_[trench] != kSideSubducting) continue;
+                uint32_t tc = grid_->neighbors(trench, trenchNbrs);
+                for (uint32_t k2 = 0; k2 < tc; ++k2) {
+                    uint8_t np = owner_[trenchNbrs[k2]];
+                    if (np != pid && np < static_cast<uint8_t>(K)) {
+                        if (overrider == kUnowned || np < overrider) overrider = np;
+                    }
                 }
             }
         }
@@ -1218,13 +1325,24 @@ void PlateSim::erosionProxy() {
     // decay = exp(-dt/tau); precompute once.
     const double decay = foundation::det_math::exp(-dtMyr_ / kErosionTauMyr);
     const double eq = kErosionEqThicknessKm;
+    // Volcanism decays toward 0 with its own e-folding time: arc magmatism shuts off when
+    // subduction moves on (extinct arcs go quiet). Active arcs re-receive their deposit
+    // each step (collisionProcessing/hotspots run before this), so they stay hot; only
+    // abandoned arcs cool. This lets a matured arc age out of arc activity so it can later
+    // dock as a quiet exotic terrane, and keeps volcanism from pinning the whole margin at
+    // 1.0 for M-T4 to read. Arc crust production itself lives in collisionProcessing's arc
+    // band so it fires only at real subduction zones, not mid-plate hotspots.
+    const double volcDecay = foundation::det_math::exp(-dtMyr_ / kVolcanismTauMyr);
     for (auto& pl : plates_) {
         if (!pl.alive) continue;
         for (TileId local : pl.occupied) {
             CrustCell& cell = pl.crust[local];
-            if (cell.type != CrustType::Continental) continue;
-            double th = eq + (static_cast<double>(cell.thicknessKm) - eq) * decay;
-            cell.thicknessKm = static_cast<float>(th);
+            if (cell.type == CrustType::None) continue;
+            cell.volcanism = static_cast<float>(cell.volcanism * volcDecay);
+            if (cell.type == CrustType::Continental) {
+                double th = eq + (static_cast<double>(cell.thicknessKm) - eq) * decay;
+                cell.thicknessKm = static_cast<float>(th);
+            }
         }
     }
 }
