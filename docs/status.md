@@ -431,7 +431,7 @@ while (running) {
   - [x] Phase 2: consumers re-baselined (neighbors=6, locateHex sampling, PlanetIO version bump)
   - [x] Phase 3: two-tier crisp rendering — base mips (async bake, dirty-flag coalescing) + detail page cache (130×130 pages, 2D-array atlas, LRU, page table), per-pixel hex assignment in planet.frag, camera deep-zoom near-plane + n-aware min distance. Supersedes the M3f-2 "chunked LOD" placeholder.
   - [x] Phase 4: docs + dev-log entry — world-generation-implementation.md (Goldberg grid, TileId amendment, frozen-contract amendments, locateHex, diagonal B-D fix, PlanetIO v2); planet-view-rendering.md (two-tier architecture, scaling table, budgets); 3d-to-2d-sampling.md (locateHex addendum); data-model.md + technical-notes.md (hexes now literal); dev log 2026-06-12-worldgen-hex-goldberg.md
-  - [ ] Phase 5: end-to-end verification + PR (New Game flow, visual checks at zoom, color-mode switching, n=1449)
+  - [x] Phase 5: end-to-end verification (New Game flow, far-tier washout fix, color-mode cycling, zoom crispness, Quick Start v2 cache save/load) + PR
 - [x] M3g: UI Slider + WorldCreator shell
 - [x] M3h: Biome taxonomy migration (engine, 8→21 biomes, sparse BiomeWeights)
 - [x] M4: PlanetSampler + GeneratedWorldSampler + GameLoading branch
