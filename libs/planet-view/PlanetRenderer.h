@@ -8,6 +8,7 @@ namespace planetview {
 
 class PlanetMesh;
 class PlanetColorizer;
+class PlanetDetailCache;
 class OrbitCamera;
 
 // Owns the offscreen FBO (RGBA8 colour + DEPTH24 renderbuffer), planet shader,
@@ -33,8 +34,11 @@ class PlanetRenderer {
     // Resize the FBO when the window changes.
     void resize(int widthPx, int heightPx);
 
-    // Draw the planet into the offscreen FBO.
+    // Draw the planet into the offscreen FBO. `detail` supplies the resident
+    // page cache + page table for the crisp detail tier; `subdivision` is the
+    // grid n (drives per-pixel hex assignment in the shader).
     void render(const PlanetMesh& mesh, const PlanetColorizer& colorizer,
+                const PlanetDetailCache& detail, uint32_t subdivision,
                 const OrbitCamera& camera, int widthPx, int heightPx);
 
     // Blit the FBO colour texture to the currently bound default framebuffer.
@@ -63,11 +67,16 @@ class PlanetRenderer {
 
     // Cached uniform locations (queried once after shader link).
     struct PlanetUniforms {
-        GLint mvp      {-1};
-        GLint model    {-1};
-        GLint sunDir   {-1};
-        GLint cameraPos{-1};
-        GLint colorTex {-1};
+        GLint mvp          {-1};
+        GLint model        {-1};
+        GLint sunDir       {-1};
+        GLint cameraPos    {-1};
+        GLint baseTex      {-1};
+        GLint pageTable    {-1};
+        GLint atlas        {-1};
+        GLint n            {-1};
+        GLint rhombus      {-1};
+        GLint pagesPerSide {-1};
     } planetUniforms;
 
     struct BlitUniforms {

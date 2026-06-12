@@ -1,129 +1,21 @@
 #include "PlanetColorizer.h"
 
+#include "PlanetTileColor.h"
+
 #include <world/worldgen/data/GeneratedWorld.h>
-#include <world/worldgen/data/WorldData.h>
-#include <world/worldgen/debug/ColorMaps.h>
+#include <world/worldgen/grid/SphereGrid.h>
+
+#include <threading/TaskPool.h>
 
 #include <algorithm>
-#include <cstdint>
-#include <vector>
+#include <chrono>
+#include <future>
 
 namespace planetview {
 
 namespace {
-
-struct RGBA { uint8_t r, g, b, a; };
-
-// Convert a worldgen Rgb to our internal RGBA.
-RGBA toRGBA(worldgen::Rgb c) { return {c.r, c.g, c.b, 255}; }
-
-RGBA neutralGray() { return {128, 128, 128, 255}; }
-
-// Check whether a WorldField bit is set in validFields.
-bool hasField(uint32_t validFields, worldgen::WorldField f) {
-    return (validFields & static_cast<uint32_t>(f)) != 0;
-}
-
-RGBA colorForTile(uint32_t tileId, ColorMode mode,
-                  const worldgen::WorldData& data, uint32_t validFields,
-                  float seaLevelMeters) {
-    switch (mode) {
-        case ColorMode::Terrain: {
-            if (!hasField(validFields, worldgen::WorldField::Elevation))
-                return neutralGray();
-            return toRGBA(worldgen::elevationColor(data.elevation[tileId], seaLevelMeters));
-        }
-        case ColorMode::Temperature: {
-            if (!hasField(validFields, worldgen::WorldField::TemperatureMean))
-                return neutralGray();
-            float tempC = static_cast<float>(data.temperatureMean[tileId]) * 0.1f;
-            return toRGBA(worldgen::temperatureColor(tempC));
-        }
-        case ColorMode::Precipitation: {
-            if (!hasField(validFields, worldgen::WorldField::Precipitation))
-                return neutralGray();
-            float precip = static_cast<float>(data.precipitation[tileId]);
-            return toRGBA(worldgen::precipitationColor(precip));
-        }
-        case ColorMode::Biome: {
-            if (!hasField(validFields, worldgen::WorldField::Biome))
-                return neutralGray();
-            uint8_t b = data.biome[tileId];
-            if (b >= static_cast<uint8_t>(worldgen::Biome::Count))
-                return neutralGray();
-            auto c = worldgen::kBiomeColors[b];
-            return {c.r, c.g, c.b, 255};
-        }
-        case ColorMode::Plates: {
-            if (!hasField(validFields, worldgen::WorldField::PlateId))
-                return neutralGray();
-            uint8_t plateId = data.plateId[tileId];
-            if (plateId == 255) return neutralGray();
-            RGBA base = toRGBA(worldgen::plateColor(plateId));
-            // Boundary emphasis: darken tiles near plate boundaries.
-            if (hasField(validFields, worldgen::WorldField::BoundaryDistance)) {
-                uint16_t dist = data.boundaryDistance[tileId];
-                if (dist <= 2) {
-                    // Within 2 tiles of a boundary — darken by 40%.
-                    base.r = static_cast<uint8_t>(base.r * 0.6f);
-                    base.g = static_cast<uint8_t>(base.g * 0.6f);
-                    base.b = static_cast<uint8_t>(base.b * 0.6f);
-                }
-            }
-            return base;
-        }
-        case ColorMode::Snow: {
-            if (!hasField(validFields, worldgen::WorldField::SnowCover))
-                return neutralGray();
-            uint8_t snow = data.snowCover[tileId];
-            if (snow == 0) return {60, 100, 50, 255};
-            // Blend from bare ground to full snow.
-            float t = static_cast<float>(snow) / 255.0f;
-            auto r = static_cast<uint8_t>(60 + (240 - 60) * t);
-            auto g = static_cast<uint8_t>(100 + (245 - 100) * t);
-            auto b = static_cast<uint8_t>(50 + (255 - 50) * t);
-            return {r, g, b, 255};
-        }
-        case ColorMode::Combined: {
-            // Biome base + ocean depth + snow whitening.
-            if (!hasField(validFields, worldgen::WorldField::Biome))
-                return neutralGray();
-            uint8_t biomeIdx = data.biome[tileId];
-            if (biomeIdx >= static_cast<uint8_t>(worldgen::Biome::Count))
-                return neutralGray();
-            auto bc = worldgen::kBiomeColors[biomeIdx];
-            RGBA base = {bc.r, bc.g, bc.b, 255};
-
-            // Ocean depth shading.
-            bool isOcean = (biomeIdx == static_cast<uint8_t>(worldgen::Biome::Ocean) ||
-                            biomeIdx == static_cast<uint8_t>(worldgen::Biome::Lake));
-            if (isOcean && hasField(validFields, worldgen::WorldField::Elevation)) {
-                float elev = data.elevation[tileId];
-                float depth = seaLevelMeters - elev;
-                float t = std::clamp(depth / 4000.0f, 0.0f, 1.0f) * 0.7f;
-                base.r = static_cast<uint8_t>(base.r * (1.0f - t) + 10 * t);
-                base.g = static_cast<uint8_t>(base.g * (1.0f - t) + 30 * t);
-                base.b = static_cast<uint8_t>(base.b * (1.0f - t) + 80 * t);
-            }
-
-            // Snow whitening.
-            if (hasField(validFields, worldgen::WorldField::SnowCover)) {
-                uint8_t snow = data.snowCover[tileId];
-                if (snow > 0) {
-                    float t = static_cast<float>(snow) / 255.0f * 0.6f;
-                    base.r = static_cast<uint8_t>(base.r * (1.0f - t) + 240 * t);
-                    base.g = static_cast<uint8_t>(base.g * (1.0f - t) + 245 * t);
-                    base.b = static_cast<uint8_t>(base.b * (1.0f - t) + 255 * t);
-                }
-            }
-            return base;
-        }
-        default:
-            return neutralGray();
-    }
-}
-
-} // anonymous namespace
+constexpr uint32_t kBaseMax = 1024; // base-tier cap (mips cover smaller detail)
+} // namespace
 
 const char* colorModeName(ColorMode m) {
     switch (m) {
@@ -138,67 +30,152 @@ const char* colorModeName(ColorMode m) {
     }
 }
 
-PlanetColorizer::~PlanetColorizer() { release(); }
+PlanetColorizer::~PlanetColorizer() {
+    if (bakeFuture.valid()) bakeFuture.wait();
+    release();
+}
 
 void PlanetColorizer::release() {
     for (auto& t : textures) {
         if (t) { glDeleteTextures(1, &t); t = 0; }
     }
     texSize = 0;
+    contentReady = false;
+    ready.reset();
+    inFlight.reset();
+    uploadCursor = 0;
 }
 
-void PlanetColorizer::init(uint32_t subdivision) {
+void PlanetColorizer::init(uint32_t newSubdivision) {
     release();
-    texSize = std::min(subdivision, 2048U);
+    subdivision = newSubdivision;
+    texSize = std::min(newSubdivision, kBaseMax);
     glGenTextures(10, textures);
-    std::vector<RGBA> buf(static_cast<size_t>(texSize) * texSize, neutralGray());
+    std::vector<uint8_t> buf(static_cast<size_t>(texSize) * texSize * 4, 128);
+    for (auto& px : buf) px = 128;
+    for (size_t i = 3; i < buf.size(); i += 4) buf[i] = 255; // alpha
     for (uint32_t r = 0; r < 10U; ++r) {
         glBindTexture(GL_TEXTURE_2D, textures[r]);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8,
                      static_cast<GLsizei>(texSize), static_cast<GLsizei>(texSize),
                      0, GL_RGBA, GL_UNSIGNED_BYTE, buf.data());
+        glGenerateMipmap(GL_TEXTURE_2D);
     }
     glBindTexture(GL_TEXTURE_2D, 0);
 }
 
-void PlanetColorizer::update(const worldgen::GeneratedWorld& world, ColorMode mode) {
-    if (texSize == 0) return;
-    const worldgen::WorldData& data = world.data;
-    if (data.elevation.empty()) return; // nothing allocated yet
-
-    uint32_t n = world.grid ? world.grid->subdivision() : 0;
-    if (n == 0) return;
-
-    std::vector<RGBA> buf(static_cast<size_t>(texSize) * texSize);
-
+// Bake one rhombus's base texture. Texel (i,j) maps to an owned chart vertex via
+// canonicalTile, so seam/pole vertices resolve to the same tile the CPU assigns.
+// For n > texSize the texel->vertex map downsamples (nearest); the mip chain then
+// answers the still-coarser zoomed-out views.
+void PlanetColorizer::bakeInto(BakeResult& out, uint32_t texSize, uint32_t n,
+                               const worldgen::GeneratedWorld& world, ColorMode mode,
+                               foundation::TaskPool& pool) {
+    const worldgen::SphereGrid& grid = *world.grid;
     for (uint32_t r = 0; r < 10U; ++r) {
-        for (uint32_t j = 0; j < texSize; ++j) {
-            for (uint32_t i = 0; i < texSize; ++i) {
-                // Map texel (i,j) → an OWNED chart vertex of rhombus r. Goldberg
-                // ownership is i in [1..n], j in [0..n-1], so the texture column
-                // spans vertex i = ti+1 and row j = tj. canonicalTile resolves
-                // the encoding (and any pole/seam vertex) so the id is always in
-                // range. With texSize == n this samples each owned vertex once.
-                uint32_t ti = (texSize > 1) ? (i * (n - 1U)) / (texSize - 1U) : 0U;
-                uint32_t tj = (texSize > 1) ? (j * (n - 1U)) / (texSize - 1U) : 0U;
-                uint32_t tileId = world.grid->canonicalTile(
-                    r, static_cast<int>(ti) + 1, static_cast<int>(tj));
-                if (tileId == worldgen::kInvalidTile) tileId = 0;
-                buf[j * texSize + i] = colorForTile(tileId, mode, data,
-                                                    world.validFields,
-                                                    world.seaLevelMeters);
+        auto& dst = out.rhombi[r];
+        dst.resize(static_cast<size_t>(texSize) * texSize * 4);
+        pool.parallelFor(0, texSize, 16, [&](size_t jb, size_t je) {
+            for (size_t j = jb; j < je; ++j) {
+                for (uint32_t i = 0; i < texSize; ++i) {
+                    uint32_t ti = (texSize > 1) ? (i * (n - 1U)) / (texSize - 1U) : 0U;
+                    uint32_t tj = (texSize > 1)
+                                      ? (static_cast<uint32_t>(j) * (n - 1U)) / (texSize - 1U)
+                                      : 0U;
+                    uint32_t tileId = grid.canonicalTile(
+                        r, static_cast<int>(ti) + 1, static_cast<int>(tj));
+                    RGBA8 c = colorForTile(tileId, mode, world);
+                    size_t o = (static_cast<size_t>(j) * texSize + i) * 4;
+                    dst[o + 0] = c.r;
+                    dst[o + 1] = c.g;
+                    dst[o + 2] = c.b;
+                    dst[o + 3] = c.a;
+                }
             }
-        }
+        });
+    }
+}
+
+void PlanetColorizer::requestBake(std::shared_ptr<const worldgen::GeneratedWorld> world,
+                                  ColorMode mode, foundation::TaskPool& pool) {
+    if (texSize == 0 || !world || !world->grid) return;
+    if (world->data.elevation.empty()) return;
+
+    pendingWorld = std::move(world);
+    pendingMode = mode;
+    taskPool = &pool;
+
+    if (baking) {
+        // A bake is running; mark dirty so exactly one fresh bake follows it.
+        dirty = true;
+        return;
+    }
+    scheduleBake();
+}
+
+void PlanetColorizer::scheduleBake() {
+    baking = true;
+    dirty = false;
+
+    auto world = pendingWorld;
+    ColorMode mode = pendingMode;
+    uint32_t ts = texSize;
+    uint32_t n = subdivision;
+    foundation::TaskPool& pool = *taskPool;
+
+    inFlight = std::make_shared<BakeResult>();
+    auto result = inFlight;
+
+    bakeFuture = std::async(std::launch::async,
+        [result, world, mode, ts, n, &pool]() {
+            bakeInto(*result, ts, n, *world, mode, pool);
+        });
+}
+
+bool PlanetColorizer::uploadPending() {
+    if (texSize == 0) return false;
+
+    // Reap a finished bake.
+    if (baking && inFlight && bakeFuture.valid() &&
+        bakeFuture.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+        bakeFuture.get();
+        ready = inFlight;
+        inFlight.reset();
+        uploadCursor = 0;
+        baking = false;
+    }
+
+    if (!ready) {
+        // No buffers waiting — if a rebake was requested mid-bake, kick it now.
+        if (!baking && dirty) scheduleBake();
+        return false;
+    }
+
+    // Upload up to 2 rhombi per frame, regenerating mips for each.
+    int uploaded = 0;
+    while (uploadCursor < 10 && uploaded < 2) {
+        uint32_t r = static_cast<uint32_t>(uploadCursor);
         glBindTexture(GL_TEXTURE_2D, textures[r]);
         glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0,
                         static_cast<GLsizei>(texSize), static_cast<GLsizei>(texSize),
-                        GL_RGBA, GL_UNSIGNED_BYTE, buf.data());
+                        GL_RGBA, GL_UNSIGNED_BYTE, ready->rhombi[r].data());
+        glGenerateMipmap(GL_TEXTURE_2D);
+        ++uploadCursor;
+        ++uploaded;
     }
     glBindTexture(GL_TEXTURE_2D, 0);
+
+    if (uploadCursor >= 10) {
+        ready.reset();
+        contentReady = true;
+        // If a snapshot/mode change arrived during this bake, run one more.
+        if (!baking && dirty) scheduleBake();
+    }
+    return uploaded > 0;
 }
 
 void PlanetColorizer::bind(uint32_t rhombus, GLuint unit) const {

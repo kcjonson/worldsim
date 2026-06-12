@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2026-06-10 (Worldgen foundation merged: M1, M2, M3a, M3b, M3f-1, M3g, M3h on main via PRs #118-#124; render perf analysis complete)
+Last Updated: 2026-06-12 (Hex conversion Phases 1-3 on feature/worldgen-hex-tiles: Goldberg grid + two-tier crisp hex rendering)
 
 ## Epic/Story/Task Template
 
@@ -426,6 +426,11 @@ while (running) {
 - [x] M3d: Precipitation + rivers (P5)
 - [x] M3e: Oceans, biomes, snow, summary (P6–P9)
 - [x] M3f: planet-view lib (renderer, camera, picker, colorizer; chunked-LOD deferred to M3f-2)
+- [ ] Hex conversion + scalable crisp globe rendering (`.claude/plans/lets-work-on-the-serene-waterfall.md`)
+  - [x] Phase 1: SphereGrid Goldberg hex semantics (vertex-centered tiles, 10n²+2, cube-round assignment, 6-neighbor offsets, locateHex)
+  - [x] Phase 2: consumers re-baselined (neighbors=6, locateHex sampling, PlanetIO version bump)
+  - [x] Phase 3: two-tier crisp rendering — base mips (async bake, dirty-flag coalescing) + detail page cache (130×130 pages, 2D-array atlas, LRU, page table), per-pixel hex assignment in planet.frag, camera deep-zoom near-plane + n-aware min distance. Supersedes the M3f-2 "chunked LOD" placeholder.
+  - [ ] Phase 4: docs + dev-log entry (rendering scaling table, contract amendments)
 - [x] M3g: UI Slider + WorldCreator shell
 - [x] M3h: Biome taxonomy migration (engine, 8→21 biomes, sparse BiomeWeights)
 - [x] M4: PlanetSampler + GeneratedWorldSampler + GameLoading branch

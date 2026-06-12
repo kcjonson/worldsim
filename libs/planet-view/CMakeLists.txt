@@ -1,6 +1,9 @@
 add_library(planet-view
     PlanetMesh.cpp
     PlanetColorizer.cpp
+    PlanetTileColor.cpp
+    PlanetDetailCache.cpp
+    PlanetScheduler.cpp
     OrbitCamera.cpp
     PlanetRenderer.cpp
 )

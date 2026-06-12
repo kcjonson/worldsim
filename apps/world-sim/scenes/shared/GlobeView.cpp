@@ -2,6 +2,7 @@
 
 #include <GL/glew.h>
 
+#include <planet-view/PlanetScheduler.h>
 #include <primitives/Primitives.h>
 #include <utils/Log.h>
 #include <utils/ResourcePath.h>
@@ -11,10 +12,15 @@
 
 namespace world_sim {
 
-namespace {
-	// Colorizer texel work scales with texSize^2 per update; clamp so High-res
-	// grids (1449) don't hitch the UI thread on every snapshot.
-	constexpr uint32_t kMaxColorTexSize = 1024;
+void GlobeView::chooseMinDistance(uint32_t n) {
+	// Pick the closest orbit so a single tile can reach ~50 px on a 1080p view.
+	// estimatePixelsPerTile is monotone in distance; solve for ~50 px at h=1080.
+	// Closed form: pxPerTile = (1.1/n)/(d-1) * (h/fovRad); set = 50.
+	constexpr float kTargetPx = 50.0f;
+	constexpr float kFovRad = 45.0f * 3.14159265f / 180.0f;
+	float h = 1080.0f;
+	float gap = (1.1f / static_cast<float>(n)) * (h / kFovRad) / kTargetPx;
+	camera.setMinDistance(1.0f + gap);
 }
 
 void GlobeView::setWorld(std::shared_ptr<const worldgen::GeneratedWorld> world) {
@@ -26,7 +32,9 @@ void GlobeView::setWorld(std::shared_ptr<const worldgen::GeneratedWorld> world) 
 	if (builtGrid != currentWorld->grid.get()) {
 		uint32_t subdiv = currentWorld->grid->subdivision();
 		mesh.build(subdiv, *currentWorld->grid);
-		colorizer.init(std::min(subdiv, kMaxColorTexSize));
+		colorizer.init(subdiv);
+		detailCache.init(subdiv);
+		chooseMinDistance(subdiv);
 		builtGrid = currentWorld->grid.get();
 
 		if (!renderer.isReady()) {
@@ -46,7 +54,8 @@ void GlobeView::setWorld(std::shared_ptr<const worldgen::GeneratedWorld> world) 
 
 void GlobeView::refreshColors() {
 	if (currentWorld && colorizer.isReady()) {
-		colorizer.update(*currentWorld, mode);
+		colorizer.requestBake(currentWorld, mode, pool);
+		detailCache.setWorld(currentWorld, mode);
 	}
 }
 
@@ -80,7 +89,18 @@ void GlobeView::render(const Foundation::Rect& rect, float logicalW, float logic
 	int ph = static_cast<int>(rect.height * sy);
 	if (pw <= 0 || ph <= 0) return;
 
-	renderer.render(mesh, colorizer, camera, pw, ph);
+	// Pump async base-tier uploads and stream detail pages for the current view.
+	colorizer.uploadPending();
+	if (currentWorld && currentWorld->grid && detailCache.isReady()) {
+		float aspect = static_cast<float>(pw) / static_cast<float>(ph);
+		planetview::schedulePages(detailCache, camera, aspect, pw, ph,
+		                          *currentWorld->grid,
+		                          currentWorld->grid->subdivision());
+	}
+
+	renderer.render(mesh, colorizer, detailCache,
+	                currentWorld ? currentWorld->grid->subdivision() : 0,
+	                camera, pw, ph);
 
 	// GL viewport origin is bottom-left; UI rect origin is top-left
 	glViewport(px, vp[3] - py - ph, pw, ph);

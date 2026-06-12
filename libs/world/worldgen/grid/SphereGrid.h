@@ -116,6 +116,13 @@ class SphereGrid {
     // Hexagon tiles: 6. The 12 icosahedron-vertex pentagon tiles: 5.
     uint32_t neighbors(TileId t, std::array<TileId, 6>& out) const;
 
+    // Map a unit direction to the rhombus and (u,v) in [0,1]^2 that contains it.
+    // planet-view's detail-page scheduler uses this to turn screen-visible rays
+    // into per-rhombus uv rects. (Same solve as fromUnitVector, minus rounding.)
+    void locateRhombusUV(Vec3d dir, uint32_t& rhombus, double& u, double& v) const {
+        dirToRhombusUV(dir, rhombus, u, v);
+    }
+
     // Map a possibly out-of-range (rhombus, i, j) lattice VERTEX to its
     // canonical TileId by hopping across rhombus edges and resolving ownership.
     // Returns kInvalidTile if the position is unmappable. planet-view uses this
