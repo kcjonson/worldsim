@@ -15,6 +15,33 @@ namespace planetview {
 
 namespace {
 constexpr uint32_t kBaseMax = 1024; // base-tier cap (mips cover smaller detail)
+
+// Fill texel rows [jb, je) of rhombus `r`'s base texture into `dst` (texSize^2*4).
+// Texel (i,j) maps to an owned chart vertex via canonicalTile, so seam/pole
+// vertices resolve to the same tile the CPU assigns. For n > texSize the
+// texel->vertex map downsamples (nearest); the mip chain answers coarser views.
+// Single source of truth for the parallel runtime bake and the test baker.
+void bakeRhombusRows(uint8_t* dst, uint32_t r, uint32_t texSize, uint32_t n,
+                     const worldgen::SphereGrid& grid,
+                     const worldgen::GeneratedWorld& world, ColorMode mode,
+                     size_t jb, size_t je) {
+    for (size_t j = jb; j < je; ++j) {
+        for (uint32_t i = 0; i < texSize; ++i) {
+            uint32_t ti = (texSize > 1) ? (i * (n - 1U)) / (texSize - 1U) : 0U;
+            uint32_t tj = (texSize > 1)
+                              ? (static_cast<uint32_t>(j) * (n - 1U)) / (texSize - 1U)
+                              : 0U;
+            uint32_t tileId = grid.canonicalTile(
+                r, static_cast<int>(ti) + 1, static_cast<int>(tj));
+            RGBA8 c = colorForTile(tileId, mode, world);
+            size_t o = (static_cast<size_t>(j) * texSize + i) * 4;
+            dst[o + 0] = c.r;
+            dst[o + 1] = c.g;
+            dst[o + 2] = c.b;
+            dst[o + 3] = c.a;
+        }
+    }
+}
 } // namespace
 
 const char* colorModeName(ColorMode m) {
@@ -68,10 +95,6 @@ void PlanetColorizer::init(uint32_t newSubdivision) {
     glBindTexture(GL_TEXTURE_2D, 0);
 }
 
-// Bake one rhombus's base texture. Texel (i,j) maps to an owned chart vertex via
-// canonicalTile, so seam/pole vertices resolve to the same tile the CPU assigns.
-// For n > texSize the texel->vertex map downsamples (nearest); the mip chain then
-// answers the still-coarser zoomed-out views.
 void PlanetColorizer::bakeInto(BakeResult& out, uint32_t texSize, uint32_t n,
                                const worldgen::GeneratedWorld& world, ColorMode mode,
                                foundation::TaskPool& pool) {
@@ -79,25 +102,20 @@ void PlanetColorizer::bakeInto(BakeResult& out, uint32_t texSize, uint32_t n,
     for (uint32_t r = 0; r < 10U; ++r) {
         auto& dst = out.rhombi[r];
         dst.resize(static_cast<size_t>(texSize) * texSize * 4);
+        uint8_t* p = dst.data();
         pool.parallelFor(0, texSize, 16, [&](size_t jb, size_t je) {
-            for (size_t j = jb; j < je; ++j) {
-                for (uint32_t i = 0; i < texSize; ++i) {
-                    uint32_t ti = (texSize > 1) ? (i * (n - 1U)) / (texSize - 1U) : 0U;
-                    uint32_t tj = (texSize > 1)
-                                      ? (static_cast<uint32_t>(j) * (n - 1U)) / (texSize - 1U)
-                                      : 0U;
-                    uint32_t tileId = grid.canonicalTile(
-                        r, static_cast<int>(ti) + 1, static_cast<int>(tj));
-                    RGBA8 c = colorForTile(tileId, mode, world);
-                    size_t o = (static_cast<size_t>(j) * texSize + i) * 4;
-                    dst[o + 0] = c.r;
-                    dst[o + 1] = c.g;
-                    dst[o + 2] = c.b;
-                    dst[o + 3] = c.a;
-                }
-            }
+            bakeRhombusRows(p, r, texSize, n, grid, world, mode, jb, je);
         });
     }
+}
+
+void PlanetColorizer::bakeRhombusForTest(std::vector<uint8_t>& out, uint32_t rhombus,
+                                         uint32_t texSize, uint32_t n,
+                                         const worldgen::GeneratedWorld& world,
+                                         ColorMode mode) {
+    out.resize(static_cast<size_t>(texSize) * texSize * 4);
+    bakeRhombusRows(out.data(), rhombus, texSize, n, *world.grid, world, mode, 0,
+                    texSize);
 }
 
 void PlanetColorizer::requestBake(std::shared_ptr<const worldgen::GeneratedWorld> world,

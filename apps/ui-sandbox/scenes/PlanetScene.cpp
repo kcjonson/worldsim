@@ -70,10 +70,14 @@ class PlanetScene : public engine::IScene {
             statusText = buf;
         }
 
-        // Check for new snapshot and upload colors progressively.
+        // Check for new snapshot and upload colors progressively. The generator
+        // publishes one growing GeneratedWorld object across stages (same pointer,
+        // validFields grows monotonically), so re-bake on field growth too, not
+        // just on a fresh pointer from a new run.
         auto snap = generator->snapshot();
-        if (snap && snap != lastSnapshot) {
+        if (snap && (snap != lastSnapshot || snap->validFields != lastValidFields)) {
             lastSnapshot = snap;
+            lastValidFields = snap->validFields;
             onSnapshot(*snap);
         }
 
@@ -247,6 +251,7 @@ class PlanetScene : public engine::IScene {
 
     std::unique_ptr<worldgen::PlanetGenerator> generator;
     std::shared_ptr<const worldgen::GeneratedWorld> lastSnapshot;
+    uint32_t lastValidFields{0};
     bool worldReady{false};
     bool meshBuilt{false};
     std::string statusText;

@@ -71,6 +71,13 @@ class PlanetColorizer {
     // Bind rhombus r's texture to the given texture unit.
     void bind(uint32_t rhombus, GLuint unit) const;
 
+    // Bake one rhombus's base-tier texels into `out` (texSize*texSize RGBA8),
+    // GL-free. Same path the async runtime bake uses. For tests only.
+    static void bakeRhombusForTest(std::vector<uint8_t>& out, uint32_t rhombus,
+                                   uint32_t texSize, uint32_t n,
+                                   const worldgen::GeneratedWorld& world,
+                                   ColorMode mode);
+
   private:
     GLuint textures[10]{};
     uint32_t texSize{0};      // texture dimension (= min(n, 1024))
