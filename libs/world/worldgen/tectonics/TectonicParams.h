@@ -484,4 +484,43 @@ inline constexpr float kArcMaturationSupportVolcFrac = 0.7f; // neighbor volcani
 inline constexpr float    kCrustSpeckleVolcExempt = kArcMaturationSupportVolcFrac * kArcMatureVolcThreshold;
 inline constexpr uint32_t kCrustSpeckleMaxCells = 2;  // components <= this revert
 
+// ============================================================================
+// M-T3.6 crust-type upsampling: signed-distance threshold (crisp coastlines)
+// ============================================================================
+// CrustStage decides each full-res tile's crust type by thresholding a SMOOTH
+// signed "continentalness" field at 0, not by nearest-sampling the coarse binary
+// crustType. Warping a binary field per-sample dithers a ~1-cell band around
+// every coast into salt-and-pepper confetti (adjacent full-res tiles flip
+// continental/oceanic). A signed distance field (cell units, + inside continental,
+// - inside oceanic) warps cleanly and thresholds to a crisp 1-tile organic coast.
+
+// Light Jacobi smoothing passes over the coarse signed-distance field after the
+// multi-source BFS, to soften hex-ring quantization. Kept low (2) so thin arcs and
+// small islands survive — heavy smoothing erodes narrow features below the 0 level set.
+inline constexpr int kCoastSdfSmoothPasses = 2;
+// Per-pass blend weight toward the 6-neighbor mean (0 = no smoothing, 1 = full mean).
+inline constexpr float kCoastSdfSmoothWeight = 0.5f;
+
+// Fine crenulation noise added to the warped signed distance before thresholding.
+// This noise sets the coastline fractal dimension and is THE primary knob for the
+// continent isoperimetric gate: more amplitude / lower frequency -> wigglier coast
+// -> higher isoperimetric ratio. Tuned so coasts get natural wiggle WITHOUT
+// re-introducing detached specks (amplitude stays a fraction of a cell so the
+// crenulation only bends the 0 level set, never punches isolated holes through it).
+// Amplitude is in coarse-cell units (same units as the signed distance).
+inline constexpr float kCoastDetailAmp     = 0.48f;
+// Spatial frequency of the crenulation on the unit sphere. Kept LOW and with FEW
+// octaves on purpose: at full res each tile is far smaller than a coarse cell, so a
+// high-frequency / many-octave crenulation jitters individual tiles across the 0
+// crossing and explodes the coastline perimeter (P^2/(4 pi A) is extremely sensitive
+// to tile-scale roughness). A low frequency (5) plus 2 octaves adds large organic
+// lobes that bend the coast as a smooth meander instead of fragmenting it.
+// Empirically amp 0.85 / freq 9 / 4 octaves pushed seed 42's isoperimetric median
+// from ~5 to ~38 (fragmenting regime); amp 0.48 / freq 5 / 2 octaves lands all three
+// gate seeds inside [3,25] (42: 5.8, 7: 18.1, 1337: 4.7) — the low-freq lobes lift
+// intrinsically round continents (seed 1337) above the 3.0 floor without tipping the
+// rougher seeds (42, 7) past the ceiling.
+inline constexpr float kCoastDetailFreq    = 5.0f;
+inline constexpr int   kCoastDetailOctaves = 2;
+
 } // namespace worldgen::tectonics
