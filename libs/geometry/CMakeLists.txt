@@ -3,6 +3,7 @@ add_library(geometry
     polygon/Polygon.cpp
     arrangement/Arrangement.cpp
     arrangement/HalfEdge.cpp
+    offset/WallOffset.cpp
 )
 
 target_include_directories(geometry
