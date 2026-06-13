@@ -63,7 +63,11 @@ namespace geometry {
 		constexpr Int128(__int128 raw, tag) : value(raw) {}
 
 		void magnitudeLimbs(std::uint64_t& low, std::uint64_t& high) const {
-			unsigned __int128 mag = value < 0 ? static_cast<unsigned __int128>(-value) : static_cast<unsigned __int128>(value);
+			// Two's-complement negate in the unsigned domain. Negating `value`
+			// directly would be signed-overflow UB at INT128_MIN; this matches the
+			// MSVC two-limb path's safe idiom and is exact for every input.
+			const unsigned __int128 raw = static_cast<unsigned __int128>(value);
+			const unsigned __int128 mag = value < 0 ? (~raw + 1) : raw;
 			low	 = static_cast<std::uint64_t>(mag);
 			high = static_cast<std::uint64_t>(mag >> 64);
 		}

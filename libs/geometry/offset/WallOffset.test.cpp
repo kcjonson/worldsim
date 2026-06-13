@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <map>
 #include <vector>
 #include <gtest/gtest.h>
 
@@ -200,10 +201,10 @@ TEST(Junction, StraightContinuationNoPolygonNoTrim) {
 
 TEST(Junction, RightAngleCornerGolden) {
 	// L-corner at origin: (1000,0)->(0,0) and (0,0)->(0,1000), both half 100.
-	// Centerlines meet at right angle. The inner miter apex is (100,100), the
-	// outer apex is (-100,-100) wait: with both half 100 the band corners are at
-	// +-100. Assert structural tiling and that the junction polygon welds to the
-	// trimmed band corners.
+	// Centerlines meet at a right angle. With both half 100 the band edges sit
+	// at +-100, so the inner miter apex is (100,100) and the outer apex is
+	// (-100,-100). Assert structural tiling and that the junction polygon welds
+	// to the trimmed band corners.
 	std::vector<WallSegment> segs = {
 		{{1000, 0}, {0, 0}, 100},
 		{{0, 0}, {0, 1000}, 100},
@@ -507,4 +508,71 @@ TEST(Junction, FourWayCrossExactNoOverlap) {
 	ASSERT_EQ(wb.status, OffsetStatus::Ok) << "status=" << static_cast<int>(wb.status);
 	expectAllRingsValid(wb);
 	expectExactPairwiseDisjoint(wb);
+}
+
+// --- determinism (exact angular ordering, no atan2/double comparators) -------
+
+TEST(Junction, IncidentOrderPermutationInvariant) {
+	// Resolving the same junction with its incident segments supplied in every
+	// permutation must yield byte-identical trims and polygon. atan2/double
+	// ordering could reorder nearly-collinear directions platform-dependently;
+	// the exact comparator with an index tiebreak makes the result canonical.
+	// Use a 4-way junction of distinct directions and thicknesses.
+	std::vector<IncidentSegment> base = {
+		{{1000, 0}, 120, 0},
+		{{0, 1000}, 100, 1},
+		{{-1000, 0}, 140, 2},
+		{{0, -1000}, 80, 3},
+	};
+
+	const JunctionResolution reference = resolveJunction({0, 0}, base, kDefaultMiterLimit);
+	ASSERT_EQ(reference.status, OffsetStatus::Ok);
+
+	std::vector<std::size_t> perm = {0, 1, 2, 3};
+	std::sort(perm.begin(), perm.end());
+	do {
+		std::vector<IncidentSegment> shuffled;
+		shuffled.reserve(base.size());
+		for (std::size_t p : perm) {
+			shuffled.push_back(base[p]);
+		}
+		const JunctionResolution jr = resolveJunction({0, 0}, shuffled, kDefaultMiterLimit);
+		ASSERT_EQ(jr.status, OffsetStatus::Ok);
+
+		// The polygon is geometry about the vertex; it must be identical
+		// regardless of input order.
+		EXPECT_EQ(jr.polygon, reference.polygon);
+
+		// Trims are keyed by the caller index, so build an index->trim map for
+		// each result and compare those (the trims vector order tracks input
+		// order, the mapping does not).
+		std::map<std::size_t, std::int64_t> refTrim;
+		for (const JunctionTrim& t : reference.trims) {
+			refTrim[t.index] = t.trimMm;
+		}
+		std::map<std::size_t, std::int64_t> gotTrim;
+		for (const JunctionTrim& t : jr.trims) {
+			gotTrim[t.index] = t.trimMm;
+		}
+		EXPECT_EQ(gotTrim, refTrim);
+	} while (std::next_permutation(perm.begin(), perm.end()));
+}
+
+TEST(Junction, NearParallelLargeCoordinateDenominatorExact) {
+	// A real corner whose two outgoing directions are nearly collinear at large
+	// magnitude with messy low bits. The line-line denominator is the cross
+	// product of the two directions; the int64 component products here exceed
+	// 2^53, so computing the denominator in double loses integer bits and the
+	// near-cancellation leaves it off by ~100+ (verified: exact -5051857754 vs
+	// double -5051857920). That corrupts the miter apex and, in the limit, can
+	// round a true non-zero determinant to 0.0 and misclassify the corner as a
+	// straight continuation. The exact Int128 cross keeps the determinant honest:
+	// the corner resolves to a valid, non-rejected junction.
+	std::vector<IncidentSegment> incidents = {
+		{{3037000123LL, 2014857631LL}, 100, 0},
+		{{3037000124LL, 2014857630LL}, 100, 1}, // 1 mm cross-wise over a ~3.6e9 run
+	};
+	const JunctionResolution jr = resolveJunction({0, 0}, incidents, kDefaultMiterLimit);
+	EXPECT_EQ(jr.status, OffsetStatus::Ok);
+	ASSERT_EQ(jr.trims.size(), 2u);
 }

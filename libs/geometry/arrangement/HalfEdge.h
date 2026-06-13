@@ -19,16 +19,11 @@
 // are bounded faces.
 //
 // Everything here is exact and deterministic across platforms: the angular
-// comparator uses quadrant classification plus cross-product sign (no atan2, no
-// floats), and the arrangement it consumes is already canonical.
+// comparator (geometry::angleLess in predicates) uses half-plane classification
+// plus cross-product sign (no atan2, no floats), and the arrangement it consumes
+// is already canonical.
 
 namespace geometry {
-
-	// Exact angular comparison of two direction vectors `u` and `v` measured
-	// counter-clockwise from the +x axis. Returns true when u sorts strictly
-	// before v. Half-open quadrants plus an exact cross-product tiebreak; the
-	// zero vector is not a valid input (arrangement edges are never zero-length).
-	bool angleLess(const Vec2i64& u, const Vec2i64& v);
 
 	struct HalfEdge {
 		std::size_t origin = 0; // vertex index this half-edge leaves from

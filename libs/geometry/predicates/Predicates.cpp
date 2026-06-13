@@ -18,6 +18,20 @@ namespace geometry {
 				   p.y <= std::max(a.y, b.y);
 		}
 
+		// Half-plane of a direction measured CCW from +x: 0 for angles in
+		// [0, pi) (the +x axis and the upper half), 1 for [pi, 2pi) (the -x axis
+		// and the lower half). Splitting here lets a single cross-product sign
+		// order everything within a half-plane.
+		int angleHalf(const Vec2i64& d) {
+			if (d.y > 0) {
+				return 0;
+			}
+			if (d.y < 0) {
+				return 1;
+			}
+			return d.x > 0 ? 0 : 1; // on the x-axis: +x is half 0, -x is half 1
+		}
+
 	} // namespace
 
 	Orientation orientation(const Vec2i64& a, const Vec2i64& b, const Vec2i64& c) {
@@ -29,6 +43,16 @@ namespace geometry {
 			return Orientation::Clockwise;
 		}
 		return Orientation::Collinear;
+	}
+
+	bool angleLess(const Vec2i64& u, const Vec2i64& v) {
+		const int hu = angleHalf(u);
+		const int hv = angleHalf(v);
+		if (hu != hv) {
+			return hu < hv;
+		}
+		// Same half-plane: u precedes v iff v is CCW from u, i.e. cross(u,v) > 0.
+		return cross(u, v).sign() > 0;
 	}
 
 	SegmentIntersection intersectSegments(const Vec2i64& a0, const Vec2i64& a1, const Vec2i64& b0, const Vec2i64& b1) {
@@ -154,9 +178,9 @@ namespace geometry {
 				// Exact side test: is the edge crossing to the right of point?
 				// Sign of cross(vj - vi, point - vi) gives the side; combine with
 				// the upward/downward edge direction.
-				const int side		= crossSign(vi, vj, point);
-				const bool downward = vj.y > vi.y;
-				if ((side > 0) == downward) {
+				const int  side		   = crossSign(vi, vj, point);
+				const bool edgePointsUp = vj.y > vi.y; // vi -> vj rises in +y
+				if ((side > 0) == edgePointsUp) {
 					inside = !inside;
 				}
 			}

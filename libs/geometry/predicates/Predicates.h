@@ -19,6 +19,17 @@ namespace geometry {
 	// the full int64 coordinate range.
 	Orientation orientation(const Vec2i64& a, const Vec2i64& b, const Vec2i64& c);
 
+	// Exact angular comparison of two direction vectors `u` and `v` measured
+	// counter-clockwise from the +x axis. Returns true when u sorts strictly
+	// before v. Half-plane classification plus an exact cross-product tiebreak;
+	// no atan2, no floats, deterministic across platforms. Equal directions
+	// (parallel, same sense) compare equivalent (neither precedes the other), so
+	// callers that need a strict total order over coincident rays must add their
+	// own deterministic tie-break. The zero vector is not a valid input. This is
+	// the library's single angular comparator; arrangement face extraction and
+	// wall-offset junction ordering both use it.
+	bool angleLess(const Vec2i64& u, const Vec2i64& v);
+
 	enum class SegmentRelation {
 		Disjoint,
 		ProperCrossing,	 // single interior crossing point

@@ -50,22 +50,22 @@ namespace geometry {
 		}
 
 		// Intersect two lines, each given by a point and a direction. Returns the
-		// parameter t along (p0, d0) of the intersection, or nullopt when the
-		// directions are parallel. Float; the caller rounds the resulting point.
+		// parameter t along (p0, d0) of the intersection, or false when the
+		// directions are parallel. The denominator (cross of the two directions)
+		// and the numerator are both the exact 128-bit cross products, so the
+		// parallel test is exact: a true non-zero determinant can never round to
+		// zero and misclassify the lines. Only the final t = num/denom ratio is
+		// taken in double, the one inexact step the caller then rounds to the mm
+		// grid (consistent with the module's rounding policy in the header).
 		bool lineIntersectParam(const Vec2i64& p0, const Vec2i64& d0, const Vec2i64& p1, const Vec2i64& d1, double& t) {
-			const double denom = static_cast<double>(d0.x) * static_cast<double>(d1.y) -
-								 static_cast<double>(d0.y) * static_cast<double>(d1.x);
-			if (denom == 0.0) {
+			const Int128 denom = cross(d0, d1);
+			if (denom.sign() == 0) {
 				return false;
 			}
-			const double wx = static_cast<double>(p1.x - p0.x);
-			const double wy = static_cast<double>(p1.y - p0.y);
-			t = (wx * static_cast<double>(d1.y) - wy * static_cast<double>(d1.x)) / denom;
+			const Vec2i64 w		= p1 - p0;
+			const Int128  numer = cross(w, d1);
+			t					= numer.toDouble() / denom.toDouble();
 			return true;
-		}
-
-		double angleOf(const Vec2i64& dir) {
-			return std::atan2(static_cast<double>(dir.y), static_cast<double>(dir.x));
 		}
 
 	} // namespace
@@ -134,16 +134,26 @@ namespace geometry {
 		}
 
 		// Sort incidents CCW by outgoing angle. Wedges are between CCW-adjacent
-		// pairs; each wedge's apex is where the two facing band edges meet.
+		// pairs; each wedge's apex is where the two facing band edges meet. The
+		// order uses the exact angleLess comparator (no atan2, deterministic);
+		// two incidents with the exact same outgoing direction tie-break on the
+		// local index so the order is a strict total order regardless of input
+		// permutation.
 		std::vector<std::size_t> order(degree);
 		for (std::size_t i = 0; i < degree; ++i) {
 			order[i] = i;
 		}
-		std::vector<double> ang(degree);
-		for (std::size_t i = 0; i < degree; ++i) {
-			ang[i] = angleOf(incidents[i].direction - vertex);
-		}
-		std::sort(order.begin(), order.end(), [&](std::size_t l, std::size_t r) { return ang[l] < ang[r]; });
+		std::sort(order.begin(), order.end(), [&](std::size_t l, std::size_t r) {
+			const Vec2i64 dl = incidents[l].direction - vertex;
+			const Vec2i64 dr = incidents[r].direction - vertex;
+			if (angleLess(dl, dr)) {
+				return true;
+			}
+			if (angleLess(dr, dl)) {
+				return false;
+			}
+			return l < r; // identical direction: deterministic tie-break by index
+		});
 
 		std::vector<std::int64_t> trimByLocal(degree, 0);
 
@@ -260,9 +270,28 @@ namespace geometry {
 			}
 		}
 
+		// Order boundary points CCW about the vertex with the exact angleLess
+		// comparator (no atan2, deterministic). Points sharing a ray from the
+		// vertex (equal angle) tie-break on exact squared distance then on the
+		// point itself, so the comparator is a strict total order: std::sort then
+		// never permutes collinear points unpredictably or yields a degenerate,
+		// self-touching star. Duplicate points compare equal and are collapsed by
+		// the dedup pass below.
 		std::sort(pts.begin(), pts.end(), [&](const Vec2i64& l, const Vec2i64& r) {
-			return std::atan2(static_cast<double>(l.y - vertex.y), static_cast<double>(l.x - vertex.x)) <
-				   std::atan2(static_cast<double>(r.y - vertex.y), static_cast<double>(r.x - vertex.x));
+			const Vec2i64 dl = l - vertex;
+			const Vec2i64 dr = r - vertex;
+			if (angleLess(dl, dr)) {
+				return true;
+			}
+			if (angleLess(dr, dl)) {
+				return false;
+			}
+			const Int128 distL = dot(dl, dl);
+			const Int128 distR = dot(dr, dr);
+			if (distL != distR) {
+				return distL < distR;
+			}
+			return l < r; // exact lexicographic final tiebreak
 		});
 		Ring poly;
 		poly.reserve(pts.size());

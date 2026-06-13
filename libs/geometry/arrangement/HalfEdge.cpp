@@ -1,37 +1,8 @@
 #include "HalfEdge.h"
 
 #include <algorithm>
-#include <map>
 
 namespace geometry {
-
-	namespace {
-
-		// Half-plane of a direction measured CCW from +x: 0 for angles in
-		// [0, pi) (the +x axis and the upper half), 1 for [pi, 2pi) (the -x axis
-		// and the lower half). Splitting here lets a single cross-product sign
-		// order everything within a half-plane.
-		int angleHalf(const Vec2i64& d) {
-			if (d.y > 0) {
-				return 0;
-			}
-			if (d.y < 0) {
-				return 1;
-			}
-			return d.x > 0 ? 0 : 1; // on the x-axis: +x is half 0, -x is half 1
-		}
-
-	} // namespace
-
-	bool angleLess(const Vec2i64& u, const Vec2i64& v) {
-		const int hu = angleHalf(u);
-		const int hv = angleHalf(v);
-		if (hu != hv) {
-			return hu < hv;
-		}
-		// Same half-plane: u precedes v iff v is CCW from u, i.e. cross(u,v) > 0.
-		return cross(u, v).sign() > 0;
-	}
 
 	HalfEdgeMesh extractFaces(const Arrangement& arrangement) {
 		HalfEdgeMesh mesh;
@@ -76,7 +47,10 @@ namespace geometry {
 		// clockwise from that twin around v, i.e. the predecessor in the CCW
 		// sorted list (wrapping). This is the standard construction that makes
 		// bounded faces wind CCW and the outer boundary wind CW.
-		std::map<std::size_t, std::size_t> posInList; // half-edge -> index in its origin's sorted list
+		// Half-edge id -> index in its origin's sorted outgoing list. Half-edge
+		// ids are dense (0..N-1), so a flat vector keyed by id replaces a map:
+		// no allocation per lookup, no O(log N) in this hot link-up.
+		std::vector<std::size_t> posInList(mesh.halfEdges.size(), 0);
 		for (std::size_t v = 0; v < outgoing.size(); ++v) {
 			const std::vector<std::size_t>& list = outgoing[v];
 			for (std::size_t k = 0; k < list.size(); ++k) {

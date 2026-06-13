@@ -114,7 +114,8 @@ TEST(SegmentIntersect, ProperCrossing) {
 }
 
 TEST(SegmentIntersect, ProperCrossingRoundsToNearestMm) {
-	// Cross at (333.33.., 333.33..): rounds to nearest mm = 333.
+	// Diagonal y=x meets the line from (0,1000) to (1000,850): cross at
+	// (869.565.., 869.565..), which rounds to nearest mm = 870.
 	auto r = intersectSegments({0, 0}, {1000, 1000}, {0, 1000}, {1000, 850});
 	EXPECT_EQ(r.relation, SegmentRelation::ProperCrossing);
 	// y = 1000 - 0.15x and y = x  =>  x = 1000/1.15 = 869.565..  rounds to 870.
