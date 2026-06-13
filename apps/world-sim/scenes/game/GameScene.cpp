@@ -54,12 +54,14 @@
 #include <ecs/components/Needs.h>
 #include <ecs/components/Packaged.h>
 #include <ecs/components/Skills.h>
+#include <ecs/components/Structure.h>
 #include <ecs/components/Task.h>
 #include <ecs/components/Transform.h>
 #include <ecs/components/WorkQueue.h>
 #include <ecs/systems/AIDecisionSystem.h>
 #include <ecs/systems/ActionSystem.h>
 #include <ecs/systems/BuildGoalSystem.h>
+#include <ecs/systems/ConstructionSystem.h>
 #include <ecs/systems/CraftingGoalSystem.h>
 #include <ecs/systems/DynamicEntityRenderSystem.h>
 #include <ecs/systems/MovementSystem.h>
@@ -243,6 +245,41 @@ namespace {
 					}
 				}
 			});
+
+			// Now that DrawingSystem owns the ConstructionWorld, give ConstructionSystem a handle
+			// to it and wire the structure-lifecycle callbacks. ConstructionSystem lives in
+			// libs/engine and doesn't know ConstructionWorld topology state; these callbacks are
+			// the cross-layer signal (same pattern as ActionSystem's other callbacks).
+			{
+				auto& constructionSystem = ecsWorld->getSystem<ecs::ConstructionSystem>();
+				constructionSystem.setConstructionWorld(&m_drawingSystem->world());
+
+				auto& actionSys = ecsWorld->getSystem<ecs::ActionSystem>();
+
+				// Build complete: flip the foundation to Built (bumps ConstructionWorld version,
+				// so the render picks up the new style next frame) and toast the player.
+				actionSys.setStructureCompletedCallback([this](ecs::EntityID blueprintEntity) {
+					const auto* structure = ecsWorld->getComponent<ecs::Structure>(blueprintEntity);
+					if (structure == nullptr || structure->graphId == 0) {
+						LOG_WARNING(Game, "Structure-completed: entity %u has no foundation link", static_cast<uint32_t>(blueprintEntity));
+						return;
+					}
+					m_drawingSystem->world().setState(structure->graphId, engine::construction::FoundationState::Built);
+					gameUI->pushNotification("Construction complete", "Foundation built", UI::ToastSeverity::Info);
+					LOG_INFO(Game, "Foundation #%llu built (entity %u)", static_cast<unsigned long long>(structure->graphId), static_cast<uint32_t>(blueprintEntity));
+				});
+
+				// Deconstruct complete: remove the foundation topology + entity (refund is a
+				// later slice), mirroring handleDemolishFoundation but keyed by the entity.
+				actionSys.setStructureDeconstructedCallback([this](ecs::EntityID blueprintEntity) {
+					const auto* structure = ecsWorld->getComponent<ecs::Structure>(blueprintEntity);
+					if (structure != nullptr && structure->graphId != 0) {
+						m_drawingSystem->world().removeFoundation(structure->graphId);
+						LOG_INFO(Game, "Foundation #%llu deconstructed (entity %u)", static_cast<unsigned long long>(structure->graphId), static_cast<uint32_t>(blueprintEntity));
+					}
+					ecsWorld->destroyEntity(blueprintEntity);
+				});
+			}
 
 			// Initialize SelectionSystem (after ECS, PlacementExecutor, and DrawingSystem)
 			m_selectionSystem = std::make_unique<world_sim::SelectionSystem>(world_sim::SelectionSystem::Args{
@@ -575,6 +612,7 @@ namespace {
 			ecsWorld->registerSystem<ecs::StorageGoalSystem>();								// Priority 55 - goals before AI
 			ecsWorld->registerSystem<ecs::CraftingGoalSystem>();							// Priority 56 - goals before AI
 			ecsWorld->registerSystem<ecs::BuildGoalSystem>();								// Priority 57 - goals before AI
+			ecsWorld->registerSystem<ecs::ConstructionSystem>();							// Priority 58 - foundation lifecycle goals
 			ecsWorld->registerSystem<ecs::AIDecisionSystem>(assetRegistry, recipeRegistry); // Priority 60
 			ecsWorld->registerSystem<ecs::MovementSystem>();								// Priority 100
 			ecsWorld->registerSystem<ecs::PhysicsSystem>();									// Priority 200
@@ -595,6 +633,12 @@ namespace {
 			// Wire up AIDecisionSystem with chunk manager for toilet location queries
 			auto& aiDecisionSystem = ecsWorld->getSystem<ecs::AIDecisionSystem>();
 			aiDecisionSystem.setChunkManager(m_chunkManager.get());
+
+			// Wire ConstructionSystem with placement data for footprint-clearing queries. The
+			// ConstructionWorld pointer and completion callbacks are wired after DrawingSystem
+			// (which owns the ConstructionWorld) is created, back in initialize().
+			auto& constructionSystem = ecsWorld->getSystem<ecs::ConstructionSystem>();
+			constructionSystem.setPlacementData(m_placementExecutor.get(), &m_processedChunks);
 
 			// Wire up ActionSystem for "item crafted" notifications
 			auto& actionSystem = ecsWorld->getSystem<ecs::ActionSystem>();

@@ -1,6 +1,7 @@
 #include "DrawingSystem.h"
 
 #include <assets/ConstructionRegistry.h>
+#include <ecs/components/Inventory.h>
 #include <ecs/components/Structure.h>
 #include <ecs/components/StructureBlueprint.h>
 #include <ecs/components/StructureHealth.h>
@@ -220,6 +221,14 @@ namespace world_sim {
 		blueprint.workTotal = area * workRate;
 		ecsWorld_->addComponent<ecs::StructureBlueprint>(entity, std::move(blueprint));
 
+		// Delivery inventory: hauled materials land here, and ConstructionSystem reconciles the
+		// blueprint's delivered[] manifest from it. One slot per material type is enough; large
+		// stacks so a whole foundation's Wood fits in a single slot.
+		ecs::Inventory deliveryInv;
+		deliveryInv.maxCapacity	 = 8;
+		deliveryInv.maxStackSize = 100000;
+		ecsWorld_->addComponent<ecs::Inventory>(entity, std::move(deliveryInv));
+
 		// HP scales with area; full HP is only meaningful once built but the
 		// component exists from creation (architecture: avoid a later migration).
 		const float maxHp = area * hpRate;
@@ -283,23 +292,36 @@ namespace world_sim {
 			return camera_->worldToScreen(w.x, w.y, viewportW, viewportH, kPixelsPerMeter);
 		};
 
-		// --- Committed foundations (interim) ----------------------------------
-		// Filled translucent polygon + outline. Blueprint state is dashed/fainter,
-		// Built is solid. Drawn above terrain, below entities (zIndex < ghost 1000).
+		// --- Committed foundations: build-progress visualization (D8) ----------
+		// Each foundation renders in three layers: a faint translucent "blueprint" base
+		// fill always, then a material-colored fill whose alpha ramps with build progress
+		// (workDone/workTotal from the blueprint entity), then an outline whose weight/
+		// brightness firms up as the structure approaches Built. A proportional opacity
+		// ramp is the slice's progress viz; the baked element-emitter index-prefix (a
+		// deterministic per-element reveal) is the later optimization noted in D8.
 		for (const auto& f : constructionWorld_.foundations()) {
 			const std::size_t n = f.ring.size();
 			if (n < 3) {
 				continue;
 			}
-			const bool		 built = (f.state == engine::construction::FoundationState::Built);
-			const auto*		 mat   = ConstructionRegistry::Get().getMaterial(f.material);
-			Foundation::Color fill{0.5F, 0.65F, 0.9F, built ? 0.55F : 0.22F};
-			if (mat != nullptr && !mat->pattern.palette.empty()) {
-				const auto& c = mat->pattern.palette.front();
-				fill = {c.r / 255.0F, c.g / 255.0F, c.b / 255.0F, built ? 0.85F : 0.3F};
+			const bool built = (f.state == engine::construction::FoundationState::Built);
+
+			// Progress in [0,1] from the ECS mirror's blueprint. Built foundations render full.
+			float progress = built ? 1.0F : 0.0F;
+			if (!built && ecsWorld_ != nullptr && f.entity != ecs::kInvalidEntity) {
+				if (const auto* bp = ecsWorld_->getComponent<ecs::StructureBlueprint>(f.entity)) {
+					progress = bp->progress();
+				}
 			}
 
-			// Triangle-fan fill from the first vertex.
+			// Material color (palette front) drives the progress fill; fall back to blue.
+			const auto* mat = ConstructionRegistry::Get().getMaterial(f.material);
+			Foundation::Color matColor{0.5F, 0.65F, 0.9F, 1.0F};
+			if (mat != nullptr && !mat->pattern.palette.empty()) {
+				const auto& c = mat->pattern.palette.front();
+				matColor = {c.r / 255.0F, c.g / 255.0F, c.b / 255.0F, 1.0F};
+			}
+
 			std::vector<Foundation::Vec2> screen;
 			screen.reserve(n);
 			for (const auto& v : f.ring) {
@@ -312,26 +334,43 @@ namespace world_sim {
 				indices.push_back(static_cast<uint16_t>(i));
 				indices.push_back(static_cast<uint16_t>(i + 1));
 			}
+
+			// Layer 1: faint blueprint base (always present, reads as the planned footprint).
 			Renderer::Primitives::drawTriangles({
 				.vertices	 = screen.data(),
 				.indices	 = indices.data(),
 				.vertexCount = screen.size(),
 				.indexCount	 = indices.size(),
-				.color		 = fill,
-				.id			 = "committed_foundation_fill",
+				.color		 = {0.5F, 0.65F, 0.9F, 0.18F},
+				.id			 = "committed_foundation_base",
 				.zIndex		 = 50,
 			});
 
-			// Outline.
-			const Foundation::Color outline = built ? Foundation::Color{0.6F, 0.75F, 1.0F, 1.0F}
-													 : Foundation::Color{0.5F, 0.7F, 1.0F, 0.8F};
+			// Layer 2: progress fill, alpha proportional to workDone/workTotal. Ramps from a
+			// barely-there tint at 0% to a solid floor at 100% / Built.
+			if (progress > 0.0F) {
+				const float fillAlpha = built ? 0.85F : (0.15F + 0.7F * progress);
+				Renderer::Primitives::drawTriangles({
+					.vertices	 = screen.data(),
+					.indices	 = indices.data(),
+					.vertexCount = screen.size(),
+					.indexCount	 = indices.size(),
+					.color		 = {matColor.r, matColor.g, matColor.b, fillAlpha},
+					.id			 = "committed_foundation_progress",
+					.zIndex		 = 51,
+				});
+			}
+
+			// Layer 3: outline, brighter/heavier as it firms up toward Built.
+			const float			   outlineAlpha = 0.6F + 0.4F * progress;
+			const Foundation::Color outline{0.55F, 0.72F, 1.0F, built ? 1.0F : outlineAlpha};
 			for (std::size_t i = 0; i < n; ++i) {
 				Renderer::Primitives::drawLine({
 					.start = screen[i],
 					.end   = screen[(i + 1) % n],
 					.style = {.color = outline, .width = built ? 2.0F : 1.5F},
 					.id	   = "committed_foundation_edge",
-					.zIndex = 51,
+					.zIndex = 52,
 				});
 			}
 		}

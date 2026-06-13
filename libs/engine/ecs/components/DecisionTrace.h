@@ -71,6 +71,9 @@ namespace ecs {
 		uint64_t harvestGoalId = 0;			 // Goal being fulfilled (for reservation)
 		uint32_t harvestYieldDefNameId = 0;	 // What item will be yielded
 
+		// Build-specific fields (for Build tasks)
+		uint64_t buildBlueprintEntityId = 0; // Blueprint entity whose workDone is advanced
+
 		// Skill-related fields (for work tasks with skill requirements)
 		float	skillLevel = 0.0F; // Colonist's skill level for this work
 		int16_t skillBonus = 0;	   // Calculated skill bonus for priority
@@ -127,6 +130,11 @@ namespace ecs {
 			// Tier 6.4: Hauling loose items to storage - priority 37 + bonuses (no skill bonus)
 			if (taskType == TaskType::Haul && status == OptionStatus::Available) {
 				return 37.0F + static_cast<float>(distanceBonus + chainBonus + inProgressBonus + taskAgeBonus);
+			}
+			// Tier 5: Construction build work - priority 41 + all bonuses. Sits just above
+			// crafting so staged build sites get finished; Construction skill feeds workBonus.
+			if (taskType == TaskType::Build && status == OptionStatus::Available) {
+				return 41.0F + workBonus();
 			}
 			// Tier 6.5: Crafting work - priority 40 + all bonuses
 			if (taskType == TaskType::Craft && status == OptionStatus::Available) {

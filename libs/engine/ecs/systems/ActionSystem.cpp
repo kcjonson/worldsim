@@ -1156,22 +1156,27 @@ namespace ecs {
 
 		constexpr float kPositionTolerance = 0.5F;
 
-		// Craft-material haul: the colonist already carries the harvested items, so there is
-		// no ground pickup. It just walks to the crafting station and "delivers" (items stay
-		// in inventory for the Craft action; the goal is credited). Single-phase.
+		// Inventory-source haul: the colonist already carries the harvested items, so there is
+		// no ground pickup. It walks to the destination and deposits. Single-phase. The deposit
+		// mode depends on the destination: a build site (blueprint) has a delivery Inventory the
+		// Wood lands in for real; a crafting station has none, so "delivery" just credits the
+		// goal and the items stay in inventory for the Craft action to consume.
 		if (task.haulFromInventory) {
+			const bool targetHasInventory =
+				world->hasComponent<Inventory>(static_cast<EntityID>(task.haulTargetStorageId));
 			action = Action::Deposit(
 				task.haulItemDefName,
 				task.haulQuantity,
 				task.haulTargetStorageId,
 				task.haulTargetPosition,
-				/*deliverToCraftStation=*/true
+				/*deliverToCraftStation=*/!targetHasInventory
 			);
 			LOG_DEBUG(
 				Engine,
-				"[Action] Haul-from-inventory: deliver %u x %s to crafting station %llu",
+				"[Action] Haul-from-inventory: deliver %u x %s to %s %llu",
 				task.haulQuantity,
 				task.haulItemDefName.c_str(),
+				targetHasInventory ? "build site" : "crafting station",
 				static_cast<unsigned long long>(task.haulTargetStorageId)
 			);
 			return;

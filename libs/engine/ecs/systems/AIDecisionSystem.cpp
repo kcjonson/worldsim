@@ -13,6 +13,7 @@
 #include "../components/Packaged.h"
 #include "../components/Skills.h"
 #include "../components/StorageConfiguration.h"
+#include "../components/StructureBlueprint.h"
 #include "../components/Task.h"
 #include "../components/ToiletLocationFinder.h"
 #include "../components/Transform.h"
@@ -212,6 +213,8 @@ namespace ecs {
 				case TaskType::Harvest:
 					return option.harvestTargetEntityId == currentTask.harvestTargetEntityId &&
 						   option.harvestGoalId == currentTask.harvestGoalId;
+				case TaskType::Build:
+					return option.buildBlueprintEntityId == currentTask.buildBlueprintEntityId;
 				default:
 					return false;
 			}
@@ -293,43 +296,51 @@ namespace ecs {
 					continue; // Goal is full or null
 				}
 
-				// Craft-material haul: source is the colonist's inventory, never loose ground
-				// items. If this Haul belongs to a Craft goal, handle it here and skip the
-				// memory scan. An option is emitted only once the Harvest dependency has
-				// completed (status Available) and the colonist actually carries the material.
-				if (goal->parentGoalId.has_value()) {
+				// Inventory-source haul: the colonist already carries the harvested material, so
+				// there is no loose ground pickup. Two cases use this path:
+				//  - Craft-material hauls (Haul is a child of a Craft goal): deliver to the
+				//    crafting station (items stay in inventory for the Craft action).
+				//  - Construction-material hauls (owner ConstructionGoalSystem): deliver to the
+				//    blueprint, which has a delivery Inventory the deposit lands in.
+				// Both skip the memory scan and emit only once the dependency completed (status
+				// Available) and the colonist actually carries the material.
+				bool inventorySourceHaul = goal->owner == GoalOwner::ConstructionGoalSystem;
+				if (!inventorySourceHaul && goal->parentGoalId.has_value()) {
 					const auto* parent = goalRegistry.getGoal(goal->parentGoalId.value());
-					if (parent != nullptr && parent->type == TaskType::Craft) {
-						if (goal->status == GoalStatus::Available) {
-							for (uint32_t acceptedId : goal->acceptedDefNameIds) {
-								const auto& itemDefName = registry.getDefName(acceptedId);
-								uint32_t	carried = inventory.getQuantity(itemDefName);
-								if (carried == 0) {
-									continue;
-								}
-
-								EvaluatedOption haulOption;
-								haulOption.taskType = TaskType::Haul;
-								haulOption.needType = NeedType::Count;
-								haulOption.needValue = 100.0F;
-								haulOption.threshold = 0.0F;
-								haulOption.targetPosition = goal->destinationPosition;
-								haulOption.targetDefNameId = acceptedId;
-								haulOption.distanceToTarget = glm::distance(position, goal->destinationPosition);
-								haulOption.haulItemDefName = itemDefName;
-								haulOption.haulQuantity = std::min(carried, goal->availableCapacity());
-								haulOption.haulSourcePosition = position; // already carrying
-								haulOption.haulTargetStorageId = static_cast<uint64_t>(goal->destinationEntity);
-								haulOption.haulTargetPosition = goal->destinationPosition;
-								haulOption.haulGoalId = goal->id;
-								haulOption.haulFromInventory = true;
-								haulOption.status = OptionStatus::Available;
-								haulOption.reason = "Delivering " + itemDefName + " to crafting station";
-								trace.options.push_back(haulOption);
+					inventorySourceHaul = parent != nullptr && parent->type == TaskType::Craft;
+				}
+				if (inventorySourceHaul) {
+					if (goal->status == GoalStatus::Available) {
+						const bool toBlueprint = goal->owner == GoalOwner::ConstructionGoalSystem;
+						for (uint32_t acceptedId : goal->acceptedDefNameIds) {
+							const auto& itemDefName = registry.getDefName(acceptedId);
+							uint32_t	carried = inventory.getQuantity(itemDefName);
+							if (carried == 0) {
+								continue;
 							}
+
+							EvaluatedOption haulOption;
+							haulOption.taskType = TaskType::Haul;
+							haulOption.needType = NeedType::Count;
+							haulOption.needValue = 100.0F;
+							haulOption.threshold = 0.0F;
+							haulOption.targetPosition = goal->destinationPosition;
+							haulOption.targetDefNameId = acceptedId;
+							haulOption.distanceToTarget = glm::distance(position, goal->destinationPosition);
+							haulOption.haulItemDefName = itemDefName;
+							haulOption.haulQuantity = std::min(carried, goal->availableCapacity());
+							haulOption.haulSourcePosition = position; // already carrying
+							haulOption.haulTargetStorageId = static_cast<uint64_t>(goal->destinationEntity);
+							haulOption.haulTargetPosition = goal->destinationPosition;
+							haulOption.haulGoalId = goal->id;
+							haulOption.haulFromInventory = true;
+							haulOption.status = OptionStatus::Available;
+							haulOption.reason = toBlueprint ? "Delivering " + itemDefName + " to build site"
+															: "Delivering " + itemDefName + " to crafting station";
+							trace.options.push_back(haulOption);
 						}
-						continue;
 					}
+					continue;
 				}
 
 				// Check colonist's memory for items that can fulfill this goal
@@ -482,6 +493,51 @@ namespace ecs {
 
 					trace.options.push_back(harvestOption);
 				}
+			}
+		}
+
+		/// Evaluate build options by querying Build goals from GoalTaskRegistry.
+		/// Goal-driven: ConstructionSystem emits a Build goal once a blueprint's materials are
+		/// staged. We surface it only while the blueprint is actually UnderConstruction (the
+		/// phase ActionSystem's Build action requires), targeting the goal's work slot.
+		void evaluateBuildOptions(
+			World*			 world,
+			const glm::vec2& position,
+			const Skills*	 skills,
+			DecisionTrace&	 trace
+		) {
+			if (world == nullptr) {
+				return;
+			}
+			auto& goalRegistry = GoalTaskRegistry::Get();
+
+			for (const auto* goal : goalRegistry.getGoalsOfType(TaskType::Build)) {
+				if (goal == nullptr || goal->status != GoalStatus::Available) {
+					continue;
+				}
+				const auto blueprintEntity = static_cast<EntityID>(goal->destinationEntity);
+				const auto* blueprint = world->getComponent<StructureBlueprint>(blueprintEntity);
+				if (blueprint == nullptr ||
+					blueprint->phase != StructureBlueprint::BuildPhase::UnderConstruction) {
+					continue; // not ready to build (cleared/awaiting materials/complete)
+				}
+
+				EvaluatedOption buildOption;
+				buildOption.taskType = TaskType::Build;
+				buildOption.needType = NeedType::Count;
+				buildOption.needValue = 100.0F;
+				buildOption.threshold = 0.0F;
+				buildOption.targetPosition = goal->destinationPosition;
+				buildOption.distanceToTarget = glm::distance(position, goal->destinationPosition);
+				buildOption.buildBlueprintEntityId = goal->destinationEntity;
+				buildOption.status = OptionStatus::Available;
+
+				auto [buildSkillLevel, buildSkillBonus] = calculateSkillBonus(skills, kSkillConstruction);
+				buildOption.skillLevel = buildSkillLevel;
+				buildOption.skillBonus = buildSkillBonus;
+				buildOption.reason = "Building structure";
+
+				trace.options.push_back(buildOption);
 			}
 		}
 
@@ -1085,6 +1141,9 @@ namespace ecs {
 		// Tier 6.7: Harvest resources for crafting (goal-driven)
 		evaluateHarvestOptions(m_registry, memory, position.value, skills, trace);
 
+		// Tier 5: Build staged construction blueprints (goal-driven)
+		evaluateBuildOptions(world, position.value, skills, trace);
+
 		// Tier 6.35: Place packaged items at target locations
 		evaluatePlacePackagedOptions(world, position.value, inventory, trace);
 
@@ -1162,6 +1221,12 @@ namespace ecs {
 				task.chainId = goal->chainId;
 				task.chainStep = 0; // Harvest is step 0 of the Harvest→Haul chain
 			}
+		}
+
+		// Copy build-specific fields for Build tasks. ActionSystem reads the blueprint entity
+		// from the task and advances its workDone; targetPosition is the work slot.
+		if (selected->taskType == TaskType::Build) {
+			task.buildBlueprintEntityId = selected->buildBlueprintEntityId;
 		}
 
 		// Copy hauling-specific fields for Haul tasks
