@@ -570,6 +570,9 @@ void PlateSim::initPlateRasters() {
 //   5. Apply erase list to plate-local rasters.
 //   6. Gap fill ascending:   empty cells inherit majority neighbor owner and get
 //                            NEW oceanic crust at birth=now (spreading ridges).
+//   6.5 Absorb speckle:      weld isolated ownership islands (<= kAbsorbMaxCells) into the
+//                            dominant surrounding plate so spurious specks never reach the
+//                            boundary scan (M-T2.7). Continental crust is conserved.
 //   7. Boundary scan:        Euler-pole relative velocity, convergence, classify.
 //   7.5 Slab pull:           scale each plate's omega toward a target factor set by
 //                            the mean age of its subducting oceanic floor (old cold
@@ -591,6 +594,7 @@ void PlateSim::step(const CancelFn& cancel, const ProgressFn& progress) {
     resolveOwnership();   // 4
     applyEraseList();     // 5
     gapFill();            // 6
+    absorbOwnershipSpeckle(); // 6.5 (M-T2.7): weld isolated ownership islands
     boundaryScan();       // 7
     slabPull();           // 7.5 (M-T2.6): scale omega by mean subducting-floor age
     collisionProcessing();// 8
@@ -801,8 +805,140 @@ void PlateSim::gapFill() {
         pl.occupied.push_back(localCell); // forwardRasterize re-sorts next step
         resolved_[w] = cell;
     }
+    // Snapshot ownership for next step's CC-tie stickiness. absorbOwnershipSpeckle runs
+    // next and re-snapshots after it edits owner_ on the steps it runs; on strided steps it
+    // doesn't run, so this snapshot stands.
+    prevOwner_ = owner_;
+}
 
-    // Snapshot final ownership for next step's CC-tie stickiness.
+// ============================================================================
+// Ownership coherence filter (M-T2.7): weld isolated ownership islands into the
+// dominant surrounding plate.
+// ============================================================================
+//
+// Forward-rasterize rounding bleed, post-rift fringe interleave, and accretion debris
+// leave plate interiors peppered with 1-4 cell islands of a foreign plate. Left alone the
+// boundary scan classifies each speck as a boundary and orogeny gets stamped mid-plate
+// (coverage inflates past Earth's ~30-50%). This pass floods same-owner connected
+// components over the world owner map; any component of <= kAbsorbMaxCells whose entire
+// outer boundary is dominated by a single foreign plate is welded into that plate. The
+// crust at each absorbed cell transfers into the absorber's baseline raster (continental
+// crust is never deleted — area is conserved), the donor cell is cleared, and owner_ /
+// resolved_ are updated so the subsequent boundary scan sees clean interiors.
+
+// Transfer the crust at world cell w from its current owner into dst's baseline frame.
+// Continental crust is conserved (copied, not dropped); owner_/resolved_ updated.
+void PlateSim::absorbCellInto(TileId w, uint32_t dst) {
+    uint8_t src = owner_[w];
+    if (src == static_cast<uint8_t>(kUnowned) || src == static_cast<uint8_t>(dst)) return;
+    if (!plates_[dst].alive) return;
+    SimPlate& donor = plates_[src];
+    SimPlate& keep  = plates_[dst];
+    TileId srcLocal = worldToLocal(src, w);
+    CrustCell moved = (srcLocal != kInvalidTile) ? donor.crust[srcLocal] : resolved_[w];
+    if (moved.type == CrustType::None) moved = resolved_[w];
+    TileId dstLocal = worldToLocal(dst, w);
+    if (dstLocal != kInvalidTile) {
+        CrustCell& kc = keep.crust[dstLocal];
+        if (kc.type == CrustType::None) {
+            kc = moved;
+            keep.occupied.push_back(dstLocal);
+        }
+        resolved_[w] = kc;
+    } else {
+        resolved_[w] = moved;
+    }
+    // Donor loses its raster cell at this world position. If dst already had crust at the
+    // same world cell (its local was occupied), the donor cell was a duplicate of that
+    // world position, so clearing it conserves world-resolved area (same dedup rule as
+    // mergePlates). The world cell still shows dst's crust.
+    if (srcLocal != kInvalidTile) donor.crust[srcLocal] = CrustCell{};
+    owner_[w] = static_cast<uint8_t>(dst);
+}
+
+void PlateSim::absorbOwnershipSpeckle() {
+    const int K = static_cast<int>(plates_.size());
+    // Per-plate owned-cell count, so we never absorb a plate's ENTIRE body (a small plate is
+    // not a speckle of itself — that would silently delete a live plate the controller is
+    // counting). An island is only welded if its donor still has cells left over.
+    std::vector<uint32_t> plateArea(static_cast<size_t>(K), 0u);
+    for (TileId t = 0; t < tileCount_; ++t) {
+        uint8_t pid = owner_[t];
+        if (pid < static_cast<uint8_t>(K)) plateArea[pid]++;
+    }
+    // speckComp_ marks cells visited THIS sweep: -1 unvisited, >=0 component id of a small
+    // island, -2 part of an aborted (over-cap, i.e. real plate body) flood. The -2 marker
+    // lets us bail out of a body flood without re-walking it from another of its cells.
+    speckComp_.assign(tileCount_, -1);
+    std::array<TileId, 6> nbrs{};
+    int compCount = 0;
+    // Cap the flood a hair above the island size cap: as soon as a flood exceeds the cap it
+    // is a plate body, not a speck, so we abandon it. Only cells with a FOREIGN neighbor
+    // seed a flood — deep interior cells (all same-owner neighbors) are never flooded, so
+    // giant plate bodies cost ~their boundary length, not their area.
+    for (TileId s = 0; s < tileCount_; ++s) {
+        if (speckComp_[s] != -1) continue;
+        uint8_t pid = owner_[s];
+        if (pid >= static_cast<uint8_t>(K)) continue;
+        // Cheap pre-filter: skip cells with no foreign neighbor (cannot be an island cell).
+        uint32_t cnt0 = grid_->neighbors(s, nbrs);
+        bool anyForeign = false;
+        for (uint32_t k = 0; k < cnt0; ++k) {
+            uint8_t np = owner_[nbrs[k]];
+            if (np != pid) { anyForeign = true; break; }
+        }
+        if (!anyForeign) continue;
+
+        int cid = compCount++;
+        speckStack_.clear();
+        speckStack_.push_back(s);
+        speckCells_.clear();
+        speckComp_[s] = cid;
+        bool overCap = false;
+        while (!speckStack_.empty()) {
+            TileId cur = speckStack_.back(); speckStack_.pop_back();
+            speckCells_.push_back(cur);
+            if (speckCells_.size() > kAbsorbMaxCells) { overCap = true; break; }
+            uint32_t cnt = grid_->neighbors(cur, nbrs);
+            for (uint32_t k = 0; k < cnt; ++k) {
+                TileId v = nbrs[k];
+                if (speckComp_[v] != -1) continue;
+                if (owner_[v] != pid) continue;
+                speckComp_[v] = cid;
+                speckStack_.push_back(v);
+            }
+        }
+        if (overCap) {
+            // Real plate body: mark every cell we touched (and any still queued) as -2 so it
+            // is not re-flooded from another boundary cell of the same body this sweep.
+            for (TileId c : speckCells_) speckComp_[c] = -2;
+            for (TileId c : speckStack_) speckComp_[c] = -2;
+            continue;
+        }
+
+        // Dominant foreign plate around the island's outer boundary. Tie -> smaller id.
+        std::array<uint32_t, 256> tally{};
+        uint8_t dom = static_cast<uint8_t>(kUnowned);
+        uint32_t domCnt = 0;
+        for (TileId c : speckCells_) {
+            uint32_t cnt = grid_->neighbors(c, nbrs);
+            for (uint32_t k = 0; k < cnt; ++k) {
+                uint8_t np = owner_[nbrs[k]];
+                if (np == pid || np >= static_cast<uint8_t>(K)) continue;
+                uint32_t t = ++tally[np];
+                if (t > domCnt || (t == domCnt && np < dom)) { domCnt = t; dom = np; }
+            }
+        }
+        if (dom == static_cast<uint8_t>(kUnowned)) continue; // island has no foreign border
+        // Don't dissolve a whole plate: if this island IS the donor's entire footprint,
+        // leave it (it is a small plate, not a stray fragment of a larger one).
+        if (plateArea[pid] <= speckCells_.size()) continue;
+        // Weld the whole island into dom (ascending world-cell order for determinism).
+        std::sort(speckCells_.begin(), speckCells_.end());
+        for (TileId c : speckCells_) absorbCellInto(c, dom);
+    }
+
+    // Snapshot post-absorption ownership for next step's CC-tie stickiness.
     prevOwner_ = owner_;
 }
 
@@ -972,6 +1108,28 @@ void PlateSim::collisionProcessing() {
         return dom;
     };
 
+    // Orogeny stamp hygiene (M-T2.7): a convergent boundary tile only seeds an orogeny /
+    // arc band if it belongs to a COHERENT boundary SEGMENT — i.e. enough of its neighbors
+    // are convergent-boundary cells of the same broad kind (CC vs subduction). A real
+    // collision/subduction front is a continuous line, so its cells have >= 2 such
+    // neighbors; a residual one- or two-cell ownership speck (that appeared this step,
+    // before next step's absorber sweeps it) has 0-1 and is rejected, so it cannot stamp
+    // spurious mid-plate orogeny. `wantCC` selects the kind: CC neighbors for a CC tile,
+    // CO/OO neighbors for a subduction tile.
+    auto coherentSegment = [&](TileId t, bool wantCC) -> bool {
+        uint32_t cnt = grid_->neighbors(t, nbrs);
+        uint32_t same = 0;
+        for (uint32_t k = 0; k < cnt; ++k) {
+            uint8_t nbt = bndType_[nbrs[k]];
+            bool match = wantCC
+                ? (nbt == static_cast<uint8_t>(BoundaryType::ConvergentCC))
+                : (nbt == static_cast<uint8_t>(BoundaryType::ConvergentCO) ||
+                   nbt == static_cast<uint8_t>(BoundaryType::ConvergentOO));
+            if (match) ++same;
+        }
+        return same >= kBoundarySegmentMinNeighbors;
+    };
+
     // BFS ring distance from a set of seed world cells, restricted to one plate's
     // territory, bounded to maxRing. ringScratch_ is reset for touched cells only.
     // Returns the list of (worldCell, ring) reached, appended to `out`.
@@ -1032,6 +1190,7 @@ void PlateSim::collisionProcessing() {
         if (conv <= 0.0f) conv = 0.0f;
 
         if (bt == static_cast<uint8_t>(BoundaryType::ConvergentCC)) {
+            if (!coherentSegment(t, /*wantCC=*/true)) continue; // speck, not a real front
             uint8_t dom = domForeign(t, pid);
             ccSeeds[pid].push_back(t);
             if (conv > ccConv[pid]) ccConv[pid] = conv;
@@ -1048,8 +1207,9 @@ void PlateSim::collisionProcessing() {
                 if (!found) stepScore.push_back({key, add});
             }
         } else {
-            // CO/OO: arc band only on the OVERRIDING side.
-            if (bndSide_[t] == kSideOverriding) {
+            // CO/OO: arc band only on the OVERRIDING side, and only along a coherent
+            // subduction front (a speck overriding cell can't seed an arc).
+            if (bndSide_[t] == kSideOverriding && coherentSegment(t, /*wantCC=*/false)) {
                 arcSeeds[pid].push_back(t);
                 if (conv > arcConv[pid]) arcConv[pid] = conv;
             }
@@ -1089,17 +1249,34 @@ void PlateSim::collisionProcessing() {
         for (const auto& pr : band) {
             TileId w = pr.first;
             int ring = pr.second;
-            // Falloff with ring: full at front, ~half at the band edge.
+            // Falloff relative to the THICKEN band, so thickening at rings 1..thickenRings is
+            // independent of how far the stamp band extends (the stamp band must not perturb
+            // the thickness field, hence the motion trajectory). Clamped to 0 past it.
             double falloff = 1.0 - 0.5 * (static_cast<double>(ring) /
-                             static_cast<double>(kCollisionBandRings + 1));
+                             static_cast<double>(kCollisionThickenRings + 1));
+            if (falloff < 0.0) falloff = 0.0;
             TileId local = worldToLocal(static_cast<uint32_t>(p), w);
             if (local == kInvalidTile) continue;
             CrustCell& cell = plates_[static_cast<size_t>(p)].crust[local];
             if (cell.type != CrustType::Continental) continue;
-            double th = cell.thicknessKm + thickenFull * falloff;
-            if (th > kMaxCrustThicknessKm) th = kMaxCrustThicknessKm;
-            cell.thicknessKm = static_cast<float>(th);
-            cell.orogenyMyr = nowI;
+            // Thicken only the inner rings (the real stacking the area controller balances).
+            // Outer rings record the orogeny stamp + intensity for coverage / M-T4 texture
+            // but add no crust, so the wide stamp band does not deepen continental drain.
+            if (ring <= kCollisionThickenRings) {
+                double th = cell.thicknessKm + thickenFull * falloff;
+                if (th > kMaxCrustThicknessKm) th = kMaxCrustThicknessKm;
+                cell.thicknessKm = static_cast<float>(th);
+                cell.orogenyMyr = nowI; // inner belt: a recent suture (rifts may re-open it)
+            } else if (cell.orogenyMyr == kOrogenyNever ||
+                       (nowI - cell.orogenyMyr) >= kRiftSutureRecentMyr) {
+                // Outer flank: record an orogeny for coverage / M-T4 texture, but date it
+                // OLD (just past the recent-suture window) so it does NOT bias rift cuts.
+                // This decouples the wide coverage band from the rift feedback path, so
+                // widening it does not steer the trajectory into heavier shortening (which
+                // was draining continental area past budget on some seeds). A cell already
+                // carrying a recent inner-belt stamp keeps it (don't age a live orogen).
+                cell.orogenyMyr = nowI - kRiftSutureRecentMyr;
+            }
             float inten = cell.orogenyIntensity +
                           kOrogenyIntensityPerStep * static_cast<float>(falloff);
             cell.orogenyIntensity = inten > 1.0f ? 1.0f : inten;
@@ -1951,6 +2128,144 @@ bool PlateSim::tryRift(uint32_t pid, uint64_t stepSalt, bool oversized) {
     return true;
 }
 
+// ============================================================================
+// Stranded-floor resurfacing (M-T2.7): coherent ridge nucleation.
+// ============================================================================
+//
+// Replaces M-T2.6's per-cell resurfacing lottery, which reset over-old floor as
+// salt-and-pepper and buried the coherent ridge-stripe structure under dither. Physically,
+// new spreading nucleates as a coherent rift LINE, not random cells. We work per plate in
+// its baseline raster: flood connected components of over-old oceanic floor, and for each
+// region large enough to be a genuine stranded basin, with a per-REGION (not per-cell)
+// probability that ramps with the region's mean over-age, carve a noisy great-circle swath
+// through it (cut plane = least-variance axis of the region's scatter, so the ridge runs
+// ALONG the basin's long axis) and stamp those cells to age 0 in one shot.
+// Two design choices kill the dither the per-cell lottery produced:
+//   - per-REGION probability: a basin of N cells no longer gets N independent coin flips;
+//   - a high reset-age threshold + a large min-region size: only genuinely over-old, large
+//     basins resurface (the >220 Myr tail), as coherent swaths, leaving the bulk of the
+//     ridge-to-abyssal age gradient untouched.
+// Deterministic: plates ascending, regions keyed by their min local cell; rolls hashed from
+// (min cell, plate, step).
+void PlateSim::resurfaceStrandedRidges(uint64_t stepSalt) {
+    const int32_t nowI = static_cast<int32_t>(nowMyr_ + 0.5);
+    const uint32_t jumpSeed = static_cast<uint32_t>(
+        deriveSeed(riftStream_, 0x91D3E7C0FFEEULL ^ stepSalt));
+    std::array<TileId, 6> nbrs{};
+
+    for (uint32_t p = 0; p < plates_.size(); ++p) {
+        SimPlate& pl = plates_[p];
+        if (!pl.alive) continue;
+        // Reset the per-local component map over this plate's occupied cells only.
+        if (strandComp_.size() != tileCount_) strandComp_.assign(tileCount_, -1);
+        for (TileId local : pl.occupied) strandComp_[local] = -1;
+
+        int compCount = 0;
+        for (TileId seed : pl.occupied) {
+            if (strandComp_[seed] >= 0) continue;
+            const CrustCell& sc = pl.crust[seed];
+            if (sc.type != CrustType::Oceanic) continue;
+            if (nowI - sc.birthMyr < kRidgeJumpResetAgeMyr) continue;
+            // Flood the connected region of over-old oceanic floor on this plate's raster.
+            int cid = compCount++;
+            strandComp_[seed] = cid;
+            strandStack_.clear();
+            strandStack_.push_back(seed);
+            strandCells_.clear();
+            TileId minCell = seed;
+            while (!strandStack_.empty()) {
+                TileId cur = strandStack_.back(); strandStack_.pop_back();
+                strandCells_.push_back(cur);
+                if (cur < minCell) minCell = cur;
+                uint32_t cnt = grid_->neighbors(cur, nbrs);
+                for (uint32_t k = 0; k < cnt; ++k) {
+                    TileId v = nbrs[k];
+                    if (strandComp_[v] >= 0) continue;
+                    const CrustCell& vc = pl.crust[v];
+                    if (vc.type != CrustType::Oceanic) continue;
+                    if (nowI - vc.birthMyr < kRidgeJumpResetAgeMyr) continue;
+                    strandComp_[v] = cid;
+                    strandStack_.push_back(v);
+                }
+            }
+            if (strandCells_.size() < kRidgeJumpMinRegionCells) continue;
+
+            // Per-REGION nucleation roll (not per cell — that was the salt-and-pepper bug).
+            // Probability ramps with the region's mean over-age, so the oldest basins jump
+            // first. A region that does NOT roll this step keeps aging untouched; the roll
+            // is independent each step, so it eventually fires.
+            double ageSum = 0.0;
+            for (TileId c : strandCells_) ageSum += static_cast<double>(nowI - pl.crust[c].birthMyr);
+            double meanOver = ageSum / static_cast<double>(strandCells_.size()) -
+                              static_cast<double>(kRidgeJumpResetAgeMyr);
+            if (meanOver < 0.0) meanOver = 0.0;
+            double prob = kRidgeJumpRegionProb + kRidgeJumpRegionAgeGain * meanOver;
+            if (prob > kRidgeJumpRegionProbMax) prob = kRidgeJumpRegionProbMax;
+            uint32_t roll = foundation::hash3(static_cast<int32_t>(minCell),
+                static_cast<int32_t>(p), step_, jumpSeed);
+            if ((static_cast<double>(roll) * (1.0 / 4294967296.0)) >= prob) continue;
+
+            // Cut plane: the least-variance axis of the region's local-cell scatter, so the
+            // ridge runs ALONG the basin's long axis (a spreading center bisects the basin,
+            // it doesn't slice it short). Plane point = region centroid.
+            Vec3d mu{0, 0, 0};
+            for (TileId c : strandCells_) {
+                mu.x += centers_[c].x; mu.y += centers_[c].y; mu.z += centers_[c].z;
+            }
+            double inv = 1.0 / static_cast<double>(strandCells_.size());
+            mu = {mu.x * inv, mu.y * inv, mu.z * inv};
+            double m[9] = {0,0,0,0,0,0,0,0,0};
+            for (TileId c : strandCells_) {
+                Vec3d d{centers_[c].x - mu.x, centers_[c].y - mu.y, centers_[c].z - mu.z};
+                m[0]+=d.x*d.x; m[1]+=d.x*d.y; m[2]+=d.x*d.z;
+                m[4]+=d.y*d.y; m[5]+=d.y*d.z; m[8]+=d.z*d.z;
+            }
+            m[3]=m[1]; m[6]=m[2]; m[7]=m[5];
+            Vec3d normal = minEigenVector(m);
+            double nl = foundation::det_math::sqrt(normal.x*normal.x + normal.y*normal.y +
+                                                   normal.z*normal.z);
+            if (nl < 1e-9) continue;
+            normal = {normal.x/nl, normal.y/nl, normal.z/nl};
+
+            // Mark all region cells whose noisy signed distance to the plane falls inside a
+            // band a few cells wide: the resurfaced spreading swath. Stamping a coherent
+            // multi-cell band in ONE shot (rather than a one-cell thread widened over time)
+            // is what makes the lineament read as a clean ridge instead of dither. The band
+            // half-width is ~ kRidgeJumpBandHalfCells coarse cells.
+            const uint32_t noiseSeed = jumpSeed ^ (static_cast<uint32_t>(minCell) * 0x9E3779B9u);
+            const double cellArc = 2.0 / static_cast<double>(cfg_.coarseN); // ~chord per cell
+            const double bandHalf = kRidgeJumpBandHalfCells * cellArc;
+            // Mark via strandStack_ as scratch list of cells to resurface, then apply (so a
+            // partial band still connects through a guaranteed-nucleus seed if it missed).
+            strandStack_.clear();
+            for (TileId c : strandCells_) {
+                Vec3d rel{centers_[c].x - mu.x, centers_[c].y - mu.y, centers_[c].z - mu.z};
+                double s = rel.x*normal.x + rel.y*normal.y + rel.z*normal.z;
+                float n = boundaryNoise(static_cast<float>(centers_[c].x) * kBoundaryNoiseFreq,
+                                        static_cast<float>(centers_[c].y) * kBoundaryNoiseFreq,
+                                        static_cast<float>(centers_[c].z) * kBoundaryNoiseFreq,
+                                        noiseSeed);
+                double jog = static_cast<double>((n - 0.5f) * kRidgeJumpArcNoise) * bandHalf;
+                if (s + jog < bandHalf && s + jog > -bandHalf) strandStack_.push_back(c);
+            }
+            if (strandStack_.empty()) {
+                // Degenerate scatter: stamp the centroid-nearest cell so a swath exists.
+                TileId best = strandCells_[0]; double bestDot = -2.0;
+                for (TileId c : strandCells_) {
+                    double dot = centers_[c].x*mu.x + centers_[c].y*mu.y + centers_[c].z*mu.z;
+                    if (dot > bestDot) { bestDot = dot; best = c; }
+                }
+                strandStack_.push_back(best);
+            }
+            for (TileId c : strandStack_) {
+                CrustCell& cc = pl.crust[c];
+                cc.birthMyr = nowI;
+                cc.thicknessKm = static_cast<float>(kOceanicThicknessKm);
+            }
+        }
+    }
+}
+
 void PlateSim::plateEvents() {
     const int K = static_cast<int>(plates_.size());
 
@@ -2046,45 +2361,8 @@ void PlateSim::plateEvents() {
         }
     }
 
-    // ---- Stranded-floor resurfacing (M-T2.6): some ocean floor never reaches a trench
-    // within the run — it sits on a plate with no subduction zone on its margins, so
-    // neither slab pull nor pole steering can recycle it, and it ages past Earth's
-    // ~180-200 Myr ceiling. The geometry-independent physical reset is intraplate ridge
-    // initiation / a ridge jump: any floor that has survived absurdly long without
-    // recycling eventually gets resurfaced by a new spreading center opening through it
-    // (ridge jumps and intraplate rifting are well recorded, e.g. the Pacific). We reset
-    // any oceanic cell older than kRidgeJumpResetAgeMyr to age 0 with a small per-step
-    // probability, so the stranded tail drains gradually and the >220 Myr fraction stays
-    // bounded on every seed regardless of plate geometry — the part neither motion
-    // mechanism can reach. Operates on plate-local rasters; resolution catches up next
-    // rasterize. The rate ramps with age so the very oldest floor resets fastest. ----
-    {
-        const int32_t nowI = static_cast<int32_t>(nowMyr_ + 0.5);
-        const uint32_t jumpSeed = static_cast<uint32_t>(
-            deriveSeed(riftStream_, 0x91D3E7C0FFEEULL ^ static_cast<uint64_t>(step_)));
-        for (uint32_t p = 0; p < plates_.size(); ++p) {
-            SimPlate& pl = plates_[p];
-            if (!pl.alive) continue;
-            for (TileId local : pl.occupied) {
-                CrustCell& cc = pl.crust[local];
-                if (cc.type != CrustType::Oceanic) continue;
-                int32_t age = nowI - cc.birthMyr;
-                if (age < kRidgeJumpResetAgeMyr) continue;
-                // Resurface probability ramps from the base rate at the reset age up to
-                // the cap as age climbs, so the very oldest stranded floor (which pushes
-                // the >220 tail) resets fastest.
-                double over = static_cast<double>(age - kRidgeJumpResetAgeMyr);
-                double prob = kStrandedResurfaceProb + kStrandedResurfaceAgeGain * over;
-                if (prob > kStrandedResurfaceProbMax) prob = kStrandedResurfaceProbMax;
-                uint32_t roll = foundation::hash3(static_cast<int32_t>(local),
-                    static_cast<int32_t>(p), step_, jumpSeed);
-                if ((static_cast<double>(roll) * (1.0 / 4294967296.0)) < prob) {
-                    cc.birthMyr = nowI;          // resurfaced by a new spreading center
-                    cc.thicknessKm = static_cast<float>(kOceanicThicknessKm);
-                }
-            }
-        }
-    }
+    // ---- Stranded-floor resurfacing (M-T2.7): coherent ridge nucleation. ----
+    resurfaceStrandedRidges(static_cast<uint64_t>(step_));
 
     // ---- Rift: when alive < K, with rising probability, split a big plate. ----
     uint32_t alive = aliveCount();

@@ -202,6 +202,11 @@ TEST(PlateSim, DeterministicProductHash) {
 // fix ocean-floor age (mean ~60-80 Myr, >220 Myr tail under ~6%) and the plate-size
 // runaway (largest plate under ~30% of the sphere). The M-T2.5 value was
 // 0xe4877d7fc02798f5.
+// Updated for M-T2.7 (ridge-coherent resurfacing replacing the per-cell lottery, ownership
+// speckle absorption before the boundary scan, orogeny stamp hygiene via coherent boundary
+// segments, decoupled orogeny stamp/thicken bands, and the gain-4 / max-3 area controller).
+// These clean plate interiors (no pepper), restore coherent crustAge structure, and put
+// orogeny coverage in the 25-60% band. The M-T2.6 value was 0x1f37724f6edce86c.
 // ============================================================================
 
 TEST(PlateSim, GoldenProductHash) {
@@ -209,7 +214,7 @@ TEST(PlateSim, GoldenProductHash) {
     PlateSim sim(p);
     auto h = sim.run();
     uint64_t hash = computeTectonicHistoryHash(*h);
-    constexpr uint64_t kGolden = 0x1f37724f6edce86cULL;
+    constexpr uint64_t kGolden = 0xacf2522344ffd037ULL;
     // Print so a deliberate update is easy; assert against the pinned value.
     std::printf("[PlateSim.GoldenProductHash] coarseN=64 seed=0x1234567890ABCDEF "
                 "hash=0x%016llx\n", static_cast<unsigned long long>(hash));
@@ -584,8 +589,8 @@ TEST(PlateSim, SlabPullAcceleratesOldSlabPlate) {
     auto buildAndRun = [&](int32_t oceanBirth) -> double {
         PlateSimParams p = defaultParams(coarseN, 4242ULL, 2, 0.80);
         // < kPoleEvolutionPeriodMyr (90) so poles don't re-draw / rebalance, and short
-        // enough that the old slab stays below kRidgeJumpResetAgeMyr (150) — otherwise the
-        // stranded-floor resurfacing would reset it to age 0 and erase the age contrast.
+        // enough that the old slab's final age stays below kRidgeJumpResetAgeMyr (230) —
+        // otherwise the stranded-floor resurfacing would reset it and erase the age contrast.
         p.historyMyr = 60.0;
         p.dtMyr = 5.0;
         PlateSimTestOverride ov;
@@ -622,7 +627,9 @@ TEST(PlateSim, SlabPullAcceleratesOldSlabPlate) {
         return std::abs(sim.plates()[1].omegaRadPerMyr);
     };
 
-    const double omegaOld   = buildAndRun(-140); // plate 1 = old oceanic slab (~140 Myr)
+    // Old slab birth -165: final age ~225 Myr, just under the 230 reset, so the slab stays
+    // old (not resurfaced) and the slab-pull age contrast is robust. Young control birth -5.
+    const double omegaOld   = buildAndRun(-165); // plate 1 = old oceanic slab (~165-225 Myr)
     const double omegaYoung  = buildAndRun(-5);   // control: plate 1 = young
 
     std::printf("[PlateSim.SlabPullAcceleratesOldSlabPlate] omegaOld=%.5f omegaYoung=%.5f\n",
@@ -682,6 +689,183 @@ TEST(PlateSim, OversizedOceanicPlateRifts) {
         << "oversized oceanic plate did not rift";
     EXPECT_GT(sim.aliveCount(), aliveStart)
         << "oversized rift did not produce a new plate";
+}
+
+// ============================================================================
+// M-T2.7 TESTS: ownership speckle absorption + coherent resurfacing
+// ============================================================================
+
+// ----------------------------------------------------------------------------
+// Ownership coherence filter: a small isolated island of plate B sitting inside
+// plate A's continental body is welded into A within one step, and the total
+// continental cell count is conserved (the island's crust transfers, it is not
+// deleted). Both plates are stationary so the only ownership change is the absorb.
+// ----------------------------------------------------------------------------
+
+TEST(PlateSim, SpeckleIslandAbsorbedConservingContinent) {
+    const uint32_t coarseN = 32;
+    PlateSimParams p = defaultParams(coarseN, 0xA11A5ULL, 2, 0.0); // all continental
+    p.historyMyr = 5.0; // a single step
+    p.dtMyr = 5.0;
+
+    auto grid = std::make_shared<const SphereGrid>(coarseN);
+    const uint32_t N = grid->tileCount();
+
+    // Plate 1 owns one polar cap; plate 0 owns the rest. Then carve a tiny isolated island
+    // of plate 1 cells deep inside plate 0's territory (a 1-cell core + a few neighbors,
+    // <= kAbsorbMaxCells). The island is a stray FRAGMENT of plate 1 (which keeps its cap),
+    // so the absorber welds it into plate 0 without dissolving plate 1.
+    PlateSimTestOverride ov;
+    ov.plates.assign(2, SimPlate{});
+    ov.owner.assign(N, 255);
+    for (auto& pl : ov.plates) { pl.crust.assign(N, CrustCell{}); pl.alive = true; pl.isContinental = true; }
+    auto paint = [&](TileId t, int pid) {
+        ov.owner[t] = static_cast<uint8_t>(pid);
+        CrustCell& c = ov.plates[pid].crust[t];
+        c.type = CrustType::Continental;
+        c.thicknessKm = 38.0f;
+        c.birthMyr = 0;
+    };
+    for (TileId t = 0; t < N; ++t) {
+        Vec3d c = grid->tileCenter(t);
+        paint(t, c.z < -0.6 ? 1 : 0); // plate 1 = south polar cap, plate 0 = the rest
+    }
+    // Carve the island near +z (well inside plate 0), assign it to plate 1.
+    TileId core = grid->fromUnitVector({0, 0, 1});
+    std::array<TileId, 6> nbrs{};
+    std::vector<TileId> island{core};
+    uint32_t nc = grid->neighbors(core, nbrs);
+    for (uint32_t k = 0; k < nc && island.size() < kAbsorbMaxCells; ++k) island.push_back(nbrs[k]);
+    for (TileId t : island) {
+        ov.plates[0].crust[t] = CrustCell{}; // plate 0 no longer owns the island cell
+        paint(t, 1);                          // plate 1's stray island fragment
+    }
+    ov.plates[0].eulerPole = {0, 0, 1}; ov.plates[0].omegaRadPerMyr = 0.0;
+    ov.plates[1].eulerPole = {0, 0, 1}; ov.plates[1].omegaRadPerMyr = 0.0;
+
+    PlateSim sim(p, &ov);
+
+    // Continental cell count across all rasters, before and after.
+    uint32_t contBefore = countType(sim, CrustType::Continental);
+    // The island starts owned by plate 1.
+    uint32_t islandOwnedByOne = 0;
+    for (TileId t : island) if (sim.owner()[t] == 1) ++islandOwnedByOne;
+    ASSERT_EQ(islandOwnedByOne, island.size()) << "test setup: island not owned by plate 1";
+
+    sim.step();
+
+    // After one step the speckle filter has welded the island into plate 0.
+    uint32_t islandStillOne = 0;
+    for (TileId t : island) if (sim.owner()[t] == 1) ++islandStillOne;
+    EXPECT_EQ(islandStillOne, 0u)
+        << "isolated island was not absorbed into the surrounding plate";
+
+    // Continental crust is conserved: the island's cells moved into plate 0's raster, they
+    // were not deleted. (Stationary plates + 0 water -> no spreading/subduction to perturb
+    // the count, so it must be exactly conserved.)
+    uint32_t contAfter = countType(sim, CrustType::Continental);
+    EXPECT_EQ(contAfter, contBefore)
+        << "continental cell count not conserved across speckle absorption ("
+        << contBefore << " -> " << contAfter << ")";
+}
+
+// ----------------------------------------------------------------------------
+// Coherent resurfacing: a large stranded oceanic basin (all floor far past the
+// ridge-jump reset age, no subduction zone to recycle it) gets resurfaced as a
+// coherent age-0 LINE/swath, not salt-and-pepper. We assert the resurfaced cells
+// form one connected component of meaningful length, not scattered singletons.
+// ----------------------------------------------------------------------------
+
+TEST(PlateSim, ResurfacingNucleatesCoherentRidge) {
+    const uint32_t coarseN = 48;
+    PlateSimParams p = defaultParams(coarseN, 0x21D9EULL, 1, 1.0); // single all-ocean plate
+    // Long enough that the per-region nucleation fires, short enough to stay cheap. A single
+    // stationary plate has no trench, so slab pull / steering can't recycle: the floor ages
+    // monotonically and resurfacing is the only thing that resets it.
+    p.historyMyr = 300.0;
+    p.dtMyr = 5.0;
+
+    auto grid = std::make_shared<const SphereGrid>(coarseN);
+    const uint32_t N = grid->tileCount();
+
+    PlateSimTestOverride ov;
+    ov.plates.assign(1, SimPlate{});
+    ov.owner.assign(N, 0);
+    ov.plates[0].crust.assign(N, CrustCell{});
+    ov.plates[0].alive = true;
+    ov.plates[0].isContinental = false;
+    // Pre-age the whole basin well past the reset age so it is one big stranded region.
+    for (TileId t = 0; t < N; ++t) {
+        ov.plates[0].crust[t].type = CrustType::Oceanic;
+        ov.plates[0].crust[t].thicknessKm = 7.0f;
+        ov.plates[0].crust[t].birthMyr = -(kRidgeJumpResetAgeMyr + 80); // ~310 Myr old at t=0
+    }
+    ov.plates[0].eulerPole = {0, 0, 1};
+    ov.plates[0].omegaRadPerMyr = 0.0; // stationary: no trench, floor cannot recycle
+
+    PlateSim sim(p, &ov);
+
+    // Step until resurfacing has fired (some cells reset to a young age), or history ends.
+    int32_t nowI = 0;
+    auto youngCount = [&](void) -> uint32_t {
+        const auto& crust = sim.resolvedCrust();
+        nowI = static_cast<int32_t>(sim.nowMyr() + 0.5);
+        uint32_t y = 0;
+        for (TileId t = 0; t < N; ++t) {
+            if (crust[t].type != CrustType::Oceanic) continue;
+            if (nowI - crust[t].birthMyr <= static_cast<int32_t>(p.dtMyr * 2)) ++y;
+        }
+        return y;
+    };
+    while (sim.nowMyr() < sim.historyMyr() && youngCount() == 0) sim.step();
+
+    ASSERT_GT(youngCount(), 0u) << "resurfacing never fired on a deeply stranded basin";
+
+    // Collect the freshly-resurfaced (young) world cells and find their largest connected
+    // component. A coherent ridge swath is ONE connected component spanning many cells; a
+    // salt-and-pepper reset would be many singletons (largest component ~1).
+    const auto& crust = sim.resolvedCrust();
+    nowI = static_cast<int32_t>(sim.nowMyr() + 0.5);
+    std::vector<char> young(N, 0);
+    uint32_t youngTotal = 0;
+    for (TileId t = 0; t < N; ++t) {
+        if (crust[t].type == CrustType::Oceanic &&
+            nowI - crust[t].birthMyr <= static_cast<int32_t>(p.dtMyr * 2)) {
+            young[t] = 1; ++youngTotal;
+        }
+    }
+    std::vector<char> seen(N, 0);
+    std::array<TileId, 6> nbrs{};
+    uint32_t largest = 0;
+    for (TileId s = 0; s < N; ++s) {
+        if (!young[s] || seen[s]) continue;
+        // BFS this young component.
+        std::vector<TileId> stack{s};
+        seen[s] = 1;
+        uint32_t sz = 0;
+        while (!stack.empty()) {
+            TileId cur = stack.back(); stack.pop_back();
+            ++sz;
+            uint32_t cnt = grid->neighbors(cur, nbrs);
+            for (uint32_t k = 0; k < cnt; ++k) {
+                TileId v = nbrs[k];
+                if (young[v] && !seen[v]) { seen[v] = 1; stack.push_back(v); }
+            }
+        }
+        if (sz > largest) largest = sz;
+    }
+    std::printf("[PlateSim.ResurfacingNucleatesCoherentRidge] youngTotal=%u largestComponent=%u\n",
+                youngTotal, largest);
+    // The largest connected young component must be a real line/swath, not a dot. A
+    // coherent band a few cells wide and many long easily clears this; scattered singletons
+    // would leave the largest component at ~1-2.
+    EXPECT_GE(largest, 8u)
+        << "resurfaced cells did not form a coherent connected ridge (largest component "
+        << largest << ")";
+    // And it should be a meaningful fraction of the resurfaced cells (a coherent swath, not
+    // one big blob plus scattered confetti).
+    EXPECT_GE(static_cast<double>(largest), 0.4 * static_cast<double>(youngTotal))
+        << "resurfaced cells are mostly scattered rather than one coherent ridge";
 }
 
 } // namespace worldgen::tectonics

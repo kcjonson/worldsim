@@ -120,6 +120,8 @@ class PlateSim {
     void resolveOwnership();
     void applyEraseList();
     void gapFill();
+    void absorbOwnershipSpeckle();  // M-T2.7: weld isolated ownership islands into the
+                                    // dominant surrounding plate (runs before boundaryScan)
     void boundaryScan();
     void collisionProcessing();  // M-T2: CC thicken+orogeny, CO/OO arc volcanism
     void terraneAccretion();     // M-T2: microcontinent transfer at trenches
@@ -132,6 +134,10 @@ class PlateSim {
     void initHotspots(uint64_t seed);
     void mergePlates(uint32_t keep, uint32_t donor); // donor -> keep in keep's frame
     void pruneStaleCrust(uint32_t pid);              // drop subducted oceanic raster crust
+    // M-T2.7: transfer the crust at world cell `w` from its current owner into plate
+    // `dst`'s baseline frame (no deletion of continental crust) and update owner_/resolved_.
+    void absorbCellInto(TileId w, uint32_t dst);
+    void resurfaceStrandedRidges(uint64_t stepSalt); // M-T2.7: coherent ridge nucleation
     // split plate pid; returns true on success. oversized=true forces the oceanic
     // young/ridge-biased great-circle cut (a plate-motion reorganization of a runaway
     // plate) even on a continental plate, and ignores the min-area-factor gate.
@@ -230,6 +236,14 @@ class PlateSim {
     // Scratch reused across steps to avoid per-step allocation.
     std::vector<int32_t> ringScratch_; // BFS ring distance buffer (per world cell)
     std::vector<TileId>  bfsScratch_;   // BFS frontier
+
+    // M-T2.7 scratch reused across steps.
+    std::vector<int32_t> speckComp_;   // per-world-cell component id for the speckle filter
+    std::vector<TileId>  speckStack_;  // speckle flood-fill frontier
+    std::vector<TileId>  speckCells_;  // current speckle component's cells
+    std::vector<int32_t> strandComp_;  // per-local-cell component id for stranded-floor BFS
+    std::vector<TileId>  strandStack_;  // stranded-floor BFS frontier
+    std::vector<TileId>  strandCells_;  // current stranded region's local cells
 
     // Terrane-accretion flood-fill scratch, reused across stride-calls (M-T2.5: the
     // pass now does real transfer work each call, so per-call heap churn matters).

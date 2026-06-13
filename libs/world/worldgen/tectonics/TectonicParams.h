@@ -98,8 +98,20 @@ inline constexpr int32_t kOrogenyNever = 0x7FFFFFFF;
 inline constexpr double kCcThickenPerConvMyr = 9000.0;
 // Cap on crustal thickness from collision (km). (Tibetan plateau crust ~70-80 km.)
 inline constexpr double kMaxCrustThicknessKm = 75.0;
-// CC thickening / orogeny band half-width in coarse-cell rings from the boundary.
-inline constexpr int kCollisionBandRings = 3;
+// CC orogeny-STAMP band half-width in coarse-cell rings from the boundary. At ~56 km/cell,
+// 5 rings is a ~280 km half-width belt, within the 150-800 km observed widths (Himalaya-
+// Tibet ~300 km). 5 (not 3) so a single sustained collision stamps a belt wide enough that,
+// summed over a run, continental orogeny coverage clears the ~25% floor even on stable,
+// few-collision seeds, while the ring falloff keeps it a linear belt with a crest-to-flank
+// gradient (not a blotchy uniform fill).
+inline constexpr int kCollisionBandRings = 5;
+// CC THICKENING is confined to the inner rings only. The outer stamp rings record the
+// orogeny (intensity + age, for the M-T4 ridged-belt texture and the coverage statistic)
+// but add no crust thickness, so widening the stamp band for coverage does NOT increase
+// collisional shortening (stacking) — that would shrink the continental footprint and drain
+// continental area past the +/-10% budget. Thickening (the real stacking that the area
+// controller must balance) stays at the physical inner-belt width.
+inline constexpr int kCollisionThickenRings = 4;
 
 // Continental-collision motion damping: a plate's rotation is scaled by
 // (1 - block), where block rises with its CC contact extent and saturates at
@@ -198,11 +210,17 @@ inline constexpr int kMarginAccretionMaxRing = 2;
 // centering the 5-seed distribution inside the +/-10% acceptance band. This is the
 // standard offset correction for proportional control of a one-sided actuator.
 inline constexpr double kAreaControllerSetpointBias = 0.06;
-// Gain 3.0: a ~10% shortfall below the set-point pushes the factor to ~1.3, enough to
-// close the gap without a single-step lurch; the clamp bounds prevent runaway.
-inline constexpr double kAreaControllerGain      = 3.0;
+// Gain 4.0 (was 3.0): a ~10% shortfall below the set-point pushes the factor to ~1.4. The
+// wider (5-ring) orogeny stamp perturbs rift cuts, so the trajectory differs from M-T2.6;
+// the stronger controller keeps continental drift inside the +/-10% budget on every gate
+// seed. The clamp bounds still prevent a single-step lurch.
+inline constexpr double kAreaControllerGain      = 4.0;
 inline constexpr double kAreaControllerFactorMin = 0.5;
-inline constexpr double kAreaControllerFactorMax = 2.0;
+// Max 3.0 (was 2.0): lets arc crust production ramp harder under a large deficit so a
+// high-shortening trajectory is pulled back inside the +/-10% drift budget. Still bounded,
+// so production never runs away into a continental surplus; every observed gate seed sits
+// in deficit, so the higher ceiling only ever helps close a gap.
+inline constexpr double kAreaControllerFactorMax = 3.0;
 
 // --- Plate merge ---
 // Per-pair collision score: each step a colliding pair adds sum(convergence*dt)
@@ -367,20 +385,67 @@ inline constexpr float kOceanicRiftYoungBias = 0.5f;
 // Some ocean floor never reaches a trench within the run — it rides a plate with no
 // subduction zone on its margins, so neither slab pull nor pole steering can recycle it,
 // and it ages past Earth's ~180-200 Myr ceiling. The geometry-independent physical reset
-// is intraplate ridge initiation / a ridge jump: floor that has survived absurdly long
-// without recycling eventually gets resurfaced by a new spreading center opening through
-// it (ridge jumps and intraplate rifting are well recorded, e.g. the Pacific). Any
-// oceanic cell older than this (Myr) is a resurfacing candidate. Set near Earth's age
-// ceiling so only genuinely over-old, stranded floor resets — normal ridge/slab turnover
-// handles everything younger.
-inline constexpr int32_t kRidgeJumpResetAgeMyr = 150;
-// Base per-step resurface probability at the reset age. Small so resurfacing is gradual
-// (a typical candidate lingers tens of Myr before its ridge jump), not a visible wipe.
-inline constexpr double kStrandedResurfaceProb = 0.015;
-// The probability ramps by this much per Myr of age above the reset threshold, so the
-// very oldest stranded floor (which pushes the >220 Myr tail) resurfaces fastest.
-inline constexpr double kStrandedResurfaceAgeGain = 0.0004;
-// Cap on the per-step resurface probability (the ramp saturates here).
-inline constexpr double kStrandedResurfaceProbMax = 0.12;
+// is intraplate ridge initiation / a ridge jump: a new spreading center opens through the
+// over-old floor (ridge jumps and intraplate rifting are well recorded, e.g. the Pacific).
+//
+// Physically this nucleates as a coherent ridge LINE, not a salt-and-pepper scatter of
+// reset cells. We find each connected component of over-old stranded oceanic floor on a
+// plate, and with a per-REGION (not per-cell) probability carve a noisy great-circle arc
+// of cells through it and stamp those to age 0 — a freshly opened spreading center. The
+// arc widens by a cell per K steps so the young lineament spreads, as a real ridge does.
+//
+// Any oceanic cell older than this (Myr) counts toward a stranded region. Set ABOVE Earth's
+// in-situ ceiling (~180-200 Myr) so resurfacing only trims the genuinely over-old tail —
+// the floor neither slab pull nor pole steering reached. Keeping the threshold high leaves
+// the bulk of the coherent ridge-to-abyssal age gradient untouched (resurfacing young/mid
+// basin floor is what dithers the field); only the >threshold tail is reset, as coherent
+// ridge swaths, so the >220 Myr fraction stays bounded without spraying the basin.
+inline constexpr int32_t kRidgeJumpResetAgeMyr = 230;
+// A stranded region only nucleates a ridge if it has at least this many over-old cells.
+// Set so resurfacing acts on a genuine stranded BASIN as one coherent swath, not on dozens
+// of tiny over-old patches (each tiny patch nucleating its own little band is exactly the
+// salt-and-pepper this fix exists to remove). Tiny over-old patches are left to normal
+// ridge/slab turnover, which reaches them as basins migrate.
+inline constexpr uint32_t kRidgeJumpMinRegionCells = 40;
+// Per-REGION per-step probability that an eligible stranded region nucleates a ridge swath,
+// at the reset age. Per region (not per cell), so a region of N cells no longer gets N
+// independent chances to dither.
+inline constexpr double kRidgeJumpRegionProb = 0.10;
+// The per-region probability ramps by this much per Myr of the region's MEAN age above the
+// reset threshold, so the oldest stranded basins (which push the >220 Myr tail) jump first.
+inline constexpr double kRidgeJumpRegionAgeGain = 0.0025;
+// Cap on the per-region nucleation probability (the ramp saturates here).
+inline constexpr double kRidgeJumpRegionProbMax = 0.40;
+// Ridge swath half-width in coarse cells. The nucleated spreading center is a band this
+// many cells to each side of the cut plane, stamped in one shot so it reads as a coherent
+// ridge swath, not a one-cell thread. ~2 cells -> a ~4-cell-wide young lineament.
+inline constexpr double kRidgeJumpBandHalfCells = 2.0;
+// Noise amplitude on the ridge band edge so the spreading center is an irregular line/arc,
+// not a clean great circle (real ridges are segmented and offset by transforms).
+inline constexpr float kRidgeJumpArcNoise = 0.6f;
+
+// --- Ownership coherence filter (speckle absorption) ---
+// Forward rasterization (coarse rounding bleed), post-rift fringe interleave, and
+// accretion debris leave plate interiors peppered with isolated 1-4 cell islands of a
+// foreign plate. The boundary scan then classifies these specks as boundaries, so orogeny
+// gets stamped mid-plate — orogeny coverage inflates far past Earth's ~30-50%. A
+// deterministic absorption pass runs right after gapFill (before the boundary scan) and
+// welds any ownership island of <= this many cells into the dominant surrounding plate:
+// physically, small fragments weld onto the plate that encloses them. Continental crust is
+// conserved (cells transfer into the absorber's raster, they are not deleted); oceanic
+// specks transfer too (the bookkeeping stays consistent, and any genuine subduction the
+// next step handles normally).
+inline constexpr uint32_t kAbsorbMaxCells = 4;
+
+// --- Orogeny stamp hygiene ---
+// Even with the absorption filter, a residual one- or two-cell ownership fringe can survive
+// a step (it is absorbed the SAME step it appears, but a brand-new fringe from this step's
+// motion is scanned before next step's absorber). To keep such transient specks from
+// stamping spurious mid-plate orogeny, a CC/arc boundary seed cell is only honored if it
+// belongs to a COHERENT boundary segment: it must have at least this many neighbors that
+// are themselves convergent-boundary cells of the same boundary type. A real subduction or
+// collision front is a continuous line, so its cells have >= 2 boundary neighbors; an
+// isolated speck has 0-1 and is rejected.
+inline constexpr uint32_t kBoundarySegmentMinNeighbors = 2;
 
 } // namespace worldgen::tectonics
