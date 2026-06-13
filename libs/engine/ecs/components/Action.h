@@ -169,6 +169,13 @@ namespace ecs {
 
 		/// Target storage container entity ID
 		uint64_t storageEntityId = 0;
+
+		/// Craft-material delivery: the target is a crafting station, not a storage
+		/// container. The items stay in the colonist's inventory (the Craft action consumes
+		/// them from there); the deposit only marks the materials as delivered to the station
+		/// so the goal hierarchy advances. When true, storageEntityId is the station and is
+		/// not expected to have an Inventory component.
+		bool deliverToCraftStation = false;
 	};
 
 	/// Effect for placing packaged items at target locations.
@@ -514,11 +521,14 @@ namespace ecs {
 		/// @param quantity Number of items to deposit
 		/// @param storageEntityId Entity ID of the target storage container
 		/// @param storagePos Position of the storage container
+		/// @param deliverToCraftStation If true, the target is a crafting station: items stay
+		///        in inventory and the deposit only marks them delivered (see DepositEffect).
 		static Action Deposit(
 			const std::string& itemDefName,
 			uint32_t		   quantity,
 			uint64_t		   storageEntityId,
-			glm::vec2		   storagePos
+			glm::vec2		   storagePos,
+			bool			   deliverToCraftStation = false
 		) {
 			Action action;
 			action.type = ActionType::Deposit;
@@ -531,6 +541,7 @@ namespace ecs {
 			depEff.itemDefName = itemDefName;
 			depEff.quantity = quantity;
 			depEff.storageEntityId = storageEntityId;
+			depEff.deliverToCraftStation = deliverToCraftStation;
 			action.effect = depEff;
 
 			return action;

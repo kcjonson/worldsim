@@ -64,7 +64,7 @@ private:
 		struct Task& task,
 		struct Action& action,
 		const struct Position& position,
-		const struct Memory& memory,
+		struct Memory& memory,
 		const struct NeedsComponent& needs,
 		const struct Inventory& inventory
 	);
@@ -102,12 +102,23 @@ private:
 		const struct Memory& memory
 	);
 
+	/// Start a harvest action for goal-driven harvesting (crafting materials)
+	/// Finds harvestable at target position that yields the required item type.
+	/// Memory is mutable so a vanished target can be forgotten (prevents re-selection).
+	void startHarvestAction(
+		struct Task& task,
+		struct Action& action,
+		const struct Position& position,
+		struct Memory& memory
+	);
+
 	/// Start a haul action (pickup from source, then deposit to storage)
+	/// Memory is mutable so a vanished pickup target can be forgotten.
 	void startHaulAction(
 		struct Task& task,
 		struct Action& action,
 		const struct Position& position,
-		const struct Memory& memory
+		struct Memory& memory
 	);
 
 	/// Start a place packaged action (pickup packaged item, then place at target)

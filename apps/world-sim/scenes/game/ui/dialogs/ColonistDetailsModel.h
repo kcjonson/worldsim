@@ -32,7 +32,7 @@ namespace world_sim {
 		};
 
 		/// Refresh model with current colonist data
-		/// @param world ECS world (non-const for task queries via GlobalTaskRegistry)
+		/// @param world ECS world (non-const for task queries via GoalTaskRegistry)
 		/// @param colonistId Entity ID of the colonist
 		/// @return Type of update needed
 		[[nodiscard]] UpdateType refresh(ecs::World& world, ecs::EntityID colonistId);

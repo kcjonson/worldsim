@@ -22,15 +22,17 @@ Colonists remember WHERE entities are. That's the core of the system.
 
 > "There's a berry bush at the south edge of camp."
 
-### State Is Always Current
+### Memory Is a Snapshot, and Can Be Wrong
 
-**Key Decision:** If a colonist knows an entity's location, they have access to its current state.
+**Key Decision (revised 2026-06-12, supersedes "State Is Always Current"):** Memory records what was true at last observation. Truth is reconciled only by seeing the entity again.
 
-No staleness tracking. No "I remember it had berries yesterday." The memory is "I know that bush exists" and the game state tells you what's currently there.
+A colonist who knows a tree may walk to it and find it died, fell, or was chopped by someone else while they were away. On arrival, vision reconciles: the memory entry updates or is removed, the task fails gracefully, and the colonist re-evaluates.
 
-**Rationale:** Tracking stale states adds complexity without clear gameplay benefit. The interesting constraint is knowing vs not knowing.
+**Rationale:** The original decision (known location grants access to live state) quietly reintroduced omniscience: a colonist across the map instantly knowing a bush was harvested is the same unreality as knowing where everything is. Snapshot memory also produces behaviors we actively want: walking to a dead tree, hunting from a last-seen position, and planning routes through walls they haven't seen yet.
 
-**Implication:** A farmer looking for harvest work can check all known crop fields and see which ones are actually ready right now.
+**This is not staleness simulation.** Entries keep their last-observed snapshot; nothing decays or is recomputed per tick. The only cost is reconciling on re-observation, which vision already does.
+
+**Implication:** A farmer checks remembered crop fields and may find some already harvested on arrival. Witnessing changes (below) keeps nearby colonists current; social sharing and radios propagate the rest.
 
 ### Mobile Entities
 
@@ -38,7 +40,17 @@ For animals and other moving things, colonists remember the **last known locatio
 
 **Example:** Bob saw a deer at coordinates (50, 30). The deer has since moved. Bob's memory says "deer at (50, 30)" but when he goes there, the deer is gone.
 
-**Behavior:** Bob arrives, deer isn't there. He either gives up and re-evaluates, or enters a "searching" behavior (future feature).
+**Behavior:** Bob arrives, deer isn't there. He either gives up and re-evaluates, or enters search behavior (see Search & Discovery Behaviors below).
+
+### Structures Are Remembered Too
+
+Walls, doors, and buildings are remembered entities like anything else, and navigation plans against the layout a colonist *believes*:
+
+- A door they've never seen doesn't exist for them. To get inside, they must discover one.
+- A wall built while they were away doesn't block their plans. They route as if it weren't there, see it, and re-route.
+- Raiders arrive knowing the colony's location, not its floor plan. They can't path to a storage room they've never seen.
+
+Mechanics live in [Pathfinding Architecture](/docs/technical/pathfinding-architecture.md) (Belief-Filtered Navigation).
 
 ---
 
@@ -49,7 +61,7 @@ For animals and other moving things, colonists remember the **last known locatio
 Colonists see entities within a sight radius around them.
 
 **MVP:** Circular range, sees through walls  
-**Future:** Proper line of sight with wall occlusion
+**With buildings:** Walls occlude sight; windows pass sight but block movement. This is a hard dependency of belief-filtered navigation (without it, anyone walking past a building learns its whole interior through the walls) and lands with it — mechanics in [Vision Architecture](/docs/technical/vision-architecture.md).
 
 Everything within sight range is automatically known. Colonists continuously observe while doing other activities.
 
@@ -91,6 +103,16 @@ This creates meaningful consequences for colonist death beyond losing labor.
 
 ---
 
+## Search & Discovery Behaviors
+
+What an agent does when memory runs out or turns out to be wrong. Three behaviors, shared by colonists, animals, and raiders:
+
+- **Stale-target arrival.** Go to the remembered position; vision reconciles on arrival; if the target is gone, the memory entry invalidates, the task fails gracefully, and the agent re-evaluates.
+- **Last-known-position search** (hunting). Go to where the target was last seen, then search outward: an expanding pattern of looks biased toward where it could plausibly have gone. The hunter who saw a deer by the river checks the river first.
+- **Door discovery** (perimeter probe). The agent knows a building but no way in. Walk the exterior, watching the walls, until an opening is found or the loop closes ("sealed, as far as I know" is itself remembered). A raider casing the colony and a newcomer finding the kitchen door are the same behavior.
+
+These read as intent, not error, only if the UI helps: the current-task line surfaces the navigation state with status colors (see Current Task Navigation States under UI Elements), and the re-route moment is shown rather than silent.
+
 ## Impact on Gameplay
 
 | Game Stage | Memory Impact |
@@ -108,6 +130,21 @@ This creates meaningful consequences for colonist death beyond losing labor.
 
 Show what this colonist knows:
 - Known entities: 47 total - expandable to exact list
+
+### Current Task Navigation States
+
+The info panel's current-task line surfaces *how* the colonist is moving, not just what they're doing. Belief-driven behaviors must read as intent; the state vocabulary plus the existing status colors does that. "Searching" states are a mild warning on purpose: they mean colonist time is being spent on uncertainty the player could fix (stale knowledge, a missing door, a lost target).
+
+| Navigation state | Display | Color |
+|------------------|---------|-------|
+| Traveling | "Going to [target]" | active (green) |
+| Re-routing (momentary) | "Re-routing" | neutral, brief |
+| LKP search | "Searching for [target]" | mild warning (yellow) |
+| Door discovery | "Looking for a way into [building]" | mild warning (yellow) |
+| No believed route | "Can't find a way to [target]" | blocked (red) |
+| Idle | "Wandering" | idle (gray) |
+
+The momentary "Re-routing" beat doubles as the discovery affordance: the player sees the colonist react to the new wall instead of wondering why they walked at it.
 
 ### Debug Overlay (Development)
 
@@ -138,10 +175,6 @@ Physical map items that grant knowledge when read.
 - Found maps reveal new regions
 - maps contain a list of knowledge items
 
-### Searching Behavior
-
-When colonist goes to last known location and target is gone, they could enter a "search" mode — wandering in expanding circles looking for the target.
-
 ---
 
 ## Scale Considerations
@@ -160,6 +193,7 @@ Scale concerns are engineering problems, not gameplay constraints.
 - [AI Behavior](./ai-behavior.md) — How memory constrains task selection
 - [Skills System](./skills.md) — Skill knowledge (separate from location knowledge)
 - [Entity Capabilities](../world/entity-capabilities.md) — What colonists look for
+- [Pathfinding Architecture](/docs/technical/pathfinding-architecture.md) — Belief-filtered navigation, search primitives
 
 ---
 

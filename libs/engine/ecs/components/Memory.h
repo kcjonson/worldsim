@@ -51,12 +51,6 @@ namespace ecs {
 		return posHash ^ (static_cast<uint64_t>(defNameId) * 0x9e3779b97f4a7c15ULL);
 	}
 
-	/// Callback type for entity eviction notifications
-	/// Called when a colonist forgets an entity due to LRU eviction
-	/// @param ownerEntity The colonist who forgot
-	/// @param worldEntityKey The hash key of the forgotten entity
-	using EvictionCallback = void (*)(EntityID ownerEntity, uint64_t worldEntityKey);
-
 	/// Memory component - stores a colonist's knowledge of the world.
 	/// Colonists can only interact with entities they know about.
 	///
@@ -71,17 +65,10 @@ namespace ecs {
 		/// Number of capability types (must match AssetRegistry::kCapabilityTypeCount)
 		static constexpr size_t kCapabilityTypeCount = 7;
 
-		// --- Owner & Callbacks ---
+		// --- Owner ---
 
-		/// Entity ID of the colonist that owns this memory (for eviction callbacks)
+		/// Entity ID of the colonist that owns this memory
 		EntityID owner = 0;
-
-		/// Callback invoked when an entity is evicted from memory (LRU)
-		/// Set globally via setEvictionCallback() - shared by all Memory instances
-		static inline EvictionCallback evictionCallback = nullptr;
-
-		/// Set the global eviction callback (called when any colonist forgets an entity)
-		static void setEvictionCallback(EvictionCallback callback) { evictionCallback = callback; }
 
 		// --- Primary Storage ---
 
@@ -211,17 +198,9 @@ namespace ecs {
 			knownDynamicEntities[entityId] = KnownDynamicEntity{entityId, position};
 		}
 
-		/// Forget a world entity (e.g., when it's destroyed)
-		/// Also notifies the eviction callback so task registry can update
+		/// Forget a world entity (e.g., when it's destroyed or proven stale)
 		void forgetWorldEntity(const glm::vec2& position, uint32_t defNameId) {
-			uint64_t key = ecs::hashWorldEntity(position, defNameId);
-
-			// Notify callback before removing (so task registry can clean up)
-			if (evictionCallback != nullptr && owner != 0) {
-				evictionCallback(owner, key);
-			}
-
-			removeEntity(key);
+			removeEntity(ecs::hashWorldEntity(position, defNameId));
 		}
 
 		/// Clear all memory
@@ -294,12 +273,6 @@ namespace ecs {
 				return;
 			}
 			uint64_t oldestKey = lruOrder.front();
-
-			// Notify callback before removing (so task registry can clean up)
-			if (evictionCallback != nullptr && owner != 0) {
-				evictionCallback(owner, oldestKey);
-			}
-
 			removeEntity(oldestKey);
 		}
 
