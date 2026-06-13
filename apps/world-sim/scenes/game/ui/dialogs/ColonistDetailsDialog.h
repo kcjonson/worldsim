@@ -61,7 +61,7 @@ class ColonistDetailsDialog : public UI::Component {
 	[[nodiscard]] ecs::EntityID getColonistId() const { return colonistId; }
 
 	// Per-frame update with ECS world for live data
-	// Note: non-const world required for GlobalTaskRegistry queries
+	// Note: non-const world required for GoalTaskRegistry queries
 	void update(ecs::World& world, float deltaTime);
 
 	// IComponent overrides

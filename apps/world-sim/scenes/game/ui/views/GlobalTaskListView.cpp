@@ -97,7 +97,7 @@ void GlobalTaskListView::toggle() {
 void GlobalTaskListView::updateHeaderText() {
 	auto* header = getChild<UI::Button>(headerButtonHandle);
 	if (header) {
-		header->label = std::format("Tasks ({})", cachedTaskCount);
+		header->setLabel(std::format("Tasks ({})", cachedTaskCount));
 	}
 }
 

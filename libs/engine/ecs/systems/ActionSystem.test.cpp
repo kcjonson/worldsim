@@ -3,6 +3,7 @@
 
 #include "ActionSystem.h"
 
+#include "../GoalTaskRegistry.h"
 #include "../World.h"
 #include "../components/Action.h"
 #include "../components/Appearance.h"
@@ -466,6 +467,137 @@ TEST_F(ActionSystemTest, PeeingDoesNotSpawnBioPile) {
 		++entitiesAfter;
 	}
 	EXPECT_EQ(entitiesAfter, 1); // Just the colonist, no bio pile
+}
+
+// =============================================================================
+// Goal-driven craft pipeline integration (harvest -> inventory-haul -> craft credit)
+// =============================================================================
+
+// Fixture variant that wires the GoalTaskRegistry so we can drive the goal-driven
+// harvest/haul completion paths through ActionSystem deterministically. This exercises the
+// exact ActionSystem code the runtime app would, without depending on world geography
+// (Reed/WoodyBush only spawn in Wetland/Grassland/Forest, not Beach).
+class ActionSystemGoalTest : public ::testing::Test {
+  protected:
+	void SetUp() override {
+		GoalTaskRegistry::Get().clear();
+		world = std::make_unique<World>();
+		world->registerSystem<ActionSystem>();
+	}
+
+	void TearDown() override {
+		GoalTaskRegistry::Get().clear();
+		engine::assets::AssetRegistry::Get().clearDefinitions();
+		world.reset();
+	}
+
+	EntityID createColonist(glm::vec2 position = {0.0F, 0.0F}) {
+		auto entity = world->createEntity();
+		world->addComponent<Position>(entity, Position{position});
+		world->addComponent<Velocity>(entity, Velocity{{0.0F, 0.0F}});
+		world->addComponent<MovementTarget>(entity, MovementTarget{{0.0F, 0.0F}, 2.0F, false});
+		world->addComponent<NeedsComponent>(entity, NeedsComponent::createDefault());
+		world->addComponent<Memory>(entity, Memory{});
+		world->addComponent<Inventory>(entity, Inventory::createForColonist());
+		world->addComponent<Task>(entity, Task{});
+		world->addComponent<Action>(entity, Action{});
+		return entity;
+	}
+
+	std::unique_ptr<World> world;
+};
+
+// A completed Harvest credits its harvest goal by the ACTUAL yield (not 1-per-action) and,
+// once satisfied, unblocks the dependent Haul. Then an inventory-sourced Haul delivering to
+// the crafting station credits the parent Craft goal and unblocks it - while keeping the
+// materials in inventory for the subsequent Craft action to consume.
+TEST_F(ActionSystemGoalTest, HarvestThenInventoryHaulDeliversMaterialsAndUnblocksCraft) {
+	auto&	 registry = GoalTaskRegistry::Get();
+	EntityID station = static_cast<EntityID>(777);
+
+	// Craft goal needs 2 Sticks total, born Blocked.
+	GoalTask craft;
+	craft.type = TaskType::Craft;
+	craft.owner = GoalOwner::CraftingGoalSystem;
+	craft.destinationEntity = station;
+	craft.destinationPosition = {5.0F, 0.0F};
+	craft.targetAmount = 2;
+	craft.status = GoalStatus::Blocked;
+	uint64_t craftId = registry.createGoal(std::move(craft));
+
+	// Child Harvest (yields 2 Sticks) and child Haul (depends on the harvest).
+	GoalTask harvest;
+	harvest.type = TaskType::Harvest;
+	harvest.owner = GoalOwner::CraftingGoalSystem;
+	harvest.destinationEntity = station;
+	harvest.targetAmount = 2;
+	harvest.parentGoalId = craftId;
+	harvest.status = GoalStatus::Available;
+	uint64_t harvestId = registry.createGoal(std::move(harvest));
+
+	GoalTask haul;
+	haul.type = TaskType::Haul;
+	haul.owner = GoalOwner::CraftingGoalSystem;
+	haul.destinationEntity = station;
+	haul.destinationPosition = {5.0F, 0.0F};
+	haul.targetAmount = 2;
+	haul.parentGoalId = craftId;
+	haul.dependsOnGoalId = harvestId;
+	haul.status = GoalStatus::WaitingForItems;
+	uint64_t haulId = registry.createGoal(std::move(haul));
+
+	// --- Phase 1: drive a Harvest action that yields 2 Sticks ---
+	auto colonist = createColonist({1.0F, 1.0F});
+	auto* task = world->getComponent<Task>(colonist);
+	task->type = TaskType::Harvest;
+	task->state = TaskState::Arrived;
+	task->harvestGoalId = harvestId;
+	task->targetPosition = {1.0F, 1.0F};
+
+	auto* action = world->getComponent<Action>(colonist);
+	*action = Action::Harvest("Stick", 2, 4.0F, {1.0F, 1.0F}, "Flora_WoodyBush",
+							  /*destructive=*/false, /*regrowthTime=*/0.0F);
+
+	world->update(0.1F); // start
+	world->update(5.0F); // complete (duration 4s)
+
+	auto* inventory = world->getComponent<Inventory>(colonist);
+	EXPECT_EQ(inventory->getQuantity("Stick"), 2U) << "Harvest yield should be in inventory";
+	// Harvest goal credited by the real yield (2), so it completed and was removed; the
+	// dependent Haul flipped to Available.
+	EXPECT_EQ(registry.getGoal(harvestId), nullptr) << "Completed harvest goal removed";
+	ASSERT_NE(registry.getGoal(haulId), nullptr);
+	EXPECT_EQ(registry.getGoal(haulId)->status, GoalStatus::Available)
+	    << "Dependent Haul unblocked once harvest completed";
+	EXPECT_EQ(registry.getGoal(craftId)->deliveredAmount, 0U)
+	    << "Harvest must NOT credit the Craft - materials are only in inventory, not at station";
+
+	// --- Phase 2: drive an inventory-sourced Haul delivering to the station ---
+	task->clear();
+	task->type = TaskType::Haul;
+	task->state = TaskState::Arrived;
+	task->haulGoalId = haulId;
+	task->haulItemDefName = "Stick";
+	task->haulQuantity = 2;
+	task->haulTargetStorageId = static_cast<uint64_t>(station);
+	task->haulTargetPosition = {5.0F, 0.0F};
+	task->haulFromInventory = true;
+	task->targetPosition = {5.0F, 0.0F};
+
+	action->clear();
+
+	world->update(0.1F); // start the deliver-to-station deposit
+	world->update(2.0F); // complete (deposit duration 1s)
+
+	// Materials stay in inventory for the Craft action; the goal hierarchy advanced.
+	EXPECT_EQ(inventory->getQuantity("Stick"), 2U)
+	    << "Craft-station delivery keeps items in inventory for crafting";
+	EXPECT_EQ(registry.getGoal(haulId), nullptr) << "Completed haul goal removed";
+	ASSERT_NE(registry.getGoal(craftId), nullptr);
+	EXPECT_EQ(registry.getGoal(craftId)->deliveredAmount, 2U)
+	    << "Delivery to station credited the parent Craft goal";
+	EXPECT_EQ(registry.getGoal(craftId)->status, GoalStatus::Available)
+	    << "Craft leaves Blocked once all materials delivered";
 }
 
 } // namespace ecs::test

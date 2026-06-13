@@ -80,6 +80,7 @@ This activates the protocol from `/docs/technical/debugging-strategy.md` which u
 - Ignore established patterns
 - Create technical debt
 - **⚠️ NEVER provide time estimates or cost estimates for tasks** - You cannot accurately estimate how long work will take. Focus on clear task descriptions and deliverables instead.
+- **⚠️ NEVER change LOG_DEBUG to LOG_INFO** - LOG_DEBUG works fine. Debug logs are visible via the HTTP log server in dev tools. Do not change log levels to "see" logs.
 
 ### ⚠️ IMPORTANT: Documentation Over Existing Code
 
@@ -227,6 +228,7 @@ If tests fail, fix the new code—don't revert to keeping both versions.
 - Use structured logging with categories
 - `LOG_DEBUG`, `LOG_INFO`, `LOG_WARNING`, `LOG_ERROR`
 - Debug logs compile out in release builds
+- **CRITICAL: LOG_DEBUG WORKS FINE. NEVER switch LOG_DEBUG to LOG_INFO "to see logs". Debug logs are visible in dev tools via the HTTP log server. Do not change log levels.**
 
 **Visual Verification:**
 - When user reports visual issues ("X doesn't appear", "layout is wrong")
