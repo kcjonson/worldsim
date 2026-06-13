@@ -21,9 +21,17 @@
 //                         callback (wired in GameScene).
 //
 // Goals are emitted through GoalTaskRegistry with owner ConstructionGoalSystem
-// so AIDecisionSystem scores and picks them up like any other goal. Goals are
-// cleaned up when a blueprint entity disappears or completes (BuildGoalSystem's
-// watch/emit/cleanup shape).
+// so AIDecisionSystem scores and picks them up like any other goal.
+//
+// Goal-graph shape (mirrors CraftingGoalSystem): ONE top-level umbrella goal per
+// blueprint, keyed by destinationEntity, persists across every phase. The umbrella
+// is the Build goal. Every phase goal (clear-Harvest, per-material Harvest, per-
+// material Haul) is a CHILD of it (parentGoalId = umbrella id), which exempts the
+// children from the registry's single-top-level-goal-per-destination guard so a
+// multi-material site can carry several Harvest + Haul goals at once. The umbrella
+// is Blocked while clearing or awaiting materials and flips Available only at
+// UnderConstruction, exactly like a Craft goal. Goals are cleaned up via
+// removeGoalWithChildren when a blueprint entity disappears or completes.
 //
 // This system lives in libs/engine and links ConstructionWorld directly (it is
 // part of the engine lib). It does NOT flip ConstructionWorld state itself; that
@@ -59,6 +67,7 @@ namespace engine::construction {
 namespace ecs {
 
 	class World;
+	enum class GoalStatus : uint8_t; // defined in GoalTaskRegistry.h
 
 	/// Pure phase-decision result, independent of ECS/placement wiring so it can be
 	/// unit-tested directly. Tells the system what the blueprint's phase SHOULD be and
@@ -125,24 +134,32 @@ namespace ecs {
 		/// single source of truth; delivered[] is the derived mirror the gate reads.
 		void reconcileDelivered(EntityID blueprintEntity, StructureBlueprint& blueprint);
 
-		/// Emit Harvest goals to clear Harvestable blockers off the footprint. Reuses the
-		/// Harvest goal shape (yield = whatever the blocker yields) so chopping a tree both
-		/// clears the site and produces Wood for the manifest.
-		void emitClearGoals(EntityID blueprintEntity, uint64_t foundationId);
+		/// Create (or fetch) the per-blueprint umbrella goal: a single top-level Build goal
+		/// keyed by destinationEntity that every phase goal hangs under as a child. It is
+		/// Blocked until materials are staged, then Available at UnderConstruction (like a
+		/// Craft goal). Returns the stable umbrella goal id so phase goals can parent to it.
+		uint64_t ensureUmbrellaGoal(EntityID blueprintEntity, const StructureBlueprint& blueprint, GoalStatus status);
 
-		/// Emit a Harvest+Haul chain per outstanding material (CraftingGoalSystem's pattern):
-		/// Harvest yields the material into a colonist's inventory, the dependent Haul carries
-		/// it to the blueprint and deposits into its Inventory.
-		void emitMaterialGoals(EntityID blueprintEntity, const StructureBlueprint& blueprint);
+		/// Emit a clear-Harvest CHILD under the umbrella for Harvestable blockers on the
+		/// footprint. Reuses the Harvest goal shape (yield = whatever the blocker yields) so
+		/// chopping a tree both clears the site and produces Wood for the manifest.
+		void emitClearGoals(EntityID blueprintEntity, uint64_t foundationId, uint64_t umbrellaGoalId);
+
+		/// Emit a Harvest+Haul CHILD chain per outstanding material under the umbrella
+		/// (CraftingGoalSystem's pattern): Harvest yields the material into a colonist's
+		/// inventory, the Haul carries it to the blueprint and deposits into its Inventory.
+		/// Both stay Available concurrently (no dependency gate) so each trip can deliver.
+		void emitMaterialGoals(EntityID blueprintEntity, const StructureBlueprint& blueprint, uint64_t umbrellaGoalId);
+
+		/// Retire any leftover child goals of a kind no longer relevant to the current phase
+		/// (e.g. the clear-Harvest child once the footprint is clear, or all material children
+		/// once materials are staged). The umbrella itself is left in place.
+		void retireChildGoals(EntityID blueprintEntity, uint64_t umbrellaGoalId, bool keepMaterialChildren);
 
 		/// Sum how much of a material colonists are currently carrying (the build site's own
 		/// delivery Inventory is excluded). Used to bound harvest demand so a colonist that
 		/// already carries enough delivers it instead of chopping more.
 		[[nodiscard]] uint32_t carriedAmount(EntityID buildSite, const std::string& defName) const;
-
-		/// Emit a single Build goal at the foundation's work slot (centroid). ActionSystem
-		/// turns this into Build actions that advance workDone.
-		void emitBuildGoal(EntityID blueprintEntity, const StructureBlueprint& blueprint);
 
 		engine::construction::ConstructionWorld*				 m_constructionWorld = nullptr;
 		const engine::assets::PlacementExecutor*				 m_placementExecutor = nullptr;

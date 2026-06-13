@@ -970,6 +970,24 @@ namespace ecs {
 			return false;
 		}
 
+		// Redundant-builder guard: completion is gated on the actual phase/work-bound transition,
+		// not just on the work bound being reached. With multiple concurrent builders, a second
+		// builder still arriving after the structure already flipped Complete (or a deconstruct
+		// already at 0) would otherwise re-set its action to Complete every tick and re-fire the
+		// completion callback (duplicate toast + redundant world version bump). Treat such a
+		// builder as redundant: clear its action and return without firing.
+		if (progressEff.deconstruct) {
+			if (blueprint->workDone <= 0.0F) {
+				action.clear();
+				return false;
+			}
+		} else {
+			if (blueprint->phase == StructureBlueprint::BuildPhase::Complete) {
+				action.clear();
+				return false;
+			}
+		}
+
 		const float delta = constructionWorkRate(progressEff.skillLevel) * deltaTime;
 
 		if (progressEff.deconstruct) {

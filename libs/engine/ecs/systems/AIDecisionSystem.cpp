@@ -334,6 +334,7 @@ namespace ecs {
 							haulOption.haulTargetPosition = goal->destinationPosition;
 							haulOption.haulGoalId = goal->id;
 							haulOption.haulFromInventory = true;
+							haulOption.tiebreakId = goal->id ^ (static_cast<uint64_t>(acceptedId) << 1);
 							haulOption.status = OptionStatus::Available;
 							haulOption.reason = toBlueprint ? "Delivering " + itemDefName + " to build site"
 															: "Delivering " + itemDefName + " to crafting station";
@@ -403,6 +404,9 @@ namespace ecs {
 					haulOption.haulTargetStorageId = static_cast<uint64_t>(goal->destinationEntity);
 					haulOption.haulTargetPosition = goal->destinationPosition;
 					haulOption.haulGoalId = goal->id;
+					// Tiebreak on (goal, source item) so two equidistant loose items for the same
+					// goal resolve deterministically rather than by memory's hash order.
+					haulOption.tiebreakId = goal->id ^ (key << 1);
 					haulOption.status = OptionStatus::Available;
 					haulOption.reason = "Hauling " + itemDefName + " to storage";
 					trace.options.push_back(haulOption);
@@ -480,6 +484,9 @@ namespace ecs {
 					harvestOption.harvestTargetEntityId = key; // The world entity ID
 					harvestOption.harvestGoalId = goal->id;
 					harvestOption.harvestYieldDefNameId = goal->yieldDefNameId;
+					// Tiebreak on (goal, target) so two equidistant harvestables feeding the same
+					// goal still resolve deterministically, not by memory's hash order.
+					harvestOption.tiebreakId = goal->id ^ (key << 1);
 					harvestOption.status = OptionStatus::Available;
 
 					// Harvesting uses Farming skill
@@ -530,6 +537,7 @@ namespace ecs {
 				buildOption.targetPosition = goal->destinationPosition;
 				buildOption.distanceToTarget = glm::distance(position, goal->destinationPosition);
 				buildOption.buildBlueprintEntityId = goal->destinationEntity;
+				buildOption.tiebreakId = goal->id;
 				buildOption.status = OptionStatus::Available;
 
 				auto [buildSkillLevel, buildSkillBonus] = calculateSkillBonus(skills, kSkillConstruction);
@@ -587,6 +595,7 @@ namespace ecs {
 				placeOption.placePackagedEntityId = static_cast<uint64_t>(packagedEntity);
 				placeOption.placeSourcePosition = packagedPos.value;
 				placeOption.placeTargetPosition = targetPos;
+				placeOption.tiebreakId = static_cast<uint64_t>(packagedEntity);
 				placeOption.status = OptionStatus::Available;
 				placeOption.reason = isCarryingThis ? "Delivering " + packagedAppearance.defName : "Placing " + packagedAppearance.defName;
 				trace.options.push_back(placeOption);
@@ -1085,6 +1094,7 @@ namespace ecs {
 			craftOption.distanceToTarget = glm::distance(position.value, stationPos.value);
 			craftOption.craftRecipeDefName = nextJob->recipeDefName;
 			craftOption.stationEntityId = static_cast<uint64_t>(stationEntity);
+			craftOption.tiebreakId = static_cast<uint64_t>(stationEntity);
 
 			// Calculate skill bonus for crafting
 			auto [craftSkillLevel, craftSkillBonus] = calculateSkillBonus(skills, kSkillCrafting);
@@ -1119,6 +1129,10 @@ namespace ecs {
 					gatherOption.targetDefNameId = gatherSource.source.defNameId;
 					gatherOption.distanceToTarget = glm::distance(position.value, gatherSource.source.position);
 					gatherOption.gatherItemDefName = gatherSource.inputDefName;
+					// Tiebreak on the source's stable world-entity hash (quantized position + def),
+					// which is sim state, so equal-priority gather sources resolve deterministically.
+					gatherOption.tiebreakId = static_cast<uint64_t>(stationEntity) ^
+						hashWorldEntity(gatherSource.source.position, gatherSource.source.defNameId);
 					gatherOption.status = OptionStatus::Available;
 					gatherOption.reason = "Gathering " + gatherSource.inputDefName + " for crafting";
 
@@ -1141,7 +1155,7 @@ namespace ecs {
 		// Tier 6.7: Harvest resources for crafting (goal-driven)
 		evaluateHarvestOptions(m_registry, memory, position.value, skills, trace);
 
-		// Tier 5: Build staged construction blueprints (goal-driven)
+		// Tier 6.45: Build staged construction blueprints (goal-driven, priority 41)
 		evaluateBuildOptions(world, position.value, skills, trace);
 
 		// Tier 6.35: Place packaged items at target locations
@@ -1163,9 +1177,19 @@ namespace ecs {
 			populatePriorityBonuses(option, currentTask, 0.0F);
 		}
 
-		// Sort by priority (highest first)
+		// Sort by priority (highest first), breaking ties on the stable tiebreak id so the order
+		// is a deterministic total order independent of container iteration. std::sort is not
+		// stable and selection takes the first element, so without the tiebreak two equal-priority
+		// options (e.g. two equidistant, equal-skill build sites) would resolve by hash-bucket
+		// order and route colonists nondeterministically (a multiplayer desync). Lower tiebreak
+		// id wins ties; goals get smaller ids the earlier they were created.
 		std::sort(trace.options.begin(), trace.options.end(), [](const auto& a, const auto& b) {
-			return a.calculatePriority() > b.calculatePriority();
+			const float pa = a.calculatePriority();
+			const float pb = b.calculatePriority();
+			if (pa != pb) {
+				return pa > pb;
+			}
+			return a.tiebreakId < b.tiebreakId;
 		});
 
 		// Mark the first actionable option as Selected

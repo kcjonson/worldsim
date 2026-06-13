@@ -23,8 +23,8 @@ enum class TaskType : uint8_t {
 	Craft,		   // Tier 6.5: Crafting at a station
 	Haul,		   // Tier 6.4: Moving loose items to storage containers
 	PlacePackaged, // Tier 6.35: Carrying packaged items to placement locations
-	Build,		   // Tier 5: Advancing construction work on a blueprint
-	Deconstruct,   // Tier 5: Tearing down a structure
+	Build,		   // Tier 6.45: Advancing construction work on a blueprint (priority 41, just above Craft)
+	Deconstruct,   // Tearing down a structure
 	Wander		   // Tier 7: Random exploration
 };
 

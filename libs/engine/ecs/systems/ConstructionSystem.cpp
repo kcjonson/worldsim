@@ -128,12 +128,27 @@ namespace ecs {
 				blueprint.phase = decision.nextPhase;
 			}
 
+			// One umbrella Build goal per blueprint owns the destination slot and parents every
+			// phase goal. It is Available only once materials are staged (UnderConstruction),
+			// matching evaluateBuildOptions' gate; otherwise Blocked so builders aren't dispatched
+			// while the site still needs clearing or materials. The umbrella persists across phases
+			// so the child Harvest/Haul goals never collide on the single-top-level-per-destination
+			// guard.
+			const GoalStatus umbrellaStatus =
+				decision.emitBuildGoal ? GoalStatus::Available : GoalStatus::Blocked;
+			const uint64_t umbrellaId = ensureUmbrellaGoal(entity, blueprint, umbrellaStatus);
+
 			if (decision.emitClearGoals) {
-				emitClearGoals(entity, foundationId);
+				emitClearGoals(entity, foundationId, umbrellaId);
 			} else if (decision.emitMaterialGoals) {
-				emitMaterialGoals(entity, blueprint);
+				// Footprint is clear: the clear-Harvest child is obsolete, drop it; keep the
+				// per-material Harvest/Haul children sized against the live manifest.
+				retireChildGoals(entity, umbrellaId, /*keepMaterialChildren=*/true);
+				emitMaterialGoals(entity, blueprint, umbrellaId);
 			} else if (decision.emitBuildGoal) {
-				emitBuildGoal(entity, blueprint);
+				// Materials staged: no child goals remain relevant; the umbrella is now Available
+				// and ActionSystem advances workDone directly.
+				retireChildGoals(entity, umbrellaId, /*keepMaterialChildren=*/false);
 			}
 
 			entitiesWithGoals.erase(entity);
@@ -213,7 +228,7 @@ namespace ecs {
 		}
 	}
 
-	void ConstructionSystem::emitClearGoals(EntityID blueprintEntity, uint64_t foundationId) {
+	void ConstructionSystem::emitClearGoals(EntityID blueprintEntity, uint64_t foundationId, uint64_t umbrellaGoalId) {
 		if (m_constructionWorld == nullptr || m_placementExecutor == nullptr || m_processedChunks == nullptr) {
 			return;
 		}
@@ -221,13 +236,17 @@ namespace ecs {
 		auto& registry		= GoalTaskRegistry::Get();
 		auto& assetRegistry = engine::assets::AssetRegistry::Get();
 
-		// One clear Harvest goal per blueprint is enough: it requests the yield of the blockers
+		// One clear Harvest CHILD per blueprint is enough: it requests the yield of the blockers
 		// (e.g. Wood from trees), which AIDecision serves against any matching harvestable on the
-		// site. Chopping clears the footprint AND feeds the Wood manifest. We point destination at
-		// the blueprint so the goal is owned/cleaned alongside it; the actual harvest target is a
-		// tree the colonist knows about.
-		if (registry.getGoalByDestination(blueprintEntity) != nullptr) {
-			return; // already has a goal of some kind for this entity
+		// site. Chopping clears the footprint AND feeds the Wood manifest. The child hangs under
+		// the umbrella (parentGoalId set) so it is owned/cleaned alongside the blueprint without
+		// fighting the umbrella for the single-top-level-per-destination slot; the actual harvest
+		// target is a tree the colonist knows about.
+		for (const auto* g : registry.getGoalsByOwner(GoalOwner::ConstructionGoalSystem)) {
+			if (g->destinationEntity == blueprintEntity && g->type == TaskType::Harvest &&
+				g->parentGoalId.has_value() && g->parentGoalId.value() == umbrellaGoalId) {
+				return; // a clear/material Harvest child is already active for this blueprint
+			}
 		}
 
 		// Find the dominant yield among footprint blockers so the Harvest goal has a concrete
@@ -284,6 +303,7 @@ namespace ecs {
 		clearGoal.acceptedDefNameIds = {yieldDefNameId};
 		clearGoal.targetAmount		= 1; // clear at least one blocker per pass; re-emitted while not clear
 		clearGoal.yieldDefNameId	= yieldDefNameId;
+		clearGoal.parentGoalId		= umbrellaGoalId; // child of the umbrella: skips the destination guard
 		clearGoal.status			= GoalStatus::Available;
 		registry.createGoal(std::move(clearGoal));
 		LOG_DEBUG(
@@ -294,17 +314,20 @@ namespace ecs {
 		);
 	}
 
-	void ConstructionSystem::emitMaterialGoals(EntityID blueprintEntity, const StructureBlueprint& blueprint) {
+	void ConstructionSystem::emitMaterialGoals(
+		EntityID blueprintEntity, const StructureBlueprint& blueprint, uint64_t umbrellaGoalId
+	) {
 		auto& registry		= GoalTaskRegistry::Get();
 		auto& assetRegistry = engine::assets::AssetRegistry::Get();
 
 		const auto* position = world->getComponent<Position>(blueprintEntity);
 		const glm::vec2 sitePos = position != nullptr ? position->value : glm::vec2{0.0F, 0.0F};
 
-		// A clear-Harvest goal from the previous phase points at the site too. It is harmless
-		// (it requests the same Wood), so we leave it; the per-material goals below are keyed by
-		// type + accepted id, and the loose set of construction goals for this entity is rebuilt
-		// against the live `remaining` each pass.
+		// The clear-Harvest child from the previous phase was already retired by the caller once
+		// the footprint went clear. The per-material goals below are keyed by type + accepted id,
+		// and the set of construction children for this entity is rebuilt against the live
+		// `remaining` each pass. Every child parents to the umbrella so a multi-material site
+		// carries one Harvest + one Haul child per material without colliding on the destination.
 		//
 		// Model: one Harvest goal and one Haul goal per material, BOTH Available, NO dependency.
 		// The colonist chops a tree (Wood into inventory), then the inventory-source Haul (which
@@ -392,6 +415,7 @@ namespace ecs {
 				harvestGoal.acceptedDefNameIds = {defNameId};
 				harvestGoal.targetAmount	  = harvestDemand;
 				harvestGoal.yieldDefNameId	  = defNameId;
+				harvestGoal.parentGoalId	  = umbrellaGoalId; // child of umbrella: skips destination guard
 				harvestGoal.status			  = GoalStatus::Available;
 				harvestGoal.chainId			  = chainId;
 				registry.createGoal(std::move(harvestGoal));
@@ -412,6 +436,7 @@ namespace ecs {
 				haulGoal.destinationPosition = sitePos;
 				haulGoal.acceptedDefNameIds	 = {defNameId};
 				haulGoal.targetAmount		 = remaining;
+				haulGoal.parentGoalId		 = umbrellaGoalId; // child of umbrella: skips destination guard
 				haulGoal.status				 = GoalStatus::Available;
 				haulGoal.chainId			 = chainId;
 				registry.createGoal(std::move(haulGoal));
@@ -443,37 +468,69 @@ namespace ecs {
 		return total;
 	}
 
-	void ConstructionSystem::emitBuildGoal(EntityID blueprintEntity, const StructureBlueprint& blueprint) {
+	uint64_t ConstructionSystem::ensureUmbrellaGoal(
+		EntityID blueprintEntity, const StructureBlueprint& blueprint, GoalStatus status
+	) {
 		auto& registry = GoalTaskRegistry::Get();
 
 		const auto* position = world->getComponent<Position>(blueprintEntity);
 		const glm::vec2 sitePos = position != nullptr ? position->value : glm::vec2{0.0F, 0.0F};
 
+		// The umbrella owns the destination slot. Because every child carries parentGoalId it is
+		// always the (only) goal getGoalByDestination returns for this blueprint.
 		const auto* existing = registry.getGoalByDestination(blueprintEntity);
-		if (existing != nullptr) {
-			if (existing->type == TaskType::Build) {
-				return; // build goal already active
+		if (existing != nullptr && existing->type == TaskType::Build) {
+			if (existing->status != status) {
+				registry.updateGoal(existing->id, [status](GoalTask& g) { g.status = status; });
 			}
-			// A leftover material goal: materials are done, replace it with the Build goal.
-			registry.removeGoalWithChildren(existing->id);
+			return existing->id;
 		}
 
+		// No umbrella yet (first tick for this blueprint). A stray non-Build top-level goal here
+		// would be a bug from an earlier owner; createGoal updates the destination slot in place,
+		// so this both creates the umbrella and reclaims the slot if needed.
 		GoalTask buildGoal;
 		buildGoal.type				 = TaskType::Build;
 		buildGoal.owner				 = GoalOwner::ConstructionGoalSystem;
 		buildGoal.destinationEntity	 = blueprintEntity;
 		buildGoal.destinationPosition = sitePos;
 		buildGoal.targetAmount		 = 1; // a single goal; multiple colonists can all work it
-		buildGoal.status			 = GoalStatus::Available;
-		registry.createGoal(std::move(buildGoal));
+		buildGoal.status			 = status;
+		const uint64_t umbrellaId = registry.createGoal(std::move(buildGoal));
 
 		LOG_DEBUG(
 			Engine,
-			"[Construction] Emitted Build goal for blueprint %u (work %.0f/%.0f)",
+			"[Construction] Umbrella Build goal %llu for blueprint %u (status %d, work %.0f/%.0f)",
+			static_cast<unsigned long long>(umbrellaId),
 			static_cast<uint32_t>(blueprintEntity),
+			static_cast<int>(status),
 			static_cast<double>(blueprint.workDone),
 			static_cast<double>(blueprint.workTotal)
 		);
+		return umbrellaId;
+	}
+
+	void ConstructionSystem::retireChildGoals(
+		EntityID blueprintEntity, uint64_t umbrellaGoalId, bool keepMaterialChildren
+	) {
+		auto& registry = GoalTaskRegistry::Get();
+
+		std::vector<uint64_t> toRemove;
+		for (const auto* child : registry.getChildGoals(umbrellaGoalId)) {
+			if (child->destinationEntity != blueprintEntity) {
+				continue;
+			}
+			// Material children carry a chainId (the Harvest/Haul delivery chain); the clear-Harvest
+			// child does not. When keeping material children, retire only the chain-less clear goal.
+			const bool isMaterialChild = child->chainId.has_value();
+			if (keepMaterialChildren && isMaterialChild) {
+				continue;
+			}
+			toRemove.push_back(child->id);
+		}
+		for (uint64_t id : toRemove) {
+			registry.removeGoalWithChildren(id);
+		}
 	}
 
 } // namespace ecs

@@ -84,6 +84,15 @@ namespace ecs {
 		int16_t inProgressBonus = 0; // Bonus for current task (+200)
 		int16_t taskAgeBonus = 0;	 // Bonus for old unclaimed tasks (0 to +100)
 
+		// Stable tiebreak key for deterministic option ordering. When two options compute the
+		// same calculatePriority() (e.g. two equidistant, equal-skill build sites), the sort
+		// must not fall back to container iteration order: the goal registry is backed by
+		// unordered containers, so that order is hash-bucket-dependent and would route colonists
+		// differently across machines, desyncing a fixed-step multiplayer simulation. Each
+		// evaluator fills this with the most stable id it has (goal id, station/entity id, etc.);
+		// the comparator breaks priority ties on it for a deterministic total order.
+		uint64_t tiebreakId = 0;
+
 		// Human-readable explanation for UI
 		std::string reason;
 
@@ -131,8 +140,8 @@ namespace ecs {
 			if (taskType == TaskType::Haul && status == OptionStatus::Available) {
 				return 37.0F + static_cast<float>(distanceBonus + chainBonus + inProgressBonus + taskAgeBonus);
 			}
-			// Tier 5: Construction build work - priority 41 + all bonuses. Sits just above
-			// crafting so staged build sites get finished; Construction skill feeds workBonus.
+			// Tier 6.45: Construction build work - priority 41 + all bonuses. Sits just above
+			// crafting (40) so staged build sites get finished; Construction skill feeds workBonus.
 			if (taskType == TaskType::Build && status == OptionStatus::Available) {
 				return 41.0F + workBonus();
 			}

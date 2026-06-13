@@ -232,6 +232,40 @@ TEST_F(BuildActionSystemTest, FiresStructureCompletedCallbackOnce) {
 	EXPECT_EQ(notified, blueprint);
 }
 
+TEST_F(BuildActionSystemTest, CompletionCallbackFiresOnceWithTwoConcurrentBuilders) {
+	// Two builders working the same blueprint. When the structure flips Complete, exactly ONE
+	// completion callback must fire: the redundant builder that arrives after the phase already
+	// flipped Complete is treated as a no-op, not a second completion (no duplicate toast / world
+	// version bump).
+	int		 callbackCount = 0;
+	EntityID notified	   = 0;
+	actionSystem->setStructureCompletedCallback([&](EntityID e) {
+		++callbackCount;
+		notified = e;
+	});
+
+	auto blueprint = createBlueprint(10.0F); // base rate 10/s
+	auto builderA  = createBuilder(0.0F);
+	auto builderB  = createBuilder(0.0F);
+	assignBuildTask(builderA, blueprint);
+	assignBuildTask(builderB, blueprint);
+
+	world->update(0.1F); // both start + first tick
+	world->update(2.0F); // both overshoot the bound on the same update
+
+	auto* bp = world->getComponent<StructureBlueprint>(blueprint);
+	EXPECT_EQ(bp->phase, StructureBlueprint::BuildPhase::Complete);
+	EXPECT_FLOAT_EQ(bp->workDone, 10.0F); // clamped, not double-overshot
+	EXPECT_EQ(callbackCount, 1) << "redundant second builder must not re-fire completion";
+	EXPECT_EQ(notified, blueprint);
+
+	// A further tick with both still assigned (the redundant-builder path) must not fire again.
+	assignBuildTask(builderA, blueprint);
+	assignBuildTask(builderB, blueprint);
+	world->update(1.0F);
+	EXPECT_EQ(callbackCount, 1) << "no completion callback once already Complete";
+}
+
 TEST_F(BuildActionSystemTest, DoesNotStartBuildWhenNotUnderConstruction) {
 	auto builder = createBuilder(0.0F);
 	auto blueprint = createBlueprint(100.0F);
