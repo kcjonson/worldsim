@@ -1,6 +1,8 @@
 add_library(geometry
     predicates/Predicates.cpp
     polygon/Polygon.cpp
+    arrangement/Arrangement.cpp
+    arrangement/HalfEdge.cpp
 )
 
 target_include_directories(geometry
