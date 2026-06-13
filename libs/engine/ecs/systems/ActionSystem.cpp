@@ -445,9 +445,7 @@ namespace ecs {
 				auto& goalRegistry = GoalTaskRegistry::Get();
 
 				// Record delivery to the harvest goal (items yielded)
-				uint64_t worldEntityKey = static_cast<uint64_t>(std::hash<float>{}(collEff.sourcePosition.x)) ^
-										  (static_cast<uint64_t>(std::hash<float>{}(collEff.sourcePosition.y)) << 32);
-				goalRegistry.recordDelivery(task.harvestGoalId, worldEntityKey);
+				goalRegistry.recordDelivery(task.harvestGoalId);
 
 				// Check if goal is now complete
 				const auto* goal = goalRegistry.getGoal(task.harvestGoalId);
@@ -455,11 +453,6 @@ namespace ecs {
 					// Harvest goal complete - notify dependent goals then remove
 					goalRegistry.notifyGoalCompleted(task.harvestGoalId);
 					goalRegistry.removeGoal(task.harvestGoalId);
-					LOG_INFO(
-						Engine,
-						"[Action] Harvest goal %llu complete - removed",
-						static_cast<unsigned long long>(task.harvestGoalId)
-					);
 				}
 			}
 		}
@@ -617,17 +610,12 @@ namespace ecs {
 				// For goal-driven Haul tasks, update and clean up the goal
 				if (task.type == TaskType::Haul && task.haulGoalId != 0) {
 					auto& goalRegistry = GoalTaskRegistry::Get();
-					goalRegistry.recordDelivery(task.haulGoalId, 0); // Record delivery
+					goalRegistry.recordDelivery(task.haulGoalId);
 
 					const auto* goal = goalRegistry.getGoal(task.haulGoalId);
 					if (goal != nullptr && goal->availableCapacity() == 0) {
 						// Haul goal complete - remove it
 						goalRegistry.removeGoal(task.haulGoalId);
-						LOG_INFO(
-							Engine,
-							"[Action] Haul goal %llu complete - removed",
-							static_cast<unsigned long long>(task.haulGoalId)
-						);
 					}
 				}
 			} else {

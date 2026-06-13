@@ -2,7 +2,6 @@
 
 #include "scenes/game/ui/adapters/GlobalTaskAdapter.h"
 
-#include <ecs/GlobalTaskRegistry.h>
 #include <ecs/components/Colonist.h>
 #include <ecs/components/Inventory.h>
 #include <ecs/components/Memory.h>
@@ -291,7 +290,7 @@ void ColonistDetailsModel::extractTasksData(ecs::World& world, ecs::EntityID col
 
 	// Get tasks known by this colonist via the adapter
 	// Uses GlobalTaskDisplayData directly for consistency with GlobalTaskRow
-	tasksData.tasks = adapters::getTasksForColonist(world, colonistId, colonistPosition);
+	tasksData.tasks = adapters::getTasksForColonist(colonistPosition);
 	adapters::sortTasksForDisplay(tasksData.tasks);
 	tasksData.totalCount = tasksData.tasks.size();
 }

@@ -2,15 +2,12 @@
 
 // GlobalTaskAdapter - Query layer for global task list UI
 //
-// This adapter isolates ECS/GlobalTaskRegistry knowledge from the ViewModel.
-// Queries all tasks and transforms them into display-ready data.
+// This adapter isolates ECS/GoalTaskRegistry knowledge from the ViewModel.
+// Queries all goals and transforms them into display-ready data.
 //
 // Used by both:
 // - GlobalTaskListView (colony-wide panel)
 // - TasksTabView (colonist-specific dialog tab)
-
-#include <ecs/EntityID.h>
-#include <ecs/World.h>
 
 #include <glm/vec2.hpp>
 
@@ -38,23 +35,17 @@ struct GlobalTaskDisplayData {
 	uint32_t quantity = 1;			// Amount: "Cut 2 Trees" or "Haul 3 Wood"
 };
 
-/// Query all tasks from GlobalTaskRegistry (for colony-wide view)
-/// @param world The ECS world (for colonist name lookups)
+/// Query all goals from GoalTaskRegistry (for colony-wide view)
 /// @param cameraCenter Position to calculate distances from
 /// @return Vector of task display data, unsorted
 [[nodiscard]] std::vector<GlobalTaskDisplayData> getGlobalTasks(
-	ecs::World& world,
 	const glm::vec2& cameraCenter
 );
 
-/// Query tasks known by a specific colonist (for colonist details tab)
-/// @param world The ECS world (for colonist name lookups)
-/// @param colonistId The colonist whose known tasks to query
+/// Query goals for the colonist details tab
 /// @param colonistPosition Position to calculate distances from
 /// @return Vector of task display data, unsorted
 [[nodiscard]] std::vector<GlobalTaskDisplayData> getTasksForColonist(
-	ecs::World& world,
-	ecs::EntityID colonistId,
 	const glm::vec2& colonistPosition
 );
 

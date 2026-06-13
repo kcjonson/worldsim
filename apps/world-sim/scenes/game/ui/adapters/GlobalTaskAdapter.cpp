@@ -2,9 +2,6 @@
 
 #include <assets/AssetRegistry.h>
 #include <ecs/GoalTaskRegistry.h>
-#include <ecs/components/Colonist.h>
-
-#include <utils/Log.h>
 
 #include <algorithm>
 #include <cmath>
@@ -97,15 +94,6 @@ namespace world_sim::adapters {
 			return defName;
 		}
 
-		/// Get colonist name from EntityID
-		std::string getColonistName(ecs::World& world, ecs::EntityID colonistId) {
-			auto* colonist = world.getComponent<ecs::Colonist>(colonistId);
-			if (colonist != nullptr) {
-				return colonist->name;
-			}
-			return "Unknown";
-		}
-
 		/// Build description for a goal based on type and accepted items
 		std::string buildGoalDescription(const ecs::GoalTask& goal, const ecs::GoalTaskRegistry& goalRegistry) {
 			std::string prefix = getTaskTypePrefix(goal.type);
@@ -170,7 +158,6 @@ namespace world_sim::adapters {
 
 		/// Convert goal to display data
 		GlobalTaskDisplayData goalToDisplayData(
-			ecs::World&					  world,
 			const ecs::GoalTaskRegistry& goalRegistry,
 			const ecs::GoalTask&		  goal,
 			const glm::vec2&			  referencePosition
@@ -193,8 +180,7 @@ namespace world_sim::adapters {
 			data.distanceValue = std::sqrt(dx * dx + dy * dy);
 			data.distance = std::format("{}m", static_cast<int>(data.distanceValue));
 
-			// Status based on GoalStatus and reservations
-			size_t	 reservationCount = goal.itemReservations.size();
+			// Status based on GoalStatus
 			uint32_t available = goal.availableCapacity();
 
 			// First check goal status for blocking conditions
@@ -206,18 +192,6 @@ namespace world_sim::adapters {
 				data.status = "Waiting for harvest";
 				data.statusDetail = "";
 				data.isBlocked = true;
-			} else if (reservationCount > 0) {
-				// Show who's working on it
-				auto		it = goal.itemReservations.begin();
-				std::string workerName = getColonistName(world, it->second);
-				if (reservationCount == 1) {
-					data.status = workerName;
-					data.statusDetail = "working";
-				} else {
-					data.status = workerName;
-					data.statusDetail = std::format("+ {} more", reservationCount - 1);
-				}
-				data.isReserved = true;
 			} else if (available == 0) {
 				data.status = "Complete";
 				data.statusDetail = "";
@@ -240,7 +214,7 @@ namespace world_sim::adapters {
 
 	} // anonymous namespace
 
-	std::vector<GlobalTaskDisplayData> getGlobalTasks(ecs::World& world, const glm::vec2& cameraCenter) {
+	std::vector<GlobalTaskDisplayData> getGlobalTasks(const glm::vec2& cameraCenter) {
 		auto& registry = ecs::GoalTaskRegistry::Get();
 
 		std::vector<GlobalTaskDisplayData> result;
@@ -248,67 +222,48 @@ namespace world_sim::adapters {
 		// Get all goals (Harvest, Haul, Craft, PlacePackaged) - skip completed ones
 		for (const auto* goal : registry.getGoalsOfType(ecs::TaskType::Harvest)) {
 			if (goal->availableCapacity() > 0) {
-				result.push_back(goalToDisplayData(world, registry, *goal, cameraCenter));
+				result.push_back(goalToDisplayData(registry, *goal, cameraCenter));
 			}
 		}
 		for (const auto* goal : registry.getGoalsOfType(ecs::TaskType::Haul)) {
 			if (goal->availableCapacity() > 0) {
-				result.push_back(goalToDisplayData(world, registry, *goal, cameraCenter));
+				result.push_back(goalToDisplayData(registry, *goal, cameraCenter));
 			}
 		}
 		for (const auto* goal : registry.getGoalsOfType(ecs::TaskType::Craft)) {
 			if (goal->availableCapacity() > 0) {
-				result.push_back(goalToDisplayData(world, registry, *goal, cameraCenter));
+				result.push_back(goalToDisplayData(registry, *goal, cameraCenter));
 			}
 		}
 		for (const auto* goal : registry.getGoalsOfType(ecs::TaskType::PlacePackaged)) {
 			if (goal->availableCapacity() > 0) {
-				result.push_back(goalToDisplayData(world, registry, *goal, cameraCenter));
+				result.push_back(goalToDisplayData(registry, *goal, cameraCenter));
 			}
 		}
 
 		return result;
 	}
 
-	std::vector<GlobalTaskDisplayData> getTasksForColonist(ecs::World& world, ecs::EntityID colonistId, const glm::vec2& colonistPosition) {
+	std::vector<GlobalTaskDisplayData> getTasksForColonist(const glm::vec2& colonistPosition) {
 		auto& registry = ecs::GoalTaskRegistry::Get();
 
 		std::vector<GlobalTaskDisplayData> result;
 
-		// For colonist view, show goals where this colonist has a reservation
-		auto checkReservation = [colonistId](const ecs::GoalTask& goal, GlobalTaskDisplayData& data) {
-			for (const auto& [itemKey, reserver] : goal.itemReservations) {
-				if (reserver == colonistId) {
-					data.isMine = true;
-					data.status = "In Progress";
-					break;
-				}
-			}
-		};
-
 		for (const auto* goal : registry.getGoalsOfType(ecs::TaskType::Harvest)) {
 			if (goal->availableCapacity() == 0) continue;
-			auto data = goalToDisplayData(world, registry, *goal, colonistPosition);
-			checkReservation(*goal, data);
-			result.push_back(data);
+			result.push_back(goalToDisplayData(registry, *goal, colonistPosition));
 		}
 		for (const auto* goal : registry.getGoalsOfType(ecs::TaskType::Haul)) {
 			if (goal->availableCapacity() == 0) continue;
-			auto data = goalToDisplayData(world, registry, *goal, colonistPosition);
-			checkReservation(*goal, data);
-			result.push_back(data);
+			result.push_back(goalToDisplayData(registry, *goal, colonistPosition));
 		}
 		for (const auto* goal : registry.getGoalsOfType(ecs::TaskType::Craft)) {
 			if (goal->availableCapacity() == 0) continue;
-			auto data = goalToDisplayData(world, registry, *goal, colonistPosition);
-			checkReservation(*goal, data);
-			result.push_back(data);
+			result.push_back(goalToDisplayData(registry, *goal, colonistPosition));
 		}
 		for (const auto* goal : registry.getGoalsOfType(ecs::TaskType::PlacePackaged)) {
 			if (goal->availableCapacity() == 0) continue;
-			auto data = goalToDisplayData(world, registry, *goal, colonistPosition);
-			checkReservation(*goal, data);
-			result.push_back(data);
+			result.push_back(goalToDisplayData(registry, *goal, colonistPosition));
 		}
 
 		return result;

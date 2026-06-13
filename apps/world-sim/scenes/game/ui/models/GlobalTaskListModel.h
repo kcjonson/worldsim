@@ -3,7 +3,7 @@
 // GlobalTaskListModel - ViewModel for the global task list panel
 //
 // This model:
-// - Caches task data from GlobalTaskRegistry via GlobalTaskAdapter
+// - Caches task data from GoalTaskRegistry via GlobalTaskAdapter
 // - Throttles refresh rate to 5Hz (every 0.2s) to reduce cost
 // - Detects changes between refreshes to avoid unnecessary UI rebuilds
 // - Tracks total task count for collapsed panel display
@@ -29,7 +29,7 @@ class GlobalTaskListModel {
   public:
 	using TaskData = adapters::GlobalTaskDisplayData;
 
-	/// Refresh data from GlobalTaskRegistry (throttled to 5Hz)
+	/// Refresh data from GoalTaskRegistry (throttled to 5Hz)
 	/// @param world The ECS world (for colonist name lookups)
 	/// @param cameraCenter Camera position for distance calculations
 	/// @param deltaTime Time since last frame (seconds)

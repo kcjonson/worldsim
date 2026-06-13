@@ -7,7 +7,6 @@
 
 #include <assets/AssetRegistry.h>
 #include <assets/RecipeRegistry.h>
-#include <utils/Log.h>
 
 namespace ecs {
 
@@ -68,24 +67,13 @@ namespace ecs {
 		activeGoalCount = 0;
 
 		// Query all entities with WorkQueue + Position (crafting stations)
-		LOG_DEBUG(Engine, "[CraftingGoalSystem] Starting main loop, stationsWithGoals has %zu entries",
-			stationsWithGoals.size());
-
 		for (auto [entity, workQueue, position] : world->view<WorkQueue, Position>()) {
-			LOG_DEBUG(Engine, "[CraftingGoalSystem] Processing entity %llu",
-				static_cast<unsigned long long>(entity));
-
 			// Check if there's pending work
 			const CraftingJob* nextJob = workQueue.getNextJob();
 			if (nextJob == nullptr) {
 				// No pending work - remove goal and all children if exists
-				LOG_DEBUG(Engine, "[CraftingGoalSystem] Entity %llu has NO JOB, removing goals",
-					static_cast<unsigned long long>(entity));
 				const auto* existingGoal = goalRegistry.getGoalByDestination(entity);
 				if (existingGoal != nullptr) {
-					LOG_DEBUG(Engine, "[CraftingGoalSystem] Removing goal %llu for entity %llu (no job)",
-						static_cast<unsigned long long>(existingGoal->id),
-						static_cast<unsigned long long>(entity));
 					goalRegistry.removeGoalWithChildren(existingGoal->id);
 				}
 				stationsWithGoals.erase(entity);
@@ -96,9 +84,6 @@ namespace ecs {
 			const auto* recipe = recipeRegistry.getRecipe(nextJob->recipeDefName);
 			if (recipe == nullptr) {
 				// Invalid recipe - skip
-				LOG_DEBUG(Engine, "[CraftingGoalSystem] Entity %llu has INVALID RECIPE: %s",
-					static_cast<unsigned long long>(entity),
-					nextJob->recipeDefName.c_str());
 				const auto* existingGoal = goalRegistry.getGoalByDestination(entity);
 				if (existingGoal != nullptr) {
 					goalRegistry.removeGoalWithChildren(existingGoal->id);
@@ -107,16 +92,8 @@ namespace ecs {
 				continue;
 			}
 
-			LOG_DEBUG(Engine, "[CraftingGoalSystem] Entity %llu has job: %s (remaining=%u)",
-				static_cast<unsigned long long>(entity),
-				nextJob->recipeDefName.c_str(),
-				nextJob->remaining());
-
 			// Check if goal already exists
 			const auto* existingGoal = goalRegistry.getGoalByDestination(entity);
-			LOG_INFO(Engine, "[CraftingGoalSystem] Entity %llu: existingGoal=%s",
-				static_cast<unsigned long long>(entity),
-				existingGoal ? "found" : "NOT FOUND");
 			if (existingGoal != nullptr) {
 				// Goal exists - update target amount but keep hierarchy
 				goalRegistry.updateGoal(existingGoal->id, [&](GoalTask& goal) {
@@ -126,9 +103,6 @@ namespace ecs {
 				activeGoalCount++;
 				continue;
 			}
-
-			LOG_INFO(Engine, "[CraftingGoalSystem] Creating NEW goal hierarchy for entity %llu",
-				static_cast<unsigned long long>(entity));
 
 			// --- Create new goal hierarchy ---
 
@@ -224,25 +198,11 @@ namespace ecs {
 
 		// Remove goals for stations that no longer exist or have no WorkQueue
 		for (EntityID oldStation : stationsWithGoals) {
-			LOG_DEBUG(Engine, "[CraftingGoalSystem] Cleanup: station %llu no longer in view",
-				static_cast<unsigned long long>(oldStation));
 			const auto* existingGoal = goalRegistry.getGoalByDestination(oldStation);
 			if (existingGoal != nullptr) {
-				LOG_DEBUG(Engine, "[CraftingGoalSystem] Cleanup: removing goal %llu",
-					static_cast<unsigned long long>(existingGoal->id));
 				goalRegistry.removeGoalWithChildren(existingGoal->id);
 			}
 		}
-
-		// Log total goal count for debugging
-		size_t totalGoals = goalRegistry.getGoalsOfType(TaskType::Craft).size() +
-							goalRegistry.getGoalsOfType(TaskType::Harvest).size() +
-							goalRegistry.getGoalsOfType(TaskType::Haul).size();
-		LOG_DEBUG(Engine, "[CraftingGoalSystem] Update complete. Total goals: %zu (Craft=%zu, Harvest=%zu, Haul=%zu)",
-			totalGoals,
-			goalRegistry.getGoalsOfType(TaskType::Craft).size(),
-			goalRegistry.getGoalsOfType(TaskType::Harvest).size(),
-			goalRegistry.getGoalsOfType(TaskType::Haul).size());
 	}
 
 } // namespace ecs

@@ -260,26 +260,15 @@ namespace ecs {
 			}
 		}
 
-		/// Hash a world entity position + defNameId for reservation tracking
-		[[nodiscard]] uint64_t hashWorldEntity(const glm::vec2& pos, uint32_t defNameId) {
-			// Quantize position to 0.1 resolution
-			auto qx = static_cast<int64_t>(std::round(pos.x * 10.0F));
-			auto qy = static_cast<int64_t>(std::round(pos.y * 10.0F));
-			// Combine position and defNameId into unique key
-			return (static_cast<uint64_t>(qx) << 40) | (static_cast<uint64_t>(qy) << 16) | defNameId;
-		}
-
 		/// Evaluate haul options by querying Haul goals from GoalTaskRegistry
 		/// Goal-driven: Goals define WHAT storage needs items, Memory provides fulfillment options
 		/// @param registry Asset registry for capability lookups
 		/// @param memory Colonist memory (known entities)
-		/// @param colonist Colonist entity ID (for checking own reservations)
 		/// @param position Colonist position
 		/// @param trace Output decision trace
 		void evaluateHaulOptions(
 			const engine::assets::AssetRegistry& registry,
 			const Memory&						 memory,
-			EntityID							 colonist,
 			const glm::vec2&					 position,
 			DecisionTrace&						 trace
 		) {
@@ -326,12 +315,6 @@ namespace ecs {
 						continue;
 					}
 
-					// Check if item is already reserved by someone else
-					uint64_t worldEntityKey = hashWorldEntity(looseItem.position, looseItem.defNameId);
-					if (goal->isItemReserved(worldEntityKey) && !goal->isItemReservedBy(worldEntityKey, colonist)) {
-						continue; // Reserved by another colonist
-					}
-
 					const auto& itemDefName = registry.getDefName(looseItem.defNameId);
 					const auto* itemDef = registry.getDefinition(itemDefName);
 					if (itemDef == nullptr) {
@@ -370,14 +353,12 @@ namespace ecs {
 		/// Goal-driven: Goals define WHAT items are needed (via yieldDefNameId), Memory provides harvestable sources
 		/// @param registry Asset registry for capability and definition lookups
 		/// @param memory Colonist memory (known entities)
-		/// @param colonist Colonist entity ID (for checking own reservations)
 		/// @param position Colonist position
 		/// @param skills Optional skills component for skill bonus calculation
 		/// @param trace Output decision trace
 		void evaluateHarvestOptions(
 			const engine::assets::AssetRegistry& registry,
 			const Memory&						 memory,
-			EntityID							 colonist,
 			const glm::vec2&					 position,
 			const Skills*						 skills,
 			DecisionTrace&						 trace
@@ -421,13 +402,6 @@ namespace ecs {
 					uint32_t yieldDefNameId = registry.getDefNameId(def->capabilities.harvestable->yieldDefName);
 					if (yieldDefNameId != goal->yieldDefNameId) {
 						continue; // Yields different item than what goal needs
-					}
-
-					// Check if this entity is already reserved by someone else
-					// Use the entity position + defNameId as the key (same as haul)
-					uint64_t worldEntityKey = hashWorldEntity(knownEntity.position, knownEntity.defNameId);
-					if (goal->isItemReserved(worldEntityKey) && !goal->isItemReservedBy(worldEntityKey, colonist)) {
-						continue; // Reserved by another colonist
 					}
 
 					// Calculate distance to harvestable
@@ -1055,10 +1029,10 @@ namespace ecs {
 		}
 
 		// Tier 6.4: Haul loose items to storage containers (goal-driven)
-		evaluateHaulOptions(m_registry, memory, entity, position.value, trace);
+		evaluateHaulOptions(m_registry, memory, position.value, trace);
 
 		// Tier 6.7: Harvest resources for crafting (goal-driven)
-		evaluateHarvestOptions(m_registry, memory, entity, position.value, skills, trace);
+		evaluateHarvestOptions(m_registry, memory, position.value, skills, trace);
 
 		// Tier 6.35: Place packaged items at target locations
 		evaluatePlacePackagedOptions(world, position.value, inventory, trace);

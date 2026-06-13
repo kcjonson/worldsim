@@ -24,7 +24,6 @@ add_library(engine
     ecs/systems/StorageGoalSystem.cpp
     ecs/systems/CraftingGoalSystem.cpp
     ecs/systems/BuildGoalSystem.cpp
-    ecs/GlobalTaskRegistry.cpp
     ecs/GoalTaskRegistry.cpp
     ecs/components/MemoryQueries.cpp
     ecs/components/ToiletLocationFinder.cpp

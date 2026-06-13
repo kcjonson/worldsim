@@ -6,7 +6,8 @@
 // not at the ITEM level. This makes task counts bounded by O(goals) ~200 instead
 // of O(discovered entities) ~100,000.
 //
-// See /docs/design/game-systems/colonists/task-registry.md for design details.
+// Design: docs/design/game-systems/colonists/task-registry.md
+// Architecture: docs/technical/task-generation-architecture.md
 
 #include "EntityID.h"
 #include "components/Task.h"
@@ -48,7 +49,6 @@ namespace ecs {
 	/// - Old: One task per discovered loose item (O(discovered items) ~100,000)
 	/// - New: One task per GOAL - storage, crafting station, etc. (O(goals) ~200)
 	///
-	/// Item-level reservations happen INSIDE the goal, not as separate tasks.
 	struct GoalTask {
 		// Identity
 		uint64_t id = 0;	// Unique goal ID
@@ -62,11 +62,6 @@ namespace ecs {
 		// What this goal accepts (for Haul/Gather tasks)
 		std::vector<uint32_t>		 acceptedDefNameIds; // Specific items accepted
 		engine::assets::ItemCategory acceptedCategory = engine::assets::ItemCategory::None;
-
-		// Item-level reservations: which items are being hauled TO this goal
-		// Key = worldEntityKey (hash of item position + defNameId)
-		// Value = colonist hauling it
-		std::unordered_map<uint64_t, EntityID> itemReservations;
 
 		// Progress tracking
 		uint32_t targetAmount = 0;	  // How many items the goal wants
@@ -87,27 +82,15 @@ namespace ecs {
 		// Task chain ID for continuity bonus (cutter gets priority for linked haul)
 		std::optional<uint64_t> chainId;
 
-		// Check if an item is reserved (by anyone)
-		[[nodiscard]] bool isItemReserved(uint64_t worldEntityKey) const {
-			return itemReservations.find(worldEntityKey) != itemReservations.end();
-		}
-
-		// Check if an item is reserved by a specific colonist
-		[[nodiscard]] bool isItemReservedBy(uint64_t worldEntityKey, EntityID colonist) const {
-			auto it = itemReservations.find(worldEntityKey);
-			return it != itemReservations.end() && it->second == colonist;
-		}
-
 		// Check if goal is complete
 		[[nodiscard]] bool isComplete() const { return targetAmount > 0 && deliveredAmount >= targetAmount; }
 
-		// Get available capacity (target - delivered - in-progress)
+		// Get available capacity (target - delivered)
 		[[nodiscard]] uint32_t availableCapacity() const {
-			uint32_t inProgress = static_cast<uint32_t>(itemReservations.size());
-			if (deliveredAmount + inProgress >= targetAmount) {
+			if (deliveredAmount >= targetAmount) {
 				return 0;
 			}
-			return targetAmount - deliveredAmount - inProgress;
+			return targetAmount - deliveredAmount;
 		}
 	};
 
@@ -145,25 +128,9 @@ namespace ecs {
 		/// Remove goal by destination entity (convenience for entity destruction)
 		void removeGoalByDestination(EntityID destinationEntity);
 
-		// --- Item Reservations (called by colonists when they claim work) ---
-
-		/// Reserve an item for hauling to a goal
-		/// @param goalId The goal the item will be delivered to
-		/// @param worldEntityKey Hash key of the item being hauled
-		/// @param colonist The colonist claiming this item
-		/// @return true if reservation succeeded
-		bool reserveItem(uint64_t goalId, uint64_t worldEntityKey, EntityID colonist);
-
-		/// Release an item reservation (colonist finished or abandoned)
-		void releaseItem(uint64_t goalId, uint64_t worldEntityKey);
-
-		/// Release all reservations held by a colonist (colonist died, changed task, etc.)
-		void releaseAllForColonist(EntityID colonist);
-
-		/// Record delivery of an item to a goal
+		/// Record delivery of an item to a goal (increments deliveredAmount)
 		/// @param goalId The goal that received the item
-		/// @param worldEntityKey The item that was delivered (releases reservation too)
-		void recordDelivery(uint64_t goalId, uint64_t worldEntityKey);
+		void recordDelivery(uint64_t goalId);
 
 		// --- Queries ---
 
@@ -197,10 +164,6 @@ namespace ecs {
 		/// Get count of goals by owner
 		[[nodiscard]] size_t goalCount(GoalOwner owner) const;
 
-		/// Check if an item is reserved by any goal
-		/// @return The goal ID if reserved, nullopt if not
-		[[nodiscard]] std::optional<uint64_t> findItemReservation(uint64_t worldEntityKey) const;
-
 		// --- Hierarchy queries ---
 
 		/// Get all child goals of a parent goal
@@ -230,9 +193,6 @@ namespace ecs {
 
 		// Index: GoalOwner → set of goalIds
 		std::unordered_map<GoalOwner, std::unordered_set<uint64_t>> ownerToGoals;
-
-		// Index: worldEntityKey → goalId (for finding which goal has an item reserved)
-		std::unordered_map<uint64_t, uint64_t> itemToGoal;
 
 		// Index: parentGoalId → set of child goalIds
 		std::unordered_map<uint64_t, std::unordered_set<uint64_t>> parentToChildren;

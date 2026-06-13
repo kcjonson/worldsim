@@ -375,4 +375,149 @@ TEST_F(MultiSystemGoalTest, GoalOwnershipIsSetCorrectly) {
 	       craftingOwnedGoals, storageOwnedGoals);
 }
 
+// =============================================================================
+// Goal Hierarchy & Lifecycle Tests (registry semantics)
+// =============================================================================
+
+class GoalHierarchyTest : public ::testing::Test {
+  protected:
+	void SetUp() override { GoalTaskRegistry::Get().clear(); }
+	void TearDown() override { GoalTaskRegistry::Get().clear(); }
+
+	/// Build a Craft goal with a child Harvest and a child Haul that depends on the Harvest.
+	/// Returns the three goal IDs.
+	struct Hierarchy {
+		uint64_t craftId;
+		uint64_t harvestId;
+		uint64_t haulId;
+	};
+
+	Hierarchy buildCraftHierarchy(EntityID station) {
+		auto& registry = GoalTaskRegistry::Get();
+
+		GoalTask craft;
+		craft.type = TaskType::Craft;
+		craft.owner = GoalOwner::CraftingGoalSystem;
+		craft.destinationEntity = station;
+		craft.targetAmount = 1;
+		craft.status = GoalStatus::Blocked;
+		uint64_t craftId = registry.createGoal(std::move(craft));
+
+		GoalTask harvest;
+		harvest.type = TaskType::Harvest;
+		harvest.owner = GoalOwner::CraftingGoalSystem;
+		harvest.destinationEntity = station;
+		harvest.targetAmount = 1;
+		harvest.parentGoalId = craftId;
+		harvest.status = GoalStatus::Available;
+		uint64_t harvestId = registry.createGoal(std::move(harvest));
+
+		GoalTask haul;
+		haul.type = TaskType::Haul;
+		haul.owner = GoalOwner::CraftingGoalSystem;
+		haul.destinationEntity = station;
+		haul.targetAmount = 1;
+		haul.parentGoalId = craftId;
+		haul.dependsOnGoalId = harvestId;
+		haul.status = GoalStatus::WaitingForItems;
+		uint64_t haulId = registry.createGoal(std::move(haul));
+
+		return {craftId, harvestId, haulId};
+	}
+};
+
+// (a) Cancel cascade: removing a Craft goal removes all child Haul/Harvest goals
+TEST_F(GoalHierarchyTest, RemoveGoalWithChildrenCascades) {
+	auto& registry = GoalTaskRegistry::Get();
+	auto  h = buildCraftHierarchy(static_cast<EntityID>(42));
+
+	ASSERT_EQ(registry.goalCount(), 3U);
+	ASSERT_EQ(registry.getChildGoals(h.craftId).size(), 2U);
+
+	registry.removeGoalWithChildren(h.craftId);
+
+	EXPECT_EQ(registry.goalCount(), 0U) << "Craft + both children should be gone";
+	EXPECT_EQ(registry.getGoal(h.craftId), nullptr);
+	EXPECT_EQ(registry.getGoal(h.harvestId), nullptr);
+	EXPECT_EQ(registry.getGoal(h.haulId), nullptr);
+}
+
+// (a') The WorkQueue-job-removed path in CraftingGoalSystem reaps children too
+TEST_F(CraftingGoalSystemTest, JobRemovedReapsChildGoals) {
+	// Recipe with an input creates a Craft + child Haul hierarchy
+	engine::assets::RecipeDef recipe;
+	recipe.defName = "ReapRecipe";
+	recipe.label = "Reap Recipe";
+	recipe.stationDefName = "";
+	recipe.workAmount = 100.0F;
+	engine::assets::AssetRegistry::Get().clearDefinitions();
+	engine::assets::AssetDefinition stickDef;
+	stickDef.defName = "Stick";
+	stickDef.label = "Stick";
+	stickDef.category = engine::assets::ItemCategory::RawMaterial;
+	stickDef.itemProperties = engine::assets::ItemProperties{};
+	stickDef.itemProperties->stackSize = 10;
+	engine::assets::AssetRegistry::Get().registerTestDefinition(std::move(stickDef));
+	recipe.inputs.push_back(engine::assets::RecipeInput{.defName = "Stick", .defNameId = 0, .count = 1});
+	engine::assets::RecipeRegistry::Get().registerTestRecipe(recipe);
+
+	auto  station = createCraftingStation({0.0F, 0.0F}, "ReapRecipe", 1);
+	auto& registry = GoalTaskRegistry::Get();
+
+	runUpdates(60);
+	ASSERT_GE(registry.goalCount(), 2U) << "Craft + child Haul should exist";
+
+	// Remove the job; the system should reap the whole hierarchy
+	auto* queue = world->getComponent<WorkQueue>(station);
+	ASSERT_NE(queue, nullptr);
+	queue->jobs.clear();
+
+	runUpdates(60);
+
+	EXPECT_EQ(registry.goalCount(), 0U) << "All goals reaped when job removed";
+
+	engine::assets::AssetRegistry::Get().clearDefinitions();
+}
+
+// (b) Dependency unlock: completing a Harvest flips its dependent Haul to Available
+TEST_F(GoalHierarchyTest, NotifyGoalCompletedUnlocksDependents) {
+	auto& registry = GoalTaskRegistry::Get();
+	auto  h = buildCraftHierarchy(static_cast<EntityID>(7));
+
+	ASSERT_EQ(registry.getGoal(h.haulId)->status, GoalStatus::WaitingForItems);
+	ASSERT_EQ(registry.getDependentGoals(h.harvestId).size(), 1U);
+
+	registry.notifyGoalCompleted(h.harvestId);
+
+	EXPECT_EQ(registry.getGoal(h.haulId)->status, GoalStatus::Available)
+	    << "Haul should unblock once its Harvest dependency completes";
+}
+
+// (c) Delivery completion: recordDelivery increments deliveredAmount and completes at target
+TEST_F(GoalHierarchyTest, RecordDeliveryCompletesGoal) {
+	auto& registry = GoalTaskRegistry::Get();
+
+	GoalTask haul;
+	haul.type = TaskType::Haul;
+	haul.owner = GoalOwner::StorageGoalSystem;
+	haul.destinationEntity = static_cast<EntityID>(99);
+	haul.targetAmount = 3;
+	uint64_t haulId = registry.createGoal(std::move(haul));
+
+	EXPECT_EQ(registry.getGoal(haulId)->deliveredAmount, 0U);
+	EXPECT_EQ(registry.getGoal(haulId)->availableCapacity(), 3U);
+	EXPECT_FALSE(registry.getGoal(haulId)->isComplete());
+
+	registry.recordDelivery(haulId);
+	registry.recordDelivery(haulId);
+	EXPECT_EQ(registry.getGoal(haulId)->deliveredAmount, 2U);
+	EXPECT_EQ(registry.getGoal(haulId)->availableCapacity(), 1U);
+	EXPECT_FALSE(registry.getGoal(haulId)->isComplete());
+
+	registry.recordDelivery(haulId);
+	EXPECT_EQ(registry.getGoal(haulId)->deliveredAmount, 3U);
+	EXPECT_EQ(registry.getGoal(haulId)->availableCapacity(), 0U);
+	EXPECT_TRUE(registry.getGoal(haulId)->isComplete());
+}
+
 } // namespace ecs::test

@@ -16,7 +16,7 @@ bool distanceChanged(float oldDist, float newDist) {
 
 } // namespace
 
-bool GlobalTaskListModel::refresh(ecs::World& world, const glm::vec2& cameraCenter, float deltaTime) {
+bool GlobalTaskListModel::refresh(ecs::World& /*world*/, const glm::vec2& cameraCenter, float deltaTime) {
 	// Throttle refreshes to 5Hz unless forced
 	if (!forceRefresh) {
 		timeSinceRefresh += deltaTime;
@@ -30,7 +30,7 @@ bool GlobalTaskListModel::refresh(ecs::World& world, const glm::vec2& cameraCent
 	forceRefresh = false;
 
 	// Query fresh data
-	auto newData = adapters::getGlobalTasks(world, cameraCenter);
+	auto newData = adapters::getGlobalTasks(cameraCenter);
 	adapters::sortTasksForDisplay(newData);
 
 	// First refresh always triggers rebuild
