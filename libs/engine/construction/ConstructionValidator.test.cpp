@@ -236,11 +236,11 @@ TEST(ConstructionValidator, WallJunctionAngleExactlyAtThresholdPasses) {
 	// well above 30. Build a tight-but-legal 30 deg interior angle instead: prior
 	// runs +x, candidate doubles back at 30 deg above the reverse direction.
 	// interior angle between (prev->before)=(-x) and (prev->cand) = 30 deg.
-	const float			rad = 30.0F * 3.14159265F / 180.0F;
-	std::vector<Vec2>	chain = {{2.0F, 6.0F}, {6.0F, 6.0F}};
-	const float			len = 3.0F;
-	Vec2				cand{6.0F - len * std::cos(rad), 6.0F + len * std::sin(rad)};
-	auto				r = validator.validateWallPoint(chain, cand, standardWood(), host);
+	const float		  rad = 30.0F * 3.14159265F / 180.0F;
+	std::vector<Vec2> chain = {{2.0F, 6.0F}, {6.0F, 6.0F}};
+	const float		  len = 3.0F;
+	Vec2			  cand{6.0F - len * std::cos(rad), 6.0F + len * std::sin(rad)};
+	auto			  r = validator.validateWallPoint(chain, cand, standardWood(), host);
 	EXPECT_TRUE(r.ok()) << "30 deg junction should pass at threshold (measured " << r.measuredValue << ")";
 }
 
@@ -251,11 +251,11 @@ TEST(ConstructionValidator, WallJunctionAngleTooSharpFails) {
 	ConstructionValidator validator(cfg, world);
 	// Candidate doubles back almost on top of the prior segment: ~10 deg interior
 	// junction angle, far below 30.
-	const float			rad = 10.0F * 3.14159265F / 180.0F;
-	std::vector<Vec2>	chain = {{2.0F, 6.0F}, {6.0F, 6.0F}};
-	const float			len = 3.0F;
-	Vec2				cand{6.0F - len * std::cos(rad), 6.0F + len * std::sin(rad)};
-	auto				r = validator.validateWallPoint(chain, cand, standardWood(), host);
+	const float		  rad = 10.0F * 3.14159265F / 180.0F;
+	std::vector<Vec2> chain = {{2.0F, 6.0F}, {6.0F, 6.0F}};
+	const float		  len = 3.0F;
+	Vec2			  cand{6.0F - len * std::cos(rad), 6.0F + len * std::sin(rad)};
+	auto			  r = validator.validateWallPoint(chain, cand, standardWood(), host);
 	EXPECT_EQ(r.code, ValidationCode::AngleTooSharp);
 }
 

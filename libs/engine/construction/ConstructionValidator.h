@@ -43,7 +43,7 @@
 namespace engine::assets {
 	struct ConstraintConfig;
 	struct ThicknessPreset;
-}
+} // namespace engine::assets
 
 namespace engine::construction {
 
@@ -64,11 +64,11 @@ namespace engine::construction {
 		// Wall codes (Epic D phase 2). AngleTooSharp (junction angle) and
 		// SelfIntersects (open chain crosses itself) are reused for walls where
 		// they already fit; these are the wall-only reasons.
-		SegmentTooShort,			// wall segment shorter than minSegmentLength
+		SegmentTooShort,			  // wall segment shorter than minSegmentLength
 		NotContainedInHostFoundation, // full-thickness footprint pokes outside the host ring
-		WallsOverlap,				// footprint overlaps another wall's footprint (not a junction)
-		ParallelClearanceTooSmall,	// faces run closer than minParallelClearance without joining
-		XCrossing,					// centerline would properly cross an existing wall centerline
+		WallsOverlap,				  // footprint overlaps another wall's footprint (not a junction)
+		ParallelClearanceTooSmall,	  // faces run closer than minParallelClearance without joining
+		XCrossing,					  // centerline would properly cross an existing wall centerline
 	};
 
 	// Result of a check. `code` drives both the red colorizing and the reason
@@ -124,10 +124,10 @@ namespace engine::construction {
 		// check, for the freestanding-wall future). `vertexIndex` in a failure
 		// indexes into `points`+candidate (candidate is the last index).
 		[[nodiscard]] ValidationResult validateWallPoint(
-			const std::vector<::Foundation::Vec2>&	points,
-			::Foundation::Vec2						candidate,
-			const engine::assets::ThicknessPreset&	thickness,
-			FoundationId							host
+			const std::vector<::Foundation::Vec2>& points,
+			::Foundation::Vec2					   candidate,
+			const engine::assets::ThicknessPreset& thickness,
+			FoundationId						   host
 		) const;
 
 		// Validate a single committed-segment a->b (world meters): length, host
@@ -137,10 +137,10 @@ namespace engine::construction {
 		// overlap/clearance check (they meet at a junction). Used as the per-segment
 		// commit gate and the colorizing feedback source.
 		[[nodiscard]] ValidationResult validateWallSegment(
-			::Foundation::Vec2						a,
-			::Foundation::Vec2						b,
-			const engine::assets::ThicknessPreset&	thickness,
-			FoundationId							host
+			::Foundation::Vec2					   a,
+			::Foundation::Vec2					   b,
+			const engine::assets::ThicknessPreset& thickness,
+			FoundationId						   host
 		) const;
 
 	  private:

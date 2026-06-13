@@ -59,8 +59,7 @@ namespace engine::construction {
 					const auto& b0 = q[k];
 					const auto& b1 = q[(k + 1) % nq];
 					const auto	rel = geometry::intersectSegments(a0, a1, b0, b1).relation;
-					if (rel == geometry::SegmentRelation::ProperCrossing ||
-						rel == geometry::SegmentRelation::CollinearOverlap) {
+					if (rel == geometry::SegmentRelation::ProperCrossing || rel == geometry::SegmentRelation::CollinearOverlap) {
 						return true;
 					}
 				}
@@ -352,8 +351,8 @@ namespace engine::construction {
 
 		// Min segment length: the new segment prev->candidate. Strict-< so a segment
 		// exactly minSegmentLength long passes (matches minVertexSpacing convention).
-		const auto	 d = cand - prev;
-		const auto	 sq = geometry::dot(d, d);
+		const auto d = cand - prev;
+		const auto sq = geometry::dot(d, d);
 		if (sq < geometry::Int128::product(c.minSegmentLengthMm, c.minSegmentLengthMm)) {
 			const double mm = std::sqrt(sq.toDouble());
 			return {ValidationCode::SegmentTooShort, candIndex, 0, mm / static_cast<double>(geometry::kMillimetersPerMeter)};
@@ -417,7 +416,7 @@ namespace engine::construction {
 		}
 
 		// The candidate footprint, built once.
-		const std::int64_t half = thickness.halfThicknessMm;
+		const std::int64_t	 half = thickness.halfThicknessMm;
 		const geometry::Ring candBand = half > 0 ? geometry::band(qa, qb, half) : geometry::Ring{qa, qb};
 
 		for (const WallSegment& s : world_->segments()) {
@@ -446,7 +445,7 @@ namespace engine::construction {
 			// Build the existing wall's footprint. Its half-thickness lives only in
 			// config, so resolve it from the registry (the production source of
 			// truth); an unresolved preset degenerates to the centerline.
-			std::int64_t otherHalf = 0;
+			std::int64_t						   otherHalf = 0;
 			const engine::assets::ThicknessPreset* preset =
 				engine::assets::ConstructionRegistry::Get().getThicknessPreset(s.material, s.thicknessPreset);
 			if (preset != nullptr) {

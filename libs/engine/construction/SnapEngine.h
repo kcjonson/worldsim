@@ -79,7 +79,7 @@ namespace engine::construction {
 		//     T-junction" by hitSegment != kInvalidSegment.
 		// Both are the invalid sentinel for every other (and every foundation) kind.
 		SegmentId hitSegment = kInvalidSegment;
-		VertexId  hitVertex	 = kInvalidVertex;
+		VertexId  hitVertex = kInvalidVertex;
 
 		// True when the snap closes the polygon onto its origin (kind == Origin):
 		// the tool reads this to know a click commits.
