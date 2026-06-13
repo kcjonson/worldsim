@@ -31,7 +31,9 @@ namespace geometry {
 		constexpr explicit Int128(std::int64_t value) : value(value) {}
 
 		static Int128 product(std::int64_t a, std::int64_t b) {
-			return Int128(static_cast<__int128>(a) * static_cast<__int128>(b));
+			// Route through the wide tag constructor; Int128(int64_t) would narrow
+			// the 128-bit product to 64 bits before storing it.
+			return Int128(static_cast<__int128>(a) * static_cast<__int128>(b), tag{});
 		}
 
 		Int128 operator+(const Int128& rhs) const { return Int128(value + rhs.value, tag{}); }
