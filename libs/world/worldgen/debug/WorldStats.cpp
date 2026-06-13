@@ -56,6 +56,36 @@ float median(std::vector<float>& v) {
     return (v[mid - 1] + upper) * 0.5f;
 }
 
+// Tile-count-weighted median: expand each belt's value by its tileCount weight,
+// then find the weighted 50th-percentile without literally expanding.
+// Builds a sorted list of (value, weight) pairs and walks the CDF.
+float tileWeightedMedian(const std::vector<BeltStats>& belts,
+                         float BeltStats::* field) {
+    if (belts.empty()) return 0.0f;
+    // Collect (value, tileCount) and sort by value.
+    std::vector<std::pair<float, uint32_t>> vw;
+    vw.reserve(belts.size());
+    uint64_t totalTiles = 0;
+    for (const auto& b : belts) {
+        float v = b.*field;
+        vw.push_back({v, b.tileCount});
+        totalTiles += b.tileCount;
+    }
+    if (totalTiles == 0) return 0.0f;
+    std::sort(vw.begin(), vw.end(),
+              [](const std::pair<float,uint32_t>& a, const std::pair<float,uint32_t>& b) {
+                  return a.first < b.first;
+              });
+    // Walk until cumulative weight >= 50% of total.
+    uint64_t half = (totalTiles + 1) / 2;
+    uint64_t cumul = 0;
+    for (const auto& p : vw) {
+        cumul += p.second;
+        if (cumul >= half) return p.first;
+    }
+    return vw.back().first;
+}
+
 // ============================================================================
 // Hypsometry
 // ============================================================================
@@ -281,6 +311,82 @@ PcaResult pcaOnUnitVectors(const SphereGrid& grid, const std::vector<TileId>& ti
     return res;
 }
 
+// ============================================================================
+// Double-BFS graph diameter approximation (standard two-pass BFS).
+// Returns hop count of the diameter.  Restricted to tiles in the component,
+// identified by a bool membership array.
+// Tie-break: when multiple tiles share the maximum distance in each BFS pass,
+// pick the smallest TileId (ascending iteration ensures this naturally since we
+// overwrite only on strict improvement).
+// ============================================================================
+
+static uint32_t bfsDiameter(const SphereGrid& grid,
+                             const std::vector<TileId>& tiles,
+                             const std::vector<bool>& inComp,
+                             std::vector<int32_t>& dist) {
+    if (tiles.empty()) return 0;
+    if (tiles.size() == 1) return 0;
+
+    std::array<TileId, 6> nbrs{};
+    std::vector<TileId> queue;
+    queue.reserve(tiles.size());
+
+    auto bfsFrom = [&](TileId src) -> TileId {
+        // dist is pre-allocated to N and pre-filled with -1 by caller.
+        // We only set values for tiles in this component.
+        dist[src] = 0;
+        queue.clear();
+        queue.push_back(src);
+        TileId farthest = src;
+        int32_t maxDist = 0;
+        for (size_t qi = 0; qi < queue.size(); ++qi) {
+            TileId t = queue[qi];
+            uint32_t cnt = grid.neighbors(t, nbrs);
+            for (uint32_t k = 0; k < cnt; ++k) {
+                TileId nb = nbrs[k];
+                if (inComp[nb] && dist[nb] < 0) {
+                    dist[nb] = dist[t] + 1;
+                    queue.push_back(nb);
+                    if (dist[nb] > maxDist ||
+                        (dist[nb] == maxDist && nb < farthest)) {
+                        maxDist = dist[nb];
+                        farthest = nb;
+                    }
+                }
+            }
+        }
+        // Reset dist entries we set (avoids a full N-wide fill between calls).
+        for (TileId t : queue) dist[t] = -1;
+        dist[src] = -1;
+        return farthest;
+    };
+
+    // Pass 1: BFS from tiles[0] (arbitrary, ascending-sorted → deterministic).
+    TileId a = bfsFrom(tiles[0]);
+    // Pass 2: BFS from a → farthest tile b.
+    TileId b = bfsFrom(a);
+    // Pass 3: BFS from b to get the actual diameter distance.
+    dist[b] = 0;
+    queue.clear();
+    queue.push_back(b);
+    int32_t diameter = 0;
+    for (size_t qi = 0; qi < queue.size(); ++qi) {
+        TileId t = queue[qi];
+        if (dist[t] > diameter) diameter = dist[t];
+        uint32_t cnt = grid.neighbors(t, nbrs);
+        for (uint32_t k = 0; k < cnt; ++k) {
+            TileId nb = nbrs[k];
+            if (inComp[nb] && dist[nb] < 0) {
+                dist[nb] = dist[t] + 1;
+                queue.push_back(nb);
+            }
+        }
+    }
+    for (TileId t : queue) dist[t] = -1;
+    dist[b] = -1;
+    return static_cast<uint32_t>(diameter);
+}
+
 std::vector<BeltStats> computeBeltStats(const GeneratedWorld& world,
                                         float meanLandElevation,
                                         float tileKm) {
@@ -329,8 +435,15 @@ std::vector<BeltStats> computeBeltStats(const GeneratedWorld& world,
         if (comp[t] >= 0) compTiles[static_cast<size_t>(comp[t])].push_back(t);
     }
 
+    // Shared dist workspace for double-BFS (reused across components).
+    std::vector<int32_t> dist(N, -1);
+
+    // Membership bitset for BFS (built per component).
+    std::vector<bool> inComp(N, false);
+
     // Compute stats only for components >= 32 tiles.
     float tileAreaKm2 = tileKm * tileKm;
+    double radiusKm   = world.derived.planetRadiusMeters / 1000.0;
 
     std::vector<BeltStats> stats;
     for (const auto& tiles : compTiles) {
@@ -342,13 +455,23 @@ std::vector<BeltStats> computeBeltStats(const GeneratedWorld& world,
         PcaResult pca = pcaOnUnitVectors(grid, tiles);
         bs.elongation = pca.elongation;
 
-        // Width = area / length (via PCA extents: length = 2*sqrt(lambda1),
-        // width estimate = 2*sqrt(lambda2)).  Convert from unit-vector distance
-        // to km: one radian on a unit sphere ≈ planetRadiusMeters/1000 km.
-        double radiusKm = world.derived.planetRadiusMeters / 1000.0;
-        float lengthKm  = static_cast<float>(2.0 * std::sqrt(static_cast<double>(pca.lambda1)) * radiusKm);
-        float areaKm2   = static_cast<float>(tiles.size()) * tileAreaKm2;
-        bs.widthKm      = (lengthKm > 0.0f) ? areaKm2 / lengthKm : 0.0f;
+        // PCA-derived width (kept as second signal).
+        float pcaLengthKm = static_cast<float>(2.0 * std::sqrt(static_cast<double>(pca.lambda1)) * radiusKm);
+        float areaKm2     = static_cast<float>(tiles.size()) * tileAreaKm2;
+        bs.widthKm        = (pcaLengthKm > 0.0f) ? areaKm2 / pcaLengthKm : 0.0f;
+
+        // Geodesic aspect ratio via double-BFS diameter.
+        // Mark membership for this component.
+        for (TileId t : tiles) inComp[t] = true;
+
+        uint32_t diamHops = bfsDiameter(grid, tiles, inComp, dist);
+        bs.lengthKm   = static_cast<float>(diamHops) * tileKm;
+        bs.geoWidthKm = (bs.lengthKm > 0.0f) ? areaKm2 / bs.lengthKm : static_cast<float>(tileKm);
+        float denom   = (bs.geoWidthKm > tileKm) ? bs.geoWidthKm : tileKm;
+        bs.aspectRatio = (bs.lengthKm > 0.0f) ? bs.lengthKm / denom : 1.0f;
+
+        // Clear membership.
+        for (TileId t : tiles) inComp[t] = false;
 
         stats.push_back(bs);
     }
@@ -528,11 +651,18 @@ WorldStats computeWorldStats(const GeneratedWorld& world) {
 
         s.belts = computeBeltStats(world, meanLand, tkm);
 
-        // Median elongation.
+        // Median elongation (PCA).
         std::vector<float> elongs;
         elongs.reserve(s.belts.size());
         for (const auto& b : s.belts) elongs.push_back(b.elongation);
         s.medianBeltElongation = median(elongs);
+
+        // Geodesic aspect ratio medians.
+        std::vector<float> aspects;
+        aspects.reserve(s.belts.size());
+        for (const auto& b : s.belts) aspects.push_back(b.aspectRatio);
+        s.medianAspectRatio = median(aspects);
+        s.tileWeightedMedianAspectRatio = tileWeightedMedian(s.belts, &BeltStats::aspectRatio);
 
         // Interior mountain fraction.
         s.interiorMountainFraction = computeInteriorMountainFraction(world, s.belts, meanLand, tkm);

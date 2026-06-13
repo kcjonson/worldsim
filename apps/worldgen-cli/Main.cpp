@@ -272,15 +272,23 @@ static void writeStatsJson(const std::string& path,
                  static_cast<unsigned>(s.belts.size()));
     std::fprintf(fp, "    \"medianElongation\": %.3f,\n",
                  static_cast<double>(s.medianBeltElongation));
+    std::fprintf(fp, "    \"medianAspectRatio\": %.3f,\n",
+                 static_cast<double>(s.medianAspectRatio));
+    std::fprintf(fp, "    \"tileWeightedMedianAspectRatio\": %.3f,\n",
+                 static_cast<double>(s.tileWeightedMedianAspectRatio));
     std::fprintf(fp, "    \"interiorMountainFraction\": %.4f,\n",
                  static_cast<double>(s.interiorMountainFraction));
     std::fprintf(fp, "    \"belts\": [");
     for (size_t i = 0; i < s.belts.size(); ++i) {
         if (i > 0) std::fprintf(fp, ",");
-        std::fprintf(fp, "{\"tiles\":%u,\"elongation\":%.3f,\"widthKm\":%.1f}",
+        std::fprintf(fp, "{\"tiles\":%u,\"elongation\":%.3f,\"widthKm\":%.1f,"
+                         "\"lengthKm\":%.1f,\"geoWidthKm\":%.1f,\"aspectRatio\":%.2f}",
                      s.belts[i].tileCount,
                      static_cast<double>(s.belts[i].elongation),
-                     static_cast<double>(s.belts[i].widthKm));
+                     static_cast<double>(s.belts[i].widthKm),
+                     static_cast<double>(s.belts[i].lengthKm),
+                     static_cast<double>(s.belts[i].geoWidthKm),
+                     static_cast<double>(s.belts[i].aspectRatio));
     }
     std::fprintf(fp, "]\n");
     std::fprintf(fp, "  },\n");
@@ -347,9 +355,11 @@ static void printSummary(const worldgen::WorldStats& s,
                 static_cast<double>(s.plates.logAreaRankR2));
 
     std::printf("  Mountain belts     : %u  median elongation = %.2f  "
-                "interior fraction = %.3f\n",
+                "aspect(plain/twgt) = %.2f / %.2f  interior fraction = %.3f\n",
                 static_cast<unsigned>(s.belts.size()),
                 static_cast<double>(s.medianBeltElongation),
+                static_cast<double>(s.medianAspectRatio),
+                static_cast<double>(s.tileWeightedMedianAspectRatio),
                 static_cast<double>(s.interiorMountainFraction));
 
     std::printf("  Continents (>=0.5%): %u  median isoperimetric = %.2f\n",

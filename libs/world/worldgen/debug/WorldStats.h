@@ -25,6 +25,11 @@ struct BeltStats {
     uint32_t tileCount{};
     float    elongation{};    // sqrt(lambda1 / lambda2) from PCA of unit-vector positions
     float    widthKm{};       // area / length, both derived from PCA extents
+
+    // Geodesic aspect ratio (honest curved-belt linearity metric).
+    float    lengthKm{};      // graph diameter in hops * tileKm (double-BFS approximation)
+    float    geoWidthKm{};    // area / lengthKm (mean width along the arc)
+    float    aspectRatio{};   // lengthKm / max(geoWidthKm, tileKm)
 };
 
 // Aggregated world statistics computed from a fully-generated world.
@@ -51,6 +56,10 @@ struct WorldStats {
     std::vector<BeltStats> belts;
     float                  medianBeltElongation{};
     float                  interiorMountainFraction{}; // fraction of belt tiles with boundaryDist > 500 km
+
+    // Geodesic aspect-ratio medians.
+    float                  medianAspectRatio{};         // plain median across belts >= 32 tiles
+    float                  tileWeightedMedianAspectRatio{}; // headline: tile-count-weighted median
 
     std::vector<ContinentStats> continents;
     float                       medianIsoperimetric{};
