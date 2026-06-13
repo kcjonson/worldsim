@@ -153,9 +153,28 @@ namespace {
 							m_camera->setPosition({pos->value.x, pos->value.y});
 						}
 					},
-				.onBuildToggle = [this]() { m_placementSystem->toggleBuildMenu(); },
-				.onBuildItemSelected = [this](const std::string& defName) { m_placementSystem->selectBuildItem(defName); },
-				.onProductionSelected = [this](const std::string& defName) { m_placementSystem->selectBuildItem(defName); },
+				.onBuildToggle =
+					[this]() {
+						// One tool owns world input: drop the foundation tool first.
+						if (m_drawingSystem) {
+							m_drawingSystem->deactivate();
+						}
+						m_placementSystem->toggleBuildMenu();
+					},
+				.onBuildItemSelected =
+					[this](const std::string& defName) {
+						if (m_drawingSystem) {
+							m_drawingSystem->deactivate();
+						}
+						m_placementSystem->selectBuildItem(defName);
+					},
+				.onProductionSelected =
+					[this](const std::string& defName) {
+						if (m_drawingSystem) {
+							m_drawingSystem->deactivate();
+						}
+						m_placementSystem->selectBuildItem(defName);
+					},
 				.onQueueRecipe =
 					[this](const std::string& recipeDefName, uint32_t quantity) { handleQueueRecipe(recipeDefName, quantity); },
 				.onCancelJob = [this](const std::string& recipeDefName) { handleCancelJob(recipeDefName); },
@@ -183,6 +202,10 @@ namespace {
 				},
 				.onStructureSelected = [this](const std::string& structure) {
 					if (structure == "foundation" && m_drawingSystem) {
+						// One tool owns world input: drop any active placement first.
+						if (m_placementSystem) {
+							m_placementSystem->cancel();
+						}
 						m_drawingSystem->activateFoundationTool();
 					}
 				},
@@ -269,15 +292,18 @@ namespace {
 					LOG_INFO(Game, "Foundation #%llu built (entity %u)", static_cast<unsigned long long>(structure->graphId), static_cast<uint32_t>(blueprintEntity));
 				});
 
-				// Deconstruct complete: remove the foundation topology + entity (refund is a
-				// later slice), mirroring handleDemolishFoundation but keyed by the entity.
+				// Deconstruct complete: remove the foundation topology now, but DEFER the
+				// entity destruction. This callback fires from inside ActionSystem::update's
+				// live view iteration; destroying here swap-and-pops the shared component
+				// pools and corrupts that iteration. The queue is drained after
+				// ecsWorld->update() returns (see update()). Refund is a later slice.
 				actionSys.setStructureDeconstructedCallback([this](ecs::EntityID blueprintEntity) {
 					const auto* structure = ecsWorld->getComponent<ecs::Structure>(blueprintEntity);
 					if (structure != nullptr && structure->graphId != 0) {
 						m_drawingSystem->world().removeFoundation(structure->graphId);
 						LOG_INFO(Game, "Foundation #%llu deconstructed (entity %u)", static_cast<unsigned long long>(structure->graphId), static_cast<uint32_t>(blueprintEntity));
 					}
-					ecsWorld->destroyEntity(blueprintEntity);
+					m_pendingEntityRemoval.push_back(blueprintEntity);
 				});
 			}
 
@@ -322,7 +348,9 @@ namespace {
 				constexpr int kModAlt = 0x0004; // GLFW_MOD_ALT
 				const bool	  freeform = (event.modifiers & kModAlt) != 0;
 
-				if (event.type == UI::InputEvent::Type::MouseMove) {
+				if (!consumed && event.type == UI::InputEvent::Type::MouseMove) {
+					// Skip when a UI panel consumed the move, otherwise the preview
+					// tracks the snapped cursor under the panel to a spot you can't click.
 					m_drawingSystem->handleMouseMove(event.position.x, event.position.y, logicalW, logicalH, freeform);
 				} else if (!consumed && event.type == UI::InputEvent::Type::MouseUp) {
 					if (event.button == engine::MouseButton::Right) {
@@ -339,7 +367,7 @@ namespace {
 
 			// Handle placement mode interaction
 			if (m_placementSystem->isActive()) {
-				if (event.type == UI::InputEvent::Type::MouseMove) {
+				if (!consumed && event.type == UI::InputEvent::Type::MouseMove) {
 					m_placementSystem->handleMouseMove(event.position.x, event.position.y, logicalW, logicalH);
 				} else if (!consumed && event.type == UI::InputEvent::Type::MouseUp) {
 					if (m_placementSystem->handleClick()) {
@@ -377,8 +405,10 @@ namespace {
 				m_drawingSystem->removeLastPoint();
 			}
 
-			// Handle B key - toggle build mode
-			if (input.isKeyPressed(engine::Key::B)) {
+			// Handle B key - toggle build mode. Gated while the foundation tool owns
+			// world input so the two tools can't be live at once (see tool-exclusivity
+			// wiring in the placement/drawing activation callbacks).
+			if (input.isKeyPressed(engine::Key::B) && !m_drawingSystem->isActive()) {
 				m_placementSystem->toggleBuildMenu();
 			}
 
@@ -481,6 +511,17 @@ namespace {
 
 			// Update ECS world (movement, physics, render system)
 			ecsWorld->update(dt);
+
+			// Drain deferred entity removals AFTER the ECS update. Systems (e.g.
+			// ActionSystem on a completed Deconstruct) and input handlers queue
+			// destroys here instead of calling destroyEntity mid-iteration, which
+			// would swap-and-pop the component pools out from under a live view.
+			if (!m_pendingEntityRemoval.empty()) {
+				for (ecs::EntityID entity : m_pendingEntityRemoval) {
+					ecsWorld->destroyEntity(entity);
+				}
+				m_pendingEntityRemoval.clear();
+			}
 
 			// Update unified game UI (overlay + info panel)
 			auto& assetRegistry = engine::assets::AssetRegistry::Get();
@@ -828,8 +869,9 @@ namespace {
 		}
 
 		/// Handle Demolish request from a foundation's info panel.
-		/// Epic C scope: immediate whole-foundation removal. The work-driven
-		/// Deconstruct lifecycle and the Demolish-building cascade land in C5+.
+		/// Epic C scope: immediate whole-foundation removal. The work-driven Deconstruct
+		/// action exists; only its material refund and the Demolish-building cascade are
+		/// deferred polish.
 		void handleDemolishFoundation() {
 			const auto& sel = m_selectionSystem->current();
 			auto*		foundationSel = std::get_if<world_sim::FoundationSelection>(&sel);
@@ -846,13 +888,15 @@ namespace {
 				return;
 			}
 
-			// Destroy the ECS mirror entity first (capture the handle before the
-			// topology record goes away), then remove the topology record.
+			// Capture the ECS mirror handle before the topology record goes away, then
+			// remove the topology record. Defer the entity destruction through the same
+			// queue the deconstruct callback uses, so there's one removal path (drained
+			// after ecsWorld->update() in update()).
 			const ecs::EntityID entity = foundation->entity;
-			if (entity != ecs::kInvalidEntity) {
-				ecsWorld->destroyEntity(entity);
-			}
 			constructionWorld.removeFoundation(foundationSel->id);
+			if (entity != ecs::kInvalidEntity) {
+				m_pendingEntityRemoval.push_back(entity);
+			}
 
 			LOG_INFO(Game, "Demolished foundation #%llu", static_cast<unsigned long long>(foundationSel->id));
 			m_selectionSystem->clearSelection();
@@ -891,6 +935,10 @@ namespace {
 		std::unique_ptr<world_sim::PlacementSystem> m_placementSystem;
 		std::unique_ptr<world_sim::SelectionSystem> m_selectionSystem;
 		std::unique_ptr<world_sim::DrawingSystem>	m_drawingSystem;
+
+		// Entities queued for destruction, drained after ecsWorld->update() so we
+		// never destroyEntity mid-view-iteration (deconstruct callback, demolish).
+		std::vector<ecs::EntityID> m_pendingEntityRemoval;
 	};
 
 } // namespace

@@ -158,8 +158,9 @@ namespace engine {
 					mods |= kModAlt;
 				}
 
-				// MouseMove for hover states
-				UI::InputEvent moveEvent = UI::InputEvent::mouseMove(pos);
+				// MouseMove for hover states (carries modifiers so tools like the
+				// foundation freeform snap see Alt during hover, not just on click)
+				UI::InputEvent moveEvent = UI::InputEvent::mouseMove(pos, mods);
 				SceneManager::Get().handleInput(moveEvent);
 
 				// MouseDown on press (left button)

@@ -189,9 +189,9 @@ namespace world_sim {
 
 		const float area = constructionWorld_.areaSquareMeters(id);
 
-		// Material-driven manifest, work, and HP. The manifest defName is the
-		// material name for now (the construction config keys materials by name);
-		// C5 reconciles this with real item defNames once the haul chain is wired.
+		// Material-driven manifest, work, and HP. Invariant: the manifest defName IS
+		// the material name; construction config keys materials by name and the haul
+		// chain resolves items by that same name, so the two stay aligned by design.
 		const auto& registry = ConstructionRegistry::Get();
 		const auto* material = registry.getMaterial(activeMaterial_);
 		float		costRate = 0.0F;
