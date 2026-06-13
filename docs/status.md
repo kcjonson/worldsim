@@ -424,7 +424,9 @@ while (running) {
   - [x] M-T2.5: arc crust production balancing collisional shortening (continental area to target)
   - [x] M-T2.6: slab pull + oceanic plate reorganization (ocean age, plate size distribution)
   - [x] M-T2.7: ridge-coherent resurfacing + ownership speckle absorption (field coherence)
-- [ ] M-T3: CrustStage upsampling + WorldData crustAge/orogenyAge + PlanetIO v3
+- [x] M-T3: CrustStage upsampling + WorldData crustAge/orogenyAge + PlanetIO v3
+  - [x] M-T3.5: arc nucleation support + sim-level crust speckle revert
+  - [x] M-T3.6: signed-distance crust-type threshold for crisp non-hexagonal coastlines
 - [ ] M-T4: TerrainStage rewrite (isostasy + depth-age + orogeny-aged belts + boundary kernels) — ends with USER screenshot review gate
 - [ ] M-T5: delete PlateStage/PlateMovementStage, test re-baseline, edge cases, benchmark
 - [ ] M-T6: docs (concept.md, generation-phases.md, implementation contracts), dev log, PR
