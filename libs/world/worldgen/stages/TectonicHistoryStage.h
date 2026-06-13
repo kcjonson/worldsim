@@ -4,10 +4,8 @@
 
 namespace worldgen {
 
-// Provisional stage: runs the coarse PlateSim and attaches its TectonicHistory
-// product to the world. NOT yet in PlanetGenerator's stage list (the old
-// PlateStage/PlateMovementStage pipeline keeps running until M-T3). Exists so the
-// sim can be driven through the standard stage harness (cancel + progress).
+// Stage 0: runs the coarse PlateSim and attaches its TectonicHistory product to
+// the world. Drives cancel + progress through the standard stage harness.
 class TectonicHistoryStage : public IGenerationStage {
   public:
     const char* name()   const override { return "TectonicHistory"; }

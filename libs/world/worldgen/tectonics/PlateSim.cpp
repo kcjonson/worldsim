@@ -592,6 +592,7 @@ void PlateSim::initPlateRasters() {
 //  13. cancel + progress callbacks.
 
 void PlateSim::step(const CancelFn& cancel, const ProgressFn& progress) {
+    if (cancel) cancel();                                            // 0: early-out before any work
     evolvePoles();        // 1
     advanceRotations();   // 2
     forwardRasterize();   // 3
@@ -601,6 +602,7 @@ void PlateSim::step(const CancelFn& cancel, const ProgressFn& progress) {
     absorbOwnershipSpeckle(); // 6.5 (M-T2.7): weld isolated ownership islands
     absorbCrustSpeckle();     // 6.6 (M-T3.5): revert isolated continental specks to oceanic
     boundaryScan();       // 7
+    if (cancel) cancel();                                            // 7.9: mid-step check
     slabPull();           // 7.5 (M-T2.6): scale omega by mean subducting-floor age
     collisionProcessing();// 8
     terraneAccretion();   // 9

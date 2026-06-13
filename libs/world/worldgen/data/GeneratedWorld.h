@@ -16,7 +16,7 @@ struct TectonicHistory;
 
 namespace worldgen {
 
-// Per-plate metadata produced by PlateStage.
+// Per-plate metadata built by CrustStage from TectonicHistory.
 struct PlateInfo {
     Vec3d  eulerPole{};       // unit vector (rotation pole)
     float  angularSpeed{};    // radians per million years
