@@ -10,6 +10,8 @@
 #include "../components/Movement.h"
 #include "../components/Needs.h"
 #include "../components/Packaged.h"
+#include "../components/Skills.h"
+#include "../components/StructureBlueprint.h"
 #include "../components/Task.h"
 #include "../components/Transform.h"
 #include "../components/WorkQueue.h"
@@ -63,9 +65,11 @@ namespace ecs {
 				continue;
 			}
 
-			// Only process actionable tasks (FulfillNeed, Gather, Craft, Haul, PlacePackaged, Harvest)
+			// Only process actionable tasks (FulfillNeed, Gather, Craft, Haul, PlacePackaged,
+			// Harvest, Build, Deconstruct)
 			if (task.type != TaskType::FulfillNeed && task.type != TaskType::Gather && task.type != TaskType::Craft &&
-				task.type != TaskType::Haul && task.type != TaskType::PlacePackaged && task.type != TaskType::Harvest) {
+				task.type != TaskType::Haul && task.type != TaskType::PlacePackaged && task.type != TaskType::Harvest &&
+				task.type != TaskType::Build && task.type != TaskType::Deconstruct) {
 				// For non-actionable tasks like Wander, just clear when arrived
 				task.clear();
 				task.timeSinceEvaluation = 0.0F;
@@ -74,7 +78,11 @@ namespace ecs {
 
 			// Start action if not already active
 			if (!action.isActive()) {
-				startAction(task, action, position, memory, needs, inventory);
+				if (task.type == TaskType::Build || task.type == TaskType::Deconstruct) {
+					startBuildAction(entity, task, action);
+				} else {
+					startAction(task, action, position, memory, needs, inventory);
+				}
 				LOG_INFO(
 					Engine,
 					"[Action] Entity %llu: Started %s action (%.1fs duration)",
@@ -84,8 +92,14 @@ namespace ecs {
 				);
 			}
 
-			// Process the action
-			processAction(deltaTime, action, needs, task);
+			// Construction actions advance continuously by workDone, not by elapsed/duration.
+			// A failed start (e.g. blueprint gone) clears the action, so guard on the effect.
+			if (action.hasProgressEffect()) {
+				advanceConstructionWork(deltaTime, action);
+			} else {
+				// Process the action
+				processAction(deltaTime, action, needs, task);
+			}
 
 			// Update WorkQueue progress for craft actions (for UI progress bar)
 			if (action.hasCraftingEffect() && action.isActive()) {
@@ -663,6 +677,38 @@ namespace ecs {
 			} // end storage-deposit branch
 		}
 
+		// Handle construction progress effects (Build, Deconstruct).
+		// advanceConstructionWork already moved workDone to the bound and set the phase; here we
+		// signal the layer above ActionSystem (which doesn't know ConstructionWorld) via callback.
+		if (action.hasProgressEffect()) {
+			const auto& progressEff = action.progressEffect();
+			auto		blueprintEntity = static_cast<EntityID>(progressEff.targetEntityId);
+
+			if (progressEff.deconstruct) {
+				LOG_INFO(
+					Engine,
+					"[Action] Deconstruct complete on blueprint %llu - signaling removal/refund",
+					static_cast<unsigned long long>(progressEff.targetEntityId)
+				);
+				if (m_onStructureDeconstructed) {
+					m_onStructureDeconstructed(blueprintEntity);
+				} else {
+					LOG_WARNING(Engine, "[Action] No structure-deconstructed callback set - removal/refund skipped");
+				}
+			} else {
+				LOG_INFO(
+					Engine,
+					"[Action] Build complete on blueprint %llu - signaling structure built",
+					static_cast<unsigned long long>(progressEff.targetEntityId)
+				);
+				if (m_onStructureCompleted) {
+					m_onStructureCompleted(blueprintEntity);
+				} else {
+					LOG_WARNING(Engine, "[Action] No structure-completed callback set - structure state not flipped");
+				}
+			}
+		}
+
 		// Special handling for Haul tasks - may need to continue to deposit phase
 		// NOTE: This intentionally returns early WITHOUT clearing the task. Haul is a
 		// two-phase task (Pickup→Deposit), so after phase 1 we set up phase 2 and return.
@@ -837,6 +883,113 @@ namespace ecs {
 		action = Action::Craft(task.craftRecipeDefName, task.targetStationId, task.targetPosition, recipe->workAmount, inputs, outputs);
 
 		LOG_DEBUG(Engine, "[Action] Starting Craft action for %s (%.1fs duration)", recipe->label.c_str(), action.duration);
+	}
+
+	void ActionSystem::startBuildAction(EntityID entity, Task& task, Action& action) {
+		auto blueprintEntity = static_cast<EntityID>(task.buildBlueprintEntityId);
+		auto* blueprint = world->getComponent<StructureBlueprint>(blueprintEntity);
+		if (blueprint == nullptr) {
+			LOG_WARNING(
+				Engine,
+				"[Action] %s task targets entity %llu with no StructureBlueprint - clearing",
+				task.type == TaskType::Deconstruct ? "Deconstruct" : "Build",
+				static_cast<unsigned long long>(task.buildBlueprintEntityId)
+			);
+			action.clear();
+			return;
+		}
+
+		const bool deconstruct = (task.type == TaskType::Deconstruct);
+
+		// Build requires the blueprint to be under construction (materials staged); Deconstruct
+		// requires there to be work to undo. A no-op start clears the action so the colonist
+		// re-evaluates rather than spinning on a finished or not-yet-ready blueprint.
+		if (deconstruct) {
+			if (blueprint->workDone <= 0.0F) {
+				LOG_DEBUG(
+					Engine,
+					"[Action] Deconstruct skipped: blueprint %llu has no work to undo",
+					static_cast<unsigned long long>(task.buildBlueprintEntityId)
+				);
+				action.clear();
+				return;
+			}
+		} else {
+			if (blueprint->phase != StructureBlueprint::BuildPhase::UnderConstruction) {
+				LOG_DEBUG(
+					Engine,
+					"[Action] Build skipped: blueprint %llu not UnderConstruction (phase %d)",
+					static_cast<unsigned long long>(task.buildBlueprintEntityId),
+					static_cast<int>(blueprint->phase)
+				);
+				action.clear();
+				return;
+			}
+		}
+
+		// Capture the builder's Construction skill to scale the work rate. Skills is optional;
+		// a colonist without it (or untrained) still builds at the base rate.
+		float skillLevel = 0.0F;
+		if (const auto* skills = world->getComponent<Skills>(entity)) {
+			skillLevel = skills->getLevel("Construction");
+		}
+
+		action = deconstruct ? Action::Deconstruct(task.buildBlueprintEntityId, task.targetPosition, skillLevel)
+							  : Action::Build(task.buildBlueprintEntityId, task.targetPosition, skillLevel);
+
+		LOG_DEBUG(
+			Engine,
+			"[Action] Starting %s action on blueprint %llu (skill %.1f, rate %.1f/s, workDone %.1f/%.1f)",
+			deconstruct ? "Deconstruct" : "Build",
+			static_cast<unsigned long long>(task.buildBlueprintEntityId),
+			skillLevel,
+			constructionWorkRate(skillLevel),
+			blueprint->workDone,
+			blueprint->workTotal
+		);
+	}
+
+	bool ActionSystem::advanceConstructionWork(float deltaTime, Action& action) {
+		// Transition Starting -> InProgress on the first tick, mirroring processAction.
+		if (action.state == ActionState::Starting) {
+			action.state = ActionState::InProgress;
+		}
+
+		const auto& progressEff = action.progressEffect();
+		auto		blueprintEntity = static_cast<EntityID>(progressEff.targetEntityId);
+		auto* blueprint = world->getComponent<StructureBlueprint>(blueprintEntity);
+		if (blueprint == nullptr) {
+			// Blueprint vanished mid-work (e.g. cancelled). Abandon the action; the task will
+			// re-evaluate next tick. Don't fire a completion callback for a target that's gone.
+			LOG_WARNING(
+				Engine,
+				"[Action] Construction target %llu vanished mid-work - abandoning action",
+				static_cast<unsigned long long>(progressEff.targetEntityId)
+			);
+			action.clear();
+			return false;
+		}
+
+		const float delta = constructionWorkRate(progressEff.skillLevel) * deltaTime;
+
+		if (progressEff.deconstruct) {
+			blueprint->workDone -= delta;
+			if (blueprint->workDone <= 0.0F) {
+				blueprint->workDone = 0.0F;
+				action.state = ActionState::Complete;
+				return true;
+			}
+		} else {
+			blueprint->workDone += delta;
+			if (blueprint->workDone >= blueprint->workTotal) {
+				blueprint->workDone = blueprint->workTotal;
+				blueprint->phase = StructureBlueprint::BuildPhase::Complete;
+				action.state = ActionState::Complete;
+				return true;
+			}
+		}
+
+		return false;
 	}
 
 	void ActionSystem::startGatherAction(Task& task, Action& action, const Position& position, const Memory& memory) {
