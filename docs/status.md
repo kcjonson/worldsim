@@ -429,7 +429,7 @@ while (running) {
   - [x] M-T3.6: signed-distance crust-type threshold for crisp non-hexagonal coastlines
 - [x] M-T4: TerrainStage rewrite (isostasy + depth-age + orogeny-aged belts + boundary kernels) — ends with USER screenshot review gate
   - [x] M-T4.5: concentrate orogeny into linear belts with aging sutures; geodesic belt-linearity metric (tile-weighted aspect 5-7)
-- [ ] M-T5: delete PlateStage/PlateMovementStage, test re-baseline, edge cases, benchmark
+- [x] M-T5: delete PlateStage/PlateMovementStage, test re-baseline, edge cases, benchmark (clean whole-project build, --verify-threads determinism, n=1024 ~11s)
 - [ ] M-T6: docs (concept.md, generation-phases.md, implementation contracts), dev log, PR
 
 ---
