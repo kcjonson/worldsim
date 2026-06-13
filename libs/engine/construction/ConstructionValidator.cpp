@@ -116,8 +116,9 @@ namespace engine::construction {
 		}
 
 		// Edge clearance: non-adjacent edges must stay at least segmentClearance
-		// apart. Only meaningful once the shape has enough edges to have a
-		// non-adjacent pair (>= 4 edges closed, >= 4 vertices open).
+		// apart. Only meaningful once the shape has at least 4 edges to have a
+		// non-adjacent pair (closed: 4 vertices; open: 5 vertices, since the
+		// open chain has edgeCount = n - 1 edges).
 		if (edgeCount >= 4) {
 			for (std::size_t i = 0; i < edgeCount; ++i) {
 				const auto& a0 = ring[i];
@@ -130,11 +131,13 @@ namespace engine::construction {
 					const auto& b0 = ring[k];
 					const auto& b1 = ring[(k + 1) % n];
 					// Endpoint distance probes are enough at editor scale: check the
-					// four segment-endpoint distances against the clearance.
-					const bool tooClose = geometry::withinDistanceOfSegment(b0, a0, a1, c.segmentClearanceMm) ||
-										  geometry::withinDistanceOfSegment(b1, a0, a1, c.segmentClearanceMm) ||
-										  geometry::withinDistanceOfSegment(a0, b0, b1, c.segmentClearanceMm) ||
-										  geometry::withinDistanceOfSegment(a1, b0, b1, c.segmentClearanceMm);
+					// four segment-endpoint distances against the clearance. Strict
+					// < so a gap exactly equal to segmentClearance passes, matching
+					// minVertexSpacing and geometry::minEdgeClearance.
+					const bool tooClose = geometry::closerThanToSegment(b0, a0, a1, c.segmentClearanceMm) ||
+										  geometry::closerThanToSegment(b1, a0, a1, c.segmentClearanceMm) ||
+										  geometry::closerThanToSegment(a0, b0, b1, c.segmentClearanceMm) ||
+										  geometry::closerThanToSegment(a1, b0, b1, c.segmentClearanceMm);
 					if (tooClose) {
 						return {ValidationCode::EdgeClearanceTooSmall, i, k, 0.0};
 					}

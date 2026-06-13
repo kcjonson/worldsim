@@ -130,6 +130,46 @@ bool ConfigValidator::validateConstruction() {
                      "Add at least one <color> entry inside <palette>");
             valid = false;
         }
+
+        // Numeric rates must be positive: a zero workRate yields workTotal 0 (a
+        // free instant building) and a zero costRate yields no material
+        // requirement at all. beauty is intentionally unchecked (may be 0 or
+        // negative). See ConstructionRegistry.test.cpp Materials_SaneValues for
+        // the contract this enforces.
+        if (mat.costRatePerSquareMeter <= 0.0F) {
+            addError("ConstructionMaterials",
+                     "Material '" + name + "' costRatePerSquareMeter must be positive, got " +
+                         std::to_string(mat.costRatePerSquareMeter),
+                     "Set <costRatePerSquareMeter> to a positive value");
+            valid = false;
+        }
+        if (mat.workRatePerSquareMeter <= 0.0F) {
+            addError("ConstructionMaterials",
+                     "Material '" + name + "' workRatePerSquareMeter must be positive, got " +
+                         std::to_string(mat.workRatePerSquareMeter),
+                     "Set <workRatePerSquareMeter> to a positive value");
+            valid = false;
+        }
+        if (mat.hp <= 0.0F) {
+            addError("ConstructionMaterials",
+                     "Material '" + name + "' hp must be positive, got " + std::to_string(mat.hp),
+                     "Set <hp> to a positive value");
+            valid = false;
+        }
+        if (mat.speedModifier <= 0.0F) {
+            addError("ConstructionMaterials",
+                     "Material '" + name + "' speedModifier must be positive, got " +
+                         std::to_string(mat.speedModifier),
+                     "Set <speedModifier> to a positive value (1.0 = no change)");
+            valid = false;
+        }
+        if (mat.flammability < 0.0F || mat.flammability > 1.0F) {
+            addError("ConstructionMaterials",
+                     "Material '" + name + "' flammability must be in [0, 1], got " +
+                         std::to_string(mat.flammability),
+                     "0.0 = fireproof, 1.0 = highly flammable");
+            valid = false;
+        }
     }
 
     // Constraints must be loaded and internally consistent.

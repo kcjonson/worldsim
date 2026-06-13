@@ -119,7 +119,11 @@ bool ConstructionRegistry::loadMaterials(const std::string& xmlPath) {
             }
         }
 
-        materials.emplace(mat.name, std::move(mat));
+        auto [it, inserted] = materials.emplace(mat.name, std::move(mat));
+        if (!inserted) {
+            LOG_WARNING(Engine, "Duplicate construction material '%s' ignored", it->first.c_str());
+            continue;
+        }
         ++loaded;
     }
 
