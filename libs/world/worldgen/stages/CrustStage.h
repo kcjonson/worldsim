@@ -21,8 +21,7 @@ namespace worldgen {
 class CrustStage : public IGenerationStage {
   public:
     const char* name()   const override { return "Crust"; }
-    // Weight 0.15: takes 0.10 from the old TerrainStage (which drops 0.25->0.15
-    // for now; M-T4 will reassign after the TerrainStage rewrite).
+    // Weight 0.15 (TerrainStage is 0.20; all eight stages sum to 1.00).
     float       weight() const override { return 0.15f; }
     void        run(StageContext& ctx) override;
 };

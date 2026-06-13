@@ -5,8 +5,11 @@
 //   - Continental: Airy isostasy on crustal thickness gives the platform height;
 //     orogeny-aged RIDGED belts give the linear mountain texture (sharp crests,
 //     V-valleys) along collision margins; a continental-shelf ramp handles coasts.
-//   - Oceanic: the Parsons-Sclater depth-age law z = -(2500 + 320*sqrt(age_Myr))
-//     turns the simulated seafloor age field into a ridge-to-abyssal gradient.
+//   - Oceanic: the GDH1 plate-cooling depth-age law
+//       depth = floorDepth - (floorDepth - ridgeDepth) * exp(-age / tau)
+//     turns the simulated seafloor age field into a ridge-to-abyssal gradient that
+//     saturates near the plate-equilibrium depth (~-5750 m) rather than subsiding
+//     without bound (unlike the half-space sqrt law).
 // Narrow active-boundary kernels add trenches, volcanic arcs, rifts, and transform
 // roughness only where the full-res boundary classification puts them.
 //
@@ -40,7 +43,6 @@
 
 #include <math/DeterministicMath.h>
 #include <random/HashNoise.h>
-#include <random/Pcg32.h>
 
 #include <algorithm>
 #include <array>
@@ -77,17 +79,11 @@ constexpr uint8_t kSideSymmetric  = 0;
 // thickness raises elevation by kIsostasyMPerKm per km — the real isostatic response
 // that builds plateaus at genuine collision cores.
 //   thickness <= knee  -> kPlatformM (flat shelf-of-the-continent)
-//   thickness  > knee   -> kPlatformM + (thickness - knee) * kIsostasyMPerKm
-// M-T4.5: knee raised 44 -> 50 km. With the coarse thickening band 4 rings wide, the
-// thickness field carried moderately-thick crust (50-56 km) over a broad apron around every
-// collision front; a 44 km knee turned that whole apron into a +1400..+2000 m platform that
-// cleared the mountain threshold as one blob, capping belt PCA elongation at ~2. Raising the
-// 145 m/km above the 44 km knee: 50 km -> +1.32 km, 58 km -> +2.48 km, 70 km -> +4.22 km
-// (Tibet-class). (Airy 1855; the knee mimics that normal cratonic crust ~38-44 km all floats
-// to roughly the same platform height, only over-thickened crust stands tall.) M-T4.5 keeps
-// these at the M-T4 values: belt WIDTH is controlled at the source by the 2-ring thicken band
-// (kCollisionThickenRings), so the platform did not need re-tuning, and leaving it unchanged
-// keeps the deep-ocean / land bimodal hypsometry exactly where M-T4 had it.
+//   thickness  > knee  -> kPlatformM + (thickness - knee) * kIsostasyMPerKm
+// Knee = 44 km: normal cratonic crust (38-44 km) all floats to roughly the same
+// platform height; only over-thickened crust stands tall. At 145 m/km above the knee:
+//   46 km -> +740 m, 58 km -> +2.48 km, 70 km -> +4.22 km (Tibet-class).
+// (Airy 1855; reference column from CRUST2.0 global mean.)
 constexpr float kIsostasyKneeThicknessKm = 44.0f;
 constexpr float kIsostasyPlatformM       = 450.0f; // platform height at/below the knee
 constexpr float kIsostasyMPerKm          = 145.0f; // ramp above the knee
@@ -160,15 +156,13 @@ constexpr float kShelfEdgeM   = -2500.0f; // depth at the continental crust edge
 constexpr float kShelfBlendKm = 60.0f;    // distance over which the shelf rises to interior
 
 // --- Oceanic depth-age law (Stein & Stein 1992 GDH1 plate-cooling form) ---
-// Young floor near a ridge follows the sqrt-of-age subsidence; old floor flattens to
-// a plate-equilibrium depth instead of subsiding without bound (the plate-cooling
-// model, not the half-space sqrt law, which is why real old basins sit near -5.7 km,
-// not -8 km). We use the exponential plate form
+// We use the exponential plate form:
 //   depth = floorDepth - (floorDepth - ridgeDepth) * exp(-age / tau)
-// which is ~sqrt(age) for young floor and saturates smoothly toward floorDepth, so the
-// over-old tail the coarse sim leaves (a few % past 220 Myr) spreads across the deep
-// abyssal band instead of piling on a hard clamp. age 0 -> -2500 (ridge), 60 -> -4490,
-// 100 -> -5060, 180 -> -5570, 360 -> -5690.
+// which approximates sqrt(age) for young floor and saturates smoothly toward
+// floorDepth, so the over-old tail the coarse sim leaves (a few % past 220 Myr)
+// spreads across the deep abyssal band instead of piling on a hard clamp.
+// Representative values: age 0 -> -2500 (ridge), 60 -> -4490, 100 -> -5060,
+// 180 -> -5570, 360 -> -5690.
 constexpr float kOceanRidgeDepthM = 2500.0f;
 constexpr float kOceanFloorDepthM = 5750.0f; // plate-equilibrium abyssal depth
 constexpr float kOceanDepthTauMyr = 65.0f;   // e-folding age of the subsidence
@@ -223,6 +217,28 @@ constexpr float kVolcanismCapM      = 3500.0f;
 // --- Global elevation clamp ---
 constexpr float kElevMinM = -11000.0f; // Challenger-Deep-class floor
 constexpr float kElevMaxM =   9000.0f; // Everest-class ceiling
+
+// --- Foothill proximity-to-orogeny decay ---
+// Hills near recent orogeny get a boost; this e-folding time controls how quickly
+// that boost fades with orogeny age (separate from the belt age-decay tau).
+constexpr double kFoothillDecayTauMyr = 600.0;
+
+// --- Abyssal-hill noise parameters ---
+constexpr float kAbyssalHillFreq    =  3.0f;
+constexpr int   kAbyssalHillOctaves =  5;
+constexpr float kAbyssalSwellFreq   =  1.2f;
+constexpr int   kAbyssalSwellOctaves = 3;
+
+// --- OO convergent arc mix coefficients ---
+// arcAmp = kArcOOAmpM * (kOOConvBase + kOOConvAmp * convN) * (kOORidgeBase + kOORidgeAmp * ridgeN)
+constexpr float kOOConvBase  = 0.5f;
+constexpr float kOOConvAmp   = 0.5f;
+constexpr float kOORidgeBase = 0.3f;
+constexpr float kOORidgeAmp  = 0.7f;
+
+// --- Transform shear noise frequency ---
+constexpr float kTransformShearFreq    = 6.0f;
+constexpr int   kTransformShearOctaves = 3;
 
 // Gaussian falloff via det_math::exp for cross-platform determinism.
 inline float gaussianFalloff(float d, float sigma) {
@@ -284,6 +300,15 @@ void TerrainStage::run(StageContext& ctx) {
 
     // =========================================================================
     // 1. Boundary classification
+    //
+    // Full-res boundary type is reclassified here from full-res plateId + Euler poles
+    // rather than upsampled from the coarse TectonicHistory boundary fields. This is
+    // deliberate: the full-res reclassification is more accurate (it reflects the actual
+    // sub-cell plate geometry after CrustStage's domain-warp upsampling, not an
+    // approximation interpolated from coarse cells). The coarse boundaryType and
+    // boundaryDistance fields in TectonicHistory are sim-internal diagnostics consumed
+    // by worldgen-cli --sim-only for debugging; they are not the authoritative values
+    // for the full pipeline.
     // =========================================================================
 
     std::vector<BType>   bndTypeRaw(N, BType::None);
@@ -763,14 +788,13 @@ void TerrainStage::run(StageContext& ctx) {
 
                 // -- Orogeny-aged ridged belt detail --
                 // The belt is the primary tall-relief source and it TRACKS THE OROGENY LINE.
-                // beltCore (thickness excess) is a soft multiplier with a floor, not a hard
-                // gate: a strong-intensity belt segment on only-moderately-thickened crust
-                // still rises (to kBeltCoreFloor of full amplitude), so the belt follows the
-                // thin linear orogeny field continuously instead of breaking into the scattered
                 // beltCore gates the tall belt to the thickened CORE (thickness >
-                // kBeltThicknessMinKm). The 2-ring thicken band keeps that core narrow, so the
-                // belt is thin; a small floor keeps the gate from fully severing a belt where
-                // thickness dips a hair below the knee mid-ridge (continuity for elongation).
+                // kBeltThicknessMinKm). It is a soft multiplier with a floor, not a hard gate:
+                // a strong-intensity belt segment on only-moderately-thickened crust still rises
+                // to kBeltCoreFloor of full amplitude, so the belt follows the thin linear
+                // orogeny field continuously. The 2-ring thicken band keeps the core narrow; the
+                // floor keeps the gate from severing a belt where thickness dips a hair below the
+                // knee mid-ridge (continuity for elongation).
                 float beltCoreRaw = (thicknessKm - kBeltThicknessMinKm) /
                                     (kBeltThicknessFullKm - kBeltThicknessMinKm);
                 if (beltCoreRaw < 0.0f) beltCoreRaw = 0.0f;
@@ -820,7 +844,8 @@ void TerrainStage::run(StageContext& ctx) {
                 if (hasOrogeny) {
                     // closer/younger orogeny -> more foothill relief
                     float ad = static_cast<float>(
-                        foundation::det_math::exp(-static_cast<double>(orogenyAgeMyr) / 600.0));
+                        foundation::det_math::exp(-static_cast<double>(orogenyAgeMyr) /
+                                                  kFoothillDecayTauMyr));
                     proximityToOrogeny = orogenyIntensity * ad;
                 }
                 float hills = foundation::fractalNoise3(
@@ -856,11 +881,11 @@ void TerrainStage::run(StageContext& ctx) {
 
                 // Abyssal hills + a longer swell.
                 float hills = foundation::fractalNoise3(
-                                  cx * 3.0f, cy * 3.0f, cz * 3.0f,
-                                  seedFractal + 3u, 5, 2.0f, 0.5f) * kAbyssalHillAmpM;
+                                  cx * kAbyssalHillFreq, cy * kAbyssalHillFreq, cz * kAbyssalHillFreq,
+                                  seedFractal + 3u, kAbyssalHillOctaves, 2.0f, 0.5f) * kAbyssalHillAmpM;
                 float swell = foundation::fractalNoise3(
-                                  cx * 1.2f, cy * 1.2f, cz * 1.2f,
-                                  seedFractal + 5u, 3, 2.0f, 0.5f) * kAbyssalSwellAmpM;
+                                  cx * kAbyssalSwellFreq, cy * kAbyssalSwellFreq, cz * kAbyssalSwellFreq,
+                                  seedFractal + 5u, kAbyssalSwellOctaves, 2.0f, 0.5f) * kAbyssalSwellAmpM;
                 elev = z + hills + swell;
                 if (elev < kOceanMaxDepthM) elev = kOceanMaxDepthM;
             }
@@ -890,7 +915,8 @@ void TerrainStage::run(StageContext& ctx) {
                         float ridgeN = foundation::ridgedNoise3(
                             cx * 8.0f, cy * 8.0f, cz * 8.0f,
                             seedRidged + 1u, 3, 2.0f, 0.5f);
-                        float arcAmp = kArcOOAmpM * (0.5f + 0.5f * convN) * (0.3f + 0.7f * ridgeN);
+                        float arcAmp = kArcOOAmpM * (kOOConvBase + kOOConvAmp * convN) *
+                                       (kOORidgeBase + kOORidgeAmp * ridgeN);
                         kernel = arcAmp * gaussianFalloff(distT - dOO_arc, sigOO_arc) * taperAmp;
                     }
                     break;
@@ -908,8 +934,8 @@ void TerrainStage::run(StageContext& ctx) {
                 }
                 case BType::Transform: {
                     float shearN = foundation::fractalNoise3(
-                        cx * 6.0f, cy * 6.0f, cz * 6.0f,
-                        seedFractal + 7u, 3, 2.0f, 0.5f);
+                        cx * kTransformShearFreq, cy * kTransformShearFreq, cz * kTransformShearFreq,
+                        seedFractal + 7u, kTransformShearOctaves, 2.0f, 0.5f);
                     kernel = kTransformAmpM * shearN * gaussianFalloff(distT, sigTrn);
                     break;
                 }

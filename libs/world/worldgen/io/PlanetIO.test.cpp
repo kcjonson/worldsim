@@ -234,8 +234,8 @@ TEST_F(PlanetIOTest, CorruptedArrayByteFailsHashCheck) {
 	GeneratedWorld world = makeTestWorld();
 	ASSERT_TRUE(savePlanet(world, filePath));
 
-	// The last array written is flags (640 bytes), so a byte 10 from the end
-	// lands inside an array region covered by the hash.
+	// The last array written is orogenyAge (642 * 2 = 1284 bytes), so a byte 10
+	// from the end lands inside an array region covered by the hash.
 	const auto fileSize = std::filesystem::file_size(filePath);
 	flipByteAt(filePath, static_cast<std::streamoff>(fileSize) - 10);
 
@@ -252,7 +252,7 @@ TEST_F(PlanetIOTest, BadMagicReturnsNull) {
 TEST_F(PlanetIOTest, UnsupportedVersionReturnsNull) {
 	GeneratedWorld world = makeTestWorld();
 	ASSERT_TRUE(savePlanet(world, filePath));
-	flipByteAt(filePath, 4); // low byte of the uint32 format version (2 -> 3)
+	flipByteAt(filePath, 4); // corrupts low byte of the uint32 format version to a non-3 value
 	EXPECT_EQ(loadPlanet(filePath), nullptr);
 }
 

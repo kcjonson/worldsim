@@ -28,17 +28,10 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <string>
 #include <thread>
 #include <vector>
-
-#ifdef _WIN32
-#include <direct.h>
-#define MKDIR(p) _mkdir(p)
-#else
-#include <sys/stat.h>
-#define MKDIR(p) mkdir((p), 0755)
-#endif
 
 // ============================================================================
 // Argument parsing
@@ -137,11 +130,18 @@ static bool parseArgs(int argc, char** argv, CliArgs& out) {
 }
 
 // ============================================================================
-// Directory creation (best-effort, recursive not needed for single level)
+// Directory creation (recursive, fatal on failure)
 // ============================================================================
 
-static void mkdirP(const std::string& path) {
-    MKDIR(path.c_str());
+static bool mkdirP(const std::string& path) {
+    std::error_code ec;
+    std::filesystem::create_directories(path, ec);
+    if (ec) {
+        std::fprintf(stderr, "Cannot create output directory '%s': %s\n",
+                     path.c_str(), ec.message().c_str());
+        return false;
+    }
+    return true;
 }
 
 // ============================================================================
@@ -388,6 +388,8 @@ static const struct {
     { worldgen::WorldFieldOrMode::Ocean,           "ocean"           },
     { worldgen::WorldFieldOrMode::Crust,           "crust"           },
     { worldgen::WorldFieldOrMode::BoundaryTypeMap, "boundarytypemap" },
+    { worldgen::WorldFieldOrMode::CrustAge,        "crustage"        },
+    { worldgen::WorldFieldOrMode::OrogenyAge,      "orogenyage"      },
 };
 
 static bool exportAllBmps(const worldgen::GeneratedWorld& world,
@@ -410,24 +412,6 @@ static bool exportAllBmps(const worldgen::GeneratedWorld& world,
 // --sim-only mode: run PlateSim directly, dump frames + stats
 // ============================================================================
 
-static worldgen::ExportRgb crustAgeColor(uint16_t ageMyr, uint8_t crustType) {
-    using CT = worldgen::tectonics::CrustType;
-    if (crustType == static_cast<uint8_t>(CT::Continental)) {
-        return {70, 110, 60}; // continental crust: muted green, age ramp is for ocean
-    }
-    if (crustType == static_cast<uint8_t>(CT::None)) {
-        return {0, 0, 0};
-    }
-    // Oceanic: young (age 0) bright/white near ridge -> old deep blue.
-    // Ramp over 0..200 Myr.
-    float t = static_cast<float>(ageMyr) / 200.0f;
-    if (t > 1.0f) t = 1.0f;
-    auto r = static_cast<uint8_t>(235 - static_cast<int>(t * 235));
-    auto g = static_cast<uint8_t>(245 - static_cast<int>(t * 165));
-    auto b = static_cast<uint8_t>(255 - static_cast<int>(t * 95));
-    return {r, g, b};
-}
-
 static worldgen::ExportRgb boundaryTypeColor(uint8_t bt) {
     switch (bt) {
         case 1: return {220, 30,  30};  // ConvergentCC
@@ -437,18 +421,6 @@ static worldgen::ExportRgb boundaryTypeColor(uint8_t bt) {
         case 5: return {30,  180, 80};  // Transform
         default: return {40, 40, 50};
     }
-}
-
-// orogenyAge: young orogens (recent) bright red -> old scars dark; never = grey.
-static worldgen::ExportRgb orogenyAgeColor(int32_t ageMyr) {
-    if (ageMyr == worldgen::tectonics::kOrogenyNever) return {30, 35, 45};
-    float t = static_cast<float>(ageMyr) / 800.0f;
-    if (t > 1.0f) t = 1.0f;
-    // hot (recent) -> cool/dark (old): red->maroon.
-    auto r = static_cast<uint8_t>(240 - static_cast<int>(t * 150));
-    auto gg = static_cast<uint8_t>(180 - static_cast<int>(t * 150));
-    auto b = static_cast<uint8_t>(60  - static_cast<int>(t * 40));
-    return {r, gg, b};
 }
 
 // 0..1 field (orogeny intensity / volcanism) on a black->yellow->white ramp.
@@ -513,15 +485,14 @@ static int runSimOnly(const CliArgs& args) {
             int32_t age = nowI - cc.birthMyr;
             if (age < 0) age = 0;
             if (age > 65534) age = 65534;
-            return crustAgeColor(static_cast<uint16_t>(age), static_cast<uint8_t>(cc.type));
+            return crustAgeColor(static_cast<uint16_t>(age),
+                                 cc.type == CrustType::Continental);
         }, buf, 2048);
         std::snprintf(buf, sizeof(buf), "%s/frame_%03d_orogenyage.bmp", args.outDir.c_str(), frameIdx);
         exportEquirectangularBmp(g, [&](TileId t) -> ExportRgb {
             const CrustCell& cc = crust[t];
-            if (cc.type != CrustType::Continental)
-                return {15, 20, 35}; // ocean: dark
             int32_t oage = cc.orogenyMyr == kOrogenyNever ? kOrogenyNever : (nowI - cc.orogenyMyr);
-            return orogenyAgeColor(oage);
+            return orogenyAgeColor(oage, cc.type == CrustType::Continental);
         }, buf, 2048);
     };
 
@@ -562,9 +533,8 @@ static int runSimOnly(const CliArgs& args) {
         }, buf, 2048);
         std::snprintf(buf, sizeof(buf), "%s/final_orogenyage.bmp", args.outDir.c_str());
         exportEquirectangularBmp(g, [&](TileId t) -> ExportRgb {
-            if (history->crustType[t] != static_cast<uint8_t>(CrustType::Continental))
-                return {15, 20, 35};
-            return orogenyAgeColor(history->orogenyAge[t]);
+            bool isCont = history->crustType[t] == static_cast<uint8_t>(CrustType::Continental);
+            return orogenyAgeColor(history->orogenyAge[t], isCont);
         }, buf, 2048);
         std::snprintf(buf, sizeof(buf), "%s/final_orogenyintensity.bmp", args.outDir.c_str());
         exportEquirectangularBmp(g, [&](TileId t) -> ExportRgb {
@@ -747,7 +717,19 @@ int main(int argc, char** argv) {
         return 3;
     }
 
-    mkdirP(args.outDir);
+    // Validate --verify-threads before doing any work.
+    if (args.verifyA != 0 || args.verifyB != 0) {
+        if (args.verifyA < 1 || args.verifyB < 1) {
+            std::fprintf(stderr,
+                         "--verify-threads requires two positive thread counts (got %d,%d)\n",
+                         args.verifyA, args.verifyB);
+            return 3;
+        }
+    }
+
+    if (!mkdirP(args.outDir)) {
+        return 4;
+    }
 
     if (args.simOnly) {
         return runSimOnly(args);

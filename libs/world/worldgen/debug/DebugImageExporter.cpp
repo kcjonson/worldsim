@@ -158,6 +158,21 @@ bool exportEquirectangularBmp(const GeneratedWorld& world,
                     }
                     break;
                 }
+                case WorldFieldOrMode::CrustAge: {
+                    bool isCont = (world.data.flags[t] & kFlagContinentalCrust) != 0;
+                    ExportRgb c = crustAgeColor(world.data.crustAge[t], isCont);
+                    color = {c.r, c.g, c.b};
+                    break;
+                }
+                case WorldFieldOrMode::OrogenyAge: {
+                    bool isCont = (world.data.flags[t] & kFlagContinentalCrust) != 0;
+                    int32_t age = (world.data.orogenyAge[t] == 65535u)
+                                  ? tectonics::kOrogenyNever
+                                  : static_cast<int32_t>(world.data.orogenyAge[t]);
+                    ExportRgb c = orogenyAgeColor(age, isCont);
+                    color = {c.r, c.g, c.b};
+                    break;
+                }
             }
 
             size_t idx = static_cast<size_t>((py * width + px) * 3);

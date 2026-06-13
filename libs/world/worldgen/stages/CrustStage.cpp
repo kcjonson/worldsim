@@ -184,16 +184,32 @@ void CrustStage::run(StageContext& ctx) {
             ctx.data.plateId[t] = pid;
 
             // crustAge: inverse-distance blend of same-crust-type neighbors of sm.
+            // Guard: if nearestMatchingCrustTile fell back to returning a wrong-type
+            // tile (sm's crustType != wantType), writing its age into a tile of the
+            // opposite crust type would be semantically wrong (ocean age on a continent,
+            // or vice versa). In that rare case use 0 — a neutral, type-appropriate
+            // default — rather than inheriting a cross-type value.
             auto getCrustAge = [&](TileId tile) -> float {
                 return static_cast<float>(hist->crustAge[tile]);
             };
-            tectonics::BlendResult ageBlend =
-                tectonics::blendSmoothField(sm, coarseGrid, *hist, getCrustAge);
-            ctx.data.crustAge[t] = clampCrustAge(ageBlend.value);
+            if (hist->crustType[sm] != wantType) {
+                ctx.data.crustAge[t] = 0u;
+            } else {
+                tectonics::BlendResult ageBlend =
+                    tectonics::blendSmoothField(sm, coarseGrid, *hist, getCrustAge);
+                ctx.data.crustAge[t] = clampCrustAge(ageBlend.value);
+            }
 
-            // orogenyAge: suture-guarded blend anchored at sm.
-            const float blendedOrogenic = tectonics::blendOrogenyAge(sm, coarseGrid, *hist);
-            ctx.data.orogenyAge[t] = toOrogenyAgeU16(blendedOrogenic);
+            // orogenyAge: suture-guarded blend anchored at sm. Same fallback guard as
+            // crustAge: if sm is the wrong crust type, use a neutral value (kOrogenyNeverU16
+            // for continental — no orogeny yet; 0 for oceanic — though orogeny on ocean is
+            // unexpected). In practice continental is the only type that carries orogenyAge.
+            if (hist->crustType[sm] != wantType) {
+                ctx.data.orogenyAge[t] = isCont ? kOrogenyNeverU16 : 0u;
+            } else {
+                const float blendedOrogenic = tectonics::blendOrogenyAge(sm, coarseGrid, *hist);
+                ctx.data.orogenyAge[t] = toOrogenyAgeU16(blendedOrogenic);
+            }
         }
 
         ctx.reportProgress(0.10f + static_cast<float>(end) / static_cast<float>(N) * 0.85f);
@@ -204,6 +220,9 @@ void CrustStage::run(StageContext& ctx) {
     ctx.world.validFields |= static_cast<uint32_t>(WorldField::CrustAge);
     ctx.world.validFields |= static_cast<uint32_t>(WorldField::OrogenyAge);
     // BoundaryType and BoundaryDistance are written by TerrainStage, not here.
+    // TerrainStage reclassifies boundaries at full resolution from plateId + Euler poles
+    // (more accurate than upsampling the coarse TectonicHistory boundary fields, which
+    // are sim-internal diagnostics used only by worldgen-cli --sim-only).
     // TerrainStage also inherits the plates list we built above.
 
     ctx.reportProgress(1.0f);

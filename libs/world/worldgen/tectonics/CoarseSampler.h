@@ -171,6 +171,20 @@ inline std::vector<float> buildSignedDistanceField(const SphereGrid& grid,
         if (isCoast) { ringDist[t] = 0; frontier.push_back(t); }
     }
 
+    // Degenerate case: no coast cells (all-ocean or all-continent world — reachable at
+    // extreme waterAmount or on tiny grids). The BFS would leave every ringDist at
+    // kUnset, which maps to sdf=0, and the threshold would flip tiles based on
+    // crenulation noise alone (~50% confetti). Instead, set sdf to a large signed
+    // constant that matches the uniform crust type so the threshold always yields the
+    // correct uniform crust everywhere.
+    if (frontier.empty()) {
+        bool allCont = !crustType.empty() &&
+                       crustType[0] == static_cast<uint8_t>(CrustType::Continental);
+        constexpr float kBig = 1000.0f; // >> any crenulation amplitude
+        float fill = allCont ? kBig : -kBig;
+        return std::vector<float>(N, fill);
+    }
+
     // Multi-source BFS, ring by ring. frontier is already ascending; each next ring
     // is built ascending because we scan the (ascending) frontier and push neighbors
     // in fixed order, then sort the next frontier to restore ascending order.
