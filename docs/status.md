@@ -454,7 +454,7 @@ while (running) {
 
 **Tasks:**
 - [x] Epic A: Geometry foundations (libs/geometry in-house: int64-mm core + Int128, exact predicates, polygon constraint primitives, planar arrangement + half-edge face extraction, ring booleans, wall band offsetting + junction trimming; 157 unit tests) — merged to main (#135)
-- [ ] Epic C: Foundations end-to-end — implemented, pending end-to-end sandbox proof (see below)
+- [x] Epic C: Foundations end-to-end — verified in sandbox: draw a foundation, colonist chops palms for Wood, hauls it to the site, builds it to completion, renders progress. Polish items remain (see sub-list).
   - [x] Config + ConstructionRegistry + ConfigValidator (materials/constraints/snapping, meters + mm mirrors)
   - [x] ConstructionWorld topology store (commit/add/subtract/remove via geometry booleans, overlap rejection, hit-test, version counter)
   - [x] Blueprint ECS components (Structure, StructureBlueprint manifest+work+phase, StructureHealth)
@@ -463,7 +463,9 @@ while (running) {
   - [x] Material economy: Wood item + choppable Oak/Maple trees (reuses Harvestable path)
   - [x] Build/Deconstruct actions (skill-scaled workDone += rate×dt, completion callbacks; 14 tests)
   - [x] ConstructionSystem lifecycle (Clearing→AwaitingMaterials→UnderConstruction→Complete; clear/haul/build goals; blueprint-inventory delivery; build-progress render ramp)
-  - [ ] End-to-end proof of the chop→haul→build loop in a live world — BLOCKED: quickstart spawns a treeless Beach biome (no Wood source). Each link is unit-tested or visually confirmed in isolation; needs a forested spawn or a debug Wood/tree affordance to demonstrate the full loop. Baked element-emitter progress (D8) and ConstructionProgressSlot (D11) are later polish.
+  - [x] Choppable palm trees added to the Beach biome (Wood source at spawn) so the loop is exercisable
+  - [x] End-to-end proof of chop→haul→build in a live world — verified in sandbox (foundation built to completion, ~1 min sim time). Fixed a goal-thrashing bug found in the process (harvest demand now bounded by carried Wood; harvest→haul chained for delivery stickiness).
+  - [ ] Polish (deferred): baked element-emitter index-prefix progress render (D8), ConstructionProgressSlot in the info panel (D11), N discrete builder work slots from builderCap, deconstruct material refund + cascade, mining/haul-away clearing of non-harvestable obstructions
 - [ ] Epic D: Walls (graph + junction splitting, WallTool, band rendering, nav integration, demolition)
 - [ ] Epic E: Rooms (face extraction on built/demolish events, room entities, notification)
 - [ ] Epic F: Openings (OpeningTool, parameterized assets, retrofit cuts, door nav nodes)
