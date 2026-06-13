@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100">
+  <!-- Wood log - Top-down view of a short cut log (~0.4m length) -->
+
+  <!-- Log body (rounded rectangle, top-down cross-section) -->
+  <rect x="18" y="38" width="64" height="24" rx="5" ry="5" fill="#8B5A2B"/>
+
+  <!-- End grain (left cut face) -->
+  <ellipse cx="20" cy="50" rx="6" ry="12" fill="#A0622E"/>
+  <ellipse cx="20" cy="50" rx="3" ry="7" fill="#7A4820" opacity="0.6"/>
+
+  <!-- End grain (right cut face) -->
+  <ellipse cx="80" cy="50" rx="6" ry="12" fill="#A0622E"/>
+  <ellipse cx="80" cy="50" rx="3" ry="7" fill="#7A4820" opacity="0.6"/>
+
+  <!-- Bark texture lines -->
+  <path d="M26,41 L74,41" stroke="#6B4218" stroke-width="1.5" fill="none" opacity="0.7"/>
+  <path d="M26,50 L74,50" stroke="#6B4218" stroke-width="1"   fill="none" opacity="0.4"/>
+  <path d="M26,59 L74,59" stroke="#6B4218" stroke-width="1.5" fill="none" opacity="0.7"/>
+
+  <!-- Highlight -->
+  <path d="M28,42 L72,42" stroke="#C87840" stroke-width="1" fill="none" opacity="0.5"/>
+</svg>

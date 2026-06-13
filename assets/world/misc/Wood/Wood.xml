@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Wood - Chopped from trees, primary construction material
+     Unified entity: exists in world (when dropped) or inventory (when carried)
+     Source: Harvested from Flora_TreeOak, Flora_TreeMaple
+-->
+<AssetDefinitions>
+  <AssetDef>
+    <defName>Wood</defName>
+    <label>Wood</label>
+    <assetType>simple</assetType>
+    <svgPath>wood.svg</svgPath>
+    <worldHeight>0.4</worldHeight>
+
+    <rendering>
+      <complexity>simple</complexity>
+      <tier>instanced</tier>
+    </rendering>
+
+    <!-- Item category: raw construction material -->
+    <category>RawMaterial</category>
+
+    <!-- Item properties (when in inventory) -->
+    <item>
+      <stackSize>25</stackSize>
+    </item>
+
+    <!-- Entity capabilities -->
+    <capabilities>
+      <carryable quantity="1"/>
+    </capabilities>
+
+    <!-- No placement - wood doesn't spawn naturally, it's chopped from trees -->
+  </AssetDef>
+</AssetDefinitions>
