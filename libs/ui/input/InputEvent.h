@@ -40,7 +40,7 @@ struct InputEvent {
 	// Factory methods for clearer construction
 	static InputEvent mouseDown(Foundation::Vec2 pos, engine::MouseButton btn, int mods = 0);
 	static InputEvent mouseUp(Foundation::Vec2 pos, engine::MouseButton btn, int mods = 0);
-	static InputEvent mouseMove(Foundation::Vec2 pos);
+	static InputEvent mouseMove(Foundation::Vec2 pos, int mods = 0);
 	static InputEvent scroll(Foundation::Vec2 pos, float delta);
 };
 

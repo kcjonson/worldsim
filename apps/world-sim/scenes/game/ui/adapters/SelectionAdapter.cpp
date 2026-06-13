@@ -455,9 +455,9 @@ namespace world_sim {
 			content.slots.push_back(TextSlot{"State", built ? "Built" : "Blueprint"});
 		}
 
-		// Demolish action. Epic C does an immediate whole-foundation removal here;
-		// the work-driven Deconstruct lifecycle (and the Demolish-building cascade)
-		// arrives with C5.
+		// Demolish action. Epic C does an immediate whole-foundation removal here. The
+		// work-driven Deconstruct action exists; only its material refund and the
+		// Demolish-building cascade are deferred polish.
 		content.slots.push_back(SpacerSlot{.height = 8.0F});
 		content.slots.push_back(
 			ActionButtonSlot{

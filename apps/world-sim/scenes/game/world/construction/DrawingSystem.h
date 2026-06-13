@@ -107,7 +107,7 @@ namespace world_sim {
 
 		[[nodiscard]] DrawingStatus status() const;
 
-		// --- Topology access for later pieces (C5/C6/C7) ---
+		// --- Topology access for consumers (selection, ConstructionSystem) ---
 
 		[[nodiscard]] engine::construction::ConstructionWorld&		world() { return constructionWorld_; }
 		[[nodiscard]] const engine::construction::ConstructionWorld& world() const { return constructionWorld_; }
