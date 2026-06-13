@@ -4,6 +4,7 @@ add_library(geometry
     arrangement/Arrangement.cpp
     arrangement/HalfEdge.cpp
     offset/WallOffset.cpp
+    boolean/RingBoolean.cpp
 )
 
 target_include_directories(geometry
