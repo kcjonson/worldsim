@@ -2,11 +2,11 @@
 
 #include "worldgen/stages/AtmosphereStage.h"
 #include "worldgen/stages/BiomeStage.h"
+#include "worldgen/stages/CrustStage.h"
 #include "worldgen/stages/OceanStage.h"
-#include "worldgen/stages/PlateMovementStage.h"
-#include "worldgen/stages/PlateStage.h"
 #include "worldgen/stages/PrecipitationStage.h"
 #include "worldgen/stages/SnowStage.h"
+#include "worldgen/stages/TectonicHistoryStage.h"
 #include "worldgen/stages/TerrainStage.h"
 
 #include <random/SplitMix64.h>
@@ -50,8 +50,8 @@ float habitabilityWeight(Biome b) {
 
 PlanetGenerator::PlanetGenerator(unsigned threadCount)
     : pool(threadCount) {
-    stages.push_back(std::make_unique<PlateStage>());
-    stages.push_back(std::make_unique<PlateMovementStage>());
+    stages.push_back(std::make_unique<TectonicHistoryStage>());
+    stages.push_back(std::make_unique<CrustStage>());
     stages.push_back(std::make_unique<TerrainStage>());
     stages.push_back(std::make_unique<AtmosphereStage>());
     stages.push_back(std::make_unique<PrecipitationStage>());

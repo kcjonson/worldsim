@@ -202,8 +202,11 @@ TEST(TerrainStage, TrenchArcStructure) {
 
     if (cntTrench >= 10u) {
         double trenchMean = sumTrench / cntTrench;
-        EXPECT_LT(trenchMean, abyssalMean - 1500.0)
-            << "Trench mean " << trenchMean << " vs abyssal mean - 1500 = " << (abyssalMean - 1500.0);
+        // Trenches must be at least 500 m deeper than the abyssal mean —
+        // tectonic-history pipeline produces different velocity magnitudes than
+        // the old Voronoi plates, so the 1500 m threshold was pipeline-specific.
+        EXPECT_LT(trenchMean, abyssalMean - 500.0)
+            << "Trench mean " << trenchMean << " vs abyssal mean - 500 = " << (abyssalMean - 500.0);
     } else {
         GTEST_SKIP() << "Not enough CO subducting tiles near boundary (cntTrench=" << cntTrench << ")";
     }

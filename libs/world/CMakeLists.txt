@@ -2,9 +2,8 @@ add_library(world
     worldgen/grid/SphereGrid.cpp
     worldgen/data/PlanetParams.cpp
     worldgen/pipeline/PlanetGenerator.cpp
-    worldgen/stages/PlateStage.cpp
-    worldgen/stages/PlateMovementStage.cpp
     worldgen/stages/TectonicHistoryStage.cpp
+    worldgen/stages/CrustStage.cpp
     worldgen/stages/TerrainStage.cpp
     worldgen/tectonics/PlateSim.cpp
     worldgen/tectonics/TectonicHistory.cpp
