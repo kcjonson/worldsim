@@ -22,9 +22,9 @@ namespace world_sim {
 		// Centroid of a polygon (world meters). Falls back to the vertex average
 		// for a degenerate ring so the spawned entity always has a sane Position.
 		Foundation::Vec2 polygonCentroid(const std::vector<Foundation::Vec2>& pts) {
-			double cx = 0.0;
-			double cy = 0.0;
-			double a  = 0.0;
+			double			  cx = 0.0;
+			double			  cy = 0.0;
+			double			  a = 0.0;
 			const std::size_t n = pts.size();
 			for (std::size_t i = 0, j = n - 1; i < n; j = i++) {
 				const double cross = static_cast<double>(pts[j].x) * pts[i].y - static_cast<double>(pts[i].x) * pts[j].y;
@@ -51,12 +51,14 @@ namespace world_sim {
 	} // namespace
 
 	DrawingSystem::DrawingSystem(const Args& args)
-		: ecsWorld_(args.world), camera_(args.camera), callbacks_(args.callbacks) {}
+		: ecsWorld_(args.world),
+		  camera_(args.camera),
+		  callbacks_(args.callbacks) {}
 
 	void DrawingSystem::activateFoundationTool() {
 		state_ = DrawingState::Drawing;
 		points_.clear();
-		lastSnap_		= {};
+		lastSnap_ = {};
 		lastValidation_ = {};
 		if (callbacks_.onToolActive) {
 			callbacks_.onToolActive(true);
@@ -67,7 +69,7 @@ namespace world_sim {
 	void DrawingSystem::deactivate() {
 		state_ = DrawingState::Idle;
 		points_.clear();
-		lastSnap_		= {};
+		lastSnap_ = {};
 		lastValidation_ = {};
 		if (callbacks_.onToolActive) {
 			callbacks_.onToolActive(false);
@@ -84,10 +86,10 @@ namespace world_sim {
 		}
 		const auto world = camera_->screenToWorld(screenX, screenY, viewportW, viewportH, kPixelsPerMeter);
 
-		auto&			 registry = ConstructionRegistry::Get();
-		ec::SnapEngine	 snap(registry.snapping(), constructionWorld_);
-		lastSnap_	= snap.snap(points_, {world.x, world.y}, freeform);
-		cursor_		= lastSnap_.point;
+		auto&		   registry = ConstructionRegistry::Get();
+		ec::SnapEngine snap(registry.snapping(), constructionWorld_);
+		lastSnap_ = snap.snap(points_, {world.x, world.y}, freeform);
+		cursor_ = lastSnap_.point;
 
 		ec::ConstructionValidator validator(registry.constraints(), constructionWorld_);
 		lastValidation_ = validator.validatePoint(points_, cursor_);
@@ -196,11 +198,11 @@ namespace world_sim {
 		const auto* material = registry.getMaterial(activeMaterial_);
 		float		costRate = 0.0F;
 		float		workRate = 0.0F;
-		float		hpRate	 = 0.0F;
+		float		hpRate = 0.0F;
 		if (material != nullptr) {
 			costRate = material->costRatePerSquareMeter;
 			workRate = material->workRatePerSquareMeter;
-			hpRate	 = material->hp;
+			hpRate = material->hp;
 		}
 
 		auto entity = ecsWorld_->createEntity();
@@ -225,7 +227,7 @@ namespace world_sim {
 		// blueprint's delivered[] manifest from it. One slot per material type is enough; large
 		// stacks so a whole foundation's Wood fits in a single slot.
 		ecs::Inventory deliveryInv;
-		deliveryInv.maxCapacity	 = 8;
+		deliveryInv.maxCapacity = 8;
 		deliveryInv.maxStackSize = 100000;
 		ecsWorld_->addComponent<ecs::Inventory>(entity, std::move(deliveryInv));
 
@@ -251,16 +253,16 @@ namespace world_sim {
 
 	DrawingStatus DrawingSystem::status() const {
 		DrawingStatus s;
-		s.active	 = (state_ == DrawingState::Drawing);
+		s.active = (state_ == DrawingState::Drawing);
 		s.pointCount = static_cast<int>(points_.size());
-		s.material	 = activeMaterial_;
+		s.material = activeMaterial_;
 
 		// Area preview: only meaningful once a closeable shape exists.
 		if (points_.size() >= 3) {
-			auto&			 registry = ConstructionRegistry::Get();
+			auto&					  registry = ConstructionRegistry::Get();
 			ec::ConstructionValidator validator(registry.constraints(), constructionWorld_);
-			const auto		 ring = validator.validateRing(points_);
-			s.valid	  = ring.ok();
+			const auto				  ring = validator.validateRing(points_);
+			s.valid = ring.ok();
 			s.message = ec::validationReason(ring.code);
 			// Recompute area regardless of validity so the readout tracks the shape.
 			geometry::Ring quantized;
@@ -270,7 +272,7 @@ namespace world_sim {
 			}
 			s.areaSquareMeters = static_cast<float>(std::abs(geometry::signedAreaSquareMeters(quantized)));
 		} else {
-			s.valid	  = lastValidation_.ok();
+			s.valid = lastValidation_.ok();
 			s.message = ec::validationReason(lastValidation_.code);
 		}
 		return s;
@@ -315,7 +317,7 @@ namespace world_sim {
 			}
 
 			// Material color (palette front) drives the progress fill; fall back to blue.
-			const auto* mat = ConstructionRegistry::Get().getMaterial(f.material);
+			const auto*		  mat = ConstructionRegistry::Get().getMaterial(f.material);
 			Foundation::Color matColor{0.5F, 0.65F, 0.9F, 1.0F};
 			if (mat != nullptr && !mat->pattern.palette.empty()) {
 				const auto& c = mat->pattern.palette.front();
@@ -337,13 +339,13 @@ namespace world_sim {
 
 			// Layer 1: faint blueprint base (always present, reads as the planned footprint).
 			Renderer::Primitives::drawTriangles({
-				.vertices	 = screen.data(),
-				.indices	 = indices.data(),
+				.vertices = screen.data(),
+				.indices = indices.data(),
 				.vertexCount = screen.size(),
-				.indexCount	 = indices.size(),
-				.color		 = {0.5F, 0.65F, 0.9F, 0.18F},
-				.id			 = "committed_foundation_base",
-				.zIndex		 = 50,
+				.indexCount = indices.size(),
+				.color = {0.5F, 0.65F, 0.9F, 0.18F},
+				.id = "committed_foundation_base",
+				.zIndex = 50,
 			});
 
 			// Layer 2: progress fill, alpha proportional to workDone/workTotal. Ramps from a
@@ -351,25 +353,25 @@ namespace world_sim {
 			if (progress > 0.0F) {
 				const float fillAlpha = built ? 0.85F : (0.15F + 0.7F * progress);
 				Renderer::Primitives::drawTriangles({
-					.vertices	 = screen.data(),
-					.indices	 = indices.data(),
+					.vertices = screen.data(),
+					.indices = indices.data(),
 					.vertexCount = screen.size(),
-					.indexCount	 = indices.size(),
-					.color		 = {matColor.r, matColor.g, matColor.b, fillAlpha},
-					.id			 = "committed_foundation_progress",
-					.zIndex		 = 51,
+					.indexCount = indices.size(),
+					.color = {matColor.r, matColor.g, matColor.b, fillAlpha},
+					.id = "committed_foundation_progress",
+					.zIndex = 51,
 				});
 			}
 
 			// Layer 3: outline, brighter/heavier as it firms up toward Built.
-			const float			   outlineAlpha = 0.6F + 0.4F * progress;
+			const float				outlineAlpha = 0.6F + 0.4F * progress;
 			const Foundation::Color outline{0.55F, 0.72F, 1.0F, built ? 1.0F : outlineAlpha};
 			for (std::size_t i = 0; i < n; ++i) {
 				Renderer::Primitives::drawLine({
 					.start = screen[i],
-					.end   = screen[(i + 1) % n],
+					.end = screen[(i + 1) % n],
 					.style = {.color = outline, .width = built ? 2.0F : 1.5F},
-					.id	   = "committed_foundation_edge",
+					.id = "committed_foundation_edge",
 					.zIndex = 52,
 				});
 			}
@@ -380,10 +382,10 @@ namespace world_sim {
 			return;
 		}
 
-		const bool			   valid = lastValidation_.ok();
-		const Foundation::Color okColor	   = UI::Theme::Colors::statusActive;	// green
-		const Foundation::Color badColor   = UI::Theme::Colors::statusBlocked;	// red
-		const Foundation::Color lineColor  = valid ? okColor : badColor;
+		const bool				valid = lastValidation_.ok();
+		const Foundation::Color okColor = UI::Theme::Colors::statusActive;	 // green
+		const Foundation::Color badColor = UI::Theme::Colors::statusBlocked; // red
+		const Foundation::Color lineColor = valid ? okColor : badColor;
 
 		std::vector<Foundation::Vec2> screen;
 		screen.reserve(points_.size());
@@ -401,15 +403,15 @@ namespace world_sim {
 				indices.push_back(static_cast<uint16_t>(i + 1));
 			}
 			Foundation::Color fillColor = valid ? Foundation::Color{okColor.r, okColor.g, okColor.b, 0.15F}
-												 : Foundation::Color{badColor.r, badColor.g, badColor.b, 0.15F};
+												: Foundation::Color{badColor.r, badColor.g, badColor.b, 0.15F};
 			Renderer::Primitives::drawTriangles({
-				.vertices	 = fillPts.data(),
-				.indices	 = indices.data(),
+				.vertices = fillPts.data(),
+				.indices = indices.data(),
 				.vertexCount = fillPts.size(),
-				.indexCount	 = indices.size(),
-				.color		 = fillColor,
-				.id			 = "drawing_fill_preview",
-				.zIndex		 = 900,
+				.indexCount = indices.size(),
+				.color = fillColor,
+				.id = "drawing_fill_preview",
+				.zIndex = 900,
 			});
 		}
 
@@ -417,9 +419,9 @@ namespace world_sim {
 		for (std::size_t i = 0; i + 1 < screen.size(); ++i) {
 			Renderer::Primitives::drawLine({
 				.start = screen[i],
-				.end   = screen[i + 1],
+				.end = screen[i + 1],
 				.style = {.color = okColor, .width = 2.0F},
-				.id	   = "drawing_edge",
+				.id = "drawing_edge",
 				.zIndex = 901,
 			});
 		}
@@ -428,9 +430,9 @@ namespace world_sim {
 		if (!points_.empty()) {
 			Renderer::Primitives::drawLine({
 				.start = screen.back(),
-				.end   = toScreen(cursor_),
+				.end = toScreen(cursor_),
 				.style = {.color = lineColor, .width = 2.0F},
-				.id	   = "drawing_rubberband",
+				.id = "drawing_rubberband",
 				.zIndex = 902,
 			});
 		}
@@ -439,9 +441,9 @@ namespace world_sim {
 		if (lastSnap_.kind == engine::construction::SnapKind::Angle) {
 			Renderer::Primitives::drawLine({
 				.start = toScreen(lastSnap_.guideFrom),
-				.end   = toScreen(lastSnap_.guideTo),
+				.end = toScreen(lastSnap_.guideTo),
 				.style = {.color = {0.7F, 0.85F, 1.0F, 0.4F}, .width = 1.0F},
-				.id	   = "drawing_guide",
+				.id = "drawing_guide",
 				.zIndex = 899,
 			});
 		}
@@ -451,8 +453,8 @@ namespace world_sim {
 			Renderer::Primitives::drawCircle({
 				.center = sp,
 				.radius = 4.0F,
-				.style	= {.fill = okColor},
-				.id		= "drawing_vertex",
+				.style = {.fill = okColor},
+				.id = "drawing_vertex",
 				.zIndex = 903,
 			});
 		}
@@ -460,14 +462,17 @@ namespace world_sim {
 		// Origin halo when the shape can close.
 		if (points_.size() >= 3) {
 			const float originRadius = ConstructionRegistry::Get().snapping().originCloseRadiusMeters * scale;
-			const bool	closing		 = lastSnap_.closesShape();
+			const bool	closing = lastSnap_.closesShape();
 			Renderer::Primitives::drawCircle({
 				.center = screen.front(),
 				.radius = std::max(8.0F, originRadius),
-				.style	= {.fill	= {0.0F, 0.0F, 0.0F, 0.0F},
-						   .border = Foundation::BorderStyle{.color = closing ? okColor : Foundation::Color{0.7F, 0.85F, 1.0F, 0.6F},
-															 .width = closing ? 3.0F : 1.5F}},
-				.id		= "drawing_origin_halo",
+				.style =
+					{.fill = {0.0F, 0.0F, 0.0F, 0.0F},
+					 .border =
+						 Foundation::BorderStyle{
+							 .color = closing ? okColor : Foundation::Color{0.7F, 0.85F, 1.0F, 0.6F}, .width = closing ? 3.0F : 1.5F
+						 }},
+				.id = "drawing_origin_halo",
 				.zIndex = 904,
 			});
 		}
@@ -478,8 +483,8 @@ namespace world_sim {
 			Renderer::Primitives::drawCircle({
 				.center = screen[vi],
 				.radius = 7.0F,
-				.style	= {.fill = {badColor.r, badColor.g, badColor.b, 0.5F}},
-				.id		= "drawing_invalid_vertex",
+				.style = {.fill = {badColor.r, badColor.g, badColor.b, 0.5F}},
+				.id = "drawing_invalid_vertex",
 				.zIndex = 905,
 			});
 		}

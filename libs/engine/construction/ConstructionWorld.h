@@ -50,11 +50,11 @@ namespace engine::construction {
 	// the ECS mirror handle, set by the caller via setEntity once the gameplay
 	// entity is spawned; kInvalidEntity until then.
 	struct Foundation {
-		FoundationId	id		 = kInvalidFoundation;
+		FoundationId	id = kInvalidFoundation;
 		geometry::Ring	ring;
 		std::string		material;
-		FoundationState state	 = FoundationState::Blueprint;
-		ecs::EntityID	entity	 = ecs::kInvalidEntity;
+		FoundationState state = FoundationState::Blueprint;
+		ecs::EntityID	entity = ecs::kInvalidEntity;
 	};
 
 	// Outcome of a commit or edit. Mirrors geometry's reject-don't-repair model:
@@ -63,10 +63,10 @@ namespace engine::construction {
 	// reason (hole, split, pinch, disjoint, consumes, no-effect).
 	enum class CommitStatus {
 		Ok,
-		TooFewVertices,	  // ring has fewer than 3 vertices
-		NotSimple,		  // ring self-intersects (geometry::isSimple failed)
-		DegenerateArea,	  // zero signed area
-		OverlapsExisting, // interior overlaps an already-committed foundation
+		TooFewVertices,	   // ring has fewer than 3 vertices
+		NotSimple,		   // ring self-intersects (geometry::isSimple failed)
+		DegenerateArea,	   // zero signed area
+		OverlapsExisting,  // interior overlaps an already-committed foundation
 		UnknownFoundation, // edit referenced an id not in the store
 		// Boolean-edit failures, forwarded from geometry::BooleanStatus:
 		BooleanInvalidInput,
@@ -80,7 +80,7 @@ namespace engine::construction {
 
 	struct CommitResult {
 		CommitStatus status = CommitStatus::TooFewVertices;
-		FoundationId id		= kInvalidFoundation; // valid only when status == Ok
+		FoundationId id = kInvalidFoundation; // valid only when status == Ok
 
 		bool ok() const { return status == CommitStatus::Ok; }
 	};
@@ -91,7 +91,7 @@ namespace engine::construction {
 	};
 
 	class ConstructionWorld {
-	public:
+	  public:
 		// --- Construction ---------------------------------------------------
 
 		// Commit a new foundation from a ring already quantized to integer mm.
@@ -156,18 +156,18 @@ namespace engine::construction {
 		// it and rebuild when it moves. Pure queries never bump it.
 		std::uint64_t version() const { return version_; }
 
-	private:
-		Foundation*			  find(FoundationId id);
-		const Foundation*	  find(FoundationId id) const;
+	  private:
+		Foundation*		  find(FoundationId id);
+		const Foundation* find(FoundationId id) const;
 
 		// Structural invariant gate shared by commit and the edit paths.
 		// `ignoreId` excludes a foundation from the overlap check (the one being
 		// edited in place). On success `ring` is left CCW-normalized.
 		CommitStatus validateStructure(geometry::Ring& ring, FoundationId ignoreId) const;
 
-		std::vector<Foundation> foundations_;	   // stable insertion order
-		FoundationId			nextId_	   = 1;	   // 0 reserved as invalid
-		std::uint64_t			version_   = 0;
+		std::vector<Foundation> foundations_; // stable insertion order
+		FoundationId			nextId_ = 1;  // 0 reserved as invalid
+		std::uint64_t			version_ = 0;
 	};
 
 } // namespace engine::construction

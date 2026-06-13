@@ -37,15 +37,15 @@ namespace engine::construction {
 	// truthiness check (`code != Ok`) reads naturally.
 	enum class ValidationCode {
 		Ok,
-		TooFewPoints,		 // fewer than 3 points (commit gate only)
-		TooManyPoints,		 // candidate would exceed maxPoints
-		VerticesTooClose,	 // adjacent vertices closer than minVertexSpacing
-		AngleTooSharp,		 // an interior corner below minCornerAngle
-		SelfIntersects,		 // ring is not simple
+		TooFewPoints,		   // fewer than 3 points (commit gate only)
+		TooManyPoints,		   // candidate would exceed maxPoints
+		VerticesTooClose,	   // adjacent vertices closer than minVertexSpacing
+		AngleTooSharp,		   // an interior corner below minCornerAngle
+		SelfIntersects,		   // ring is not simple
 		EdgeClearanceTooSmall, // non-adjacent edges closer than segmentClearance
-		AreaTooSmall,		 // closed area below minArea
-		AreaTooLarge,		 // closed area above maxArea
-		OverlapsExisting,	 // interior overlaps a committed foundation
+		AreaTooSmall,		   // closed area below minArea
+		AreaTooLarge,		   // closed area above maxArea
+		OverlapsExisting,	   // interior overlaps a committed foundation
 	};
 
 	// Result of a check. `code` drives both the red colorizing and the reason
@@ -54,9 +54,9 @@ namespace engine::construction {
 	// offending vertex or edge. `measuredValue` is the measured quantity in the
 	// constraint's natural units (degrees or meters), for richer messages.
 	struct ValidationResult {
-		ValidationCode code			 = ValidationCode::Ok;
-		std::size_t	   vertexIndex	 = 0;
-		std::size_t	   otherIndex	 = 0;
+		ValidationCode code = ValidationCode::Ok;
+		std::size_t	   vertexIndex = 0;
+		std::size_t	   otherIndex = 0;
 		double		   measuredValue = 0.0;
 
 		[[nodiscard]] bool ok() const { return code == ValidationCode::Ok; }
@@ -67,9 +67,10 @@ namespace engine::construction {
 	[[nodiscard]] std::string validationReason(ValidationCode code);
 
 	class ConstructionValidator {
-	public:
+	  public:
 		ConstructionValidator(const engine::assets::ConstraintConfig& constraints, const ConstructionWorld& world)
-			: constraints_(&constraints), world_(&world) {}
+			: constraints_(&constraints),
+			  world_(&world) {}
 
 		// Validate the open polygon formed by `points` with `candidate` appended.
 		// Used live as the cursor moves: checks the things that must hold for the
@@ -83,7 +84,7 @@ namespace engine::construction {
 		// against every constraint including area and overlap. Used to gate commit.
 		[[nodiscard]] ValidationResult validateRing(const std::vector<::Foundation::Vec2>& ring) const;
 
-	private:
+	  private:
 		// Shared ring-shape checks (spacing, angle, simplicity, clearance) over a
 		// quantized ring. `closed` selects whether the implicit closing edge and
 		// the wrap-around corner/spacing are included.

@@ -2,8 +2,8 @@
 
 #include "../GoalTaskRegistry.h"
 #include "../World.h"
-#include "../components/StructureBlueprint.h"
 #include "../components/Structure.h"
+#include "../components/StructureBlueprint.h"
 #include "../components/Transform.h"
 
 #include <assets/AssetDefinition.h>
@@ -18,16 +18,14 @@ using namespace ecs;
 namespace {
 	StructureBlueprint makeBlueprint(StructureBlueprint::BuildPhase phase) {
 		StructureBlueprint bp;
-		bp.phase	= phase;
+		bp.phase = phase;
 		bp.required = {{"Wood", 100}};
 		bp.workTotal = 50.0F;
 		return bp;
 	}
 
 	size_t countOfType(const std::vector<const GoalTask*>& goals, TaskType type) {
-		return static_cast<size_t>(std::count_if(goals.begin(), goals.end(), [type](const GoalTask* g) {
-			return g->type == type;
-		}));
+		return static_cast<size_t>(std::count_if(goals.begin(), goals.end(), [type](const GoalTask* g) { return g->type == type; }));
 	}
 } // namespace
 
@@ -144,7 +142,7 @@ namespace {
 			for (const char* name : {"Wood", "Stone"}) {
 				engine::assets::AssetDefinition def;
 				def.defName = name;
-				def.label	= name;
+				def.label = name;
 				assets.registerTestDefinition(std::move(def));
 			}
 
@@ -166,8 +164,8 @@ namespace {
 			world->addComponent<Position>(entity, Position{pos});
 			world->addComponent<Structure>(entity, Structure{StructureKind::Foundation, /*graphId=*/0});
 			StructureBlueprint bp;
-			bp.phase	 = StructureBlueprint::BuildPhase::Clearing;
-			bp.required	 = {{"Wood", 30}, {"Stone", 20}};
+			bp.phase = StructureBlueprint::BuildPhase::Clearing;
+			bp.required = {{"Wood", 30}, {"Stone", 20}};
 			bp.workTotal = 100.0F;
 			world->addComponent<StructureBlueprint>(entity, bp);
 			return entity;
@@ -186,8 +184,8 @@ namespace {
 } // namespace
 
 TEST_F(ConstructionGoalEmissionTest, TwoMaterialsEmitUmbrellaPlusAllChildrenAndSurviveSecondRefresh) {
-	auto foundation = createTwoMaterialFoundation();
-	auto& registry	= GoalTaskRegistry::Get();
+	auto  foundation = createTwoMaterialFoundation();
+	auto& registry = GoalTaskRegistry::Get();
 
 	refresh();
 
@@ -233,8 +231,8 @@ TEST_F(ConstructionGoalEmissionTest, TwoMaterialsEmitUmbrellaPlusAllChildrenAndS
 }
 
 TEST_F(ConstructionGoalEmissionTest, GoalsAreCleanedUpWhenBlueprintCompletes) {
-	auto foundation = createTwoMaterialFoundation();
-	auto& registry	= GoalTaskRegistry::Get();
+	auto  foundation = createTwoMaterialFoundation();
+	auto& registry = GoalTaskRegistry::Get();
 
 	refresh();
 	ASSERT_EQ(registry.goalCount(GoalOwner::ConstructionGoalSystem), 5U);

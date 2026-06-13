@@ -64,10 +64,9 @@ TEST(ConstructionWorldTests, ClockwiseInputIsNormalizedToCcw) {
 }
 
 TEST(ConstructionWorldTests, MetersOverloadQuantizesToMillimeters) {
-	ConstructionWorld			 world;
-	std::vector<::Foundation::Vec2> meters = {
-		{0.0F, 0.0F}, {4.0F, 0.0F}, {4.0F, 4.0F}, {0.0F, 4.0F}};
-	CommitResult result = world.commitFoundation(meters, "wood");
+	ConstructionWorld				world;
+	std::vector<::Foundation::Vec2> meters = {{0.0F, 0.0F}, {4.0F, 0.0F}, {4.0F, 4.0F}, {0.0F, 4.0F}};
+	CommitResult					result = world.commitFoundation(meters, "wood");
 
 	ASSERT_TRUE(result.ok());
 	const FoundationRecord* foundation = world.get(result.id);
@@ -156,7 +155,7 @@ TEST(ConstructionWorldTests, SubtractShrinksRingAndBumpsVersion) {
 	CommitResult	  base = world.commitFoundation(box(0, 0, 8000, 4000), "wood");
 	ASSERT_TRUE(base.ok());
 
-	const std::uint64_t before	   = world.version();
+	const std::uint64_t before = world.version();
 	const float			areaBefore = world.areaSquareMeters(base.id);
 
 	// Carve the right half off; the cut crosses the boundary, remainder is one
@@ -171,7 +170,7 @@ TEST(ConstructionWorldTests, SubtractInteriorHoleRejected) {
 	CommitResult	  base = world.commitFoundation(box(0, 0, 10000, 10000), "wood");
 	ASSERT_TRUE(base.ok());
 
-	const Ring			before	 = world.get(base.id)->ring;
+	const Ring			before = world.get(base.id)->ring;
 	const std::uint64_t versionBefore = world.version();
 
 	// A region strictly interior to the foundation would carve an enclosed hole.
@@ -221,14 +220,14 @@ TEST(ConstructionWorldTests, FoundationAtHitMissBoundary) {
 	CommitResult	  base = world.commitFoundation(box(0, 0, 4000, 4000), "wood");
 	ASSERT_TRUE(base.ok());
 
-	EXPECT_EQ(world.foundationAt({2000, 2000}), base.id);		   // interior hit
+	EXPECT_EQ(world.foundationAt({2000, 2000}), base.id);			 // interior hit
 	EXPECT_EQ(world.foundationAt({9000, 9000}), kInvalidFoundation); // miss
-	EXPECT_EQ(world.foundationAt({0, 2000}), base.id);			   // on boundary edge
+	EXPECT_EQ(world.foundationAt({0, 2000}), base.id);				 // on boundary edge
 }
 
 TEST(ConstructionWorldTests, FoundationAtSharedEdgeTieBreaksToHighestId) {
 	ConstructionWorld world;
-	CommitResult	  first	 = world.commitFoundation(box(0, 0, 4000, 4000), "wood");
+	CommitResult	  first = world.commitFoundation(box(0, 0, 4000, 4000), "wood");
 	CommitResult	  second = world.commitFoundation(box(4000, 0, 8000, 4000), "stone");
 	ASSERT_TRUE(first.ok());
 	ASSERT_TRUE(second.ok());
@@ -266,7 +265,7 @@ TEST(ConstructionWorldTests, SetStateAndEntity) {
 	EXPECT_EQ(world.get(base.id)->state, FoundationState::Built);
 	EXPECT_GT(world.version(), v0);
 
-	const std::uint64_t v1	   = world.version();
+	const std::uint64_t v1 = world.version();
 	const ecs::EntityID handle = ecs::makeEntityID(7, 1);
 	EXPECT_TRUE(world.setEntity(base.id, handle));
 	EXPECT_EQ(world.get(base.id)->entity, handle);

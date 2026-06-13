@@ -5,9 +5,9 @@
 #include <assets/ConstructionRegistry.h>
 
 #include <cmath>
+#include <gtest/gtest.h>
 #include <numbers>
 #include <vector>
-#include <gtest/gtest.h>
 
 using namespace engine::construction;
 using engine::assets::SnappingConfig;
@@ -17,9 +17,13 @@ namespace {
 
 	// Defaults match assets/config/construction/snapping.xml: angle 15 deg,
 	// vertexSnapRadius 0.4 m, edgeSnapRadius 0.3 m, originCloseRadius 0.5 m.
-	SnappingConfig defaults() { return SnappingConfig{}; }
+	SnappingConfig defaults() {
+		return SnappingConfig{};
+	}
 
-	float dist(Vec2 a, Vec2 b) { return std::sqrt((a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y)); }
+	float dist(Vec2 a, Vec2 b) {
+		return std::sqrt((a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y));
+	}
 
 } // namespace
 
@@ -40,13 +44,13 @@ TEST(SnapEngine, AngleSnapsToAxis) {
 	// One point at origin; cursor near +x but a few degrees off. With no previous
 	// segment the reference is the +x axis, so it should snap to 0 deg.
 	std::vector<Vec2> points = {{0.0F, 0.0F}};
-	const float		  len	 = 5.0F;
-	const float		  off	 = 5.0F * (std::numbers::pi_v<float> / 180.0F); // 5 deg
+	const float		  len = 5.0F;
+	const float		  off = 5.0F * (std::numbers::pi_v<float> / 180.0F); // 5 deg
 	Vec2			  cursor{len * std::cos(off), len * std::sin(off)};
 	auto			  r = engine.snap(points, cursor, /*freeform=*/false);
 	EXPECT_EQ(r.kind, SnapKind::Angle);
-	EXPECT_NEAR(r.point.y, 0.0F, 1e-3F);	  // snapped onto the axis
-	EXPECT_NEAR(r.point.x, len, 1e-3F);		  // distance preserved
+	EXPECT_NEAR(r.point.y, 0.0F, 1e-3F); // snapped onto the axis
+	EXPECT_NEAR(r.point.x, len, 1e-3F);	 // distance preserved
 }
 
 TEST(SnapEngine, AngleSnapRelativeToPreviousSegment) {
@@ -91,7 +95,7 @@ TEST(SnapEngine, NoOriginCloseBeforeThreePoints) {
 	ConstructionWorld world;
 	SnapEngine		  engine(cfg, world);
 	std::vector<Vec2> points = {{0.0F, 0.0F}, {5.0F, 0.0F}};
-	auto			  r		 = engine.snap(points, {0.1F, 0.0F}, /*freeform=*/false);
+	auto			  r = engine.snap(points, {0.1F, 0.0F}, /*freeform=*/false);
 	EXPECT_NE(r.kind, SnapKind::Origin);
 }
 

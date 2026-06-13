@@ -37,11 +37,7 @@ namespace ecs {
 		return carried >= remaining ? 0U : remaining - carried;
 	}
 
-	ConstructionDecision decideConstructionPhase(
-		const StructureBlueprint& blueprint,
-		bool					  footprintClear,
-		bool					  materialsComplete
-	) {
+	ConstructionDecision decideConstructionPhase(const StructureBlueprint& blueprint, bool footprintClear, bool materialsComplete) {
 		ConstructionDecision decision;
 
 		// A blueprint slated for demolition is owned by the Deconstruct path; emit nothing
@@ -58,18 +54,18 @@ namespace ecs {
 		}
 
 		if (!footprintClear) {
-			decision.nextPhase	   = StructureBlueprint::BuildPhase::Clearing;
+			decision.nextPhase = StructureBlueprint::BuildPhase::Clearing;
 			decision.emitClearGoals = true;
 			return decision;
 		}
 
 		if (!materialsComplete) {
-			decision.nextPhase		   = StructureBlueprint::BuildPhase::AwaitingMaterials;
+			decision.nextPhase = StructureBlueprint::BuildPhase::AwaitingMaterials;
 			decision.emitMaterialGoals = true;
 			return decision;
 		}
 
-		decision.nextPhase	  = StructureBlueprint::BuildPhase::UnderConstruction;
+		decision.nextPhase = StructureBlueprint::BuildPhase::UnderConstruction;
 		decision.emitBuildGoal = true;
 		return decision;
 	}
@@ -116,11 +112,10 @@ namespace ecs {
 			// Reconcile delivered[] from the on-site inventory before gating on materials.
 			reconcileDelivered(entity, blueprint);
 
-			const bool footprintClear	= isFootprintClear(foundationId);
-			const bool materialsDone	= blueprint.materialsComplete();
+			const bool footprintClear = isFootprintClear(foundationId);
+			const bool materialsDone = blueprint.materialsComplete();
 
-			const ConstructionDecision decision =
-				decideConstructionPhase(blueprint, footprintClear, materialsDone);
+			const ConstructionDecision decision = decideConstructionPhase(blueprint, footprintClear, materialsDone);
 
 			// Advance the phase (idempotent). ActionSystem flips Complete itself on the last
 			// Build tick, so we never downgrade out of Complete here.
@@ -134,9 +129,8 @@ namespace ecs {
 			// while the site still needs clearing or materials. The umbrella persists across phases
 			// so the child Harvest/Haul goals never collide on the single-top-level-per-destination
 			// guard.
-			const GoalStatus umbrellaStatus =
-				decision.emitBuildGoal ? GoalStatus::Available : GoalStatus::Blocked;
-			const uint64_t umbrellaId = ensureUmbrellaGoal(entity, blueprint, umbrellaStatus);
+			const GoalStatus umbrellaStatus = decision.emitBuildGoal ? GoalStatus::Available : GoalStatus::Blocked;
+			const uint64_t	 umbrellaId = ensureUmbrellaGoal(entity, blueprint, umbrellaStatus);
 
 			if (decision.emitClearGoals) {
 				emitClearGoals(entity, foundationId, umbrellaId);
@@ -173,7 +167,7 @@ namespace ecs {
 			return true;
 		}
 
-		const auto aabb = m_constructionWorld->footprintAabb(foundationId);
+		const auto	aabb = m_constructionWorld->footprintAabb(foundationId);
 		const float minX = geometry::dequantize(aabb.min).x;
 		const float minY = geometry::dequantize(aabb.min).y;
 		const float maxX = geometry::dequantize(aabb.max).x;
@@ -182,10 +176,10 @@ namespace ecs {
 		auto& assetRegistry = engine::assets::AssetRegistry::Get();
 
 		constexpr float kChunkWorldSize = static_cast<float>(engine::world::kChunkSize);
-		const int32_t chunkMinX = static_cast<int32_t>(std::floor(minX / kChunkWorldSize));
-		const int32_t chunkMaxX = static_cast<int32_t>(std::floor(maxX / kChunkWorldSize));
-		const int32_t chunkMinY = static_cast<int32_t>(std::floor(minY / kChunkWorldSize));
-		const int32_t chunkMaxY = static_cast<int32_t>(std::floor(maxY / kChunkWorldSize));
+		const int32_t	chunkMinX = static_cast<int32_t>(std::floor(minX / kChunkWorldSize));
+		const int32_t	chunkMaxX = static_cast<int32_t>(std::floor(maxX / kChunkWorldSize));
+		const int32_t	chunkMinY = static_cast<int32_t>(std::floor(minY / kChunkWorldSize));
+		const int32_t	chunkMaxY = static_cast<int32_t>(std::floor(maxY / kChunkWorldSize));
 
 		for (int32_t cy = chunkMinY; cy <= chunkMaxY; ++cy) {
 			for (int32_t cx = chunkMinX; cx <= chunkMaxX; ++cx) {
@@ -233,7 +227,7 @@ namespace ecs {
 			return;
 		}
 
-		auto& registry		= GoalTaskRegistry::Get();
+		auto& registry = GoalTaskRegistry::Get();
 		auto& assetRegistry = engine::assets::AssetRegistry::Get();
 
 		// One clear Harvest CHILD per blueprint is enough: it requests the yield of the blockers
@@ -243,15 +237,15 @@ namespace ecs {
 		// fighting the umbrella for the single-top-level-per-destination slot; the actual harvest
 		// target is a tree the colonist knows about.
 		for (const auto* g : registry.getGoalsByOwner(GoalOwner::ConstructionGoalSystem)) {
-			if (g->destinationEntity == blueprintEntity && g->type == TaskType::Harvest &&
-				g->parentGoalId.has_value() && g->parentGoalId.value() == umbrellaGoalId) {
+			if (g->destinationEntity == blueprintEntity && g->type == TaskType::Harvest && g->parentGoalId.has_value() &&
+				g->parentGoalId.value() == umbrellaGoalId) {
 				return; // a clear/material Harvest child is already active for this blueprint
 			}
 		}
 
 		// Find the dominant yield among footprint blockers so the Harvest goal has a concrete
 		// yieldDefNameId for AIDecision to match.
-		const auto aabb = m_constructionWorld->footprintAabb(foundationId);
+		const auto	aabb = m_constructionWorld->footprintAabb(foundationId);
 		const float minX = geometry::dequantize(aabb.min).x;
 		const float minY = geometry::dequantize(aabb.min).y;
 		const float maxX = geometry::dequantize(aabb.max).x;
@@ -261,10 +255,10 @@ namespace ecs {
 		glm::vec2 blockerPos{(minX + maxX) * 0.5F, (minY + maxY) * 0.5F};
 
 		constexpr float kChunkWorldSize = static_cast<float>(engine::world::kChunkSize);
-		const int32_t chunkMinX = static_cast<int32_t>(std::floor(minX / kChunkWorldSize));
-		const int32_t chunkMaxX = static_cast<int32_t>(std::floor(maxX / kChunkWorldSize));
-		const int32_t chunkMinY = static_cast<int32_t>(std::floor(minY / kChunkWorldSize));
-		const int32_t chunkMaxY = static_cast<int32_t>(std::floor(maxY / kChunkWorldSize));
+		const int32_t	chunkMinX = static_cast<int32_t>(std::floor(minX / kChunkWorldSize));
+		const int32_t	chunkMaxX = static_cast<int32_t>(std::floor(maxX / kChunkWorldSize));
+		const int32_t	chunkMinY = static_cast<int32_t>(std::floor(minY / kChunkWorldSize));
+		const int32_t	chunkMaxY = static_cast<int32_t>(std::floor(maxY / kChunkWorldSize));
 
 		for (int32_t cy = chunkMinY; cy <= chunkMaxY && yieldDefNameId == 0; ++cy) {
 			for (int32_t cx = chunkMinX; cx <= chunkMaxX && yieldDefNameId == 0; ++cx) {
@@ -284,7 +278,7 @@ namespace ecs {
 					const auto* def = assetRegistry.getDefinition(placed->defName);
 					if (def != nullptr && def->capabilities.harvestable.has_value()) {
 						yieldDefNameId = assetRegistry.getDefNameId(def->capabilities.harvestable->yieldDefName);
-						blockerPos	   = placed->position;
+						blockerPos = placed->position;
 						break;
 					}
 				}
@@ -296,15 +290,15 @@ namespace ecs {
 		}
 
 		GoalTask clearGoal;
-		clearGoal.type				= TaskType::Harvest;
-		clearGoal.owner				= GoalOwner::ConstructionGoalSystem;
+		clearGoal.type = TaskType::Harvest;
+		clearGoal.owner = GoalOwner::ConstructionGoalSystem;
 		clearGoal.destinationEntity = blueprintEntity;
 		clearGoal.destinationPosition = blockerPos;
 		clearGoal.acceptedDefNameIds = {yieldDefNameId};
-		clearGoal.targetAmount		= 1; // clear at least one blocker per pass; re-emitted while not clear
-		clearGoal.yieldDefNameId	= yieldDefNameId;
-		clearGoal.parentGoalId		= umbrellaGoalId; // child of the umbrella: skips the destination guard
-		clearGoal.status			= GoalStatus::Available;
+		clearGoal.targetAmount = 1; // clear at least one blocker per pass; re-emitted while not clear
+		clearGoal.yieldDefNameId = yieldDefNameId;
+		clearGoal.parentGoalId = umbrellaGoalId; // child of the umbrella: skips the destination guard
+		clearGoal.status = GoalStatus::Available;
 		registry.createGoal(std::move(clearGoal));
 		LOG_DEBUG(
 			Engine,
@@ -314,13 +308,11 @@ namespace ecs {
 		);
 	}
 
-	void ConstructionSystem::emitMaterialGoals(
-		EntityID blueprintEntity, const StructureBlueprint& blueprint, uint64_t umbrellaGoalId
-	) {
-		auto& registry		= GoalTaskRegistry::Get();
+	void ConstructionSystem::emitMaterialGoals(EntityID blueprintEntity, const StructureBlueprint& blueprint, uint64_t umbrellaGoalId) {
+		auto& registry = GoalTaskRegistry::Get();
 		auto& assetRegistry = engine::assets::AssetRegistry::Get();
 
-		const auto* position = world->getComponent<Position>(blueprintEntity);
+		const auto*		position = world->getComponent<Position>(blueprintEntity);
 		const glm::vec2 sitePos = position != nullptr ? position->value : glm::vec2{0.0F, 0.0F};
 
 		// The clear-Harvest child from the previous phase was already retired by the caller once
@@ -367,7 +359,7 @@ namespace ecs {
 			}
 
 			const GoalTask* harvest = findGoal(TaskType::Harvest, defNameId);
-			const GoalTask* haul	= findGoal(TaskType::Haul, defNameId);
+			const GoalTask* haul = findGoal(TaskType::Haul, defNameId);
 
 			if (remaining == 0) {
 				// Material satisfied: retire its goals.
@@ -391,7 +383,7 @@ namespace ecs {
 				chainId = generateChainId();
 			}
 
-			const uint32_t carried		= carriedAmount(blueprintEntity, defName);
+			const uint32_t carried = carriedAmount(blueprintEntity, defName);
 			const uint32_t harvestDemand = constructionHarvestDemand(remaining, carried);
 
 			if (harvestDemand == 0) {
@@ -402,43 +394,43 @@ namespace ecs {
 				}
 			} else if (harvest != nullptr) {
 				registry.updateGoal(harvest->id, [&](GoalTask& g) {
-					g.targetAmount	  = harvestDemand;
+					g.targetAmount = harvestDemand;
 					g.deliveredAmount = 0;
-					g.status		  = GoalStatus::Available;
+					g.status = GoalStatus::Available;
 				});
 			} else {
 				GoalTask harvestGoal;
-				harvestGoal.type			  = TaskType::Harvest;
-				harvestGoal.owner			  = GoalOwner::ConstructionGoalSystem;
+				harvestGoal.type = TaskType::Harvest;
+				harvestGoal.owner = GoalOwner::ConstructionGoalSystem;
 				harvestGoal.destinationEntity = blueprintEntity;
 				harvestGoal.destinationPosition = sitePos;
 				harvestGoal.acceptedDefNameIds = {defNameId};
-				harvestGoal.targetAmount	  = harvestDemand;
-				harvestGoal.yieldDefNameId	  = defNameId;
-				harvestGoal.parentGoalId	  = umbrellaGoalId; // child of umbrella: skips destination guard
-				harvestGoal.status			  = GoalStatus::Available;
-				harvestGoal.chainId			  = chainId;
+				harvestGoal.targetAmount = harvestDemand;
+				harvestGoal.yieldDefNameId = defNameId;
+				harvestGoal.parentGoalId = umbrellaGoalId; // child of umbrella: skips destination guard
+				harvestGoal.status = GoalStatus::Available;
+				harvestGoal.chainId = chainId;
 				registry.createGoal(std::move(harvestGoal));
 			}
 
 			if (haul != nullptr) {
 				registry.updateGoal(haul->id, [&](GoalTask& g) {
-					g.targetAmount	  = remaining;
+					g.targetAmount = remaining;
 					g.deliveredAmount = 0;
-					g.status		  = GoalStatus::Available;
-					g.chainId		  = chainId;
+					g.status = GoalStatus::Available;
+					g.chainId = chainId;
 				});
 			} else {
 				GoalTask haulGoal;
-				haulGoal.type				 = TaskType::Haul;
-				haulGoal.owner				 = GoalOwner::ConstructionGoalSystem;
-				haulGoal.destinationEntity	 = blueprintEntity;
+				haulGoal.type = TaskType::Haul;
+				haulGoal.owner = GoalOwner::ConstructionGoalSystem;
+				haulGoal.destinationEntity = blueprintEntity;
 				haulGoal.destinationPosition = sitePos;
-				haulGoal.acceptedDefNameIds	 = {defNameId};
-				haulGoal.targetAmount		 = remaining;
-				haulGoal.parentGoalId		 = umbrellaGoalId; // child of umbrella: skips destination guard
-				haulGoal.status				 = GoalStatus::Available;
-				haulGoal.chainId			 = chainId;
+				haulGoal.acceptedDefNameIds = {defNameId};
+				haulGoal.targetAmount = remaining;
+				haulGoal.parentGoalId = umbrellaGoalId; // child of umbrella: skips destination guard
+				haulGoal.status = GoalStatus::Available;
+				haulGoal.chainId = chainId;
 				registry.createGoal(std::move(haulGoal));
 			}
 
@@ -468,12 +460,10 @@ namespace ecs {
 		return total;
 	}
 
-	uint64_t ConstructionSystem::ensureUmbrellaGoal(
-		EntityID blueprintEntity, const StructureBlueprint& blueprint, GoalStatus status
-	) {
+	uint64_t ConstructionSystem::ensureUmbrellaGoal(EntityID blueprintEntity, const StructureBlueprint& blueprint, GoalStatus status) {
 		auto& registry = GoalTaskRegistry::Get();
 
-		const auto* position = world->getComponent<Position>(blueprintEntity);
+		const auto*		position = world->getComponent<Position>(blueprintEntity);
 		const glm::vec2 sitePos = position != nullptr ? position->value : glm::vec2{0.0F, 0.0F};
 
 		// The umbrella owns the destination slot. Because every child carries parentGoalId it is
@@ -490,12 +480,12 @@ namespace ecs {
 		// would be a bug from an earlier owner; createGoal updates the destination slot in place,
 		// so this both creates the umbrella and reclaims the slot if needed.
 		GoalTask buildGoal;
-		buildGoal.type				 = TaskType::Build;
-		buildGoal.owner				 = GoalOwner::ConstructionGoalSystem;
-		buildGoal.destinationEntity	 = blueprintEntity;
+		buildGoal.type = TaskType::Build;
+		buildGoal.owner = GoalOwner::ConstructionGoalSystem;
+		buildGoal.destinationEntity = blueprintEntity;
 		buildGoal.destinationPosition = sitePos;
-		buildGoal.targetAmount		 = 1; // a single goal; multiple colonists can all work it
-		buildGoal.status			 = status;
+		buildGoal.targetAmount = 1; // a single goal; multiple colonists can all work it
+		buildGoal.status = status;
 		const uint64_t umbrellaId = registry.createGoal(std::move(buildGoal));
 
 		LOG_DEBUG(
@@ -510,9 +500,7 @@ namespace ecs {
 		return umbrellaId;
 	}
 
-	void ConstructionSystem::retireChildGoals(
-		EntityID blueprintEntity, uint64_t umbrellaGoalId, bool keepMaterialChildren
-	) {
+	void ConstructionSystem::retireChildGoals(EntityID blueprintEntity, uint64_t umbrellaGoalId, bool keepMaterialChildren) {
 		auto& registry = GoalTaskRegistry::Get();
 
 		std::vector<uint64_t> toRemove;

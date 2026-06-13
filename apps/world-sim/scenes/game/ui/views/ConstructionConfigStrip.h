@@ -27,7 +27,7 @@ namespace world_sim {
 		struct Args {
 			/// Called when a material card is clicked.
 			std::function<void(const std::string&)> onMaterialSelected;
-			std::string								 id = "construction_config_strip";
+			std::string								id = "construction_config_strip";
 		};
 
 		explicit ConstructionConfigStrip(const Args& args);
@@ -45,12 +45,12 @@ namespace world_sim {
 		float getHeight() const override { return kStripHeight; }
 
 	  private:
-		static constexpr float kStripHeight	  = 56.0F;
+		static constexpr float kStripHeight = 56.0F;
 		static constexpr float kGameplayBarReserve = 64.0F; // bar height + margins
-		static constexpr float kCardWidth	  = 120.0F;
-		static constexpr float kCardHeight	  = 40.0F;
-		static constexpr float kCardSpacing	  = 8.0F;
-		static constexpr float kPadding		  = 12.0F;
+		static constexpr float kCardWidth = 120.0F;
+		static constexpr float kCardHeight = 40.0F;
+		static constexpr float kCardSpacing = 8.0F;
+		static constexpr float kPadding = 12.0F;
 
 		std::function<void(const std::string&)> onMaterialSelected;
 

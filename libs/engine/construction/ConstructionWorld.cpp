@@ -11,14 +11,22 @@ namespace engine::construction {
 
 		CommitStatus translateBooleanStatus(geometry::BooleanStatus status) {
 			switch (status) {
-				case geometry::BooleanStatus::Ok:			 return CommitStatus::Ok;
-				case geometry::BooleanStatus::InvalidInput:	 return CommitStatus::BooleanInvalidInput;
-				case geometry::BooleanStatus::Disjoint:		 return CommitStatus::BooleanDisjoint;
-				case geometry::BooleanStatus::PinchVertex:	 return CommitStatus::BooleanPinchVertex;
-				case geometry::BooleanStatus::ResultHasHole: return CommitStatus::BooleanResultHasHole;
-				case geometry::BooleanStatus::ResultSplits:	 return CommitStatus::BooleanResultSplits;
-				case geometry::BooleanStatus::ConsumesInput: return CommitStatus::BooleanConsumesInput;
-				case geometry::BooleanStatus::NoEffect:		 return CommitStatus::BooleanNoEffect;
+				case geometry::BooleanStatus::Ok:
+					return CommitStatus::Ok;
+				case geometry::BooleanStatus::InvalidInput:
+					return CommitStatus::BooleanInvalidInput;
+				case geometry::BooleanStatus::Disjoint:
+					return CommitStatus::BooleanDisjoint;
+				case geometry::BooleanStatus::PinchVertex:
+					return CommitStatus::BooleanPinchVertex;
+				case geometry::BooleanStatus::ResultHasHole:
+					return CommitStatus::BooleanResultHasHole;
+				case geometry::BooleanStatus::ResultSplits:
+					return CommitStatus::BooleanResultSplits;
+				case geometry::BooleanStatus::ConsumesInput:
+					return CommitStatus::BooleanConsumesInput;
+				case geometry::BooleanStatus::NoEffect:
+					return CommitStatus::BooleanNoEffect;
 			}
 			return CommitStatus::BooleanInvalidInput;
 		}
@@ -57,11 +65,11 @@ namespace engine::construction {
 		}
 
 		Foundation foundation;
-		foundation.id		= nextId_++;
-		foundation.ring		= std::move(ring);
+		foundation.id = nextId_++;
+		foundation.ring = std::move(ring);
 		foundation.material = std::move(material);
-		foundation.state	= FoundationState::Blueprint;
-		foundation.entity	= ecs::kInvalidEntity;
+		foundation.state = FoundationState::Blueprint;
+		foundation.entity = ecs::kInvalidEntity;
 
 		const FoundationId id = foundation.id;
 		foundations_.push_back(std::move(foundation));
@@ -124,8 +132,7 @@ namespace engine::construction {
 	}
 
 	bool ConstructionWorld::removeFoundation(FoundationId id) {
-		const auto it = std::find_if(foundations_.begin(), foundations_.end(),
-			[id](const Foundation& f) { return f.id == id; });
+		const auto it = std::find_if(foundations_.begin(), foundations_.end(), [id](const Foundation& f) { return f.id == id; });
 		if (it == foundations_.end()) {
 			return false;
 		}
@@ -160,8 +167,8 @@ namespace engine::construction {
 		}
 
 		const geometry::Ring& ring = foundation->ring;
-		geometry::Vec2i64	  min  = ring.front();
-		geometry::Vec2i64	  max  = ring.front();
+		geometry::Vec2i64	  min = ring.front();
+		geometry::Vec2i64	  max = ring.front();
 		for (const geometry::Vec2i64& v : ring) {
 			min.x = std::min(min.x, v.x);
 			min.y = std::min(min.y, v.y);
@@ -200,14 +207,12 @@ namespace engine::construction {
 	}
 
 	Foundation* ConstructionWorld::find(FoundationId id) {
-		const auto it = std::find_if(foundations_.begin(), foundations_.end(),
-			[id](const Foundation& f) { return f.id == id; });
+		const auto it = std::find_if(foundations_.begin(), foundations_.end(), [id](const Foundation& f) { return f.id == id; });
 		return it == foundations_.end() ? nullptr : &*it;
 	}
 
 	const Foundation* ConstructionWorld::find(FoundationId id) const {
-		const auto it = std::find_if(foundations_.begin(), foundations_.end(),
-			[id](const Foundation& f) { return f.id == id; });
+		const auto it = std::find_if(foundations_.begin(), foundations_.end(), [id](const Foundation& f) { return f.id == id; });
 		return it == foundations_.end() ? nullptr : &*it;
 	}
 

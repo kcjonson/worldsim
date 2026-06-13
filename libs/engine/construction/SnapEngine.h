@@ -35,16 +35,16 @@ namespace engine::construction {
 	class ConstructionWorld;
 
 	enum class SnapKind {
-		None,	  // raw cursor, no snap applied
-		Angle,	  // snapped onto an angle increment off the previous segment
-		Vertex,	  // snapped onto an existing foundation vertex
-		Edge,	  // snapped onto the nearest point of an existing foundation edge
-		Origin,	  // within originClose radius of the first point: closes the shape
+		None,	// raw cursor, no snap applied
+		Angle,	// snapped onto an angle increment off the previous segment
+		Vertex, // snapped onto an existing foundation vertex
+		Edge,	// snapped onto the nearest point of an existing foundation edge
+		Origin, // within originClose radius of the first point: closes the shape
 	};
 
 	struct SnapResult {
 		::Foundation::Vec2 point{0.0F, 0.0F};
-		SnapKind		 kind = SnapKind::None;
+		SnapKind		   kind = SnapKind::None;
 
 		// For Angle snaps: the guide ray from the previous vertex through the
 		// snapped point, so the tool can draw the faint guide line. Zero otherwise.
@@ -57,15 +57,16 @@ namespace engine::construction {
 	};
 
 	class SnapEngine {
-	public:
+	  public:
 		SnapEngine(const engine::assets::SnappingConfig& snapping, const ConstructionWorld& world)
-			: snapping_(&snapping), world_(&world) {}
+			: snapping_(&snapping),
+			  world_(&world) {}
 
 		// Snap `cursor` given the points already placed (`points`, world meters) and
 		// whether the user is holding the freeform modifier (suppresses angle snap).
 		[[nodiscard]] SnapResult snap(const std::vector<::Foundation::Vec2>& points, ::Foundation::Vec2 cursor, bool freeform) const;
 
-	private:
+	  private:
 		// Nearest existing-foundation vertex within vertexSnapRadius, if any.
 		[[nodiscard]] bool snapToVertex(::Foundation::Vec2 cursor, ::Foundation::Vec2& out) const;
 

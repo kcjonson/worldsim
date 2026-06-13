@@ -29,19 +29,19 @@ namespace engine::construction {
 		// Float math from integer mm vectors; thresholds are coarse (~30 deg) so
 		// this matches geometry::minInteriorAngle. Returns 0 for a degenerate edge.
 		double cornerAngleDegrees(const geometry::Vec2i64& a, const geometry::Vec2i64& b, const geometry::Vec2i64& c) {
-			const auto   u	 = a - b;
-			const auto   v	 = c - b;
-			const double ux	 = static_cast<double>(u.x);
-			const double uy	 = static_cast<double>(u.y);
-			const double vx	 = static_cast<double>(v.x);
-			const double vy	 = static_cast<double>(v.y);
+			const auto	 u = a - b;
+			const auto	 v = c - b;
+			const double ux = static_cast<double>(u.x);
+			const double uy = static_cast<double>(u.y);
+			const double vx = static_cast<double>(v.x);
+			const double vy = static_cast<double>(v.y);
 			const double lenU = std::sqrt(ux * ux + uy * uy);
 			const double lenV = std::sqrt(vx * vx + vy * vy);
 			if (lenU == 0.0 || lenV == 0.0) {
 				return 0.0;
 			}
 			double cosA = (ux * vx + uy * vy) / (lenU * lenV);
-			cosA		= std::clamp(cosA, -1.0, 1.0);
+			cosA = std::clamp(cosA, -1.0, 1.0);
 			return std::acos(cosA) * (180.0 / std::numbers::pi);
 		}
 
@@ -49,16 +49,26 @@ namespace engine::construction {
 
 	std::string validationReason(ValidationCode code) {
 		switch (code) {
-			case ValidationCode::Ok:				   return {};
-			case ValidationCode::TooFewPoints:		   return "need at least 3 points";
-			case ValidationCode::TooManyPoints:		   return "too many points";
-			case ValidationCode::VerticesTooClose:	   return "points too close";
-			case ValidationCode::AngleTooSharp:		   return "corner too tight";
-			case ValidationCode::SelfIntersects:	   return "shape crosses itself";
-			case ValidationCode::EdgeClearanceTooSmall: return "edges too close";
-			case ValidationCode::AreaTooSmall:		   return "area too small";
-			case ValidationCode::AreaTooLarge:		   return "area too large";
-			case ValidationCode::OverlapsExisting:	   return "overlaps another foundation";
+			case ValidationCode::Ok:
+				return {};
+			case ValidationCode::TooFewPoints:
+				return "need at least 3 points";
+			case ValidationCode::TooManyPoints:
+				return "too many points";
+			case ValidationCode::VerticesTooClose:
+				return "points too close";
+			case ValidationCode::AngleTooSharp:
+				return "corner too tight";
+			case ValidationCode::SelfIntersects:
+				return "shape crosses itself";
+			case ValidationCode::EdgeClearanceTooSmall:
+				return "edges too close";
+			case ValidationCode::AreaTooSmall:
+				return "area too small";
+			case ValidationCode::AreaTooLarge:
+				return "area too large";
+			case ValidationCode::OverlapsExisting:
+				return "overlaps another foundation";
 		}
 		return {};
 	}
@@ -70,11 +80,11 @@ namespace engine::construction {
 		// Vertex spacing: consecutive vertices, plus the closing pair when closed.
 		const std::size_t spacingPairs = closed ? n : (n - 1);
 		for (std::size_t i = 0; i < spacingPairs; ++i) {
-			const std::size_t j	 = (i + 1) % n;
-			const auto		  d	 = ring[j] - ring[i];
+			const std::size_t j = (i + 1) % n;
+			const auto		  d = ring[j] - ring[i];
 			const auto		  sq = geometry::dot(d, d);
 			if (sq < geometry::Int128::product(c.minVertexSpacingMm, c.minVertexSpacingMm)) {
-				const double mm	 = std::sqrt(sq.toDouble());
+				const double mm = std::sqrt(sq.toDouble());
 				return {ValidationCode::VerticesTooClose, i, j, mm / static_cast<double>(geometry::kMillimetersPerMeter)};
 			}
 		}
@@ -83,11 +93,11 @@ namespace engine::construction {
 		// corner so skip them. When closed, wrap around.
 		if (n >= 3) {
 			const std::size_t first = closed ? 0 : 1;
-			const std::size_t last	= closed ? n : (n - 1);
+			const std::size_t last = closed ? n : (n - 1);
 			for (std::size_t i = first; i < last; ++i) {
-				const auto&	 a	   = ring[(i + n - 1) % n];
-				const auto&	 b	   = ring[i % n];
-				const auto&	 c2	   = ring[(i + 1) % n];
+				const auto&	 a = ring[(i + n - 1) % n];
+				const auto&	 b = ring[i % n];
+				const auto&	 c2 = ring[(i + 1) % n];
 				const double angle = cornerAngleDegrees(a, b, c2);
 				if (angle < c.minCornerAngleDegrees) {
 					return {ValidationCode::AngleTooSharp, i % n, 0, angle};
@@ -106,9 +116,9 @@ namespace engine::construction {
 				if (adjacent) {
 					continue;
 				}
-				const auto& b0	 = ring[k];
-				const auto& b1	 = ring[(k + 1) % n];
-				const auto	rel	 = geometry::intersectSegments(a0, a1, b0, b1).relation;
+				const auto& b0 = ring[k];
+				const auto& b1 = ring[(k + 1) % n];
+				const auto	rel = geometry::intersectSegments(a0, a1, b0, b1).relation;
 				if (rel != geometry::SegmentRelation::Disjoint) {
 					return {ValidationCode::SelfIntersects, i, k, 0.0};
 				}
@@ -148,7 +158,8 @@ namespace engine::construction {
 		return {};
 	}
 
-	ValidationResult ConstructionValidator::validatePoint(const std::vector<::Foundation::Vec2>& points, ::Foundation::Vec2 candidate) const {
+	ValidationResult
+	ConstructionValidator::validatePoint(const std::vector<::Foundation::Vec2>& points, ::Foundation::Vec2 candidate) const {
 		// First point is always placeable.
 		if (points.empty()) {
 			return {};

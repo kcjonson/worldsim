@@ -4,8 +4,8 @@
 
 #include <assets/ConstructionRegistry.h>
 
-#include <vector>
 #include <gtest/gtest.h>
+#include <vector>
 
 using namespace engine::construction;
 using engine::assets::ConstraintConfig;
@@ -16,7 +16,9 @@ namespace {
 	// Default config matches assets/config/construction/constraints.xml defaults:
 	// minVertexSpacing 0.5 m, minCornerAngle 30 deg, segmentClearance 1.0 m,
 	// minArea 4 m^2, maxArea 2500 m^2, maxPoints 32.
-	ConstraintConfig defaults() { return ConstraintConfig{}; }
+	ConstraintConfig defaults() {
+		return ConstraintConfig{};
+	}
 
 	// A clean 5x5 m square: well above min area, right-angle corners, ample spacing.
 	std::vector<Vec2> squareRing() {
@@ -26,51 +28,51 @@ namespace {
 } // namespace
 
 TEST(ConstructionValidator, FirstPointAlwaysOk) {
-	ConstraintConfig  cfg = defaults();
-	ConstructionWorld world;
+	ConstraintConfig	  cfg = defaults();
+	ConstructionWorld	  world;
 	ConstructionValidator validator(cfg, world);
 	EXPECT_TRUE(validator.validatePoint({}, {0.0F, 0.0F}).ok());
 }
 
 TEST(ConstructionValidator, GoodSquareCommits) {
-	ConstraintConfig  cfg = defaults();
-	ConstructionWorld world;
+	ConstraintConfig	  cfg = defaults();
+	ConstructionWorld	  world;
 	ConstructionValidator validator(cfg, world);
 	EXPECT_TRUE(validator.validateRing(squareRing()).ok());
 }
 
 TEST(ConstructionValidator, RejectsTooFewPoints) {
-	ConstraintConfig  cfg = defaults();
-	ConstructionWorld world;
+	ConstraintConfig	  cfg = defaults();
+	ConstructionWorld	  world;
 	ConstructionValidator validator(cfg, world);
-	std::vector<Vec2> two = {{0.0F, 0.0F}, {5.0F, 0.0F}};
+	std::vector<Vec2>	  two = {{0.0F, 0.0F}, {5.0F, 0.0F}};
 	EXPECT_EQ(validator.validateRing(two).code, ValidationCode::TooFewPoints);
 }
 
 TEST(ConstructionValidator, RejectsVerticesTooClose) {
-	ConstraintConfig  cfg = defaults();
-	ConstructionWorld world;
+	ConstraintConfig	  cfg = defaults();
+	ConstructionWorld	  world;
 	ConstructionValidator validator(cfg, world);
 	// Candidate only 0.2 m from the previous point (< 0.5 m spacing).
 	std::vector<Vec2> chain = {{0.0F, 0.0F}};
-	auto			  r		= validator.validatePoint(chain, {0.2F, 0.0F});
+	auto			  r = validator.validatePoint(chain, {0.2F, 0.0F});
 	EXPECT_EQ(r.code, ValidationCode::VerticesTooClose);
 }
 
 TEST(ConstructionValidator, RejectsSharpCorner) {
-	ConstraintConfig  cfg = defaults();
-	ConstructionWorld world;
+	ConstraintConfig	  cfg = defaults();
+	ConstructionWorld	  world;
 	ConstructionValidator validator(cfg, world);
 	// Two points going +x, candidate doubles back nearly on top of the line: the
 	// corner at the middle vertex is far below 30 deg.
 	std::vector<Vec2> chain = {{0.0F, 0.0F}, {5.0F, 0.0F}};
-	auto			  r		= validator.validatePoint(chain, {0.5F, 0.2F});
+	auto			  r = validator.validatePoint(chain, {0.5F, 0.2F});
 	EXPECT_EQ(r.code, ValidationCode::AngleTooSharp);
 }
 
 TEST(ConstructionValidator, RejectsSelfIntersection) {
-	ConstraintConfig  cfg = defaults();
-	ConstructionWorld world;
+	ConstraintConfig	  cfg = defaults();
+	ConstructionWorld	  world;
 	ConstructionValidator validator(cfg, world);
 	// Bowtie: the closing edges cross.
 	std::vector<Vec2> bowtie = {{0.0F, 0.0F}, {5.0F, 5.0F}, {5.0F, 0.0F}, {0.0F, 5.0F}};
@@ -78,8 +80,8 @@ TEST(ConstructionValidator, RejectsSelfIntersection) {
 }
 
 TEST(ConstructionValidator, RejectsAreaTooSmall) {
-	ConstraintConfig  cfg = defaults();
-	ConstructionWorld world;
+	ConstraintConfig	  cfg = defaults();
+	ConstructionWorld	  world;
 	ConstructionValidator validator(cfg, world);
 	// 1.9x1.9 m square = 3.61 m^2, below the 4 m^2 floor, but with opposite edges
 	// 1.9 m apart (clears the 1.0 m segment clearance) so area is the live reason.
@@ -89,11 +91,11 @@ TEST(ConstructionValidator, RejectsAreaTooSmall) {
 
 TEST(ConstructionValidator, RejectsTooManyPoints) {
 	ConstraintConfig cfg = defaults();
-	cfg.maxPoints		 = 4;
-	ConstructionWorld world;
+	cfg.maxPoints = 4;
+	ConstructionWorld	  world;
 	ConstructionValidator validator(cfg, world);
-	std::vector<Vec2> chain = {{0.0F, 0.0F}, {5.0F, 0.0F}, {5.0F, 5.0F}, {0.0F, 5.0F}};
-	auto			  r		= validator.validatePoint(chain, {-1.0F, 2.5F});
+	std::vector<Vec2>	  chain = {{0.0F, 0.0F}, {5.0F, 0.0F}, {5.0F, 5.0F}, {0.0F, 5.0F}};
+	auto				  r = validator.validatePoint(chain, {-1.0F, 2.5F});
 	EXPECT_EQ(r.code, ValidationCode::TooManyPoints);
 }
 
@@ -111,8 +113,8 @@ TEST(ConstructionValidator, RejectsOverlapWithCommitted) {
 }
 
 TEST(ConstructionValidator, EdgeClearanceAtThresholdPasses) {
-	ConstraintConfig  cfg = defaults(); // segmentClearance 1.0 m
-	ConstructionWorld world;
+	ConstraintConfig	  cfg = defaults(); // segmentClearance 1.0 m
+	ConstructionWorld	  world;
 	ConstructionValidator validator(cfg, world);
 	// A 5 x 1.0 m rectangle: the long top/bottom edges are exactly 1.0 m apart,
 	// equal to segmentClearance. Strict-< clearance must permit the at-threshold
@@ -122,8 +124,8 @@ TEST(ConstructionValidator, EdgeClearanceAtThresholdPasses) {
 }
 
 TEST(ConstructionValidator, EdgeClearanceJustBelowThresholdFails) {
-	ConstraintConfig  cfg = defaults(); // segmentClearance 1.0 m
-	ConstructionWorld world;
+	ConstraintConfig	  cfg = defaults(); // segmentClearance 1.0 m
+	ConstructionWorld	  world;
 	ConstructionValidator validator(cfg, world);
 	// One mm closer than the threshold (0.999 m gap): edge clearance must reject.
 	std::vector<Vec2> tooClose = {{0.0F, 0.0F}, {5.0F, 0.0F}, {5.0F, 0.999F}, {0.0F, 0.999F}};
@@ -133,7 +135,7 @@ TEST(ConstructionValidator, EdgeClearanceJustBelowThresholdFails) {
 TEST(ConstructionValidator, DisjointFoundationOk) {
 	ConstraintConfig  cfg = defaults();
 	ConstructionWorld world;
-	auto first = world.commitFoundation(squareRing(), "Wood");
+	auto			  first = world.commitFoundation(squareRing(), "Wood");
 	ASSERT_TRUE(first.ok());
 
 	ConstructionValidator validator(cfg, world);

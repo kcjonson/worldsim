@@ -42,12 +42,12 @@ namespace world_sim {
 
 	/// Live status of the in-progress shape, surfaced to the config strip.
 	struct DrawingStatus {
-		bool		active		= false; // tool is on (config strip visible)
-		int			pointCount	= 0;
+		bool		active = false; // tool is on (config strip visible)
+		int			pointCount = 0;
 		float		areaSquareMeters = 0.0F; // closed-polygon area preview (0 until >= 3 pts)
-		bool		valid		= true;	 // current cursor placement / shape validity
-		std::string message;			 // validity reason (empty when valid)
-		std::string material;			 // active material name
+		bool		valid = true;			 // current cursor placement / shape validity
+		std::string message;				 // validity reason (empty when valid)
+		std::string material;				 // active material name
 	};
 
 	class DrawingSystem {
@@ -80,7 +80,7 @@ namespace world_sim {
 
 		// --- Material selection (from the config strip) ---
 
-		void setActiveMaterial(const std::string& material);
+		void							 setActiveMaterial(const std::string& material);
 		[[nodiscard]] const std::string& activeMaterial() const { return activeMaterial_; }
 
 		// --- Input ---
@@ -109,7 +109,7 @@ namespace world_sim {
 
 		// --- Topology access for consumers (selection, ConstructionSystem) ---
 
-		[[nodiscard]] engine::construction::ConstructionWorld&		world() { return constructionWorld_; }
+		[[nodiscard]] engine::construction::ConstructionWorld&		 world() { return constructionWorld_; }
 		[[nodiscard]] const engine::construction::ConstructionWorld& world() const { return constructionWorld_; }
 
 	  private:
@@ -121,15 +121,15 @@ namespace world_sim {
 		ecs::EntityID spawnBlueprintEntity(engine::construction::FoundationId id);
 
 		ecs::World*					ecsWorld_ = nullptr;
-		engine::world::WorldCamera* camera_	  = nullptr;
+		engine::world::WorldCamera* camera_ = nullptr;
 		Callbacks					callbacks_;
 
 		engine::construction::ConstructionWorld constructionWorld_;
 
-		DrawingState				  state_ = DrawingState::Idle;
-		std::vector<Foundation::Vec2> points_;	  // placed vertices, world meters
-		Foundation::Vec2			  cursor_{0.0F, 0.0F}; // snapped cursor
-		engine::construction::SnapResult	  lastSnap_;
+		DrawingState						   state_ = DrawingState::Idle;
+		std::vector<Foundation::Vec2>		   points_;				// placed vertices, world meters
+		Foundation::Vec2					   cursor_{0.0F, 0.0F}; // snapped cursor
+		engine::construction::SnapResult	   lastSnap_;
 		engine::construction::ValidationResult lastValidation_;
 
 		std::string activeMaterial_ = "Wood";

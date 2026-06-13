@@ -74,9 +74,9 @@ namespace ecs {
 	/// which goal kinds to emit this tick.
 	struct ConstructionDecision {
 		StructureBlueprint::BuildPhase nextPhase = StructureBlueprint::BuildPhase::Clearing;
-		bool emitClearGoals	   = false; // footprint not yet clear: emit Harvest for blockers
-		bool emitMaterialGoals = false; // clear, materials outstanding: emit Harvest+Haul chains
-		bool emitBuildGoal	   = false; // materials staged: emit a Build goal
+		bool						   emitClearGoals = false;	  // footprint not yet clear: emit Harvest for blockers
+		bool						   emitMaterialGoals = false; // clear, materials outstanding: emit Harvest+Haul chains
+		bool						   emitBuildGoal = false;	  // materials staged: emit a Build goal
 	};
 
 	/// Decide the blueprint's phase and which goals to emit, from the two facts the
@@ -84,11 +84,8 @@ namespace ecs {
 	/// and whether the material manifest is satisfied. Pure; no side effects.
 	///
 	/// Demolishing blueprints emit nothing (the Deconstruct path owns them).
-	[[nodiscard]] ConstructionDecision decideConstructionPhase(
-		const StructureBlueprint& blueprint,
-		bool					  footprintClear,
-		bool					  materialsComplete
-	);
+	[[nodiscard]] ConstructionDecision
+	decideConstructionPhase(const StructureBlueprint& blueprint, bool footprintClear, bool materialsComplete);
 
 	/// How much of a material a colonist still needs to HARVEST, given how much the
 	/// site still needs (`remaining`) and how much is already carried toward it
@@ -110,15 +107,13 @@ namespace ecs {
 		/// Inject the app-owned topology store (foundation footprints) and the placement
 		/// data used to detect footprint blockers. Called once from GameScene after both
 		/// the ConstructionWorld and PlacementExecutor exist.
-		void setConstructionWorld(engine::construction::ConstructionWorld* constructionWorld) {
-			m_constructionWorld = constructionWorld;
-		}
+		void setConstructionWorld(engine::construction::ConstructionWorld* constructionWorld) { m_constructionWorld = constructionWorld; }
 		void setPlacementData(
-			const engine::assets::PlacementExecutor*					placementExecutor,
-			const std::unordered_set<engine::world::ChunkCoordinate>*	processedChunks
+			const engine::assets::PlacementExecutor*				  placementExecutor,
+			const std::unordered_set<engine::world::ChunkCoordinate>* processedChunks
 		) {
 			m_placementExecutor = placementExecutor;
-			m_processedChunks	= processedChunks;
+			m_processedChunks = processedChunks;
 		}
 
 		/// Debug: count of blueprints the system is actively driving this tick.
@@ -161,8 +156,8 @@ namespace ecs {
 		/// already carries enough delivers it instead of chopping more.
 		[[nodiscard]] uint32_t carriedAmount(EntityID buildSite, const std::string& defName) const;
 
-		engine::construction::ConstructionWorld*				 m_constructionWorld = nullptr;
-		const engine::assets::PlacementExecutor*				 m_placementExecutor = nullptr;
+		engine::construction::ConstructionWorld*				  m_constructionWorld = nullptr;
+		const engine::assets::PlacementExecutor*				  m_placementExecutor = nullptr;
 		const std::unordered_set<engine::world::ChunkCoordinate>* m_processedChunks = nullptr;
 
 		size_t m_activeBlueprintCount = 0;
