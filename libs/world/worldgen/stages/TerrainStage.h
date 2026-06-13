@@ -7,9 +7,9 @@ namespace worldgen {
 class TerrainStage : public IGenerationStage {
   public:
     const char* name()   const override { return "Terrain"; }
-    // Weight reduced from 0.25 to 0.15; the 0.10 moved to CrustStage (M-T3).
-    // Will be reassigned in M-T4 after the full TerrainStage rewrite.
-    float       weight() const override { return 0.15f; }
+    // M-T4: elevation synthesis (isostasy + depth-age + orogeny-aged ridged belts +
+    // active-boundary kernels). The 0.10 boundary/BFS share moved to CrustStage in M-T3.
+    float       weight() const override { return 0.20f; }
     void        run(StageContext& ctx) override;
 };
 

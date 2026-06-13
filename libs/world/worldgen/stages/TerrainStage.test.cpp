@@ -147,6 +147,50 @@ TEST(TerrainStage, MountainsAtConvergentCC) {
 }
 
 // ============================================================================
+// Hypsometry is bimodal: a deep-ocean population (abyssal plains) and a
+// near-sea-level continental-platform population, with a sparse mid-depth trough
+// between them. This is the headline outcome of the two-law model (depth-age vs
+// isostasy) and must hold without per-seed tuning. We count tiles in three bands
+// (relative to sea level) and require the abyssal and platform bands to each hold
+// far more tiles than the trough band between them.
+//   abyssal  band: elev - sea in [-5500, -3000]
+//   trough   band: elev - sea in [-2500,  -800]   (the continental-slope gap)
+//   platform band: elev - sea in [ -200, +1500]
+// At n=256 the populations are large enough to be stable across seeds.
+// ============================================================================
+
+TEST(TerrainStage, HypsometryBimodal) {
+    auto world = runPipeline(makeParams(256, 0.70, 12, 0xFACEFEED42ULL));
+    ASSERT_NE(world, nullptr);
+
+    const uint32_t N    = static_cast<uint32_t>(world->data.elevation.size());
+    const float    sea  = world->seaLevelMeters;
+
+    uint32_t abyssal = 0u, trough = 0u, platform = 0u;
+    for (uint32_t t = 0; t < N; ++t) {
+        float r = world->data.elevation[t] - sea;
+        if (r >= -5500.0f && r <= -3000.0f) ++abyssal;
+        else if (r >= -2500.0f && r <= -800.0f) ++trough;
+        else if (r >= -200.0f && r <= 1500.0f) ++platform;
+    }
+
+    ASSERT_GT(abyssal, 0u);
+    ASSERT_GT(platform, 0u);
+
+    // Per-band tile counts span unequal band widths, so normalize to a per-meter
+    // density and require the trough density to be a fraction of each mode density.
+    double dAbyssal  = abyssal  / 2500.0;  // band width 2500 m
+    double dTrough   = trough   / 1700.0;  // band width 1700 m
+    double dPlatform = platform / 1700.0;  // band width 1700 m
+
+    double lowerMode = std::min(dAbyssal, dPlatform);
+    EXPECT_GT(lowerMode, 0.0);
+    EXPECT_LT(dTrough, 0.60 * lowerMode)
+        << "Trough density " << dTrough << " not < 60% of lower mode density "
+        << lowerMode << " (abyssal=" << dAbyssal << " platform=" << dPlatform << ")";
+}
+
+// ============================================================================
 // Trench-arc structure for ConvergentCO boundaries:
 //   Oceanic side at d∈[0,3]: mean elevation < oceanic abyssal mean - 1500m
 //   Continental side has local max in arc band vs near boundary
