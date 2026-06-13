@@ -603,12 +603,48 @@ static int runSimOnly(const CliArgs& args) {
     double overFrac = oceanCount ? 100.0 * ageOver220 / oceanCount : 0.0;
 
     // Orogeny coverage: fraction of continental tiles carrying an orogeny stamp.
+    // Also gather the orogenyAge distribution (min/median/max) of stamped tiles to verify
+    // the age clock produces a gradient (margins young, merged-continent interiors old),
+    // and split margin vs interior by boundaryDistance proxy: a stamped tile sitting on or
+    // near a live convergent boundary is a "margin" orogen; one far from any boundary is an
+    // "interior" suture. We approximate margin-ness by whether the tile's coarse cell is a
+    // convergent boundary cell or neighbors one.
     uint32_t orogenyTiles = 0;
-    for (TileId t = 0; t < N; ++t) {
-        if (history->crustType[t] != static_cast<uint8_t>(CrustType::Continental)) continue;
-        if (history->orogenyAge[t] != kOrogenyNever) ++orogenyTiles;
+    std::vector<int32_t> orogenyAges;
+    orogenyAges.reserve(N);
+    uint64_t marginAgeSum = 0, interiorAgeSum = 0;
+    uint32_t marginN = 0, interiorN = 0;
+    {
+        std::array<TileId, 6> obNbrs{};
+        for (TileId t = 0; t < N; ++t) {
+            if (history->crustType[t] != static_cast<uint8_t>(CrustType::Continental)) continue;
+            if (history->orogenyAge[t] == kOrogenyNever) continue;
+            ++orogenyTiles;
+            int32_t a = history->orogenyAge[t];
+            orogenyAges.push_back(a);
+            // Margin = this cell or a neighbor is a convergent boundary.
+            bool nearConv = (history->boundaryType[t] >= 1 && history->boundaryType[t] <= 3);
+            if (!nearConv) {
+                uint32_t nc = g.neighbors(t, obNbrs);
+                for (uint32_t k = 0; k < nc; ++k) {
+                    uint8_t bt = history->boundaryType[obNbrs[k]];
+                    if (bt >= 1 && bt <= 3) { nearConv = true; break; }
+                }
+            }
+            if (nearConv) { marginAgeSum += static_cast<uint64_t>(a); ++marginN; }
+            else          { interiorAgeSum += static_cast<uint64_t>(a); ++interiorN; }
+        }
     }
     double orogenyCoverage = contCount ? 100.0 * orogenyTiles / contCount : 0.0;
+    int32_t orogAgeMin = 0, orogAgeMed = 0, orogAgeMax = 0;
+    if (!orogenyAges.empty()) {
+        std::sort(orogenyAges.begin(), orogenyAges.end());
+        orogAgeMin = orogenyAges.front();
+        orogAgeMax = orogenyAges.back();
+        orogAgeMed = orogenyAges[orogenyAges.size() / 2];
+    }
+    double marginAgeMean   = marginN   ? static_cast<double>(marginAgeSum)   / marginN   : 0.0;
+    double interiorAgeMean = interiorN ? static_cast<double>(interiorAgeSum) / interiorN : 0.0;
 
     // Speck metric (M-T3.5 gate): fraction of resolved continental cells in components < 5.
     // Connected continental components (world adjacency) of size < 5 are "specks".
@@ -677,6 +713,10 @@ static int runSimOnly(const CliArgs& args) {
                 static_cast<unsigned long long>(ccLast));
     std::printf("  orogeny coverage: %.1f%% of continental tiles (%u stamped)\n",
                 orogenyCoverage, orogenyTiles);
+    std::printf("  orogeny age (Myr): min %d  median %d  max %d  "
+                "[margin mean %.0f (n=%u)  interior mean %.0f (n=%u)]\n",
+                orogAgeMin, orogAgeMed, orogAgeMax,
+                marginAgeMean, marginN, interiorAgeMean, interiorN);
     std::printf("  ocean age (Myr) : min %u  mean %.1f  p99 %u  max %u  (>220: %.2f%%, n=%u)\n",
                 ageMin == 65535 ? 0u : ageMin, ageMean, ageP99, ageMax, overFrac, oceanCount);
     std::printf("  product hash    : 0x%016llx\n",

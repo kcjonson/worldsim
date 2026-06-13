@@ -211,6 +211,11 @@ TEST(PlateSim, DeterministicProductHash) {
 // Updated for M-T3.5 (arc nucleation support check, crust-type coherence filter with
 // arc-adjacent exemption, controller gain 4.7 + setpointBias 0.02). The M-T2.7 value
 // was 0xacf2522344ffd037.
+// Updated for M-T4.5 (concentrate orogeny into thin linear belts: collision band 5->4 with a
+// squared, convergence-scaled intensity falloff and an intensity coverage floor; recent-suture
+// DATE band decoupled from the thicken band so post-suture interiors age; thicken band 4->3).
+// These put orogeny coverage in the 12-32% band with a margin-young / interior-old age
+// gradient. The M-T3.5 value was 0xeb2cb3f12d7fb6f6.
 // ============================================================================
 
 TEST(PlateSim, GoldenProductHash) {
@@ -218,7 +223,7 @@ TEST(PlateSim, GoldenProductHash) {
     PlateSim sim(p);
     auto h = sim.run();
     uint64_t hash = computeTectonicHistoryHash(*h);
-    constexpr uint64_t kGolden = 0xeb2cb3f12d7fb6f6ULL;
+    constexpr uint64_t kGolden = 0x25511f9162f0425bULL;
     // Print so a deliberate update is easy; assert against the pinned value.
     std::printf("[PlateSim.GoldenProductHash] coarseN=64 seed=0x1234567890ABCDEF "
                 "hash=0x%016llx\n", static_cast<unsigned long long>(hash));

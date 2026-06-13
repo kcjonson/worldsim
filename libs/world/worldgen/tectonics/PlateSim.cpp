@@ -1396,40 +1396,68 @@ void PlateSim::collisionProcessing() {
                 kCollisionBandRings, band);
         float conv = ccConv[static_cast<size_t>(p)];
         double thickenFull = kCcThickenPerConvMyr * static_cast<double>(conv) * dtMyr_;
+        // Convergence factor for the intensity stamp: a fast head-on contact stamps at
+        // full strength, a slow/oblique one proportionally weaker (clamped to 1). Coverage
+        // then tracks where REAL fast convergence happened, not every cell that grazed a
+        // boundary. (Thickening already scales by conv via thickenFull above.)
+        double convFactor = static_cast<double>(conv) / kOrogenyConvRefRadPerMyr;
+        if (convFactor > 1.0) convFactor = 1.0;
+        if (convFactor < 0.0) convFactor = 0.0;
         for (const auto& pr : band) {
             TileId w = pr.first;
             int ring = pr.second;
-            // Falloff relative to the THICKEN band, so thickening at rings 1..thickenRings is
-            // independent of how far the stamp band extends (the stamp band must not perturb
-            // the thickness field, hence the motion trajectory). Clamped to 0 past it.
-            double falloff = 1.0 - 0.5 * (static_cast<double>(ring) /
-                             static_cast<double>(kCollisionThickenRings + 1));
-            if (falloff < 0.0) falloff = 0.0;
+            // Thickening falloff is relative to the THICKEN band, so thickening at rings
+            // 1..thickenRings is independent of how far the stamp band extends (the stamp
+            // band must not perturb the thickness field, hence the motion trajectory).
+            double thFalloff = 1.0 - 0.5 * (static_cast<double>(ring) /
+                               static_cast<double>(kCollisionThickenRings + 1));
+            if (thFalloff < 0.0) thFalloff = 0.0;
+            // Intensity falloff is relative to the FULL stamp band, squared so intensity
+            // concentrates on the boundary core and tapers to a faint apron, reading as a
+            // thin linear range, not a flat plateau.
+            double lin = 1.0 - static_cast<double>(ring) /
+                         static_cast<double>(kCollisionBandRings + 1);
+            if (lin < 0.0) lin = 0.0;
+            double intenFalloff = lin * lin;
             TileId local = worldToLocal(static_cast<uint32_t>(p), w);
             if (local == kInvalidTile) continue;
             CrustCell& cell = plates_[static_cast<size_t>(p)].crust[local];
             if (cell.type != CrustType::Continental) continue;
-            // Thicken only the inner rings (the real stacking the area controller balances).
+            // Accumulate intensity first so the coverage gate below can test the built-up
+            // value (not just this step's increment).
+            float inten = cell.orogenyIntensity +
+                          kOrogenyIntensityPerStep *
+                          static_cast<float>(intenFalloff * convFactor);
+            cell.orogenyIntensity = inten > 1.0f ? 1.0f : inten;
+
+            // Thicken the inner rings (the real stacking the area controller balances).
             // Outer rings record the orogeny stamp + intensity for coverage / M-T4 texture
             // but add no crust, so the wide stamp band does not deepen continental drain.
             if (ring <= kCollisionThickenRings) {
-                double th = cell.thicknessKm + thickenFull * falloff;
+                double th = cell.thicknessKm + thickenFull * thFalloff;
                 if (th > kMaxCrustThicknessKm) th = kMaxCrustThicknessKm;
                 cell.thicknessKm = static_cast<float>(th);
-                cell.orogenyMyr = nowI; // inner belt: a recent suture (rifts may re-open it)
-            } else if (cell.orogenyMyr == kOrogenyNever ||
-                       (nowI - cell.orogenyMyr) >= kRiftSutureRecentMyr) {
-                // Outer flank: record an orogeny for coverage / M-T4 texture, but date it
-                // OLD (just past the recent-suture window) so it does NOT bias rift cuts.
-                // This decouples the wide coverage band from the rift feedback path, so
-                // widening it does not steer the trajectory into heavier shortening (which
-                // was draining continental area past budget on some seeds). A cell already
-                // carrying a recent inner-belt stamp keeps it (don't age a live orogen).
+            }
+            if (ring <= kOrogenyRecentDateRings &&
+                cell.orogenyIntensity >= kOrogenyCoverageFloor) {
+                // Young crest: a recent, active suture (rifts may re-open it). Gated on built
+                // intensity so a faint grazing touch in the band does not register as a young
+                // orogen — coverage tracks where a belt genuinely built, and the band stays a
+                // line, not a swath. Thickening above is unconditional (it builds the crust
+                // and the rift-relevant suture set is driven by these dated cells).
+                cell.orogenyMyr = nowI;
+            } else if ((cell.orogenyMyr == kOrogenyNever ||
+                        (nowI - cell.orogenyMyr) >= kRiftSutureRecentMyr) &&
+                       cell.orogenyIntensity >= kOrogenyCoverageFloor) {
+                // Flank/apron: record an orogeny for coverage / M-T4 texture ONLY once the
+                // cell has accumulated real intensity (a faint single-touch cell stays
+                // unstamped, keeping coverage on cells that actually built a belt). Date it
+                // OLD (just past the recent-suture window) so it does NOT bias rift cuts and
+                // so TerrainStage's ageDecay subdues it to a low flank, not a second wall.
+                // A cell already carrying a recent core stamp keeps it (don't age a live
+                // orogen).
                 cell.orogenyMyr = nowI - kRiftSutureRecentMyr;
             }
-            float inten = cell.orogenyIntensity +
-                          kOrogenyIntensityPerStep * static_cast<float>(falloff);
-            cell.orogenyIntensity = inten > 1.0f ? 1.0f : inten;
         }
     }
 

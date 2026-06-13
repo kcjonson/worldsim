@@ -99,19 +99,42 @@ inline constexpr double kCcThickenPerConvMyr = 9000.0;
 // Cap on crustal thickness from collision (km). (Tibetan plateau crust ~70-80 km.)
 inline constexpr double kMaxCrustThicknessKm = 75.0;
 // CC orogeny-STAMP band half-width in coarse-cell rings from the boundary. At ~56 km/cell,
-// 5 rings is a ~280 km half-width belt, within the 150-800 km observed widths (Himalaya-
-// Tibet ~300 km). 5 (not 3) so a single sustained collision stamps a belt wide enough that,
-// summed over a run, continental orogeny coverage clears the ~25% floor even on stable,
-// few-collision seeds, while the ring falloff keeps it a linear belt with a crest-to-flank
-// gradient (not a blotchy uniform fill).
+// 5 rings is a ~280 km half-width band. Pre-M-T4.5 this band was stamped at near-uniform
+// intensity on BOTH plates either side of every collision cell and, swept over the run by
+// continental drift, painted ~33-40% of continental area with broad saturated orogeny — far
+// past Earth's ~10-25% active+recent orogen fraction, and impossible for a texture stage to
+// carve linear ranges out of. M-T4.5 keeps the band wide (so a belt records its full length)
+// but replaces the uniform stamp with a SQUARED, convergence-scaled intensity falloff plus an
+// intensity COVERAGE FLOOR (kOrogenyCoverageFloor): only the boundary-core rings accumulate
+// enough intensity to register, so the belt stays a THIN line along the boundary while
+// coverage lands in the 12-32% band. Thin + long, not broad + blobby.
 inline constexpr int kCollisionBandRings = 5;
 // CC THICKENING is confined to the inner rings only. The outer stamp rings record the
 // orogeny (intensity + age, for the M-T4 ridged-belt texture and the coverage statistic)
 // but add no crust thickness, so widening the stamp band for coverage does NOT increase
 // collisional shortening (stacking) — that would shrink the continental footprint and drain
 // continental area past the +/-10% budget. Thickening (the real stacking that the area
-// controller must balance) stays at the physical inner-belt width.
-inline constexpr int kCollisionThickenRings = 4;
+// controller must balance) stays at the physical inner-belt width. M-T4.5: cut from 4 to 3.
+// The thickness field is what TerrainStage's beltCore gates the tall belt on; a 4-ring band
+// gave a wide thickened core (wide belts). A 3-ring core narrows belts without the sim-
+// trajectory shift a 2-ring band caused (which fragmented continents into more, smaller blocks
+// and grew the shallow-ocean hypsometric sub-peak past the abyssal mode on some seeds). The
+// recent-suture rift bias is driven by a SEPARATE band (kOrogenyRecentDateRings), so the
+// thicken band can shrink a ring without moving the rift dynamics.
+inline constexpr int kCollisionThickenRings = 3;
+// Recent-suture DATE band: rings out to here get orogenyMyr = now (a "young, active" orogen)
+// while still on an active CC boundary, gated on the coverage floor. Kept at 4 (one ring wider
+// than the thicken band): the recent-suture flag drives the rift-path bias (rifts re-open
+// recent sutures, kRiftSutureBias), so the band width is a sensitive lever on the shortening-
+// heavy seed's rift trajectory — narrowing it to 2 fragmented that seed's continents and
+// drained continental area past the +/-10% budget. Decoupling this band from the thicken band
+// is what lets the thicken band shrink (narrower belts) without moving the rift dynamics. The
+// age GRADIENT (diagnosis #2: margins young, merged interiors old) comes from cells LEAVING
+// the active boundary as it drifts past — once a cell is no longer in any plate's CC band it
+// stops being re-dated and ages — so the gradient holds regardless of this band's width
+// (margins ~20-60 Myr, interiors ~230-360 Myr). Beyond this band, the outermost stamp ring
+// dates OLD via the coverage gate so it reads as an eroded flank, not a live crest.
+inline constexpr int kOrogenyRecentDateRings = 4;
 
 // Continental-collision motion damping: a plate's rotation is scaled by
 // (1 - block), where block rises with its CC contact extent and saturates at
@@ -123,10 +146,29 @@ inline constexpr double kMaxCollisionBlock = 0.70;
 inline constexpr uint32_t kCollisionBlockRefTiles = 45;
 
 // Per-step orogeny-intensity increment at the collision front (added, clamped to
-// 1). A boundary in sustained collision saturates intensity over a few tens of
-// Myr. (Intensity is a unitless 0..1 "how recently/hard did this orogen build"
-// accumulator, read by TerrainStage for ridged-belt amplitude in M-T4.)
-inline constexpr float kOrogenyIntensityPerStep = 0.20f;
+// 1). A boundary in SUSTAINED, FAST collision saturates intensity over a few tens of
+// Myr; a slow or oblique contact builds intensity slowly and may never saturate.
+// (Intensity is a unitless 0..1 "how recently/hard did this orogen build" accumulator,
+// read by TerrainStage for ridged-belt amplitude.) M-T4.5: the per-cell increment is
+// now scaled by BOTH a steep distance-from-boundary falloff (kOrogenyBandFalloffPow)
+// AND the local convergence rate (normalized by kOrogenyConvRefRadPerMyr), so the
+// stamp concentrates on the boundary core where contact is fast, instead of painting a
+// broad uniform saturated band. Raised from 0.20 to 0.30 so the thin core still
+// saturates over a sustained collision despite the narrower band.
+inline constexpr float kOrogenyIntensityPerStep = 0.30f;
+// Distance-from-boundary intensity falloff: the per-ring linear weight
+// lin = 1 - ring/(kCollisionBandRings+1) is SQUARED, concentrating intensity on the inner
+// rings. For the 5-ring band the squared weight at rings 0..5 is 1.00/0.69/0.44/0.25/0.11/
+// 0.03, a sharp crest-to-flank gradient: combined with the coverage floor, only the inner
+// rings ever register orogeny, so the belt is a thin line with a faint tapering apron rather
+// than a flat-topped plateau. (Square chosen over a general pow() so the falloff stays in
+// det_math-only arithmetic; deterministic across platforms.)
+// Reference convergence rate (rad/Myr) at which the orogeny stamp lands at full
+// strength. Convergence at a fast head-on CC contact runs ~1e-2 rad/Myr; slower or
+// oblique contacts run lower and stamp proportionally weaker orogeny (clamped to 1).
+// This makes grazing collisions build only faint belts, so coverage tracks where real,
+// fast convergence happened rather than every cell that ever touched a boundary.
+inline constexpr double kOrogenyConvRefRadPerMyr = 0.010;
 
 // --- Arc volcanism (CO / OO convergent) ---
 // Volcanism deposited per step on the overriding side within the arc band.
@@ -235,6 +277,18 @@ inline constexpr double kMergeScoreThreshold = 1.0;
 inline constexpr double kCollisionScoreDecay = 0.75; // per step, untouched pairs
 // On merge, re-stamp orogeny intensity along the suture at this level.
 inline constexpr float kSutureOrogenyIntensity = 0.85f;
+// Minimum accumulated orogeny intensity before an OUTER-flank (non-thickening) cell
+// records an orogeny date and so counts as "covered" / textured. The squared falloff
+// stamps faint apron cells with a trickle of intensity each step; without a floor, any
+// cell that ever grazed a collision band registers as orogeny and inflates coverage past
+// Earth's ~10-25% active+recent fraction. Gating the date-stamp on a real built-up
+// intensity keeps coverage on the cells that actually accumulated a belt, while the
+// inner thickening rings (genuine collision cores) always stamp regardless of this floor.
+// 0.18: with the convergence-scaled, distance-squared falloff feeding intensity, 0.25 over-
+// trimmed the shortening-light seeds below the 12% coverage floor; 0.18 lifts coverage into
+// the middle of the [12%,32%] band on every gate seed while still rejecting faint grazing
+// touches (one weak step adds < 0.18, so a cell must see sustained or near-core contact).
+inline constexpr float kOrogenyCoverageFloor = 0.18f;
 
 // --- Rifting ---
 // Per-step base probability of a rift firing when the alive plate count is below

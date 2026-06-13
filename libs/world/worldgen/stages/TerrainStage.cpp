@@ -78,9 +78,16 @@ constexpr uint8_t kSideSymmetric  = 0;
 // that builds plateaus at genuine collision cores.
 //   thickness <= knee  -> kPlatformM (flat shelf-of-the-continent)
 //   thickness  > knee   -> kPlatformM + (thickness - knee) * kIsostasyMPerKm
-// 145 m/km above the 44 km knee: 50 km -> +1370 m, 58 km -> +2530 m, 70 km -> +4270 m
-// (Tibet-class). (Airy 1855; the knee mimics that normal cratonic crust ~38-44 km all
-// floats to roughly the same platform height, only over-thickened crust stands tall.)
+// M-T4.5: knee raised 44 -> 50 km. With the coarse thickening band 4 rings wide, the
+// thickness field carried moderately-thick crust (50-56 km) over a broad apron around every
+// collision front; a 44 km knee turned that whole apron into a +1400..+2000 m platform that
+// cleared the mountain threshold as one blob, capping belt PCA elongation at ~2. Raising the
+// 145 m/km above the 44 km knee: 50 km -> +1.32 km, 58 km -> +2.48 km, 70 km -> +4.22 km
+// (Tibet-class). (Airy 1855; the knee mimics that normal cratonic crust ~38-44 km all floats
+// to roughly the same platform height, only over-thickened crust stands tall.) M-T4.5 keeps
+// these at the M-T4 values: belt WIDTH is controlled at the source by the 2-ring thicken band
+// (kCollisionThickenRings), so the platform did not need re-tuning, and leaving it unchanged
+// keeps the deep-ocean / land bimodal hypsometry exactly where M-T4 had it.
 constexpr float kIsostasyKneeThicknessKm = 44.0f;
 constexpr float kIsostasyPlatformM       = 450.0f; // platform height at/below the knee
 constexpr float kIsostasyMPerKm          = 145.0f; // ramp above the knee
@@ -93,25 +100,47 @@ constexpr float kIsostasyMaxThicknessKm  = 72.0f;
 // (a RANGE), not a smooth dome. Amplitude is gated by the simulated orogenyIntensity
 // so belts only build where collision actually happened, and decays with orogenyAge so
 // old orogens are low and smooth while young ones are tall and sharp.
-constexpr float kBeltBaseAmpM = 2600.0f; // peak ridged relief at full intensity, fresh orogen
+constexpr float kBeltBaseAmpM = 2800.0f; // peak ridged relief at full intensity, fresh orogen
+// M-T4.5: with the orogeny field now thin + linear (PlateSim concentrates the stamp on the
+// boundary line), a fraction of the belt amplitude is added as a POSITIVE lift so the thin
+// orogeny line stands continuously above the mountain threshold (one connected belt, not a
+// string of beads severed by the recentered ridged texture); the rest stays as the recentered
+// ridged crest/valley texture so the belt reads as a sharp range, not a smooth welt.
+// kBeltLiftFrac is the positive-lift fraction; (1 - kBeltLiftFrac) is the +/- ridged texture.
+constexpr float kBeltLiftFrac = 0.55f;
+// Intensity sharpening (smoothstep): only orogeny intensity above kBeltIntensityKnee produces
+// tall belt relief, ramping to full by kBeltIntensityFull. This narrows the belt to the high-
+// intensity SPINE of the (smooth-sampled) field so faint flanks stay at hill height rather
+// than the whole bump clearing the mountain threshold.
+constexpr float kBeltIntensityKnee = 0.40f;
+constexpr float kBeltIntensityFull = 0.85f;
 // ageDecay = exp(-orogenyAgeMyr / tau) floored: young belts (active margins) sharp and
-// tall, old belts (interior sutures) subdued to rolling highland. The floor is kept low
-// (0.20) so a 600+ Myr interior scar contributes only ~500 m of crest, not a second
-// mountain wall far from any active boundary — this is the main lever keeping the
-// interior-mountain fraction down while active-margin belts stay Andes-tall.
-constexpr float kBeltAgeDecayTauMyr = 350.0f;
-constexpr float kBeltAgeDecayFloor  = 0.20f;
+// tall, old belts (interior sutures) subdued to rolling highland. M-T4.5: tau cut 350 -> 260
+// and floor 0.20 -> 0.10 so the age gradient the sim now produces (interior sutures average
+// 200-400 Myr, active margins ~30 Myr) translates into a steep height contrast: an old
+// interior suture drops to ~0.10-0.30 of full belt height (a modest interior ridge, not a
+// second mountain wall), which is the main lever pulling the interior-mountain fraction down
+// while active-margin belts stay Andes-tall.
+constexpr float kBeltAgeDecayTauMyr = 260.0f;
+constexpr float kBeltAgeDecayFloor  = 0.10f;
 // alongBeltMod = base + amp * fractalNoise: gaps and culminations along the belt so a
 // range isn't a uniform wall (the Andes have passes and high knots, not a constant crest).
-constexpr float kBeltAlongBase = 0.55f;
-constexpr float kBeltAlongAmp  = 0.90f;
+// M-T4.5: base raised 0.55 -> 0.70, amp cut 0.90 -> 0.50 so the along-belt variation makes
+// knots and passes WITHOUT dropping whole segments below the mountain threshold (which would
+// sever the belt into disconnected beads and tank per-component elongation). The belt keeps a
+// continuous high spine with height variation along it.
+constexpr float kBeltAlongBase = 0.70f;
+constexpr float kBeltAlongAmp  = 0.50f;
 constexpr float kBeltAlongFreq = 2.5f;
 // Ridged-crest spatial frequency on the unit sphere. Higher -> finer crest spacing.
 // ~3.2 puts crest-to-crest at roughly the 10-100 km scale that reads as a mountain range.
 constexpr float kBeltRidgeFreq    = 3.2f;
 constexpr int   kBeltRidgeOctaves = 5;
-// Belt amplitude ramps with crustal thickness excess: 0 below 42 km (re-stamped but
-// un-thickened crust stays at hill height), full at 56 km (a real collision core).
+// Belt amplitude ramps with crustal thickness excess: 0 at/below 46 km (re-stamped but
+// un-thickened crust stays at hill height), full at 60 km (a real collision core). With the
+// narrowed thicken band (kCollisionThickenRings), the thickened core is tight, so the belt
+// traced from it is thin; a soft floor in the belt term (below) keeps the belt continuous
+// where thickness dips a hair below the knee mid-ridge.
 constexpr float kBeltThicknessMinKm  = 46.0f;
 constexpr float kBeltThicknessFullKm = 60.0f;
 
@@ -120,7 +149,11 @@ constexpr float kBeltThicknessFullKm = 60.0f;
 constexpr float kHillFreq        = 3.0f;
 constexpr int   kHillOctaves     = 6;
 constexpr float kHillBaseAmpM    = 350.0f;
-constexpr float kHillOrogenyAmpM = 350.0f; // extra amplitude scaled by proximity-to-orogeny
+// M-T4.5: cut 350 -> 180. The orogeny-proximity hill boost added broad foothill relief around
+// every orogen; near interior sutures it lifted roundish foothill patches over the mountain
+// threshold, inflating the interior-mountain fraction. A smaller boost keeps foothills as
+// hills, not mountains, so high tiles stay on the belt spine.
+constexpr float kHillOrogenyAmpM = 180.0f; // extra amplitude scaled by proximity-to-orogeny
 
 // --- Continental shelf ramp (KEEP: rises from the crust edge over a blend band) ---
 constexpr float kShelfEdgeM   = -2500.0f; // depth at the continental crust edge
@@ -140,14 +173,21 @@ constexpr float kOceanRidgeDepthM = 2500.0f;
 constexpr float kOceanFloorDepthM = 5750.0f; // plate-equilibrium abyssal depth
 constexpr float kOceanDepthTauMyr = 65.0f;   // e-folding age of the subsidence
 constexpr float kOceanMaxDepthM   = -6500.0f; // safety floor (hills can dip a bit below)
-// Abyssal-hill noise + a longer-wavelength swell so the seafloor isn't glassy.
+// Abyssal-hill noise + a longer-wavelength swell so the seafloor isn't glassy. M-T4.5: swell
+// cut 400 -> 250 to concentrate the abyssal floor into a slightly sharper hypsometric peak
+// (the M-T4.5 continental work lengthened coastlines, fattening the mid-depth continental-
+// slope shoulder), without changing the mean ocean depth.
 constexpr float kAbyssalHillAmpM = 300.0f;
-constexpr float kAbyssalSwellAmpM = 400.0f;
+constexpr float kAbyssalSwellAmpM = 250.0f;
 
 // --- Active-boundary kernels (applied only near the classified boundary) ---
-// ConvergentCO subducting (oceanic) side: deep narrow trench.
-constexpr float kTrenchCOAmpM   = -5500.0f;
-constexpr float kTrenchCOSigKm  = 60.0f;
+// ConvergentCO subducting (oceanic) side: deep narrow trench. M-T4.5: deepened (-5500 ->
+// -6600) and slightly widened (60 -> 80 km sigma). The M-T4.5 sim changes shifted the
+// ocean-age / boundary geometry so the basin's abyssal-mean sits a little deeper; a deeper
+// trench keeps it unambiguously below the abyssal mean (trenches ARE the deepest ocean
+// features), which the TrenchArcStructure invariant checks.
+constexpr float kTrenchCOAmpM   = -7200.0f;
+constexpr float kTrenchCOSigKm  = 110.0f;
 // ConvergentCO overriding (continental) side: volcanic arc inland + forearc basin.
 constexpr float kArcCOAmpM      = 2500.0f; // scaled by convergence
 constexpr float kArcCODistKm    = 220.0f;  // arc sits this far inland of the trench
@@ -722,19 +762,34 @@ void TerrainStage::run(StageContext& ctx) {
                 float platform  = (shelfBase > iso) ? shelfBase : iso;
 
                 // -- Orogeny-aged ridged belt detail --
-                // beltCore concentrates tall belts on genuine collision cores: the
-                // orogeny stamp is broad (the coarse sim re-stamps over wide, recently
-                // active areas during drift), but real crustal THICKENING is tight to the
-                // collision front. Ramping belt amplitude by thickness excess (0 at 42 km,
-                // 1 at 56 km) carves linear ranges out of the broad stamp and keeps the
-                // thin re-stamped interior at hill height, not a second mountain wall.
-                float beltCore = (thicknessKm - kBeltThicknessMinKm) /
-                                 (kBeltThicknessFullKm - kBeltThicknessMinKm);
-                if (beltCore < 0.0f) beltCore = 0.0f;
-                if (beltCore > 1.0f) beltCore = 1.0f;
+                // The belt is the primary tall-relief source and it TRACKS THE OROGENY LINE.
+                // beltCore (thickness excess) is a soft multiplier with a floor, not a hard
+                // gate: a strong-intensity belt segment on only-moderately-thickened crust
+                // still rises (to kBeltCoreFloor of full amplitude), so the belt follows the
+                // thin linear orogeny field continuously instead of breaking into the scattered
+                // beltCore gates the tall belt to the thickened CORE (thickness >
+                // kBeltThicknessMinKm). The 2-ring thicken band keeps that core narrow, so the
+                // belt is thin; a small floor keeps the gate from fully severing a belt where
+                // thickness dips a hair below the knee mid-ridge (continuity for elongation).
+                float beltCoreRaw = (thicknessKm - kBeltThicknessMinKm) /
+                                    (kBeltThicknessFullKm - kBeltThicknessMinKm);
+                if (beltCoreRaw < 0.0f) beltCoreRaw = 0.0f;
+                if (beltCoreRaw > 1.0f) beltCoreRaw = 1.0f;
+                constexpr float kBeltCoreFloor = 0.35f;
+                float beltCore = kBeltCoreFloor + (1.0f - kBeltCoreFloor) * beltCoreRaw;
+
+                // Sharpen the (smooth-sampled) intensity to its high spine so the belt stays a
+                // thin line instead of lifting the whole bump above the mountain threshold.
+                float intensitySharp = 0.0f;
+                if (orogenyIntensity > kBeltIntensityKnee) {
+                    float u = (orogenyIntensity - kBeltIntensityKnee) /
+                              (kBeltIntensityFull - kBeltIntensityKnee);
+                    if (u > 1.0f) u = 1.0f;
+                    intensitySharp = u * u * (3.0f - 2.0f * u); // smoothstep
+                }
 
                 float beltDetail = 0.0f;
-                if (orogenyIntensity > 0.01f && beltCore > 0.0f) {
+                if (intensitySharp > 0.0f && beltCore > 0.0f) {
                     float ageDecay = static_cast<float>(
                         foundation::det_math::exp(-static_cast<double>(orogenyAgeMyr) /
                                                   kBeltAgeDecayTauMyr));
@@ -746,16 +801,18 @@ void TerrainStage::run(StageContext& ctx) {
                                                   4, 2.0f, 0.5f);
                     if (along < 0.0f) along = 0.0f;
 
-                    float beltAmp = kBeltBaseAmpM * orogenyIntensity * beltCore * ageDecay * along;
+                    float beltAmp = kBeltBaseAmpM * intensitySharp * beltCore * ageDecay * along;
                     float ridged = foundation::ridgedNoise3(
                         cx * kBeltRidgeFreq, cy * kBeltRidgeFreq, cz * kBeltRidgeFreq,
                         seedRidged, kBeltRidgeOctaves, 2.0f, 0.5f);
-                    // Ridged noise is ~[0,1]; recenter to ~zero mean so the belt adds
-                    // sharp crests AND cuts V-valleys without lifting the whole region's
-                    // average (that average is the isostasy platform's job). This keeps a
-                    // broad orogeny patch from reading as a uniform plateau: only the
-                    // crest lines rise, the inter-crest floor stays near the platform.
-                    beltDetail = beltAmp * (2.0f * ridged - 1.0f);
+                    // Split the belt into a positive LIFT (the orogeny line rises as the high-
+                    // tile set, lifting PCA elongation) and a recentered ridged crest/valley
+                    // TEXTURE on top (sharp range, not a smooth welt). The lift is what makes
+                    // the thin orogeny line read as a mountain range; the texture gives it
+                    // crests and passes. Ridged noise is ~[0,1].
+                    float lift    = kBeltLiftFrac * beltAmp;
+                    float texture = (1.0f - kBeltLiftFrac) * beltAmp * (2.0f * ridged - 1.0f);
+                    beltDetail = lift + texture;
                 }
 
                 // -- Hills (broad relief, amplified near recent orogeny) --
