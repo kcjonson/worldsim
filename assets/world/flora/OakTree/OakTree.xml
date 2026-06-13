@@ -28,6 +28,13 @@
       <tier>batched</tier>
     </rendering>
 
+    <!-- Entity capabilities - chopped for wood; removed when resource pool is exhausted -->
+    <!-- Starter values: 6-10 wood per chop action, pool of 20-30 total (a full tree's yield) -->
+    <capabilities>
+      <harvestable yield="Wood" amountMin="6" amountMax="10" duration="8.0"
+                   destructive="false" totalResourceMin="20" totalResourceMax="30"/>
+    </capabilities>
+
     <placement>
       <biome name="TemperateDeciduousForest">
         <spawnChance>0.03</spawnChance>
@@ -43,6 +50,8 @@
         <group>deciduous_trees</group>
         <group>oak_trees</group>
         <group>large_flora</group>
+        <group>wild_plants</group>
+        <group>wood_sources</group>
       </groups>
 
       <!-- Relationships with other entities -->

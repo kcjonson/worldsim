@@ -23,6 +23,8 @@ bool CachedSelection::matches(const Selection& selection) const {
 				return type == Type::CraftingStation && stationId == sel.entityId;
 			} else if constexpr (std::is_same_v<T, FurnitureSelection>) {
 				return type == Type::Furniture && furnitureId == sel.entityId && furniturePackaged == sel.isPackaged;
+			} else if constexpr (std::is_same_v<T, FoundationSelection>) {
+				return type == Type::Foundation && foundationId == sel.id;
 			}
 			return false;
 		},
@@ -34,56 +36,38 @@ void CachedSelection::update(const Selection& selection) {
 	std::visit(
 		[this](const auto& sel) {
 			using T = std::decay_t<decltype(sel)>;
+			// Reset all identity fields, then set the ones the active variant needs.
+			colonistId = ecs::EntityID{0};
+			stationId = ecs::EntityID{0};
+			furnitureId = ecs::EntityID{0};
+			worldEntityDef.clear();
+			stationDefName.clear();
+			furnitureDefName.clear();
+			worldEntityPos = {};
+			furniturePackaged = false;
+			foundationId = engine::construction::kInvalidFoundation;
+
 			if constexpr (std::is_same_v<T, NoSelection>) {
 				type = Type::None;
-				colonistId = ecs::EntityID{0};
-				stationId = ecs::EntityID{0};
-				furnitureId = ecs::EntityID{0};
-				worldEntityDef.clear();
-				stationDefName.clear();
-				furnitureDefName.clear();
-				worldEntityPos = {};
-				furniturePackaged = false;
 			} else if constexpr (std::is_same_v<T, ColonistSelection>) {
 				type = Type::Colonist;
 				colonistId = sel.entityId;
-				stationId = ecs::EntityID{0};
-				furnitureId = ecs::EntityID{0};
-				worldEntityDef.clear();
-				stationDefName.clear();
-				furnitureDefName.clear();
-				worldEntityPos = {};
-				furniturePackaged = false;
 			} else if constexpr (std::is_same_v<T, WorldEntitySelection>) {
 				type = Type::WorldEntity;
-				colonistId = ecs::EntityID{0};
-				stationId = ecs::EntityID{0};
-				furnitureId = ecs::EntityID{0};
 				worldEntityDef = sel.defName;
-				stationDefName.clear();
-				furnitureDefName.clear();
 				worldEntityPos = sel.position;
-				furniturePackaged = false;
 			} else if constexpr (std::is_same_v<T, CraftingStationSelection>) {
 				type = Type::CraftingStation;
-				colonistId = ecs::EntityID{0};
 				stationId = sel.entityId;
-				furnitureId = ecs::EntityID{0};
-				worldEntityDef.clear();
 				stationDefName = sel.defName;
-				furnitureDefName.clear();
-				worldEntityPos = {};
-				furniturePackaged = false;
 			} else if constexpr (std::is_same_v<T, FurnitureSelection>) {
 				type = Type::Furniture;
-				colonistId = ecs::EntityID{0};
-				stationId = ecs::EntityID{0};
 				furnitureId = sel.entityId;
-				worldEntityDef.clear();
-				stationDefName.clear();
 				furnitureDefName = sel.defName;
-				worldEntityPos = {};
 				furniturePackaged = sel.isPackaged;
+			} else if constexpr (std::is_same_v<T, FoundationSelection>) {
+				type = Type::Foundation;
+				foundationId = sel.id;
 			}
 		},
 		selection
@@ -99,12 +83,14 @@ EntityInfoModel::UpdateType EntityInfoModel::refresh(
 	const ecs::World& world,
 	const engine::assets::AssetRegistry& assetRegistry,
 	const engine::assets::RecipeRegistry& recipeRegistry,
-	const Callbacks& callbacks
+	const Callbacks& callbacks,
+	const engine::construction::ConstructionWorld* constructionWorld
 ) {
 	// Detect selection types
 	bool		  isColonist = std::holds_alternative<ColonistSelection>(selection);
 	bool		  isStation = std::holds_alternative<CraftingStationSelection>(selection);
 	bool		  isFurniture = std::holds_alternative<FurnitureSelection>(selection);
+	bool		  isFoundation = std::holds_alternative<FoundationSelection>(selection);
 	ecs::EntityID colonistId{0};
 	ecs::EntityID stationId{0};
 	std::string   stationDefName;
@@ -127,6 +113,12 @@ EntityInfoModel::UpdateType EntityInfoModel::refresh(
 		const auto& furnitureSel = std::get<FurnitureSelection>(selection);
 		if (!world.isAlive(furnitureSel.entityId)) {
 			isFurniture = false;
+		}
+	}
+	if (isFoundation) {
+		const auto& foundationSel = std::get<FoundationSelection>(selection);
+		if (constructionWorld == nullptr || constructionWorld->get(foundationSel.id) == nullptr) {
+			isFoundation = false;
 		}
 	}
 
@@ -174,6 +166,9 @@ EntityInfoModel::UpdateType EntityInfoModel::refresh(
 			};
 		}
 		contentData = adaptFurniture(assetRegistry, furnitureSel, callbacks.onPlace, callbacks.onPackage, onConfigure);
+	} else if (isFoundation && constructionWorld != nullptr) {
+		const auto& foundationSel = std::get<FoundationSelection>(selection);
+		contentData = adaptFoundation(world, *constructionWorld, foundationSel, callbacks.onDemolishFoundation);
 	} else {
 		// World entity - use standard adapter with resource query callback
 		auto worldContent = adaptSelection(selection, world, assetRegistry, callbacks.queryResources);

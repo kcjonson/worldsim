@@ -14,6 +14,7 @@
 // Handles input consumption to prevent click-through to world.
 
 #include "scenes/game/ui/views/BuildMenu.h"
+#include "scenes/game/ui/views/ConstructionConfigStrip.h"
 #include "scenes/game/ui/views/GameplayBar.h"
 #include "scenes/game/ui/views/ColonistListView.h"
 #include "scenes/game/ui/views/DebugOverlay.h"
@@ -73,7 +74,10 @@ class GameUI {
 		std::function<void(ecs::GameSpeed)> onSpeedChange;			 ///< Called when speed changed
 		std::function<void()> onMenuClick;								 ///< Called when menu button clicked
 		std::function<void()> onPlaceFurniture;						 ///< Called when Place button clicked for packaged furniture
+		std::function<void()> onDemolishFoundation;					 ///< Called when Demolish button clicked for a foundation
 		ResourceQueryCallback queryResources;							 ///< Query remaining resource count for harvestable entities
+		std::function<void(const std::string&)> onStructureSelected;	 ///< Called when a structure tool (e.g. "foundation") is chosen
+		std::function<void(const std::string&)> onConstructionMaterialSelected; ///< Called when a config-strip material card is clicked
 	};
 
 	explicit GameUI(const Args& args);
@@ -95,7 +99,8 @@ class GameUI {
 		ecs::World& ecsWorld,
 		const engine::assets::AssetRegistry& assetRegistry,
 		const engine::assets::RecipeRegistry& recipeRegistry,
-		const Selection& selection
+		const Selection& selection,
+		const engine::construction::ConstructionWorld* constructionWorld = nullptr
 	);
 
 	/// Render all UI elements
@@ -129,6 +134,16 @@ class GameUI {
 	/// Set the production station items in the Production dropdown
 	/// @param items Vector of {defName, label} pairs for placeable production stations
 	void setProductionItems(const std::vector<std::pair<std::string, std::string>>& items);
+
+	// --- Construction Config Strip API ---
+
+	/// Set the material cards shown in the construction config strip.
+	/// @param materials Vector of {name, costPerSquareMeter} pairs.
+	void setConstructionMaterials(const std::vector<std::pair<std::string, float>>& materials);
+
+	/// Push the latest drawing-tool status to the config strip (drives readouts,
+	/// validity line, selection highlight, and visibility).
+	void setConstructionStatus(const DrawingStatus& status);
 
 	// --- Colonist Details Dialog API ---
 
@@ -171,6 +186,7 @@ class GameUI {
 	std::unique_ptr<DebugOverlay> debugOverlay;
 	std::unique_ptr<ZoomControlPanel> zoomControlPanel;
 	std::unique_ptr<GameplayBar> gameplayBar;
+	std::unique_ptr<ConstructionConfigStrip> configStrip;
 	std::unique_ptr<BuildMenu> buildMenu;
 	std::unique_ptr<ColonistListView> colonistList;
 	std::unique_ptr<EntityInfoView> infoPanel;

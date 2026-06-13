@@ -18,6 +18,7 @@
 
 #include <assets/AssetRegistry.h>
 #include <assets/RecipeRegistry.h>
+#include <construction/ConstructionWorld.h>
 #include <ecs/World.h>
 
 #include <functional>
@@ -27,7 +28,7 @@ namespace world_sim {
 
 /// Cached selection identity for detecting structural vs value-only updates
 struct CachedSelection {
-	enum class Type { None, Colonist, WorldEntity, CraftingStation, Furniture };
+	enum class Type { None, Colonist, WorldEntity, CraftingStation, Furniture, Foundation };
 
 	Type			  type = Type::None;
 	ecs::EntityID	  colonistId{0};	 // For Colonist selection
@@ -38,6 +39,7 @@ struct CachedSelection {
 	std::string		  furnitureDefName;	 // For Furniture selection
 	Foundation::Vec2 worldEntityPos;	 // For WorldEntity selection
 	bool			  furniturePackaged{false}; // For Furniture selection
+	engine::construction::FoundationId foundationId{0}; // For Foundation selection
 
 	/// Check if this cache matches the given selection
 	[[nodiscard]] bool matches(const Selection& selection) const;
@@ -77,16 +79,19 @@ class EntityInfoModel {
 		std::function<void()> onPackage;		// Package placed furniture
 		OpenStorageConfigCallback onOpenStorageConfig;	// Open storage config dialog for containers
 		ResourceQueryCallback queryResources;	// Query remaining resource count for harvestable entities
+		std::function<void()> onDemolishFoundation;	// Demolish the selected foundation
 	};
 
 	/// Refresh model with current selection state
+	/// @param constructionWorld Topology store for FoundationSelection (nullable)
 	/// @return Type of update the panel should perform
 	[[nodiscard]] UpdateType refresh(
 		const Selection& selection,
 		const ecs::World& world,
 		const engine::assets::AssetRegistry& assetRegistry,
 		const engine::assets::RecipeRegistry& recipeRegistry,
-		const Callbacks& callbacks
+		const Callbacks& callbacks,
+		const engine::construction::ConstructionWorld* constructionWorld = nullptr
 	);
 
 	/// Get the current panel content (valid after refresh())

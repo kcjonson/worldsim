@@ -79,6 +79,12 @@ namespace geometry {
 	// 128-bit and compared against the exact squared distance.
 	bool withinDistanceOfSegment(const Vec2i64& p, const Vec2i64& a, const Vec2i64& b, std::int64_t thresholdMm);
 
+	// Strict variant of withinDistanceOfSegment: is the point STRICTLY closer
+	// than `threshold` mm to the segment? A gap exactly equal to the threshold
+	// returns false (permitted), matching minVertexSpacing / minEdgeClearance's
+	// at-threshold-passes rule. Same exact integer comparison path.
+	bool closerThanToSegment(const Vec2i64& p, const Vec2i64& a, const Vec2i64& b, std::int64_t thresholdMm);
+
 	// Float convenience for UI readouts only. Not for exact comparisons.
 	double distanceToSegment(const Vec2i64& p, const Vec2i64& a, const Vec2i64& b);
 

@@ -32,6 +32,13 @@
 
     <!-- No animation for now (trees sway is future work) -->
 
+    <!-- Entity capabilities - chopped for wood; removed when resource pool is exhausted -->
+    <!-- Starter values: 4-7 wood per chop action, pool of 14-22 total (maple is smaller than oak) -->
+    <capabilities>
+      <harvestable yield="Wood" amountMin="4" amountMax="7" duration="7.0"
+                   destructive="false" totalResourceMin="14" totalResourceMax="22"/>
+    </capabilities>
+
     <!-- Per-biome placement configuration -->
     <placement>
       <!-- Forest: Common, spaced out -->
@@ -58,6 +65,8 @@
         <group>deciduous_trees</group>
         <group>maple_trees</group>
         <group>large_flora</group>
+        <group>wild_plants</group>
+        <group>wood_sources</group>
       </groups>
 
       <!-- Relationships with other entities -->

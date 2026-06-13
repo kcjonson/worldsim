@@ -6,34 +6,6 @@
 
 namespace geometry {
 
-	namespace {
-
-		// Strict: is the point closer than thresholdMm to the segment? Exact,
-		// no floating point. Mirrors withinDistanceOfSegment but uses strict <
-		// so that a gap exactly equal to the threshold is permitted (consistent
-		// with minVertexSpacing's at-threshold-passes rule).
-		bool closerThanToSegment(const Vec2i64& p, const Vec2i64& a, const Vec2i64& b, std::int64_t thresholdMm) {
-			const Vec2i64 ab	   = b - a;
-			const Vec2i64 ap	   = p - a;
-			const Int128  threshSq = Int128::product(thresholdMm, thresholdMm);
-
-			if (ab.x == 0 && ab.y == 0) {
-				return dot(ap, ap) < threshSq;
-			}
-			const Int128 t = dot(ap, ab);
-			if (t <= Int128(0)) {
-				return dot(ap, ap) < threshSq;
-			}
-			const Int128 denom = dot(ab, ab);
-			if (t >= denom) {
-				const Vec2i64 bp = p - b;
-				return dot(bp, bp) < threshSq;
-			}
-			return Int128::compareSquareToProduct(cross(ab, ap), threshSq, denom) < 0;
-		}
-
-	} // namespace
-
 	Int128 signedAreaDoubled(const Ring& ring) {
 		const std::size_t n = ring.size();
 		if (n < 3) {

@@ -65,6 +65,7 @@ Development log entries are **immutable history**. Don't update old entries — 
 #### June 2026
 
 - [2026-06-13 - Tectonic history simulation](./entries/2026-06-13-tectonic-history-simulation.md)
+- [2026-06-13 - Construction Epic C: foundations end-to-end](./entries/2026-06-13-construction-epic-c.md)
 - [2026-06-12 - Geometry Foundations (libs/geometry)](./entries/2026-06-12-geometry-foundations.md)
 - [2026-06-12 - Goal-Driven Task Generation (core)](./entries/2026-06-12-goal-driven-task-generation.md)
 - [2026-06-12 - Building, Pathfinding, and Vision Specs](./entries/2026-06-12-building-pathfinding-vision-specs.md)

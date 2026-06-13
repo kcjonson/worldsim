@@ -13,6 +13,7 @@
 #include "../components/Packaged.h"
 #include "../components/Skills.h"
 #include "../components/StorageConfiguration.h"
+#include "../components/StructureBlueprint.h"
 #include "../components/Task.h"
 #include "../components/ToiletLocationFinder.h"
 #include "../components/Transform.h"
@@ -212,6 +213,8 @@ namespace ecs {
 				case TaskType::Harvest:
 					return option.harvestTargetEntityId == currentTask.harvestTargetEntityId &&
 						   option.harvestGoalId == currentTask.harvestGoalId;
+				case TaskType::Build:
+					return option.buildBlueprintEntityId == currentTask.buildBlueprintEntityId;
 				default:
 					return false;
 			}
@@ -293,43 +296,52 @@ namespace ecs {
 					continue; // Goal is full or null
 				}
 
-				// Craft-material haul: source is the colonist's inventory, never loose ground
-				// items. If this Haul belongs to a Craft goal, handle it here and skip the
-				// memory scan. An option is emitted only once the Harvest dependency has
-				// completed (status Available) and the colonist actually carries the material.
-				if (goal->parentGoalId.has_value()) {
+				// Inventory-source haul: the colonist already carries the harvested material, so
+				// there is no loose ground pickup. Two cases use this path:
+				//  - Craft-material hauls (Haul is a child of a Craft goal): deliver to the
+				//    crafting station (items stay in inventory for the Craft action).
+				//  - Construction-material hauls (owner ConstructionGoalSystem): deliver to the
+				//    blueprint, which has a delivery Inventory the deposit lands in.
+				// Both skip the memory scan and emit only once the dependency completed (status
+				// Available) and the colonist actually carries the material.
+				bool inventorySourceHaul = goal->owner == GoalOwner::ConstructionGoalSystem;
+				if (!inventorySourceHaul && goal->parentGoalId.has_value()) {
 					const auto* parent = goalRegistry.getGoal(goal->parentGoalId.value());
-					if (parent != nullptr && parent->type == TaskType::Craft) {
-						if (goal->status == GoalStatus::Available) {
-							for (uint32_t acceptedId : goal->acceptedDefNameIds) {
-								const auto& itemDefName = registry.getDefName(acceptedId);
-								uint32_t	carried = inventory.getQuantity(itemDefName);
-								if (carried == 0) {
-									continue;
-								}
-
-								EvaluatedOption haulOption;
-								haulOption.taskType = TaskType::Haul;
-								haulOption.needType = NeedType::Count;
-								haulOption.needValue = 100.0F;
-								haulOption.threshold = 0.0F;
-								haulOption.targetPosition = goal->destinationPosition;
-								haulOption.targetDefNameId = acceptedId;
-								haulOption.distanceToTarget = glm::distance(position, goal->destinationPosition);
-								haulOption.haulItemDefName = itemDefName;
-								haulOption.haulQuantity = std::min(carried, goal->availableCapacity());
-								haulOption.haulSourcePosition = position; // already carrying
-								haulOption.haulTargetStorageId = static_cast<uint64_t>(goal->destinationEntity);
-								haulOption.haulTargetPosition = goal->destinationPosition;
-								haulOption.haulGoalId = goal->id;
-								haulOption.haulFromInventory = true;
-								haulOption.status = OptionStatus::Available;
-								haulOption.reason = "Delivering " + itemDefName + " to crafting station";
-								trace.options.push_back(haulOption);
+					inventorySourceHaul = parent != nullptr && parent->type == TaskType::Craft;
+				}
+				if (inventorySourceHaul) {
+					if (goal->status == GoalStatus::Available) {
+						const bool toBlueprint = goal->owner == GoalOwner::ConstructionGoalSystem;
+						for (uint32_t acceptedId : goal->acceptedDefNameIds) {
+							const auto& itemDefName = registry.getDefName(acceptedId);
+							uint32_t	carried = inventory.getQuantity(itemDefName);
+							if (carried == 0) {
+								continue;
 							}
+
+							EvaluatedOption haulOption;
+							haulOption.taskType = TaskType::Haul;
+							haulOption.needType = NeedType::Count;
+							haulOption.needValue = 100.0F;
+							haulOption.threshold = 0.0F;
+							haulOption.targetPosition = goal->destinationPosition;
+							haulOption.targetDefNameId = acceptedId;
+							haulOption.distanceToTarget = glm::distance(position, goal->destinationPosition);
+							haulOption.haulItemDefName = itemDefName;
+							haulOption.haulQuantity = std::min(carried, goal->availableCapacity());
+							haulOption.haulSourcePosition = position; // already carrying
+							haulOption.haulTargetStorageId = static_cast<uint64_t>(goal->destinationEntity);
+							haulOption.haulTargetPosition = goal->destinationPosition;
+							haulOption.haulGoalId = goal->id;
+							haulOption.haulFromInventory = true;
+							haulOption.tiebreakId = goal->id ^ (static_cast<uint64_t>(acceptedId) << 1);
+							haulOption.status = OptionStatus::Available;
+							haulOption.reason = toBlueprint ? "Delivering " + itemDefName + " to build site"
+															: "Delivering " + itemDefName + " to crafting station";
+							trace.options.push_back(haulOption);
 						}
-						continue;
 					}
+					continue;
 				}
 
 				// Check colonist's memory for items that can fulfill this goal
@@ -392,6 +404,9 @@ namespace ecs {
 					haulOption.haulTargetStorageId = static_cast<uint64_t>(goal->destinationEntity);
 					haulOption.haulTargetPosition = goal->destinationPosition;
 					haulOption.haulGoalId = goal->id;
+					// Tiebreak on (goal, source item) so two equidistant loose items for the same
+					// goal resolve deterministically rather than by memory's hash order.
+					haulOption.tiebreakId = goal->id ^ (key << 1);
 					haulOption.status = OptionStatus::Available;
 					haulOption.reason = "Hauling " + itemDefName + " to storage";
 					trace.options.push_back(haulOption);
@@ -469,6 +484,9 @@ namespace ecs {
 					harvestOption.harvestTargetEntityId = key; // The world entity ID
 					harvestOption.harvestGoalId = goal->id;
 					harvestOption.harvestYieldDefNameId = goal->yieldDefNameId;
+					// Tiebreak on (goal, target) so two equidistant harvestables feeding the same
+					// goal still resolve deterministically, not by memory's hash order.
+					harvestOption.tiebreakId = goal->id ^ (key << 1);
 					harvestOption.status = OptionStatus::Available;
 
 					// Harvesting uses Farming skill
@@ -482,6 +500,52 @@ namespace ecs {
 
 					trace.options.push_back(harvestOption);
 				}
+			}
+		}
+
+		/// Evaluate build options by querying Build goals from GoalTaskRegistry.
+		/// Goal-driven: ConstructionSystem emits a Build goal once a blueprint's materials are
+		/// staged. We surface it only while the blueprint is actually UnderConstruction (the
+		/// phase ActionSystem's Build action requires), targeting the goal's work slot.
+		void evaluateBuildOptions(
+			World*			 world,
+			const glm::vec2& position,
+			const Skills*	 skills,
+			DecisionTrace&	 trace
+		) {
+			if (world == nullptr) {
+				return;
+			}
+			auto& goalRegistry = GoalTaskRegistry::Get();
+
+			for (const auto* goal : goalRegistry.getGoalsOfType(TaskType::Build)) {
+				if (goal == nullptr || goal->status != GoalStatus::Available) {
+					continue;
+				}
+				const auto blueprintEntity = static_cast<EntityID>(goal->destinationEntity);
+				const auto* blueprint = world->getComponent<StructureBlueprint>(blueprintEntity);
+				if (blueprint == nullptr ||
+					blueprint->phase != StructureBlueprint::BuildPhase::UnderConstruction) {
+					continue; // not ready to build (cleared/awaiting materials/complete)
+				}
+
+				EvaluatedOption buildOption;
+				buildOption.taskType = TaskType::Build;
+				buildOption.needType = NeedType::Count;
+				buildOption.needValue = 100.0F;
+				buildOption.threshold = 0.0F;
+				buildOption.targetPosition = goal->destinationPosition;
+				buildOption.distanceToTarget = glm::distance(position, goal->destinationPosition);
+				buildOption.buildBlueprintEntityId = goal->destinationEntity;
+				buildOption.tiebreakId = goal->id;
+				buildOption.status = OptionStatus::Available;
+
+				auto [buildSkillLevel, buildSkillBonus] = calculateSkillBonus(skills, kSkillConstruction);
+				buildOption.skillLevel = buildSkillLevel;
+				buildOption.skillBonus = buildSkillBonus;
+				buildOption.reason = "Building structure";
+
+				trace.options.push_back(buildOption);
 			}
 		}
 
@@ -531,6 +595,7 @@ namespace ecs {
 				placeOption.placePackagedEntityId = static_cast<uint64_t>(packagedEntity);
 				placeOption.placeSourcePosition = packagedPos.value;
 				placeOption.placeTargetPosition = targetPos;
+				placeOption.tiebreakId = static_cast<uint64_t>(packagedEntity);
 				placeOption.status = OptionStatus::Available;
 				placeOption.reason = isCarryingThis ? "Delivering " + packagedAppearance.defName : "Placing " + packagedAppearance.defName;
 				trace.options.push_back(placeOption);
@@ -1029,6 +1094,7 @@ namespace ecs {
 			craftOption.distanceToTarget = glm::distance(position.value, stationPos.value);
 			craftOption.craftRecipeDefName = nextJob->recipeDefName;
 			craftOption.stationEntityId = static_cast<uint64_t>(stationEntity);
+			craftOption.tiebreakId = static_cast<uint64_t>(stationEntity);
 
 			// Calculate skill bonus for crafting
 			auto [craftSkillLevel, craftSkillBonus] = calculateSkillBonus(skills, kSkillCrafting);
@@ -1063,6 +1129,10 @@ namespace ecs {
 					gatherOption.targetDefNameId = gatherSource.source.defNameId;
 					gatherOption.distanceToTarget = glm::distance(position.value, gatherSource.source.position);
 					gatherOption.gatherItemDefName = gatherSource.inputDefName;
+					// Tiebreak on the source's stable world-entity hash (quantized position + def),
+					// which is sim state, so equal-priority gather sources resolve deterministically.
+					gatherOption.tiebreakId = static_cast<uint64_t>(stationEntity) ^
+						hashWorldEntity(gatherSource.source.position, gatherSource.source.defNameId);
 					gatherOption.status = OptionStatus::Available;
 					gatherOption.reason = "Gathering " + gatherSource.inputDefName + " for crafting";
 
@@ -1085,6 +1155,9 @@ namespace ecs {
 		// Tier 6.7: Harvest resources for crafting (goal-driven)
 		evaluateHarvestOptions(m_registry, memory, position.value, skills, trace);
 
+		// Tier 6.45: Build staged construction blueprints (goal-driven, priority 41)
+		evaluateBuildOptions(world, position.value, skills, trace);
+
 		// Tier 6.35: Place packaged items at target locations
 		evaluatePlacePackagedOptions(world, position.value, inventory, trace);
 
@@ -1104,9 +1177,19 @@ namespace ecs {
 			populatePriorityBonuses(option, currentTask, 0.0F);
 		}
 
-		// Sort by priority (highest first)
+		// Sort by priority (highest first), breaking ties on the stable tiebreak id so the order
+		// is a deterministic total order independent of container iteration. std::sort is not
+		// stable and selection takes the first element, so without the tiebreak two equal-priority
+		// options (e.g. two equidistant, equal-skill build sites) would resolve by hash-bucket
+		// order and route colonists nondeterministically (a multiplayer desync). Lower tiebreak
+		// id wins ties; goals get smaller ids the earlier they were created.
 		std::sort(trace.options.begin(), trace.options.end(), [](const auto& a, const auto& b) {
-			return a.calculatePriority() > b.calculatePriority();
+			const float pa = a.calculatePriority();
+			const float pb = b.calculatePriority();
+			if (pa != pb) {
+				return pa > pb;
+			}
+			return a.tiebreakId < b.tiebreakId;
 		});
 
 		// Mark the first actionable option as Selected
@@ -1162,6 +1245,12 @@ namespace ecs {
 				task.chainId = goal->chainId;
 				task.chainStep = 0; // Harvest is step 0 of the Harvest→Haul chain
 			}
+		}
+
+		// Copy build-specific fields for Build tasks. ActionSystem reads the blueprint entity
+		// from the task and advances its workDone; targetPosition is the work slot.
+		if (selected->taskType == TaskType::Build) {
+			task.buildBlueprintEntityId = selected->buildBlueprintEntityId;
 		}
 
 		// Copy hauling-specific fields for Haul tasks

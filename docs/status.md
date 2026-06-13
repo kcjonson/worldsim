@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2026-06-13 (Tectonic history simulation M-T6: docs + dev log + PR — awaiting user visual review to confirm epic complete; libs/geometry + goal-driven task generation also landed on main)
+Last Updated: 2026-06-13 (Tectonic history simulation: PR #136 awaiting merge after CI; Construction Epic C landed on main)
 
 ## Epic/Story/Task Template
 
@@ -477,8 +477,19 @@ while (running) {
 **Goal:** Freeform polygon building: foundation blueprints drawn on the map, walls on foundations with snapping and edge-fill, doors/windows as parameterized vector assets, automatic room detection. Deliver-then-build loop with work-driven procedural construction visuals.
 
 **Tasks:**
-- [x] Epic A: Geometry foundations (libs/geometry in-house: int64-mm core + Int128, exact predicates, polygon constraint primitives, planar arrangement + half-edge face extraction, ring booleans, wall band offsetting + junction trimming; 157 unit tests)
-- [ ] Epic C: Foundations end-to-end (ConstructionWorld, FoundationTool, blueprint lifecycle, goals, StructureRenderer, selection/panels, config)
+- [x] Epic A: Geometry foundations (libs/geometry in-house: int64-mm core + Int128, exact predicates, polygon constraint primitives, planar arrangement + half-edge face extraction, ring booleans, wall band offsetting + junction trimming; 157 unit tests) — merged to main (#135)
+- [x] Epic C: Foundations end-to-end — verified in sandbox: draw a foundation, colonist chops palms for Wood, hauls it to the site, builds it to completion, renders progress. Polish items remain (see sub-list).
+  - [x] Config + ConstructionRegistry + ConfigValidator (materials/constraints/snapping, meters + mm mirrors)
+  - [x] ConstructionWorld topology store (commit/add/subtract/remove via geometry booleans, overlap rejection, hit-test, version counter)
+  - [x] Blueprint ECS components (Structure, StructureBlueprint manifest+work+phase, StructureHealth)
+  - [x] DrawingSystem + FoundationTool + SnapEngine + ConstructionValidator + config strip (verified in sandbox: draw → commit → blueprint entity → toast)
+  - [x] Selection + info panel adapter + immediate demolish (verified in sandbox)
+  - [x] Material economy: Wood item + choppable Oak/Maple trees (reuses Harvestable path)
+  - [x] Build/Deconstruct actions (skill-scaled workDone += rate×dt, completion callbacks; 14 tests)
+  - [x] ConstructionSystem lifecycle (Clearing→AwaitingMaterials→UnderConstruction→Complete; clear/haul/build goals; blueprint-inventory delivery; build-progress render ramp)
+  - [x] Choppable palm trees added to the Beach biome (Wood source at spawn) so the loop is exercisable
+  - [x] End-to-end proof of chop→haul→build in a live world — verified in sandbox (foundation built to completion, ~1 min sim time). Fixed a goal-thrashing bug found in the process (harvest demand now bounded by carried Wood; harvest→haul chained for delivery stickiness).
+  - [ ] Polish (deferred): baked element-emitter index-prefix progress render (D8), ConstructionProgressSlot in the info panel (D11), N discrete builder work slots from builderCap, deconstruct material refund + cascade, mining/haul-away clearing of non-harvestable obstructions
 - [ ] Epic D: Walls (graph + junction splitting, WallTool, band rendering, nav integration, demolition)
 - [ ] Epic E: Rooms (face extraction on built/demolish events, room entities, notification)
 - [ ] Epic F: Openings (OpeningTool, parameterized assets, retrofit cuts, door nav nodes)

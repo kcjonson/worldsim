@@ -5,6 +5,7 @@
 #include <ecs/components/Inventory.h>
 #include <ecs/components/Mood.h>
 #include <ecs/components/Needs.h>
+#include <ecs/components/StructureBlueprint.h>
 #include <ecs/components/Task.h>
 
 #include <iomanip>
@@ -93,10 +94,12 @@ namespace world_sim {
 		const Selection&					 selection,
 		const ecs::World&					 world,
 		const engine::assets::AssetRegistry& registry,
-		const ResourceQueryCallback&		 queryResources
+		const ResourceQueryCallback&		 queryResources,
+		const engine::construction::ConstructionWorld* constructionWorld,
+		const std::function<void()>&		 onDemolish
 	) {
 		return std::visit(
-			[&world, &registry, &queryResources](auto&& sel) -> std::optional<PanelContent> {
+			[&world, &registry, &queryResources, constructionWorld, &onDemolish](auto&& sel) -> std::optional<PanelContent> {
 				using T = std::decay_t<decltype(sel)>;
 				if constexpr (std::is_same_v<T, NoSelection>) {
 					return std::nullopt;
@@ -108,6 +111,11 @@ namespace world_sim {
 					return adaptColonistStatus(world, sel.entityId);
 				} else if constexpr (std::is_same_v<T, WorldEntitySelection>) {
 					return adaptWorldEntity(registry, sel, queryResources);
+				} else if constexpr (std::is_same_v<T, FoundationSelection>) {
+					if (constructionWorld == nullptr || constructionWorld->get(sel.id) == nullptr) {
+						return std::nullopt;
+					}
+					return adaptFoundation(world, *constructionWorld, sel, onDemolish);
 				} else if constexpr (std::is_same_v<T, CraftingStationSelection>) {
 					// Validate entity still exists
 					if (!world.isAlive(sel.entityId)) {
@@ -367,6 +375,96 @@ namespace world_sim {
 				}
 			);
 		}
+
+		return content;
+	}
+
+	namespace {
+		// "AwaitingMaterials" -> "Awaiting Materials" is overkill; the design panel
+		// wants a state word, so map the build phase to a plain label.
+		std::string buildPhaseLabel(ecs::StructureBlueprint::BuildPhase phase, bool demolishing) {
+			if (demolishing) {
+				return "Demolishing";
+			}
+			switch (phase) {
+				case ecs::StructureBlueprint::BuildPhase::Clearing:
+					return "Clearing site";
+				case ecs::StructureBlueprint::BuildPhase::AwaitingMaterials:
+					return "Awaiting materials";
+				case ecs::StructureBlueprint::BuildPhase::UnderConstruction:
+					return "Under construction";
+				case ecs::StructureBlueprint::BuildPhase::Complete:
+					return "Built";
+			}
+			return "Unknown";
+		}
+
+		// "2/5 Wood, 1/3 Stone" style summary of delivered vs required materials.
+		std::string materialsSummary(const ecs::StructureBlueprint& blueprint) {
+			if (blueprint.required.empty()) {
+				return "none";
+			}
+			std::ostringstream oss;
+			bool first = true;
+			for (const auto& [defName, need] : blueprint.required) {
+				uint32_t have = need - blueprint.remaining(defName); // clamps internally
+				if (!first) {
+					oss << ", ";
+				}
+				oss << have << "/" << need << " " << defName;
+				first = false;
+			}
+			return oss.str();
+		}
+	} // namespace
+
+	PanelContent adaptFoundation(
+		const ecs::World&								world,
+		const engine::construction::ConstructionWorld& constructionWorld,
+		const FoundationSelection&						selection,
+		const std::function<void()>&					onDemolish
+	) {
+		PanelContent content;
+		content.layout = PanelLayout::SingleColumn;
+
+		const auto* foundation = constructionWorld.get(selection.id);
+		const std::string material = (foundation != nullptr) ? foundation->material : std::string{"Foundation"};
+		content.title = material + " Foundation";
+
+		content.slots.push_back(TextSlot{"Material", material});
+
+		std::ostringstream areaText;
+		// "m\xC2\xB2" is UTF-8 for "m²" (matches ConstructionConfigStrip's readout).
+		areaText << std::fixed << std::setprecision(1) << constructionWorld.areaSquareMeters(selection.id) << " m\xC2\xB2";
+		content.slots.push_back(TextSlot{"Area", areaText.str()});
+
+		const bool built =
+			(foundation != nullptr && foundation->state == engine::construction::FoundationState::Built);
+
+		// Build state + progress come from the ECS mirror's blueprint. A built
+		// foundation has no blueprint progress to show; a blueprint shows phase,
+		// a 0-100 work bar, and the delivered/required materials summary.
+		const ecs::StructureBlueprint* blueprint =
+			(foundation != nullptr) ? world.getComponent<ecs::StructureBlueprint>(foundation->entity) : nullptr;
+
+		if (blueprint != nullptr) {
+			content.slots.push_back(TextSlot{"State", buildPhaseLabel(blueprint->phase, blueprint->demolishing)});
+			content.slots.push_back(TextSlot{"Materials", materialsSummary(*blueprint)});
+			content.slots.push_back(ProgressBarSlot{.label = "Work", .value = blueprint->progress() * 100.0F});
+		} else {
+			content.slots.push_back(TextSlot{"State", built ? "Built" : "Blueprint"});
+		}
+
+		// Demolish action. Epic C does an immediate whole-foundation removal here. The
+		// work-driven Deconstruct action exists; only its material refund and the
+		// Demolish-building cascade are deferred polish.
+		content.slots.push_back(SpacerSlot{.height = 8.0F});
+		content.slots.push_back(
+			ActionButtonSlot{
+				.label = "Demolish",
+				.onClick = onDemolish,
+			}
+		);
 
 		return content;
 	}

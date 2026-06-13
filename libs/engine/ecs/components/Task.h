@@ -23,6 +23,8 @@ enum class TaskType : uint8_t {
 	Craft,		   // Tier 6.5: Crafting at a station
 	Haul,		   // Tier 6.4: Moving loose items to storage containers
 	PlacePackaged, // Tier 6.35: Carrying packaged items to placement locations
+	Build,		   // Tier 6.45: Advancing construction work on a blueprint (priority 41, just above Craft)
+	Deconstruct,   // Tearing down a structure
 	Wander		   // Tier 7: Random exploration
 };
 
@@ -72,6 +74,10 @@ struct Task {
 	/// inventory. The haul records its delivery (crediting the parent Craft goal) on arrival.
 	bool haulFromInventory = false;
 
+	/// For Build/Deconstruct tasks: the blueprint entity whose StructureBlueprint is
+	/// advanced. The target position (build work slot) is carried in targetPosition.
+	uint64_t buildBlueprintEntityId = 0;
+
 	/// For PlacePackaged tasks: packaged entity to carry and placement target
 	uint64_t  placePackagedEntityId = 0;		   // Entity ID of the packaged item to carry
 	glm::vec2 placeSourcePosition{0.0F, 0.0F};	   // Where the packaged item currently is
@@ -115,6 +121,7 @@ struct Task {
 		haulSourcePosition = glm::vec2{0.0F, 0.0F};
 		haulTargetPosition = glm::vec2{0.0F, 0.0F};
 		haulFromInventory = false;
+		buildBlueprintEntityId = 0;
 		placePackagedEntityId = 0;
 		placeSourcePosition = glm::vec2{0.0F, 0.0F};
 		placeTargetPosition = glm::vec2{0.0F, 0.0F};

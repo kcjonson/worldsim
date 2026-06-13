@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Palm Tree Asset Definition
+     Tropical tree spawning on Beach biome; yields Wood when chopped.
+     Uses the palm Lua generator for the distinctive radiating-frond silhouette.
+-->
+<AssetDefinitions>
+  <AssetDef>
+    <defName>Flora_TreePalm</defName>
+    <label>Palm Tree</label>
+    <assetType>procedural</assetType>
+
+    <generator>
+      <scriptPath>@shared/palm.lua</scriptPath>
+      <params>
+        <!-- Trunk narrower and taller than oak (palms are slender) -->
+        <trunkHeight>1.4</trunkHeight>
+        <trunkWidth>0.12</trunkWidth>
+        <!-- Frond reach in meters -->
+        <frondLength>0.7</frondLength>
+        <!-- Number of fronds radiating from crown -->
+        <frondCount>7</frondCount>
+      </params>
+    </generator>
+
+    <rendering>
+      <complexity>complex</complexity>
+      <tier>batched</tier>
+    </rendering>
+
+    <!-- Harvestable: palm yields less wood than oak (thinner trunk, softer wood) -->
+    <!-- 3-6 wood per chop, pool of 10-18 total -->
+    <capabilities>
+      <harvestable yield="Wood" amountMin="3" amountMax="6" duration="7.0"
+                   destructive="false" totalResourceMin="10" totalResourceMax="18"/>
+    </capabilities>
+
+    <placement>
+      <!-- Beach: scattered palms, light clumping so colonists have trees within reach
+           without the beach becoming a dense forest. spawnChance 0.015 gives a visible
+           scattering; spaced distribution keeps them from crowding the shoreline. -->
+      <biome name="Beach">
+        <spawnChance>0.015</spawnChance>
+        <distribution>spaced</distribution>
+        <spacing>
+          <minDistance>8.0</minDistance>
+        </spacing>
+      </biome>
+
+      <!-- Tropical biomes: denser, palms are at home here -->
+      <biome name="TropicalRainforest">
+        <spawnChance>0.02</spawnChance>
+        <distribution>spaced</distribution>
+        <spacing>
+          <minDistance>6.0</minDistance>
+        </spacing>
+      </biome>
+
+      <biome name="TropicalSeasonalForest">
+        <spawnChance>0.018</spawnChance>
+        <distribution>spaced</distribution>
+        <spacing>
+          <minDistance>7.0</minDistance>
+        </spacing>
+      </biome>
+
+      <groups>
+        <group>trees</group>
+        <group>palm_trees</group>
+        <group>tropical_trees</group>
+        <group>large_flora</group>
+        <group>wild_plants</group>
+        <group>wood_sources</group>
+      </groups>
+
+      <relationships>
+        <!-- Palms keep a little distance from each other -->
+        <avoids type="same" distance="7.0" penalty="0.15"/>
+        <!-- Avoid other tree types for visual variety -->
+        <avoids group="trees" distance="4.0" penalty="0.4"/>
+      </relationships>
+    </placement>
+
+    <variantCount>12</variantCount>
+  </AssetDef>
+</AssetDefinitions>

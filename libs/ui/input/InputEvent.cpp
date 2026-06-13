@@ -20,10 +20,11 @@ InputEvent InputEvent::mouseUp(Foundation::Vec2 pos, engine::MouseButton btn, in
 	};
 }
 
-InputEvent InputEvent::mouseMove(Foundation::Vec2 pos) {
+InputEvent InputEvent::mouseMove(Foundation::Vec2 pos, int mods) {
 	return InputEvent{
 		.type = Type::MouseMove,
 		.position = pos,
+		.modifiers = mods,
 	};
 }
 

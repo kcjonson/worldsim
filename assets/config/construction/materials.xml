@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Construction Materials Configuration
+  Per-material properties for each structure kind.
+
+  Units:
+    costRatePerSquareMeter  - material items consumed per m² of foundation
+    workRatePerSquareMeter  - work units per m² (drives build time)
+    hp                      - hit points per m²
+    flammability            - 0.0 (fireproof) to 1.0 (highly flammable)
+    beauty                  - beauty contribution per m²
+    speedModifier           - walking speed multiplier on the finished floor (1.0 = normal)
+
+  Pattern block:
+    emitter   - element emitter type name used by the renderer
+    seed      - base seed for deterministic pattern generation
+    color     - hex RGBA values for the material palette
+
+  NOTE: All numeric values are starter estimates pending design tuning.
+  Exact cost/work rates depend on the haul logistics decision (bulk containers,
+  carry capacity) and playtesting. See open question #2 in building-construction.md.
+-->
+<ConstructionMaterials>
+
+  <!-- Foundation materials -->
+  <Foundation>
+
+    <Material name="Wood">
+      <!-- 1 plank per 0.5 m² is reasonable for a light floor deck -->
+      <costRatePerSquareMeter>2.0</costRatePerSquareMeter>
+      <!-- Moderate work: sill beams + joists + decking -->
+      <workRatePerSquareMeter>12.0</workRatePerSquareMeter>
+      <hp>40.0</hp>
+      <flammability>0.8</flammability>
+      <beauty>1.0</beauty>
+      <!-- Planked floors are faster to walk on than bare ground -->
+      <speedModifier>1.15</speedModifier>
+      <pattern>
+        <emitter>planks</emitter>
+        <seed>1001</seed>
+        <!-- Warm pine tones: main plank body, highlight grain, shadow gap -->
+        <palette>
+          <color>#C8915AFF</color>
+          <color>#D9A870FF</color>
+          <color>#A06830FF</color>
+        </palette>
+      </pattern>
+    </Material>
+
+    <!--
+      Stone foundation is omitted for this slice: there is no Stone item asset
+      and no harvestable that yields Stone, so a Stone foundation would stick in
+      AwaitingMaterials forever (ConstructionSystem getDefNameId("Stone") == 0).
+      Re-add the <Material name="Stone"> block once a Stone item asset and a
+      Stone source (harvestable rock) exist. Wood works only because the
+      material name "Wood" coincides with the Wood item defName.
+    -->
+
+  </Foundation>
+
+</ConstructionMaterials>

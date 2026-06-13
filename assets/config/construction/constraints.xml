@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Construction Shape Constraints
+  All distances in meters, areas in square meters, angles in degrees.
+  NO tiles anywhere in this file.
+
+  These values enforce pathfinding soundness: every gap the drawing tools
+  can produce is either zero (edge-to-edge snap) or wide enough to walk through.
+  The root constant is pathingClearanceMeters; the distance constraints derive
+  from it. See design spec section "Shape Constraints" for rationale.
+
+  NOTE: All values are starter estimates pending playtesting.
+  They live here so tuning is data-only; see open question #1 in building-construction.md.
+-->
+<ConstructionConstraints>
+
+  <!-- The root pathing constant: minimum gap a colonist needs to pass through.
+       All gap-related distance constraints derive from this value. -->
+  <pathingClearanceMeters>0.7</pathingClearanceMeters>
+
+  <!-- Foundation shape constraints -->
+
+  <!-- No knife-edge corners. 30 degrees keeps snapping comfortable and bans degenerate sliver angles. -->
+  <minCornerAngleDegrees>30.0</minCornerAngleDegrees>
+
+  <!-- Adjacent vertices can't be closer than this. Prevents micro-segments that
+       look like a vertex but are really two coincident points. -->
+  <minVertexSpacingMeters>0.5</minVertexSpacingMeters>
+
+  <!-- Non-adjacent edges of the same polygon can't pass closer than this.
+       Must be >= pathingClearanceMeters to prevent sliver pockets. -->
+  <segmentClearanceMeters>1.0</segmentClearanceMeters>
+
+  <!-- Minimum interior area. Prevents foundations too small to place walls or fit a colonist. -->
+  <minAreaSquareMeters>4.0</minAreaSquareMeters>
+
+  <!-- Soft cap on foundation area. Not a hard gameplay limit; raises a warning
+       and may affect performance of face extraction and nav updates. -->
+  <maxAreaSquareMeters>2500.0</maxAreaSquareMeters>
+
+  <!-- Maximum polygon vertices. Keeps shapes sane and bounds the constraint-check cost. -->
+  <maxPoints>32</maxPoints>
+
+  <!-- Opening constraints (walls/doors) -->
+
+  <!-- Minimum distance from a wall endpoint, corner, or junction to an opening edge.
+       Keeps structural corners intact. -->
+  <openingMarginMeters>0.3</openingMarginMeters>
+
+  <!-- Demolition -->
+
+  <!-- Percentage of materials returned on demolition. 50% is the classic colony-game value. -->
+  <refundPercent>50</refundPercent>
+
+  <!-- Builder concurrency -->
+
+  <!-- Minimum concurrent builders regardless of structure size. -->
+  <builderCapBase>1</builderCapBase>
+
+  <!-- Additional concurrent builder slot per this many square meters of foundation area.
+       e.g. at 0.1: a 20 m² foundation allows 3 builders (base 1 + floor(20*0.1) = 2). -->
+  <builderCapPerSquareMeter>0.1</builderCapPerSquareMeter>
+
+</ConstructionConstraints>

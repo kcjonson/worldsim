@@ -14,6 +14,7 @@
 #include <assets/ActionTypeRegistry.h>
 #include <assets/AssetRegistry.h>
 #include <assets/ConfigValidator.h>
+#include <assets/ConstructionRegistry.h>
 #include <assets/PriorityConfig.h>
 #include <assets/TaskChainRegistry.h>
 #include <assets/WorkTypeRegistry.h>
@@ -493,6 +494,7 @@ namespace {
 			TaskChainRegistry::Get().clear();
 			WorkTypeRegistry::Get().clear();
 			PriorityConfig::Get().clear();
+			ConstructionRegistry::Get().clear();
 			ConfigValidator::clearErrors();
 			ecs::GoalTaskRegistry::Get().clear();
 
@@ -519,13 +521,18 @@ namespace {
 				return false;
 			}
 
+			if (!ConstructionRegistry::Get().load(basePath + "construction")) {
+				LOG_ERROR(Game, "Failed to load construction config");
+				return false;
+			}
+
 			// Validate cross-references between configs
 			if (!ConfigValidator::validateAll()) {
 				LOG_ERROR(Game, "Config validation failed");
 				return false;
 			}
 
-			LOG_INFO(Game, "Work configuration loaded successfully");
+			LOG_INFO(Game, "Configuration loaded successfully");
 			return true;
 		}
 
