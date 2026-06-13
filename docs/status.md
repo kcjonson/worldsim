@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2026-06-12 (Building/Construction, Pathfinding, and Vision architecture specs drafted; memory design revised for belief-filtered navigation)
+Last Updated: 2026-06-12 (Goal-driven task generation core landed: GoalTaskRegistry + goal systems replace discovery-driven GlobalTaskRegistry; reservations and Memory push integration remain)
 
 ## Epic/Story/Task Template
 
@@ -445,6 +445,44 @@ while (running) {
 
 ---
 
+### Goal-Driven Task Generation
+**Spec/Documentation:** `/docs/design/game-systems/colonists/task-registry.md`, `/docs/technical/task-generation-architecture.md`
+**Dependencies:** ~~Task Ordering System~~ (complete)
+**Status:** in progress (core landed in PR #115; item reservations and Memory push integration remain)
+
+**Goal:** Refactor task generation from discovery-driven (see item → create task) to goal-driven (goal exists → create task using Memory for fulfillment). This fixes the issue of thousands of invalid tasks appearing in the global task list.
+
+**Architecture Change:**
+- Discovery → Updates **Memory** (what colonists know about)
+- Goals → Generate **Tasks** (what needs to be done)
+- Tasks exist at goal-level (~200), not item-level (~100,000)
+- Reservations are item-level (allows parallel work by multiple colonists)
+
+**Tasks:**
+- [x] Phase 1: Remove Discovery-Based Task Generation
+  - [x] Remove VisionSystem task creation for Carryable items
+  - [x] Remove VisionSystem task creation for Harvestable items
+  - [x] Clean up GlobalTaskRegistry discovery-driven methods (registry deleted entirely)
+- [x] Phase 2: Goal Source Integration
+  - [x] StorageGoalSystem creates Haul goals when capacity available
+  - [x] CraftingGoalSystem creates Craft + Harvest + Haul goal hierarchies when recipe queued
+  - [x] NeedsSystem creates FulfillNeed tasks when need below threshold (already correct)
+  - [x] BuildGoalSystem creates PlacePackaged goals when build order placed
+- [ ] Phase 3: Two-Level Task/Reservation Model
+  - [x] GoalTask struct (destination, type, acceptedTypes)
+  - [ ] Reservation system at item-level (prevents conflicts; the unwired API was removed in PR #115, needs real integration with AIDecisionSystem/ActionSystem)
+  - [ ] availableCount() computation (known items minus reserved; currently target minus delivered)
+- [ ] Phase 4: Memory Integration
+  - [ ] Memory notifies registry of fulfillment options (not tasks)
+  - [ ] Task availability updates based on Memory changes
+  - [x] Colonist filtering by what they know (AIDecisionSystem matches goals against colonist Memory)
+- [ ] Phase 5: UI Updates
+  - [x] Task list shows goal-level tasks with parent/child hierarchy
+  - [ ] "Blocked" status when no fulfillment options known
+  - [ ] Sub-demand display for multi-type storage
+
+---
+
 ### ✅ Storage and Hauling System
 **Spec/Documentation:** `/docs/design/features/storage-system.md`, `.claude/plans/storage-and-hauling.md`
 **Dependencies:** ~~Main Game UI: Colonist Details Dialog~~ (complete)
@@ -583,44 +621,6 @@ The following MVP epics have all been completed. Detailed task breakdowns are pr
 - [ ] M-B: Interaction displacement map (trampling) + footprint persistence
 - [ ] M-C: Water ripple/foam/sparkle + interaction rings
 - [ ] M-D: Far-zoom wind sheen, tree sway, particles, blob shadows
-
----
-
-### Goal-Driven Task Generation
-**Spec/Documentation:** `/docs/design/game-systems/colonists/task-registry.md`, `/docs/technical/task-generation-architecture.md`
-**Dependencies:** ~~Task Ordering System~~ (complete)
-**Status:** ready (requirements documented)
-
-**Goal:** Refactor task generation from discovery-driven (see item → create task) to goal-driven (goal exists → create task using Memory for fulfillment). This fixes the issue of thousands of invalid tasks appearing in the global task list.
-
-**Architecture Change:**
-- Discovery → Updates **Memory** (what colonists know about)
-- Goals → Generate **Tasks** (what needs to be done)
-- Tasks exist at goal-level (~200), not item-level (~100,000)
-- Reservations are item-level (allows parallel work by multiple colonists)
-
-**Tasks:**
-- [ ] Phase 1: Remove Discovery-Based Task Generation
-  - [ ] Remove VisionSystem task creation for Carryable items
-  - [ ] Remove VisionSystem task creation for Harvestable items
-  - [ ] Clean up GlobalTaskRegistry discovery-driven methods
-- [ ] Phase 2: Goal Source Integration
-  - [ ] StorageSystem creates Haul tasks when capacity available
-  - [ ] CraftingSystem creates Gather tasks when recipe queued
-  - [ ] NeedsSystem creates FulfillNeed tasks when need below threshold (already correct)
-  - [ ] BuildSystem creates Haul/Place tasks when build order placed
-- [ ] Phase 3: Two-Level Task/Reservation Model
-  - [ ] GoalTask struct (destination, type, acceptedTypes, reservations map)
-  - [ ] Reservation system at item-level (prevents conflicts)
-  - [ ] availableCount() computation (known items minus reserved)
-- [ ] Phase 4: Memory Integration
-  - [ ] Memory notifies registry of fulfillment options (not tasks)
-  - [ ] Task availability updates based on Memory changes
-  - [ ] Colonist filtering by what they know
-- [ ] Phase 5: UI Updates
-  - [ ] GlobalTaskListView shows goal-level tasks
-  - [ ] "Blocked" status when no fulfillment options known
-  - [ ] Sub-demand display for multi-type storage
 
 ---
 
