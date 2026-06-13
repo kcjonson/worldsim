@@ -58,4 +58,61 @@
 
   </Foundation>
 
+  <!--
+    Wall materials
+    Each material offers discrete thickness presets (Light / Standard / Heavy).
+    Wall work is computed as: length × thicknessMeters × workRatePerSquareMeter × workMultiplier
+    Wall cost:               length × thicknessMeters × costRatePerSquareMeter × costMultiplier
+    Wall HP:                 length × thicknessMeters × hp × hpMultiplier
+    The per-area rates (costRatePerSquareMeter etc.) come from the Foundation block above
+    for materials that appear in both sections. The merger happens at load time.
+
+    NOTE: All preset values are starter estimates pending design tuning. See open question
+    #2 in building-construction.md for the haul-logistics dependency that affects cost rates.
+  -->
+  <Wall>
+
+    <!--
+      Wood walls: studs + planking construction, fast to build, weak against fire.
+      Wood is the only wall material here because it is the only material with a
+      corresponding item asset and a harvestable source (palm/timber trees). Do not
+      add Stone here until a Stone item + harvestable rock source exist.
+    -->
+    <Material name="Wood">
+      <!--
+        Thickness presets — starter values pending design tuning.
+        Light  (~single-stud frame):      0.15 m, lower HP, fastest to build
+        Standard (~double-stud frame):    0.20 m, balanced
+        Heavy    (~log-wall / cob-style): 0.30 m, highest HP and insulation, slower build
+      -->
+      <Preset name="Light">
+        <thicknessMeters>0.15</thicknessMeters>
+        <costMultiplier>0.75</costMultiplier>
+        <workMultiplier>0.75</workMultiplier>
+        <hpMultiplier>0.75</hpMultiplier>
+        <!-- Low thermal mass; thin wall lets heat through easily -->
+        <insulation>0.2</insulation>
+      </Preset>
+
+      <Preset name="Standard">
+        <thicknessMeters>0.20</thicknessMeters>
+        <costMultiplier>1.0</costMultiplier>
+        <workMultiplier>1.0</workMultiplier>
+        <hpMultiplier>1.0</hpMultiplier>
+        <!-- Moderate insulation: double-stud cavity traps some air -->
+        <insulation>0.4</insulation>
+      </Preset>
+
+      <Preset name="Heavy">
+        <thicknessMeters>0.30</thicknessMeters>
+        <costMultiplier>1.5</costMultiplier>
+        <workMultiplier>1.5</workMultiplier>
+        <hpMultiplier>1.4</hpMultiplier>
+        <!-- Dense timber / log construction, better thermal resistance -->
+        <insulation>0.6</insulation>
+      </Preset>
+    </Material>
+
+  </Wall>
+
 </ConstructionMaterials>

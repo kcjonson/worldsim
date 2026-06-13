@@ -170,6 +170,58 @@ bool ConfigValidator::validateConstruction() {
                      "0.0 = fireproof, 1.0 = highly flammable");
             valid = false;
         }
+
+        // Wall thickness preset validation
+        std::unordered_map<std::string, bool> seenPresetNames;
+        for (const auto& preset : mat.wallThicknesses) {
+            if (seenPresetNames.count(preset.name)) {
+                addError("ConstructionMaterials",
+                         "Material '" + name + "' has duplicate wall preset name '" + preset.name + "'",
+                         "Each preset name must be unique within a material");
+                valid = false;
+            }
+            seenPresetNames[preset.name] = true;
+
+            if (preset.thicknessMeters <= 0.0F) {
+                addError("ConstructionMaterials",
+                         "Material '" + name + "' preset '" + preset.name +
+                             "' thicknessMeters must be positive, got " +
+                             std::to_string(preset.thicknessMeters),
+                         "Set <thicknessMeters> to a positive value");
+                valid = false;
+            }
+            if (preset.costMultiplier <= 0.0F) {
+                addError("ConstructionMaterials",
+                         "Material '" + name + "' preset '" + preset.name +
+                             "' costMultiplier must be positive, got " +
+                             std::to_string(preset.costMultiplier),
+                         "Set <costMultiplier> to a positive value");
+                valid = false;
+            }
+            if (preset.workMultiplier <= 0.0F) {
+                addError("ConstructionMaterials",
+                         "Material '" + name + "' preset '" + preset.name +
+                             "' workMultiplier must be positive, got " +
+                             std::to_string(preset.workMultiplier),
+                         "Set <workMultiplier> to a positive value");
+                valid = false;
+            }
+            if (preset.hpMultiplier <= 0.0F) {
+                addError("ConstructionMaterials",
+                         "Material '" + name + "' preset '" + preset.name +
+                             "' hpMultiplier must be positive, got " +
+                             std::to_string(preset.hpMultiplier),
+                         "Set <hpMultiplier> to a positive value");
+                valid = false;
+            }
+            if (preset.insulation < 0.0F) {
+                addError("ConstructionMaterials",
+                         "Material '" + name + "' preset '" + preset.name +
+                             "' insulation must be >= 0, got " + std::to_string(preset.insulation),
+                         "Set <insulation> to a non-negative value");
+                valid = false;
+            }
+        }
     }
 
     // Constraints must be loaded and internally consistent.
@@ -219,6 +271,40 @@ bool ConfigValidator::validateConstruction() {
         addError("ConstructionConstraints",
                  "refundPercent must be in [0, 100], got " + std::to_string(c.refundPercent),
                  "");
+        valid = false;
+    }
+
+    // Wall constraint validation
+    if (c.minSegmentLengthMeters <= 0.0F) {
+        addError("ConstructionConstraints",
+                 "minSegmentLengthMeters must be positive, got " +
+                     std::to_string(c.minSegmentLengthMeters),
+                 "Set <minSegmentLengthMeters> to a positive value (suggested: 0.5)");
+        valid = false;
+    }
+
+    if (c.minWallJunctionAngleDegrees <= 0.0F || c.minWallJunctionAngleDegrees >= 180.0F) {
+        addError("ConstructionConstraints",
+                 "minWallJunctionAngleDegrees must be in (0, 180), got " +
+                     std::to_string(c.minWallJunctionAngleDegrees),
+                 "Suggested range: 15-60 degrees");
+        valid = false;
+    }
+
+    if (c.minParallelClearanceMeters < 0.0F) {
+        addError("ConstructionConstraints",
+                 "minParallelClearanceMeters must be >= 0, got " +
+                     std::to_string(c.minParallelClearanceMeters),
+                 "Set <minParallelClearanceMeters> to a non-negative value");
+        valid = false;
+    }
+
+    if (c.minParallelClearanceMeters > 0.0F && c.minParallelClearanceMeters < c.pathingClearanceMeters) {
+        addError("ConstructionConstraints",
+                 "minParallelClearanceMeters (" + std::to_string(c.minParallelClearanceMeters) +
+                     ") must be >= pathingClearanceMeters (" +
+                     std::to_string(c.pathingClearanceMeters) + ") so colonists can pass between walls",
+                 "Increase <minParallelClearanceMeters> or decrease <pathingClearanceMeters>");
         valid = false;
     }
 

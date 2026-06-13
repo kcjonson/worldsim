@@ -84,7 +84,7 @@ namespace engine::assets {
 			return false;
 		}
 
-		// Only Foundation materials for now; wall/opening sections can be added here later.
+		// Foundation materials
 		pugi::xml_node foundationNode = root.child("Foundation");
 		if (!foundationNode) {
 			LOG_ERROR(Engine, "No Foundation element in construction materials: %s", xmlPath.c_str());
@@ -124,6 +124,68 @@ namespace engine::assets {
 				continue;
 			}
 			++loaded;
+		}
+
+		// Wall materials — thickness presets merged into the same MaterialDef.
+		// A wall material reuses the per-area cost/work/hp/flammability from its
+		// MaterialDef (walls compute work from length×thickness×material), with each
+		// preset's multipliers scaling the base rates. A Wall <Material> whose name
+		// already appears in the Foundation map has its presets appended; a new name
+		// creates a fresh entry with zeroed foundation fields.
+		pugi::xml_node wallNode = root.child("Wall");
+		if (wallNode) {
+			for (pugi::xml_node matNode : wallNode.children("Material")) {
+				std::string matName = matNode.attribute("name").as_string();
+				if (matName.empty()) {
+					LOG_WARNING(Engine, "Wall material missing name attribute, skipping");
+					continue;
+				}
+
+				// Merge into existing foundation entry or create a new one.
+				MaterialDef& mat = materials[matName];
+				if (mat.name.empty()) {
+					mat.name = matName;
+					// Parse per-area rates in case this material has no Foundation block.
+					mat.costRatePerSquareMeter = matNode.child("costRatePerSquareMeter").text().as_float(0.0F);
+					mat.workRatePerSquareMeter = matNode.child("workRatePerSquareMeter").text().as_float(0.0F);
+					mat.hp = matNode.child("hp").text().as_float(0.0F);
+					mat.flammability = matNode.child("flammability").text().as_float(0.0F);
+					mat.beauty = matNode.child("beauty").text().as_float(0.0F);
+					mat.speedModifier = matNode.child("speedModifier").text().as_float(1.0F);
+
+					if (auto patNode = matNode.child("pattern")) {
+						mat.pattern.emitter = patNode.child("emitter").text().as_string();
+						mat.pattern.seed = static_cast<uint32_t>(patNode.child("seed").text().as_uint(0));
+						for (pugi::xml_node colorNode : patNode.child("palette").children("color")) {
+							mat.pattern.palette.push_back(parseColor(colorNode.text().as_string()));
+						}
+					}
+					++loaded;
+				}
+
+				// Parse <Preset> children.
+				for (pugi::xml_node presetNode : matNode.children("Preset")) {
+					ThicknessPreset preset;
+					preset.name = presetNode.attribute("name").as_string();
+					if (preset.name.empty()) {
+						LOG_WARNING(Engine, "Wall preset for '%s' missing name attribute, skipping", matName.c_str());
+						continue;
+					}
+
+					preset.thicknessMeters  = presetNode.child("thicknessMeters").text().as_float(0.0F);
+					preset.thicknessMm      = toMm(preset.thicknessMeters);
+					preset.halfThicknessMm  = preset.thicknessMm / 2;
+					preset.costMultiplier   = presetNode.child("costMultiplier").text().as_float(1.0F);
+					preset.workMultiplier   = presetNode.child("workMultiplier").text().as_float(1.0F);
+					preset.hpMultiplier     = presetNode.child("hpMultiplier").text().as_float(1.0F);
+					preset.insulation       = presetNode.child("insulation").text().as_float(0.0F);
+
+					mat.wallThicknesses.push_back(std::move(preset));
+				}
+
+				LOG_DEBUG(Engine, "Loaded %zu wall presets for material '%s'",
+					mat.wallThicknesses.size(), matName.c_str());
+			}
 		}
 
 		hasMaterials = (loaded > 0);
@@ -171,6 +233,15 @@ namespace engine::assets {
 
 		cfg.builderCapBase = root.child("builderCapBase").text().as_int(1);
 		cfg.builderCapPerSquareMeter = root.child("builderCapPerSquareMeter").text().as_float(0.1F);
+
+		// Wall constraints
+		cfg.minSegmentLengthMeters = root.child("minSegmentLengthMeters").text().as_float(0.5F);
+		cfg.minSegmentLengthMm = toMm(cfg.minSegmentLengthMeters);
+
+		cfg.minWallJunctionAngleDegrees = root.child("minWallJunctionAngleDegrees").text().as_float(30.0F);
+
+		cfg.minParallelClearanceMeters = root.child("minParallelClearanceMeters").text().as_float(0.8F);
+		cfg.minParallelClearanceMm = toMm(cfg.minParallelClearanceMeters);
 
 		constraintConfig = cfg;
 		hasConstraints = true;
@@ -240,6 +311,30 @@ namespace engine::assets {
 
 	const std::unordered_map<std::string, MaterialDef>& ConstructionRegistry::getAllMaterials() const {
 		return materials;
+	}
+
+	const MaterialDef* ConstructionRegistry::getWallMaterial(const std::string& name) const {
+		auto it = materials.find(name);
+		if (it != materials.end() && !it->second.wallThicknesses.empty()) {
+			return &it->second;
+		}
+		return nullptr;
+	}
+
+	const ThicknessPreset* ConstructionRegistry::getThicknessPreset(
+		const std::string& materialName,
+		const std::string& presetName) const
+	{
+		const MaterialDef* mat = getMaterial(materialName);
+		if (!mat) {
+			return nullptr;
+		}
+		for (const auto& preset : mat->wallThicknesses) {
+			if (preset.name == presetName) {
+				return &preset;
+			}
+		}
+		return nullptr;
 	}
 
 	const ConstraintConfig& ConstructionRegistry::constraints() const {
