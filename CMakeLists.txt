@@ -47,6 +47,9 @@ enable_testing()
 # Foundation layer
 add_subdirectory(libs/foundation)
 
+# Geometry layer (pure math, depends only on foundation)
+add_subdirectory(libs/geometry)
+
 # Graphics layer
 add_subdirectory(libs/renderer)
 

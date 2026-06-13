@@ -75,6 +75,25 @@ This document is the **single source of truth** for library selection decisions.
 |---------|---------|---------------|--------|
 | Bazel | Build system | 2025-10-27 | Migration complexity not worth benefits for current project size |
 
+### libs/geometry (integer-millimeter exact geometry for the construction system)
+
+Context: [building-construction-architecture.md D2](./building-construction-architecture.md#d2-no-new-dependencies--geometry-built-in-house-concepts-borrowed). Decision to build in-house follows the same pattern as the Tessellator (concepts borrowed from Lyon, library not adopted).
+
+| Library | License | Purpose considered | Rejected Date |
+|---------|---------|-------------------|---------------|
+| **Clipper2** | Boost | Polygon clipping and offsetting | 2026-06-12 |
+| **earcut.hpp** | ISC (Mapbox) | Polygon triangulation | 2026-06-12 |
+| **CGAL** | GPL / commercial | Exact arrangements and boolean ops | 2026-06-12 |
+| **CavalierContours** | MIT | Polyline offsetting with arc support | 2026-06-12 |
+
+**Clipper2:** we need a narrow slice — union/difference of two simple editor-validated rings, and straight-segment miter offsetting. The boolean ops ride the same arrangement + face-extraction core that room detection needs (D6), so that substrate had to be built regardless. Concepts borrowed (integer coordinates as the robustness model, miter limit with square fallback, post-boolean simplification pass); library not adopted.
+
+**earcut.hpp:** the existing Tessellator already covers runtime polygon triangulation. Generated construction geometry is well-formed by construction (D4 invariant), so no second triangulator is needed.
+
+**CGAL:** GPL/commercial licensing friction, and enormous dependency surface for a narrow, well-validated input domain. The editor invariants (no crossings, T-junctions pre-split, min angle/spacing enforced) remove the cases that make general-purpose arrangements hard.
+
+**CavalierContours:** we offset only straight segments with miter joins. The 30° minimum-angle invariant bounds miter length and prevents band self-overlap, removing the hard cases (arcs, self-intersection trimming, collapsing loops) the library exists to solve.
+
 ---
 
 ## Decision Process

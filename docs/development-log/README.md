@@ -64,6 +64,7 @@ Development log entries are **immutable history**. Don't update old entries — 
 
 #### June 2026
 
+- [2026-06-12 - Geometry Foundations (libs/geometry)](./entries/2026-06-12-geometry-foundations.md)
 - [2026-06-12 - Goal-Driven Task Generation (core)](./entries/2026-06-12-goal-driven-task-generation.md)
 - [2026-06-12 - Building, Pathfinding, and Vision Specs](./entries/2026-06-12-building-pathfinding-vision-specs.md)
 - [2026-06-12 - Goldberg hex grid + two-tier planet rendering](./entries/2026-06-12-worldgen-hex-goldberg.md)
@@ -93,9 +94,10 @@ Development log entries are **immutable history**. Don't update old entries — 
 
 ## Quick Stats
 
-- **Total Entries:** 10
+- **Total Entries:** 11
 - **Latest Entry:** 2026-06-12
 - **Major Milestones:**
+  - libs/geometry exact-geometry library (2026-06-12)
   - Goal-driven task generation core (2026-06-12)
   - Goldberg hex grid + two-tier planet rendering (2026-06-12)
   - UI Primitives Foundation (ProgressBar, ScrollContainer) (2025-12-26)
