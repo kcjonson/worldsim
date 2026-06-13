@@ -2,10 +2,13 @@ name: Tests
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
     branches: [ "**" ]
 
 jobs:
   test:
+    # Skip while the PR is a draft; re-runs when marked ready for review.
+    if: github.event.pull_request.draft == false
     runs-on: ubuntu-latest
 
     steps:
@@ -49,5 +52,44 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: test-results
+        path: build/Testing/
+        retention-days: 7
+
+  test-windows:
+    # Skip while the PR is a draft; re-runs when marked ready for review.
+    if: github.event.pull_request.draft == false
+    runs-on: windows-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup vcpkg
+      uses: lukka/run-vcpkg@v11
+      with:
+        vcpkgGitCommitId: '8f54ef5453e7e76ff01e15988bf243e7247c5eb5'
+
+    - name: Configure CMake
+      shell: bash
+      run: |
+        cmake -S . -B build -A x64 \
+          -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" \
+          -DBUILD_TESTING=ON
+
+    - name: Build
+      shell: bash
+      run: cmake --build build --config Debug -j
+
+    - name: Run tests
+      shell: bash
+      run: |
+        cd build
+        ctest -C Debug --output-on-failure -E ".*\.bench"
+
+    - name: Upload test results
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: test-results-windows
         path: build/Testing/
         retention-days: 7

@@ -35,7 +35,7 @@
     <!-- Per-biome placement configuration -->
     <placement>
       <!-- Forest: Common, spaced out -->
-      <biome name="Forest">
+      <biome name="TemperateDeciduousForest">
         <spawnChance>0.05</spawnChance>
         <distribution>spaced</distribution>
         <spacing>
@@ -44,7 +44,7 @@
       </biome>
 
       <!-- Grassland: Occasional, well-spaced -->
-      <biome name="Grassland">
+      <biome name="TemperateGrassland">
         <spawnChance>0.01</spawnChance>
         <distribution>spaced</distribution>
         <spacing>

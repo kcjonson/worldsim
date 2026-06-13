@@ -29,7 +29,7 @@
     </rendering>
 
     <placement>
-      <biome name="Forest">
+      <biome name="TemperateDeciduousForest">
         <spawnChance>0.03</spawnChance>
         <distribution>spaced</distribution>
         <spacing>

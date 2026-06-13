@@ -68,9 +68,9 @@ namespace world_sim {
 						.label = item.label,
 						.size = {buttonWidth, kButtonHeight},
 						.type = UI::Button::Type::Secondary,
-						.margin = kButtonSpacing * 0.5F,
 						.onClick = onClick,
-						.id = "build_item"
+						.id = "build_item",
+						.margin = kButtonSpacing * 0.5F
 					}
 				)
 			);

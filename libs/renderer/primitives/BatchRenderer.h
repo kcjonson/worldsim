@@ -36,7 +36,6 @@ namespace Renderer { // NOLINT(readability-identifier-naming)
 	//   location 3: a_data1 (vec4) - borderData for shapes, unused for text
 	//   location 4: a_data2 (vec4) - shapeParams for shapes, (pixelRange, 0, 0, -1) for text
 	//   location 5: a_clipBounds (vec4) - (minX, minY, maxX, maxY) or (0,0,0,0) for no clip
-	//   location 8: a_data3 (vec4) - diagonal neighbors for tiles (NW, NE, SE, SW)
 	struct UberVertex {
 		Foundation::Vec2 position;	 // Screen-space position
 		Foundation::Vec2 texCoord;	 // UV for text, rectLocalPos for shapes
@@ -44,7 +43,6 @@ namespace Renderer { // NOLINT(readability-identifier-naming)
 		Foundation::Vec4 data1;		 // Border: (color.rgb, width) for shapes, unused for text
 		Foundation::Vec4 data2;		 // Shape: (halfW, halfH, cornerRadius, borderPos), Text: (pixelRange, 0, 0, -1)
 		Foundation::Vec4 clipBounds; // Clip rect (minX, minY, maxX, maxY), or (0,0,0,0) for no clipping
-		Foundation::Vec4 data3;		 // Diagonal neighbors for tiles (NW, NE, SE, SW), unused for shapes/text
 	};
 
 	// Render mode constants for data2.w
@@ -84,26 +82,6 @@ namespace Renderer { // NOLINT(readability-identifier-naming)
 			const Foundation::Color*  inputColors = nullptr
 		);
 
-		// Add a tile quad with adjacency-packed data
-		void addTileQuad(
-			const Foundation::Rect&  bounds,
-			const Foundation::Color& color,
-			uint8_t				 edgeMask,
-			uint8_t				 cornerMask,
-			uint8_t				 surfaceId,
-			uint8_t				 hardEdgeMask,
-			int32_t				 tileX,
-			int32_t				 tileY,
-			uint8_t				 neighborN,
-			uint8_t				 neighborE,
-			uint8_t				 neighborS,
-			uint8_t				 neighborW,
-			uint8_t				 neighborNW,
-			uint8_t				 neighborNE,
-			uint8_t				 neighborSE,
-			uint8_t				 neighborSW
-		);
-
 		// --- Text rendering (MSDF) ---
 
 		// Add text glyph quad to batch
@@ -121,9 +99,6 @@ namespace Renderer { // NOLINT(readability-identifier-naming)
 
 		// Set the MSDF font atlas texture (call once per font)
 		void setFontAtlas(GLuint atlasTexture, float pixelRange = 4.0F);
-
-		// Set tile atlas texture and rects (uvMin.xy, uvMax.xy per surface id).
-		void setTileAtlas(GLuint atlasTexture, const std::vector<glm::vec4>& rects);
 
 		// --- Rendering ---
 
@@ -232,9 +207,6 @@ namespace Renderer { // NOLINT(readability-identifier-naming)
 		GLint atlasLoc = -1;
 		GLint viewportHeightLoc = -1;
 		GLint pixelRatioLoc = -1;
-		GLint tileAtlasLoc = -1;
-		GLint tileAtlasRectsLoc = -1;
-		GLint tileAtlasCountLoc = -1;
 
 		// Uniform locations (instanced rendering)
 		GLint cameraPositionLoc = -1;
@@ -253,10 +225,6 @@ namespace Renderer { // NOLINT(readability-identifier-naming)
 		// Font atlas for text rendering
 		GLuint fontAtlas = 0;
 		float  fontPixelRange = 4.0F;
-
-		// Tile atlas for ground textures
-		GLuint tileAtlas = 0;
-		std::vector<glm::vec4> tileAtlasRects;
 
 		// Current clip bounds (applied to all vertices)
 		// (0,0,0,0) means no clipping

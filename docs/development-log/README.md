@@ -60,6 +60,13 @@ Development log entries are **immutable history**. Don't update old entries — 
 
 ## Entry Index
 
+### 2026
+
+#### June 2026
+
+- [2026-06-12 - Building, Pathfinding, and Vision Specs](./entries/2026-06-12-building-pathfinding-vision-specs.md)
+- [2026-06-12 - Goldberg hex grid + two-tier planet rendering](./entries/2026-06-12-worldgen-hex-goldberg.md)
+
 ### 2025
 
 #### December 2025
@@ -85,9 +92,10 @@ Development log entries are **immutable history**. Don't update old entries — 
 
 ## Quick Stats
 
-- **Total Entries:** 8
-- **Latest Entry:** 2025-12-26
+- **Total Entries:** 9
+- **Latest Entry:** 2026-06-12
 - **Major Milestones:**
+  - Goldberg hex grid + two-tier planet rendering (2026-06-12)
   - UI Primitives Foundation (ProgressBar, ScrollContainer) (2025-12-26)
   - FocusManager CRTP simplification (2025-12-24)
   - Vector graphics research complete (2025-10-24)

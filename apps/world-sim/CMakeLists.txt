@@ -2,6 +2,7 @@ add_executable(world-sim
     Main.cpp
     SceneTypes.cpp
     GameWorldState.cpp
+    GameStartConfig.cpp
     # Game scene UI - views
     scenes/game/ui/views/ColonistListView.cpp
     scenes/game/ui/views/EntityInfoView.cpp
@@ -52,9 +53,13 @@ add_executable(world-sim
     scenes/game/world/placement/PlacementSystem.cpp
     scenes/game/world/selection/SelectionSystem.cpp
     # Scenes
+    scenes/shared/GlobeView.cpp
     scenes/splash/SplashScene.cpp
     scenes/menu/MainMenuScene.cpp
     scenes/world-creator/WorldCreatorScene.cpp
+    scenes/world-creator/WorldCreatorModel.cpp
+    scenes/world-creator/ui/ParameterPanel.cpp
+    scenes/landing/LandingSiteScene.cpp
     scenes/loading/GameLoadingScene.cpp
     scenes/game/GameScene.cpp
     scenes/settings/SettingsScene.cpp
@@ -77,6 +82,7 @@ target_link_libraries(world-sim
         renderer
         foundation
         assets
+        planet-view
 )
 
 # Copy shaders after build as well (kept for redundancy during full rebuilds)
@@ -95,11 +101,13 @@ add_custom_command(TARGET world-sim POST_BUILD
     COMMENT "Copying fonts to world-sim directory"
 )
 
-# Create a custom target that always syncs assets (runs every build)
+# Create a custom target that always syncs assets (runs every build).
+# Use the target's actual output dir (TARGET_FILE_DIR) so this is correct under
+# multi-config generators (e.g. MSVC, where the exe lives in a Debug/ subdir).
 add_custom_target(world-sim-assets ALL
     COMMAND ${CMAKE_COMMAND} -E copy_directory
     ${CMAKE_SOURCE_DIR}/assets
-    ${CMAKE_CURRENT_BINARY_DIR}/assets
+    $<TARGET_FILE_DIR:world-sim>/assets
     COMMENT "Syncing assets to world-sim directory"
 )
 

@@ -10,11 +10,6 @@
 namespace Renderer {
 
 	namespace {
-		// Render mode constant for tile rendering. Must match uber.vert:31 and uber.frag:66.
-		constexpr float kRenderModeTile = -3.0F;
-		// Maximum number of tile atlas UV rects. Must match uber.frag:19 (u_tileAtlasRects[64]).
-		constexpr int kMaxTileAtlasRects = 64;
-
 		// Helper to transform a 2D position by a 4x4 matrix
 		// isIdentity flag is pre-computed in setTransform() to avoid per-vertex checks
 		inline Foundation::Vec2 TransformPosition(const Foundation::Vec2& pos, const Foundation::Mat4& transform, bool isIdentity) {
@@ -50,9 +45,6 @@ namespace Renderer {
 		atlasLoc = glGetUniformLocation(shader.getProgram(), "u_atlas");
 		viewportHeightLoc = glGetUniformLocation(shader.getProgram(), "u_viewportHeight");
 		pixelRatioLoc = glGetUniformLocation(shader.getProgram(), "u_pixelRatio");
-		tileAtlasLoc = glGetUniformLocation(shader.getProgram(), "u_tileAtlas");
-		tileAtlasRectsLoc = glGetUniformLocation(shader.getProgram(), "u_tileAtlasRects");
-		tileAtlasCountLoc = glGetUniformLocation(shader.getProgram(), "u_tileAtlasRectCount");
 
 		// Get uniform locations (instanced rendering)
 		cameraPositionLoc = glGetUniformLocation(shader.getProgram(), "u_cameraPosition");
@@ -60,6 +52,12 @@ namespace Renderer {
 		pixelsPerMeterLoc = glGetUniformLocation(shader.getProgram(), "u_pixelsPerMeter");
 		viewportSizeLoc = glGetUniformLocation(shader.getProgram(), "u_viewportSize");
 		instancedLoc = glGetUniformLocation(shader.getProgram(), "u_instanced");
+
+		// u_bakedAlpha defaults to 0.0 like all uniforms; initialize to opaque so
+		// instanced draws are visible before the baked path ever sets it
+		shader.use();
+		glUniform1f(glGetUniformLocation(shader.getProgram(), "u_bakedAlpha"), 1.0F);
+		shader.unbind();
 
 		// Debug: verify instancing uniforms are found (only in debug builds)
 #ifndef NDEBUG
@@ -102,13 +100,9 @@ namespace Renderer {
 		glVertexAttribPointer(4, 4, GL_FLOAT, GL_FALSE, sizeof(UberVertex), (void*)offsetof(UberVertex, data2));
 
 		// ClipBounds attribute (location = 5) - (minX, minY, maxX, maxY) for clipping
+		// Note: locations 6-7 are reserved for instancing
 		glEnableVertexAttribArray(5);
 		glVertexAttribPointer(5, 4, GL_FLOAT, GL_FALSE, sizeof(UberVertex), (void*)offsetof(UberVertex, clipBounds));
-
-		// Data3 attribute (location = 8) - diagonal neighbors for tiles (NW, NE, SE, SW)
-		// Note: locations 6-7 are reserved for instancing
-		glEnableVertexAttribArray(8);
-		glVertexAttribPointer(8, 4, GL_FLOAT, GL_FALSE, sizeof(UberVertex), (void*)offsetof(UberVertex, data3));
 
 		// Bind index buffer
 		glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ibo);
@@ -189,7 +183,6 @@ namespace Renderer {
 		// Add 4 vertices with expanded screen positions but rect-local coordinates
 		// that extend beyond the original shape bounds.
 		// Positions are transformed by currentTransform to support scrolling/offset.
-		Foundation::Vec4 noData3(0.0F, 0.0F, 0.0F, 0.0F); // Unused for shapes
 
 		// Top-left corner
 		vertices.push_back(
@@ -198,8 +191,7 @@ namespace Renderer {
 			 colorVec,
 			 borderData,
 			 shapeParams,
-			 currentClipBounds,
-			 noData3}
+			 currentClipBounds}
 		);
 
 		// Top-right corner
@@ -209,8 +201,7 @@ namespace Renderer {
 			 colorVec,
 			 borderData,
 			 shapeParams,
-			 currentClipBounds,
-			 noData3}
+			 currentClipBounds}
 		);
 
 		// Bottom-right corner
@@ -220,8 +211,7 @@ namespace Renderer {
 			 colorVec,
 			 borderData,
 			 shapeParams,
-			 currentClipBounds,
-			 noData3}
+			 currentClipBounds}
 		);
 
 		// Bottom-left corner
@@ -231,8 +221,7 @@ namespace Renderer {
 			 colorVec,
 			 borderData,
 			 shapeParams,
-			 currentClipBounds,
-			 noData3}
+			 currentClipBounds}
 		);
 
 		// Add 6 indices (2 triangles)
@@ -245,114 +234,6 @@ namespace Renderer {
 		indices.push_back(baseIndex + 3);
 	}
 
-
-	void BatchRenderer::addTileQuad(
-		const Foundation::Rect&  bounds,
-		const Foundation::Color& color,
-		uint8_t				 edgeMask,
-		uint8_t				 cornerMask,
-		uint8_t			 surfaceId,
-		uint8_t			 hardEdgeMask,
-		int32_t			 tileX,
-		int32_t			 tileY,
-		uint8_t			 neighborN,
-		uint8_t			 neighborE,
-		uint8_t			 neighborS,
-		uint8_t			 neighborW,
-		uint8_t			 neighborNW,
-		uint8_t			 neighborNE,
-		uint8_t			 neighborSE,
-		uint8_t			 neighborSW
-	) { // NOLINT(readability-convert-member-functions-to-static)
-		uint32_t baseIndex = static_cast<uint32_t>(vertices.size());
-
-		float halfW = bounds.width * 0.5F;
-		float halfH = bounds.height * 0.5F;
-		float centerX = bounds.x + halfW;
-		float centerY = bounds.y + halfH;
-
-		// Pack tile coordinates into a single float for shader use.
-		// Offset by 32768 to handle negative coordinates, then pack X in lower 16 bits, Y in upper 16 bits.
-		// This supports world coordinates from -32768 to +32767 tiles in each dimension.
-		auto packedTileCoord = static_cast<float>(
-			(static_cast<uint32_t>(tileX + 32768) & 0xFFFFU) |
-			((static_cast<uint32_t>(tileY + 32768) & 0xFFFFU) << 16U)
-		);
-
-		Foundation::Vec4 colorVec = color.toVec4();
-		Foundation::Vec4 data1(static_cast<float>(edgeMask), static_cast<float>(cornerMask), static_cast<float>(surfaceId), static_cast<float>(hardEdgeMask));
-		Foundation::Vec4 data2(halfW, halfH, packedTileCoord, kRenderModeTile);
-
-		// For tiles, repurpose clipBounds to store cardinal neighbor surface IDs for soft edge blending.
-		// Tiles don't use per-vertex clipping (the shader returns before the clip check for tiles).
-		// Each neighbor ID is a surface type (0-255), stored as float for shader compatibility.
-		Foundation::Vec4 neighborData(
-			static_cast<float>(neighborN),
-			static_cast<float>(neighborE),
-			static_cast<float>(neighborS),
-			static_cast<float>(neighborW)
-		);
-
-		// Diagonal neighbor surface IDs for corner blending
-		Foundation::Vec4 diagonalData(
-			static_cast<float>(neighborNW),
-			static_cast<float>(neighborNE),
-			static_cast<float>(neighborSE),
-			static_cast<float>(neighborSW)
-		);
-
-		// Top-left
-		vertices.push_back({
-			TransformPosition(Foundation::Vec2(centerX - halfW, centerY - halfH), currentTransform, transformIsIdentity),
-			Foundation::Vec2(-halfW, -halfH),
-			colorVec,
-			data1,
-			data2,
-			neighborData,
-			diagonalData
-		});
-
-		// Top-right
-		vertices.push_back({
-			TransformPosition(Foundation::Vec2(centerX + halfW, centerY - halfH), currentTransform, transformIsIdentity),
-			Foundation::Vec2(halfW, -halfH),
-			colorVec,
-			data1,
-			data2,
-			neighborData,
-			diagonalData
-		});
-
-		// Bottom-right
-		vertices.push_back({
-			TransformPosition(Foundation::Vec2(centerX + halfW, centerY + halfH), currentTransform, transformIsIdentity),
-			Foundation::Vec2(halfW, halfH),
-			colorVec,
-			data1,
-			data2,
-			neighborData,
-			diagonalData
-		});
-
-		// Bottom-left
-		vertices.push_back({
-			TransformPosition(Foundation::Vec2(centerX - halfW, centerY + halfH), currentTransform, transformIsIdentity),
-			Foundation::Vec2(-halfW, halfH),
-			colorVec,
-			data1,
-			data2,
-			neighborData,
-			diagonalData
-		});
-
-		indices.push_back(baseIndex + 0);
-		indices.push_back(baseIndex + 1);
-		indices.push_back(baseIndex + 2);
-
-		indices.push_back(baseIndex + 0);
-		indices.push_back(baseIndex + 2);
-		indices.push_back(baseIndex + 3);
-	}
 
 	void BatchRenderer::addTriangles( // NOLINT(readability-convert-member-functions-to-static)
 		const Foundation::Vec2*	  inputVertices,
@@ -384,8 +265,7 @@ namespace Renderer {
 				colorVec,
 				zeroVec4,		  // data1 (unused)
 				shapeParams,	  // data2 with borderPos >= 0 marks as shape
-				currentClipBounds, // clip bounds
-				zeroVec4		  // data3 (unused for triangles)
+				currentClipBounds // clip bounds
 			});
 		}
 
@@ -423,8 +303,7 @@ namespace Renderer {
 			 colorVec,
 			 zeroVec4,
 			 textParams,
-			 currentClipBounds,
-			 zeroVec4} // data3 (unused for text)
+			 currentClipBounds}
 		);
 
 		// Top-right
@@ -434,8 +313,7 @@ namespace Renderer {
 			 colorVec,
 			 zeroVec4,
 			 textParams,
-			 currentClipBounds,
-			 zeroVec4} // data3 (unused for text)
+			 currentClipBounds}
 		);
 
 		// Bottom-right
@@ -445,8 +323,7 @@ namespace Renderer {
 			 colorVec,
 			 zeroVec4,
 			 textParams,
-			 currentClipBounds,
-			 zeroVec4} // data3 (unused for text)
+			 currentClipBounds}
 		);
 
 		// Bottom-left
@@ -456,8 +333,7 @@ namespace Renderer {
 			 colorVec,
 			 zeroVec4,
 			 textParams,
-			 currentClipBounds,
-			 zeroVec4} // data3 (unused for text)
+			 currentClipBounds}
 		);
 
 		// Add 6 indices (2 triangles)
@@ -473,11 +349,6 @@ namespace Renderer {
 	void BatchRenderer::setFontAtlas(GLuint atlasTexture, float pixelRange) {
 		fontAtlas = atlasTexture;
 		fontPixelRange = pixelRange;
-	}
-
-	void BatchRenderer::setTileAtlas(GLuint atlasTexture, const std::vector<glm::vec4>& rects) {
-		tileAtlas = atlasTexture;
-		tileAtlasRects = rects;
 	}
 
 	void BatchRenderer::flush() {
@@ -544,33 +415,8 @@ namespace Renderer {
 			glUniform1i(atlasLoc, 0);
 		}
 
-		// Bind tile atlas texture and rects if provided (texture unit 1)
-		int rectCount = static_cast<int>(std::min<size_t>(tileAtlasRects.size(), kMaxTileAtlasRects));
-		if (tileAtlas != 0 && rectCount > 0) {
-			glActiveTexture(GL_TEXTURE1);
-			glBindTexture(GL_TEXTURE_2D, tileAtlas);
-			if (tileAtlasLoc >= 0) {
-				glUniform1i(tileAtlasLoc, 1);
-			}
-			if (tileAtlasRectsLoc >= 0) {
-				glUniform4fv(tileAtlasRectsLoc, rectCount, reinterpret_cast<const float*>(tileAtlasRects.data()));
-			}
-			if (tileAtlasCountLoc >= 0) {
-				glUniform1i(tileAtlasCountLoc, rectCount);
-			}
-		} else {
-			if (tileAtlasCountLoc >= 0) {
-				glUniform1i(tileAtlasCountLoc, 0);
-			}
-		}
-
 		// Set instanced = false for standard batched rendering path
 		glUniform1i(instancedLoc, 0);
-
-		// Soft blend mode uniform (currently disabled by default)
-		if (auto loc = glGetUniformLocation(shader.getProgram(), "u_softBlendMode"); loc >= 0) {
-			glUniform1i(loc, 0);
-		}
 
 		// Draw
 		glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(indices.size()), GL_UNSIGNED_INT, nullptr);
@@ -581,11 +427,6 @@ namespace Renderer {
 		glBindVertexArray(0);
 		if (fontAtlas != 0) {
 			glBindTexture(GL_TEXTURE_2D, 0);
-		}
-		if (tileAtlas != 0 && rectCount > 0) {
-			glActiveTexture(GL_TEXTURE1);
-			glBindTexture(GL_TEXTURE_2D, 0);
-			glActiveTexture(GL_TEXTURE0);
 		}
 		glDisable(GL_BLEND);
 

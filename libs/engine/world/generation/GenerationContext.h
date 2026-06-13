@@ -17,7 +17,7 @@ struct GenerationContext {
 	uint16_t localX = 0;        ///< Tile X within chunk (0 to kChunkSize-1)
 	uint16_t localY = 0;        ///< Tile Y within chunk (0 to kChunkSize-1)
 	uint64_t worldSeed = 0;     ///< World seed for determinism
-	Biome biome = Biome::Grassland; ///< Primary biome at this tile
+	Biome biome = Biome::TemperateGrassland; ///< Primary biome at this tile
 	float elevation = 0.0F;     ///< Elevation in meters
 
 	/// Calculate world X position in tile units

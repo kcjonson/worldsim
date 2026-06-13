@@ -11,6 +11,7 @@
 #include "assets/placement/PlacementExecutor.h"
 #include "gl/GLBuffer.h"
 #include "gl/GLVertexArray.h"
+#include "world/rendering/BakedEntityMesh.h"
 #include "primitives/InstanceData.h"
 #include "vector/Tessellator.h"
 #include "world/camera/WorldCamera.h"
@@ -73,6 +74,20 @@ class EntityRenderer {
 	/// Get number of entities rendered in last frame (for profiling)
 	[[nodiscard]] uint32_t lastEntityCount() const { return m_lastEntityCount; }
 
+	/// Draw call / triangle counts from last frame (raw GL draws bypass the
+	/// BatchRenderer stats, so the metrics system reads them from here)
+	[[nodiscard]] uint32_t lastDrawCallCount() const { return m_lastDrawCallCount; }
+	[[nodiscard]] uint32_t lastTriangleCount() const { return m_lastTriangleCount; }
+
+	/// Upload a CPU-baked chunk mesh (from a worker thread bake) to the GPU.
+	/// Call on the render thread; replaces any existing baked data for the chunk.
+	void uploadBakedChunk(const ChunkCoordinate& coord, BakedChunkCPUData&& cpuData);
+
+	/// Queue a CPU-baked chunk mesh for budgeted upload (a few sub-chunks per
+	/// frame, processed inside render). Avoids multi-ms frame spikes when
+	/// several chunk bakes complete at once while scrolling.
+	void queueBakedChunk(const ChunkCoordinate& coord, BakedChunkCPUData&& cpuData);
+
 	/// Enable/disable GPU instancing (for A/B testing and fallback)
 	void setInstancingEnabled(bool enabled) { m_useInstancing = enabled; }
 	[[nodiscard]] bool isInstancingEnabled() const { return m_useInstancing; }
@@ -80,6 +95,8 @@ class EntityRenderer {
   private:
 	float m_pixelsPerMeter = 16.0F;
 	uint32_t m_lastEntityCount = 0;
+	uint32_t m_lastDrawCallCount = 0;
+	uint32_t m_lastTriangleCount = 0;
 	uint64_t frameCounter = 0;  // Incremented each render call (for LRU tracking)
 
 	// --- LRU Cache Configuration ---
@@ -100,36 +117,58 @@ class EntityRenderer {
 	std::unordered_map<std::string, std::vector<Renderer::InstanceData>> m_instanceBatches;
 
 	// --- Baked Static Mesh Path with Sub-Chunk Culling ---
-	// Pre-transforms all entity vertices on CPU once at chunk load time.
-	// Subdivides chunks into smaller regions for view frustum culling.
-	// Only draws sub-regions that intersect the viewport.
+	// Entity vertices are pre-transformed to world space once per chunk (on a
+	// worker thread via AsyncChunkProcessor, or on the render thread when an
+	// evicted chunk is revisited). Sub-regions are culled against the viewport.
+	// CPU bake types/constants live in BakedEntityMesh.h.
 
-	// Sub-chunk grid: 8×8 = 64 sub-regions per chunk
-	// Each sub-region is 64×64 tiles (512/8 = 64)
-	static constexpr int kSubChunkGridSize = 8;
-	static constexpr int kSubChunkTileSize = kChunkSize / kSubChunkGridSize;  // 64 tiles
-	static constexpr float kSubChunkWorldSize = static_cast<float>(kSubChunkTileSize) * kTileSize;  // 64 meters
-
-	/// GPU resources for a single sub-region's baked entity mesh.
-	struct BakedSubChunkData {
+	/// GPU resources for one height bucket of one sub-region.
+	struct BakedMeshGPU {
 		Renderer::GLVertexArray vao;     // VAO with baked vertex data
 		Renderer::GLBuffer vertexVBO;    // Pre-transformed vertices (world-space)
 		Renderer::GLBuffer indexIBO;     // Combined indices
 		uint32_t indexCount = 0;         // Total indices in IBO
 		uint32_t entityCount = 0;        // For debugging/metrics
+		float maxEntityHeight = 0.0F;    // Drives the far-zoom cutoff (short bucket)
+	};
+
+	/// GPU resources for a single sub-region's baked entity meshes.
+	struct BakedSubChunkData {
+		std::array<BakedMeshGPU, kFloraBucketCount> buckets;
 		float minX = 0, minY = 0;        // World-space bounds for culling
 		float maxX = 0, maxY = 0;
 	};
 
 	/// GPU resources for a chunk, subdivided into sub-regions.
 	struct BakedChunkData {
-		std::array<BakedSubChunkData, kSubChunkGridSize * kSubChunkGridSize> subChunks;
+		std::array<BakedSubChunkData, kSubChunkCount> subChunks;
 		uint32_t totalEntityCount = 0;   // For debugging/metrics
 		uint64_t lastAccessFrame = 0;    // For LRU eviction
 	};
 
 	/// Cache of baked per-chunk meshes.
 	std::unordered_map<ChunkCoordinate, BakedChunkData> m_bakedChunkCache;
+
+	/// CPU bakes waiting for budgeted GPU upload (FIFO; partially uploaded
+	/// chunks track progress via nextSubChunk)
+	struct PendingUpload {
+		ChunkCoordinate coord;
+		BakedChunkCPUData cpuData;
+		int nextSubChunk = 0;
+	};
+	std::vector<PendingUpload> m_pendingUploads;
+
+	/// Max bytes of baked vertex/index data uploaded per frame. A byte budget
+	/// (rather than a sub-chunk count) keeps the per-frame cost flat as flora
+	/// density grows; 2MB is well under 1ms of PCIe transfer.
+	static constexpr size_t kUploadBudgetBytesPerFrame = 2 * 1024 * 1024;
+
+	/// Upload pending sub-chunks until the byte budget is exhausted (render thread)
+	void processPendingUploads(size_t budgetBytes);
+
+	/// Upload a single sub-chunk's buffers into an existing cache entry.
+	/// @return Bytes of vertex+index data uploaded
+	size_t uploadSubChunk(BakedChunkData& bakedData, BakedSubChunkCPUData& cpu, int subIndex);
 
 	/// Cached uniform locations for instanced rendering (avoid glGetUniformLocation per frame).
 	struct CachedUniformLocations {
@@ -140,6 +179,7 @@ class EntityRenderer {
 		GLint cameraZoom = -1;
 		GLint pixelsPerMeter = -1;
 		GLint viewportSize = -1;
+		GLint bakedAlpha = -1;
 		bool initialized = false;
 	};
 	CachedUniformLocations m_uniformLocations;
@@ -149,8 +189,9 @@ class EntityRenderer {
 
 	// --- Baked Static Mesh Methods ---
 
-	/// Build baked mesh for a chunk (pre-transform all entity vertices on CPU).
-	/// Called once per chunk when first rendered.
+	/// Re-bake a chunk from the executor's spatial index on the render thread.
+	/// Only used when a still-loaded chunk's baked mesh was LRU-evicted; new
+	/// chunks arrive pre-baked via uploadBakedChunk.
 	void buildBakedChunkMesh(const assets::PlacementExecutor& executor, const ChunkCoordinate& coord);
 
 	/// Release baked mesh GPU resources for a chunk.

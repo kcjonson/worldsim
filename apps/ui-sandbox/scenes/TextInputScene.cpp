@@ -130,9 +130,9 @@ namespace {
 				.label = "Test Button (Tab index 4)",
 				.position = {50.0F, yPos},
 				.size = {200.0F, 40.0F},
-				.tabIndex = 4,
+				.onClick = []() { LOG_INFO(UI, "Button clicked!"); },
 				.id = "button1",
-				.onClick = []() { LOG_INFO(UI, "Button clicked!"); }
+				.tabIndex = 4
 			});
 
 			// Create output display area

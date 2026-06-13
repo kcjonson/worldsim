@@ -21,7 +21,8 @@ struct SceneInfo {
 	X(GameLoading)  \
 	X(Game)         \
 	X(Settings)     \
-	X(WorldCreator)
+	X(WorldCreator) \
+	X(LandingSite)
 // clang-format on
 
 /// @brief Scene types for world-sim application (auto-generated from SCENE_LIST)

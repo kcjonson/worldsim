@@ -30,7 +30,7 @@
     <!-- Per-biome placement configuration -->
     <placement>
       <!-- Wetland: Dense clumps near water -->
-      <biome name="Wetland" near="Water" distance="3">
+      <biome name="TemperateWetland" near="Water" distance="3">
         <spawnChance>0.30</spawnChance>
         <distribution>clumped</distribution>
         <clumping>
@@ -41,7 +41,7 @@
       </biome>
 
       <!-- Grassland ponds: Moderate patches -->
-      <biome name="Grassland" near="Water" distance="3">
+      <biome name="TemperateGrassland" near="Water" distance="3">
         <spawnChance>0.15</spawnChance>
         <distribution>clumped</distribution>
         <clumping>
@@ -52,7 +52,7 @@
       </biome>
 
       <!-- Forest ponds: Sparse patches -->
-      <biome name="Forest" near="Water" distance="3">
+      <biome name="TemperateDeciduousForest" near="Water" distance="3">
         <spawnChance>0.08</spawnChance>
         <distribution>clumped</distribution>
         <clumping>

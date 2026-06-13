@@ -11,6 +11,7 @@
 #include <GL/glew.h>
 
 #include <application/AppLauncher.h>
+#include <debug/DebugServer.h>
 #include <chrono>
 #include <cmath>
 #include <graphics/Rect.h>
@@ -113,7 +114,6 @@ namespace {
 				m_camera->setPanSpeed(200.0F);
 
 				m_renderer = std::make_unique<engine::world::ChunkRenderer>(kPixelsPerMeter);
-				m_renderer->setTileResolution(1); // Render every tile
 
 				m_entityRenderer = std::make_unique<engine::world::EntityRenderer>(kPixelsPerMeter);
 
@@ -159,7 +159,6 @@ namespace {
 				.onOpenStorageConfig = [this](
 										   ecs::EntityID containerId, const std::string& defName
 									   ) { gameUI->showStorageConfigDialog(containerId, defName); },
-				.onPlaceFurniture = [this]() { handlePlaceFurniture(); },
 				.onPause =
 					[this]() {
 						auto& timeSystem = ecsWorld->getSystem<ecs::TimeSystem>();
@@ -171,6 +170,7 @@ namespace {
 						timeSystem.setSpeed(speed);
 					},
 				.onMenuClick = [this]() { sceneManager->switchTo(world_sim::toKey(world_sim::SceneType::MainMenu)); },
+				.onPlaceFurniture = [this]() { handlePlaceFurniture(); },
 				.queryResources = [this](const std::string& defName, Foundation::Vec2 position) -> std::optional<uint32_t> {
 					auto coord = engine::world::worldToChunk({position.x, position.y});
 					return m_placementExecutor->getResourceCount(coord, {position.x, position.y}, defName);
@@ -313,10 +313,31 @@ namespace {
 				dx += 1.0F;
 			}
 
-			if (dx != 0.0F && dy != 0.0F) {
-				constexpr float kDiagonalNormalizer = 0.7071F; // 1/sqrt(2), normalizes diagonal movement to unit length
-				dx *= kDiagonalNormalizer;
-				dy *= kDiagonalNormalizer;
+			// Remote camera control from the debug server (position/zoom set once,
+			// pan persists like held movement keys until cleared)
+			if (auto* debugServer = engine::AppLauncher::getDebugServer()) {
+				Foundation::CameraCommand cmd;
+				if (debugServer->consumeCameraCommand(cmd)) {
+					if (cmd.hasPosition) {
+						m_camera->setPosition({cmd.x, cmd.y});
+					}
+					if (cmd.hasZoom) {
+						m_camera->setZoom(cmd.zoom);
+					}
+					if (cmd.hasPan) {
+						m_debugPanX = cmd.panX;
+						m_debugPanY = cmd.panY;
+					}
+				}
+			}
+			dx += m_debugPanX;
+			dy += m_debugPanY;
+
+			// Normalize combined input so diagonal movement (keys or debug pan) is unit speed
+			float inputLength = std::sqrt(dx * dx + dy * dy);
+			if (inputLength > 1.0F) {
+				dx /= inputLength;
+				dy /= inputLength;
 			}
 
 			m_camera->move(dx, dy, dt);
@@ -411,6 +432,7 @@ namespace {
 					m_entityRenderer->lastEntityCount(),
 					m_renderer->lastChunkCount()
 				);
+				metrics->setEntityRenderStats(m_entityRenderer->lastDrawCallCount(), m_entityRenderer->lastTriangleCount());
 
 				// Convert ECS system timings to Foundation format (reuse cache to avoid allocation)
 				const auto& ecsTimings = ecsWorld->getSystemTimings();
@@ -575,6 +597,12 @@ namespace {
 			// First, poll and integrate any completed async tasks
 			m_asyncProcessor->pollCompleted();
 
+			// Queue worker-baked entity meshes for budgeted GPU upload (the bake
+			// itself ran on the placement worker)
+			for (auto& [coord, bake] : m_asyncProcessor->takeReadyBakes()) {
+				m_entityRenderer->queueBakedChunk(coord, std::move(bake));
+			}
+
 			// Then launch new async tasks for unprocessed chunks
 			for (auto* chunk : m_chunkManager->getLoadedChunks()) {
 				m_asyncProcessor->launchTask(chunk);
@@ -697,6 +725,10 @@ namespace {
 		// Scroll accumulator for smooth zoom on high-precision input devices (Magic Mouse, trackpad)
 		// Accumulates fractional scroll deltas and triggers zoom only when threshold is crossed
 		float m_scrollAccumulator = 0.0F;
+
+		// Persistent pan direction from debug server camera commands (held-key style)
+		float m_debugPanX = 0.0F;
+		float m_debugPanY = 0.0F;
 
 		// World interaction subsystems (extracted from GameScene)
 		std::unique_ptr<world_sim::PlacementSystem> m_placementSystem;

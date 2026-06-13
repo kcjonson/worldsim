@@ -9,6 +9,8 @@ add_library(engine
     world/chunk/ChunkManager.cpp
     world/chunk/TilePostProcessor.cpp
     world/chunk/MockWorldSampler.cpp
+    world/chunk/GeneratedWorldSampler.cpp
+    world/rendering/BakedEntityMesh.cpp
     world/rendering/ChunkRenderer.cpp
     world/rendering/EntityRenderer.cpp
     ecs/systems/TimeSystem.cpp
@@ -43,9 +45,15 @@ target_link_libraries(engine
         renderer
         ui
         assets
+        world
         nlohmann_json::nlohmann_json
         glfw
 )
+
+# timeBeginPeriod/timeEndPeriod for frame-pacing timer resolution
+if(WIN32)
+    target_link_libraries(engine PRIVATE winmm)
+endif()
 
 # Tests
 if(BUILD_TESTING)
@@ -69,7 +77,11 @@ if(BUILD_TESTING)
                 GTest::gtest
                 GTest::gtest_main
         )
-        target_compile_options(engine-tests PRIVATE -O0 -g)
+        if(MSVC)
+            target_compile_options(engine-tests PRIVATE /Od /Zi)
+        else()
+            target_compile_options(engine-tests PRIVATE -O0 -g)
+        endif()
         add_test(NAME engine-tests COMMAND engine-tests)
     endif()
 
@@ -83,7 +95,11 @@ if(BUILD_TESTING)
                 benchmark::benchmark
                 benchmark::benchmark_main
         )
-        target_compile_options(engine-benchmarks PRIVATE -O3)
+        # MSVC: per-config defaults (/O2 in Release); forcing /O2 collides with
+        # Debug's /RTC1 (D8016).
+        if(NOT MSVC)
+            target_compile_options(engine-benchmarks PRIVATE -O3)
+        endif()
         add_test(NAME engine-benchmarks COMMAND engine-benchmarks)
     endif()
 endif()

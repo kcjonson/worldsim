@@ -32,7 +32,22 @@ cd vcpkg
 export VCPKG_ROOT=/path/to/vcpkg  # Add to your shell profile
 ```
 
+On Windows (PowerShell), set it with an assignment, and persist it for future sessions:
+
+```powershell
+$env:VCPKG_ROOT = "C:\vcpkg"                                    # current session
+[Environment]::SetEnvironmentVariable("VCPKG_ROOT", "C:\vcpkg", "User")  # persisted
+```
+
+> **Keep vcpkg current.** Dependencies are pinned in `vcpkg.json` via `builtin-baseline`
+> (a vcpkg commit). If your local vcpkg checkout is older than that commit, configure fails
+> with `no version database entry for <pkg> at <version>`. Fix it by updating vcpkg:
+> `git -C $VCPKG_ROOT fetch && git -C $VCPKG_ROOT checkout <builtin-baseline> && $VCPKG_ROOT/bootstrap-vcpkg.{sh,bat}`,
+> or just pull the latest master (the version database only grows).
+
 ### 2. Configure and Build
+
+**macOS / Linux** (single-config generator):
 
 ```bash
 # Configure
@@ -44,6 +59,25 @@ cmake --build build
 # Run
 ./build/apps/world-sim/world-sim
 ```
+
+**Windows** (Visual Studio 2022 + MSVC), from PowerShell:
+
+```powershell
+# Configure (multi-config generator)
+cmake -S . -B build -G "Visual Studio 17 2022" -A x64 `
+  -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake"
+
+# Build (pick a config)
+cmake --build build --config Debug
+
+# Run (note the per-config subdirectory)
+./build/apps/world-sim/Debug/world-sim.exe
+```
+
+The build generates the SDF font atlas (`fonts/Roboto-SDF.png`) automatically, so a fresh
+checkout needs no manual asset steps. On multi-config generators (MSVC) binaries land in a
+per-config subdirectory (`Debug/`, `Release/`); on single-config (Make/Ninja) they're in the
+target directory directly.
 
 ### 3. VSCode Setup
 

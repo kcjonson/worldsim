@@ -2,10 +2,13 @@ name: Build
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
     branches: [ "**" ]
 
 jobs:
   build:
+    # Skip while the PR is a draft; re-runs when marked ready for review.
+    if: github.event.pull_request.draft == false
     runs-on: ubuntu-latest
 
     steps:

@@ -1,5 +1,20 @@
 add_library(world
-    generation/Placeholder.cpp
+    worldgen/grid/SphereGrid.cpp
+    worldgen/data/PlanetParams.cpp
+    worldgen/pipeline/PlanetGenerator.cpp
+    worldgen/stages/PlateStage.cpp
+    worldgen/stages/PlateMovementStage.cpp
+    worldgen/stages/TerrainStage.cpp
+    worldgen/stages/AtmosphereStage.cpp
+    worldgen/stages/PrecipitationStage.cpp
+    worldgen/stages/OceanStage.cpp
+    worldgen/stages/BiomeStage.cpp
+    worldgen/stages/SnowStage.cpp
+    worldgen/sampling/SphericalProjection.cpp
+    worldgen/sampling/PlanetSampler.cpp
+    worldgen/sampling/LandingSite.cpp
+    worldgen/io/PlanetIO.cpp
+    worldgen/debug/DebugImageExporter.cpp
 )
 
 target_include_directories(world
@@ -14,8 +29,6 @@ target_compile_features(world PUBLIC cxx_std_20)
 target_link_libraries(world
     PUBLIC
         foundation
-        renderer
-        nlohmann_json::nlohmann_json
 )
 
 # Tests
@@ -40,7 +53,9 @@ if(BUILD_TESTING)
                 GTest::gtest
                 GTest::gtest_main
         )
-        target_compile_options(world-tests PRIVATE -O0 -g)
+        if(NOT MSVC)
+            target_compile_options(world-tests PRIVATE -O0 -g)
+        endif()
         add_test(NAME world-tests COMMAND world-tests)
     endif()
 
@@ -54,7 +69,11 @@ if(BUILD_TESTING)
                 benchmark::benchmark
                 benchmark::benchmark_main
         )
-        target_compile_options(world-benchmarks PRIVATE -O3)
+        # MSVC: rely on per-config defaults (/O2 in Release); forcing /O2 here
+        # collides with Debug's /RTC1 (D8016).
+        if(NOT MSVC)
+            target_compile_options(world-benchmarks PRIVATE -O3)
+        endif()
         add_test(NAME world-benchmarks COMMAND world-benchmarks)
     endif()
 endif()

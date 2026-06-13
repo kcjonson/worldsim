@@ -36,6 +36,8 @@ namespace engine::world {
 		// This avoids per-frame extraction of adjacency data during rendering
 		computeRenderData();
 
+		m_renderDataVersion.fetch_add(1, std::memory_order_release);
+
 		// Mark generation complete (release semantics for thread safety)
 		m_generationComplete.store(true, std::memory_order_release);
 	}
@@ -120,6 +122,8 @@ namespace engine::world {
 		render.neighborNE = TileAdjacency::getNeighbor(adjacency, TileAdjacency::NE);
 		render.neighborSE = TileAdjacency::getNeighbor(adjacency, TileAdjacency::SE);
 		render.neighborSW = TileAdjacency::getNeighbor(adjacency, TileAdjacency::SW);
+
+		m_renderDataVersion.fetch_add(1, std::memory_order_release);
 	}
 
 	TileData Chunk::computeTile(uint16_t localX, uint16_t localY) const {
@@ -150,9 +154,12 @@ namespace engine::world {
 		float			moistureBase = static_cast<float>(hash) * kNormalize;
 
 		// Adjust moisture based on biome
-		if (tile.primaryBiome == Biome::Desert) {
+		if (tile.primaryBiome == Biome::HotDesert || tile.primaryBiome == Biome::ColdDesert ||
+		    tile.primaryBiome == Biome::SemiDesert || tile.primaryBiome == Biome::XericShrubland ||
+		    tile.primaryBiome == Biome::PolarDesert) {
 			moistureBase *= 0.2F;
-		} else if (tile.primaryBiome == Biome::Wetland || tile.primaryBiome == Biome::Ocean) {
+		} else if (tile.primaryBiome == Biome::TemperateWetland || tile.primaryBiome == Biome::TropicalWetland ||
+		           tile.primaryBiome == Biome::Ocean || tile.primaryBiome == Biome::Lake) {
 			moistureBase = 0.8F + moistureBase * 0.2F;
 		}
 
@@ -243,33 +250,45 @@ namespace engine::world {
 
 	Foundation::Color Chunk::getBiomeColor(Biome biome) {
 		switch (biome) {
-			case Biome::Grassland:
-				return Foundation::Color(0.29F, 0.49F, 0.25F, 1.0F); // #4a7c3f
+			case Biome::TemperateGrassland:
+			case Biome::TropicalSavanna:
+			case Biome::AlpineGrassland:
+				return Foundation::Color(0.29F, 0.49F, 0.25F, 1.0F);
 
-			case Biome::Forest:
-				return Foundation::Color(0.18F, 0.35F, 0.12F, 1.0F); // #2d5a1f
+			case Biome::TemperateDeciduousForest:
+			case Biome::TropicalRainforest:
+			case Biome::TropicalSeasonalForest:
+			case Biome::TemperateRainforest:
+			case Biome::BorealForest:
+			case Biome::MontaneForest:
+				return Foundation::Color(0.18F, 0.35F, 0.12F, 1.0F);
 
-			case Biome::Desert:
-				return Foundation::Color(0.82F, 0.71F, 0.47F, 1.0F); // #d1b578
+			case Biome::HotDesert:
+			case Biome::ColdDesert:
+			case Biome::SemiDesert:
+			case Biome::XericShrubland:
+				return Foundation::Color(0.82F, 0.71F, 0.47F, 1.0F);
 
-			case Biome::Tundra:
-				return Foundation::Color(0.75F, 0.78F, 0.80F, 1.0F); // #c0c7cc
+			case Biome::ArcticTundra:
+			case Biome::AlpineTundra:
+			case Biome::PolarDesert:
+				return Foundation::Color(0.75F, 0.78F, 0.80F, 1.0F);
 
-			case Biome::Wetland:
-				return Foundation::Color(0.25F, 0.42F, 0.35F, 1.0F); // #406b59
-
-			case Biome::Mountain:
-				return Foundation::Color(0.42F, 0.42F, 0.42F, 1.0F); // #6b6b6b
+			case Biome::TemperateWetland:
+			case Biome::TropicalWetland:
+				return Foundation::Color(0.25F, 0.42F, 0.35F, 1.0F);
 
 			case Biome::Beach:
-				return Foundation::Color(0.77F, 0.64F, 0.35F, 1.0F); // #c4a35a
+				return Foundation::Color(0.77F, 0.64F, 0.35F, 1.0F);
 
 			case Biome::Ocean:
-				return Foundation::Color(0.10F, 0.30F, 0.48F, 1.0F); // #1a4c7a
+			case Biome::Lake:
+				return Foundation::Color(0.10F, 0.30F, 0.48F, 1.0F);
 
-			default:
+			case Biome::Count:
 				return Foundation::Color(0.5F, 0.5F, 0.5F, 1.0F);
 		}
+		return Foundation::Color(0.5F, 0.5F, 0.5F, 1.0F);
 	}
 
 	Foundation::Color Chunk::getSurfaceColor(Surface surface) {

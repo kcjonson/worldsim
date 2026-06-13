@@ -67,8 +67,8 @@ enum class Surface : uint8_t {
 /// Designed for single source of truth: computed once, read by all systems.
 struct TileData {
 	Surface surface = Surface::Grass;   ///< 1 byte - THE definitive terrain type
-	Biome primaryBiome = Biome::Grassland;   ///< 1 byte - dominant biome
-	Biome secondaryBiome = Biome::Grassland; ///< 1 byte - for ecotones (may equal primary)
+	Biome primaryBiome = Biome::TemperateGrassland;   ///< 1 byte - dominant biome
+	Biome secondaryBiome = Biome::TemperateGrassland; ///< 1 byte - for ecotones (may equal primary)
 	uint8_t biomeBlend = 255;           ///< 1 byte - weight of primary (255 = 100% primary)
 	uint16_t elevation = 0;             ///< 2 bytes - centimeters above sea level
 	uint8_t moisture = 128;             ///< 1 byte - normalized 0-255
@@ -169,6 +169,14 @@ class Chunk {
 		return m_renderData[localY * kChunkSize + localX];
 	}
 
+	/// Raw render data array (kChunkSize * kChunkSize entries, row-major).
+	/// Uploaded directly as a GPU tile-data texture by ChunkRenderer.
+	[[nodiscard]] const TileRenderData* renderData() const { return m_renderData.data(); }
+
+	/// Version counter for render data; bumped by generate() and setAdjacency().
+	/// GPU caches compare this to detect stale uploads.
+	[[nodiscard]] uint32_t renderDataVersion() const { return m_renderDataVersion.load(std::memory_order_acquire); }
+
   private:
 	ChunkCoordinate m_coord;
 	ChunkSampleResult m_biomeData;
@@ -184,6 +192,9 @@ class Chunk {
 
 	/// Thread-safe flag indicating generation is complete
 	std::atomic<bool> m_generationComplete{false};
+
+	/// Bumped whenever m_renderData changes (generation, adjacency updates)
+	std::atomic<uint32_t> m_renderDataVersion{0};
 
 	/// Cached shore tile positions (land tiles adjacent to water)
 	/// Computed during generation, used by VisionSystem for fast shore discovery

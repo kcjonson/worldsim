@@ -9,6 +9,7 @@
 #include <assets/RecipeRegistry.h>
 #include <debug/DebugServer.h>
 #include <font/FontRenderer.h>
+#include <input/InputEvent.h>
 #include <metrics/MetricsCollector.h>
 #include <primitives/Primitives.h>
 #include <resources/TileAtlasBuilder.h>
@@ -38,6 +39,37 @@ namespace engine {
 
 		// Owned resources that persist between initialize() and run()
 		std::unique_ptr<Foundation::DebugServer>	g_debugServer;
+
+		// Route one /api/input command through the scene input path. Click
+		// expands to move+down+up so single-shot interactions are one request.
+		void dispatchInjectedInput(const Foundation::InputCommand& cmd) {
+			Foundation::Vec2 pos{cmd.x, cmd.y};
+			MouseButton button = MouseButton::Left;
+			if (cmd.button == 1) button = MouseButton::Right;
+			else if (cmd.button == 2) button = MouseButton::Middle;
+
+			auto send = [](UI::InputEvent event) { SceneManager::Get().handleInput(event); };
+
+			switch (cmd.type) {
+				case Foundation::InputCommand::Type::Move:
+					send(UI::InputEvent::mouseMove(pos));
+					break;
+				case Foundation::InputCommand::Type::Down:
+					send(UI::InputEvent::mouseDown(pos, button, 0));
+					break;
+				case Foundation::InputCommand::Type::Up:
+					send(UI::InputEvent::mouseUp(pos, button, 0));
+					break;
+				case Foundation::InputCommand::Type::Click:
+					send(UI::InputEvent::mouseMove(pos));
+					send(UI::InputEvent::mouseDown(pos, button, 0));
+					send(UI::InputEvent::mouseUp(pos, button, 0));
+					break;
+				case Foundation::InputCommand::Type::Scroll:
+					send(UI::InputEvent::scroll(pos, cmd.scrollDelta));
+					break;
+			}
+		}
 		std::unique_ptr<Renderer::MetricsCollector> g_metrics;
 		std::unique_ptr<Application>				g_app;
 
@@ -337,6 +369,17 @@ namespace engine {
 
 			Renderer::Primitives::beginFrame();
 
+			// Dispatch injected input (/api/input) through the same path as
+			// real mouse events; skipped while paused, matching real input
+			if (g_debugServer && !g_app->isPaused()) {
+				std::vector<Foundation::InputCommand> injected;
+				if (g_debugServer->consumeInputCommands(injected)) {
+					for (const auto& cmd : injected) {
+						dispatchInjectedInput(cmd);
+					}
+				}
+			}
+
 			// Handle debug server control actions
 			if (g_debugServer) {
 				Foundation::ControlAction action = g_debugServer->getControlAction();
@@ -377,6 +420,12 @@ namespace engine {
 							g_debugServer->clearControlAction();
 							break;
 						}
+
+						case Foundation::ControlAction::SetVsync:
+							glfwSwapInterval(g_debugServer->getTargetVsync());
+							LOG_INFO(Engine, "Vsync set to %d via control endpoint", g_debugServer->getTargetVsync());
+							g_debugServer->clearControlAction();
+							break;
 
 						default:
 							break;
@@ -468,6 +517,10 @@ namespace engine {
 
 	Renderer::MetricsCollector* AppLauncher::getMetrics() {
 		return g_metrics.get();
+	}
+
+	Foundation::DebugServer* AppLauncher::getDebugServer() {
+		return g_debugServer.get();
 	}
 
 } // namespace engine

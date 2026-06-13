@@ -13,6 +13,13 @@
 #include <iostream>
 #include <thread>
 
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#include <timeapi.h>
+#endif
+
 namespace engine {
 
 	// GLFW modifier bit flags (matches GLFW_MOD_* values)
@@ -91,6 +98,12 @@ namespace engine {
 		}
 
 		LOG_INFO(Engine, "Starting application main loop");
+
+#ifdef _WIN32
+		// Raise the OS timer resolution so frame-pacing sleeps wake within ~1ms
+		// instead of the 15.6ms default tick (which capped frames at ~60 FPS)
+		timeBeginPeriod(1);
+#endif
 
 		isRunning = true;
 		lastTime = glfwGetTime();
@@ -254,13 +267,22 @@ namespace engine {
 			auto swapEnd = std::chrono::high_resolution_clock::now();
 			m_frameTimings.swapBuffersMs = std::chrono::duration<float, std::milli>(swapEnd - swapStart).count();
 
-			// Frame pacing: yield CPU to prevent starving other processes
-			constexpr float kTargetFrameMs = 1000.0F / 120.0F; // 8.33ms for 120 FPS cap
-			double			frameNow = glfwGetTime();
-			float			elapsedMs = static_cast<float>((frameNow - lastTime) * 1000.0);
-			float			sleepMs = kTargetFrameMs - elapsedMs;
-			if (sleepMs > 1.0F) {
-				std::this_thread::sleep_for(std::chrono::microseconds(static_cast<int>(sleepMs * 1000.0F)));
+			// Frame pacing: yield CPU to prevent starving other processes.
+			// Sleep coarsely, then spin to the target: on Windows sleep_for rounds up
+			// to the OS timer tick (~15.6ms default), which silently capped frames at
+			// ~60 FPS and injected 25ms spikes. The spin window stays accurate at the
+			// cost of <2ms of busy-wait per frame.
+			constexpr float	 kTargetFrameMs = 1000.0F / 120.0F; // 8.33ms for 120 FPS cap
+			constexpr double kSpinWindowMs = 2.0;
+			double			 targetTime = lastTime + (kTargetFrameMs / 1000.0);
+			double			 frameNow = glfwGetTime();
+			if ((targetTime - frameNow) * 1000.0 > kSpinWindowMs + 1.0) {
+				std::this_thread::sleep_for(
+					std::chrono::microseconds(static_cast<int>(((targetTime - frameNow) * 1000.0 - kSpinWindowMs) * 1000.0))
+				);
+			}
+			while (glfwGetTime() < targetTime) {
+				std::this_thread::yield();
 			}
 
 			// Recalculate deltaTime/FPS after sleep so they reflect the capped frame duration
@@ -282,6 +304,10 @@ namespace engine {
 				}
 			}
 		}
+
+#ifdef _WIN32
+		timeEndPeriod(1);
+#endif
 
 		LOG_INFO(Engine, "Application main loop ended");
 	}

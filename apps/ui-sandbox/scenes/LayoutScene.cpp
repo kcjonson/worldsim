@@ -57,25 +57,25 @@ class LayoutScene : public engine::IScene {
 			.label = "Button One",
 			.size = {180.0F, 40.0F},
 			.type = Button::Type::Primary,
-			.margin = 5.0F,
 			.onClick = []() { LOG_INFO(UI, "Button One clicked!"); },
-			.id = "btn_one"}));
+			.id = "btn_one",
+			.margin = 5.0F}));
 
 		verticalLayout->addChild(Button(Button::Args{
 			.label = "Button Two",
 			.size = {180.0F, 40.0F},
 			.type = Button::Type::Primary,
-			.margin = 5.0F,
 			.onClick = []() { LOG_INFO(UI, "Button Two clicked!"); },
-			.id = "btn_two"}));
+			.id = "btn_two",
+			.margin = 5.0F}));
 
 		verticalLayout->addChild(Button(Button::Args{
 			.label = "Button Three",
 			.size = {180.0F, 40.0F},
 			.type = Button::Type::Secondary,
-			.margin = 5.0F,
 			.onClick = []() { LOG_INFO(UI, "Button Three clicked!"); },
-			.id = "btn_three"}));
+			.id = "btn_three",
+			.margin = 5.0F}));
 
 		// ================================================================
 		// Demo 2: Horizontal Layout
@@ -97,25 +97,25 @@ class LayoutScene : public engine::IScene {
 			.label = "Left",
 			.size = {100.0F, 40.0F},
 			.type = Button::Type::Primary,
-			.margin = 5.0F,
 			.onClick = []() { LOG_INFO(UI, "Left clicked!"); },
-			.id = "btn_left"}));
+			.id = "btn_left",
+			.margin = 5.0F}));
 
 		horizontalLayout->addChild(Button(Button::Args{
 			.label = "Center",
 			.size = {100.0F, 40.0F},
 			.type = Button::Type::Secondary,
-			.margin = 5.0F,
 			.onClick = []() { LOG_INFO(UI, "Center clicked!"); },
-			.id = "btn_center"}));
+			.id = "btn_center",
+			.margin = 5.0F}));
 
 		horizontalLayout->addChild(Button(Button::Args{
 			.label = "Right",
 			.size = {100.0F, 40.0F},
 			.type = Button::Type::Primary,
-			.margin = 5.0F,
 			.onClick = []() { LOG_INFO(UI, "Right clicked!"); },
-			.id = "btn_right"}));
+			.id = "btn_right",
+			.margin = 5.0F}));
 
 		// ================================================================
 		// Demo 3: Centered Alignment
@@ -137,25 +137,25 @@ class LayoutScene : public engine::IScene {
 			.label = "Wide Button",
 			.size = {180.0F, 35.0F},
 			.type = Button::Type::Primary,
-			.margin = 3.0F,
 			.onClick = []() { LOG_INFO(UI, "Wide clicked!"); },
-			.id = "btn_wide"}));
+			.id = "btn_wide",
+			.margin = 3.0F}));
 
 		centeredLayout->addChild(Button(Button::Args{
 			.label = "Short",
 			.size = {100.0F, 35.0F},
 			.type = Button::Type::Secondary,
-			.margin = 3.0F,
 			.onClick = []() { LOG_INFO(UI, "Short clicked!"); },
-			.id = "btn_short"}));
+			.id = "btn_short",
+			.margin = 3.0F}));
 
 		centeredLayout->addChild(Button(Button::Args{
 			.label = "Medium Btn",
 			.size = {140.0F, 35.0F},
 			.type = Button::Type::Primary,
-			.margin = 3.0F,
 			.onClick = []() { LOG_INFO(UI, "Medium clicked!"); },
-			.id = "btn_medium"}));
+			.id = "btn_medium",
+			.margin = 3.0F}));
 
 		// ================================================================
 		// Demo 4: Layout with Shapes
@@ -176,20 +176,20 @@ class LayoutScene : public engine::IScene {
 		shapesLayout->addChild(Rectangle(Rectangle::Args{
 			.size = {150.0F, 40.0F},
 			.style = {.fill = Color(0.204F, 0.596F, 0.859F)},  // Blue
-			.margin = 5.0F,
-			.id = "rect_blue"}));
+			.id = "rect_blue",
+			.margin = 5.0F}));
 
 		shapesLayout->addChild(Rectangle(Rectangle::Args{
 			.size = {100.0F, 40.0F},
 			.style = {.fill = Color(0.906F, 0.298F, 0.235F)},  // Red
-			.margin = 5.0F,
-			.id = "rect_red"}));
+			.id = "rect_red",
+			.margin = 5.0F}));
 
 		shapesLayout->addChild(Rectangle(Rectangle::Args{
 			.size = {180.0F, 40.0F},
 			.style = {.fill = Color(0.180F, 0.800F, 0.443F)},  // Green
-			.margin = 5.0F,
-			.id = "rect_green"}));
+			.id = "rect_green",
+			.margin = 5.0F}));
 
 		LOG_INFO(UI, "Layout scene initialized");
 	}

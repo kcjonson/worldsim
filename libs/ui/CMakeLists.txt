@@ -19,6 +19,7 @@ add_library(ui
     components/dialog/Dialog.cpp
     components/tooltip/Tooltip.cpp
     components/tooltip/TooltipManager.cpp
+    components/slider/Slider.cpp
     components/contextmenu/ContextMenu.cpp
     focus/FocusManager.cpp
     input/InputEvent.cpp
@@ -65,7 +66,11 @@ if(BUILD_TESTING)
                 GTest::gtest
                 GTest::gtest_main
         )
-        target_compile_options(ui-tests PRIVATE -O0 -g)
+        if(MSVC)
+            target_compile_options(ui-tests PRIVATE /Od /Zi)
+        else()
+            target_compile_options(ui-tests PRIVATE -O0 -g)
+        endif()
         add_test(NAME ui-tests COMMAND ui-tests)
     endif()
 
@@ -79,7 +84,11 @@ if(BUILD_TESTING)
                 benchmark::benchmark
                 benchmark::benchmark_main
         )
-        target_compile_options(ui-benchmarks PRIVATE -O3)
+        # MSVC: per-config defaults (/O2 in Release); forcing /O2 collides with
+        # Debug's /RTC1 (D8016).
+        if(NOT MSVC)
+            target_compile_options(ui-benchmarks PRIVATE -O3)
+        endif()
         add_test(NAME ui-benchmarks COMMAND ui-benchmarks)
     endif()
 endif()

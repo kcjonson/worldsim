@@ -93,7 +93,11 @@ if(BUILD_TESTING)
                 GTest::gtest
                 GTest::gtest_main
         )
-        target_compile_options(renderer-tests PRIVATE -O0 -g)
+        if(MSVC)
+            target_compile_options(renderer-tests PRIVATE /Od /Zi)
+        else()
+            target_compile_options(renderer-tests PRIVATE -O0 -g)
+        endif()
         add_test(NAME renderer-tests COMMAND renderer-tests)
     endif()
 
@@ -107,7 +111,11 @@ if(BUILD_TESTING)
                 benchmark::benchmark
                 benchmark::benchmark_main
         )
-        target_compile_options(renderer-benchmarks PRIVATE -O3)
+        # MSVC: per-config defaults (/O2 in Release); forcing /O2 collides with
+        # Debug's /RTC1 (D8016).
+        if(NOT MSVC)
+            target_compile_options(renderer-benchmarks PRIVATE -O3)
+        endif()
         add_test(NAME renderer-benchmarks COMMAND renderer-benchmarks)
     endif()
 endif()

@@ -6,6 +6,23 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# Treat out-of-order designated initializers as an error where supported.
+# MSVC enforces C++20 declaration-order for designators (C7560); enabling the
+# matching warning-as-error on Clang/GCC catches the same portability breaks
+# locally. Feature-detect the flag so this is safe on AppleClang and on
+# compilers that don't recognize the warning group (e.g. some GCC versions).
+if(MSVC)
+    # Sources are UTF-8 (authored on macOS/Clang). Tell MSVC so Unicode character
+    # literals compile instead of erroring as multibyte constants (C2015).
+    add_compile_options(/utf-8)
+else()
+    include(CheckCXXCompilerFlag)
+    check_cxx_compiler_flag("-Werror=reorder-init-list" HAS_WERROR_REORDER_INIT_LIST)
+    if(HAS_WERROR_REORDER_INIT_LIST)
+        add_compile_options(-Werror=reorder-init-list)
+    endif()
+endif()
+
 # Force use of LLVM's libc++ on macOS
 if(APPLE)
     add_link_options("-L/usr/local/opt/llvm/lib/c++" "-Wl,-rpath,/usr/local/opt/llvm/lib/c++")
@@ -36,6 +53,7 @@ add_subdirectory(libs/renderer)
 # Feature layers
 add_subdirectory(libs/ui)
 add_subdirectory(libs/world)
+add_subdirectory(libs/planet-view)
 add_subdirectory(libs/game-systems)
 
 # Engine layer
@@ -51,9 +69,30 @@ add_subdirectory(apps/ui-sandbox)
 # Build tools (atlas generator, etc.)
 add_subdirectory(tools/generate_sdf_atlas)
 
+# Generate the SDF font atlas as a build step so a fresh checkout runs without a
+# manual tool invocation. The PNG is a gitignored build artifact, rebuilt when the
+# source font changes; the JSON metadata regenerates deterministically.
+add_custom_command(
+    OUTPUT ${CMAKE_SOURCE_DIR}/fonts/Roboto-SDF.png ${CMAKE_SOURCE_DIR}/fonts/Roboto-SDF.json
+    COMMAND $<TARGET_FILE:generate_sdf_atlas>
+        --font ${CMAKE_SOURCE_DIR}/fonts/Roboto-Regular.ttf
+        --output ${CMAKE_SOURCE_DIR}/fonts/Roboto-SDF.png
+        --metadata ${CMAKE_SOURCE_DIR}/fonts/Roboto-SDF.json
+    DEPENDS generate_sdf_atlas ${CMAKE_SOURCE_DIR}/fonts/Roboto-Regular.ttf
+    COMMENT "Generating SDF font atlas (fonts/Roboto-SDF.png)"
+    VERBATIM
+)
+add_custom_target(font-atlas
+    DEPENDS ${CMAKE_SOURCE_DIR}/fonts/Roboto-SDF.png ${CMAKE_SOURCE_DIR}/fonts/Roboto-SDF.json)
+add_dependencies(world-sim font-atlas)
+add_dependencies(ui-sandbox font-atlas)
+
 # Developer client (web app)
-# Only build in Development mode (builds React app with npm)
-if(CMAKE_BUILD_TYPE STREQUAL "Development" OR CMAKE_BUILD_TYPE STREQUAL "Debug")
+# Multi-config generators (Visual Studio) have no CMAKE_BUILD_TYPE at configure
+# time, so Windows/VS users opt in with -DBUILD_DEVELOPER_CLIENT=ON; single-config
+# Debug/Development builds keep auto-building it.
+option(BUILD_DEVELOPER_CLIENT "Build the React developer-client web app (requires npm)" OFF)
+if(BUILD_DEVELOPER_CLIENT OR CMAKE_BUILD_TYPE STREQUAL "Development" OR CMAKE_BUILD_TYPE STREQUAL "Debug")
     # Check if npm is available
     find_program(NPM_EXECUTABLE npm)
     if(NPM_EXECUTABLE)
@@ -81,4 +120,11 @@ if(CMAKE_BUILD_TYPE STREQUAL "Development" OR CMAKE_BUILD_TYPE STREQUAL "Debug")
     else()
         message(WARNING "npm not found - skipping developer-client build. Install Node.js to enable developer tools.")
     endif()
+endif()
+
+# world-sim's POST_BUILD step copies the shared build/shaders directory but
+# does not link planet-view, so parallel MSBuild can schedule planet-view's
+# shader staging concurrently with that copy (Windows file locks fail it).
+if(TARGET world-sim AND TARGET planet-view-shaders)
+    add_dependencies(world-sim planet-view-shaders)
 endif()

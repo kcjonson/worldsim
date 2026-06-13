@@ -124,10 +124,15 @@ Applications:
 | Document | Description |
 |----------|-------------|
 | [World Generation Architecture](./world-generation-architecture.md) | Pluggable world generators |
+| [World Generation Implementation](./world-generation-implementation.md) | SphereGrid (Goldberg hex), pipeline, frozen contracts |
+| [Planet-view Rendering](./planet-view-rendering.md) | Two-tier globe renderer: base mips + detail page cache |
 | [Chunk Management System](./chunk-management-system.md) | Infinite 2D world from 3D sphere |
-| [3D to 2D Sampling](./3d-to-2d-sampling.md) | Converting spherical world to tiles |
+| [3D to 2D Sampling](./3d-to-2d-sampling.md) | Converting spherical world to tiles (locateHex) |
 | [Flat Tile Storage Refactor](./flat-tile-storage-refactor.md) | Proposed: Replace layered tiles with flat array |
 | [Ground Textures](./ground-textures.md) | SVG tile patterns with GPU rasterization cache |
+| [Building & Construction Architecture](./building-construction-architecture.md) | Freeform structures: geometry lib, room detection, structure rendering |
+| [Pathfinding Architecture](./pathfinding-architecture.md) | Four-tier navigation: planet hex graph, chunk components, CDT navmesh, physical agents |
+| [Vision Architecture](./vision-architecture.md) | Wall-occluded sight: visibility polygons, discovery/witnessing, fog of war |
 
 ### Graphics & Rendering
 

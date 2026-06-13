@@ -43,10 +43,10 @@ namespace Renderer {
 		// Get min/max from sample window
 		getFrameTimeMinMax(metrics.frameTimeMinMs, metrics.frameTimeMaxMs);
 
-		// Rendering stats
-		metrics.drawCalls = drawCalls;
+		// Rendering stats (batch renderer + raw entity draws combined)
+		metrics.drawCalls = drawCalls + entityDrawCalls;
 		metrics.vertexCount = vertexCount;
-		metrics.triangleCount = triangleCount;
+		metrics.triangleCount = triangleCount + entityTriangleCount;
 
 		// Timing breakdown
 		metrics.tileRenderMs = tileRenderMs;
@@ -108,6 +108,11 @@ namespace Renderer {
 		tileCount = inTileCount;
 		entityCount = inEntityCount;
 		visibleChunkCount = inVisibleChunkCount;
+	}
+
+	void MetricsCollector::setEntityRenderStats(uint32_t inDrawCalls, uint32_t inTriangleCount) {
+		entityDrawCalls = inDrawCalls;
+		entityTriangleCount = inTriangleCount;
 	}
 
 	void MetricsCollector::setEcsSystemTimings(const std::vector<Foundation::EcsSystemTiming>& timings) {

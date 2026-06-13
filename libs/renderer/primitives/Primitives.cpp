@@ -64,6 +64,8 @@ namespace Renderer::Primitives {
 	static CoordinateSystem*			  g_coordinateSystem = nullptr;
 	static ui::FontRenderer*			  g_fontRenderer = nullptr;
 	static FrameUpdateCallback			  g_frameUpdateCallback = nullptr;
+	static unsigned int					  g_tileAtlasTexture = 0;
+	static std::vector<glm::vec4>		  g_tileAtlasRects;
 	static std::stack<Foundation::Rect>	  g_scissorStack;
 	static std::stack<Foundation::Mat4>	  g_transformStack;
 	static Foundation::Rect				  g_currentScissor;
@@ -121,9 +123,16 @@ namespace Renderer::Primitives {
 	}
 
 	void setTileAtlas(unsigned int atlasTexture, const std::vector<glm::vec4>& rects) {
-		if (g_batchRenderer != nullptr) {
-			g_batchRenderer->setTileAtlas(atlasTexture, rects);
-		}
+		g_tileAtlasTexture = atlasTexture;
+		g_tileAtlasRects = rects;
+	}
+
+	unsigned int getTileAtlasTexture() {
+		return g_tileAtlasTexture;
+	}
+
+	const std::vector<glm::vec4>& getTileAtlasRects() {
+		return g_tileAtlasRects;
 	}
 
 	BatchRenderer* getBatchRenderer() {
@@ -308,20 +317,6 @@ namespace Renderer::Primitives {
 
 		g_batchRenderer->addTriangles(
 			args.vertices, args.indices, args.vertexCount, args.indexCount, args.color, args.colors
-		);
-	}
-
-	void drawTile(const TileArgs& args) {
-		if (g_batchRenderer == nullptr) {
-			return;
-		}
-
-		g_batchRenderer->addTileQuad(
-			args.bounds, args.color,
-			args.edgeMask, args.cornerMask, args.surfaceId, args.hardEdgeMask,
-			args.tileX, args.tileY,
-			args.neighborN, args.neighborE, args.neighborS, args.neighborW,
-			args.neighborNW, args.neighborNE, args.neighborSE, args.neighborSW
 		);
 	}
 

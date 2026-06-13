@@ -1,7 +1,7 @@
 #pragma once
 
-// BiomeDispatcher - Routes generation to appropriate biome generator
-// Uses static dispatch (switch) for zero runtime overhead.
+// BiomeDispatcher - Routes generation to the appropriate biome generator.
+// All 21 worldgen biomes are mapped to one of the 8 existing generators.
 
 #include "world/generation/GenerationContext.h"
 #include "world/generation/GenerationResult.h"
@@ -17,36 +17,60 @@
 
 namespace engine::world::generation {
 
-/// Dispatches to the appropriate biome generator based on biome type.
-/// Uses static dispatch (switch) for zero overhead - equivalent to direct function call.
 class BiomeDispatcher {
 public:
-	/// Generate terrain for a tile based on its biome.
-	/// @param ctx Generation context with all input data
-	/// @return GenerationResult with surface type and optional metadata
-	[[nodiscard]] static GenerationResult generate(const GenerationContext& ctx) {
-		switch (ctx.biome) {
-			case Biome::Grassland:
-				return GrasslandGenerator::generate(ctx);
-			case Biome::Forest:
-				return ForestGenerator::generate(ctx);
-			case Biome::Desert:
-				return DesertGenerator::generate(ctx);
-			case Biome::Tundra:
-				return TundraGenerator::generate(ctx);
-			case Biome::Wetland:
-				return WetlandGenerator::generate(ctx);
-			case Biome::Mountain:
-				return MountainGenerator::generate(ctx);
-			case Biome::Beach:
-				return BeachGenerator::generate(ctx);
-			case Biome::Ocean:
-				return OceanGenerator::generate(ctx);
-			default:
-				// Unknown biome - fallback to grassland
-				return GrasslandGenerator::generate(ctx);
-		}
-	}
+    [[nodiscard]] static GenerationResult generate(const GenerationContext& ctx) {
+        switch (ctx.biome) {
+            // ── Forest group ──────────────────────────────────────────────
+            case Biome::TropicalRainforest:
+            case Biome::TropicalSeasonalForest:
+            case Biome::TemperateDeciduousForest:
+            case Biome::TemperateRainforest:
+            case Biome::BorealForest:
+            case Biome::MontaneForest:
+                return ForestGenerator::generate(ctx);
+
+            // ── Grassland group ───────────────────────────────────────────
+            case Biome::TropicalSavanna:
+            case Biome::TemperateGrassland:
+            case Biome::AlpineGrassland:
+                return GrasslandGenerator::generate(ctx);
+
+            // ── Desert group ──────────────────────────────────────────────
+            case Biome::HotDesert:
+            case Biome::ColdDesert:
+            case Biome::SemiDesert:
+            case Biome::XericShrubland:
+                return DesertGenerator::generate(ctx);
+
+            // ── Tundra / polar group ──────────────────────────────────────
+            case Biome::ArcticTundra:
+            case Biome::PolarDesert:
+                return TundraGenerator::generate(ctx);
+
+            // Old Mountain mapped to AlpineTundra; preserve MountainGenerator visuals.
+            case Biome::AlpineTundra:
+                return MountainGenerator::generate(ctx);
+
+            // ── Wetland group ─────────────────────────────────────────────
+            case Biome::TemperateWetland:
+            case Biome::TropicalWetland:
+                return WetlandGenerator::generate(ctx);
+
+            // ── Beach ─────────────────────────────────────────────────────
+            case Biome::Beach:
+                return BeachGenerator::generate(ctx);
+
+            // ── Ocean / Lake ──────────────────────────────────────────────
+            case Biome::Ocean:
+            case Biome::Lake:
+                return OceanGenerator::generate(ctx);
+
+            case Biome::Count:
+                return GrasslandGenerator::generate(ctx);
+        }
+        return GrasslandGenerator::generate(ctx);
+    }
 };
 
 } // namespace engine::world::generation

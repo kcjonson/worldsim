@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2025-01-05 (Task Ordering System Phase 6: Task List UI - complete)
+Last Updated: 2026-06-12 (Building/Construction, Pathfinding, and Vision architecture specs drafted; memory design revised for belief-filtered navigation)
 
 ## Epic/Story/Task Template
 
@@ -410,6 +410,41 @@ while (running) {
 
 ## In Progress Epics
 
+### World Generation & Creator
+**Spec/Documentation:** `/docs/design/features/world-generation/`, `.claude/plans/world-generation.md`
+**Dependencies:** None
+**Status:** in progress
+
+**Goal:** Real 8-phase world generation (plates → terrain → climate → biomes), WorldCreator scene with 3D planet view and landing site selection, wired into New Game → 2D gameplay sampling the generated world.
+
+**Tasks:**
+- [x] M1: Foundation primitives (TaskPool, RNG, HashNoise, DeterministicMath, WorldHash)
+- [x] M2: worldgen core + frozen contracts (SphereGrid, WorldData, pipeline skeleton, debug image exporter, technical doc)
+- [x] M3a: Plates + plate movement (P1, P2)
+- [x] M3b: Terrain + sea level (P3) — ends with USER screenshot review gate
+- [x] M3c: Atmosphere + temperature (P4)
+- [x] M3d: Precipitation + rivers (P5)
+- [x] M3e: Oceans, biomes, snow, summary (P6–P9)
+- [x] M3f: planet-view lib (renderer, camera, picker, colorizer; chunked-LOD deferred to M3f-2)
+- [ ] Hex conversion + scalable crisp globe rendering (`.claude/plans/lets-work-on-the-serene-waterfall.md`)
+  - [x] Phase 1: SphereGrid Goldberg hex semantics (vertex-centered tiles, 10n²+2, cube-round assignment, 6-neighbor offsets, locateHex)
+  - [x] Phase 2: consumers re-baselined (neighbors=6, locateHex sampling, PlanetIO version bump)
+  - [x] Phase 3: two-tier crisp rendering — base mips (async bake, dirty-flag coalescing) + detail page cache (130×130 pages, 2D-array atlas, LRU, page table), per-pixel hex assignment in planet.frag, camera deep-zoom near-plane + n-aware min distance. Supersedes the M3f-2 "chunked LOD" placeholder.
+  - [x] Phase 4: docs + dev-log entry — world-generation-implementation.md (Goldberg grid, TileId amendment, frozen-contract amendments, locateHex, diagonal B-D fix, PlanetIO v2); planet-view-rendering.md (two-tier architecture, scaling table, budgets); 3d-to-2d-sampling.md (locateHex addendum); data-model.md + technical-notes.md (hexes now literal); dev log 2026-06-12-worldgen-hex-goldberg.md
+  - [x] Phase 5: end-to-end verification (New Game flow, far-tier washout fix, color-mode cycling, zoom crispness, Quick Start v2 cache save/load) + PR
+- [x] M3g: UI Slider + WorldCreator shell
+- [x] M3h: Biome taxonomy migration (engine, 8→21 biomes, sparse BiomeWeights)
+- [x] M4: PlanetSampler + GeneratedWorldSampler + GameLoading branch
+- [x] M5: WorldCreator integration (real generator + planet view)
+- [x] M6: Landing site + handoff + MainMenu rewire (e2e New Game)
+  - [x] Quick Start: cached pre-generated planet (PlanetIO save/load), bypasses generation
+  - [x] Persist accepted world on landing confirm
+  - [ ] Landing site local preview + difficulty rating (UX spec, deferred)
+- [ ] M7: Hardening, benchmark-gated default resolution, cross-platform determinism
+- [ ] Future: planet database — mmap/streamed reads from PlanetIO files for n>=4096 planets instead of whole-planet RAM residency (PlanetIO v1 SoA layout is already offset-addressable; see development log)
+
+---
+
 ### ✅ Storage and Hauling System
 **Spec/Documentation:** `/docs/design/features/storage-system.md`, `.claude/plans/storage-and-hauling.md`
 **Dependencies:** ~~Main Game UI: Colonist Details Dialog~~ (complete)
@@ -516,6 +551,40 @@ The following MVP epics have all been completed. Detailed task breakdowns are pr
 ---
 
 ## Planned Epics
+
+### 2D Render Performance Overhaul
+**Spec/Documentation:** `.claude/plans/render-performance-overhaul.md`, `/docs/development-log/entries/2026-06-09-render-performance-analysis.md`
+**Dependencies:** None
+**Status:** ready
+
+**Goal:** Fix the measured collapse at zoom-out (4 FPS at 0.25x) and scroll hitches (112-443ms). Persistent GPU tile geometry, async entity bake, far-zoom impostor handoff. Target 120 FPS at every zoom at current flora density (headroom for massively increased density later); 4x density stress must hold 60+.
+
+**Tasks:**
+- [x] Profiling tooling (camera/vsync control endpoints, perf-capture.ps1, draw call metrics fix)
+- [x] Phase 1: Per-chunk tile-data textures (one quad per chunk; deleted per-frame drawTile path)
+- [x] Phase 2: Async chunk generation + worker entity mesh bake + budgeted GPU uploads
+- [x] Phase 3: Far-zoom impostor handoff (height-bucketed meshes, zoom cutoff + fade)
+- [x] Windows frame pacing fix (timeBeginPeriod + sleep-then-spin; was capped ~60 FPS)
+- [ ] Phase 4: Remaining metrics correctness (GPU timer, Windows SystemResources, per-window max breakdown)
+- [ ] Phase 5: Small wins (AABB cache, LRU eviction, zoom-aware load radius, View smallest-pool, uniform-chunk fast path: skip the full 512x512 computeTile loop when all 4 sampled corners agree, e.g. deep-ocean chunks)
+- [ ] 4x-density scroll hitch attribution (p99 64ms at 4x; within criteria but worth chasing before density increase lands)
+
+---
+
+### Living Environment Rendering
+**Spec/Documentation:** `.claude/plans/living-environment-rendering.md`
+**Dependencies:** 2D Render Performance Overhaul (Phases 1-3)
+**Status:** ready
+
+**Goal:** Wind-blown grass at scale, grass parting around colonists with footprint trails, animated reactive water. Vertex-shader animation + interaction displacement maps; no per-frame CPU tessellation.
+
+**Tasks:**
+- [ ] M-A: WindSystem + vertex-shader wind for instanced and baked flora
+- [ ] M-B: Interaction displacement map (trampling) + footprint persistence
+- [ ] M-C: Water ripple/foam/sparkle + interaction rings
+- [ ] M-D: Far-zoom wind sheen, tree sway, particles, blob shadows
+
+---
 
 ### Goal-Driven Task Generation
 **Spec/Documentation:** `/docs/design/game-systems/colonists/task-registry.md`, `/docs/technical/task-generation-architecture.md`
@@ -820,6 +889,55 @@ The following MVP epics have all been completed. Detailed task breakdowns are pr
   - [ ] Colonist labels toggle (`L` key)
   - [ ] Threat indicators (red pulsing circles)
   - [ ] Off-screen threat direction arrows
+
+---
+
+### Vision System: Occlusion & Discovery
+**Spec/Documentation:** `/docs/technical/vision-architecture.md`
+**Dependencies:** Geometry Foundations (libs/geometry); consumes Building & Construction's structure publication for occluders
+**Status:** planned
+
+**Goal:** Honest sight: GeometryIndex shared with navigation, visibility polygons with an outdoor fast path, discovery/witnessing/stale-memory reconciliation through visibility, windows pass sight while blocking movement, structures discoverable per segment. Must land with or before Navigation P4 (belief filtering is hollow without it). **Fog of war explicitly excluded** — separate later epic alongside the overlay system; the polygon data it needs comes free from this work.
+
+**Tasks:**
+- [ ] GeometryIndex (segment store + transparency flags + version counter, shared with nav obstacle publication)
+- [ ] Visibility polygons (rotational sweep, outdoor fast path, per-observer caching)
+- [ ] Rewire discovery, witnessing, and stale-memory reconciliation through visibility
+- [ ] Structure-as-observable discovery + window transparency
+
+---
+
+### Navigation & Pathfinding
+**Spec/Documentation:** `/docs/technical/pathfinding-architecture.md`
+**Dependencies:** Geometry Foundations (shared integer-coordinate substrate, libs/geometry); consumes the construction obstacle/portal contract
+**Status:** planned (spec in review)
+
+**Goal:** Four-tier vector-native navigation: planet hex graph for cross-globe abstract parties, chunk connectivity components for reachability, dynamic CDT navmesh for exact local paths, collision circles + velocity-obstacle steering so agents take up space. Must land (through P4) before walls ship as player-facing gameplay; P6 unlocks raids.
+
+**Tasks:**
+- [ ] P1: Agents become physical (radius component, dynamic spatial hash, circle collision, separation)
+- [ ] P2: Local navmesh, static world (per-chunk CDT from terrain contours, triangle A* + corridor width + funnel, waypoint following; chunk anchoring fix)
+- [ ] P3: Regional layer (components, traversal-class reachability API, RRA* heuristic)
+- [ ] P4: Dynamic world + belief (construction obstacles/portals, door permission costs, memory-filtered planning, discovery replans, search primitives; requires Vision System: Occlusion & Discovery)
+- [ ] P5: Crowds (velocity-obstacle avoidance + mitigations, occupancy costs, door slot queues, regression rig)
+- [ ] P6: Global tier + raids (hex-graph A*, abstract party records, attention bubbles, materialization handoffs, raider belief seeding + scouting)
+
+---
+
+### Building & Construction System
+**Spec/Documentation:** `/docs/design/game-systems/world/building-construction.md` (design), `/docs/technical/building-construction-architecture.md` (architecture)
+**Dependencies:** Goal-Driven Task Generation (build/haul task sources); Navigation & Pathfinding before walls ship as gameplay (walls don't block movement until then); Material economy — extend the early crafting implementation with choppable trees and construction material items (axe/chop work in flight; chains grow as systems need them)
+**Status:** planned (specs in review)
+
+**Goal:** Freeform polygon building: foundation blueprints drawn on the map, walls on foundations with snapping and edge-fill, doors/windows as parameterized vector assets, automatic room detection. Deliver-then-build loop with work-driven procedural construction visuals.
+
+**Tasks:**
+- [ ] Epic A: Geometry foundations (libs/geometry, Clipper2 + earcut.hpp, planar graph + face extraction)
+- [ ] Epic C: Foundations end-to-end (ConstructionWorld, FoundationTool, blueprint lifecycle, goals, StructureRenderer, selection/panels, config)
+- [ ] Epic D: Walls (graph + junction splitting, WallTool, band rendering, nav integration, demolition)
+- [ ] Epic E: Rooms (face extraction on built/demolish events, room entities, notification)
+- [ ] Epic F: Openings (OpeningTool, parameterized assets, retrofit cuts, door nav nodes)
+- [ ] Epic G: Editing & polish (add/subtract, vertex editing, cascade demolish, multi-select)
 
 ---
 
