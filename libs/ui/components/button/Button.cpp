@@ -78,8 +78,12 @@ namespace UI {
 			return;
 		}
 		label = newLabel;
-		// updateTextPosition() syncs labelText.text and re-centers it; icon layout
-		// depends on label width, so refresh both.
+		// updateTextPosition() syncs labelText.text and re-centers it, but it early-returns
+		// for an empty label and would leave the old text behind, so clear it here to keep
+		// renderedLabel() truthful.
+		if (label.empty()) {
+			labelText.text.clear();
+		}
 		labelText.visible = visible && !label.empty();
 		updateTextPosition();
 		updateIconPosition();

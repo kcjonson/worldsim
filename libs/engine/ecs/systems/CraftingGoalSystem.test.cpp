@@ -331,6 +331,84 @@ TEST_F(MultiSystemGoalTest, BothSystemsRunWithoutInterference) {
 	EXPECT_GE(craftGoalsAfter, 1U) << "Should have craft goal";
 }
 
+// Recipe swap: when a station's next job changes to a different recipe, the old recipe's
+// child Harvest/Haul goals are torn down and rebuilt to match the new recipe's inputs.
+TEST_F(MultiSystemGoalTest, RecipeSwapRebuildsChildHierarchy) {
+	auto& assetReg = engine::assets::AssetRegistry::Get();
+
+	// A second material so recipe B's inputs differ from recipe A's.
+	engine::assets::AssetDefinition fiberDef;
+	fiberDef.defName = "PlantFiber";
+	fiberDef.label = "Plant Fiber";
+	fiberDef.category = engine::assets::ItemCategory::RawMaterial;
+	fiberDef.itemProperties = engine::assets::ItemProperties{};
+	fiberDef.itemProperties->stackSize = 10;
+	assetReg.registerTestDefinition(std::move(fiberDef));
+
+	engine::assets::RecipeDef recipeA;
+	recipeA.defName = "RecipeA";
+	recipeA.label = "Recipe A";
+	recipeA.stationDefName = "";
+	recipeA.workAmount = 100.0F;
+	recipeA.inputs.push_back(engine::assets::RecipeInput{.defName = "Stick", .defNameId = 0, .count = 2});
+	engine::assets::RecipeRegistry::Get().registerTestRecipe(recipeA);
+
+	engine::assets::RecipeDef recipeB;
+	recipeB.defName = "RecipeB";
+	recipeB.label = "Recipe B";
+	recipeB.stationDefName = "";
+	recipeB.workAmount = 100.0F;
+	recipeB.inputs.push_back(engine::assets::RecipeInput{.defName = "PlantFiber", .defNameId = 0, .count = 3});
+	engine::assets::RecipeRegistry::Get().registerTestRecipe(recipeB);
+
+	uint32_t stickId = assetReg.getDefNameId("Stick");
+	uint32_t fiberId = assetReg.getDefNameId("PlantFiber");
+
+	auto  station = createCraftingStation({0.0F, 0.0F}, "RecipeA");
+	auto& registry = GoalTaskRegistry::Get();
+
+	runUpdates(60);
+
+	const auto* craftA = registry.getGoalByDestination(station);
+	ASSERT_NE(craftA, nullptr);
+	uint64_t craftIdA = craftA->id;
+
+	// Children should accept Stick (recipe A's input).
+	{
+		auto children = registry.getChildGoals(craftIdA);
+		ASSERT_FALSE(children.empty());
+		for (const auto* child : children) {
+			ASSERT_FALSE(child->acceptedDefNameIds.empty());
+			EXPECT_EQ(child->acceptedDefNameIds[0], stickId) << "Recipe A children should accept Stick";
+		}
+	}
+
+	// Swap the queued job to recipe B (simulates job A finishing, job B becoming next).
+	auto* queue = world->getComponent<WorkQueue>(station);
+	ASSERT_NE(queue, nullptr);
+	queue->jobs.clear();
+	queue->addJob("RecipeB", 1);
+
+	runUpdates(60);
+
+	const auto* craftB = registry.getGoalByDestination(station);
+	ASSERT_NE(craftB, nullptr);
+
+	// Children must now match recipe B (accept PlantFiber, not Stick).
+	auto childrenB = registry.getChildGoals(craftB->id);
+	ASSERT_FALSE(childrenB.empty());
+	for (const auto* child : childrenB) {
+		ASSERT_FALSE(child->acceptedDefNameIds.empty());
+		EXPECT_EQ(child->acceptedDefNameIds[0], fiberId) << "After swap, children should accept PlantFiber";
+		EXPECT_NE(child->acceptedDefNameIds[0], stickId) << "Stale Stick children must be gone";
+	}
+
+	// Craft material total reflects recipe B (3), reset and Blocked again.
+	EXPECT_EQ(craftB->targetAmount, 3U);
+	EXPECT_EQ(craftB->deliveredAmount, 0U);
+	EXPECT_EQ(craftB->status, GoalStatus::Blocked);
+}
+
 TEST_F(MultiSystemGoalTest, GoalOwnershipIsSetCorrectly) {
 	// Create crafting station with recipe that has inputs (creates child goals)
 	engine::assets::RecipeDef recipeWithInputs;
@@ -508,16 +586,55 @@ TEST_F(GoalHierarchyTest, RecordDeliveryCompletesGoal) {
 	EXPECT_EQ(registry.getGoal(haulId)->availableCapacity(), 3U);
 	EXPECT_FALSE(registry.getGoal(haulId)->isComplete());
 
-	registry.recordDelivery(haulId);
-	registry.recordDelivery(haulId);
+	// recordDelivery now counts ITEMS, not actions: one haul moving 2 items records 2.
+	registry.recordDelivery(haulId, 2);
 	EXPECT_EQ(registry.getGoal(haulId)->deliveredAmount, 2U);
 	EXPECT_EQ(registry.getGoal(haulId)->availableCapacity(), 1U);
 	EXPECT_FALSE(registry.getGoal(haulId)->isComplete());
 
-	registry.recordDelivery(haulId);
+	// A zero-amount delivery is a no-op.
+	registry.recordDelivery(haulId, 0);
+	EXPECT_EQ(registry.getGoal(haulId)->deliveredAmount, 2U);
+
+	registry.recordDelivery(haulId, 1);
 	EXPECT_EQ(registry.getGoal(haulId)->deliveredAmount, 3U);
 	EXPECT_EQ(registry.getGoal(haulId)->availableCapacity(), 0U);
 	EXPECT_TRUE(registry.getGoal(haulId)->isComplete());
+}
+
+// (c') Delivering to a child Haul also credits its parent Craft goal and unblocks it once the
+// materials are satisfied (single source of truth: child and parent advance together).
+TEST_F(GoalHierarchyTest, ChildHaulDeliveryCreditsParentCraftAndUnblocks) {
+	auto& registry = GoalTaskRegistry::Get();
+
+	GoalTask craft;
+	craft.type = TaskType::Craft;
+	craft.owner = GoalOwner::CraftingGoalSystem;
+	craft.destinationEntity = static_cast<EntityID>(123);
+	craft.targetAmount = 3;
+	craft.status = GoalStatus::Blocked;
+	uint64_t craftId = registry.createGoal(std::move(craft));
+
+	GoalTask haul;
+	haul.type = TaskType::Haul;
+	haul.owner = GoalOwner::CraftingGoalSystem;
+	haul.destinationEntity = static_cast<EntityID>(123);
+	haul.targetAmount = 3;
+	haul.parentGoalId = craftId;
+	haul.status = GoalStatus::Available;
+	uint64_t haulId = registry.createGoal(std::move(haul));
+
+	registry.recordDelivery(haulId, 2);
+	// Both child and parent advanced by the same amount, no double-count.
+	EXPECT_EQ(registry.getGoal(haulId)->deliveredAmount, 2U);
+	EXPECT_EQ(registry.getGoal(craftId)->deliveredAmount, 2U);
+	EXPECT_EQ(registry.getGoal(craftId)->status, GoalStatus::Blocked)
+	    << "Craft stays Blocked until all materials delivered";
+
+	registry.recordDelivery(haulId, 1);
+	EXPECT_EQ(registry.getGoal(craftId)->deliveredAmount, 3U);
+	EXPECT_EQ(registry.getGoal(craftId)->status, GoalStatus::Available)
+	    << "Craft leaves Blocked once materials are satisfied";
 }
 
 } // namespace ecs::test

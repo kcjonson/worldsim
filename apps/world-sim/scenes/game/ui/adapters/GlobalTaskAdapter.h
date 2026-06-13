@@ -32,7 +32,6 @@ struct GlobalTaskDisplayData {
 	bool isMine = false;			// For colonist view: this colonist owns it
 	bool isBlocked = false;			// Goal is blocked (waiting for dependencies)
 	bool isUnassigned = false;		// Work pool entry (no colonist assigned yet)
-	uint32_t quantity = 1;			// Amount: "Cut 2 Trees" or "Haul 3 Wood"
 };
 
 /// Query all goals from GoalTaskRegistry (for colony-wide view)

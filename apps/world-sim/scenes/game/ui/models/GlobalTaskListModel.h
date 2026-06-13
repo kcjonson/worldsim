@@ -10,14 +10,12 @@
 //
 // Usage:
 //   GlobalTaskListModel model;
-//   if (model.refresh(world, cameraCenter, deltaTime)) {
+//   if (model.refresh(cameraCenter, deltaTime)) {
 //       // Data changed, rebuild UI
 //       rebuildUI(model.tasks());
 //   }
 
 #include "scenes/game/ui/adapters/GlobalTaskAdapter.h"
-
-#include <ecs/World.h>
 
 #include <glm/vec2.hpp>
 
@@ -30,11 +28,10 @@ class GlobalTaskListModel {
 	using TaskData = adapters::GlobalTaskDisplayData;
 
 	/// Refresh data from GoalTaskRegistry (throttled to 5Hz)
-	/// @param world The ECS world (for colonist name lookups)
 	/// @param cameraCenter Camera position for distance calculations
 	/// @param deltaTime Time since last frame (seconds)
 	/// @return true if data changed since last refresh
-	bool refresh(ecs::World& world, const glm::vec2& cameraCenter, float deltaTime);
+	bool refresh(const glm::vec2& cameraCenter, float deltaTime);
 
 	/// Get the cached task data (already sorted for display)
 	[[nodiscard]] const std::vector<TaskData>& tasks() const { return tasksData; }

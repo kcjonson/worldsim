@@ -16,7 +16,7 @@ bool distanceChanged(float oldDist, float newDist) {
 
 } // namespace
 
-bool GlobalTaskListModel::refresh(ecs::World& /*world*/, const glm::vec2& cameraCenter, float deltaTime) {
+bool GlobalTaskListModel::refresh(const glm::vec2& cameraCenter, float deltaTime) {
 	// Throttle refreshes to 5Hz unless forced
 	if (!forceRefresh) {
 		timeSinceRefresh += deltaTime;
@@ -67,6 +67,11 @@ bool GlobalTaskListModel::hasChanged(const std::vector<TaskData>& newData) const
 
 		// Status changed
 		if (oldTask.status != newTask.status) {
+			return true;
+		}
+
+		// Status detail changed (e.g., "0/11 materials" -> "3/11 materials")
+		if (oldTask.statusDetail != newTask.statusDetail) {
 			return true;
 		}
 

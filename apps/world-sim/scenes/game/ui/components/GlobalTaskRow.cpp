@@ -31,7 +31,7 @@ GlobalTaskRow::GlobalTaskRow(const Args& args)
 		.id = (args.id + "_line1").c_str()
 	}));
 
-	// Line 2: "Available • Need 3 • Known by: Bob, Alice" or "Blocked • 0/3 materials"
+	// Line 2: "Available • Known by: Bob, Alice" or "Blocked • 0/11 materials"
 	std::string line2Text = args.task.status;
 	if (!args.task.statusDetail.empty()) {
 		line2Text += " \xE2\x80\xA2 " + args.task.statusDetail;

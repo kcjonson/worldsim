@@ -83,9 +83,15 @@ namespace ecs {
 			// Check if goal already exists
 			const auto* existingGoal = registry.getGoalByDestination(entity);
 			if (existingGoal != nullptr) {
-				// Update existing goal
+				// Update existing goal. availableSlots already reflects everything deposited so
+				// far (the storage inventory grew with each delivery), so it IS the current
+				// available capacity. Reset deliveredAmount to 0 and absorb it into the freshly
+				// computed target - otherwise availableCapacity() = target - delivered would
+				// subtract the deposits twice (once via the shrunken slot count, once via the
+				// running deliveredAmount).
 				registry.updateGoal(existingGoal->id, [&](GoalTask& goal) {
 					goal.targetAmount = availableSlots;
+					goal.deliveredAmount = 0;
 					goal.acceptedDefNameIds = acceptedDefNameIds;
 					goal.acceptedCategory = primaryCategory;
 				});

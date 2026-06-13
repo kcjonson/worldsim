@@ -261,14 +261,25 @@ namespace ecs {
 		}
 
 		/// Evaluate haul options by querying Haul goals from GoalTaskRegistry
-		/// Goal-driven: Goals define WHAT storage needs items, Memory provides fulfillment options
+		/// Goal-driven: Goals define WHAT storage needs items, Memory + inventory provide
+		/// fulfillment options.
+		///
+		/// Two source kinds:
+		/// - Craft-material hauls (the Haul is a child of a Craft goal): the colonist harvested
+		///   the materials into its own inventory, so the source is inventory. It carries them
+		///   to the crafting station - no ground pickup. This is what makes the
+		///   harvest -> haul -> craft chain actually connect.
+		/// - Storage hauls: the source is a loose ground item the colonist knows about.
+		///
 		/// @param registry Asset registry for capability lookups
 		/// @param memory Colonist memory (known entities)
+		/// @param inventory Colonist inventory (for craft-material hauls)
 		/// @param position Colonist position
 		/// @param trace Output decision trace
 		void evaluateHaulOptions(
 			const engine::assets::AssetRegistry& registry,
 			const Memory&						 memory,
+			const Inventory&					 inventory,
 			const glm::vec2&					 position,
 			DecisionTrace&						 trace
 		) {
@@ -280,6 +291,45 @@ namespace ecs {
 			for (const auto* goal : haulGoals) {
 				if (goal == nullptr || goal->availableCapacity() == 0) {
 					continue; // Goal is full or null
+				}
+
+				// Craft-material haul: source is the colonist's inventory, never loose ground
+				// items. If this Haul belongs to a Craft goal, handle it here and skip the
+				// memory scan. An option is emitted only once the Harvest dependency has
+				// completed (status Available) and the colonist actually carries the material.
+				if (goal->parentGoalId.has_value()) {
+					const auto* parent = goalRegistry.getGoal(goal->parentGoalId.value());
+					if (parent != nullptr && parent->type == TaskType::Craft) {
+						if (goal->status == GoalStatus::Available) {
+							for (uint32_t acceptedId : goal->acceptedDefNameIds) {
+								const auto& itemDefName = registry.getDefName(acceptedId);
+								uint32_t	carried = inventory.getQuantity(itemDefName);
+								if (carried == 0) {
+									continue;
+								}
+
+								EvaluatedOption haulOption;
+								haulOption.taskType = TaskType::Haul;
+								haulOption.needType = NeedType::Count;
+								haulOption.needValue = 100.0F;
+								haulOption.threshold = 0.0F;
+								haulOption.targetPosition = goal->destinationPosition;
+								haulOption.targetDefNameId = acceptedId;
+								haulOption.distanceToTarget = glm::distance(position, goal->destinationPosition);
+								haulOption.haulItemDefName = itemDefName;
+								haulOption.haulQuantity = std::min(carried, goal->availableCapacity());
+								haulOption.haulSourcePosition = position; // already carrying
+								haulOption.haulTargetStorageId = static_cast<uint64_t>(goal->destinationEntity);
+								haulOption.haulTargetPosition = goal->destinationPosition;
+								haulOption.haulGoalId = goal->id;
+								haulOption.haulFromInventory = true;
+								haulOption.status = OptionStatus::Available;
+								haulOption.reason = "Delivering " + itemDefName + " to crafting station";
+								trace.options.push_back(haulOption);
+							}
+						}
+						continue;
+					}
 				}
 
 				// Check colonist's memory for items that can fulfill this goal
@@ -1028,8 +1078,9 @@ namespace ecs {
 			}
 		}
 
-		// Tier 6.4: Haul loose items to storage containers (goal-driven)
-		evaluateHaulOptions(m_registry, memory, position.value, trace);
+		// Tier 6.4: Haul loose items to storage containers (goal-driven), and deliver
+		// harvested craft materials from inventory to crafting stations
+		evaluateHaulOptions(m_registry, memory, inventory, position.value, trace);
 
 		// Tier 6.7: Harvest resources for crafting (goal-driven)
 		evaluateHarvestOptions(m_registry, memory, position.value, skills, trace);
@@ -1123,8 +1174,10 @@ namespace ecs {
 			task.haulTargetStorageId = selected->haulTargetStorageId;
 			task.haulGoalId = selected->haulGoalId;
 			task.haulTargetPosition = selected->haulTargetPosition.value_or(glm::vec2{0.0F, 0.0F});
-			// For haul tasks, target is initially the source position (pickup first)
-			task.targetPosition = task.haulSourcePosition;
+			task.haulFromInventory = selected->haulFromInventory;
+			// Craft-material hauls already carry the items, so head straight to the station.
+			// Standard hauls go to the source first (pickup), then the destination.
+			task.targetPosition = task.haulFromInventory ? task.haulTargetPosition : task.haulSourcePosition;
 			// Check if goal has a chainId (linked to a prior Harvest)
 			const auto* goal = GoalTaskRegistry::Get().getGoal(selected->haulGoalId);
 			if (goal != nullptr && goal->chainId.has_value()) {

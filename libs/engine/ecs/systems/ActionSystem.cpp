@@ -21,7 +21,11 @@
 
 #include <utils/Log.h>
 
+#include <algorithm>
+#include <optional>
 #include <random>
+#include <utility>
+#include <vector>
 
 namespace ecs {
 
@@ -114,7 +118,7 @@ namespace ecs {
 		Task&				  task,
 		Action&				  action,
 		const Position&		  position,
-		const Memory&		  memory,
+		Memory&				  memory,
 		const NeedsComponent& needs,
 		const Inventory&	  inventory
 	) {
@@ -439,18 +443,19 @@ namespace ecs {
 				}
 			}
 
-			// For goal-driven Harvest tasks, update the GoalTaskRegistry
-			// This notifies dependent goals (e.g., Haul goals waiting for harvest) that items are now available
-			if (task.type == TaskType::Harvest && task.harvestGoalId != 0) {
+			// For goal-driven Harvest tasks, update the GoalTaskRegistry.
+			// Record only what actually landed in inventory (overflow is lost, above), so the
+			// harvest goal's progress reflects real items the colonist now carries.
+			if (task.type == TaskType::Harvest && task.harvestGoalId != 0 && added > 0) {
 				auto& goalRegistry = GoalTaskRegistry::Get();
 
-				// Record delivery to the harvest goal (items yielded)
-				goalRegistry.recordDelivery(task.harvestGoalId);
+				goalRegistry.recordDelivery(task.harvestGoalId, added);
 
 				// Check if goal is now complete
 				const auto* goal = goalRegistry.getGoal(task.harvestGoalId);
 				if (goal != nullptr && goal->availableCapacity() == 0) {
-					// Harvest goal complete - notify dependent goals then remove
+					// Harvest goal complete - notify dependent goals (the Haul that carries
+					// these items to the station unblocks) then remove the harvest goal.
 					goalRegistry.notifyGoalCompleted(task.harvestGoalId);
 					goalRegistry.removeGoal(task.harvestGoalId);
 				}
@@ -576,6 +581,38 @@ namespace ecs {
 		if (action.hasDepositEffect()) {
 			const auto& depEff = action.depositEffect();
 
+			// Craft-material delivery: the target is a crafting station with no storage
+			// container. The harvested materials stay in the colonist's inventory (the Craft
+			// action consumes them from there); arriving here just marks them delivered so the
+			// parent Craft goal advances out of Blocked.
+			if (depEff.deliverToCraftStation) {
+				uint32_t carried = inventory.getQuantity(depEff.itemDefName);
+				uint32_t delivered = std::min(carried, depEff.quantity);
+				if (delivered > 0 && task.type == TaskType::Haul && task.haulGoalId != 0) {
+					auto& goalRegistry = GoalTaskRegistry::Get();
+					goalRegistry.recordDelivery(task.haulGoalId, delivered);
+
+					const auto* goal = goalRegistry.getGoal(task.haulGoalId);
+					if (goal != nullptr && goal->availableCapacity() == 0) {
+						goalRegistry.removeGoal(task.haulGoalId);
+					}
+					LOG_INFO(
+						Engine,
+						"[Action] Delivered %u x %s to crafting station %llu (kept in inventory for craft)",
+						delivered,
+						depEff.itemDefName.c_str(),
+						static_cast<unsigned long long>(depEff.storageEntityId)
+					);
+				} else {
+					LOG_WARNING(
+						Engine,
+						"[Action] Craft delivery of %s found nothing carried (carried=%u)",
+						depEff.itemDefName.c_str(),
+						carried
+					);
+				}
+			} else {
+
 			// Remove item from colonist inventory
 			uint32_t removed = inventory.removeItem(depEff.itemDefName, depEff.quantity);
 			if (removed > 0) {
@@ -597,8 +634,22 @@ namespace ecs {
 							static_cast<unsigned long long>(depEff.storageEntityId)
 						);
 					}
+
+					// Record delivery only for items that actually landed in storage. If the
+					// store was full (partial add) or destroyed (no storageInv, items bounced
+					// back), nothing is credited - the goal stays open.
+					if (added > 0 && task.type == TaskType::Haul && task.haulGoalId != 0) {
+						auto& goalRegistry = GoalTaskRegistry::Get();
+						goalRegistry.recordDelivery(task.haulGoalId, added);
+
+						const auto* goal = goalRegistry.getGoal(task.haulGoalId);
+						if (goal != nullptr && goal->availableCapacity() == 0) {
+							// Haul goal complete - remove it
+							goalRegistry.removeGoal(task.haulGoalId);
+						}
+					}
 				} else {
-					// Storage entity not found - put items back
+					// Storage entity not found - put items back, credit nothing
 					inventory.addItem(depEff.itemDefName, removed);
 					LOG_WARNING(
 						Engine,
@@ -606,21 +657,10 @@ namespace ecs {
 						static_cast<unsigned long long>(depEff.storageEntityId)
 					);
 				}
-
-				// For goal-driven Haul tasks, update and clean up the goal
-				if (task.type == TaskType::Haul && task.haulGoalId != 0) {
-					auto& goalRegistry = GoalTaskRegistry::Get();
-					goalRegistry.recordDelivery(task.haulGoalId);
-
-					const auto* goal = goalRegistry.getGoal(task.haulGoalId);
-					if (goal != nullptr && goal->availableCapacity() == 0) {
-						// Haul goal complete - remove it
-						goalRegistry.removeGoal(task.haulGoalId);
-					}
-				}
 			} else {
 				LOG_WARNING(Engine, "[Action] Deposit failed: %s not in inventory", depEff.itemDefName.c_str());
 			}
+			} // end storage-deposit branch
 		}
 
 		// Special handling for Haul tasks - may need to continue to deposit phase
@@ -871,12 +911,17 @@ namespace ecs {
 		action.clear();
 	}
 
-	void ActionSystem::startHarvestAction(Task& task, Action& action, const Position& position, const Memory& memory) {
+	void ActionSystem::startHarvestAction(Task& task, Action& action, const Position& position, Memory& memory) {
 		auto& registry = engine::assets::AssetRegistry::Get();
 
 		// Goal-driven harvest: Find a harvestable entity at the target position that yields
 		// the item type specified by the Harvest goal (harvestYieldDefNameId)
 		constexpr float kPositionTolerance = 0.5F;
+
+		// Track stale memory entries sitting at the target so we can forget them if no valid
+		// harvestable is actually there (phantom target). Otherwise AIDecision keeps
+		// re-selecting the dead entity and floods warnings until LRU eviction.
+		std::vector<std::pair<glm::vec2, uint32_t>> staleAtTarget;
 
 		for (const auto& [key, entity] : memory.knownWorldEntities) {
 			// Check if entity is at target position
@@ -885,6 +930,8 @@ namespace ecs {
 			if (distSq > kPositionTolerance * kPositionTolerance) {
 				continue;
 			}
+
+			staleAtTarget.emplace_back(entity.position, entity.defNameId);
 
 			// Check if entity has Harvestable capability
 			if (!registry.hasCapability(entity.defNameId, engine::assets::CapabilityType::Harvestable)) {
@@ -932,27 +979,55 @@ namespace ecs {
 			return;
 		}
 
-		// No valid harvestable found at target
+		// No valid harvestable found at target - the memory entry (if any) is stale. Forget
+		// it so AIDecision stops re-selecting the phantom target on the next tick.
+		for (const auto& [pos, defNameId] : staleAtTarget) {
+			memory.forgetWorldEntity(pos, defNameId);
+		}
+
 		LOG_WARNING(
 			Engine,
-			"[Action] No harvestable entity found at (%.1f, %.1f) for yield %u (goal %llu)",
+			"[Action] No harvestable entity found at (%.1f, %.1f) for yield %u (goal %llu) - forgot %zu stale entr%s",
 			task.targetPosition.x,
 			task.targetPosition.y,
 			task.harvestYieldDefNameId,
-			static_cast<unsigned long long>(task.harvestGoalId)
+			static_cast<unsigned long long>(task.harvestGoalId),
+			staleAtTarget.size(),
+			staleAtTarget.size() == 1 ? "y" : "ies"
 		);
 		action.clear();
 	}
 
-	void ActionSystem::startHaulAction(Task& task, Action& action, const Position& position, const Memory& memory) {
+	void ActionSystem::startHaulAction(Task& task, Action& action, const Position& position, Memory& memory) {
 		auto& registry = engine::assets::AssetRegistry::Get();
 
-		// Haul is a two-phase task:
+		constexpr float kPositionTolerance = 0.5F;
+
+		// Craft-material haul: the colonist already carries the harvested items, so there is
+		// no ground pickup. It just walks to the crafting station and "delivers" (items stay
+		// in inventory for the Craft action; the goal is credited). Single-phase.
+		if (task.haulFromInventory) {
+			action = Action::Deposit(
+				task.haulItemDefName,
+				task.haulQuantity,
+				task.haulTargetStorageId,
+				task.haulTargetPosition,
+				/*deliverToCraftStation=*/true
+			);
+			LOG_DEBUG(
+				Engine,
+				"[Action] Haul-from-inventory: deliver %u x %s to crafting station %llu",
+				task.haulQuantity,
+				task.haulItemDefName.c_str(),
+				static_cast<unsigned long long>(task.haulTargetStorageId)
+			);
+			return;
+		}
+
+		// Standard haul is a two-phase task:
 		// Phase 1: At source position → Pickup the item
 		// Phase 2: At storage position → Deposit the item
 		// We determine which phase by checking which position we're closer to
-
-		constexpr float kPositionTolerance = 0.5F;
 
 		glm::vec2 diffToSource = position.value - task.haulSourcePosition;
 		float	  distSqToSource = diffToSource.x * diffToSource.x + diffToSource.y * diffToSource.y;
@@ -965,6 +1040,7 @@ namespace ecs {
 		if (atSource && !atTarget) {
 			// Phase 1: At source - do Pickup
 			// Look for a carryable entity at the source position matching the item we want to haul
+			std::optional<std::pair<glm::vec2, uint32_t>> staleAtSource;
 			for (const auto& [key, entity] : memory.knownWorldEntities) {
 				// Check if entity is at the source position
 				glm::vec2 diff = entity.position - task.haulSourcePosition;
@@ -993,14 +1069,23 @@ namespace ecs {
 					);
 					return;
 				}
+
+				// Matches by name but isn't actually carryable anymore - stale memory entry
+				staleAtSource = std::make_pair(entity.position, entity.defNameId);
+			}
+
+			// Pickup target gone - forget the stale entry so AIDecision stops re-selecting it.
+			if (staleAtSource.has_value()) {
+				memory.forgetWorldEntity(staleAtSource->first, staleAtSource->second);
 			}
 
 			LOG_WARNING(
 				Engine,
-				"[Action] Haul failed: item %s not found at (%.1f, %.1f)",
+				"[Action] Haul failed: item %s not found at (%.1f, %.1f)%s",
 				task.haulItemDefName.c_str(),
 				task.haulSourcePosition.x,
-				task.haulSourcePosition.y
+				task.haulSourcePosition.y,
+				staleAtSource.has_value() ? " - forgot stale entry" : ""
 			);
 			action.clear();
 		} else if (atTarget) {

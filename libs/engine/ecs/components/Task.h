@@ -65,6 +65,13 @@ struct Task {
 	glm::vec2	haulSourcePosition{0.0F, 0.0F};	   // Position of the source item
 	glm::vec2	haulTargetPosition{0.0F, 0.0F};	   // Position of the storage container
 
+	/// For craft-material hauls: the colonist already carries the harvested items in its
+	/// inventory, so the haul skips the ground-pickup phase and just carries them to the
+	/// crafting station. The station has no storage container; "delivery" means the items
+	/// are present at the station, ready for the subsequent Craft action to consume from
+	/// inventory. The haul records its delivery (crediting the parent Craft goal) on arrival.
+	bool haulFromInventory = false;
+
 	/// For PlacePackaged tasks: packaged entity to carry and placement target
 	uint64_t  placePackagedEntityId = 0;		   // Entity ID of the packaged item to carry
 	glm::vec2 placeSourcePosition{0.0F, 0.0F};	   // Where the packaged item currently is
@@ -107,6 +114,7 @@ struct Task {
 		haulGoalId = 0;
 		haulSourcePosition = glm::vec2{0.0F, 0.0F};
 		haulTargetPosition = glm::vec2{0.0F, 0.0F};
+		haulFromInventory = false;
 		placePackagedEntityId = 0;
 		placeSourcePosition = glm::vec2{0.0F, 0.0F};
 		placeTargetPosition = glm::vec2{0.0F, 0.0F};

@@ -59,6 +59,7 @@ namespace ecs {
 		uint64_t				 haulTargetStorageId = 0; // Storage container entity ID
 		std::optional<glm::vec2> haulTargetPosition;	  // Where to deposit
 		uint64_t				 haulGoalId = 0;		  // Goal being fulfilled (for reservation)
+		bool					 haulFromInventory = false; // Source is colonist inventory (craft-material haul)
 
 		// PlacePackaged-specific fields (for PlacePackaged tasks)
 		uint64_t				 placePackagedEntityId = 0; // Entity ID of packaged item

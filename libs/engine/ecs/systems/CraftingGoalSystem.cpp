@@ -8,6 +8,10 @@
 #include <assets/AssetRegistry.h>
 #include <assets/RecipeRegistry.h>
 
+#include <functional>
+#include <string>
+#include <vector>
+
 namespace ecs {
 
 	namespace {
@@ -15,6 +19,16 @@ namespace ecs {
 		uint64_t generateChainId() {
 			static uint64_t nextChainId = 1;
 			return nextChainId++;
+		}
+
+		// Stable, non-zero identity for a recipe defName (used to detect recipe swaps).
+		uint32_t recipeIdentity(const std::string& recipeDefName) {
+			if (recipeDefName.empty()) {
+				return 0;
+			}
+			auto h = std::hash<std::string>{}(recipeDefName);
+			auto id = static_cast<uint32_t>(h ^ (h >> 32));
+			return id == 0 ? 1U : id; // never collide with the "no recipe" sentinel
 		}
 
 		// Check if any asset definition has a harvestable that yields the given item type
@@ -92,12 +106,107 @@ namespace ecs {
 				continue;
 			}
 
+			uint32_t recipeId = recipeIdentity(nextJob->recipeDefName);
+
+			// Build the child Harvest/Haul hierarchy under a Craft goal. Returns the total
+			// number of input items the recipe needs (the Craft goal's targetAmount).
+			auto buildChildHierarchy = [&](uint64_t craftGoalId) -> uint32_t {
+				uint32_t totalInputsNeeded = 0;
+				for (const auto& input : recipe->inputs) {
+					uint32_t inputDefNameId = assetRegistry.getDefNameId(input.defName);
+					if (inputDefNameId == 0) {
+						continue;
+					}
+
+					totalInputsNeeded += input.count;
+
+					// Check if this input can come from harvestable sources
+					bool canHarvest = canItemBeHarvested(assetRegistry, input.defName);
+
+					// Generate chain ID to link Harvest → Haul (for continuity bonus)
+					uint64_t chainId = generateChainId();
+
+					std::optional<uint64_t> harvestGoalId;
+
+					if (canHarvest) {
+						// Create Harvest goal
+						GoalTask harvestGoal;
+						harvestGoal.type = TaskType::Harvest;
+						harvestGoal.owner = GoalOwner::CraftingGoalSystem;
+						harvestGoal.destinationEntity = entity;
+						harvestGoal.destinationPosition = position.value;
+						harvestGoal.destinationDefNameId = 0;
+						harvestGoal.acceptedDefNameIds = {inputDefNameId};
+						harvestGoal.acceptedCategory = engine::assets::ItemCategory::None;
+						harvestGoal.targetAmount = input.count;
+						harvestGoal.deliveredAmount = 0;
+						harvestGoal.createdAt = 0.0F;
+						harvestGoal.parentGoalId = craftGoalId;
+						harvestGoal.status = GoalStatus::Available;
+						harvestGoal.yieldDefNameId = inputDefNameId;
+						harvestGoal.chainId = chainId;
+
+						harvestGoalId = goalRegistry.createGoal(std::move(harvestGoal));
+					}
+
+					// Create Haul goal
+					GoalTask haulGoal;
+					haulGoal.type = TaskType::Haul;
+					haulGoal.owner = GoalOwner::CraftingGoalSystem;
+					haulGoal.destinationEntity = entity;
+					haulGoal.destinationPosition = position.value;
+					haulGoal.destinationDefNameId = 0;
+					haulGoal.acceptedDefNameIds = {inputDefNameId};
+					haulGoal.acceptedCategory = engine::assets::ItemCategory::None;
+					haulGoal.targetAmount = input.count;
+					haulGoal.deliveredAmount = 0;
+					haulGoal.createdAt = 0.0F;
+					haulGoal.parentGoalId = craftGoalId;
+					haulGoal.chainId = chainId;
+
+					if (harvestGoalId.has_value()) {
+						// Haul depends on Harvest completing
+						haulGoal.dependsOnGoalId = harvestGoalId;
+						haulGoal.status = GoalStatus::WaitingForItems;
+					} else {
+						// No harvest needed - Haul can start immediately
+						haulGoal.status = GoalStatus::Available;
+					}
+
+					goalRegistry.createGoal(std::move(haulGoal));
+				}
+				return totalInputsNeeded;
+			};
+
 			// Check if goal already exists
 			const auto* existingGoal = goalRegistry.getGoalByDestination(entity);
 			if (existingGoal != nullptr) {
-				// Goal exists - update target amount but keep hierarchy
-				goalRegistry.updateGoal(existingGoal->id, [&](GoalTask& goal) {
-					goal.targetAmount = nextJob->remaining();
+				if (existingGoal->recipeNameId == recipeId) {
+					// Same recipe - keep the hierarchy, just refresh remaining job count.
+					// Don't clobber targetAmount (it's the material total, not the job count)
+					// or deliveredAmount (delivery progress).
+					stationsWithGoals.erase(entity);
+					activeGoalCount++;
+					continue;
+				}
+
+				// Recipe swapped (e.g., job A finished, job B is now next): the old children
+				// belong to the previous recipe. Tear the hierarchy down and rebuild for the
+				// new recipe so children match the new inputs.
+				uint64_t craftGoalId = existingGoal->id;
+				std::vector<uint64_t> oldChildIds;
+				for (const auto* child : goalRegistry.getChildGoals(craftGoalId)) {
+					oldChildIds.push_back(child->id);
+				}
+				for (uint64_t childId : oldChildIds) {
+					goalRegistry.removeGoalWithChildren(childId);
+				}
+				uint32_t totalInputsNeeded = buildChildHierarchy(craftGoalId);
+				goalRegistry.updateGoal(craftGoalId, [&](GoalTask& goal) {
+					goal.recipeNameId = recipeId;
+					goal.targetAmount = totalInputsNeeded;
+					goal.deliveredAmount = 0;
+					goal.status = GoalStatus::Blocked;
 				});
 				stationsWithGoals.erase(entity);
 				activeGoalCount++;
@@ -118,76 +227,14 @@ namespace ecs {
 			craftGoal.deliveredAmount = 0;
 			craftGoal.createdAt = 0.0F;
 			craftGoal.status = GoalStatus::Blocked; // Blocked until materials ready
+			craftGoal.recipeNameId = recipeId;
 
 			uint64_t craftGoalId = goalRegistry.createGoal(std::move(craftGoal));
 
 			// 2. For each recipe input, create Harvest and/or Haul goals
-			uint32_t totalInputsNeeded = 0;
-			for (const auto& input : recipe->inputs) {
-				uint32_t inputDefNameId = assetRegistry.getDefNameId(input.defName);
-				if (inputDefNameId == 0) {
-					continue;
-				}
+			uint32_t totalInputsNeeded = buildChildHierarchy(craftGoalId);
 
-				totalInputsNeeded += input.count;
-
-				// Check if this input can come from harvestable sources
-				bool canHarvest = canItemBeHarvested(assetRegistry, input.defName);
-
-				// Generate chain ID to link Harvest → Haul (for continuity bonus)
-				uint64_t chainId = generateChainId();
-
-				std::optional<uint64_t> harvestGoalId;
-
-				if (canHarvest) {
-					// Create Harvest goal
-					GoalTask harvestGoal;
-					harvestGoal.type = TaskType::Harvest;
-					harvestGoal.owner = GoalOwner::CraftingGoalSystem;
-					harvestGoal.destinationEntity = entity;
-					harvestGoal.destinationPosition = position.value;
-					harvestGoal.destinationDefNameId = 0;
-					harvestGoal.acceptedDefNameIds = {inputDefNameId};
-					harvestGoal.acceptedCategory = engine::assets::ItemCategory::None;
-					harvestGoal.targetAmount = input.count;
-					harvestGoal.deliveredAmount = 0;
-					harvestGoal.createdAt = 0.0F;
-					harvestGoal.parentGoalId = craftGoalId;
-					harvestGoal.status = GoalStatus::Available;
-					harvestGoal.yieldDefNameId = inputDefNameId;
-					harvestGoal.chainId = chainId;
-
-					harvestGoalId = goalRegistry.createGoal(std::move(harvestGoal));
-				}
-
-				// Create Haul goal
-				GoalTask haulGoal;
-				haulGoal.type = TaskType::Haul;
-				haulGoal.owner = GoalOwner::CraftingGoalSystem;
-				haulGoal.destinationEntity = entity;
-				haulGoal.destinationPosition = position.value;
-				haulGoal.destinationDefNameId = 0;
-				haulGoal.acceptedDefNameIds = {inputDefNameId};
-				haulGoal.acceptedCategory = engine::assets::ItemCategory::None;
-				haulGoal.targetAmount = input.count;
-				haulGoal.deliveredAmount = 0;
-				haulGoal.createdAt = 0.0F;
-				haulGoal.parentGoalId = craftGoalId;
-				haulGoal.chainId = chainId;
-
-				if (harvestGoalId.has_value()) {
-					// Haul depends on Harvest completing
-					haulGoal.dependsOnGoalId = harvestGoalId;
-					haulGoal.status = GoalStatus::WaitingForItems;
-				} else {
-					// No harvest needed - Haul can start immediately
-					haulGoal.status = GoalStatus::Available;
-				}
-
-				goalRegistry.createGoal(std::move(haulGoal));
-			}
-
-			// Update craft goal with total inputs needed
+			// Update craft goal with total inputs needed (the material total it tracks)
 			goalRegistry.updateGoal(craftGoalId, [&](GoalTask& goal) {
 				goal.targetAmount = totalInputsNeeded;
 			});

@@ -36,16 +36,11 @@ namespace ecs {
 	  private:
 
 		// Throttle updates (not needed every frame)
-		float	 updateTimer = 0.0F;
-		float	 updateInterval = 1.0F; // Update every 1 second
-		uint32_t frameCounter = 0;
-		uint32_t updateFrameInterval = 60; // Alternative: update every 60 frames
+		uint32_t				 frameCounter = 0;
+		static constexpr uint32_t updateFrameInterval = 60; // Update every 60 frames
 
 		// Statistics
 		size_t activeGoalCount = 0;
-
-		/// Create or update a goal for a storage container
-		void updateGoalForStorage(EntityID storageEntity);
 	};
 
 } // namespace ecs

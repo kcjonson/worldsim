@@ -79,6 +79,12 @@ namespace ecs {
 		// For Harvest goals: what item type is yielded when harvesting completes
 		uint32_t yieldDefNameId = 0; // e.g., Tree yields Wood
 
+		// For Craft goals: identity of the recipe this goal's child hierarchy was built for.
+		// Hash of the recipe defName. When a station's next job switches to a different
+		// recipe, this changes and the child Harvest/Haul goals are rebuilt. 0 = not a Craft
+		// goal (or no recipe).
+		uint32_t recipeNameId = 0;
+
 		// Task chain ID for continuity bonus (cutter gets priority for linked haul)
 		std::optional<uint64_t> chainId;
 
@@ -117,7 +123,14 @@ namespace ecs {
 		/// @return The assigned goal ID
 		uint64_t createGoal(GoalTask goal);
 
-		/// Update an existing goal (e.g., capacity changed)
+		/// Update an existing goal in place (e.g., capacity changed).
+		///
+		/// CONTRACT: the updater may only mutate amount/accepted-type fields
+		/// (targetAmount, deliveredAmount, acceptedDefNameIds, acceptedCategory, status, ...).
+		/// It must NOT change indexed identity fields (type, owner, destinationEntity,
+		/// parentGoalId, dependsOnGoalId); only the type index is reconciled here. To change
+		/// identity, remove and recreate the goal.
+		///
 		/// @param goalId The goal to update
 		/// @param updater Function to modify the goal
 		void updateGoal(uint64_t goalId, const std::function<void(GoalTask&)>& updater);
@@ -128,9 +141,19 @@ namespace ecs {
 		/// Remove goal by destination entity (convenience for entity destruction)
 		void removeGoalByDestination(EntityID destinationEntity);
 
-		/// Record delivery of an item to a goal (increments deliveredAmount)
-		/// @param goalId The goal that received the item
-		void recordDelivery(uint64_t goalId);
+		/// Record delivery of items to a goal (increments deliveredAmount by the amount
+		/// actually moved). Quantities count ITEMS, not actions: a harvest yielding 3 sticks
+		/// or a haul moving 5 wood records 3 or 5, never 1.
+		///
+		/// If the goal is a child of a Craft goal, the same amount is also credited to the
+		/// parent Craft (whose target is the total material count). The parent leaves
+		/// Blocked status once its materials are satisfied. This keeps a single source of
+		/// truth: child progress and parent progress advance together, never double-counted
+		/// against the same goal.
+		///
+		/// @param goalId The goal that received the items
+		/// @param amount Number of items actually delivered (0 is a no-op)
+		void recordDelivery(uint64_t goalId, uint32_t amount);
 
 		// --- Queries ---
 

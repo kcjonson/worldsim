@@ -164,7 +164,6 @@ namespace world_sim::adapters {
 		) {
 			GlobalTaskDisplayData data;
 			data.id = goal.id;
-			data.quantity = goal.targetAmount > 0 ? goal.targetAmount : 1;
 
 			// Build description with parent context
 			data.description = buildGoalDescription(goal, goalRegistry);
@@ -180,10 +179,8 @@ namespace world_sim::adapters {
 			data.distanceValue = std::sqrt(dx * dx + dy * dy);
 			data.distance = std::format("{}m", static_cast<int>(data.distanceValue));
 
-			// Status based on GoalStatus
-			uint32_t available = goal.availableCapacity();
-
-			// First check goal status for blocking conditions
+			// Status based on GoalStatus (only goals with capacity reach here; callers filter
+			// out completed ones)
 			if (goal.status == ecs::GoalStatus::Blocked) {
 				data.status = "Blocked";
 				data.statusDetail = std::format("{}/{} materials", goal.deliveredAmount, goal.targetAmount);
@@ -192,9 +189,6 @@ namespace world_sim::adapters {
 				data.status = "Waiting for harvest";
 				data.statusDetail = "";
 				data.isBlocked = true;
-			} else if (available == 0) {
-				data.status = "Complete";
-				data.statusDetail = "";
 			} else if (data.distanceValue > 50.0F) {
 				data.status = "Available";
 				data.statusDetail = "far";
