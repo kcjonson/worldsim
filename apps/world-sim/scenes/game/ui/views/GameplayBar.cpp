@@ -6,9 +6,7 @@
 namespace world_sim {
 
 GameplayBar::GameplayBar(const Args& args)
-	: onBuildClick(args.onBuildClick)
-	, onActionSelected(args.onActionSelected)
-	, onProductionSelected(args.onProductionSelected)
+	: onProductionSelected(args.onProductionSelected)
 	, onFurnitureSelected(args.onFurnitureSelected) {
 
 	// Create background rectangle (added first so it renders behind other children)
@@ -26,50 +24,8 @@ GameplayBar::GameplayBar(const Args& args)
 			},
 		.id = "gameplay_bar_background"}));
 
-	// Create Actions dropdown (stub items for now)
-	actionsDropdownHandle = addChild(UI::DropdownButton(UI::DropdownButton::Args{
-		.label = "Actions",
-		.position = {0.0F, 0.0F},
-		.buttonSize = {kButtonWidth, kButtonHeight},
-		.items =
-			{
-				UI::DropdownItem{
-					.label = "Hunt",
-					.onSelect = [this]() {
-						if (onActionSelected) onActionSelected("hunt");
-					}},
-				UI::DropdownItem{
-					.label = "Harvest",
-					.onSelect = [this]() {
-						if (onActionSelected) onActionSelected("harvest");
-					}},
-				UI::DropdownItem{
-					.label = "Haul",
-					.onSelect = [this]() {
-						if (onActionSelected) onActionSelected("haul");
-					}},
-			},
-		.id = "actions_dropdown",
-		.openUpward = true}));
-
-	// Create Build dropdown - shows directly placeable structures (walls, floors, etc.)
-	// Currently empty as we don't have those yet
-	buildDropdownHandle = addChild(UI::DropdownButton(UI::DropdownButton::Args{
-		.label = "Build",
-		.position = {0.0F, 0.0F},
-		.buttonSize = {kButtonWidth, kButtonHeight},
-		.items =
-			{
-				UI::DropdownItem{
-					.label = "(Coming Soon)",
-					.onSelect = []() {},
-					.enabled = false},
-			},
-		.id = "build_dropdown",
-		.openUpward = true}));
-
-	// Create Production dropdown - production stations that can be placed
-	// Items are populated dynamically via setProductionItems()
+	// Create Production dropdown - production stations that can be placed.
+	// Items are populated dynamically via setProductionItems().
 	productionDropdownHandle = addChild(UI::DropdownButton(UI::DropdownButton::Args{
 		.label = "Production",
 		.position = {0.0F, 0.0F},
@@ -78,29 +34,13 @@ GameplayBar::GameplayBar(const Args& args)
 		.id = "production_dropdown",
 		.openUpward = true}));
 
-	// Create Furniture dropdown (stub items for now)
+	// Create Furniture dropdown - placeable furniture (storage containers, etc.).
+	// Items are populated dynamically via setFurnitureItems().
 	furnitureDropdownHandle = addChild(UI::DropdownButton(UI::DropdownButton::Args{
 		.label = "Furniture",
 		.position = {0.0F, 0.0F},
 		.buttonSize = {kButtonWidth, kButtonHeight},
-		.items =
-			{
-				UI::DropdownItem{
-					.label = "Beds",
-					.onSelect = [this]() {
-						if (onFurnitureSelected) onFurnitureSelected("beds");
-					}},
-				UI::DropdownItem{
-					.label = "Tables",
-					.onSelect = [this]() {
-						if (onFurnitureSelected) onFurnitureSelected("tables");
-					}},
-				UI::DropdownItem{
-					.label = "Storage",
-					.onSelect = [this]() {
-						if (onFurnitureSelected) onFurnitureSelected("storage");
-					}},
-			},
+		.items = {}, // Populated dynamically
 		.id = "furniture_dropdown",
 		.openUpward = true}));
 }
@@ -109,7 +49,7 @@ void GameplayBar::layout(const Foundation::Rect& newBounds) {
 	Component::layout(newBounds);
 
 	// Calculate and cache bar layout (used by positionElements)
-	float totalButtonWidth = (kButtonWidth * 4.0F) + (kButtonSpacing * 3.0F);
+	float totalButtonWidth = (kButtonWidth * kButtonCount) + (kButtonSpacing * (kButtonCount - 1));
 	cachedBarWidth = totalButtonWidth + (kHorizontalPadding * 2.0F);
 	cachedBarX = bounds.x + (bounds.width - cachedBarWidth) / 2.0F;
 	cachedBarY = bounds.y + bounds.height - kBarHeight - kBottomMargin;
@@ -127,16 +67,6 @@ void GameplayBar::positionElements() {
 	float buttonY = cachedBarY + (kBarHeight - kButtonHeight) / 2.0F;
 	float x = cachedBarX + kHorizontalPadding;
 
-	if (auto* dropdown = getChild<UI::DropdownButton>(actionsDropdownHandle)) {
-		dropdown->setPosition(x, buttonY);
-		x += kButtonWidth + kButtonSpacing;
-	}
-
-	if (auto* dropdown = getChild<UI::DropdownButton>(buildDropdownHandle)) {
-		dropdown->setPosition(x, buttonY);
-		x += kButtonWidth + kButtonSpacing;
-	}
-
 	if (auto* dropdown = getChild<UI::DropdownButton>(productionDropdownHandle)) {
 		dropdown->setPosition(x, buttonY);
 		x += kButtonWidth + kButtonSpacing;
@@ -152,12 +82,6 @@ bool GameplayBar::handleEvent(UI::InputEvent& event) {
 }
 
 void GameplayBar::closeAllDropdowns() {
-	if (auto* dropdown = getChild<UI::DropdownButton>(actionsDropdownHandle)) {
-		dropdown->closeMenu();
-	}
-	if (auto* dropdown = getChild<UI::DropdownButton>(buildDropdownHandle)) {
-		dropdown->closeMenu();
-	}
 	if (auto* dropdown = getChild<UI::DropdownButton>(productionDropdownHandle)) {
 		dropdown->closeMenu();
 	}
@@ -167,25 +91,32 @@ void GameplayBar::closeAllDropdowns() {
 }
 
 void GameplayBar::setProductionItems(const std::vector<std::pair<std::string, std::string>>& items) {
-	auto* dropdown = getChild<UI::DropdownButton>(productionDropdownHandle);
+	setDropdownItems(productionDropdownHandle, items, onProductionSelected);
+}
+
+void GameplayBar::setFurnitureItems(const std::vector<std::pair<std::string, std::string>>& items) {
+	setDropdownItems(furnitureDropdownHandle, items, onFurnitureSelected);
+}
+
+void GameplayBar::setDropdownItems(
+	UI::LayerHandle handle,
+	const std::vector<std::pair<std::string, std::string>>& items,
+	const std::function<void(const std::string&)>& callback
+) {
+	auto* dropdown = getChild<UI::DropdownButton>(handle);
 	if (dropdown == nullptr) {
-		LOG_WARNING(Game, "[GameplayBar] Production dropdown not found");
+		LOG_WARNING(Game, "[GameplayBar] Dropdown not found while setting items");
 		return;
 	}
 
-	LOG_INFO(Game, "[GameplayBar] Setting %zu production items", items.size());
-
 	std::vector<UI::DropdownItem> dropdownItems;
+	dropdownItems.reserve(items.size());
 	for (const auto& [defName, label] : items) {
-		LOG_INFO(Game, "[GameplayBar] Adding production item: %s (%s)", label.c_str(), defName.c_str());
 		dropdownItems.push_back(UI::DropdownItem{
 			.label = label,
-			.onSelect = [this, defName]() {
-				LOG_INFO(Game, "[GameplayBar] Production item selected: %s", defName.c_str());
-				if (onProductionSelected) {
-					onProductionSelected(defName);
-				} else {
-					LOG_WARNING(Game, "[GameplayBar] onProductionSelected callback is null!");
+			.onSelect = [callback, defName]() {
+				if (callback) {
+					callback(defName);
 				}
 			}});
 	}

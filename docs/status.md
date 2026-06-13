@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2026-06-12 (Building/Construction, Pathfinding, and Vision architecture specs drafted; memory design revised for belief-filtered navigation)
+Last Updated: 2026-06-13 (GameplayBar dead-UI cleanup: removed non-functional Actions/Build dropdowns, wired Furniture dropdown to storage-container placement)
 
 ## Epic/Story/Task Template
 
@@ -84,7 +84,7 @@ Use this template for all work items:
   - [x] Status tint (green/yellow/red background based on mood)
   - [x] Click to select, double-click to follow
 - [x] Gameplay Bar
-  - [x] Category dropdowns: [Actions▾] [Build▾] [Production▾] [Furniture▾]
+  - [x] Category dropdowns: [Production▾] [Furniture▾] (Actions/Build removed 2026-06-13 — see dead-UI cleanup log entry)
   - [x] Upward menu expansion (openUpward flag)
   - [x] B key for build toggle
 - [x] UI Restructure
@@ -981,6 +981,13 @@ The following MVP epics have all been completed. Detailed task breakdowns are pr
 ---
 
 ## Blockers & Issues
+
+### ✅ RESOLVED: GameplayBar Dead Dropdowns (Actions/Furniture/Build)
+**Impact:** Actions (Hunt/Harvest/Haul) and Furniture (Beds/Tables/Storage) menu items invoked null callbacks and silently did nothing; Build was a `(Coming Soon)` placeholder. Storage could only be created via the craft-then-place path.
+**Resolution:** Fixed 2026-06-13 (see `/docs/development-log/entries/2026-06-13-gameplay-bar-dead-ui-cleanup.md`)
+- Removed the Actions dropdown (designation system not implemented) and Build dropdown (construction not implemented), plus the dead `onBuildClick`/`onBuildToggle` chain
+- Wired the Furniture dropdown to `PlacementSystem::selectBuildItem`, populated dynamically from asset definitions with a `storage` capability (BasicBox, BasicShelf)
+- Placing a storage container now generates haul demand directly, since `spawnEntity` adds `Inventory` + `StorageConfiguration` that `AIDecisionSystem::evaluateHaulOptions` consumes
 
 ### ✅ RESOLVED: SVG Ellipse/Circle Tessellation Bug
 **Impact:** Berry Bush and other assets using `<ellipse>` or `<circle>` SVG elements fail to render

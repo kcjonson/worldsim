@@ -36,8 +36,8 @@ namespace world_sim {
 
 		// Create gameplay bar (replaces build toolbar)
 		gameplayBar = std::make_unique<GameplayBar>(GameplayBar::Args{
-			.onBuildClick = args.onBuildToggle,
 			.onProductionSelected = args.onProductionSelected,
+			.onFurnitureSelected = args.onFurnitureSelected,
 			.id = "gameplay_bar"});
 
 		// Create build menu (position set in layout())
@@ -575,6 +575,12 @@ namespace world_sim {
 	void GameUI::setProductionItems(const std::vector<std::pair<std::string, std::string>>& items) {
 		if (gameplayBar) {
 			gameplayBar->setProductionItems(items);
+		}
+	}
+
+	void GameUI::setFurnitureItems(const std::vector<std::pair<std::string, std::string>>& items) {
+		if (gameplayBar) {
+			gameplayBar->setFurnitureItems(items);
 		}
 	}
 

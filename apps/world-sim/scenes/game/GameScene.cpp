@@ -145,9 +145,9 @@ namespace {
 							m_camera->setPosition({pos->value.x, pos->value.y});
 						}
 					},
-				.onBuildToggle = [this]() { m_placementSystem->toggleBuildMenu(); },
 				.onBuildItemSelected = [this](const std::string& defName) { m_placementSystem->selectBuildItem(defName); },
 				.onProductionSelected = [this](const std::string& defName) { m_placementSystem->selectBuildItem(defName); },
+				.onFurnitureSelected = [this](const std::string& defName) { m_placementSystem->selectBuildItem(defName); },
 				.onQueueRecipe =
 					[this](const std::string& recipeDefName, uint32_t quantity) { handleQueueRecipe(recipeDefName, quantity); },
 				.onCancelJob = [this](const std::string& recipeDefName) { handleCancelJob(recipeDefName); },
@@ -187,6 +187,23 @@ namespace {
 					}
 				}
 				gameUI->setProductionItems(productionItems);
+			}
+
+			// Populate Furniture dropdown with placeable storage containers.
+			// Any asset definition exposing a storage capability is a placeable
+			// container; PlacementSystem::spawnEntity wires up its Inventory and
+			// StorageConfiguration so it immediately generates haul demand.
+			{
+				auto& assetRegistry = engine::assets::AssetRegistry::Get();
+
+				std::vector<std::pair<std::string, std::string>> furnitureItems;
+				for (const auto& defName : assetRegistry.getDefinitionNames()) {
+					const auto* def = assetRegistry.getDefinition(defName);
+					if (def != nullptr && def->capabilities.storage.has_value()) {
+						furnitureItems.emplace_back(def->defName, def->label.empty() ? def->defName : def->label);
+					}
+				}
+				gameUI->setFurnitureItems(furnitureItems);
 			}
 
 			// Initial layout pass with consistent DPI scaling

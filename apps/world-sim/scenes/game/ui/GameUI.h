@@ -5,7 +5,7 @@
 // Contains all game UI elements as children:
 // - DebugOverlay: chunk/position/biome display (top-left)
 // - ZoomControlPanel: floating zoom controls (right side)
-// - BuildToolbar: build mode toggle button (temporary, will be replaced by GameplayBar)
+// - GameplayBar: bottom action bar with Production/Furniture placement dropdowns
 // - BuildMenu: popup for selecting items to place
 // - ColonistListView: left-side colonist portraits
 // - EntityInfoView: selected entity information
@@ -62,9 +62,9 @@ class GameUI {
 		std::function<void()> onSelectionCleared;
 		std::function<void(ecs::EntityID)> onColonistSelected;
 		std::function<void(ecs::EntityID)> onColonistFollowed;		 ///< Called on double-click to follow
-		std::function<void()> onBuildToggle;							 ///< Called when build button clicked
 		std::function<void(const std::string&)> onBuildItemSelected; ///< Called when item selected from build menu
 		std::function<void(const std::string&)> onProductionSelected; ///< Called when production item selected (e.g., CraftingSpot)
+		std::function<void(const std::string&)> onFurnitureSelected;  ///< Called when furniture item selected (e.g., BasicBox)
 		QueueRecipeCallback onQueueRecipe;								 ///< Called when recipe queued at station
 		std::function<void(const std::string&)> onCancelJob;			 ///< Called when job canceled from queue
 		std::function<void(ecs::EntityID, const std::string&)> onOpenCraftingDialog; ///< Called to open crafting dialog
@@ -129,6 +129,10 @@ class GameUI {
 	/// Set the production station items in the Production dropdown
 	/// @param items Vector of {defName, label} pairs for placeable production stations
 	void setProductionItems(const std::vector<std::pair<std::string, std::string>>& items);
+
+	/// Set the furniture items in the Furniture dropdown
+	/// @param items Vector of {defName, label} pairs for placeable furniture (storage, etc.)
+	void setFurnitureItems(const std::vector<std::pair<std::string, std::string>>& items);
 
 	// --- Colonist Details Dialog API ---
 
