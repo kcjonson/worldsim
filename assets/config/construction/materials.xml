@@ -47,27 +47,14 @@
       </pattern>
     </Material>
 
-    <Material name="Stone">
-      <!-- Heavier material: roughly 4 units per m² for a full slab -->
-      <costRatePerSquareMeter>4.0</costRatePerSquareMeter>
-      <!-- More work: corner stones + courses + infill -->
-      <workRatePerSquareMeter>20.0</workRatePerSquareMeter>
-      <hp>120.0</hp>
-      <flammability>0.0</flammability>
-      <beauty>2.0</beauty>
-      <!-- Stone floors are solid but not faster than wood -->
-      <speedModifier>1.05</speedModifier>
-      <pattern>
-        <emitter>courses</emitter>
-        <seed>2001</seed>
-        <!-- Cool grey granite tones: face, highlight, mortar -->
-        <palette>
-          <color>#7A7A7AFF</color>
-          <color>#9A9A9AFF</color>
-          <color>#5A5A5AFF</color>
-        </palette>
-      </pattern>
-    </Material>
+    <!--
+      Stone foundation is omitted for this slice: there is no Stone item asset
+      and no harvestable that yields Stone, so a Stone foundation would stick in
+      AwaitingMaterials forever (ConstructionSystem getDefNameId("Stone") == 0).
+      Re-add the <Material name="Stone"> block once a Stone item asset and a
+      Stone source (harvestable rock) exist. Wood works only because the
+      material name "Wood" coincides with the Wood item defName.
+    -->
 
   </Foundation>
 

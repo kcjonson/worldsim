@@ -110,6 +110,26 @@ TEST(ConstructionValidator, RejectsOverlapWithCommitted) {
 	EXPECT_EQ(validator.validateRing(overlapping).code, ValidationCode::OverlapsExisting);
 }
 
+TEST(ConstructionValidator, EdgeClearanceAtThresholdPasses) {
+	ConstraintConfig  cfg = defaults(); // segmentClearance 1.0 m
+	ConstructionWorld world;
+	ConstructionValidator validator(cfg, world);
+	// A 5 x 1.0 m rectangle: the long top/bottom edges are exactly 1.0 m apart,
+	// equal to segmentClearance. Strict-< clearance must permit the at-threshold
+	// gap (area 5.0 m^2 clears the floor, every edge >= 0.5 m spacing).
+	std::vector<Vec2> atThreshold = {{0.0F, 0.0F}, {5.0F, 0.0F}, {5.0F, 1.0F}, {0.0F, 1.0F}};
+	EXPECT_TRUE(validator.validateRing(atThreshold).ok());
+}
+
+TEST(ConstructionValidator, EdgeClearanceJustBelowThresholdFails) {
+	ConstraintConfig  cfg = defaults(); // segmentClearance 1.0 m
+	ConstructionWorld world;
+	ConstructionValidator validator(cfg, world);
+	// One mm closer than the threshold (0.999 m gap): edge clearance must reject.
+	std::vector<Vec2> tooClose = {{0.0F, 0.0F}, {5.0F, 0.0F}, {5.0F, 0.999F}, {0.0F, 0.999F}};
+	EXPECT_EQ(validator.validateRing(tooClose).code, ValidationCode::EdgeClearanceTooSmall);
+}
+
 TEST(ConstructionValidator, DisjointFoundationOk) {
 	ConstraintConfig  cfg = defaults();
 	ConstructionWorld world;

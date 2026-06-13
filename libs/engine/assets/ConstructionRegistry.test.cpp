@@ -91,16 +91,16 @@ TEST_F(ConstructionRegistryTest, Load_RealFiles_Succeeds) {
     EXPECT_TRUE(ConstructionRegistry::Get().snappingLoaded());
 }
 
-TEST_F(ConstructionRegistryTest, Materials_WoodAndStonePresent) {
+TEST_F(ConstructionRegistryTest, Materials_WoodPresentStoneAbsent) {
     ASSERT_TRUE(ConstructionRegistry::Get().load(constructionConfigFolder().string()));
 
     const auto* wood = ConstructionRegistry::Get().getMaterial("Wood");
     ASSERT_NE(wood, nullptr);
     EXPECT_EQ(wood->name, "Wood");
 
-    const auto* stone = ConstructionRegistry::Get().getMaterial("Stone");
-    ASSERT_NE(stone, nullptr);
-    EXPECT_EQ(stone->name, "Stone");
+    // Stone is omitted this slice: no Stone item asset / source exists yet, so a
+    // Stone foundation would never finish. Re-add when that economy lands.
+    EXPECT_EQ(ConstructionRegistry::Get().getMaterial("Stone"), nullptr);
 }
 
 TEST_F(ConstructionRegistryTest, Materials_SaneValues) {
@@ -116,15 +116,6 @@ TEST_F(ConstructionRegistryTest, Materials_SaneValues) {
     EXPECT_GT(wood->speedModifier, 0.0F);
     EXPECT_FALSE(wood->pattern.emitter.empty());
     EXPECT_FALSE(wood->pattern.palette.empty());
-
-    const auto* stone = ConstructionRegistry::Get().getMaterial("Stone");
-    ASSERT_NE(stone, nullptr);
-    EXPECT_GT(stone->costRatePerSquareMeter, 0.0F);
-    EXPECT_GT(stone->workRatePerSquareMeter, 0.0F);
-    // Stone should cost more work than wood (heavier material)
-    EXPECT_GT(stone->workRatePerSquareMeter, wood->workRatePerSquareMeter);
-    // Stone should be fireproof
-    EXPECT_EQ(stone->flammability, 0.0F);
 }
 
 TEST_F(ConstructionRegistryTest, Constraints_Parsed) {
@@ -218,6 +209,43 @@ TEST_F(ConstructionRegistryTest, Validation_RejectsMaterialWithEmptyPalette) {
                 (ConstructionRegistry::Get().constraintsLoaded() &&
                  ConstructionRegistry::Get().snappingLoaded()));
     // Force reload constraints/snapping only (materials already loaded above)
+    std::string folder = constructionConfigFolder().string();
+    ConstructionRegistry::Get().loadConstraints(
+        (std::filesystem::path(folder) / "constraints.xml").string());
+    ConstructionRegistry::Get().loadSnapping(
+        (std::filesystem::path(folder) / "snapping.xml").string());
+
+    EXPECT_FALSE(ConfigValidator::validateConstruction());
+    EXPECT_GT(ConfigValidator::getErrorCount(), 0);
+}
+
+TEST_F(ConstructionRegistryTest, Validation_RejectsZeroWorkRate) {
+    // workRatePerSquareMeter omitted -> parses as 0 -> workTotal 0 -> a free
+    // instant building. The validator must reject this, not let it through.
+    std::string xml = R"(<?xml version="1.0"?>
+<ConstructionMaterials>
+  <Foundation>
+    <Material name="FreeWood">
+      <costRatePerSquareMeter>2.0</costRatePerSquareMeter>
+      <!-- workRatePerSquareMeter intentionally omitted -->
+      <hp>40.0</hp>
+      <flammability>0.8</flammability>
+      <beauty>1.0</beauty>
+      <speedModifier>1.15</speedModifier>
+      <pattern>
+        <emitter>planks</emitter>
+        <seed>999</seed>
+        <palette>
+          <color>#C8915AFF</color>
+        </palette>
+      </pattern>
+    </Material>
+  </Foundation>
+</ConstructionMaterials>)";
+
+    std::string path = writeTempFile(xml, ".xml");
+    ASSERT_TRUE(ConstructionRegistry::Get().loadMaterials(path));
+
     std::string folder = constructionConfigFolder().string();
     ConstructionRegistry::Get().loadConstraints(
         (std::filesystem::path(folder) / "constraints.xml").string());
