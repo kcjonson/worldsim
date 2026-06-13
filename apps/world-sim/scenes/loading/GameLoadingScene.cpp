@@ -19,8 +19,7 @@
 #include <assets/WorkTypeRegistry.h>
 #include <assets/placement/AsyncChunkProcessor.h>
 #include <assets/placement/PlacementExecutor.h>
-#include <ecs/GlobalTaskRegistry.h>
-#include <ecs/components/Memory.h>
+#include <ecs/GoalTaskRegistry.h>
 #include <graphics/Color.h>
 #include <input/InputManager.h>
 #include <primitives/Primitives.h>
@@ -495,12 +494,7 @@ namespace {
 			WorkTypeRegistry::Get().clear();
 			PriorityConfig::Get().clear();
 			ConfigValidator::clearErrors();
-			ecs::GlobalTaskRegistry::Get().clear();
-
-			// Set up Memory eviction callback to notify GlobalTaskRegistry when colonists forget entities
-			ecs::Memory::setEvictionCallback([](ecs::EntityID colonist, uint64_t worldEntityKey) {
-				ecs::GlobalTaskRegistry::Get().onEntityForgotten(colonist, worldEntityKey);
-			});
+			ecs::GoalTaskRegistry::Get().clear();
 
 			// Load in dependency order
 			std::string basePath = "assets/config/";

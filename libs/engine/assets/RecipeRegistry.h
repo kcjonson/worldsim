@@ -71,6 +71,13 @@ class RecipeRegistry {
     /// Get count of loaded recipes
     [[nodiscard]] size_t size() const;
 
+    // --- Test Support ---
+
+    /// Register a recipe directly (for unit tests)
+    /// This bypasses XML loading for test scenarios.
+    /// @param recipe The recipe to register
+    void registerTestRecipe(RecipeDef recipe);
+
   private:
     RecipeRegistry() = default;
 

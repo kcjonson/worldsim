@@ -89,6 +89,15 @@ class Button : public Component, public FocusableBase<Button> {
 	// Position override to update text position
 	void setPosition(float x, float y) override;
 
+	// Update the displayed label. Mutating the public `label` field alone does
+	// not change rendered text: the Text primitive is only synced here and at
+	// construction.
+	void setLabel(const std::string& newLabel);
+
+	// The text actually rendered (the underlying Text primitive's content). Equal
+	// to `label` only when changes go through the constructor or setLabel().
+	[[nodiscard]] const std::string& renderedLabel() const { return labelText.text; }
+
 	// State management
 	void setFocused(bool newFocused) { focused = newFocused; }
 	void setDisabled(bool newDisabled) { disabled = newDisabled; }
