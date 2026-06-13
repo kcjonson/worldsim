@@ -28,6 +28,8 @@ add_library(engine
     ecs/components/MemoryQueries.cpp
     ecs/components/ToiletLocationFinder.cpp
     construction/ConstructionWorld.cpp
+    construction/ConstructionValidator.cpp
+    construction/SnapEngine.cpp
 )
 
 target_include_directories(engine

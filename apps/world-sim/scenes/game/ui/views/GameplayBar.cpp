@@ -9,7 +9,8 @@ GameplayBar::GameplayBar(const Args& args)
 	: onBuildClick(args.onBuildClick)
 	, onActionSelected(args.onActionSelected)
 	, onProductionSelected(args.onProductionSelected)
-	, onFurnitureSelected(args.onFurnitureSelected) {
+	, onFurnitureSelected(args.onFurnitureSelected)
+	, onStructureSelected(args.onStructureSelected) {
 
 	// Create background rectangle (added first so it renders behind other children)
 	backgroundHandle = addChild(UI::Rectangle(UI::Rectangle::Args{
@@ -52,8 +53,7 @@ GameplayBar::GameplayBar(const Args& args)
 		.id = "actions_dropdown",
 		.openUpward = true}));
 
-	// Create Build dropdown - shows directly placeable structures (walls, floors, etc.)
-	// Currently empty as we don't have those yet
+	// Create Build dropdown - structure tools (foundations, later walls/openings).
 	buildDropdownHandle = addChild(UI::DropdownButton(UI::DropdownButton::Args{
 		.label = "Build",
 		.position = {0.0F, 0.0F},
@@ -61,9 +61,10 @@ GameplayBar::GameplayBar(const Args& args)
 		.items =
 			{
 				UI::DropdownItem{
-					.label = "(Coming Soon)",
-					.onSelect = []() {},
-					.enabled = false},
+					.label = "Foundation",
+					.onSelect = [this]() {
+						if (onStructureSelected) onStructureSelected("foundation");
+					}},
 			},
 		.id = "build_dropdown",
 		.openUpward = true}));

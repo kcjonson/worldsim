@@ -3,8 +3,11 @@
 #include "GameWorldState.h"
 #include "SceneTypes.h"
 #include "scenes/game/ui/GameUI.h"
+#include "scenes/game/world/construction/DrawingSystem.h"
 #include "scenes/game/world/placement/PlacementSystem.h"
 #include "scenes/game/world/selection/SelectionSystem.h"
+
+#include <assets/ConstructionRegistry.h>
 
 #include <components/toast/Toast.h> // For ToastSeverity
 
@@ -174,6 +177,16 @@ namespace {
 				.queryResources = [this](const std::string& defName, Foundation::Vec2 position) -> std::optional<uint32_t> {
 					auto coord = engine::world::worldToChunk({position.x, position.y});
 					return m_placementExecutor->getResourceCount(coord, {position.x, position.y}, defName);
+				},
+				.onStructureSelected = [this](const std::string& structure) {
+					if (structure == "foundation" && m_drawingSystem) {
+						m_drawingSystem->activateFoundationTool();
+					}
+				},
+				.onConstructionMaterialSelected = [this](const std::string& material) {
+					if (m_drawingSystem) {
+						m_drawingSystem->setActiveMaterial(material);
+					}
 				}
 			});
 
@@ -223,6 +236,30 @@ namespace {
 				}}
 			});
 
+			// Initialize DrawingSystem (foundation tool). Sibling of PlacementSystem;
+			// owns the app's ConstructionWorld topology store.
+			m_drawingSystem = std::make_unique<world_sim::DrawingSystem>(world_sim::DrawingSystem::Args{
+				.world = ecsWorld.get(),
+				.camera = m_camera.get(),
+				.callbacks = {
+					.onToolActive = [this](bool /*active*/) {
+						// Visibility is driven by the per-frame status push in update().
+					},
+					.onToast = [this](const std::string& title, const std::string& message) {
+						gameUI->pushNotification(title, message, UI::ToastSeverity::Warning);
+					}
+				}
+			});
+
+			// Populate the config strip's material cards from construction config.
+			{
+				std::vector<std::pair<std::string, float>> materials;
+				for (const auto& [name, def] : engine::assets::ConstructionRegistry::Get().getAllMaterials()) {
+					materials.emplace_back(name, def.costRatePerSquareMeter);
+				}
+				gameUI->setConstructionMaterials(materials);
+			}
+
 			// Enable GPU timing for performance monitoring
 			m_gpuTimer.setEnabled(true);
 		}
@@ -237,6 +274,27 @@ namespace {
 			int logicalW = 0;
 			int logicalH = 0;
 			Renderer::Primitives::getLogicalViewport(logicalW, logicalH);
+
+			// Drawing tool gets input before placement/selection (GameUI already had
+			// first dibs above). It consumes clicks while active.
+			if (m_drawingSystem->isActive()) {
+				constexpr int kModAlt = 0x0004; // GLFW_MOD_ALT
+				const bool	  freeform = (event.modifiers & kModAlt) != 0;
+
+				if (event.type == UI::InputEvent::Type::MouseMove) {
+					m_drawingSystem->handleMouseMove(event.position.x, event.position.y, logicalW, logicalH, freeform);
+				} else if (!consumed && event.type == UI::InputEvent::Type::MouseUp) {
+					if (event.button == engine::MouseButton::Right) {
+						m_drawingSystem->cancel();
+						return true;
+					}
+					if (event.button == engine::MouseButton::Left) {
+						m_drawingSystem->handleClick(event.position.x, event.position.y, logicalW, logicalH, freeform);
+						return true;
+					}
+				}
+				return consumed;
+			}
 
 			// Handle placement mode interaction
 			if (m_placementSystem->isActive()) {
@@ -261,14 +319,21 @@ namespace {
 		void update(float dt) override {
 			auto& input = engine::InputManager::Get();
 
-			// Handle Escape - cancel placement mode first, then exit to menu
+			// Handle Escape - cancel the drawing tool / placement first, then exit
 			if (input.isKeyPressed(engine::Key::Escape)) {
-				if (m_placementSystem->isActive()) {
+				if (m_drawingSystem->isActive()) {
+					m_drawingSystem->cancel();
+				} else if (m_placementSystem->isActive()) {
 					m_placementSystem->cancel();
 				} else {
 					sceneManager->switchTo(world_sim::toKey(world_sim::SceneType::MainMenu));
 					return; // Don't process rest of update when switching scenes
 				}
+			}
+
+			// Backspace removes the last placed point while drawing.
+			if (input.isKeyPressed(engine::Key::Backspace) && m_drawingSystem->isActive()) {
+				m_drawingSystem->removeLastPoint();
 			}
 
 			// Handle B key - toggle build mode
@@ -381,6 +446,10 @@ namespace {
 			auto& recipeRegistry = engine::assets::RecipeRegistry::Get();
 			gameUI->update(dt, *m_camera, *m_chunkManager, *ecsWorld, assetRegistry, recipeRegistry, m_selectionSystem->current());
 
+			// Push drawing-tool status to the config strip (drives its readouts and
+			// visibility).
+			gameUI->setConstructionStatus(m_drawingSystem->status());
+
 			m_lastUpdateMs = elapsedMs(updateStart, Clock::now());
 		}
 
@@ -408,6 +477,11 @@ namespace {
 			const auto& dynamicEntities = renderSystem.getRenderData();
 			m_entityRenderer->render(*m_placementExecutor, m_processedChunks, dynamicEntities, *m_camera, w, h);
 			float entityMs = elapsedMs(entityStart, Clock::now());
+
+			// Render committed foundations + in-progress drawing preview (interim;
+			// C6 replaces committed-foundation rendering). Drawn after entities so
+			// foundations sit above terrain and below the cursor ghost/UI.
+			m_drawingSystem->render(w, h);
 
 			// Render selection indicator in world-space (after entities, before UI)
 			m_selectionSystem->renderIndicator(w, h);
@@ -458,6 +532,7 @@ namespace {
 			// Clean up subsystems (order matters - systems may reference ECS/Camera)
 			m_placementSystem.reset();
 			m_selectionSystem.reset();
+			m_drawingSystem.reset();
 
 			m_asyncProcessor.reset();
 			gameUI.reset();
@@ -733,6 +808,7 @@ namespace {
 		// World interaction subsystems (extracted from GameScene)
 		std::unique_ptr<world_sim::PlacementSystem> m_placementSystem;
 		std::unique_ptr<world_sim::SelectionSystem> m_selectionSystem;
+		std::unique_ptr<world_sim::DrawingSystem>	m_drawingSystem;
 	};
 
 } // namespace

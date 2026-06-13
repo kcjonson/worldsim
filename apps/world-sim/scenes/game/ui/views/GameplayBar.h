@@ -31,6 +31,7 @@ class GameplayBar : public UI::Component {
 		std::function<void(const std::string&)> onActionSelected = nullptr;
 		std::function<void(const std::string&)> onProductionSelected = nullptr;
 		std::function<void(const std::string&)> onFurnitureSelected = nullptr;
+		std::function<void(const std::string&)> onStructureSelected = nullptr; ///< Activates a structure tool (e.g. "foundation")
 		std::string id = "gameplay_bar";
 	};
 
@@ -80,6 +81,7 @@ class GameplayBar : public UI::Component {
 	std::function<void(const std::string&)> onActionSelected;
 	std::function<void(const std::string&)> onProductionSelected;
 	std::function<void(const std::string&)> onFurnitureSelected;
+	std::function<void(const std::string&)> onStructureSelected;
 
 	/// Position all elements
 	void positionElements();
