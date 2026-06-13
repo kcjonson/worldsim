@@ -159,6 +159,14 @@ Vec3d PlateSim::quatRotate(const double q[4], const Vec3d& v) {
 
 PlateSim::PlateSim(const PlateSimParams& params, const PlateSimTestOverride* override)
     : cfg_(params) {
+    // K must be at least 1 and leave id headroom below the uint8_t ceiling. Rifts can
+    // only grow the live count from here, and allocPlateId stops at kMaxLivePlates, but
+    // a bad initial K would silently corrupt ownership (owner_ ids index plates_), so
+    // reject it up front. PlanetParams bounds K to 2..30 upstream; this guards the sim
+    // when handed a hand-built case directly.
+    assert(params.plateCount >= 1 &&
+           static_cast<size_t>(params.plateCount) < kMaxLivePlates &&
+           "plateCount must be in [1, kMaxLivePlates)");
     grid_ = std::make_shared<const SphereGrid>(params.coarseN);
     tileCount_ = grid_->tileCount();
     dtMyr_ = params.dtMyr;
@@ -779,11 +787,12 @@ void PlateSim::gapFill() {
         if (owner_[w] != static_cast<uint8_t>(kUnowned)) continue;
         // Majority of already-resolved neighbors; tie -> smaller plateId.
         uint32_t cnt = grid_->neighbors(w, nbrs);
-        std::array<uint32_t, 256> tally{};
+        std::array<uint32_t, kMaxPlateSlots> tally{};
         uint32_t bestId = kUnowned, bestCnt = 0;
         for (uint32_t k = 0; k < cnt; ++k) {
             uint8_t np = owner_[nbrs[k]];
             if (np >= static_cast<uint8_t>(K)) continue;
+            assert(np < kMaxPlateSlots);
             uint32_t c = ++tally[np];
             if (c > bestCnt || (c == bestCnt && np < bestId)) { bestCnt = c; bestId = np; }
         }
@@ -924,7 +933,7 @@ void PlateSim::absorbOwnershipSpeckle() {
         }
 
         // Dominant foreign plate around the island's outer boundary. Tie -> smaller id.
-        std::array<uint32_t, 256> tally{};
+        std::array<uint32_t, kMaxPlateSlots> tally{};
         uint8_t dom = static_cast<uint8_t>(kUnowned);
         uint32_t domCnt = 0;
         for (TileId c : speckCells_) {
@@ -932,6 +941,7 @@ void PlateSim::absorbOwnershipSpeckle() {
             for (uint32_t k = 0; k < cnt; ++k) {
                 uint8_t np = owner_[nbrs[k]];
                 if (np == pid || np >= static_cast<uint8_t>(K)) continue;
+                assert(np < kMaxPlateSlots);
                 uint32_t t = ++tally[np];
                 if (t > domCnt || (t == domCnt && np < dom)) { domCnt = t; dom = np; }
             }
@@ -1583,7 +1593,6 @@ void PlateSim::collisionProcessing() {
     // A plate's block rises with the fraction of its boundary in CC collision; deep
     // collision (block -> kMaxCollisionBlock) nearly halts the plate so continents
     // suture instead of interpenetrating. Decays when collision eases.
-    if (collisionBlock_.size() < plates_.size()) collisionBlock_.resize(plates_.size(), 0.0f);
     for (int p = 0; p < K; ++p) {
         if (!plates_[static_cast<size_t>(p)].alive) { collisionBlock_[static_cast<size_t>(p)] = 0.0f; continue; }
         uint32_t ccTiles = static_cast<uint32_t>(ccSeeds[static_cast<size_t>(p)].size());
@@ -1876,7 +1885,6 @@ void PlateSim::evolvePoles() {
 // it. Together: old floor is both sped up and aimed at a trench, so it recycles.
 void PlateSim::slabPull() {
     const int K = static_cast<int>(plates_.size());
-    if (static_cast<int>(slabPull_.size()) < K) slabPull_.resize(K, 1.0);
 
     const int32_t nowI = static_cast<int32_t>(nowMyr_ + dtMyr_ + 0.5);
 
@@ -2030,6 +2038,14 @@ void PlateSim::slabPull() {
 // Plate events: merge then rift.
 // ============================================================================
 
+// allocPlateId is the ONLY place plates_ grows at runtime, so it is the single owner
+// of keeping the per-plate side vectors (nextPoleEvolveMyr_, collisionBlock_, slabPull_)
+// sized to plates_.size(). The reuse path resets nextPoleEvolveMyr_ and leaves the
+// reused slot's collisionBlock_/slabPull_ as the dead plate left them (collisionProcessing
+// and slabPull already zero/relax dead-slot entries, so they carry their last live value
+// only when a slot is reused the same step it merged away; preserved here, unchanged).
+// The grow path appends each side vector's resize default (0.0f / 1.0), so downstream
+// passes never have to lazily resize.
 uint32_t PlateSim::allocPlateId() {
     const int K = static_cast<int>(plates_.size());
     for (int p = 0; p < K; ++p) {
@@ -2038,17 +2054,18 @@ uint32_t PlateSim::allocPlateId() {
             SimPlate fresh;
             fresh.crust.assign(tileCount_, CrustCell{});
             plates_[static_cast<size_t>(p)] = std::move(fresh);
-            if (static_cast<size_t>(p) < nextPoleEvolveMyr_.size())
-                nextPoleEvolveMyr_[static_cast<size_t>(p)] = nowMyr_ + kPoleEvolutionPeriodMyr;
+            nextPoleEvolveMyr_[static_cast<size_t>(p)] = nowMyr_ + kPoleEvolutionPeriodMyr;
             return static_cast<uint32_t>(p);
         }
     }
-    if (plates_.size() >= 254) return kUnowned; // id space exhausted (u8, 255 reserved)
+    if (plates_.size() >= kMaxLivePlates) return kUnowned; // id space exhausted (u8, 255 reserved)
     uint32_t id = static_cast<uint32_t>(plates_.size());
     SimPlate fresh;
     fresh.crust.assign(tileCount_, CrustCell{});
     plates_.push_back(std::move(fresh));
     nextPoleEvolveMyr_.push_back(nowMyr_ + kPoleEvolutionPeriodMyr);
+    collisionBlock_.push_back(0.0f); // collisionProcessing's resize default
+    slabPull_.push_back(1.0);        // slabPull's resize default
     return id;
 }
 
@@ -2158,12 +2175,14 @@ void PlateSim::mergePlates(uint32_t keep, uint32_t donor) {
 // Farallon/Pacific breakups). The far side of the cut becomes a new plate with an
 // opposing Euler pole.
 bool PlateSim::tryRift(uint32_t pid, uint64_t stepSalt, bool oversized) {
-    SimPlate& src = plates_[pid];
-    if (!src.alive) return false;
+    // Do NOT bind a SimPlate& to plates_[pid] here: allocPlateId() below may push_back
+    // and reallocate plates_, dangling any held reference. The pre-alloc section indexes
+    // plates_[pid] directly; the post-alloc section re-fetches refs after the realloc.
+    if (!plates_[pid].alive) return false;
 
     // Work in the plate's CURRENT world footprint. Collect owned world cells.
     std::vector<TileId> owned;
-    owned.reserve(src.occupied.size());
+    owned.reserve(plates_[pid].occupied.size());
     for (TileId t = 0; t < tileCount_; ++t) if (owner_[t] == static_cast<uint8_t>(pid)) owned.push_back(t);
     if (owned.size() < 16) return false;
 
@@ -2193,7 +2212,7 @@ bool PlateSim::tryRift(uint32_t pid, uint64_t stepSalt, bool oversized) {
         for (TileId c : owned) {
             TileId local = worldToLocal(pid, c);
             if (local == kInvalidTile) continue;
-            const CrustCell& cc = src.crust[local];
+            const CrustCell& cc = plates_[pid].crust[local];
             if (cc.orogenyMyr != kOrogenyNever && (nowI - cc.orogenyMyr) < kRiftSutureRecentMyr) {
                 sutureMean.x += centers_[c].x; sutureMean.y += centers_[c].y; sutureMean.z += centers_[c].z;
                 ++sutureN;
@@ -2210,7 +2229,7 @@ bool PlateSim::tryRift(uint32_t pid, uint64_t stepSalt, bool oversized) {
         for (TileId c : owned) {
             TileId local = worldToLocal(pid, c);
             if (local == kInvalidTile) continue;
-            const CrustCell& cc = src.crust[local];
+            const CrustCell& cc = plates_[pid].crust[local];
             if (cc.orogenyMyr == kOrogenyNever || (nowI - cc.orogenyMyr) >= kRiftSutureRecentMyr) continue;
             Vec3d d{centers_[c].x - mu.x, centers_[c].y - mu.y, centers_[c].z - mu.z};
             m[0]+=d.x*d.x; m[1]+=d.x*d.y; m[2]+=d.x*d.z;
@@ -2261,7 +2280,7 @@ bool PlateSim::tryRift(uint32_t pid, uint64_t stepSalt, bool oversized) {
         if (oversized && !sutureBiased) {
             TileId local = worldToLocal(pid, c);
             if (local != kInvalidTile) {
-                const CrustCell& cc = src.crust[local];
+                const CrustCell& cc = plates_[pid].crust[local];
                 int32_t age = nowI - cc.birthMyr;
                 if (age < 0) age = 0;
                 // ageNorm in [0,1] over a typical basin span; young -> ~0, old -> ~1.
@@ -2287,7 +2306,8 @@ bool PlateSim::tryRift(uint32_t pid, uint64_t stepSalt, bool oversized) {
     uint32_t nid = allocPlateId();
     if (nid == kUnowned) return false;
 
-    // Re-fetch refs: allocPlateId may have grown plates_ and invalidated `src`.
+    // Bind refs only now: allocPlateId may have grown plates_, so any ref taken before
+    // it would dangle. s is the source plate's post-alloc ref.
     SimPlate& s = plates_[pid];
     SimPlate& nw = plates_[nid];
     nw.alive = true;

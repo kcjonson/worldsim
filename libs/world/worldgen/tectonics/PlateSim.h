@@ -11,6 +11,15 @@
 
 namespace worldgen::tectonics {
 
+// Plate-id ceiling. owner_ stores plate ids as uint8_t with 255 reserved for
+// "unowned", so live ids run 0..253 and allocPlateId caps plates_ at kMaxLivePlates.
+// The neighbor-tally scratch arrays in gapFill/absorbOwnershipSpeckle are indexed by
+// plate id, so they are sized kMaxPlateSlots; allocPlateId's cap keeps every id a
+// valid index. The two are coupled: kMaxLivePlates < kMaxPlateSlots, and id 255
+// (kUnowned) is never used as an index.
+inline constexpr size_t kMaxPlateSlots = 256; // index space for per-plate tally arrays
+inline constexpr size_t kMaxLivePlates = 254; // max live plate ids (255 = unowned)
+
 // Per-plate-local crust cell. Indexed by coarse TileId in the plate's BASELINE
 // frame (the world frame at the moment the plate's rotation quaternion was last
 // reset to identity; in M-T1 every plate's baseline is the sim start frame).

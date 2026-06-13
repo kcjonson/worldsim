@@ -52,9 +52,9 @@ inline constexpr double kSpeedAgeMax = 2.0;
 // Myr). Pre-aging the start uniformly to 180 seeds a large old-floor population that the
 // recycling machinery then has to chew through over the whole run, which keeps the >220
 // Myr tail and the mean stubbornly high on geometry-unlucky seeds. We seed the bulk
-// younger (120 Myr cap) so the start already resembles a mature-but-not-ancient ocean;
+// younger (100 Myr cap) so the start already resembles a mature-but-not-ancient ocean;
 // active spreading + slab-pull recycling carry it from there. (Parsons-Sclater / GDH1
-// depth-age law saturates past ~180 Myr, so nothing visual is lost at 120.)
+// depth-age law saturates past ~180 Myr, so nothing visual is lost at 100.)
 inline constexpr int32_t kOceanInitMaxAgeMyr = 100;
 
 // Initial crustal thickness. Continental 38 +/- 6 km (global average ~39 km,
@@ -114,26 +114,25 @@ inline constexpr int kCollisionBandRings = 5;
 // but add no crust thickness, so widening the stamp band for coverage does NOT increase
 // collisional shortening (stacking) — that would shrink the continental footprint and drain
 // continental area past the +/-10% budget. Thickening (the real stacking that the area
-// controller must balance) stays at the physical inner-belt width. M-T4.5: cut from 4 to 3.
-// The thickness field is what TerrainStage's beltCore gates the tall belt on; a 4-ring band
-// gave a wide thickened core (wide belts). A 3-ring core narrows belts without the sim-
-// trajectory shift a 2-ring band caused (which fragmented continents into more, smaller blocks
-// and grew the shallow-ocean hypsometric sub-peak past the abyssal mode on some seeds). The
-// recent-suture rift bias is driven by a SEPARATE band (kOrogenyRecentDateRings), so the
-// thicken band can shrink a ring without moving the rift dynamics.
+// controller must balance) stays at the physical inner-belt width. TerrainStage's beltCore
+// gates the tall belt on the thickness field, so this width sets belt width directly: 3 rings
+// gives a thin core. A 2-ring core shifts the sim trajectory (fragments continents and grows
+// the shallow-ocean hypsometric sub-peak past the abyssal mode on some seeds). The recent-
+// suture rift bias is driven by a SEPARATE band (kOrogenyRecentDateRings), so this band can
+// shrink without moving the rift dynamics.
 inline constexpr int kCollisionThickenRings = 3;
 // Recent-suture DATE band: rings out to here get orogenyMyr = now (a "young, active" orogen)
-// while still on an active CC boundary, gated on the coverage floor. Kept at 4 (one ring wider
-// than the thicken band): the recent-suture flag drives the rift-path bias (rifts re-open
-// recent sutures, kRiftSutureBias), so the band width is a sensitive lever on the shortening-
-// heavy seed's rift trajectory — narrowing it to 2 fragmented that seed's continents and
-// drained continental area past the +/-10% budget. Decoupling this band from the thicken band
-// is what lets the thicken band shrink (narrower belts) without moving the rift dynamics. The
-// age GRADIENT (diagnosis #2: margins young, merged interiors old) comes from cells LEAVING
-// the active boundary as it drifts past — once a cell is no longer in any plate's CC band it
-// stops being re-dated and ages — so the gradient holds regardless of this band's width
-// (margins ~20-60 Myr, interiors ~230-360 Myr). Beyond this band, the outermost stamp ring
-// dates OLD via the coverage gate so it reads as an eroded flank, not a live crest.
+// while still on an active CC boundary, gated on the coverage floor. One ring wider than the
+// thicken band: the recent-suture flag drives the rift-path bias (rifts re-open recent
+// sutures, kRiftSutureBias), so band width is a sensitive lever on the shortening-heavy seed's
+// rift trajectory (a 2-ring band fragments its continents and drains continental area past the
+// +/-10% budget). Keeping this band separate from the thicken band lets the thicken band shrink
+// (narrower belts) without moving the rift dynamics. The age GRADIENT (margins young, merged
+// interiors old) comes from cells LEAVING the active boundary as it drifts past: once a cell
+// is no longer in any plate's CC band it stops being re-dated and ages, so the gradient holds
+// regardless of this band's width (margins ~20-60 Myr, interiors ~230-360 Myr). Beyond this
+// band, the outermost stamp ring dates OLD via the coverage gate so it reads as an eroded
+// flank, not a live crest.
 inline constexpr int kOrogenyRecentDateRings = 4;
 
 // Continental-collision motion damping: a plate's rotation is scaled by
@@ -149,12 +148,12 @@ inline constexpr uint32_t kCollisionBlockRefTiles = 45;
 // 1). A boundary in SUSTAINED, FAST collision saturates intensity over a few tens of
 // Myr; a slow or oblique contact builds intensity slowly and may never saturate.
 // (Intensity is a unitless 0..1 "how recently/hard did this orogen build" accumulator,
-// read by TerrainStage for ridged-belt amplitude.) M-T4.5: the per-cell increment is
-// now scaled by BOTH a steep distance-from-boundary falloff (kOrogenyBandFalloffPow)
-// AND the local convergence rate (normalized by kOrogenyConvRefRadPerMyr), so the
-// stamp concentrates on the boundary core where contact is fast, instead of painting a
-// broad uniform saturated band. Raised from 0.20 to 0.30 so the thin core still
-// saturates over a sustained collision despite the narrower band.
+// read by TerrainStage for ridged-belt amplitude.) The per-cell increment is scaled by
+// BOTH a steep distance-from-boundary falloff (the squared per-ring weight below) AND the
+// local convergence rate (normalized by kOrogenyConvRefRadPerMyr), so the stamp
+// concentrates on the boundary core where contact is fast, instead of painting a broad
+// uniform saturated band. 0.30 lets the thin core still saturate over a sustained
+// collision despite the narrow band.
 inline constexpr float kOrogenyIntensityPerStep = 0.30f;
 // Distance-from-boundary intensity falloff: the per-ring linear weight
 // lin = 1 - ring/(kCollisionBandRings+1) is SQUARED, concentrating intensity on the inner
@@ -247,21 +246,21 @@ inline constexpr int kMarginAccretionMaxRing = 2;
 // Set-point bias: production is irreversible (matured crust cannot un-convert), so a
 // purely proportional controller halts production exactly at target and then settles a
 // little ABOVE it (the last deficit-driven batch overshoots, consumption near target is
-// slow). With the M-T3.5 crust-type coherence filter acting as a continuous drain, the
-// 6% bias creates a dead band where the filter can drain area below target before the
-// controller responds. Reduced to 2% to keep the controller responsive while still
-// providing enough buffer to avoid overshoot. The ±10% gate absorbs any residual spread.
+// slow). A larger bias creates a dead band where the M-T3.5 crust-type coherence filter
+// (a continuous drain) can pull area below target before the controller responds. 2% keeps
+// the controller responsive while still buffering against overshoot; the ±10% gate absorbs
+// any residual spread.
 inline constexpr double kAreaControllerSetpointBias = 0.02;
-// Gain 4.7 (was 4.0): a ~10% shortfall below the set-point pushes the factor to ~1.47.
-// The M-T3.5 nucleation rule and crust-type coherence filter add a continuous drain;
-// the stronger gain plus the reduced setpointBias (0.02) keeps continental drift inside
-// the +/-10% budget on all gate seeds. The clamp bounds prevent a single-step lurch.
+// Gain 4.7: a ~10% shortfall below the set-point pushes the factor to ~1.47. The M-T3.5
+// nucleation rule and crust-type coherence filter add a continuous drain, so the gain plus
+// the small setpointBias keeps continental drift inside the +/-10% budget on all gate
+// seeds. The clamp bounds prevent a single-step lurch.
 inline constexpr double kAreaControllerGain      = 4.7;
 inline constexpr double kAreaControllerFactorMin = 0.5;
-// Max 3.0 (was 2.0): lets arc crust production ramp harder under a large deficit so a
-// high-shortening trajectory is pulled back inside the +/-10% drift budget. Still bounded,
-// so production never runs away into a continental surplus; every observed gate seed sits
-// in deficit, so the higher ceiling only ever helps close a gap.
+// Max 3.0: lets arc crust production ramp harder under a large deficit so a high-shortening
+// trajectory is pulled back inside the +/-10% drift budget. Still bounded, so production
+// never runs away into a continental surplus; every observed gate seed sits in deficit, so
+// the higher ceiling only ever helps close a gap.
 inline constexpr double kAreaControllerFactorMax = 3.0;
 
 // --- Plate merge ---
