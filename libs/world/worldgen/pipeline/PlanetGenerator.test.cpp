@@ -151,7 +151,7 @@ TEST(PlanetGenerator, DifferentSeedDifferentHash) {
 // typical hardware). 200 ms gives a 4x margin on a loaded machine.
 // ============================================================================
 
-TEST(PlanetGenerator, CancelWithin100ms) {
+TEST(PlanetGenerator, CancelWithin200ms) {
     PlanetParams params = PlanetParams::preset(Preset::EarthLike);
     params.gridSubdivision = 256; // large enough to still be running
 

@@ -412,7 +412,7 @@ PR #136 (`feature/worldgen-tectonic-history`) replaced the first three stages an
 
 | Slot | Old | New | Weight |
 |------|-----|-----|--------|
-| 0 | `PlateStage` | `TectonicHistoryStage` | 0.10 |
+| 0 | `PlateStage` | `TectonicHistoryStage` | 0.05 |
 | 1 | `PlateMovementStage` | `CrustStage` | 0.15 |
 | 2 | `TerrainStage` (Gaussian kernels) | `TerrainStage` (isostasy + depth-age) | 0.20 |
 
@@ -426,12 +426,12 @@ Two u16 fields added:
 
 | Field | Type | Bytes/tile | Units |
 |---|---|---|---|
-| crustAge | uint16 | 2 | Myr; 65535 = unset |
+| crustAge | uint16 | 2 | Myr; range 0..65534, cap 65534 (no unset sentinel; initialized to 0) |
 | orogenyAge | uint16 | 2 | Myr since last orogeny; 65535 = never |
 
 `WorldField` bits 15 and 16 are assigned to these fields. `kAllWorldFields = 0x1FFFFu` (bits 0..16). Both fields are appended to `forEachFieldArray`, which means they participate automatically in `worldHash` and `PlanetIO` serialization.
 
-`flags` gains one new bit: `kFlagContinentalCrust = 0x40`. Written by `CrustStage`.
+`flags` bit `kFlagContinentalCrust = 0x40` is now written by `CrustStage` (the bit existed before this PR; only the writer changed).
 
 ### PlanetIO format version 3
 

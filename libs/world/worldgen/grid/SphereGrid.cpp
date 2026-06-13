@@ -630,10 +630,12 @@ TileId SphereGrid::fromUnitVectorHinted(Vec3d dir, uint32_t& rhombusHint) const 
     uint32_t rh = rhombusHint < 10u ? rhombusHint : 0u;
     double u{}, v{};
     if (!tryRhombusSolve(rhombiInvT1[rh].m, rhombiInvT2[rh].m, dir, u, v)) {
-        // Miss: full search, then remember the rhombus it landed in.
+        // Miss: full search to find the owning rhombus.
         dirToRhombusUV(dir, rh, u, v);
-        rhombusHint = rh;
     }
+    // Always write back so the next call starts warm on the resolved rhombus
+    // (and so an out-of-range incoming hint is normalized on the hit path too).
+    rhombusHint = rh;
     int i{}, j{};
     hexRound(u * dn, v * dn, i, j);
     TileId t = canonicalVertex(static_cast<int>(rh), i, j);

@@ -354,13 +354,13 @@ Each phase depends on previous phases:
 - Phase 7: "Assigning biomes... 90%"
 
 **Phase Weights** (approximate time):
-- Tectonic History (coarse sim): 10%
+- Tectonic History (coarse sim): 5%
 - Crust Upsampling: 15%
 - Terrain: 20%
 - Atmosphere: 15%
 - Precipitation: 20%
 - Oceans: 5%
-- Biomes: 10%
+- Biomes: 15%
 - Snow: 5%
 
 ## Visual Feedback During Generation
