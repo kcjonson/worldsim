@@ -55,6 +55,21 @@ public:
 	using DecrementResourceCallback = std::function<bool(const std::string& defName, float x, float y)>;
 	void setDecrementResourceCallback(DecrementResourceCallback callback) { m_onDecrementResource = std::move(callback); }
 
+	/// Set callback fired when a Build action completes a structure (workDone reached workTotal).
+	/// ActionSystem lives in libs/engine and does not know ConstructionWorld; the app wires this
+	/// to flip the ConstructionWorld structure state to Built and mark its render dirty.
+	/// The StructureBlueprint component's phase is already set to Complete before this fires.
+	using StructureCompletedCallback = std::function<void(EntityID blueprintEntity)>;
+	void setStructureCompletedCallback(StructureCompletedCallback callback) { m_onStructureCompleted = std::move(callback); }
+
+	/// Set callback fired when a Deconstruct action finishes tearing down a structure
+	/// (workDone reached 0). The app wires this to remove the structure from ConstructionWorld,
+	/// issue the material refund, and run the demolish cascade. See building-construction D7.
+	using StructureDeconstructedCallback = std::function<void(EntityID blueprintEntity)>;
+	void setStructureDeconstructedCallback(StructureDeconstructedCallback callback) {
+		m_onStructureDeconstructed = std::move(callback);
+	}
+
 private:
 	/// Random number generator for yield calculations
 	std::mt19937 m_rng;
@@ -93,6 +108,22 @@ private:
 		struct Action& action,
 		const struct Inventory& inventory
 	);
+
+	/// Start a Build or Deconstruct action on the task's blueprint.
+	/// Reads the colonist's Construction skill (if any) to scale the work rate, and validates
+	/// the blueprint is in a workable phase. @param entity is the builder (for skill lookup).
+	void startBuildAction(
+		EntityID entity,
+		struct Task& task,
+		struct Action& action
+	);
+
+	/// Advance continuous construction work on the blueprint targeted by a Build/Deconstruct
+	/// action. Moves StructureBlueprint.workDone by constructionWorkRate(skill) x dt (up for
+	/// Build, down for Deconstruct), clamps it, and marks the action Complete when the work
+	/// bound is reached. Separated from processAction because completion is gated by workDone,
+	/// not elapsed time. @return true if the action reached completion this tick.
+	bool advanceConstructionWork(float deltaTime, struct Action& action);
 
 	/// Start a gather action (pickup or harvest) for crafting materials
 	void startGatherAction(
@@ -167,6 +198,12 @@ private:
 
 	/// Callback for decrementing entity resource count
 	DecrementResourceCallback m_onDecrementResource = nullptr;
+
+	/// Callback fired when a Build action completes a structure
+	StructureCompletedCallback m_onStructureCompleted = nullptr;
+
+	/// Callback fired when a Deconstruct action finishes tearing down a structure
+	StructureDeconstructedCallback m_onStructureDeconstructed = nullptr;
 };
 
 } // namespace ecs
