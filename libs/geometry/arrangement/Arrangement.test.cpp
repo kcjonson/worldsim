@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <random>
+#include <string>
 #include <vector>
 #include <gtest/gtest.h>
 

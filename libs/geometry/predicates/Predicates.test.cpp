@@ -1,7 +1,9 @@
 #include "Predicates.h"
 #include "../core/Vec2i64.h"
 
+#include <algorithm>
 #include <cstdint>
+#include <cstdlib>
 #include <random>
 #include <vector>
 #include <gtest/gtest.h>

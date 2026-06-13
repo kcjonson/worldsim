@@ -137,8 +137,8 @@ namespace geometry {
 		// pairs; each wedge's apex is where the two facing band edges meet. The
 		// order uses the exact angleLess comparator (no atan2, deterministic);
 		// two incidents with the exact same outgoing direction tie-break on the
-		// local index so the order is a strict total order regardless of input
-		// permutation.
+		// caller-provided stable index, so the order is permutation-invariant in
+		// the input vector (tie-breaking on the local index would not be).
 		std::vector<std::size_t> order(degree);
 		for (std::size_t i = 0; i < degree; ++i) {
 			order[i] = i;
@@ -152,7 +152,7 @@ namespace geometry {
 			if (angleLess(dr, dl)) {
 				return false;
 			}
-			return l < r; // identical direction: deterministic tie-break by index
+			return incidents[l].index < incidents[r].index;
 		});
 
 		std::vector<std::int64_t> trimByLocal(degree, 0);
