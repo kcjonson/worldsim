@@ -1,6 +1,7 @@
 add_library(geometry
     predicates/Predicates.cpp
     polygon/Polygon.cpp
+    offset/WallOffset.cpp
 )
 
 target_include_directories(geometry
