@@ -84,3 +84,23 @@ TEST(ConstructionSystemTests, ClearingGateTakesPriorityOverMaterials) {
 	EXPECT_TRUE(decision.emitClearGoals);
 	EXPECT_FALSE(decision.emitBuildGoal);
 }
+
+// ============================================================================
+// constructionHarvestDemand: bound chopping by what is already carried so the
+// colonist delivers its load instead of topping up forever (the haul-loop stall).
+// ============================================================================
+
+TEST(ConstructionSystemTests, HarvestDemandIsSiteShortfallWhenCarryingNothing) {
+	EXPECT_EQ(constructionHarvestDemand(/*remaining=*/20, /*carried=*/0), 20U);
+}
+
+TEST(ConstructionSystemTests, HarvestDemandShrinksByWhatIsCarried) {
+	// Carrying some Wood toward the site: only chop the difference.
+	EXPECT_EQ(constructionHarvestDemand(/*remaining=*/20, /*carried=*/8), 12U);
+}
+
+TEST(ConstructionSystemTests, HarvestDemandIsZeroWhenCarryingEnough) {
+	// Carrying exactly enough or more: stop chopping, go deliver.
+	EXPECT_EQ(constructionHarvestDemand(/*remaining=*/20, /*carried=*/20), 0U);
+	EXPECT_EQ(constructionHarvestDemand(/*remaining=*/20, /*carried=*/35), 0U);
+}

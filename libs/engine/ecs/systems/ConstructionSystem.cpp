@@ -3,6 +3,7 @@
 #include "../GoalTaskRegistry.h"
 #include "../World.h"
 #include "../components/Inventory.h"
+#include "../components/Needs.h"
 #include "../components/Structure.h"
 #include "../components/Transform.h"
 
@@ -28,6 +29,13 @@ namespace ecs {
 			return nextChainId++;
 		}
 	} // namespace
+
+	uint32_t constructionHarvestDemand(uint32_t remaining, uint32_t carried) {
+		// Only chop what the site still needs beyond what colonists already carry toward
+		// it. Once carried >= remaining, demand is 0 so the colonist stops topping up and
+		// delivers the load it already has.
+		return carried >= remaining ? 0U : remaining - carried;
+	}
 
 	ConstructionDecision decideConstructionPhase(
 		const StructureBlueprint& blueprint,
@@ -299,12 +307,22 @@ namespace ecs {
 		// against the live `remaining` each pass.
 		//
 		// Model: one Harvest goal and one Haul goal per material, BOTH Available, NO dependency.
-		// The colonist chops a tree (Wood into inventory, harvest goal credited), then the
-		// inventory-source Haul (which AIDecision only surfaces while carrying) brings it to the
-		// site and deposits into the blueprint Inventory. Yields are random, so a strict
-		// harvest-all-then-haul gate would make colonists hoard; the open chain lets each trip
-		// deliver. `remaining` is recomputed from the on-site inventory, so goals self-retire as
-		// material lands. Goals are sized/refreshed in place to avoid churn.
+		// The colonist chops a tree (Wood into inventory), then the inventory-source Haul (which
+		// AIDecision only surfaces while carrying) brings it to the site and deposits into the
+		// blueprint Inventory. Yields are random, so a strict harvest-all-then-haul gate would
+		// make colonists hoard; the open chain lets each trip deliver.
+		//
+		// Two corrections over a naive refresh:
+		//  - Harvest demand is bounded by what colonists already CARRY toward the site, not just
+		//    the site shortfall. Without this, the Harvest goal stays full-size while the colonist
+		//    is already carrying enough, so chopping (a near tree, with a skill bonus) keeps
+		//    out-scoring delivery (a far site, no skill bonus) and the load never gets delivered.
+		//    Once carried >= remaining, the Harvest goal retires and only the Haul remains.
+		//  - The Harvest and Haul share a stable chainId. selectTaskFromTrace tags the Haul as
+		//    chain step 1, so once the colonist commits to delivering, the chain-continuation
+		//    bonus keeps it on the trip instead of flip-flopping back to harvest each AI tick.
+		// `remaining` and `carried` are recomputed each pass, so the goals self-size as material
+		// is chopped and lands on site.
 
 		// Find this entity's existing construction goal by (type, accepted id) so we update
 		// rather than duplicate.
@@ -339,9 +357,29 @@ namespace ecs {
 				continue;
 			}
 
-			if (harvest != nullptr) {
+			// One stable chainId per (blueprint, material), preserved across refreshes so the
+			// chain-continuation bonus doesn't churn. Reuse whichever goal already carries it.
+			uint64_t chainId = 0;
+			if (haul != nullptr && haul->chainId.has_value()) {
+				chainId = haul->chainId.value();
+			} else if (harvest != nullptr && harvest->chainId.has_value()) {
+				chainId = harvest->chainId.value();
+			} else {
+				chainId = generateChainId();
+			}
+
+			const uint32_t carried		= carriedAmount(blueprintEntity, defName);
+			const uint32_t harvestDemand = constructionHarvestDemand(remaining, carried);
+
+			if (harvestDemand == 0) {
+				// Colonists already carry enough to finish the site: stop chopping so the load
+				// gets delivered. The Haul goal below stays open until material lands on site.
+				if (harvest != nullptr) {
+					registry.removeGoal(harvest->id);
+				}
+			} else if (harvest != nullptr) {
 				registry.updateGoal(harvest->id, [&](GoalTask& g) {
-					g.targetAmount	  = remaining;
+					g.targetAmount	  = harvestDemand;
 					g.deliveredAmount = 0;
 					g.status		  = GoalStatus::Available;
 				});
@@ -352,9 +390,10 @@ namespace ecs {
 				harvestGoal.destinationEntity = blueprintEntity;
 				harvestGoal.destinationPosition = sitePos;
 				harvestGoal.acceptedDefNameIds = {defNameId};
-				harvestGoal.targetAmount	  = remaining;
+				harvestGoal.targetAmount	  = harvestDemand;
 				harvestGoal.yieldDefNameId	  = defNameId;
 				harvestGoal.status			  = GoalStatus::Available;
+				harvestGoal.chainId			  = chainId;
 				registry.createGoal(std::move(harvestGoal));
 			}
 
@@ -363,6 +402,7 @@ namespace ecs {
 					g.targetAmount	  = remaining;
 					g.deliveredAmount = 0;
 					g.status		  = GoalStatus::Available;
+					g.chainId		  = chainId;
 				});
 			} else {
 				GoalTask haulGoal;
@@ -373,17 +413,34 @@ namespace ecs {
 				haulGoal.acceptedDefNameIds	 = {defNameId};
 				haulGoal.targetAmount		 = remaining;
 				haulGoal.status				 = GoalStatus::Available;
+				haulGoal.chainId			 = chainId;
 				registry.createGoal(std::move(haulGoal));
 			}
 
 			LOG_DEBUG(
 				Engine,
-				"[Construction] Material goals for blueprint %u: %u x %s outstanding",
+				"[Construction] Material goals for blueprint %u: %u x %s outstanding (%u carried, harvest demand %u)",
 				static_cast<uint32_t>(blueprintEntity),
 				remaining,
-				defName.c_str()
+				defName.c_str(),
+				carried,
+				harvestDemand
 			);
 		}
+	}
+
+	uint32_t ConstructionSystem::carriedAmount(EntityID buildSite, const std::string& defName) const {
+		// Sum the material carried by colonists (NeedsComponent distinguishes a colonist from the
+		// build site, which also owns an Inventory). Goals are global with no in-flight accounting,
+		// so this is how the system learns how much material is already en route to the site.
+		uint32_t total = 0;
+		for (auto [entity, needs, inventory] : world->view<NeedsComponent, Inventory>()) {
+			if (entity == buildSite) {
+				continue; // the delivery inventory is on-site, not in flight
+			}
+			total += inventory.getQuantity(defName);
+		}
+		return total;
 	}
 
 	void ConstructionSystem::emitBuildGoal(EntityID blueprintEntity, const StructureBlueprint& blueprint) {

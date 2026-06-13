@@ -81,6 +81,13 @@ namespace ecs {
 		bool					  materialsComplete
 	);
 
+	/// How much of a material a colonist still needs to HARVEST, given how much the
+	/// site still needs (`remaining`) and how much is already carried toward it
+	/// (`carried`, summed across colonists). Bounds chopping so a colonist that
+	/// already carries enough switches to delivering instead of topping up forever.
+	/// Pure; unit-tested directly.
+	[[nodiscard]] uint32_t constructionHarvestDemand(uint32_t remaining, uint32_t carried);
+
 	/// ConstructionSystem - foundation lifecycle goal source (see file header).
 	class ConstructionSystem : public ISystem {
 	  public:
@@ -127,6 +134,11 @@ namespace ecs {
 		/// Harvest yields the material into a colonist's inventory, the dependent Haul carries
 		/// it to the blueprint and deposits into its Inventory.
 		void emitMaterialGoals(EntityID blueprintEntity, const StructureBlueprint& blueprint);
+
+		/// Sum how much of a material colonists are currently carrying (the build site's own
+		/// delivery Inventory is excluded). Used to bound harvest demand so a colonist that
+		/// already carries enough delivers it instead of chopping more.
+		[[nodiscard]] uint32_t carriedAmount(EntityID buildSite, const std::string& defName) const;
 
 		/// Emit a single Build goal at the foundation's work slot (centroid). ActionSystem
 		/// turns this into Build actions that advance workDone.
