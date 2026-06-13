@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <map>
+#include <tuple>
 
 namespace geometry {
 
@@ -36,16 +37,26 @@ namespace geometry {
 				   p.y <= std::max(a.y, b.y);
 		}
 
-		// Order two collinear points along [a,b]'s direction by projection onto
-		// the dominant axis, returning them low-to-high.
-		void orderAlong(const Vec2i64& a, const Vec2i64& b, Vec2i64& lo, Vec2i64& hi) {
-			if (b < a) {
-				lo = b;
-				hi = a;
-			} else {
-				lo = a;
-				hi = b;
-			}
+		// Clamp p into the axis-aligned bounding box of [a,b]. After a proper
+		// crossing rounds to the nearest mm the point can land a hair outside the
+		// box (or just off the exact line); clamping snaps it back onto the
+		// segment's extent so it becomes a valid interior split vertex.
+		Vec2i64 clampToBox(const Vec2i64& p, const Vec2i64& a, const Vec2i64& b) {
+			return {std::clamp(p.x, std::min(a.x, b.x), std::max(a.x, b.x)),
+					std::clamp(p.y, std::min(a.y, b.y), std::max(a.y, b.y))};
+		}
+
+		// Canonical rounded crossing point of two segments, independent of which is
+		// passed first. intersectSegments parametrizes on its first segment, so the
+		// rounded point can differ by a millimeter depending on argument order;
+		// ordering the pair canonically guarantees both contributors split at the
+		// SAME lattice vertex, which is what actually resolves the crossing.
+		Vec2i64 canonicalCrossingPoint(const WorkSegment& s, const WorkSegment& other) {
+			const bool sFirst =
+				std::tie(s.a, s.b) < std::tie(other.a, other.b);
+			const WorkSegment& p = sFirst ? s : other;
+			const WorkSegment& q = sFirst ? other : s;
+			return intersectSegments(p.a, p.b, q.a, q.b).point;
 		}
 
 		// Collect every point at which `other` forces a split of segment `s`'s
@@ -57,11 +68,17 @@ namespace geometry {
 			switch (r.relation) {
 				case SegmentRelation::Disjoint:
 					return;
-				case SegmentRelation::ProperCrossing:
-					if (strictlyInterior(r.point, s.a, s.b)) {
-						out.push_back(r.point);
+				case SegmentRelation::ProperCrossing: {
+					// Snap-rounding: a proper crossing must become a shared vertex on
+					// BOTH segments even when rounding moved it off either exact line.
+					// Use the order-independent rounded point, clamped onto s, and
+					// split there unless it coincides with an endpoint.
+					const Vec2i64 cp = clampToBox(canonicalCrossingPoint(s, other), s.a, s.b);
+					if (cp != s.a && cp != s.b) {
+						out.push_back(cp);
 					}
 					return;
+				}
 				case SegmentRelation::EndpointTouch:
 					if (strictlyInterior(r.point, s.a, s.b)) {
 						out.push_back(r.point);

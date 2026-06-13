@@ -216,3 +216,68 @@ TEST(Faces, RepresentativePointInsideNonConvexFace) {
 		}
 	}
 }
+
+TEST(AngleLess, StrictWeakOrderingExhaustive) {
+	// A broken comparator is undefined behavior in std::sort. Verify the three
+	// strict-weak-ordering axioms over a dense set of integer directions: every
+	// nonzero vector in a grid, which covers all angle classes and many collinear
+	// duplicates per direction.
+	std::vector<Vec2i64> dirs;
+	for (std::int64_t y = -7; y <= 7; ++y) {
+		for (std::int64_t x = -7; x <= 7; ++x) {
+			if (x == 0 && y == 0) {
+				continue; // zero vector is not a valid input
+			}
+			dirs.push_back({x, y});
+		}
+	}
+
+	auto equiv = [](const Vec2i64& a, const Vec2i64& b) { return !angleLess(a, b) && !angleLess(b, a); };
+
+	// Irreflexivity.
+	for (const Vec2i64& a : dirs) {
+		ASSERT_FALSE(angleLess(a, a)) << a.x << "," << a.y;
+	}
+
+	// Asymmetry and a consistent equivalence (transitivity of equivalence plus
+	// transitivity of <), checked over all triples.
+	for (std::size_t i = 0; i < dirs.size(); ++i) {
+		for (std::size_t j = 0; j < dirs.size(); ++j) {
+			const bool ltij = angleLess(dirs[i], dirs[j]);
+			const bool ltji = angleLess(dirs[j], dirs[i]);
+			ASSERT_FALSE(ltij && ltji) << "asymmetry " << i << "," << j;
+			for (std::size_t k = 0; k < dirs.size(); ++k) {
+				// Transitivity of <.
+				if (ltij && angleLess(dirs[j], dirs[k])) {
+					ASSERT_TRUE(angleLess(dirs[i], dirs[k])) << "transitivity i<j<k";
+				}
+				// Transitivity of equivalence.
+				if (equiv(dirs[i], dirs[j]) && equiv(dirs[j], dirs[k])) {
+					ASSERT_TRUE(equiv(dirs[i], dirs[k])) << "transitivity of equiv";
+				}
+			}
+		}
+	}
+}
+
+TEST(AngleLess, EquivalenceMeansSameDirection) {
+	// Two directions compare equivalent under angleLess iff they point the same
+	// way (same ray from origin). Distinct angles must order strictly one way.
+	std::vector<Vec2i64> dirs;
+	for (std::int64_t y = -5; y <= 5; ++y) {
+		for (std::int64_t x = -5; x <= 5; ++x) {
+			if (x == 0 && y == 0) {
+				continue;
+			}
+			dirs.push_back({x, y});
+		}
+	}
+	for (const Vec2i64& a : dirs) {
+		for (const Vec2i64& b : dirs) {
+			const bool equiv	   = !angleLess(a, b) && !angleLess(b, a);
+			// Same ray: cross == 0 and dot > 0.
+			const bool sameRay = cross(a, b).sign() == 0 && dot(a, b).sign() > 0;
+			ASSERT_EQ(equiv, sameRay) << a.x << "," << a.y << " vs " << b.x << "," << b.y;
+		}
+	}
+}

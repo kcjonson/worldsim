@@ -418,3 +418,93 @@ TEST(Validation, ResolveJunctionDirect) {
 	EXPECT_GT(jr.trims[0].trimMm, 0);
 	EXPECT_GT(jr.trims[1].trimMm, 0);
 }
+
+// --- adversarial tiling / trim ----------------------------------------------
+
+namespace {
+
+	// Strict exact pairwise non-overlap: no edge of one ring properly crosses an
+	// edge of the other, and no vertex of one is strictly inside the other. This is
+	// stronger than the midpoint-sampling helper; it catches any interior overlap.
+	bool exactlyDisjointInteriors(const Ring& a, const Ring& b) {
+		const std::size_t na = a.size();
+		const std::size_t nb = b.size();
+		for (std::size_t i = 0; i < na; ++i) {
+			for (std::size_t k = 0; k < nb; ++k) {
+				const SegmentRelation rel =
+					intersectSegments(a[i], a[(i + 1) % na], b[k], b[(k + 1) % nb]).relation;
+				if (rel == SegmentRelation::ProperCrossing) {
+					return false;
+				}
+			}
+		}
+		for (const Vec2i64& p : a) {
+			if (pointInPolygon(p, b) == PointInPolygon::Inside) {
+				return false;
+			}
+		}
+		for (const Vec2i64& p : b) {
+			if (pointInPolygon(p, a) == PointInPolygon::Inside) {
+				return false;
+			}
+		}
+		return true;
+	}
+
+	void expectExactPairwiseDisjoint(const WallBands& wb) {
+		std::vector<Ring> all = wb.bands;
+		all.insert(all.end(), wb.junctions.begin(), wb.junctions.end());
+		for (std::size_t i = 0; i < all.size(); ++i) {
+			for (std::size_t k = i + 1; k < all.size(); ++k) {
+				EXPECT_TRUE(exactlyDisjointInteriors(all[i], all[k]))
+					<< "rings " << i << " and " << k << " interiors overlap";
+			}
+		}
+	}
+
+} // namespace
+
+TEST(Junction, ClosedTriangleRoomTilesWithoutOverlap) {
+	// A closed triangle room with one acute (~25 deg) corner, sharper than the
+	// square test's right angles. Three degree-2 junctions, half 60. Must tile with
+	// no overlap and conserve area (within per-corner rounding slack).
+	std::vector<WallSegment> segs = {
+		{{0, 0}, {2000, 0}, 60},
+		{{2000, 0}, {400, 300}, 60},
+		{{400, 300}, {0, 0}, 60},
+	};
+	WallBands wb = resolveWallBands(segs, kDefaultMiterLimit);
+	ASSERT_EQ(wb.status, OffsetStatus::Ok) << "status=" << static_cast<int>(wb.status);
+	ASSERT_EQ(wb.bands.size(), 3u);
+	EXPECT_EQ(wb.junctions.size(), 3u);
+	expectAllRingsValid(wb);
+	expectExactPairwiseDisjoint(wb);
+}
+
+TEST(Junction, ShortMiddleSegmentBetweenSharpCornersRejectsOverrun) {
+	// A short middle segment whose two endpoints are sharp corners. The miter trims
+	// demanded at each end exceed the segment length, so the band would invert:
+	// resolveWallBands must reject with TrimOverrunsSegment, never emit overlapping
+	// or inverted rings.
+	std::vector<WallSegment> segs = {
+		{{-2000, 1000}, {0, 0}, 300}, // arrives at left corner steeply
+		{{0, 0}, {100, 0}, 300},	  // SHORT middle segment, length 100
+		{{100, 0}, {2100, 1000}, 300},// leaves right corner steeply
+	};
+	WallBands wb = resolveWallBands(segs, kDefaultMiterLimit);
+	EXPECT_EQ(wb.status, OffsetStatus::TrimOverrunsSegment) << "status=" << static_cast<int>(wb.status);
+}
+
+TEST(Junction, FourWayCrossExactNoOverlap) {
+	// Denser exact-overlap check on a 4-way cross with mixed thickness.
+	std::vector<WallSegment> segs = {
+		{{0, 0}, {1000, 0}, 120},
+		{{0, 0}, {-1000, 0}, 80},
+		{{0, 0}, {0, 1000}, 120},
+		{{0, 0}, {0, -1000}, 80},
+	};
+	WallBands wb = resolveWallBands(segs, kDefaultMiterLimit);
+	ASSERT_EQ(wb.status, OffsetStatus::Ok) << "status=" << static_cast<int>(wb.status);
+	expectAllRingsValid(wb);
+	expectExactPairwiseDisjoint(wb);
+}

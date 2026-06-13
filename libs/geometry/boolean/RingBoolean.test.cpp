@@ -349,3 +349,69 @@ TEST(BooleanProperties, SubtractAreaEqualsAMinusIntersection) {
 	EXPECT_EQ(area2(d.ring), 3'500'000);
 	EXPECT_TRUE(isSimple(d.ring).pass);
 }
+
+// ---------------------------------------------------------------------------
+// Adversarial cases: bridge shapes, two-stretch shared edges, status reachability.
+// ---------------------------------------------------------------------------
+
+TEST(UnionRings, BridgeAcrossSlotEnclosesHoleRejected) {
+	// A is a U with tall prongs (slot interior x in [20,40], y in [20,60]). B is a
+	// bar spanning the slot at y in [40,50], sharing a vertical edge stretch on each
+	// prong's inner wall (x=20 and x=40, two disjoint shared stretches). The union
+	// caps the slot, enclosing the region below the bar as a void: must reject.
+	Ring a = {{0, 0}, {60, 0}, {60, 60}, {40, 60}, {40, 20}, {20, 20}, {20, 60}, {0, 60}};
+	Ring b = {{20, 40}, {40, 40}, {40, 50}, {20, 50}};
+	const BooleanResult r = unionRings(a, b);
+	EXPECT_FALSE(r.ok());
+	EXPECT_EQ(r.status, BooleanStatus::ResultHasHole) << "status=" << static_cast<int>(r.status);
+}
+
+TEST(UnionRings, TwoDisjointEdgeStretchesNoHoleMerges) {
+	// Control: B fills the entire slot mouth (x in [20,40], y in [20,60]), sharing
+	// the same two vertical stretches but enclosing nothing. The union is a solid
+	// rectangle 60x60 and must succeed.
+	Ring a = {{0, 0}, {60, 0}, {60, 60}, {40, 60}, {40, 20}, {20, 20}, {20, 60}, {0, 60}};
+	Ring b = square(20, 20, 40, 60);
+	const BooleanResult r = unionRings(a, b);
+	ASSERT_TRUE(r.ok()) << "status=" << static_cast<int>(r.status);
+	EXPECT_EQ(area2(r.ring), 60 * 60 * 2);
+}
+
+TEST(SubtractRings, BoundaryRunsAlongThenCutsIn) {
+	// B's boundary runs ALONG a's bottom edge for a stretch, then cuts up into a's
+	// interior and back out: a bite whose mouth is a sub-stretch of a's edge. The
+	// remainder stays a single simple ring.
+	Ring a = square(0, 0, 100, 100);
+	Ring b = {{20, 0}, {60, 0}, {60, 40}, {20, 40}}; // sits on a's bottom edge y=0
+	const BooleanResult r = subtractRings(a, b);
+	ASSERT_TRUE(r.ok()) << "status=" << static_cast<int>(r.status);
+	EXPECT_EQ(area2(r.ring), (100 * 100 - 40 * 40) * 2);
+	EXPECT_TRUE(isSimple(r.ring).pass);
+}
+
+TEST(RingsInteriorOverlap, RingEntersThroughSharedEdge) {
+	// B shares a stretch of a's edge but pokes its interior across into a: the
+	// interiors DO overlap, so this must be true (it is not the legal edge-adjacent
+	// case). B straddles a's right edge x=100.
+	Ring a = square(0, 0, 100, 100);
+	Ring b = {{80, 20}, {120, 20}, {120, 60}, {80, 60}};
+	EXPECT_TRUE(ringsInteriorOverlap(a, b));
+}
+
+TEST(RingsInteriorOverlap, SharedEdgeStretchOnlyNoInterior) {
+	// B sits entirely outside a, flush against a's right edge along a sub-stretch.
+	// Edge contact only: no interior overlap.
+	Ring a = square(0, 0, 100, 100);
+	Ring b = {{100, 20}, {160, 20}, {160, 60}, {100, 60}};
+	EXPECT_FALSE(ringsInteriorOverlap(a, b));
+}
+
+TEST(SubtractRings, SplitWhenBSpansFullWidthThroughMiddle) {
+	// B cuts clean across a from one edge to the opposite edge, sharing edge
+	// stretches on both, severing a into top and bottom: ResultSplits.
+	Ring a = square(0, 0, 100, 100);
+	Ring b = square(0, 40, 100, 60); // spans the full width, touching both side edges
+	const BooleanResult r = subtractRings(a, b);
+	EXPECT_FALSE(r.ok());
+	EXPECT_EQ(r.status, BooleanStatus::ResultSplits) << "status=" << static_cast<int>(r.status);
+}

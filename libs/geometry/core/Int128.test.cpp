@@ -98,6 +98,135 @@ TEST(Int128, CompareSquareToProductLarge) {
 	EXPECT_EQ(Int128::compareSquareToProduct(c, c, c), 0);
 }
 
+namespace {
+
+	// Independent 256-bit unsigned magnitude as eight 32-bit limbs, built without
+	// _umul128 or __int128 so it shares no code with the implementation under test.
+	// This is the oracle the hand-rolled two-limb mul128 carry chain is checked
+	// against.
+	struct Oracle256 {
+		std::uint32_t limb[8] = {0, 0, 0, 0, 0, 0, 0, 0};
+	};
+
+	// Magnitude of an int64 as two 32-bit limbs.
+	void mag32(std::int64_t v, std::uint32_t& lo, std::uint32_t& hi) {
+		std::uint64_t m = v < 0 ? (~static_cast<std::uint64_t>(v) + 1U) : static_cast<std::uint64_t>(v);
+		lo				= static_cast<std::uint32_t>(m & 0xFFFFFFFFU);
+		hi				= static_cast<std::uint32_t>(m >> 32);
+	}
+
+	// Schoolbook multiply of two 128-bit magnitudes (each four 32-bit limbs) into
+	// a 256-bit magnitude. Pure 32x32->64 partial products with running carry.
+	Oracle256 oracleMul(const std::uint32_t a[4], const std::uint32_t b[4]) {
+		// Carry immediately into the next limb so the running accumulator never
+		// exceeds the diagonal sum plus an incoming carry (well under 2^64).
+		Oracle256 out;
+		for (int i = 0; i < 4; ++i) {
+			std::uint64_t carry = 0;
+			for (int j = 0; j < 4; ++j) {
+				std::uint64_t cur = static_cast<std::uint64_t>(out.limb[i + j]) +
+									static_cast<std::uint64_t>(a[i]) * static_cast<std::uint64_t>(b[j]) + carry;
+				out.limb[i + j] = static_cast<std::uint32_t>(cur & 0xFFFFFFFFU);
+				carry			= cur >> 32;
+			}
+			out.limb[i + 4] = static_cast<std::uint32_t>(carry);
+		}
+		return out;
+	}
+
+	int oracleCompare(const Oracle256& a, const Oracle256& b) {
+		for (int i = 7; i >= 0; --i) {
+			if (a.limb[i] != b.limb[i]) {
+				return a.limb[i] < b.limb[i] ? -1 : 1;
+			}
+		}
+		return 0;
+	}
+
+	// sign(|c|^2 - |a|*|b|) computed entirely by the independent oracle, where
+	// c, a, b are each products of two int64 values (i.e. up to 128-bit magnitude).
+	int oracleSquareToProduct(std::int64_t c0, std::int64_t c1, std::int64_t a0, std::int64_t a1, std::int64_t b0,
+							  std::int64_t b1) {
+		auto toLimbs = [](std::int64_t x, std::int64_t y, std::uint32_t out[4]) {
+			std::uint32_t xl = 0, xh = 0, yl = 0, yh = 0;
+			mag32(x, xl, xh);
+			mag32(y, yl, yh);
+			// |x*y| as a 128-bit magnitude in four 32-bit limbs.
+			std::uint32_t xs[4] = {xl, xh, 0, 0};
+			std::uint32_t ys[4] = {yl, yh, 0, 0};
+			Oracle256	  p		= oracleMul(xs, ys);
+			for (int i = 0; i < 4; ++i) {
+				out[i] = p.limb[i];
+			}
+		};
+		std::uint32_t cl[4], al[4], bl[4];
+		toLimbs(c0, c1, cl);
+		toLimbs(a0, a1, al);
+		toLimbs(b0, b1, bl);
+		Oracle256 cc = oracleMul(cl, cl);
+		Oracle256 ab = oracleMul(al, bl);
+		return oracleCompare(cc, ab);
+	}
+
+} // namespace
+
+TEST(Int128, Mul128AgainstIndependentOracleExtremePatterns) {
+	// All-ones limbs, near-2^127 magnitudes, and INT64_MIN edges. These exercise
+	// every carry boundary in the hand-rolled mul128 two-limb chain. compareSquare-
+	// ToProduct is the only public surface that reaches mul128; we drive it with
+	// magnitudes built as products of int64 values and cross-check the sign.
+	const std::int64_t vals[] = {
+		0, 1, -1, 2, kI64Max, kI64Min, kI64Max - 1, kI64Min + 1, 0x7FFFFFFFFFFFFFFFLL, 0x100000000LL, 0xFFFFFFFFLL,
+		-0x100000000LL, 3037000499LL /* ~sqrt(2^63) */, -3037000499LL,
+	};
+	for (std::int64_t c0 : vals) {
+		for (std::int64_t c1 : vals) {
+			for (std::int64_t a0 : vals) {
+				for (std::int64_t a1 : vals) {
+					// Keep b a simple product to bound the loop while still spanning
+					// the limb range via a0,a1.
+					const std::int64_t b0	  = c1;
+					const std::int64_t b1	  = a0;
+					const int		   got	  = Int128::compareSquareToProduct(
+						   Int128::product(c0, c1), Int128::product(a0, a1), Int128::product(b0, b1));
+					const int expected = oracleSquareToProduct(c0, c1, a0, a1, b0, b1);
+					ASSERT_EQ(got, expected)
+						<< "c=" << c0 << "*" << c1 << " a=" << a0 << "*" << a1 << " b=" << b0 << "*" << b1;
+				}
+			}
+		}
+	}
+}
+
+TEST(Int128, CompareSquareToProductExhaustiveSmall) {
+	// Brute force every (c,a,b) in a small range against int64 math that cannot
+	// overflow at this scale: c*c and a*b both fit comfortably in int64.
+	for (std::int64_t c = 0; c <= 120; ++c) {
+		for (std::int64_t a = 0; a <= 120; ++a) {
+			for (std::int64_t b = 0; b <= 120; ++b) {
+				const int got	   = Int128::compareSquareToProduct(Int128(c), Int128(a), Int128(b));
+				const std::int64_t diff = c * c - a * b;
+				const int expected = diff < 0 ? -1 : (diff > 0 ? 1 : 0);
+				ASSERT_EQ(got, expected) << "c=" << c << " a=" << a << " b=" << b;
+			}
+		}
+	}
+}
+
+TEST(Int128, ProductMagnitudeFullWidthOracle) {
+	// Directly check that |a|*|b| matches the oracle for all-ones and mixed-limb
+	// products, exercising mul128 with maximal limb values (aLo=aHi=...=0xFFFF...).
+	const std::int64_t big = kI64Max;	   // 0x7FFFFFFFFFFFFFFF
+	const std::int64_t neg = kI64Min;	   // 0x8000000000000000 magnitude
+	// (big*big) compared against (neg*neg): |neg| = 2^63 > |big| = 2^63-1, so
+	// neg*neg > big*big, hence c=big,a=neg,b=neg gives big^2 - neg^2 < 0.
+	EXPECT_EQ(Int128::compareSquareToProduct(Int128::product(big, 1), Int128::product(neg, 1), Int128::product(neg, 1)),
+			  -1);
+	// Symmetric large square equality through different factorizations of the same
+	// magnitude is covered by the oracle test; here pin the known sign.
+	EXPECT_EQ(oracleSquareToProduct(big, 1, neg, 1, neg, 1), -1);
+}
+
 TEST(Vec2i64, Arithmetic) {
 	Vec2i64 a{3, 4};
 	Vec2i64 b{1, 2};
