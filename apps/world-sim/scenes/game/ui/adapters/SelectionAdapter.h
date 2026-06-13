@@ -10,6 +10,7 @@
 #include "scenes/game/world/selection/SelectionTypes.h"
 
 #include <assets/AssetRegistry.h>
+#include <construction/ConstructionWorld.h>
 #include <ecs/World.h>
 
 #include <functional>
@@ -22,11 +23,15 @@ using ResourceQueryCallback = std::function<std::optional<uint32_t>(const std::s
 
 /// Convert a Selection variant into panel content.
 /// Returns std::nullopt for NoSelection (panel should hide).
+/// @param constructionWorld Topology store for FoundationSelection (nullable).
+/// @param onDemolish Callback for a foundation's Demolish button (nullable).
 [[nodiscard]] std::optional<PanelContent> adaptSelection(
 	const Selection& selection,
 	const ecs::World& world,
 	const engine::assets::AssetRegistry& registry,
-	const ResourceQueryCallback& queryResources = {}
+	const ResourceQueryCallback& queryResources = {},
+	const engine::construction::ConstructionWorld* constructionWorld = nullptr,
+	const std::function<void()>& onDemolish = {}
 );
 
 /// Convert colonist data into two-column panel content
@@ -59,6 +64,21 @@ using ResourceQueryCallback = std::function<std::optional<uint32_t>(const std::s
 	const std::function<void()>& onPlace = {},
 	const std::function<void()>& onPackage = {},
 	const std::function<void()>& onConfigure = {}
+);
+
+/// Convert a selected construction foundation into panel content.
+/// Pulls material/area/state from the ConstructionWorld and build progress from
+/// the ECS StructureBlueprint on the foundation's mirror entity. Emits a
+/// Demolish ActionButtonSlot wired to onDemolish.
+/// @param world ECS world (for the blueprint component).
+/// @param constructionWorld Topology store (geometry, material, state).
+/// @param selection The selected foundation.
+/// @param onDemolish Callback for the Demolish button (nullable).
+[[nodiscard]] PanelContent adaptFoundation(
+	const ecs::World& world,
+	const engine::construction::ConstructionWorld& constructionWorld,
+	const FoundationSelection& selection,
+	const std::function<void()>& onDemolish = {}
 );
 
 } // namespace world_sim

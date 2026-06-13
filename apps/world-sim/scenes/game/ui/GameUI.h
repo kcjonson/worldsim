@@ -74,6 +74,7 @@ class GameUI {
 		std::function<void(ecs::GameSpeed)> onSpeedChange;			 ///< Called when speed changed
 		std::function<void()> onMenuClick;								 ///< Called when menu button clicked
 		std::function<void()> onPlaceFurniture;						 ///< Called when Place button clicked for packaged furniture
+		std::function<void()> onDemolishFoundation;					 ///< Called when Demolish button clicked for a foundation
 		ResourceQueryCallback queryResources;							 ///< Query remaining resource count for harvestable entities
 		std::function<void(const std::string&)> onStructureSelected;	 ///< Called when a structure tool (e.g. "foundation") is chosen
 		std::function<void(const std::string&)> onConstructionMaterialSelected; ///< Called when a config-strip material card is clicked
@@ -98,7 +99,8 @@ class GameUI {
 		ecs::World& ecsWorld,
 		const engine::assets::AssetRegistry& assetRegistry,
 		const engine::assets::RecipeRegistry& recipeRegistry,
-		const Selection& selection
+		const Selection& selection,
+		const engine::construction::ConstructionWorld* constructionWorld = nullptr
 	);
 
 	/// Render all UI elements

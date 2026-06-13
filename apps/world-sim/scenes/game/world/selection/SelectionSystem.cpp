@@ -2,6 +2,8 @@
 
 #include <assets/AssetRegistry.h>
 #include <assets/placement/PlacementExecutor.h>
+#include <construction/ConstructionWorld.h>
+#include <core/Vec2i64.h>
 #include <ecs/components/Appearance.h>
 #include <ecs/components/Colonist.h>
 #include <ecs/components/Inventory.h>
@@ -20,6 +22,7 @@ SelectionSystem::SelectionSystem(const Args& args)
 	: ecsWorld(args.world)
 	, camera(args.camera)
 	, placementExecutor(args.placementExecutor)
+	, constructionWorld(args.constructionWorld)
 	, callbacks(args.callbacks) {}
 
 void SelectionSystem::handleClick(float screenX, float screenY, int viewportW, int viewportH) {
@@ -180,6 +183,22 @@ void SelectionSystem::handleClick(float screenX, float screenY, int viewportW, i
 		}
 	}
 
+	// Priority 3: Foundations (lowest). Quantize the click to integer mm and ask
+	// the ConstructionWorld for the topmost foundation containing it. Reaching
+	// here means no higher-priority entity was hit, so a colonist or item sitting
+	// on the foundation still wins the click.
+	if (constructionWorld != nullptr) {
+		auto foundationId = constructionWorld->foundationAt(geometry::quantize(Foundation::Vec2{worldPos.x, worldPos.y}));
+		if (foundationId != engine::construction::kInvalidFoundation) {
+			selection = FoundationSelection{foundationId};
+			LOG_INFO(Game, "Selected foundation #%llu", static_cast<unsigned long long>(foundationId));
+			if (callbacks.onSelectionChanged) {
+				callbacks.onSelectionChanged(selection);
+			}
+			return;
+		}
+	}
+
 	// Nothing found - deselect
 	selection = NoSelection{};
 	LOG_DEBUG(Game, "No selectable entity found, deselecting");
@@ -204,6 +223,36 @@ void SelectionSystem::selectColonist(ecs::EntityID entityId) {
 
 void SelectionSystem::renderIndicator(int viewportW, int viewportH) {
 	if (ecsWorld == nullptr || camera == nullptr) {
+		return;
+	}
+
+	// Foundations: outline the selected ring (no single point), reusing the ring
+	// stored in the ConstructionWorld. Drawn above the interim foundation render.
+	if (auto* foundationSel = std::get_if<FoundationSelection>(&selection)) {
+		const engine::construction::Foundation* foundation =
+			(constructionWorld != nullptr) ? constructionWorld->get(foundationSel->id) : nullptr;
+		if (foundation != nullptr && foundation->ring.size() >= 3) {
+			const std::size_t n = foundation->ring.size();
+			for (std::size_t i = 0; i < n; ++i) {
+				auto a = geometry::dequantize(foundation->ring[i]);
+				auto b = geometry::dequantize(foundation->ring[(i + 1) % n]);
+				auto sa = camera->worldToScreen(a.x, a.y, viewportW, viewportH, kPixelsPerMeter);
+				auto sb = camera->worldToScreen(b.x, b.y, viewportW, viewportH, kPixelsPerMeter);
+				Renderer::Primitives::drawLine(
+					Renderer::Primitives::LineArgs{
+						.start = Foundation::Vec2{sa.x, sa.y},
+						.end = Foundation::Vec2{sb.x, sb.y},
+						.style =
+							Foundation::LineStyle{
+								.color = Foundation::Color(1.0F, 0.85F, 0.0F, 0.9F), // Gold, matches entity indicator
+								.width = 3.0F,
+							},
+						.id = "foundation-selection-indicator",
+						.zIndex = 100,
+					}
+				);
+			}
+		}
 		return;
 	}
 

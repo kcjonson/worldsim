@@ -6,7 +6,9 @@
 // - NoSelection: Nothing selected (panel hidden)
 // - ColonistSelection: An ECS colonist entity
 // - WorldEntitySelection: A placed world entity (bush, tree, etc.)
+// - FoundationSelection: A construction foundation (ConstructionWorld topology)
 
+#include <construction/ConstructionWorld.h>
 #include <ecs/EntityID.h>
 #include <math/Types.h>
 
@@ -45,8 +47,17 @@ struct FurnitureSelection {
 	bool			 isPackaged;  // True if has Packaged component
 };
 
+/// A construction foundation is selected. Geometry, material, and state are
+/// queried from the ConstructionWorld by id (topology is the source of truth,
+/// not a snapshot here); the ECS mirror entity is reached via the foundation's
+/// `entity` handle for blueprint/progress info.
+struct FoundationSelection {
+	engine::construction::FoundationId id = engine::construction::kInvalidFoundation;
+};
+
 /// Selection variant - represents current selection state
-using Selection = std::variant<NoSelection, ColonistSelection, WorldEntitySelection, CraftingStationSelection, FurnitureSelection>;
+using Selection =
+	std::variant<NoSelection, ColonistSelection, WorldEntitySelection, CraftingStationSelection, FurnitureSelection, FoundationSelection>;
 
 /// Helper to check if selection is empty
 [[nodiscard]] inline bool hasSelection(const Selection& sel) {

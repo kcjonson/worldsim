@@ -19,7 +19,8 @@ namespace world_sim {
 		  onPlaceCallback(args.onPlace),
 		  onPackageCallback(args.onPackage),
 		  onOpenStorageConfigCallback(args.onOpenStorageConfig),
-		  queryResourcesCallback(args.queryResources) {
+		  queryResourcesCallback(args.queryResources),
+		  onDemolishFoundationCallback(args.onDemolishFoundation) {
 
 		contentWidth = panelWidth - (2.0F * kPadding);
 
@@ -474,7 +475,8 @@ namespace world_sim {
 		const ecs::World&					  world,
 		const engine::assets::AssetRegistry&  assetRegistry,
 		const engine::assets::RecipeRegistry& recipeRegistry,
-		const Selection&					  selection
+		const Selection&					  selection,
+		const engine::construction::ConstructionWorld* constructionWorld
 	) {
 		// Prepare callbacks for model
 		EntityInfoModel::Callbacks callbacks{
@@ -485,10 +487,11 @@ namespace world_sim {
 			.onPackage = onPackageCallback,
 			.onOpenStorageConfig = onOpenStorageConfigCallback,
 			.queryResources = queryResourcesCallback,
+			.onDemolishFoundation = onDemolishFoundationCallback,
 		};
 
 		// Let model handle all the logic (selection detection, change detection, content generation)
-		auto updateType = m_model.refresh(selection, world, assetRegistry, recipeRegistry, callbacks);
+		auto updateType = m_model.refresh(selection, world, assetRegistry, recipeRegistry, callbacks, constructionWorld);
 
 		// React based on update type
 		switch (updateType) {

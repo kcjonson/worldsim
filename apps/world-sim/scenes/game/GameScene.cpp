@@ -174,6 +174,7 @@ namespace {
 					},
 				.onMenuClick = [this]() { sceneManager->switchTo(world_sim::toKey(world_sim::SceneType::MainMenu)); },
 				.onPlaceFurniture = [this]() { handlePlaceFurniture(); },
+				.onDemolishFoundation = [this]() { handleDemolishFoundation(); },
 				.queryResources = [this](const std::string& defName, Foundation::Vec2 position) -> std::optional<uint32_t> {
 					auto coord = engine::world::worldToChunk({position.x, position.y});
 					return m_placementExecutor->getResourceCount(coord, {position.x, position.y}, defName);
@@ -226,18 +227,10 @@ namespace {
 				}
 			});
 
-			// Initialize SelectionSystem (after ECS and PlacementExecutor)
-			m_selectionSystem = std::make_unique<world_sim::SelectionSystem>(world_sim::SelectionSystem::Args{
-				.world = ecsWorld.get(),
-				.camera = m_camera.get(),
-				.placementExecutor = m_placementExecutor.get(),
-				.callbacks = {.onSelectionChanged = [](const world_sim::Selection&) {
-					// Selection state is queried each frame - no action needed on change
-				}}
-			});
-
 			// Initialize DrawingSystem (foundation tool). Sibling of PlacementSystem;
-			// owns the app's ConstructionWorld topology store.
+			// owns the app's ConstructionWorld topology store. Created before the
+			// SelectionSystem so the latter can hold a pointer to that store for
+			// foundation hit-testing.
 			m_drawingSystem = std::make_unique<world_sim::DrawingSystem>(world_sim::DrawingSystem::Args{
 				.world = ecsWorld.get(),
 				.camera = m_camera.get(),
@@ -249,6 +242,17 @@ namespace {
 						gameUI->pushNotification(title, message, UI::ToastSeverity::Warning);
 					}
 				}
+			});
+
+			// Initialize SelectionSystem (after ECS, PlacementExecutor, and DrawingSystem)
+			m_selectionSystem = std::make_unique<world_sim::SelectionSystem>(world_sim::SelectionSystem::Args{
+				.world = ecsWorld.get(),
+				.camera = m_camera.get(),
+				.placementExecutor = m_placementExecutor.get(),
+				.constructionWorld = &m_drawingSystem->world(),
+				.callbacks = {.onSelectionChanged = [](const world_sim::Selection&) {
+					// Selection state is queried each frame - no action needed on change
+				}}
 			});
 
 			// Populate the config strip's material cards from construction config.
@@ -444,7 +448,10 @@ namespace {
 			// Update unified game UI (overlay + info panel)
 			auto& assetRegistry = engine::assets::AssetRegistry::Get();
 			auto& recipeRegistry = engine::assets::RecipeRegistry::Get();
-			gameUI->update(dt, *m_camera, *m_chunkManager, *ecsWorld, assetRegistry, recipeRegistry, m_selectionSystem->current());
+			gameUI->update(
+				dt, *m_camera, *m_chunkManager, *ecsWorld, assetRegistry, recipeRegistry, m_selectionSystem->current(),
+				&m_drawingSystem->world()
+			);
 
 			// Push drawing-tool status to the config strip (drives its readouts and
 			// visibility).
@@ -774,6 +781,37 @@ namespace {
 			// Remove the job
 			workQueue->removeJob(recipeDefName);
 			LOG_INFO(Game, "Canceled job '%s' at station '%s'", recipeDefName.c_str(), stationSel->defName.c_str());
+		}
+
+		/// Handle Demolish request from a foundation's info panel.
+		/// Epic C scope: immediate whole-foundation removal. The work-driven
+		/// Deconstruct lifecycle and the Demolish-building cascade land in C5+.
+		void handleDemolishFoundation() {
+			const auto& sel = m_selectionSystem->current();
+			auto*		foundationSel = std::get_if<world_sim::FoundationSelection>(&sel);
+			if (foundationSel == nullptr) {
+				LOG_WARNING(Game, "Cannot demolish: no foundation selected");
+				return;
+			}
+
+			auto& constructionWorld = m_drawingSystem->world();
+			const auto* foundation = constructionWorld.get(foundationSel->id);
+			if (foundation == nullptr) {
+				LOG_WARNING(Game, "Cannot demolish: foundation #%llu not found", static_cast<unsigned long long>(foundationSel->id));
+				m_selectionSystem->clearSelection();
+				return;
+			}
+
+			// Destroy the ECS mirror entity first (capture the handle before the
+			// topology record goes away), then remove the topology record.
+			const ecs::EntityID entity = foundation->entity;
+			if (entity != ecs::kInvalidEntity) {
+				ecsWorld->destroyEntity(entity);
+			}
+			constructionWorld.removeFoundation(foundationSel->id);
+
+			LOG_INFO(Game, "Demolished foundation #%llu", static_cast<unsigned long long>(foundationSel->id));
+			m_selectionSystem->clearSelection();
 		}
 
 		std::unique_ptr<engine::world::ChunkManager>	   m_chunkManager;

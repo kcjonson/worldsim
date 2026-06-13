@@ -86,7 +86,8 @@ namespace world_sim {
 			.onOpenCraftingDialog = args.onOpenCraftingDialog,
 			.onPlace = args.onPlaceFurniture,
 			.onOpenStorageConfig = args.onOpenStorageConfig,
-			.queryResources = args.queryResources
+			.queryResources = args.queryResources,
+			.onDemolishFoundation = args.onDemolishFoundation
 		});
 
 		// Create colonist details dialog
@@ -391,7 +392,8 @@ namespace world_sim {
 		ecs::World&							  ecsWorld,
 		const engine::assets::AssetRegistry&  assetRegistry,
 		const engine::assets::RecipeRegistry& recipeRegistry,
-		const Selection&					  selection
+		const Selection&					  selection,
+		const engine::construction::ConstructionWorld* constructionWorld
 	) {
 		// Update time model and top bar
 		if (topBar) {
@@ -448,7 +450,7 @@ namespace world_sim {
 
 		// Update info panel with selection
 		if (infoPanel) {
-			infoPanel->update(ecsWorld, assetRegistry, recipeRegistry, selection);
+			infoPanel->update(ecsWorld, assetRegistry, recipeRegistry, selection, constructionWorld);
 		}
 
 		// Update task list panel if expanded
