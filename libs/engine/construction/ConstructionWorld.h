@@ -108,11 +108,11 @@ namespace engine::construction {
 	// a wall, like a foundation, only distinguishes a not-yet-built blueprint
 	// from a finished structure; richer gameplay states live on the ECS entity.
 
-	using VertexId	= std::uint64_t;
+	using VertexId = std::uint64_t;
 	using SegmentId = std::uint64_t;
 	using OpeningId = std::uint64_t;
 
-	constexpr VertexId	kInvalidVertex	= 0;
+	constexpr VertexId	kInvalidVertex = 0;
 	constexpr SegmentId kInvalidSegment = 0;
 	constexpr OpeningId kInvalidOpening = 0;
 
@@ -120,7 +120,7 @@ namespace engine::construction {
 	// this vertex); its size is the vertex degree. Vertices are merged by exact
 	// integer position, so two segments meeting at a point share one Vertex.
 	struct Vertex {
-		VertexId			   id  = kInvalidVertex;
+		VertexId			   id = kInvalidVertex;
 		geometry::Vec2i64	   pos;
 		std::vector<SegmentId> segments; // incident segment ids, insertion order
 	};
@@ -133,14 +133,14 @@ namespace engine::construction {
 	// walls); the editor picks it, the store records it. `entity` is the ECS
 	// mirror handle, kInvalidEntity until the caller spawns the gameplay entity.
 	struct WallSegment {
-		SegmentId		id	= kInvalidSegment;
-		VertexId		v0	= kInvalidVertex;
-		VertexId		v1	= kInvalidVertex;
+		SegmentId		id = kInvalidSegment;
+		VertexId		v0 = kInvalidVertex;
+		VertexId		v1 = kInvalidVertex;
 		std::string		material;
 		std::string		thicknessPreset;
 		FoundationId	hostFoundation = kInvalidFoundation;
-		FoundationState state		   = FoundationState::Blueprint;
-		ecs::EntityID	entity		   = ecs::kInvalidEntity;
+		FoundationState state = FoundationState::Blueprint;
+		ecs::EntityID	entity = ecs::kInvalidEntity;
 	};
 
 	// A door or window attached to a segment at parameter `t` in [0,1] measured
@@ -149,12 +149,12 @@ namespace engine::construction {
 	// half it falls in). Full opening creation/validation is Epic F; this record
 	// plus the split re-attach are all that is built now.
 	struct Opening {
-		OpeningId		id		= kInvalidOpening;
+		OpeningId		id = kInvalidOpening;
 		SegmentId		segment = kInvalidSegment;
-		float			t		= 0.0F;
+		float			t = 0.0F;
 		std::string		type;
 		std::string		material;
-		FoundationState state  = FoundationState::Blueprint;
+		FoundationState state = FoundationState::Blueprint;
 		ecs::EntityID	entity = ecs::kInvalidEntity;
 	};
 
@@ -162,15 +162,15 @@ namespace engine::construction {
 	// rejections mirror the foundation reject-don't-repair model.
 	enum class SegmentStatus {
 		Ok,
-		ZeroLength,	  // a == b after quantization
-		Duplicate,	  // an existing segment already joins these two vertices
-		XCrossing,	  // interior would properly cross an existing segment interior
-		UnknownHost,  // hostFoundation id is not in the store
+		ZeroLength,	 // a == b after quantization
+		Duplicate,	 // an existing segment already joins these two vertices
+		XCrossing,	 // interior would properly cross an existing segment interior
+		UnknownHost, // hostFoundation id is not in the store
 	};
 
 	struct SegmentCommitResult {
 		SegmentStatus status = SegmentStatus::ZeroLength;
-		SegmentId	  id	 = kInvalidSegment; // valid only when status == Ok
+		SegmentId	  id = kInvalidSegment; // valid only when status == Ok
 
 		bool ok() const { return status == SegmentStatus::Ok; }
 	};
@@ -250,8 +250,13 @@ namespace engine::construction {
 		//     so the committed graph never has a vertex sitting on a segment's
 		//     interior. See commitSegment in the .cpp for the split mechanics and
 		//     opening re-attach.
-		SegmentCommitResult commitSegment(const geometry::Vec2i64& a, const geometry::Vec2i64& b, std::string material,
-										   std::string thicknessPreset, FoundationId host);
+		SegmentCommitResult commitSegment(
+			const geometry::Vec2i64& a,
+			const geometry::Vec2i64& b,
+			std::string				 material,
+			std::string				 thicknessPreset,
+			FoundationId			 host
+		);
 
 		// Remove a segment, drop it from its endpoints' adjacency, and delete any
 		// vertex left with no incident segments. Openings on the segment are
@@ -325,8 +330,8 @@ namespace engine::construction {
 		CommitStatus validateStructure(geometry::Ring& ring, FoundationId ignoreId) const;
 
 		// Wall topology helpers.
-		WallSegment*	 findSegment(SegmentId id);
-		Vertex*			 findVertex(VertexId id);
+		WallSegment* findSegment(SegmentId id);
+		Vertex*		 findVertex(VertexId id);
 
 		// Return the id of the vertex at exactly `pos`, creating one if none
 		// exists. Merge is by exact integer equality (Vec2i64::operator==).
@@ -350,12 +355,12 @@ namespace engine::construction {
 
 		std::vector<Foundation> foundations_; // stable insertion order
 		FoundationId			nextFoundationId_ = 1;
-		std::uint64_t			version_		  = 0;
+		std::uint64_t			version_ = 0;
 
 		std::vector<Vertex>		 vertices_; // stable insertion order
 		std::vector<WallSegment> segments_;
 		std::vector<Opening>	 openings_;
-		VertexId				 nextVertexId_	= 1; // 0 reserved as invalid
+		VertexId				 nextVertexId_ = 1; // 0 reserved as invalid
 		SegmentId				 nextSegmentId_ = 1;
 		OpeningId				 nextOpeningId_ = 1;
 	};

@@ -130,7 +130,7 @@ namespace engine::assets {
 		// minWallJunctionAngleDegrees is identical in value to minCornerAngleDegrees (both
 		// 30°) and enforces the same pathfinding invariant for wall junctions. Stored
 		// separately so callers can express intent clearly and the XML is self-documenting.
-		float minSegmentLengthMeters = 0.5F;
+		float	minSegmentLengthMeters = 0.5F;
 		int64_t minSegmentLengthMm = 500;
 
 		float minWallJunctionAngleDegrees = 30.0F;
@@ -209,9 +209,7 @@ namespace engine::assets {
 
 		/// Get a specific thickness preset by material name and preset name.
 		/// @return pointer to ThicknessPreset, or nullptr if either is not found
-		[[nodiscard]] const ThicknessPreset* getThicknessPreset(
-			const std::string& materialName,
-			const std::string& presetName) const;
+		[[nodiscard]] const ThicknessPreset* getThicknessPreset(const std::string& materialName, const std::string& presetName) const;
 
 		// --- Constraint / snapping queries ---
 

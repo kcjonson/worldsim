@@ -391,8 +391,8 @@ TEST_F(ConstructionRegistryTest, WallPresets_MultipliersPositive) {
 	for (const auto& preset : wood->wallThicknesses) {
 		EXPECT_GT(preset.costMultiplier, 0.0F) << "preset: " << preset.name;
 		EXPECT_GT(preset.workMultiplier, 0.0F) << "preset: " << preset.name;
-		EXPECT_GT(preset.hpMultiplier, 0.0F)   << "preset: " << preset.name;
-		EXPECT_GE(preset.insulation, 0.0F)     << "preset: " << preset.name;
+		EXPECT_GT(preset.hpMultiplier, 0.0F) << "preset: " << preset.name;
+		EXPECT_GE(preset.insulation, 0.0F) << "preset: " << preset.name;
 	}
 }
 

@@ -172,19 +172,18 @@ namespace engine::assets {
 						continue;
 					}
 
-					preset.thicknessMeters  = presetNode.child("thicknessMeters").text().as_float(0.0F);
-					preset.thicknessMm      = toMm(preset.thicknessMeters);
-					preset.halfThicknessMm  = preset.thicknessMm / 2;
-					preset.costMultiplier   = presetNode.child("costMultiplier").text().as_float(1.0F);
-					preset.workMultiplier   = presetNode.child("workMultiplier").text().as_float(1.0F);
-					preset.hpMultiplier     = presetNode.child("hpMultiplier").text().as_float(1.0F);
-					preset.insulation       = presetNode.child("insulation").text().as_float(0.0F);
+					preset.thicknessMeters = presetNode.child("thicknessMeters").text().as_float(0.0F);
+					preset.thicknessMm = toMm(preset.thicknessMeters);
+					preset.halfThicknessMm = preset.thicknessMm / 2;
+					preset.costMultiplier = presetNode.child("costMultiplier").text().as_float(1.0F);
+					preset.workMultiplier = presetNode.child("workMultiplier").text().as_float(1.0F);
+					preset.hpMultiplier = presetNode.child("hpMultiplier").text().as_float(1.0F);
+					preset.insulation = presetNode.child("insulation").text().as_float(0.0F);
 
 					mat.wallThicknesses.push_back(std::move(preset));
 				}
 
-				LOG_DEBUG(Engine, "Loaded %zu wall presets for material '%s'",
-					mat.wallThicknesses.size(), matName.c_str());
+				LOG_DEBUG(Engine, "Loaded %zu wall presets for material '%s'", mat.wallThicknesses.size(), matName.c_str());
 			}
 		}
 
@@ -321,10 +320,7 @@ namespace engine::assets {
 		return nullptr;
 	}
 
-	const ThicknessPreset* ConstructionRegistry::getThicknessPreset(
-		const std::string& materialName,
-		const std::string& presetName) const
-	{
+	const ThicknessPreset* ConstructionRegistry::getThicknessPreset(const std::string& materialName, const std::string& presetName) const {
 		const MaterialDef* mat = getMaterial(materialName);
 		if (!mat) {
 			return nullptr;

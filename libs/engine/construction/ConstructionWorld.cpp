@@ -43,8 +43,7 @@ namespace engine::construction {
 			if (geometry::orientation(s0, s1, p) != geometry::Orientation::Collinear) {
 				return false;
 			}
-			return p.x >= std::min(s0.x, s1.x) && p.x <= std::max(s0.x, s1.x) && p.y >= std::min(s0.y, s1.y) &&
-				   p.y <= std::max(s0.y, s1.y);
+			return p.x >= std::min(s0.x, s1.x) && p.x <= std::max(s0.x, s1.x) && p.y >= std::min(s0.y, s1.y) && p.y <= std::max(s0.y, s1.y);
 		}
 
 		// Parameter of a point along a->b as the exact integer dot(p-a, b-a).
@@ -188,7 +187,7 @@ namespace engine::construction {
 			}
 		}
 		Vertex vertex;
-		vertex.id  = nextVertexId_++;
+		vertex.id = nextVertexId_++;
 		vertex.pos = pos;
 		const VertexId id = vertex.id;
 		vertices_.push_back(std::move(vertex));
@@ -227,12 +226,12 @@ namespace engine::construction {
 		}
 
 		// Snapshot what we need before mutating the segment vector.
-		const VertexId		  oldV0	  = s->v0;
-		const VertexId		  oldV1	  = s->v1;
+		const VertexId		  oldV0 = s->v0;
+		const VertexId		  oldV1 = s->v1;
 		const std::string	  material = s->material;
-		const std::string	  preset  = s->thicknessPreset;
+		const std::string	  preset = s->thicknessPreset;
 		const FoundationId	  hostFnd = s->hostFoundation;
-		const FoundationState state	  = s->state;
+		const FoundationState state = s->state;
 
 		const Vertex* v0 = findVertex(oldV0);
 		const Vertex* v1 = findVertex(oldV1);
@@ -251,26 +250,26 @@ namespace engine::construction {
 		const VertexId mid = findOrCreateVertex(at);
 
 		WallSegment first;
-		first.id			  = nextSegmentId_++;
-		first.v0			  = oldV0;
-		first.v1			  = mid;
-		first.material		  = material;
+		first.id = nextSegmentId_++;
+		first.v0 = oldV0;
+		first.v1 = mid;
+		first.material = material;
 		first.thicknessPreset = preset;
-		first.hostFoundation  = hostFnd;
-		first.state			  = state;
-		first.entity		  = ecs::kInvalidEntity;
+		first.hostFoundation = hostFnd;
+		first.state = state;
+		first.entity = ecs::kInvalidEntity;
 
 		WallSegment second;
-		second.id			   = nextSegmentId_++;
-		second.v0			   = mid;
-		second.v1			   = oldV1;
-		second.material		   = material;
+		second.id = nextSegmentId_++;
+		second.v0 = mid;
+		second.v1 = oldV1;
+		second.material = material;
 		second.thicknessPreset = preset;
-		second.hostFoundation  = hostFnd;
-		second.state		   = state;
-		second.entity		   = ecs::kInvalidEntity;
+		second.hostFoundation = hostFnd;
+		second.state = state;
+		second.entity = ecs::kInvalidEntity;
 
-		const SegmentId firstId	 = first.id;
+		const SegmentId firstId = first.id;
 		const SegmentId secondId = second.id;
 
 		// Re-attach openings. The old segment's ECS entity is intentionally NOT
@@ -285,11 +284,11 @@ namespace engine::construction {
 			}
 			if (opening.t < splitParam) {
 				opening.segment = firstId;
-				opening.t		= splitParam > 0.0F ? opening.t / splitParam : 0.0F;
+				opening.t = splitParam > 0.0F ? opening.t / splitParam : 0.0F;
 			} else {
 				opening.segment = secondId;
 				const float denom = 1.0F - splitParam;
-				opening.t		  = denom > 0.0F ? (opening.t - splitParam) / denom : 0.0F;
+				opening.t = denom > 0.0F ? (opening.t - splitParam) / denom : 0.0F;
 			}
 		}
 
@@ -313,9 +312,13 @@ namespace engine::construction {
 		return mid;
 	}
 
-	SegmentCommitResult ConstructionWorld::commitSegment(const geometry::Vec2i64& a, const geometry::Vec2i64& b,
-																			std::string material, std::string thicknessPreset,
-																			FoundationId host) {
+	SegmentCommitResult ConstructionWorld::commitSegment(
+		const geometry::Vec2i64& a,
+		const geometry::Vec2i64& b,
+		std::string				 material,
+		std::string				 thicknessPreset,
+		FoundationId			 host
+	) {
 		if (a == b) {
 			return {SegmentStatus::ZeroLength, kInvalidSegment};
 		}
@@ -354,8 +357,9 @@ namespace engine::construction {
 				breakPoints.push_back(v.pos);
 			}
 		}
-		std::sort(breakPoints.begin(), breakPoints.end(),
-				  [&](const geometry::Vec2i64& p, const geometry::Vec2i64& q) { return paramAlong(p, a, b) < paramAlong(q, a, b); });
+		std::sort(breakPoints.begin(), breakPoints.end(), [&](const geometry::Vec2i64& p, const geometry::Vec2i64& q) {
+			return paramAlong(p, a, b) < paramAlong(q, a, b);
+		});
 		breakPoints.erase(std::unique(breakPoints.begin(), breakPoints.end()), breakPoints.end());
 
 		// Resolve each break point to a vertex id. A break point that is NOT an
@@ -393,8 +397,8 @@ namespace engine::construction {
 		// A pair already joined by a segment is a duplicate and is skipped (the
 		// whole-commit status reports the first such rejection only if nothing
 		// else was created; see below).
-		SegmentId firstCreated	= kInvalidSegment;
-		bool	  anyDuplicate	= false;
+		SegmentId firstCreated = kInvalidSegment;
+		bool	  anyDuplicate = false;
 		for (std::size_t i = 0; i + 1 < chainVertices.size(); ++i) {
 			const VertexId u = chainVertices[i];
 			const VertexId w = chainVertices[i + 1];
@@ -402,7 +406,7 @@ namespace engine::construction {
 				continue;
 			}
 
-			bool duplicate = false;
+			bool		  duplicate = false;
 			const Vertex* uv = findVertex(u);
 			if (uv != nullptr) {
 				for (const SegmentId sid : uv->segments) {
@@ -419,14 +423,14 @@ namespace engine::construction {
 			}
 
 			WallSegment segment;
-			segment.id				= nextSegmentId_++;
-			segment.v0				= u;
-			segment.v1				= w;
-			segment.material		= material;
+			segment.id = nextSegmentId_++;
+			segment.v0 = u;
+			segment.v1 = w;
+			segment.material = material;
 			segment.thicknessPreset = thicknessPreset;
-			segment.hostFoundation	= host;
-			segment.state			= FoundationState::Blueprint;
-			segment.entity			= ecs::kInvalidEntity;
+			segment.hostFoundation = host;
+			segment.state = FoundationState::Blueprint;
+			segment.entity = ecs::kInvalidEntity;
 
 			const SegmentId id = segment.id;
 			segments_.push_back(std::move(segment));
@@ -465,8 +469,9 @@ namespace engine::construction {
 		segments_.erase(it);
 
 		// Openings on a removed segment go with it (the wall they cut is gone).
-		openings_.erase(std::remove_if(openings_.begin(), openings_.end(), [id](const Opening& o) { return o.segment == id; }),
-						openings_.end());
+		openings_.erase(
+			std::remove_if(openings_.begin(), openings_.end(), [id](const Opening& o) { return o.segment == id; }), openings_.end()
+		);
 
 		removeAdjacency(v0, id);
 		removeAdjacency(v1, id);
@@ -547,13 +552,13 @@ namespace engine::construction {
 			return kInvalidOpening;
 		}
 		Opening opening;
-		opening.id		 = nextOpeningId_++;
-		opening.segment	 = segment;
-		opening.t		 = std::clamp(t, 0.0F, 1.0F);
-		opening.type	 = std::move(type);
+		opening.id = nextOpeningId_++;
+		opening.segment = segment;
+		opening.t = std::clamp(t, 0.0F, 1.0F);
+		opening.type = std::move(type);
 		opening.material = std::move(material);
-		opening.state	 = FoundationState::Blueprint;
-		opening.entity	 = ecs::kInvalidEntity;
+		opening.state = FoundationState::Blueprint;
+		opening.entity = ecs::kInvalidEntity;
 		const OpeningId id = opening.id;
 		openings_.push_back(std::move(opening));
 		++version_;

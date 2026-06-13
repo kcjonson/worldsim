@@ -358,7 +358,7 @@ namespace {
 // ============================================================================
 
 TEST(ConstructionWorldWallTests, CommitSegmentCreatesIdsAndVertices) {
-	ConstructionWorld world;
+	ConstructionWorld	   world;
 	const cw::FoundationId host = makeHost(world);
 
 	SegmentCommitResult result = world.commitSegment({0, 0}, {4000, 0}, "wood", "thin", host);
@@ -382,7 +382,7 @@ TEST(ConstructionWorldWallTests, CommitSegmentCreatesIdsAndVertices) {
 }
 
 TEST(ConstructionWorldWallTests, RejectsZeroLength) {
-	ConstructionWorld world;
+	ConstructionWorld	   world;
 	const cw::FoundationId host = makeHost(world);
 
 	const std::uint64_t before = world.version();
@@ -394,14 +394,14 @@ TEST(ConstructionWorldWallTests, RejectsZeroLength) {
 }
 
 TEST(ConstructionWorldWallTests, RejectsUnknownHost) {
-	ConstructionWorld world;
+	ConstructionWorld	world;
 	SegmentCommitResult result = world.commitSegment({0, 0}, {4000, 0}, "wood", "thin", 999);
 	EXPECT_EQ(result.status, SegmentStatus::UnknownHost);
 	EXPECT_EQ(world.segments().size(), 0u);
 }
 
 TEST(ConstructionWorldWallTests, SharedEndpointMergesVertex) {
-	ConstructionWorld world;
+	ConstructionWorld	   world;
 	const cw::FoundationId host = makeHost(world);
 
 	SegmentCommitResult first = world.commitSegment({0, 0}, {4000, 0}, "wood", "thin", host);
@@ -416,7 +416,7 @@ TEST(ConstructionWorldWallTests, SharedEndpointMergesVertex) {
 }
 
 TEST(ConstructionWorldWallTests, RejectsExactDuplicate) {
-	ConstructionWorld world;
+	ConstructionWorld	   world;
 	const cw::FoundationId host = makeHost(world);
 
 	ASSERT_TRUE(world.commitSegment({0, 0}, {4000, 0}, "wood", "thin", host).ok());
@@ -437,7 +437,7 @@ TEST(ConstructionWorldWallTests, RejectsExactDuplicate) {
 // ============================================================================
 
 TEST(ConstructionWorldWallTests, TJunctionSplitsHostSegment) {
-	ConstructionWorld world;
+	ConstructionWorld	   world;
 	const cw::FoundationId host = makeHost(world);
 
 	// Horizontal host wall, then a perpendicular wall whose endpoint lands on its
@@ -462,8 +462,7 @@ TEST(ConstructionWorldWallTests, TJunctionSplitsHostSegment) {
 	for (const cw::WallSegment& s : world.segments()) {
 		const Vec2i64 p0 = world.getVertex(s.v0)->pos;
 		const Vec2i64 p1 = world.getVertex(s.v1)->pos;
-		const bool isHalf = (p0 == Vec2i64(0, 0) && p1 == Vec2i64(4000, 0)) ||
-							(p0 == Vec2i64(4000, 0) && p1 == Vec2i64(8000, 0));
+		const bool	  isHalf = (p0 == Vec2i64(0, 0) && p1 == Vec2i64(4000, 0)) || (p0 == Vec2i64(4000, 0) && p1 == Vec2i64(8000, 0));
 		if (isHalf) {
 			++halvesFound;
 			EXPECT_EQ(s.material, "stone");
@@ -475,7 +474,7 @@ TEST(ConstructionWorldWallTests, TJunctionSplitsHostSegment) {
 }
 
 TEST(ConstructionWorldWallTests, NewSegmentSplitsAtExistingVertex) {
-	ConstructionWorld world;
+	ConstructionWorld	   world;
 	const cw::FoundationId host = makeHost(world);
 
 	// A T-stem rising from (4000,0) creates an isolated junction vertex there
@@ -494,7 +493,7 @@ TEST(ConstructionWorldWallTests, NewSegmentSplitsAtExistingVertex) {
 }
 
 TEST(ConstructionWorldWallTests, RejectsXCrossing) {
-	ConstructionWorld world;
+	ConstructionWorld	   world;
 	const cw::FoundationId host = makeHost(world);
 
 	// Two segments whose interiors properly cross at (4000,4000).
@@ -513,7 +512,7 @@ TEST(ConstructionWorldWallTests, RejectsXCrossing) {
 // ============================================================================
 
 TEST(ConstructionWorldWallTests, OpeningsReattachByParamRangeAcrossSplit) {
-	ConstructionWorld world;
+	ConstructionWorld	   world;
 	const cw::FoundationId host = makeHost(world);
 
 	SegmentCommitResult base = world.commitSegment({0, 0}, {8000, 0}, "stone", "thick", host);
@@ -549,7 +548,7 @@ TEST(ConstructionWorldWallTests, OpeningsReattachByParamRangeAcrossSplit) {
 }
 
 TEST(ConstructionWorldWallTests, SplitClearsOldSegmentEntity) {
-	ConstructionWorld world;
+	ConstructionWorld	   world;
 	const cw::FoundationId host = makeHost(world);
 
 	SegmentCommitResult base = world.commitSegment({0, 0}, {8000, 0}, "stone", "thick", host);
@@ -571,7 +570,7 @@ TEST(ConstructionWorldWallTests, SplitClearsOldSegmentEntity) {
 // ============================================================================
 
 TEST(ConstructionWorldWallTests, SegmentAtHitMissAndRadiusBoundary) {
-	ConstructionWorld world;
+	ConstructionWorld	   world;
 	const cw::FoundationId host = makeHost(world);
 
 	SegmentCommitResult seg = world.commitSegment({0, 0}, {8000, 0}, "wood", "thin", host);
@@ -590,7 +589,7 @@ TEST(ConstructionWorldWallTests, SegmentAtHitMissAndRadiusBoundary) {
 }
 
 TEST(ConstructionWorldWallTests, SegmentAtTieBreaksToHighestId) {
-	ConstructionWorld world;
+	ConstructionWorld	   world;
 	const cw::FoundationId host = makeHost(world);
 
 	// Two parallel segments equidistant (500 mm each) from y=500: tie-break to the
@@ -609,7 +608,7 @@ TEST(ConstructionWorldWallTests, SegmentAtTieBreaksToHighestId) {
 // ============================================================================
 
 TEST(ConstructionWorldWallTests, RemoveSegmentCleansAdjacencyAndOrphans) {
-	ConstructionWorld world;
+	ConstructionWorld	   world;
 	const cw::FoundationId host = makeHost(world);
 
 	SegmentCommitResult a = world.commitSegment({0, 0}, {4000, 0}, "wood", "thin", host);
@@ -634,7 +633,7 @@ TEST(ConstructionWorldWallTests, RemoveSegmentCleansAdjacencyAndOrphans) {
 }
 
 TEST(ConstructionWorldWallTests, RemoveSegmentDropsItsOpenings) {
-	ConstructionWorld world;
+	ConstructionWorld	   world;
 	const cw::FoundationId host = makeHost(world);
 
 	SegmentCommitResult seg = world.commitSegment({0, 0}, {4000, 0}, "wood", "thin", host);
@@ -653,9 +652,9 @@ TEST(ConstructionWorldWallTests, RemoveSegmentDropsItsOpenings) {
 // ============================================================================
 
 TEST(ConstructionWorldWallTests, SegmentStateAndEntityMutators) {
-	ConstructionWorld world;
+	ConstructionWorld	   world;
 	const cw::FoundationId host = makeHost(world);
-	SegmentCommitResult seg = world.commitSegment({0, 0}, {4000, 0}, "wood", "thin", host);
+	SegmentCommitResult	   seg = world.commitSegment({0, 0}, {4000, 0}, "wood", "thin", host);
 	ASSERT_TRUE(seg.ok());
 
 	const std::uint64_t v0 = world.version();
@@ -674,7 +673,7 @@ TEST(ConstructionWorldWallTests, SegmentStateAndEntityMutators) {
 }
 
 TEST(ConstructionWorldWallTests, VersionBumpsOnWallMutationNotOnQuery) {
-	ConstructionWorld world;
+	ConstructionWorld	   world;
 	const cw::FoundationId host = makeHost(world);
 
 	const std::uint64_t v0 = world.version();
@@ -704,7 +703,7 @@ TEST(ConstructionWorldWallTests, VersionBumpsOnWallMutationNotOnQuery) {
 }
 
 TEST(ConstructionWorldWallTests, DeterministicIterationAcrossInsertionOrders) {
-	ConstructionWorld world;
+	ConstructionWorld	   world;
 	const cw::FoundationId host = makeHost(world);
 
 	SegmentCommitResult a = world.commitSegment({0, 0}, {1000, 0}, "wood", "thin", host);
@@ -731,7 +730,7 @@ TEST(ConstructionWorldWallTests, DeterministicIterationAcrossInsertionOrders) {
 }
 
 TEST(ConstructionWorldWallTests, FoundationAndWallIdSpacesAreIndependent) {
-	ConstructionWorld world;
+	ConstructionWorld	   world;
 	const cw::FoundationId host = makeHost(world);
 
 	// First segment gets SegmentId 1 even though FoundationId 1 is already taken:
