@@ -73,6 +73,18 @@ namespace UI {
 		updateIconPosition();
 	}
 
+	void Button::setLabel(const std::string& newLabel) {
+		if (label == newLabel) {
+			return;
+		}
+		label = newLabel;
+		// updateTextPosition() syncs labelText.text and re-centers it; icon layout
+		// depends on label width, so refresh both.
+		labelText.visible = visible && !label.empty();
+		updateTextPosition();
+		updateIconPosition();
+	}
+
 	void Button::update(float /*deltaTime*/) {
 		// Text position is updated in setPosition() - no per-frame work needed
 	}
