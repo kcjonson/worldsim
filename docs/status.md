@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2026-06-12 (Building/Construction, Pathfinding, and Vision architecture specs drafted; memory design revised for belief-filtered navigation)
+Last Updated: 2026-06-12 (libs/geometry landed: Epic A of Building & Construction complete, 157 unit tests)
 
 ## Epic/Story/Task Template
 
@@ -442,6 +442,23 @@ while (running) {
   - [ ] Landing site local preview + difficulty rating (UX spec, deferred)
 - [ ] M7: Hardening, benchmark-gated default resolution, cross-platform determinism
 - [ ] Future: planet database — mmap/streamed reads from PlanetIO files for n>=4096 planets instead of whole-planet RAM residency (PlanetIO v1 SoA layout is already offset-addressable; see development log)
+
+---
+
+### Building & Construction System
+**Spec/Documentation:** `/docs/design/game-systems/world/building-construction.md` (design), `/docs/technical/building-construction-architecture.md` (architecture)
+**Dependencies:** Goal-Driven Task Generation (build/haul task sources); Navigation & Pathfinding before walls ship as gameplay (walls don't block movement until then); Material economy — extend the early crafting implementation with choppable trees and construction material items (axe/chop work in flight; chains grow as systems need them)
+**Status:** in progress
+
+**Goal:** Freeform polygon building: foundation blueprints drawn on the map, walls on foundations with snapping and edge-fill, doors/windows as parameterized vector assets, automatic room detection. Deliver-then-build loop with work-driven procedural construction visuals.
+
+**Tasks:**
+- [x] Epic A: Geometry foundations (libs/geometry in-house: int64-mm core + Int128, exact predicates, polygon constraint primitives, planar arrangement + half-edge face extraction, ring booleans, wall band offsetting + junction trimming; 157 unit tests)
+- [ ] Epic C: Foundations end-to-end (ConstructionWorld, FoundationTool, blueprint lifecycle, goals, StructureRenderer, selection/panels, config)
+- [ ] Epic D: Walls (graph + junction splitting, WallTool, band rendering, nav integration, demolition)
+- [ ] Epic E: Rooms (face extraction on built/demolish events, room entities, notification)
+- [ ] Epic F: Openings (OpeningTool, parameterized assets, retrofit cuts, door nav nodes)
+- [ ] Epic G: Editing & polish (add/subtract, vertex editing, cascade demolish, multi-select)
 
 ---
 
@@ -921,23 +938,6 @@ The following MVP epics have all been completed. Detailed task breakdowns are pr
 - [ ] P4: Dynamic world + belief (construction obstacles/portals, door permission costs, memory-filtered planning, discovery replans, search primitives; requires Vision System: Occlusion & Discovery)
 - [ ] P5: Crowds (velocity-obstacle avoidance + mitigations, occupancy costs, door slot queues, regression rig)
 - [ ] P6: Global tier + raids (hex-graph A*, abstract party records, attention bubbles, materialization handoffs, raider belief seeding + scouting)
-
----
-
-### Building & Construction System
-**Spec/Documentation:** `/docs/design/game-systems/world/building-construction.md` (design), `/docs/technical/building-construction-architecture.md` (architecture)
-**Dependencies:** Goal-Driven Task Generation (build/haul task sources); Navigation & Pathfinding before walls ship as gameplay (walls don't block movement until then); Material economy — extend the early crafting implementation with choppable trees and construction material items (axe/chop work in flight; chains grow as systems need them)
-**Status:** planned (specs in review)
-
-**Goal:** Freeform polygon building: foundation blueprints drawn on the map, walls on foundations with snapping and edge-fill, doors/windows as parameterized vector assets, automatic room detection. Deliver-then-build loop with work-driven procedural construction visuals.
-
-**Tasks:**
-- [ ] Epic A: Geometry foundations (libs/geometry, Clipper2 + earcut.hpp, planar graph + face extraction)
-- [ ] Epic C: Foundations end-to-end (ConstructionWorld, FoundationTool, blueprint lifecycle, goals, StructureRenderer, selection/panels, config)
-- [ ] Epic D: Walls (graph + junction splitting, WallTool, band rendering, nav integration, demolition)
-- [ ] Epic E: Rooms (face extraction on built/demolish events, room entities, notification)
-- [ ] Epic F: Openings (OpeningTool, parameterized assets, retrofit cuts, door nav nodes)
-- [ ] Epic G: Editing & polish (add/subtract, vertex editing, cascade demolish, multi-select)
 
 ---
 

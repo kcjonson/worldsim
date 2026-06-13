@@ -15,6 +15,7 @@ The monorepo is organized by dependency layers, from foundation to high-level:
 ```
 libs/
 ├── foundation/          # Base layer - math, platform, utilities
+├── geometry/            # Exact integer-mm 2D geometry (predicates, arrangement, booleans, offsetting)
 ├── renderer/            # Graphics layer - OpenGL, 2D/3D rendering
 ├── ui/                  # UI framework - components, layout, inspector
 ├── world/               # World generation and 3D-to-2D sampling
@@ -31,7 +32,7 @@ engine
   ↓
 game-systems, ui, world
   ↓
-renderer
+renderer, geometry
   ↓
 foundation
 ```
@@ -49,6 +50,12 @@ foundation
 - Platform abstraction (window creation, OS interfaces)
 - Common utilities (logging, string helpers, etc.)
 - No external dependencies except standard library
+
+**geometry/**
+- Exact 2D geometry on integer-millimeter coordinates (construction, navigation, vision substrate)
+- Exact predicates, polygon constraint primitives, planar arrangement + face extraction
+- Ring booleans, wall band offsetting with junction trimming
+- Depends on: `foundation`
 
 **renderer/**
 - OpenGL wrapper/abstraction
