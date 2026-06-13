@@ -205,16 +205,16 @@ inline constexpr int kMarginAccretionMaxRing = 2;
 // Set-point bias: production is irreversible (matured crust cannot un-convert), so a
 // purely proportional controller halts production exactly at target and then settles a
 // little ABOVE it (the last deficit-driven batch overshoots, consumption near target is
-// slow). Aiming the controller ~6% below the true target halts production early and lets
-// ongoing subduction/collision consumption pull the resolved area back onto target,
-// centering the 5-seed distribution inside the +/-10% acceptance band. This is the
-// standard offset correction for proportional control of a one-sided actuator.
-inline constexpr double kAreaControllerSetpointBias = 0.06;
-// Gain 4.0 (was 3.0): a ~10% shortfall below the set-point pushes the factor to ~1.4. The
-// wider (5-ring) orogeny stamp perturbs rift cuts, so the trajectory differs from M-T2.6;
-// the stronger controller keeps continental drift inside the +/-10% budget on every gate
-// seed. The clamp bounds still prevent a single-step lurch.
-inline constexpr double kAreaControllerGain      = 4.0;
+// slow). With the M-T3.5 crust-type coherence filter acting as a continuous drain, the
+// 6% bias creates a dead band where the filter can drain area below target before the
+// controller responds. Reduced to 2% to keep the controller responsive while still
+// providing enough buffer to avoid overshoot. The ±10% gate absorbs any residual spread.
+inline constexpr double kAreaControllerSetpointBias = 0.02;
+// Gain 4.7 (was 4.0): a ~10% shortfall below the set-point pushes the factor to ~1.47.
+// The M-T3.5 nucleation rule and crust-type coherence filter add a continuous drain;
+// the stronger gain plus the reduced setpointBias (0.02) keeps continental drift inside
+// the +/-10% budget on all gate seeds. The clamp bounds prevent a single-step lurch.
+inline constexpr double kAreaControllerGain      = 4.7;
 inline constexpr double kAreaControllerFactorMin = 0.5;
 // Max 3.0 (was 2.0): lets arc crust production ramp harder under a large deficit so a
 // high-shortening trajectory is pulled back inside the +/-10% drift budget. Still bounded,
@@ -447,5 +447,41 @@ inline constexpr uint32_t kAbsorbMaxCells = 4;
 // collision front is a continuous line, so its cells have >= 2 boundary neighbors; an
 // isolated speck has 0-1 and is rejected.
 inline constexpr uint32_t kBoundarySegmentMinNeighbors = 2;
+
+// --- Arc maturation nucleation support (M-T3.5) ---
+// An oceanic arc cell can only mature to continental if it has sufficient "support" from
+// neighboring cells that are already continental OR already past the volcanism threshold.
+// Arc bands are linear, so real arc cells have supporting neighbors; isolated cells
+// converted mid-plate by plate churn have no such support and cannot convert. This
+// prevents the confetti of isolated continental specks that the arc-maturation producer
+// was generating. The threshold fraction of kArcMatureVolcThreshold counts a neighbor as
+// "arc-mature enough" for support purposes (allows cells earlier in the band to count).
+// Minimum number of continental-or-volcanic neighbors required before an oceanic arc
+// cell may mature. Set to 1: arc bands are linear, so every cell on a real arc front
+// has at least one similarly-volcanic or already-continental neighbor. A cell with zero
+// such neighbors is likely a mid-plate stray converted by plate churn, not a coherent
+// arc front. The check uses resolved_[] (pre-step world view). Setting to 0 disables
+// the neighbor check entirely and relies only on the volcanism threshold + crust filter.
+inline constexpr uint32_t kArcMaturationMinNeighbors = 1;  // at least 1 continental or volcanism-eligible neighbor
+inline constexpr float kArcMaturationSupportVolcFrac = 0.7f; // neighbor volcanism >= this * kArcMatureVolcThreshold
+
+// --- Crust-type coherence filter (M-T3.5) ---
+// After ownership speckle absorption (which welds isolated OWNERSHIP islands), we run a
+// second pass within each plate's world footprint: connected continental components of
+// size <= kCrustSpeckleMaxCells revert to oceanic crust. These are matured arc cells that
+// dispersed from real arc bands due to plate churn or were isolated single conversions.
+// The reversion is clean: type=oceanic, thickness=kOceanicThicknessKm, birthMyr = current
+// step (a fresh young floor age), volcanism kept (the magmatic signal survives). The area
+// controller will redirect production to coherent margins automatically. Run it in world
+// space (ascending world-cell order for determinism) using the same seed pre-filter
+// optimization as absorbOwnershipSpeckle.
+// Arc-adjacent exemption: components with any cell touching a non-continental neighbor at
+// volcanism >= kCrustSpeckleVolcExempt, OR any component cell itself at volcanism >=
+// kCrustSpeckleVolcExempt, are skipped — recently-active arc fragments should not be
+// reverted (the arc band will grow to encompass them or they will merge via terrane accretion).
+// Threshold 0.595 = 0.7 * kArcMatureVolcThreshold: protects for ~30 Myr of decay.
+// Any cell or neighbor above this is still arc-hot and must not be treated as confetti.
+inline constexpr float    kCrustSpeckleVolcExempt = kArcMaturationSupportVolcFrac * kArcMatureVolcThreshold;
+inline constexpr uint32_t kCrustSpeckleMaxCells = 2;  // components <= this revert
 
 } // namespace worldgen::tectonics

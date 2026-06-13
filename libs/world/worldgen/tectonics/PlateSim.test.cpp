@@ -11,6 +11,7 @@
 #include <array>
 #include <cmath>
 #include <cstdio>
+#include <deque>
 #include <vector>
 
 namespace worldgen::tectonics {
@@ -207,6 +208,9 @@ TEST(PlateSim, DeterministicProductHash) {
 // segments, decoupled orogeny stamp/thicken bands, and the gain-4 / max-3 area controller).
 // These clean plate interiors (no pepper), restore coherent crustAge structure, and put
 // orogeny coverage in the 25-60% band. The M-T2.6 value was 0x1f37724f6edce86c.
+// Updated for M-T3.5 (arc nucleation support check, crust-type coherence filter with
+// arc-adjacent exemption, controller gain 4.7 + setpointBias 0.02). The M-T2.7 value
+// was 0xacf2522344ffd037.
 // ============================================================================
 
 TEST(PlateSim, GoldenProductHash) {
@@ -214,7 +218,7 @@ TEST(PlateSim, GoldenProductHash) {
     PlateSim sim(p);
     auto h = sim.run();
     uint64_t hash = computeTectonicHistoryHash(*h);
-    constexpr uint64_t kGolden = 0xacf2522344ffd037ULL;
+    constexpr uint64_t kGolden = 0xeb2cb3f12d7fb6f6ULL;
     // Print so a deliberate update is easy; assert against the pinned value.
     std::printf("[PlateSim.GoldenProductHash] coarseN=64 seed=0x1234567890ABCDEF "
                 "hash=0x%016llx\n", static_cast<unsigned long long>(hash));
@@ -754,19 +758,21 @@ TEST(PlateSim, SpeckleIslandAbsorbedConservingContinent) {
 
     sim.step();
 
-    // After one step the speckle filter has welded the island into plate 0.
+    // After one step the ownership speckle filter has welded the island into plate 0.
     uint32_t islandStillOne = 0;
     for (TileId t : island) if (sim.owner()[t] == 1) ++islandStillOne;
     EXPECT_EQ(islandStillOne, 0u)
-        << "isolated island was not absorbed into the surrounding plate";
+        << "isolated ownership island was not absorbed into the surrounding plate";
 
-    // Continental crust is conserved: the island's cells moved into plate 0's raster, they
-    // were not deleted. (Stationary plates + 0 water -> no spreading/subduction to perturb
-    // the count, so it must be exactly conserved.)
+    // M-T3.5: the crust-type coherence filter (absorbCrustSpeckle) runs after the ownership
+    // absorber. The island cells, now owned by plate 0, may form a small continental
+    // component in plate 0's oceanic interior and get reverted to oceanic. That is the
+    // intended behavior (no confetti specks). So we check ownership, not crust conservation.
+    // Continental count may drop by <= island.size() cells (the reverted island).
     uint32_t contAfter = countType(sim, CrustType::Continental);
-    EXPECT_EQ(contAfter, contBefore)
-        << "continental cell count not conserved across speckle absorption ("
-        << contBefore << " -> " << contAfter << ")";
+    EXPECT_LE(contBefore - contAfter, static_cast<uint32_t>(island.size()))
+        << "continental cell count dropped more than the island size ("
+        << contBefore << " -> " << contAfter << ", island=" << island.size() << ")";
 }
 
 // ----------------------------------------------------------------------------
@@ -866,6 +872,140 @@ TEST(PlateSim, ResurfacingNucleatesCoherentRidge) {
     // one big blob plus scattered confetti).
     EXPECT_GE(static_cast<double>(largest), 0.4 * static_cast<double>(youngTotal))
         << "resurfaced cells are mostly scattered rather than one coherent ridge";
+}
+
+// ============================================================================
+// M-T3.5 TESTS: arc nucleation support + crust-type coherence filter
+// ============================================================================
+
+// ----------------------------------------------------------------------------
+// Crust-type coherence filter: an isolated single-cell continental speck sitting
+// mid-ocean (all neighbors oceanic) reverts to oceanic after one step. A 6+-cell
+// arc line (continental cells connected in a chain) survives the filter.
+// ----------------------------------------------------------------------------
+
+TEST(PlateSim, IsolatedContinentalSpeckReverts) {
+    // Single all-oceanic plate, stationary. We plant a 1-cell continental speck
+    // into the plate's raster mid-sphere. After one step the crust-type filter
+    // should revert it (it is a component of size 1 <= kCrustSpeckleMaxCells=3).
+    const uint32_t coarseN = 32;
+    PlateSimParams p = defaultParams(coarseN, 0x5E5E5E5EULL, 1, 1.0);
+    p.historyMyr = 5.0; // single step
+    p.dtMyr = 5.0;
+
+    auto grid = std::make_shared<const SphereGrid>(coarseN);
+    const uint32_t N = grid->tileCount();
+
+    PlateSimTestOverride ov;
+    ov.plates.assign(1, SimPlate{});
+    ov.owner.assign(N, 0);
+    ov.plates[0].crust.assign(N, CrustCell{});
+    ov.plates[0].alive = true;
+    ov.plates[0].isContinental = false;
+    for (TileId t = 0; t < N; ++t) {
+        ov.plates[0].crust[t].type = CrustType::Oceanic;
+        ov.plates[0].crust[t].thicknessKm = 7.0f;
+        ov.plates[0].crust[t].birthMyr = -40;
+    }
+    ov.plates[0].eulerPole = {0, 0, 1};
+    ov.plates[0].omegaRadPerMyr = 0.0;
+
+    // Plant a 1-cell continental speck at +z.
+    TileId speck = grid->fromUnitVector({0, 0, 1});
+    ASSERT_NE(speck, kInvalidTile);
+    ov.plates[0].crust[speck].type = CrustType::Continental;
+    ov.plates[0].crust[speck].thicknessKm = 24.0f;
+    ov.plates[0].crust[speck].birthMyr = 0;
+    ov.plates[0].crust[speck].volcanism = 0.9f; // high volcanism (simulates matured arc)
+
+    PlateSim sim(p, &ov);
+
+    // Before step: speck is continental in plate 0's own raster.
+    ASSERT_EQ(sim.plates()[0].crust[speck].type, CrustType::Continental)
+        << "test setup: speck not continental in plate raster before step";
+
+    sim.step();
+
+    // After step: the crust filter should have reverted the speck to oceanic.
+    // The filter works on resolved_ and writes back to the local raster; check
+    // the plate raster (which is what persists to the next step).
+    EXPECT_EQ(sim.plates()[0].crust[speck].type, CrustType::Oceanic)
+        << "isolated single-cell continental speck was not reverted to oceanic";
+}
+
+TEST(PlateSim, ArcLineSurvivesCrustFilter) {
+    // Single all-oceanic plate, stationary. We plant a 7-cell continental LINE
+    // (connected chain of cells along a great circle). After one step the filter
+    // should leave it intact (component size 7 > kCrustSpeckleMaxCells=3).
+    const uint32_t coarseN = 48;
+    PlateSimParams p = defaultParams(coarseN, 0xABC11EULL, 1, 1.0);
+    p.historyMyr = 5.0;
+    p.dtMyr = 5.0;
+
+    auto grid = std::make_shared<const SphereGrid>(coarseN);
+    const uint32_t N = grid->tileCount();
+
+    PlateSimTestOverride ov;
+    ov.plates.assign(1, SimPlate{});
+    ov.owner.assign(N, 0);
+    ov.plates[0].crust.assign(N, CrustCell{});
+    ov.plates[0].alive = true;
+    ov.plates[0].isContinental = false;
+    for (TileId t = 0; t < N; ++t) {
+        ov.plates[0].crust[t].type = CrustType::Oceanic;
+        ov.plates[0].crust[t].thicknessKm = 7.0f;
+        ov.plates[0].crust[t].birthMyr = -40;
+    }
+    ov.plates[0].eulerPole = {0, 0, 1};
+    ov.plates[0].omegaRadPerMyr = 0.0;
+
+    // Build a 7-cell arc line via BFS from a seed: pick the equatorial belt (z~0)
+    // and grow a connected chain of 7 cells by taking BFS neighbors.
+    TileId seed = grid->fromUnitVector({1, 0, 0}); // equator at +x
+    ASSERT_NE(seed, kInvalidTile);
+    std::vector<TileId> arcLine;
+    std::vector<bool> visited(N, false);
+    std::deque<TileId> queue;
+    queue.push_back(seed);
+    visited[seed] = true;
+    while (!queue.empty() && arcLine.size() < 7u) {
+        TileId cur = queue.front(); queue.pop_front();
+        arcLine.push_back(cur);
+        std::array<TileId, 6> nbrs{};
+        uint32_t cnt = grid->neighbors(cur, nbrs);
+        for (uint32_t k = 0; k < cnt; ++k) {
+            if (!visited[nbrs[k]]) { visited[nbrs[k]] = true; queue.push_back(nbrs[k]); }
+        }
+    }
+    ASSERT_EQ(arcLine.size(), 7u) << "could not build 7-cell arc line";
+
+    for (TileId t : arcLine) {
+        ov.plates[0].crust[t].type = CrustType::Continental;
+        ov.plates[0].crust[t].thicknessKm = 24.0f;
+        ov.plates[0].crust[t].birthMyr = 0;
+        ov.plates[0].crust[t].volcanism = 0.9f;
+    }
+
+    PlateSim sim(p, &ov);
+
+    // Before step: all 7 arc cells should be continental in plate 0's raster.
+    uint32_t contBefore = 0;
+    for (TileId t : arcLine)
+        if (sim.plates()[0].crust[t].type == CrustType::Continental) ++contBefore;
+    ASSERT_EQ(contBefore, 7u) << "test setup: arc line not continental in plate raster before step";
+
+    sim.step();
+
+    // After step: all 7 cells must still be continental (component too large to revert).
+    // Check via resolvedCrust (the world view after the step's rasterize+filter pipeline).
+    uint32_t contAfter = 0;
+    for (TileId t : arcLine)
+        if (sim.resolvedCrust()[t].type == CrustType::Continental) ++contAfter;
+    std::printf("[PlateSim.ArcLineSurvivesCrustFilter] arcLine size=%zu contBefore=%u contAfter=%u\n",
+                arcLine.size(), contBefore, contAfter);
+    EXPECT_EQ(contAfter, 7u)
+        << "6+-cell connected arc line was incorrectly reverted by the crust filter ("
+        << contAfter << "/7 survived)";
 }
 
 } // namespace worldgen::tectonics

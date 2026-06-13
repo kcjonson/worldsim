@@ -573,6 +573,10 @@ void PlateSim::initPlateRasters() {
 //   6.5 Absorb speckle:      weld isolated ownership islands (<= kAbsorbMaxCells) into the
 //                            dominant surrounding plate so spurious specks never reach the
 //                            boundary scan (M-T2.7). Continental crust is conserved.
+//   6.6 Absorb crust speckle: revert tiny isolated continental components (<=
+//                            kCrustSpeckleMaxCells) within each plate's world footprint back
+//                            to oceanic (M-T3.5). Prevents isolated arc-maturation conversions
+//                            from persisting as confetti single-cell continents.
 //   7. Boundary scan:        Euler-pole relative velocity, convergence, classify.
 //   7.5 Slab pull:           scale each plate's omega toward a target factor set by
 //                            the mean age of its subducting oceanic floor (old cold
@@ -595,6 +599,7 @@ void PlateSim::step(const CancelFn& cancel, const ProgressFn& progress) {
     applyEraseList();     // 5
     gapFill();            // 6
     absorbOwnershipSpeckle(); // 6.5 (M-T2.7): weld isolated ownership islands
+    absorbCrustSpeckle();     // 6.6 (M-T3.5): revert isolated continental specks to oceanic
     boundaryScan();       // 7
     slabPull();           // 7.5 (M-T2.6): scale omega by mean subducting-floor age
     collisionProcessing();// 8
@@ -940,6 +945,151 @@ void PlateSim::absorbOwnershipSpeckle() {
 
     // Snapshot post-absorption ownership for next step's CC-tie stickiness.
     prevOwner_ = owner_;
+}
+
+// ============================================================================
+// Crust-type coherence filter (M-T3.5): revert tiny isolated continental
+// components within a plate's world footprint back to oceanic crust.
+// ============================================================================
+//
+// Arc maturation (collisionProcessing) converts individual oceanic cells to continental
+// crust along subduction arc bands. Most conversions happen on real arc fronts and are
+// geographically coherent; however, plate churn scatters a fraction into open ocean as
+// isolated one- to three-cell specks. These specks persist and accumulate because
+// absorbOwnershipSpeckle welds OWNERSHIP islands but does not touch crust type, so a
+// single plate owning isolated continental cells in its oceanic interior is perfectly
+// legal from an ownership standpoint.
+//
+// This pass finds, for each plate's world footprint, connected components of continental
+// cells (geographic adjacency in world space). Components of size <= kCrustSpeckleMaxCells
+// are reverted to oceanic (type=oceanic, thickness=kOceanicThicknessKm, birthMyr=now,
+// volcanism kept — the magmatic signal stays, only the irreversible type flip is undone).
+// The area controller then redirects production to coherent margins on subsequent steps.
+//
+// Same optimization as absorbOwnershipSpeckle: only cells with a foreign-crust-type
+// neighbor seed a flood, so interior cells of large continents are never walked.
+// Deterministic: plates ascending, component cells sorted ascending before reversion.
+
+void PlateSim::absorbCrustSpeckle() {
+    const int K = static_cast<int>(plates_.size());
+    const int32_t nowI = static_cast<int32_t>(nowMyr_ + dtMyr_ + 0.5);
+    crustSpeckRevertedThisStep_ = 0;
+
+    // We work in world space via resolved_[]/owner_ so the component adjacency matches
+    // what the boundary scan and future rasterizes will see. The revert writes back to
+    // the plate's local raster (via worldToLocal) so the change persists next step.
+    //
+    // speckComp_ is reused scratch (already sized to tileCount_ by absorbOwnershipSpeckle).
+    // We reset it here to -1 for continental cells we encounter.
+    speckComp_.assign(tileCount_, -1);
+    std::array<TileId, 6> nbrs{};
+    int compCount = 0;
+
+    for (TileId s = 0; s < tileCount_; ++s) {
+        if (speckComp_[s] != -1) continue;
+        if (resolved_[s].type != CrustType::Continental) continue;
+        uint8_t pid = owner_[s];
+        if (pid >= static_cast<uint8_t>(K)) continue;
+        if (!plates_[static_cast<size_t>(pid)].alive) continue;
+
+        // Cheap pre-filter: skip cells with no different-type or foreign-plate neighbor.
+        // These are deep interior cells that can never be a speck boundary on their own.
+        // We do NOT mark them visited here — the flood from a neighboring boundary cell
+        // MUST be able to expand into them to correctly measure component size.
+        uint32_t cnt0 = grid_->neighbors(s, nbrs);
+        bool anyDifferent = false;
+        for (uint32_t k = 0; k < cnt0; ++k) {
+            TileId nb = nbrs[k];
+            if (resolved_[nb].type != CrustType::Continental || owner_[nb] != pid) {
+                anyDifferent = true;
+                break;
+            }
+        }
+        if (!anyDifferent) continue; // skip as seed, but leave speckComp_[s] = -1
+
+        int cid = compCount++;
+        speckComp_[s] = cid;
+        speckStack_.clear();
+        speckStack_.push_back(s);
+        speckCells_.clear();
+        bool overCap = false;
+        while (!speckStack_.empty()) {
+            TileId cur = speckStack_.back(); speckStack_.pop_back();
+            speckCells_.push_back(cur);
+            if (speckCells_.size() > kCrustSpeckleMaxCells) { overCap = true; break; }
+            uint32_t cnt = grid_->neighbors(cur, nbrs);
+            for (uint32_t k = 0; k < cnt; ++k) {
+                TileId v = nbrs[k];
+                if (speckComp_[v] == -2) {
+                    // This cell's continental neighbor is already confirmed part of a large
+                    // body. The current seed is adjacent to a large body, so it cannot be
+                    // a speck — abort immediately and mark all cells visited as large body.
+                    overCap = true;
+                    break;
+                }
+                if (speckComp_[v] != -1) continue;
+                if (resolved_[v].type != CrustType::Continental) continue;
+                if (owner_[v] != pid) continue; // same plate only
+                speckComp_[v] = cid;
+                speckStack_.push_back(v);
+            }
+            if (overCap) break;
+        }
+        if (overCap) {
+            // Large component (or adjacent to one): mark all touched cells as -2 so
+            // subsequent seeds from the same body also abort immediately.
+            for (TileId c : speckCells_) speckComp_[c] = -2;
+            for (TileId c : speckStack_) speckComp_[c] = -2;
+            continue;
+        }
+
+        // Arc-adjacent exemption: if any component cell has a non-continental neighbor with
+        // volcanism >= kCrustSpeckleVolcExempt, the active arc band passes near this fragment
+        // and will grow to encompass it. Reverting now would cause oscillation (nucleation→
+        // maturation, filter→revert, controller→produce, repeat). Only the currently-ACTIVE
+        // arc (high-volcanism oceanic cells) signals adjacency — the component cells' own
+        // volcanism is a historical record, not evidence of an active arc passing through.
+        {
+            bool arcAdjacent = false;
+            for (TileId c : speckCells_) {
+                uint32_t cntA = grid_->neighbors(c, nbrs);
+                for (uint32_t k = 0; k < cntA; ++k) {
+                    const CrustCell& nc = resolved_[nbrs[k]];
+                    if (nc.type != CrustType::Continental && nc.volcanism >= kCrustSpeckleVolcExempt) {
+                        arcAdjacent = true;
+                        break;
+                    }
+                }
+                if (arcAdjacent) break;
+            }
+            if (arcAdjacent) continue;
+        }
+
+        // Small continental component: revert to oceanic in ascending world-cell order.
+        std::sort(speckCells_.begin(), speckCells_.end());
+        for (TileId c : speckCells_) {
+            // Write back to the plate's local raster.
+            TileId local = worldToLocal(static_cast<uint32_t>(pid), c);
+            if (local != kInvalidTile) {
+                CrustCell& lc = plates_[static_cast<size_t>(pid)].crust[local];
+                if (lc.type == CrustType::Continental) {
+                    lc.type = CrustType::Oceanic;
+                    lc.thicknessKm = static_cast<float>(kOceanicThicknessKm);
+                    lc.birthMyr = nowI; // fresh young floor
+                    lc.orogenyMyr = kOrogenyNever;
+                    // volcanism kept: the magmatic signal survives; the cell will age
+                    // out of arc activity through erosionProxy's volcanism decay.
+                }
+            }
+            // Update the resolved world view so subsequent passes this step see the revert.
+            CrustCell& rc = resolved_[c];
+            rc.type = CrustType::Oceanic;
+            rc.thicknessKm = static_cast<float>(kOceanicThicknessKm);
+            rc.birthMyr = nowI;
+            rc.orogenyMyr = kOrogenyNever;
+            ++crustSpeckRevertedThisStep_;
+        }
+    }
 }
 
 void PlateSim::boundaryScan() {
@@ -1319,32 +1469,75 @@ void PlateSim::collisionProcessing() {
                 // is the volcanism floor; the flip is deficit-gated and probabilistic so
                 // an irreversible conversion drains a deficit gradually and settles near
                 // target instead of overshooting.
+                //
+                // M-T3.5 nucleation rule: a cell may only mature if it has at least
+                // kArcMaturationMinNeighbors neighbors that are already continental OR
+                // have volcanism >= kArcMaturationSupportVolcFrac * kArcMatureVolcThreshold.
+                // Arc bands are linear structures; cells on a real arc front have supportive
+                // neighbors. Isolated cells dispersed by plate churn into open ocean have no
+                // continental or strongly-volcanic neighbors and are rejected, so they cannot
+                // produce isolated continental specks.
                 bool matured = false;
                 if (cell.volcanism >= kArcMatureVolcThreshold) {
-                    uint32_t roll = foundation::hash3(static_cast<int32_t>(w), p, step_,
-                        static_cast<uint32_t>(matureStream_ ^ (matureStream_ >> 32)));
-                    double u = static_cast<double>(roll) * (1.0 / 4294967296.0);
-                    if (u < matureProb) {
-                        cell.type = CrustType::Continental;
-                        cell.thicknessKm = kJuvenileArcThicknessKm;
-                        cell.birthMyr = nowI;            // juvenile crust, born now
-                        cell.orogenyMyr = kOrogenyNever; // an arc, not an orogen
-                        matured = true;                  // keep volcanism: stays active
+                    // Count supporting neighbors before the maturation roll.
+                    const float supportVolcMin = kArcMaturationSupportVolcFrac * kArcMatureVolcThreshold;
+                    uint32_t supportN = 0;
+                    {
+                        std::array<TileId, 6> wNbrs{};
+                        uint32_t nCnt = grid_->neighbors(w, wNbrs);
+                        for (uint32_t ni = 0; ni < nCnt; ++ni) {
+                            TileId wn = wNbrs[ni];
+                            const CrustCell& nc = resolved_[wn];
+                            if (nc.type == CrustType::Continental ||
+                                nc.volcanism >= supportVolcMin) {
+                                ++supportN;
+                            }
+                        }
+                    }
+                    if (supportN >= kArcMaturationMinNeighbors) {
+                        uint32_t roll = foundation::hash3(static_cast<int32_t>(w), p, step_,
+                            static_cast<uint32_t>(matureStream_ ^ (matureStream_ >> 32)));
+                        double u = static_cast<double>(roll) * (1.0 / 4294967296.0);
+                        if (u < matureProb) {
+                            cell.type = CrustType::Continental;
+                            cell.thicknessKm = kJuvenileArcThicknessKm;
+                            cell.birthMyr = nowI;            // juvenile crust, born now
+                            cell.orogenyMyr = kOrogenyNever; // an arc, not an orogen
+                            matured = true;                  // keep volcanism: stays active
+                        }
                     }
                 }
                 // Continental-margin progradation (secondary): right at the trench-
                 // adjacent forearc, a margin oceanic cell occasionally becomes thin
                 // juvenile continental crust, so established margins creep seaward.
+                // M-T3.5: apply the same neighbor support check so isolated margin cells
+                // (forearc cells stranded by plate churn) also cannot nucleate specks.
                 if (!matured && ring <= kMarginAccretionMaxRing) {
-                    uint32_t roll = foundation::hash3(static_cast<int32_t>(w), p,
-                        step_ ^ 0x5A5A,
-                        static_cast<uint32_t>(marginStream_ ^ (marginStream_ >> 32)));
-                    double u = static_cast<double>(roll) * (1.0 / 4294967296.0);
-                    if (u < marginProb) {
-                        cell.type = CrustType::Continental;
-                        cell.thicknessKm = kJuvenileArcThicknessKm;
-                        cell.birthMyr = nowI;
-                        cell.orogenyMyr = kOrogenyNever;
+                    const float supportVolcMin = kArcMaturationSupportVolcFrac * kArcMatureVolcThreshold;
+                    uint32_t supportN = 0;
+                    {
+                        std::array<TileId, 6> wNbrs{};
+                        uint32_t nCnt = grid_->neighbors(w, wNbrs);
+                        for (uint32_t ni = 0; ni < nCnt; ++ni) {
+                            TileId wn = wNbrs[ni];
+                            const CrustCell& nc = resolved_[wn];
+                            if (nc.type == CrustType::Continental ||
+                                nc.volcanism >= supportVolcMin) {
+                                ++supportN;
+                            }
+                        }
+                    }
+                    if (supportN >= kArcMaturationMinNeighbors) {
+                        uint32_t roll = foundation::hash3(static_cast<int32_t>(w), p,
+                            step_ ^ 0x5A5A,
+                            static_cast<uint32_t>(marginStream_ ^ (marginStream_ >> 32)));
+                        double u = static_cast<double>(roll) * (1.0 / 4294967296.0);
+                        if (u < marginProb) {
+                            cell.type = CrustType::Continental;
+                            cell.thicknessKm = kJuvenileArcThicknessKm;
+                            cell.birthMyr = nowI;
+                            cell.orogenyMyr = kOrogenyNever;
+                        }
                     }
                 }
             }

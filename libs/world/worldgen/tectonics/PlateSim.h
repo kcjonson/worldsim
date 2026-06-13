@@ -104,6 +104,7 @@ class PlateSim {
     uint32_t mergeCount() const { return mergeCount_; }
     uint32_t riftCount() const { return riftCount_; }
     uint32_t accretionCount() const { return accretionCount_; }
+    uint32_t crustSpeckRevertedThisStep() const { return crustSpeckRevertedThisStep_; }
 
   private:
     // --- init helpers ---
@@ -122,6 +123,8 @@ class PlateSim {
     void gapFill();
     void absorbOwnershipSpeckle();  // M-T2.7: weld isolated ownership islands into the
                                     // dominant surrounding plate (runs before boundaryScan)
+    void absorbCrustSpeckle();      // M-T3.5: revert tiny isolated continental components
+                                    // (<=kCrustSpeckleMaxCells) within a plate to oceanic
     void boundaryScan();
     void collisionProcessing();  // M-T2: CC thicken+orogeny, CO/OO arc volcanism
     void terraneAccretion();     // M-T2: microcontinent transfer at trenches
@@ -232,6 +235,7 @@ class PlateSim {
     uint32_t mergeCount_{0};
     uint32_t riftCount_{0};
     uint32_t accretionCount_{0};
+    uint32_t crustSpeckRevertedThisStep_{0}; // M-T3.5: cells reverted by absorbCrustSpeckle last step
 
     // Scratch reused across steps to avoid per-step allocation.
     std::vector<int32_t> ringScratch_; // BFS ring distance buffer (per world cell)

@@ -610,6 +610,38 @@ static int runSimOnly(const CliArgs& args) {
     }
     double orogenyCoverage = contCount ? 100.0 * orogenyTiles / contCount : 0.0;
 
+    // Speck metric (M-T3.5 gate): fraction of resolved continental cells in components < 5.
+    // Connected continental components (world adjacency) of size < 5 are "specks".
+    uint32_t contInSmallComp = 0;
+    {
+        std::vector<int32_t> compId(N, -1);
+        std::vector<TileId> stack;
+        std::array<TileId, 6> spkNbrs{};
+        for (TileId s = 0; s < N; ++s) {
+            if (compId[s] >= 0) continue;
+            if (history->crustType[s] != static_cast<uint8_t>(CrustType::Continental)) continue;
+            // BFS continental component.
+            stack.clear();
+            stack.push_back(s);
+            compId[s] = static_cast<int32_t>(s); // use s as component id (unique)
+            std::vector<TileId> comp;
+            while (!stack.empty()) {
+                TileId cur = stack.back(); stack.pop_back();
+                comp.push_back(cur);
+                uint32_t nc = g.neighbors(cur, spkNbrs);
+                for (uint32_t k = 0; k < nc; ++k) {
+                    TileId v = spkNbrs[k];
+                    if (compId[v] >= 0) continue;
+                    if (history->crustType[v] != static_cast<uint8_t>(CrustType::Continental)) continue;
+                    compId[v] = static_cast<int32_t>(s);
+                    stack.push_back(v);
+                }
+            }
+            if (comp.size() < 5u) contInSmallComp += static_cast<uint32_t>(comp.size());
+        }
+    }
+    double speckFrac = contCount ? 100.0 * contInSmallComp / contCount : 0.0;
+
     // Continental drift: count vs. initial continental cell budget.
     uint32_t simContCells = sim.continentalCellCount();
     double contTarget = (1.0 - args.water) * 1.12 * static_cast<double>(N);
@@ -633,6 +665,8 @@ static int runSimOnly(const CliArgs& args) {
     std::printf("  continental cells (in-raster) : %u  (target %.0f, drift %+.2f%%)\n",
                 simContCells, contTarget, driftPct);
     std::printf("  continental cells (resolved)  : %u\n", contCount);
+    std::printf("  speck fraction (gate <2%%)    : %.2f%%  (%u cells in components < 5)\n",
+                speckFrac, contInSmallComp);
     std::printf("  events          : merges %u  rifts %u  accretions %u\n",
                 sim.mergeCount(), sim.riftCount(), sim.accretionCount());
     std::printf("  alive plates    : start %d  min %u  max %u  final %u\n",
