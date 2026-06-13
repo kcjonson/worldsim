@@ -71,6 +71,9 @@ namespace ecs {
 		uint64_t harvestGoalId = 0;			 // Goal being fulfilled (for reservation)
 		uint32_t harvestYieldDefNameId = 0;	 // What item will be yielded
 
+		// Build-specific fields (for Build tasks)
+		uint64_t buildBlueprintEntityId = 0; // Blueprint entity whose workDone is advanced
+
 		// Skill-related fields (for work tasks with skill requirements)
 		float	skillLevel = 0.0F; // Colonist's skill level for this work
 		int16_t skillBonus = 0;	   // Calculated skill bonus for priority
@@ -80,6 +83,15 @@ namespace ecs {
 		int16_t chainBonus = 0;		 // Chain continuation bonus (+2000 if continuing chain)
 		int16_t inProgressBonus = 0; // Bonus for current task (+200)
 		int16_t taskAgeBonus = 0;	 // Bonus for old unclaimed tasks (0 to +100)
+
+		// Stable tiebreak key for deterministic option ordering. When two options compute the
+		// same calculatePriority() (e.g. two equidistant, equal-skill build sites), the sort
+		// must not fall back to container iteration order: the goal registry is backed by
+		// unordered containers, so that order is hash-bucket-dependent and would route colonists
+		// differently across machines, desyncing a fixed-step multiplayer simulation. Each
+		// evaluator fills this with the most stable id it has (goal id, station/entity id, etc.);
+		// the comparator breaks priority ties on it for a deterministic total order.
+		uint64_t tiebreakId = 0;
 
 		// Human-readable explanation for UI
 		std::string reason;
@@ -127,6 +139,11 @@ namespace ecs {
 			// Tier 6.4: Hauling loose items to storage - priority 37 + bonuses (no skill bonus)
 			if (taskType == TaskType::Haul && status == OptionStatus::Available) {
 				return 37.0F + static_cast<float>(distanceBonus + chainBonus + inProgressBonus + taskAgeBonus);
+			}
+			// Tier 6.45: Construction build work - priority 41 + all bonuses. Sits just above
+			// crafting (40) so staged build sites get finished; Construction skill feeds workBonus.
+			if (taskType == TaskType::Build && status == OptionStatus::Available) {
+				return 41.0F + workBonus();
 			}
 			// Tier 6.5: Crafting work - priority 40 + all bonuses
 			if (taskType == TaskType::Craft && status == OptionStatus::Available) {

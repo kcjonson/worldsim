@@ -38,7 +38,13 @@ namespace world_sim {
 		gameplayBar = std::make_unique<GameplayBar>(GameplayBar::Args{
 			.onBuildClick = args.onBuildToggle,
 			.onProductionSelected = args.onProductionSelected,
+			.onStructureSelected = args.onStructureSelected,
 			.id = "gameplay_bar"});
+
+		// Create construction config strip (hidden until a structure tool is active)
+		configStrip = std::make_unique<ConstructionConfigStrip>(ConstructionConfigStrip::Args{
+			.onMaterialSelected = args.onConstructionMaterialSelected,
+			.id = "construction_config_strip"});
 
 		// Create build menu (position set in layout())
 		buildMenu = std::make_unique<BuildMenu>(BuildMenu::Args{
@@ -80,7 +86,8 @@ namespace world_sim {
 			.onOpenCraftingDialog = args.onOpenCraftingDialog,
 			.onPlace = args.onPlaceFurniture,
 			.onOpenStorageConfig = args.onOpenStorageConfig,
-			.queryResources = args.queryResources
+			.queryResources = args.queryResources,
+			.onDemolishFoundation = args.onDemolishFoundation
 		});
 
 		// Create colonist details dialog
@@ -157,6 +164,11 @@ namespace world_sim {
 		// Layout gameplay bar at bottom center
 		if (gameplayBar) {
 			gameplayBar->layout(newBounds);
+		}
+
+		// Layout config strip (docks itself just above the gameplay bar)
+		if (configStrip) {
+			configStrip->layout(newBounds);
 		}
 
 		// Position build menu above the gameplay bar, centered
@@ -340,6 +352,17 @@ namespace world_sim {
 			}
 		}
 
+		// Construction config strip (docked above the gameplay bar; only handles
+		// events while visible)
+		if (configStrip && configStrip->visible) {
+			if (configStrip->handleEvent(event)) {
+				return true;
+			}
+			if (event.isConsumed()) {
+				return true;
+			}
+		}
+
 		// Gameplay bar
 		if (gameplayBar) {
 			if (gameplayBar->handleEvent(event)) {
@@ -369,7 +392,8 @@ namespace world_sim {
 		ecs::World&							  ecsWorld,
 		const engine::assets::AssetRegistry&  assetRegistry,
 		const engine::assets::RecipeRegistry& recipeRegistry,
-		const Selection&					  selection
+		const Selection&					  selection,
+		const engine::construction::ConstructionWorld* constructionWorld
 	) {
 		// Update time model and top bar
 		if (topBar) {
@@ -426,7 +450,7 @@ namespace world_sim {
 
 		// Update info panel with selection
 		if (infoPanel) {
-			infoPanel->update(ecsWorld, assetRegistry, recipeRegistry, selection);
+			infoPanel->update(ecsWorld, assetRegistry, recipeRegistry, selection, constructionWorld);
 		}
 
 		// Update task list panel if expanded
@@ -474,6 +498,11 @@ namespace world_sim {
 		// Render gameplay bar
 		if (gameplayBar) {
 			gameplayBar->render();
+		}
+
+		// Render construction config strip (self-hides when inactive)
+		if (configStrip) {
+			configStrip->render();
 		}
 
 		// Render build menu if visible
@@ -575,6 +604,18 @@ namespace world_sim {
 	void GameUI::setProductionItems(const std::vector<std::pair<std::string, std::string>>& items) {
 		if (gameplayBar) {
 			gameplayBar->setProductionItems(items);
+		}
+	}
+
+	void GameUI::setConstructionMaterials(const std::vector<std::pair<std::string, float>>& materials) {
+		if (configStrip) {
+			configStrip->setMaterials(materials);
+		}
+	}
+
+	void GameUI::setConstructionStatus(const DrawingStatus& status) {
+		if (configStrip) {
+			configStrip->setStatus(status);
 		}
 	}
 

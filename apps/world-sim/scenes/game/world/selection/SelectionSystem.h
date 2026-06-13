@@ -7,6 +7,7 @@
 // - Priority 1.5: Crafting stations
 // - Priority 1.6: Storage containers
 // - Priority 2.0: World entities (placed assets)
+// - Priority 3.0: Foundations (lowest; below everything that can stand on them)
 //
 // Also renders selection indicators in world-space.
 
@@ -22,6 +23,10 @@ namespace engine::assets {
 class PlacementExecutor;
 }
 
+namespace engine::construction {
+class ConstructionWorld;
+}
+
 namespace world_sim {
 
 /// Selection priority constants (lower = higher priority)
@@ -30,6 +35,7 @@ namespace SelectionPriority {
 	constexpr float kCraftingStation = 1.5F;
 	constexpr float kStorageContainer = 1.6F;
 	constexpr float kWorldEntity = 2.0F;
+	constexpr float kFoundation = 3.0F; // below everything that sits on a foundation
 } // namespace SelectionPriority
 
 /// SelectionSystem - Manages entity selection and rendering.
@@ -46,10 +52,11 @@ class SelectionSystem {
 	};
 
 	struct Args {
-		ecs::World*							  world;
-		engine::world::WorldCamera*			  camera;
-		engine::assets::PlacementExecutor*	  placementExecutor;
-		Callbacks							  callbacks;
+		ecs::World*								 world;
+		engine::world::WorldCamera*				 camera;
+		engine::assets::PlacementExecutor*		 placementExecutor;
+		engine::construction::ConstructionWorld* constructionWorld;
+		Callbacks								 callbacks;
 	};
 
 	SelectionSystem() = default;
@@ -80,10 +87,11 @@ class SelectionSystem {
 	[[nodiscard]] bool hasSelection() const { return world_sim::hasSelection(selection); }
 
   private:
-	ecs::World*							ecsWorld = nullptr;
-	engine::world::WorldCamera*			camera = nullptr;
-	engine::assets::PlacementExecutor*	placementExecutor = nullptr;
-	Callbacks							callbacks;
+	ecs::World*								 ecsWorld = nullptr;
+	engine::world::WorldCamera*				 camera = nullptr;
+	engine::assets::PlacementExecutor*		 placementExecutor = nullptr;
+	engine::construction::ConstructionWorld* constructionWorld = nullptr;
+	Callbacks								 callbacks;
 
 	Selection selection = NoSelection{};
 

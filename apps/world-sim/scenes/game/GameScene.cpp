@@ -3,8 +3,11 @@
 #include "GameWorldState.h"
 #include "SceneTypes.h"
 #include "scenes/game/ui/GameUI.h"
+#include "scenes/game/world/construction/DrawingSystem.h"
 #include "scenes/game/world/placement/PlacementSystem.h"
 #include "scenes/game/world/selection/SelectionSystem.h"
+
+#include <assets/ConstructionRegistry.h>
 
 #include <components/toast/Toast.h> // For ToastSeverity
 
@@ -51,12 +54,14 @@
 #include <ecs/components/Needs.h>
 #include <ecs/components/Packaged.h>
 #include <ecs/components/Skills.h>
+#include <ecs/components/Structure.h>
 #include <ecs/components/Task.h>
 #include <ecs/components/Transform.h>
 #include <ecs/components/WorkQueue.h>
 #include <ecs/systems/AIDecisionSystem.h>
 #include <ecs/systems/ActionSystem.h>
 #include <ecs/systems/BuildGoalSystem.h>
+#include <ecs/systems/ConstructionSystem.h>
 #include <ecs/systems/CraftingGoalSystem.h>
 #include <ecs/systems/DynamicEntityRenderSystem.h>
 #include <ecs/systems/MovementSystem.h>
@@ -148,9 +153,28 @@ namespace {
 							m_camera->setPosition({pos->value.x, pos->value.y});
 						}
 					},
-				.onBuildToggle = [this]() { m_placementSystem->toggleBuildMenu(); },
-				.onBuildItemSelected = [this](const std::string& defName) { m_placementSystem->selectBuildItem(defName); },
-				.onProductionSelected = [this](const std::string& defName) { m_placementSystem->selectBuildItem(defName); },
+				.onBuildToggle =
+					[this]() {
+						// One tool owns world input: drop the foundation tool first.
+						if (m_drawingSystem) {
+							m_drawingSystem->deactivate();
+						}
+						m_placementSystem->toggleBuildMenu();
+					},
+				.onBuildItemSelected =
+					[this](const std::string& defName) {
+						if (m_drawingSystem) {
+							m_drawingSystem->deactivate();
+						}
+						m_placementSystem->selectBuildItem(defName);
+					},
+				.onProductionSelected =
+					[this](const std::string& defName) {
+						if (m_drawingSystem) {
+							m_drawingSystem->deactivate();
+						}
+						m_placementSystem->selectBuildItem(defName);
+					},
 				.onQueueRecipe =
 					[this](const std::string& recipeDefName, uint32_t quantity) { handleQueueRecipe(recipeDefName, quantity); },
 				.onCancelJob = [this](const std::string& recipeDefName) { handleCancelJob(recipeDefName); },
@@ -171,9 +195,24 @@ namespace {
 					},
 				.onMenuClick = [this]() { sceneManager->switchTo(world_sim::toKey(world_sim::SceneType::MainMenu)); },
 				.onPlaceFurniture = [this]() { handlePlaceFurniture(); },
+				.onDemolishFoundation = [this]() { handleDemolishFoundation(); },
 				.queryResources = [this](const std::string& defName, Foundation::Vec2 position) -> std::optional<uint32_t> {
 					auto coord = engine::world::worldToChunk({position.x, position.y});
 					return m_placementExecutor->getResourceCount(coord, {position.x, position.y}, defName);
+				},
+				.onStructureSelected = [this](const std::string& structure) {
+					if (structure == "foundation" && m_drawingSystem) {
+						// One tool owns world input: drop any active placement first.
+						if (m_placementSystem) {
+							m_placementSystem->cancel();
+						}
+						m_drawingSystem->activateFoundationTool();
+					}
+				},
+				.onConstructionMaterialSelected = [this](const std::string& material) {
+					if (m_drawingSystem) {
+						m_drawingSystem->setActiveMaterial(material);
+					}
 				}
 			});
 
@@ -213,15 +252,80 @@ namespace {
 				}
 			});
 
-			// Initialize SelectionSystem (after ECS and PlacementExecutor)
+			// Initialize DrawingSystem (foundation tool). Sibling of PlacementSystem;
+			// owns the app's ConstructionWorld topology store. Created before the
+			// SelectionSystem so the latter can hold a pointer to that store for
+			// foundation hit-testing.
+			m_drawingSystem = std::make_unique<world_sim::DrawingSystem>(world_sim::DrawingSystem::Args{
+				.world = ecsWorld.get(),
+				.camera = m_camera.get(),
+				.callbacks = {
+					.onToolActive = [this](bool /*active*/) {
+						// Visibility is driven by the per-frame status push in update().
+					},
+					.onToast = [this](const std::string& title, const std::string& message) {
+						gameUI->pushNotification(title, message, UI::ToastSeverity::Warning);
+					}
+				}
+			});
+
+			// Now that DrawingSystem owns the ConstructionWorld, give ConstructionSystem a handle
+			// to it and wire the structure-lifecycle callbacks. ConstructionSystem lives in
+			// libs/engine and doesn't know ConstructionWorld topology state; these callbacks are
+			// the cross-layer signal (same pattern as ActionSystem's other callbacks).
+			{
+				auto& constructionSystem = ecsWorld->getSystem<ecs::ConstructionSystem>();
+				constructionSystem.setConstructionWorld(&m_drawingSystem->world());
+
+				auto& actionSys = ecsWorld->getSystem<ecs::ActionSystem>();
+
+				// Build complete: flip the foundation to Built (bumps ConstructionWorld version,
+				// so the render picks up the new style next frame) and toast the player.
+				actionSys.setStructureCompletedCallback([this](ecs::EntityID blueprintEntity) {
+					const auto* structure = ecsWorld->getComponent<ecs::Structure>(blueprintEntity);
+					if (structure == nullptr || structure->graphId == 0) {
+						LOG_WARNING(Game, "Structure-completed: entity %u has no foundation link", static_cast<uint32_t>(blueprintEntity));
+						return;
+					}
+					m_drawingSystem->world().setState(structure->graphId, engine::construction::FoundationState::Built);
+					gameUI->pushNotification("Construction complete", "Foundation built", UI::ToastSeverity::Info);
+					LOG_INFO(Game, "Foundation #%llu built (entity %u)", static_cast<unsigned long long>(structure->graphId), static_cast<uint32_t>(blueprintEntity));
+				});
+
+				// Deconstruct complete: remove the foundation topology now, but DEFER the
+				// entity destruction. This callback fires from inside ActionSystem::update's
+				// live view iteration; destroying here swap-and-pops the shared component
+				// pools and corrupts that iteration. The queue is drained after
+				// ecsWorld->update() returns (see update()). Refund is a later slice.
+				actionSys.setStructureDeconstructedCallback([this](ecs::EntityID blueprintEntity) {
+					const auto* structure = ecsWorld->getComponent<ecs::Structure>(blueprintEntity);
+					if (structure != nullptr && structure->graphId != 0) {
+						m_drawingSystem->world().removeFoundation(structure->graphId);
+						LOG_INFO(Game, "Foundation #%llu deconstructed (entity %u)", static_cast<unsigned long long>(structure->graphId), static_cast<uint32_t>(blueprintEntity));
+					}
+					m_pendingEntityRemoval.push_back(blueprintEntity);
+				});
+			}
+
+			// Initialize SelectionSystem (after ECS, PlacementExecutor, and DrawingSystem)
 			m_selectionSystem = std::make_unique<world_sim::SelectionSystem>(world_sim::SelectionSystem::Args{
 				.world = ecsWorld.get(),
 				.camera = m_camera.get(),
 				.placementExecutor = m_placementExecutor.get(),
+				.constructionWorld = &m_drawingSystem->world(),
 				.callbacks = {.onSelectionChanged = [](const world_sim::Selection&) {
 					// Selection state is queried each frame - no action needed on change
 				}}
 			});
+
+			// Populate the config strip's material cards from construction config.
+			{
+				std::vector<std::pair<std::string, float>> materials;
+				for (const auto& [name, def] : engine::assets::ConstructionRegistry::Get().getAllMaterials()) {
+					materials.emplace_back(name, def.costRatePerSquareMeter);
+				}
+				gameUI->setConstructionMaterials(materials);
+			}
 
 			// Enable GPU timing for performance monitoring
 			m_gpuTimer.setEnabled(true);
@@ -238,9 +342,32 @@ namespace {
 			int logicalH = 0;
 			Renderer::Primitives::getLogicalViewport(logicalW, logicalH);
 
+			// Drawing tool gets input before placement/selection (GameUI already had
+			// first dibs above). It consumes clicks while active.
+			if (m_drawingSystem->isActive()) {
+				constexpr int kModAlt = 0x0004; // GLFW_MOD_ALT
+				const bool	  freeform = (event.modifiers & kModAlt) != 0;
+
+				if (!consumed && event.type == UI::InputEvent::Type::MouseMove) {
+					// Skip when a UI panel consumed the move, otherwise the preview
+					// tracks the snapped cursor under the panel to a spot you can't click.
+					m_drawingSystem->handleMouseMove(event.position.x, event.position.y, logicalW, logicalH, freeform);
+				} else if (!consumed && event.type == UI::InputEvent::Type::MouseUp) {
+					if (event.button == engine::MouseButton::Right) {
+						m_drawingSystem->cancel();
+						return true;
+					}
+					if (event.button == engine::MouseButton::Left) {
+						m_drawingSystem->handleClick(event.position.x, event.position.y, logicalW, logicalH, freeform);
+						return true;
+					}
+				}
+				return consumed;
+			}
+
 			// Handle placement mode interaction
 			if (m_placementSystem->isActive()) {
-				if (event.type == UI::InputEvent::Type::MouseMove) {
+				if (!consumed && event.type == UI::InputEvent::Type::MouseMove) {
 					m_placementSystem->handleMouseMove(event.position.x, event.position.y, logicalW, logicalH);
 				} else if (!consumed && event.type == UI::InputEvent::Type::MouseUp) {
 					if (m_placementSystem->handleClick()) {
@@ -261,9 +388,11 @@ namespace {
 		void update(float dt) override {
 			auto& input = engine::InputManager::Get();
 
-			// Handle Escape - cancel placement mode first, then exit to menu
+			// Handle Escape - cancel the drawing tool / placement first, then exit
 			if (input.isKeyPressed(engine::Key::Escape)) {
-				if (m_placementSystem->isActive()) {
+				if (m_drawingSystem->isActive()) {
+					m_drawingSystem->cancel();
+				} else if (m_placementSystem->isActive()) {
 					m_placementSystem->cancel();
 				} else {
 					sceneManager->switchTo(world_sim::toKey(world_sim::SceneType::MainMenu));
@@ -271,8 +400,15 @@ namespace {
 				}
 			}
 
-			// Handle B key - toggle build mode
-			if (input.isKeyPressed(engine::Key::B)) {
+			// Backspace removes the last placed point while drawing.
+			if (input.isKeyPressed(engine::Key::Backspace) && m_drawingSystem->isActive()) {
+				m_drawingSystem->removeLastPoint();
+			}
+
+			// Handle B key - toggle build mode. Gated while the foundation tool owns
+			// world input so the two tools can't be live at once (see tool-exclusivity
+			// wiring in the placement/drawing activation callbacks).
+			if (input.isKeyPressed(engine::Key::B) && !m_drawingSystem->isActive()) {
 				m_placementSystem->toggleBuildMenu();
 			}
 
@@ -376,10 +512,28 @@ namespace {
 			// Update ECS world (movement, physics, render system)
 			ecsWorld->update(dt);
 
+			// Drain deferred entity removals AFTER the ECS update. Systems (e.g.
+			// ActionSystem on a completed Deconstruct) and input handlers queue
+			// destroys here instead of calling destroyEntity mid-iteration, which
+			// would swap-and-pop the component pools out from under a live view.
+			if (!m_pendingEntityRemoval.empty()) {
+				for (ecs::EntityID entity : m_pendingEntityRemoval) {
+					ecsWorld->destroyEntity(entity);
+				}
+				m_pendingEntityRemoval.clear();
+			}
+
 			// Update unified game UI (overlay + info panel)
 			auto& assetRegistry = engine::assets::AssetRegistry::Get();
 			auto& recipeRegistry = engine::assets::RecipeRegistry::Get();
-			gameUI->update(dt, *m_camera, *m_chunkManager, *ecsWorld, assetRegistry, recipeRegistry, m_selectionSystem->current());
+			gameUI->update(
+				dt, *m_camera, *m_chunkManager, *ecsWorld, assetRegistry, recipeRegistry, m_selectionSystem->current(),
+				&m_drawingSystem->world()
+			);
+
+			// Push drawing-tool status to the config strip (drives its readouts and
+			// visibility).
+			gameUI->setConstructionStatus(m_drawingSystem->status());
 
 			m_lastUpdateMs = elapsedMs(updateStart, Clock::now());
 		}
@@ -408,6 +562,11 @@ namespace {
 			const auto& dynamicEntities = renderSystem.getRenderData();
 			m_entityRenderer->render(*m_placementExecutor, m_processedChunks, dynamicEntities, *m_camera, w, h);
 			float entityMs = elapsedMs(entityStart, Clock::now());
+
+			// Render committed foundations + in-progress drawing preview (interim;
+			// C6 replaces committed-foundation rendering). Drawn after entities so
+			// foundations sit above terrain and below the cursor ghost/UI.
+			m_drawingSystem->render(w, h);
 
 			// Render selection indicator in world-space (after entities, before UI)
 			m_selectionSystem->renderIndicator(w, h);
@@ -458,6 +617,7 @@ namespace {
 			// Clean up subsystems (order matters - systems may reference ECS/Camera)
 			m_placementSystem.reset();
 			m_selectionSystem.reset();
+			m_drawingSystem.reset();
 
 			m_asyncProcessor.reset();
 			gameUI.reset();
@@ -493,6 +653,7 @@ namespace {
 			ecsWorld->registerSystem<ecs::StorageGoalSystem>();								// Priority 55 - goals before AI
 			ecsWorld->registerSystem<ecs::CraftingGoalSystem>();							// Priority 56 - goals before AI
 			ecsWorld->registerSystem<ecs::BuildGoalSystem>();								// Priority 57 - goals before AI
+			ecsWorld->registerSystem<ecs::ConstructionSystem>();							// Priority 58 - foundation lifecycle goals
 			ecsWorld->registerSystem<ecs::AIDecisionSystem>(assetRegistry, recipeRegistry); // Priority 60
 			ecsWorld->registerSystem<ecs::MovementSystem>();								// Priority 100
 			ecsWorld->registerSystem<ecs::PhysicsSystem>();									// Priority 200
@@ -513,6 +674,12 @@ namespace {
 			// Wire up AIDecisionSystem with chunk manager for toilet location queries
 			auto& aiDecisionSystem = ecsWorld->getSystem<ecs::AIDecisionSystem>();
 			aiDecisionSystem.setChunkManager(m_chunkManager.get());
+
+			// Wire ConstructionSystem with placement data for footprint-clearing queries. The
+			// ConstructionWorld pointer and completion callbacks are wired after DrawingSystem
+			// (which owns the ConstructionWorld) is created, back in initialize().
+			auto& constructionSystem = ecsWorld->getSystem<ecs::ConstructionSystem>();
+			constructionSystem.setPlacementData(m_placementExecutor.get(), &m_processedChunks);
 
 			// Wire up ActionSystem for "item crafted" notifications
 			auto& actionSystem = ecsWorld->getSystem<ecs::ActionSystem>();
@@ -701,6 +868,40 @@ namespace {
 			LOG_INFO(Game, "Canceled job '%s' at station '%s'", recipeDefName.c_str(), stationSel->defName.c_str());
 		}
 
+		/// Handle Demolish request from a foundation's info panel.
+		/// Epic C scope: immediate whole-foundation removal. The work-driven Deconstruct
+		/// action exists; only its material refund and the Demolish-building cascade are
+		/// deferred polish.
+		void handleDemolishFoundation() {
+			const auto& sel = m_selectionSystem->current();
+			auto*		foundationSel = std::get_if<world_sim::FoundationSelection>(&sel);
+			if (foundationSel == nullptr) {
+				LOG_WARNING(Game, "Cannot demolish: no foundation selected");
+				return;
+			}
+
+			auto& constructionWorld = m_drawingSystem->world();
+			const auto* foundation = constructionWorld.get(foundationSel->id);
+			if (foundation == nullptr) {
+				LOG_WARNING(Game, "Cannot demolish: foundation #%llu not found", static_cast<unsigned long long>(foundationSel->id));
+				m_selectionSystem->clearSelection();
+				return;
+			}
+
+			// Capture the ECS mirror handle before the topology record goes away, then
+			// remove the topology record. Defer the entity destruction through the same
+			// queue the deconstruct callback uses, so there's one removal path (drained
+			// after ecsWorld->update() in update()).
+			const ecs::EntityID entity = foundation->entity;
+			constructionWorld.removeFoundation(foundationSel->id);
+			if (entity != ecs::kInvalidEntity) {
+				m_pendingEntityRemoval.push_back(entity);
+			}
+
+			LOG_INFO(Game, "Demolished foundation #%llu", static_cast<unsigned long long>(foundationSel->id));
+			m_selectionSystem->clearSelection();
+		}
+
 		std::unique_ptr<engine::world::ChunkManager>	   m_chunkManager;
 		std::unique_ptr<engine::world::WorldCamera>		   m_camera;
 		std::unique_ptr<engine::world::ChunkRenderer>	   m_renderer;
@@ -733,6 +934,11 @@ namespace {
 		// World interaction subsystems (extracted from GameScene)
 		std::unique_ptr<world_sim::PlacementSystem> m_placementSystem;
 		std::unique_ptr<world_sim::SelectionSystem> m_selectionSystem;
+		std::unique_ptr<world_sim::DrawingSystem>	m_drawingSystem;
+
+		// Entities queued for destruction, drained after ecsWorld->update() so we
+		// never destroyEntity mid-view-iteration (deconstruct callback, demolish).
+		std::vector<ecs::EntityID> m_pendingEntityRemoval;
 	};
 
 } // namespace

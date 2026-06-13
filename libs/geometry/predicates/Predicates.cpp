@@ -244,6 +244,30 @@ namespace geometry {
 		return Int128::compareSquareToProduct(crossComp, threshSq, denom) <= 0;
 	}
 
+	bool closerThanToSegment(const Vec2i64& p, const Vec2i64& a, const Vec2i64& b, std::int64_t thresholdMm) {
+		const Vec2i64 ab	   = b - a;
+		const Vec2i64 ap	   = p - a;
+		const Int128  threshSq = Int128::product(thresholdMm, thresholdMm);
+
+		if (ab.x == 0 && ab.y == 0) {
+			return dot(ap, ap) < threshSq;
+		}
+
+		const Int128 t = dot(ap, ab);
+		if (t <= Int128(0)) {
+			return dot(ap, ap) < threshSq;
+		}
+
+		const Int128 denom = dot(ab, ab);
+		if (t >= denom) {
+			const Vec2i64 bp = p - b;
+			return dot(bp, bp) < threshSq;
+		}
+
+		const Int128 crossComp = cross(ab, ap);
+		return Int128::compareSquareToProduct(crossComp, threshSq, denom) < 0;
+	}
+
 	double distanceToSegment(const Vec2i64& p, const Vec2i64& a, const Vec2i64& b) {
 		const Vec2i64 ab = b - a;
 		const Vec2i64 ap = p - a;

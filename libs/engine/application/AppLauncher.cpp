@@ -52,7 +52,8 @@ namespace engine {
 
 			switch (cmd.type) {
 				case Foundation::InputCommand::Type::Move:
-					send(UI::InputEvent::mouseMove(pos));
+					// Injected input carries no modifier state; 0 matches the live path's default.
+					send(UI::InputEvent::mouseMove(pos, 0));
 					break;
 				case Foundation::InputCommand::Type::Down:
 					send(UI::InputEvent::mouseDown(pos, button, 0));
@@ -61,7 +62,7 @@ namespace engine {
 					send(UI::InputEvent::mouseUp(pos, button, 0));
 					break;
 				case Foundation::InputCommand::Type::Click:
-					send(UI::InputEvent::mouseMove(pos));
+					send(UI::InputEvent::mouseMove(pos, 0));
 					send(UI::InputEvent::mouseDown(pos, button, 0));
 					send(UI::InputEvent::mouseUp(pos, button, 0));
 					break;

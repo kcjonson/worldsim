@@ -41,6 +41,7 @@ namespace ecs {
 		StorageGoalSystem,	// Haul goals for storage containers
 		CraftingGoalSystem, // Craft + child Harvest/Haul goals
 		BuildGoalSystem,	// PlacePackaged goals
+		ConstructionGoalSystem, // Foundation lifecycle: clear Harvest, deliver Harvest/Haul, Build goals
 	};
 
 	/// A goal-level task (e.g., "Storage wants rocks", "Crafting needs wood")

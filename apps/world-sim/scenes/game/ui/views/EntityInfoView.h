@@ -21,6 +21,7 @@
 #include <assets/AssetRegistry.h>
 #include <assets/RecipeRegistry.h>
 #include <component/Component.h>
+#include <construction/ConstructionWorld.h>
 #include <ecs/World.h>
 #include <graphics/Color.h>
 #include <input/InputEvent.h>
@@ -57,6 +58,7 @@ class EntityInfoView : public UI::Component {
 		std::function<void()> onPackage;			// Called when Package button clicked for placed furniture
 		OpenStorageConfigCallback onOpenStorageConfig;	// Called to open storage config dialog for containers
 		ResourceQueryCallback queryResources;		// Query remaining resource count for harvestable entities
+		std::function<void()> onDemolishFoundation; // Called when Demolish button clicked for a foundation
 	};
 
 	explicit EntityInfoView(const Args& args);
@@ -70,7 +72,8 @@ class EntityInfoView : public UI::Component {
 		const ecs::World& world,
 		const engine::assets::AssetRegistry& assetRegistry,
 		const engine::assets::RecipeRegistry& recipeRegistry,
-		const Selection& selection
+		const Selection& selection,
+		const engine::construction::ConstructionWorld* constructionWorld = nullptr
 	);
 
 	/// Check if panel is visible
@@ -139,6 +142,7 @@ class EntityInfoView : public UI::Component {
 	std::function<void()> onPackageCallback;
 	OpenStorageConfigCallback onOpenStorageConfigCallback;
 	ResourceQueryCallback queryResourcesCallback;
+	std::function<void()> onDemolishFoundationCallback;
 
 	// Background panel
 	UI::LayerHandle backgroundHandle;

@@ -47,6 +47,10 @@ namespace ecs {
 		Craft,	 // Creating items at workbench
 		Deposit, // Depositing items into storage container
 
+		// Construction Actions
+		Build,		 // Advancing construction work on a blueprint (UnderConstruction phase)
+		Deconstruct, // Tearing down a structure (mirrors Build, counts work down)
+
 		// Placement Actions
 		PickupPackaged, // Clear hands + pick up 2-handed packaged item
 		PlacePackaged,	// Place packaged item at target location
@@ -58,6 +62,34 @@ namespace ecs {
 		InProgress, // Action is ongoing
 		Complete	// Action finished, ready for cleanup
 	};
+
+	// ============================================================================
+	// Construction work rate
+	// ============================================================================
+
+	/// Construction work units produced per second at a given Construction skill level.
+	///
+	/// Pure function (no state, easily unit-tested) used by Build and Deconstruct actions
+	/// to advance StructureBlueprint.workDone: workDone += constructionWorkRate(skill) x dt.
+	///
+	/// Linear in skill: a level-0 (untrained) builder still works at the base rate, and the
+	/// rate scales up to roughly base x (1 + 20 x perLevel) at master. The same multiplier
+	/// shape as the AI-priority skill bonus (level x multiplier), expressed as a work
+	/// multiplier on a base rate so untrained colonists are not stuck at zero.
+	/// @param skillLevel Construction skill in [0, 20]; clamped if out of range.
+	[[nodiscard]] inline float constructionWorkRate(float skillLevel) {
+		// Base work units/second for an untrained builder. workTotal is in the same units
+		// (area/length x material factor), so base x typical workTotal gives a sane build time.
+		constexpr float kBaseWorkRate = 10.0F;
+
+		// Per-skill-level fractional speedup. At level 20 the builder is 1 + 20*0.08 = 2.6x
+		// the base rate; tuned so skill matters without dwarfing the untrained baseline.
+		constexpr float kPerLevelBonus = 0.08F;
+
+		constexpr float kMaxSkillLevel = 20.0F;
+		float			clamped = skillLevel < 0.0F ? 0.0F : (skillLevel > kMaxSkillLevel ? kMaxSkillLevel : skillLevel);
+		return kBaseWorkRate * (1.0F + kPerLevelBonus * clamped);
+	}
 
 	// ============================================================================
 	// Effect Types (what happens when the action completes)
@@ -123,14 +155,24 @@ namespace ecs {
 		float sideEffectAmount = 0.0F;
 	};
 
-	/// Effect for progress actions (Build, Repair)
-	/// Advances construction/repair progress. Stub for Phase 2+.
+	/// Effect for construction progress actions (Build, Deconstruct).
+	///
+	/// Unlike fixed-duration effects (applied once on completion), construction work is
+	/// continuous: ActionSystem advances the target blueprint's workDone every processAction
+	/// tick by rate(skill) x dt, so multiple colonists and multiple work sessions accumulate
+	/// onto the same StructureBlueprint. The action ends when the blueprint reaches its work
+	/// bound (workTotal for Build, 0 for Deconstruct), at which point ActionSystem fires the
+	/// structure-completion callback. See building-construction-architecture.md D7.
 	struct ProgressEffect {
-		/// Target entity being built/repaired
+		/// Target blueprint entity whose StructureBlueprint.workDone is advanced.
 		uint64_t targetEntityId = 0;
 
-		/// Amount of progress to add (0-1 scale)
-		float progressAmount = 0.0F;
+		/// Builder's Construction skill level (0-20), captured when the action starts.
+		/// Scales the per-second work rate; see constructionWorkRate().
+		float skillLevel = 0.0F;
+
+		/// True for Deconstruct (workDone counts down toward 0); false for Build (counts up).
+		bool deconstruct = false;
 	};
 
 	/// Effect for entity spawning (Toilet creates Bio Pile)
@@ -280,6 +322,13 @@ namespace ecs {
 		/// Get the deposit effect
 		[[nodiscard]] const DepositEffect& depositEffect() const { return std::get<DepositEffect>(effect); }
 		[[nodiscard]] DepositEffect&	   depositEffect() { return std::get<DepositEffect>(effect); }
+
+		/// Check if this action has a construction progress effect (Build, Deconstruct)
+		[[nodiscard]] bool hasProgressEffect() const { return std::holds_alternative<ProgressEffect>(effect); }
+
+		/// Get the progress effect (call hasProgressEffect() first or use std::get_if)
+		[[nodiscard]] const ProgressEffect& progressEffect() const { return std::get<ProgressEffect>(effect); }
+		[[nodiscard]] ProgressEffect&		progressEffect() { return std::get<ProgressEffect>(effect); }
 
 		/// Check if this action has a place packaged effect
 		[[nodiscard]] bool hasPlacePackagedEffect() const { return std::holds_alternative<PlacePackagedEffect>(effect); }
@@ -547,6 +596,57 @@ namespace ecs {
 			return action;
 		}
 
+		/// Factory: Build action - advance construction work on a blueprint.
+		///
+		/// Continuous model: this action has no fixed duration. ActionSystem advances the
+		/// target blueprint's StructureBlueprint.workDone by constructionWorkRate(skill) x dt
+		/// each tick and ends the action when workDone reaches workTotal (firing the
+		/// structure-completion callback). A level-0 builder still makes progress; higher
+		/// Construction skill builds faster. See building-construction-architecture.md D7.
+		/// @param blueprintEntityId Entity carrying the StructureBlueprint to build
+		/// @param blueprintPos Position of the build work slot
+		/// @param skillLevel Builder's Construction skill (0-20)
+		static Action Build(uint64_t blueprintEntityId, glm::vec2 blueprintPos, float skillLevel) {
+			Action action;
+			action.type = ActionType::Build;
+			action.state = ActionState::Starting;
+			action.duration = 0.0F; // Completion is gated by workDone >= workTotal, not elapsed time
+			action.targetPosition = blueprintPos;
+			action.interruptable = false; // Commit to the work session like other work actions
+
+			ProgressEffect progressEff;
+			progressEff.targetEntityId = blueprintEntityId;
+			progressEff.skillLevel = skillLevel;
+			progressEff.deconstruct = false;
+			action.effect = progressEff;
+
+			return action;
+		}
+
+		/// Factory: Deconstruct action - tear down a structure (mirror of Build).
+		///
+		/// Counts the blueprint's workDone back down toward 0 at constructionWorkRate(skill) x dt
+		/// each tick, ending when workDone reaches 0 (firing the structure-removed callback).
+		/// @param blueprintEntityId Entity carrying the StructureBlueprint to deconstruct
+		/// @param blueprintPos Position of the deconstruct work slot
+		/// @param skillLevel Builder's Construction skill (0-20)
+		static Action Deconstruct(uint64_t blueprintEntityId, glm::vec2 blueprintPos, float skillLevel) {
+			Action action;
+			action.type = ActionType::Deconstruct;
+			action.state = ActionState::Starting;
+			action.duration = 0.0F;
+			action.targetPosition = blueprintPos;
+			action.interruptable = false;
+
+			ProgressEffect progressEff;
+			progressEff.targetEntityId = blueprintEntityId;
+			progressEff.skillLevel = skillLevel;
+			progressEff.deconstruct = true;
+			action.effect = progressEff;
+
+			return action;
+		}
+
 		/// Factory: PickupPackaged action - clear hands and pick up a 2-handed packaged item
 		/// Phase 1 of PlacePackaged task. Colonist clears hands first, then picks up.
 		/// @param packagedEntityId Entity ID of the packaged item
@@ -609,6 +709,10 @@ namespace ecs {
 				return "Craft";
 			case ActionType::Deposit:
 				return "Deposit";
+			case ActionType::Build:
+				return "Build";
+			case ActionType::Deconstruct:
+				return "Deconstruct";
 			case ActionType::PickupPackaged:
 				return "PickupPackaged";
 			case ActionType::PlacePackaged:
