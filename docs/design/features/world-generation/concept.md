@@ -40,7 +40,9 @@ By generating a **complete planet first**, we get:
 - Prioritize believability over scientific precision
 - Abstract away unnecessary complexity
 
-**Example**: We calculate steady-state plate positions based on planet age, rather than simulating millions of years step-by-step. The result looks plausible - that's what matters.
+**Example**: We run a coarse time-stepped tectonic history (~800 Myr, 160 steps) to derive realistic crust state, then upsample to full resolution. Continental shapes, mountain belts, and ocean age gradients emerge from ~2 Wilson cycles of plate motion — we do not place them. The result has the irregular coastlines, linear mountain ranges, and bimodal hypsometry of a real planet because it was generated the same way, not because we tuned noise parameters to look that way.
+
+*Revision note, 2026-06-13:* The original text said "calculate steady-state plate positions rather than simulating millions of years step-by-step." That was accurate for the first implementation. The tectonic history overhaul (PR #136) replaced it with an explicit time-stepped simulation; this paragraph was updated to reflect the as-built approach. The "emergence over specification" and "plausibility over accuracy" principles remain unchanged.
 
 ### Parameterized Generation
 
@@ -212,3 +214,4 @@ World-sim is about **building colonies on alien worlds**. The world generation s
 ## Revision History
 
 - 2025-10-26: Initial concept document created
+- 2026-06-13: "Scientific Plausibility" section updated to reflect time-stepped tectonic history implementation (PR #136 — tectonic history simulation)

@@ -64,6 +64,7 @@ Development log entries are **immutable history**. Don't update old entries — 
 
 #### June 2026
 
+- [2026-06-13 - Tectonic history simulation](./entries/2026-06-13-tectonic-history-simulation.md)
 - [2026-06-12 - Goldberg hex grid + two-tier planet rendering](./entries/2026-06-12-worldgen-hex-goldberg.md)
 
 ### 2025
@@ -91,9 +92,10 @@ Development log entries are **immutable history**. Don't update old entries — 
 
 ## Quick Stats
 
-- **Total Entries:** 9
-- **Latest Entry:** 2026-06-12
+- **Total Entries:** 10
+- **Latest Entry:** 2026-06-13
 - **Major Milestones:**
+  - Tectonic history simulation: realistic continents and mountains (2026-06-13)
   - Goldberg hex grid + two-tier planet rendering (2026-06-12)
   - UI Primitives Foundation (ProgressBar, ScrollContainer) (2025-12-26)
   - FocusManager CRTP simplification (2025-12-24)

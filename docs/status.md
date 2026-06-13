@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2026-06-12 (Hex conversion Phases 1-4 on feature/worldgen-hex-tiles: Goldberg grid, two-tier rendering, docs + dev log)
+Last Updated: 2026-06-13 (Tectonic history simulation M-T6: docs + dev log + PR — awaiting user visual review to confirm epic complete)
 
 ## Epic/Story/Task Template
 
@@ -430,7 +430,7 @@ while (running) {
 - [x] M-T4: TerrainStage rewrite (isostasy + depth-age + orogeny-aged belts + boundary kernels) — ends with USER screenshot review gate
   - [x] M-T4.5: concentrate orogeny into linear belts with aging sutures; geodesic belt-linearity metric (tile-weighted aspect 5-7)
 - [x] M-T5: delete PlateStage/PlateMovementStage, test re-baseline, edge cases, benchmark (clean whole-project build, --verify-threads determinism, n=1024 ~11s)
-- [ ] M-T6: docs (concept.md, generation-phases.md, implementation contracts), dev log, PR
+- [x] M-T6: docs (concept.md, generation-phases.md, implementation contracts), dev log, PR — awaiting user visual review to mark epic complete
 
 ---
 
