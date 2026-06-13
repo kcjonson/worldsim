@@ -3,6 +3,7 @@
 
 #include "assets/ConfigValidator.h"
 #include "assets/ActionTypeRegistry.h"
+#include "assets/ConstructionRegistry.h"
 #include "assets/PriorityConfig.h"
 #include "assets/TaskChainRegistry.h"
 #include "assets/WorkTypeRegistry.h"
@@ -109,6 +110,115 @@ bool ConfigValidator::validatePriorityConfig() {
     return valid;
 }
 
+bool ConfigValidator::validateConstruction() {
+    const auto& reg = ConstructionRegistry::Get();
+
+    bool valid = true;
+
+    // Materials must be loaded and each palette must be non-empty.
+    if (!reg.materialsLoaded()) {
+        addError("ConstructionMaterials",
+                 "No construction materials loaded",
+                 "Ensure assets/config/construction/materials.xml exists and is valid");
+        return false;
+    }
+
+    for (const auto& [name, mat] : reg.getAllMaterials()) {
+        if (mat.pattern.palette.empty()) {
+            addError("ConstructionMaterials",
+                     "Material '" + name + "' has an empty pattern palette",
+                     "Add at least one <color> entry inside <palette>");
+            valid = false;
+        }
+    }
+
+    // Constraints must be loaded and internally consistent.
+    if (!reg.constraintsLoaded()) {
+        addError("ConstructionConstraints",
+                 "Construction constraints not loaded",
+                 "Ensure assets/config/construction/constraints.xml exists and is valid");
+        return false;
+    }
+
+    const auto& c = reg.constraints();
+
+    if (c.minCornerAngleDegrees <= 0.0F || c.minCornerAngleDegrees >= 180.0F) {
+        addError("ConstructionConstraints",
+                 "minCornerAngleDegrees must be in (0, 180), got " +
+                     std::to_string(c.minCornerAngleDegrees),
+                 "Suggested range: 15-60 degrees");
+        valid = false;
+    }
+
+    if (c.pathingClearanceMeters > c.segmentClearanceMeters) {
+        addError("ConstructionConstraints",
+                 "pathingClearanceMeters (" + std::to_string(c.pathingClearanceMeters) +
+                     ") must be <= segmentClearanceMeters (" +
+                     std::to_string(c.segmentClearanceMeters) + ")",
+                 "segmentClearance enforces the gap that pathingClearance requires");
+        valid = false;
+    }
+
+    if (c.minAreaSquareMeters >= c.maxAreaSquareMeters) {
+        addError("ConstructionConstraints",
+                 "minAreaSquareMeters must be < maxAreaSquareMeters",
+                 "Got min=" + std::to_string(c.minAreaSquareMeters) +
+                     " max=" + std::to_string(c.maxAreaSquareMeters));
+        valid = false;
+    }
+
+    if (c.maxPoints < 3) {
+        addError("ConstructionConstraints",
+                 "maxPoints must be >= 3 (a triangle is the minimum polygon), got " +
+                     std::to_string(c.maxPoints),
+                 "");
+        valid = false;
+    }
+
+    if (c.refundPercent < 0.0F || c.refundPercent > 100.0F) {
+        addError("ConstructionConstraints",
+                 "refundPercent must be in [0, 100], got " + std::to_string(c.refundPercent),
+                 "");
+        valid = false;
+    }
+
+    // Snapping must be loaded with positive radii.
+    if (!reg.snappingLoaded()) {
+        addError("ConstructionSnapping",
+                 "Construction snapping config not loaded",
+                 "Ensure assets/config/construction/snapping.xml exists and is valid");
+        return false;
+    }
+
+    const auto& s = reg.snapping();
+
+    if (s.vertexSnapRadiusMeters <= 0.0F) {
+        addError("ConstructionSnapping",
+                 "vertexSnapRadiusMeters must be positive, got " +
+                     std::to_string(s.vertexSnapRadiusMeters),
+                 "");
+        valid = false;
+    }
+
+    if (s.edgeSnapRadiusMeters <= 0.0F) {
+        addError("ConstructionSnapping",
+                 "edgeSnapRadiusMeters must be positive, got " +
+                     std::to_string(s.edgeSnapRadiusMeters),
+                 "");
+        valid = false;
+    }
+
+    if (s.originCloseRadiusMeters <= 0.0F) {
+        addError("ConstructionSnapping",
+                 "originCloseRadiusMeters must be positive, got " +
+                     std::to_string(s.originCloseRadiusMeters),
+                 "");
+        valid = false;
+    }
+
+    return valid;
+}
+
 bool ConfigValidator::validateAll() {
     clearErrors();
 
@@ -135,6 +245,16 @@ bool ConfigValidator::validateAll() {
         valid = false;
     }
 
+    // Construction config is optional at this call site; only validate if loaded.
+    if (ConstructionRegistry::Get().materialsLoaded() ||
+        ConstructionRegistry::Get().constraintsLoaded() ||
+        ConstructionRegistry::Get().snappingLoaded()) {
+        if (!validateConstruction()) {
+            LOG_ERROR(Engine, "Construction config validation failed");
+            valid = false;
+        }
+    }
+
     // Log all errors
     for (const auto& error : errors) {
         LOG_ERROR(Engine, "[%s] %s\n  %s",
@@ -144,9 +264,9 @@ bool ConfigValidator::validateAll() {
     }
 
     if (valid) {
-        LOG_INFO(Engine, "All work configs validated successfully");
+        LOG_INFO(Engine, "All configs validated successfully");
     } else {
-        LOG_ERROR(Engine, "Work config validation failed with %zu error(s)", errors.size());
+        LOG_ERROR(Engine, "Config validation failed with %zu error(s)", errors.size());
     }
 
     return valid;

@@ -33,6 +33,11 @@ class ConfigValidator {
     /// @return true if valid
     static bool validateActionTypes();
 
+    /// Validate ConstructionRegistry - material palettes, constraint consistency,
+    /// snapping radii. Must be called after ConstructionRegistry::load().
+    /// @return true if valid
+    static bool validateConstruction();
+
     /// Validate TaskChains - check action references
     /// @return true if valid
     static bool validateTaskChains();
@@ -47,7 +52,8 @@ class ConfigValidator {
 
     // --- Full Validation ---
 
-    /// Validate all registries (call after all configs loaded)
+    /// Validate all registries (call after all configs loaded).
+    /// Includes construction config if it has been loaded.
     /// @return true if all valid
     static bool validateAll();
 
