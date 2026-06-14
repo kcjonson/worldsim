@@ -16,11 +16,27 @@
 //     transport) and down by thick atmosphere (stronger transport).
 //   Land above sea level loses lapseRateCPerKm per km; ocean and below-sea-level
 //   depressions are clamped at 0 km.
+//
+// Continentality (land/sea contrast):
+//   Distance-to-ocean (tile hops, shared with PrecipitationStage) drives two
+//   corrections on land:
+//     - mean temperature: a ZERO-SUM nudge contDelta = kContinentality *
+//       (distNorm - meanLandDistNorm). The land sum of contDelta is exactly 0
+//       (meanLandDistNorm is the land-area mean of distNorm), so the global mean
+//       is preserved by construction — interiors warm, coasts cool, sum unchanged.
+//     - seasonal range: interiors get a much larger half-amplitude than coasts at
+//       the same latitude (Earth: maritime west-coast ~5 C, deep-continental
+//       ~30 C+). This is the dominant continentality effect and it is NOT zero-sum
+//       (range has no global-mean constraint).
 
 #include "worldgen/stages/AtmosphereStage.h"
 
+#include "worldgen/stages/ClimateField.h"
+
 #include <math/DeterministicMath.h>
 #include <random/HashNoise.h>
+
+#include <vector>
 
 namespace worldgen {
 
@@ -29,6 +45,26 @@ namespace {
 constexpr size_t kGrainSize = 4096;
 constexpr double kPiOver180 = 3.14159265358979323846 / 180.0;
 constexpr double kPi        = 3.14159265358979323846;
+
+// --- Continentality (land/sea contrast) ---
+// distNorm in [0,1] = (distToOcean - meanLand) re-centered then scaled, see below.
+// kContinentalityMeanC sets the half-spread of the ZERO-SUM mean nudge: a tile at
+// the deepest interior (distNorm=1) ends up ~kContinentalityMeanC*(1-mean) warmer
+// than the global land mean, a coast (distNorm=0) ~kContinentalityMeanC*mean
+// cooler. Small (a few C) so the equator-pole structure still dominates and the
+// EarthLikeGlobalMean gate holds. Earth's annual-mean continentality is modest;
+// the seasonal swing below is where continentality really shows.
+constexpr double kContinentalityMeanC = 8.0; // full distNorm span -> ~8 C warmer interior
+// Seasonal-range continentality: interiors get a far larger half-amplitude than
+// coasts. kContinentalityRangeC is the extra half-amplitude added to a deep
+// interior (distNorm=1) over a coast (distNorm=0) at the same latitude. Earth:
+// maritime ~5 C half-amp, deep-continental ~30 C+, so ~20 C of spread.
+constexpr double kContinentalityRangeC = 20.0;
+// distToOcean saturates: beyond this many hops a tile is "fully interior" for the
+// purpose of normalization, so a single huge supercontinent doesn't compress every
+// other land mass to distNorm~0. ~14 hops at n=512 is roughly a 2500-3000 km
+// traverse (the scale at which interiors fully dry / decouple from the sea).
+constexpr double kInteriorSaturationHops = 14.0;
 
 double clampd(double v, double lo, double hi) {
     return v < lo ? lo : (v > hi ? hi : v);
@@ -76,6 +112,27 @@ void AtmosphereStage::run(StageContext& ctx) {
     const double atmWindFactor = clampd(0.8 + 0.2 * sqrtAtm, 0.7, 1.5);
     const double windScale = rotWindFactor * atmWindFactor;
 
+    // --- Continentality pass 1: distance-to-ocean + land-mean of distNorm ---
+    // distNorm[t] = min(distToOcean / saturation, 1) on land, 0 on ocean. The
+    // mean is reduced SERIALLY over land tiles in ascending order — a parallel
+    // float reduce would not be bit-reproducible. The mean drives the zero-sum
+    // mean-temperature nudge below.
+    const std::vector<float> distToOcean =
+        computeDistanceToOcean(ctx.grid, ctx.data.elevation, seaLevel);
+    std::vector<float> distNorm(totalTiles, 0.0f);
+    double landDistSum = 0.0;
+    uint32_t landCount = 0;
+    for (uint32_t t = 0; t < totalTiles; ++t) {
+        if (static_cast<double>(ctx.data.elevation[t]) < seaLevel) continue; // ocean
+        double dn = static_cast<double>(distToOcean[t]) / kInteriorSaturationHops;
+        if (dn > 1.0) dn = 1.0;
+        distNorm[t] = static_cast<float>(dn);
+        landDistSum += dn;
+        ++landCount;
+    }
+    const double meanLandDistNorm = landCount > 0
+        ? landDistSum / static_cast<double>(landCount) : 0.0;
+
     ctx.pool.parallelFor(0, totalTiles, kGrainSize, [&](size_t begin, size_t end) {
         throwIfCancelled(ctx);
         for (size_t t = begin; t < end; ++t) {
@@ -99,6 +156,14 @@ void AtmosphereStage::run(StageContext& ctx) {
                 tempC -= lapseRate * (elev - seaLevel) / 1000.0;
             }
 
+            // Continentality mean nudge (land only, zero-sum). distNorm is 0 on
+            // ocean, so this is a no-op there; over land the (distNorm - mean)
+            // factor sums to exactly 0, preserving the global mean.
+            if (!isOcean) {
+                tempC += kContinentalityMeanC *
+                         (static_cast<double>(distNorm[t]) - meanLandDistNorm);
+            }
+
             // Small seeded perturbation (+/-1.5 C) for texture.
             const float noise = foundation::valueNoise3(
                 static_cast<float>(center.x) * 4.0f,
@@ -112,7 +177,13 @@ void AtmosphereStage::run(StageContext& ctx) {
 
             // --- Seasonal range (half-amplitude) ---
             double range = (4.0 + 30.0 * sin2Lat + eccBoost) * atmRangeDamp;
-            if (isOcean) range *= 0.5; // maritime moderation
+            if (isOcean) {
+                range *= 0.5; // maritime moderation
+            } else {
+                // Continentality: interiors swing far more than coasts at the
+                // same latitude. NOT zero-sum (range has no global-mean budget).
+                range += kContinentalityRangeC * static_cast<double>(distNorm[t]);
+            }
             ctx.data.temperatureRange[t] =
                 static_cast<int16_t>(clampd(range, 1.0, 80.0) * 10.0);
 

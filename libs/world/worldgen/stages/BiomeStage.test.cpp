@@ -446,16 +446,21 @@ TEST(BiomeStage, ShowcaseWorldBiomeDiversity) {
         const double absLat = lat < 0.0 ? -lat : lat;
         const float  e = w.world.data.elevation[t];
 
-        if (e == 300.0f && absLat < 8.0) {
-            // Equatorial wet plain: tropical forest should dominate, but the
-            // real precipitation stage legitimately dries rain-shadowed and
-            // deep-interior tiles into savanna (rarely further), so assert
-            // the majority, not every tile.
+        if (e == 300.0f && absLat < 8.0 && lon >= 67.0) {
+            // Equatorial plain within ~2 tiles of the EAST coast (the moisture
+            // source, since equatorial trades blow west): tropical forest dominates
+            // this wet windward strip. The C-2 advection sweep dries the rest of the
+            // plain inland (downwind) into savanna — a real continentality gradient —
+            // which is exactly the behavior the old fixed-march lacked, so we no
+            // longer require forest across the whole 45-degree-wide plain.
             ++equatorialPlain;
             if (b == Biome::TropicalRainforest ||
                 b == Biome::TropicalSeasonalForest) {
                 ++equatorialTropicalForest;
             }
+            if (b == Biome::TropicalRainforest) sawTropicalRain = true;
+        } else if (e == 300.0f && absLat < 8.0) {
+            // Deeper interior plain: still counts toward seeing tropical rain.
             if (b == Biome::TropicalRainforest) sawTropicalRain = true;
         } else if (e == 300.0f && absLat >= 28.0 && absLat < 33.0) {
             if (b == Biome::HotDesert || b == Biome::ColdDesert ||
