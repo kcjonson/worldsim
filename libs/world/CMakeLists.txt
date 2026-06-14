@@ -59,22 +59,28 @@ if(BUILD_TESTING)
         if(NOT MSVC)
             target_compile_options(world-tests PRIVATE -O0 -g)
         endif()
-        # Two ctest entries against the SAME executable, split by gtest suite name.
-        # Classification rule: a test belongs in *Heavy if it runs the full PlanetGenerator
-        # pipeline (calls runPipeline/runToCompletion or equivalent) OR a full PlateSim
-        # history at coarseN >= 48. Tests at n <= 32 or using only individual stages on
-        # synthetic worlds are fast. Add the "Heavy" suffix to the gtest SUITE name to
-        # classify; no list to maintain here.
+        # Two ctest entries against the SAME executable, split by gtest SUITE name:
+        # any suite whose name ends in "Heavy" is the heavy bucket. The filters use
+        # "*Heavy.*" (Heavy immediately before the Suite.Test separator) so only a
+        # suite-name suffix classifies a test, never a "Heavy" substring in a test
+        # name. Add the "Heavy" suffix to a test's SUITE to make it heavy; no list to
+        # maintain here.
         #
-        # Fast-bucket TIMEOUT calibration (2025-06-13):
+        # A test belongs in a *Heavy suite when it is materially slow in a Debug build:
+        # in practice that means it runs the full PlanetGenerator pipeline
+        # (runPipeline/runToCompletion) or a full PlateSim history. These dominate the
+        # suite at the resolutions used (coarseN ~32-256); cheap tests (tiny n,
+        # single-stage, or pure-logic) stay in the fast bucket.
+        #
+        # Fast-bucket TIMEOUT calibration (2026-06-14):
         #   RelWithDebInfo wall time: ~7s
         #   Debug-CI multiplier: ~9x -> ~63s on CI
         #   Formula: max(300, ceil(7 * 12)) = max(300, 84) = 300
         #   300s gives >4x margin over the worst-case Debug-CI estimate.
         # If the fast wall time grows, rerun and set TIMEOUT = max(300, ceil(newWall * 12)).
-        add_test(NAME world-tests COMMAND world-tests --gtest_filter=-*Heavy*)
+        add_test(NAME world-tests COMMAND world-tests --gtest_filter=-*Heavy.*)
         set_tests_properties(world-tests PROPERTIES LABELS "fast" TIMEOUT 300)
-        add_test(NAME world-tests-heavy COMMAND world-tests --gtest_filter=*Heavy*)
+        add_test(NAME world-tests-heavy COMMAND world-tests --gtest_filter=*Heavy.*)
         set_tests_properties(world-tests-heavy PROPERTIES LABELS "heavy" TIMEOUT 2400)
     endif()
 

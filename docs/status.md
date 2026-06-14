@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2026-06-14 (Climate/biome/shelf retune PR #139 merged; splitting heavy worldgen tests into a separate ctest bucket next)
+Last Updated: 2026-06-14 (Climate/biome/shelf retune #139 merged; heavy worldgen tests split into a separate ctest bucket on PR #141)
 
 ## Epic/Story/Task Template
 
