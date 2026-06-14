@@ -10,6 +10,8 @@
 
 #include <utils/Log.h>
 
+#include <cmath>
+
 namespace engine::assets {
 
 std::vector<ValidationError> ConfigValidator::errors;
@@ -306,6 +308,67 @@ bool ConfigValidator::validateConstruction() {
                      std::to_string(c.pathingClearanceMeters) + ") so colonists can pass between walls",
                  "Increase <minParallelClearanceMeters> or decrease <pathingClearanceMeters>");
         valid = false;
+    }
+
+    if (c.openingMarginMeters < 0.0F) {
+        addError("ConstructionConstraints",
+                 "openingMarginMeters must be >= 0, got " + std::to_string(c.openingMarginMeters),
+                 "Set <openingMarginMeters> to a non-negative value (suggested: 0.3)");
+        valid = false;
+    }
+
+    // Opening type validation. Cost/work are constants per type; widths must be
+    // positive, the material must resolve, pathable is a parsed bool (no check
+    // needed), and the opening plus its end margins must fit within the LONGEST
+    // wall a tool could draw, or it could never be placed anywhere. Cross-checks
+    // materials AND constraints, so it runs here after both are confirmed loaded.
+    for (const auto& type : reg.openingTypes()) {
+        if (type.widthMeters <= 0.0F) {
+            addError("ConstructionOpenings",
+                     "Opening type '" + type.name + "' widthMeters must be positive, got " +
+                         std::to_string(type.widthMeters),
+                     "Set <widthMeters> to a positive value");
+            valid = false;
+        }
+        if (type.material.empty() || reg.getMaterial(type.material) == nullptr) {
+            addError("ConstructionOpenings",
+                     "Opening type '" + type.name + "' references unknown material '" + type.material + "'",
+                     "Set <material> to a loaded construction material (e.g. Wood)");
+            valid = false;
+        }
+        if (type.costItems <= 0.0F) {
+            addError("ConstructionOpenings",
+                     "Opening type '" + type.name + "' costItems must be positive, got " +
+                         std::to_string(type.costItems),
+                     "Set <costItems> to a positive value");
+            valid = false;
+        }
+        if (type.workUnits <= 0.0F) {
+            addError("ConstructionOpenings",
+                     "Opening type '" + type.name + "' workUnits must be positive, got " +
+                         std::to_string(type.workUnits),
+                     "Set <workUnits> to a positive value");
+            valid = false;
+        }
+        // Fit sanity: an opening needs width + 2*margin of wall to honor its end
+        // margins. Reject a type only if that exceeds the LONGEST wall a tool could
+        // draw -- a wall can't be longer than the largest foundation's diagonal, so
+        // bound it coarsely by the DIAGONAL of the max-area square, sqrt(2*maxArea)
+        // (the side, sqrt(maxArea), would under-count and false-reject a type that
+        // fits on a diagonal wall). A type needing more than that could never be
+        // placed on any legal wall.
+        if (type.widthMeters > 0.0F && c.maxAreaSquareMeters > 0.0F) {
+            const float needed = type.widthMeters + 2.0F * c.openingMarginMeters;
+            const float maxWallLength = std::sqrt(2.0F * c.maxAreaSquareMeters);
+            if (needed > maxWallLength) {
+                addError("ConstructionOpenings",
+                         "Opening type '" + type.name + "' needs " + std::to_string(needed) +
+                             " m (width + 2*margin) but the longest possible wall is about " +
+                             std::to_string(maxWallLength) + " m",
+                         "Reduce <widthMeters>/<openingMarginMeters> or raise <maxAreaSquareMeters>");
+                valid = false;
+            }
+        }
     }
 
     // Snapping must be loaded with positive radii.

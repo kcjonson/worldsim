@@ -21,7 +21,8 @@ namespace world_sim {
 		  onOpenStorageConfigCallback(args.onOpenStorageConfig),
 		  queryResourcesCallback(args.queryResources),
 		  onDemolishFoundationCallback(args.onDemolishFoundation),
-		  onDemolishWallSegmentCallback(args.onDemolishWallSegment) {
+		  onDemolishWallSegmentCallback(args.onDemolishWallSegment),
+		  onDemolishOpeningCallback(args.onDemolishOpening) {
 
 		contentWidth = panelWidth - (2.0F * kPadding);
 
@@ -490,6 +491,7 @@ namespace world_sim {
 			.queryResources = queryResourcesCallback,
 			.onDemolishFoundation = onDemolishFoundationCallback,
 			.onDemolishWallSegment = onDemolishWallSegmentCallback,
+			.onDemolishOpening = onDemolishOpeningCallback,
 		};
 
 		// Let model handle all the logic (selection detection, change detection, content generation)

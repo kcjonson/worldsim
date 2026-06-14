@@ -272,7 +272,13 @@ namespace engine::construction {
 		// removed with it. Returns false for an unknown id. (Per-segment demolish
 		// is the design's wall removal unit; the gameplay demolish-with-refund
 		// flow lives in ConstructionSystem and calls through here.)
-		bool removeSegment(SegmentId id);
+		//
+		// The removed openings' ECS entity handles are appended to
+		// `removedOpeningEntities` (when non-null) so the caller can despawn those
+		// mirror entities; topology only erases the records, it never destroys ECS
+		// entities. Without this, demolishing a wall that hosts a door/window would
+		// leak the opening blueprint entities.
+		bool removeSegment(SegmentId id, std::vector<ecs::EntityID>* removedOpeningEntities = nullptr);
 
 		// --- Walls: queries --------------------------------------------------
 
@@ -315,6 +321,15 @@ namespace engine::construction {
 		// Returns kInvalidOpening for an unknown segment.
 		OpeningId addOpening(SegmentId segment, float t, std::string type, std::string material);
 
+		// Mirror mutators for the opening's ECS-backed gameplay state, parallel to the
+		// foundation/segment ones. Both bump the version. Return false on unknown id.
+		bool setOpeningState(OpeningId id, FoundationState state);
+		bool setOpeningEntity(OpeningId id, ecs::EntityID entity);
+
+		// Remove a single opening (per-opening demolish). Returns false for an unknown
+		// id. (Whole-segment removal already drops its openings via removeSegment.)
+		bool removeOpening(OpeningId id);
+
 		// --- Foundation lifecycle / ECS wiring -------------------------------
 
 		// Mutators for later pieces (ConstructionSystem, the ECS mirror). Both
@@ -341,6 +356,7 @@ namespace engine::construction {
 		// Wall topology helpers.
 		WallSegment* findSegment(SegmentId id);
 		Vertex*		 findVertex(VertexId id);
+		Opening*	 findOpening(OpeningId id);
 
 		// Return the id of the vertex at exactly `pos`, creating one if none
 		// exists. Merge is by exact integer equality (Vec2i64::operator==).

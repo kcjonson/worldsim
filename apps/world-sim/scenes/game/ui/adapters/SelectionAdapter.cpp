@@ -94,17 +94,18 @@ namespace world_sim {
 	} // namespace
 
 	std::optional<PanelContent> adaptSelection(
-		const Selection&					 selection,
-		const ecs::World&					 world,
-		const engine::assets::AssetRegistry& registry,
-		const ResourceQueryCallback&		 queryResources,
+		const Selection&							   selection,
+		const ecs::World&							   world,
+		const engine::assets::AssetRegistry&		   registry,
+		const ResourceQueryCallback&				   queryResources,
 		const engine::construction::ConstructionWorld* constructionWorld,
-		const std::function<void()>&		 onDemolish,
-		const std::function<void()>&		 onDemolishWallSegment
+		const std::function<void()>&				   onDemolish,
+		const std::function<void()>&				   onDemolishWallSegment,
+		const std::function<void()>&				   onDemolishOpening
 	) {
 		return std::visit(
-			[&world, &registry, &queryResources, constructionWorld, &onDemolish, &onDemolishWallSegment](auto&& sel
-			) -> std::optional<PanelContent> {
+			[&world, &registry, &queryResources, constructionWorld, &onDemolish, &onDemolishWallSegment, &onDemolishOpening](auto&& sel)
+				-> std::optional<PanelContent> {
 				using T = std::decay_t<decltype(sel)>;
 				if constexpr (std::is_same_v<T, NoSelection>) {
 					return std::nullopt;
@@ -126,6 +127,11 @@ namespace world_sim {
 						return std::nullopt;
 					}
 					return adaptWallSegment(world, *constructionWorld, sel, onDemolishWallSegment);
+				} else if constexpr (std::is_same_v<T, OpeningSelection>) {
+					if (constructionWorld == nullptr || constructionWorld->getOpening(sel.id) == nullptr) {
+						return std::nullopt;
+					}
+					return adaptOpening(world, *constructionWorld, sel, onDemolishOpening);
 				} else if constexpr (std::is_same_v<T, CraftingStationSelection>) {
 					// Validate entity still exists
 					if (!world.isAlive(sel.entityId)) {
@@ -539,6 +545,62 @@ namespace world_sim {
 		// Demolish action. Per-segment removal is the design's wall demolition unit;
 		// GameScene's handler removes only this segment. Immediate, mirroring the
 		// foundation precedent (see GameScene::handleDemolishWallSegment).
+		content.slots.push_back(SpacerSlot{.height = 8.0F});
+		content.slots.push_back(
+			ActionButtonSlot{
+				.label = "Demolish",
+				.onClick = onDemolish,
+			}
+		);
+
+		return content;
+	}
+
+	PanelContent adaptOpening(
+		const ecs::World&							   world,
+		const engine::construction::ConstructionWorld& constructionWorld,
+		const OpeningSelection&						   selection,
+		const std::function<void()>&				   onDemolish
+	) {
+		PanelContent content;
+		content.layout = PanelLayout::SingleColumn;
+
+		const auto*		  opening = constructionWorld.getOpening(selection.id);
+		const std::string typeName = (opening != nullptr) ? opening->type : std::string{"Opening"};
+		content.title = typeName;
+
+		content.slots.push_back(TextSlot{"Type", typeName});
+
+		// Material and pathability come from the type def (the topology stores the
+		// type NAME; resolve the rest through the registry, same as the renderer).
+		const auto*		  type = (opening != nullptr) ? engine::assets::ConstructionRegistry::Get().getOpeningType(opening->type) : nullptr;
+		const std::string material = (type != nullptr) ? type->material : (opening != nullptr ? opening->material : std::string{"--"});
+		content.slots.push_back(TextSlot{"Material", material});
+		if (type != nullptr) {
+			content.slots.push_back(TextSlot{"Pathable", type->pathable ? "Yes" : "No"});
+		}
+
+		const bool built = (opening != nullptr && opening->state == engine::construction::FoundationState::Built);
+
+		// Build state + progress come from the ECS mirror's blueprint, exactly like a
+		// wall: a built opening has no blueprint progress; a blueprint shows phase, a
+		// 0-100 work bar, and the delivered/required materials summary. Guard the entity
+		// handle: getComponent indexes by entity index without a generation check, so a
+		// kInvalidEntity (0) or stale handle would alias entity 0's components.
+		const bool hasMirror = opening != nullptr && opening->entity != ecs::kInvalidEntity && world.isAlive(opening->entity);
+		const ecs::StructureBlueprint* blueprint = hasMirror ? world.getComponent<ecs::StructureBlueprint>(opening->entity) : nullptr;
+
+		if (blueprint != nullptr) {
+			content.slots.push_back(TextSlot{"State", buildPhaseLabel(blueprint->phase, blueprint->demolishing)});
+			content.slots.push_back(TextSlot{"Materials", materialsSummary(*blueprint)});
+			content.slots.push_back(ProgressBarSlot{.label = "Work", .value = blueprint->progress() * 100.0F});
+		} else {
+			content.slots.push_back(TextSlot{"State", built ? "Built" : "Blueprint"});
+		}
+
+		// Demolish action. The opening is its own demolition unit (independent of the
+		// wall it sits on); GameScene's handler removes just this opening. Immediate,
+		// mirroring the wall precedent (see GameScene::handleDemolishOpening).
 		content.slots.push_back(SpacerSlot{.height = 8.0F});
 		content.slots.push_back(
 			ActionButtonSlot{

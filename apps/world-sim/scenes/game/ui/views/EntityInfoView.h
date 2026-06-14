@@ -60,6 +60,7 @@ class EntityInfoView : public UI::Component {
 		ResourceQueryCallback queryResources;		// Query remaining resource count for harvestable entities
 		std::function<void()> onDemolishFoundation; // Called when Demolish button clicked for a foundation
 		std::function<void()> onDemolishWallSegment; // Called when Demolish button clicked for a wall segment
+		std::function<void()>	   onDemolishOpening;	  // Called when Demolish button clicked for an opening
 	};
 
 	explicit EntityInfoView(const Args& args);
@@ -145,6 +146,7 @@ class EntityInfoView : public UI::Component {
 	ResourceQueryCallback queryResourcesCallback;
 	std::function<void()> onDemolishFoundationCallback;
 	std::function<void()> onDemolishWallSegmentCallback;
+	std::function<void()>	   onDemolishOpeningCallback;
 
 	// Background panel
 	UI::LayerHandle backgroundHandle;

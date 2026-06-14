@@ -53,6 +53,7 @@
 #include <ecs/components/Movement.h>
 #include <ecs/components/Needs.h>
 #include <ecs/components/Packaged.h>
+#include <ecs/components/Room.h>
 #include <ecs/components/Skills.h>
 #include <ecs/components/Structure.h>
 #include <ecs/components/StructureBlueprint.h>
@@ -69,6 +70,7 @@
 #include <ecs/systems/MovementSystem.h>
 #include <ecs/systems/NeedsDecaySystem.h>
 #include <ecs/systems/PhysicsSystem.h>
+#include <ecs/systems/RoomDetectionSystem.h>
 #include <ecs/systems/StorageGoalSystem.h>
 #include <ecs/systems/TimeSystem.h>
 #include <ecs/systems/VisionSystem.h>
@@ -201,35 +203,43 @@ namespace {
 				.onPlaceFurniture = [this]() { handlePlaceFurniture(); },
 				.onDemolishFoundation = [this]() { handleDemolishFoundation(); },
 				.onDemolishWallSegment = [this]() { handleDemolishWallSegment(); },
+				.onDemolishOpening = [this]() { handleDemolishOpening(); },
 				.queryResources = [this](const std::string& defName, Foundation::Vec2 position) -> std::optional<uint32_t> {
 					auto coord = engine::world::worldToChunk({position.x, position.y});
 					return m_placementExecutor->getResourceCount(coord, {position.x, position.y}, defName);
 				},
-				.onStructureSelected = [this](const std::string& structure) {
-					if (!m_drawingSystem) {
-						return;
+				.onStructureSelected =
+					[this](const std::string& structure) {
+						if (!m_drawingSystem) {
+							return;
+						}
+						// One tool owns world input: drop any active placement first.
+						if (m_placementSystem) {
+							m_placementSystem->cancel();
+						}
+						if (structure == "foundation") {
+							m_drawingSystem->activateFoundationTool();
+						} else if (structure == "wall") {
+							m_drawingSystem->activateWallTool();
+						} else if (structure == "door") {
+							m_drawingSystem->activateOpeningTool("Door");
+						} else if (structure == "window") {
+							m_drawingSystem->activateOpeningTool("Window");
+						}
+					},
+				.onConstructionMaterialSelected =
+					[this](const std::string& material) {
+						if (m_drawingSystem) {
+							m_drawingSystem->setActiveMaterial(material);
+							refreshThicknessPresets(material);
+						}
+					},
+				.onConstructionThicknessSelected =
+					[this](const std::string& preset) {
+						if (m_drawingSystem) {
+							m_drawingSystem->setActiveThicknessPreset(preset);
+						}
 					}
-					// One tool owns world input: drop any active placement first.
-					if (m_placementSystem) {
-						m_placementSystem->cancel();
-					}
-					if (structure == "foundation") {
-						m_drawingSystem->activateFoundationTool();
-					} else if (structure == "wall") {
-						m_drawingSystem->activateWallTool();
-					}
-				},
-				.onConstructionMaterialSelected = [this](const std::string& material) {
-					if (m_drawingSystem) {
-						m_drawingSystem->setActiveMaterial(material);
-						refreshThicknessPresets(material);
-					}
-				},
-				.onConstructionThicknessSelected = [this](const std::string& preset) {
-					if (m_drawingSystem) {
-						m_drawingSystem->setActiveThicknessPreset(preset);
-					}
-				}
 			});
 
 			// Populate Production dropdown with placeable stations (recipes where station="none")
@@ -313,6 +323,17 @@ namespace {
 						LOG_INFO(Game, "Wall segment #%llu built (entity %u)", static_cast<unsigned long long>(structure->graphId), static_cast<uint32_t>(blueprintEntity));
 						return;
 					}
+					if (structure->kind == ecs::StructureKind::Opening) {
+						m_drawingSystem->world().setOpeningState(structure->graphId, engine::construction::FoundationState::Built);
+						gameUI->pushNotification("Construction complete", "Opening built", UI::ToastSeverity::Info);
+						LOG_INFO(
+							Game,
+							"Opening #%llu built (entity %u)",
+							static_cast<unsigned long long>(structure->graphId),
+							static_cast<uint32_t>(blueprintEntity)
+						);
+						return;
+					}
 					m_drawingSystem->world().setState(structure->graphId, engine::construction::FoundationState::Built);
 					gameUI->pushNotification("Construction complete", "Foundation built", UI::ToastSeverity::Info);
 					LOG_INFO(Game, "Foundation #%llu built (entity %u)", static_cast<unsigned long long>(structure->graphId), static_cast<uint32_t>(blueprintEntity));
@@ -328,10 +349,43 @@ namespace {
 				actionSys.setStructureDeconstructedCallback([this](ecs::EntityID blueprintEntity) {
 					const auto* structure = ecsWorld->getComponent<ecs::Structure>(blueprintEntity);
 					if (structure != nullptr && structure->graphId != 0) {
-						m_drawingSystem->world().removeFoundation(structure->graphId);
-						LOG_INFO(Game, "Foundation #%llu deconstructed (entity %u)", static_cast<unsigned long long>(structure->graphId), static_cast<uint32_t>(blueprintEntity));
+						// The Structure kind selects which topology record to drop (an
+						// opening is attached to a segment, not a foundation, so it has its
+						// own removal). Walls deconstruct through handleDemolishWallSegment,
+						// not this callback.
+						if (structure->kind == ecs::StructureKind::Opening) {
+							m_drawingSystem->world().removeOpening(structure->graphId);
+							LOG_INFO(
+								Game,
+								"Opening #%llu deconstructed (entity %u)",
+								static_cast<unsigned long long>(structure->graphId),
+								static_cast<uint32_t>(blueprintEntity)
+							);
+						} else {
+							m_drawingSystem->world().removeFoundation(structure->graphId);
+							LOG_INFO(
+								Game,
+								"Foundation #%llu deconstructed (entity %u)",
+								static_cast<unsigned long long>(structure->graphId),
+								static_cast<uint32_t>(blueprintEntity)
+							);
+						}
 					}
 					m_pendingEntityRemoval.push_back(blueprintEntity);
+				});
+
+				// Room detection watches the same ConstructionWorld: when a closed loop of
+				// built walls forms, it spawns a room entity and toasts the player. Identity
+				// (id/name) persists across edits inside the system; here we only feed it the
+				// topology handle and the room-formed seam (engine lib can't touch UI).
+				auto& roomSystem = ecsWorld->getSystem<ecs::RoomDetectionSystem>();
+				roomSystem.setConstructionWorld(&m_drawingSystem->world());
+				roomSystem.setRoomFormedCallback([this](ecs::EntityID room) {
+					const auto* roomComp = ecsWorld->getComponent<ecs::Room>(room);
+					gameUI->pushNotification("Room formed", roomComp != nullptr ? roomComp->name : "New room", UI::ToastSeverity::Info);
+					LOG_INFO(
+						Game, "Room formed: %s (entity %u)", roomComp != nullptr ? roomComp->name.c_str() : "?", static_cast<uint32_t>(room)
+					);
 				});
 			}
 
@@ -708,6 +762,7 @@ namespace {
 			ecsWorld->registerSystem<ecs::CraftingGoalSystem>();							// Priority 56 - goals before AI
 			ecsWorld->registerSystem<ecs::BuildGoalSystem>();								// Priority 57 - goals before AI
 			ecsWorld->registerSystem<ecs::ConstructionSystem>();							// Priority 58 - foundation lifecycle goals
+			ecsWorld->registerSystem<ecs::RoomDetectionSystem>();							// Priority 59 - derive rooms from built walls
 			ecsWorld->registerSystem<ecs::AIDecisionSystem>(assetRegistry, recipeRegistry); // Priority 60
 			ecsWorld->registerSystem<ecs::MovementSystem>();								// Priority 100
 			ecsWorld->registerSystem<ecs::PhysicsSystem>();									// Priority 200
@@ -950,6 +1005,10 @@ namespace {
 				devGiveWood(cmd);
 			} else if (cmd.verb == "foundation") {
 				devFoundation(cmd);
+			} else if (cmd.verb == "walls") {
+				devWalls(cmd);
+			} else if (cmd.verb == "opening") {
+				devOpening(cmd);
 			} else {
 				LOG_WARNING(Game, "[DevAPI] Unknown dev command verb '%s'", cmd.verb.c_str());
 			}
@@ -1034,8 +1093,124 @@ namespace {
 			gameUI->pushNotification("Dev", built ? "Built foundation placed" : "Foundation blueprint placed", UI::ToastSeverity::Info);
 		}
 
+		/// /api/dev/walls?pts=x0,y0;x1,y1;...&material=Wood&thickness=Standard&built=1&host=0&close=1.
+		/// Commits a wall chain straight into the ConstructionWorld (bypassing the draw
+		/// tool) and spawns segment entities. close=1 (default) appends the first point
+		/// so a >=3-point chain encloses, which forms a room when built=1. host=0
+		/// (default) makes the walls freestanding -- rooms need only built centerlines,
+		/// not a host foundation. built=0 leaves blueprints for colonists to build.
+		void devWalls(const Foundation::DevCommand& cmd) {
+			std::vector<Foundation::Vec2> pts = parsePointList(cmd.param("pts"));
+			if (pts.size() < 2) {
+				LOG_WARNING(Game, "[DevAPI] walls: pts needs >= 2 'x,y' pairs (got %zu)", pts.size());
+				return;
+			}
+			const std::string material = cmd.param("material", "Wood");
+			const std::string thickness = cmd.param("thickness", "Standard");
+			// strtoull, not strtoul: FoundationId is 64-bit, and unsigned long is only
+			// 32-bit on Windows (LLP64), which would truncate large ids.
+			const auto host = static_cast<engine::construction::FoundationId>(std::strtoull(cmd.param("host", "0").c_str(), nullptr, 10));
+
+			const std::string builtStr = cmd.param("built", "1");
+			const bool		  built = (builtStr == "1" || builtStr == "on" || builtStr == "true" || builtStr == "yes");
+			const std::string closeStr = cmd.param("close", "1");
+			const bool		  close = (closeStr == "1" || closeStr == "on" || closeStr == "true" || closeStr == "yes");
+			if (close && pts.size() >= 3) {
+				pts.push_back(pts.front()); // close the loop so the chain encloses
+			}
+
+			const int n = m_drawingSystem->devCommitWalls(pts, material, thickness, host, built);
+			LOG_INFO(
+				Game,
+				"[DevAPI] walls: committed %d segment(s) (%s/%s, built=%d, host=%llu)",
+				n,
+				material.c_str(),
+				thickness.c_str(),
+				built ? 1 : 0,
+				static_cast<unsigned long long>(host)
+			);
+			gameUI->pushNotification("Dev", std::to_string(n) + (built ? " built wall(s)" : " wall blueprint(s)"), UI::ToastSeverity::Info);
+		}
+
+		/// /api/dev/opening?seg=<id>|pt=x,y&type=Door|Window&t=<0..1>&built=1.
+		/// Places an opening on a built wall and (built=1, default) spawns it Complete in
+		/// one call. The target segment is `seg` when given, else the nearest built wall
+		/// to `pt` (world meters) via snapOpening. `t` overrides the centerline parameter
+		/// (default: the snapped t for pt, or 0.5 for seg). built=0 leaves a blueprint
+		/// colonists build once the host wall is up. Bypasses the draw tool + soft
+		/// validator (the opening analogue of /api/dev/foundation).
+		void devOpening(const Foundation::DevCommand& cmd) {
+			const std::string type = cmd.param("type", "Door");
+			const auto*		  typeDef = engine::assets::ConstructionRegistry::Get().getOpeningType(type);
+			if (typeDef == nullptr) {
+				LOG_WARNING(Game, "[DevAPI] opening: unknown type '%s'", type.c_str());
+				gameUI->pushNotification("Dev", "Unknown opening type", UI::ToastSeverity::Warning);
+				return;
+			}
+
+			auto& constructionWorld = m_drawingSystem->world();
+
+			// Resolve the target segment + centerline t: seg= names it directly (t
+			// defaults to center), pt= snaps to the nearest built wall (t from the snap).
+			engine::construction::SegmentId segment = engine::construction::kInvalidSegment;
+			float							t = 0.5F;
+			if (cmd.hasParam("seg")) {
+				segment = static_cast<engine::construction::SegmentId>(std::strtoull(cmd.param("seg").c_str(), nullptr, 10));
+			} else if (cmd.hasParam("pt")) {
+				const std::vector<Foundation::Vec2> pts = parsePointList(cmd.param("pt"));
+				if (pts.empty()) {
+					LOG_WARNING(Game, "[DevAPI] opening: pt must be 'x,y' world meters");
+					return;
+				}
+				const auto&							   registry = engine::assets::ConstructionRegistry::Get();
+				const engine::construction::SnapEngine snap(registry.snapping(), constructionWorld);
+				const auto							   os = snap.snapOpening(pts.front(), typeDef->widthMeters);
+				if (!os.valid) {
+					LOG_WARNING(Game, "[DevAPI] opening: no built wall near pt");
+					gameUI->pushNotification("Dev", "No built wall near point", UI::ToastSeverity::Warning);
+					return;
+				}
+				segment = os.segment;
+				t = os.t;
+			} else {
+				LOG_WARNING(Game, "[DevAPI] opening: needs seg=<id> or pt=x,y");
+				return;
+			}
+
+			// Explicit t= overrides the resolved parameter (addOpening clamps to [0,1]).
+			if (cmd.hasParam("t")) {
+				t = std::strtof(cmd.param("t").c_str(), nullptr);
+			}
+
+			const std::string builtStr = cmd.param("built", "1");
+			const bool		  built = (builtStr == "1" || builtStr == "on" || builtStr == "true" || builtStr == "yes");
+
+			const engine::construction::OpeningId id = m_drawingSystem->devCommitOpening(segment, t, type, built);
+			if (id == engine::construction::kInvalidOpening) {
+				LOG_WARNING(
+					Game,
+					"[DevAPI] opening: commit rejected (segment #%llu, type %s)",
+					static_cast<unsigned long long>(segment),
+					type.c_str()
+				);
+				gameUI->pushNotification("Dev", "Opening commit rejected", UI::ToastSeverity::Warning);
+				return;
+			}
+
+			LOG_INFO(
+				Game,
+				"[DevAPI] opening #%llu spawned (%s on segment #%llu at t=%.2f, built=%d)",
+				static_cast<unsigned long long>(id),
+				type.c_str(),
+				static_cast<unsigned long long>(segment),
+				static_cast<double>(t),
+				built ? 1 : 0
+			);
+			gameUI->pushNotification("Dev", built ? "Built opening placed" : "Opening blueprint placed", UI::ToastSeverity::Info);
+		}
+
 		/// Parse "x0,y0;x1,y1;..." (world meters) into a point list. Tolerant: skips
-		/// malformed pairs. Used by /api/dev/foundation.
+		/// malformed pairs. Used by /api/dev/foundation and /api/dev/walls.
 		static std::vector<Foundation::Vec2> parsePointList(const std::string& spec) {
 			std::vector<Foundation::Vec2> pts;
 			std::stringstream			  ss(spec);
@@ -1178,15 +1353,56 @@ namespace {
 			// Capture the ECS mirror handle before the topology record goes away, then
 			// remove just this segment (vertices left orphaned are pruned inside).
 			// Defer the entity destruction through the shared queue (drained after
-			// ecsWorld->update() in update()).
-			const ecs::EntityID entity = segment->entity;
-			constructionWorld.removeSegment(wallSel->id);
+			// ecsWorld->update() in update()). removeSegment also drops any openings
+			// on the segment; it hands back their mirror entities so we despawn those
+			// too (otherwise the door/window blueprint entities would leak).
+			const ecs::EntityID		   entity = segment->entity;
+			std::vector<ecs::EntityID> removedOpeningEntities;
+			constructionWorld.removeSegment(wallSel->id, &removedOpeningEntities);
 			if (entity != ecs::kInvalidEntity) {
 				m_pendingEntityRemoval.push_back(entity);
+			}
+			for (const ecs::EntityID openingEntity : removedOpeningEntities) {
+				m_pendingEntityRemoval.push_back(openingEntity);
 			}
 
 			LOG_INFO(Game, "Demolished wall segment #%llu", static_cast<unsigned long long>(wallSel->id));
 			gameUI->pushNotification("Demolished", "Wall segment removed", UI::ToastSeverity::Info);
+			m_selectionSystem->clearSelection();
+		}
+
+		/// Handle Demolish request from an opening's info panel. The opening is its own
+		/// demolition unit (independent of the host wall): removeOpening drops just this
+		/// opening from the topology. Mirrors handleDemolishWallSegment: immediate
+		/// topology removal plus a deferred ECS entity destroy through the shared queue
+		/// (so we never destroyEntity mid-update).
+		void handleDemolishOpening() {
+			const auto& sel = m_selectionSystem->current();
+			auto*		openingSel = std::get_if<world_sim::OpeningSelection>(&sel);
+			if (openingSel == nullptr) {
+				LOG_WARNING(Game, "Cannot demolish: no opening selected");
+				return;
+			}
+
+			auto&		constructionWorld = m_drawingSystem->world();
+			const auto* opening = constructionWorld.getOpening(openingSel->id);
+			if (opening == nullptr) {
+				LOG_WARNING(Game, "Cannot demolish: opening #%llu not found", static_cast<unsigned long long>(openingSel->id));
+				m_selectionSystem->clearSelection();
+				return;
+			}
+
+			// Capture the ECS mirror handle before the topology record goes away, then
+			// remove just this opening. Defer the entity destruction through the shared
+			// queue (drained after ecsWorld->update() in update()).
+			const ecs::EntityID entity = opening->entity;
+			constructionWorld.removeOpening(openingSel->id);
+			if (entity != ecs::kInvalidEntity) {
+				m_pendingEntityRemoval.push_back(entity);
+			}
+
+			LOG_INFO(Game, "Demolished opening #%llu", static_cast<unsigned long long>(openingSel->id));
+			gameUI->pushNotification("Demolished", "Opening removed", UI::ToastSeverity::Info);
 			m_selectionSystem->clearSelection();
 		}
 

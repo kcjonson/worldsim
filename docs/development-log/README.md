@@ -64,6 +64,8 @@ Development log entries are **immutable history**. Don't update old entries — 
 
 #### June 2026
 
+- [2026-06-14 - Construction Epic F1: openings (doors & windows)](./entries/2026-06-14-construction-epic-f1-openings.md)
+- [2026-06-14 - Construction Epic E: rooms](./entries/2026-06-14-construction-epic-e-rooms.md)
 - [2026-06-14 - Climate, biome, and shelf realism retune](./entries/2026-06-14-climate-biome-shelf-retune.md)
 - [2026-06-13 - Construction Epic D: walls](./entries/2026-06-13-construction-epic-d-walls.md)
 - [2026-06-13 - Tectonic history simulation](./entries/2026-06-13-tectonic-history-simulation.md)
@@ -98,9 +100,11 @@ Development log entries are **immutable history**. Don't update old entries — 
 
 ## Quick Stats
 
-- **Total Entries:** 14
+- **Total Entries:** 16
 - **Latest Entry:** 2026-06-14
 - **Major Milestones:**
+  - Construction Epic F1: openings — doors & windows (2026-06-14)
+  - Construction Epic E: rooms (2026-06-14)
   - Climate/biome/shelf retune: Earth-like biome fractions + rain shadows (2026-06-14)
   - Construction Epic D: walls (2026-06-13)
   - Tectonic history simulation: realistic continents and mountains (2026-06-13)

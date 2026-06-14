@@ -7,6 +7,7 @@
 // - Priority 1.5: Crafting stations
 // - Priority 1.6: Storage containers
 // - Priority 2.0: World entities (placed assets)
+// - Priority 2.3: Openings (above the wall they sit on, below entities/furniture)
 // - Priority 2.5: Wall segments (above foundations, below entities/furniture)
 // - Priority 3.0: Foundations (lowest; below everything that can stand on them)
 //
@@ -37,6 +38,7 @@ namespace SelectionPriority {
 	constexpr float kCraftingStation = 1.5F;
 	constexpr float kStorageContainer = 1.6F;
 	constexpr float kWorldEntity = 2.0F;
+	constexpr float kOpening = 2.3F;	 // above the wall it sits on, below entities/furniture
 	constexpr float kWallSegment = 2.5F; // above the host foundation, below entities/furniture
 	constexpr float kFoundation = 3.0F;	 // below everything that sits on a foundation
 } // namespace SelectionPriority
