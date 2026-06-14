@@ -310,12 +310,18 @@ bool ConfigValidator::validateConstruction() {
         valid = false;
     }
 
+    if (c.openingMarginMeters < 0.0F) {
+        addError("ConstructionConstraints",
+                 "openingMarginMeters must be >= 0, got " + std::to_string(c.openingMarginMeters),
+                 "Set <openingMarginMeters> to a non-negative value (suggested: 0.3)");
+        valid = false;
+    }
+
     // Opening type validation. Cost/work are constants per type; widths must be
     // positive, the material must resolve, pathable is a parsed bool (no check
-    // needed), and the opening plus its end margins must physically fit on the
-    // shortest wall a tool can build (minSegmentLength), or it could never be
-    // placed anywhere. Cross-checks materials AND constraints, so it runs here
-    // after both are confirmed loaded.
+    // needed), and the opening plus its end margins must fit within the LONGEST
+    // wall a tool could draw, or it could never be placed anywhere. Cross-checks
+    // materials AND constraints, so it runs here after both are confirmed loaded.
     for (const auto& type : reg.openingTypes()) {
         if (type.widthMeters <= 0.0F) {
             addError("ConstructionOpenings",
@@ -344,12 +350,11 @@ bool ConfigValidator::validateConstruction() {
                      "Set <workUnits> to a positive value");
             valid = false;
         }
-        // Fit sanity: the shortest wall that can host this opening is
-        // width + 2*margin long. That host length must itself be a buildable wall
-        // (>= minSegmentLength) AND fit inside the largest foundation a tool can
-        // draw (a wall can't be longer than the host's diagonal; bound it by the
-        // max-area square's side, sqrt(maxArea), as a coarse upper limit). A type
-        // that needs more than that could never be placed on any legal wall.
+        // Fit sanity: an opening needs width + 2*margin of wall to honor its end
+        // margins. Reject a type only if that exceeds the LONGEST wall a tool could
+        // draw -- a wall can't be longer than the largest foundation's diagonal, so
+        // bound it coarsely by the max-area square's side, sqrt(maxArea). A type
+        // needing more than that could never be placed on any legal wall.
         if (type.widthMeters > 0.0F && c.maxAreaSquareMeters > 0.0F) {
             const float needed = type.widthMeters + 2.0F * c.openingMarginMeters;
             const float maxWallLength = std::sqrt(c.maxAreaSquareMeters);

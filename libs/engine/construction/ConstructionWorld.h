@@ -272,7 +272,13 @@ namespace engine::construction {
 		// removed with it. Returns false for an unknown id. (Per-segment demolish
 		// is the design's wall removal unit; the gameplay demolish-with-refund
 		// flow lives in ConstructionSystem and calls through here.)
-		bool removeSegment(SegmentId id);
+		//
+		// The removed openings' ECS entity handles are appended to
+		// `removedOpeningEntities` (when non-null) so the caller can despawn those
+		// mirror entities; topology only erases the records, it never destroys ECS
+		// entities. Without this, demolishing a wall that hosts a door/window would
+		// leak the opening blueprint entities.
+		bool removeSegment(SegmentId id, std::vector<ecs::EntityID>* removedOpeningEntities = nullptr);
 
 		// --- Walls: queries --------------------------------------------------
 

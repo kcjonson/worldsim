@@ -1353,11 +1353,17 @@ namespace {
 			// Capture the ECS mirror handle before the topology record goes away, then
 			// remove just this segment (vertices left orphaned are pruned inside).
 			// Defer the entity destruction through the shared queue (drained after
-			// ecsWorld->update() in update()).
-			const ecs::EntityID entity = segment->entity;
-			constructionWorld.removeSegment(wallSel->id);
+			// ecsWorld->update() in update()). removeSegment also drops any openings
+			// on the segment; it hands back their mirror entities so we despawn those
+			// too (otherwise the door/window blueprint entities would leak).
+			const ecs::EntityID		   entity = segment->entity;
+			std::vector<ecs::EntityID> removedOpeningEntities;
+			constructionWorld.removeSegment(wallSel->id, &removedOpeningEntities);
 			if (entity != ecs::kInvalidEntity) {
 				m_pendingEntityRemoval.push_back(entity);
+			}
+			for (const ecs::EntityID openingEntity : removedOpeningEntities) {
+				m_pendingEntityRemoval.push_back(openingEntity);
 			}
 
 			LOG_INFO(Game, "Demolished wall segment #%llu", static_cast<unsigned long long>(wallSel->id));

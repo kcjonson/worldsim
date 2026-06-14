@@ -535,7 +535,7 @@ namespace engine::construction {
 		return result;
 	}
 
-	bool ConstructionWorld::removeSegment(SegmentId id) {
+	bool ConstructionWorld::removeSegment(SegmentId id, std::vector<ecs::EntityID>* removedOpeningEntities) {
 		const auto it = std::find_if(segments_.begin(), segments_.end(), [id](const WallSegment& w) { return w.id == id; });
 		if (it == segments_.end()) {
 			return false;
@@ -545,6 +545,15 @@ namespace engine::construction {
 		segments_.erase(it);
 
 		// Openings on a removed segment go with it (the wall they cut is gone).
+		// Surface their ECS entity handles so the caller can despawn the mirror
+		// entities (topology never destroys ECS entities itself).
+		if (removedOpeningEntities != nullptr) {
+			for (const Opening& o : openings_) {
+				if (o.segment == id && o.entity != ecs::kInvalidEntity) {
+					removedOpeningEntities->push_back(o.entity);
+				}
+			}
+		}
 		openings_.erase(
 			std::remove_if(openings_.begin(), openings_.end(), [id](const Opening& o) { return o.segment == id; }), openings_.end()
 		);

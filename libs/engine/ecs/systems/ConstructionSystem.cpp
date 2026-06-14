@@ -632,7 +632,8 @@ namespace ecs {
 		if (structure == nullptr || blueprint == nullptr) {
 			return false;
 		}
-		if (structure->kind != StructureKind::Foundation && structure->kind != StructureKind::Wall) {
+		if (structure->kind != StructureKind::Foundation && structure->kind != StructureKind::Wall &&
+			structure->kind != StructureKind::Opening) {
 			return false;
 		}
 		if (blueprint->phase == StructureBlueprint::BuildPhase::Complete || blueprint->demolishing) {
@@ -651,7 +652,8 @@ namespace ecs {
 			if (amount == 0) {
 				break;
 			}
-			if (structure.kind != StructureKind::Foundation && structure.kind != StructureKind::Wall) {
+			if (structure.kind != StructureKind::Foundation && structure.kind != StructureKind::Wall &&
+				structure.kind != StructureKind::Opening) {
 				continue;
 			}
 			if (blueprint.phase == StructureBlueprint::BuildPhase::Complete || blueprint.demolishing) {
