@@ -265,4 +265,38 @@ TEST(WorldStats, HypsometryBimodalityIgnoresShelfShoulder) {
     EXPECT_LE(hi, 1500.0f)  << "shallower mode " << hi << " m implausibly high";
 }
 
+// ============================================================================
+// High-waterAmount hypsometry: at waterAmount=0.85 (sparse land), the land mode
+// must still report the continental platform (>= 0 m), not the shelf shoulder
+// (~-120/-140 m). The two-threshold detection in computeHypsometry uses
+// kLandModeMinM=0 to exclude the shelf from the "land" slot.
+// ============================================================================
+TEST(WorldStats, HypsometryLandModeAboveZeroAtHighWaterAmount) {
+    PlanetParams p = PlanetParams::preset(Preset::EarthLike);
+    p.gridSubdivision = 128;
+    p.waterAmount = 0.85f;
+    p.seed = 42;
+
+    auto world = runPipeline(p, 180);
+    ASSERT_NE(world, nullptr);
+
+    WorldStats stats = computeWorldStats(*world);
+
+    // Must still report exactly two modes.
+    ASSERT_EQ(stats.modeElevations.size(), 2u)
+        << "High-waterAmount hypsometry must still be bimodal";
+
+    float lo = std::min(stats.modeElevations[0], stats.modeElevations[1]);
+    float hi = std::max(stats.modeElevations[0], stats.modeElevations[1]);
+
+    // Abyssal mode must be deep.
+    EXPECT_LE(lo, -2000.0f)
+        << "deeper mode " << lo << " m must be abyssal at high waterAmount";
+
+    // Land mode must be on the platform (>= 0 m), not the shelf shoulder.
+    EXPECT_GE(hi, 0.0f)
+        << "shallower mode " << hi << " m is the shelf shoulder, not the platform "
+        << "(two-threshold detection failed at waterAmount=0.85)";
+}
+
 } // namespace worldgen

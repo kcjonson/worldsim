@@ -121,23 +121,31 @@ HypsoResult computeHypsometry(const std::vector<float>& elevation) {
         res.hist[static_cast<size_t>(bin)]++;
     }
 
-    // Region-split bimodality. Earth's hypsometry is bimodal (abyssal plains +
-    // continental platform), but the C-3 piecewise shelf adds a third, shallow
-    // shoulder near -100 m. A naive "two tallest bins" detector can pick
-    // {land, shelf-shoulder} and miss the abyssal mode entirely. So instead of
-    // ranking all bins by count, we find the single tallest bin in each of two
-    // DISJOINT elevation regions split at a mid-depth threshold: the abyssal
-    // mode below it (expect ~[-5500,-3500] m) and the land/shelf mode above it
-    // (expect ~[-500,+1200] m). The shelf shoulder, being above the split,
-    // competes with the land peak for one slot rather than displacing the
-    // abyssal mode.
+    // Two-threshold bimodality. Earth's hypsometry has three populations: abyssal
+    // plains (~-5000 m), the C-3 shelf shoulder (~-120/-140 m), and the continental
+    // platform (+100 to +500 m). A single split at -1500 m groups the shelf
+    // shoulder with the land peak, which is fine at Earth-like waterAmount. But at
+    // high waterAmount (sparse land), the shelf shoulder can dominate the "land"
+    // slot and suppress the true platform mode.
     //
-    // The split is relative to sea level (bin 0 == minElev). minElev is the
-    // deepest ocean, so the abyssal population sits in the lower bins.
-    static constexpr float kMidDepthSplitM = -1500.0f;
-    int splitBin = static_cast<int>((kMidDepthSplitM - minE) / res.binWidth);
-    if (splitBin < 1)        splitBin = 1;
-    if (splitBin > kBins - 1) splitBin = kBins - 1;
+    // Fix: use TWO thresholds that exclude the shelf shoulder from BOTH canonical
+    // modes. The abyssal mode must be at or below kAbyssalModeMaxM (well into the
+    // abyssal plain, below the slope foot); the land mode must be at or above
+    // kLandModeMinM (on or above sea level, i.e. the continental platform). The
+    // shelf shoulder in between is a valid third population but not one of the two
+    // reported modes.
+    static constexpr float kAbyssalModeMaxM = -2000.0f; // abyssal mode must be <= this
+    static constexpr float kLandModeMinM    =     0.0f; // land mode must be >= this
+
+    auto binForElev = [&](float e) -> int {
+        int b = static_cast<int>((e - minE) / res.binWidth);
+        if (b < 0)      b = 0;
+        if (b >= kBins) b = kBins - 1;
+        return b;
+    };
+
+    const int abyssalMaxBin = binForElev(kAbyssalModeMaxM);
+    const int landMinBin    = binForElev(kLandModeMinM);
 
     auto tallestBinInRange = [&](int lo, int hi) -> int {
         int bestBin = -1;
@@ -151,8 +159,10 @@ HypsoResult computeHypsometry(const std::vector<float>& elevation) {
         return bestBin;
     };
 
-    const int abyssalBin = tallestBinInRange(0, splitBin);
-    const int landBin     = tallestBinInRange(splitBin, kBins);
+    // abyssal mode: tallest bin at elevation <= kAbyssalModeMaxM
+    const int abyssalBin = tallestBinInRange(0, abyssalMaxBin + 1);
+    // land mode: tallest bin at elevation >= kLandModeMinM
+    const int landBin    = tallestBinInRange(landMinBin, kBins);
 
     // Emit the dominant (higher-count) mode first to preserve the convention
     // that modeElevations[0] is the larger population.
@@ -170,25 +180,36 @@ HypsoResult computeHypsometry(const std::vector<float>& elevation) {
     }
 
     // Trough = the shallowest-count bin between the two modes (the genuine
-    // land/abyssal gap, by construction spanning the mid-depth split).
+    // land/abyssal gap). The two-threshold design above places abyssalBin well
+    // below kAbyssalModeMaxM and landBin at or above kLandModeMinM, so they are
+    // never adjacent in practice; the guard below handles any degenerate world
+    // where they somehow end up in the same or adjacent bins.
     if (abyssalBin >= 0 && landBin >= 0) {
         int binA = abyssalBin;
         int binB = landBin;
         if (binA > binB) std::swap(binA, binB);
 
-        uint32_t troughCount = std::numeric_limits<uint32_t>::max();
-        int      troughBin   = binA;
-        for (int b = binA + 1; b < binB; ++b) {
-            if (res.hist[static_cast<size_t>(b)] < troughCount) {
-                troughCount = res.hist[static_cast<size_t>(b)];
-                troughBin   = b;
+        if (binB <= binA + 1) {
+            // Modes are adjacent or identical — no gap exists. Report the midpoint
+            // and troughFraction = 1.0 (no separation).
+            float midElev = res.binMin + (static_cast<float>(binA) + 1.0f) * res.binWidth;
+            res.troughElevation = midElev;
+            res.troughFraction  = 1.0f;
+        } else {
+            uint32_t troughCount = std::numeric_limits<uint32_t>::max();
+            int      troughBin   = binA;
+            for (int b = binA + 1; b < binB; ++b) {
+                if (res.hist[static_cast<size_t>(b)] < troughCount) {
+                    troughCount = res.hist[static_cast<size_t>(b)];
+                    troughBin   = b;
+                }
             }
+            res.troughElevation = res.binMin + (static_cast<float>(troughBin) + 0.5f) * res.binWidth;
+            uint32_t lowerPeak  = std::min(modes[0].count, modes[1].count);
+            res.troughFraction  = lowerPeak > 0
+                ? static_cast<float>(troughCount) / static_cast<float>(lowerPeak)
+                : 1.0f;
         }
-        res.troughElevation = res.binMin + (static_cast<float>(troughBin) + 0.5f) * res.binWidth;
-        uint32_t lowerPeak  = std::min(modes[0].count, modes[1].count);
-        res.troughFraction  = lowerPeak > 0
-            ? static_cast<float>(troughCount) / static_cast<float>(lowerPeak)
-            : 1.0f;
     }
 
     return res;

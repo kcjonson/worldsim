@@ -20,10 +20,12 @@
 // Continentality (land/sea contrast):
 //   Distance-to-ocean (tile hops, shared with PrecipitationStage) drives two
 //   corrections on land:
-//     - mean temperature: a ZERO-SUM nudge contDelta = kContinentality *
-//       (distNorm - meanLandDistNorm). The land sum of contDelta is exactly 0
-//       (meanLandDistNorm is the land-area mean of distNorm), so the global mean
-//       is preserved by construction — interiors warm, coasts cool, sum unchanged.
+//     - mean temperature: a near-ZERO-SUM nudge contDelta = kContinentality *
+//       (distNorm - meanLandDistNorm). meanLandDistNorm is accumulated from the
+//       same stored float distNorm[t] values used per-tile, so the pre-
+//       quantization land sum of contDelta is zero to float precision; the final
+//       int16 *10 storage truncates each tile by up to 0.05 C so the invariant
+//       holds up to int16 storage. Interiors warm, coasts cool, sum ~unchanged.
 //     - seasonal range: interiors get a much larger half-amplitude than coasts at
 //       the same latitude (Earth: maritime west-coast ~5 C, deep-continental
 //       ~30 C+). This is the dominant continentality effect and it is NOT zero-sum
@@ -107,8 +109,10 @@ void AtmosphereStage::run(StageContext& ctx) {
     const double atmRangeDamp = clampd(1.0 - 0.2 * (sqrtAtm - 1.0), 0.5, 1.2);
 
     // Circulation cell boundaries: faster rotation -> narrower cells.
-    const double hadleyEdge = clampd(30.0 + 5.0 * (sqrtRot - 1.0), 25.0, 35.0);
-    const double ferrelEdge = hadleyEdge + 30.0;
+    // Formula shared with PrecipitationStage via ClimateField.h.
+    const CirculationCellEdges cellEdges = circulationCellEdges(sqrtRot);
+    const double hadleyEdge = cellEdges.hadleyEdge;
+    const double ferrelEdge = cellEdges.ferrelEdge;
 
     // Wind speed scaling: slower rotation sustains stronger winds; thicker
     // atmosphere carries more momentum.
@@ -121,6 +125,14 @@ void AtmosphereStage::run(StageContext& ctx) {
     // mean is reduced SERIALLY over land tiles in ascending order — a parallel
     // float reduce would not be bit-reproducible. The mean drives the zero-sum
     // mean-temperature nudge below.
+    //
+    // Exactness: landDistSum is accumulated from the STORED float distNorm[t]
+    // values, not from the intermediate double dn. This ensures the pre-
+    // quantization land sum of kContinentalityMeanC*(distNorm[t]-meanLandDistNorm)
+    // is genuinely zero (to float precision) when evaluated in the parallel loop,
+    // since both use identical float values. The int16 *10 quantization introduces
+    // a per-tile rounding of up to 0.05 C, so the invariant holds up to int16
+    // storage precision.
     const std::vector<float> distToOcean =
         computeDistanceToOcean(ctx.grid, ctx.data.elevation, seaLevel);
     std::vector<float> distNorm(totalTiles, 0.0f);
@@ -131,7 +143,7 @@ void AtmosphereStage::run(StageContext& ctx) {
         double dn = static_cast<double>(distToOcean[t]) / kInteriorSaturationHops;
         if (dn > 1.0) dn = 1.0;
         distNorm[t] = static_cast<float>(dn);
-        landDistSum += dn;
+        landDistSum += static_cast<double>(distNorm[t]); // sum from stored float, not intermediate double
         ++landCount;
     }
     const double meanLandDistNorm = landCount > 0

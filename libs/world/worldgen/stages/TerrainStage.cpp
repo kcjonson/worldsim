@@ -158,8 +158,10 @@ constexpr float kHillOrogenyAmpM = 180.0f; // extra amplitude scaled by proximit
 //   Continental slope: steep (~1-4 deg), 140 m to 3000+ m, 20-100 km wide
 // We use a signed crust-edge distance: positive = inland (continental), negative = seaward.
 //   signedKm > kShelfWidthKm      → platformElev (isostasy, blended)
-//   0 < signedKm <= kShelfWidthKm → flat shelf rising from kShelfBreakDepthM to ~-60m
-//   signedKm ≈ 0                  → kShelfBreakDepthM
+//   0 < signedKm <= kShelfWidthKm → flat shelf rising from kShelfBreakDepthM (-140m) to
+//                                   kShelfDepthM (-120m) over the outer portion, then
+//                                   smoothstepping up to platformElev over the inner blend
+//   signedKm ≈ 0                  → kShelfBreakDepthM (-140m)
 //   −kSlopeWidthKm < signedKm < 0 → continental slope: steep descent to abyssalElev
 //   signedKm <= −kSlopeWidthKm    → abyssalElev (depth-age, unchanged)
 constexpr float kShelfBreakDepthM = -140.0f; // depth at the shelf break (signedKm=0)

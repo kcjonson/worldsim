@@ -69,6 +69,8 @@
 
 #include "worldgen/stages/PrecipitationStage.h"
 
+#include "worldgen/stages/ClimateField.h"
+
 #include <math/DeterministicMath.h>
 #include <random/HashNoise.h>
 
@@ -143,21 +145,6 @@ constexpr double kSurfaceRechargeCapBase = 0.40;
 constexpr double kSurfaceRechargeCapLo   = 0.55; // multiplier in the dry subtropics
 constexpr double kSurfaceRechargeCapHi   = 1.45; // multiplier in the wet ITCZ/midlat bands
 
-// Latitude-band base precipitation (mm/yr): simplified Hadley cell pattern.
-// Band edges are derived from the same rotation-rate formula AtmosphereStage
-// uses (hadleyEdge = clamp(30+5*(sqrt(rot)-1), 25, 35); ferrelEdge = +30).
-// This keeps precipitation bands physically coupled to the wind cells rather
-// than hardcoded at 15/30/60 deg.
-// Kept in sync with PrecipitationStage.test.cpp (expectedNoOrographic).
-double latitudeBase(double absLat, double hadleyEdge, double ferrelEdge) {
-    const double itczEdge     = 0.5 * hadleyEdge;       // ITCZ half-width (~15 deg)
-    const double subDryPeak   = hadleyEdge;              // subtropical dry (~30 deg)
-    if (absLat < itczEdge)      return 2000.0 - absLat * (20.0 * 15.0 / itczEdge);
-    if (absLat < subDryPeak)    return 2000.0 - absLat * (60.0 * 30.0 / subDryPeak) + 200.0;
-    if (absLat < ferrelEdge)    return 200.0 + (absLat - subDryPeak) * (18.3 * 30.0 / (ferrelEdge - subDryPeak));
-    return 750.0 - (absLat - ferrelEdge) * (7.5 * 30.0 / (90.0 - ferrelEdge));
-}
-
 inline double dot3(const Vec3d& a, const Vec3d& b) {
     return a.x * b.x + a.y * b.y + a.z * b.z;
 }
@@ -171,13 +158,13 @@ void PrecipitationStage::run(StageContext& ctx) {
     const double dSeaLevel = static_cast<double>(seaLevel);
     const float  invTotal  = 1.0f / static_cast<float>(totalTiles);
 
-    // Circulation cell boundaries — same formula as AtmosphereStage so that
-    // precipitation bands stay physically coupled to wind cells.
-    const double rot        = ctx.params.rotationRate;
-    const double sqrtRot    = foundation::det_math::sqrt(rot < 0.0 ? 0.0 : rot);
-    const double rawHadley  = 30.0 + 5.0 * (sqrtRot - 1.0);
-    const double hadleyEdge = rawHadley < 25.0 ? 25.0 : (rawHadley > 35.0 ? 35.0 : rawHadley);
-    const double ferrelEdge = hadleyEdge + 30.0;
+    // Circulation cell boundaries — shared formula via ClimateField.h so that
+    // precipitation bands stay physically coupled to wind cells and can't drift.
+    const double rot     = ctx.params.rotationRate;
+    const double sqrtRot = foundation::det_math::sqrt(rot < 0.0 ? 0.0 : rot);
+    const CirculationCellEdges cellEdges = circulationCellEdges(sqrtRot);
+    const double hadleyEdge = cellEdges.hadleyEdge;
+    const double ferrelEdge = cellEdges.ferrelEdge;
 
     // Tile width in km (equatorial approximation: circumference / sqrt(N)). The
     // continentality moisture loss is keyed to physical distance via this, so the
@@ -236,7 +223,7 @@ void PrecipitationStage::run(StageContext& ctx) {
             const double lat = foundation::det_math::asin(c.z) / kPiOver180;
             const double absLat = lat < 0.0 ? -lat : lat;
 
-            const double latBase = latitudeBase(absLat, hadleyEdge, ferrelEdge);
+            const double latBase = latitudePrecipBase(absLat, hadleyEdge, ferrelEdge);
             const float noise = foundation::valueNoise3(
                 static_cast<float>(c.x) * 3.0f,
                 static_cast<float>(c.y) * 3.0f,
@@ -274,10 +261,13 @@ void PrecipitationStage::run(StageContext& ctx) {
 
             // Upwind link: the neighbor most OPPOSITE the downwind heading (the
             // direction the moisture parcel arrives from).
+            // bestUp starts below any achievable alignment (-2 < any dot product
+            // of unit vectors divided by distance) so a neighbor with alignment
+            // exactly 0.0 is correctly selected rather than rejected.
             Vec3d dir{};
             if (downwindDir(tile, c, dir)) {
                 const uint32_t cnt = ctx.grid.neighbors(tile, nbs);
-                double bestUp = 0.0;
+                double bestUp = -2.0;
                 TileId up = kInvalidTile;
                 for (uint32_t k = 0; k < cnt; ++k) {
                     const Vec3d& nc = centers[nbs[k]];
@@ -286,7 +276,7 @@ void PrecipitationStage::run(StageContext& ctx) {
                     if (dl2 <= 0.0) continue;
                     const double align = -dot3(d, dir) / foundation::det_math::sqrt(dl2);
                     if (align > bestUp ||
-                        (align == bestUp && up != kInvalidTile && nbs[k] < up)) {
+                        (align == bestUp && nbs[k] < up)) {
                         bestUp = align; up = nbs[k];
                     }
                 }
