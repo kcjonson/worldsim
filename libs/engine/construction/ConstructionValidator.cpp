@@ -428,17 +428,26 @@ namespace engine::construction {
 			const geometry::Vec2i64& e0 = sv0->pos;
 			const geometry::Vec2i64& e1 = sv1->pos;
 
+			const geometry::SegmentRelation rel = geometry::intersectSegments(qa, qb, e0, e1).relation;
+
 			// X-crossing: centerlines properly cross. Report it even though
 			// ConstructionWorld also rejects it, so the tool can colorize the reason
 			// (no X-crossings in v1; the snap turns these into T-junctions).
-			if (geometry::intersectSegments(qa, qb, e0, e1).relation == geometry::SegmentRelation::ProperCrossing) {
+			if (rel == geometry::SegmentRelation::ProperCrossing) {
 				return {ValidationCode::XCrossing, 0, 0, 0.0};
 			}
 
-			// Joined walls (sharing an exact endpoint) meet at a junction and are
-			// exempt from overlap / clearance: their bands touch by design.
-			const bool joined = (qa == e0) || (qa == e1) || (qb == e0) || (qb == e1);
-			if (joined) {
+			// Joined walls meet at a junction and are exempt from overlap /
+			// clearance: their bands touch there by design. This covers BOTH a
+			// shared endpoint AND a T-junction (one segment's endpoint landing on the
+			// other's interior, either direction) -- the world's commitSegment splits
+			// the latter into a shared vertex, and SnapEngine snaps to it as a
+			// WallSegment hit, so the validator must accept it too. intersectSegments
+			// reports exactly these single-point incidences as EndpointTouch, and
+			// (critically) reports a genuine parallel overlap as CollinearOverlap, not
+			// EndpointTouch, so a parallel overlap is NOT exempted here -- it falls
+			// through to the bandsOverlap reject below.
+			if (rel == geometry::SegmentRelation::EndpointTouch) {
 				continue;
 			}
 

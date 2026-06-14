@@ -382,6 +382,41 @@ TEST_F(WallVsExisting, JoinedWallsAtJunctionPass) {
 	EXPECT_TRUE(r.ok()) << "walls joined at a junction must be exempt from overlap/clearance";
 }
 
+TEST_F(WallVsExisting, TJunctionOnExistingInteriorPasses) {
+	ConstraintConfig  cfg = defaults();
+	ConstructionWorld world;
+	FoundationId	  host = hostFoundation(world);
+	// Existing horizontal wall (2,6)->(10,6), Wood/Standard. Its vertices are the
+	// two endpoints; (6,6) is interior, NOT a stored vertex.
+	ASSERT_TRUE(world.commitSegment(mm(2.0F, 6.0F), mm(10.0F, 6.0F), "Wood", "Standard", host).ok());
+
+	ConstructionValidator validator(cfg, world);
+	// A perpendicular wall whose lower endpoint lands ON the existing wall's
+	// interior at (6,6) and rises to (6,10). The two bands necessarily touch at
+	// that junction, but it is a legitimate T-junction (commitSegment splits the
+	// host there), so it must be exempt from overlap/clearance and PASS -- not be
+	// mis-rejected as WallsOverlap the way a shared-endpoint join is exempt.
+	auto r = validator.validateWallSegment({6.0F, 6.0F}, {6.0F, 10.0F}, standardWood(), host);
+	EXPECT_TRUE(r.ok()) << "T-junction (endpoint on existing interior) must pass; got code "
+						<< static_cast<int>(r.code);
+}
+
+TEST_F(WallVsExisting, ParallelOverlapStillFailsDespiteTouchingJunction) {
+	ConstraintConfig  cfg = defaults();
+	ConstructionWorld world;
+	FoundationId	  host = hostFoundation(world);
+	// Existing horizontal wall (2,6)->(10,6).
+	ASSERT_TRUE(world.commitSegment(mm(2.0F, 6.0F), mm(10.0F, 6.0F), "Wood", "Standard", host).ok());
+
+	ConstructionValidator validator(cfg, world);
+	// A wall collinear with the existing one and overlapping it along its length
+	// (4,6)->(8,6): same line, bands fully coincident. intersectSegments reports
+	// CollinearOverlap (not EndpointTouch), so the T-junction exemption must NOT
+	// fire and the overlap must still be rejected.
+	auto r = validator.validateWallSegment({4.0F, 6.0F}, {8.0F, 6.0F}, standardWood(), host);
+	EXPECT_EQ(r.code, ValidationCode::WallsOverlap);
+}
+
 TEST_F(WallVsExisting, DistantParallelWallOk) {
 	ConstraintConfig  cfg = defaults();
 	ConstructionWorld world;

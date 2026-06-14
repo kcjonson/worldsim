@@ -229,6 +229,40 @@ TEST(SnapEngine, WallSnapsToPointOnWallSegment) {
 	EXPECT_EQ(r.hitVertex, kInvalidVertex);
 }
 
+TEST(SnapEngine, WallSegmentEndpointDoesNotReportTJunction) {
+	SnappingConfig	  cfg = defaults();
+	ConstructionWorld world;
+	FoundationId	  host = kInvalidFoundation;
+	buildHostAndWall(world, host); // wall (2,2)->(8,2)
+
+	SnapEngine engine(cfg, world);
+	// Cursor just past the (8,2) endpoint along the wall's axis (8.2,2): beyond the
+	// 0.4 m vertex radius (0.2 m away, in radius -> would be an endpoint hit), so
+	// move it OUTSIDE the vertex radius but still within edge radius of the segment's
+	// end. The projection clamps to the endpoint, so this must NOT be WallSegment.
+	// Place it 0.45 m past the end (outside the 0.4 m vertex radius) and 0.1 m off
+	// axis: the perpendicular foot lands past t=1, so no interior point-on-wall.
+	auto r = engine.snapWall({}, {8.45F, 2.1F}, /*freeform=*/false);
+	EXPECT_NE(r.kind, SnapKind::WallSegment);
+	EXPECT_EQ(r.hitSegment, kInvalidSegment);
+}
+
+TEST(SnapEngine, WallSegmentMidSpanReportsTJunction) {
+	SnappingConfig	  cfg = defaults();
+	ConstructionWorld world;
+	FoundationId	  host = kInvalidFoundation;
+	buildHostAndWall(world, host); // wall (2,2)->(8,2)
+
+	SnapEngine engine(cfg, world);
+	// Mid-span (5,2), perpendicular foot strictly interior: a genuine T-junction.
+	auto r = engine.snapWall({}, {5.0F, 2.25F}, /*freeform=*/false);
+	EXPECT_EQ(r.kind, SnapKind::WallSegment);
+	EXPECT_NE(r.hitSegment, kInvalidSegment);
+	EXPECT_EQ(r.hitVertex, kInvalidVertex);
+	EXPECT_NEAR(r.point.x, 5.0F, 1e-3F);
+	EXPECT_NEAR(r.point.y, 2.0F, 1e-3F);
+}
+
 TEST(SnapEngine, WallVertexBeatsPointOnSegment) {
 	SnappingConfig	  cfg = defaults();
 	ConstructionWorld world;

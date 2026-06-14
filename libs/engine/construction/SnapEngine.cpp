@@ -31,6 +31,20 @@ namespace engine::construction {
 			return {a.x + abx * t, a.y + aby * t};
 		}
 
+		// Unclamped projection parameter of p onto the line through a->b. A value
+		// strictly in (0,1) means the foot of the perpendicular lands on the
+		// segment's interior; <=0 or >=1 means it clamps to an endpoint. Returns
+		// 0 for a degenerate (zero-length) segment.
+		float projectionParam(::Foundation::Vec2 p, ::Foundation::Vec2 a, ::Foundation::Vec2 b) {
+			const float abx = b.x - a.x;
+			const float aby = b.y - a.y;
+			const float lenSq = abx * abx + aby * aby;
+			if (lenSq <= 0.0F) {
+				return 0.0F;
+			}
+			return ((p.x - a.x) * abx + (p.y - a.y) * aby) / lenSq;
+		}
+
 	} // namespace
 
 	bool SnapEngine::snapToVertex(::Foundation::Vec2 cursor, ::Foundation::Vec2& out) const {
@@ -103,6 +117,17 @@ namespace engine::construction {
 			}
 			const ::Foundation::Vec2 a = geometry::dequantize(v0->pos);
 			const ::Foundation::Vec2 b = geometry::dequantize(v1->pos);
+			// Endpoints are explicitly NOT segment hits: a projection that clamps to
+			// either end is an endpoint join (the wall-vertex tier owns it), not a
+			// T-junction. Only a foot of perpendicular landing strictly inside the
+			// span (0 < t < 1) is a genuine interior point-on-wall, so skip the rest.
+			// Without this, a cursor near a segment's end but outside the vertex
+			// radius would report WallSegment with hitSegment set, telling the
+			// WallTool to T-split when it should plain-join the endpoint.
+			const float t = projectionParam(cursor, a, b);
+			if (t <= 0.0F || t >= 1.0F) {
+				continue;
+			}
 			const ::Foundation::Vec2 c = closestOnSegment(cursor, a, b);
 			const float				 d = distanceMeters(cursor, c);
 			// Strict-< keeps the lowest-id segment on a tie; segments() is in

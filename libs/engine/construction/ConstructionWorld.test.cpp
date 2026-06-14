@@ -12,6 +12,7 @@ using cw::CommitStatus;
 using cw::ConstructionWorld;
 using cw::FoundationState;
 using cw::kInvalidFoundation;
+using cw::kInvalidOpening;
 using cw::kInvalidSegment;
 using cw::kInvalidVertex;
 using cw::SegmentCommitResult;
@@ -432,6 +433,37 @@ TEST(ConstructionWorldWallTests, RejectsExactDuplicate) {
 	EXPECT_EQ(world.version(), before);
 }
 
+TEST(ConstructionWorldWallTests, RejectedDuplicateRequiringSplitIsAtomic) {
+	ConstructionWorld	   world;
+	const cw::FoundationId host = makeHost(world);
+
+	// One long base wall (0,0)->(8000,0).
+	SegmentCommitResult base = world.commitSegment({0, 0}, {8000, 0}, "stone", "thick", host);
+	ASSERT_TRUE(base.ok());
+	const cw::SegmentId baseId = base.id;
+
+	// Snapshot topology before the rejected commit.
+	const std::size_t	beforeSegments = world.segments().size();
+	const std::size_t	beforeVertices = world.vertices().size();
+	const std::uint64_t beforeVersion = world.version();
+
+	// Commit (0,0)->(4000,0): (4000,0) lands on the base's interior, so resolving
+	// it would split the base into (0,0)..(4000,0) and (4000,0)..(8000,0). But the
+	// span (0,0)..(4000,0) then duplicates the first half, so the commit creates
+	// nothing and must reject Duplicate -- WITHOUT having performed the split.
+	SegmentCommitResult rejected = world.commitSegment({0, 0}, {4000, 0}, "wood", "thin", host);
+	EXPECT_EQ(rejected.status, SegmentStatus::Duplicate);
+	EXPECT_EQ(rejected.id, kInvalidSegment);
+
+	// The split must not have happened: the base segment still exists by its
+	// original id, no new vertex at (4000,0), and counts + version are unchanged.
+	EXPECT_NE(world.getSegment(baseId), nullptr);
+	EXPECT_EQ(world.vertexAt({4000, 0}), kInvalidVertex);
+	EXPECT_EQ(world.segments().size(), beforeSegments);
+	EXPECT_EQ(world.vertices().size(), beforeVertices);
+	EXPECT_EQ(world.version(), beforeVersion);
+}
+
 // ============================================================================
 // Walls: T-junction splitting
 // ============================================================================
@@ -521,8 +553,8 @@ TEST(ConstructionWorldWallTests, OpeningsReattachByParamRangeAcrossSplit) {
 	// Two openings: one in each half once the segment is split at t=0.5.
 	cw::OpeningId low = world.addOpening(base.id, 0.25F, "door", "wood");
 	cw::OpeningId high = world.addOpening(base.id, 0.75F, "window", "glass");
-	ASSERT_NE(low, kInvalidVertex);
-	ASSERT_NE(high, kInvalidVertex);
+	ASSERT_NE(low, kInvalidOpening);
+	ASSERT_NE(high, kInvalidOpening);
 
 	// Split at the midpoint (param 0.5 along the 8 m base).
 	ASSERT_TRUE(world.commitSegment({4000, 0}, {4000, 5000}, "wood", "thin", host).ok());
@@ -639,7 +671,7 @@ TEST(ConstructionWorldWallTests, RemoveSegmentDropsItsOpenings) {
 	SegmentCommitResult seg = world.commitSegment({0, 0}, {4000, 0}, "wood", "thin", host);
 	ASSERT_TRUE(seg.ok());
 	cw::OpeningId opening = world.addOpening(seg.id, 0.5F, "door", "wood");
-	ASSERT_NE(opening, kInvalidVertex);
+	ASSERT_NE(opening, kInvalidOpening);
 	ASSERT_EQ(world.openings().size(), 1u);
 
 	EXPECT_TRUE(world.removeSegment(seg.id));

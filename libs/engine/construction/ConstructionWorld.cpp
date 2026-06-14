@@ -347,8 +347,8 @@ namespace engine::construction {
 
 		// Break the new segment at every existing vertex lying strictly in its
 		// interior (a wall drawn through a junction splits there). Endpoints a/b
-		// coinciding with existing vertices are ordinary joins, handled by
-		// findOrCreateVertex below, not added as interior breaks.
+		// coinciding with existing vertices are ordinary joins, handled in the
+		// mutation phase by findOrCreateVertex, not added as interior breaks.
 		std::vector<geometry::Vec2i64> breakPoints;
 		breakPoints.push_back(a);
 		breakPoints.push_back(b);
@@ -362,10 +362,92 @@ namespace engine::construction {
 		});
 		breakPoints.erase(std::unique(breakPoints.begin(), breakPoints.end()), breakPoints.end());
 
-		// Resolve each break point to a vertex id. A break point that is NOT an
-		// existing vertex but lands on an existing segment's interior triggers a
-		// T-junction split of that host segment (which creates the vertex). The
-		// segment list is rescanned each time because a prior split rewrites it.
+		// --- Analysis phase (read-only) -------------------------------------
+		//
+		// Decide, WITHOUT mutating, whether the commit would create at least one
+		// new segment. The old code split host segments while resolving break
+		// points, then discovered the chain was entirely duplicate and bailed; the
+		// splits stayed, so a rejected commit corrupted the topology and never
+		// bumped version_. Instead, simulate the post-split connectivity here and
+		// commit to mutating only once we know a segment will be created.
+		//
+		// Two consecutive break points form a chain span. A span is a duplicate if
+		// the position pair is already connected by an existing segment OR by one of
+		// the halves an existing segment would split into at a break point on its
+		// interior. Build that post-split adjacency set from positions alone.
+		std::vector<std::pair<geometry::Vec2i64, geometry::Vec2i64>> connectedPairs;
+		for (const WallSegment& s : segments_) {
+			const Vertex* sv0 = findVertex(s.v0);
+			const Vertex* sv1 = findVertex(s.v1);
+			if (sv0 == nullptr || sv1 == nullptr) {
+				continue;
+			}
+			const geometry::Vec2i64 s0 = sv0->pos;
+			const geometry::Vec2i64 s1 = sv1->pos;
+
+			// Collect this segment's interior split points (break points landing on
+			// its interior), ordered along s0->s1, then emit the resulting halves.
+			std::vector<geometry::Vec2i64> cuts;
+			for (const geometry::Vec2i64& p : breakPoints) {
+				if (pointOnSegmentInterior(p, s0, s1)) {
+					cuts.push_back(p);
+				}
+			}
+			std::vector<geometry::Vec2i64> nodes;
+			nodes.reserve(cuts.size() + 2);
+			nodes.push_back(s0);
+			for (const geometry::Vec2i64& p : cuts) {
+				nodes.push_back(p);
+			}
+			nodes.push_back(s1);
+			std::sort(nodes.begin(), nodes.end(), [&](const geometry::Vec2i64& p, const geometry::Vec2i64& q) {
+				return paramAlong(p, s0, s1) < paramAlong(q, s0, s1);
+			});
+			nodes.erase(std::unique(nodes.begin(), nodes.end()), nodes.end());
+			for (std::size_t i = 0; i + 1 < nodes.size(); ++i) {
+				connectedPairs.emplace_back(nodes[i], nodes[i + 1]);
+			}
+		}
+
+		auto pairConnected = [&](const geometry::Vec2i64& u, const geometry::Vec2i64& w) {
+			for (const auto& pr : connectedPairs) {
+				if ((pr.first == u && pr.second == w) || (pr.first == w && pr.second == u)) {
+					return true;
+				}
+			}
+			return false;
+		};
+
+		bool anyCreated = false;
+		bool anyDuplicate = false;
+		for (std::size_t i = 0; i + 1 < breakPoints.size(); ++i) {
+			const geometry::Vec2i64& u = breakPoints[i];
+			const geometry::Vec2i64& w = breakPoints[i + 1];
+			if (u == w) {
+				continue;
+			}
+			if (pairConnected(u, w)) {
+				anyDuplicate = true;
+			} else {
+				anyCreated = true;
+			}
+		}
+
+		if (!anyCreated) {
+			// The commit would create nothing: every span duplicates an existing
+			// span (or the chain collapsed). Reject WITHOUT having touched topology
+			// or version_, so the rejected commit is a true no-op. Report Duplicate
+			// when a duplicate span was the cause, else ZeroLength (defensive: a
+			// single-point chain after dedup).
+			return {anyDuplicate ? SegmentStatus::Duplicate : SegmentStatus::ZeroLength, kInvalidSegment};
+		}
+
+		// --- Mutation phase -------------------------------------------------
+		//
+		// The commit will create at least one segment, so the splits below are not
+		// wasted. Resolve each break point to a vertex id, splitting host segments
+		// at T-junction break points (which creates the vertex). The segment list
+		// is rescanned each time because a prior split rewrites it.
 		std::vector<VertexId> chainVertices;
 		chainVertices.reserve(breakPoints.size());
 		for (const geometry::Vec2i64& p : breakPoints) {
@@ -393,12 +475,10 @@ namespace engine::construction {
 			}
 		}
 
-		// Create the chain of new segments between consecutive break vertices.
-		// A pair already joined by a segment is a duplicate and is skipped (the
-		// whole-commit status reports the first such rejection only if nothing
-		// else was created; see below).
+		// Create the chain of new segments between consecutive break vertices,
+		// skipping any span already connected (a duplicate). The analysis phase
+		// guarantees at least one span here is new, so firstCreated is set.
 		SegmentId firstCreated = kInvalidSegment;
-		bool	  anyDuplicate = false;
 		for (std::size_t i = 0; i + 1 < chainVertices.size(); ++i) {
 			const VertexId u = chainVertices[i];
 			const VertexId w = chainVertices[i + 1];
@@ -418,7 +498,6 @@ namespace engine::construction {
 				}
 			}
 			if (duplicate) {
-				anyDuplicate = true;
 				continue;
 			}
 
@@ -439,20 +518,6 @@ namespace engine::construction {
 			if (firstCreated == kInvalidSegment) {
 				firstCreated = id;
 			}
-		}
-
-		if (firstCreated == kInvalidSegment) {
-			// Nothing was created. Either every span duplicated an existing
-			// segment, or (defensively) the chain collapsed. Roll back any orphan
-			// vertices the resolution step created so a rejected commit leaves no
-			// trace, and report Duplicate when that was the cause.
-			for (const geometry::Vec2i64& p : breakPoints) {
-				const VertexId vid = vertexAt(p);
-				if (vid != kInvalidVertex) {
-					pruneVertexIfOrphan(vid);
-				}
-			}
-			return {anyDuplicate ? SegmentStatus::Duplicate : SegmentStatus::ZeroLength, kInvalidSegment};
 		}
 
 		++version_;
