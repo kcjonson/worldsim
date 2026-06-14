@@ -101,11 +101,13 @@ namespace ecs {
 		m_activeBlueprintCount = 0;
 
 		for (auto [entity, structure, blueprint] : world->view<Structure, StructureBlueprint>()) {
-			// Foundations and walls both flow through; openings/rooms are not blueprints yet.
-			if (structure.kind != StructureKind::Foundation && structure.kind != StructureKind::Wall) {
+			// Foundations, walls, and openings all flow through; rooms are not blueprints yet.
+			if (structure.kind != StructureKind::Foundation && structure.kind != StructureKind::Wall &&
+				structure.kind != StructureKind::Opening) {
 				continue;
 			}
 			const bool isWall = (structure.kind == StructureKind::Wall);
+			const bool isOpening = (structure.kind == StructureKind::Opening);
 
 			const uint64_t graphId = structure.graphId;
 
@@ -125,10 +127,12 @@ namespace ecs {
 				continue;
 			}
 
-			// Wall gate: a wall blueprint waits, holding nothing but a Blocked umbrella,
-			// until its host foundation is Built. Hauling and building stay off until then
-			// (design: Walls / Prerequisites). This is the wall-specific front of the pipeline.
-			if (isWall && !isWallHostBuilt(graphId)) {
+			// Host gate: a wall waits on its host foundation being Built; an opening waits
+			// on its host wall segment being Built. While gated the blueprint holds nothing
+			// but a Blocked umbrella, and no haul/build goals emit (design: Walls /
+			// Prerequisites; openings sit on a built wall). This is the front of the pipeline.
+			const bool hostGated = (isWall && !isWallHostBuilt(graphId)) || (isOpening && !isOpeningHostSegmentBuilt(graphId));
+			if (hostGated) {
 				ensureUmbrellaGoal(entity, blueprint, GoalStatus::Blocked);
 				entitiesWithGoals.erase(entity);
 				m_activeBlueprintCount++;
@@ -138,9 +142,9 @@ namespace ecs {
 			// Reconcile delivered[] from the on-site inventory before gating on materials.
 			reconcileDelivered(entity, blueprint);
 
-			// Walls have no clear phase: they sit on a cleared, built foundation, so the
-			// footprint is clear by construction. Foundations query their footprint.
-			const bool footprintClear = isWall || isFootprintClear(graphId);
+			// Walls and openings have no clear phase: they sit on a cleared, built host, so
+			// the footprint is clear by construction. Foundations query their footprint.
+			const bool footprintClear = isWall || isOpening || isFootprintClear(graphId);
 			const bool materialsDone = blueprint.materialsComplete();
 
 			const ConstructionDecision decision = decideConstructionPhase(blueprint, footprintClear, materialsDone);
@@ -248,6 +252,22 @@ namespace ecs {
 			return segment->hostFoundation == engine::construction::kInvalidFoundation;
 		}
 		return host->state == engine::construction::FoundationState::Built;
+	}
+
+	bool ConstructionSystem::isOpeningHostSegmentBuilt(uint64_t openingId) const {
+		if (m_constructionWorld == nullptr) {
+			// No topology wired (headless/unit context): ungate so the lifecycle still runs.
+			return true;
+		}
+		const auto* opening = m_constructionWorld->getOpening(openingId);
+		if (opening == nullptr) {
+			return false; // unknown opening: keep it gated until the topology catches up
+		}
+		const auto* segment = m_constructionWorld->getSegment(opening->segment);
+		if (segment == nullptr) {
+			return false; // unknown host segment: stay gated
+		}
+		return segment->state == engine::construction::FoundationState::Built;
 	}
 
 	void ConstructionSystem::reconcileDelivered(EntityID blueprintEntity, StructureBlueprint& blueprint) {
