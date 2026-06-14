@@ -479,6 +479,126 @@ TEST_F(WallVsExisting, DistantParallelWallOk) {
 	EXPECT_TRUE(r.ok());
 }
 
+// --- Opening validation ---------------------------------------------------
+//
+// validateOpening resolves the opening type's width and the material from the
+// ConstructionRegistry (the same way validateWallSegment resolves existing-wall
+// thickness), so these tests load the real construction config.
+
+class OpeningValidation : public ::testing::Test {
+  protected:
+	void SetUp() override {
+		ConstructionRegistry::Get().clear();
+		ASSERT_TRUE(ConstructionRegistry::Get().load(constructionConfigFolder().string()))
+			<< "load construction config from " << constructionConfigFolder().string();
+	}
+	void TearDown() override { ConstructionRegistry::Get().clear(); }
+
+	// Commit a single wall of `lengthMeters` along +x at y=6 inside a 20x20 host,
+	// returning its segment id. The host is wide enough for any test length here.
+	SegmentId buildWall(ConstructionWorld& world, float lengthMeters) {
+		std::vector<Vec2> sq = {{0.0F, 0.0F}, {20.0F, 0.0F}, {20.0F, 20.0F}, {0.0F, 20.0F}};
+		auto			  f = world.commitFoundation(sq, "Wood");
+		EXPECT_TRUE(f.ok());
+		auto seg = world.commitSegment(mm(2.0F, 6.0F), mm(2.0F + lengthMeters, 6.0F), "Wood", "Standard", f.id);
+		EXPECT_TRUE(seg.ok());
+		return seg.id;
+	}
+};
+
+TEST_F(OpeningValidation, DoorAtMidpointValid) {
+	ConstraintConfig  cfg = defaults();
+	ConstructionWorld world;
+	SegmentId		  seg = buildWall(world, 6.0F); // plenty long for a 0.9 m door
+
+	ConstructionValidator validator(cfg, world);
+	EXPECT_TRUE(validator.validateOpening(seg, 0.5F, "Door", "Wood").ok());
+}
+
+TEST_F(OpeningValidation, UnknownSegmentRejected) {
+	ConstraintConfig	  cfg = defaults();
+	ConstructionWorld	  world;
+	ConstructionValidator validator(cfg, world);
+	// No segment with id 999 exists.
+	EXPECT_EQ(validator.validateOpening(999, 0.5F, "Door", "Wood").code, ValidationCode::OpeningSegmentInvalid);
+}
+
+TEST_F(OpeningValidation, UnknownTypeRejected) {
+	ConstraintConfig  cfg = defaults();
+	ConstructionWorld world;
+	SegmentId		  seg = buildWall(world, 6.0F);
+
+	ConstructionValidator validator(cfg, world);
+	EXPECT_EQ(validator.validateOpening(seg, 0.5F, "Skylight", "Wood").code, ValidationCode::OpeningTypeInvalid);
+}
+
+TEST_F(OpeningValidation, UnknownMaterialRejected) {
+	ConstraintConfig  cfg = defaults();
+	ConstructionWorld world;
+	SegmentId		  seg = buildWall(world, 6.0F);
+
+	ConstructionValidator validator(cfg, world);
+	EXPECT_EQ(validator.validateOpening(seg, 0.5F, "Door", "Adamantium").code, ValidationCode::OpeningMaterialInvalid);
+}
+
+TEST_F(OpeningValidation, ParamOutOfRangeRejected) {
+	ConstraintConfig  cfg = defaults();
+	ConstructionWorld world;
+	SegmentId		  seg = buildWall(world, 6.0F);
+
+	ConstructionValidator validator(cfg, world);
+	EXPECT_EQ(validator.validateOpening(seg, 1.5F, "Door", "Wood").code, ValidationCode::OpeningParamOutOfRange);
+	EXPECT_EQ(validator.validateOpening(seg, -0.1F, "Door", "Wood").code, ValidationCode::OpeningParamOutOfRange);
+}
+
+TEST_F(OpeningValidation, TooCloseToEndRejected) {
+	ConstraintConfig  cfg = defaults(); // openingMargin 0.3 m
+	ConstructionWorld world;
+	// 6 m wall. A 0.9 m door (half 0.45) at t=0.05 sits 0.3 m from the v0 end:
+	// near-edge clearance = 0.05*6 - 0.45 = -0.15 m, well below the 0.3 m margin.
+	SegmentId seg = buildWall(world, 6.0F);
+
+	ConstructionValidator validator(cfg, world);
+	auto				  r = validator.validateOpening(seg, 0.05F, "Door", "Wood");
+	EXPECT_EQ(r.code, ValidationCode::OpeningMarginTooSmall);
+}
+
+TEST_F(OpeningValidation, WallTooShortRejected) {
+	ConstraintConfig  cfg = defaults(); // openingMargin 0.3 m
+	ConstructionWorld world;
+	// A 1.0 m wall cannot host a 0.9 m door plus 2*0.3 m margins (needs 1.5 m).
+	SegmentId seg = buildWall(world, 1.0F);
+
+	ConstructionValidator validator(cfg, world);
+	EXPECT_EQ(validator.validateOpening(seg, 0.5F, "Door", "Wood").code, ValidationCode::OpeningWallTooShort);
+}
+
+TEST_F(OpeningValidation, SecondOpeningOverlappingFirstRejected) {
+	ConstraintConfig  cfg = defaults();
+	ConstructionWorld world;
+	// 8 m wall: room for two doors if spaced apart. Place the first at t=0.4.
+	SegmentId seg = buildWall(world, 8.0F);
+	ASSERT_NE(world.addOpening(seg, 0.4F, "Door", "Wood"), kInvalidOpening);
+
+	ConstructionValidator validator(cfg, world);
+	// A second door at t=0.45 (0.4 m apart along an 8 m wall = 0.4 m between
+	// centers). Each half-width is 0.45 m, so the near edges already overlap; the
+	// inter-opening margin makes it worse. Must reject as OpeningOverlap.
+	auto r = validator.validateOpening(seg, 0.45F, "Door", "Wood");
+	EXPECT_EQ(r.code, ValidationCode::OpeningOverlap);
+}
+
+TEST_F(OpeningValidation, SecondOpeningClearOfFirstValid) {
+	ConstraintConfig  cfg = defaults();
+	ConstructionWorld world;
+	// 8 m wall. First door near the v0 end, second near the v1 end: well clear.
+	SegmentId seg = buildWall(world, 8.0F);
+	ASSERT_NE(world.addOpening(seg, 0.2F, "Door", "Wood"), kInvalidOpening);
+
+	ConstructionValidator validator(cfg, world);
+	EXPECT_TRUE(validator.validateOpening(seg, 0.8F, "Door", "Wood").ok());
+}
+
 TEST(ConstructionValidator, FoundationValidationUnchangedWithWalls) {
 	// Committing a wall must not perturb foundation validatePoint/validateRing.
 	ConstraintConfig  cfg = defaults();

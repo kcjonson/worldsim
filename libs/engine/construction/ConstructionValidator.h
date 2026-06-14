@@ -69,6 +69,15 @@ namespace engine::construction {
 		WallsOverlap,				  // footprint overlaps another wall's footprint (not a junction)
 		ParallelClearanceTooSmall,	  // faces run closer than minParallelClearance without joining
 		XCrossing,					  // centerline would properly cross an existing wall centerline
+		// Opening codes (Epic F). An opening is placed on a BUILT wall segment at a
+		// centerline parameter t; these are the opening-only reasons.
+		OpeningSegmentInvalid,	// target segment is missing or not a wall segment in the world
+		OpeningTypeInvalid,		// opening type name is not a known opening type
+		OpeningMaterialInvalid, // opening material name is not a known material
+		OpeningParamOutOfRange, // t outside [0,1]
+		OpeningMarginTooSmall,	// opening edge closer to a segment end than openingMargin
+		OpeningWallTooShort,	// segment too short to host width + 2*openingMargin
+		OpeningOverlap,			// overlaps another opening already on the same segment
 	};
 
 	// Result of a check. `code` drives both the red colorizing and the reason
@@ -142,6 +151,23 @@ namespace engine::construction {
 			const engine::assets::ThicknessPreset& thickness,
 			FoundationId						   host
 		) const;
+
+		// --- Openings -------------------------------------------------------
+
+		// Validate placing an opening of `type` (material `material`) on wall
+		// `segment` at centerline parameter `t` in [0,1] (measured v0->v1). The
+		// per-opening placement gate for the OpeningTool (Epic F): the segment must
+		// exist and be a wall, the type and material must be known, t must be in
+		// range, the opening's near edge must clear `openingMargin` from each
+		// segment end, the segment must be long enough to host width + 2*margin, and
+		// the opening's [t-half/L, t+half/L] interval must not overlap (within the
+		// inter-opening margin) any opening already on the SAME segment. Width is
+		// resolved from the registry's OpeningTypeDef (passing the type name keeps
+		// the validator reading config the same way validateWallSegment does for
+		// existing-wall thickness). First failure is reported with the measured
+		// value; the result's vertexIndex/otherIndex are unused for openings.
+		[[nodiscard]] ValidationResult
+		validateOpening(SegmentId segment, float t, const std::string& type, const std::string& material) const;
 
 	  private:
 		// Shared ring-shape checks (spacing, angle, simplicity, clearance) over a

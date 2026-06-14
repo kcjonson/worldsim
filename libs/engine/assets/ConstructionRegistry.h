@@ -89,6 +89,28 @@ namespace engine::assets {
 		std::vector<ThicknessPreset> wallThicknesses;
 	};
 
+	/// An opening type (e.g. Door, Window). Cost and work are CONSTANTS per type,
+	/// not area-derived: the build effort of a door does not depend on the wall it
+	/// sits in. widthMeters is the clear width along the wall centerline; widthMm is
+	/// the pre-quantized mirror for the geometry/validator layer. material is a
+	/// config NAME resolved against the materials map (ConfigValidator checks it).
+	struct OpeningTypeDef {
+		/// Canonical name, e.g. "Door", "Window".
+		std::string name;
+		/// Material consumed, by name (must reference a loaded MaterialDef).
+		std::string material;
+		/// Clear width in meters (floating-point, for UI display and validation).
+		float widthMeters = 0.0F;
+		/// Pre-quantized width: round(widthMeters * 1000). Integer mm.
+		int64_t widthMm = 0;
+		/// Whether colonists can walk through the finished opening (doors yes, windows no).
+		bool pathable = false;
+		/// Fixed material items consumed to build the opening (constant per type).
+		float costItems = 0.0F;
+		/// Fixed work units to build the opening (constant per type, drives build time).
+		float workUnits = 0.0F;
+	};
+
 	/// Shape and gameplay constraints for all foundations and walls.
 	/// Float members are in meters/degrees/percent (UI-layer friendly).
 	/// Int64 members are pre-quantized to millimeters (geometry/validator layer).
@@ -211,6 +233,15 @@ namespace engine::assets {
 		/// @return pointer to ThicknessPreset, or nullptr if either is not found
 		[[nodiscard]] const ThicknessPreset* getThicknessPreset(const std::string& materialName, const std::string& presetName) const;
 
+		// --- Opening queries ---
+
+		/// Get an opening type by name (e.g. "Door").
+		/// @return pointer to OpeningTypeDef, or nullptr if not found
+		[[nodiscard]] const OpeningTypeDef* getOpeningType(const std::string& name) const;
+
+		/// Get all loaded opening types, in load order (stable for determinism).
+		[[nodiscard]] const std::vector<OpeningTypeDef>& openingTypes() const;
+
 		// --- Constraint / snapping queries ---
 
 		[[nodiscard]] const ConstraintConfig& constraints() const;
@@ -232,6 +263,7 @@ namespace engine::assets {
 		static int64_t toMm(float meters);
 
 		std::unordered_map<std::string, MaterialDef> materials;
+		std::vector<OpeningTypeDef>					 openingTypeList; // load order, stable for determinism
 		ConstraintConfig							 constraintConfig;
 		SnappingConfig								 snappingConfig;
 

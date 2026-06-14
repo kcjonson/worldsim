@@ -210,6 +210,58 @@ namespace engine::construction {
 		return {cursor, SnapKind::None};
 	}
 
+	OpeningSnap SnapEngine::snapOpening(::Foundation::Vec2 cursor, float openingWidthMeters) const {
+		const float radius = snapping_->edgeSnapRadiusMeters;
+		// End margin is a construction CONSTRAINT, not a snapping one; read it from the
+		// registry (the production source of truth) the same way the validator resolves
+		// config it doesn't directly hold. An unloaded registry yields the struct
+		// default (0.3 m), which is deterministic.
+		const float margin = engine::assets::ConstructionRegistry::Get().constraints().openingMarginMeters;
+		const float halfWidth = openingWidthMeters * 0.5F;
+
+		float		best = radius;
+		OpeningSnap result;
+		for (const WallSegment& s : world_->segments()) {
+			// Only finished walls can host an opening; a blueprint has no surface yet.
+			if (s.state != FoundationState::Built) {
+				continue;
+			}
+			const Vertex* v0 = world_->getVertex(s.v0);
+			const Vertex* v1 = world_->getVertex(s.v1);
+			if (v0 == nullptr || v1 == nullptr) {
+				continue;
+			}
+			const ::Foundation::Vec2 a = geometry::dequantize(v0->pos);
+			const ::Foundation::Vec2 b = geometry::dequantize(v1->pos);
+			const float				 length = distanceMeters(a, b);
+			if (length <= 0.0F) {
+				continue;
+			}
+			// Too short to host the opening within the end margins: skip it (a closer
+			// short wall must not shadow a farther wall that could actually hold it).
+			const float halfFrac = (halfWidth + margin) / length;
+			if (halfFrac > 0.5F) {
+				continue;
+			}
+
+			const ::Foundation::Vec2 c = closestOnSegment(cursor, a, b);
+			const float				 d = distanceMeters(cursor, c);
+			// Strict-< keeps the lowest-id segment on a tie; segments() is in
+			// ascending-id insertion order (deterministic).
+			if (d < best) {
+				best = d;
+				// Clamp t so the opening honors the end margins on both ends.
+				float t = projectionParam(cursor, a, b);
+				t = std::clamp(t, halfFrac, 1.0F - halfFrac);
+				result.segment = s.id;
+				result.t = t;
+				result.point = {a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t};
+				result.valid = true;
+			}
+		}
+		return result;
+	}
+
 	SnapResult SnapEngine::snapWall(const std::vector<::Foundation::Vec2>& points, ::Foundation::Vec2 cursor, bool freeform) const {
 		// Priority, most specific first (design Walls > Drawing). No origin-close:
 		// the chain is open and never closes onto its first point.

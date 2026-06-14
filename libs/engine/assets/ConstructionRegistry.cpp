@@ -187,6 +187,32 @@ namespace engine::assets {
 			}
 		}
 
+		// Opening types — doors/windows carved into walls. Loaded from the same
+		// materials.xml (parallel to <Foundation> and <Wall>) so loadFromFolder is
+		// unchanged. Cost/work are constants per type, not area-derived. material is a
+		// config name validated by ConfigValidator against the materials map above.
+		pugi::xml_node openingNode = root.child("Opening");
+		if (openingNode) {
+			for (pugi::xml_node typeNode : openingNode.children("Type")) {
+				OpeningTypeDef type;
+				type.name = typeNode.attribute("name").as_string();
+				if (type.name.empty()) {
+					LOG_WARNING(Engine, "Opening type missing name attribute, skipping");
+					continue;
+				}
+
+				type.material = typeNode.child("material").text().as_string();
+				type.widthMeters = typeNode.child("widthMeters").text().as_float(0.0F);
+				type.widthMm = toMm(type.widthMeters);
+				type.pathable = typeNode.child("pathable").text().as_bool(false);
+				type.costItems = typeNode.child("costItems").text().as_float(0.0F);
+				type.workUnits = typeNode.child("workUnits").text().as_float(0.0F);
+
+				openingTypeList.push_back(std::move(type));
+			}
+			LOG_DEBUG(Engine, "Loaded %zu opening types", openingTypeList.size());
+		}
+
 		hasMaterials = (loaded > 0);
 		LOG_INFO(Engine, "Loaded %zu construction materials from %s", loaded, xmlPath.c_str());
 		return hasMaterials;
@@ -293,6 +319,7 @@ namespace engine::assets {
 
 	void ConstructionRegistry::clear() {
 		materials.clear();
+		openingTypeList.clear();
 		constraintConfig = ConstraintConfig{};
 		snappingConfig = SnappingConfig{};
 		hasMaterials = false;
@@ -331,6 +358,19 @@ namespace engine::assets {
 			}
 		}
 		return nullptr;
+	}
+
+	const OpeningTypeDef* ConstructionRegistry::getOpeningType(const std::string& name) const {
+		for (const auto& type : openingTypeList) {
+			if (type.name == name) {
+				return &type;
+			}
+		}
+		return nullptr;
+	}
+
+	const std::vector<OpeningTypeDef>& ConstructionRegistry::openingTypes() const {
+		return openingTypeList;
 	}
 
 	const ConstraintConfig& ConstructionRegistry::constraints() const {

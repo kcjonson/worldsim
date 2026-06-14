@@ -300,6 +300,97 @@ TEST(SnapEngine, WallFreeformSuppressesAngleSnap) {
 	EXPECT_FLOAT_EQ(r.point.y, 1.44F);
 }
 
+// --- Opening snapping ------------------------------------------------------
+
+namespace {
+
+	// A 20x20 m foundation plus one BUILT wall (2,6)->(2+len,6), Wood/Standard.
+	// Returns the segment id. Openings snap only to built walls, so the segment is
+	// promoted to Built here.
+	SegmentId buildBuiltWall(ConstructionWorld& world, float lengthMeters) {
+		std::vector<Vec2> sq = {{0.0F, 0.0F}, {20.0F, 0.0F}, {20.0F, 20.0F}, {0.0F, 20.0F}};
+		auto			  f = world.commitFoundation(sq, "Wood");
+		EXPECT_TRUE(f.ok());
+		auto seg = world.commitSegment(mm(2.0F, 6.0F), mm(2.0F + lengthMeters, 6.0F), "Wood", "Standard", f.id);
+		EXPECT_TRUE(seg.ok());
+		EXPECT_TRUE(world.setSegmentState(seg.id, FoundationState::Built));
+		return seg.id;
+	}
+
+} // namespace
+
+TEST(SnapEngine, OpeningSnapsToNearestBuiltWall) {
+	SnappingConfig	  cfg = defaults(); // edgeSnapRadius 0.3 m
+	ConstructionWorld world;
+	SegmentId		  seg = buildBuiltWall(world, 8.0F); // (2,6)->(10,6)
+
+	SnapEngine engine(cfg, world);
+	// Cursor 0.2 m off the wall at x=6 (midpoint), within edge radius. A 0.9 m door.
+	auto r = engine.snapOpening({6.0F, 6.2F}, 0.9F);
+	ASSERT_TRUE(r.valid);
+	EXPECT_EQ(r.segment, seg);
+	// Snapped point is the centerline point at t; cursor at x=6 -> t at (6-2)/8 = 0.5.
+	EXPECT_NEAR(r.t, 0.5F, 1e-3F);
+	EXPECT_NEAR(r.point.x, 6.0F, 1e-3F);
+	EXPECT_NEAR(r.point.y, 6.0F, 1e-3F);
+}
+
+TEST(SnapEngine, OpeningFarFromAnyWallInvalid) {
+	SnappingConfig	  cfg = defaults();
+	ConstructionWorld world;
+	buildBuiltWall(world, 8.0F); // wall at y=6
+
+	SnapEngine engine(cfg, world);
+	// Cursor 2 m off the wall, far outside the 0.3 m edge radius.
+	auto r = engine.snapOpening({6.0F, 8.0F}, 0.9F);
+	EXPECT_FALSE(r.valid);
+}
+
+TEST(SnapEngine, OpeningTClampedAwayFromEnds) {
+	SnappingConfig	  cfg = defaults(); // openingMargin 0.3 m (struct default)
+	ConstructionWorld world;
+	SegmentId		  seg = buildBuiltWall(world, 6.0F); // (2,6)->(8,6)
+
+	SnapEngine engine(cfg, world);
+	// Cursor right at the v0 end (x=2). Raw projection t=0, but the clamp must push
+	// it inward so a 0.9 m door (half 0.45) honors the 0.3 m end margin:
+	// minimum t = (0.45 + 0.3) / 6 = 0.125.
+	auto r = engine.snapOpening({2.0F, 6.1F}, 0.9F);
+	ASSERT_TRUE(r.valid);
+	EXPECT_EQ(r.segment, seg);
+	EXPECT_NEAR(r.t, 0.125F, 1e-3F);
+	// Snapped point is the centerline at the clamped t, not at the raw end.
+	EXPECT_NEAR(r.point.x, 2.0F + 0.125F * 6.0F, 1e-2F);
+}
+
+TEST(SnapEngine, OpeningDoesNotSnapToBlueprintWall) {
+	SnappingConfig	  cfg = defaults();
+	ConstructionWorld world;
+	// A wall left in the default Blueprint state (NOT promoted to Built).
+	std::vector<Vec2> sq = {{0.0F, 0.0F}, {20.0F, 0.0F}, {20.0F, 20.0F}, {0.0F, 20.0F}};
+	auto			  f = world.commitFoundation(sq, "Wood");
+	ASSERT_TRUE(f.ok());
+	auto seg = world.commitSegment(mm(2.0F, 6.0F), mm(10.0F, 6.0F), "Wood", "Standard", f.id);
+	ASSERT_TRUE(seg.ok());
+
+	SnapEngine engine(cfg, world);
+	// Cursor right on the blueprint wall: must NOT snap (only built walls qualify).
+	auto r = engine.snapOpening({6.0F, 6.1F}, 0.9F);
+	EXPECT_FALSE(r.valid);
+}
+
+TEST(SnapEngine, OpeningSkipsWallTooShortForOpening) {
+	SnappingConfig	  cfg = defaults();
+	ConstructionWorld world;
+	// A 1.0 m built wall cannot host a 0.9 m door + 2*0.3 m margins (needs 1.5 m).
+	buildBuiltWall(world, 1.0F);
+
+	SnapEngine engine(cfg, world);
+	// Cursor on it: no valid placement exists, so snap is invalid.
+	auto r = engine.snapOpening({2.5F, 6.1F}, 0.9F);
+	EXPECT_FALSE(r.valid);
+}
+
 TEST(SnapEngine, FoundationSnapUnaffectedByWalls) {
 	// A committed wall must not change foundation snap(): snap() ignores walls.
 	SnappingConfig	  cfg = defaults();
