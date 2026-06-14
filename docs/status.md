@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2026-06-14 (Construction Epic E rooms — detection + room entities + room-formed toast + identity persistence on feature/construction-rooms; Climate/biome/shelf retune #139, heavy worldgen test split #141, Construction Epic D walls #138 landed on main)
+Last Updated: 2026-06-14 (Construction Epic F1 openings — doors/windows place/build/render-with-gap/select/demolish, interim visuals, on feature/construction-openings; Epic E rooms #140, Climate/biome/shelf retune #139, heavy worldgen test split #141, Epic D walls #138 landed on main)
 
 ## Epic/Story/Task Template
 
@@ -507,7 +507,15 @@ while (running) {
   - [x] /api/dev/walls dev command (stamp a built wall loop in one call; rooms testable without the draw tool); reused for sandbox verification
   - [x] Hardened (adversarial review): OnBoundary fallback so a divider through a room's rep keeps identity on one side; dev-walls T-split only force-builds chain segments (not split halves of pre-existing blueprints)
   - [ ] Deferred: rooms OVERLAY UI (tint/labels/click/info panel — ships with the overlay system per design); nested room-in-room (loop inside a loop, no connecting wall) identity/area needs hole-aware face extraction (pinned by a test, deferred until the overlay consumes it); room types/functions/bonuses (post-v1)
-- [ ] Epic F: Openings (OpeningTool, parameterized assets, retrofit cuts, door nav nodes)
+- [x] Epic F1: Openings end-to-end (interim visuals) — doors/windows on walls (feature/construction-openings). Verified in sandbox: a Door placed on a built wall shows a gap in the wall band with the door fill; clicking selects it (panel: Type/Material/Pathable/State/Materials/Work + Demolish).
+  - [x] F1a engine: opening types config (Door 0.9m pathable, Window 0.6m) + ConfigValidator; ConstructionValidator.validateOpening (margins, overlap, length, type/material); SnapEngine.snapOpening; ConstructionWorld setOpeningState/Entity/removeOpening
+  - [x] F1b lifecycle: openings in the build loop (own materials + constant work), gated on host segment built (isOpeningHostSegmentBuilt)
+  - [x] F1c app: OpeningTool (slide along wall, validate, commit→addOpening+spawn blueprint) + config strip + GameplayBar Door/Window + /api/dev/opening
+  - [x] F1d render: interim wall-band gap + procedural door/window fill + ghost (Primitives)
+  - [x] F1e selection: OpeningSelection (priority above walls) + point-in-footprint hit test + adaptOpening panel + per-opening demolish
+  - [x] Hardened (adversarial review): wall-demolish now despawns hosted openings' entities (removeSegment surfaces them); openingMarginMeters sign-checked; dev helpers include Opening
+  - [ ] F2 (deferred): D9 parameter-extended procedural Lua door/window assets (cache key (defName,thicknessPreset,material), material palettes); retrofit-cut-as-work on a built wall; portal publication to nav (no consumer yet)
+- [ ] Epic G: Editing & polish (add/subtract, vertex editing, cascade demolish, multi-select)
 - [ ] Epic G: Editing & polish (add/subtract, vertex editing, cascade demolish, multi-select)
 
 ---
