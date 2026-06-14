@@ -21,6 +21,7 @@ namespace world_sim {
 		  onOpenStorageConfigCallback(args.onOpenStorageConfig),
 		  queryResourcesCallback(args.queryResources),
 		  onDemolishFoundationCallback(args.onDemolishFoundation),
+		  onDemolishBuildingCallback(args.onDemolishBuilding),
 		  onDemolishWallSegmentCallback(args.onDemolishWallSegment),
 		  onDemolishOpeningCallback(args.onDemolishOpening) {
 
@@ -490,6 +491,7 @@ namespace world_sim {
 			.onOpenStorageConfig = onOpenStorageConfigCallback,
 			.queryResources = queryResourcesCallback,
 			.onDemolishFoundation = onDemolishFoundationCallback,
+			.onDemolishBuilding = onDemolishBuildingCallback,
 			.onDemolishWallSegment = onDemolishWallSegmentCallback,
 			.onDemolishOpening = onDemolishOpeningCallback,
 		};

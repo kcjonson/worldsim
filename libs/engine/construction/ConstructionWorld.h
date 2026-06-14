@@ -306,6 +306,12 @@ namespace engine::construction {
 		// later mutations.
 		std::vector<SegmentId> segmentsOfVertex(VertexId id) const;
 
+		// Every wall segment hosted by foundation `id`, in stable segments() order.
+		// The demolish-building cascade walks these to drop the walls (and their
+		// openings) before the foundation; the demolish-foundation gate uses
+		// non-empty to mean "walls still stand". Empty for an unknown id.
+		std::vector<SegmentId> segmentsOnFoundation(FoundationId id) const;
+
 		// --- Walls: lifecycle / ECS wiring -----------------------------------
 
 		// Mirror mutators for the ECS-backed gameplay state, parallel to the

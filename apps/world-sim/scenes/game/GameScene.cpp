@@ -202,6 +202,7 @@ namespace {
 				.onMenuClick = [this]() { sceneManager->switchTo(world_sim::toKey(world_sim::SceneType::MainMenu)); },
 				.onPlaceFurniture = [this]() { handlePlaceFurniture(); },
 				.onDemolishFoundation = [this]() { handleDemolishFoundation(); },
+				.onDemolishBuilding = [this]() { handleDemolishBuilding(); },
 				.onDemolishWallSegment = [this]() { handleDemolishWallSegment(); },
 				.onDemolishOpening = [this]() { handleDemolishOpening(); },
 				.queryResources = [this](const std::string& defName, Foundation::Vec2 position) -> std::optional<uint32_t> {
@@ -1313,6 +1314,18 @@ namespace {
 				return;
 			}
 
+			// Walls block plain foundation removal: a hosted wall would be orphaned
+			// (its host gone) by removing the foundation alone. The panel hides this
+			// button while walls stand and offers Demolish building instead; this is
+			// the defensive guard for any other caller.
+			if (!constructionWorld.segmentsOnFoundation(foundationSel->id).empty()) {
+				LOG_WARNING(
+					Game, "Cannot demolish foundation #%llu: walls still stand", static_cast<unsigned long long>(foundationSel->id)
+				);
+				gameUI->pushNotification("Walls still stand", "Use Demolish building", UI::ToastSeverity::Warning);
+				return;
+			}
+
 			// Capture the ECS mirror handle before the topology record goes away, then
 			// remove the topology record. Defer the entity destruction through the same
 			// queue the deconstruct callback uses, so there's one removal path (drained
@@ -1324,6 +1337,67 @@ namespace {
 			}
 
 			LOG_INFO(Game, "Demolished foundation #%llu", static_cast<unsigned long long>(foundationSel->id));
+			m_selectionSystem->clearSelection();
+		}
+
+		/// Handle Demolish building (the cascade) from a built foundation's panel:
+		/// remove every wall hosted by the foundation (and each wall's openings),
+		/// then the foundation itself, despawning every ECS mirror through the shared
+		/// deferred queue. Order matters: removeSegment drops a wall's openings and
+		/// surfaces their entities, so walls go first (no wall is left hosted when the
+		/// foundation goes). One removal path: this reuses removeSegment's opening
+		/// out-param and m_pendingEntityRemoval, the same as the per-piece handlers.
+		void handleDemolishBuilding() {
+			const auto& sel = m_selectionSystem->current();
+			auto*		foundationSel = std::get_if<world_sim::FoundationSelection>(&sel);
+			if (foundationSel == nullptr) {
+				LOG_WARNING(Game, "Cannot demolish building: no foundation selected");
+				return;
+			}
+
+			auto&		constructionWorld = m_drawingSystem->world();
+			const auto* foundation = constructionWorld.get(foundationSel->id);
+			if (foundation == nullptr) {
+				LOG_WARNING(
+					Game, "Cannot demolish building: foundation #%llu not found", static_cast<unsigned long long>(foundationSel->id)
+				);
+				m_selectionSystem->clearSelection();
+				return;
+			}
+
+			const ecs::EntityID foundationEntity = foundation->entity;
+
+			// Walls (and their openings) first. segmentsOnFoundation is a stable
+			// snapshot; capture each segment's mirror handle before removeSegment
+			// erases the record, queue it and every surfaced opening handle.
+			const std::vector<engine::construction::SegmentId> segIds = constructionWorld.segmentsOnFoundation(foundationSel->id);
+			for (const engine::construction::SegmentId segId : segIds) {
+				const auto*			segment = constructionWorld.getSegment(segId);
+				const ecs::EntityID segEntity = (segment != nullptr) ? segment->entity : ecs::kInvalidEntity;
+
+				std::vector<ecs::EntityID> removedOpeningEntities;
+				constructionWorld.removeSegment(segId, &removedOpeningEntities);
+				if (segEntity != ecs::kInvalidEntity) {
+					m_pendingEntityRemoval.push_back(segEntity);
+				}
+				for (const ecs::EntityID openingEntity : removedOpeningEntities) {
+					m_pendingEntityRemoval.push_back(openingEntity);
+				}
+			}
+
+			// Foundation last, now that nothing is hosted on it.
+			constructionWorld.removeFoundation(foundationSel->id);
+			if (foundationEntity != ecs::kInvalidEntity) {
+				m_pendingEntityRemoval.push_back(foundationEntity);
+			}
+
+			LOG_INFO(
+				Game,
+				"Demolished building: foundation #%llu and %zu wall(s)",
+				static_cast<unsigned long long>(foundationSel->id),
+				segIds.size()
+			);
+			gameUI->pushNotification("Building demolished", "Foundation and walls removed", UI::ToastSeverity::Info);
 			m_selectionSystem->clearSelection();
 		}
 

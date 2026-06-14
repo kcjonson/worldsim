@@ -802,6 +802,38 @@ TEST(ConstructionWorldWallTests, RemoveSegmentSurfacesOpeningEntitiesForDespawn)
 	EXPECT_EQ(world.openings().size(), 0u);
 }
 
+TEST(ConstructionWorldWallTests, SegmentsOnFoundationReturnsHostedInStableOrder) {
+	ConstructionWorld world;
+	// Two non-overlapping host foundations and a freestanding (host=0) wall.
+	const cw::FoundationId hostA = makeHost(world);
+	CommitResult		   b = world.commitFoundation(box(200000, 0, 240000, 40000), "wood");
+	ASSERT_TRUE(b.ok());
+	const cw::FoundationId hostB = b.id;
+
+	SegmentCommitResult a0 = world.commitSegment({0, 0}, {4000, 0}, "wood", "thin", hostA);
+	SegmentCommitResult a1 = world.commitSegment({4000, 0}, {4000, 4000}, "wood", "thin", hostA);
+	SegmentCommitResult onB = world.commitSegment({201000, 1000}, {205000, 1000}, "wood", "thin", hostB);
+	SegmentCommitResult free = world.commitSegment({0, 20000}, {4000, 20000}, "wood", "thin", kInvalidFoundation);
+	ASSERT_TRUE(a0.ok());
+	ASSERT_TRUE(a1.ok());
+	ASSERT_TRUE(onB.ok());
+	ASSERT_TRUE(free.ok());
+
+	// hostA returns exactly its two walls, in segments() order; the other-host and
+	// freestanding walls are excluded.
+	const std::vector<cw::SegmentId> onA = world.segmentsOnFoundation(hostA);
+	ASSERT_EQ(onA.size(), 2u);
+	EXPECT_EQ(onA[0], a0.id);
+	EXPECT_EQ(onA[1], a1.id);
+
+	EXPECT_EQ(world.segmentsOnFoundation(hostB).size(), 1u);
+	EXPECT_EQ(world.segmentsOnFoundation(hostB).front(), onB.id);
+
+	// An unknown id and the invalid sentinel both return empty.
+	EXPECT_TRUE(world.segmentsOnFoundation(98765).empty());
+	EXPECT_TRUE(world.segmentsOnFoundation(kInvalidFoundation).empty());
+}
+
 // ============================================================================
 // Walls: ECS-mirror mutators and versioning
 // ============================================================================

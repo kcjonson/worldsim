@@ -89,6 +89,7 @@ namespace world_sim {
 			.onOpenStorageConfig = args.onOpenStorageConfig,
 			.queryResources = args.queryResources,
 			.onDemolishFoundation = args.onDemolishFoundation,
+			.onDemolishBuilding = args.onDemolishBuilding,
 			.onDemolishWallSegment = args.onDemolishWallSegment,
 			.onDemolishOpening = args.onDemolishOpening
 		});

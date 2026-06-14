@@ -435,10 +435,11 @@ namespace world_sim {
 	} // namespace
 
 	PanelContent adaptFoundation(
-		const ecs::World&								world,
+		const ecs::World&							   world,
 		const engine::construction::ConstructionWorld& constructionWorld,
-		const FoundationSelection&						selection,
-		const std::function<void()>&					onDemolish
+		const FoundationSelection&					   selection,
+		const std::function<void()>&				   onDemolish,
+		const std::function<void()>&				   onDemolishBuilding
 	) {
 		PanelContent content;
 		content.layout = PanelLayout::SingleColumn;
@@ -471,16 +472,27 @@ namespace world_sim {
 			content.slots.push_back(TextSlot{"State", built ? "Built" : "Blueprint"});
 		}
 
-		// Demolish action. Epic C does an immediate whole-foundation removal here. The
-		// work-driven Deconstruct action exists; only its material refund and the
-		// Demolish-building cascade are deferred polish.
+		// Demolish action. A foundation that still hosts walls can't be removed on
+		// its own (the walls would be orphaned), so offer the cascade instead;
+		// ActionButtonSlot has no disabled flag, so swap the button rather than
+		// graying it out. A clear or blueprint foundation gets the plain Demolish.
+		const bool hasWalls = !constructionWorld.segmentsOnFoundation(selection.id).empty();
 		content.slots.push_back(SpacerSlot{.height = 8.0F});
-		content.slots.push_back(
-			ActionButtonSlot{
-				.label = "Demolish",
-				.onClick = onDemolish,
-			}
-		);
+		if (hasWalls) {
+			content.slots.push_back(
+				ActionButtonSlot{
+					.label = "Demolish building",
+					.onClick = onDemolishBuilding,
+				}
+			);
+		} else {
+			content.slots.push_back(
+				ActionButtonSlot{
+					.label = "Demolish",
+					.onClick = onDemolish,
+				}
+			);
+		}
 
 		return content;
 	}
