@@ -214,6 +214,7 @@ namespace ecs {
 					return option.harvestTargetEntityId == currentTask.harvestTargetEntityId &&
 						   option.harvestGoalId == currentTask.harvestGoalId;
 				case TaskType::Build:
+				case TaskType::Deconstruct:
 					return option.buildBlueprintEntityId == currentTask.buildBlueprintEntityId;
 				default:
 					return false;
@@ -546,6 +547,48 @@ namespace ecs {
 				buildOption.reason = "Building structure";
 
 				trace.options.push_back(buildOption);
+			}
+		}
+
+		/// Evaluate deconstruct options by querying Deconstruct goals from GoalTaskRegistry.
+		/// Mirror of evaluateBuildOptions: ConstructionSystem emits a Deconstruct goal for a
+		/// demolishing structure once its dependents are cleared (the cascade gate). We surface it
+		/// only while the blueprint still has work to undo (workDone > 0, the bound ActionSystem's
+		/// Deconstruct action counts down). Deconstruct is Construction work, so it uses the same
+		/// skill and priority tier as Build.
+		void evaluateDeconstructOptions(World* world, const glm::vec2& position, const Skills* skills, DecisionTrace& trace) {
+			if (world == nullptr) {
+				return;
+			}
+			auto& goalRegistry = GoalTaskRegistry::Get();
+
+			for (const auto* goal : goalRegistry.getGoalsOfType(TaskType::Deconstruct)) {
+				if (goal == nullptr || goal->status != GoalStatus::Available) {
+					continue;
+				}
+				const auto	blueprintEntity = static_cast<EntityID>(goal->destinationEntity);
+				const auto* blueprint = world->getComponent<StructureBlueprint>(blueprintEntity);
+				if (blueprint == nullptr || blueprint->workDone <= 0.0F) {
+					continue; // nothing to tear down (already removed, or no work invested)
+				}
+
+				EvaluatedOption deconstructOption;
+				deconstructOption.taskType = TaskType::Deconstruct;
+				deconstructOption.needType = NeedType::Count;
+				deconstructOption.needValue = 100.0F;
+				deconstructOption.threshold = 0.0F;
+				deconstructOption.targetPosition = goal->destinationPosition;
+				deconstructOption.distanceToTarget = glm::distance(position, goal->destinationPosition);
+				deconstructOption.buildBlueprintEntityId = goal->destinationEntity;
+				deconstructOption.tiebreakId = goal->id;
+				deconstructOption.status = OptionStatus::Available;
+
+				auto [deconstructSkillLevel, deconstructSkillBonus] = calculateSkillBonus(skills, kSkillConstruction);
+				deconstructOption.skillLevel = deconstructSkillLevel;
+				deconstructOption.skillBonus = deconstructSkillBonus;
+				deconstructOption.reason = "Deconstructing structure";
+
+				trace.options.push_back(deconstructOption);
 			}
 		}
 
@@ -1158,6 +1201,9 @@ namespace ecs {
 		// Tier 6.45: Build staged construction blueprints (goal-driven, priority 41)
 		evaluateBuildOptions(world, position.value, skills, trace);
 
+		// Tier 6.45: Deconstruct demolishing structures (goal-driven, priority 41 - same as Build)
+		evaluateDeconstructOptions(world, position.value, skills, trace);
+
 		// Tier 6.35: Place packaged items at target locations
 		evaluatePlacePackagedOptions(world, position.value, inventory, trace);
 
@@ -1247,9 +1293,10 @@ namespace ecs {
 			}
 		}
 
-		// Copy build-specific fields for Build tasks. ActionSystem reads the blueprint entity
-		// from the task and advances its workDone; targetPosition is the work slot.
-		if (selected->taskType == TaskType::Build) {
+		// Copy build-specific fields for Build/Deconstruct tasks. ActionSystem reads the blueprint
+		// entity from the task and advances (Build) or unwinds (Deconstruct) its workDone;
+		// targetPosition is the work slot.
+		if (selected->taskType == TaskType::Build || selected->taskType == TaskType::Deconstruct) {
 			task.buildBlueprintEntityId = selected->buildBlueprintEntityId;
 		}
 

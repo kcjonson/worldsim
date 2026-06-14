@@ -81,6 +81,7 @@ namespace engine::construction {
 namespace ecs {
 
 	class World;
+	struct Structure;				 // defined in components/Structure.h
 	enum class GoalStatus : uint8_t; // defined in GoalTaskRegistry.h
 
 	/// Pure phase-decision result, independent of ECS/placement wiring so it can be
@@ -97,7 +98,7 @@ namespace ecs {
 	/// system measures each tick: whether the footprint is clear of blocking entities,
 	/// and whether the material manifest is satisfied. Pure; no side effects.
 	///
-	/// Demolishing blueprints emit nothing (the Deconstruct path owns them).
+	/// Demolishing blueprints emit nothing here (the Deconstruct path owns them).
 	[[nodiscard]] ConstructionDecision
 	decideConstructionPhase(const StructureBlueprint& blueprint, bool footprintClear, bool materialsComplete);
 
@@ -164,6 +165,15 @@ namespace ecs {
 		using StructureCompletedCallback = std::function<void(EntityID)>;
 		void setStructureCompletedCallback(StructureCompletedCallback callback) { m_onStructureCompleted = std::move(callback); }
 
+		/// Set the callback fired when a demolishing blueprint has no work to undo (workDone <= 0)
+		/// and is therefore removed immediately. Wired to the SAME lambda GameScene gives
+		/// ActionSystem's structure-deconstructed callback, so a no-work removal takes the same
+		/// topology-removal + refund path a worked deconstruct does.
+		using StructureDeconstructedCallback = std::function<void(EntityID)>;
+		void setStructureDeconstructedCallback(StructureDeconstructedCallback callback) {
+			m_onStructureDeconstructed = std::move(callback);
+		}
+
 		/// DEV/TEST ONLY. Credit `amount` of `defName` into the delivery inventories of all
 		/// active (non-Complete) build sites, capped at each site's outstanding need so no
 		/// site is over-filled, and stops once `amount` is exhausted. Returns the total
@@ -199,6 +209,25 @@ namespace ecs {
 		/// Blocked until materials are staged, then Available at UnderConstruction (like a
 		/// Craft goal). Returns the stable umbrella goal id so phase goals can parent to it.
 		uint64_t ensureUmbrellaGoal(EntityID blueprintEntity, const StructureBlueprint& blueprint, GoalStatus status);
+
+		/// Drive a demolishing blueprint's Deconstruct goal. Mirrors ensureUmbrellaGoal but the
+		/// goal is a top-level Deconstruct keyed by destinationEntity (no children). It is
+		/// Available only once the structure's dependents are gone (cascade gate), else Blocked,
+		/// so a fully-marked building tears down in order: openings -> walls -> foundation. Any
+		/// Build umbrella+children for the entity are dropped first (it's being torn down, not
+		/// built). Returns the umbrella goal id.
+		///
+		/// Edge case: a blueprint with workDone <= 0 has no work to undo (startBuildAction would
+		/// reject it), so there is nothing for a colonist to deconstruct. Such a structure is
+		/// removed immediately via the deconstructed-completion callback (the SAME removal+refund
+		/// path a worked deconstruct fires), instead of emitting an un-actionable goal.
+		void decideDeconstruct(EntityID blueprintEntity, const Structure& structure, StructureBlueprint& blueprint);
+
+		/// Cascade gate: true once a demolishing structure's dependents are gone, so its
+		/// Deconstruct goal may go Available. A foundation waits until no wall is hosted on it; a
+		/// wall waits until no opening sits on it; an opening has no dependents (always cleared).
+		/// True (ungated) when there is no ConstructionWorld wired (headless contexts).
+		[[nodiscard]] bool deconstructDependentsCleared(const Structure& structure) const;
 
 		/// Emit a clear-Harvest CHILD under the umbrella for Harvestable blockers on the
 		/// footprint. Reuses the Harvest goal shape (yield = whatever the blocker yields) so
@@ -241,6 +270,9 @@ namespace ecs {
 		// forceCompleteBlueprint) fire. Off / null in normal play.
 		bool					   m_freeBuild = false;
 		StructureCompletedCallback m_onStructureCompleted = nullptr;
+
+		// Fired when a demolishing blueprint with no work to undo is removed immediately.
+		StructureDeconstructedCallback m_onStructureDeconstructed = nullptr;
 
 		size_t m_activeBlueprintCount = 0;
 

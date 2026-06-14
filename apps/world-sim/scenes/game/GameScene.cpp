@@ -342,38 +342,64 @@ namespace {
 				actionSys.setStructureCompletedCallback(structureCompleted);
 				constructionSystem.setStructureCompletedCallback(structureCompleted);
 
-				// Deconstruct complete: remove the foundation topology now, but DEFER the
-				// entity destruction. This callback fires from inside ActionSystem::update's
-				// live view iteration; destroying here swap-and-pops the shared component
-				// pools and corrupts that iteration. The queue is drained after
-				// ecsWorld->update() returns (see update()). Refund is a later slice.
-				actionSys.setStructureDeconstructedCallback([this](ecs::EntityID blueprintEntity) {
+				// Deconstruct complete: drop the topology record now (the Structure kind selects
+				// which mutator; a wall surfaces its openings' entities too), refund a percentage
+				// of the structure's materials as ground items, and DEFER the entity destruction.
+				// This callback fires from inside ActionSystem::update's live view iteration;
+				// destroying here would swap-and-pop the shared component pools and corrupt that
+				// iteration, so entities go on the queue drained after ecsWorld->update() (see
+				// update()). This is the SINGLE removal path: the demolish buttons only mark
+				// structures; the work-driven deconstruct lands here. The SAME lambda is wired to
+				// ConstructionSystem for the no-work edge case (a marked blueprint with workDone <= 0
+				// is removed immediately through here).
+				auto structureDeconstructed = [this](ecs::EntityID blueprintEntity) {
 					const auto* structure = ecsWorld->getComponent<ecs::Structure>(blueprintEntity);
 					if (structure != nullptr && structure->graphId != 0) {
-						// The Structure kind selects which topology record to drop (an
-						// opening is attached to a segment, not a foundation, so it has its
-						// own removal). Walls deconstruct through handleDemolishWallSegment,
-						// not this callback.
-						if (structure->kind == ecs::StructureKind::Opening) {
-							m_drawingSystem->world().removeOpening(structure->graphId);
-							LOG_INFO(
-								Game,
-								"Opening #%llu deconstructed (entity %u)",
-								static_cast<unsigned long long>(structure->graphId),
-								static_cast<uint32_t>(blueprintEntity)
-							);
-						} else {
-							m_drawingSystem->world().removeFoundation(structure->graphId);
-							LOG_INFO(
-								Game,
-								"Foundation #%llu deconstructed (entity %u)",
-								static_cast<unsigned long long>(structure->graphId),
-								static_cast<uint32_t>(blueprintEntity)
-							);
+						auto& constructionWorld = m_drawingSystem->world();
+						switch (structure->kind) {
+							case ecs::StructureKind::Opening:
+								constructionWorld.removeOpening(structure->graphId);
+								LOG_INFO(
+									Game,
+									"Opening #%llu deconstructed (entity %u)",
+									static_cast<unsigned long long>(structure->graphId),
+									static_cast<uint32_t>(blueprintEntity)
+								);
+								break;
+							case ecs::StructureKind::Wall: {
+								// removeSegment hands back any openings still on the wall; queue
+								// their mirror entities too (the cascade should have torn them down
+								// first, but this keeps removal leak-free if one survives).
+								std::vector<ecs::EntityID> removedOpeningEntities;
+								constructionWorld.removeSegment(structure->graphId, &removedOpeningEntities);
+								for (const ecs::EntityID openingEntity : removedOpeningEntities) {
+									m_pendingEntityRemoval.push_back(openingEntity);
+								}
+								LOG_INFO(
+									Game,
+									"Wall segment #%llu deconstructed (entity %u)",
+									static_cast<unsigned long long>(structure->graphId),
+									static_cast<uint32_t>(blueprintEntity)
+								);
+								break;
+							}
+							case ecs::StructureKind::Foundation:
+							case ecs::StructureKind::Room:
+								constructionWorld.removeFoundation(structure->graphId);
+								LOG_INFO(
+									Game,
+									"Foundation #%llu deconstructed (entity %u)",
+									static_cast<unsigned long long>(structure->graphId),
+									static_cast<uint32_t>(blueprintEntity)
+								);
+								break;
 						}
 					}
+					refundDeconstructedMaterials(blueprintEntity);
 					m_pendingEntityRemoval.push_back(blueprintEntity);
-				});
+				};
+				actionSys.setStructureDeconstructedCallback(structureDeconstructed);
+				constructionSystem.setStructureDeconstructedCallback(structureDeconstructed);
 
 				// Room detection watches the same ConstructionWorld: when a closed loop of
 				// built walls forms, it spawns a room entity and toasts the player. Identity
@@ -1294,10 +1320,63 @@ namespace {
 			return entity;
 		}
 
-		/// Handle Demolish request from a foundation's info panel.
-		/// Epic C scope: immediate whole-foundation removal. The work-driven Deconstruct
-		/// action exists; only its material refund and the Demolish-building cascade are
-		/// deferred polish.
+		/// Refund a percentage of a deconstructed structure's materials as ground items at its
+		/// position. Uses the structure's `delivered` manifest (what was actually invested: a built
+		/// structure delivered its full `required`, so the common case refunds against the whole
+		/// manifest, while a never-built blueprint torn down with no work invested refunds nothing)
+		/// and the config refundPercent, flooring per material so a partial unit is not refunded.
+		/// Spawns through the same packaged-item path crafted/dropped items use; a no-op if the
+		/// entity lacks a blueprint or nothing was delivered. Toasts the dominant refunded material.
+		void refundDeconstructedMaterials(ecs::EntityID blueprintEntity) {
+			const auto* blueprint = ecsWorld->getComponent<ecs::StructureBlueprint>(blueprintEntity);
+			if (blueprint == nullptr || blueprint->delivered.empty()) {
+				return;
+			}
+			const auto*		position = ecsWorld->getComponent<ecs::Position>(blueprintEntity);
+			const glm::vec2 dropPos = position != nullptr ? position->value : glm::vec2{0.0F, 0.0F};
+
+			const float refundPercent = engine::assets::ConstructionRegistry::Get().constraints().refundPercent;
+
+			std::string topMaterial;
+			uint32_t	topQty = 0;
+			for (const auto& [defName, qty] : blueprint->delivered) {
+				const auto refundQty = static_cast<uint32_t>(std::floor(static_cast<float>(qty) * refundPercent / 100.0F));
+				for (uint32_t i = 0; i < refundQty; ++i) {
+					auto entity = m_placementSystem->spawnEntity(defName, {dropPos.x, dropPos.y});
+					ecsWorld->addComponent<ecs::Packaged>(entity, ecs::Packaged{});
+				}
+				if (refundQty > topQty) {
+					topQty = refundQty;
+					topMaterial = defName;
+				}
+			}
+
+			if (topQty > 0) {
+				gameUI->pushNotification("Demolished", "Refunded " + std::to_string(topQty) + " " + topMaterial, UI::ToastSeverity::Info);
+				LOG_INFO(
+					Game, "Refunded %u %s from deconstructed entity %u", topQty, topMaterial.c_str(), static_cast<uint32_t>(blueprintEntity)
+				);
+			}
+		}
+
+		/// Mark a structure's ECS blueprint for deconstruction. ConstructionSystem then emits a
+		/// Deconstruct goal a colonist works down, and the deconstructed-completion callback does
+		/// the topology removal + material refund. Returns false if the entity has no blueprint.
+		bool markForDemolition(ecs::EntityID entity) {
+			if (entity == ecs::kInvalidEntity) {
+				return false;
+			}
+			auto* blueprint = ecsWorld->getComponent<ecs::StructureBlueprint>(entity);
+			if (blueprint == nullptr) {
+				return false;
+			}
+			blueprint->demolishing = true;
+			return true;
+		}
+
+		/// Handle Demolish request from a foundation's info panel. Marks the foundation for
+		/// deconstruction; a colonist tears it down over time (work-driven), and the
+		/// deconstructed-completion callback removes the topology and refunds materials.
 		void handleDemolishFoundation() {
 			const auto& sel = m_selectionSystem->current();
 			auto*		foundationSel = std::get_if<world_sim::FoundationSelection>(&sel);
@@ -1314,10 +1393,9 @@ namespace {
 				return;
 			}
 
-			// Walls block plain foundation removal: a hosted wall would be orphaned
-			// (its host gone) by removing the foundation alone. The panel hides this
-			// button while walls stand and offers Demolish building instead; this is
-			// the defensive guard for any other caller.
+			// Walls block plain foundation demolition: removing the foundation alone would
+			// orphan a hosted wall. The panel hides this button while walls stand and offers
+			// Demolish building instead; this is the defensive guard for any other caller.
 			if (!constructionWorld.segmentsOnFoundation(foundationSel->id).empty()) {
 				LOG_WARNING(
 					Game, "Cannot demolish foundation #%llu: walls still stand", static_cast<unsigned long long>(foundationSel->id)
@@ -1326,27 +1404,22 @@ namespace {
 				return;
 			}
 
-			// Capture the ECS mirror handle before the topology record goes away, then
-			// remove the topology record. Defer the entity destruction through the same
-			// queue the deconstruct callback uses, so there's one removal path (drained
-			// after ecsWorld->update() in update()).
-			const ecs::EntityID entity = foundation->entity;
-			constructionWorld.removeFoundation(foundationSel->id);
-			if (entity != ecs::kInvalidEntity) {
-				m_pendingEntityRemoval.push_back(entity);
+			if (!markForDemolition(foundation->entity)) {
+				LOG_WARNING(Game, "Cannot demolish foundation #%llu: no blueprint", static_cast<unsigned long long>(foundationSel->id));
+				return;
 			}
 
-			LOG_INFO(Game, "Demolished foundation #%llu", static_cast<unsigned long long>(foundationSel->id));
+			LOG_INFO(Game, "Marked foundation #%llu for demolition", static_cast<unsigned long long>(foundationSel->id));
+			gameUI->pushNotification("Marked for demolition", "Foundation", UI::ToastSeverity::Info);
 			m_selectionSystem->clearSelection();
 		}
 
-		/// Handle Demolish building (the cascade) from a built foundation's panel:
-		/// remove every wall hosted by the foundation (and each wall's openings),
-		/// then the foundation itself, despawning every ECS mirror through the shared
-		/// deferred queue. Order matters: removeSegment drops a wall's openings and
-		/// surfaces their entities, so walls go first (no wall is left hosted when the
-		/// foundation goes). One removal path: this reuses removeSegment's opening
-		/// out-param and m_pendingEntityRemoval, the same as the per-piece handlers.
+		/// Handle Demolish building (the cascade) from a built foundation's panel: mark the
+		/// foundation, every wall hosted on it, and every opening on those walls for
+		/// deconstruction. ConstructionSystem's cascade gate then orders the actual teardown
+		/// (openings -> walls -> foundation): each tier's Deconstruct goal stays Blocked until the
+		/// tier it depends on is removed. No topology removal happens here; the
+		/// deconstructed-completion callback owns that (single removal path).
 		void handleDemolishBuilding() {
 			const auto& sel = m_selectionSystem->current();
 			auto*		foundationSel = std::get_if<world_sim::FoundationSelection>(&sel);
@@ -1365,49 +1438,40 @@ namespace {
 				return;
 			}
 
-			const ecs::EntityID foundationEntity = foundation->entity;
-
-			// Walls (and their openings) first. segmentsOnFoundation is a stable
-			// snapshot; capture each segment's mirror handle before removeSegment
-			// erases the record, queue it and every surfaced opening handle.
+			// Mark every opening on every wall, then every wall, then the foundation. Marking
+			// order is immaterial (the cascade gate orders the teardown); we walk
+			// segmentsOnFoundation for the walls and the global openings list for their openings.
 			const std::vector<engine::construction::SegmentId> segIds = constructionWorld.segmentsOnFoundation(foundationSel->id);
+			size_t											   markedOpenings = 0;
 			for (const engine::construction::SegmentId segId : segIds) {
-				const auto*			segment = constructionWorld.getSegment(segId);
-				const ecs::EntityID segEntity = (segment != nullptr) ? segment->entity : ecs::kInvalidEntity;
-
-				std::vector<ecs::EntityID> removedOpeningEntities;
-				constructionWorld.removeSegment(segId, &removedOpeningEntities);
-				if (segEntity != ecs::kInvalidEntity) {
-					m_pendingEntityRemoval.push_back(segEntity);
+				for (const auto& opening : constructionWorld.openings()) {
+					if (opening.segment == segId && markForDemolition(opening.entity)) {
+						markedOpenings++;
+					}
 				}
-				for (const ecs::EntityID openingEntity : removedOpeningEntities) {
-					m_pendingEntityRemoval.push_back(openingEntity);
+				const auto* segment = constructionWorld.getSegment(segId);
+				if (segment != nullptr) {
+					markForDemolition(segment->entity);
 				}
 			}
-
-			// Foundation last, now that nothing is hosted on it.
-			constructionWorld.removeFoundation(foundationSel->id);
-			if (foundationEntity != ecs::kInvalidEntity) {
-				m_pendingEntityRemoval.push_back(foundationEntity);
-			}
+			markForDemolition(foundation->entity);
 
 			LOG_INFO(
 				Game,
-				"Demolished building: foundation #%llu and %zu wall(s)",
+				"Marked building for demolition: foundation #%llu, %zu wall(s), %zu opening(s)",
 				static_cast<unsigned long long>(foundationSel->id),
-				segIds.size()
+				segIds.size(),
+				markedOpenings
 			);
-			gameUI->pushNotification("Building demolished", "Foundation and walls removed", UI::ToastSeverity::Info);
+			gameUI->pushNotification("Building marked for demolition", "Foundation, walls, and openings", UI::ToastSeverity::Info);
 			m_selectionSystem->clearSelection();
 		}
 
-		/// Handle Demolish request from a wall segment's info panel. The SEGMENT, not
-		/// the chain, is the demolition unit (design D6): a multi-segment wall keeps its
-		/// other segments. Mirrors handleDemolishFoundation: immediate topology removal
-		/// plus a deferred ECS entity destroy through the same queue (so we never
-		/// destroyEntity mid-update). removeSegment also prunes any vertex left orphaned,
-		/// so a split T-junction can't leave a dangling vertex; the only entity to clean
-		/// up is this segment's own mirror (a split already re-mapped the host's entity).
+		/// Handle Demolish request from a wall segment's info panel. The SEGMENT, not the chain,
+		/// is the demolition unit (design D6): a multi-segment wall keeps its other segments.
+		/// Marks the segment for deconstruction; ConstructionSystem gates it behind any openings
+		/// on it (those must deconstruct first), and the deconstructed-completion callback removes
+		/// the topology (surfacing any opening entities) and refunds materials.
 		void handleDemolishWallSegment() {
 			const auto& sel = m_selectionSystem->current();
 			auto*		wallSel = std::get_if<world_sim::WallSegmentSelection>(&sel);
@@ -1424,32 +1488,26 @@ namespace {
 				return;
 			}
 
-			// Capture the ECS mirror handle before the topology record goes away, then
-			// remove just this segment (vertices left orphaned are pruned inside).
-			// Defer the entity destruction through the shared queue (drained after
-			// ecsWorld->update() in update()). removeSegment also drops any openings
-			// on the segment; it hands back their mirror entities so we despawn those
-			// too (otherwise the door/window blueprint entities would leak).
-			const ecs::EntityID		   entity = segment->entity;
-			std::vector<ecs::EntityID> removedOpeningEntities;
-			constructionWorld.removeSegment(wallSel->id, &removedOpeningEntities);
-			if (entity != ecs::kInvalidEntity) {
-				m_pendingEntityRemoval.push_back(entity);
+			// Mark this segment's openings too, so the cascade can tear them down first; a wall's
+			// Deconstruct goal stays Blocked while an opening sits on it.
+			for (const auto& opening : constructionWorld.openings()) {
+				if (opening.segment == wallSel->id) {
+					markForDemolition(opening.entity);
+				}
 			}
-			for (const ecs::EntityID openingEntity : removedOpeningEntities) {
-				m_pendingEntityRemoval.push_back(openingEntity);
+			if (!markForDemolition(segment->entity)) {
+				LOG_WARNING(Game, "Cannot demolish wall segment #%llu: no blueprint", static_cast<unsigned long long>(wallSel->id));
+				return;
 			}
 
-			LOG_INFO(Game, "Demolished wall segment #%llu", static_cast<unsigned long long>(wallSel->id));
-			gameUI->pushNotification("Demolished", "Wall segment removed", UI::ToastSeverity::Info);
+			LOG_INFO(Game, "Marked wall segment #%llu for demolition", static_cast<unsigned long long>(wallSel->id));
+			gameUI->pushNotification("Marked for demolition", "Wall segment", UI::ToastSeverity::Info);
 			m_selectionSystem->clearSelection();
 		}
 
-		/// Handle Demolish request from an opening's info panel. The opening is its own
-		/// demolition unit (independent of the host wall): removeOpening drops just this
-		/// opening from the topology. Mirrors handleDemolishWallSegment: immediate
-		/// topology removal plus a deferred ECS entity destroy through the shared queue
-		/// (so we never destroyEntity mid-update).
+		/// Handle Demolish request from an opening's info panel. The opening is its own demolition
+		/// unit (independent of the host wall). Marks it for deconstruction; the
+		/// deconstructed-completion callback removes the topology and refunds materials.
 		void handleDemolishOpening() {
 			const auto& sel = m_selectionSystem->current();
 			auto*		openingSel = std::get_if<world_sim::OpeningSelection>(&sel);
@@ -1466,17 +1524,13 @@ namespace {
 				return;
 			}
 
-			// Capture the ECS mirror handle before the topology record goes away, then
-			// remove just this opening. Defer the entity destruction through the shared
-			// queue (drained after ecsWorld->update() in update()).
-			const ecs::EntityID entity = opening->entity;
-			constructionWorld.removeOpening(openingSel->id);
-			if (entity != ecs::kInvalidEntity) {
-				m_pendingEntityRemoval.push_back(entity);
+			if (!markForDemolition(opening->entity)) {
+				LOG_WARNING(Game, "Cannot demolish opening #%llu: no blueprint", static_cast<unsigned long long>(openingSel->id));
+				return;
 			}
 
-			LOG_INFO(Game, "Demolished opening #%llu", static_cast<unsigned long long>(openingSel->id));
-			gameUI->pushNotification("Demolished", "Opening removed", UI::ToastSeverity::Info);
+			LOG_INFO(Game, "Marked opening #%llu for demolition", static_cast<unsigned long long>(openingSel->id));
+			gameUI->pushNotification("Marked for demolition", "Opening", UI::ToastSeverity::Info);
 			m_selectionSystem->clearSelection();
 		}
 
