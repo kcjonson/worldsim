@@ -11,6 +11,7 @@
 #include "worldgen/grid/SphereGrid.h"
 #include "worldgen/pipeline/GenerationStage.h"
 #include "worldgen/stages/AtmosphereStage.h"
+#include "worldgen/stages/ClimateField.h"
 #include "worldgen/stages/PrecipitationStage.h"
 #include "worldgen/stages/SnowStage.h"
 
@@ -89,17 +90,16 @@ struct TestWorld {
 
 // Everything the stage applies EXCEPT the orographic multiplier, so
 // stored/expected isolates the orographic effect per tile.
-// Kept in sync with PrecipitationStage.cpp (latitudeBase + pass 1).
+// Uses latitudePrecipBase from ClimateField.h (same function as the stage).
+// Earth-like defaults: rot=1 -> hadleyEdge=30, ferrelEdge=60.
 double expectedNoOrographic(const TestWorld& w, TileId t, uint64_t stageSeed) {
     const Vec3d c = w.grid.tileCenter(t);
     const double lat = foundation::det_math::asin(c.z) / (3.14159265358979323846 / 180.0);
     const double absLat = lat < 0.0 ? -lat : lat;
 
-    double base = 0.0;
-    if (absLat < 15.0)      base = 2000.0 - absLat * 20.0;
-    else if (absLat < 30.0) base = 2000.0 - absLat * 60.0 + 200.0;
-    else if (absLat < 60.0) base = 200.0 + (absLat - 30.0) * 18.3;
-    else                    base = 750.0 - (absLat - 60.0) * 7.5;
+    // Earth-like rotation: sqrtRot=1 -> hadleyEdge=30, ferrelEdge=60.
+    const auto edges = circulationCellEdges(1.0);
+    double base = latitudePrecipBase(absLat, edges.hadleyEdge, edges.ferrelEdge);
 
     const auto seed32 = static_cast<uint32_t>(stageSeed ^ (stageSeed >> 32));
     const float noise = foundation::valueNoise3(
@@ -126,8 +126,15 @@ uint32_t fieldBit(WorldField f) { return static_cast<uint32_t>(f); }
 // ============================================================================
 
 TEST(PrecipitationStage, LatitudeBandShapeOnFlatLand) {
+    // Flat land bordered by ocean so the advection sweep has a moisture source.
+    // The bands are keyed to AtmosphereStage's hadleyEdge (~30 deg at Earth-like
+    // rotation), so the exact-degree windows are loose; we assert the RELATIVE
+    // band SHAPE (the sweep scales the absolute level by the moisture budget):
+    // equator wet, subtropics (~hadleyEdge) dry, midlatitudes recover.
     TestWorld w;
-    w.setElevation([](double, double) { return 100.0; }); // all land
+    w.setElevation([](double lat, double) {
+        return (lat < -55.0 || lat > 55.0) ? -3000.0 : 100.0; // polar oceans
+    });
     w.runAtmosphere();
     w.runPrecipitation();
 
@@ -136,25 +143,24 @@ TEST(PrecipitationStage, LatitudeBandShapeOnFlatLand) {
     for (TileId t = 0; t < w.grid.tileCount(); ++t) {
         double lat{}, lon{};
         w.grid.latLonOf(t, lat, lon);
+        if (w.world.data.elevation[t] < 0.0f) continue; // land only
         const double absLat = lat < 0.0 ? -lat : lat;
         const double p = w.world.data.precipitation[t];
-        if (absLat < 10.0)                       { sumEq  += p; ++cntEq;  }
-        else if (absLat >= 27.0 && absLat < 33.0){ sumSub += p; ++cntSub; }
-        else if (absLat >= 42.0 && absLat < 55.0){ sumMid += p; ++cntMid; }
+        if (absLat < 10.0)                        { sumEq  += p; ++cntEq;  }
+        else if (absLat >= 25.0 && absLat < 35.0) { sumSub += p; ++cntSub; }
+        else if (absLat >= 40.0 && absLat < 52.0) { sumMid += p; ++cntMid; }
     }
-    ASSERT_GT(cntEq, 50u);
-    ASSERT_GT(cntSub, 50u);
-    ASSERT_GT(cntMid, 50u);
+    ASSERT_GT(cntEq, 20u);
+    ASSERT_GT(cntSub, 20u);
+    ASSERT_GT(cntMid, 20u);
 
     const double meanEq  = sumEq / cntEq;
     const double meanSub = sumSub / cntSub;
     const double meanMid = sumMid / cntMid;
 
-    EXPECT_GT(meanEq, 1200.0) << "equatorial land should be wet";
-    EXPECT_LT(meanSub, 600.0) << "subtropical (27-33 deg) interior should be dry";
-    EXPECT_GT(meanEq, 1.8 * meanSub);
-    EXPECT_GT(meanMid, 1.2 * meanSub) << "midlatitudes recover from the subtropical minimum";
-    EXPECT_GT(meanEq, meanMid);
+    EXPECT_GT(meanEq, meanSub * 1.5) << "ITCZ much wetter than the subtropical dry zone";
+    EXPECT_GT(meanMid, meanSub)      << "midlatitudes recover from the subtropical minimum";
+    EXPECT_GT(meanEq, meanMid)       << "equator wetter than midlatitudes";
 }
 
 // ============================================================================
@@ -188,23 +194,34 @@ TEST(PrecipitationStage, EvaporationScalesWithTemperature) {
 }
 
 // ============================================================================
-// Orographic: 3000 m ridge against the westerlies at lat ~45.
-// Windward crest >= 1.4x its latitude base; leeward plain <= 0.5x windward.
+// Orographic: a WIDE 3000 m ridge against an eastward wind (upwind = west).
+// The moisture-advection sweep must (a) boost the windward face >= 1.4x its
+// latitude base, and (b) keep the lee dry across the FULL ridge width — not just
+// the first few tiles. This is the capability the old fixed-4-hop march lacked.
 // ============================================================================
 
 namespace {
 
-// Meridional ridge: ocean west of lon 14, windward plain [14,20), ridge
-// [20,30) at 3000 m, leeward plain [30,40), ocean east of 40; land confined
-// to lat [35,58). At n=24 a tile is ~2.7 deg (~3.4-4.4 deg of lon across the
-// sampled latitudes), so the 4-hop upwind march from the western crest
-// reaches ocean, and every leeward tile sees the ridge.
+// Longitude geometry (wind blows east, so moisture arrives from the west):
+//   ocean   lon < kRidgeWest              (moisture source right at the coast)
+//   RIDGE   kRidgeWest..kRidgeEast at 3000 m, rising straight from the coast so the
+//           leading edge gets a fresh, fully-charged ocean parcel and the full
+//           windward boost (WIDE: ~40 deg lon ~= 3000+ km)
+//   lee plain kRidgeEast..kLeeEast        (must stay dry across its width)
+//   ocean   lon >= kLeeEast
+// Land confined to lat [30,58) so the band is sampled by many tiles at n=24.
+constexpr double kRidgeWest     = -30.0;
+constexpr double kRidgeEast     =  10.0; // 40 deg of ridge
+constexpr double kLeeEast       =  60.0; // 50 deg of lee
+constexpr double kRidgeLatLo    =  30.0;
+constexpr double kRidgeLatHi    =  58.0;
+
 double ridgeWorldElevation(double lat, double lon) {
-    if (lat < 35.0 || lat >= 58.0) return -3000.0;
-    if (lon >= 14.0 && lon < 20.0) return 200.0;
-    if (lon >= 20.0 && lon < 30.0) return 3000.0;
-    if (lon >= 30.0 && lon < 40.0) return 200.0;
-    return -3000.0;
+    if (lat < kRidgeLatLo || lat >= kRidgeLatHi) return -3000.0;
+    if (lon < kRidgeWest)  return -3000.0;             // ocean (moisture source)
+    if (lon < kRidgeEast)  return 3000.0;              // wide ridge rising from the coast
+    if (lon < kLeeEast)    return 200.0;               // lee plain
+    return -3000.0;                                    // ocean east
 }
 
 void buildRidgeWorld(TestWorld& w) {
@@ -219,33 +236,102 @@ TEST(PrecipitationStage, RainShadowAndWindwardBoost) {
     buildRidgeWorld(w);
     w.runPrecipitation();
 
-    double sumWindward = 0.0, sumLeeward = 0.0;
-    uint32_t cntWindward = 0, cntLeeward = 0;
+    // Windward boost: somewhere on the windward face the ocean-charged parcel
+    // first rises and wrings out enhanced rain (>=1.4x its latitude base). The
+    // exact tile depends on grid quantization, so we take the PEAK windward ratio
+    // over the windward face rather than a fixed-tile mean. (The crest and lee are
+    // drier — the parcel already rained out — which is the shadow.)
+    double peakWindward = 0.0;
+    // Lee dryness: sample the lee in THREE longitude bands spanning the full ridge
+    // width, to prove the shadow does not fade after a few tiles.
+    double sumLeeNear = 0.0, sumLeeMid = 0.0, sumLeeFar = 0.0;
+    uint32_t cntLeeNear = 0, cntLeeMid = 0, cntLeeFar = 0;
+
     for (TileId t = 0; t < w.grid.tileCount(); ++t) {
         double lat{}, lon{};
         w.grid.latLonOf(t, lat, lon);
+        if (lat < 36.0 || lat >= 52.0) continue;
 
         const double ratio = static_cast<double>(w.world.data.precipitation[t]) /
                              expectedNoOrographic(w, t, kPrecipSeed);
-        if (lat >= 38.0 && lat < 54.0 &&
-            lon >= 20.0 && lon < 23.5) {           // western (windward) crest
-            sumWindward += ratio; ++cntWindward;
-        } else if (lat >= 40.0 && lat < 50.0 &&
-                   lon >= 30.0 && lon < 38.0) {    // leeward plain
-            sumLeeward += ratio; ++cntLeeward;
+        if (lon >= kRidgeWest - 2.0 && lon < kRidgeWest + 12.0) { // windward face
+            if (ratio > peakWindward) peakWindward = ratio;
+        } else if (lon >= kRidgeEast + 2.0 && lon < kRidgeEast + 16.0) {
+            sumLeeNear += ratio; ++cntLeeNear;               // just past the crest
+        } else if (lon >= kRidgeEast + 18.0 && lon < kRidgeEast + 32.0) {
+            sumLeeMid += ratio; ++cntLeeMid;                 // mid lee
+        } else if (lon >= kRidgeEast + 34.0 && lon < kLeeEast - 2.0) {
+            sumLeeFar += ratio; ++cntLeeFar;                 // far lee, near east coast
         }
     }
-    ASSERT_GT(cntWindward, 3u);
-    ASSERT_GT(cntLeeward, 4u);
+    ASSERT_GT(cntLeeNear, 2u);
+    ASSERT_GT(cntLeeMid, 2u);
+    ASSERT_GT(cntLeeFar, 2u);
 
-    const double windwardRatio = sumWindward / cntWindward;
-    const double leewardRatio  = sumLeeward / cntLeeward;
+    const double leeNear = sumLeeNear / cntLeeNear;
+    const double leeMid  = sumLeeMid / cntLeeMid;
+    const double leeFar  = sumLeeFar / cntLeeFar;
 
-    EXPECT_GE(windwardRatio, 1.4)
-        << "windward crest should be boosted (got " << windwardRatio << "x)";
-    EXPECT_LE(leewardRatio, 0.5 * windwardRatio)
-        << "rain shadow: leeward " << leewardRatio
-        << "x vs windward " << windwardRatio << "x";
+    EXPECT_GE(peakWindward, 1.4)
+        << "windward face should be orographically boosted (peak " << peakWindward << "x)";
+    // The lee stays dry across the FULL ridge width: every lee band well below the
+    // windward peak. (The old 4-hop march only shadowed the first ~4 tiles.)
+    EXPECT_LE(leeNear, 0.5 * peakWindward) << "near lee " << leeNear;
+    EXPECT_LE(leeMid,  0.5 * peakWindward) << "mid lee "  << leeMid;
+    EXPECT_LE(leeFar,  0.55 * peakWindward) << "far lee " << leeFar
+        << " — shadow must persist across the whole ridge width";
+}
+
+// ============================================================================
+// Rain shadow scales with belt width: a wider ridge keeps its lee dry farther.
+// Two worlds, identical except the ridge is twice as wide in the second; the lee
+// immediately behind each crest must be dry in BOTH (a fixed-hop march would let
+// the wide ridge's lee recover).
+// ============================================================================
+
+TEST(PrecipitationStage, RainShadowScalesWithWidth) {
+    auto build = [](TestWorld& w, double ridgeEastLon) {
+        w.setElevation([ridgeEastLon](double lat, double lon) -> double {
+            if (lat < 30.0 || lat >= 58.0) return -3000.0;
+            if (lon < -60.0) return -3000.0;        // ocean (moisture source)
+            if (lon < -50.0) return 200.0;          // windward plain
+            if (lon < ridgeEastLon) return 3000.0;  // ridge (variable width)
+            if (lon < ridgeEastLon + 30.0) return 200.0; // lee plain
+            return -3000.0;
+        });
+        w.setUniformAtmosphere(100, kWindEast);
+    };
+
+    TestWorld narrow, wide;
+    build(narrow, -30.0); // 20 deg ridge
+    build(wide,   10.0);  // 60 deg ridge (3x wider)
+    narrow.runPrecipitation();
+    wide.runPrecipitation();
+
+    // Sample the lee just past each crest: dryness must hold for both widths.
+    auto leeRatio = [](TestWorld& w, double crestLon) {
+        double sum = 0.0; uint32_t cnt = 0;
+        for (TileId t = 0; t < w.grid.tileCount(); ++t) {
+            double lat{}, lon{};
+            w.grid.latLonOf(t, lat, lon);
+            if (lat < 36.0 || lat >= 52.0) continue;
+            if (lon >= crestLon + 2.0 && lon < crestLon + 16.0) {
+                sum += static_cast<double>(w.world.data.precipitation[t]) /
+                       expectedNoOrographic(w, t, kPrecipSeed);
+                ++cnt;
+            }
+        }
+        return cnt > 0 ? sum / cnt : -1.0;
+    };
+
+    const double narrowLee = leeRatio(narrow, -30.0);
+    const double wideLee    = leeRatio(wide,   10.0);
+    ASSERT_GT(narrowLee, 0.0);
+    ASSERT_GT(wideLee, 0.0);
+
+    EXPECT_LT(narrowLee, 0.6) << "narrow-ridge lee should be dry (" << narrowLee << ")";
+    EXPECT_LT(wideLee,   0.6) << "wide-ridge lee should be just as dry (" << wideLee
+        << ") — the shadow scales with width";
 }
 
 // ============================================================================

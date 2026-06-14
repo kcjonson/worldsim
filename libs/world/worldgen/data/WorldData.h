@@ -12,9 +12,9 @@ namespace worldgen {
 inline constexpr uint8_t kFlagOcean           = 0x01;
 inline constexpr uint8_t kFlagLake            = 0x02;
 inline constexpr uint8_t kFlagRiver           = 0x04;
-inline constexpr uint8_t kFlagCoast           = 0x08;
+// 0x08: reserved (was kFlagCoast — removed; BiomeStage computes coastness locally)
 inline constexpr uint8_t kFlagPermanentSnow   = 0x10;
-inline constexpr uint8_t kFlagGlacier         = 0x20;
+// 0x20: reserved (was kFlagGlacier — removed; glacier modeling is a future epic)
 // Set by CrustStage on tiles with continental crust (including shelves).
 // Driven by the simulated TectonicHistory crustType field; oceanic tiles never carry this.
 inline constexpr uint8_t kFlagContinentalCrust = 0x40;

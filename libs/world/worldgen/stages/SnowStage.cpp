@@ -64,8 +64,8 @@ void SnowStage::run(StageContext& ctx) {
     });
 
     // SnowStage is the last writer of flags (adds kFlagPermanentSnow after
-    // OceanStage's kFlagOcean and BiomeStage's kFlagCoast). It owns the Flags
-    // valid bit; no stage may write flags afterward.
+    // OceanStage's kFlagOcean). It owns the Flags valid bit; no stage may
+    // write flags afterward.
     ctx.world.validFields |= static_cast<uint32_t>(WorldField::Flags);
     ctx.world.validFields |= static_cast<uint32_t>(WorldField::SnowCover);
 }

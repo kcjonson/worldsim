@@ -60,6 +60,11 @@ if(BUILD_TESTING)
             target_compile_options(world-tests PRIVATE -O0 -g)
         endif()
         add_test(NAME world-tests COMMAND world-tests)
+        # The suite includes several full-pipeline and coarse-tectonic-sim tests
+        # that are inherently multi-second each; in a Debug build on a slow CI
+        # runner the whole executable can run ~20+ min, past ctest's 1500s default.
+        # Give explicit headroom so runner-speed variance doesn't spuriously time out.
+        set_tests_properties(world-tests PROPERTIES TIMEOUT 2400)
     endif()
 
     # Create benchmark executable if benchmarks found

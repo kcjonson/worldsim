@@ -12,6 +12,7 @@
 // Exit codes: 0 ok, 1 generation failed, 2 thread-determinism mismatch,
 //             3 bad arguments, 4 output error.
 
+#include "worldgen/data/Biome.h"
 #include "worldgen/data/GeneratedWorld.h"
 #include "worldgen/data/PlanetParams.h"
 #include "worldgen/data/WorldData.h"
@@ -309,6 +310,26 @@ static void writeStatsJson(const std::string& path,
     std::fprintf(fp, "]\n");
     std::fprintf(fp, "  },\n");
 
+    // Biome fractions (land tiles only).
+    std::fprintf(fp, "  \"biomeFractions\": {\n");
+    {
+        bool first = true;
+        for (size_t i = 0; i < static_cast<size_t>(worldgen::Biome::Count); ++i) {
+            auto b = static_cast<worldgen::Biome>(i);
+            if (b == worldgen::Biome::Ocean || b == worldgen::Biome::Lake) continue;
+            if (!first) std::fprintf(fp, ",\n");
+            std::fprintf(fp, "    \"%s\": %.6f",
+                         worldgen::biomeToString(b),
+                         static_cast<double>(s.biomeFraction[i]));
+            first = false;
+        }
+        std::fprintf(fp, "\n");
+    }
+    std::fprintf(fp, "  },\n");
+    std::fprintf(fp, "  \"landTileCount\": %.0f,\n", static_cast<double>(s.landTileCount));
+    std::fprintf(fp, "  \"shelfSubmergedFraction\": %.6f,\n",
+                 static_cast<double>(s.shelfSubmergedFraction));
+
     // Timing.
     std::fprintf(fp, "  \"timing\": {\n");
     std::fprintf(fp, "    \"wallSeconds\": %.3f,\n", wallSeconds);
@@ -365,6 +386,21 @@ static void printSummary(const worldgen::WorldStats& s,
     std::printf("  Continents (>=0.5%): %u  median isoperimetric = %.2f\n",
                 static_cast<unsigned>(s.continents.size()),
                 static_cast<double>(s.medianIsoperimetric));
+
+    // Biome summary — highlight the key fractions.
+    std::printf("  Biome fractions    :");
+    for (size_t i = 0; i < static_cast<size_t>(worldgen::Biome::Count); ++i) {
+        auto b = static_cast<worldgen::Biome>(i);
+        if (b == worldgen::Biome::Ocean || b == worldgen::Biome::Lake) continue;
+        if (s.biomeFraction[i] > 0.005f) {
+            std::printf(" %s=%.2f%%",
+                        worldgen::biomeToString(b),
+                        static_cast<double>(s.biomeFraction[i]) * 100.0);
+        }
+    }
+    std::printf("\n");
+    std::printf("  Shelf submerged    : %.4f (continental crust below sea level)\n",
+                static_cast<double>(s.shelfSubmergedFraction));
 
     std::printf("  Wall time          : %.2f s\n", wallSeconds);
     std::printf("  worldHash          : 0x%016llx\n",

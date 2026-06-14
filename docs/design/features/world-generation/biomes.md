@@ -164,16 +164,18 @@ Biomes are large-scale ecosystem types defined by temperature, precipitation, an
 ---
 
 #### 6. Montane Forest
-**Temperature**: Varies with elevation
-**Precipitation**: Varies with elevation and aspect (slope direction)
+**Temperature**: > 3°C mean annual (tile's own climate, after lapse-rate correction)
+**Precipitation**: > 400mm/year (tile's own precipitation)
+**Elevation**: 1200-2500 m above sea level
 **Characteristics**:
-- Vertical zonation (different forests at different elevations)
-- Cooler than lowland forests at same latitude
-- Often transitions to alpine meadows above treeline
+- Assigned from the mid-elevation slope's own climate, independent of the lowland biome below it
+- A warm, wet slope grows montane forest even if the adjacent lowland is desert or tundra
+- Cooler than lowland forests at same latitude; often transitions to alpine grassland or tundra above
+- Below 1200 m or above 2500 m, the slope falls through to the standard Whittaker matrix or alpine zonation respectively
 
 **Locations**:
-- Mountain slopes
-- Elevation determines type (subtropical → temperate → boreal)
+- Mountain slopes in the 1200-2500 m band
+- Most common on windward flanks of major belts where orographic lift brings sufficient precipitation
 
 **Gameplay Implications**:
 - Slopes affect building and movement
@@ -255,7 +257,7 @@ Biomes are large-scale ecosystem types defined by temperature, precipitation, an
 ### Desert and Xeric Biomes
 
 #### 10. Hot Desert
-**Temperature**: > 18°C annual average, extreme daily variation
+**Temperature**: > 12°C annual average, extreme daily variation
 **Precipitation**: < 250mm/year
 **Characteristics**:
 - Sparse vegetation
@@ -341,8 +343,8 @@ Biomes are large-scale ecosystem types defined by temperature, precipitation, an
 ### Tundra and Cold Biomes
 
 #### 14. Arctic Tundra
-**Temperature**: Annual average < 0°C
-**Precipitation**: 150-250mm/year
+**Temperature**: Annual average < -10°C
+**Precipitation**: > 150mm/year (below this threshold: Polar Desert)
 **Characteristics**:
 - No trees (permafrost prevents deep roots)
 - Mosses, lichens, low shrubs
@@ -592,3 +594,4 @@ Tile #52341:
 ## Revision History
 
 - 2025-10-26: Initial biome classification documentation created
+- 2026-06-14: Updated classification thresholds to match as-built code (feature/worldgen-climate-biome): Arctic Tundra temperature cutoff lowered from <0°C to <-10°C (widens the boreal/taiga band to cover ~50-70° latitude instead of collapsing into tundra at ~55°); Hot Desert temperature floor lowered from >18°C to >12°C (dry subtropical interiors 12-20°C now classify as hot desert rather than cold desert, restoring Sahara/Arabian/Australian analogs); Montane Forest now assigned from the tile's own mid-elevation climate (1200-2500 m, T>3°C, precip>400 mm/yr), decoupled from the lowland biome below it. Beach elevation cutoff: ≤50 m above sea level (from ≤20 m).
