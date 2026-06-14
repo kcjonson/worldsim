@@ -165,6 +165,22 @@ namespace world_sim {
 		[[nodiscard]] engine::construction::ConstructionWorld&		 world() { return constructionWorld_; }
 		[[nodiscard]] const engine::construction::ConstructionWorld& world() const { return constructionWorld_; }
 
+		// --- Dev/test hook ---
+
+		/// Commit a wall chain straight to the topology, bypassing the draw tool and
+		/// the soft validator (the wall analogue of the /api/dev/foundation path).
+		/// Each consecutive (pts[i], pts[i+1]) becomes a segment on `host` (0 ==
+		/// freestanding); when `built`, the created segments flip to Built so they
+		/// enclose rooms immediately. Reconciles segment entities once. Returns the
+		/// number of segments created.
+		int devCommitWalls(
+			const std::vector<Foundation::Vec2>& pts,
+			const std::string&					 material,
+			const std::string&					 thicknessPreset,
+			engine::construction::FoundationId	 host,
+			bool								 built
+		);
+
 	  private:
 		// --- Foundation tool ---
 
