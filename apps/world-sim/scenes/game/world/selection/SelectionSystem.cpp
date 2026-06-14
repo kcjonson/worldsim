@@ -31,6 +31,20 @@ namespace {
 		const auto* preset = engine::assets::ConstructionRegistry::Get().getThicknessPreset(seg.material, seg.thicknessPreset);
 		return (preset != nullptr) ? preset->halfThicknessMm : 0;
 	}
+
+	// Widest wall half-thickness any segment could have, from the config presets (a
+	// handful), NOT by scanning committed segments (which grows with wall count). Used
+	// only to size the single-radius segmentAt query; the hit is then confirmed against
+	// the picked segment's own radius.
+	std::int64_t maxWallHalfThicknessMm() {
+		std::int64_t maxHalf = 0;
+		for (const auto& [name, material] : engine::assets::ConstructionRegistry::Get().getAllMaterials()) {
+			for (const auto& preset : material.wallThicknesses) {
+				maxHalf = std::max(maxHalf, preset.halfThicknessMm);
+			}
+		}
+		return maxHalf;
+	}
 } // namespace
 
 SelectionSystem::SelectionSystem(const Args& args)
@@ -209,11 +223,7 @@ void SelectionSystem::handleClick(float screenX, float screenY, int viewportW, i
 	if (constructionWorld != nullptr) {
 		const auto clickMm = geometry::quantize(Foundation::Vec2{worldPos.x, worldPos.y});
 
-		std::int64_t maxHalfThicknessMm = 0;
-		for (const auto& seg : constructionWorld->segments()) {
-			maxHalfThicknessMm = std::max(maxHalfThicknessMm, segmentHalfThicknessMm(seg));
-		}
-		const std::int64_t queryRadiusMm = std::max(kWallPickSlopMm, maxHalfThicknessMm);
+		const std::int64_t queryRadiusMm = std::max(kWallPickSlopMm, maxWallHalfThicknessMm());
 
 		const auto segmentId = constructionWorld->segmentAt(clickMm, queryRadiusMm);
 		if (segmentId != engine::construction::kInvalidSegment) {
