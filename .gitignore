@@ -51,3 +51,4 @@ test_debug_*.bmp
 
 # worldgen-cli baseline outputs (untracked build artifacts)
 worldgen-baseline/
+water-baseline/

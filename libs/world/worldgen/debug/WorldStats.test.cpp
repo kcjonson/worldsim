@@ -148,6 +148,41 @@ TEST(WorldStats, TileWeightedMedianFavorsLargeBelt) {
     }
 }
 
+// Water stats: sanity-check all new drainage fields are in range.
+TEST(WorldStats, WaterStatsInRange) {
+    PlanetParams p = PlanetParams::preset(Preset::EarthLike);
+    p.gridSubdivision = 16;
+    p.seed = 0xA917E001u;
+
+    auto world = runPipeline(p);
+    ASSERT_NE(world, nullptr);
+
+    WorldStats stats = computeWorldStats(*world);
+
+    // Fractions must be in [0, 1].
+    EXPECT_GE(stats.riverTileFraction,            0.0f);
+    EXPECT_LE(stats.riverTileFraction,            1.0f);
+    EXPECT_GE(stats.endorheicSinkFraction,        0.0f);
+    EXPECT_LE(stats.endorheicSinkFraction,        1.0f);
+    EXPECT_GE(stats.lakeTileFraction,             0.0f);
+    EXPECT_LE(stats.lakeTileFraction,             1.0f);
+    EXPECT_GE(stats.landWithWaterNearbyFraction,  0.0f);
+    EXPECT_LE(stats.landWithWaterNearbyFraction,  1.0f);
+
+    // Pre-W1 baseline: kFlagLake is never set, so lake fraction must be 0.
+    EXPECT_EQ(stats.lakeTileFraction, 0.0f);
+
+    // Sinks cannot exceed land tile count.
+    const uint32_t landCount = static_cast<uint32_t>(stats.landTileCount);
+    EXPECT_LE(stats.sinkTileCount, landCount);
+
+    // Flow stats: non-negative.
+    EXPECT_GE(stats.maxFlowAccum,      0.0f);
+    EXPECT_GE(stats.meanFlowAccumLand, 0.0f);
+    // Mean can't exceed max.
+    EXPECT_LE(stats.meanFlowAccumLand, stats.maxFlowAccum + 1e-3f);
+}
+
 // Biome fractions: sum over land biomes is ~1.0, all values in [0,1].
 TEST(WorldStats, BiomeFractionsSumToOne) {
     PlanetParams p = PlanetParams::preset(Preset::EarthLike);

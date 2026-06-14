@@ -26,6 +26,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -330,6 +331,23 @@ static void writeStatsJson(const std::string& path,
     std::fprintf(fp, "  \"shelfSubmergedFraction\": %.6f,\n",
                  static_cast<double>(s.shelfSubmergedFraction));
 
+    // Water / drainage stats.
+    std::fprintf(fp, "  \"water\": {\n");
+    std::fprintf(fp, "    \"riverTileFraction\": %.6f,\n",
+                 static_cast<double>(s.riverTileFraction));
+    std::fprintf(fp, "    \"sinkTileCount\": %u,\n", s.sinkTileCount);
+    std::fprintf(fp, "    \"endorheicSinkFraction\": %.6f,\n",
+                 static_cast<double>(s.endorheicSinkFraction));
+    std::fprintf(fp, "    \"lakeTileFraction\": %.6f,\n",
+                 static_cast<double>(s.lakeTileFraction));
+    std::fprintf(fp, "    \"maxFlowAccum\": %.2f,\n",
+                 static_cast<double>(s.maxFlowAccum));
+    std::fprintf(fp, "    \"meanFlowAccumLand\": %.4f,\n",
+                 static_cast<double>(s.meanFlowAccumLand));
+    std::fprintf(fp, "    \"landWithWaterNearbyFraction\": %.6f\n",
+                 static_cast<double>(s.landWithWaterNearbyFraction));
+    std::fprintf(fp, "  },\n");
+
     // Timing.
     std::fprintf(fp, "  \"timing\": {\n");
     std::fprintf(fp, "    \"wallSeconds\": %.3f,\n", wallSeconds);
@@ -401,6 +419,11 @@ static void printSummary(const worldgen::WorldStats& s,
     std::printf("\n");
     std::printf("  Shelf submerged    : %.4f (continental crust below sea level)\n",
                 static_cast<double>(s.shelfSubmergedFraction));
+    std::printf("  Water              : rivers %.2f%% of land, sinks %.2f%%, lakes %.2f%%, water-nearby %.2f%%\n",
+                static_cast<double>(s.riverTileFraction) * 100.0,
+                static_cast<double>(s.endorheicSinkFraction) * 100.0,
+                static_cast<double>(s.lakeTileFraction) * 100.0,
+                static_cast<double>(s.landWithWaterNearbyFraction) * 100.0);
 
     std::printf("  Wall time          : %.2f s\n", wallSeconds);
     std::printf("  worldHash          : 0x%016llx\n",
@@ -441,6 +464,45 @@ static bool exportAllBmps(const worldgen::GeneratedWorld& world,
             ok = false;
         }
     }
+
+    // Drainage / flow BMP: land colored by log(flowAccum+1) — rivers bright yellow,
+    // sinks marked red, ocean dark blue.  Visual baseline before W-1 fixes drainage.
+    {
+        const worldgen::SphereGrid& grid = *world.grid;
+        // Find max log-flow over land for normalization.
+        float maxLogFlow = 0.0f;
+        const uint32_t N = grid.tileCount();
+        for (uint32_t t = 0; t < N; ++t) {
+            if (world.data.flags[t] & worldgen::kFlagOcean) continue;
+            float lf = std::log(world.data.flowAccum[t] + 1.0f);
+            if (lf > maxLogFlow) maxLogFlow = lf;
+        }
+        if (maxLogFlow < 1.0f) maxLogFlow = 1.0f;
+
+        std::string drainPath = outDir + "/drainage.bmp";
+        bool result = worldgen::exportEquirectangularBmp(grid,
+            [&](worldgen::TileId t) -> worldgen::ExportRgb {
+                const uint8_t f = world.data.flags[t];
+                if (f & worldgen::kFlagOcean) return {10, 30, 80}; // ocean: dark blue
+                // Sink tiles: red
+                if (world.data.downhill[t] == 0xFFu) return {200, 40, 40};
+                // Land: black (low flow) -> yellow (high flow)
+                float v = std::log(world.data.flowAccum[t] + 1.0f) / maxLogFlow;
+                if (v < 0.0f) v = 0.0f;
+                if (v > 1.0f) v = 1.0f;
+                auto r = static_cast<uint8_t>(static_cast<int>(v * 255));
+                auto g = static_cast<uint8_t>(static_cast<int>(v * 220));
+                auto b = static_cast<uint8_t>(static_cast<int>(v * v * 30));
+                return {r, g, b};
+            }, drainPath, 2048);
+        if (result) {
+            std::printf("  wrote drainage.bmp\n");
+        } else {
+            std::fprintf(stderr, "  WARN: failed to write drainage.bmp\n");
+            ok = false;
+        }
+    }
+
     return ok;
 }
 
