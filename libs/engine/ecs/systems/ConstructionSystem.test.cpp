@@ -2,6 +2,8 @@
 
 #include "../GoalTaskRegistry.h"
 #include "../World.h"
+#include "../components/Inventory.h"
+#include "../components/Needs.h"
 #include "../components/Structure.h"
 #include "../components/StructureBlueprint.h"
 #include "../components/Transform.h"
@@ -99,23 +101,50 @@ TEST(ConstructionSystemTests, ClearingGateTakesPriorityOverMaterials) {
 }
 
 // ============================================================================
-// constructionHarvestDemand: bound chopping by what is already carried so the
-// colonist delivers its load instead of topping up forever (the haul-loop stall).
+// constructionHarvestDemand: bound chopping by what is already carried AND by one
+// trip's carry capacity, so the colonist delivers its load instead of topping up
+// forever (the haul-loop stall). The capacity bound is what lets a manifest larger
+// than one stack ever build: `carried` caps at the stack size, so without it the
+// demand would stay > 0 forever and the colonist would hoard at the cap.
 // ============================================================================
 
 TEST(ConstructionSystemTests, HarvestDemandIsSiteShortfallWhenCarryingNothing) {
-	EXPECT_EQ(constructionHarvestDemand(/*remaining=*/20, /*carried=*/0), 20U);
+	// Small site (fits in one trip): chop the whole shortfall.
+	EXPECT_EQ(constructionHarvestDemand(/*remaining=*/20, /*carried=*/0, /*carryCapacity=*/99), 20U);
 }
 
 TEST(ConstructionSystemTests, HarvestDemandShrinksByWhatIsCarried) {
-	// Carrying some Wood toward the site: only chop the difference.
-	EXPECT_EQ(constructionHarvestDemand(/*remaining=*/20, /*carried=*/8), 12U);
+	// Carrying some Wood toward a small site: only chop the difference.
+	EXPECT_EQ(constructionHarvestDemand(/*remaining=*/20, /*carried=*/8, /*carryCapacity=*/99), 12U);
 }
 
 TEST(ConstructionSystemTests, HarvestDemandIsZeroWhenCarryingEnough) {
-	// Carrying exactly enough or more: stop chopping, go deliver.
-	EXPECT_EQ(constructionHarvestDemand(/*remaining=*/20, /*carried=*/20), 0U);
-	EXPECT_EQ(constructionHarvestDemand(/*remaining=*/20, /*carried=*/35), 0U);
+	// Carrying exactly enough or more for a small site: stop chopping, go deliver.
+	EXPECT_EQ(constructionHarvestDemand(/*remaining=*/20, /*carried=*/20, /*carryCapacity=*/99), 0U);
+	EXPECT_EQ(constructionHarvestDemand(/*remaining=*/20, /*carried=*/35, /*carryCapacity=*/99), 0U);
+}
+
+TEST(ConstructionSystemTests, HarvestDemandCapsAtOneTripForLargeManifest) {
+	// The regression: a 313-Wood site with an empty-handed colonist must ask for ONE
+	// trip's worth (99), not the whole 313. Asking for 313 keeps the Harvest goal
+	// Available even when the colonist's stack is full, so it never delivers.
+	EXPECT_EQ(constructionHarvestDemand(/*remaining=*/313, /*carried=*/0, /*carryCapacity=*/99), 99U);
+}
+
+TEST(ConstructionSystemTests, HarvestDemandIsZeroWhenStackFullEvenIfSiteStillNeedsMore) {
+	// Stack full (99) but the site still needs 313: demand is 0 so the colonist DELIVERS
+	// its trip instead of hoarding at the cap. This is the exact stall the fix removes.
+	EXPECT_EQ(constructionHarvestDemand(/*remaining=*/313, /*carried=*/99, /*carryCapacity=*/99), 0U);
+}
+
+TEST(ConstructionSystemTests, HarvestDemandToppingUpToAFullTrip) {
+	// Large site, carrying a partial load: top the trip up to one full stack, no more.
+	EXPECT_EQ(constructionHarvestDemand(/*remaining=*/313, /*carried=*/40, /*carryCapacity=*/99), 59U);
+}
+
+TEST(ConstructionSystemTests, HarvestDemandLastTripIsTheRemainder) {
+	// Final trip: less than a stack still needed and hands empty -> chop just the remainder.
+	EXPECT_EQ(constructionHarvestDemand(/*remaining=*/15, /*carried=*/0, /*carryCapacity=*/99), 15U);
 }
 
 // ============================================================================
@@ -169,6 +198,40 @@ namespace {
 			bp.workTotal = 100.0F;
 			world->addComponent<StructureBlueprint>(entity, bp);
 			return entity;
+		}
+
+		/// A clear single-material foundation whose Wood manifest exceeds one carry stack
+		/// (the bug case: 313 Wood with a 99 stack size).
+		EntityID createLargeWoodFoundation(uint32_t woodNeeded, glm::vec2 pos = {5.0F, 7.0F}) {
+			auto entity = world->createEntity();
+			world->addComponent<Position>(entity, Position{pos});
+			world->addComponent<Structure>(entity, Structure{StructureKind::Foundation, /*graphId=*/0});
+			StructureBlueprint bp;
+			bp.phase = StructureBlueprint::BuildPhase::Clearing;
+			bp.required = {{"Wood", woodNeeded}};
+			bp.workTotal = 100.0F;
+			world->addComponent<StructureBlueprint>(entity, bp);
+			return entity;
+		}
+
+		/// A colonist carrying `woodCarried` Wood in its backpack (capped at the stack size).
+		/// NeedsComponent marks it a colonist so carriedAmount/colonistCarryCapacity see it.
+		EntityID createColonistCarryingWood(uint32_t woodCarried) {
+			auto entity = world->createEntity();
+			world->addComponent<NeedsComponent>(entity, NeedsComponent::createDefault());
+			auto inv = Inventory::createForColonist();
+			inv.addItem("Wood", woodCarried); // clamps to maxStackSize
+			world->addComponent<Inventory>(entity, std::move(inv));
+			return entity;
+		}
+
+		static const GoalTask* findChild(uint64_t umbrellaId, TaskType type) {
+			for (const auto* g : GoalTaskRegistry::Get().getChildGoals(umbrellaId)) {
+				if (g->type == type) {
+					return g;
+				}
+			}
+			return nullptr;
 		}
 
 		/// Run one ConstructionSystem cycle (it throttles to every 30 frames).
@@ -244,4 +307,49 @@ TEST_F(ConstructionGoalEmissionTest, GoalsAreCleanedUpWhenBlueprintCompletes) {
 
 	EXPECT_EQ(registry.goalCount(GoalOwner::ConstructionGoalSystem), 0U);
 	EXPECT_EQ(registry.getGoalByDestination(foundation), nullptr);
+}
+
+// ============================================================================
+// The haul-loop stall (this fix): a manifest larger than one carry stack must still
+// emit a sensibly-sized Harvest goal and, once a colonist's stack is full, retire the
+// Harvest so the Haul wins and the load gets delivered. These drive the live update()
+// path with a real colonist so carriedAmount + colonistCarryCapacity feed the bound.
+// ============================================================================
+
+TEST_F(ConstructionGoalEmissionTest, LargeManifestHarvestGoalIsBoundedToOneTrip) {
+	// 313 Wood needed, an empty-handed colonist: the Harvest goal must ask for one trip's
+	// worth (99), NOT 313. Asking for 313 is what kept it Available after the stack filled.
+	auto  foundation = createLargeWoodFoundation(/*woodNeeded=*/313);
+	createColonistCarryingWood(/*woodCarried=*/0);
+	auto& registry = GoalTaskRegistry::Get();
+
+	refresh();
+
+	const auto* umbrella = registry.getGoalByDestination(foundation);
+	ASSERT_NE(umbrella, nullptr);
+	const auto* harvest = findChild(umbrella->id, TaskType::Harvest);
+	const auto* haul = findChild(umbrella->id, TaskType::Haul);
+	ASSERT_NE(harvest, nullptr) << "empty-handed colonist + outstanding manifest must have a Harvest goal";
+	ASSERT_NE(haul, nullptr);
+	EXPECT_EQ(harvest->targetAmount, 99U) << "Harvest demand must cap at one carry stack, not the full 313";
+	EXPECT_EQ(haul->targetAmount, 313U) << "Haul targets the whole site shortfall";
+}
+
+TEST_F(ConstructionGoalEmissionTest, FullStackRetiresHarvestSoHaulWinsForLargeManifest) {
+	// 313 Wood needed, a colonist carrying a FULL stack (addItem clamps 200 -> 99): the
+	// Harvest goal must retire (demand 0) while the Haul stays open. Before the fix the
+	// Harvest stayed Available (313 - 99 = 214 > 0) and the colonist hoarded forever.
+	auto  foundation = createLargeWoodFoundation(/*woodNeeded=*/313);
+	createColonistCarryingWood(/*woodCarried=*/200); // clamps to the 99 stack cap
+	auto& registry = GoalTaskRegistry::Get();
+
+	refresh();
+
+	const auto* umbrella = registry.getGoalByDestination(foundation);
+	ASSERT_NE(umbrella, nullptr);
+	EXPECT_EQ(findChild(umbrella->id, TaskType::Harvest), nullptr)
+		<< "a full-stacked colonist must NOT have a Harvest goal (it should deliver)";
+	const auto* haul = findChild(umbrella->id, TaskType::Haul);
+	ASSERT_NE(haul, nullptr) << "the Haul goal must remain so the carried load gets delivered";
+	EXPECT_EQ(haul->targetAmount, 313U);
 }
