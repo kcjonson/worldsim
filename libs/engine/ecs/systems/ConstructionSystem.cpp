@@ -609,7 +609,9 @@ namespace ecs {
 		switch (structure.kind) {
 			case StructureKind::Foundation:
 				// A foundation may not deconstruct while any wall still stands on it.
-				return m_constructionWorld->segmentsOnFoundation(structure.graphId).empty();
+				// foundationHasWalls is the allocation-free early-exit query (this runs
+				// every tick for each demolishing foundation).
+				return !m_constructionWorld->foundationHasWalls(structure.graphId);
 			case StructureKind::Wall: {
 				// A wall may not deconstruct while any opening sits on it.
 				for (const auto& opening : m_constructionWorld->openings()) {

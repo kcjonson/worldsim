@@ -111,8 +111,8 @@ namespace ecs {
 				case TaskType::Harvest:
 					return "Harvest"; // Both gather and harvest use the Harvest action
 				case TaskType::Deconstruct:
-					// Pure work, no item in hand: the Deconstruct action has no needsHands entry, so
-					// actionNeedsHands reports false and no missing-case warning fires.
+					// Config-driven like Build: the Deconstruct action is defined in
+					// action-types.xml (needsHands=true), so actionNeedsHands reads it.
 					return "Deconstruct";
 				case TaskType::FulfillNeed:
 					switch (needType) {

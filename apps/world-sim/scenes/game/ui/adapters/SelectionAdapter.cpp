@@ -475,9 +475,13 @@ namespace world_sim {
 		// its own (the walls would be orphaned), so offer the cascade instead;
 		// ActionButtonSlot has no disabled flag, so swap the button rather than
 		// graying it out. A clear or blueprint foundation gets the plain Demolish.
+		// Offer "Demolish building" (cascade) only when there are walls AND a cascade
+		// callback is wired; otherwise the plain Demolish. The adaptSelection fallback
+		// path passes no onDemolishBuilding, so guard against a dead (null-callback)
+		// button there by falling back to plain Demolish.
 		const bool hasWalls = constructionWorld.foundationHasWalls(selection.id);
 		content.slots.push_back(SpacerSlot{.height = 8.0F});
-		if (hasWalls) {
+		if (hasWalls && onDemolishBuilding) {
 			content.slots.push_back(
 				ActionButtonSlot{
 					.label = "Demolish building",

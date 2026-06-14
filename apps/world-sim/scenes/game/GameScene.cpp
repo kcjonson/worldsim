@@ -1456,8 +1456,15 @@ namespace {
 
 			size_t markedOpenings = 0;
 			for (const auto& opening : constructionWorld.openings()) {
-				if (wallIds.count(opening.segment) != 0 && markForDemolition(opening.entity)) {
+				if (wallIds.count(opening.segment) == 0) {
+					continue;
+				}
+				if (markForDemolition(opening.entity)) {
 					markedOpenings++;
+				} else {
+					// A failed opening mark leaves its wall's deconstruct gate blocked; warn so the
+					// stuck cascade is diagnosable instead of silently stalling.
+					LOG_WARNING(Game, "Demolish building: opening #%llu has no blueprint", static_cast<unsigned long long>(opening.id));
 				}
 			}
 
