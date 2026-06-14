@@ -20,11 +20,19 @@ inline constexpr uint8_t kFlagPermanentSnow   = 0x10;
 inline constexpr uint8_t kFlagContinentalCrust = 0x40;
 
 // A tile is a river tile when flowAccum (accumulated upstream drainage,
-// seeded at precipitation/1000 per land tile) reaches this value — roughly a
-// drainage basin of a half-dozen wet tiles. Shared by WorldSummary's
-// riverTileCount and BiomeStage's wetland drainage test so "river" means the
-// same thing everywhere.
-inline constexpr float kRiverFlowThreshold = 5.0f;
+// seeded at precipitation/1000 per land tile) reaches this value. Shared by
+// WorldStats' riverTileCount, the drainage debug map, and BiomeStage's wetland
+// drainage test so "river" means the same thing everywhere.
+//
+// Tuned against the W-0 baseline (n=256): the pre-W1 drainage truncated flow at
+// inland sinks, yet still flagged 14-17% of land as river at threshold 5. W-1's
+// depression routing pushes ALL upstream flow through to the sea (nothing
+// vanishes in pits), which inflates flowAccum further, so the threshold rises to
+// land the river-tile fraction in Earth's plausible band (a few % of land: major
+// trunks, not every drainage line). 30 is roughly a basin of 30 wet upstream
+// tiles; measured river-tile fraction across seeds 42/7/1337 at n=256 lands in
+// ~2.5-4% of land. See W-1 in .claude/plans/water-hydrology.md.
+inline constexpr float kRiverFlowThreshold = 30.0f;
 
 // Boundary type enum for data.boundaryType (uint8_t per tile).
 // Written by TerrainStage; read by any consumer that interprets plate boundaries.

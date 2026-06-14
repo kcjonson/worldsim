@@ -604,7 +604,13 @@ TEST(BiomeStageHeavy, DeterministicAcrossThreadCounts) {
 
 TEST(BiomeStageHeavy, WorldSummaryFullPipeline) {
     PlanetParams params = PlanetParams::preset(Preset::EarthLike);
-    params.gridSubdivision = 12;
+    // n=48: flowAccum (seeded at precipitation/1000 per tile) scales with basin
+    // tile count, so the absolute river threshold (kRiverFlowThreshold, tuned for
+    // the n=256-1024 production range) only fires once basins hold enough tiles.
+    // At n=12 (1442 tiles) the biggest basin carries ~6 units, well under the
+    // threshold, so no rivers form there; n=48 produces healthy trunks (maxFlow
+    // ~130) and a stable riverTileCount > 0.
+    params.gridSubdivision = 48;
     params.seed = 0xB10BE5EED12345ULL;
 
     PlanetGenerator gen;

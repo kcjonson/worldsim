@@ -466,7 +466,9 @@ static bool exportAllBmps(const worldgen::GeneratedWorld& world,
     }
 
     // Drainage / flow BMP: land colored by log(flowAccum+1) — rivers bright yellow,
-    // sinks marked red, ocean dark blue.  Visual baseline before W-1 fixes drainage.
+    // lakes (kFlagLake) cyan, endorheic sinks red, ocean dark blue. Lets the W-1
+    // depression routing be eyeballed: coherent dendritic networks reaching the
+    // sea, with lakes pooled in basins.
     {
         const worldgen::SphereGrid& grid = *world.grid;
         // Find max log-flow over land for normalization.
@@ -484,7 +486,9 @@ static bool exportAllBmps(const worldgen::GeneratedWorld& world,
             [&](worldgen::TileId t) -> worldgen::ExportRgb {
                 const uint8_t f = world.data.flags[t];
                 if (f & worldgen::kFlagOcean) return {10, 30, 80}; // ocean: dark blue
-                // Sink tiles: red
+                // Lakes: cyan (ponded basins from depression routing)
+                if (f & worldgen::kFlagLake) return {40, 200, 220};
+                // Endorheic sinks (unreached land, no spill to sea): red
                 if (world.data.downhill[t] == 0xFFu) return {200, 40, 40};
                 // Land: black (low flow) -> yellow (high flow)
                 float v = std::log(world.data.flowAccum[t] + 1.0f) / maxLogFlow;
