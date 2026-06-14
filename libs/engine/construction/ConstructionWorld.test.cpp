@@ -366,6 +366,10 @@ TEST(ConstructionWorldWallTests, CommitSegmentCreatesIdsAndVertices) {
 	ASSERT_TRUE(result.ok());
 	EXPECT_NE(result.id, kInvalidSegment);
 
+	// A simple commit reports exactly one created segment, and `id` mirrors it.
+	ASSERT_EQ(result.createdSegments.size(), 1u);
+	EXPECT_EQ(result.createdSegments.front(), result.id);
+
 	ASSERT_EQ(world.segments().size(), 1u);
 	ASSERT_EQ(world.vertices().size(), 2u);
 
@@ -537,6 +541,103 @@ TEST(ConstructionWorldWallTests, RejectsXCrossing) {
 	EXPECT_EQ(crossing.id, kInvalidSegment);
 	EXPECT_EQ(world.segments().size(), 1u);
 	EXPECT_EQ(world.version(), before);
+}
+
+// ============================================================================
+// Walls: commitSegment reports every created/changed segment
+// ============================================================================
+//
+// The ECS-spawning caller (DrawingSystem) must give EVERY segment a correctly-
+// sized blueprint entity, so commitSegment reports all segment ids it created:
+// the new chain span(s) AND the two halves of any existing segment a T-junction
+// split. These tests pin that contract.
+
+namespace {
+
+	// True if `id` names a live segment in the store.
+	bool isLiveSegment(const ConstructionWorld& world, cw::SegmentId id) {
+		return world.getSegment(id) != nullptr;
+	}
+
+	// True if `ids` contains a segment whose endpoints (either order) are p0/p1.
+	bool createdHasSpan(const ConstructionWorld& world, const std::vector<cw::SegmentId>& ids, const Vec2i64& p0, const Vec2i64& p1) {
+		for (const cw::SegmentId id : ids) {
+			const cw::WallSegment* s = world.getSegment(id);
+			if (s == nullptr) {
+				continue;
+			}
+			const Vec2i64 a = world.getVertex(s->v0)->pos;
+			const Vec2i64 b = world.getVertex(s->v1)->pos;
+			if ((a == p0 && b == p1) || (a == p1 && b == p0)) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+} // namespace
+
+TEST(ConstructionWorldWallTests, ReportsSingleCreatedSegmentForSimpleCommit) {
+	ConstructionWorld	   world;
+	const cw::FoundationId host = makeHost(world);
+
+	SegmentCommitResult r = world.commitSegment({0, 0}, {4000, 0}, "wood", "thin", host);
+	ASSERT_TRUE(r.ok());
+	ASSERT_EQ(r.createdSegments.size(), 1u);
+	EXPECT_TRUE(isLiveSegment(world, r.createdSegments.front()));
+	EXPECT_TRUE(createdHasSpan(world, r.createdSegments, {0, 0}, {4000, 0}));
+}
+
+TEST(ConstructionWorldWallTests, ReportsBothSegmentsWhenSpanCrossesExistingVertex) {
+	ConstructionWorld	   world;
+	const cw::FoundationId host = makeHost(world);
+
+	// A stem creates an isolated junction vertex at (4000,0). A horizontal wall
+	// drawn straight through it splits into two new segments at that vertex; both
+	// must be reported so each gets its own entity.
+	ASSERT_TRUE(world.commitSegment({4000, 0}, {4000, 5000}, "wood", "thin", host).ok());
+
+	SegmentCommitResult through = world.commitSegment({0, 0}, {8000, 0}, "stone", "thick", host);
+	ASSERT_TRUE(through.ok());
+
+	ASSERT_EQ(through.createdSegments.size(), 2u);
+	for (const cw::SegmentId id : through.createdSegments) {
+		EXPECT_TRUE(isLiveSegment(world, id));
+	}
+	EXPECT_TRUE(createdHasSpan(world, through.createdSegments, {0, 0}, {4000, 0}));
+	EXPECT_TRUE(createdHasSpan(world, through.createdSegments, {4000, 0}, {8000, 0}));
+	// `id` is one of the reported segments.
+	EXPECT_TRUE(isLiveSegment(world, through.id));
+}
+
+TEST(ConstructionWorldWallTests, ReportsSplitHalvesAndNewSegmentForTJunction) {
+	ConstructionWorld	   world;
+	const cw::FoundationId host = makeHost(world);
+
+	// A long base wall; then a branch whose endpoint lands on the base interior.
+	// The commit splits the base into two halves AND adds the branch: three new
+	// segments, all reported (the base's old id and its entity are orphaned).
+	SegmentCommitResult base = world.commitSegment({0, 0}, {8000, 0}, "stone", "thick", host);
+	ASSERT_TRUE(base.ok());
+	const cw::SegmentId baseId = base.id;
+
+	SegmentCommitResult branch = world.commitSegment({4000, 0}, {4000, 5000}, "wood", "thin", host);
+	ASSERT_TRUE(branch.ok());
+
+	// The two split halves plus the branch == three created segments.
+	ASSERT_EQ(branch.createdSegments.size(), 3u);
+	for (const cw::SegmentId id : branch.createdSegments) {
+		EXPECT_TRUE(isLiveSegment(world, id));
+		EXPECT_NE(id, baseId); // the old base id is gone, never reported
+	}
+
+	// The created/changed set includes BOTH halves of the split base and the branch.
+	EXPECT_TRUE(createdHasSpan(world, branch.createdSegments, {0, 0}, {4000, 0}));
+	EXPECT_TRUE(createdHasSpan(world, branch.createdSegments, {4000, 0}, {8000, 0}));
+	EXPECT_TRUE(createdHasSpan(world, branch.createdSegments, {4000, 0}, {4000, 5000}));
+
+	// The old base id is dead: a caller mirroring it must destroy that entity.
+	EXPECT_EQ(world.getSegment(baseId), nullptr);
 }
 
 // ============================================================================

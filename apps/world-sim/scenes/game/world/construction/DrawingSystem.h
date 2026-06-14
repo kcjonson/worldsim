@@ -195,14 +195,22 @@ namespace world_sim {
 		/// foundation edge nearest `world`. Returns true if it placed a segment.
 		bool tryEdgeFill(Foundation::Vec2 world);
 
-		/// Spawn the ECS blueprint entity for a committed wall segment. lengthMeters
-		/// and the preset drive the manifest / work / HP (length x thickness x rate).
-		ecs::EntityID spawnWallBlueprintEntity(
-			engine::construction::SegmentId		   segmentId,
-			Foundation::Vec2					   a,
-			Foundation::Vec2					   b,
-			const engine::assets::ThicknessPreset& preset
-		);
+		/// Spawn the ECS mirror entity for a single wall segment, sized to THAT
+		/// segment's own length (its v0/v1 positions) x its thickness preset x its
+		/// material rate. Reads material / preset / state from the segment record,
+		/// not the active tool settings, so split halves of a differently-materialed
+		/// wall are priced correctly. A Built segment spawns Complete (full work,
+		/// delivered == required); a Blueprint spawns AwaitingMaterials. Sets the
+		/// segment's entity handle. No-op if the id is unknown or already has an
+		/// entity.
+		ecs::EntityID spawnWallSegmentEntity(engine::construction::SegmentId segmentId);
+
+		/// Idempotently make the ECS mirror match the wall topology: spawn an entity
+		/// for every segment that lacks one (sized to itself), and destroy any wall
+		/// entity whose segment id no longer exists (orphaned by a T-junction split).
+		/// Called after every wall commit / edge fill so multi-segment commits and
+		/// splits leave no segment entity-less and no entity leaked.
+		void reconcileSegmentEntities();
 
 		ecs::World*					ecsWorld_ = nullptr;
 		engine::world::WorldCamera* camera_ = nullptr;

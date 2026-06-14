@@ -170,7 +170,16 @@ namespace engine::construction {
 
 	struct SegmentCommitResult {
 		SegmentStatus status = SegmentStatus::ZeroLength;
-		SegmentId	  id = kInvalidSegment; // valid only when status == Ok
+		SegmentId	  id = kInvalidSegment; // first created chain segment; valid only when status == Ok
+
+		// Every segment id created by this commit: the new chain segment(s) AND the
+		// two halves of any existing segment a T-junction split (the old segment's
+		// id is gone, its ECS entity orphaned). The caller must spawn/reconcile a
+		// blueprint entity for EACH of these, sized to that segment's own length --
+		// a single commit can create several segments (a span drawn through an
+		// existing vertex, a T-junction onto a segment interior). `id` is
+		// createdSegments.front() (or kInvalidSegment when none / on rejection).
+		std::vector<SegmentId> createdSegments;
 
 		bool ok() const { return status == SegmentStatus::Ok; }
 	};
@@ -350,8 +359,10 @@ namespace engine::construction {
 		// material/thickness/host/state, re-attaches host's openings by parameter
 		// range, and clears host's ECS entity (the caller/ConstructionSystem
 		// despawns or re-maps it; see the .cpp). The new vertex at `at` is
-		// returned. Does NOT bump the version; the enclosing commit owns that.
-		VertexId splitSegmentAt(SegmentId host, const geometry::Vec2i64& at);
+		// returned. The two replacement segment ids are appended to `createdOut`
+		// (so the enclosing commit can report them to the ECS-spawning caller).
+		// Does NOT bump the version; the enclosing commit owns that.
+		VertexId splitSegmentAt(SegmentId host, const geometry::Vec2i64& at, std::vector<SegmentId>& createdOut);
 
 		std::vector<Foundation> foundations_; // stable insertion order
 		FoundationId			nextFoundationId_ = 1;

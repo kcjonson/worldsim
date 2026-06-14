@@ -219,7 +219,7 @@ namespace engine::construction {
 		}
 	}
 
-	VertexId ConstructionWorld::splitSegmentAt(SegmentId host, const geometry::Vec2i64& at) {
+	VertexId ConstructionWorld::splitSegmentAt(SegmentId host, const geometry::Vec2i64& at, std::vector<SegmentId>& createdOut) {
 		WallSegment* s = findSegment(host);
 		if (s == nullptr) {
 			return kInvalidVertex;
@@ -308,6 +308,11 @@ namespace engine::construction {
 		addAdjacency(mid, firstId);
 		addAdjacency(mid, secondId);
 		addAdjacency(oldV1, secondId);
+
+		// Report the two replacement ids so the commit can spawn entities for them
+		// (the old segment's entity is orphaned and the caller destroys it).
+		createdOut.push_back(firstId);
+		createdOut.push_back(secondId);
 
 		return mid;
 	}
@@ -447,8 +452,11 @@ namespace engine::construction {
 		// The commit will create at least one segment, so the splits below are not
 		// wasted. Resolve each break point to a vertex id, splitting host segments
 		// at T-junction break points (which creates the vertex). The segment list
-		// is rescanned each time because a prior split rewrites it.
-		std::vector<VertexId> chainVertices;
+		// is rescanned each time because a prior split rewrites it. `created`
+		// accumulates every new segment id: the two halves of each split host here,
+		// plus the chain segments below, so the caller can spawn one ECS entity per.
+		std::vector<SegmentId> created;
+		std::vector<VertexId>  chainVertices;
 		chainVertices.reserve(breakPoints.size());
 		for (const geometry::Vec2i64& p : breakPoints) {
 			VertexId existing = vertexAt(p);
@@ -469,7 +477,7 @@ namespace engine::construction {
 				}
 			}
 			if (hostSegment != kInvalidSegment) {
-				chainVertices.push_back(splitSegmentAt(hostSegment, p));
+				chainVertices.push_back(splitSegmentAt(hostSegment, p, created));
 			} else {
 				chainVertices.push_back(findOrCreateVertex(p));
 			}
@@ -477,8 +485,7 @@ namespace engine::construction {
 
 		// Create the chain of new segments between consecutive break vertices,
 		// skipping any span already connected (a duplicate). The analysis phase
-		// guarantees at least one span here is new, so firstCreated is set.
-		SegmentId firstCreated = kInvalidSegment;
+		// guarantees at least one span here is new.
 		for (std::size_t i = 0; i + 1 < chainVertices.size(); ++i) {
 			const VertexId u = chainVertices[i];
 			const VertexId w = chainVertices[i + 1];
@@ -515,13 +522,17 @@ namespace engine::construction {
 			segments_.push_back(std::move(segment));
 			addAdjacency(u, id);
 			addAdjacency(w, id);
-			if (firstCreated == kInvalidSegment) {
-				firstCreated = id;
-			}
+			created.push_back(id);
 		}
 
 		++version_;
-		return {SegmentStatus::Ok, firstCreated};
+		SegmentCommitResult result;
+		result.status = SegmentStatus::Ok;
+		result.createdSegments = std::move(created);
+		// `id` keeps the legacy single-id field meaningful (first created segment);
+		// callers that must touch every new segment iterate createdSegments.
+		result.id = result.createdSegments.empty() ? kInvalidSegment : result.createdSegments.front();
+		return result;
 	}
 
 	bool ConstructionWorld::removeSegment(SegmentId id) {

@@ -441,9 +441,14 @@ namespace world_sim {
 				continue;
 			}
 
-			spawnWallBlueprintEntity(result.id, a, b, *preset);
-			committed++;
+			// A single pair can create several segments (drawn through a junction,
+			// or a T-split of an existing wall); count them all as committed.
+			committed += static_cast<int>(result.createdSegments.size());
 		}
+
+		// One reconcile after the whole chain: spawns a correctly-sized entity for
+		// every segment created/split above, and destroys any orphaned by a split.
+		reconcileSegmentEntities();
 
 		if (callbacks_.onToast) {
 			if (committed > 0) {
@@ -530,41 +535,56 @@ namespace world_sim {
 			return false;
 		}
 
-		spawnWallBlueprintEntity(result.id, bestA, bestB, *preset);
+		// Reconcile rather than spawn one entity: an edge that crosses an existing
+		// wall splits it, so this commit can touch more than result.id.
+		reconcileSegmentEntities();
 		if (callbacks_.onToast) {
 			callbacks_.onToast("Wall placed", "edge fill (" + activeMaterial_ + ")");
 		}
 		return true;
 	}
 
-	ecs::EntityID DrawingSystem::spawnWallBlueprintEntity(
-		ec::SegmentId						   segmentId,
-		Foundation::Vec2					   a,
-		Foundation::Vec2					   b,
-		const engine::assets::ThicknessPreset& preset
-	) {
+	ecs::EntityID DrawingSystem::spawnWallSegmentEntity(ec::SegmentId segmentId) {
 		if (ecsWorld_ == nullptr) {
 			return ecs::EntityID{0};
 		}
 
-		const double dx = static_cast<double>(b.x) - a.x;
-		const double dy = static_cast<double>(b.y) - a.y;
-		const float	 lengthMeters = static_cast<float>(std::sqrt(dx * dx + dy * dy));
-		const float	 thicknessMeters = preset.thicknessMeters;
+		const ec::WallSegment* segment = constructionWorld_.getSegment(segmentId);
+		if (segment == nullptr || segment->entity != ecs::kInvalidEntity) {
+			return segment != nullptr ? segment->entity : ecs::EntityID{0};
+		}
+		const ec::Vertex* vert0 = constructionWorld_.getVertex(segment->v0);
+		const ec::Vertex* vert1 = constructionWorld_.getVertex(segment->v1);
+		if (vert0 == nullptr || vert1 == nullptr) {
+			return ecs::EntityID{0};
+		}
+
+		// Geometry from THIS segment's own endpoints, so a sub-segment of a split
+		// span is priced by its real length, not the whole drawn span.
+		const Foundation::Vec2 a = geometry::dequantize(vert0->pos);
+		const Foundation::Vec2 b = geometry::dequantize(vert1->pos);
+		const double		   dx = static_cast<double>(b.x) - a.x;
+		const double		   dy = static_cast<double>(b.y) - a.y;
+		const float			   lengthMeters = static_cast<float>(std::sqrt(dx * dx + dy * dy));
+
+		// Resolve material + preset from the SEGMENT, not the active tool: split
+		// halves inherit the old wall's material/thickness, which may differ.
+		const auto& registry = ConstructionRegistry::Get();
+		const auto* preset = registry.getThicknessPreset(segment->material, segment->thicknessPreset);
+		const auto* material = registry.getMaterial(segment->material);
+		const float thicknessMeters = preset != nullptr ? preset->thicknessMeters : 0.0F;
 
 		// Wall cost/work/HP scale with the area of the band (length x thickness),
 		// times the material's per-m^2 rate, times the preset multiplier
 		// (materials.xml: "length x thicknessMeters x rate x multiplier").
 		const float areaEquivalent = lengthMeters * thicknessMeters;
-		const auto& registry = ConstructionRegistry::Get();
-		const auto* material = registry.getMaterial(activeMaterial_);
 		float		costRate = 0.0F;
 		float		workRate = 0.0F;
 		float		hpRate = 0.0F;
-		if (material != nullptr) {
-			costRate = material->costRatePerSquareMeter * preset.costMultiplier;
-			workRate = material->workRatePerSquareMeter * preset.workMultiplier;
-			hpRate = material->hp * preset.hpMultiplier;
+		if (material != nullptr && preset != nullptr) {
+			costRate = material->costRatePerSquareMeter * preset->costMultiplier;
+			workRate = material->workRatePerSquareMeter * preset->workMultiplier;
+			hpRate = material->hp * preset->hpMultiplier;
 		}
 
 		auto entity = ecsWorld_->createEntity();
@@ -576,16 +596,30 @@ namespace world_sim {
 
 		ecsWorld_->addComponent<ecs::Structure>(entity, ecs::Structure{ecs::StructureKind::Wall, segmentId});
 
+		const bool				built = segment->state == ec::FoundationState::Built;
 		ecs::StructureBlueprint blueprint;
-		// Walls sit on a cleared, built foundation: no clear phase. They start
-		// AwaitingMaterials; ConstructionSystem holds them there (umbrella Blocked)
-		// until the host foundation is Built, then haul + build proceed.
-		blueprint.phase = ecs::StructureBlueprint::BuildPhase::AwaitingMaterials;
-		const auto requiredQty = static_cast<uint32_t>(std::ceil(static_cast<double>(areaEquivalent) * static_cast<double>(costRate)));
-		if (requiredQty > 0) {
-			blueprint.required.emplace_back(activeMaterial_, requiredQty);
-		}
+		const auto				requiredQty =
+			static_cast<uint32_t>(std::ceil(static_cast<double>(areaEquivalent) * static_cast<double>(costRate)));
 		blueprint.workTotal = areaEquivalent * workRate;
+		if (built) {
+			// A Built segment's halves come from splitting an already-finished wall:
+			// their entity mirrors a complete structure (full work done, manifest
+			// already delivered) so the construction loop does not re-haul/re-build.
+			blueprint.phase = ecs::StructureBlueprint::BuildPhase::Complete;
+			blueprint.workDone = blueprint.workTotal;
+			if (requiredQty > 0) {
+				blueprint.required.emplace_back(segment->material, requiredQty);
+				blueprint.delivered.emplace_back(segment->material, requiredQty);
+			}
+		} else {
+			// Walls sit on a cleared, built foundation: no clear phase. They start
+			// AwaitingMaterials; ConstructionSystem holds them there (umbrella
+			// Blocked) until the host foundation is Built, then haul + build proceed.
+			blueprint.phase = ecs::StructureBlueprint::BuildPhase::AwaitingMaterials;
+			if (requiredQty > 0) {
+				blueprint.required.emplace_back(segment->material, requiredQty);
+			}
+		}
 		ecsWorld_->addComponent<ecs::StructureBlueprint>(entity, std::move(blueprint));
 
 		ecs::Inventory deliveryInv;
@@ -598,23 +632,53 @@ namespace world_sim {
 
 		constructionWorld_.setSegmentEntity(segmentId, entity);
 
-		const ec::WallSegment* committed = constructionWorld_.getSegment(segmentId);
-		const ec::FoundationId hostId = committed != nullptr ? committed->hostFoundation : ec::kInvalidFoundation;
-
 		LOG_INFO(
 			Game,
-			"Wall segment #%llu spawned: %.2f m x %.2f m (%s/%s), %u materials, %.0f work, host #%llu, entity %u",
+			"Wall segment #%llu spawned: %.2f m x %.2f m (%s/%s), %u materials, %.0f work, host #%llu, entity %u, %s",
 			static_cast<unsigned long long>(segmentId),
 			static_cast<double>(lengthMeters),
 			static_cast<double>(thicknessMeters),
-			activeMaterial_.c_str(),
-			activeThicknessPreset_.c_str(),
+			segment->material.c_str(),
+			segment->thicknessPreset.c_str(),
 			requiredQty,
-			static_cast<double>(blueprint.workTotal),
-			static_cast<unsigned long long>(hostId),
-			static_cast<uint32_t>(entity)
+			static_cast<double>(areaEquivalent * workRate),
+			static_cast<unsigned long long>(segment->hostFoundation),
+			static_cast<uint32_t>(entity),
+			built ? "built" : "blueprint"
 		);
 		return entity;
+	}
+
+	void DrawingSystem::reconcileSegmentEntities() {
+		if (ecsWorld_ == nullptr) {
+			return;
+		}
+
+		// Destroy wall entities whose segment is gone (orphaned by a T-junction
+		// split: splitSegmentAt clears the old segment's entity handle but the
+		// entity itself outlives the topology record). Collect first, destroy
+		// after, so we never mutate the registry mid-view-iteration.
+		std::vector<ecs::EntityID> orphans;
+		for (auto [entity, structure] : ecsWorld_->view<ecs::Structure>()) {
+			if (structure.kind != ecs::StructureKind::Wall) {
+				continue;
+			}
+			if (constructionWorld_.getSegment(structure.graphId) == nullptr) {
+				orphans.push_back(entity);
+			}
+		}
+		for (const ecs::EntityID orphan : orphans) {
+			ecsWorld_->destroyEntity(orphan);
+		}
+
+		// Spawn an entity for every segment that lacks one (newly created chain
+		// segments and the two halves of any split). spawnWallSegmentEntity no-ops
+		// on a segment that already has one, so this is idempotent.
+		for (const ec::WallSegment& segment : constructionWorld_.segments()) {
+			if (segment.entity == ecs::kInvalidEntity) {
+				spawnWallSegmentEntity(segment.id);
+			}
+		}
 	}
 
 	DrawingStatus DrawingSystem::status() const {
