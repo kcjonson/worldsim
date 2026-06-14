@@ -44,6 +44,7 @@ namespace world_sim {
 		// Create construction config strip (hidden until a structure tool is active)
 		configStrip = std::make_unique<ConstructionConfigStrip>(ConstructionConfigStrip::Args{
 			.onMaterialSelected = args.onConstructionMaterialSelected,
+			.onThicknessSelected = args.onConstructionThicknessSelected,
 			.id = "construction_config_strip"});
 
 		// Create build menu (position set in layout())
@@ -610,6 +611,12 @@ namespace world_sim {
 	void GameUI::setConstructionMaterials(const std::vector<std::pair<std::string, float>>& materials) {
 		if (configStrip) {
 			configStrip->setMaterials(materials);
+		}
+	}
+
+	void GameUI::setConstructionThicknessPresets(const std::vector<ConstructionConfigStrip::ThicknessPresetInfo>& presets) {
+		if (configStrip) {
+			configStrip->setThicknessPresets(presets);
 		}
 	}
 

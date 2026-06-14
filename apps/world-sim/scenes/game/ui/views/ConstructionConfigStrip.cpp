@@ -8,7 +8,8 @@
 namespace world_sim {
 
 	ConstructionConfigStrip::ConstructionConfigStrip(const Args& args)
-		: onMaterialSelected(args.onMaterialSelected) {
+		: onMaterialSelected(args.onMaterialSelected),
+		  onThicknessSelected(args.onThicknessSelected) {
 		visible = false;
 	}
 
@@ -17,9 +18,19 @@ namespace world_sim {
 		positionCards();
 	}
 
+	void ConstructionConfigStrip::setThicknessPresets(std::vector<ThicknessPresetInfo> presets) {
+		presets_ = std::move(presets);
+		positionCards();
+	}
+
 	void ConstructionConfigStrip::setStatus(const DrawingStatus& status) {
+		const bool wallChanged = status_.wall != status.wall;
 		status_ = status;
 		visible = status.active;
+		// Preset cards only exist in wall mode; reposition when the mode flips.
+		if (wallChanged) {
+			positionCards();
+		}
 	}
 
 	void ConstructionConfigStrip::layout(const Foundation::Rect& viewportBounds) {
@@ -38,11 +49,22 @@ namespace world_sim {
 
 	void ConstructionConfigStrip::positionCards() {
 		cardRects_.clear();
+		presetRects_.clear();
 		float		x = stripBounds_.x + kPadding;
 		const float y = stripBounds_.y + (kStripHeight - kCardHeight) * 0.5F;
 		for (std::size_t i = 0; i < materials_.size(); ++i) {
 			cardRects_.push_back({x, y, kCardWidth, kCardHeight});
 			x += kCardWidth + kCardSpacing;
+		}
+
+		// Wall mode: thickness-preset cards follow the material cards, after a gap.
+		// Narrower than material cards (just a name + thickness).
+		if (status_.wall) {
+			x += kCardSpacing * 2.0F;
+			for (std::size_t i = 0; i < presets_.size(); ++i) {
+				presetRects_.push_back({x, y, kPresetCardWidth, kCardHeight});
+				x += kPresetCardWidth + kCardSpacing;
+			}
 		}
 	}
 
@@ -58,6 +80,15 @@ namespace world_sim {
 				if (cardRects_[i].contains(event.position)) {
 					if (onMaterialSelected) {
 						onMaterialSelected(materials_[i].first);
+					}
+					event.consume();
+					return true;
+				}
+			}
+			for (std::size_t i = 0; i < presetRects_.size() && i < presets_.size(); ++i) {
+				if (presetRects_[i].contains(event.position)) {
+					if (onThicknessSelected) {
+						onThicknessSelected(presets_[i].name);
 					}
 					break;
 				}
@@ -118,44 +149,122 @@ namespace world_sim {
 			});
 		}
 
-		// Readouts: area + point count, to the right of the cards.
-		const float readoutX = stripBounds_.x + kPadding + static_cast<float>(materials_.size()) * (kCardWidth + kCardSpacing) + 8.0F;
-		char		areaBuf[48];
-		std::snprintf(areaBuf, sizeof(areaBuf), "Area: %.1f m\xC2\xB2", static_cast<double>(status_.areaSquareMeters));
-		Renderer::Primitives::drawText({
-			.text = areaBuf,
-			.position = {readoutX, stripBounds_.y + 8.0F},
-			.scale = 0.8F,
-			.color = UI::Theme::Colors::textBody,
-		});
+		// Thickness-preset cards (wall mode).
+		for (std::size_t i = 0; i < presets_.size() && i < presetRects_.size(); ++i) {
+			const bool selected = (presets_[i].name == status_.thicknessPreset);
+			Renderer::Primitives::drawRect({
+				.bounds = presetRects_[i],
+				.style =
+					{.fill = selected ? UI::Theme::Colors::selectionBackground : UI::Theme::Colors::cardBackground,
+					 .border =
+						 Foundation::BorderStyle{
+							 .color = selected ? UI::Theme::Colors::selectionBorder : UI::Theme::Colors::cardBorder,
+							 .width = selected ? 2.0F : 1.0F
+						 }},
+				.id = "config_strip_preset",
+			});
+			Renderer::Primitives::drawText({
+				.text = presets_[i].name,
+				.position = {presetRects_[i].x + 8.0F, presetRects_[i].y + 5.0F},
+				.scale = 0.8F,
+				.color = UI::Theme::Colors::textTitle,
+			});
+			char thick[24];
+			std::snprintf(thick, sizeof(thick), "%.2f m", static_cast<double>(presets_[i].thicknessMeters));
+			Renderer::Primitives::drawText({
+				.text = thick,
+				.position = {presetRects_[i].x + 8.0F, presetRects_[i].y + 22.0F},
+				.scale = 0.7F,
+				.color = UI::Theme::Colors::textSecondary,
+			});
+		}
 
-		char ptsBuf[32];
-		std::snprintf(ptsBuf, sizeof(ptsBuf), "Points: %d", status_.pointCount);
-		Renderer::Primitives::drawText({
-			.text = ptsBuf,
-			.position = {readoutX, stripBounds_.y + 26.0F},
-			.scale = 0.8F,
-			.color = UI::Theme::Colors::textBody,
-		});
+		// Readouts, to the right of whichever set of cards is last.
+		float readoutX = stripBounds_.x + kPadding + static_cast<float>(materials_.size()) * (kCardWidth + kCardSpacing) + 8.0F;
+		if (status_.wall && !presetRects_.empty()) {
+			readoutX = presetRects_.back().x + kPresetCardWidth + 16.0F;
+		}
+
+		if (status_.wall) {
+			char lenBuf[48];
+			std::snprintf(
+				lenBuf,
+				sizeof(lenBuf),
+				"Len: %.1f m  (seg %.1f m)",
+				static_cast<double>(status_.totalLengthMeters),
+				static_cast<double>(status_.segmentLengthMeters)
+			);
+			Renderer::Primitives::drawText({
+				.text = lenBuf,
+				.position = {readoutX, stripBounds_.y + 8.0F},
+				.scale = 0.8F,
+				.color = UI::Theme::Colors::textBody,
+			});
+			char costBuf[48];
+			std::snprintf(
+				costBuf,
+				sizeof(costBuf),
+				"Cost: %.0f  Work: %.0f",
+				static_cast<double>(status_.wallCost),
+				static_cast<double>(status_.wallWork)
+			);
+			Renderer::Primitives::drawText({
+				.text = costBuf,
+				.position = {readoutX, stripBounds_.y + 26.0F},
+				.scale = 0.8F,
+				.color = UI::Theme::Colors::textBody,
+			});
+		} else {
+			char areaBuf[48];
+			std::snprintf(areaBuf, sizeof(areaBuf), "Area: %.1f m\xC2\xB2", static_cast<double>(status_.areaSquareMeters));
+			Renderer::Primitives::drawText({
+				.text = areaBuf,
+				.position = {readoutX, stripBounds_.y + 8.0F},
+				.scale = 0.8F,
+				.color = UI::Theme::Colors::textBody,
+			});
+			char ptsBuf[32];
+			std::snprintf(ptsBuf, sizeof(ptsBuf), "Points: %d", status_.pointCount);
+			Renderer::Primitives::drawText({
+				.text = ptsBuf,
+				.position = {readoutX, stripBounds_.y + 26.0F},
+				.scale = 0.8F,
+				.color = UI::Theme::Colors::textBody,
+			});
+		}
 
 		// Validity message line, colored by status.
 		Foundation::Color msgColor = UI::Theme::Colors::statusActive;
 		std::string		  message = "Ready";
-		if (status_.pointCount > 0 && status_.pointCount < 3) {
-			msgColor = UI::Theme::Colors::statusPending;
-			message = "Keep placing points";
-		}
-		if (!status_.valid && !status_.message.empty()) {
-			msgColor = UI::Theme::Colors::statusBlocked;
-			message = status_.message;
-		} else if (status_.valid && status_.pointCount >= 3) {
-			msgColor = UI::Theme::Colors::statusActive;
-			message = "Click origin to close";
+		if (status_.wall) {
+			if (status_.pointCount == 0) {
+				msgColor = UI::Theme::Colors::statusPending;
+				message = "Click a foundation to start";
+			} else {
+				msgColor = UI::Theme::Colors::statusActive;
+				message = "Right-click / Enter to finish";
+			}
+			if (!status_.valid && !status_.message.empty()) {
+				msgColor = UI::Theme::Colors::statusBlocked;
+				message = status_.message;
+			}
+		} else {
+			if (status_.pointCount > 0 && status_.pointCount < 3) {
+				msgColor = UI::Theme::Colors::statusPending;
+				message = "Keep placing points";
+			}
+			if (!status_.valid && !status_.message.empty()) {
+				msgColor = UI::Theme::Colors::statusBlocked;
+				message = status_.message;
+			} else if (status_.valid && status_.pointCount >= 3) {
+				msgColor = UI::Theme::Colors::statusActive;
+				message = "Click origin to close";
+			}
 		}
 
 		Renderer::Primitives::drawText({
 			.text = message,
-			.position = {readoutX + 160.0F, stripBounds_.y + 18.0F},
+			.position = {readoutX + 180.0F, stripBounds_.y + 18.0F},
 			.scale = 0.85F,
 			.color = msgColor,
 		});

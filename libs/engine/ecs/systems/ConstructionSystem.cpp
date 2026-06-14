@@ -95,12 +95,13 @@ namespace ecs {
 		m_activeBlueprintCount = 0;
 
 		for (auto [entity, structure, blueprint] : world->view<Structure, StructureBlueprint>()) {
-			// Only foundations carry a footprint in the ConstructionWorld for now.
-			if (structure.kind != StructureKind::Foundation) {
+			// Foundations and walls both flow through; openings/rooms are not blueprints yet.
+			if (structure.kind != StructureKind::Foundation && structure.kind != StructureKind::Wall) {
 				continue;
 			}
+			const bool isWall = (structure.kind == StructureKind::Wall);
 
-			const uint64_t foundationId = structure.graphId;
+			const uint64_t graphId = structure.graphId;
 
 			// A completed or demolishing blueprint emits nothing; leave it in the stale set so
 			// the cleanup pass below drops any lingering goals (the Build goal never self-retires
@@ -109,10 +110,22 @@ namespace ecs {
 				continue;
 			}
 
+			// Wall gate: a wall blueprint waits, holding nothing but a Blocked umbrella,
+			// until its host foundation is Built. Hauling and building stay off until then
+			// (design: Walls / Prerequisites). This is the wall-specific front of the pipeline.
+			if (isWall && !isWallHostBuilt(graphId)) {
+				ensureUmbrellaGoal(entity, blueprint, GoalStatus::Blocked);
+				entitiesWithGoals.erase(entity);
+				m_activeBlueprintCount++;
+				continue;
+			}
+
 			// Reconcile delivered[] from the on-site inventory before gating on materials.
 			reconcileDelivered(entity, blueprint);
 
-			const bool footprintClear = isFootprintClear(foundationId);
+			// Walls have no clear phase: they sit on a cleared, built foundation, so the
+			// footprint is clear by construction. Foundations query their footprint.
+			const bool footprintClear = isWall || isFootprintClear(graphId);
 			const bool materialsDone = blueprint.materialsComplete();
 
 			const ConstructionDecision decision = decideConstructionPhase(blueprint, footprintClear, materialsDone);
@@ -133,7 +146,7 @@ namespace ecs {
 			const uint64_t	 umbrellaId = ensureUmbrellaGoal(entity, blueprint, umbrellaStatus);
 
 			if (decision.emitClearGoals) {
-				emitClearGoals(entity, foundationId, umbrellaId);
+				emitClearGoals(entity, graphId, umbrellaId);
 			} else if (decision.emitMaterialGoals) {
 				// Footprint is clear: the clear-Harvest child is obsolete, drop it; keep the
 				// per-material Harvest/Haul children sized against the live manifest.
@@ -203,6 +216,23 @@ namespace ecs {
 			}
 		}
 		return true;
+	}
+
+	bool ConstructionSystem::isWallHostBuilt(uint64_t segmentId) const {
+		if (m_constructionWorld == nullptr) {
+			// No topology wired (headless/unit context): ungate so the lifecycle still runs.
+			return true;
+		}
+		const auto* segment = m_constructionWorld->getSegment(segmentId);
+		if (segment == nullptr) {
+			return false; // unknown segment: keep it gated until the topology catches up
+		}
+		const auto* host = m_constructionWorld->get(segment->hostFoundation);
+		// A freestanding wall (no host) is ungated; a hosted wall waits for Built.
+		if (host == nullptr) {
+			return segment->hostFoundation == engine::construction::kInvalidFoundation;
+		}
+		return host->state == engine::construction::FoundationState::Built;
 	}
 
 	void ConstructionSystem::reconcileDelivered(EntityID blueprintEntity, StructureBlueprint& blueprint) {

@@ -1,13 +1,21 @@
 #pragma once
 
-// ConstructionSystem - drives the foundation build lifecycle as a goal source.
+// ConstructionSystem - drives the structure build lifecycle as a goal source.
 //
 // Watches every entity carrying Structure + StructureBlueprint and walks it
-// through the construction loop (building-construction-architecture.md D7):
+// through the construction loop (building-construction-architecture.md D7).
+// Foundations and walls share the lifecycle machinery; the two differ only at the
+// front of the pipeline:
+//   Foundations start at Clearing and clear their footprint of choppable blockers.
+//   Walls have no clear phase (they sit on a cleared, built foundation), so they
+//     start at AwaitingMaterials. Their haul + build goals are GATED: a wall's
+//     umbrella stays Blocked, and no material/build goals emit, until the host
+//     foundation is Built (design: walls draw on a foundation blueprint but only
+//     build once the foundation finishes). isWallHostBuilt owns that gate.
 //
 //   Clearing           -> emit Harvest goals for choppable entities sitting on
 //                         the footprint; advance to AwaitingMaterials once the
-//                         footprint is clear.
+//                         footprint is clear. (Foundations only.)
 //   AwaitingMaterials  -> reconcile delivered[] from the blueprint's delivery
 //                         Inventory, emit a Harvest+Haul chain per outstanding
 //                         material (Wood from trees, hauled into the blueprint
@@ -123,6 +131,12 @@ namespace ecs {
 		/// True if no Harvestable placed entity overlaps the foundation's footprint AABB.
 		/// v1 clearing rule (see header): only Harvestable blockers gate clearing.
 		[[nodiscard]] bool isFootprintClear(uint64_t foundationId) const;
+
+		/// True once the wall segment's host foundation is Built. Walls draw on a
+		/// foundation blueprint but only BUILD after the foundation finishes (design:
+		/// Walls / Prerequisites), so this gates a wall blueprint's haul + build goals.
+		/// True (ungated) when there is no ConstructionWorld wired (headless contexts).
+		[[nodiscard]] bool isWallHostBuilt(uint64_t segmentId) const;
 
 		/// Sync the blueprint's delivered[] manifest from its delivery Inventory so
 		/// materialsComplete() reflects what is physically on site. Inventory is the

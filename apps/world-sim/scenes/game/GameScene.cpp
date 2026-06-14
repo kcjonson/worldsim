@@ -201,17 +201,28 @@ namespace {
 					return m_placementExecutor->getResourceCount(coord, {position.x, position.y}, defName);
 				},
 				.onStructureSelected = [this](const std::string& structure) {
-					if (structure == "foundation" && m_drawingSystem) {
-						// One tool owns world input: drop any active placement first.
-						if (m_placementSystem) {
-							m_placementSystem->cancel();
-						}
+					if (!m_drawingSystem) {
+						return;
+					}
+					// One tool owns world input: drop any active placement first.
+					if (m_placementSystem) {
+						m_placementSystem->cancel();
+					}
+					if (structure == "foundation") {
 						m_drawingSystem->activateFoundationTool();
+					} else if (structure == "wall") {
+						m_drawingSystem->activateWallTool();
 					}
 				},
 				.onConstructionMaterialSelected = [this](const std::string& material) {
 					if (m_drawingSystem) {
 						m_drawingSystem->setActiveMaterial(material);
+						refreshThicknessPresets(material);
+					}
+				},
+				.onConstructionThicknessSelected = [this](const std::string& preset) {
+					if (m_drawingSystem) {
+						m_drawingSystem->setActiveThicknessPreset(preset);
 					}
 				}
 			});
@@ -279,12 +290,20 @@ namespace {
 
 				auto& actionSys = ecsWorld->getSystem<ecs::ActionSystem>();
 
-				// Build complete: flip the foundation to Built (bumps ConstructionWorld version,
-				// so the render picks up the new style next frame) and toast the player.
+				// Build complete: flip the structure to Built (bumps ConstructionWorld version,
+				// so the render picks up the new style next frame) and toast the player. Walls
+				// and foundations share this callback; the Structure kind selects which topology
+				// mutator to call.
 				actionSys.setStructureCompletedCallback([this](ecs::EntityID blueprintEntity) {
 					const auto* structure = ecsWorld->getComponent<ecs::Structure>(blueprintEntity);
 					if (structure == nullptr || structure->graphId == 0) {
-						LOG_WARNING(Game, "Structure-completed: entity %u has no foundation link", static_cast<uint32_t>(blueprintEntity));
+						LOG_WARNING(Game, "Structure-completed: entity %u has no topology link", static_cast<uint32_t>(blueprintEntity));
+						return;
+					}
+					if (structure->kind == ecs::StructureKind::Wall) {
+						m_drawingSystem->world().setSegmentState(structure->graphId, engine::construction::FoundationState::Built);
+						gameUI->pushNotification("Construction complete", "Wall built", UI::ToastSeverity::Info);
+						LOG_INFO(Game, "Wall segment #%llu built (entity %u)", static_cast<unsigned long long>(structure->graphId), static_cast<uint32_t>(blueprintEntity));
 						return;
 					}
 					m_drawingSystem->world().setState(structure->graphId, engine::construction::FoundationState::Built);
@@ -327,6 +346,10 @@ namespace {
 				gameUI->setConstructionMaterials(materials);
 			}
 
+			// Populate the config strip's wall thickness-preset cards for the active
+			// material (Wood). Refreshed in onConstructionMaterialSelected too.
+			refreshThicknessPresets(m_drawingSystem->activeMaterial());
+
 			// Enable GPU timing for performance monitoring
 			m_gpuTimer.setEnabled(true);
 		}
@@ -346,7 +369,9 @@ namespace {
 			// first dibs above). It consumes clicks while active.
 			if (m_drawingSystem->isActive()) {
 				constexpr int kModAlt = 0x0004; // GLFW_MOD_ALT
+				constexpr int kModCtrl = 0x0002; // GLFW_MOD_CONTROL
 				const bool	  freeform = (event.modifiers & kModAlt) != 0;
+				const bool	  ctrl = (event.modifiers & kModCtrl) != 0;
 
 				if (!consumed && event.type == UI::InputEvent::Type::MouseMove) {
 					// Skip when a UI panel consumed the move, otherwise the preview
@@ -354,11 +379,12 @@ namespace {
 					m_drawingSystem->handleMouseMove(event.position.x, event.position.y, logicalW, logicalH, freeform);
 				} else if (!consumed && event.type == UI::InputEvent::Type::MouseUp) {
 					if (event.button == engine::MouseButton::Right) {
+						// Foundation: cancel the shape. Wall: end (commit) the chain.
 						m_drawingSystem->cancel();
 						return true;
 					}
 					if (event.button == engine::MouseButton::Left) {
-						m_drawingSystem->handleClick(event.position.x, event.position.y, logicalW, logicalH, freeform);
+						m_drawingSystem->handleClick(event.position.x, event.position.y, logicalW, logicalH, freeform, ctrl);
 						return true;
 					}
 				}
@@ -403,6 +429,12 @@ namespace {
 			// Backspace removes the last placed point while drawing.
 			if (input.isKeyPressed(engine::Key::Backspace) && m_drawingSystem->isActive()) {
 				m_drawingSystem->removeLastPoint();
+			}
+
+			// Enter finishes (commits) a wall chain; the foundation tool ignores it
+			// (it closes on origin-click instead).
+			if (input.isKeyPressed(engine::Key::Enter) && m_drawingSystem->isActive()) {
+				m_drawingSystem->finishChain();
 			}
 
 			// Handle B key - toggle build mode. Gated while the foundation tool owns
@@ -803,6 +835,19 @@ namespace {
 
 		/// Handle furniture placement request from info panel.
 		/// Enters placement mode to relocate the selected packaged furniture.
+		/// Refresh the config strip's wall thickness-preset cards for `material`.
+		/// A material with no wall presets clears the cards (the wall tool then
+		/// rejects commits with a "no wall preset" toast).
+		void refreshThicknessPresets(const std::string& material) {
+			std::vector<world_sim::ConstructionConfigStrip::ThicknessPresetInfo> presets;
+			if (const auto* mat = engine::assets::ConstructionRegistry::Get().getWallMaterial(material)) {
+				for (const auto& p : mat->wallThicknesses) {
+					presets.push_back({p.name, p.thicknessMeters});
+				}
+			}
+			gameUI->setConstructionThicknessPresets(presets);
+		}
+
 		void handlePlaceFurniture() {
 			// Get currently selected furniture from selection system
 			const auto& sel = m_selectionSystem->current();

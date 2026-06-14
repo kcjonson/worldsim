@@ -78,6 +78,7 @@ class GameUI {
 		ResourceQueryCallback queryResources;							 ///< Query remaining resource count for harvestable entities
 		std::function<void(const std::string&)> onStructureSelected;	 ///< Called when a structure tool (e.g. "foundation") is chosen
 		std::function<void(const std::string&)> onConstructionMaterialSelected; ///< Called when a config-strip material card is clicked
+		std::function<void(const std::string&)> onConstructionThicknessSelected; ///< Called when a config-strip wall thickness preset is clicked
 	};
 
 	explicit GameUI(const Args& args);
@@ -140,6 +141,9 @@ class GameUI {
 	/// Set the material cards shown in the construction config strip.
 	/// @param materials Vector of {name, costPerSquareMeter} pairs.
 	void setConstructionMaterials(const std::vector<std::pair<std::string, float>>& materials);
+
+	/// Set the wall thickness-preset cards shown in the config strip (wall mode).
+	void setConstructionThicknessPresets(const std::vector<ConstructionConfigStrip::ThicknessPresetInfo>& presets);
 
 	/// Push the latest drawing-tool status to the config strip (drives readouts,
 	/// validity line, selection highlight, and visibility).

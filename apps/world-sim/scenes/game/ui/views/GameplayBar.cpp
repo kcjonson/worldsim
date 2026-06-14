@@ -65,6 +65,11 @@ GameplayBar::GameplayBar(const Args& args)
 					.onSelect = [this]() {
 						if (onStructureSelected) onStructureSelected("foundation");
 					}},
+				UI::DropdownItem{
+					.label = "Wall",
+					.onSelect = [this]() {
+						if (onStructureSelected) onStructureSelected("wall");
+					}},
 			},
 		.id = "build_dropdown",
 		.openUpward = true}));
