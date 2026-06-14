@@ -137,6 +137,20 @@ namespace engine::construction {
 				return "walls too close";
 			case ValidationCode::XCrossing:
 				return "walls can't cross";
+			case ValidationCode::OpeningSegmentInvalid:
+				return "no wall here";
+			case ValidationCode::OpeningTypeInvalid:
+				return "unknown opening type";
+			case ValidationCode::OpeningMaterialInvalid:
+				return "unknown material";
+			case ValidationCode::OpeningParamOutOfRange:
+				return "off the wall";
+			case ValidationCode::OpeningMarginTooSmall:
+				return "too close to the end";
+			case ValidationCode::OpeningWallTooShort:
+				return "wall too short for opening";
+			case ValidationCode::OpeningOverlap:
+				return "openings overlap";
 		}
 		return {};
 	}
@@ -472,6 +486,83 @@ namespace engine::construction {
 			const bool parallel = geometry::cross(d, e1 - e0).sign() == 0;
 			if (parallel && bandsCloserThan(candBand, otherBand, c.minParallelClearanceMm)) {
 				return {ValidationCode::ParallelClearanceTooSmall, 0, 0, 0.0};
+			}
+		}
+
+		return {};
+	}
+
+	// --- Openings -----------------------------------------------------------
+
+	ValidationResult
+	ConstructionValidator::validateOpening(SegmentId segment, float t, const std::string& type, const std::string& material) const {
+		// 1. Segment exists and is a wall in this world.
+		const WallSegment* seg = world_->getSegment(segment);
+		if (seg == nullptr) {
+			return {ValidationCode::OpeningSegmentInvalid, 0, 0, 0.0};
+		}
+		const Vertex* v0 = world_->getVertex(seg->v0);
+		const Vertex* v1 = world_->getVertex(seg->v1);
+		if (v0 == nullptr || v1 == nullptr) {
+			return {ValidationCode::OpeningSegmentInvalid, 0, 0, 0.0};
+		}
+
+		// 2. Type and material are known config entries. Width comes from the type.
+		const auto&							  reg = engine::assets::ConstructionRegistry::Get();
+		const engine::assets::OpeningTypeDef* typeDef = reg.getOpeningType(type);
+		if (typeDef == nullptr) {
+			return {ValidationCode::OpeningTypeInvalid, 0, 0, 0.0};
+		}
+		if (reg.getMaterial(material) == nullptr) {
+			return {ValidationCode::OpeningMaterialInvalid, 0, 0, 0.0};
+		}
+
+		// 3. t in [0,1].
+		if (t < 0.0F || t > 1.0F) {
+			return {ValidationCode::OpeningParamOutOfRange, 0, 0, static_cast<double>(t)};
+		}
+
+		// Segment length in meters (exact from integer mm, no float drift).
+		const auto	 d = v1->pos - v0->pos;
+		const double lengthMm = std::sqrt(geometry::dot(d, d).toDouble());
+		const double lengthM = lengthMm / static_cast<double>(geometry::kMillimetersPerMeter);
+
+		const auto&	 c = *constraints_;
+		const double halfWidthM = static_cast<double>(typeDef->widthMeters) / 2.0;
+		const double marginM = static_cast<double>(c.openingMarginMeters);
+
+		// 5. Wall must be long enough to host width + 2*margin. Check before the
+		// margin clearance so a wall that simply cannot fit the opening reports the
+		// clearer reason (and avoids a meaningless negative clearance below).
+		if (lengthM < static_cast<double>(typeDef->widthMeters) + 2.0 * marginM) {
+			return {ValidationCode::OpeningWallTooShort, 0, 0, lengthM};
+		}
+
+		// 4. End margin: the opening occupies [t - half/L, t + half/L] along the
+		// centerline; its near edges must clear `openingMargin` from each end.
+		// Clearance from the v0 end to the near edge, in meters: (t*L - half).
+		const double clearV0 = t * lengthM - halfWidthM;
+		const double clearV1 = (1.0 - t) * lengthM - halfWidthM;
+		const double minClear = std::min(clearV0, clearV1);
+		if (minClear < marginM) {
+			return {ValidationCode::OpeningMarginTooSmall, 0, 0, minClear};
+		}
+
+		// 6. No overlap with another opening already on the SAME segment. Two
+		// openings conflict when the gap between their near edges is below the
+		// inter-opening margin (reuse openingMargin). Compare in meters along the
+		// centerline. Iterate openings() in stable insertion order (determinism).
+		const double centerM = t * lengthM;
+		for (const Opening& other : world_->openings()) {
+			if (other.segment != segment) {
+				continue;
+			}
+			const engine::assets::OpeningTypeDef* otherType = reg.getOpeningType(other.type);
+			const double otherHalfM = otherType != nullptr ? static_cast<double>(otherType->widthMeters) / 2.0 : 0.0;
+			const double otherCenterM = static_cast<double>(other.t) * lengthM;
+			const double gap = std::abs(centerM - otherCenterM) - halfWidthM - otherHalfM;
+			if (gap < marginM) {
+				return {ValidationCode::OpeningOverlap, 0, 0, gap};
 			}
 		}
 

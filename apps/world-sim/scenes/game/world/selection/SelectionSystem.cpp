@@ -1,5 +1,7 @@
 #include "SelectionSystem.h"
 
+#include "scenes/game/world/construction/OpeningGeometry.h"
+
 #include <assets/AssetRegistry.h>
 #include <assets/ConstructionRegistry.h>
 #include <assets/placement/PlacementExecutor.h>
@@ -212,6 +214,40 @@ void SelectionSystem::handleClick(float screenX, float screenY, int viewportW, i
 		}
 	}
 
+	// Priority 2.3: Openings (doors/windows). An opening sits IN the wall it cuts,
+	// so a click on its footprint must beat the wall band underneath it (and the
+	// foundation below that), while still losing to anything resting on top
+	// (entities/items/colonists, handled above). Test the click against each
+	// opening's oriented footprint (the same rectangle the render and indicator use)
+	// in integer mm via exact point-in-polygon. Iterate openings() in its stable
+	// insertion order; a contained hit wins, tie-break the highest id (deterministic,
+	// matching foundationAt / segmentAt). Openings don't overlap, so "contained"
+	// resolves uniquely except on a shared boundary, which the id tie-break settles.
+	if (constructionWorld != nullptr) {
+		const auto						clickMm = geometry::quantize(Foundation::Vec2{worldPos.x, worldPos.y});
+		engine::construction::OpeningId hitOpening = engine::construction::kInvalidOpening;
+		for (const auto& opening : constructionWorld->openings()) {
+			const geometry::Ring footprint = openingFootprint(*constructionWorld, opening);
+			if (footprint.size() < 3) {
+				continue;
+			}
+			if (geometry::pointInPolygon(clickMm, footprint) == geometry::PointInPolygon::Outside) {
+				continue;
+			}
+			if (opening.id >= hitOpening) { // highest-id tie-break; ids are monotonic
+				hitOpening = opening.id;
+			}
+		}
+		if (hitOpening != engine::construction::kInvalidOpening) {
+			selection = OpeningSelection{hitOpening};
+			LOG_INFO(Game, "Selected opening #%llu", static_cast<unsigned long long>(hitOpening));
+			if (callbacks.onSelectionChanged) {
+				callbacks.onSelectionChanged(selection);
+			}
+			return;
+		}
+	}
+
 	// Priority 2.5: Wall segments. A wall stands ON a foundation, so it must beat
 	// foundation selection (a click on the wall band selects the wall, not the floor
 	// under it) while still losing to anything that sits on the wall (entities, items,
@@ -309,6 +345,38 @@ void SelectionSystem::renderIndicator(int viewportW, int viewportH) {
 								.width = 3.0F,
 							},
 						.id = "foundation-selection-indicator",
+						.zIndex = 100,
+					}
+				);
+			}
+		}
+		return;
+	}
+
+	// Openings: outline the selected opening's footprint (the same oriented rectangle
+	// the render and hit-test use), mirroring the foundation/wall gold-ring. Drawn
+	// above the committed opening fill (z 63-64) at z 100.
+	if (auto* openingSel = std::get_if<OpeningSelection>(&selection)) {
+		const engine::construction::Opening* opening =
+			(constructionWorld != nullptr) ? constructionWorld->getOpening(openingSel->id) : nullptr;
+		if (opening != nullptr) {
+			const geometry::Ring footprint = openingFootprint(*constructionWorld, *opening);
+			const std::size_t	 n = footprint.size();
+			for (std::size_t i = 0; i < n; ++i) {
+				auto a = geometry::dequantize(footprint[i]);
+				auto b = geometry::dequantize(footprint[(i + 1) % n]);
+				auto sa = camera->worldToScreen(a.x, a.y, viewportW, viewportH, kPixelsPerMeter);
+				auto sb = camera->worldToScreen(b.x, b.y, viewportW, viewportH, kPixelsPerMeter);
+				Renderer::Primitives::drawLine(
+					Renderer::Primitives::LineArgs{
+						.start = Foundation::Vec2{sa.x, sa.y},
+						.end = Foundation::Vec2{sb.x, sb.y},
+						.style =
+							Foundation::LineStyle{
+								.color = Foundation::Color(1.0F, 0.85F, 0.0F, 0.9F), // Gold, matches wall/foundation indicator
+								.width = 3.0F,
+							},
+						.id = "opening-selection-indicator",
 						.zIndex = 100,
 					}
 				);

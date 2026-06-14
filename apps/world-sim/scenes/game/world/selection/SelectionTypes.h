@@ -65,6 +65,15 @@ struct WallSegmentSelection {
 	engine::construction::SegmentId id = engine::construction::kInvalidSegment;
 };
 
+/// A construction opening (door/window) is selected. Like WallSegmentSelection,
+/// geometry/type/material/state are queried from the ConstructionWorld by id; the
+/// ECS mirror entity (via the opening's `entity` handle) carries blueprint/progress
+/// info. The opening is the unit of selection and demolition, independent of the
+/// wall it sits on.
+struct OpeningSelection {
+	engine::construction::OpeningId id = engine::construction::kInvalidOpening;
+};
+
 /// Selection variant - represents current selection state
 using Selection = std::variant<
 	NoSelection,
@@ -73,6 +82,7 @@ using Selection = std::variant<
 	CraftingStationSelection,
 	FurnitureSelection,
 	WallSegmentSelection,
+	OpeningSelection,
 	FoundationSelection>;
 
 /// Helper to check if selection is empty

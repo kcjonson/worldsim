@@ -53,7 +53,7 @@ GameplayBar::GameplayBar(const Args& args)
 		.id = "actions_dropdown",
 		.openUpward = true}));
 
-	// Create Build dropdown - structure tools (foundations, later walls/openings).
+	// Create Build dropdown - structure tools (foundation, wall, openings).
 	buildDropdownHandle = addChild(UI::DropdownButton(UI::DropdownButton::Args{
 		.label = "Build",
 		.position = {0.0F, 0.0F},
@@ -69,6 +69,16 @@ GameplayBar::GameplayBar(const Args& args)
 					.label = "Wall",
 					.onSelect = [this]() {
 						if (onStructureSelected) onStructureSelected("wall");
+					}},
+				UI::DropdownItem{
+					.label = "Door",
+					.onSelect = [this]() {
+						if (onStructureSelected) onStructureSelected("door");
+					}},
+				UI::DropdownItem{
+					.label = "Window",
+					.onSelect = [this]() {
+						if (onStructureSelected) onStructureSelected("window");
 					}},
 			},
 		.id = "build_dropdown",

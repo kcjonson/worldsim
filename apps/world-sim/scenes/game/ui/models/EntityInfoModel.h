@@ -28,7 +28,7 @@ namespace world_sim {
 
 /// Cached selection identity for detecting structural vs value-only updates
 struct CachedSelection {
-	enum class Type { None, Colonist, WorldEntity, CraftingStation, Furniture, WallSegment, Foundation };
+	enum class Type { None, Colonist, WorldEntity, CraftingStation, Furniture, WallSegment, Opening, Foundation };
 
 	Type			  type = Type::None;
 	ecs::EntityID	  colonistId{0};	 // For Colonist selection
@@ -41,6 +41,7 @@ struct CachedSelection {
 	bool			  furniturePackaged{false}; // For Furniture selection
 	engine::construction::FoundationId foundationId{0};	 // For Foundation selection
 	engine::construction::SegmentId	   wallSegmentId{0}; // For WallSegment selection
+	engine::construction::OpeningId	   openingId{0};	 // For Opening selection
 
 	/// Check if this cache matches the given selection
 	[[nodiscard]] bool matches(const Selection& selection) const;
@@ -82,6 +83,7 @@ class EntityInfoModel {
 		ResourceQueryCallback queryResources;	// Query remaining resource count for harvestable entities
 		std::function<void()> onDemolishFoundation;	// Demolish the selected foundation
 		std::function<void()> onDemolishWallSegment; // Demolish the selected wall segment
+		std::function<void()>	   onDemolishOpening;	  // Demolish the selected opening
 	};
 
 	/// Refresh model with current selection state

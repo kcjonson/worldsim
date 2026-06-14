@@ -780,6 +780,28 @@ TEST(ConstructionWorldWallTests, RemoveSegmentDropsItsOpenings) {
 	EXPECT_EQ(world.getOpening(opening), nullptr);
 }
 
+TEST(ConstructionWorldWallTests, RemoveSegmentSurfacesOpeningEntitiesForDespawn) {
+	ConstructionWorld	   world;
+	const cw::FoundationId host = makeHost(world);
+
+	SegmentCommitResult seg = world.commitSegment({0, 0}, {4000, 0}, "wood", "thin", host);
+	ASSERT_TRUE(seg.ok());
+	const cw::OpeningId linked = world.addOpening(seg.id, 0.4F, "door", "wood");
+	const cw::OpeningId unlinked = world.addOpening(seg.id, 0.7F, "window", "wood");
+	ASSERT_NE(linked, kInvalidOpening);
+	ASSERT_NE(unlinked, kInvalidOpening);
+	ASSERT_TRUE(world.setOpeningEntity(linked, ecs::EntityID{42}));
+	// `unlinked` keeps kInvalidEntity (never mirrored to an ECS entity).
+
+	// removeSegment must hand back the live ECS handles of the openings it drops,
+	// so the caller can despawn them (no leaked door/window blueprint entities).
+	std::vector<ecs::EntityID> removed;
+	EXPECT_TRUE(world.removeSegment(seg.id, &removed));
+	ASSERT_EQ(removed.size(), 1u); // only the linked opening had a live handle
+	EXPECT_EQ(removed[0], ecs::EntityID{42});
+	EXPECT_EQ(world.openings().size(), 0u);
+}
+
 // ============================================================================
 // Walls: ECS-mirror mutators and versioning
 // ============================================================================

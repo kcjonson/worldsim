@@ -552,6 +552,141 @@ TEST_F(ConstructionRegistryTest, Validation_RejectsWallPresetWithNegativeMultipl
 	EXPECT_GT(ConfigValidator::getErrorCount(), 0);
 }
 
+// ---------------------------------------------------------------------------
+// Opening type tests
+// ---------------------------------------------------------------------------
+
+TEST_F(ConstructionRegistryTest, Openings_DoorAndWindowLoad) {
+	ASSERT_TRUE(ConstructionRegistry::Get().load(constructionConfigFolder().string()));
+
+	const auto* door = ConstructionRegistry::Get().getOpeningType("Door");
+	ASSERT_NE(door, nullptr);
+	EXPECT_EQ(door->name, "Door");
+	EXPECT_EQ(door->material, "Wood");
+	EXPECT_FLOAT_EQ(door->widthMeters, 0.9F);
+	EXPECT_EQ(door->widthMm, 900);
+	EXPECT_TRUE(door->pathable);
+	EXPECT_GT(door->costItems, 0.0F);
+	EXPECT_GT(door->workUnits, 0.0F);
+
+	const auto* window = ConstructionRegistry::Get().getOpeningType("Window");
+	ASSERT_NE(window, nullptr);
+	EXPECT_FLOAT_EQ(window->widthMeters, 0.6F);
+	EXPECT_EQ(window->widthMm, 600);
+	EXPECT_FALSE(window->pathable);
+}
+
+TEST_F(ConstructionRegistryTest, Openings_ListHasTwoTypesInOrder) {
+	ASSERT_TRUE(ConstructionRegistry::Get().load(constructionConfigFolder().string()));
+
+	const auto& types = ConstructionRegistry::Get().openingTypes();
+	ASSERT_EQ(types.size(), 2u);
+	// Load order is stable (matches XML order): Door first, Window second.
+	EXPECT_EQ(types[0].name, "Door");
+	EXPECT_EQ(types[1].name, "Window");
+}
+
+TEST_F(ConstructionRegistryTest, Openings_UnknownTypeIsNull) {
+	ASSERT_TRUE(ConstructionRegistry::Get().load(constructionConfigFolder().string()));
+	EXPECT_EQ(ConstructionRegistry::Get().getOpeningType("Skylight"), nullptr);
+}
+
+TEST_F(ConstructionRegistryTest, Openings_ClearedOnClear) {
+	ASSERT_TRUE(ConstructionRegistry::Get().load(constructionConfigFolder().string()));
+	ASSERT_FALSE(ConstructionRegistry::Get().openingTypes().empty());
+
+	ConstructionRegistry::Get().clear();
+	EXPECT_TRUE(ConstructionRegistry::Get().openingTypes().empty());
+	EXPECT_EQ(ConstructionRegistry::Get().getOpeningType("Door"), nullptr);
+}
+
+TEST_F(ConstructionRegistryTest, Validation_RejectsOpeningWithMissingMaterial) {
+	// An opening type referencing a material that does not exist must fail
+	// validation (fail-fast on a dangling config reference).
+	std::string xml = R"(<?xml version="1.0"?>
+<ConstructionMaterials>
+  <Foundation>
+    <Material name="Wood">
+      <costRatePerSquareMeter>2.0</costRatePerSquareMeter>
+      <workRatePerSquareMeter>12.0</workRatePerSquareMeter>
+      <hp>40.0</hp>
+      <flammability>0.8</flammability>
+      <beauty>1.0</beauty>
+      <speedModifier>1.15</speedModifier>
+      <pattern>
+        <emitter>planks</emitter>
+        <seed>1001</seed>
+        <palette>
+          <color>#C8915AFF</color>
+        </palette>
+      </pattern>
+    </Material>
+  </Foundation>
+  <Opening>
+    <Type name="GhostDoor">
+      <!-- references a material that was never defined -->
+      <material>Adamantium</material>
+      <widthMeters>0.9</widthMeters>
+      <pathable>true</pathable>
+      <costItems>3.0</costItems>
+      <workUnits>60.0</workUnits>
+    </Type>
+  </Opening>
+</ConstructionMaterials>)";
+
+	std::string path = writeTempFile(xml, ".xml");
+	ASSERT_TRUE(ConstructionRegistry::Get().loadMaterials(path));
+
+	std::string folder = constructionConfigFolder().string();
+	ConstructionRegistry::Get().loadConstraints((std::filesystem::path(folder) / "constraints.xml").string());
+	ConstructionRegistry::Get().loadSnapping((std::filesystem::path(folder) / "snapping.xml").string());
+
+	EXPECT_FALSE(ConfigValidator::validateConstruction());
+	EXPECT_GT(ConfigValidator::getErrorCount(), 0);
+}
+
+TEST_F(ConstructionRegistryTest, Validation_RejectsOpeningWithZeroWidth) {
+	std::string xml = R"(<?xml version="1.0"?>
+<ConstructionMaterials>
+  <Foundation>
+    <Material name="Wood">
+      <costRatePerSquareMeter>2.0</costRatePerSquareMeter>
+      <workRatePerSquareMeter>12.0</workRatePerSquareMeter>
+      <hp>40.0</hp>
+      <flammability>0.8</flammability>
+      <beauty>1.0</beauty>
+      <speedModifier>1.15</speedModifier>
+      <pattern>
+        <emitter>planks</emitter>
+        <seed>1001</seed>
+        <palette>
+          <color>#C8915AFF</color>
+        </palette>
+      </pattern>
+    </Material>
+  </Foundation>
+  <Opening>
+    <Type name="NoWidthDoor">
+      <material>Wood</material>
+      <!-- width omitted -> 0 -> invalid -->
+      <pathable>true</pathable>
+      <costItems>3.0</costItems>
+      <workUnits>60.0</workUnits>
+    </Type>
+  </Opening>
+</ConstructionMaterials>)";
+
+	std::string path = writeTempFile(xml, ".xml");
+	ASSERT_TRUE(ConstructionRegistry::Get().loadMaterials(path));
+
+	std::string folder = constructionConfigFolder().string();
+	ConstructionRegistry::Get().loadConstraints((std::filesystem::path(folder) / "constraints.xml").string());
+	ConstructionRegistry::Get().loadSnapping((std::filesystem::path(folder) / "snapping.xml").string());
+
+	EXPECT_FALSE(ConfigValidator::validateConstruction());
+	EXPECT_GT(ConfigValidator::getErrorCount(), 0);
+}
+
 TEST_F(ConstructionRegistryTest, Validation_RejectsDuplicateWallPresetNames) {
 	std::string xml = R"(<?xml version="1.0"?>
 <ConstructionMaterials>

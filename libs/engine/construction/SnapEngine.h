@@ -86,6 +86,19 @@ namespace engine::construction {
 		[[nodiscard]] bool closesShape() const { return kind == SnapKind::Origin; }
 	};
 
+	// Result of an opening snap: the BUILT wall segment the cursor snapped to, the
+	// centerline parameter t (clamped so an opening of the queried width honors the
+	// end margins), and the snapped world point (centerline at t) for the ghost
+	// preview. `valid` is false when no built wall is within the snap radius or the
+	// nearest one is too short to fit the opening; the other fields are unspecified
+	// then. The OpeningTool reads `segment` + `t` to commit and `point` to draw.
+	struct OpeningSnap {
+		SegmentId		   segment = kInvalidSegment;
+		float			   t = 0.0F;
+		::Foundation::Vec2 point{0.0F, 0.0F};
+		bool			   valid = false;
+	};
+
 	class SnapEngine {
 	  public:
 		SnapEngine(const engine::assets::SnappingConfig& snapping, const ConstructionWorld& world)
@@ -102,6 +115,16 @@ namespace engine::construction {
 		// off the previous chain point > raw. No origin-close (the chain is open). The
 		// result's hitVertex/hitSegment tell the WallTool what to commit against.
 		[[nodiscard]] SnapResult snapWall(const std::vector<::Foundation::Vec2>& points, ::Foundation::Vec2 cursor, bool freeform) const;
+
+		// Opening snap (Epic F). Find the nearest BUILT wall segment whose centerline
+		// passes within edgeSnapRadius of `cursor`, project the cursor onto it, and
+		// return the placement for an opening of `openingWidthMeters`. t is clamped so
+		// the opening honors the end margins from openingMargin config: t in
+		// [(half+margin)/L, 1-(half+margin)/L]. Returns valid=false if no built wall
+		// is in range, or the nearest one is too short to fit the opening. Only BUILT
+		// segments are candidates (a blueprint wall has no surface to cut yet).
+		// Reads segments() in stable order; ties keep the lowest-id segment.
+		[[nodiscard]] OpeningSnap snapOpening(::Foundation::Vec2 cursor, float openingWidthMeters) const;
 
 	  private:
 		// Nearest existing-foundation vertex within vertexSnapRadius, if any.

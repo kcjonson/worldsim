@@ -25,6 +25,8 @@ bool CachedSelection::matches(const Selection& selection) const {
 				return type == Type::Furniture && furnitureId == sel.entityId && furniturePackaged == sel.isPackaged;
 			} else if constexpr (std::is_same_v<T, WallSegmentSelection>) {
 				return type == Type::WallSegment && wallSegmentId == sel.id;
+			} else if constexpr (std::is_same_v<T, OpeningSelection>) {
+				return type == Type::Opening && openingId == sel.id;
 			} else if constexpr (std::is_same_v<T, FoundationSelection>) {
 				return type == Type::Foundation && foundationId == sel.id;
 			}
@@ -49,6 +51,7 @@ void CachedSelection::update(const Selection& selection) {
 			furniturePackaged = false;
 			foundationId = engine::construction::kInvalidFoundation;
 			wallSegmentId = engine::construction::kInvalidSegment;
+			openingId = engine::construction::kInvalidOpening;
 
 			if constexpr (std::is_same_v<T, NoSelection>) {
 				type = Type::None;
@@ -71,6 +74,9 @@ void CachedSelection::update(const Selection& selection) {
 			} else if constexpr (std::is_same_v<T, WallSegmentSelection>) {
 				type = Type::WallSegment;
 				wallSegmentId = sel.id;
+			} else if constexpr (std::is_same_v<T, OpeningSelection>) {
+				type = Type::Opening;
+				openingId = sel.id;
 			} else if constexpr (std::is_same_v<T, FoundationSelection>) {
 				type = Type::Foundation;
 				foundationId = sel.id;
@@ -97,6 +103,7 @@ EntityInfoModel::UpdateType EntityInfoModel::refresh(
 	bool		  isStation = std::holds_alternative<CraftingStationSelection>(selection);
 	bool		  isFurniture = std::holds_alternative<FurnitureSelection>(selection);
 	bool		  isWallSegment = std::holds_alternative<WallSegmentSelection>(selection);
+	bool		  isOpening = std::holds_alternative<OpeningSelection>(selection);
 	bool		  isFoundation = std::holds_alternative<FoundationSelection>(selection);
 	ecs::EntityID colonistId{0};
 	ecs::EntityID stationId{0};
@@ -126,6 +133,12 @@ EntityInfoModel::UpdateType EntityInfoModel::refresh(
 		const auto& wallSel = std::get<WallSegmentSelection>(selection);
 		if (constructionWorld == nullptr || constructionWorld->getSegment(wallSel.id) == nullptr) {
 			isWallSegment = false;
+		}
+	}
+	if (isOpening) {
+		const auto& openingSel = std::get<OpeningSelection>(selection);
+		if (constructionWorld == nullptr || constructionWorld->getOpening(openingSel.id) == nullptr) {
+			isOpening = false;
 		}
 	}
 	if (isFoundation) {
@@ -182,6 +195,9 @@ EntityInfoModel::UpdateType EntityInfoModel::refresh(
 	} else if (isWallSegment && constructionWorld != nullptr) {
 		const auto& wallSel = std::get<WallSegmentSelection>(selection);
 		contentData = adaptWallSegment(world, *constructionWorld, wallSel, callbacks.onDemolishWallSegment);
+	} else if (isOpening && constructionWorld != nullptr) {
+		const auto& openingSel = std::get<OpeningSelection>(selection);
+		contentData = adaptOpening(world, *constructionWorld, openingSel, callbacks.onDemolishOpening);
 	} else if (isFoundation && constructionWorld != nullptr) {
 		const auto& foundationSel = std::get<FoundationSelection>(selection);
 		contentData = adaptFoundation(world, *constructionWorld, foundationSel, callbacks.onDemolishFoundation);

@@ -11,6 +11,11 @@
 #include <assets/AssetDefinition.h>
 #include <assets/AssetRegistry.h>
 
+#include <construction/ConstructionWorld.h>
+
+#include <core/Vec2i64.h>
+#include <polygon/Polygon.h>
+
 #include <gtest/gtest.h>
 
 #include <algorithm>
@@ -214,6 +219,21 @@ namespace {
 			return entity;
 		}
 
+		/// An opening blueprint (door/window) per the F1b entity contract: starts at
+		/// AwaitingMaterials (no clear phase), single-material manifest, graphId = openingId.
+		EntityID createOpeningBlueprint(uint64_t openingId, glm::vec2 pos = {5.0F, 7.0F}) {
+			auto entity = world->createEntity();
+			world->addComponent<Position>(entity, Position{pos});
+			world->addComponent<Structure>(entity, Structure{StructureKind::Opening, openingId});
+			world->addComponent<Inventory>(entity, Inventory{});
+			StructureBlueprint bp;
+			bp.phase = StructureBlueprint::BuildPhase::AwaitingMaterials;
+			bp.required = {{"Wood", 10}};
+			bp.workTotal = 20.0F;
+			world->addComponent<StructureBlueprint>(entity, bp);
+			return entity;
+		}
+
 		/// A colonist carrying `woodCarried` Wood in its backpack (capped at the stack size).
 		/// NeedsComponent marks it a colonist so carriedAmount/colonistCarryCapacity see it.
 		EntityID createColonistCarryingWood(uint32_t woodCarried) {
@@ -352,4 +372,184 @@ TEST_F(ConstructionGoalEmissionTest, FullStackRetiresHarvestSoHaulWinsForLargeMa
 	const auto* haul = findChild(umbrella->id, TaskType::Haul);
 	ASSERT_NE(haul, nullptr) << "the Haul goal must remain so the carried load gets delivered";
 	EXPECT_EQ(haul->targetAmount, 313U);
+}
+
+// ============================================================================
+// Openings (doors/windows): same gated lifecycle as walls but one level up. An
+// opening waits on its host wall SEGMENT being Built, has no clear phase, and then
+// hauls + builds through the shared loop. The null-world case (this fixture wires
+// no ConstructionWorld) proves the headless ungate: isOpeningHostSegmentBuilt
+// returns true, so the opening immediately hauls its material.
+// ============================================================================
+
+TEST_F(ConstructionGoalEmissionTest, OpeningWithNoWorldIsUngatedAndHaulsImmediately) {
+	// No ConstructionWorld wired -> isOpeningHostSegmentBuilt is true (headless ungate),
+	// so the opening flows straight into AwaitingMaterials and emits haul goals.
+	auto  opening = createOpeningBlueprint(/*openingId=*/1);
+	auto& registry = GoalTaskRegistry::Get();
+
+	refresh();
+
+	const auto* umbrella = registry.getGoalByDestination(opening);
+	ASSERT_NE(umbrella, nullptr);
+	EXPECT_EQ(umbrella->type, TaskType::Build);
+	EXPECT_EQ(umbrella->status, GoalStatus::Blocked) << "umbrella Blocked while materials outstanding";
+
+	auto children = registry.getChildGoals(umbrella->id);
+	EXPECT_EQ(countOfType(children, TaskType::Harvest), 1U);
+	EXPECT_EQ(countOfType(children, TaskType::Haul), 1U);
+}
+
+TEST_F(ConstructionGoalEmissionTest, OpeningNeverEmitsClearGoals) {
+	// An opening sits on a built wall: it has no clear phase, so even on first sight it
+	// emits no Harvest CLEAR goal. (Its only Harvest is the per-material delivery chain,
+	// which carries a chainId; a clear goal would not.)
+	auto  opening = createOpeningBlueprint(/*openingId=*/1);
+	auto& registry = GoalTaskRegistry::Get();
+
+	refresh();
+
+	const auto* umbrella = registry.getGoalByDestination(opening);
+	ASSERT_NE(umbrella, nullptr);
+	for (const auto* child : registry.getChildGoals(umbrella->id)) {
+		if (child->type == TaskType::Harvest) {
+			EXPECT_TRUE(child->chainId.has_value()) << "an opening's only Harvest is a material chain, never a clear goal";
+		}
+	}
+}
+
+// ============================================================================
+// Opening host-segment gate, driven through a real ConstructionWorld. The gate
+// holds the opening at a Blocked umbrella with NO haul/build goals while its host
+// segment is Blueprint, and releases it (haul, then build) once the segment is Built.
+// ============================================================================
+
+namespace {
+	namespace cw = engine::construction;
+
+	class OpeningHostGateTest : public ::testing::Test {
+	  protected:
+		void SetUp() override {
+			GoalTaskRegistry::Get().clear();
+			auto& assets = engine::assets::AssetRegistry::Get();
+			assets.clearDefinitions();
+			engine::assets::AssetDefinition def;
+			def.defName = "Wood";
+			def.label = "Wood";
+			assets.registerTestDefinition(std::move(def));
+
+			world = std::make_unique<World>();
+			construction = &world->registerSystem<ConstructionSystem>();
+			construction->setConstructionWorld(&topology);
+		}
+
+		void TearDown() override {
+			world.reset();
+			GoalTaskRegistry::Get().clear();
+			engine::assets::AssetRegistry::Get().clearDefinitions();
+		}
+
+		/// Commit a host foundation + wall segment, attach an opening at t=0.5, and return
+		/// the opening id. The segment starts Blueprint.
+		cw::OpeningId makeOpeningOnSegment() {
+			// CCW integer-mm box (1000 mm == 1 m), the proven host-foundation shape.
+			geometry::Ring	 ring{{-10000, -10000}, {100000, -10000}, {100000, 100000}, {-10000, 100000}};
+			cw::CommitResult host = topology.commitFoundation(std::move(ring), "wood");
+			EXPECT_TRUE(host.ok());
+			cw::SegmentCommitResult seg = topology.commitSegment({0, 0}, {4000, 0}, "wood", "thin", host.id);
+			EXPECT_TRUE(seg.ok());
+			hostSegment = seg.id;
+			return topology.addOpening(seg.id, 0.5F, "door", "wood");
+		}
+
+		EntityID createOpeningBlueprint(uint64_t openingId, glm::vec2 pos = {1.0F, 1.0F}) {
+			auto entity = world->createEntity();
+			world->addComponent<Position>(entity, Position{pos});
+			world->addComponent<Structure>(entity, Structure{StructureKind::Opening, openingId});
+			world->addComponent<Inventory>(entity, Inventory{});
+			StructureBlueprint bp;
+			bp.phase = StructureBlueprint::BuildPhase::AwaitingMaterials;
+			bp.required = {{"Wood", 10}};
+			bp.workTotal = 20.0F;
+			world->addComponent<StructureBlueprint>(entity, bp);
+			return entity;
+		}
+
+		void refresh() {
+			for (int i = 0; i < 30; ++i) {
+				world->update(0.016F);
+			}
+		}
+
+		cw::ConstructionWorld  topology;
+		cw::SegmentId		   hostSegment = cw::kInvalidSegment;
+		std::unique_ptr<World> world;
+		ConstructionSystem*	   construction = nullptr;
+	};
+} // namespace
+
+TEST_F(OpeningHostGateTest, BlueprintSegmentGatesOpeningAtBlockedUmbrellaWithNoGoals) {
+	const cw::OpeningId opening = makeOpeningOnSegment();
+	ASSERT_NE(opening, cw::kInvalidOpening);
+	auto  blueprint = createOpeningBlueprint(opening);
+	auto& registry = GoalTaskRegistry::Get();
+
+	refresh();
+
+	// Host segment is still Blueprint: the opening holds a Blocked umbrella, NO children,
+	// and stays AwaitingMaterials.
+	const auto* bp = world->getComponent<StructureBlueprint>(blueprint);
+	ASSERT_NE(bp, nullptr);
+	EXPECT_EQ(bp->phase, StructureBlueprint::BuildPhase::AwaitingMaterials);
+
+	const auto* umbrella = registry.getGoalByDestination(blueprint);
+	ASSERT_NE(umbrella, nullptr);
+	EXPECT_EQ(umbrella->type, TaskType::Build);
+	EXPECT_EQ(umbrella->status, GoalStatus::Blocked);
+	EXPECT_TRUE(registry.getChildGoals(umbrella->id).empty()) << "gated opening must emit no haul/build child goals";
+}
+
+TEST_F(OpeningHostGateTest, BuiltSegmentReleasesOpeningToHaulThenBuild) {
+	const cw::OpeningId opening = makeOpeningOnSegment();
+	ASSERT_NE(opening, cw::kInvalidOpening);
+	auto  blueprint = createOpeningBlueprint(opening);
+	auto& registry = GoalTaskRegistry::Get();
+
+	// Flip the host segment to Built: the gate opens.
+	ASSERT_TRUE(topology.setSegmentState(hostSegment, cw::FoundationState::Built));
+
+	refresh();
+
+	// Now hauling: a Harvest + Haul child per material under the umbrella.
+	const auto* umbrella = registry.getGoalByDestination(blueprint);
+	ASSERT_NE(umbrella, nullptr);
+	auto children = registry.getChildGoals(umbrella->id);
+	EXPECT_EQ(countOfType(children, TaskType::Harvest), 1U);
+	EXPECT_EQ(countOfType(children, TaskType::Haul), 1U);
+
+	// Stage the materials on the blueprint's delivery inventory, then refresh: the opening
+	// advances to UnderConstruction and the umbrella flips Available (the Build goal).
+	world->getComponent<Inventory>(blueprint)->addItem("Wood", 10);
+	refresh();
+
+	const auto* bp = world->getComponent<StructureBlueprint>(blueprint);
+	ASSERT_NE(bp, nullptr);
+	EXPECT_EQ(bp->phase, StructureBlueprint::BuildPhase::UnderConstruction);
+
+	const auto* umbrella2 = registry.getGoalByDestination(blueprint);
+	ASSERT_NE(umbrella2, nullptr);
+	EXPECT_EQ(umbrella2->status, GoalStatus::Available) << "materials staged -> umbrella Build goal Available";
+}
+
+TEST_F(OpeningHostGateTest, UnknownOpeningStaysGated) {
+	// graphId points at no opening in the topology: the gate stays closed (Blocked, no goals).
+	auto  blueprint = createOpeningBlueprint(/*openingId=*/9999);
+	auto& registry = GoalTaskRegistry::Get();
+
+	refresh();
+
+	const auto* umbrella = registry.getGoalByDestination(blueprint);
+	ASSERT_NE(umbrella, nullptr);
+	EXPECT_EQ(umbrella->status, GoalStatus::Blocked);
+	EXPECT_TRUE(registry.getChildGoals(umbrella->id).empty()) << "an opening with no topology node stays gated";
 }
