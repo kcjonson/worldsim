@@ -60,12 +60,18 @@ if(BUILD_TESTING)
             target_compile_options(world-tests PRIVATE -O0 -g)
         endif()
         # Two ctest entries against the SAME executable, split by gtest suite name.
-        # The heaviest tests (full planet pipelines and full coarse tectonic-sim
-        # histories, multi-second each, tens of seconds in Debug) live in suites ending
-        # in "Heavy"; everything else is the fast bucket. New tests classify themselves
-        # just by their suite name, no list to maintain. The heavy bucket gets generous
-        # headroom for slow CI runners; the fast bucket has a 300s cap so a heavy test
-        # mistakenly left without the suffix fails loud instead of bloating the gate.
+        # Classification rule: a test belongs in *Heavy if it runs the full PlanetGenerator
+        # pipeline (calls runPipeline/runToCompletion or equivalent) OR a full PlateSim
+        # history at coarseN >= 48. Tests at n <= 32 or using only individual stages on
+        # synthetic worlds are fast. Add the "Heavy" suffix to the gtest SUITE name to
+        # classify; no list to maintain here.
+        #
+        # Fast-bucket TIMEOUT calibration (2025-06-13):
+        #   RelWithDebInfo wall time: ~7s
+        #   Debug-CI multiplier: ~9x -> ~63s on CI
+        #   Formula: max(300, ceil(7 * 12)) = max(300, 84) = 300
+        #   300s gives >4x margin over the worst-case Debug-CI estimate.
+        # If the fast wall time grows, rerun and set TIMEOUT = max(300, ceil(newWall * 12)).
         add_test(NAME world-tests COMMAND world-tests --gtest_filter=-*Heavy*)
         set_tests_properties(world-tests PROPERTIES LABELS "fast" TIMEOUT 300)
         add_test(NAME world-tests-heavy COMMAND world-tests --gtest_filter=*Heavy*)

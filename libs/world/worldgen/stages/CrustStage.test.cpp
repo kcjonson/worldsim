@@ -57,7 +57,7 @@ PlanetParams makeParams(uint32_t n, double waterAmount = 0.70, int K = 8,
 // All tiles have valid plateId (< plateCount, not 255)
 // ============================================================================
 
-TEST(CrustStage, ValidPlateIds) {
+TEST(CrustStageHeavy, ValidPlateIds) {
     // n=64 keeps this fast; coarseN stays 128 (capped by PlateSim)
     auto world = runPipeline(makeParams(64, 0.70, 8, 0xC501C501C501C501ULL));
     ASSERT_NE(world, nullptr);
@@ -79,7 +79,7 @@ TEST(CrustStage, ValidPlateIds) {
 // Continental-crust fraction within a sane band (5%..95% range of TectonicHistory)
 // ============================================================================
 
-TEST(CrustStage, CrustFractionSaneBand) {
+TEST(CrustStageHeavy, CrustFractionSaneBand) {
     auto world = runPipeline(makeParams(64, 0.70, 8, 0xC502C502C502C502ULL));
     ASSERT_NE(world, nullptr);
 
@@ -102,7 +102,7 @@ TEST(CrustStage, CrustFractionSaneBand) {
 // crustAge in [0, 65534] for every tile
 // ============================================================================
 
-TEST(CrustStage, CrustAgeInRange) {
+TEST(CrustStageHeavy, CrustAgeInRange) {
     auto world = runPipeline(makeParams(64, 0.70, 8, 0xC503C503C503C503ULL));
     ASSERT_NE(world, nullptr);
 
@@ -119,7 +119,7 @@ TEST(CrustStage, CrustAgeInRange) {
 // orogenyAge: either kNeverU16 (65535) or a valid Myr < 65535; no unassigned
 // ============================================================================
 
-TEST(CrustStage, OrogenyAgeValid) {
+TEST(CrustStageHeavy, OrogenyAgeValid) {
     auto world = runPipeline(makeParams(64, 0.70, 8, 0xC504C504C504C504ULL));
     ASSERT_NE(world, nullptr);
 
@@ -149,7 +149,7 @@ TEST(CrustStage, OrogenyAgeValid) {
 // Cross-thread determinism: worldHash identical at thread counts 1 and 8
 // ============================================================================
 
-TEST(CrustStage, DeterministicAcrossThreadCounts) {
+TEST(CrustStageHeavy, DeterministicAcrossThreadCounts) {
     PlanetParams params = makeParams(128, 0.70, 8, 0xDE7128C8DE7128C8ULL);
 
     auto w1 = runPipeline(params, 600, 1);
@@ -167,7 +167,7 @@ TEST(CrustStage, DeterministicAcrossThreadCounts) {
 // ValidFields include PlateId, Flags, CrustAge, OrogenyAge after Crust runs
 // ============================================================================
 
-TEST(CrustStage, ValidFieldsSet) {
+TEST(CrustStageHeavy, ValidFieldsSet) {
     auto world = runPipeline(makeParams(64));
     ASSERT_NE(world, nullptr);
 

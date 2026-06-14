@@ -105,7 +105,7 @@ TEST(PlateSim, OlderOceanicSubducts) {
 // time (age 0 at creation), so the final history has age-0 oceanic cells.
 // ============================================================================
 
-TEST(PlateSim, GapFillCreatesAgeZeroCrust) {
+TEST(PlateSimHeavy, GapFillCreatesAgeZeroCrust) {
     auto p = defaultParams(48, 99ULL, 6, 0.70);
     PlateSim sim(p);
     auto history = sim.run();
