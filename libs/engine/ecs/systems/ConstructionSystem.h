@@ -95,12 +95,21 @@ namespace ecs {
 	[[nodiscard]] ConstructionDecision
 	decideConstructionPhase(const StructureBlueprint& blueprint, bool footprintClear, bool materialsComplete);
 
-	/// How much of a material a colonist still needs to HARVEST, given how much the
-	/// site still needs (`remaining`) and how much is already carried toward it
-	/// (`carried`, summed across colonists). Bounds chopping so a colonist that
-	/// already carries enough switches to delivering instead of topping up forever.
+	/// How much of a material to HARVEST for the NEXT delivery trip, given how much the
+	/// site still needs (`remaining`), how much is already carried toward it (`carried`,
+	/// summed across colonists), and how much a colonist can carry in one trip
+	/// (`carryCapacity`, the inventory stack size).
+	///
+	/// The demand that matters is "do I need MORE in hand to make a worthwhile delivery
+	/// trip", not "is the whole site satisfied". A colonist's stack caps at carryCapacity
+	/// (e.g. 99), so for a manifest larger than one stack `carried` can never reach
+	/// `remaining`; bounding by `remaining` alone would leave the Harvest goal Available
+	/// forever and the colonist would hoard at the stack cap instead of delivering. So the
+	/// per-trip target is min(remaining, carryCapacity): once carried reaches it, demand is
+	/// 0, the Harvest goal retires, and the Haul wins so the load gets delivered. Empty
+	/// hands with work outstanding gives demand > 0 again for the next trip.
 	/// Pure; unit-tested directly.
-	[[nodiscard]] uint32_t constructionHarvestDemand(uint32_t remaining, uint32_t carried);
+	[[nodiscard]] uint32_t constructionHarvestDemand(uint32_t remaining, uint32_t carried, uint32_t carryCapacity);
 
 	/// ConstructionSystem - foundation lifecycle goal source (see file header).
 	class ConstructionSystem : public ISystem {
@@ -169,6 +178,12 @@ namespace ecs {
 		/// delivery Inventory is excluded). Used to bound harvest demand so a colonist that
 		/// already carries enough delivers it instead of chopping more.
 		[[nodiscard]] uint32_t carriedAmount(EntityID buildSite, const std::string& defName) const;
+
+		/// The most a single colonist can carry of a material in one trip: the largest
+		/// inventory stack size among colonists (a deterministic max, not iteration-order
+		/// dependent). Used as the per-trip harvest target so a manifest larger than one
+		/// stack still gets delivered in repeated trips rather than hoarded at the cap.
+		[[nodiscard]] uint32_t colonistCarryCapacity(EntityID buildSite) const;
 
 		engine::construction::ConstructionWorld*				  m_constructionWorld = nullptr;
 		const engine::assets::PlacementExecutor*				  m_placementExecutor = nullptr;
