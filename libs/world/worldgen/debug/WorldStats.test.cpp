@@ -195,7 +195,7 @@ TEST(WorldStats, BiomeFractionsSumToOne) {
 // The gates below sit outside that spread with margin so the test is a genuine
 // regression guard, not an overfit to one seed.
 // ============================================================================
-TEST(WorldStats, EarthLikeBiomeFractionsAcceptance) {
+TEST(WorldStatsHeavy, EarthLikeBiomeFractionsAcceptance) {
     PlanetParams p = PlanetParams::preset(Preset::EarthLike);
     // n=64 keeps enough land tiles for stable biome fractions while keeping this
     // full-pipeline test fast enough for the Debug CI suite's ctest budget.
@@ -244,7 +244,7 @@ TEST(WorldStats, EarthLikeBiomeFractionsAcceptance) {
 // the C-3 shelf shoulder (~-100 m). The two modes must sit in distinct
 // elevation regions: one abyssal (deep ocean), one land/shelf.
 // ============================================================================
-TEST(WorldStats, HypsometryBimodalityIgnoresShelfShoulder) {
+TEST(WorldStatsHeavy, HypsometryBimodalityIgnoresShelfShoulder) {
     PlanetParams p = PlanetParams::preset(Preset::EarthLike);
     // n=64: low enough to keep the full-pipeline run cheap for the Debug CI suite,
     // high enough that the abyssal plains resolve to a genuinely deep mode
@@ -280,7 +280,7 @@ TEST(WorldStats, HypsometryBimodalityIgnoresShelfShoulder) {
 // (~-120/-140 m). The two-threshold detection in computeHypsometry uses
 // kLandModeMinM=0 to exclude the shelf from the "land" slot.
 // ============================================================================
-TEST(WorldStats, HypsometryLandModeAboveZeroAtHighWaterAmount) {
+TEST(WorldStatsHeavy, HypsometryLandModeAboveZeroAtHighWaterAmount) {
     PlanetParams p = PlanetParams::preset(Preset::EarthLike);
     // n=48 is ample for the bimodal histogram; keeps the full-pipeline run cheap.
     p.gridSubdivision = 48;

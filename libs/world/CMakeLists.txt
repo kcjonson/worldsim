@@ -59,12 +59,17 @@ if(BUILD_TESTING)
         if(NOT MSVC)
             target_compile_options(world-tests PRIVATE -O0 -g)
         endif()
-        add_test(NAME world-tests COMMAND world-tests)
-        # The suite includes several full-pipeline and coarse-tectonic-sim tests
-        # that are inherently multi-second each; in a Debug build on a slow CI
-        # runner the whole executable can run ~20+ min, past ctest's 1500s default.
-        # Give explicit headroom so runner-speed variance doesn't spuriously time out.
-        set_tests_properties(world-tests PROPERTIES TIMEOUT 2400)
+        # Two ctest entries against the SAME executable, split by gtest suite name.
+        # The heaviest tests (full planet pipelines and full coarse tectonic-sim
+        # histories, multi-second each, tens of seconds in Debug) live in suites ending
+        # in "Heavy"; everything else is the fast bucket. New tests classify themselves
+        # just by their suite name, no list to maintain. The heavy bucket gets generous
+        # headroom for slow CI runners; the fast bucket has a 300s cap so a heavy test
+        # mistakenly left without the suffix fails loud instead of bloating the gate.
+        add_test(NAME world-tests COMMAND world-tests --gtest_filter=-*Heavy*)
+        set_tests_properties(world-tests PROPERTIES LABELS "fast" TIMEOUT 300)
+        add_test(NAME world-tests-heavy COMMAND world-tests --gtest_filter=*Heavy*)
+        set_tests_properties(world-tests-heavy PROPERTIES LABELS "heavy" TIMEOUT 2400)
     endif()
 
     # Create benchmark executable if benchmarks found

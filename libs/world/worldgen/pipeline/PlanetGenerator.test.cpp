@@ -158,7 +158,7 @@ TEST(PlanetGenerator, DifferentSeedDifferentHash) {
 // Cancelled, not Done. Elapsed time is printed for diagnostics only.
 // ============================================================================
 
-TEST(PlanetGenerator, CancelStopsGeneration) {
+TEST(PlanetGeneratorHeavy, CancelStopsGeneration) {
     PlanetParams params = PlanetParams::preset(Preset::EarthLike);
     params.gridSubdivision = 256; // large enough to still be running when we cancel
 
@@ -446,7 +446,7 @@ TEST(PlanetGenerator, SmallGridN16Completes) {
 }
 
 // n=64: coarseN clamp still active (64 < 128); upsample is actually downsampling.
-TEST(PlanetGenerator, SmallGridN64Completes) {
+TEST(PlanetGeneratorHeavy, SmallGridN64Completes) {
     PlanetParams params = PlanetParams::preset(Preset::EarthLike);
     params.gridSubdivision = 64;
     params.seed = 0x6464646464646464ULL;
@@ -461,7 +461,7 @@ TEST(PlanetGenerator, SmallGridN64Completes) {
 
 // K=2 plates: oversized-rift logic and plate-count controller must not deadlock
 // or collapse the continent.
-TEST(PlanetGenerator, PlatesMin2Completes) {
+TEST(PlanetGeneratorHeavy, PlatesMin2Completes) {
     PlanetParams params = PlanetParams::preset(Preset::EarthLike);
     params.gridSubdivision = 64;
     params.tectonicPlateCount = 2;
@@ -479,7 +479,7 @@ TEST(PlanetGenerator, PlatesMin2Completes) {
 
 // water=0.95 (ocean world): sea-level quantile and continental-area controller
 // must not fight the extreme target into divergence.
-TEST(PlanetGenerator, WaterExtreme095Completes) {
+TEST(PlanetGeneratorHeavy, WaterExtreme095Completes) {
     PlanetParams params = PlanetParams::preset(Preset::EarthLike);
     params.gridSubdivision = 64;
     params.waterAmount = 0.95;
@@ -493,7 +493,7 @@ TEST(PlanetGenerator, WaterExtreme095Completes) {
 }
 
 // water=0.05 (desert world): almost all continental crust.
-TEST(PlanetGenerator, WaterExtreme005Completes) {
+TEST(PlanetGeneratorHeavy, WaterExtreme005Completes) {
     PlanetParams params = PlanetParams::preset(Preset::EarthLike);
     params.gridSubdivision = 64;
     params.waterAmount = 0.05;

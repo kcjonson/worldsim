@@ -137,7 +137,7 @@ TEST(PlateSim, GapFillCreatesAgeZeroCrust) {
 // senses resolved area and a divergence would mean stale duplicate crust.
 // ============================================================================
 
-TEST(PlateSim, ContinentalAreaTrackedToTarget) {
+TEST(PlateSimHeavy, ContinentalAreaTrackedToTarget) {
     const double water = 0.70;
     auto p = defaultParams(64, 0xABCDULL, 12, water);
     PlateSim sim(p);
@@ -177,7 +177,7 @@ TEST(PlateSim, ContinentalAreaTrackedToTarget) {
 // Determinism: same seed twice -> identical product hash.
 // ============================================================================
 
-TEST(PlateSim, DeterministicProductHash) {
+TEST(PlateSimHeavy, DeterministicProductHash) {
     auto p = defaultParams(48, 0x5EED5EEDULL, 10, 0.65);
     PlateSim a(p);
     PlateSim b(p);
@@ -218,7 +218,7 @@ TEST(PlateSim, DeterministicProductHash) {
 // gradient. The M-T3.5 value was 0xeb2cb3f12d7fb6f6.
 // ============================================================================
 
-TEST(PlateSim, GoldenProductHash) {
+TEST(PlateSimHeavy, GoldenProductHash) {
     auto p = defaultParams(64, 0x1234567890ABCDEFULL, 12, 0.70);
     PlateSim sim(p);
     auto h = sim.run();
@@ -236,7 +236,7 @@ TEST(PlateSim, GoldenProductHash) {
 // (ridge crust young, abyssal crust old).
 // ============================================================================
 
-TEST(PlateSim, OceanAgeSanity) {
+TEST(PlateSimHeavy, OceanAgeSanity) {
     auto p = defaultParams(64, 0xFEEDULL, 12, 0.70);
     PlateSim sim(p);
     auto h = sim.run();
@@ -336,7 +336,7 @@ PlateSimTestOverride twoContinentsConverging(const std::shared_ptr<const SphereG
 // one plate is dead and the suture carries an orogeny stamp.
 // ----------------------------------------------------------------------------
 
-TEST(PlateSim, MergeAfterSustainedCollision) {
+TEST(PlateSimHeavy, MergeAfterSustainedCollision) {
     const uint32_t coarseN = 32;
     PlateSimParams p = defaultParams(coarseN, 1234ULL, 2, 0.0); // 0 water -> all continental
     p.historyMyr = 400.0; // long enough to accumulate the merge score
@@ -376,7 +376,7 @@ TEST(PlateSim, MergeAfterSustainedCollision) {
 // near the suture band.
 // ----------------------------------------------------------------------------
 
-TEST(PlateSim, RiftFollowsStampedSuture) {
+TEST(PlateSimHeavy, RiftFollowsStampedSuture) {
     const uint32_t coarseN = 40;
     // K=6 set-point but we install only 2 plates, so alive (2) << K -> a large
     // deficit drives the controller to rift the big plate quickly.
@@ -469,7 +469,7 @@ TEST(PlateSim, RiftFollowsStampedSuture) {
 // totals stay bounded, ~16-25), so the band is widened, not the underlying controller.
 // ----------------------------------------------------------------------------
 
-TEST(PlateSim, PlateCountStability) {
+TEST(PlateSimHeavy, PlateCountStability) {
     const int K = 12;
     const int kLow = K - 8;   // observed worst-case dip during a merge cascade
     const int kHigh = K + 7;  // transient peak during an oceanic reorganization burst
@@ -498,7 +498,7 @@ TEST(PlateSim, PlateCountStability) {
 // plate leaves a decaying trail (more than one volcanic cell, the freshest hottest).
 // ----------------------------------------------------------------------------
 
-TEST(PlateSim, HotspotStationaryAccumulates) {
+TEST(PlateSimHeavy, HotspotStationaryAccumulates) {
     const uint32_t coarseN = 32;
     PlateSimParams p = defaultParams(coarseN, 777ULL, 1, 0.0);
     p.historyMyr = 200.0;
@@ -536,7 +536,7 @@ TEST(PlateSim, HotspotStationaryAccumulates) {
     EXPECT_GT(volcCells, 0u);
 }
 
-TEST(PlateSim, HotspotMovingLeavesTrail) {
+TEST(PlateSimHeavy, HotspotMovingLeavesTrail) {
     const uint32_t coarseN = 32;
     PlateSimParams p = defaultParams(coarseN, 777ULL, 1, 0.0);
     p.historyMyr = 300.0;
@@ -585,7 +585,7 @@ TEST(PlateSim, HotspotMovingLeavesTrail) {
 // faster than the young-floor one, isolating the age dependence from the shared geometry.
 // ----------------------------------------------------------------------------
 
-TEST(PlateSim, SlabPullAcceleratesOldSlabPlate) {
+TEST(PlateSimHeavy, SlabPullAcceleratesOldSlabPlate) {
     const uint32_t coarseN = 32;
     auto grid = std::make_shared<const SphereGrid>(coarseN);
     const uint32_t N = grid->tileCount();
@@ -657,7 +657,7 @@ TEST(PlateSim, SlabPullAcceleratesOldSlabPlate) {
 // After running, the oversized plate has split (rift fired, an extra plate is alive).
 // ----------------------------------------------------------------------------
 
-TEST(PlateSim, OversizedOceanicPlateRifts) {
+TEST(PlateSimHeavy, OversizedOceanicPlateRifts) {
     const uint32_t coarseN = 32;
     PlateSimParams p = defaultParams(coarseN, 0x0CEA0CEAULL, 2, 1.0); // all ocean
     p.historyMyr = 300.0;
@@ -787,7 +787,7 @@ TEST(PlateSim, SpeckleIslandAbsorbedConservingContinent) {
 // form one connected component of meaningful length, not scattered singletons.
 // ----------------------------------------------------------------------------
 
-TEST(PlateSim, ResurfacingNucleatesCoherentRidge) {
+TEST(PlateSimHeavy, ResurfacingNucleatesCoherentRidge) {
     const uint32_t coarseN = 48;
     PlateSimParams p = defaultParams(coarseN, 0x21D9EULL, 1, 1.0); // single all-ocean plate
     // Long enough that the per-region nucleation fires, short enough to stay cheap. A single
