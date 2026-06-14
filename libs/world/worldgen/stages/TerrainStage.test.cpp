@@ -494,7 +494,8 @@ TEST(TerrainStage, ConvergenceSignCorrectness) {
 // ============================================================================
 
 TEST(TerrainStage, ShelfProfileAndSubmergedFraction) {
-    // n=256 so tile width is ~150km; we need enough resolution to see the shelf.
+    // n=256: tileCount = 10*256^2+2 = 655362, tileWidthKm ≈ 40030/sqrt(655362) ≈ 49 km.
+    // Enough resolution to resolve the 200 km shelf band (kShelfWidthKm in TerrainStage).
     auto world = runPipeline(makeParams(256, 0.70, 12, 0xFACEFEED42ULL), 300);
     ASSERT_NE(world, nullptr);
 
@@ -540,8 +541,8 @@ TEST(TerrainStage, ShelfProfileAndSubmergedFraction) {
         << " suspiciously high (>30%); shelf profile may be too wide or too shallow";
 
     // --- Shallow shelf tiles exist at -50m to -200m below sea level ---
-    // (These are the nearly-flat shelf tiles.) With a 75km shelf at -120m and n=256
-    // there should be a noticeable population here.
+    // (These are the nearly-flat shelf tiles.) With a 200 km shelf (kShelfWidthKm=200)
+    // at -120m and n=256 there should be a noticeable population here.
     uint32_t shallowShelfTiles = 0u;
     for (uint32_t t = 0; t < N; ++t) {
         float r = world->data.elevation[t] - sea;

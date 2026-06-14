@@ -45,8 +45,8 @@ namespace worldgen {
 namespace {
 
 constexpr size_t kGrainSize = 4096;
-constexpr double kPiOver180 = 3.14159265358979323846 / 180.0;
 constexpr double kPi        = 3.14159265358979323846;
+constexpr double kPiOver180 = kPi / 180.0;
 
 // --- Continentality (land/sea contrast) ---
 // distNorm in [0,1] = (distToOcean - meanLand) re-centered then scaled, see below.
@@ -62,11 +62,11 @@ constexpr double kContinentalityMeanC = 8.0; // full distNorm span -> ~8 C warme
 // interior (distNorm=1) over a coast (distNorm=0) at the same latitude. Earth:
 // maritime ~5 C half-amp, deep-continental ~30 C+, so ~20 C of spread.
 constexpr double kContinentalityRangeC = 20.0;
-// distToOcean saturates: beyond this many hops a tile is "fully interior" for the
-// purpose of normalization, so a single huge supercontinent doesn't compress every
-// other land mass to distNorm~0. ~14 hops at n=512 is roughly a 2500-3000 km
-// traverse (the scale at which interiors fully dry / decouple from the sea).
-constexpr double kInteriorSaturationHops = 14.0;
+// distToOcean (in tile hops) is converted to km using tileWidthKm so the
+// saturation distance is resolution-independent. Beyond kInteriorSaturationKm a
+// tile is "fully interior" (distNorm = 1). ~2000 km is the scale at which
+// continental interiors (Siberia, central Africa) decouple from maritime influence.
+constexpr double kInteriorSaturationKm = 2000.0;
 
 double clampd(double v, double lo, double hi) {
     return v < lo ? lo : (v > hi ? hi : v);
@@ -120,11 +120,21 @@ void AtmosphereStage::run(StageContext& ctx) {
     const double atmWindFactor = clampd(0.8 + 0.2 * sqrtAtm, 0.7, 1.5);
     const double windScale = rotWindFactor * atmWindFactor;
 
+    // Tile width in km (equatorial approximation: circumference / sqrt(N)). Used to
+    // convert the distance-to-ocean hop count to km so continentality saturation is
+    // resolution-independent (same physical distance at n=256, n=512, n=1024, etc.).
+    const double circumferenceKm =
+        2.0 * kPi * ctx.derived.planetRadiusMeters / 1000.0;
+    const double tileWidthKm =
+        circumferenceKm / foundation::det_math::sqrt(static_cast<double>(totalTiles));
+
     // --- Continentality pass 1: distance-to-ocean + land-mean of distNorm ---
-    // distNorm[t] = min(distToOcean / saturation, 1) on land, 0 on ocean. The
-    // mean is reduced SERIALLY over land tiles in ascending order — a parallel
-    // float reduce would not be bit-reproducible. The mean drives the zero-sum
-    // mean-temperature nudge below.
+    // distNorm[t] = min(distToOcean_km / kInteriorSaturationKm, 1) on land, 0 on
+    // ocean. Converting hops -> km makes the saturation distance fixed in physical
+    // units regardless of grid resolution (cf. PrecipitationStage's continentality
+    // loss, which uses the same conversion). The mean is reduced SERIALLY in tile
+    // order — a parallel float reduce would not be bit-reproducible. It drives the
+    // zero-sum mean-temperature nudge below.
     //
     // Exactness: landDistSum is accumulated from the STORED float distNorm[t]
     // values, not from the intermediate double dn. This ensures the pre-
@@ -140,7 +150,8 @@ void AtmosphereStage::run(StageContext& ctx) {
     uint32_t landCount = 0;
     for (uint32_t t = 0; t < totalTiles; ++t) {
         if (static_cast<double>(ctx.data.elevation[t]) < seaLevel) continue; // ocean
-        double dn = static_cast<double>(distToOcean[t]) / kInteriorSaturationHops;
+        double dn = static_cast<double>(distToOcean[t]) * tileWidthKm
+                    / kInteriorSaturationKm;
         if (dn > 1.0) dn = 1.0;
         distNorm[t] = static_cast<float>(dn);
         landDistSum += static_cast<double>(distNorm[t]); // sum from stored float, not intermediate double

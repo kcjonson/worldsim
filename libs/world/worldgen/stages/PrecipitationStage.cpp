@@ -62,10 +62,12 @@
 // seeded by stageSeed; the advection sweep and flowAccum pass run serially in a
 // fixed total order, so they are bit-identical at any thread count.
 //
-// Transient memory: tile-center cache (24 B/tile) + Pbase/oceanCharge/surfCap +
-// upwind ids + chain depth + sweep order + carriedOut/Base/Peak + downhill target
-// ids, all released before return. The center cache exists because the upwind
-// lookup reads up to 6 neighbor centers per tile; recomputing them would dominate.
+// Transient memory: tile-center cache (24 B/tile) + Pbase/oceanCharge +
+// upwind ids + seenStamp + chain depth + sweep order + carriedOut/Base/Peak +
+// downhill target ids, all released before return. surfCap is computed on-the-fly
+// in the serial sweep to save one tileCount-sized float allocation. The center
+// cache exists because the upwind lookup reads up to 6 neighbor centers per tile;
+// recomputing them would dominate.
 
 #include "worldgen/stages/PrecipitationStage.h"
 
@@ -212,7 +214,9 @@ void PrecipitationStage::run(StageContext& ctx) {
     // the downwind heading).
     std::vector<float>  pbase(totalTiles, 0.0f);
     std::vector<float>  oceanCharge(totalTiles, 0.0f); // Mcap for ocean tiles
-    std::vector<float>  surfCap(totalTiles, 0.0f);     // latitude-dependent plateau cap
+    // surfCap (latitude-dependent plateau cap) is computed on-the-fly in the serial
+    // sweep (pass 1c) to avoid a tileCount-sized allocation here. The cap formula
+    // needs only latBase and the named constants, all of which are in scope there.
     std::vector<TileId> upwind(totalTiles, kInvalidTile);
     ctx.pool.parallelFor(0, totalTiles, kGrainSize, [&](size_t begin, size_t end) {
         throwIfCancelled(ctx);
@@ -249,16 +253,6 @@ void PrecipitationStage::run(StageContext& ctx) {
             if (charge > kOceanChargeMax) charge = kOceanChargeMax;
             oceanCharge[t] = static_cast<float>(charge);
 
-            // Latitude-dependent surface plateau cap: wet bands (high latitudeBase)
-            // hold more interior moisture (convective recharge), dry subtropics less.
-            double latBaseNorm = latBase / 2000.0;
-            if (latBaseNorm < 0.0) latBaseNorm = 0.0;
-            if (latBaseNorm > 1.0) latBaseNorm = 1.0;
-            double cap = kSurfaceRechargeCapBase *
-                (kSurfaceRechargeCapLo +
-                 (kSurfaceRechargeCapHi - kSurfaceRechargeCapLo) * latBaseNorm);
-            surfCap[t] = static_cast<float>(cap);
-
             // Upwind link: the neighbor most OPPOSITE the downwind heading (the
             // direction the moisture parcel arrives from).
             // bestUp starts below any achievable alignment (-2 < any dot product
@@ -293,12 +287,20 @@ void PrecipitationStage::run(StageContext& ctx) {
     // a source" is a valid topological key: a tile always has strictly greater depth
     // than its upwind parent, so sorting by (depth, TileId) processes parents first.
     // Sources are ocean tiles and tiles whose upwind link is invalid; cycles (two
-    // tiles pointing at each other across a convergence line) are broken at the tile
-    // with the smaller id, which becomes a local source. Computed by an iterative
-    // walk of the chain (no recursion -> no stack overflow at millions of tiles).
-    // Pure function of the upwind array, so it is thread-count independent.
+    // tiles pointing at each other across a convergence line) are broken at the FIRST
+    // tile that is detected to already appear in the current chain walk (the repeated
+    // tile itself becomes depth 0), which is deterministic because the chain walk
+    // always starts from the same start tile and follows the same upwind links.
+    // Computed by an iterative walk (no recursion -> no stack overflow at millions of
+    // tiles). Pure function of the upwind array, so it is thread-count independent.
     std::vector<int32_t> depth(totalTiles, -1);
     {
+        // seenStamp[t] == start means tile t was pushed onto the chain for the
+        // walk that started at `start`. O(1) membership test per hop, replacing
+        // the previous O(chain-length) linear scan. The break point is identical
+        // to the old scan: the first tile whose seenStamp already equals start
+        // is the first repeated tile in the current chain, and it becomes depth 0.
+        std::vector<TileId> seenStamp(totalTiles, kInvalidTile);
         std::vector<TileId> chain;
         chain.reserve(64);
         for (TileId start = 0; start < totalTiles; ++start) {
@@ -315,12 +317,11 @@ void PrecipitationStage::run(StageContext& ctx) {
                     break;
                 }
                 // Detect a cycle: cur already appears earlier in this chain.
-                bool inChain = false;
-                for (TileId c : chain) {
-                    if (c == cur) { inChain = true; break; }
+                if (seenStamp[cur] == start) {
+                    depth[cur] = 0; break;             // break the cycle here
                 }
-                if (inChain) { depth[cur] = 0; break; } // break the cycle here
-                depth[cur] = -2;                        // mark in-progress
+                seenStamp[cur] = start;                // mark as seen for this walk
+                depth[cur] = -2;                       // mark in-progress
                 chain.push_back(cur);
                 cur = up;
             }
@@ -393,7 +394,20 @@ void PrecipitationStage::run(StageContext& ctx) {
         // flat interiors plateau there rather than at the desert floor. The surface
         // is a weak source: it only lifts M toward the (latitude-dependent) cap,
         // never tops up an already-wetter parcel, so wet coasts and lee shadows hold.
-        const double cap = static_cast<double>(surfCap[t]);
+        // Cap is computed on-the-fly from the tile center (centers[] is still live)
+        // to avoid carrying a full surfCap[] array through the sweep.
+        const Vec3d& tc = centers[t];
+        const double tAbsLat = [&] {
+            const double tlat = foundation::det_math::asin(tc.z) / kPiOver180;
+            return tlat < 0.0 ? -tlat : tlat;
+        }();
+        const double tLatBase = latitudePrecipBase(tAbsLat, hadleyEdge, ferrelEdge);
+        double tLatBaseNorm = tLatBase / 2000.0;
+        if (tLatBaseNorm < 0.0) tLatBaseNorm = 0.0;
+        if (tLatBaseNorm > 1.0) tLatBaseNorm = 1.0;
+        const double cap = kSurfaceRechargeCapBase *
+            (kSurfaceRechargeCapLo +
+             (kSurfaceRechargeCapHi - kSurfaceRechargeCapLo) * tLatBaseNorm);
         if (m < cap) {
             m += surfRechargePerHop;
             if (m > cap) m = cap;
@@ -445,7 +459,6 @@ void PrecipitationStage::run(StageContext& ctx) {
 
     pbase.clear();       pbase.shrink_to_fit();
     oceanCharge.clear(); oceanCharge.shrink_to_fit();
-    surfCap.clear();     surfCap.shrink_to_fit();
     upwind.clear();      upwind.shrink_to_fit();
     depth.clear();       depth.shrink_to_fit();
     carriedOut.clear();  carriedOut.shrink_to_fit();
