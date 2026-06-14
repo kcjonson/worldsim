@@ -26,7 +26,8 @@ enum class ColorMode : int {
     Plates       = 4, // Distinct hue per plate + boundary darkening
     Snow         = 5,
     Combined     = 6, // Biome + snow whitening + ocean depth shading
-    Count        = 7
+    Hydrology    = 7, // Drainage network: rivers bright blue, lakes cyan, land tinted by log(flowAccum)
+    Count        = 8
 };
 
 const char* colorModeName(ColorMode m);

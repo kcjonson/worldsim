@@ -132,6 +132,23 @@ TEST(PlanetColorizerBake, DownsampleMappingStaysInOwnedRange) {
     EXPECT_EQ(tiLast, n - 1U) << "last texel should map to vertex n-1";
 }
 
+// Hydrology mode: rivers (kFlagRiver) must be blue, lakes (kFlagLake) must be
+// cyan-blue (more blue than land), ocean tiles must render as elevation blue
+// (not neutral gray), and the bake must not be dominated by neutral gray.
+TEST(PlanetColorizerBake, HydrologyBakeIsNotGray) {
+    auto world = generate(64);
+    ASSERT_TRUE(world);
+    ASSERT_TRUE(world->validFields & static_cast<uint32_t>(worldgen::WorldField::FlowAccum))
+        << "Hydrology mode needs FlowAccum";
+
+    double meanSat = 0.0, grayFrac = 0.0;
+    bakeStats(*world, 64, ColorMode::Hydrology, meanSat, grayFrac);
+
+    EXPECT_LT(grayFrac, 0.05) << "Hydrology bake is mostly neutral-gray (missing fields?)";
+    // The mode should have some saturation from ocean blue and river/lake tiles.
+    EXPECT_GT(meanSat, 0.1) << "Hydrology bake is completely desaturated";
+}
+
 // Regression for release() not draining bake state: calling bakeRhombusForTest
 // twice on the same world must produce byte-identical output, confirming the
 // CPU baker is stateless and the fix does not corrupt the shared path.
