@@ -40,10 +40,21 @@ jobs:
     - name: Build
       run: cmake --build build -j$(nproc)
 
-    - name: Run tests
+    # Gating step: every unit-test target except the heavy worldgen bucket (full
+    # pipelines / coarse tectonic sims). A fast or unit regression surfaces here
+    # immediately. The exclusion drops the *-benchmarks ctest entries and the heavy
+    # world bucket; the heavy bucket then runs as its own step with a generous timeout.
+    - name: Run fast tests
       run: |
         cd build
-        ctest --output-on-failure -E ".*\.bench"
+        ctest --output-on-failure -E "(benchmarks|world-tests-heavy)"
+      env:
+        CTEST_OUTPUT_ON_FAILURE: 1
+
+    - name: Run heavy worldgen tests
+      run: |
+        cd build
+        ctest --output-on-failure -L heavy
       env:
         CTEST_OUTPUT_ON_FAILURE: 1
 
@@ -80,11 +91,21 @@ jobs:
       shell: bash
       run: cmake --build build --config Debug -j
 
-    - name: Run tests
+    # Gating step: every unit-test target except the heavy worldgen bucket (full
+    # pipelines / coarse tectonic sims). A fast or unit regression surfaces here
+    # immediately. The exclusion drops the *-benchmarks ctest entries and the heavy
+    # world bucket; the heavy bucket then runs as its own step with a generous timeout.
+    - name: Run fast tests
       shell: bash
       run: |
         cd build
-        ctest -C Debug --output-on-failure -E ".*\.bench"
+        ctest -C Debug --output-on-failure -E "(benchmarks|world-tests-heavy)"
+
+    - name: Run heavy worldgen tests
+      shell: bash
+      run: |
+        cd build
+        ctest -C Debug --output-on-failure -L heavy
 
     - name: Upload test results
       if: always()
