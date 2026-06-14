@@ -458,18 +458,17 @@ namespace world_sim {
 		const bool built =
 			(foundation != nullptr && foundation->state == engine::construction::FoundationState::Built);
 
-		// Build state + progress come from the ECS mirror's blueprint. A built
-		// foundation has no blueprint progress to show; a blueprint shows phase,
-		// a 0-100 work bar, and the delivered/required materials summary.
+		// Build state + progress (phase, delivered/required materials, work bar) come
+		// from the ECS mirror's blueprint and are only meaningful WHILE BUILDING. A
+		// finished foundation shows none of them -- its title, material, and area say
+		// what it is; State/Materials/Work would just be noise.
 		const ecs::StructureBlueprint* blueprint =
 			(foundation != nullptr) ? world.getComponent<ecs::StructureBlueprint>(foundation->entity) : nullptr;
 
-		if (blueprint != nullptr) {
+		if (!built && blueprint != nullptr) {
 			content.slots.push_back(TextSlot{"State", buildPhaseLabel(blueprint->phase, blueprint->demolishing)});
 			content.slots.push_back(TextSlot{"Materials", materialsSummary(*blueprint)});
 			content.slots.push_back(ProgressBarSlot{.label = "Work", .value = blueprint->progress() * 100.0F});
-		} else {
-			content.slots.push_back(TextSlot{"State", built ? "Built" : "Blueprint"});
 		}
 
 		// Demolish action. A foundation that still hosts walls can't be removed on
@@ -540,18 +539,16 @@ namespace world_sim {
 		const bool built =
 			(segment != nullptr && segment->state == engine::construction::FoundationState::Built);
 
-		// Build state + progress come from the ECS mirror's blueprint, exactly like a
-		// foundation: a built wall has no blueprint progress; a blueprint shows phase,
-		// a 0-100 work bar, and the delivered/required materials summary.
+		// Build state + progress (phase, materials, work bar) are only meaningful WHILE
+		// BUILDING; a finished wall shows none of them (its material, thickness, and
+		// length already say what it is). Same rule as the foundation panel.
 		const ecs::StructureBlueprint* blueprint =
 			(segment != nullptr) ? world.getComponent<ecs::StructureBlueprint>(segment->entity) : nullptr;
 
-		if (blueprint != nullptr) {
+		if (!built && blueprint != nullptr) {
 			content.slots.push_back(TextSlot{"State", buildPhaseLabel(blueprint->phase, blueprint->demolishing)});
 			content.slots.push_back(TextSlot{"Materials", materialsSummary(*blueprint)});
 			content.slots.push_back(ProgressBarSlot{.label = "Work", .value = blueprint->progress() * 100.0F});
-		} else {
-			content.slots.push_back(TextSlot{"State", built ? "Built" : "Blueprint"});
 		}
 
 		// Demolish action. Per-segment removal is the design's wall demolition unit;
@@ -602,12 +599,13 @@ namespace world_sim {
 		const bool hasMirror = opening != nullptr && opening->entity != ecs::kInvalidEntity && world.isAlive(opening->entity);
 		const ecs::StructureBlueprint* blueprint = hasMirror ? world.getComponent<ecs::StructureBlueprint>(opening->entity) : nullptr;
 
-		if (blueprint != nullptr) {
+		// Progress (state, materials, work bar) only while building; a finished opening
+		// shows none of it (type, material, pathable already describe it). Same rule as
+		// the foundation/wall panels.
+		if (!built && blueprint != nullptr) {
 			content.slots.push_back(TextSlot{"State", buildPhaseLabel(blueprint->phase, blueprint->demolishing)});
 			content.slots.push_back(TextSlot{"Materials", materialsSummary(*blueprint)});
 			content.slots.push_back(ProgressBarSlot{.label = "Work", .value = blueprint->progress() * 100.0F});
-		} else {
-			content.slots.push_back(TextSlot{"State", built ? "Built" : "Blueprint"});
 		}
 
 		// Demolish action. The opening is its own demolition unit (independent of the
