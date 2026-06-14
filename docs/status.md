@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2026-06-14 (Climate/biome/shelf retune PR #139 ready for merge; Construction Epic D walls #138 landed on main)
+Last Updated: 2026-06-14 (Climate/biome/shelf retune PR #139 merged; splitting heavy worldgen tests into a separate ctest bucket next)
 
 ## Epic/Story/Task Template
 
@@ -27,6 +27,19 @@ Use this template for all work items:
 ---
 
 ## Recently Completed Epics (Last 4)
+
+### ✅ Climate, Biome & Shelf Realism Retune (worldgen)
+**Spec/Documentation:** `/docs/development-log/entries/2026-06-14-climate-biome-shelf-retune.md`
+**Dependencies:** Tectonic History Simulation
+**Status:** complete (PR #139 merged)
+
+**Goal:** Retune the climate/biome stages (written against the old smooth terrain) for the new linear belts + bimodal hypsometry.
+
+**Completed Tasks:**
+- [x] C-1..C-5: meridional wind + distance-to-ocean moisture-advection sweep (rain shadows that scale to wide belts) + continentality temperature; piecewise continental shelf; biome rebalance + montane decouple + biome-fraction acceptance stats; dead-flag hygiene (kFlagCoast/kFlagGlacier); docs + dev log
+- [x] Self-review (2 agents) + fixes; two Copilot rounds cleared; CI timeout fix (trimmed heavy acceptance tests)
+
+**Result:** ArcticTundra ~47%→8-16%, HotDesert restored to ~8-10%, forests ~35-40%; visible rain shadows behind belts; shelves submerged ~6%; biomes bend around terrain instead of rigid latitude stripes. Deterministic across thread counts, n=1024 ~16.6s. Follow-up: water-availability hydrology, valley erosion. ✅
 
 ### ✅ Tectonic History Simulation (worldgen realism overhaul)
 **Spec/Documentation:** `.claude/plans/tectonic-history.md`, `/docs/development-log/entries/2026-06-13-tectonic-history-simulation.md`
@@ -422,22 +435,6 @@ while (running) {
 ---
 
 ## In Progress Epics
-
-### Climate, Biome & Shelf Realism Retune (worldgen)
-**Spec/Documentation:** `/docs/design/features/world-generation/generation-phases.md` (Phases 4-7), `biomes.md`
-**Dependencies:** Tectonic History Simulation (complete)
-**Status:** in progress
-
-**Goal:** Retune the climate/biome stages (written against the old smooth terrain) for the new linear belts + bimodal hypsometry. Distance-based moisture advection (rain shadows that scale to wide belts), continentality temperature, piecewise continental shelf, biome rebalance (ArcticTundra ~47%→~10%, restore hot desert + temperate forest), dead-flag hygiene. Earth-like biome fractions + visible rain shadows.
-
-**Tasks:**
-- [x] C-1: quick wins — flag hygiene (kFlagGlacier/kFlagCoast), backwards wetland predicate, meridional wind, Beach cutoff
-- [x] C-2: distance-to-ocean field + moisture advection sweep (replaces fixed 4-hop march) + continentality temperature
-- [x] C-3: continental shelf profile (flat shelf → break → slope) via shared signed-crust-edge function
-- [x] C-4: biome rebalance (cold/desert thresholds, montane-forest decouple) + biome-fraction stats + acceptance assertion
-- [x] C-5: verify (Earth-like fractions, rain shadows, shelf), docs (Phases 4-7), dev log, PR
-
----
 
 ### World Generation & Creator
 **Spec/Documentation:** `/docs/design/features/world-generation/`, `.claude/plans/world-generation.md`
