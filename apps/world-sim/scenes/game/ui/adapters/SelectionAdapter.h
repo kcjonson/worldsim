@@ -23,15 +23,17 @@ using ResourceQueryCallback = std::function<std::optional<uint32_t>(const std::s
 
 /// Convert a Selection variant into panel content.
 /// Returns std::nullopt for NoSelection (panel should hide).
-/// @param constructionWorld Topology store for FoundationSelection (nullable).
+/// @param constructionWorld Topology store for Foundation/WallSegment selection (nullable).
 /// @param onDemolish Callback for a foundation's Demolish button (nullable).
+/// @param onDemolishWallSegment Callback for a wall segment's Demolish button (nullable).
 [[nodiscard]] std::optional<PanelContent> adaptSelection(
 	const Selection& selection,
 	const ecs::World& world,
 	const engine::assets::AssetRegistry& registry,
 	const ResourceQueryCallback& queryResources = {},
 	const engine::construction::ConstructionWorld* constructionWorld = nullptr,
-	const std::function<void()>& onDemolish = {}
+	const std::function<void()>& onDemolish = {},
+	const std::function<void()>& onDemolishWallSegment = {}
 );
 
 /// Convert colonist data into two-column panel content
@@ -78,6 +80,23 @@ using ResourceQueryCallback = std::function<std::optional<uint32_t>(const std::s
 	const ecs::World& world,
 	const engine::construction::ConstructionWorld& constructionWorld,
 	const FoundationSelection& selection,
+	const std::function<void()>& onDemolish = {}
+);
+
+/// Convert a selected wall segment into panel content.
+/// Pulls material, thickness preset (name + meters), and length (from the
+/// segment's vertex positions) from the ConstructionWorld, and build state +
+/// progress + delivered/required materials from the ECS StructureBlueprint on the
+/// segment's mirror entity. Emits a Demolish ActionButtonSlot wired to onDemolish.
+/// Mirrors adaptFoundation; the segment (not the chain) is the demolition unit.
+/// @param world ECS world (for the blueprint component).
+/// @param constructionWorld Topology store (geometry, material, thickness, state).
+/// @param selection The selected wall segment.
+/// @param onDemolish Callback for the Demolish button (nullable).
+[[nodiscard]] PanelContent adaptWallSegment(
+	const ecs::World& world,
+	const engine::construction::ConstructionWorld& constructionWorld,
+	const WallSegmentSelection& selection,
 	const std::function<void()>& onDemolish = {}
 );
 

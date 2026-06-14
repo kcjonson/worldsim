@@ -196,6 +196,7 @@ namespace {
 				.onMenuClick = [this]() { sceneManager->switchTo(world_sim::toKey(world_sim::SceneType::MainMenu)); },
 				.onPlaceFurniture = [this]() { handlePlaceFurniture(); },
 				.onDemolishFoundation = [this]() { handleDemolishFoundation(); },
+				.onDemolishWallSegment = [this]() { handleDemolishWallSegment(); },
 				.queryResources = [this](const std::string& defName, Foundation::Vec2 position) -> std::optional<uint32_t> {
 					auto coord = engine::world::worldToChunk({position.x, position.y});
 					return m_placementExecutor->getResourceCount(coord, {position.x, position.y}, defName);
@@ -944,6 +945,44 @@ namespace {
 			}
 
 			LOG_INFO(Game, "Demolished foundation #%llu", static_cast<unsigned long long>(foundationSel->id));
+			m_selectionSystem->clearSelection();
+		}
+
+		/// Handle Demolish request from a wall segment's info panel. The SEGMENT, not
+		/// the chain, is the demolition unit (design D6): a multi-segment wall keeps its
+		/// other segments. Mirrors handleDemolishFoundation: immediate topology removal
+		/// plus a deferred ECS entity destroy through the same queue (so we never
+		/// destroyEntity mid-update). removeSegment also prunes any vertex left orphaned,
+		/// so a split T-junction can't leave a dangling vertex; the only entity to clean
+		/// up is this segment's own mirror (a split already re-mapped the host's entity).
+		void handleDemolishWallSegment() {
+			const auto& sel = m_selectionSystem->current();
+			auto*		wallSel = std::get_if<world_sim::WallSegmentSelection>(&sel);
+			if (wallSel == nullptr) {
+				LOG_WARNING(Game, "Cannot demolish: no wall segment selected");
+				return;
+			}
+
+			auto&		constructionWorld = m_drawingSystem->world();
+			const auto* segment = constructionWorld.getSegment(wallSel->id);
+			if (segment == nullptr) {
+				LOG_WARNING(Game, "Cannot demolish: wall segment #%llu not found", static_cast<unsigned long long>(wallSel->id));
+				m_selectionSystem->clearSelection();
+				return;
+			}
+
+			// Capture the ECS mirror handle before the topology record goes away, then
+			// remove just this segment (vertices left orphaned are pruned inside).
+			// Defer the entity destruction through the shared queue (drained after
+			// ecsWorld->update() in update()).
+			const ecs::EntityID entity = segment->entity;
+			constructionWorld.removeSegment(wallSel->id);
+			if (entity != ecs::kInvalidEntity) {
+				m_pendingEntityRemoval.push_back(entity);
+			}
+
+			LOG_INFO(Game, "Demolished wall segment #%llu", static_cast<unsigned long long>(wallSel->id));
+			gameUI->pushNotification("Demolished", "Wall segment removed", UI::ToastSeverity::Info);
 			m_selectionSystem->clearSelection();
 		}
 

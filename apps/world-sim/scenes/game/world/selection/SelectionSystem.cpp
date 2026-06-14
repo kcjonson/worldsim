@@ -1,6 +1,7 @@
 #include "SelectionSystem.h"
 
 #include <assets/AssetRegistry.h>
+#include <assets/ConstructionRegistry.h>
 #include <assets/placement/PlacementExecutor.h>
 #include <construction/ConstructionWorld.h>
 #include <core/Vec2i64.h>
@@ -10,13 +11,27 @@
 #include <ecs/components/Packaged.h>
 #include <ecs/components/Transform.h>
 #include <ecs/components/WorkQueue.h>
+#include <offset/WallOffset.h>
+#include <predicates/Predicates.h>
 #include <primitives/Primitives.h>
 #include <utils/Log.h>
 #include <world/chunk/ChunkCoordinate.h>
 
+#include <algorithm>
 #include <cmath>
 
 namespace world_sim {
+
+namespace {
+	// A segment's half-thickness in mm from its material/thickness preset, or 0 if
+	// the material has no wall config. The topology store is config-agnostic (it
+	// holds the preset NAME), so the renderer and this hit-test both resolve the
+	// number through ConstructionRegistry; same lookup as DrawingSystem's band render.
+	std::int64_t segmentHalfThicknessMm(const engine::construction::WallSegment& seg) {
+		const auto* preset = engine::assets::ConstructionRegistry::Get().getThicknessPreset(seg.material, seg.thicknessPreset);
+		return (preset != nullptr) ? preset->halfThicknessMm : 0;
+	}
+} // namespace
 
 SelectionSystem::SelectionSystem(const Args& args)
 	: ecsWorld(args.world)
@@ -183,6 +198,42 @@ void SelectionSystem::handleClick(float screenX, float screenY, int viewportW, i
 		}
 	}
 
+	// Priority 2.5: Wall segments. A wall stands ON a foundation, so it must beat
+	// foundation selection (a click on the wall band selects the wall, not the floor
+	// under it) while still losing to anything that sits on the wall (entities, items,
+	// colonists handled above). The per-segment pick radius is max(half-thickness,
+	// UI slop): a thin wall gets a forgiving target, a thick wall keeps its own face.
+	// segmentAt applies one radius to every segment (the topology store is
+	// config-agnostic), so query with the widest needed radius, then confirm the hit
+	// lies within its OWN segment's radius.
+	if (constructionWorld != nullptr) {
+		const auto clickMm = geometry::quantize(Foundation::Vec2{worldPos.x, worldPos.y});
+
+		std::int64_t maxHalfThicknessMm = 0;
+		for (const auto& seg : constructionWorld->segments()) {
+			maxHalfThicknessMm = std::max(maxHalfThicknessMm, segmentHalfThicknessMm(seg));
+		}
+		const std::int64_t queryRadiusMm = std::max(kWallPickSlopMm, maxHalfThicknessMm);
+
+		const auto segmentId = constructionWorld->segmentAt(clickMm, queryRadiusMm);
+		if (segmentId != engine::construction::kInvalidSegment) {
+			const auto* seg = constructionWorld->getSegment(segmentId);
+			const auto* v0 = (seg != nullptr) ? constructionWorld->getVertex(seg->v0) : nullptr;
+			const auto* v1 = (seg != nullptr) ? constructionWorld->getVertex(seg->v1) : nullptr;
+			if (seg != nullptr && v0 != nullptr && v1 != nullptr) {
+				const std::int64_t segRadiusMm = std::max(kWallPickSlopMm, segmentHalfThicknessMm(*seg));
+				if (geometry::withinDistanceOfSegment(clickMm, v0->pos, v1->pos, segRadiusMm)) {
+					selection = WallSegmentSelection{segmentId};
+					LOG_INFO(Game, "Selected wall segment #%llu", static_cast<unsigned long long>(segmentId));
+					if (callbacks.onSelectionChanged) {
+						callbacks.onSelectionChanged(selection);
+					}
+					return;
+				}
+			}
+		}
+	}
+
 	// Priority 3: Foundations (lowest). Quantize the click to integer mm and ask
 	// the ConstructionWorld for the topmost foundation containing it. Reaching
 	// here means no higher-priority entity was hit, so a colonist or item sitting
@@ -248,6 +299,43 @@ void SelectionSystem::renderIndicator(int viewportW, int viewportH) {
 								.width = 3.0F,
 							},
 						.id = "foundation-selection-indicator",
+						.zIndex = 100,
+					}
+				);
+			}
+		}
+		return;
+	}
+
+	// Wall segments: outline the selected segment's BAND (centerline offset by its
+	// half-thickness), mirroring the foundation gold-ring. Using geometry::band for
+	// the single segment keeps the indicator independent of the whole-graph junction
+	// trim the interim wall render runs; the outline reads cleanly even where two
+	// bands meet. Drawn above the wall band render (z 60-62) at z 100.
+	if (auto* wallSel = std::get_if<WallSegmentSelection>(&selection)) {
+		const engine::construction::WallSegment* seg =
+			(constructionWorld != nullptr) ? constructionWorld->getSegment(wallSel->id) : nullptr;
+		const engine::construction::Vertex* v0 = (seg != nullptr) ? constructionWorld->getVertex(seg->v0) : nullptr;
+		const engine::construction::Vertex* v1 = (seg != nullptr) ? constructionWorld->getVertex(seg->v1) : nullptr;
+		if (seg != nullptr && v0 != nullptr && v1 != nullptr) {
+			const std::int64_t halfThicknessMm = std::max<std::int64_t>(1, segmentHalfThicknessMm(*seg));
+			const geometry::Ring band = geometry::band(v0->pos, v1->pos, halfThicknessMm);
+			const std::size_t  n = band.size();
+			for (std::size_t i = 0; i < n; ++i) {
+				auto a = geometry::dequantize(band[i]);
+				auto b = geometry::dequantize(band[(i + 1) % n]);
+				auto sa = camera->worldToScreen(a.x, a.y, viewportW, viewportH, kPixelsPerMeter);
+				auto sb = camera->worldToScreen(b.x, b.y, viewportW, viewportH, kPixelsPerMeter);
+				Renderer::Primitives::drawLine(
+					Renderer::Primitives::LineArgs{
+						.start = Foundation::Vec2{sa.x, sa.y},
+						.end = Foundation::Vec2{sb.x, sb.y},
+						.style =
+							Foundation::LineStyle{
+								.color = Foundation::Color(1.0F, 0.85F, 0.0F, 0.9F), // Gold, matches foundation indicator
+								.width = 3.0F,
+							},
+						.id = "wall-segment-selection-indicator",
 						.zIndex = 100,
 					}
 				);

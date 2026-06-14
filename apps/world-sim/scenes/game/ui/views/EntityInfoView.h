@@ -59,6 +59,7 @@ class EntityInfoView : public UI::Component {
 		OpenStorageConfigCallback onOpenStorageConfig;	// Called to open storage config dialog for containers
 		ResourceQueryCallback queryResources;		// Query remaining resource count for harvestable entities
 		std::function<void()> onDemolishFoundation; // Called when Demolish button clicked for a foundation
+		std::function<void()> onDemolishWallSegment; // Called when Demolish button clicked for a wall segment
 	};
 
 	explicit EntityInfoView(const Args& args);
@@ -143,6 +144,7 @@ class EntityInfoView : public UI::Component {
 	OpenStorageConfigCallback onOpenStorageConfigCallback;
 	ResourceQueryCallback queryResourcesCallback;
 	std::function<void()> onDemolishFoundationCallback;
+	std::function<void()> onDemolishWallSegmentCallback;
 
 	// Background panel
 	UI::LayerHandle backgroundHandle;
