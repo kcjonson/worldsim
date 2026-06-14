@@ -10,9 +10,13 @@
 #include <memory>
 #include <vector>
 
+namespace worldgen::tectonics {
+struct TectonicHistory;
+}
+
 namespace worldgen {
 
-// Per-plate metadata produced by PlateStage.
+// Per-plate metadata built by CrustStage from TectonicHistory.
 struct PlateInfo {
     Vec3d  eulerPole{};       // unit vector (rotation pole)
     float  angularSpeed{};    // radians per million years
@@ -48,6 +52,11 @@ struct GeneratedWorld {
     WorldSummary         summary;
     uint32_t             validFields{};  // WorldField bits
     uint64_t             worldHash{};
+
+    // Coarse tectonic-history product. Set by TectonicHistoryStage, consumed by
+    // CrustStage. Non-serialized: PlanetIO does not persist it; the pipeline
+    // regenerates it on each run.
+    std::shared_ptr<const tectonics::TectonicHistory> tectonicHistory;
 };
 
 } // namespace worldgen

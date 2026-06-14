@@ -12,121 +12,112 @@ World generation follows a sequential pipeline of **eight conceptual phases**, e
 ## Generation Pipeline
 
 ```
-Parameters → Plates → Terrain → Climate → Water → Biomes → Complete World
+Parameters → Tectonic History → Crust → Terrain → Climate → Water → Biomes → Complete World
 ```
 
 Each phase produces data that later phases consume:
 
-1. **Tectonic Plate Generation** - Divide sphere into moving plates
-2. **Plate Movement Simulation** - Simulate geological time
-3. **Terrain Height Generation** - Create mountains and oceans from plate interactions
+1. **Tectonic History Simulation** - Run coarse time-stepped plate sim (~800 Myr)
+2. **Crust Upsampling** - Upsample coarse history to full resolution; crisp organic coastlines
+3. **Terrain Height Generation** - Elevation from isostasy, depth-age law, and orogeny history
 4. **Atmospheric Circulation** - Model wind patterns
 5. **Precipitation & River Formation** - Simulate rainfall and water flow
 6. **Ocean & Sea Formation** - Fill low areas with water
 7. **Biome Generation** - Assign ecosystems based on climate
 8. **Snow & Glacier Formation** - Calculate ice coverage
 
-## Phase 1: Tectonic Plate Generation
+## Phase 1: Tectonic History Simulation
 
-**Purpose**: Divide the spherical planet into tectonic plates (continental and oceanic)
+**Purpose**: Run a coarse time-stepped tectonic simulation to produce geologically plausible crust state, boundary locations, and mountain-building history
 
-**Conceptual Process**:
-- Generate specified number of plate "seed points" evenly distributed across sphere
-- Divide sphere into regions (Voronoi diagram) around these points
-- Classify each plate as **continental** (higher, thicker crust) or **oceanic** (lower, thinner crust)
-- Ensure realistic distribution (Earth: ~30% continental, ~70% oceanic)
-
-**Output**:
-- Plate boundaries (where plates meet)
-- Plate types (continental or oceanic)
-- Base elevation for each plate region
-
-**Visual Result**: Planet divided into colored regions representing different plates
-
-**Gameplay Impact**:
-- More plates → fragmented continents, archipelagos
-- Fewer plates → large unified landmasses
-- Plate boundaries become mountain ranges and ocean trenches
-
-**Design Notes**:
-- Plates aren't perfectly geometric - add natural variation to boundaries
-- Plate sizes should vary (some large, some small) like real Earth
-- Classification affects later terrain generation (continents sit higher than ocean floor)
-
-## Phase 2: Plate Movement Simulation
-
-**Purpose**: Simulate plate tectonics over geological time to determine plate interactions
+*Revision note, 2026-06-13:* Phase 1 previously described a single-pass Voronoi plate generation. That was replaced by a time-stepped simulation (PR #136). Phase 2 (plate movement) was folded into Phase 1 as well; the pipeline now has TectonicHistoryStage + CrustStage in the first two slots.
 
 **Conceptual Process**:
-- Assign movement vector to each plate (direction and speed)
-- Model rotational movement (plates can spin as they move)
-- Ensure global momentum conservation (movement vectors balance out)
-- Calculate steady-state positions based on planet age
 
-**Output**:
-- Plate movement directions and speeds
-- Rotational components for each plate
-- Historical context (how plates reached current positions)
+The planet runs ~800 Myr of tectonic history (scaled by planet age, ~160 time steps of 5 Myr each) on a coarse grid (~56 km/tile). That is roughly two Wilson cycles — enough for continents to rift, drift, collide, suture, and sometimes re-rift.
 
-**Visual Result**: Arrows showing plate movement directions
+Each step:
+- Plates move along Euler poles (oceanic 4-10 cm/yr, continental 1-4 cm/yr). Poles evolve slowly so plates don't move forever in straight lines.
+- Each plate's crust is re-rasterized into the world grid each step. Ownership is resolved deterministically: continental crust wins over oceanic; between two oceanic cells, younger wins (older, denser crust subducts).
+- **Subduction**: oceanic crust displaced by a higher-priority cell is erased. The subducting slab pulls its plate trenchward (slab pull), accelerating the recycling of old seafloor.
+- **Ridge gap-fill**: cells left unoccupied after subduction get fresh age-0 oceanic crust (spreading ridges emerge where plates separate).
+- **Collisions**: continental-continental convergence thickens crust and stamps orogeny records. Sustained fast collision (~150 Myr) sutures two plates into one.
+- **Rifting**: when plate count falls below the target K, large plates preferentially split along old sutures, re-opening ancient mountain belts as new ocean basins (Wilson cycle).
+- **Arc magmatism**: subduction zones generate volcanic arcs; mature arc crust converts to thin continental crust, balancing the area lost to collisional shortening. This keeps continental fraction near the target.
+- **Hotspots**: fixed mantle plumes deposit volcanism as plates drift over them.
+- Thickness-relaxation erosion proxy: over-thickened crust slowly relaxes toward the stable cratonic mean.
+
+**Output** (coarse grid, ~56 km/tile):
+- Per-tile: plate ID, crust type (continental/oceanic), crust age, thickness, orogeny age and intensity, volcanism, boundary type and convergence rate
+- Plate list with Euler poles and cumulative rotation quaternions
+
+**Visual Result**: Coarse crust map showing plate territories, age-striped seafloor, orogeny bands, and boundary classifications
 
 **Gameplay Impact**:
-- Movement creates plate boundary interactions (collision, spreading, sliding)
-- Planet age determines how far plates have moved
-- Young planets: plates haven't moved much (less mountain building)
-- Old planets: plates have collided and formed major mountain ranges
+- More plates → fragmented continents, island arcs, archipelagos
+- Fewer plates → large unified landmasses, broader collisional belts
+- Planet age → more Wilson cycles → richer suture networks, more eroded old belts
 
-**Design Notes**:
-- We don't literally simulate millions of years - we calculate what the result **would be**
-- Movement is abstracted: just enough to determine boundary interactions
-- Provides geological context (why are mountains here? Plates collided)
+## Phase 2: Crust Upsampling
+
+**Purpose**: Upsample the coarse tectonic history to the full-resolution world grid, producing crisp organic coastlines and smooth spatial fields
+
+**Conceptual Process**:
+
+Each full-resolution tile is assigned crust type by thresholding a signed-distance field (built from the coarse crust boundary) rather than nearest-neighbor sampling. The signed distance field is warped by fractal noise before thresholding, so the coastline meanders organically and breaks up any lingering hexagonal regularity from the coarse grid. A crenulation noise term adds further wiggle at the continental margin.
+
+Once crust type is decided, per-tile crust age, orogeny age, and plate ID are sampled from the nearest coarse cell of the matching crust type (inverse-distance blend). This prevents coastline-transition artifacts where a continental tile would otherwise inherit oceanic ages.
+
+**Output**:
+- Per-tile: plate ID, crust flag (continental/oceanic), crust age (u16, Myr), orogeny age (u16, Myr)
+- Boundary type and convergence rate carried from the coarse history
+
+**Visual Result**: Full-resolution crust map with irregular coastlines, no hexagonal grid artifacts
+
+**Gameplay Impact**:
+- Coastline shape determines how much navigable coast, how many peninsulas and bays
+- Crust age feeds the elevation calculation in Phase 3
 
 ## Phase 3: Terrain Height Generation
 
-**Purpose**: Create realistic terrain elevation based on plate boundaries and types
+**Purpose**: Synthesize planetary elevation from crust physics and tectonic history
 
 **Conceptual Process**:
 
-### 3A: Analyze Plate Boundaries
-Determine how plates interact at boundaries:
+### 3A: Continental elevation (Airy isostasy)
+Thick continental crust floats high on the mantle. Elevation scales with how far the crust thickness departs from the cratonic equilibrium (~35 km): thin young continental crust sits near sea level, normal crust at ~+400 m, and collision-thickened crust (65-70 km, Tibet scale) reaches +5-6 km. Orogeny records from the tectonic history add ridged-noise mountain belts on top: active recent belts are tall and linear; ancient eroded sutures are low rolling hills.
 
-- **Convergent** (collision): Plates moving toward each other
-  - Continental + Continental → Mountain ranges (Himalayas)
-  - Oceanic + Continental → Subduction, coastal mountains (Andes)
-  - Oceanic + Oceanic → Deep ocean trench (Mariana Trench)
+### 3B: Oceanic elevation (seafloor depth-age law)
+Oceanic crust cools and subsides as it ages, following an empirically calibrated depth-age relation (Parsons-Sclater / GDH1): ridge crests sit at ~-2500 m, abyssal plains at ~-5500 m. The bimodal hypsometry (land mode ~+400 m, ocean mode ~-5500 m) emerges from these two laws without any hand-tuning.
 
-- **Divergent** (spreading): Plates moving apart
-  - Creates oceanic ridges (Mid-Atlantic Ridge)
-  - Forms rift valleys on continents (East African Rift)
+### 3C: Active-boundary features
+Narrow kernels at active boundaries add:
+- Ocean trenches (~-5500 m, 60 km wide) at subduction zones
+- Volcanic arcs (+2500 m scaled by convergence rate, ~220 km inland)
+- Rift valleys and flanking shoulders at divergent boundaries
+- Transform fault roughness
 
-- **Transform** (sliding): Plates sliding past each other
-  - Creates fault lines (San Andreas Fault)
-  - Minor elevation changes, rough terrain
+### 3D: Hotspot volcanism
+Mantle plume locations from the tectonic history get volcanic cones, capped at ~3500 m, with a ridged-noise texture.
 
-### 3B: Generate Elevation
-- Set base elevation for each plate (continental higher, oceanic lower)
-- Add elevation at convergent boundaries (mountains)
-- Create ridges at divergent boundaries (underwater mountains or rift valleys)
-- Add variation to transform boundaries (fault scarps)
-- Apply noise for natural variation within each region
+### 3E: Sea level
+Sea level is set by histogram quantile so the ocean fraction matches the player's water-amount parameter (±2%).
 
 **Output**:
-- Elevation map for entire planet
-- Mountain ranges at plate collision zones
-- Ocean ridges at spreading zones
-- Variation within plates (not perfectly flat)
+- Elevation map for the full planet
+- Sea level value
 
-**Visual Result**: 3D terrain with visible mountains, ocean basins, highlands, lowlands
+**Visual Result**: 3D terrain with linear mountain ranges, ocean trenches, mid-ocean ridges, rift valleys, volcanic islands, and smooth abyssal plains
 
 **Gameplay Impact**:
-- Mountains affect movement, building difficulty, resources
-- Elevation determines biomes (higher = colder)
-- Creates strategic terrain (chokepoints, defensible positions, fertile valleys)
+- Mountains are thin linear ridges (realistic), not smooth symmetric domes
+- Ocean depth varies by seafloor age (ridges shallower than abyssal plains)
+- Young planets: tall sharp mountain belts (recent collisions); old planets: eroded low sutures
+- Planet age affects both how many Wilson cycles occurred and how eroded old belts are
 
 **Design Notes**:
-- Young planets: Sharp, high mountains (recent formation, little erosion)
-- Old planets: Smooth, gentle hills (heavily eroded over time)
-- Planet age affects terrain roughness dramatically
+- Bimodal hypsometry (the defining feature of an Earth-like planet) is a consequence of physics, not parameter tuning
+- Same seed produces a different world than before this overhaul (documented; analogous to the Goldberg hex conversion precedent)
 
 ## Phase 4: Atmospheric Circulation
 
@@ -339,9 +330,9 @@ Determine how plates interact at boundaries:
 Each phase depends on previous phases:
 
 ```
-1. Plates              →  (independent, just parameters)
-2. Movement            →  Requires: Plates
-3. Terrain             →  Requires: Plates, Movement
+1. Tectonic History    →  (independent, just parameters)
+2. Crust               →  Requires: Tectonic History
+3. Terrain             →  Requires: Tectonic History, Crust
 4. Atmosphere          →  Requires: Terrain (topography affects winds)
 5. Precipitation       →  Requires: Atmosphere, Terrain
 6. Oceans              →  Requires: Terrain (fill low areas)
@@ -363,9 +354,9 @@ Each phase depends on previous phases:
 - Phase 7: "Assigning biomes... 90%"
 
 **Phase Weights** (approximate time):
-- Plates: 10%
-- Movement: 5%
-- Terrain: 25%
+- Tectonic History (coarse sim): 5%
+- Crust Upsampling: 15%
+- Terrain: 20%
 - Atmosphere: 15%
 - Precipitation: 20%
 - Oceans: 5%
@@ -414,3 +405,4 @@ Each phase depends on previous phases:
 ## Revision History
 
 - 2025-10-26: Initial generation phases documentation created
+- 2026-06-13: Phases 1-3 rewritten to document the as-built tectonic history simulation, crust upsampling, and isostasy/depth-age terrain (PR #136 — tectonic history simulation). Phase 4-8 unchanged.

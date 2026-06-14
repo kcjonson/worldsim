@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2026-06-13 (Construction Epic C implemented on feature/construction-foundations: config, ConstructionWorld, drawing tool, selection, Wood+choppable trees, Build/Deconstruct actions, ConstructionSystem lifecycle; 434 engine tests; end-to-end colonist build loop pending a forested spawn to verify)
+Last Updated: 2026-06-13 (Tectonic history simulation: PR #136 awaiting merge after CI; Construction Epic C landed on main)
 
 ## Epic/Story/Task Template
 
@@ -409,6 +409,30 @@ while (running) {
 ---
 
 ## In Progress Epics
+
+### Tectonic History Simulation (worldgen realism overhaul)
+**Spec/Documentation:** `.claude/plans/tectonic-history.md`, `/docs/design/features/world-generation/`
+**Dependencies:** World Generation & Creator (M1–M6 complete)
+**Status:** in progress
+
+**Goal:** Replace single-pass Voronoi plates + Gaussian-kernel terrain with a coarse time-stepped tectonic history (Euler-pole motion, subduction, ridges with crust age, collisions/sutures, rifting, hotspots) upsampled to full resolution; elevation from Airy isostasy + seafloor depth-age law. Fixes hexagonal continents and dome-shaped mountains; Earth-calibrated acceptance stats.
+
+**Tasks:**
+- [x] M-T0: headless worldgen-cli + WorldStats, baseline capture of current pipeline
+- [x] M-T1: PlateSim core (quaternion motion, forward rasterize, subduction, ridge gap-fill, boundary scan)
+- [x] M-T2: Wilson-cycle events (collision/suture, merge, suture-biased rifting, terrane accretion, hotspots, erosion proxy, plate-count controller)
+  - [x] M-T2.5: arc crust production balancing collisional shortening (continental area to target)
+  - [x] M-T2.6: slab pull + oceanic plate reorganization (ocean age, plate size distribution)
+  - [x] M-T2.7: ridge-coherent resurfacing + ownership speckle absorption (field coherence)
+- [x] M-T3: CrustStage upsampling + WorldData crustAge/orogenyAge + PlanetIO v3
+  - [x] M-T3.5: arc nucleation support + sim-level crust speckle revert
+  - [x] M-T3.6: signed-distance crust-type threshold for crisp non-hexagonal coastlines
+- [x] M-T4: TerrainStage rewrite (isostasy + depth-age + orogeny-aged belts + boundary kernels) — ends with USER screenshot review gate
+  - [x] M-T4.5: concentrate orogeny into linear belts with aging sutures; geodesic belt-linearity metric (tile-weighted aspect 5-7)
+- [x] M-T5: delete PlateStage/PlateMovementStage, test re-baseline, edge cases, benchmark (clean whole-project build, --verify-threads determinism, n=1024 ~11s)
+- [x] M-T6: docs (concept.md, generation-phases.md, implementation contracts), dev log, PR — awaiting user visual review to mark epic complete
+
+---
 
 ### World Generation & Creator
 **Spec/Documentation:** `/docs/design/features/world-generation/`, `.claude/plans/world-generation.md`

@@ -45,12 +45,16 @@ GeneratedWorld makeTestWorld() {
 		world.data.precipitation[i] = static_cast<uint16_t>((i * 7) % 3000);
 		world.data.biome[i] = static_cast<uint8_t>(i % static_cast<uint32_t>(Biome::Count));
 		world.data.flags[i] = static_cast<uint8_t>(i % 256);
+		world.data.crustAge[i] = static_cast<uint16_t>((i * 13) % 220);
+		world.data.orogenyAge[i] = (i % 10 == 0) ? uint16_t{65535} : static_cast<uint16_t>((i * 17) % 500);
 	}
 	world.validFields = static_cast<uint32_t>(WorldField::Elevation) |
 		static_cast<uint32_t>(WorldField::TemperatureMean) |
 		static_cast<uint32_t>(WorldField::Precipitation) |
 		static_cast<uint32_t>(WorldField::Biome) |
-		static_cast<uint32_t>(WorldField::Flags);
+		static_cast<uint32_t>(WorldField::Flags) |
+		static_cast<uint32_t>(WorldField::CrustAge) |
+		static_cast<uint32_t>(WorldField::OrogenyAge);
 
 	world.plates.push_back({{0.0, 0.0, 1.0}, 0.015f, true});
 	world.plates.push_back({{0.6, -0.8, 0.0}, -0.007f, false});
@@ -158,6 +162,8 @@ TEST_F(PlanetIOTest, RoundtripPreservesAllFields) {
 	EXPECT_EQ(world.data.precipitation, loaded->data.precipitation);
 	EXPECT_EQ(world.data.biome, loaded->data.biome);
 	EXPECT_EQ(world.data.flags, loaded->data.flags);
+	EXPECT_EQ(world.data.crustAge, loaded->data.crustAge);
+	EXPECT_EQ(world.data.orogenyAge, loaded->data.orogenyAge);
 
 	WorldData defaults;
 	defaults.allocate(kTestTileCount);
@@ -228,8 +234,8 @@ TEST_F(PlanetIOTest, CorruptedArrayByteFailsHashCheck) {
 	GeneratedWorld world = makeTestWorld();
 	ASSERT_TRUE(savePlanet(world, filePath));
 
-	// The last array written is flags (640 bytes), so a byte 10 from the end
-	// lands inside an array region covered by the hash.
+	// The last array written is orogenyAge (642 * 2 = 1284 bytes), so a byte 10
+	// from the end lands inside an array region covered by the hash.
 	const auto fileSize = std::filesystem::file_size(filePath);
 	flipByteAt(filePath, static_cast<std::streamoff>(fileSize) - 10);
 
@@ -246,7 +252,7 @@ TEST_F(PlanetIOTest, BadMagicReturnsNull) {
 TEST_F(PlanetIOTest, UnsupportedVersionReturnsNull) {
 	GeneratedWorld world = makeTestWorld();
 	ASSERT_TRUE(savePlanet(world, filePath));
-	flipByteAt(filePath, 4); // low byte of the uint32 format version (2 -> 3)
+	flipByteAt(filePath, 4); // corrupts low byte of the uint32 format version to a non-3 value
 	EXPECT_EQ(loadPlanet(filePath), nullptr);
 }
 
@@ -262,6 +268,24 @@ TEST_F(PlanetIOTest, VersionOneFileReturnsNull) {
 	f.seekp(4);
 	const uint8_t v1[4] = {1, 0, 0, 0};
 	f.write(reinterpret_cast<const char*>(v1), 4);
+	ASSERT_TRUE(f.good());
+	f.close();
+
+	EXPECT_EQ(loadPlanet(filePath), nullptr);
+}
+
+// Version 2 files (pre-crustAge/orogenyAge) must be rejected — callers rely on
+// the auto-regenerate path that fires when loadPlanet returns nullptr.
+TEST_F(PlanetIOTest, VersionTwoFileReturnsNull) {
+	GeneratedWorld world = makeTestWorld();
+	ASSERT_TRUE(savePlanet(world, filePath));
+
+	// Overwrite the format version field (offset 4, uint32 LE) with 2.
+	std::fstream f(filePath, std::ios::binary | std::ios::in | std::ios::out);
+	ASSERT_TRUE(f.is_open());
+	f.seekp(4);
+	const uint8_t v2[4] = {2, 0, 0, 0};
+	f.write(reinterpret_cast<const char*>(v2), 4);
 	ASSERT_TRUE(f.good());
 	f.close();
 

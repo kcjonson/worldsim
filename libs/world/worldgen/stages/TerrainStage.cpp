@@ -1,66 +1,48 @@
-// TerrainStage — M3b implementation.
+// TerrainStage — M-T4 elevation synthesis.
 //
-// Algorithm overview:
-//   1. Boundary classification: tiles with any differently-plated neighbor are boundary.
-//      Relative plate velocity decomposed into convergence (normal) and shear (tangential)
-//      components; classified into BoundaryType enum. Two smoothing passes (mode filter
-//      over adjacent boundary tiles) prevent flickering classification.
-//   2. Distance fields: multi-source BFS from all boundary tiles; produces boundaryDistance
-//      (uint16, saturating at 65535), plus transient arrays: bndType, bndSide (overriding
-//      or subducting) used only during elevation synthesis.
-//      2b. Distance smoothing: three Jacobi passes average each tile's integer BFS distance
-//          with its neighbors → removes stair-step terracing on steep slopes.
-//          A per-tile fractional hash offset (hashNoise * 0.5 tiles) is added to further
-//          break discretization without introducing non-determinism.
-//      2c. Belt-end taper: for each boundary tile, count same-type boundary neighbors
-//          within 4 hops along the boundary graph. Amplitude taper = smoothstep over
-//          that count, preventing hard cutoffs at convergent segment ends.
-//   3. Elevation synthesis: per-tile, parallel.
-//      elevation = base + uplift + noise + hotspot
-//      - Base: continental +400m, oceanic -4200m; continental shelf ramp near crust edges.
-//      - Uplift kernels: side-aware Gaussian falloff by BoundaryType and distance.
-//      - Noise: fractalNoise3 + ridgedNoise3; kept subordinate (capped at 40% of |uplift|+base).
-//      - Hotspot chains: ~K/4 plumes; chain centers stored as tile ids; hotspot elevation
-//        accumulated into a per-tile array via a single global BFS from all chain centers.
-//      - Hard elevation cap: total elevation clamped to 9000m (Everest-style planetary max).
-//   4. Sea level: histogram quantile at waterAmount (4096 bins).
-//   5. Sets WorldField::Elevation | BoundaryType | BoundaryDistance.
+// Elevation derives from the simulated tectonic state, not from uplift kernels
+// stacked on a flat base. Two laws carry the bimodal hypsometry for free:
+//   - Continental: Airy isostasy on crustal thickness gives the platform height;
+//     orogeny-aged RIDGED belts give the linear mountain texture (sharp crests,
+//     V-valleys) along collision margins; a continental-shelf ramp handles coasts.
+//   - Oceanic: the GDH1 plate-cooling depth-age law
+//       depth = floorDepth - (floorDepth - ridgeDepth) * exp(-age / tau)
+//     turns the simulated seafloor age field into a ridge-to-abyssal gradient that
+//     saturates near the plate-equilibrium depth (~-5750 m) rather than subsiding
+//     without bound (unlike the half-space sqrt law).
+// Narrow active-boundary kernels add trenches, volcanic arcs, rifts, and transform
+// roughness only where the full-res boundary classification puts them.
 //
-// Transient memory peak: ~14 vectors of float/int over N tiles ≈ 56 bytes/tile.
-// At n=1024 (N=10.5M): ~590 MB peak transient, all released before stage return.
+// All tectonic inputs (thicknessKm, orogenyIntensity, volcanism, convergence) are
+// sampled from the coarse TectonicHistory through the SAME domain warp CrustStage
+// used (CoarseSampler::warpedCoarseDir + smoothSampleAt), so they stay aligned with
+// the coastline. crustAge and orogenyAge are already full-res fields (CrustStage
+// wrote them) and are read directly.
 //
-// Determinism:
-//   - All random numbers from Pcg32 or HashNoise; no std transcendentals (det_math only).
-//   - BFS uses FIFO with tile-id-ordered seed initialization → deterministic visit order:
-//     seeds enqueued in ascending tile-id order, FIFO never reorders them.
-//   - Jacobi distance smoothing uses double-buffering (read one, write other) so tile
-//     visit order is irrelevant → identical result at any thread count.
-//   - Belt-end BFS is also FIFO with ascending tile-id seed order.
-//   - parallelFor uses fixed grainSize slabs → same slab boundaries at any thread count.
-//   - Euler cross products use only +-*/ → IEEE 754 basic ops, bit-identical everywhere.
+// Pipeline scaffolding REUSED from the prior stage (unchanged):
+//   1. Boundary classification: relative Euler velocity from world.plates ->
+//      convergence/shear -> BoundaryType + side; two mode-filter smoothing passes.
+//   2c. Belt-end taper along the boundary graph.
+//   2.  Multi-source boundary-distance BFS (propagates type/side/conv/taper inward).
+//   2b. Jacobi+jitter distance smoothing (kills stair-step terracing).
+//   2d. Crust-edge distance BFS (continental shelf ramp).
+//   Sea level: histogram quantile at waterAmount.
 //
-// Kernel constants (iteration 3):
-//   ConvergentCC:  A=7000m * conv * ridgeMod(0.7-1.3), sigma=280km, both sides
-//   ConvergentCO overriding arc: A=4500m * conv, center=180km, sigma=100km; forearc: -600m
-//   ConvergentCO subducting trench: A=-6000m, sigma=70km
-//   ConvergentOO overriding arc: A=5500m * ridgeMod * conv, center=150km, sigma=60km
-//   ConvergentOO subducting trench: A=-7000m, sigma=50km
-//   Divergent oceanic ridge: A=2500m, sigma=150km; axial valley: -500m, sigma=20km
-//   Divergent continental: rift -1500m, sigma=60km; shoulder +800m at 80km, sigma=45km
-//   Transform: ±400m * noise, sigma=50km
-//   Hotspot: capped at 3500m per tile.
-//   Classification: convergent/divergent when |convergence| > 0.35*|v_rel|; transform otherwise.
-//   Convergence normalized by 90th percentile of positive values (not global max).
-//   All mountain amplitudes multiplied by ageFactor. Sigma multiplied by sigmaAgeFactor.
-//   Hard elevation cap: 9000m (no stacking of base+uplift+noise+hotspot can exceed this).
+// Determinism: every per-tile value is a pure function of (tile id, params, seeds).
+// parallelFor uses fixed grain slabs; all transcendentals go through det_math; the
+// coarse samplers are pure functions of the coarse grid + fields. BFS passes use
+// ascending-tile-id seed order over a FIFO, and the Jacobi smoother is double
+// buffered, so results are identical at any thread count.
 
 #include "worldgen/stages/TerrainStage.h"
 
 #include "worldgen/data/WorldData.h"
+#include "worldgen/tectonics/CoarseSampler.h"
+#include "worldgen/tectonics/TectonicHistory.h"
+#include "worldgen/tectonics/TectonicParams.h"
 
 #include <math/DeterministicMath.h>
 #include <random/HashNoise.h>
-#include <random/Pcg32.h>
 
 #include <algorithm>
 #include <array>
@@ -78,6 +60,185 @@ using BType = BoundaryType;
 constexpr uint8_t kSideOverriding = 1;
 constexpr uint8_t kSideSubducting = 2;
 constexpr uint8_t kSideSymmetric  = 0;
+
+// ============================================================================
+// Elevation-model constants (Earth-anchored). Centralized here so the mountain
+// look is tuned in one place. Heights in meters, distances in km unless noted.
+// ============================================================================
+
+// --- Continental Airy isostasy ---
+// Crust floats on the mantle: extra thickness above the reference column rises by
+// (rho_mantle - rho_crust)/rho_mantle of the excess. The lumped coefficient
+// 180 m per km of crust above a 35 km reference reproduces the observed platform
+// heights: 35 km -> +400 m baseline craton, 50 km -> +3.1 km, 65 km -> +5.8 km
+// (Tibet-class plateau). (Airy 1855; reference column from CRUST2.0 global mean.)
+// Isostasy with a platform KNEE. Below the knee thickness most continental crust sits
+// on a flat ~platform height, so the bulk of the continent forms one sharp hypsometric
+// land mode (the bimodality gate needs a tall land peak to beat the deep-ocean peak,
+// which a smooth thickness-proportional ramp smears away). Above the knee, extra
+// thickness raises elevation by kIsostasyMPerKm per km — the real isostatic response
+// that builds plateaus at genuine collision cores.
+//   thickness <= knee  -> kPlatformM (flat shelf-of-the-continent)
+//   thickness  > knee  -> kPlatformM + (thickness - knee) * kIsostasyMPerKm
+// Knee = 44 km: normal cratonic crust (38-44 km) all floats to roughly the same
+// platform height; only over-thickened crust stands tall. At 145 m/km above the knee:
+//   46 km -> +740 m, 58 km -> +2.48 km, 70 km -> +4.22 km (Tibet-class).
+// (Airy 1855; reference column from CRUST2.0 global mean.)
+constexpr float kIsostasyKneeThicknessKm = 44.0f;
+constexpr float kIsostasyPlatformM       = 450.0f; // platform height at/below the knee
+constexpr float kIsostasyMPerKm          = 145.0f; // ramp above the knee
+// Cap the thickness fed to isostasy so a runaway collision raster can't push a tile
+// past plausible plateau heights (Tibetan crust tops out ~70-80 km).
+constexpr float kIsostasyMaxThicknessKm  = 72.0f;
+
+// --- Orogeny-aged ridged mountain belts ---
+// THE core of the realistic-mountain fix: ridged noise gives sharp crests + V-valleys
+// (a RANGE), not a smooth dome. Amplitude is gated by the simulated orogenyIntensity
+// so belts only build where collision actually happened, and decays with orogenyAge so
+// old orogens are low and smooth while young ones are tall and sharp.
+constexpr float kBeltBaseAmpM = 2800.0f; // peak ridged relief at full intensity, fresh orogen
+// M-T4.5: with the orogeny field now thin + linear (PlateSim concentrates the stamp on the
+// boundary line), a fraction of the belt amplitude is added as a POSITIVE lift so the thin
+// orogeny line stands continuously above the mountain threshold (one connected belt, not a
+// string of beads severed by the recentered ridged texture); the rest stays as the recentered
+// ridged crest/valley texture so the belt reads as a sharp range, not a smooth welt.
+// kBeltLiftFrac is the positive-lift fraction; (1 - kBeltLiftFrac) is the +/- ridged texture.
+constexpr float kBeltLiftFrac = 0.55f;
+// Intensity sharpening (smoothstep): only orogeny intensity above kBeltIntensityKnee produces
+// tall belt relief, ramping to full by kBeltIntensityFull. This narrows the belt to the high-
+// intensity SPINE of the (smooth-sampled) field so faint flanks stay at hill height rather
+// than the whole bump clearing the mountain threshold.
+constexpr float kBeltIntensityKnee = 0.40f;
+constexpr float kBeltIntensityFull = 0.85f;
+// ageDecay = exp(-orogenyAgeMyr / tau) floored: young belts (active margins) sharp and
+// tall, old belts (interior sutures) subdued to rolling highland. M-T4.5: tau cut 350 -> 260
+// and floor 0.20 -> 0.10 so the age gradient the sim now produces (interior sutures average
+// 200-400 Myr, active margins ~30 Myr) translates into a steep height contrast: an old
+// interior suture drops to ~0.10-0.30 of full belt height (a modest interior ridge, not a
+// second mountain wall), which is the main lever pulling the interior-mountain fraction down
+// while active-margin belts stay Andes-tall.
+constexpr float kBeltAgeDecayTauMyr = 260.0f;
+constexpr float kBeltAgeDecayFloor  = 0.10f;
+// alongBeltMod = base + amp * fractalNoise: gaps and culminations along the belt so a
+// range isn't a uniform wall (the Andes have passes and high knots, not a constant crest).
+// M-T4.5: base raised 0.55 -> 0.70, amp cut 0.90 -> 0.50 so the along-belt variation makes
+// knots and passes WITHOUT dropping whole segments below the mountain threshold (which would
+// sever the belt into disconnected beads and tank per-component elongation). The belt keeps a
+// continuous high spine with height variation along it.
+constexpr float kBeltAlongBase = 0.70f;
+constexpr float kBeltAlongAmp  = 0.50f;
+constexpr float kBeltAlongFreq = 2.5f;
+// Ridged-crest spatial frequency on the unit sphere. Higher -> finer crest spacing.
+// ~3.2 puts crest-to-crest at roughly the 10-100 km scale that reads as a mountain range.
+constexpr float kBeltRidgeFreq    = 3.2f;
+constexpr int   kBeltRidgeOctaves = 5;
+// Belt amplitude ramps with crustal thickness excess: 0 at/below 46 km (re-stamped but
+// un-thickened crust stays at hill height), full at 60 km (a real collision core). With the
+// narrowed thicken band (kCollisionThickenRings), the thickened core is tight, so the belt
+// traced from it is thin; a soft floor in the belt term (below) keeps the belt continuous
+// where thickness dips a hair below the knee mid-ridge.
+constexpr float kBeltThicknessMinKm  = 46.0f;
+constexpr float kBeltThicknessFullKm = 60.0f;
+
+// --- Continental hills ---
+// Broad fractal relief everywhere on land, amplified near recent orogeny (foothills).
+constexpr float kHillFreq        = 3.0f;
+constexpr int   kHillOctaves     = 6;
+constexpr float kHillBaseAmpM    = 350.0f;
+// M-T4.5: cut 350 -> 180. The orogeny-proximity hill boost added broad foothill relief around
+// every orogen; near interior sutures it lifted roundish foothill patches over the mountain
+// threshold, inflating the interior-mountain fraction. A smaller boost keeps foothills as
+// hills, not mountains, so high tiles stay on the belt spine.
+constexpr float kHillOrogenyAmpM = 180.0f; // extra amplitude scaled by proximity-to-orogeny
+
+// --- Continental shelf ramp (KEEP: rises from the crust edge over a blend band) ---
+constexpr float kShelfEdgeM   = -2500.0f; // depth at the continental crust edge
+constexpr float kShelfBlendKm = 60.0f;    // distance over which the shelf rises to interior
+
+// --- Oceanic depth-age law (Stein & Stein 1992 GDH1 plate-cooling form) ---
+// We use the exponential plate form:
+//   depth = floorDepth - (floorDepth - ridgeDepth) * exp(-age / tau)
+// which approximates sqrt(age) for young floor and saturates smoothly toward
+// floorDepth, so the over-old tail the coarse sim leaves (a few % past 220 Myr)
+// spreads across the deep abyssal band instead of piling on a hard clamp.
+// Representative values: age 0 -> -2500 (ridge), 60 -> -4490, 100 -> -5060,
+// 180 -> -5570, 360 -> -5690.
+constexpr float kOceanRidgeDepthM = 2500.0f;
+constexpr float kOceanFloorDepthM = 5750.0f; // plate-equilibrium abyssal depth
+constexpr float kOceanDepthTauMyr = 65.0f;   // e-folding age of the subsidence
+constexpr float kOceanMaxDepthM   = -6500.0f; // safety floor (hills can dip a bit below)
+// Abyssal-hill noise + a longer-wavelength swell so the seafloor isn't glassy. M-T4.5: swell
+// cut 400 -> 250 to concentrate the abyssal floor into a slightly sharper hypsometric peak
+// (the M-T4.5 continental work lengthened coastlines, fattening the mid-depth continental-
+// slope shoulder), without changing the mean ocean depth.
+constexpr float kAbyssalHillAmpM = 300.0f;
+constexpr float kAbyssalSwellAmpM = 250.0f;
+
+// --- Active-boundary kernels (applied only near the classified boundary) ---
+// ConvergentCO subducting (oceanic) side: deep narrow trench. M-T4.5: deepened (-5500 ->
+// -6600) and slightly widened (60 -> 80 km sigma). The M-T4.5 sim changes shifted the
+// ocean-age / boundary geometry so the basin's abyssal-mean sits a little deeper; a deeper
+// trench keeps it unambiguously below the abyssal mean (trenches ARE the deepest ocean
+// features), which the TrenchArcStructure invariant checks.
+constexpr float kTrenchCOAmpM   = -7200.0f;
+constexpr float kTrenchCOSigKm  = 110.0f;
+// ConvergentCO overriding (continental) side: volcanic arc inland + forearc basin.
+constexpr float kArcCOAmpM      = 2500.0f; // scaled by convergence
+constexpr float kArcCODistKm    = 220.0f;  // arc sits this far inland of the trench
+constexpr float kArcCOSigKm     = 90.0f;
+constexpr float kForearcAmpM    = -400.0f;
+constexpr float kForearcSigKm   = 28.0f;
+// ConvergentOO: trench + ridged island-arc peaks behind it.
+constexpr float kTrenchOOAmpM   = -6000.0f;
+constexpr float kTrenchOOSigKm  = 50.0f;
+constexpr float kArcOOAmpM      = 3000.0f; // scaled by convergence, ridged so only some breach
+constexpr float kArcOODistKm    = 150.0f;
+constexpr float kArcOOSigKm     = 60.0f;
+// Divergent continental rift: valley + flanking shoulders.
+constexpr float kRiftAmpM       = -1500.0f;
+constexpr float kRiftSigKm      = 60.0f;
+constexpr float kRiftShoulderM  = 800.0f;
+constexpr float kRiftShoulderDistKm = 80.0f;
+constexpr float kRiftShoulderSigKm  = 45.0f;
+// Divergent oceanic: ridge crest comes from the depth-age law; add a small axial valley.
+constexpr float kAxialValleyM   = -300.0f;
+constexpr float kAxialValleySigKm = 20.0f;
+// Transform: low-amplitude shear roughness.
+constexpr float kTransformAmpM  = 400.0f;
+constexpr float kTransformSigKm = 50.0f;
+
+// --- Hotspot / arc volcanism cones ---
+// volcanism * ridged cone noise (high frequency) so hotspot chains read as
+// seamount/island lines. Capped so a saturated plume can't make a Hawaii the size of Tibet.
+constexpr float kVolcanismConeAmpM  = 4500.0f; // pre-cap amplitude at volcanism=1
+constexpr float kVolcanismConeFreq  = 14.0f;
+constexpr float kVolcanismCapM      = 3500.0f;
+
+// --- Global elevation clamp ---
+constexpr float kElevMinM = -11000.0f; // Challenger-Deep-class floor
+constexpr float kElevMaxM =   9000.0f; // Everest-class ceiling
+
+// --- Foothill proximity-to-orogeny decay ---
+// Hills near recent orogeny get a boost; this e-folding time controls how quickly
+// that boost fades with orogeny age (separate from the belt age-decay tau).
+constexpr double kFoothillDecayTauMyr = 600.0;
+
+// --- Abyssal-hill noise parameters ---
+constexpr float kAbyssalHillFreq    =  3.0f;
+constexpr int   kAbyssalHillOctaves =  5;
+constexpr float kAbyssalSwellFreq   =  1.2f;
+constexpr int   kAbyssalSwellOctaves = 3;
+
+// --- OO convergent arc mix coefficients ---
+// arcAmp = kArcOOAmpM * (kOOConvBase + kOOConvAmp * convN) * (kOORidgeBase + kOORidgeAmp * ridgeN)
+constexpr float kOOConvBase  = 0.5f;
+constexpr float kOOConvAmp   = 0.5f;
+constexpr float kOORidgeBase = 0.3f;
+constexpr float kOORidgeAmp  = 0.7f;
+
+// --- Transform shear noise frequency ---
+constexpr float kTransformShearFreq    = 6.0f;
+constexpr int   kTransformShearOctaves = 3;
 
 // Gaussian falloff via det_math::exp for cross-platform determinism.
 inline float gaussianFalloff(float d, float sigma) {
@@ -112,11 +273,22 @@ void TerrainStage::run(StageContext& ctx) {
     const uint32_t N = ctx.grid.tileCount();
     const int      K = static_cast<int>(ctx.world.plates.size());
 
+    // The coarse tectonic history is the source of thickness/orogeny/volcanism/
+    // convergence. CrustStage runs before this stage and never clears it.
+    const auto& hist = ctx.world.tectonicHistory;
+    assert(hist && "TerrainStage requires TectonicHistory (run after CrustStage)");
+    const SphereGrid& coarseGrid = *hist->grid;
+    const float kWarpAmp = tectonics::warpAmplitude(coarseGrid);
+
     // Sub-seeds for each independent RNG stream.
     const auto stageSeed32 = static_cast<uint32_t>(ctx.stageSeed ^ (ctx.stageSeed >> 32));
     const uint32_t seedFractal = stageSeed32 ^ 0xA3C5E7F1u;
     const uint32_t seedRidged  = stageSeed32 ^ 0x1B2D4E6Fu;
-    const uint32_t seedHotspot = stageSeed32 ^ 0xDEADBEEFu;
+    // Same three warp channels CrustStage used, so coarse fields warp coherently
+    // with the coastline (CrustStage seeds: seed32 ^ {0xA3C5E701, 0x1B2D4E02, 0xDEADBE03}).
+    const uint32_t seedWX = stageSeed32 ^ 0xA3C5E701u;
+    const uint32_t seedWY = stageSeed32 ^ 0x1B2D4E02u;
+    const uint32_t seedWZ = stageSeed32 ^ 0xDEADBE03u;
 
     // tile width in km (equatorial approximation: circumference / sqrt(N))
     const double kPlanetCircumference = 2.0 * 3.14159265358979323846 *
@@ -126,14 +298,17 @@ void TerrainStage::run(StageContext& ctx) {
 
     auto kmToTiles = [&](float km) -> float { return km / tileWidthKm; };
 
-    // Age modulation
-    double ageFactor = 4.5e9 / ctx.params.planetAge;
-    if (ageFactor < 0.55) ageFactor = 0.55;
-    if (ageFactor > 1.60) ageFactor = 1.60;
-    double sigmaAgeFactor = 1.0 / foundation::det_math::sqrt(ageFactor);
-
     // =========================================================================
     // 1. Boundary classification
+    //
+    // Full-res boundary type is reclassified here from full-res plateId + Euler poles
+    // rather than upsampled from the coarse TectonicHistory boundary fields. This is
+    // deliberate: the full-res reclassification is more accurate (it reflects the actual
+    // sub-cell plate geometry after CrustStage's domain-warp upsampling, not an
+    // approximation interpolated from coarse cells). The coarse boundaryType and
+    // boundaryDistance fields in TectonicHistory are sim-internal diagnostics consumed
+    // by worldgen-cli --sim-only for debugging; they are not the authoritative values
+    // for the full pipeline.
     // =========================================================================
 
     std::vector<BType>   bndTypeRaw(N, BType::None);
@@ -354,9 +529,6 @@ void TerrainStage::run(StageContext& ctx) {
     //     For each boundary tile, count same-type boundary neighbors within 4 hops
     //     along the boundary graph; taper = smoothstep(count / kTaperMax).
     //     Isolated segment ends taper to 0; interior belt tiles stay at 1.
-    //     BFS is seeded in ascending tile-id order → deterministic.
-    //     Interior tiles receive the propagated taper value from their nearest
-    //     boundary tile (via the multi-source BFS in section 2).
     // =========================================================================
 
     std::vector<float> beltTaper(N, 1.0f);
@@ -371,8 +543,6 @@ void TerrainStage::run(StageContext& ctx) {
 
         int32_t baseEpoch = 0;
         for (uint32_t t = 0; t < N; ++t) {
-            // Use bndTypeRaw (already smoothed at this point) rather than
-            // ctx.data.boundaryType, which isn't written until after this block.
             BType myType = bndTypeRaw[t];
             if (myType == BType::None) continue;
 
@@ -408,8 +578,6 @@ void TerrainStage::run(StageContext& ctx) {
     // =========================================================================
     // 2. Distance BFS — from all boundary tiles simultaneously.
     //    Seeds enqueued in ascending tile-id order → FIFO → deterministic.
-    //    bfsBndTaper propagated from the seed boundary tile to every interior
-    //    tile in its BFS region (same mechanism as bndType/bndSide/bndConv).
     // =========================================================================
 
     std::vector<BType>   bfsBndType(N, BType::None);
@@ -457,20 +625,11 @@ void TerrainStage::run(StageContext& ctx) {
 
     // =========================================================================
     // 2b. Distance smoothing — three Jacobi passes to eliminate stair-step
-    //     terracing caused by integer BFS tile distances on steep slopes.
-    //     Double-buffered: reads distA, writes distB, then swaps.
-    //     Result is float to preserve sub-tile precision; a fractional hash
-    //     offset is added to further break discretization bands.
+    //     terracing from integer BFS distances. Jitter first, then smooth.
     // =========================================================================
 
     std::vector<float> smoothDist(N, 0.0f);
     {
-        // Jitter FIRST, then Jacobi-smooth.  Adding noise to the integer BFS
-        // distances before averaging means each iso-distance shell gets blurred
-        // into its neighbors, eliminating the stair-step bands that appear with
-        // tight-sigma kernels (trench sigma ~1.75 tiles: one tile step = 25% drop).
-        // Jitter amplitude 1.2 tiles: large enough to span adjacent shells on the
-        // steepest kernels; smoothing then blends them continuously.
         const uint32_t seedDistJitter = stageSeed32 ^ 0xF1E2D3C4u;
         std::vector<float> distA(N);
         for (uint32_t t = 0; t < N; ++t) {
@@ -484,7 +643,6 @@ void TerrainStage::run(StageContext& ctx) {
         std::vector<float> distB(N);
         std::array<TileId, 6> jNbrs{};
 
-        // Three Jacobi passes blend jittered shells into a continuous float field.
         for (int pass = 0; pass < 3; ++pass) {
             for (uint32_t t = 0; t < N; ++t) {
                 uint32_t cnt = ctx.grid.neighbors(t, jNbrs);
@@ -501,12 +659,13 @@ void TerrainStage::run(StageContext& ctx) {
         }
     }
 
-    // Free no-longer-needed data
+    // Free no-longer-needed boundary-classification scratch.
     isBoundary.clear();  isBoundary.shrink_to_fit();
     bndTypeRaw.clear();  bndTypeRaw.shrink_to_fit();
     bndSideRaw.clear();  bndSideRaw.shrink_to_fit();
     bndConvNorm.clear(); bndConvNorm.shrink_to_fit();
     beltTaper.clear();   beltTaper.shrink_to_fit();
+    bndPlate.clear();    bndPlate.shrink_to_fit();
 
     ctx.reportProgress(0.25f);
     throwIfCancelled(ctx);
@@ -540,323 +699,268 @@ void TerrainStage::run(StageContext& ctx) {
         }
     }
 
-    ctx.reportProgress(0.30f);
+    ctx.reportProgress(0.32f);
     throwIfCancelled(ctx);
 
     // =========================================================================
-    // 3. Hotspot chains — per-chain-point bounded BFS with accumulation:
-    //    For each plume chain, store (centerTileId, amplitude) pairs.
-    //    For each chain point, run a bounded BFS limited to kHotspotMaxTiles hops;
-    //    accumulate Gaussian elevation contributions into hotspotElev[] per tile.
-    //    Tiles within range of multiple chain points accumulate all contributions.
-    //
-    //    Each bounded BFS touches O(kHotspotMaxTiles^2) tiles; with ~nHotspots*kChainLen
-    //    centers this is much less than O(N) total, so it is efficient.
-    //    BFS terminates when distance > kHotspotMaxTiles.
+    // 3. Elevation synthesis — parallel per tile.
+    //    Pure function of (tile id, coarse fields, full-res fields, seeds).
     // =========================================================================
 
-    const int  nHotspots         = std::max(2, K / 4);
-    const int  kChainLen         = 12;
-    const float kChainSpacingKm  = 200.0f;
-    const float chainSpacingTiles = kmToTiles(kChainSpacingKm);
-    const float hotspotSigmaTiles = kmToTiles(55.0f);
-    const int   kHotspotMaxTiles  = static_cast<int>(hotspotSigmaTiles * 3.5f) + 2;
+    // Kernel sigma values in tiles. A floor of ~1.3 tiles keeps the narrow features
+    // (trench, axial valley, forearc) at least one tile wide at coarse n, where a
+    // physical 50-60 km sigma would otherwise be sub-tile and the feature would vanish
+    // between samples. At full res these kilometre sigmas dominate the floor, so the
+    // floor only bites on small test grids (n=128) — the features stay geologically
+    // narrow where it matters.
+    constexpr float kSigFloorTiles = 1.3f;
+    auto sigTiles = [&](float km) { float s = kmToTiles(km); return s < kSigFloorTiles ? kSigFloorTiles : s; };
+    const float sigCO_trnc  = sigTiles(kTrenchCOSigKm);
+    const float sigCO_arc   = sigTiles(kArcCOSigKm);
+    const float dCO_arc     = kmToTiles(kArcCODistKm);
+    const float sigForearc  = sigTiles(kForearcSigKm);
+    const float sigOO_trnc  = sigTiles(kTrenchOOSigKm);
+    const float sigOO_arc   = sigTiles(kArcOOSigKm);
+    const float dOO_arc     = kmToTiles(kArcOODistKm);
+    const float sigRift     = sigTiles(kRiftSigKm);
+    const float sigRiftShl  = sigTiles(kRiftShoulderSigKm);
+    const float dRiftShl    = kmToTiles(kRiftShoulderDistKm);
+    const float sigAxial    = sigTiles(kAxialValleySigKm);
+    const float sigTrn      = sigTiles(kTransformSigKm);
+    const float shelfBlend  = kmToTiles(kShelfBlendKm);
 
-    // Per-tile hotspot elevation accumulator
-    std::vector<float> hotspotElev(N, 0.0f);
-
-    {
-        // Collect all (tileId, amplitude) chain points
-        struct ChainPoint { TileId tile; float amplitude; };
-        std::vector<ChainPoint> chainPts;
-        chainPts.reserve(static_cast<size_t>(nHotspots * kChainLen));
-
-        foundation::Pcg32 pcgHot(static_cast<uint64_t>(seedHotspot));
-
-        for (int h = 0; h < nHotspots; ++h) {
-            // Random point on unit sphere (rejection sampling)
-            double px{}, py{}, pz{};
-            for (;;) {
-                px = pcgHot.nextDouble() * 2.0 - 1.0;
-                py = pcgHot.nextDouble() * 2.0 - 1.0;
-                pz = pcgHot.nextDouble() * 2.0 - 1.0;
-                double r2 = px*px + py*py + pz*pz;
-                if (r2 > 0.01 && r2 <= 1.0) {
-                    double inv = 1.0 / foundation::det_math::sqrt(r2);
-                    px *= inv; py *= inv; pz *= inv; break;
-                }
-            }
-            TileId plumeTile = ctx.grid.fromUnitVector({px, py, pz});
-            if (plumeTile == kInvalidTile) continue;
-            uint8_t plumeplate = ctx.data.plateId[plumeTile];
-            if (plumeplate >= static_cast<uint8_t>(K)) continue;
-
-            const auto& pl = ctx.world.plates[static_cast<size_t>(plumeplate)];
-            double omegaX = pl.eulerPole.x * static_cast<double>(pl.angularSpeed);
-            double omegaY = pl.eulerPole.y * static_cast<double>(pl.angularSpeed);
-            double omegaZ = pl.eulerPole.z * static_cast<double>(pl.angularSpeed);
-
-            const double twoPI = 6.283185307179586;
-            double sqrtN       = foundation::det_math::sqrt(static_cast<double>(N));
-            double angleStepRad = twoPI * (static_cast<double>(chainSpacingTiles) / sqrtN);
-
-            double cx = px, cy = py, cz = pz;
-            for (int s = 0; s < kChainLen; ++s) {
-                float amplitude = static_cast<float>(5500.0 - s * 380.0);
-                if (amplitude < 150.0f) amplitude = 150.0f;
-
-                TileId centerTile = ctx.grid.fromUnitVector({cx, cy, cz});
-                if (centerTile != kInvalidTile) {
-                    chainPts.push_back({centerTile, amplitude});
-                }
-
-                // Rotate backward along plate motion
-                double theta    = -angleStepRad;
-                double cosTheta = foundation::det_math::cos(theta);
-                double sinTheta = foundation::det_math::sin(theta);
-                double omLen    = length3d(omegaX, omegaY, omegaZ);
-                double ex{}, ey{}, ez{};
-                if (omLen > 1e-12) {
-                    ex = omegaX/omLen; ey = omegaY/omLen; ez = omegaZ/omLen;
-                } else {
-                    ex = 0.0; ey = 0.0; ez = 1.0;
-                }
-                double edotP = dot3d(ex, ey, ez, cx, cy, cz);
-                double crossX{}, crossY{}, crossZ{};
-                cross3d(ex, ey, ez, cx, cy, cz, crossX, crossY, crossZ);
-                double nx = cx * cosTheta + crossX * sinTheta + ex * edotP * (1.0 - cosTheta);
-                double ny = cy * cosTheta + crossY * sinTheta + ey * edotP * (1.0 - cosTheta);
-                double nz = cz * cosTheta + crossZ * sinTheta + ez * edotP * (1.0 - cosTheta);
-                double nlen = length3d(nx, ny, nz);
-                if (nlen > 1e-12) { cx = nx/nlen; cy = ny/nlen; cz = nz/nlen; }
-            }
-        }
-
-        // Global BFS from all chain centers, limited to kHotspotMaxTiles steps.
-        // For each tile, track (closest center index, bfs distance).
-        // We don't need to track which center owns a tile — just accumulate Gaussian
-        // contributions from ALL centers within range.
-        //
-        // To keep this O(N) instead of O(N * nChainPts): do a multi-source BFS
-        // seeded by all chain centers, and for each tile record the distance from
-        // its nearest chain center. Then apply the Gaussian using that distance.
-        // But multiple nearby chain centers all contribute independently — a tile
-        // near two chain points should get contributions from both.
-        //
-        // Pragmatic approach: for each chain point do a BOUNDED BFS limited to
-        // kHotspotMaxTiles. At n=512, kHotspotMaxTiles ≈ 10 tiles, so the BFS
-        // touches only ~pi*10^2 ≈ 314 tiles per center. With nHotspots*kChainLen ≈ 36
-        // centers, total BFS work ≈ 11000 tiles << N=2.6M. Efficient enough.
-        //
-        // We allocate a single int32 "tag" array to avoid re-allocating per center;
-        // use the chain-point index + 1 as the tag, reset via a "visited this round"
-        // epoch counter instead of zeroing the full array.
-
-        std::vector<int32_t>  hotDist(N, -1);
-        std::vector<uint32_t> hotQueue;
-        hotQueue.reserve(kHotspotMaxTiles * kHotspotMaxTiles * 8);
-
-        for (const auto& cp : chainPts) {
-            if (cp.tile == kInvalidTile) continue;
-
-            // BFS from this center, up to kHotspotMaxTiles hops
-            hotQueue.clear();
-            // We need a local visited array — use hotDist with a sentinel trick:
-            // set hotDist[t] = d during this BFS, but reset with the collected queue afterward.
-            hotQueue.push_back(cp.tile);
-            hotDist[cp.tile] = 0;
-
-            std::array<TileId, 6> hnbrs{};
-            for (size_t qi = 0; qi < hotQueue.size(); ++qi) {
-                uint32_t t  = hotQueue[qi];
-                int32_t  d  = hotDist[t];
-                if (d >= kHotspotMaxTiles) continue;
-
-                uint32_t cnt = ctx.grid.neighbors(t, hnbrs);
-                for (uint32_t k = 0; k < cnt; ++k) {
-                    TileId nb = hnbrs[k];
-                    if (hotDist[nb] < 0) {
-                        hotDist[nb] = d + 1;
-                        hotQueue.push_back(nb);
-                    }
-                }
-            }
-
-            // Apply Gaussian and accumulate; then reset hotDist for reuse
-            for (uint32_t t2 : hotQueue) {
-                float falloff = gaussianFalloff(static_cast<float>(hotDist[t2]),
-                                                hotspotSigmaTiles);
-                hotspotElev[t2] += cp.amplitude * falloff;
-                hotDist[t2] = -1; // reset for next chain point
-            }
-        }
-    }
-
-    ctx.reportProgress(0.38f);
-    throwIfCancelled(ctx);
-
-    // =========================================================================
-    // 4. Elevation synthesis — parallel per tile.
-    // =========================================================================
-
-    // Kernel sigma values in tiles (age-modulated)
-    const float sigCC       = static_cast<float>(sigmaAgeFactor) * kmToTiles(280.0f);
-    const float sigCO_arc   = static_cast<float>(sigmaAgeFactor) * kmToTiles(100.0f);
-    const float sigCO_trnc  = static_cast<float>(sigmaAgeFactor) * kmToTiles(70.0f);
-    const float dCO_arc     = kmToTiles(180.0f);
-    const float sigOO_arc   = static_cast<float>(sigmaAgeFactor) * kmToTiles(60.0f);
-    const float sigOO_trnc  = static_cast<float>(sigmaAgeFactor) * kmToTiles(50.0f);
-    const float dOO_arc     = kmToTiles(150.0f);
-    const float sigDiv_rdg  = static_cast<float>(sigmaAgeFactor) * kmToTiles(150.0f);
-    const float sigDiv_axv  = kmToTiles(20.0f);
-    const float sigDiv_rft  = static_cast<float>(sigmaAgeFactor) * kmToTiles(60.0f);
-    const float sigDiv_shl  = static_cast<float>(sigmaAgeFactor) * kmToTiles(45.0f);
-    const float dDiv_shl    = kmToTiles(80.0f);
-    const float sigTrn      = kmToTiles(50.0f);
-    const float shelfBlend  = kmToTiles(60.0f);
-
-    const float ageAmp = static_cast<float>(ageFactor);
     constexpr size_t kGrainSize = 4096;
 
     ctx.pool.parallelFor(0, N, kGrainSize, [&](size_t begin, size_t end) {
         throwIfCancelled(ctx);
         for (size_t t = begin; t < end; ++t) {
-            const bool    isCrust  = (ctx.data.flags[t] & kFlagContinentalCrust) != 0;
+            const bool    isCont   = (ctx.data.flags[t] & kFlagContinentalCrust) != 0;
             const BType   bt       = static_cast<BType>(bfsBndType[t]);
             const uint8_t side     = bfsBndSide[t];
-            const float   distT    = smoothDist[t]; // smoothed float distance (Jacobi + jitter)
-            const float   conv     = bfsBndConv[t];
-            const float   taperAmp = bfsBndTaper[t]; // along-boundary end taper, propagated to interior tiles
+            const float   distT    = smoothDist[t];
+            const float   convN    = bfsBndConv[t];
+            const float   taperAmp = bfsBndTaper[t];
 
-            // ---- Base ----
-            float base;
-            {
+            Vec3d  ctr = ctx.grid.tileCenter(static_cast<uint32_t>(t));
+            float  cx  = static_cast<float>(ctr.x);
+            float  cy  = static_cast<float>(ctr.y);
+            float  cz  = static_cast<float>(ctr.z);
+
+            // ---- Sample coarse fields through the same warp CrustStage used ----
+            const tectonics::WarpResult w = tectonics::warpedCoarseDir(
+                ctr, coarseGrid, kWarpAmp, seedWX, seedWY, seedWZ);
+            const float thicknessKm = tectonics::smoothSampleAt(
+                w.point, w.tile, coarseGrid,
+                [&](TileId tile) { return hist->thicknessKm[tile]; });
+            const float orogenyIntensity = tectonics::smoothSampleAt(
+                w.point, w.tile, coarseGrid,
+                [&](TileId tile) { return hist->orogenyIntensity[tile]; });
+            const float volcanism = tectonics::smoothSampleAt(
+                w.point, w.tile, coarseGrid,
+                [&](TileId tile) { return hist->volcanism[tile]; });
+
+            // Full-res fields read directly (CrustStage wrote them).
+            const float crustAgeMyr   = static_cast<float>(ctx.data.crustAge[t]);
+            const uint16_t orogenyAgeRaw = ctx.data.orogenyAge[t];
+            const bool hasOrogeny     = orogenyAgeRaw != 65535u;
+            const float orogenyAgeMyr = hasOrogeny ? static_cast<float>(orogenyAgeRaw) : 1e9f;
+
+            float elev;
+
+            if (isCont) {
+                // -- Continental shelf ramp (rises from the crust edge inward) --
                 float cedge = static_cast<float>(crustEdgeDist[t] >= 0 ? crustEdgeDist[t] : 9999);
-                if (isCrust) {
-                    // Smoothstep from shelf (-2500m) to continental (+400m)
-                    float tt = cedge / shelfBlend;
-                    if (tt > 1.0f) tt = 1.0f;
-                    float sm = tt * tt * (3.0f - 2.0f * tt);
-                    base = -2500.0f + sm * 2900.0f;
-                } else {
-                    // Oceanic: shelf blend from -2500 to -4200 away from crust edge
+                float tt = cedge / shelfBlend;
+                if (tt > 1.0f) tt = 1.0f;
+                float sm = tt * tt * (3.0f - 2.0f * tt);
+
+                // -- Airy isostasy platform from crustal thickness (knee model) --
+                float thkClamped = thicknessKm;
+                if (thkClamped > kIsostasyMaxThicknessKm) thkClamped = kIsostasyMaxThicknessKm;
+                float iso = kIsostasyPlatformM;
+                if (thkClamped > kIsostasyKneeThicknessKm) {
+                    iso += (thkClamped - kIsostasyKneeThicknessKm) * kIsostasyMPerKm;
+                }
+
+                // Shelf edge floor blends into the isostatic platform across the band.
+                float shelfBase = kShelfEdgeM + sm * (iso - kShelfEdgeM);
+                float platform  = (shelfBase > iso) ? shelfBase : iso;
+
+                // -- Orogeny-aged ridged belt detail --
+                // The belt is the primary tall-relief source and it TRACKS THE OROGENY LINE.
+                // beltCore gates the tall belt to the thickened CORE (thickness >
+                // kBeltThicknessMinKm). It is a soft multiplier with a floor, not a hard gate:
+                // a strong-intensity belt segment on only-moderately-thickened crust still rises
+                // to kBeltCoreFloor of full amplitude, so the belt follows the thin linear
+                // orogeny field continuously. The 2-ring thicken band keeps the core narrow; the
+                // floor keeps the gate from severing a belt where thickness dips a hair below the
+                // knee mid-ridge (continuity for elongation).
+                float beltCoreRaw = (thicknessKm - kBeltThicknessMinKm) /
+                                    (kBeltThicknessFullKm - kBeltThicknessMinKm);
+                if (beltCoreRaw < 0.0f) beltCoreRaw = 0.0f;
+                if (beltCoreRaw > 1.0f) beltCoreRaw = 1.0f;
+                constexpr float kBeltCoreFloor = 0.35f;
+                float beltCore = kBeltCoreFloor + (1.0f - kBeltCoreFloor) * beltCoreRaw;
+
+                // Sharpen the (smooth-sampled) intensity to its high spine so the belt stays a
+                // thin line instead of lifting the whole bump above the mountain threshold.
+                float intensitySharp = 0.0f;
+                if (orogenyIntensity > kBeltIntensityKnee) {
+                    float u = (orogenyIntensity - kBeltIntensityKnee) /
+                              (kBeltIntensityFull - kBeltIntensityKnee);
+                    if (u > 1.0f) u = 1.0f;
+                    intensitySharp = u * u * (3.0f - 2.0f * u); // smoothstep
+                }
+
+                float beltDetail = 0.0f;
+                if (intensitySharp > 0.0f && beltCore > 0.0f) {
+                    float ageDecay = static_cast<float>(
+                        foundation::det_math::exp(-static_cast<double>(orogenyAgeMyr) /
+                                                  kBeltAgeDecayTauMyr));
+                    if (ageDecay < kBeltAgeDecayFloor) ageDecay = kBeltAgeDecayFloor;
+
+                    float along = kBeltAlongBase + kBeltAlongAmp *
+                        foundation::fractalNoise3(cx * kBeltAlongFreq, cy * kBeltAlongFreq,
+                                                  cz * kBeltAlongFreq, seedFractal + 11u,
+                                                  4, 2.0f, 0.5f);
+                    if (along < 0.0f) along = 0.0f;
+
+                    float beltAmp = kBeltBaseAmpM * intensitySharp * beltCore * ageDecay * along;
+                    float ridged = foundation::ridgedNoise3(
+                        cx * kBeltRidgeFreq, cy * kBeltRidgeFreq, cz * kBeltRidgeFreq,
+                        seedRidged, kBeltRidgeOctaves, 2.0f, 0.5f);
+                    // Split the belt into a positive LIFT (the orogeny line rises as the high-
+                    // tile set, lifting PCA elongation) and a recentered ridged crest/valley
+                    // TEXTURE on top (sharp range, not a smooth welt). The lift is what makes
+                    // the thin orogeny line read as a mountain range; the texture gives it
+                    // crests and passes. Ridged noise is ~[0,1].
+                    float lift    = kBeltLiftFrac * beltAmp;
+                    float texture = (1.0f - kBeltLiftFrac) * beltAmp * (2.0f * ridged - 1.0f);
+                    beltDetail = lift + texture;
+                }
+
+                // -- Hills (broad relief, amplified near recent orogeny) --
+                float proximityToOrogeny = 0.0f;
+                if (hasOrogeny) {
+                    // closer/younger orogeny -> more foothill relief
+                    float ad = static_cast<float>(
+                        foundation::det_math::exp(-static_cast<double>(orogenyAgeMyr) /
+                                                  kFoothillDecayTauMyr));
+                    proximityToOrogeny = orogenyIntensity * ad;
+                }
+                float hills = foundation::fractalNoise3(
+                                  cx * kHillFreq, cy * kHillFreq, cz * kHillFreq,
+                                  seedFractal, kHillOctaves, 2.0f, 0.5f)
+                              * (kHillBaseAmpM + kHillOrogenyAmpM * proximityToOrogeny);
+
+                elev = platform + beltDetail + hills;
+            } else {
+                // -- Oceanic depth-age law (GDH1 plate-cooling form) --
+                float subside = static_cast<float>(foundation::det_math::exp(
+                    -static_cast<double>(crustAgeMyr) / kOceanDepthTauMyr));
+                float depth = kOceanFloorDepthM -
+                              (kOceanFloorDepthM - kOceanRidgeDepthM) * subside;
+                float z = -depth;
+
+                // Shelf blend near the crust edge (rise toward the coast) — but ONLY on
+                // passive margins. On the subducting side of a convergent trench the
+                // ocean floor dives steeply into the trench, with no continental shelf to
+                // climb, so we skip the shelf rise there and let the depth-age depth + the
+                // trench kernel below carry the deep narrow trough.
+                bool subductingTrench =
+                    side == kSideSubducting &&
+                    (bt == BType::ConvergentCO || bt == BType::ConvergentOO);
+                if (!subductingTrench) {
+                    float cedge = static_cast<float>(crustEdgeDist[t] >= 0 ? crustEdgeDist[t] : 9999);
                     float tt = cedge / (shelfBlend * 1.5f);
                     if (tt > 1.0f) tt = 1.0f;
                     float sm = tt * tt * (3.0f - 2.0f * tt);
-                    base = -2500.0f - sm * 1700.0f;
+                    float shelfZ = kShelfEdgeM;
+                    z = shelfZ + sm * (z - shelfZ);
                 }
+
+                // Abyssal hills + a longer swell.
+                float hills = foundation::fractalNoise3(
+                                  cx * kAbyssalHillFreq, cy * kAbyssalHillFreq, cz * kAbyssalHillFreq,
+                                  seedFractal + 3u, kAbyssalHillOctaves, 2.0f, 0.5f) * kAbyssalHillAmpM;
+                float swell = foundation::fractalNoise3(
+                                  cx * kAbyssalSwellFreq, cy * kAbyssalSwellFreq, cz * kAbyssalSwellFreq,
+                                  seedFractal + 5u, kAbyssalSwellOctaves, 2.0f, 0.5f) * kAbyssalSwellAmpM;
+                elev = z + hills + swell;
+                if (elev < kOceanMaxDepthM) elev = kOceanMaxDepthM;
             }
 
-            // Tile center needed by both uplift and noise kernels
-            Vec3d ctr = ctx.grid.tileCenter(static_cast<uint32_t>(t));
-            float cx  = static_cast<float>(ctr.x);
-            float cy  = static_cast<float>(ctr.y);
-            float cz  = static_cast<float>(ctr.z);
-
-            // ---- Uplift ----
-            float uplift = 0.0f;
+            // ---- Active-boundary kernels (narrow, near the classified boundary) ----
+            float kernel = 0.0f;
             switch (bt) {
-                case BType::ConvergentCC: {
-                    // Both-sides uplift, amplitude scales with convergence.
-                    // Ridged noise (0.7..1.3x) gives crest variation so ranges aren't flat-topped.
-                    // taperAmp fades to 0 at segment ends → no hard belt cutoffs.
-                    float amp = ageAmp * (5000.0f + 2000.0f * conv);
-                    float ridgeMod = 0.7f + 0.6f * foundation::ridgedNoise3(
-                        cx * 4.0f, cy * 4.0f, cz * 4.0f,
-                        seedRidged + 3u, 3, 2.0f, 0.5f);
-                    uplift = amp * ridgeMod * gaussianFalloff(distT, sigCC) * taperAmp;
+                case BType::ConvergentCC:
+                    // NO Gaussian dome — collision relief is the isostasy platform +
+                    // ridged belts above. Nothing added here.
                     break;
-                }
                 case BType::ConvergentCO: {
                     if (side == kSideSubducting) {
-                        // Oceanic trench depression at boundary
-                        uplift = -6000.0f * gaussianFalloff(distT, sigCO_trnc) * taperAmp;
+                        kernel = kTrenchCOAmpM * gaussianFalloff(distT, sigCO_trnc) * taperAmp;
                     } else {
-                        // Continental volcanic arc: peak at dCO_arc tiles inland
-                        float arcAmp = ageAmp * (3500.0f + 1000.0f * conv);
-                        uplift = arcAmp * gaussianFalloff(distT - dCO_arc, sigCO_arc) * taperAmp;
-                        // Forearc basin (slight depression between trench and arc)
-                        uplift += -600.0f * gaussianFalloff(distT, sigCO_trnc * 0.4f) * taperAmp;
+                        float arc = kArcCOAmpM * convN *
+                                    gaussianFalloff(distT - dCO_arc, sigCO_arc) * taperAmp;
+                        float forearc = kForearcAmpM * gaussianFalloff(distT, sigForearc) * taperAmp;
+                        kernel = arc + forearc;
                     }
                     break;
                 }
                 case BType::ConvergentOO: {
                     if (side == kSideSubducting) {
-                        uplift = -7000.0f * gaussianFalloff(distT, sigOO_trnc) * taperAmp;
+                        kernel = kTrenchOOAmpM * gaussianFalloff(distT, sigOO_trnc) * taperAmp;
                     } else {
-                        // Island arc with ridged-noise variation so only some peaks breach surface
                         float ridgeN = foundation::ridgedNoise3(
                             cx * 8.0f, cy * 8.0f, cz * 8.0f,
                             seedRidged + 1u, 3, 2.0f, 0.5f);
-                        float arcAmp = ageAmp * (4000.0f + 1500.0f * conv) * (0.3f + 0.7f * ridgeN);
-                        uplift = arcAmp * gaussianFalloff(distT - dOO_arc, sigOO_arc) * taperAmp;
+                        float arcAmp = kArcOOAmpM * (kOOConvBase + kOOConvAmp * convN) *
+                                       (kOORidgeBase + kOORidgeAmp * ridgeN);
+                        kernel = arcAmp * gaussianFalloff(distT - dOO_arc, sigOO_arc) * taperAmp;
                     }
                     break;
                 }
                 case BType::Divergent: {
-                    if (!isCrust) {
-                        // Oceanic mid-ocean ridge + axial valley
-                        uplift  = 2500.0f * gaussianFalloff(distT, sigDiv_rdg);
-                        uplift += -500.0f * gaussianFalloff(distT, sigDiv_axv);
+                    if (!isCont) {
+                        // Oceanic ridge crest is already in the depth-age law (age 0 at
+                        // the spreading center); add only a small axial valley.
+                        kernel = kAxialValleyM * gaussianFalloff(distT, sigAxial);
                     } else {
-                        // Continental rift valley + shoulder uplift
-                        uplift  = -1500.0f * gaussianFalloff(distT, sigDiv_rft);
-                        uplift += 800.0f   * gaussianFalloff(distT - dDiv_shl, sigDiv_shl);
+                        kernel  = kRiftAmpM * gaussianFalloff(distT, sigRift);
+                        kernel += kRiftShoulderM * gaussianFalloff(distT - dRiftShl, sigRiftShl);
                     }
                     break;
                 }
                 case BType::Transform: {
                     float shearN = foundation::fractalNoise3(
-                        cx * 6.0f, cy * 6.0f, cz * 6.0f,
-                        seedFractal + 7u, 3, 2.0f, 0.5f);
-                    uplift = 400.0f * shearN * gaussianFalloff(distT, sigTrn);
+                        cx * kTransformShearFreq, cy * kTransformShearFreq, cz * kTransformShearFreq,
+                        seedFractal + 7u, kTransformShearOctaves, 2.0f, 0.5f);
+                    kernel = kTransformAmpM * shearN * gaussianFalloff(distT, sigTrn);
                     break;
                 }
                 case BType::None:
                     break;
             }
+            elev += kernel;
 
-            float noiseTotal;
-            if (isCrust) {
-                float baseNoise = foundation::fractalNoise3(cx*3.0f, cy*3.0f, cz*3.0f,
-                                                            seedFractal, 6, 2.0f, 0.5f)
-                                  * 700.0f;
-                // Mountain mask: bias ridged noise toward high-uplift zones
-                float upliftAbs  = uplift < 0.0f ? -uplift : uplift;
-                float mMask      = upliftAbs / (upliftAbs + 1800.0f);
-                float ridgedN    = foundation::ridgedNoise3(cx*1.5f, cy*1.5f, cz*1.5f,
-                                                            seedRidged, 4, 2.0f, 0.5f)
-                                   * 400.0f * mMask;
-                noiseTotal = baseNoise + ridgedN;
-            } else {
-                // Oceanic abyssal hills + longer-wavelength variation
-                float baseN  = foundation::fractalNoise3(cx*3.0f, cy*3.0f, cz*3.0f,
-                                                         seedFractal + 3u, 5, 2.0f, 0.5f)
-                               * 300.0f;
-                float longN  = foundation::fractalNoise3(cx*1.2f, cy*1.2f, cz*1.2f,
-                                                         seedFractal + 5u, 3, 2.0f, 0.5f)
-                               * 400.0f;
-                noiseTotal = baseN + longN;
+            // ---- Hotspot / arc volcanism cones (seamount/island lines) ----
+            if (volcanism > 0.02f) {
+                float cone = foundation::ridgedNoise3(
+                    cx * kVolcanismConeFreq, cy * kVolcanismConeFreq, cz * kVolcanismConeFreq,
+                    seedRidged + 5u, 4, 2.0f, 0.5f);
+                // Sharpen so cones are isolated peaks, not a continuous mat.
+                cone = cone * cone;
+                float volc = volcanism * cone * kVolcanismConeAmpM;
+                if (volc > kVolcanismCapM) volc = kVolcanismCapM;
+                elev += volc;
             }
 
-            // Cap: noise stays subordinate to tectonic signal
-            float upliftAbs2 = uplift < 0.0f ? -uplift : uplift;
-            float baseVar    = isCrust ? 2900.0f : 1950.0f;
-            float noiseCap   = 0.40f * (upliftAbs2 + baseVar);
-            if (noiseTotal >  noiseCap) noiseTotal =  noiseCap;
-            if (noiseTotal < -noiseCap) noiseTotal = -noiseCap;
-
-            // ---- Hotspot ----
-            float hotspot = hotspotElev[t];
-            if (hotspot > 3500.0f) hotspot = 3500.0f;
-
-            // Hard cap: no real planet has terrain above ~9000m; prevents runaway
-            // stacking from high-convergence CC belts + ridgeMod + noise + hotspot.
-            float total = base + uplift + noiseTotal + hotspot;
-            if (total > 9000.0f) total = 9000.0f;
-            ctx.data.elevation[t] = total;
+            if (elev < kElevMinM) elev = kElevMinM;
+            if (elev > kElevMaxM) elev = kElevMaxM;
+            ctx.data.elevation[t] = elev;
         }
-        ctx.reportProgress(0.38f + static_cast<float>(end) / static_cast<float>(N) * 0.50f);
+        ctx.reportProgress(0.32f + static_cast<float>(end) / static_cast<float>(N) * 0.56f);
     });
 
     // Free transient arrays
@@ -867,7 +971,6 @@ void TerrainStage::run(StageContext& ctx) {
     bfsDist.clear();      bfsDist.shrink_to_fit();
     smoothDist.clear();   smoothDist.shrink_to_fit();
     crustEdgeDist.clear(); crustEdgeDist.shrink_to_fit();
-    hotspotElev.clear();  hotspotElev.shrink_to_fit();
 
     ctx.reportProgress(0.90f);
     throwIfCancelled(ctx);

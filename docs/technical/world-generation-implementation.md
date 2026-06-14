@@ -399,3 +399,71 @@ called out below.
   deliberate One-Path deletion, not a deprecation.
 - **PlanetParams fields**: all fields used by stubs are the same fields M3 uses; adding a new field requires updating `preset()` and `derive()`.
 - **8 stage pipeline order**: Plates → PlateMovement → Terrain → Atmosphere → Precipitation → Ocean → Biome → Snow. M3 replaces each stub in-place; the order and count do not change.
+
+---
+
+## Contract amendment — tectonic history simulation (2026-06-13)
+
+PR #136 (`feature/worldgen-tectonic-history`) replaced the first three stages and expanded `WorldData`. The frozen contracts from M2 and the Goldberg amendment still hold for stages 4-8; the amendments below cover what changed.
+
+### Stage replacements
+
+`PlateStage` (weight 0.10) and `PlateMovementStage` (weight 0.05) are **deleted**. `TerrainStage` is rewritten (weight changes from 0.25 to 0.20). Two new stages take the first two slots:
+
+| Slot | Old | New | Weight |
+|------|-----|-----|--------|
+| 0 | `PlateStage` | `TectonicHistoryStage` | 0.05 |
+| 1 | `PlateMovementStage` | `CrustStage` | 0.15 |
+| 2 | `TerrainStage` (Gaussian kernels) | `TerrainStage` (isostasy + depth-age) | 0.20 |
+
+`TectonicHistoryStage` runs `PlateSim` on a `SphereGrid(128)` (~163,842 tiles, ~56 km/tile) for ~160 steps of 5 Myr each. Output is a `TectonicHistory` held on `GeneratedWorld` as a non-serialized `shared_ptr<const TectonicHistory>`. `CrustStage` upsamples the coarse history to the full-res grid and writes `WorldData` fields. `TerrainStage` synthesizes elevation from crust physics rather than Gaussian kernels.
+
+All constants for the tectonic simulation live in `libs/world/worldgen/tectonics/TectonicParams.h`.
+
+### WorldData: 26 → 30 bytes/tile
+
+Two u16 fields added:
+
+| Field | Type | Bytes/tile | Units |
+|---|---|---|---|
+| crustAge | uint16 | 2 | Myr; range 0..65534, cap 65534 (no unset sentinel; initialized to 0) |
+| orogenyAge | uint16 | 2 | Myr since last orogeny; 65535 = never |
+
+`WorldField` bits 15 and 16 are assigned to these fields. `kAllWorldFields = 0x1FFFFu` (bits 0..16). Both fields are appended to `forEachFieldArray`, which means they participate automatically in `worldHash` and `PlanetIO` serialization.
+
+`flags` bit `kFlagContinentalCrust = 0x40` is now written by `CrustStage` (the bit existed before this PR; only the writer changed).
+
+### PlanetIO format version 3
+
+`kFormatVersion = 3`. Version 2 (Goldberg, 26 B/tile) is rejected at load time with the existing `IOErrorCode::FormatVersionMismatch` path. `GameLoadingScene` auto-regenerates on any load failure, so old quickstart caches silently rebuild. Existing v1 files are also rejected (unchanged behavior).
+
+The on-disk layout is the same SoA format as v2, extended by the two new field arrays at the end of the tile data block.
+
+### New module: `libs/world/worldgen/tectonics/`
+
+Contains:
+- `TectonicParams.h` — all simulation constants, Earth-anchored with citations
+- `TectonicHistory.h` — `TectonicHistory` struct (coarse per-tile arrays + plate list), `TectonicPlate`, `CrustType`, and `computeTectonicHistoryHash`
+- `PlateSim.h/.cpp` — the simulation engine; single-threaded for determinism
+- `PlateSim.test.cpp` — unit tests including the golden determinism hash
+- `CoarseSampler.h` — domain-warp lookup, signed-distance field builder, smooth sampling helpers; shared by `CrustStage` and `TerrainStage`
+
+### New app: `apps/worldgen-cli`
+
+Headless pipeline runner. Accepts `--n`, `--seed`, `--water`, `--plates`, `--age`, `--preset`, `--sim-only` (coarse sim only, optional per-step frame dumps), `--verify-threads N,M` (runs pipeline at two thread counts and asserts `worldHash` is identical). Dumps all `DebugImageExporter` modes as BMPs plus a `stats.json` containing `WorldStats` output.
+
+### New: `libs/world/worldgen/debug/WorldStats`
+
+Computes and reports: hypsometry (land/ocean elevation modes, trough depth, peak heights), plate-size distribution (exponential fit R², largest/smallest ratio), orogeny belt geodesic aspect ratio (tile-weighted median length/width), continent isoperimetric ratio (P²/4πA), interior-mountain fraction, and ocean-fraction vs. water-amount error.
+
+### DebugImageExporter additions
+
+New export modes: `CrustAge`, `OrogenyAge`. The exporter also gained a reusable color-lambda BMP helper so adding new single-field modes no longer requires duplicating the BMP write loop. Optional env-gated per-step coarse frame dumps (set `WORLDGEN_COARSE_FRAMES=1`) for history-animation debugging.
+
+### Same-seed worlds change
+
+Worlds generated with the same seed produce a different result than before this amendment. This is expected and intentional, analogous to the Goldberg hex conversion (2026-06-12). The world hash will differ; any cached quickstart planets in PlanetIO format will be auto-regenerated.
+
+### Determinism contract (unchanged, stricter)
+
+`worldHash` is still FNV-1a in fixed field order. The coarse sim is single-threaded so its output is bit-identical across TaskPool sizes. `--verify-threads 1,8` passes. A separate golden product-hash test in `PlateSim.test.cpp` pins the coarse TectonicHistory to a known value at a fixed seed.

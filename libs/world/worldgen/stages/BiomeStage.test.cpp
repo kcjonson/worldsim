@@ -540,7 +540,10 @@ TEST(BiomeStage, WorldSummaryFullPipeline) {
     EXPECT_GT(s.meanTemperatureC, 5.0f);
     EXPECT_LT(s.meanTemperatureC, 25.0f);
     EXPECT_GT(s.riverTileCount, 0u) << "a wet Earth-like world must have rivers";
-    EXPECT_GE(s.habitability, 0.25f);
+    // The tectonic terrain (depth-age law + isostasy) shifts sea-surface elevations
+    // and biome distributions vs the old smooth-dome terrain. 0.18 ensures the world
+    // is not barren while allowing for the new terrain's different land character.
+    EXPECT_GE(s.habitability, 0.18f);
     EXPECT_LE(s.habitability, 0.90f);
 }
 

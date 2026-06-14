@@ -74,6 +74,20 @@ class SphereGrid {
     // Convert a unit direction vector to the nearest tile.
     TileId fromUnitVector(Vec3d dir) const;
 
+    // Hinted variant for hot loops with temporal coherence (e.g. rigidly rotating
+    // plates): tries rhombus rhombusHint first and skips the 10-way sort when the
+    // barycentric solve lands inside it, then updates rhombusHint to the resolved
+    // rhombus so the next call (a nearby direction) starts warm.
+    //
+    // Determinism note: for a direction exactly on a rhombus seam, more than one
+    // rhombus can satisfy the eps-tolerant solve, so the chosen tile near a seam
+    // can differ from the unhinted fromUnitVector (which always tries rhombi in
+    // dot-sorted order). The result is still fully deterministic for a fixed hint
+    // sequence; callers that need run-to-run stability must drive the hint from a
+    // deterministic iteration order (PlateSim does). Do not mix hinted and unhinted
+    // lookups expecting identical seam assignments.
+    TileId fromUnitVectorHinted(Vec3d dir, uint32_t& rhombusHint) const;
+
     // Map (rhombus, u, v) in [0,1]^2 to a unit-sphere direction using the same
     // icosahedral barycentric mapping used internally for tile placement.
     // planet-view uses this to build vertex positions that share icosahedron-edge
