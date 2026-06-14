@@ -59,12 +59,29 @@ if(BUILD_TESTING)
         if(NOT MSVC)
             target_compile_options(world-tests PRIVATE -O0 -g)
         endif()
-        add_test(NAME world-tests COMMAND world-tests)
-        # The suite includes several full-pipeline and coarse-tectonic-sim tests
-        # that are inherently multi-second each; in a Debug build on a slow CI
-        # runner the whole executable can run ~20+ min, past ctest's 1500s default.
-        # Give explicit headroom so runner-speed variance doesn't spuriously time out.
-        set_tests_properties(world-tests PROPERTIES TIMEOUT 2400)
+        # Two ctest entries against the SAME executable, split by gtest SUITE name:
+        # any suite whose name ends in "Heavy" is the heavy bucket. The filters use
+        # "*Heavy.*" (Heavy immediately before the Suite.Test separator) so only a
+        # suite-name suffix classifies a test, never a "Heavy" substring in a test
+        # name. Add the "Heavy" suffix to a test's SUITE to make it heavy; no list to
+        # maintain here.
+        #
+        # A test belongs in a *Heavy suite when it is materially slow in a Debug build:
+        # in practice that means it runs the full PlanetGenerator pipeline
+        # (runPipeline/runToCompletion) or a full PlateSim history. These dominate the
+        # suite at the resolutions used (coarseN ~32-256); cheap tests (tiny n,
+        # single-stage, or pure-logic) stay in the fast bucket.
+        #
+        # Fast-bucket TIMEOUT calibration (2026-06-14):
+        #   RelWithDebInfo wall time: ~7s
+        #   Debug-CI multiplier: ~9x -> ~63s on CI
+        #   Formula: max(300, ceil(7 * 12)) = max(300, 84) = 300
+        #   300s gives >4x margin over the worst-case Debug-CI estimate.
+        # If the fast wall time grows, rerun and set TIMEOUT = max(300, ceil(newWall * 12)).
+        add_test(NAME world-tests COMMAND world-tests --gtest_filter=-*Heavy.*)
+        set_tests_properties(world-tests PROPERTIES LABELS "fast" TIMEOUT 300)
+        add_test(NAME world-tests-heavy COMMAND world-tests --gtest_filter=*Heavy.*)
+        set_tests_properties(world-tests-heavy PROPERTIES LABELS "heavy" TIMEOUT 2400)
     endif()
 
     # Create benchmark executable if benchmarks found

@@ -473,7 +473,7 @@ double showcaseElevation(double, double lon) {
 
 } // namespace
 
-TEST(BiomeStage, ShowcaseWorldBiomeDiversity) {
+TEST(BiomeStageHeavy, ShowcaseWorldBiomeDiversity) {
     TestWorld w;
     w.setElevation(showcaseElevation);
     w.runAtmosphere();
@@ -582,7 +582,7 @@ TEST(BiomeStage, ValidFieldsExactness) {
 // Determinism: bit-identical biome/flags/snow at different thread counts
 // ============================================================================
 
-TEST(BiomeStage, DeterministicAcrossThreadCounts) {
+TEST(BiomeStageHeavy, DeterministicAcrossThreadCounts) {
     TestWorld w1(24, 1);
     TestWorld w2(24, 5);
     for (TestWorld* w : {&w1, &w2}) {
@@ -602,7 +602,7 @@ TEST(BiomeStage, DeterministicAcrossThreadCounts) {
 // Full pipeline: WorldSummary populated on a small Earth-like run
 // ============================================================================
 
-TEST(BiomeStage, WorldSummaryFullPipeline) {
+TEST(BiomeStageHeavy, WorldSummaryFullPipeline) {
     PlanetParams params = PlanetParams::preset(Preset::EarthLike);
     params.gridSubdivision = 12;
     params.seed = 0xB10BE5EED12345ULL;

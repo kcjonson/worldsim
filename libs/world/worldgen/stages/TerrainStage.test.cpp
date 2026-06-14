@@ -72,7 +72,7 @@ uint64_t arrayHash(const std::vector<T>& v) {
 // Ocean fraction == waterAmount ± 2% (quantile construction)
 // ============================================================================
 
-TEST(TerrainStage, OceanFractionEarthLike) {
+TEST(TerrainStageHeavy, OceanFractionEarthLike) {
     auto world = runPipeline(makeParams(128, 0.70, 12, 0xFACEFEED42ULL));
     ASSERT_NE(world, nullptr);
 
@@ -91,7 +91,7 @@ TEST(TerrainStage, OceanFractionEarthLike) {
         << "Ocean fraction " << actual << " vs expected " << expected;
 }
 
-TEST(TerrainStage, OceanFractionDry) {
+TEST(TerrainStageHeavy, OceanFractionDry) {
     auto world = runPipeline(makeParams(128, 0.40, 12, 0xABCDEF12ULL));
     ASSERT_NE(world, nullptr);
 
@@ -112,7 +112,7 @@ TEST(TerrainStage, OceanFractionDry) {
 // > mean land elevation + 800m
 // ============================================================================
 
-TEST(TerrainStage, MountainsAtConvergentCC) {
+TEST(TerrainStageHeavy, MountainsAtConvergentCC) {
     auto world = runPipeline(makeParams(128, 0.70, 12, 0xFACEFEED42ULL));
     ASSERT_NE(world, nullptr);
 
@@ -159,7 +159,7 @@ TEST(TerrainStage, MountainsAtConvergentCC) {
 // At n=256 the populations are large enough to be stable across seeds.
 // ============================================================================
 
-TEST(TerrainStage, HypsometryBimodal) {
+TEST(TerrainStageHeavy, HypsometryBimodal) {
     auto world = runPipeline(makeParams(256, 0.70, 12, 0xFACEFEED42ULL));
     ASSERT_NE(world, nullptr);
 
@@ -196,7 +196,7 @@ TEST(TerrainStage, HypsometryBimodal) {
 //   Continental side has local max in arc band vs near boundary
 // ============================================================================
 
-TEST(TerrainStage, TrenchArcStructure) {
+TEST(TerrainStageHeavy, TrenchArcStructure) {
     auto world = runPipeline(makeParams(128, 0.70, 12, 0xFACEFEED42ULL));
     ASSERT_NE(world, nullptr);
 
@@ -268,7 +268,7 @@ TEST(TerrainStage, TrenchArcStructure) {
 // have |elevation - continentalBase| < 1500m on average (no phantom mountains)
 // ============================================================================
 
-TEST(TerrainStage, PassiveMarginsCalm) {
+TEST(TerrainStageHeavy, PassiveMarginsCalm) {
     auto world = runPipeline(makeParams(128, 0.70, 12, 0xFACEFEED42ULL));
     ASSERT_NE(world, nullptr);
 
@@ -295,7 +295,7 @@ TEST(TerrainStage, PassiveMarginsCalm) {
 // Determinism: same seed → identical elevation + boundaryType arrays
 // ============================================================================
 
-TEST(TerrainStage, Deterministic) {
+TEST(TerrainStageHeavy, Deterministic) {
     auto p  = makeParams(64, 0.70, 12, 0xCAFEBABEDEAD0000ULL);
     auto w1 = runPipeline(p);
     auto w2 = runPipeline(p);
@@ -313,7 +313,7 @@ TEST(TerrainStage, Deterministic) {
         << "seaLevelMeters differs between runs";
 }
 
-TEST(TerrainStage, DifferentSeedsDiffer) {
+TEST(TerrainStageHeavy, DifferentSeedsDiffer) {
     auto p1 = makeParams(64, 0.70, 12, 0xAAAAAAAAAAAAAAAAULL);
     auto p2 = makeParams(64, 0.70, 12, 0xBBBBBBBBBBBBBBBBULL);
     auto w1 = runPipeline(p1);
@@ -329,7 +329,7 @@ TEST(TerrainStage, DifferentSeedsDiffer) {
 // Valid fields are set
 // ============================================================================
 
-TEST(TerrainStage, ValidFieldsSet) {
+TEST(TerrainStageHeavy, ValidFieldsSet) {
     auto world = runPipeline(makeParams(64));
     ASSERT_NE(world, nullptr);
 
@@ -342,7 +342,7 @@ TEST(TerrainStage, ValidFieldsSet) {
 // BoundaryDistance: interior tiles of large plates have distance > 5
 // ============================================================================
 
-TEST(TerrainStage, BoundaryDistanceNonTrivial) {
+TEST(TerrainStageHeavy, BoundaryDistanceNonTrivial) {
     auto world = runPipeline(makeParams(128, 0.70, 12, 0xFACEFEED42ULL));
     ASSERT_NE(world, nullptr);
 
@@ -361,7 +361,7 @@ TEST(TerrainStage, BoundaryDistanceNonTrivial) {
 // Elevation ranges are plausible: land max > 2000m, ocean min < -3000m
 // ============================================================================
 
-TEST(TerrainStage, ElevationRange) {
+TEST(TerrainStageHeavy, ElevationRange) {
     auto world = runPipeline(makeParams(128, 0.70, 12, 0xFACEFEED42ULL));
     ASSERT_NE(world, nullptr);
 
@@ -387,7 +387,7 @@ TEST(TerrainStage, ElevationRange) {
 // Convergent boundary fraction > 25% at Earth-like n=256
 // ============================================================================
 
-TEST(TerrainStage, ConvergentBoundaryFraction) {
+TEST(TerrainStageHeavy, ConvergentBoundaryFraction) {
     auto world = runPipeline(makeParams(256, 0.70, 12, 0xFACEFEED42ULL));
     ASSERT_NE(world, nullptr);
 
@@ -493,7 +493,7 @@ TEST(TerrainStage, ConvergenceSignCorrectness) {
 // shelfSubmergedFraction rises well above the ~0.8% baseline.
 // ============================================================================
 
-TEST(TerrainStage, ShelfProfileAndSubmergedFraction) {
+TEST(TerrainStageHeavy, ShelfProfileAndSubmergedFraction) {
     // n=256: tileCount = 10*256^2+2 = 655362, tileWidthKm ≈ 40030/sqrt(655362) ≈ 49 km.
     // Enough resolution to resolve the 200 km shelf band (kShelfWidthKm in TerrainStage).
     auto world = runPipeline(makeParams(256, 0.70, 12, 0xFACEFEED42ULL), 300);
@@ -559,7 +559,7 @@ TEST(TerrainStage, ShelfProfileAndSubmergedFraction) {
 // Visual image export test — always writes n=256; WORLDGEN_VISUAL=1 → n=512
 // ============================================================================
 
-TEST(TerrainStageVisual, WriteDebugImages) {
+TEST(TerrainStageVisualHeavy, WriteDebugImages) {
     const uint32_t n = 256;
     auto world = runPipeline(makeParams(n, 0.70, 12, 42ULL), 300);
     ASSERT_NE(world, nullptr) << "Pipeline failed at n=" << n;
