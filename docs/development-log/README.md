@@ -65,6 +65,7 @@ Development log entries are **immutable history**. Don't update old entries — 
 #### June 2026
 
 - [2026-06-13 - Construction Epic D: walls](./entries/2026-06-13-construction-epic-d-walls.md)
+- [2026-06-13 - Tectonic history simulation](./entries/2026-06-13-tectonic-history-simulation.md)
 - [2026-06-13 - Construction Epic C: foundations end-to-end](./entries/2026-06-13-construction-epic-c.md)
 - [2026-06-12 - Geometry Foundations (libs/geometry)](./entries/2026-06-12-geometry-foundations.md)
 - [2026-06-12 - Goal-Driven Task Generation (core)](./entries/2026-06-12-goal-driven-task-generation.md)
@@ -96,9 +97,11 @@ Development log entries are **immutable history**. Don't update old entries — 
 
 ## Quick Stats
 
-- **Total Entries:** 11
-- **Latest Entry:** 2026-06-12
+- **Total Entries:** 13
+- **Latest Entry:** 2026-06-13
 - **Major Milestones:**
+  - Construction Epic D: walls (2026-06-13)
+  - Tectonic history simulation: realistic continents and mountains (2026-06-13)
   - libs/geometry exact-geometry library (2026-06-12)
   - Goal-driven task generation core (2026-06-12)
   - Goldberg hex grid + two-tier planet rendering (2026-06-12)

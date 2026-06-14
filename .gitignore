@@ -48,3 +48,6 @@ build-asan/
 
 # Test artifacts (DebugImageExporter output from world-tests)
 test_debug_*.bmp
+
+# worldgen-cli baseline outputs (untracked build artifacts)
+worldgen-baseline/

@@ -15,9 +15,8 @@ inline constexpr uint8_t kFlagRiver           = 0x04;
 inline constexpr uint8_t kFlagCoast           = 0x08;
 inline constexpr uint8_t kFlagPermanentSnow   = 0x10;
 inline constexpr uint8_t kFlagGlacier         = 0x20;
-// Set by PlateStage on tiles with continental crust (including shelves).
-// Continental plates have craton cores; oceanic margins of continental plates
-// and small mixed-plate areas also carry this flag when within the craton growth radius.
+// Set by CrustStage on tiles with continental crust (including shelves).
+// Driven by the simulated TectonicHistory crustType field; oceanic tiles never carry this.
 inline constexpr uint8_t kFlagContinentalCrust = 0x40;
 
 // A tile is a river tile when flowAccum (accumulated upstream drainage,
@@ -57,11 +56,14 @@ enum class WorldField : uint32_t {
     FlowAccum         = 1u << 12,
     Downhill          = 1u << 13,
     SnowCover         = 1u << 14,
+    // Tectonic-history fields (M-T3). Appended last to keep IO layout append-only.
+    CrustAge          = 1u << 15, // oceanic seafloor age or continental crust age, Myr
+    OrogenyAge        = 1u << 16, // Myr since last orogeny (65535 = never)
 };
 
-inline constexpr uint32_t kAllWorldFields = 0x7FFFu; // bits 0..14
+inline constexpr uint32_t kAllWorldFields = 0x1FFFFu; // bits 0..16
 
-// SoA world data storage — 26 bytes per tile.
+// SoA world data storage — 30 bytes per tile.
 // All arrays allocated together via allocate(); never resized after that.
 //
 // Units:
@@ -83,6 +85,8 @@ inline constexpr uint32_t kAllWorldFields = 0x7FFFu; // bits 0..14
 //   flowAccum:         float, accumulated upstream drainage area (tile count)
 //   downhill:          uint8, neighbor direction index 0..5 (0xFF = none/sink)
 //   snowCover:         uint8, 0..255 (0 = bare, 255 = full permanent snow)
+//   crustAge:          uint16, Myr — oceanic = seafloor age; continental = crust age; 65534 = max cap
+//   orogenyAge:        uint16, Myr since last orogeny; 65535 = never
 struct WorldData {
     std::vector<float>    elevation;
     std::vector<int16_t>  temperatureMean;
@@ -99,6 +103,9 @@ struct WorldData {
     std::vector<float>    flowAccum;
     std::vector<uint8_t>  downhill;
     std::vector<uint8_t>  snowCover;
+    // Tectonic-history fields — appended last (defines IO layout; append-only).
+    std::vector<uint16_t> crustAge;   // Myr, cap 65534; 65534 = maximum stored age
+    std::vector<uint16_t> orogenyAge; // Myr since last orogeny; 65535 = never
 
     void allocate(uint32_t tileCount) {
         elevation.assign(tileCount, 0.0f);
@@ -116,6 +123,8 @@ struct WorldData {
         flowAccum.assign(tileCount, 0.0f);
         downhill.assign(tileCount, 0xFF);
         snowCover.assign(tileCount, 0);
+        crustAge.assign(tileCount, 0);
+        orogenyAge.assign(tileCount, 65535u);
     }
 };
 
@@ -141,6 +150,9 @@ void forEachFieldArray(WorldDataT& d, Fn&& fn) {
     fn(WorldField::FlowAccum, d.flowAccum);
     fn(WorldField::Downhill, d.downhill);
     fn(WorldField::SnowCover, d.snowCover);
+    // Tectonic-history fields appended last — IO layout is defined by this order.
+    fn(WorldField::CrustAge, d.crustAge);
+    fn(WorldField::OrogenyAge, d.orogenyAge);
 }
 
 // worldHash: FNV-1a over each valid array in WorldField bit order, folded
