@@ -294,20 +294,17 @@ namespace Renderer::Primitives {
 		Foundation::Vec2 normal = Foundation::Vec2(-dir.y, dir.x) / length;
 		Foundation::Vec2 offset = normal * (args.style.width * 0.5F);
 
-		// Create quad for line
-		Foundation::Vec2 p0 = args.start - offset;
-		Foundation::Vec2 p1 = args.start + offset;
-		Foundation::Vec2 p2 = args.end + offset;
-		Foundation::Vec2 p3 = args.end - offset;
-
-		// Calculate bounding box
-		float minX = glm::min(glm::min(p0.x, p1.x), glm::min(p2.x, p3.x));
-		float maxX = glm::max(glm::max(p0.x, p1.x), glm::max(p2.x, p3.x));
-		float minY = glm::min(glm::min(p0.y, p1.y), glm::min(p2.y, p3.y));
-		float maxY = glm::max(glm::max(p0.y, p1.y), glm::max(p2.y, p3.y));
-
-		Foundation::Rect bounds(minX, minY, maxX - minX, maxY - minY);
-		g_batchRenderer->addQuad(bounds, args.style.color, std::nullopt, 0.0F);
+		// Rotated quad following the line direction. Emit it as two triangles, not
+		// the axis-aligned bounding box of the corners: a diagonal line's AABB is a
+		// large filled rectangle, which paints any non-orthogonal edge as a box.
+		const Foundation::Vec2 quad[4] = {
+			args.start - offset, // start, left
+			args.start + offset, // start, right
+			args.end + offset,	 // end, right
+			args.end - offset,	 // end, left
+		};
+		static constexpr uint16_t kQuadIndices[6] = {0, 1, 2, 0, 2, 3};
+		g_batchRenderer->addTriangles(quad, kQuadIndices, 4, 6, args.style.color, nullptr);
 	}
 
 	void drawTriangles(const TrianglesArgs& args) {

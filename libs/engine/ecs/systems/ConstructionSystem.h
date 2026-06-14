@@ -1,13 +1,21 @@
 #pragma once
 
-// ConstructionSystem - drives the foundation build lifecycle as a goal source.
+// ConstructionSystem - drives the structure build lifecycle as a goal source.
 //
 // Watches every entity carrying Structure + StructureBlueprint and walks it
-// through the construction loop (building-construction-architecture.md D7):
+// through the construction loop (building-construction-architecture.md D7).
+// Foundations and walls share the lifecycle machinery; the two differ only at the
+// front of the pipeline:
+//   Foundations start at Clearing and clear their footprint of choppable blockers.
+//   Walls have no clear phase (they sit on a cleared, built foundation), so they
+//     start at AwaitingMaterials. Their haul + build goals are GATED: a wall's
+//     umbrella stays Blocked, and no material/build goals emit, until the host
+//     foundation is Built (design: walls draw on a foundation blueprint but only
+//     build once the foundation finishes). isWallHostBuilt owns that gate.
 //
 //   Clearing           -> emit Harvest goals for choppable entities sitting on
 //                         the footprint; advance to AwaitingMaterials once the
-//                         footprint is clear.
+//                         footprint is clear. (Foundations only.)
 //   AwaitingMaterials  -> reconcile delivered[] from the blueprint's delivery
 //                         Inventory, emit a Harvest+Haul chain per outstanding
 //                         material (Wood from trees, hauled into the blueprint
@@ -47,6 +55,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <unordered_set>
 #include <vector>
@@ -87,12 +96,21 @@ namespace ecs {
 	[[nodiscard]] ConstructionDecision
 	decideConstructionPhase(const StructureBlueprint& blueprint, bool footprintClear, bool materialsComplete);
 
-	/// How much of a material a colonist still needs to HARVEST, given how much the
-	/// site still needs (`remaining`) and how much is already carried toward it
-	/// (`carried`, summed across colonists). Bounds chopping so a colonist that
-	/// already carries enough switches to delivering instead of topping up forever.
+	/// How much of a material to HARVEST for the NEXT delivery trip, given how much the
+	/// site still needs (`remaining`), how much is already carried toward it (`carried`,
+	/// summed across colonists), and how much a colonist can carry in one trip
+	/// (`carryCapacity`, the inventory stack size).
+	///
+	/// The demand that matters is "do I need MORE in hand to make a worthwhile delivery
+	/// trip", not "is the whole site satisfied". A colonist's stack caps at carryCapacity
+	/// (e.g. 99), so for a manifest larger than one stack `carried` can never reach
+	/// `remaining`; bounding by `remaining` alone would leave the Harvest goal Available
+	/// forever and the colonist would hoard at the stack cap instead of delivering. So the
+	/// per-trip target is min(remaining, carryCapacity): once carried reaches it, demand is
+	/// 0, the Harvest goal retires, and the Haul wins so the load gets delivered. Empty
+	/// hands with work outstanding gives demand > 0 again for the next trip.
 	/// Pure; unit-tested directly.
-	[[nodiscard]] uint32_t constructionHarvestDemand(uint32_t remaining, uint32_t carried);
+	[[nodiscard]] uint32_t constructionHarvestDemand(uint32_t remaining, uint32_t carried, uint32_t carryCapacity);
 
 	/// ConstructionSystem - foundation lifecycle goal source (see file header).
 	class ConstructionSystem : public ISystem {
@@ -119,10 +137,45 @@ namespace ecs {
 		/// Debug: count of blueprints the system is actively driving this tick.
 		[[nodiscard]] size_t getActiveBlueprintCount() const { return m_activeBlueprintCount; }
 
+		/// DEV/TEST ONLY. When on, every committed blueprint is driven straight to Built
+		/// each tick (materials credited, work completed, phase flipped) without any
+		/// colonist clear/haul/build. Inert when off: normal play is untouched and
+		/// determinism is unaffected. Toggled from the debug HTTP API (/api/dev/freebuild).
+		void			   setFreeBuild(bool on) { m_freeBuild = on; }
+		[[nodiscard]] bool freeBuild() const { return m_freeBuild; }
+
+		/// DEV/TEST ONLY. Drive a single blueprint entity straight to Built right now,
+		/// independent of the free-build flag: credit its delivery inventory + delivered[]
+		/// to satisfy the manifest, set workDone = workTotal, flip phase to Complete, and
+		/// fire the structure-completed callback so the ConstructionWorld state flip and
+		/// render update happen through the SAME path a normal build takes. Returns false
+		/// if the entity is not a non-Complete foundation/wall blueprint. Used by the
+		/// programmatic-foundation dev endpoint (built=1).
+		bool forceCompleteBlueprint(EntityID blueprintEntity);
+
+		/// Set the callback fired when free-build completes a structure. Wired to the
+		/// SAME lambda GameScene gives ActionSystem's structure-completed callback, so a
+		/// free-built structure is indistinguishable from a normally-built one.
+		using StructureCompletedCallback = std::function<void(EntityID)>;
+		void setStructureCompletedCallback(StructureCompletedCallback callback) { m_onStructureCompleted = std::move(callback); }
+
+		/// DEV/TEST ONLY. Credit `amount` of `defName` into the delivery inventories of all
+		/// active (non-Complete) build sites, capped at each site's outstanding need so no
+		/// site is over-filled, and stops once `amount` is exhausted. Returns the total
+		/// credited across sites. Reuses StructureBlueprint::remaining(), so it never
+		/// duplicates the manifest math. Used by /api/dev/givewood?where=site.
+		uint32_t creditMaterialToSites(const std::string& defName, uint32_t amount);
+
 	  private:
 		/// True if no Harvestable placed entity overlaps the foundation's footprint AABB.
 		/// v1 clearing rule (see header): only Harvestable blockers gate clearing.
 		[[nodiscard]] bool isFootprintClear(uint64_t foundationId) const;
+
+		/// True once the wall segment's host foundation is Built. Walls draw on a
+		/// foundation blueprint but only BUILD after the foundation finishes (design:
+		/// Walls / Prerequisites), so this gates a wall blueprint's haul + build goals.
+		/// True (ungated) when there is no ConstructionWorld wired (headless contexts).
+		[[nodiscard]] bool isWallHostBuilt(uint64_t segmentId) const;
 
 		/// Sync the blueprint's delivered[] manifest from its delivery Inventory so
 		/// materialsComplete() reflects what is physically on site. Inventory is the
@@ -156,9 +209,26 @@ namespace ecs {
 		/// already carries enough delivers it instead of chopping more.
 		[[nodiscard]] uint32_t carriedAmount(EntityID buildSite, const std::string& defName) const;
 
+		/// The most a single colonist can carry of a material in one trip: the largest
+		/// inventory stack size among colonists (a deterministic max, not iteration-order
+		/// dependent). Used as the per-trip harvest target so a manifest larger than one
+		/// stack still gets delivered in repeated trips rather than hoarded at the cap.
+		[[nodiscard]] uint32_t colonistCarryCapacity(EntityID buildSite) const;
+
+		/// Shared by the free-build flag path and forceCompleteBlueprint: stage materials,
+		/// finish work, flip phase, fire the completion callback. `blueprint` and `structure`
+		/// belong to `entity`. The caller has already confirmed the blueprint is a non-Complete
+		/// foundation/wall.
+		void completeBlueprintNow(EntityID entity, StructureBlueprint& blueprint);
+
 		engine::construction::ConstructionWorld*				  m_constructionWorld = nullptr;
 		const engine::assets::PlacementExecutor*				  m_placementExecutor = nullptr;
 		const std::unordered_set<engine::world::ChunkCoordinate>* m_processedChunks = nullptr;
+
+		// DEV/TEST: instant-build flag and the completion callback it (and
+		// forceCompleteBlueprint) fire. Off / null in normal play.
+		bool					   m_freeBuild = false;
+		StructureCompletedCallback m_onStructureCompleted = nullptr;
 
 		size_t m_activeBlueprintCount = 0;
 

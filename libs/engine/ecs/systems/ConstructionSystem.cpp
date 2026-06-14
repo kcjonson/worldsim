@@ -30,11 +30,17 @@ namespace ecs {
 		}
 	} // namespace
 
-	uint32_t constructionHarvestDemand(uint32_t remaining, uint32_t carried) {
-		// Only chop what the site still needs beyond what colonists already carry toward
-		// it. Once carried >= remaining, demand is 0 so the colonist stops topping up and
-		// delivers the load it already has.
-		return carried >= remaining ? 0U : remaining - carried;
+	uint32_t constructionHarvestDemand(uint32_t remaining, uint32_t carried, uint32_t carryCapacity) {
+		// Per-trip target: chop up to what the site still needs, but never more than one
+		// trip's worth can carry. A colonist's stack caps at carryCapacity, so for a manifest
+		// larger than a stack `carried` can never reach `remaining`; capping demand at
+		// `remaining` alone would keep the Harvest goal Available forever and the colonist
+		// would hoard at the stack cap instead of delivering. Bounding by min(remaining,
+		// carryCapacity) means once carried fills a trip, demand drops to 0, the Harvest goal
+		// retires, and the Haul wins so the load is delivered. Empty hands with work
+		// outstanding gives demand > 0 again for the next trip.
+		const uint32_t tripTarget = std::min(remaining, carryCapacity);
+		return carried >= tripTarget ? 0U : tripTarget - carried;
 	}
 
 	ConstructionDecision decideConstructionPhase(const StructureBlueprint& blueprint, bool footprintClear, bool materialsComplete) {
@@ -95,12 +101,13 @@ namespace ecs {
 		m_activeBlueprintCount = 0;
 
 		for (auto [entity, structure, blueprint] : world->view<Structure, StructureBlueprint>()) {
-			// Only foundations carry a footprint in the ConstructionWorld for now.
-			if (structure.kind != StructureKind::Foundation) {
+			// Foundations and walls both flow through; openings/rooms are not blueprints yet.
+			if (structure.kind != StructureKind::Foundation && structure.kind != StructureKind::Wall) {
 				continue;
 			}
+			const bool isWall = (structure.kind == StructureKind::Wall);
 
-			const uint64_t foundationId = structure.graphId;
+			const uint64_t graphId = structure.graphId;
 
 			// A completed or demolishing blueprint emits nothing; leave it in the stale set so
 			// the cleanup pass below drops any lingering goals (the Build goal never self-retires
@@ -109,10 +116,31 @@ namespace ecs {
 				continue;
 			}
 
+			// DEV/TEST free-build: drive every non-Complete blueprint straight to Built, skipping
+			// clear/haul/build entirely. Inert unless the flag is set, so normal play is untouched.
+			// The entity is left in the stale set so its leftover goals are dropped by the cleanup
+			// pass below; completion fires the SAME callback a normal build uses.
+			if (m_freeBuild) {
+				completeBlueprintNow(entity, blueprint);
+				continue;
+			}
+
+			// Wall gate: a wall blueprint waits, holding nothing but a Blocked umbrella,
+			// until its host foundation is Built. Hauling and building stay off until then
+			// (design: Walls / Prerequisites). This is the wall-specific front of the pipeline.
+			if (isWall && !isWallHostBuilt(graphId)) {
+				ensureUmbrellaGoal(entity, blueprint, GoalStatus::Blocked);
+				entitiesWithGoals.erase(entity);
+				m_activeBlueprintCount++;
+				continue;
+			}
+
 			// Reconcile delivered[] from the on-site inventory before gating on materials.
 			reconcileDelivered(entity, blueprint);
 
-			const bool footprintClear = isFootprintClear(foundationId);
+			// Walls have no clear phase: they sit on a cleared, built foundation, so the
+			// footprint is clear by construction. Foundations query their footprint.
+			const bool footprintClear = isWall || isFootprintClear(graphId);
 			const bool materialsDone = blueprint.materialsComplete();
 
 			const ConstructionDecision decision = decideConstructionPhase(blueprint, footprintClear, materialsDone);
@@ -133,7 +161,7 @@ namespace ecs {
 			const uint64_t	 umbrellaId = ensureUmbrellaGoal(entity, blueprint, umbrellaStatus);
 
 			if (decision.emitClearGoals) {
-				emitClearGoals(entity, foundationId, umbrellaId);
+				emitClearGoals(entity, graphId, umbrellaId);
 			} else if (decision.emitMaterialGoals) {
 				// Footprint is clear: the clear-Harvest child is obsolete, drop it; keep the
 				// per-material Harvest/Haul children sized against the live manifest.
@@ -203,6 +231,23 @@ namespace ecs {
 			}
 		}
 		return true;
+	}
+
+	bool ConstructionSystem::isWallHostBuilt(uint64_t segmentId) const {
+		if (m_constructionWorld == nullptr) {
+			// No topology wired (headless/unit context): ungate so the lifecycle still runs.
+			return true;
+		}
+		const auto* segment = m_constructionWorld->getSegment(segmentId);
+		if (segment == nullptr) {
+			return false; // unknown segment: keep it gated until the topology catches up
+		}
+		const auto* host = m_constructionWorld->get(segment->hostFoundation);
+		// A freestanding wall (no host) is ungated; a hosted wall waits for Built.
+		if (host == nullptr) {
+			return segment->hostFoundation == engine::construction::kInvalidFoundation;
+		}
+		return host->state == engine::construction::FoundationState::Built;
 	}
 
 	void ConstructionSystem::reconcileDelivered(EntityID blueprintEntity, StructureBlueprint& blueprint) {
@@ -328,11 +373,14 @@ namespace ecs {
 		// make colonists hoard; the open chain lets each trip deliver.
 		//
 		// Two corrections over a naive refresh:
-		//  - Harvest demand is bounded by what colonists already CARRY toward the site, not just
-		//    the site shortfall. Without this, the Harvest goal stays full-size while the colonist
-		//    is already carrying enough, so chopping (a near tree, with a skill bonus) keeps
-		//    out-scoring delivery (a far site, no skill bonus) and the load never gets delivered.
-		//    Once carried >= remaining, the Harvest goal retires and only the Haul remains.
+		//  - Harvest demand is bounded by what colonists already CARRY toward the site AND by one
+		//    trip's carry capacity, not just the site shortfall. Without this, the Harvest goal
+		//    stays full-size while the colonist is already carrying a full load, so chopping (a
+		//    near tree, with a skill bonus) keeps out-scoring delivery (a far site, no skill bonus)
+		//    and the load never gets delivered. For a manifest larger than one stack the colonist's
+		//    `carried` caps at the stack size and can never reach `remaining`, so bounding by
+		//    `remaining` alone would stall forever; bounding by min(remaining, carryCapacity)
+		//    retires the Harvest goal once a trip's worth is in hand and lets the Haul win.
 		//  - The Harvest and Haul share a stable chainId. selectTaskFromTrace tags the Haul as
 		//    chain step 1, so once the colonist commits to delivering, the chain-continuation
 		//    bonus keeps it on the trip instead of flip-flopping back to harvest each AI tick.
@@ -350,6 +398,9 @@ namespace ecs {
 			}
 			return nullptr;
 		};
+
+		// One trip's carry capacity for this site, shared across all of its materials.
+		const uint32_t carryCapacity = colonistCarryCapacity(blueprintEntity);
 
 		for (const auto& [defName, requiredQty] : blueprint.required) {
 			const uint32_t remaining = blueprint.remaining(defName);
@@ -384,11 +435,12 @@ namespace ecs {
 			}
 
 			const uint32_t carried = carriedAmount(blueprintEntity, defName);
-			const uint32_t harvestDemand = constructionHarvestDemand(remaining, carried);
+			const uint32_t harvestDemand = constructionHarvestDemand(remaining, carried, carryCapacity);
 
 			if (harvestDemand == 0) {
-				// Colonists already carry enough to finish the site: stop chopping so the load
-				// gets delivered. The Haul goal below stays open until material lands on site.
+				// Colonists carry a full trip's worth (or enough to finish the site): stop
+				// chopping so the load gets delivered. The Haul goal below stays open until
+				// material lands on site.
 				if (harvest != nullptr) {
 					registry.removeGoal(harvest->id);
 				}
@@ -460,6 +512,21 @@ namespace ecs {
 		return total;
 	}
 
+	uint32_t ConstructionSystem::colonistCarryCapacity(EntityID buildSite) const {
+		// Largest backpack stack among colonists: how much one of them can carry of a single
+		// material in one trip. A max (not a sum or the first hit) keeps this independent of
+		// view iteration order, so the harvest-demand bound stays deterministic. Falls back to
+		// the colonist default if no colonist exists yet (headless/unit context).
+		uint32_t capacity = 0;
+		for (auto [entity, needs, inventory] : world->view<NeedsComponent, Inventory>()) {
+			if (entity == buildSite) {
+				continue;
+			}
+			capacity = std::max(capacity, inventory.maxStackSize);
+		}
+		return capacity > 0 ? capacity : Inventory::createForColonist().maxStackSize;
+	}
+
 	uint64_t ConstructionSystem::ensureUmbrellaGoal(EntityID blueprintEntity, const StructureBlueprint& blueprint, GoalStatus status) {
 		auto& registry = GoalTaskRegistry::Get();
 
@@ -498,6 +565,94 @@ namespace ecs {
 			static_cast<double>(blueprint.workTotal)
 		);
 		return umbrellaId;
+	}
+
+	void ConstructionSystem::completeBlueprintNow(EntityID entity, StructureBlueprint& blueprint) {
+		// Satisfy the manifest on the delivery inventory so delivered[] reconciles full and the
+		// build site genuinely holds its materials (matching a normally-built structure, and
+		// surviving a later reconcile if free-build is toggled off). Inventory is the source of
+		// truth; delivered[] is its mirror, so mirror it here too.
+		if (auto* inventory = world->getComponent<Inventory>(entity)) {
+			for (const auto& [defName, qty] : blueprint.required) {
+				const uint32_t have = inventory->getQuantity(defName);
+				if (have < qty) {
+					inventory->addItem(defName, qty - have);
+				}
+			}
+		}
+		blueprint.delivered = blueprint.required;
+
+		// Finish the work and flip the phase exactly as the last Build tick would.
+		blueprint.workDone = blueprint.workTotal;
+		blueprint.phase = StructureBlueprint::BuildPhase::Complete;
+
+		// Retire every goal this blueprint owns (umbrella + children) so no Build goal lingers.
+		auto&		registry = GoalTaskRegistry::Get();
+		const auto* goal = registry.getGoalByDestination(entity);
+		while (goal != nullptr) {
+			registry.removeGoalWithChildren(goal->id);
+			goal = registry.getGoalByDestination(entity);
+		}
+
+		// Fire the SAME completion callback a real build uses (GameScene wires it to the same
+		// lambda it gives ActionSystem), flipping ConstructionWorld state to Built and toasting.
+		if (m_onStructureCompleted) {
+			m_onStructureCompleted(entity);
+		}
+
+		LOG_INFO(Engine, "[Construction] DEV free-build completed blueprint %u", static_cast<uint32_t>(entity));
+	}
+
+	bool ConstructionSystem::forceCompleteBlueprint(EntityID blueprintEntity) {
+		if (world == nullptr) {
+			return false;
+		}
+		const auto* structure = world->getComponent<Structure>(blueprintEntity);
+		auto*		blueprint = world->getComponent<StructureBlueprint>(blueprintEntity);
+		if (structure == nullptr || blueprint == nullptr) {
+			return false;
+		}
+		if (structure->kind != StructureKind::Foundation && structure->kind != StructureKind::Wall) {
+			return false;
+		}
+		if (blueprint->phase == StructureBlueprint::BuildPhase::Complete || blueprint->demolishing) {
+			return false;
+		}
+		completeBlueprintNow(blueprintEntity, *blueprint);
+		return true;
+	}
+
+	uint32_t ConstructionSystem::creditMaterialToSites(const std::string& defName, uint32_t amount) {
+		if (world == nullptr || amount == 0) {
+			return 0;
+		}
+		uint32_t credited = 0;
+		for (auto [entity, structure, blueprint] : world->view<Structure, StructureBlueprint>()) {
+			if (amount == 0) {
+				break;
+			}
+			if (structure.kind != StructureKind::Foundation && structure.kind != StructureKind::Wall) {
+				continue;
+			}
+			if (blueprint.phase == StructureBlueprint::BuildPhase::Complete || blueprint.demolishing) {
+				continue;
+			}
+			const uint32_t need = blueprint.remaining(defName);
+			if (need == 0) {
+				continue;
+			}
+			auto* inventory = world->getComponent<Inventory>(entity);
+			if (inventory == nullptr) {
+				continue;
+			}
+			// Fill only this site's outstanding need, never more than we have left to hand out.
+			// remaining() already encodes the manifest math, so this never re-derives it.
+			const uint32_t give = std::min(need, amount);
+			const uint32_t added = inventory->addItem(defName, give);
+			credited += added;
+			amount -= added;
+		}
+		return credited;
 	}
 
 	void ConstructionSystem::retireChildGoals(EntityID blueprintEntity, uint64_t umbrellaGoalId, bool keepMaterialChildren) {

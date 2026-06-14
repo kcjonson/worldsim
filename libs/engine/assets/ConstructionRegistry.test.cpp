@@ -337,3 +337,269 @@ TEST_F(ConstructionRegistryTest, Clear_ResetsState) {
 	EXPECT_FALSE(ConstructionRegistry::Get().snappingLoaded());
 	EXPECT_EQ(ConstructionRegistry::Get().getMaterial("Wood"), nullptr);
 }
+
+// ---------------------------------------------------------------------------
+// Wall thickness preset tests
+// ---------------------------------------------------------------------------
+
+TEST_F(ConstructionRegistryTest, WallPresets_WoodHasThreePresets) {
+	ASSERT_TRUE(ConstructionRegistry::Get().load(constructionConfigFolder().string()));
+
+	const auto* wood = ConstructionRegistry::Get().getMaterial("Wood");
+	ASSERT_NE(wood, nullptr);
+	EXPECT_EQ(wood->wallThicknesses.size(), 3u);
+}
+
+TEST_F(ConstructionRegistryTest, WallPresets_StandardMmConversion) {
+	// Standard preset is 0.20 m → 200 mm → 100 half
+	ASSERT_TRUE(ConstructionRegistry::Get().load(constructionConfigFolder().string()));
+
+	const auto* preset = ConstructionRegistry::Get().getThicknessPreset("Wood", "Standard");
+	ASSERT_NE(preset, nullptr);
+	EXPECT_FLOAT_EQ(preset->thicknessMeters, 0.20F);
+	EXPECT_EQ(preset->thicknessMm, 200);
+	EXPECT_EQ(preset->halfThicknessMm, 100);
+}
+
+TEST_F(ConstructionRegistryTest, WallPresets_LightMmConversion) {
+	// Light preset is 0.15 m → 150 mm → 75 half
+	ASSERT_TRUE(ConstructionRegistry::Get().load(constructionConfigFolder().string()));
+
+	const auto* preset = ConstructionRegistry::Get().getThicknessPreset("Wood", "Light");
+	ASSERT_NE(preset, nullptr);
+	EXPECT_FLOAT_EQ(preset->thicknessMeters, 0.15F);
+	EXPECT_EQ(preset->thicknessMm, 150);
+	EXPECT_EQ(preset->halfThicknessMm, 75);
+}
+
+TEST_F(ConstructionRegistryTest, WallPresets_HeavyMmConversion) {
+	// Heavy preset is 0.30 m → 300 mm → 150 half
+	ASSERT_TRUE(ConstructionRegistry::Get().load(constructionConfigFolder().string()));
+
+	const auto* preset = ConstructionRegistry::Get().getThicknessPreset("Wood", "Heavy");
+	ASSERT_NE(preset, nullptr);
+	EXPECT_FLOAT_EQ(preset->thicknessMeters, 0.30F);
+	EXPECT_EQ(preset->thicknessMm, 300);
+	EXPECT_EQ(preset->halfThicknessMm, 150);
+}
+
+TEST_F(ConstructionRegistryTest, WallPresets_MultipliersPositive) {
+	ASSERT_TRUE(ConstructionRegistry::Get().load(constructionConfigFolder().string()));
+
+	const auto* wood = ConstructionRegistry::Get().getMaterial("Wood");
+	ASSERT_NE(wood, nullptr);
+	for (const auto& preset : wood->wallThicknesses) {
+		EXPECT_GT(preset.costMultiplier, 0.0F) << "preset: " << preset.name;
+		EXPECT_GT(preset.workMultiplier, 0.0F) << "preset: " << preset.name;
+		EXPECT_GT(preset.hpMultiplier, 0.0F) << "preset: " << preset.name;
+		EXPECT_GE(preset.insulation, 0.0F) << "preset: " << preset.name;
+	}
+}
+
+TEST_F(ConstructionRegistryTest, WallPresets_GetThicknessPreset_Hit) {
+	ASSERT_TRUE(ConstructionRegistry::Get().load(constructionConfigFolder().string()));
+
+	const auto* p = ConstructionRegistry::Get().getThicknessPreset("Wood", "Standard");
+	EXPECT_NE(p, nullptr);
+}
+
+TEST_F(ConstructionRegistryTest, WallPresets_GetThicknessPreset_MissMaterial) {
+	ASSERT_TRUE(ConstructionRegistry::Get().load(constructionConfigFolder().string()));
+
+	EXPECT_EQ(ConstructionRegistry::Get().getThicknessPreset("Stone", "Standard"), nullptr);
+}
+
+TEST_F(ConstructionRegistryTest, WallPresets_GetThicknessPreset_MissPresetName) {
+	ASSERT_TRUE(ConstructionRegistry::Get().load(constructionConfigFolder().string()));
+
+	EXPECT_EQ(ConstructionRegistry::Get().getThicknessPreset("Wood", "NonExistent"), nullptr);
+}
+
+TEST_F(ConstructionRegistryTest, WallPresets_GetWallMaterial_Hit) {
+	ASSERT_TRUE(ConstructionRegistry::Get().load(constructionConfigFolder().string()));
+
+	EXPECT_NE(ConstructionRegistry::Get().getWallMaterial("Wood"), nullptr);
+}
+
+TEST_F(ConstructionRegistryTest, WallPresets_GetWallMaterial_MissNoPresets) {
+	// Stone has no wall presets, so getWallMaterial should return nullptr.
+	ASSERT_TRUE(ConstructionRegistry::Get().load(constructionConfigFolder().string()));
+
+	EXPECT_EQ(ConstructionRegistry::Get().getWallMaterial("Stone"), nullptr);
+}
+
+// ---------------------------------------------------------------------------
+// Wall constraint tests
+// ---------------------------------------------------------------------------
+
+TEST_F(ConstructionRegistryTest, WallConstraints_Parsed) {
+	ASSERT_TRUE(ConstructionRegistry::Get().load(constructionConfigFolder().string()));
+
+	const auto& c = ConstructionRegistry::Get().constraints();
+	EXPECT_FLOAT_EQ(c.minSegmentLengthMeters, 0.5F);
+	EXPECT_FLOAT_EQ(c.minWallJunctionAngleDegrees, 30.0F);
+	EXPECT_FLOAT_EQ(c.minParallelClearanceMeters, 0.8F);
+}
+
+TEST_F(ConstructionRegistryTest, WallConstraints_MmMirrors) {
+	// 0.5 m → 500 mm, 0.8 m → 800 mm
+	ASSERT_TRUE(ConstructionRegistry::Get().load(constructionConfigFolder().string()));
+
+	const auto& c = ConstructionRegistry::Get().constraints();
+	EXPECT_EQ(c.minSegmentLengthMm, 500);
+	EXPECT_EQ(c.minParallelClearanceMm, 800);
+}
+
+TEST_F(ConstructionRegistryTest, WallConstraints_ParallelClearanceGePathingClearance) {
+	// minParallelClearance must be >= pathingClearance (0.7) or else colonists can't pass.
+	ASSERT_TRUE(ConstructionRegistry::Get().load(constructionConfigFolder().string()));
+
+	const auto& c = ConstructionRegistry::Get().constraints();
+	EXPECT_GE(c.minParallelClearanceMeters, c.pathingClearanceMeters);
+}
+
+// ---------------------------------------------------------------------------
+// Negative-path: malformed wall preset rejected by validateConstruction
+// ---------------------------------------------------------------------------
+
+TEST_F(ConstructionRegistryTest, Validation_RejectsWallPresetWithZeroThickness) {
+	std::string xml = R"(<?xml version="1.0"?>
+<ConstructionMaterials>
+  <Foundation>
+    <Material name="Wood">
+      <costRatePerSquareMeter>2.0</costRatePerSquareMeter>
+      <workRatePerSquareMeter>12.0</workRatePerSquareMeter>
+      <hp>40.0</hp>
+      <flammability>0.8</flammability>
+      <beauty>1.0</beauty>
+      <speedModifier>1.15</speedModifier>
+      <pattern>
+        <emitter>planks</emitter>
+        <seed>1001</seed>
+        <palette>
+          <color>#C8915AFF</color>
+        </palette>
+      </pattern>
+    </Material>
+  </Foundation>
+  <Wall>
+    <Material name="Wood">
+      <Preset name="BadPreset">
+        <!-- thicknessMeters intentionally zero → invalid -->
+        <thicknessMeters>0.0</thicknessMeters>
+        <costMultiplier>1.0</costMultiplier>
+        <workMultiplier>1.0</workMultiplier>
+        <hpMultiplier>1.0</hpMultiplier>
+        <insulation>0.4</insulation>
+      </Preset>
+    </Material>
+  </Wall>
+</ConstructionMaterials>)";
+
+	std::string path = writeTempFile(xml, ".xml");
+	ASSERT_TRUE(ConstructionRegistry::Get().loadMaterials(path));
+
+	std::string folder = constructionConfigFolder().string();
+	ConstructionRegistry::Get().loadConstraints((std::filesystem::path(folder) / "constraints.xml").string());
+	ConstructionRegistry::Get().loadSnapping((std::filesystem::path(folder) / "snapping.xml").string());
+
+	EXPECT_FALSE(ConfigValidator::validateConstruction());
+	EXPECT_GT(ConfigValidator::getErrorCount(), 0);
+}
+
+TEST_F(ConstructionRegistryTest, Validation_RejectsWallPresetWithNegativeMultiplier) {
+	std::string xml = R"(<?xml version="1.0"?>
+<ConstructionMaterials>
+  <Foundation>
+    <Material name="Wood">
+      <costRatePerSquareMeter>2.0</costRatePerSquareMeter>
+      <workRatePerSquareMeter>12.0</workRatePerSquareMeter>
+      <hp>40.0</hp>
+      <flammability>0.8</flammability>
+      <beauty>1.0</beauty>
+      <speedModifier>1.15</speedModifier>
+      <pattern>
+        <emitter>planks</emitter>
+        <seed>1001</seed>
+        <palette>
+          <color>#C8915AFF</color>
+        </palette>
+      </pattern>
+    </Material>
+  </Foundation>
+  <Wall>
+    <Material name="Wood">
+      <Preset name="BadMultiplier">
+        <thicknessMeters>0.2</thicknessMeters>
+        <!-- negative workMultiplier → invalid -->
+        <costMultiplier>1.0</costMultiplier>
+        <workMultiplier>-1.0</workMultiplier>
+        <hpMultiplier>1.0</hpMultiplier>
+        <insulation>0.4</insulation>
+      </Preset>
+    </Material>
+  </Wall>
+</ConstructionMaterials>)";
+
+	std::string path = writeTempFile(xml, ".xml");
+	ASSERT_TRUE(ConstructionRegistry::Get().loadMaterials(path));
+
+	std::string folder = constructionConfigFolder().string();
+	ConstructionRegistry::Get().loadConstraints((std::filesystem::path(folder) / "constraints.xml").string());
+	ConstructionRegistry::Get().loadSnapping((std::filesystem::path(folder) / "snapping.xml").string());
+
+	EXPECT_FALSE(ConfigValidator::validateConstruction());
+	EXPECT_GT(ConfigValidator::getErrorCount(), 0);
+}
+
+TEST_F(ConstructionRegistryTest, Validation_RejectsDuplicateWallPresetNames) {
+	std::string xml = R"(<?xml version="1.0"?>
+<ConstructionMaterials>
+  <Foundation>
+    <Material name="Wood">
+      <costRatePerSquareMeter>2.0</costRatePerSquareMeter>
+      <workRatePerSquareMeter>12.0</workRatePerSquareMeter>
+      <hp>40.0</hp>
+      <flammability>0.8</flammability>
+      <beauty>1.0</beauty>
+      <speedModifier>1.15</speedModifier>
+      <pattern>
+        <emitter>planks</emitter>
+        <seed>1001</seed>
+        <palette>
+          <color>#C8915AFF</color>
+        </palette>
+      </pattern>
+    </Material>
+  </Foundation>
+  <Wall>
+    <Material name="Wood">
+      <Preset name="Standard">
+        <thicknessMeters>0.2</thicknessMeters>
+        <costMultiplier>1.0</costMultiplier>
+        <workMultiplier>1.0</workMultiplier>
+        <hpMultiplier>1.0</hpMultiplier>
+        <insulation>0.4</insulation>
+      </Preset>
+      <!-- Duplicate name: Standard appears twice → invalid -->
+      <Preset name="Standard">
+        <thicknessMeters>0.3</thicknessMeters>
+        <costMultiplier>1.5</costMultiplier>
+        <workMultiplier>1.5</workMultiplier>
+        <hpMultiplier>1.4</hpMultiplier>
+        <insulation>0.6</insulation>
+      </Preset>
+    </Material>
+  </Wall>
+</ConstructionMaterials>)";
+
+	std::string path = writeTempFile(xml, ".xml");
+	ASSERT_TRUE(ConstructionRegistry::Get().loadMaterials(path));
+
+	std::string folder = constructionConfigFolder().string();
+	ConstructionRegistry::Get().loadConstraints((std::filesystem::path(folder) / "constraints.xml").string());
+	ConstructionRegistry::Get().loadSnapping((std::filesystem::path(folder) / "snapping.xml").string());
+
+	EXPECT_FALSE(ConfigValidator::validateConstruction());
+	EXPECT_GT(ConfigValidator::getErrorCount(), 0);
+}

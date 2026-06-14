@@ -7,6 +7,7 @@
 // - Priority 1.5: Crafting stations
 // - Priority 1.6: Storage containers
 // - Priority 2.0: World entities (placed assets)
+// - Priority 2.5: Wall segments (above foundations, below entities/furniture)
 // - Priority 3.0: Foundations (lowest; below everything that can stand on them)
 //
 // Also renders selection indicators in world-space.
@@ -17,6 +18,7 @@
 #include <math/Types.h>
 #include <world/camera/WorldCamera.h>
 
+#include <cstdint>
 #include <functional>
 
 namespace engine::assets {
@@ -35,7 +37,8 @@ namespace SelectionPriority {
 	constexpr float kCraftingStation = 1.5F;
 	constexpr float kStorageContainer = 1.6F;
 	constexpr float kWorldEntity = 2.0F;
-	constexpr float kFoundation = 3.0F; // below everything that sits on a foundation
+	constexpr float kWallSegment = 2.5F; // above the host foundation, below entities/furniture
+	constexpr float kFoundation = 3.0F;	 // below everything that sits on a foundation
 } // namespace SelectionPriority
 
 /// SelectionSystem - Manages entity selection and rendering.
@@ -98,6 +101,11 @@ class SelectionSystem {
 	static constexpr float kSelectionRadius = 2.0F;		 // meters
 	static constexpr float kPixelsPerMeter = 8.0F;
 	static constexpr float kIndicatorRadius = 1.0F;		 // meters
+
+	// Pick slop for thin wall segments: a thin wall's half-thickness is a small
+	// target, so a click within this radius of the centerline still hits. mm,
+	// max'd against the segment's half-thickness so a thick wall uses its own face.
+	static constexpr std::int64_t kWallPickSlopMm = 300; // 0.3 m, matches edge-snap slop
 };
 
 } // namespace world_sim

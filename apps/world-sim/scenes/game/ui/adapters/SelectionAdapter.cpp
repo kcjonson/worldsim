@@ -1,5 +1,7 @@
 #include "SelectionAdapter.h"
 
+#include <assets/ConstructionRegistry.h>
+#include <core/Vec2i64.h>
 #include <ecs/components/Action.h>
 #include <ecs/components/Colonist.h>
 #include <ecs/components/Inventory.h>
@@ -8,6 +10,7 @@
 #include <ecs/components/StructureBlueprint.h>
 #include <ecs/components/Task.h>
 
+#include <cmath>
 #include <iomanip>
 #include <sstream>
 
@@ -96,10 +99,12 @@ namespace world_sim {
 		const engine::assets::AssetRegistry& registry,
 		const ResourceQueryCallback&		 queryResources,
 		const engine::construction::ConstructionWorld* constructionWorld,
-		const std::function<void()>&		 onDemolish
+		const std::function<void()>&		 onDemolish,
+		const std::function<void()>&		 onDemolishWallSegment
 	) {
 		return std::visit(
-			[&world, &registry, &queryResources, constructionWorld, &onDemolish](auto&& sel) -> std::optional<PanelContent> {
+			[&world, &registry, &queryResources, constructionWorld, &onDemolish, &onDemolishWallSegment](auto&& sel
+			) -> std::optional<PanelContent> {
 				using T = std::decay_t<decltype(sel)>;
 				if constexpr (std::is_same_v<T, NoSelection>) {
 					return std::nullopt;
@@ -116,6 +121,11 @@ namespace world_sim {
 						return std::nullopt;
 					}
 					return adaptFoundation(world, *constructionWorld, sel, onDemolish);
+				} else if constexpr (std::is_same_v<T, WallSegmentSelection>) {
+					if (constructionWorld == nullptr || constructionWorld->getSegment(sel.id) == nullptr) {
+						return std::nullopt;
+					}
+					return adaptWallSegment(world, *constructionWorld, sel, onDemolishWallSegment);
 				} else if constexpr (std::is_same_v<T, CraftingStationSelection>) {
 					// Validate entity still exists
 					if (!world.isAlive(sel.entityId)) {
@@ -458,6 +468,77 @@ namespace world_sim {
 		// Demolish action. Epic C does an immediate whole-foundation removal here. The
 		// work-driven Deconstruct action exists; only its material refund and the
 		// Demolish-building cascade are deferred polish.
+		content.slots.push_back(SpacerSlot{.height = 8.0F});
+		content.slots.push_back(
+			ActionButtonSlot{
+				.label = "Demolish",
+				.onClick = onDemolish,
+			}
+		);
+
+		return content;
+	}
+
+	PanelContent adaptWallSegment(
+		const ecs::World&								world,
+		const engine::construction::ConstructionWorld& constructionWorld,
+		const WallSegmentSelection&						selection,
+		const std::function<void()>&					onDemolish
+	) {
+		PanelContent content;
+		content.layout = PanelLayout::SingleColumn;
+
+		const auto* segment = constructionWorld.getSegment(selection.id);
+		const std::string material = (segment != nullptr) ? segment->material : std::string{"Wall"};
+		content.title = material + " Wall";
+
+		content.slots.push_back(TextSlot{"Material", material});
+
+		// Thickness: the topology stores the preset NAME; resolve the meters value
+		// through the registry (same lookup the band render and hit-test use).
+		if (segment != nullptr) {
+			const auto* preset =
+				engine::assets::ConstructionRegistry::Get().getThicknessPreset(segment->material, segment->thicknessPreset);
+			std::ostringstream thicknessText;
+			thicknessText << segment->thicknessPreset;
+			if (preset != nullptr) {
+				thicknessText << " (" << std::fixed << std::setprecision(2) << preset->thicknessMeters << " m)";
+			}
+			content.slots.push_back(TextSlot{"Thickness", thicknessText.str()});
+		}
+
+		// Length from the segment's two vertices (integer mm -> meters).
+		const engine::construction::Vertex* v0 = (segment != nullptr) ? constructionWorld.getVertex(segment->v0) : nullptr;
+		const engine::construction::Vertex* v1 = (segment != nullptr) ? constructionWorld.getVertex(segment->v1) : nullptr;
+		if (v0 != nullptr && v1 != nullptr) {
+			const double dx = static_cast<double>(v1->pos.x - v0->pos.x);
+			const double dy = static_cast<double>(v1->pos.y - v0->pos.y);
+			const double lengthMeters = std::sqrt(dx * dx + dy * dy) / 1000.0;
+			std::ostringstream lengthText;
+			lengthText << std::fixed << std::setprecision(2) << lengthMeters << " m";
+			content.slots.push_back(TextSlot{"Length", lengthText.str()});
+		}
+
+		const bool built =
+			(segment != nullptr && segment->state == engine::construction::FoundationState::Built);
+
+		// Build state + progress come from the ECS mirror's blueprint, exactly like a
+		// foundation: a built wall has no blueprint progress; a blueprint shows phase,
+		// a 0-100 work bar, and the delivered/required materials summary.
+		const ecs::StructureBlueprint* blueprint =
+			(segment != nullptr) ? world.getComponent<ecs::StructureBlueprint>(segment->entity) : nullptr;
+
+		if (blueprint != nullptr) {
+			content.slots.push_back(TextSlot{"State", buildPhaseLabel(blueprint->phase, blueprint->demolishing)});
+			content.slots.push_back(TextSlot{"Materials", materialsSummary(*blueprint)});
+			content.slots.push_back(ProgressBarSlot{.label = "Work", .value = blueprint->progress() * 100.0F});
+		} else {
+			content.slots.push_back(TextSlot{"State", built ? "Built" : "Blueprint"});
+		}
+
+		// Demolish action. Per-segment removal is the design's wall demolition unit;
+		// GameScene's handler removes only this segment. Immediate, mirroring the
+		// foundation precedent (see GameScene::handleDemolishWallSegment).
 		content.slots.push_back(SpacerSlot{.height = 8.0F});
 		content.slots.push_back(
 			ActionButtonSlot{
