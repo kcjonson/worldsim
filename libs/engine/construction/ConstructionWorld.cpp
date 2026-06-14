@@ -625,6 +625,18 @@ namespace engine::construction {
 		return result;
 	}
 
+	bool ConstructionWorld::foundationHasWalls(FoundationId id) const {
+		if (id == kInvalidFoundation) {
+			return false;
+		}
+		for (const WallSegment& s : segments_) {
+			if (s.hostFoundation == id) {
+				return true;
+			}
+		}
+		return false;
+	}
+
 	bool ConstructionWorld::setSegmentState(SegmentId id, FoundationState state) {
 		WallSegment* s = findSegment(id);
 		if (s == nullptr) {

@@ -308,9 +308,13 @@ namespace engine::construction {
 
 		// Every wall segment hosted by foundation `id`, in stable segments() order.
 		// The demolish-building cascade walks these to drop the walls (and their
-		// openings) before the foundation; the demolish-foundation gate uses
-		// non-empty to mean "walls still stand". Empty for an unknown id.
+		// openings) before the foundation. Empty for an unknown id.
 		std::vector<SegmentId> segmentsOnFoundation(FoundationId id) const;
+
+		// True if any wall segment is hosted on this foundation. Early-exit, no
+		// allocation -- the demolish-foundation gate (queried every frame while a
+		// foundation is selected) only needs the boolean, not the list.
+		bool foundationHasWalls(FoundationId id) const;
 
 		// --- Walls: lifecycle / ECS wiring -----------------------------------
 

@@ -832,6 +832,12 @@ TEST(ConstructionWorldWallTests, SegmentsOnFoundationReturnsHostedInStableOrder)
 	// An unknown id and the invalid sentinel both return empty.
 	EXPECT_TRUE(world.segmentsOnFoundation(98765).empty());
 	EXPECT_TRUE(world.segmentsOnFoundation(kInvalidFoundation).empty());
+
+	// foundationHasWalls is the allocation-free boolean for the same predicate.
+	EXPECT_TRUE(world.foundationHasWalls(hostA));
+	EXPECT_TRUE(world.foundationHasWalls(hostB));
+	EXPECT_FALSE(world.foundationHasWalls(98765));
+	EXPECT_FALSE(world.foundationHasWalls(kInvalidFoundation));
 }
 
 // ============================================================================

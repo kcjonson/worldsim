@@ -475,7 +475,7 @@ namespace world_sim {
 		// its own (the walls would be orphaned), so offer the cascade instead;
 		// ActionButtonSlot has no disabled flag, so swap the button rather than
 		// graying it out. A clear or blueprint foundation gets the plain Demolish.
-		const bool hasWalls = !constructionWorld.segmentsOnFoundation(selection.id).empty();
+		const bool hasWalls = constructionWorld.foundationHasWalls(selection.id);
 		content.slots.push_back(SpacerSlot{.height = 8.0F});
 		if (hasWalls) {
 			content.slots.push_back(

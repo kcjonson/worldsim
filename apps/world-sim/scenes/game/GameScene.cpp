@@ -1396,7 +1396,7 @@ namespace {
 			// Walls block plain foundation demolition: removing the foundation alone would
 			// orphan a hosted wall. The panel hides this button while walls stand and offers
 			// Demolish building instead; this is the defensive guard for any other caller.
-			if (!constructionWorld.segmentsOnFoundation(foundationSel->id).empty()) {
+			if (constructionWorld.foundationHasWalls(foundationSel->id)) {
 				LOG_WARNING(
 					Game, "Cannot demolish foundation #%llu: walls still stand", static_cast<unsigned long long>(foundationSel->id)
 				);
