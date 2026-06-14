@@ -6,6 +6,7 @@
 
 #include "worldgen/debug/WorldStats.h"
 
+#include "worldgen/data/Biome.h"
 #include "worldgen/data/WorldData.h"
 #include "worldgen/grid/SphereGrid.h"
 
@@ -120,46 +121,101 @@ HypsoResult computeHypsometry(const std::vector<float>& elevation) {
         res.hist[static_cast<size_t>(bin)]++;
     }
 
-    // Detect local maxima via simple neighbour comparison; collect all,
-    // then take the two largest by count.
-    struct Peak { int bin; uint32_t count; };
-    std::vector<Peak> peaks;
-    for (int b = 1; b < kBins - 1; ++b) {
-        if (res.hist[static_cast<size_t>(b)] > res.hist[static_cast<size_t>(b - 1)] &&
-            res.hist[static_cast<size_t>(b)] > res.hist[static_cast<size_t>(b + 1)]) {
-            peaks.push_back({b, res.hist[static_cast<size_t>(b)]});
-        }
-    }
-    // Sort peaks descending by count.
-    std::sort(peaks.begin(), peaks.end(),
-              [](const Peak& a, const Peak& b) { return a.count > b.count; });
+    // Two-threshold bimodality. Earth's hypsometry has three populations: abyssal
+    // plains (~-5000 m), the C-3 shelf shoulder (~-120/-140 m), and the continental
+    // platform (+100 to +500 m). A single split at -1500 m groups the shelf
+    // shoulder with the land peak, which is fine at Earth-like waterAmount. But at
+    // high waterAmount (sparse land), the shelf shoulder can dominate the "land"
+    // slot and suppress the true platform mode.
+    //
+    // Fix: use TWO thresholds that exclude the shelf shoulder from BOTH canonical
+    // modes. The abyssal mode must be at or below kAbyssalModeMaxM (well into the
+    // abyssal plain, below the slope foot); the land mode must be at or above
+    // kLandModeMinM (on or above sea level, i.e. the continental platform). The
+    // shelf shoulder in between is a valid third population but not one of the two
+    // reported modes.
+    static constexpr float kAbyssalModeMaxM = -2000.0f; // abyssal mode must be <= this
+    static constexpr float kLandModeMinM    =     0.0f; // land mode must be >= this
 
-    size_t nPeaks = std::min(peaks.size(), size_t{2});
-    for (size_t i = 0; i < nPeaks; ++i) {
-        float center = res.binMin + (static_cast<float>(peaks[i].bin) + 0.5f) * res.binWidth;
-        res.modeElevations.push_back(center);
-        res.modeCounts.push_back(peaks[i].count);
-    }
+    auto binForElev = [&](float e) -> int {
+        int b = static_cast<int>((e - minE) / res.binWidth);
+        if (b < 0)      b = 0;
+        if (b >= kBins) b = kBins - 1;
+        return b;
+    };
 
-    // Trough between the two largest modes (if bimodal).
-    if (nPeaks >= 2) {
-        int binA = peaks[0].bin;
-        int binB = peaks[1].bin;
-        if (binA > binB) std::swap(binA, binB);
+    const int abyssalMaxBin = binForElev(kAbyssalModeMaxM);
+    const int landMinBin    = binForElev(kLandModeMinM);
 
-        uint32_t troughCount = std::numeric_limits<uint32_t>::max();
-        int      troughBin   = binA;
-        for (int b = binA + 1; b < binB; ++b) {
-            if (res.hist[static_cast<size_t>(b)] < troughCount) {
-                troughCount = res.hist[static_cast<size_t>(b)];
-                troughBin   = b;
+    auto tallestBinInRange = [&](int lo, int hi) -> int {
+        int bestBin = -1;
+        uint32_t bestCount = 0;
+        for (int b = lo; b < hi; ++b) {
+            if (res.hist[static_cast<size_t>(b)] > bestCount) {
+                bestCount = res.hist[static_cast<size_t>(b)];
+                bestBin   = b;
             }
         }
-        res.troughElevation = res.binMin + (static_cast<float>(troughBin) + 0.5f) * res.binWidth;
-        uint32_t lowerPeak  = std::min(peaks[0].count, peaks[1].count);
-        res.troughFraction  = lowerPeak > 0
-            ? static_cast<float>(troughCount) / static_cast<float>(lowerPeak)
-            : 1.0f;
+        return bestBin;
+    };
+
+    // abyssal mode: tallest bin at elevation <= kAbyssalModeMaxM
+    const int abyssalBin = tallestBinInRange(0, abyssalMaxBin + 1);
+    // land mode: tallest bin at elevation >= kLandModeMinM
+    int landBin          = tallestBinInRange(landMinBin, kBins);
+
+    // For a normal world the two ranges are disjoint, so abyssalBin != landBin. But a
+    // degenerate world (all-ocean or all-land with a narrow elevation span) can clamp
+    // both thresholds onto the same histogram bin; report a single mode in that case
+    // rather than a spurious duplicate that downstream reads as bimodal.
+    if (landBin == abyssalBin) landBin = -1;
+
+    // Emit the dominant (higher-count) mode first to preserve the convention
+    // that modeElevations[0] is the larger population.
+    struct Mode { int bin; uint32_t count; };
+    std::vector<Mode> modes;
+    if (abyssalBin >= 0) modes.push_back({abyssalBin, res.hist[static_cast<size_t>(abyssalBin)]});
+    if (landBin >= 0)    modes.push_back({landBin,    res.hist[static_cast<size_t>(landBin)]});
+    std::sort(modes.begin(), modes.end(),
+              [](const Mode& a, const Mode& b) { return a.count > b.count; });
+
+    for (const Mode& m : modes) {
+        float center = res.binMin + (static_cast<float>(m.bin) + 0.5f) * res.binWidth;
+        res.modeElevations.push_back(center);
+        res.modeCounts.push_back(m.count);
+    }
+
+    // Trough = the shallowest-count bin between the two modes (the genuine
+    // land/abyssal gap). The two-threshold design above places abyssalBin well
+    // below kAbyssalModeMaxM and landBin at or above kLandModeMinM, so they are
+    // never adjacent in practice; the guard below handles any degenerate world
+    // where they somehow end up in the same or adjacent bins.
+    if (abyssalBin >= 0 && landBin >= 0) {
+        int binA = abyssalBin;
+        int binB = landBin;
+        if (binA > binB) std::swap(binA, binB);
+
+        if (binB <= binA + 1) {
+            // Modes are adjacent or identical — no gap exists. Report the midpoint
+            // and troughFraction = 1.0 (no separation).
+            float midElev = res.binMin + (static_cast<float>(binA) + 1.0f) * res.binWidth;
+            res.troughElevation = midElev;
+            res.troughFraction  = 1.0f;
+        } else {
+            uint32_t troughCount = std::numeric_limits<uint32_t>::max();
+            int      troughBin   = binA;
+            for (int b = binA + 1; b < binB; ++b) {
+                if (res.hist[static_cast<size_t>(b)] < troughCount) {
+                    troughCount = res.hist[static_cast<size_t>(b)];
+                    troughBin   = b;
+                }
+            }
+            res.troughElevation = res.binMin + (static_cast<float>(troughBin) + 0.5f) * res.binWidth;
+            uint32_t lowerPeak  = std::min(modes[0].count, modes[1].count);
+            res.troughFraction  = lowerPeak > 0
+                ? static_cast<float>(troughCount) / static_cast<float>(lowerPeak)
+                : 1.0f;
+        }
     }
 
     return res;
@@ -676,6 +732,43 @@ WorldStats computeWorldStats(const GeneratedWorld& world) {
         ratios.reserve(s.continents.size());
         for (const auto& c : s.continents) ratios.push_back(c.isoperimetricRatio);
         s.medianIsoperimetric = median(ratios);
+    }
+
+    // ---- Biome fractions (land tiles only) ----
+    {
+        std::array<uint32_t, static_cast<size_t>(Biome::Count)> biomeCounts{};
+        biomeCounts.fill(0u);
+        uint32_t landCount = 0;
+        for (uint32_t t = 0; t < N; ++t) {
+            auto b = static_cast<Biome>(world.data.biome[t]);
+            if (b == Biome::Ocean || b == Biome::Lake) continue;
+            ++landCount;
+            const size_t idx = static_cast<size_t>(b);
+            if (idx < static_cast<size_t>(Biome::Count)) ++biomeCounts[idx];
+        }
+        s.landTileCount = static_cast<float>(landCount);
+        s.biomeFraction.fill(0.0f);
+        if (landCount > 0) {
+            for (size_t i = 0; i < static_cast<size_t>(Biome::Count); ++i) {
+                s.biomeFraction[i] = static_cast<float>(biomeCounts[i]) /
+                                     static_cast<float>(landCount);
+            }
+        }
+    }
+
+    // ---- Continental shelf: kFlagContinentalCrust tiles below sea level ----
+    {
+        uint32_t contCrustTotal = 0;
+        uint32_t contCrustSubmerged = 0;
+        const float seaLevel = world.seaLevelMeters;
+        for (uint32_t t = 0; t < N; ++t) {
+            if ((world.data.flags[t] & kFlagContinentalCrust) == 0) continue;
+            ++contCrustTotal;
+            if (world.data.elevation[t] < seaLevel) ++contCrustSubmerged;
+        }
+        s.shelfSubmergedFraction = (contCrustTotal > 0)
+            ? static_cast<float>(contCrustSubmerged) / static_cast<float>(contCrustTotal)
+            : 0.0f;
     }
 
     return s;

@@ -60,13 +60,4 @@ inline bool isWater(Biome b) {
     return b == Biome::Ocean || b == Biome::Lake;
 }
 
-inline bool isForest(Biome b) {
-    return b == Biome::TropicalRainforest       ||
-           b == Biome::TropicalSeasonalForest   ||
-           b == Biome::TemperateDeciduousForest ||
-           b == Biome::TemperateRainforest       ||
-           b == Biome::BorealForest             ||
-           b == Biome::MontaneForest;
-}
-
 } // namespace worldgen

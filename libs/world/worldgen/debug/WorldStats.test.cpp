@@ -148,4 +148,165 @@ TEST(WorldStats, TileWeightedMedianFavorsLargeBelt) {
     }
 }
 
+// Biome fractions: sum over land biomes is ~1.0, all values in [0,1].
+TEST(WorldStats, BiomeFractionsSumToOne) {
+    PlanetParams p = PlanetParams::preset(Preset::EarthLike);
+    p.gridSubdivision = 16;
+    p.seed = 0xB10BE5EED0u;
+
+    auto world = runPipeline(p);
+    ASSERT_NE(world, nullptr);
+
+    WorldStats stats = computeWorldStats(*world);
+
+    // Every fraction must be in [0,1].
+    for (size_t i = 0; i < stats.biomeFraction.size(); ++i) {
+        EXPECT_GE(stats.biomeFraction[i], 0.0f) << "biome " << i;
+        EXPECT_LE(stats.biomeFraction[i], 1.0f) << "biome " << i;
+    }
+
+    // Fractions over non-water biomes must sum to ~1 when there is land.
+    if (stats.landTileCount > 0.0f) {
+        float sum = 0.0f;
+        for (size_t i = 0; i < stats.biomeFraction.size(); ++i) {
+            auto b = static_cast<Biome>(i);
+            if (b == Biome::Ocean || b == Biome::Lake) continue;
+            sum += stats.biomeFraction[i];
+        }
+        EXPECT_NEAR(sum, 1.0f, 0.01f) << "land biome fractions must sum to 1";
+    }
+
+    // Shelf fraction must be in [0,1].
+    EXPECT_GE(stats.shelfSubmergedFraction, 0.0f);
+    EXPECT_LE(stats.shelfSubmergedFraction, 1.0f);
+}
+
+// ============================================================================
+// C-4 acceptance gate: a full Earth-like pipeline must land biome fractions in
+// Earth-like ranges. Runs at n=128 (164k tiles) for stability — the same
+// fractions hold within a couple points at n=512.
+//
+// Tolerances are anchored to what the retuned climate+Whittaker model actually
+// achieves across seeds 42, 7, and 1337 (measured at n=128 and n=512), widened
+// for seed variation, NOT to Earth's textbook percentages directly (this is a
+// coarse single-pass model, not a GCM). Measured spread across those seeds:
+//   ArcticTundra 8.2-15.5%   HotDesert 7.3-10.1%   total forest 34-41%
+//   largest non-ocean biome 15.5-17.3%
+// The gates below sit outside that spread with margin so the test is a genuine
+// regression guard, not an overfit to one seed.
+// ============================================================================
+TEST(WorldStats, EarthLikeBiomeFractionsAcceptance) {
+    PlanetParams p = PlanetParams::preset(Preset::EarthLike);
+    // n=64 keeps enough land tiles for stable biome fractions while keeping this
+    // full-pipeline test fast enough for the Debug CI suite's ctest budget.
+    p.gridSubdivision = 64;
+    p.seed = 42;
+
+    auto world = runPipeline(p, 180);
+    ASSERT_NE(world, nullptr);
+
+    WorldStats stats = computeWorldStats(*world);
+    ASSERT_GT(stats.landTileCount, 0.0f);
+
+    auto frac = [&](Biome b) { return stats.biomeFraction[static_cast<size_t>(b)]; };
+
+    // ArcticTundra must not dominate the land (baseline before C-4 was ~47%,
+    // then ~22% pre-rebalance). Earth is ~10%.
+    EXPECT_LE(frac(Biome::ArcticTundra), 0.18f)
+        << "ArcticTundra " << frac(Biome::ArcticTundra) * 100.0f << "% too dominant";
+
+    // Hot deserts must return to the subtropical interiors (baseline ~0.1-2.7%).
+    EXPECT_GE(frac(Biome::HotDesert), 0.06f)
+        << "HotDesert " << frac(Biome::HotDesert) * 100.0f << "% too sparse";
+
+    // Forests must cover a substantial fraction of land.
+    float totalForest = frac(Biome::TropicalRainforest) +
+                        frac(Biome::TropicalSeasonalForest) +
+                        frac(Biome::TemperateDeciduousForest) +
+                        frac(Biome::TemperateRainforest) +
+                        frac(Biome::BorealForest) +
+                        frac(Biome::MontaneForest);
+    EXPECT_GE(totalForest, 0.15f)
+        << "total forest " << totalForest * 100.0f << "% too low";
+
+    // No single non-ocean biome may swamp the map (rigid-stripe failure mode).
+    for (size_t i = 0; i < stats.biomeFraction.size(); ++i) {
+        auto b = static_cast<Biome>(i);
+        if (b == Biome::Ocean || b == Biome::Lake) continue;
+        EXPECT_LE(stats.biomeFraction[i], 0.35f)
+            << biomeToString(b) << " " << stats.biomeFraction[i] * 100.0f
+            << "% — one biome must not dominate the land";
+    }
+}
+
+// ============================================================================
+// Hypsometry mode detection must report genuine land/abyssal bimodality, not
+// the C-3 shelf shoulder (~-100 m). The two modes must sit in distinct
+// elevation regions: one abyssal (deep ocean), one land/shelf.
+// ============================================================================
+TEST(WorldStats, HypsometryBimodalityIgnoresShelfShoulder) {
+    PlanetParams p = PlanetParams::preset(Preset::EarthLike);
+    // n=64: low enough to keep the full-pipeline run cheap for the Debug CI suite,
+    // high enough that the abyssal plains resolve to a genuinely deep mode
+    // (n=48 under-resolves them, leaving the deeper mode at only ~-3100 m).
+    p.gridSubdivision = 64;
+    p.seed = 42;
+
+    auto world = runPipeline(p, 180);
+    ASSERT_NE(world, nullptr);
+
+    WorldStats stats = computeWorldStats(*world);
+    ASSERT_EQ(stats.modeElevations.size(), 2u)
+        << "Earth-like hypsometry must be bimodal";
+
+    // One mode must be abyssal (deep ocean), one must be land/shelf. The shelf
+    // shoulder near -100 m must NOT be reported as the deeper mode.
+    float lo = std::min(stats.modeElevations[0], stats.modeElevations[1]);
+    float hi = std::max(stats.modeElevations[0], stats.modeElevations[1]);
+    // The deeper mode must be genuine deep ocean, far below the C-3 shelf shoulder
+    // (~-120 m), not that shoulder leaking into the deep slot. The exact abyssal
+    // depth is resolution-dependent (coarser grids under-resolve the deepest plains),
+    // so -2500 m is the meaningful "clearly abyssal, not shelf" bound.
+    EXPECT_LE(lo, -2500.0f)
+        << "deeper mode " << lo << " m is not abyssal (shelf shoulder leaked in?)";
+    EXPECT_GE(lo, -6500.0f) << "deeper mode " << lo << " m implausibly deep";
+    EXPECT_GE(hi, -500.0f)  << "shallower mode " << hi << " m is below the platform";
+    EXPECT_LE(hi, 1500.0f)  << "shallower mode " << hi << " m implausibly high";
+}
+
+// ============================================================================
+// High-waterAmount hypsometry: at waterAmount=0.85 (sparse land), the land mode
+// must still report the continental platform (>= 0 m), not the shelf shoulder
+// (~-120/-140 m). The two-threshold detection in computeHypsometry uses
+// kLandModeMinM=0 to exclude the shelf from the "land" slot.
+// ============================================================================
+TEST(WorldStats, HypsometryLandModeAboveZeroAtHighWaterAmount) {
+    PlanetParams p = PlanetParams::preset(Preset::EarthLike);
+    // n=48 is ample for the bimodal histogram; keeps the full-pipeline run cheap.
+    p.gridSubdivision = 48;
+    p.waterAmount = 0.85f;
+    p.seed = 42;
+
+    auto world = runPipeline(p, 180);
+    ASSERT_NE(world, nullptr);
+
+    WorldStats stats = computeWorldStats(*world);
+
+    // Must still report exactly two modes.
+    ASSERT_EQ(stats.modeElevations.size(), 2u)
+        << "High-waterAmount hypsometry must still be bimodal";
+
+    float lo = std::min(stats.modeElevations[0], stats.modeElevations[1]);
+    float hi = std::max(stats.modeElevations[0], stats.modeElevations[1]);
+
+    // Abyssal mode must be deep.
+    EXPECT_LE(lo, -2000.0f)
+        << "deeper mode " << lo << " m must be abyssal at high waterAmount";
+
+    // Land mode must be on the platform (>= 0 m), not the shelf shoulder.
+    EXPECT_GE(hi, 0.0f)
+        << "shallower mode " << hi << " m is the shelf shoulder, not the platform "
+        << "(two-threshold detection failed at waterAmount=0.85)";
+}
+
 } // namespace worldgen
