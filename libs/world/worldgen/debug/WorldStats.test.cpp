@@ -148,4 +148,37 @@ TEST(WorldStats, TileWeightedMedianFavorsLargeBelt) {
     }
 }
 
+// Biome fractions: sum over land biomes is ~1.0, all values in [0,1].
+TEST(WorldStats, BiomeFractionsSumToOne) {
+    PlanetParams p = PlanetParams::preset(Preset::EarthLike);
+    p.gridSubdivision = 16;
+    p.seed = 0xB10BE5EED0u;
+
+    auto world = runPipeline(p);
+    ASSERT_NE(world, nullptr);
+
+    WorldStats stats = computeWorldStats(*world);
+
+    // Every fraction must be in [0,1].
+    for (size_t i = 0; i < stats.biomeFraction.size(); ++i) {
+        EXPECT_GE(stats.biomeFraction[i], 0.0f) << "biome " << i;
+        EXPECT_LE(stats.biomeFraction[i], 1.0f) << "biome " << i;
+    }
+
+    // Fractions over non-water biomes must sum to ~1 when there is land.
+    if (stats.landTileCount > 0.0f) {
+        float sum = 0.0f;
+        for (size_t i = 0; i < stats.biomeFraction.size(); ++i) {
+            auto b = static_cast<Biome>(i);
+            if (b == Biome::Ocean || b == Biome::Lake) continue;
+            sum += stats.biomeFraction[i];
+        }
+        EXPECT_NEAR(sum, 1.0f, 0.01f) << "land biome fractions must sum to 1";
+    }
+
+    // Shelf fraction must be in [0,1].
+    EXPECT_GE(stats.shelfSubmergedFraction, 0.0f);
+    EXPECT_LE(stats.shelfSubmergedFraction, 1.0f);
+}
+
 } // namespace worldgen

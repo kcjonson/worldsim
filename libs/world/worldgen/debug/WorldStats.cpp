@@ -6,6 +6,7 @@
 
 #include "worldgen/debug/WorldStats.h"
 
+#include "worldgen/data/Biome.h"
 #include "worldgen/data/WorldData.h"
 #include "worldgen/grid/SphereGrid.h"
 
@@ -676,6 +677,43 @@ WorldStats computeWorldStats(const GeneratedWorld& world) {
         ratios.reserve(s.continents.size());
         for (const auto& c : s.continents) ratios.push_back(c.isoperimetricRatio);
         s.medianIsoperimetric = median(ratios);
+    }
+
+    // ---- Biome fractions (land tiles only) ----
+    {
+        std::array<uint32_t, static_cast<size_t>(Biome::Count)> biomeCounts{};
+        biomeCounts.fill(0u);
+        uint32_t landCount = 0;
+        for (uint32_t t = 0; t < N; ++t) {
+            auto b = static_cast<Biome>(world.data.biome[t]);
+            if (b == Biome::Ocean || b == Biome::Lake) continue;
+            ++landCount;
+            const size_t idx = static_cast<size_t>(b);
+            if (idx < static_cast<size_t>(Biome::Count)) ++biomeCounts[idx];
+        }
+        s.landTileCount = static_cast<float>(landCount);
+        s.biomeFraction.fill(0.0f);
+        if (landCount > 0) {
+            for (size_t i = 0; i < static_cast<size_t>(Biome::Count); ++i) {
+                s.biomeFraction[i] = static_cast<float>(biomeCounts[i]) /
+                                     static_cast<float>(landCount);
+            }
+        }
+    }
+
+    // ---- Continental shelf: kFlagContinentalCrust tiles below sea level ----
+    {
+        uint32_t contCrustTotal = 0;
+        uint32_t contCrustSubmerged = 0;
+        const float seaLevel = world.seaLevelMeters;
+        for (uint32_t t = 0; t < N; ++t) {
+            if ((world.data.flags[t] & kFlagContinentalCrust) == 0) continue;
+            ++contCrustTotal;
+            if (world.data.elevation[t] < seaLevel) ++contCrustSubmerged;
+        }
+        s.shelfSubmergedFraction = (contCrustTotal > 0)
+            ? static_cast<float>(contCrustSubmerged) / static_cast<float>(contCrustTotal)
+            : 0.0f;
     }
 
     return s;

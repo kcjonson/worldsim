@@ -75,12 +75,18 @@ constexpr double kEvapTmaxC           = 60.0;
 constexpr double kMaxPrecipMmYr       = 8000.0;
 
 // Latitude-band base precipitation (mm/yr): simplified Hadley cell pattern.
+// Band edges are derived from the same rotation-rate formula AtmosphereStage
+// uses (hadleyEdge = clamp(30+5*(sqrt(rot)-1), 25, 35); ferrelEdge = +30).
+// This keeps precipitation bands physically coupled to the wind cells rather
+// than hardcoded at 15/30/60 deg.
 // Kept in sync with PrecipitationStage.test.cpp (expectedNoOrographic).
-double latitudeBase(double absLat) {
-    if (absLat < 15.0) return 2000.0 - absLat * 20.0;          // ITCZ
-    if (absLat < 30.0) return 2000.0 - absLat * 60.0 + 200.0;  // subtropical dry
-    if (absLat < 60.0) return 200.0 + (absLat - 30.0) * 18.3;  // midlatitude
-    return 750.0 - (absLat - 60.0) * 7.5;                      // polar
+double latitudeBase(double absLat, double hadleyEdge, double ferrelEdge) {
+    const double itczEdge     = 0.5 * hadleyEdge;       // ITCZ half-width (~15 deg)
+    const double subDryPeak   = hadleyEdge;              // subtropical dry (~30 deg)
+    if (absLat < itczEdge)      return 2000.0 - absLat * (20.0 * 15.0 / itczEdge);
+    if (absLat < subDryPeak)    return 2000.0 - absLat * (60.0 * 30.0 / subDryPeak) + 200.0;
+    if (absLat < ferrelEdge)    return 200.0 + (absLat - subDryPeak) * (18.3 * 30.0 / (ferrelEdge - subDryPeak));
+    return 750.0 - (absLat - ferrelEdge) * (7.5 * 30.0 / (90.0 - ferrelEdge));
 }
 
 inline double dot3(const Vec3d& a, const Vec3d& b) {
@@ -95,6 +101,14 @@ void PrecipitationStage::run(StageContext& ctx) {
     const float  seaLevel  = ctx.world.seaLevelMeters;
     const double dSeaLevel = static_cast<double>(seaLevel);
     const float  invTotal  = 1.0f / static_cast<float>(totalTiles);
+
+    // Circulation cell boundaries — same formula as AtmosphereStage so that
+    // precipitation bands stay physically coupled to wind cells.
+    const double rot        = ctx.params.rotationRate;
+    const double sqrtRot    = foundation::det_math::sqrt(rot < 0.0 ? 0.0 : rot);
+    const double rawHadley  = 30.0 + 5.0 * (sqrtRot - 1.0);
+    const double hadleyEdge = rawHadley < 25.0 ? 25.0 : (rawHadley > 35.0 ? 35.0 : rawHadley);
+    const double ferrelEdge = hadleyEdge + 30.0;
 
     std::vector<Vec3d> centers(totalTiles);
     ctx.pool.parallelFor(0, totalTiles, kGrainSize, [&](size_t begin, size_t end) {
@@ -205,7 +219,7 @@ void PrecipitationStage::run(StageContext& ctx) {
             const double lat = foundation::det_math::asin(c.z) / kPiOver180;
             const double absLat = lat < 0.0 ? -lat : lat;
 
-            double precip = latitudeBase(absLat);
+            double precip = latitudeBase(absLat, hadleyEdge, ferrelEdge);
 
             const float noise = foundation::valueNoise3(
                 static_cast<float>(c.x) * 3.0f,

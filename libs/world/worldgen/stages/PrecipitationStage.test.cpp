@@ -90,16 +90,26 @@ struct TestWorld {
 // Everything the stage applies EXCEPT the orographic multiplier, so
 // stored/expected isolates the orographic effect per tile.
 // Kept in sync with PrecipitationStage.cpp (latitudeBase + pass 1).
+// Uses Earth-like defaults (rot=1 -> hadleyEdge=30, ferrelEdge=60).
 double expectedNoOrographic(const TestWorld& w, TileId t, uint64_t stageSeed) {
     const Vec3d c = w.grid.tileCenter(t);
     const double lat = foundation::det_math::asin(c.z) / (3.14159265358979323846 / 180.0);
     const double absLat = lat < 0.0 ? -lat : lat;
 
+    // Match the parameterized latitudeBase with Earth-like edges (rot=1 -> hadley=30, ferrel=60).
+    const double hadleyEdge = 30.0;
+    const double ferrelEdge = 60.0;
+    const double itczEdge   = 0.5 * hadleyEdge;   // 15
+    const double subDryPeak = hadleyEdge;           // 30
     double base = 0.0;
-    if (absLat < 15.0)      base = 2000.0 - absLat * 20.0;
-    else if (absLat < 30.0) base = 2000.0 - absLat * 60.0 + 200.0;
-    else if (absLat < 60.0) base = 200.0 + (absLat - 30.0) * 18.3;
-    else                    base = 750.0 - (absLat - 60.0) * 7.5;
+    if (absLat < itczEdge)
+        base = 2000.0 - absLat * (20.0 * 15.0 / itczEdge);
+    else if (absLat < subDryPeak)
+        base = 2000.0 - absLat * (60.0 * 30.0 / subDryPeak) + 200.0;
+    else if (absLat < ferrelEdge)
+        base = 200.0 + (absLat - subDryPeak) * (18.3 * 30.0 / (ferrelEdge - subDryPeak));
+    else
+        base = 750.0 - (absLat - ferrelEdge) * (7.5 * 30.0 / (90.0 - ferrelEdge));
 
     const auto seed32 = static_cast<uint32_t>(stageSeed ^ (stageSeed >> 32));
     const float noise = foundation::valueNoise3(

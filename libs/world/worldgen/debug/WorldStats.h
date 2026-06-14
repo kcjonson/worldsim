@@ -1,7 +1,9 @@
 #pragma once
 
+#include "worldgen/data/Biome.h"
 #include "worldgen/data/GeneratedWorld.h"
 
+#include <array>
 #include <cstdint>
 #include <vector>
 
@@ -63,6 +65,17 @@ struct WorldStats {
 
     std::vector<ContinentStats> continents;
     float                       medianIsoperimetric{};
+
+    // Biome fractions over LAND tiles only (each value in [0,1]; sum ~1.0).
+    // biomeFraction[i] = (tiles with biome i that are not ocean/lake) /
+    //                    landTileCount.  Water biomes (Ocean, Lake) are
+    //                    excluded from both numerator and denominator.
+    std::array<float, static_cast<size_t>(Biome::Count)> biomeFraction{};
+    float landTileCount{};
+
+    // Fraction of continental-crust tiles (kFlagContinentalCrust) that sit
+    // below sea level.  Measures how much shelf the terrain stage produced.
+    float shelfSubmergedFraction{};
 };
 
 // Compute WorldStats from a completed GeneratedWorld.

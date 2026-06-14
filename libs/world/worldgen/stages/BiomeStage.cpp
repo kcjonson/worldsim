@@ -8,11 +8,11 @@
 //
 // Per-tile decision order (first match wins):
 //   1. kFlagOcean -> Ocean; kFlagLake -> Lake
-//   2. Wetland: T > 0 C, precip > 900 mm/yr, poor drainage (flowAccum >=
-//      kRiverFlowThreshold or downhill == 0xFF inland sink), elevation
-//      < 200 m above sea level -> TropicalWetland (T > 18 C) else
-//      TemperateWetland
-//   3. Beach: ocean neighbor, <= 30 m above sea level, T > 0 C
+//   2. Wetland: T > 0 C, precip > 900 mm/yr, poor drainage (inland sink
+//      downhill == 0xFF, OR flat-and-low: localRelief < kFlatReliefM &&
+//      elevAboveSea < kWetlandMaxElevMeters), elevation < 200 m above sea
+//      level -> TropicalWetland (T > 18 C) else TemperateWetland
+//   3. Beach: ocean neighbor, <= 50 m above sea level, T > 0 C
 //   4. Elevation zonation (meters above sea level):
 //        > 3500, or > 2500 with T < -2 C -> AlpineTundra
 //        2500..3500: precip >= 250 -> AlpineGrassland, else ColdDesert
@@ -26,9 +26,9 @@
 //        -5..5:   > 300 BorealForest | else ColdDesert
 //        <= -5:   > 150 ArcticTundra | else PolarDesert
 //
-// Also sets kFlagCoast on every non-water tile with at least one ocean
-// neighbor, independent of the Beach biome. The Flags validFields bit stays
-// owned by SnowStage; this stage claims only Biome.
+// kFlagCoast has been removed; BiomeStage computes oceanNeighbor locally per
+// tile for the Beach decision and does not store it. The Flags validFields bit
+// stays owned by SnowStage; this stage claims only Biome.
 
 #include "worldgen/stages/BiomeStage.h"
 
@@ -45,7 +45,12 @@ constexpr size_t kGrainSize = 4096;
 constexpr float kWetlandMinPrecipMmYr   = 900.0f;
 constexpr float kWetlandMaxElevMeters   = 200.0f;
 constexpr float kWetlandTropicalTempC   = 18.0f;
-constexpr float kBeachMaxElevMeters     = 30.0f;
+// Flat local relief threshold for wetland poor-drainage predicate (meters).
+// A tile is considered flat when max-neighbor-elev minus min-neighbor-elev
+// falls below this value; combined with low elevation it indicates a poor-
+// drainage depression rather than a well-drained hillslope.
+constexpr float kFlatReliefM            = 40.0f;
+constexpr float kBeachMaxElevMeters     = 50.0f;
 constexpr float kMontaneMinElevMeters   = 1200.0f;
 constexpr float kAlpineGrassMinElevMeters  = 2500.0f;
 constexpr float kAlpineTundraMinElevMeters = 3500.0f;
@@ -75,9 +80,13 @@ Biome classifyBase(float tempC, float precip) {
 }
 
 Biome classifyLand(float tempC, float precip, float elevAboveSea,
-                   bool oceanNeighbor, float flowAccum, uint8_t downhill) {
+                   bool oceanNeighbor, uint8_t downhill, float localRelief) {
+    // Poor drainage: inland sinks (no downhill path), or flat low terrain
+    // where water pools. High flowAccum means a river trunk — well drained,
+    // not a swamp — so we do NOT use it here.
     const bool poorDrainage =
-        flowAccum >= kRiverFlowThreshold || downhill == 0xFFu;
+        (downhill == 0xFFu) ||
+        (localRelief < kFlatReliefM && elevAboveSea < kWetlandMaxElevMeters);
     if (tempC > 0.0f && precip > kWetlandMinPrecipMmYr && poorDrainage &&
         elevAboveSea < kWetlandMaxElevMeters) {
         return tempC > kWetlandTropicalTempC ? Biome::TropicalWetland
@@ -114,11 +123,7 @@ void BiomeStage::run(StageContext& ctx) {
     ctx.pool.parallelFor(0, totalTiles, kGrainSize, [&](size_t begin, size_t end) {
         throwIfCancelled(ctx);
         for (size_t t = begin; t < end; ++t) {
-            // Recompute kFlagCoast from scratch (idempotent on rerun; water
-            // tiles never carry it)
-            const uint8_t tileFlags =
-                ctx.data.flags[t] & static_cast<uint8_t>(~kFlagCoast);
-            ctx.data.flags[t] = tileFlags;
+            const uint8_t tileFlags = ctx.data.flags[t];
 
             if ((tileFlags & kFlagOcean) != 0) {
                 ctx.data.biome[t] = static_cast<uint8_t>(Biome::Ocean);
@@ -129,23 +134,24 @@ void BiomeStage::run(StageContext& ctx) {
                 continue;
             }
 
-            // Neighbor ocean-ness by elevation < seaLevel — the exact
-            // predicate OceanStage applied. Slabs concurrently write kFlagCoast
-            // into their own tiles' flags, so reading a neighbor's flags byte
-            // here would be a data race.
+            // Scan neighbors: detect ocean adjacency (for Beach) and compute
+            // local relief (max - min neighbor elevation, for wetland test).
+            // Uses elevation rather than kFlagOcean/kFlagCoast because slabs
+            // run in parallel — reading a neighbor's flags byte written by
+            // another slab would be a data race.
             std::array<TileId, 6> nbs{};
             const uint32_t cnt =
                 ctx.grid.neighbors(static_cast<TileId>(t), nbs);
             bool oceanNeighbor = false;
+            float minNbElev =  1e9f;
+            float maxNbElev = -1e9f;
             for (uint32_t k = 0; k < cnt; ++k) {
-                if (ctx.data.elevation[nbs[k]] < seaLevel) {
-                    oceanNeighbor = true;
-                    break;
-                }
+                const float nbElev = ctx.data.elevation[nbs[k]];
+                if (nbElev < seaLevel) oceanNeighbor = true;
+                if (nbElev < minNbElev) minNbElev = nbElev;
+                if (nbElev > maxNbElev) maxNbElev = nbElev;
             }
-            if (oceanNeighbor) {
-                ctx.data.flags[t] = tileFlags | kFlagCoast;
-            }
+            const float localRelief = (cnt > 0) ? (maxNbElev - minNbElev) : 0.0f;
 
             const float tempC =
                 static_cast<float>(ctx.data.temperatureMean[t]) * 0.1f;
@@ -154,7 +160,7 @@ void BiomeStage::run(StageContext& ctx) {
 
             ctx.data.biome[t] = static_cast<uint8_t>(
                 classifyLand(tempC, precip, elevAboveSea, oceanNeighbor,
-                             ctx.data.flowAccum[t], ctx.data.downhill[t]));
+                             ctx.data.downhill[t], localRelief));
         }
         ctx.reportProgress(static_cast<float>(end) /
                            static_cast<float>(totalTiles));

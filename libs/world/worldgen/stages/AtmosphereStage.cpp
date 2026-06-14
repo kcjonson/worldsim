@@ -117,19 +117,35 @@ void AtmosphereStage::run(StageContext& ctx) {
                 static_cast<int16_t>(clampd(range, 1.0, 80.0) * 10.0);
 
             // --- Wind direction ---
-            // Three-cell structure: trades easterly (192), westerlies (64),
-            // polar easterlies (192); meridional component flips south, encoded
-            // as a 180-degree flip in the coarse 4-direction scheme.
-            uint8_t wdir;
+            // Three-cell structure with ~30 degree meridional tilt.
+            // Encoding: 0=N, 64=E, 128=S, 192=W (256 units = 360 degrees).
+            // kMeridionalUnits = round(30/360*256) = 21.
+            // Trades: blow toward west + toward equator (equatorward in
+            //   each hemisphere). Westerlies: east + poleward. Polar
+            //   easterlies: west + equatorward (same sense as trades).
+            // All arithmetic is integer and wraps mod 256 — deterministic.
+            static constexpr uint32_t kMeridionalUnits = 21u;
+            uint32_t wdir;
             if (absLat < hadleyEdge) {
-                wdir = 192;
+                // Trades: zonal base west (192). NH tilts toward S (+64 units
+                // moves from W toward S in the 0=N,64=E,128=S,192=W encoding);
+                // SH tilts toward N (-64 units, i.e. +192).
+                wdir = lat >= 0.0
+                    ? (192u + kMeridionalUnits)   // NH: WNW->SW direction
+                    : (192u - kMeridionalUnits + 256u); // SH: WSW->NW direction
             } else if (absLat < ferrelEdge) {
-                wdir = 64;
+                // Westerlies: zonal base east (64). NH tilts toward N (-64
+                // moves toward N); SH tilts toward S (+64).
+                wdir = lat >= 0.0
+                    ? (64u - kMeridionalUnits + 256u) // NH: ENE direction
+                    : (64u + kMeridionalUnits);        // SH: ESE direction
             } else {
-                wdir = 192;
+                // Polar easterlies: same sense as trades (equatorward tilt).
+                wdir = lat >= 0.0
+                    ? (192u + kMeridionalUnits)
+                    : (192u - kMeridionalUnits + 256u);
             }
-            if (lat < 0.0) wdir = static_cast<uint8_t>((wdir + 128u) & 0xFFu);
-            ctx.data.windDir[t] = wdir;
+            ctx.data.windDir[t] = static_cast<uint8_t>(wdir & 0xFFu);
 
             // --- Wind speed ---
             // Sinusoidal bump per cell: calm (~4 m/s) at the doldrums and cell

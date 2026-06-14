@@ -250,43 +250,59 @@ TEST(BiomeStage, ElevationZonationLadder) {
 
 TEST(BiomeStage, WetlandDrainageTrigger) {
     TestWorld w;
-    w.setElevation([](double, double) { return 50.0; }); // lowland, no ocean
+    // Flat lowland: all tiles at 50 m with identical neighbors -> local relief
+    // is ~0, well below kFlatReliefM (40 m), so flat-and-low fires.
+    w.setElevation([](double, double) { return 50.0; });
     w.fillClimate(250, 1000); // 25 C, 1000 mm
-    w.fillDrainage(0, 0.0f);  // well drained by default
+    w.fillDrainage(0, 0.0f);  // well drained by default (downhill != 0xFF)
 
-    const TileId highFlow = w.grid.fromLatLon(10.0, 50.0);
-    const TileId sink     = w.grid.fromLatLon(-20.0, 100.0);
-    const TileId control  = w.grid.fromLatLon(40.0, 150.0);
-    w.world.data.flowAccum[highFlow] = kRiverFlowThreshold + 1.0f;
-    w.world.data.downhill[sink]      = 0xFF;
+    // Flat lowland tile: localRelief ≈ 0 < kFlatReliefM, elevAboveSea=50 < 200 m.
+    const TileId flat    = w.grid.fromLatLon(10.0, 50.0);
+    // Explicit sink: no downhill neighbor.
+    const TileId sink    = w.grid.fromLatLon(-20.0, 100.0);
+    // Control: will have downhill set away from sink and flat predicate applies
+    // (since elevation is uniform, all tiles are flat-and-low).
+    // Use a high-flowAccum tile that would have triggered the OLD (wrong)
+    // predicate — it should still be wetland because it's flat, NOT because
+    // of flowAccum.
+    const TileId highFlow = w.grid.fromLatLon(5.0, 80.0);
+    w.world.data.flowAccum[highFlow] = kRiverFlowThreshold + 10.0f;
+    w.world.data.downhill[sink] = 0xFF;
 
     w.runBiome();
-    EXPECT_EQ(biomeAt(w, highFlow), Biome::TropicalWetland);
+    // All three are flat lowland (localRelief=0, elev=50m) with T=25C, P=1000mm.
+    EXPECT_EQ(biomeAt(w, flat),     Biome::TropicalWetland);
     EXPECT_EQ(biomeAt(w, sink),     Biome::TropicalWetland);
-    EXPECT_EQ(biomeAt(w, control),  Biome::TropicalSavanna);
+    EXPECT_EQ(biomeAt(w, highFlow), Biome::TropicalWetland);
 
-    // Cooler run: same drainage, temperate wetland instead.
+    // Cooler run: temperate wetland.
     w.fillClimate(100, 1000); // 10 C
     w.runBiome();
+    EXPECT_EQ(biomeAt(w, flat),     Biome::TemperateWetland);
+    EXPECT_EQ(biomeAt(w, sink),     Biome::TemperateWetland);
     EXPECT_EQ(biomeAt(w, highFlow), Biome::TemperateWetland);
-    EXPECT_EQ(biomeAt(w, control),  Biome::TemperateDeciduousForest);
 }
 
 TEST(BiomeStage, WetlandRequiresWarmthLowlandAndRain) {
     TestWorld w;
+    // Uniform 50 m terrain: localRelief=0, elevAboveSea=50 -> poor-drainage
+    // flat-and-low predicate fires everywhere. Gates (warmth, rain, elevation)
+    // are tested by varying climate or a specific tile's elevation.
     w.setElevation([](double, double) { return 50.0; });
     w.fillDrainage(0, 0.0f);
     const TileId poorDrain = w.grid.fromLatLon(10.0, 50.0);
-    w.world.data.flowAccum[poorDrain] = kRiverFlowThreshold + 1.0f;
+    // Use an explicit sink so the drainage predicate fires unambiguously,
+    // independent of the flat-and-low path.
+    w.world.data.downhill[poorDrain] = 0xFF;
 
-    // Too high: 300 m is above the lowland cutoff.
+    // Too high: 300 m is above kWetlandMaxElevMeters (200 m).
     w.world.data.elevation[poorDrain] = 300.0f;
     w.fillClimate(250, 1000);
     w.runBiome();
     EXPECT_EQ(biomeAt(w, poorDrain), Biome::TropicalSavanna);
     w.world.data.elevation[poorDrain] = 50.0f;
 
-    // Too dry: 800 mm misses the wetland precipitation bar.
+    // Too dry: 800 mm misses the wetland precipitation bar (900 mm).
     w.fillClimate(250, 800);
     w.runBiome();
     EXPECT_EQ(biomeAt(w, poorDrain), Biome::TropicalSavanna);
@@ -297,8 +313,36 @@ TEST(BiomeStage, WetlandRequiresWarmthLowlandAndRain) {
     EXPECT_EQ(biomeAt(w, poorDrain), Biome::BorealForest);
 }
 
+// River-trunk tiles must NOT be wetland: high flowAccum on a steep tile means
+// good drainage, so the flat-and-low predicate must not fire there either.
+TEST(BiomeStage, RiverTrunkIsNotWetland) {
+    TestWorld w;
+    // Steep terrain: tile at 100 m surrounded by tiles at varying elevations
+    // so localRelief >> kFlatReliefM (40 m). Use a ridge world where all tiles
+    // have meaningful elevation differences.
+    w.setElevation([](double lat, double lon) {
+        // Gradient: elevation proportional to lat so every tile has steep neighbors.
+        return 50.0 + lat * 20.0;
+    });
+    w.fillClimate(250, 1000); // warm and wet
+    w.fillDrainage(0, 0.0f);
+
+    // High-flowAccum tile with a downhill direction (not a sink) on steep terrain.
+    const TileId trunk = w.grid.fromLatLon(10.0, 50.0);
+    w.world.data.flowAccum[trunk] = kRiverFlowThreshold * 10.0f;
+    // downhill[trunk] already != 0xFF from fillDrainage(0, 0) — keep it.
+
+    w.runBiome();
+    // River trunk: steep (localRelief > 40 m), not a sink -> NOT wetland.
+    const Biome b = biomeAt(w, trunk);
+    EXPECT_NE(b, Biome::TropicalWetland)
+        << "river trunk on steep terrain must not be classified as wetland";
+    EXPECT_NE(b, Biome::TemperateWetland)
+        << "river trunk on steep terrain must not be classified as wetland";
+}
+
 // ============================================================================
-// Beach on low coastal land; kFlagCoast on all coastal land
+// Beach on low coastal land (kFlagCoast removed; coastness is computed locally)
 // ============================================================================
 
 namespace {
@@ -311,7 +355,7 @@ double coastElevation(double lat, double lon) {
 
 } // namespace
 
-TEST(BiomeStage, BeachAndCoastFlag) {
+TEST(BiomeStage, BeachAndCoastBiome) {
     TestWorld w;
     w.setElevation(coastElevation);
     w.fillClimate(150, 400); // 15 C, 400 mm -> XericShrubland baseline
@@ -321,16 +365,8 @@ TEST(BiomeStage, BeachAndCoastFlag) {
 
     uint32_t beaches = 0, bluffCoasts = 0, interior = 0;
     for (TileId t = 0; t < w.grid.tileCount(); ++t) {
-        const bool ocean = (w.world.data.flags[t] & kFlagOcean) != 0;
-        const bool coastal = !ocean && hasOceanNeighbor(w, t);
-        const bool flagged = (w.world.data.flags[t] & kFlagCoast) != 0;
-
-        if (ocean) {
-            EXPECT_FALSE(flagged) << "ocean tile " << t << " has kFlagCoast";
-            continue;
-        }
-        EXPECT_EQ(flagged, coastal) << "tile " << t;
-
+        if ((w.world.data.flags[t] & kFlagOcean) != 0) continue;
+        const bool coastal = hasOceanNeighbor(w, t);
         const float e = w.world.data.elevation[t];
         if (coastal && e == 10.0f) {
             EXPECT_EQ(biomeAt(w, t), Biome::Beach) << "tile " << t;
@@ -359,7 +395,7 @@ TEST(BiomeStage, FrozenCoastIsNotBeach) {
     for (TileId t = 0; t < w.grid.tileCount(); ++t) {
         if ((w.world.data.flags[t] & kFlagOcean) != 0) continue;
         if (!hasOceanNeighbor(w, t)) continue;
-        EXPECT_TRUE((w.world.data.flags[t] & kFlagCoast) != 0) << "tile " << t;
+        // kFlagCoast is removed; just check the biome is not Beach.
         EXPECT_EQ(biomeAt(w, t), Biome::ArcticTundra)
             << "frozen coast tile " << t << " got "
             << biomeToString(biomeAt(w, t));
