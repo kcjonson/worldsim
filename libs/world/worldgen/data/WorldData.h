@@ -19,20 +19,17 @@ inline constexpr uint8_t kFlagPermanentSnow   = 0x10;
 // Driven by the simulated TectonicHistory crustType field; oceanic tiles never carry this.
 inline constexpr uint8_t kFlagContinentalCrust = 0x40;
 
-// A tile is a river tile when flowAccum (accumulated upstream drainage,
-// seeded at precipitation/1000 per land tile) reaches this value. Shared by
-// WorldStats' riverTileCount, the drainage debug map, and BiomeStage's wetland
-// drainage test so "river" means the same thing everywhere.
+// Fraction of LAND tiles flagged as river (kFlagRiver). PrecipitationStage
+// computes the flowAccum quantile at (1 - kRiverLandFraction) over land tiles
+// and sets kFlagRiver where flowAccum >= that value, so the river fraction is
+// pinned to approximately this constant regardless of grid resolution. A fixed
+// flow-magnitude threshold cannot do this: flowAccum is a precip-weighted
+// upstream tile count that scales with total tile count, so the same magnitude
+// flags a growing fraction of land as resolution rises.
 //
-// Tuned against the W-0 baseline (n=256): the pre-W1 drainage truncated flow at
-// inland sinks, yet still flagged 14-17% of land as river at threshold 5. W-1's
-// depression routing pushes ALL upstream flow through to the sea (nothing
-// vanishes in pits), which inflates flowAccum further, so the threshold rises to
-// land the river-tile fraction in Earth's plausible band (a few % of land: major
-// trunks, not every drainage line). 30 is roughly a basin of 30 wet upstream
-// tiles; measured river-tile fraction across seeds 42/7/1337 at n=256 lands in
-// ~2.5-4% of land. See W-1 in .claude/plans/water-hydrology.md.
-inline constexpr float kRiverFlowThreshold = 30.0f;
+// 0.04 = top 4% of land by drainage = major rivers + main tributaries.
+// See W-1.5 in .claude/plans/water-hydrology.md.
+inline constexpr float kRiverLandFraction = 0.04f;
 
 // Boundary type enum for data.boundaryType (uint8_t per tile).
 // Written by TerrainStage; read by any consumer that interprets plate boundaries.

@@ -792,7 +792,7 @@ WorldStats computeWorldStats(const GeneratedWorld& world) {
             flowSum += static_cast<double>(flow);
             if (flow > flowMax) flowMax = flow;
 
-            const bool isRiver = (flow >= kRiverFlowThreshold);
+            const bool isRiver = (f & kFlagRiver) != 0;
             const bool isSink  = (world.data.downhill[t] == 0xFFu);
 
             if (isRiver) ++riverCount;

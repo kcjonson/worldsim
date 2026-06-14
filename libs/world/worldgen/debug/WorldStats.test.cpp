@@ -410,12 +410,13 @@ TEST(WorldStatsHeavy, DrainageRoutesToOcean) {
     // Lakes must form on an Earth-like world (depression routing ponds basins).
     EXPECT_GT(stats.lakeTileFraction, 0.0f) << "no lakes formed";
 
-    // River-tile fraction in Earth's plausible band (a few % of land). The lower
-    // bound guards against the threshold being set absurdly high (no rivers); the
-    // upper guards the pre-W1 regression (14-17% of land flagged as river).
-    EXPECT_GE(stats.riverTileFraction, 0.01f)
+    // River-tile fraction should be close to kRiverLandFraction (4%). The band
+    // is wider than exactly 4% because land fraction varies per seed/resolution,
+    // so the quantile cut lands at slightly different tile counts depending on
+    // how many land tiles exist. Guards against regressions in both directions.
+    EXPECT_GE(stats.riverTileFraction, 0.02f)
         << "river fraction " << stats.riverTileFraction * 100.0f << "% too low";
-    EXPECT_LE(stats.riverTileFraction, 0.08f)
+    EXPECT_LE(stats.riverTileFraction, 0.07f)
         << "river fraction " << stats.riverTileFraction * 100.0f << "% too high";
 }
 

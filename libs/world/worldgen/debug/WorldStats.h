@@ -79,7 +79,7 @@ struct WorldStats {
 
     // Water / drainage stats.  All fractions are over LAND tiles (tiles without
     // kFlagOcean) unless noted.  Captured pre-fix so W-1 has a before/after.
-    float    riverTileFraction{};        // land tiles with flowAccum >= kRiverFlowThreshold
+    float    riverTileFraction{};        // land tiles with kFlagRiver set (~kRiverLandFraction)
     uint32_t sinkTileCount{};           // land tiles with downhill == 0xFF (inland sinks)
     float    endorheicSinkFraction{};   // sinkTileCount / landTileCount
     float    lakeTileFraction{};        // tiles with kFlagLake set (0 pre-W1)

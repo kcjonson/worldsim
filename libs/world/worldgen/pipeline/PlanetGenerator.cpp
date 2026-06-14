@@ -232,7 +232,7 @@ void PlanetGenerator::runPipeline(PlanetParams params) {
                     world->summary.biomeHistogram[idx]++;
                 }
                 if ((world->data.flags[t] & kFlagOcean) == 0) ++landCount;
-                if (world->data.flowAccum[t] >= kRiverFlowThreshold) ++riverTiles;
+                if (world->data.flags[t] & kFlagRiver) ++riverTiles;
                 tempSum += static_cast<double>(world->data.temperatureMean[t]) * 0.1;
             }
             world->summary.landFraction   = static_cast<float>(landCount) / static_cast<float>(totalTiles);

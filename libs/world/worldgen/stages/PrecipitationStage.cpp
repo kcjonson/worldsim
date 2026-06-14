@@ -74,7 +74,8 @@
 //     float addition order, and the result, is identical at any thread count.
 //   - kFlagLake on ponded tiles (filled > terrain); waterDepth = filled - terrain
 //     (the basin's spill level above terrain, meters, clamped to uint16) for the
-//     chunk layer to fill to. kFlagRiver where flowAccum >= kRiverFlowThreshold.
+//     chunk layer to fill to. kFlagRiver on the top kRiverLandFraction of land
+//     tiles by flowAccum (quantile cut, resolution-invariant).
 //
 // Determinism: det_math for transcendentals (std::sqrt is correctly rounded per
 // IEEE 754 and wrapped by det_math::sqrt); all randomness from valueNoise3
@@ -632,10 +633,37 @@ void PrecipitationStage::run(StageContext& ctx) {
     ctx.reportProgress(0.95f);
 
     // -------- River flags (after accumulation) --------
-    for (TileId t = 0; t < totalTiles; ++t) {
-        if (ctx.data.elevation[t] < seaLevel) continue;
-        if (ctx.data.flowAccum[t] >= kRiverFlowThreshold) {
-            ctx.data.flags[t] |= kFlagRiver;
+    // Use a quantile cut so the river-tile fraction is resolution-invariant.
+    // Collect land flowAccum values, find the (1 - kRiverLandFraction) quantile,
+    // then flag tiles at or above it. nth_element is O(n) average and preserves
+    // determinism because the quantile is a VALUE, not a per-tile rank (ties at
+    // the boundary are all flagged, which is fine). Guard empty-land.
+    {
+        std::vector<float> landFlow;
+        landFlow.reserve(totalTiles / 2);
+        for (TileId t = 0; t < totalTiles; ++t) {
+            if (ctx.data.elevation[t] >= seaLevel) {
+                landFlow.push_back(ctx.data.flowAccum[t]);
+            }
+        }
+
+        float riverThreshold = std::numeric_limits<float>::max();
+        if (!landFlow.empty()) {
+            // nth_element partitions so element at kth is >= everything before it.
+            // We want the top kRiverLandFraction, so kth = floor((1 - frac) * n).
+            const size_t n    = landFlow.size();
+            const size_t kth  = static_cast<size_t>(
+                static_cast<double>(1.0f - kRiverLandFraction) * static_cast<double>(n));
+            const size_t idx  = kth < n ? kth : n - 1;
+            std::nth_element(landFlow.begin(), landFlow.begin() + static_cast<ptrdiff_t>(idx), landFlow.end());
+            riverThreshold = landFlow[idx];
+        }
+
+        for (TileId t = 0; t < totalTiles; ++t) {
+            if (ctx.data.elevation[t] < seaLevel) continue;
+            if (ctx.data.flowAccum[t] >= riverThreshold) {
+                ctx.data.flags[t] |= kFlagRiver;
+            }
         }
     }
 
