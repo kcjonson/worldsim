@@ -38,7 +38,7 @@ namespace world_sim {
 			std::function<void(const std::string&)> onMaterialSelected;
 			/// Called when a thickness-preset card is clicked (wall mode).
 			std::function<void(const std::string&)> onThicknessSelected;
-			std::string								 id = "construction_config_strip";
+			std::string								id = "construction_config_strip";
 		};
 
 		explicit ConstructionConfigStrip(const Args& args);

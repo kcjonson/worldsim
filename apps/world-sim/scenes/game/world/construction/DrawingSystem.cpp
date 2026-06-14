@@ -538,7 +538,10 @@ namespace world_sim {
 	}
 
 	ecs::EntityID DrawingSystem::spawnWallBlueprintEntity(
-		ec::SegmentId segmentId, Foundation::Vec2 a, Foundation::Vec2 b, const engine::assets::ThicknessPreset& preset
+		ec::SegmentId						   segmentId,
+		Foundation::Vec2					   a,
+		Foundation::Vec2					   b,
+		const engine::assets::ThicknessPreset& preset
 	) {
 		if (ecsWorld_ == nullptr) {
 			return ecs::EntityID{0};
@@ -552,7 +555,7 @@ namespace world_sim {
 		// Wall cost/work/HP scale with the area of the band (length x thickness),
 		// times the material's per-m^2 rate, times the preset multiplier
 		// (materials.xml: "length x thicknessMeters x rate x multiplier").
-		const float	areaEquivalent = lengthMeters * thicknessMeters;
+		const float areaEquivalent = lengthMeters * thicknessMeters;
 		const auto& registry = ConstructionRegistry::Get();
 		const auto* material = registry.getMaterial(activeMaterial_);
 		float		costRate = 0.0F;
@@ -578,8 +581,7 @@ namespace world_sim {
 		// AwaitingMaterials; ConstructionSystem holds them there (umbrella Blocked)
 		// until the host foundation is Built, then haul + build proceed.
 		blueprint.phase = ecs::StructureBlueprint::BuildPhase::AwaitingMaterials;
-		const auto requiredQty =
-			static_cast<uint32_t>(std::ceil(static_cast<double>(areaEquivalent) * static_cast<double>(costRate)));
+		const auto requiredQty = static_cast<uint32_t>(std::ceil(static_cast<double>(areaEquivalent) * static_cast<double>(costRate)));
 		if (requiredQty > 0) {
 			blueprint.required.emplace_back(activeMaterial_, requiredQty);
 		}
@@ -1041,10 +1043,8 @@ namespace world_sim {
 			}
 
 			// Blueprint base always; progress fill ramps with workDone/workTotal.
-			fillRing(
-				screen, {0.5F, 0.65F, 0.9F, 0.22F}, {0.55F, 0.72F, 1.0F, 0.0F}, 0.0F, "committed_wall_base", "", 60, 60
-			);
-			const float			   fillAlpha = built ? 0.9F : (0.2F + 0.7F * progress);
+			fillRing(screen, {0.5F, 0.65F, 0.9F, 0.22F}, {0.55F, 0.72F, 1.0F, 0.0F}, 0.0F, "committed_wall_base", "", 60, 60);
+			const float				fillAlpha = built ? 0.9F : (0.2F + 0.7F * progress);
 			const Foundation::Color outline{0.6F, 0.78F, 1.0F, built ? 1.0F : (0.65F + 0.35F * progress)};
 			fillRing(
 				screen,
@@ -1071,9 +1071,7 @@ namespace world_sim {
 			for (const auto& v : ring) {
 				screen.push_back(toScreen(v));
 			}
-			fillRing(
-				screen, {0.5F, 0.65F, 0.9F, junctionAlpha}, {0.6F, 0.78F, 1.0F, 0.0F}, 0.0F, "committed_wall_junction", "", 61, 61
-			);
+			fillRing(screen, {0.5F, 0.65F, 0.9F, junctionAlpha}, {0.6F, 0.78F, 1.0F, 0.0F}, 0.0F, "committed_wall_junction", "", 61, 61);
 		}
 	}
 
@@ -1170,8 +1168,8 @@ namespace world_sim {
 		}
 
 		using engine::construction::SnapKind;
-		if (lastSnap_.kind == SnapKind::WallEndpoint || lastSnap_.kind == SnapKind::WallSegment ||
-			lastSnap_.kind == SnapKind::Vertex || lastSnap_.kind == SnapKind::Edge) {
+		if (lastSnap_.kind == SnapKind::WallEndpoint || lastSnap_.kind == SnapKind::WallSegment || lastSnap_.kind == SnapKind::Vertex ||
+			lastSnap_.kind == SnapKind::Edge) {
 			const Foundation::Color snapColor = (lastSnap_.kind == SnapKind::WallEndpoint || lastSnap_.kind == SnapKind::Vertex)
 													? Foundation::Color{1.0F, 0.85F, 0.3F, 0.9F}  // vertex snap: amber
 													: Foundation::Color{0.4F, 0.85F, 1.0F, 0.9F}; // edge / T-junction: cyan

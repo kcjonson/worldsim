@@ -70,7 +70,7 @@ namespace world_sim {
 		std::string material;				 // active material name
 
 		// Wall readouts (meaningful only when wall == true).
-		std::string thicknessPreset;		// active preset name (Light/Standard/Heavy)
+		std::string thicknessPreset;			// active preset name (Light/Standard/Heavy)
 		float		segmentLengthMeters = 0.0F; // length of the rubber-band segment
 		float		totalLengthMeters = 0.0F;	// summed length of the committed chain so far
 		float		wallCost = 0.0F;			// material cost of the chain so far
@@ -156,7 +156,6 @@ namespace world_sim {
 		void renderWallChainPreview(int viewportW, int viewportH);
 
 	  public:
-
 		// --- Status for the config strip ---
 
 		[[nodiscard]] DrawingStatus status() const;
