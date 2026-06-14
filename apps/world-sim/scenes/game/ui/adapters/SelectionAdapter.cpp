@@ -584,9 +584,11 @@ namespace world_sim {
 
 		// Build state + progress come from the ECS mirror's blueprint, exactly like a
 		// wall: a built opening has no blueprint progress; a blueprint shows phase, a
-		// 0-100 work bar, and the delivered/required materials summary.
-		const ecs::StructureBlueprint* blueprint =
-			(opening != nullptr) ? world.getComponent<ecs::StructureBlueprint>(opening->entity) : nullptr;
+		// 0-100 work bar, and the delivered/required materials summary. Guard the entity
+		// handle: getComponent indexes by entity index without a generation check, so a
+		// kInvalidEntity (0) or stale handle would alias entity 0's components.
+		const bool hasMirror = opening != nullptr && opening->entity != ecs::kInvalidEntity && world.isAlive(opening->entity);
+		const ecs::StructureBlueprint* blueprint = hasMirror ? world.getComponent<ecs::StructureBlueprint>(opening->entity) : nullptr;
 
 		if (blueprint != nullptr) {
 			content.slots.push_back(TextSlot{"State", buildPhaseLabel(blueprint->phase, blueprint->demolishing)});

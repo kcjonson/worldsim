@@ -353,11 +353,13 @@ bool ConfigValidator::validateConstruction() {
         // Fit sanity: an opening needs width + 2*margin of wall to honor its end
         // margins. Reject a type only if that exceeds the LONGEST wall a tool could
         // draw -- a wall can't be longer than the largest foundation's diagonal, so
-        // bound it coarsely by the max-area square's side, sqrt(maxArea). A type
-        // needing more than that could never be placed on any legal wall.
+        // bound it coarsely by the DIAGONAL of the max-area square, sqrt(2*maxArea)
+        // (the side, sqrt(maxArea), would under-count and false-reject a type that
+        // fits on a diagonal wall). A type needing more than that could never be
+        // placed on any legal wall.
         if (type.widthMeters > 0.0F && c.maxAreaSquareMeters > 0.0F) {
             const float needed = type.widthMeters + 2.0F * c.openingMarginMeters;
-            const float maxWallLength = std::sqrt(c.maxAreaSquareMeters);
+            const float maxWallLength = std::sqrt(2.0F * c.maxAreaSquareMeters);
             if (needed > maxWallLength) {
                 addError("ConstructionOpenings",
                          "Opening type '" + type.name + "' needs " + std::to_string(needed) +
