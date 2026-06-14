@@ -55,6 +55,8 @@
 #include <ecs/components/Packaged.h>
 #include <ecs/components/Skills.h>
 #include <ecs/components/Structure.h>
+#include <ecs/components/StructureBlueprint.h>
+#include <ecs/components/StructureHealth.h>
 #include <ecs/components/Task.h>
 #include <ecs/components/Transform.h>
 #include <ecs/components/WorkQueue.h>
@@ -71,8 +73,10 @@
 #include <ecs/systems/TimeSystem.h>
 #include <ecs/systems/VisionSystem.h>
 
+#include <cstdlib>
 #include <memory>
 #include <sstream>
+#include <string>
 #include <unordered_set>
 #include <vector>
 
@@ -294,8 +298,10 @@ namespace {
 				// Build complete: flip the structure to Built (bumps ConstructionWorld version,
 				// so the render picks up the new style next frame) and toast the player. Walls
 				// and foundations share this callback; the Structure kind selects which topology
-				// mutator to call.
-				actionSys.setStructureCompletedCallback([this](ecs::EntityID blueprintEntity) {
+				// mutator to call. The SAME callback is given to both ActionSystem (normal builds)
+				// and ConstructionSystem (DEV free-build), so a free-built structure flips state
+				// and renders identically to a normally-built one.
+				auto structureCompleted = [this](ecs::EntityID blueprintEntity) {
 					const auto* structure = ecsWorld->getComponent<ecs::Structure>(blueprintEntity);
 					if (structure == nullptr || structure->graphId == 0) {
 						LOG_WARNING(Game, "Structure-completed: entity %u has no topology link", static_cast<uint32_t>(blueprintEntity));
@@ -310,7 +316,9 @@ namespace {
 					m_drawingSystem->world().setState(structure->graphId, engine::construction::FoundationState::Built);
 					gameUI->pushNotification("Construction complete", "Foundation built", UI::ToastSeverity::Info);
 					LOG_INFO(Game, "Foundation #%llu built (entity %u)", static_cast<unsigned long long>(structure->graphId), static_cast<uint32_t>(blueprintEntity));
-				});
+				};
+				actionSys.setStructureCompletedCallback(structureCompleted);
+				constructionSystem.setStructureCompletedCallback(structureCompleted);
 
 				// Deconstruct complete: remove the foundation topology now, but DEFER the
 				// entity destruction. This callback fires from inside ActionSystem::update's
@@ -496,6 +504,19 @@ namespace {
 					if (cmd.hasPan) {
 						m_debugPanX = cmd.panX;
 						m_debugPanY = cmd.panY;
+					}
+				}
+
+				// Drain DEV/TEST construction commands (/api/dev/...). DebugServer is
+				// domain-agnostic and only queues generic DevCommands; GameScene owns the
+				// construction context (ConstructionSystem, ConstructionWorld, ecsWorld) so
+				// it interprets them here. Mirrors the camera/input consume path; runs only
+				// in dev builds (the debug server is dev-only). Drained BEFORE ecsWorld->update()
+				// so a freebuild/foundation command takes effect the same frame.
+				std::vector<Foundation::DevCommand> devCommands;
+				if (debugServer->consumeDevCommands(devCommands)) {
+					for (const auto& devCmd : devCommands) {
+						handleDevCommand(devCmd);
 					}
 				}
 			}
@@ -912,6 +933,180 @@ namespace {
 			// Remove the job
 			workQueue->removeJob(recipeDefName);
 			LOG_INFO(Game, "Canceled job '%s' at station '%s'", recipeDefName.c_str(), stationSel->defName.c_str());
+		}
+
+		// =====================================================================
+		// DEV/TEST HTTP commands (/api/dev/...). Dev-only: the debug server that
+		// queues these runs only in dev builds. DebugServer stays domain-agnostic
+		// and hands us a generic DevCommand; this is where the construction context
+		// (ConstructionSystem, ConstructionWorld, ecsWorld) interprets the verb.
+		// =====================================================================
+
+		/// Interpret one queued DevCommand. Unknown verbs are logged and ignored.
+		void handleDevCommand(const Foundation::DevCommand& cmd) {
+			if (cmd.verb == "freebuild" || cmd.verb == "construction") {
+				devFreeBuild(cmd);
+			} else if (cmd.verb == "givewood") {
+				devGiveWood(cmd);
+			} else if (cmd.verb == "foundation") {
+				devFoundation(cmd);
+			} else {
+				LOG_WARNING(Game, "[DevAPI] Unknown dev command verb '%s'", cmd.verb.c_str());
+			}
+		}
+
+		/// /api/dev/freebuild?on=1|0  (also /api/dev/construction?freebuild=on|off).
+		/// Toggles ConstructionSystem free-build: every blueprint is then driven
+		/// straight to Built each tick without colonists. Inert when off.
+		void devFreeBuild(const Foundation::DevCommand& cmd) {
+			// Accept on= (freebuild verb) or freebuild= (construction verb); truthy on
+			// 1/on/true/yes.
+			std::string value = cmd.hasParam("on") ? cmd.param("on") : cmd.param("freebuild", "1");
+			const bool	on = (value == "1" || value == "on" || value == "true" || value == "yes");
+			ecsWorld->getSystem<ecs::ConstructionSystem>().setFreeBuild(on);
+			LOG_INFO(Game, "[DevAPI] free-build %s", on ? "ON" : "OFF");
+			gameUI->pushNotification("Dev", on ? "Free-build ON" : "Free-build OFF", UI::ToastSeverity::Info);
+		}
+
+		/// /api/dev/givewood?n=100[&where=site|loose]. Credits N Wood to active build
+		/// sites' delivery inventories (where=site, the default and most direct), so the
+		/// build proceeds without harvesting/hauling. where=loose is not wired here.
+		void devGiveWood(const Foundation::DevCommand& cmd) {
+			const long n = std::strtol(cmd.param("n", "100").c_str(), nullptr, 10);
+			if (n <= 0) {
+				LOG_WARNING(Game, "[DevAPI] givewood: n must be > 0");
+				return;
+			}
+			const std::string where = cmd.param("where", "site");
+			if (where != "site") {
+				LOG_WARNING(Game, "[DevAPI] givewood where=%s not supported (only 'site'); ignoring", where.c_str());
+				return;
+			}
+			const uint32_t credited =
+				ecsWorld->getSystem<ecs::ConstructionSystem>().creditMaterialToSites("Wood", static_cast<uint32_t>(n));
+			LOG_INFO(Game, "[DevAPI] givewood: credited %u Wood across build sites", credited);
+			gameUI->pushNotification("Dev", "Credited " + std::to_string(credited) + " Wood to sites", UI::ToastSeverity::Info);
+		}
+
+		/// /api/dev/foundation?pts=x0,y0;x1,y1;...&material=Wood&built=1. Commits a
+		/// foundation from world-meter coordinates straight into the ConstructionWorld
+		/// (bypassing the draw tool), spawns its blueprint entity the same way the draw
+		/// tool's commit does, and optionally drives it to Built via the free-build path
+		/// (built=1). built=0 leaves a normal blueprint colonists will build.
+		void devFoundation(const Foundation::DevCommand& cmd) {
+			std::vector<Foundation::Vec2> pts = parsePointList(cmd.param("pts"));
+			if (pts.size() < 3) {
+				LOG_WARNING(Game, "[DevAPI] foundation: pts needs >= 3 'x,y' pairs (got %zu)", pts.size());
+				return;
+			}
+			const std::string material = cmd.param("material", "Wood");
+
+			auto&	   constructionWorld = m_drawingSystem->world();
+			const auto commit = constructionWorld.commitFoundation(pts, material);
+			if (!commit.ok()) {
+				LOG_WARNING(Game, "[DevAPI] foundation: commit rejected (status %d)", static_cast<int>(commit.status));
+				gameUI->pushNotification("Dev", "Foundation commit rejected", UI::ToastSeverity::Warning);
+				return;
+			}
+
+			const ecs::EntityID entity = spawnFoundationBlueprintEntity(commit.id, pts, material);
+			if (entity == ecs::kInvalidEntity) {
+				LOG_WARNING(Game, "[DevAPI] foundation: spawn failed for #%llu", static_cast<unsigned long long>(commit.id));
+				return;
+			}
+
+			const std::string builtStr = cmd.param("built", "0");
+			const bool		  built = (builtStr == "1" || builtStr == "on" || builtStr == "true" || builtStr == "yes");
+			if (built) {
+				// Route through the SAME instant-completion path free-build uses, so a
+				// one-call built foundation is indistinguishable from a normally-built one.
+				ecsWorld->getSystem<ecs::ConstructionSystem>().forceCompleteBlueprint(entity);
+			}
+			LOG_INFO(
+				Game,
+				"[DevAPI] foundation #%llu spawned (%zu pts, %s, built=%d, entity %u)",
+				static_cast<unsigned long long>(commit.id),
+				pts.size(),
+				material.c_str(),
+				built ? 1 : 0,
+				static_cast<uint32_t>(entity)
+			);
+			gameUI->pushNotification("Dev", built ? "Built foundation placed" : "Foundation blueprint placed", UI::ToastSeverity::Info);
+		}
+
+		/// Parse "x0,y0;x1,y1;..." (world meters) into a point list. Tolerant: skips
+		/// malformed pairs. Used by /api/dev/foundation.
+		static std::vector<Foundation::Vec2> parsePointList(const std::string& spec) {
+			std::vector<Foundation::Vec2> pts;
+			std::stringstream			  ss(spec);
+			std::string					  pair;
+			while (std::getline(ss, pair, ';')) {
+				const auto comma = pair.find(',');
+				if (comma == std::string::npos) {
+					continue;
+				}
+				char* end = nullptr;
+				const float x = std::strtof(pair.substr(0, comma).c_str(), &end);
+				const float y = std::strtof(pair.substr(comma + 1).c_str(), nullptr);
+				pts.emplace_back(x, y);
+			}
+			return pts;
+		}
+
+		/// Build the ECS blueprint entity for a programmatically committed foundation.
+		/// Replicates DrawingSystem::spawnBlueprintEntity (which is private): same
+		/// components, same material-driven manifest/work/HP, same ConstructionWorld
+		/// entity link. Kept minimal and in sync with the draw-tool path.
+		ecs::EntityID spawnFoundationBlueprintEntity(engine::construction::FoundationId id, const std::vector<Foundation::Vec2>& pts, const std::string& material) {
+			auto& constructionWorld = m_drawingSystem->world();
+			if (constructionWorld.get(id) == nullptr) {
+				return ecs::kInvalidEntity;
+			}
+
+			const float area = constructionWorld.areaSquareMeters(id);
+
+			const auto& registry = engine::assets::ConstructionRegistry::Get();
+			const auto* mat = registry.getMaterial(material);
+			float		costRate = 0.0F;
+			float		workRate = 0.0F;
+			float		hpRate = 0.0F;
+			if (mat != nullptr) {
+				costRate = mat->costRatePerSquareMeter;
+				workRate = mat->workRatePerSquareMeter;
+				hpRate = mat->hp;
+			}
+
+			auto entity = ecsWorld->createEntity();
+
+			// Centroid (average of vertices) keeps the transform inside the footprint.
+			Foundation::Vec2 centroid{0.0F, 0.0F};
+			for (const auto& p : pts) {
+				centroid += p;
+			}
+			centroid /= static_cast<float>(pts.size());
+			ecsWorld->addComponent<ecs::Position>(entity, ecs::Position{{centroid.x, centroid.y}});
+
+			ecsWorld->addComponent<ecs::Structure>(entity, ecs::Structure{ecs::StructureKind::Foundation, id});
+
+			ecs::StructureBlueprint blueprint;
+			blueprint.phase = ecs::StructureBlueprint::BuildPhase::Clearing;
+			const auto requiredQty = static_cast<uint32_t>(std::ceil(static_cast<double>(area) * static_cast<double>(costRate)));
+			if (requiredQty > 0) {
+				blueprint.required.emplace_back(material, requiredQty);
+			}
+			blueprint.workTotal = area * workRate;
+			ecsWorld->addComponent<ecs::StructureBlueprint>(entity, std::move(blueprint));
+
+			ecs::Inventory deliveryInv;
+			deliveryInv.maxCapacity = 8;
+			deliveryInv.maxStackSize = 100000;
+			ecsWorld->addComponent<ecs::Inventory>(entity, std::move(deliveryInv));
+
+			const float maxHp = area * hpRate;
+			ecsWorld->addComponent<ecs::StructureHealth>(entity, ecs::StructureHealth{maxHp, maxHp});
+
+			constructionWorld.setEntity(id, entity);
+			return entity;
 		}
 
 		/// Handle Demolish request from a foundation's info panel.

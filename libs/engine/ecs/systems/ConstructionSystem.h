@@ -55,6 +55,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <unordered_set>
 #include <vector>
@@ -136,6 +137,35 @@ namespace ecs {
 		/// Debug: count of blueprints the system is actively driving this tick.
 		[[nodiscard]] size_t getActiveBlueprintCount() const { return m_activeBlueprintCount; }
 
+		/// DEV/TEST ONLY. When on, every committed blueprint is driven straight to Built
+		/// each tick (materials credited, work completed, phase flipped) without any
+		/// colonist clear/haul/build. Inert when off: normal play is untouched and
+		/// determinism is unaffected. Toggled from the debug HTTP API (/api/dev/freebuild).
+		void setFreeBuild(bool on) { m_freeBuild = on; }
+		[[nodiscard]] bool freeBuild() const { return m_freeBuild; }
+
+		/// DEV/TEST ONLY. Drive a single blueprint entity straight to Built right now,
+		/// independent of the free-build flag: credit its delivery inventory + delivered[]
+		/// to satisfy the manifest, set workDone = workTotal, flip phase to Complete, and
+		/// fire the structure-completed callback so the ConstructionWorld state flip and
+		/// render update happen through the SAME path a normal build takes. Returns false
+		/// if the entity is not a non-Complete foundation/wall blueprint. Used by the
+		/// programmatic-foundation dev endpoint (built=1).
+		bool forceCompleteBlueprint(EntityID blueprintEntity);
+
+		/// Set the callback fired when free-build completes a structure. Wired to the
+		/// SAME lambda GameScene gives ActionSystem's structure-completed callback, so a
+		/// free-built structure is indistinguishable from a normally-built one.
+		using StructureCompletedCallback = std::function<void(EntityID)>;
+		void setStructureCompletedCallback(StructureCompletedCallback callback) { m_onStructureCompleted = std::move(callback); }
+
+		/// DEV/TEST ONLY. Credit `amount` of `defName` into the delivery inventories of all
+		/// active (non-Complete) build sites, capped at each site's outstanding need so no
+		/// site is over-filled, and stops once `amount` is exhausted. Returns the total
+		/// credited across sites. Reuses StructureBlueprint::remaining(), so it never
+		/// duplicates the manifest math. Used by /api/dev/givewood?where=site.
+		uint32_t creditMaterialToSites(const std::string& defName, uint32_t amount);
+
 	  private:
 		/// True if no Harvestable placed entity overlaps the foundation's footprint AABB.
 		/// v1 clearing rule (see header): only Harvestable blockers gate clearing.
@@ -185,9 +215,20 @@ namespace ecs {
 		/// stack still gets delivered in repeated trips rather than hoarded at the cap.
 		[[nodiscard]] uint32_t colonistCarryCapacity(EntityID buildSite) const;
 
+		/// Shared by the free-build flag path and forceCompleteBlueprint: stage materials,
+		/// finish work, flip phase, fire the completion callback. `blueprint` and `structure`
+		/// belong to `entity`. The caller has already confirmed the blueprint is a non-Complete
+		/// foundation/wall.
+		void completeBlueprintNow(EntityID entity, StructureBlueprint& blueprint);
+
 		engine::construction::ConstructionWorld*				  m_constructionWorld = nullptr;
 		const engine::assets::PlacementExecutor*				  m_placementExecutor = nullptr;
 		const std::unordered_set<engine::world::ChunkCoordinate>* m_processedChunks = nullptr;
+
+		// DEV/TEST: instant-build flag and the completion callback it (and
+		// forceCompleteBlueprint) fire. Off / null in normal play.
+		bool					   m_freeBuild = false;
+		StructureCompletedCallback m_onStructureCompleted = nullptr;
 
 		size_t m_activeBlueprintCount = 0;
 

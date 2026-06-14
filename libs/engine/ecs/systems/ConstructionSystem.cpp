@@ -116,6 +116,15 @@ namespace ecs {
 				continue;
 			}
 
+			// DEV/TEST free-build: drive every non-Complete blueprint straight to Built, skipping
+			// clear/haul/build entirely. Inert unless the flag is set, so normal play is untouched.
+			// The entity is left in the stale set so its leftover goals are dropped by the cleanup
+			// pass below; completion fires the SAME callback a normal build uses.
+			if (m_freeBuild) {
+				completeBlueprintNow(entity, blueprint);
+				continue;
+			}
+
 			// Wall gate: a wall blueprint waits, holding nothing but a Blocked umbrella,
 			// until its host foundation is Built. Hauling and building stay off until then
 			// (design: Walls / Prerequisites). This is the wall-specific front of the pipeline.
@@ -556,6 +565,94 @@ namespace ecs {
 			static_cast<double>(blueprint.workTotal)
 		);
 		return umbrellaId;
+	}
+
+	void ConstructionSystem::completeBlueprintNow(EntityID entity, StructureBlueprint& blueprint) {
+		// Satisfy the manifest on the delivery inventory so delivered[] reconciles full and the
+		// build site genuinely holds its materials (matching a normally-built structure, and
+		// surviving a later reconcile if free-build is toggled off). Inventory is the source of
+		// truth; delivered[] is its mirror, so mirror it here too.
+		if (auto* inventory = world->getComponent<Inventory>(entity)) {
+			for (const auto& [defName, qty] : blueprint.required) {
+				const uint32_t have = inventory->getQuantity(defName);
+				if (have < qty) {
+					inventory->addItem(defName, qty - have);
+				}
+			}
+		}
+		blueprint.delivered = blueprint.required;
+
+		// Finish the work and flip the phase exactly as the last Build tick would.
+		blueprint.workDone = blueprint.workTotal;
+		blueprint.phase = StructureBlueprint::BuildPhase::Complete;
+
+		// Retire every goal this blueprint owns (umbrella + children) so no Build goal lingers.
+		auto&		registry = GoalTaskRegistry::Get();
+		const auto* goal = registry.getGoalByDestination(entity);
+		while (goal != nullptr) {
+			registry.removeGoalWithChildren(goal->id);
+			goal = registry.getGoalByDestination(entity);
+		}
+
+		// Fire the SAME completion callback a real build uses (GameScene wires it to the same
+		// lambda it gives ActionSystem), flipping ConstructionWorld state to Built and toasting.
+		if (m_onStructureCompleted) {
+			m_onStructureCompleted(entity);
+		}
+
+		LOG_INFO(Engine, "[Construction] DEV free-build completed blueprint %u", static_cast<uint32_t>(entity));
+	}
+
+	bool ConstructionSystem::forceCompleteBlueprint(EntityID blueprintEntity) {
+		if (world == nullptr) {
+			return false;
+		}
+		const auto* structure = world->getComponent<Structure>(blueprintEntity);
+		auto*		blueprint = world->getComponent<StructureBlueprint>(blueprintEntity);
+		if (structure == nullptr || blueprint == nullptr) {
+			return false;
+		}
+		if (structure->kind != StructureKind::Foundation && structure->kind != StructureKind::Wall) {
+			return false;
+		}
+		if (blueprint->phase == StructureBlueprint::BuildPhase::Complete || blueprint->demolishing) {
+			return false;
+		}
+		completeBlueprintNow(blueprintEntity, *blueprint);
+		return true;
+	}
+
+	uint32_t ConstructionSystem::creditMaterialToSites(const std::string& defName, uint32_t amount) {
+		if (world == nullptr || amount == 0) {
+			return 0;
+		}
+		uint32_t credited = 0;
+		for (auto [entity, structure, blueprint] : world->view<Structure, StructureBlueprint>()) {
+			if (amount == 0) {
+				break;
+			}
+			if (structure.kind != StructureKind::Foundation && structure.kind != StructureKind::Wall) {
+				continue;
+			}
+			if (blueprint.phase == StructureBlueprint::BuildPhase::Complete || blueprint.demolishing) {
+				continue;
+			}
+			const uint32_t need = blueprint.remaining(defName);
+			if (need == 0) {
+				continue;
+			}
+			auto* inventory = world->getComponent<Inventory>(entity);
+			if (inventory == nullptr) {
+				continue;
+			}
+			// Fill only this site's outstanding need, never more than we have left to hand out.
+			// remaining() already encodes the manifest math, so this never re-derives it.
+			const uint32_t give = std::min(need, amount);
+			const uint32_t added = inventory->addItem(defName, give);
+			credited += added;
+			amount -= added;
+		}
+		return credited;
 	}
 
 	void ConstructionSystem::retireChildGoals(EntityID blueprintEntity, uint64_t umbrellaGoalId, bool keepMaterialChildren) {

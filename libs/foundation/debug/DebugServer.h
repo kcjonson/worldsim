@@ -20,7 +20,9 @@
 #include <cstdint>
 #include <memory>
 #include <mutex>
+#include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 // Forward declare httplib::Server to avoid exposing cpp-httplib in header
@@ -60,6 +62,41 @@ namespace Foundation { // NOLINT(readability-identifier-naming)
 		std::uint8_t button = 0; // 0=left, 1=right, 2=middle
 		float		 scrollDelta = 0.0F;
 	};
+
+	// Generic dev/test command queued via /api/dev/<verb>?k=v&k2=v2. DebugServer
+	// lives in foundation and must stay domain-agnostic, so it does NOT know what
+	// "freebuild" or "givewood" mean: it just parses the verb plus the query
+	// params into this bag and hands it to the app, which interprets it (the
+	// construction context lives in GameScene). Mirrors InputCommand's queue.
+	struct DevCommand {
+		std::string										 verb;	 // path tail after /api/dev/, e.g. "freebuild"
+		std::vector<std::pair<std::string, std::string>> params; // raw query key/value pairs
+
+		// First value for `key`, or `fallback` if absent. Linear scan; the param
+		// list is tiny (a handful of keys per command).
+		[[nodiscard]] std::string param(const std::string& key, const std::string& fallback = "") const {
+			for (const auto& [k, v] : params) {
+				if (k == key) {
+					return v;
+				}
+			}
+			return fallback;
+		}
+
+		[[nodiscard]] bool hasParam(const std::string& key) const {
+			for (const auto& [k, v] : params) {
+				if (k == key) {
+					return true;
+				}
+			}
+			return false;
+		}
+	};
+
+	// Extract the dev-command verb (the path tail) from a /api/dev/<verb> request
+	// path. Returns the lowercased segment after the last '/', or empty if the
+	// path doesn't sit under /api/dev/ or carries no verb. Pure; unit-tested.
+	[[nodiscard]] std::string parseDevVerb(const std::string& path);
 
 	// Log levels (must match foundation::LogLevel enum)
 	enum class LogLevel : std::uint8_t { Debug, Info, Warning, Error }; // NOLINT(performance-enum-size)
@@ -145,6 +182,11 @@ namespace Foundation { // NOLINT(readability-identifier-naming)
 		// returns true if any commands were pending.
 		bool consumeInputCommands(std::vector<InputCommand>& out);
 
+		// Consume queued dev/test commands (game thread). Appends to out and
+		// returns true if any were pending. Mirrors consumeInputCommands; the app
+		// interprets each DevCommand's verb (DebugServer stays domain-agnostic).
+		bool consumeDevCommands(std::vector<DevCommand>& out);
+
 		// Set/get current scene name (for metrics streaming to frontend)
 		void		setCurrentSceneName(const std::string& name);
 		std::string getCurrentSceneName() const;
@@ -188,6 +230,11 @@ namespace Foundation { // NOLINT(readability-identifier-naming)
 		std::vector<InputCommand> inputCommands;
 		std::atomic<bool>		  inputCommandsPending{false};
 		mutable std::mutex		  inputCommandsMutex; // Protects inputCommands
+
+		// Dev/test command queue (HTTP thread writes, game thread consumes)
+		std::vector<DevCommand> devCommands;
+		std::atomic<bool>		devCommandsPending{false};
+		mutable std::mutex		devCommandsMutex; // Protects devCommands
 
 		// Vsync target for SetVsync action (0 = off, 1 = on)
 		std::atomic<int> targetVsync{1};
