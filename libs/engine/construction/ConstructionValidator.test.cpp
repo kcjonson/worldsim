@@ -397,8 +397,7 @@ TEST_F(WallVsExisting, TJunctionOnExistingInteriorPasses) {
 	// host there), so it must be exempt from overlap/clearance and PASS -- not be
 	// mis-rejected as WallsOverlap the way a shared-endpoint join is exempt.
 	auto r = validator.validateWallSegment({6.0F, 6.0F}, {6.0F, 10.0F}, standardWood(), host);
-	EXPECT_TRUE(r.ok()) << "T-junction (endpoint on existing interior) must pass; got code "
-						<< static_cast<int>(r.code);
+	EXPECT_TRUE(r.ok()) << "T-junction (endpoint on existing interior) must pass; got code " << static_cast<int>(r.code);
 }
 
 TEST_F(WallVsExisting, ParallelOverlapStillFailsDespiteTouchingJunction) {

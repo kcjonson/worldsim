@@ -319,7 +319,7 @@ TEST_F(ConstructionGoalEmissionTest, GoalsAreCleanedUpWhenBlueprintCompletes) {
 TEST_F(ConstructionGoalEmissionTest, LargeManifestHarvestGoalIsBoundedToOneTrip) {
 	// 313 Wood needed, an empty-handed colonist: the Harvest goal must ask for one trip's
 	// worth (99), NOT 313. Asking for 313 is what kept it Available after the stack filled.
-	auto  foundation = createLargeWoodFoundation(/*woodNeeded=*/313);
+	auto foundation = createLargeWoodFoundation(/*woodNeeded=*/313);
 	createColonistCarryingWood(/*woodCarried=*/0);
 	auto& registry = GoalTaskRegistry::Get();
 
@@ -339,7 +339,7 @@ TEST_F(ConstructionGoalEmissionTest, FullStackRetiresHarvestSoHaulWinsForLargeMa
 	// 313 Wood needed, a colonist carrying a FULL stack (addItem clamps 200 -> 99): the
 	// Harvest goal must retire (demand 0) while the Haul stays open. Before the fix the
 	// Harvest stayed Available (313 - 99 = 214 > 0) and the colonist hoarded forever.
-	auto  foundation = createLargeWoodFoundation(/*woodNeeded=*/313);
+	auto foundation = createLargeWoodFoundation(/*woodNeeded=*/313);
 	createColonistCarryingWood(/*woodCarried=*/200); // clamps to the 99 stack cap
 	auto& registry = GoalTaskRegistry::Get();
 
