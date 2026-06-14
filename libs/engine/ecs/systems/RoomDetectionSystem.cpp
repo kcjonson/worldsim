@@ -16,20 +16,20 @@
 namespace ecs {
 
 	void RoomDetectionSystem::update(float /*deltaTime*/) {
-		if (m_world == nullptr) {
+		if (constructionWorld == nullptr) {
 			return;
 		}
-		const uint64_t version = m_world->version();
-		if (m_seenVersion && version == m_lastVersion) {
+		const uint64_t version = constructionWorld->version();
+		if (seenVersion && version == lastVersion) {
 			return; // topology unchanged since last reconcile; nothing to do
 		}
-		m_lastVersion = version;
-		m_seenVersion = true;
+		lastVersion = version;
+		seenVersion = true;
 		reconcile();
 	}
 
 	void RoomDetectionSystem::reconcile() {
-		const std::vector<engine::construction::RoomFace> faces = engine::construction::detectRooms(*m_world);
+		const std::vector<engine::construction::RoomFace> faces = engine::construction::detectRooms(*constructionWorld);
 
 		// Identity matching (D6 "names survive edits"). A new face inherits the
 		// existing record whose stored representative point lies in the new face's
@@ -53,7 +53,7 @@ namespace ecs {
 		// face extraction; deferred until the overlay consumes it.
 		const std::size_t		 faceCount = faces.size();
 		std::vector<std::size_t> inheritedRecord(faceCount, std::numeric_limits<std::size_t>::max());
-		std::vector<bool>		 recordClaimed(m_rooms.size(), false);
+		std::vector<bool>		 recordClaimed(roomRecords.size(), false);
 
 		// Claim, for face fi, the dominant unclaimed record whose rep relates to the
 		// face ring as `want` (Inside on the first pass, OnBoundary on the fallback).
@@ -62,14 +62,14 @@ namespace ecs {
 			std::size_t							  best = std::numeric_limits<std::size_t>::max();
 			geometry::Int128					  bestArea; // exact, so the tiebreak is deterministic
 			uint64_t							  bestId = 0;
-			for (std::size_t ri = 0; ri < m_rooms.size(); ++ri) {
+			for (std::size_t ri = 0; ri < roomRecords.size(); ++ri) {
 				if (recordClaimed[ri]) {
 					continue;
 				}
-				if (geometry::pointInPolygon(m_rooms[ri].rep, face.ring) != want) {
+				if (geometry::pointInPolygon(roomRecords[ri].rep, face.ring) != want) {
 					continue;
 				}
-				const RoomRecord& rec = m_rooms[ri];
+				const RoomRecord& rec = roomRecords[ri];
 				if (best == std::numeric_limits<std::size_t>::max() || rec.areaDoubled > bestArea ||
 					(rec.areaDoubled == bestArea && rec.roomId < bestId)) {
 					best = ri;
@@ -102,7 +102,7 @@ namespace ecs {
 			const engine::construction::RoomFace& face = faces[fi];
 
 			if (inheritedRecord[fi] != std::numeric_limits<std::size_t>::max()) {
-				RoomRecord rec = m_rooms[inheritedRecord[fi]]; // keep id/name/entity
+				RoomRecord rec = roomRecords[inheritedRecord[fi]]; // keep id/name/entity
 				rec.ring = face.ring;
 				rec.rep = face.representativePoint;
 				rec.area = face.area;
@@ -121,8 +121,8 @@ namespace ecs {
 			}
 
 			RoomRecord rec;
-			rec.roomId = m_nextRoomId++;
-			rec.name = "Room " + std::to_string(++m_nameCounter);
+			rec.roomId = nextRoomId++;
+			rec.name = "Room " + std::to_string(++nameCounter);
 			rec.ring = face.ring;
 			rec.rep = face.representativePoint;
 			rec.area = face.area;
@@ -133,22 +133,25 @@ namespace ecs {
 			world->addComponent<Structure>(rec.entity, Structure{StructureKind::Room, rec.roomId});
 			world->addComponent<Room>(rec.entity, Room{rec.roomId, face.area, face.boundingSegmentIds, rec.name});
 
-			next.push_back(rec);
+			// Capture the entity before moving rec into the vector (avoids copying the
+			// record's ring/name on every newly formed room).
+			const EntityID entity = rec.entity;
+			next.push_back(std::move(rec));
 
-			if (m_onRoomFormed) {
-				m_onRoomFormed(rec.entity);
+			if (onRoomFormed) {
+				onRoomFormed(entity);
 			}
 		}
 
 		// Records no face inherited were unmade (wall demolished / loop broken):
 		// destroy their entities.
-		for (std::size_t ri = 0; ri < m_rooms.size(); ++ri) {
+		for (std::size_t ri = 0; ri < roomRecords.size(); ++ri) {
 			if (!recordClaimed[ri]) {
-				world->destroyEntity(m_rooms[ri].entity);
+				world->destroyEntity(roomRecords[ri].entity);
 			}
 		}
 
-		m_rooms = std::move(next);
+		roomRecords = std::move(next);
 	}
 
 } // namespace ecs

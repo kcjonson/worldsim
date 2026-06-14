@@ -49,14 +49,15 @@ namespace ecs {
 		[[nodiscard]] const char* name() const override { return "RoomDetection"; }
 
 		/// Inject the app-owned topology store. Called once from GameScene, the same
-		/// place ConstructionSystem is wired.
-		void setConstructionWorld(engine::construction::ConstructionWorld* world) { m_world = world; }
+		/// place ConstructionSystem is wired. (Param is not named `world` to avoid
+		/// confusion with ISystem's ECS `world` pointer.)
+		void setConstructionWorld(engine::construction::ConstructionWorld* newWorld) { constructionWorld = newWorld; }
 
 		/// Fired once when a room is newly formed, with its ECS entity. GameScene
 		/// wires this to a "Room formed" toast (the cross-layer seam; the engine lib
 		/// must not include UI).
 		using RoomFormedCallback = std::function<void(EntityID room)>;
-		void setRoomFormedCallback(RoomFormedCallback callback) { m_onRoomFormed = std::move(callback); }
+		void setRoomFormedCallback(RoomFormedCallback callback) { onRoomFormed = std::move(callback); }
 
 		/// A persistent room: its identity (id/name) and the geometry that lets the
 		/// next reconcile recognize it. `entity` is the ECS mirror.
@@ -71,21 +72,21 @@ namespace ecs {
 		};
 
 		/// Current room records (test/inspection helper).
-		[[nodiscard]] const std::vector<RoomRecord>& rooms() const { return m_rooms; }
+		[[nodiscard]] const std::vector<RoomRecord>& rooms() const { return roomRecords; }
 
 	  private:
-		// Re-detect rooms and reconcile against m_rooms: match, update, spawn, retire.
+		// Re-detect rooms and reconcile against roomRecords: match, update, spawn, retire.
 		void reconcile();
 
-		engine::construction::ConstructionWorld* m_world = nullptr;
-		RoomFormedCallback						 m_onRoomFormed = nullptr;
+		engine::construction::ConstructionWorld* constructionWorld = nullptr;
+		RoomFormedCallback						 onRoomFormed = nullptr;
 
-		std::vector<RoomRecord> m_rooms;
+		std::vector<RoomRecord> roomRecords;
 
-		uint64_t m_nextRoomId = 1;		// monotonic; reused ids would alias old entities
-		uint64_t m_nameCounter = 0;		// monotonic; "Room N" names never repeat
-		uint64_t m_lastVersion = 0;		// last ConstructionWorld version reconciled
-		bool	 m_seenVersion = false; // false until the first reconcile runs
+		uint64_t nextRoomId = 1;	  // monotonic; reused ids would alias old entities
+		uint64_t nameCounter = 0;	  // monotonic; "Room N" names never repeat
+		uint64_t lastVersion = 0;	  // last ConstructionWorld version reconciled
+		bool	 seenVersion = false; // false until the first reconcile runs
 	};
 
 } // namespace ecs
