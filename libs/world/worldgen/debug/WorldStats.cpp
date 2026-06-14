@@ -162,7 +162,13 @@ HypsoResult computeHypsometry(const std::vector<float>& elevation) {
     // abyssal mode: tallest bin at elevation <= kAbyssalModeMaxM
     const int abyssalBin = tallestBinInRange(0, abyssalMaxBin + 1);
     // land mode: tallest bin at elevation >= kLandModeMinM
-    const int landBin    = tallestBinInRange(landMinBin, kBins);
+    int landBin          = tallestBinInRange(landMinBin, kBins);
+
+    // For a normal world the two ranges are disjoint, so abyssalBin != landBin. But a
+    // degenerate world (all-ocean or all-land with a narrow elevation span) can clamp
+    // both thresholds onto the same histogram bin; report a single mode in that case
+    // rather than a spurious duplicate that downstream reads as bimodal.
+    if (landBin == abyssalBin) landBin = -1;
 
     // Emit the dominant (higher-count) mode first to preserve the convention
     // that modeElevations[0] is the larger population.

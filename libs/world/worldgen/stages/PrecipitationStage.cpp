@@ -307,27 +307,35 @@ void PrecipitationStage::run(StageContext& ctx) {
             if (depth[start] >= 0) continue;
             chain.clear();
             TileId cur = start;
+            bool cycle = false;
             // Walk upwind until we reach a resolved tile, a source, or a cycle.
             while (true) {
-                if (depth[cur] >= 0) break;            // parent already resolved
+                if (depth[cur] >= 0) break;            // parent already resolved (not in chain)
                 const bool isOcean = ctx.data.elevation[cur] < seaLevel;
                 const TileId up = upwind[cur];
-                if (isOcean || up == kInvalidTile) {   // source: depth 0
+                if (isOcean || up == kInvalidTile) {   // source: depth 0 (not in chain)
                     depth[cur] = 0;
                     break;
                 }
                 // Detect a cycle: cur already appears earlier in this chain.
                 if (seenStamp[cur] == start) {
-                    depth[cur] = 0; break;             // break the cycle here
+                    depth[cur] = 0; cycle = true; break;  // break the cycle here; cur IS in chain
                 }
                 seenStamp[cur] = start;                // mark as seen for this walk
                 depth[cur] = -2;                       // mark in-progress
                 chain.push_back(cur);
                 cur = up;
             }
-            // Unwind, assigning depth = parent depth + 1.
+            // Unwind, assigning depth = parent depth + 1. When the walk closed a cycle,
+            // `cur` is the break tile and is already in `chain` with depth 0: leave it at
+            // 0 and re-base from it so tiles downwind of the break measure depth from the
+            // break, not from inside the cycle (no inflation by the cycle length).
             int32_t base = depth[cur];
             for (size_t k = chain.size(); k-- > 0;) {
+                if (cycle && chain[k] == cur) {
+                    base = depth[cur];                 // = 0; keep the break tile's depth
+                    continue;
+                }
                 base += 1;
                 depth[chain[k]] = base;
             }
