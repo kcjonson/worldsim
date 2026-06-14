@@ -65,7 +65,8 @@ namespace ecs {
 			std::string		  name;
 			geometry::Ring	  ring;
 			geometry::Vec2i64 rep;
-			float			  area = 0.0f;
+			float			  area = 0.0f; // display only
+			geometry::Int128  areaDoubled; // exact 2x area; deterministic merge tiebreak key
 			EntityID		  entity = kInvalidEntity;
 		};
 

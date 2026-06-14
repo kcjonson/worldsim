@@ -60,7 +60,7 @@ namespace ecs {
 		const auto claimBest = [&](std::size_t fi, geometry::PointInPolygon want) {
 			const engine::construction::RoomFace& face = faces[fi];
 			std::size_t							  best = std::numeric_limits<std::size_t>::max();
-			float								  bestArea = -1.0f;
+			geometry::Int128					  bestArea; // exact, so the tiebreak is deterministic
 			uint64_t							  bestId = 0;
 			for (std::size_t ri = 0; ri < m_rooms.size(); ++ri) {
 				if (recordClaimed[ri]) {
@@ -70,10 +70,10 @@ namespace ecs {
 					continue;
 				}
 				const RoomRecord& rec = m_rooms[ri];
-				if (best == std::numeric_limits<std::size_t>::max() || rec.area > bestArea ||
-					(rec.area == bestArea && rec.roomId < bestId)) {
+				if (best == std::numeric_limits<std::size_t>::max() || rec.areaDoubled > bestArea ||
+					(rec.areaDoubled == bestArea && rec.roomId < bestId)) {
 					best = ri;
-					bestArea = rec.area;
+					bestArea = rec.areaDoubled;
 					bestId = rec.roomId;
 				}
 			}
@@ -106,6 +106,7 @@ namespace ecs {
 				rec.ring = face.ring;
 				rec.rep = face.representativePoint;
 				rec.area = face.area;
+				rec.areaDoubled = face.areaDoubled;
 
 				if (Room* room = world->getComponent<Room>(rec.entity)) {
 					room->area = face.area;
@@ -125,6 +126,7 @@ namespace ecs {
 			rec.ring = face.ring;
 			rec.rep = face.representativePoint;
 			rec.area = face.area;
+			rec.areaDoubled = face.areaDoubled;
 			rec.entity = world->createEntity();
 
 			world->addComponent<Position>(rec.entity, Position{geometry::dequantize(face.representativePoint)});

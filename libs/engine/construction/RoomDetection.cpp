@@ -24,6 +24,10 @@ namespace engine::construction {
 			if (v0 == nullptr || v1 == nullptr) {
 				continue;
 			}
+			// SegmentId is uint64 but InputSegment::index is int64. SegmentIds are
+			// allocated from a counter starting at 1 and never approach INT64_MAX, so
+			// this narrowing is value-preserving and round-trips exactly back to a
+			// SegmentId via the provenance below.
 			inputs.push_back({v0->pos, v1->pos, static_cast<std::int64_t>(seg.id)});
 		}
 
@@ -42,7 +46,10 @@ namespace engine::construction {
 
 			RoomFace room;
 			// signedAreaDoubled is 2x area in mm^2; /2 for area, /1e6 for mm^2 -> m^2.
-			// Bounded faces are CCW (positive), but fabs keeps it robust.
+			// Bounded faces are CCW (sign >= 0 -- that is how `outer` is defined), so
+			// the exact doubled area is non-negative and serves as a deterministic
+			// integer key for identity tiebreaks; the float `area` is display-only.
+			room.areaDoubled = face.signedAreaDoubled;
 			room.area = static_cast<float>(std::fabs(face.signedAreaDoubled.toDouble()) / 2.0e6);
 			room.representativePoint = *face.representativePoint;
 

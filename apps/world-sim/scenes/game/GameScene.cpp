@@ -1067,7 +1067,9 @@ namespace {
 			}
 			const std::string material = cmd.param("material", "Wood");
 			const std::string thickness = cmd.param("thickness", "Standard");
-			const auto host = static_cast<engine::construction::FoundationId>(std::strtoul(cmd.param("host", "0").c_str(), nullptr, 10));
+			// strtoull, not strtoul: FoundationId is 64-bit, and unsigned long is only
+			// 32-bit on Windows (LLP64), which would truncate large ids.
+			const auto host = static_cast<engine::construction::FoundationId>(std::strtoull(cmd.param("host", "0").c_str(), nullptr, 10));
 
 			const std::string builtStr = cmd.param("built", "1");
 			const bool		  built = (builtStr == "1" || builtStr == "on" || builtStr == "true" || builtStr == "yes");

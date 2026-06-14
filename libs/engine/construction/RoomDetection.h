@@ -2,6 +2,7 @@
 
 #include "ConstructionWorld.h"
 
+#include <core/Int128.h>
 #include <core/Vec2i64.h>
 #include <polygon/Polygon.h>
 
@@ -20,7 +21,9 @@ namespace engine::construction {
 	// wall segments bounding it. Bounded (interior) faces only; the unbounded
 	// outer face is excluded. Ring is CCW integer mm.
 	struct RoomFace {
-		float				   area = 0.0f;			// m^2
+		float			 area = 0.0f;				// m^2 (for display)
+		geometry::Int128 areaDoubled;				// exact 2x area in mm^2 (>= 0 for bounded faces);
+													// the deterministic key for identity tiebreaks
 		geometry::Vec2i64	   representativePoint; // a point strictly inside (mm)
 		geometry::Ring		   ring;				// boundary vertices (mm), CCW loop order
 		std::vector<SegmentId> boundingSegmentIds;	// from face provenance (the wall ids)
