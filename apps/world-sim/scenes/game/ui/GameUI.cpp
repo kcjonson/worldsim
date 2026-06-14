@@ -89,7 +89,8 @@ namespace world_sim {
 			.onOpenStorageConfig = args.onOpenStorageConfig,
 			.queryResources = args.queryResources,
 			.onDemolishFoundation = args.onDemolishFoundation,
-			.onDemolishWallSegment = args.onDemolishWallSegment
+			.onDemolishWallSegment = args.onDemolishWallSegment,
+			.onDemolishOpening = args.onDemolishOpening
 		});
 
 		// Create colonist details dialog

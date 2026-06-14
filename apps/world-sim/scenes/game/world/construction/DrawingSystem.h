@@ -161,8 +161,18 @@ namespace world_sim {
 
 	  private:
 		/// Render committed wall segments as trimmed bands + junction polygons
-		/// (resolveWallBands), styled per segment by build progress. INTERIM.
+		/// (resolveWallBands), styled per segment by build progress. A segment that
+		/// hosts openings is drawn as solid sub-bands around each opening's gap
+		/// instead of one continuous band. INTERIM.
 		void renderCommittedWalls(int viewportW, int viewportH);
+
+		/// Render each committed opening as a procedural door/window fill in its
+		/// wall-band gap, styled by build progress. INTERIM.
+		void renderCommittedOpenings(int viewportW, int viewportH);
+
+		/// Render the opening tool's ghost at the snapped position, colorized for
+		/// validity. INTERIM.
+		void renderOpeningGhost(int viewportW, int viewportH);
 
 		/// Render the in-progress wall chain: centerline, thickness band preview,
 		/// snap guides, and validity colorize. INTERIM.

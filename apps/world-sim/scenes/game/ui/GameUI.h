@@ -76,6 +76,7 @@ class GameUI {
 		std::function<void()> onPlaceFurniture;						 ///< Called when Place button clicked for packaged furniture
 		std::function<void()> onDemolishFoundation;					 ///< Called when Demolish button clicked for a foundation
 		std::function<void()> onDemolishWallSegment;				 ///< Called when Demolish button clicked for a wall segment
+		std::function<void()>					onDemolishOpening; ///< Called when Demolish button clicked for an opening
 		ResourceQueryCallback queryResources;							 ///< Query remaining resource count for harvestable entities
 		std::function<void(const std::string&)> onStructureSelected;	 ///< Called when a structure tool (e.g. "foundation") is chosen
 		std::function<void(const std::string&)> onConstructionMaterialSelected; ///< Called when a config-strip material card is clicked

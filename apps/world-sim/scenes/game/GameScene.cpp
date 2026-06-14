@@ -203,39 +203,43 @@ namespace {
 				.onPlaceFurniture = [this]() { handlePlaceFurniture(); },
 				.onDemolishFoundation = [this]() { handleDemolishFoundation(); },
 				.onDemolishWallSegment = [this]() { handleDemolishWallSegment(); },
+				.onDemolishOpening = [this]() { handleDemolishOpening(); },
 				.queryResources = [this](const std::string& defName, Foundation::Vec2 position) -> std::optional<uint32_t> {
 					auto coord = engine::world::worldToChunk({position.x, position.y});
 					return m_placementExecutor->getResourceCount(coord, {position.x, position.y}, defName);
 				},
-				.onStructureSelected = [this](const std::string& structure) {
-					if (!m_drawingSystem) {
-						return;
+				.onStructureSelected =
+					[this](const std::string& structure) {
+						if (!m_drawingSystem) {
+							return;
+						}
+						// One tool owns world input: drop any active placement first.
+						if (m_placementSystem) {
+							m_placementSystem->cancel();
+						}
+						if (structure == "foundation") {
+							m_drawingSystem->activateFoundationTool();
+						} else if (structure == "wall") {
+							m_drawingSystem->activateWallTool();
+						} else if (structure == "door") {
+							m_drawingSystem->activateOpeningTool("Door");
+						} else if (structure == "window") {
+							m_drawingSystem->activateOpeningTool("Window");
+						}
+					},
+				.onConstructionMaterialSelected =
+					[this](const std::string& material) {
+						if (m_drawingSystem) {
+							m_drawingSystem->setActiveMaterial(material);
+							refreshThicknessPresets(material);
+						}
+					},
+				.onConstructionThicknessSelected =
+					[this](const std::string& preset) {
+						if (m_drawingSystem) {
+							m_drawingSystem->setActiveThicknessPreset(preset);
+						}
 					}
-					// One tool owns world input: drop any active placement first.
-					if (m_placementSystem) {
-						m_placementSystem->cancel();
-					}
-					if (structure == "foundation") {
-						m_drawingSystem->activateFoundationTool();
-					} else if (structure == "wall") {
-						m_drawingSystem->activateWallTool();
-					} else if (structure == "door") {
-						m_drawingSystem->activateOpeningTool("Door");
-					} else if (structure == "window") {
-						m_drawingSystem->activateOpeningTool("Window");
-					}
-				},
-				.onConstructionMaterialSelected = [this](const std::string& material) {
-					if (m_drawingSystem) {
-						m_drawingSystem->setActiveMaterial(material);
-						refreshThicknessPresets(material);
-					}
-				},
-				.onConstructionThicknessSelected = [this](const std::string& preset) {
-					if (m_drawingSystem) {
-						m_drawingSystem->setActiveThicknessPreset(preset);
-					}
-				}
 			});
 
 			// Populate Production dropdown with placeable stations (recipes where station="none")
@@ -1358,6 +1362,41 @@ namespace {
 
 			LOG_INFO(Game, "Demolished wall segment #%llu", static_cast<unsigned long long>(wallSel->id));
 			gameUI->pushNotification("Demolished", "Wall segment removed", UI::ToastSeverity::Info);
+			m_selectionSystem->clearSelection();
+		}
+
+		/// Handle Demolish request from an opening's info panel. The opening is its own
+		/// demolition unit (independent of the host wall): removeOpening drops just this
+		/// opening from the topology. Mirrors handleDemolishWallSegment: immediate
+		/// topology removal plus a deferred ECS entity destroy through the shared queue
+		/// (so we never destroyEntity mid-update).
+		void handleDemolishOpening() {
+			const auto& sel = m_selectionSystem->current();
+			auto*		openingSel = std::get_if<world_sim::OpeningSelection>(&sel);
+			if (openingSel == nullptr) {
+				LOG_WARNING(Game, "Cannot demolish: no opening selected");
+				return;
+			}
+
+			auto&		constructionWorld = m_drawingSystem->world();
+			const auto* opening = constructionWorld.getOpening(openingSel->id);
+			if (opening == nullptr) {
+				LOG_WARNING(Game, "Cannot demolish: opening #%llu not found", static_cast<unsigned long long>(openingSel->id));
+				m_selectionSystem->clearSelection();
+				return;
+			}
+
+			// Capture the ECS mirror handle before the topology record goes away, then
+			// remove just this opening. Defer the entity destruction through the shared
+			// queue (drained after ecsWorld->update() in update()).
+			const ecs::EntityID entity = opening->entity;
+			constructionWorld.removeOpening(openingSel->id);
+			if (entity != ecs::kInvalidEntity) {
+				m_pendingEntityRemoval.push_back(entity);
+			}
+
+			LOG_INFO(Game, "Demolished opening #%llu", static_cast<unsigned long long>(openingSel->id));
+			gameUI->pushNotification("Demolished", "Opening removed", UI::ToastSeverity::Info);
 			m_selectionSystem->clearSelection();
 		}
 

@@ -1,5 +1,7 @@
 #include "DrawingSystem.h"
 
+#include "OpeningGeometry.h"
+
 #include <assets/ConstructionRegistry.h>
 #include <ecs/components/Inventory.h>
 #include <ecs/components/Structure.h>
@@ -60,6 +62,53 @@ namespace world_sim {
 			}
 			a *= 0.5;
 			return {static_cast<float>(cx / (6.0 * a)), static_cast<float>(cy / (6.0 * a))};
+		}
+
+		// Segment length in mm (its two vertex positions), or 0 if either vertex is
+		// missing. The opening's clear width maps to a centerline half-extent of
+		// (widthMm/2) / lengthMm, so a zero-length segment yields no intervals.
+		double segmentLengthMm(const ec::ConstructionWorld& world, const ec::WallSegment& seg) {
+			const ec::Vertex* v0 = world.getVertex(seg.v0);
+			const ec::Vertex* v1 = world.getVertex(seg.v1);
+			if (v0 == nullptr || v1 == nullptr) {
+				return 0.0;
+			}
+			const double dx = static_cast<double>(v1->pos.x - v0->pos.x);
+			const double dy = static_cast<double>(v1->pos.y - v0->pos.y);
+			return std::sqrt(dx * dx + dy * dy);
+		}
+
+		// The centerline [t0,t1] intervals every opening on `segmentId` occupies,
+		// sorted ascending and clamped to [0,1]. An opening at param t with clear
+		// width w on a segment of length L spans [t - (w/2)/L, t + (w/2)/L]. Stable
+		// order (openings() insertion order, then t) keeps the gap render deterministic.
+		std::vector<std::pair<float, float>> openingIntervalsForSegment(const ec::ConstructionWorld& world, ec::SegmentId segmentId) {
+			std::vector<std::pair<float, float>> intervals;
+			const ec::WallSegment*				 seg = world.getSegment(segmentId);
+			if (seg == nullptr) {
+				return intervals;
+			}
+			const double lengthMm = segmentLengthMm(world, *seg);
+			if (lengthMm <= 0.0) {
+				return intervals;
+			}
+			for (const auto& op : world.openings()) {
+				if (op.segment != segmentId) {
+					continue;
+				}
+				const auto* type = ConstructionRegistry::Get().getOpeningType(op.type);
+				if (type == nullptr || type->widthMm <= 0) {
+					continue;
+				}
+				const float half = static_cast<float>((static_cast<double>(type->widthMm) * 0.5) / lengthMm);
+				const float t0 = std::clamp(op.t - half, 0.0F, 1.0F);
+				const float t1 = std::clamp(op.t + half, 0.0F, 1.0F);
+				if (t1 > t0) {
+					intervals.emplace_back(t0, t1);
+				}
+			}
+			std::sort(intervals.begin(), intervals.end());
+			return intervals;
 		}
 
 	} // namespace
@@ -1144,6 +1193,10 @@ namespace world_sim {
 		// render above.
 		renderCommittedWalls(viewportW, viewportH);
 
+		// Committed openings fill the gaps the wall render leaves (above the bands
+		// at z 60-62, below the in-progress preview at 900+).
+		renderCommittedOpenings(viewportW, viewportH);
+
 		// --- In-progress preview ----------------------------------------------
 		if (state_ != DrawingState::Drawing) {
 			return;
@@ -1155,8 +1208,9 @@ namespace world_sim {
 			return;
 		}
 
-		// Opening ghost / gap rendering is a later sub-phase; nothing to draw here yet.
+		// Opening tool: a validity-colorized ghost at the snapped position.
 		if (activeTool_ == ToolKind::Opening) {
+			renderOpeningGhost(viewportW, viewportH);
 			return;
 		}
 
@@ -1398,26 +1452,85 @@ namespace world_sim {
 				matColor = {c.r / 255.0F, c.g / 255.0F, c.b / 255.0F, 1.0F};
 			}
 
-			std::vector<Foundation::Vec2> screen;
-			screen.reserve(ring.size());
-			for (const auto& v : ring) {
-				screen.push_back(toScreen(v));
-			}
-
-			// Blueprint base always; progress fill ramps with workDone/workTotal.
-			fillRing(screen, {0.5F, 0.65F, 0.9F, 0.22F}, {0.55F, 0.72F, 1.0F, 0.0F}, 0.0F, "committed_wall_base", "", 60, 60);
 			const float				fillAlpha = built ? 0.9F : (0.2F + 0.7F * progress);
 			const Foundation::Color outline{0.6F, 0.78F, 1.0F, built ? 1.0F : (0.65F + 0.35F * progress)};
-			fillRing(
-				screen,
-				{matColor.r, matColor.g, matColor.b, fillAlpha},
-				outline,
-				built ? 2.0F : 1.5F,
-				"committed_wall_progress",
-				"committed_wall_edge",
-				61,
-				62
-			);
+
+			auto drawWallRing = [&](const std::vector<Foundation::Vec2>& screen) {
+				// Blueprint base always; progress fill ramps with workDone/workTotal.
+				fillRing(screen, {0.5F, 0.65F, 0.9F, 0.22F}, {0.55F, 0.72F, 1.0F, 0.0F}, 0.0F, "committed_wall_base", "", 60, 60);
+				fillRing(
+					screen,
+					{matColor.r, matColor.g, matColor.b, fillAlpha},
+					outline,
+					built ? 2.0F : 1.5F,
+					"committed_wall_progress",
+					"committed_wall_edge",
+					61,
+					62
+				);
+			};
+
+			// A segment hosting openings can't use the single resolved band: it must
+			// show a gap where each opening sits. Replace the band with solid sub-bands
+			// over the centerline runs between the gaps, computed from the segment's own
+			// v0->v1 centerline. This drops the whole-graph junction trim on this one
+			// segment (square cuts at the gap edges, an accepted interim approximation);
+			// the junction polygons still fill the corners. Segments with no openings
+			// keep the trimmed band unchanged.
+			const auto intervals = openingIntervalsForSegment(constructionWorld_, wseg.id);
+			if (intervals.empty()) {
+				std::vector<Foundation::Vec2> screen;
+				screen.reserve(ring.size());
+				for (const auto& v : ring) {
+					screen.push_back(toScreen(v));
+				}
+				drawWallRing(screen);
+				continue;
+			}
+
+			const ec::Vertex* v0 = constructionWorld_.getVertex(wseg.v0);
+			const ec::Vertex* v1 = constructionWorld_.getVertex(wseg.v1);
+			std::int64_t	  halfThick = 0;
+			if (const auto* preset = ConstructionRegistry::Get().getThicknessPreset(wseg.material, wseg.thicknessPreset)) {
+				halfThick = preset->halfThicknessMm;
+			}
+			if (v0 == nullptr || v1 == nullptr || halfThick <= 0) {
+				continue;
+			}
+
+			// Walk the centerline cutting out each [t0,t1] gap; render a sub-band over
+			// each solid run that has positive length.
+			auto lerpMm = [&](float t) -> geometry::Vec2i64 {
+				const double ax = static_cast<double>(v0->pos.x);
+				const double ay = static_cast<double>(v0->pos.y);
+				const double bx = static_cast<double>(v1->pos.x);
+				const double by = static_cast<double>(v1->pos.y);
+				return {
+					static_cast<std::int64_t>(std::llround(ax + (bx - ax) * t)),
+					static_cast<std::int64_t>(std::llround(ay + (by - ay) * t)),
+				};
+			};
+			float runStart = 0.0F;
+			auto  emitRun = [&](float a, float b) {
+				 if (b - a <= 1e-4F) {
+					 return;
+				 }
+				 const geometry::Ring sub = geometry::band(lerpMm(a), lerpMm(b), halfThick);
+				 if (sub.size() < 3) {
+					 return;
+				 }
+				 std::vector<Foundation::Vec2> screen;
+				 screen.reserve(sub.size());
+				 for (const auto& v : sub) {
+					 screen.push_back(toScreen(v));
+				 }
+				 drawWallRing(screen);
+			};
+			for (const auto& iv : intervals) {
+				emitRun(runStart, iv.first);
+				runStart = iv.second;
+			}
+			emitRun(runStart, 1.0F);
 		}
 
 		// Junction polygons fill the corner gaps the trimmed bands leave. Interim
@@ -1435,6 +1548,163 @@ namespace world_sim {
 			}
 			fillRing(screen, {0.5F, 0.65F, 0.9F, junctionAlpha}, {0.6F, 0.78F, 1.0F, 0.0F}, 0.0F, "committed_wall_junction", "", 61, 61);
 		}
+	}
+
+	namespace {
+
+		// Material color (palette front) or a fallback. Doors fall back to a warm
+		// wood-brown, windows to the same so the frame reads as the material; the
+		// pane tint is derived in the draw below.
+		Foundation::Color openingMaterialColor(const std::string& materialName) {
+			const auto* mat = ConstructionRegistry::Get().getMaterial(materialName);
+			if (mat != nullptr && !mat->pattern.palette.empty()) {
+				const auto& c = mat->pattern.palette.front();
+				return {c.r / 255.0F, c.g / 255.0F, c.b / 255.0F, 1.0F};
+			}
+			return {0.55F, 0.40F, 0.25F, 1.0F};
+		}
+
+		// Draw a procedural door/window fill over the opening footprint (screen-space
+		// ring). `alpha` scales the whole fill (build progress / ghost dimming).
+		// Doors: a solid material slab. Windows: a material-color frame with a
+		// lighter, more transparent center pane. zBase: fill z, zBase+1: edges.
+		void drawOpeningFill(
+			const std::vector<Foundation::Vec2>& screen,
+			Foundation::Color					 matColor,
+			bool								 window,
+			float								 alpha,
+			float								 outlineWidth
+		) {
+			if (screen.size() < 3) {
+				return;
+			}
+			if (window) {
+				// Pane: lighter and more see-through than the frame so a window reads as
+				// glazed. Frame: the material color as a thicker outline.
+				const Foundation::Color pane{
+					std::min(1.0F, matColor.r + 0.35F),
+					std::min(1.0F, matColor.g + 0.45F),
+					std::min(1.0F, matColor.b + 0.55F),
+					0.35F * alpha,
+				};
+				fillRing(
+					screen,
+					pane,
+					{matColor.r, matColor.g, matColor.b, 0.95F * alpha},
+					outlineWidth,
+					"committed_opening_pane",
+					"committed_opening_frame",
+					63,
+					64
+				);
+			} else {
+				fillRing(
+					screen,
+					{matColor.r, matColor.g, matColor.b, 0.9F * alpha},
+					{std::min(1.0F, matColor.r + 0.1F),
+					 std::min(1.0F, matColor.g + 0.1F),
+					 std::min(1.0F, matColor.b + 0.1F),
+					 0.95F * alpha},
+					outlineWidth,
+					"committed_opening_slab",
+					"committed_opening_edge",
+					63,
+					64
+				);
+			}
+		}
+
+	} // namespace
+
+	void DrawingSystem::renderCommittedOpenings(int viewportW, int viewportH) {
+		const auto& ops = constructionWorld_.openings();
+		if (ops.empty()) {
+			return;
+		}
+
+		auto toScreen = [&](geometry::Vec2i64 mm) -> Foundation::Vec2 {
+			const auto w = geometry::dequantize(mm);
+			return camera_->worldToScreen(w.x, w.y, viewportW, viewportH, kPixelsPerMeter);
+		};
+
+		for (const ec::Opening& op : ops) {
+			const geometry::Ring footprint = openingFootprint(constructionWorld_, op);
+			if (footprint.size() < 3) {
+				continue;
+			}
+
+			const auto* type = ConstructionRegistry::Get().getOpeningType(op.type);
+			if (type == nullptr) {
+				continue;
+			}
+			const bool window = !type->pathable; // windows are not pathable; doors are
+
+			// Progress styling mirrors walls: a Built opening renders solid, a blueprint
+			// dims with workDone/workTotal from its ECS mirror (falling back to the
+			// topology state when there's no entity yet).
+			const bool built = (op.state == ec::FoundationState::Built);
+			float	   progress = built ? 1.0F : 0.0F;
+			if (!built && ecsWorld_ != nullptr && op.entity != ecs::kInvalidEntity) {
+				if (const auto* bp = ecsWorld_->getComponent<ecs::StructureBlueprint>(op.entity)) {
+					progress = bp->progress();
+				}
+			}
+			const float alpha = built ? 1.0F : (0.25F + 0.6F * progress);
+
+			std::vector<Foundation::Vec2> screen;
+			screen.reserve(footprint.size());
+			for (const auto& v : footprint) {
+				screen.push_back(toScreen(v));
+			}
+			drawOpeningFill(screen, openingMaterialColor(type->material), window, alpha, built ? 2.0F : 1.0F);
+		}
+	}
+
+	void DrawingSystem::renderOpeningGhost(int viewportW, int viewportH) {
+		const auto* type = activeOpeningType();
+		if (type == nullptr || !openingSnap_.valid) {
+			return; // no wall in range: show nothing
+		}
+
+		auto toScreen = [&](geometry::Vec2i64 mm) -> Foundation::Vec2 {
+			const auto w = geometry::dequantize(mm);
+			return camera_->worldToScreen(w.x, w.y, viewportW, viewportH, kPixelsPerMeter);
+		};
+
+		// Build a transient Opening at the snapped segment/t to reuse the shared
+		// footprint geometry; it is never committed.
+		ec::Opening ghost;
+		ghost.segment = openingSnap_.segment;
+		ghost.t = openingSnap_.t;
+		ghost.type = type->name;
+		ghost.material = type->material;
+		const geometry::Ring footprint = openingFootprint(constructionWorld_, ghost);
+		if (footprint.size() < 3) {
+			return;
+		}
+
+		const bool				valid = openingValidation_.ok();
+		const Foundation::Color okColor = UI::Theme::Colors::statusActive;	 // green
+		const Foundation::Color badColor = UI::Theme::Colors::statusBlocked; // red
+		const Foundation::Color tint = valid ? okColor : badColor;
+
+		std::vector<Foundation::Vec2> screen;
+		screen.reserve(footprint.size());
+		for (const auto& v : footprint) {
+			screen.push_back(toScreen(v));
+		}
+		// Validity-colorized ghost: translucent fill + a solid outline, above the
+		// committed render (z 920+, like the wall preview band).
+		fillRing(
+			screen,
+			{tint.r, tint.g, tint.b, 0.25F},
+			{tint.r, tint.g, tint.b, 0.9F},
+			2.0F,
+			"opening_ghost_fill",
+			"opening_ghost_edge",
+			920,
+			921
+		);
 	}
 
 	void DrawingSystem::renderWallChainPreview(int viewportW, int viewportH) {
