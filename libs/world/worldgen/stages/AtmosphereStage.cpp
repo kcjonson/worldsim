@@ -12,7 +12,7 @@
 //   T(lat) = T_global + A * (cos^2(lat) - 2/3)
 //     The area-weighted sphere average of cos^2(lat) is exactly 2/3, so the
 //     global mean is preserved by construction. A is the equator-pole contrast
-//     (~50 C Earth-like), nudged up by fast rotation (weaker meridional heat
+//     (~44 C Earth-like), nudged up by fast rotation (weaker meridional heat
 //     transport) and down by thick atmosphere (stronger transport).
 //   Land above sea level loses lapseRateCPerKm per km; ocean and below-sea-level
 //   depressions are clamped at 0 km.
@@ -95,7 +95,11 @@ void AtmosphereStage::run(StageContext& ctx) {
     // atmosphere lowers it; both modest and clamped.
     const double rotContrast = clampd(1.0 + 0.25 * (1.0 - sqrtRot), 0.8, 1.2);
     const double atmContrast = clampd(1.0 + 0.15 * (1.0 - sqrtAtm), 0.75, 1.25);
-    const double contrastA   = clampd(50.0 * rotContrast * atmContrast, 25.0, 75.0);
+    // Base 44 (was 50): a 50 C contrast pushed the -5 C arctic isotherm to ~57
+    // deg, drowning the mid-latitudes in tundra. 44 warms 50-70 deg into the
+    // taiga/subtropical-dry range while keeping the equator-pole spread inside
+    // the [40,65] EquatorHotterThanPoles gate.
+    const double contrastA   = clampd(44.0 * rotContrast * atmContrast, 25.0, 75.0);
 
     // Seasonal range modifiers: eccentricity widens it (quadratic, +15 C at
     // e=0.95), thick atmosphere damps it.

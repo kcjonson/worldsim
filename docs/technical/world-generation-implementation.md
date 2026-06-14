@@ -164,7 +164,7 @@ At n=1024 on a 32-core 3.4 GHz machine (Release):
 **Header:** `worldgen/data/Biome.h`
 
 21 values (0–20) as `enum class Biome : uint8_t`. Helpers: `biomeToString`,
-`isWater`, `isForest`. The enum value is used as a direct index into
+`isWater`. The enum value is used as a direct index into
 `kBiomeColors` in `DebugImageExporter`.
 
 ---

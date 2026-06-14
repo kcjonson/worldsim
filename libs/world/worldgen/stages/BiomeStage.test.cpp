@@ -160,9 +160,16 @@ TEST(BiomeStage, WhittakerMatrix) {
         {15.0, 400,  Biome::XericShrubland},
         {8.0,  400,  Biome::SemiDesert},
         {19.0, 200,  Biome::HotDesert},
+        // Dry-tail HotDesert floor is now 12 C (was 18): a 13 C dry interior
+        // reads HotDesert, an 11 C one stays ColdDesert.
+        {13.0, 200,  Biome::HotDesert},
+        {11.0, 200,  Biome::ColdDesert},
         {10.0, 200,  Biome::ColdDesert},
         {0.0,  500,  Biome::BorealForest},
         {0.0,  200,  Biome::ColdDesert},
+        // Boreal band now reaches down to -10 C; the ArcticTundra floor is -10 C.
+        {-9.0, 500,  Biome::BorealForest},
+        {-12.0, 200, Biome::ArcticTundra},
         {-10.0, 200, Biome::ArcticTundra},
         {-10.0, 100, Biome::PolarDesert},
     };
@@ -242,6 +249,49 @@ TEST(BiomeStage, ElevationZonationLadder) {
     EXPECT_GT(cnt1800, 2u);
     EXPECT_GT(cnt3000, 2u);
     EXPECT_GT(cnt5000, 2u);
+}
+
+// ============================================================================
+// MontaneForest is decoupled from the lowland base biome. A climate whose
+// Whittaker base is a NON-forest (XericShrubland) becomes MontaneForest in the
+// 1200-2500 m band when the tile's own temp+precip clear the montane gate. The
+// old gating (isForest(base)) would have left it XericShrubland.
+// ============================================================================
+
+TEST(BiomeStage, MontaneForestDecoupledFromLowlandBase) {
+    TestWorld w;
+    w.fillDrainage(0, 0.0f);
+
+    // 18 C / 420 mm: lowland Whittaker base is XericShrubland (warm, 250-500 mm,
+    // T >= 12) — a scrub/desert biome, not a forest. Confirm that first on flat
+    // lowland (500 m, below the montane band).
+    w.setElevation([](double, double) { return 500.0; });
+    w.fillClimate(180, 420);
+    w.runBiome();
+    for (TileId t = 0; t < w.grid.tileCount(); ++t) {
+        ASSERT_EQ(biomeAt(w, t), Biome::XericShrubland)
+            << "lowland base tile " << t << " got " << biomeToString(biomeAt(w, t));
+    }
+
+    // Same climate at 1500 m (inside the montane band): T 18 > 3 C and
+    // precip 420 > 400 mm clear the montane gate, so the slope reads
+    // MontaneForest even though its lowland base is a desert.
+    w.setElevation([](double, double) { return 1500.0; });
+    w.fillClimate(180, 420);
+    w.runBiome();
+    for (TileId t = 0; t < w.grid.tileCount(); ++t) {
+        ASSERT_EQ(biomeAt(w, t), Biome::MontaneForest)
+            << "montane tile " << t << " got " << biomeToString(biomeAt(w, t));
+    }
+
+    // Too dry for the montane gate (300 < 400 mm) at the same elevation: falls
+    // through to the lowland classifier (XericShrubland at 18 C / 300 mm).
+    w.fillClimate(180, 300);
+    w.runBiome();
+    for (TileId t = 0; t < w.grid.tileCount(); ++t) {
+        ASSERT_EQ(biomeAt(w, t), Biome::XericShrubland)
+            << "dry montane tile " << t << " got " << biomeToString(biomeAt(w, t));
+    }
 }
 
 // ============================================================================
@@ -386,7 +436,7 @@ TEST(BiomeStage, BeachAndCoastBiome) {
 TEST(BiomeStage, FrozenCoastIsNotBeach) {
     TestWorld w;
     w.setElevation(coastElevation);
-    w.fillClimate(-60, 400); // -6 C: below freezing, polar branch
+    w.fillClimate(-120, 400); // -12 C: below the -10 C arctic floor, tundra branch
     w.fillDrainage(0, 0.0f);
     w.runOcean();
     w.runBiome();

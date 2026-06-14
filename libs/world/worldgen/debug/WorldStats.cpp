@@ -121,31 +121,59 @@ HypsoResult computeHypsometry(const std::vector<float>& elevation) {
         res.hist[static_cast<size_t>(bin)]++;
     }
 
-    // Detect local maxima via simple neighbour comparison; collect all,
-    // then take the two largest by count.
-    struct Peak { int bin; uint32_t count; };
-    std::vector<Peak> peaks;
-    for (int b = 1; b < kBins - 1; ++b) {
-        if (res.hist[static_cast<size_t>(b)] > res.hist[static_cast<size_t>(b - 1)] &&
-            res.hist[static_cast<size_t>(b)] > res.hist[static_cast<size_t>(b + 1)]) {
-            peaks.push_back({b, res.hist[static_cast<size_t>(b)]});
+    // Region-split bimodality. Earth's hypsometry is bimodal (abyssal plains +
+    // continental platform), but the C-3 piecewise shelf adds a third, shallow
+    // shoulder near -100 m. A naive "two tallest bins" detector can pick
+    // {land, shelf-shoulder} and miss the abyssal mode entirely. So instead of
+    // ranking all bins by count, we find the single tallest bin in each of two
+    // DISJOINT elevation regions split at a mid-depth threshold: the abyssal
+    // mode below it (expect ~[-5500,-3500] m) and the land/shelf mode above it
+    // (expect ~[-500,+1200] m). The shelf shoulder, being above the split,
+    // competes with the land peak for one slot rather than displacing the
+    // abyssal mode.
+    //
+    // The split is relative to sea level (bin 0 == minElev). minElev is the
+    // deepest ocean, so the abyssal population sits in the lower bins.
+    static constexpr float kMidDepthSplitM = -1500.0f;
+    int splitBin = static_cast<int>((kMidDepthSplitM - minE) / res.binWidth);
+    if (splitBin < 1)        splitBin = 1;
+    if (splitBin > kBins - 1) splitBin = kBins - 1;
+
+    auto tallestBinInRange = [&](int lo, int hi) -> int {
+        int bestBin = -1;
+        uint32_t bestCount = 0;
+        for (int b = lo; b < hi; ++b) {
+            if (res.hist[static_cast<size_t>(b)] > bestCount) {
+                bestCount = res.hist[static_cast<size_t>(b)];
+                bestBin   = b;
+            }
         }
-    }
-    // Sort peaks descending by count.
-    std::sort(peaks.begin(), peaks.end(),
-              [](const Peak& a, const Peak& b) { return a.count > b.count; });
+        return bestBin;
+    };
 
-    size_t nPeaks = std::min(peaks.size(), size_t{2});
-    for (size_t i = 0; i < nPeaks; ++i) {
-        float center = res.binMin + (static_cast<float>(peaks[i].bin) + 0.5f) * res.binWidth;
+    const int abyssalBin = tallestBinInRange(0, splitBin);
+    const int landBin     = tallestBinInRange(splitBin, kBins);
+
+    // Emit the dominant (higher-count) mode first to preserve the convention
+    // that modeElevations[0] is the larger population.
+    struct Mode { int bin; uint32_t count; };
+    std::vector<Mode> modes;
+    if (abyssalBin >= 0) modes.push_back({abyssalBin, res.hist[static_cast<size_t>(abyssalBin)]});
+    if (landBin >= 0)    modes.push_back({landBin,    res.hist[static_cast<size_t>(landBin)]});
+    std::sort(modes.begin(), modes.end(),
+              [](const Mode& a, const Mode& b) { return a.count > b.count; });
+
+    for (const Mode& m : modes) {
+        float center = res.binMin + (static_cast<float>(m.bin) + 0.5f) * res.binWidth;
         res.modeElevations.push_back(center);
-        res.modeCounts.push_back(peaks[i].count);
+        res.modeCounts.push_back(m.count);
     }
 
-    // Trough between the two largest modes (if bimodal).
-    if (nPeaks >= 2) {
-        int binA = peaks[0].bin;
-        int binB = peaks[1].bin;
+    // Trough = the shallowest-count bin between the two modes (the genuine
+    // land/abyssal gap, by construction spanning the mid-depth split).
+    if (abyssalBin >= 0 && landBin >= 0) {
+        int binA = abyssalBin;
+        int binB = landBin;
         if (binA > binB) std::swap(binA, binB);
 
         uint32_t troughCount = std::numeric_limits<uint32_t>::max();
@@ -157,7 +185,7 @@ HypsoResult computeHypsometry(const std::vector<float>& elevation) {
             }
         }
         res.troughElevation = res.binMin + (static_cast<float>(troughBin) + 0.5f) * res.binWidth;
-        uint32_t lowerPeak  = std::min(peaks[0].count, peaks[1].count);
+        uint32_t lowerPeak  = std::min(modes[0].count, modes[1].count);
         res.troughFraction  = lowerPeak > 0
             ? static_cast<float>(troughCount) / static_cast<float>(lowerPeak)
             : 1.0f;
