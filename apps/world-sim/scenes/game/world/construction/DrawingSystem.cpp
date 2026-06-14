@@ -598,8 +598,7 @@ namespace world_sim {
 
 		const bool				built = segment->state == ec::FoundationState::Built;
 		ecs::StructureBlueprint blueprint;
-		const auto				requiredQty =
-			static_cast<uint32_t>(std::ceil(static_cast<double>(areaEquivalent) * static_cast<double>(costRate)));
+		const auto requiredQty = static_cast<uint32_t>(std::ceil(static_cast<double>(areaEquivalent) * static_cast<double>(costRate)));
 		blueprint.workTotal = areaEquivalent * workRate;
 		if (built) {
 			// A Built segment's halves come from splitting an already-finished wall:

@@ -141,7 +141,7 @@ namespace ecs {
 		/// each tick (materials credited, work completed, phase flipped) without any
 		/// colonist clear/haul/build. Inert when off: normal play is untouched and
 		/// determinism is unaffected. Toggled from the debug HTTP API (/api/dev/freebuild).
-		void setFreeBuild(bool on) { m_freeBuild = on; }
+		void			   setFreeBuild(bool on) { m_freeBuild = on; }
 		[[nodiscard]] bool freeBuild() const { return m_freeBuild; }
 
 		/// DEV/TEST ONLY. Drive a single blueprint entity straight to Built right now,
