@@ -94,11 +94,13 @@ namespace ecs {
 		bool						   emitBuildGoal = false;	  // materials staged: emit a Build goal
 	};
 
-	/// Decide the blueprint's phase and which goals to emit, from the two facts the
-	/// system measures each tick: whether the footprint is clear of blocking entities,
-	/// and whether the material manifest is satisfied. Pure; no side effects.
+	/// Decide forward build progression only, from the two facts the system measures each
+	/// tick: whether the footprint is clear of blocking entities, and whether the material
+	/// manifest is satisfied. Pure; no side effects.
 	///
-	/// Demolishing blueprints emit nothing here (the Deconstruct path owns them).
+	/// Does NOT handle demolishing. Callers MUST route a demolishing blueprint to the
+	/// deconstruct path (decideDeconstruct) before reaching this helper; passing one here
+	/// would mis-decide it as a build.
 	[[nodiscard]] ConstructionDecision
 	decideConstructionPhase(const StructureBlueprint& blueprint, bool footprintClear, bool materialsComplete);
 
@@ -215,7 +217,7 @@ namespace ecs {
 		/// Available only once the structure's dependents are gone (cascade gate), else Blocked,
 		/// so a fully-marked building tears down in order: openings -> walls -> foundation. Any
 		/// Build umbrella+children for the entity are dropped first (it's being torn down, not
-		/// built). Returns the umbrella goal id.
+		/// built). Returns void; it drives the Deconstruct goal as a side effect.
 		///
 		/// Edge case: a blueprint with workDone <= 0 has no work to undo (startBuildAction would
 		/// reject it), so there is nothing for a colonist to deconstruct. Such a structure is
@@ -273,6 +275,11 @@ namespace ecs {
 
 		// Fired when a demolishing blueprint with no work to undo is removed immediately.
 		StructureDeconstructedCallback m_onStructureDeconstructed = nullptr;
+
+		// Entities already warned about a missing deconstructed callback. Without the callback the
+		// blueprint can't be removed, so it re-enters the no-work branch every tick; this throttles
+		// the warning to once per entity (headless/test contexts where no callback is wired).
+		std::unordered_set<EntityID> m_warnedNoDeconstructCallback;
 
 		size_t m_activeBlueprintCount = 0;
 

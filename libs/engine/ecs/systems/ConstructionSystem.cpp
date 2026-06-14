@@ -46,8 +46,9 @@ namespace ecs {
 	ConstructionDecision decideConstructionPhase(const StructureBlueprint& blueprint, bool footprintClear, bool materialsComplete) {
 		ConstructionDecision decision;
 
-		// Demolishing blueprints are routed to the Deconstruct path before this is called; this
-		// pure helper only decides the forward build progression.
+		// Forward build progression only. Demolishing is NOT handled here: callers MUST route a
+		// demolishing blueprint to decideDeconstruct before reaching this helper (update() does
+		// so). A demolishing blueprint passed in here would be mis-decided as a build.
 
 		// Already done: no goals, stay Complete.
 		if (blueprint.phase == StructureBlueprint::BuildPhase::Complete) {
@@ -111,6 +112,13 @@ namespace ecs {
 			// goals and drive its Deconstruct goal (gated by the cascade order). Keep it OUT of the
 			// stale set so the cleanup pass doesn't tear down the Deconstruct goal we just emitted.
 			if (blueprint.demolishing) {
+				// Refresh delivered[] from on-site inventory so the refund matches what is physically
+				// present (an in-progress site may have in-flight hauls). Only for non-Complete
+				// blueprints: a Built structure has delivered == required, and its delivery inventory
+				// may already be cleared, so reconciling it would zero the refund.
+				if (blueprint.phase != StructureBlueprint::BuildPhase::Complete) {
+					reconcileDelivered(entity, blueprint);
+				}
 				decideDeconstruct(entity, structure, blueprint);
 				entitiesWithGoals.erase(entity);
 				m_activeBlueprintCount++;
@@ -634,7 +642,9 @@ namespace ecs {
 			}
 			if (m_onStructureDeconstructed) {
 				m_onStructureDeconstructed(blueprintEntity);
-			} else {
+			} else if (m_warnedNoDeconstructCallback.insert(blueprintEntity).second) {
+				// No callback: the blueprint stays demolishing and re-enters this branch every tick,
+				// so warn once per entity instead of per tick.
 				LOG_WARNING(
 					Engine,
 					"[Construction] Demolishing blueprint %u has no work to undo but no deconstructed callback set - not removed",

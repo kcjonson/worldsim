@@ -1439,22 +1439,33 @@ namespace {
 			}
 
 			// Mark every opening on every wall, then every wall, then the foundation. Marking
-			// order is immaterial (the cascade gate orders the teardown); we walk
-			// segmentsOnFoundation for the walls and the global openings list for their openings.
+			// order is immaterial (the cascade gate orders the teardown). Build the set of hosted
+			// wall ids first, then walk the global openings list ONCE marking any opening whose
+			// host segment is in that set: O(walls + openings), not O(walls * openings).
 			const std::vector<engine::construction::SegmentId> segIds = constructionWorld.segmentsOnFoundation(foundationSel->id);
-			size_t											   markedOpenings = 0;
+			std::unordered_set<engine::construction::SegmentId> wallIds(segIds.begin(), segIds.end());
+
 			for (const engine::construction::SegmentId segId : segIds) {
-				for (const auto& opening : constructionWorld.openings()) {
-					if (opening.segment == segId && markForDemolition(opening.entity)) {
-						markedOpenings++;
-					}
-				}
 				const auto* segment = constructionWorld.getSegment(segId);
-				if (segment != nullptr) {
-					markForDemolition(segment->entity);
+				if (segment != nullptr && !markForDemolition(segment->entity)) {
+					// A failed mark leaves the cascade gate blocked with no feedback; warn and keep
+					// going so the rest of the building still gets marked.
+					LOG_WARNING(Game, "Demolish building: wall segment #%llu has no blueprint", static_cast<unsigned long long>(segId));
 				}
 			}
-			markForDemolition(foundation->entity);
+
+			size_t markedOpenings = 0;
+			for (const auto& opening : constructionWorld.openings()) {
+				if (wallIds.count(opening.segment) != 0 && markForDemolition(opening.entity)) {
+					markedOpenings++;
+				}
+			}
+
+			if (!markForDemolition(foundation->entity)) {
+				LOG_WARNING(
+					Game, "Demolish building: foundation #%llu has no blueprint", static_cast<unsigned long long>(foundationSel->id)
+				);
+			}
 
 			LOG_INFO(
 				Game,
@@ -1489,10 +1500,16 @@ namespace {
 			}
 
 			// Mark this segment's openings too, so the cascade can tear them down first; a wall's
-			// Deconstruct goal stays Blocked while an opening sits on it.
+			// Deconstruct goal stays Blocked while an opening sits on it. A failed opening mark would
+			// leave the wall's gate stuck forever, so warn (and keep going).
 			for (const auto& opening : constructionWorld.openings()) {
-				if (opening.segment == wallSel->id) {
-					markForDemolition(opening.entity);
+				if (opening.segment == wallSel->id && !markForDemolition(opening.entity)) {
+					LOG_WARNING(
+						Game,
+						"Demolish wall segment #%llu: opening #%llu has no blueprint",
+						static_cast<unsigned long long>(wallSel->id),
+						static_cast<unsigned long long>(opening.id)
+					);
 				}
 			}
 			if (!markForDemolition(segment->entity)) {

@@ -110,6 +110,10 @@ namespace ecs {
 				case TaskType::Gather:
 				case TaskType::Harvest:
 					return "Harvest"; // Both gather and harvest use the Harvest action
+				case TaskType::Deconstruct:
+					// Pure work, no item in hand: the Deconstruct action has no needsHands entry, so
+					// actionNeedsHands reports false and no missing-case warning fires.
+					return "Deconstruct";
 				case TaskType::FulfillNeed:
 					switch (needType) {
 						case NeedType::Hunger:
