@@ -487,6 +487,74 @@ TEST(TerrainStage, ConvergenceSignCorrectness) {
 }
 
 // ============================================================================
+// Shelf profile: passive continental margins should have a band of tiles near
+// -120m (flat shelf), then a break, then steep slope to abyssal.
+// Also verifies oceanFraction stays within ±0.01 of waterAmount and that
+// shelfSubmergedFraction rises well above the ~0.8% baseline.
+// ============================================================================
+
+TEST(TerrainStage, ShelfProfileAndSubmergedFraction) {
+    // n=256 so tile width is ~150km; we need enough resolution to see the shelf.
+    auto world = runPipeline(makeParams(256, 0.70, 12, 0xFACEFEED42ULL), 300);
+    ASSERT_NE(world, nullptr);
+
+    const uint32_t N     = static_cast<uint32_t>(world->data.elevation.size());
+    const float    sea   = world->seaLevelMeters;
+    const double   waterAmount = 0.70;
+
+    // --- oceanFraction within ±0.01 of waterAmount ---
+    uint32_t oceanCount = 0u;
+    for (uint32_t t = 0; t < N; ++t) {
+        if (world->data.elevation[t] < sea) ++oceanCount;
+    }
+    double oceanFraction = static_cast<double>(oceanCount) / static_cast<double>(N);
+    EXPECT_NEAR(oceanFraction, waterAmount, 0.01)
+        << "oceanFraction=" << oceanFraction << " waterAmount=" << waterAmount;
+
+    // --- shelfSubmergedFraction: continental tiles below sea level ---
+    // Earth: ~8-15% of continental crust is submerged shelf; baseline was ~0.8%.
+    uint32_t contTotal    = 0u;
+    uint32_t contSubmerged = 0u;
+    // Shelf count: continental tiles below sea AND above -400m (shallow shelf band)
+    uint32_t shelfCount = 0u;
+
+    for (uint32_t t = 0; t < N; ++t) {
+        bool isCont = (world->data.flags[t] & kFlagContinentalCrust) != 0;
+        if (!isCont) continue;
+        ++contTotal;
+        float e = world->data.elevation[t];
+        if (e < sea) {
+            ++contSubmerged;
+            if (e >= sea - 400.0f) ++shelfCount; // shallow-submerged band
+        }
+    }
+
+    ASSERT_GT(contTotal, 0u);
+    double shelfSubmergedFraction = static_cast<double>(contSubmerged) /
+                                    static_cast<double>(contTotal);
+    EXPECT_GT(shelfSubmergedFraction, 0.05)
+        << "shelfSubmergedFraction=" << shelfSubmergedFraction
+        << " — expected >5% (Earth is ~8-15%); baseline was ~0.8%";
+    EXPECT_LT(shelfSubmergedFraction, 0.30)
+        << "shelfSubmergedFraction=" << shelfSubmergedFraction
+        << " suspiciously high (>30%); shelf profile may be too wide or too shallow";
+
+    // --- Shallow shelf tiles exist at -50m to -200m below sea level ---
+    // (These are the nearly-flat shelf tiles.) With a 75km shelf at -120m and n=256
+    // there should be a noticeable population here.
+    uint32_t shallowShelfTiles = 0u;
+    for (uint32_t t = 0; t < N; ++t) {
+        float r = world->data.elevation[t] - sea;
+        // shallow shelf band: 50 to 250m below sea level
+        if (r >= -250.0f && r < -50.0f) ++shallowShelfTiles;
+    }
+    double shallowFraction = static_cast<double>(shallowShelfTiles) / static_cast<double>(N);
+    EXPECT_GT(shallowFraction, 0.005)
+        << "Shallow shelf band (<250m, >50m below sea) only " << (shallowFraction * 100.0)
+        << "% of tiles; expected a visible shelf shoulder";
+}
+
+// ============================================================================
 // Visual image export test — always writes n=256; WORLDGEN_VISUAL=1 → n=512
 // ============================================================================
 

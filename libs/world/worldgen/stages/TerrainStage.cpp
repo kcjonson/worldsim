@@ -151,9 +151,27 @@ constexpr float kHillBaseAmpM    = 350.0f;
 // hills, not mountains, so high tiles stay on the belt spine.
 constexpr float kHillOrogenyAmpM = 180.0f; // extra amplitude scaled by proximity-to-orogeny
 
-// --- Continental shelf ramp (KEEP: rises from the crust edge over a blend band) ---
-constexpr float kShelfEdgeM   = -2500.0f; // depth at the continental crust edge
-constexpr float kShelfBlendKm = 60.0f;    // distance over which the shelf rises to interior
+// --- Continental shelf profile (Earth-anchored piecewise) ---
+// Real passive-margin structure (Harris et al. 2014 bathymetric survey):
+//   Inner shelf to shelf break: gently inclined, 0-150 m depth, 0-100 km wide
+//   Shelf break: ~140 m
+//   Continental slope: steep (~1-4 deg), 140 m to 3000+ m, 20-100 km wide
+// We use a signed crust-edge distance: positive = inland (continental), negative = seaward.
+//   signedKm > kShelfWidthKm      → platformElev (isostasy, blended)
+//   0 < signedKm <= kShelfWidthKm → flat shelf rising from kShelfBreakDepthM to ~-60m
+//   signedKm ≈ 0                  → kShelfBreakDepthM
+//   −kSlopeWidthKm < signedKm < 0 → continental slope: steep descent to abyssalElev
+//   signedKm <= −kSlopeWidthKm    → abyssalElev (depth-age, unchanged)
+constexpr float kShelfBreakDepthM = -140.0f; // depth at the shelf break (signedKm=0)
+constexpr float kShelfDepthM      = -120.0f; // representative mid-shelf depth
+// kShelfWidthKm: Earth passive-margin shelves span 50-300+ km (mean ~75 km, wide
+// Atlantic-type > 200 km). Use 200 km to ensure 3-4 tiles at n=256 (tile ~50 km)
+// fall in the submerged shelf band; the quantile-based sea level self-corrects
+// oceanFraction, so widening the shelf doesn't push more land underwater.
+constexpr float kShelfWidthKm     =  200.0f; // flat shelf width (0 to +200 km inland)
+constexpr float kSlopeWidthKm     =   60.0f; // continental slope width (0 to -60 km seaward)
+// Inner shelf edge: shelf transitions into the isostatic platform over this blend.
+constexpr float kShelfInnerBlendKm = 50.0f;
 
 // --- Oceanic depth-age law (Stein & Stein 1992 GDH1 plate-cooling form) ---
 // We use the exponential plate form:
@@ -245,6 +263,47 @@ inline float gaussianFalloff(float d, float sigma) {
     if (sigma <= 0.0f) return 0.0f;
     double x = static_cast<double>(d) / static_cast<double>(sigma);
     return static_cast<float>(foundation::det_math::exp(-0.5 * x * x));
+}
+
+// Piecewise continental shelf profile driven by signed crust-edge distance.
+// signedKm > 0 = inland on continental crust; signedKm < 0 = seaward on oceanic crust.
+// platformElev = isostatic elevation for this continental tile.
+// abyssalElev  = depth-age elevation for this oceanic tile.
+// Called by BOTH continental and oceanic synthesis blocks.
+inline float shelfElevationForSignedEdge(float signedKm, float platformElev, float abyssalElev) {
+    if (signedKm >= kShelfWidthKm) {
+        // Deep continental interior — full platform, no shelf.
+        return platformElev;
+    }
+    if (signedKm <= -kSlopeWidthKm) {
+        // Past the slope foot — full abyssal depth.
+        return abyssalElev;
+    }
+    if (signedKm >= 0.0f) {
+        // On the shelf: rises gently from kShelfBreakDepthM at the break (0 km)
+        // up to near kShelfDepthM toward mid-shelf, then blends into platformElev
+        // near the inner edge (kShelfWidthKm).
+        //
+        // Two-segment blend:
+        //   outer portion [0, kShelfWidthKm - kShelfInnerBlendKm]: nearly flat at shelf depth
+        //   inner blend   [kShelfWidthKm - kShelfInnerBlendKm, kShelfWidthKm]: rise to platformElev
+        float outerEdge = kShelfWidthKm - kShelfInnerBlendKm;
+        if (signedKm < outerEdge) {
+            // Flat shelf, very gentle rise from break to mid-shelf depth.
+            float t = signedKm / outerEdge;
+            return kShelfBreakDepthM + t * (kShelfDepthM - kShelfBreakDepthM);
+        } else {
+            // Inner blend: rise from kShelfDepthM to platformElev.
+            float t = (signedKm - outerEdge) / kShelfInnerBlendKm;
+            float sm = t * t * (3.0f - 2.0f * t); // smoothstep
+            return kShelfDepthM + sm * (platformElev - kShelfDepthM);
+        }
+    } else {
+        // On the continental slope: steep descent from break to abyssal floor.
+        float t = -signedKm / kSlopeWidthKm; // 0 at break, 1 at slope foot
+        float sm = t * t * (3.0f - 2.0f * t); // smoothstep → concave-up profile
+        return kShelfBreakDepthM + sm * (abyssalElev - kShelfBreakDepthM);
+    }
 }
 
 // Cross product
@@ -727,7 +786,6 @@ void TerrainStage::run(StageContext& ctx) {
     const float dRiftShl    = kmToTiles(kRiftShoulderDistKm);
     const float sigAxial    = sigTiles(kAxialValleySigKm);
     const float sigTrn      = sigTiles(kTransformSigKm);
-    const float shelfBlend  = kmToTiles(kShelfBlendKm);
 
     constexpr size_t kGrainSize = 4096;
 
@@ -768,12 +826,6 @@ void TerrainStage::run(StageContext& ctx) {
             float elev;
 
             if (isCont) {
-                // -- Continental shelf ramp (rises from the crust edge inward) --
-                float cedge = static_cast<float>(crustEdgeDist[t] >= 0 ? crustEdgeDist[t] : 9999);
-                float tt = cedge / shelfBlend;
-                if (tt > 1.0f) tt = 1.0f;
-                float sm = tt * tt * (3.0f - 2.0f * tt);
-
                 // -- Airy isostasy platform from crustal thickness (knee model) --
                 float thkClamped = thicknessKm;
                 if (thkClamped > kIsostasyMaxThicknessKm) thkClamped = kIsostasyMaxThicknessKm;
@@ -782,9 +834,16 @@ void TerrainStage::run(StageContext& ctx) {
                     iso += (thkClamped - kIsostasyKneeThicknessKm) * kIsostasyMPerKm;
                 }
 
-                // Shelf edge floor blends into the isostatic platform across the band.
-                float shelfBase = kShelfEdgeM + sm * (iso - kShelfEdgeM);
-                float platform  = (shelfBase > iso) ? shelfBase : iso;
+                // -- Signed crust-edge distance (positive = inland) --
+                float cedge = static_cast<float>(crustEdgeDist[t] >= 0 ? crustEdgeDist[t] : 9999);
+                float signedKm = cedge * tileWidthKm; // continental side is always +
+
+                // Shelf profile: flat shelf → break → steep slope → abyssal.
+                // For the continental block the abyssal reference is the shelf-break
+                // depth (the slope below the break is on oceanic tiles; the oceanic
+                // block handles signedKm < 0). Supply kShelfBreakDepthM as abyssalElev
+                // so the continental block just governs the +signedKm (shelf) region.
+                float platform = shelfElevationForSignedEdge(signedKm, iso, kShelfBreakDepthM);
 
                 // -- Orogeny-aged ridged belt detail --
                 // The belt is the primary tall-relief source and it TRACKS THE OROGENY LINE.
@@ -840,6 +899,17 @@ void TerrainStage::run(StageContext& ctx) {
                 }
 
                 // -- Hills (broad relief, amplified near recent orogeny) --
+                // Suppressed on the shallow shelf so fractal noise can't push
+                // -120m shelf tiles above sea level. Hill amplitude ramps from
+                // 0 at the crust edge to full at the inner shelf edge, then
+                // stays full across the continental interior.
+                float hillShelfFade = signedKm >= kShelfWidthKm
+                    ? 1.0f
+                    : (signedKm <= 0.0f
+                        ? 0.0f
+                        : signedKm / kShelfWidthKm);
+                hillShelfFade = hillShelfFade * hillShelfFade * (3.0f - 2.0f * hillShelfFade); // smoothstep
+
                 float proximityToOrogeny = 0.0f;
                 if (hasOrogeny) {
                     // closer/younger orogeny -> more foothill relief
@@ -851,7 +921,8 @@ void TerrainStage::run(StageContext& ctx) {
                 float hills = foundation::fractalNoise3(
                                   cx * kHillFreq, cy * kHillFreq, cz * kHillFreq,
                                   seedFractal, kHillOctaves, 2.0f, 0.5f)
-                              * (kHillBaseAmpM + kHillOrogenyAmpM * proximityToOrogeny);
+                              * (kHillBaseAmpM + kHillOrogenyAmpM * proximityToOrogeny)
+                              * hillShelfFade;
 
                 elev = platform + beltDetail + hills;
             } else {
@@ -862,21 +933,22 @@ void TerrainStage::run(StageContext& ctx) {
                               (kOceanFloorDepthM - kOceanRidgeDepthM) * subside;
                 float z = -depth;
 
-                // Shelf blend near the crust edge (rise toward the coast) — but ONLY on
-                // passive margins. On the subducting side of a convergent trench the
-                // ocean floor dives steeply into the trench, with no continental shelf to
-                // climb, so we skip the shelf rise there and let the depth-age depth + the
-                // trench kernel below carry the deep narrow trough.
+                // Continental shelf slope on passive margins — but NOT on active subducting
+                // margins where the trench kernel already carries the deep trough.
                 bool subductingTrench =
                     side == kSideSubducting &&
                     (bt == BType::ConvergentCO || bt == BType::ConvergentOO);
                 if (!subductingTrench) {
+                    // Signed distance: oceanic tiles have negative sign (seaward of edge).
                     float cedge = static_cast<float>(crustEdgeDist[t] >= 0 ? crustEdgeDist[t] : 9999);
-                    float tt = cedge / (shelfBlend * 1.5f);
-                    if (tt > 1.0f) tt = 1.0f;
-                    float sm = tt * tt * (3.0f - 2.0f * tt);
-                    float shelfZ = kShelfEdgeM;
-                    z = shelfZ + sm * (z - shelfZ);
+                    float signedKm = -(cedge * tileWidthKm); // oceanic side is always −
+
+                    // shelfElevationForSignedEdge with platformElev=kShelfBreakDepthM:
+                    // for signedKm in (−kSlopeWidthKm, 0) it gives the slope profile;
+                    // for signedKm <= −kSlopeWidthKm it gives z (the depth-age abyssal floor).
+                    // We pass z as abyssalElev so the slope foot connects exactly to the
+                    // depth-age depth of this tile.
+                    z = shelfElevationForSignedEdge(signedKm, kShelfBreakDepthM, z);
                 }
 
                 // Abyssal hills + a longer swell.
