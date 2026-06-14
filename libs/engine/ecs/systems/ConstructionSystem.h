@@ -4,14 +4,19 @@
 //
 // Watches every entity carrying Structure + StructureBlueprint and walks it
 // through the construction loop (building-construction-architecture.md D7).
-// Foundations and walls share the lifecycle machinery; the two differ only at the
-// front of the pipeline:
+// Foundations, walls, and openings share the lifecycle machinery; they differ only
+// at the front of the pipeline:
 //   Foundations start at Clearing and clear their footprint of choppable blockers.
 //   Walls have no clear phase (they sit on a cleared, built foundation), so they
 //     start at AwaitingMaterials. Their haul + build goals are GATED: a wall's
 //     umbrella stays Blocked, and no material/build goals emit, until the host
 //     foundation is Built (design: walls draw on a foundation blueprint but only
 //     build once the foundation finishes). isWallHostBuilt owns that gate.
+//   Openings (doors/windows) also have no clear phase (they sit on a built wall on a
+//     cleared foundation), so they start at AwaitingMaterials too. Same gate shape as
+//     walls but one level up: an opening's umbrella stays Blocked, and no material/
+//     build goals emit, until its host wall SEGMENT is Built. isOpeningHostSegmentBuilt
+//     owns that gate.
 //
 //   Clearing           -> emit Harvest goals for choppable entities sitting on
 //                         the footprint; advance to AwaitingMaterials once the
@@ -176,6 +181,13 @@ namespace ecs {
 		/// Walls / Prerequisites), so this gates a wall blueprint's haul + build goals.
 		/// True (ungated) when there is no ConstructionWorld wired (headless contexts).
 		[[nodiscard]] bool isWallHostBuilt(uint64_t segmentId) const;
+
+		/// True once the opening's host wall segment is Built. Openings sit on a built
+		/// wall, so this gates an opening blueprint's haul + build goals exactly as
+		/// isWallHostBuilt gates a wall's (one level up the topology: opening -> segment).
+		/// True (ungated) when there is no ConstructionWorld wired (headless contexts);
+		/// an unknown opening or unknown host segment stays gated (false).
+		[[nodiscard]] bool isOpeningHostSegmentBuilt(uint64_t openingId) const;
 
 		/// Sync the blueprint's delivered[] manifest from its delivery Inventory so
 		/// materialsComplete() reflects what is physically on site. Inventory is the
