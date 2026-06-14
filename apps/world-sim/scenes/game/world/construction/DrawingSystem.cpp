@@ -7,6 +7,7 @@
 #include <ecs/components/StructureHealth.h>
 #include <ecs/components/Transform.h>
 #include <offset/WallOffset.h>
+#include <predicates/Predicates.h>
 #include <primitives/Primitives.h>
 #include <theme/Theme.h>
 #include <utils/Log.h>
@@ -22,6 +23,15 @@ namespace world_sim {
 
 		using engine::assets::ConstructionRegistry;
 		namespace ec = engine::construction;
+
+		// True if integer-mm point p lies on segment [a,b] (collinear and within the
+		// bounding box, endpoints inclusive).
+		bool pointOnSegment(const geometry::Vec2i64& a, const geometry::Vec2i64& b, const geometry::Vec2i64& p) {
+			if (geometry::orientation(a, b, p) != geometry::Orientation::Collinear) {
+				return false;
+			}
+			return p.x >= std::min(a.x, b.x) && p.x <= std::max(a.x, b.x) && p.y >= std::min(a.y, b.y) && p.y <= std::max(a.y, b.y);
+		}
 
 		// Centroid of a polygon (world meters). Falls back to the vertex average
 		// for a degenerate ring so the spawned entity always has a sane Position.
@@ -464,6 +474,52 @@ namespace world_sim {
 		points_.clear();
 		wallHost_ = ec::kInvalidFoundation;
 		lastValidation_ = {};
+	}
+
+	int DrawingSystem::devCommitWalls(
+		const std::vector<Foundation::Vec2>& pts,
+		const std::string&					 material,
+		const std::string&					 thicknessPreset,
+		ec::FoundationId					 host,
+		bool								 built
+	) {
+		// Dev/test bypass (mirrors the /api/dev/foundation path): commit each
+		// consecutive pair straight to the topology with no soft-validator pass, so a
+		// caller can stamp a wall loop in one shot. commitSegment still enforces the
+		// hard topology invariants (zero-length, X-crossing, duplicate, T-split).
+		int committed = 0;
+		for (std::size_t i = 0; i + 1 < pts.size(); ++i) {
+			const geometry::Vec2i64 qa = geometry::quantize(pts[i]);
+			const geometry::Vec2i64 qb = geometry::quantize(pts[i + 1]);
+			const auto				result = constructionWorld_.commitSegment(qa, qb, material, thicknessPreset, host);
+			if (!result.ok()) {
+				continue;
+			}
+			if (built) {
+				// Flip only the segments lying on the requested chain edge to Built (so
+				// the spawned entity mirrors a complete wall and the version bump makes
+				// them enclose a room now). A pre-existing wall this edge T-splits yields
+				// halves that lie OFF [qa,qb]; they must keep their own (e.g. Blueprint)
+				// state rather than be force-completed by the dev call.
+				for (const ec::SegmentId id : result.createdSegments) {
+					const ec::WallSegment* seg = constructionWorld_.getSegment(id);
+					if (seg == nullptr) {
+						continue;
+					}
+					const ec::Vertex* v0 = constructionWorld_.getVertex(seg->v0);
+					const ec::Vertex* v1 = constructionWorld_.getVertex(seg->v1);
+					if (v0 == nullptr || v1 == nullptr) {
+						continue;
+					}
+					if (pointOnSegment(qa, qb, v0->pos) && pointOnSegment(qa, qb, v1->pos)) {
+						constructionWorld_.setSegmentState(id, ec::FoundationState::Built);
+					}
+				}
+			}
+			committed += static_cast<int>(result.createdSegments.size());
+		}
+		reconcileSegmentEntities();
+		return committed;
 	}
 
 	bool DrawingSystem::tryEdgeFill(Foundation::Vec2 world) {

@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2026-06-13 (Construction Epic D walls draw/build/select/demolish on PR #138; Tectonic history simulation #136 and Construction Epic C #137 landed on main)
+Last Updated: 2026-06-14 (Construction Epic E rooms — detection + room entities + room-formed toast + identity persistence on feature/construction-rooms; Epic D walls #138, Tectonic history #136, Epic C #137 landed on main)
 
 ## Epic/Story/Task Template
 
@@ -498,7 +498,13 @@ while (running) {
   - [x] Per-segment selection + adaptWallSegment panel + band-outline indicator + immediate per-segment demolition; verified in sandbox
   - [x] Hardened: snap endpoint-vs-T-junction, validator T-junction exemption, atomic commitSegment, harvest demand bounded to carry capacity (structures needing >1 stack build over multiple trips)
   - [ ] Deferred: D5 obstacle/portal publication to nav (no consumer until the nav epic); work-driven Deconstruct + refund + host-can't-demolish-while-walls-stand guard (same deferred polish as foundations); partial edge-fill
-- [ ] Epic E: Rooms (face extraction on built/demolish events, room entities, notification)
+- [x] Epic E: Rooms — detection + room entities + room-formed toast + identity persistence (feature/construction-rooms). Verified in sandbox: a closed built-wall loop fires "Room formed"; an interior divider splits it and the rep-containing half keeps its name.
+  - [x] RoomDetection pure core (built wall centerlines → geometry arrangement/half-edge face extraction → bounded faces as rooms; openings don't break enclosure); 6 tests
+  - [x] RoomDetectionSystem (polls ConstructionWorld.version(), reconciles against persistent room records, max-overlap identity so names survive edits, spawns/refreshes/retires room entities, room-formed callback seam); 6 tests
+  - [x] Room ECS component + GameScene wiring (register system, "Room formed" toast via the engine→UI callback seam)
+  - [x] /api/dev/walls dev command (stamp a built wall loop in one call; rooms testable without the draw tool); reused for sandbox verification
+  - [x] Hardened (adversarial review): OnBoundary fallback so a divider through a room's rep keeps identity on one side; dev-walls T-split only force-builds chain segments (not split halves of pre-existing blueprints)
+  - [ ] Deferred: rooms OVERLAY UI (tint/labels/click/info panel — ships with the overlay system per design); nested room-in-room (loop inside a loop, no connecting wall) identity/area needs hole-aware face extraction (pinned by a test, deferred until the overlay consumes it); room types/functions/bonuses (post-v1)
 - [ ] Epic F: Openings (OpeningTool, parameterized assets, retrofit cuts, door nav nodes)
 - [ ] Epic G: Editing & polish (add/subtract, vertex editing, cascade demolish, multi-select)
 
