@@ -121,160 +121,163 @@ Sea level is set by histogram quantile so the ocean fraction matches the player'
 
 ## Phase 4: Atmospheric Circulation
 
-**Purpose**: Model global wind patterns based on planetary rotation and temperature
+**Purpose**: Model surface temperature and prevailing winds from planetary rotation, atmospheric pressure, and land/sea contrast
 
 **Conceptual Process**:
-- Calculate temperature gradient (hot equator, cold poles)
-- Model atmospheric circulation cells (Hadley, Ferrel, Polar)
-- Apply Coriolis effect (wind deflection from rotation)
-- Modify patterns based on topography (mountains block/redirect wind)
 
-**Atmospheric Cells**:
-- **Hadley Cell** (0-30° latitude): Warm air rises at equator, flows poleward, sinks at 30°
-- **Ferrel Cell** (30-60° latitude): Mid-latitude circulation
-- **Polar Cell** (60-90° latitude): Cold air circulation at poles
+### 4A: Global mean temperature
+A Stefan-Boltzmann equilibrium temperature for the planet's orbit and star, plus a greenhouse correction that scales as the square root of atmospheric pressure (absorption bands saturate as column mass grows, so warming is sublinear). Earth at 1 atm: +33 C greenhouse, giving a ~15 C global mean.
+
+### 4B: Latitude gradient and continentality
+Temperature varies as cos²(latitude) around the global mean, with an equator-pole contrast A (~44 C Earth-like). The area-weighted sphere average of cos²(lat) is exactly 2/3, so the formula is zero-sum: the global mean is preserved by construction.
+
+Land/sea contrast is applied on top using a distance-to-ocean field (multi-source BFS from every below-sea-level tile). Two corrections:
+- Mean temperature: interiors warm slightly, coasts cool slightly, by an amount proportional to how far each land tile is from the sea. The nudge is zero-sum over land so the global mean is unchanged.
+- Seasonal range: interiors swing far more than coasts at the same latitude (maritime vs. continental climate). This is the dominant continentality effect.
+
+Elevation adds a lapse-rate cooling on land above sea level (~6.5 C/km). Below-sea-level depressions don't get the correction.
+
+### 4C: Three-cell wind model with meridional tilt
+Three atmospheric circulation cells per hemisphere, with cell boundaries shifted by rotation rate (faster rotation narrows the cells):
+- **Hadley cell** (0° to ~30°): Trade winds, blowing westward and toward the equator (equatorward-west in both hemispheres). The ~30° meridional tilt means E-W mountain ranges cast rain shadows — wind approaches at an angle rather than dead-on.
+- **Ferrel cell** (~30° to ~60°): Westerlies, blowing eastward and toward the pole.
+- **Polar cell** (~60° to 90°): Polar easterlies, same equatorward tilt as the trades.
+
+Wind speed peaks in the middle of each cell and drops near the cell boundaries (doldrums, subtropical high, subpolar low).
 
 **Output**:
-- Wind direction map (prevailing winds for each region)
-- Wind speed/intensity data
-- Air pressure patterns
+- Temperature map (annual mean and seasonal half-amplitude per tile)
+- Wind direction and speed per tile
 
-**Visual Result**: Arrows showing wind direction, potentially heat map of temperature
+**Visual Result**: Temperature gradient from equator to poles, modified by elevation and land/sea position; wind arrows showing the three-cell structure with meridional tilt
 
 **Gameplay Impact**:
-- Wind patterns determine precipitation (affects biomes)
-- Creates rain shadows (dry side of mountains)
-- Affects weather intensity in gameplay
-- Determines where moisture comes from
+- Wind direction determines which side of a mountain range is wet vs. dry
+- Continental interiors are colder in winter, hotter in summer than coasts
+- Elevation creates cold highland plateaus even at low latitudes
 
 **Design Notes**:
-- Fast rotation: Stronger Coriolis effect, more distinct wind bands
-- Slow rotation: Weaker patterns, simpler circulation
-- Mountains disrupt wind flow (create rain shadows, local weather)
+- Faster rotation: narrower cells, winds stay more strictly zonal
+- Slow rotation: wider cells, weather reaches higher latitudes
+- The distance-to-ocean field is shared with PrecipitationStage so the two stages can never silently drift apart
 
 ## Phase 5: Precipitation & River Formation
 
-**Purpose**: Simulate rainfall and water flow to create rivers and determine moisture distribution
+**Purpose**: Simulate rainfall by advecting moisture parcels downwind, producing rain shadows behind mountain belts and a smooth wet-coast-to-dry-interior gradient
 
 **Conceptual Process**:
 
-### 5A: Calculate Precipitation
-- Wind picks up moisture from oceans
-- Moisture condenses as rain based on:
-  - Temperature (warmer = more evaporation/precipitation)
-  - Wind patterns (prevailing winds bring moisture)
-  - Elevation (air cools rising over mountains → rain)
-  - Distance from water (farther = drier)
+### 5A: Base moisture per tile
+A per-tile base precipitation is computed from three inputs: the latitude band (ITCZ near the equator peaks at ~2000 mm/yr, the subtropical highs dip to ~200, the midlatitudes recover to ~750, then decline to the poles), temperature-driven evaporation, and a seeded noise factor. The latitude band boundaries track the circulation cell edges from Phase 4 so precipitation bands stay physically coupled to winds.
 
-- **Rain Shadows**: Dry region on leeward side of mountains
-  - Wind rises over mountain (cools, rains)
-  - Wind descends other side (warms, no rain → desert)
+### 5B: Downwind-ordered moisture sweep
+Moisture advects downwind in a single sweep rather than a fixed-hop march. The key challenge is ordering: each tile must be processed after the tile upwind of it so the carried moisture is finalized before being read.
 
-### 5B: Simulate Water Flow
-- Water flows downhill from high elevation to low
-- Accumulate flow to form rivers where enough water concentrates
-- Rivers cut paths toward oceans or inland seas
-- Create lakes in depressions where water accumulates
+Each tile's upwind neighbor is the grid neighbor whose direction is most opposite the prevailing wind. These links form a tree (one parent each), so "depth along the upwind chain back to the coast" is a valid topological ordering key — a tile's depth always exceeds its parent's. Sorting by (depth, tile ID) gives a total order that is bit-identical at any thread count.
+
+In sweep order, a moisture parcel M (normalized: 1.0 = fully saturated) is pulled downwind:
+- **Ocean tile**: parcel recharges to a charge level set by sea-surface temperature; precipitation is the base ocean source term.
+- **Land tile, in order**:
+  1. Surface re-evaporation lifts M toward a latitude-dependent plateau cap, so flat interiors plateau at steppe/forest rather than collapsing to absolute desert (Congo/Amazon interiors stay forested because their local convective rainfall charges the surface even without direct ocean advection).
+  2. Continentality loss: M drops by a fixed amount per km traveled inland, giving the smooth wet-coast-to-dry-interior gradient.
+  3. Rain falls proportional to current M, with a windward orographic boost as the parcel climbs above its last-descended low.
+  4. Orographic depletion: moisture is depleted only when the parcel climbs to a *new peak height*. Bumps below the running peak cost nothing; the total depletion over a windward face telescopes to (peak − base) regardless of how finely the slope is tiled, so rain shadows are resolution-independent and scale to any belt width.
+  5. Once the parcel descends far enough past the peak into lowland, the peak resets so a second belt can cast its own shadow.
+
+This approach produces rain shadows that are as wide as the mountain belt and survive even with 200-km ranges: the lee stays dry across the full downwind side.
+
+### 5C: River formation
+Downhill pointers are assigned per tile (the strictly lower neighbor, ties broken by tile ID). Flow accumulation is then computed in a single serial pass over land tiles sorted by decreasing elevation, so each tile's contribution flows into its downhill target before that target is processed. Tiles seeded with precipitation/1000 produce larger rivers in wet regions.
 
 **Output**:
-- Precipitation map (rainfall per region)
-- River networks (major rivers and tributaries)
-- Lake locations
-- Moisture/humidity map
+- Precipitation map (mm/yr per tile)
+- Downhill pointers and flow accumulation (river network skeleton)
 
-**Visual Result**: Blue lines showing rivers, shaded regions showing wet/dry areas
+**Visual Result**: Wet windward coasts, dry lee sides behind mountain belts, broad interior drying gradient; river trunks visible in flow-accumulation maps
 
 **Gameplay Impact**:
-- Rivers provide water for colonies
-- Wet regions support forests, dry regions become deserts
-- Rivers are strategic features (defense, trade, agriculture)
-- Rain shadows create interesting geography (lush forest → mountain → desert)
+- Rain shadows create the most geographically interesting biome transitions (rainforest → mountain → desert in a compact strip)
+- Continental interiors are substantially drier than coasts at the same latitude
+- Rivers concentrate where precipitation and topography funnel water together
 
 **Design Notes**:
-- More water = more rainfall = bigger rivers
-- Atmospheric strength affects weather intensity
-- Old planets: Well-developed river networks (time to form)
-- Young planets: Fewer rivers (terrain still rough, rivers just forming)
+- The upwind-chain-depth ordering trick is what makes the sweep resolution-independent; projecting tile positions onto the wind vector (the naive alternative) is geometrically wrong on a sphere because the wind is tangent, giving ~0 projection everywhere
+- The latitude-dependent surface-recharge cap is what keeps equatorial interiors forested; without it the advection model would dry out the Congo/Amazon analogs the same way it dries the Sahara
 
 ## Phase 6: Ocean & Sea Formation
 
-**Purpose**: Fill low-lying areas with water based on water percentage parameter
+**Purpose**: Set sea level so the ocean fraction matches the player's water-amount parameter, and mark coastal geometry
 
 **Conceptual Process**:
-- Sort all regions by elevation
-- Fill from lowest to highest until water percentage is reached
-- Define ocean basins (large connected water bodies)
-- Define seas (smaller or partially enclosed)
-- Calculate water depth (difference between elevation and water level)
-- Define coastlines (boundary between land and water)
+- Sea level is set by histogram quantile so the ocean fraction matches the player's water-amount parameter (±2%). Terrain Phase 3 already produces the bimodal hypsometry (abyssal ~-5500 m, land platform ~+400 m), so the sea level quantile falls cleanly in the gap between the two modes.
+- The continental shelf profile, already embedded in the terrain by Phase 3, gives a shallow submerged rim around each continent. The shelf rises gently from the shelf break (~-140 m) across ~200 km to the inner edge, then blends into the platform. This puts roughly 5-7% of continental crust below sea level as shallow ocean — consistent with Earth's passive-margin shelves and visible as light-blue coastal rims in ocean maps.
+- Coastlines, ocean basins, and seas are identified by flood-fill from the set sea level. Islands are land tiles entirely surrounded by ocean tiles.
 
 **Output**:
-- Water level (global "sea level")
-- Ocean and sea boundaries
-- Water depth map
+- Sea level value
+- Ocean/lake flags per tile
+- Water depth (elevation relative to sea level, for below-sea tiles)
 - Coastline positions
-- Island identification (small land completely surrounded by water)
 
-**Visual Result**: Blue oceans and seas, clearly defined coastlines
+**Visual Result**: Blue oceans with a visible shallow coastal rim; deep abyssal plains much darker than the shelf shallows; islands small and distinct
 
 **Gameplay Impact**:
 - Water percentage determines land area available for colonization
-- Coastlines are strategic (ports, fishing, defense)
+- Shallow shelves are strategic (ports, fishing, coastal resources)
 - Islands create isolated challenges
-- Water depth affects naval gameplay (if we have that)
+- Water depth varies systematically with seafloor age (ridges shallower than abyssal plains)
 
 **Design Notes**:
 - 0-30% water: Desert world, small isolated oceans
 - 40-70% water: Earth-like, balanced continents and oceans
 - 80-100% water: Ocean world, scattered islands
 - Many plates + high water = archipelago world (volcanic island chains)
+- The shelf width (~200 km) is a terrain constant, not a sea-level parameter; changing water-amount shifts which parts of the shelf are submerged rather than changing the shelf geometry
 
 ## Phase 7: Biome Generation
 
-**Purpose**: Assign ecosystem types based on environmental factors
+**Purpose**: Assign ecosystem types from the temperature and precipitation fields produced by Phases 4-5, with elevation zonation layered on top
 
 **Conceptual Process**:
-- For each region, calculate:
-  - Temperature (based on latitude, elevation, proximity to water)
-  - Precipitation (from Phase 5)
-  - Seasonality (from orbital eccentricity)
-  - Soil type (from underlying geology)
 
-- Use **Whittaker diagram** approach:
-  - High temp + high precipitation → Tropical Rainforest
-  - High temp + low precipitation → Desert
-  - Mid temp + mid precipitation → Temperate Forest or Grassland
-  - Low temp + low precipitation → Tundra
-  - (See [biomes.md](./biomes.md) for complete classification)
+Each tile gets one biome. The decision runs top-down through these layers (first match wins):
 
-- Assign **single definitive biome** to each tile
-  - Based purely on local climate conditions
-  - No neighbor checking or transition calculation
-  - Sharp boundaries between tiles (blending happens later during 2D sampling)
+**Water tiles**: ocean or lake from Phase 6.
+
+**Wetlands**: warm, wet tiles with poor drainage (inland sinks with no downhill outlet, or flat low terrain where water pools). River trunks are excluded — high flow-accumulation means well-drained, not swampy. Tropical wetland above 18 C, temperate wetland otherwise.
+
+**Beach**: any tile with an ocean neighbor, within 50 m of sea level, above freezing.
+
+**Elevation zonation** (meters above sea level):
+- Above 3500 m, or above 2500 m with mean annual temperature below -2 C → Alpine Tundra
+- 2500-3500 m: wet enough (>250 mm/yr) → Alpine Grassland, else Cold Desert
+- 1200-2500 m: Montane Forest if the *tile's own* temperature (>3 C) and precipitation (>400 mm/yr) support it, regardless of what the lowland below it is. A warm, wet mid-elevation slope grows forest even when the lowland is desert or tundra. Below the threshold, the Whittaker matrix applies.
+
+**Whittaker base matrix** (all elevations below 1200 m, or mid-elevation tiles that don't qualify for montane forest):
+- Hot (>20 C): tropical rainforest, seasonal forest, savanna, or hot desert depending on precipitation
+- Temperate (5-20 C): temperate rainforest, deciduous forest, grassland, xeric shrubland, semi-desert, or desert depending on precipitation and temperature
+- Cold (-10 to 5 C): boreal forest if precipitation exceeds 300 mm/yr, cold desert otherwise
+- Arctic (≤-10 C): arctic tundra if precipitation exceeds 150 mm/yr, polar desert otherwise
+
+The -10 C arctic/boreal cutoff (rather than -5 C) is what keeps the boreal band from collapsing into tundra at 55°. The 12 C hot-desert floor (rather than 18 C) is what lets subtropical dry interiors — the Sahara and Arabian/Australian analogs — land in hot desert rather than cold desert.
 
 **Output**:
-- Biome type for each region (single, definitive)
-- Temperature and moisture data
-- Vegetation density estimates
+- Single biome type per tile
 
-**Note on Transitions**: Ecotones (transition zones) are NOT stored in world data. They are generated during 2D sampling when tiles near spherical boundaries blend neighboring biomes. See [data-model.md](./data-model.md) for details.
+**Note on transitions**: Ecotones are not stored. They are generated during 2D sampling when tiles near spherical boundaries blend neighboring biomes. See [data-model.md](./data-model.md).
 
-**Visual Result**: Color-coded biomes (green forests, yellow deserts, white ice, etc.)
+**Visual Result**: Color-coded biomes that track terrain, with biomes bending around mountain ranges (montane-forest flanks, rain-shadow deserts immediately behind belts) rather than running in rigid latitude stripes
 
 **Gameplay Impact**:
-- Biomes determine available resources
-- Affect colonist comfort and survival
-- Create visual variety
-- Strategic choices (settle in forest vs. desert)
+- Biomes determine available resources and colonist comfort
+- Rain shadows create the most interesting adjacencies (wet windward forest → mountain barrier → dry leeward desert)
+- Montane forest flanks give mid-latitude belts a distinctive character
+- Arctic tundra confined to genuinely high latitudes; temperate and boreal bands correctly sized
 
 **Design Notes**:
-- Elevation creates biome bands on mountains (forest → alpine → snow)
-- Latitude creates climate zones (tropical → temperate → polar)
-- Rain shadows create desert next to wet forest
-- Biomes emerge from climate, not placed manually
-- Each tile gets single biome - simple, fast assignment
-- Visual transitions (ecotones) rendered during 2D sampling, not stored
-- Most of each spherical tile (99%+) will be pure biome in 2D view
+- Biomes emerge from the climate model, not from placed distributions or noise
+- The montane-forest decoupling is important: before this change, mid-elevation slopes in cold regions went straight from lowland tundra to alpine rock with no forest belt, which looked wrong and killed forest fraction totals
+- Earth-like target fractions (seeds 42, 7, 1337): arctic tundra 8-16%, hot desert 7-10%, total forest 33-40%, no non-ocean biome above 35%
 
 ## Phase 8: Snow & Glacier Formation
 
@@ -405,4 +408,5 @@ Each phase depends on previous phases:
 ## Revision History
 
 - 2025-10-26: Initial generation phases documentation created
-- 2026-06-13: Phases 1-3 rewritten to document the as-built tectonic history simulation, crust upsampling, and isostasy/depth-age terrain (PR #136 — tectonic history simulation). Phase 4-8 unchanged.
+- 2026-06-13: Phases 1-3 rewritten to document the as-built tectonic history simulation, crust upsampling, and isostasy/depth-age terrain (PR #136 — tectonic history simulation). Phases 4-8 unchanged.
+- 2026-06-14: Phases 4-7 rewritten to document the as-built climate/biome/shelf retune (feature/worldgen-climate-biome). Phase 4: meridional wind (~30° tilt), continentality temperature (zero-sum mean nudge + range boost), shared distance-to-ocean field. Phase 5: downwind-ordered moisture-advection sweep with upwind-chain-depth topological ordering, new-peak orographic ratchet (resolution-independent rain shadows), latitude-dependent surface-recharge cap. Phase 6: piecewise continental shelf profile (flat -120 m shelf → break at -140 m → steep slope). Phase 7: biome rebalance with -10 C arctic floor, 12 C hot-desert floor, montane-forest decoupled from lowland base, Beach cutoff 50 m, flag hygiene (kFlagCoast/kFlagGlacier removed). Phase 8 unchanged.

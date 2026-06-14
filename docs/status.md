@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2026-06-14 (Tectonic history simulation PR #136 merged; starting Climate/Biome/Shelf realism retune epic)
+Last Updated: 2026-06-14 (Climate/biome/shelf retune C-1..C-5 complete; PR open for review)
 
 ## Epic/Story/Task Template
 
@@ -431,11 +431,11 @@ while (running) {
 **Goal:** Retune the climate/biome stages (written against the old smooth terrain) for the new linear belts + bimodal hypsometry. Distance-based moisture advection (rain shadows that scale to wide belts), continentality temperature, piecewise continental shelf, biome rebalance (ArcticTundra ~47%→~10%, restore hot desert + temperate forest), dead-flag hygiene. Earth-like biome fractions + visible rain shadows.
 
 **Tasks:**
-- [ ] C-1: quick wins — flag hygiene (kFlagGlacier/kFlagCoast), backwards wetland predicate, meridional wind, Beach cutoff
-- [ ] C-2: distance-to-ocean field + moisture advection sweep (replaces fixed 4-hop march) + continentality temperature
-- [ ] C-3: continental shelf profile (flat shelf → break → slope) via shared signed-crust-edge function
-- [ ] C-4: biome rebalance (cold/desert thresholds, montane-forest decouple) + biome-fraction stats + acceptance assertion
-- [ ] C-5: verify (Earth-like fractions, rain shadows, shelf), docs (Phases 4-7), dev log, PR
+- [x] C-1: quick wins — flag hygiene (kFlagGlacier/kFlagCoast), backwards wetland predicate, meridional wind, Beach cutoff
+- [x] C-2: distance-to-ocean field + moisture advection sweep (replaces fixed 4-hop march) + continentality temperature
+- [x] C-3: continental shelf profile (flat shelf → break → slope) via shared signed-crust-edge function
+- [x] C-4: biome rebalance (cold/desert thresholds, montane-forest decouple) + biome-fraction stats + acceptance assertion
+- [x] C-5: verify (Earth-like fractions, rain shadows, shelf), docs (Phases 4-7), dev log, PR
 
 ---
 
