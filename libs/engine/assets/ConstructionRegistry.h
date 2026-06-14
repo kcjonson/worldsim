@@ -36,8 +36,37 @@ namespace engine::assets {
 		std::vector<PatternColor> palette;
 	};
 
+	/// A discrete wall thickness option for a material (e.g. Light / Standard / Heavy).
+	/// Wall work and cost are computed as: length × thicknessMeters × material rate × multiplier.
+	/// thicknessMm and halfThicknessMm are pre-quantized at load for geometry consumers
+	/// (geometry::WallSegment uses halfThicknessMm for band offsetting).
+	struct ThicknessPreset {
+		/// Display name, e.g. "Light", "Standard", "Heavy".
+		std::string name;
+		/// Thickness in meters (floating-point, for UI display).
+		float thicknessMeters = 0.0F;
+		/// Pre-quantized thickness: round(thicknessMeters * 1000). Integer mm.
+		int64_t thicknessMm = 0;
+		/// Half-thickness in mm (thicknessMm / 2). Used by band offsetting.
+		int64_t halfThicknessMm = 0;
+		/// Multiplies the material's base costRatePerSquareMeter for wall area.
+		float costMultiplier = 1.0F;
+		/// Multiplies the material's base workRatePerSquareMeter for wall area.
+		float workMultiplier = 1.0F;
+		/// Multiplies the material's base hp for wall area.
+		float hpMultiplier = 1.0F;
+		/// Thermal resistance starter value; design TBD.
+		float insulation = 0.0F;
+	};
+
 	/// Per-material definition for one structure kind (e.g. Foundation/Wood).
 	/// All rates are in SI units: meters, square meters, work units.
+	///
+	/// A single MaterialDef carries both foundation rates and optional wall thickness
+	/// presets. This avoids a parallel map lookup when the drawing tool needs both the
+	/// palette and the preset list for the same material. wallThicknesses is empty for
+	/// materials that have no wall configuration (e.g. future Stone before its item
+	/// asset exists).
 	struct MaterialDef {
 		/// Canonical name, e.g. "Wood", "Stone".
 		std::string name;
@@ -55,9 +84,12 @@ namespace engine::assets {
 		float speedModifier = 1.0F;
 		/// Visual pattern used by the renderer.
 		PatternDef pattern;
+		/// Wall thickness presets for this material. Empty if the material has no
+		/// wall configuration. Populated from the <Wall> section of materials.xml.
+		std::vector<ThicknessPreset> wallThicknesses;
 	};
 
-	/// Shape and gameplay constraints for all foundations.
+	/// Shape and gameplay constraints for all foundations and walls.
 	/// Float members are in meters/degrees/percent (UI-layer friendly).
 	/// Int64 members are pre-quantized to millimeters (geometry/validator layer).
 	struct ConstraintConfig {
@@ -65,7 +97,7 @@ namespace engine::assets {
 		float	pathingClearanceMeters = 0.7F;
 		int64_t pathingClearanceMm = 700;
 
-		// Corner angles
+		// Corner angles (shared by foundations and wall junctions)
 		float minCornerAngleDegrees = 30.0F;
 
 		// Vertex spacing
@@ -93,6 +125,20 @@ namespace engine::assets {
 		// Concurrent builder caps
 		int	  builderCapBase = 1;
 		float builderCapPerSquareMeter = 0.1F;
+
+		// Wall constraints
+		// minWallJunctionAngleDegrees is identical in value to minCornerAngleDegrees (both
+		// 30°) and enforces the same pathfinding invariant for wall junctions. Stored
+		// separately so callers can express intent clearly and the XML is self-documenting.
+		float	minSegmentLengthMeters = 0.5F;
+		int64_t minSegmentLengthMm = 500;
+
+		float minWallJunctionAngleDegrees = 30.0F;
+
+		// Minimum face-to-face clearance between parallel walls (thickness included).
+		// Must be >= pathingClearanceMeters so colonists can pass between walls.
+		float	minParallelClearanceMeters = 0.8F;
+		int64_t minParallelClearanceMm = 800;
 	};
 
 	/// Snapping parameters for the drawing tools.
@@ -146,12 +192,24 @@ namespace engine::assets {
 
 		// --- Material queries ---
 
-		/// Get a foundation material by name (e.g. "Wood").
+		/// Get a material by name (e.g. "Wood"). The same MaterialDef carries both
+		/// foundation rates and optional wall thickness presets; callers that only
+		/// need wall presets can use getWallMaterial or getThicknessPreset instead.
 		/// @return pointer to MaterialDef, or nullptr if not found
 		[[nodiscard]] const MaterialDef* getMaterial(const std::string& name) const;
 
-		/// Get all loaded foundation materials.
+		/// Get all loaded materials.
 		[[nodiscard]] const std::unordered_map<std::string, MaterialDef>& getAllMaterials() const;
+
+		/// Get a material that has wall thickness presets, by name.
+		/// Equivalent to getMaterial but returns nullptr for materials whose
+		/// wallThicknesses vector is empty.
+		/// @return pointer to MaterialDef, or nullptr if not found or no wall presets
+		[[nodiscard]] const MaterialDef* getWallMaterial(const std::string& name) const;
+
+		/// Get a specific thickness preset by material name and preset name.
+		/// @return pointer to ThicknessPreset, or nullptr if either is not found
+		[[nodiscard]] const ThicknessPreset* getThicknessPreset(const std::string& materialName, const std::string& presetName) const;
 
 		// --- Constraint / snapping queries ---
 

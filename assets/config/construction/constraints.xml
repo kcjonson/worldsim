@@ -61,4 +61,22 @@
        e.g. at 0.1: a 20 m² foundation allows 3 builders (base 1 + floor(20*0.1) = 2). -->
   <builderCapPerSquareMeter>0.1</builderCapPerSquareMeter>
 
+  <!-- Wall constraints
+       Same pathfinding rationale as foundation constraints: every gap a wall tool
+       can produce is either zero (joined) or wide enough for a colonist to pass.
+       NOTE: All values are starter estimates pending playtesting. -->
+
+  <!-- Minimum wall segment length. Prevents stub walls that serve no structural purpose. -->
+  <minSegmentLengthMeters>0.5</minSegmentLengthMeters>
+
+  <!-- Minimum angle at a wall junction. Identical value to minCornerAngleDegrees (30°)
+       and enforces the same no-knife-edge invariant. Stored separately so drawing-tool
+       callers can express wall-specific intent without coupling to the foundation field. -->
+  <minWallJunctionAngleDegrees>30.0</minWallJunctionAngleDegrees>
+
+  <!-- Minimum face-to-face clearance between parallel walls (thickness included).
+       Must be >= pathingClearanceMeters (0.7 m) so colonists can pass between walls.
+       0.8 m gives a small margin above the pathing root constant. -->
+  <minParallelClearanceMeters>0.8</minParallelClearanceMeters>
+
 </ConstructionConstraints>

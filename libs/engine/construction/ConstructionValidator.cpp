@@ -5,6 +5,7 @@
 #include <assets/ConstructionRegistry.h>
 
 #include <boolean/RingBoolean.h>
+#include <offset/WallOffset.h>
 #include <polygon/Polygon.h>
 #include <predicates/Predicates.h>
 
@@ -45,6 +46,63 @@ namespace engine::construction {
 			return std::acos(cosA) * (180.0 / std::numbers::pi);
 		}
 
+		// True if the two bands' interiors intersect: a proper edge crossing /
+		// collinear overlap between them, or a corner of one strictly inside the
+		// other. Rings are CCW 4-corner bands (geometry::band output).
+		bool bandsOverlap(const geometry::Ring& p, const geometry::Ring& q) {
+			const std::size_t np = p.size();
+			const std::size_t nq = q.size();
+			for (std::size_t i = 0; i < np; ++i) {
+				const auto& a0 = p[i];
+				const auto& a1 = p[(i + 1) % np];
+				for (std::size_t k = 0; k < nq; ++k) {
+					const auto& b0 = q[k];
+					const auto& b1 = q[(k + 1) % nq];
+					const auto	rel = geometry::intersectSegments(a0, a1, b0, b1).relation;
+					if (rel == geometry::SegmentRelation::ProperCrossing || rel == geometry::SegmentRelation::CollinearOverlap) {
+						return true;
+					}
+				}
+			}
+			// No edge crossing: one band may still sit fully inside the other.
+			for (const auto& c : p) {
+				if (geometry::pointInPolygon(c, q) == geometry::PointInPolygon::Inside) {
+					return true;
+				}
+			}
+			for (const auto& c : q) {
+				if (geometry::pointInPolygon(c, p) == geometry::PointInPolygon::Inside) {
+					return true;
+				}
+			}
+			return false;
+		}
+
+		// Strict min face-to-face distance between two bands is below `thresholdMm`.
+		// Probes every corner of each band against the other band's edges (both
+		// directions), the same endpoint-probe approximation foundation edge
+		// clearance uses; exact at editor scale. Strict-< so a gap exactly equal to
+		// the threshold passes, matching minVertexSpacing / minEdgeClearance.
+		bool bandsCloserThan(const geometry::Ring& p, const geometry::Ring& q, std::int64_t thresholdMm) {
+			const std::size_t np = p.size();
+			const std::size_t nq = q.size();
+			for (const auto& c : p) {
+				for (std::size_t k = 0; k < nq; ++k) {
+					if (geometry::closerThanToSegment(c, q[k], q[(k + 1) % nq], thresholdMm)) {
+						return true;
+					}
+				}
+			}
+			for (const auto& c : q) {
+				for (std::size_t i = 0; i < np; ++i) {
+					if (geometry::closerThanToSegment(c, p[i], p[(i + 1) % np], thresholdMm)) {
+						return true;
+					}
+				}
+			}
+			return false;
+		}
+
 	} // namespace
 
 	std::string validationReason(ValidationCode code) {
@@ -69,6 +127,16 @@ namespace engine::construction {
 				return "area too large";
 			case ValidationCode::OverlapsExisting:
 				return "overlaps another foundation";
+			case ValidationCode::SegmentTooShort:
+				return "wall too short";
+			case ValidationCode::NotContainedInHostFoundation:
+				return "wall off the foundation";
+			case ValidationCode::WallsOverlap:
+				return "walls overlap";
+			case ValidationCode::ParallelClearanceTooSmall:
+				return "walls too close";
+			case ValidationCode::XCrossing:
+				return "walls can't cross";
 		}
 		return {};
 	}
@@ -211,6 +279,199 @@ namespace engine::construction {
 		for (const Foundation& other : world_->foundations()) {
 			if (geometry::ringsInteriorOverlap(ring, other.ring)) {
 				return {ValidationCode::OverlapsExisting, 0, 0, 0.0};
+			}
+		}
+
+		return {};
+	}
+
+	// --- Walls --------------------------------------------------------------
+
+	bool ConstructionValidator::bandContainedInFoundation(
+		const geometry::Vec2i64& a,
+		const geometry::Vec2i64& b,
+		std::int64_t			 halfThickMm,
+		FoundationId			 host
+	) const {
+		if (host == kInvalidFoundation) {
+			return true; // no host to contain the wall (freestanding, future tool)
+		}
+		const Foundation* f = world_->get(host);
+		if (f == nullptr) {
+			return false;
+		}
+		// The full-thickness footprint is the band; a zero-thickness preset
+		// degenerates the band to the centerline, so probe the two endpoints in that
+		// case. A band corner inside-or-on the ring plus no band edge crossing a ring
+		// edge means the convex band lies entirely within the (possibly non-convex)
+		// host: corners alone miss a band bulging over a concave notch, the
+		// edge-cross check catches it.
+		geometry::Ring band;
+		if (halfThickMm > 0) {
+			band = geometry::band(a, b, halfThickMm);
+		} else {
+			band = {a, b};
+		}
+		for (const auto& c : band) {
+			if (geometry::pointInPolygon(c, f->ring) == geometry::PointInPolygon::Outside) {
+				return false;
+			}
+		}
+		const std::size_t nb = band.size();
+		const std::size_t nf = f->ring.size();
+		for (std::size_t i = 0; i < nb; ++i) {
+			const auto& a0 = band[i];
+			const auto& a1 = band[(i + 1) % nb];
+			for (std::size_t k = 0; k < nf; ++k) {
+				const auto& b0 = f->ring[k];
+				const auto& b1 = f->ring[(k + 1) % nf];
+				if (geometry::intersectSegments(a0, a1, b0, b1).relation == geometry::SegmentRelation::ProperCrossing) {
+					return false;
+				}
+			}
+		}
+		return true;
+	}
+
+	ValidationResult ConstructionValidator::validateWallPoint(
+		const std::vector<::Foundation::Vec2>& points,
+		::Foundation::Vec2					   candidate,
+		const engine::assets::ThicknessPreset& thickness,
+		FoundationId						   host
+	) const {
+		// First point is always placeable (matches foundation validatePoint).
+		if (points.empty()) {
+			return {};
+		}
+
+		const auto&				c = *constraints_;
+		const geometry::Vec2i64 prev = geometry::quantize(points.back());
+		const geometry::Vec2i64 cand = geometry::quantize(candidate);
+		const std::size_t		candIndex = points.size();
+
+		// Min segment length: the new segment prev->candidate. Strict-< so a segment
+		// exactly minSegmentLength long passes (matches minVertexSpacing convention).
+		const auto d = cand - prev;
+		const auto sq = geometry::dot(d, d);
+		if (sq < geometry::Int128::product(c.minSegmentLengthMm, c.minSegmentLengthMm)) {
+			const double mm = std::sqrt(sq.toDouble());
+			return {ValidationCode::SegmentTooShort, candIndex, 0, mm / static_cast<double>(geometry::kMillimetersPerMeter)};
+		}
+
+		// Junction angle at the previous vertex, between the prior segment and the
+		// new one. Only when there is a prior segment to turn off of.
+		if (points.size() >= 2) {
+			const geometry::Vec2i64 before = geometry::quantize(points[points.size() - 2]);
+			const double			angle = cornerAngleDegrees(before, prev, cand);
+			if (angle < c.minWallJunctionAngleDegrees) {
+				return {ValidationCode::AngleTooSharp, points.size() - 1, 0, angle};
+			}
+		}
+
+		// Open chain stays simple: the new segment prev->candidate must not cross any
+		// earlier segment of the chain. The last existing segment shares the prev
+		// vertex (adjacent) and is exempt; the chain is open, so no closing edge.
+		for (std::size_t i = 0; i + 1 < points.size(); ++i) {
+			const bool adjacent = (i + 1 == points.size() - 1); // shares the prev vertex
+			if (adjacent) {
+				continue;
+			}
+			const geometry::Vec2i64 e0 = geometry::quantize(points[i]);
+			const geometry::Vec2i64 e1 = geometry::quantize(points[i + 1]);
+			const auto				rel = geometry::intersectSegments(prev, cand, e0, e1).relation;
+			if (rel != geometry::SegmentRelation::Disjoint) {
+				return {ValidationCode::SelfIntersects, candIndex, i, 0.0};
+			}
+		}
+
+		// Host containment of the new segment's full-thickness footprint.
+		if (!bandContainedInFoundation(prev, cand, thickness.halfThicknessMm, host)) {
+			return {ValidationCode::NotContainedInHostFoundation, candIndex, 0, 0.0};
+		}
+
+		return {};
+	}
+
+	ValidationResult ConstructionValidator::validateWallSegment(
+		::Foundation::Vec2					   a,
+		::Foundation::Vec2					   b,
+		const engine::assets::ThicknessPreset& thickness,
+		FoundationId						   host
+	) const {
+		const auto&				c = *constraints_;
+		const geometry::Vec2i64 qa = geometry::quantize(a);
+		const geometry::Vec2i64 qb = geometry::quantize(b);
+
+		// Length (strict-< at-threshold passes).
+		const auto d = qb - qa;
+		const auto sq = geometry::dot(d, d);
+		if (sq < geometry::Int128::product(c.minSegmentLengthMm, c.minSegmentLengthMm)) {
+			const double mm = std::sqrt(sq.toDouble());
+			return {ValidationCode::SegmentTooShort, 0, 0, mm / static_cast<double>(geometry::kMillimetersPerMeter)};
+		}
+
+		// Host containment.
+		if (!bandContainedInFoundation(qa, qb, thickness.halfThicknessMm, host)) {
+			return {ValidationCode::NotContainedInHostFoundation, 0, 0, 0.0};
+		}
+
+		// The candidate footprint, built once.
+		const std::int64_t	 half = thickness.halfThicknessMm;
+		const geometry::Ring candBand = half > 0 ? geometry::band(qa, qb, half) : geometry::Ring{qa, qb};
+
+		for (const WallSegment& s : world_->segments()) {
+			const Vertex* sv0 = world_->getVertex(s.v0);
+			const Vertex* sv1 = world_->getVertex(s.v1);
+			if (sv0 == nullptr || sv1 == nullptr) {
+				continue;
+			}
+			const geometry::Vec2i64& e0 = sv0->pos;
+			const geometry::Vec2i64& e1 = sv1->pos;
+
+			const geometry::SegmentRelation rel = geometry::intersectSegments(qa, qb, e0, e1).relation;
+
+			// X-crossing: centerlines properly cross. Report it even though
+			// ConstructionWorld also rejects it, so the tool can colorize the reason
+			// (no X-crossings in v1; the snap turns these into T-junctions).
+			if (rel == geometry::SegmentRelation::ProperCrossing) {
+				return {ValidationCode::XCrossing, 0, 0, 0.0};
+			}
+
+			// Joined walls meet at a junction and are exempt from overlap /
+			// clearance: their bands touch there by design. This covers BOTH a
+			// shared endpoint AND a T-junction (one segment's endpoint landing on the
+			// other's interior, either direction) -- the world's commitSegment splits
+			// the latter into a shared vertex, and SnapEngine snaps to it as a
+			// WallSegment hit, so the validator must accept it too. intersectSegments
+			// reports exactly these single-point incidences as EndpointTouch, and
+			// (critically) reports a genuine parallel overlap as CollinearOverlap, not
+			// EndpointTouch, so a parallel overlap is NOT exempted here -- it falls
+			// through to the bandsOverlap reject below.
+			if (rel == geometry::SegmentRelation::EndpointTouch) {
+				continue;
+			}
+
+			// Build the existing wall's footprint. Its half-thickness lives only in
+			// config, so resolve it from the registry (the production source of
+			// truth); an unresolved preset degenerates to the centerline.
+			std::int64_t						   otherHalf = 0;
+			const engine::assets::ThicknessPreset* preset =
+				engine::assets::ConstructionRegistry::Get().getThicknessPreset(s.material, s.thicknessPreset);
+			if (preset != nullptr) {
+				otherHalf = preset->halfThicknessMm;
+			}
+			const geometry::Ring otherBand = otherHalf > 0 ? geometry::band(e0, e1, otherHalf) : geometry::Ring{e0, e1};
+
+			if (bandsOverlap(candBand, otherBand)) {
+				return {ValidationCode::WallsOverlap, 0, 0, 0.0};
+			}
+			// Parallel-clearance only applies to (anti-)parallel runs: two walls
+			// sitting close alongside each other need the pathing gap between their
+			// faces. Walls meeting at an angle are not a parallel run -- a true
+			// intersection/overlap is already caught above -- so don't reject them.
+			const bool parallel = geometry::cross(d, e1 - e0).sign() == 0;
+			if (parallel && bandsCloserThan(candBand, otherBand, c.minParallelClearanceMm)) {
+				return {ValidationCode::ParallelClearanceTooSmall, 0, 0, 0.0};
 			}
 		}
 

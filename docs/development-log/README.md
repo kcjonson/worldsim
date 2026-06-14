@@ -65,6 +65,7 @@ Development log entries are **immutable history**. Don't update old entries — 
 #### June 2026
 
 - [2026-06-14 - Climate, biome, and shelf realism retune](./entries/2026-06-14-climate-biome-shelf-retune.md)
+- [2026-06-13 - Construction Epic D: walls](./entries/2026-06-13-construction-epic-d-walls.md)
 - [2026-06-13 - Tectonic history simulation](./entries/2026-06-13-tectonic-history-simulation.md)
 - [2026-06-13 - Construction Epic C: foundations end-to-end](./entries/2026-06-13-construction-epic-c.md)
 - [2026-06-12 - Geometry Foundations (libs/geometry)](./entries/2026-06-12-geometry-foundations.md)
@@ -97,10 +98,11 @@ Development log entries are **immutable history**. Don't update old entries — 
 
 ## Quick Stats
 
-- **Total Entries:** 13
+- **Total Entries:** 14
 - **Latest Entry:** 2026-06-14
 - **Major Milestones:**
   - Climate/biome/shelf retune: Earth-like biome fractions + rain shadows (2026-06-14)
+  - Construction Epic D: walls (2026-06-13)
   - Tectonic history simulation: realistic continents and mountains (2026-06-13)
   - libs/geometry exact-geometry library (2026-06-12)
   - Goal-driven task generation core (2026-06-12)

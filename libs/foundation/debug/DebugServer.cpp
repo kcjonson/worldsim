@@ -3,6 +3,7 @@
 #include "debug/DebugServer.h"
 #include "utils/Log.h"
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
@@ -10,7 +11,9 @@
 #include <ctime>
 #include <httplib.h>
 #include <iostream>
+#include <iterator>
 #include <sstream>
+#include <string_view>
 #include <thread>
 
 // OpenGL for framebuffer capture
@@ -87,6 +90,21 @@ namespace Foundation {
 		}
 
 		return true;
+	}
+
+	std::string parseDevVerb(const std::string& path) {
+		// Expect "/api/dev/<verb>"; the verb is the segment after the prefix. A
+		// trailing slash or extra path is trimmed at the next '/'.
+		constexpr std::string_view kPrefix = "/api/dev/";
+		if (path.size() <= kPrefix.size() || path.compare(0, kPrefix.size(), kPrefix) != 0) {
+			return {};
+		}
+		std::string verb = path.substr(kPrefix.size());
+		if (auto slash = verb.find('/'); slash != std::string::npos) {
+			verb = verb.substr(0, slash);
+		}
+		std::transform(verb.begin(), verb.end(), verb.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+		return verb;
 	}
 
 	// Helper function to escape strings for JSON
@@ -400,6 +418,17 @@ namespace Foundation {
 		return true;
 	}
 
+	bool DebugServer::consumeDevCommands(std::vector<DevCommand>& out) {
+		if (!devCommandsPending.load()) {
+			return false;
+		}
+		std::lock_guard<std::mutex> lock(devCommandsMutex);
+		out.insert(out.end(), std::make_move_iterator(devCommands.begin()), std::make_move_iterator(devCommands.end()));
+		devCommands.clear();
+		devCommandsPending.store(false);
+		return true;
+	}
+
 	void DebugServer::setCurrentSceneName(const std::string& name) {
 		std::lock_guard<std::mutex> lock(sceneNameMutex);
 		currentSceneName = name;
@@ -557,6 +586,41 @@ namespace Foundation {
 
 			std::ostringstream json;
 			json << "{\"status\":\"ok\",\"queued\":" << parsed.size() << "}";
+			res.set_content(json.str(), "application/json");
+		});
+
+		// Dev/test command endpoint - queues a generic DevCommand the app drains and
+		// interprets. DebugServer stays domain-agnostic: it parses the verb (path
+		// tail) plus every query param into a bag and queues it; the app (GameScene)
+		// knows what "freebuild"/"givewood"/"foundation" mean. Dev-only, gated by the
+		// debug server (which only runs in dev builds), mirrors /api/input's queue.
+		//   /api/dev/freebuild?on=1
+		//   /api/dev/givewood?n=100[&where=site|loose]
+		//   /api/dev/foundation?pts=x0,y0;x1,y1;...&material=Wood&built=1
+		server->Get(R"(/api/dev/[A-Za-z0-9_-]+)", [this](const httplib::Request& req, httplib::Response& res) {
+			res.set_header("Access-Control-Allow-Origin", "*");
+
+			DevCommand cmd;
+			cmd.verb = parseDevVerb(req.path);
+			if (cmd.verb.empty()) {
+				res.status = 400;
+				res.set_content("{\"error\":\"Missing dev command verb (expected /api/dev/<verb>)\"}", "application/json");
+				return;
+			}
+
+			for (const auto& [key, value] : req.params) {
+				cmd.params.emplace_back(key, value);
+			}
+
+			std::string verb = cmd.verb;
+			{
+				std::lock_guard<std::mutex> lock(devCommandsMutex);
+				devCommands.push_back(std::move(cmd));
+				devCommandsPending.store(true);
+			}
+
+			std::ostringstream json;
+			json << "{\"status\":\"ok\",\"verb\":\"" << escapeJsonString(verb) << "\",\"queued\":1}";
 			res.set_content(json.str(), "application/json");
 		});
 

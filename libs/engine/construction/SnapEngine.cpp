@@ -31,6 +31,20 @@ namespace engine::construction {
 			return {a.x + abx * t, a.y + aby * t};
 		}
 
+		// Unclamped projection parameter of p onto the line through a->b. A value
+		// strictly in (0,1) means the foot of the perpendicular lands on the
+		// segment's interior; <=0 or >=1 means it clamps to an endpoint. Returns
+		// 0 for a degenerate (zero-length) segment.
+		float projectionParam(::Foundation::Vec2 p, ::Foundation::Vec2 a, ::Foundation::Vec2 b) {
+			const float abx = b.x - a.x;
+			const float aby = b.y - a.y;
+			const float lenSq = abx * abx + aby * aby;
+			if (lenSq <= 0.0F) {
+				return 0.0F;
+			}
+			return ((p.x - a.x) * abx + (p.y - a.y) * aby) / lenSq;
+		}
+
 	} // namespace
 
 	bool SnapEngine::snapToVertex(::Foundation::Vec2 cursor, ::Foundation::Vec2& out) const {
@@ -67,6 +81,65 @@ namespace engine::construction {
 					out = c;
 					found = true;
 				}
+			}
+		}
+		return found;
+	}
+
+	bool SnapEngine::snapToWallVertex(::Foundation::Vec2 cursor, ::Foundation::Vec2& out, VertexId& outVertex) const {
+		const float radius = snapping_->vertexSnapRadiusMeters;
+		float		best = radius;
+		bool		found = false;
+		for (const Vertex& v : world_->vertices()) {
+			const ::Foundation::Vec2 vm = geometry::dequantize(v.pos);
+			const float				 d = distanceMeters(cursor, vm);
+			// Strict-< on a tie keeps the lowest-id vertex (vertices() is in
+			// ascending-id insertion order), so ties resolve deterministically.
+			if (d < best) {
+				best = d;
+				out = vm;
+				outVertex = v.id;
+				found = true;
+			}
+		}
+		return found;
+	}
+
+	bool SnapEngine::snapToWallSegment(::Foundation::Vec2 cursor, ::Foundation::Vec2& out, SegmentId& outSegment) const {
+		const float radius = snapping_->edgeSnapRadiusMeters;
+		float		best = radius;
+		bool		found = false;
+		for (const WallSegment& s : world_->segments()) {
+			const Vertex* v0 = world_->getVertex(s.v0);
+			const Vertex* v1 = world_->getVertex(s.v1);
+			if (v0 == nullptr || v1 == nullptr) {
+				continue;
+			}
+			const ::Foundation::Vec2 a = geometry::dequantize(v0->pos);
+			const ::Foundation::Vec2 b = geometry::dequantize(v1->pos);
+			// Endpoints are explicitly NOT segment hits: a projection that clamps to
+			// either end is an endpoint join (the wall-vertex tier owns it), not a
+			// T-junction. Only a foot of perpendicular landing strictly inside the
+			// span (0 < t < 1) is a genuine interior point-on-wall, so skip the rest.
+			// Without this, a cursor near a segment's end but outside the vertex
+			// radius would report WallSegment with hitSegment set, telling the
+			// WallTool to T-split when it should plain-join the endpoint.
+			const float t = projectionParam(cursor, a, b);
+			if (t <= 0.0F || t >= 1.0F) {
+				continue;
+			}
+			const ::Foundation::Vec2 c = closestOnSegment(cursor, a, b);
+			const float				 d = distanceMeters(cursor, c);
+			// Strict-< keeps the lowest-id segment on a tie; segments() is in
+			// ascending-id order. (segmentAt's stored tie-break is highest-id, but
+			// that is the pick query, not snapping; here the wall vertices already
+			// handle endpoint priority, so the segment tie-break only ever picks
+			// among true interior projections and lowest-id is the simplest rule.)
+			if (d < best) {
+				best = d;
+				out = c;
+				outSegment = s.id;
+				found = true;
 			}
 		}
 		return found;
@@ -130,6 +203,46 @@ namespace engine::construction {
 
 		// Angle snap relative to the previous segment, unless freeform or there is
 		// no previous point to anchor the angle to.
+		if (!freeform && !points.empty()) {
+			return snapAngle(points, cursor);
+		}
+
+		return {cursor, SnapKind::None};
+	}
+
+	SnapResult SnapEngine::snapWall(const std::vector<::Foundation::Vec2>& points, ::Foundation::Vec2 cursor, bool freeform) const {
+		// Priority, most specific first (design Walls > Drawing). No origin-close:
+		// the chain is open and never closes onto its first point.
+		::Foundation::Vec2 wv{};
+		VertexId		   wvId = kInvalidVertex;
+		if (snapToWallVertex(cursor, wv, wvId)) {
+			SnapResult r;
+			r.point = wv;
+			r.kind = SnapKind::WallEndpoint;
+			r.hitVertex = wvId;
+			return r;
+		}
+
+		::Foundation::Vec2 v{};
+		if (snapToVertex(cursor, v)) {
+			return {v, SnapKind::Vertex};
+		}
+
+		::Foundation::Vec2 ws{};
+		SegmentId		   wsId = kInvalidSegment;
+		if (snapToWallSegment(cursor, ws, wsId)) {
+			SnapResult r;
+			r.point = ws;
+			r.kind = SnapKind::WallSegment;
+			r.hitSegment = wsId;
+			return r;
+		}
+
+		::Foundation::Vec2 e{};
+		if (snapToEdge(cursor, e)) {
+			return {e, SnapKind::Edge};
+		}
+
 		if (!freeform && !points.empty()) {
 			return snapAngle(points, cursor);
 		}

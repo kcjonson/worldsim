@@ -6,6 +6,7 @@
 // - NoSelection: Nothing selected (panel hidden)
 // - ColonistSelection: An ECS colonist entity
 // - WorldEntitySelection: A placed world entity (bush, tree, etc.)
+// - WallSegmentSelection: A construction wall segment (ConstructionWorld topology)
 // - FoundationSelection: A construction foundation (ConstructionWorld topology)
 
 #include <construction/ConstructionWorld.h>
@@ -55,9 +56,24 @@ struct FoundationSelection {
 	engine::construction::FoundationId id = engine::construction::kInvalidFoundation;
 };
 
+/// A construction wall segment is selected. Like FoundationSelection, geometry,
+/// material, thickness, and state are queried from the ConstructionWorld by id
+/// (topology is the source of truth); the ECS mirror entity is reached via the
+/// segment's `entity` handle for blueprint/progress info. The segment is the
+/// design's unit of selection and demolition (D4/D6), not the chain.
+struct WallSegmentSelection {
+	engine::construction::SegmentId id = engine::construction::kInvalidSegment;
+};
+
 /// Selection variant - represents current selection state
-using Selection =
-	std::variant<NoSelection, ColonistSelection, WorldEntitySelection, CraftingStationSelection, FurnitureSelection, FoundationSelection>;
+using Selection = std::variant<
+	NoSelection,
+	ColonistSelection,
+	WorldEntitySelection,
+	CraftingStationSelection,
+	FurnitureSelection,
+	WallSegmentSelection,
+	FoundationSelection>;
 
 /// Helper to check if selection is empty
 [[nodiscard]] inline bool hasSelection(const Selection& sel) {
