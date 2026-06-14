@@ -465,7 +465,12 @@ namespace engine::construction {
 			if (bandsOverlap(candBand, otherBand)) {
 				return {ValidationCode::WallsOverlap, 0, 0, 0.0};
 			}
-			if (bandsCloserThan(candBand, otherBand, c.minParallelClearanceMm)) {
+			// Parallel-clearance only applies to (anti-)parallel runs: two walls
+			// sitting close alongside each other need the pathing gap between their
+			// faces. Walls meeting at an angle are not a parallel run -- a true
+			// intersection/overlap is already caught above -- so don't reject them.
+			const bool parallel = geometry::cross(d, e1 - e0).sign() == 0;
+			if (parallel && bandsCloserThan(candBand, otherBand, c.minParallelClearanceMm)) {
 				return {ValidationCode::ParallelClearanceTooSmall, 0, 0, 0.0};
 			}
 		}

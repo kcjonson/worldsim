@@ -376,6 +376,22 @@ TEST_F(WallVsExisting, ParallelWallsBelowClearanceFail) {
 	EXPECT_EQ(r.code, ValidationCode::ParallelClearanceTooSmall);
 }
 
+TEST_F(WallVsExisting, NonParallelNearbyWallPasses) {
+	ConstraintConfig  cfg = defaults(); // minParallelClearance 0.8 m
+	ConstructionWorld world;
+	FoundationId	  host = hostFoundation(world);
+	// Existing horizontal wall at y=2 (top face at 2.1).
+	ASSERT_TRUE(world.commitSegment(mm(2.0F, 2.0F), mm(10.0F, 2.0F), "Wood", "Standard", host).ok());
+
+	ConstructionValidator validator(cfg, world);
+	// A candidate at an ANGLE that starts within the parallel-clearance distance of
+	// the existing wall (bottom face ~0.65 m above the existing top face) but is not
+	// parallel, does not overlap, and does not cross. Parallel-clearance must not
+	// apply to non-parallel runs, so this is a legal placement.
+	auto r = validator.validateWallSegment({4.0F, 2.85F}, {7.0F, 4.5F}, standardWood(), host);
+	EXPECT_TRUE(r.ok()) << "non-parallel nearby wall must not be rejected for parallel clearance (code " << static_cast<int>(r.code) << ")";
+}
+
 TEST_F(WallVsExisting, OverlappingWallsFail) {
 	ConstraintConfig  cfg = defaults();
 	ConstructionWorld world;

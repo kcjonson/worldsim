@@ -1045,9 +1045,18 @@ namespace {
 				if (comma == std::string::npos) {
 					continue;
 				}
-				char* end = nullptr;
-				const float x = std::strtof(pair.substr(0, comma).c_str(), &end);
-				const float y = std::strtof(pair.substr(comma + 1).c_str(), nullptr);
+				const std::string xs = pair.substr(0, comma);
+				const std::string ys = pair.substr(comma + 1);
+				char*			  endX = nullptr;
+				char*			  endY = nullptr;
+				const float		  x = std::strtof(xs.c_str(), &endX);
+				const float		  y = std::strtof(ys.c_str(), &endY);
+				// Skip the pair unless both parses consumed at least one character;
+				// strtof returns 0.0 on a non-numeric string, which would otherwise
+				// silently inject a (0,0) vertex.
+				if (endX == xs.c_str() || endY == ys.c_str()) {
+					continue;
+				}
 				pts.emplace_back(x, y);
 			}
 			return pts;

@@ -499,7 +499,6 @@ while (running) {
   - [x] Hardened: snap endpoint-vs-T-junction, validator T-junction exemption, atomic commitSegment, harvest demand bounded to carry capacity (structures needing >1 stack build over multiple trips)
   - [ ] Deferred: D5 obstacle/portal publication to nav (no consumer until the nav epic); work-driven Deconstruct + refund + host-can't-demolish-while-walls-stand guard (same deferred polish as foundations); partial edge-fill
 - [ ] Epic E: Rooms (face extraction on built/demolish events, room entities, notification)
-- [ ] Epic E: Rooms (face extraction on built/demolish events, room entities, notification)
 - [ ] Epic F: Openings (OpeningTool, parameterized assets, retrofit cuts, door nav nodes)
 - [ ] Epic G: Editing & polish (add/subtract, vertex editing, cascade demolish, multi-select)
 
