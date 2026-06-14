@@ -773,7 +773,10 @@ WorldStats computeWorldStats(const GeneratedWorld& world) {
 
     // ---- Water / drainage stats ----
     {
-        const uint32_t landCount = static_cast<uint32_t>(s.landTileCount);
+        // Land water stats are over DRY land (non-ocean, non-lake). Count that
+        // denominator locally here rather than reusing s.landTileCount: the numerators
+        // below skip lake tiles, so the denominator must too, or the fractions skew.
+        uint32_t landCount   = 0;
         uint32_t riverCount  = 0;
         uint32_t sinkCount   = 0;
         uint32_t lakeCount   = 0;
@@ -784,9 +787,10 @@ WorldStats computeWorldStats(const GeneratedWorld& world) {
         std::array<TileId, 6> nbrs{};
         for (uint32_t t = 0; t < N; ++t) {
             const uint8_t f = world.data.flags[t];
-            if (f & kFlagOcean) continue; // ocean: skip
+            if (f & kFlagOcean) continue;                  // ocean: not land
+            if (f & kFlagLake) { ++lakeCount; continue; }  // lake is water, not dry land
 
-            if (f & kFlagLake) ++lakeCount;
+            ++landCount; // dry land: the population the land fractions below are over
 
             const float flow = world.data.flowAccum[t];
             flowSum += static_cast<double>(flow);

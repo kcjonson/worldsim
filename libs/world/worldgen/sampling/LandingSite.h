@@ -1,6 +1,5 @@
 #pragma once
 
-#include "worldgen/data/Biome.h"
 #include "worldgen/grid/SphereGrid.h" // TileId
 
 #include <cstdint>
