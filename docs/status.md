@@ -454,7 +454,7 @@ while (running) {
 
 **Tasks:**
 - [x] Epic A: Geometry foundations (libs/geometry in-house: int64-mm core + Int128, exact predicates, polygon constraint primitives, planar arrangement + half-edge face extraction, ring booleans, wall band offsetting + junction trimming; 157 unit tests) — merged to main (#135)
-- [x] Epic C: Foundations end-to-end — verified in sandbox: draw a foundation, colonist chops palms for Wood, hauls it to the site, builds it to completion, renders progress. Polish items remain (see sub-list).
+- [x] Epic C: Foundations end-to-end — merged to main (#137, hardened by an adversarial review: goal-collision umbrella restructure, deterministic option ordering, fail-open validation, deferred-demolish UAF, more). Verified in sandbox: draw a foundation, colonist chops palms for Wood, hauls it to the site, builds it to completion, renders progress. Polish items remain (see sub-list).
   - [x] Config + ConstructionRegistry + ConfigValidator (materials/constraints/snapping, meters + mm mirrors)
   - [x] ConstructionWorld topology store (commit/add/subtract/remove via geometry booleans, overlap rejection, hit-test, version counter)
   - [x] Blueprint ECS components (Structure, StructureBlueprint manifest+work+phase, StructureHealth)
@@ -466,7 +466,15 @@ while (running) {
   - [x] Choppable palm trees added to the Beach biome (Wood source at spawn) so the loop is exercisable
   - [x] End-to-end proof of chop→haul→build in a live world — verified in sandbox (foundation built to completion, ~1 min sim time). Fixed a goal-thrashing bug found in the process (harvest demand now bounded by carried Wood; harvest→haul chained for delivery stickiness).
   - [ ] Polish (deferred): baked element-emitter index-prefix progress render (D8), ConstructionProgressSlot in the info panel (D11), N discrete builder work slots from builderCap, deconstruct material refund + cascade, mining/haul-away clearing of non-harvestable obstructions
-- [ ] Epic D: Walls (graph + junction splitting, WallTool, band rendering, nav integration, demolition)
+- [x] Epic D: Walls — draw/build/select/demolish, verified in sandbox (draft PR #138). Polyline wall chains on a foundation, T-junction split, band+junction rendering, build via the shared lifecycle (gated on host-foundation-built), per-segment selection/panel/demolish.
+  - [x] Wall topology in ConstructionWorld (vertices/segments/openings, T-junction split + opening re-attach, X-crossing rejection, atomic commit); 18 tests
+  - [x] Wall config (thickness presets Light/Standard/Heavy, wall constraints) + validation; 30 tests
+  - [x] SnapEngine.snapWall (endpoint/vertex/T-junction/edge/angle) + wall draw-time validation (length/angle/containment/overlap/clearance/X-crossing); 27 tests
+  - [x] WallTool (chain draw, Ctrl+click edge fill, commit→segment blueprint entities) + interim band/junction render via WallOffset + config strip wall mode; verified in sandbox
+  - [x] Per-segment selection + adaptWallSegment panel + band-outline indicator + immediate per-segment demolition; verified in sandbox
+  - [x] Hardened: snap endpoint-vs-T-junction, validator T-junction exemption, atomic commitSegment, harvest demand bounded to carry capacity (structures needing >1 stack build over multiple trips)
+  - [ ] Deferred: D5 obstacle/portal publication to nav (no consumer until the nav epic); work-driven Deconstruct + refund + host-can't-demolish-while-walls-stand guard (same deferred polish as foundations); partial edge-fill
+- [ ] Epic E: Rooms (face extraction on built/demolish events, room entities, notification)
 - [ ] Epic E: Rooms (face extraction on built/demolish events, room entities, notification)
 - [ ] Epic F: Openings (OpeningTool, parameterized assets, retrofit cuts, door nav nodes)
 - [ ] Epic G: Editing & polish (add/subtract, vertex editing, cascade demolish, multi-select)
