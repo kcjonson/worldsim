@@ -46,6 +46,41 @@ TEST(ConstructionValidator, GoodSquareCommits) {
 	EXPECT_TRUE(validator.validateRing(squareRing()).ok());
 }
 
+// Non-square rings are first-class: the tools draw freeform polygons (3+ points),
+// not just rectangles. A triangle (60 deg corners), a regular pentagon, and a
+// concave L all clear every shape constraint and must validate.
+TEST(ConstructionValidator, AcceptsTriangle) {
+	ConstraintConfig	  cfg = defaults();
+	ConstructionWorld	  world;
+	ConstructionValidator validator(cfg, world);
+	// Equilateral-ish triangle, ~10 m base: corners ~60 deg, area well above 4 m^2.
+	std::vector<Vec2> triangle = {{0.0F, 0.0F}, {10.0F, 0.0F}, {5.0F, 8.66F}};
+	EXPECT_TRUE(validator.validateRing(triangle).ok());
+}
+
+TEST(ConstructionValidator, AcceptsPentagon) {
+	ConstraintConfig	  cfg = defaults();
+	ConstructionWorld	  world;
+	ConstructionValidator validator(cfg, world);
+	// Regular pentagon, radius 6 m: interior corners 108 deg, edges ~7 m apart.
+	std::vector<Vec2> pentagon;
+	for (int i = 0; i < 5; ++i) {
+		const float angle = static_cast<float>(i) * (2.0F * 3.14159265F / 5.0F) - 3.14159265F / 2.0F;
+		pentagon.push_back({6.0F * std::cos(angle), 6.0F * std::sin(angle)});
+	}
+	EXPECT_TRUE(validator.validateRing(pentagon).ok());
+}
+
+TEST(ConstructionValidator, AcceptsConcaveLShape) {
+	ConstraintConfig	  cfg = defaults();
+	ConstructionWorld	  world;
+	ConstructionValidator validator(cfg, world);
+	// L-shape with a 90 deg concave (reflex-interior) notch. Simple, no self-cross,
+	// every corner >= 30 deg, opposite faces > 1 m apart.
+	std::vector<Vec2> lshape = {{0.0F, 0.0F}, {8.0F, 0.0F}, {8.0F, 3.0F}, {3.0F, 3.0F}, {3.0F, 8.0F}, {0.0F, 8.0F}};
+	EXPECT_TRUE(validator.validateRing(lshape).ok());
+}
+
 TEST(ConstructionValidator, RejectsTooFewPoints) {
 	ConstraintConfig	  cfg = defaults();
 	ConstructionWorld	  world;
