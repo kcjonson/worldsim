@@ -95,12 +95,30 @@ namespace world_sim {
 		LOG_INFO(Game, "Wall tool activated (material=%s, preset=%s)", activeMaterial_.c_str(), activeThicknessPreset_.c_str());
 	}
 
+	void DrawingSystem::activateOpeningTool(const std::string& openingType) {
+		state_ = DrawingState::Drawing;
+		activeTool_ = ToolKind::Opening;
+		activeOpeningType_ = openingType;
+		points_.clear();
+		lastSnap_ = {};
+		lastValidation_ = {};
+		wallHost_ = ec::kInvalidFoundation;
+		openingSnap_ = {};
+		openingValidation_ = {};
+		if (callbacks_.onToolActive) {
+			callbacks_.onToolActive(true);
+		}
+		LOG_INFO(Game, "Opening tool activated (type=%s)", activeOpeningType_.c_str());
+	}
+
 	void DrawingSystem::deactivate() {
 		state_ = DrawingState::Idle;
 		points_.clear();
 		lastSnap_ = {};
 		lastValidation_ = {};
 		wallHost_ = ec::kInvalidFoundation;
+		openingSnap_ = {};
+		openingValidation_ = {};
 		if (callbacks_.onToolActive) {
 			callbacks_.onToolActive(false);
 		}
@@ -118,6 +136,10 @@ namespace world_sim {
 
 		if (activeTool_ == ToolKind::Wall) {
 			handleWallMove({world.x, world.y}, freeform);
+			return;
+		}
+		if (activeTool_ == ToolKind::Opening) {
+			handleOpeningMove({world.x, world.y});
 			return;
 		}
 
@@ -142,6 +164,10 @@ namespace world_sim {
 		if (activeTool_ == ToolKind::Wall) {
 			const auto world = camera_->screenToWorld(screenX, screenY, viewportW, viewportH, kPixelsPerMeter);
 			return handleWallClick({world.x, world.y}, freeform, ctrl);
+		}
+		if (activeTool_ == ToolKind::Opening) {
+			const auto world = camera_->screenToWorld(screenX, screenY, viewportW, viewportH, kPixelsPerMeter);
+			return handleOpeningClick({world.x, world.y});
 		}
 
 		// Origin-close (>= 3 points) commits the shape.
@@ -182,6 +208,13 @@ namespace world_sim {
 				lastValidation_ = {};
 				return true;
 			}
+			deactivate();
+			return true;
+		}
+
+		if (activeTool_ == ToolKind::Opening) {
+			// The opening tool has no in-progress state to discard (each click is a
+			// one-shot placement), so Esc / right-click exits the tool.
 			deactivate();
 			return true;
 		}
@@ -736,12 +769,217 @@ namespace world_sim {
 		}
 	}
 
+	// =========================================================================
+	// Opening tool. Unlike foundation/wall there is no multi-click chain: each
+	// click is a one-shot placement of a door/window onto the nearest BUILT wall.
+	// snapOpening picks the segment + centerline t; validateOpening gates the
+	// commit (margins, overlap, segment length); spawnOpeningBlueprintEntity
+	// mirrors spawnWallSegmentEntity with the type's CONSTANT manifest/work.
+	// =========================================================================
+
+	const engine::assets::OpeningTypeDef* DrawingSystem::activeOpeningType() const {
+		return ConstructionRegistry::Get().getOpeningType(activeOpeningType_);
+	}
+
+	void DrawingSystem::handleOpeningMove(Foundation::Vec2 world) {
+		const auto* type = activeOpeningType();
+		if (type == nullptr) {
+			openingSnap_ = {};
+			openingValidation_ = {};
+			return;
+		}
+
+		auto&		   registry = ConstructionRegistry::Get();
+		ec::SnapEngine snap(registry.snapping(), constructionWorld_);
+		openingSnap_ = snap.snapOpening(world, type->widthMeters);
+		cursor_ = openingSnap_.point;
+
+		if (openingSnap_.valid) {
+			ec::ConstructionValidator validator(registry.constraints(), constructionWorld_);
+			openingValidation_ = validator.validateOpening(openingSnap_.segment, openingSnap_.t, type->name, type->material);
+		} else {
+			openingValidation_ = {};
+		}
+	}
+
+	bool DrawingSystem::handleOpeningClick(Foundation::Vec2 world) {
+		const auto* type = activeOpeningType();
+		if (type == nullptr) {
+			if (callbacks_.onToast) {
+				callbacks_.onToast("Unknown opening", activeOpeningType_ + " is not a known type");
+			}
+			return true;
+		}
+
+		// Refresh the snap/validity at the exact click position so a click commits the
+		// same placement the preview showed.
+		handleOpeningMove(world);
+
+		if (!openingSnap_.valid) {
+			if (callbacks_.onToast) {
+				callbacks_.onToast("No wall", "openings must sit on a built wall");
+			}
+			return true;
+		}
+		if (!openingValidation_.ok()) {
+			if (callbacks_.onToast) {
+				callbacks_.onToast("Invalid opening", ec::validationReason(openingValidation_.code));
+			}
+			return true;
+		}
+
+		const ec::OpeningId id = constructionWorld_.addOpening(openingSnap_.segment, openingSnap_.t, type->name, type->material);
+		if (id == ec::kInvalidOpening) {
+			if (callbacks_.onToast) {
+				callbacks_.onToast("Commit failed", "opening rejected");
+			}
+			return true;
+		}
+
+		spawnOpeningBlueprintEntity(id, /*built=*/false);
+
+		if (callbacks_.onToast) {
+			callbacks_.onToast("Opening placed", type->name + " blueprint");
+		}
+
+		// Stay in the tool, ready for the next placement.
+		return true;
+	}
+
+	ec::OpeningId DrawingSystem::devCommitOpening(ec::SegmentId segment, float t, const std::string& openingType, bool built) {
+		const auto* type = ConstructionRegistry::Get().getOpeningType(openingType);
+		if (type == nullptr || constructionWorld_.getSegment(segment) == nullptr) {
+			return ec::kInvalidOpening;
+		}
+
+		const ec::OpeningId id = constructionWorld_.addOpening(segment, t, type->name, type->material);
+		if (id == ec::kInvalidOpening) {
+			return ec::kInvalidOpening;
+		}
+		if (built) {
+			constructionWorld_.setOpeningState(id, ec::FoundationState::Built);
+		}
+		spawnOpeningBlueprintEntity(id, built);
+		return id;
+	}
+
+	ecs::EntityID DrawingSystem::spawnOpeningBlueprintEntity(ec::OpeningId openingId, bool built) {
+		if (ecsWorld_ == nullptr) {
+			return ecs::EntityID{0};
+		}
+
+		const ec::Opening* opening = constructionWorld_.getOpening(openingId);
+		if (opening == nullptr || opening->entity != ecs::kInvalidEntity) {
+			return opening != nullptr ? opening->entity : ecs::EntityID{0};
+		}
+		const ec::WallSegment* segment = constructionWorld_.getSegment(opening->segment);
+		if (segment == nullptr) {
+			return ecs::EntityID{0};
+		}
+		const ec::Vertex* vert0 = constructionWorld_.getVertex(segment->v0);
+		const ec::Vertex* vert1 = constructionWorld_.getVertex(segment->v1);
+		if (vert0 == nullptr || vert1 == nullptr) {
+			return ecs::EntityID{0};
+		}
+
+		const auto* type = ConstructionRegistry::Get().getOpeningType(opening->type);
+		if (type == nullptr) {
+			return ecs::EntityID{0};
+		}
+
+		// Centerline world point at parameter t (lerp v0 -> v1, dequantized). This is
+		// the opening's gameplay position (haul destination / build site).
+		const Foundation::Vec2 a = geometry::dequantize(vert0->pos);
+		const Foundation::Vec2 b = geometry::dequantize(vert1->pos);
+		const float			   t = opening->t;
+		const Foundation::Vec2 center{a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t};
+
+		auto entity = ecsWorld_->createEntity();
+		ecsWorld_->addComponent<ecs::Position>(entity, ecs::Position{{center.x, center.y}});
+		ecsWorld_->addComponent<ecs::Structure>(entity, ecs::Structure{ecs::StructureKind::Opening, openingId});
+
+		// Opening cost/work are CONSTANTS per type (not area-derived): costItems and
+		// workUnits straight from the type def. Manifest defName is the type's material.
+		const auto requiredQty = static_cast<uint32_t>(std::ceil(static_cast<double>(type->costItems)));
+
+		ecs::StructureBlueprint blueprint;
+		blueprint.workTotal = type->workUnits;
+		if (built) {
+			// Mirror spawnWallSegmentEntity's built branch: a complete opening (full
+			// work, manifest already delivered) so the construction loop does not
+			// re-haul / re-build it.
+			blueprint.phase = ecs::StructureBlueprint::BuildPhase::Complete;
+			blueprint.workDone = blueprint.workTotal;
+			if (requiredQty > 0) {
+				blueprint.required.emplace_back(type->material, requiredQty);
+				blueprint.delivered.emplace_back(type->material, requiredQty);
+			}
+		} else {
+			// Openings sit on a built wall: no clearing phase (like walls). Start
+			// AwaitingMaterials; ConstructionSystem gates them until the host wall is
+			// Built, then haul + build proceed.
+			blueprint.phase = ecs::StructureBlueprint::BuildPhase::AwaitingMaterials;
+			if (requiredQty > 0) {
+				blueprint.required.emplace_back(type->material, requiredQty);
+			}
+		}
+		ecsWorld_->addComponent<ecs::StructureBlueprint>(entity, std::move(blueprint));
+
+		ecs::Inventory deliveryInv;
+		deliveryInv.maxCapacity = 8;
+		deliveryInv.maxStackSize = 100000;
+		ecsWorld_->addComponent<ecs::Inventory>(entity, std::move(deliveryInv));
+
+		// Openings are not area-derived, so HP is a small fixed value scaled by the
+		// material's per-m^2 hp (a door/window is roughly a square meter of structure).
+		const auto* material = ConstructionRegistry::Get().getMaterial(type->material);
+		const float maxHp = material != nullptr ? material->hp : 1.0F;
+		ecsWorld_->addComponent<ecs::StructureHealth>(entity, ecs::StructureHealth{maxHp, maxHp});
+
+		constructionWorld_.setOpeningEntity(openingId, entity);
+
+		LOG_INFO(
+			Game,
+			"Opening #%llu spawned: %s (%s) on segment #%llu at t=%.2f, %u materials, %.0f work, entity %u, %s",
+			static_cast<unsigned long long>(openingId),
+			type->name.c_str(),
+			type->material.c_str(),
+			static_cast<unsigned long long>(opening->segment),
+			static_cast<double>(t),
+			requiredQty,
+			static_cast<double>(type->workUnits),
+			static_cast<uint32_t>(entity),
+			built ? "built" : "blueprint"
+		);
+		return entity;
+	}
+
 	DrawingStatus DrawingSystem::status() const {
 		DrawingStatus s;
 		s.active = (state_ == DrawingState::Drawing);
 		s.wall = (activeTool_ == ToolKind::Wall);
+		s.opening = (activeTool_ == ToolKind::Opening);
 		s.pointCount = static_cast<int>(points_.size());
 		s.material = activeMaterial_;
+
+		if (activeTool_ == ToolKind::Opening) {
+			s.openingType = activeOpeningType_;
+			if (const auto* type = activeOpeningType()) {
+				s.openingWidthMeters = type->widthMeters;
+				s.material = type->material;
+			}
+			// Validity reflects the live snap + validateOpening. No built wall in range
+			// reads as "no wall to place on"; an in-range wall surfaces the validator's
+			// reason (margin / overlap / too short) when it rejects.
+			if (!openingSnap_.valid) {
+				s.valid = false;
+				s.message = "no wall in range";
+			} else {
+				s.valid = openingValidation_.ok();
+				s.message = ec::validationReason(openingValidation_.code);
+			}
+			return s;
+		}
 
 		if (activeTool_ == ToolKind::Wall) {
 			s.thicknessPreset = activeThicknessPreset_;
@@ -914,6 +1152,11 @@ namespace world_sim {
 		// Wall chain preview is a centerline + thickness band, not a closed polygon.
 		if (activeTool_ == ToolKind::Wall) {
 			renderWallChainPreview(viewportW, viewportH);
+			return;
+		}
+
+		// Opening ghost / gap rendering is a later sub-phase; nothing to draw here yet.
+		if (activeTool_ == ToolKind::Opening) {
 			return;
 		}
 

@@ -185,7 +185,25 @@ namespace world_sim {
 			readoutX = presetRects_.back().x + kPresetCardWidth + 16.0F;
 		}
 
-		if (status_.wall) {
+		if (status_.opening) {
+			// Opening mode: the type (Door/Window) is chosen from the Build menu (no
+			// in-strip selector in v1), so the strip just displays it plus the clear
+			// width. The validity line below carries the snap / placement feedback.
+			Renderer::Primitives::drawText({
+				.text = std::string("Opening: ") + status_.openingType,
+				.position = {readoutX, stripBounds_.y + 8.0F},
+				.scale = 0.8F,
+				.color = UI::Theme::Colors::textBody,
+			});
+			char widthBuf[32];
+			std::snprintf(widthBuf, sizeof(widthBuf), "Width: %.2f m", static_cast<double>(status_.openingWidthMeters));
+			Renderer::Primitives::drawText({
+				.text = widthBuf,
+				.position = {readoutX, stripBounds_.y + 26.0F},
+				.scale = 0.8F,
+				.color = UI::Theme::Colors::textBody,
+			});
+		} else if (status_.wall) {
 			char lenBuf[48];
 			std::snprintf(
 				lenBuf,
@@ -236,7 +254,18 @@ namespace world_sim {
 		// Validity message line, colored by status.
 		Foundation::Color msgColor = UI::Theme::Colors::statusActive;
 		std::string		  message = "Ready";
-		if (status_.wall) {
+		if (status_.opening) {
+			if (status_.valid) {
+				msgColor = UI::Theme::Colors::statusActive;
+				message = "Click a wall to place";
+			} else {
+				// No wall in range reads as pending (move onto a built wall); an in-range
+				// wall that fails the placement gate reads as blocked.
+				const bool blocked = !status_.message.empty() && status_.message != "no wall in range";
+				msgColor = blocked ? UI::Theme::Colors::statusBlocked : UI::Theme::Colors::statusPending;
+				message = status_.message.empty() ? "Hover a built wall" : status_.message;
+			}
+		} else if (status_.wall) {
 			if (status_.pointCount == 0) {
 				msgColor = UI::Theme::Colors::statusPending;
 				message = "Click a foundation to start";

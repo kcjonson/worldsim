@@ -41,6 +41,7 @@
 
 namespace engine::assets {
 	struct ThicknessPreset;
+	struct OpeningTypeDef;
 }
 
 namespace world_sim {
@@ -57,12 +58,14 @@ namespace world_sim {
 	enum class ToolKind {
 		Foundation,
 		Wall,
+		Opening,
 	};
 
 	/// Live status of the in-progress shape, surfaced to the config strip.
 	struct DrawingStatus {
-		bool		active = false; // tool is on (config strip visible)
-		bool		wall = false;	// true while the wall tool is active (config strip shows presets)
+		bool		active = false;	 // tool is on (config strip visible)
+		bool		wall = false;	 // true while the wall tool is active (config strip shows presets)
+		bool		opening = false; // true while the opening tool is active (config strip shows the opening type)
 		int			pointCount = 0;
 		float		areaSquareMeters = 0.0F; // closed-polygon area preview (0 until >= 3 pts)
 		bool		valid = true;			 // current cursor placement / shape validity
@@ -75,6 +78,10 @@ namespace world_sim {
 		float		totalLengthMeters = 0.0F;	// summed length of the committed chain so far
 		float		wallCost = 0.0F;			// material cost of the chain so far
 		float		wallWork = 0.0F;			// work units of the chain so far
+
+		// Opening readouts (meaningful only when opening == true).
+		std::string openingType;			   // active opening type name (Door/Window)
+		float		openingWidthMeters = 0.0F; // clear width of the active opening type
 	};
 
 	class DrawingSystem {
@@ -103,11 +110,17 @@ namespace world_sim {
 		/// Activate the wall tool (from the Build menu). Enters Drawing in wall mode.
 		void activateWallTool();
 
+		/// Activate the opening tool (from the Build menu). `openingType` is a config
+		/// name ("Door"/"Window"); enters Drawing in opening mode. The material is the
+		/// type's own material (v1: no separate material selector for openings).
+		void activateOpeningTool(const std::string& openingType);
+
 		/// Deactivate and discard any in-progress shape.
 		void deactivate();
 
 		[[nodiscard]] bool isActive() const { return state_ == DrawingState::Drawing; }
 		[[nodiscard]] bool isWallTool() const { return activeTool_ == ToolKind::Wall; }
+		[[nodiscard]] bool isOpeningTool() const { return activeTool_ == ToolKind::Opening; }
 
 		// --- Material selection (from the config strip) ---
 
@@ -181,6 +194,16 @@ namespace world_sim {
 			bool								 built
 		);
 
+		/// Commit an opening straight to the topology and spawn its mirror entity,
+		/// bypassing the draw tool and the soft validator (the opening analogue of the
+		/// /api/dev/foundation path). Places `openingType` on `segment` at parameter t
+		/// (clamped in addOpening). When `built`, the spawned entity mirrors a complete
+		/// opening (full work, manifest delivered) and the topology flips to Built.
+		/// Returns the created opening id, or kInvalidOpening on failure (unknown
+		/// segment / type).
+		engine::construction::OpeningId
+		devCommitOpening(engine::construction::SegmentId segment, float t, const std::string& openingType, bool built);
+
 	  private:
 		// --- Foundation tool ---
 
@@ -228,6 +251,30 @@ namespace world_sim {
 		/// splits leave no segment entity-less and no entity leaked.
 		void reconcileSegmentEntities();
 
+		// --- Opening tool ---
+
+		/// Mouse-move handling for the opening tool: snapOpening onto the nearest built
+		/// wall, store the snap, and (when the snap is valid) run validateOpening for the
+		/// live validity readout.
+		void handleOpeningMove(Foundation::Vec2 world);
+
+		/// Click handling for the opening tool: commit the opening at the current snap if
+		/// valid, spawn its blueprint entity, and stay in the tool. Returns whether the
+		/// click was consumed (always true while the tool is active).
+		bool handleOpeningClick(Foundation::Vec2 world);
+
+		/// Resolve the active opening type's config def, or nullptr if the type name is
+		/// not a known opening type (the opening tool can't snap/commit then).
+		[[nodiscard]] const engine::assets::OpeningTypeDef* activeOpeningType() const;
+
+		/// Spawn the ECS mirror entity for a single opening (Position at the centerline
+		/// point at t, Structure{Opening, openingId}, StructureBlueprint with the type's
+		/// constant manifest/work, Inventory, StructureHealth). A `built` opening spawns
+		/// Complete (full work, delivered == required); otherwise AwaitingMaterials
+		/// (openings have no clearing phase, like walls). Sets the opening's entity
+		/// handle. No-op if the id is unknown or already has an entity.
+		ecs::EntityID spawnOpeningBlueprintEntity(engine::construction::OpeningId openingId, bool built);
+
 		ecs::World*					ecsWorld_ = nullptr;
 		engine::world::WorldCamera* camera_ = nullptr;
 		Callbacks					callbacks_;
@@ -244,6 +291,12 @@ namespace world_sim {
 		// Wall chain host: the foundation the first chain point landed on. Every
 		// segment of the chain hosts here; a later point leaving it is rejected.
 		engine::construction::FoundationId wallHost_ = engine::construction::kInvalidFoundation;
+
+		// Opening tool: the active opening type (config name) plus the latest snap +
+		// validity, refreshed on every move and read on click / by status().
+		std::string							   activeOpeningType_ = "Door";
+		engine::construction::OpeningSnap	   openingSnap_;
+		engine::construction::ValidationResult openingValidation_;
 
 		std::string activeMaterial_ = "Wood";
 		std::string activeThicknessPreset_ = "Standard";
