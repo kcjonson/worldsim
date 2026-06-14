@@ -315,6 +315,11 @@ namespace engine::construction {
 		// Returns kInvalidOpening for an unknown segment.
 		OpeningId addOpening(SegmentId segment, float t, std::string type, std::string material);
 
+		// Mirror mutators for the opening's ECS-backed gameplay state, parallel to the
+		// foundation/segment ones. Both bump the version. Return false on unknown id.
+		bool setOpeningState(OpeningId id, FoundationState state);
+		bool setOpeningEntity(OpeningId id, ecs::EntityID entity);
+
 		// --- Foundation lifecycle / ECS wiring -------------------------------
 
 		// Mutators for later pieces (ConstructionSystem, the ECS mirror). Both
@@ -341,6 +346,7 @@ namespace engine::construction {
 		// Wall topology helpers.
 		WallSegment* findSegment(SegmentId id);
 		Vertex*		 findVertex(VertexId id);
+		Opening*	 findOpening(OpeningId id);
 
 		// Return the id of the vertex at exactly `pos`, creating one if none
 		// exists. Merge is by exact integer equality (Vec2i64::operator==).

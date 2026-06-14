@@ -623,6 +623,35 @@ namespace engine::construction {
 		return true;
 	}
 
+	Opening* ConstructionWorld::findOpening(OpeningId id) {
+		for (Opening& o : openings_) {
+			if (o.id == id) {
+				return &o;
+			}
+		}
+		return nullptr;
+	}
+
+	bool ConstructionWorld::setOpeningState(OpeningId id, FoundationState state) {
+		Opening* o = findOpening(id);
+		if (o == nullptr) {
+			return false;
+		}
+		o->state = state;
+		++version_;
+		return true;
+	}
+
+	bool ConstructionWorld::setOpeningEntity(OpeningId id, ecs::EntityID entity) {
+		Opening* o = findOpening(id);
+		if (o == nullptr) {
+			return false;
+		}
+		o->entity = entity;
+		++version_;
+		return true;
+	}
+
 	OpeningId ConstructionWorld::addOpening(SegmentId segment, float t, std::string type, std::string material) {
 		if (getSegment(segment) == nullptr) {
 			return kInvalidOpening;
