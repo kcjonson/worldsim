@@ -652,6 +652,17 @@ namespace engine::construction {
 		return true;
 	}
 
+	bool ConstructionWorld::removeOpening(OpeningId id) {
+		for (std::size_t i = 0; i < openings_.size(); ++i) {
+			if (openings_[i].id == id) {
+				openings_.erase(openings_.begin() + static_cast<std::ptrdiff_t>(i));
+				++version_;
+				return true;
+			}
+		}
+		return false;
+	}
+
 	OpeningId ConstructionWorld::addOpening(SegmentId segment, float t, std::string type, std::string material) {
 		if (getSegment(segment) == nullptr) {
 			return kInvalidOpening;

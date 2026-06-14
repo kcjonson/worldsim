@@ -320,6 +320,10 @@ namespace engine::construction {
 		bool setOpeningState(OpeningId id, FoundationState state);
 		bool setOpeningEntity(OpeningId id, ecs::EntityID entity);
 
+		// Remove a single opening (per-opening demolish). Returns false for an unknown
+		// id. (Whole-segment removal already drops its openings via removeSegment.)
+		bool removeOpening(OpeningId id);
+
 		// --- Foundation lifecycle / ECS wiring -------------------------------
 
 		// Mutators for later pieces (ConstructionSystem, the ECS mirror). Both
