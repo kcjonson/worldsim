@@ -12,6 +12,7 @@
 #include <assets/AssetRegistry.h>
 #include <construction/ConstructionWorld.h>
 #include <ecs/World.h>
+#include <ecs/systems/RoomDetectionSystem.h>
 
 #include <functional>
 #include <optional>
@@ -123,5 +124,14 @@ using ResourceQueryCallback = std::function<std::optional<uint32_t>(const std::s
 	const OpeningSelection&						   selection,
 	const std::function<void()>&				   onDemolish = {}
 );
+
+/// Convert a selected room into read-only panel content. Name + area come from the
+/// RoomDetectionSystem record (the source of truth for room geometry; the Room ECS
+/// component carries no polygon); the enclosing-wall count comes from the Room
+/// component's boundingSegmentIds on the record's mirror entity. Rooms have NO
+/// demolish action -- only their walls do -- so there are no action callbacks.
+/// @param world ECS world (for the Room component).
+/// @param record The room record resolved by roomId by the caller.
+[[nodiscard]] PanelContent adaptRoom(const ecs::World& world, const ecs::RoomDetectionSystem::RoomRecord& record);
 
 } // namespace world_sim

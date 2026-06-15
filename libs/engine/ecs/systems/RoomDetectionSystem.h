@@ -72,7 +72,9 @@ namespace ecs {
 			EntityID		  entity = kInvalidEntity;
 		};
 
-		/// Current room records (test/inspection helper).
+		/// Current room records, in stable order. The supported read accessor for the
+		/// room overlay/selection: the Room ECS component carries no polygon, so the
+		/// fill ring and label anchor come from here. Live view; ids are monotonic.
 		[[nodiscard]] const std::vector<RoomRecord>& rooms() const { return roomRecords; }
 
 	  private:

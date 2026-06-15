@@ -12,6 +12,7 @@
 // Extends UI::Component to use the Layer system for child management.
 
 #include <component/Component.h>
+#include <components/button/Button.h>
 #include <components/dropdown/DropdownButton.h>
 #include <graphics/Rect.h>
 #include <input/InputEvent.h>
@@ -32,6 +33,7 @@ class GameplayBar : public UI::Component {
 		std::function<void(const std::string&)> onProductionSelected = nullptr;
 		std::function<void(const std::string&)> onFurnitureSelected = nullptr;
 		std::function<void(const std::string&)> onStructureSelected = nullptr; ///< Activates a structure tool (e.g. "foundation")
+		std::function<void()>					onRoomsToggle = nullptr; ///< Toggles the rooms overlay (same state the R hotkey flips)
 		std::string id = "gameplay_bar";
 	};
 
@@ -55,6 +57,10 @@ class GameplayBar : public UI::Component {
 	/// @param items Vector of {defName, label} pairs for placeable production stations
 	void setProductionItems(const std::vector<std::pair<std::string, std::string>>& items);
 
+	/// Reflect the rooms-overlay active state on the Rooms toggle button (highlighted
+	/// fill when on). Pushed by GameUI so the button and the R hotkey stay in sync.
+	void setRoomsActive(bool active);
+
   private:
 	// Layout constants
 	static constexpr float kBarHeight = 40.0F;
@@ -63,6 +69,7 @@ class GameplayBar : public UI::Component {
 	static constexpr float kButtonSpacing = 8.0F;
 	static constexpr float kBottomMargin = 12.0F;
 	static constexpr float kHorizontalPadding = 12.0F;  // Padding on each side of buttons
+	static constexpr float kRoomsButtonWidth = 72.0F;	// Narrower than the dropdowns (single word)
 
 	// Cached layout values (computed once in layout())
 	float cachedBarWidth = 0.0F;
@@ -75,6 +82,7 @@ class GameplayBar : public UI::Component {
 	UI::LayerHandle buildDropdownHandle;
 	UI::LayerHandle productionDropdownHandle;
 	UI::LayerHandle furnitureDropdownHandle;
+	UI::LayerHandle roomsButtonHandle;
 
 	// Callbacks
 	std::function<void()> onBuildClick;
@@ -82,9 +90,15 @@ class GameplayBar : public UI::Component {
 	std::function<void(const std::string&)> onProductionSelected;
 	std::function<void(const std::string&)> onFurnitureSelected;
 	std::function<void(const std::string&)> onStructureSelected;
+	std::function<void()>					onRoomsToggle;
+
+	bool roomsActive = false;
 
 	/// Position all elements
 	void positionElements();
+
+	/// The two appearances the Rooms toggle swaps between (active = highlighted fill).
+	static UI::ButtonAppearance roomsButtonAppearance(bool active);
 };
 
 }  // namespace world_sim

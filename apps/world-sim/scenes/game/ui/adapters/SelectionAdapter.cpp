@@ -7,6 +7,7 @@
 #include <ecs/components/Inventory.h>
 #include <ecs/components/Mood.h>
 #include <ecs/components/Needs.h>
+#include <ecs/components/Room.h>
 #include <ecs/components/StructureBlueprint.h>
 #include <ecs/components/Task.h>
 
@@ -149,6 +150,11 @@ namespace world_sim {
 						return std::nullopt;
 					}
 					return adaptFurniture(registry, sel);
+				} else if constexpr (std::is_same_v<T, RoomSelection>) {
+					// Rooms need the RoomDetectionSystem records (not available on this
+					// path); EntityInfoModel::refresh resolves the record and calls
+					// adaptRoom directly. This arm just keeps the visit exhaustive.
+					return std::nullopt;
 				}
 			},
 			selection
@@ -623,6 +629,34 @@ namespace world_sim {
 			}
 		);
 
+		return content;
+	}
+
+	PanelContent adaptRoom(const ecs::World& world, const ecs::RoomDetectionSystem::RoomRecord& record) {
+		PanelContent content;
+		content.layout = PanelLayout::SingleColumn;
+		content.title = record.name;
+
+		content.slots.push_back(TextSlot{"Name", record.name});
+
+		std::ostringstream areaText;
+		// "m\xC2\xB2" is UTF-8 for "m²" (matches adaptFoundation's readout).
+		areaText << std::fixed << std::setprecision(1) << record.area << " m\xC2\xB2";
+		content.slots.push_back(TextSlot{"Area", areaText.str()});
+
+		// Enclosing-wall count from the Room ECS component on the record's mirror
+		// entity. The component carries the bounding segment ids (the record does
+		// not), so this is the one fact sourced from the component rather than the
+		// detection record. Guard the entity handle: a record whose entity has been
+		// destroyed shows no count rather than aliasing entity 0's components.
+		const ecs::Room* room =
+			(record.entity != ecs::kInvalidEntity && world.isAlive(record.entity)) ? world.getComponent<ecs::Room>(record.entity) : nullptr;
+		if (room != nullptr) {
+			content.slots.push_back(TextSlot{"Enclosing walls", std::to_string(room->boundingSegmentIds.size())});
+		}
+
+		// Read-only: a room is demolished by removing its walls, not the room itself,
+		// so there is no demolish action here.
 		return content;
 	}
 

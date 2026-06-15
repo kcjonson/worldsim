@@ -475,11 +475,12 @@ namespace world_sim {
 	}
 
 	void EntityInfoView::update(
-		const ecs::World&					  world,
-		const engine::assets::AssetRegistry&  assetRegistry,
-		const engine::assets::RecipeRegistry& recipeRegistry,
-		const Selection&					  selection,
-		const engine::construction::ConstructionWorld* constructionWorld
+		const ecs::World&							   world,
+		const engine::assets::AssetRegistry&		   assetRegistry,
+		const engine::assets::RecipeRegistry&		   recipeRegistry,
+		const Selection&							   selection,
+		const engine::construction::ConstructionWorld* constructionWorld,
+		const ecs::RoomDetectionSystem*				   roomDetection
 	) {
 		// Prepare callbacks for model
 		EntityInfoModel::Callbacks callbacks{
@@ -497,7 +498,7 @@ namespace world_sim {
 		};
 
 		// Let model handle all the logic (selection detection, change detection, content generation)
-		auto updateType = m_model.refresh(selection, world, assetRegistry, recipeRegistry, callbacks, constructionWorld);
+		auto updateType = m_model.refresh(selection, world, assetRegistry, recipeRegistry, callbacks, constructionWorld, roomDetection);
 
 		// React based on update type
 		switch (updateType) {

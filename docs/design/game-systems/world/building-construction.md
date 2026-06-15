@@ -236,8 +236,7 @@ V1 rooms don't do anything beyond this. Future: room types from contents, owners
 
 Doors and windows place onto walls, blueprint or built. The cursor slides along the wall, showing a ghost of the opening at the snapped position, colorized for validity.
 
-- On a **wall blueprint**: the opening is reserved in the wall; the wall builds around it (framing the gap), then the door/window builds as its own blueprint with its own materials and work.
-- On a **built wall** (retrofit): placing the opening creates a **cut opening** task. A builder cuts away that wall section (work, no material refund for the cut section), then the opening builds normally. Buildings stay renovatable forever.
+An opening **sits on the wall** as its own blueprint with its own materials and work; it does not cut, consume, or modify the wall (deliberately unlike the real world, where a door needs a hole framed for it). The wall and the opening are independent: placing an opening adds no wall work and costs no wall material, there is no cut-and-patch step, and removing an opening leaves the wall fully intact. Openings can be added to a wall (blueprint or built) at any time, so buildings stay renovatable forever.
 
 ### Sizes
 
