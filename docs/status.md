@@ -468,6 +468,20 @@ while (running) {
 
 ## In Progress Epics
 
+### Asset Manager
+**Spec/Documentation:** `/docs/design/features/asset-manager/`, `/docs/technical/asset-manager/`
+**Dependencies:** None
+**Status:** in progress
+
+**Goal:** Standalone tool to browse, inspect, validate, and render the asset library through the game's own render path, with a designer GUI and a headless CLI over one shared core.
+
+**Tasks:**
+- [x] Phase 1: Shared render path (renderer MeshBounds computeBounds/fitToRect; AssetRegistry::buildMesh; assets AssetRenderer prepare + renderToPixels/Png; foundation PngEncoder + DebugServer refactor; determinism + fidelity tests)
+- [ ] Phase 2: Load-time validation (AssetValidator + ValidationReport, loader hardening, render smoke test)
+- [ ] Phase 3: Headless CLI (apps/asset-cli: list/search/inspect/validate/render, JSON, server-less)
+- [ ] Phase 4: Async loading + splash (worker-thread load, progress, validation summary, error-gate scene)
+- [ ] Phase 5: GUI (apps/asset-manager: GridContainer, browser scene, preview + sampling, inspector, validation view, reload)
+
 ### World Generation & Creator
 **Spec/Documentation:** `/docs/design/features/world-generation/`, `.claude/plans/world-generation.md`
 **Dependencies:** None
