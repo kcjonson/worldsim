@@ -46,16 +46,36 @@
 //   replacing the old per-tile fixed 4-hop march (O(n*4*6)) that could not fire on
 //   belts wider than ~4 tiles.
 //
-// Pass 2 — rivers (this stage introduces FlowAccum and Downhill):
-//   - downhill[t]: index into grid.neighbors(t, ..) order of the strictly
-//     lowest neighbor; 0xFF for ocean tiles and local minima (sink/lake
-//     candidates). Ties broken by lowest neighbor TileId. Slab-parallel.
-//   - flowAccum[t]: land tiles seeded with precipitation/1000 (wet regions
-//     drain more), then one serial pass over land tiles sorted by elevation
-//     descending (ties by ascending TileId) adds each tile's accumulation into
-//     its downhill target. Flow into an ocean tile exits the network (ocean
-//     stays 0). The sort gives a total order, so float addition order — and
-//     therefore the result — is identical at any thread count.
+// Pass 2 - drainage (this stage introduces FlowAccum, Downhill, lake/river
+// flags, and lake spill levels in waterDepth):
+//   - Pass 2a (parallel): seed flowAccum[t] = precipitation/1000 on land (wet
+//     regions drain more); ocean tiles get flowAccum 0 and downhill 0xFF.
+//   - Priority-flood depression routing (serial, Barnes 2014). The raw terrain
+//     is full of pits (local minima) where naive steepest-descent drainage dies
+//     and flow vanishes, so no lakes form and rivers truncate. Priority-flood
+//     fills every pit up to the lowest lip over which it spills to the sea: a
+//     min-heap keyed (filledElevation, TileId) is seeded with all ocean tiles at
+//     their own elevation (the outlets); popping the lowest cell and relaxing its
+//     land neighbors to filled = max(neighborTerrain, cell.filled) raises pits to
+//     their spill level. The cell from which a tile is relaxed (its floodParent)
+//     is the tile one step toward the spill outlet, so EVERY reachable land tile
+//     gets a downstream route to the sea, across flat lake surfaces too, where
+//     terrain steepest-descent has no gradient. TileId tie-break keeps the heap
+//     order, and therefore the result, identical at any thread count.
+//     filledElevation > terrain marks a tile as UNDER a lake surface.
+//   - downhill[t]/downTarget: derived from floodParent (the spill route). A land
+//     tile unreachable from any ocean (a closed landmass with no ocean anywhere
+//     in its component, a genuine endorheic basin) keeps downhill 0xFF and is
+//     left as a sink rather than force-drained to a sea it can't reach.
+//   - Pass 2b (serial, deterministic): land tiles sorted by FILLED elevation
+//     descending (ties by ascending TileId) add their accumulation into their
+//     downTarget. Because routing follows the filled surface, flow no longer
+//     drops at pits, so rivers resume below lakes. The sort is a total order, so
+//     float addition order, and the result, is identical at any thread count.
+//   - kFlagLake on ponded tiles (filled > terrain); waterDepth = filled - terrain
+//     (the basin's spill level above terrain, meters, clamped to uint16) for the
+//     chunk layer to fill to. kFlagRiver on the top kRiverLandFraction of land
+//     tiles by flowAccum (quantile cut, resolution-invariant).
 //
 // Determinism: det_math for transcendentals (std::sqrt is correctly rounded per
 // IEEE 754 and wrapped by det_math::sqrt); all randomness from valueNoise3
@@ -79,6 +99,8 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <limits>
+#include <queue>
 #include <vector>
 
 namespace worldgen {
@@ -474,7 +496,9 @@ void PrecipitationStage::run(StageContext& ctx) {
     carriedPeak.clear(); carriedPeak.shrink_to_fit();
     sweepOrder.clear();  sweepOrder.shrink_to_fit();
 
-    // -------- Pass 2a: downhill pointers (slab-parallel) --------
+    // -------- Pass 2a: seed flow + clear ocean drainage (slab-parallel) --------
+    // downTarget[t] is the world TileId each land tile drains to (kInvalidTile =
+    // ocean or, after the flood, a genuine sink). flowAccum is seeded from rain.
     std::vector<TileId> downTarget(totalTiles, kInvalidTile);
     ctx.pool.parallelFor(0, totalTiles, kGrainSize, [&](size_t begin, size_t end) {
         throwIfCancelled(ctx);
@@ -482,56 +506,171 @@ void PrecipitationStage::run(StageContext& ctx) {
             if (ctx.data.elevation[t] < seaLevel) {
                 ctx.data.downhill[t]  = 0xFF;
                 ctx.data.flowAccum[t] = 0.0f;
-                continue;
+            } else {
+                ctx.data.downhill[t]  = 0xFF; // resolved by the priority-flood below
+                ctx.data.flowAccum[t] =
+                    static_cast<float>(ctx.data.precipitation[t]) * (1.0f / 1000.0f);
             }
-            std::array<TileId, 6> nbs{};
-            const uint32_t cnt = ctx.grid.neighbors(static_cast<TileId>(t), nbs);
-            float    bestE   = ctx.data.elevation[t]; // strictly lower required
-            uint32_t bestIdx = 0xFFu;
-            TileId   bestId  = kInvalidTile;
-            for (uint32_t k = 0; k < cnt; ++k) {
-                const float e = ctx.data.elevation[nbs[k]];
-                if (e < bestE ||
-                    (bestIdx != 0xFFu && e == bestE && nbs[k] < bestId)) {
-                    bestE   = e;
-                    bestIdx = k;
-                    bestId  = nbs[k];
-                }
-            }
-            ctx.data.downhill[t]  = static_cast<uint8_t>(bestIdx);
-            downTarget[t]         = bestIdx == 0xFFu ? kInvalidTile : bestId;
-            ctx.data.flowAccum[t] =
-                static_cast<float>(ctx.data.precipitation[t]) * (1.0f / 1000.0f);
         }
-        ctx.reportProgress(0.60f + 0.20f * static_cast<float>(end) * invTotal);
+        ctx.reportProgress(0.60f + 0.10f * static_cast<float>(end) * invTotal);
     });
 
+    // -------- Priority-flood depression routing (serial, deterministic) --------
+    // Barnes 2014. Raise every pit to its spill level so flow reaches the sea,
+    // and route each land tile one step toward that spill (floodParent). The heap
+    // pops the globally lowest filled cell each time; relaxing a land neighbor to
+    // filled = max(neighborTerrain, poppedFilled) is exactly the water level a
+    // parcel must rise to in order to cross from the neighbor out through the
+    // popped cell. Ties on filled level break by TileId so the traversal, and
+    // thus the result, is bit-identical at any thread count.
+    std::vector<float>  filled(totalTiles, std::numeric_limits<float>::infinity());
+    std::vector<TileId> floodParent(totalTiles, kInvalidTile);
+
+    struct HeapItem {
+        float  level; // filled water level this cell drains over
+        TileId tile;
+    };
+    // Min-heap: lowest level first; equal levels ordered by ascending TileId.
+    auto cmp = [](const HeapItem& a, const HeapItem& b) {
+        if (a.level != b.level) return a.level > b.level;
+        return a.tile > b.tile;
+    };
+    std::priority_queue<HeapItem, std::vector<HeapItem>, decltype(cmp)> heap(cmp);
+
+    // Seed: every ocean tile is an outlet at its own terrain elevation. Land
+    // tiles enter the heap only when first reached from an already-spilled cell.
+    for (TileId t = 0; t < totalTiles; ++t) {
+        if (ctx.data.elevation[t] < seaLevel) {
+            const float e = ctx.data.elevation[t];
+            filled[t] = e;
+            heap.push({e, t});
+        }
+    }
+
+    {
+        std::array<TileId, 6> nbs{};
+        size_t processed = 0;
+        while (!heap.empty()) {
+            const HeapItem it = heap.top();
+            heap.pop();
+            // A tile can be pushed more than once (a lower level found later);
+            // skip the stale entry whose level no longer matches.
+            if (it.level != filled[it.tile]) continue;
+            if ((++processed & 0xFFFFFu) == 0u) throwIfCancelled(ctx);
+
+            const TileId t = it.tile;
+            const uint32_t cnt = ctx.grid.neighbors(t, nbs);
+            for (uint32_t k = 0; k < cnt; ++k) {
+                const TileId nb = nbs[k];
+                if (ctx.data.elevation[nb] < seaLevel) continue; // outlet, fixed
+                // The neighbor must rise to at least this cell's level to spill
+                // out through it; if its own terrain is higher, that wins.
+                float newLevel = it.level;
+                if (ctx.data.elevation[nb] > newLevel) newLevel = ctx.data.elevation[nb];
+                if (newLevel < filled[nb]) {
+                    filled[nb]      = newLevel;
+                    floodParent[nb] = t; // one step toward the spill outlet
+                    heap.push({newLevel, nb});
+                }
+            }
+        }
+    }
+    ctx.reportProgress(0.80f);
+
+    // -------- Lake flags + spill levels; downhill from the flood route --------
+    // A land tile whose filled level exceeds its terrain is under a lake surface.
+    // waterDepth stores the spill height above terrain (meters, clamped) so the
+    // chunk layer can fill the basin. downTarget/downhill follow floodParent.
+    // A land tile the flood never reached (no ocean in its connected component)
+    // keeps downhill 0xFF, a genuine endorheic sink we don't force to drain.
+    for (TileId t = 0; t < totalTiles; ++t) {
+        if (ctx.data.elevation[t] < seaLevel) continue; // ocean: handled in 2a
+
+        const TileId parent = floodParent[t];
+        if (parent == kInvalidTile) continue; // unreached land: stays a sink
+
+        downTarget[t] = parent;
+        // Recover the neighbor index of `parent` for the downhill field, which
+        // indexes into grid.neighbors() order (consumed by the chunk sampler).
+        std::array<TileId, 6> nbs{};
+        const uint32_t cnt = ctx.grid.neighbors(t, nbs);
+        for (uint32_t k = 0; k < cnt; ++k) {
+            if (nbs[k] == parent) { ctx.data.downhill[t] = static_cast<uint8_t>(k); break; }
+        }
+
+        const float depth = filled[t] - ctx.data.elevation[t];
+        if (depth > 0.0f) {
+            ctx.data.flags[t] |= kFlagLake;
+            const uint32_t depthU = static_cast<uint32_t>(depth);
+            ctx.data.waterDepth[t] =
+                static_cast<uint16_t>(depthU < 65535u ? depthU : 65535u);
+        }
+    }
+
     // -------- Pass 2b: flow accumulation (serial, deterministic order) --------
+    // Sort land tiles by FILLED elevation descending (ties by TileId) so each is
+    // processed before its downstream target. Routing follows the filled surface,
+    // so flow is never dropped: it spills over lakes and reaches the sea.
     std::vector<TileId> order;
     order.reserve(totalTiles);
     for (TileId t = 0; t < totalTiles; ++t) {
         if (ctx.data.elevation[t] >= seaLevel) order.push_back(t);
     }
     std::sort(order.begin(), order.end(), [&](TileId a, TileId b) {
-        const float ea = ctx.data.elevation[a];
-        const float eb = ctx.data.elevation[b];
-        if (ea != eb) return ea > eb;
+        if (filled[a] != filled[b]) return filled[a] > filled[b];
         return a < b;
     });
-    ctx.reportProgress(0.90f);
 
     for (size_t i = 0; i < order.size(); ++i) {
         if ((i & 0xFFFFFu) == 0u) throwIfCancelled(ctx);
         const TileId t   = order[i];
         const TileId tgt = downTarget[t];
+        // Flow into an ocean target exits the network; into land it accumulates.
         if (tgt != kInvalidTile && ctx.data.elevation[tgt] >= seaLevel) {
             ctx.data.flowAccum[tgt] += ctx.data.flowAccum[t];
+        }
+    }
+    ctx.reportProgress(0.95f);
+
+    // -------- River flags (after accumulation) --------
+    // Use a quantile cut so the river-tile fraction is resolution-invariant.
+    // Collect land flowAccum values, find the (1 - kRiverLandFraction) quantile,
+    // then flag tiles at or above it. nth_element is O(n) average and preserves
+    // determinism because the quantile is a VALUE, not a per-tile rank (ties at
+    // the boundary are all flagged, which is fine). Guard empty-land.
+    {
+        std::vector<float> landFlow;
+        landFlow.reserve(totalTiles / 2);
+        for (TileId t = 0; t < totalTiles; ++t) {
+            if (ctx.data.elevation[t] >= seaLevel) {
+                landFlow.push_back(ctx.data.flowAccum[t]);
+            }
+        }
+
+        float riverThreshold = std::numeric_limits<float>::max();
+        if (!landFlow.empty()) {
+            // nth_element partitions so element at kth is >= everything before it.
+            // We want the top kRiverLandFraction, so kth = floor((1 - frac) * n).
+            const size_t n    = landFlow.size();
+            const size_t kth  = static_cast<size_t>(
+                static_cast<double>(1.0f - kRiverLandFraction) * static_cast<double>(n));
+            const size_t idx  = kth < n ? kth : n - 1;
+            std::nth_element(landFlow.begin(), landFlow.begin() + static_cast<ptrdiff_t>(idx), landFlow.end());
+            riverThreshold = landFlow[idx];
+        }
+
+        for (TileId t = 0; t < totalTiles; ++t) {
+            if (ctx.data.elevation[t] < seaLevel) continue;
+            if (ctx.data.flowAccum[t] >= riverThreshold) {
+                ctx.data.flags[t] |= kFlagRiver;
+            }
         }
     }
 
     ctx.world.validFields |= static_cast<uint32_t>(WorldField::Precipitation);
     ctx.world.validFields |= static_cast<uint32_t>(WorldField::FlowAccum);
     ctx.world.validFields |= static_cast<uint32_t>(WorldField::Downhill);
+    ctx.world.validFields |= static_cast<uint32_t>(WorldField::WaterDepth);
     ctx.reportProgress(1.0f);
 }
 

@@ -323,4 +323,158 @@ TEST(LandingSite, AllOceanFallsBackToZeroZero) {
     EXPECT_DOUBLE_EQ(site.lonDeg, 0.0);
 }
 
+// --- Water classification (W-3) ---
+//
+// classifyWater reads the tile's own coarse flags plus its immediate neighbors.
+// The makeWorld fixture gives a land block around (0,0) surrounded by ocean, so
+// (0,0) is interior land and a tile far from the coast is dry rain-fed until we
+// set river/lake flags on it.
+
+// An interior land tile with no flags and dry-ish defaults is rain-fed.
+TEST(LandingSiteWater, InteriorDryTileIsRainFed) {
+    auto world = makeWorld(0.0f);
+    TileId tile = world->grid->fromLatLon(0.0, 0.0);
+    ASSERT_EQ(world->data.flags[tile] & (kFlagOcean | kFlagLake), 0); // confirm land
+
+    EXPECT_EQ(classifyWater(*world, tile), WaterClass::RainFed);
+    EXPECT_FALSE(isFreshwater(WaterClass::RainFed));
+}
+
+// kFlagRiver on the tile itself classifies as River (freshwater), outranking
+// everything else.
+TEST(LandingSiteWater, RiverFlagOnTileIsRiver) {
+    auto world = makeWorld(0.0f);
+    world->validFields |= static_cast<uint32_t>(WorldField::FlowAccum);
+    TileId tile = world->grid->fromLatLon(0.0, 0.0);
+    world->data.flags[tile] |= kFlagRiver;
+
+    EXPECT_EQ(classifyWater(*world, tile), WaterClass::River);
+    EXPECT_TRUE(isFreshwater(classifyWater(*world, tile)));
+}
+
+// A river flagged on a NEIGHBOR still counts as a river running through the site.
+TEST(LandingSiteWater, RiverFlagOnNeighborIsRiver) {
+    auto world = makeWorld(0.0f);
+    TileId tile = world->grid->fromLatLon(0.0, 0.0);
+    std::array<TileId, 6> nbrs{};
+    uint32_t count = world->grid->neighbors(tile, nbrs);
+    ASSERT_GT(count, 0u);
+    world->data.flags[nbrs[0]] |= kFlagRiver;
+
+    EXPECT_EQ(classifyWater(*world, tile), WaterClass::River);
+}
+
+// kFlagLake on a neighbor classifies as Lake (freshwater).
+TEST(LandingSiteWater, LakeFlagOnNeighborIsLake) {
+    auto world = makeWorld(0.0f);
+    TileId tile = world->grid->fromLatLon(0.0, 0.0);
+    std::array<TileId, 6> nbrs{};
+    uint32_t count = world->grid->neighbors(tile, nbrs);
+    ASSERT_GT(count, 0u);
+    world->data.flags[nbrs[0]] |= kFlagLake;
+
+    EXPECT_EQ(classifyWater(*world, tile), WaterClass::Lake);
+    EXPECT_TRUE(isFreshwater(classifyWater(*world, tile)));
+}
+
+// A land tile bordering ocean (no river/lake) is coastal saltwater.
+TEST(LandingSiteWater, OceanNeighborWithoutFreshwaterIsCoastal) {
+    auto world = makeWorld(0.0f);
+
+    // Find a land tile in the temperate block that borders ocean.
+    TileId coast = kInvalidTile;
+    for (TileId t = 0; t < world->grid->tileCount(); ++t) {
+        if ((world->data.flags[t] & (kFlagOcean | kFlagLake)) != 0) continue;
+        std::array<TileId, 6> nbrs{};
+        uint32_t count = world->grid->neighbors(t, nbrs);
+        for (uint32_t i = 0; i < count; ++i) {
+            if ((world->data.flags[nbrs[i]] & kFlagOcean) != 0) { coast = t; break; }
+        }
+        if (coast != kInvalidTile) break;
+    }
+    ASSERT_NE(coast, kInvalidTile);
+
+    EXPECT_EQ(classifyWater(*world, coast), WaterClass::Coastal);
+    EXPECT_FALSE(isFreshwater(WaterClass::Coastal));
+}
+
+// Freshwater outranks an adjacent ocean: a coastal tile that also has a river
+// reports River, not Coastal.
+TEST(LandingSiteWater, FreshwaterOutranksCoast) {
+    auto world = makeWorld(0.0f);
+
+    TileId coast = kInvalidTile;
+    for (TileId t = 0; t < world->grid->tileCount(); ++t) {
+        if ((world->data.flags[t] & (kFlagOcean | kFlagLake)) != 0) continue;
+        std::array<TileId, 6> nbrs{};
+        uint32_t count = world->grid->neighbors(t, nbrs);
+        for (uint32_t i = 0; i < count; ++i) {
+            if ((world->data.flags[nbrs[i]] & kFlagOcean) != 0) { coast = t; break; }
+        }
+        if (coast != kInvalidTile) break;
+    }
+    ASSERT_NE(coast, kInvalidTile);
+    world->data.flags[coast] |= kFlagRiver;
+
+    EXPECT_EQ(classifyWater(*world, coast), WaterClass::River);
+}
+
+// --- Habitability rating (W-3) ---
+
+TEST(LandingSiteWater, FreshwaterMildClimateRatesEasy) {
+    auto world = makeWorld(0.0f);
+    world->validFields |= static_cast<uint32_t>(WorldField::TemperatureMean) |
+                          static_cast<uint32_t>(WorldField::Precipitation);
+    TileId tile = world->grid->fromLatLon(0.0, 0.0);
+    world->data.temperatureMean[tile] = 150;   // 15.0 C
+    world->data.precipitation[tile] = 900;     // ample rain
+
+    EXPECT_EQ(rateHabitability(*world, tile, WaterClass::River), Habitability::Easy);
+}
+
+TEST(LandingSiteWater, DryColdRainFedRatesHarsh) {
+    auto world = makeWorld(0.0f);
+    world->validFields |= static_cast<uint32_t>(WorldField::TemperatureMean) |
+                          static_cast<uint32_t>(WorldField::Precipitation);
+    TileId tile = world->grid->fromLatLon(0.0, 0.0);
+    world->data.temperatureMean[tile] = -200;  // -20 C, brutal
+    world->data.precipitation[tile] = 40;      // near-zero rain
+
+    EXPECT_EQ(rateHabitability(*world, tile, WaterClass::RainFed), Habitability::Harsh);
+}
+
+// --- findDefaultLandingSite freshwater bias (W-3) ---
+//
+// With a river available in the temperate band, the suggested site must land on
+// freshwater rather than the first bare temperate coast.
+TEST(LandingSite, PrefersFreshwaterOverBareCoast) {
+    auto world = makeWorld(0.0f);
+    world->validFields |= static_cast<uint32_t>(WorldField::FlowAccum);
+
+    // Pick an interior temperate land tile (not coastal) and flag it as a river.
+    TileId river = kInvalidTile;
+    for (TileId t = 0; t < world->grid->tileCount(); ++t) {
+        if ((world->data.flags[t] & (kFlagOcean | kFlagLake)) != 0) continue;
+        double latDeg = 0.0;
+        double lonDeg = 0.0;
+        world->grid->latLonOf(t, latDeg, lonDeg);
+        if (std::abs(latDeg) > 45.0) continue;
+        // Interior: no water neighbor.
+        std::array<TileId, 6> nbrs{};
+        uint32_t count = world->grid->neighbors(t, nbrs);
+        bool interior = true;
+        for (uint32_t i = 0; i < count; ++i) {
+            if ((world->data.flags[nbrs[i]] & (kFlagOcean | kFlagLake)) != 0) interior = false;
+        }
+        if (interior) { river = t; break; }
+    }
+    ASSERT_NE(river, kInvalidTile);
+    world->data.flags[river] |= kFlagRiver;
+
+    LatLon site = findDefaultLandingSite(*world);
+    TileId chosen = world->grid->fromLatLon(site.latDeg, site.lonDeg);
+    EXPECT_EQ(classifyWater(*world, chosen), WaterClass::River)
+        << "default site should land on freshwater when available";
+}
+
 } // namespace worldgen

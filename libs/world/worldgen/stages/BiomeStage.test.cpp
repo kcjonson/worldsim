@@ -316,7 +316,7 @@ TEST(BiomeStage, WetlandDrainageTrigger) {
     // predicate — it should still be wetland because it's flat, NOT because
     // of flowAccum.
     const TileId highFlow = w.grid.fromLatLon(5.0, 80.0);
-    w.world.data.flowAccum[highFlow] = kRiverFlowThreshold + 10.0f;
+    w.world.data.flowAccum[highFlow] = 40.0f; // well into "would-be-river" territory
     w.world.data.downhill[sink] = 0xFF;
 
     w.runBiome();
@@ -379,7 +379,7 @@ TEST(BiomeStage, RiverTrunkIsNotWetland) {
 
     // High-flowAccum tile with a downhill direction (not a sink) on steep terrain.
     const TileId trunk = w.grid.fromLatLon(10.0, 50.0);
-    w.world.data.flowAccum[trunk] = kRiverFlowThreshold * 10.0f;
+    w.world.data.flowAccum[trunk] = 300.0f; // well above any river threshold
     // downhill[trunk] already != 0xFF from fillDrainage(0, 0) — keep it.
 
     w.runBiome();
@@ -604,7 +604,10 @@ TEST(BiomeStageHeavy, DeterministicAcrossThreadCounts) {
 
 TEST(BiomeStageHeavy, WorldSummaryFullPipeline) {
     PlanetParams params = PlanetParams::preset(Preset::EarthLike);
-    params.gridSubdivision = 12;
+    // n=48: rivers are flagged as the top kRiverLandFraction of land by flowAccum,
+    // so the fraction is stable across resolutions. n=48 produces healthy trunks
+    // and a stable riverTileCount > 0.
+    params.gridSubdivision = 48;
     params.seed = 0xB10BE5EED12345ULL;
 
     PlanetGenerator gen;

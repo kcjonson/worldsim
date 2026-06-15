@@ -4,11 +4,12 @@
 
 #include "GameStartConfig.h"
 #include "SceneTypes.h"
+#include "scenes/landing/LandingSiteDetailsModel.h"
+#include "scenes/landing/LandingSiteDetailsPanel.h"
 #include "scenes/shared/GlobeView.h"
 
 #include <GL/glew.h>
 
-#include <worldgen/data/Biome.h>
 #include <worldgen/data/WorldData.h>
 #include <worldgen/io/PlanetIO.h>
 #include <worldgen/sampling/LandingSite.h>
@@ -64,6 +65,7 @@ class LandingSiteScene : public engine::IScene {
 		auto suggested = worldgen::findDefaultLandingSite(*config->world);
 		site = {static_cast<float>(suggested.latDeg), static_cast<float>(suggested.lonDeg)};
 		siteValid = true;
+		refreshDetails();
 
 		buildUI();
 	}
@@ -159,6 +161,9 @@ class LandingSiteScene : public engine::IScene {
 	bool                 siteValid{false};
 	std::string          pickHint;
 
+	world_sim::LandingSiteDetails      details;
+	world_sim::LandingSiteDetailsPanel detailsPanel;
+
 	std::unique_ptr<UI::Button> confirmButton;
 	std::unique_ptr<UI::Button> backButton;
 
@@ -202,6 +207,7 @@ class LandingSiteScene : public engine::IScene {
 		site = picked;
 		siteValid = true;
 		pickHint.clear();
+		refreshDetails();
 		LOG_INFO(Game, "LandingSiteScene: selected lat=%.2f lon=%.2f tile=%u",
 		         static_cast<double>(picked.latDeg),
 		         static_cast<double>(picked.lonDeg),
@@ -248,44 +254,35 @@ class LandingSiteScene : public engine::IScene {
 		hint.render();
 	}
 
+	void refreshDetails() {
+		if (siteValid && config && config->world) {
+			details = world_sim::buildLandingSiteDetails(
+				*config->world, site.latDeg, site.lonDeg);
+		}
+	}
+
 	void renderSiteInfo(const Foundation::Rect& rect) {
-		std::string info;
+		// Details pane: top-right of the globe area, non-modal so the globe and
+		// the marker stay visible. Inset from the edge to clear the ESC hint row.
 		if (siteValid) {
-			info = std::format("Landing site: {:.2f}{}, {:.2f}{}",
-				std::abs(site.latDeg), site.latDeg >= 0.0F ? "N" : "S",
-				std::abs(site.lonDeg), site.lonDeg >= 0.0F ? "E" : "W");
-
-			const auto& world = *config->world;
-			glm::vec3 unit = planetview::latLonToUnitSphere(site.latDeg, site.lonDeg);
-			worldgen::TileId tile = world.grid->fromUnitVector(
-				worldgen::Vec3d{unit.x, unit.y, unit.z});
-
-			if (hasField(world, worldgen::WorldField::Biome) && tile < world.data.biome.size()) {
-				info += std::format("  |  Biome: {}",
-					worldgen::biomeToString(static_cast<worldgen::Biome>(world.data.biome[tile])));
-			}
-			if (hasField(world, worldgen::WorldField::Elevation) && tile < world.data.elevation.size()) {
-				info += std::format("  |  Elevation: {:.0f}m",
-					world.data.elevation[tile] - world.seaLevelMeters);
-			}
+			detailsPanel.render(details, rect.right() - 12.0F, rect.y + 12.0F);
 		}
+
+		// Pick errors (e.g. clicking water) surface as a short hint at the
+		// bottom; selecting a valid tile clears it.
 		if (!pickHint.empty()) {
-			info += (info.empty() ? "" : "    ") + pickHint;
+			UI::Text text(UI::Text::Args{
+				.position = {rect.x + rect.width * 0.5F, viewportH - 38.0F},
+				.text = pickHint,
+				.style = {
+					.color = Foundation::Color{0.95F, 0.75F, 0.3F, 1.0F},
+					.fontSize = 14.0F,
+					.hAlign = Foundation::HorizontalAlign::Center,
+					.vAlign = Foundation::VerticalAlign::Middle,
+				},
+			});
+			text.render();
 		}
-
-		UI::Text text(UI::Text::Args{
-			.position = {rect.x + rect.width * 0.5F, viewportH - 38.0F},
-			.text = info,
-			.style = {
-				.color = pickHint.empty()
-					? Foundation::Color{0.8F, 0.8F, 0.8F, 1.0F}
-					: Foundation::Color{0.95F, 0.75F, 0.3F, 1.0F},
-				.fontSize = 14.0F,
-				.hAlign = Foundation::HorizontalAlign::Center,
-				.vAlign = Foundation::VerticalAlign::Middle,
-			},
-		});
-		text.render();
 	}
 
 	void goBack() {

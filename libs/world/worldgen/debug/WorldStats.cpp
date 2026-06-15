@@ -771,6 +771,68 @@ WorldStats computeWorldStats(const GeneratedWorld& world) {
             : 0.0f;
     }
 
+    // ---- Water / drainage stats ----
+    {
+        // Land water stats are over DRY land (non-ocean, non-lake). Count that
+        // denominator locally here rather than reusing s.landTileCount: the numerators
+        // below skip lake tiles, so the denominator must too, or the fractions skew.
+        uint32_t landCount   = 0;
+        uint32_t riverCount  = 0;
+        uint32_t sinkCount   = 0;
+        uint32_t lakeCount   = 0;
+        uint32_t waterNearby = 0;
+        double   flowSum     = 0.0;
+        float    flowMax     = 0.0f;
+
+        std::array<TileId, 6> nbrs{};
+        for (uint32_t t = 0; t < N; ++t) {
+            const uint8_t f = world.data.flags[t];
+            if (f & kFlagOcean) continue;                  // ocean: not land
+            if (f & kFlagLake) { ++lakeCount; continue; }  // lake is water, not dry land
+
+            ++landCount; // dry land: the population the land fractions below are over
+
+            const float flow = world.data.flowAccum[t];
+            flowSum += static_cast<double>(flow);
+            if (flow > flowMax) flowMax = flow;
+
+            const bool isRiver = (f & kFlagRiver) != 0;
+            const bool isSink  = (world.data.downhill[t] == 0xFFu);
+
+            if (isRiver) ++riverCount;
+            if (isSink)  ++sinkCount;
+
+            // water-nearby: river tile, sink tile, or has an ocean/lake neighbor
+            if (isRiver || isSink) {
+                ++waterNearby;
+            } else {
+                uint32_t cnt = grid.neighbors(t, nbrs);
+                for (uint32_t k = 0; k < cnt; ++k) {
+                    uint8_t nf = world.data.flags[nbrs[k]];
+                    if (nf & (kFlagOcean | kFlagLake)) { ++waterNearby; break; }
+                }
+            }
+        }
+
+        s.sinkTileCount            = sinkCount;
+        s.maxFlowAccum             = flowMax;
+        s.meanFlowAccumLand        = (landCount > 0)
+            ? static_cast<float>(flowSum / static_cast<double>(landCount))
+            : 0.0f;
+        s.riverTileFraction        = (landCount > 0)
+            ? static_cast<float>(riverCount)  / static_cast<float>(landCount)
+            : 0.0f;
+        s.endorheicSinkFraction    = (landCount > 0)
+            ? static_cast<float>(sinkCount)   / static_cast<float>(landCount)
+            : 0.0f;
+        s.lakeTileFraction         = (N > 0)
+            ? static_cast<float>(lakeCount)   / static_cast<float>(N)
+            : 0.0f;
+        s.landWithWaterNearbyFraction = (landCount > 0)
+            ? static_cast<float>(waterNearby) / static_cast<float>(landCount)
+            : 0.0f;
+    }
+
     return s;
 }
 

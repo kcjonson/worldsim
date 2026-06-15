@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2026-06-14 (Construction Epic F1 openings — doors/windows place/build/render-with-gap/select/demolish, interim visuals, on feature/construction-openings; Epic E rooms #140, Climate/biome/shelf retune #139, heavy worldgen test split #141, Epic D walls #138 landed on main)
+Last Updated: 2026-06-14 (Water Availability epic — drainage fix + Hydrology globe mode + landing-site water pane, PR #144; on main: Construction Epic F1 openings #142, Epic E rooms #140, Climate/biome/shelf retune #139, heavy worldgen test split #141, Epic D walls #138)
 
 ## Epic/Story/Task Template
 
@@ -435,6 +435,22 @@ while (running) {
 ---
 
 ## In Progress Epics
+
+### Water Availability (worldgen + landing UX)
+**Spec/Documentation:** `.claude/plans/water-hydrology.md`
+**Dependencies:** Climate/biome retune (complete)
+**Status:** in progress
+
+**Goal:** Fix the drainage network (depression routing so flow reaches the sea or ponds into basins; set the dead kFlagRiver/kFlagLake coarse flags) and tell the player whether a landing site has fresh water, via a landing-site details pane + a globe Hydrology color mode. Worldgen stays coarse (water amount + direction); actual river/lake geometry is computed later at chunk load (continuous-curve distance field). Erosion and 2D river rendering are the following epics.
+
+**Tasks:**
+- [ ] W-0: water stats baseline (WorldStats + worldgen-cli)
+- [ ] W-1: drainage fix — depression routing through basins + coarse kFlagRiver/kFlagLake + basin spill levels
+- [ ] W-2: globe Hydrology color mode (rivers from flowAccum, lakes from kFlagLake)
+- [ ] W-3: landing-site water signal + details pane (coarse reliable: river/lake on tile-or-neighbor, coast, rain-fed) — USER TEST GATE
+- [ ] W-4: docs + PR
+
+---
 
 ### World Generation & Creator
 **Spec/Documentation:** `/docs/design/features/world-generation/`, `.claude/plans/world-generation.md`

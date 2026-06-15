@@ -76,6 +76,17 @@ struct WorldStats {
     // Fraction of continental-crust tiles (kFlagContinentalCrust) that sit
     // below sea level.  Measures how much shelf the terrain stage produced.
     float shelfSubmergedFraction{};
+
+    // Water / drainage stats.  All fractions are over LAND tiles (tiles without
+    // kFlagOcean) unless noted.  Captured pre-fix so W-1 has a before/after.
+    float    riverTileFraction{};        // land tiles with kFlagRiver set (~kRiverLandFraction)
+    uint32_t sinkTileCount{};           // land tiles with downhill == 0xFF (inland sinks)
+    float    endorheicSinkFraction{};   // sinkTileCount / landTileCount
+    float    lakeTileFraction{};        // kFlagLake tiles / ALL tiles (surface fraction, not over land; 0 pre-W1)
+    float    maxFlowAccum{};            // max flowAccum across all land tiles
+    float    meanFlowAccumLand{};       // mean flowAccum across land tiles
+    float    landWithWaterNearbyFraction{}; // land tiles that are a river OR sink OR
+                                            // have an ocean/lake neighbor
 };
 
 // Compute WorldStats from a completed GeneratedWorld.

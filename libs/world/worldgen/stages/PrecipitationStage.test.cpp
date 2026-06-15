@@ -335,16 +335,19 @@ TEST(PrecipitationStage, RainShadowScalesWithWidth) {
 }
 
 // ============================================================================
-// Downhill: steepest strictly-lower neighbor, sinks and ocean are 0xFF
+// Depression routing (W-1): ocean tiles are 0xFF, every land tile routes
+// downstream to the sea (no dropped flow), and a hand-made pit is filled and
+// drained over its spill rather than left as a sink. The pit carries kFlagLake.
 // ============================================================================
 
-TEST(PrecipitationStage, DownhillSteepestNeighborAndSinks) {
+TEST(PrecipitationStage, DepressionRoutingFillsPitsAndReachesOcean) {
     TestWorld w;
-    // Northern hemisphere land sloping down toward the equator; southern
-    // hemisphere ocean.
+    // Northern hemisphere land sloping down toward the equatorial coast; southern
+    // hemisphere ocean. Every land tile must therefore reach the sea.
     w.setElevation([](double lat, double) { return lat * 60.0; });
 
-    // Hand-made pit: strictly below all its neighbors -> sink.
+    // Hand-made pit: strictly below all its neighbors. Pre-W1 this was a sink;
+    // now priority-flood fills it to its spill and routes flow out of it.
     const TileId pit = w.grid.fromLatLon(45.0, 90.0);
     w.world.data.elevation[pit] = 1.0f;
 
@@ -352,34 +355,42 @@ TEST(PrecipitationStage, DownhillSteepestNeighborAndSinks) {
     w.runPrecipitation();
 
     const auto& data = w.world.data;
-    for (TileId t = 0; t < w.grid.tileCount(); ++t) {
-        std::array<TileId, 6> nbs{};
-        const uint32_t cnt = w.grid.neighbors(t, nbs);
+    const float seaLevel = w.world.seaLevelMeters;
 
-        if (data.elevation[t] < w.world.seaLevelMeters) {
+    for (TileId t = 0; t < w.grid.tileCount(); ++t) {
+        if (data.elevation[t] < seaLevel) {
             EXPECT_EQ(data.downhill[t], 0xFFu) << "ocean tile " << t;
             EXPECT_EQ(data.flowAccum[t], 0.0f) << "ocean tile " << t;
             continue;
         }
 
-        // Reference: strictly lowest neighbor, ties by lowest TileId.
-        float    bestE   = data.elevation[t];
-        uint32_t bestIdx = 0xFFu;
-        TileId   bestId  = kInvalidTile;
-        for (uint32_t k = 0; k < cnt; ++k) {
-            const float e = data.elevation[nbs[k]];
-            if (e < bestE || (bestIdx != 0xFFu && e == bestE && nbs[k] < bestId)) {
-                bestE = e; bestIdx = k; bestId = nbs[k];
-            }
+        // Land downhill must index a real neighbor and route, in finitely many
+        // hops, to a tile below sea level. (This land slopes to the equator coast,
+        // so no genuine endorheic basin exists; every tile reaches the ocean.)
+        const uint8_t dh = data.downhill[t];
+        ASSERT_NE(dh, 0xFFu) << "land tile " << t << " left as a sink (flow dropped)";
+
+        TileId cur = t;
+        bool reachedSea = false;
+        const uint32_t maxHops = w.grid.tileCount() + 8u;
+        for (uint32_t hop = 0; hop < maxHops; ++hop) {
+            std::array<TileId, 6> nbs{};
+            const uint32_t cnt = w.grid.neighbors(cur, nbs);
+            const uint8_t cdh = data.downhill[cur];
+            if (cdh == 0xFFu) break; // would-be sink (none expected here)
+            ASSERT_LT(cdh, cnt) << "downhill index out of range at " << cur;
+            const TileId next = nbs[cdh];
+            if (data.elevation[next] < seaLevel) { reachedSea = true; break; }
+            cur = next;
         }
-        EXPECT_EQ(data.downhill[t], static_cast<uint8_t>(bestIdx))
-            << "tile " << t;
-        if (bestIdx != 0xFFu) {
-            EXPECT_LT(bestIdx, cnt);
-        }
+        EXPECT_TRUE(reachedSea) << "land tile " << t << " never routed to the sea";
     }
 
-    EXPECT_EQ(data.downhill[pit], 0xFFu) << "local minimum must be a sink";
+    // The pit is no longer a sink: it has a downstream route and is flagged as a
+    // (ponded) lake tile with a positive spill depth in waterDepth.
+    EXPECT_NE(data.downhill[pit], 0xFFu) << "pit must be filled and routed, not a sink";
+    EXPECT_NE(data.flags[pit] & kFlagLake, 0) << "filled pit must carry kFlagLake";
+    EXPECT_GT(data.waterDepth[pit], 0u) << "filled pit must store a spill depth";
 }
 
 // ============================================================================
@@ -444,7 +455,8 @@ TEST(PrecipitationStage, DeterministicAcrossThreadCounts) {
 
 // ============================================================================
 // Field ownership: PrecipitationStage sets exactly Precipitation|FlowAccum|
-// Downhill; SnowStage no longer claims FlowAccum/Downhill.
+// Downhill|WaterDepth (W-1 stores lake spill levels in waterDepth). SnowStage
+// claims only Flags and SnowCover.
 // ============================================================================
 
 TEST(PrecipitationStage, ValidFieldsOwnership) {
@@ -457,7 +469,8 @@ TEST(PrecipitationStage, ValidFieldsOwnership) {
     EXPECT_EQ(w.world.validFields,
               fieldBit(WorldField::Precipitation) |
               fieldBit(WorldField::FlowAccum) |
-              fieldBit(WorldField::Downhill));
+              fieldBit(WorldField::Downhill) |
+              fieldBit(WorldField::WaterDepth));
 
     const uint32_t beforeSnow = w.world.validFields;
     SnowStage snow;

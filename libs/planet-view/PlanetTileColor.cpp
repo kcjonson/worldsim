@@ -5,6 +5,7 @@
 #include <world/worldgen/debug/ColorMaps.h>
 
 #include <algorithm>
+#include <cmath>
 
 namespace planetview {
 
@@ -115,6 +116,44 @@ RGBA8 colorForTile(uint32_t tileId, ColorMode mode,
                 }
             }
             return base;
+        }
+        case ColorMode::Hydrology: {
+            // Oceans: depth-shaded blue, same as Terrain, so oceans read normally.
+            if (hasField(validFields, worldgen::WorldField::Elevation)) {
+                float elev = data.elevation[tileId];
+                if (elev < seaLevelMeters) {
+                    return toRGBA(worldgen::elevationColor(elev, seaLevelMeters));
+                }
+            }
+
+            // Flags-driven water features, checked before the drainage gradient.
+            if (hasField(validFields, worldgen::WorldField::Flags)) {
+                uint8_t fl = data.flags[tileId];
+                if (fl & worldgen::kFlagLake) {
+                    // Lake: bright cyan-blue, distinct from ocean and rivers.
+                    return {60, 190, 230, 255};
+                }
+                if (fl & worldgen::kFlagRiver) {
+                    // River: strong saturated blue.
+                    return {30, 100, 220, 255};
+                }
+            }
+
+            // Dry land: muted warm-gray base tinted by log(flowAccum+1) so
+            // sub-river tributaries appear as a faint drainage gradient.
+            // log scale: flowAccum of ~1 -> t~0 (neutral), ~1000 -> t~0.5, ~1e6 -> t~1.
+            float flow = 0.0f;
+            if (hasField(validFields, worldgen::WorldField::FlowAccum) &&
+                tileId < data.flowAccum.size()) {
+                flow = data.flowAccum[tileId];
+            }
+            float t = std::log(flow + 1.0f) / 14.0f; // log(1e6)~13.8
+            if (t > 1.0f) t = 1.0f;
+            // Neutral land (105,100,90) -> faint blue-teal tint at high drainage.
+            auto r = static_cast<uint8_t>(105 - static_cast<int>(t * 50));
+            auto g = static_cast<uint8_t>(100 - static_cast<int>(t * 10));
+            auto b = static_cast<uint8_t>( 90 + static_cast<int>(t * 80));
+            return {r, g, b, 255};
         }
         default:
             return neutralGray();

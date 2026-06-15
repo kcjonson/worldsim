@@ -59,6 +59,7 @@ const char* colorModeName(ColorMode m) {
         case ColorMode::Plates:        return "Plates";
         case ColorMode::Snow:          return "Snow";
         case ColorMode::Combined:      return "Combined";
+        case ColorMode::Hydrology:     return "Hydrology";
         default:                       return "Unknown";
     }
 }

@@ -19,12 +19,17 @@ inline constexpr uint8_t kFlagPermanentSnow   = 0x10;
 // Driven by the simulated TectonicHistory crustType field; oceanic tiles never carry this.
 inline constexpr uint8_t kFlagContinentalCrust = 0x40;
 
-// A tile is a river tile when flowAccum (accumulated upstream drainage,
-// seeded at precipitation/1000 per land tile) reaches this value — roughly a
-// drainage basin of a half-dozen wet tiles. Shared by WorldSummary's
-// riverTileCount and BiomeStage's wetland drainage test so "river" means the
-// same thing everywhere.
-inline constexpr float kRiverFlowThreshold = 5.0f;
+// Fraction of LAND tiles flagged as river (kFlagRiver). PrecipitationStage
+// computes the flowAccum quantile at (1 - kRiverLandFraction) over land tiles
+// and sets kFlagRiver where flowAccum >= that value, so the river fraction is
+// pinned to approximately this constant regardless of grid resolution. A fixed
+// flow-magnitude threshold cannot do this: flowAccum is a precip-weighted
+// upstream tile count that scales with total tile count, so the same magnitude
+// flags a growing fraction of land as resolution rises.
+//
+// 0.04 = top 4% of land by drainage = major rivers + main tributaries.
+// See W-1.5 in .claude/plans/water-hydrology.md.
+inline constexpr float kRiverLandFraction = 0.04f;
 
 // Boundary type enum for data.boundaryType (uint8_t per tile).
 // Written by TerrainStage; read by any consumer that interprets plate boundaries.

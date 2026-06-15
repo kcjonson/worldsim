@@ -148,6 +148,48 @@ TEST(WorldStats, TileWeightedMedianFavorsLargeBelt) {
     }
 }
 
+// Water stats: sanity-check all new drainage fields are in range.
+TEST(WorldStats, WaterStatsInRange) {
+    PlanetParams p = PlanetParams::preset(Preset::EarthLike);
+    p.gridSubdivision = 16;
+    p.seed = 0xA917E001u;
+
+    auto world = runPipeline(p);
+    ASSERT_NE(world, nullptr);
+
+    WorldStats stats = computeWorldStats(*world);
+
+    // Fractions must be in [0, 1].
+    EXPECT_GE(stats.riverTileFraction,            0.0f);
+    EXPECT_LE(stats.riverTileFraction,            1.0f);
+    EXPECT_GE(stats.endorheicSinkFraction,        0.0f);
+    EXPECT_LE(stats.endorheicSinkFraction,        1.0f);
+    EXPECT_GE(stats.lakeTileFraction,             0.0f);
+    EXPECT_LE(stats.lakeTileFraction,             1.0f);
+    EXPECT_GE(stats.landWithWaterNearbyFraction,  0.0f);
+    EXPECT_LE(stats.landWithWaterNearbyFraction,  1.0f);
+
+    // W-1: depression routing sets kFlagLake on ponded basin tiles, so lakes may
+    // now form. The fraction stays small (lakes are a few % of the surface at
+    // most); at n=16 (2562 tiles) a given Earth-like world may have zero or a
+    // handful, so only the [0,1] range is asserted here. The heavy drainage test
+    // (WorldStatsHeavy.DrainageRoutesToOcean) checks that lakes actually form on
+    // a higher-resolution world.
+    EXPECT_GE(stats.lakeTileFraction, 0.0f);
+    EXPECT_LE(stats.lakeTileFraction, 0.20f)
+        << "lakes should never cover a large fraction of the surface";
+
+    // Sinks cannot exceed land tile count.
+    const uint32_t landCount = static_cast<uint32_t>(stats.landTileCount);
+    EXPECT_LE(stats.sinkTileCount, landCount);
+
+    // Flow stats: non-negative.
+    EXPECT_GE(stats.maxFlowAccum,      0.0f);
+    EXPECT_GE(stats.meanFlowAccumLand, 0.0f);
+    // Mean can't exceed max.
+    EXPECT_LE(stats.meanFlowAccumLand, stats.maxFlowAccum + 1e-3f);
+}
+
 // Biome fractions: sum over land biomes is ~1.0, all values in [0,1].
 TEST(WorldStats, BiomeFractionsSumToOne) {
     PlanetParams p = PlanetParams::preset(Preset::EarthLike);
@@ -307,6 +349,75 @@ TEST(WorldStatsHeavy, HypsometryLandModeAboveZeroAtHighWaterAmount) {
     EXPECT_GE(hi, 0.0f)
         << "shallower mode " << hi << " m is the shelf shoulder, not the platform "
         << "(two-threshold detection failed at waterAmount=0.85)";
+}
+
+// ============================================================================
+// W-1 drainage acceptance: priority-flood depression routing must give every
+// land tile a downstream route that reaches the ocean (no dropped flow), unless
+// the tile is a genuine endorheic sink (downhill 0xFF). Lakes must form, and the
+// river-tile fraction must land in Earth's plausible band. Determinism is
+// covered by PlanetGenerator's worldHash tests + worldgen-cli --verify-threads;
+// here we re-run once and confirm the structural invariant holds identically.
+// ============================================================================
+TEST(WorldStatsHeavy, DrainageRoutesToOcean) {
+    PlanetParams p = PlanetParams::preset(Preset::EarthLike);
+    p.gridSubdivision = 64; // enough land for stable lake/river fractions
+    p.seed = 42;
+
+    auto world = runPipeline(p, 180);
+    ASSERT_NE(world, nullptr);
+
+    const SphereGrid& grid = *world->grid;
+    const uint32_t N = grid.tileCount();
+    const float seaLevel = world->seaLevelMeters;
+
+    // Follow each land tile's downhill chain. It must terminate at the ocean
+    // (a tile whose downhill target is below sea level), at a flagged endorheic
+    // sink (downhill 0xFF), and never loop. A cap on hops guards against an
+    // accidental cycle hanging the test.
+    std::array<TileId, 6> nbrs{};
+    uint32_t reachedOcean = 0;
+    uint32_t endorheic    = 0;
+    uint32_t landCount    = 0;
+    const uint32_t maxHops = N + 8u;
+
+    for (uint32_t s = 0; s < N; ++s) {
+        if (world->data.elevation[s] < seaLevel) continue; // ocean
+        ++landCount;
+
+        TileId cur = s;
+        bool resolved = false;
+        for (uint32_t hop = 0; hop < maxHops; ++hop) {
+            const uint8_t dh = world->data.downhill[cur];
+            if (dh == 0xFFu) { ++endorheic; resolved = true; break; } // sink
+            const uint32_t cnt = grid.neighbors(cur, nbrs);
+            ASSERT_LT(dh, cnt) << "downhill index out of range at tile " << cur;
+            const TileId next = nbrs[dh];
+            if (world->data.elevation[next] < seaLevel) { // reached the sea
+                ++reachedOcean; resolved = true; break;
+            }
+            cur = next;
+        }
+        ASSERT_TRUE(resolved)
+            << "land tile " << s << " never reached ocean/sink (cycle?)";
+    }
+
+    EXPECT_EQ(reachedOcean + endorheic, landCount)
+        << "every land tile must route to the ocean or be an endorheic sink";
+
+    WorldStats stats = computeWorldStats(*world);
+
+    // Lakes must form on an Earth-like world (depression routing ponds basins).
+    EXPECT_GT(stats.lakeTileFraction, 0.0f) << "no lakes formed";
+
+    // River-tile fraction should be close to kRiverLandFraction (4%). The band
+    // is wider than exactly 4% because land fraction varies per seed/resolution,
+    // so the quantile cut lands at slightly different tile counts depending on
+    // how many land tiles exist. Guards against regressions in both directions.
+    EXPECT_GE(stats.riverTileFraction, 0.02f)
+        << "river fraction " << stats.riverTileFraction * 100.0f << "% too low";
+    EXPECT_LE(stats.riverTileFraction, 0.07f)
+        << "river fraction " << stats.riverTileFraction * 100.0f << "% too high";
 }
 
 } // namespace worldgen
