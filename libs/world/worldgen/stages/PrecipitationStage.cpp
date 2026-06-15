@@ -598,13 +598,15 @@ void PrecipitationStage::run(StageContext& ctx) {
             if (nbs[k] == parent) { ctx.data.downhill[t] = static_cast<uint8_t>(k); break; }
         }
 
-        // Round the spill height and only flag a lake once it rounds to >= 1 m, so a
-        // flagged lake always carries a meaningful stored depth. Truncating toward zero
-        // would flag sub-1 m spills as lakes while storing waterDepth 0, leaving the chunk
-        // layer nothing to fill; a sub-1 m pond over a multi-km coarse tile is negligible.
+        // Flag a lake only once the spill height rounds to >= 1 m (depth >= 0.5 m), so a
+        // flagged lake always carries a meaningful stored depth. Truncating toward zero would
+        // flag sub-1 m spills as lakes while storing waterDepth 0, leaving the chunk layer
+        // nothing to fill; a sub-1 m pond over a multi-km coarse tile is negligible. Guarding
+        // on depth first also skips the cast for the common shallow case and keeps the
+        // negative (never happens for land, filled >= terrain) out of the unsigned cast.
         const float depth = filled[t] - ctx.data.elevation[t];
-        const uint32_t depthU = static_cast<uint32_t>(depth + 0.5f); // round to nearest meter
-        if (depthU >= 1u) {
+        if (depth >= 0.5f) {
+            const uint32_t depthU = static_cast<uint32_t>(depth + 0.5f); // round to nearest meter
             ctx.data.flags[t] |= kFlagLake;
             ctx.data.waterDepth[t] =
                 static_cast<uint16_t>(depthU < 65535u ? depthU : 65535u);
