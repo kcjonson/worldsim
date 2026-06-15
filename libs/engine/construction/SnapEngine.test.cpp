@@ -157,7 +157,7 @@ TEST(SnapEngine, WallSnapFirstPointFreeWhenNoGeometry) {
 	SnappingConfig	  cfg = defaults();
 	ConstructionWorld world;
 	SnapEngine		  engine(cfg, world);
-	auto			  r = engine.snapWall({}, {3.3F, 7.1F}, /*freeform=*/false);
+	auto			  r = engine.snapWall({}, {3.3F, 7.1F}, /*freeform=*/false, /*wallHalfThicknessMm=*/100);
 	EXPECT_EQ(r.kind, SnapKind::None);
 	EXPECT_FLOAT_EQ(r.point.x, 3.3F);
 	EXPECT_FLOAT_EQ(r.point.y, 7.1F);
@@ -171,7 +171,7 @@ TEST(SnapEngine, WallSnapsToWallEndpoint) {
 
 	SnapEngine engine(cfg, world);
 	// Cursor 0.2 m from the wall endpoint (8,2), inside the 0.4 m vertex radius.
-	auto r = engine.snapWall({}, {8.15F, 2.1F}, /*freeform=*/false);
+	auto r = engine.snapWall({}, {8.15F, 2.1F}, /*freeform=*/false, /*wallHalfThicknessMm=*/100);
 	EXPECT_EQ(r.kind, SnapKind::WallEndpoint);
 	EXPECT_FLOAT_EQ(r.point.x, 8.0F);
 	EXPECT_FLOAT_EQ(r.point.y, 2.0F);
@@ -191,7 +191,7 @@ TEST(SnapEngine, WallEndpointBeatsFoundationVertex) {
 	ASSERT_TRUE(world.commitSegment(mm(0.0F, 0.0F), mm(5.0F, 3.0F), "Wood", "Standard", 1).ok());
 
 	SnapEngine engine(cfg, world);
-	auto	   r = engine.snapWall({}, {0.1F, 0.1F}, /*freeform=*/false);
+	auto	   r = engine.snapWall({}, {0.1F, 0.1F}, /*freeform=*/false, /*wallHalfThicknessMm=*/100);
 	EXPECT_EQ(r.kind, SnapKind::WallEndpoint);
 	EXPECT_FLOAT_EQ(r.point.x, 0.0F);
 	EXPECT_FLOAT_EQ(r.point.y, 0.0F);
@@ -204,11 +204,18 @@ TEST(SnapEngine, WallSnapsToFoundationVertexWhenNoWallNear) {
 	buildHostAndWall(world, host); // wall is at y=2, far from the (10,10) corner
 
 	SnapEngine engine(cfg, world);
-	// Cursor near the (10,10) foundation corner, no wall vertex within radius.
-	auto r = engine.snapWall({}, {10.1F, 9.9F}, /*freeform=*/false);
+	// Cursor near the (10,10) foundation corner, no wall vertex within radius. The
+	// wall tool insets the corner to the outer-face-flush miter (inward by the
+	// 0.1 m half-thickness plus a small safety bias), so the snapped centerline sits
+	// ON the foundation rather than on the perimeter. The miter of a right-angle
+	// corner is inset equally on both axes: ~(9.9, 9.9), strictly inside the ring.
+	auto r = engine.snapWall({}, {10.1F, 9.9F}, /*freeform=*/false, /*wallHalfThicknessMm=*/100);
 	EXPECT_EQ(r.kind, SnapKind::Vertex);
-	EXPECT_FLOAT_EQ(r.point.x, 10.0F);
-	EXPECT_FLOAT_EQ(r.point.y, 10.0F);
+	EXPECT_LT(r.point.x, 10.0F);
+	EXPECT_LT(r.point.y, 10.0F);
+	EXPECT_NEAR(r.point.x, 9.9F, 0.02F);
+	EXPECT_NEAR(r.point.y, 9.9F, 0.02F);
+	EXPECT_EQ(geometry::pointInPolygon(geometry::quantize(r.point), world.get(host)->ring), geometry::PointInPolygon::Inside);
 }
 
 TEST(SnapEngine, WallSnapsToPointOnWallSegment) {
@@ -220,7 +227,7 @@ TEST(SnapEngine, WallSnapsToPointOnWallSegment) {
 	SnapEngine engine(cfg, world);
 	// Cursor 0.2 m off the wall midpoint (5,2), within edge radius, far from both
 	// endpoints and from any foundation vertex/edge. T-junction target.
-	auto r = engine.snapWall({}, {5.0F, 2.2F}, /*freeform=*/false);
+	auto r = engine.snapWall({}, {5.0F, 2.2F}, /*freeform=*/false, /*wallHalfThicknessMm=*/100);
 	EXPECT_EQ(r.kind, SnapKind::WallSegment);
 	EXPECT_NEAR(r.point.x, 5.0F, 1e-3F);
 	EXPECT_NEAR(r.point.y, 2.0F, 1e-3F);
@@ -242,7 +249,7 @@ TEST(SnapEngine, WallSegmentEndpointDoesNotReportTJunction) {
 	// end. The projection clamps to the endpoint, so this must NOT be WallSegment.
 	// Place it 0.45 m past the end (outside the 0.4 m vertex radius) and 0.1 m off
 	// axis: the perpendicular foot lands past t=1, so no interior point-on-wall.
-	auto r = engine.snapWall({}, {8.45F, 2.1F}, /*freeform=*/false);
+	auto r = engine.snapWall({}, {8.45F, 2.1F}, /*freeform=*/false, /*wallHalfThicknessMm=*/100);
 	EXPECT_NE(r.kind, SnapKind::WallSegment);
 	EXPECT_EQ(r.hitSegment, kInvalidSegment);
 }
@@ -255,7 +262,7 @@ TEST(SnapEngine, WallSegmentMidSpanReportsTJunction) {
 
 	SnapEngine engine(cfg, world);
 	// Mid-span (5,2), perpendicular foot strictly interior: a genuine T-junction.
-	auto r = engine.snapWall({}, {5.0F, 2.25F}, /*freeform=*/false);
+	auto r = engine.snapWall({}, {5.0F, 2.25F}, /*freeform=*/false, /*wallHalfThicknessMm=*/100);
 	EXPECT_EQ(r.kind, SnapKind::WallSegment);
 	EXPECT_NE(r.hitSegment, kInvalidSegment);
 	EXPECT_EQ(r.hitVertex, kInvalidVertex);
@@ -272,7 +279,7 @@ TEST(SnapEngine, WallVertexBeatsPointOnSegment) {
 	SnapEngine engine(cfg, world);
 	// Near the (2,2) endpoint: both a wall-vertex and a point-on-segment target are
 	// in range, the endpoint must win.
-	auto r = engine.snapWall({}, {2.1F, 2.1F}, /*freeform=*/false);
+	auto r = engine.snapWall({}, {2.1F, 2.1F}, /*freeform=*/false, /*wallHalfThicknessMm=*/100);
 	EXPECT_EQ(r.kind, SnapKind::WallEndpoint);
 	EXPECT_FLOAT_EQ(r.point.x, 2.0F);
 	EXPECT_FLOAT_EQ(r.point.y, 2.0F);
@@ -285,7 +292,7 @@ TEST(SnapEngine, WallAngleSnapOffPreviousChainPoint) {
 	// Chain heading +y; cursor heading +x but a few degrees off snaps to a 90 deg
 	// turn flat off the corner.
 	std::vector<Vec2> points = {{1.0F, 1.0F}, {1.0F, 6.0F}};
-	auto			  r = engine.snapWall(points, {5.0F, 6.25F}, /*freeform=*/false);
+	auto			  r = engine.snapWall(points, {5.0F, 6.25F}, /*freeform=*/false, /*wallHalfThicknessMm=*/100);
 	EXPECT_EQ(r.kind, SnapKind::Angle);
 	EXPECT_NEAR(r.point.y, points.back().y, 1e-3F);
 }
@@ -295,9 +302,82 @@ TEST(SnapEngine, WallFreeformSuppressesAngleSnap) {
 	ConstructionWorld world;
 	SnapEngine		  engine(cfg, world);
 	std::vector<Vec2> points = {{1.0F, 1.0F}};
-	auto			  r = engine.snapWall(points, {6.0F, 1.44F}, /*freeform=*/true);
+	auto			  r = engine.snapWall(points, {6.0F, 1.44F}, /*freeform=*/true, /*wallHalfThicknessMm=*/100);
 	EXPECT_EQ(r.kind, SnapKind::None);
 	EXPECT_FLOAT_EQ(r.point.y, 1.44F);
+}
+
+// --- Outer-face-flush alignment -------------------------------------------
+
+TEST(SnapEngine, WallSnapInsetsFromFoundationEdge) {
+	SnappingConfig	  cfg = defaults(); // edgeSnapRadius 0.3 m
+	ConstructionWorld world;
+	std::vector<Vec2> sq = {{0.0F, 0.0F}, {10.0F, 0.0F}, {10.0F, 10.0F}, {0.0F, 10.0F}};
+	auto			  f = world.commitFoundation(sq, "Wood");
+	ASSERT_TRUE(f.ok());
+
+	SnapEngine engine(cfg, world);
+	// Cursor 0.2 m below the bottom-edge midpoint, within edge radius and far from
+	// corners. The wall snap insets inward (+y) by ~0.1 m so the band sits ON the
+	// foundation, instead of landing the centerline on the perimeter (y = 0).
+	auto r = engine.snapWall({}, {5.0F, -0.2F}, /*freeform=*/false, /*wallHalfThicknessMm=*/100);
+	EXPECT_EQ(r.kind, SnapKind::Edge);
+	EXPECT_NEAR(r.point.x, 5.0F, 1e-3F);
+	EXPECT_GT(r.point.y, 0.0F); // pushed inward, not on the boundary
+	EXPECT_NEAR(r.point.y, 0.1F, 0.02F);
+	EXPECT_EQ(geometry::pointInPolygon(geometry::quantize(r.point), world.get(f.id)->ring), geometry::PointInPolygon::Inside);
+}
+
+TEST(SnapEngine, WallSnapZeroThicknessDoesNotInset) {
+	SnappingConfig	  cfg = defaults();
+	ConstructionWorld world;
+	std::vector<Vec2> sq = {{0.0F, 0.0F}, {10.0F, 0.0F}, {10.0F, 10.0F}, {0.0F, 10.0F}};
+	ASSERT_TRUE(world.commitFoundation(sq, "Wood").ok());
+
+	SnapEngine engine(cfg, world);
+	// A zero-thickness preset has no band to keep inside, so the snap lands exactly on
+	// the edge (no inset) -- the degenerate case the validator accepts as on-boundary.
+	auto r = engine.snapWall({}, {5.0F, -0.2F}, /*freeform=*/false, /*wallHalfThicknessMm=*/0);
+	EXPECT_EQ(r.kind, SnapKind::Edge);
+	EXPECT_NEAR(r.point.x, 5.0F, 1e-4F);
+	EXPECT_NEAR(r.point.y, 0.0F, 1e-4F);
+}
+
+TEST(SnapEngine, OuterFaceFlushCornerMitersInward) {
+	ConstructionWorld world;
+	std::vector<Vec2> sq = {{0.0F, 0.0F}, {10.0F, 0.0F}, {10.0F, 10.0F}, {0.0F, 10.0F}};
+	auto			  f = world.commitFoundation(sq, "Wood");
+	ASSERT_TRUE(f.ok());
+	const auto& ring = world.get(f.id)->ring;
+
+	// Right-angle corner (10,10) at index 2: the miter insets equally on both axes.
+	const Vec2 m = outerFaceFlushCorner(ring, 2, /*halfThicknessMm=*/100);
+	EXPECT_LT(m.x, 10.0F);
+	EXPECT_LT(m.y, 10.0F);
+	EXPECT_NEAR(m.x, 9.9F, 0.02F);
+	EXPECT_NEAR(m.y, 9.9F, 0.02F);
+	EXPECT_EQ(geometry::pointInPolygon(geometry::quantize(m), ring), geometry::PointInPolygon::Inside);
+
+	// Zero thickness returns the raw corner unchanged.
+	const Vec2 raw = outerFaceFlushCorner(ring, 2, /*halfThicknessMm=*/0);
+	EXPECT_FLOAT_EQ(raw.x, 10.0F);
+	EXPECT_FLOAT_EQ(raw.y, 10.0F);
+}
+
+TEST(SnapEngine, OuterFaceFlushCornerOnDiagonalFoundationStaysInside) {
+	ConstructionWorld world;
+	// A diamond (square rotated 45 deg): every edge runs diagonally, so the inward
+	// offset is irrational and exercises the millimeter-rounding safety bias.
+	std::vector<Vec2> diamond = {{6.0F, 0.0F}, {12.0F, 6.0F}, {6.0F, 12.0F}, {0.0F, 6.0F}};
+	auto			  f = world.commitFoundation(diamond, "Wood");
+	ASSERT_TRUE(f.ok());
+	const auto& ring = world.get(f.id)->ring;
+
+	for (std::size_t i = 0; i < ring.size(); ++i) {
+		const Vec2 m = outerFaceFlushCorner(ring, i, /*halfThicknessMm=*/100);
+		EXPECT_EQ(geometry::pointInPolygon(geometry::quantize(m), ring), geometry::PointInPolygon::Inside)
+			<< "miter for diamond corner " << i << " must be strictly inside";
+	}
 }
 
 // --- Opening snapping ------------------------------------------------------

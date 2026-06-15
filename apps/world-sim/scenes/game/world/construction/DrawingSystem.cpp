@@ -426,13 +426,16 @@ namespace world_sim {
 	void DrawingSystem::handleWallMove(Foundation::Vec2 world, bool freeform) {
 		auto&		   registry = ConstructionRegistry::Get();
 		ec::SnapEngine snap(registry.snapping(), constructionWorld_);
-		lastSnap_ = snap.snapWall(points_, world, freeform);
+
+		// The snap insets foundation-edge/corner hits by the wall's half-thickness for
+		// outer-face-flush alignment, so resolve the preset first. Without a preset (a
+		// material with no wall config) there is no thickness to measure: snap with no
+		// inset and skip validation below.
+		const auto*		   preset = activePreset();
+		const std::int64_t halfThick = preset != nullptr ? preset->halfThicknessMm : 0;
+		lastSnap_ = snap.snapWall(points_, world, freeform, halfThick);
 		cursor_ = lastSnap_.point;
 
-		// Live validity: the in-progress chain with the snapped cursor appended,
-		// measured against the host foundation's footprint. Without a preset (a
-		// material with no wall config) we can't measure thickness, so skip.
-		const auto* preset = activePreset();
 		if (preset == nullptr) {
 			lastValidation_ = {};
 			return;
@@ -630,8 +633,7 @@ namespace world_sim {
 		const auto&		  ring = foundation->ring;
 		const std::size_t n = ring.size();
 		double			  bestDistSq = std::numeric_limits<double>::max();
-		Foundation::Vec2  bestA{0.0F, 0.0F};
-		Foundation::Vec2  bestB{0.0F, 0.0F};
+		std::size_t		  bestEdge = 0;
 		for (std::size_t i = 0; i < n; ++i) {
 			const Foundation::Vec2 a = geometry::dequantize(ring[i]);
 			const Foundation::Vec2 b = geometry::dequantize(ring[(i + 1) % n]);
@@ -648,10 +650,15 @@ namespace world_sim {
 			const double dSq = (world.x - px) * (world.x - px) + (world.y - py) * (world.y - py);
 			if (dSq < bestDistSq) {
 				bestDistSq = dSq;
-				bestA = a;
-				bestB = b;
+				bestEdge = i;
 			}
 		}
+
+		// Outer-face-flush: the wall spans the two mitered inset corners, not the raw
+		// foundation corners, so its full thickness sits on the foundation (design
+		// "Alignment"). Adjacent edge fills share each corner exactly, joining cleanly.
+		const Foundation::Vec2 bestA = ec::outerFaceFlushCorner(ring, bestEdge, preset->halfThicknessMm);
+		const Foundation::Vec2 bestB = ec::outerFaceFlushCorner(ring, (bestEdge + 1) % n, preset->halfThicknessMm);
 
 		auto&					  registry = ConstructionRegistry::Get();
 		ec::ConstructionValidator validator(registry.constraints(), constructionWorld_);
