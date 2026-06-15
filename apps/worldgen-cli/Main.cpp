@@ -348,7 +348,7 @@ static void writeStatsJson(const std::string& path,
                  static_cast<double>(s.landWithWaterNearbyFraction));
     std::fprintf(fp, "  },\n");
 
-    // Terrain dissection (erosion baseline, E-0).
+    // Terrain dissection metrics (of the fully-generated world).
     std::fprintf(fp, "  \"dissection\": {\n");
     std::fprintf(fp, "    \"hypsometricIntegral\": %.6f,\n",
                  static_cast<double>(s.hypsometricIntegral));
@@ -438,7 +438,7 @@ static void printSummary(const worldgen::WorldStats& s,
                 static_cast<double>(s.endorheicSinkFraction) * 100.0,
                 static_cast<double>(s.lakeTileFraction) * 100.0,
                 static_cast<double>(s.landWithWaterNearbyFraction) * 100.0);
-    std::printf("  Dissection (E-0)   : HI=%.4f  localRelief=%.0f m  drainDens=%.4f km/km2  "
+    std::printf("  Dissection         : HI=%.4f  localRelief=%.0f m  drainDens=%.4f km/km2  "
                 "chanDist2=%.2f%%  beltCrest=%.0f m\n",
                 static_cast<double>(s.hypsometricIntegral),
                 static_cast<double>(s.meanLocalReliefM),

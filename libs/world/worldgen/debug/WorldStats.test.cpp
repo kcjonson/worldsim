@@ -190,8 +190,8 @@ TEST(WorldStats, WaterStatsInRange) {
     EXPECT_LE(stats.meanFlowAccumLand, stats.maxFlowAccum + 1e-3f);
 }
 
-// Terrain dissection (E-0 baseline): all five new metrics must be finite and
-// in sensible ranges on a tiny n=16 world.
+// Terrain dissection metrics: all five must be finite and in sensible ranges on a
+// tiny n=16 world (computed on the fully-generated world).
 TEST(WorldStats, DissectionMetricsInRange) {
     PlanetParams p = PlanetParams::preset(Preset::EarthLike);
     p.gridSubdivision = 16;

@@ -3,6 +3,7 @@
 #include "worldgen/pipeline/GenerationStage.h" // CancelledException
 
 #include <array>
+#include <cassert>
 #include <limits>
 #include <queue>
 
@@ -14,7 +15,9 @@ void routeDepressions(const SphereGrid& grid,
                       std::vector<float>& filled,
                       std::vector<TileId>& receiver,
                       const std::atomic<bool>& cancel) {
-    const TileId totalTiles = static_cast<TileId>(elevation.size());
+    const TileId totalTiles = grid.tileCount();
+    assert(elevation.size() == totalTiles &&
+           "routeDepressions: elevation must be sized to grid.tileCount()");
     filled.assign(totalTiles, std::numeric_limits<float>::infinity());
     receiver.assign(totalTiles, kInvalidTile);
 

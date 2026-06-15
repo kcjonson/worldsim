@@ -833,7 +833,7 @@ WorldStats computeWorldStats(const GeneratedWorld& world) {
             : 0.0f;
     }
 
-    // ---- Terrain dissection (erosion baseline, E-0) ----
+    // ---- Terrain dissection metrics (computed on whatever world is supplied) ----
     {
         // Hypsometric integral: (meanElev - minElev) / (maxElev - minElev) over land.
         float landMinElev =  std::numeric_limits<float>::max();
@@ -975,9 +975,9 @@ WorldStats computeWorldStats(const GeneratedWorld& world) {
             // Mark candidate tiles.
             std::vector<bool> candidate(N, false);
             for (uint32_t t = 0; t < N; ++t) {
-                if ((world.data.flags[t] & kFlagOcean) == 0 &&
+                if ((world.data.flags[t] & (kFlagOcean | kFlagLake)) == 0 &&
                     world.data.elevation[t] > beltThresh) {
-                    candidate[t] = true;
+                    candidate[t] = true; // dry land only, consistent with the other dissection metrics
                 }
             }
 

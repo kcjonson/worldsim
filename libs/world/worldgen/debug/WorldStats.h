@@ -88,9 +88,9 @@ struct WorldStats {
     float    landWithWaterNearbyFraction{}; // land tiles that are a river OR sink OR
                                             // have an ocean/lake neighbor
 
-    // Terrain dissection (erosion baseline).  All metrics are over DRY land
-    // (non-ocean, non-lake) unless noted.  Captured E-0 (pre-erosion) so the
-    // fluvial-erosion epic has a before/after baseline.
+    // Terrain dissection metrics.  All are over DRY land (non-ocean, non-lake)
+    // unless noted, and measure whatever GeneratedWorld is supplied (the CLI and
+    // tests compute them on the fully-generated world, i.e. after erosion).
     float hypsometricIntegral{};         // (meanElev - minElev) / (maxElev - minElev) over land;
                                          // classic geomorphic index, 0..1; erosion lowers it over time
     float meanLocalReliefM{};            // mean over land tiles of (maxNeighborElev - minNeighborElev)
