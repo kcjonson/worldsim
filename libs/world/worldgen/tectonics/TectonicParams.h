@@ -34,6 +34,21 @@ inline constexpr double kHistoryAgeRefYrs = 4.5e9; // Earth age reference
 inline constexpr double kHistoryAgeMin    = 0.4;
 inline constexpr double kHistoryAgeMax    = 1.3;
 
+// --- Plate-size hierarchy (seeding) ---
+// Each seeded plate gets a growth weight that scales how fast its Dijkstra front
+// expands, so weight ~ relative area. A flat uniform draw puts every plate in one
+// size class; Earth's inventory is instead a few large plates plus a long tail of
+// smaller ones (the "broken sheet" power-law: Pacific ~20% down to microplates,
+// Sornette & Pisarenko 2003). We approximate that with weight = min + (max-min)*u*u
+// for u uniform [0,1): the square biases draws toward min, so most plates are small
+// and a few are large. (A square is used rather than an arbitrary exponent so the
+// draw stays det_math-exact across platforms; there is no deterministic pow.) The
+// absolute scale is irrelevant (the flood fills the whole sphere regardless); only
+// the relative spread sets the size distribution. The 0.22 oversized cap
+// (kMaxPlateAreaFrac) still bounds the top, and merges/rifts let it self-organize.
+inline constexpr float kPlateGrowthMin = 0.5f;
+inline constexpr float kPlateGrowthMax = 2.6f;
+
 // Plate surface speeds (cm/yr). Oceanic plates move faster than continental
 // (slab pull dominates ridge push). (Bird 2003 plate catalog; DeMets et al. NUVEL-1A.)
 inline constexpr double kOceanicSpeedMinCmYr     = 4.0;

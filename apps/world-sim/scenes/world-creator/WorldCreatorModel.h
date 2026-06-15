@@ -38,7 +38,7 @@ class WorldCreatorModel {
 	void setStarTemperature(double kelvin);
 	void setSemiMajorAxis(double au);
 	void setEccentricity(double ecc);
-	void setGridSubdivision(uint32_t n);   // 256/512/1024/1449
+	void setGridSubdivision(uint32_t n);   // 256/512/1024/1449/2048
 	void setSeed(uint64_t seed);
 	void randomizeSeed();
 

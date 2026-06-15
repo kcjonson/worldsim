@@ -318,9 +318,14 @@ void PlateSim::seedAndGrowPlates(uint64_t seed) {
         used[tile] = true;
     }
 
-    // Per-plate growth rate [0.6, 2.4] -> lopsided Voronoi areas.
+    // Per-plate growth weight -> relative plate area. Square-warped so the inventory
+    // is a few large plates plus many smaller ones (Earth's power-law size hierarchy)
+    // rather than one uniform size class. See kPlateGrowth* in TectonicParams.h.
     std::vector<float> growth(static_cast<size_t>(K));
-    for (int p = 0; p < K; ++p) growth[static_cast<size_t>(p)] = 0.6f + rng.nextFloat() * 1.8f;
+    for (int p = 0; p < K; ++p) {
+        float u = rng.nextFloat();
+        growth[static_cast<size_t>(p)] = kPlateGrowthMin + (kPlateGrowthMax - kPlateGrowthMin) * u * u;
+    }
 
     std::vector<float> best(N, 1e30f);
     std::vector<bool> visited(N, false);
@@ -2255,46 +2260,81 @@ bool PlateSim::tryRift(uint32_t pid, uint64_t stepSalt, bool oversized) {
         normal = {normal.x/l, normal.y/l, normal.z/l};
     }
 
-    // Plane point: the great-circle suture passes through the sphere center, so a
-    // suture-biased cut splits by sign of dot(center, normal) (plane through origin).
-    // An unbiased cut passes through the plate centroid.
-    Vec3d planePt = sutureBiased ? Vec3d{0, 0, 0} : centroid;
-
-    // Split owned cells by the plane, with a per-cell noise jog on the boundary so
-    // the rift margin is irregular (not a clean great circle).
+    // Split the plate by growing two cost-fronts and assigning each owned cell to the
+    // nearer front; the seam where they meet is the rift margin. The front cost carries
+    // boundaryNoise (the same scheme that grows the initial plate boundaries in
+    // seedAndGrowPlates), so the seam MEANDERS like a real rift instead of tracing the
+    // analytic great circle a plane-sign split would give. `normal` still names the cut
+    // axis (and drives the new plate's opening pole below); the two seeds are the owned
+    // cells most extreme along it, so for a suture-biased cut they straddle the suture
+    // and the fronts meet along it, and for an unbiased/oversized cut they straddle the
+    // centroid plane.
     const auto noiseSeed = static_cast<uint32_t>(deriveSeed(riftStream_, stepSalt) ^ 0xABCDu);
+    TileId seedA = kInvalidTile, seedB = kInvalidTile;
+    double dMax = -1e30, dMin = 1e30;
+    for (TileId c : owned) {
+        double s = centers_[c].x*normal.x + centers_[c].y*normal.y + centers_[c].z*normal.z;
+        if (s > dMax) { dMax = s; seedA = c; }
+        if (s < dMin) { dMin = s; seedB = c; }
+    }
+    if (seedA == kInvalidTile || seedB == kInvalidTile || seedA == seedB) return false;
+
     std::vector<int8_t> region(N, -1);
+    std::vector<float>  fbest(N, 1e30f);
+    std::array<TileId, 6> nbrs{};
+    // HeapEntry tie-breaks (cost, plate, tile); here plate is the front id (1/2), so an
+    // exact-cost tie deterministically resolves to front 1. The front costs carry continuous
+    // boundaryNoise, so exact ties are vanishingly rare, and the pop order is fully determined
+    // either way, so the split is identical at any thread count.
+    std::priority_queue<HeapEntry, std::vector<HeapEntry>, std::greater<HeapEntry>> pq;
+    fbest[seedA] = 0.0f; pq.push({0.0f, 1u, seedA});
+    fbest[seedB] = 0.0f; pq.push({0.0f, 2u, seedB});
+    while (!pq.empty()) {
+        HeapEntry cur = pq.top();
+        pq.pop();
+        if (region[cur.tile] != -1) continue; // finalized by a cheaper front
+        region[cur.tile] = static_cast<int8_t>(cur.plate);
+        uint32_t cnt = grid_->neighbors(cur.tile, nbrs);
+        for (uint32_t k = 0; k < cnt; ++k) {
+            TileId nb = nbrs[k];
+            if (owner_[nb] != static_cast<uint8_t>(pid)) continue; // grow only within the plate
+            if (region[nb] != -1) continue;
+            float noise = boundaryNoise(static_cast<float>(centers_[nb].x) * kBoundaryNoiseFreq,
+                                        static_cast<float>(centers_[nb].y) * kBoundaryNoiseFreq,
+                                        static_cast<float>(centers_[nb].z) * kBoundaryNoiseFreq, noiseSeed);
+            float step = 1.0f + kRiftPathNoise * noise;
+            // Oversized (oceanic) reorganization: weak, freshly-accreted floor rifts
+            // preferentially, so make young crust cheaper to overrun. The fronts funnel
+            // along young corridors and meet on weak floor instead of slicing old cratonic
+            // interior. Modest vs the noise so it tilts the seam, never dictates it.
+            if (oversized && !sutureBiased) {
+                TileId local = worldToLocal(pid, nb);
+                if (local != kInvalidTile) {
+                    const CrustCell& cc = plates_[pid].crust[local];
+                    int32_t age = nowI - cc.birthMyr;
+                    if (age < 0) age = 0;
+                    double ageNorm = static_cast<double>(age) / 200.0; // young ~0, old ~1
+                    if (ageNorm > 1.0) ageNorm = 1.0;
+                    step *= static_cast<float>(1.0 - 0.5 * static_cast<double>(kOceanicRiftYoungBias) * (1.0 - ageNorm));
+                }
+            }
+            float nc = cur.cost + step;
+            if (nc < fbest[nb]) { fbest[nb] = nc; pq.push({nc, cur.plate, nb}); }
+        }
+    }
+
+    // Disconnected fragments are reached by neither front; assign them by the centroid
+    // plane so every owned cell lands on a side and the split stays well-defined.
     uint32_t r1 = 0, r2 = 0;
     for (TileId c : owned) {
-        Vec3d rel{centers_[c].x - planePt.x, centers_[c].y - planePt.y, centers_[c].z - planePt.z};
-        double s = rel.x*normal.x + rel.y*normal.y + rel.z*normal.z;
-        float n = boundaryNoise(static_cast<float>(centers_[c].x) * kBoundaryNoiseFreq,
-                                static_cast<float>(centers_[c].y) * kBoundaryNoiseFreq,
-                                static_cast<float>(centers_[c].z) * kBoundaryNoiseFreq, noiseSeed);
-        s += static_cast<double>((n - 0.5f) * kRiftPathNoise) * 0.05; // jog the margin
-        // Oversized-plate (oceanic) reorganization: pull the cut margin toward young /
-        // ridge-adjacent crust so the split runs through weak, freshly-accreted floor
-        // rather than slicing old cratonic interior. A young cell near the plane gets
-        // its |s| reduced (more likely to flip across the cut), an old one stiffened.
-        // Only in the oceanic fallback (no suture); a suture-biased cut keeps its plane.
-        if (oversized && !sutureBiased) {
-            TileId local = worldToLocal(pid, c);
-            if (local != kInvalidTile) {
-                const CrustCell& cc = plates_[pid].crust[local];
-                int32_t age = nowI - cc.birthMyr;
-                if (age < 0) age = 0;
-                // ageNorm in [0,1] over a typical basin span; young -> ~0, old -> ~1.
-                double ageNorm = static_cast<double>(age) / 200.0;
-                if (ageNorm > 1.0) ageNorm = 1.0;
-                // Bias toward 0 (the cut) for young crust: shift |s| by a young-weighted
-                // amount, sign-preserving so cells don't teleport across the plate.
-                double bias = static_cast<double>(kOceanicRiftYoungBias) * (1.0 - ageNorm) * 0.05;
-                s += (s >= 0.0 ? -bias : bias);
-            }
+        if (region[c] == -1) {
+            double s = (centers_[c].x - centroid.x)*normal.x
+                     + (centers_[c].y - centroid.y)*normal.y
+                     + (centers_[c].z - centroid.z)*normal.z;
+            region[c] = (s >= 0.0) ? 1 : 2;
         }
-        if (s >= 0.0) { region[c] = 1; ++r1; } else { region[c] = 2; ++r2; }
+        if (region[c] == 1) ++r1; else ++r2;
     }
-    std::array<TileId, 6> nbrs{};
     if (r1 < 8 || r2 < 8) return false; // degenerate split
     // Region 2 is the moved (new) plate; keep the larger side as src for stability.
     int8_t moveRegion = (r2 <= r1) ? 2 : 1;
