@@ -47,13 +47,14 @@ namespace engine::construction {
 			return ((p.x - a.x) * abx + (p.y - a.y) * aby) / lenSq;
 		}
 
-		// Safety bias added to the outer-face-flush inset. The flush corner ideally
-		// lands the band's outer face exactly on the foundation edge, but the two mm
-		// roundings on a diagonal edge (the inset point's quantize plus geometry::band's
-		// perpendicular llround) can together push that corner ~1.4 mm outside the ring,
-		// tripping the validator's containment check. Biasing the inset 2 mm further in
-		// keeps the corner inside-or-on after rounding; 2 mm is sub-pixel at any zoom.
-		// Axis-aligned edges have no rounding and land exactly on the boundary regardless.
+		// Safety bias added to the outer-face-flush inset, applied to EVERY edge. Without
+		// it the flush corner would land the band's outer face right on the foundation
+		// edge, but the two mm roundings on a diagonal edge (the inset point's quantize
+		// plus geometry::band's perpendicular llround) can together push that corner
+		// ~1.4 mm outside the ring, tripping the validator's containment check. Biasing
+		// the inset 2 mm further in keeps the corner inside-or-on after rounding. Axis-
+		// aligned edges have no rounding, so the bias simply seats them a flat 2 mm inside
+		// the edge rather than exactly on it; 2 mm is sub-pixel at any zoom.
 		constexpr std::int64_t kFlushInsetSafetyMm = 2;
 
 		// The inward offset distance (meters) for an outer-face-flush wall of the given
@@ -95,10 +96,13 @@ namespace engine::construction {
 	} // namespace
 
 	::Foundation::Vec2 outerFaceFlushCorner(const geometry::Ring& ring, std::size_t vertexIndex, std::int64_t halfThicknessMm) {
-		const std::size_t		 n = ring.size();
+		const std::size_t n = ring.size();
+		if (vertexIndex >= n) {
+			return {0.0F, 0.0F}; // out-of-range index (covers an empty ring): nothing to inset
+		}
 		const ::Foundation::Vec2 v = geometry::dequantize(ring[vertexIndex]);
 		if (halfThicknessMm <= 0 || n < 3) {
-			return v;
+			return v; // zero-thickness or degenerate ring: the corner is returned unchanged
 		}
 
 		const float				 d = flushInsetMeters(halfThicknessMm);
@@ -384,7 +388,7 @@ namespace engine::construction {
 			return r;
 		}
 
-		// Foundation corner: insetted to the outer-face-flush miter so a perimeter
+		// Foundation corner: inset to the outer-face-flush miter so a perimeter
 		// wall sits ON the foundation (design "Alignment").
 		::Foundation::Vec2 v{};
 		if (snapToVertex(cursor, v, wallHalfThicknessMm)) {
@@ -401,7 +405,7 @@ namespace engine::construction {
 			return r;
 		}
 
-		// Foundation edge: insetted inward by the half-thickness (outer-face-flush).
+		// Foundation edge: inset inward by the half-thickness (outer-face-flush).
 		::Foundation::Vec2 e{};
 		if (snapToEdge(cursor, e, wallHalfThicknessMm)) {
 			return {e, SnapKind::Edge};

@@ -106,10 +106,12 @@ namespace engine::construction {
 	// the two incident edges' inset lines. Two perimeter walls that share this corner
 	// resolve to the identical point, so they join at one vertex on commit. World
 	// meters; the interior side is found exactly via point-in-polygon so the ring's
-	// winding doesn't matter. A small fixed safety bias (kept inside the offset) keeps
-	// the band's outer corners inside the ring after millimeter quantization on
-	// diagonal edges. halfThicknessMm <= 0 or a degenerate ring returns the corner
-	// unchanged. Shared by the WallTool's foundation-vertex snap and the edge-fill path.
+	// winding doesn't matter. A small fixed safety bias (kept inside the offset, applied
+	// to every edge) absorbs the millimeter quantization that would otherwise push a
+	// diagonal edge's outer band corner just outside the ring; on axis-aligned edges,
+	// which have no rounding, it just seats the corner a flat ~2 mm inside. halfThicknessMm
+	// <= 0 or a degenerate ring returns the corner unchanged. Shared by the WallTool's
+	// foundation-vertex snap and the edge-fill path.
 	[[nodiscard]] ::Foundation::Vec2
 	outerFaceFlushCorner(const geometry::Ring& ring, std::size_t vertexIndex, std::int64_t halfThicknessMm);
 
@@ -129,10 +131,10 @@ namespace engine::construction {
 		// off the previous chain point > raw. No origin-close (the chain is open). The
 		// result's hitVertex/hitSegment tell the WallTool what to commit against.
 		// `wallHalfThicknessMm` is the active wall's half-thickness: foundation-vertex
-		// and foundation-edge hits are insetted by it for outer-face-flush alignment
+		// and foundation-edge hits are inset by it for outer-face-flush alignment
 		// (see outerFaceFlushCorner), so a wall traced along the perimeter sits ON the
 		// foundation. Wall-endpoint and T-junction hits snap to the existing wall graph
-		// exactly and are never insetted. Pass 0 to disable insetting (zero-thickness).
+		// exactly and are never inset. Pass 0 to disable the inset (zero-thickness).
 		[[nodiscard]] SnapResult snapWall(
 			const std::vector<::Foundation::Vec2>& points,
 			::Foundation::Vec2					   cursor,
