@@ -45,14 +45,33 @@ namespace Foundation {
 		}
 
 		const std::string& type = fields[0];
-		if (type == "move")        cmd.type = InputCommand::Type::Move;
-		else if (type == "down")   cmd.type = InputCommand::Type::Down;
-		else if (type == "up")     cmd.type = InputCommand::Type::Up;
-		else if (type == "click")  cmd.type = InputCommand::Type::Click;
-		else if (type == "scroll") cmd.type = InputCommand::Type::Scroll;
+		if (type == "move")
+			cmd.type = InputCommand::Type::Move;
+		else if (type == "down")
+			cmd.type = InputCommand::Type::Down;
+		else if (type == "up")
+			cmd.type = InputCommand::Type::Up;
+		else if (type == "click")
+			cmd.type = InputCommand::Type::Click;
+		else if (type == "scroll")
+			cmd.type = InputCommand::Type::Scroll;
+		else if (type == "keydown")
+			cmd.type = InputCommand::Type::KeyDown;
+		else if (type == "keyup")
+			cmd.type = InputCommand::Type::KeyUp;
 		else {
-			error = "unknown event type (expected move|down|up|click|scroll)";
+			error = "unknown event type (expected move|down|up|click|scroll|keydown|keyup)";
 			return false;
+		}
+
+		// Key events carry a key name instead of coordinates: "keydown,R" / "keyup,Escape".
+		if (cmd.type == InputCommand::Type::KeyDown || cmd.type == InputCommand::Type::KeyUp) {
+			if (fields.size() < 2 || fields[1].empty()) {
+				error = "key event requires a key name (e.g. keydown,R)";
+				return false;
+			}
+			cmd.keyName = fields[1];
+			return true;
 		}
 
 		if (fields.size() < 3) {
@@ -543,14 +562,19 @@ namespace Foundation {
 			}
 		});
 
-		// Input injection endpoint - queues synthetic UI input dispatched by the
-		// main loop through the same path as real mouse events. Coordinates are
+		// Input injection endpoint - queues synthetic input dispatched by the main
+		// loop through the same paths as real mouse/keyboard events. Coordinates are
 		// logical UI pixels. Accepts one or more 'ev' params, each a CSV:
 		//   click,x,y[,left|right|middle]   (expands to move+down+up)
 		//   move,x,y
 		//   down,x,y[,button]   up,x,y[,button]
 		//   scroll,x,y,delta
-		// Example: /api/input?ev=click,160,630&ev=scroll,1500,800,-2
+		//   keydown,<key>   keyup,<key>   (key name, e.g. R or Escape; no coords)
+		// Send key events in SEPARATE requests: a keydown registers on the next frame
+		// and fires the press edge (isKeyPressed) once; a later keyup releases. A
+		// keydown and keyup batched in ONE request land in the same frame and collapse
+		// to a release, missing the press edge. Tap example (two requests):
+		//   GET /api/input?ev=keydown,R    then    GET /api/input?ev=keyup,R
 		server->Get("/api/input", [this](const httplib::Request& req, httplib::Response& res) {
 			res.set_header("Access-Control-Allow-Origin", "*");
 

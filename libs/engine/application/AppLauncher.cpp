@@ -10,6 +10,7 @@
 #include <debug/DebugServer.h>
 #include <font/FontRenderer.h>
 #include <input/InputEvent.h>
+#include <input/InputManager.h>
 #include <metrics/MetricsCollector.h>
 #include <primitives/Primitives.h>
 #include <resources/TileAtlasBuilder.h>
@@ -69,6 +70,18 @@ namespace engine {
 				case Foundation::InputCommand::Type::Scroll:
 					send(UI::InputEvent::scroll(pos, cmd.scrollDelta));
 					break;
+				case Foundation::InputCommand::Type::KeyDown:
+				case Foundation::InputCommand::Type::KeyUp: {
+					// Keys are POLLED from InputManager (not routed as UI events like the
+					// mouse), so feed the manager directly. A down fires the press edge
+					// once; pair with an up to release.
+					if (auto key = InputManager::keyFromName(cmd.keyName)) {
+						InputManager::Get().injectKey(*key, cmd.type == Foundation::InputCommand::Type::KeyDown);
+					} else {
+						LOG_WARNING(Engine, "[Input] injected key '%s' not recognized", cmd.keyName.c_str());
+					}
+					break;
+				}
 			}
 		}
 		std::unique_ptr<Renderer::MetricsCollector> g_metrics;
