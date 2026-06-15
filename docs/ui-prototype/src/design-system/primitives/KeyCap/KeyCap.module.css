@@ -1,0 +1,16 @@
+.key {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	min-width: 18px;
+	height: 18px;
+	padding: 0 5px;
+	font-family: var(--font-mono);
+	font-size: var(--fs-2xs);
+	font-weight: 600;
+	color: var(--text-dim);
+	background: var(--bg-inset);
+	border: var(--bw) solid var(--line-edge);
+	border-bottom-width: 2px;
+	border-radius: var(--radius-sm);
+}

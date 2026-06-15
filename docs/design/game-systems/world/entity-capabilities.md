@@ -102,7 +102,10 @@ The `Carryable` capability includes properties that affect hauling behavior:
 </capabilities>
 ```
 
-See [Task Chains](../colonists/task-chains.md) for how `handsRequired` affects chain interruption.
+`handsRequired` doubles as the item's size/hand class (0 = pocket, 1 = one-hand,
+2 = two-hand, which is also "bulky" — can't be stowed). It gates where an item can
+be carried; see [Equipment & Inventory](../colonists/equipment.md). Also see
+[Task Chains](../colonists/task-chains.md) for how it affects chain interruption.
 
 ---
 

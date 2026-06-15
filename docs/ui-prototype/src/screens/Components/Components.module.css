@@ -1,0 +1,385 @@
+/* ============================================================
+ * Components.module.css — Design System Gallery
+ * ============================================================ */
+
+/* Root: full-bleed, scrolls vertically */
+.root {
+	position: absolute;
+	inset: 0;
+	overflow-y: auto;
+	background: var(--bg-base);
+	/* subtle scanline texture on the whole page */
+	background-image:
+		repeating-linear-gradient(
+			0deg,
+			transparent,
+			transparent 3px,
+			rgba(0, 0, 0, 0.04) 3px,
+			rgba(0, 0, 0, 0.04) 4px
+		);
+}
+
+/* Centered content column */
+.column {
+	max-width: 1100px;
+	margin: 0 auto;
+	padding: var(--space-12) var(--space-8) var(--space-20);
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-8);
+}
+
+/* ============================================================
+ * Page header
+ * ============================================================ */
+
+.pageHead {
+	padding: var(--space-8) 0 var(--space-4);
+	border-bottom: 1px solid var(--line-hairline);
+}
+
+.pageKicker {
+	font-family: var(--font-mono);
+	font-size: var(--fs-2xs);
+	letter-spacing: var(--ls-wider);
+	text-transform: uppercase;
+	color: var(--accent);
+	margin-bottom: var(--space-2);
+}
+
+.pageTitle {
+	font-family: var(--font-display);
+	font-size: var(--fs-3xl);
+	font-weight: 700;
+	letter-spacing: var(--ls-wide);
+	color: var(--text-bright);
+	line-height: var(--lh-tight);
+}
+
+.pageSubtitle {
+	margin-top: var(--space-3);
+	font-size: var(--fs-md);
+	color: var(--text-dim);
+	line-height: var(--lh-loose);
+	max-width: 680px;
+}
+
+/* ============================================================
+ * Color tokens section
+ * ============================================================ */
+
+.tokenGroups {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-6);
+}
+
+.tokenGroup {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-3);
+}
+
+.tokenGroupLabel {
+	font-family: var(--font-mono);
+	font-size: var(--fs-2xs);
+	letter-spacing: var(--ls-wider);
+	text-transform: uppercase;
+	color: var(--text-faint);
+}
+
+.swatchRow {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--space-4);
+}
+
+.swatch {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: var(--space-2);
+}
+
+.swatchChip {
+	width: 56px;
+	height: 36px;
+	border-radius: var(--radius-sm);
+}
+
+.swatchLabel {
+	font-family: var(--font-mono);
+	font-size: var(--fs-2xs);
+	color: var(--text-faint);
+	white-space: nowrap;
+}
+
+/* ============================================================
+ * Typography section
+ * ============================================================ */
+
+.typeGroups {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-6);
+}
+
+.typeGroup {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-3);
+}
+
+.typeFamilies {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-5);
+}
+
+.typeFamilyName {
+	font-family: var(--font-mono);
+	font-size: var(--fs-2xs);
+	letter-spacing: var(--ls-wider);
+	text-transform: uppercase;
+	color: var(--text-faint);
+	margin-bottom: var(--space-1);
+}
+
+.typeScale {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-2);
+}
+
+.typeScaleRow {
+	display: grid;
+	grid-template-columns: 48px 52px 1fr;
+	align-items: baseline;
+	gap: var(--space-4);
+	padding: var(--space-1) 0;
+}
+
+.typeToken {
+	font-family: var(--font-mono);
+	font-size: var(--fs-xs);
+	color: var(--accent);
+}
+
+.typePx {
+	font-family: var(--font-mono);
+	font-size: var(--fs-xs);
+	color: var(--text-faint);
+}
+
+/* ============================================================
+ * Buttons section
+ * ============================================================ */
+
+.btnSection {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-4);
+}
+
+.btnMatrix {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-3);
+}
+
+.btnRow {
+	display: flex;
+	align-items: center;
+	gap: var(--space-4);
+	flex-wrap: wrap;
+}
+
+.btnVariantLabel {
+	font-family: var(--font-mono);
+	font-size: var(--fs-xs);
+	color: var(--text-faint);
+	width: 80px;
+	flex-shrink: 0;
+}
+
+.btnSpecialRow {
+	display: flex;
+	align-items: center;
+	gap: var(--space-3);
+	flex-wrap: wrap;
+}
+
+/* ============================================================
+ * Panels section
+ * ============================================================ */
+
+.panelGrid {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+	gap: var(--space-5);
+}
+
+.panelBody {
+	font-size: var(--fs-sm);
+	color: var(--text-dim);
+	line-height: var(--lh-loose);
+}
+
+/* ============================================================
+ * Data display section
+ * ============================================================ */
+
+.subHead {
+	font-family: var(--font-mono);
+	font-size: var(--fs-xs);
+	letter-spacing: var(--ls-wider);
+	text-transform: uppercase;
+	color: var(--text-faint);
+	margin-bottom: var(--space-3);
+}
+
+.subLabel {
+	font-family: var(--font-mono);
+	font-size: var(--fs-2xs);
+	letter-spacing: var(--ls-wider);
+	text-transform: uppercase;
+	color: var(--text-faint);
+	margin-bottom: var(--space-2);
+}
+
+.statGrid {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+	gap: var(--space-4);
+	margin-bottom: var(--space-4);
+}
+
+.meterGroup {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-3);
+}
+
+.sliderGroup {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-5);
+}
+
+.controlsRow {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--space-8);
+	align-items: flex-start;
+}
+
+.tabsWrap {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-2);
+}
+
+.tabContent {
+	padding: var(--space-4) var(--space-2);
+	font-family: var(--font-mono);
+	font-size: var(--fs-xs);
+	color: var(--text-dim);
+	border-bottom: 1px solid var(--line-hairline);
+}
+
+.badgeRow {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--space-3);
+	align-items: center;
+}
+
+.keyRow {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--space-3);
+	align-items: center;
+}
+
+.tooltipRow {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--space-4);
+	align-items: center;
+	padding: var(--space-6) 0;
+}
+
+.avatarGrid {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(80px, 1fr));
+	gap: var(--space-4);
+}
+
+.avatarCell {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: var(--space-2);
+}
+
+.avatarName {
+	font-size: var(--fs-2xs);
+	color: var(--text-dim);
+	text-align: center;
+	line-height: 1.2;
+}
+
+.avatarMood {
+	font-family: var(--font-mono);
+	font-size: var(--fs-2xs);
+}
+
+/* ============================================================
+ * Icons section
+ * ============================================================ */
+
+.iconGrid {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+	gap: var(--space-1);
+}
+
+.iconCell {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: var(--space-2);
+	padding: var(--space-3) var(--space-2);
+	border-radius: var(--radius-sm);
+	color: var(--text-dim);
+	transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+
+.iconCell:hover {
+	background: var(--bg-hover);
+	color: var(--accent);
+}
+
+.iconName {
+	font-family: var(--font-mono);
+	font-size: var(--fs-2xs);
+	color: var(--text-faint);
+	text-align: center;
+}
+
+.iconCell:hover .iconName {
+	color: var(--accent-dim);
+}
+
+/* ============================================================
+ * Page footer
+ * ============================================================ */
+
+.pageFooter {
+	padding: var(--space-6) 0;
+	border-top: 1px solid var(--line-hairline);
+	font-family: var(--font-mono);
+	font-size: var(--fs-2xs);
+	color: var(--text-faint);
+	letter-spacing: var(--ls-wide);
+}

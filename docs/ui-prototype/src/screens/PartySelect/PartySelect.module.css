@@ -1,0 +1,271 @@
+.screen {
+	position: absolute;
+	inset: 0;
+	overflow: hidden;
+}
+
+/* ── Layout shell ─────────────────────────────────────────────────────────── */
+.layout {
+	position: relative;
+	z-index: 2;
+	height: 100%;
+	display: flex;
+	flex-direction: column;
+	padding: var(--space-8) var(--space-10);
+	gap: var(--space-5);
+}
+
+/* ── Header ───────────────────────────────────────────────────────────────── */
+.header {
+	flex-shrink: 0;
+}
+.kicker {
+	font-family: var(--font-mono);
+	font-size: var(--fs-2xs);
+	letter-spacing: var(--ls-wider);
+	text-transform: uppercase;
+	color: var(--accent);
+	margin-bottom: var(--space-2);
+}
+.title {
+	font-size: var(--fs-3xl);
+	font-weight: 700;
+	letter-spacing: var(--ls-tight);
+	color: var(--text-bright);
+	line-height: var(--lh-tight);
+}
+.subtitle {
+	font-size: var(--fs-base);
+	color: var(--text-dim);
+	margin-top: var(--space-2);
+	line-height: var(--lh);
+}
+
+/* ── Main two-pane ────────────────────────────────────────────────────────── */
+.main {
+	flex: 1;
+	min-height: 0;
+	display: grid;
+	grid-template-columns: 280px 1fr;
+	gap: var(--space-5);
+}
+
+/* ── Roster column ────────────────────────────────────────────────────────── */
+.roster {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-3);
+}
+.rosterList {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-2);
+	flex: 1;
+	min-height: 0;
+	overflow-y: auto;
+}
+
+.rosterCard {
+	position: relative;
+	display: grid;
+	grid-template-columns: 40px 1fr auto;
+	align-items: center;
+	gap: var(--space-3);
+	padding: var(--space-3);
+	background: var(--bg-panel);
+	border: var(--bw-hair) solid var(--line-hairline);
+	border-radius: var(--radius-md);
+	text-align: left;
+	cursor: pointer;
+	transition:
+		background var(--dur-fast) var(--ease),
+		border-color var(--dur-fast) var(--ease);
+}
+.rosterCard:hover {
+	background: var(--bg-hover);
+	border-color: var(--line-edge);
+}
+.rosterCardActive {
+	background: var(--bg-active);
+	border-color: var(--accent);
+	box-shadow: 0 0 12px var(--accent-glow), inset 0 0 12px rgba(232, 163, 62, 0.04);
+}
+
+/* corner ticks — match ScenarioSelect pattern */
+.corner {
+	position: absolute;
+	width: 6px;
+	height: 6px;
+	border-color: var(--line-edge);
+	border-style: solid;
+	opacity: 0;
+	transition: opacity var(--dur-fast) var(--ease);
+}
+.rosterCard:hover .corner,
+.rosterCardActive .corner {
+	opacity: 1;
+}
+.rosterCardActive .corner {
+	border-color: var(--accent);
+}
+.tl { top: 3px; left: 3px;  border-width: 1px 0 0 1px; }
+.tr { top: 3px; right: 3px; border-width: 1px 1px 0 0; }
+.bl { bottom: 3px; left: 3px;  border-width: 0 0 1px 1px; }
+.br { bottom: 3px; right: 3px; border-width: 0 1px 1px 0; }
+
+.rosterInfo {
+	min-width: 0;
+}
+.rosterName {
+	font-family: var(--font-display);
+	font-size: var(--fs-md);
+	font-weight: 600;
+	color: var(--text-bright);
+	letter-spacing: var(--ls-tight);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+.rosterRole {
+	font-family: var(--font-mono);
+	font-size: var(--fs-2xs);
+	letter-spacing: var(--ls-wide);
+	text-transform: uppercase;
+	color: var(--text-faint);
+	margin-top: 2px;
+}
+.rosterMood {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-end;
+	gap: 3px;
+	min-width: 60px;
+}
+.rosterMoodLabel {
+	font-family: var(--font-mono);
+	font-size: var(--fs-2xs);
+	color: var(--text-faint);
+	letter-spacing: var(--ls-wide);
+	text-transform: uppercase;
+}
+
+.rosterActions {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--space-3);
+	padding-top: var(--space-2);
+	border-top: var(--bw-hair) solid var(--line-hairline);
+}
+.addHint {
+	display: flex;
+	align-items: center;
+	gap: var(--space-2);
+	font-family: var(--font-mono);
+	font-size: var(--fs-2xs);
+	letter-spacing: var(--ls-wide);
+	color: var(--text-faint);
+}
+
+/* ── Detail panel ─────────────────────────────────────────────────────────── */
+.detail {
+	overflow: hidden;
+}
+.detailInner {
+	height: 100%;
+	overflow-y: auto;
+	padding: var(--space-5) var(--space-6);
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-4);
+}
+
+.detailHero {
+	display: flex;
+	align-items: center;
+	gap: var(--space-4);
+	padding-bottom: var(--space-4);
+	border-bottom: var(--bw-hair) solid var(--line-hairline);
+}
+.detailHeroText {
+	min-width: 0;
+}
+.detailName {
+	font-family: var(--font-display);
+	font-size: var(--fs-2xl);
+	font-weight: 700;
+	color: var(--text-bright);
+	letter-spacing: var(--ls-tight);
+	line-height: var(--lh-tight);
+}
+.detailRole {
+	font-family: var(--font-mono);
+	font-size: var(--fs-xs);
+	letter-spacing: var(--ls-wide);
+	text-transform: uppercase;
+	color: var(--accent);
+	margin-top: var(--space-1);
+}
+
+/* stat row */
+.statRow {
+	display: flex;
+	gap: var(--space-8);
+}
+
+/* backstory */
+.backstory {
+	font-size: var(--fs-base);
+	color: var(--text-dim);
+	line-height: var(--lh-loose);
+	font-style: italic;
+}
+
+/* skills */
+.skills {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-2);
+}
+.skillRow {
+	display: grid;
+	grid-template-columns: 140px 1fr;
+	align-items: center;
+	gap: var(--space-4);
+}
+.skillLabel {
+	display: flex;
+	align-items: center;
+	gap: var(--space-2);
+}
+.skillIcon {
+	color: var(--text-faint);
+	flex-shrink: 0;
+}
+.skillName {
+	font-family: var(--font-mono);
+	font-size: var(--fs-xs);
+	letter-spacing: var(--ls-wide);
+	text-transform: uppercase;
+	color: var(--text-dim);
+}
+.skillMeter {
+	flex: 1;
+}
+
+/* traits */
+.traits {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--space-2);
+}
+
+/* ── Footer ───────────────────────────────────────────────────────────────── */
+.footer {
+	flex-shrink: 0;
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	padding-top: var(--space-3);
+	border-top: var(--bw-hair) solid var(--line-hairline);
+}

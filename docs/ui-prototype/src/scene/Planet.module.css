@@ -1,0 +1,87 @@
+.wrap {
+	position: relative;
+	display: grid;
+	place-items: center;
+}
+.svg {
+	overflow: visible;
+}
+
+.atmo {
+	fill: none;
+	stroke: var(--data);
+	stroke-width: 6;
+	opacity: 0.18;
+	filter: blur(6px);
+}
+.rim {
+	fill: none;
+	stroke: color-mix(in srgb, var(--data) 60%, transparent);
+	stroke-width: 1;
+	opacity: 0.5;
+}
+
+.spin {
+	animation: planetspin 48s linear infinite;
+}
+@keyframes planetspin {
+	from {
+		transform: translateX(0);
+	}
+	to {
+		transform: translateX(-200px);
+	}
+}
+
+.grat ellipse {
+	fill: none;
+	stroke: color-mix(in srgb, var(--data) 55%, transparent);
+	stroke-width: 0.5;
+	opacity: 0.35;
+}
+
+.tempOverlay {
+	opacity: 0.55;
+}
+.precipOverlay {
+	opacity: 0.5;
+}
+
+.sweep {
+	fill: var(--data-bright);
+	opacity: 0.5;
+	filter: blur(1px);
+	animation: fx-sweep 3.5s linear infinite;
+}
+
+.markerRing {
+	fill: none;
+	stroke: var(--accent-bright);
+	stroke-width: 1.5;
+	animation: pulse 1.8s ease-in-out infinite;
+}
+.markerDot {
+	fill: var(--accent-bright);
+}
+.markerTicks {
+	stroke: var(--accent-bright);
+	stroke-width: 1.5;
+}
+.marker {
+	filter: drop-shadow(0 0 6px var(--accent-glow));
+}
+@keyframes pulse {
+	0%,
+	100% {
+		opacity: 1;
+		transform: scale(1);
+	}
+	50% {
+		opacity: 0.5;
+		transform: scale(1.25);
+	}
+}
+
+.hit {
+	cursor: crosshair;
+}

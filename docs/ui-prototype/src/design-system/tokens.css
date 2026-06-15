@@ -1,0 +1,157 @@
+/*
+ * World-Sim Design Tokens — Salvage
+ *
+ * The chosen design language: a used-future ship terminal. Warm amber readouts
+ * and teal data on a near-black hull, sharp bracketed panels, hairline borders,
+ * scanlines, stencilled mono labels. Dense, lived-in. One theme, all on :root.
+ * These translate to the C++ libs/ui/theme/Theme.h once the look is final.
+ */
+
+:root {
+	/* === Spacing (4px base + half-steps for dense UI) === */
+	--space-0: 0;
+	--space-0-5: 2px;
+	--space-1: 4px;
+	--space-1-5: 6px;
+	--space-2: 8px;
+	--space-3: 12px;
+	--space-4: 16px;
+	--space-5: 20px;
+	--space-6: 24px;
+	--space-8: 32px;
+	--space-10: 40px;
+	--space-12: 48px;
+	--space-16: 64px;
+	--space-20: 80px;
+	--space-24: 96px;
+
+	/* === Radius scale === */
+	--r-0: 0;
+	--r-xs: 1px;
+	--r-sm: 2px;
+	--r-md: 4px;
+	--r-lg: 8px;
+	--r-xl: 14px;
+	--r-pill: 999px;
+	--radius-xs: var(--r-xs);
+	--radius-sm: var(--r-sm);
+	--radius-md: var(--r-md);
+	--radius-lg: var(--r-lg);
+	--radius-pill: var(--r-pill);
+
+	/* === Borders === */
+	--bw-hair: 1px;
+	--bw: 1px;
+	--bw-thick: 2px;
+
+	/* === Type scale === */
+	--fs-2xs: 10px;
+	--fs-xs: 11px;
+	--fs-sm: 12px;
+	--fs-base: 13px;
+	--fs-md: 15px;
+	--fs-lg: 18px;
+	--fs-xl: 22px;
+	--fs-2xl: 28px;
+	--fs-3xl: 38px;
+	--fs-4xl: 52px;
+	--fs-5xl: 72px;
+
+	--lh-tight: 1.1;
+	--lh: 1.4;
+	--lh-loose: 1.6;
+
+	--ls-tight: -0.01em;
+	--ls: 0;
+	--ls-wide: 0.08em;
+	--ls-wider: 0.16em;
+	--ls-widest: 0.3em;
+
+	/* === Motion === */
+	--dur-fast: 120ms;
+	--dur: 200ms;
+	--dur-slow: 360ms;
+	--ease: cubic-bezier(0.4, 0, 0.2, 1);
+	--ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+
+	/* === Z layers === */
+	--z-base: 0;
+	--z-panel: 10;
+	--z-raised: 20;
+	--z-overlay: 100;
+	--z-modal: 200;
+	--z-toast: 300;
+	--z-tooltip: 400;
+
+	/* === Shape & surface treatment === */
+	--radius-ui: var(--r-sm);
+	--radius-panel: var(--r-sm);
+	--border-width: 1px;
+	--panel-backdrop: none;
+	--panel-clip: none;
+	--corner-display: block;
+	--panel-shadow: 0 8px 30px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.03);
+
+	/* === Typography roles === */
+	--font-display: "Chakra Petch", system-ui, sans-serif;
+	--font-ui: "Barlow", system-ui, sans-serif;
+	--font-mono: "JetBrains Mono", ui-monospace, monospace;
+	--label-font: var(--font-mono);
+	--label-transform: uppercase;
+	--label-spacing: var(--ls-wider);
+	--title-transform: uppercase;
+	--title-spacing: var(--ls-wide);
+	--title-weight: 600;
+
+	/* === Density & texture === */
+	--density: 1;
+	--scanline-opacity: 0.05;
+	--grain-opacity: 0.04;
+	--vignette-opacity: 0.55;
+
+	/* === Surfaces === */
+	--bg-void: #07080b;
+	--bg-base: #0b0d12;
+	--bg-panel: #12151c;
+	--bg-panel-raised: #181c24;
+	--bg-inset: #08090d;
+	--bg-hover: rgba(255, 255, 255, 0.045);
+	--bg-active: rgba(232, 163, 62, 0.1);
+
+	--line-hairline: rgba(180, 200, 230, 0.1);
+	--line-edge: rgba(150, 180, 220, 0.2);
+	--line-strong: rgba(170, 195, 230, 0.36);
+
+	/* === Accent (warm amber readouts) === */
+	--accent: #e8a33e;
+	--accent-bright: #ffc56b;
+	--accent-dim: #8a6326;
+	--accent-contrast: #1a1206;
+	--accent-glow: rgba(232, 163, 62, 0.45);
+
+	/* === Data (holographic teal) === */
+	--data: #45c7c0;
+	--data-bright: #7be6df;
+	--data-dim: #2a6e6a;
+	--data-glow: rgba(69, 199, 192, 0.4);
+
+	/* === Text === */
+	--text-bright: #f4eee2;
+	--text: #c6c8ce;
+	--text-dim: #8a8f9b;
+	--text-faint: #5a5f6b;
+	--text-disabled: #44485033;
+
+	/* === Status === */
+	--status-ok: #5fb87a;
+	--status-warn: #e8a33e;
+	--status-crit: #e0533c;
+	--status-info: #45c7c0;
+
+	--scrim: rgba(5, 6, 10, 0.72);
+
+	/* === Elevation helpers === */
+	--shadow-pop: 0 14px 44px rgba(0, 0, 0, 0.62);
+	--shadow-inset: inset 0 2px 8px rgba(0, 0, 0, 0.5);
+	--shadow-panel: var(--panel-shadow);
+}

@@ -1,0 +1,186 @@
+.screen {
+	position: absolute;
+	inset: 0;
+	overflow: hidden;
+}
+.grid {
+	position: relative;
+	z-index: 2;
+	height: 100%;
+	display: grid;
+	grid-template-columns: 1fr 360px;
+	grid-template-rows: auto 1fr auto;
+	grid-template-areas:
+		"head head"
+		"stage info"
+		"foot foot";
+	gap: var(--space-4);
+	padding: var(--space-6) var(--space-8);
+}
+
+.head {
+	grid-area: head;
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+}
+.kicker {
+	font-family: var(--font-mono);
+	font-size: var(--fs-2xs);
+	letter-spacing: var(--ls-wider);
+	text-transform: uppercase;
+	color: var(--text-faint);
+	margin-bottom: var(--space-1);
+}
+.title {
+	font-size: var(--fs-3xl);
+	font-weight: 700;
+	letter-spacing: var(--ls-wide);
+	color: var(--text-bright);
+}
+
+.stage {
+	grid-area: stage;
+	position: relative;
+	display: grid;
+	place-items: center;
+	min-height: 0;
+}
+.crossHint {
+	position: absolute;
+	top: var(--space-4);
+	left: 50%;
+	transform: translateX(-50%);
+	display: flex;
+	align-items: center;
+	gap: var(--space-2);
+	font-family: var(--font-mono);
+	font-size: var(--fs-xs);
+	color: var(--text-dim);
+}
+.vizDock {
+	position: absolute;
+	bottom: var(--space-4);
+	left: 50%;
+	transform: translateX(-50%);
+}
+
+.info {
+	grid-area: info;
+	min-height: 0;
+}
+.infoBody {
+	height: calc(100% - 54px);
+	overflow-y: auto;
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-3);
+}
+.coords {
+	display: flex;
+	align-items: center;
+	gap: var(--space-2);
+	font-family: var(--font-mono);
+	font-size: var(--fs-sm);
+	color: var(--data-bright);
+}
+.biome {
+	font-family: var(--font-display);
+	font-size: var(--fs-xl);
+	font-weight: 600;
+	color: var(--text-bright);
+	line-height: var(--lh-tight);
+	margin-top: var(--space-1);
+}
+.statRow {
+	display: flex;
+	gap: var(--space-6);
+	margin-top: var(--space-2);
+}
+.diffRow {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	padding: var(--space-3);
+	background: var(--bg-inset);
+	border: var(--bw) solid var(--line-hairline);
+	border-radius: var(--radius-sm);
+	margin-top: var(--space-2);
+}
+.diffLabel {
+	font-size: var(--fs-2xs);
+	letter-spacing: var(--ls-wider);
+	text-transform: uppercase;
+	color: var(--text-dim);
+}
+.skulls {
+	display: flex;
+	gap: 3px;
+}
+.notes {
+	font-size: var(--fs-sm);
+	line-height: var(--lh-loose);
+	color: var(--text);
+}
+.hazards {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--space-2);
+}
+
+.foot {
+	grid-area: foot;
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--space-4);
+	padding-top: var(--space-3);
+	border-top: var(--bw) solid var(--line-hairline);
+}
+.footNote {
+	font-size: var(--fs-xs);
+	color: var(--text-dim);
+	max-width: 60ch;
+}
+
+/* modal */
+.modalScrim {
+	position: absolute;
+	inset: 0;
+	z-index: var(--z-modal);
+	display: grid;
+	place-items: center;
+	background: var(--scrim);
+	backdrop-filter: blur(2px);
+	animation: fade var(--dur) var(--ease);
+}
+.modalWrap {
+	width: min(440px, 90%);
+	animation: pop var(--dur) var(--ease-out);
+}
+.modalBody {
+	font-size: var(--fs-md);
+	line-height: var(--lh-loose);
+	color: var(--text);
+	margin-bottom: var(--space-5);
+}
+.modalBody strong {
+	color: var(--accent-bright);
+	font-family: var(--font-mono);
+}
+.modalActions {
+	display: flex;
+	justify-content: flex-end;
+	gap: var(--space-3);
+}
+@keyframes fade {
+	from {
+		opacity: 0;
+	}
+}
+@keyframes pop {
+	from {
+		opacity: 0;
+		transform: scale(0.96) translateY(8px);
+	}
+}

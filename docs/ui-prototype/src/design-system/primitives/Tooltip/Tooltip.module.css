@@ -1,0 +1,70 @@
+.wrap {
+	position: relative;
+	display: inline-flex;
+	outline: none;
+}
+.bubble {
+	position: absolute;
+	z-index: var(--z-tooltip);
+	min-width: max-content;
+	max-width: 240px;
+	padding: var(--space-2) var(--space-3);
+	background: var(--bg-panel-raised);
+	border: var(--bw) solid var(--line-strong);
+	border-radius: var(--radius-sm);
+	box-shadow: var(--shadow-pop);
+	color: var(--text);
+	font-size: var(--fs-xs);
+	line-height: var(--lh);
+	letter-spacing: var(--ls);
+	text-transform: none;
+	opacity: 0;
+	visibility: hidden;
+	transform: translateY(2px);
+	transition:
+		opacity var(--dur-fast) var(--ease),
+		transform var(--dur-fast) var(--ease);
+	pointer-events: none;
+}
+.wrap:hover .bubble,
+.wrap:focus-visible .bubble {
+	opacity: 1;
+	visibility: visible;
+	transform: translateY(0);
+}
+.top {
+	bottom: calc(100% + 8px);
+	left: 50%;
+	transform: translate(-50%, 2px);
+}
+.wrap:hover .top,
+.wrap:focus-visible .top {
+	transform: translate(-50%, 0);
+}
+.bottom {
+	top: calc(100% + 8px);
+	left: 50%;
+	transform: translate(-50%, -2px);
+}
+.wrap:hover .bottom,
+.wrap:focus-visible .bottom {
+	transform: translate(-50%, 0);
+}
+.left {
+	right: calc(100% + 8px);
+	top: 50%;
+	transform: translate(2px, -50%);
+}
+.wrap:hover .left,
+.wrap:focus-visible .left {
+	transform: translate(0, -50%);
+}
+.right {
+	left: calc(100% + 8px);
+	top: 50%;
+	transform: translate(-2px, -50%);
+}
+.wrap:hover .right,
+.wrap:focus-visible .right {
+	transform: translate(0, -50%);
+}

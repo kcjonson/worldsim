@@ -1,0 +1,131 @@
+.btn {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: var(--space-2);
+	font-family: var(--font-ui);
+	font-weight: 600;
+	white-space: nowrap;
+	border: var(--border-width) solid transparent;
+	border-radius: var(--radius-ui);
+	transition:
+		background var(--dur-fast) var(--ease),
+		border-color var(--dur-fast) var(--ease),
+		color var(--dur-fast) var(--ease),
+		box-shadow var(--dur) var(--ease),
+		transform var(--dur-fast) var(--ease);
+	user-select: none;
+}
+
+.btn:active {
+	transform: translateY(1px);
+}
+
+.btn:disabled {
+	opacity: 0.4;
+	cursor: not-allowed;
+	box-shadow: none;
+}
+
+.label {
+	display: inline-block;
+}
+
+.stencil .label {
+	text-transform: uppercase;
+	letter-spacing: var(--ls-wide);
+	font-family: var(--font-display);
+}
+
+/* ===== sizes ===== */
+.sm {
+	height: 26px;
+	padding: 0 var(--space-3);
+	font-size: var(--fs-xs);
+}
+.md {
+	height: 34px;
+	padding: 0 var(--space-4);
+	font-size: var(--fs-sm);
+}
+.lg {
+	height: 46px;
+	padding: 0 var(--space-6);
+	font-size: var(--fs-md);
+}
+.iconOnly.sm {
+	width: 26px;
+	padding: 0;
+}
+.iconOnly.md {
+	width: 34px;
+	padding: 0;
+}
+.iconOnly.lg {
+	width: 46px;
+	padding: 0;
+}
+.block {
+	display: flex;
+	width: 100%;
+}
+
+/* ===== variants ===== */
+
+/* primary — amber fill, glows on hover */
+.primary {
+	background: linear-gradient(180deg, var(--accent-bright), var(--accent));
+	color: var(--accent-contrast);
+	border-color: var(--accent-bright);
+	box-shadow: 0 0 0 transparent;
+}
+.primary:hover:not(:disabled) {
+	box-shadow: 0 0 16px var(--accent-glow);
+	background: linear-gradient(180deg, #fff, var(--accent-bright));
+}
+
+/* secondary — outlined glass */
+.secondary {
+	background: var(--bg-panel-raised);
+	color: var(--text-bright);
+	border-color: var(--line-edge);
+}
+.secondary:hover:not(:disabled) {
+	border-color: var(--accent);
+	color: var(--accent-bright);
+	background: var(--bg-active);
+}
+
+/* ghost — no chrome until hover */
+.ghost {
+	background: transparent;
+	color: var(--text);
+	border-color: transparent;
+}
+.ghost:hover:not(:disabled) {
+	background: var(--bg-hover);
+	color: var(--text-bright);
+}
+
+/* danger — destructive */
+.danger {
+	background: transparent;
+	color: var(--status-crit);
+	border-color: color-mix(in srgb, var(--status-crit) 50%, transparent);
+}
+.danger:hover:not(:disabled) {
+	background: color-mix(in srgb, var(--status-crit) 14%, transparent);
+	border-color: var(--status-crit);
+	color: #fff;
+}
+
+/* data — teal holographic */
+.data {
+	background: color-mix(in srgb, var(--data) 12%, transparent);
+	color: var(--data-bright);
+	border-color: color-mix(in srgb, var(--data) 45%, transparent);
+}
+.data:hover:not(:disabled) {
+	border-color: var(--data);
+	box-shadow: 0 0 14px var(--data-glow);
+}
