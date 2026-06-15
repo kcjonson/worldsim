@@ -41,7 +41,7 @@ Verification: organically curved boundaries across many seeds including low plat
 
 - `.claude/plans/water-hydrology.md` — the water/erosion/rendering plan and the chunk-time model
 - `/docs/design/features/world-generation/data-model.md` — coarse worldgen data fields
-- `status.md` — Water Availability and Plate Boundary Realism under Recently Completed
+- `/docs/status.md` — Water Availability and Plate Boundary Realism under Recently Completed
 
 ## Next Steps
 

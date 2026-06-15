@@ -101,7 +101,7 @@ Development log entries are **immutable history**. Don't update old entries — 
 
 ## Quick Stats
 
-- **Total Entries:** 17
+- **Total Entries:** 70 (entry files; the index below lists notable milestones)
 - **Latest Entry:** 2026-06-15
 - **Major Milestones:**
   - Water availability + plate-boundary realism: real drainage, landing water signal, curved rift cuts (2026-06-15)
