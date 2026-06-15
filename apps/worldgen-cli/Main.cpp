@@ -348,6 +348,20 @@ static void writeStatsJson(const std::string& path,
                  static_cast<double>(s.landWithWaterNearbyFraction));
     std::fprintf(fp, "  },\n");
 
+    // Terrain dissection (erosion baseline, E-0).
+    std::fprintf(fp, "  \"dissection\": {\n");
+    std::fprintf(fp, "    \"hypsometricIntegral\": %.6f,\n",
+                 static_cast<double>(s.hypsometricIntegral));
+    std::fprintf(fp, "    \"meanLocalReliefM\": %.2f,\n",
+                 static_cast<double>(s.meanLocalReliefM));
+    std::fprintf(fp, "    \"drainageDensity\": %.6f,\n",
+                 static_cast<double>(s.drainageDensity));
+    std::fprintf(fp, "    \"landWithinChannelDistFraction\": %.6f,\n",
+                 static_cast<double>(s.landWithinChannelDistFraction));
+    std::fprintf(fp, "    \"meanBeltCrestElevM\": %.2f\n",
+                 static_cast<double>(s.meanBeltCrestElevM));
+    std::fprintf(fp, "  },\n");
+
     // Timing.
     std::fprintf(fp, "  \"timing\": {\n");
     std::fprintf(fp, "    \"wallSeconds\": %.3f,\n", wallSeconds);
@@ -424,6 +438,13 @@ static void printSummary(const worldgen::WorldStats& s,
                 static_cast<double>(s.endorheicSinkFraction) * 100.0,
                 static_cast<double>(s.lakeTileFraction) * 100.0,
                 static_cast<double>(s.landWithWaterNearbyFraction) * 100.0);
+    std::printf("  Dissection (E-0)   : HI=%.4f  localRelief=%.0f m  drainDens=%.4f km/km2  "
+                "chanDist2=%.2f%%  beltCrest=%.0f m\n",
+                static_cast<double>(s.hypsometricIntegral),
+                static_cast<double>(s.meanLocalReliefM),
+                static_cast<double>(s.drainageDensity),
+                static_cast<double>(s.landWithinChannelDistFraction) * 100.0,
+                static_cast<double>(s.meanBeltCrestElevM));
 
     std::printf("  Wall time          : %.2f s\n", wallSeconds);
     std::printf("  worldHash          : 0x%016llx\n",
