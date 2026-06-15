@@ -5,6 +5,7 @@
 // Handles definition loading, generator invocation, and template caching.
 
 #include "assets/AssetDefinition.h"
+#include "assets/AssetValidator.h"
 #include "assets/IAssetGenerator.h"
 
 #include <vector/Types.h>
@@ -66,6 +67,10 @@ namespace engine::assets {
 
 		/// Get all loaded definition names
 		std::vector<std::string> getDefinitionNames() const;
+
+		/// Validation report from the most recent loadDefinitionsFromFolder.
+		/// Produced at load time; shared by the game (launch) and the Asset Manager.
+		[[nodiscard]] const ValidationReport& getValidationReport() const { return m_validationReport; }
 
 		// --- Entity Placement System API ---
 
@@ -159,6 +164,9 @@ namespace engine::assets {
 
 		// Path to shared scripts folder (for @shared/ prefix resolution)
 		std::filesystem::path m_sharedScriptsPath;
+
+		// Validation report from the most recent loadDefinitionsFromFolder
+		ValidationReport m_validationReport;
 	};
 
 } // namespace engine::assets

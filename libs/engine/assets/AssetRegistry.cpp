@@ -763,6 +763,13 @@ namespace engine::assets {
 		// Build string interning index for memory-efficient storage
 		buildDefNameIndex();
 
+		// Validate on load so the game (at launch) and the Asset Manager share one
+		// report. No GL; safe on the load worker thread.
+		m_validationReport = AssetValidator::validate(folderPath, m_sharedScriptsPath);
+		LOG_INFO(
+			Engine, "Asset validation: %d error(s), %d warning(s)", m_validationReport.errorCount(), m_validationReport.warningCount()
+		);
+
 		return totalLoaded;
 	}
 
@@ -996,6 +1003,7 @@ namespace engine::assets {
 		definitions.clear();
 		templateCache.clear();
 		groupIndex.clear();
+		m_validationReport.issues.clear();
 	}
 
 	std::vector<std::string> AssetRegistry::getDefinitionNames() const {

@@ -477,7 +477,7 @@ while (running) {
 
 **Tasks:**
 - [x] Phase 1: Shared render path (renderer MeshBounds computeBounds/fitToRect; AssetRegistry::buildMesh; assets AssetRenderer prepare + renderToPixels/Png; foundation PngEncoder + DebugServer refactor; determinism + fidelity tests)
-- [ ] Phase 2: Load-time validation (AssetValidator + ValidationReport, loader hardening, render smoke test)
+- [x] Phase 2: Load-time validation (AssetValidator + ValidationReport: missing refs, duplicate defNames, name/folder mismatch, ignored fields, variantCount drift, bad assetType, orphan SVGs; validates on load via getValidationReport; full GL render smoke deferred to the CLI)
 - [ ] Phase 3: Headless CLI (apps/asset-cli: list/search/inspect/validate/render, JSON, server-less)
 - [ ] Phase 4: Async loading + splash (worker-thread load, progress, validation summary, error-gate scene)
 - [ ] Phase 5: GUI (apps/asset-manager: GridContainer, browser scene, preview + sampling, inspector, validation view, reload)
