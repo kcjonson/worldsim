@@ -153,6 +153,7 @@ void ParameterPanel::buildWidgets() {
 		{"Low 512",      "512"},
 		{"Default 1024", "1024"},
 		{"High 1449",    "1449"},
+		{"Ultra 2048",   "2048"},
 	};
 	resolutionSelect = std::make_unique<UI::Select>(UI::Select::Args{
 		.position = {position.x + kSliderX, resY},
