@@ -5,6 +5,7 @@
 #include "AIDecisionSystem.h"
 #include "ActionSystem.h"
 
+#include "../GoalTaskRegistry.h"
 #include "../World.h"
 #include "../components/Action.h"
 #include "../components/DecisionTrace.h"
@@ -12,6 +13,9 @@
 #include "../components/Memory.h"
 #include "../components/Movement.h"
 #include "../components/Needs.h"
+#include "../components/Skills.h"
+#include "../components/Structure.h"
+#include "../components/StructureBlueprint.h"
 #include "../components/Task.h"
 #include "../components/Transform.h"
 
@@ -33,6 +37,10 @@ namespace ecs::test {
 			// Create ECS world
 			world = std::make_unique<World>();
 
+			// Goals are global (singleton registry); clear so a Deconstruct goal from one test
+			// can't leak into another.
+			GoalTaskRegistry::Get().clear();
+
 			// Initialize AssetRegistry (singleton) - needed for capability lookups
 			auto& registry = engine::assets::AssetRegistry::Get();
 
@@ -53,6 +61,7 @@ namespace ecs::test {
 		void TearDown() override {
 			// Clean up test definitions
 			engine::assets::AssetRegistry::Get().clearDefinitions();
+			GoalTaskRegistry::Get().clear();
 			world.reset();
 		}
 
@@ -1506,6 +1515,53 @@ namespace ecs::test {
 			EXPECT_TRUE(actionRegistry.actionNeedsHands("Eat"))
 			    << "Eat action should need hands";
 		}
+	}
+
+	// =============================================================================
+	// Deconstruct work (work-driven demolish): an Available Deconstruct goal for a
+	// demolishing structure with work to undo must yield a Deconstruct task for a
+	// Construction-capable colonist whose needs are all satisfied.
+	// =============================================================================
+
+	TEST_F(AIDecisionSystemTest, AvailableDeconstructGoalYieldsDeconstructTask) {
+		auto colonist = createColonist({0.0F, 0.0F});
+		setNeedValue(colonist, NeedType::Hunger, 100.0F);
+		setNeedValue(colonist, NeedType::Thirst, 100.0F);
+		setNeedValue(colonist, NeedType::Energy, 100.0F);
+		setNeedValue(colonist, NeedType::Bladder, 100.0F);
+
+		// Construction skill makes the colonist a builder/deconstructor (feeds the work bonus).
+		Skills skills;
+		skills.setLevel("Construction", 5.0F);
+		world->addComponent<Skills>(colonist, std::move(skills));
+
+		// A BUILT structure marked for demolition (work invested, so it can be deconstructed).
+		auto blueprint = world->createEntity();
+		world->addComponent<Position>(blueprint, Position{{3.0F, 0.0F}});
+		world->addComponent<Structure>(blueprint, Structure{StructureKind::Foundation, /*graphId=*/0});
+		StructureBlueprint bp;
+		bp.phase = StructureBlueprint::BuildPhase::Complete;
+		bp.workTotal = 50.0F;
+		bp.workDone = 50.0F;
+		bp.demolishing = true;
+		world->addComponent<StructureBlueprint>(blueprint, bp);
+
+		// An Available Deconstruct goal targeting it (what ConstructionSystem would emit).
+		GoalTask goal;
+		goal.type = TaskType::Deconstruct;
+		goal.owner = GoalOwner::ConstructionGoalSystem;
+		goal.destinationEntity = blueprint;
+		goal.destinationPosition = {3.0F, 0.0F};
+		goal.targetAmount = 1;
+		goal.status = GoalStatus::Available;
+		GoalTaskRegistry::Get().createGoal(std::move(goal));
+
+		world->update(0.016F);
+
+		auto* task = getTask(colonist);
+		ASSERT_NE(task, nullptr);
+		EXPECT_EQ(task->type, TaskType::Deconstruct);
+		EXPECT_EQ(task->buildBlueprintEntityId, static_cast<uint64_t>(blueprint));
 	}
 
 } // namespace ecs::test

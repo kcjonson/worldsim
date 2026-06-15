@@ -83,17 +83,6 @@ TEST(ConstructionSystemTests, CompletePhaseEmitsNothing) {
 	EXPECT_FALSE(decision.emitBuildGoal);
 }
 
-TEST(ConstructionSystemTests, DemolishingEmitsNothingAndHoldsPhase) {
-	auto bp = makeBlueprint(StructureBlueprint::BuildPhase::UnderConstruction);
-	bp.demolishing = true;
-	auto decision = decideConstructionPhase(bp, /*footprintClear=*/true, /*materialsComplete=*/true);
-
-	EXPECT_EQ(decision.nextPhase, StructureBlueprint::BuildPhase::UnderConstruction);
-	EXPECT_FALSE(decision.emitClearGoals);
-	EXPECT_FALSE(decision.emitMaterialGoals);
-	EXPECT_FALSE(decision.emitBuildGoal);
-}
-
 TEST(ConstructionSystemTests, ClearingGateTakesPriorityOverMaterials) {
 	// Even with materials complete, a blocked footprint keeps the blueprint Clearing:
 	// the clear gate is checked first.
@@ -234,6 +223,24 @@ namespace {
 			return entity;
 		}
 
+		/// A BUILT structure (phase Complete, work fully done, manifest delivered) flagged for
+		/// demolition. graphId 0 + no ConstructionWorld means the cascade gate is ungated, so its
+		/// Deconstruct goal goes Available immediately. kind selects the structural role.
+		EntityID createBuiltDemolishing(StructureKind kind, glm::vec2 pos = {5.0F, 7.0F}) {
+			auto entity = world->createEntity();
+			world->addComponent<Position>(entity, Position{pos});
+			world->addComponent<Structure>(entity, Structure{kind, /*graphId=*/0});
+			StructureBlueprint bp;
+			bp.phase = StructureBlueprint::BuildPhase::Complete;
+			bp.required = {{"Wood", 30}};
+			bp.delivered = {{"Wood", 30}};
+			bp.workTotal = 100.0F;
+			bp.workDone = 100.0F;
+			bp.demolishing = true;
+			world->addComponent<StructureBlueprint>(entity, bp);
+			return entity;
+		}
+
 		/// A colonist carrying `woodCarried` Wood in its backpack (capped at the stack size).
 		/// NeedsComponent marks it a colonist so carriedAmount/colonistCarryCapacity see it.
 		EntityID createColonistCarryingWood(uint32_t woodCarried) {
@@ -311,6 +318,72 @@ TEST_F(ConstructionGoalEmissionTest, TwoMaterialsEmitUmbrellaPlusAllChildrenAndS
 	EXPECT_EQ(countOfType(children2, TaskType::Harvest), 2U) << "both Harvest children must survive";
 	EXPECT_EQ(countOfType(children2, TaskType::Haul), 2U) << "both Haul children must survive";
 	EXPECT_EQ(registry.goalCount(GoalOwner::ConstructionGoalSystem), 5U);
+}
+
+// ============================================================================
+// Deconstruct (work-driven demolish): a demolishing blueprint emits a top-level
+// Deconstruct goal instead of nothing. With no ConstructionWorld wired the cascade
+// gate is ungated, so a built structure's Deconstruct goal goes Available at once. A
+// Build umbrella parked on the entity from before the demolish order is replaced.
+// ============================================================================
+
+TEST_F(ConstructionGoalEmissionTest, DemolishingBuiltStructureEmitsAvailableDeconstructGoal) {
+	auto  foundation = createBuiltDemolishing(StructureKind::Foundation);
+	auto& registry = GoalTaskRegistry::Get();
+
+	refresh();
+
+	const auto* goal = registry.getGoalByDestination(foundation);
+	ASSERT_NE(goal, nullptr);
+	EXPECT_EQ(goal->type, TaskType::Deconstruct);
+	EXPECT_EQ(goal->status, GoalStatus::Available) << "no dependents (ungated) -> Deconstruct goal Available";
+	EXPECT_FALSE(goal->parentGoalId.has_value()) << "the Deconstruct goal is top-level, not a child";
+	EXPECT_EQ(registry.goalCount(GoalOwner::ConstructionGoalSystem), 1U) << "one Deconstruct goal, no children";
+}
+
+TEST_F(ConstructionGoalEmissionTest, NoWorkDemolishingStructureIsRemovedImmediatelyViaCallback) {
+	// A demolishing blueprint with workDone <= 0 (an unbuilt blueprint, nothing to undo) can't be
+	// work-deconstructed (startBuildAction rejects it). It must fire the deconstructed callback
+	// immediately and emit NO Deconstruct goal.
+	auto entity = world->createEntity();
+	world->addComponent<Position>(entity, Position{{1.0F, 2.0F}});
+	world->addComponent<Structure>(entity, Structure{StructureKind::Foundation, /*graphId=*/0});
+	StructureBlueprint bp;
+	bp.phase = StructureBlueprint::BuildPhase::AwaitingMaterials;
+	bp.required = {{"Wood", 30}};
+	bp.workTotal = 100.0F;
+	bp.workDone = 0.0F; // no work invested
+	bp.demolishing = true;
+	world->addComponent<StructureBlueprint>(entity, bp);
+
+	EntityID removed = kInvalidEntity;
+	construction->setStructureDeconstructedCallback([&](EntityID e) { removed = e; });
+
+	refresh();
+
+	EXPECT_EQ(removed, entity) << "a no-work demolishing blueprint must fire the deconstructed callback";
+	EXPECT_EQ(GoalTaskRegistry::Get().getGoalByDestination(entity), nullptr) << "no Deconstruct goal for a no-work structure";
+}
+
+TEST_F(ConstructionGoalEmissionTest, DemolishOrderReplacesAnExistingBuildUmbrella) {
+	// A structure mid-build (Build umbrella + children) is then marked for demolition: the next
+	// refresh must drop the Build tree and leave a single Deconstruct goal on the destination.
+	auto  foundation = createTwoMaterialFoundation();
+	auto& registry = GoalTaskRegistry::Get();
+	refresh();
+	ASSERT_EQ(registry.getGoalByDestination(foundation)->type, TaskType::Build);
+	ASSERT_GT(registry.goalCount(GoalOwner::ConstructionGoalSystem), 1U);
+
+	// Mark it demolishing with work invested so it takes the worked path (not the no-work edge).
+	auto* bp = world->getComponent<StructureBlueprint>(foundation);
+	bp->workDone = 10.0F;
+	bp->demolishing = true;
+	refresh();
+
+	const auto* goal = registry.getGoalByDestination(foundation);
+	ASSERT_NE(goal, nullptr);
+	EXPECT_EQ(goal->type, TaskType::Deconstruct) << "Build umbrella replaced by a Deconstruct goal";
+	EXPECT_EQ(registry.goalCount(GoalOwner::ConstructionGoalSystem), 1U) << "Build children gone, only the Deconstruct goal";
 }
 
 TEST_F(ConstructionGoalEmissionTest, GoalsAreCleanedUpWhenBlueprintCompletes) {
@@ -458,6 +531,7 @@ namespace {
 			EXPECT_TRUE(host.ok());
 			cw::SegmentCommitResult seg = topology.commitSegment({0, 0}, {4000, 0}, "wood", "thin", host.id);
 			EXPECT_TRUE(seg.ok());
+			hostFoundation = host.id;
 			hostSegment = seg.id;
 			return topology.addOpening(seg.id, 0.5F, "door", "wood");
 		}
@@ -475,6 +549,23 @@ namespace {
 			return entity;
 		}
 
+		/// A BUILT structure (full work invested) flagged for demolition, linked to a real
+		/// topology node by graphId, so the cascade gate queries the live ConstructionWorld.
+		EntityID createBuiltDemolishing(StructureKind kind, uint64_t graphId, glm::vec2 pos = {1.0F, 1.0F}) {
+			auto entity = world->createEntity();
+			world->addComponent<Position>(entity, Position{pos});
+			world->addComponent<Structure>(entity, Structure{kind, graphId});
+			StructureBlueprint bp;
+			bp.phase = StructureBlueprint::BuildPhase::Complete;
+			bp.required = {{"Wood", 10}};
+			bp.delivered = {{"Wood", 10}};
+			bp.workTotal = 20.0F;
+			bp.workDone = 20.0F;
+			bp.demolishing = true;
+			world->addComponent<StructureBlueprint>(entity, bp);
+			return entity;
+		}
+
 		void refresh() {
 			for (int i = 0; i < 30; ++i) {
 				world->update(0.016F);
@@ -482,6 +573,7 @@ namespace {
 		}
 
 		cw::ConstructionWorld  topology;
+		cw::FoundationId	   hostFoundation = cw::kInvalidFoundation;
 		cw::SegmentId		   hostSegment = cw::kInvalidSegment;
 		std::unique_ptr<World> world;
 		ConstructionSystem*	   construction = nullptr;
@@ -552,4 +644,57 @@ TEST_F(OpeningHostGateTest, UnknownOpeningStaysGated) {
 	ASSERT_NE(umbrella, nullptr);
 	EXPECT_EQ(umbrella->status, GoalStatus::Blocked);
 	EXPECT_TRUE(registry.getChildGoals(umbrella->id).empty()) << "an opening with no topology node stays gated";
+}
+
+// ============================================================================
+// Deconstruct cascade gate (driven through a real ConstructionWorld): a demolishing
+// foundation stays Blocked while a wall is hosted on it; a demolishing wall stays
+// Blocked while an opening sits on it; each goes Available once its dependent is gone.
+// This is what orders a whole-building teardown: openings -> walls -> foundation.
+// ============================================================================
+
+TEST_F(OpeningHostGateTest, DemolishingFoundationGatedWhileWallStands) {
+	const cw::OpeningId opening = makeOpeningOnSegment();
+	ASSERT_NE(opening, cw::kInvalidOpening);
+	auto  foundationBp = createBuiltDemolishing(StructureKind::Foundation, hostFoundation);
+	auto& registry = GoalTaskRegistry::Get();
+
+	refresh();
+
+	// A wall is still hosted on the foundation: its Deconstruct goal is Blocked.
+	const auto* goal = registry.getGoalByDestination(foundationBp);
+	ASSERT_NE(goal, nullptr);
+	EXPECT_EQ(goal->type, TaskType::Deconstruct);
+	EXPECT_EQ(goal->status, GoalStatus::Blocked) << "foundation must wait for its walls";
+
+	// Remove the wall (and its opening): the gate opens and the goal goes Available.
+	topology.removeSegment(hostSegment);
+	refresh();
+
+	const auto* goal2 = registry.getGoalByDestination(foundationBp);
+	ASSERT_NE(goal2, nullptr);
+	EXPECT_EQ(goal2->status, GoalStatus::Available) << "no walls left -> foundation Deconstruct Available";
+}
+
+TEST_F(OpeningHostGateTest, DemolishingWallGatedWhileOpeningStands) {
+	const cw::OpeningId opening = makeOpeningOnSegment();
+	ASSERT_NE(opening, cw::kInvalidOpening);
+	auto  wallBp = createBuiltDemolishing(StructureKind::Wall, hostSegment);
+	auto& registry = GoalTaskRegistry::Get();
+
+	refresh();
+
+	// An opening still sits on the wall: its Deconstruct goal is Blocked.
+	const auto* goal = registry.getGoalByDestination(wallBp);
+	ASSERT_NE(goal, nullptr);
+	EXPECT_EQ(goal->type, TaskType::Deconstruct);
+	EXPECT_EQ(goal->status, GoalStatus::Blocked) << "wall must wait for its openings";
+
+	// Remove the opening: the gate opens and the wall's goal goes Available.
+	topology.removeOpening(opening);
+	refresh();
+
+	const auto* goal2 = registry.getGoalByDestination(wallBp);
+	ASSERT_NE(goal2, nullptr);
+	EXPECT_EQ(goal2->status, GoalStatus::Available) << "no openings left -> wall Deconstruct Available";
 }

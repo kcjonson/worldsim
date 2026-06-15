@@ -612,6 +612,31 @@ namespace engine::construction {
 		return v == nullptr ? std::vector<SegmentId>{} : v->segments;
 	}
 
+	std::vector<SegmentId> ConstructionWorld::segmentsOnFoundation(FoundationId id) const {
+		std::vector<SegmentId> result;
+		if (id == kInvalidFoundation) {
+			return result;
+		}
+		for (const WallSegment& s : segments_) {
+			if (s.hostFoundation == id) {
+				result.push_back(s.id);
+			}
+		}
+		return result;
+	}
+
+	bool ConstructionWorld::foundationHasWalls(FoundationId id) const {
+		if (id == kInvalidFoundation) {
+			return false;
+		}
+		for (const WallSegment& s : segments_) {
+			if (s.hostFoundation == id) {
+				return true;
+			}
+		}
+		return false;
+	}
+
 	bool ConstructionWorld::setSegmentState(SegmentId id, FoundationState state) {
 		WallSegment* s = findSegment(id);
 		if (s == nullptr) {

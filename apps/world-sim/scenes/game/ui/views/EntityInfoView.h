@@ -58,7 +58,8 @@ class EntityInfoView : public UI::Component {
 		std::function<void()> onPackage;			// Called when Package button clicked for placed furniture
 		OpenStorageConfigCallback onOpenStorageConfig;	// Called to open storage config dialog for containers
 		ResourceQueryCallback queryResources;		// Query remaining resource count for harvestable entities
-		std::function<void()> onDemolishFoundation; // Called when Demolish button clicked for a foundation
+		std::function<void()>	   onDemolishFoundation; // Called when Demolish foundation clicked (clear foundation only)
+		std::function<void()>	   onDemolishBuilding;	 // Called when Demolish building clicked (cascade)
 		std::function<void()> onDemolishWallSegment; // Called when Demolish button clicked for a wall segment
 		std::function<void()>	   onDemolishOpening;	  // Called when Demolish button clicked for an opening
 	};
@@ -145,6 +146,7 @@ class EntityInfoView : public UI::Component {
 	OpenStorageConfigCallback onOpenStorageConfigCallback;
 	ResourceQueryCallback queryResourcesCallback;
 	std::function<void()> onDemolishFoundationCallback;
+	std::function<void()>	   onDemolishBuildingCallback;
 	std::function<void()> onDemolishWallSegmentCallback;
 	std::function<void()>	   onDemolishOpeningCallback;
 

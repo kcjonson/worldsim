@@ -46,12 +46,9 @@ namespace ecs {
 	ConstructionDecision decideConstructionPhase(const StructureBlueprint& blueprint, bool footprintClear, bool materialsComplete) {
 		ConstructionDecision decision;
 
-		// A blueprint slated for demolition is owned by the Deconstruct path; emit nothing
-		// and leave the phase where it is.
-		if (blueprint.demolishing) {
-			decision.nextPhase = blueprint.phase;
-			return decision;
-		}
+		// Forward build progression only. Demolishing is NOT handled here: callers MUST route a
+		// demolishing blueprint to decideDeconstruct before reaching this helper (update() does
+		// so). A demolishing blueprint passed in here would be mis-decided as a build.
 
 		// Already done: no goals, stay Complete.
 		if (blueprint.phase == StructureBlueprint::BuildPhase::Complete) {
@@ -111,10 +108,27 @@ namespace ecs {
 
 			const uint64_t graphId = structure.graphId;
 
-			// A completed or demolishing blueprint emits nothing; leave it in the stale set so
-			// the cleanup pass below drops any lingering goals (the Build goal never self-retires
-			// via delivery). Completion itself is flipped by ActionSystem's callback.
-			if (blueprint.phase == StructureBlueprint::BuildPhase::Complete || blueprint.demolishing) {
+			// A demolishing blueprint is owned by the Deconstruct path: drop any leftover Build
+			// goals and drive its Deconstruct goal (gated by the cascade order). Keep it OUT of the
+			// stale set so the cleanup pass doesn't tear down the Deconstruct goal we just emitted.
+			if (blueprint.demolishing) {
+				// Refresh delivered[] from on-site inventory so the refund matches what is physically
+				// present (an in-progress site may have in-flight hauls). Only for non-Complete
+				// blueprints: a Built structure has delivered == required, and its delivery inventory
+				// may already be cleared, so reconciling it would zero the refund.
+				if (blueprint.phase != StructureBlueprint::BuildPhase::Complete) {
+					reconcileDelivered(entity, blueprint);
+				}
+				decideDeconstruct(entity, structure, blueprint);
+				entitiesWithGoals.erase(entity);
+				m_activeBlueprintCount++;
+				continue;
+			}
+
+			// A completed blueprint emits nothing; leave it in the stale set so the cleanup pass
+			// below drops any lingering goals (the Build goal never self-retires via delivery).
+			// Completion itself is flipped by ActionSystem's callback.
+			if (blueprint.phase == StructureBlueprint::BuildPhase::Complete) {
 				continue;
 			}
 
@@ -585,6 +599,105 @@ namespace ecs {
 			static_cast<double>(blueprint.workTotal)
 		);
 		return umbrellaId;
+	}
+
+	bool ConstructionSystem::deconstructDependentsCleared(const Structure& structure) const {
+		if (m_constructionWorld == nullptr) {
+			// No topology wired (headless/unit context): nothing to cascade-gate on.
+			return true;
+		}
+		switch (structure.kind) {
+			case StructureKind::Foundation:
+				// A foundation may not deconstruct while any wall still stands on it.
+				// foundationHasWalls is the allocation-free early-exit query (this runs
+				// every tick for each demolishing foundation).
+				return !m_constructionWorld->foundationHasWalls(structure.graphId);
+			case StructureKind::Wall: {
+				// A wall may not deconstruct while any opening sits on it.
+				for (const auto& opening : m_constructionWorld->openings()) {
+					if (opening.segment == structure.graphId) {
+						return false;
+					}
+				}
+				return true;
+			}
+			case StructureKind::Opening:
+			case StructureKind::Room:
+				// Openings (and the non-blueprint Room) have no structural dependents.
+				return true;
+		}
+		return true;
+	}
+
+	void ConstructionSystem::decideDeconstruct(EntityID blueprintEntity, const Structure& structure, StructureBlueprint& blueprint) {
+		auto& registry = GoalTaskRegistry::Get();
+
+		// A demolishing structure with no work to undo can't be work-deconstructed (startBuildAction
+		// rejects workDone <= 0). Remove it immediately through the SAME removal+refund callback a
+		// worked deconstruct fires, and retire any goals it owned. Common case is demolishing a BUILT
+		// structure (workDone == workTotal), which takes the worked path below instead.
+		if (blueprint.workDone <= 0.0F) {
+			const auto* goal = registry.getGoalByDestination(blueprintEntity);
+			while (goal != nullptr) {
+				registry.removeGoalWithChildren(goal->id);
+				goal = registry.getGoalByDestination(blueprintEntity);
+			}
+			if (m_onStructureDeconstructed) {
+				m_onStructureDeconstructed(blueprintEntity);
+			} else if (m_warnedNoDeconstructCallback.insert(blueprintEntity).second) {
+				// No callback: the blueprint stays demolishing and re-enters this branch every tick,
+				// so warn once per entity instead of per tick.
+				LOG_WARNING(
+					Engine,
+					"[Construction] Demolishing blueprint %u has no work to undo but no deconstructed callback set - not removed",
+					static_cast<uint32_t>(blueprintEntity)
+				);
+			}
+			return;
+		}
+
+		const auto*		position = world->getComponent<Position>(blueprintEntity);
+		const glm::vec2 sitePos = position != nullptr ? position->value : glm::vec2{0.0F, 0.0F};
+
+		// Cascade gate: a structure's Deconstruct goal goes Available only once its dependents are
+		// gone (openings off a wall, walls off a foundation). Until then it holds a Blocked goal so
+		// the building tears down in order: openings -> walls -> foundation.
+		const GoalStatus status = deconstructDependentsCleared(structure) ? GoalStatus::Available : GoalStatus::Blocked;
+
+		// One top-level Deconstruct goal owns the destination slot. If a stale Build umbrella (and
+		// its children) is still parked there from before the demolish order, drop the whole tree
+		// so the slot is free for the Deconstruct goal.
+		const auto* existing = registry.getGoalByDestination(blueprintEntity);
+		if (existing != nullptr && existing->type != TaskType::Deconstruct) {
+			registry.removeGoalWithChildren(existing->id);
+			existing = nullptr;
+		}
+
+		if (existing != nullptr) {
+			if (existing->status != status) {
+				registry.updateGoal(existing->id, [status](GoalTask& g) { g.status = status; });
+			}
+			return;
+		}
+
+		GoalTask deconstructGoal;
+		deconstructGoal.type = TaskType::Deconstruct;
+		deconstructGoal.owner = GoalOwner::ConstructionGoalSystem;
+		deconstructGoal.destinationEntity = blueprintEntity;
+		deconstructGoal.destinationPosition = sitePos;
+		deconstructGoal.targetAmount = 1; // a single goal; one or more colonists can work it down
+		deconstructGoal.status = status;
+		const uint64_t goalId = registry.createGoal(std::move(deconstructGoal));
+
+		LOG_DEBUG(
+			Engine,
+			"[Construction] Deconstruct goal %llu for blueprint %u (status %d, work %.0f/%.0f)",
+			static_cast<unsigned long long>(goalId),
+			static_cast<uint32_t>(blueprintEntity),
+			static_cast<int>(status),
+			static_cast<double>(blueprint.workDone),
+			static_cast<double>(blueprint.workTotal)
+		);
 	}
 
 	void ConstructionSystem::completeBlueprintNow(EntityID entity, StructureBlueprint& blueprint) {

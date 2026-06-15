@@ -435,10 +435,11 @@ namespace world_sim {
 	} // namespace
 
 	PanelContent adaptFoundation(
-		const ecs::World&								world,
+		const ecs::World&							   world,
 		const engine::construction::ConstructionWorld& constructionWorld,
-		const FoundationSelection&						selection,
-		const std::function<void()>&					onDemolish
+		const FoundationSelection&					   selection,
+		const std::function<void()>&				   onDemolish,
+		const std::function<void()>&				   onDemolishBuilding
 	) {
 		PanelContent content;
 		content.layout = PanelLayout::SingleColumn;
@@ -457,30 +458,44 @@ namespace world_sim {
 		const bool built =
 			(foundation != nullptr && foundation->state == engine::construction::FoundationState::Built);
 
-		// Build state + progress come from the ECS mirror's blueprint. A built
-		// foundation has no blueprint progress to show; a blueprint shows phase,
-		// a 0-100 work bar, and the delivered/required materials summary.
+		// Build state + progress (phase, delivered/required materials, work bar) come
+		// from the ECS mirror's blueprint and are only meaningful WHILE BUILDING. A
+		// finished foundation shows none of them -- its title, material, and area say
+		// what it is; State/Materials/Work would just be noise.
 		const ecs::StructureBlueprint* blueprint =
 			(foundation != nullptr) ? world.getComponent<ecs::StructureBlueprint>(foundation->entity) : nullptr;
 
-		if (blueprint != nullptr) {
+		if (!built && blueprint != nullptr) {
 			content.slots.push_back(TextSlot{"State", buildPhaseLabel(blueprint->phase, blueprint->demolishing)});
 			content.slots.push_back(TextSlot{"Materials", materialsSummary(*blueprint)});
 			content.slots.push_back(ProgressBarSlot{.label = "Work", .value = blueprint->progress() * 100.0F});
-		} else {
-			content.slots.push_back(TextSlot{"State", built ? "Built" : "Blueprint"});
 		}
 
-		// Demolish action. Epic C does an immediate whole-foundation removal here. The
-		// work-driven Deconstruct action exists; only its material refund and the
-		// Demolish-building cascade are deferred polish.
+		// Demolish action. A foundation that still hosts walls can't be removed on
+		// its own (the walls would be orphaned), so offer the cascade instead;
+		// ActionButtonSlot has no disabled flag, so swap the button rather than
+		// graying it out. A clear or blueprint foundation gets the plain Demolish.
+		// Offer "Demolish building" (cascade) only when there are walls AND a cascade
+		// callback is wired; otherwise the plain Demolish. The adaptSelection fallback
+		// path passes no onDemolishBuilding, so guard against a dead (null-callback)
+		// button there by falling back to plain Demolish.
+		const bool hasWalls = constructionWorld.foundationHasWalls(selection.id);
 		content.slots.push_back(SpacerSlot{.height = 8.0F});
-		content.slots.push_back(
-			ActionButtonSlot{
-				.label = "Demolish",
-				.onClick = onDemolish,
-			}
-		);
+		if (hasWalls && onDemolishBuilding) {
+			content.slots.push_back(
+				ActionButtonSlot{
+					.label = "Demolish building",
+					.onClick = onDemolishBuilding,
+				}
+			);
+		} else {
+			content.slots.push_back(
+				ActionButtonSlot{
+					.label = "Demolish",
+					.onClick = onDemolish,
+				}
+			);
+		}
 
 		return content;
 	}
@@ -528,18 +543,16 @@ namespace world_sim {
 		const bool built =
 			(segment != nullptr && segment->state == engine::construction::FoundationState::Built);
 
-		// Build state + progress come from the ECS mirror's blueprint, exactly like a
-		// foundation: a built wall has no blueprint progress; a blueprint shows phase,
-		// a 0-100 work bar, and the delivered/required materials summary.
+		// Build state + progress (phase, materials, work bar) are only meaningful WHILE
+		// BUILDING; a finished wall shows none of them (its material, thickness, and
+		// length already say what it is). Same rule as the foundation panel.
 		const ecs::StructureBlueprint* blueprint =
 			(segment != nullptr) ? world.getComponent<ecs::StructureBlueprint>(segment->entity) : nullptr;
 
-		if (blueprint != nullptr) {
+		if (!built && blueprint != nullptr) {
 			content.slots.push_back(TextSlot{"State", buildPhaseLabel(blueprint->phase, blueprint->demolishing)});
 			content.slots.push_back(TextSlot{"Materials", materialsSummary(*blueprint)});
 			content.slots.push_back(ProgressBarSlot{.label = "Work", .value = blueprint->progress() * 100.0F});
-		} else {
-			content.slots.push_back(TextSlot{"State", built ? "Built" : "Blueprint"});
 		}
 
 		// Demolish action. Per-segment removal is the design's wall demolition unit;
@@ -590,12 +603,13 @@ namespace world_sim {
 		const bool hasMirror = opening != nullptr && opening->entity != ecs::kInvalidEntity && world.isAlive(opening->entity);
 		const ecs::StructureBlueprint* blueprint = hasMirror ? world.getComponent<ecs::StructureBlueprint>(opening->entity) : nullptr;
 
-		if (blueprint != nullptr) {
+		// Progress (state, materials, work bar) only while building; a finished opening
+		// shows none of it (type, material, pathable already describe it). Same rule as
+		// the foundation/wall panels.
+		if (!built && blueprint != nullptr) {
 			content.slots.push_back(TextSlot{"State", buildPhaseLabel(blueprint->phase, blueprint->demolishing)});
 			content.slots.push_back(TextSlot{"Materials", materialsSummary(*blueprint)});
 			content.slots.push_back(ProgressBarSlot{.label = "Work", .value = blueprint->progress() * 100.0F});
-		} else {
-			content.slots.push_back(TextSlot{"State", built ? "Built" : "Blueprint"});
 		}
 
 		// Demolish action. The opening is its own demolition unit (independent of the

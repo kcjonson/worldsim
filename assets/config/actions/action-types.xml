@@ -40,6 +40,10 @@
     <description>Constructing a structure</description>
   </Action>
 
+  <Action defName="Deconstruct" needsHands="true">
+    <description>Tearing down a structure</description>
+  </Action>
+
   <Action defName="Pickup" needsHands="true">
     <description>Picking up an item</description>
   </Action>

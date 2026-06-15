@@ -145,6 +145,11 @@ namespace ecs {
 			if (taskType == TaskType::Build && status == OptionStatus::Available) {
 				return 41.0F + workBonus();
 			}
+			// Tier 6.45: Deconstruct work - same priority as Build (both are Construction work);
+			// Construction skill feeds workBonus identically.
+			if (taskType == TaskType::Deconstruct && status == OptionStatus::Available) {
+				return 41.0F + workBonus();
+			}
 			// Tier 6.5: Crafting work - priority 40 + all bonuses
 			if (taskType == TaskType::Craft && status == OptionStatus::Available) {
 				return 40.0F + workBonus();

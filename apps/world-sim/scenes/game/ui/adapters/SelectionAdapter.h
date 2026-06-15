@@ -72,17 +72,23 @@ using ResourceQueryCallback = std::function<std::optional<uint32_t>(const std::s
 
 /// Convert a selected construction foundation into panel content.
 /// Pulls material/area/state from the ConstructionWorld and build progress from
-/// the ECS StructureBlueprint on the foundation's mirror entity. Emits a
-/// Demolish ActionButtonSlot wired to onDemolish.
+/// the ECS StructureBlueprint on the foundation's mirror entity. The demolish
+/// button is conditional: a built foundation that still hosts walls offers
+/// "Demolish building" (the cascade) since the plain foundation removal would
+/// orphan those walls; a clear (or blueprint) foundation offers "Demolish".
+/// (ActionButtonSlot has no disabled flag, so this swaps the button rather than
+/// disabling it.)
 /// @param world ECS world (for the blueprint component).
-/// @param constructionWorld Topology store (geometry, material, state).
+/// @param constructionWorld Topology store (geometry, material, state, hosted walls).
 /// @param selection The selected foundation.
-/// @param onDemolish Callback for the Demolish button (nullable).
+/// @param onDemolish Callback for the plain Demolish button (nullable).
+/// @param onDemolishBuilding Callback for the cascade Demolish-building button (nullable).
 [[nodiscard]] PanelContent adaptFoundation(
-	const ecs::World& world,
+	const ecs::World&							   world,
 	const engine::construction::ConstructionWorld& constructionWorld,
-	const FoundationSelection& selection,
-	const std::function<void()>& onDemolish = {}
+	const FoundationSelection&					   selection,
+	const std::function<void()>&				   onDemolish = {},
+	const std::function<void()>&				   onDemolishBuilding = {}
 );
 
 /// Convert a selected wall segment into panel content.

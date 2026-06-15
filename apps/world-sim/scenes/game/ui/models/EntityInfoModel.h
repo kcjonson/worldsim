@@ -81,7 +81,8 @@ class EntityInfoModel {
 		std::function<void()> onPackage;		// Package placed furniture
 		OpenStorageConfigCallback onOpenStorageConfig;	// Open storage config dialog for containers
 		ResourceQueryCallback queryResources;	// Query remaining resource count for harvestable entities
-		std::function<void()> onDemolishFoundation;	// Demolish the selected foundation
+		std::function<void()>	   onDemolishFoundation;  // Demolish just the (clear) foundation
+		std::function<void()>	   onDemolishBuilding;	  // Demolish the whole building (walls + openings + foundation)
 		std::function<void()> onDemolishWallSegment; // Demolish the selected wall segment
 		std::function<void()>	   onDemolishOpening;	  // Demolish the selected opening
 	};
