@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2026-06-15 (Water Availability complete — PRs #144 + lake fix #146; Plate Boundary Realism — curved rift cuts + power-law plate sizes + broken mountain belts + Ultra 2048, PR #145; next: valley erosion then 2D chunk-time river/lake rendering)
+Last Updated: 2026-06-15 (Fluvial Erosion — stream-power valley carving, PR #149 draft; Water Availability complete PRs #144/#146; Plate Boundary Realism PR #145; next: bathymetry comb-artifact fix, then 2D chunk-time river/lake rendering)
 
 ## Epic/Story/Task Template
 
@@ -467,6 +467,23 @@ while (running) {
 ---
 
 ## In Progress Epics
+
+### Fluvial Erosion (worldgen)
+**Spec/Documentation:** `.claude/plans/erosion.md`, `/docs/development-log/entries/2026-06-15-worldgen-fluvial-erosion.md`
+**Dependencies:** Water Availability (drainage)
+**Status:** in progress (PR #149, draft)
+
+**Goal:** Carve valleys into the continental terrain so rivers (rendered later from the climate drainage) land in real valleys. Detachment-limited stream-power incision (Braun & Willett implicit solver) on the drainage stack, between Terrain and Atmosphere; downstream climate/biomes/final drainage all see the carved terrain.
+
+**Tasks:**
+- [x] E-0: dissection metrics baseline (WorldStats + worldgen-cli)
+- [x] E-1: ErosionStage core (shared DrainageRouting helper + implicit stream-power) + pipeline integration
+- [x] E-2: downstream re-validation (carved terrain through climate/biomes/final drainage; determinism; budget)
+- [x] E-3: strength at conservative subtle default (accepted)
+- [x] E-4: dev log + status (this) on the draft PR
+- [ ] Mark PR #149 ready, clear CI + Copilot, merge
+
+**Result:** Valleys carved deterministically (worldHash bit-identical across thread counts); mountains preserved (belt crests stay tall); world-tests green (174); gen ~22s at n=1024. Follow-ups: the bathymetry "comb" artifact (hex-BFS distance terracing on the shelf edge + crust-age depth field) is a separate deferred tuning task; then 2D chunk-time river/lake rendering.
 
 ### World Generation & Creator
 **Spec/Documentation:** `/docs/design/features/world-generation/`, `.claude/plans/world-generation.md`

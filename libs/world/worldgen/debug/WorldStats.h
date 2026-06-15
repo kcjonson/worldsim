@@ -87,6 +87,21 @@ struct WorldStats {
     float    meanFlowAccumLand{};       // mean flowAccum across land tiles
     float    landWithWaterNearbyFraction{}; // land tiles that are a river OR sink OR
                                             // have an ocean/lake neighbor
+
+    // Terrain dissection metrics.  All are over DRY land (non-ocean, non-lake)
+    // unless noted, and measure whatever GeneratedWorld is supplied (the CLI and
+    // tests compute them on the fully-generated world, i.e. after erosion).
+    float hypsometricIntegral{};         // (meanElev - minElev) / (maxElev - minElev) over land;
+                                         // classic geomorphic index, 0..1; erosion lowers it over time
+    float meanLocalReliefM{};            // mean over land tiles of (maxNeighborElev - minNeighborElev)
+                                         // across tile + its grid neighbors; fine-scale ruggedness
+    float drainageDensity{};             // km of channel per km^2 of land:
+                                         // (riverTileCount * tileWidthKm) / landAreaKm2; 0 if no land
+    float landWithinChannelDistFraction{}; // fraction of land tiles that are a river (kFlagRiver) OR
+                                           // within 2 grid hops of one; tracks valley coverage
+    float meanBeltCrestElevM{};          // mean elevation of mountain-belt tiles
+                                         // (land tiles with elev > meanLand + 1500 m, component >= 32);
+                                         // erosion guard: must not flatten mountains; 0 if no belts
 };
 
 // Compute WorldStats from a completed GeneratedWorld.

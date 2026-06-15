@@ -833,6 +833,200 @@ WorldStats computeWorldStats(const GeneratedWorld& world) {
             : 0.0f;
     }
 
+    // ---- Terrain dissection metrics (computed on whatever world is supplied) ----
+    {
+        // Hypsometric integral: (meanElev - minElev) / (maxElev - minElev) over land.
+        float landMinElev =  std::numeric_limits<float>::max();
+        float landMaxElev = -std::numeric_limits<float>::max();
+        double landElevSum = 0.0;
+        uint32_t landCount = 0;
+
+        // Mean local relief: mean over land tiles of (maxNeighborElev - minNeighborElev)
+        // across the tile + its grid neighbors.
+        double localReliefSum = 0.0;
+
+        // Drainage density: river channel length / land area.
+        uint32_t riverTileCount = 0;
+
+        // Mean belt crest elevation: mean elev of belt-candidate tiles.
+        // Belt criterion reuses computeBeltStats: land tiles elev > meanLand + 1500 m,
+        // component >= 32.  We already have s.belts computed above.  Collect them now.
+        // (We need meanLand first, so compute it in the same pass.)
+        // Note: meanLand was computed in the belts block above; we re-derive it here
+        // to keep this block self-contained and avoid cross-block ordering dependencies.
+        double meanLandForBelt = 0.0;
+        {
+            uint32_t lc = 0;
+            for (uint32_t t = 0; t < N; ++t) {
+                const uint8_t f = world.data.flags[t];
+                if (f & kFlagOcean) continue;
+                if (f & kFlagLake)  continue;
+                meanLandForBelt += static_cast<double>(world.data.elevation[t]);
+                ++lc;
+            }
+            if (lc > 0) meanLandForBelt /= static_cast<double>(lc);
+        }
+        const float beltThresh = static_cast<float>(meanLandForBelt) + 1500.0f;
+
+        std::array<TileId, 6> nbrs{};
+        for (uint32_t t = 0; t < N; ++t) {
+            const uint8_t f = world.data.flags[t];
+            if (f & kFlagOcean) continue;
+            if (f & kFlagLake)  continue;
+
+            ++landCount;
+            const float elev = world.data.elevation[t];
+            if (elev < landMinElev) landMinElev = elev;
+            if (elev > landMaxElev) landMaxElev = elev;
+            landElevSum += static_cast<double>(elev);
+
+            if (f & kFlagRiver) ++riverTileCount;
+
+            // Local relief: range over tile + neighbors.
+            float relMin = elev;
+            float relMax = elev;
+            const uint32_t cnt = grid.neighbors(t, nbrs);
+            for (uint32_t k = 0; k < cnt; ++k) {
+                const float ne = world.data.elevation[nbrs[k]];
+                if (ne < relMin) relMin = ne;
+                if (ne > relMax) relMax = ne;
+            }
+            localReliefSum += static_cast<double>(relMax - relMin);
+        }
+
+        // Hypsometric integral.
+        if (landCount > 0 && (landMaxElev - landMinElev) > 0.0f) {
+            float meanElev = static_cast<float>(landElevSum / static_cast<double>(landCount));
+            s.hypsometricIntegral = (meanElev - landMinElev) / (landMaxElev - landMinElev);
+        } else {
+            s.hypsometricIntegral = 0.0f;
+        }
+
+        // Mean local relief.
+        s.meanLocalReliefM = (landCount > 0)
+            ? static_cast<float>(localReliefSum / static_cast<double>(landCount))
+            : 0.0f;
+
+        // Drainage density: (channelTileCount * tileWidthKm) / landAreaKm2.
+        if (landCount > 0) {
+            const float landAreaKm2 = static_cast<float>(landCount) * tkm * tkm;
+            s.drainageDensity = (static_cast<float>(riverTileCount) * tkm) / landAreaKm2;
+        } else {
+            s.drainageDensity = 0.0f;
+        }
+
+        // landWithinChannelDistFraction: land tiles that are a river OR within 2 hops of one.
+        // BFS from all river tiles, mark tiles at distance <= 2.  Ascending TileId seed
+        // order for determinism, matching the existing water-nearby logic.
+        {
+            std::vector<uint8_t> channelDist(N, 0xFFu); // 0xFF = unreached
+            std::vector<TileId> queue;
+            queue.reserve(N / 8);
+
+            // Seed from river tiles (dry land only, ascending order).
+            for (uint32_t t = 0; t < N; ++t) {
+                const uint8_t f = world.data.flags[t];
+                if (f & kFlagOcean) continue;
+                if (f & kFlagLake)  continue;
+                if (f & kFlagRiver) {
+                    channelDist[t] = 0;
+                    queue.push_back(t);
+                }
+            }
+
+            // BFS limited to depth 2.
+            for (size_t qi = 0; qi < queue.size(); ++qi) {
+                TileId cur = queue[qi];
+                if (channelDist[cur] >= 2) continue;
+                const uint32_t cnt = grid.neighbors(cur, nbrs);
+                for (uint32_t k = 0; k < cnt; ++k) {
+                    TileId nb = nbrs[k];
+                    if (channelDist[nb] != 0xFFu) continue; // already visited
+                    const uint8_t nf = world.data.flags[nb];
+                    if (nf & kFlagOcean) continue;
+                    if (nf & kFlagLake)  continue;
+                    channelDist[nb] = channelDist[cur] + 1;
+                    queue.push_back(nb);
+                }
+            }
+
+            uint32_t withinDist = 0;
+            for (uint32_t t = 0; t < N; ++t) {
+                const uint8_t f = world.data.flags[t];
+                if (f & kFlagOcean) continue;
+                if (f & kFlagLake)  continue;
+                if (channelDist[t] <= 2) ++withinDist;
+            }
+            s.landWithinChannelDistFraction = (landCount > 0)
+                ? static_cast<float>(withinDist) / static_cast<float>(landCount)
+                : 0.0f;
+        }
+
+        // Mean belt crest elevation: mean elev of tiles meeting the belt criterion
+        // (land, elev > meanLand + 1500 m), restricted to tiles that belong to a
+        // component >= 32 tiles — i.e. the same tiles captured in s.belts.
+        // Rather than re-running BFS, re-apply the criterion and check component
+        // membership using the same threshold; the belt stats already capture all
+        // qualifying tiles via computeBeltStats, but we don't store the tile lists.
+        // We re-derive via a second BFS: mark candidates, BFS components, sum elev
+        // only for components >= 32 tiles.  This is deterministic and fast (same
+        // work as computeBeltStats already did above).
+        {
+            // Mark candidate tiles.
+            std::vector<bool> candidate(N, false);
+            for (uint32_t t = 0; t < N; ++t) {
+                if ((world.data.flags[t] & (kFlagOcean | kFlagLake)) == 0 &&
+                    world.data.elevation[t] > beltThresh) {
+                    candidate[t] = true; // dry land only, consistent with the other dissection metrics
+                }
+            }
+
+            // BFS components (ascending order).
+            std::vector<int32_t> comp(N, -1);
+            int32_t nextComp = 0;
+            std::vector<TileId> bfsQueue;
+            bfsQueue.reserve(N / 10);
+
+            for (uint32_t seed = 0; seed < N; ++seed) {
+                if (!candidate[seed] || comp[seed] >= 0) continue;
+                int32_t c = nextComp++;
+                comp[seed] = c;
+                bfsQueue.clear();
+                bfsQueue.push_back(seed);
+                for (size_t qi = 0; qi < bfsQueue.size(); ++qi) {
+                    TileId cur2 = bfsQueue[qi];
+                    const uint32_t cnt = grid.neighbors(cur2, nbrs);
+                    for (uint32_t k = 0; k < cnt; ++k) {
+                        TileId nb = nbrs[k];
+                        if (candidate[nb] && comp[nb] < 0) {
+                            comp[nb] = c;
+                            bfsQueue.push_back(nb);
+                        }
+                    }
+                }
+            }
+
+            // Count component sizes.
+            std::vector<uint32_t> compSize(static_cast<size_t>(nextComp), 0u);
+            for (uint32_t t = 0; t < N; ++t) {
+                if (comp[t] >= 0) ++compSize[static_cast<size_t>(comp[t])];
+            }
+
+            // Sum elevations for tiles in components >= 32.
+            double beltElevSum = 0.0;
+            uint32_t beltTileCount = 0;
+            for (uint32_t t = 0; t < N; ++t) {
+                if (comp[t] < 0) continue;
+                if (compSize[static_cast<size_t>(comp[t])] < 32u) continue;
+                beltElevSum += static_cast<double>(world.data.elevation[t]);
+                ++beltTileCount;
+            }
+            s.meanBeltCrestElevM = (beltTileCount > 0)
+                ? static_cast<float>(beltElevSum / static_cast<double>(beltTileCount))
+                : 0.0f;
+        }
+    }
+
     return s;
 }
 
