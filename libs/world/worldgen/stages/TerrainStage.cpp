@@ -111,7 +111,7 @@ constexpr float kBeltBaseAmpM = 2800.0f; // peak ridged relief at full intensity
 // The min floor keeps the belt from severing into disconnected beads (the M-T4.5 risk).
 constexpr float kBeltLiftFracMin = 0.30f;
 constexpr float kBeltLiftFracMax = 0.55f;
-constexpr float kBeltLiftFreq    = 1.3f; // along-belt lift-fraction wavelength (low freq)
+constexpr float kBeltLiftFreq    = 1.3f; // along-belt lift-fraction noise frequency (low, long-scale variation)
 // Intensity sharpening (smoothstep): only orogeny intensity above kBeltIntensityKnee produces
 // tall belt relief, ramping to full by kBeltIntensityFull. This narrows the belt to the high-
 // intensity SPINE of the (smooth-sampled) field so faint flanks stay at hill height rather

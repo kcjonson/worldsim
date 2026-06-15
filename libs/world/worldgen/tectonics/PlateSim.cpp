@@ -2282,6 +2282,10 @@ bool PlateSim::tryRift(uint32_t pid, uint64_t stepSalt, bool oversized) {
     std::vector<int8_t> region(N, -1);
     std::vector<float>  fbest(N, 1e30f);
     std::array<TileId, 6> nbrs{};
+    // HeapEntry tie-breaks (cost, plate, tile); here plate is the front id (1/2), so an
+    // exact-cost tie deterministically resolves to front 1. The front costs carry continuous
+    // boundaryNoise, so exact ties are vanishingly rare, and the pop order is fully determined
+    // either way, so the split is identical at any thread count.
     std::priority_queue<HeapEntry, std::vector<HeapEntry>, std::greater<HeapEntry>> pq;
     fbest[seedA] = 0.0f; pq.push({0.0f, 1u, seedA});
     fbest[seedB] = 0.0f; pq.push({0.0f, 2u, seedB});
