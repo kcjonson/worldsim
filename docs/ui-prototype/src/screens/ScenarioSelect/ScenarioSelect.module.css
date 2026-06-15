@@ -1,0 +1,235 @@
+.screen {
+	position: absolute;
+	inset: 0;
+	overflow: hidden;
+}
+
+.layout {
+	position: relative;
+	z-index: 2;
+	height: 100%;
+	display: flex;
+	flex-direction: column;
+	padding: var(--space-12) var(--space-16);
+	gap: var(--space-8);
+	animation: rise var(--dur-slow) var(--ease-out);
+}
+
+/* === Header === */
+.header {
+	flex-shrink: 0;
+}
+.kicker {
+	font-family: var(--font-mono);
+	font-size: var(--fs-2xs);
+	letter-spacing: var(--ls-wider);
+	text-transform: uppercase;
+	color: var(--accent);
+	margin-bottom: var(--space-2);
+}
+.title {
+	font-family: var(--font-display);
+	font-size: var(--fs-3xl);
+	font-weight: 700;
+	letter-spacing: var(--ls-wide);
+	color: var(--text-bright);
+	line-height: var(--lh-tight);
+	margin: 0 0 var(--space-2);
+}
+.subtitle {
+	font-size: var(--fs-md);
+	color: var(--text-dim);
+	margin: 0;
+	max-width: 600px;
+	line-height: var(--lh);
+}
+
+/* === Card grid === */
+.grid {
+	flex: 1;
+	display: grid;
+	grid-template-columns: repeat(5, 1fr);
+	gap: var(--space-4);
+	align-items: stretch;
+	min-height: 0;
+}
+
+/* === Scenario card === */
+.card {
+	position: relative;
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-3);
+	padding: var(--space-5);
+	background: var(--bg-panel);
+	border: var(--bw-hair) solid var(--line-edge);
+	border-radius: var(--radius-md);
+	text-align: left;
+	color: var(--text);
+	cursor: pointer;
+	transition:
+		border-color var(--dur-fast) var(--ease),
+		background var(--dur-fast) var(--ease),
+		box-shadow var(--dur-fast) var(--ease);
+}
+.card:hover {
+	background: var(--bg-panel-raised);
+	border-color: var(--line-strong);
+	box-shadow: var(--shadow-panel);
+}
+.card:hover .corner {
+	border-color: var(--accent-dim);
+	opacity: 1;
+}
+
+/* selected state */
+.cardSelected {
+	background: var(--bg-active);
+	border-color: var(--accent);
+	box-shadow:
+		0 0 0 1px var(--accent),
+		0 0 22px var(--accent-glow),
+		var(--shadow-panel);
+}
+.cardSelected .corner {
+	border-color: var(--accent);
+	opacity: 1;
+}
+.cardSelected .cardIcon {
+	color: var(--accent);
+}
+
+/* === Corner ticks === */
+.corner {
+	position: absolute;
+	width: 10px;
+	height: 10px;
+	border-color: var(--line-edge);
+	border-style: solid;
+	opacity: 0.5;
+	transition:
+		border-color var(--dur-fast) var(--ease),
+		opacity var(--dur-fast) var(--ease);
+	pointer-events: none;
+}
+.tl {
+	top: 4px;
+	left: 4px;
+	border-width: 1px 0 0 1px;
+}
+.tr {
+	top: 4px;
+	right: 4px;
+	border-width: 1px 1px 0 0;
+}
+.bl {
+	bottom: 4px;
+	left: 4px;
+	border-width: 0 0 1px 1px;
+}
+.br {
+	bottom: 4px;
+	right: 4px;
+	border-width: 0 1px 1px 0;
+}
+
+/* === Checkmark badge === */
+.checkmark {
+	position: absolute;
+	top: var(--space-3);
+	right: var(--space-3);
+	width: 20px;
+	height: 20px;
+	border-radius: var(--radius-pill);
+	background: var(--accent);
+	color: var(--accent-contrast);
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	box-shadow: 0 0 10px var(--accent-glow);
+}
+
+/* === Card content === */
+.cardIcon {
+	color: var(--text-dim);
+	transition: color var(--dur-fast) var(--ease);
+	flex-shrink: 0;
+}
+.card:hover .cardIcon {
+	color: var(--text);
+}
+.cardName {
+	font-family: var(--font-display);
+	font-size: var(--fs-md);
+	font-weight: 600;
+	letter-spacing: var(--ls-wide);
+	color: var(--text-bright);
+	text-transform: uppercase;
+	line-height: var(--lh-tight);
+}
+.cardBlurb {
+	font-size: var(--fs-sm);
+	color: var(--text-dim);
+	line-height: var(--lh);
+	margin: 0;
+	flex: 1;
+}
+
+/* === Difficulty + party row === */
+.cardMeta {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--space-2);
+}
+.difficulty {
+	display: flex;
+	gap: 3px;
+	align-items: center;
+}
+.pip {
+	display: block;
+	width: 14px;
+	height: 4px;
+	border-radius: var(--radius-xs);
+	transition: background var(--dur-fast) var(--ease);
+}
+.party {
+	display: flex;
+	align-items: center;
+	gap: var(--space-1);
+	font-family: var(--font-mono);
+	font-size: var(--fs-2xs);
+	letter-spacing: var(--ls-wide);
+	color: var(--text-faint);
+	white-space: nowrap;
+}
+
+/* === Tags === */
+.tags {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--space-1);
+}
+
+/* === Footer bar === */
+.footer {
+	flex-shrink: 0;
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	padding-top: var(--space-4);
+	border-top: var(--bw-hair) solid var(--line-hairline);
+}
+
+/* === Entrance animation === */
+@keyframes rise {
+	from {
+		opacity: 0;
+		transform: translateY(12px);
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0);
+	}
+}

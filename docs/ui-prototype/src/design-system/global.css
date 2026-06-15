@@ -1,0 +1,155 @@
+/* Global base styles. Imported once from main.tsx after tokens.css. */
+
+*,
+*::before,
+*::after {
+	box-sizing: border-box;
+	margin: 0;
+	padding: 0;
+}
+
+html,
+body,
+#root {
+	height: 100%;
+}
+
+body {
+	font-family: var(--font-ui);
+	font-size: var(--fs-base);
+	line-height: var(--lh);
+	color: var(--text);
+	background: var(--bg-void);
+	-webkit-font-smoothing: antialiased;
+	text-rendering: optimizeLegibility;
+	overflow: hidden;
+}
+
+button {
+	font: inherit;
+	color: inherit;
+	background: none;
+	border: none;
+	cursor: pointer;
+}
+
+input,
+select,
+textarea {
+	font: inherit;
+	color: inherit;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5 {
+	font-family: var(--font-display);
+	font-weight: 600;
+	line-height: var(--lh-tight);
+	color: var(--text-bright);
+}
+
+::selection {
+	background: var(--accent-glow);
+	color: var(--text-bright);
+}
+
+/* Focus ring — keyboard only */
+:focus-visible {
+	outline: var(--bw) solid var(--accent);
+	outline-offset: 2px;
+}
+
+/* Scrollbars — thin, themed */
+* {
+	scrollbar-width: thin;
+	scrollbar-color: var(--line-strong) transparent;
+}
+*::-webkit-scrollbar {
+	width: 10px;
+	height: 10px;
+}
+*::-webkit-scrollbar-track {
+	background: var(--bg-inset);
+}
+*::-webkit-scrollbar-thumb {
+	background: var(--line-edge);
+	border: 2px solid transparent;
+	background-clip: content-box;
+	border-radius: var(--radius-pill);
+}
+*::-webkit-scrollbar-thumb:hover {
+	background: var(--line-strong);
+	background-clip: content-box;
+}
+
+/* ===== Texture utilities ===== */
+
+/* Horizontal CRT scanlines — overlay on a positioned ancestor */
+.fx-scanlines::after {
+	content: "";
+	position: absolute;
+	inset: 0;
+	pointer-events: none;
+	background: repeating-linear-gradient(
+		to bottom,
+		rgba(255, 255, 255, var(--scanline-opacity)) 0px,
+		rgba(255, 255, 255, var(--scanline-opacity)) 1px,
+		transparent 1px,
+		transparent 3px
+	);
+	mix-blend-mode: overlay;
+	z-index: 1;
+}
+
+/* Fine sensor grain */
+.fx-grain::before {
+	content: "";
+	position: absolute;
+	inset: 0;
+	pointer-events: none;
+	opacity: var(--grain-opacity);
+	background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+	z-index: 1;
+}
+
+/* Animated holographic flicker (use sparingly on glowing accents) */
+@keyframes fx-flicker {
+	0%,
+	100% {
+		opacity: 1;
+	}
+	92% {
+		opacity: 1;
+	}
+	94% {
+		opacity: 0.82;
+	}
+	96% {
+		opacity: 1;
+	}
+	98% {
+		opacity: 0.9;
+	}
+}
+
+@keyframes fx-sweep {
+	from {
+		transform: translateY(-100%);
+	}
+	to {
+		transform: translateY(100%);
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	*,
+	*::before,
+	*::after {
+		animation-duration: 0.001ms !important;
+		animation-iteration-count: 1 !important;
+		transition-duration: 0.001ms !important;
+	}
+}
