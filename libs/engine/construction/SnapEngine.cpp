@@ -4,6 +4,8 @@
 
 #include <assets/ConstructionRegistry.h>
 
+#include <predicates/Predicates.h>
+
 #include <algorithm>
 #include <cmath>
 #include <numbers>
@@ -45,30 +47,118 @@ namespace engine::construction {
 			return ((p.x - a.x) * abx + (p.y - a.y) * aby) / lenSq;
 		}
 
+		// Safety bias added to the outer-face-flush inset. The flush corner ideally
+		// lands the band's outer face exactly on the foundation edge, but the two mm
+		// roundings on a diagonal edge (the inset point's quantize plus geometry::band's
+		// perpendicular llround) can together push that corner ~1.4 mm outside the ring,
+		// tripping the validator's containment check. Biasing the inset 2 mm further in
+		// keeps the corner inside-or-on after rounding; 2 mm is sub-pixel at any zoom.
+		// Axis-aligned edges have no rounding and land exactly on the boundary regardless.
+		constexpr std::int64_t kFlushInsetSafetyMm = 2;
+
+		// The inward offset distance (meters) for an outer-face-flush wall of the given
+		// half-thickness: half-thickness plus the rounding safety bias.
+		float flushInsetMeters(std::int64_t halfThicknessMm) {
+			return static_cast<float>(halfThicknessMm + kFlushInsetSafetyMm) / static_cast<float>(geometry::kMillimetersPerMeter);
+		}
+
+		// Unit interior normal (meters) of ring edge `edgeIndex` (ring[i] -> ring[i+1]),
+		// pointing toward the polygon interior. The candidate left normal is flipped
+		// when a probe just off the edge midpoint lands outside the ring, so this is
+		// correct for either winding without relying on a coordinate-handedness
+		// assumption. Zero for a degenerate (zero-length) edge.
+		::Foundation::Vec2 inwardNormalMeters(const geometry::Ring& ring, std::size_t edgeIndex) {
+			const std::size_t		 n = ring.size();
+			const ::Foundation::Vec2 a = geometry::dequantize(ring[edgeIndex]);
+			const ::Foundation::Vec2 b = geometry::dequantize(ring[(edgeIndex + 1) % n]);
+			const float				 dx = b.x - a.x;
+			const float				 dy = b.y - a.y;
+			const float				 len = std::sqrt(dx * dx + dy * dy);
+			if (len <= 0.0F) {
+				return {0.0F, 0.0F};
+			}
+			float nx = -dy / len;
+			float ny = dx / len;
+			// Disambiguate the interior side exactly: a 10 mm probe off the midpoint
+			// (well within any legal foundation, min spacing 0.5 m) that lands outside
+			// means we picked the exterior normal, so flip.
+			const ::Foundation::Vec2 mid{(a.x + b.x) * 0.5F, (a.y + b.y) * 0.5F};
+			const float				 probe = 0.01F;
+			const geometry::Vec2i64	 q = geometry::quantize({mid.x + nx * probe, mid.y + ny * probe});
+			if (geometry::pointInPolygon(q, ring) == geometry::PointInPolygon::Outside) {
+				nx = -nx;
+				ny = -ny;
+			}
+			return {nx, ny};
+		}
+
 	} // namespace
 
-	bool SnapEngine::snapToVertex(::Foundation::Vec2 cursor, ::Foundation::Vec2& out) const {
-		const float radius = snapping_->vertexSnapRadiusMeters;
-		float		best = radius;
-		bool		found = false;
+	::Foundation::Vec2 outerFaceFlushCorner(const geometry::Ring& ring, std::size_t vertexIndex, std::int64_t halfThicknessMm) {
+		const std::size_t		 n = ring.size();
+		const ::Foundation::Vec2 v = geometry::dequantize(ring[vertexIndex]);
+		if (halfThicknessMm <= 0 || n < 3) {
+			return v;
+		}
+
+		const float				 d = flushInsetMeters(halfThicknessMm);
+		const std::size_t		 prevEdge = (vertexIndex + n - 1) % n; // edge prev -> v
+		const std::size_t		 nextEdge = vertexIndex;			   // edge v -> next
+		const ::Foundation::Vec2 prev = geometry::dequantize(ring[prevEdge]);
+		const ::Foundation::Vec2 next = geometry::dequantize(ring[(nextEdge + 1) % n]);
+		const ::Foundation::Vec2 n1 = inwardNormalMeters(ring, prevEdge);
+		const ::Foundation::Vec2 n2 = inwardNormalMeters(ring, nextEdge);
+
+		// Each incident edge offset inward by d defines a line; the corner is their
+		// intersection (the miter). Line 1 passes through A1 along d1 (prev->v); line 2
+		// through A2 along d2 (v->next).
+		const ::Foundation::Vec2 d1{v.x - prev.x, v.y - prev.y};
+		const ::Foundation::Vec2 d2{next.x - v.x, next.y - v.y};
+		const ::Foundation::Vec2 a1{v.x + n1.x * d, v.y + n1.y * d};
+		const ::Foundation::Vec2 a2{v.x + n2.x * d, v.y + n2.y * d};
+
+		const float denom = d1.x * d2.y - d1.y * d2.x;
+		if (std::abs(denom) < 1e-6F) {
+			// (Near-)collinear edges (a straight pass-through vertex): the two inset
+			// lines coincide, so a single-edge offset is the miter.
+			return a1;
+		}
+		const float s = ((a2.x - a1.x) * d2.y - (a2.y - a1.y) * d2.x) / denom;
+		return {a1.x + s * d1.x, a1.y + s * d1.y};
+	}
+
+	bool SnapEngine::snapToVertex(::Foundation::Vec2 cursor, ::Foundation::Vec2& out, std::int64_t insetMm) const {
+		const float		  radius = snapping_->vertexSnapRadiusMeters;
+		float			  best = radius;
+		const Foundation* bestF = nullptr;
+		std::size_t		  bestIndex = 0;
 		for (const Foundation& f : world_->foundations()) {
-			for (const auto& v : f.ring) {
-				const ::Foundation::Vec2 vm = geometry::dequantize(v);
+			for (std::size_t i = 0; i < f.ring.size(); ++i) {
+				const ::Foundation::Vec2 vm = geometry::dequantize(f.ring[i]);
 				const float				 d = distanceMeters(cursor, vm);
 				if (d <= best) {
 					best = d;
-					out = vm;
-					found = true;
+					bestF = &f;
+					bestIndex = i;
 				}
 			}
 		}
-		return found;
+		if (bestF == nullptr) {
+			return false;
+		}
+		// Proximity is to the raw corner; the returned point is the outer-face-flush
+		// miter when an inset is requested (the wall tool), else the raw corner (the
+		// foundation tool).
+		out = insetMm > 0 ? outerFaceFlushCorner(bestF->ring, bestIndex, insetMm) : geometry::dequantize(bestF->ring[bestIndex]);
+		return true;
 	}
 
-	bool SnapEngine::snapToEdge(::Foundation::Vec2 cursor, ::Foundation::Vec2& out) const {
-		const float radius = snapping_->edgeSnapRadiusMeters;
-		float		best = radius;
-		bool		found = false;
+	bool SnapEngine::snapToEdge(::Foundation::Vec2 cursor, ::Foundation::Vec2& out, std::int64_t insetMm) const {
+		const float		   radius = snapping_->edgeSnapRadiusMeters;
+		float			   best = radius;
+		const Foundation*  bestF = nullptr;
+		std::size_t		   bestEdge = 0;
+		::Foundation::Vec2 bestFoot{};
 		for (const Foundation& f : world_->foundations()) {
 			const std::size_t n = f.ring.size();
 			for (std::size_t i = 0; i < n; ++i) {
@@ -78,12 +168,26 @@ namespace engine::construction {
 				const float				 d = distanceMeters(cursor, c);
 				if (d <= best) {
 					best = d;
-					out = c;
-					found = true;
+					bestF = &f;
+					bestEdge = i;
+					bestFoot = c;
 				}
 			}
 		}
-		return found;
+		if (bestF == nullptr) {
+			return false;
+		}
+		// Inset the foot inward along the edge's interior normal for outer-face-flush
+		// alignment (the wall tool); the foundation tool passes insetMm == 0 and gets
+		// the raw foot.
+		if (insetMm > 0) {
+			const ::Foundation::Vec2 nrm = inwardNormalMeters(bestF->ring, bestEdge);
+			const float				 d = flushInsetMeters(insetMm);
+			out = {bestFoot.x + nrm.x * d, bestFoot.y + nrm.y * d};
+		} else {
+			out = bestFoot;
+		}
+		return true;
 	}
 
 	bool SnapEngine::snapToWallVertex(::Foundation::Vec2 cursor, ::Foundation::Vec2& out, VertexId& outVertex) const {
@@ -262,7 +366,12 @@ namespace engine::construction {
 		return result;
 	}
 
-	SnapResult SnapEngine::snapWall(const std::vector<::Foundation::Vec2>& points, ::Foundation::Vec2 cursor, bool freeform) const {
+	SnapResult SnapEngine::snapWall(
+		const std::vector<::Foundation::Vec2>& points,
+		::Foundation::Vec2					   cursor,
+		bool								   freeform,
+		std::int64_t						   wallHalfThicknessMm
+	) const {
 		// Priority, most specific first (design Walls > Drawing). No origin-close:
 		// the chain is open and never closes onto its first point.
 		::Foundation::Vec2 wv{};
@@ -275,8 +384,10 @@ namespace engine::construction {
 			return r;
 		}
 
+		// Foundation corner: insetted to the outer-face-flush miter so a perimeter
+		// wall sits ON the foundation (design "Alignment").
 		::Foundation::Vec2 v{};
-		if (snapToVertex(cursor, v)) {
+		if (snapToVertex(cursor, v, wallHalfThicknessMm)) {
 			return {v, SnapKind::Vertex};
 		}
 
@@ -290,8 +401,9 @@ namespace engine::construction {
 			return r;
 		}
 
+		// Foundation edge: insetted inward by the half-thickness (outer-face-flush).
 		::Foundation::Vec2 e{};
-		if (snapToEdge(cursor, e)) {
+		if (snapToEdge(cursor, e, wallHalfThicknessMm)) {
 			return {e, SnapKind::Edge};
 		}
 
