@@ -570,8 +570,11 @@ namespace Foundation {
 		//   down,x,y[,button]   up,x,y[,button]
 		//   scroll,x,y,delta
 		//   keydown,<key>   keyup,<key>   (key name, e.g. R or Escape; no coords)
-		// A keydown alone fires isKeyPressed once (the press edge); pair with keyup to
-		// release. Example: /api/input?ev=click,160,630&ev=keydown,R&ev=keyup,R
+		// Send key events in SEPARATE requests: a keydown registers on the next frame
+		// and fires the press edge (isKeyPressed) once; a later keyup releases. A
+		// keydown and keyup batched in ONE request land in the same frame and collapse
+		// to a release, missing the press edge. Tap example (two requests):
+		//   GET /api/input?ev=keydown,R    then    GET /api/input?ev=keyup,R
 		server->Get("/api/input", [this](const httplib::Request& req, httplib::Response& res) {
 			res.set_header("Access-Control-Allow-Origin", "*");
 
