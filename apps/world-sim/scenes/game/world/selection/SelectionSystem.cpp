@@ -318,6 +318,13 @@ void SelectionSystem::selectColonist(ecs::EntityID entityId) {
 	}
 }
 
+void SelectionSystem::setSelection(const Selection& newSelection) {
+	selection = newSelection;
+	if (callbacks.onSelectionChanged) {
+		callbacks.onSelectionChanged(selection);
+	}
+}
+
 void SelectionSystem::renderIndicator(int viewportW, int viewportH) {
 	if (ecsWorld == nullptr || camera == nullptr) {
 		return;

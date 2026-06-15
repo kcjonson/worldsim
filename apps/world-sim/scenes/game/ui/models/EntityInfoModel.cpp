@@ -29,6 +29,8 @@ bool CachedSelection::matches(const Selection& selection) const {
 				return type == Type::Opening && openingId == sel.id;
 			} else if constexpr (std::is_same_v<T, FoundationSelection>) {
 				return type == Type::Foundation && foundationId == sel.id;
+			} else if constexpr (std::is_same_v<T, RoomSelection>) {
+				return type == Type::Room && roomId == sel.roomId;
 			}
 			return false;
 		},
@@ -52,6 +54,7 @@ void CachedSelection::update(const Selection& selection) {
 			foundationId = engine::construction::kInvalidFoundation;
 			wallSegmentId = engine::construction::kInvalidSegment;
 			openingId = engine::construction::kInvalidOpening;
+			roomId = 0;
 
 			if constexpr (std::is_same_v<T, NoSelection>) {
 				type = Type::None;
@@ -80,6 +83,9 @@ void CachedSelection::update(const Selection& selection) {
 			} else if constexpr (std::is_same_v<T, FoundationSelection>) {
 				type = Type::Foundation;
 				foundationId = sel.id;
+			} else if constexpr (std::is_same_v<T, RoomSelection>) {
+				type = Type::Room;
+				roomId = sel.roomId;
 			}
 		},
 		selection
@@ -91,12 +97,13 @@ void CachedSelection::update(const Selection& selection) {
 // ============================================================================
 
 EntityInfoModel::UpdateType EntityInfoModel::refresh(
-	const Selection& selection,
-	const ecs::World& world,
-	const engine::assets::AssetRegistry& assetRegistry,
-	const engine::assets::RecipeRegistry& recipeRegistry,
-	const Callbacks& callbacks,
-	const engine::construction::ConstructionWorld* constructionWorld
+	const Selection&							   selection,
+	const ecs::World&							   world,
+	const engine::assets::AssetRegistry&		   assetRegistry,
+	const engine::assets::RecipeRegistry&		   recipeRegistry,
+	const Callbacks&							   callbacks,
+	const engine::construction::ConstructionWorld* constructionWorld,
+	const ecs::RoomDetectionSystem*				   roomDetection
 ) {
 	// Detect selection types
 	bool		  isColonist = std::holds_alternative<ColonistSelection>(selection);
@@ -105,9 +112,16 @@ EntityInfoModel::UpdateType EntityInfoModel::refresh(
 	bool		  isWallSegment = std::holds_alternative<WallSegmentSelection>(selection);
 	bool		  isOpening = std::holds_alternative<OpeningSelection>(selection);
 	bool		  isFoundation = std::holds_alternative<FoundationSelection>(selection);
+	bool		  isRoom = std::holds_alternative<RoomSelection>(selection);
 	ecs::EntityID colonistId{0};
 	ecs::EntityID stationId{0};
 	std::string   stationDefName;
+
+	// Resolve the room record up front so the existence guard and the content arm
+	// share one lookup. A room whose id vanished (wall demolished out from under it)
+	// resolves to null and is treated as not-a-room, so the panel clears rather than
+	// showing a stale record (mirrors the foundation existence guard).
+	const ecs::RoomDetectionSystem::RoomRecord* roomRecord = nullptr;
 
 	if (isColonist) {
 		colonistId = std::get<ColonistSelection>(selection).entityId;
@@ -147,9 +161,27 @@ EntityInfoModel::UpdateType EntityInfoModel::refresh(
 			isFoundation = false;
 		}
 	}
+	if (isRoom) {
+		const auto& roomSel = std::get<RoomSelection>(selection);
+		if (roomDetection != nullptr) {
+			for (const auto& record : roomDetection->rooms()) {
+				if (record.roomId == roomSel.roomId) {
+					roomRecord = &record;
+					break;
+				}
+			}
+		}
+		if (roomRecord == nullptr) {
+			isRoom = false; // id vanished (wall demolished); fall through to the hide path
+		}
+	}
 
-	// Handle NoSelection -> hide panel
-	if (std::holds_alternative<NoSelection>(selection)) {
+	// Handle NoSelection -> hide panel. A RoomSelection whose room vanished resolves
+	// to no room above (isRoom cleared, no record) and matches none of the content
+	// arms below; treat it like NoSelection so the panel clears rather than showing
+	// a stale room.
+	const bool roomVanished = std::holds_alternative<RoomSelection>(selection) && !isRoom;
+	if (std::holds_alternative<NoSelection>(selection) || roomVanished) {
 		if (visible) {
 			visible = false;
 			cachedSelection.update(selection);
@@ -202,6 +234,8 @@ EntityInfoModel::UpdateType EntityInfoModel::refresh(
 		const auto& foundationSel = std::get<FoundationSelection>(selection);
 		contentData =
 			adaptFoundation(world, *constructionWorld, foundationSel, callbacks.onDemolishFoundation, callbacks.onDemolishBuilding);
+	} else if (isRoom && roomRecord != nullptr) {
+		contentData = adaptRoom(world, *roomRecord);
 	} else {
 		// World entity - use standard adapter with resource query callback
 		auto worldContent = adaptSelection(selection, world, assetRegistry, callbacks.queryResources);

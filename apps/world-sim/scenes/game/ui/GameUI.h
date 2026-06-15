@@ -34,6 +34,7 @@
 
 #include <components/toast/ToastStack.h>
 
+#include <ecs/systems/RoomDetectionSystem.h>
 #include <ecs/systems/TimeSystem.h>
 
 #include <input/InputEvent.h>
@@ -82,6 +83,7 @@ class GameUI {
 		std::function<void(const std::string&)> onStructureSelected;	 ///< Called when a structure tool (e.g. "foundation") is chosen
 		std::function<void(const std::string&)> onConstructionMaterialSelected; ///< Called when a config-strip material card is clicked
 		std::function<void(const std::string&)> onConstructionThicknessSelected; ///< Called when a config-strip wall thickness preset is clicked
+		std::function<void()> onRoomsToggle;									 ///< Called when the GameplayBar Rooms toggle is clicked
 	};
 
 	explicit GameUI(const Args& args);
@@ -97,14 +99,15 @@ class GameUI {
 
 	/// Update UI state
 	void update(
-		float deltaTime,
-		const engine::world::WorldCamera& camera,
-		const engine::world::ChunkManager& chunkManager,
-		ecs::World& ecsWorld,
-		const engine::assets::AssetRegistry& assetRegistry,
-		const engine::assets::RecipeRegistry& recipeRegistry,
-		const Selection& selection,
-		const engine::construction::ConstructionWorld* constructionWorld = nullptr
+		float										   deltaTime,
+		const engine::world::WorldCamera&			   camera,
+		const engine::world::ChunkManager&			   chunkManager,
+		ecs::World&									   ecsWorld,
+		const engine::assets::AssetRegistry&		   assetRegistry,
+		const engine::assets::RecipeRegistry&		   recipeRegistry,
+		const Selection&							   selection,
+		const engine::construction::ConstructionWorld* constructionWorld = nullptr,
+		const ecs::RoomDetectionSystem*				   roomDetection = nullptr
 	);
 
 	/// Render all UI elements
@@ -151,6 +154,11 @@ class GameUI {
 	/// Push the latest drawing-tool status to the config strip (drives readouts,
 	/// validity line, selection highlight, and visibility).
 	void setConstructionStatus(const DrawingStatus& status);
+
+	/// Reflect the rooms-overlay active state on the GameplayBar toggle button. The
+	/// GameScene pushes this whenever the overlay flips (from the button or the R
+	/// hotkey) so the two stay in sync. Mirrors the setConstructionStatus push.
+	void setRoomsOverlayActive(bool active);
 
 	// --- Colonist Details Dialog API ---
 

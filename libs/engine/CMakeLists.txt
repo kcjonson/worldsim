@@ -32,6 +32,7 @@ add_library(engine
     construction/ConstructionWorld.cpp
     construction/ConstructionValidator.cpp
     construction/RoomDetection.cpp
+    construction/RoomHitTest.cpp
     construction/SnapEngine.cpp
 )
 

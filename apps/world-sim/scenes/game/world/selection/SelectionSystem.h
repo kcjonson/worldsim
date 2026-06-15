@@ -81,6 +81,11 @@ class SelectionSystem {
 	/// Select a specific colonist (from UI)
 	void selectColonist(ecs::EntityID entityId);
 
+	/// Set selection to an arbitrary state and fire onSelectionChanged. The room
+	/// overlay routes its hit-test result through here so the room's selection
+	/// flows through the same single sink (current()) every consumer already reads.
+	void setSelection(const Selection& newSelection);
+
 	// --- Rendering ---
 
 	/// Render selection indicator (call during render phase)
