@@ -5,9 +5,11 @@ add_library(world
     worldgen/stages/TectonicHistoryStage.cpp
     worldgen/stages/CrustStage.cpp
     worldgen/stages/TerrainStage.cpp
+    worldgen/stages/ErosionStage.cpp
     worldgen/tectonics/PlateSim.cpp
     worldgen/tectonics/TectonicHistory.cpp
     worldgen/stages/AtmosphereStage.cpp
+    worldgen/stages/DrainageRouting.cpp
     worldgen/stages/PrecipitationStage.cpp
     worldgen/stages/OceanStage.cpp
     worldgen/stages/BiomeStage.cpp

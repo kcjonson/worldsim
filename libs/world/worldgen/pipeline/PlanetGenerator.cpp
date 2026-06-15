@@ -3,6 +3,7 @@
 #include "worldgen/stages/AtmosphereStage.h"
 #include "worldgen/stages/BiomeStage.h"
 #include "worldgen/stages/CrustStage.h"
+#include "worldgen/stages/ErosionStage.h"
 #include "worldgen/stages/OceanStage.h"
 #include "worldgen/stages/PrecipitationStage.h"
 #include "worldgen/stages/SnowStage.h"
@@ -53,6 +54,7 @@ PlanetGenerator::PlanetGenerator(unsigned threadCount)
     stages.push_back(std::make_unique<TectonicHistoryStage>());
     stages.push_back(std::make_unique<CrustStage>());
     stages.push_back(std::make_unique<TerrainStage>());
+    stages.push_back(std::make_unique<ErosionStage>());
     stages.push_back(std::make_unique<AtmosphereStage>());
     stages.push_back(std::make_unique<PrecipitationStage>());
     stages.push_back(std::make_unique<OceanStage>());
