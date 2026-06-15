@@ -216,6 +216,11 @@ TEST(PlateSimHeavy, DeterministicProductHash) {
 // DATE band decoupled from the thicken band so post-suture interiors age; thicken band 4->3).
 // These put orogeny coverage in the 12-32% band with a margin-young / interior-old age
 // gradient. The M-T3.5 value was 0xeb2cb3f12d7fb6f6.
+// Updated for the curved-rift fix (tryRift cuts plates with a two-front noisy Dijkstra split
+// instead of a great-circle plane, killing the dead-straight rift seams/mountain walls) plus
+// the power-law plate-size hierarchy at seeding (square-warped growth weights -> a few large
+// plates and many small, rather than one uniform size class). The M-T4.5 value was
+// 0x25511f9162f0425b.
 // ============================================================================
 
 TEST(PlateSimHeavy, GoldenProductHash) {
@@ -223,7 +228,7 @@ TEST(PlateSimHeavy, GoldenProductHash) {
     PlateSim sim(p);
     auto h = sim.run();
     uint64_t hash = computeTectonicHistoryHash(*h);
-    constexpr uint64_t kGolden = 0x25511f9162f0425bULL;
+    constexpr uint64_t kGolden = 0xe649494ce980d050ULL;
     // Print so a deliberate update is easy; assert against the pinned value.
     std::printf("[PlateSim.GoldenProductHash] coarseN=64 seed=0x1234567890ABCDEF "
                 "hash=0x%016llx\n", static_cast<unsigned long long>(hash));
