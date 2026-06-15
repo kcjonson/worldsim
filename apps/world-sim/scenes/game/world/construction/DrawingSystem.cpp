@@ -1571,53 +1571,144 @@ namespace world_sim {
 			return {0.55F, 0.40F, 0.25F, 1.0F};
 		}
 
-		// Draw a procedural door/window fill over the opening footprint (screen-space
-		// ring). `alpha` scales the whole fill (build progress / ghost dimming).
-		// Doors: a solid material slab. Windows: a material-color frame with a
-		// lighter, more transparent center pane. zBase: fill z, zBase+1: edges.
+		// Multiply rgb by `factor` (clamped to [0,1]); alpha untouched. Used to darken
+		// the material color for jambs, seams, and outlines so detail reads against the
+		// flat leaf/frame fill.
+		Foundation::Color darken(Foundation::Color c, float factor) {
+			return {
+				std::clamp(c.r * factor, 0.0F, 1.0F),
+				std::clamp(c.g * factor, 0.0F, 1.0F),
+				std::clamp(c.b * factor, 0.0F, 1.0F),
+				c.a,
+			};
+		}
+
+		// Draw a procedural door/window over the opening footprint (the 4 CCW screen-
+		// space corners of the oriented wall-thickness rectangle). `alpha` scales the
+		// whole fill (build progress / ghost dimming).
+		//
+		// A parametric local frame makes feature placement orientation-independent:
+		// the two rectangle edges from corner 0 are edgeA/edgeB; the longer is the
+		// WIDTH axis (along the wall, the opening's clear width), the shorter is the
+		// THICKNESS axis (across the wall). pt(u,v) maps u in [0,1] along the width and
+		// v in [0,1] across the thickness, so sub-quads/lines are laid out in unit
+		// coordinates regardless of how the wall is rotated on screen.
+		//
+		// Door: a solid material leaf with darkened jamb caps at both width-ends and a
+		// center panel seam. Window: a material frame with an inset translucent glass
+		// pane crossed by mullion bar(s).
+		//
+		// `frameColor` is the material color; the green/red ghost reuses this with a
+		// validity tint. z: fill at 63, detail (jambs/glass) just above, lines at 64.
 		void drawOpeningFill(
 			const std::vector<Foundation::Vec2>& screen,
-			Foundation::Color					 matColor,
+			Foundation::Color					 frameColor,
 			bool								 window,
+			float								 openingWidthMeters,
 			float								 alpha,
 			float								 outlineWidth
 		) {
-			if (screen.size() < 3) {
+			if (screen.size() < 4) {
 				return;
 			}
+
+			// Local frame from corner 0. edgeA, edgeB are the two perpendicular sides.
+			const Foundation::Vec2 corner = screen[0];
+			const Foundation::Vec2 edgeA = screen[1] - screen[0];
+			const Foundation::Vec2 edgeB = screen[3] - screen[0];
+
+			// Width axis = longer edge (along the wall); thickness axis = shorter. Anchor
+			// the origin so pt(0,0) sits at a corner and pt(1,1) at the diagonal one.
+			const bool			   aIsWidth = glm::dot(edgeA, edgeA) >= glm::dot(edgeB, edgeB);
+			const Foundation::Vec2 widthVec = aIsWidth ? edgeA : edgeB;
+			const Foundation::Vec2 thickVec = aIsWidth ? edgeB : edgeA;
+			auto				   pt = [&](float u, float v) -> Foundation::Vec2 {
+				  return corner + widthVec * u + thickVec * v;
+			};
+			auto quad = [&](float u0, float u1, float v0, float v1) -> std::vector<Foundation::Vec2> {
+				return {pt(u0, v0), pt(u1, v0), pt(u1, v1), pt(u0, v1)};
+			};
+
+			const Foundation::Color outline = darken(frameColor, 0.7F);
+
 			if (window) {
-				// Pane: lighter and more see-through than the frame so a window reads as
-				// glazed. Frame: the material color as a thicker outline.
-				const Foundation::Color pane{
-					std::min(1.0F, matColor.r + 0.35F),
-					std::min(1.0F, matColor.g + 0.45F),
-					std::min(1.0F, matColor.b + 0.55F),
-					0.35F * alpha,
-				};
+				// Frame: the whole footprint in material color, darkened outline.
 				fillRing(
 					screen,
-					pane,
-					{matColor.r, matColor.g, matColor.b, 0.95F * alpha},
+					{frameColor.r, frameColor.g, frameColor.b, 0.92F * alpha},
+					{outline.r, outline.g, outline.b, 0.95F * alpha},
 					outlineWidth,
-					"committed_opening_pane",
 					"committed_opening_frame",
+					"committed_opening_frame_edge",
 					63,
 					64
 				);
+
+				// Glass: inset pane, translucent cyan-blue glazing. Inset along the width
+				// by the jamb width, across the thickness by kGlassInset.
+				constexpr float			kJamb = 0.14F;
+				constexpr float			kGlassInset = 0.24F;
+				const Foundation::Color glass{0.50F, 0.72F, 0.90F, 0.6F * alpha};
+				fillRing(
+					quad(kJamb, 1.0F - kJamb, kGlassInset, 1.0F - kGlassInset),
+					glass,
+					{glass.r, glass.g, glass.b, 0.0F},
+					0.0F,
+					"committed_opening_glass",
+					"",
+					64,
+					64
+				);
+
+				// Mullion(s): thin material bars across the glass along the thickness axis.
+				// Count scales with the window's real width in METERS (not screen pixels),
+				// so the pane count is stable across zoom: roughly one mullion per 0.7 m.
+				const int				mullions = std::max(1, static_cast<int>(openingWidthMeters / 0.7F + 0.5F));
+				const Foundation::Color mullionColor{frameColor.r, frameColor.g, frameColor.b, 0.9F * alpha};
+				for (int i = 1; i <= mullions; ++i) {
+					const float u = kJamb + (1.0F - 2.0F * kJamb) * static_cast<float>(i) / static_cast<float>(mullions + 1);
+					Renderer::Primitives::drawLine({
+						.start = pt(u, kGlassInset),
+						.end = pt(u, 1.0F - kGlassInset),
+						.style = {.color = mullionColor, .width = std::max(1.0F, outlineWidth)},
+						.id = "committed_opening_mullion",
+						.zIndex = 64,
+					});
+				}
 			} else {
+				// Leaf: the whole footprint, opaque material color (the door shares the
+				// wall material, so jambs + seam are what distinguish it).
 				fillRing(
 					screen,
-					{matColor.r, matColor.g, matColor.b, 0.9F * alpha},
-					{std::min(1.0F, matColor.r + 0.1F),
-					 std::min(1.0F, matColor.g + 0.1F),
-					 std::min(1.0F, matColor.b + 0.1F),
-					 0.95F * alpha},
+					{frameColor.r, frameColor.g, frameColor.b, 0.92F * alpha},
+					{outline.r, outline.g, outline.b, 0.95F * alpha},
 					outlineWidth,
-					"committed_opening_slab",
-					"committed_opening_edge",
+					"committed_opening_leaf",
+					"committed_opening_leaf_edge",
 					63,
 					64
 				);
+
+				// Jamb caps: a darkened sub-quad at each width-end, full thickness. These
+				// frame the leaf and read as the door's hinge/strike jambs.
+				constexpr float			kJamb = 0.14F;
+				const Foundation::Color jambBase = darken(frameColor, 0.6F);
+				const Foundation::Color jamb{jambBase.r, jambBase.g, jambBase.b, 0.95F * alpha};
+				fillRing(quad(0.0F, kJamb, 0.0F, 1.0F), jamb, {jamb.r, jamb.g, jamb.b, 0.0F}, 0.0F, "committed_opening_jamb", "", 64, 64);
+				fillRing(
+					quad(1.0F - kJamb, 1.0F, 0.0F, 1.0F), jamb, {jamb.r, jamb.g, jamb.b, 0.0F}, 0.0F, "committed_opening_jamb", "", 64, 64
+				);
+
+				// Center seam: one darkened line across the thickness at u=0.5, the door
+				// panel split.
+				const Foundation::Color seam{jamb.r, jamb.g, jamb.b, 0.95F * alpha};
+				Renderer::Primitives::drawLine({
+					.start = pt(0.5F, 0.0F),
+					.end = pt(0.5F, 1.0F),
+					.style = {.color = seam, .width = std::max(1.0F, outlineWidth)},
+					.id = "committed_opening_seam",
+					.zIndex = 64,
+				});
 			}
 		}
 
@@ -1663,7 +1754,7 @@ namespace world_sim {
 			for (const auto& v : footprint) {
 				screen.push_back(toScreen(v));
 			}
-			drawOpeningFill(screen, openingMaterialColor(type->material), window, alpha, built ? 2.0F : 1.0F);
+			drawOpeningFill(screen, openingMaterialColor(type->material), window, type->widthMeters, alpha, built ? 2.0F : 1.0F);
 		}
 	}
 
@@ -1700,18 +1791,11 @@ namespace world_sim {
 		for (const auto& v : footprint) {
 			screen.push_back(toScreen(v));
 		}
-		// Validity-colorized ghost: translucent fill + a solid outline, above the
-		// committed render (z 920+, like the wall preview band).
-		fillRing(
-			screen,
-			{tint.r, tint.g, tint.b, 0.25F},
-			{tint.r, tint.g, tint.b, 0.9F},
-			2.0F,
-			"opening_ghost_fill",
-			"opening_ghost_edge",
-			920,
-			921
-		);
+		// Validity-colorized ghost: the same procedural door/window shape as the
+		// committed render, drawn with the green/red validity tint in place of the
+		// material color so the preview reads as the real thing.
+		const bool window = !type->pathable;
+		drawOpeningFill(screen, tint, window, type->widthMeters, 1.0F, 2.0F);
 	}
 
 	void DrawingSystem::renderWallChainPreview(int viewportW, int viewportH) {
