@@ -99,11 +99,19 @@ constexpr float kIsostasyMaxThicknessKm  = 72.0f;
 constexpr float kBeltBaseAmpM = 2800.0f; // peak ridged relief at full intensity, fresh orogen
 // M-T4.5: with the orogeny field now thin + linear (PlateSim concentrates the stamp on the
 // boundary line), a fraction of the belt amplitude is added as a POSITIVE lift so the thin
-// orogeny line stands continuously above the mountain threshold (one connected belt, not a
-// string of beads severed by the recentered ridged texture); the rest stays as the recentered
-// ridged crest/valley texture so the belt reads as a sharp range, not a smooth welt.
-// kBeltLiftFrac is the positive-lift fraction; (1 - kBeltLiftFrac) is the +/- ridged texture.
-constexpr float kBeltLiftFrac = 0.55f;
+// orogeny line stands above the mountain threshold; the rest stays as recentered ridged
+// crest/valley texture so the belt reads as a sharp range, not a smooth welt. The lift
+// fraction is the positive-lift share; (1 - fraction) is the +/- ridged texture.
+//
+// A CONSTANT lift fraction made the crest a flat-topped pedestal of uniform height, so a
+// straight boundary read as a continuous white wall. Modulate the fraction along the belt on
+// a low-frequency noise within [min,max]: where it is low, more amplitude goes to the ridged
+// texture whose valleys dip below the pedestal -> real passes and saddles; where it is high, a
+// continuous spine. So the crest breaks like a true range (Andes have passes, not one wall).
+// The min floor keeps the belt from severing into disconnected beads (the M-T4.5 risk).
+constexpr float kBeltLiftFracMin = 0.30f;
+constexpr float kBeltLiftFracMax = 0.55f;
+constexpr float kBeltLiftFreq    = 1.3f; // along-belt lift-fraction wavelength (low freq)
 // Intensity sharpening (smoothstep): only orogeny intensity above kBeltIntensityKnee produces
 // tall belt relief, ramping to full by kBeltIntensityFull. This narrows the belt to the high-
 // intensity SPINE of the (smooth-sampled) field so faint flanks stay at hill height rather
@@ -895,8 +903,15 @@ void TerrainStage::run(StageContext& ctx) {
                     // TEXTURE on top (sharp range, not a smooth welt). The lift is what makes
                     // the thin orogeny line read as a mountain range; the texture gives it
                     // crests and passes. Ridged noise is ~[0,1].
-                    float lift    = kBeltLiftFrac * beltAmp;
-                    float texture = (1.0f - kBeltLiftFrac) * beltAmp * (2.0f * ridged - 1.0f);
+                    float liftN = foundation::fractalNoise3(
+                        cx * kBeltLiftFreq, cy * kBeltLiftFreq, cz * kBeltLiftFreq,
+                        seedFractal + 23u, 3, 2.0f, 0.5f);
+                    float liftT = 0.5f + 0.5f * liftN;
+                    if (liftT < 0.0f) liftT = 0.0f;
+                    if (liftT > 1.0f) liftT = 1.0f;
+                    float liftFrac = kBeltLiftFracMin + (kBeltLiftFracMax - kBeltLiftFracMin) * liftT;
+                    float lift    = liftFrac * beltAmp;
+                    float texture = (1.0f - liftFrac) * beltAmp * (2.0f * ridged - 1.0f);
                     beltDetail = lift + texture;
                 }
 
