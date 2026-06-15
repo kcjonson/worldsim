@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2026-06-14 (Water Availability epic — drainage fix + Hydrology globe mode + landing-site water pane, PR #144; on main: Construction Epic F1 openings #142, Epic E rooms #140, Climate/biome/shelf retune #139, heavy worldgen test split #141, Epic D walls #138)
+Last Updated: 2026-06-15 (Water Availability complete — PRs #144 + lake fix #146; Plate Boundary Realism — curved rift cuts + power-law plate sizes + broken mountain belts + Ultra 2048, PR #145; next: valley erosion then 2D chunk-time river/lake rendering)
 
 ## Epic/Story/Task Template
 
@@ -27,6 +27,38 @@ Use this template for all work items:
 ---
 
 ## Recently Completed Epics (Last 4)
+
+### ✅ Water Availability (worldgen + landing UX)
+**Spec/Documentation:** `/docs/development-log/entries/2026-06-15-worldgen-water-and-plate-realism.md`, `.claude/plans/water-hydrology.md`
+**Dependencies:** Climate/Biome/Shelf Retune
+**Status:** complete (PRs #144, #146 merged)
+
+**Goal:** Fix the coarse drainage so flow reaches the sea or ponds into basins, set the dead kFlagRiver/kFlagLake flags, and tell the player whether a landing site has fresh water (details pane + globe Hydrology mode). Worldgen stays coarse (amount + direction); actual river/lake geometry is deferred to chunk load.
+
+**Completed Tasks:**
+- [x] W-0: water stats baseline (WorldStats + worldgen-cli)
+- [x] W-1: priority-flood depression routing + coarse kFlagRiver/kFlagLake + basin spill levels (resolution-invariant river quantile)
+- [x] W-2: globe Hydrology color mode
+- [x] W-3: landing-site water signal + details pane (river/lake on tile-or-neighbor, coast, rain-fed) + freshwater-biased default site
+- [x] W-4: docs + PR; two Copilot rounds cleared; sub-1m lake spill-depth truncation fix (#146)
+
+**Result:** Every land tile routes to the sea or a marked endorheic basin; lakes form in real basins; rivers ~4-5% of land, stable across resolution; landing pane reports water/terrain/climate/difficulty. Deterministic across thread counts. Follow-ups: valley erosion, 2D chunk-time river/lake rendering. ✅
+
+### ✅ Plate Boundary Realism (straight-mountains fix)
+**Spec/Documentation:** `/docs/development-log/entries/2026-06-15-worldgen-water-and-plate-realism.md`
+**Dependencies:** Tectonic History Simulation
+**Status:** complete (PR #145 merged)
+
+**Goal:** Kill the dead-straight mountain walls that appeared across many generated worlds.
+
+**Completed Tasks:**
+- [x] Multi-agent diagnosis: root cause is the great-circle rift cut (tryRift plane-split), amplified by a flat plate-size distribution and a uniform belt-lift pedestal
+- [x] Curved rift cut: two-front noisy Dijkstra split replacing the great-circle plane (oversized + suture paths)
+- [x] Power-law plate-size hierarchy at seeding (few large, many small)
+- [x] Along-belt lift modulation so ranges get passes/saddles instead of a uniform wall
+- [x] Ultra 2048 generator option; golden hash re-pin; six-seed biome acceptance test; Copilot cleared
+
+**Result:** Rift seams meander like real margins, no straight great-circle cuts on any seed (including low plate counts); the plate inventory has an Earth-like size hierarchy; mountain crests break into passes. Deterministic across thread counts. ✅
 
 ### ✅ Climate, Biome & Shelf Realism Retune (worldgen)
 **Spec/Documentation:** `/docs/development-log/entries/2026-06-14-climate-biome-shelf-retune.md`
@@ -435,22 +467,6 @@ while (running) {
 ---
 
 ## In Progress Epics
-
-### Water Availability (worldgen + landing UX)
-**Spec/Documentation:** `.claude/plans/water-hydrology.md`
-**Dependencies:** Climate/biome retune (complete)
-**Status:** in progress
-
-**Goal:** Fix the drainage network (depression routing so flow reaches the sea or ponds into basins; set the dead kFlagRiver/kFlagLake coarse flags) and tell the player whether a landing site has fresh water, via a landing-site details pane + a globe Hydrology color mode. Worldgen stays coarse (water amount + direction); actual river/lake geometry is computed later at chunk load (continuous-curve distance field). Erosion and 2D river rendering are the following epics.
-
-**Tasks:**
-- [ ] W-0: water stats baseline (WorldStats + worldgen-cli)
-- [ ] W-1: drainage fix — depression routing through basins + coarse kFlagRiver/kFlagLake + basin spill levels
-- [ ] W-2: globe Hydrology color mode (rivers from flowAccum, lakes from kFlagLake)
-- [ ] W-3: landing-site water signal + details pane (coarse reliable: river/lake on tile-or-neighbor, coast, rain-fed) — USER TEST GATE
-- [ ] W-4: docs + PR
-
----
 
 ### World Generation & Creator
 **Spec/Documentation:** `/docs/design/features/world-generation/`, `.claude/plans/world-generation.md`

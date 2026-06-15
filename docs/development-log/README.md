@@ -64,6 +64,7 @@ Development log entries are **immutable history**. Don't update old entries — 
 
 #### June 2026
 
+- [2026-06-15 - Water availability + plate-boundary realism](./entries/2026-06-15-worldgen-water-and-plate-realism.md)
 - [2026-06-14 - Construction Epic F1: openings (doors & windows)](./entries/2026-06-14-construction-epic-f1-openings.md)
 - [2026-06-14 - Construction Epic E: rooms](./entries/2026-06-14-construction-epic-e-rooms.md)
 - [2026-06-14 - Climate, biome, and shelf realism retune](./entries/2026-06-14-climate-biome-shelf-retune.md)
@@ -100,9 +101,10 @@ Development log entries are **immutable history**. Don't update old entries — 
 
 ## Quick Stats
 
-- **Total Entries:** 16
-- **Latest Entry:** 2026-06-14
+- **Total Entries:** 70 (entry files; the index below lists notable milestones)
+- **Latest Entry:** 2026-06-15
 - **Major Milestones:**
+  - Water availability + plate-boundary realism: real drainage, landing water signal, curved rift cuts (2026-06-15)
   - Construction Epic F1: openings — doors & windows (2026-06-14)
   - Construction Epic E: rooms (2026-06-14)
   - Climate/biome/shelf retune: Earth-like biome fractions + rain shadows (2026-06-14)
