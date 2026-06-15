@@ -15,9 +15,11 @@
 #include <utils/Log.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <limits>
+#include <span>
 
 namespace world_sim {
 
@@ -1334,14 +1336,14 @@ namespace world_sim {
 		// Triangulate a CCW ring (fan from vertex 0) and emit a filled polygon plus an
 		// outline via Primitives. Screen-space points. Shared by band + junction draws.
 		void fillRing(
-			const std::vector<Foundation::Vec2>& screen,
-			Foundation::Color					 fill,
-			Foundation::Color					 outline,
-			float								 outlineWidth,
-			const char*							 fillId,
-			const char*							 edgeId,
-			int									 zFill,
-			int									 zEdge
+			std::span<const Foundation::Vec2> screen,
+			Foundation::Color				  fill,
+			Foundation::Color				  outline,
+			float							  outlineWidth,
+			const char*						  fillId,
+			const char*						  edgeId,
+			int								  zFill,
+			int								  zEdge
 		) {
 			const std::size_t n = screen.size();
 			if (n < 3) {
@@ -1571,6 +1573,22 @@ namespace world_sim {
 			return {0.55F, 0.40F, 0.25F, 1.0F};
 		}
 
+		// The opening's footprint width in world meters: the long edge of the oriented
+		// footprint rectangle. Derived from the actual geometry (not the type's nominal
+		// width), so width-based styling like the mullion count matches what's drawn and
+		// stays correct even if the footprint were ever clamped near a wall end.
+		float footprintWidthMeters(const geometry::Ring& f) {
+			if (f.size() < 4) {
+				return 0.0F;
+			}
+			auto edgeLen = [](geometry::Vec2i64 a, geometry::Vec2i64 b) {
+				const double dx = static_cast<double>(b.x - a.x);
+				const double dy = static_cast<double>(b.y - a.y);
+				return std::sqrt(dx * dx + dy * dy);
+			};
+			return static_cast<float>(std::max(edgeLen(f[0], f[1]), edgeLen(f[0], f[3])) / geometry::kMillimetersPerMeter);
+		}
+
 		// Multiply rgb by `factor` (clamped to [0,1]); alpha untouched. Used to darken
 		// the material color for jambs, seams, and outlines so detail reads against the
 		// flat leaf/frame fill.
@@ -1625,7 +1643,7 @@ namespace world_sim {
 			auto				   pt = [&](float u, float v) -> Foundation::Vec2 {
 				  return corner + widthVec * u + thickVec * v;
 			};
-			auto quad = [&](float u0, float u1, float v0, float v1) -> std::vector<Foundation::Vec2> {
+			auto quad = [&](float u0, float u1, float v0, float v1) -> std::array<Foundation::Vec2, 4> {
 				return {pt(u0, v0), pt(u1, v0), pt(u1, v1), pt(u0, v1)};
 			};
 
@@ -1754,7 +1772,9 @@ namespace world_sim {
 			for (const auto& v : footprint) {
 				screen.push_back(toScreen(v));
 			}
-			drawOpeningFill(screen, openingMaterialColor(type->material), window, type->widthMeters, alpha, built ? 2.0F : 1.0F);
+			drawOpeningFill(
+				screen, openingMaterialColor(type->material), window, footprintWidthMeters(footprint), alpha, built ? 2.0F : 1.0F
+			);
 		}
 	}
 
@@ -1793,9 +1813,10 @@ namespace world_sim {
 		}
 		// Validity-colorized ghost: the same procedural door/window shape as the
 		// committed render, drawn with the green/red validity tint in place of the
-		// material color so the preview reads as the real thing.
+		// material color. Half alpha so it reads as a translucent preview over the wall
+		// and ground rather than an opaque structure.
 		const bool window = !type->pathable;
-		drawOpeningFill(screen, tint, window, type->widthMeters, 1.0F, 2.0F);
+		drawOpeningFill(screen, tint, window, footprintWidthMeters(footprint), 0.5F, 2.0F);
 	}
 
 	void DrawingSystem::renderWallChainPreview(int viewportW, int viewportH) {
