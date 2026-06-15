@@ -54,6 +54,13 @@ namespace engine::assets {
 		/// @return true if generation succeeded
 		bool generateAsset(const std::string& defName, uint32_t seed, GeneratedAsset& outAsset);
 
+		/// Build an uncached tessellated mesh for an asset at a given seed.
+		/// Simple assets ignore the seed (one drawing); procedural assets use it to
+		/// select a form (vary the seed to sample the generator's range).
+		/// This is the single shared "defName + seed -> mesh" entry point.
+		/// @return true if a non-empty mesh was produced
+		bool buildMesh(const std::string& defName, uint32_t seed, renderer::TessellatedMesh& outMesh);
+
 		/// Clear all loaded definitions and cached templates
 		void clear();
 

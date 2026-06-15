@@ -8,6 +8,7 @@ add_library(renderer
     vector/Tessellator.cpp
     vector/Bezier.cpp
     vector/SVGLoader.cpp
+    vector/MeshBounds.cpp
     shader/Shader.cpp
     shader/ShaderLoader.cpp
     shader/ShaderPreprocessor.cpp

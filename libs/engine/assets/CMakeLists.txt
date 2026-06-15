@@ -1,6 +1,7 @@
 add_library(assets
     ActionTypeRegistry.cpp
     AssetRegistry.cpp
+    AssetRenderer.cpp
     ConstructionRegistry.cpp
     AssetBatcher.cpp
     ConfigValidator.cpp

@@ -965,6 +965,33 @@ namespace engine::assets {
 		return !outMesh.vertices.empty();
 	}
 
+	bool AssetRegistry::buildMesh(const std::string& defName, uint32_t seed, renderer::TessellatedMesh& outMesh) {
+		outMesh.clear();
+
+		const AssetDefinition* def = getDefinition(defName);
+		if (def == nullptr) {
+			LOG_ERROR(Engine, "buildMesh: definition not found: %s", defName.c_str());
+			return false;
+		}
+
+		// Simple assets are a single drawing; reuse the cached, normalized template.
+		if (def->assetType == AssetType::Simple) {
+			const renderer::TessellatedMesh* tmpl = getTemplate(defName);
+			if (tmpl == nullptr) {
+				return false;
+			}
+			outMesh = *tmpl;
+			return !outMesh.vertices.empty();
+		}
+
+		// Procedural assets: generate this seed's form fresh (uncached) and tessellate.
+		GeneratedAsset asset;
+		if (!generateAsset(defName, seed, asset)) {
+			return false;
+		}
+		return tessellateAsset(asset, outMesh);
+	}
+
 	void AssetRegistry::clear() {
 		definitions.clear();
 		templateCache.clear();
