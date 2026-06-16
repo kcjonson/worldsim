@@ -2,10 +2,10 @@
 // primitive (scrim + centered bracketed Panel) against the prototype.
 
 #include <design-system/Modal.h>
-#include <design-system/Panel.h>
-#include <design-system/Stat.h>
-#include <design-system/Tokens.h>
-#include <design-system/Variants.h>
+#include <components/panel/Panel.h>
+#include <components/stat/Stat.h>
+#include <theme/Tokens.h>
+#include <theme/Variants.h>
 #include <graphics/Color.h>
 #include <primitives/Primitives.h>
 #include <scene/Scene.h>

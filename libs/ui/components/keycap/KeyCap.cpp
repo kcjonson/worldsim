@@ -1,7 +1,7 @@
-#include "design-system/KeyCap.h"
+#include "components/keycap/KeyCap.h"
 
-#include "design-system/Tokens.h"
-#include "design-system/Variants.h"
+#include "theme/Tokens.h"
+#include "theme/Variants.h"
 #include "font/FontRenderer.h"
 #include "graphics/Color.h"
 #include "graphics/PrimitiveStyles.h"
@@ -11,7 +11,7 @@
 #include <algorithm>
 #include <utility>
 
-namespace UI::DS {
+namespace UI {
 
 	namespace {
 
@@ -88,4 +88,4 @@ namespace UI::DS {
 				  .id = "ds_keycap_label"});
 	}
 
-} // namespace UI::DS
+} // namespace UI

@@ -6,19 +6,19 @@
 // variant-tinted background, a hairline/edge border, optional L-bracket corner
 // ticks, and an optional header (mono kicker eyebrow above a larger title).
 //
-// All visuals come from UI::DS tokens (see design-system/Tokens.h). Texture
+// All visuals come from UI tokens (see theme/Tokens.h). Texture
 // passes (scanlines, grain, glow) and real display fonts are later milestones.
 //
 // Spec: docs/design/ui/design-system/components.md (Panel section).
 
-#include "design-system/Tokens.h"
+#include "theme/Tokens.h"
 #include "graphics/Color.h"
 #include "graphics/Rect.h"
 #include "math/Types.h"
 #include <optional>
 #include <string>
 
-namespace UI::DS {
+namespace UI {
 
 	// Surface tint and border treatment.
 	enum class PanelVariant { Panel, Raised, Inset };
@@ -57,4 +57,4 @@ namespace UI::DS {
 		Args args;
 	};
 
-} // namespace UI::DS
+} // namespace UI

@@ -10,16 +10,16 @@
 //
 // Static rendering: the segment at Args::selected is drawn active. No icons yet
 // (the icon system is a later milestone), so segments render label text only.
-// All visuals come from UI::DS tokens.
+// All visuals come from UI tokens.
 //
 // Spec: docs/design/ui/design-system/components.md (SegmentedControl section).
 
-#include "design-system/Variants.h"
+#include "theme/Variants.h"
 #include "math/Types.h"
 #include <string>
 #include <vector>
 
-namespace UI::DS {
+namespace UI {
 
 	class SegmentedControl {
 	  public:
@@ -48,4 +48,4 @@ namespace UI::DS {
 		Args args;
 	};
 
-} // namespace UI::DS
+} // namespace UI

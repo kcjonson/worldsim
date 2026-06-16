@@ -7,7 +7,7 @@
 // colonist's name) drives both the color and the initials via an FNV-1a hash, so
 // the same name always yields the same avatar with no stored state.
 //
-// Static rendering only. The frame, ring color, and glow come from UI::DS tokens
+// Static rendering only. The frame, ring color, and glow come from UI tokens
 // and per-instance HSL math; the silhouette SVG is approximated by a filled disc
 // behind centered initials.
 //
@@ -16,7 +16,7 @@
 #include "math/Types.h"
 #include <string>
 
-namespace UI::DS {
+namespace UI {
 
 	class Avatar {
 	  public:
@@ -39,4 +39,4 @@ namespace UI::DS {
 		Args args;
 	};
 
-} // namespace UI::DS
+} // namespace UI

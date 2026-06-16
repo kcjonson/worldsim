@@ -1,6 +1,6 @@
 #include "design-system/Button.h"
 
-#include "design-system/Tokens.h"
+#include "theme/Tokens.h"
 #include "font/FontRenderer.h"
 #include "graphics/Color.h"
 #include "graphics/PrimitiveStyles.h"

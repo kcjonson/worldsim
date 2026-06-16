@@ -8,14 +8,14 @@
 // and another hairline segment, with the segment widths computed from the total
 // width minus the measured label and its gaps.
 //
-// Static, non-interactive. All visuals come from UI::DS tokens.
+// Static, non-interactive. All visuals come from UI tokens.
 //
 // Spec: docs/design/ui/design-system/components.md (Divider section).
 
 #include "math/Types.h"
 #include <string>
 
-namespace UI::DS {
+namespace UI {
 
 	class Divider {
 	  public:
@@ -34,4 +34,4 @@ namespace UI::DS {
 		Args args;
 	};
 
-} // namespace UI::DS
+} // namespace UI

@@ -1,13 +1,13 @@
-#include "design-system/Stat.h"
+#include "components/stat/Stat.h"
 
-#include "design-system/Tokens.h"
+#include "theme/Tokens.h"
 #include "font/FontRenderer.h"
 #include "graphics/Color.h"
 #include "primitives/Primitives.h"
 
 #include <utility>
 
-namespace UI::DS {
+namespace UI {
 
 	namespace {
 
@@ -83,4 +83,4 @@ namespace UI::DS {
 		}
 	}
 
-} // namespace UI::DS
+} // namespace UI

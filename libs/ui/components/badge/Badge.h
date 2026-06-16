@@ -8,15 +8,15 @@
 //
 // Static rendering only. The dot's faux glow approximates the prototype's
 // box-shadow with a larger, more-transparent circle behind it. All visuals
-// come from UI::DS tokens.
+// come from UI tokens.
 //
 // Spec: docs/design/ui/design-system/components.md (Badge section).
 
-#include "design-system/Variants.h"
+#include "theme/Variants.h"
 #include "math/Types.h"
 #include <string>
 
-namespace UI::DS {
+namespace UI {
 
 	class Badge {
 	  public:
@@ -36,4 +36,4 @@ namespace UI::DS {
 		Args args;
 	};
 
-} // namespace UI::DS
+} // namespace UI

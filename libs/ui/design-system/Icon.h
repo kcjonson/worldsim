@@ -9,7 +9,7 @@
 //
 // Spec: docs/design/ui/design-system/icons.md.
 
-#include "design-system/Tokens.h"
+#include "theme/Tokens.h"
 #include "graphics/Color.h"
 #include "math/Types.h"
 

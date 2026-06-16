@@ -6,15 +6,15 @@
 // optional small trailing unit. Tone colors only the value, not the label.
 // Size sets the value's font size (sm/md/lg).
 //
-// Static rendering only. All visuals come from UI::DS tokens.
+// Static rendering only. All visuals come from UI tokens.
 //
 // Spec: docs/design/ui/design-system/components.md (Stat section).
 
-#include "design-system/Variants.h"
+#include "theme/Variants.h"
 #include "math/Types.h"
 #include <string>
 
-namespace UI::DS {
+namespace UI {
 
 	class Stat {
 	  public:
@@ -36,4 +36,4 @@ namespace UI::DS {
 		Args args;
 	};
 
-} // namespace UI::DS
+} // namespace UI

@@ -8,14 +8,14 @@
 // label (measured) plus horizontal padding, with a min-width floor so single
 // characters don't collapse narrower than multi-character caps.
 //
-// Static. All visuals come from UI::DS tokens.
+// Static. All visuals come from UI tokens.
 //
 // Spec: docs/design/ui/design-system/components.md (KeyCap section).
 
 #include "math/Types.h"
 #include <string>
 
-namespace UI::DS {
+namespace UI {
 
 	class KeyCap {
 	  public:
@@ -36,4 +36,4 @@ namespace UI::DS {
 		Args args;
 	};
 
-} // namespace UI::DS
+} // namespace UI

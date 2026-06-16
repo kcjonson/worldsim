@@ -1,6 +1,6 @@
 #include "design-system/Icon.h"
 
-#include "design-system/IconGlyphs.h"
+#include "theme/IconGlyphs.h"
 #include "graphics/PrimitiveStyles.h"
 #include "primitives/Primitives.h"
 #include "vector/Tessellator.h"

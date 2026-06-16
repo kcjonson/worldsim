@@ -4,13 +4,13 @@
 //
 // Tone and Size are the cross-primitive knobs (a Meter, a Badge, and a Stat all
 // share the same notion of "warn" or "small"). toneColor resolves a tone to a
-// UI::DS token; Auto picks by value using the prototype's thresholds.
+// UI token; Auto picks by value using the prototype's thresholds.
 
-#include "design-system/Tokens.h"
+#include "theme/Tokens.h"
 #include "graphics/Color.h"
 #include "primitives/FontFamily.h"
 
-namespace UI::DS {
+namespace UI {
 
 	enum class Tone { Accent, Data, Ok, Warn, Crit, Auto, Default };
 	enum class Size { Sm, Md, Lg };
@@ -48,4 +48,4 @@ namespace UI::DS {
 		return {color.r, color.g, color.b, alpha};
 	}
 
-} // namespace UI::DS
+} // namespace UI

@@ -24,18 +24,17 @@ add_library(ui
     focus/FocusManager.cpp
     input/InputEvent.cpp
     layout/LayoutContainer.cpp
-    design-system/Panel.cpp
+    components/panel/Panel.cpp
     design-system/Button.cpp
-    design-system/Meter.cpp
-    design-system/Stat.cpp
-    design-system/Badge.cpp
-    design-system/SegmentedControl.cpp
+    components/stat/Stat.cpp
+    components/badge/Badge.cpp
+    components/segmentedcontrol/SegmentedControl.cpp
     design-system/Tabs.cpp
-    design-system/Divider.cpp
-    design-system/KeyCap.cpp
+    components/divider/Divider.cpp
+    components/keycap/KeyCap.cpp
     design-system/Icon.cpp
     design-system/Modal.cpp
-    design-system/Avatar.cpp
+    components/avatar/Avatar.cpp
     design-system/Slider.cpp
     design-system/Tooltip.cpp
 )

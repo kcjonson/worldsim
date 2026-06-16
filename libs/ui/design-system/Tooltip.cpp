@@ -1,7 +1,7 @@
 #include "design-system/Tooltip.h"
 
-#include "design-system/Tokens.h"
-#include "design-system/Variants.h"
+#include "theme/Tokens.h"
+#include "theme/Variants.h"
 #include "font/FontRenderer.h"
 #include "graphics/Color.h"
 #include "graphics/PrimitiveStyles.h"

@@ -9,11 +9,11 @@
 //
 // Static rendering only: the normal visual state, no hover/pressed/disabled.
 // Hover glow, the press nudge, and icons (icon system not yet built) are later
-// milestones. All visuals come from UI::DS tokens (see design-system/Tokens.h).
+// milestones. All visuals come from UI::DS tokens (see theme/Tokens.h).
 //
 // Spec: docs/design/ui/design-system/components.md (Button section).
 
-#include "design-system/Variants.h"
+#include "theme/Variants.h"
 #include "math/Types.h"
 #include <string>
 

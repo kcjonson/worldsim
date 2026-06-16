@@ -13,8 +13,8 @@
 //
 // Spec: docs/design/ui/design-system/components.md (Modal section).
 
-#include "design-system/Panel.h"
-#include "design-system/Variants.h"
+#include "components/panel/Panel.h"
+#include "theme/Variants.h"
 #include "math/Types.h"
 #include <string>
 

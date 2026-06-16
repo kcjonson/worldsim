@@ -11,7 +11,7 @@
 
 #include <string_view>
 
-namespace UI::DS::Icons {
+namespace UI::Icons {
 
 	struct SubPath {
 		const Foundation::Vec2* pts;
@@ -369,5 +369,5 @@ namespace UI::DS::Icons {
 
 	inline constexpr int count = 51;
 
-} // namespace UI::DS::Icons
+} // namespace UI::Icons
 

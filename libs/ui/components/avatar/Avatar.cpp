@@ -1,7 +1,7 @@
-#include "design-system/Avatar.h"
+#include "components/avatar/Avatar.h"
 
-#include "design-system/Tokens.h"
-#include "design-system/Variants.h"
+#include "theme/Tokens.h"
+#include "theme/Variants.h"
 #include "font/FontRenderer.h"
 #include "graphics/Color.h"
 #include "graphics/PrimitiveStyles.h"
@@ -14,7 +14,7 @@
 #include <sstream>
 #include <utility>
 
-namespace UI::DS {
+namespace UI {
 
 	namespace {
 
@@ -173,4 +173,4 @@ namespace UI::DS {
 		}
 	}
 
-} // namespace UI::DS
+} // namespace UI

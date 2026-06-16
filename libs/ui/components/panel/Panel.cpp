@@ -1,6 +1,6 @@
-#include "design-system/Panel.h"
+#include "components/panel/Panel.h"
 
-#include "design-system/Variants.h"
+#include "theme/Variants.h"
 #include "graphics/Color.h"
 #include "graphics/PrimitiveStyles.h"
 #include "primitives/Primitives.h"
@@ -8,7 +8,7 @@
 #include <algorithm>
 #include <utility>
 
-namespace UI::DS {
+namespace UI {
 
 	namespace {
 
@@ -44,7 +44,7 @@ namespace UI::DS {
 				case PanelAccent::Accent:
 					break;
 			}
-			return UI::DS::accent;
+			return accent;
 		}
 
 		// Vertical/horizontal header and body padding by density mode.
@@ -177,4 +177,4 @@ namespace UI::DS {
 		return {left, top, width, height};
 	}
 
-} // namespace UI::DS
+} // namespace UI

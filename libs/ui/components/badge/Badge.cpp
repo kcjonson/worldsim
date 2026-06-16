@@ -1,6 +1,6 @@
-#include "design-system/Badge.h"
+#include "components/badge/Badge.h"
 
-#include "design-system/Tokens.h"
+#include "theme/Tokens.h"
 #include "font/FontRenderer.h"
 #include "graphics/Color.h"
 #include "graphics/PrimitiveStyles.h"
@@ -9,7 +9,7 @@
 
 #include <utility>
 
-namespace UI::DS {
+namespace UI {
 
 	namespace {
 
@@ -81,4 +81,4 @@ namespace UI::DS {
 				  .id = "ds_badge_label"});
 	}
 
-} // namespace UI::DS
+} // namespace UI

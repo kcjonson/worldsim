@@ -4,8 +4,8 @@
  *
  * Run from docs/ui-prototype:  node scripts/gen-cpp-theme.mjs
  *
- * Flat UI::DS namespace, snake_case names mirroring the CSS custom properties
- * (--space-3 -> UI::DS::space_3, --accent -> UI::DS::accent) so the mapping is
+ * Flat UI namespace, snake_case names mirroring the CSS custom properties
+ * (--space-3 -> UI::space_3, --accent -> UI::accent) so the mapping is
  * obvious. Colors become Foundation::Color (rgba floats from tokens.json),
  * z-index becomes int, everything else float. cssOnly tokens (gradients, eases,
  * font stacks) and pure aliases are skipped.
@@ -16,7 +16,7 @@ import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const tokens = JSON.parse(readFileSync(resolve(here, "../../design/ui/design-system/tokens.json"), "utf8"));
-const outPath = resolve(here, "../../../libs/ui/design-system/Tokens.h");
+const outPath = resolve(here, "../../../libs/ui/theme/Tokens.h");
 
 const id = (name) => name.replace(/-/g, "_");
 const f = (n) => (Number.isInteger(n) ? `${n}.0F` : `${n}F`);
@@ -67,13 +67,13 @@ const header = `#pragma once
 // by docs/ui-prototype/scripts/gen-cpp-theme.mjs. Do not edit by hand.
 //
 // Salvage design tokens for the C++ UI. Compile-time constexpr. Names mirror
-// the CSS custom properties: --space-3 -> UI::DS::space_3, --accent -> UI::DS::accent.
+// the CSS custom properties: --space-3 -> UI::space_3, --accent -> UI::accent.
 
 #include "graphics/Color.h"
 
-namespace UI::DS {
+namespace UI {
 
-${lines.join("\n")}} // namespace UI::DS
+${lines.join("\n")}} // namespace UI
 `;
 
 mkdirSync(dirname(outPath), { recursive: true });

@@ -1,7 +1,7 @@
 #include "design-system/Modal.h"
 
-#include "design-system/Tokens.h"
-#include "design-system/Variants.h"
+#include "theme/Tokens.h"
+#include "theme/Variants.h"
 #include "graphics/Color.h"
 #include "graphics/PrimitiveStyles.h"
 #include "graphics/Rect.h"

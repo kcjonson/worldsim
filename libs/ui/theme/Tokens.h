@@ -4,11 +4,11 @@
 // by docs/ui-prototype/scripts/gen-cpp-theme.mjs. Do not edit by hand.
 //
 // Salvage design tokens for the C++ UI. Compile-time constexpr. Names mirror
-// the CSS custom properties: --space-3 -> UI::DS::space_3, --accent -> UI::DS::accent.
+// the CSS custom properties: --space-3 -> UI::space_3, --accent -> UI::accent.
 
 #include "graphics/Color.h"
 
-namespace UI::DS {
+namespace UI {
 
 	// Colors
 	inline constexpr Foundation::Color bg_void{0.0275F, 0.0314F, 0.0431F, 1.0F};
@@ -120,4 +120,4 @@ namespace UI::DS {
 
 	// Typography (numeric)
 	inline constexpr float title_weight = 600.0F;
-} // namespace UI::DS
+} // namespace UI

@@ -2,22 +2,22 @@
 // Renders every Salvage primitive in its variants so the C++ implementation can
 // be eyeballed against the React prototype's component gallery.
 
-#include <design-system/Avatar.h>
-#include <design-system/Badge.h>
+#include <components/avatar/Avatar.h>
+#include <components/badge/Badge.h>
 #include <design-system/Button.h>
-#include <design-system/Divider.h>
+#include <components/divider/Divider.h>
 #include <design-system/Icon.h>
-#include <design-system/IconGlyphs.h>
-#include <design-system/KeyCap.h>
+#include <theme/IconGlyphs.h>
+#include <components/keycap/KeyCap.h>
 #include <design-system/Meter.h>
-#include <design-system/Panel.h>
-#include <design-system/SegmentedControl.h>
+#include <components/panel/Panel.h>
+#include <components/segmentedcontrol/SegmentedControl.h>
 #include <design-system/Slider.h>
-#include <design-system/Stat.h>
+#include <components/stat/Stat.h>
 #include <design-system/Tabs.h>
-#include <design-system/Tokens.h>
+#include <theme/Tokens.h>
 #include <design-system/Tooltip.h>
-#include <design-system/Variants.h>
+#include <theme/Variants.h>
 #include <graphics/Color.h>
 #include <graphics/Rect.h>
 #include <primitives/Primitives.h>

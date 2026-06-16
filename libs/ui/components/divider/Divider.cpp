@@ -1,7 +1,7 @@
-#include "design-system/Divider.h"
+#include "components/divider/Divider.h"
 
-#include "design-system/Tokens.h"
-#include "design-system/Variants.h"
+#include "theme/Tokens.h"
+#include "theme/Variants.h"
 #include "font/FontRenderer.h"
 #include "graphics/Color.h"
 #include "graphics/PrimitiveStyles.h"
@@ -10,7 +10,7 @@
 #include <algorithm>
 #include <utility>
 
-namespace UI::DS {
+namespace UI {
 
 	namespace {
 
@@ -73,4 +73,4 @@ namespace UI::DS {
 		drawLine({.start = {rightStart, lineY}, .end = {rightEnd, lineY}, .style = {.color = line_hairline, .width = bw}});
 	}
 
-} // namespace UI::DS
+} // namespace UI

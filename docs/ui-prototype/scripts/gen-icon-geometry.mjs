@@ -1,6 +1,6 @@
 /*
  * Flatten the icon set (icons.json) into compiled C++ glyph geometry:
- * libs/ui/design-system/IconGlyphs.h. Each glyph becomes one or more subpaths
+ * libs/ui/theme/IconGlyphs.h. Each glyph becomes one or more subpaths
  * of 2D points in the 24x24 icon space, plus a filled flag. The C++ Icon
  * primitive strokes open/closed subpaths (drawLine + round joins) or fills them
  * (Tessellator) depending on the flag. No runtime SVG parsing.
@@ -16,7 +16,7 @@ import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const icons = JSON.parse(readFileSync(resolve(here, "../../design/ui/design-system/icons.json"), "utf8"));
-const outPath = resolve(here, "../../../libs/ui/design-system/IconGlyphs.h");
+const outPath = resolve(here, "../../../libs/ui/theme/IconGlyphs.h");
 
 const CURVE_STEPS = 16;
 const CIRCLE_STEPS = 28;
@@ -150,7 +150,7 @@ out.push(`#pragma once
 
 #include <string_view>
 
-namespace UI::DS::Icons {
+namespace UI::Icons {
 
 	struct SubPath {
 		const Foundation::Vec2* pts;
@@ -199,7 +199,7 @@ out.push(`
 
 	inline constexpr int count = ${names.length};
 
-} // namespace UI::DS::Icons
+} // namespace UI::Icons
 `);
 
 mkdirSync(dirname(outPath), { recursive: true });
