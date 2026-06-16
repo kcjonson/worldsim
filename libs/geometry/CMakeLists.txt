@@ -6,6 +6,7 @@ add_library(geometry
     offset/WallOffset.cpp
     boolean/RingBoolean.cpp
     triangulation/Triangulation.cpp
+    nav/NavMesh.cpp
 )
 
 target_include_directories(geometry
