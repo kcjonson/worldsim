@@ -141,14 +141,22 @@ namespace UI {
 			const float				glyphPx = args.size * 0.34F;
 			const float				scale = textScale(glyphPx);
 			const Foundation::Color textColor = hslToRgb(hue, 0.55F, 0.82F);
-			float					textWidth = 0.0F;
-			if (const ui::FontRenderer* font = Renderer::Primitives::getFontRenderer(); font != nullptr) {
-				textWidth = font->MeasureText(initials, scale, fontDisplay).x;
-			}
-			const Foundation::Vec2 textPos{center.x - (textWidth * 0.5F), center.y - (glyphPx * 0.5F)};
-			// Faked text-shadow for legibility over the art: a dark copy down-right.
-			drawText({.text = initials, .position = {textPos.x + 1.0F, textPos.y + 1.0F}, .scale = scale, .color = bg_void, .font = fontDisplay, .id = "ds_avatar_initials"});
-			drawText({.text = initials, .position = textPos, .scale = scale, .color = textColor, .font = fontDisplay, .id = "ds_avatar_initials"});
+			// Center the initials in the frame box (== disc center) using the text
+			// primitive's own metrics, with a dark shadow copy for legibility.
+			const auto drawInitials = [&](Foundation::Vec2 pos, Foundation::Color col) {
+				drawText({.text = initials,
+						  .position = pos,
+						  .scale = scale,
+						  .color = col,
+						  .font = fontDisplay,
+						  .hAlign = Foundation::HorizontalAlign::Center,
+						  .vAlign = Foundation::VerticalAlign::Middle,
+						  .boxWidth = args.size,
+						  .boxHeight = args.size,
+						  .id = "ds_avatar_initials"});
+			};
+			drawInitials({frame.x + 1.0F, frame.y + 1.0F}, bg_void);
+			drawInitials({frame.x, frame.y}, textColor);
 		}
 
 		// Corner tick, top-right, for the dossier feel: a 5px L-bracket in text_faint.
