@@ -40,11 +40,20 @@ void OrbitCamera::beginDrag(float mouseX, float mouseY) {
     prevMouseY = mouseY;
 }
 
+float OrbitCamera::pitchUnlockDistance() {
+    // Orbit distance at which the unit sphere exactly fills the vertical
+    // viewport, derived from the projection FOV (same glm::radians conversion
+    // projMatrix uses). Cached on first use.
+    static const float d = 1.0F / std::sin(glm::radians(kFovDeg * 0.5F));
+    return d;
+}
+
 void OrbitCamera::clampPitch() {
+    const float unlock = pitchUnlockDistance();
     float r = 0.0F;
-    if (distance < kPitchUnlockDistance) {
-        const float span = kPitchUnlockDistance - minDist;
-        float t = span > 0.0F ? (kPitchUnlockDistance - distance) / span : 1.0F;
+    if (distance < unlock) {
+        const float span = unlock - minDist;
+        float t = span > 0.0F ? (unlock - distance) / span : 1.0F;
         t = std::clamp(t, 0.0F, 1.0F);
         r = t * kMaxPitchOffset;
     }
@@ -71,6 +80,10 @@ void OrbitCamera::drag(float mouseX, float mouseY) {
 
 void OrbitCamera::endDrag() {
     dragging = false;
+}
+
+void OrbitCamera::markInteracted() {
+    userInteracted = true;
 }
 
 void OrbitCamera::scroll(float delta) {

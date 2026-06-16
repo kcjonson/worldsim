@@ -101,6 +101,14 @@ class WorldCreatorScene : public engine::IScene {
 		// or pick, and the only generation-time control is Cancel (on the panel).
 		if (!reviewing) return false;
 
+		// A press on the location pane belongs to the overlay, not the globe
+		// behind it: swallow it so it can't pick a tile or start an orbit.
+		if (!globe.isDragging() && detailsPaneShown &&
+		    event.type == UI::InputEvent::Type::MouseDown &&
+		    detailsPaneBounds.contains(event.position)) {
+			return true;
+		}
+
 		// Pick before orbit-drag so a left click selects the tile under the
 		// cursor; the same click then begins an orbit drag.
 		if (event.type == UI::InputEvent::Type::MouseDown &&
@@ -159,6 +167,10 @@ class WorldCreatorScene : public engine::IScene {
 	void render() override {
 		glClearColor(0.08F, 0.07F, 0.12F, 1.0F);
 		glClear(GL_COLOR_BUFFER_BIT);
+
+		// The pane republishes its bounds below only on frames it actually
+		// draws; clear first so input never trusts a stale rect.
+		detailsPaneShown = false;
 
 		Foundation::Rect rect = mainRect();
 		auto state = model.getState();
@@ -227,6 +239,12 @@ class WorldCreatorScene : public engine::IScene {
 	std::string                        pickHint;
 	world_sim::LandingSiteDetails      details;
 	world_sim::LandingSiteDetailsPanel detailsPanel;
+
+	// On-screen bounds of the location pane, republished each frame it draws so
+	// input can swallow clicks over the overlay rather than picking/orbiting the
+	// globe behind it. Cleared at the top of every render().
+	Foundation::Rect detailsPaneBounds{};
+	bool             detailsPaneShown{false};
 
 	// Main content area right of the parameter panel. Bottom strip (80px)
 	// holds the progress bar / stage text / stats.
@@ -531,7 +549,7 @@ class WorldCreatorScene : public engine::IScene {
 	void renderModeHint(const Foundation::Rect& rect) {
 		std::string label = std::string("Mode: ") +
 			planetview::colorModeName(globe.colorMode()) +
-			"   (click a land tile to inspect, drag/arrows to orbit, scroll to zoom, right-click to cycle)";
+			"   (click a land tile to inspect, drag or arrow/WASD keys to orbit, scroll to zoom, right-click to cycle)";
 		UI::Text hint(UI::Text::Args{
 			.position = {rect.x + 10.0F, rect.y + 10.0F},
 			.text = label,
@@ -606,13 +624,15 @@ class WorldCreatorScene : public engine::IScene {
 		}
 
 		// Location pane (top-right of the globe area) with the Land button
-		// docked beneath it.
+		// docked beneath it. Publish the pane bounds for input click-swallowing.
 		if (siteValid) {
-			Foundation::Rect pane =
+			detailsPaneBounds =
 				detailsPanel.render(details, rect.right() - 12.0F, rect.y + 12.0F);
+			detailsPaneShown = true;
 			if (landButton) {
 				landButton->visible = true;
-				landButton->setPosition(pane.x, pane.y + pane.height + 6.0F);
+				landButton->setPosition(detailsPaneBounds.x,
+				                        detailsPaneBounds.y + detailsPaneBounds.height + 6.0F);
 				landButton->render();
 			}
 		}
