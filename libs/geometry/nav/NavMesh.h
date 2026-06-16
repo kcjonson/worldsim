@@ -6,9 +6,9 @@
 #include <cstdint>
 #include <vector>
 
-// Navmesh assembler: turn a set of tagged polygons (one walkable border plus
-// blocked obstacles, with door portals) into a triangle navmesh with adjacency,
-// ready for path queries.
+// Navmesh assembler: turn a set of tagged polygons (one or more walkable borders
+// plus blocked obstacles, with door portals) into a triangle navmesh with
+// adjacency, ready for path queries.
 //
 // The pipeline is arrangement -> half-edge face extraction -> per-walkable-face
 // constrained triangulation -> global edge-hash adjacency. Walkable faces are
@@ -30,10 +30,11 @@ namespace geometry::nav {
 	constexpr std::int64_t kNoProvenance = INT64_MIN;
 	constexpr std::int64_t kNoOpening	 = -1;
 
-	// One tagged input ring. Exactly one polygon in NavMeshInput has blocked=false:
-	// the walkable bounds (the chunk/region border). All others are blocked
-	// obstacles. `ring` is a simple closed ring (no repeated closing vertex);
-	// winding is normalized internally, callers need not pre-orient it.
+	// One tagged input ring. One or more polygons in NavMeshInput have blocked=false:
+	// the walkable bounds (the chunk/region border, or several disjoint regions).
+	// All others are blocked obstacles. `ring` is a simple closed ring (no repeated
+	// closing vertex); winding is normalized internally, callers need not pre-orient
+	// it.
 	struct NavInputPolygon {
 		std::vector<Vec2i64> ring;
 		bool				 blocked	  = false;

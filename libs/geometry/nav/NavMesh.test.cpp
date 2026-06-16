@@ -355,6 +355,41 @@ TEST(NavMesh, OutsideBorderDiscarded) {
 	}
 }
 
+TEST(NavMesh, MultipleDisjointBorders) {
+	// Two disjoint unblocked border squares. The first is empty; the second has a
+	// freestanding obstacle. Walkable triangles must appear in BOTH regions, none
+	// may lie outside either border, and the obstacle interior stays empty.
+	NavMeshInput in;
+	in.polygons.push_back(border({{0, 0}, {1000, 0}, {1000, 1000}, {0, 1000}}));
+	in.polygons.push_back(border({{2000, 0}, {3000, 0}, {3000, 1000}, {2000, 1000}}));
+	in.polygons.push_back(blocked({{2400, 400}, {2600, 400}, {2600, 600}, {2400, 600}}, 9));
+
+	NavMesh m = buildNavMesh(in);
+	ASSERT_FALSE(m.triangles.empty());
+	EXPECT_TRUE(allCcw(m));
+	EXPECT_TRUE(isEdgeManifold(m));
+	EXPECT_TRUE(neighborsConsistent(m));
+
+	// Total covered area: first square (1000^2) plus second minus its obstacle.
+	EXPECT_EQ(totalArea2(m), Int128(2 * (1000 * 1000 + 1000 * 1000 - 200 * 200)));
+
+	std::vector<Vec2i64> regionA = {{0, 0}, {1000, 0}, {1000, 1000}, {0, 1000}};
+	std::vector<Vec2i64> regionB = {{2000, 0}, {3000, 0}, {3000, 1000}, {2000, 1000}};
+	EXPECT_GE(findTriangleInside(m, regionA), 0) << "expected triangles in the first border";
+	EXPECT_GE(findTriangleInside(m, regionB), 0) << "expected triangles in the second border";
+
+	// No triangle centroid lands outside BOTH borders (i.e. in the dead band
+	// between them), and none inside the obstacle.
+	std::vector<Vec2i64> obstacle = {{2400, 400}, {2600, 400}, {2600, 600}, {2400, 600}};
+	for (const NavTriangle& t : m.triangles) {
+		Vec2i64 c		= centroid(m.vertices, t.v);
+		bool	inAny	= pointInPolygon(c, regionA) == PointInPolygon::Inside ||
+						pointInPolygon(c, regionB) == PointInPolygon::Inside;
+		EXPECT_TRUE(inAny) << "triangle must lie inside one of the two borders";
+		EXPECT_NE(pointInPolygon(c, obstacle), PointInPolygon::Inside);
+	}
+}
+
 TEST(NavMesh, Deterministic) {
 	NavMeshInput in;
 	in.polygons.push_back(border({{0, 0}, {2000, 0}, {2000, 2000}, {0, 2000}}));

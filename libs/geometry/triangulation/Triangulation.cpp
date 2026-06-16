@@ -85,6 +85,34 @@ namespace geometry {
 				   orientation(c, a, p) != Orientation::Clockwise;
 		}
 
+		// Strict interior of a CCW triangle (a,b,c): p must be strictly left of all
+		// three directed edges. On-edge and on-vertex both return false. Used by the
+		// ear-clip blocker test so a vertex lying on a candidate ear's edge does NOT
+		// block it (distinct from pointInCcwTriangle, which counts the boundary in).
+		bool strictlyInsideCcwTriangle(const Vec2i64& p, const Vec2i64& a, const Vec2i64& b, const Vec2i64& c) {
+			return orientation(a, b, p) == Orientation::CounterClockwise &&
+				   orientation(b, c, p) == Orientation::CounterClockwise &&
+				   orientation(c, a, p) == Orientation::CounterClockwise;
+		}
+
+		// Is p strictly between a and b on the open segment (a,b)? Collinear with a-b
+		// and lexicographically strictly between the endpoints. Exact integer math.
+		bool onOpenSegment(const Vec2i64& p, const Vec2i64& a, const Vec2i64& b) {
+			if (orientation(a, b, p) != Orientation::Collinear) {
+				return false;
+			}
+			// Collinear: p is interior to the segment iff it lies strictly within the
+			// bounding box of a-b on the dominant axis (and is not an endpoint).
+			if (a.x != b.x) {
+				const std::int64_t lo = std::min(a.x, b.x);
+				const std::int64_t hi = std::max(a.x, b.x);
+				return p.x > lo && p.x < hi;
+			}
+			const std::int64_t lo = std::min(a.y, b.y);
+			const std::int64_t hi = std::max(a.y, b.y);
+			return p.y > lo && p.y < hi;
+		}
+
 		// ---- Hole merging (Eberly bridge technique) ------------------------------
 		//
 		// Splice each hole into the outer ring via a bridge edge so the whole region
@@ -342,39 +370,43 @@ namespace geometry {
 
 			auto pos = [&](std::size_t loopPos) -> const Vec2i64& { return vertices[loop[loopPos]]; };
 
-			// Convex (left turn) at loop position p, using its current neighbors.
-			auto isConvex = [&](std::size_t p) {
-				return orientation(pos(prev[p]), pos(p), pos(next[p])) == Orientation::CounterClockwise;
+			// Turn direction at loop position p, using its current neighbors.
+			// CCW = convex, CW = reflex, Collinear = a straight (180-degree) corner.
+			auto turnAt = [&](std::size_t p) {
+				return orientation(pos(prev[p]), pos(p), pos(next[p]));
 			};
 
-			// p is an ear iff convex and no other (reflex) vertex lies strictly inside
-			// triangle (prev,p,next). We only need to test reflex vertices, but for
-			// robustness against repeated bridge vertices we test all remaining ones
-			// that are not the ear's three corners (by loop position).
-			auto isEar = [&](std::size_t p) {
-				if (!isConvex(p)) {
-					return false;
-				}
+			// Is the cut at p obstructed? p is an ear candidate only if NOT reflex
+			// (handled by the caller via turnAt). The blocker test is STRICT: a vertex
+			// on the triangle's boundary does not block, EXCEPT one strictly interior
+			// to the prospective diagonal (prev,next), which would leave that diagonal
+			// cutting through the boundary. We test every other vertex (not just reflex
+			// ones) so repeated bridge vertices and collinear features stay correct;
+			// coincident-corner hits are skipped. For a zero-area (collinear) candidate
+			// the diagonal is the existing straight edge, so nothing can be strictly
+			// inside and only the on-diagonal guard applies (a valid simple ring has no
+			// such vertex).
+			auto cutIsClear = [&](std::size_t p) {
 				const std::size_t a = prev[p];
 				const std::size_t c = next[p];
 				const Vec2i64&	  A = pos(a);
 				const Vec2i64&	  B = pos(p);
 				const Vec2i64&	  C = pos(c);
+				const bool		  degenerate = (orientation(A, B, C) == Orientation::Collinear);
 				for (std::size_t q = next[c]; q != a; q = next[q]) {
 					if (q == p) {
 						continue;
 					}
-					// Reflex test: only reflex vertices can violate an ear.
-					if (isConvex(q)) {
-						continue;
-					}
 					const Vec2i64& Pq = pos(q);
-					// Skip a query point coincident with a corner (bridge duplicates):
-					// a vertex sitting exactly on a corner does not block the ear.
+					// A query point coincident with a corner (bridge duplicates) does
+					// not block: it sits exactly on the ear and shares the corner.
 					if (Pq == A || Pq == B || Pq == C) {
 						continue;
 					}
-					if (pointInCcwTriangle(Pq, A, B, C)) {
+					if (!degenerate && strictlyInsideCcwTriangle(Pq, A, B, C)) {
+						return false;
+					}
+					if (onOpenSegment(Pq, A, C)) {
 						return false;
 					}
 				}
@@ -384,43 +416,76 @@ namespace geometry {
 			std::vector<Tri> tris;
 			tris.reserve(L);
 
-			std::size_t remaining = L;
-			std::size_t cur		  = 0;
-			std::size_t guard	  = 0;			   // failsafe against an unclippable loop
-			const std::size_t guardMax = L * L + 16;
+			auto clip = [&](std::size_t p, bool emit) {
+				const std::size_t a = prev[p];
+				const std::size_t c = next[p];
+				if (emit) {
+					tris.push_back({loop[a], loop[p], loop[c]});
+				}
+				next[a]	   = c;
+				prev[c]	   = a;
+				removed[p] = true;
+			};
 
-			while (remaining > 3) {
-				if (guard++ > guardMax) {
-					return {}; // no ear found in a full sweep: degenerate, reject
-				}
-				if (removed[cur]) {
-					cur = next[cur];
-					continue;
-				}
-				if (isEar(cur)) {
-					const std::size_t a = prev[cur];
-					const std::size_t c = next[cur];
-					tris.push_back({loop[a], loop[cur], loop[c]});
-					// Unlink cur.
-					next[a]		 = c;
-					prev[c]		 = a;
-					removed[cur] = true;
-					--remaining;
-					guard = 0;	  // progress; reset the failsafe
-					cur	  = a;	  // step back: a new ear may have opened at the prev vertex
-				} else {
-					cur = next[cur];
-				}
+			// A live (not-yet-removed) ring node to start each scan from.
+			std::size_t liveStart = 0;
+			while (removed[liveStart]) {
+				++liveStart;
 			}
 
-			// Final triangle from the three survivors.
+			// Find a clippable ear of the requested turn type among the live nodes,
+			// or L if none. Removed nodes are unlinked, so walking `next` visits only
+			// live nodes; `remaining` bounds the walk.
+			std::size_t remaining = L;
+			auto		findEar	  = [&](Orientation want) -> std::size_t {
+				std::size_t cur = liveStart;
+				for (std::size_t k = 0; k < remaining; ++k, cur = next[cur]) {
+					if (turnAt(cur) == want && cutIsClear(cur)) {
+						return cur;
+					}
+				}
+				return L;
+			};
+
+			// Clip strictly-convex ears first (emitting a positive-area triangle);
+			// only when a full sweep finds none, absorb a collinear (straight, zero-
+			// area) corner -- unlink it WITHOUT emitting its degenerate triangle. This
+			// keeps the n-2 triangle count for rings without forced collinear
+			// absorption and absorbs a collinear vertex only when it is the sole way
+			// forward (the T-junction split-point case). The two-ears theorem
+			// guarantees a strictly-convex ear exists whenever a strictly-convex vertex
+			// remains; a collinear corner is always clippable since nothing can lie
+			// strictly inside a zero-area triangle. Each iteration removes one node, so
+			// the loop terminates.
+			while (remaining > 3) {
+				std::size_t ear	 = findEar(Orientation::CounterClockwise);
+				bool		emit = true;
+				if (ear == L) {
+					ear	 = findEar(Orientation::Collinear);
+					emit = false;
+				}
+				if (ear == L) {
+					return {}; // no clippable ear at all: degenerate, reject
+				}
+				if (liveStart == ear) {
+					liveStart = next[ear]; // ear's successor stays live across the clip
+				}
+				clip(ear, emit);
+				--remaining;
+			}
+
+			// Final triangle from the three survivors. Skip it if collinear (zero
+			// area): a valid positive-area ring never reduces to a degenerate final
+			// triple, so this only guards against emitting a bad triangle.
 			std::size_t s0 = 0;
 			while (removed[s0]) {
 				++s0;
 			}
 			std::size_t s1 = next[s0];
 			std::size_t s2 = next[s1];
-			tris.push_back({loop[s0], loop[s1], loop[s2]});
+			if (orientation(pos(s0), pos(s1), pos(s2)) != Orientation::Collinear) {
+				tris.push_back({loop[s0], loop[s1], loop[s2]});
+			}
 
 			return tris;
 		}
@@ -686,6 +751,43 @@ namespace geometry {
 						if (pointInPolygon(p, holePts[j]) != PointInPolygon::Outside) {
 							return false;
 						}
+					}
+				}
+			}
+
+			// Vertex containment alone misses two cases: a concave outer ring lets a
+			// hole EDGE bow out past the boundary with all its vertices still inside,
+			// and two holes can interleave so an edge of one crosses an edge of the
+			// other with no vertex contained. Holes are disjoint from the outer ring
+			// and from each other, so any non-Disjoint relation between a hole edge
+			// and an outer edge (or an edge of a different hole) is a rejection: a
+			// proper crossing, a collinear overlap, or even an endpoint touch (a hole
+			// legitimately shares nothing with the outer or another hole). O(n*m)
+			// exact; rings are small per navmesh chunk.
+			auto ringsTouch = [](const std::vector<Vec2i64>& ra, const std::vector<Vec2i64>& rb) {
+				const std::size_t na = ra.size();
+				const std::size_t nb = rb.size();
+				for (std::size_t i = 0; i < na; ++i) {
+					const Vec2i64& a0 = ra[i];
+					const Vec2i64& a1 = ra[(i + 1) % na];
+					for (std::size_t j = 0; j < nb; ++j) {
+						const Vec2i64& b0 = rb[j];
+						const Vec2i64& b1 = rb[(j + 1) % nb];
+						if (intersectSegments(a0, a1, b0, b1).relation != SegmentRelation::Disjoint) {
+							return true;
+						}
+					}
+				}
+				return false;
+			};
+
+			for (std::size_t i = 0; i < holePts.size(); ++i) {
+				if (ringsTouch(holePts[i], outerPts)) {
+					return false; // hole edge meets the outer boundary
+				}
+				for (std::size_t j = i + 1; j < holePts.size(); ++j) {
+					if (ringsTouch(holePts[i], holePts[j])) {
+						return false; // two holes' edges meet
 					}
 				}
 			}

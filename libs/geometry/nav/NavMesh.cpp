@@ -59,17 +59,22 @@ namespace geometry::nav {
 	NavMesh buildNavMesh(const NavMeshInput& input) {
 		NavMesh result;
 
-		// Locate the single walkable-bounds polygon and gather the blocked rings.
-		const NavInputPolygon* border = nullptr;
+		// Gather the walkable-bounds (unblocked) rings and the blocked rings. One
+		// border is the common case, but multiple disjoint walkable regions are
+		// supported: a face is walkable iff it lies inside ANY unblocked bound.
+		std::vector<const std::vector<Vec2i64>*> borderRings;
 		std::vector<const std::vector<Vec2i64>*> blockedRings;
 		for (const NavInputPolygon& poly : input.polygons) {
+			if (poly.ring.size() < 3) {
+				continue;
+			}
 			if (poly.blocked) {
 				blockedRings.push_back(&poly.ring);
-			} else if (border == nullptr) {
-				border = &poly;
+			} else {
+				borderRings.push_back(&poly.ring);
 			}
 		}
-		if (border == nullptr || border->ring.size() < 3) {
+		if (borderRings.empty()) {
 			return result; // no walkable bounds -> empty mesh
 		}
 
@@ -91,9 +96,10 @@ namespace geometry::nav {
 		result.vertices					= mesh.vertices;
 
 		// 2-3. Classify bounded CCW faces. A face is walkable iff its representative
-		// point lies inside the border ring and inside no blocked ring. Faces whose
-		// rep is outside the border (exterior) or inside a blocked obstacle are
-		// discarded. We keep, per surviving face, its index plus its CCW ring.
+		// point lies inside ANY unblocked border ring and inside no blocked ring.
+		// Faces whose rep is outside every border (exterior) or inside a blocked
+		// obstacle are discarded. We keep, per surviving face, its index plus its
+		// CCW ring.
 		std::vector<std::size_t>	walkableFaceIndex; // -> mesh.faces index
 		std::vector<WalkableFace>	walkable;
 		for (std::size_t fi = 0; fi < mesh.faces.size(); ++fi) {
@@ -102,8 +108,15 @@ namespace geometry::nav {
 				continue; // CW cycle or degenerate bounded face
 			}
 			const Vec2i64& rep = *f.representativePoint;
-			if (pointInPolygon(rep, border->ring) != PointInPolygon::Inside) {
-				continue; // outside the walkable bounds
+			bool insideBorder = false;
+			for (const std::vector<Vec2i64>* ring : borderRings) {
+				if (pointInPolygon(rep, *ring) == PointInPolygon::Inside) {
+					insideBorder = true;
+					break;
+				}
+			}
+			if (!insideBorder) {
+				continue; // outside every walkable bound
 			}
 			bool insideBlocked = false;
 			for (const std::vector<Vec2i64>* ring : blockedRings) {

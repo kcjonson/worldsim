@@ -51,6 +51,17 @@ namespace {
 		return true;
 	}
 
+	// No emitted triangle is degenerate (zero area / collinear): every one has
+	// strictly positive doubled area.
+	bool allNonDegenerate(const std::vector<Vec2i64>& v, const std::vector<Tri>& tris) {
+		for (const Tri& t : tris) {
+			if (triArea2(v, t).sign() <= 0) {
+				return false;
+			}
+		}
+		return true;
+	}
+
 	// Integer centroid of a triangle (exact mean is rational; the floored mean is
 	// strictly interior for the well-shaped triangles these tests produce).
 	Vec2i64 centroid(const std::vector<Vec2i64>& v, const Tri& t) {
@@ -511,4 +522,107 @@ TEST(OracleSweep, RotatedConvexHolesInSquare) {
 		++built;
 	}
 	EXPECT_GT(built, 50);
+}
+
+TEST(Triangulation, CollinearMidpointOnEdge) {
+	// A square with an extra COLLINEAR vertex at the midpoint of the bottom edge.
+	// buildArrangement splits an edge at every T-junction, so straight boundaries
+	// routinely arrive with three collinear vertices; the clipper must triangulate
+	// the ring without emitting the zero-area corner and without returning empty.
+	std::vector<Vec2i64> v	  = {{0, 0}, {50, 0}, {100, 0}, {100, 100}, {0, 100}};
+	auto				 ring = iota(5);
+	auto				 tris = triangulateSimple(v, ring);
+	ASSERT_FALSE(tris.empty());
+	EXPECT_TRUE(allCcw(v, tris));
+	EXPECT_TRUE(allNonDegenerate(v, tris));
+	// Area conserved: equals the square's ring area (the midpoint lies on the edge).
+	EXPECT_EQ(totalArea2(v, tris), ringArea2(v, ring));
+	EXPECT_EQ(totalArea2(v, tris), Int128(2 * 100 * 100));
+	// Covers the square: every triangle centroid is inside the boundary.
+	std::vector<Vec2i64> poly;
+	for (std::uint32_t i : ring) {
+		poly.push_back(v[i]);
+	}
+	for (const Tri& t : tris) {
+		EXPECT_EQ(pointInPolygon(centroid(v, t), poly), PointInPolygon::Inside);
+	}
+}
+
+TEST(Triangulation, CollinearSplitPointsAlongEdges) {
+	// An L-shape with several collinear split-points inserted along its straight
+	// edges (mid-edge T-junctions on both the long bottom run and a vertical run).
+	std::vector<Vec2i64> v = {
+		{0, 0}, {100, 0}, {200, 0},		   // bottom edge, split at (100,0)
+		{200, 60}, {80, 60},			   // notch
+		{80, 100}, {80, 140},			   // vertical edge, split at (80,100)
+		{0, 140}, {0, 70}};				   // left edge, split at (0,70)
+	auto ring = iota(static_cast<std::uint32_t>(v.size()));
+	auto tris = triangulateSimple(v, ring);
+	ASSERT_FALSE(tris.empty());
+	EXPECT_TRUE(allCcw(v, tris));
+	EXPECT_TRUE(allNonDegenerate(v, tris));
+	EXPECT_EQ(totalArea2(v, tris), ringArea2(v, ring));
+	std::vector<Vec2i64> poly;
+	for (std::uint32_t i : ring) {
+		poly.push_back(v[i]);
+	}
+	for (const Tri& t : tris) {
+		EXPECT_EQ(pointInPolygon(centroid(v, t), poly), PointInPolygon::Inside);
+	}
+}
+
+TEST(Triangulation, CollinearMidpointsOuterAndHole) {
+	// Square outer with a square hole, where BOTH rings carry a collinear midpoint
+	// vertex on one edge. Valid: area conserved, no degenerate triangles, the hole
+	// stays uncovered.
+	std::vector<Vec2i64> v = {
+		{0, 0}, {150, 0}, {300, 0}, {300, 300}, {0, 300},				 // outer, split at (150,0)
+		{100, 100}, {100, 150}, {100, 200}, {200, 200}, {200, 100}};	 // hole (CW), split at (100,150)
+	std::vector<std::uint32_t>				outer = {0, 1, 2, 3, 4};
+	std::vector<std::vector<std::uint32_t>> holes = {{5, 6, 7, 8, 9}};
+
+	ASSERT_GT(ringArea2(v, outer).sign(), 0);	   // outer CCW
+	ASSERT_LT(ringArea2(v, holes[0]).sign(), 0);   // hole CW
+
+	auto tris = triangulateWithHoles(v, outer, holes);
+	ASSERT_FALSE(tris.empty());
+	EXPECT_TRUE(allCcw(v, tris));
+	EXPECT_TRUE(allNonDegenerate(v, tris));
+	// Covered area == outer minus hole (CW hole's doubled area is negative).
+	EXPECT_EQ(totalArea2(v, tris), ringArea2(v, outer) + ringArea2(v, holes[0]));
+
+	std::vector<Vec2i64> holeRing = {v[5], v[6], v[7], v[8], v[9]};
+	for (const Tri& t : tris) {
+		EXPECT_NE(pointInPolygon(centroid(v, t), holeRing), PointInPolygon::Inside);
+	}
+}
+
+TEST(Triangulation, ConcaveOuterHoleEdgePokesOutReturnsEmpty) {
+	// A chevron/arrow-shaped concave outer ring (CCW) with a deep notch on the
+	// right. A hole whose four vertices are all strictly inside the outer ring, but
+	// one edge bridges across the concavity and pokes outside the boundary. Vertex
+	// containment passes; the edge-crossing check must reject it.
+	std::vector<Vec2i64> v = {
+		// Outer (CCW): a box with a triangular notch cut into its right edge; the
+		// notch tip reaches in to x=200 at y=200.
+		{0, 0}, {400, 0}, {200, 200}, {400, 400}, {0, 400},
+		// Hole (CW): a rectangle whose four vertices are all strictly inside the
+		// outer ring, but whose right edge (x=250, y in 100..300) bridges across the
+		// notch and pokes outside (the tip is at x=200, so x=250 is exterior near
+		// y=200). It crosses both notch edges, at (250,150) and (250,250).
+		{150, 100}, {150, 300}, {250, 300}, {250, 100}};
+	std::vector<std::uint32_t>				outer = {0, 1, 2, 3, 4};
+	std::vector<std::vector<std::uint32_t>> holes = {{5, 6, 7, 8}};
+
+	ASSERT_GT(ringArea2(v, outer).sign(), 0); // outer CCW
+	ASSERT_LT(ringArea2(v, holes[0]).sign(), 0); // hole CW
+	// Every hole vertex is strictly inside the outer ring (the case vertex-only
+	// containment would wrongly accept).
+	std::vector<Vec2i64> outerPts = {v[0], v[1], v[2], v[3], v[4]};
+	for (std::uint32_t idx : holes[0]) {
+		ASSERT_EQ(pointInPolygon(v[idx], outerPts), PointInPolygon::Inside);
+	}
+
+	auto tris = triangulateWithHoles(v, outer, holes);
+	EXPECT_TRUE(tris.empty());
 }
