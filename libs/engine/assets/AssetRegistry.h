@@ -10,13 +10,24 @@
 
 #include <vector/Types.h>
 
+#include <atomic>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <unordered_map>
 
 namespace engine::assets {
+
+	/// Snapshot of asynchronous asset loading. All fields are atomic so the splash
+	/// (main thread) can poll them while the load worker writes them.
+	struct LoadProgress {
+		std::atomic<bool> started{false};
+		std::atomic<bool> done{false};
+		std::atomic<int>  defsLoaded{0};
+	};
 
 	/// Central registry for asset definitions and generated templates.
 	/// Assets are loaded from XML definition files and can be generated on demand.
@@ -33,8 +44,10 @@ namespace engine::assets {
 		/// Load all asset definitions from a folder recursively
 		/// Scans for all *.xml files in the folder and subfolders.
 		/// @param folderPath Path to the definitions folder
+		/// @param onProgress Optional callback invoked with the running definition
+		///        count as files load (used by the async loader to drive the splash)
 		/// @return Number of definitions loaded (0 if folder not found)
-		size_t loadDefinitionsFromFolder(const std::string& folderPath);
+		size_t loadDefinitionsFromFolder(const std::string& folderPath, const std::function<void(int)>& onProgress = {});
 
 		/// Get an asset definition by name
 		/// @param defName The definition name (e.g., "Flora_GrassBlade")
@@ -71,6 +84,19 @@ namespace engine::assets {
 		/// Validation report from the most recent loadDefinitionsFromFolder.
 		/// Produced at load time; shared by the game (launch) and the Asset Manager.
 		[[nodiscard]] const ValidationReport& getValidationReport() const { return m_validationReport; }
+
+		// --- Asynchronous loading (for a non-blocking splash) ---
+
+		/// Load the asset folder on a background worker thread. Definitions are not
+		/// safe to read until isLoadComplete() returns true. Only one async load may
+		/// run at a time; a prior one is joined first.
+		void beginLoadAsync(const std::string& folderPath);
+
+		/// Progress of the most recent beginLoadAsync (atomics; safe to poll).
+		[[nodiscard]] const LoadProgress& loadProgress() const { return m_loadProgress; }
+
+		/// True once an async load has finished and definitions are safe to read.
+		[[nodiscard]] bool isLoadComplete() const { return m_loadProgress.done.load(std::memory_order_acquire); }
 
 		// --- Entity Placement System API ---
 
@@ -134,6 +160,7 @@ namespace engine::assets {
 
 	  private:
 		AssetRegistry() = default;
+		~AssetRegistry();
 
 		/// Tessellate a generated asset into a mesh
 		bool tessellateAsset(const GeneratedAsset& asset, renderer::TessellatedMesh& outMesh);
@@ -167,6 +194,10 @@ namespace engine::assets {
 
 		// Validation report from the most recent loadDefinitionsFromFolder
 		ValidationReport m_validationReport;
+
+		// Asynchronous load worker + its progress
+		LoadProgress m_loadProgress;
+		std::thread	 m_loadThread;
 	};
 
 } // namespace engine::assets
