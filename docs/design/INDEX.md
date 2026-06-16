@@ -46,6 +46,7 @@ Everything about colonist behavior, needs, and mechanics.
 | [Attributes](./game-systems/colonists/attributes.md) | Personality, backstory |
 | [Skills](./game-systems/colonists/skills.md) | Learning, progression |
 | [Work Priorities](./game-systems/colonists/work-priorities.md) | Work assignment |
+| [Equipment & Inventory](./game-systems/colonists/equipment.md) | Worn slots, belt slots, weight-based pack, item size |
 
 ### World
 

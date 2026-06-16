@@ -1,0 +1,24 @@
+.line {
+	height: 0;
+	border: none;
+	border-top: var(--bw) solid var(--line-hairline);
+	width: 100%;
+}
+.labeled {
+	display: flex;
+	align-items: center;
+	gap: var(--space-3);
+	width: 100%;
+}
+.seg {
+	flex: 1;
+	height: 0;
+	border-top: var(--bw) solid var(--line-hairline);
+}
+.text {
+	font-family: var(--font-mono);
+	font-size: var(--fs-2xs);
+	letter-spacing: var(--ls-wider);
+	text-transform: uppercase;
+	color: var(--text-faint);
+}

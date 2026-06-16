@@ -1,0 +1,66 @@
+.stat {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	min-width: 0;
+}
+.left {
+	align-items: flex-start;
+	text-align: left;
+}
+.right {
+	align-items: flex-end;
+	text-align: right;
+}
+.center {
+	align-items: center;
+	text-align: center;
+}
+.label {
+	font-family: var(--label-font);
+	font-size: var(--fs-2xs);
+	letter-spacing: var(--label-spacing);
+	text-transform: var(--label-transform);
+	color: var(--text-dim);
+	white-space: nowrap;
+}
+.value {
+	font-family: var(--font-display);
+	font-weight: 600;
+	color: var(--text-bright);
+	line-height: 1;
+	display: inline-flex;
+	align-items: baseline;
+	gap: 3px;
+}
+.unit {
+	font-family: var(--font-ui);
+	font-weight: 500;
+	font-size: 0.62em;
+	color: var(--text-dim);
+}
+.sm .value {
+	font-size: var(--fs-md);
+}
+.md .value {
+	font-size: var(--fs-xl);
+}
+.lg .value {
+	font-size: var(--fs-3xl);
+}
+
+.t_accent {
+	color: var(--accent-bright);
+}
+.t_data {
+	color: var(--data-bright);
+}
+.t_ok {
+	color: var(--status-ok);
+}
+.t_warn {
+	color: var(--status-warn);
+}
+.t_crit {
+	color: var(--status-crit);
+}

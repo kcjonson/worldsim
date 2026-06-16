@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2026-06-15 (Water Availability complete — PRs #144 + lake fix #146; Plate Boundary Realism — curved rift cuts + power-law plate sizes + broken mountain belts + Ultra 2048, PR #145; next: valley erosion then 2D chunk-time river/lake rendering)
+Last Updated: 2026-06-15 (Fluvial Erosion — stream-power valley carving, PR #149 draft; Water Availability complete PRs #144/#146; Plate Boundary Realism PR #145; next: bathymetry comb-artifact fix, then 2D chunk-time river/lake rendering)
 
 ## Epic/Story/Task Template
 
@@ -482,6 +482,23 @@ while (running) {
 - [ ] Phase 4: Async loading + splash (worker-thread load, progress, validation summary, error-gate scene)
 - [ ] Phase 5: GUI (apps/asset-manager: GridContainer, browser scene, preview + sampling, inspector, validation view, reload)
 
+### Fluvial Erosion (worldgen)
+**Spec/Documentation:** `.claude/plans/erosion.md`, `/docs/development-log/entries/2026-06-15-worldgen-fluvial-erosion.md`
+**Dependencies:** Water Availability (drainage)
+**Status:** in progress (PR #149, draft)
+
+**Goal:** Carve valleys into the continental terrain so rivers (rendered later from the climate drainage) land in real valleys. Detachment-limited stream-power incision (Braun & Willett implicit solver) on the drainage stack, between Terrain and Atmosphere; downstream climate/biomes/final drainage all see the carved terrain.
+
+**Tasks:**
+- [x] E-0: dissection metrics baseline (WorldStats + worldgen-cli)
+- [x] E-1: ErosionStage core (shared DrainageRouting helper + implicit stream-power) + pipeline integration
+- [x] E-2: downstream re-validation (carved terrain through climate/biomes/final drainage; determinism; budget)
+- [x] E-3: strength at conservative subtle default (accepted)
+- [x] E-4: dev log + status (this) on the draft PR
+- [ ] Mark PR #149 ready, clear CI + Copilot, merge
+
+**Result:** Valleys carved deterministically (worldHash bit-identical across thread counts); mountains preserved (belt crests stay tall); world-tests green (174); gen ~22s at n=1024. Follow-ups: the bathymetry "comb" artifact (hex-BFS distance terracing on the shelf edge + crust-age depth field) is a separate deferred tuning task; then 2D chunk-time river/lake rendering.
+
 ### World Generation & Creator
 **Spec/Documentation:** `/docs/design/features/world-generation/`, `.claude/plans/world-generation.md`
 **Dependencies:** None
@@ -552,7 +569,8 @@ while (running) {
   - [x] Room ECS component + GameScene wiring (register system, "Room formed" toast via the engine→UI callback seam)
   - [x] /api/dev/walls dev command (stamp a built wall loop in one call; rooms testable without the draw tool); reused for sandbox verification
   - [x] Hardened (adversarial review): OnBoundary fallback so a divider through a room's rep keeps identity on one side; dev-walls T-split only force-builds chain segments (not split halves of pre-existing blueprints)
-  - [ ] Deferred: rooms OVERLAY UI (tint/labels/click/info panel — ships with the overlay system per design); nested room-in-room (loop inside a loop, no connecting wall) identity/area needs hole-aware face extraction (pinned by a test, deferred until the overlay consumes it); room types/functions/bonuses (post-v1)
+  - [x] Rooms overlay UI: scene-owned RoomOverlay tints/outlines/labels each room (concave-correct via renderer::Tessellator), click-to-select (overlay-gated) → read-only info panel (Name/Area/enclosing walls), HUD "Rooms" toggle synced with the R hotkey (feature/rooms-overlay)
+  - [ ] Deferred: nested room-in-room (loop inside a loop, no connecting wall) identity/area needs hole-aware face extraction (pinned by a test); room types/functions/bonuses (post-v1)
 - [x] Epic F1: Openings end-to-end (interim visuals) — doors/windows on walls (feature/construction-openings). Verified in sandbox: a Door placed on a built wall shows a gap in the wall band with the door fill; clicking selects it (panel: Type/Material/Pathable/State/Materials/Work + Demolish).
   - [x] F1a engine: opening types config (Door 0.9m pathable, Window 0.6m) + ConfigValidator; ConstructionValidator.validateOpening (margins, overlap, length, type/material); SnapEngine.snapOpening; ConstructionWorld setOpeningState/Entity/removeOpening
   - [x] F1b lifecycle: openings in the build loop (own materials + constant work), gated on host segment built (isOpeningHostSegmentBuilt)
@@ -560,9 +578,13 @@ while (running) {
   - [x] F1d render: interim wall-band gap + procedural door/window fill + ghost (Primitives)
   - [x] F1e selection: OpeningSelection (priority above walls) + point-in-footprint hit test + adaptOpening panel + per-opening demolish
   - [x] Hardened (adversarial review): wall-demolish now despawns hosted openings' entities (removeSegment surfaces them); openingMarginMeters sign-checked; dev helpers include Opening
-  - [ ] F2 (deferred): D9 parameter-extended procedural Lua door/window assets (cache key (defName,thicknessPreset,material), material palettes); retrofit-cut-as-work on a built wall; portal publication to nav (no consumer yet)
-- [ ] Epic G: Editing & polish (add/subtract, vertex editing, cascade demolish, multi-select)
-- [ ] Epic G: Editing & polish (add/subtract, vertex editing, cascade demolish, multi-select)
+  - [ ] F2 (deferred): D9 parameter-extended procedural Lua door/window assets (cache key (defName,thicknessPreset,material), material palettes); portal publication to nav (no consumer yet). NOTE: retrofit-cut-as-work is CUT from scope — openings sit on the wall and never cut it (design decision 2026-06-15).
+- [ ] Epic G: Editing & polish
+  - [x] Demolish-building cascade + work-driven demolish (deconstruct task + material refund) + foundation-demolish gate (#143)
+  - [x] Outer-face-flush wall snapping so walls build along foundation edges (#147)
+  - [ ] G2: click-cycling selection (repeated click cycles opening → wall → foundation)
+  - [ ] G3: foundation add/subtract tool (merge/subtract via the geometry booleans)
+  - [ ] Deferred: vertex editing (drag/add/delete on a foundation blueprint), full Shift-click multi-select, double-click connected wall-run select
 
 ---
 

@@ -13,6 +13,7 @@
 #include <ecs/EntityID.h>
 #include <math/Types.h>
 
+#include <cstdint>
 #include <string>
 #include <variant>
 
@@ -74,6 +75,15 @@ struct OpeningSelection {
 	engine::construction::OpeningId id = engine::construction::kInvalidOpening;
 };
 
+/// A detected room is selected. Overlay-gated: only reachable while the room
+/// overlay owns the click (rooms are not in SelectionSystem's normal ladder).
+/// Geometry/name/area are queried from RoomDetectionSystem by roomId (its records
+/// are the source of truth; the Room ECS component carries no polygon). roomId is
+/// monotonic, so 0 never aliases a live room.
+struct RoomSelection {
+	std::uint64_t roomId = 0;
+};
+
 /// Selection variant - represents current selection state
 using Selection = std::variant<
 	NoSelection,
@@ -83,7 +93,8 @@ using Selection = std::variant<
 	FurnitureSelection,
 	WallSegmentSelection,
 	OpeningSelection,
-	FoundationSelection>;
+	FoundationSelection,
+	RoomSelection>;
 
 /// Helper to check if selection is empty
 [[nodiscard]] inline bool hasSelection(const Selection& sel) {

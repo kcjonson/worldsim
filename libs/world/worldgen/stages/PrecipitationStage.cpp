@@ -92,6 +92,7 @@
 #include "worldgen/stages/PrecipitationStage.h"
 
 #include "worldgen/stages/ClimateField.h"
+#include "worldgen/stages/DrainageRouting.h"
 
 #include <math/DeterministicMath.h>
 #include <random/HashNoise.h>
@@ -100,7 +101,6 @@
 #include <array>
 #include <cstdint>
 #include <limits>
-#include <queue>
 #include <vector>
 
 namespace worldgen {
@@ -515,66 +515,14 @@ void PrecipitationStage::run(StageContext& ctx) {
         ctx.reportProgress(0.60f + 0.10f * static_cast<float>(end) * invTotal);
     });
 
-    // -------- Priority-flood depression routing (serial, deterministic) --------
-    // Barnes 2014. Raise every pit to its spill level so flow reaches the sea,
-    // and route each land tile one step toward that spill (floodParent). The heap
-    // pops the globally lowest filled cell each time; relaxing a land neighbor to
-    // filled = max(neighborTerrain, poppedFilled) is exactly the water level a
-    // parcel must rise to in order to cross from the neighbor out through the
-    // popped cell. Ties on filled level break by TileId so the traversal, and
-    // thus the result, is bit-identical at any thread count.
-    std::vector<float>  filled(totalTiles, std::numeric_limits<float>::infinity());
-    std::vector<TileId> floodParent(totalTiles, kInvalidTile);
-
-    struct HeapItem {
-        float  level; // filled water level this cell drains over
-        TileId tile;
-    };
-    // Min-heap: lowest level first; equal levels ordered by ascending TileId.
-    auto cmp = [](const HeapItem& a, const HeapItem& b) {
-        if (a.level != b.level) return a.level > b.level;
-        return a.tile > b.tile;
-    };
-    std::priority_queue<HeapItem, std::vector<HeapItem>, decltype(cmp)> heap(cmp);
-
-    // Seed: every ocean tile is an outlet at its own terrain elevation. Land
-    // tiles enter the heap only when first reached from an already-spilled cell.
-    for (TileId t = 0; t < totalTiles; ++t) {
-        if (ctx.data.elevation[t] < seaLevel) {
-            const float e = ctx.data.elevation[t];
-            filled[t] = e;
-            heap.push({e, t});
-        }
-    }
-
-    {
-        std::array<TileId, 6> nbs{};
-        size_t processed = 0;
-        while (!heap.empty()) {
-            const HeapItem it = heap.top();
-            heap.pop();
-            // A tile can be pushed more than once (a lower level found later);
-            // skip the stale entry whose level no longer matches.
-            if (it.level != filled[it.tile]) continue;
-            if ((++processed & 0xFFFFFu) == 0u) throwIfCancelled(ctx);
-
-            const TileId t = it.tile;
-            const uint32_t cnt = ctx.grid.neighbors(t, nbs);
-            for (uint32_t k = 0; k < cnt; ++k) {
-                const TileId nb = nbs[k];
-                if (ctx.data.elevation[nb] < seaLevel) continue; // outlet, fixed
-                // The neighbor must rise to at least this cell's level to spill
-                // out through it; if its own terrain is higher, that wins.
-                float newLevel = it.level;
-                if (ctx.data.elevation[nb] > newLevel) newLevel = ctx.data.elevation[nb];
-                if (newLevel < filled[nb]) {
-                    filled[nb]      = newLevel;
-                    floodParent[nb] = t; // one step toward the spill outlet
-                    heap.push({newLevel, nb});
-                }
-            }
-        }
-    }
+    // -------- Priority-flood depression routing (shared helper) --------
+    // Raises every pit to its spill level so flow reaches the sea, and routes each land
+    // tile one step toward that spill (floodParent). Deterministic (heap ties by ascending
+    // TileId). Shared with ErosionStage; see DrainageRouting.h.
+    std::vector<float>  filled;
+    std::vector<TileId> floodParent;
+    routeDepressions(ctx.grid, ctx.data.elevation, seaLevel, filled, floodParent,
+                     ctx.cancelRequested);
     ctx.reportProgress(0.80f);
 
     // -------- Lake flags + spill levels; downhill from the flood route --------

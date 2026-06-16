@@ -1,0 +1,130 @@
+.screen {
+	position: absolute;
+	inset: 0;
+	display: grid;
+	place-items: center;
+	overflow: hidden;
+}
+.center {
+	position: relative;
+	z-index: 2;
+	text-align: center;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: var(--space-3);
+	animation: rise var(--dur-slow) var(--ease-out);
+}
+.mark {
+	font-size: 56px;
+	color: var(--accent);
+	text-shadow: 0 0 30px var(--accent-glow);
+	animation: fx-flicker 6s infinite;
+}
+.title {
+	font-size: var(--fs-5xl);
+	font-weight: 700;
+	letter-spacing: var(--ls-widest);
+	margin-left: var(--ls-widest);
+	color: var(--text-bright);
+	text-shadow: 0 0 40px color-mix(in srgb, var(--accent) 30%, transparent);
+}
+.tagline {
+	font-family: var(--font-mono);
+	font-size: var(--fs-sm);
+	letter-spacing: var(--ls-wider);
+	text-transform: uppercase;
+	color: var(--accent);
+}
+.flavor {
+	max-width: 460px;
+	margin-top: var(--space-4);
+	color: var(--text-dim);
+	font-size: var(--fs-md);
+	font-style: italic;
+	line-height: var(--lh-loose);
+}
+
+.bottom {
+	position: absolute;
+	bottom: var(--space-12);
+	left: 50%;
+	transform: translateX(-50%);
+	z-index: 2;
+	width: min(520px, 70vw);
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: var(--space-5);
+}
+.bootlog {
+	width: 100%;
+	min-height: 96px;
+	font-family: var(--font-mono);
+	font-size: var(--fs-xs);
+	color: var(--text-faint);
+	display: flex;
+	flex-direction: column;
+	gap: 3px;
+}
+.bootline {
+	animation: rise var(--dur) var(--ease-out);
+}
+.ok {
+	color: var(--status-ok);
+}
+.loader {
+	width: 100%;
+}
+.loaderHead {
+	display: flex;
+	justify-content: space-between;
+	align-items: baseline;
+	margin-bottom: var(--space-2);
+}
+.phase {
+	font-family: var(--font-mono);
+	font-size: var(--fs-xs);
+	letter-spacing: var(--ls-wide);
+	text-transform: uppercase;
+	color: var(--text);
+}
+.pct {
+	font-family: var(--font-mono);
+	font-size: var(--fs-xs);
+	color: var(--accent-bright);
+}
+.track {
+	height: 3px;
+	background: var(--bg-inset);
+	border-radius: var(--radius-pill);
+	overflow: hidden;
+}
+.fill {
+	height: 100%;
+	background: var(--accent);
+	box-shadow: 0 0 10px var(--accent-glow);
+	transition: width 80ms linear;
+}
+.enter {
+	animation: rise var(--dur-slow) var(--ease-out);
+}
+.version {
+	position: absolute;
+	bottom: var(--space-4);
+	right: var(--space-5);
+	z-index: 2;
+	font-family: var(--font-mono);
+	font-size: var(--fs-2xs);
+	color: var(--text-faint);
+}
+@keyframes rise {
+	from {
+		opacity: 0;
+		transform: translateY(10px);
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0);
+	}
+}

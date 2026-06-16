@@ -216,6 +216,13 @@ TEST(Junction, RightAngleCornerGolden) {
 	expectAllRingsValid(wb);
 	expectPairwiseDisjoint(wb);
 
+	// The junction reports the segments incident to it (both, at this corner), aligned
+	// with `junctions`, so a renderer can style each junction from its own segments.
+	ASSERT_EQ(wb.junctionSegments.size(), wb.junctions.size());
+	std::vector<std::size_t> incident = wb.junctionSegments[0];
+	std::sort(incident.begin(), incident.end());
+	EXPECT_EQ(incident, (std::vector<std::size_t>{0u, 1u}));
+
 	// Mitered L of two 200-thick walls meeting at a right angle. The inner
 	// 100x100 corner square is shared by both bands; trimming removes it from the
 	// bands and the junction polygon adds it back. The outer corner is filled by

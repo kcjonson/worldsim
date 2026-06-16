@@ -4,6 +4,7 @@
 #include <GLFW/glfw3.h>
 #include <functional>
 #include <glm/glm.hpp>
+#include <optional>
 #include <string>
 #include <unordered_map>
 
@@ -65,6 +66,16 @@ namespace engine {
 		}
 		bool	  isCursorInWindow() const { return cursorInWindow; }
 		glm::vec2 getWindowSize() const { return windowSize; }
+
+		// Synthetic key injection (debug/test, e.g. the /api/input endpoint). Routes
+		// through the same state machine as a real GLFW key event, so isKeyPressed/
+		// isKeyDown/isKeyReleased behave identically: a down fires the press edge for
+		// one frame, then holds Down until the matching up. Not for gameplay code.
+		void injectKey(Key key, bool down);
+
+		// Parse a key name (single letter/digit, or a named key like "Escape", "Enter",
+		// "Space", "F5") to a Key. Case-insensitive. Nullopt if unrecognized.
+		[[nodiscard]] static std::optional<Key> keyFromName(const std::string& name);
 
 		// Callbacks for external systems (e.g., FocusManager for keyboard, UI event system for mouse)
 		using KeyInputCallback = std::function<bool(Key key, int action, int mods)>;

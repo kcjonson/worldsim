@@ -21,6 +21,8 @@
 
 #include <cstdint>
 #include <functional>
+#include <utility>
+#include <vector>
 
 namespace engine::assets {
 class PlacementExecutor;
@@ -81,6 +83,11 @@ class SelectionSystem {
 	/// Select a specific colonist (from UI)
 	void selectColonist(ecs::EntityID entityId);
 
+	/// Set selection to an arbitrary state and fire onSelectionChanged. The room
+	/// overlay routes its hit-test result through here so the room's selection
+	/// flows through the same single sink (current()) every consumer already reads.
+	void setSelection(const Selection& newSelection);
+
 	// --- Rendering ---
 
 	/// Render selection indicator (call during render phase)
@@ -92,6 +99,17 @@ class SelectionSystem {
 	[[nodiscard]] bool hasSelection() const { return world_sim::hasSelection(selection); }
 
   private:
+	/// Stable identity for a candidate: (variant type index, entity/structure id).
+	/// Used to detect "the same stack is under the cursor" between clicks so repeated
+	/// same-spot clicks cycle through it. NoSelection has no key (never a candidate).
+	using CandidateKey = std::pair<int, std::uint64_t>;
+
+	/// Gather every entity under the world position, one per priority level, ordered
+	/// highest-priority-first. Runs the same hit-tests as a single-pick click but
+	/// appends each level's best hit instead of returning on the first. Re-gathered
+	/// every click; never caches entity pointers across clicks.
+	[[nodiscard]] std::vector<Selection> gatherCandidates(glm::vec2 worldPos);
+
 	ecs::World*								 ecsWorld = nullptr;
 	engine::world::WorldCamera*				 camera = nullptr;
 	engine::assets::PlacementExecutor*		 placementExecutor = nullptr;
@@ -99,6 +117,20 @@ class SelectionSystem {
 	Callbacks								 callbacks;
 
 	Selection selection = NoSelection{};
+
+	// --- Click-cycling state ---
+	// Repeated clicks at (approximately) the same screen spot cycle the selection
+	// through every candidate under the cursor. A click elsewhere, or a changed
+	// candidate set, resets to the top-priority hit. Reset on any non-click
+	// selection path so a programmatic select doesn't leave stale cycle state.
+	bool					  hasLastClick = false;
+	glm::vec2				  lastClickScreen{0.0F, 0.0F};
+	std::vector<CandidateKey> lastCandidateKeys;
+	std::size_t				  cycleIndex = 0;
+
+	/// Forget any in-progress click cycle. Call from every selection path that is
+	/// not handleClick so the next same-spot click starts fresh.
+	void resetCycleState();
 
 	static constexpr float kSelectionRadius = 2.0F;		 // meters
 	static constexpr float kPixelsPerMeter = 8.0F;
@@ -108,6 +140,10 @@ class SelectionSystem {
 	// target, so a click within this radius of the centerline still hits. mm,
 	// max'd against the segment's half-thickness so a thick wall uses its own face.
 	static constexpr std::int64_t kWallPickSlopMm = 300; // 0.3 m, matches edge-snap slop
+
+	// Two clicks within this screen-space distance (logical px) count as the "same
+	// spot" and advance the cycle rather than starting a fresh selection.
+	static constexpr float kClickCycleTolerancePx = 6.0F;
 };
 
 } // namespace world_sim

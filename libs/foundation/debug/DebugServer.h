@@ -55,12 +55,13 @@ namespace Foundation { // NOLINT(readability-identifier-naming)
 	// move+down+up at dispatch so single-shot interactions are one request;
 	// multi-frame gestures (drags) use separate down/move/up requests.
 	struct InputCommand {
-		enum class Type : std::uint8_t { Move, Down, Up, Click, Scroll };
+		enum class Type : std::uint8_t { Move, Down, Up, Click, Scroll, KeyDown, KeyUp };
 		Type		 type{Type::Click};
 		float		 x = 0.0F;
 		float		 y = 0.0F;
 		std::uint8_t button = 0; // 0=left, 1=right, 2=middle
 		float		 scrollDelta = 0.0F;
+		std::string	 keyName; // KeyDown/KeyUp only: the key, e.g. "R", "Escape" (no x/y)
 	};
 
 	// Generic dev/test command queued via /api/dev/<verb>?k=v&k2=v2. DebugServer

@@ -190,6 +190,46 @@ TEST(WorldStats, WaterStatsInRange) {
     EXPECT_LE(stats.meanFlowAccumLand, stats.maxFlowAccum + 1e-3f);
 }
 
+// Terrain dissection metrics: all five must be finite and in sensible ranges on a
+// tiny n=16 world (computed on the fully-generated world).
+TEST(WorldStats, DissectionMetricsInRange) {
+    PlanetParams p = PlanetParams::preset(Preset::EarthLike);
+    p.gridSubdivision = 16;
+    p.seed = 0xD155EC710u;
+
+    auto world = runPipeline(p);
+    ASSERT_NE(world, nullptr);
+
+    WorldStats stats = computeWorldStats(*world);
+
+    // Hypsometric integral: defined on [0, 1].
+    EXPECT_GE(stats.hypsometricIntegral, 0.0f);
+    EXPECT_LE(stats.hypsometricIntegral, 1.0f);
+
+    // Mean local relief: non-negative; bounded by the world's total elevation range.
+    EXPECT_GE(stats.meanLocalReliefM, 0.0f);
+    EXPECT_LE(stats.meanLocalReliefM, 20000.0f); // no plausible planet exceeds this
+
+    // Drainage density: non-negative.
+    EXPECT_GE(stats.drainageDensity, 0.0f);
+
+    // landWithinChannelDistFraction: [0, 1].
+    EXPECT_GE(stats.landWithinChannelDistFraction, 0.0f);
+    EXPECT_LE(stats.landWithinChannelDistFraction, 1.0f);
+
+    // Mean belt crest elevation: non-negative (0 when no belts at n=16 is fine).
+    EXPECT_GE(stats.meanBeltCrestElevM, 0.0f);
+
+    // Consistency: if there are rivers, drainage density must be > 0.
+    if (stats.riverTileFraction > 0.0f) {
+        EXPECT_GT(stats.drainageDensity, 0.0f);
+    }
+
+    // Consistency: landWithinChannelDistFraction >= riverTileFraction
+    // (rivers are a subset of within-dist-2 tiles).
+    EXPECT_GE(stats.landWithinChannelDistFraction, stats.riverTileFraction - 1e-5f);
+}
+
 // Biome fractions: sum over land biomes is ~1.0, all values in [0,1].
 TEST(WorldStats, BiomeFractionsSumToOne) {
     PlanetParams p = PlanetParams::preset(Preset::EarthLike);

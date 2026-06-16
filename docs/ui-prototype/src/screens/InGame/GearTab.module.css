@@ -1,0 +1,209 @@
+.gear {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-4);
+}
+
+/* ===== paper-doll ===== */
+.paperdoll {
+	display: grid;
+	grid-template-columns: 1fr 96px 1fr;
+	gap: var(--space-3);
+	align-items: stretch;
+}
+.col {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-2);
+}
+.figureWrap {
+	display: grid;
+	place-items: center;
+}
+.figure {
+	width: 70px;
+	height: 100%;
+}
+.figure circle,
+.figure path {
+	fill: color-mix(in srgb, var(--data) 8%, var(--bg-inset));
+	stroke: var(--line-strong);
+	stroke-width: 1;
+}
+
+.slot {
+	display: flex;
+	flex-direction: column;
+	gap: 3px;
+	padding: 6px var(--space-2);
+	border: var(--border-width) solid var(--line-edge);
+	border-radius: var(--radius-sm);
+	background: var(--bg-inset);
+	min-height: 42px;
+	justify-content: center;
+}
+.empty {
+	border-style: dashed;
+	border-color: var(--line-hairline);
+}
+.slotLabel {
+	font-family: var(--label-font);
+	font-size: var(--fs-2xs);
+	letter-spacing: var(--ls-wide);
+	text-transform: var(--label-transform);
+	color: var(--text-faint);
+}
+.slotItem {
+	display: flex;
+	align-items: center;
+	gap: var(--space-2);
+	min-width: 0;
+}
+.slotIcon {
+	color: var(--accent);
+	flex-shrink: 0;
+}
+.slotName {
+	flex: 1;
+	min-width: 0;
+	font-size: var(--fs-sm);
+	color: var(--text-bright);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+.slotEmptyRow {
+	display: flex;
+	align-items: center;
+	gap: var(--space-1);
+	font-size: var(--fs-xs);
+	color: var(--text-faint);
+}
+/* hand-class chip on a held item (e.g. 2H) */
+.fit {
+	flex-shrink: 0;
+	font-family: var(--font-mono);
+	font-size: var(--fs-2xs);
+	font-weight: 700;
+	color: var(--accent-contrast);
+	background: var(--accent);
+	border-radius: var(--radius-sm);
+	padding: 0 4px;
+}
+/* a two-handed item occupies both hands */
+.span {
+	border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+/* ===== containers (weight-based, stacked) ===== */
+.container {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-2);
+}
+.cHead {
+	display: flex;
+	align-items: baseline;
+	justify-content: space-between;
+	gap: var(--space-2);
+}
+.cName {
+	font-family: var(--font-display);
+	font-size: var(--fs-sm);
+	font-weight: 600;
+	letter-spacing: var(--ls-wide);
+	text-transform: uppercase;
+	color: var(--text-bright);
+}
+.cWeight {
+	font-family: var(--font-mono);
+	font-size: var(--fs-xs);
+	color: var(--data-bright);
+}
+.cAccepts {
+	font-size: var(--fs-2xs);
+	letter-spacing: var(--ls-wide);
+	color: var(--text-faint);
+}
+.stacks {
+	display: flex;
+	flex-direction: column;
+}
+.stackRow {
+	display: flex;
+	align-items: center;
+	gap: var(--space-2);
+	padding: 3px var(--space-1);
+	border-radius: var(--radius-sm);
+}
+.stackRow:hover {
+	background: var(--bg-hover);
+}
+.stackIcon {
+	color: var(--text-dim);
+	flex-shrink: 0;
+}
+.stackName {
+	flex: 1;
+	min-width: 0;
+	font-size: var(--fs-sm);
+	color: var(--text);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+.stackQty {
+	font-family: var(--font-mono);
+	font-size: var(--fs-xs);
+	color: var(--text-dim);
+}
+.stackFit {
+	font-family: var(--font-mono);
+	font-size: var(--fs-2xs);
+	color: var(--text-faint);
+	min-width: 16px;
+	text-align: center;
+}
+.stackKg {
+	font-family: var(--font-mono);
+	font-size: var(--fs-xs);
+	color: var(--text-bright);
+	min-width: 54px;
+	text-align: right;
+}
+.cEmpty {
+	font-size: var(--fs-xs);
+	color: var(--text-faint);
+	padding: var(--space-1);
+}
+
+/* belt: small fixed-width one-hand slots */
+.beltSlots {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--space-2);
+}
+.beltCell {
+	display: grid;
+	place-items: center;
+	width: 40px;
+	height: 40px;
+	border: var(--border-width) solid var(--line-edge);
+	border-radius: var(--radius-sm);
+	background: var(--bg-panel-raised);
+}
+.beltEmpty {
+	border-style: dashed;
+	border-color: var(--line-hairline);
+	background: var(--bg-inset);
+	color: var(--text-faint);
+}
+.beltIcon {
+	color: var(--accent);
+}
+
+.total {
+	margin-top: var(--space-1);
+	padding-top: var(--space-3);
+	border-top: var(--border-width) solid var(--line-hairline);
+}

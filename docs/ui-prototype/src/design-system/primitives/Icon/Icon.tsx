@@ -1,0 +1,270 @@
+import type { CSSProperties, ReactNode } from "react";
+
+/*
+ * Line-style icon set. 24x24 viewBox, strokes use currentColor so icons
+ * inherit text color and any glow filter applied to the parent.
+ */
+
+export type IconName =
+	| "play"
+	| "pause"
+	| "fast"
+	| "veryFast"
+	| "plus"
+	| "minus"
+	| "close"
+	| "gear"
+	| "menu"
+	| "chevronLeft"
+	| "chevronRight"
+	| "chevronUp"
+	| "chevronDown"
+	| "arrowRight"
+	| "check"
+	| "alert"
+	| "info"
+	| "globe"
+	| "crosshair"
+	| "user"
+	| "users"
+	| "heart"
+	| "food"
+	| "water"
+	| "energy"
+	| "rest"
+	| "hammer"
+	| "box"
+	| "leaf"
+	| "search"
+	| "lock"
+	| "dice"
+	| "sprout"
+	| "mountain"
+	| "temp"
+	| "rain"
+	| "map"
+	| "home"
+	| "rocket"
+	| "star"
+	| "skull"
+	| "refresh"
+	| "eye"
+	| "clock"
+	| "list"
+	| "layers"
+	| "save"
+	| "bolt"
+	| "shirt"
+	| "pants"
+	| "boot";
+
+const PATHS: Record<IconName, ReactNode> = {
+	play: <path d="M7 5 19 12 7 19Z" />,
+	pause: (
+		<>
+			<rect x="7" y="5" width="3.5" height="14" />
+			<rect x="13.5" y="5" width="3.5" height="14" />
+		</>
+	),
+	fast: <path d="M5 5 12 12 5 19ZM12 5 19 12 12 19Z" />,
+	veryFast: <path d="M3 5 9 12 3 19ZM9 5 15 12 9 19ZM15 5 21 12 15 19Z" />,
+	plus: <path d="M12 5V19M5 12H19" />,
+	minus: <path d="M5 12H19" />,
+	close: <path d="M6 6 18 18M18 6 6 18" />,
+	gear: (
+		<>
+			<circle cx="12" cy="12" r="3.2" />
+			<path d="M12 2.5V5M12 19V21.5M21.5 12H19M5 12H2.5M18.7 5.3 17 7M7 17 5.3 18.7M18.7 18.7 17 17M7 7 5.3 5.3" />
+		</>
+	),
+	menu: <path d="M4 7H20M4 12H20M4 17H20" />,
+	chevronLeft: <path d="M15 5 8 12 15 19" />,
+	chevronRight: <path d="M9 5 16 12 9 19" />,
+	chevronUp: <path d="M5 15 12 8 19 15" />,
+	chevronDown: <path d="M5 9 12 16 19 9" />,
+	arrowRight: <path d="M4 12H20M14 6 20 12 14 18" />,
+	check: <path d="M5 12.5 10 17.5 19 6.5" />,
+	alert: (
+		<>
+			<path d="M12 3 22 20H2Z" />
+			<path d="M12 9V14M12 17V17.5" />
+		</>
+	),
+	info: (
+		<>
+			<circle cx="12" cy="12" r="9" />
+			<path d="M12 11V16M12 8V8.5" />
+		</>
+	),
+	globe: (
+		<>
+			<circle cx="12" cy="12" r="9" />
+			<path d="M3 12H21M12 3C14.5 6 14.5 18 12 21C9.5 18 9.5 6 12 3Z" />
+		</>
+	),
+	crosshair: (
+		<>
+			<circle cx="12" cy="12" r="7" />
+			<path d="M12 2V6M12 18V22M2 12H6M18 12H22" />
+			<circle cx="12" cy="12" r="1.4" />
+		</>
+	),
+	user: (
+		<>
+			<circle cx="12" cy="8" r="3.6" />
+			<path d="M5 20C5 16 8 14 12 14C16 14 19 16 19 20" />
+		</>
+	),
+	users: (
+		<>
+			<circle cx="9" cy="8" r="3.2" />
+			<path d="M3 19C3 15.5 5.6 13.6 9 13.6C12.4 13.6 15 15.5 15 19" />
+			<path d="M16 5.4C18 5.8 19.2 7.3 19.2 9C19.2 10.5 18.2 11.8 16.7 12.2M16.5 13.8C19.4 14.2 21 16 21 19" />
+		</>
+	),
+	heart: <path d="M12 20C12 20 3.5 14.5 3.5 8.8C3.5 6 5.7 4 8.2 4C10 4 11.4 5 12 6.4C12.6 5 14 4 15.8 4C18.3 4 20.5 6 20.5 8.8C20.5 14.5 12 20 12 20Z" />,
+	food: (
+		<>
+			<path d="M7 3V10C7 11 6 11.5 6 13L6.4 21H7.6L8 13C8 11.5 7 11 7 10V3" />
+			<path d="M16 3C14 3 13 5 13 8C13 10 14 11 15 11L14.6 21H15.8L16 3Z" />
+		</>
+	),
+	water: <path d="M12 3C12 3 6 10 6 14.5C6 18 8.7 20.5 12 20.5C15.3 20.5 18 18 18 14.5C18 10 12 3 12 3Z" />,
+	energy: <path d="M13 3 5 13H11L10 21 19 10H13Z" />,
+	rest: <path d="M20 14.5C18.7 15.2 17.2 15.6 15.6 15.6C10.6 15.6 6.5 11.5 6.5 6.5C6.5 4.9 6.9 3.4 7.6 2C4.3 3.3 2 6.6 2 10.5C2 15.7 6.3 20 11.5 20C15.4 20 18.7 17.7 20 14.5Z" />,
+	hammer: (
+		<>
+			<path d="M14 6 18 10M16.5 4.5 19.5 7.5L17 10L14 7Z" />
+			<path d="M15.5 8.5 7 17L9 19L17.5 10.5" />
+		</>
+	),
+	box: (
+		<>
+			<path d="M4 8 12 4 20 8 12 12Z" />
+			<path d="M4 8V16L12 20V12M20 8V16L12 20" />
+		</>
+	),
+	leaf: (
+		<>
+			<path d="M5 19C5 11 11 5 19 5C19 13 13 19 5 19Z" />
+			<path d="M9 15 16 8" />
+		</>
+	),
+	search: (
+		<>
+			<circle cx="11" cy="11" r="6" />
+			<path d="M15.5 15.5 20 20" />
+		</>
+	),
+	lock: (
+		<>
+			<rect x="5" y="11" width="14" height="9" />
+			<path d="M8 11V8C8 5.8 9.8 4 12 4C14.2 4 16 5.8 16 8V11" />
+		</>
+	),
+	dice: (
+		<>
+			<rect x="4" y="4" width="16" height="16" rx="2" />
+			<circle cx="9" cy="9" r="1.1" />
+			<circle cx="15" cy="15" r="1.1" />
+			<circle cx="15" cy="9" r="1.1" />
+			<circle cx="9" cy="15" r="1.1" />
+		</>
+	),
+	sprout: (
+		<>
+			<path d="M12 20V11" />
+			<path d="M12 13C12 9 8.5 7 5 7C5 11 8.5 13 12 13Z" />
+			<path d="M12 11C12 8 15 6.5 18.5 6.5C18.5 10 15.5 11 12 11Z" />
+		</>
+	),
+	mountain: <path d="M3 19 9.5 7 14 14 16.5 10 21 19Z" />,
+	temp: (
+		<>
+			<path d="M10 5C10 3.9 10.9 3 12 3C13.1 3 14 3.9 14 5V13.5C15.2 14.2 16 15.5 16 17C16 19.2 14.2 21 12 21C9.8 21 8 19.2 8 17C8 15.5 8.8 14.2 10 13.5Z" />
+			<circle cx="12" cy="17" r="1.5" />
+		</>
+	),
+	rain: (
+		<>
+			<path d="M7 13C4.8 13 3 11.2 3 9C3 6.8 4.8 5 7 5C7.4 3.3 9 2 11 2C13.2 2 15 3.8 15 6H16C18.2 6 20 7.8 20 10C20 11.7 19 13 17.5 13.6" />
+			<path d="M8 17 7 19M12 17 11 19M16 17 15 19" />
+		</>
+	),
+	map: <path d="M9 4 3 6V20L9 18 15 20 21 18V4L15 6 9 4ZM9 4V18M15 6V20" />,
+	home: <path d="M4 11 12 4 20 11M6 9.5V20H18V9.5" />,
+	rocket: (
+		<>
+			<path d="M12 2C15 5 16 9 16 13L12 16 8 13C8 9 9 5 12 2Z" />
+			<circle cx="12" cy="9" r="1.6" />
+			<path d="M8 13 5 16 5 20 8 18M16 13 19 16 19 20 16 18" />
+		</>
+	),
+	star: <path d="M12 3 14.6 9.2 21 9.6 16 13.8 17.6 20 12 16.4 6.4 20 8 13.8 3 9.6 9.4 9.2Z" />,
+	skull: (
+		<>
+			<path d="M5 11C5 6.6 8.1 3.5 12 3.5C15.9 3.5 19 6.6 19 11C19 13 18 14.5 17 15.5V18H7V15.5C6 14.5 5 13 5 11Z" />
+			<circle cx="9.2" cy="11" r="1.4" />
+			<circle cx="14.8" cy="11" r="1.4" />
+			<path d="M10 18V20M14 18V20M12 18V20.5" />
+		</>
+	),
+	refresh: <path d="M20 12C20 16.4 16.4 20 12 20C7.6 20 4 16.4 4 12C4 7.6 7.6 4 12 4C15 4 17.6 5.6 19 8M19 4V8H15" />,
+	eye: (
+		<>
+			<path d="M2 12C4 7.5 7.7 5 12 5C16.3 5 20 7.5 22 12C20 16.5 16.3 19 12 19C7.7 19 4 16.5 2 12Z" />
+			<circle cx="12" cy="12" r="3" />
+		</>
+	),
+	clock: (
+		<>
+			<circle cx="12" cy="12" r="9" />
+			<path d="M12 7V12L15.5 14" />
+		</>
+	),
+	list: <path d="M8 6H20M8 12H20M8 18H20M4 6V6.5M4 12V12.5M4 18V18.5" />,
+	layers: <path d="M12 3 21 8 12 13 3 8ZM3 13 12 18 21 13M3 17 12 22 21 17" />,
+	save: (
+		<>
+			<path d="M5 5H16L19 8V19H5Z" />
+			<path d="M8 5V9H15M8 19V14H16V19" />
+		</>
+	),
+	bolt: <path d="M13 2 4 14H11L10 22 19 10H12Z" />,
+	shirt: <path d="M9 4 6 4 3 8 6 11 7.5 9.5V20H16.5V9.5L18 11 21 8 18 4 15 4C15 5.7 13.7 7 12 7C10.3 7 9 5.7 9 4Z" />,
+	pants: <path d="M8 3H16L16.5 8 17 21H13.5L12.5 11 12 11 11.5 11 10.5 21H7L7.5 8Z" />,
+	boot: <path d="M9 3H12.5V12C12.5 13 13 13.5 14 13.5H18C19.7 13.5 21 14.8 21 16.5V20H9Z" />,
+};
+
+export interface IconProps {
+	name: IconName;
+	size?: number;
+	className?: string;
+	style?: CSSProperties;
+	strokeWidth?: number;
+	/* filled glyphs (play, star) read better filled; default is stroked */
+	filled?: boolean;
+}
+
+const FILLED: Set<IconName> = new Set(["play", "fast", "veryFast", "energy", "bolt", "star", "mountain", "water"]);
+
+export function Icon({ name, size = 16, className, style, strokeWidth = 1.6, filled }: IconProps) {
+	const isFilled = filled ?? FILLED.has(name);
+	return (
+		<svg
+			width={size}
+			height={size}
+			viewBox="0 0 24 24"
+			className={className}
+			style={style}
+			fill={isFilled ? "currentColor" : "none"}
+			stroke={isFilled ? "none" : "currentColor"}
+			strokeWidth={strokeWidth}
+			strokeLinecap="round"
+			strokeLinejoin="round"
+			aria-hidden="true"
+		>
+			{PATHS[name]}
+		</svg>
+	);
+}

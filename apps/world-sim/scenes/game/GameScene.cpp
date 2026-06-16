@@ -5,6 +5,7 @@
 #include "scenes/game/ui/GameUI.h"
 #include "scenes/game/world/construction/DrawingSystem.h"
 #include "scenes/game/world/placement/PlacementSystem.h"
+#include "scenes/game/world/rooms/RoomOverlay.h"
 #include "scenes/game/world/selection/SelectionSystem.h"
 
 #include <assets/ConstructionRegistry.h>
@@ -240,6 +241,13 @@ namespace {
 						if (m_drawingSystem) {
 							m_drawingSystem->setActiveThicknessPreset(preset);
 						}
+					},
+				.onRoomsToggle =
+					[this]() {
+						// Button and R hotkey share this one method so they never drift.
+						if (m_roomOverlay) {
+							setRoomOverlayActive(!m_roomOverlay->isActive());
+						}
 					}
 			});
 
@@ -427,6 +435,15 @@ namespace {
 				}}
 			});
 
+			// Rooms overlay: scene-owned world-space layer that tints/outlines/labels
+			// detected rooms when toggled on (R). Reads the same RoomDetectionSystem
+			// records live; off by default.
+			m_roomOverlay = std::make_unique<world_sim::RoomOverlay>(world_sim::RoomOverlay::Args{
+				.world = ecsWorld.get(),
+				.camera = m_camera.get(),
+				.roomDetection = &ecsWorld->getSystem<ecs::RoomDetectionSystem>(),
+			});
+
 			// Populate the config strip's material cards from construction config.
 			{
 				std::vector<std::pair<std::string, float>> materials;
@@ -495,7 +512,19 @@ namespace {
 
 			// Handle entity selection on left click release (only if UI didn't consume it)
 			if (!consumed && event.type == UI::InputEvent::Type::MouseUp) {
-				m_selectionSystem->handleClick(event.position.x, event.position.y, logicalW, logicalH);
+				// While the room overlay is active it owns the LEFT click: hit a room ->
+				// RoomSelection, miss -> deselect. It never falls through to structure
+				// selection (rooms aren't in the SelectionSystem ladder). Routed through
+				// setSelection so the result flows through the same sink (current()).
+				if (m_roomOverlay->isActive() && event.button == engine::MouseButton::Left) {
+					if (auto roomId = m_roomOverlay->handleClick(event.position.x, event.position.y, logicalW, logicalH)) {
+						m_selectionSystem->setSelection(world_sim::RoomSelection{*roomId});
+					} else {
+						m_selectionSystem->clearSelection();
+					}
+				} else {
+					m_selectionSystem->handleClick(event.position.x, event.position.y, logicalW, logicalH);
+				}
 			}
 
 			return consumed;
@@ -532,6 +561,13 @@ namespace {
 			// wiring in the placement/drawing activation callbacks).
 			if (input.isKeyPressed(engine::Key::B) && !m_drawingSystem->isActive()) {
 				m_placementSystem->toggleBuildMenu();
+			}
+
+			// R toggles the rooms overlay (tint/outline/label of detected rooms). Same
+			// state the GameplayBar Rooms button flips, through the same method, so the
+			// two never drift.
+			if (input.isKeyPressed(engine::Key::R)) {
+				setRoomOverlayActive(!m_roomOverlay->isActive());
 			}
 
 			// Handle time controls
@@ -658,12 +694,30 @@ namespace {
 				m_pendingEntityRemoval.clear();
 			}
 
+			// Feed the current selection's room id to the overlay so it can draw the
+			// gold selected highlight; 0 (no room selected) clears it.
+			{
+				const auto&	  sel = m_selectionSystem->current();
+				std::uint64_t selectedRoom = 0;
+				if (const auto* roomSel = std::get_if<world_sim::RoomSelection>(&sel)) {
+					selectedRoom = roomSel->roomId;
+				}
+				m_roomOverlay->setSelectedRoom(selectedRoom);
+			}
+
 			// Update unified game UI (overlay + info panel)
 			auto& assetRegistry = engine::assets::AssetRegistry::Get();
 			auto& recipeRegistry = engine::assets::RecipeRegistry::Get();
 			gameUI->update(
-				dt, *m_camera, *m_chunkManager, *ecsWorld, assetRegistry, recipeRegistry, m_selectionSystem->current(),
-				&m_drawingSystem->world()
+				dt,
+				*m_camera,
+				*m_chunkManager,
+				*ecsWorld,
+				assetRegistry,
+				recipeRegistry,
+				m_selectionSystem->current(),
+				&m_drawingSystem->world(),
+				&ecsWorld->getSystem<ecs::RoomDetectionSystem>()
 			);
 
 			// Push drawing-tool status to the config strip (drives its readouts and
@@ -702,6 +756,10 @@ namespace {
 			// C6 replaces committed-foundation rendering). Drawn after entities so
 			// foundations sit above terrain and below the cursor ghost/UI.
 			m_drawingSystem->render(w, h);
+
+			// Rooms overlay (tint/outline/label) above foundation fills, below walls.
+			// No-op unless toggled on (R).
+			m_roomOverlay->render(w, h);
 
 			// Render selection indicator in world-space (after entities, before UI)
 			m_selectionSystem->renderIndicator(w, h);
@@ -1374,6 +1432,17 @@ namespace {
 			return true;
 		}
 
+		/// Set the rooms-overlay active state and reflect it on the GameplayBar toggle
+		/// button. The single entry point for the R hotkey and the button, so the two
+		/// can never drift out of sync.
+		void setRoomOverlayActive(bool active) {
+			m_roomOverlay->setActive(active);
+			if (gameUI) {
+				gameUI->setRoomsOverlayActive(active);
+			}
+			LOG_INFO(Game, "Rooms overlay %s", active ? "ON" : "OFF");
+		}
+
 		/// Handle Demolish request from a foundation's info panel. Marks the foundation for
 		/// deconstruction; a colonist tears it down over time (work-driven), and the
 		/// deconstructed-completion callback removes the topology and refunds materials.
@@ -1591,6 +1660,7 @@ namespace {
 		std::unique_ptr<world_sim::PlacementSystem> m_placementSystem;
 		std::unique_ptr<world_sim::SelectionSystem> m_selectionSystem;
 		std::unique_ptr<world_sim::DrawingSystem>	m_drawingSystem;
+		std::unique_ptr<world_sim::RoomOverlay>		m_roomOverlay;
 
 		// Entities queued for destruction, drained after ecsWorld->update() so we
 		// never destroyEntity mid-view-iteration (deconstruct callback, demolish).

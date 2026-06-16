@@ -5,12 +5,38 @@
 
 namespace world_sim {
 
+// The two appearances the Rooms toggle swaps between (active = highlighted fill).
+UI::ButtonAppearance GameplayBar::roomsButtonAppearance(bool active) {
+	// Start from the secondary style, then tint the fill to read as a toggle: a dim
+	// slate when off, a saturated blue when on (the overlay's own accent).
+	UI::ButtonAppearance	appearance = UI::ButtonStyles::secondary();
+	const Foundation::Color off{0.22F, 0.26F, 0.34F, 1.0F};
+	const Foundation::Color on{0.20F, 0.45F, 0.85F, 1.0F};
+	const Foundation::Color fill = active ? on : off;
+	appearance.normal.background.fill = fill;
+	appearance.hover.background.fill =
+		active ? Foundation::Color{0.28F, 0.55F, 0.95F, 1.0F} : Foundation::Color{0.30F, 0.35F, 0.45F, 1.0F};
+	appearance.pressed.background.fill = on;
+	appearance.focused.background.fill = fill;
+	// White label in every state so swapping appearance needs no text resync.
+	appearance.normal.textColor = Foundation::Color::white();
+	appearance.hover.textColor = Foundation::Color::white();
+	appearance.pressed.textColor = Foundation::Color::white();
+	appearance.focused.textColor = Foundation::Color::white();
+	appearance.normal.fontSize = 14.0F;
+	appearance.hover.fontSize = 14.0F;
+	appearance.pressed.fontSize = 14.0F;
+	appearance.focused.fontSize = 14.0F;
+	return appearance;
+}
+
 GameplayBar::GameplayBar(const Args& args)
 	: onBuildClick(args.onBuildClick)
 	, onActionSelected(args.onActionSelected)
 	, onProductionSelected(args.onProductionSelected)
 	, onFurnitureSelected(args.onFurnitureSelected)
-	, onStructureSelected(args.onStructureSelected) {
+	, onStructureSelected(args.onStructureSelected)
+	, onRoomsToggle(args.onRoomsToggle) {
 
 	// Create background rectangle (added first so it renders behind other children)
 	backgroundHandle = addChild(UI::Rectangle(UI::Rectangle::Args{
@@ -119,13 +145,31 @@ GameplayBar::GameplayBar(const Args& args)
 			},
 		.id = "furniture_dropdown",
 		.openUpward = true}));
+
+	// Rooms overlay toggle. A plain button (not a dropdown) whose fill reflects the
+	// overlay active state; click flips it via onRoomsToggle (the same path the R
+	// hotkey drives), and GameUI pushes the result back via setRoomsActive.
+	roomsButtonHandle = addChild(UI::Button(UI::Button::Args{
+		.label = "Rooms",
+		.position = {0.0F, 0.0F},
+		.size = {kRoomsButtonWidth, kButtonHeight},
+		.type = UI::Button::Type::Custom,
+		.onClick =
+			[this]() {
+				if (onRoomsToggle) onRoomsToggle();
+			},
+		.id = "rooms_toggle"}));
+	if (auto* roomsButton = getChild<UI::Button>(roomsButtonHandle)) {
+		roomsButton->appearance = roomsButtonAppearance(false);
+	}
 }
 
 void GameplayBar::layout(const Foundation::Rect& newBounds) {
 	Component::layout(newBounds);
 
-	// Calculate and cache bar layout (used by positionElements)
-	float totalButtonWidth = (kButtonWidth * 4.0F) + (kButtonSpacing * 3.0F);
+	// Calculate and cache bar layout (used by positionElements). Four dropdowns plus
+	// the Rooms toggle, with a spacing between each.
+	float totalButtonWidth = (kButtonWidth * 4.0F) + kRoomsButtonWidth + (kButtonSpacing * 4.0F);
 	cachedBarWidth = totalButtonWidth + (kHorizontalPadding * 2.0F);
 	cachedBarX = bounds.x + (bounds.width - cachedBarWidth) / 2.0F;
 	cachedBarY = bounds.y + bounds.height - kBarHeight - kBottomMargin;
@@ -160,6 +204,18 @@ void GameplayBar::positionElements() {
 
 	if (auto* dropdown = getChild<UI::DropdownButton>(furnitureDropdownHandle)) {
 		dropdown->setPosition(x, buttonY);
+		x += kButtonWidth + kButtonSpacing;
+	}
+
+	if (auto* roomsButton = getChild<UI::Button>(roomsButtonHandle)) {
+		roomsButton->setPosition(x, buttonY);
+	}
+}
+
+void GameplayBar::setRoomsActive(bool active) {
+	roomsActive = active;
+	if (auto* roomsButton = getChild<UI::Button>(roomsButtonHandle)) {
+		roomsButton->appearance = roomsButtonAppearance(active);
 	}
 }
 
