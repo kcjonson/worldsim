@@ -21,6 +21,10 @@
 
 #include <algorithm>
 #include <cmath>
+#include <type_traits>
+#include <utility>
+#include <variant>
+#include <vector>
 
 namespace world_sim {
 
@@ -47,6 +51,38 @@ namespace {
 		}
 		return maxHalf;
 	}
+
+	// Stable identity for a candidate: (variant type index, structure/entity id). Lets
+	// handleClick tell "the same stack is under the cursor" from "a different stack",
+	// so a same-spot click only cycles when the set is unchanged. NoSelection never
+	// appears in a candidate list, so its id (0) is inert.
+	std::pair<int, std::uint64_t> candidateKey(const Selection& sel) {
+		return std::visit(
+			[](const auto& s) -> std::pair<int, std::uint64_t> {
+				using T = std::decay_t<decltype(s)>;
+				const int type = static_cast<int>(Selection(s).index());
+				if constexpr (std::is_same_v<T, ColonistSelection>) {
+					return {type, static_cast<std::uint64_t>(s.entityId)};
+				} else if constexpr (std::is_same_v<T, CraftingStationSelection>) {
+					return {type, static_cast<std::uint64_t>(s.entityId)};
+				} else if constexpr (std::is_same_v<T, FurnitureSelection>) {
+					return {type, static_cast<std::uint64_t>(s.entityId)};
+				} else if constexpr (std::is_same_v<T, OpeningSelection>) {
+					return {type, static_cast<std::uint64_t>(s.id)};
+				} else if constexpr (std::is_same_v<T, WallSegmentSelection>) {
+					return {type, static_cast<std::uint64_t>(s.id)};
+				} else if constexpr (std::is_same_v<T, FoundationSelection>) {
+					return {type, static_cast<std::uint64_t>(s.id)};
+				} else {
+					// NoSelection and WorldEntitySelection (no integer id); keyed by type
+					// alone. World entities are positional, not id-bearing, so the type
+					// discriminant is the stable part we can compare.
+					return {type, 0};
+				}
+			},
+			sel
+		);
+	}
 } // namespace
 
 SelectionSystem::SelectionSystem(const Args& args)
@@ -56,15 +92,8 @@ SelectionSystem::SelectionSystem(const Args& args)
 	, constructionWorld(args.constructionWorld)
 	, callbacks(args.callbacks) {}
 
-void SelectionSystem::handleClick(float screenX, float screenY, int viewportW, int viewportH) {
-	if (ecsWorld == nullptr || camera == nullptr) {
-		return;
-	}
-
-	// Convert screen position to world position
-	auto worldPos = camera->screenToWorld(screenX, screenY, viewportW, viewportH, kPixelsPerMeter);
-
-	LOG_DEBUG(Game, "Click at screen (%.1f, %.1f) -> world (%.2f, %.2f)", screenX, screenY, worldPos.x, worldPos.y);
+std::vector<Selection> SelectionSystem::gatherCandidates(glm::vec2 worldPos) {
+	std::vector<Selection> candidates;
 
 	// Priority 1: Check ECS colonists first (dynamic, moving entities)
 	float		  closestColonistDist = kSelectionRadius;
@@ -82,14 +111,7 @@ void SelectionSystem::handleClick(float screenX, float screenY, int viewportW, i
 	}
 
 	if (closestColonist != 0) {
-		selection = ColonistSelection{closestColonist};
-		if (auto* colonist = ecsWorld->getComponent<ecs::Colonist>(closestColonist)) {
-			LOG_INFO(Game, "Selected colonist: %s", colonist->name.c_str());
-		}
-		if (callbacks.onSelectionChanged) {
-			callbacks.onSelectionChanged(selection);
-		}
-		return;
+		candidates.emplace_back(ColonistSelection{closestColonist});
 	}
 
 	// Priority 1.5: Check ECS stations (entities with WorkQueue)
@@ -111,15 +133,10 @@ void SelectionSystem::handleClick(float screenX, float screenY, int viewportW, i
 		auto* pos = ecsWorld->getComponent<ecs::Position>(closestStation);
 		auto* appearance = ecsWorld->getComponent<ecs::Appearance>(closestStation);
 		if (pos != nullptr && appearance != nullptr) {
-			selection = CraftingStationSelection{
-				closestStation, appearance->defName, Foundation::Vec2{pos->value.x, pos->value.y}
-			};
-			LOG_INFO(Game, "Selected station: %s at (%.1f, %.1f)", appearance->defName.c_str(), pos->value.x, pos->value.y);
+			candidates.emplace_back(
+				CraftingStationSelection{closestStation, appearance->defName, Foundation::Vec2{pos->value.x, pos->value.y}}
+			);
 		}
-		if (callbacks.onSelectionChanged) {
-			callbacks.onSelectionChanged(selection);
-		}
-		return;
 	}
 
 	// Priority 1.6: Check ECS storage containers (entities with Inventory but no WorkQueue)
@@ -151,22 +168,10 @@ void SelectionSystem::handleClick(float screenX, float screenY, int viewportW, i
 		auto* appearance = ecsWorld->getComponent<ecs::Appearance>(closestStorage);
 		if (pos != nullptr && appearance != nullptr) {
 			bool isPackaged = ecsWorld->getComponent<ecs::Packaged>(closestStorage) != nullptr;
-			selection = FurnitureSelection{
-				closestStorage, appearance->defName, Foundation::Vec2{pos->value.x, pos->value.y}, isPackaged
-			};
-			LOG_INFO(
-				Game,
-				"Selected storage: %s at (%.1f, %.1f)%s",
-				appearance->defName.c_str(),
-				pos->value.x,
-				pos->value.y,
-				isPackaged ? " (packaged)" : ""
+			candidates.emplace_back(
+				FurnitureSelection{closestStorage, appearance->defName, Foundation::Vec2{pos->value.x, pos->value.y}, isPackaged}
 			);
 		}
-		if (callbacks.onSelectionChanged) {
-			callbacks.onSelectionChanged(selection);
-		}
-		return;
 	}
 
 	// Priority 2: Check world entities (static placed assets)
@@ -198,18 +203,7 @@ void SelectionSystem::handleClick(float screenX, float screenY, int viewportW, i
 			}
 
 			if (closestWorldEntity != nullptr) {
-				selection = WorldEntitySelection{closestWorldEntity->defName, closestWorldEntity->position};
-				LOG_INFO(
-					Game,
-					"Selected world entity: %s at (%.1f, %.1f)",
-					closestWorldEntity->defName.c_str(),
-					closestWorldEntity->position.x,
-					closestWorldEntity->position.y
-				);
-				if (callbacks.onSelectionChanged) {
-					callbacks.onSelectionChanged(selection);
-				}
-				return;
+				candidates.emplace_back(WorldEntitySelection{closestWorldEntity->defName, closestWorldEntity->position});
 			}
 		}
 	}
@@ -239,12 +233,7 @@ void SelectionSystem::handleClick(float screenX, float screenY, int viewportW, i
 			}
 		}
 		if (hitOpening != engine::construction::kInvalidOpening) {
-			selection = OpeningSelection{hitOpening};
-			LOG_INFO(Game, "Selected opening #%llu", static_cast<unsigned long long>(hitOpening));
-			if (callbacks.onSelectionChanged) {
-				callbacks.onSelectionChanged(selection);
-			}
-			return;
+			candidates.emplace_back(OpeningSelection{hitOpening});
 		}
 	}
 
@@ -269,42 +258,89 @@ void SelectionSystem::handleClick(float screenX, float screenY, int viewportW, i
 			if (seg != nullptr && v0 != nullptr && v1 != nullptr) {
 				const std::int64_t segRadiusMm = std::max(kWallPickSlopMm, segmentHalfThicknessMm(*seg));
 				if (geometry::withinDistanceOfSegment(clickMm, v0->pos, v1->pos, segRadiusMm)) {
-					selection = WallSegmentSelection{segmentId};
-					LOG_INFO(Game, "Selected wall segment #%llu", static_cast<unsigned long long>(segmentId));
-					if (callbacks.onSelectionChanged) {
-						callbacks.onSelectionChanged(selection);
-					}
-					return;
+					candidates.emplace_back(WallSegmentSelection{segmentId});
 				}
 			}
 		}
 	}
 
 	// Priority 3: Foundations (lowest). Quantize the click to integer mm and ask
-	// the ConstructionWorld for the topmost foundation containing it. Reaching
-	// here means no higher-priority entity was hit, so a colonist or item sitting
-	// on the foundation still wins the click.
+	// the ConstructionWorld for the topmost foundation containing it. A colonist or
+	// item sitting on the foundation outranks it via its earlier candidate slot.
 	if (constructionWorld != nullptr) {
 		auto foundationId = constructionWorld->foundationAt(geometry::quantize(Foundation::Vec2{worldPos.x, worldPos.y}));
 		if (foundationId != engine::construction::kInvalidFoundation) {
-			selection = FoundationSelection{foundationId};
-			LOG_INFO(Game, "Selected foundation #%llu", static_cast<unsigned long long>(foundationId));
-			if (callbacks.onSelectionChanged) {
-				callbacks.onSelectionChanged(selection);
-			}
-			return;
+			candidates.emplace_back(FoundationSelection{foundationId});
 		}
 	}
 
-	// Nothing found - deselect
-	selection = NoSelection{};
-	LOG_DEBUG(Game, "No selectable entity found, deselecting");
+	return candidates;
+}
+
+void SelectionSystem::handleClick(float screenX, float screenY, int viewportW, int viewportH) {
+	if (ecsWorld == nullptr || camera == nullptr) {
+		return;
+	}
+
+	// Convert screen position to world position
+	auto worldPos = camera->screenToWorld(screenX, screenY, viewportW, viewportH, kPixelsPerMeter);
+
+	LOG_DEBUG(Game, "Click at screen (%.1f, %.1f) -> world (%.2f, %.2f)", screenX, screenY, worldPos.x, worldPos.y);
+
+	// Gather every entity under the cursor, ordered highest-priority-first, then build
+	// the matching identity keys so we can tell a repeat same-spot click from a new one.
+	const std::vector<Selection> candidates = gatherCandidates(glm::vec2{worldPos.x, worldPos.y});
+	std::vector<CandidateKey>	 keys;
+	keys.reserve(candidates.size());
+	for (const auto& candidate : candidates) {
+		keys.emplace_back(candidateKey(candidate));
+	}
+
+	const glm::vec2 clickScreen{screenX, screenY};
+	const bool		sameSpot =
+		hasLastClick &&
+		std::abs(clickScreen.x - lastClickScreen.x) <= kClickCycleTolerancePx &&
+		std::abs(clickScreen.y - lastClickScreen.y) <= kClickCycleTolerancePx;
+
+	if (sameSpot && !keys.empty() && keys == lastCandidateKeys) {
+		// Same stack, same spot: advance to the next thing underneath.
+		cycleIndex = (cycleIndex + 1) % candidates.size();
+	} else {
+		// New spot, or the stack changed: start fresh at the top-priority hit.
+		cycleIndex = 0;
+		lastCandidateKeys = keys;
+	}
+
+	hasLastClick = true;
+	lastClickScreen = clickScreen;
+
+	if (candidates.empty()) {
+		selection = NoSelection{};
+		LOG_DEBUG(Game, "No selectable entity found, deselecting");
+	} else {
+		selection = candidates[cycleIndex];
+		LOG_DEBUG(
+			Game,
+			"Selected candidate %zu/%zu (type index %d)",
+			cycleIndex + 1,
+			candidates.size(),
+			static_cast<int>(selection.index())
+		);
+	}
+
 	if (callbacks.onSelectionChanged) {
 		callbacks.onSelectionChanged(selection);
 	}
 }
 
+void SelectionSystem::resetCycleState() {
+	hasLastClick = false;
+	lastCandidateKeys.clear();
+	cycleIndex = 0;
+}
+
 void SelectionSystem::clearSelection() {
+	resetCycleState();
 	selection = NoSelection{};
 	if (callbacks.onSelectionChanged) {
 		callbacks.onSelectionChanged(selection);
@@ -312,6 +348,7 @@ void SelectionSystem::clearSelection() {
 }
 
 void SelectionSystem::selectColonist(ecs::EntityID entityId) {
+	resetCycleState();
 	selection = ColonistSelection{entityId};
 	if (callbacks.onSelectionChanged) {
 		callbacks.onSelectionChanged(selection);
@@ -319,6 +356,7 @@ void SelectionSystem::selectColonist(ecs::EntityID entityId) {
 }
 
 void SelectionSystem::setSelection(const Selection& newSelection) {
+	resetCycleState();
 	selection = newSelection;
 	if (callbacks.onSelectionChanged) {
 		callbacks.onSelectionChanged(selection);
