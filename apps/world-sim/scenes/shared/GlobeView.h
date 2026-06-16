@@ -48,6 +48,10 @@ class GlobeView {
 
 	void update(float dt) { camera.update(dt); }
 
+	// Keyboard pan: spin yaw / tilt pitch by radians (pitch obeys the camera's
+	// zoom gate). For scenes that drive the camera from held keys.
+	void panCamera(float dYaw, float dPitch) { camera.nudge(dYaw, dPitch); }
+
 	// Render the globe into `rect` (logical UI coordinates, top-left origin).
 	void render(const Foundation::Rect& rect, float logicalW, float logicalH);
 

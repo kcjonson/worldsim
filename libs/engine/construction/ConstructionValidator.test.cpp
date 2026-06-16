@@ -1,6 +1,7 @@
 #include "ConstructionValidator.h"
 
 #include "ConstructionWorld.h"
+#include "SnapEngine.h"
 
 #include <assets/ConstructionRegistry.h>
 #include <core/Vec2i64.h>
@@ -334,6 +335,72 @@ TEST(ConstructionValidator, WallEndpointOutsideHostFails) {
 	// One endpoint past the right edge (x = 14 > 12): clearly outside the host.
 	auto r = validator.validateWallSegment({3.0F, 6.0F}, {14.0F, 6.0F}, standardWood(), host);
 	EXPECT_EQ(r.code, ValidationCode::NotContainedInHostFoundation);
+}
+
+// Tracing a wall along every foundation edge is the core build flow ("build walls
+// all around its edges"). Each perimeter wall spans the two outer-face-flush mitered
+// corners the WallTool's snap produces, so its full band sits ON the foundation and
+// containment passes. This is the regression guard for "can't build walls along
+// foundation edges": the validator stays strict (a raw on-edge centerline is still
+// rejected, see WallBandPokingOutsideHostFails); the inset snap is what keeps the
+// band inside.
+TEST(ConstructionValidator, PerimeterWallsAlongEdgesAreContained) {
+	ConstraintConfig	  cfg = defaults();
+	ConstructionWorld	  world;
+	FoundationId		  host = hostFoundation(world); // 12x12 axis-aligned
+	ConstructionValidator validator(cfg, world);
+
+	const auto&		  ring = world.get(host)->ring;
+	const std::size_t n = ring.size();
+	for (std::size_t i = 0; i < n; ++i) {
+		const Vec2 a = outerFaceFlushCorner(ring, i, standardWood().halfThicknessMm);
+		const Vec2 b = outerFaceFlushCorner(ring, (i + 1) % n, standardWood().halfThicknessMm);
+		EXPECT_TRUE(validator.validateWallSegment(a, b, standardWood(), host).ok())
+			<< "perimeter wall on edge " << i << " should be contained after outer-face-flush inset";
+	}
+}
+
+TEST(ConstructionValidator, PerimeterWallsOnDiagonalEdgesAreContained) {
+	ConstraintConfig  cfg = defaults();
+	ConstructionWorld world;
+	// A diamond host (square rotated 45 deg): every edge is diagonal, so the inward
+	// offset is irrational and stresses the millimeter-rounding safety bias.
+	std::vector<Vec2> diamond = {{12.0F, 0.0F}, {24.0F, 12.0F}, {12.0F, 24.0F}, {0.0F, 12.0F}};
+	auto			  f = world.commitFoundation(diamond, "Wood");
+	ASSERT_TRUE(f.ok());
+	ConstructionValidator validator(cfg, world);
+
+	const auto&		  ring = world.get(f.id)->ring;
+	const std::size_t n = ring.size();
+	for (std::size_t i = 0; i < n; ++i) {
+		const Vec2 a = outerFaceFlushCorner(ring, i, standardWood().halfThicknessMm);
+		const Vec2 b = outerFaceFlushCorner(ring, (i + 1) % n, standardWood().halfThicknessMm);
+		EXPECT_TRUE(validator.validateWallSegment(a, b, standardWood(), f.id).ok())
+			<< "diagonal perimeter wall on edge " << i << " should be contained";
+	}
+}
+
+TEST(ConstructionValidator, PerimeterWallsOnAcuteCornerFoundationContained) {
+	ConstraintConfig  cfg = defaults();
+	ConstructionWorld world;
+	// A tall isosceles triangle whose apex is a 30 deg interior corner (the legal
+	// minimum, minCornerAngle). The outer-face-flush miter extends farthest from the
+	// corner at the sharpest angle (d / sin(theta/2) ~ 3.9*d here), so this is the
+	// worst case for the miter landing outside or the band poking out. All three
+	// perimeter walls must still be contained.
+	std::vector<Vec2> triangle = {{0.0F, 10.0F}, {-2.68F, 0.0F}, {2.68F, 0.0F}};
+	auto			  f = world.commitFoundation(triangle, "Wood");
+	ASSERT_TRUE(f.ok());
+	ConstructionValidator validator(cfg, world);
+
+	const auto&		  ring = world.get(f.id)->ring;
+	const std::size_t n = ring.size();
+	for (std::size_t i = 0; i < n; ++i) {
+		const Vec2 a = outerFaceFlushCorner(ring, i, standardWood().halfThicknessMm);
+		const Vec2 b = outerFaceFlushCorner(ring, (i + 1) % n, standardWood().halfThicknessMm);
+		EXPECT_TRUE(validator.validateWallSegment(a, b, standardWood(), f.id).ok())
+			<< "acute-corner perimeter wall on edge " << i << " should be contained";
+	}
 }
 
 // Overlap / clearance / crossing all compare against existing committed walls, so

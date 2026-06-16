@@ -19,6 +19,26 @@ namespace geometry {
 	// the full int64 coordinate range.
 	Orientation orientation(const Vec2i64& a, const Vec2i64& b, const Vec2i64& c);
 
+	enum class InCircle {
+		Inside,	  // d strictly inside the circumcircle of (a, b, c)
+		Outside,  // d strictly outside
+		OnCircle, // d exactly on the circumcircle (cocircular)
+	};
+
+	// Exact in-circle test: where does `d` fall relative to the circumcircle of
+	// the triangle (a, b, c)? `a, b, c` MUST be in counter-clockwise order (the
+	// triangulation keeps every triangle CCW), matching orientation()'s sign
+	// convention. The result is the sign of the standard lifted 3x3 determinant.
+	//
+	// Precondition: coordinates are region-local. The determinant is degree 4 in
+	// the coordinate differences, so unlike orientation() it stays exact only
+	// while every pairwise difference satisfies |dx|, |dy| <= ~2^30 mm (about a
+	// thousand km): the int64 sub-products then stay under 2^61 and the three
+	// Int128 terms sum under 2^124. The navmesh triangulates in a frame rebased
+	// to its region origin, so local coordinates are a few km and never approach
+	// this bound. Inputs beyond it overflow silently; rebase before calling.
+	InCircle inCircle(const Vec2i64& a, const Vec2i64& b, const Vec2i64& c, const Vec2i64& d);
+
 	// Exact angular comparison of two direction vectors `u` and `v` measured
 	// counter-clockwise from the +x axis. Returns true when u sorts strictly
 	// before v. Half-plane classification plus an exact cross-product tiebreak;

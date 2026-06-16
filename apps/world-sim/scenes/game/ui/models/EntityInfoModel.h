@@ -20,7 +20,9 @@
 #include <assets/RecipeRegistry.h>
 #include <construction/ConstructionWorld.h>
 #include <ecs/World.h>
+#include <ecs/systems/RoomDetectionSystem.h>
 
+#include <cstdint>
 #include <functional>
 #include <string>
 
@@ -28,7 +30,7 @@ namespace world_sim {
 
 /// Cached selection identity for detecting structural vs value-only updates
 struct CachedSelection {
-	enum class Type { None, Colonist, WorldEntity, CraftingStation, Furniture, WallSegment, Opening, Foundation };
+	enum class Type { None, Colonist, WorldEntity, CraftingStation, Furniture, WallSegment, Opening, Foundation, Room };
 
 	Type			  type = Type::None;
 	ecs::EntityID	  colonistId{0};	 // For Colonist selection
@@ -42,6 +44,7 @@ struct CachedSelection {
 	engine::construction::FoundationId foundationId{0};	 // For Foundation selection
 	engine::construction::SegmentId	   wallSegmentId{0}; // For WallSegment selection
 	engine::construction::OpeningId	   openingId{0};	 // For Opening selection
+	std::uint64_t					   roomId{0};		 // For Room selection
 
 	/// Check if this cache matches the given selection
 	[[nodiscard]] bool matches(const Selection& selection) const;
@@ -89,14 +92,16 @@ class EntityInfoModel {
 
 	/// Refresh model with current selection state
 	/// @param constructionWorld Topology store for FoundationSelection (nullable)
+	/// @param roomDetection Room records for RoomSelection (nullable)
 	/// @return Type of update the panel should perform
 	[[nodiscard]] UpdateType refresh(
-		const Selection& selection,
-		const ecs::World& world,
-		const engine::assets::AssetRegistry& assetRegistry,
-		const engine::assets::RecipeRegistry& recipeRegistry,
-		const Callbacks& callbacks,
-		const engine::construction::ConstructionWorld* constructionWorld = nullptr
+		const Selection&							   selection,
+		const ecs::World&							   world,
+		const engine::assets::AssetRegistry&		   assetRegistry,
+		const engine::assets::RecipeRegistry&		   recipeRegistry,
+		const Callbacks&							   callbacks,
+		const engine::construction::ConstructionWorld* constructionWorld = nullptr,
+		const ecs::RoomDetectionSystem*				   roomDetection = nullptr
 	);
 
 	/// Get the current panel content (valid after refresh())

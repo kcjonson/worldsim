@@ -26,12 +26,15 @@ add_library(engine
     ecs/systems/BuildGoalSystem.cpp
     ecs/systems/ConstructionSystem.cpp
     ecs/systems/RoomDetectionSystem.cpp
+    ecs/systems/CollisionSystem.cpp
+    ecs/spatial/AgentSpatialHash.cpp
     ecs/GoalTaskRegistry.cpp
     ecs/components/MemoryQueries.cpp
     ecs/components/ToiletLocationFinder.cpp
     construction/ConstructionWorld.cpp
     construction/ConstructionValidator.cpp
     construction/RoomDetection.cpp
+    construction/RoomHitTest.cpp
     construction/SnapEngine.cpp
 )
 

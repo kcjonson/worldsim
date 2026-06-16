@@ -118,6 +118,7 @@ Applications:
 | [Asset Definitions](./asset-system/asset-definitions.md) | XML format, inheritance |
 | [Entity Placement](./entity-placement-system.md) | Biome rules, distribution |
 | [Lua Scripting API](./asset-system/lua-scripting-api.md) | Procedural generation |
+| [Asset Manager](./asset-manager/README.md) | Browse/inspect/validate/render tool: shared render path, load-time validation, GUI + headless CLI |
 
 ### World & Game
 

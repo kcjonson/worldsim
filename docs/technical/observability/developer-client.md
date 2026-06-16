@@ -10,9 +10,21 @@ The developer client is an external TypeScript/Vite web application that connect
 
 **Key Principles:**
 - **External**: Runs in a separate browser window - cannot crash or interfere with the application
-- **Zero server required**: Built as a single self-contained HTML file that works with `file://` protocol
+- **Static, not a live server**: Built as a single self-contained HTML file opened via `file://`. There is **no dev server** - do not run `vite` / `npm run dev`; build the static file (`npm run build` or CMake) and open it. The only thing that needs to be running is the *game* (its debug server on port 8081), which this page reaches over HTTP.
 - **Auto-reconnecting**: Gracefully handles application restarts during development
 - **Development-only**: Only built in Development/Debug builds, skipped in Release
+
+## Tabs
+
+- **Performance** / **Logs** — read-only, fed by the SSE streams below.
+- **Dev Tools** — the only tab that *sends* rather than streams. It drives the running game with
+  one-shot `fetch()` calls: the dev verbs (`GET /api/dev/<verb>` — spawn, colonist, give, need,
+  time, teleport, select, kill, complete, freebuild) and the synchronous world-state readback
+  (`GET /api/state?what=summary|colonists|construction|time`). `DevToolsService.ts` wraps these;
+  `DevToolsPanel.tsx` is the form. Still no web server of its own — the static `file://` page reaches
+  the debug server because it sets CORS `*`. Dev builds only. See the
+  [dev-tools dev-log entry](../../development-log/entries/2026-06-16-dev-tools-api-and-tab.md) and
+  [developer-server.md](./developer-server.md) for the endpoint contracts.
 
 ## Architecture
 

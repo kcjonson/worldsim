@@ -87,7 +87,7 @@ TEST(PlanetGenerator, AllStagesReported) {
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
 
-    EXPECT_EQ(maxStageIndex, 7) << "Expected 8 stages (indices 0..7)";
+    EXPECT_EQ(maxStageIndex, 8) << "Expected 9 stages (indices 0..8)";
 }
 
 // ============================================================================

@@ -1,7 +1,7 @@
 #pragma once
 
 // GameStartConfig - scene-to-scene handoff for starting a game on a planet.
-// MainMenu (Quick Start) or WorldCreator/LandingSite (New Game) set a pending
+// MainMenu (Quick Start) or WorldCreator (New Game: Land button) set a pending
 // config; GameLoadingScene takes it and builds the gameplay world from it.
 // Mirrors the GameWorldState SetPending()/Take() pattern.
 

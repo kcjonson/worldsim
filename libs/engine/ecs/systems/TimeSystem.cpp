@@ -1,6 +1,7 @@
 #include "TimeSystem.h"
 
 #include <cassert>
+#include <cmath>
 
 namespace ecs {
 
@@ -81,6 +82,20 @@ void TimeSystem::togglePause() {
 		resume();
 	} else {
 		pause();
+	}
+}
+
+void TimeSystem::setTimeOfDay(float hours) {
+	hours = std::fmod(hours, 24.0F);
+	if (hours < 0.0F) {
+		hours += 24.0F;
+	}
+	currentTimeOfDay = hours;
+}
+
+void TimeSystem::skipTime(float gameMinutes) {
+	if (gameMinutes > 0.0F) {
+		advanceTime(gameMinutes);
 	}
 }
 

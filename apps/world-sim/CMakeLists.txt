@@ -54,6 +54,7 @@ add_executable(world-sim
     scenes/game/world/selection/SelectionSystem.cpp
     scenes/game/world/construction/DrawingSystem.cpp
     scenes/game/world/construction/OpeningGeometry.cpp
+    scenes/game/world/rooms/RoomOverlay.cpp
     scenes/game/ui/views/ConstructionConfigStrip.cpp
     # Scenes
     scenes/shared/GlobeView.cpp
@@ -62,10 +63,10 @@ add_executable(world-sim
     scenes/world-creator/WorldCreatorScene.cpp
     scenes/world-creator/WorldCreatorModel.cpp
     scenes/world-creator/ui/ParameterPanel.cpp
-    scenes/landing/LandingSiteScene.cpp
     scenes/landing/LandingSiteDetailsModel.cpp
     scenes/landing/LandingSiteDetailsPanel.cpp
     scenes/loading/GameLoadingScene.cpp
+    scenes/game/dev/DevCommandHandler.cpp
     scenes/game/GameScene.cpp
     scenes/settings/SettingsScene.cpp
 )

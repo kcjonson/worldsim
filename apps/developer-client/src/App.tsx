@@ -9,6 +9,7 @@ import StatsRow from './components/StatsRow';
 import Sparkline from './components/Sparkline';
 import LogViewer from './components/LogViewer';
 import { ScenePerformanceLog } from './components/ScenePerformanceLog';
+import DevToolsPanel from './components/DevToolsPanel';
 import styles from './App.module.css';
 
 const serverUrl = 'http://localhost:8081'; // Or 8080, 8082 for other apps
@@ -72,7 +73,7 @@ interface MetricsData {
   swapBuffersMs: number;
 }
 
-type Tab = 'performance' | 'logs';
+type Tab = 'performance' | 'logs' | 'devtools';
 
 function App() {
   const [metrics, setMetrics] = useState<MetricsData>({
@@ -331,6 +332,12 @@ function App() {
         >
           Logs
         </button>
+        <button
+          className={`${styles.tabButton} ${activeTab === 'devtools' ? styles.tabActive : ''}`}
+          onClick={() => setActiveTab('devtools')}
+        >
+          Dev Tools
+        </button>
       </nav>
 
       <div className={styles.content}>
@@ -567,6 +574,8 @@ function App() {
             />
           </div>
         )}
+
+        {activeTab === 'devtools' && <DevToolsPanel serverUrl={serverUrl} />}
       </div>
     </div>
   );

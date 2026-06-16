@@ -69,6 +69,7 @@ add_subdirectory(libs/engine/assets)
 add_subdirectory(apps/world-sim)
 add_subdirectory(apps/ui-sandbox)
 add_subdirectory(apps/worldgen-cli)
+add_subdirectory(apps/asset-cli)
 
 # Build tools (atlas generator, etc.)
 add_subdirectory(tools/generate_sdf_atlas)

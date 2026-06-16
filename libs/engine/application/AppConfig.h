@@ -41,6 +41,11 @@ struct AppConfig {
 	/// Asset definitions are loaded from all FolderName/FolderName.xml files recursively.
 	/// Example: "assets/world" scans for assets/world/flora/GrassBlade/GrassBlade.xml etc.
 	std::string assetsRootPath = "assets/world";
+
+	/// Load assets on a background thread so a splash can show progress instead of
+	/// freezing. Only takes effect on the default launch path; a --scene override
+	/// loads synchronously so a jumped-to scene has assets ready.
+	bool loadAssetsAsync = false;
 };
 
 } // namespace engine

@@ -1,5 +1,6 @@
 #include "input/InputManager.h"
 #include "utils/Log.h"
+#include <cctype>
 #include <optional>
 #include <stdexcept>
 
@@ -364,6 +365,86 @@ namespace engine {
 		if (it == keyPreviousStates.end())
 			return false;
 		return it->second == ButtonState::Released;
+	}
+
+	void InputManager::injectKey(Key key, bool down) {
+		// Funnel through the exact path GLFW key events take, so the press/release edge
+		// state machine (and isKeyPressed/isKeyDown/isKeyReleased) behaves identically.
+		handleKeyInput(ToGLFW(key), down ? GLFW_PRESS : GLFW_RELEASE);
+	}
+
+	std::optional<Key> InputManager::keyFromName(const std::string& name) {
+		// keyFromName relies on the Key enum's letters, digits, and function keys being
+		// contiguous (see InputTypes.h); these guard against a future reordering.
+		static_assert(static_cast<int>(Key::Z) - static_cast<int>(Key::A) == 25, "Key A-Z must be contiguous");
+		static_assert(static_cast<int>(Key::Num9) - static_cast<int>(Key::Num0) == 9, "Key Num0-9 must be contiguous");
+		static_assert(static_cast<int>(Key::F12) - static_cast<int>(Key::F1) == 11, "Key F1-F12 must be contiguous");
+
+		if (name.empty()) {
+			return std::nullopt;
+		}
+		if (name.size() == 1) {
+			const char c = name[0];
+			if (c >= 'a' && c <= 'z') {
+				return static_cast<Key>(static_cast<int>(Key::A) + (c - 'a'));
+			}
+			if (c >= 'A' && c <= 'Z') {
+				return static_cast<Key>(static_cast<int>(Key::A) + (c - 'A'));
+			}
+			if (c >= '0' && c <= '9') {
+				return static_cast<Key>(static_cast<int>(Key::Num0) + (c - '0'));
+			}
+		}
+
+		std::string lower;
+		lower.reserve(name.size());
+		for (char c : name) {
+			lower.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+		}
+
+		if (lower == "space")
+			return Key::Space;
+		if (lower == "escape" || lower == "esc")
+			return Key::Escape;
+		if (lower == "enter" || lower == "return")
+			return Key::Enter;
+		if (lower == "tab")
+			return Key::Tab;
+		if (lower == "backspace")
+			return Key::Backspace;
+		if (lower == "delete" || lower == "del")
+			return Key::Delete;
+		if (lower == "insert")
+			return Key::Insert;
+		if (lower == "home")
+			return Key::Home;
+		if (lower == "end")
+			return Key::End;
+		if (lower == "pageup")
+			return Key::PageUp;
+		if (lower == "pagedown")
+			return Key::PageDown;
+		if (lower == "up")
+			return Key::Up;
+		if (lower == "down")
+			return Key::Down;
+		if (lower == "left")
+			return Key::Left;
+		if (lower == "right")
+			return Key::Right;
+
+		// Function keys F1..F12.
+		if (lower.size() >= 2 && lower[0] == 'f') {
+			try {
+				const int n = std::stoi(lower.substr(1));
+				if (n >= 1 && n <= 12) {
+					return static_cast<Key>(static_cast<int>(Key::F1) + (n - 1));
+				}
+			} catch (...) {
+				return std::nullopt;
+			}
+		}
+		return std::nullopt;
 	}
 
 	// GLFW static callbacks

@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Construction rendering style. Drives the look of committed foundations, walls,
+  and openings (doors/windows) drawn by DrawingSystem via Renderer::Primitives.
+  This is NOT the SVG/vector asset pipeline; it is plain styling data.
+
+  Colors are "#RRGGBBAA". Material FILL color comes from each material's palette in
+  materials.xml; the colors here are the treatment around it (blueprint tint, edges,
+  junction fill, glass, detail). Where an alpha ramps with build progress, the color's
+  own alpha channel is ignored and the *AlphaMin/*AlphaMax pair is used instead (a
+  blueprint renders at Min, a Built structure at Max, in-progress lerps between).
+
+  Every element is optional; a missing one falls back to the engine default
+  (ConstructionRegistry::RenderingConfig), which mirrors these values.
+-->
+<ConstructionRendering>
+
+  <!-- Committed foundations. fill = material palette color. Blueprint wears the cool
+       outlineColor; a Built foundation wears its material darkened by builtEdgeDarken. -->
+  <Foundation>
+    <blueprintFill>#80A6E62E</blueprintFill>   <!-- faint always-on base under the progress fill -->
+    <fallbackColor>#80A6E6FF</fallbackColor>   <!-- fill when the material palette is empty -->
+    <outlineColor>#8CB8FFFF</outlineColor>     <!-- blueprint edge; rgb only, alpha from the ramp -->
+    <progressAlphaMin>0.15</progressAlphaMin>
+    <progressAlphaMax>0.85</progressAlphaMax>
+    <outlineAlphaMin>0.6</outlineAlphaMin>
+    <outlineAlphaMax>1.0</outlineAlphaMax>
+    <outlineWidthBlueprint>1.5</outlineWidthBlueprint>
+    <outlineWidthBuilt>2.0</outlineWidthBuilt>
+    <builtEdgeDarken>0.55</builtEdgeDarken>    <!-- Built edge = material color * this -->
+  </Foundation>
+
+  <!-- Committed walls. A Built wall renders nearly opaque with a darker-material edge,
+       so it stands proud of the floor; blueprints keep the cool outline. Built junctions
+       take the wall material color (below) so corners read continuous. -->
+  <Wall>
+    <blueprintFill>#80A6E638</blueprintFill>
+    <fallbackColor>#80A6E6FF</fallbackColor>
+    <outlineColor>#99C7FFFF</outlineColor>     <!-- blueprint edge; rgb only, alpha from the ramp -->
+    <junctionColor>#80A6E6FF</junctionColor>   <!-- blueprint junction; rgb only, alpha below -->
+    <progressAlphaMin>0.2</progressAlphaMin>
+    <progressAlphaMax>0.97</progressAlphaMax>  <!-- built fill: nearly opaque, reads solid -->
+    <outlineAlphaMin>0.65</outlineAlphaMin>
+    <outlineAlphaMax>1.0</outlineAlphaMax>
+    <outlineWidthBlueprint>1.5</outlineWidthBlueprint>
+    <outlineWidthBuilt>2.0</outlineWidthBuilt>
+    <junctionAlphaBlueprint>0.4</junctionAlphaBlueprint>
+    <junctionAlphaBuilt>0.97</junctionAlphaBuilt> <!-- match the built band so corners are seamless -->
+    <builtEdgeDarken>0.5</builtEdgeDarken>      <!-- Built edge = material color * this -->
+  </Wall>
+
+  <!-- Procedural doors/windows. leaf/frame = opening material color; glass + jambs derived. -->
+  <Opening>
+    <doorFallbackColor>#8C6640FF</doorFallbackColor> <!-- warm wood-brown when palette is empty -->
+    <glassColor>#8FCCF2B8</glassColor>               <!-- window pane: brighter, more glass-like -->
+    <fillAlpha>0.92</fillAlpha>                       <!-- leaf/frame fill -->
+    <outlineAlpha>0.95</outlineAlpha>                 <!-- leaf/frame outline -->
+    <outlineDarken>0.7</outlineDarken>                <!-- outline = material color * this -->
+    <outlineWidthBuilt>2.0</outlineWidthBuilt>        <!-- leaf/frame outline weight, built -->
+    <outlineWidthBlueprint>1.0</outlineWidthBlueprint><!-- leaf/frame outline weight, blueprint -->
+    <jambWidth>0.11</jambWidth>                       <!-- door jamb cap / window side frame, fraction of clear width -->
+    <jambDarken>0.5</jambDarken>                       <!-- darker jambs read as defined door frame -->
+    <jambAlpha>0.95</jambAlpha>
+    <glassInset>0.18</glassInset>                     <!-- smaller inset = larger glass pane -->
+    <mullionSpacingMeters>0.7</mullionSpacingMeters>  <!-- ~one mullion bar per this many meters -->
+    <mullionAlpha>0.9</mullionAlpha>
+    <progressAlphaMin>0.25</progressAlphaMin>         <!-- blueprint ramp floor -->
+    <progressAlphaMax>0.85</progressAlphaMax>         <!-- blueprint ramp cap; Built renders fully opaque -->
+    <ghostAlpha>0.5</ghostAlpha>                      <!-- placement-preview dimming -->
+  </Opening>
+
+  <!-- Drawing-tool preview chrome (construction-specific; validity green/red comes from the UI theme). -->
+  <Preview>
+    <guideColor>#B3D9FF66</guideColor>               <!-- angle-snap guide line -->
+    <originHaloColor>#B3D9FF99</originHaloColor>      <!-- origin-close halo when it can't yet close -->
+    <snapVertexColor>#FFD94DE6</snapVertexColor>     <!-- vertex/endpoint snap ring (amber) -->
+    <snapEdgeColor>#66D9FFE6</snapEdgeColor>         <!-- edge/T-junction snap ring (cyan) -->
+    <fillPreviewAlpha>0.15</fillPreviewAlpha>        <!-- in-progress polygon fill tint -->
+    <bandPreviewAlpha>0.2</bandPreviewAlpha>         <!-- wall-band preview tint -->
+    <lineWidth>2.0</lineWidth>                        <!-- committed edges / rubber-band / centerline -->
+    <guideWidth>1.0</guideWidth>
+    <vertexRadiusPx>4.0</vertexRadiusPx>
+    <invalidVertexRadiusPx>7.0</invalidVertexRadiusPx>
+    <originHaloMinRadiusPx>8.0</originHaloMinRadiusPx>
+  </Preview>
+
+</ConstructionRendering>

@@ -35,6 +35,12 @@ No manual npm commands needed!
 
 ## Running
 
+> **This is a static single-file build, NOT a live server.** There is no `dev`/serve script,
+> and you should not run `vite` / `npm run dev` against it. Build the static HTML (`npm run build`,
+> or CMake with `-DBUILD_DEVELOPER_CLIENT=ON`) and open the file directly. It talks to the running
+> game over HTTP (the debug server on port 8081), so the *game* is the only thing that needs to be
+> running, not a web server.
+
 After building, open the static HTML file:
 
 ```bash
@@ -45,7 +51,15 @@ open ../../build/developer-client/index.html
 # build/developer-client/index.html
 ```
 
-The app will open in your browser and connect to `http://localhost:8081` by default.
+The app opens in your browser and connects to `http://localhost:8081` by default.
+
+## Tabs
+
+- **Performance / Logs** — read-only, fed by SSE streams (`/stream/metrics`, `/stream/logs`).
+- **Dev Tools** — drives the running game: one-shot `fetch()` to the dev verbs (`/api/dev/<verb>`)
+  and the world-state readback (`/api/state`). Dev builds only. This is the only tab that *sends*
+  commands; it still needs no web server of its own (CORS `*` lets the static `file://` page reach
+  the debug server).
 
 ## Project Structure
 

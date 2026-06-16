@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2026-06-15 (Water Availability complete — PRs #144 + lake fix #146; Plate Boundary Realism — curved rift cuts + power-law plate sizes + broken mountain belts + Ultra 2048, PR #145; next: valley erosion then 2D chunk-time river/lake rendering; UI Design System (Salvage) extracted to docs/design/ui)
+Last Updated: 2026-06-16 (Reconciling the Salvage UI cutover onto main: tokens + theme, one unified UI library, SDF shadow/gradient/multi-atlas renderer, global z-index draw queue. Latest main carried in: Dev/Test Tools #157, Fluvial Erosion #149, Asset Manager #156)
 
 ## Epic/Story/Task Template
 
@@ -27,6 +27,21 @@ Use this template for all work items:
 ---
 
 ## Recently Completed Epics (Last 4)
+
+### ✅ Dev/Test Tools (HTTP verbs + developer-client tab)
+**Spec/Documentation:** `/docs/development-log/entries/2026-06-16-dev-tools-api-and-tab.md`, `/docs/development-log/plans/2026-06-16-dev-tools-api-and-tab.md`
+**Dependencies:** None
+**Status:** complete (merged PR #157)
+
+**Completed Tasks:**
+- [x] Step 1: `spawn`, `colonist`, `give` (replaces `givewood`; site/loose/colonist/storage)
+- [x] Step 2: `need`, `time` (speed/set/skip), `teleport`, `select`, `kill`, `complete`
+- [x] Step 3: synchronous `/api/state?what=summary|colonists|construction|time` (screenshot-style request/response handshake)
+- [x] Phase 2: Dev Tools tab (DevToolsService + DevToolsPanel) in the static developer-client
+- [x] Refactor: dev surface extracted from GameScene into DevCommandHandler (scenes/game/dev/)
+- [x] `parseDevVerb` tests refreshed (7/7); two rounds of Copilot review cleared (single-flight `/api/state`, CV wait, jsonEscape)
+
+**Result:** Dev-only `/api/dev/<verb>` controls plus a synchronous `/api/state` readback, driven from a Dev Tools tab in the static developer-client, so sim state can be set up and asserted on without screenshots. In-browser tab click-test was skipped by choice (build clean, every endpoint curl-verified); `demolish`, inventory-in-readback, and `query/count` deferred as optional. ✅
 
 ### ✅ UI Design System (Salvage) — extraction
 **Spec/Documentation:** `/docs/design/ui/`
@@ -486,6 +501,37 @@ while (running) {
 
 ## In Progress Epics
 
+### Asset Manager
+**Spec/Documentation:** `/docs/design/features/asset-manager/`, `/docs/technical/asset-manager/`
+**Dependencies:** None
+**Status:** in progress
+
+**Goal:** Standalone tool to browse, inspect, validate, and render the asset library through the game's own render path, with a designer GUI and a headless CLI over one shared core.
+
+**Tasks:**
+- [x] Phase 1: Shared render path (renderer MeshBounds computeBounds/fitToRect; AssetRegistry::buildMesh; assets AssetRenderer prepare + renderToPixels/Png; foundation PngEncoder + DebugServer refactor; determinism + fidelity tests)
+- [x] Phase 2: Load-time validation (AssetValidator + ValidationReport: missing refs, duplicate defNames, name/folder mismatch, ignored fields, variantCount drift, bad assetType, orphan SVGs; validates on load via getValidationReport; full GL render smoke deferred to the CLI)
+- [x] Phase 3: Headless CLI (apps/asset-cli: list/search/inspect/validate/render; --json; exit codes; server-less for parallel runs; render via hidden GL context; getExecutableDir implemented on Windows so resources resolve regardless of cwd)
+- [x] Phase 4: Async loading + splash (AssetRegistry::beginLoadAsync worker thread + LoadProgress; AppConfig.loadAssetsAsync, async only on the default splash path, synchronous on a --scene override; splash polls progress, transitions to the menu on clean load, or blocks with an error summary on validation errors)
+- [ ] Phase 5: GUI (apps/asset-manager: GridContainer, browser scene, preview + sampling, inspector, validation view, reload)
+
+### Fluvial Erosion (worldgen)
+**Spec/Documentation:** `.claude/plans/erosion.md`, `/docs/development-log/entries/2026-06-15-worldgen-fluvial-erosion.md`
+**Dependencies:** Water Availability (drainage)
+**Status:** in progress (PR #149, draft)
+
+**Goal:** Carve valleys into the continental terrain so rivers (rendered later from the climate drainage) land in real valleys. Detachment-limited stream-power incision (Braun & Willett implicit solver) on the drainage stack, between Terrain and Atmosphere; downstream climate/biomes/final drainage all see the carved terrain.
+
+**Tasks:**
+- [x] E-0: dissection metrics baseline (WorldStats + worldgen-cli)
+- [x] E-1: ErosionStage core (shared DrainageRouting helper + implicit stream-power) + pipeline integration
+- [x] E-2: downstream re-validation (carved terrain through climate/biomes/final drainage; determinism; budget)
+- [x] E-3: strength at conservative subtle default (accepted)
+- [x] E-4: dev log + status (this) on the draft PR
+- [ ] Mark PR #149 ready, clear CI + Copilot, merge
+
+**Result:** Valleys carved deterministically (worldHash bit-identical across thread counts); mountains preserved (belt crests stay tall); world-tests green (174); gen ~22s at n=1024. Follow-ups: the bathymetry "comb" artifact (hex-BFS distance terracing on the shelf edge + crust-age depth field) is a separate deferred tuning task; then 2D chunk-time river/lake rendering.
+
 ### World Generation & Creator
 **Spec/Documentation:** `/docs/design/features/world-generation/`, `.claude/plans/world-generation.md`
 **Dependencies:** None
@@ -556,7 +602,8 @@ while (running) {
   - [x] Room ECS component + GameScene wiring (register system, "Room formed" toast via the engine→UI callback seam)
   - [x] /api/dev/walls dev command (stamp a built wall loop in one call; rooms testable without the draw tool); reused for sandbox verification
   - [x] Hardened (adversarial review): OnBoundary fallback so a divider through a room's rep keeps identity on one side; dev-walls T-split only force-builds chain segments (not split halves of pre-existing blueprints)
-  - [ ] Deferred: rooms OVERLAY UI (tint/labels/click/info panel — ships with the overlay system per design); nested room-in-room (loop inside a loop, no connecting wall) identity/area needs hole-aware face extraction (pinned by a test, deferred until the overlay consumes it); room types/functions/bonuses (post-v1)
+  - [x] Rooms overlay UI: scene-owned RoomOverlay tints/outlines/labels each room (concave-correct via renderer::Tessellator), click-to-select (overlay-gated) → read-only info panel (Name/Area/enclosing walls), HUD "Rooms" toggle synced with the R hotkey (feature/rooms-overlay)
+  - [ ] Deferred: nested room-in-room (loop inside a loop, no connecting wall) identity/area needs hole-aware face extraction (pinned by a test); room types/functions/bonuses (post-v1)
 - [x] Epic F1: Openings end-to-end (interim visuals) — doors/windows on walls (feature/construction-openings). Verified in sandbox: a Door placed on a built wall shows a gap in the wall band with the door fill; clicking selects it (panel: Type/Material/Pathable/State/Materials/Work + Demolish).
   - [x] F1a engine: opening types config (Door 0.9m pathable, Window 0.6m) + ConfigValidator; ConstructionValidator.validateOpening (margins, overlap, length, type/material); SnapEngine.snapOpening; ConstructionWorld setOpeningState/Entity/removeOpening
   - [x] F1b lifecycle: openings in the build loop (own materials + constant work), gated on host segment built (isOpeningHostSegmentBuilt)
@@ -564,9 +611,13 @@ while (running) {
   - [x] F1d render: interim wall-band gap + procedural door/window fill + ghost (Primitives)
   - [x] F1e selection: OpeningSelection (priority above walls) + point-in-footprint hit test + adaptOpening panel + per-opening demolish
   - [x] Hardened (adversarial review): wall-demolish now despawns hosted openings' entities (removeSegment surfaces them); openingMarginMeters sign-checked; dev helpers include Opening
-  - [ ] F2 (deferred): D9 parameter-extended procedural Lua door/window assets (cache key (defName,thicknessPreset,material), material palettes); retrofit-cut-as-work on a built wall; portal publication to nav (no consumer yet)
-- [ ] Epic G: Editing & polish (add/subtract, vertex editing, cascade demolish, multi-select)
-- [ ] Epic G: Editing & polish (add/subtract, vertex editing, cascade demolish, multi-select)
+  - [ ] F2 (deferred): D9 parameter-extended procedural Lua door/window assets (cache key (defName,thicknessPreset,material), material palettes); portal publication to nav (no consumer yet). NOTE: retrofit-cut-as-work is CUT from scope — openings sit on the wall and never cut it (design decision 2026-06-15).
+- [ ] Epic G: Editing & polish
+  - [x] Demolish-building cascade + work-driven demolish (deconstruct task + material refund) + foundation-demolish gate (#143)
+  - [x] Outer-face-flush wall snapping so walls build along foundation edges (#147)
+  - [ ] G2: click-cycling selection (repeated click cycles opening → wall → foundation)
+  - [ ] G3: foundation add/subtract tool (merge/subtract via the geometry booleans)
+  - [ ] Deferred: vertex editing (drag/add/delete on a foundation blueprint), full Shift-click multi-select, double-click connected wall-run select
 
 ---
 

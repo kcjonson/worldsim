@@ -72,11 +72,12 @@ class EntityInfoView : public UI::Component {
 	/// @param recipeRegistry Recipe registry (for crafting stations)
 	/// @param selection Current selection state
 	void update(
-		const ecs::World& world,
-		const engine::assets::AssetRegistry& assetRegistry,
-		const engine::assets::RecipeRegistry& recipeRegistry,
-		const Selection& selection,
-		const engine::construction::ConstructionWorld* constructionWorld = nullptr
+		const ecs::World&							   world,
+		const engine::assets::AssetRegistry&		   assetRegistry,
+		const engine::assets::RecipeRegistry&		   recipeRegistry,
+		const Selection&							   selection,
+		const engine::construction::ConstructionWorld* constructionWorld = nullptr,
+		const ecs::RoomDetectionSystem*				   roomDetection = nullptr
 	);
 
 	/// Check if panel is visible

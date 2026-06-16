@@ -64,6 +64,7 @@ Development log entries are **immutable history**. Don't update old entries — 
 
 #### June 2026
 
+- [2026-06-15 - Fluvial erosion (stream-power valley carving)](./entries/2026-06-15-worldgen-fluvial-erosion.md)
 - [2026-06-15 - Water availability + plate-boundary realism](./entries/2026-06-15-worldgen-water-and-plate-realism.md)
 - [2026-06-14 - Construction Epic F1: openings (doors & windows)](./entries/2026-06-14-construction-epic-f1-openings.md)
 - [2026-06-14 - Construction Epic E: rooms](./entries/2026-06-14-construction-epic-e-rooms.md)
@@ -101,9 +102,10 @@ Development log entries are **immutable history**. Don't update old entries — 
 
 ## Quick Stats
 
-- **Total Entries:** 70 (entry files; the index below lists notable milestones)
+- **Total Entries:** 71 (entry files; the index below lists notable milestones)
 - **Latest Entry:** 2026-06-15
 - **Major Milestones:**
+  - Fluvial erosion: stream-power valley carving so rivers land in valleys (2026-06-15)
   - Water availability + plate-boundary realism: real drainage, landing water signal, curved rift cuts (2026-06-15)
   - Construction Epic F1: openings — doors & windows (2026-06-14)
   - Construction Epic E: rooms (2026-06-14)

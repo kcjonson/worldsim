@@ -48,11 +48,6 @@ class WorldCreatorModel {
 	// Transition Generating -> Configuring (cancels background thread)
 	void cancelGeneration();
 
-	// Enter Reviewing with an existing world (returning from landing site
-	// selection; scenes are recreated on switch, so the world rides back via
-	// GameStartConfig). Adopts the world's params so the UI reflects it.
-	void restoreResult(std::shared_ptr<const worldgen::GeneratedWorld> world);
-
 	// Call from scene's update() - polls progress, drives state machine
 	worldgen::GenerationProgress pollProgress();
 
@@ -62,9 +57,6 @@ class WorldCreatorModel {
 
 	// Latest completed world (valid when state == Reviewing)
 	std::shared_ptr<const worldgen::GeneratedWorld> getResult() const { return result; }
-
-	// Latest progressive snapshot from the generator (updates during Generating)
-	std::shared_ptr<const worldgen::GeneratedWorld> snapshot() const { return generator.snapshot(); }
 
   private:
 	WorldCreatorState         state{WorldCreatorState::Configuring};

@@ -39,7 +39,9 @@ namespace world_sim {
 			.onBuildClick = args.onBuildToggle,
 			.onProductionSelected = args.onProductionSelected,
 			.onStructureSelected = args.onStructureSelected,
-			.id = "gameplay_bar"});
+			.onRoomsToggle = args.onRoomsToggle,
+			.id = "gameplay_bar"
+		});
 
 		// Create construction config strip (hidden until a structure tool is active)
 		configStrip = std::make_unique<ConstructionConfigStrip>(ConstructionConfigStrip::Args{
@@ -390,14 +392,15 @@ namespace world_sim {
 	}
 
 	void GameUI::update(
-		float								  deltaTime,
-		const engine::world::WorldCamera&	  camera,
-		const engine::world::ChunkManager&	  chunkManager,
-		ecs::World&							  ecsWorld,
-		const engine::assets::AssetRegistry&  assetRegistry,
-		const engine::assets::RecipeRegistry& recipeRegistry,
-		const Selection&					  selection,
-		const engine::construction::ConstructionWorld* constructionWorld
+		float										   deltaTime,
+		const engine::world::WorldCamera&			   camera,
+		const engine::world::ChunkManager&			   chunkManager,
+		ecs::World&									   ecsWorld,
+		const engine::assets::AssetRegistry&		   assetRegistry,
+		const engine::assets::RecipeRegistry&		   recipeRegistry,
+		const Selection&							   selection,
+		const engine::construction::ConstructionWorld* constructionWorld,
+		const ecs::RoomDetectionSystem*				   roomDetection
 	) {
 		// Update time model and top bar
 		if (topBar) {
@@ -454,7 +457,7 @@ namespace world_sim {
 
 		// Update info panel with selection
 		if (infoPanel) {
-			infoPanel->update(ecsWorld, assetRegistry, recipeRegistry, selection, constructionWorld);
+			infoPanel->update(ecsWorld, assetRegistry, recipeRegistry, selection, constructionWorld, roomDetection);
 		}
 
 		// Update task list panel if expanded
@@ -626,6 +629,12 @@ namespace world_sim {
 	void GameUI::setConstructionStatus(const DrawingStatus& status) {
 		if (configStrip) {
 			configStrip->setStatus(status);
+		}
+	}
+
+	void GameUI::setRoomsOverlayActive(bool active) {
+		if (gameplayBar) {
+			gameplayBar->setRoomsActive(active);
 		}
 	}
 

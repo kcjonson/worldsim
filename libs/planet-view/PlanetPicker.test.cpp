@@ -116,6 +116,31 @@ TEST(OrbitCamera, DistanceClamped) {
 TEST(OrbitCamera, AutoRotateAfterIdle) {
     OrbitCamera cam;
     cam.yaw = 0.0F;
-    cam.update(5.0F); // 5 seconds of idle
-    EXPECT_GT(cam.yaw, 0.0F); // should have auto-rotated
+    cam.update(5.0F);        // idle reveal spin, no interaction yet
+    EXPECT_GT(cam.yaw, 0.0F);
+}
+
+TEST(OrbitCamera, AutoRotateStopsAfterInteraction) {
+    OrbitCamera cam;
+    cam.scroll(1.0F);        // any interaction latches the spin off
+    cam.yaw = 0.0F;
+    cam.update(5.0F);        // still idle, but must not resume
+    EXPECT_FLOAT_EQ(cam.yaw, 0.0F);
+}
+
+TEST(OrbitCamera, PitchLockedWhenZoomedOut) {
+    OrbitCamera cam;
+    cam.distance = 4.0F;       // whole globe in frame -> pitch pinned to home
+    cam.beginDrag(0.0F, 0.0F);
+    cam.drag(0.0F, 10000.0F);  // yank vertically
+    EXPECT_NEAR(cam.pitch, 0.3F, 1e-4F); // home pitch, unchanged
+}
+
+TEST(OrbitCamera, PitchUnlocksWhenZoomedIn) {
+    OrbitCamera cam;
+    cam.distance = 1.05F;      // zoomed in -> latitude pan unlocked
+    cam.beginDrag(0.0F, 0.0F);
+    cam.drag(0.0F, 10000.0F);  // yank down hard
+    EXPECT_LT(cam.pitch, -0.5F); // moved well away from home...
+    EXPECT_GE(cam.pitch, -1.5F); // ...but never past the pole
 }

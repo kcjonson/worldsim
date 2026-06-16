@@ -7,6 +7,16 @@
 #include <mach-o/dyld.h>
 #endif
 
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
+
 namespace Foundation {
 
 	std::filesystem::path getExecutableDir() {
@@ -17,11 +27,23 @@ namespace Foundation {
 		if (_NSGetExecutablePath(buf.data(), &bufsize) == 0) {
 			return std::filesystem::path(buf.data()).parent_path();
 		}
-#endif
-		// TODO: Add Linux/Windows implementations when needed
-		// Linux: readlink("/proc/self/exe", ...)
-		// Windows: GetModuleFileName(NULL, ...)
 		return {};
+#elif defined(_WIN32)
+		std::vector<wchar_t> buf(MAX_PATH);
+		for (;;) {
+			const DWORD len = GetModuleFileNameW(nullptr, buf.data(), static_cast<DWORD>(buf.size()));
+			if (len == 0) {
+				return {};
+			}
+			if (len < buf.size()) {
+				return std::filesystem::path(std::wstring(buf.data(), len)).parent_path();
+			}
+			buf.resize(buf.size() * 2); // path was truncated; grow and retry
+		}
+#else
+		// TODO: Linux implementation: readlink("/proc/self/exe", ...)
+		return {};
+#endif
 	}
 
 	std::optional<std::filesystem::path> findResource(const std::filesystem::path& relativePath) {

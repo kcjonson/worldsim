@@ -19,13 +19,8 @@
 // OpenGL for framebuffer capture
 #include <GL/glew.h>
 
-// stb_image_write for PNG encoding
-// Protect against multiple definition errors if this gets included elsewhere
-#ifndef WORLDSIM_STB_IMAGE_WRITE_IMPL
-#define WORLDSIM_STB_IMAGE_WRITE_IMPL
-#define STB_IMAGE_WRITE_IMPLEMENTATION
-#include <stb_image_write.h>
-#endif
+// PNG encoding is centralized in Foundation::PngEncoder (single STB definition site).
+#include "graphics/PngEncoder.h"
 
 namespace Foundation {
 
@@ -45,14 +40,33 @@ namespace Foundation {
 		}
 
 		const std::string& type = fields[0];
-		if (type == "move")        cmd.type = InputCommand::Type::Move;
-		else if (type == "down")   cmd.type = InputCommand::Type::Down;
-		else if (type == "up")     cmd.type = InputCommand::Type::Up;
-		else if (type == "click")  cmd.type = InputCommand::Type::Click;
-		else if (type == "scroll") cmd.type = InputCommand::Type::Scroll;
+		if (type == "move")
+			cmd.type = InputCommand::Type::Move;
+		else if (type == "down")
+			cmd.type = InputCommand::Type::Down;
+		else if (type == "up")
+			cmd.type = InputCommand::Type::Up;
+		else if (type == "click")
+			cmd.type = InputCommand::Type::Click;
+		else if (type == "scroll")
+			cmd.type = InputCommand::Type::Scroll;
+		else if (type == "keydown")
+			cmd.type = InputCommand::Type::KeyDown;
+		else if (type == "keyup")
+			cmd.type = InputCommand::Type::KeyUp;
 		else {
-			error = "unknown event type (expected move|down|up|click|scroll)";
+			error = "unknown event type (expected move|down|up|click|scroll|keydown|keyup)";
 			return false;
+		}
+
+		// Key events carry a key name instead of coordinates: "keydown,R" / "keyup,Escape".
+		if (cmd.type == InputCommand::Type::KeyDown || cmd.type == InputCommand::Type::KeyUp) {
+			if (fields.size() < 2 || fields[1].empty()) {
+				error = "key event requires a key name (e.g. keydown,R)";
+				return false;
+			}
+			cmd.keyName = fields[1];
+			return true;
 		}
 
 		if (fields.size() < 3) {
@@ -345,41 +359,16 @@ namespace Foundation {
 			memcpy(flipped.data() + (height - 1 - y) * width * 4, pixels.data() + y * width * 4, width * 4);
 		}
 
-		// Encode to PNG using stb_image_write
-		// We use a custom write function to write to a vector instead of a file
-		struct PNGWriteContext {
-			std::vector<unsigned char>* data;
-		};
-
-		PNGWriteContext context;
-		context.data = &screenshotData;
-
-		// Write callback for stb_image_write
-		auto pngWriteFunc = [](void* context, void* data, int size) {
-			auto* ctx = static_cast<PNGWriteContext*>(context);
-			auto* bytes = static_cast<unsigned char*>(data);
-			ctx->data->insert(ctx->data->end(), bytes, bytes + size); // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic)
-		};
-
-		// Encode to PNG (hold mutex for entire operation to prevent race conditions)
+		// Encode to PNG via the shared encoder (single STB definition site).
 		LOG_DEBUG(Foundation, "Encoding screenshot to PNG...");
-		int result = 0;
+		bool encodeFailed = false;
 		{
 			std::lock_guard<std::mutex> lock(screenshotMutex);
-			screenshotData.clear();
-
-			result = stbi_write_png_to_func(
-				pngWriteFunc,
-				&context,
-				width,
-				height,
-				4, // RGBA (4 components)
-				flipped.data(),
-				width * 4 // stride
-			);
+			screenshotData = encodePngToMemory(flipped.data(), width, height);
+			encodeFailed = screenshotData.empty();
 		}
 
-		if (result == 0) {
+		if (encodeFailed) {
 			LOG_ERROR(Foundation, "Failed to encode screenshot to PNG");
 			screenshotRequested.store(false);
 			return;
@@ -493,6 +482,54 @@ namespace Foundation {
 		return true;
 	}
 
+	bool DebugServer::requestState(const std::string& what, std::string& out, int timeoutMs) { // NOLINT(readability-identifier-naming)
+		// Single in-flight request: stateQuery/stateResult are one shared slot, so a second
+		// concurrent caller would clobber the first (or read the wrong JSON). try_lock fails
+		// fast instead; the route turns that into a 503. Held for the whole blocking wait.
+		std::unique_lock<std::mutex> inFlight(stateRequestMutex, std::try_to_lock);
+		if (!inFlight.owns_lock()) {
+			return false;
+		}
+
+		std::unique_lock<std::mutex> lock(stateMutex);
+		stateQuery = what;
+		stateResult.clear();
+		stateReady.store(false);
+		stateRequested.store(true);
+
+		// Block on the CV (releasing stateMutex while parked) until the game thread delivers
+		// or the timeout elapses -- no busy-poll, no tied-up CPU.
+		const bool delivered = stateCV.wait_for(lock, std::chrono::milliseconds(timeoutMs), [this] { return stateReady.load(); });
+		if (!delivered) {
+			stateRequested.store(false);
+			return false;
+		}
+		out = stateResult;
+		stateReady.store(false);
+		return true;
+	}
+
+	bool DebugServer::consumeStateRequest(std::string& whatOut) {
+		if (!stateRequested.load()) {
+			return false;
+		}
+		{
+			std::lock_guard<std::mutex> lock(stateMutex);
+			whatOut = stateQuery;
+		}
+		stateRequested.store(false);
+		return true;
+	}
+
+	void DebugServer::deliverState(const std::string& json) {
+		{
+			std::lock_guard<std::mutex> lock(stateMutex);
+			stateResult = json;
+			stateReady.store(true); // set under the lock so the waiter can't miss the wakeup
+		}
+		stateCV.notify_all();
+	}
+
 	void DebugServer::serverThreadFunc(int port) { // NOLINT(readability-convert-member-functions-to-static)
 		server = std::make_unique<httplib::Server>();
 
@@ -543,14 +580,19 @@ namespace Foundation {
 			}
 		});
 
-		// Input injection endpoint - queues synthetic UI input dispatched by the
-		// main loop through the same path as real mouse events. Coordinates are
+		// Input injection endpoint - queues synthetic input dispatched by the main
+		// loop through the same paths as real mouse/keyboard events. Coordinates are
 		// logical UI pixels. Accepts one or more 'ev' params, each a CSV:
 		//   click,x,y[,left|right|middle]   (expands to move+down+up)
 		//   move,x,y
 		//   down,x,y[,button]   up,x,y[,button]
 		//   scroll,x,y,delta
-		// Example: /api/input?ev=click,160,630&ev=scroll,1500,800,-2
+		//   keydown,<key>   keyup,<key>   (key name, e.g. R or Escape; no coords)
+		// Send key events in SEPARATE requests: a keydown registers on the next frame
+		// and fires the press edge (isKeyPressed) once; a later keyup releases. A
+		// keydown and keyup batched in ONE request land in the same frame and collapse
+		// to a release, missing the press edge. Tap example (two requests):
+		//   GET /api/input?ev=keydown,R    then    GET /api/input?ev=keyup,R
 		server->Get("/api/input", [this](const httplib::Request& req, httplib::Response& res) {
 			res.set_header("Access-Control-Allow-Origin", "*");
 
@@ -592,10 +634,11 @@ namespace Foundation {
 		// Dev/test command endpoint - queues a generic DevCommand the app drains and
 		// interprets. DebugServer stays domain-agnostic: it parses the verb (path
 		// tail) plus every query param into a bag and queues it; the app (GameScene)
-		// knows what "freebuild"/"givewood"/"foundation" mean. Dev-only, gated by the
+		// knows what "freebuild"/"spawn"/"foundation" mean. Dev-only, gated by the
 		// debug server (which only runs in dev builds), mirrors /api/input's queue.
 		//   /api/dev/freebuild?on=1
-		//   /api/dev/givewood?n=100[&where=site|loose]
+		//   /api/dev/give?material=Wood&n=100&where=site|loose|colonist|storage
+			//   /api/dev/spawn?def=<assetName>&at=x,y&n=5&scatter=3
 		//   /api/dev/foundation?pts=x0,y0;x1,y1;...&material=Wood&built=1
 		server->Get(R"(/api/dev/[A-Za-z0-9_-]+)", [this](const httplib::Request& req, httplib::Response& res) {
 			res.set_header("Access-Control-Allow-Origin", "*");
@@ -622,6 +665,21 @@ namespace Foundation {
 			std::ostringstream json;
 			json << "{\"status\":\"ok\",\"verb\":\"" << escapeJsonString(verb) << "\",\"queued\":1}";
 			res.set_content(json.str(), "application/json");
+		});
+
+		// World-state readback. Synchronous: parks the HTTP thread while the game thread
+		// serializes the requested view to JSON (the HTTP thread must never touch the ECS).
+		//   /api/state?what=summary|colonists|construction|time
+		server->Get("/api/state", [this](const httplib::Request& req, httplib::Response& res) {
+			res.set_header("Access-Control-Allow-Origin", "*");
+			const std::string what = req.has_param("what") ? req.get_param_value("what") : "summary";
+			std::string		  json;
+			if (requestState(what, json, 2000)) {
+				res.set_content(json, "application/json");
+			} else {
+				res.status = 503;
+				res.set_content("{\"error\":\"state request unavailable (timed out, busy, or game scene not running)\"}", "application/json");
+			}
 		});
 
 		// Control endpoint - allows control of sandbox via HTTP GET with query params

@@ -35,8 +35,31 @@ void OrbitCamera::setMinDistance(float newMin) {
 
 void OrbitCamera::beginDrag(float mouseX, float mouseY) {
     dragging = true;
+    userInteracted = true;
     prevMouseX = mouseX;
     prevMouseY = mouseY;
+}
+
+float OrbitCamera::pitchUnlockDistance() {
+    // Orbit distance at which the unit sphere exactly fills the vertical
+    // viewport, derived from the projection FOV (same glm::radians conversion
+    // projMatrix uses). Cached on first use.
+    static const float d = 1.0F / std::sin(glm::radians(kFovDeg * 0.5F));
+    return d;
+}
+
+void OrbitCamera::clampPitch() {
+    const float unlock = pitchUnlockDistance();
+    float r = 0.0F;
+    if (distance < unlock) {
+        const float span = unlock - minDist;
+        float t = span > 0.0F ? (unlock - distance) / span : 1.0F;
+        t = std::clamp(t, 0.0F, 1.0F);
+        r = t * kMaxPitchOffset;
+    }
+    const float lo = std::max(kHomePitch - r, -kPolePitch);
+    const float hi = std::min(kHomePitch + r,  kPolePitch);
+    pitch = std::clamp(pitch, lo, hi);
 }
 
 void OrbitCamera::drag(float mouseX, float mouseY) {
@@ -51,7 +74,7 @@ void OrbitCamera::drag(float mouseX, float mouseY) {
 
     yaw   += yawVel;
     pitch += pitchVel;
-    pitch = std::clamp(pitch, -1.5F, 1.5F);
+    clampPitch();
     idleTime = 0.0F;
 }
 
@@ -59,9 +82,24 @@ void OrbitCamera::endDrag() {
     dragging = false;
 }
 
+void OrbitCamera::markInteracted() {
+    userInteracted = true;
+}
+
 void OrbitCamera::scroll(float delta) {
     distance -= delta * kScrollSens * distance;
     distance = std::clamp(distance, minDist, kMaxDist);
+    // Zooming out tightens the allowed band, easing pitch back toward home.
+    clampPitch();
+    userInteracted = true;
+    idleTime = 0.0F;
+}
+
+void OrbitCamera::nudge(float dYaw, float dPitch) {
+    yaw   += dYaw;
+    pitch += dPitch;
+    clampPitch();
+    userInteracted = true;
     idleTime = 0.0F;
 }
 
@@ -72,11 +110,12 @@ void OrbitCamera::update(float dt) {
         pitchVel *= kInertia;
         yaw   += yawVel * dt * 60.0F;
         pitch += pitchVel * dt * 60.0F;
-        pitch = std::clamp(pitch, -1.5F, 1.5F);
+        clampPitch();
 
-        // Auto-rotate after idle.
+        // Gentle reveal spin while idle, but only until the user first touches
+        // the globe -- after any interaction it stays put and never resumes.
         idleTime += dt;
-        if (idleTime > kIdleDelay) {
+        if (!userInteracted && idleTime > kIdleDelay) {
             float blend = std::min((idleTime - kIdleDelay) / 2.0F, 1.0F);
             yaw += kAutoYaw * dt * blend;
         }

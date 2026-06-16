@@ -99,6 +99,22 @@ namespace engine::construction {
 		bool			   valid = false;
 	};
 
+	// Outer-face-flush alignment (design "Alignment": walls snapped to a foundation
+	// edge align outer-face-flush, so the full thickness sits ON the foundation and
+	// the foundation never lips outside the building). Returns the centerline corner
+	// for `ring`'s vertex `vertexIndex`, offset INWARD to the mitered meeting point of
+	// the two incident edges' inset lines. Two perimeter walls that share this corner
+	// resolve to the identical point, so they join at one vertex on commit. World
+	// meters; the interior side is found exactly via point-in-polygon so the ring's
+	// winding doesn't matter. A small fixed safety bias (kept inside the offset, applied
+	// to every edge) absorbs the millimeter quantization that would otherwise push a
+	// diagonal edge's outer band corner just outside the ring; on axis-aligned edges,
+	// which have no rounding, it just seats the corner a flat ~2 mm inside. halfThicknessMm
+	// <= 0 or a degenerate ring returns the corner unchanged. Shared by the WallTool's
+	// foundation-vertex snap and the edge-fill path.
+	[[nodiscard]] ::Foundation::Vec2
+	outerFaceFlushCorner(const geometry::Ring& ring, std::size_t vertexIndex, std::int64_t halfThicknessMm);
+
 	class SnapEngine {
 	  public:
 		SnapEngine(const engine::assets::SnappingConfig& snapping, const ConstructionWorld& world)
@@ -114,7 +130,17 @@ namespace engine::construction {
 		// vertex > point-on-wall-segment (T-junction) > foundation edge > angle snap
 		// off the previous chain point > raw. No origin-close (the chain is open). The
 		// result's hitVertex/hitSegment tell the WallTool what to commit against.
-		[[nodiscard]] SnapResult snapWall(const std::vector<::Foundation::Vec2>& points, ::Foundation::Vec2 cursor, bool freeform) const;
+		// `wallHalfThicknessMm` is the active wall's half-thickness: foundation-vertex
+		// and foundation-edge hits are inset by it for outer-face-flush alignment
+		// (see outerFaceFlushCorner), so a wall traced along the perimeter sits ON the
+		// foundation. Wall-endpoint and T-junction hits snap to the existing wall graph
+		// exactly and are never inset. Pass 0 to disable the inset (zero-thickness).
+		[[nodiscard]] SnapResult snapWall(
+			const std::vector<::Foundation::Vec2>& points,
+			::Foundation::Vec2					   cursor,
+			bool								   freeform,
+			std::int64_t						   wallHalfThicknessMm
+		) const;
 
 		// Opening snap (Epic F). Find the nearest BUILT wall segment whose centerline
 		// passes within edgeSnapRadius of `cursor`, project the cursor onto it, and
@@ -127,11 +153,17 @@ namespace engine::construction {
 		[[nodiscard]] OpeningSnap snapOpening(::Foundation::Vec2 cursor, float openingWidthMeters) const;
 
 	  private:
-		// Nearest existing-foundation vertex within vertexSnapRadius, if any.
-		[[nodiscard]] bool snapToVertex(::Foundation::Vec2 cursor, ::Foundation::Vec2& out) const;
+		// Nearest existing-foundation vertex within vertexSnapRadius, if any. When
+		// `insetMm > 0` the returned point is the outer-face-flush mitered corner
+		// (offset inward by insetMm), not the raw vertex; proximity is still measured
+		// to the raw vertex. insetMm == 0 returns the raw vertex (the foundation tool).
+		[[nodiscard]] bool snapToVertex(::Foundation::Vec2 cursor, ::Foundation::Vec2& out, std::int64_t insetMm = 0) const;
 
-		// Nearest point on any existing-foundation edge within edgeSnapRadius.
-		[[nodiscard]] bool snapToEdge(::Foundation::Vec2 cursor, ::Foundation::Vec2& out) const;
+		// Nearest point on any existing-foundation edge within edgeSnapRadius. When
+		// `insetMm > 0` the returned point is offset inward by insetMm along the edge's
+		// interior normal (outer-face-flush); proximity is still measured to the raw
+		// edge. insetMm == 0 returns the raw foot of perpendicular (the foundation tool).
+		[[nodiscard]] bool snapToEdge(::Foundation::Vec2 cursor, ::Foundation::Vec2& out, std::int64_t insetMm = 0) const;
 
 		// Nearest existing WALL vertex within vertexSnapRadius. On a hit, `out` is the
 		// snapped point and `outVertex` the vertex id (so the chain joins it exactly).

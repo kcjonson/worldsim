@@ -2,9 +2,11 @@
 
 #include "GameWorldState.h"
 #include "SceneTypes.h"
+#include "scenes/game/dev/DevCommandHandler.h"
 #include "scenes/game/ui/GameUI.h"
 #include "scenes/game/world/construction/DrawingSystem.h"
 #include "scenes/game/world/placement/PlacementSystem.h"
+#include "scenes/game/world/rooms/RoomOverlay.h"
 #include "scenes/game/world/selection/SelectionSystem.h"
 
 #include <assets/ConstructionRegistry.h>
@@ -53,6 +55,7 @@
 #include <ecs/components/Movement.h>
 #include <ecs/components/Needs.h>
 #include <ecs/components/Packaged.h>
+#include <ecs/components/AgentRadius.h>
 #include <ecs/components/Room.h>
 #include <ecs/components/Skills.h>
 #include <ecs/components/Structure.h>
@@ -64,6 +67,7 @@
 #include <ecs/systems/AIDecisionSystem.h>
 #include <ecs/systems/ActionSystem.h>
 #include <ecs/systems/BuildGoalSystem.h>
+#include <ecs/systems/CollisionSystem.h>
 #include <ecs/systems/ConstructionSystem.h>
 #include <ecs/systems/CraftingGoalSystem.h>
 #include <ecs/systems/DynamicEntityRenderSystem.h>
@@ -239,6 +243,13 @@ namespace {
 					[this](const std::string& preset) {
 						if (m_drawingSystem) {
 							m_drawingSystem->setActiveThicknessPreset(preset);
+						}
+					},
+				.onRoomsToggle =
+					[this]() {
+						// Button and R hotkey share this one method so they never drift.
+						if (m_roomOverlay) {
+							setRoomOverlayActive(!m_roomOverlay->isActive());
 						}
 					}
 			});
@@ -427,6 +438,27 @@ namespace {
 				}}
 			});
 
+			// Dev/test command + readback handler. All the systems it pokes now exist; it
+			// borrows the colonist-spawn helper (also used at world init) via a callback.
+			m_devHandler = std::make_unique<world_sim::DevCommandHandler>(world_sim::DevCommandContext{
+				.world = ecsWorld.get(),
+				.drawing = m_drawingSystem.get(),
+				.placement = m_placementSystem.get(),
+				.selection = m_selectionSystem.get(),
+				.ui = gameUI.get(),
+				.chunks = m_chunkManager.get(),
+				.spawnColonist = [this](glm::vec2 pos, const std::string& name) { return spawnColonist(pos, name); },
+			});
+
+			// Rooms overlay: scene-owned world-space layer that tints/outlines/labels
+			// detected rooms when toggled on (R). Reads the same RoomDetectionSystem
+			// records live; off by default.
+			m_roomOverlay = std::make_unique<world_sim::RoomOverlay>(world_sim::RoomOverlay::Args{
+				.world = ecsWorld.get(),
+				.camera = m_camera.get(),
+				.roomDetection = &ecsWorld->getSystem<ecs::RoomDetectionSystem>(),
+			});
+
 			// Populate the config strip's material cards from construction config.
 			{
 				std::vector<std::pair<std::string, float>> materials;
@@ -495,7 +527,19 @@ namespace {
 
 			// Handle entity selection on left click release (only if UI didn't consume it)
 			if (!consumed && event.type == UI::InputEvent::Type::MouseUp) {
-				m_selectionSystem->handleClick(event.position.x, event.position.y, logicalW, logicalH);
+				// While the room overlay is active it owns the LEFT click: hit a room ->
+				// RoomSelection, miss -> deselect. It never falls through to structure
+				// selection (rooms aren't in the SelectionSystem ladder). Routed through
+				// setSelection so the result flows through the same sink (current()).
+				if (m_roomOverlay->isActive() && event.button == engine::MouseButton::Left) {
+					if (auto roomId = m_roomOverlay->handleClick(event.position.x, event.position.y, logicalW, logicalH)) {
+						m_selectionSystem->setSelection(world_sim::RoomSelection{*roomId});
+					} else {
+						m_selectionSystem->clearSelection();
+					}
+				} else {
+					m_selectionSystem->handleClick(event.position.x, event.position.y, logicalW, logicalH);
+				}
 			}
 
 			return consumed;
@@ -532,6 +576,13 @@ namespace {
 			// wiring in the placement/drawing activation callbacks).
 			if (input.isKeyPressed(engine::Key::B) && !m_drawingSystem->isActive()) {
 				m_placementSystem->toggleBuildMenu();
+			}
+
+			// R toggles the rooms overlay (tint/outline/label of detected rooms). Same
+			// state the GameplayBar Rooms button flips, through the same method, so the
+			// two never drift.
+			if (input.isKeyPressed(engine::Key::R)) {
+				setRoomOverlayActive(!m_roomOverlay->isActive());
 			}
 
 			// Handle time controls
@@ -588,17 +639,22 @@ namespace {
 					}
 				}
 
-				// Drain DEV/TEST construction commands (/api/dev/...). DebugServer is
-				// domain-agnostic and only queues generic DevCommands; GameScene owns the
-				// construction context (ConstructionSystem, ConstructionWorld, ecsWorld) so
-				// it interprets them here. Mirrors the camera/input consume path; runs only
-				// in dev builds (the debug server is dev-only). Drained BEFORE ecsWorld->update()
-				// so a freebuild/foundation command takes effect the same frame.
+				// Drain DEV/TEST commands (/api/dev/...) and serve a pending /api/state
+				// readback. DebugServer is domain-agnostic and only queues generic
+				// DevCommands / state requests; DevCommandHandler owns the game context and
+				// interprets them. Both run on the game thread (the HTTP thread must never
+				// touch the ECS) and BEFORE ecsWorld->update() so a command takes effect the
+				// same frame. Dev builds only (the debug server is dev-only).
 				std::vector<Foundation::DevCommand> devCommands;
 				if (debugServer->consumeDevCommands(devCommands)) {
 					for (const auto& devCmd : devCommands) {
-						handleDevCommand(devCmd);
+						m_devHandler->handle(devCmd);
 					}
+				}
+
+				std::string stateQuery;
+				if (debugServer->consumeStateRequest(stateQuery)) {
+					debugServer->deliverState(m_devHandler->serializeState(stateQuery));
 				}
 			}
 			dx += m_debugPanX;
@@ -658,12 +714,30 @@ namespace {
 				m_pendingEntityRemoval.clear();
 			}
 
+			// Feed the current selection's room id to the overlay so it can draw the
+			// gold selected highlight; 0 (no room selected) clears it.
+			{
+				const auto&	  sel = m_selectionSystem->current();
+				std::uint64_t selectedRoom = 0;
+				if (const auto* roomSel = std::get_if<world_sim::RoomSelection>(&sel)) {
+					selectedRoom = roomSel->roomId;
+				}
+				m_roomOverlay->setSelectedRoom(selectedRoom);
+			}
+
 			// Update unified game UI (overlay + info panel)
 			auto& assetRegistry = engine::assets::AssetRegistry::Get();
 			auto& recipeRegistry = engine::assets::RecipeRegistry::Get();
 			gameUI->update(
-				dt, *m_camera, *m_chunkManager, *ecsWorld, assetRegistry, recipeRegistry, m_selectionSystem->current(),
-				&m_drawingSystem->world()
+				dt,
+				*m_camera,
+				*m_chunkManager,
+				*ecsWorld,
+				assetRegistry,
+				recipeRegistry,
+				m_selectionSystem->current(),
+				&m_drawingSystem->world(),
+				&ecsWorld->getSystem<ecs::RoomDetectionSystem>()
 			);
 
 			// Push drawing-tool status to the config strip (drives its readouts and
@@ -702,6 +776,10 @@ namespace {
 			// C6 replaces committed-foundation rendering). Drawn after entities so
 			// foundations sit above terrain and below the cursor ghost/UI.
 			m_drawingSystem->render(w, h);
+
+			// Rooms overlay (tint/outline/label) above foundation fills, below walls.
+			// No-op unless toggled on (R).
+			m_roomOverlay->render(w, h);
 
 			// Render selection indicator in world-space (after entities, before UI)
 			m_selectionSystem->renderIndicator(w, h);
@@ -793,6 +871,7 @@ namespace {
 			ecsWorld->registerSystem<ecs::AIDecisionSystem>(assetRegistry, recipeRegistry); // Priority 60
 			ecsWorld->registerSystem<ecs::MovementSystem>();								// Priority 100
 			ecsWorld->registerSystem<ecs::PhysicsSystem>();									// Priority 200
+			ecsWorld->registerSystem<ecs::CollisionSystem>();								// Priority 250 - positional separation after physics
 			ecsWorld->registerSystem<ecs::ActionSystem>();									// Priority 350
 			ecsWorld->registerSystem<ecs::DynamicEntityRenderSystem>();						// Priority 900
 
@@ -880,6 +959,7 @@ namespace {
 			ecsWorld->addComponent<ecs::Task>(entity, ecs::Task{});
 			ecsWorld->addComponent<ecs::DecisionTrace>(entity, ecs::DecisionTrace{});
 			ecsWorld->addComponent<ecs::Action>(entity, ecs::Action{});
+			ecsWorld->addComponent<ecs::AgentRadius>(entity, ecs::AgentRadius{});
 
 			// Add skills with default starting values
 			// Skills range 0-20 (see SkillLevels in Skills.h)
@@ -1017,309 +1097,6 @@ namespace {
 			LOG_INFO(Game, "Canceled job '%s' at station '%s'", recipeDefName.c_str(), stationSel->defName.c_str());
 		}
 
-		// =====================================================================
-		// DEV/TEST HTTP commands (/api/dev/...). Dev-only: the debug server that
-		// queues these runs only in dev builds. DebugServer stays domain-agnostic
-		// and hands us a generic DevCommand; this is where the construction context
-		// (ConstructionSystem, ConstructionWorld, ecsWorld) interprets the verb.
-		// =====================================================================
-
-		/// Interpret one queued DevCommand. Unknown verbs are logged and ignored.
-		void handleDevCommand(const Foundation::DevCommand& cmd) {
-			if (cmd.verb == "freebuild" || cmd.verb == "construction") {
-				devFreeBuild(cmd);
-			} else if (cmd.verb == "givewood") {
-				devGiveWood(cmd);
-			} else if (cmd.verb == "foundation") {
-				devFoundation(cmd);
-			} else if (cmd.verb == "walls") {
-				devWalls(cmd);
-			} else if (cmd.verb == "opening") {
-				devOpening(cmd);
-			} else {
-				LOG_WARNING(Game, "[DevAPI] Unknown dev command verb '%s'", cmd.verb.c_str());
-			}
-		}
-
-		/// /api/dev/freebuild?on=1|0  (also /api/dev/construction?freebuild=on|off).
-		/// Toggles ConstructionSystem free-build: every blueprint is then driven
-		/// straight to Built each tick without colonists. Inert when off.
-		void devFreeBuild(const Foundation::DevCommand& cmd) {
-			// Accept on= (freebuild verb) or freebuild= (construction verb); truthy on
-			// 1/on/true/yes.
-			std::string value = cmd.hasParam("on") ? cmd.param("on") : cmd.param("freebuild", "1");
-			const bool	on = (value == "1" || value == "on" || value == "true" || value == "yes");
-			ecsWorld->getSystem<ecs::ConstructionSystem>().setFreeBuild(on);
-			LOG_INFO(Game, "[DevAPI] free-build %s", on ? "ON" : "OFF");
-			gameUI->pushNotification("Dev", on ? "Free-build ON" : "Free-build OFF", UI::ToastSeverity::Info);
-		}
-
-		/// /api/dev/givewood?n=100[&where=site|loose]. Credits N Wood to active build
-		/// sites' delivery inventories (where=site, the default and most direct), so the
-		/// build proceeds without harvesting/hauling. where=loose is not wired here.
-		void devGiveWood(const Foundation::DevCommand& cmd) {
-			const long n = std::strtol(cmd.param("n", "100").c_str(), nullptr, 10);
-			if (n <= 0) {
-				LOG_WARNING(Game, "[DevAPI] givewood: n must be > 0");
-				return;
-			}
-			const std::string where = cmd.param("where", "site");
-			if (where != "site") {
-				LOG_WARNING(Game, "[DevAPI] givewood where=%s not supported (only 'site'); ignoring", where.c_str());
-				return;
-			}
-			const uint32_t credited =
-				ecsWorld->getSystem<ecs::ConstructionSystem>().creditMaterialToSites("Wood", static_cast<uint32_t>(n));
-			LOG_INFO(Game, "[DevAPI] givewood: credited %u Wood across build sites", credited);
-			gameUI->pushNotification("Dev", "Credited " + std::to_string(credited) + " Wood to sites", UI::ToastSeverity::Info);
-		}
-
-		/// /api/dev/foundation?pts=x0,y0;x1,y1;...&material=Wood&built=1. Commits a
-		/// foundation from world-meter coordinates straight into the ConstructionWorld
-		/// (bypassing the draw tool), spawns its blueprint entity the same way the draw
-		/// tool's commit does, and optionally drives it to Built via the free-build path
-		/// (built=1). built=0 leaves a normal blueprint colonists will build.
-		void devFoundation(const Foundation::DevCommand& cmd) {
-			std::vector<Foundation::Vec2> pts = parsePointList(cmd.param("pts"));
-			if (pts.size() < 3) {
-				LOG_WARNING(Game, "[DevAPI] foundation: pts needs >= 3 'x,y' pairs (got %zu)", pts.size());
-				return;
-			}
-			const std::string material = cmd.param("material", "Wood");
-
-			auto&	   constructionWorld = m_drawingSystem->world();
-			const auto commit = constructionWorld.commitFoundation(pts, material);
-			if (!commit.ok()) {
-				LOG_WARNING(Game, "[DevAPI] foundation: commit rejected (status %d)", static_cast<int>(commit.status));
-				gameUI->pushNotification("Dev", "Foundation commit rejected", UI::ToastSeverity::Warning);
-				return;
-			}
-
-			const ecs::EntityID entity = spawnFoundationBlueprintEntity(commit.id, pts, material);
-			if (entity == ecs::kInvalidEntity) {
-				LOG_WARNING(Game, "[DevAPI] foundation: spawn failed for #%llu", static_cast<unsigned long long>(commit.id));
-				return;
-			}
-
-			const std::string builtStr = cmd.param("built", "0");
-			const bool		  built = (builtStr == "1" || builtStr == "on" || builtStr == "true" || builtStr == "yes");
-			if (built) {
-				// Route through the SAME instant-completion path free-build uses, so a
-				// one-call built foundation is indistinguishable from a normally-built one.
-				ecsWorld->getSystem<ecs::ConstructionSystem>().forceCompleteBlueprint(entity);
-			}
-			LOG_INFO(
-				Game,
-				"[DevAPI] foundation #%llu spawned (%zu pts, %s, built=%d, entity %u)",
-				static_cast<unsigned long long>(commit.id),
-				pts.size(),
-				material.c_str(),
-				built ? 1 : 0,
-				static_cast<uint32_t>(entity)
-			);
-			gameUI->pushNotification("Dev", built ? "Built foundation placed" : "Foundation blueprint placed", UI::ToastSeverity::Info);
-		}
-
-		/// /api/dev/walls?pts=x0,y0;x1,y1;...&material=Wood&thickness=Standard&built=1&host=0&close=1.
-		/// Commits a wall chain straight into the ConstructionWorld (bypassing the draw
-		/// tool) and spawns segment entities. close=1 (default) appends the first point
-		/// so a >=3-point chain encloses, which forms a room when built=1. host=0
-		/// (default) makes the walls freestanding -- rooms need only built centerlines,
-		/// not a host foundation. built=0 leaves blueprints for colonists to build.
-		void devWalls(const Foundation::DevCommand& cmd) {
-			std::vector<Foundation::Vec2> pts = parsePointList(cmd.param("pts"));
-			if (pts.size() < 2) {
-				LOG_WARNING(Game, "[DevAPI] walls: pts needs >= 2 'x,y' pairs (got %zu)", pts.size());
-				return;
-			}
-			const std::string material = cmd.param("material", "Wood");
-			const std::string thickness = cmd.param("thickness", "Standard");
-			// strtoull, not strtoul: FoundationId is 64-bit, and unsigned long is only
-			// 32-bit on Windows (LLP64), which would truncate large ids.
-			const auto host = static_cast<engine::construction::FoundationId>(std::strtoull(cmd.param("host", "0").c_str(), nullptr, 10));
-
-			const std::string builtStr = cmd.param("built", "1");
-			const bool		  built = (builtStr == "1" || builtStr == "on" || builtStr == "true" || builtStr == "yes");
-			const std::string closeStr = cmd.param("close", "1");
-			const bool		  close = (closeStr == "1" || closeStr == "on" || closeStr == "true" || closeStr == "yes");
-			if (close && pts.size() >= 3) {
-				pts.push_back(pts.front()); // close the loop so the chain encloses
-			}
-
-			const int n = m_drawingSystem->devCommitWalls(pts, material, thickness, host, built);
-			LOG_INFO(
-				Game,
-				"[DevAPI] walls: committed %d segment(s) (%s/%s, built=%d, host=%llu)",
-				n,
-				material.c_str(),
-				thickness.c_str(),
-				built ? 1 : 0,
-				static_cast<unsigned long long>(host)
-			);
-			gameUI->pushNotification("Dev", std::to_string(n) + (built ? " built wall(s)" : " wall blueprint(s)"), UI::ToastSeverity::Info);
-		}
-
-		/// /api/dev/opening?seg=<id>|pt=x,y&type=Door|Window&t=<0..1>&built=1.
-		/// Places an opening on a built wall and (built=1, default) spawns it Complete in
-		/// one call. The target segment is `seg` when given, else the nearest built wall
-		/// to `pt` (world meters) via snapOpening. `t` overrides the centerline parameter
-		/// (default: the snapped t for pt, or 0.5 for seg). built=0 leaves a blueprint
-		/// colonists build once the host wall is up. Bypasses the draw tool + soft
-		/// validator (the opening analogue of /api/dev/foundation).
-		void devOpening(const Foundation::DevCommand& cmd) {
-			const std::string type = cmd.param("type", "Door");
-			const auto*		  typeDef = engine::assets::ConstructionRegistry::Get().getOpeningType(type);
-			if (typeDef == nullptr) {
-				LOG_WARNING(Game, "[DevAPI] opening: unknown type '%s'", type.c_str());
-				gameUI->pushNotification("Dev", "Unknown opening type", UI::ToastSeverity::Warning);
-				return;
-			}
-
-			auto& constructionWorld = m_drawingSystem->world();
-
-			// Resolve the target segment + centerline t: seg= names it directly (t
-			// defaults to center), pt= snaps to the nearest built wall (t from the snap).
-			engine::construction::SegmentId segment = engine::construction::kInvalidSegment;
-			float							t = 0.5F;
-			if (cmd.hasParam("seg")) {
-				segment = static_cast<engine::construction::SegmentId>(std::strtoull(cmd.param("seg").c_str(), nullptr, 10));
-			} else if (cmd.hasParam("pt")) {
-				const std::vector<Foundation::Vec2> pts = parsePointList(cmd.param("pt"));
-				if (pts.empty()) {
-					LOG_WARNING(Game, "[DevAPI] opening: pt must be 'x,y' world meters");
-					return;
-				}
-				const auto&							   registry = engine::assets::ConstructionRegistry::Get();
-				const engine::construction::SnapEngine snap(registry.snapping(), constructionWorld);
-				const auto							   os = snap.snapOpening(pts.front(), typeDef->widthMeters);
-				if (!os.valid) {
-					LOG_WARNING(Game, "[DevAPI] opening: no built wall near pt");
-					gameUI->pushNotification("Dev", "No built wall near point", UI::ToastSeverity::Warning);
-					return;
-				}
-				segment = os.segment;
-				t = os.t;
-			} else {
-				LOG_WARNING(Game, "[DevAPI] opening: needs seg=<id> or pt=x,y");
-				return;
-			}
-
-			// Explicit t= overrides the resolved parameter (addOpening clamps to [0,1]).
-			if (cmd.hasParam("t")) {
-				t = std::strtof(cmd.param("t").c_str(), nullptr);
-			}
-
-			const std::string builtStr = cmd.param("built", "1");
-			const bool		  built = (builtStr == "1" || builtStr == "on" || builtStr == "true" || builtStr == "yes");
-
-			const engine::construction::OpeningId id = m_drawingSystem->devCommitOpening(segment, t, type, built);
-			if (id == engine::construction::kInvalidOpening) {
-				LOG_WARNING(
-					Game,
-					"[DevAPI] opening: commit rejected (segment #%llu, type %s)",
-					static_cast<unsigned long long>(segment),
-					type.c_str()
-				);
-				gameUI->pushNotification("Dev", "Opening commit rejected", UI::ToastSeverity::Warning);
-				return;
-			}
-
-			LOG_INFO(
-				Game,
-				"[DevAPI] opening #%llu spawned (%s on segment #%llu at t=%.2f, built=%d)",
-				static_cast<unsigned long long>(id),
-				type.c_str(),
-				static_cast<unsigned long long>(segment),
-				static_cast<double>(t),
-				built ? 1 : 0
-			);
-			gameUI->pushNotification("Dev", built ? "Built opening placed" : "Opening blueprint placed", UI::ToastSeverity::Info);
-		}
-
-		/// Parse "x0,y0;x1,y1;..." (world meters) into a point list. Tolerant: skips
-		/// malformed pairs. Used by /api/dev/foundation and /api/dev/walls.
-		static std::vector<Foundation::Vec2> parsePointList(const std::string& spec) {
-			std::vector<Foundation::Vec2> pts;
-			std::stringstream			  ss(spec);
-			std::string					  pair;
-			while (std::getline(ss, pair, ';')) {
-				const auto comma = pair.find(',');
-				if (comma == std::string::npos) {
-					continue;
-				}
-				const std::string xs = pair.substr(0, comma);
-				const std::string ys = pair.substr(comma + 1);
-				char*			  endX = nullptr;
-				char*			  endY = nullptr;
-				const float		  x = std::strtof(xs.c_str(), &endX);
-				const float		  y = std::strtof(ys.c_str(), &endY);
-				// Skip the pair unless both parses consumed at least one character;
-				// strtof returns 0.0 on a non-numeric string, which would otherwise
-				// silently inject a (0,0) vertex.
-				if (endX == xs.c_str() || endY == ys.c_str()) {
-					continue;
-				}
-				pts.emplace_back(x, y);
-			}
-			return pts;
-		}
-
-		/// Build the ECS blueprint entity for a programmatically committed foundation.
-		/// Replicates DrawingSystem::spawnBlueprintEntity (which is private): same
-		/// components, same material-driven manifest/work/HP, same ConstructionWorld
-		/// entity link. Kept minimal and in sync with the draw-tool path.
-		ecs::EntityID spawnFoundationBlueprintEntity(engine::construction::FoundationId id, const std::vector<Foundation::Vec2>& pts, const std::string& material) {
-			auto& constructionWorld = m_drawingSystem->world();
-			if (constructionWorld.get(id) == nullptr) {
-				return ecs::kInvalidEntity;
-			}
-
-			const float area = constructionWorld.areaSquareMeters(id);
-
-			const auto& registry = engine::assets::ConstructionRegistry::Get();
-			const auto* mat = registry.getMaterial(material);
-			float		costRate = 0.0F;
-			float		workRate = 0.0F;
-			float		hpRate = 0.0F;
-			if (mat != nullptr) {
-				costRate = mat->costRatePerSquareMeter;
-				workRate = mat->workRatePerSquareMeter;
-				hpRate = mat->hp;
-			}
-
-			auto entity = ecsWorld->createEntity();
-
-			// Centroid (average of vertices) keeps the transform inside the footprint.
-			Foundation::Vec2 centroid{0.0F, 0.0F};
-			for (const auto& p : pts) {
-				centroid += p;
-			}
-			centroid /= static_cast<float>(pts.size());
-			ecsWorld->addComponent<ecs::Position>(entity, ecs::Position{{centroid.x, centroid.y}});
-
-			ecsWorld->addComponent<ecs::Structure>(entity, ecs::Structure{ecs::StructureKind::Foundation, id});
-
-			ecs::StructureBlueprint blueprint;
-			blueprint.phase = ecs::StructureBlueprint::BuildPhase::Clearing;
-			const auto requiredQty = static_cast<uint32_t>(std::ceil(static_cast<double>(area) * static_cast<double>(costRate)));
-			if (requiredQty > 0) {
-				blueprint.required.emplace_back(material, requiredQty);
-			}
-			blueprint.workTotal = area * workRate;
-			ecsWorld->addComponent<ecs::StructureBlueprint>(entity, std::move(blueprint));
-
-			ecs::Inventory deliveryInv;
-			deliveryInv.maxCapacity = 8;
-			deliveryInv.maxStackSize = 100000;
-			ecsWorld->addComponent<ecs::Inventory>(entity, std::move(deliveryInv));
-
-			const float maxHp = area * hpRate;
-			ecsWorld->addComponent<ecs::StructureHealth>(entity, ecs::StructureHealth{maxHp, maxHp});
-
-			constructionWorld.setEntity(id, entity);
-			return entity;
-		}
-
 		/// Refund a percentage of a deconstructed structure's materials as ground items at its
 		/// position. Uses the structure's `delivered` manifest (what was actually invested: a built
 		/// structure delivered its full `required`, so the common case refunds against the whole
@@ -1372,6 +1149,17 @@ namespace {
 			}
 			blueprint->demolishing = true;
 			return true;
+		}
+
+		/// Set the rooms-overlay active state and reflect it on the GameplayBar toggle
+		/// button. The single entry point for the R hotkey and the button, so the two
+		/// can never drift out of sync.
+		void setRoomOverlayActive(bool active) {
+			m_roomOverlay->setActive(active);
+			if (gameUI) {
+				gameUI->setRoomsOverlayActive(active);
+			}
+			LOG_INFO(Game, "Rooms overlay %s", active ? "ON" : "OFF");
 		}
 
 		/// Handle Demolish request from a foundation's info panel. Marks the foundation for
@@ -1591,6 +1379,11 @@ namespace {
 		std::unique_ptr<world_sim::PlacementSystem> m_placementSystem;
 		std::unique_ptr<world_sim::SelectionSystem> m_selectionSystem;
 		std::unique_ptr<world_sim::DrawingSystem>	m_drawingSystem;
+		std::unique_ptr<world_sim::RoomOverlay>		m_roomOverlay;
+
+		// Dev/test command + state-readback surface (/api/dev, /api/state). Dev-only;
+		// constructed after the systems above exist.
+		std::unique_ptr<world_sim::DevCommandHandler> m_devHandler;
 
 		// Entities queued for destruction, drained after ecsWorld->update() so we
 		// never destroyEntity mid-view-iteration (deconstruct callback, demolish).

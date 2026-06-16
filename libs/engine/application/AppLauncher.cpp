@@ -10,6 +10,7 @@
 #include <debug/DebugServer.h>
 #include <font/FontRenderer.h>
 #include <input/InputEvent.h>
+#include <input/InputManager.h>
 #include <metrics/MetricsCollector.h>
 #include <primitives/Primitives.h>
 #include <resources/TileAtlasBuilder.h>
@@ -69,6 +70,18 @@ namespace engine {
 				case Foundation::InputCommand::Type::Scroll:
 					send(UI::InputEvent::scroll(pos, cmd.scrollDelta));
 					break;
+				case Foundation::InputCommand::Type::KeyDown:
+				case Foundation::InputCommand::Type::KeyUp: {
+					// Keys are POLLED from InputManager (not routed as UI events like the
+					// mouse), so feed the manager directly. A down fires the press edge
+					// once; pair with an up to release.
+					if (auto key = InputManager::keyFromName(cmd.keyName)) {
+						InputManager::Get().injectKey(*key, cmd.type == Foundation::InputCommand::Type::KeyDown);
+					} else {
+						LOG_WARNING(Engine, "[Input] injected key '%s' not recognized", cmd.keyName.c_str());
+					}
+					break;
+				}
 			}
 		}
 		std::unique_ptr<Renderer::MetricsCollector> g_metrics;
@@ -206,7 +219,7 @@ namespace engine {
 			return true;
 		}
 
-		void initializeAssetSystem(const std::string& assetsRootPath) {
+		void initializeAssetSystem(const std::string& assetsRootPath, bool async) {
 			LOG_INFO(Engine, "Initializing asset system from %s", assetsRootPath.c_str());
 
 			// Find the assets root folder
@@ -223,10 +236,15 @@ namespace engine {
 				LOG_INFO(Engine, "Set shared scripts path: %s", sharedPath.c_str());
 			}
 
-			// Load all asset definitions from the root folder
-			// Item properties are now part of unified entity definitions (itemProperties section)
-			size_t loaded = engine::assets::AssetRegistry::Get().loadDefinitionsFromFolder(fullPath);
-			LOG_INFO(Engine, "Loaded %zu asset definitions from %s", loaded, fullPath.c_str());
+			// Load all asset definitions from the root folder.
+			// Item properties are now part of unified entity definitions (itemProperties section).
+			if (async) {
+				engine::assets::AssetRegistry::Get().beginLoadAsync(fullPath);
+				LOG_INFO(Engine, "Asset loading started asynchronously from %s", fullPath.c_str());
+			} else {
+				size_t loaded = engine::assets::AssetRegistry::Get().loadDefinitionsFromFolder(fullPath);
+				LOG_INFO(Engine, "Loaded %zu asset definitions from %s", loaded, fullPath.c_str());
+			}
 
 			// Load recipes from the recipes folder
 			std::string recipesPath = Foundation::findResourceString("assets/recipes");
@@ -324,8 +342,11 @@ namespace engine {
 			return {};
 		}
 
-		// Initialize asset system
-		initializeAssetSystem(config.assetsRootPath);
+		// Initialize asset system. Load asynchronously only on the normal splash
+		// path; a --scene override loads synchronously so the jumped-to scene has
+		// assets ready before it runs.
+		const bool asyncAssets = config.loadAssetsAsync && !hasSceneArg;
+		initializeAssetSystem(config.assetsRootPath, asyncAssets);
 
 		// Create application
 		LOG_INFO(Engine, "Creating application");
