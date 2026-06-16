@@ -51,6 +51,9 @@ class OrbitCamera {
     void clampPitch();
 
     bool dragging{false};
+    // Latched true on the first user interaction (drag/scroll/key). Idle
+    // auto-rotate runs only before this and never resumes once set.
+    bool userInteracted{false};
     float prevMouseX{0.0F};
     float prevMouseY{0.0F};
 
