@@ -45,6 +45,31 @@ namespace geometry {
 		return Orientation::Collinear;
 	}
 
+	InCircle inCircle(const Vec2i64& a, const Vec2i64& b, const Vec2i64& c, const Vec2i64& d) {
+		// Translate so d is the origin; the differences fit int64 (precondition).
+		const Vec2i64 A = a - d;
+		const Vec2i64 B = b - d;
+		const Vec2i64 C = c - d;
+
+		// Lifted weights and 2x2 minors. Under the region-local precondition each
+		// product is < 2^61, so these int64 expressions do not overflow.
+		const std::int64_t aSq	   = A.x * A.x + A.y * A.y;
+		const std::int64_t bSq	   = B.x * B.x + B.y * B.y;
+		const std::int64_t cSq	   = C.x * C.x + C.y * C.y;
+		const std::int64_t crossBC = B.x * C.y - B.y * C.x;
+		const std::int64_t crossAC = A.x * C.y - A.y * C.x;
+		const std::int64_t crossAB = A.x * B.y - A.y * B.x;
+
+		// Cofactor expansion of the lifted determinant along its third column:
+		//   |A|^2 (B x C) - |B|^2 (A x C) + |C|^2 (A x B).
+		// Each term is an int64*int64 product (<= 2^122) and the three sum inside
+		// Int128. Positive => d inside the circumcircle of the CCW triangle.
+		const Int128 det = Int128::product(aSq, crossBC) - Int128::product(bSq, crossAC) + Int128::product(cSq, crossAB);
+
+		const int s = det.sign();
+		return s > 0 ? InCircle::Inside : (s < 0 ? InCircle::Outside : InCircle::OnCircle);
+	}
+
 	bool angleLess(const Vec2i64& u, const Vec2i64& v) {
 		const int hu = angleHalf(u);
 		const int hv = angleHalf(v);
