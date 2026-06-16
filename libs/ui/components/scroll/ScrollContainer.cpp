@@ -1,7 +1,9 @@
 #include "ScrollContainer.h"
 
+#include "graphics/PrimitiveStyles.h"
 #include "primitives/Primitives.h"
-#include "theme/Theme.h"
+#include "theme/Tokens.h"
+#include "theme/Variants.h"
 
 #include <algorithm>
 
@@ -87,38 +89,24 @@ void ScrollContainer::render() {
 
 	// Render scrollbar on top (only if content overflows)
 	if (maxScroll > 0.0F) {
+		using Renderer::Primitives::drawRect;
+
 		Foundation::Vec2 contentPos = getContentPosition();
+		const float		 trackLeft = contentPos.x + viewportSize.x - kScrollbarWidth;
 
-		// Track background
-		Renderer::Primitives::drawRect({
-			.bounds = Foundation::Rect{
-				contentPos.x + viewportSize.x - kScrollbarWidth,
-				contentPos.y,
-				kScrollbarWidth,
-				viewportSize.y
-			},
-			.style = {
-				.fill = Theme::Colors::scrollbarTrack
-			}
-		});
+		// Faint inset track spanning the full scrollbar column.
+		drawRect({.bounds = Foundation::Rect{trackLeft, contentPos.y, kScrollbarWidth, viewportSize.y},
+				  .style = {.fill = withAlpha(line_hairline, 0.4F)}});
 
-		// Thumb
-		float currentThumbY = contentPos.y + thumbY;
-		Foundation::Color thumbColor = isDraggingThumb
-			? Theme::Colors::scrollbarThumbActive
-			: Theme::Colors::scrollbarThumb;
+		// Thin rounded thumb, inset within the track. Brightens to accent on drag.
+		constexpr float			kThumbInset = 1.5F; // px gutter each side
+		const float				thumbWidth = kScrollbarWidth - (kThumbInset * 2.0F);
+		const Foundation::Color thumbColor = isDraggingThumb ? accent : withAlpha(text_dim, 0.5F);
 
-		Renderer::Primitives::drawRect({
-			.bounds = Foundation::Rect{
-				contentPos.x + viewportSize.x - kScrollbarWidth,
-				currentThumbY,
-				kScrollbarWidth,
-				thumbHeight
-			},
-			.style = {
-				.fill = thumbColor
-			}
-		});
+		drawRect({.bounds = Foundation::Rect{trackLeft + kThumbInset, contentPos.y + thumbY, thumbWidth, thumbHeight},
+				  .style = {.fill = thumbColor,
+							.border = Foundation::BorderStyle{
+								.color = thumbColor, .width = 0.0F, .cornerRadius = r_sm, .position = Foundation::BorderPosition::Inside}}});
 	}
 }
 

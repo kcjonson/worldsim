@@ -3,8 +3,8 @@
 // Toast - Notification popup with severity styling
 //
 // A temporary notification popup that displays a title, message, and optional
-// icon. Supports three severity levels (Info, Warning, Critical) with
-// automatic styling from the theme.
+// icon. Supports three severity levels (Info, Warning, Critical), each mapped to
+// a Salvage status tone.
 //
 // Features:
 // - Title and message text
@@ -15,18 +15,23 @@
 
 #include "component/Component.h"
 #include "graphics/Color.h"
-#include "theme/Theme.h"
+#include "theme/Tokens.h"
+#include "theme/Variants.h"
 
 #include <functional>
 #include <string>
 
 namespace UI {
 
+/// Default toast geometry/timing (formerly Theme::Toast).
+inline constexpr float kToastDefaultWidth = 300.0F;
+inline constexpr float kToastDefaultAutoDismiss = 5.0F;
+
 /// Severity levels for toast notifications
 enum class ToastSeverity {
-	Info,	 /// Blue - informational messages
-	Warning, /// Yellow - warnings
-	Critical /// Red - critical alerts
+	Info,	 /// Informational messages (data tone)
+	Warning, /// Warnings (warn tone)
+	Critical /// Critical alerts (crit tone)
 };
 
 class Toast : public Component {
@@ -35,12 +40,12 @@ class Toast : public Component {
 		std::string				  title;
 		std::string				  message;
 		ToastSeverity			  severity{ToastSeverity::Info};
-		float					  autoDismissTime{Theme::Toast::defaultAutoDismiss}; // 0 = persistent
-		std::string				  iconPath;											 // Optional SVG icon
+		float					  autoDismissTime{kToastDefaultAutoDismiss}; // 0 = persistent
+		std::string				  iconPath;									 // Optional SVG icon
 		std::function<void()>	  onDismiss;
 		std::function<void()>	  onClick; // Called when toast body is clicked (for navigation)
 		Foundation::Vec2		  position{0.0F, 0.0F};
-		float					  width{Theme::Toast::defaultWidth};
+		float					  width{kToastDefaultWidth};
 		const char*				  id = nullptr;
 		float					  margin{0.0F};
 	};
@@ -123,8 +128,9 @@ class Toast : public Component {
 	// Calculate toast height based on content
 	[[nodiscard]] float calculateHeight() const;
 
-	// Get background color based on severity
-	[[nodiscard]] Foundation::Color getBackgroundColor() const;
+	// Resolve the severity accent color (status tone) used for the stripe, title,
+	// icon, and glow.
+	[[nodiscard]] Foundation::Color getSeverityColor() const;
 
 	// Get bounds for dismiss button
 	[[nodiscard]] Foundation::Rect getDismissButtonBounds() const;

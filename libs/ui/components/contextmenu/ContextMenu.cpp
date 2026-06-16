@@ -1,15 +1,15 @@
 #include "ContextMenu.h"
 
 #include "focus/FocusManager.h"
+#include "graphics/PrimitiveStyles.h"
 #include "primitives/Primitives.h"
 
 #include <algorithm>
 
 namespace UI {
 
-	// Constants for menu item text rendering
-	constexpr float kItemTextPadding = 8.0F;
-	constexpr float kItemFontSize = 12.0F;
+	// drawText scale is relative to a 16px base.
+	constexpr float kTextBasePx = 16.0F;
 
 	ContextMenu::ContextMenu(const Args& args)
 		: FocusableBase<ContextMenu>(args.tabIndex),
@@ -55,24 +55,24 @@ namespace UI {
 	}
 
 	float ContextMenu::getMenuWidth() const {
-		// Use minimum width from theme, could expand for longer labels
-		return Theme::ContextMenu::minWidth;
+		// Minimum width; could expand for longer labels.
+		return kMinWidth;
 	}
 
 	float ContextMenu::getMenuHeight() const {
 		if (items.empty()) {
-			return Theme::ContextMenu::padding * 2;
+			return kPadding * 2;
 		}
-		return static_cast<float>(items.size()) * Theme::ContextMenu::itemHeight + Theme::ContextMenu::padding * 2;
+		return static_cast<float>(items.size()) * kItemHeight + kPadding * 2;
 	}
 
 	Foundation::Rect ContextMenu::getItemBounds(size_t index) const {
-		float itemY = position.y + Theme::ContextMenu::padding + static_cast<float>(index) * Theme::ContextMenu::itemHeight;
+		float itemY = position.y + kPadding + static_cast<float>(index) * kItemHeight;
 		return {
-			position.x + Theme::ContextMenu::padding,
+			position.x + kPadding,
 			itemY,
-			getMenuWidth() - Theme::ContextMenu::padding * 2,
-			Theme::ContextMenu::itemHeight
+			getMenuWidth() - kPadding * 2,
+			kItemHeight
 		};
 	}
 
@@ -89,8 +89,8 @@ namespace UI {
 			return -1;
 		}
 
-		float relativeY = point.y - position.y - Theme::ContextMenu::padding;
-		int	  index = static_cast<int>(relativeY / Theme::ContextMenu::itemHeight);
+		float relativeY = point.y - position.y - kPadding;
+		int	  index = static_cast<int>(relativeY / kItemHeight);
 
 		if (index < 0 || static_cast<size_t>(index) >= items.size()) {
 			return -1;
@@ -286,13 +286,17 @@ namespace UI {
 		float menuWidth = getMenuWidth();
 		float menuHeight = getMenuHeight();
 
-		// Menu background
+		// Raised Salvage surface: edge border, small radius, soft drop shadow.
 		Renderer::Primitives::drawRect(
 			Renderer::Primitives::RectArgs{
 				.bounds = {position.x, position.y, menuWidth, menuHeight},
 				.style =
-					{.fill = Theme::ContextMenu::background,
-					 .border = Foundation::BorderStyle{.color = Theme::ContextMenu::border, .width = 1.0F}},
+					{.fill = bg_panel_raised,
+					 .border = Foundation::BorderStyle{.color = line_edge,
+													  .width = bw,
+													  .cornerRadius = r_sm,
+													  .position = Foundation::BorderPosition::Inside},
+					 .boxShadow = Foundation::BoxShadow{.color = withAlpha(bg_void, 0.5F), .blur = 16.0F, .offset = {0.0F, 6.0F}}},
 				.zIndex = zIndex,
 			}
 		);
@@ -302,26 +306,31 @@ namespace UI {
 			Foundation::Rect	   itemBounds = getItemBounds(i);
 			const ContextMenuItem& item = items[i];
 
-			// Hover highlight
-			if (static_cast<int>(i) == hoveredIndex && item.enabled) {
+			const bool hovered = static_cast<int>(i) == hoveredIndex && item.enabled;
+
+			// Hover wash.
+			if (hovered) {
 				Renderer::Primitives::drawRect(
 					Renderer::Primitives::RectArgs{
 						.bounds = itemBounds,
-						.style = {.fill = Theme::ContextMenu::itemHover},
+						.style = {.fill = bg_hover},
 						.zIndex = zIndex + 1,
 					}
 				);
 			}
 
-			// Item text
-			Foundation::Color textColor = item.enabled ? Theme::Colors::textBody : Theme::ContextMenu::itemDisabled;
+			// Label: hovered = bright, normal = body, disabled = muted (no hover).
+			Foundation::Color textColor = !item.enabled ? text_disabled : (hovered ? text_bright : text);
 
 			Renderer::Primitives::drawText(
 				Renderer::Primitives::TextArgs{
 					.text = item.label,
-					.position = {itemBounds.x + kItemTextPadding, itemBounds.y + (Theme::ContextMenu::itemHeight - kItemFontSize) / 2.0F},
-					.scale = kItemFontSize / 16.0F,
+					.position = {itemBounds.x + space_3, itemBounds.y},
+					.scale = fs_sm / kTextBasePx,
 					.color = textColor,
+					.font = fontUi,
+					.vAlign = Foundation::VerticalAlign::Middle,
+					.boxHeight = kItemHeight,
 					.zIndex = static_cast<float>(zIndex + 2),
 				}
 			);

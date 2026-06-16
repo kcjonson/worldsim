@@ -1,9 +1,20 @@
 #include "TreeView.h"
 
+#include "graphics/PrimitiveStyles.h"
 #include "primitives/Primitives.h"
-#include "shapes/Shapes.h"
+#include "theme/Tokens.h"
+#include "theme/Variants.h"
 
 namespace UI {
+
+namespace {
+
+	// drawText scale is relative to a 16px base.
+	constexpr float kTextBasePx = 16.0F;
+
+	float textScale(float sizePx) { return sizePx / kTextBasePx; }
+
+} // namespace
 
 TreeView::TreeView(const Args& args)
 	: rowHeight(args.rowHeight),
@@ -146,10 +157,22 @@ void TreeView::render() {
 		rebuildFlatList();
 	}
 
+	using Renderer::Primitives::drawLine;
+	using Renderer::Primitives::drawRect;
+	using Renderer::Primitives::drawText;
+
 	Foundation::Vec2 contentPos = getContentPosition();
 
 	// Calculate effective height for clipping (auto-height mode uses content height)
 	float effectiveHeight = size.y > 0.0F ? size.y : static_cast<float>(flattenedRows.size()) * rowHeight;
+
+	// Marker glyph metrics: a small chevron drawn from two diagonal strokes.
+	constexpr float kMarkerBox = 16.0F;	  // column reserved for the chevron
+	constexpr float kChevronArm = 3.5F;	  // half-extent of the chevron
+	constexpr float kChevronStroke = bw_thick; // stroke width
+
+	const float rowTextPx = fs_sm;
+	const float labelZ = static_cast<float>(zIndex) + 0.1F;
 
 	// Render each visible row
 	for (size_t i = 0; i < flattenedRows.size(); ++i) {
@@ -161,47 +184,74 @@ void TreeView::render() {
 			continue; // Skip rows outside viewport
 		}
 
+		const bool hovered = static_cast<int>(i) == hoveredRowIndex;
+
 		float indent = static_cast<float>(row.depth) * indentWidth;
 		float rowX = contentPos.x + indent;
 
-		// Hover highlight
-		if (static_cast<int>(i) == hoveredRowIndex) {
-			Renderer::Primitives::drawRect(Renderer::Primitives::RectArgs{
-				.bounds = {contentPos.x, rowY, size.x, rowHeight},
-				.style = {.fill = Theme::TreeView::rowHover},
-				.zIndex = zIndex,
-			});
+		// Hairline separator below each row, drawn first so washes sit on top.
+		drawRect({.bounds = {contentPos.x, rowY + rowHeight - bw_hair, size.x, bw_hair},
+				  .style = {.fill = line_hairline},
+				  .zIndex = zIndex});
+
+		// Hover wash spanning the full row width.
+		if (hovered) {
+			drawRect({.bounds = {contentPos.x, rowY, size.x, rowHeight},
+					  .style = {.fill = bg_hover},
+					  .zIndex = zIndex});
 		}
 
-		// Expand/collapse indicator
-		bool hasChildren = !row.node->children.empty();
+		// Expand/collapse marker: a chevron built from two short legs. Points down
+		// (v) when expanded, right (>) when collapsed. Accent when open, dim when
+		// shut; brightens slightly on hover.
+		const bool hasChildren = !row.node->children.empty();
 		if (hasChildren) {
-			const char* indicator = row.node->expanded ? "v" : ">";
-			Renderer::Primitives::drawText(Renderer::Primitives::TextArgs{
-				.text = indicator,
-				.position = {rowX, rowY + (rowHeight - 12.0F) / 2.0F},
-				.scale = 12.0F / 16.0F,
-				.color = Theme::Colors::textSecondary,
-				.zIndex = static_cast<float>(zIndex) + 0.1F,
-			});
+			const bool				expanded = row.node->expanded;
+			const Foundation::Color markerColor = expanded
+				? (hovered ? accent_bright : accent)
+				: (hovered ? text : text_dim);
+
+			const float cx = rowX + (kMarkerBox * 0.5F);
+			const float cy = rowY + (rowHeight * 0.5F);
+			const auto	stroke = [&](Foundation::Vec2 a, Foundation::Vec2 b) {
+				drawLine({.start = a, .end = b, .style = {.color = markerColor, .width = kChevronStroke}, .zIndex = zIndex + 1});
+			};
+
+			if (expanded) {
+				// Downward chevron (v): two arms meeting at the bottom vertex.
+				stroke({cx - kChevronArm, cy - kChevronArm * 0.5F}, {cx, cy + kChevronArm * 0.5F});
+				stroke({cx, cy + kChevronArm * 0.5F}, {cx + kChevronArm, cy - kChevronArm * 0.5F});
+			} else {
+				// Rightward chevron (>): two arms meeting at the right vertex.
+				stroke({cx - kChevronArm * 0.5F, cy - kChevronArm}, {cx + kChevronArm * 0.5F, cy});
+				stroke({cx + kChevronArm * 0.5F, cy}, {cx - kChevronArm * 0.5F, cy + kChevronArm});
+			}
 		}
 
-		// Label text (offset past indicator)
-		float labelX = rowX + (hasChildren ? 16.0F : 8.0F);
-		std::string displayText = row.node->label;
+		// Label, offset past the marker column. Body text in UI font.
+		const float labelX = rowX + (hasChildren ? kMarkerBox : space_2);
+		drawText({.text = row.node->label,
+				  .position = {labelX, rowY},
+				  .scale = textScale(rowTextPx),
+				  .color = hovered ? text_bright : text,
+				  .font = fontUi,
+				  .vAlign = Foundation::VerticalAlign::Middle,
+				  .boxHeight = rowHeight,
+				  .zIndex = labelZ});
 
-		// Add count if present
+		// Count badge, right-aligned in mono and dimmed.
 		if (row.node->count.has_value()) {
-			displayText += " (" + std::to_string(row.node->count.value()) + ")";
+			drawText({.text = std::to_string(row.node->count.value()),
+					  .position = {contentPos.x, rowY},
+					  .scale = textScale(fs_xs),
+					  .color = text_dim,
+					  .font = fontMono,
+					  .hAlign = Foundation::HorizontalAlign::Right,
+					  .vAlign = Foundation::VerticalAlign::Middle,
+					  .boxWidth = size.x - space_2,
+					  .boxHeight = rowHeight,
+					  .zIndex = labelZ});
 		}
-
-		Renderer::Primitives::drawText(Renderer::Primitives::TextArgs{
-			.text = displayText,
-			.position = {labelX, rowY + (rowHeight - 12.0F) / 2.0F},
-			.scale = 12.0F / 16.0F,
-			.color = Theme::Colors::textBody,
-			.zIndex = static_cast<float>(zIndex) + 0.1F,
-		});
 	}
 }
 

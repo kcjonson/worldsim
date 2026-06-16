@@ -35,7 +35,7 @@ class ToastStack : public Component {
 		ToastAnchor		 anchor{ToastAnchor::BottomRight};
 		float			 spacing{8.0F};	   // Space between toasts
 		size_t			 maxToasts{5};	   // Maximum visible toasts
-		float			 toastWidth{Theme::Toast::defaultWidth};
+		float			 toastWidth{kToastDefaultWidth};
 		const char*		 id = nullptr;
 	};
 
@@ -53,7 +53,7 @@ class ToastStack : public Component {
 	// Add a new toast notification
 	void addToast(const std::string& title, const std::string& message,
 				  ToastSeverity severity = ToastSeverity::Info,
-				  float autoDismissTime = Theme::Toast::defaultAutoDismiss);
+				  float autoDismissTime = kToastDefaultAutoDismiss);
 
 	// Add a toast with click-to-navigate callback
 	void addToast(const std::string& title, const std::string& message,
