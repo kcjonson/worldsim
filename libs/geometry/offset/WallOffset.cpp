@@ -422,7 +422,13 @@ namespace geometry {
 					result.status = st;
 					return result;
 				}
+				std::vector<std::size_t> incidentSegs;
+				incidentSegs.reserve(incidences.size());
+				for (const Incidence& inc : incidences) {
+					incidentSegs.push_back(inc.segIndex);
+				}
 				result.junctions.push_back(std::move(poly));
+				result.junctionSegments.push_back(std::move(incidentSegs));
 			}
 		}
 

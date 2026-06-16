@@ -26,7 +26,31 @@ namespace world_sim {
 	namespace {
 
 		using engine::assets::ConstructionRegistry;
+		using engine::assets::StyleColor;
 		namespace ec = engine::construction;
+
+		// StyleColor (engine config, float rgba) -> Foundation::Color (renderer rgba).
+		Foundation::Color toColor(StyleColor c) {
+			return {c.r, c.g, c.b, c.a};
+		}
+		// Same, but with the alpha replaced — for colors whose alpha comes from a
+		// progress ramp rather than the configured color's own alpha channel.
+		Foundation::Color toColor(StyleColor c, float alpha) {
+			return {c.r, c.g, c.b, alpha};
+		}
+
+		// Multiply rgb by `factor` (clamped to [0,1]); alpha untouched. Darkens a
+		// material color for built edges, jambs, and seams so they read against the
+		// flat fill. A built structure wears a darker shade of its own material rather
+		// than the blueprint-blue outline, which is reserved for the planned state.
+		Foundation::Color darken(Foundation::Color c, float factor) {
+			return {
+				std::clamp(c.r * factor, 0.0F, 1.0F),
+				std::clamp(c.g * factor, 0.0F, 1.0F),
+				std::clamp(c.b * factor, 0.0F, 1.0F),
+				c.a,
+			};
+		}
 
 		// True if integer-mm point p lies on segment [a,b] (collinear and within the
 		// bounding box, endpoints inclusive).
@@ -1101,6 +1125,10 @@ namespace world_sim {
 			return;
 		}
 
+		const auto& style = ConstructionRegistry::Get().rendering();
+		const auto& fs = style.foundation;
+		const auto& ps = style.preview;
+
 		const float scale = kPixelsPerMeter * camera_->zoom();
 
 		auto toScreen = [&](Foundation::Vec2 w) -> Foundation::Vec2 {
@@ -1129,9 +1157,10 @@ namespace world_sim {
 				}
 			}
 
-			// Material color (palette front) drives the progress fill; fall back to blue.
+			// Material color (palette front) drives the progress fill; fall back to the
+			// configured fallback color.
 			const auto*		  mat = ConstructionRegistry::Get().getMaterial(f.material);
-			Foundation::Color matColor{0.5F, 0.65F, 0.9F, 1.0F};
+			Foundation::Color matColor = toColor(fs.fallbackColor);
 			if (mat != nullptr && !mat->pattern.palette.empty()) {
 				const auto& c = mat->pattern.palette.front();
 				matColor = {c.r / 255.0F, c.g / 255.0F, c.b / 255.0F, 1.0F};
@@ -1156,7 +1185,7 @@ namespace world_sim {
 				.indices = indices.data(),
 				.vertexCount = screen.size(),
 				.indexCount = indices.size(),
-				.color = {0.5F, 0.65F, 0.9F, 0.18F},
+				.color = toColor(fs.blueprintFill),
 				.id = "committed_foundation_base",
 				.zIndex = 50,
 			});
@@ -1164,7 +1193,8 @@ namespace world_sim {
 			// Layer 2: progress fill, alpha proportional to workDone/workTotal. Ramps from a
 			// barely-there tint at 0% to a solid floor at 100% / Built.
 			if (progress > 0.0F) {
-				const float fillAlpha = built ? 0.85F : (0.15F + 0.7F * progress);
+				const float fillAlpha =
+					built ? fs.progressAlphaMax : (fs.progressAlphaMin + (fs.progressAlphaMax - fs.progressAlphaMin) * progress);
 				Renderer::Primitives::drawTriangles({
 					.vertices = screen.data(),
 					.indices = indices.data(),
@@ -1176,14 +1206,15 @@ namespace world_sim {
 				});
 			}
 
-			// Layer 3: outline, brighter/heavier as it firms up toward Built.
-			const float				outlineAlpha = 0.6F + 0.4F * progress;
-			const Foundation::Color outline{0.55F, 0.72F, 1.0F, built ? 1.0F : outlineAlpha};
+			// Layer 3: outline. A Built foundation wears a darker shade of its own
+			// material; a blueprint keeps the cool outline, firming up toward Built.
+			const float				outlineAlpha = fs.outlineAlphaMin + (fs.outlineAlphaMax - fs.outlineAlphaMin) * progress;
+			const Foundation::Color outline = built ? darken(matColor, fs.builtEdgeDarken) : toColor(fs.outlineColor, outlineAlpha);
 			for (std::size_t i = 0; i < n; ++i) {
 				Renderer::Primitives::drawLine({
 					.start = screen[i],
 					.end = screen[(i + 1) % n],
-					.style = {.color = outline, .width = built ? 2.0F : 1.5F},
+					.style = {.color = outline, .width = built ? fs.outlineWidthBuilt : fs.outlineWidthBlueprint},
 					.id = "committed_foundation_edge",
 					.zIndex = 52,
 				});
@@ -1243,8 +1274,8 @@ namespace world_sim {
 				indices.push_back(static_cast<uint16_t>(i));
 				indices.push_back(static_cast<uint16_t>(i + 1));
 			}
-			Foundation::Color fillColor = valid ? Foundation::Color{okColor.r, okColor.g, okColor.b, 0.15F}
-												: Foundation::Color{badColor.r, badColor.g, badColor.b, 0.15F};
+			Foundation::Color fillColor = valid ? Foundation::Color{okColor.r, okColor.g, okColor.b, ps.fillPreviewAlpha}
+												: Foundation::Color{badColor.r, badColor.g, badColor.b, ps.fillPreviewAlpha};
 			Renderer::Primitives::drawTriangles({
 				.vertices = fillPts.data(),
 				.indices = indices.data(),
@@ -1261,7 +1292,7 @@ namespace world_sim {
 			Renderer::Primitives::drawLine({
 				.start = screen[i],
 				.end = screen[i + 1],
-				.style = {.color = okColor, .width = 2.0F},
+				.style = {.color = okColor, .width = ps.lineWidth},
 				.id = "drawing_edge",
 				.zIndex = 901,
 			});
@@ -1272,7 +1303,7 @@ namespace world_sim {
 			Renderer::Primitives::drawLine({
 				.start = screen.back(),
 				.end = toScreen(cursor_),
-				.style = {.color = lineColor, .width = 2.0F},
+				.style = {.color = lineColor, .width = ps.lineWidth},
 				.id = "drawing_rubberband",
 				.zIndex = 902,
 			});
@@ -1283,7 +1314,7 @@ namespace world_sim {
 			Renderer::Primitives::drawLine({
 				.start = toScreen(lastSnap_.guideFrom),
 				.end = toScreen(lastSnap_.guideTo),
-				.style = {.color = {0.7F, 0.85F, 1.0F, 0.4F}, .width = 1.0F},
+				.style = {.color = toColor(ps.guideColor), .width = ps.guideWidth},
 				.id = "drawing_guide",
 				.zIndex = 899,
 			});
@@ -1293,7 +1324,7 @@ namespace world_sim {
 		for (const auto& sp : screen) {
 			Renderer::Primitives::drawCircle({
 				.center = sp,
-				.radius = 4.0F,
+				.radius = ps.vertexRadiusPx,
 				.style = {.fill = okColor},
 				.id = "drawing_vertex",
 				.zIndex = 903,
@@ -1306,13 +1337,11 @@ namespace world_sim {
 			const bool	closing = lastSnap_.closesShape();
 			Renderer::Primitives::drawCircle({
 				.center = screen.front(),
-				.radius = std::max(8.0F, originRadius),
+				.radius = std::max(ps.originHaloMinRadiusPx, originRadius),
 				.style =
 					{.fill = {0.0F, 0.0F, 0.0F, 0.0F},
 					 .border =
-						 Foundation::BorderStyle{
-							 .color = closing ? okColor : Foundation::Color{0.7F, 0.85F, 1.0F, 0.6F}, .width = closing ? 3.0F : 1.5F
-						 }},
+						 Foundation::BorderStyle{.color = closing ? okColor : toColor(ps.originHaloColor), .width = closing ? 3.0F : 1.5F}},
 				.id = "drawing_origin_halo",
 				.zIndex = 904,
 			});
@@ -1323,7 +1352,7 @@ namespace world_sim {
 			const std::size_t vi = std::min(lastValidation_.vertexIndex, screen.size() - 1);
 			Renderer::Primitives::drawCircle({
 				.center = screen[vi],
-				.radius = 7.0F,
+				.radius = ps.invalidVertexRadiusPx,
 				.style = {.fill = {badColor.r, badColor.g, badColor.b, 0.5F}},
 				.id = "drawing_invalid_vertex",
 				.zIndex = 905,
@@ -1381,10 +1410,23 @@ namespace world_sim {
 	void DrawingSystem::renderCommittedWalls(int viewportW, int viewportH) {
 		namespace ec = engine::construction;
 
+		const auto& ws = ConstructionRegistry::Get().rendering().wall;
+
 		const auto& segs = constructionWorld_.segments();
 		if (segs.empty()) {
 			return;
 		}
+
+		// Palette color for a wall material (drives both the band fill and the built
+		// junction fill). Falls back to the configured color when there is no palette.
+		auto wallMatColor = [&](const std::string& name) -> Foundation::Color {
+			const auto* m = ConstructionRegistry::Get().getMaterial(name);
+			if (m != nullptr && !m->pattern.palette.empty()) {
+				const auto& c = m->pattern.palette.front();
+				return {c.r / 255.0F, c.g / 255.0F, c.b / 255.0F, 1.0F};
+			}
+			return toColor(ws.fallbackColor);
+		};
 
 		auto toScreen = [&](geometry::Vec2i64 mm) -> Foundation::Vec2 {
 			const auto w = geometry::dequantize(mm);
@@ -1393,26 +1435,31 @@ namespace world_sim {
 
 		// Build the offsetter input for the WHOLE graph at once: shared integer
 		// vertices mean resolveWallBands derives every junction by exact-endpoint
-		// grouping. Bands come back one-per-segment in this same order, so index i
-		// maps straight back to segs[i] for per-segment styling.
+		// grouping. A malformed segment (missing vertex or unresolved thickness
+		// preset) is SKIPPED rather than fed as a zero-length placeholder, because
+		// resolveWallBands rejects any zero-length segment up front and would fail
+		// the whole graph. offsetToSeg maps each offsetter index (and the segment
+		// indices reported back in bands/junctionSegments) to its original segs index.
 		std::vector<geometry::WallSegment> offsetSegs;
+		std::vector<std::size_t>		   offsetToSeg;
 		offsetSegs.reserve(segs.size());
-		bool anyBuilt = false;
-		for (const auto& wseg : segs) {
-			const ec::Vertex* v0 = constructionWorld_.getVertex(wseg.v0);
-			const ec::Vertex* v1 = constructionWorld_.getVertex(wseg.v1);
-			std::int64_t	  halfThick = 0;
+		offsetToSeg.reserve(segs.size());
+		for (std::size_t i = 0; i < segs.size(); ++i) {
+			const ec::WallSegment& wseg = segs[i];
+			const ec::Vertex*	   v0 = constructionWorld_.getVertex(wseg.v0);
+			const ec::Vertex*	   v1 = constructionWorld_.getVertex(wseg.v1);
+			std::int64_t		   halfThick = 0;
 			if (const auto* preset = ConstructionRegistry::Get().getThicknessPreset(wseg.material, wseg.thicknessPreset)) {
 				halfThick = preset->halfThicknessMm;
 			}
 			if (v0 == nullptr || v1 == nullptr || halfThick <= 0) {
-				offsetSegs.push_back({{0, 0}, {0, 0}, 0}); // placeholder keeps index alignment
 				continue;
 			}
 			offsetSegs.push_back({v0->pos, v1->pos, halfThick});
-			if (wseg.state == ec::FoundationState::Built) {
-				anyBuilt = true;
-			}
+			offsetToSeg.push_back(i);
+		}
+		if (offsetSegs.empty()) {
+			return;
 		}
 
 		const geometry::WallBands bands = geometry::resolveWallBands(offsetSegs, geometry::kDefaultMiterLimit);
@@ -1429,7 +1476,7 @@ namespace world_sim {
 				Renderer::Primitives::drawLine({
 					.start = toScreen(v0->pos),
 					.end = toScreen(v1->pos),
-					.style = {.color = {0.55F, 0.72F, 1.0F, 0.8F}, .width = 2.0F},
+					.style = {.color = toColor(ws.outlineColor, 0.8F), .width = ws.outlineWidthBuilt},
 					.id = "committed_wall_fallback",
 					.zIndex = 60,
 				});
@@ -1438,9 +1485,10 @@ namespace world_sim {
 		}
 
 		// Per-segment bands, styled like the foundation render (z 60-62, above
-		// foundations at 50-52, below the in-progress preview at 900+).
-		for (std::size_t i = 0; i < bands.bands.size() && i < segs.size(); ++i) {
-			const ec::WallSegment& wseg = segs[i];
+		// foundations at 50-52, below the in-progress preview at 900+). bands[i]
+		// corresponds to offsetSegs[i], i.e. segs[offsetToSeg[i]].
+		for (std::size_t i = 0; i < bands.bands.size() && i < offsetToSeg.size(); ++i) {
+			const ec::WallSegment& wseg = segs[offsetToSeg[i]];
 			const geometry::Ring&  ring = bands.bands[i];
 			if (ring.size() < 3) {
 				continue;
@@ -1454,24 +1502,24 @@ namespace world_sim {
 				}
 			}
 
-			const auto*		  mat = ConstructionRegistry::Get().getMaterial(wseg.material);
-			Foundation::Color matColor{0.5F, 0.65F, 0.9F, 1.0F};
-			if (mat != nullptr && !mat->pattern.palette.empty()) {
-				const auto& c = mat->pattern.palette.front();
-				matColor = {c.r / 255.0F, c.g / 255.0F, c.b / 255.0F, 1.0F};
-			}
+			const Foundation::Color matColor = wallMatColor(wseg.material);
 
-			const float				fillAlpha = built ? 0.9F : (0.2F + 0.7F * progress);
-			const Foundation::Color outline{0.6F, 0.78F, 1.0F, built ? 1.0F : (0.65F + 0.35F * progress)};
+			const float fillAlpha =
+				built ? ws.progressAlphaMax : (ws.progressAlphaMin + (ws.progressAlphaMax - ws.progressAlphaMin) * progress);
+			// Built walls wear a darker shade of their own material; blueprints keep the
+			// cool outline so blue stays the "planned" signal.
+			const Foundation::Color outline =
+				built ? darken(matColor, ws.builtEdgeDarken)
+					  : toColor(ws.outlineColor, ws.outlineAlphaMin + (ws.outlineAlphaMax - ws.outlineAlphaMin) * progress);
 
 			auto drawWallRing = [&](const std::vector<Foundation::Vec2>& screen) {
 				// Blueprint base always; progress fill ramps with workDone/workTotal.
-				fillRing(screen, {0.5F, 0.65F, 0.9F, 0.22F}, {0.55F, 0.72F, 1.0F, 0.0F}, 0.0F, "committed_wall_base", "", 60, 60);
+				fillRing(screen, toColor(ws.blueprintFill), toColor(ws.outlineColor, 0.0F), 0.0F, "committed_wall_base", "", 60, 60);
 				fillRing(
 					screen,
 					{matColor.r, matColor.g, matColor.b, fillAlpha},
 					outline,
-					built ? 2.0F : 1.5F,
+					built ? ws.outlineWidthBuilt : ws.outlineWidthBlueprint,
 					"committed_wall_progress",
 					"committed_wall_edge",
 					61,
@@ -1542,20 +1590,48 @@ namespace world_sim {
 			emitRun(runStart, 1.0F);
 		}
 
-		// Junction polygons fill the corner gaps the trimmed bands leave. Interim
-		// styling: a neutral material-tinted fill so chains read continuous; built
-		// state lifts the alpha (a per-junction progress mapping is later polish).
-		const float junctionAlpha = anyBuilt ? 0.8F : 0.4F;
-		for (const geometry::Ring& ring : bands.junctions) {
+		// Junction polygons fill the corner gaps the trimmed bands leave. Styling is
+		// per junction, from its own incident segments: a junction reads as built only
+		// when it has incident segments and every one is built, in which case it takes
+		// the wall material color so corners read as continuous material; otherwise it
+		// keeps the cool blueprint tint. So a blueprint's corners stay blue even while a
+		// finished structure elsewhere shows wood corners. junctionSegments holds
+		// offsetter indices, mapped back to segs via offsetToSeg.
+		for (std::size_t j = 0; j < bands.junctions.size(); ++j) {
+			const geometry::Ring& ring = bands.junctions[j];
 			if (ring.size() < 3) {
 				continue;
 			}
+
+			// Default to blueprint styling; only a fully-built junction with a known
+			// incident set flips to built, so a missing/out-of-sync segment list can't
+			// masquerade as built.
+			bool		junctionBuilt = (j < bands.junctionSegments.size() && !bands.junctionSegments[j].empty());
+			std::string junctionMaterial;
+			if (j < bands.junctionSegments.size()) {
+				for (const std::size_t offIdx : bands.junctionSegments[j]) {
+					if (offIdx >= offsetToSeg.size()) {
+						continue;
+					}
+					const ec::WallSegment& iseg = segs[offsetToSeg[offIdx]];
+					if (junctionMaterial.empty()) {
+						junctionMaterial = iseg.material;
+					}
+					if (iseg.state != ec::FoundationState::Built) {
+						junctionBuilt = false;
+					}
+				}
+			}
+			const Foundation::Color jMat = wallMatColor(junctionMaterial);
+			const Foundation::Color junctionFill = junctionBuilt ? Foundation::Color{jMat.r, jMat.g, jMat.b, ws.junctionAlphaBuilt}
+																 : toColor(ws.junctionColor, ws.junctionAlphaBlueprint);
+
 			std::vector<Foundation::Vec2> screen;
 			screen.reserve(ring.size());
 			for (const auto& v : ring) {
 				screen.push_back(toScreen(v));
 			}
-			fillRing(screen, {0.5F, 0.65F, 0.9F, junctionAlpha}, {0.6F, 0.78F, 1.0F, 0.0F}, 0.0F, "committed_wall_junction", "", 61, 61);
+			fillRing(screen, junctionFill, toColor(ws.outlineColor, 0.0F), 0.0F, "committed_wall_junction", "", 61, 61);
 		}
 	}
 
@@ -1570,7 +1646,7 @@ namespace world_sim {
 				const auto& c = mat->pattern.palette.front();
 				return {c.r / 255.0F, c.g / 255.0F, c.b / 255.0F, 1.0F};
 			}
-			return {0.55F, 0.40F, 0.25F, 1.0F};
+			return toColor(ConstructionRegistry::Get().rendering().opening.doorFallbackColor);
 		}
 
 		// The opening's footprint width in world meters: the long edge of the oriented
@@ -1587,18 +1663,6 @@ namespace world_sim {
 				return std::sqrt(dx * dx + dy * dy);
 			};
 			return static_cast<float>(std::max(edgeLen(f[0], f[1]), edgeLen(f[0], f[3])) / geometry::kMillimetersPerMeter);
-		}
-
-		// Multiply rgb by `factor` (clamped to [0,1]); alpha untouched. Used to darken
-		// the material color for jambs, seams, and outlines so detail reads against the
-		// flat leaf/frame fill.
-		Foundation::Color darken(Foundation::Color c, float factor) {
-			return {
-				std::clamp(c.r * factor, 0.0F, 1.0F),
-				std::clamp(c.g * factor, 0.0F, 1.0F),
-				std::clamp(c.b * factor, 0.0F, 1.0F),
-				c.a,
-			};
 		}
 
 		// Draw a procedural door/window over the opening footprint (the 4 CCW screen-
@@ -1647,14 +1711,15 @@ namespace world_sim {
 				return {pt(u0, v0), pt(u1, v0), pt(u1, v1), pt(u0, v1)};
 			};
 
-			const Foundation::Color outline = darken(frameColor, 0.7F);
+			const auto&				os = ConstructionRegistry::Get().rendering().opening;
+			const Foundation::Color outline = darken(frameColor, os.outlineDarken);
 
 			if (window) {
 				// Frame: the whole footprint in material color, darkened outline.
 				fillRing(
 					screen,
-					{frameColor.r, frameColor.g, frameColor.b, 0.92F * alpha},
-					{outline.r, outline.g, outline.b, 0.95F * alpha},
+					{frameColor.r, frameColor.g, frameColor.b, os.fillAlpha * alpha},
+					{outline.r, outline.g, outline.b, os.outlineAlpha * alpha},
 					outlineWidth,
 					"committed_opening_frame",
 					"committed_opening_frame_edge",
@@ -1664,9 +1729,9 @@ namespace world_sim {
 
 				// Glass: inset pane, translucent cyan-blue glazing. Inset along the width
 				// by the jamb width, across the thickness by kGlassInset.
-				constexpr float			kJamb = 0.14F;
-				constexpr float			kGlassInset = 0.24F;
-				const Foundation::Color glass{0.50F, 0.72F, 0.90F, 0.6F * alpha};
+				const float				kJamb = os.jambWidth;
+				const float				kGlassInset = os.glassInset;
+				const Foundation::Color glass{os.glassColor.r, os.glassColor.g, os.glassColor.b, os.glassColor.a * alpha};
 				fillRing(
 					quad(kJamb, 1.0F - kJamb, kGlassInset, 1.0F - kGlassInset),
 					glass,
@@ -1681,8 +1746,8 @@ namespace world_sim {
 				// Mullion(s): thin material bars across the glass along the thickness axis.
 				// Count scales with the window's real width in METERS (not screen pixels),
 				// so the pane count is stable across zoom: roughly one mullion per 0.7 m.
-				const int				mullions = std::max(1, static_cast<int>(openingWidthMeters / 0.7F + 0.5F));
-				const Foundation::Color mullionColor{frameColor.r, frameColor.g, frameColor.b, 0.9F * alpha};
+				const int				mullions = std::max(1, static_cast<int>(openingWidthMeters / os.mullionSpacingMeters + 0.5F));
+				const Foundation::Color mullionColor{frameColor.r, frameColor.g, frameColor.b, os.mullionAlpha * alpha};
 				for (int i = 1; i <= mullions; ++i) {
 					const float u = kJamb + (1.0F - 2.0F * kJamb) * static_cast<float>(i) / static_cast<float>(mullions + 1);
 					Renderer::Primitives::drawLine({
@@ -1698,8 +1763,8 @@ namespace world_sim {
 				// wall material, so jambs + seam are what distinguish it).
 				fillRing(
 					screen,
-					{frameColor.r, frameColor.g, frameColor.b, 0.92F * alpha},
-					{outline.r, outline.g, outline.b, 0.95F * alpha},
+					{frameColor.r, frameColor.g, frameColor.b, os.fillAlpha * alpha},
+					{outline.r, outline.g, outline.b, os.outlineAlpha * alpha},
 					outlineWidth,
 					"committed_opening_leaf",
 					"committed_opening_leaf_edge",
@@ -1709,9 +1774,9 @@ namespace world_sim {
 
 				// Jamb caps: a darkened sub-quad at each width-end, full thickness. These
 				// frame the leaf and read as the door's hinge/strike jambs.
-				constexpr float			kJamb = 0.14F;
-				const Foundation::Color jambBase = darken(frameColor, 0.6F);
-				const Foundation::Color jamb{jambBase.r, jambBase.g, jambBase.b, 0.95F * alpha};
+				const float				kJamb = os.jambWidth;
+				const Foundation::Color jambBase = darken(frameColor, os.jambDarken);
+				const Foundation::Color jamb{jambBase.r, jambBase.g, jambBase.b, os.jambAlpha * alpha};
 				fillRing(quad(0.0F, kJamb, 0.0F, 1.0F), jamb, {jamb.r, jamb.g, jamb.b, 0.0F}, 0.0F, "committed_opening_jamb", "", 64, 64);
 				fillRing(
 					quad(1.0F - kJamb, 1.0F, 0.0F, 1.0F), jamb, {jamb.r, jamb.g, jamb.b, 0.0F}, 0.0F, "committed_opening_jamb", "", 64, 64
@@ -1719,7 +1784,7 @@ namespace world_sim {
 
 				// Center seam: one darkened line across the thickness at u=0.5, the door
 				// panel split.
-				const Foundation::Color seam{jamb.r, jamb.g, jamb.b, 0.95F * alpha};
+				const Foundation::Color seam{jamb.r, jamb.g, jamb.b, os.jambAlpha * alpha};
 				Renderer::Primitives::drawLine({
 					.start = pt(0.5F, 0.0F),
 					.end = pt(0.5F, 1.0F),
@@ -1737,6 +1802,8 @@ namespace world_sim {
 		if (ops.empty()) {
 			return;
 		}
+
+		const auto& os = ConstructionRegistry::Get().rendering().opening;
 
 		auto toScreen = [&](geometry::Vec2i64 mm) -> Foundation::Vec2 {
 			const auto w = geometry::dequantize(mm);
@@ -1765,7 +1832,7 @@ namespace world_sim {
 					progress = bp->progress();
 				}
 			}
-			const float alpha = built ? 1.0F : (0.25F + 0.6F * progress);
+			const float alpha = built ? 1.0F : (os.progressAlphaMin + (os.progressAlphaMax - os.progressAlphaMin) * progress);
 
 			std::vector<Foundation::Vec2> screen;
 			screen.reserve(footprint.size());
@@ -1773,7 +1840,12 @@ namespace world_sim {
 				screen.push_back(toScreen(v));
 			}
 			drawOpeningFill(
-				screen, openingMaterialColor(type->material), window, footprintWidthMeters(footprint), alpha, built ? 2.0F : 1.0F
+				screen,
+				openingMaterialColor(type->material),
+				window,
+				footprintWidthMeters(footprint),
+				alpha,
+				built ? os.outlineWidthBuilt : os.outlineWidthBlueprint
 			);
 		}
 	}
@@ -1815,11 +1887,14 @@ namespace world_sim {
 		// committed render, drawn with the green/red validity tint in place of the
 		// material color. Half alpha so it reads as a translucent preview over the wall
 		// and ground rather than an opaque structure.
-		const bool window = !type->pathable;
-		drawOpeningFill(screen, tint, window, footprintWidthMeters(footprint), 0.5F, 2.0F);
+		const bool	window = !type->pathable;
+		const auto& os = ConstructionRegistry::Get().rendering().opening;
+		drawOpeningFill(screen, tint, window, footprintWidthMeters(footprint), os.ghostAlpha, os.outlineWidthBuilt);
 	}
 
 	void DrawingSystem::renderWallChainPreview(int viewportW, int viewportH) {
+		const auto& ps = ConstructionRegistry::Get().rendering().preview;
+
 		const float scale = kPixelsPerMeter * camera_->zoom();
 
 		auto toScreen = [&](Foundation::Vec2 w) -> Foundation::Vec2 {
@@ -1855,13 +1930,13 @@ namespace world_sim {
 				fillRing(bandScreen, color, {color.r, color.g, color.b, 0.0F}, 0.0F, "wall_preview_band", "", 906, 906);
 			};
 
-			const Foundation::Color bandColor{okColor.r, okColor.g, okColor.b, 0.2F};
+			const Foundation::Color bandColor{okColor.r, okColor.g, okColor.b, ps.bandPreviewAlpha};
 			for (std::size_t i = 0; i + 1 < points_.size(); ++i) {
 				drawBand(points_[i], points_[i + 1], bandColor);
 			}
 			if (!points_.empty()) {
-				const Foundation::Color rb = valid ? Foundation::Color{okColor.r, okColor.g, okColor.b, 0.2F}
-												   : Foundation::Color{badColor.r, badColor.g, badColor.b, 0.2F};
+				const Foundation::Color rb = valid ? Foundation::Color{okColor.r, okColor.g, okColor.b, ps.bandPreviewAlpha}
+												   : Foundation::Color{badColor.r, badColor.g, badColor.b, ps.bandPreviewAlpha};
 				drawBand(points_.back(), cursor_, rb);
 			}
 		}
@@ -1871,7 +1946,7 @@ namespace world_sim {
 			Renderer::Primitives::drawLine({
 				.start = screen[i],
 				.end = screen[i + 1],
-				.style = {.color = okColor, .width = 2.0F},
+				.style = {.color = okColor, .width = ps.lineWidth},
 				.id = "wall_centerline",
 				.zIndex = 907,
 			});
@@ -1882,7 +1957,7 @@ namespace world_sim {
 			Renderer::Primitives::drawLine({
 				.start = screen.back(),
 				.end = toScreen(cursor_),
-				.style = {.color = valid ? okColor : badColor, .width = 2.0F},
+				.style = {.color = valid ? okColor : badColor, .width = ps.lineWidth},
 				.id = "wall_rubberband",
 				.zIndex = 908,
 			});
@@ -1893,7 +1968,7 @@ namespace world_sim {
 			Renderer::Primitives::drawLine({
 				.start = toScreen(lastSnap_.guideFrom),
 				.end = toScreen(lastSnap_.guideTo),
-				.style = {.color = {0.7F, 0.85F, 1.0F, 0.4F}, .width = 1.0F},
+				.style = {.color = toColor(ps.guideColor), .width = ps.guideWidth},
 				.id = "wall_guide",
 				.zIndex = 905,
 			});
@@ -1904,7 +1979,7 @@ namespace world_sim {
 		for (const auto& sp : screen) {
 			Renderer::Primitives::drawCircle({
 				.center = sp,
-				.radius = 4.0F,
+				.radius = ps.vertexRadiusPx,
 				.style = {.fill = okColor},
 				.id = "wall_vertex",
 				.zIndex = 909,
@@ -1915,8 +1990,8 @@ namespace world_sim {
 		if (lastSnap_.kind == SnapKind::WallEndpoint || lastSnap_.kind == SnapKind::WallSegment || lastSnap_.kind == SnapKind::Vertex ||
 			lastSnap_.kind == SnapKind::Edge) {
 			const Foundation::Color snapColor = (lastSnap_.kind == SnapKind::WallEndpoint || lastSnap_.kind == SnapKind::Vertex)
-													? Foundation::Color{1.0F, 0.85F, 0.3F, 0.9F}  // vertex snap: amber
-													: Foundation::Color{0.4F, 0.85F, 1.0F, 0.9F}; // edge / T-junction: cyan
+													? toColor(ps.snapVertexColor) // vertex snap: amber
+													: toColor(ps.snapEdgeColor);  // edge / T-junction: cyan
 			Renderer::Primitives::drawCircle({
 				.center = toScreen(cursor_),
 				.radius = std::max(6.0F, ConstructionRegistry::Get().snapping().vertexSnapRadiusMeters * scale * 0.5F),
