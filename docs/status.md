@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2026-06-16 (Dev/Test Tools — new /api/dev verbs (spawn/colonist/give/need/time/teleport/select/kill/complete) + synchronous /api/state readback + developer-client Dev Tools tab; API verified end-to-end. Prior: Fluvial Erosion PR #149 draft; Water Availability PRs #144/#146)
+Last Updated: 2026-06-16 (Dev/Test Tools complete, merged PR #157 — /api/dev verbs + synchronous /api/state readback + developer-client Dev Tools tab + DevCommandHandler extraction. Prior: Fluvial Erosion #149, Asset Manager #156)
 
 ## Epic/Story/Task Template
 
@@ -27,6 +27,21 @@ Use this template for all work items:
 ---
 
 ## Recently Completed Epics (Last 4)
+
+### ✅ Dev/Test Tools (HTTP verbs + developer-client tab)
+**Spec/Documentation:** `/docs/development-log/entries/2026-06-16-dev-tools-api-and-tab.md`, `/docs/development-log/plans/2026-06-16-dev-tools-api-and-tab.md`
+**Dependencies:** None
+**Status:** complete (merged PR #157)
+
+**Completed Tasks:**
+- [x] Step 1: `spawn`, `colonist`, `give` (replaces `givewood`; site/loose/colonist/storage)
+- [x] Step 2: `need`, `time` (speed/set/skip), `teleport`, `select`, `kill`, `complete`
+- [x] Step 3: synchronous `/api/state?what=summary|colonists|construction|time` (screenshot-style request/response handshake)
+- [x] Phase 2: Dev Tools tab (DevToolsService + DevToolsPanel) in the static developer-client
+- [x] Refactor: dev surface extracted from GameScene into DevCommandHandler (scenes/game/dev/)
+- [x] `parseDevVerb` tests refreshed (7/7); two rounds of Copilot review cleared (single-flight `/api/state`, CV wait, jsonEscape)
+
+**Result:** Dev-only `/api/dev/<verb>` controls plus a synchronous `/api/state` readback, driven from a Dev Tools tab in the static developer-client, so sim state can be set up and asserted on without screenshots. In-browser tab click-test was skipped by choice (build clean, every endpoint curl-verified); `demolish`, inventory-in-readback, and `query/count` deferred as optional. ✅
 
 ### ✅ Water Availability (worldgen + landing UX)
 **Spec/Documentation:** `/docs/development-log/entries/2026-06-15-worldgen-water-and-plate-realism.md`, `.claude/plans/water-hydrology.md`
@@ -467,23 +482,6 @@ while (running) {
 ---
 
 ## In Progress Epics
-
-### Dev/Test Tools (HTTP verbs + developer-client tab)
-**Spec/Documentation:** `/docs/development-log/entries/2026-06-16-dev-tools-api-and-tab.md`
-**Dependencies:** None
-**Status:** in progress (verbs + readback + tab done; tab not yet exercised in-browser; draft PR #157)
-
-**Goal:** Put the sim into a desired state on demand for manual + agent testing, driven from a Dev Tools tab in the developer-client. Debug server stays domain-agnostic; a DevCommandHandler (scenes/game/dev/) interprets the verbs.
-
-**Tasks:**
-- [x] Step 1: `spawn`, `colonist`, `give` (replaces `givewood`; site/loose/colonist/storage)
-- [x] Step 2: `need`, `time` (speed/set/skip), `teleport`, `select`, `kill`, `complete`
-- [x] Step 3: synchronous `/api/state?what=summary|colonists|construction|time` (screenshot-style handshake)
-- [x] Phase 2: Dev Tools tab (DevToolsService + DevToolsPanel) in developer-client static build
-- [x] Refactor: dev surface extracted from GameScene into DevCommandHandler
-- [x] `parseDevVerb` tests refreshed (7/7 green); API verified end-to-end via curl + readback + screenshot
-- [ ] Exercise the tab in-browser (open static `dist/index.html` against a running game)
-- [ ] Optional: `demolish` verb, inventory in colonist readback, `/api/state?what=query|count`
 
 ### Asset Manager
 **Spec/Documentation:** `/docs/design/features/asset-manager/`, `/docs/technical/asset-manager/`
