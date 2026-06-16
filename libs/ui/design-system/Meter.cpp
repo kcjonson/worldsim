@@ -36,13 +36,23 @@ namespace UI::DS {
 			return 0.0F;
 		}
 
-		// Draw a string twice to fake CSS text-shadow: a dark bg_void copy offset
-		// down-right, then the bright copy on top. Keeps inline text legible over
-		// both filled and empty track.
+		// Scale a color's RGB toward black, keeping alpha. Used to give the fill a
+		// subtle top-bright -> bottom-darker gradient without inventing new tokens.
+		Foundation::Color darken(Foundation::Color color, float factor) {
+			return {color.r * factor, color.g * factor, color.b * factor, color.a};
+		}
+
+		// Inline text with a dark text-shadow, so labels stay legible over both the
+		// filled and empty track (the shadow is a style prop, not a double draw).
 		void drawShadowedText(const std::string& text, Foundation::Vec2 pos, float scale, Foundation::Color color, const char* id) {
-			using Renderer::Primitives::drawText;
-			drawText({.text = text, .position = {pos.x + 1.0F, pos.y + 1.0F}, .scale = scale, .color = bg_void, .font = fontMono, .id = id});
-			drawText({.text = text, .position = pos, .scale = scale, .color = color, .font = fontMono, .id = id});
+			Renderer::Primitives::drawText({.text = text,
+											.position = pos,
+											.scale = scale,
+											.color = color,
+											.font = fontMono,
+											.shadowColor = bg_void,
+											.shadowOffset = {1.0F, 1.0F},
+											.id = id});
 		}
 
 	} // namespace
@@ -71,13 +81,16 @@ namespace UI::DS {
 
 			const float fillWidth = value * args.width;
 
-			// Faux glow: a taller, more-transparent wash behind the fill.
-			drawRect({.bounds = {track.x, track.y - 2.0F, fillWidth, height + 4.0F},
-					  .style = {.fill = withAlpha(toneCol, 0.18F)},
-					  .id = "ds_meter_glow"});
-
 			// Dim wash fill with a bright 2px leading edge (matches the inline CSS).
-			drawRect({.bounds = {track.x, track.y, fillWidth, height}, .style = {.fill = withAlpha(toneCol, 0.22F)}, .id = "ds_meter_fill"});
+			// Subtle vertical gradient: a touch brighter at the top, settling to the
+			// dim tone wash below, so the bar reads with a little depth. A soft tone
+			// glow sits behind it as an inline box-shadow.
+			drawRect({.bounds = {track.x, track.y, fillWidth, height},
+					  .style = {.fill = withAlpha(toneCol, 0.22F),
+								.gradient = Foundation::LinearGradient{
+									.from = withAlpha(toneCol, 0.30F), .to = withAlpha(darken(toneCol, 0.85F), 0.18F), .horizontal = false},
+								.boxShadow = Foundation::BoxShadow{.color = withAlpha(toneCol, 0.35F), .blur = 8.0F, .spread = 0.0F, .offset = {0.0F, 0.0F}}},
+					  .id = "ds_meter_fill"});
 			if (fillWidth >= bw_thick) {
 				drawRect({.bounds = {track.x + fillWidth - bw_thick, track.y, bw_thick, height},
 						  .style = {.fill = toneCol},
@@ -137,15 +150,13 @@ namespace UI::DS {
 
 		const float fillWidth = value * args.width;
 		if (fillWidth > 0.0F) {
-			// Faux glow behind the fill: taller and more transparent.
-			drawRect({.bounds = {track.x, track.y - 2.0F, fillWidth, height + 4.0F},
-					  .style = {.fill = withAlpha(toneCol, 0.35F)},
-					  .id = "ds_meter_glow"});
-
+			// Soft tone glow behind the fill as an inline box-shadow.
 			drawRect({.bounds = {track.x, track.y, fillWidth, height},
 					  .style = {.fill = toneCol,
 								.border = Foundation::BorderStyle{
-									.color = toneCol, .width = 0.0F, .cornerRadius = radius, .position = Foundation::BorderPosition::Inside}},
+									.color = toneCol, .width = 0.0F, .cornerRadius = radius, .position = Foundation::BorderPosition::Inside},
+								.gradient = Foundation::LinearGradient{.from = toneCol, .to = darken(toneCol, 0.78F), .horizontal = false},
+								.boxShadow = Foundation::BoxShadow{.color = withAlpha(toneCol, 0.35F), .blur = 8.0F, .spread = 0.0F, .offset = {0.0F, 0.0F}}},
 					  .id = "ds_meter_fill"});
 		}
 

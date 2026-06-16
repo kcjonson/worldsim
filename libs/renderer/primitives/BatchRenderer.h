@@ -46,7 +46,8 @@ namespace Renderer { // NOLINT(readability-identifier-naming)
 	};
 
 	// Render mode constants for data2.w
-	constexpr float kRenderModeText = -1.0F; // Text rendering (MSDF)
+	constexpr float kRenderModeText = -1.0F;   // Text rendering (MSDF)
+	constexpr float kRenderModeShadow = -3.0F; // Box-shadow / glow (SDF soft falloff)
 	// Shapes use borderPosition (0, 1, 2) in data2.w
 
 	// Batch accumulator - collects geometry before GPU upload
@@ -63,13 +64,22 @@ namespace Renderer { // NOLINT(readability-identifier-naming)
 
 		// --- Shape rendering (SDF) ---
 
-		// Add shape quad to batch (with optional SDF border and corner radius)
+		// Add shape quad to batch (with optional SDF border and corner radius).
+		// When `gradient` is set, the quad's four corners are colored from the
+		// gradient stops (interpolated by the GPU) instead of the flat fillColor;
+		// the border/SDF/corner radius are unaffected.
 		void addQuad(
-			const Foundation::Rect&						  bounds,
-			const Foundation::Color&					  fillColor,
-			const std::optional<Foundation::BorderStyle>& border = std::nullopt,
-			float										  cornerRadius = 0.0F
+			const Foundation::Rect&							 bounds,
+			const Foundation::Color&						 fillColor,
+			const std::optional<Foundation::BorderStyle>&	 border = std::nullopt,
+			float											 cornerRadius = 0.0F,
+			const std::optional<Foundation::LinearGradient>& gradient = std::nullopt
 		);
+
+		// Add an outer box-shadow / glow quad behind a rect. The SDF shader renders
+		// it as a soft falloff over `shadow.blur` px outside the (spread-grown)
+		// shape. Emit before the element's own quad so it sits behind.
+		void addShadowQuad(const Foundation::Rect& bounds, const Foundation::BoxShadow& shadow, float cornerRadius);
 
 		// Add raw triangles (for circles, polygons, etc.)
 		// If inputColors is provided, uses per-vertex colors; otherwise uses uniform color

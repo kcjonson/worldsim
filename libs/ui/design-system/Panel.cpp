@@ -84,6 +84,16 @@ namespace UI::DS {
 
 		const Foundation::Rect bounds{args.position, args.size};
 
+		// Box-shadow as an inline style: an explicit glow color wins; otherwise a
+		// raised panel lifts off the hull with a soft downward drop shadow
+		// (--shadow-pop). Inset/flat panels cast nothing.
+		std::optional<Foundation::BoxShadow> shadow;
+		if (args.glow.has_value()) {
+			shadow = Foundation::BoxShadow{.color = args.glow.value(), .blur = 24.0F, .spread = 2.0F, .offset = {0.0F, 0.0F}};
+		} else if (args.variant == PanelVariant::Raised) {
+			shadow = Foundation::BoxShadow{.color = {0.0F, 0.0F, 0.0F, 0.5F}, .blur = 24.0F, .spread = 0.0F, .offset = {0.0F, 8.0F}};
+		}
+
 		// Background surface with a 1px border that sits inside the bounds so the
 		// corner brackets can straddle the outer edge cleanly.
 		drawRect({.bounds = bounds,
@@ -93,7 +103,8 @@ namespace UI::DS {
 								.width = bw,
 								.cornerRadius = r_sm,
 								.position = Foundation::BorderPosition::Inside,
-							}},
+							},
+							.boxShadow = shadow},
 				  .id = "ds_panel"});
 
 		// Header: hairline divider, kicker eyebrow, title.

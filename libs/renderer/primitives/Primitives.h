@@ -213,6 +213,10 @@ namespace Renderer {
 			float				 scale = 1.0F; // Text scale (1.0F = 16px base size)
 			Foundation::Color	 color = Foundation::Color(1.0F, 1.0F, 1.0F, 1.0F); // RGBA
 			FontFamily			 font = FontFamily::Roboto; // Atlas to render with (default Roboto)
+			// CSS text-shadow: when shadowColor.a > 0, the string is drawn once at
+			// position+shadowOffset in shadowColor (behind), then normally.
+			Foundation::Color	 shadowColor = Foundation::Color(0.0F, 0.0F, 0.0F, 0.0F);
+			Foundation::Vec2	 shadowOffset{0.0F, 0.0F};
 			const char*			 id = nullptr;
 			float				 zIndex = 0.0F;
 		};

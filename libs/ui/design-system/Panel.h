@@ -12,8 +12,10 @@
 // Spec: docs/design/ui/design-system/components.md (Panel section).
 
 #include "design-system/Tokens.h"
+#include "graphics/Color.h"
 #include "graphics/Rect.h"
 #include "math/Types.h"
+#include <optional>
 #include <string>
 
 namespace UI::DS {
@@ -36,6 +38,7 @@ namespace UI::DS {
 			bool			 corners = true;  // draw the four L-bracket ticks
 			bool			 compact = false; // denser header/body padding for HUD panels
 			bool			 flush = false;	  // remove body padding (edge-to-edge content)
+			std::optional<Foundation::Color> glow = std::nullopt; // colored box-shadow halo; overrides the raised drop shadow
 		};
 
 		explicit Panel(Args args);

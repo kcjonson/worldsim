@@ -30,6 +30,7 @@ add_executable(ui-sandbox
     scenes/TextWrapScene.cpp
     scenes/PlanetScene.cpp
     scenes/SalvageScene.cpp
+    scenes/SalvageModalScene.cpp
 )
 
 target_include_directories(ui-sandbox

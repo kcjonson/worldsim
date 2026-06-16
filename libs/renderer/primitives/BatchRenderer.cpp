@@ -123,7 +123,8 @@ namespace Renderer {
 		const Foundation::Rect&						bounds,
 		const Foundation::Color&					fillColor,
 		const std::optional<Foundation::BorderStyle>& border,
-		float										cornerRadius
+		float										cornerRadius,
+		const std::optional<Foundation::LinearGradient>& gradient
 	) { // NOLINT(readability-convert-member-functions-to-static)
 		uint32_t baseIndex = static_cast<uint32_t>(vertices.size());
 
@@ -131,8 +132,28 @@ namespace Renderer {
 		float halfW = bounds.width * 0.5F;
 		float halfH = bounds.height * 0.5F;
 
-		// Fill color
-		Foundation::Vec4 colorVec = fillColor.toVec4();
+		// Per-corner fill colors (vertex order: TL, TR, BR, BL). Without a gradient
+		// all four are the flat fill, matching prior behavior exactly. With one, the
+		// stops are placed on the corners and the GPU interpolates across the quad.
+		Foundation::Vec4 colorTL = fillColor.toVec4();
+		Foundation::Vec4 colorTR = colorTL;
+		Foundation::Vec4 colorBR = colorTL;
+		Foundation::Vec4 colorBL = colorTL;
+		if (gradient.has_value()) {
+			const Foundation::Vec4 from = gradient->from.toVec4();
+			const Foundation::Vec4 to = gradient->to.toVec4();
+			if (gradient->horizontal) {
+				colorTL = from;
+				colorBL = from;
+				colorTR = to;
+				colorBR = to;
+			} else {
+				colorTL = from;
+				colorTR = from;
+				colorBR = to;
+				colorBL = to;
+			}
+		}
 
 		// Pack border data (color RGB + width)
 		Foundation::Vec4 borderData(0.0F, 0.0F, 0.0F, 0.0F);
@@ -189,7 +210,7 @@ namespace Renderer {
 		vertices.push_back(
 			{TransformPosition(Foundation::Vec2(centerX - expandedHalfW, centerY - expandedHalfH), currentTransform, transformIsIdentity),
 			 Foundation::Vec2(-expandedHalfW, -expandedHalfH), // Rect-local: top-left (expanded)
-			 colorVec,
+			 colorTL,
 			 borderData,
 			 shapeParams,
 			 currentClipBounds}
@@ -199,7 +220,7 @@ namespace Renderer {
 		vertices.push_back(
 			{TransformPosition(Foundation::Vec2(centerX + expandedHalfW, centerY - expandedHalfH), currentTransform, transformIsIdentity),
 			 Foundation::Vec2(expandedHalfW, -expandedHalfH), // Rect-local: top-right (expanded)
-			 colorVec,
+			 colorTR,
 			 borderData,
 			 shapeParams,
 			 currentClipBounds}
@@ -209,7 +230,7 @@ namespace Renderer {
 		vertices.push_back(
 			{TransformPosition(Foundation::Vec2(centerX + expandedHalfW, centerY + expandedHalfH), currentTransform, transformIsIdentity),
 			 Foundation::Vec2(expandedHalfW, expandedHalfH), // Rect-local: bottom-right (expanded)
-			 colorVec,
+			 colorBR,
 			 borderData,
 			 shapeParams,
 			 currentClipBounds}
@@ -219,7 +240,7 @@ namespace Renderer {
 		vertices.push_back(
 			{TransformPosition(Foundation::Vec2(centerX - expandedHalfW, centerY + expandedHalfH), currentTransform, transformIsIdentity),
 			 Foundation::Vec2(-expandedHalfW, expandedHalfH), // Rect-local: bottom-left (expanded)
-			 colorVec,
+			 colorBL,
 			 borderData,
 			 shapeParams,
 			 currentClipBounds}
@@ -238,6 +259,46 @@ namespace Renderer {
 		vertexAtlas.insert(vertexAtlas.end(), 4, 0);
 	}
 
+	void BatchRenderer::addShadowQuad(const Foundation::Rect& bounds, const Foundation::BoxShadow& shadow, float cornerRadius) {
+		// The shadow's SDF shape is the rect grown by `spread`; the quad is grown a
+		// further `blur` so the shader has room to fade the falloff to zero.
+		const float halfW = (bounds.width * 0.5F) + shadow.spread;
+		const float halfH = (bounds.height * 0.5F) + shadow.spread;
+		if (halfW <= 0.0F || halfH <= 0.0F) {
+			return;
+		}
+		const float blur = shadow.blur > 0.0F ? shadow.blur : 0.5F;
+		const float cr = cornerRadius + shadow.spread;
+		const float cx = bounds.x + (bounds.width * 0.5F) + shadow.offset.x;
+		const float cy = bounds.y + (bounds.height * 0.5F) + shadow.offset.y;
+		const float qHalfW = halfW + blur;
+		const float qHalfH = halfH + blur;
+
+		const uint32_t		   baseIndex = static_cast<uint32_t>(vertices.size());
+		const Foundation::Vec4 colorVec = shadow.color.toVec4();
+		const Foundation::Vec4 data1(blur, 0.0F, 0.0F, 0.0F);
+		const Foundation::Vec4 data2(halfW, halfH, cr, kRenderModeShadow);
+
+		// Corners TL, TR, BR, BL. rectLocalPos is the SDF coordinate from the shadow
+		// center: the shape edge sits at +-halfSize, the falloff runs out to +-blur.
+		vertices.push_back({TransformPosition(Foundation::Vec2(cx - qHalfW, cy - qHalfH), currentTransform, transformIsIdentity),
+							Foundation::Vec2(-qHalfW, -qHalfH), colorVec, data1, data2, currentClipBounds});
+		vertices.push_back({TransformPosition(Foundation::Vec2(cx + qHalfW, cy - qHalfH), currentTransform, transformIsIdentity),
+							Foundation::Vec2(qHalfW, -qHalfH), colorVec, data1, data2, currentClipBounds});
+		vertices.push_back({TransformPosition(Foundation::Vec2(cx + qHalfW, cy + qHalfH), currentTransform, transformIsIdentity),
+							Foundation::Vec2(qHalfW, qHalfH), colorVec, data1, data2, currentClipBounds});
+		vertices.push_back({TransformPosition(Foundation::Vec2(cx - qHalfW, cy + qHalfH), currentTransform, transformIsIdentity),
+							Foundation::Vec2(-qHalfW, qHalfH), colorVec, data1, data2, currentClipBounds});
+
+		indices.push_back(baseIndex + 0);
+		indices.push_back(baseIndex + 1);
+		indices.push_back(baseIndex + 2);
+		indices.push_back(baseIndex + 0);
+		indices.push_back(baseIndex + 2);
+		indices.push_back(baseIndex + 3);
+
+		vertexAtlas.insert(vertexAtlas.end(), 4, 0);
+	}
 
 	void BatchRenderer::addTriangles( // NOLINT(readability-convert-member-functions-to-static)
 		const Foundation::Vec2*	  inputVertices,

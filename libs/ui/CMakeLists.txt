@@ -34,6 +34,10 @@ add_library(ui
     design-system/Divider.cpp
     design-system/KeyCap.cpp
     design-system/Icon.cpp
+    design-system/Modal.cpp
+    design-system/Avatar.cpp
+    design-system/Slider.cpp
+    design-system/Tooltip.cpp
 )
 
 target_include_directories(ui

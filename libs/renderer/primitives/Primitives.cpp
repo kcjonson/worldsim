@@ -274,8 +274,14 @@ namespace Renderer::Primitives {
 			cornerRadius = args.style.border.value().cornerRadius;
 		}
 
-		// Single AddQuad call handles fill, border, and rounded corners via GPU fragment shader
-		g_batchRenderer->addQuad(args.bounds, args.style.fill, args.style.border, cornerRadius);
+		// Outer box-shadow / glow sits behind the fill (emit first).
+		if (args.style.boxShadow.has_value()) {
+			g_batchRenderer->addShadowQuad(args.bounds, args.style.boxShadow.value(), cornerRadius);
+		}
+
+		// Single AddQuad call handles fill, border, rounded corners, and an optional
+		// gradient (per-corner vertex colors) via the GPU.
+		g_batchRenderer->addQuad(args.bounds, args.style.fill, args.style.border, cornerRadius, args.style.gradient);
 	}
 
 	void drawLine(const LineArgs& args) {
@@ -390,32 +396,32 @@ namespace Renderer::Primitives {
 			return;
 		}
 
-		// Generate glyph quads from the font renderer for the requested family
-		std::vector<ui::FontRenderer::GlyphQuad> quads;
-		g_fontRenderer->generateGlyphQuads(
-			args.text,
-			glm::vec2(args.position.x, args.position.y),
-			args.scale,
-			glm::vec4(args.color.r, args.color.g, args.color.b, args.color.a),
-			quads,
-			args.font
-		);
-
 		// Each glyph carries its family's atlas texture so the batch groups it
 		// with other glyphs from the same atlas (see BatchRenderer::flush).
-		GLuint atlasTexture = g_fontRenderer->getAtlasTexture(args.font);
+		const GLuint atlasTexture = g_fontRenderer->getAtlasTexture(args.font);
 
-		// Add each glyph quad to the batch renderer
-		for (const auto& quad : quads) {
-			g_batchRenderer->addTextQuad(
-				Foundation::Vec2(quad.position.x, quad.position.y),
-				Foundation::Vec2(quad.size.x, quad.size.y),
-				Foundation::Vec2(quad.uvMin.x, quad.uvMin.y),
-				Foundation::Vec2(quad.uvMax.x, quad.uvMax.y),
-				Foundation::Color(quad.color.r, quad.color.g, quad.color.b, quad.color.a),
-				atlasTexture
-			);
+		// Emit one pass of the string at a position/color (shared by the shadow
+		// and the main text so text-shadow is a single inline property, not a
+		// caller-side double draw).
+		const auto emit = [&](Foundation::Vec2 pos, const Foundation::Color& col) {
+			std::vector<ui::FontRenderer::GlyphQuad> quads;
+			g_fontRenderer->generateGlyphQuads(
+				args.text, glm::vec2(pos.x, pos.y), args.scale, glm::vec4(col.r, col.g, col.b, col.a), quads, args.font);
+			for (const auto& quad : quads) {
+				g_batchRenderer->addTextQuad(
+					Foundation::Vec2(quad.position.x, quad.position.y),
+					Foundation::Vec2(quad.size.x, quad.size.y),
+					Foundation::Vec2(quad.uvMin.x, quad.uvMin.y),
+					Foundation::Vec2(quad.uvMax.x, quad.uvMax.y),
+					Foundation::Color(quad.color.r, quad.color.g, quad.color.b, quad.color.a),
+					atlasTexture);
+			}
+		};
+
+		if (args.shadowColor.a > 0.0F) {
+			emit({args.position.x + args.shadowOffset.x, args.position.y + args.shadowOffset.y}, args.shadowColor);
 		}
+		emit(args.position, args.color);
 	}
 
 	// --- Clip Stack (Shader-based, batching-friendly) ---

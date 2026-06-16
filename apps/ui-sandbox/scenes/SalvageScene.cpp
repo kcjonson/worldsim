@@ -2,6 +2,7 @@
 // Renders every Salvage primitive in its variants so the C++ implementation can
 // be eyeballed against the React prototype's component gallery.
 
+#include <design-system/Avatar.h>
 #include <design-system/Badge.h>
 #include <design-system/Button.h>
 #include <design-system/Divider.h>
@@ -11,9 +12,11 @@
 #include <design-system/Meter.h>
 #include <design-system/Panel.h>
 #include <design-system/SegmentedControl.h>
+#include <design-system/Slider.h>
 #include <design-system/Stat.h>
 #include <design-system/Tabs.h>
 #include <design-system/Tokens.h>
+#include <design-system/Tooltip.h>
 #include <design-system/Variants.h>
 #include <graphics/Color.h>
 #include <graphics/Rect.h>
@@ -140,6 +143,21 @@ class SalvageScene : public engine::IScene {
 		y += 30.0F;
 		Divider({.position = {left, y}, .width = 380.0F, .label = "FIELD REPORT"}).render();
 		y += 28.0F;
+
+		// --- People / inputs (middle column) ---
+		const float mx = left + 540.0F;
+		drawText({.text = "PEOPLE", .position = {mx, 60.0F}, .scale = fs_2xs / 16.0F, .color = accent, .font = fontMono, .id = "section"});
+		Avatar({.position = {mx, 78.0F}, .size = 44.0F, .seed = "Mara Vance", .mood = 0.72F}).render();
+		Avatar({.position = {mx + 54.0F, 78.0F}, .size = 44.0F, .seed = "Idris Okonkwo", .mood = 0.45F}).render();
+		Avatar({.position = {mx + 108.0F, 78.0F}, .size = 44.0F, .seed = "Rin Calloway", .mood = 0.2F}).render();
+		Avatar({.position = {mx + 162.0F, 78.0F}, .size = 44.0F, .seed = "Vale", .mood = 0.9F, .selected = true}).render();
+
+		drawText({.text = "SLIDERS", .position = {mx, 142.0F}, .scale = fs_2xs / 16.0F, .color = accent, .font = fontMono, .id = "section"});
+		Slider({.position = {mx, 160.0F}, .width = 220.0F, .value = 0.62F, .label = "WATER", .valueText = "62%", .detent = 0.62F}).render();
+		Slider({.position = {mx, 200.0F}, .width = 220.0F, .value = 0.31F, .label = "ATMOSPHERE", .valueText = "0.7 atm", .detent = 0.31F}).render();
+
+		drawText({.text = "TOOLTIP", .position = {mx, 244.0F}, .scale = fs_2xs / 16.0F, .color = accent, .font = fontMono, .id = "section"});
+		Tooltip({.position = {mx, 260.0F}, .content = "Double-click for full dossier"}).render();
 
 		// --- Panels (right column) ---
 		const float px = left + 820.0F;

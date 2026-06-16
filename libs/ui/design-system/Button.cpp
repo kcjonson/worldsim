@@ -62,12 +62,13 @@ namespace UI::DS {
 			Foundation::Color label;
 			Foundation::Color border;
 			bool			  hasBorder;
+			bool			  gradientFill = false; // Primary only: accent_bright -> accent
 		};
 
 		VariantStyle styleFor(ButtonVariant variant) {
 			switch (variant) {
 				case ButtonVariant::Primary:
-					return {accent, accent_contrast, accent_bright, true};
+					return {accent, accent_contrast, accent_bright, true, true};
 				case ButtonVariant::Ghost:
 					return {Foundation::Color::transparent(), text_dim, {}, false};
 				case ButtonVariant::Danger:
@@ -109,6 +110,9 @@ namespace UI::DS {
 		const VariantStyle	   style = styleFor(args.variant);
 
 		Foundation::RectStyle rectStyle{.fill = style.fill};
+		if (style.gradientFill) {
+			rectStyle.gradient = Foundation::LinearGradient{.from = accent_bright, .to = accent, .horizontal = false};
+		}
 		if (style.hasBorder) {
 			rectStyle.border = Foundation::BorderStyle{
 				.color = style.border,

@@ -67,6 +67,12 @@ namespace UI::DS {
 			return 0.0F;
 		}
 
+		// Lift a color's RGB toward white, keeping alpha. Gives the active chip a
+		// brighter top edge without a dedicated per-tone bright token.
+		Foundation::Color brighten(Foundation::Color color, float amount) {
+			return {color.r + ((1.0F - color.r) * amount), color.g + ((1.0F - color.g) * amount), color.b + ((1.0F - color.b) * amount), color.a};
+		}
+
 	} // namespace
 
 	SegmentedControl::SegmentedControl(Args controlArgs)
@@ -136,22 +142,9 @@ namespace UI::DS {
 			const Foundation::Rect segRect{{cursorX, top}, {segW, segH}};
 
 			if (active) {
-				// Faux glow: a larger, softer tone-colored rect behind the chip
-				// approximating the prototype's 12px box-shadow bloom.
-				const float			   glowSpread = 4.0F;
-				const Foundation::Rect glowRect{{segRect.x - glowSpread, segRect.y - glowSpread},
-												{segRect.width + (glowSpread * 2.0F), segRect.height + (glowSpread * 2.0F)}};
-				drawRect({.bounds = glowRect,
-						  .style = {.fill = glowCol,
-									.border = Foundation::BorderStyle{
-										.color = Foundation::Color::transparent(),
-										.width = 0.0F,
-										.cornerRadius = r_md,
-										.position = Foundation::BorderPosition::Inside,
-									}},
-						  .id = "ds_segmented_glow"});
-
-				// Solid tone chip.
+				// Tone chip with a subtle top-bright -> tone vertical gradient and a
+				// soft tone-colored glow behind it via an inline box-shadow
+				// (the prototype's box-shadow bloom).
 				drawRect({.bounds = segRect,
 						  .style = {.fill = toneCol,
 									.border = Foundation::BorderStyle{
@@ -159,7 +152,9 @@ namespace UI::DS {
 										.width = 0.0F,
 										.cornerRadius = r_sm,
 										.position = Foundation::BorderPosition::Inside,
-									}},
+									},
+									.gradient = Foundation::LinearGradient{.from = brighten(toneCol, 0.25F), .to = toneCol, .horizontal = false},
+									.boxShadow = Foundation::BoxShadow{.color = withAlpha(glowCol, 0.4F), .blur = 10.0F, .spread = 1.0F, .offset = {0.0F, 0.0F}}},
 						  .id = "ds_segmented_active"});
 			}
 

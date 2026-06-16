@@ -63,6 +63,7 @@ float screenPxRange(float pixelRange) {
 // ============================================================================
 const float kRenderModeText = -1.0;      // MSDF text rendering
 const float kRenderModeInstanced = -2.0; // Simple solid color (instanced entities)
+const float kRenderModeShadow = -3.0;    // Box-shadow / glow (SDF soft falloff)
 
 // ============================================================================
 // MAIN - Branch on render mode
@@ -75,7 +76,8 @@ void main() {
 	// - Instanced: v_data2.w == -2.0
 
 	// ========== INSTANCED ENTITY RENDERING (simple solid color) ==========
-	if (v_data2.w < -1.5) {
+	// Exactly mode -2 (shadow is -3 and falls through to the clipped branch below).
+	if (v_data2.w < -1.5 && v_data2.w > -2.5) {
 		// Output the vertex color (includes instance color tint from SVG asset)
 		FragColor = vec4(v_color.rgb, v_color.a * u_bakedAlpha);
 		return;
@@ -170,6 +172,25 @@ void main() {
 
 		// Apply shape boundary alpha
 		FragColor = vec4(finalColor, shapeAlpha * finalAlpha);
+
+	} else if (v_data2.w < -2.5) {
+		// ========== BOX-SHADOW / GLOW (SDF soft falloff) ==========
+		// v_texCoord = rectLocalPos (SDF coords from the shadow-shape center)
+		// v_data1.x  = blur radius (px)
+		// v_data2    = (halfWidth, halfHeight, cornerRadius, -3)
+		// v_color    = shadow color (rgb + peak alpha)
+		vec2 rectLocalPos = v_texCoord;
+		vec2 halfSize = v_data2.xy;
+		float cornerRadius = v_data2.z;
+		float blur = max(v_data1.x, 0.5);
+
+		float dist = sdRoundedBox(rectLocalPos, halfSize, cornerRadius);
+		// Full alpha inside the shape footprint, fading to 0 over `blur` outside.
+		float a = 1.0 - smoothstep(0.0, blur, dist);
+		if (a < 0.001) {
+			discard;
+		}
+		FragColor = vec4(v_color.rgb, v_color.a * a);
 
 	} else {
 		// ========== TEXT RENDERING (MSDF) ==========
