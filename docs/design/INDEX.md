@@ -71,6 +71,7 @@ Discrete player-facing features.
 |----------|-------------|
 | [Game Start Experience](./features/game-start-experience.md) | Main menu → gameplay flow |
 | [Player Control](./features/player-control.md) | Observation, command, direct control |
+| [Asset Manager](./features/asset-manager/) | Designer/agent tool to browse, preview, validate assets (technical overlap) |
 | [Storage System](./features/storage-system.md) | Item storage, priority hauling |
 | [Vector Graphics](./features/vector-graphics/) | Asset workflow, animations |
 | [Multiplayer](./features/multiplayer/) | Co-op, multiplayer design |
