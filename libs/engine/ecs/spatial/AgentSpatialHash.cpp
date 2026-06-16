@@ -37,12 +37,13 @@ void AgentSpatialHash::queryNeighbors(glm::vec2 center, float radius, std::vecto
     }
 }
 
-int64_t AgentSpatialHash::cellKey(int32_t cx, int32_t cy) {
-    // Pack the two int32 bit patterns via unsigned arithmetic; shifting a
-    // negative signed value is at best implementation-defined.
+uint64_t AgentSpatialHash::cellKey(int32_t cx, int32_t cy) {
+    // Pack the two int32 cell coordinates into an unsigned bit pattern. Staying
+    // unsigned end-to-end avoids both the signed left-shift and the
+    // unsigned->signed conversion, so the key is well-defined on every platform.
     const uint64_t ux = static_cast<uint64_t>(static_cast<uint32_t>(cx));
     const uint64_t uy = static_cast<uint64_t>(static_cast<uint32_t>(cy));
-    return static_cast<int64_t>((ux << 32) | uy);
+    return (ux << 32) | uy;
 }
 
 std::pair<int32_t, int32_t> AgentSpatialHash::cellCoords(glm::vec2 pos) const {
