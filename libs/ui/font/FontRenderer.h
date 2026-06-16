@@ -53,10 +53,15 @@ namespace ui {
 		 * @param text The text to measure
 		 * @param scale Scaling factor (default 1.0F)
 		 * @param family Font family to measure with (default Roboto)
+		 * @param letterSpacing Extra px between glyphs (CSS letter-spacing); 0 = none
 		 * @return Width and height of the text in pixels
 		 */
-		glm::vec2 MeasureText(const std::string& text, float scale = 1.0F, Renderer::FontFamily family = Renderer::FontFamily::Roboto)
-			const;
+		glm::vec2 MeasureText(
+			const std::string&	 text,
+			float				 scale = 1.0F,
+			Renderer::FontFamily family = Renderer::FontFamily::Roboto,
+			float				 letterSpacing = 0.0F
+		) const;
 
 		/**
 		 * Get the maximum glyph height scaled by the given factor
@@ -103,6 +108,7 @@ namespace ui {
 		 * @param scale Scaling factor for the text size (1.0F = 16px base size)
 		 * @param color RGBA color of the text (0-1 range)
 		 * @param outQuads Output vector to append generated quads to
+		 * @param letterSpacing Extra px between glyphs (CSS letter-spacing); 0 = none
 		 */
 		void generateGlyphQuads(
 			const std::string&		text,
@@ -110,7 +116,8 @@ namespace ui {
 			float					scale,
 			const glm::vec4&		color,
 			std::vector<GlyphQuad>& outQuads,
-			Renderer::FontFamily	family = Renderer::FontFamily::Roboto
+			Renderer::FontFamily	family = Renderer::FontFamily::Roboto,
+			float					letterSpacing = 0.0F
 		) const;
 
 		/**
@@ -247,15 +254,17 @@ namespace ui {
 		const Atlas& atlasFor(Renderer::FontFamily family) const;
 
 		/**
-		 * Cache key for glyph quad caching (family + text + scale)
+		 * Cache key for glyph quad caching (family + text + scale + letterSpacing)
 		 */
 		struct CacheKey {
 			Renderer::FontFamily family;
 			std::string			 text;
 			float				 scale;
+			float				 letterSpacing;
 
 			bool operator==(const CacheKey& other) const {
-				return family == other.family && text == other.text && std::abs(scale - other.scale) < 0.001F;
+				return family == other.family && text == other.text && std::abs(scale - other.scale) < 0.001F &&
+					std::abs(letterSpacing - other.letterSpacing) < 0.001F;
 			}
 		};
 
@@ -267,7 +276,8 @@ namespace ui {
 				size_t h1 = std::hash<std::string>{}(key.text);
 				size_t h2 = std::hash<float>{}(key.scale);
 				size_t h3 = std::hash<int>{}(static_cast<int>(key.family));
-				return h1 ^ (h2 << 1) ^ (h3 << 2);
+				size_t h4 = std::hash<float>{}(key.letterSpacing);
+				return h1 ^ (h2 << 1) ^ (h3 << 2) ^ (h4 << 3);
 			}
 		};
 

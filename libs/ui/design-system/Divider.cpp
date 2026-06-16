@@ -19,9 +19,9 @@ namespace UI::DS {
 
 		float textScale(float sizePx) { return sizePx / kTextBasePx; }
 
-		float measureWidth(const std::string& text, float scale) {
+		float measureWidth(const std::string& text, float scale, float letterSpacing) {
 			if (const ui::FontRenderer* font = Renderer::Primitives::getFontRenderer(); font != nullptr) {
-				return font->MeasureText(text, scale).x;
+				return font->MeasureText(text, scale, fontMono, letterSpacing).x;
 			}
 			return 0.0F;
 		}
@@ -49,7 +49,8 @@ namespace UI::DS {
 		// segment. Segment widths are the remaining space after the label and the
 		// two gaps (space_3 on each side of the label).
 		const float scale = textScale(fs_2xs);
-		const float labelWidth = measureWidth(args.label, scale);
+		const float labelSpacing = fs_2xs * ls_wider;
+		const float labelWidth = measureWidth(args.label, scale, labelSpacing);
 		const float gap = space_3;
 		const float segWidth = std::max(0.0F, (args.width - labelWidth - (gap * 2.0F)) * 0.5F);
 
@@ -63,6 +64,8 @@ namespace UI::DS {
 				  .scale = scale,
 				  .color = text_faint,
 				  .font = fontMono,
+				  .letterSpacing = labelSpacing,
+				  .transform = Foundation::TextTransform::Uppercase,
 				  .id = "ds_divider_label"});
 
 		const float rightStart = labelX + labelWidth + gap;

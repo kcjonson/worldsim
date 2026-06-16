@@ -93,9 +93,10 @@ namespace UI::DS {
 
 		const float height = heightFor(args.sizeVariant);
 
-		float labelWidth = 0.0F;
+		const float fontPx = fontFor(args.sizeVariant);
+		float		labelWidth = 0.0F;
 		if (const ui::FontRenderer* font = Renderer::Primitives::getFontRenderer(); font != nullptr) {
-			labelWidth = font->MeasureText(args.label, textScale(fontFor(args.sizeVariant))).x;
+			labelWidth = font->MeasureText(args.label, textScale(fontPx), fontDisplay, fontPx * ls_wide).x;
 		}
 
 		return {labelWidth + (padXFor(args.sizeVariant) * 2.0F), height};
@@ -123,25 +124,20 @@ namespace UI::DS {
 		}
 		drawRect({.bounds = bounds, .style = rectStyle, .id = "ds_button"});
 
-		// Center the label: horizontally via measured width, vertically via the
-		// glyph height. drawText positions by the text's top-left.
-		const float			 fontPx = fontFor(args.sizeVariant);
-		const float			 scale = textScale(fontPx);
-		Foundation::Vec2	 textSize{0.0F, fontPx};
-		if (const ui::FontRenderer* font = Renderer::Primitives::getFontRenderer(); font != nullptr) {
-			textSize = font->MeasureText(args.label, scale);
-		}
-
-		const Foundation::Vec2 textPos{
-			bounds.x + ((bounds.width - textSize.x) * 0.5F),
-			bounds.y + ((bounds.height - textSize.y) * 0.5F),
-		};
-
+		// Center the label within the button box; the text primitive owns the
+		// uppercase, the letter-spacing, and the alignment math.
+		const float fontPx = fontFor(args.sizeVariant);
 		drawText({.text = args.label,
-				  .position = textPos,
-				  .scale = scale,
+				  .position = bounds.position(),
+				  .scale = textScale(fontPx),
 				  .color = style.label,
 				  .font = fontDisplay,
+				  .hAlign = Foundation::HorizontalAlign::Center,
+				  .vAlign = Foundation::VerticalAlign::Middle,
+				  .boxWidth = bounds.width,
+				  .boxHeight = bounds.height,
+				  .letterSpacing = fontPx * ls_wide,
+				  .transform = Foundation::TextTransform::Uppercase,
 				  .id = "ds_button_label"});
 	}
 

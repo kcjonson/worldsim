@@ -44,7 +44,15 @@ namespace UI::DS {
 
 		// Inline text with a dark text-shadow, so labels stay legible over both the
 		// filled and empty track (the shadow is a style prop, not a double draw).
-		void drawShadowedText(const std::string& text, Foundation::Vec2 pos, float scale, Foundation::Color color, const char* id) {
+		void drawShadowedText(
+			const std::string&		  text,
+			Foundation::Vec2		  pos,
+			float					  scale,
+			Foundation::Color		  color,
+			const char*				  id,
+			float					  letterSpacing = 0.0F,
+			Foundation::TextTransform transform = Foundation::TextTransform::None
+		) {
 			Renderer::Primitives::drawText({.text = text,
 											.position = pos,
 											.scale = scale,
@@ -52,6 +60,8 @@ namespace UI::DS {
 											.font = fontMono,
 											.shadowColor = bg_void,
 											.shadowOffset = {1.0F, 1.0F},
+											.letterSpacing = letterSpacing,
+											.transform = transform,
 											.id = id});
 		}
 
@@ -103,7 +113,8 @@ namespace UI::DS {
 			const float textY = track.y + ((height - fs_2xs) * 0.5F);
 
 			if (!args.label.empty()) {
-				drawShadowedText(args.label, {track.x + pad, textY}, scale, text_bright, "ds_meter_label");
+				drawShadowedText(args.label, {track.x + pad, textY}, scale, text_bright, "ds_meter_label",
+								 fs_2xs * ls_wider, Foundation::TextTransform::Uppercase);
 			}
 			if (!args.valueText.empty()) {
 				const float valueWidth = measureWidth(args.valueText, scale);
@@ -124,6 +135,8 @@ namespace UI::DS {
 						  .scale = scale,
 						  .color = text_dim,
 						  .font = fontMono,
+						  .letterSpacing = fs_xs * ls_wider,
+						  .transform = Foundation::TextTransform::Uppercase,
 						  .id = "ds_meter_label"});
 			}
 			if (!args.valueText.empty()) {

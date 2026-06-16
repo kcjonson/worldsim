@@ -44,13 +44,15 @@ namespace UI::DS {
 	void Stat::render() const {
 		using Renderer::Primitives::drawText;
 
-		// Label on top: small, dim.
+		// Label on top: small, dim, uppercase mono with wide tracking.
 		if (!args.label.empty()) {
 			drawText({.text = args.label,
 					  .position = args.position,
 					  .scale = textScale(fs_2xs),
 					  .color = text_dim,
 					  .font = fontMono,
+					  .letterSpacing = fs_2xs * ls_wider,
+					  .transform = Foundation::TextTransform::Uppercase,
 					  .id = "ds_stat_label"});
 		}
 

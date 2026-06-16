@@ -217,6 +217,17 @@ namespace Renderer {
 			// position+shadowOffset in shadowColor (behind), then normally.
 			Foundation::Color	 shadowColor = Foundation::Color(0.0F, 0.0F, 0.0F, 0.0F);
 			Foundation::Vec2	 shadowOffset{0.0F, 0.0F};
+			// CSS text-align / vertical alignment. When boxWidth/boxHeight > 0, the
+			// text is aligned within [position, position+box]; otherwise drawn at
+			// position (the box-less default matches plain top-left placement).
+			Foundation::HorizontalAlign hAlign = Foundation::HorizontalAlign::Left;
+			Foundation::VerticalAlign	vAlign = Foundation::VerticalAlign::Top;
+			float				 boxWidth = 0.0F;  // align box width (px); 0 = no horizontal box
+			float				 boxHeight = 0.0F; // align box height (px); 0 = no vertical box
+			// CSS letter-spacing: extra px inserted between glyphs (not after last).
+			float				 letterSpacing = 0.0F;
+			// CSS text-transform applied to the string at draw time.
+			Foundation::TextTransform transform = Foundation::TextTransform::None;
 			const char*			 id = nullptr;
 			float				 zIndex = 0.0F;
 		};

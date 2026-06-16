@@ -70,6 +70,9 @@ namespace Foundation { // NOLINT(readability-identifier-naming)
 	// Text vertical alignment
 	enum class VerticalAlign { Top, Middle, Bottom };
 
+	// CSS text-transform: case folding applied at draw time.
+	enum class TextTransform { None, Uppercase };
+
 	// Text visual style
 	struct TextStyle {
 		Color			color = Color::white();

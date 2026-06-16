@@ -26,9 +26,13 @@ namespace UI::DS {
 		constexpr float kPadX = 5.0F;		// horizontal padding each side
 		constexpr float kBottomEdge = 2.0F; // doubled bottom border for the bevel
 
+		// Mono labels are letter-spaced (ls_wider) and uppercased by the text
+		// primitive; auto-width must account for the same spacing.
+		constexpr float kLabelSpacing = fs_2xs * ls_wider;
+
 		float measureWidth(const std::string& text, float scale) {
 			if (const ui::FontRenderer* font = Renderer::Primitives::getFontRenderer(); font != nullptr) {
-				return font->MeasureText(text, scale).x;
+				return font->MeasureText(text, scale, fontMono, kLabelSpacing).x;
 			}
 			return 0.0F;
 		}
@@ -68,17 +72,20 @@ namespace UI::DS {
 				  .style = {.fill = line_strong},
 				  .id = "ds_keycap_edge"});
 
-		// Centered mono label.
-		const float		 scale = textScale(fs_2xs);
-		Foundation::Vec2 textSize{0.0F, fs_2xs};
-		if (const ui::FontRenderer* font = Renderer::Primitives::getFontRenderer(); font != nullptr) {
-			textSize = font->MeasureText(args.label, scale);
-		}
-		const Foundation::Vec2 textPos{
-			bounds.x + ((bounds.width - textSize.x) * 0.5F),
-			bounds.y + ((bounds.height - textSize.y) * 0.5F),
-		};
-		drawText({.text = args.label, .position = textPos, .scale = scale, .color = text_dim, .font = fontMono, .id = "ds_keycap_label"});
+		// Centered mono label; the text primitive owns the uppercase, the
+		// letter-spacing, and the centering.
+		drawText({.text = args.label,
+				  .position = bounds.position(),
+				  .scale = textScale(fs_2xs),
+				  .color = text_dim,
+				  .font = fontMono,
+				  .hAlign = Foundation::HorizontalAlign::Center,
+				  .vAlign = Foundation::VerticalAlign::Middle,
+				  .boxWidth = bounds.width,
+				  .boxHeight = bounds.height,
+				  .letterSpacing = kLabelSpacing,
+				  .transform = Foundation::TextTransform::Uppercase,
+				  .id = "ds_keycap_label"});
 	}
 
 } // namespace UI::DS

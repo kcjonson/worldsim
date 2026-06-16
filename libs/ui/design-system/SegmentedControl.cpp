@@ -60,9 +60,9 @@ namespace UI::DS {
 			return space_3;
 		}
 
-		float measureWidth(const std::string& text, float scale) {
+		float measureWidth(const std::string& text, float scale, float letterSpacing) {
 			if (const ui::FontRenderer* font = Renderer::Primitives::getFontRenderer(); font != nullptr) {
-				return font->MeasureText(text, scale).x;
+				return font->MeasureText(text, scale, fontDisplay, letterSpacing).x;
 			}
 			return 0.0F;
 		}
@@ -93,11 +93,13 @@ namespace UI::DS {
 
 		// Auto-fit: widest label plus per-size padding, applied to every segment so
 		// they stay equal width.
-		const float scale = textScale(fontFor(args.size));
+		const float fontPx = fontFor(args.size);
+		const float scale = textScale(fontPx);
+		const float spacing = fontPx * ls_wide;
 		const float pad = segPadXFor(args.size) * 2.0F;
 		float		widest = 0.0F;
 		for (const std::string& label : args.options) {
-			widest = std::max(widest, measureWidth(label, scale));
+			widest = std::max(widest, measureWidth(label, scale, spacing));
 		}
 		return widest + pad;
 	}
@@ -159,20 +161,19 @@ namespace UI::DS {
 			}
 
 			// Centered label: active text is near-black on the chip, inactive is dim.
+			// The text primitive owns the uppercase, letter-spacing, and centering.
 			const Foundation::Color labelCol = active ? accent_contrast : text_dim;
-			Foundation::Vec2		textSize{0.0F, fontPx};
-			if (const ui::FontRenderer* font = Renderer::Primitives::getFontRenderer(); font != nullptr) {
-				textSize = font->MeasureText(args.options[i], scale);
-			}
-			const Foundation::Vec2 textPos{
-				segRect.x + ((segRect.width - textSize.x) * 0.5F),
-				segRect.y + ((segRect.height - textSize.y) * 0.5F),
-			};
 			drawText({.text = args.options[i],
-					  .position = textPos,
+					  .position = segRect.position(),
 					  .scale = scale,
 					  .color = labelCol,
 					  .font = fontDisplay,
+					  .hAlign = Foundation::HorizontalAlign::Center,
+					  .vAlign = Foundation::VerticalAlign::Middle,
+					  .boxWidth = segRect.width,
+					  .boxHeight = segRect.height,
+					  .letterSpacing = fontPx * ls_wide,
+					  .transform = Foundation::TextTransform::Uppercase,
 					  .id = "ds_segmented_label"});
 
 			cursorX += segW + kSegGap;

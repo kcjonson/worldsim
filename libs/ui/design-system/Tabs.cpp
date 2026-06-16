@@ -26,11 +26,15 @@ namespace UI::DS {
 
 		float tabGap(float requested) { return requested >= 0.0F ? requested : space_1; }
 
+		// Display labels are letter-spaced (ls_wide) and uppercased by the text
+		// primitive; the width must account for the same spacing.
+		constexpr float kLabelSpacing = kLabelPx * ls_wide;
+
 		// Per-tab content width: label plus the css padding (space_3 each side).
 		float tabWidth(const std::string& label, float scale) {
 			float labelWidth = 0.0F;
 			if (const ui::FontRenderer* font = Renderer::Primitives::getFontRenderer(); font != nullptr) {
-				labelWidth = font->MeasureText(label, scale).x;
+				labelWidth = font->MeasureText(label, scale, fontDisplay, kLabelSpacing).x;
 			}
 			return labelWidth + (space_3 * 2.0F);
 		}
@@ -74,21 +78,19 @@ namespace UI::DS {
 			const bool	active = static_cast<int>(i) == args.selected;
 			const float width = tabWidth(args.tabs[i], scale);
 
-			Foundation::Vec2 textSize{0.0F, kLabelPx};
-			if (const ui::FontRenderer* font = Renderer::Primitives::getFontRenderer(); font != nullptr) {
-				textSize = font->MeasureText(args.tabs[i], scale);
-			}
-
-			// Center the label within the tab cell.
-			const Foundation::Vec2 textPos{
-				cursorX + ((width - textSize.x) * 0.5F),
-				args.position.y + ((kBarHeight - textSize.y) * 0.5F),
-			};
+			// Center the label within the tab cell; the text primitive owns the
+			// uppercase, the letter-spacing, and the alignment.
 			drawText({.text = args.tabs[i],
-					  .position = textPos,
+					  .position = {cursorX, args.position.y},
 					  .scale = scale,
 					  .color = active ? text_bright : text_dim,
 					  .font = fontDisplay,
+					  .hAlign = Foundation::HorizontalAlign::Center,
+					  .vAlign = Foundation::VerticalAlign::Middle,
+					  .boxWidth = width,
+					  .boxHeight = kBarHeight,
+					  .letterSpacing = kLabelSpacing,
+					  .transform = Foundation::TextTransform::Uppercase,
 					  .id = "ds_tab_label"});
 
 			// Active underline: a 2px accent bar sitting flush on the baseline so it

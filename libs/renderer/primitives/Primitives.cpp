@@ -9,6 +9,7 @@
 #include <utils/Log.h>
 #include <GL/glew.h>
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <glm/gtc/matrix_transform.hpp>
 #include <memory>
@@ -400,13 +401,53 @@ namespace Renderer::Primitives {
 		// with other glyphs from the same atlas (see BatchRenderer::flush).
 		const GLuint atlasTexture = g_fontRenderer->getAtlasTexture(args.font);
 
+		// CSS text-transform: fold the case once up front so measure and emit agree.
+		std::string effective = args.text;
+		if (args.transform == Foundation::TextTransform::Uppercase) {
+			for (char& c : effective) {
+				c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+			}
+		}
+
+		// Measure the (transformed) string once for box alignment.
+		const glm::vec2 m = g_fontRenderer->MeasureText(effective, args.scale, args.font, args.letterSpacing);
+
+		// CSS text-align within the optional [position, position+box] rect. With no
+		// box (width/height 0) the origin stays at position, matching plain top-left.
+		Foundation::Vec2 origin = args.position;
+		if (args.boxWidth > 0.0F) {
+			switch (args.hAlign) {
+				case Foundation::HorizontalAlign::Center:
+					origin.x += (args.boxWidth - m.x) * 0.5F;
+					break;
+				case Foundation::HorizontalAlign::Right:
+					origin.x += args.boxWidth - m.x;
+					break;
+				case Foundation::HorizontalAlign::Left:
+					break;
+			}
+		}
+		if (args.boxHeight > 0.0F) {
+			switch (args.vAlign) {
+				case Foundation::VerticalAlign::Middle:
+					origin.y += (args.boxHeight - m.y) * 0.5F;
+					break;
+				case Foundation::VerticalAlign::Bottom:
+					origin.y += args.boxHeight - m.y;
+					break;
+				case Foundation::VerticalAlign::Top:
+					break;
+			}
+		}
+
 		// Emit one pass of the string at a position/color (shared by the shadow
 		// and the main text so text-shadow is a single inline property, not a
 		// caller-side double draw).
 		const auto emit = [&](Foundation::Vec2 pos, const Foundation::Color& col) {
 			std::vector<ui::FontRenderer::GlyphQuad> quads;
 			g_fontRenderer->generateGlyphQuads(
-				args.text, glm::vec2(pos.x, pos.y), args.scale, glm::vec4(col.r, col.g, col.b, col.a), quads, args.font);
+				effective, glm::vec2(pos.x, pos.y), args.scale, glm::vec4(col.r, col.g, col.b, col.a), quads, args.font,
+				args.letterSpacing);
 			for (const auto& quad : quads) {
 				g_batchRenderer->addTextQuad(
 					Foundation::Vec2(quad.position.x, quad.position.y),
@@ -419,9 +460,9 @@ namespace Renderer::Primitives {
 		};
 
 		if (args.shadowColor.a > 0.0F) {
-			emit({args.position.x + args.shadowOffset.x, args.position.y + args.shadowOffset.y}, args.shadowColor);
+			emit({origin.x + args.shadowOffset.x, origin.y + args.shadowOffset.y}, args.shadowColor);
 		}
-		emit(args.position, args.color);
+		emit(origin, args.color);
 	}
 
 	// --- Clip Stack (Shader-based, batching-friendly) ---

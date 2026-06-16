@@ -36,9 +36,10 @@ namespace UI::DS {
 		const Foundation::Color toneCol = args.tone == Tone::Default ? text : toneColor(args.tone);
 
 		const float scale = textScale(fs_2xs);
+		const float labelSpacing = fs_2xs * ls_wider;
 		float		labelWidth = 0.0F;
 		if (const ui::FontRenderer* font = Renderer::Primitives::getFontRenderer(); font != nullptr) {
-			labelWidth = font->MeasureText(args.label, scale).x;
+			labelWidth = font->MeasureText(args.label, scale, fontMono, labelSpacing).x;
 		}
 
 		const float dotSpace = args.dot ? (kDotDiameter + kDotGap) : 0.0F;
@@ -68,8 +69,16 @@ namespace UI::DS {
 			contentX += kDotDiameter + kDotGap;
 		}
 
-		const float textY = bounds.y + ((kHeight - fs_2xs) * 0.5F);
-		drawText({.text = args.label, .position = {contentX, textY}, .scale = scale, .color = toneCol, .font = fontMono, .id = "ds_badge_label"});
+		drawText({.text = args.label,
+				  .position = {contentX, bounds.y},
+				  .scale = scale,
+				  .color = toneCol,
+				  .font = fontMono,
+				  .vAlign = Foundation::VerticalAlign::Middle,
+				  .boxHeight = kHeight,
+				  .letterSpacing = labelSpacing,
+				  .transform = Foundation::TextTransform::Uppercase,
+				  .id = "ds_badge_label"});
 	}
 
 } // namespace UI::DS

@@ -83,7 +83,7 @@ namespace ui {
 		return atlases[static_cast<int>(Renderer::FontFamily::Roboto)];
 	}
 
-	glm::vec2 FontRenderer::MeasureText(const std::string& text, float scale, Renderer::FontFamily family) const {
+	glm::vec2 FontRenderer::MeasureText(const std::string& text, float scale, Renderer::FontFamily family, float letterSpacing) const {
 		if (text.empty()) {
 			return glm::vec2(0.0F, 0.0F);
 		}
@@ -106,6 +106,12 @@ namespace ui {
 					totalWidth += fallbackIt->second.advance * fontSize;
 				}
 			}
+		}
+
+		// letter-spacing sits between glyphs only (n glyphs -> n-1 gaps).
+		const auto glyphCount = static_cast<float>(text.size());
+		if (glyphCount > 1.0F) {
+			totalWidth += letterSpacing * (glyphCount - 1.0F);
 		}
 
 		// For height, use the line height from atlas metadata
@@ -290,14 +296,15 @@ namespace ui {
 		float					scale,
 		const glm::vec4&		color,
 		std::vector<GlyphQuad>& outQuads,
-		Renderer::FontFamily	family
+		Renderer::FontFamily	family,
+		float					letterSpacing
 	) const {
 		const Atlas&					atlas = atlasFor(family);
 		const std::map<char, SDFGlyph>& sdfGlyphs = atlas.glyphs;
 
 		// Try cache lookup if enabled
 		if (FontRendererConfig::kEnableGlyphQuadCache) {
-			CacheKey key{family, text, scale};
+			CacheKey key{family, text, scale, letterSpacing};
 			auto	 it = glyphQuadCache.find(key);
 
 			if (it != glyphQuadCache.end()) {
@@ -337,7 +344,8 @@ namespace ui {
 		glm::vec2 penPosition = glm::vec2(0, 0); // Generate relative to origin for caching
 		penPosition.y += ascenderAtCurrentScale; // Move to baseline
 
-		for (char currentChar : text) {
+		for (size_t charIdx = 0; charIdx < text.size(); ++charIdx) {
+			char			currentChar = text[charIdx];
 			auto			it = sdfGlyphs.find(currentChar);
 			const SDFGlyph* glyphPtr = nullptr;
 
@@ -380,8 +388,12 @@ namespace ui {
 				outQuads.push_back(quad);
 			}
 
-			// Advance pen position
+			// Advance pen position; letter-spacing sits between glyphs, not after
+			// the last one.
 			penPosition.x += glyph.advance * fontSize;
+			if (charIdx + 1 < text.size()) {
+				penPosition.x += letterSpacing;
+			}
 		}
 
 		// Cache the generated quads if enabled
@@ -406,7 +418,7 @@ namespace ui {
 				entry.quads.push_back(outQuads[i]);
 			}
 
-			CacheKey key{family, text, scale};
+			CacheKey key{family, text, scale, letterSpacing};
 			glyphQuadCache[key] = std::move(entry);
 
 			// Now adjust positions in outQuads for the caller
