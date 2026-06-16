@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2026-06-15 (Water Availability complete — PRs #144 + lake fix #146; Plate Boundary Realism — curved rift cuts + power-law plate sizes + broken mountain belts + Ultra 2048, PR #145; next: valley erosion then 2D chunk-time river/lake rendering)
+Last Updated: 2026-06-15 (Water Availability complete — PRs #144 + lake fix #146; Plate Boundary Realism — curved rift cuts + power-law plate sizes + broken mountain belts + Ultra 2048, PR #145; next: valley erosion then 2D chunk-time river/lake rendering; UI Design System (Salvage) extracted to docs/design/ui)
 
 ## Epic/Story/Task Template
 
@@ -27,6 +27,24 @@ Use this template for all work items:
 ---
 
 ## Recently Completed Epics (Last 4)
+
+### ✅ UI Design System (Salvage) — extraction
+**Spec/Documentation:** `/docs/design/ui/`
+**Dependencies:** None
+**Status:** complete (docs extracted from prototype; C++ implementation is a separate future epic)
+
+**Goal:** Extract the approved "Salvage" UI prototype (`docs/ui-prototype/`) into durable design docs so the C++ build follows the docs, not the throwaway CSS. The prototype is kept as the live look-and-feel sandbox.
+
+**Completed Tasks:**
+- [x] Design language doc (principles, palette, typography, texture, motion)
+- [x] Tokens: deterministic `tokens.json` (+ rgba floats, `palette.svg`) and readable `tokens.md`, generated from `tokens.css`
+- [x] Component catalog: all 14 primitives (variants, props, states, anatomy, behavior/formulas)
+- [x] Icons: 51-glyph set extracted to `icons.json` + `icons-preview.svg` + `icons.md`
+- [x] Screen specs: 7 screens (pre-game flow + in-game HUD with every sub-state)
+- [x] Mocks: rendered shots of every screen and in-game state (Playwright capture script) + anatomy wireframes for the dense screens
+- [x] Re-runnable extraction scripts in the prototype; wired into `/docs/design/INDEX.md`
+
+**Result:** `/docs/design/ui/` holds the canonical UI spec. The data that only lived in code (icon paths, token values, component formulas, font identities) is now in text. Next: C++ implementation (generate `constexpr Theme.h` from `tokens.json`, build the primitive library, stroke-tessellated icons, multi-font). ✅
 
 ### ✅ Water Availability (worldgen + landing UX)
 **Spec/Documentation:** `/docs/development-log/entries/2026-06-15-worldgen-water-and-plate-realism.md`, `.claude/plans/water-hydrology.md`

@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="520" viewBox="0 0 800 520">
+	<style>
+		.scrim { fill: #07080b; }
+		.modal { fill: #12151c; stroke: #e8a33e; stroke-opacity: 0.7; stroke-width: 1.4; }
+		.p { fill: #181c24; stroke: #e8a33e; stroke-opacity: 0.45; stroke-width: 1; }
+		.inner { fill: none; stroke: #45c7c0; stroke-opacity: 0.5; stroke-width: 1; stroke-dasharray: 4 3; }
+		.t { font-family: ui-monospace, monospace; fill: #f4eee2; font-size: 11px; letter-spacing: 0.04em; }
+		.s { font-family: ui-monospace, monospace; fill: #8a8f9b; font-size: 9px; }
+		.vt { font-family: ui-monospace, monospace; fill: #45c7c0; font-size: 10px; }
+	</style>
+	<rect class="scrim" width="800" height="520" />
+	<rect class="modal" x="70" y="24" width="660" height="472" rx="2" />
+
+	<rect class="p" x="84" y="40" width="632" height="60" rx="2" />
+	<text class="t" x="92" y="60">1 · Header — avatar, name, role / origin / age / mood, close</text>
+
+	<rect class="p" x="84" y="108" width="632" height="26" rx="2" />
+	<text class="t" x="92" y="125">2 · Tabs — Bio · Needs · Skills · Social · Gear · Log</text>
+
+	<rect class="inner" x="84" y="142" width="632" height="296" rx="2" />
+	<text class="vt" x="92" y="158">Tab body (Gear shown)</text>
+
+	<rect class="p" x="96" y="170" width="270" height="256" rx="2" />
+	<text class="t" x="104" y="188">3 · Worn slots</text>
+	<text class="s" x="104" y="202">head, face, body over / under, legs, feet</text>
+
+	<rect class="p" x="540" y="170" width="164" height="80" rx="2" />
+	<text class="t" x="548" y="188">4 · Back · Belt</text>
+	<text class="s" x="548" y="202">+ Both Hands (held item)</text>
+
+	<rect class="inner" x="392" y="200" width="120" height="120" rx="2" />
+	<text class="vt" x="400" y="216">5 · Silhouette</text>
+
+	<rect class="p" x="96" y="336" width="608" height="50" rx="2" />
+	<text class="t" x="104" y="356">6 · Field Pack — weight-based stacks, kg of cap</text>
+
+	<rect class="p" x="96" y="392" width="608" height="34" rx="2" />
+	<text class="t" x="104" y="413">7 · Tool Belt — fixed one-hand slots</text>
+
+	<rect class="p" x="84" y="446" width="632" height="36" rx="2" />
+	<text class="t" x="92" y="468">8 · Footer — Close · Work Priorities · Draft</text>
+</svg>

@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="500" viewBox="0 0 800 500">
+	<style>
+		.bg { fill: #07080b; }
+		.p { fill: #12151c; stroke: #e8a33e; stroke-opacity: 0.55; stroke-width: 1.2; }
+		.inner { fill: none; stroke: #45c7c0; stroke-opacity: 0.5; stroke-width: 1; stroke-dasharray: 4 3; }
+		.t { font-family: ui-monospace, monospace; fill: #f4eee2; font-size: 11px; letter-spacing: 0.04em; }
+		.s { font-family: ui-monospace, monospace; fill: #8a8f9b; font-size: 9px; }
+		.vt { font-family: ui-monospace, monospace; fill: #45c7c0; font-size: 10px; }
+	</style>
+	<rect class="bg" width="800" height="500" />
+
+	<rect class="p" x="6" y="6" width="788" height="24" rx="2" />
+	<text class="t" x="14" y="22">1 · Top bar — New Game, step 04 / 06</text>
+
+	<rect class="p" x="6" y="38" width="788" height="40" rx="2" />
+	<text class="t" x="14" y="56">2 · Title &amp; intro</text>
+	<text class="s" x="14" y="70">"Assemble the Crew" + one-line setup</text>
+
+	<rect class="p" x="6" y="86" width="196" height="358" rx="2" />
+	<text class="t" x="14" y="104">3 · Survivor roster</text>
+	<text class="s" x="14" y="118">selectable candidate cards</text>
+
+	<rect class="p" x="210" y="86" width="584" height="358" rx="2" />
+	<text class="t" x="220" y="104">4 · Personnel detail — avatar, name, role, species / age / mood, backstory</text>
+	<rect class="inner" x="220" y="210" width="564" height="120" rx="2" />
+	<text class="vt" x="228" y="226">5 · Skill meters (Construction, Crafting, Mining, Medicine, Cooking, Research)</text>
+	<rect class="inner" x="220" y="340" width="564" height="40" rx="2" />
+	<text class="vt" x="228" y="356">6 · Trait badges (tone-coded: good / bad / neutral)</text>
+
+	<rect class="p" x="6" y="452" width="160" height="40" rx="2" />
+	<text class="t" x="14" y="476">7 · Randomize</text>
+
+	<rect class="p" x="556" y="452" width="238" height="40" rx="2" />
+	<text class="t" x="564" y="476">8 · Back · Generate Planet</text>
+</svg>

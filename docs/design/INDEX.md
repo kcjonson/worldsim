@@ -24,6 +24,25 @@ This directory contains game design documents describing **what** we're building
 - **[MVP Scope](./mvp-scope.md)** — What's included in each development phase
 - **[Game Overview](./game-overview.md)** — Core concept, world mechanics
 - **[Visual Style](./visual-style.md)** — Art direction, aesthetics
+- **[UI Design](./ui/INDEX.md)** — Interface design system, screen specs, mocks
+
+---
+
+## User Interface
+
+Location: `ui/`
+
+The interface design ("Salvage"), the design system that builds it, and the spec for every screen. Extracted from the prototype under `docs/ui-prototype/`.
+
+| Document | Description |
+|----------|-------------|
+| [UI Design Index](./ui/INDEX.md) | Entry point for everything below |
+| [Design Language](./ui/design-language.md) | Salvage: principles, palette, typography, texture, motion |
+| [Tokens](./ui/design-system/tokens.md) | Every design value (readable); canonical in `tokens.json` |
+| [Components](./ui/design-system/components.md) | The 14 primitives: variants, props, states, behavior |
+| [Icons](./ui/design-system/icons.md) | The 51-glyph line-icon set |
+| [Screens](./ui/screens/INDEX.md) | Pre-game flow and in-game HUD specs |
+| [Mocks](./ui/mocks/README.md) | Rendered shots of every screen and state |
 
 ---
 

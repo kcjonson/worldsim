@@ -1,0 +1,148 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="766" height="576" viewBox="0 0 766 576">
+	<rect width="766" height="576" fill="#07080b"/>
+	<g>
+		<rect x="16" y="16" width="40" height="40" rx="2" fill="#07080b" stroke="rgba(170,195,230,0.36)"/>
+		<text x="66" y="32" fill="#f4eee2" font-family="ui-monospace, monospace" font-size="12">--bg-void</text>
+		<text x="66" y="48" fill="#8a8f9b" font-family="ui-monospace, monospace" font-size="11">#07080b</text>
+	</g>
+	<g>
+		<rect x="266" y="16" width="40" height="40" rx="2" fill="#0b0d12" stroke="rgba(170,195,230,0.36)"/>
+		<text x="316" y="32" fill="#f4eee2" font-family="ui-monospace, monospace" font-size="12">--bg-base</text>
+		<text x="316" y="48" fill="#8a8f9b" font-family="ui-monospace, monospace" font-size="11">#0b0d12</text>
+	</g>
+	<g>
+		<rect x="516" y="16" width="40" height="40" rx="2" fill="#12151c" stroke="rgba(170,195,230,0.36)"/>
+		<text x="566" y="32" fill="#f4eee2" font-family="ui-monospace, monospace" font-size="12">--bg-panel</text>
+		<text x="566" y="48" fill="#8a8f9b" font-family="ui-monospace, monospace" font-size="11">#12151c</text>
+	</g>
+	<g>
+		<rect x="16" y="72" width="40" height="40" rx="2" fill="#181c24" stroke="rgba(170,195,230,0.36)"/>
+		<text x="66" y="88" fill="#f4eee2" font-family="ui-monospace, monospace" font-size="12">--bg-panel-raised</text>
+		<text x="66" y="104" fill="#8a8f9b" font-family="ui-monospace, monospace" font-size="11">#181c24</text>
+	</g>
+	<g>
+		<rect x="266" y="72" width="40" height="40" rx="2" fill="#08090d" stroke="rgba(170,195,230,0.36)"/>
+		<text x="316" y="88" fill="#f4eee2" font-family="ui-monospace, monospace" font-size="12">--bg-inset</text>
+		<text x="316" y="104" fill="#8a8f9b" font-family="ui-monospace, monospace" font-size="11">#08090d</text>
+	</g>
+	<g>
+		<rect x="516" y="72" width="40" height="40" rx="2" fill="rgba(255, 255, 255, 0.045)" stroke="rgba(170,195,230,0.36)"/>
+		<text x="566" y="88" fill="#f4eee2" font-family="ui-monospace, monospace" font-size="12">--bg-hover</text>
+		<text x="566" y="104" fill="#8a8f9b" font-family="ui-monospace, monospace" font-size="11">rgba(255, 255, 255, 0.045)</text>
+	</g>
+	<g>
+		<rect x="16" y="128" width="40" height="40" rx="2" fill="rgba(232, 163, 62, 0.1)" stroke="rgba(170,195,230,0.36)"/>
+		<text x="66" y="144" fill="#f4eee2" font-family="ui-monospace, monospace" font-size="12">--bg-active</text>
+		<text x="66" y="160" fill="#8a8f9b" font-family="ui-monospace, monospace" font-size="11">rgba(232, 163, 62, 0.1)</text>
+	</g>
+	<g>
+		<rect x="266" y="128" width="40" height="40" rx="2" fill="rgba(180, 200, 230, 0.1)" stroke="rgba(170,195,230,0.36)"/>
+		<text x="316" y="144" fill="#f4eee2" font-family="ui-monospace, monospace" font-size="12">--line-hairline</text>
+		<text x="316" y="160" fill="#8a8f9b" font-family="ui-monospace, monospace" font-size="11">rgba(180, 200, 230, 0.1)</text>
+	</g>
+	<g>
+		<rect x="516" y="128" width="40" height="40" rx="2" fill="rgba(150, 180, 220, 0.2)" stroke="rgba(170,195,230,0.36)"/>
+		<text x="566" y="144" fill="#f4eee2" font-family="ui-monospace, monospace" font-size="12">--line-edge</text>
+		<text x="566" y="160" fill="#8a8f9b" font-family="ui-monospace, monospace" font-size="11">rgba(150, 180, 220, 0.2)</text>
+	</g>
+	<g>
+		<rect x="16" y="184" width="40" height="40" rx="2" fill="rgba(170, 195, 230, 0.36)" stroke="rgba(170,195,230,0.36)"/>
+		<text x="66" y="200" fill="#f4eee2" font-family="ui-monospace, monospace" font-size="12">--line-strong</text>
+		<text x="66" y="216" fill="#8a8f9b" font-family="ui-monospace, monospace" font-size="11">rgba(170, 195, 230, 0.36)</text>
+	</g>
+	<g>
+		<rect x="266" y="184" width="40" height="40" rx="2" fill="#e8a33e" stroke="rgba(170,195,230,0.36)"/>
+		<text x="316" y="200" fill="#f4eee2" font-family="ui-monospace, monospace" font-size="12">--accent</text>
+		<text x="316" y="216" fill="#8a8f9b" font-family="ui-monospace, monospace" font-size="11">#e8a33e</text>
+	</g>
+	<g>
+		<rect x="516" y="184" width="40" height="40" rx="2" fill="#ffc56b" stroke="rgba(170,195,230,0.36)"/>
+		<text x="566" y="200" fill="#f4eee2" font-family="ui-monospace, monospace" font-size="12">--accent-bright</text>
+		<text x="566" y="216" fill="#8a8f9b" font-family="ui-monospace, monospace" font-size="11">#ffc56b</text>
+	</g>
+	<g>
+		<rect x="16" y="240" width="40" height="40" rx="2" fill="#8a6326" stroke="rgba(170,195,230,0.36)"/>
+		<text x="66" y="256" fill="#f4eee2" font-family="ui-monospace, monospace" font-size="12">--accent-dim</text>
+		<text x="66" y="272" fill="#8a8f9b" font-family="ui-monospace, monospace" font-size="11">#8a6326</text>
+	</g>
+	<g>
+		<rect x="266" y="240" width="40" height="40" rx="2" fill="#1a1206" stroke="rgba(170,195,230,0.36)"/>
+		<text x="316" y="256" fill="#f4eee2" font-family="ui-monospace, monospace" font-size="12">--accent-contrast</text>
+		<text x="316" y="272" fill="#8a8f9b" font-family="ui-monospace, monospace" font-size="11">#1a1206</text>
+	</g>
+	<g>
+		<rect x="516" y="240" width="40" height="40" rx="2" fill="rgba(232, 163, 62, 0.45)" stroke="rgba(170,195,230,0.36)"/>
+		<text x="566" y="256" fill="#f4eee2" font-family="ui-monospace, monospace" font-size="12">--accent-glow</text>
+		<text x="566" y="272" fill="#8a8f9b" font-family="ui-monospace, monospace" font-size="11">rgba(232, 163, 62, 0.45)</text>
+	</g>
+	<g>
+		<rect x="16" y="296" width="40" height="40" rx="2" fill="#45c7c0" stroke="rgba(170,195,230,0.36)"/>
+		<text x="66" y="312" fill="#f4eee2" font-family="ui-monospace, monospace" font-size="12">--data</text>
+		<text x="66" y="328" fill="#8a8f9b" font-family="ui-monospace, monospace" font-size="11">#45c7c0</text>
+	</g>
+	<g>
+		<rect x="266" y="296" width="40" height="40" rx="2" fill="#7be6df" stroke="rgba(170,195,230,0.36)"/>
+		<text x="316" y="312" fill="#f4eee2" font-family="ui-monospace, monospace" font-size="12">--data-bright</text>
+		<text x="316" y="328" fill="#8a8f9b" font-family="ui-monospace, monospace" font-size="11">#7be6df</text>
+	</g>
+	<g>
+		<rect x="516" y="296" width="40" height="40" rx="2" fill="#2a6e6a" stroke="rgba(170,195,230,0.36)"/>
+		<text x="566" y="312" fill="#f4eee2" font-family="ui-monospace, monospace" font-size="12">--data-dim</text>
+		<text x="566" y="328" fill="#8a8f9b" font-family="ui-monospace, monospace" font-size="11">#2a6e6a</text>
+	</g>
+	<g>
+		<rect x="16" y="352" width="40" height="40" rx="2" fill="rgba(69, 199, 192, 0.4)" stroke="rgba(170,195,230,0.36)"/>
+		<text x="66" y="368" fill="#f4eee2" font-family="ui-monospace, monospace" font-size="12">--data-glow</text>
+		<text x="66" y="384" fill="#8a8f9b" font-family="ui-monospace, monospace" font-size="11">rgba(69, 199, 192, 0.4)</text>
+	</g>
+	<g>
+		<rect x="266" y="352" width="40" height="40" rx="2" fill="#f4eee2" stroke="rgba(170,195,230,0.36)"/>
+		<text x="316" y="368" fill="#f4eee2" font-family="ui-monospace, monospace" font-size="12">--text-bright</text>
+		<text x="316" y="384" fill="#8a8f9b" font-family="ui-monospace, monospace" font-size="11">#f4eee2</text>
+	</g>
+	<g>
+		<rect x="516" y="352" width="40" height="40" rx="2" fill="#c6c8ce" stroke="rgba(170,195,230,0.36)"/>
+		<text x="566" y="368" fill="#f4eee2" font-family="ui-monospace, monospace" font-size="12">--text</text>
+		<text x="566" y="384" fill="#8a8f9b" font-family="ui-monospace, monospace" font-size="11">#c6c8ce</text>
+	</g>
+	<g>
+		<rect x="16" y="408" width="40" height="40" rx="2" fill="#8a8f9b" stroke="rgba(170,195,230,0.36)"/>
+		<text x="66" y="424" fill="#f4eee2" font-family="ui-monospace, monospace" font-size="12">--text-dim</text>
+		<text x="66" y="440" fill="#8a8f9b" font-family="ui-monospace, monospace" font-size="11">#8a8f9b</text>
+	</g>
+	<g>
+		<rect x="266" y="408" width="40" height="40" rx="2" fill="#5a5f6b" stroke="rgba(170,195,230,0.36)"/>
+		<text x="316" y="424" fill="#f4eee2" font-family="ui-monospace, monospace" font-size="12">--text-faint</text>
+		<text x="316" y="440" fill="#8a8f9b" font-family="ui-monospace, monospace" font-size="11">#5a5f6b</text>
+	</g>
+	<g>
+		<rect x="516" y="408" width="40" height="40" rx="2" fill="#44485033" stroke="rgba(170,195,230,0.36)"/>
+		<text x="566" y="424" fill="#f4eee2" font-family="ui-monospace, monospace" font-size="12">--text-disabled</text>
+		<text x="566" y="440" fill="#8a8f9b" font-family="ui-monospace, monospace" font-size="11">#44485033</text>
+	</g>
+	<g>
+		<rect x="16" y="464" width="40" height="40" rx="2" fill="#5fb87a" stroke="rgba(170,195,230,0.36)"/>
+		<text x="66" y="480" fill="#f4eee2" font-family="ui-monospace, monospace" font-size="12">--status-ok</text>
+		<text x="66" y="496" fill="#8a8f9b" font-family="ui-monospace, monospace" font-size="11">#5fb87a</text>
+	</g>
+	<g>
+		<rect x="266" y="464" width="40" height="40" rx="2" fill="#e8a33e" stroke="rgba(170,195,230,0.36)"/>
+		<text x="316" y="480" fill="#f4eee2" font-family="ui-monospace, monospace" font-size="12">--status-warn</text>
+		<text x="316" y="496" fill="#8a8f9b" font-family="ui-monospace, monospace" font-size="11">#e8a33e</text>
+	</g>
+	<g>
+		<rect x="516" y="464" width="40" height="40" rx="2" fill="#e0533c" stroke="rgba(170,195,230,0.36)"/>
+		<text x="566" y="480" fill="#f4eee2" font-family="ui-monospace, monospace" font-size="12">--status-crit</text>
+		<text x="566" y="496" fill="#8a8f9b" font-family="ui-monospace, monospace" font-size="11">#e0533c</text>
+	</g>
+	<g>
+		<rect x="16" y="520" width="40" height="40" rx="2" fill="#45c7c0" stroke="rgba(170,195,230,0.36)"/>
+		<text x="66" y="536" fill="#f4eee2" font-family="ui-monospace, monospace" font-size="12">--status-info</text>
+		<text x="66" y="552" fill="#8a8f9b" font-family="ui-monospace, monospace" font-size="11">#45c7c0</text>
+	</g>
+	<g>
+		<rect x="266" y="520" width="40" height="40" rx="2" fill="rgba(5, 6, 10, 0.72)" stroke="rgba(170,195,230,0.36)"/>
+		<text x="316" y="536" fill="#f4eee2" font-family="ui-monospace, monospace" font-size="12">--scrim</text>
+		<text x="316" y="552" fill="#8a8f9b" font-family="ui-monospace, monospace" font-size="11">rgba(5, 6, 10, 0.72)</text>
+	</g>
+</svg>

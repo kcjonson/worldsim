@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="500" viewBox="0 0 800 500">
+	<style>
+		.bg { fill: #07080b; }
+		.vp { fill: #0e1a14; stroke: #2a6e6a; stroke-width: 1; stroke-dasharray: 4 3; }
+		.p { fill: #12151c; stroke: #e8a33e; stroke-opacity: 0.55; stroke-width: 1.2; }
+		.t { font-family: ui-monospace, monospace; fill: #f4eee2; font-size: 11px; letter-spacing: 0.04em; }
+		.s { font-family: ui-monospace, monospace; fill: #8a8f9b; font-size: 9px; }
+		.vt { font-family: ui-monospace, monospace; fill: #45c7c0; font-size: 11px; letter-spacing: 0.04em; }
+	</style>
+	<rect class="bg" width="800" height="500" />
+	<rect class="vp" x="182" y="40" width="438" height="452" rx="2" />
+	<text class="vt" x="330" y="250">9 · World viewport</text>
+	<text class="s" x="330" y="264">colonists, selection marker</text>
+
+	<rect class="p" x="6" y="6" width="788" height="26" rx="2" />
+	<text class="t" x="14" y="23">1 · Top bar — colony name, day &amp; clock, speed controls, menu</text>
+
+	<rect class="p" x="6" y="40" width="168" height="170" rx="2" />
+	<text class="t" x="14" y="58">2 · Roster</text>
+	<text class="s" x="14" y="72">mood + task meter per card</text>
+
+	<rect class="p" x="6" y="322" width="236" height="172" rx="2" />
+	<text class="t" x="14" y="340">6 · Selected colonist</text>
+	<text class="s" x="14" y="354">needs, mood, current task</text>
+	<text class="s" x="14" y="366">expand to full dossier</text>
+
+	<rect class="p" x="628" y="40" width="166" height="112" rx="2" />
+	<text class="t" x="636" y="58">3 · Region minimap</text>
+	<text class="s" x="636" y="72">off-screen colonist markers</text>
+
+	<rect class="p" x="628" y="158" width="166" height="66" rx="2" />
+	<text class="t" x="636" y="176">4 · Storage</text>
+
+	<rect class="p" x="628" y="230" width="166" height="232" rx="2" />
+	<text class="t" x="636" y="248">5 · Task list</text>
+	<text class="s" x="636" y="262">dense, scales to thousands</text>
+
+	<rect class="p" x="440" y="392" width="176" height="84" rx="2" />
+	<text class="t" x="448" y="410">8 · Toasts / alerts</text>
+
+	<rect class="p" x="250" y="468" width="300" height="26" rx="2" />
+	<text class="t" x="258" y="485">7 · Command bar — Build / Zones / Production</text>
+</svg>
