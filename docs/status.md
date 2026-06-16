@@ -471,19 +471,33 @@ while (running) {
 ### Dev/Test Tools (HTTP verbs + developer-client tab)
 **Spec/Documentation:** `.claude/plans/alright-these-seem-good-hidden-wadler.md`, `/docs/development-log/entries/2026-06-16-dev-tools-api-and-tab.md`
 **Dependencies:** None
-**Status:** in progress (verbs + readback + tab done; tab not yet exercised in-browser, no PR)
+**Status:** in progress (verbs + readback + tab done; tab not yet exercised in-browser; draft PR #157)
 
-**Goal:** Put the sim into a desired state on demand for manual + agent testing, driven from a Dev Tools tab in the developer-client. Debug server stays domain-agnostic; GameScene interprets the verbs.
+**Goal:** Put the sim into a desired state on demand for manual + agent testing, driven from a Dev Tools tab in the developer-client. Debug server stays domain-agnostic; a DevCommandHandler (scenes/game/dev/) interprets the verbs.
 
 **Tasks:**
 - [x] Step 1: `spawn`, `colonist`, `give` (replaces `givewood`; site/loose/colonist/storage)
 - [x] Step 2: `need`, `time` (speed/set/skip), `teleport`, `select`, `kill`, `complete`
 - [x] Step 3: synchronous `/api/state?what=summary|colonists|construction|time` (screenshot-style handshake)
 - [x] Phase 2: Dev Tools tab (DevToolsService + DevToolsPanel) in developer-client static build
+- [x] Refactor: dev surface extracted from GameScene into DevCommandHandler
 - [x] `parseDevVerb` tests refreshed (7/7 green); API verified end-to-end via curl + readback + screenshot
 - [ ] Exercise the tab in-browser (open static `dist/index.html` against a running game)
 - [ ] Optional: `demolish` verb, inventory in colonist readback, `/api/state?what=query|count`
-- [ ] PR
+
+### Asset Manager
+**Spec/Documentation:** `/docs/design/features/asset-manager/`, `/docs/technical/asset-manager/`
+**Dependencies:** None
+**Status:** in progress
+
+**Goal:** Standalone tool to browse, inspect, validate, and render the asset library through the game's own render path, with a designer GUI and a headless CLI over one shared core.
+
+**Tasks:**
+- [x] Phase 1: Shared render path (renderer MeshBounds computeBounds/fitToRect; AssetRegistry::buildMesh; assets AssetRenderer prepare + renderToPixels/Png; foundation PngEncoder + DebugServer refactor; determinism + fidelity tests)
+- [x] Phase 2: Load-time validation (AssetValidator + ValidationReport: missing refs, duplicate defNames, name/folder mismatch, ignored fields, variantCount drift, bad assetType, orphan SVGs; validates on load via getValidationReport; full GL render smoke deferred to the CLI)
+- [x] Phase 3: Headless CLI (apps/asset-cli: list/search/inspect/validate/render; --json; exit codes; server-less for parallel runs; render via hidden GL context; getExecutableDir implemented on Windows so resources resolve regardless of cwd)
+- [ ] Phase 4: Async loading + splash (worker-thread load, progress, validation summary, error-gate scene)
+- [ ] Phase 5: GUI (apps/asset-manager: GridContainer, browser scene, preview + sampling, inspector, validation view, reload)
 
 ### Fluvial Erosion (worldgen)
 **Spec/Documentation:** `.claude/plans/erosion.md`, `/docs/development-log/entries/2026-06-15-worldgen-fluvial-erosion.md`

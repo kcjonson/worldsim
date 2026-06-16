@@ -19,13 +19,8 @@
 // OpenGL for framebuffer capture
 #include <GL/glew.h>
 
-// stb_image_write for PNG encoding
-// Protect against multiple definition errors if this gets included elsewhere
-#ifndef WORLDSIM_STB_IMAGE_WRITE_IMPL
-#define WORLDSIM_STB_IMAGE_WRITE_IMPL
-#define STB_IMAGE_WRITE_IMPLEMENTATION
-#include <stb_image_write.h>
-#endif
+// PNG encoding is centralized in Foundation::PngEncoder (single STB definition site).
+#include "graphics/PngEncoder.h"
 
 namespace Foundation {
 
@@ -364,41 +359,16 @@ namespace Foundation {
 			memcpy(flipped.data() + (height - 1 - y) * width * 4, pixels.data() + y * width * 4, width * 4);
 		}
 
-		// Encode to PNG using stb_image_write
-		// We use a custom write function to write to a vector instead of a file
-		struct PNGWriteContext {
-			std::vector<unsigned char>* data;
-		};
-
-		PNGWriteContext context;
-		context.data = &screenshotData;
-
-		// Write callback for stb_image_write
-		auto pngWriteFunc = [](void* context, void* data, int size) {
-			auto* ctx = static_cast<PNGWriteContext*>(context);
-			auto* bytes = static_cast<unsigned char*>(data);
-			ctx->data->insert(ctx->data->end(), bytes, bytes + size); // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic)
-		};
-
-		// Encode to PNG (hold mutex for entire operation to prevent race conditions)
+		// Encode to PNG via the shared encoder (single STB definition site).
 		LOG_DEBUG(Foundation, "Encoding screenshot to PNG...");
-		int result = 0;
+		bool encodeFailed = false;
 		{
 			std::lock_guard<std::mutex> lock(screenshotMutex);
-			screenshotData.clear();
-
-			result = stbi_write_png_to_func(
-				pngWriteFunc,
-				&context,
-				width,
-				height,
-				4, // RGBA (4 components)
-				flipped.data(),
-				width * 4 // stride
-			);
+			screenshotData = encodePngToMemory(flipped.data(), width, height);
+			encodeFailed = screenshotData.empty();
 		}
 
-		if (result == 0) {
+		if (encodeFailed) {
 			LOG_ERROR(Foundation, "Failed to encode screenshot to PNG");
 			screenshotRequested.store(false);
 			return;

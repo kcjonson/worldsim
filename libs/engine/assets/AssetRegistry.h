@@ -5,6 +5,7 @@
 // Handles definition loading, generator invocation, and template caching.
 
 #include "assets/AssetDefinition.h"
+#include "assets/AssetValidator.h"
 #include "assets/IAssetGenerator.h"
 
 #include <vector/Types.h>
@@ -54,11 +55,22 @@ namespace engine::assets {
 		/// @return true if generation succeeded
 		bool generateAsset(const std::string& defName, uint32_t seed, GeneratedAsset& outAsset);
 
+		/// Build an uncached tessellated mesh for an asset at a given seed.
+		/// Simple assets ignore the seed (one drawing); procedural assets use it to
+		/// select a form (vary the seed to sample the generator's range).
+		/// This is the single shared "defName + seed -> mesh" entry point.
+		/// @return true if a non-empty mesh was produced
+		bool buildMesh(const std::string& defName, uint32_t seed, renderer::TessellatedMesh& outMesh);
+
 		/// Clear all loaded definitions and cached templates
 		void clear();
 
 		/// Get all loaded definition names
 		std::vector<std::string> getDefinitionNames() const;
+
+		/// Validation report from the most recent loadDefinitionsFromFolder.
+		/// Produced at load time; shared by the game (launch) and the Asset Manager.
+		[[nodiscard]] const ValidationReport& getValidationReport() const { return m_validationReport; }
 
 		// --- Entity Placement System API ---
 
@@ -152,6 +164,9 @@ namespace engine::assets {
 
 		// Path to shared scripts folder (for @shared/ prefix resolution)
 		std::filesystem::path m_sharedScriptsPath;
+
+		// Validation report from the most recent loadDefinitionsFromFolder
+		ValidationReport m_validationReport;
 	};
 
 } // namespace engine::assets
