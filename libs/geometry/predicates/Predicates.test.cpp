@@ -65,6 +65,24 @@ namespace {
 		return inside ? 1 : -1; // 1 inside, -1 outside
 	}
 
+	// Exact-in-double in-circle oracle (third-column expansion, the same form the
+	// predicate computes). At |coords| <= ~50 the degree-4 determinant is far
+	// inside the 53-bit mantissa, so double is exact. Returns the determinant
+	// sign: +1 inside, -1 outside, 0 on-circle.
+	int inCircleOracle(const Vec2i64& a, const Vec2i64& b, const Vec2i64& c, const Vec2i64& d) {
+		const double ax = static_cast<double>(a.x - d.x);
+		const double ay = static_cast<double>(a.y - d.y);
+		const double bx = static_cast<double>(b.x - d.x);
+		const double by = static_cast<double>(b.y - d.y);
+		const double cx = static_cast<double>(c.x - d.x);
+		const double cy = static_cast<double>(c.y - d.y);
+		const double aSq = ax * ax + ay * ay;
+		const double bSq = bx * bx + by * by;
+		const double cSq = cx * cx + cy * cy;
+		const double det = aSq * (bx * cy - by * cx) - bSq * (ax * cy - ay * cx) + cSq * (ax * by - ay * bx);
+		return det > 0 ? 1 : (det < 0 ? -1 : 0);
+	}
+
 } // namespace
 
 TEST(Orientation, BasicTriangle) {
@@ -261,6 +279,66 @@ TEST(Distance, DegenerateSegment) {
 TEST(Distance, FloatConvenience) {
 	EXPECT_NEAR(distanceToSegment({50, 30}, {0, 0}, {100, 0}), 30.0, 1e-9);
 	EXPECT_NEAR(distanceToSegment({-3, 4}, {0, 0}, {100, 0}), 5.0, 1e-9);
+}
+
+TEST(InCircle, CocircularSquare) {
+	// The four corners of a square are cocircular: the 4th corner lies on the
+	// circle through the other three.
+	Vec2i64 a{0, 0};
+	Vec2i64 b{100, 0};
+	Vec2i64 c{100, 100};
+	Vec2i64 d{0, 100};
+	ASSERT_EQ(orientation(a, b, c), Orientation::CounterClockwise);
+	EXPECT_EQ(inCircle(a, b, c, d), InCircle::OnCircle);
+}
+
+TEST(InCircle, CenterInside) {
+	EXPECT_EQ(inCircle({0, 0}, {100, 0}, {100, 100}, {50, 50}), InCircle::Inside);
+}
+
+TEST(InCircle, FarOutside) {
+	EXPECT_EQ(inCircle({0, 0}, {100, 0}, {100, 100}, {1000, 1000}), InCircle::Outside);
+}
+
+TEST(InCircle, NearBoundaryInsideOutside) {
+	// Circle through (0,0),(200,0),(200,200): center (100,100), radius^2 = 20000.
+	Vec2i64 a{0, 0};
+	Vec2i64 b{200, 0};
+	Vec2i64 c{200, 200};
+	// (1,200): dist^2 from center = 99^2 + 100^2 = 19801 < 20000 -> inside.
+	EXPECT_EQ(inCircle(a, b, c, {1, 200}), InCircle::Inside);
+	// (-1,200): 101^2 + 100^2 = 20201 > 20000 -> outside.
+	EXPECT_EQ(inCircle(a, b, c, {-1, 200}), InCircle::Outside);
+}
+
+TEST(InCircle, LargeScaleCocircularStaysExact) {
+	// At R = 2^20 the lifted determinant reaches ~2^85, past double's 53-bit
+	// mantissa, so the exactly-cocircular determinant rounds to nonzero in double
+	// while the exact predicate still reports OnCircle. Coordinates (~2e6 mm =
+	// 2 km) are well within the region-local precondition.
+	const std::int64_t R = 1 << 20;
+	Vec2i64			   a{0, 0};
+	Vec2i64			   b{2 * R, 0};
+	Vec2i64			   c{2 * R, 2 * R};
+	Vec2i64			   d{0, 2 * R}; // 4th square corner: exactly cocircular
+	EXPECT_EQ(inCircle(a, b, c, d), InCircle::OnCircle);
+}
+
+TEST(OracleSweep, InCircleVsDouble) {
+	// The predicate and the oracle compute the same third-column determinant, so
+	// their signs must agree for every input (CCW or not, degenerate or not).
+	std::mt19937								rng(0xC1C1E5);
+	std::uniform_int_distribution<std::int64_t> coord(-50, 50);
+	for (int iter = 0; iter < 8000; ++iter) {
+		Vec2i64			 a{coord(rng), coord(rng)};
+		Vec2i64			 b{coord(rng), coord(rng)};
+		Vec2i64			 c{coord(rng), coord(rng)};
+		Vec2i64			 d{coord(rng), coord(rng)};
+		const InCircle	 got = inCircle(a, b, c, d);
+		const int		 gv	 = got == InCircle::Inside ? 1 : (got == InCircle::Outside ? -1 : 0);
+		ASSERT_EQ(gv, inCircleOracle(a, b, c, d)) << a.x << "," << a.y << " " << b.x << "," << b.y << " " << c.x << ","
+												  << c.y << " " << d.x << "," << d.y;
+	}
 }
 
 TEST(OracleSweep, OrientationVsDouble) {
