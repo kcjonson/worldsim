@@ -1435,22 +1435,31 @@ namespace world_sim {
 
 		// Build the offsetter input for the WHOLE graph at once: shared integer
 		// vertices mean resolveWallBands derives every junction by exact-endpoint
-		// grouping. Bands come back one-per-segment in this same order, so index i
-		// maps straight back to segs[i] for per-segment styling.
+		// grouping. A malformed segment (missing vertex or unresolved thickness
+		// preset) is SKIPPED rather than fed as a zero-length placeholder, because
+		// resolveWallBands rejects any zero-length segment up front and would fail
+		// the whole graph. offsetToSeg maps each offsetter index (and the segment
+		// indices reported back in bands/junctionSegments) to its original segs index.
 		std::vector<geometry::WallSegment> offsetSegs;
+		std::vector<std::size_t>		   offsetToSeg;
 		offsetSegs.reserve(segs.size());
-		for (const auto& wseg : segs) {
-			const ec::Vertex* v0 = constructionWorld_.getVertex(wseg.v0);
-			const ec::Vertex* v1 = constructionWorld_.getVertex(wseg.v1);
-			std::int64_t	  halfThick = 0;
+		offsetToSeg.reserve(segs.size());
+		for (std::size_t i = 0; i < segs.size(); ++i) {
+			const ec::WallSegment& wseg = segs[i];
+			const ec::Vertex*	   v0 = constructionWorld_.getVertex(wseg.v0);
+			const ec::Vertex*	   v1 = constructionWorld_.getVertex(wseg.v1);
+			std::int64_t		   halfThick = 0;
 			if (const auto* preset = ConstructionRegistry::Get().getThicknessPreset(wseg.material, wseg.thicknessPreset)) {
 				halfThick = preset->halfThicknessMm;
 			}
 			if (v0 == nullptr || v1 == nullptr || halfThick <= 0) {
-				offsetSegs.push_back({{0, 0}, {0, 0}, 0}); // placeholder keeps index alignment
 				continue;
 			}
 			offsetSegs.push_back({v0->pos, v1->pos, halfThick});
+			offsetToSeg.push_back(i);
+		}
+		if (offsetSegs.empty()) {
+			return;
 		}
 
 		const geometry::WallBands bands = geometry::resolveWallBands(offsetSegs, geometry::kDefaultMiterLimit);
@@ -1476,9 +1485,10 @@ namespace world_sim {
 		}
 
 		// Per-segment bands, styled like the foundation render (z 60-62, above
-		// foundations at 50-52, below the in-progress preview at 900+).
-		for (std::size_t i = 0; i < bands.bands.size() && i < segs.size(); ++i) {
-			const ec::WallSegment& wseg = segs[i];
+		// foundations at 50-52, below the in-progress preview at 900+). bands[i]
+		// corresponds to offsetSegs[i], i.e. segs[offsetToSeg[i]].
+		for (std::size_t i = 0; i < bands.bands.size() && i < offsetToSeg.size(); ++i) {
+			const ec::WallSegment& wseg = segs[offsetToSeg[i]];
 			const geometry::Ring&  ring = bands.bands[i];
 			if (ring.size() < 3) {
 				continue;
@@ -1580,31 +1590,34 @@ namespace world_sim {
 			emitRun(runStart, 1.0F);
 		}
 
-		// Junction polygons fill the corner gaps the trimmed bands leave. Interim
-		// styling: a neutral material-tinted fill so chains read continuous; built
-		// state lifts the alpha (a per-junction progress mapping is later polish).
-		// Junction styling is per junction, from its own incident segments: a built
-		// junction (every incident segment built) takes the wall material color so
-		// corners read as continuous material; otherwise it keeps the cool blueprint
-		// tint. This way a blueprint's corners stay blue even while a finished
-		// structure elsewhere shows wood corners.
+		// Junction polygons fill the corner gaps the trimmed bands leave. Styling is
+		// per junction, from its own incident segments: a junction reads as built only
+		// when it has incident segments and every one is built, in which case it takes
+		// the wall material color so corners read as continuous material; otherwise it
+		// keeps the cool blueprint tint. So a blueprint's corners stay blue even while a
+		// finished structure elsewhere shows wood corners. junctionSegments holds
+		// offsetter indices, mapped back to segs via offsetToSeg.
 		for (std::size_t j = 0; j < bands.junctions.size(); ++j) {
 			const geometry::Ring& ring = bands.junctions[j];
 			if (ring.size() < 3) {
 				continue;
 			}
 
-			bool		junctionBuilt = true;
+			// Default to blueprint styling; only a fully-built junction with a known
+			// incident set flips to built, so a missing/out-of-sync segment list can't
+			// masquerade as built.
+			bool		junctionBuilt = (j < bands.junctionSegments.size() && !bands.junctionSegments[j].empty());
 			std::string junctionMaterial;
 			if (j < bands.junctionSegments.size()) {
-				for (const std::size_t segIdx : bands.junctionSegments[j]) {
-					if (segIdx >= segs.size()) {
+				for (const std::size_t offIdx : bands.junctionSegments[j]) {
+					if (offIdx >= offsetToSeg.size()) {
 						continue;
 					}
+					const ec::WallSegment& iseg = segs[offsetToSeg[offIdx]];
 					if (junctionMaterial.empty()) {
-						junctionMaterial = segs[segIdx].material;
+						junctionMaterial = iseg.material;
 					}
-					if (segs[segIdx].state != ec::FoundationState::Built) {
+					if (iseg.state != ec::FoundationState::Built) {
 						junctionBuilt = false;
 					}
 				}

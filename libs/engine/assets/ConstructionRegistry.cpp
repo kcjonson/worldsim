@@ -341,7 +341,9 @@ namespace engine::assets {
 			return false;
 		}
 
-		// Each field is optional: a missing element keeps the struct's default.
+		// Each field is optional: a missing element keeps the struct's default. A
+		// present-but-malformed color also keeps the default (rather than parsing as
+		// black) so a typo in the config can't silently wreck the look.
 		auto color = [](pugi::xml_node parent, const char* tag, StyleColor def) -> StyleColor {
 			pugi::xml_node node = parent.child(tag);
 			if (!node) {
@@ -349,6 +351,12 @@ namespace engine::assets {
 			}
 			const std::string hex = node.text().as_string();
 			if (hex.empty()) {
+				return def;
+			}
+			const bool wellFormed =
+				hex.size() == 9 && hex[0] == '#' && hex.find_first_not_of("0123456789abcdefABCDEF", 1) == std::string::npos;
+			if (!wellFormed) {
+				LOG_WARNING(Engine, "Construction rendering: bad color '%s' for <%s> (expected #RRGGBBAA), keeping default", hex.c_str(), tag);
 				return def;
 			}
 			return ConstructionRegistry::parseStyleColor(hex);

@@ -159,6 +159,23 @@ TEST_F(ConstructionRegistryTest, Rendering_MalformedRoot_Fails) {
 	EXPECT_FALSE(ConstructionRegistry::Get().loadRendering(path));
 }
 
+TEST_F(ConstructionRegistryTest, Rendering_MalformedColor_KeepsDefault) {
+	// A typo'd color must keep the field default, not parse as black.
+	const std::string xml = "<?xml version=\"1.0\"?>\n"
+							"<ConstructionRendering>\n"
+							"  <Foundation>\n"
+							"    <outlineColor>not-a-color</outlineColor>\n"
+							"  </Foundation>\n"
+							"</ConstructionRendering>\n";
+	const std::string path = writeTempFile(xml, ".xml");
+	ASSERT_TRUE(ConstructionRegistry::Get().loadRendering(path));
+
+	const auto& r = ConstructionRegistry::Get().rendering();
+	// Default foundation outline is ~ (0.55, 0.72, 1.0), not black.
+	EXPECT_NEAR(r.foundation.outlineColor.r, 0.55F, 0.02F);
+	EXPECT_NEAR(r.foundation.outlineColor.b, 1.0F, 0.02F);
+}
+
 TEST_F(ConstructionRegistryTest, Materials_WoodPresentStoneAbsent) {
 	ASSERT_TRUE(ConstructionRegistry::Get().load(constructionConfigFolder().string()));
 
