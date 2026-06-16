@@ -698,13 +698,20 @@ namespace engine::assets {
 	size_t AssetRegistry::loadDefinitionsFromFolder(const std::string& folderPath, const std::function<void(int)>& onProgress) {
 		namespace fs = std::filesystem;
 
+		// Record load-blocking failures in the report too: in async mode the splash
+		// observes done==true and then reads getValidationReport() to gate, so an
+		// early return must leave the report reflecting the failure, not stale state.
 		if (!fs::exists(folderPath)) {
 			LOG_ERROR(Engine, "Asset definitions folder not found: %s", folderPath.c_str());
+			m_validationReport.issues.clear();
+			m_validationReport.add(Severity::Error, "", "", "Asset definitions folder not found", folderPath);
 			return 0;
 		}
 
 		if (!fs::is_directory(folderPath)) {
 			LOG_ERROR(Engine, "Path is not a directory: %s", folderPath.c_str());
+			m_validationReport.issues.clear();
+			m_validationReport.add(Severity::Error, "", "", "Asset path is not a directory", folderPath);
 			return 0;
 		}
 
@@ -753,6 +760,8 @@ namespace engine::assets {
 			}
 		} catch (const fs::filesystem_error& e) {
 			LOG_ERROR(Engine, "Filesystem error scanning '%s': %s", folderPath.c_str(), e.what());
+			m_validationReport.issues.clear();
+			m_validationReport.add(Severity::Error, "", "", std::string("Filesystem error scanning assets: ") + e.what(), folderPath);
 			return totalLoaded;
 		}
 

@@ -49,3 +49,16 @@ TEST(AssetRegistryAsyncTest, BeginLoadAsyncPopulatesRegistry) {
 	reg.clear();
 	EXPECT_FALSE(reg.loadProgress().started.load());
 }
+
+// A load that fails early must leave the validation report reflecting the failure
+// (not stale/empty), so an async splash can reliably gate on it.
+TEST(AssetRegistryAsyncTest, MissingFolderRecordsValidationError) {
+	auto& reg = AssetRegistry::Get();
+	reg.clear();
+
+	const size_t loaded = reg.loadDefinitionsFromFolder("__no_such_assets_folder__");
+	EXPECT_EQ(loaded, 0U);
+	EXPECT_GT(reg.getValidationReport().errorCount(), 0);
+
+	reg.clear();
+}

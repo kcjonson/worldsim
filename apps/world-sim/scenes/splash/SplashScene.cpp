@@ -123,7 +123,11 @@ class SplashScene : public engine::IScene {
 	}
 
 	void setSubtitle(const std::string& text) {
-		m_subtitle = makeText(m_centerX, m_centerY + 80.0F, text, 24.0F, Foundation::Color(0.6F, 0.6F, 0.6F, 1.0F), "splash_subtitle");
+		if (m_subtitle) {
+			m_subtitle->text = text; // UI::Text recomputes its cache when text changes; no realloc
+		} else {
+			m_subtitle = makeText(m_centerX, m_centerY + 80.0F, text, 24.0F, Foundation::Color(0.6F, 0.6F, 0.6F, 1.0F), "splash_subtitle");
+		}
 	}
 
 	void buildErrorText(const engine::assets::ValidationReport& report) {
