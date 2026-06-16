@@ -1,23 +1,24 @@
-// Salvage Scene - design-system primitive gallery.
-// Renders every Salvage primitive in its variants so the C++ implementation can
+// Salvage Scene - component gallery.
+// Renders the Salvage widgets in their variants so the C++ implementation can
 // be eyeballed against the React prototype's component gallery.
 
 #include <components/avatar/Avatar.h>
 #include <components/badge/Badge.h>
-#include <design-system/Button.h>
+#include <components/button/Button.h>
 #include <components/divider/Divider.h>
-#include <design-system/Icon.h>
-#include <theme/IconGlyphs.h>
+#include <components/icon/Icon.h>
 #include <components/keycap/KeyCap.h>
-#include <design-system/Meter.h>
 #include <components/panel/Panel.h>
+#include <components/progress/ProgressBar.h>
 #include <components/segmentedcontrol/SegmentedControl.h>
-#include <design-system/Slider.h>
+#include <components/slider/Slider.h>
 #include <components/stat/Stat.h>
-#include <design-system/Tabs.h>
+#include <components/tabbar/TabBar.h>
+#include <components/tooltip/Tooltip.h>
+#include <theme/IconGlyphs.h>
 #include <theme/Tokens.h>
-#include <design-system/Tooltip.h>
 #include <theme/Variants.h>
+
 #include <graphics/Color.h>
 #include <graphics/Rect.h>
 #include <primitives/Primitives.h>
@@ -27,6 +28,7 @@
 #include <GL/glew.h>
 
 #include <array>
+#include <string>
 
 namespace {
 
@@ -39,13 +41,13 @@ class SalvageScene : public engine::IScene {
 	void onExit() override {}
 
 	std::string exportState() override { // NOLINT(readability-convert-member-functions-to-static)
-		return R"({"scene": "salvage", "description": "Salvage design-system gallery"})";
+		return R"({"scene": "salvage", "description": "Salvage component gallery"})";
 	}
 
 	const char* getName() const override { return kSceneName; }
 
 	void render() override {
-		using namespace UI::DS;
+		using namespace UI;
 		using Renderer::Primitives::drawText;
 
 		glClearColor(bg_void.r, bg_void.g, bg_void.b, bg_void.a);
@@ -53,15 +55,15 @@ class SalvageScene : public engine::IScene {
 
 		const float left = space_6;
 
-		drawText({.text = "SALVAGE  -  DESIGN SYSTEM",
+		drawText({.text = "SALVAGE  -  COMPONENT LIBRARY",
 				  .position = {left, space_4},
 				  .scale = fs_xl / 16.0F,
 				  .color = text_bright,
-				  .font = UI::DS::fontDisplay,
+				  .font = fontDisplay,
 				  .id = "title"});
 
 		const auto header = [&](const char* label, float y) {
-			drawText({.text = label, .position = {left, y}, .scale = fs_2xs / 16.0F, .color = accent, .font = UI::DS::fontMono, .id = "section"});
+			drawText({.text = label, .position = {left, y}, .scale = fs_2xs / 16.0F, .color = accent, .font = fontMono, .id = "section"});
 		};
 
 		float y = 60.0F;
@@ -70,14 +72,14 @@ class SalvageScene : public engine::IScene {
 		header("BUTTONS", y);
 		y += 18.0F;
 		{
-			const std::array<std::pair<const char*, ButtonVariant>, 5> btns = {{{"PRIMARY", ButtonVariant::Primary},
-																				 {"SECONDARY", ButtonVariant::Secondary},
-																				 {"GHOST", ButtonVariant::Ghost},
-																				 {"DANGER", ButtonVariant::Danger},
-																				 {"DATA", ButtonVariant::Data}}};
+			const std::array<std::pair<const char*, Button::Type>, 5> btns = {{{"PRIMARY", Button::Type::Primary},
+																			   {"SECONDARY", Button::Type::Secondary},
+																			   {"GHOST", Button::Type::Ghost},
+																			   {"DANGER", Button::Type::Danger},
+																			   {"DATA", Button::Type::Data}}};
 			float x = left;
-			for (const auto& [label, variant] : btns) {
-				Button({.position = {x, y}, .size = {150.0F, 34.0F}, .label = label, .variant = variant, .sizeVariant = Size::Md}).render();
+			for (const auto& [label, type] : btns) {
+				Button({.label = label, .position = {x, y}, .size = {150.0F, 34.0F}, .type = type}).render();
 				x += 150.0F + space_3;
 			}
 		}
@@ -92,18 +94,18 @@ class SalvageScene : public engine::IScene {
 		Stat({.position = {left + 640.0F, y}, .label = "POWER", .value = "1.8", .unit = "kW", .tone = Tone::Data, .size = Size::Md}).render();
 		y += 56.0F + space_5;
 
-		// --- Meters ---
-		header("METERS", y);
+		// --- Bars (ProgressBar) ---
+		header("BARS", y);
 		y += 18.0F;
 		{
 			const float w = 360.0F;
-			Meter({.position = {left, y}, .width = w, .value = 0.72F, .label = "MOOD", .valueText = "72%", .tone = Tone::Auto}).render();
+			ProgressBar({.position = {left, y}, .width = w, .value = 0.72F, .tone = Tone::Auto, .label = "MOOD", .valueText = "72%"}).render();
 			y += 32.0F;
-			Meter({.position = {left, y}, .width = w, .value = 0.30F, .label = "HULL", .valueText = "30%", .tone = Tone::Auto}).render();
+			ProgressBar({.position = {left, y}, .width = w, .value = 0.30F, .tone = Tone::Auto, .label = "HULL", .valueText = "30%"}).render();
 			y += 32.0F;
-			Meter({.position = {left, y}, .width = w, .value = 0.85F, .label = "POWER", .valueText = "85%", .tone = Tone::Data, .segmented = true}).render();
+			ProgressBar({.position = {left, y}, .width = w, .value = 0.85F, .tone = Tone::Data, .label = "POWER", .valueText = "85%", .segmented = true}).render();
 			y += 32.0F;
-			Meter({.position = {left, y}, .width = w, .value = 0.62F, .label = "BUILD FOUNDATION", .valueText = "62%", .tone = Tone::Accent, .inlineLabel = true}).render();
+			ProgressBar({.position = {left, y}, .width = w, .value = 0.62F, .tone = Tone::Accent, .label = "BUILD FOUNDATION", .valueText = "62%", .inlineLabel = true}).render();
 			y += 28.0F;
 		}
 		y += space_5;
@@ -113,12 +115,12 @@ class SalvageScene : public engine::IScene {
 		y += 18.0F;
 		{
 			const std::array<std::tuple<const char*, Tone, bool>, 7> badges = {{{"DEFAULT", Tone::Default, false},
-																				{"ACCENT", Tone::Accent, false},
-																				{"DATA", Tone::Data, false},
-																				{"OK", Tone::Ok, false},
-																				{"WARN", Tone::Warn, false},
-																				{"CRIT", Tone::Crit, false},
-																				{"ONLINE", Tone::Ok, true}}};
+																			   {"ACCENT", Tone::Accent, false},
+																			   {"DATA", Tone::Data, false},
+																			   {"OK", Tone::Ok, false},
+																			   {"WARN", Tone::Warn, false},
+																			   {"CRIT", Tone::Crit, false},
+																			   {"ONLINE", Tone::Ok, true}}};
 			float x = left;
 			for (const auto& [label, tone, dot] : badges) {
 				Badge({.position = {x, y}, .label = label, .tone = tone, .dot = dot}).render();
@@ -131,7 +133,11 @@ class SalvageScene : public engine::IScene {
 		header("CONTROLS", y);
 		y += 18.0F;
 		SegmentedControl({.position = {left, y}, .width = 380.0F, .options = {"TERRAIN", "BIOMES", "TEMP", "RAIN"}, .selected = 0, .size = Size::Md, .tone = Tone::Data}).render();
-		Tabs({.position = {left + 440.0F, y}, .tabs = {"BIO", "NEEDS", "SKILLS", "GEAR"}, .selected = 1}).render();
+		TabBar({.position = {left + 440.0F, y},
+				.width = 320.0F,
+				.tabs = {{.id = "bio", .label = "BIO"}, {.id = "needs", .label = "NEEDS"}, {.id = "skills", .label = "SKILLS"}, {.id = "gear", .label = "GEAR"}},
+				.selectedId = "needs"})
+			.render();
 		y += 42.0F;
 		{
 			float x = left;
@@ -153,11 +159,11 @@ class SalvageScene : public engine::IScene {
 		Avatar({.position = {mx + 162.0F, 78.0F}, .size = 44.0F, .seed = "Vale", .mood = 0.9F, .selected = true}).render();
 
 		drawText({.text = "SLIDERS", .position = {mx, 142.0F}, .scale = fs_2xs / 16.0F, .color = accent, .font = fontMono, .id = "section"});
-		Slider({.position = {mx, 160.0F}, .width = 220.0F, .value = 0.62F, .label = "WATER", .valueText = "62%", .detent = 0.62F}).render();
-		Slider({.position = {mx, 200.0F}, .width = 220.0F, .value = 0.31F, .label = "ATMOSPHERE", .valueText = "0.7 atm", .detent = 0.31F}).render();
+		Slider({.position = {mx, 160.0F}, .size = {220.0F, 44.0F}, .value = 0.62, .label = "WATER", .valueFormatter = [](double) { return std::string("62%"); }, .detent = 0.62}).render();
+		Slider({.position = {mx, 204.0F}, .size = {220.0F, 44.0F}, .value = 0.31, .label = "ATMOSPHERE", .valueFormatter = [](double) { return std::string("0.7 atm"); }, .detent = 0.31}).render();
 
-		drawText({.text = "TOOLTIP", .position = {mx, 244.0F}, .scale = fs_2xs / 16.0F, .color = accent, .font = fontMono, .id = "section"});
-		Tooltip({.position = {mx, 260.0F}, .content = "Double-click for full dossier"}).render();
+		drawText({.text = "TOOLTIP", .position = {mx, 252.0F}, .scale = fs_2xs / 16.0F, .color = accent, .font = fontMono, .id = "section"});
+		Tooltip({.content = {.title = "Double-click for full dossier"}, .position = {mx, 268.0F}}).render();
 
 		// --- Panels (right column) ---
 		const float px = left + 820.0F;
@@ -172,21 +178,21 @@ class SalvageScene : public engine::IScene {
 
 		// --- Icons (all glyphs) ---
 		const float iconsTop = paletteY + 60.0F;
-		drawText({.text = "ICONS", .position = {left, iconsTop}, .scale = fs_2xs / 16.0F, .color = accent, .font = UI::DS::fontMono, .id = "section"});
+		drawText({.text = "ICONS", .position = {left, iconsTop}, .scale = fs_2xs / 16.0F, .color = accent, .font = fontMono, .id = "section"});
 		{
 			const float cell = 42.0F;
 			const int	cols = 18;
 			for (int i = 0; i < Icons::count; ++i) {
 				const float gx = left + static_cast<float>(i % cols) * cell;
 				const float gy = iconsTop + 20.0F + static_cast<float>(i / cols) * cell;
-				Icon({.position = {gx, gy}, .glyph = std::string(Icons::registry[i].name), .size = 24.0F, .color = text}).render();
+				Icon({.position = {gx, gy}, .size = 24.0F, .glyph = std::string(Icons::registry[i].name), .tint = text}).render();
 			}
 		}
 	}
 
   private:
 	static void drawPalette(float originX, float originY) {
-		using namespace UI::DS;
+		using namespace UI;
 		const std::array<Foundation::Color, 11> swatches = {
 			accent, accent_bright, data, data_bright, status_ok, status_warn, status_crit, text_bright, bg_panel, bg_panel_raised, bg_inset};
 		float x = originX;

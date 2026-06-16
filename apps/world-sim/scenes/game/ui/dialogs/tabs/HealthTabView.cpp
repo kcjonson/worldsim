@@ -54,11 +54,11 @@ void HealthTabView::create(const Foundation::Rect& contentBounds) {
 	// Need bars - store handles for dynamic updates
 	for (size_t i = 0; i < static_cast<size_t>(ecs::NeedType::Count); ++i) {
 		auto bar = UI::ProgressBar(UI::ProgressBar::Args{
-			.size = {needBarWidth, needBarHeight},
+			.width = needBarWidth,
 			.value = 1.0F,
-			.fillColor = UI::Theme::Colors::statusActive,
+			.tone = UI::Tone::Auto,
 			.label = ecs::kNeedLabels[i],
-			.labelWidth = 50.0F,
+			.inlineLabel = true,
 			.margin = 1.0F
 		});
 		needBarHandles[i] = leftColumn.addChild(std::move(bar));
@@ -140,11 +140,11 @@ void HealthTabView::update(const HealthData& health) {
 
 			// Color based on status
 			if (health.isCritical[i]) {
-				bar->setFillColor({0.9F, 0.2F, 0.2F, 1.0F}); // Red
+				bar->setTone(UI::Tone::Crit);
 			} else if (health.needsAttention[i]) {
-				bar->setFillColor({0.9F, 0.7F, 0.2F, 1.0F}); // Yellow
+				bar->setTone(UI::Tone::Warn);
 			} else {
-				bar->setFillColor({0.2F, 0.8F, 0.4F, 1.0F}); // Green
+				bar->setTone(UI::Tone::Ok);
 			}
 		}
 	}
