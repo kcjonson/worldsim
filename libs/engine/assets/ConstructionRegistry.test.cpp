@@ -103,14 +103,16 @@ TEST_F(ConstructionRegistryTest, Rendering_RealFileValues) {
 	EXPECT_FLOAT_EQ(r.foundation.progressAlphaMin, 0.15F);
 	EXPECT_FLOAT_EQ(r.foundation.progressAlphaMax, 0.85F);
 	EXPECT_FLOAT_EQ(r.foundation.outlineWidthBuilt, 2.0F);
-	EXPECT_FLOAT_EQ(r.wall.junctionAlphaBuilt, 0.8F);
-	EXPECT_FLOAT_EQ(r.opening.jambWidth, 0.14F);
+	EXPECT_FLOAT_EQ(r.foundation.builtEdgeDarken, 0.55F);
+	EXPECT_FLOAT_EQ(r.wall.junctionAlphaBuilt, 0.97F);
+	EXPECT_FLOAT_EQ(r.wall.builtEdgeDarken, 0.5F);
+	EXPECT_FLOAT_EQ(r.opening.jambWidth, 0.11F);
 	EXPECT_FLOAT_EQ(r.opening.mullionSpacingMeters, 0.7F);
 	EXPECT_FLOAT_EQ(r.preview.vertexRadiusPx, 4.0F);
 
-	// Glass color parsed from "#80B8E699" (0x80/255 ~= 0.502, 0x99/255 ~= 0.6).
-	EXPECT_NEAR(r.opening.glassColor.r, 0.50F, 0.01F);
-	EXPECT_NEAR(r.opening.glassColor.a, 0.60F, 0.01F);
+	// Glass color parsed from "#8FCCF2B8" (0x8F/255 ~= 0.56, 0xB8/255 ~= 0.72).
+	EXPECT_NEAR(r.opening.glassColor.r, 0.56F, 0.01F);
+	EXPECT_NEAR(r.opening.glassColor.a, 0.72F, 0.01F);
 }
 
 TEST_F(ConstructionRegistryTest, Rendering_MissingFile_KeepsDefaults) {
@@ -121,33 +123,34 @@ TEST_F(ConstructionRegistryTest, Rendering_MissingFile_KeepsDefaults) {
 
 	const auto& r = ConstructionRegistry::Get().rendering();
 	EXPECT_FLOAT_EQ(r.foundation.progressAlphaMax, 0.85F);
-	EXPECT_FLOAT_EQ(r.opening.jambWidth, 0.14F);
+	EXPECT_FLOAT_EQ(r.opening.jambWidth, 0.11F);
 }
 
 TEST_F(ConstructionRegistryTest, Rendering_ParsesOverridesKeepsOtherDefaults) {
-	const std::string xml =
-		"<?xml version=\"1.0\"?>\n"
-		"<ConstructionRendering>\n"
-		"  <Foundation>\n"
-		"    <outlineColor>#FF0000FF</outlineColor>\n"
-		"    <outlineWidthBuilt>3.5</outlineWidthBuilt>\n"
-		"  </Foundation>\n"
-		"  <Opening>\n"
-		"    <jambWidth>0.20</jambWidth>\n"
-		"  </Opening>\n"
-		"</ConstructionRendering>\n";
+	const std::string xml = "<?xml version=\"1.0\"?>\n"
+							"<ConstructionRendering>\n"
+							"  <Foundation>\n"
+							"    <outlineColor>#FF0000FF</outlineColor>\n"
+							"    <outlineWidthBuilt>3.5</outlineWidthBuilt>\n"
+							"    <builtEdgeDarken>0.33</builtEdgeDarken>\n"
+							"  </Foundation>\n"
+							"  <Opening>\n"
+							"    <jambWidth>0.20</jambWidth>\n"
+							"  </Opening>\n"
+							"</ConstructionRendering>\n";
 	const std::string path = writeTempFile(xml, ".xml");
 	ASSERT_TRUE(ConstructionRegistry::Get().loadRendering(path));
 
 	const auto& r = ConstructionRegistry::Get().rendering();
 	// Overridden fields take the file's values.
 	EXPECT_FLOAT_EQ(r.foundation.outlineWidthBuilt, 3.5F);
+	EXPECT_FLOAT_EQ(r.foundation.builtEdgeDarken, 0.33F);
 	EXPECT_NEAR(r.foundation.outlineColor.r, 1.0F, 0.01F);
 	EXPECT_NEAR(r.foundation.outlineColor.g, 0.0F, 0.01F);
 	EXPECT_FLOAT_EQ(r.opening.jambWidth, 0.20F);
 	// Unspecified fields keep their built-in defaults.
 	EXPECT_FLOAT_EQ(r.foundation.progressAlphaMax, 0.85F);
-	EXPECT_FLOAT_EQ(r.wall.junctionAlphaBuilt, 0.8F);
+	EXPECT_FLOAT_EQ(r.wall.junctionAlphaBuilt, 0.97F);
 	EXPECT_FLOAT_EQ(r.preview.vertexRadiusPx, 4.0F);
 }
 

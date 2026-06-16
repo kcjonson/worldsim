@@ -102,6 +102,10 @@ namespace geometry {
 		OffsetStatus	  status = OffsetStatus::Ok;
 		std::vector<Ring> bands;	 // one trimmed band per input segment, same order
 		std::vector<Ring> junctions; // one polygon per junction that produced one
+		// Caller indices of the segments incident to each emitted junction, aligned
+		// with `junctions`. Lets a renderer style a junction from its own segments
+		// (e.g. built vs blueprint, material) instead of a graph-wide flag.
+		std::vector<std::vector<std::size_t>> junctionSegments;
 	};
 
 	// Orchestrate band + junction resolution over a list of segments that share

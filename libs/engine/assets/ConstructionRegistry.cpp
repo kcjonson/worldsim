@@ -368,6 +368,7 @@ namespace engine::assets {
 			cfg.foundation.outlineAlphaMax = number(f, "outlineAlphaMax", cfg.foundation.outlineAlphaMax);
 			cfg.foundation.outlineWidthBlueprint = number(f, "outlineWidthBlueprint", cfg.foundation.outlineWidthBlueprint);
 			cfg.foundation.outlineWidthBuilt = number(f, "outlineWidthBuilt", cfg.foundation.outlineWidthBuilt);
+			cfg.foundation.builtEdgeDarken = number(f, "builtEdgeDarken", cfg.foundation.builtEdgeDarken);
 		}
 		if (pugi::xml_node w = root.child("Wall")) {
 			cfg.wall.blueprintFill = color(w, "blueprintFill", cfg.wall.blueprintFill);
@@ -382,6 +383,7 @@ namespace engine::assets {
 			cfg.wall.outlineWidthBuilt = number(w, "outlineWidthBuilt", cfg.wall.outlineWidthBuilt);
 			cfg.wall.junctionAlphaBlueprint = number(w, "junctionAlphaBlueprint", cfg.wall.junctionAlphaBlueprint);
 			cfg.wall.junctionAlphaBuilt = number(w, "junctionAlphaBuilt", cfg.wall.junctionAlphaBuilt);
+			cfg.wall.builtEdgeDarken = number(w, "builtEdgeDarken", cfg.wall.builtEdgeDarken);
 		}
 		if (pugi::xml_node o = root.child("Opening")) {
 			cfg.opening.doorFallbackColor = color(o, "doorFallbackColor", cfg.opening.doorFallbackColor);

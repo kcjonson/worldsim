@@ -204,37 +204,43 @@ namespace engine::assets {
 	};
 
 	/// Committed-foundation look. The fill is the material palette color; its alpha
-	/// ramps progressAlphaMin..Max with build progress (Built renders at Max). The
-	/// outline rgb is outlineColor; its alpha ramps outlineAlphaMin..Max likewise.
+	/// ramps progressAlphaMin..Max with build progress (Built renders at Max). A
+	/// blueprint wears the cool outlineColor (alpha ramps outlineAlphaMin..Max); a
+	/// Built foundation wears a darker shade of its own material (builtEdgeDarken), so
+	/// finished structures read as solid material and blue stays the "planned" cue.
 	/// blueprintFill is the always-present faint base under the progress fill.
 	struct FoundationStyle {
 		StyleColor blueprintFill{0.5F, 0.65F, 0.9F, 0.18F};
 		StyleColor fallbackColor{0.5F, 0.65F, 0.9F, 1.0F}; // used when the palette is empty
-		StyleColor outlineColor{0.55F, 0.72F, 1.0F, 1.0F}; // rgb only; alpha from the ramp
+		StyleColor outlineColor{0.55F, 0.72F, 1.0F, 1.0F}; // blueprint edge; rgb only, alpha ramps
 		float	   progressAlphaMin = 0.15F;
 		float	   progressAlphaMax = 0.85F;
 		float	   outlineAlphaMin = 0.6F;
 		float	   outlineAlphaMax = 1.0F;
 		float	   outlineWidthBlueprint = 1.5F;
 		float	   outlineWidthBuilt = 2.0F;
+		float	   builtEdgeDarken = 0.55F; // Built edge = material color * this
 	};
 
-	/// Committed-wall look. Same ramp model as foundations, plus the junction-polygon
-	/// fill that tiles the corners between trimmed bands (its alpha lifts when any
-	/// incident segment is built).
+	/// Committed-wall look. Same ramp model as foundations. A Built wall renders nearly
+	/// opaque with a darker-material edge (builtEdgeDarken), so it stands clearly proud
+	/// of the floor; a blueprint keeps the cool outlineColor. The junction-polygon fill
+	/// tiles the corners between trimmed bands: blueprint junctions use junctionColor
+	/// (blue), built junctions take the wall material color so corners read continuous.
 	struct WallStyle {
 		StyleColor blueprintFill{0.5F, 0.65F, 0.9F, 0.22F};
 		StyleColor fallbackColor{0.5F, 0.65F, 0.9F, 1.0F};
-		StyleColor outlineColor{0.6F, 0.78F, 1.0F, 1.0F}; // rgb only; alpha from the ramp
-		StyleColor junctionColor{0.5F, 0.65F, 0.9F, 1.0F}; // rgb only; alpha below
+		StyleColor outlineColor{0.6F, 0.78F, 1.0F, 1.0F};  // blueprint edge; rgb only, alpha ramps
+		StyleColor junctionColor{0.5F, 0.65F, 0.9F, 1.0F}; // blueprint junction; rgb only, alpha below
 		float	   progressAlphaMin = 0.2F;
-		float	   progressAlphaMax = 0.9F;
+		float	   progressAlphaMax = 0.97F;
 		float	   outlineAlphaMin = 0.65F;
 		float	   outlineAlphaMax = 1.0F;
 		float	   outlineWidthBlueprint = 1.5F;
 		float	   outlineWidthBuilt = 2.0F;
 		float	   junctionAlphaBlueprint = 0.4F;
-		float	   junctionAlphaBuilt = 0.8F;
+		float	   junctionAlphaBuilt = 0.97F;
+		float	   builtEdgeDarken = 0.5F; // Built edge = material color * this
 	};
 
 	/// Procedural door/window look. The leaf/frame fill is the opening material color
@@ -246,16 +252,16 @@ namespace engine::assets {
 	/// (progressAlphaMin..Max); the placement ghost draws at ghostAlpha.
 	struct OpeningStyle {
 		StyleColor doorFallbackColor{0.55F, 0.40F, 0.25F, 1.0F};
-		StyleColor glassColor{0.50F, 0.72F, 0.90F, 0.6F};
+		StyleColor glassColor{0.56F, 0.80F, 0.95F, 0.72F};
 		float	   fillAlpha = 0.92F;
 		float	   outlineAlpha = 0.95F;
 		float	   outlineDarken = 0.7F;
 		float	   outlineWidthBuilt = 2.0F;
 		float	   outlineWidthBlueprint = 1.0F;
-		float	   jambWidth = 0.14F;
-		float	   jambDarken = 0.6F;
+		float	   jambWidth = 0.11F;
+		float	   jambDarken = 0.5F;
 		float	   jambAlpha = 0.95F;
-		float	   glassInset = 0.24F;
+		float	   glassInset = 0.18F;
 		float	   mullionSpacingMeters = 0.7F;
 		float	   mullionAlpha = 0.9F;
 		float	   progressAlphaMin = 0.25F; // blueprint ramp floor
