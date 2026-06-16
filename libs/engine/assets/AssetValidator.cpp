@@ -51,8 +51,15 @@ namespace engine::assets {
 	ValidationReport AssetValidator::validate(const fs::path& assetsRoot, const fs::path& sharedScriptsPath) {
 		ValidationReport report;
 
-		std::error_code ec;
-		if (!fs::exists(assetsRoot, ec) || !fs::is_directory(assetsRoot, ec)) {
+		// Each filesystem probe gets its own error_code so a transient failure on
+		// one path can't poison traversal or later checks.
+		const auto pathExists = [](const fs::path& p) {
+			std::error_code e;
+			return fs::exists(p, e);
+		};
+
+		std::error_code rootEc;
+		if (!fs::is_directory(assetsRoot, rootEc)) {
 			report.add(Severity::Error, "", "", "Assets root not found or not a directory", assetsRoot.string());
 			return report;
 		}
@@ -60,11 +67,18 @@ namespace engine::assets {
 		// defName -> file it was first declared in, for cross-library duplicate detection.
 		std::unordered_map<std::string, std::string> defNameToFile;
 
-		for (const auto& entry : fs::recursive_directory_iterator(assetsRoot, ec)) {
-			if (ec) {
+		std::error_code						   iterEc;
+		fs::recursive_directory_iterator	   it(assetsRoot, iterEc);
+		const fs::recursive_directory_iterator end;
+		for (; it != end; it.increment(iterEc)) {
+			if (iterEc) {
+				report.add(Severity::Warning, "", "", "Stopped scanning after a filesystem error", iterEc.message());
 				break;
 			}
-			if (!entry.is_regular_file() || entry.path().extension() != ".xml") {
+
+			const fs::directory_entry& entry = *it;
+			std::error_code			   entryEc;
+			if (!entry.is_regular_file(entryEc) || entry.path().extension() != ".xml") {
 				continue;
 			}
 
@@ -119,7 +133,7 @@ namespace engine::assets {
 				if (!svgPath.empty()) {
 					const fs::path resolved = (assetFolder / svgPath).lexically_normal();
 					referencedSvgs.insert(resolved.string());
-					if (!fs::exists(resolved, ec)) {
+					if (!pathExists(resolved)) {
 						report.add(Severity::Error, defName, "svgPath", "Referenced SVG does not exist", resolved.string());
 					}
 				}
@@ -130,7 +144,7 @@ namespace engine::assets {
 					const fs::path resolved = resolveScriptPath(scriptPath, assetFolder, sharedScriptsPath);
 					if (resolved.empty()) {
 						report.add(Severity::Error, defName, "scriptPath", "@shared/ used but no shared scripts path is configured", scriptPath);
-					} else if (!fs::exists(resolved, ec)) {
+					} else if (!pathExists(resolved)) {
 						report.add(Severity::Error, defName, "scriptPath", "Generator script does not exist", resolved.string());
 					}
 				}
@@ -154,11 +168,16 @@ namespace engine::assets {
 			}
 
 			// Orphan SVGs: .svg files in the folder that no definition references.
-			for (const auto& f : fs::directory_iterator(assetFolder, ec)) {
-				if (ec) {
+			std::error_code				 dirEc;
+			fs::directory_iterator		 dit(assetFolder, dirEc);
+			const fs::directory_iterator dend;
+			for (; dit != dend; dit.increment(dirEc)) {
+				if (dirEc) {
 					break;
 				}
-				if (!f.is_regular_file() || f.path().extension() != ".svg") {
+				const fs::directory_entry& f = *dit;
+				std::error_code			   fEc;
+				if (!f.is_regular_file(fEc) || f.path().extension() != ".svg") {
 					continue;
 				}
 				const std::string canon = f.path().lexically_normal().string();

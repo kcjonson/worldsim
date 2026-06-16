@@ -54,10 +54,15 @@ namespace {
 	// Brings up a hidden GL context + the renderer primitives for the duration of
 	// a test. `ok` is false when no context/shaders are available (headless CI).
 	struct GlFixture {
-		GLFWwindow* window = nullptr;
-		bool		ok = false;
+		GLFWwindow*			  window = nullptr;
+		bool				  ok = false;
+		std::filesystem::path originalCwd;
 
 		GlFixture() {
+			// Captured before ensureShadersResolvable() may change cwd; restored in the dtor.
+			std::error_code cwdEc;
+			originalCwd = std::filesystem::current_path(cwdEc);
+
 			if (glfwInit() != GLFW_TRUE) {
 				return;
 			}
@@ -94,6 +99,12 @@ namespace {
 			if (window != nullptr) {
 				glfwDestroyWindow(window);
 				glfwTerminate();
+			}
+			// ensureShadersResolvable() may have changed the working directory;
+			// restore it so test execution order can't leak between tests.
+			if (!originalCwd.empty()) {
+				std::error_code ec;
+				std::filesystem::current_path(originalCwd, ec);
 			}
 		}
 
