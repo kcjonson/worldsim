@@ -469,7 +469,7 @@ while (running) {
 ## In Progress Epics
 
 ### Dev/Test Tools (HTTP verbs + developer-client tab)
-**Spec/Documentation:** `.claude/plans/alright-these-seem-good-hidden-wadler.md`, `/docs/development-log/entries/2026-06-16-dev-tools-api-and-tab.md`
+**Spec/Documentation:** `/docs/development-log/entries/2026-06-16-dev-tools-api-and-tab.md`
 **Dependencies:** None
 **Status:** in progress (verbs + readback + tab done; tab not yet exercised in-browser; draft PR #157)
 

@@ -490,28 +490,21 @@ namespace Foundation {
 		if (!inFlight.owns_lock()) {
 			return false;
 		}
-		{
-			std::lock_guard<std::mutex> lock(stateMutex);
-			stateQuery = what;
-			stateResult.clear();
-		}
+
+		std::unique_lock<std::mutex> lock(stateMutex);
+		stateQuery = what;
+		stateResult.clear();
 		stateReady.store(false);
 		stateRequested.store(true);
 
-		auto startTime = std::chrono::steady_clock::now();
-		while (!stateReady.load()) {
-			auto elapsed = std::chrono::steady_clock::now() - startTime;
-			if (std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count() > timeoutMs) {
-				stateRequested.store(false);
-				return false;
-			}
-			std::this_thread::sleep_for(std::chrono::milliseconds(5));
+		// Block on the CV (releasing stateMutex while parked) until the game thread delivers
+		// or the timeout elapses -- no busy-poll, no tied-up CPU.
+		const bool delivered = stateCV.wait_for(lock, std::chrono::milliseconds(timeoutMs), [this] { return stateReady.load(); });
+		if (!delivered) {
+			stateRequested.store(false);
+			return false;
 		}
-
-		{
-			std::lock_guard<std::mutex> lock(stateMutex);
-			out = stateResult;
-		}
+		out = stateResult;
 		stateReady.store(false);
 		return true;
 	}
@@ -532,8 +525,9 @@ namespace Foundation {
 		{
 			std::lock_guard<std::mutex> lock(stateMutex);
 			stateResult = json;
+			stateReady.store(true); // set under the lock so the waiter can't miss the wakeup
 		}
-		stateReady.store(true);
+		stateCV.notify_all();
 	}
 
 	void DebugServer::serverThreadFunc(int port) { // NOLINT(readability-convert-member-functions-to-static)
@@ -684,7 +678,7 @@ namespace Foundation {
 				res.set_content(json, "application/json");
 			} else {
 				res.status = 503;
-				res.set_content("{\"error\":\"state request unavailable (busy, or game scene not running)\"}", "application/json");
+				res.set_content("{\"error\":\"state request unavailable (timed out, busy, or game scene not running)\"}", "application/json");
 			}
 		});
 

@@ -257,8 +257,9 @@ namespace Foundation { // NOLINT(readability-identifier-naming)
 		std::atomic<bool> stateReady{false};
 		std::string		  stateQuery;		// HTTP writes (the `what` param), game reads
 		std::string		  stateResult;		// game writes (JSON), HTTP reads
-		std::mutex		  stateMutex;		// Protects stateQuery + stateResult
-		std::mutex		  stateRequestMutex; // Held by requestState to enforce one in-flight request
+		std::mutex				stateMutex;		   // Protects stateQuery + stateResult
+		std::mutex				stateRequestMutex; // Held by requestState to enforce one in-flight request
+		std::condition_variable stateCV;		   // Signaled by deliverState; requestState parks on it
 
 		// Vsync target for SetVsync action (0 = off, 1 = on)
 		std::atomic<int> targetVsync{1};

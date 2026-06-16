@@ -38,6 +38,7 @@
 
 #include <cctype>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 
 namespace world_sim {
@@ -683,11 +684,18 @@ namespace world_sim {
 			switch (c) {
 				case '"': out += "\\\""; break;
 				case '\\': out += "\\\\"; break;
+				case '\b': out += "\\b"; break;
+				case '\f': out += "\\f"; break;
 				case '\n': out += "\\n"; break;
 				case '\r': out += "\\r"; break;
 				case '\t': out += "\\t"; break;
 				default:
-					if (static_cast<unsigned char>(c) >= 0x20) {
+					if (static_cast<unsigned char>(c) < 0x20) {
+						// Other control chars: emit a \u00XX escape rather than dropping them.
+						char buf[7];
+						std::snprintf(buf, sizeof(buf), "\\u%04x", static_cast<unsigned char>(c));
+						out += buf;
+					} else {
 						out += c;
 					}
 			}

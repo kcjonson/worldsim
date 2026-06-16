@@ -1,7 +1,6 @@
 # Dev/Test Tools: HTTP verbs + developer-client tab
 
 **Date:** 2026-06-16
-**Plan:** `.claude/plans/alright-these-seem-good-hidden-wadler.md`
 
 ## Summary
 
