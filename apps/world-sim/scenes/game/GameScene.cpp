@@ -56,6 +56,7 @@
 #include <ecs/components/Packaged.h>
 #include <ecs/components/Room.h>
 #include <ecs/components/Skills.h>
+#include <ecs/components/StorageConfiguration.h>
 #include <ecs/components/Structure.h>
 #include <ecs/components/StructureBlueprint.h>
 #include <ecs/components/StructureHealth.h>
@@ -76,6 +77,7 @@
 #include <ecs/systems/TimeSystem.h>
 #include <ecs/systems/VisionSystem.h>
 
+#include <cctype>
 #include <cstdlib>
 #include <memory>
 #include <sstream>
@@ -636,6 +638,14 @@ namespace {
 						handleDevCommand(devCmd);
 					}
 				}
+
+				// Serve a pending /api/state readback on the game thread (the HTTP thread
+				// must never touch the ECS). Mirrors the dev-command consume + the
+				// screenshot request/response handshake.
+				std::string stateQuery;
+				if (debugServer->consumeStateRequest(stateQuery)) {
+					debugServer->deliverState(serializeState(stateQuery));
+				}
 			}
 			dx += m_debugPanX;
 			dy += m_debugPanY;
@@ -1086,8 +1096,24 @@ namespace {
 		void handleDevCommand(const Foundation::DevCommand& cmd) {
 			if (cmd.verb == "freebuild" || cmd.verb == "construction") {
 				devFreeBuild(cmd);
-			} else if (cmd.verb == "givewood") {
-				devGiveWood(cmd);
+			} else if (cmd.verb == "give") {
+				devGive(cmd);
+			} else if (cmd.verb == "spawn") {
+				devSpawn(cmd);
+			} else if (cmd.verb == "colonist") {
+				devColonist(cmd);
+			} else if (cmd.verb == "need") {
+				devNeed(cmd);
+			} else if (cmd.verb == "time") {
+				devTime(cmd);
+			} else if (cmd.verb == "teleport") {
+				devTeleport(cmd);
+			} else if (cmd.verb == "select") {
+				devSelect(cmd);
+			} else if (cmd.verb == "kill") {
+				devKill(cmd);
+			} else if (cmd.verb == "complete") {
+				devComplete(cmd);
 			} else if (cmd.verb == "foundation") {
 				devFoundation(cmd);
 			} else if (cmd.verb == "walls") {
@@ -1112,24 +1138,426 @@ namespace {
 			gameUI->pushNotification("Dev", on ? "Free-build ON" : "Free-build OFF", UI::ToastSeverity::Info);
 		}
 
-		/// /api/dev/givewood?n=100[&where=site|loose]. Credits N Wood to active build
-		/// sites' delivery inventories (where=site, the default and most direct), so the
-		/// build proceeds without harvesting/hauling. where=loose is not wired here.
-		void devGiveWood(const Foundation::DevCommand& cmd) {
-			const long n = std::strtol(cmd.param("n", "100").c_str(), nullptr, 10);
-			if (n <= 0) {
-				LOG_WARNING(Game, "[DevAPI] givewood: n must be > 0");
+		/// /api/dev/give?material=Wood&n=100&where=site|loose|colonist|storage[&at=x,y].
+		/// Hands out items/materials with no harvesting or hauling:
+		///   site (default) -- credits the delivery inventories of active build sites,
+		///                      capped per site, so a build proceeds. Reuses creditMaterialToSites.
+		///   loose          -- drops up to N packaged item-entities on the ground at `at`
+		///                      (same path ActionSystem uses for non-backpackable crafted items).
+		///   colonist       -- adds N to the nearest colonist's backpack (nearest to `at`).
+		///   storage        -- adds N to the nearest storage container, ignoring its accept rules
+		///                      (this is a dev cheat -- rules are for normal hauling).
+		void devGive(const Foundation::DevCommand& cmd) {
+			const std::string material = cmd.param("material", "Wood");
+			const long		  nRaw = std::strtol(cmd.param("n", "100").c_str(), nullptr, 10);
+			if (nRaw <= 0) {
+				LOG_WARNING(Game, "[DevAPI] give: n must be > 0");
 				return;
 			}
+			const auto		  n = static_cast<uint32_t>(nRaw);
 			const std::string where = cmd.param("where", "site");
-			if (where != "site") {
-				LOG_WARNING(Game, "[DevAPI] givewood where=%s not supported (only 'site'); ignoring", where.c_str());
+
+			if (where == "site") {
+				const uint32_t credited = ecsWorld->getSystem<ecs::ConstructionSystem>().creditMaterialToSites(material, n);
+				LOG_INFO(Game, "[DevAPI] give: credited %u %s across build sites", credited, material.c_str());
+				gameUI->pushNotification("Dev", "Credited " + std::to_string(credited) + " " + material + " to sites", UI::ToastSeverity::Info);
 				return;
 			}
-			const uint32_t credited =
-				ecsWorld->getSystem<ecs::ConstructionSystem>().creditMaterialToSites("Wood", static_cast<uint32_t>(n));
-			LOG_INFO(Game, "[DevAPI] givewood: credited %u Wood across build sites", credited);
-			gameUI->pushNotification("Dev", "Credited " + std::to_string(credited) + " Wood to sites", UI::ToastSeverity::Info);
+
+			if (where == "loose") {
+				if (engine::assets::AssetRegistry::Get().getDefinition(material) == nullptr) {
+					LOG_WARNING(Game, "[DevAPI] give loose: unknown asset '%s'", material.c_str());
+					gameUI->pushNotification("Dev", "Unknown asset: " + material, UI::ToastSeverity::Warning);
+					return;
+				}
+				const Foundation::Vec2 at = parsePoint(cmd.param("at"));
+				// Each packaged item is its own entity (no ground stacks); cap so a big N
+				// can't spawn thousands of entities.
+				constexpr uint32_t kMaxLoose = 50;
+				const uint32_t	   count = n < kMaxLoose ? n : kMaxLoose;
+				for (uint32_t i = 0; i < count; ++i) {
+					const Foundation::Vec2 off = spreadOffset(static_cast<long>(i), static_cast<long>(count), 1.0F);
+					const ecs::EntityID	   entity = m_placementSystem->spawnEntity(material, {at.x + off.x, at.y + off.y});
+					ecsWorld->addComponent<ecs::Packaged>(entity, ecs::Packaged{});
+				}
+				if (n > kMaxLoose) {
+					LOG_WARNING(Game, "[DevAPI] give loose: capped %u -> %u entities", n, kMaxLoose);
+				}
+				LOG_INFO(Game, "[DevAPI] give: dropped %u loose '%s' near (%.1f, %.1f)", count, material.c_str(), at.x, at.y);
+				gameUI->pushNotification("Dev", "Dropped " + std::to_string(count) + " " + material, UI::ToastSeverity::Info);
+				return;
+			}
+
+			if (where == "colonist" || where == "storage") {
+				const Foundation::Vec2 at = parsePoint(cmd.param("at"));
+				ecs::Inventory*		   inventory = (where == "colonist") ? nearestColonistInventory(at) : nearestStorageInventory(at);
+				if (inventory == nullptr) {
+					LOG_WARNING(Game, "[DevAPI] give %s: no target found", where.c_str());
+					gameUI->pushNotification("Dev", "No " + where + " to give to", UI::ToastSeverity::Warning);
+					return;
+				}
+				const uint32_t added = inventory->addItem(material, n);
+				LOG_INFO(Game, "[DevAPI] give: added %u/%u %s to nearest %s", added, n, material.c_str(), where.c_str());
+				gameUI->pushNotification("Dev", "Gave " + std::to_string(added) + " " + material + " to " + where, UI::ToastSeverity::Info);
+				return;
+			}
+
+			LOG_WARNING(Game, "[DevAPI] give: unknown where=%s (site|loose|colonist|storage)", where.c_str());
+			gameUI->pushNotification("Dev", "Unknown where: " + where, UI::ToastSeverity::Warning);
+		}
+
+		/// /api/dev/spawn?def=<assetName>&at=x,y&n=1&scatter=0. Spawns N copies of an asset
+		/// definition through the placement path (same components the build menu produces).
+		/// `scatter` (meters) spreads copies in a deterministic sunflower pattern around `at`;
+		/// 0 stacks them. Rejects unknown defNames.
+		void devSpawn(const Foundation::DevCommand& cmd) {
+			const std::string def = cmd.param("def");
+			if (def.empty()) {
+				LOG_WARNING(Game, "[DevAPI] spawn: missing def=<assetName>");
+				gameUI->pushNotification("Dev", "spawn needs def=", UI::ToastSeverity::Warning);
+				return;
+			}
+			if (engine::assets::AssetRegistry::Get().getDefinition(def) == nullptr) {
+				LOG_WARNING(Game, "[DevAPI] spawn: unknown def '%s'", def.c_str());
+				gameUI->pushNotification("Dev", "Unknown asset: " + def, UI::ToastSeverity::Warning);
+				return;
+			}
+			const Foundation::Vec2 at = parsePoint(cmd.param("at"));
+			const long			   nRaw = std::strtol(cmd.param("n", "1").c_str(), nullptr, 10);
+			const long			   n = nRaw < 1 ? 1 : nRaw;
+			const float			   scatter = std::strtof(cmd.param("scatter", "0").c_str(), nullptr);
+
+			for (long i = 0; i < n; ++i) {
+				const Foundation::Vec2 off = spreadOffset(i, n, scatter);
+				m_placementSystem->spawnEntity(def, {at.x + off.x, at.y + off.y});
+			}
+			LOG_INFO(Game, "[DevAPI] spawn: %ld x '%s' near (%.1f, %.1f)", n, def.c_str(), at.x, at.y);
+			gameUI->pushNotification("Dev", "Spawned " + std::to_string(n) + " " + def, UI::ToastSeverity::Info);
+		}
+
+		/// /api/dev/colonist?at=x,y&n=1&name=Dev. Spawns N fully-formed colonists (the same
+		/// component set as the starting colonist). Extras get a small offset so they don't
+		/// land exactly on top of each other, and a numeric name suffix.
+		void devColonist(const Foundation::DevCommand& cmd) {
+			const Foundation::Vec2 at = parsePoint(cmd.param("at"));
+			const long			   nRaw = std::strtol(cmd.param("n", "1").c_str(), nullptr, 10);
+			const long			   n = nRaw < 1 ? 1 : nRaw;
+			const std::string	   baseName = cmd.param("name", "Dev");
+
+			for (long i = 0; i < n; ++i) {
+				const Foundation::Vec2 off = spreadOffset(i, n, n > 1 ? 1.0F : 0.0F);
+				const std::string	   name = (n == 1) ? baseName : baseName + std::to_string(i + 1);
+				spawnColonist({at.x + off.x, at.y + off.y}, name);
+			}
+			LOG_INFO(Game, "[DevAPI] colonist: spawned %ld at (%.1f, %.1f)", n, at.x, at.y);
+			gameUI->pushNotification("Dev", "Spawned " + std::to_string(n) + " colonist(s)", UI::ToastSeverity::Info);
+		}
+
+		/// Nearest colonist entity to `at` (kInvalidEntity if none). Shared by devGive,
+		/// devSelect.
+		ecs::EntityID nearestColonist(Foundation::Vec2 at) {
+			ecs::EntityID best = ecs::kInvalidEntity;
+			float		  bestDistSq = 0.0F;
+			for (auto [entity, colonist, pos] : ecsWorld->view<ecs::Colonist, ecs::Position>()) {
+				const float dx = pos.value.x - at.x;
+				const float dy = pos.value.y - at.y;
+				const float distSq = dx * dx + dy * dy;
+				if (best == ecs::kInvalidEntity || distSq < bestDistSq) {
+					best = entity;
+					bestDistSq = distSq;
+				}
+			}
+			return best;
+		}
+
+		/// Nearest colonist's Inventory to `at` (nullptr if none). Used by devGive.
+		ecs::Inventory* nearestColonistInventory(Foundation::Vec2 at) {
+			const ecs::EntityID id = nearestColonist(at);
+			return id == ecs::kInvalidEntity ? nullptr : ecsWorld->getComponent<ecs::Inventory>(id);
+		}
+
+		/// Nearest storage container's Inventory to `at` (nullptr if none). Used by devGive.
+		ecs::Inventory* nearestStorageInventory(Foundation::Vec2 at) {
+			ecs::Inventory* best = nullptr;
+			float			bestDistSq = 0.0F;
+			for (auto [entity, storage, pos, inventory] : ecsWorld->view<ecs::StorageConfiguration, ecs::Position, ecs::Inventory>()) {
+				const float dx = pos.value.x - at.x;
+				const float dy = pos.value.y - at.y;
+				const float distSq = dx * dx + dy * dy;
+				if (best == nullptr || distSq < bestDistSq) {
+					best = &inventory;
+					bestDistSq = distSq;
+				}
+			}
+			return best;
+		}
+
+		/// Parse a decimal entity id (EntityID is a uint64). 0 (kInvalidEntity) on failure.
+		static ecs::EntityID parseEntity(const std::string& spec) {
+			return static_cast<ecs::EntityID>(std::strtoull(spec.c_str(), nullptr, 10));
+		}
+
+		/// Map a need name (Needs.h labels, case-insensitive) to its NeedType. Returns false
+		/// for an unknown name.
+		static bool parseNeedType(const std::string& name, ecs::NeedType& out) {
+			for (size_t i = 0; i < ecs::kNeedLabels.size(); ++i) {
+				if (equalsIgnoreCase(name, ecs::kNeedLabels[i])) {
+					out = static_cast<ecs::NeedType>(i);
+					return true;
+				}
+			}
+			return false;
+		}
+
+		static bool equalsIgnoreCase(const std::string& a, const char* b) {
+			size_t i = 0;
+			for (; i < a.size() && b[i] != '\0'; ++i) {
+				if (std::tolower(static_cast<unsigned char>(a[i])) != std::tolower(static_cast<unsigned char>(b[i]))) {
+					return false;
+				}
+			}
+			return i == a.size() && b[i] == '\0';
+		}
+
+		/// Parse "HH:MM" (or "HH") into hours-of-day. Tolerant; minutes default to 0.
+		static float parseClock(const std::string& spec) {
+			const float h = std::strtof(spec.c_str(), nullptr);
+			float		m = 0.0F;
+			const auto	colon = spec.find(':');
+			if (colon != std::string::npos) {
+				m = std::strtof(spec.c_str() + colon + 1, nullptr);
+			}
+			return h + m / 60.0F;
+		}
+
+		/// Parse a duration into game-minutes: "2h" -> 120, "90m"/"90" -> 90.
+		static float parseDuration(const std::string& spec) {
+			char*		end = nullptr;
+			const float v = std::strtof(spec.c_str(), &end);
+			if (end != nullptr && (*end == 'h' || *end == 'H')) {
+				return v * 60.0F;
+			}
+			return v;
+		}
+
+		/// /api/dev/need?colonist=<id>&need=hunger&value=0..100. Sets one need on a colonist
+		/// (drive it to starving/full without waiting for decay). need= matches the Needs.h
+		/// labels, case-insensitive.
+		void devNeed(const Foundation::DevCommand& cmd) {
+			const ecs::EntityID id = parseEntity(cmd.param("colonist"));
+			auto*				needs = ecsWorld->getComponent<ecs::NeedsComponent>(id);
+			if (needs == nullptr) {
+				LOG_WARNING(Game, "[DevAPI] need: no colonist #%llu", static_cast<unsigned long long>(id));
+				gameUI->pushNotification("Dev", "No such colonist", UI::ToastSeverity::Warning);
+				return;
+			}
+			ecs::NeedType type{};
+			if (!parseNeedType(cmd.param("need"), type)) {
+				LOG_WARNING(Game, "[DevAPI] need: unknown need '%s'", cmd.param("need").c_str());
+				gameUI->pushNotification("Dev", "Unknown need", UI::ToastSeverity::Warning);
+				return;
+			}
+			float value = std::strtof(cmd.param("value", "100").c_str(), nullptr);
+			value = value < 0.0F ? 0.0F : (value > 100.0F ? 100.0F : value);
+			needs->get(type).value = value;
+			LOG_INFO(Game, "[DevAPI] need: %s=%.1f on #%llu", ecs::needLabel(type), static_cast<double>(value), static_cast<unsigned long long>(id));
+			gameUI->pushNotification("Dev", std::string(ecs::needLabel(type)) + " set", UI::ToastSeverity::Info);
+		}
+
+		/// /api/dev/time?speed=0..3|set=HH:MM|skip=Nh|Nm. Drives the clock: speed sets
+		/// Paused/1x/3x/10x, set jumps to a time of day, skip fast-forwards (rolls day/season).
+		/// Any combination applies in that order.
+		void devTime(const Foundation::DevCommand& cmd) {
+			auto& timeSystem = ecsWorld->getSystem<ecs::TimeSystem>();
+			bool  acted = false;
+
+			if (cmd.hasParam("speed")) {
+				const long s = std::strtol(cmd.param("speed").c_str(), nullptr, 10);
+				if (s >= 0 && s <= 3) {
+					timeSystem.setSpeed(static_cast<ecs::GameSpeed>(s));
+					acted = true;
+				} else {
+					LOG_WARNING(Game, "[DevAPI] time: speed must be 0..3");
+				}
+			}
+			if (cmd.hasParam("set")) {
+				timeSystem.setTimeOfDay(parseClock(cmd.param("set")));
+				acted = true;
+			}
+			if (cmd.hasParam("skip")) {
+				timeSystem.skipTime(parseDuration(cmd.param("skip")));
+				acted = true;
+			}
+
+			const auto snap = timeSystem.snapshot();
+			LOG_INFO(Game, "[DevAPI] time: day %d, %.2fh, speed %d", snap.day, static_cast<double>(snap.timeOfDay), static_cast<int>(snap.speed));
+			gameUI->pushNotification("Dev", acted ? "Time updated" : "time: speed|set|skip", acted ? UI::ToastSeverity::Info : UI::ToastSeverity::Warning);
+		}
+
+		/// /api/dev/teleport?colonist=<id>&to=x,y. Moves a colonist to a point and clears its
+		/// movement target + velocity so it stays put.
+		void devTeleport(const Foundation::DevCommand& cmd) {
+			const ecs::EntityID id = parseEntity(cmd.param("colonist"));
+			auto*				pos = ecsWorld->getComponent<ecs::Position>(id);
+			if (pos == nullptr) {
+				LOG_WARNING(Game, "[DevAPI] teleport: no entity #%llu", static_cast<unsigned long long>(id));
+				gameUI->pushNotification("Dev", "No such entity", UI::ToastSeverity::Warning);
+				return;
+			}
+			const Foundation::Vec2 to = parsePoint(cmd.param("to"));
+			pos->value = {to.x, to.y};
+			if (auto* target = ecsWorld->getComponent<ecs::MovementTarget>(id)) {
+				target->active = false;
+			}
+			if (auto* vel = ecsWorld->getComponent<ecs::Velocity>(id)) {
+				vel->value = {0.0F, 0.0F};
+			}
+			LOG_INFO(Game, "[DevAPI] teleport: #%llu -> (%.1f, %.1f)", static_cast<unsigned long long>(id), to.x, to.y);
+			gameUI->pushNotification("Dev", "Teleported", UI::ToastSeverity::Info);
+		}
+
+		/// /api/dev/select?colonist=<id>|at=x,y. Selects a colonist (by id, or nearest to a
+		/// point) through the same path a click takes.
+		void devSelect(const Foundation::DevCommand& cmd) {
+			ecs::EntityID id = ecs::kInvalidEntity;
+			if (cmd.hasParam("colonist")) {
+				id = parseEntity(cmd.param("colonist"));
+			} else if (cmd.hasParam("at")) {
+				id = nearestColonist(parsePoint(cmd.param("at")));
+			} else {
+				LOG_WARNING(Game, "[DevAPI] select: needs colonist=<id> or at=x,y");
+				return;
+			}
+			if (id == ecs::kInvalidEntity || !ecsWorld->isAlive(id)) {
+				LOG_WARNING(Game, "[DevAPI] select: no colonist to select");
+				gameUI->pushNotification("Dev", "No colonist to select", UI::ToastSeverity::Warning);
+				return;
+			}
+			m_selectionSystem->selectColonist(id);
+			LOG_INFO(Game, "[DevAPI] select: colonist #%llu", static_cast<unsigned long long>(id));
+		}
+
+		/// /api/dev/kill?colonist=<id>. Removes a colonist entity, clearing the selection if it
+		/// pointed at the killed colonist.
+		void devKill(const Foundation::DevCommand& cmd) {
+			const ecs::EntityID id = parseEntity(cmd.param("colonist"));
+			if (!ecsWorld->isAlive(id)) {
+				LOG_WARNING(Game, "[DevAPI] kill: no entity #%llu", static_cast<unsigned long long>(id));
+				gameUI->pushNotification("Dev", "No such entity", UI::ToastSeverity::Warning);
+				return;
+			}
+			const auto* colonistSel = std::get_if<world_sim::ColonistSelection>(&m_selectionSystem->current());
+			if (colonistSel != nullptr && colonistSel->entityId == id) {
+				m_selectionSystem->clearSelection();
+			}
+			ecsWorld->destroyEntity(id);
+			LOG_INFO(Game, "[DevAPI] kill: removed #%llu", static_cast<unsigned long long>(id));
+			gameUI->pushNotification("Dev", "Colonist removed", UI::ToastSeverity::Info);
+		}
+
+		/// /api/dev/complete?id=<blueprintEntity>. Drives a single blueprint to Built (the
+		/// per-entity form of freebuild). Get the id from /api/state?what=construction.
+		void devComplete(const Foundation::DevCommand& cmd) {
+			const ecs::EntityID id = parseEntity(cmd.param("id"));
+			if (ecsWorld->getSystem<ecs::ConstructionSystem>().forceCompleteBlueprint(id)) {
+				LOG_INFO(Game, "[DevAPI] complete: built blueprint #%llu", static_cast<unsigned long long>(id));
+				gameUI->pushNotification("Dev", "Blueprint built", UI::ToastSeverity::Info);
+			} else {
+				LOG_WARNING(Game, "[DevAPI] complete: #%llu is not a buildable blueprint", static_cast<unsigned long long>(id));
+				gameUI->pushNotification("Dev", "Not a blueprint", UI::ToastSeverity::Warning);
+			}
+		}
+
+		// ===================================================================== STATE READBACK
+		// Serializes a world view to JSON on the GAME thread, for the synchronous /api/state
+		// endpoint (the HTTP thread parks in DebugServer::requestState while this runs). Read
+		// only; touches the same systems the dev verbs write.
+
+		/// Produce the JSON for /api/state?what=. Unknown views fall back to the summary.
+		std::string serializeState(const std::string& what) {
+			std::ostringstream out;
+			if (what == "colonists") {
+				serializeColonists(out);
+			} else if (what == "construction") {
+				serializeConstruction(out);
+			} else if (what == "time") {
+				serializeTime(out);
+			} else {
+				serializeSummary(out);
+			}
+			return out.str();
+		}
+
+		void serializeColonists(std::ostringstream& out) {
+			out << "{\"colonists\":[";
+			bool first = true;
+			for (auto [entity, colonist, pos, needs] : ecsWorld->view<ecs::Colonist, ecs::Position, ecs::NeedsComponent>()) {
+				out << (first ? "" : ",");
+				first = false;
+				out << "{\"id\":" << static_cast<unsigned long long>(entity) << ",\"name\":\"" << jsonEscape(colonist.name) << "\""
+					<< ",\"x\":" << pos.value.x << ",\"y\":" << pos.value.y << ",\"needs\":{";
+				for (size_t i = 0; i < ecs::kNeedLabels.size(); ++i) {
+					out << (i > 0 ? "," : "") << "\"" << ecs::kNeedLabels[i] << "\":" << needs.get(static_cast<ecs::NeedType>(i)).value;
+				}
+				out << "}";
+				if (const auto* action = ecsWorld->getComponent<ecs::Action>(entity)) {
+					out << ",\"action\":\"" << ecs::actionTypeName(action->type) << "\"";
+				}
+				out << "}";
+			}
+			out << "]}";
+		}
+
+		void serializeConstruction(std::ostringstream& out) {
+			const auto& world = m_drawingSystem->world();
+			out << "{\"foundations\":[";
+			bool first = true;
+			for (const auto& foundation : world.foundations()) {
+				out << (first ? "" : ",");
+				first = false;
+				out << "{\"id\":" << static_cast<unsigned long long>(foundation.id) << ",\"material\":\"" << jsonEscape(foundation.material)
+					<< "\",\"state\":\"" << (foundation.state == engine::construction::FoundationState::Built ? "Built" : "Blueprint")
+					<< "\",\"entity\":" << static_cast<unsigned long long>(foundation.entity) << ",\"area\":" << world.areaSquareMeters(foundation.id)
+					<< "}";
+			}
+			out << "]}";
+		}
+
+		void serializeTime(std::ostringstream& out) {
+			const auto snap = ecsWorld->getSystem<ecs::TimeSystem>().snapshot();
+			out << "{\"day\":" << snap.day << ",\"season\":\"" << ecs::seasonName(snap.season) << "\",\"timeOfDay\":" << snap.timeOfDay
+				<< ",\"speed\":" << static_cast<int>(snap.speed) << ",\"paused\":" << (snap.isPaused ? "true" : "false") << "}";
+		}
+
+		void serializeSummary(std::ostringstream& out) {
+			size_t colonists = 0;
+			for (auto colonistRow : ecsWorld->view<ecs::Colonist>()) {
+				(void)colonistRow;
+				++colonists;
+			}
+			out << "{\"colonists\":" << colonists << ",\"foundations\":" << m_drawingSystem->world().foundations().size()
+				<< ",\"chunks\":" << m_chunkManager->loadedChunkCount() << "}";
+		}
+
+		/// Escape a string for embedding in a JSON string literal. Control chars (which
+		/// never appear in colonist names or material ids) are dropped.
+		static std::string jsonEscape(const std::string& s) {
+			std::string out;
+			out.reserve(s.size() + 8);
+			for (char c : s) {
+				switch (c) {
+					case '"': out += "\\\""; break;
+					case '\\': out += "\\\\"; break;
+					case '\n': out += "\\n"; break;
+					case '\r': out += "\\r"; break;
+					case '\t': out += "\\t"; break;
+					default:
+						if (static_cast<unsigned char>(c) >= 0x20) {
+							out += c;
+						}
+				}
+			}
+			return out;
 		}
 
 		/// /api/dev/foundation?pts=x0,y0;x1,y1;...&material=Wood&built=1. Commits a
@@ -1292,6 +1720,26 @@ namespace {
 				built ? 1 : 0
 			);
 			gameUI->pushNotification("Dev", built ? "Built opening placed" : "Opening blueprint placed", UI::ToastSeverity::Info);
+		}
+
+		/// Parse a single "x,y" (world meters) point, defaulting to (0,0) when empty or
+		/// malformed. Reuses parsePointList. Used by the spawn/colonist/give dev verbs.
+		static Foundation::Vec2 parsePoint(const std::string& spec) {
+			const std::vector<Foundation::Vec2> pts = parsePointList(spec);
+			return pts.empty() ? Foundation::Vec2{0.0F, 0.0F} : pts.front();
+		}
+
+		/// Deterministic sunflower (Vogel) offset for the i-th of n points within `radius`
+		/// meters. Even spread, no RNG, so dev spawns are reproducible. Returns (0,0) for
+		/// radius <= 0 or n <= 1.
+		static Foundation::Vec2 spreadOffset(long i, long n, float radius) {
+			if (radius <= 0.0F || n <= 1) {
+				return {0.0F, 0.0F};
+			}
+			const float t = (static_cast<float>(i) + 0.5F) / static_cast<float>(n);
+			const float r = radius * std::sqrt(t);
+			const float angle = static_cast<float>(i) * 2.399963229F; // golden angle (radians)
+			return {r * std::cos(angle), r * std::sin(angle)};
 		}
 
 		/// Parse "x0,y0;x1,y1;..." (world meters) into a point list. Tolerant: skips

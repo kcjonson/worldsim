@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2026-06-15 (Fluvial Erosion — stream-power valley carving, PR #149 draft; Water Availability complete PRs #144/#146; Plate Boundary Realism PR #145; next: bathymetry comb-artifact fix, then 2D chunk-time river/lake rendering)
+Last Updated: 2026-06-16 (Dev/Test Tools — new /api/dev verbs (spawn/colonist/give/need/time/teleport/select/kill/complete) + synchronous /api/state readback + developer-client Dev Tools tab; API verified end-to-end. Prior: Fluvial Erosion PR #149 draft; Water Availability PRs #144/#146)
 
 ## Epic/Story/Task Template
 
@@ -467,6 +467,23 @@ while (running) {
 ---
 
 ## In Progress Epics
+
+### Dev/Test Tools (HTTP verbs + developer-client tab)
+**Spec/Documentation:** `.claude/plans/alright-these-seem-good-hidden-wadler.md`, `/docs/development-log/entries/2026-06-16-dev-tools-api-and-tab.md`
+**Dependencies:** None
+**Status:** in progress (verbs + readback + tab done; tab not yet exercised in-browser, no PR)
+
+**Goal:** Put the sim into a desired state on demand for manual + agent testing, driven from a Dev Tools tab in the developer-client. Debug server stays domain-agnostic; GameScene interprets the verbs.
+
+**Tasks:**
+- [x] Step 1: `spawn`, `colonist`, `give` (replaces `givewood`; site/loose/colonist/storage)
+- [x] Step 2: `need`, `time` (speed/set/skip), `teleport`, `select`, `kill`, `complete`
+- [x] Step 3: synchronous `/api/state?what=summary|colonists|construction|time` (screenshot-style handshake)
+- [x] Phase 2: Dev Tools tab (DevToolsService + DevToolsPanel) in developer-client static build
+- [x] `parseDevVerb` tests refreshed (7/7 green); API verified end-to-end via curl + readback + screenshot
+- [ ] Exercise the tab in-browser (open static `dist/index.html` against a running game)
+- [ ] Optional: `demolish` verb, inventory in colonist readback, `/api/state?what=query|count`
+- [ ] PR
 
 ### Fluvial Erosion (worldgen)
 **Spec/Documentation:** `.claude/plans/erosion.md`, `/docs/development-log/entries/2026-06-15-worldgen-fluvial-erosion.md`

@@ -512,6 +512,53 @@ namespace Foundation {
 		return true;
 	}
 
+	bool DebugServer::requestState(const std::string& what, std::string& out, int timeoutMs) { // NOLINT(readability-identifier-naming)
+		{
+			std::lock_guard<std::mutex> lock(stateMutex);
+			stateQuery = what;
+			stateResult.clear();
+		}
+		stateReady.store(false);
+		stateRequested.store(true);
+
+		auto startTime = std::chrono::steady_clock::now();
+		while (!stateReady.load()) {
+			auto elapsed = std::chrono::steady_clock::now() - startTime;
+			if (std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count() > timeoutMs) {
+				stateRequested.store(false);
+				return false;
+			}
+			std::this_thread::sleep_for(std::chrono::milliseconds(5));
+		}
+
+		{
+			std::lock_guard<std::mutex> lock(stateMutex);
+			out = stateResult;
+		}
+		stateReady.store(false);
+		return true;
+	}
+
+	bool DebugServer::consumeStateRequest(std::string& whatOut) {
+		if (!stateRequested.load()) {
+			return false;
+		}
+		{
+			std::lock_guard<std::mutex> lock(stateMutex);
+			whatOut = stateQuery;
+		}
+		stateRequested.store(false);
+		return true;
+	}
+
+	void DebugServer::deliverState(const std::string& json) {
+		{
+			std::lock_guard<std::mutex> lock(stateMutex);
+			stateResult = json;
+		}
+		stateReady.store(true);
+	}
+
 	void DebugServer::serverThreadFunc(int port) { // NOLINT(readability-convert-member-functions-to-static)
 		server = std::make_unique<httplib::Server>();
 
@@ -616,10 +663,11 @@ namespace Foundation {
 		// Dev/test command endpoint - queues a generic DevCommand the app drains and
 		// interprets. DebugServer stays domain-agnostic: it parses the verb (path
 		// tail) plus every query param into a bag and queues it; the app (GameScene)
-		// knows what "freebuild"/"givewood"/"foundation" mean. Dev-only, gated by the
+		// knows what "freebuild"/"spawn"/"foundation" mean. Dev-only, gated by the
 		// debug server (which only runs in dev builds), mirrors /api/input's queue.
 		//   /api/dev/freebuild?on=1
-		//   /api/dev/givewood?n=100[&where=site|loose]
+		//   /api/dev/give?material=Wood&n=100&where=site|loose|colonist|storage
+			//   /api/dev/spawn?def=<assetName>&at=x,y&n=5&scatter=3
 		//   /api/dev/foundation?pts=x0,y0;x1,y1;...&material=Wood&built=1
 		server->Get(R"(/api/dev/[A-Za-z0-9_-]+)", [this](const httplib::Request& req, httplib::Response& res) {
 			res.set_header("Access-Control-Allow-Origin", "*");
@@ -646,6 +694,21 @@ namespace Foundation {
 			std::ostringstream json;
 			json << "{\"status\":\"ok\",\"verb\":\"" << escapeJsonString(verb) << "\",\"queued\":1}";
 			res.set_content(json.str(), "application/json");
+		});
+
+		// World-state readback. Synchronous: parks the HTTP thread while the game thread
+		// serializes the requested view to JSON (the HTTP thread must never touch the ECS).
+		//   /api/state?what=summary|colonists|construction|time
+		server->Get("/api/state", [this](const httplib::Request& req, httplib::Response& res) {
+			res.set_header("Access-Control-Allow-Origin", "*");
+			const std::string what = req.has_param("what") ? req.get_param_value("what") : "summary";
+			std::string		  json;
+			if (requestState(what, json, 2000)) {
+				res.set_content(json, "application/json");
+			} else {
+				res.status = 503;
+				res.set_content("{\"error\":\"state request timed out (is the game scene running?)\"}", "application/json");
+			}
 		});
 
 		// Control endpoint - allows control of sandbox via HTTP GET with query params

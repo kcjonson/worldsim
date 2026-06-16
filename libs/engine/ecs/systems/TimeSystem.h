@@ -77,6 +77,12 @@ class TimeSystem : public ISystem {
 	/// Days per season (default: 15)
 	void setDaysPerSeason(int days) { daysPerSeason = days; }
 
+	// --- DEV/TEST time control ---
+	/// Jump the clock to a time of day (hours, wrapped into [0,24)); day unchanged.
+	void setTimeOfDay(float hours);
+	/// Advance the clock by gameMinutes, rolling day/season the normal way. No-op for <= 0.
+	void skipTime(float gameMinutes);
+
   private:
 	// Time state
 	int dayCount = 1;						   // Day 1 is the first day
