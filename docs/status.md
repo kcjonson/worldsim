@@ -501,6 +501,25 @@ while (running) {
 
 ## In Progress Epics
 
+### Salvage UI Cutover (one unified UI library)
+**Spec/Documentation:** `/docs/design/ui/`
+**Dependencies:** UI Design System (Salvage) — extraction
+**Status:** in progress (reconciled onto current main; builds + verified; on `feature/ui-salvage-cutover`)
+
+**Goal:** One Salvage-styled UI library. Re-style the existing `libs/ui` widgets to the approved look via design tokens, fold the render-only design-system widgets into it, delete the duplicates, then rebuild the HUD, dialogs, and world creator to the prototype designs.
+
+**Tasks:**
+- [x] Salvage primitives + tokens + icons + fonts in the engine (Panel, Button, ProgressBar, Stat, Badge, Avatar, Slider, Tooltip, Dialog, ...)
+- [x] Inline render styles: gradient fills, soft shadow/glow (SDF), text-align/letter-spacing/text-transform
+- [x] Phase 1: tokens to `theme/`, non-dup widgets to `components/`, flatten `UI::DS`->`UI`, merge the 7 duplicate widgets, update ui-sandbox + CMake
+- [x] Phase 2: restyle the remaining legacy widgets onto Salvage tokens
+- [x] Global z-index draw queue (BatchRenderer group sort, perf-gated) so popups float over siblings
+- [x] Reconcile onto current main (merge; only status.md conflicted; renderer merged clean; fixed stale widget tests; whole solution builds, 288 ui-tests + 79 renderer-tests pass; sandbox + game verified)
+- [ ] Phase 3: rebuild HUD views to the prototype via primitives
+- [ ] Phase 3: rebuild dialogs to the prototype designs
+- [ ] Phase 3: rebuild WorldCreatorScene to the WorldGen prototype
+- [ ] Phase 4: delete the legacy `theme/Theme.h` + `PanelStyle.h`; finalize
+
 ### Asset Manager
 **Spec/Documentation:** `/docs/design/features/asset-manager/`, `/docs/technical/asset-manager/`
 **Dependencies:** None
