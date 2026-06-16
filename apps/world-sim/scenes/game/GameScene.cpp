@@ -55,6 +55,7 @@
 #include <ecs/components/Movement.h>
 #include <ecs/components/Needs.h>
 #include <ecs/components/Packaged.h>
+#include <ecs/components/AgentRadius.h>
 #include <ecs/components/Room.h>
 #include <ecs/components/Skills.h>
 #include <ecs/components/Structure.h>
@@ -66,6 +67,7 @@
 #include <ecs/systems/AIDecisionSystem.h>
 #include <ecs/systems/ActionSystem.h>
 #include <ecs/systems/BuildGoalSystem.h>
+#include <ecs/systems/CollisionSystem.h>
 #include <ecs/systems/ConstructionSystem.h>
 #include <ecs/systems/CraftingGoalSystem.h>
 #include <ecs/systems/DynamicEntityRenderSystem.h>
@@ -869,6 +871,7 @@ namespace {
 			ecsWorld->registerSystem<ecs::AIDecisionSystem>(assetRegistry, recipeRegistry); // Priority 60
 			ecsWorld->registerSystem<ecs::MovementSystem>();								// Priority 100
 			ecsWorld->registerSystem<ecs::PhysicsSystem>();									// Priority 200
+			ecsWorld->registerSystem<ecs::CollisionSystem>();								// Priority 250 - positional separation after physics
 			ecsWorld->registerSystem<ecs::ActionSystem>();									// Priority 350
 			ecsWorld->registerSystem<ecs::DynamicEntityRenderSystem>();						// Priority 900
 
@@ -956,6 +959,7 @@ namespace {
 			ecsWorld->addComponent<ecs::Task>(entity, ecs::Task{});
 			ecsWorld->addComponent<ecs::DecisionTrace>(entity, ecs::DecisionTrace{});
 			ecsWorld->addComponent<ecs::Action>(entity, ecs::Action{});
+			ecsWorld->addComponent<ecs::AgentRadius>(entity, ecs::AgentRadius{});
 
 			// Add skills with default starting values
 			// Skills range 0-20 (see SkillLevels in Skills.h)
