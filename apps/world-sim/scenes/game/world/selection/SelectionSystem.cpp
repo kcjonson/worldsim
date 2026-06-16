@@ -57,10 +57,12 @@ namespace {
 	// so a same-spot click only cycles when the set is unchanged. NoSelection never
 	// appears in a candidate list, so its id (0) is inert.
 	std::pair<int, std::uint64_t> candidateKey(const Selection& sel) {
+		// Type discriminant taken from the outer variant so the visitor never copies
+		// the alternative (string-bearing alternatives would otherwise allocate).
+		const int type = static_cast<int>(sel.index());
 		return std::visit(
-			[](const auto& s) -> std::pair<int, std::uint64_t> {
+			[type](const auto& s) -> std::pair<int, std::uint64_t> {
 				using T = std::decay_t<decltype(s)>;
-				const int type = static_cast<int>(Selection(s).index());
 				if constexpr (std::is_same_v<T, ColonistSelection>) {
 					return {type, static_cast<std::uint64_t>(s.entityId)};
 				} else if constexpr (std::is_same_v<T, CraftingStationSelection>) {
@@ -73,10 +75,16 @@ namespace {
 					return {type, static_cast<std::uint64_t>(s.id)};
 				} else if constexpr (std::is_same_v<T, FoundationSelection>) {
 					return {type, static_cast<std::uint64_t>(s.id)};
+				} else if constexpr (std::is_same_v<T, WorldEntitySelection>) {
+					// Positional, no integer id: key on the quantized position (low 32
+					// bits of each mm axis) so two different world entities under the
+					// same spot are distinct keys, not both {type, 0}.
+					const auto			mm = geometry::quantize(s.position);
+					const std::uint64_t x = static_cast<std::uint64_t>(mm.x) & 0xFFFFFFFFULL;
+					const std::uint64_t y = static_cast<std::uint64_t>(mm.y) & 0xFFFFFFFFULL;
+					return {type, (x << 32) | y};
 				} else {
-					// NoSelection and WorldEntitySelection (no integer id); keyed by type
-					// alone. World entities are positional, not id-bearing, so the type
-					// discriminant is the stable part we can compare.
+					// NoSelection never appears in a candidate list.
 					return {type, 0};
 				}
 			},
@@ -297,10 +305,11 @@ void SelectionSystem::handleClick(float screenX, float screenY, int viewportW, i
 	}
 
 	const glm::vec2 clickScreen{screenX, screenY};
-	const bool		sameSpot =
-		hasLastClick &&
-		std::abs(clickScreen.x - lastClickScreen.x) <= kClickCycleTolerancePx &&
-		std::abs(clickScreen.y - lastClickScreen.y) <= kClickCycleTolerancePx;
+	const float		dx = clickScreen.x - lastClickScreen.x;
+	const float		dy = clickScreen.y - lastClickScreen.y;
+	// 2D (Euclidean) distance, not per-axis: a diagonal click just outside the
+	// radius must not count as the same spot and wrongly advance the cycle.
+	const bool sameSpot = hasLastClick && (dx * dx + dy * dy) <= (kClickCycleTolerancePx * kClickCycleTolerancePx);
 
 	if (sameSpot && !keys.empty() && keys == lastCandidateKeys) {
 		// Same stack, same spot: advance to the next thing underneath.
