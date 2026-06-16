@@ -105,7 +105,7 @@ class WorldCreatorScene : public engine::IScene {
 		// behind it: swallow it so it can't pick a tile or start an orbit.
 		if (!globe.isDragging() && detailsPaneShown &&
 		    event.type == UI::InputEvent::Type::MouseDown &&
-		    inRect(detailsPaneBounds, event.position)) {
+		    detailsPaneBounds.contains(event.position)) {
 			return true;
 		}
 
@@ -251,11 +251,6 @@ class WorldCreatorScene : public engine::IScene {
 	Foundation::Rect mainRect() const {
 		float x = kPanelWidth + 20.0F;
 		return {x, 40.0F, viewportW - x - 20.0F, viewportH - 120.0F};
-	}
-
-	static bool inRect(const Foundation::Rect& r, Foundation::Vec2 p) {
-		return p.x >= r.x && p.x <= r.x + r.width &&
-		       p.y >= r.y && p.y <= r.y + r.height;
 	}
 
 	void buildUI() {

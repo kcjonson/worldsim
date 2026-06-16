@@ -42,9 +42,9 @@ void OrbitCamera::beginDrag(float mouseX, float mouseY) {
 
 float OrbitCamera::pitchUnlockDistance() {
     // Orbit distance at which the unit sphere exactly fills the vertical
-    // viewport, derived from the projection FOV. Cached on first use.
-    static const float d =
-        1.0F / std::sin(kFovDeg * 0.5F * 3.14159265F / 180.0F);
+    // viewport, derived from the projection FOV (same glm::radians conversion
+    // projMatrix uses). Cached on first use.
+    static const float d = 1.0F / std::sin(glm::radians(kFovDeg * 0.5F));
     return d;
 }
 
