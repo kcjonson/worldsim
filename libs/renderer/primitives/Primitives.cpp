@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <functional>
 #include <glm/gtc/matrix_transform.hpp>
 #include <memory>
 #include <numbers>
@@ -165,6 +166,19 @@ namespace Renderer::Primitives {
 		return key;
 	}
 
+	// --- Overlay (top-layer) queue ---
+	// Deferred draw callbacks that must paint above all normal UI (popups). Drained
+	// in endFrame() just before the batch flush.
+	namespace {
+		struct OverlayEntry {
+			int					  zIndex = 0;
+			std::function<void()> draw;
+		};
+		std::vector<OverlayEntry> g_overlayQueue;
+	} // namespace
+
+	void submitOverlay(int zIndex, std::function<void()> drawFn) { g_overlayQueue.push_back({zIndex, std::move(drawFn)}); }
+
 	// --- Frame Lifecycle ---
 
 	void beginFrame() {
@@ -179,6 +193,20 @@ namespace Renderer::Primitives {
 	}
 
 	void endFrame() {
+		// Drain the overlay queue first so deferred popups batch AFTER all normal UI
+		// and therefore paint on top, sorted by zIndex (higher last). A callback may
+		// enqueue more (nested popups), so loop until the queue is empty.
+		while (!g_overlayQueue.empty()) {
+			std::vector<OverlayEntry> batch;
+			batch.swap(g_overlayQueue);
+			std::stable_sort(batch.begin(), batch.end(), [](const OverlayEntry& a, const OverlayEntry& b) { return a.zIndex < b.zIndex; });
+			for (const OverlayEntry& entry : batch) {
+				if (entry.draw) {
+					entry.draw();
+				}
+			}
+		}
+
 		// Flush all batched geometry (shapes + text) in a single draw call
 		// The uber shader handles both SDF shapes and MSDF text
 		if (g_batchRenderer != nullptr) {

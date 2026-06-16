@@ -18,6 +18,7 @@
 #include "math/Types.h"
 #include "primitives/FontFamily.h"
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <vector>
 #include <glm/vec4.hpp>
@@ -121,6 +122,13 @@ namespace Renderer {
 
 		void beginFrame();
 		void endFrame(); // Flushes all batches
+
+		// Defer a draw callback to a top overlay layer, flushed inside endFrame() after
+		// all normal UI (sorted by zIndex, higher paints on top). For popups that must
+		// escape their parent's submission order: dropdown/select menus, context menus,
+		// tooltips. The callback runs with an empty clip/transform stack, so it should
+		// draw in absolute coordinates.
+		void submitOverlay(int zIndex, std::function<void()> drawFn);
 
 		// Set viewport dimensions for projection matrix
 		void setViewport(int width, int height);
