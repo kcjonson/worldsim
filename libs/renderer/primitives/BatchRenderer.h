@@ -89,15 +89,21 @@ namespace Renderer { // NOLINT(readability-identifier-naming)
 		// size: glyph dimensions in screen pixels
 		// uvMin/uvMax: texture coordinates in MSDF atlas
 		// color: text color with alpha
+		// atlasTexture: MSDF atlas this glyph samples from. 0 selects the default
+		//   atlas set via setFontAtlas() (Roboto), preserving prior behavior for
+		//   callers that don't pass a texture. A frame may mix multiple atlases;
+		//   flush() splits draws by atlas so each glyph samples the right texture.
 		void addTextQuad(
 			const Foundation::Vec2&	 position,
 			const Foundation::Vec2&	 size,
 			const Foundation::Vec2&	 uvMin,
 			const Foundation::Vec2&	 uvMax,
-			const Foundation::Color& color
+			const Foundation::Color& color,
+			GLuint					 atlasTexture = 0
 		);
 
-		// Set the MSDF font atlas texture (call once per font)
+		// Set the default MSDF font atlas texture (used by text quads added with
+		// atlasTexture == 0). pixelRange comes from atlas generation.
 		void setFontAtlas(GLuint atlasTexture, float pixelRange = 4.0F);
 
 		// --- Rendering ---
@@ -195,6 +201,11 @@ namespace Renderer { // NOLINT(readability-identifier-naming)
 		std::vector<UberVertex>	 vertices;
 		std::vector<uint32_t>	 indices;
 
+		// Per-vertex atlas tag, parallel to `vertices`. 0 = shape (no texture
+		// requirement); non-zero = the MSDF atlas a text vertex must sample from.
+		// flush() uses these to split text into per-atlas draw runs.
+		std::vector<GLuint>		 vertexAtlas;
+
 		// OpenGL resources (RAII wrappers for automatic cleanup)
 		GLVertexArray vao;
 		GLBuffer vbo;
@@ -222,8 +233,8 @@ namespace Renderer { // NOLINT(readability-identifier-naming)
 		// Coordinate system (optional, for DPI-aware rendering)
 		CoordinateSystem* coordinateSystem = nullptr;
 
-		// Font atlas for text rendering
-		GLuint fontAtlas = 0;
+		// Default font atlas: bound for text quads added with atlasTexture == 0.
+		GLuint defaultFontAtlas = 0;
 		float  fontPixelRange = 4.0F;
 
 		// Current clip bounds (applied to all vertices)

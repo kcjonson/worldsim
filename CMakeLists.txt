@@ -73,21 +73,43 @@ add_subdirectory(apps/worldgen-cli)
 # Build tools (atlas generator, etc.)
 add_subdirectory(tools/generate_sdf_atlas)
 
-# Generate the SDF font atlas as a build step so a fresh checkout runs without a
-# manual tool invocation. The PNG is a gitignored build artifact, rebuilt when the
+# Generate the SDF font atlases as a build step so a fresh checkout runs without a
+# manual tool invocation. The PNGs are gitignored build artifacts, rebuilt when the
 # source font changes; the JSON metadata regenerates deterministically.
-add_custom_command(
-    OUTPUT ${CMAKE_SOURCE_DIR}/fonts/Roboto-SDF.png ${CMAKE_SOURCE_DIR}/fonts/Roboto-SDF.json
-    COMMAND $<TARGET_FILE:generate_sdf_atlas>
-        --font ${CMAKE_SOURCE_DIR}/fonts/Roboto-Regular.ttf
-        --output ${CMAKE_SOURCE_DIR}/fonts/Roboto-SDF.png
-        --metadata ${CMAKE_SOURCE_DIR}/fonts/Roboto-SDF.json
-    DEPENDS generate_sdf_atlas ${CMAKE_SOURCE_DIR}/fonts/Roboto-Regular.ttf
-    COMMENT "Generating SDF font atlas (fonts/Roboto-SDF.png)"
-    VERBATIM
+#
+# Each entry is "AtlasBaseName:SourceTTF". The atlas base names must match
+# FontFamily / kAtlasBaseNames in libs/renderer + libs/ui.
+set(SDF_FONT_ATLASES
+    "Roboto-SDF:Roboto-Regular.ttf"
+    "ChakraPetch-SDF:ChakraPetch-SemiBold.ttf"
+    "Barlow-SDF:Barlow-Regular.ttf"
+    "JetBrainsMono-SDF:JetBrainsMono-Regular.ttf"
 )
-add_custom_target(font-atlas
-    DEPENDS ${CMAKE_SOURCE_DIR}/fonts/Roboto-SDF.png ${CMAKE_SOURCE_DIR}/fonts/Roboto-SDF.json)
+
+set(SDF_ATLAS_OUTPUTS "")
+foreach(atlas_entry ${SDF_FONT_ATLASES})
+    string(REPLACE ":" ";" atlas_parts ${atlas_entry})
+    list(GET atlas_parts 0 atlas_name)
+    list(GET atlas_parts 1 atlas_ttf)
+
+    set(atlas_png ${CMAKE_SOURCE_DIR}/fonts/${atlas_name}.png)
+    set(atlas_json ${CMAKE_SOURCE_DIR}/fonts/${atlas_name}.json)
+
+    add_custom_command(
+        OUTPUT ${atlas_png} ${atlas_json}
+        COMMAND $<TARGET_FILE:generate_sdf_atlas>
+            --font ${CMAKE_SOURCE_DIR}/fonts/${atlas_ttf}
+            --output ${atlas_png}
+            --metadata ${atlas_json}
+        DEPENDS generate_sdf_atlas ${CMAKE_SOURCE_DIR}/fonts/${atlas_ttf}
+        COMMENT "Generating SDF font atlas (fonts/${atlas_name}.png)"
+        VERBATIM
+    )
+
+    list(APPEND SDF_ATLAS_OUTPUTS ${atlas_png} ${atlas_json})
+endforeach()
+
+add_custom_target(font-atlas DEPENDS ${SDF_ATLAS_OUTPUTS})
 add_dependencies(world-sim font-atlas)
 add_dependencies(ui-sandbox font-atlas)
 

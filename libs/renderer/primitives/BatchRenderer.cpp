@@ -26,6 +26,7 @@ namespace Renderer {
 		// Reserve space for vertices to minimize allocations
 		vertices.reserve(10000);
 		indices.reserve(15000);
+		vertexAtlas.reserve(10000);
 	}
 
 	BatchRenderer::~BatchRenderer() {
@@ -232,6 +233,9 @@ namespace Renderer {
 		indices.push_back(baseIndex + 0);
 		indices.push_back(baseIndex + 2);
 		indices.push_back(baseIndex + 3);
+
+		// Shapes ignore the bound atlas (shader branches on data2.w); tag 0.
+		vertexAtlas.insert(vertexAtlas.end(), 4, 0);
 	}
 
 
@@ -273,6 +277,9 @@ namespace Renderer {
 		for (size_t i = 0; i < indexCount; ++i) {
 			indices.push_back(baseIndex + inputIndices[i]);
 		}
+
+		// Tessellated shapes ignore the bound atlas; tag every vertex 0.
+		vertexAtlas.insert(vertexAtlas.end(), vertexCount, 0);
 	}
 
 	void BatchRenderer::addTextQuad(
@@ -280,8 +287,13 @@ namespace Renderer {
 		const Foundation::Vec2&	 size,
 		const Foundation::Vec2&	 uvMin,
 		const Foundation::Vec2&	 uvMax,
-		const Foundation::Color& color
+		const Foundation::Color& color,
+		GLuint					 atlasTexture
 	) {
+		// Resolve the atlas this glyph samples. 0 means "use the default atlas"
+		// (Roboto, set via setFontAtlas), so existing callers are unchanged.
+		GLuint resolvedAtlas = (atlasTexture != 0) ? atlasTexture : defaultFontAtlas;
+
 		uint32_t baseIndex = static_cast<uint32_t>(vertices.size());
 
 		Foundation::Vec4 colorVec = color.toVec4();
@@ -344,10 +356,14 @@ namespace Renderer {
 		indices.push_back(baseIndex + 0);
 		indices.push_back(baseIndex + 2);
 		indices.push_back(baseIndex + 3);
+
+		// Tag all 4 vertices with the atlas they sample, so flush() can group
+		// this glyph into the matching per-atlas draw run.
+		vertexAtlas.insert(vertexAtlas.end(), 4, resolvedAtlas);
 	}
 
 	void BatchRenderer::setFontAtlas(GLuint atlasTexture, float pixelRange) {
-		fontAtlas = atlasTexture;
+		defaultFontAtlas = atlasTexture;
 		fontPixelRange = pixelRange;
 	}
 
@@ -408,26 +424,71 @@ namespace Renderer {
 		glUniform1f(viewportHeightLoc, framebufferHeight);
 		glUniform1f(pixelRatioLoc, pixelRatio);
 
-		// Bind font atlas texture (always bound, shader ignores it for shapes)
-		if (fontAtlas != 0) {
-			glActiveTexture(GL_TEXTURE0);
-			glBindTexture(GL_TEXTURE_2D, fontAtlas);
-			glUniform1i(atlasLoc, 0);
-		}
-
 		// Set instanced = false for standard batched rendering path
 		glUniform1i(instancedLoc, 0);
 
-		// Draw
-		glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(indices.size()), GL_UNSIGNED_INT, nullptr);
+		glActiveTexture(GL_TEXTURE0);
+		glUniform1i(atlasLoc, 0);
 
-		drawCallCount++;
+		// Multi-atlas draw splitting.
+		//
+		// All shapes and text share one VBO/IBO and one draw order (z-order ==
+		// submission order). Text vertices are tagged in `vertexAtlas` with the
+		// MSDF atlas they sample; shapes are tagged 0 (they ignore the bound
+		// texture, the shader branches on data2.w). We walk triangles in order,
+		// keeping a contiguous run of indices, and start a NEW draw call only
+		// when a text triangle needs a different atlas than the one currently
+		// bound. Triangles are never reordered, so z-order is exact.
+		//
+		// Common case (all text from one atlas, e.g. the default Roboto): every
+		// text triangle needs the same atlas, so this collapses to a single
+		// glDrawElements identical to the prior single-atlas behavior.
+		const size_t indexCount = indices.size();
+		GLuint		 boundAtlas = defaultFontAtlas; // What's currently bound on the GPU
+		if (boundAtlas != 0) {
+			glBindTexture(GL_TEXTURE_2D, boundAtlas);
+		}
+
+		size_t runStart = 0; // First index of the current contiguous run
+		for (size_t tri = 0; tri < indexCount; tri += 3) {
+			// A triangle's vertices are all shape (tag 0) or all the same text
+			// atlas; max() yields the text atlas if any, else 0 (no requirement).
+			GLuint required = vertexAtlas[indices[tri]];
+			required = std::max(required, vertexAtlas[indices[tri + 1]]);
+			required = std::max(required, vertexAtlas[indices[tri + 2]]);
+
+			if (required != 0 && required != boundAtlas) {
+				// Flush the run accumulated so far with the previously bound atlas.
+				if (tri > runStart) {
+					glDrawElements(
+						GL_TRIANGLES,
+						static_cast<GLsizei>(tri - runStart),
+						GL_UNSIGNED_INT,
+						(const void*)(runStart * sizeof(uint32_t))
+					);
+					drawCallCount++;
+				}
+				// Bind the atlas this run needs and start a new run here.
+				boundAtlas = required;
+				glBindTexture(GL_TEXTURE_2D, boundAtlas);
+				runStart = tri;
+			}
+		}
+
+		// Draw the final run.
+		if (indexCount > runStart) {
+			glDrawElements(
+				GL_TRIANGLES,
+				static_cast<GLsizei>(indexCount - runStart),
+				GL_UNSIGNED_INT,
+				(const void*)(runStart * sizeof(uint32_t))
+			);
+			drawCallCount++;
+		}
 
 		// Cleanup
 		glBindVertexArray(0);
-		if (fontAtlas != 0) {
-			glBindTexture(GL_TEXTURE_2D, 0);
-		}
+		glBindTexture(GL_TEXTURE_2D, 0);
 		glDisable(GL_BLEND);
 
 		// Accumulate stats before clearing
@@ -437,6 +498,7 @@ namespace Renderer {
 		// Clear buffers for next batch
 		vertices.clear();
 		indices.clear();
+		vertexAtlas.clear();
 	}
 
 	void BatchRenderer::beginFrame() {
@@ -445,6 +507,7 @@ namespace Renderer {
 		frameTriangleCount = 0;
 		vertices.clear();
 		indices.clear();
+		vertexAtlas.clear();
 	}
 
 	void BatchRenderer::endFrame() {

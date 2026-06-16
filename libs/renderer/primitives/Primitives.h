@@ -16,6 +16,7 @@
 #include "graphics/PrimitiveStyles.h"
 #include "graphics/Rect.h"
 #include "math/Types.h"
+#include "primitives/FontFamily.h"
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -211,6 +212,7 @@ namespace Renderer {
 			Foundation::Vec2	 position; // Top-left position
 			float				 scale = 1.0F; // Text scale (1.0F = 16px base size)
 			Foundation::Color	 color = Foundation::Color(1.0F, 1.0F, 1.0F, 1.0F); // RGBA
+			FontFamily			 font = FontFamily::Roboto; // Atlas to render with (default Roboto)
 			const char*			 id = nullptr;
 			float				 zIndex = 0.0F;
 		};

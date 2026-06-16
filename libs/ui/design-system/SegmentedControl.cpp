@@ -1,0 +1,187 @@
+#include "design-system/SegmentedControl.h"
+
+#include "design-system/Tokens.h"
+#include "font/FontRenderer.h"
+#include "graphics/Color.h"
+#include "graphics/PrimitiveStyles.h"
+#include "graphics/Rect.h"
+#include "primitives/Primitives.h"
+
+#include <algorithm>
+#include <utility>
+
+namespace UI::DS {
+
+	namespace {
+
+		// drawText scale is relative to a 16px base.
+		constexpr float kTextBasePx = 16.0F;
+
+		float textScale(float sizePx) { return sizePx / kTextBasePx; }
+
+		// Group inner padding and inter-segment gap (SegmentedControl.module.css:
+		// 3px padding, 2px gap).
+		constexpr float kGroupPad = 3.0F;
+		constexpr float kSegGap = 2.0F;
+
+		// Segment height by size (sm/md = 22/28).
+		float segHeightFor(Size size) {
+			switch (size) {
+				case Size::Sm:
+					return 22.0F;
+				case Size::Lg: // md/lg share the larger chip; no dedicated lg in the prototype
+				case Size::Md:
+					break;
+			}
+			return 28.0F;
+		}
+
+		// Label font size by size (fs_xs / fs_sm).
+		float fontFor(Size size) {
+			switch (size) {
+				case Size::Sm:
+					return fs_xs;
+				case Size::Lg:
+				case Size::Md:
+					break;
+			}
+			return fs_sm;
+		}
+
+		// Per-segment horizontal padding by size (space_2 / space_3).
+		float segPadXFor(Size size) {
+			switch (size) {
+				case Size::Sm:
+					return space_2;
+				case Size::Lg:
+				case Size::Md:
+					break;
+			}
+			return space_3;
+		}
+
+		float measureWidth(const std::string& text, float scale) {
+			if (const ui::FontRenderer* font = Renderer::Primitives::getFontRenderer(); font != nullptr) {
+				return font->MeasureText(text, scale).x;
+			}
+			return 0.0F;
+		}
+
+	} // namespace
+
+	SegmentedControl::SegmentedControl(Args controlArgs)
+		: args(std::move(controlArgs)) {}
+
+	float SegmentedControl::segmentInnerWidth() const {
+		const auto count = static_cast<float>(std::max<size_t>(args.options.size(), 1));
+
+		if (args.segmentWidth > 0.0F) {
+			return args.segmentWidth;
+		}
+
+		if (args.width > 0.0F) {
+			// Split the well's inner content width evenly across the segments.
+			const float content = std::max(0.0F, args.width - (kGroupPad * 2.0F) - (kSegGap * (count - 1.0F)));
+			return content / count;
+		}
+
+		// Auto-fit: widest label plus per-size padding, applied to every segment so
+		// they stay equal width.
+		const float scale = textScale(fontFor(args.size));
+		const float pad = segPadXFor(args.size) * 2.0F;
+		float		widest = 0.0F;
+		for (const std::string& label : args.options) {
+			widest = std::max(widest, measureWidth(label, scale));
+		}
+		return widest + pad;
+	}
+
+	Foundation::Vec2 SegmentedControl::footprint() const {
+		const auto	count = static_cast<float>(std::max<size_t>(args.options.size(), 1));
+		const float segW = segmentInnerWidth();
+		const float width = (kGroupPad * 2.0F) + (segW * count) + (kSegGap * (count - 1.0F));
+		const float height = (kGroupPad * 2.0F) + segHeightFor(args.size);
+		return {width, height};
+	}
+
+	void SegmentedControl::render() const {
+		using Renderer::Primitives::drawRect;
+		using Renderer::Primitives::drawText;
+
+		const Foundation::Vec2 size = footprint();
+		const Foundation::Rect bounds{args.position, size};
+
+		// The inset well: dark fill, hairline border, rounded.
+		drawRect({.bounds = bounds,
+				  .style = {.fill = bg_inset,
+							.border = Foundation::BorderStyle{
+								.color = line_hairline,
+								.width = bw,
+								.cornerRadius = r_md,
+								.position = Foundation::BorderPosition::Inside,
+							}},
+				  .id = "ds_segmented"});
+
+		const Foundation::Color toneCol = toneColor(args.tone);
+		const Foundation::Color glowCol = args.tone == Tone::Data ? data_glow : accent_glow;
+		const float				segW = segmentInnerWidth();
+		const float				segH = segHeightFor(args.size);
+		const float				fontPx = fontFor(args.size);
+		const float				scale = textScale(fontPx);
+		const float				top = bounds.y + kGroupPad;
+
+		float cursorX = bounds.x + kGroupPad;
+		for (size_t i = 0; i < args.options.size(); ++i) {
+			const bool			   active = static_cast<int>(i) == args.selected;
+			const Foundation::Rect segRect{{cursorX, top}, {segW, segH}};
+
+			if (active) {
+				// Faux glow: a larger, softer tone-colored rect behind the chip
+				// approximating the prototype's 12px box-shadow bloom.
+				const float			   glowSpread = 4.0F;
+				const Foundation::Rect glowRect{{segRect.x - glowSpread, segRect.y - glowSpread},
+												{segRect.width + (glowSpread * 2.0F), segRect.height + (glowSpread * 2.0F)}};
+				drawRect({.bounds = glowRect,
+						  .style = {.fill = glowCol,
+									.border = Foundation::BorderStyle{
+										.color = Foundation::Color::transparent(),
+										.width = 0.0F,
+										.cornerRadius = r_md,
+										.position = Foundation::BorderPosition::Inside,
+									}},
+						  .id = "ds_segmented_glow"});
+
+				// Solid tone chip.
+				drawRect({.bounds = segRect,
+						  .style = {.fill = toneCol,
+									.border = Foundation::BorderStyle{
+										.color = Foundation::Color::transparent(),
+										.width = 0.0F,
+										.cornerRadius = r_sm,
+										.position = Foundation::BorderPosition::Inside,
+									}},
+						  .id = "ds_segmented_active"});
+			}
+
+			// Centered label: active text is near-black on the chip, inactive is dim.
+			const Foundation::Color labelCol = active ? accent_contrast : text_dim;
+			Foundation::Vec2		textSize{0.0F, fontPx};
+			if (const ui::FontRenderer* font = Renderer::Primitives::getFontRenderer(); font != nullptr) {
+				textSize = font->MeasureText(args.options[i], scale);
+			}
+			const Foundation::Vec2 textPos{
+				segRect.x + ((segRect.width - textSize.x) * 0.5F),
+				segRect.y + ((segRect.height - textSize.y) * 0.5F),
+			};
+			drawText({.text = args.options[i],
+					  .position = textPos,
+					  .scale = scale,
+					  .color = labelCol,
+					  .font = fontDisplay,
+					  .id = "ds_segmented_label"});
+
+			cursorX += segW + kSegGap;
+		}
+	}
+
+} // namespace UI::DS

@@ -390,15 +390,20 @@ namespace Renderer::Primitives {
 			return;
 		}
 
-		// Generate glyph quads from the font renderer
+		// Generate glyph quads from the font renderer for the requested family
 		std::vector<ui::FontRenderer::GlyphQuad> quads;
 		g_fontRenderer->generateGlyphQuads(
 			args.text,
 			glm::vec2(args.position.x, args.position.y),
 			args.scale,
 			glm::vec4(args.color.r, args.color.g, args.color.b, args.color.a),
-			quads
+			quads,
+			args.font
 		);
+
+		// Each glyph carries its family's atlas texture so the batch groups it
+		// with other glyphs from the same atlas (see BatchRenderer::flush).
+		GLuint atlasTexture = g_fontRenderer->getAtlasTexture(args.font);
 
 		// Add each glyph quad to the batch renderer
 		for (const auto& quad : quads) {
@@ -407,7 +412,8 @@ namespace Renderer::Primitives {
 				Foundation::Vec2(quad.size.x, quad.size.y),
 				Foundation::Vec2(quad.uvMin.x, quad.uvMin.y),
 				Foundation::Vec2(quad.uvMax.x, quad.uvMax.y),
-				Foundation::Color(quad.color.r, quad.color.g, quad.color.b, quad.color.a)
+				Foundation::Color(quad.color.r, quad.color.g, quad.color.b, quad.color.a),
+				atlasTexture
 			);
 		}
 	}

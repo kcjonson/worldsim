@@ -4,9 +4,11 @@
 #pragma once
 
 #include "graphics/PrimitiveStyles.h"
+#include "primitives/FontFamily.h"
 #include "shader/Shader.h"
 #include <GL/glew.h>
 #include <glm/glm.hpp>
+#include <array>
 #include <map>
 #include <string>
 #include <unordered_map>
@@ -50,23 +52,27 @@ namespace ui {
 		 * Calculate the dimensions of a text string with the given scale
 		 * @param text The text to measure
 		 * @param scale Scaling factor (default 1.0F)
+		 * @param family Font family to measure with (default Roboto)
 		 * @return Width and height of the text in pixels
 		 */
-		glm::vec2 MeasureText(const std::string& text, float scale = 1.0F) const;
+		glm::vec2 MeasureText(const std::string& text, float scale = 1.0F, Renderer::FontFamily family = Renderer::FontFamily::Roboto)
+			const;
 
 		/**
 		 * Get the maximum glyph height scaled by the given factor
 		 * @param scale Scaling factor for the font size (1.0F = original size)
+		 * @param family Font family to query (default Roboto)
 		 * @return Height of the tallest glyph in the font at the given scale
 		 */
-		float getMaxGlyphHeight(float scale = 1.0F) const;
+		float getMaxGlyphHeight(float scale = 1.0F, Renderer::FontFamily family = Renderer::FontFamily::Roboto) const;
 
 		/**
 		 * Get the font's ascent (distance from baseline to top) scaled by the given factor
 		 * @param scale Scaling factor for the font size (1.0F = original size)
+		 * @param family Font family to query (default Roboto)
 		 * @return Font ascent at the given scale
 		 */
-		float getAscent(float scale = 1.0F) const;
+		float getAscent(float scale = 1.0F, Renderer::FontFamily family = Renderer::FontFamily::Roboto) const;
 
 		/**
 		 * Glyph quad data for batched text rendering
@@ -103,7 +109,8 @@ namespace ui {
 			const glm::vec2&		position,
 			float					scale,
 			const glm::vec4&		color,
-			std::vector<GlyphQuad>& outQuads
+			std::vector<GlyphQuad>& outQuads,
+			Renderer::FontFamily	family = Renderer::FontFamily::Roboto
 		) const;
 
 		/**
@@ -113,18 +120,27 @@ namespace ui {
 		 * @param text The text to wrap
 		 * @param scale Scaling factor (fontSize / 16.0)
 		 * @param maxWidth Maximum line width in pixels (0 = no wrapping, single line)
+		 * @param family Font family used for glyph metrics (default Roboto)
 		 * @return Cached reference to wrapped result (lines, dimensions)
 		 */
-		const WrappedTextResult& wrapText(const std::string& text, float scale, float maxWidth) const;
+		const WrappedTextResult&
+		wrapText(const std::string& text, float scale, float maxWidth, Renderer::FontFamily family = Renderer::FontFamily::Roboto)
+			const;
 
 		/**
 		 * Measure text with optional wrapping
 		 * @param text The text to measure
 		 * @param scale Scaling factor
 		 * @param maxWidth Maximum line width (0 = no wrapping, returns single-line size)
+		 * @param family Font family used for glyph metrics (default Roboto)
 		 * @return Width and height of the text block in pixels
 		 */
-		glm::vec2 measureTextWithWrapping(const std::string& text, float scale, float maxWidth) const;
+		glm::vec2 measureTextWithWrapping(
+			const std::string&	 text,
+			float				 scale,
+			float				 maxWidth,
+			Renderer::FontFamily family = Renderer::FontFamily::Roboto
+		) const;
 
 		/**
 		 * Generate glyph quads for wrapped/multi-line text
@@ -145,14 +161,16 @@ namespace ui {
 			float							lineHeight,
 			Foundation::HorizontalAlign		hAlign,
 			float							containerWidth,
-			std::vector<GlyphQuad>&			outQuads
+			std::vector<GlyphQuad>&			outQuads,
+			Renderer::FontFamily			family = Renderer::FontFamily::Roboto
 		) const;
 
 		/**
-		 * Get the texture ID of the font atlas (for batching)
+		 * Get the texture ID of a font atlas (for batching)
+		 * @param family Font family whose atlas texture to return (default Roboto)
 		 * @return OpenGL texture ID
 		 */
-		GLuint getAtlasTexture() const;
+		GLuint getAtlasTexture(Renderer::FontFamily family = Renderer::FontFamily::Roboto) const;
 
 		/**
 		 * Update the internal frame counter for cache LRU tracking
@@ -201,21 +219,44 @@ namespace ui {
 		};
 
 		/**
-		 * Load SDF atlas from PNG and JSON files
+		 * A single loaded font: its glyphs, atlas metadata, GL texture, and the
+		 * font metrics derived from them. One Atlas per FontFamily.
+		 */
+		struct Atlas {
+			std::map<char, SDFGlyph> glyphs;				 // Map of SDF glyphs
+			SDFAtlasMetadata		 metadata{};			 // SDF atlas metadata
+			GLuint					 texture = 0;			 // SDF atlas GL texture
+			float					 scaledAscender = 0.0F;	 // Ascender for the base font size
+			float					 maxGlyphHeightUnscaled = 0.0F; // Unscaled max glyph height
+			bool					 loaded = false;		 // True once successfully loaded
+		};
+
+		/**
+		 * Load an SDF atlas from PNG and JSON files into the given Atlas slot.
+		 * @param atlas Destination atlas (glyphs, metadata, texture filled in)
 		 * @param pngPath Path to the PNG atlas texture
 		 * @param jsonPath Path to the JSON metadata file
 		 * @return true if atlas was loaded successfully
 		 */
-		bool LoadSDFAtlas(const std::string& pngPath, const std::string& jsonPath);
+		bool LoadSDFAtlas(Atlas& atlas, const std::string& pngPath, const std::string& jsonPath);
 
 		/**
-		 * Cache key for glyph quad caching (text + scale)
+		 * Resolve a family to its atlas, falling back to Roboto if the requested
+		 * family failed to load. Roboto is always present (fatal if it isn't).
+		 */
+		const Atlas& atlasFor(Renderer::FontFamily family) const;
+
+		/**
+		 * Cache key for glyph quad caching (family + text + scale)
 		 */
 		struct CacheKey {
-			std::string text;
-			float		scale;
+			Renderer::FontFamily family;
+			std::string			 text;
+			float				 scale;
 
-			bool operator==(const CacheKey& other) const { return text == other.text && std::abs(scale - other.scale) < 0.001F; }
+			bool operator==(const CacheKey& other) const {
+				return family == other.family && text == other.text && std::abs(scale - other.scale) < 0.001F;
+			}
 		};
 
 		/**
@@ -225,7 +266,8 @@ namespace ui {
 			size_t operator()(const CacheKey& key) const {
 				size_t h1 = std::hash<std::string>{}(key.text);
 				size_t h2 = std::hash<float>{}(key.scale);
-				return h1 ^ (h2 << 1);
+				size_t h3 = std::hash<int>{}(static_cast<int>(key.family));
+				return h1 ^ (h2 << 1) ^ (h3 << 2);
 			}
 		};
 
@@ -237,11 +279,8 @@ namespace ui {
 			uint64_t			   lastAccessFrame;
 		};
 
-		std::map<char, SDFGlyph> sdfGlyphs;						// Map of SDF glyphs
-		SDFAtlasMetadata		 atlasMetadata{};				// SDF atlas metadata
-		GLuint					 atlasTexture = 0;				// SDF atlas texture
-		float					 scaledAscender = 0.0F;			// Stores the ascender for the base font size
-		float					 maxGlyphHeightUnscaled = 0.0F; // Unscaled maximum glyph height
+		// One atlas per FontFamily, indexed by static_cast<int>(family).
+		std::array<Atlas, Renderer::kFontFamilyCount> atlases;
 
 		// Glyph quad cache (mutable for const GenerateGlyphQuads)
 		mutable std::unordered_map<CacheKey, CacheEntry, CacheKeyHash> glyphQuadCache;
@@ -251,12 +290,14 @@ namespace ui {
 		 * Cache key for text wrapping (text + scale + wrap width)
 		 */
 		struct WrapCacheKey {
-			std::string text;
-			float		scale;
-			float		wrapWidth;
+			Renderer::FontFamily family;
+			std::string			 text;
+			float				 scale;
+			float				 wrapWidth;
 
 			bool operator==(const WrapCacheKey& other) const {
-				return text == other.text && std::abs(scale - other.scale) < 0.001F && std::abs(wrapWidth - other.wrapWidth) < 0.1F;
+				return family == other.family && text == other.text && std::abs(scale - other.scale) < 0.001F &&
+					std::abs(wrapWidth - other.wrapWidth) < 0.1F;
 			}
 		};
 
@@ -274,7 +315,8 @@ namespace ui {
 				size_t h1 = std::hash<std::string>{}(key.text);
 				size_t h2 = std::hash<float>{}(roundedScale);
 				size_t h3 = std::hash<float>{}(roundedWidth);
-				return h1 ^ (h2 << 1) ^ (h3 << 2);
+				size_t h4 = std::hash<int>{}(static_cast<int>(key.family));
+				return h1 ^ (h2 << 1) ^ (h3 << 2) ^ (h4 << 3);
 			}
 		};
 
