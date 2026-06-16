@@ -5,26 +5,26 @@
 #include "component/Component.h"
 #include "focus/FocusableBase.h"
 #include "math/Types.h"
-#include "shapes/Shapes.h"
 #include <functional>
 #include <memory>
 #include <string>
 
 // Button Component
 //
-// Interactive UI button with state management and event handling.
-// Supports 5 visual states: Normal, Hover, Pressed, Disabled, Focused
-// Extends Component (for AddChild capability) and IFocusable (for keyboard focus).
-//
-// See: /docs/technical/ui-framework/architecture.md
+// Interactive UI button with state management and event handling. Renders the
+// Salvage look: a variant-tinted rounded background (primary carries an
+// accent gradient), a per-variant border, and a centered uppercase label in the
+// display font. State overlays cover hover, pressed, focused, and disabled.
+// Extends Component (for child management) and IFocusable (for keyboard focus).
 
 namespace UI {
 
 // Button component - extends Component and uses FocusableBase for auto-registration
 class Button : public Component, public FocusableBase<Button> {
   public:
-	// Button type enum for predefined styles
-	enum class Type { Primary, Secondary, Custom };
+	// Visual variant. Primary/Secondary/Ghost/Danger/Data are the Salvage
+	// variants; Custom defers to a caller-supplied ButtonAppearance.
+	enum class Type { Primary, Secondary, Custom, Ghost, Danger, Data };
 
 	// Visual interaction state (mouse-driven)
 	enum class State { Normal, Hover, Pressed };
@@ -54,8 +54,9 @@ class Button : public Component, public FocusableBase<Button> {
 	State state{State::Normal};
 	bool  disabled{false};
 	bool  focused{false};
+	Type  type{Type::Primary};
 
-	// Visual appearance (all 5 state styles)
+	// Custom appearance (only consulted when type == Custom)
 	ButtonAppearance appearance;
 
 	// Callback
@@ -66,7 +67,6 @@ class Button : public Component, public FocusableBase<Button> {
 
 	// --- Public Methods ---
 
-	// Constructor & Destructor
 	explicit Button(const Args& args);
 	~Button() override = default;
 
@@ -82,21 +82,18 @@ class Button : public Component, public FocusableBase<Button> {
 	void update(float deltaTime) override;
 	void render() override;
 
-	// IComponent event handling (new event system)
+	// IComponent event handling
 	bool handleEvent(InputEvent& event) override;
 	bool containsPoint(Foundation::Vec2 point) const override;
 
-	// Position override to update text position
+	// Position override to reposition the icon
 	void setPosition(float x, float y) override;
 
-	// Update the displayed label. Mutating the public `label` field alone does
-	// not change rendered text: the Text primitive is only synced here and at
-	// construction.
+	// Update the displayed label.
 	void setLabel(const std::string& newLabel);
 
-	// The text actually rendered (the underlying Text primitive's content). Equal
-	// to `label` only when changes go through the constructor or setLabel().
-	[[nodiscard]] const std::string& renderedLabel() const { return labelText.text; }
+	// The text actually rendered (equals `label`).
+	[[nodiscard]] const std::string& renderedLabel() const { return label; }
 
 	// State management
 	void setFocused(bool newFocused) { focused = newFocused; }
@@ -122,18 +119,10 @@ class Button : public Component, public FocusableBase<Button> {
 	bool mouseOver{false};
 	bool mouseDown{false};
 
-	// Text label (owned directly for simplicity)
-	Text labelText;
-
-	// Optional icon
+	// Optional icon (legacy SVG-path icon)
 	std::unique_ptr<Icon> icon;
 	float				  iconSize{16.0F};
 
-	// Get current style based on state/flags
-	const ButtonStyle& getCurrentStyle() const;
-
-	// Update text and icon positions when button moves
-	void updateTextPosition();
 	void updateIconPosition();
 };
 

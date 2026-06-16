@@ -1,15 +1,13 @@
 #include "Dialog.h"
 
+#include "graphics/PrimitiveStyles.h"
 #include "primitives/Primitives.h"
+#include "theme/Tokens.h"
+#include "theme/Variants.h"
 
 #include <algorithm>
 
 namespace UI {
-
-	// Constants for close button X text centering (approximate glyph dimensions)
-	constexpr float kCloseButtonTextWidth = 10.0F;
-	constexpr float kCloseButtonTextHeight = 14.0F;
-	constexpr float kSeparatorOpacityMultiplier = 0.5F;
 
 	Dialog::Dialog(const Args& args)
 		: FocusableBase<Dialog>(args.tabIndex),
@@ -269,104 +267,84 @@ namespace UI {
 			return;
 		}
 
-		// Draw semi-transparent overlay covering entire screen (only in modal mode)
+		using Renderer::Primitives::drawLine;
+		using Renderer::Primitives::drawRect;
+		using Renderer::Primitives::drawText;
+
+		// Fold the fade opacity into any color's alpha.
+		const auto fade = [&](Foundation::Color c) {
+			c.a *= opacity;
+			return c;
+		};
+
+		// Full-bleed scrim (modal only).
 		if (modal) {
-			Foundation::Color overlayColor = Theme::Dialog::overlayBackground;
-			overlayColor.a *= opacity;
-
-			Renderer::Primitives::drawRect(
-				Renderer::Primitives::RectArgs{
-					.bounds = {0.0F, 0.0F, screenWidth, screenHeight},
-					.style = {.fill = overlayColor},
-				}
-			);
+			drawRect({.bounds = {0.0F, 0.0F, screenWidth, screenHeight}, .style = {.fill = fade(scrim)}});
 		}
 
-		// Draw dialog panel
-		Foundation::Rect  panelBounds = getPanelBounds();
-		Foundation::Color panelBg = Theme::Dialog::panelBackground;
-		panelBg.a *= opacity;
-		Foundation::Color panelBorder = Theme::Dialog::panelBorder;
-		panelBorder.a *= opacity;
+		const Foundation::Rect panel = getPanelBounds();
+		const float			   titleH = Theme::Dialog::titleBarHeight;
 
-		Renderer::Primitives::drawRect(
-			Renderer::Primitives::RectArgs{
-				.bounds = panelBounds,
-				.style = {.fill = panelBg, .border = Foundation::BorderStyle{.color = panelBorder, .width = 1.0F}},
-			}
-		);
+		// Raised, bracketed Salvage surface with an edge border and a soft accent glow.
+		drawRect({.bounds = panel,
+				  .style = {.fill = fade(bg_panel_raised),
+							.border = Foundation::BorderStyle{
+								.color = fade(line_edge), .width = bw, .cornerRadius = r_sm, .position = Foundation::BorderPosition::Inside},
+							.boxShadow = Foundation::BoxShadow{.color = fade(withAlpha(accent, 0.4F)), .blur = 24.0F, .spread = 2.0F, .offset = {0.0F, 0.0F}}}});
 
-		// Draw title bar background
-		Foundation::Rect  titleBarBounds = getTitleBarBounds();
-		Foundation::Color titleBg = Theme::Dialog::titleBackground;
-		titleBg.a *= opacity;
+		// Title: display font, uppercase, letter-spaced.
+		if (!title.empty()) {
+			drawText({.text = title,
+					  .position = {panel.x + Theme::Dialog::contentPadding, panel.y + ((titleH - fs_md) * 0.5F)},
+					  .scale = fs_md / 16.0F,
+					  .color = fade(text_bright),
+					  .font = fontDisplay,
+					  .letterSpacing = fs_md * ls_wide,
+					  .transform = Foundation::TextTransform::Uppercase});
+		}
 
-		Renderer::Primitives::drawRect(
-			Renderer::Primitives::RectArgs{
-				.bounds = titleBarBounds,
-				.style = {.fill = titleBg},
-			}
-		);
+		// Hairline divider under the title.
+		drawLine({.start = {panel.x, panel.y + titleH}, .end = {panel.x + panel.width, panel.y + titleH}, .style = {.color = fade(line_hairline), .width = bw}});
 
-		// Draw title text
-		Foundation::Color titleColor = Theme::Colors::textTitle;
-		titleColor.a *= opacity;
-
-		Renderer::Primitives::drawText(
-			Renderer::Primitives::TextArgs{
-				.text = title,
-				.position =
-					{panelBounds.x + Theme::Dialog::contentPadding,
-					 panelBounds.y + (Theme::Dialog::titleBarHeight - Theme::Typography::titleSize) / 2.0F},
-				.scale = Theme::Typography::titleSize / 16.0F,
-				.color = titleColor,
-			}
-		);
-
-		// Draw close button
-		Foundation::Rect closeBounds = getCloseButtonBounds();
-
-		// Close button background (only when hovered)
+		// Close button: hover wash + a mono "X".
+		const Foundation::Rect closeBounds = getCloseButtonBounds();
 		if (closeButtonHovered) {
-			Foundation::Color closeBg = Theme::Colors::closeButtonBackground;
-			closeBg.a *= opacity;
+			drawRect({.bounds = closeBounds,
+					  .style = {.fill = fade(bg_hover),
+								.border = Foundation::BorderStyle{
+									.color = fade(bg_hover), .width = 0.0F, .cornerRadius = r_sm, .position = Foundation::BorderPosition::Inside}}});
+		}
+		drawText({.text = "X",
+				  .position = {closeBounds.x, closeBounds.y},
+				  .scale = fs_sm / 16.0F,
+				  .color = fade(closeButtonHovered ? accent_bright : text_dim),
+				  .font = fontMono,
+				  .hAlign = Foundation::HorizontalAlign::Center,
+				  .vAlign = Foundation::VerticalAlign::Middle,
+				  .boxWidth = closeBounds.width,
+				  .boxHeight = closeBounds.height});
 
-			Renderer::Primitives::drawRect(
-				Renderer::Primitives::RectArgs{
-					.bounds = closeBounds,
-					.style = {.fill = closeBg},
-				}
-			);
+		// L-bracket corner ticks straddling the panel edge.
+		{
+			const Foundation::Color tick = fade(accent);
+			const float				leg = space_3;
+			const float				th = bw_thick;
+			const float				ox = panel.x;
+			const float				oy = panel.y;
+			const float				rx = panel.x + panel.width;
+			const float				by = panel.y + panel.height;
+			const auto				bracket = [&](Foundation::Rect r) { drawRect({.bounds = r, .style = {.fill = tick}}); };
+			bracket({ox, oy, leg, th});
+			bracket({ox, oy, th, leg});
+			bracket({rx - leg, oy, leg, th});
+			bracket({rx - th, oy, th, leg});
+			bracket({ox, by - th, leg, th});
+			bracket({ox, by - leg, th, leg});
+			bracket({rx - leg, by - th, leg, th});
+			bracket({rx - th, by - leg, th, leg});
 		}
 
-		// Draw X text
-		Foundation::Color xColor = closeButtonHovered ? Theme::Colors::closeButtonText : Theme::Colors::textSecondary;
-		xColor.a *= opacity;
-
-		float xTextX = closeBounds.x + (kCloseButtonSize - kCloseButtonTextWidth) / 2.0F;
-		float xTextY = closeBounds.y + (kCloseButtonSize - kCloseButtonTextHeight) / 2.0F;
-
-		Renderer::Primitives::drawText(
-			Renderer::Primitives::TextArgs{
-				.text = "X",
-				.position = {xTextX, xTextY},
-				.scale = kCloseButtonTextHeight / 16.0F,
-				.color = xColor,
-			}
-		);
-
-		// Draw separator line below title bar
-		Foundation::Color lineColor = panelBorder;
-		lineColor.a *= opacity * kSeparatorOpacityMultiplier;
-
-		Renderer::Primitives::drawRect(
-			Renderer::Primitives::RectArgs{
-				.bounds = {panelBounds.x, titleBarBounds.y + titleBarBounds.height, panelBounds.width, 1.0F},
-				.style = {.fill = lineColor},
-			}
-		);
-
-		// Render content children (Container handles clipping and offset)
+		// Render content children (Container handles clipping and offset).
 		Container::render();
 	}
 

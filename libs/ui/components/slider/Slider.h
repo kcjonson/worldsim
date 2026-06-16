@@ -50,6 +50,7 @@ class Slider : public Component, public FocusableBase<Slider> {
 		float							   margin{0.0F};
 		bool							   disabled{false};
 		SliderStyle						   style;
+		double							   detent{-1.0}; // normalized 0..1 reference tick; <0 = none
 	};
 
 	explicit Slider(const Args& args);
@@ -94,6 +95,7 @@ class Slider : public Component, public FocusableBase<Slider> {
 	double step;
 	double value;
 	bool   logScale;
+	double detent;
 
 	std::string								label;
 	std::function<std::string(double)>		valueFormatter;

@@ -25,18 +25,12 @@ add_library(ui
     input/InputEvent.cpp
     layout/LayoutContainer.cpp
     components/panel/Panel.cpp
-    design-system/Button.cpp
     components/stat/Stat.cpp
     components/badge/Badge.cpp
     components/segmentedcontrol/SegmentedControl.cpp
-    design-system/Tabs.cpp
     components/divider/Divider.cpp
     components/keycap/KeyCap.cpp
-    design-system/Icon.cpp
-    design-system/Modal.cpp
     components/avatar/Avatar.cpp
-    design-system/Slider.cpp
-    design-system/Tooltip.cpp
 )
 
 target_include_directories(ui
