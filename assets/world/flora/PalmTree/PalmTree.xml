@@ -27,6 +27,9 @@
       <tier>batched</tier>
     </rendering>
 
+    <!-- Trunk-base collision (half trunkWidth=0.12 -> radius 0.06m); not the frond canopy -->
+    <collision><circle radius="0.06"/></collision>
+
     <!-- Harvestable: palm yields less wood than oak (thinner trunk, softer wood) -->
     <!-- 3-6 wood per chop, pool of 10-18 total -->
     <capabilities>

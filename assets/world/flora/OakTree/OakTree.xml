@@ -28,6 +28,9 @@
       <tier>batched</tier>
     </rendering>
 
+    <!-- Trunk-base collision (half trunkWidth=0.2 -> radius 0.1m); not the canopy -->
+    <collision><circle radius="0.1"/></collision>
+
     <!-- Entity capabilities - chopped for wood; removed when resource pool is exhausted -->
     <!-- Starter values: 6-10 wood per chop action, pool of 20-30 total (a full tree's yield) -->
     <capabilities>

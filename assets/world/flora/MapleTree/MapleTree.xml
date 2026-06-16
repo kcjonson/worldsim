@@ -32,6 +32,9 @@
 
     <!-- No animation for now (trees sway is future work) -->
 
+    <!-- Trunk-base collision (half trunkWidth=0.15 -> radius 0.075m); not the canopy -->
+    <collision><circle radius="0.075"/></collision>
+
     <!-- Entity capabilities - chopped for wood; removed when resource pool is exhausted -->
     <!-- Starter values: 4-7 wood per chop action, pool of 14-22 total (maple is smaller than oak) -->
     <capabilities>
