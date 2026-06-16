@@ -483,6 +483,13 @@ namespace Foundation {
 	}
 
 	bool DebugServer::requestState(const std::string& what, std::string& out, int timeoutMs) { // NOLINT(readability-identifier-naming)
+		// Single in-flight request: stateQuery/stateResult are one shared slot, so a second
+		// concurrent caller would clobber the first (or read the wrong JSON). try_lock fails
+		// fast instead; the route turns that into a 503. Held for the whole blocking wait.
+		std::unique_lock<std::mutex> inFlight(stateRequestMutex, std::try_to_lock);
+		if (!inFlight.owns_lock()) {
+			return false;
+		}
 		{
 			std::lock_guard<std::mutex> lock(stateMutex);
 			stateQuery = what;
@@ -677,7 +684,7 @@ namespace Foundation {
 				res.set_content(json, "application/json");
 			} else {
 				res.status = 503;
-				res.set_content("{\"error\":\"state request timed out (is the game scene running?)\"}", "application/json");
+				res.set_content("{\"error\":\"state request unavailable (busy, or game scene not running)\"}", "application/json");
 			}
 		});
 

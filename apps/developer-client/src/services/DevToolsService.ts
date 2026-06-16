@@ -2,8 +2,9 @@
 //
 // Unlike ServerConnection (which holds SSE streams), this issues one-shot fetch() requests:
 // the dev verbs queue actions (/api/dev/<verb>) and the state endpoint reads back a JSON
-// snapshot (/api/state). The debug server sets CORS '*', so this works from file:// or the
-// vite dev server. Dev-build only -- the debug server that serves these is dev-only.
+// snapshot (/api/state). The debug server sets CORS '*', so this works from the static
+// file:// page (this is a static build, not a served app). Dev-build only -- the debug
+// server that serves these is dev-only.
 
 export interface DevResult {
   ok: boolean;

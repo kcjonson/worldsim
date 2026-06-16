@@ -255,9 +255,10 @@ namespace Foundation { // NOLINT(readability-identifier-naming)
 		// screenshot request/response pair (single-flight; dev use is single-client).
 		std::atomic<bool> stateRequested{false};
 		std::atomic<bool> stateReady{false};
-		std::string		  stateQuery;  // HTTP writes (the `what` param), game reads
-		std::string		  stateResult; // game writes (JSON), HTTP reads
-		std::mutex		  stateMutex;  // Protects stateQuery + stateResult
+		std::string		  stateQuery;		// HTTP writes (the `what` param), game reads
+		std::string		  stateResult;		// game writes (JSON), HTTP reads
+		std::mutex		  stateMutex;		// Protects stateQuery + stateResult
+		std::mutex		  stateRequestMutex; // Held by requestState to enforce one in-flight request
 
 		// Vsync target for SetVsync action (0 = off, 1 = on)
 		std::atomic<int> targetVsync{1};
