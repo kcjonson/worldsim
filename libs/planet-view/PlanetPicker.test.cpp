@@ -113,9 +113,18 @@ TEST(OrbitCamera, DistanceClamped) {
     EXPECT_GE(cam.distance, 1.05F);
 }
 
-TEST(OrbitCamera, AutoRotateAfterIdle) {
+TEST(OrbitCamera, AutoRotateWhenZoomedOut) {
     OrbitCamera cam;
+    cam.distance = 3.0F; // whole globe in frame -> gentle idle spin
     cam.yaw = 0.0F;
-    cam.update(5.0F); // 5 seconds of idle
-    EXPECT_GT(cam.yaw, 0.0F); // should have auto-rotated
+    cam.update(5.0F);    // 5 seconds of idle
+    EXPECT_GT(cam.yaw, 0.0F);
+}
+
+TEST(OrbitCamera, NoAutoRotateWhenZoomedIn) {
+    OrbitCamera cam;
+    cam.distance = 1.5F; // zoomed in to inspect -> stays put
+    cam.yaw = 0.0F;
+    cam.update(5.0F);
+    EXPECT_FLOAT_EQ(cam.yaw, 0.0F);
 }
