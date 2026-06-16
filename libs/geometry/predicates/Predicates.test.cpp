@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <random>
+#include <utility>
 #include <vector>
 #include <gtest/gtest.h>
 
@@ -325,8 +326,9 @@ TEST(InCircle, LargeScaleCocircularStaysExact) {
 }
 
 TEST(OracleSweep, InCircleVsDouble) {
-	// The predicate and the oracle compute the same third-column determinant, so
-	// their signs must agree for every input (CCW or not, degenerate or not).
+	// Enforce inCircle's CCW contract (reorient CW triples, skip collinear ones,
+	// which have no circumcircle), so this exercises the Inside/Outside semantics,
+	// not just determinant-sign agreement, against the exact-in-double oracle.
 	std::mt19937								rng(0xC1C1E5);
 	std::uniform_int_distribution<std::int64_t> coord(-50, 50);
 	for (int iter = 0; iter < 8000; ++iter) {
@@ -334,6 +336,13 @@ TEST(OracleSweep, InCircleVsDouble) {
 		Vec2i64			 b{coord(rng), coord(rng)};
 		Vec2i64			 c{coord(rng), coord(rng)};
 		Vec2i64			 d{coord(rng), coord(rng)};
+		const Orientation o = orientation(a, b, c);
+		if (o == Orientation::Collinear) {
+			continue; // a degenerate triangle has no circumcircle
+		}
+		if (o == Orientation::Clockwise) {
+			std::swap(b, c); // satisfy inCircle's CCW precondition
+		}
 		const InCircle	 got = inCircle(a, b, c, d);
 		const int		 gv	 = got == InCircle::Inside ? 1 : (got == InCircle::Outside ? -1 : 0);
 		ASSERT_EQ(gv, inCircleOracle(a, b, c, d)) << a.x << "," << a.y << " " << b.x << "," << b.y << " " << c.x << ","

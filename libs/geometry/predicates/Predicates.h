@@ -36,7 +36,9 @@ namespace geometry {
 	// thousand km): the int64 sub-products then stay under 2^61 and the three
 	// Int128 terms sum under 2^124. The navmesh triangulates in a frame rebased
 	// to its region origin, so local coordinates are a few km and never approach
-	// this bound. Inputs beyond it overflow silently; rebase before calling.
+	// this bound. Exceeding it overflows the signed int64 sub-products, which is
+	// undefined behavior (not a defined wraparound), so callers must rebase to a
+	// local frame first.
 	InCircle inCircle(const Vec2i64& a, const Vec2i64& b, const Vec2i64& c, const Vec2i64& d);
 
 	// Exact angular comparison of two direction vectors `u` and `v` measured

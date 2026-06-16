@@ -10,15 +10,17 @@
 
 namespace ecs {
 
-// Dynamic spatial hash for moving agents. Keyed by packed (cellX, cellY) int64
-// (same packing as engine::assets::SpatialIndex). Rebuilt each frame: clear()
-// preserves allocated capacity so steady-state is allocation-free, then every
-// agent is re-inserted at its new position.
+// Dynamic spatial hash for moving agents. Keyed by the two cell coordinates
+// packed into a uint64 bit pattern (kept unsigned end-to-end so there is no
+// signed shift or unsigned->signed conversion). Rebuilt each frame: clear()
+// drops every cell, then every agent is re-inserted at its new position, so the
+// map only ever holds cells occupied this frame (it cannot accumulate empty
+// cells as agents roam the world).
 class AgentSpatialHash {
   public:
     explicit AgentSpatialHash(float cellSize = 1.0f);
 
-    // Clear all entries but retain bucket/vector capacity.
+    // Drop all cells (bounded: only currently-occupied cells survive a rebuild).
     void clear();
 
     // Insert agent at position into the hash.
@@ -30,11 +32,11 @@ class AgentSpatialHash {
     void queryNeighbors(glm::vec2 center, float radius, std::vector<EntityID>& out) const;
 
   private:
-    [[nodiscard]] static int64_t cellKey(int32_t cx, int32_t cy);
+    [[nodiscard]] static uint64_t cellKey(int32_t cx, int32_t cy);
     [[nodiscard]] std::pair<int32_t, int32_t> cellCoords(glm::vec2 pos) const;
 
     float m_cellSize;
-    std::unordered_map<int64_t, std::vector<EntityID>> m_cells;
+    std::unordered_map<uint64_t, std::vector<EntityID>> m_cells;
 };
 
 } // namespace ecs
