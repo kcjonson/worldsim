@@ -119,13 +119,25 @@ namespace Renderer {
 		// Shader cleanup handled by its own RAII destructor
 	}
 
+	void BatchRenderer::recordGroup(uint32_t groupStart, float zIndex) {
+		const uint32_t end = static_cast<uint32_t>(indices.size());
+		if (end > groupStart) {
+			drawGroups.push_back({groupStart, end - groupStart, zIndex});
+			if (zIndex != 0.0F) {
+				anyExplicitZ = true;
+			}
+		}
+	}
+
 	void BatchRenderer::addQuad( // NOLINT(readability-convert-member-functions-to-static)
 		const Foundation::Rect&						bounds,
 		const Foundation::Color&					fillColor,
 		const std::optional<Foundation::BorderStyle>& border,
 		float										cornerRadius,
-		const std::optional<Foundation::LinearGradient>& gradient
+		const std::optional<Foundation::LinearGradient>& gradient,
+		float										zIndex
 	) { // NOLINT(readability-convert-member-functions-to-static)
+		const uint32_t zGroupStart = static_cast<uint32_t>(indices.size());
 		uint32_t baseIndex = static_cast<uint32_t>(vertices.size());
 
 		// Calculate rect center and half-dimensions for SDF
@@ -257,9 +269,12 @@ namespace Renderer {
 
 		// Shapes ignore the bound atlas (shader branches on data2.w); tag 0.
 		vertexAtlas.insert(vertexAtlas.end(), 4, 0);
+
+		recordGroup(zGroupStart, zIndex);
 	}
 
-	void BatchRenderer::addShadowQuad(const Foundation::Rect& bounds, const Foundation::BoxShadow& shadow, float cornerRadius) {
+	void BatchRenderer::addShadowQuad(const Foundation::Rect& bounds, const Foundation::BoxShadow& shadow, float cornerRadius, float zIndex) {
+		const uint32_t zGroupStart = static_cast<uint32_t>(indices.size());
 		// The shadow's SDF shape is the rect grown by `spread`; the quad is grown a
 		// further `blur` so the shader has room to fade the falloff to zero.
 		const float halfW = (bounds.width * 0.5F) + shadow.spread;
@@ -298,6 +313,8 @@ namespace Renderer {
 		indices.push_back(baseIndex + 3);
 
 		vertexAtlas.insert(vertexAtlas.end(), 4, 0);
+
+		recordGroup(zGroupStart, zIndex);
 	}
 
 	void BatchRenderer::addTriangles( // NOLINT(readability-convert-member-functions-to-static)
@@ -306,8 +323,10 @@ namespace Renderer {
 		size_t					  vertexCount,
 		size_t					  indexCount,
 		const Foundation::Color&  color,
-		const Foundation::Color*  inputColors
+		const Foundation::Color*  inputColors,
+		float					  zIndex
 	) { // NOLINT(readability-convert-member-functions-to-static)
+		const uint32_t zGroupStart = static_cast<uint32_t>(indices.size());
 		uint32_t baseIndex = static_cast<uint32_t>(vertices.size());
 
 		Foundation::Vec4 uniformColorVec = color.toVec4();
@@ -341,6 +360,8 @@ namespace Renderer {
 
 		// Tessellated shapes ignore the bound atlas; tag every vertex 0.
 		vertexAtlas.insert(vertexAtlas.end(), vertexCount, 0);
+
+		recordGroup(zGroupStart, zIndex);
 	}
 
 	void BatchRenderer::addTextQuad(
@@ -349,8 +370,10 @@ namespace Renderer {
 		const Foundation::Vec2&	 uvMin,
 		const Foundation::Vec2&	 uvMax,
 		const Foundation::Color& color,
-		GLuint					 atlasTexture
+		GLuint					 atlasTexture,
+		float					 zIndex
 	) {
+		const uint32_t zGroupStart = static_cast<uint32_t>(indices.size());
 		// Resolve the atlas this glyph samples. 0 means "use the default atlas"
 		// (Roboto, set via setFontAtlas), so existing callers are unchanged.
 		GLuint resolvedAtlas = (atlasTexture != 0) ? atlasTexture : defaultFontAtlas;
@@ -421,6 +444,8 @@ namespace Renderer {
 		// Tag all 4 vertices with the atlas they sample, so flush() can group
 		// this glyph into the matching per-atlas draw run.
 		vertexAtlas.insert(vertexAtlas.end(), 4, resolvedAtlas);
+
+		recordGroup(zGroupStart, zIndex);
 	}
 
 	void BatchRenderer::setFontAtlas(GLuint atlasTexture, float pixelRange) {
@@ -432,6 +457,23 @@ namespace Renderer {
 		if (vertices.empty()) {
 			return;
 		}
+
+		// Resolve draw order. Submission ("organic") order is kept unless some draw
+		// carried an explicit (non-zero) z; then the per-draw-call groups are
+		// stable-sorted by z and the emit-order index list is rebuilt (groups, not
+		// triangles). The zIndex came from the component layer; the renderer only
+		// orders by it. The fast path costs nothing beyond the group records.
+		const std::vector<uint32_t>* emit = &indices;
+		std::vector<uint32_t>		 sortedIndices;
+		if (anyExplicitZ && !drawGroups.empty()) {
+			std::stable_sort(drawGroups.begin(), drawGroups.end(), [](const DrawGroup& a, const DrawGroup& b) { return a.zIndex < b.zIndex; });
+			sortedIndices.reserve(indices.size());
+			for (const DrawGroup& g : drawGroups) {
+				sortedIndices.insert(sortedIndices.end(), indices.begin() + g.indexStart, indices.begin() + g.indexStart + g.indexCount);
+			}
+			emit = &sortedIndices;
+		}
+		const std::vector<uint32_t>& idx = *emit;
 
 		// Enable blending for transparency (shapes and text both need this)
 		glEnable(GL_BLEND);
@@ -449,7 +491,7 @@ namespace Renderer {
 
 		// Upload index data to GPU
 		glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ibo);
-		glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(uint32_t), indices.data(), GL_DYNAMIC_DRAW);
+		glBufferData(GL_ELEMENT_ARRAY_BUFFER, idx.size() * sizeof(uint32_t), idx.data(), GL_DYNAMIC_DRAW);
 
 		// Bind shader and VAO
 		shader.use();
@@ -504,7 +546,7 @@ namespace Renderer {
 		// Common case (all text from one atlas, e.g. the default Roboto): every
 		// text triangle needs the same atlas, so this collapses to a single
 		// glDrawElements identical to the prior single-atlas behavior.
-		const size_t indexCount = indices.size();
+		const size_t indexCount = idx.size();
 		GLuint		 boundAtlas = defaultFontAtlas; // What's currently bound on the GPU
 		if (boundAtlas != 0) {
 			glBindTexture(GL_TEXTURE_2D, boundAtlas);
@@ -514,9 +556,9 @@ namespace Renderer {
 		for (size_t tri = 0; tri < indexCount; tri += 3) {
 			// A triangle's vertices are all shape (tag 0) or all the same text
 			// atlas; max() yields the text atlas if any, else 0 (no requirement).
-			GLuint required = vertexAtlas[indices[tri]];
-			required = std::max(required, vertexAtlas[indices[tri + 1]]);
-			required = std::max(required, vertexAtlas[indices[tri + 2]]);
+			GLuint required = vertexAtlas[idx[tri]];
+			required = std::max(required, vertexAtlas[idx[tri + 1]]);
+			required = std::max(required, vertexAtlas[idx[tri + 2]]);
 
 			if (required != 0 && required != boundAtlas) {
 				// Flush the run accumulated so far with the previously bound atlas.
@@ -560,6 +602,8 @@ namespace Renderer {
 		vertices.clear();
 		indices.clear();
 		vertexAtlas.clear();
+		drawGroups.clear();
+		anyExplicitZ = false;
 	}
 
 	void BatchRenderer::beginFrame() {
@@ -569,6 +613,8 @@ namespace Renderer {
 		vertices.clear();
 		indices.clear();
 		vertexAtlas.clear();
+		drawGroups.clear();
+		anyExplicitZ = false;
 	}
 
 	void BatchRenderer::endFrame() {

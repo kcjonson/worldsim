@@ -73,13 +73,14 @@ namespace Renderer { // NOLINT(readability-identifier-naming)
 			const Foundation::Color&						 fillColor,
 			const std::optional<Foundation::BorderStyle>&	 border = std::nullopt,
 			float											 cornerRadius = 0.0F,
-			const std::optional<Foundation::LinearGradient>& gradient = std::nullopt
+			const std::optional<Foundation::LinearGradient>& gradient = std::nullopt,
+			float											 zIndex = 0.0F
 		);
 
 		// Add an outer box-shadow / glow quad behind a rect. The SDF shader renders
 		// it as a soft falloff over `shadow.blur` px outside the (spread-grown)
 		// shape. Emit before the element's own quad so it sits behind.
-		void addShadowQuad(const Foundation::Rect& bounds, const Foundation::BoxShadow& shadow, float cornerRadius);
+		void addShadowQuad(const Foundation::Rect& bounds, const Foundation::BoxShadow& shadow, float cornerRadius, float zIndex = 0.0F);
 
 		// Add raw triangles (for circles, polygons, etc.)
 		// If inputColors is provided, uses per-vertex colors; otherwise uses uniform color
@@ -89,7 +90,8 @@ namespace Renderer { // NOLINT(readability-identifier-naming)
 			size_t					  vertexCount,
 			size_t					  indexCount,
 			const Foundation::Color&  color,
-			const Foundation::Color*  inputColors = nullptr
+			const Foundation::Color*  inputColors = nullptr,
+			float					  zIndex = 0.0F
 		);
 
 		// --- Text rendering (MSDF) ---
@@ -109,7 +111,8 @@ namespace Renderer { // NOLINT(readability-identifier-naming)
 			const Foundation::Vec2&	 uvMin,
 			const Foundation::Vec2&	 uvMax,
 			const Foundation::Color& color,
-			GLuint					 atlasTexture = 0
+			GLuint					 atlasTexture = 0,
+			float					 zIndex = 0.0F
 		);
 
 		// Set the default MSDF font atlas texture (used by text quads added with
@@ -215,6 +218,21 @@ namespace Renderer { // NOLINT(readability-identifier-naming)
 		// requirement); non-zero = the MSDF atlas a text vertex must sample from.
 		// flush() uses these to split text into per-atlas draw runs.
 		std::vector<GLuint>		 vertexAtlas;
+
+		// Per-draw-call z-order groups. Each add* records one {indexStart, indexCount,
+		// zIndex}. flush() keeps submission order untouched unless some group carries
+		// an explicit (non-zero) z, in which case groups are stable-sorted by z and the
+		// emit-order index list is rebuilt. zIndex originates in the component layer.
+		struct DrawGroup {
+			uint32_t indexStart;
+			uint32_t indexCount;
+			float	 zIndex;
+		};
+		std::vector<DrawGroup> drawGroups;
+		bool				   anyExplicitZ = false;
+
+		// Record the index range [groupStart, current end) as one z-order group.
+		void recordGroup(uint32_t groupStart, float zIndex);
 
 		// OpenGL resources (RAII wrappers for automatic cleanup)
 		GLVertexArray vao;

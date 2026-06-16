@@ -365,11 +365,10 @@ void Select::render() {
 		.zIndex = static_cast<float>(zIndex) + 0.1F,
 	});
 
-	// Render menu if open. Defer to the top overlay layer so it paints above sibling
-	// widgets regardless of scene draw order.
+	// Render menu if open
 	if (open) {
 		if (auto* menu = getChild<Menu>(menuHandle)) {
-			Renderer::Primitives::submitOverlay(menu->zIndex, [menu]() { menu->render(); });
+			menu->render();
 		}
 	}
 }

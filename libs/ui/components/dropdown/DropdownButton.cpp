@@ -349,12 +349,10 @@ namespace UI {
 			chevron->render();
 		}
 
-		// Render menu if open. Defer it to the top overlay layer so it paints above
-		// sibling widgets regardless of scene draw order (the menu's high zIndex orders
-		// it within the overlay).
+		// Render menu if open (Menu handles its own rendering)
 		if (open) {
 			if (auto* menu = getChild<Menu>(menuHandle)) {
-				Renderer::Primitives::submitOverlay(menu->zIndex, [menu]() { menu->render(); });
+				menu->render();
 			}
 		}
 	}

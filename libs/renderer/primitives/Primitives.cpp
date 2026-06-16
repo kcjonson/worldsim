@@ -11,7 +11,6 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
-#include <functional>
 #include <glm/gtc/matrix_transform.hpp>
 #include <memory>
 #include <numbers>
@@ -166,19 +165,6 @@ namespace Renderer::Primitives {
 		return key;
 	}
 
-	// --- Overlay (top-layer) queue ---
-	// Deferred draw callbacks that must paint above all normal UI (popups). Drained
-	// in endFrame() just before the batch flush.
-	namespace {
-		struct OverlayEntry {
-			int					  zIndex = 0;
-			std::function<void()> draw;
-		};
-		std::vector<OverlayEntry> g_overlayQueue;
-	} // namespace
-
-	void submitOverlay(int zIndex, std::function<void()> drawFn) { g_overlayQueue.push_back({zIndex, std::move(drawFn)}); }
-
 	// --- Frame Lifecycle ---
 
 	void beginFrame() {
@@ -193,20 +179,6 @@ namespace Renderer::Primitives {
 	}
 
 	void endFrame() {
-		// Drain the overlay queue first so deferred popups batch AFTER all normal UI
-		// and therefore paint on top, sorted by zIndex (higher last). A callback may
-		// enqueue more (nested popups), so loop until the queue is empty.
-		while (!g_overlayQueue.empty()) {
-			std::vector<OverlayEntry> batch;
-			batch.swap(g_overlayQueue);
-			std::stable_sort(batch.begin(), batch.end(), [](const OverlayEntry& a, const OverlayEntry& b) { return a.zIndex < b.zIndex; });
-			for (const OverlayEntry& entry : batch) {
-				if (entry.draw) {
-					entry.draw();
-				}
-			}
-		}
-
 		// Flush all batched geometry (shapes + text) in a single draw call
 		// The uber shader handles both SDF shapes and MSDF text
 		if (g_batchRenderer != nullptr) {
@@ -305,12 +277,12 @@ namespace Renderer::Primitives {
 
 		// Outer box-shadow / glow sits behind the fill (emit first).
 		if (args.style.boxShadow.has_value()) {
-			g_batchRenderer->addShadowQuad(args.bounds, args.style.boxShadow.value(), cornerRadius);
+			g_batchRenderer->addShadowQuad(args.bounds, args.style.boxShadow.value(), cornerRadius, static_cast<float>(args.zIndex));
 		}
 
 		// Single AddQuad call handles fill, border, rounded corners, and an optional
 		// gradient (per-corner vertex colors) via the GPU.
-		g_batchRenderer->addQuad(args.bounds, args.style.fill, args.style.border, cornerRadius, args.style.gradient);
+		g_batchRenderer->addQuad(args.bounds, args.style.fill, args.style.border, cornerRadius, args.style.gradient, static_cast<float>(args.zIndex));
 	}
 
 	void drawLine(const LineArgs& args) {
@@ -339,7 +311,7 @@ namespace Renderer::Primitives {
 			args.end - offset,	 // end, left
 		};
 		static constexpr uint16_t kQuadIndices[6] = {0, 1, 2, 0, 2, 3};
-		g_batchRenderer->addTriangles(quad, kQuadIndices, 4, 6, args.style.color, nullptr);
+		g_batchRenderer->addTriangles(quad, kQuadIndices, 4, 6, args.style.color, nullptr, static_cast<float>(args.zIndex));
 	}
 
 	void drawTriangles(const TrianglesArgs& args) {
@@ -348,7 +320,7 @@ namespace Renderer::Primitives {
 		}
 
 		g_batchRenderer->addTriangles(
-			args.vertices, args.indices, args.vertexCount, args.indexCount, args.color, args.colors
+			args.vertices, args.indices, args.vertexCount, args.indexCount, args.color, args.colors, static_cast<float>(args.zIndex)
 		);
 	}
 
@@ -468,7 +440,8 @@ namespace Renderer::Primitives {
 					Foundation::Vec2(quad.uvMin.x, quad.uvMin.y),
 					Foundation::Vec2(quad.uvMax.x, quad.uvMax.y),
 					Foundation::Color(quad.color.r, quad.color.g, quad.color.b, quad.color.a),
-					atlasTexture);
+					atlasTexture,
+					static_cast<float>(args.zIndex));
 			}
 		};
 
