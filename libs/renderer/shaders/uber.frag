@@ -185,8 +185,10 @@ void main() {
 		float blur = max(v_data1.x, 0.5);
 
 		float dist = sdRoundedBox(rectLocalPos, halfSize, cornerRadius);
-		// Full alpha inside the shape footprint, fading to 0 over `blur` outside.
-		float a = 1.0 - smoothstep(0.0, blur, dist);
+		// Approximate a CSS box-shadow's Gaussian blur: the falloff is centered on
+		// the shape edge (dist 0 -> ~half alpha), reaching full `blur` px inside and
+		// zero `blur` px outside. This keeps the edge soft rather than full-strength.
+		float a = 1.0 - smoothstep(-blur, blur, dist);
 		if (a < 0.001) {
 			discard;
 		}

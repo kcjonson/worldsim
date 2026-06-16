@@ -409,34 +409,19 @@ namespace Renderer::Primitives {
 			}
 		}
 
-		// Measure the (transformed) string once for box alignment.
-		const glm::vec2 m = g_fontRenderer->MeasureText(effective, args.scale, args.font, args.letterSpacing);
-
 		// CSS text-align within the optional [position, position+box] rect. With no
-		// box (width/height 0) the origin stays at position, matching plain top-left.
+		// box, or Left/Top alignment, the origin stays at position (plain top-left)
+		// and we skip the measure entirely (it's the common case, keep it cheap).
 		Foundation::Vec2 origin = args.position;
-		if (args.boxWidth > 0.0F) {
-			switch (args.hAlign) {
-				case Foundation::HorizontalAlign::Center:
-					origin.x += (args.boxWidth - m.x) * 0.5F;
-					break;
-				case Foundation::HorizontalAlign::Right:
-					origin.x += args.boxWidth - m.x;
-					break;
-				case Foundation::HorizontalAlign::Left:
-					break;
+		const bool		 needsHAlign = args.boxWidth > 0.0F && args.hAlign != Foundation::HorizontalAlign::Left;
+		const bool		 needsVAlign = args.boxHeight > 0.0F && args.vAlign != Foundation::VerticalAlign::Top;
+		if (needsHAlign || needsVAlign) {
+			const glm::vec2 m = g_fontRenderer->MeasureText(effective, args.scale, args.font, args.letterSpacing);
+			if (needsHAlign) {
+				origin.x += (args.hAlign == Foundation::HorizontalAlign::Center) ? (args.boxWidth - m.x) * 0.5F : (args.boxWidth - m.x);
 			}
-		}
-		if (args.boxHeight > 0.0F) {
-			switch (args.vAlign) {
-				case Foundation::VerticalAlign::Middle:
-					origin.y += (args.boxHeight - m.y) * 0.5F;
-					break;
-				case Foundation::VerticalAlign::Bottom:
-					origin.y += args.boxHeight - m.y;
-					break;
-				case Foundation::VerticalAlign::Top:
-					break;
+			if (needsVAlign) {
+				origin.y += (args.vAlign == Foundation::VerticalAlign::Middle) ? (args.boxHeight - m.y) * 0.5F : (args.boxHeight - m.y);
 			}
 		}
 
