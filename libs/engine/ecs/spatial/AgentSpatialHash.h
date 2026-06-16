@@ -12,13 +12,14 @@ namespace ecs {
 
 // Dynamic spatial hash for moving agents. Keyed by packed (cellX, cellY) int64
 // (same packing as engine::assets::SpatialIndex). Rebuilt each frame: clear()
-// preserves allocated capacity so steady-state is allocation-free, then every
-// agent is re-inserted at its new position.
+// drops every cell, then every agent is re-inserted at its new position, so the
+// map only ever holds cells occupied this frame (it cannot accumulate empty
+// cells as agents roam the world).
 class AgentSpatialHash {
   public:
     explicit AgentSpatialHash(float cellSize = 1.0f);
 
-    // Clear all entries but retain bucket/vector capacity.
+    // Drop all cells (bounded: only currently-occupied cells survive a rebuild).
     void clear();
 
     // Insert agent at position into the hash.

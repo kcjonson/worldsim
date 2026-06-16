@@ -8,9 +8,10 @@ AgentSpatialHash::AgentSpatialHash(float cellSize)
     : m_cellSize(cellSize) {}
 
 void AgentSpatialHash::clear() {
-    for (auto& [key, vec] : m_cells) {
-        vec.clear(); // keep capacity
-    }
+    // Drop every cell so the map can't accumulate empty entries as agents move
+    // across the world over a session. Agent counts are small, so the per-frame
+    // rebuild cost is negligible.
+    m_cells.clear();
 }
 
 void AgentSpatialHash::insert(EntityID e, glm::vec2 pos) {
@@ -37,7 +38,11 @@ void AgentSpatialHash::queryNeighbors(glm::vec2 center, float radius, std::vecto
 }
 
 int64_t AgentSpatialHash::cellKey(int32_t cx, int32_t cy) {
-    return (static_cast<int64_t>(cx) << 32) | static_cast<uint32_t>(cy);
+    // Pack the two int32 bit patterns via unsigned arithmetic; shifting a
+    // negative signed value is at best implementation-defined.
+    const uint64_t ux = static_cast<uint64_t>(static_cast<uint32_t>(cx));
+    const uint64_t uy = static_cast<uint64_t>(static_cast<uint32_t>(cy));
+    return static_cast<int64_t>((ux << 32) | uy);
 }
 
 std::pair<int32_t, int32_t> AgentSpatialHash::cellCoords(glm::vec2 pos) const {
