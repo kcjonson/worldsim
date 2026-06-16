@@ -50,6 +50,11 @@ namespace engine::assets {
 		return c;
 	}
 
+	StyleColor ConstructionRegistry::parseStyleColor(const std::string& hex) {
+		const PatternColor c = parseColor(hex);
+		return StyleColor{c.r / 255.0F, c.g / 255.0F, c.b / 255.0F, c.a / 255.0F};
+	}
+
 	// ---------------------------------------------------------------------------
 	// Load entry points
 	// ---------------------------------------------------------------------------
@@ -66,6 +71,7 @@ namespace engine::assets {
 		ok = loadMaterials((fs::path(folderPath) / "materials.xml").string()) && ok;
 		ok = loadConstraints((fs::path(folderPath) / "constraints.xml").string()) && ok;
 		ok = loadSnapping((fs::path(folderPath) / "snapping.xml").string()) && ok;
+		ok = loadRendering((fs::path(folderPath) / "rendering.xml").string()) && ok;
 		return ok;
 	}
 
@@ -313,6 +319,108 @@ namespace engine::assets {
 		return true;
 	}
 
+	bool ConstructionRegistry::loadRendering(const std::string& xmlPath) {
+		RenderingConfig cfg; // built-in defaults; the file overlays whatever it provides
+
+		pugi::xml_document	   doc;
+		pugi::xml_parse_result result = doc.load_file(xmlPath.c_str());
+		if (!result) {
+			// Tolerant: a missing/unreadable file keeps the defaults, which are a
+			// complete valid style, so the renderer never loses its look.
+			LOG_WARNING(
+				Engine, "Construction rendering XML not loaded (%s): %s - using built-in defaults", xmlPath.c_str(), result.description()
+			);
+			renderingConfig = cfg;
+			hasRendering = true;
+			return true;
+		}
+
+		pugi::xml_node root = doc.child("ConstructionRendering");
+		if (!root) {
+			LOG_ERROR(Engine, "No ConstructionRendering root element in: %s", xmlPath.c_str());
+			return false;
+		}
+
+		// Each field is optional: a missing element keeps the struct's default.
+		auto color = [](pugi::xml_node parent, const char* tag, StyleColor def) -> StyleColor {
+			pugi::xml_node node = parent.child(tag);
+			if (!node) {
+				return def;
+			}
+			const std::string hex = node.text().as_string();
+			if (hex.empty()) {
+				return def;
+			}
+			return ConstructionRegistry::parseStyleColor(hex);
+		};
+		auto number = [](pugi::xml_node parent, const char* tag, float def) -> float {
+			pugi::xml_node node = parent.child(tag);
+			return node ? node.text().as_float(def) : def;
+		};
+
+		if (pugi::xml_node f = root.child("Foundation")) {
+			cfg.foundation.blueprintFill = color(f, "blueprintFill", cfg.foundation.blueprintFill);
+			cfg.foundation.fallbackColor = color(f, "fallbackColor", cfg.foundation.fallbackColor);
+			cfg.foundation.outlineColor = color(f, "outlineColor", cfg.foundation.outlineColor);
+			cfg.foundation.progressAlphaMin = number(f, "progressAlphaMin", cfg.foundation.progressAlphaMin);
+			cfg.foundation.progressAlphaMax = number(f, "progressAlphaMax", cfg.foundation.progressAlphaMax);
+			cfg.foundation.outlineAlphaMin = number(f, "outlineAlphaMin", cfg.foundation.outlineAlphaMin);
+			cfg.foundation.outlineAlphaMax = number(f, "outlineAlphaMax", cfg.foundation.outlineAlphaMax);
+			cfg.foundation.outlineWidthBlueprint = number(f, "outlineWidthBlueprint", cfg.foundation.outlineWidthBlueprint);
+			cfg.foundation.outlineWidthBuilt = number(f, "outlineWidthBuilt", cfg.foundation.outlineWidthBuilt);
+		}
+		if (pugi::xml_node w = root.child("Wall")) {
+			cfg.wall.blueprintFill = color(w, "blueprintFill", cfg.wall.blueprintFill);
+			cfg.wall.fallbackColor = color(w, "fallbackColor", cfg.wall.fallbackColor);
+			cfg.wall.outlineColor = color(w, "outlineColor", cfg.wall.outlineColor);
+			cfg.wall.junctionColor = color(w, "junctionColor", cfg.wall.junctionColor);
+			cfg.wall.progressAlphaMin = number(w, "progressAlphaMin", cfg.wall.progressAlphaMin);
+			cfg.wall.progressAlphaMax = number(w, "progressAlphaMax", cfg.wall.progressAlphaMax);
+			cfg.wall.outlineAlphaMin = number(w, "outlineAlphaMin", cfg.wall.outlineAlphaMin);
+			cfg.wall.outlineAlphaMax = number(w, "outlineAlphaMax", cfg.wall.outlineAlphaMax);
+			cfg.wall.outlineWidthBlueprint = number(w, "outlineWidthBlueprint", cfg.wall.outlineWidthBlueprint);
+			cfg.wall.outlineWidthBuilt = number(w, "outlineWidthBuilt", cfg.wall.outlineWidthBuilt);
+			cfg.wall.junctionAlphaBlueprint = number(w, "junctionAlphaBlueprint", cfg.wall.junctionAlphaBlueprint);
+			cfg.wall.junctionAlphaBuilt = number(w, "junctionAlphaBuilt", cfg.wall.junctionAlphaBuilt);
+		}
+		if (pugi::xml_node o = root.child("Opening")) {
+			cfg.opening.doorFallbackColor = color(o, "doorFallbackColor", cfg.opening.doorFallbackColor);
+			cfg.opening.glassColor = color(o, "glassColor", cfg.opening.glassColor);
+			cfg.opening.fillAlpha = number(o, "fillAlpha", cfg.opening.fillAlpha);
+			cfg.opening.outlineAlpha = number(o, "outlineAlpha", cfg.opening.outlineAlpha);
+			cfg.opening.outlineDarken = number(o, "outlineDarken", cfg.opening.outlineDarken);
+			cfg.opening.outlineWidthBuilt = number(o, "outlineWidthBuilt", cfg.opening.outlineWidthBuilt);
+			cfg.opening.outlineWidthBlueprint = number(o, "outlineWidthBlueprint", cfg.opening.outlineWidthBlueprint);
+			cfg.opening.jambWidth = number(o, "jambWidth", cfg.opening.jambWidth);
+			cfg.opening.jambDarken = number(o, "jambDarken", cfg.opening.jambDarken);
+			cfg.opening.jambAlpha = number(o, "jambAlpha", cfg.opening.jambAlpha);
+			cfg.opening.glassInset = number(o, "glassInset", cfg.opening.glassInset);
+			cfg.opening.mullionSpacingMeters = number(o, "mullionSpacingMeters", cfg.opening.mullionSpacingMeters);
+			cfg.opening.mullionAlpha = number(o, "mullionAlpha", cfg.opening.mullionAlpha);
+			cfg.opening.progressAlphaMin = number(o, "progressAlphaMin", cfg.opening.progressAlphaMin);
+			cfg.opening.progressAlphaMax = number(o, "progressAlphaMax", cfg.opening.progressAlphaMax);
+			cfg.opening.ghostAlpha = number(o, "ghostAlpha", cfg.opening.ghostAlpha);
+		}
+		if (pugi::xml_node p = root.child("Preview")) {
+			cfg.preview.guideColor = color(p, "guideColor", cfg.preview.guideColor);
+			cfg.preview.originHaloColor = color(p, "originHaloColor", cfg.preview.originHaloColor);
+			cfg.preview.snapVertexColor = color(p, "snapVertexColor", cfg.preview.snapVertexColor);
+			cfg.preview.snapEdgeColor = color(p, "snapEdgeColor", cfg.preview.snapEdgeColor);
+			cfg.preview.fillPreviewAlpha = number(p, "fillPreviewAlpha", cfg.preview.fillPreviewAlpha);
+			cfg.preview.bandPreviewAlpha = number(p, "bandPreviewAlpha", cfg.preview.bandPreviewAlpha);
+			cfg.preview.lineWidth = number(p, "lineWidth", cfg.preview.lineWidth);
+			cfg.preview.guideWidth = number(p, "guideWidth", cfg.preview.guideWidth);
+			cfg.preview.vertexRadiusPx = number(p, "vertexRadiusPx", cfg.preview.vertexRadiusPx);
+			cfg.preview.invalidVertexRadiusPx = number(p, "invalidVertexRadiusPx", cfg.preview.invalidVertexRadiusPx);
+			cfg.preview.originHaloMinRadiusPx = number(p, "originHaloMinRadiusPx", cfg.preview.originHaloMinRadiusPx);
+		}
+
+		renderingConfig = cfg;
+		hasRendering = true;
+		LOG_INFO(Engine, "Loaded construction rendering style from %s", xmlPath.c_str());
+		return true;
+	}
+
 	// ---------------------------------------------------------------------------
 	// Queries
 	// ---------------------------------------------------------------------------
@@ -322,9 +430,11 @@ namespace engine::assets {
 		openingTypeList.clear();
 		constraintConfig = ConstraintConfig{};
 		snappingConfig = SnappingConfig{};
+		renderingConfig = RenderingConfig{};
 		hasMaterials = false;
 		hasConstraints = false;
 		hasSnapping = false;
+		hasRendering = false;
 	}
 
 	const MaterialDef* ConstructionRegistry::getMaterial(const std::string& name) const {
@@ -381,6 +491,10 @@ namespace engine::assets {
 		return snappingConfig;
 	}
 
+	const RenderingConfig& ConstructionRegistry::rendering() const {
+		return renderingConfig;
+	}
+
 	bool ConstructionRegistry::materialsLoaded() const {
 		return hasMaterials;
 	}
@@ -389,6 +503,9 @@ namespace engine::assets {
 	}
 	bool ConstructionRegistry::snappingLoaded() const {
 		return hasSnapping;
+	}
+	bool ConstructionRegistry::renderingLoaded() const {
+		return hasRendering;
 	}
 
 } // namespace engine::assets
