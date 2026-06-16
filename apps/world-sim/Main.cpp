@@ -20,8 +20,9 @@ int main(int argc, char* argv[]) {
 					return std::string("gameloading");
 				}
 				return std::string{}; // No remapping
-			}
+			},
 		// Uses default assetsRootPath = "assets/world"
+		.loadAssetsAsync = true,
 	};
 
 	return engine::AppLauncher::launch(argc, argv, config);

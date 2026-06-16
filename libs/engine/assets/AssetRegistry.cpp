@@ -695,16 +695,23 @@ namespace engine::assets {
 		return loadedCount > 0;
 	}
 
-	size_t AssetRegistry::loadDefinitionsFromFolder(const std::string& folderPath) {
+	size_t AssetRegistry::loadDefinitionsFromFolder(const std::string& folderPath, const std::function<void(int)>& onProgress) {
 		namespace fs = std::filesystem;
 
+		// Record load-blocking failures in the report too: in async mode the splash
+		// observes done==true and then reads getValidationReport() to gate, so an
+		// early return must leave the report reflecting the failure, not stale state.
 		if (!fs::exists(folderPath)) {
 			LOG_ERROR(Engine, "Asset definitions folder not found: %s", folderPath.c_str());
+			m_validationReport.issues.clear();
+			m_validationReport.add(Severity::Error, "", "", "Asset definitions folder not found", folderPath);
 			return 0;
 		}
 
 		if (!fs::is_directory(folderPath)) {
 			LOG_ERROR(Engine, "Path is not a directory: %s", folderPath.c_str());
+			m_validationReport.issues.clear();
+			m_validationReport.add(Severity::Error, "", "", "Asset path is not a directory", folderPath);
 			return 0;
 		}
 
@@ -746,10 +753,15 @@ namespace engine::assets {
 					size_t loaded = definitions.size() - beforeCount;
 					totalLoaded += loaded;
 					LOG_DEBUG(Engine, "Loaded %zu definitions from %s", loaded, entry.path().string().c_str());
+					if (onProgress) {
+						onProgress(static_cast<int>(definitions.size()));
+					}
 				}
 			}
 		} catch (const fs::filesystem_error& e) {
 			LOG_ERROR(Engine, "Filesystem error scanning '%s': %s", folderPath.c_str(), e.what());
+			m_validationReport.issues.clear();
+			m_validationReport.add(Severity::Error, "", "", std::string("Filesystem error scanning assets: ") + e.what(), folderPath);
 			return totalLoaded;
 		}
 
@@ -771,6 +783,28 @@ namespace engine::assets {
 		);
 
 		return totalLoaded;
+	}
+
+	void AssetRegistry::beginLoadAsync(const std::string& folderPath) {
+		if (m_loadThread.joinable()) {
+			m_loadThread.join();
+		}
+		m_loadProgress.defsLoaded.store(0);
+		m_loadProgress.done.store(false);
+		m_loadProgress.started.store(true, std::memory_order_release);
+
+		m_loadThread = std::thread([this, folderPath]() {
+			loadDefinitionsFromFolder(folderPath, [this](int loaded) { m_loadProgress.defsLoaded.store(loaded); });
+			// Release so a reader that observes done (acquire) sees all the writes
+			// the worker made to definitions, indices, and the validation report.
+			m_loadProgress.done.store(true, std::memory_order_release);
+		});
+	}
+
+	AssetRegistry::~AssetRegistry() {
+		if (m_loadThread.joinable()) {
+			m_loadThread.join();
+		}
 	}
 
 	const AssetDefinition* AssetRegistry::getDefinition(const std::string& defName) const {
@@ -1000,10 +1034,17 @@ namespace engine::assets {
 	}
 
 	void AssetRegistry::clear() {
+		// Finish any in-flight async load before tearing down the data it writes.
+		if (m_loadThread.joinable()) {
+			m_loadThread.join();
+		}
 		definitions.clear();
 		templateCache.clear();
 		groupIndex.clear();
 		m_validationReport.issues.clear();
+		m_loadProgress.started.store(false);
+		m_loadProgress.done.store(false);
+		m_loadProgress.defsLoaded.store(0);
 	}
 
 	std::vector<std::string> AssetRegistry::getDefinitionNames() const {

@@ -479,7 +479,7 @@ while (running) {
 - [x] Phase 1: Shared render path (renderer MeshBounds computeBounds/fitToRect; AssetRegistry::buildMesh; assets AssetRenderer prepare + renderToPixels/Png; foundation PngEncoder + DebugServer refactor; determinism + fidelity tests)
 - [x] Phase 2: Load-time validation (AssetValidator + ValidationReport: missing refs, duplicate defNames, name/folder mismatch, ignored fields, variantCount drift, bad assetType, orphan SVGs; validates on load via getValidationReport; full GL render smoke deferred to the CLI)
 - [x] Phase 3: Headless CLI (apps/asset-cli: list/search/inspect/validate/render; --json; exit codes; server-less for parallel runs; render via hidden GL context; getExecutableDir implemented on Windows so resources resolve regardless of cwd)
-- [ ] Phase 4: Async loading + splash (worker-thread load, progress, validation summary, error-gate scene)
+- [x] Phase 4: Async loading + splash (AssetRegistry::beginLoadAsync worker thread + LoadProgress; AppConfig.loadAssetsAsync, async only on the default splash path, synchronous on a --scene override; splash polls progress, transitions to the menu on clean load, or blocks with an error summary on validation errors)
 - [ ] Phase 5: GUI (apps/asset-manager: GridContainer, browser scene, preview + sampling, inspector, validation view, reload)
 
 ### Fluvial Erosion (worldgen)
