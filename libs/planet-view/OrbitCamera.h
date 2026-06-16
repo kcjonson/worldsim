@@ -41,6 +41,10 @@ class OrbitCamera {
     // as drag, so up/down does nothing until zoomed in). Resets idle.
     void nudge(float dYaw, float dPitch);
 
+    // Latch the idle reveal-spin off. Called for any globe interaction,
+    // including ones that don't move the camera (e.g. right-click color cycle).
+    void markInteracted();
+
     // Advance inertia + auto-rotate; dt in seconds.
     void update(float dt);
 
@@ -80,8 +84,8 @@ class OrbitCamera {
 
     // Pitch (latitude) gate. The unit sphere fills the vertical viewport when
     // distance <= 1/sin(kFovDeg/2); above that the whole globe is visible and
-    // up/down is locked to kHomePitch (spin-only). 1/sin(22.5deg) = 2.6131.
-    static constexpr float kPitchUnlockDistance = 2.6131F;
+    // up/down is locked to kHomePitch (spin-only), unlocking as you zoom in.
+    static float pitchUnlockDistance(); // 1 / sin(kFovDeg/2), derived from the FOV
     static constexpr float kHomePitch       = 0.3F; // resting tilt (matches default pitch)
     static constexpr float kPolePitch       = 1.5F; // hard pole-safety clamp (~86deg)
     static constexpr float kMaxPitchOffset  = 1.8F; // full-zoom swing from home (capped by kPolePitch)

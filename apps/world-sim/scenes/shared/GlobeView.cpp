@@ -121,6 +121,7 @@ bool GlobeView::handleInput(UI::InputEvent& event, const Foundation::Rect& rect,
 				return true;
 			}
 			if (event.button == engine::MouseButton::Right && cycleOnRightClick) {
+				camera.markInteracted(); // a globe interaction: stop the reveal spin
 				cycleColorMode();
 				event.consume();
 				return true;
