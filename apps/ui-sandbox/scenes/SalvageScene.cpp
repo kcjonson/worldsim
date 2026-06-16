@@ -151,7 +151,7 @@ class SalvageScene : public engine::IScene {
 		y += 28.0F;
 
 		// --- People / inputs (middle column) ---
-		const float mx = left + 540.0F;
+		const float mx = left + 960.0F;
 		drawText({.text = "PEOPLE", .position = {mx, 60.0F}, .scale = fs_2xs / 16.0F, .color = accent, .font = fontMono, .id = "section"});
 		Avatar({.position = {mx, 78.0F}, .size = 44.0F, .seed = "Mara Vance", .mood = 0.72F}).render();
 		Avatar({.position = {mx + 54.0F, 78.0F}, .size = 44.0F, .seed = "Idris Okonkwo", .mood = 0.45F}).render();
@@ -166,7 +166,7 @@ class SalvageScene : public engine::IScene {
 		Tooltip({.content = {.title = "Double-click for full dossier"}, .position = {mx, 268.0F}}).render();
 
 		// --- Panels (right column) ---
-		const float px = left + 820.0F;
+		const float px = left + 1320.0F;
 		Panel({.position = {px, 60.0F}, .size = {300.0F, 180.0F}, .title = "REGION", .kicker = "SURVEY", .variant = PanelVariant::Panel, .accent = PanelAccent::Accent}).render();
 		Panel({.position = {px + 320.0F, 60.0F}, .size = {300.0F, 180.0F}, .title = "TELEMETRY", .kicker = "FEED", .variant = PanelVariant::Raised, .accent = PanelAccent::Data}).render();
 		Panel({.position = {px, 260.0F}, .size = {300.0F, 150.0F}, .title = "READOUT", .variant = PanelVariant::Inset, .accent = PanelAccent::None, .corners = false}).render();
