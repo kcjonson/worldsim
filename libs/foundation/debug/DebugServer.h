@@ -66,7 +66,7 @@ namespace Foundation { // NOLINT(readability-identifier-naming)
 
 	// Generic dev/test command queued via /api/dev/<verb>?k=v&k2=v2. DebugServer
 	// lives in foundation and must stay domain-agnostic, so it does NOT know what
-	// "freebuild" or "givewood" mean: it just parses the verb plus the query
+	// "freebuild" or "spawn" mean: it just parses the verb plus the query
 	// params into this bag and hands it to the app, which interprets it (the
 	// construction context lives in GameScene). Mirrors InputCommand's queue.
 	struct DevCommand {
@@ -188,6 +188,19 @@ namespace Foundation { // NOLINT(readability-identifier-naming)
 		// interprets each DevCommand's verb (DebugServer stays domain-agnostic).
 		bool consumeDevCommands(std::vector<DevCommand>& out);
 
+		// Synchronous world-state readback (/api/state). The HTTP thread parks in
+		// requestState while the game thread serializes the requested view; DebugServer
+		// stays domain-agnostic (it carries the `what` query and the JSON result, but the
+		// app produces the JSON). Mirrors the screenshot request/response handshake.
+		bool requestState(const std::string& what, std::string& out, int timeoutMs = 2000);
+
+		// Game thread: if a state request is pending, write its `what` query to whatOut
+		// and return true (caller then serializes and calls deliverState). Else false.
+		bool consumeStateRequest(std::string& whatOut);
+
+		// Game thread: post the serialized JSON result, waking the waiting HTTP thread.
+		void deliverState(const std::string& json);
+
 		// Set/get current scene name (for metrics streaming to frontend)
 		void		setCurrentSceneName(const std::string& name);
 		std::string getCurrentSceneName() const;
@@ -236,6 +249,17 @@ namespace Foundation { // NOLINT(readability-identifier-naming)
 		std::vector<DevCommand> devCommands;
 		std::atomic<bool>		devCommandsPending{false};
 		mutable std::mutex		devCommandsMutex; // Protects devCommands
+
+		// World-state readback channel (/api/state). HTTP thread writes the query and
+		// parks; game thread reads the query, serializes, posts the result. Mirrors the
+		// screenshot request/response pair (single-flight; dev use is single-client).
+		std::atomic<bool> stateRequested{false};
+		std::atomic<bool> stateReady{false};
+		std::string		  stateQuery;		// HTTP writes (the `what` param), game reads
+		std::string		  stateResult;		// game writes (JSON), HTTP reads
+		std::mutex				stateMutex;		   // Protects stateQuery + stateResult
+		std::mutex				stateRequestMutex; // Held by requestState to enforce one in-flight request
+		std::condition_variable stateCV;		   // Signaled by deliverState; requestState parks on it
 
 		// Vsync target for SetVsync action (0 = off, 1 = on)
 		std::atomic<int> targetVsync{1};

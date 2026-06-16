@@ -180,7 +180,7 @@ namespace ecs {
 		/// active (non-Complete) build sites, capped at each site's outstanding need so no
 		/// site is over-filled, and stops once `amount` is exhausted. Returns the total
 		/// credited across sites. Reuses StructureBlueprint::remaining(), so it never
-		/// duplicates the manifest math. Used by /api/dev/givewood?where=site.
+		/// duplicates the manifest math. Used by /api/dev/give?where=site.
 		uint32_t creditMaterialToSites(const std::string& defName, uint32_t amount);
 
 	  private:

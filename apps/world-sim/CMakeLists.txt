@@ -67,6 +67,7 @@ add_executable(world-sim
     scenes/landing/LandingSiteDetailsModel.cpp
     scenes/landing/LandingSiteDetailsPanel.cpp
     scenes/loading/GameLoadingScene.cpp
+    scenes/game/dev/DevCommandHandler.cpp
     scenes/game/GameScene.cpp
     scenes/settings/SettingsScene.cpp
 )

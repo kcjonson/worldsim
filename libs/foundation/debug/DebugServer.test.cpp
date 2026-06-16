@@ -10,13 +10,16 @@ using namespace Foundation;
 
 TEST(DevCommandParse, VerbFromSimplePath) {
 	EXPECT_EQ(parseDevVerb("/api/dev/freebuild"), "freebuild");
-	EXPECT_EQ(parseDevVerb("/api/dev/givewood"), "givewood");
+	EXPECT_EQ(parseDevVerb("/api/dev/give"), "give");
+	EXPECT_EQ(parseDevVerb("/api/dev/spawn"), "spawn");
+	EXPECT_EQ(parseDevVerb("/api/dev/colonist"), "colonist");
+	EXPECT_EQ(parseDevVerb("/api/dev/teleport"), "teleport");
 	EXPECT_EQ(parseDevVerb("/api/dev/foundation"), "foundation");
 }
 
 TEST(DevCommandParse, VerbIsLowercased) {
 	EXPECT_EQ(parseDevVerb("/api/dev/FreeBuild"), "freebuild");
-	EXPECT_EQ(parseDevVerb("/api/dev/GIVEWOOD"), "givewood");
+	EXPECT_EQ(parseDevVerb("/api/dev/SPAWN"), "spawn");
 }
 
 TEST(DevCommandParse, VerbTrimsExtraPathSegments) {
@@ -38,7 +41,7 @@ TEST(DevCommandParse, RejectsNonDevPaths) {
 
 TEST(DevCommandParse, ParamReturnsFirstMatch) {
 	DevCommand cmd;
-	cmd.verb = "givewood";
+	cmd.verb = "give";
 	cmd.params = {{"n", "100"}, {"where", "site"}};
 
 	EXPECT_EQ(cmd.param("n"), "100");
@@ -49,7 +52,7 @@ TEST(DevCommandParse, ParamReturnsFirstMatch) {
 
 TEST(DevCommandParse, ParamFallbackWhenAbsent) {
 	DevCommand cmd;
-	cmd.verb = "givewood";
+	cmd.verb = "give";
 	cmd.params = {{"n", "50"}};
 
 	EXPECT_EQ(cmd.param("missing", "default"), "default");
