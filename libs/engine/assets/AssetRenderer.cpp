@@ -61,7 +61,8 @@ namespace engine::assets {
 				.indices = prepared.mesh.indices.data(),
 				.vertexCount = prepared.mesh.vertices.size(),
 				.indexCount = prepared.mesh.indices.size(),
-				.colors = prepared.mesh.colors.data(),
+				.color = Foundation::Color(0.7F, 0.7F, 0.7F, 1.0F), // fallback if the mesh has no per-vertex colors
+				.colors = prepared.mesh.hasColors() ? prepared.mesh.colors.data() : nullptr,
 			});
 		}
 		Renderer::Primitives::endFrame();

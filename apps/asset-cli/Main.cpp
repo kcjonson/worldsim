@@ -25,6 +25,7 @@
 #include <cstdio>
 #include <iostream>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -64,11 +65,25 @@ namespace {
 		return std::nullopt;
 	}
 
-	// First positional argument (not a flag and not a flag's value).
+	// Flags that consume the following argument as their value.
+	bool flagTakesValue(const std::string& flag) {
+		static const char* kValueFlags[] = {"--type", "--group", "--out", "--size", "--bg", "--seed", "--samples"};
+		for (const char* vf : kValueFlags) {
+			if (flag == vf) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	// First positional argument, skipping flags and the values of value-taking
+	// flags. Boolean flags (--json, --render-smoke) consume no value.
 	std::optional<std::string> positional(const std::vector<std::string>& args) {
 		for (size_t i = 0; i < args.size(); ++i) {
 			if (args[i].rfind("--", 0) == 0) {
-				++i; // skip this flag's value
+				if (flagTakesValue(args[i])) {
+					++i; // also skip this flag's value
+				}
 				continue;
 			}
 			return args[i];
@@ -386,10 +401,26 @@ namespace {
 			return kUsage;
 		}
 		const Foundation::Color bg = parseColor(flagValue(args, "--bg"));
-		const auto				seedArg = flagValue(args, "--seed");
-		const uint32_t			seed = seedArg ? static_cast<uint32_t>(std::stoul(*seedArg)) : 0U;
-		const auto				samplesArg = flagValue(args, "--samples");
-		const int				samples = samplesArg ? std::max(1, std::stoi(*samplesArg)) : 1;
+
+		uint32_t seed = 0U;
+		if (const auto seedArg = flagValue(args, "--seed")) {
+			try {
+				seed = static_cast<uint32_t>(std::stoul(*seedArg));
+			} catch (const std::exception&) {
+				std::cerr << "error: --seed must be a non-negative integer\n";
+				return kUsage;
+			}
+		}
+
+		int samples = 1;
+		if (const auto samplesArg = flagValue(args, "--samples")) {
+			try {
+				samples = std::max(1, std::stoi(*samplesArg));
+			} catch (const std::exception&) {
+				std::cerr << "error: --samples must be an integer\n";
+				return kUsage;
+			}
+		}
 
 		if (!loadLibrary()) {
 			return kFailure;
