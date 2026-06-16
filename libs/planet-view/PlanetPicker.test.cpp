@@ -116,6 +116,14 @@ TEST(OrbitCamera, DistanceClamped) {
 TEST(OrbitCamera, AutoRotateAfterIdle) {
     OrbitCamera cam;
     cam.yaw = 0.0F;
-    cam.update(5.0F); // 5 seconds of idle
-    EXPECT_GT(cam.yaw, 0.0F); // should have auto-rotated
+    cam.update(5.0F);        // idle reveal spin, no interaction yet
+    EXPECT_GT(cam.yaw, 0.0F);
+}
+
+TEST(OrbitCamera, AutoRotateStopsAfterInteraction) {
+    OrbitCamera cam;
+    cam.scroll(1.0F);        // any interaction latches the spin off
+    cam.yaw = 0.0F;
+    cam.update(5.0F);        // still idle, but must not resume
+    EXPECT_FLOAT_EQ(cam.yaw, 0.0F);
 }

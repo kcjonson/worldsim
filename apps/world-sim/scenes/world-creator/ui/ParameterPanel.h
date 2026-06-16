@@ -74,6 +74,10 @@ class ParameterPanel {
 	// False while the seed text is non-empty and not a valid uint64
 	bool seedIsValid() const { return seedState != SeedState::Invalid; }
 
+	// True while the seed field holds keyboard focus, so the scene can suppress
+	// WASD/arrow camera panning while the user is typing a seed.
+	bool isSeedFocused() const;
+
   private:
 	enum class SeedState { Empty, Valid, Invalid };
 

@@ -2,6 +2,8 @@
 
 #include "primitives/Primitives.h"
 
+#include <focus/FocusManager.h>
+
 #include <algorithm>
 #include <cctype>
 #include <format>
@@ -266,6 +268,10 @@ void ParameterPanel::setResolutionValue(const std::string& value) {
 
 bool ParameterPanel::seedIsEmpty() const {
 	return seedState == SeedState::Empty;
+}
+
+bool ParameterPanel::isSeedFocused() const {
+	return seedInput && UI::FocusManager::Get().hasFocus(seedInput.get());
 }
 
 void ParameterPanel::onSeedTextChanged(const std::string& text) {
