@@ -39,6 +39,19 @@ void OrbitCamera::beginDrag(float mouseX, float mouseY) {
     prevMouseY = mouseY;
 }
 
+void OrbitCamera::clampPitch() {
+    float r = 0.0F;
+    if (distance < kPitchUnlockDistance) {
+        const float span = kPitchUnlockDistance - minDist;
+        float t = span > 0.0F ? (kPitchUnlockDistance - distance) / span : 1.0F;
+        t = std::clamp(t, 0.0F, 1.0F);
+        r = t * kMaxPitchOffset;
+    }
+    const float lo = std::max(kHomePitch - r, -kPolePitch);
+    const float hi = std::min(kHomePitch + r,  kPolePitch);
+    pitch = std::clamp(pitch, lo, hi);
+}
+
 void OrbitCamera::drag(float mouseX, float mouseY) {
     if (!dragging) return;
     float dx = mouseX - prevMouseX;
@@ -51,7 +64,7 @@ void OrbitCamera::drag(float mouseX, float mouseY) {
 
     yaw   += yawVel;
     pitch += pitchVel;
-    pitch = std::clamp(pitch, -1.5F, 1.5F);
+    clampPitch();
     idleTime = 0.0F;
 }
 
@@ -62,6 +75,15 @@ void OrbitCamera::endDrag() {
 void OrbitCamera::scroll(float delta) {
     distance -= delta * kScrollSens * distance;
     distance = std::clamp(distance, minDist, kMaxDist);
+    // Zooming out tightens the allowed band, easing pitch back toward home.
+    clampPitch();
+    idleTime = 0.0F;
+}
+
+void OrbitCamera::nudge(float dYaw, float dPitch) {
+    yaw   += dYaw;
+    pitch += dPitch;
+    clampPitch();
     idleTime = 0.0F;
 }
 
@@ -72,11 +94,12 @@ void OrbitCamera::update(float dt) {
         pitchVel *= kInertia;
         yaw   += yawVel * dt * 60.0F;
         pitch += pitchVel * dt * 60.0F;
-        pitch = std::clamp(pitch, -1.5F, 1.5F);
+        clampPitch();
 
-        // Auto-rotate after idle.
+        // Auto-rotate after idle, but only on the full zoomed-out review globe
+        // -- an inspected (zoomed-in) site should hold still.
         idleTime += dt;
-        if (idleTime > kIdleDelay) {
+        if (idleTime > kIdleDelay && distance >= kPitchUnlockDistance) {
             float blend = std::min((idleTime - kIdleDelay) / 2.0F, 1.0F);
             yaw += kAutoYaw * dt * blend;
         }

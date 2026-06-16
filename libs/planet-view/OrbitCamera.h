@@ -37,10 +37,19 @@ class OrbitCamera {
     void endDrag();
     void scroll(float delta); // positive = zoom in
 
+    // Keyboard pan: nudge yaw/pitch by radians (pitch obeys the same zoom gate
+    // as drag, so up/down does nothing until zoomed in). Resets idle.
+    void nudge(float dYaw, float dPitch);
+
     // Advance inertia + auto-rotate; dt in seconds.
     void update(float dt);
 
   private:
+    // Re-clamp pitch to the currently allowed band. Up/down is locked to the
+    // home orientation until the globe overfills the viewport, then opens up
+    // proportionally without ever reaching the poles.
+    void clampPitch();
+
     bool dragging{false};
     float prevMouseX{0.0F};
     float prevMouseY{0.0F};
@@ -65,6 +74,14 @@ class OrbitCamera {
     static constexpr float kScrollSens = 0.15F;
     static constexpr float kIdleDelay = 3.0F;
     static constexpr float kAutoYaw   = 0.05F; // rad/s
+
+    // Pitch (latitude) gate. The unit sphere fills the vertical viewport when
+    // distance <= 1/sin(kFovDeg/2); above that the whole globe is visible and
+    // up/down is locked to kHomePitch (spin-only). 1/sin(22.5deg) = 2.6131.
+    static constexpr float kPitchUnlockDistance = 2.6131F;
+    static constexpr float kHomePitch       = 0.3F; // resting tilt (matches default pitch)
+    static constexpr float kPolePitch       = 1.5F; // hard pole-safety clamp (~86deg)
+    static constexpr float kMaxPitchOffset  = 1.8F; // full-zoom swing from home (capped by kPolePitch)
 };
 
 } // namespace planetview

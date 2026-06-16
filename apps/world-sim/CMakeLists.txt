@@ -63,7 +63,6 @@ add_executable(world-sim
     scenes/world-creator/WorldCreatorScene.cpp
     scenes/world-creator/WorldCreatorModel.cpp
     scenes/world-creator/ui/ParameterPanel.cpp
-    scenes/landing/LandingSiteScene.cpp
     scenes/landing/LandingSiteDetailsModel.cpp
     scenes/landing/LandingSiteDetailsPanel.cpp
     scenes/loading/GameLoadingScene.cpp
