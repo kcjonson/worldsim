@@ -7,6 +7,7 @@ add_library(geometry
     boolean/RingBoolean.cpp
     triangulation/Triangulation.cpp
     nav/NavMesh.cpp
+    nav/PathQuery.cpp
 )
 
 target_include_directories(geometry
