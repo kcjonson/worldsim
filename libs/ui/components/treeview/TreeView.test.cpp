@@ -47,8 +47,8 @@ class TreeViewTest : public ::testing::Test {
 TEST_F(TreeViewTest, ConstructsWithDefaults) {
 	TreeView tree(TreeView::Args{});
 
-	EXPECT_FLOAT_EQ(tree.getRowHeight(), Theme::TreeView::rowHeight);
-	EXPECT_FLOAT_EQ(tree.getIndentWidth(), Theme::TreeView::indentWidth);
+	EXPECT_FLOAT_EQ(tree.getRowHeight(), TreeView::Args{}.rowHeight);
+	EXPECT_FLOAT_EQ(tree.getIndentWidth(), TreeView::Args{}.indentWidth);
 	EXPECT_FLOAT_EQ(tree.getWidth(), 200.0F);  // Default size
 	EXPECT_FLOAT_EQ(tree.getHeight(), 300.0F); // Default size
 	EXPECT_EQ(tree.getVisibleRowCount(), 0);   // No nodes yet

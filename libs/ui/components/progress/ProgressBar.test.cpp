@@ -17,42 +17,38 @@ TEST_F(ProgressBarTest, ConstructsWithDefaults) {
 	ProgressBar bar(ProgressBar::Args{});
 
 	EXPECT_FLOAT_EQ(bar.getValue(), 1.0F);
-	EXPECT_FLOAT_EQ(bar.getWidth(), 100.0F);	 // Default size.x
-	EXPECT_FLOAT_EQ(bar.getHeight(), 12.0F);	 // Default size.y
+	EXPECT_FLOAT_EQ(bar.size.x, 200.0F); // Default width
 }
 
-TEST_F(ProgressBarTest, ConstructsWithCustomSize) {
+TEST_F(ProgressBarTest, ConstructsWithCustomWidth) {
 	ProgressBar bar(ProgressBar::Args{
-		.size = {200.0F, 20.0F},
+		.width = 200.0F,
 		.value = 0.5F,
 	});
 
 	EXPECT_FLOAT_EQ(bar.getValue(), 0.5F);
-	EXPECT_FLOAT_EQ(bar.getWidth(), 200.0F);
-	EXPECT_FLOAT_EQ(bar.getHeight(), 20.0F);
+	EXPECT_FLOAT_EQ(bar.size.x, 200.0F);
 }
 
 TEST_F(ProgressBarTest, ConstructsWithLabel) {
 	ProgressBar bar(ProgressBar::Args{
-		.size = {150.0F, 12.0F},
+		.width = 150.0F,
 		.label = "Test",
-		.labelWidth = 50.0F,
-		.labelGap = 5.0F,
+		.valueText = "50%",
 	});
 
-	// Size should include the full width (label + gap + bar)
-	EXPECT_FLOAT_EQ(bar.getWidth(), 150.0F);
+	// Width is the track width; a header row adds height, not width.
+	EXPECT_FLOAT_EQ(bar.size.x, 150.0F);
 }
 
 TEST_F(ProgressBarTest, ConstructsWithMargin) {
 	ProgressBar bar(ProgressBar::Args{
-		.size = {100.0F, 12.0F},
+		.width = 100.0F,
 		.margin = 5.0F,
 	});
 
-	// getWidth/getHeight include margin on both sides
-	EXPECT_FLOAT_EQ(bar.getWidth(), 110.0F);	 // 100 + 5*2
-	EXPECT_FLOAT_EQ(bar.getHeight(), 22.0F); // 12 + 5*2
+	// size is the bar's own footprint; margin is separate (folded into content position).
+	EXPECT_FLOAT_EQ(bar.size.x, 100.0F);
 }
 
 // === Value Tests ===
@@ -119,12 +115,12 @@ TEST_F(ProgressBarTest, SetPositionWithMargin) {
 
 TEST_F(ProgressBarTest, FullWidthBarNoLabel) {
 	ProgressBar bar(ProgressBar::Args{
-		.size = {80.0F, 16.0F},
+		.width = 80.0F,
 		.value = 0.5F,
 		// No label - bar should take full width
 	});
 
-	EXPECT_FLOAT_EQ(bar.getWidth(), 80.0F);
+	EXPECT_FLOAT_EQ(bar.size.x, 80.0F);
 	EXPECT_FLOAT_EQ(bar.getValue(), 0.5F);
 }
 
