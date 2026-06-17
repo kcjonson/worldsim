@@ -97,8 +97,10 @@ namespace engine::nav {
 					}
 					cur = pick;
 				}
-				(void)closed;
-				if (loop.size() >= 3) {
+				// Keep only loops that closed back to their start. An open chain (a
+				// walk that stranded before returning) is not a valid ring and would
+				// give meaningless area/orientation downstream.
+				if (closed && loop.size() >= 3) {
 					loops.push_back(std::move(loop));
 				}
 			}
@@ -302,33 +304,33 @@ namespace engine::nav {
 			if (type == nullptr) {
 				continue;
 			}
-			if (!type->pathable) {
-				// Window: leave the band solid, emit a zero-clearance portal so a later
-				// vision pass can still find the opening. No geometry change.
-				outDoors.push_back({static_cast<std::int64_t>(op.id), {}, {}, 0});
-				continue;
-			}
-			auto idxIt = segIndexById.find(op.segment);
-			if (idxIt == segIndexById.end()) {
-				continue; // door on a non-built / missing segment: nothing to cut
-			}
-
-			const geometry::Ring footprint = construction::openingFootprint(world, op);
-			if (footprint.size() < 4) {
-				continue;
-			}
-
 			// The footprint is the band over the opening's clear-width sub-span,
 			// CCW with 4 verts walked aLeft, bLeft, bRight, aRight (geometry::band).
 			// Its two SHORT edges are the jambs: aLeft-aRight and bLeft-bRight. The
 			// jamb POINTS that bound the passage are the centerline-crossing midpoints
-			// of those short edges, which sit on the wall centerline.
+			// of those short edges, which sit on the wall centerline. Computed for
+			// windows too so every opening is spatially addressable.
+			const geometry::Ring footprint = construction::openingFootprint(world, op);
+			if (footprint.size() < 4) {
+				continue;
+			}
 			const geometry::Vec2i64 aLeft	= footprint[0];
 			const geometry::Vec2i64 bLeft	= footprint[1];
 			const geometry::Vec2i64 bRight	= footprint[2];
 			const geometry::Vec2i64 aRight	= footprint[3];
 			const geometry::Vec2i64 jambA{(aLeft.x + aRight.x) / 2, (aLeft.y + aRight.y) / 2};
 			const geometry::Vec2i64 jambB{(bLeft.x + bRight.x) / 2, (bLeft.y + bRight.y) / 2};
+
+			if (!type->pathable) {
+				// Window: leave the band solid, emit a zero-clearance portal carrying
+				// the jamb points so a later vision pass can locate the opening.
+				outDoors.push_back({static_cast<std::int64_t>(op.id), jambA, jambB, 0});
+				continue;
+			}
+			auto idxIt = segIndexById.find(op.segment);
+			if (idxIt == segIndexById.end()) {
+				continue; // door on a non-built / missing segment: nothing to cut
+			}
 
 			// Centerline parameter range of the gap, recomputed the same way the
 			// footprint did (clear-width half-extent over segment length), so the

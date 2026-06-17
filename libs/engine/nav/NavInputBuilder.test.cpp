@@ -151,7 +151,15 @@ TEST(NavInputBuilder, Water_OriginOffsetMapsToWorldMm) {
 // Flora
 // ---------------------------------------------------------------------------
 
-TEST(NavInputBuilder, Flora_CircleEntity_EmitsOctagon) {
+// Flora tests register into the global AssetRegistry singleton; clear it before
+// and after each so they neither inherit nor leak definitions across the suite.
+class NavFloraTest : public ::testing::Test {
+  protected:
+	void SetUp() override { AssetRegistry::Get().clearDefinitions(); }
+	void TearDown() override { AssetRegistry::Get().clearDefinitions(); }
+};
+
+TEST_F(NavFloraTest, CircleEntity_EmitsOctagon) {
 	AssetRegistry& reg = AssetRegistry::Get();
 	AssetDefinition tree;
 	tree.defName = "Test_NavTree";
@@ -195,7 +203,7 @@ TEST(NavInputBuilder, Flora_CircleEntity_EmitsOctagon) {
 	EXPECT_NEAR(maxR, 150.0, 5.0);
 }
 
-TEST(NavInputBuilder, Flora_NoCollision_EmitsNothing) {
+TEST_F(NavFloraTest, NoCollision_EmitsNothing) {
 	AssetRegistry& reg = AssetRegistry::Get();
 	AssetDefinition bush;
 	bush.defName = "Test_NavBush";
