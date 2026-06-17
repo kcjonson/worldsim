@@ -12,6 +12,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <utility>
+#include <vector>
 
 namespace ecs {
 
@@ -20,14 +22,15 @@ namespace {
 	namespace cons = engine::construction;
 
 	// One built wall resolved to float meters: centerline endpoints, the band's
-	// half-thickness, and the segment id so the door-gap lookup can find its
-	// openings. Precomputed once per update() so the per-agent inner loop stays
-	// cheap (no registry lookups, no mm<->m conversion per agent).
+	// half-thickness, and its precomputed door-gap spans (the [t0,t1] centerline
+	// ranges of built pathable openings). All resolved once per update() so the
+	// per-agent inner loop stays cheap -- no registry lookups, no mm<->m
+	// conversion, and no rescan of every opening per agent.
 	struct WallBand {
-		cons::SegmentId id;
-		glm::vec2		v0;
-		glm::vec2		v1;
-		float			halfThicknessMeters;
+		glm::vec2							 v0;
+		glm::vec2							 v1;
+		float								 halfThicknessMeters;
+		std::vector<std::pair<float, float>> doorSpans;
 	};
 
 	constexpr float kMillimetersPerMeter = 1000.0F;
@@ -67,42 +70,38 @@ void WallCollisionSystem::update(float /*deltaTime*/) {
 		if (preset == nullptr || preset->halfThicknessMm <= 0) {
 			continue;
 		}
-		bands.push_back({seg.id, toMeters(v0->pos), toMeters(v1->pos),
-						 static_cast<float>(preset->halfThicknessMm) / kMillimetersPerMeter});
+
+		WallBand band;
+		band.v0					 = toMeters(v0->pos);
+		band.v1					 = toMeters(v1->pos);
+		band.halfThicknessMeters = static_cast<float>(preset->halfThicknessMm) / kMillimetersPerMeter;
+
+		// Precompute this segment's door gaps ONCE here, not per agent: the
+		// centerline span [t0,t1] of every BUILT, PATHABLE opening. Windows
+		// (non-pathable) and blueprint openings leave the band solid. The span uses
+		// the same clear-width formula NavInputBuilder cuts the band at, so the
+		// collision gap matches the navmesh gap the path was solved against.
+		const float segLengthMm = glm::length(band.v1 - band.v0) * kMillimetersPerMeter;
+		if (segLengthMm > 0.0F) {
+			for (const cons::Opening& op : m_construction->openings()) {
+				if (op.segment != seg.id || op.state != cons::FoundationState::Built) {
+					continue;
+				}
+				const auto* type = registry.getOpeningType(op.type);
+				if (type == nullptr || !type->pathable) {
+					continue;
+				}
+				const float halfExtent = (static_cast<float>(type->widthMm) * 0.5F) / segLengthMm;
+				band.doorSpans.emplace_back(std::clamp(op.t - halfExtent, 0.0F, 1.0F),
+											std::clamp(op.t + halfExtent, 0.0F, 1.0F));
+			}
+		}
+		bands.push_back(std::move(band));
 	}
 
 	if (bands.empty()) {
 		return; // no built walls: no-op (and no per-agent work)
 	}
-
-	// Returns true if `tProj` along segment `segId` falls in a door gap: the
-	// centerline span of a BUILT, PATHABLE opening. Windows (non-pathable) and
-	// blueprint openings do NOT exempt. The gap span is computed with the exact
-	// NavInputBuilder formula (clear-width half-extent over segment length), so
-	// the collision gap matches the navmesh gap the path was solved against. If
-	// multiple openings sit on the segment, any one pathable-built span exempts.
-	auto inDoorGap = [&](cons::SegmentId segId, float tProj, float segLengthMeters) -> bool {
-		const float segLengthMm = segLengthMeters * kMillimetersPerMeter;
-		if (segLengthMm <= 0.0F) {
-			return false;
-		}
-		for (const cons::Opening& op : m_construction->openings()) {
-			if (op.segment != segId || op.state != cons::FoundationState::Built) {
-				continue;
-			}
-			const auto* type = registry.getOpeningType(op.type);
-			if (type == nullptr || !type->pathable) {
-				continue; // windows leave the band solid
-			}
-			const float halfExtent = (static_cast<float>(type->widthMm) * 0.5F) / segLengthMm;
-			const float t0			= std::clamp(op.t - halfExtent, 0.0F, 1.0F);
-			const float t1			= std::clamp(op.t + halfExtent, 0.0F, 1.0F);
-			if (tProj >= t0 && tProj <= t1) {
-				return true;
-			}
-		}
-		return false;
-	};
 
 	// Two relaxation iterations so an agent wedged into a corner between two
 	// perpendicular walls settles against BOTH: iteration 1 clears the wall it
@@ -133,14 +132,21 @@ void WallCollisionSystem::update(float /*deltaTime*/) {
 					continue; // disc doesn't overlap this wall's band
 				}
 
-				// Door-gap exemption: a built pathable opening whose centerline span
-				// contains the projection means the wall has a real gap there, so the
-				// agent may pass. Computed off the unclamped-then-clamped tProj, which
-				// is the same parameter NavInputBuilder cuts the band at.
-				const float segLength = std::sqrt(len2);
-				if (inDoorGap(band.id, tProj, segLength)) {
+				// Door-gap exemption: if the projection lands in one of this band's
+				// precomputed pathable-opening spans, the wall has a real gap there
+				// and the agent may pass through it.
+				bool inDoorGap = false;
+				for (const std::pair<float, float>& span : band.doorSpans) {
+					if (tProj >= span.first && tProj <= span.second) {
+						inDoorGap = true;
+						break;
+					}
+				}
+				if (inDoorGap) {
 					continue;
 				}
+
+				const float segLength = std::sqrt(len2); // for the on-centerline normal fallback
 
 				glm::vec2 normal;
 				if (dist > 1e-4F) {

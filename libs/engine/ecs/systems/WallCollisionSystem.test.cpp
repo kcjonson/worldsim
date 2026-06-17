@@ -7,6 +7,9 @@
 #include <assets/ConstructionRegistry.h>
 #include <construction/ConstructionWorld.h>
 
+#include <glm/geometric.hpp>
+#include <glm/vec2.hpp>
+
 #include <cmath>
 #include <filesystem>
 #include <string>
@@ -51,7 +54,10 @@ namespace {
 	// the asserts track the real band, not a hard-coded guess.
 	float standardHalfThicknessMeters() {
 		const auto* preset = ConstructionRegistry::Get().getThicknessPreset("Wood", "Standard");
-		EXPECT_NE(preset, nullptr);
+		if (preset == nullptr) {
+			ADD_FAILURE() << "Wood/Standard thickness preset missing from config";
+			return 0.1F; // safe fallback so the test fails cleanly instead of dereferencing null
+		}
 		return static_cast<float>(preset->halfThicknessMm) / 1000.0F;
 	}
 
