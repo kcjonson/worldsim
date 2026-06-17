@@ -84,7 +84,10 @@ namespace world_sim {
 			}
 
 			const std::string idBase = "nav_path_" + std::to_string(static_cast<unsigned long long>(entity));
-			for (std::size_t i = 0; i + 1 < screen.size(); ++i) {
+			// Draw only the route the colonist still has to walk: start at the waypoint
+			// it is steering toward (navPath.current), not the already-traversed ones. If
+			// current has advanced to/past the end, nothing is drawn.
+			for (std::size_t i = navPath.current; i + 1 < screen.size(); ++i) {
 				const std::string segId = idBase + "_" + std::to_string(i);
 				Renderer::Primitives::drawLine(
 					Renderer::Primitives::LineArgs{

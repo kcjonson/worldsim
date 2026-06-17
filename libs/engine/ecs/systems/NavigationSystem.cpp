@@ -79,8 +79,12 @@ namespace ecs {
 			}
 		}
 
-		// Nothing to build against. A query before any wiring is a safe no-op.
-		if (m_chunkManager == nullptr && m_constructionWorld == nullptr) {
+		// buildInput needs the (non-thread-safe) ConstructionWorld for the walls and
+		// the fallback border, so there is nothing meaningful to build without it.
+		// Return WITHOUT latching m_haveBuiltOnce, so the first real build happens once
+		// the world is wired -- otherwise an empty mesh would stick and no later
+		// version/chunk change would trigger a rebuild.
+		if (m_constructionWorld == nullptr) {
 			return;
 		}
 

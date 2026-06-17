@@ -222,3 +222,26 @@ TEST_F(NavigationSystemTest, RebuildSealsRoomWhenDoorRemoved) {
 	}
 	EXPECT_TRUE(sealed) << "blueprinting the door never re-sealed the room";
 }
+
+// Deferred wiring: pumping update() before the ConstructionWorld is set must NOT
+// latch a mesh. Once the world is wired the first real build still happens.
+// (Regression: an empty build used to latch m_haveBuiltOnce, after which no later
+// version/chunk change would trigger the real build.)
+TEST_F(NavigationSystemTest, ConstructionWorldWiredAfterUpdatesStillBuilds) {
+	ConstructionWorld cw;
+	buildRoom(cw, /*withOpening=*/true, /*pathableOpening=*/true);
+
+	World world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+
+	// Frames with nothing wired must stay a no-op: no mesh latched.
+	for (int i = 0; i < 10; ++i) {
+		sys.update(0.016F);
+	}
+	ASSERT_FALSE(sys.hasMesh());
+
+	// Wiring the world now must still trigger the first build and a path solve.
+	sys.setConstructionWorld(&cw);
+	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built after deferred wiring";
+	EXPECT_TRUE(sys.requestPath(kOutside, kInside, kAgentRadius).has_value());
+}
