@@ -6,6 +6,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
+#include <limits>
 #include <numbers>
 
 // Design: angular sweep over candidate directions. The naive endpoint ray-cast
@@ -236,8 +238,15 @@ namespace geometry {
 			if (dirLen == 0.0) {
 				continue;
 			}
-			const std::int64_t scale   = static_cast<std::int64_t>(static_cast<double>(sightRadiusMm) / dirLen) + 2;
-			const Vec2i64	   farExact = observer + dir * scale;
+			std::int64_t scale = static_cast<std::int64_t>(static_cast<double>(sightRadiusMm) / dirLen) + 2;
+			// Cap the multiplier so dir*scale (and observer+dir*scale) stay within
+			// int64 -- Vec2i64::operator* is unchecked. In practice scale ~
+			// radius/|dir| keeps the product near the radius; this only guards
+			// pathological inputs and never trims a scale we actually need.
+			const std::int64_t kSafe   = (std::numeric_limits<std::int64_t>::max)() / 4;
+			const std::int64_t maxComp = std::max<std::int64_t>(1, std::max(std::llabs(dir.x), std::llabs(dir.y)));
+			scale					   = std::max<std::int64_t>(1, std::min(scale, kSafe / maxComp));
+			const Vec2i64 farExact	   = observer + dir * scale;
 			// Circle clamp point in this exact direction (float-snapped, the one
 			// inexact step; used only for unoccluded arcs).
 			const Vec2i64 circleAtDir =
@@ -280,6 +289,9 @@ namespace geometry {
 
 	bool hasLineOfSight(const Vec2i64& observer, const Vec2i64& target, std::int64_t sightRadiusMm,
 						const std::vector<OccluderSegment>& occluders) {
+		if (sightRadiusMm <= 0) {
+			return false; // non-positive sight radius sees nothing (mirrors computeVisibilityPolygon)
+		}
 		if (observer == target) {
 			return true;
 		}

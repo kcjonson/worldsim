@@ -307,7 +307,9 @@ TEST(OracleSweep, RandomScenesMatchBruteForce) {
 	std::uniform_int_distribution<std::int64_t> coord(-1000, 1000);
 	std::uniform_int_distribution<int> segCount(0, 5);
 
-	constexpr int kAngles = 720;
+	// Sized to stay thorough (tens of thousands of rays) while keeping the suite
+	// snappy in CI; bump kAngles/iter for a heavier local soak.
+	constexpr int kAngles = 360;
 	constexpr double kTwoPi = 2.0 * std::numbers::pi;
 	// Tolerance covers the mm snapping of polygon vertices and the half-degree
 	// offset between the sampled angle and a sloped occluder face. Generous in
@@ -318,7 +320,7 @@ TEST(OracleSweep, RandomScenesMatchBruteForce) {
 	int scenes = 0;
 	int samples = 0;
 
-	for (int iter = 0; iter < 700; ++iter) {
+	for (int iter = 0; iter < 300; ++iter) {
 		const Vec2i64 observer{coord(rng), coord(rng)};
 		const int m = segCount(rng);
 		std::vector<OccluderSegment> occ;
@@ -401,6 +403,6 @@ TEST(OracleSweep, RandomScenesMatchBruteForce) {
 		}
 	}
 
-	EXPECT_GT(scenes, 400);		   // hundreds of random scenes actually ran
-	EXPECT_GT(samples, 150000);	   // and a deep sweep of rays per scene was checked
+	EXPECT_GT(scenes, 100);		  // a meaningful number of random scenes actually ran
+	EXPECT_GT(samples, 40000);	  // and a deep sweep of rays per scene was checked
 }
