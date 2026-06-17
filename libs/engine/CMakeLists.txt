@@ -27,6 +27,7 @@ add_library(engine
     ecs/systems/ConstructionSystem.cpp
     ecs/systems/RoomDetectionSystem.cpp
     ecs/systems/CollisionSystem.cpp
+    ecs/systems/NavigationSystem.cpp
     ecs/spatial/AgentSpatialHash.cpp
     ecs/GoalTaskRegistry.cpp
     ecs/components/MemoryQueries.cpp
