@@ -1,11 +1,10 @@
 #include "SelectionSystem.h"
 
-#include "scenes/game/world/construction/OpeningGeometry.h"
-
 #include <assets/AssetRegistry.h>
 #include <assets/ConstructionRegistry.h>
 #include <assets/placement/PlacementExecutor.h>
 #include <construction/ConstructionWorld.h>
+#include <construction/OpeningGeometry.h>
 #include <core/Vec2i64.h>
 #include <ecs/components/Appearance.h>
 #include <ecs/components/Colonist.h>
@@ -229,7 +228,7 @@ std::vector<Selection> SelectionSystem::gatherCandidates(glm::vec2 worldPos) {
 		const auto						clickMm = geometry::quantize(Foundation::Vec2{worldPos.x, worldPos.y});
 		engine::construction::OpeningId hitOpening = engine::construction::kInvalidOpening;
 		for (const auto& opening : constructionWorld->openings()) {
-			const geometry::Ring footprint = openingFootprint(*constructionWorld, opening);
+			const geometry::Ring footprint = engine::construction::openingFootprint(*constructionWorld, opening);
 			if (footprint.size() < 3) {
 				continue;
 			}
@@ -414,7 +413,7 @@ void SelectionSystem::renderIndicator(int viewportW, int viewportH) {
 		const engine::construction::Opening* opening =
 			(constructionWorld != nullptr) ? constructionWorld->getOpening(openingSel->id) : nullptr;
 		if (opening != nullptr) {
-			const geometry::Ring footprint = openingFootprint(*constructionWorld, *opening);
+			const geometry::Ring footprint = engine::construction::openingFootprint(*constructionWorld, *opening);
 			const std::size_t	 n = footprint.size();
 			for (std::size_t i = 0; i < n; ++i) {
 				auto a = geometry::dequantize(footprint[i]);

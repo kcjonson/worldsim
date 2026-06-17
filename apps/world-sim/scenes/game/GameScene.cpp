@@ -5,6 +5,7 @@
 #include "scenes/game/dev/DevCommandHandler.h"
 #include "scenes/game/ui/GameUI.h"
 #include "scenes/game/world/construction/DrawingSystem.h"
+#include "scenes/game/world/nav/NavOverlay.h"
 #include "scenes/game/world/placement/PlacementSystem.h"
 #include "scenes/game/world/rooms/RoomOverlay.h"
 #include "scenes/game/world/selection/SelectionSystem.h"
@@ -72,6 +73,7 @@
 #include <ecs/systems/CraftingGoalSystem.h>
 #include <ecs/systems/DynamicEntityRenderSystem.h>
 #include <ecs/systems/MovementSystem.h>
+#include <ecs/systems/NavigationSystem.h>
 #include <ecs/systems/NeedsDecaySystem.h>
 #include <ecs/systems/PhysicsSystem.h>
 #include <ecs/systems/RoomDetectionSystem.h>
@@ -315,6 +317,10 @@ namespace {
 				auto& constructionSystem = ecsWorld->getSystem<ecs::ConstructionSystem>();
 				constructionSystem.setConstructionWorld(&m_drawingSystem->world());
 
+				// NavigationSystem reads the same ConstructionWorld (walls/doors) to build
+				// its navmesh input; wired here for the same reason ConstructionSystem is.
+				ecsWorld->getSystem<ecs::NavigationSystem>().setConstructionWorld(&m_drawingSystem->world());
+
 				auto& actionSys = ecsWorld->getSystem<ecs::ActionSystem>();
 
 				// Build complete: flip the structure to Built (bumps ConstructionWorld version,
@@ -459,6 +465,15 @@ namespace {
 				.roomDetection = &ecsWorld->getSystem<ecs::RoomDetectionSystem>(),
 			});
 
+			// Nav debug overlay: draws the cached navmesh wireframe and live agent
+			// routes when toggled on (N). Reads the NavigationSystem mesh + per-entity
+			// NavPath components live; off by default.
+			m_navOverlay = std::make_unique<world_sim::NavOverlay>(world_sim::NavOverlay::Args{
+				.world = ecsWorld.get(),
+				.camera = m_camera.get(),
+				.navigation = &ecsWorld->getSystem<ecs::NavigationSystem>(),
+			});
+
 			// Populate the config strip's material cards from construction config.
 			{
 				std::vector<std::pair<std::string, float>> materials;
@@ -583,6 +598,11 @@ namespace {
 			// two never drift.
 			if (input.isKeyPressed(engine::Key::R)) {
 				setRoomOverlayActive(!m_roomOverlay->isActive());
+			}
+
+			// N toggles the nav debug overlay (navmesh wireframe + agent routes).
+			if (input.isKeyPressed(engine::Key::N)) {
+				setNavOverlayActive(!m_navOverlay->isActive());
 			}
 
 			// Handle time controls
@@ -781,6 +801,10 @@ namespace {
 			// No-op unless toggled on (R).
 			m_roomOverlay->render(w, h);
 
+			// Nav debug overlay (navmesh wireframe + agent routes) above wall bands.
+			// No-op unless toggled on (N).
+			m_navOverlay->render(w, h);
+
 			// Render selection indicator in world-space (after entities, before UI)
 			m_selectionSystem->renderIndicator(w, h);
 
@@ -868,6 +892,7 @@ namespace {
 			ecsWorld->registerSystem<ecs::BuildGoalSystem>();								// Priority 57 - goals before AI
 			ecsWorld->registerSystem<ecs::ConstructionSystem>();							// Priority 58 - foundation lifecycle goals
 			ecsWorld->registerSystem<ecs::RoomDetectionSystem>();							// Priority 59 - derive rooms from built walls
+			ecsWorld->registerSystem<ecs::NavigationSystem>();								// Priority 51 - cached navmesh + path queries
 			ecsWorld->registerSystem<ecs::AIDecisionSystem>(assetRegistry, recipeRegistry); // Priority 60
 			ecsWorld->registerSystem<ecs::MovementSystem>();								// Priority 100
 			ecsWorld->registerSystem<ecs::PhysicsSystem>();									// Priority 200
@@ -886,9 +911,19 @@ namespace {
 				LOG_INFO(Game, "Recipe discovered: %s", recipeLabel.c_str());
 			});
 
+			// Wire NavigationSystem resources (same data VisionSystem consumes). The
+			// ConstructionWorld pointer is wired after DrawingSystem is created, back in
+			// initialize(), exactly like ConstructionSystem.
+			auto& navSystem = ecsWorld->getSystem<ecs::NavigationSystem>();
+			navSystem.setChunkManager(m_chunkManager.get());
+			navSystem.setPlacementData(m_placementExecutor.get(), &m_processedChunks);
+
 			// Wire up AIDecisionSystem with chunk manager for toilet location queries
 			auto& aiDecisionSystem = ecsWorld->getSystem<ecs::AIDecisionSystem>();
 			aiDecisionSystem.setChunkManager(m_chunkManager.get());
+
+			// AI resolves a navmesh route at the destination seam; null mesh = beeline.
+			aiDecisionSystem.setNavigationSystem(&navSystem);
 
 			// Wire ConstructionSystem with placement data for footprint-clearing queries. The
 			// ConstructionWorld pointer and completion callbacks are wired after DrawingSystem
@@ -1162,6 +1197,13 @@ namespace {
 			LOG_INFO(Game, "Rooms overlay %s", active ? "ON" : "OFF");
 		}
 
+		/// Set the nav debug overlay active state. Plain hotkey toggle (N); no
+		/// GameplayBar button mirror.
+		void setNavOverlayActive(bool active) {
+			m_navOverlay->setActive(active);
+			LOG_INFO(Game, "Nav overlay %s", active ? "ON" : "OFF");
+		}
+
 		/// Handle Demolish request from a foundation's info panel. Marks the foundation for
 		/// deconstruction; a colonist tears it down over time (work-driven), and the
 		/// deconstructed-completion callback removes the topology and refunds materials.
@@ -1380,6 +1422,7 @@ namespace {
 		std::unique_ptr<world_sim::SelectionSystem> m_selectionSystem;
 		std::unique_ptr<world_sim::DrawingSystem>	m_drawingSystem;
 		std::unique_ptr<world_sim::RoomOverlay>		m_roomOverlay;
+		std::unique_ptr<world_sim::NavOverlay>		m_navOverlay;
 
 		// Dev/test command + state-readback surface (/api/dev, /api/state). Dev-only;
 		// constructed after the systems above exist.

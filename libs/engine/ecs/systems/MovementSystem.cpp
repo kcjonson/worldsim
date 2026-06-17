@@ -3,6 +3,7 @@
 #include "../World.h"
 #include "../components/FacingDirection.h"
 #include "../components/Movement.h"
+#include "../components/NavPath.h"
 #include "../components/Task.h"
 #include "../components/Transform.h"
 
@@ -18,6 +19,15 @@ namespace ecs {
 void MovementSystem::update(float deltaTime) {
     (void)deltaTime;  // Not used directly - we set velocity, PhysicsSystem applies it
 
+    // Final-waypoint / beeline arrival threshold - stop when close enough. Matched to
+    // the legacy value so navmesh-following tasks complete at the same distance the
+    // direct-movement tasks always have, keeping ActionSystem hand-offs unchanged.
+    constexpr float kArrivalThreshold = 0.1f;
+
+    // Intermediate-waypoint advance radius: a colonist need only get near a corner
+    // before turning toward the next one, so this is looser than the final arrival.
+    constexpr float kWaypointAdvance = 0.15f;
+
     // Process all entities with movement targets
     for (auto [entity, pos, vel, target] :
          world->view<Position, Velocity, MovementTarget>()) {
@@ -25,11 +35,49 @@ void MovementSystem::update(float deltaTime) {
             continue;
         }
 
+        // Navmesh path-following: when the entity carries a valid route, steer along
+        // its waypoints instead of beelining straight at the goal. Entities without a
+        // valid NavPath keep the exact direct-movement behavior below.
+        auto* navPath = world->getComponent<NavPath>(entity);
+        if (navPath != nullptr && navPath->valid && !navPath->done()) {
+            glm::vec2 waypoint = navPath->waypoints[navPath->current];
+            glm::vec2 toWaypoint = waypoint - pos.value;
+            float distance = glm::length(toWaypoint);
+
+            const bool isFinal = (navPath->current + 1 >= navPath->waypoints.size());
+            const float threshold = isFinal ? kArrivalThreshold : kWaypointAdvance;
+
+            if (distance < threshold) {
+                ++navPath->current;
+                if (navPath->done()) {
+                    // Reached the goal: same hand-off the beeline path performs.
+                    vel.value = {0.0f, 0.0f};
+                    target.active = false;
+                    navPath->valid = false;
+
+                    if (auto* task = world->getComponent<Task>(entity)) {
+                        if (task->state == TaskState::Moving) {
+                            task->state = TaskState::Arrived;
+                        }
+                    }
+                    continue;
+                }
+                // Re-aim at the next waypoint this same frame.
+                waypoint = navPath->waypoints[navPath->current];
+                toWaypoint = waypoint - pos.value;
+                distance = glm::length(toWaypoint);
+            }
+
+            if (distance > 0.0001f) {
+                vel.value = (toWaypoint / distance) * target.speed;
+            } else {
+                vel.value = {0.0f, 0.0f};
+            }
+            continue;
+        }
+
         glm::vec2 toTarget = target.target - pos.value;
         float distance = glm::length(toTarget);
-
-        // Arrival threshold - stop when close enough
-        constexpr float kArrivalThreshold = 0.1f;
 
         if (distance < kArrivalThreshold) {
             // Arrived at target

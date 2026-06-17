@@ -6,15 +6,13 @@
 #include <algorithm>
 #include <cmath>
 
-namespace world_sim {
+namespace engine::construction {
 
 	namespace {
-		namespace ec = engine::construction;
-
 		// Segment length in mm from its two vertex positions, 0 if a vertex is missing.
-		double segmentLengthMm(const ec::ConstructionWorld& world, const ec::WallSegment& seg) {
-			const ec::Vertex* v0 = world.getVertex(seg.v0);
-			const ec::Vertex* v1 = world.getVertex(seg.v1);
+		double segmentLengthMm(const ConstructionWorld& world, const WallSegment& seg) {
+			const Vertex* v0 = world.getVertex(seg.v0);
+			const Vertex* v1 = world.getVertex(seg.v1);
 			if (v0 == nullptr || v1 == nullptr) {
 				return 0.0;
 			}
@@ -24,13 +22,13 @@ namespace world_sim {
 		}
 	} // namespace
 
-	geometry::Ring openingFootprint(const ec::ConstructionWorld& world, const ec::Opening& opening) {
-		const ec::WallSegment* seg = world.getSegment(opening.segment);
+	geometry::Ring openingFootprint(const ConstructionWorld& world, const Opening& opening) {
+		const WallSegment* seg = world.getSegment(opening.segment);
 		if (seg == nullptr) {
 			return {};
 		}
-		const ec::Vertex* v0 = world.getVertex(seg->v0);
-		const ec::Vertex* v1 = world.getVertex(seg->v1);
+		const Vertex* v0 = world.getVertex(seg->v0);
+		const Vertex* v1 = world.getVertex(seg->v1);
 		if (v0 == nullptr || v1 == nullptr) {
 			return {};
 		}
@@ -66,4 +64,4 @@ namespace world_sim {
 		return geometry::band(lerpMm(t0), lerpMm(t1), halfThick);
 	}
 
-} // namespace world_sim
+} // namespace engine::construction

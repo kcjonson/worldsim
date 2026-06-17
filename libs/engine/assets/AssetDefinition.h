@@ -14,6 +14,8 @@
 
 #include "placement/PlacementTypes.h"
 
+#include <glm/vec2.hpp>
+
 namespace engine::assets {
 
 	// ─────────────────────────────────────────────────────────────────────────
@@ -257,6 +259,23 @@ namespace engine::assets {
 		std::unordered_map<std::string, std::string> params;
 	};
 
+	// ─────────────────────────────────────────────────────────────────────────
+	// Collision Shape
+	// Optional per-asset physical footprint for navmesh and static collision.
+	// Most flora (grass, bushes) leave this at None and don't block movement.
+	// ─────────────────────────────────────────────────────────────────────────
+
+	enum class CollisionShapeType { None, Circle, Polygon };
+
+	struct CollisionShape {
+		CollisionShapeType     type = CollisionShapeType::None;
+		float                  radiusMeters = 0.0F;          // Circle
+		glm::vec2              offsetMeters{0.0F, 0.0F};     // Circle center offset from asset origin
+		std::vector<glm::vec2> pointsMeters;                 // Polygon vertices (local space, CCW)
+
+		[[nodiscard]] bool blocks() const { return type != CollisionShapeType::None; }
+	};
+
 	/// Animation parameters parsed from asset definition
 	struct AnimationParams {
 		bool		  enabled = false;
@@ -334,6 +353,8 @@ namespace engine::assets {
 		AssetComplexity					  complexity = AssetComplexity::Simple;
 		RenderingTier					  renderingTier = RenderingTier::Instanced;
 		uint32_t						  variantCount = 1; // Number of variants to pre-generate
+
+		CollisionShape collision; // Physical footprint for navmesh/collision; default None = doesn't block
 
 		// Item category and carrying
 		ItemCategory category = ItemCategory::None; // What type of item (for storage matching, UI grouping)
