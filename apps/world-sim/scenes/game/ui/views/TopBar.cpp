@@ -73,10 +73,10 @@ void TopBar::updateData(const TimeModel& timeModel, int survivorCount) {
 	std::snprintf(buf, sizeof(buf), "%02d:%02d", d.hour, d.minute);
 	timeStr = buf;
 
-	// The Salvage sub-lines use a middot separator, but the MSDF atlas is ASCII-only
-	// for now; use a hyphen until the charset gains the punctuation glyphs.
-	survivorStr = std::to_string(survivorCount) + (survivorCount == 1 ? " survivor" : " survivors") +
-				  " - Sol " + std::to_string(d.day);
+	// Split the sub-line so the middot separator can be drawn as a vector dot
+	// (symbols are iconography, not font glyphs).
+	survivorPart = std::to_string(survivorCount) + (survivorCount == 1 ? " survivor" : " survivors");
+	solPart = "Sol " + std::to_string(d.day);
 
 	updateSpeedButtonStates(d.speed);
 	positionElements();
@@ -115,6 +115,11 @@ void TopBar::positionElements() {
 	const float w1 = measure(dayStr, UI::fs_md, UI::fontDisplay);
 	const float w2 = measure(seasonStr, UI::fs_xs, UI::fontMono, UI::fs_xs * UI::ls_wide);
 	const float w3 = measure(timeStr, UI::fs_md, UI::fontMono);
+
+	// Sub-line layout: "<survivors> . <Sol D>", the dot drawn as a vector middot.
+	const float subW = measure(survivorPart, UI::fs_2xs, UI::fontMono);
+	subDotX = bounds.x + kPadH + subW + UI::space_1_5;
+	subSolX = subDotX + UI::space_1_5;
 
 	float btnW = 0.0F;
 	float btnH = 0.0F;
@@ -161,8 +166,11 @@ void TopBar::positionElements() {
 }
 
 void TopBar::render() {
+	using Renderer::Primitives::drawCircle;
 	using Renderer::Primitives::drawRect;
 	using Renderer::Primitives::drawText;
+
+	constexpr float kSubY = 30.0F;	  // sub-line text top, relative to bar top
 
 	// Bar background + bottom hairline.
 	drawRect(Renderer::Primitives::RectArgs{
@@ -182,8 +190,20 @@ void TopBar::render() {
 		.hAlign = Foundation::HorizontalAlign::Left,
 		.vAlign = Foundation::VerticalAlign::Top});
 	drawText(Renderer::Primitives::TextArgs{
-		.text = survivorStr,
-		.position = {bounds.x + kPadH, bounds.y + 30.0F},
+		.text = survivorPart,
+		.position = {bounds.x + kPadH, bounds.y + kSubY},
+		.scale = textScale(UI::fs_2xs),
+		.color = UI::text_faint,
+		.font = UI::fontMono,
+		.hAlign = Foundation::HorizontalAlign::Left,
+		.vAlign = Foundation::VerticalAlign::Top});
+	drawCircle(Renderer::Primitives::CircleArgs{
+		.center = {subDotX, bounds.y + kSubY + 5.0F},
+		.radius = 1.4F,
+		.style = {.fill = UI::text_faint}});
+	drawText(Renderer::Primitives::TextArgs{
+		.text = solPart,
+		.position = {subSolX, bounds.y + kSubY},
 		.scale = textScale(UI::fs_2xs),
 		.color = UI::text_faint,
 		.font = UI::fontMono,

@@ -76,16 +76,19 @@ class TopBar : public UI::Component {
 
 	// Cached display data (built in updateData, drawn in render)
 	std::string colonyName;
-	std::string dayStr;		   // "Day 14"
-	std::string seasonStr;	   // "SPRING" (uppercased)
-	std::string timeStr;	   // "09:42"
-	std::string survivorStr;   // "3 survivors / Sol 14"
+	std::string dayStr;			// "Day 14"
+	std::string seasonStr;		// "SPRING" (uppercased)
+	std::string timeStr;		// "09:42"
+	std::string survivorPart;	// "3 survivors"
+	std::string solPart;		// "Sol 14"
 
 	// Computed layout (set by positionElements)
 	float rowY = 0.0F;		   // vertical center of the bar
 	float dayX = 0.0F;
 	float seasonX = 0.0F;
 	float timeX = 0.0F;
+	float subDotX = 0.0F;	   // middot separator x in the sub-line
+	float subSolX = 0.0F;	   // "Sol D" run x in the sub-line
 	Foundation::Rect pillRect{};
 
 	void updateSpeedButtonStates(ecs::GameSpeed currentSpeed);
