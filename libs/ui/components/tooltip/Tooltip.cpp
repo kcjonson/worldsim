@@ -32,7 +32,7 @@ namespace UI {
 		}
 
 		// Draw a filled triangle from three corners.
-		void drawTriangle(Foundation::Vec2 a, Foundation::Vec2 b, Foundation::Vec2 c, Foundation::Color color, const char* id) {
+		void drawTriangle(Foundation::Vec2 a, Foundation::Vec2 b, Foundation::Vec2 c, Foundation::Color color, const char* id, int zIndex) {
 			const std::array<Foundation::Vec2, 3> verts{a, b, c};
 			const std::array<uint16_t, 3>		  idx{0, 1, 2};
 			Renderer::Primitives::drawTriangles({.vertices = verts.data(),
@@ -40,7 +40,8 @@ namespace UI {
 												 .vertexCount = verts.size(),
 												 .indexCount = idx.size(),
 												 .color = color,
-												 .id = id});
+												 .id = id,
+												 .zIndex = zIndex});
 		}
 
 	} // namespace
@@ -139,7 +140,8 @@ namespace UI {
 					 {center.x + kPointerSize, bubble.y},
 					 {center.x, bubble.y - kPointerSize},
 					 fade(bg_panel_raised, opacity),
-					 "tooltip_pointer");
+					 "tooltip_pointer",
+					 zIndex);
 
 		const float textX = bubble.x + kPadX;
 		float		textY = bubble.y + kPadY;

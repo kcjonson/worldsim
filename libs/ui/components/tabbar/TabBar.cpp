@@ -338,7 +338,15 @@ namespace UI {
 		for (const Tab& tab : m_tabs) {
 			float labelWidth = 0.0F;
 			if (fontRenderer != nullptr) {
-				labelWidth = fontRenderer->MeasureText(tab.label, scale, fontDisplay, kLabelSpacing).x;
+				// render() uppercases the label, so measure the uppercased form or the
+				// cell widths (and hit regions) drift from what's drawn.
+				std::string measured = tab.label;
+				for (char& ch : measured) {
+					if (ch >= 'a' && ch <= 'z') {
+						ch = static_cast<char>(ch - ('a' - 'A'));
+					}
+				}
+				labelWidth = fontRenderer->MeasureText(measured, scale, fontDisplay, kLabelSpacing).x;
 			}
 			const float cellWidth = labelWidth + (space_3 * 2.0F);
 

@@ -64,9 +64,14 @@ if(BUILD_TESTING)
     if(PLANET_VIEW_TEST_SOURCES)
         find_package(GTest CONFIG REQUIRED)
         add_executable(planet-view-tests ${PLANET_VIEW_TEST_SOURCES})
+        # renderer's Primitives TU references ui::FontRenderer but links it only as
+        # include-only (to avoid a renderer<->ui cycle), so the final executable must
+        # supply the font impl. world-sim/ui-sandbox link ui already; this test exe
+        # pulls Primitives via planet-view, so it links ui too.
         target_link_libraries(planet-view-tests
             PRIVATE
                 planet-view
+                ui
                 GTest::gtest
                 GTest::gtest_main
         )

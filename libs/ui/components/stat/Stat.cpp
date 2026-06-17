@@ -29,9 +29,9 @@ namespace UI {
 			return fs_xl;
 		}
 
-		float measureWidth(const std::string& text, float scale) {
+		float measureWidth(const std::string& text, float scale, Renderer::FontFamily family) {
 			if (const ui::FontRenderer* font = Renderer::Primitives::getFontRenderer(); font != nullptr) {
-				return font->MeasureText(text, scale).x;
+				return font->MeasureText(text, scale, family).x;
 			}
 			return 0.0F;
 		}
@@ -73,7 +73,7 @@ namespace UI {
 		// the value's baseline (offset down by the font-size difference).
 		if (!args.unit.empty()) {
 			const float unitPx = valuePx * 0.62F;
-			const float valueWidth = measureWidth(args.value, valueScale);
+			const float valueWidth = measureWidth(args.value, valueScale, fontDisplay);
 			drawText({.text = args.unit,
 					  .position = {args.position.x + valueWidth + space_0_5, valueY + (valuePx - unitPx)},
 					  .scale = textScale(unitPx),
