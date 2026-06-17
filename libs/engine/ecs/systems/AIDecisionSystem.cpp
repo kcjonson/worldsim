@@ -3,8 +3,10 @@
 #include "../GoalTaskRegistry.h"
 #include "../World.h"
 #include "../components/Action.h"
+#include "../components/AgentRadius.h"
 #include "../components/Appearance.h"
 #include "../components/DecisionTrace.h"
+#include "../components/NavPath.h"
 #include "../components/Inventory.h"
 #include "../components/Memory.h"
 #include "../components/MemoryQueries.h"
@@ -18,6 +20,7 @@
 #include "../components/ToiletLocationFinder.h"
 #include "../components/Transform.h"
 #include "../components/WorkQueue.h"
+#include "NavigationSystem.h"
 
 #include "assets/ActionTypeRegistry.h"
 #include "assets/AssetDefinition.h"
@@ -783,7 +786,7 @@ namespace ecs {
 					// Clear and assign new task
 					task.clear();
 					task.timeSinceEvaluation = 0.0F;
-					selectTaskFromTrace(task, movementTarget, *trace, position);
+					selectTaskFromTrace(entity, task, movementTarget, *trace, position);
 					task.priority = newPriority; // Store priority for future comparisons
 
 					LOG_INFO(
@@ -1253,6 +1256,7 @@ namespace ecs {
 	}
 
 	void AIDecisionSystem::selectTaskFromTrace(
+		EntityID			 entity,
 		Task&				 task,
 		MovementTarget&		 movementTarget,
 		const DecisionTrace& trace,
@@ -1350,10 +1354,65 @@ namespace ecs {
 		if (isGroundFallback) {
 			movementTarget.active = false;
 			task.state = TaskState::Arrived;
+			// Already at the goal: drop any stale route from a prior task.
+			if (auto* navPath = world->getComponent<NavPath>(entity)) {
+				navPath->valid = false;
+			}
 		} else {
 			movementTarget.active = true;
 			task.state = TaskState::Moving;
+			requestNavPath(entity, task.targetPosition, position);
 		}
+	}
+
+	void AIDecisionSystem::requestNavPath(EntityID entity, const glm::vec2& goal, const Position& position) {
+		// No nav system wired, or no mesh built yet: fall back to the straight-line
+		// beeline MovementSystem already set up via MovementTarget. Invalidate any
+		// route left over from a previous task so a stale path isn't followed.
+		if (m_navSystem == nullptr || !m_navSystem->hasMesh()) {
+			if (auto* navPath = world->getComponent<NavPath>(entity)) {
+				navPath->valid = false;
+			}
+			LOG_DEBUG(Engine, "[Nav] Entity %llu: no mesh, beeline to (%.2f, %.2f)",
+				static_cast<unsigned long long>(entity), goal.x, goal.y);
+			return;
+		}
+
+		// Agent footprint feeds the disc-clearance query; default if the entity has none.
+		float radius = 0.3F;
+		if (const auto* agentRadius = world->getComponent<AgentRadius>(entity)) {
+			radius = agentRadius->radiusMeters;
+		}
+
+		auto path = m_navSystem->requestPath(position.value, goal, radius);
+		if (!path.has_value()) {
+			// Off-mesh or unreachable goal: invalidate the route and let the beeline
+			// MovementTarget carry the colonist (v1 still beelines an unreachable goal;
+			// the wall-collision safety net is a later task).
+			if (auto* navPath = world->getComponent<NavPath>(entity)) {
+				navPath->valid = false;
+			}
+			LOG_DEBUG(Engine, "[Nav] Entity %llu: no path to (%.2f, %.2f), beeline fallback",
+				static_cast<unsigned long long>(entity), goal.x, goal.y);
+			return;
+		}
+
+		// Attach or overwrite the route. waypoints[0] is ~the start, so steer toward
+		// index 1 when there's more than one point (skip the point we're standing on).
+		NavPath navPath;
+		navPath.waypoints = std::move(*path);
+		navPath.current = navPath.waypoints.size() >= 2 ? 1 : 0;
+		navPath.valid = true;
+
+		const std::size_t count = navPath.waypoints.size();
+		if (auto* existing = world->getComponent<NavPath>(entity)) {
+			*existing = std::move(navPath);
+		} else {
+			world->addComponent<NavPath>(entity, std::move(navPath));
+		}
+
+		LOG_DEBUG(Engine, "[Nav] Entity %llu: path to (%.2f, %.2f), %zu waypoints",
+			static_cast<unsigned long long>(entity), goal.x, goal.y, count);
 	}
 
 	std::string AIDecisionSystem::formatOptionReason(const EvaluatedOption& option, const char* needName) {
