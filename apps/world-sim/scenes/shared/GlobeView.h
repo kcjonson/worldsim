@@ -10,7 +10,6 @@
 
 #include <planet-view/OrbitCamera.h>
 #include <planet-view/PlanetColorizer.h>
-#include <planet-view/PlanetDetailCache.h>
 #include <planet-view/PlanetMesh.h>
 #include <planet-view/PlanetPicker.h>
 #include <planet-view/PlanetRenderer.h>
@@ -69,13 +68,12 @@ class GlobeView {
 	const std::shared_ptr<const worldgen::GeneratedWorld>& world() const { return currentWorld; }
 
   private:
-	// pool must outlive colorizer/detailCache: they bake on it asynchronously and
-	// wait on those bakes in their destructors. Declaration order = construction
-	// order; reverse is destruction order, so pool is destroyed last.
+	// pool must outlive colorizer: it bakes on the pool asynchronously and waits
+	// on those bakes in its destructor. Declaration order = construction order;
+	// reverse is destruction order, so pool is destroyed last.
 	foundation::TaskPool        pool;
 	planetview::PlanetMesh      mesh;
 	planetview::PlanetColorizer colorizer;
-	planetview::PlanetDetailCache detailCache;
 	planetview::PlanetRenderer  renderer;
 	planetview::OrbitCamera     camera;
 

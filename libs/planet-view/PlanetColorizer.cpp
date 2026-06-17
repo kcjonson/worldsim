@@ -14,7 +14,11 @@
 namespace planetview {
 
 namespace {
-constexpr uint32_t kBaseMax = 1024; // base-tier cap (mips cover smaller detail)
+// Base-tier resolution cap = the product subdivision max (PlanetIO kMaxSubdivision
+// = 2048). At this cap mip 0 carries one texel per tile for every generatable world,
+// which is exactly what the shader's analytic per-pixel hex render reads (one
+// exact tile color per cell); finer than one-texel-per-tile is never needed.
+constexpr uint32_t kBaseMax = 2048;
 
 // Fill texel rows [jb, je) of rhombus `r`'s base texture into `dst` (texSize^2*4).
 // Texel (i,j) maps to an owned chart vertex via canonicalTile, so seam/pole
@@ -194,9 +198,12 @@ bool PlanetColorizer::uploadPending() {
         return false;
     }
 
-    // Upload up to 2 rhombi per frame, regenerating mips for each.
+    // Upload a couple of rhombi per frame, regenerating mips for each. A single
+    // 2048^2 glGenerateMipmap is a few ms, so drop to one rhombus/frame at the
+    // largest sizes to avoid a frame spike on a full re-bake (e.g. mode cycle).
+    const int uploadsPerFrame = (texSize >= 1536) ? 1 : 2;
     int uploaded = 0;
-    while (uploadCursor < 10 && uploaded < 2) {
+    while (uploadCursor < 10 && uploaded < uploadsPerFrame) {
         uint32_t r = static_cast<uint32_t>(uploadCursor);
         glBindTexture(GL_TEXTURE_2D, textures[r]);
         glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0,

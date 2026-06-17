@@ -6,11 +6,9 @@
 
 #include <planet-view/OrbitCamera.h>
 #include <planet-view/PlanetColorizer.h>
-#include <planet-view/PlanetDetailCache.h>
 #include <planet-view/PlanetMesh.h>
 #include <planet-view/PlanetPicker.h>
 #include <planet-view/PlanetRenderer.h>
-#include <planet-view/PlanetScheduler.h>
 #include <world/worldgen/data/PlanetParams.h>
 #include <world/worldgen/pipeline/PlanetGenerator.h>
 
@@ -106,13 +104,7 @@ class PlanetScene : public engine::IScene {
             int fbW = vp[2], fbH = vp[3];
 
             colorizer.uploadPending();
-            if (lastSnapshot && lastSnapshot->grid && detailCache.isReady()) {
-                float aspect = (fbH > 0) ? (static_cast<float>(fbW) / fbH) : 1.0F;
-                planetview::schedulePages(detailCache, camera, aspect, fbW, fbH,
-                                          *lastSnapshot->grid, kSubdivision);
-            }
-
-            renderer.render(mesh, colorizer, detailCache, kSubdivision, camera, fbW, fbH);
+            renderer.render(mesh, colorizer, kSubdivision, camera, fbW, fbH);
             renderer.blitToScreen(fbW, fbH);
 
             if (markerVisible) {
@@ -256,12 +248,11 @@ class PlanetScene : public engine::IScene {
     bool meshBuilt{false};
     std::string statusText;
 
-    // pool declared first so it outlives colorizer/detailCache (they bake on it
-    // and wait on those bakes in their destructors).
+    // pool declared first so it outlives colorizer (it bakes on the pool and
+    // waits on those bakes in its destructor).
     foundation::TaskPool        pool;
     planetview::PlanetMesh      mesh;
     planetview::PlanetColorizer colorizer;
-    planetview::PlanetDetailCache detailCache;
     planetview::PlanetRenderer  renderer;
     planetview::OrbitCamera     camera;
 
@@ -278,7 +269,6 @@ class PlanetScene : public engine::IScene {
             mesh.build(kSubdivision, *world.grid);
 
             colorizer.init(kSubdivision);
-            detailCache.init(kSubdivision);
 
             std::string shaderDir = Foundation::findResourceString("shaders");
             if (shaderDir.empty()) shaderDir = "shaders";
@@ -302,7 +292,6 @@ class PlanetScene : public engine::IScene {
         if (meshBuilt && colorizer.isReady() && lastSnapshot) {
             auto mode = static_cast<planetview::ColorMode>(colorModeIdx);
             colorizer.requestBake(lastSnapshot, mode, pool);
-            detailCache.setWorld(lastSnapshot, mode);
         }
     }
 
@@ -311,7 +300,6 @@ class PlanetScene : public engine::IScene {
         if (lastSnapshot && colorizer.isReady()) {
             auto mode = static_cast<planetview::ColorMode>(colorModeIdx);
             colorizer.requestBake(lastSnapshot, mode, pool);
-            detailCache.setWorld(lastSnapshot, mode);
         }
     }
 };

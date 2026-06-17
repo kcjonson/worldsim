@@ -1,59 +1,63 @@
 # Planet-view rendering
 
 Created: 2026-06-12
-Status: Implemented (feature/worldgen-hex-tiles)
+Updated: 2026-06-16 — detail-tier page cache removed; the globe now renders from a single smooth tier (see Historical Addendum).
+Status: Implemented
 
 Supersedes: the "M3f-2 chunked-LOD" placeholder from the M3f-1 commit and
 `docs/development-log/entries/2026-06-10-worldgen-foundation-merged.md` note
 ("chunked-LOD deferred to M3f-2"). That approach — drawing tile geometry — was
-replaced by a two-tier texture + per-pixel shader design that scales to any n
-with O(screen pixels) GPU cost and constant GPU memory.
+replaced by a texture + per-pixel shader design with O(screen pixels) GPU cost;
+the base textures scale with n² up to the 2048 product cap (see GPU memory budget).
 
 ---
 
-## Two-tier architecture
+## Architecture
 
-The globe renders in two tiers that blend seamlessly as the camera zooms:
+The globe renders from a single **base texture** per rhombus (RGBA8 + full mips,
+`baseSize = min(n, kBaseMax)`, `kBaseMax = 2048` = the product cap
+`PlanetIO kMaxSubdivision`, so `baseSize == n` and mip 0 holds exactly one texel
+per tile). That texture is just the per-tile color store — the hexagons are drawn
+**analytically per pixel** in the shader (next section), so the globe stays crisp
+vector hexagons at any zoom. The mip chain is used only to average tiles into a
+shimmer-free image once they go sub-pixel.
 
-**Base tier** (always resident): answers "zoomed out". Per-rhombus RGBA8 textures
-at `baseSize = min(n, 1024)` with a full mip chain, `GL_LINEAR_MIPMAP_LINEAR` min
-filter. When tiles are sub-pixel the mip hierarchy is the correct, shimmer-free
-answer — no per-tile work needed. ~40MB + mips total for n≥1024.
-
-**Detail tier** (camera-following page cache): answers "zoomed in". Pages are
-128×128 tiles plus a 1-texel border ring = 130×130 texels, baked with
-`SphereGrid::canonicalTile` so border texels match the CPU assignment across
-rhombus seams. An LRU atlas (`GL_TEXTURE_2D_ARRAY`, 256 layers, ~17MB) holds
-resident pages; a per-rhombus R16UI page table (one layer per rhombus, entries
-= atlas layer+1 or 0-for-not-resident) lets the shader look up any page in
-constant time.
-
-The blend between tiers happens in the fragment shader based on `tilePx` (pixels
-per tile from `fwidth(axial)`), fading from base-only below 2 px/tile to
-detail-dominant above 5 px/tile.
+> A second camera-following per-tile "detail tier" used to stream full-n pages at
+> close zoom (see Historical Addendum). It sampled NEAREST (flat hex facets), was a
+> single level, and stepped jarringly from the blurry base — removed 2026-06-16.
+> Within the n≤2048 cap and the camera's px/tile clamp, the analytic-hex render
+> over the full-resolution base needs no streaming or second tier.
 
 ---
 
-## Per-pixel hex assignment (planet.frag)
+## Crisp analytic hexagons (planet.frag)
 
-The mesh stays a fixed ~166k-vertex sphere. No tile geometry exists. Hex
-assignment is pure shader math:
+The mesh is a fixed ~166k-vertex sphere with no tile geometry — the hexagons are
+evaluated per pixel. Each fragment finds its cell and on-screen size:
 
 ```glsl
-vec2 axial = v_uv * u_n;          // tile centers at integer lattice coords
-ivec2 cell = hexRound(axial);     // cube round, floor(x+0.5) ties (matches SphereGrid::hexRound)
+vec2  axial  = v_uv * u_n;        // tile centers at integer lattice coords
+ivec2 cell   = hexRound(axial);   // cube round, matches SphereGrid::hexRound
 float tilePx = 1.0 / length(fwidth(axial));
 ```
 
-Voronoi edge distance for the border line uses the 6 fixed neighbor offsets in
-unskewed Cartesian (basis vectors equal length at 60°):
+- **Crisp fill.** The cell's exact color at its texel center, forced to mip 0:
+  `textureLod(u_baseTex, (vec2(cell)-vec2(1,0)+0.5)/u_n, 0.0)`. Sampling the texel
+  center returns that texel un-blended. (The old blur came from
+  `texture(u_baseTex, v_uv)` landing on tile *vertices* = texel boundaries, so
+  bilinear mixed two tiles on every edge.)
+- **Anti-aliased edges.** A Voronoi distance to the 6 neighbors (in `cart()`
+  unskewed Cartesian, 60° basis) gives signed edge distances; the **two** nearest
+  cells are blended by coverage `smoothstep(-w, +w, edgeDist)`,
+  `w = clamp(0.5*fwidth(edgeDist), 1e-4, 0.7)`. Two-cell blending keeps the
+  three-cell hex corners clean; the `fwidth` clamp stops the limb from smearing.
+  ~1px vector-clean edges at any zoom.
+- **Sub-pixel.** Below ~1.5 px/tile the per-pixel cell flickers, so cross-fade to
+  the mipmapped `texture(u_baseTex, v_uv)` average; the two agree at the handoff.
+- **Faint outline.** A subtle dark cell edge keeps the lattice legible between
+  same-colored tiles (tunable `kGridDarken`, `kGridNearPx/FullPx`).
 
-```glsl
-vec2 cart(vec2 a) { return vec2(a.x + 0.5*a.y, a.y*0.8660254); }
-```
-
-The border band fades in over `tilePx` 14→40, is AA'd via `fwidth(edgeDist)`,
-and darkens to 55% of the tile color. GPU cost is O(screen pixels) at any n.
+Tunable consts at the top of `planet.frag`. GPU cost is O(screen pixels) at any n.
 
 ---
 
@@ -71,38 +75,6 @@ and darkens to 55% of the tile color. GPU cost is O(screen pixels) at any n.
 
 ---
 
-## Detail-tier page cache (PlanetDetailCache)
-
-`PlanetDetailCache` owns the atlas + page table:
-
-- Per-frame flow: `beginFrame()` → scheduler calls `requestPage(rhombus, pi, pj)`
-  for visible and prefetch pages → `endFrame()` bakes queued pages serially (each
-  is ≤1ms), uploads ≤4 pages/frame, pushes R16UI page table updates.
-- Pages bake on the render thread (no TaskPool): each 130×130×4 = ~68KB bake is
-  sub-millisecond and serializes cheaply against the colorizer's worker.
-- LRU eviction (`PlanetLru`) keeps atlas usage bounded regardless of n.
-- `invalidate()` / `setWorld()`: drops all pages on color-mode change or new
-  snapshot; they re-bake on demand.
-
-**No seams**: border texels call `SphereGrid::canonicalTile(r, i, j)` for i,j
-outside the [1..n] × [0..n-1] owned range, resolving to the neighbor chart's
-owner. This is the same canonicalization the CPU uses for tile assignment, so
-cross-page and cross-rhombus borders never disagree.
-
----
-
-## Scheduler (GlobeView / PlanetScene)
-
-Each frame, the scheduler:
-1. Ray-casts the viewport against the sphere to get per-rhombus visible uv rects
-   (using `SphereGrid::locateRhombusUV`).
-2. Converts to page-index ranges; requests intersecting pages plus a 1-page
-   prefetch ring when `tilePx > ~2`.
-3. Calls `detail.requestPage(r, pi, pj)` — resident pages are just touched in the
-   LRU; missing pages queue for baking.
-
----
-
 ## OrbitCamera deep zoom
 
 `OrbitCamera` has two additions for deep-zoom correctness:
@@ -116,35 +88,17 @@ Each frame, the scheduler:
 
 ---
 
-## GPU memory budgets
+## GPU memory budget
 
 | Resource | Size |
 |---|---|
-| Base textures (10 rhombi, min(n,1024)², RGBA8 + mips) | ~40MB + mips |
-| Detail atlas (256 pages × 130×130 × RGBA8) | ~17MB |
-| Page tables (10 rhombi × ceil(n/128)² × R16UI) | <1MB at n=1449 |
-| Total GPU (renderer) | <60MB at any n |
+| Base textures (10 rhombi, n², RGBA8 + mips), n=1449 (default) | ~112MB |
+| Base textures, n=2048 (Ultra, the product cap) | ~224MB |
 
-The base-tier size is fixed once n≥1024. Detail-tier and page-table sizes grow
-with n but only logarithmically in the dominant dimension.
-
----
-
-## Scaling table
-
-| n | tiles | WorldData RAM | GPU (renderer) | CPU bottleneck |
-|---|---|---|---|---|
-| 256 | 655,362 | ~17MB | <60MB | generation |
-| 1024 | 10,485,762 | ~273MB | <60MB | generation |
-| 1449 | ~21M | ~547MB | <60MB | generation (design target) |
-| 2048 | ~42M | ~1.1GB | <60MB | generation |
-| 4096 | ~168M | ~4.4GB | <60MB | planet database streaming (future epic) |
-| 16384 | ~2.7B | — | <60MB | float precision limit (shader) |
-| 20724 | ~4.3B | — | <60MB | uint32 TileId cap |
-
-Renderer cost is O(screen pixels) at every row. The GPU column doesn't grow with
-n. At n≥4096 the binding constraint shifts to CPU RAM — the already-planned
-planet-database streaming epic addresses that.
+Scales with n² up to the n=2048 cap, then fixed. 2048² is well within
+`GL_MAX_TEXTURE_SIZE`. Renderer cost is O(screen pixels); zoomed-out frames sample
+coarse mips, so FPS stays high. The binding constraint at the cap is CPU RAM for
+`WorldData` (n=2048 ≈ 42M tiles ≈ 1.1GB), not the ~224MB of GPU textures.
 
 Float precision note: `v_uv * u_n` in the shader stays accurate while the integer
 part of n fits in float mantissa. At n~16384 the mantissa (23 bits) starts losing
@@ -155,20 +109,51 @@ formula `r*n*n + j*n + (i-1)` overflows past n=20724 (10·20724²+2 > 2³²).
 
 ## Color modes
 
-Seven modes (`ColorMode` enum, 0–6): Terrain, Temperature, Precipitation, Biome,
-Plates, Snow, Combined. Both tiers use `PlanetTileColor::colorForTile(world, mode,
-tileId)` as the pixel source, so the same function drives base bakes and page
-bakes. Switching modes calls `requestBake` on the colorizer and `invalidate` on
-the cache; the old base texture and cached pages serve as a fallback until the
-fresh bake arrives.
+`ColorMode` modes (Terrain, Temperature, Precipitation, Biome, Plates, Snow,
+Combined, Hydrology) are cycled by right-click. The base tier uses
+`PlanetTileColor::colorForTile(world, mode, tileId)` as the pixel source.
+Switching modes calls `requestBake` on the colorizer; the old base texture serves
+as a fallback until the fresh bake arrives.
 
 ---
 
 ## Related documentation
 
 - `libs/planet-view/PlanetColorizer.h` — base tier class
-- `libs/planet-view/PlanetDetailCache.h` — detail tier class
-- `libs/planet-view/PlanetPageMath.h` — page/texel layout constants
-- `libs/planet-view/shaders/planet.frag` — per-pixel hex assignment
+- `libs/planet-view/PlanetTileColor.h` — tile → RGBA color mapping
+- `libs/planet-view/shaders/planet.frag` — per-pixel hex assignment + faint outline
 - `docs/technical/world-generation-implementation.md` — SphereGrid contracts
 - `docs/development-log/entries/2026-06-12-worldgen-hex-goldberg.md` — decision history
+
+---
+
+## Historical Addendum: detail-tier page cache (removed 2026-06-16)
+
+The original design was two-tier: the base tier above plus a camera-following
+**detail tier** (`PlanetDetailCache` + `PlanetScheduler`) that streamed per-tile
+color pages for crisp close-up rendering.
+
+- Pages were 128×128 tiles + a 1-texel border ring = 130×130 texels, in an LRU
+  `GL_TEXTURE_2D_ARRAY` atlas (256 layers, ~17MB), addressed by a per-rhombus
+  R16UI page table (entry = atlas layer+1, or 0 for not-resident).
+- `PlanetScheduler` ray-cast the viewport each frame to request visible +
+  prefetch pages; pages baked serially on the render thread (sub-ms each).
+- Border texels used `SphereGrid::canonicalTile` so cross-page and cross-rhombus
+  seams agreed with CPU tile assignment.
+- The shader fetched the resident page (NEAREST, one flat color per hex) and
+  blended base→detail over `tilePx` 2→5, then darkened Voronoi edges to draw the
+  grid.
+
+It was removed because the flat per-tile fill read as a jarring discrete step at
+deepest zoom, and because within the n≤2048 cap a full-resolution mipmapped base
+is a complete LOD (2026-06-16). The full implementation lives in git history
+(pre-2026-06-16) alongside the decision record in the dev-log entry above.
+
+**Future (only if n>2048 ever ships).** Once worldgen can generate above 2048 (a
+planet-database/streaming epic — n=4096 is ~4.4GB of `WorldData` and ~895MB of
+full-resident base mips), restore a single streamed finest level from the deleted
+page cache, but sampled **mipped/LINEAR (not NEAREST)** and cross-faded into the
+base above its resolution — reusing `PlanetLru` / the page table / the ray-cast
+scheduler. The camera's px/tile clamp (`GlobeView kTargetPx`, currently 100) keeps
+the streamed region to ~one octave above the base, so a full per-octave software
+pyramid is not needed even then.
