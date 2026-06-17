@@ -80,6 +80,7 @@
 #include <ecs/systems/StorageGoalSystem.h>
 #include <ecs/systems/TimeSystem.h>
 #include <ecs/systems/VisionSystem.h>
+#include <ecs/systems/WallCollisionSystem.h>
 
 #include <cstdlib>
 #include <memory>
@@ -320,6 +321,9 @@ namespace {
 				// NavigationSystem reads the same ConstructionWorld (walls/doors) to build
 				// its navmesh input; wired here for the same reason ConstructionSystem is.
 				ecsWorld->getSystem<ecs::NavigationSystem>().setConstructionWorld(&m_drawingSystem->world());
+
+				// WallCollisionSystem reads the same store for its built-wall safety net.
+				ecsWorld->getSystem<ecs::WallCollisionSystem>().setConstructionWorld(&m_drawingSystem->world());
 
 				auto& actionSys = ecsWorld->getSystem<ecs::ActionSystem>();
 
@@ -897,6 +901,7 @@ namespace {
 			ecsWorld->registerSystem<ecs::MovementSystem>();								// Priority 100
 			ecsWorld->registerSystem<ecs::PhysicsSystem>();									// Priority 200
 			ecsWorld->registerSystem<ecs::CollisionSystem>();								// Priority 250 - positional separation after physics
+			ecsWorld->registerSystem<ecs::WallCollisionSystem>();							// Priority 260 - wall safety-net after agent separation
 			ecsWorld->registerSystem<ecs::ActionSystem>();									// Priority 350
 			ecsWorld->registerSystem<ecs::DynamicEntityRenderSystem>();						// Priority 900
 
