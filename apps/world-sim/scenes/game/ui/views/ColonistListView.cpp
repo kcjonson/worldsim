@@ -1,9 +1,5 @@
 #include "ColonistListView.h"
 
-#include <primitives/Primitives.h>
-#include <theme/PanelStyle.h>
-#include <theme/Theme.h>
-
 #include <chrono>
 
 namespace world_sim {
@@ -109,19 +105,6 @@ void ColonistListView::rebuildUI(const std::vector<adapters::ColonistData>& colo
 
 		itemHandles.push_back(handle);
 	}
-
-	// Calculate panel height from layout
-	float itemsHeight = static_cast<float>(colonists.size()) * itemHeight;
-	float panelHeight = kPadding * 2 + itemsHeight;
-
-	// Create/update background panel
-	if (!backgroundRect) {
-		backgroundRect = std::make_unique<UI::Rectangle>();
-	}
-	backgroundRect->position = {panelX, panelY};
-	backgroundRect->size = {panelWidth, panelHeight};
-	backgroundRect->style = UI::PanelStyles::floating();
-	backgroundRect->zIndex = -1;
 }
 
 void ColonistListView::updateSelectionHighlight(ecs::EntityID newSelectedId) {
@@ -172,11 +155,6 @@ bool ColonistListView::handleEvent(UI::InputEvent& event) {
 void ColonistListView::render() {
 	if (!itemLayout || itemHandles.empty()) {
 		return;
-	}
-
-	// Render background first
-	if (backgroundRect) {
-		backgroundRect->render();
 	}
 
 	// Render items via layout container

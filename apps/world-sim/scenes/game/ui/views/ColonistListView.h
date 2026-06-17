@@ -80,15 +80,14 @@ class ColonistListView {
 	static constexpr float kDoubleClickThreshold = 0.4F;  // 400ms
 
 	// UI elements
-	std::unique_ptr<UI::Rectangle> backgroundRect;
 	std::unique_ptr<UI::LayoutContainer> itemLayout;
 
 	// Handles to items for updates
 	std::vector<UI::LayerHandle> itemHandles;
 
 	// Layout constants
-	static constexpr float kPadding = 4.0F;
-	static constexpr float kItemSpacing = 2.0F;
+	static constexpr float kPadding = 0.0F;	  // cards span the roster width; no wrapper
+	static constexpr float kItemSpacing = 8.0F;
 	static constexpr size_t kMaxColonists = 20;
 };
 

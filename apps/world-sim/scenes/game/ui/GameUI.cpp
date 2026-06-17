@@ -59,8 +59,8 @@ namespace world_sim {
 
 		// Create colonist list view (left side)
 		colonistList = std::make_unique<ColonistListView>(ColonistListView::Args{
-			.width = 60.0F,
-			.itemHeight = 50.0F,
+			.width = 208.0F,
+			.itemHeight = 54.0F,
 			.onColonistSelected = args.onColonistSelected,
 			.onColonistFollowed = args.onColonistFollowed,
 			.id = "colonist_list"
@@ -184,9 +184,9 @@ namespace world_sim {
 			buildMenu->setPosition({menuX, menuY});
 		}
 
-		// Position colonist list on left side, below top bar and debug overlay
+		// Position colonist roster on the left, just below the top bar
 		if (colonistList) {
-			colonistList->setPosition(0.0F, topBarHeight + 100.0F);
+			colonistList->setPosition(12.0F, topBarHeight + 12.0F);
 		}
 
 		// Position info panel in bottom-left corner (flush with edges)

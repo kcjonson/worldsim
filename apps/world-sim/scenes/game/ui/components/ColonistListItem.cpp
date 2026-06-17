@@ -1,299 +1,136 @@
 #include "ColonistListItem.h"
 
-#include <algorithm>
-#include <assets/AssetRegistry.h>
-#include <graphics/ClipTypes.h>
+#include <components/avatar/Avatar.h>
+#include <graphics/PrimitiveStyles.h>
 #include <primitives/Primitives.h>
-#include <theme/Theme.h>
+#include <theme/Tokens.h>
+#include <theme/Variants.h>
+
+#include <algorithm>
+#include <string>
 
 namespace world_sim {
 
-	namespace {
-		// Mood thresholds for visual tinting
-		constexpr float kHappyMoodThreshold = 70.0F;    // Above this: green tint
-		constexpr float kNeutralMoodThreshold = 40.0F;  // Above this: yellow tint, below: red tint
+namespace {
+	constexpr float kAvatar = 30.0F;
+	constexpr float kPad = 8.0F;
+	float textScale(float px) { return px / 16.0F; }
+}  // namespace
 
-		// Color tint adjustments (added to base background color)
-		constexpr float kHappyGreenTint = 0.05F;
-		constexpr float kNeutralYellowTint = 0.03F;
-		constexpr float kStressedRedTint = 0.08F;
-	}  // namespace
+ColonistListItem::ColonistListItem(const Args& args)
+	: entityId(args.colonist.id)
+	, name(args.colonist.name)
+	, firstName(firstNameOf(args.colonist.name))
+	, mood(args.colonist.mood)
+	, selected(args.isSelected)
+	, onSelect(args.onSelect) {
+	size = {args.width, args.height};
+	margin = args.itemMargin;
+}
 
-	// Static member definition
-	ColonistListItem::CachedMeshData ColonistListItem::cachedMesh;
+std::string ColonistListItem::firstNameOf(const std::string& full) {
+	const size_t space = full.find(' ');
+	return space == std::string::npos ? full : full.substr(0, space);
+}
 
-	ColonistListItem::ColonistListItem(const Args& args)
-		: entityId(args.colonist.id),
-		  name(args.colonist.name),
-		  mood(args.colonist.mood),
-		  selected(args.isSelected),
-		  onSelect(args.onSelect) {
+void ColonistListItem::setColonistData(const adapters::ColonistData& data) {
+	entityId = data.id;
+	name = data.name;
+	firstName = firstNameOf(data.name);
+	mood = data.mood;
+}
 
-		// Set component size and margin for layout
-		size = {args.width, args.height};
-		margin = args.itemMargin;
+void ColonistListItem::render() {
+	using Renderer::Primitives::drawRect;
+	using Renderer::Primitives::drawText;
 
-		// Background rectangle
-		backgroundHandle = addChild(
-			UI::Rectangle(
-				UI::Rectangle::Args{
-					.position = {0.0F, 0.0F},
-					.size = size,
-					.style =
-						{.fill = selected ? UI::Theme::Colors::selectionBackground : UI::Theme::Colors::cardBackground,
-						 .border =
-							 Foundation::BorderStyle{
-								 .color = selected ? UI::Theme::Colors::selectionBorder : UI::Theme::Colors::cardBorder,
-								 .width = 1.0F,
-								 .cornerRadius = 4.0F,
-							 }},
-					.id = (args.id + "_bg").c_str()
-				}
-			)
-		);
+	const Foundation::Vec2 p = getContentPosition();
+	const float w = size.x;
+	const float h = size.y;
+	const float moodRatio = std::clamp(mood / 100.0F, 0.0F, 1.0F);
+	const Foundation::Color moodCol = UI::toneColor(UI::Tone::Auto, moodRatio);
 
-		// Name text (right of portrait, centered)
-		float textX = kPortraitSize + kPortraitMargin + (size.x - kPortraitSize - kPortraitMargin) / 2.0F;
-		nameTextHandle = addChild(
-			UI::Text(
-				UI::Text::Args{
-					.position = {textX, size.y / 2.0F},
-					.text = name,
-					.style =
-						{
-							.color = UI::Theme::Colors::textTitle,
-							.fontSize = 10.0F,
-							.hAlign = Foundation::HorizontalAlign::Center,
-							.vAlign = Foundation::VerticalAlign::Middle,
-						},
-					.id = (args.id + "_name").c_str()
-				}
-			)
-		);
-
-		// Mood bar
-		float moodBarWidth = size.x - kPortraitSize - kPortraitMargin;
-		float moodBarX = kPortraitSize + kPortraitMargin;
-		float moodBarY = size.y - kMoodBarOffset;
-		float moodRatio = std::clamp(mood / 100.0F, 0.0F, 1.0F);
-
-		// Mood bar color gradient (green → yellow → red based on value)
-		float r = moodRatio < 0.5F ? 1.0F : 1.0F - (moodRatio - 0.5F) * 2.0F * 0.2F;
-		float g = moodRatio > 0.5F ? 1.0F : 0.5F + moodRatio;
-
-		moodBarHandle = addChild(
-			UI::Rectangle(
-				UI::Rectangle::Args{
-					.position = {moodBarX, moodBarY},
-					.size = {moodBarWidth * moodRatio, kMoodBarHeight},
-					.style =
-						{.fill = Foundation::Color(r, g, 0.2F, 0.9F),
-						 .border =
-							 Foundation::BorderStyle{
-								 .color = Foundation::Color(0.0F, 0.0F, 0.0F, 0.7F),
-								 .width = 1.0F,
-								 .cornerRadius = 2.0F,
-							 }},
-					.id = (args.id + "_mood").c_str()
-				}
-			)
-		);
+	// Card surface (raised + amber left edge when active).
+	drawRect(Renderer::Primitives::RectArgs{
+		.bounds = {p.x, p.y, w, h},
+		.style = {.fill = selected ? UI::bg_panel_raised : UI::bg_panel,
+				  .border = Foundation::BorderStyle{
+					  .color = UI::line_hairline, .width = UI::bw, .cornerRadius = UI::r_md, .position = Foundation::BorderPosition::Inside}}});
+	if (selected) {
+		drawRect(Renderer::Primitives::RectArgs{
+			.bounds = {p.x, p.y + 2.0F, 3.0F, h - 4.0F},
+			.style = {.fill = UI::accent}});
 	}
 
-	void ColonistListItem::setPosition(float x, float y) {
-		Component::setPosition(x, y);
+	// Avatar (mood-tinted, selected ring).
+	UI::Avatar(UI::Avatar::Args{
+				   .position = {p.x + kPad, p.y + (h - kAvatar) * 0.5F},
+				   .size = kAvatar,
+				   .seed = name,
+				   .mood = moodRatio,
+				   .hasMood = true,
+				   .selected = selected})
+		.render();
 
-		// Immediately update child positions to avoid one-frame delay
-		Foundation::Vec2 contentPos = getContentPosition();
-		if (auto* bg = getChild<UI::Rectangle>(backgroundHandle)) {
-			bg->position = contentPos;
-		}
-		if (auto* nameText = getChild<UI::Text>(nameTextHandle)) {
-			float textX = contentPos.x + kPortraitSize + kPortraitMargin + (size.x - kPortraitSize - kPortraitMargin) / 2.0F;
-			nameText->position = {textX, contentPos.y + size.y / 2.0F};
-		}
-		if (auto* moodBar = getChild<UI::Rectangle>(moodBarHandle)) {
-			float moodBarX = contentPos.x + kPortraitSize + kPortraitMargin;
-			float moodBarY = contentPos.y + size.y - kMoodBarOffset;
-			moodBar->position = {moodBarX, moodBarY};
-		}
+	// Info column.
+	const float infoX = p.x + kPad + kAvatar + UI::space_2;
+	const float infoW = (p.x + w) - infoX - kPad;
+
+	drawText(Renderer::Primitives::TextArgs{
+		.text = firstName,
+		.position = {infoX, p.y + kPad},
+		.scale = textScale(UI::fs_sm),
+		.color = UI::text_bright,
+		.font = UI::fontDisplay,
+		.hAlign = Foundation::HorizontalAlign::Left,
+		.vAlign = Foundation::VerticalAlign::Top});
+	drawText(Renderer::Primitives::TextArgs{
+		.text = std::to_string(static_cast<int>(moodRatio * 100.0F)) + "%",
+		.position = {infoX, p.y + kPad},
+		.scale = textScale(UI::fs_2xs),
+		.color = moodCol,
+		.font = UI::fontMono,
+		.hAlign = Foundation::HorizontalAlign::Right,
+		.vAlign = Foundation::VerticalAlign::Top,
+		.boxWidth = infoW});
+
+	// Mood meter (track + tone-colored fill).
+	constexpr float kBarH = 4.0F;
+	const float barY = p.y + h - kPad - kBarH;
+	drawRect(Renderer::Primitives::RectArgs{
+		.bounds = {infoX, barY, infoW, kBarH},
+		.style = {.fill = UI::bg_inset,
+				  .border = Foundation::BorderStyle{
+					  .color = UI::line_hairline, .width = UI::bw, .cornerRadius = UI::r_sm, .position = Foundation::BorderPosition::Inside}}});
+	if (moodRatio > 0.0F) {
+		drawRect(Renderer::Primitives::RectArgs{
+			.bounds = {infoX, barY, infoW * moodRatio, kBarH},
+			.style = {.fill = moodCol,
+					  .border = Foundation::BorderStyle{
+						  .color = moodCol, .width = 0.0F, .cornerRadius = UI::r_sm, .position = Foundation::BorderPosition::Inside}}});
 	}
+}
 
-	void ColonistListItem::render() {
-		// Render children (background, mood bar, name)
-		Component::render();
-
-		// Render portrait last (on top of background)
-		renderPortrait();
+bool ColonistListItem::handleEvent(UI::InputEvent& event) {
+	if (event.type != UI::InputEvent::Type::MouseUp) {
+		return false;
 	}
-
-	void ColonistListItem::renderPortrait() {
-		auto&		registry = engine::assets::AssetRegistry::Get();
-		const auto* colonistMesh = registry.getTemplate("Colonist_down");
-
-		if (colonistMesh == nullptr || colonistMesh->vertices.empty()) {
-			return;
-		}
-
-		Foundation::Vec2 contentPos = getContentPosition();
-		float			 portraitX = contentPos.x + kPortraitMargin;
-		float			 portraitY = contentPos.y + (size.y - kPortraitSize) / 2.0F;
-
-		// Cache mesh bounds (computed once, reused for all items)
-		if (!cachedMesh.valid) {
-			cachedMesh.minX = colonistMesh->vertices[0].x;
-			cachedMesh.maxX = colonistMesh->vertices[0].x;
-			cachedMesh.minY = colonistMesh->vertices[0].y;
-			cachedMesh.maxY = colonistMesh->vertices[0].y;
-			for (const auto& v : colonistMesh->vertices) {
-				cachedMesh.minX = std::min(cachedMesh.minX, v.x);
-				cachedMesh.maxX = std::max(cachedMesh.maxX, v.x);
-				cachedMesh.minY = std::min(cachedMesh.minY, v.y);
-				cachedMesh.maxY = std::max(cachedMesh.maxY, v.y);
-			}
-			cachedMesh.width = cachedMesh.maxX - cachedMesh.minX;
-			cachedMesh.height = cachedMesh.maxY - cachedMesh.minY;
-
-			constexpr float kCropRatio = 0.55F;
-			float			displayHeight = cachedMesh.height * kCropRatio;
-			cachedMesh.scale = kPortraitSize / std::max(cachedMesh.width, displayHeight);
-			cachedMesh.valid = true;
-		}
-
-		// Transform vertices to screen space
-		screenVerts.clear();
-		screenVerts.reserve(colonistMesh->vertices.size());
-		for (const auto& v : colonistMesh->vertices) {
-			float sx = portraitX + (v.x - cachedMesh.minX - cachedMesh.width * 0.5F) * cachedMesh.scale + kPortraitSize * 0.5F;
-			float sy = portraitY + (v.y - cachedMesh.minY) * cachedMesh.scale;
-			screenVerts.push_back({sx, sy});
-		}
-
-		// Clip to show only upper portion
-		Foundation::ClipSettings clipSettings;
-		clipSettings.shape = Foundation::ClipRect{.bounds = Foundation::Rect{portraitX, portraitY, kPortraitSize, kPortraitSize}};
-		clipSettings.mode = Foundation::ClipMode::Inside;
-		Renderer::Primitives::pushClip(clipSettings);
-
-		Renderer::Primitives::drawTriangles(
-			Renderer::Primitives::TrianglesArgs{
-				.vertices = screenVerts.data(),
-				.indices = colonistMesh->indices.data(),
-				.vertexCount = screenVerts.size(),
-				.indexCount = colonistMesh->indices.size(),
-				.colors = colonistMesh->colors.data()
-			}
-		);
-
-		Renderer::Primitives::popClip();
+	if (event.button != engine::MouseButton::Left) {
+		return false;
 	}
-
-	bool ColonistListItem::handleEvent(UI::InputEvent& event) {
-		if (event.type != UI::InputEvent::Type::MouseUp) {
-			return false;
-		}
-
-		if (event.button != engine::MouseButton::Left) {
-			return false;
-		}
-
-		if (!containsPoint(event.position)) {
-			return false;
-		}
-
-		// Item was clicked
-		if (onSelect) {
-			onSelect(entityId);
-		}
-		event.consume();
-		return true;
+	if (!containsPoint(event.position)) {
+		return false;
 	}
-
-	bool ColonistListItem::containsPoint(Foundation::Vec2 point) const {
-		Foundation::Vec2 contentPos = getContentPosition();
-		return point.x >= contentPos.x && point.x <= contentPos.x + size.x && point.y >= contentPos.y && point.y <= contentPos.y + size.y;
+	if (onSelect) {
+		onSelect(entityId);
 	}
+	event.consume();
+	return true;
+}
 
-	void ColonistListItem::setSelected(bool newSelected) {
-		if (selected == newSelected) {
-			return;
-		}
-		selected = newSelected;
-		updateBackgroundStyle();
-	}
+bool ColonistListItem::containsPoint(Foundation::Vec2 point) const {
+	const Foundation::Vec2 p = getContentPosition();
+	return point.x >= p.x && point.x <= p.x + size.x && point.y >= p.y && point.y <= p.y + size.y;
+}
 
-	void ColonistListItem::setMood(float newMood) {
-		mood = newMood;
-		updateMoodBar();
-		updateBackgroundStyle();  // Mood affects background tint
-	}
-
-	void ColonistListItem::setColonistData(const adapters::ColonistData& data) {
-		entityId = data.id;
-		name = data.name;
-		mood = data.mood;
-
-		if (auto* nameText = getChild<UI::Text>(nameTextHandle)) {
-			nameText->text = name;
-		}
-		updateMoodBar();
-		updateBackgroundStyle();  // Mood affects background tint
-	}
-
-	void ColonistListItem::updateBackgroundStyle() {
-		if (auto* bg = getChild<UI::Rectangle>(backgroundHandle)) {
-			if (selected) {
-				bg->style.fill = UI::Theme::Colors::selectionBackground;
-			} else {
-				// Apply mood-based tint to background
-				bg->style.fill = getMoodTintedBackground();
-			}
-			if (bg->style.border) {
-				bg->style.border->color = selected ? UI::Theme::Colors::selectionBorder : UI::Theme::Colors::cardBorder;
-			}
-		}
-	}
-
-	Foundation::Color ColonistListItem::getMoodTintedBackground() const {
-		// Subtle mood-based tinting of the card background
-		Foundation::Color base = UI::Theme::Colors::cardBackground;
-
-		if (mood > kHappyMoodThreshold) {
-			// Green tint - happy
-			return Foundation::Color{
-				base.r,
-				base.g + kHappyGreenTint,
-				base.b,
-				base.a};
-		}
-		if (mood > kNeutralMoodThreshold) {
-			// Yellow tint - neutral
-			return Foundation::Color{
-				base.r + kNeutralYellowTint,
-				base.g + kNeutralYellowTint,
-				base.b,
-				base.a};
-		}
-		// Red tint - stressed
-		return Foundation::Color{
-			base.r + kStressedRedTint,
-			base.g,
-			base.b,
-			base.a};
-	}
-
-	void ColonistListItem::updateMoodBar() {
-		if (auto* moodBar = getChild<UI::Rectangle>(moodBarHandle)) {
-			float moodBarWidth = size.x - kPortraitSize - kPortraitMargin;
-			float moodRatio = std::clamp(mood / 100.0F, 0.0F, 1.0F);
-
-			moodBar->size.x = moodBarWidth * moodRatio;
-
-			// Update color gradient
-			float r = moodRatio < 0.5F ? 1.0F : 1.0F - (moodRatio - 0.5F) * 2.0F * 0.2F;
-			float g = moodRatio > 0.5F ? 1.0F : 0.5F + moodRatio;
-			moodBar->style.fill = Foundation::Color(r, g, 0.2F, 0.9F);
-		}
-	}
-
-} // namespace world_sim
+}  // namespace world_sim
