@@ -26,6 +26,7 @@
 #include <scene/Scene.h>
 #include <scene/SceneManager.h>
 #include <shapes/Shapes.h>
+#include <theme/Tokens.h>
 #include <utils/Log.h>
 
 #include <format>
@@ -165,7 +166,7 @@ class WorldCreatorScene : public engine::IScene {
 	}
 
 	void render() override {
-		glClearColor(0.08F, 0.07F, 0.12F, 1.0F);
+		glClearColor(UI::bg_void.r, UI::bg_void.g, UI::bg_void.b, 1.0F);
 		glClear(GL_COLOR_BUFFER_BIT);
 
 		// The pane republishes its bounds below only on frames it actually
@@ -202,7 +203,7 @@ class WorldCreatorScene : public engine::IScene {
 				.position = {rect.x, viewportH - 60.0F},
 				.text = errorText,
 				.style = {
-					.color = Foundation::Color{0.9F, 0.4F, 0.4F, 1.0F},
+					.color = UI::status_crit,
 					.fontSize = 14.0F,
 					.hAlign = Foundation::HorizontalAlign::Left,
 					.vAlign = Foundation::VerticalAlign::Middle,
@@ -493,9 +494,9 @@ class WorldCreatorScene : public engine::IScene {
 		Renderer::Primitives::drawRect({
 			.bounds = rect,
 			.style = {
-				.fill = Foundation::Color{0.05F, 0.05F, 0.08F, 1.0F},
+				.fill = UI::bg_panel,
 				.border = Foundation::BorderStyle{
-					.color = Foundation::Color{0.2F, 0.2F, 0.25F, 1.0F},
+					.color = UI::line_edge,
 					.width = 1.0F,
 				},
 			},
@@ -507,9 +508,7 @@ class WorldCreatorScene : public engine::IScene {
 			.position = {rect.x + rect.width * 0.5F, rect.y + rect.height * 0.5F},
 			.text = generating ? "Generating World..." : "Set parameters and press Generate",
 			.style = {
-				.color = generating
-					? Foundation::Color{0.7F, 0.75F, 1.0F, 1.0F}
-					: Foundation::Color{0.3F, 0.3F, 0.35F, 1.0F},
+				.color = generating ? UI::data : UI::text_faint,
 				.fontSize = 18.0F,
 				.hAlign = Foundation::HorizontalAlign::Center,
 				.vAlign = Foundation::VerticalAlign::Middle,
@@ -523,7 +522,7 @@ class WorldCreatorScene : public engine::IScene {
 			.position = {kPanelWidth + (viewportW - kPanelWidth) * 0.5F, 14.0F},
 			.text = "World Creator",
 			.style = {
-				.color = Foundation::Color::white(),
+				.color = UI::text_bright,
 				.fontSize = 20.0F,
 				.hAlign = Foundation::HorizontalAlign::Center,
 				.vAlign = Foundation::VerticalAlign::Middle,
@@ -537,7 +536,7 @@ class WorldCreatorScene : public engine::IScene {
 			.position = {viewportW - 12.0F, 14.0F},
 			.text = "ESC: Back to menu",
 			.style = {
-				.color = Foundation::Color{0.45F, 0.45F, 0.45F, 1.0F},
+				.color = UI::text_dim,
 				.fontSize = 13.0F,
 				.hAlign = Foundation::HorizontalAlign::Right,
 				.vAlign = Foundation::VerticalAlign::Middle,
