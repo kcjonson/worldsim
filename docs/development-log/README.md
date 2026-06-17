@@ -103,7 +103,7 @@ Development log entries are **immutable history**. Don't update old entries — 
 
 ## Quick Stats
 
-- **Total Entries:** 72 (entry files; the index below lists notable milestones)
+- **Total Entries:** 72 (entry files; the Major Milestones list below highlights notable ones)
 - **Latest Entry:** 2026-06-16
 - **Major Milestones:**
   - Navigation v1: colonists path around walls/water/trees on a dynamic navmesh, through doors (2026-06-16)

@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2026-06-16 (Navigation v1 landed: colonists path around walls, water, and trees on a dynamic CDT navmesh, walk through doors, and can't clip through a solid wall — PRs #161/#162/#163/#165/#166/#169, see dev log 2026-06-16-navigation-v1. Walls now ship as real gameplay. Earlier on main: Salvage UI cutover (tokens + theme, unified UI library, SDF renderer, z-index draw queue), Dev/Test Tools #157, Fluvial Erosion #149, Asset Manager #156)
+Last Updated: 2026-06-16 (Navigation v1 landed: colonists path around walls, water, and trees on a dynamic CDT navmesh, walk through doors, and can't clip through a solid wall — PRs #161/#162/#163/#165/#166/#169, see dev log 2026-06-16-navigation-v1.md. Walls now ship as real gameplay. Earlier on main: Salvage UI cutover (tokens + theme, unified UI library, SDF renderer, z-index draw queue), Dev/Test Tools #157, Fluvial Erosion #149, Asset Manager #156)
 
 ## Epic/Story/Task Template
 
@@ -1106,7 +1106,7 @@ The following MVP epics have all been completed. Detailed task breakdowns are pr
 ### Navigation & Pathfinding
 **Spec/Documentation:** `/docs/technical/pathfinding-architecture.md`
 **Dependencies:** Geometry Foundations (shared integer-coordinate substrate, libs/geometry); consumes the construction obstacle/portal contract
-**Status:** in progress — local navigation v1 shipped (P1, P2, and the static-obstacle slice of P4); see dev log 2026-06-16-navigation-v1
+**Status:** in progress — local navigation v1 shipped (P1, P2, and the static-obstacle slice of P4); see dev log 2026-06-16-navigation-v1.md
 
 **Goal:** Four-tier vector-native navigation: planet hex graph for cross-globe abstract parties, chunk connectivity components for reachability, dynamic CDT navmesh for exact local paths, collision circles + velocity-obstacle steering so agents take up space. Must land (through P4) before walls ship as player-facing gameplay; P6 unlocks raids.
 
