@@ -26,6 +26,7 @@ namespace Renderer {
 		// Reserve space for vertices to minimize allocations
 		vertices.reserve(10000);
 		indices.reserve(15000);
+		vertexAtlas.reserve(10000);
 	}
 
 	BatchRenderer::~BatchRenderer() {
@@ -118,20 +119,53 @@ namespace Renderer {
 		// Shader cleanup handled by its own RAII destructor
 	}
 
+	void BatchRenderer::recordGroup(uint32_t groupStart, float zIndex) {
+		const uint32_t end = static_cast<uint32_t>(indices.size());
+		if (end > groupStart) {
+			drawGroups.push_back({groupStart, end - groupStart, zIndex});
+			if (zIndex != 0.0F) {
+				anyExplicitZ = true;
+			}
+		}
+	}
+
 	void BatchRenderer::addQuad( // NOLINT(readability-convert-member-functions-to-static)
 		const Foundation::Rect&						bounds,
 		const Foundation::Color&					fillColor,
 		const std::optional<Foundation::BorderStyle>& border,
-		float										cornerRadius
+		float										cornerRadius,
+		const std::optional<Foundation::LinearGradient>& gradient,
+		float										zIndex
 	) { // NOLINT(readability-convert-member-functions-to-static)
+		const uint32_t zGroupStart = static_cast<uint32_t>(indices.size());
 		uint32_t baseIndex = static_cast<uint32_t>(vertices.size());
 
 		// Calculate rect center and half-dimensions for SDF
 		float halfW = bounds.width * 0.5F;
 		float halfH = bounds.height * 0.5F;
 
-		// Fill color
-		Foundation::Vec4 colorVec = fillColor.toVec4();
+		// Per-corner fill colors (vertex order: TL, TR, BR, BL). Without a gradient
+		// all four are the flat fill, matching prior behavior exactly. With one, the
+		// stops are placed on the corners and the GPU interpolates across the quad.
+		Foundation::Vec4 colorTL = fillColor.toVec4();
+		Foundation::Vec4 colorTR = colorTL;
+		Foundation::Vec4 colorBR = colorTL;
+		Foundation::Vec4 colorBL = colorTL;
+		if (gradient.has_value()) {
+			const Foundation::Vec4 from = gradient->from.toVec4();
+			const Foundation::Vec4 to = gradient->to.toVec4();
+			if (gradient->horizontal) {
+				colorTL = from;
+				colorBL = from;
+				colorTR = to;
+				colorBR = to;
+			} else {
+				colorTL = from;
+				colorTR = from;
+				colorBR = to;
+				colorBL = to;
+			}
+		}
 
 		// Pack border data (color RGB + width)
 		Foundation::Vec4 borderData(0.0F, 0.0F, 0.0F, 0.0F);
@@ -188,7 +222,7 @@ namespace Renderer {
 		vertices.push_back(
 			{TransformPosition(Foundation::Vec2(centerX - expandedHalfW, centerY - expandedHalfH), currentTransform, transformIsIdentity),
 			 Foundation::Vec2(-expandedHalfW, -expandedHalfH), // Rect-local: top-left (expanded)
-			 colorVec,
+			 colorTL,
 			 borderData,
 			 shapeParams,
 			 currentClipBounds}
@@ -198,7 +232,7 @@ namespace Renderer {
 		vertices.push_back(
 			{TransformPosition(Foundation::Vec2(centerX + expandedHalfW, centerY - expandedHalfH), currentTransform, transformIsIdentity),
 			 Foundation::Vec2(expandedHalfW, -expandedHalfH), // Rect-local: top-right (expanded)
-			 colorVec,
+			 colorTR,
 			 borderData,
 			 shapeParams,
 			 currentClipBounds}
@@ -208,7 +242,7 @@ namespace Renderer {
 		vertices.push_back(
 			{TransformPosition(Foundation::Vec2(centerX + expandedHalfW, centerY + expandedHalfH), currentTransform, transformIsIdentity),
 			 Foundation::Vec2(expandedHalfW, expandedHalfH), // Rect-local: bottom-right (expanded)
-			 colorVec,
+			 colorBR,
 			 borderData,
 			 shapeParams,
 			 currentClipBounds}
@@ -218,7 +252,7 @@ namespace Renderer {
 		vertices.push_back(
 			{TransformPosition(Foundation::Vec2(centerX - expandedHalfW, centerY + expandedHalfH), currentTransform, transformIsIdentity),
 			 Foundation::Vec2(-expandedHalfW, expandedHalfH), // Rect-local: bottom-left (expanded)
-			 colorVec,
+			 colorBL,
 			 borderData,
 			 shapeParams,
 			 currentClipBounds}
@@ -232,8 +266,56 @@ namespace Renderer {
 		indices.push_back(baseIndex + 0);
 		indices.push_back(baseIndex + 2);
 		indices.push_back(baseIndex + 3);
+
+		// Shapes ignore the bound atlas (shader branches on data2.w); tag 0.
+		vertexAtlas.insert(vertexAtlas.end(), 4, 0);
+
+		recordGroup(zGroupStart, zIndex);
 	}
 
+	void BatchRenderer::addShadowQuad(const Foundation::Rect& bounds, const Foundation::BoxShadow& shadow, float cornerRadius, float zIndex) {
+		const uint32_t zGroupStart = static_cast<uint32_t>(indices.size());
+		// The shadow's SDF shape is the rect grown by `spread`; the quad is grown a
+		// further `blur` so the shader has room to fade the falloff to zero.
+		const float halfW = (bounds.width * 0.5F) + shadow.spread;
+		const float halfH = (bounds.height * 0.5F) + shadow.spread;
+		if (halfW <= 0.0F || halfH <= 0.0F) {
+			return;
+		}
+		const float blur = shadow.blur > 0.0F ? shadow.blur : 0.5F;
+		const float cr = cornerRadius + shadow.spread;
+		const float cx = bounds.x + (bounds.width * 0.5F) + shadow.offset.x;
+		const float cy = bounds.y + (bounds.height * 0.5F) + shadow.offset.y;
+		const float qHalfW = halfW + blur;
+		const float qHalfH = halfH + blur;
+
+		const uint32_t		   baseIndex = static_cast<uint32_t>(vertices.size());
+		const Foundation::Vec4 colorVec = shadow.color.toVec4();
+		const Foundation::Vec4 data1(blur, 0.0F, 0.0F, 0.0F);
+		const Foundation::Vec4 data2(halfW, halfH, cr, kRenderModeShadow);
+
+		// Corners TL, TR, BR, BL. rectLocalPos is the SDF coordinate from the shadow
+		// center: the shape edge sits at +-halfSize, the falloff runs out to +-blur.
+		vertices.push_back({TransformPosition(Foundation::Vec2(cx - qHalfW, cy - qHalfH), currentTransform, transformIsIdentity),
+							Foundation::Vec2(-qHalfW, -qHalfH), colorVec, data1, data2, currentClipBounds});
+		vertices.push_back({TransformPosition(Foundation::Vec2(cx + qHalfW, cy - qHalfH), currentTransform, transformIsIdentity),
+							Foundation::Vec2(qHalfW, -qHalfH), colorVec, data1, data2, currentClipBounds});
+		vertices.push_back({TransformPosition(Foundation::Vec2(cx + qHalfW, cy + qHalfH), currentTransform, transformIsIdentity),
+							Foundation::Vec2(qHalfW, qHalfH), colorVec, data1, data2, currentClipBounds});
+		vertices.push_back({TransformPosition(Foundation::Vec2(cx - qHalfW, cy + qHalfH), currentTransform, transformIsIdentity),
+							Foundation::Vec2(-qHalfW, qHalfH), colorVec, data1, data2, currentClipBounds});
+
+		indices.push_back(baseIndex + 0);
+		indices.push_back(baseIndex + 1);
+		indices.push_back(baseIndex + 2);
+		indices.push_back(baseIndex + 0);
+		indices.push_back(baseIndex + 2);
+		indices.push_back(baseIndex + 3);
+
+		vertexAtlas.insert(vertexAtlas.end(), 4, 0);
+
+		recordGroup(zGroupStart, zIndex);
+	}
 
 	void BatchRenderer::addTriangles( // NOLINT(readability-convert-member-functions-to-static)
 		const Foundation::Vec2*	  inputVertices,
@@ -241,8 +323,10 @@ namespace Renderer {
 		size_t					  vertexCount,
 		size_t					  indexCount,
 		const Foundation::Color&  color,
-		const Foundation::Color*  inputColors
+		const Foundation::Color*  inputColors,
+		float					  zIndex
 	) { // NOLINT(readability-convert-member-functions-to-static)
+		const uint32_t zGroupStart = static_cast<uint32_t>(indices.size());
 		uint32_t baseIndex = static_cast<uint32_t>(vertices.size());
 
 		Foundation::Vec4 uniformColorVec = color.toVec4();
@@ -273,6 +357,11 @@ namespace Renderer {
 		for (size_t i = 0; i < indexCount; ++i) {
 			indices.push_back(baseIndex + inputIndices[i]);
 		}
+
+		// Tessellated shapes ignore the bound atlas; tag every vertex 0.
+		vertexAtlas.insert(vertexAtlas.end(), vertexCount, 0);
+
+		recordGroup(zGroupStart, zIndex);
 	}
 
 	void BatchRenderer::addTextQuad(
@@ -280,8 +369,15 @@ namespace Renderer {
 		const Foundation::Vec2&	 size,
 		const Foundation::Vec2&	 uvMin,
 		const Foundation::Vec2&	 uvMax,
-		const Foundation::Color& color
+		const Foundation::Color& color,
+		GLuint					 atlasTexture,
+		float					 zIndex
 	) {
+		const uint32_t zGroupStart = static_cast<uint32_t>(indices.size());
+		// Resolve the atlas this glyph samples. 0 means "use the default atlas"
+		// (Roboto, set via setFontAtlas), so existing callers are unchanged.
+		GLuint resolvedAtlas = (atlasTexture != 0) ? atlasTexture : defaultFontAtlas;
+
 		uint32_t baseIndex = static_cast<uint32_t>(vertices.size());
 
 		Foundation::Vec4 colorVec = color.toVec4();
@@ -344,10 +440,16 @@ namespace Renderer {
 		indices.push_back(baseIndex + 0);
 		indices.push_back(baseIndex + 2);
 		indices.push_back(baseIndex + 3);
+
+		// Tag all 4 vertices with the atlas they sample, so flush() can group
+		// this glyph into the matching per-atlas draw run.
+		vertexAtlas.insert(vertexAtlas.end(), 4, resolvedAtlas);
+
+		recordGroup(zGroupStart, zIndex);
 	}
 
 	void BatchRenderer::setFontAtlas(GLuint atlasTexture, float pixelRange) {
-		fontAtlas = atlasTexture;
+		defaultFontAtlas = atlasTexture;
 		fontPixelRange = pixelRange;
 	}
 
@@ -355,6 +457,23 @@ namespace Renderer {
 		if (vertices.empty()) {
 			return;
 		}
+
+		// Resolve draw order. Submission ("organic") order is kept unless some draw
+		// carried an explicit (non-zero) z; then the per-draw-call groups are
+		// stable-sorted by z and the emit-order index list is rebuilt (groups, not
+		// triangles). The zIndex came from the component layer; the renderer only
+		// orders by it. The fast path costs nothing beyond the group records.
+		const std::vector<uint32_t>* emit = &indices;
+		std::vector<uint32_t>		 sortedIndices;
+		if (anyExplicitZ && !drawGroups.empty()) {
+			std::stable_sort(drawGroups.begin(), drawGroups.end(), [](const DrawGroup& a, const DrawGroup& b) { return a.zIndex < b.zIndex; });
+			sortedIndices.reserve(indices.size());
+			for (const DrawGroup& g : drawGroups) {
+				sortedIndices.insert(sortedIndices.end(), indices.begin() + g.indexStart, indices.begin() + g.indexStart + g.indexCount);
+			}
+			emit = &sortedIndices;
+		}
+		const std::vector<uint32_t>& idx = *emit;
 
 		// Enable blending for transparency (shapes and text both need this)
 		glEnable(GL_BLEND);
@@ -372,7 +491,7 @@ namespace Renderer {
 
 		// Upload index data to GPU
 		glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ibo);
-		glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(uint32_t), indices.data(), GL_DYNAMIC_DRAW);
+		glBufferData(GL_ELEMENT_ARRAY_BUFFER, idx.size() * sizeof(uint32_t), idx.data(), GL_DYNAMIC_DRAW);
 
 		// Bind shader and VAO
 		shader.use();
@@ -408,26 +527,71 @@ namespace Renderer {
 		glUniform1f(viewportHeightLoc, framebufferHeight);
 		glUniform1f(pixelRatioLoc, pixelRatio);
 
-		// Bind font atlas texture (always bound, shader ignores it for shapes)
-		if (fontAtlas != 0) {
-			glActiveTexture(GL_TEXTURE0);
-			glBindTexture(GL_TEXTURE_2D, fontAtlas);
-			glUniform1i(atlasLoc, 0);
-		}
-
 		// Set instanced = false for standard batched rendering path
 		glUniform1i(instancedLoc, 0);
 
-		// Draw
-		glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(indices.size()), GL_UNSIGNED_INT, nullptr);
+		glActiveTexture(GL_TEXTURE0);
+		glUniform1i(atlasLoc, 0);
 
-		drawCallCount++;
+		// Multi-atlas draw splitting.
+		//
+		// All shapes and text share one VBO/IBO and one draw order (z-order ==
+		// submission order). Text vertices are tagged in `vertexAtlas` with the
+		// MSDF atlas they sample; shapes are tagged 0 (they ignore the bound
+		// texture, the shader branches on data2.w). We walk triangles in order,
+		// keeping a contiguous run of indices, and start a NEW draw call only
+		// when a text triangle needs a different atlas than the one currently
+		// bound. Triangles are never reordered, so z-order is exact.
+		//
+		// Common case (all text from one atlas, e.g. the default Roboto): every
+		// text triangle needs the same atlas, so this collapses to a single
+		// glDrawElements identical to the prior single-atlas behavior.
+		const size_t indexCount = idx.size();
+		GLuint		 boundAtlas = defaultFontAtlas; // What's currently bound on the GPU
+		if (boundAtlas != 0) {
+			glBindTexture(GL_TEXTURE_2D, boundAtlas);
+		}
+
+		size_t runStart = 0; // First index of the current contiguous run
+		for (size_t tri = 0; tri < indexCount; tri += 3) {
+			// A triangle's vertices are all shape (tag 0) or all the same text
+			// atlas; max() yields the text atlas if any, else 0 (no requirement).
+			GLuint required = vertexAtlas[idx[tri]];
+			required = std::max(required, vertexAtlas[idx[tri + 1]]);
+			required = std::max(required, vertexAtlas[idx[tri + 2]]);
+
+			if (required != 0 && required != boundAtlas) {
+				// Flush the run accumulated so far with the previously bound atlas.
+				if (tri > runStart) {
+					glDrawElements(
+						GL_TRIANGLES,
+						static_cast<GLsizei>(tri - runStart),
+						GL_UNSIGNED_INT,
+						(const void*)(runStart * sizeof(uint32_t))
+					);
+					drawCallCount++;
+				}
+				// Bind the atlas this run needs and start a new run here.
+				boundAtlas = required;
+				glBindTexture(GL_TEXTURE_2D, boundAtlas);
+				runStart = tri;
+			}
+		}
+
+		// Draw the final run.
+		if (indexCount > runStart) {
+			glDrawElements(
+				GL_TRIANGLES,
+				static_cast<GLsizei>(indexCount - runStart),
+				GL_UNSIGNED_INT,
+				(const void*)(runStart * sizeof(uint32_t))
+			);
+			drawCallCount++;
+		}
 
 		// Cleanup
 		glBindVertexArray(0);
-		if (fontAtlas != 0) {
-			glBindTexture(GL_TEXTURE_2D, 0);
-		}
+		glBindTexture(GL_TEXTURE_2D, 0);
 		glDisable(GL_BLEND);
 
 		// Accumulate stats before clearing
@@ -437,6 +601,9 @@ namespace Renderer {
 		// Clear buffers for next batch
 		vertices.clear();
 		indices.clear();
+		vertexAtlas.clear();
+		drawGroups.clear();
+		anyExplicitZ = false;
 	}
 
 	void BatchRenderer::beginFrame() {
@@ -445,6 +612,9 @@ namespace Renderer {
 		frameTriangleCount = 0;
 		vertices.clear();
 		indices.clear();
+		vertexAtlas.clear();
+		drawGroups.clear();
+		anyExplicitZ = false;
 	}
 
 	void BatchRenderer::endFrame() {

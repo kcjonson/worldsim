@@ -42,7 +42,9 @@ namespace ui_sandbox {
 	X(Tooltip_)    \
 	X(ContextMenu_) \
 	X(TextWrap) \
-	X(Planet)
+	X(Planet)  \
+	X(Salvage) \
+	X(SalvageModal)
 	// clang-format on
 
 	/// @brief Scene types for ui-sandbox application (auto-generated from SCENE_LIST)

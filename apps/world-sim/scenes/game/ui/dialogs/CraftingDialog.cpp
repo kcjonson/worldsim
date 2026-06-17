@@ -620,9 +620,9 @@ void CraftingDialog::rebuildQueueColumn() {
 
 				// Progress bar
 				queueLayout.addChild(UI::ProgressBar(UI::ProgressBar::Args{
-					.size = {kRightColumnWidth - 32, 10},
+					.width = kRightColumnWidth - 32,
 					.value = item.progress,
-					.fillColor = UI::Theme::Colors::statusActive,
+					.tone = UI::Tone::Data,
 					.margin = 2.0F
 				}));
 

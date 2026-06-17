@@ -1,10 +1,32 @@
 #include "components/tabbar/TabBar.h"
+
 #include "font/FontRenderer.h"
+#include "graphics/PrimitiveStyles.h"
+#include "graphics/Rect.h"
+#include "primitives/Primitives.h"
+#include "theme/Tokens.h"
+#include "theme/Variants.h"
+
 #include <glm/glm.hpp>
 #include <input/InputTypes.h>
-#include <primitives/Primitives.h>
 
 namespace UI {
+
+	namespace {
+
+		// drawText scale is relative to a 16px base.
+		constexpr float kTextBasePx = 16.0F;
+
+		float textScale(float sizePx) { return sizePx / kTextBasePx; }
+
+		// Salvage tab metrics: 34px bar, fs_sm labels in fontDisplay, letter-spaced
+		// (ls_wide) and uppercased; the cell adds space_3 padding on each side.
+		constexpr float kBarHeight = 34.0F;
+		constexpr float kLabelPx = fs_sm;
+		constexpr float kLabelSpacing = kLabelPx * ls_wide;
+		constexpr float kUnderline = 2.0F; // active underline thickness
+
+	} // namespace
 
 	TabBar::TabBar(const Args& args)
 		: FocusableBase<TabBar>(args.tabIndex),
@@ -96,50 +118,55 @@ namespace UI {
 			return;
 		}
 
-		// Draw bar background at content position (accounting for margin)
-		Foundation::Vec2 contentPos = getContentPosition();
-		Foundation::Rect barBounds{
-			contentPos.x,
-			contentPos.y,
-			size.x,
-			m_height};
-		Renderer::Primitives::drawRect({.bounds = barBounds, .style = m_appearance.barBackground, .id = id});
+		using Renderer::Primitives::drawLine;
+		using Renderer::Primitives::drawRect;
+		using Renderer::Primitives::drawText;
 
-		// Get font renderer for text measurements
-		ui::FontRenderer* fontRenderer = Renderer::Primitives::getFontRenderer();
+		// Anchor at raw position to match getTabBounds() (which hit-testing reads);
+		// the baseline and cells share the same origin.
+		const float scale = textScale(kLabelPx);
+		const float baselineY = position.y + kBarHeight;
 
-		// Draw each tab
+		// Hairline baseline under the whole bar.
+		drawLine({.start = {position.x, baselineY},
+				  .end = {position.x + size.x, baselineY},
+				  .style = {.color = line_hairline, .width = bw},
+				  .id = id});
+
 		for (size_t i = 0; i < m_tabs.size(); ++i) {
-			const Tab&		 tab = m_tabs[i];
-			const TabStyle&	 style = getTabStyle(static_cast<int>(i));
-			Foundation::Rect tabBounds = getTabBounds(static_cast<int>(i));
+			const Tab&			   tab = m_tabs[i];
+			const Foundation::Rect cell = getTabBounds(static_cast<int>(i));
+			const bool			   active = static_cast<int>(i) == m_selectedIndex;
 
-			// Draw tab background
-			Renderer::Primitives::drawRect({.bounds = tabBounds, .style = style.background, .id = id});
-
-			// Calculate text scale from fontSize (16px base = 1.0 scale)
-			constexpr float kBaseFontSize = 16.0F;
-			float			scale = style.fontSize / kBaseFontSize;
-
-			// Calculate centered text position
-			Foundation::Vec2 textPos{
-				tabBounds.x + tabBounds.width * 0.5F,
-				tabBounds.y + tabBounds.height * 0.5F};
-
-			// Adjust for center/middle alignment using font measurements
-			if (fontRenderer != nullptr) {
-				glm::vec2 textSize = fontRenderer->MeasureText(tab.label, scale);
-				float	  ascent = fontRenderer->getAscent(scale);
-				textPos.x -= textSize.x * 0.5F;	 // Center horizontally
-				textPos.y -= ascent * 0.5F;		 // Center vertically
+			// Active label is bright, disabled is faint, everything else dims.
+			Foundation::Color labelColor = text_dim;
+			if (tab.disabled) {
+				labelColor = text_faint;
+			} else if (active) {
+				labelColor = text_bright;
 			}
 
-			Renderer::Primitives::drawText({
-				.text = tab.label,
-				.position = textPos,
-				.scale = scale,
-				.color = style.textColor,
-				.id = id});
+			// Label centered in the cell; the text primitive owns the uppercase,
+			// the letter-spacing, and the alignment.
+			drawText({.text = tab.label,
+					  .position = {cell.x, cell.y},
+					  .scale = scale,
+					  .color = labelColor,
+					  .font = fontDisplay,
+					  .hAlign = Foundation::HorizontalAlign::Center,
+					  .vAlign = Foundation::VerticalAlign::Middle,
+					  .boxWidth = cell.width,
+					  .boxHeight = cell.height,
+					  .letterSpacing = kLabelSpacing,
+					  .transform = Foundation::TextTransform::Uppercase,
+					  .id = id});
+
+			// Active underline: a 2px accent bar flush on the baseline.
+			if (active && !tab.disabled) {
+				drawRect({.bounds = {cell.x, baselineY - kUnderline, cell.width, kUnderline},
+						  .style = {.fill = accent},
+						  .id = id});
+			}
 		}
 	}
 
@@ -290,26 +317,43 @@ namespace UI {
 		m_tabWidths.clear();
 		m_tabOffsets.clear();
 
+		// Salvage tabs sit flush against the bar's edges with no container padding
+		// or inter-tab gap. getTabBounds() derives cell rects from these fields, so
+		// zero them to keep hit-testing aligned with what render() draws.
+		m_appearance.barPadding = 0.0F;
+		m_appearance.tabSpacing = 0.0F;
+
+		m_height = kBarHeight;
+
 		if (m_tabs.empty()) {
-			m_height = m_appearance.barPadding * 2.0F + 24.0F;	// Minimum height
 			return;
 		}
 
-		// Calculate width for each tab based on text + padding
-		// For simplicity, we'll distribute width evenly for now
-		float availableWidth = size.x - 2.0F * m_appearance.barPadding;
-		float totalSpacing = m_appearance.tabSpacing * static_cast<float>(m_tabs.size() - 1);
-		float tabWidth = (availableWidth - totalSpacing) / static_cast<float>(m_tabs.size());
+		// Per-tab width: measured label (display font, fs_sm scale, ls_wide spacing)
+		// plus space_3 of padding on each side.
+		const float			scale = textScale(kLabelPx);
+		ui::FontRenderer*	fontRenderer = Renderer::Primitives::getFontRenderer();
 
 		float currentOffset = 0.0F;
-		for (size_t i = 0; i < m_tabs.size(); ++i) {
-			m_tabWidths.push_back(tabWidth);
-			m_tabOffsets.push_back(currentOffset);
-			currentOffset += tabWidth + m_appearance.tabSpacing;
-		}
+		for (const Tab& tab : m_tabs) {
+			float labelWidth = 0.0F;
+			if (fontRenderer != nullptr) {
+				// render() uppercases the label, so measure the uppercased form or the
+				// cell widths (and hit regions) drift from what's drawn.
+				std::string measured = tab.label;
+				for (char& ch : measured) {
+					if (ch >= 'a' && ch <= 'z') {
+						ch = static_cast<char>(ch - ('a' - 'A'));
+					}
+				}
+				labelWidth = fontRenderer->MeasureText(measured, scale, fontDisplay, kLabelSpacing).x;
+			}
+			const float cellWidth = labelWidth + (space_3 * 2.0F);
 
-		// Height: padding + text height + padding
-		m_height = m_appearance.barPadding * 2.0F + m_appearance.normal.paddingY * 2.0F + m_appearance.normal.fontSize;
+			m_tabWidths.push_back(cellWidth);
+			m_tabOffsets.push_back(currentOffset);
+			currentOffset += cellWidth;
+		}
 	}
 
 	int TabBar::findTabIndex(const std::string& tabId) const {

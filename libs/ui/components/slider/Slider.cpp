@@ -1,10 +1,14 @@
 #include "components/slider/Slider.h"
 
+#include "font/FontRenderer.h"
+#include "graphics/PrimitiveStyles.h"
+#include "graphics/Rect.h"
 #include "primitives/Primitives.h"
+#include "theme/Tokens.h"
+#include "theme/Variants.h"
 
 #include <algorithm>
 #include <cmath>
-#include <format>
 #include <string>
 
 namespace UI {
@@ -26,6 +30,7 @@ Slider::Slider(const Args& args)
 	  max(args.max),
 	  step(args.step),
 	  logScale(args.logScale),
+	  detent(args.detent),
 	  label(args.label),
 	  valueFormatter(args.valueFormatter),
 	  onChanged(args.onChanged),
@@ -144,112 +149,82 @@ void Slider::render() {
 	if (!visible) {
 		return;
 	}
+	using Renderer::Primitives::drawRect;
+	using Renderer::Primitives::drawText;
 
-	Foundation::Vec2 contentPos = getContentPosition();
+	// drawText scale is relative to a 16px base.
+	constexpr float kTextBasePx = 16.0F;
+	const float		headerScale = fs_sm / kTextBasePx;
 
-	// Label
+	// Salvage geometry: 4px full-pill track, 14px square thumb.
+	constexpr float kTrackHeight = 4.0F;
+	constexpr float kThumbSize = 14.0F;
+
+	const Foundation::Vec2 contentPos = getContentPosition();
+
+	// Header row: label left in text_dim, value right in accent_bright, both mono.
 	if (!label.empty()) {
-		Text labelShape(Text::Args{
-			.position = {contentPos.x, trackY},
-			.width = kLabelWidth,
-			.text = label,
-			.style = {
-				.color = disabled
-					? Foundation::Color{0.45F, 0.45F, 0.45F, 1.0F}
-					: style.labelColor,
-				.fontSize = style.labelFontSize,
-				.hAlign = Foundation::HorizontalAlign::Left,
-				.vAlign = Foundation::VerticalAlign::Middle,
-			},
-		});
-		labelShape.render();
+		drawText({.text = label,
+				  .position = {contentPos.x, contentPos.y},
+				  .scale = headerScale,
+				  .color = disabled ? text_disabled : text_dim,
+				  .font = fontMono,
+				  .id = id});
 
-		// Value text (right-aligned after track)
-		std::string valStr;
-		if (valueFormatter) {
-			valStr = valueFormatter(value);
-		} else {
-			valStr = std::format("{:.2f}", value);
+		const std::string valStr = valueFormatter ? valueFormatter(value) : "";
+		if (!valStr.empty()) {
+			drawText({.text = valStr,
+					  .position = {contentPos.x, contentPos.y},
+					  .scale = headerScale,
+					  .color = disabled ? text_disabled : accent_bright,
+					  .font = fontMono,
+					  .hAlign = Foundation::HorizontalAlign::Right,
+					  .boxWidth = size.x,
+					  .id = nullptr});
 		}
-		// Bounding-box mode (width + height set) so Right align snaps the text
-		// flush to the box's right edge. Without an explicit height the Text falls
-		// into point mode, where the anchor x becomes the text's right edge and
-		// the value drifts left into the track, clipping its leading characters.
-		Text valShape(Text::Args{
-			.position = {contentPos.x + size.x - kValueWidth, contentPos.y},
-			.width = kValueWidth,
-			.height = size.y,
-			.text = valStr,
-			.style = {
-				.color = disabled
-					? Foundation::Color{0.45F, 0.45F, 0.45F, 1.0F}
-					: style.labelColor,
-				.fontSize = style.labelFontSize,
-				.hAlign = Foundation::HorizontalAlign::Right,
-				.vAlign = Foundation::VerticalAlign::Middle,
-			},
-		});
-		valShape.render();
 	}
 
-	float hx = handleX();
-	float halfTrack = style.trackHeight * 0.5F;
+	const float hx = handleX();
+	const float trackTop = trackY - (kTrackHeight * 0.5F);
+	const float radius = kTrackHeight * 0.5F; // full pill
 
-	// Track background
-	Foundation::Rect trackRect{trackLeft, trackY - halfTrack, trackRight - trackLeft, style.trackHeight};
-	Renderer::Primitives::drawRect({
-		.bounds = trackRect,
-		.style = {
-			.fill = style.trackColor,
-			.border = Foundation::BorderStyle{
-				.color = style.trackBorderColor,
-				.width = style.borderWidth,
-				.cornerRadius = halfTrack,
-			},
-		},
-		.id = id,
-	});
+	// Track: bg_inset fill with a hairline inside border.
+	const Foundation::Rect track{trackLeft, trackTop, trackRight - trackLeft, kTrackHeight};
+	drawRect({.bounds = track,
+			  .style = {.fill = bg_inset,
+						.border = Foundation::BorderStyle{
+							.color = line_hairline, .width = bw, .cornerRadius = radius, .position = Foundation::BorderPosition::Inside}},
+			  .id = id});
 
-	// Fill (left of handle)
-	if (hx > trackLeft) {
-		Foundation::Rect fillRect{trackLeft, trackY - halfTrack, hx - trackLeft, style.trackHeight};
-		Renderer::Primitives::drawRect({
-			.bounds = fillRect,
-			.style = {
-				.fill = disabled ? style.handleDisabledColor : style.fillColor,
-			},
-			.id = nullptr,
-		});
+	// Accent fill from the left edge to the value position.
+	const float fillWidth = hx - trackLeft;
+	if (fillWidth > 0.0F) {
+		drawRect({.bounds = {track.x, trackTop, fillWidth, kTrackHeight},
+				  .style = {.fill = accent,
+							.border = Foundation::BorderStyle{
+								.color = accent, .width = 0.0F, .cornerRadius = radius, .position = Foundation::BorderPosition::Inside}},
+				  .id = nullptr});
 	}
 
-	// Handle
-	Foundation::Color handleColor;
-	if (disabled) {
-		handleColor = style.handleDisabledColor;
-	} else if (dragging) {
-		handleColor = style.handleActiveColor;
-	} else if (handleHovered) {
-		handleColor = style.handleHoverColor;
-	} else {
-		handleColor = style.handleColor;
+	// Detent: a 2px teal reference tick centered on its normalized position.
+	if (detent >= 0.0) {
+		const float d = static_cast<float>(std::clamp(detent, 0.0, 1.0));
+		const float tickX = (trackLeft + (d * (trackRight - trackLeft))) - (bw_thick * 0.5F);
+		drawRect({.bounds = {tickX, trackY - (kThumbSize * 0.5F) + space_0_5, bw_thick, kThumbSize - (space_0_5 * 2.0F)},
+				  .style = {.fill = withAlpha(data, 0.7F)},
+				  .id = nullptr});
 	}
 
-	// Focus ring (slightly larger circle behind handle)
-	if (focused && !disabled) {
-		Renderer::Primitives::drawCircle({
-			.center = {hx, trackY},
-			.radius = style.handleRadius + 3.0F,
-			.style = {.fill = style.focusRingColor},
-			.id = nullptr,
-		});
-	}
-
-	Renderer::Primitives::drawCircle({
-		.center = {hx, trackY},
-		.radius = style.handleRadius,
-		.style = {.fill = handleColor},
-		.id = nullptr,
-	});
+	// Thumb: a 14px square (r_sm) centered on the value, with a bg_void hairline
+	// border and a soft accent glow behind it.
+	const float thumbX = hx - (kThumbSize * 0.5F);
+	const float thumbY = trackY - (kThumbSize * 0.5F);
+	drawRect({.bounds = {thumbX, thumbY, kThumbSize, kThumbSize},
+			  .style = {.fill = accent_bright,
+						.border = Foundation::BorderStyle{
+							.color = bg_void, .width = bw, .cornerRadius = r_sm, .position = Foundation::BorderPosition::Inside},
+						.boxShadow = Foundation::BoxShadow{.color = withAlpha(accent, 0.4F), .blur = 8.0F, .spread = 0.0F, .offset = {0.0F, 0.0F}}},
+			  .id = nullptr});
 }
 
 bool Slider::containsPoint(Foundation::Vec2 point) const {

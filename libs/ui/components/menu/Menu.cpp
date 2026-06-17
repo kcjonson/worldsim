@@ -1,9 +1,14 @@
 #include "Menu.h"
 
+#include "graphics/PrimitiveStyles.h"
 #include "primitives/Primitives.h"
-#include "theme/PanelStyle.h"
 
 namespace UI {
+
+namespace {
+	// drawText scale is relative to a 16px base.
+	constexpr float kTextBasePx = 16.0F;
+} // namespace
 
 Menu::Menu(const Args& args)
 	: items(args.items), menuWidth(args.width), hoveredItemIndex(args.hoveredIndex) {
@@ -126,10 +131,15 @@ void Menu::render() {
 
 	Foundation::Rect menuBounds = getBounds();
 
-	// Menu background with floating panel style
+	// Raised Salvage surface: edge border, small radius, soft drop shadow.
 	Renderer::Primitives::drawRect(Renderer::Primitives::RectArgs{
 		.bounds = menuBounds,
-		.style = PanelStyles::floating(),
+		.style = {.fill = bg_panel_raised,
+				  .border = Foundation::BorderStyle{.color = line_edge,
+												   .width = bw,
+												   .cornerRadius = r_sm,
+												   .position = Foundation::BorderPosition::Inside},
+				  .boxShadow = Foundation::BoxShadow{.color = withAlpha(bg_void, 0.5F), .blur = 16.0F, .offset = {0.0F, 6.0F}}},
 		.zIndex = zIndex,
 	});
 
@@ -138,23 +148,28 @@ void Menu::render() {
 		Foundation::Rect itemBounds = getItemBounds(i);
 		const MenuItem&	 item = items[i];
 
-		// Hover highlight
-		if (static_cast<int>(i) == hoveredItemIndex && item.enabled) {
+		const bool hovered = static_cast<int>(i) == hoveredItemIndex && item.enabled;
+
+		// Hover wash.
+		if (hovered) {
 			Renderer::Primitives::drawRect(Renderer::Primitives::RectArgs{
 				.bounds = itemBounds,
-				.style = {.fill = Theme::Dropdown::menuItemHover},
+				.style = {.fill = bg_hover},
 				.zIndex = zIndex + 1,
 			});
 		}
 
-		// Item text
-		Foundation::Color textColor = item.enabled ? Theme::Colors::textBody : Theme::Colors::textMuted;
+		// Label: hovered = bright, normal = body, disabled = muted (no hover).
+		Foundation::Color textColor = !item.enabled ? text_disabled : (hovered ? text_bright : text);
 
 		Renderer::Primitives::drawText(Renderer::Primitives::TextArgs{
 			.text = item.label,
-			.position = {itemBounds.x + 8.0F, itemBounds.y + (kMenuItemHeight - 12.0F) / 2.0F},
-			.scale = 12.0F / 16.0F,
+			.position = {itemBounds.x + space_3, itemBounds.y},
+			.scale = fs_sm / kTextBasePx,
 			.color = textColor,
+			.font = fontUi,
+			.vAlign = Foundation::VerticalAlign::Middle,
+			.boxHeight = kMenuItemHeight,
 			.zIndex = static_cast<float>(zIndex + 2),
 		});
 	}

@@ -1,0 +1,587 @@
+{
+  "atlas": {
+    "type": "msdf",
+    "distanceRange": 4,
+    "size": 32,
+    "width": 512,
+    "height": 512
+  },
+  "metrics": {
+    "emSize": 1,
+    "ascender": 1.02,
+    "descender": -0.3,
+    "lineHeight": 1.32
+  },
+  "glyphs": {
+    "A": {
+      "atlas": {"x": 0, "y": 0, "width": 0.0625, "height": 0.0625},
+      "atlasBounds": {"left": 0.015625, "bottom": 0.0084375, "right": 0.046875, "top": 0.0540625},
+      "plane": {"left": 0.05, "bottom": 0, "right": 0.55, "top": 0.73},
+      "advance": 0.6
+    },
+    "B": {
+      "atlas": {"x": 0.0625, "y": 0, "width": 0.0625, "height": 0.0625},
+      "atlasBounds": {"left": 0.0800937, "bottom": 0.0084375, "right": 0.107406, "top": 0.0540625},
+      "plane": {"left": 0.093, "bottom": 0, "right": 0.53, "top": 0.73},
+      "advance": 0.6
+    },
+    "C": {
+      "atlas": {"x": 0.125, "y": 0, "width": 0.0625, "height": 0.0625},
+      "atlasBounds": {"left": 0.142813, "bottom": 0.0078125, "right": 0.169687, "top": 0.0546875},
+      "plane": {"left": 0.092, "bottom": -0.01, "right": 0.522, "top": 0.74},
+      "advance": 0.6
+    },
+    "D": {
+      "atlas": {"x": 0.1875, "y": 0, "width": 0.0625, "height": 0.0625},
+      "atlasBounds": {"left": 0.205625, "bottom": 0.0084375, "right": 0.231875, "top": 0.0540625},
+      "plane": {"left": 0.092, "bottom": 0, "right": 0.512, "top": 0.73},
+      "advance": 0.6
+    },
+    "E": {
+      "atlas": {"x": 0.25, "y": 0, "width": 0.0625, "height": 0.0625},
+      "atlasBounds": {"left": 0.268125, "bottom": 0.0084375, "right": 0.294375, "top": 0.0540625},
+      "plane": {"left": 0.1, "bottom": 0, "right": 0.52, "top": 0.73},
+      "advance": 0.6
+    },
+    "F": {
+      "atlas": {"x": 0.3125, "y": 0, "width": 0.0625, "height": 0.0625},
+      "atlasBounds": {"left": 0.330313, "bottom": 0.0084375, "right": 0.357187, "top": 0.0540625},
+      "plane": {"left": 0.095, "bottom": 0, "right": 0.525, "top": 0.73},
+      "advance": 0.6
+    },
+    "G": {
+      "atlas": {"x": 0.375, "y": 0, "width": 0.0625, "height": 0.0625},
+      "atlasBounds": {"left": 0.392813, "bottom": 0.0078125, "right": 0.419687, "top": 0.0546875},
+      "plane": {"left": 0.088, "bottom": -0.01, "right": 0.518, "top": 0.74},
+      "advance": 0.6
+    },
+    "H": {
+      "atlas": {"x": 0.4375, "y": 0, "width": 0.0625, "height": 0.0625},
+      "atlasBounds": {"left": 0.455813, "bottom": 0.0084375, "right": 0.481687, "top": 0.0540625},
+      "plane": {"left": 0.093, "bottom": 0, "right": 0.507, "top": 0.73},
+      "advance": 0.6
+    },
+    "I": {
+      "atlas": {"x": 0.5, "y": 0, "width": 0.0625, "height": 0.0625},
+      "atlasBounds": {"left": 0.519062, "bottom": 0.0084375, "right": 0.543438, "top": 0.0540625},
+      "plane": {"left": 0.105, "bottom": 0, "right": 0.495, "top": 0.73},
+      "advance": 0.6
+    },
+    "J": {
+      "atlas": {"x": 0.5625, "y": 0, "width": 0.0625, "height": 0.0625},
+      "atlasBounds": {"left": 0.579688, "bottom": 0.008125, "right": 0.607812, "top": 0.054375},
+      "plane": {"left": 0.045, "bottom": -0.01, "right": 0.495, "top": 0.73},
+      "advance": 0.6
+    },
+    "K": {
+      "atlas": {"x": 0.625, "y": 0, "width": 0.0625, "height": 0.0625},
+      "atlasBounds": {"left": 0.641625, "bottom": 0.0084375, "right": 0.670875, "top": 0.0540625},
+      "plane": {"left": 0.092, "bottom": 0, "right": 0.56, "top": 0.73},
+      "advance": 0.6
+    },
+    "L": {
+      "atlas": {"x": 0.6875, "y": 0, "width": 0.0625, "height": 0.0625},
+      "atlasBounds": {"left": 0.705625, "bottom": 0.0084375, "right": 0.731875, "top": 0.0540625},
+      "plane": {"left": 0.13, "bottom": 0, "right": 0.55, "top": 0.73},
+      "advance": 0.6
+    },
+    "M": {
+      "atlas": {"x": 0.75, "y": 0, "width": 0.0625, "height": 0.0625},
+      "atlasBounds": {"left": 0.767, "bottom": 0.0084375, "right": 0.7955, "top": 0.0540625},
+      "plane": {"left": 0.072, "bottom": 0, "right": 0.528, "top": 0.73},
+      "advance": 0.6
+    },
+    "N": {
+      "atlas": {"x": 0.8125, "y": 0, "width": 0.0625, "height": 0.0625},
+      "atlasBounds": {"left": 0.830625, "bottom": 0.0084375, "right": 0.856875, "top": 0.0540625},
+      "plane": {"left": 0.09, "bottom": 0, "right": 0.51, "top": 0.73},
+      "advance": 0.6
+    },
+    "O": {
+      "atlas": {"x": 0.875, "y": 0, "width": 0.0625, "height": 0.0625},
+      "atlasBounds": {"left": 0.893, "bottom": 0.0078125, "right": 0.9195, "top": 0.0546875},
+      "plane": {"left": 0.088, "bottom": -0.01, "right": 0.512, "top": 0.74},
+      "advance": 0.6
+    },
+    "P": {
+      "atlas": {"x": 0.9375, "y": 0, "width": 0.0625, "height": 0.0625},
+      "atlasBounds": {"left": 0.954438, "bottom": 0.0084375, "right": 0.983062, "top": 0.0540625},
+      "plane": {"left": 0.092, "bottom": 0, "right": 0.55, "top": 0.73},
+      "advance": 0.6
+    },
+    "Q": {
+      "atlas": {"x": 0, "y": 0.0625, "width": 0.0625, "height": 0.0625},
+      "atlasBounds": {"left": 0.0173125, "bottom": 0.065, "right": 0.0451875, "top": 0.1225},
+      "plane": {"left": 0.08, "bottom": -0.18, "right": 0.526, "top": 0.74},
+      "advance": 0.6
+    },
+    "R": {
+      "atlas": {"x": 0.0625, "y": 0.0625, "width": 0.0625, "height": 0.0625},
+      "atlasBounds": {"left": 0.079625, "bottom": 0.0709375, "right": 0.107875, "top": 0.116562},
+      "plane": {"left": 0.093, "bottom": 0, "right": 0.545, "top": 0.73},
+      "advance": 0.6
+    },
+    "S": {
+      "atlas": {"x": 0.125, "y": 0.0625, "width": 0.0625, "height": 0.0625},
+      "atlasBounds": {"left": 0.142, "bottom": 0.0703125, "right": 0.1705, "top": 0.117188},
+      "plane": {"left": 0.072, "bottom": -0.01, "right": 0.528, "top": 0.74},
+      "advance": 0.6
+    },
+    "T": {
+      "atlas": {"x": 0.1875, "y": 0.0625, "width": 0.0625, "height": 0.0625},
+      "atlasBounds": {"left": 0.203437, "bottom": 0.0709375, "right": 0.234063, "top": 0.116562},
+      "plane": {"left": 0.055, "bottom": 0, "right": 0.545, "top": 0.73},
+      "advance": 0.6
+    },
+    "U": {
+      "atlas": {"x": 0.25, "y": 0.0625, "width": 0.0625, "height": 0.0625},
+      "atlasBounds": {"left": 0.268125, "bottom": 0.070625, "right": 0.294375, "top": 0.116875},
+      "plane": {"left": 0.09, "bottom": -0.01, "right": 0.51, "top": 0.73},
+      "advance": 0.6
+    },
+    "V": {
+      "atlas": {"x": 0.3125, "y": 0.0625, "width": 0.0625, "height": 0.0625},
+      "atlasBounds": {"left": 0.328125, "bottom": 0.0709375, "right": 0.359375, "top": 0.116562},
+      "plane": {"left": 0.05, "bottom": 0, "right": 0.55, "top": 0.73},
+      "advance": 0.6
+    },
+    "W": {
+      "atlas": {"x": 0.375, "y": 0.0625, "width": 0.0625, "height": 0.0625},
+      "atlasBounds": {"left": 0.38875, "bottom": 0.0709375, "right": 0.42375, "top": 0.116562},
+      "plane": {"left": 0.02, "bottom": 0, "right": 0.58, "top": 0.73},
+      "advance": 0.6
+    },
+    "X": {
+      "atlas": {"x": 0.4375, "y": 0.0625, "width": 0.0625, "height": 0.0625},
+      "atlasBounds": {"left": 0.4525, "bottom": 0.0709375, "right": 0.485, "top": 0.116562},
+      "plane": {"left": 0.04, "bottom": 0, "right": 0.56, "top": 0.73},
+      "advance": 0.6
+    },
+    "Y": {
+      "atlas": {"x": 0.5, "y": 0.0625, "width": 0.0625, "height": 0.0625},
+      "atlasBounds": {"left": 0.514687, "bottom": 0.0709375, "right": 0.547813, "top": 0.116562},
+      "plane": {"left": 0.035, "bottom": 0, "right": 0.565, "top": 0.73},
+      "advance": 0.6
+    },
+    "Z": {
+      "atlas": {"x": 0.5625, "y": 0.0625, "width": 0.0625, "height": 0.0625},
+      "atlasBounds": {"left": 0.580313, "bottom": 0.0709375, "right": 0.607187, "top": 0.116562},
+      "plane": {"left": 0.085, "bottom": 0, "right": 0.515, "top": 0.73},
+      "advance": 0.6
+    },
+    "a": {
+      "atlas": {"x": 0.625, "y": 0.0625, "width": 0.0625, "height": 0.0625},
+      "atlasBounds": {"left": 0.642469, "bottom": 0.0759375, "right": 0.670031, "top": 0.111563},
+      "plane": {"left": 0.067, "bottom": -0.01, "right": 0.508, "top": 0.56},
+      "advance": 0.6
+    },
+    "b": {
+      "atlas": {"x": 0.6875, "y": 0.0625, "width": 0.0625, "height": 0.0625},
+      "atlasBounds": {"left": 0.705594, "bottom": 0.070625, "right": 0.731906, "top": 0.116875},
+      "plane": {"left": 0.092, "bottom": -0.01, "right": 0.513, "top": 0.73},
+      "advance": 0.6
+    },
+    "c": {
+      "atlas": {"x": 0.75, "y": 0.0625, "width": 0.0625, "height": 0.0625},
+      "atlasBounds": {"left": 0.767656, "bottom": 0.0759375, "right": 0.794844, "top": 0.111563},
+      "plane": {"left": 0.088, "bottom": -0.01, "right": 0.523, "top": 0.56},
+      "advance": 0.6
+    },
+    "d": {
+      "atlas": {"x": 0.8125, "y": 0.0625, "width": 0.0625, "height": 0.0625},
+      "atlasBounds": {"left": 0.830594, "bottom": 0.070625, "right": 0.856906, "top": 0.116875},
+      "plane": {"left": 0.087, "bottom": -0.01, "right": 0.508, "top": 0.73},
+      "advance": 0.6
+    },
+    "e": {
+      "atlas": {"x": 0.875, "y": 0.0625, "width": 0.0625, "height": 0.0625},
+      "atlasBounds": {"left": 0.89275, "bottom": 0.0759375, "right": 0.91975, "top": 0.111563},
+      "plane": {"left": 0.084, "bottom": -0.01, "right": 0.516, "top": 0.56},
+      "advance": 0.6
+    },
+    "f": {
+      "atlas": {"x": 0.9375, "y": 0.0625, "width": 0.0625, "height": 0.0625},
+      "atlasBounds": {"left": 0.953906, "bottom": 0.0709375, "right": 0.983594, "top": 0.116562},
+      "plane": {"left": 0.055, "bottom": 0, "right": 0.53, "top": 0.73},
+      "advance": 0.6
+    },
+    "g": {
+      "atlas": {"x": 0, "y": 0.125, "width": 0.0625, "height": 0.0625},
+      "atlasBounds": {"left": 0.0181562, "bottom": 0.133125, "right": 0.0443438, "top": 0.179375},
+      "plane": {"left": 0.088, "bottom": -0.18, "right": 0.507, "top": 0.56},
+      "advance": 0.6
+    },
+    "h": {
+      "atlas": {"x": 0.0625, "y": 0.125, "width": 0.0625, "height": 0.0625},
+      "atlasBounds": {"left": 0.0806875, "bottom": 0.133437, "right": 0.106813, "top": 0.179063},
+      "plane": {"left": 0.092, "bottom": 0, "right": 0.51, "top": 0.73},
+      "advance": 0.6
+    },
+    "i": {
+      "atlas": {"x": 0.125, "y": 0.125, "width": 0.0625, "height": 0.0625},
+      "atlasBounds": {"left": 0.141563, "bottom": 0.131969, "right": 0.170938, "top": 0.180531},
+      "plane": {"left": 0.085, "bottom": 0, "right": 0.555, "top": 0.777},
+      "advance": 0.6
+    },
+    "j": {
+      "atlas": {"x": 0.1875, "y": 0.125, "width": 0.0625, "height": 0.0625},
+      "atlasBounds": {"left": 0.207313, "bottom": 0.126344, "right": 0.230187, "top": 0.186156},
+      "plane": {"left": 0.085, "bottom": -0.18, "right": 0.451, "top": 0.777},
+      "advance": 0.6
+    },
+    "k": {
+      "atlas": {"x": 0.25, "y": 0.125, "width": 0.0625, "height": 0.0625},
+      "atlasBounds": {"left": 0.266813, "bottom": 0.133437, "right": 0.295687, "top": 0.179063},
+      "plane": {"left": 0.097, "bottom": 0, "right": 0.559, "top": 0.73},
+      "advance": 0.6
+    },
+    "l": {
+      "atlas": {"x": 0.3125, "y": 0.125, "width": 0.0625, "height": 0.0625},
+      "atlasBounds": {"left": 0.3275, "bottom": 0.133437, "right": 0.36, "top": 0.179063},
+      "plane": {"left": 0.03, "bottom": 0, "right": 0.55, "top": 0.73},
+      "advance": 0.6
+    },
+    "m": {
+      "atlas": {"x": 0.375, "y": 0.125, "width": 0.0625, "height": 0.0625},
+      "atlasBounds": {"left": 0.39125, "bottom": 0.13875, "right": 0.42125, "top": 0.17375},
+      "plane": {"left": 0.06, "bottom": 0, "right": 0.54, "top": 0.56},
+      "advance": 0.6
+    },
+    "n": {
+      "atlas": {"x": 0.4375, "y": 0.125, "width": 0.0625, "height": 0.0625},
+      "atlasBounds": {"left": 0.455688, "bottom": 0.13875, "right": 0.481812, "top": 0.17375},
+      "plane": {"left": 0.092, "bottom": 0, "right": 0.51, "top": 0.56},
+      "advance": 0.6
+    },
+    "o": {
+      "atlas": {"x": 0.5, "y": 0.125, "width": 0.0625, "height": 0.0625},
+      "atlasBounds": {"left": 0.51775, "bottom": 0.138563, "right": 0.54475, "top": 0.173937},
+      "plane": {"left": 0.084, "bottom": -0.008, "right": 0.516, "top": 0.558},
+      "advance": 0.6
+    },
+    "p": {
+      "atlas": {"x": 0.5625, "y": 0.125, "width": 0.0625, "height": 0.0625},
+      "atlasBounds": {"left": 0.580594, "bottom": 0.133125, "right": 0.606906, "top": 0.179375},
+      "plane": {"left": 0.092, "bottom": -0.18, "right": 0.513, "top": 0.56},
+      "advance": 0.6
+    },
+    "q": {
+      "atlas": {"x": 0.625, "y": 0.125, "width": 0.0625, "height": 0.0625},
+      "atlasBounds": {"left": 0.643094, "bottom": 0.133125, "right": 0.669406, "top": 0.179375},
+      "plane": {"left": 0.087, "bottom": -0.18, "right": 0.508, "top": 0.56},
+      "advance": 0.6
+    },
+    "r": {
+      "atlas": {"x": 0.6875, "y": 0.125, "width": 0.0625, "height": 0.0625},
+      "atlasBounds": {"left": 0.705688, "bottom": 0.13875, "right": 0.731812, "top": 0.17375},
+      "plane": {"left": 0.112, "bottom": 0, "right": 0.53, "top": 0.56},
+      "advance": 0.6
+    },
+    "s": {
+      "atlas": {"x": 0.75, "y": 0.125, "width": 0.0625, "height": 0.0625},
+      "atlasBounds": {"left": 0.767813, "bottom": 0.138563, "right": 0.794687, "top": 0.173937},
+      "plane": {"left": 0.085, "bottom": -0.008, "right": 0.515, "top": 0.558},
+      "advance": 0.6
+    },
+    "t": {
+      "atlas": {"x": 0.8125, "y": 0.125, "width": 0.0625, "height": 0.0625},
+      "atlasBounds": {"left": 0.828969, "bottom": 0.134219, "right": 0.858531, "top": 0.178281},
+      "plane": {"left": 0.047, "bottom": 0, "right": 0.52, "top": 0.705},
+      "advance": 0.6
+    },
+    "u": {
+      "atlas": {"x": 0.875, "y": 0.125, "width": 0.0625, "height": 0.0625},
+      "atlasBounds": {"left": 0.893125, "bottom": 0.13875, "right": 0.919375, "top": 0.17375},
+      "plane": {"left": 0.09, "bottom": -0.01, "right": 0.51, "top": 0.55},
+      "advance": 0.6
+    },
+    "v": {
+      "atlas": {"x": 0.9375, "y": 0.125, "width": 0.0625, "height": 0.0625},
+      "atlasBounds": {"left": 0.953375, "bottom": 0.139063, "right": 0.984125, "top": 0.173437},
+      "plane": {"left": 0.054, "bottom": 0, "right": 0.546, "top": 0.55},
+      "advance": 0.6
+    },
+    "w": {
+      "atlas": {"x": 0, "y": 0.1875, "width": 0.0625, "height": 0.0625},
+      "atlasBounds": {"left": 0.0144375, "bottom": 0.201563, "right": 0.0480625, "top": 0.235937},
+      "plane": {"left": 0.031, "bottom": 0, "right": 0.569, "top": 0.55},
+      "advance": 0.6
+    },
+    "x": {
+      "atlas": {"x": 0.0625, "y": 0.1875, "width": 0.0625, "height": 0.0625},
+      "atlasBounds": {"left": 0.078125, "bottom": 0.201563, "right": 0.109375, "top": 0.235937},
+      "plane": {"left": 0.05, "bottom": 0, "right": 0.55, "top": 0.55},
+      "advance": 0.6
+    },
+    "y": {
+      "atlas": {"x": 0.125, "y": 0.1875, "width": 0.0625, "height": 0.0625},
+      "atlasBounds": {"left": 0.140875, "bottom": 0.195937, "right": 0.171625, "top": 0.241563},
+      "plane": {"left": 0.054, "bottom": -0.18, "right": 0.546, "top": 0.55},
+      "advance": 0.6
+    },
+    "z": {
+      "atlas": {"x": 0.1875, "y": 0.1875, "width": 0.0625, "height": 0.0625},
+      "atlasBounds": {"left": 0.205625, "bottom": 0.201563, "right": 0.231875, "top": 0.235937},
+      "plane": {"left": 0.09, "bottom": 0, "right": 0.51, "top": 0.55},
+      "advance": 0.6
+    },
+    "0": {
+      "atlas": {"x": 0.25, "y": 0.1875, "width": 0.0625, "height": 0.0625},
+      "atlasBounds": {"left": 0.2675, "bottom": 0.195312, "right": 0.295, "top": 0.242188},
+      "plane": {"left": 0.08, "bottom": -0.01, "right": 0.52, "top": 0.74},
+      "advance": 0.6
+    },
+    "1": {
+      "atlas": {"x": 0.3125, "y": 0.1875, "width": 0.0625, "height": 0.0625},
+      "atlasBounds": {"left": 0.329688, "bottom": 0.195937, "right": 0.357812, "top": 0.241563},
+      "plane": {"left": 0.09, "bottom": 0, "right": 0.54, "top": 0.73},
+      "advance": 0.6
+    },
+    "2": {
+      "atlas": {"x": 0.375, "y": 0.1875, "width": 0.0625, "height": 0.0625},
+      "atlasBounds": {"left": 0.392156, "bottom": 0.195625, "right": 0.420344, "top": 0.241875},
+      "plane": {"left": 0.076, "bottom": 0, "right": 0.527, "top": 0.74},
+      "advance": 0.6
+    },
+    "3": {
+      "atlas": {"x": 0.4375, "y": 0.1875, "width": 0.0625, "height": 0.0625},
+      "atlasBounds": {"left": 0.455, "bottom": 0.195625, "right": 0.4825, "top": 0.241875},
+      "plane": {"left": 0.07, "bottom": -0.01, "right": 0.51, "top": 0.73},
+      "advance": 0.6
+    },
+    "4": {
+      "atlas": {"x": 0.5, "y": 0.1875, "width": 0.0625, "height": 0.0625},
+      "atlasBounds": {"left": 0.518125, "bottom": 0.195937, "right": 0.544375, "top": 0.241563},
+      "plane": {"left": 0.07, "bottom": 0, "right": 0.49, "top": 0.73},
+      "advance": 0.6
+    },
+    "5": {
+      "atlas": {"x": 0.5625, "y": 0.1875, "width": 0.0625, "height": 0.0625},
+      "atlasBounds": {"left": 0.58, "bottom": 0.195625, "right": 0.6075, "top": 0.241875},
+      "plane": {"left": 0.075, "bottom": -0.01, "right": 0.515, "top": 0.73},
+      "advance": 0.6
+    },
+    "6": {
+      "atlas": {"x": 0.625, "y": 0.1875, "width": 0.0625, "height": 0.0625},
+      "atlasBounds": {"left": 0.6415, "bottom": 0.195625, "right": 0.671, "top": 0.241875},
+      "plane": {"left": 0.064, "bottom": -0.01, "right": 0.536, "top": 0.73},
+      "advance": 0.6
+    },
+    "7": {
+      "atlas": {"x": 0.6875, "y": 0.1875, "width": 0.0625, "height": 0.0625},
+      "atlasBounds": {"left": 0.70425, "bottom": 0.195937, "right": 0.73325, "top": 0.241563},
+      "plane": {"left": 0.082, "bottom": 0, "right": 0.546, "top": 0.73},
+      "advance": 0.6
+    },
+    "8": {
+      "atlas": {"x": 0.75, "y": 0.1875, "width": 0.0625, "height": 0.0625},
+      "atlasBounds": {"left": 0.766625, "bottom": 0.195312, "right": 0.795875, "top": 0.242188},
+      "plane": {"left": 0.066, "bottom": -0.01, "right": 0.534, "top": 0.74},
+      "advance": 0.6
+    },
+    "9": {
+      "atlas": {"x": 0.8125, "y": 0.1875, "width": 0.0625, "height": 0.0625},
+      "atlasBounds": {"left": 0.829, "bottom": 0.195625, "right": 0.8585, "top": 0.241875},
+      "plane": {"left": 0.064, "bottom": 0, "right": 0.536, "top": 0.74},
+      "advance": 0.6
+    },
+    " ": {
+      "atlas": null,
+      "atlasBounds": null,
+      "plane": null,
+      "advance": 0.6
+    },
+    "!": {
+      "atlas": {"x": 0.875, "y": 0.1875, "width": 0.0625, "height": 0.0625},
+      "atlasBounds": {"left": 0.901563, "bottom": 0.195781, "right": 0.910937, "top": 0.241719},
+      "plane": {"left": 0.225, "bottom": -0.005, "right": 0.375, "top": 0.73},
+      "advance": 0.6
+    },
+    "@": {
+      "atlas": {"x": 0.9375, "y": 0.1875, "width": 0.0625, "height": 0.0625},
+      "atlasBounds": {"left": 0.952656, "bottom": 0.19, "right": 0.984844, "top": 0.2475},
+      "plane": {"left": 0.045, "bottom": -0.18, "right": 0.56, "top": 0.74},
+      "advance": 0.6
+    },
+    "#": {
+      "atlas": {"x": 0, "y": 0.25, "width": 0.0625, "height": 0.0625},
+      "atlasBounds": {"left": 0.0146875, "bottom": 0.258437, "right": 0.0478125, "top": 0.304063},
+      "plane": {"left": 0.035, "bottom": 0, "right": 0.565, "top": 0.73},
+      "advance": 0.6
+    },
+    "$": {
+      "atlas": {"x": 0.0625, "y": 0.25, "width": 0.0625, "height": 0.0625},
+      "atlasBounds": {"left": 0.0795, "bottom": 0.249688, "right": 0.108, "top": 0.312812},
+      "plane": {"left": 0.072, "bottom": -0.14, "right": 0.528, "top": 0.87},
+      "advance": 0.6
+    },
+    "%": {
+      "atlas": {"x": 0.125, "y": 0.25, "width": 0.0625, "height": 0.0625},
+      "atlasBounds": {"left": 0.138375, "bottom": 0.258125, "right": 0.174125, "top": 0.304375},
+      "plane": {"left": 0.014, "bottom": -0.005, "right": 0.586, "top": 0.735},
+      "advance": 0.6
+    },
+    "^": {
+      "atlas": {"x": 0.1875, "y": 0.25, "width": 0.0625, "height": 0.0625},
+      "atlasBounds": {"left": 0.205, "bottom": 0.269062, "right": 0.2325, "top": 0.293438},
+      "plane": {"left": 0.08, "bottom": 0.34, "right": 0.52, "top": 0.73},
+      "advance": 0.6
+    },
+    "&": {
+      "atlas": {"x": 0.25, "y": 0.25, "width": 0.0625, "height": 0.0625},
+      "atlasBounds": {"left": 0.262813, "bottom": 0.257844, "right": 0.299687, "top": 0.304656},
+      "plane": {"left": 0.025, "bottom": -0.009, "right": 0.615, "top": 0.74},
+      "advance": 0.6
+    },
+    "*": {
+      "atlas": {"x": 0.3125, "y": 0.25, "width": 0.0625, "height": 0.0625},
+      "atlasBounds": {"left": 0.32725, "bottom": 0.265094, "right": 0.36025, "top": 0.297406},
+      "plane": {"left": 0.036, "bottom": 0.103, "right": 0.564, "top": 0.62},
+      "advance": 0.6
+    },
+    "(": {
+      "atlas": {"x": 0.375, "y": 0.25, "width": 0.0625, "height": 0.0625},
+      "atlasBounds": {"left": 0.396875, "bottom": 0.25125, "right": 0.415625, "top": 0.31125},
+      "plane": {"left": 0.185, "bottom": -0.12, "right": 0.485, "top": 0.84},
+      "advance": 0.6
+    },
+    ")": {
+      "atlas": {"x": 0.4375, "y": 0.25, "width": 0.0625, "height": 0.0625},
+      "atlasBounds": {"left": 0.459375, "bottom": 0.25125, "right": 0.478125, "top": 0.31125},
+      "plane": {"left": 0.115, "bottom": -0.12, "right": 0.415, "top": 0.84},
+      "advance": 0.6
+    },
+    "_": {
+      "atlas": {"x": 0.5, "y": 0.25, "width": 0.0625, "height": 0.0625},
+      "atlasBounds": {"left": 0.51625, "bottom": 0.278906, "right": 0.54625, "top": 0.283594},
+      "plane": {"left": 0.06, "bottom": -0.1, "right": 0.54, "top": -0.025},
+      "advance": 0.6
+    },
+    "+": {
+      "atlas": {"x": 0.5625, "y": 0.25, "width": 0.0625, "height": 0.0625},
+      "atlasBounds": {"left": 0.579063, "bottom": 0.266562, "right": 0.608437, "top": 0.295938},
+      "plane": {"left": 0.065, "bottom": 0.095, "right": 0.535, "top": 0.565},
+      "advance": 0.6
+    },
+    "-": {
+      "atlas": {"x": 0.625, "y": 0.25, "width": 0.0625, "height": 0.0625},
+      "atlasBounds": {"left": 0.64625, "bottom": 0.27875, "right": 0.66625, "top": 0.28375},
+      "plane": {"left": 0.14, "bottom": 0.29, "right": 0.46, "top": 0.37},
+      "advance": 0.6
+    },
+    "=": {
+      "atlas": {"x": 0.6875, "y": 0.25, "width": 0.0625, "height": 0.0625},
+      "atlasBounds": {"left": 0.705313, "bottom": 0.27125, "right": 0.732187, "top": 0.29125},
+      "plane": {"left": 0.085, "bottom": 0.17, "right": 0.515, "top": 0.49},
+      "advance": 0.6
+    },
+    "[": {
+      "atlas": {"x": 0.75, "y": 0.25, "width": 0.0625, "height": 0.0625},
+      "atlasBounds": {"left": 0.773594, "bottom": 0.251875, "right": 0.788906, "top": 0.310625},
+      "plane": {"left": 0.205, "bottom": -0.11, "right": 0.45, "top": 0.83},
+      "advance": 0.6
+    },
+    "]": {
+      "atlas": {"x": 0.8125, "y": 0.25, "width": 0.0625, "height": 0.0625},
+      "atlasBounds": {"left": 0.836094, "bottom": 0.251875, "right": 0.851406, "top": 0.310625},
+      "plane": {"left": 0.15, "bottom": -0.11, "right": 0.395, "top": 0.83},
+      "advance": 0.6
+    },
+    "{": {
+      "atlas": {"x": 0.875, "y": 0.25, "width": 0.0625, "height": 0.0625},
+      "atlasBounds": {"left": 0.892813, "bottom": 0.251875, "right": 0.919687, "top": 0.310625},
+      "plane": {"left": 0.075, "bottom": -0.11, "right": 0.505, "top": 0.83},
+      "advance": 0.6
+    },
+    "}": {
+      "atlas": {"x": 0.9375, "y": 0.25, "width": 0.0625, "height": 0.0625},
+      "atlasBounds": {"left": 0.955313, "bottom": 0.251875, "right": 0.982187, "top": 0.310625},
+      "plane": {"left": 0.095, "bottom": -0.11, "right": 0.525, "top": 0.83},
+      "advance": 0.6
+    },
+    "|": {
+      "atlas": {"x": 0, "y": 0.3125, "width": 0.0625, "height": 0.0625},
+      "atlasBounds": {"left": 0.0284375, "bottom": 0.314375, "right": 0.0340625, "top": 0.373125},
+      "plane": {"left": 0.255, "bottom": -0.11, "right": 0.345, "top": 0.83},
+      "advance": 0.6
+    },
+    ";": {
+      "atlas": {"x": 0.0625, "y": 0.3125, "width": 0.0625, "height": 0.0625},
+      "atlasBounds": {"left": 0.088125, "bottom": 0.32125, "right": 0.099375, "top": 0.36625},
+      "plane": {"left": 0.205, "bottom": -0.16, "right": 0.385, "top": 0.56},
+      "advance": 0.6
+    },
+    "'": {
+      "atlas": {"x": 0.125, "y": 0.3125, "width": 0.0625, "height": 0.0625},
+      "atlasBounds": {"left": 0.153062, "bottom": 0.334375, "right": 0.159438, "top": 0.353125},
+      "plane": {"left": 0.249, "bottom": 0.43, "right": 0.351, "top": 0.73},
+      "advance": 0.6
+    },
+    ":": {
+      "atlas": {"x": 0.1875, "y": 0.3125, "width": 0.0625, "height": 0.0625},
+      "atlasBounds": {"left": 0.213562, "bottom": 0.325937, "right": 0.223938, "top": 0.361563},
+      "plane": {"left": 0.217, "bottom": -0.01, "right": 0.383, "top": 0.56},
+      "advance": 0.6
+    },
+    "\"": {
+      "atlas": {"x": 0.25, "y": 0.3125, "width": 0.0625, "height": 0.0625},
+      "atlasBounds": {"left": 0.271437, "bottom": 0.334375, "right": 0.291063, "top": 0.353125},
+      "plane": {"left": 0.143, "bottom": 0.43, "right": 0.457, "top": 0.73},
+      "advance": 0.6
+    },
+    ",": {
+      "atlas": {"x": 0.3125, "y": 0.3125, "width": 0.0625, "height": 0.0625},
+      "atlasBounds": {"left": 0.338656, "bottom": 0.334187, "right": 0.348844, "top": 0.353313},
+      "plane": {"left": 0.21, "bottom": -0.16, "right": 0.373, "top": 0.146},
+      "advance": 0.6
+    },
+    ".": {
+      "atlas": {"x": 0.375, "y": 0.3125, "width": 0.0625, "height": 0.0625},
+      "atlasBounds": {"left": 0.401125, "bottom": 0.338687, "right": 0.411375, "top": 0.348812},
+      "plane": {"left": 0.218, "bottom": -0.01, "right": 0.382, "top": 0.152},
+      "advance": 0.6
+    },
+    "/": {
+      "atlas": {"x": 0.4375, "y": 0.3125, "width": 0.0625, "height": 0.0625},
+      "atlasBounds": {"left": 0.454688, "bottom": 0.314375, "right": 0.482812, "top": 0.373125},
+      "plane": {"left": 0.075, "bottom": -0.11, "right": 0.525, "top": 0.83},
+      "advance": 0.6
+    },
+    "<": {
+      "atlas": {"x": 0.5, "y": 0.3125, "width": 0.0625, "height": 0.0625},
+      "atlasBounds": {"left": 0.517813, "bottom": 0.327188, "right": 0.544687, "top": 0.360312},
+      "plane": {"left": 0.085, "bottom": 0.065, "right": 0.515, "top": 0.595},
+      "advance": 0.6
+    },
+    ">": {
+      "atlas": {"x": 0.5625, "y": 0.3125, "width": 0.0625, "height": 0.0625},
+      "atlasBounds": {"left": 0.580313, "bottom": 0.327188, "right": 0.607187, "top": 0.360312},
+      "plane": {"left": 0.085, "bottom": 0.065, "right": 0.515, "top": 0.595},
+      "advance": 0.6
+    },
+    "?": {
+      "atlas": {"x": 0.625, "y": 0.3125, "width": 0.0625, "height": 0.0625},
+      "atlasBounds": {"left": 0.645156, "bottom": 0.320781, "right": 0.667344, "top": 0.366719},
+      "plane": {"left": 0.13, "bottom": -0.005, "right": 0.485, "top": 0.73},
+      "advance": 0.6
+    },
+    "`": {
+      "atlas": {"x": 0.6875, "y": 0.3125, "width": 0.0625, "height": 0.0625},
+      "atlasBounds": {"left": 0.712187, "bottom": 0.339375, "right": 0.725313, "top": 0.348125},
+      "plane": {"left": 0.162, "bottom": 0.645, "right": 0.372, "top": 0.785},
+      "advance": 0.6
+    },
+    "~": {
+      "atlas": {"x": 0.75, "y": 0.3125, "width": 0.0625, "height": 0.0625},
+      "atlasBounds": {"left": 0.766875, "bottom": 0.337344, "right": 0.795625, "top": 0.350156},
+      "plane": {"left": 0.07, "bottom": 0.25, "right": 0.53, "top": 0.455},
+      "advance": 0.6
+    },
+    "\\": {
+      "atlas": {"x": 0.8125, "y": 0.3125, "width": 0.0625, "height": 0.0625},
+      "atlasBounds": {"left": 0.829688, "bottom": 0.314375, "right": 0.857812, "top": 0.373125},
+      "plane": {"left": 0.075, "bottom": -0.11, "right": 0.525, "top": 0.83},
+      "advance": 0.6
+    }
+  }
+}

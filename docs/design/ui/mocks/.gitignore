@@ -1,0 +1,3 @@
+# The repo ignores *.png globally (generated atlas bitmaps). These reference
+# mocks are committed design artifacts, so re-include them here.
+!*.png

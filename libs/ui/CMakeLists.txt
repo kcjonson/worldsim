@@ -24,6 +24,13 @@ add_library(ui
     focus/FocusManager.cpp
     input/InputEvent.cpp
     layout/LayoutContainer.cpp
+    components/panel/Panel.cpp
+    components/stat/Stat.cpp
+    components/badge/Badge.cpp
+    components/segmentedcontrol/SegmentedControl.cpp
+    components/divider/Divider.cpp
+    components/keycap/KeyCap.cpp
+    components/avatar/Avatar.cpp
 )
 
 target_include_directories(ui

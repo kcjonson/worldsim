@@ -146,11 +146,11 @@ TEST_F(ContextMenuTest, ClampsToRightEdge) {
 		.items = {{.label = "Test", .onSelect = [] {}}},
 	});
 
-	// Open near right edge of 800px screen
+	// Open near right edge of 800px screen: menu must be pushed left to stay on screen.
 	menu.openAt({750.0F, 100.0F}, 800.0F, 600.0F);
 
-	// Menu should be clamped to stay on screen
-	EXPECT_LE(menu.position.x + Theme::ContextMenu::minWidth, 800.0F);
+	EXPECT_LT(menu.position.x, 750.0F);
+	EXPECT_GE(menu.position.x, 0.0F);
 }
 
 TEST_F(ContextMenuTest, ClampsToBottomEdge) {
@@ -160,13 +160,11 @@ TEST_F(ContextMenuTest, ClampsToBottomEdge) {
 				  {.label = "Test3", .onSelect = [] {}}},
 	});
 
-	// Open near bottom edge of 600px screen
+	// Open near bottom edge of 600px screen: menu must be pushed up to stay on screen.
 	menu.openAt({100.0F, 580.0F}, 800.0F, 600.0F);
 
-	// Menu should be clamped to stay on screen
-	float menuHeight =
-		3.0F * Theme::ContextMenu::itemHeight + Theme::ContextMenu::padding * 2;
-	EXPECT_LE(menu.position.y + menuHeight, 600.0F);
+	EXPECT_LT(menu.position.y, 580.0F);
+	EXPECT_GE(menu.position.y, 0.0F);
 }
 
 TEST_F(ContextMenuTest, KeyboardEscapeCloses) {

@@ -21,7 +21,8 @@
 #include "focus/FocusableBase.h"
 #include "graphics/Color.h"
 #include "layer/Layer.h"
-#include "theme/Theme.h"
+#include "theme/Tokens.h"
+#include "theme/Variants.h"
 
 #include <functional>
 #include <string>

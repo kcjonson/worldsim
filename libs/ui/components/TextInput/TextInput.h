@@ -4,6 +4,8 @@
 #include "focus/FocusableBase.h"
 #include "graphics/Color.h"
 #include "math/Types.h"
+#include "theme/Tokens.h"
+#include "theme/Variants.h"
 #include <functional>
 #include <optional>
 #include <string>
@@ -31,33 +33,34 @@ struct TextSelection {
 	bool   isEmpty() const { return start == end; }
 };
 
-// TextInput visual style
+// TextInput visual style. Defaults to the Salvage look: an inset well with a
+// hairline border that lifts to the amber accent on focus.
 struct TextInputStyle {
-	// Background and border
-	Foundation::Color backgroundColor{0.15F, 0.15F, 0.15F, 1.0F};
-	Foundation::Color borderColor{0.4F, 0.4F, 0.4F, 1.0F};
-	Foundation::Color focusedBorderColor{0.2F, 0.5F, 0.9F, 1.0F};
-	float			  borderWidth{1.0F};
-	float			  cornerRadius{4.0F};
+	// Background and border: bg_inset well, hairline edge, accent focus ring.
+	Foundation::Color backgroundColor{bg_inset};
+	Foundation::Color borderColor{line_hairline};
+	Foundation::Color focusedBorderColor{accent};
+	float			  borderWidth{bw};
+	float			  cornerRadius{r_sm};
 
-	// Text
-	Foundation::Color textColor{1.0F, 1.0F, 1.0F, 1.0F};
-	Foundation::Color placeholderColor{0.5F, 0.5F, 0.5F, 1.0F};
-	float			  fontSize{16.0F};
+	// Text: bright primary content, faint placeholder.
+	Foundation::Color textColor{text_bright};
+	Foundation::Color placeholderColor{text_faint};
+	float			  fontSize{fs_base};
 
-	// Cursor
-	Foundation::Color cursorColor{1.0F, 1.0F, 1.0F, 1.0F};
-	float			  cursorWidth{1.0F};
+	// Cursor: amber caret.
+	Foundation::Color cursorColor{accent};
+	float			  cursorWidth{bw};
 	float			  cursorBlinkRate{0.5F}; // Seconds per blink cycle
 
-	// Selection (Phase 2)
-	Foundation::Color selectionColor{0.2F, 0.4F, 0.8F, 0.5F};
+	// Selection (Phase 2): amber wash at ~25% (matches withAlpha(accent, 0.25)).
+	Foundation::Color selectionColor{accent.r, accent.g, accent.b, 0.25F};
 
-	// Padding
-	float paddingLeft{8.0F};
-	float paddingRight{8.0F};
-	float paddingTop{6.0F};
-	float paddingBottom{6.0F};
+	// Padding: space_3 horizontal, space_2 vertical.
+	float paddingLeft{space_3};
+	float paddingRight{space_3};
+	float paddingTop{space_2};
+	float paddingBottom{space_2};
 };
 
 // TextInput component - extends Component and uses FocusableBase for auto-registration

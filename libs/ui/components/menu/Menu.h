@@ -15,7 +15,8 @@
 
 #include "component/Component.h"
 #include "graphics/Color.h"
-#include "theme/Theme.h"
+#include "theme/Tokens.h"
+#include "theme/Variants.h"
 
 #include <functional>
 #include <string>
@@ -87,8 +88,8 @@ class Menu : public Component {
 	int					  hoveredItemIndex{-1};
 
 	// Menu dimensions
-	static constexpr float kMenuItemHeight = Theme::Dropdown::menuItemHeight;
-	static constexpr float kMenuPadding = 4.0F;
+	static constexpr float kMenuItemHeight = 30.0F;
+	static constexpr float kMenuPadding = space_1;
 };
 
 } // namespace UI

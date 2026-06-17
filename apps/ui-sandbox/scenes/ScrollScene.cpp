@@ -134,25 +134,25 @@ namespace {
 			// Progress bars with different values and colors
 			progressBar1 = std::make_unique<ProgressBar>(ProgressBar::Args{
 				.position = {550.0F, 100.0F},
-				.size = {200.0F, 16.0F},
+				.width = 200.0F,
 				.value = 0.75F,
-				.fillColor = Theme::Colors::statusActive, // Green
+				.tone = UI::Tone::Ok,
 				.id = "progress_75"
 			});
 
 			progressBar2 = std::make_unique<ProgressBar>(ProgressBar::Args{
 				.position = {550.0F, 130.0F},
-				.size = {200.0F, 16.0F},
+				.width = 200.0F,
 				.value = 0.45F,
-				.fillColor = Theme::Colors::statusPending, // Yellow
+				.tone = UI::Tone::Warn,
 				.id = "progress_45"
 			});
 
 			progressBar3 = std::make_unique<ProgressBar>(ProgressBar::Args{
 				.position = {550.0F, 160.0F},
-				.size = {200.0F, 16.0F},
+				.width = 200.0F,
 				.value = 0.25F,
-				.fillColor = Theme::Colors::statusBlocked, // Red
+				.tone = UI::Tone::Crit,
 				.id = "progress_25"
 			});
 
@@ -166,23 +166,19 @@ namespace {
 
 			progressBar4 = std::make_unique<ProgressBar>(ProgressBar::Args{
 				.position = {550.0F, 220.0F},
-				.size = {200.0F, 14.0F},
+				.width = 200.0F,
 				.value = 0.6F,
-				.fillColor = Color(0.3F, 0.6F, 0.9F, 1.0F), // Blue
+				.tone = UI::Tone::Data,
 				.label = "Health",
-				.labelWidth = 50.0F,
-				.labelGap = 5.0F,
 				.id = "progress_health"
 			});
 
 			progressBar5 = std::make_unique<ProgressBar>(ProgressBar::Args{
 				.position = {550.0F, 245.0F},
-				.size = {200.0F, 14.0F},
+				.width = 200.0F,
 				.value = 0.85F,
-				.fillColor = Color(0.9F, 0.6F, 0.2F, 1.0F), // Orange
+				.tone = UI::Tone::Warn,
 				.label = "Mana",
-				.labelWidth = 50.0F,
-				.labelGap = 5.0F,
 				.id = "progress_mana"
 			});
 

@@ -21,7 +21,8 @@
 #include "component/Component.h"
 #include "focus/FocusableBase.h"
 #include "input/InputTypes.h"
-#include "theme/Theme.h"
+#include "theme/Tokens.h"
+#include "theme/Variants.h"
 
 #include <functional>
 #include <string>
@@ -98,6 +99,11 @@ class ContextMenu : public Component, public FocusableBase<ContextMenu> {
 	// Screen bounds for edge clamping
 	float screenW{0.0F};
 	float screenH{0.0F};
+
+	// Layout dimensions
+	static constexpr float kMinWidth = 150.0F;
+	static constexpr float kItemHeight = 28.0F;
+	static constexpr float kPadding = space_1;
 
 	// Dimensions
 	[[nodiscard]] float getMenuWidth() const;

@@ -1,10 +1,19 @@
 #include "Select.h"
 
 #include "focus/FocusManager.h"
+#include "graphics/PrimitiveStyles.h"
 #include "primitives/Primitives.h"
-#include "theme/PanelStyle.h"
+#include "theme/Tokens.h"
+#include "theme/Variants.h"
 
 namespace UI {
+
+	namespace {
+		// drawText scale is relative to a 16px base.
+		constexpr float kTextBasePx = 16.0F;
+
+		float textScale(float sizePx) { return sizePx / kTextBasePx; }
+	} // namespace
 
 Select::Select(const Args& args)
 	: FocusableBase<Select>(args.tabIndex),
@@ -278,68 +287,81 @@ void Select::render() {
 	if (!visible) {
 		return;
 	}
+	using Renderer::Primitives::drawRect;
+	using Renderer::Primitives::drawText;
 
-	Foundation::Rect bounds = getButtonBounds();
+	const Foundation::Rect bounds = getButtonBounds();
 
-	// Determine button style based on state
-	Foundation::Color buttonBg;
-	Foundation::Color buttonBorder;
-	if (disabled) {
-		buttonBg = Foundation::Color(0.13F, 0.15F, 0.19F, 0.95F);
-		buttonBorder = Foundation::Color(0.22F, 0.26F, 0.32F, 1.0F);
-	} else if (open || buttonPressed) {
-		buttonBg = Foundation::Color(0.25F, 0.35F, 0.50F, 0.95F);
-		buttonBorder = Foundation::Color(0.40F, 0.55F, 0.75F, 1.0F);
-	} else if (buttonHovered) {
-		buttonBg = Foundation::Color(0.20F, 0.30F, 0.45F, 0.95F);
-		buttonBorder = Foundation::Color(0.35F, 0.50F, 0.70F, 1.0F);
-	} else {
-		buttonBg = Foundation::Color(0.15F, 0.20F, 0.30F, 0.95F);
-		buttonBorder = Foundation::Color(0.30F, 0.40F, 0.55F, 1.0F);
+	// Inset field on a hairline border; focus lifts the border to accent. The
+	// open/pressed state borrows the brighter edge tint so the field reads as
+	// "armed" while the popup is up.
+	const bool		  active = open || buttonPressed;
+	Foundation::Color borderColor = line_hairline;
+	if (focused && !disabled) {
+		borderColor = accent;
+	} else if (active) {
+		borderColor = line_edge;
 	}
 
-	// Focus ring
-	if (focused) {
-		Renderer::Primitives::drawRect(Renderer::Primitives::RectArgs{
-			.bounds = {bounds.x - 2, bounds.y - 2, bounds.width + 4, bounds.height + 4},
-			.style = {.fill = Foundation::Color(0.0F, 0.0F, 0.0F, 0.0F),
-					  .border = Foundation::BorderStyle{.color = Foundation::Color(0.4F, 0.6F, 1.0F, 1.0F), .width = 2.0F}},
+	drawRect(Renderer::Primitives::RectArgs{
+		.bounds = bounds,
+		.style = {.fill = bg_inset,
+				  .border = Foundation::BorderStyle{
+					  .color = borderColor, .width = bw, .cornerRadius = r_sm, .position = Foundation::BorderPosition::Inside}},
+		.zIndex = zIndex,
+	});
+
+	// Hover wash on the closed field.
+	if (buttonHovered && !disabled && !active) {
+		drawRect(Renderer::Primitives::RectArgs{
+			.bounds = bounds,
+			.style = {.fill = bg_hover,
+					  .border = Foundation::BorderStyle{
+						  .color = bg_hover, .width = 0.0F, .cornerRadius = r_sm, .position = Foundation::BorderPosition::Inside}},
 			.zIndex = zIndex,
 		});
 	}
 
-	// Draw button background
-	Renderer::Primitives::drawRect(Renderer::Primitives::RectArgs{
-		.bounds = bounds,
-		.style = {.fill = buttonBg, .border = Foundation::BorderStyle{.color = buttonBorder, .width = 1.0F}},
-		.zIndex = zIndex,
-	});
+	// Selected value (or placeholder). A real selection reads bright; placeholder
+	// and disabled drop to dim/disabled tokens.
+	const std::string displayText = getSelectedLabel();
+	const bool		  hasValue = !value.empty() && findSelectedIndex() >= 0;
+	Foundation::Color textColor;
+	if (disabled) {
+		textColor = text_disabled;
+	} else if (hasValue) {
+		textColor = text_bright;
+	} else {
+		textColor = text_dim;
+	}
 
-	// Draw selected label + dropdown indicator
-	std::string displayText = getSelectedLabel();
-	bool		hasValue = !value.empty() && findSelectedIndex() >= 0;
-	Foundation::Color textColor = (hasValue && !disabled) ? Foundation::Color::white() : Theme::Colors::textMuted;
-
-	// Calculate text position (left-aligned with padding)
-	float textX = bounds.x + 10.0F;
-	float textY = bounds.y + (bounds.height - 12.0F) / 2.0F;
-
-	// Draw selected value / placeholder
-	Renderer::Primitives::drawText(Renderer::Primitives::TextArgs{
+	const float chevronGutter = space_5; // room for the chevron on the right
+	drawText(Renderer::Primitives::TextArgs{
 		.text = displayText,
-		.position = {textX, textY},
-		.scale = 12.0F / 16.0F,
+		.position = {bounds.x + space_3, bounds.y},
+		.scale = textScale(fs_sm),
 		.color = textColor,
+		.font = fontUi,
+		.hAlign = Foundation::HorizontalAlign::Left,
+		.vAlign = Foundation::VerticalAlign::Middle,
+		.boxWidth = bounds.width - space_3 - chevronGutter,
+		.boxHeight = bounds.height,
 		.zIndex = static_cast<float>(zIndex) + 0.1F,
 	});
 
-	// Draw dropdown indicator on the right
-	float indicatorX = bounds.x + bounds.width - 20.0F;
-	Renderer::Primitives::drawText(Renderer::Primitives::TextArgs{
-		.text = "v",
-		.position = {indicatorX, textY},
-		.scale = 12.0F / 16.0F,
-		.color = Foundation::Color::white(),
+	// Chevron glyph on the right; brightens to accent while open/focused.
+	const Foundation::Color chevronColor = disabled ? text_disabled : ((active || focused) ? accent_bright : text_dim);
+	const float				chevronBoxX = bounds.x + bounds.width - chevronGutter;
+	drawText(Renderer::Primitives::TextArgs{
+		.text = open ? "^" : "v", // caret: up when open, down when closed
+		.position = {chevronBoxX, bounds.y},
+		.scale = textScale(fs_sm),
+		.color = chevronColor,
+		.font = fontMono,
+		.hAlign = Foundation::HorizontalAlign::Center,
+		.vAlign = Foundation::VerticalAlign::Middle,
+		.boxWidth = chevronGutter,
+		.boxHeight = bounds.height,
 		.zIndex = static_cast<float>(zIndex) + 0.1F,
 	});
 

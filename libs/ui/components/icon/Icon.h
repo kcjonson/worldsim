@@ -1,20 +1,20 @@
 #pragma once
 
-// Icon - SVG-based icon component
+// Icon - vector icon component, two sources behind one widget.
 //
-// Renders SVG assets with optional tinting at configurable sizes.
-// Uses the renderer's SVG loading and tessellation pipeline.
+//   * Salvage glyph: set Args::glyph to a registry name (see theme/IconGlyphs.h).
+//     Stroked glyphs draw as round-joined line segments; filled glyphs tessellate.
+//   * SVG asset: set Args::svgPath to load + tessellate an SVG file.
 //
-// Pipeline:
-//   1. loadSVG() - Parse SVG and flatten Bezier curves
-//   2. Tessellator - Convert paths to triangles
-//   3. drawTriangles() - Render with tint color
+// glyph takes precedence when both are set. Geometry is built once (in the
+// constructor / on size change) and reused each frame.
 
 #include "component/Component.h"
 #include "graphics/Color.h"
 #include "theme/Theme.h"
 #include "vector/Types.h"
 
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -25,8 +25,10 @@ class Icon : public Component {
 	struct Args {
 		Foundation::Vec2  position{0.0F, 0.0F};
 		float			  size{Theme::Icons::defaultSize}; // Icon renders as size × size square
-		std::string		  svgPath{};						// Path to SVG asset
-		Foundation::Color tint{1.0F, 1.0F, 1.0F, 1.0F};		// Tint color (white = no tint)
+		std::string		  svgPath{};						 // SVG asset path (used if glyph is empty)
+		std::string		  glyph{};							 // Salvage glyph name (takes precedence)
+		Foundation::Color tint{1.0F, 1.0F, 1.0F, 1.0F};		 // Tint color (stroke or fill)
+		float			  strokeWidth{1.6F};				 // glyph stroke width in 24px icon space
 		const char*		  id = nullptr;
 		float			  margin{0.0F};
 	};
@@ -48,10 +50,10 @@ class Icon : public Component {
 	void setIconSize(float newSize);
 
 	// Getters
-	[[nodiscard]] const std::string&  getSvgPath() const { return svgPath; }
-	[[nodiscard]] Foundation::Color	  getTint() const { return tint; }
-	[[nodiscard]] float				  getIconSize() const { return iconSize; }
-	[[nodiscard]] bool				  isLoaded() const { return !originalVertices.empty(); }
+	[[nodiscard]] const std::string& getSvgPath() const { return svgPath; }
+	[[nodiscard]] Foundation::Color	 getTint() const { return tint; }
+	[[nodiscard]] float				 getIconSize() const { return iconSize; }
+	[[nodiscard]] bool				 isLoaded() const { return !originalVertices.empty() || !glyphStrokes.empty() || !glyphMeshVertices.empty(); }
 
 	// IComponent overrides
 	void render() override;
@@ -61,22 +63,33 @@ class Icon : public Component {
 
   private:
 	std::string		  svgPath;
+	std::string		  glyph;
 	float			  iconSize;
 	Foundation::Color tint;
+	bool			  glyphMode{false};
 
-	// Original SVG dimensions for scaling
-	float originalWidth{0.0F};
-	float originalHeight{0.0F};
-
-	// Cached tessellated mesh (original scale for reuse)
+	// --- SVG mode ---
+	float						  originalWidth{0.0F};
+	float						  originalHeight{0.0F};
 	std::vector<Foundation::Vec2> originalVertices; // Unscaled vertices from tessellation
-	std::vector<uint16_t>		  indices;			// Indices don't change with scale
-
-	// Scaled vertices for rendering
+	std::vector<uint16_t>		  indices;
 	std::vector<Foundation::Vec2> vertices; // Scaled/offset vertices ready for render
 
-	void rebuildMesh();
-	void applyScaleToVertices();
+	// --- Salvage glyph mode ---
+	bool						  glyphFilled{false};
+	float						  glyphStrokeBase{1.6F}; // unscaled (24px space)
+	float						  glyphStrokeWidth{1.6F}; // scaled to size
+	std::vector<Foundation::Vec2> glyphMeshVertices;
+	std::vector<uint16_t>		  glyphMeshIndices;
+	struct Stroke {
+		std::vector<Foundation::Vec2> points;
+		bool						  closed{false};
+	};
+	std::vector<Stroke> glyphStrokes;
+
+	void rebuildMesh();			 // SVG
+	void applyScaleToVertices(); // SVG
+	void buildGlyph();			 // Salvage glyph
 };
 
 } // namespace UI

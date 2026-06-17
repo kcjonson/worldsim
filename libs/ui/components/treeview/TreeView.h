@@ -17,7 +17,8 @@
 
 #include "component/Component.h"
 #include "graphics/Color.h"
-#include "theme/Theme.h"
+#include "theme/Tokens.h"
+#include "theme/Variants.h"
 
 #include <functional>
 #include <optional>
@@ -40,8 +41,8 @@ class TreeView : public Component {
 	struct Args {
 		Foundation::Vec2 position{0.0F, 0.0F};
 		Foundation::Vec2 size{200.0F, 300.0F};
-		float			 rowHeight{Theme::TreeView::rowHeight};
-		float			 indentWidth{Theme::TreeView::indentWidth};
+		float			 rowHeight{space_6};  // 24px
+		float			 indentWidth{space_4}; // 16px
 		const char*		 id = nullptr;
 		float			 margin{0.0F};
 	};

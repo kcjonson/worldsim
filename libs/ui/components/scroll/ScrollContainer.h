@@ -73,7 +73,7 @@ class ScrollContainer : public Container {
 	bool containsPoint(Foundation::Vec2 point) const override;
 
   private:
-	// Layout constants (internal, use Theme colors)
+	// Layout constants (internal; visuals use design tokens)
 	static constexpr float kScrollbarWidth = 8.0F;
 	static constexpr float kMinThumbHeight = 20.0F;
 	static constexpr float kScrollSpeed = 40.0F; // Pixels per scroll tick

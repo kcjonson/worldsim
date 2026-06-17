@@ -1,20 +1,16 @@
 #pragma once
 
-// ProgressBar - Generic progress/status bar component
+// ProgressBar - horizontal progress/level bar in the Salvage look.
 //
-// Displays a horizontal bar with:
-// - Optional label text (left side)
-// - Background bar with border
-// - Fill bar (width proportional to value 0.0-1.0)
-//
-// Uses normalized 0.0-1.0 value range for flexibility.
-// For need-specific coloring (red→yellow→green), see NeedBar which wraps this.
+// Draws an inset track, a tone-colored fill (vertical gradient + soft glow), an
+// optional bright leading edge, optional segment notches, and either a header
+// row (label left, value right, above the track) or an inline overlay (label and
+// value drawn inside the bar). Value is normalized 0..1. Tone resolves the fill
+// color; Tone::Auto bands by value (red/amber/green). Non-interactive, but a
+// Component so it slots into layouts and child pools.
 
 #include "component/Component.h"
-#include "graphics/Color.h"
-#include "layer/Layer.h"
-#include "shapes/Shapes.h"
-#include "theme/Theme.h"
+#include "theme/Variants.h"
 
 #include <string>
 
@@ -24,62 +20,52 @@ class ProgressBar : public Component {
   public:
 	struct Args {
 		Foundation::Vec2 position{0.0F, 0.0F};
-		Foundation::Vec2 size{100.0F, 12.0F};
-		float			 value{1.0F}; // 0.0 to 1.0 (normalized)
-		Foundation::Color fillColor{Theme::Colors::statusActive};
-		Foundation::Color backgroundColor{0.2F, 0.2F, 0.25F, 1.0F};
-		Foundation::Color borderColor{0.3F, 0.3F, 0.35F, 1.0F};
-		float			  borderWidth{1.0F};
-
-		// Optional label (empty string = no label, bar takes full width)
-		std::string		  label{};
-		float			  labelWidth{60.0F};  // Width reserved for label
-		float			  labelGap{5.0F};	   // Gap between label and bar
-		Foundation::Color labelColor{1.0F, 1.0F, 1.0F, 1.0F};
-		float			  labelFontSize{12.0F};
-
-		const char* id = nullptr;
-		float		margin{0.0F};
+		float			 width{200.0F};
+		float			 value{1.0F}; // 0..1 (clamped)
+		Tone			 tone{Tone::Auto};
+		std::string		 label{};
+		std::string		 valueText{};
+		Size			 size{Size::Md};
+		bool			 segmented{false};	 // overlay notch ticks on the track
+		bool			 inlineLabel{false}; // draw label + value inside the bar
+		const char*		 id{nullptr};
+		float			 margin{0.0F};
 	};
 
 	explicit ProgressBar(const Args& args);
 	~ProgressBar() override = default;
 
-	// Disable copy (owns child elements)
 	ProgressBar(const ProgressBar&) = delete;
 	ProgressBar& operator=(const ProgressBar&) = delete;
-
-	// Allow move
 	ProgressBar(ProgressBar&&) noexcept = default;
 	ProgressBar& operator=(ProgressBar&&) noexcept = default;
 
-	// Value control (0.0 to 1.0, clamped)
+	// Value control (0..1, clamped)
 	void  setValue(float newValue);
 	float getValue() const { return value; }
 
-	// Appearance
-	void setFillColor(Foundation::Color color);
-	void setLabel(const std::string& newLabel);
+	void setTone(Tone newTone) { tone = newTone; }
+	void setLabel(const std::string& newLabel) { label = newLabel; }
+	void setValueText(const std::string& newValueText) { valueText = newValueText; }
 
-	// Position update (moves all child elements)
 	void setPosition(Foundation::Vec2 newPos);
 	void setPosition(float x, float y) override { setPosition({x, y}); }
-
-	// Width update (for dynamic resizing in layouts)
 	void setWidth(float newWidth);
 
-  private:
-	float value;
-	bool  hasLabel;
-	float barWidth;		   // Computed bar width (total or after label)
-	float borderWidth;	   // Cached for fill calculations
-	float labelWidth;	   // Cached for position updates
-	float labelGap;		   // Cached for position updates
+	void render() override;
 
-	// Handles to child shapes for dynamic updates
-	LayerHandle labelHandle;	  // Only valid if hasLabel
-	LayerHandle backgroundHandle;
-	LayerHandle fillHandle;
+  private:
+	float		value;
+	float		width;
+	Tone		tone;
+	std::string label;
+	std::string valueText;
+	Size		sizeVariant;
+	bool		segmented;
+	bool		inlineLabel;
+
+	// Keep the Component footprint (size) in sync with width + drawn height.
+	void syncSize();
 };
 
 } // namespace UI

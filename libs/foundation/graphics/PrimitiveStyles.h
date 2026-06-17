@@ -25,10 +25,31 @@ namespace Foundation { // NOLINT(readability-identifier-naming)
 		BorderPosition position = BorderPosition::Center;
 	};
 
+	// Two-stop linear gradient for rectangle fills. The gradient is realized by
+	// the batch renderer as per-corner vertex colors interpolated across the quad,
+	// so it composes with the rounded-corner/border SDF.
+	struct LinearGradient {
+		Color from;				 // start color (top, or left if horizontal)
+		Color to;				 // end color (bottom, or right if horizontal)
+		bool  horizontal = false; // false = vertical (top->bottom)
+	};
+
+	// Outer box-shadow / glow (CSS box-shadow, outset only). Rendered by the SDF
+	// shader as a soft falloff over `blur` px outside the (optionally `spread`-
+	// grown) shape, so it is one draw, perfectly rounded, no stacked geometry.
+	struct BoxShadow {
+		Color color = Color(0.0F, 0.0F, 0.0F, 0.5F);
+		float blur = 8.0F;	   // softness radius (px)
+		float spread = 0.0F;   // grow the shadow shape before blurring (px)
+		Vec2  offset = {0.0F, 0.0F}; // shadow displacement (px); +y is down
+	};
+
 	// Rectangle visual style
 	struct RectStyle {
-		Color					   fill = Color::white();
-		std::optional<BorderStyle> border = std::nullopt;
+		Color						  fill = Color::white(); // fallback when no gradient
+		std::optional<BorderStyle>	  border = std::nullopt;
+		std::optional<LinearGradient> gradient = std::nullopt;
+		std::optional<BoxShadow>	  boxShadow = std::nullopt;
 	};
 
 	// Line visual style
@@ -48,6 +69,9 @@ namespace Foundation { // NOLINT(readability-identifier-naming)
 
 	// Text vertical alignment
 	enum class VerticalAlign { Top, Middle, Bottom };
+
+	// CSS text-transform: case folding applied at draw time.
+	enum class TextTransform { None, Uppercase };
 
 	// Text visual style
 	struct TextStyle {

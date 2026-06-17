@@ -304,9 +304,9 @@ class WorldCreatorScene : public engine::IScene {
 		float barW  = viewportW - mainX - 20.0F;
 		progressBar = std::make_unique<UI::ProgressBar>(UI::ProgressBar::Args{
 			.position = {mainX, viewportH - 50.0F},
-			.size = {barW, kProgressBarHeight},
+			.width = barW,
 			.value = 0.0F,
-			.label = "",
+			.tone = UI::Tone::Data,
 		});
 		progressBar->visible = false;
 

@@ -9,6 +9,7 @@
 #include <utils/Log.h>
 #include <GL/glew.h>
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <glm/gtc/matrix_transform.hpp>
 #include <memory>
@@ -274,8 +275,14 @@ namespace Renderer::Primitives {
 			cornerRadius = args.style.border.value().cornerRadius;
 		}
 
-		// Single AddQuad call handles fill, border, and rounded corners via GPU fragment shader
-		g_batchRenderer->addQuad(args.bounds, args.style.fill, args.style.border, cornerRadius);
+		// Outer box-shadow / glow sits behind the fill (emit first).
+		if (args.style.boxShadow.has_value()) {
+			g_batchRenderer->addShadowQuad(args.bounds, args.style.boxShadow.value(), cornerRadius, static_cast<float>(args.zIndex));
+		}
+
+		// Single AddQuad call handles fill, border, rounded corners, and an optional
+		// gradient (per-corner vertex colors) via the GPU.
+		g_batchRenderer->addQuad(args.bounds, args.style.fill, args.style.border, cornerRadius, args.style.gradient, static_cast<float>(args.zIndex));
 	}
 
 	void drawLine(const LineArgs& args) {
@@ -304,7 +311,7 @@ namespace Renderer::Primitives {
 			args.end - offset,	 // end, left
 		};
 		static constexpr uint16_t kQuadIndices[6] = {0, 1, 2, 0, 2, 3};
-		g_batchRenderer->addTriangles(quad, kQuadIndices, 4, 6, args.style.color, nullptr);
+		g_batchRenderer->addTriangles(quad, kQuadIndices, 4, 6, args.style.color, nullptr, static_cast<float>(args.zIndex));
 	}
 
 	void drawTriangles(const TrianglesArgs& args) {
@@ -313,7 +320,7 @@ namespace Renderer::Primitives {
 		}
 
 		g_batchRenderer->addTriangles(
-			args.vertices, args.indices, args.vertexCount, args.indexCount, args.color, args.colors
+			args.vertices, args.indices, args.vertexCount, args.indexCount, args.color, args.colors, static_cast<float>(args.zIndex)
 		);
 	}
 
@@ -390,26 +397,58 @@ namespace Renderer::Primitives {
 			return;
 		}
 
-		// Generate glyph quads from the font renderer
-		std::vector<ui::FontRenderer::GlyphQuad> quads;
-		g_fontRenderer->generateGlyphQuads(
-			args.text,
-			glm::vec2(args.position.x, args.position.y),
-			args.scale,
-			glm::vec4(args.color.r, args.color.g, args.color.b, args.color.a),
-			quads
-		);
+		// Each glyph carries its family's atlas texture so the batch groups it
+		// with other glyphs from the same atlas (see BatchRenderer::flush).
+		const GLuint atlasTexture = g_fontRenderer->getAtlasTexture(args.font);
 
-		// Add each glyph quad to the batch renderer
-		for (const auto& quad : quads) {
-			g_batchRenderer->addTextQuad(
-				Foundation::Vec2(quad.position.x, quad.position.y),
-				Foundation::Vec2(quad.size.x, quad.size.y),
-				Foundation::Vec2(quad.uvMin.x, quad.uvMin.y),
-				Foundation::Vec2(quad.uvMax.x, quad.uvMax.y),
-				Foundation::Color(quad.color.r, quad.color.g, quad.color.b, quad.color.a)
-			);
+		// CSS text-transform: fold the case once up front so measure and emit agree.
+		std::string effective = args.text;
+		if (args.transform == Foundation::TextTransform::Uppercase) {
+			for (char& c : effective) {
+				c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+			}
 		}
+
+		// CSS text-align within the optional [position, position+box] rect. With no
+		// box, or Left/Top alignment, the origin stays at position (plain top-left)
+		// and we skip the measure entirely (it's the common case, keep it cheap).
+		Foundation::Vec2 origin = args.position;
+		const bool		 needsHAlign = args.boxWidth > 0.0F && args.hAlign != Foundation::HorizontalAlign::Left;
+		const bool		 needsVAlign = args.boxHeight > 0.0F && args.vAlign != Foundation::VerticalAlign::Top;
+		if (needsHAlign || needsVAlign) {
+			const glm::vec2 m = g_fontRenderer->MeasureText(effective, args.scale, args.font, args.letterSpacing);
+			if (needsHAlign) {
+				origin.x += (args.hAlign == Foundation::HorizontalAlign::Center) ? (args.boxWidth - m.x) * 0.5F : (args.boxWidth - m.x);
+			}
+			if (needsVAlign) {
+				origin.y += (args.vAlign == Foundation::VerticalAlign::Middle) ? (args.boxHeight - m.y) * 0.5F : (args.boxHeight - m.y);
+			}
+		}
+
+		// Emit one pass of the string at a position/color (shared by the shadow
+		// and the main text so text-shadow is a single inline property, not a
+		// caller-side double draw).
+		const auto emit = [&](Foundation::Vec2 pos, const Foundation::Color& col) {
+			std::vector<ui::FontRenderer::GlyphQuad> quads;
+			g_fontRenderer->generateGlyphQuads(
+				effective, glm::vec2(pos.x, pos.y), args.scale, glm::vec4(col.r, col.g, col.b, col.a), quads, args.font,
+				args.letterSpacing);
+			for (const auto& quad : quads) {
+				g_batchRenderer->addTextQuad(
+					Foundation::Vec2(quad.position.x, quad.position.y),
+					Foundation::Vec2(quad.size.x, quad.size.y),
+					Foundation::Vec2(quad.uvMin.x, quad.uvMin.y),
+					Foundation::Vec2(quad.uvMax.x, quad.uvMax.y),
+					Foundation::Color(quad.color.r, quad.color.g, quad.color.b, quad.color.a),
+					atlasTexture,
+					static_cast<float>(args.zIndex));
+			}
+		};
+
+		if (args.shadowColor.a > 0.0F) {
+			emit({origin.x + args.shadowOffset.x, origin.y + args.shadowOffset.y}, args.shadowColor);
+		}
+		emit(origin, args.color);
 	}
 
 	// --- Clip Stack (Shader-based, batching-friendly) ---

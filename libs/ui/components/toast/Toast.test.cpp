@@ -18,7 +18,7 @@ TEST(ToastTest, ConstructsWithDefaults) {
 	EXPECT_EQ(toast.getSeverity(), ToastSeverity::Info);
 	EXPECT_FALSE(toast.isPersistent());
 	EXPECT_FALSE(toast.isFinished());
-	EXPECT_FLOAT_EQ(toast.getWidth(), Theme::Toast::defaultWidth);
+	EXPECT_FLOAT_EQ(toast.getWidth(), kToastDefaultWidth);
 }
 
 TEST(ToastTest, ConstructsWithSeverity) {

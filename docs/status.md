@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2026-06-16 (Dev/Test Tools complete, merged PR #157 — /api/dev verbs + synchronous /api/state readback + developer-client Dev Tools tab + DevCommandHandler extraction. Prior: Fluvial Erosion #149, Asset Manager #156)
+Last Updated: 2026-06-16 (Reconciling the Salvage UI cutover onto main: tokens + theme, one unified UI library, SDF shadow/gradient/multi-atlas renderer, global z-index draw queue. Latest main carried in: Dev/Test Tools #157, Fluvial Erosion #149, Asset Manager #156)
 
 ## Epic/Story/Task Template
 
@@ -42,6 +42,24 @@ Use this template for all work items:
 - [x] `parseDevVerb` tests refreshed (7/7); two rounds of Copilot review cleared (single-flight `/api/state`, CV wait, jsonEscape)
 
 **Result:** Dev-only `/api/dev/<verb>` controls plus a synchronous `/api/state` readback, driven from a Dev Tools tab in the static developer-client, so sim state can be set up and asserted on without screenshots. In-browser tab click-test was skipped by choice (build clean, every endpoint curl-verified); `demolish`, inventory-in-readback, and `query/count` deferred as optional. ✅
+
+### ✅ UI Design System (Salvage) — extraction
+**Spec/Documentation:** `/docs/design/ui/`
+**Dependencies:** None
+**Status:** complete (docs extracted from prototype; C++ implementation is a separate future epic)
+
+**Goal:** Extract the approved "Salvage" UI prototype (`docs/ui-prototype/`) into durable design docs so the C++ build follows the docs, not the throwaway CSS. The prototype is kept as the live look-and-feel sandbox.
+
+**Completed Tasks:**
+- [x] Design language doc (principles, palette, typography, texture, motion)
+- [x] Tokens: deterministic `tokens.json` (+ rgba floats, `palette.svg`) and readable `tokens.md`, generated from `tokens.css`
+- [x] Component catalog: all 14 primitives (variants, props, states, anatomy, behavior/formulas)
+- [x] Icons: 51-glyph set extracted to `icons.json` + `icons-preview.svg` + `icons.md`
+- [x] Screen specs: 7 screens (pre-game flow + in-game HUD with every sub-state)
+- [x] Mocks: rendered shots of every screen and in-game state (Playwright capture script) + anatomy wireframes for the dense screens
+- [x] Re-runnable extraction scripts in the prototype; wired into `/docs/design/INDEX.md`
+
+**Result:** `/docs/design/ui/` holds the canonical UI spec. The data that only lived in code (icon paths, token values, component formulas, font identities) is now in text. Next: C++ implementation (generate `constexpr Theme.h` from `tokens.json`, build the primitive library, stroke-tessellated icons, multi-font). ✅
 
 ### ✅ Water Availability (worldgen + landing UX)
 **Spec/Documentation:** `/docs/development-log/entries/2026-06-15-worldgen-water-and-plate-realism.md`, `.claude/plans/water-hydrology.md`
@@ -482,6 +500,25 @@ while (running) {
 ---
 
 ## In Progress Epics
+
+### Salvage UI Cutover (one unified UI library)
+**Spec/Documentation:** `/docs/design/ui/`
+**Dependencies:** UI Design System (Salvage) — extraction
+**Status:** in progress (reconciled onto current main; builds + verified; on `feature/ui-salvage-cutover`)
+
+**Goal:** One Salvage-styled UI library. Re-style the existing `libs/ui` widgets to the approved look via design tokens, fold the render-only design-system widgets into it, delete the duplicates, then rebuild the HUD, dialogs, and world creator to the prototype designs.
+
+**Tasks:**
+- [x] Salvage primitives + tokens + icons + fonts in the engine (Panel, Button, ProgressBar, Stat, Badge, Avatar, Slider, Tooltip, Dialog, ...)
+- [x] Inline render styles: gradient fills, soft shadow/glow (SDF), text-align/letter-spacing/text-transform
+- [x] Phase 1: tokens to `theme/`, non-dup widgets to `components/`, flatten `UI::DS`->`UI`, merge the 7 duplicate widgets, update ui-sandbox + CMake
+- [x] Phase 2: restyle the remaining legacy widgets onto Salvage tokens
+- [x] Global z-index draw queue (BatchRenderer group sort, perf-gated) so popups float over siblings
+- [x] Reconcile onto current main (merge; only status.md conflicted; renderer merged clean; fixed stale widget tests; whole solution builds, 288 ui-tests + 79 renderer-tests pass; sandbox + game verified)
+- [ ] Phase 3: rebuild HUD views to the prototype via primitives
+- [ ] Phase 3: rebuild dialogs to the prototype designs
+- [ ] Phase 3: rebuild WorldCreatorScene to the WorldGen prototype
+- [ ] Phase 4: delete the legacy `theme/Theme.h` + `PanelStyle.h`; finalize
 
 ### Asset Manager
 **Spec/Documentation:** `/docs/design/features/asset-manager/`, `/docs/technical/asset-manager/`

@@ -1,16 +1,18 @@
 #include "DropdownButton.h"
 
-#include "components/button/ButtonStyle.h"
 #include "focus/FocusManager.h"
+#include "graphics/PrimitiveStyles.h"
 #include "primitives/Primitives.h"
-#include "theme/PanelStyle.h"
+#include "theme/Tokens.h"
+#include "theme/Variants.h"
 
 namespace UI {
 
 	namespace {
-		// Approximate average character width for simple text layout calculations.
-		// This is a rough estimate - for precise layout, use FontRenderer::measureText().
-		constexpr float kApproxCharWidth = 7.0F;
+		// drawText scale is relative to a 16px base.
+		constexpr float kTextBasePx = 16.0F;
+
+		float textScale(float sizePx) { return sizePx / kTextBasePx; }
 
 		// Chevron icon size for dropdown indicator
 		constexpr float kChevronSize = 12.0F;
@@ -49,7 +51,7 @@ namespace UI {
 				.position = {0.0F, 0.0F}, // Will be updated in updateChevronPosition
 				.size = kChevronSize,
 				.svgPath = chevronPath,
-				.tint = Foundation::Color::white(),
+				.tint = text_dim,
 			}
 		));
 
@@ -283,64 +285,66 @@ namespace UI {
 		if (!visible) {
 			return;
 		}
+		using Renderer::Primitives::drawRect;
+		using Renderer::Primitives::drawText;
 
-		// Get button bounds
-		Foundation::Rect bounds = getButtonBounds();
+		const Foundation::Rect bounds = getButtonBounds();
+		const bool			   active = open || buttonPressed;
 
-		// Determine button style based on state
-		Foundation::Color buttonBg;
-		Foundation::Color buttonBorder;
-		if (open || buttonPressed) {
-			buttonBg = Foundation::Color(0.25F, 0.35F, 0.50F, 0.95F);
-			buttonBorder = Foundation::Color(0.40F, 0.55F, 0.75F, 1.0F);
-		} else if (buttonHovered) {
-			buttonBg = Foundation::Color(0.20F, 0.30F, 0.45F, 0.95F);
-			buttonBorder = Foundation::Color(0.35F, 0.50F, 0.70F, 1.0F);
-		} else {
-			buttonBg = Foundation::Color(0.15F, 0.20F, 0.30F, 0.95F);
-			buttonBorder = Foundation::Color(0.30F, 0.40F, 0.55F, 1.0F);
+		// Secondary-style action button: transparent fill on an edge border. Open
+		// arms the border to accent so it pairs with the popup; focus brightens it.
+		Foundation::Color borderColor = line_edge;
+		if (active) {
+			borderColor = accent;
+		} else if (focused) {
+			borderColor = accent_bright;
 		}
 
-		// Focus ring
-		if (focused) {
-			Renderer::Primitives::drawRect(
-				Renderer::Primitives::RectArgs{
-					.bounds = {bounds.x - 2, bounds.y - 2, bounds.width + 4, bounds.height + 4},
-					.style =
-						{.fill = Foundation::Color(0.0F, 0.0F, 0.0F, 0.0F),
-						 .border = Foundation::BorderStyle{.color = Foundation::Color(0.4F, 0.6F, 1.0F, 1.0F), .width = 2.0F}},
-					.zIndex = zIndex,
-				}
-			);
-		}
+		drawRect(Renderer::Primitives::RectArgs{
+			.bounds = bounds,
+			.style = {.fill = Foundation::Color::transparent(),
+					  .border = Foundation::BorderStyle{
+						  .color = borderColor, .width = bw, .cornerRadius = r_sm, .position = Foundation::BorderPosition::Inside}},
+			.zIndex = zIndex,
+		});
 
-		// Draw button background
-		Renderer::Primitives::drawRect(
-			Renderer::Primitives::RectArgs{
+		// State wash, rounded to match the corners.
+		const auto overlay = [&](Foundation::Color c) {
+			drawRect(Renderer::Primitives::RectArgs{
 				.bounds = bounds,
-				.style = {.fill = buttonBg, .border = Foundation::BorderStyle{.color = buttonBorder, .width = 1.0F}},
+				.style = {.fill = c,
+						  .border = Foundation::BorderStyle{
+							  .color = c, .width = 0.0F, .cornerRadius = r_sm, .position = Foundation::BorderPosition::Inside}},
 				.zIndex = zIndex,
-			}
-		);
+			});
+		};
+		if (active) {
+			overlay(bg_active);
+		} else if (buttonHovered) {
+			overlay(bg_hover);
+		}
 
-		// Draw label (centered, leaving space for chevron icon on right)
-		constexpr float kChevronSpace = 20.0F;  // Space for chevron icon on right
-		float labelWidth = static_cast<float>(label.length()) * kApproxCharWidth;
-		float textX = bounds.x + (bounds.width - kChevronSpace - labelWidth) / 2.0F;
-		float textY = bounds.y + (bounds.height - 12.0F) / 2.0F;
+		// Label: display font, uppercase, letter-spaced, brightening while active.
+		const Foundation::Color textColor = active ? text_bright : text;
+		const float				chevronGutter = space_5; // room for the chevron on the right
+		drawText(Renderer::Primitives::TextArgs{
+			.text = label,
+			.position = {bounds.x, bounds.y},
+			.scale = textScale(fs_sm),
+			.color = textColor,
+			.font = fontDisplay,
+			.hAlign = Foundation::HorizontalAlign::Center,
+			.vAlign = Foundation::VerticalAlign::Middle,
+			.boxWidth = bounds.width - chevronGutter,
+			.boxHeight = bounds.height,
+			.letterSpacing = fs_sm * ls_wide,
+			.transform = Foundation::TextTransform::Uppercase,
+			.zIndex = static_cast<float>(zIndex) + 0.1F,
+		});
 
-		Renderer::Primitives::drawText(
-			Renderer::Primitives::TextArgs{
-				.text = label,
-				.position = {textX, textY},
-				.scale = 12.0F / 16.0F,
-				.color = Foundation::Color::white(),
-				.zIndex = static_cast<float>(zIndex) + 0.1F,
-			}
-		);
-
-		// Render chevron icon
+		// Render chevron icon (tint follows the label color).
 		if (auto* chevron = getChild<Icon>(chevronHandle)) {
+			chevron->setTint(active ? accent_bright : text_dim);
 			chevron->zIndex = zIndex + 1;
 			chevron->render();
 		}
