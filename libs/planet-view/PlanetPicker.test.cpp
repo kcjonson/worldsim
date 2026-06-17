@@ -107,10 +107,13 @@ TEST(OrbitCamera, PitchClamped) {
 
 TEST(OrbitCamera, DistanceClamped) {
     OrbitCamera cam;
-    cam.scroll(-1000.0F); // zoom way out
+    cam.scroll(-1000.0F); // zoom way out (sets target; distance eases in update)
+    for (int i = 0; i < 300; ++i) cam.update(0.05F);
     EXPECT_LE(cam.distance, 8.0F);
     cam.scroll(1000.0F);  // zoom way in
-    EXPECT_GE(cam.distance, 1.05F);
+    for (int i = 0; i < 300; ++i) cam.update(0.05F);
+    EXPECT_GE(cam.distance, 1.05F - 1e-3F);
+    EXPECT_LE(cam.distance, 8.0F);
 }
 
 TEST(OrbitCamera, AutoRotateAfterIdle) {

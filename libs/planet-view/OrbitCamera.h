@@ -13,7 +13,7 @@ class OrbitCamera {
     // Camera parameters
     float yaw{0.0F};    // radians, horizontal rotation
     float pitch{0.3F};  // radians, vertical rotation (clamped)
-    float distance{2.5F}; // in planet-radius units
+    float distance{2.5F}; // in planet-radius units (eases toward targetDistance)
 
     // Returns view matrix (world → camera).
     glm::mat4 viewMatrix() const;
@@ -64,6 +64,10 @@ class OrbitCamera {
     float yawVel{0.0F};
     float pitchVel{0.0F};
 
+    // Wheel zoom sets this; `distance` eases toward it each update for a smooth,
+    // non-jumpy zoom. Steps are scaled by the surface gap (see scroll()).
+    float targetDistance{2.5F};
+
     float idleTime{0.0F};
 
     // Runtime min distance (set by GlobeView from n). The hard floor keeps the
@@ -78,7 +82,8 @@ class OrbitCamera {
     static constexpr float kFar     = 20.0F;
     static constexpr float kInertia = 0.88F;
     static constexpr float kDragSens = 0.008F;
-    static constexpr float kScrollSens = 0.15F;
+    static constexpr float kScrollSens = 0.10F;  // apparent-zoom ratio per wheel notch
+    static constexpr float kZoomSmooth = 12.0F;  // distance -> targetDistance ease rate (1/s)
     static constexpr float kIdleDelay = 3.0F;
     static constexpr float kAutoYaw   = 0.05F; // rad/s
 

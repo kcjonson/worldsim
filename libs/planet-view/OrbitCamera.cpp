@@ -30,7 +30,8 @@ glm::mat4 OrbitCamera::projMatrix(float aspect) const {
 
 void OrbitCamera::setMinDistance(float newMin) {
     minDist = std::max(newMin, kMinDistFloor);
-    distance = std::clamp(distance, minDist, kMaxDist);
+    distance       = std::clamp(distance, minDist, kMaxDist);
+    targetDistance = std::clamp(targetDistance, minDist, kMaxDist);
 }
 
 void OrbitCamera::beginDrag(float mouseX, float mouseY) {
@@ -87,10 +88,14 @@ void OrbitCamera::markInteracted() {
 }
 
 void OrbitCamera::scroll(float delta) {
-    distance -= delta * kScrollSens * distance;
-    distance = std::clamp(distance, minDist, kMaxDist);
-    // Zooming out tightens the allowed band, easing pitch back toward home.
-    clampPitch();
+    // Step proportional to the gap to the surface (distance - 1). Apparent zoom
+    // ~ 1/(distance-1), so scaling the step by the gap makes each notch a uniform
+    // *ratio* of apparent zoom -- near the surface the steps shrink instead of
+    // jumping (the old `* distance` form exploded there). update() eases distance
+    // toward this target so the zoom glides rather than snapping.
+    float gap = targetDistance - 1.0F;
+    gap *= std::max(0.0F, 1.0F - delta * kScrollSens);
+    targetDistance = std::clamp(1.0F + gap, minDist, kMaxDist);
     userInteracted = true;
     idleTime = 0.0F;
 }
@@ -104,6 +109,14 @@ void OrbitCamera::nudge(float dYaw, float dPitch) {
 }
 
 void OrbitCamera::update(float dt) {
+    // Smooth wheel zoom: ease distance toward the target the scroll set.
+    if (distance != targetDistance) {
+        float a = 1.0F - std::exp(-dt * kZoomSmooth);
+        distance += (targetDistance - distance) * a;
+        if (std::abs(targetDistance - distance) < 1e-4F) distance = targetDistance;
+        clampPitch(); // distance drives the pitch gate
+    }
+
     if (!dragging) {
         // Apply inertia.
         yawVel   *= kInertia;

@@ -1,7 +1,7 @@
 #pragma once
 
-// Shared tile -> RGBA color mapping used by both the base tier (PlanetColorizer)
-// and the detail tier (PlanetDetailCache). Pure CPU, no GL.
+// Tile -> RGBA color mapping used by the base tier (PlanetColorizer) to bake
+// per-rhombus textures. Pure CPU, no GL.
 
 #include "PlanetColorizer.h" // ColorMode
 

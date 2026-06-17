@@ -2,7 +2,6 @@
 
 #include <GL/glew.h>
 
-#include <planet-view/PlanetScheduler.h>
 #include <primitives/Primitives.h>
 #include <utils/Log.h>
 #include <utils/ResourcePath.h>
@@ -13,10 +12,10 @@
 namespace world_sim {
 
 void GlobeView::chooseMinDistance(uint32_t n) {
-	// Pick the closest orbit so a single tile can reach ~50 px on a 1080p view.
-	// estimatePixelsPerTile is monotone in distance; solve for ~50 px at h=1080.
-	// Closed form: pxPerTile = (1.1/n)/(d-1) * (h/fovRad); set = 50.
-	constexpr float kTargetPx = 50.0f;
+	// Pick the closest orbit so a single tile can reach ~kTargetPx on a 1080p view.
+	// Pixels-per-tile is monotone in distance; solve for that at h=1080.
+	// Closed form: pxPerTile = (1.1/n)/(d-1) * (h/fovRad); set = kTargetPx.
+	constexpr float kTargetPx = 100.0f; // biggest a single hex gets on screen
 	constexpr float kFovRad = 45.0f * 3.14159265f / 180.0f;
 	float h = 1080.0f;
 	float gap = (1.1f / static_cast<float>(n)) * (h / kFovRad) / kTargetPx;
@@ -33,7 +32,6 @@ void GlobeView::setWorld(std::shared_ptr<const worldgen::GeneratedWorld> world) 
 		uint32_t subdiv = currentWorld->grid->subdivision();
 		mesh.build(subdiv, *currentWorld->grid);
 		colorizer.init(subdiv);
-		detailCache.init(subdiv);
 		chooseMinDistance(subdiv);
 		builtGrid = currentWorld->grid.get();
 
@@ -55,7 +53,6 @@ void GlobeView::setWorld(std::shared_ptr<const worldgen::GeneratedWorld> world) 
 void GlobeView::refreshColors() {
 	if (currentWorld && colorizer.isReady()) {
 		colorizer.requestBake(currentWorld, mode, pool);
-		detailCache.setWorld(currentWorld, mode);
 	}
 }
 
@@ -89,16 +86,10 @@ void GlobeView::render(const Foundation::Rect& rect, float logicalW, float logic
 	int ph = static_cast<int>(rect.height * sy);
 	if (pw <= 0 || ph <= 0) return;
 
-	// Pump async base-tier uploads and stream detail pages for the current view.
+	// Pump async base-tier color uploads for the current view.
 	colorizer.uploadPending();
-	if (currentWorld && currentWorld->grid && detailCache.isReady()) {
-		float aspect = static_cast<float>(pw) / static_cast<float>(ph);
-		planetview::schedulePages(detailCache, camera, aspect, pw, ph,
-		                          *currentWorld->grid,
-		                          currentWorld->grid->subdivision());
-	}
 
-	renderer.render(mesh, colorizer, detailCache,
+	renderer.render(mesh, colorizer,
 	                currentWorld ? currentWorld->grid->subdivision() : 0,
 	                camera, pw, ph);
 
