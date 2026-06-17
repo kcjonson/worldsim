@@ -31,6 +31,8 @@ class ChunkManager;
 
 namespace ecs {
 
+class NavigationSystem;
+
 class AIDecisionSystem : public ISystem {
 public:
 	/// Construct with optional RNG seed (defaults to random_device for non-determinism)
@@ -43,6 +45,10 @@ public:
 
 	/// Set the ChunkManager for terrain queries (required for smart toilet location)
 	void setChunkManager(engine::world::ChunkManager* chunkManager) { m_chunkManager = chunkManager; }
+
+	/// Set the NavigationSystem used to resolve a navmesh path when a task picks a
+	/// destination (optional; null falls back to straight-line beeline movement).
+	void setNavigationSystem(NavigationSystem* navSystem) { m_navSystem = navSystem; }
 
 	/// Set callback for dropping items on the ground (when chain is interrupted)
 	/// Same signature as ActionSystem's drop callback for consistency
@@ -79,10 +85,16 @@ private:
 
 	/// Select task from the decision trace (picks first Selected option)
 	void selectTaskFromTrace(
+		EntityID entity,
 		struct Task& task,
 		struct MovementTarget& movementTarget,
 		const struct DecisionTrace& trace,
 		const struct Position& position);
+
+	/// Resolve a navmesh path to `goal` for `entity` and attach it as a NavPath, or
+	/// invalidate any existing NavPath and fall back to beeline movement when no path
+	/// exists (no mesh yet, or unreachable). No-op effect on MovementTarget either way.
+	void requestNavPath(EntityID entity, const glm::vec2& goal, const struct Position& position);
 
 	/// Format a human-readable reason for an option
 	[[nodiscard]] static std::string formatOptionReason(
@@ -110,6 +122,9 @@ private:
 
 	/// ChunkManager for terrain queries (optional, fallback to current position if null)
 	engine::world::ChunkManager* m_chunkManager = nullptr;
+
+	/// NavigationSystem for navmesh path queries (optional; null = beeline movement)
+	NavigationSystem* m_navSystem = nullptr;
 
 	/// How often to re-evaluate tasks (seconds)
 	static constexpr float kReEvalInterval = 0.5F;
