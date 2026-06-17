@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2026-06-16 (Reconciling the Salvage UI cutover onto main: tokens + theme, one unified UI library, SDF shadow/gradient/multi-atlas renderer, global z-index draw queue. Latest main carried in: Dev/Test Tools #157, Fluvial Erosion #149, Asset Manager #156)
+Last Updated: 2026-06-16 (Navigation v1 landed: colonists path around walls, water, and trees on a dynamic CDT navmesh, walk through doors, and can't clip through a solid wall — PRs #161/#162/#163/#165/#166/#169, see dev log 2026-06-16-navigation-v1. Walls now ship as real gameplay. Earlier on main: Salvage UI cutover (tokens + theme, unified UI library, SDF renderer, z-index draw queue), Dev/Test Tools #157, Fluvial Erosion #149, Asset Manager #156)
 
 ## Epic/Story/Task Template
 
@@ -588,7 +588,7 @@ while (running) {
 
 ### Building & Construction System
 **Spec/Documentation:** `/docs/design/game-systems/world/building-construction.md` (design), `/docs/technical/building-construction-architecture.md` (architecture)
-**Dependencies:** Goal-Driven Task Generation (build/haul task sources); Navigation & Pathfinding before walls ship as gameplay (walls don't block movement until then); Material economy — extend the early crafting implementation with choppable trees and construction material items (axe/chop work in flight; chains grow as systems need them)
+**Dependencies:** Goal-Driven Task Generation (build/haul task sources); Navigation & Pathfinding before walls ship as gameplay — DONE (nav v1 landed 2026-06-16: walls/water/trees block movement, colonists route around them and through doors); Material economy — extend the early crafting implementation with choppable trees and construction material items (axe/chop work in flight; chains grow as systems need them)
 **Status:** in progress
 
 **Goal:** Freeform polygon building: foundation blueprints drawn on the map, walls on foundations with snapping and edge-fill, doors/windows as parameterized vector assets, automatic room detection. Deliver-then-build loop with work-driven procedural construction visuals.
@@ -614,7 +614,8 @@ while (running) {
   - [x] WallTool (chain draw, Ctrl+click edge fill, commit→segment blueprint entities) + interim band/junction render via WallOffset + config strip wall mode; verified in sandbox
   - [x] Per-segment selection + adaptWallSegment panel + band-outline indicator + immediate per-segment demolition; verified in sandbox
   - [x] Hardened: snap endpoint-vs-T-junction, validator T-junction exemption, atomic commitSegment, harvest demand bounded to carry capacity (structures needing >1 stack build over multiple trips)
-  - [ ] Deferred: D5 obstacle/portal publication to nav (no consumer until the nav epic); work-driven Deconstruct + refund + host-can't-demolish-while-walls-stand guard (same deferred polish as foundations); partial edge-fill
+  - [x] D5: obstacle/portal publication to nav — walls and openings now feed the navmesh via NavInputBuilder (nav v1, 2026-06-16); colonists route around walls and pass through doors
+  - [ ] Deferred: work-driven Deconstruct + refund + host-can't-demolish-while-walls-stand guard (same deferred polish as foundations); partial edge-fill
 - [x] Epic E: Rooms — detection + room entities + room-formed toast + identity persistence (feature/construction-rooms). Verified in sandbox: a closed built-wall loop fires "Room formed"; an interior divider splits it and the rep-containing half keeps its name.
   - [x] RoomDetection pure core (built wall centerlines → geometry arrangement/half-edge face extraction → bounded faces as rooms; openings don't break enclosure); 6 tests
   - [x] RoomDetectionSystem (polls ConstructionWorld.version(), reconciles against persistent room records, max-overlap identity so names survive edits, spawns/refreshes/retires room entities, room-formed callback seam); 6 tests
@@ -630,7 +631,7 @@ while (running) {
   - [x] F1d render: interim wall-band gap + procedural door/window fill + ghost (Primitives)
   - [x] F1e selection: OpeningSelection (priority above walls) + point-in-footprint hit test + adaptOpening panel + per-opening demolish
   - [x] Hardened (adversarial review): wall-demolish now despawns hosted openings' entities (removeSegment surfaces them); openingMarginMeters sign-checked; dev helpers include Opening
-  - [ ] F2 (deferred): D9 parameter-extended procedural Lua door/window assets (cache key (defName,thicknessPreset,material), material palettes); portal publication to nav (no consumer yet). NOTE: retrofit-cut-as-work is CUT from scope — openings sit on the wall and never cut it (design decision 2026-06-15).
+  - [ ] F2 (deferred): D9 parameter-extended procedural Lua door/window assets (cache key (defName,thicknessPreset,material), material palettes). (Portal publication to nav is DONE — doors/windows feed the navmesh, doors pathable, windows solid.) NOTE: retrofit-cut-as-work is CUT from scope — openings sit on the wall and never cut it (design decision 2026-06-15).
 - [ ] Epic G: Editing & polish
   - [x] Demolish-building cascade + work-driven demolish (deconstruct task + material refund) + foundation-demolish gate (#143)
   - [x] Outer-face-flush wall snapping so walls build along foundation edges (#147)
@@ -1105,17 +1106,18 @@ The following MVP epics have all been completed. Detailed task breakdowns are pr
 ### Navigation & Pathfinding
 **Spec/Documentation:** `/docs/technical/pathfinding-architecture.md`
 **Dependencies:** Geometry Foundations (shared integer-coordinate substrate, libs/geometry); consumes the construction obstacle/portal contract
-**Status:** planned (spec in review)
+**Status:** in progress — local navigation v1 shipped (P1, P2, and the static-obstacle slice of P4); see dev log 2026-06-16-navigation-v1
 
 **Goal:** Four-tier vector-native navigation: planet hex graph for cross-globe abstract parties, chunk connectivity components for reachability, dynamic CDT navmesh for exact local paths, collision circles + velocity-obstacle steering so agents take up space. Must land (through P4) before walls ship as player-facing gameplay; P6 unlocks raids.
 
 **Tasks:**
-- [ ] P1: Agents become physical (radius component, dynamic spatial hash, circle collision, separation)
-- [ ] P2: Local navmesh, static world (per-chunk CDT from terrain contours, triangle A* + corridor width + funnel, waypoint following; chunk anchoring fix)
+- [x] P1: Agents become physical (radius component, dynamic spatial hash, circle collision, separation)
+- [x] P2: Local navmesh, static world (exact CDT over the loaded area from terrain/water/flora/wall contours, triangle A* + corridor width + funnel, waypoint following). Shipped as one merged loaded-area mesh, off-thread rebuild on world change; integrated into MovementSystem + AIDecisionSystem; NavOverlay debug draw.
 - [ ] P3: Regional layer (components, traversal-class reachability API, RRA* heuristic)
-- [ ] P4: Dynamic world + belief (construction obstacles/portals, door permission costs, memory-filtered planning, discovery replans, search primitives; requires Vision System: Occlusion & Discovery)
+- [~] P4: Dynamic world + belief — construction obstacles/portals (walls/doors/windows) + water + tree footprints + wall-collision safety net are DONE (NavInputBuilder + NavigationSystem version-triggered rebuild); door permission costs, memory-filtered planning, discovery replans, and search primitives remain (need Vision System: Occlusion & Discovery)
 - [ ] P5: Crowds (velocity-obstacle avoidance + mitigations, occupancy costs, door slot queues, regression rig)
 - [ ] P6: Global tier + raids (hex-graph A*, abstract party records, attention bubbles, materialization handoffs, raider belief seeding + scouting)
+- [ ] Optional polish: brighter debug overlay, waypoint substepping for fast movers, nav-state line in colonist info panel
 
 ---
 
