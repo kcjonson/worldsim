@@ -1,6 +1,7 @@
 #include "GameplayBar.h"
 
-#include <theme/Theme.h>
+#include <theme/Tokens.h>
+#include <theme/Variants.h>
 #include <utils/Log.h>
 
 namespace world_sim {
@@ -10,19 +11,18 @@ UI::ButtonAppearance GameplayBar::roomsButtonAppearance(bool active) {
 	// Start from the secondary style, then tint the fill to read as a toggle: a dim
 	// slate when off, a saturated blue when on (the overlay's own accent).
 	UI::ButtonAppearance	appearance = UI::ButtonStyles::secondary();
-	const Foundation::Color off{0.22F, 0.26F, 0.34F, 1.0F};
-	const Foundation::Color on{0.20F, 0.45F, 0.85F, 1.0F};
-	const Foundation::Color fill = active ? on : off;
+	// Active arms the toggle to the amber accent; off is a quiet inset.
+	const Foundation::Color fill = active ? UI::accent : UI::bg_inset;
 	appearance.normal.background.fill = fill;
-	appearance.hover.background.fill =
-		active ? Foundation::Color{0.28F, 0.55F, 0.95F, 1.0F} : Foundation::Color{0.30F, 0.35F, 0.45F, 1.0F};
-	appearance.pressed.background.fill = on;
+	appearance.hover.background.fill = active ? UI::accent_bright : UI::bg_panel_raised;
+	appearance.pressed.background.fill = active ? UI::accent : UI::bg_active;
 	appearance.focused.background.fill = fill;
-	// White label in every state so swapping appearance needs no text resync.
-	appearance.normal.textColor = Foundation::Color::white();
-	appearance.hover.textColor = Foundation::Color::white();
-	appearance.pressed.textColor = Foundation::Color::white();
-	appearance.focused.textColor = Foundation::Color::white();
+	// Dark label on the amber active state, dim text when off.
+	const Foundation::Color label = active ? UI::accent_contrast : UI::text;
+	appearance.normal.textColor = label;
+	appearance.hover.textColor = active ? UI::accent_contrast : UI::text_bright;
+	appearance.pressed.textColor = label;
+	appearance.focused.textColor = label;
 	appearance.normal.fontSize = 14.0F;
 	appearance.hover.fontSize = 14.0F;
 	appearance.pressed.fontSize = 14.0F;
@@ -44,11 +44,12 @@ GameplayBar::GameplayBar(const Args& args)
 		.size = {400.0F, kBarHeight},  // Width will be set in layout()
 		.style =
 			{
-				.fill = UI::Theme::Colors::sidebarBackground,
+				.fill = UI::bg_panel,
 				.border =
 					Foundation::BorderStyle{
-						.color = UI::Theme::Colors::cardBorder,
-						.width = 1.0F,
+						.color = UI::line_edge,
+						.width = UI::bw,
+						.cornerRadius = UI::r_md,
 						.position = Foundation::BorderPosition::Inside},
 			},
 		.id = "gameplay_bar_background"}));
