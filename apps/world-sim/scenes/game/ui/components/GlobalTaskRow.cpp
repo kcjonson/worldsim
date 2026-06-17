@@ -1,7 +1,7 @@
 #include "GlobalTaskRow.h"
 
 #include <primitives/Primitives.h>
-#include <theme/Theme.h>
+#include <theme/Tokens.h>
 
 #include <format>
 
@@ -25,7 +25,7 @@ GlobalTaskRow::GlobalTaskRow(const Args& args)
 		.position = {kPadding, kPadding},
 		.text = line1Text,
 		.style = {
-			.color = UI::Theme::Colors::textBody,
+			.color = UI::text,
 			.fontSize = kLine1FontSize
 		},
 		.id = (args.id + "_line1").c_str()
@@ -87,18 +87,18 @@ void GlobalTaskRow::setTaskData(const adapters::GlobalTaskDisplayData& task) {
 
 Foundation::Color GlobalTaskRow::getStatusColor(const adapters::GlobalTaskDisplayData& task) const {
 	if (task.isMine) {
-		return UI::Theme::Colors::textClickable;
+		return UI::data;
 	}
 	if (task.isBlocked) {
-		return UI::Theme::Colors::textMuted; // Blocked tasks shown in muted color
+		return UI::text_dim; // Blocked tasks shown in muted color
 	}
 	if (task.isReserved) {
-		return UI::Theme::Colors::statusPending;
+		return UI::status_warn;
 	}
 	if (task.status == "Far" || task.status == "Waiting for harvest") {
-		return UI::Theme::Colors::textMuted;
+		return UI::text_dim;
 	}
-	return UI::Theme::Colors::statusActive;
+	return UI::status_ok;
 }
 
 } // namespace world_sim
