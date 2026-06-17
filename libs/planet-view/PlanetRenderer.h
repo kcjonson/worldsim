@@ -33,8 +33,9 @@ class PlanetRenderer {
     // Resize the FBO when the window changes.
     void resize(int widthPx, int heightPx);
 
-    // Draw the planet into the offscreen FBO. `subdivision` is the grid n
-    // (drives per-pixel hex assignment for the faint outline in the shader).
+    // Draw the planet into the offscreen FBO. `subdivision` is the grid n,
+    // which drives the shader's per-pixel hex assignment (cell fill, AA edges,
+    // and outline).
     void render(const PlanetMesh& mesh, const PlanetColorizer& colorizer,
                 uint32_t subdivision,
                 const OrbitCamera& camera, int widthPx, int heightPx);

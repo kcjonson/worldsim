@@ -16,8 +16,8 @@ namespace planetview {
 namespace {
 // Base-tier resolution cap = the product subdivision max (PlanetIO kMaxSubdivision
 // = 2048). At this cap mip 0 carries one texel per tile for every generatable world,
-// so the hardware trilinear mip chain (GL_LINEAR_MIPMAP_LINEAR) stays crisp at every
-// zoom -- and the camera can't zoom past ~50 px/tile, so a finer level is never seen.
+// which is exactly what the shader's analytic per-pixel hex render reads (one
+// exact tile color per cell); finer than one-texel-per-tile is never needed.
 constexpr uint32_t kBaseMax = 2048;
 
 // Fill texel rows [jb, je) of rhombus `r`'s base texture into `dst` (texSize^2*4).

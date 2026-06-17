@@ -7,8 +7,8 @@ Status: Implemented
 Supersedes: the "M3f-2 chunked-LOD" placeholder from the M3f-1 commit and
 `docs/development-log/entries/2026-06-10-worldgen-foundation-merged.md` note
 ("chunked-LOD deferred to M3f-2"). That approach — drawing tile geometry — was
-replaced by a texture + per-pixel shader design that scales to any n with
-O(screen pixels) GPU cost and constant GPU memory.
+replaced by a texture + per-pixel shader design with O(screen pixels) GPU cost;
+the base textures scale with n² up to the 2048 product cap (see GPU memory budget).
 
 ---
 
@@ -154,5 +154,6 @@ planet-database/streaming epic — n=4096 is ~4.4GB of `WorldData` and ~895MB of
 full-resident base mips), restore a single streamed finest level from the deleted
 page cache, but sampled **mipped/LINEAR (not NEAREST)** and cross-faded into the
 base above its resolution — reusing `PlanetLru` / the page table / the ray-cast
-scheduler. The camera's ~50 px/tile clamp keeps the streamed region to ~one octave
-above the base, so a full per-octave software pyramid is not needed even then.
+scheduler. The camera's px/tile clamp (`GlobeView kTargetPx`, currently 100) keeps
+the streamed region to ~one octave above the base, so a full per-octave software
+pyramid is not needed even then.
