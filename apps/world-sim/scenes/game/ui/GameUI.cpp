@@ -405,7 +405,7 @@ namespace world_sim {
 		// Update time model and top bar
 		if (topBar) {
 			timeModel.refresh(ecsWorld);
-			topBar->updateData(timeModel);
+			topBar->updateData(timeModel, static_cast<int>(colonistListModel.colonists().size()));
 		}
 
 		// Update debug overlay display values
