@@ -1,8 +1,7 @@
 #include "DrawingSystem.h"
 
-#include "OpeningGeometry.h"
-
 #include <assets/ConstructionRegistry.h>
+#include <construction/OpeningGeometry.h>
 #include <ecs/components/Inventory.h>
 #include <ecs/components/Structure.h>
 #include <ecs/components/StructureBlueprint.h>

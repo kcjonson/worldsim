@@ -683,6 +683,45 @@ namespace engine::assets {
 				}
 			}
 
+			// Collision shape - optional physical footprint for navmesh/collision
+			pugi::xml_node collisionNode = defNode.child("collision");
+			if (collisionNode) {
+				pugi::xml_node circleNode = collisionNode.child("circle");
+				pugi::xml_node polygonNode = collisionNode.child("polygon");
+
+				if (circleNode) {
+					float r = circleNode.attribute("radius").as_float(0.0F);
+					if (r <= 0.0F) {
+						LOG_WARNING(Engine, "AssetDef '%s' <collision><circle> has radius <= 0; ignoring", def.defName.c_str());
+					} else {
+						def.collision.type = CollisionShapeType::Circle;
+						def.collision.radiusMeters = r;
+						def.collision.offsetMeters.x = circleNode.attribute("offsetX").as_float(0.0F);
+						def.collision.offsetMeters.y = circleNode.attribute("offsetY").as_float(0.0F);
+					}
+				} else if (polygonNode) {
+					for (pugi::xml_node ptNode : polygonNode.children("point")) {
+						def.collision.pointsMeters.push_back({
+							ptNode.attribute("x").as_float(0.0F),
+							ptNode.attribute("y").as_float(0.0F),
+						});
+					}
+					if (def.collision.pointsMeters.size() < 3) {
+						LOG_WARNING(
+							Engine,
+							"AssetDef '%s' <collision><polygon> has fewer than 3 points (%zu); ignoring",
+							def.defName.c_str(),
+							def.collision.pointsMeters.size()
+						);
+						def.collision.pointsMeters.clear();
+					} else {
+						def.collision.type = CollisionShapeType::Polygon;
+					}
+				} else {
+					LOG_WARNING(Engine, "AssetDef '%s' has <collision> with no valid <circle> or <polygon>; ignoring", def.defName.c_str());
+				}
+			}
+
 			// Store base folder for relative path resolution
 			def.baseFolder = baseFolder;
 
