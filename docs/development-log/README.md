@@ -64,6 +64,7 @@ Development log entries are **immutable history**. Don't update old entries — 
 
 #### June 2026
 
+- [2026-06-16 - Navigation v1: colonists path the world](./entries/2026-06-16-navigation-v1.md)
 - [2026-06-15 - Fluvial erosion (stream-power valley carving)](./entries/2026-06-15-worldgen-fluvial-erosion.md)
 - [2026-06-15 - Water availability + plate-boundary realism](./entries/2026-06-15-worldgen-water-and-plate-realism.md)
 - [2026-06-14 - Construction Epic F1: openings (doors & windows)](./entries/2026-06-14-construction-epic-f1-openings.md)
@@ -102,9 +103,10 @@ Development log entries are **immutable history**. Don't update old entries — 
 
 ## Quick Stats
 
-- **Total Entries:** 71 (entry files; the index below lists notable milestones)
-- **Latest Entry:** 2026-06-15
+- **Total Entries:** 72 (entry files; the Major Milestones list below highlights notable ones)
+- **Latest Entry:** 2026-06-16
 - **Major Milestones:**
+  - Navigation v1: colonists path around walls/water/trees on a dynamic navmesh, through doors (2026-06-16)
   - Fluvial erosion: stream-power valley carving so rivers land in valleys (2026-06-15)
   - Water availability + plate-boundary realism: real drainage, landing water signal, curved rift cuts (2026-06-15)
   - Construction Epic F1: openings — doors & windows (2026-06-14)
