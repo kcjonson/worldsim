@@ -10,7 +10,7 @@
 // Implements IComponent for use in LayoutContainer.
 
 #include "shapes/Shapes.h"
-#include "theme/Theme.h"
+#include "theme/Tokens.h"
 
 #include <string>
 
@@ -82,16 +82,16 @@ class StatusTextLine : public Text {
 	static Foundation::Color statusColor(LineStatus status) {
 		switch (status) {
 			case LineStatus::Active:
-				return Theme::Colors::statusActive;
+				return UI::status_ok;
 			case LineStatus::Pending:
-				return Theme::Colors::statusPending;
+				return UI::status_warn;
 			case LineStatus::Idle:
-				return Theme::Colors::statusIdle;
+				return UI::text_dim;
 			case LineStatus::Blocked:
-				return Theme::Colors::statusBlocked;
+				return UI::status_crit;
 			case LineStatus::Available:
 			default:
-				return Theme::Colors::textBody;
+				return UI::text;
 		}
 	}
 
