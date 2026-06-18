@@ -14,7 +14,6 @@
 #include <scene/Scene.h>
 #include <scene/SceneManager.h>
 #include <shapes/Shapes.h>
-#include <theme/Theme.h>
 #include <utils/Log.h>
 
 namespace {
@@ -55,19 +54,19 @@ namespace {
 
 			icon1 = std::make_unique<Icon>(Icon::Args{
 				.position = {50.0F, 95.0F},
-				.size = Theme::Icons::defaultSize,
+				.size = UI::kIconDefaultSize,
 				.svgPath = kBerryPath,
 				.id = "icon_berry"});
 
 			icon2 = std::make_unique<Icon>(Icon::Args{
 				.position = {80.0F, 95.0F},
-				.size = Theme::Icons::defaultSize,
+				.size = UI::kIconDefaultSize,
 				.svgPath = kStonePath,
 				.id = "icon_stone"});
 
 			icon3 = std::make_unique<Icon>(Icon::Args{
 				.position = {110.0F, 95.0F},
-				.size = Theme::Icons::defaultSize,
+				.size = UI::kIconDefaultSize,
 				.svgPath = kStickPath,
 				.id = "icon_stick"});
 
@@ -82,19 +81,19 @@ namespace {
 
 			iconSmall = std::make_unique<Icon>(Icon::Args{
 				.position = {50.0F, 165.0F},
-				.size = Theme::Icons::smallSize,
+				.size = UI::kIconSmallSize,
 				.svgPath = kColonistPath,
 				.id = "icon_small"});
 
 			iconDefault = std::make_unique<Icon>(Icon::Args{
 				.position = {80.0F, 165.0F},
-				.size = Theme::Icons::defaultSize,
+				.size = UI::kIconDefaultSize,
 				.svgPath = kColonistPath,
 				.id = "icon_default"});
 
 			iconLarge = std::make_unique<Icon>(Icon::Args{
 				.position = {110.0F, 165.0F},
-				.size = Theme::Icons::largeSize,
+				.size = UI::kIconLargeSize,
 				.svgPath = kColonistPath,
 				.id = "icon_large"});
 

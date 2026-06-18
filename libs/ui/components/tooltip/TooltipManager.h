@@ -19,7 +19,6 @@
 //   }
 
 #include "Tooltip.h"
-#include "theme/Theme.h"
 
 #include <memory>
 

@@ -92,7 +92,7 @@ TEST_F(MenuTest, GetMenuHeightCalculatesFromItems) {
 	});
 
 	// Menu height = items * itemHeight + padding*2
-	// itemHeight is Theme::Dropdown::menuItemHeight (30.0F)
+	// itemHeight default is 30.0F
 	// padding is 4.0F
 	float expectedHeight = 3.0F * 30.0F + 4.0F * 2;
 	EXPECT_FLOAT_EQ(menu.getMenuHeight(), expectedHeight);

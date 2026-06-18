@@ -17,7 +17,6 @@
 #include "focus/FocusManager.h"
 #include "graphics/ClipTypes.h"
 #include "graphics/Color.h"
-#include "theme/Theme.h"
 
 #include <functional>
 #include <string>
@@ -25,11 +24,17 @@
 
 namespace UI {
 
+// Dialog layout defaults (formerly Theme::Dialog).
+inline constexpr float kDialogDefaultWidth = 600.0F;
+inline constexpr float kDialogDefaultHeight = 400.0F;
+inline constexpr float kDialogTitleBarHeight = 40.0F;
+inline constexpr float kDialogContentPadding = 16.0F;
+
 class Dialog : public Container, public FocusableBase<Dialog> {
   public:
 	struct Args {
 		std::string			  title;
-		Foundation::Vec2	  size{Theme::Dialog::defaultWidth, Theme::Dialog::defaultHeight};
+		Foundation::Vec2	  size{kDialogDefaultWidth, kDialogDefaultHeight};
 		std::function<void()> onClose;
 		int					  tabIndex = -1;
 		bool				  modal = true; ///< When false, no overlay and clicks inside don't auto-consume

@@ -13,11 +13,16 @@
 
 #include "component/Component.h"
 #include "graphics/Color.h"
-#include "theme/Theme.h"
 
 #include <string>
 
 namespace UI {
+
+// Tooltip geometry/timing defaults (formerly Theme::Tooltip).
+inline constexpr float kTooltipMaxWidth = 280.0F;
+inline constexpr float kTooltipPadding = 8.0F;
+inline constexpr float kTooltipHoverDelay = 0.5F;
+inline constexpr float kTooltipCursorOffset = 16.0F;
 
 /// Content for a tooltip
 struct TooltipContent {
@@ -33,7 +38,7 @@ class Tooltip : public Component {
 	struct Args {
 		TooltipContent	 content;
 		Foundation::Vec2 position{0.0F, 0.0F};
-		float			 maxWidth{Theme::Tooltip::maxWidth};
+		float			 maxWidth{kTooltipMaxWidth};
 	};
 
 	explicit Tooltip(const Args& args);

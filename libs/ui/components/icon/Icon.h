@@ -11,7 +11,6 @@
 
 #include "component/Component.h"
 #include "graphics/Color.h"
-#include "theme/Theme.h"
 #include "vector/Types.h"
 
 #include <cstdint>
@@ -20,11 +19,16 @@
 
 namespace UI {
 
+// Icon sizing defaults (formerly Theme::Icons).
+inline constexpr float kIconSmallSize = 12.0F;
+inline constexpr float kIconDefaultSize = 16.0F;
+inline constexpr float kIconLargeSize = 24.0F;
+
 class Icon : public Component {
   public:
 	struct Args {
 		Foundation::Vec2  position{0.0F, 0.0F};
-		float			  size{Theme::Icons::defaultSize}; // Icon renders as size × size square
+		float			  size{kIconDefaultSize}; // Icon renders as size × size square
 		std::string		  svgPath{};						 // SVG asset path (used if glyph is empty)
 		std::string		  glyph{};							 // Salvage glyph name (takes precedence)
 		Foundation::Color tint{1.0F, 1.0F, 1.0F, 1.0F};		 // Tint color (stroke or fill)

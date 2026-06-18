@@ -16,7 +16,6 @@
 #include <scene/Scene.h>
 #include <scene/SceneManager.h>
 #include <shapes/Shapes.h>
-#include <theme/Theme.h>
 #include <utils/Log.h>
 
 namespace {
