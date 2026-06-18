@@ -181,7 +181,7 @@ namespace UI {
 					// Close dialog when clicking outside (both modal and non-modal)
 					close();
 					if (modal) {
-						// Modal: consume the event (block game interaction)
+						// When modal: consume the event (block game interaction)
 						event.consume();
 						return true;
 					}
