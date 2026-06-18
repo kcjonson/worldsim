@@ -5,7 +5,7 @@
 #include <input/InputTypes.h>
 #include <primitives/Primitives.h>
 #include <shapes/Shapes.h>
-#include <theme/Theme.h>
+#include <theme/Tokens.h>
 
 namespace {
 // Recipe list item dimensions
@@ -316,7 +316,7 @@ void CraftingDialog::renderRecipeList() {
 			.text = "RECIPES",
 			.position = {leftX + kRecipeItemPadding, headerY},
 			.scale = 11.0F / 16.0F,  // 11px font
-			.color = UI::Theme::Colors::textMuted,
+			.color = UI::text_dim,
 			.id = "recipe-header"
 		});
 	}
@@ -369,8 +369,8 @@ void CraftingDialog::renderRecipeList() {
 
 		// Text color
 		Foundation::Color textColor = recipe.canCraft
-			? UI::Theme::Colors::textBody
-			: UI::Theme::Colors::textMuted;
+			? UI::text
+			: UI::text_dim;
 
 		// Draw text (vertically centered in item)
 		Renderer::Primitives::drawText({
@@ -414,14 +414,14 @@ void CraftingDialog::rebuildCenterColumn() {
 		// No recipe selected - auto-sized text
 		centerCol->addChild(UI::Text(UI::Text::Args{
 			.text = "Select a recipe",
-			.style = {.color = UI::Theme::Colors::textMuted, .fontSize = 14},
+			.style = {.color = UI::text_dim, .fontSize = 14},
 			.margin = 8.0F
 		}));
 	} else {
 		// Recipe name header - auto-sized
 		centerCol->addChild(UI::Text(UI::Text::Args{
 			.text = details.name,
-			.style = {.color = UI::Theme::Colors::textTitle, .fontSize = 16},
+			.style = {.color = UI::text_bright, .fontSize = 16},
 			.margin = 4.0F
 		}));
 
@@ -430,7 +430,7 @@ void CraftingDialog::rebuildCenterColumn() {
 			centerCol->addChild(UI::Text(UI::Text::Args{
 				.width = centerWidth - 16,  // Set width for wrapping
 				.text = details.description,
-				.style = {.color = UI::Theme::Colors::textBody, .fontSize = 12, .wordWrap = true},
+				.style = {.color = UI::text, .fontSize = 12, .wordWrap = true},
 				.margin = 2.0F
 			}));
 		}
@@ -439,7 +439,7 @@ void CraftingDialog::rebuildCenterColumn() {
 		if (!details.materials.empty()) {
 			centerCol->addChild(UI::Text(UI::Text::Args{
 				.text = "REQUIRES",
-				.style = {.color = UI::Theme::Colors::textMuted, .fontSize = 11},
+				.style = {.color = UI::text_dim, .fontSize = 11},
 				.margin = 6.0F
 			}));
 
@@ -450,7 +450,7 @@ void CraftingDialog::rebuildCenterColumn() {
 
 				centerCol->addChild(UI::Text(UI::Text::Args{
 					.text = matLine,
-					.style = {.color = mat.hasEnough ? UI::Theme::Colors::statusActive : UI::Theme::Colors::statusBlocked, .fontSize = 12},
+					.style = {.color = mat.hasEnough ? UI::status_ok : UI::status_crit, .fontSize = 12},
 					.margin = 1.0F
 				}));
 			}
@@ -460,7 +460,7 @@ void CraftingDialog::rebuildCenterColumn() {
 		if (!details.outputs.empty()) {
 			centerCol->addChild(UI::Text(UI::Text::Args{
 				.text = "PRODUCES",
-				.style = {.color = UI::Theme::Colors::textMuted, .fontSize = 11},
+				.style = {.color = UI::text_dim, .fontSize = 11},
 				.margin = 6.0F
 			}));
 
@@ -468,7 +468,7 @@ void CraftingDialog::rebuildCenterColumn() {
 				std::string outLine = std::to_string(output.count) + "x " + output.label;
 				centerCol->addChild(UI::Text(UI::Text::Args{
 					.text = outLine,
-					.style = {.color = UI::Theme::Colors::textBody, .fontSize = 12},
+					.style = {.color = UI::text, .fontSize = 12},
 					.margin = 1.0F
 				}));
 			}
@@ -477,14 +477,14 @@ void CraftingDialog::rebuildCenterColumn() {
 		// WORK TIME
 		centerCol->addChild(UI::Text(UI::Text::Args{
 			.text = "WORK TIME",
-			.style = {.color = UI::Theme::Colors::textMuted, .fontSize = 11},
+			.style = {.color = UI::text_dim, .fontSize = 11},
 			.margin = 6.0F
 		}));
 
 		std::string timeStr = "~" + std::to_string(static_cast<int>(details.workTime)) + " seconds";
 		centerCol->addChild(UI::Text(UI::Text::Args{
 			.text = timeStr,
-			.style = {.color = UI::Theme::Colors::textBody, .fontSize = 12},
+			.style = {.color = UI::text, .fontSize = 12},
 			.margin = 2.0F
 		}));
 
@@ -519,7 +519,7 @@ void CraftingDialog::rebuildCenterColumn() {
 		quantityRow.addChild(UI::Text(UI::Text::Args{
 			.width = 40,
 			.text = std::to_string(model.quantity()),
-			.style = {.color = UI::Theme::Colors::textBody, .fontSize = 16, .hAlign = Foundation::HorizontalAlign::Center},
+			.style = {.color = UI::text, .fontSize = 16, .hAlign = Foundation::HorizontalAlign::Center},
 			.margin = 4.0F
 		}));
 
@@ -577,7 +577,7 @@ void CraftingDialog::rebuildQueueColumn() {
 	// Header - auto-sized
 	queueLayout.addChild(UI::Text(UI::Text::Args{
 		.text = "QUEUE",
-		.style = {.color = UI::Theme::Colors::textMuted, .fontSize = 11},
+		.style = {.color = UI::text_dim, .fontSize = 11},
 		.margin = 4.0F
 	}));
 
@@ -587,7 +587,7 @@ void CraftingDialog::rebuildQueueColumn() {
 	if (queue.empty()) {
 		queueLayout.addChild(UI::Text(UI::Text::Args{
 			.text = "No items queued",
-			.style = {.color = UI::Theme::Colors::textMuted, .fontSize = 12},
+			.style = {.color = UI::text_dim, .fontSize = 12},
 			.margin = 4.0F
 		}));
 	} else {
@@ -598,7 +598,7 @@ void CraftingDialog::rebuildQueueColumn() {
 				std::string sectionLabel = item.isInProgress ? "In Progress:" : "Queued:";
 				queueLayout.addChild(UI::Text(UI::Text::Args{
 					.text = sectionLabel,
-					.style = {.color = UI::Theme::Colors::textMuted, .fontSize = 10},
+					.style = {.color = UI::text_dim, .fontSize = 10},
 					.margin = 2.0F
 				}));
 			}
@@ -614,7 +614,7 @@ void CraftingDialog::rebuildQueueColumn() {
 				// Show item name - auto-sized
 				queueLayout.addChild(UI::Text(UI::Text::Args{
 					.text = itemLabel,
-					.style = {.color = UI::Theme::Colors::textBody, .fontSize = 12},
+					.style = {.color = UI::text, .fontSize = 12},
 					.margin = 2.0F
 				}));
 
@@ -630,7 +630,7 @@ void CraftingDialog::rebuildQueueColumn() {
 				if (queue.size() > 1) {
 					queueLayout.addChild(UI::Text(UI::Text::Args{
 						.text = "Queued:",
-						.style = {.color = UI::Theme::Colors::textMuted, .fontSize = 10},
+						.style = {.color = UI::text_dim, .fontSize = 10},
 						.margin = 4.0F
 					}));
 				}
@@ -638,7 +638,7 @@ void CraftingDialog::rebuildQueueColumn() {
 				// Queued item - show name and cancel button - auto-sized
 				queueLayout.addChild(UI::Text(UI::Text::Args{
 					.text = itemLabel,
-					.style = {.color = UI::Theme::Colors::textBody, .fontSize = 12},
+					.style = {.color = UI::text, .fontSize = 12},
 					.margin = 2.0F
 				}));
 
