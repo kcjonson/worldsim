@@ -96,8 +96,6 @@ class StorageConfigDialog : public UI::Component {
 
 	// Left column - available items
 	UI::LayerHandle leftColumnHandle;
-	int				itemHoveredIndex = -1;
-	int				itemSelectedIndex = -1;
 	std::vector<int> expandedCategories; // Indices of expanded category groups
 
 	// Center column - rule configuration
@@ -118,6 +116,7 @@ class StorageConfigDialog : public UI::Component {
 	bool needsInitialRebuild = false;
 	bool needsCenterRebuild = false;
 	bool needsRulesRebuild = false;
+	bool needsLeftRebuild = false;
 
 	// Internal methods
 	void createDialog();
@@ -126,14 +125,7 @@ class StorageConfigDialog : public UI::Component {
 	void rebuildCenterColumn();
 	void rebuildRulesColumn();
 
-	// Item list rendering (direct rendering like CraftingDialog)
-	void renderItemList();
-	[[nodiscard]] int getItemIndexAtPosition(Foundation::Vec2 pos) const;
-	[[nodiscard]] Foundation::Rect getItemBounds(int flatIndex) const;
-	[[nodiscard]] Foundation::Rect getCategoryHeaderBounds(int categoryIndex) const;
-
 	// Event handlers
-	void handleItemClick(int flatIndex);
 	void handleCategoryToggle(int categoryIndex);
 	void handleAddRule();
 	void handleAddAll();

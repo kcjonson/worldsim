@@ -1,16 +1,14 @@
 #include "StorageConfigDialog.h"
 
 #include <components/TextInput/TextInput.h>
-#include <font/FontRenderer.h>
+#include <components/list/ListRow.h>
 #include <input/InputTypes.h>
-#include <primitives/Primitives.h>
-#include <shapes/Shapes.h>
+#include <layout/LayoutContainer.h>
 #include <theme/Tokens.h>
 
 namespace {
 	// Item list dimensions
 	constexpr float kItemHeight = 24.0F;
-	constexpr float kItemPadding = 8.0F;
 	constexpr float kCategoryHeaderHeight = 28.0F;
 	constexpr float kIndentWidth = 16.0F;
 } // namespace
@@ -154,16 +152,16 @@ namespace world_sim {
 				expandedCategories.push_back(static_cast<int>(i));
 			}
 
-			rebuildFlatList();
+			rebuildLeftColumn();
 			rebuildCenterColumn();
 			rebuildRulesColumn();
 		} else {
 			if (updateType == StorageConfigDialogModel::UpdateType::Rules || updateType == StorageConfigDialogModel::UpdateType::Full) {
-				rebuildFlatList();
+				rebuildLeftColumn();
 				rebuildRulesColumn();
 			}
 			if (updateType == StorageConfigDialogModel::UpdateType::Inventory) {
-				rebuildFlatList();
+				rebuildLeftColumn();
 			}
 		}
 
@@ -175,6 +173,11 @@ namespace world_sim {
 		if (needsRulesRebuild) {
 			needsRulesRebuild = false;
 			rebuildRulesColumn();
+		}
+
+		if (needsLeftRebuild) {
+			needsLeftRebuild = false;
+			rebuildLeftColumn();
 		}
 	}
 
@@ -195,9 +198,6 @@ namespace world_sim {
 		if (dialog != nullptr) {
 			dialog->render();
 		}
-
-		// Render item list primitives (direct rendering)
-		renderItemList();
 	}
 
 	bool StorageConfigDialog::handleEvent(UI::InputEvent& event) {
@@ -205,25 +205,8 @@ namespace world_sim {
 			return false;
 		}
 
-		// Item list - direct hit testing
-		if (event.type == UI::InputEvent::Type::MouseMove) {
-			itemHoveredIndex = getItemIndexAtPosition(event.position);
-		} else if (event.type == UI::InputEvent::Type::MouseDown && event.button == engine::MouseButton::Left) {
-			int index = getItemIndexAtPosition(event.position);
-			if (index >= 0) {
-				handleItemClick(index);
-				event.consume();
-				return true;
-			}
-		}
-
-		// Let Dialog handle all other events
 		auto* dialog = getChild<UI::Dialog>(dialogHandle);
-		if (dialog != nullptr && dialog->handleEvent(event)) {
-			return true;
-		}
-
-		return false;
+		return dialog != nullptr && dialog->handleEvent(event);
 	}
 
 	bool StorageConfigDialog::containsPoint(Foundation::Vec2 point) const {
@@ -254,58 +237,9 @@ namespace world_sim {
 		}
 	}
 
-	Foundation::Rect StorageConfigDialog::getItemBounds(int flatIndex) const {
-		if (flatIndex < 0 || flatIndex >= static_cast<int>(flatItems.size())) {
-			return {0.0F, 0.0F, 0.0F, 0.0F};
-		}
+	void StorageConfigDialog::rebuildLeftColumn() {
+		rebuildFlatList();
 
-		auto* dialog = getChild<UI::Dialog>(dialogHandle);
-		if (dialog == nullptr) {
-			return {0.0F, 0.0F, 0.0F, 0.0F};
-		}
-
-		auto  bounds = dialog->getContentBounds();
-		float leftX = bounds.x;
-		float leftY = bounds.y;
-
-		// Get scroll offset
-		float scrollOffset = 0.0F;
-		auto* contentLayout = const_cast<StorageConfigDialog*>(this)->getContentLayout();
-		if (contentLayout != nullptr) {
-			auto* leftCol = contentLayout->getChild<UI::ScrollContainer>(leftColumnHandle);
-			if (leftCol != nullptr) {
-				scrollOffset = leftCol->getScrollPosition();
-			}
-		}
-
-		// Calculate Y position based on items above
-		float itemY = leftY - scrollOffset;
-		for (int i = 0; i < flatIndex; ++i) {
-			if (flatItems[i].type == FlatItem::Type::CategoryHeader) {
-				itemY += kCategoryHeaderHeight;
-			} else {
-				itemY += kItemHeight;
-			}
-		}
-
-		float itemHeight = (flatItems[flatIndex].type == FlatItem::Type::CategoryHeader) ? kCategoryHeaderHeight : kItemHeight;
-
-		float indentX = (flatItems[flatIndex].type == FlatItem::Type::Item) ? kIndentWidth : 0.0F;
-
-		return {leftX + kItemPadding + indentX, itemY, kLeftColumnWidth - kItemPadding * 2 - indentX, itemHeight};
-	}
-
-	int StorageConfigDialog::getItemIndexAtPosition(Foundation::Vec2 pos) const {
-		for (size_t i = 0; i < flatItems.size(); ++i) {
-			Foundation::Rect bounds = getItemBounds(static_cast<int>(i));
-			if (pos.x >= bounds.x && pos.x < bounds.x + bounds.width && pos.y >= bounds.y && pos.y < bounds.y + bounds.height) {
-				return static_cast<int>(i);
-			}
-		}
-		return -1;
-	}
-
-	void StorageConfigDialog::renderItemList() {
 		auto* contentLayout = getContentLayout();
 		if (contentLayout == nullptr) {
 			return;
@@ -315,130 +249,60 @@ namespace world_sim {
 			return;
 		}
 
-		auto* dialog = getChild<UI::Dialog>(dialogHandle);
-		if (dialog == nullptr) {
-			return;
-		}
+		leftCol->clearChildren();
 
-		auto  dialogBounds = dialog->getContentBounds();
-		float scrollOffset = leftCol->getScrollPosition();
-
-		// Render scroll container
-		leftCol->render();
-
-		// Calculate viewport bounds
-		Foundation::Rect viewBounds{dialogBounds.x, dialogBounds.y, kLeftColumnWidth, dialogBounds.height};
-
-		// Colors
-		auto transparentBg = Foundation::Color{0.0F, 0.0F, 0.0F, 0.0F};
-		auto hoverBg = Foundation::Color{1.0F, 1.0F, 1.0F, 0.08F};
-		auto selectedBg = Foundation::Color{0.0F, 0.0F, 0.0F, 0.2F};
-		auto borderColor = Foundation::Color{1.0F, 1.0F, 1.0F, 0.1F};
-		auto categoryBg = Foundation::Color{1.0F, 1.0F, 1.0F, 0.03F};
+		auto listLayout = UI::LayoutContainer(UI::LayoutContainer::Args{
+			.position = {0, 0},
+			.size = {kLeftColumnWidth, 0},
+			.direction = UI::Direction::Vertical,
+			.hAlign = UI::HAlign::Left,
+			.vAlign = UI::VAlign::Top
+		});
 
 		const auto& groups = model.categoryGroups();
 		const auto& items = model.availableItems();
 
-		for (size_t fi = 0; fi < flatItems.size(); ++fi) {
-			const auto& flat = flatItems[fi];
-			int			idx = static_cast<int>(fi);
-			auto		bounds = getItemBounds(idx);
-
-			// Skip items outside viewport
-			if (bounds.y + bounds.height < viewBounds.y || bounds.y > viewBounds.y + viewBounds.height) {
-				continue;
-			}
-
+		for (const auto& flat : flatItems) {
 			if (flat.type == FlatItem::Type::CategoryHeader) {
-				// Category header
 				const auto& group = groups[flat.index];
-				bool		expanded = std::find(expandedCategories.begin(), expandedCategories.end(), static_cast<int>(flat.index)) !=
+				bool expanded = std::find(expandedCategories.begin(), expandedCategories.end(), static_cast<int>(flat.index)) !=
 								expandedCategories.end();
-
-				// Background
-				Renderer::Primitives::drawRect({.bounds = bounds, .style = {.fill = categoryBg}, .id = "category-bg"});
-
-				// Expand indicator
-				std::string indicator = expanded ? "v " : "> ";
-
-				// Draw text
-				Renderer::Primitives::drawText(
-					{.text = indicator + group.label,
-					 .position = {bounds.x + 4.0F, bounds.y + (kCategoryHeaderHeight - 14.0F) / 2.0F},
-					 .scale = 13.0F / 16.0F,
-					 .color = UI::text_bright,
-					 .id = "category-text"}
-				);
-
+				listLayout.addChild(UI::ListRow(UI::ListRow::Args{
+					.label = (expanded ? "v " : "> ") + group.label,
+					.size = {kLeftColumnWidth, kCategoryHeaderHeight},
+					.onClick = [this, catIdx = static_cast<int>(flat.index)]() { handleCategoryToggle(catIdx); }
+				}));
 			} else {
-				// Item row
 				const auto& item = items[flat.index];
-
-				// Check if this item is selected
-				bool isSelected = (item.defName == model.selectedItemDefName());
-
-				// Background
-				Foundation::Color bgColor = transparentBg;
-				if (isSelected) {
-					bgColor = selectedBg;
-				} else if (idx == itemHoveredIndex) {
-					bgColor = hoverBg;
-				}
-
-				Renderer::Primitives::drawRect({.bounds = bounds, .style = {.fill = bgColor}, .id = "item-bg"});
-
-				// Bottom border
-				Renderer::Primitives::drawRect(
-					{.bounds = {bounds.x, bounds.y + bounds.height - 1.0F, bounds.width, 1.0F},
-					 .style = {.fill = borderColor},
-					 .id = "item-border"}
-				);
-
-				// Item label with counts
-				std::string label = item.label;
-
-				// Add count indicator
 				std::string countStr;
 				if (item.requestedCount == 0 && item.hasRules) {
-					// Unlimited
 					countStr = std::to_string(item.currentCount) + "/~";
 				} else if (item.hasRules) {
 					countStr = std::to_string(item.currentCount) + "/" + std::to_string(item.requestedCount);
 				} else {
 					countStr = std::to_string(item.currentCount) + "/0";
 				}
-
-				// Text color based on rules
-				Foundation::Color textColor = item.hasRules ? UI::text : UI::text_dim;
-
-				// Draw item label
-				Renderer::Primitives::drawText(
-					{.text = label,
-					 .position = {bounds.x + 4.0F, bounds.y + (kItemHeight - 12.0F) / 2.0F},
-					 .scale = 12.0F / 16.0F,
-					 .color = textColor,
-					 .id = "item-text"}
-				);
-
-				// Draw count on the right
-				float countWidth = 50.0F;
-				Renderer::Primitives::drawText(
-					{.text = countStr,
-					 .position = {bounds.x + bounds.width - countWidth, bounds.y + (kItemHeight - 11.0F) / 2.0F},
-					 .scale = 11.0F / 16.0F,
-					 .color = UI::text_dim,
-					 .id = "item-count"}
-				);
+				listLayout.addChild(UI::ListRow(UI::ListRow::Args{
+					.label = item.label,
+					.trailing = countStr,
+					.size = {kLeftColumnWidth, kItemHeight},
+					.selected = (item.defName == model.selectedItemDefName()),
+					.dim = !item.hasRules,
+					.indent = kIndentWidth,
+					.onClick = [this, defName = item.defName]() {
+						model.selectItem(defName);
+						needsCenterRebuild = true;
+						needsRulesRebuild = true;
+						needsLeftRebuild = true;
+					}
+				}));
 			}
 		}
 
-		// Update scroll content height
-		float totalHeight = 0.0F;
-		for (const auto& flat : flatItems) {
-			totalHeight += (flat.type == FlatItem::Type::CategoryHeader) ? kCategoryHeaderHeight : kItemHeight;
-		}
-		leftCol->setContentHeight(totalHeight + 10.0F);
+		leftCol->setContentHeight(listLayout.getHeight() + 10.0F);
+		leftCol->addChild(std::move(listLayout));
 	}
+
 
 	void StorageConfigDialog::rebuildCenterColumn() {
 		auto* contentLayout = getContentLayout();
@@ -850,35 +714,6 @@ namespace world_sim {
 		rightCol->addChild(std::move(rulesLayout));
 	}
 
-	void StorageConfigDialog::handleItemClick(int flatIndex) {
-		if (flatIndex < 0 || flatIndex >= static_cast<int>(flatItems.size())) {
-			return;
-		}
-
-		const auto& flat = flatItems[flatIndex];
-
-		if (flat.type == FlatItem::Type::CategoryHeader) {
-			// Toggle category expansion
-			int	 catIdx = static_cast<int>(flat.index);
-			auto iter = std::find(expandedCategories.begin(), expandedCategories.end(), catIdx);
-			if (iter != expandedCategories.end()) {
-				expandedCategories.erase(iter);
-			} else {
-				expandedCategories.push_back(catIdx);
-			}
-			rebuildFlatList();
-		} else {
-			// Select item
-			const auto& items = model.availableItems();
-			if (flat.index < items.size()) {
-				model.selectItem(items[flat.index].defName);
-				itemSelectedIndex = flatIndex;
-				needsCenterRebuild = true;
-				needsRulesRebuild = true;
-			}
-		}
-	}
-
 	void StorageConfigDialog::handleCategoryToggle(int categoryIndex) {
 		auto iter = std::find(expandedCategories.begin(), expandedCategories.end(), categoryIndex);
 		if (iter != expandedCategories.end()) {
@@ -886,7 +721,7 @@ namespace world_sim {
 		} else {
 			expandedCategories.push_back(categoryIndex);
 		}
-		rebuildFlatList();
+		needsLeftRebuild = true;
 	}
 
 	void StorageConfigDialog::handleAddRule() {
@@ -895,7 +730,7 @@ namespace world_sim {
 		}
 		if (model.addRule(*worldPtr)) {
 			needsRulesRebuild = true;
-			rebuildFlatList();
+			needsLeftRebuild = true;
 		}
 	}
 
@@ -905,7 +740,7 @@ namespace world_sim {
 		}
 		if (model.addCategoryWildcard(*worldPtr)) {
 			needsRulesRebuild = true;
-			rebuildFlatList();
+			needsLeftRebuild = true;
 		}
 	}
 
@@ -915,7 +750,7 @@ namespace world_sim {
 		}
 		model.removeRule(*worldPtr, ruleIndex);
 		needsRulesRebuild = true;
-		rebuildFlatList();
+		needsLeftRebuild = true;
 	}
 
 	void StorageConfigDialog::handleSelectAll() {
@@ -924,7 +759,7 @@ namespace world_sim {
 		}
 		model.addAllCategories(*worldPtr);
 		needsRulesRebuild = true;
-		rebuildFlatList();
+		needsLeftRebuild = true;
 	}
 
 	void StorageConfigDialog::handleSelectNone() {
@@ -933,7 +768,7 @@ namespace world_sim {
 		}
 		model.removeAllRules(*worldPtr);
 		needsRulesRebuild = true;
-		rebuildFlatList();
+		needsLeftRebuild = true;
 	}
 
 } // namespace world_sim
