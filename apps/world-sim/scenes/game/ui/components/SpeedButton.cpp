@@ -1,6 +1,6 @@
 #include "SpeedButton.h"
 
-#include <theme/Theme.h>
+#include <theme/Tokens.h>
 
 namespace world_sim {
 
@@ -16,10 +16,10 @@ SpeedButton::SpeedButton(const Args& args)
 		.size = {kButtonSize, kButtonSize},
 		.style =
 			{
-				.fill = UI::Theme::Colors::cardBackground,
+				.fill = UI::bg_inset,
 				.border =
 					Foundation::BorderStyle{
-						.color = UI::Theme::Colors::cardBorder,
+						.color = UI::line_edge,
 						.width = 1.0F,
 						.cornerRadius = 4.0F,
 						.position = Foundation::BorderPosition::Inside},
@@ -32,7 +32,7 @@ SpeedButton::SpeedButton(const Args& args)
 		.position = {0.0F, 0.0F},
 		.size = kIconSize,
 		.svgPath = "assets/" + args.iconPath,
-		.tint = UI::Theme::Colors::textBody,
+		.tint = UI::text_dim,
 		.id = (id + "_icon").c_str()}));
 
 	if (auto* iconPtr = getChild<UI::Icon>(iconHandle)) {
@@ -110,32 +110,32 @@ void SpeedButton::updateAppearance() {
 
 	if (active) {
 		// Active state - highlighted
-		bgColor = UI::Theme::Colors::selectionBackground;
-		borderColor = UI::Theme::Colors::selectionBorder;
-		iconColor = UI::Theme::Colors::textTitle;
+		bgColor = UI::accent;
+		borderColor = UI::accent;
+		iconColor = UI::accent_contrast;
 	} else if (pressed) {
 		// Pressed state - darker
 		bgColor = Foundation::Color{
-			UI::Theme::Colors::cardBackground.r - 0.05F,
-			UI::Theme::Colors::cardBackground.g - 0.05F,
-			UI::Theme::Colors::cardBackground.b - 0.05F,
-			UI::Theme::Colors::cardBackground.a};
-		borderColor = UI::Theme::Colors::cardBorder;
-		iconColor = UI::Theme::Colors::textBody;
+			UI::bg_inset.r - 0.05F,
+			UI::bg_inset.g - 0.05F,
+			UI::bg_inset.b - 0.05F,
+			UI::bg_inset.a};
+		borderColor = UI::line_edge;
+		iconColor = UI::text_dim;
 	} else if (hovered) {
 		// Hover state - lighter
 		bgColor = Foundation::Color{
-			UI::Theme::Colors::cardBackground.r + 0.1F,
-			UI::Theme::Colors::cardBackground.g + 0.1F,
-			UI::Theme::Colors::cardBackground.b + 0.1F,
-			UI::Theme::Colors::cardBackground.a};
-		borderColor = UI::Theme::Colors::cardBorder;
-		iconColor = UI::Theme::Colors::textBody;
+			UI::bg_inset.r + 0.1F,
+			UI::bg_inset.g + 0.1F,
+			UI::bg_inset.b + 0.1F,
+			UI::bg_inset.a};
+		borderColor = UI::line_edge;
+		iconColor = UI::text_dim;
 	} else {
 		// Normal state
-		bgColor = UI::Theme::Colors::cardBackground;
-		borderColor = UI::Theme::Colors::cardBorder;
-		iconColor = UI::Theme::Colors::textBody;
+		bgColor = UI::bg_inset;
+		borderColor = UI::line_edge;
+		iconColor = UI::text_dim;
 	}
 
 	bg->style.fill = bgColor;

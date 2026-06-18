@@ -4,8 +4,7 @@
 #include <ecs/components/Colonist.h>
 #include <ecs/components/DecisionTrace.h>
 #include <ecs/components/Task.h>
-#include <theme/PanelStyle.h>
-#include <theme/Theme.h>
+#include <theme/Tokens.h>
 
 namespace world_sim {
 
@@ -37,7 +36,7 @@ namespace world_sim {
 				UI::Rectangle::Args{
 					.position = {0.0F, 0.0F},
 					.size = {m_panelWidth, m_panelHeight},
-					.style = UI::PanelStyles::floating(),
+					.style = {.fill = UI::bg_panel_raised, .border = Foundation::BorderStyle{.color = UI::line_edge, .width = UI::bw, .cornerRadius = UI::r_md, .position = Foundation::BorderPosition::Inside}},
 					.id = (args.id + "_bg").c_str(),
 					.zIndex = 0
 				}
@@ -50,7 +49,7 @@ namespace world_sim {
 				UI::Rectangle::Args{
 					.position = {0.0F, 0.0F},
 					.size = {kCloseButtonSize, kCloseButtonSize},
-					.style = UI::PanelStyles::closeButton(),
+					.style = {.fill = UI::bg_inset, .border = Foundation::BorderStyle{.color = UI::line_edge, .width = UI::bw, .cornerRadius = UI::r_sm, .position = Foundation::BorderPosition::Inside}},
 					.id = (args.id + "_close_bg").c_str(),
 					.zIndex = 2
 				}
@@ -65,7 +64,7 @@ namespace world_sim {
 					.text = "X",
 					.style =
 						{
-							.color = UI::Theme::Colors::closeButtonText,
+							.color = UI::text_dim,
 							.fontSize = 10.0F,
 							.hAlign = Foundation::HorizontalAlign::Center,
 							.vAlign = Foundation::VerticalAlign::Middle,
@@ -84,7 +83,7 @@ namespace world_sim {
 					.text = "Task Queue",
 					.style =
 						{
-							.color = UI::Theme::Colors::textTitle,
+							.color = UI::text_bright,
 							.fontSize = kTitleFontSize,
 							.hAlign = Foundation::HorizontalAlign::Left,
 							.vAlign = Foundation::VerticalAlign::Top,
