@@ -2,7 +2,9 @@
 // the Salvage dialog frame (scrim + bracketed panel + glow) against the prototype.
 
 #include <components/dialog/Dialog.h>
+#include <components/list/ListRow.h>
 #include <components/panel/Panel.h>
+#include <layout/LayoutContainer.h>
 #include <theme/Tokens.h>
 #include <theme/Variants.h>
 
@@ -24,6 +26,17 @@ class SalvageDialogScene : public engine::IScene {
   public:
 	void onEnter() override {
 		dialog = std::make_unique<UI::Dialog>(UI::Dialog::Args{.title = "MARA VANCE", .size = {760.0F, 420.0F}, .modal = true});
+
+		// Demo a column of selectable ListRows inside the dialog content.
+		auto list = UI::LayoutContainer(UI::LayoutContainer::Args{
+			.position = {0.0F, 0.0F}, .size = {340.0F, 0.0F}, .direction = UI::Direction::Vertical, .hAlign = UI::HAlign::Left, .vAlign = UI::VAlign::Top});
+		const char* items[] = {"Wooden Wall", "Stone Wall", "Campfire", "Crafting Spot", "Wooden Door", "Storage Shelf"};
+		for (int i = 0; i < 6; ++i) {
+			list.addChild(UI::ListRow(UI::ListRow::Args{
+				.label = items[i], .trailing = (i == 0 ? "x4" : ""), .size = {340.0F, 30.0F}, .selected = (i == 1), .dim = (i == 3),
+				.id = std::string("demo_row_") + std::to_string(i)}));
+		}
+		dialog->addChild(std::move(list));
 	}
 
 	void update(float dt) override {
