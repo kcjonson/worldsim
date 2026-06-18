@@ -34,7 +34,7 @@ namespace world_sim {
 		  vision(args.vision) {}
 
 	void VisionOverlay::render(int viewportW, int viewportH) {
-		if (!active || camera == nullptr || vision == nullptr) {
+		if (!active || ecsWorld == nullptr || camera == nullptr || vision == nullptr) {
 			return;
 		}
 

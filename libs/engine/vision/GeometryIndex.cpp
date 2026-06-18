@@ -43,6 +43,10 @@ namespace ecs {
 		m_occluders.clear();
 		m_segments.clear();
 		m_openings.clear();
+		// Clearing the occluder set is itself a change consumers must see, so move
+		// the generation -- a cache keyed on it (e.g. VisionSystem's polygons) would
+		// otherwise keep serving occluders from the old world after a swap to null.
+		++m_generation;
 	}
 
 	void GeometryIndex::rebuildIfStale() {
