@@ -93,25 +93,25 @@ namespace UI {
 
 	Foundation::Rect Dialog::getTitleBarBounds() const {
 		Foundation::Vec2 pos = getPanelPosition();
-		return {pos.x, pos.y, dialogSize.x, Theme::Dialog::titleBarHeight};
+		return {pos.x, pos.y, dialogSize.x, kDialogTitleBarHeight};
 	}
 
 	Foundation::Rect Dialog::getCloseButtonBounds() const {
 		Foundation::Vec2 pos = getPanelPosition();
 		float			 buttonX = pos.x + dialogSize.x - kCloseButtonMargin - kCloseButtonSize;
-		float			 buttonY = pos.y + (Theme::Dialog::titleBarHeight - kCloseButtonSize) / 2.0F;
+		float			 buttonY = pos.y + (kDialogTitleBarHeight - kCloseButtonSize) / 2.0F;
 		return {buttonX, buttonY, kCloseButtonSize, kCloseButtonSize};
 	}
 
 	Foundation::Rect Dialog::getContentBounds() const {
 		Foundation::Vec2 pos = getPanelPosition();
-		float			 contentY = pos.y + Theme::Dialog::titleBarHeight;
-		float			 contentHeight = dialogSize.y - Theme::Dialog::titleBarHeight;
+		float			 contentY = pos.y + kDialogTitleBarHeight;
+		float			 contentHeight = dialogSize.y - kDialogTitleBarHeight;
 		return {
-			pos.x + Theme::Dialog::contentPadding,
-			contentY + Theme::Dialog::contentPadding,
-			dialogSize.x - Theme::Dialog::contentPadding * 2,
-			contentHeight - Theme::Dialog::contentPadding * 2
+			pos.x + kDialogContentPadding,
+			contentY + kDialogContentPadding,
+			dialogSize.x - kDialogContentPadding * 2,
+			contentHeight - kDialogContentPadding * 2
 		};
 	}
 
@@ -283,7 +283,7 @@ namespace UI {
 		}
 
 		const Foundation::Rect panel = getPanelBounds();
-		const float			   titleH = Theme::Dialog::titleBarHeight;
+		const float			   titleH = kDialogTitleBarHeight;
 
 		// Raised, bracketed Salvage surface with an edge border and a soft accent glow.
 		drawRect({.bounds = panel,
@@ -295,7 +295,7 @@ namespace UI {
 		// Title: display font, uppercase, letter-spaced.
 		if (!title.empty()) {
 			drawText({.text = title,
-					  .position = {panel.x + Theme::Dialog::contentPadding, panel.y + ((titleH - fs_md) * 0.5F)},
+					  .position = {panel.x + kDialogContentPadding, panel.y + ((titleH - fs_md) * 0.5F)},
 					  .scale = fs_md / 16.0F,
 					  .color = fade(text_bright),
 					  .font = fontDisplay,

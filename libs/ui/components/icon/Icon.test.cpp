@@ -16,9 +16,9 @@ class IconTest : public ::testing::Test {
 TEST_F(IconTest, ConstructsWithDefaults) {
 	Icon icon(Icon::Args{});
 
-	EXPECT_FLOAT_EQ(icon.getIconSize(), Theme::Icons::defaultSize);
-	EXPECT_FLOAT_EQ(icon.getWidth(), Theme::Icons::defaultSize);	// Size.x
-	EXPECT_FLOAT_EQ(icon.getHeight(), Theme::Icons::defaultSize); // Size.y (square)
+	EXPECT_FLOAT_EQ(icon.getIconSize(), UI::kIconDefaultSize);
+	EXPECT_FLOAT_EQ(icon.getWidth(), UI::kIconDefaultSize);	// Size.x
+	EXPECT_FLOAT_EQ(icon.getHeight(), UI::kIconDefaultSize); // Size.y (square)
 	EXPECT_TRUE(icon.getSvgPath().empty());
 	EXPECT_FALSE(icon.isLoaded()); // No SVG loaded
 }

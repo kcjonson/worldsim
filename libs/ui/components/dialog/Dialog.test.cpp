@@ -29,8 +29,8 @@ TEST_F(DialogTest, ConstructsWithDefaults) {
 
 	EXPECT_EQ(dialog.getTitle(), "Test Dialog");
 	EXPECT_FALSE(dialog.isOpen());
-	EXPECT_FLOAT_EQ(dialog.getDialogSize().x, Theme::Dialog::defaultWidth);
-	EXPECT_FLOAT_EQ(dialog.getDialogSize().y, Theme::Dialog::defaultHeight);
+	EXPECT_FLOAT_EQ(dialog.getDialogSize().x, UI::kDialogDefaultWidth);
+	EXPECT_FLOAT_EQ(dialog.getDialogSize().y, UI::kDialogDefaultHeight);
 }
 
 TEST_F(DialogTest, ConstructsWithCustomSize) {
@@ -182,7 +182,7 @@ TEST_F(DialogTest, ContentBoundsExcludesTitleBar) {
 	EXPECT_GT(contentBounds.y, 0.0F);
 
 	// Content width should be dialog width minus padding on both sides
-	float expectedWidth = 600.0F - Theme::Dialog::contentPadding * 2;
+	float expectedWidth = 600.0F - UI::kDialogContentPadding * 2;
 	EXPECT_FLOAT_EQ(contentBounds.width, expectedWidth);
 }
 

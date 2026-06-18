@@ -126,7 +126,7 @@ TEST_F(TooltipManagerTest, TooltipAppearsAfterDelay) {
 	manager.startHover({.title = "Test"}, {100.0F, 100.0F});
 
 	// Wait for hover delay
-	manager.update(Theme::Tooltip::hoverDelay + 0.1F);
+	manager.update(UI::kTooltipHoverDelay + 0.1F);
 
 	EXPECT_EQ(manager.getState(), TooltipManager::State::Showing);
 }
@@ -135,7 +135,7 @@ TEST_F(TooltipManagerTest, TooltipFullyVisibleAfterFadeIn) {
 	manager.startHover({.title = "Test"}, {100.0F, 100.0F});
 
 	// Wait for hover delay
-	manager.update(Theme::Tooltip::hoverDelay + 0.1F);
+	manager.update(UI::kTooltipHoverDelay + 0.1F);
 
 	// Wait for fade in
 	manager.update(0.2F);
@@ -155,7 +155,7 @@ TEST_F(TooltipManagerTest, EndHoverCancelsWaiting) {
 
 TEST_F(TooltipManagerTest, EndHoverStartsHiding) {
 	manager.startHover({.title = "Test"}, {100.0F, 100.0F});
-	manager.update(Theme::Tooltip::hoverDelay + 0.1F);
+	manager.update(UI::kTooltipHoverDelay + 0.1F);
 	manager.update(0.2F); // Complete fade in
 
 	EXPECT_EQ(manager.getState(), TooltipManager::State::Visible);
@@ -167,7 +167,7 @@ TEST_F(TooltipManagerTest, EndHoverStartsHiding) {
 
 TEST_F(TooltipManagerTest, HideCompletesAndReturnsToIdle) {
 	manager.startHover({.title = "Test"}, {100.0F, 100.0F});
-	manager.update(Theme::Tooltip::hoverDelay + 0.1F);
+	manager.update(UI::kTooltipHoverDelay + 0.1F);
 	manager.update(0.2F); // Complete fade in
 
 	manager.endHover();
@@ -180,7 +180,7 @@ TEST_F(TooltipManagerTest, HideCompletesAndReturnsToIdle) {
 TEST_F(TooltipManagerTest, TooltipStaysOnScreenRight) {
 	// Start hover near right edge
 	manager.startHover({.title = "Test"}, {750.0F, 100.0F});
-	manager.update(Theme::Tooltip::hoverDelay + 0.1F);
+	manager.update(UI::kTooltipHoverDelay + 0.1F);
 	manager.update(0.2F);
 
 	// Tooltip should be positioned to stay on screen
@@ -190,7 +190,7 @@ TEST_F(TooltipManagerTest, TooltipStaysOnScreenRight) {
 TEST_F(TooltipManagerTest, TooltipStaysOnScreenBottom) {
 	// Start hover near bottom edge
 	manager.startHover({.title = "Test"}, {100.0F, 550.0F});
-	manager.update(Theme::Tooltip::hoverDelay + 0.1F);
+	manager.update(UI::kTooltipHoverDelay + 0.1F);
 	manager.update(0.2F);
 
 	// Tooltip should be positioned to stay on screen
@@ -199,7 +199,7 @@ TEST_F(TooltipManagerTest, TooltipStaysOnScreenBottom) {
 
 TEST_F(TooltipManagerTest, CursorPositionUpdates) {
 	manager.startHover({.title = "Test"}, {100.0F, 100.0F});
-	manager.update(Theme::Tooltip::hoverDelay + 0.1F);
+	manager.update(UI::kTooltipHoverDelay + 0.1F);
 	manager.update(0.2F);
 
 	// Update cursor position

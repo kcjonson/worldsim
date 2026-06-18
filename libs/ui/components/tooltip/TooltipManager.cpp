@@ -95,7 +95,7 @@ void TooltipManager::update(float deltaTime) {
 
 		case State::Waiting:
 			// Wait for hover delay
-			if (stateTimer >= Theme::Tooltip::hoverDelay) {
+			if (stateTimer >= kTooltipHoverDelay) {
 				// Create and show tooltip
 				// Use estimated dimensions for initial positioning
 				float estimatedWidth = estimateTooltipWidth(pendingContent);
@@ -172,18 +172,18 @@ Foundation::Vec2 TooltipManager::calculateTooltipPosition(
 	Foundation::Vec2 cursor, float tooltipWidth, float tooltipHeight) const {
 
 	// Default position: below and to the right of cursor
-	float x = cursor.x + Theme::Tooltip::cursorOffset;
-	float y = cursor.y + Theme::Tooltip::cursorOffset;
+	float x = cursor.x + kTooltipCursorOffset;
+	float y = cursor.y + kTooltipCursorOffset;
 
 	// Clamp to screen bounds
 	// If tooltip would go off the right edge, flip to left of cursor
 	if (x + tooltipWidth > screenWidth) {
-		x = cursor.x - tooltipWidth - Theme::Tooltip::cursorOffset / 2.0F;
+		x = cursor.x - tooltipWidth - kTooltipCursorOffset / 2.0F;
 	}
 
 	// If tooltip would go off the bottom edge, flip to above cursor
 	if (y + tooltipHeight > screenHeight) {
-		y = cursor.y - tooltipHeight - Theme::Tooltip::cursorOffset / 2.0F;
+		y = cursor.y - tooltipHeight - kTooltipCursorOffset / 2.0F;
 	}
 
 	// Ensure we don't go off the left or top edges
@@ -194,7 +194,7 @@ Foundation::Vec2 TooltipManager::calculateTooltipPosition(
 }
 
 float TooltipManager::estimateTooltipHeight(const TooltipContent& tooltipContent) const {
-	float height = Theme::Tooltip::padding * 2;
+	float height = kTooltipPadding * 2;
 
 	// Title is always present
 	height += Tooltip::kTitleFontSize;
@@ -226,11 +226,11 @@ float TooltipManager::estimateTooltipWidth(const TooltipContent& tooltipContent)
 	}
 
 	// Estimate width: padding + chars * estimated char width
-	float estimatedWidth = Theme::Tooltip::padding * 2 +
+	float estimatedWidth = kTooltipPadding * 2 +
 						   static_cast<float>(maxChars) * Tooltip::kEstimatedCharWidth;
 
 	// Clamp to max width
-	return std::min(estimatedWidth, Theme::Tooltip::maxWidth);
+	return std::min(estimatedWidth, kTooltipMaxWidth);
 }
 
 } // namespace UI
