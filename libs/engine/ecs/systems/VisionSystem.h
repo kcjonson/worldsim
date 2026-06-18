@@ -77,6 +77,19 @@ class VisionSystem : public ISystem {
 	/// stationary indoor observer should not bump this every tick (cache reuse).
 	[[nodiscard]] uint64_t polygonBuildCount() const { return m_polygonBuildCount; }
 
+	/// Returns the cached visibility polygon for `observer`, or nullptr if the
+	/// entity has no cache entry or took the outdoor (no-occluder) fast path.
+	[[nodiscard]] const geometry::Ring* visibilityPolygon(EntityID observer) const {
+		auto it = m_visibilityCache.find(observer);
+		if (it == m_visibilityCache.end() || !it->second.hadOccluders) {
+			return nullptr;
+		}
+		return &it->second.polygon;
+	}
+
+	/// Read-only access to the occluder geometry (walls) for overlay drawing.
+	[[nodiscard]] const GeometryIndex& geometry() const { return m_geometry; }
+
   private:
 	/// Ensure synthetic terrain definitions are registered (called once on first update)
 	void ensureTerrainDefinitionsRegistered();

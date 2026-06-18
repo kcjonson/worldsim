@@ -6,6 +6,7 @@
 #include "scenes/game/ui/GameUI.h"
 #include "scenes/game/world/construction/DrawingSystem.h"
 #include "scenes/game/world/nav/NavOverlay.h"
+#include "scenes/game/world/vision/VisionOverlay.h"
 #include "scenes/game/world/placement/PlacementSystem.h"
 #include "scenes/game/world/rooms/RoomOverlay.h"
 #include "scenes/game/world/selection/SelectionSystem.h"
@@ -483,6 +484,14 @@ namespace {
 				.navigation = &ecsWorld->getSystem<ecs::NavigationSystem>(),
 			});
 
+			// Vision debug overlay: draws each colonist's visibility polygon and the
+			// occluder wall segments when toggled on (V). Off by default.
+			m_visionOverlay = std::make_unique<world_sim::VisionOverlay>(world_sim::VisionOverlay::Args{
+				.world = ecsWorld.get(),
+				.camera = m_camera.get(),
+				.vision = &ecsWorld->getSystem<ecs::VisionSystem>(),
+			});
+
 			// Populate the config strip's material cards from construction config.
 			{
 				std::vector<std::pair<std::string, float>> materials;
@@ -612,6 +621,11 @@ namespace {
 			// N toggles the nav debug overlay (navmesh wireframe + agent routes).
 			if (input.isKeyPressed(engine::Key::N)) {
 				setNavOverlayActive(!m_navOverlay->isActive());
+			}
+
+			// V toggles the vision debug overlay (visibility polygons + occluders).
+			if (input.isKeyPressed(engine::Key::V)) {
+				setVisionOverlayActive(!m_visionOverlay->isActive());
 			}
 
 			// Handle time controls
@@ -813,6 +827,9 @@ namespace {
 			// Nav debug overlay (navmesh wireframe + agent routes) above wall bands.
 			// No-op unless toggled on (N).
 			m_navOverlay->render(w, h);
+
+			// Vision debug overlay (visibility polygons + occluders). No-op unless on (V).
+			m_visionOverlay->render(w, h);
 
 			// Render selection indicator in world-space (after entities, before UI)
 			m_selectionSystem->renderIndicator(w, h);
@@ -1214,6 +1231,12 @@ namespace {
 			LOG_INFO(Game, "Nav overlay %s", active ? "ON" : "OFF");
 		}
 
+		/// Set the vision debug overlay active state. Plain hotkey toggle (V).
+		void setVisionOverlayActive(bool active) {
+			m_visionOverlay->setActive(active);
+			LOG_INFO(Game, "Vision overlay %s", active ? "ON" : "OFF");
+		}
+
 		/// Handle Demolish request from a foundation's info panel. Marks the foundation for
 		/// deconstruction; a colonist tears it down over time (work-driven), and the
 		/// deconstructed-completion callback removes the topology and refunds materials.
@@ -1433,6 +1456,7 @@ namespace {
 		std::unique_ptr<world_sim::DrawingSystem>	m_drawingSystem;
 		std::unique_ptr<world_sim::RoomOverlay>		m_roomOverlay;
 		std::unique_ptr<world_sim::NavOverlay>		m_navOverlay;
+		std::unique_ptr<world_sim::VisionOverlay>	m_visionOverlay;
 
 		// Dev/test command + state-readback surface (/api/dev, /api/state). Dev-only;
 		// constructed after the systems above exist.
