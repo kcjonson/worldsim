@@ -134,8 +134,24 @@ namespace {
 		return -1;
 	}
 
-	// BFS over neighbor[] from `start`; returns the set of reachable triangle ids.
-	std::set<std::int32_t> reachable(const NavMesh& m, std::int32_t start) {
+	// A triangle is walkable under a TRUTH query (knows everything): real floor, or a
+	// door span (faceBlocker>0 with an opening). Solid walls (faceBlocker>0, no
+	// opening) and terrain sentinels (faceBlocker<0) block. Mirrors PathQuery's truth
+	// predicate; the whole region is now triangulated, so reachability is a filtered
+	// graph walk, not a topology fact.
+	bool truthWalkable(const NavTriangle& t) {
+		if (t.faceBlocker == kNoBlocker) {
+			return true;
+		}
+		if (t.faceBlocker < 0) {
+			return false;
+		}
+		return t.faceOpening != kNoOpening;
+	}
+
+	// BFS over neighbor[] from `start`, crossing only truth-walkable triangles when
+	// `filter` is set (the default). With filtering off it walks the raw topology.
+	std::set<std::int32_t> reachable(const NavMesh& m, std::int32_t start, bool filter = true) {
 		std::set<std::int32_t> seen;
 		std::queue<std::int32_t> q;
 		seen.insert(start);
@@ -144,12 +160,33 @@ namespace {
 			std::int32_t cur = q.front();
 			q.pop();
 			for (std::int32_t n : m.triangles[cur].neighbor) {
-				if (n >= 0 && seen.insert(n).second) {
+				if (n < 0 || seen.count(n)) {
+					continue;
+				}
+				if (filter && !truthWalkable(m.triangles[n])) {
+					continue;
+				}
+				if (seen.insert(n).second) {
 					q.push(n);
 				}
 			}
 		}
 		return seen;
+	}
+
+	// Index of the first triangle whose centroid is Inside `region`, restricted to
+	// floor triangles (faceBlocker == kNoBlocker) so callers land on walkable floor,
+	// not the wall band now triangulated inside the region.
+	std::int32_t findFloorTriangleInside(const NavMesh& m, const std::vector<Vec2i64>& region) {
+		for (std::int32_t ti = 0; ti < static_cast<std::int32_t>(m.triangles.size()); ++ti) {
+			if (m.triangles[ti].faceBlocker != kNoBlocker) {
+				continue;
+			}
+			if (pointInPolygon(centroid(m.vertices, m.triangles[ti].v), region) == PointInPolygon::Inside) {
+				return ti;
+			}
+		}
+		return -1;
 	}
 
 	NavInputPolygon border(std::vector<Vec2i64> ring) {
@@ -186,19 +223,28 @@ TEST(NavMesh, FreestandingObstacle) {
 	EXPECT_TRUE(isEdgeManifold(m));
 	EXPECT_TRUE(neighborsConsistent(m));
 
-	// Area = border 1000^2 minus obstacle 200^2.
-	EXPECT_EQ(totalArea2(m), Int128(2 * (1000 * 1000 - 200 * 200)));
+	// The whole border is now triangulated -- the obstacle interior is KEPT (tagged),
+	// not discarded -- so the triangles tile the full 1000^2 square.
+	EXPECT_EQ(totalArea2(m), Int128(2 * 1000 * 1000));
 
-	// No triangle centroid lands inside the obstacle.
+	// Every triangle whose centroid is inside the obstacle carries faceBlocker=7 with
+	// no opening (a solid wall); every triangle outside it is real floor (kNoBlocker).
 	std::vector<Vec2i64> obstacle = {{400, 400}, {600, 400}, {600, 600}, {400, 600}};
+	int inObstacle = 0;
 	for (const NavTriangle& t : m.triangles) {
-		EXPECT_NE(pointInPolygon(centroid(m.vertices, t.v), obstacle), PointInPolygon::Inside);
+		if (pointInPolygon(centroid(m.vertices, t.v), obstacle) == PointInPolygon::Inside) {
+			EXPECT_EQ(t.faceBlocker, 7);
+			EXPECT_EQ(t.faceOpening, kNoOpening);
+			++inObstacle;
+		} else {
+			EXPECT_EQ(t.faceBlocker, kNoBlocker);
+		}
 	}
+	EXPECT_GT(inObstacle, 0) << "the obstacle interior must now be triangulated and tagged";
 
-	// The obstacle's four edges are boundary edges on the walkable side: each is a
-	// triangle edge whose neighbor across it is -1 and whose provenance is the
-	// obstacle's id.
-	std::map<std::pair<Vec2i64, Vec2i64>, bool> obstacleEdgeBoundary;
+	// The obstacle's four edges still carry the obstacle's provenance, but they are
+	// now INTERIOR edges (floor and wall faces share them), which is what lets a
+	// belief query traverse into the wall.
 	auto edgeKey = [](Vec2i64 a, Vec2i64 b) {
 		if (b < a) {
 			std::swap(a, b);
@@ -213,19 +259,30 @@ TEST(NavMesh, FreestandingObstacle) {
 		for (int e = 0; e < 3; ++e) {
 			auto k = edgeKey(m.vertices[t.v[e]], m.vertices[t.v[(e + 1) % 3]]);
 			if (obstacleEdges.count(k)) {
-				EXPECT_EQ(t.neighbor[e], -1) << "obstacle edge must be boundary";
+				EXPECT_NE(t.neighbor[e], -1) << "obstacle edge now links floor to wall";
 				EXPECT_EQ(t.edgeProvenance[e], 7) << "obstacle edge carries provenance";
 				++matched;
 			}
 		}
 	}
-	EXPECT_EQ(matched, 4) << "all four obstacle edges present as walkable-side boundary edges";
+	EXPECT_EQ(matched, 8) << "each of the four obstacle edges is shared by two triangles";
+
+	// A TRUTH query still cannot enter the obstacle: a truth-filtered BFS from a floor
+	// triangle reaches no obstacle triangle (the wall blocks under truth).
+	std::int32_t floorTri = findFloorTriangleInside(m, {{0, 0}, {1000, 0}, {1000, 1000}, {0, 1000}});
+	ASSERT_GE(floorTri, 0);
+	std::set<std::int32_t> reach = reachable(m, floorTri);
+	for (std::int32_t ti : reach) {
+		EXPECT_NE(pointInPolygon(centroid(m.vertices, m.triangles[ti].v), obstacle), PointInPolygon::Inside)
+			<< "truth-filtered reachability must not enter the solid obstacle";
+	}
 }
 
 TEST(NavMesh, ClosedRoomTwoComponents) {
-	// border + a closed room of four blocked wall rectangles (gap-less band). The
-	// room interior and the exterior are distinct walkable faces with no shared
-	// edge, so BFS from inside never reaches an outside triangle.
+	// border + a closed room of four blocked wall rectangles (gap-less band). The wall
+	// interiors are now triangulated and tagged, so the mesh is one connected graph;
+	// but under TRUTH the solid walls block, so a truth-filtered BFS from a floor
+	// triangle inside the room never reaches a floor triangle outside it.
 	NavMeshInput in;
 	in.polygons.push_back(border({{0, 0}, {3000, 0}, {3000, 3000}, {0, 3000}}));
 	in.polygons.push_back(blocked({{1000, 1000}, {2000, 1000}, {2000, 1100}, {1000, 1100}}, 20)); // bottom
@@ -241,16 +298,24 @@ TEST(NavMesh, ClosedRoomTwoComponents) {
 
 	std::vector<Vec2i64> room		= {{1100, 1100}, {1900, 1100}, {1900, 1900}, {1100, 1900}};
 	std::vector<Vec2i64> borderRing = {{0, 0}, {3000, 0}, {3000, 3000}, {0, 3000}};
-	// "outside" = a walkable triangle inside the border but outside the wall band.
+	// "outside" = a floor triangle inside the border but outside the wall band.
 	std::vector<Vec2i64> wallBlock = {{1000, 1000}, {2000, 1000}, {2000, 2000}, {1000, 2000}};
 
-	std::int32_t inside	 = findTriangleInside(m, room);
-	std::int32_t outside = findTriangleInsideButOutside(m, borderRing, wallBlock);
-	ASSERT_GE(inside, 0) << "expected at least one triangle inside the room";
-	ASSERT_GE(outside, 0) << "expected at least one triangle outside the room";
+	std::int32_t inside	 = findFloorTriangleInside(m, room);
+	std::int32_t outside = -1;
+	for (std::int32_t ti = 0; ti < static_cast<std::int32_t>(m.triangles.size()); ++ti) {
+		Vec2i64 c = centroid(m.vertices, m.triangles[ti].v);
+		if (m.triangles[ti].faceBlocker == kNoBlocker && pointInPolygon(c, borderRing) == PointInPolygon::Inside &&
+			pointInPolygon(c, wallBlock) == PointInPolygon::Outside) {
+			outside = ti;
+			break;
+		}
+	}
+	ASSERT_GE(inside, 0) << "expected at least one floor triangle inside the room";
+	ASSERT_GE(outside, 0) << "expected at least one floor triangle outside the room";
 
-	std::set<std::int32_t> fromInside = reachable(m, inside);
-	EXPECT_EQ(fromInside.count(outside), 0u) << "closed room must be disconnected from the exterior";
+	std::set<std::int32_t> fromInside = reachable(m, inside); // truth-filtered
+	EXPECT_EQ(fromInside.count(outside), 0u) << "closed room must be unreachable through solid walls under truth";
 }
 
 TEST(NavMesh, DoorGapConnectsAndTags) {
@@ -308,8 +373,8 @@ TEST(NavMesh, DoorGapConnectsAndTags) {
 }
 
 TEST(NavMesh, FullWidthBlockerSeparatesSides) {
-	// A blocked polygon spanning the full width of the border splits it into a top
-	// and bottom walkable region; no BFS path links them.
+	// A blocked polygon spanning the full width of the border. Under TRUTH it blocks,
+	// so a truth-filtered BFS never links the top and bottom floor regions.
 	NavMeshInput in;
 	in.polygons.push_back(border({{0, 0}, {2000, 0}, {2000, 2000}, {0, 2000}}));
 	in.polygons.push_back(blocked({{0, 900}, {2000, 900}, {2000, 1100}, {0, 1100}}, 50));
@@ -321,19 +386,26 @@ TEST(NavMesh, FullWidthBlockerSeparatesSides) {
 
 	std::vector<Vec2i64> bottom = {{0, 0}, {2000, 0}, {2000, 400}, {0, 400}};
 	std::vector<Vec2i64> top	= {{0, 1600}, {2000, 1600}, {2000, 2000}, {0, 2000}};
-	std::int32_t		 b		= findTriangleInside(m, bottom);
-	std::int32_t		 t		= findTriangleInside(m, top);
+	std::int32_t		 b		= findFloorTriangleInside(m, bottom);
+	std::int32_t		 t		= findFloorTriangleInside(m, top);
 	ASSERT_GE(b, 0);
 	ASSERT_GE(t, 0);
 
-	std::set<std::int32_t> fromBottom = reachable(m, b);
-	EXPECT_EQ(fromBottom.count(t), 0u) << "full-width blocker must disconnect the two sides";
+	std::set<std::int32_t> fromBottom = reachable(m, b); // truth-filtered
+	EXPECT_EQ(fromBottom.count(t), 0u) << "full-width blocker must disconnect the two sides under truth";
 
-	// Nothing tiles the blocker band.
+	// The blocker band is now triangulated and tagged with its provenance (a solid
+	// wall: no opening), rather than left as a hole.
 	std::vector<Vec2i64> blocker = {{0, 900}, {2000, 900}, {2000, 1100}, {0, 1100}};
+	int inBlocker = 0;
 	for (const NavTriangle& tri : m.triangles) {
-		EXPECT_NE(pointInPolygon(centroid(m.vertices, tri.v), blocker), PointInPolygon::Inside);
+		if (pointInPolygon(centroid(m.vertices, tri.v), blocker) == PointInPolygon::Inside) {
+			EXPECT_EQ(tri.faceBlocker, 50);
+			EXPECT_EQ(tri.faceOpening, kNoOpening);
+			++inBlocker;
+		}
 	}
+	EXPECT_GT(inBlocker, 0) << "the blocker band must now be triangulated and tagged";
 }
 
 TEST(NavMesh, OutsideBorderDiscarded) {
@@ -370,24 +442,34 @@ TEST(NavMesh, MultipleDisjointBorders) {
 	EXPECT_TRUE(isEdgeManifold(m));
 	EXPECT_TRUE(neighborsConsistent(m));
 
-	// Total covered area: first square (1000^2) plus second minus its obstacle.
-	EXPECT_EQ(totalArea2(m), Int128(2 * (1000 * 1000 + 1000 * 1000 - 200 * 200)));
+	// Total covered area: both 1000^2 squares in full -- the obstacle interior is now
+	// triangulated and tagged, not subtracted.
+	EXPECT_EQ(totalArea2(m), Int128(2 * (1000 * 1000 + 1000 * 1000)));
 
 	std::vector<Vec2i64> regionA = {{0, 0}, {1000, 0}, {1000, 1000}, {0, 1000}};
 	std::vector<Vec2i64> regionB = {{2000, 0}, {3000, 0}, {3000, 1000}, {2000, 1000}};
 	EXPECT_GE(findTriangleInside(m, regionA), 0) << "expected triangles in the first border";
 	EXPECT_GE(findTriangleInside(m, regionB), 0) << "expected triangles in the second border";
 
-	// No triangle centroid lands outside BOTH borders (i.e. in the dead band
-	// between them), and none inside the obstacle.
+	// No triangle centroid lands outside BOTH borders (the dead band between them).
+	// Triangles inside the obstacle carry its provenance (solid wall, no opening);
+	// everything else is real floor.
 	std::vector<Vec2i64> obstacle = {{2400, 400}, {2600, 400}, {2600, 600}, {2400, 600}};
+	int inObstacle = 0;
 	for (const NavTriangle& t : m.triangles) {
 		Vec2i64 c		= centroid(m.vertices, t.v);
 		bool	inAny	= pointInPolygon(c, regionA) == PointInPolygon::Inside ||
 						pointInPolygon(c, regionB) == PointInPolygon::Inside;
 		EXPECT_TRUE(inAny) << "triangle must lie inside one of the two borders";
-		EXPECT_NE(pointInPolygon(c, obstacle), PointInPolygon::Inside);
+		if (pointInPolygon(c, obstacle) == PointInPolygon::Inside) {
+			EXPECT_EQ(t.faceBlocker, 9);
+			EXPECT_EQ(t.faceOpening, kNoOpening);
+			++inObstacle;
+		} else {
+			EXPECT_EQ(t.faceBlocker, kNoBlocker);
+		}
 	}
+	EXPECT_GT(inObstacle, 0) << "the obstacle interior must now be triangulated and tagged";
 }
 
 TEST(NavMesh, Deterministic) {
