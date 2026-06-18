@@ -212,6 +212,8 @@ namespace ecs {
 			}
 			lruOrder.clear();
 			lruMap.clear();
+			knownSegments.clear();
+			knownOpenings.clear();
 		}
 
 		// --- Capability Query Methods ---
