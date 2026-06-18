@@ -1,8 +1,7 @@
 #include "BuildMenu.h"
 
 #include <primitives/Primitives.h>
-#include <theme/PanelStyle.h>
-#include <theme/Theme.h>
+#include <theme/Tokens.h>
 
 namespace world_sim {
 
@@ -24,7 +23,7 @@ namespace world_sim {
 			.text = "Build",
 			.style =
 				{
-					.color = UI::Theme::Colors::textTitle,
+					.color = UI::text_bright,
 					.fontSize = 16.0F,
 					.hAlign = Foundation::HorizontalAlign::Center,
 					.vAlign = Foundation::VerticalAlign::Middle,
@@ -116,7 +115,7 @@ namespace world_sim {
 		Foundation::Rect menuRect{m_position.x, m_position.y, m_menuWidth, m_menuHeight};
 
 		Renderer::Primitives::drawRect(
-			Renderer::Primitives::RectArgs{.bounds = menuRect, .style = UI::PanelStyles::floating(), .id = "build_menu_bg"}
+			Renderer::Primitives::RectArgs{.bounds = menuRect, .style = {.fill = UI::bg_panel_raised, .border = Foundation::BorderStyle{.color = UI::line_edge, .width = UI::bw, .cornerRadius = UI::r_md, .position = Foundation::BorderPosition::Inside}}, .id = "build_menu_bg"}
 		);
 
 		// Draw title
