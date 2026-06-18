@@ -3,8 +3,7 @@
 #include "scenes/game/ui/adapters/SelectionAdapter.h"
 
 #include <ecs/components/Needs.h>
-#include <theme/PanelStyle.h>
-#include <theme/Theme.h>
+#include <theme/Tokens.h>
 #include <utils/Log.h>
 
 namespace world_sim {
@@ -36,7 +35,7 @@ namespace world_sim {
 				UI::Rectangle::Args{
 					.position = args.position,
 					.size = {panelWidth, panelHeight},
-					.style = UI::PanelStyles::floating(),
+					.style = {.fill = UI::bg_panel, .border = Foundation::BorderStyle{.color = UI::line_edge, .width = UI::bw, .cornerRadius = UI::r_md, .position = Foundation::BorderPosition::Inside}},
 					.id = (args.id + "_bg").c_str()
 				}
 			)
@@ -49,7 +48,7 @@ namespace world_sim {
 				UI::Rectangle::Args{
 					.position = closePos,
 					.size = {kCloseButtonSize, kCloseButtonSize},
-					.style = UI::PanelStyles::closeButton(),
+					.style = {.fill = UI::bg_inset, .border = Foundation::BorderStyle{.color = UI::line_edge, .width = UI::bw, .cornerRadius = UI::r_sm, .position = Foundation::BorderPosition::Inside}},
 					.id = (args.id + "_close_bg").c_str()
 				}
 			)
@@ -63,7 +62,7 @@ namespace world_sim {
 					.text = "X",
 					.style =
 						{
-							.color = UI::Theme::Colors::closeButtonText,
+							.color = UI::text_dim,
 							.fontSize = 10.0F,
 							.hAlign = Foundation::HorizontalAlign::Center,
 							.vAlign = Foundation::VerticalAlign::Middle,
@@ -81,7 +80,7 @@ namespace world_sim {
 					.text = "",
 					.style =
 						{
-							.color = UI::Theme::Colors::textTitle,
+							.color = UI::text_bright,
 							.fontSize = kNameFontSize,
 							.hAlign = Foundation::HorizontalAlign::Left,
 							.vAlign = Foundation::VerticalAlign::Top,
@@ -115,7 +114,7 @@ namespace world_sim {
 					.text = "",
 					.style =
 						{
-							.color = UI::Theme::Colors::textTitle,
+							.color = UI::text_bright,
 							.fontSize = kNameFontSize,
 							.hAlign = Foundation::HorizontalAlign::Left,
 							.vAlign = Foundation::VerticalAlign::Top,
@@ -149,7 +148,7 @@ namespace world_sim {
 					.text = "",
 					.style =
 						{
-							.color = UI::Theme::Colors::textSecondary,
+							.color = UI::text_dim,
 							.fontSize = kLabelFontSize,
 							.hAlign = Foundation::HorizontalAlign::Left,
 							.vAlign = Foundation::VerticalAlign::Top,
@@ -167,7 +166,7 @@ namespace world_sim {
 					.text = "Needs:",
 					.style =
 						{
-							.color = UI::Theme::Colors::textHeader,
+							.color = UI::text_dim,
 							.fontSize = kHeaderFontSize,
 							.hAlign = Foundation::HorizontalAlign::Left,
 							.vAlign = Foundation::VerticalAlign::Top,
@@ -201,7 +200,7 @@ namespace world_sim {
 					.text = "",
 					.style =
 						{
-							.color = UI::Theme::Colors::textTitle,
+							.color = UI::text_bright,
 							.fontSize = kNameFontSize,
 							.hAlign = Foundation::HorizontalAlign::Center,
 							.vAlign = Foundation::VerticalAlign::Top,
@@ -221,7 +220,7 @@ namespace world_sim {
 						.text = "",
 						.style =
 							{
-								.color = UI::Theme::Colors::textBody,
+								.color = UI::text,
 								.fontSize = kLabelFontSize,
 								.hAlign = Foundation::HorizontalAlign::Left,
 								.vAlign = Foundation::VerticalAlign::Top,
@@ -257,7 +256,7 @@ namespace world_sim {
 					.text = "",
 					.style =
 						{
-							.color = UI::Theme::Colors::textBody,
+							.color = UI::text,
 							.fontSize = kLabelFontSize,
 							.hAlign = Foundation::HorizontalAlign::Left,
 							.vAlign = Foundation::VerticalAlign::Top,
@@ -277,7 +276,7 @@ namespace world_sim {
 						.text = "",
 						.style =
 							{
-								.color = UI::Theme::Colors::statusActive,
+								.color = UI::status_ok,
 								.fontSize = kLabelFontSize,
 								.hAlign = Foundation::HorizontalAlign::Left,
 								.vAlign = Foundation::VerticalAlign::Top,
@@ -296,7 +295,7 @@ namespace world_sim {
 					.text = "",
 					.style =
 						{
-							.color = UI::Theme::Colors::textClickable,
+							.color = UI::data,
 							.fontSize = kLabelFontSize,
 							.hAlign = Foundation::HorizontalAlign::Left,
 							.vAlign = Foundation::VerticalAlign::Top,
@@ -319,7 +318,7 @@ namespace world_sim {
 					UI::Rectangle::Args{
 						.position = {args.position.x + kPadding, args.position.y},
 						.size = {contentWidth, kRecipeCardHeight},
-						.style = UI::PanelStyles::card(),
+						.style = {.fill = UI::bg_inset, .border = Foundation::BorderStyle{.color = UI::line_edge, .width = UI::bw, .cornerRadius = UI::r_sm, .position = Foundation::BorderPosition::Inside}},
 						.id = (args.id + "_recipe_bg_" + std::to_string(i)).c_str()
 					}
 				)
@@ -333,7 +332,7 @@ namespace world_sim {
 						.text = "",
 						.style =
 							{
-								.color = UI::Theme::Colors::textTitle,
+								.color = UI::text_bright,
 								.fontSize = kRecipeNameFontSize,
 								.hAlign = Foundation::HorizontalAlign::Left,
 								.vAlign = Foundation::VerticalAlign::Top,
@@ -351,7 +350,7 @@ namespace world_sim {
 						.text = "",
 						.style =
 							{
-								.color = UI::Theme::Colors::textSecondary,
+								.color = UI::text_dim,
 								.fontSize = kRecipeIngredientsFontSize,
 								.hAlign = Foundation::HorizontalAlign::Left,
 								.vAlign = Foundation::VerticalAlign::Top,
@@ -367,7 +366,7 @@ namespace world_sim {
 					UI::Rectangle::Args{
 						.position = {args.position.x + contentWidth - kRecipeQueueButtonSize, args.position.y},
 						.size = {kRecipeQueueButtonSize, kRecipeQueueButtonSize},
-						.style = UI::PanelStyles::actionButton(),
+						.style = {.fill = UI::bg_inset, .border = Foundation::BorderStyle{.color = UI::line_edge, .width = UI::bw, .cornerRadius = UI::r_sm, .position = Foundation::BorderPosition::Inside}},
 						.id = (args.id + "_recipe_btn_" + std::to_string(i)).c_str()
 					}
 				)
@@ -381,7 +380,7 @@ namespace world_sim {
 						.text = "+",
 						.style =
 							{
-								.color = UI::Theme::Colors::actionButtonText,
+								.color = UI::text_bright,
 								.fontSize = 14.0F,
 								.hAlign = Foundation::HorizontalAlign::Center,
 								.vAlign = Foundation::VerticalAlign::Middle,
@@ -407,7 +406,7 @@ namespace world_sim {
 					UI::Rectangle::Args{
 						.position = {args.position.x + kPadding, args.position.y},
 						.size = {contentWidth, kActionButtonHeight},
-						.style = UI::PanelStyles::actionButton(),
+						.style = {.fill = UI::bg_inset, .border = Foundation::BorderStyle{.color = UI::line_edge, .width = UI::bw, .cornerRadius = UI::r_sm, .position = Foundation::BorderPosition::Inside}},
 						.id = (args.id + "_action_bg_" + std::to_string(i)).c_str()
 					}
 				)
@@ -421,7 +420,7 @@ namespace world_sim {
 						.text = "",
 						.style =
 							{
-								.color = UI::Theme::Colors::actionButtonText,
+								.color = UI::text_bright,
 								.fontSize = kActionButtonFontSize,
 								.hAlign = Foundation::HorizontalAlign::Center,
 								.vAlign = Foundation::VerticalAlign::Middle,
@@ -442,14 +441,14 @@ namespace world_sim {
 				UI::Rectangle::Args{
 					.position = detailsPos,
 					.size = {kDetailsButtonSize, kDetailsButtonSize},
-					.style = UI::PanelStyles::actionButton(),
+					.style = {.fill = UI::bg_inset, .border = Foundation::BorderStyle{.color = UI::line_edge, .width = UI::bw, .cornerRadius = UI::r_sm, .position = Foundation::BorderPosition::Inside}},
 					.id = (args.id + "_details_bg").c_str()
 				}
 			)
 		);
 
 		// Create icon line elements (positions set by updateDetailsIcon)
-		Foundation::Color iconColor = UI::Theme::Colors::actionButtonText;
+		Foundation::Color iconColor = UI::text_bright;
 		constexpr float	  lineWidth = 1.5F;
 		auto			  createLine = [&]() {
 			 return addChild(
