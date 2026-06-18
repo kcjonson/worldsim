@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2026-06-16 (Navigation v1 landed: colonists path around walls, water, and trees on a dynamic CDT navmesh, walk through doors, and can't clip through a solid wall — PRs #161/#162/#163/#165/#166/#169, see dev log 2026-06-16-navigation-v1.md. Walls now ship as real gameplay. Earlier on main: Salvage UI cutover (tokens + theme, unified UI library, SDF renderer, z-index draw queue), Dev/Test Tools #157, Fluvial Erosion #149, Asset Manager #156)
+Last Updated: 2026-06-18 (Salvage UI cutover complete: every in-game view, screen, and shared `libs/ui` widget styles off `theme/Tokens.h`; legacy `Theme.h` + `PanelStyle.h` deleted — PRs #176/#177/#178/#180/#181, see dev log 2026-06-18-salvage-ui-cutover.md. Full dialog redesign on the Modal primitive deferred. Earlier on main: Navigation v1 #161-169, Salvage cutover groundwork #164/#167/#171/#174/#175, Dev/Test Tools #157, Fluvial Erosion #149, Asset Manager #156)
 
 ## Epic/Story/Task Template
 
@@ -504,7 +504,7 @@ while (running) {
 ### Salvage UI Cutover (one unified UI library)
 **Spec/Documentation:** `/docs/design/ui/`
 **Dependencies:** UI Design System (Salvage) — extraction
-**Status:** in progress (reconciled onto current main; builds + verified; on `feature/ui-salvage-cutover`)
+**Status:** core complete — every view/screen/widget styles off `theme/Tokens.h`; legacy `Theme.h` + `PanelStyle.h` deleted (PRs #164/#167/#171/#174/#175/#176/#177/#178/#180/#181, see dev log 2026-06-18-salvage-ui-cutover.md). Remaining: full dialog redesign (deferred).
 
 **Goal:** One Salvage-styled UI library. Re-style the existing `libs/ui` widgets to the approved look via design tokens, fold the render-only design-system widgets into it, delete the duplicates, then rebuild the HUD, dialogs, and world creator to the prototype designs.
 
@@ -515,10 +515,11 @@ while (running) {
 - [x] Phase 2: restyle the remaining legacy widgets onto Salvage tokens
 - [x] Global z-index draw queue (BatchRenderer group sort, perf-gated) so popups float over siblings
 - [x] Reconcile onto current main (merge; only status.md conflicted; renderer merged clean; fixed stale widget tests; whole solution builds, 288 ui-tests + 79 renderer-tests pass; sandbox + game verified)
-- [ ] Phase 3: rebuild HUD views to the prototype via primitives
-- [ ] Phase 3: rebuild dialogs to the prototype designs
-- [ ] Phase 3: rebuild WorldCreatorScene to the WorldGen prototype
-- [ ] Phase 4: delete the legacy `theme/Theme.h` + `PanelStyle.h`; finalize
+- [x] Phase 3: rebuild HUD views to the prototype (top bar, colonist roster, info panel, command bar, right stack; vector-drawn symbols)
+- [x] Phase 3: rebuild WorldCreatorScene to the WorldGen prototype
+- [x] Phase 4: tokenize the remaining shared widgets + dialogs; inline the Dialog/Tooltip/Icon layout constants; delete `theme/Theme.h` + `PanelStyle.h`
+- [ ] Dialog redesign (deferred): rebuild CraftingDialog/StorageConfigDialog and the colonist dossier on the `Modal` primitive per the prototype (currently color-tokenized, still hand-rolled)
+- [ ] Re-wire or delete the orphaned per-colonist `TaskListView` (no open path in the current UI)
 
 ### Asset Manager
 **Spec/Documentation:** `/docs/design/features/asset-manager/`, `/docs/technical/asset-manager/`
