@@ -1,7 +1,7 @@
 #include "ConstructionConfigStrip.h"
 
 #include <primitives/Primitives.h>
-#include <theme/Theme.h>
+#include <theme/Tokens.h>
 
 #include <cstdio>
 
@@ -112,8 +112,8 @@ namespace world_sim {
 		Renderer::Primitives::drawRect({
 			.bounds = stripBounds_,
 			.style =
-				{.fill = UI::Theme::Colors::sidebarBackground,
-				 .border = Foundation::BorderStyle{.color = UI::Theme::Colors::cardBorder, .width = 1.0F}},
+				{.fill = UI::bg_panel,
+				 .border = Foundation::BorderStyle{.color = UI::line_edge, .width = 1.0F}},
 			.id = "config_strip_bg",
 		});
 
@@ -123,10 +123,10 @@ namespace world_sim {
 			Renderer::Primitives::drawRect({
 				.bounds = cardRects_[i],
 				.style =
-					{.fill = selected ? UI::Theme::Colors::selectionBackground : UI::Theme::Colors::cardBackground,
+					{.fill = selected ? UI::bg_active : UI::bg_inset,
 					 .border =
 						 Foundation::BorderStyle{
-							 .color = selected ? UI::Theme::Colors::selectionBorder : UI::Theme::Colors::cardBorder,
+							 .color = selected ? UI::accent : UI::line_edge,
 							 .width = selected ? 2.0F : 1.0F
 						 }},
 				.id = "config_strip_card",
@@ -136,7 +136,7 @@ namespace world_sim {
 				.text = materials_[i].first,
 				.position = {cardRects_[i].x + 8.0F, cardRects_[i].y + 5.0F},
 				.scale = 0.85F,
-				.color = UI::Theme::Colors::textTitle,
+				.color = UI::text_bright,
 			});
 
 			char cost[32];
@@ -145,7 +145,7 @@ namespace world_sim {
 				.text = cost,
 				.position = {cardRects_[i].x + 8.0F, cardRects_[i].y + 22.0F},
 				.scale = 0.7F,
-				.color = UI::Theme::Colors::textSecondary,
+				.color = UI::text_dim,
 			});
 		}
 
@@ -155,10 +155,10 @@ namespace world_sim {
 			Renderer::Primitives::drawRect({
 				.bounds = presetRects_[i],
 				.style =
-					{.fill = selected ? UI::Theme::Colors::selectionBackground : UI::Theme::Colors::cardBackground,
+					{.fill = selected ? UI::bg_active : UI::bg_inset,
 					 .border =
 						 Foundation::BorderStyle{
-							 .color = selected ? UI::Theme::Colors::selectionBorder : UI::Theme::Colors::cardBorder,
+							 .color = selected ? UI::accent : UI::line_edge,
 							 .width = selected ? 2.0F : 1.0F
 						 }},
 				.id = "config_strip_preset",
@@ -167,7 +167,7 @@ namespace world_sim {
 				.text = presets_[i].name,
 				.position = {presetRects_[i].x + 8.0F, presetRects_[i].y + 5.0F},
 				.scale = 0.8F,
-				.color = UI::Theme::Colors::textTitle,
+				.color = UI::text_bright,
 			});
 			char thick[24];
 			std::snprintf(thick, sizeof(thick), "%.2f m", static_cast<double>(presets_[i].thicknessMeters));
@@ -175,7 +175,7 @@ namespace world_sim {
 				.text = thick,
 				.position = {presetRects_[i].x + 8.0F, presetRects_[i].y + 22.0F},
 				.scale = 0.7F,
-				.color = UI::Theme::Colors::textSecondary,
+				.color = UI::text_dim,
 			});
 		}
 
@@ -193,7 +193,7 @@ namespace world_sim {
 				.text = std::string("Opening: ") + status_.openingType,
 				.position = {readoutX, stripBounds_.y + 8.0F},
 				.scale = 0.8F,
-				.color = UI::Theme::Colors::textBody,
+				.color = UI::text,
 			});
 			char widthBuf[32];
 			std::snprintf(widthBuf, sizeof(widthBuf), "Width: %.2f m", static_cast<double>(status_.openingWidthMeters));
@@ -201,7 +201,7 @@ namespace world_sim {
 				.text = widthBuf,
 				.position = {readoutX, stripBounds_.y + 26.0F},
 				.scale = 0.8F,
-				.color = UI::Theme::Colors::textBody,
+				.color = UI::text,
 			});
 		} else if (status_.wall) {
 			char lenBuf[48];
@@ -216,7 +216,7 @@ namespace world_sim {
 				.text = lenBuf,
 				.position = {readoutX, stripBounds_.y + 8.0F},
 				.scale = 0.8F,
-				.color = UI::Theme::Colors::textBody,
+				.color = UI::text,
 			});
 			char costBuf[48];
 			std::snprintf(
@@ -230,7 +230,7 @@ namespace world_sim {
 				.text = costBuf,
 				.position = {readoutX, stripBounds_.y + 26.0F},
 				.scale = 0.8F,
-				.color = UI::Theme::Colors::textBody,
+				.color = UI::text,
 			});
 		} else {
 			char areaBuf[48];
@@ -239,7 +239,7 @@ namespace world_sim {
 				.text = areaBuf,
 				.position = {readoutX, stripBounds_.y + 8.0F},
 				.scale = 0.8F,
-				.color = UI::Theme::Colors::textBody,
+				.color = UI::text,
 			});
 			char ptsBuf[32];
 			std::snprintf(ptsBuf, sizeof(ptsBuf), "Points: %d", status_.pointCount);
@@ -247,46 +247,46 @@ namespace world_sim {
 				.text = ptsBuf,
 				.position = {readoutX, stripBounds_.y + 26.0F},
 				.scale = 0.8F,
-				.color = UI::Theme::Colors::textBody,
+				.color = UI::text,
 			});
 		}
 
 		// Validity message line, colored by status.
-		Foundation::Color msgColor = UI::Theme::Colors::statusActive;
+		Foundation::Color msgColor = UI::status_ok;
 		std::string		  message = "Ready";
 		if (status_.opening) {
 			if (status_.valid) {
-				msgColor = UI::Theme::Colors::statusActive;
+				msgColor = UI::status_ok;
 				message = "Click a wall to place";
 			} else {
 				// No wall in range reads as pending (move onto a built wall); an in-range
 				// wall that fails the placement gate reads as blocked.
 				const bool blocked = !status_.message.empty() && status_.message != "no wall in range";
-				msgColor = blocked ? UI::Theme::Colors::statusBlocked : UI::Theme::Colors::statusPending;
+				msgColor = blocked ? UI::status_crit : UI::status_warn;
 				message = status_.message.empty() ? "Hover a built wall" : status_.message;
 			}
 		} else if (status_.wall) {
 			if (status_.pointCount == 0) {
-				msgColor = UI::Theme::Colors::statusPending;
+				msgColor = UI::status_warn;
 				message = "Click a foundation to start";
 			} else {
-				msgColor = UI::Theme::Colors::statusActive;
+				msgColor = UI::status_ok;
 				message = "Right-click / Enter to finish";
 			}
 			if (!status_.valid && !status_.message.empty()) {
-				msgColor = UI::Theme::Colors::statusBlocked;
+				msgColor = UI::status_crit;
 				message = status_.message;
 			}
 		} else {
 			if (status_.pointCount > 0 && status_.pointCount < 3) {
-				msgColor = UI::Theme::Colors::statusPending;
+				msgColor = UI::status_warn;
 				message = "Keep placing points";
 			}
 			if (!status_.valid && !status_.message.empty()) {
-				msgColor = UI::Theme::Colors::statusBlocked;
+				msgColor = UI::status_crit;
 				message = status_.message;
 			} else if (status_.valid && status_.pointCount >= 3) {
-				msgColor = UI::Theme::Colors::statusActive;
+				msgColor = UI::status_ok;
 				message = "Click origin to close";
 			}
 		}
