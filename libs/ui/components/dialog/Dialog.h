@@ -1,6 +1,6 @@
 #pragma once
 
-// Dialog - Modal dialog with overlay
+// Dialog - overlay dialog (modal by default; non-modal optional)
 //
 // A modal dialog that displays content over the game with a semi-transparent
 // overlay. Blocks all interaction with content behind it.

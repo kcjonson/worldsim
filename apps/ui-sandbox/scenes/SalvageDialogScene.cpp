@@ -1,4 +1,4 @@
-// Salvage Modal Scene - an interactive Dialog over a dimmed mini-HUD, to verify
+// Salvage Dialog Scene - an interactive Dialog over a dimmed mini-HUD, to verify
 // the Salvage dialog frame (scrim + bracketed panel + glow) against the prototype.
 
 #include <components/dialog/Dialog.h>
@@ -18,9 +18,9 @@
 
 namespace {
 
-constexpr const char* kSceneName = "salvagemodal";
+constexpr const char* kSceneName = "salvagedialog";
 
-class SalvageModalScene : public engine::IScene {
+class SalvageDialogScene : public engine::IScene {
   public:
 	void onEnter() override {
 		dialog = std::make_unique<UI::Dialog>(UI::Dialog::Args{.title = "MARA VANCE", .size = {760.0F, 420.0F}, .modal = true});
@@ -45,7 +45,7 @@ class SalvageModalScene : public engine::IScene {
 	void onExit() override {}
 
 	std::string exportState() override { // NOLINT(readability-convert-member-functions-to-static)
-		return R"({"scene": "salvagemodal"})";
+		return R"({"scene": "salvagedialog"})";
 	}
 
 	const char* getName() const override { return kSceneName; }
@@ -73,5 +73,5 @@ class SalvageModalScene : public engine::IScene {
 } // anonymous namespace
 
 namespace ui_sandbox::scenes {
-	extern const ui_sandbox::SceneInfo SalvageModal = {kSceneName, []() { return std::make_unique<SalvageModalScene>(); }};
+	extern const ui_sandbox::SceneInfo SalvageDialog = {kSceneName, []() { return std::make_unique<SalvageDialogScene>(); }};
 }

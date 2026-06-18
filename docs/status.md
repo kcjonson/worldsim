@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2026-06-18 (Salvage UI cutover complete: every in-game view, screen, and shared `libs/ui` widget styles off `theme/Tokens.h`; legacy `Theme.h` + `PanelStyle.h` deleted — PRs #176/#177/#178/#180/#181, see dev log 2026-06-18-salvage-ui-cutover.md. Full dialog redesign on the Modal primitive deferred. Earlier on main: Navigation v1 #161-169, Salvage cutover groundwork #164/#167/#171/#174/#175, Dev/Test Tools #157, Fluvial Erosion #149, Asset Manager #156)
+Last Updated: 2026-06-18 (Salvage UI cutover complete: every in-game view, screen, and shared `libs/ui` widget styles off `theme/Tokens.h`; legacy `Theme.h` + `PanelStyle.h` deleted — PRs #176/#177/#178/#180/#181, see dev log 2026-06-18-salvage-ui-cutover.md. Full dialog redesign on the Dialog component deferred. Earlier on main: Navigation v1 #161-169, Salvage cutover groundwork #164/#167/#171/#174/#175, Dev/Test Tools #157, Fluvial Erosion #149, Asset Manager #156)
 
 ## Epic/Story/Task Template
 
@@ -518,7 +518,7 @@ while (running) {
 - [x] Phase 3: rebuild HUD views to the prototype (top bar, colonist roster, info panel, command bar, right stack; vector-drawn symbols)
 - [x] Phase 3: rebuild WorldCreatorScene to the WorldGen prototype
 - [x] Phase 4: tokenize the remaining shared widgets + dialogs; inline the Dialog/Tooltip/Icon layout constants; delete `theme/Theme.h` + `PanelStyle.h`
-- [ ] Dialog redesign (deferred): rebuild CraftingDialog/StorageConfigDialog and the colonist dossier on the `Modal` primitive per the prototype (currently color-tokenized, still hand-rolled)
+- [ ] Dialog redesign (deferred): rebuild CraftingDialog/StorageConfigDialog and the colonist dossier on the `Dialog` component per the prototype (currently color-tokenized, still hand-rolled)
 - [ ] Re-wire or delete the orphaned per-colonist `TaskListView` (no open path in the current UI)
 
 ### Asset Manager

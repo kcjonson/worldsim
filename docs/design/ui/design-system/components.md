@@ -105,11 +105,11 @@ The primitives:
 - Glow — adds two layered shadows on top of `--panel-shadow`: a 1px ring of the accent at 30% mix, plus a 26px bloom of `--accent-glow` (or `--data-glow` for the data accent). Only the `accent` and `data` accents glow; `none` has no glow rule.
 - Scanlines — opt-in via the shared `fx-scanlines` class (the 1px-on/2px-off overlay from the design language), not a Panel-specific style.
 - Compact — overrides header and body padding to `--space-1-5` × `--space-3` (× density). Use for stacked HUD panels where the default padding wastes space.
-- Flush — body padding becomes 0, so content can run to the panel's inner edge. Compose with `actions` for a titled-but-edge-to-edge panel (this is exactly how Modal uses it).
+- Flush — body padding becomes 0, so content can run to the panel's inner edge. Compose with `actions` for a titled-but-edge-to-edge panel (this is exactly how Dialog uses it).
 
 ---
 
-## Modal
+## Dialog
 
 **Purpose** — a centered, scrimmed dialog built on Panel; the system's blocking overlay.
 
@@ -121,7 +121,7 @@ The primitives:
 
 | Prop | Type / values | Meaning |
 |------|---------------|---------|
-| `open` | `boolean` | mounts/unmounts the modal; renders nothing when false |
+| `open` | `boolean` | mounts/unmounts the dialog; renders nothing when false |
 | `onClose` | `() => void` | called on scrim click, close-button click, or Escape |
 | `title` | `ReactNode` | Panel title |
 | `kicker` | `ReactNode` | Panel kicker |
@@ -138,7 +138,7 @@ The primitives:
 
 - Escape to close — a `keydown` listener is attached on the window in the capture phase, and it calls `stopImmediatePropagation()` before `onClose`. The capture-phase + stop-immediate combination is deliberate: it lets Escape close the modal without also tripping the dev-chrome toggle bound on the same window. Preserve this ordering.
 - Scrim click closes; clicks inside the dialog call `stopPropagation()` so they don't bubble to the scrim.
-- The fixed-on composition (glow + scanlines + flush) means a Modal is always a glowing, CRT-textured, edge-to-edge Panel; those three are not configurable here.
+- The fixed-on composition (glow + scanlines + flush) means a Dialog is always a glowing, CRT-textured, edge-to-edge Panel; those three are not configurable here.
 
 ---
 
