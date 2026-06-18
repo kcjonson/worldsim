@@ -297,3 +297,98 @@ TEST_F(VisionSystemTest, StationaryObserverReusesPolygon) {
 	tick(sys);
 	EXPECT_GT(sys.polygonBuildCount(), afterFirst) << "a new wall must invalidate the cached polygon";
 }
+
+// --- Structure-as-observable (Pass 0) ----------------------------------------
+
+// A wall in front of the observer (bounding its visibility polygon) is recorded
+// in memory; a second wall hidden behind the first is NOT.
+TEST_F(VisionSystemTest, SeenWallRememberedHiddenWallNot) {
+	ConstructionWorld cw;
+	SegmentId front = buildWall(cw, {1500, 0}, {1500, 3000});  // x=1.5m, faces observer
+	SegmentId behind = buildWall(cw, {2500, 0}, {2500, 3000}); // x=2.5m, occluded by front
+
+	World world;
+	VisionSystem& sys = world.registerSystem<VisionSystem>();
+	sys.setConstructionWorld(&cw);
+
+	EntityID observer = spawnObserver(world, {0.5F, 1.5F}); // west of both walls
+
+	tick(sys);
+
+	const Memory* mem = world.getComponent<Memory>(observer);
+	ASSERT_NE(mem, nullptr);
+	EXPECT_TRUE(mem->knowsSegment(front)) << "the facing wall bounds the polygon and must be seen";
+	EXPECT_FALSE(mem->knowsSegment(behind)) << "a wall behind the first is occluded and must not be seen";
+}
+
+// An opening on a seen wall is recorded too.
+TEST_F(VisionSystemTest, OpeningOnSeenWallRemembered) {
+	ConstructionWorld cw;
+	SegmentId wall = buildWall(cw, {1500, 0}, {1500, 3000});
+	OpeningId door = addBuiltOpening(cw, wall, 0.5F, "Door");
+
+	World world;
+	VisionSystem& sys = world.registerSystem<VisionSystem>();
+	sys.setConstructionWorld(&cw);
+
+	EntityID observer = spawnObserver(world, {0.5F, 1.5F});
+
+	tick(sys);
+
+	const Memory* mem = world.getComponent<Memory>(observer);
+	ASSERT_NE(mem, nullptr);
+	EXPECT_TRUE(mem->knowsSegment(wall));
+	EXPECT_TRUE(mem->knowsOpening(door)) << "an opening on a seen wall must be recorded";
+}
+
+// A long wall whose endpoints are beyond the sight radius but whose span the
+// observer faces is still seen, via the ring-edge crossing fallback. Endpoint-only
+// tests would miss it.
+TEST_F(VisionSystemTest, LongWallSeenViaEdgeCrossing) {
+	ConstructionWorld cw;
+	// A 40m-long vertical wall at x=2m, y in [-20m, 20m]. With a 5m sight radius from
+	// (0,0) both endpoints (~20m away) are far out of range, but the wall passes 2m in
+	// front of the observer -- its midspan is the polygon boundary the observer sees.
+	SegmentId wall = buildWall(cw, {2000, -20000}, {2000, 20000});
+
+	World world;
+	VisionSystem& sys = world.registerSystem<VisionSystem>();
+	sys.setConstructionWorld(&cw);
+
+	EntityID observer = spawnObserver(world, {0.0F, 0.0F});
+	world.getComponent<Memory>(observer)->sightRadius = 5.0F; // endpoints fall outside this
+
+	tick(sys);
+
+	const Memory* mem = world.getComponent<Memory>(observer);
+	ASSERT_NE(mem, nullptr);
+	EXPECT_TRUE(mem->knowsSegment(wall)) << "long wall span must be seen via the edge-crossing fallback";
+}
+
+// An outdoor observer (no walls in range) records no structures.
+TEST_F(VisionSystemTest, OutdoorObserverRecordsNoStructures) {
+	ConstructionWorld cw;
+	buildWall(cw, {50000, 0}, {50000, 3000}); // 50m away, far outside default sight radius
+
+	World world;
+	VisionSystem& sys = world.registerSystem<VisionSystem>();
+	sys.setConstructionWorld(&cw);
+
+	EntityID observer = spawnObserver(world, {0.0F, 0.0F});
+
+	tick(sys);
+
+	const Memory* mem = world.getComponent<Memory>(observer);
+	ASSERT_NE(mem, nullptr);
+	EXPECT_EQ(mem->knownSegmentCount(), 0u) << "no walls in range => no structures recorded";
+	EXPECT_EQ(sys.polygonBuildCount(), 0u) << "no occluder in range => outdoor fast path, no polygon";
+}
+
+// rememberSegment returns true on first discovery, false on repeat.
+TEST_F(VisionSystemTest, RememberSegmentReturnsTrueOnce) {
+	Memory mem;
+	EXPECT_TRUE(mem.rememberSegment(42));
+	EXPECT_FALSE(mem.rememberSegment(42));
+	EXPECT_TRUE(mem.knowsSegment(42));
+	EXPECT_EQ(mem.knownSegmentCount(), 1u);
+}

@@ -212,6 +212,8 @@ namespace ecs {
 			}
 			lruOrder.clear();
 			lruMap.clear();
+			knownSegments.clear();
+			knownOpenings.clear();
 		}
 
 		// --- Capability Query Methods ---
@@ -255,6 +257,38 @@ namespace ecs {
 			}
 			return capabilityIndex[idx].size();
 		}
+
+		// --- Known Structures (walls / openings) ---
+		//
+		// Structures are observables, not just occluders (vision-architecture D4): a
+		// wall segment or opening the colonist has seen is recorded here by its stable
+		// construction id. Discovery granularity = segment/opening id, matching belief
+		// filtering. Keyed by plain uint64 because construction SegmentId/OpeningId are
+		// uint64 typedefs; using the raw type here avoids pulling a heavy construction
+		// header in. The ids are stable, never reused, and bounded (hundreds), so a
+		// plain set suffices -- no LRU/eviction like the world entities above.
+
+		std::unordered_set<std::uint64_t> knownSegments;
+		std::unordered_set<std::uint64_t> knownOpenings;
+
+		/// Record a seen wall segment. Returns true on first discovery (like
+		/// rememberWorldEntity), false if already known.
+		bool rememberSegment(std::uint64_t id) { return knownSegments.insert(id).second; }
+
+		/// Record a seen opening. Returns true on first discovery, false if known.
+		bool rememberOpening(std::uint64_t id) { return knownOpenings.insert(id).second; }
+
+		[[nodiscard]] bool knowsSegment(std::uint64_t id) const { return knownSegments.count(id) != 0; }
+
+		[[nodiscard]] bool knowsOpening(std::uint64_t id) const { return knownOpenings.count(id) != 0; }
+
+		// Wired for future demolish-reconciliation (a removed structure leaves memory);
+		// no caller yet.
+		void forgetSegment(std::uint64_t id) { knownSegments.erase(id); }
+		void forgetOpening(std::uint64_t id) { knownOpenings.erase(id); }
+
+		[[nodiscard]] size_t knownSegmentCount() const { return knownSegments.size(); }
+		[[nodiscard]] size_t knownOpeningCount() const { return knownOpenings.size(); }
 
 	  private:
 		/// Update LRU position for an entity (move to back = most recently accessed)
