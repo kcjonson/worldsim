@@ -10,7 +10,7 @@
 // Implements IComponent for use in LayoutContainer.
 
 #include "shapes/Shapes.h"
-#include "theme/Theme.h"
+#include "theme/Tokens.h"
 
 #include <string>
 
@@ -22,7 +22,7 @@ class SectionHeader : public Text {
 	struct Args {
 		std::string text;
 		float fontSize = 12.0F;
-		Foundation::Color color = Theme::Colors::textHeader;
+		Foundation::Color color = UI::text_dim;
 		float margin = 0.0F;
 		std::string id = "section_header";
 	};

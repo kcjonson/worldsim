@@ -1,7 +1,7 @@
 #pragma once
 
 #include "ButtonStyle.h"
-#include "theme/Theme.h"
+#include "theme/Tokens.h"
 
 // List Item Button Style
 //
@@ -22,7 +22,7 @@ inline ButtonAppearance listItem(bool isSelected = false) {
 	auto pressedBg = Foundation::Color{1.0F, 1.0F, 1.0F, 0.08F};
 	auto selectedBg = Foundation::Color{0.0F, 0.0F, 0.0F, 0.15F};  // Subtle dark
 	auto borderColor = Foundation::Color{1.0F, 1.0F, 1.0F, 0.1F};  // Subtle border
-	auto textColor = Theme::Colors::textBody;
+	auto textColor = UI::text;
 
 	auto baseBg = isSelected ? selectedBg : transparentBg;
 
@@ -61,7 +61,7 @@ inline ButtonAppearance listItem(bool isSelected = false) {
 	// Disabled
 	appearance.disabled.background.fill = transparentBg;
 	appearance.disabled.background.border = bottomBorder;
-	appearance.disabled.textColor = Theme::Colors::textMuted;
+	appearance.disabled.textColor = UI::text_dim;
 	appearance.disabled.fontSize = 12.0F;
 	appearance.disabled.paddingX = 8.0F;
 	appearance.disabled.paddingY = 4.0F;
