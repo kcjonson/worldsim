@@ -238,6 +238,80 @@ namespace ecs {
 					   != geometry::PointInPolygon::Outside;
 			};
 
+			// Reconciliation (vision-architecture D4): a remembered placed entity whose
+			// position the observer can see RIGHT NOW, but which is no longer in the
+			// placement index, is stale -- forget it so tasks fail gracefully and belief
+			// replans trigger. This is the continuous, look-and-correct corrector for
+			// targets the colonist is away from; ActionSystem keeps its at-target
+			// forgets (the synchronous backstop that closes the 0-5 frame throttle
+			// window where AIDecision could re-select a just-failed phantom).
+			//
+			// Gate cheaply, in order: radius (squared distance, no sqrt) -> visible()
+			// (the polygon test, indoors only) -> the index query (the costly step).
+			// Only what's both in range AND not occluded gets verified: you can't
+			// notice a bush is gone through a wall. The index check distinguishes
+			// destructive harvest/pickup (removeEntity drops it from the index ->
+			// forget) from a regrowth cooldown (entity stays in the index, only a
+			// separate cooldown map flips -> keep). Shore-tile entries are synthetic
+			// terrain, not placement entities; they never disappear, so skip them.
+			//
+			// Collect-then-forget: mutating knownWorldEntities while iterating it would
+			// invalidate the iterator. Forgetting a SET of keys is order-independent
+			// (no LRU/capability state read here depends on order), so this stays
+			// deterministic regardless of unordered_map traversal order.
+			//
+			// Null placement data -> can't verify -> forget nothing (same guard as
+			// pass 1). Cost: one pass over knownWorldEntities per observer per tick
+			// (throttled to every m_updateInterval frames); a colonist's remembered
+			// set is realistically dozens-to-hundreds, and most entries fail the cheap
+			// radius/visible gate before ever touching the index.
+			if (m_placementExecutor != nullptr && m_processedChunks != nullptr) {
+				std::vector<std::pair<glm::vec2, uint32_t>> stale;
+				for (const auto& [key, known] : memory.knownWorldEntities) {
+					// Shore tiles are terrain, not placement entities -- never reconcile.
+					if (known.defNameId == m_shoreTileDefNameId) {
+						continue;
+					}
+
+					const float ddx = known.position.x - pos.value.x;
+					const float ddy = known.position.y - pos.value.y;
+					if (ddx * ddx + ddy * ddy > sightRadiusSq) {
+						continue; // out of sight radius
+					}
+					if (!visible(known.position)) {
+						continue; // occluded -- can't see whether it's gone
+					}
+
+					// Existence check: is a PlacedEntity of the same defName still in the
+					// index near the remembered position? Query a tiny radius (the position
+					// is the entity's own, quantized only by memory's 0.1m hash grid), then
+					// match by defName.
+					const std::string& defName = registry.getDefName(known.defNameId);
+					if (defName.empty()) {
+						continue; // unknown id -> can't verify -> keep
+					}
+
+					const engine::world::ChunkCoordinate coord =
+						engine::world::worldToChunk({known.position.x, known.position.y});
+					if (m_processedChunks->find(coord) == m_processedChunks->end()) {
+						continue; // chunk not placement-processed -> can't verify -> keep
+					}
+					const auto* chunkIndex = m_placementExecutor->getChunkIndex(coord);
+					if (chunkIndex == nullptr) {
+						continue; // no index -> can't verify -> keep
+					}
+
+					constexpr float kPresenceEpsilon = 0.2F; // tiles; covers the 0.1m memory quantization
+					const auto present = chunkIndex->queryRadius(known.position, kPresenceEpsilon, defName);
+					if (present.empty()) {
+						stale.emplace_back(known.position, known.defNameId); // gone -> forget
+					}
+				}
+				for (const auto& [pos, defNameId] : stale) {
+					memory.forgetWorldEntity(pos, defNameId);
+				}
+			}
+
 			// Pass 1: placed entities from world generation (needs placement data wired).
 			if (m_placementExecutor != nullptr && m_processedChunks != nullptr) {
 				// Query each potentially visible chunk for placed entities
