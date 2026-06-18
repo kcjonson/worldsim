@@ -171,6 +171,52 @@ namespace ecs {
 					++m_polygonBuildCount;
 				}
 				cache = &entry;
+
+				// Pass 0: structure-as-observable (vision-architecture D4). A wall or
+				// opening that bounds or intersects the visibility polygon is seen, and
+				// its stable construction id enters memory. Runs only for indoor
+				// observers (a polygon exists here), over built structures radius-culled
+				// to dozens; the per-edge crossing test is O(structures * ring edges) but
+				// both are small. Deterministic: set inserts are order-independent.
+				const auto& ring = cache->polygon;
+
+				// A structure point [p0,p1] is seen if either endpoint lies in/on the
+				// polygon, or the span crosses a ring edge. The crossing fallback matters
+				// because a wall IS (part of) the polygon boundary: a long wall facing the
+				// observer can have both endpoints out of sight radius while its middle is
+				// the boundary seen along, which an endpoint-only test would miss.
+				auto structureSeen = [&](geometry::Vec2i64 p0, geometry::Vec2i64 p1) -> bool {
+					if (geometry::pointInPolygon(p0, ring) != geometry::PointInPolygon::Outside ||
+						geometry::pointInPolygon(p1, ring) != geometry::PointInPolygon::Outside) {
+						return true;
+					}
+					for (std::size_t i = 0; i < ring.size(); ++i) {
+						const geometry::Vec2i64& e0 = ring[i];
+						const geometry::Vec2i64& e1 = ring[(i + 1) % ring.size()];
+						if (geometry::intersectSegments(p0, p1, e0, e1).relation != geometry::SegmentRelation::Disjoint) {
+							return true;
+						}
+					}
+					return false;
+				};
+
+				for (const auto& seg : m_geometry.builtSegments()) {
+					if (!geometry::withinDistanceOfSegment(observerMm, seg.a, seg.b, radiusMm)) {
+						continue;
+					}
+					if (structureSeen(seg.a, seg.b)) {
+						memory.rememberSegment(seg.id);
+					}
+				}
+
+				for (const auto& op : m_geometry.builtOpenings()) {
+					if (!geometry::withinDistanceOfSegment(observerMm, op.jambA, op.jambB, radiusMm)) {
+						continue;
+					}
+					if (structureSeen(op.jambA, op.jambB)) {
+						memory.rememberOpening(op.openingId);
+					}
+				}
 			}
 
 			// A candidate already inside the sight radius is visible iff it is not
