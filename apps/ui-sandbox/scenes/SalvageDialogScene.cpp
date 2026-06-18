@@ -33,7 +33,7 @@ class SalvageDialogScene : public engine::IScene {
 		const char* items[] = {"Wooden Wall", "Stone Wall", "Campfire", "Crafting Spot", "Wooden Door", "Storage Shelf"};
 		for (int i = 0; i < 6; ++i) {
 			list.addChild(UI::ListRow(UI::ListRow::Args{
-				.label = items[i], .trailing = (i == 0 ? "x4" : ""), .size = {340.0F, 30.0F}, .selected = (i == 1), .dim = (i == 3),
+				.label = items[i], .trailing = (i == 0 ? "x4" : ""), .size = {340.0F, 30.0F}, .selected = (i == 1), .dim = (i == 3), .indent = (i == 0 ? 0.0F : 16.0F),
 				.id = std::string("demo_row_") + std::to_string(i)}));
 		}
 		dialog->addChild(std::move(list));

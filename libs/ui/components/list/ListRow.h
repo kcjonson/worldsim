@@ -30,6 +30,7 @@ class ListRow : public Component {
 		Foundation::Vec2	  size{160.0F, 24.0F};
 		bool				  selected = false;
 		bool				  dim = false;				 // unavailable look (still clickable)
+		float				  indent = 0.0F;			 // extra left pad for the label (tree nesting)
 		std::function<void()> onClick;
 		float				  margin = 0.0F;
 		std::string			  id = "list_row";
@@ -40,6 +41,7 @@ class ListRow : public Component {
 		  trailingText(args.trailing),
 		  selected(args.selected),
 		  dim(args.dim),
+		  indent(args.indent),
 		  onClick(args.onClick),
 		  rowId(args.id) {
 		position = {0.0F, 0.0F};
@@ -77,7 +79,7 @@ class ListRow : public Component {
 
 		const Foundation::Color fg = dim ? text_dim : (selected ? text_bright : text);
 		drawText({.text = labelText,
-				  .position = {bounds.x + kPadX, bounds.y},
+				  .position = {bounds.x + kPadX + indent, bounds.y},
 				  .scale = fs_sm / 16.0F,
 				  .color = fg,
 				  .font = fontUi,
@@ -144,6 +146,7 @@ class ListRow : public Component {
 	std::string			  trailingText;
 	bool				  selected{false};
 	bool				  dim{false};
+	float				  indent{0.0F};
 	std::function<void()> onClick;
 	std::string			  rowId;
 
