@@ -5,7 +5,6 @@
 #include <ecs/components/Needs.h>
 #include <layout/LayoutContainer.h>
 #include <shapes/Shapes.h>
-#include <theme/Theme.h>
 
 #include <sstream>
 

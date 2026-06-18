@@ -10,7 +10,7 @@
 #include <offset/WallOffset.h>
 #include <predicates/Predicates.h>
 #include <primitives/Primitives.h>
-#include <theme/Theme.h>
+#include <theme/Tokens.h>
 #include <utils/Log.h>
 
 #include <algorithm>
@@ -1254,8 +1254,8 @@ namespace world_sim {
 		}
 
 		const bool				valid = lastValidation_.ok();
-		const Foundation::Color okColor = UI::Theme::Colors::statusActive;	 // green
-		const Foundation::Color badColor = UI::Theme::Colors::statusBlocked; // red
+		const Foundation::Color okColor = UI::status_ok;	 // green
+		const Foundation::Color badColor = UI::status_crit; // red
 		const Foundation::Color lineColor = valid ? okColor : badColor;
 
 		std::vector<Foundation::Vec2> screen;
@@ -1873,8 +1873,8 @@ namespace world_sim {
 		}
 
 		const bool				valid = openingValidation_.ok();
-		const Foundation::Color okColor = UI::Theme::Colors::statusActive;	 // green
-		const Foundation::Color badColor = UI::Theme::Colors::statusBlocked; // red
+		const Foundation::Color okColor = UI::status_ok;	 // green
+		const Foundation::Color badColor = UI::status_crit; // red
 		const Foundation::Color tint = valid ? okColor : badColor;
 
 		std::vector<Foundation::Vec2> screen;
@@ -1901,8 +1901,8 @@ namespace world_sim {
 		};
 
 		const bool				valid = lastValidation_.ok();
-		const Foundation::Color okColor = UI::Theme::Colors::statusActive;	 // green
-		const Foundation::Color badColor = UI::Theme::Colors::statusBlocked; // red
+		const Foundation::Color okColor = UI::status_ok;	 // green
+		const Foundation::Color badColor = UI::status_crit; // red
 
 		std::vector<Foundation::Vec2> screen;
 		screen.reserve(points_.size());
