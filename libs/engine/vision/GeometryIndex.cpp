@@ -7,6 +7,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <unordered_map>
+#include <vector>
 
 namespace ecs {
 
@@ -35,6 +37,12 @@ namespace ecs {
 		// Force a rebuild against the new source on the next tick: a different world
 		// (or back to null) can share a version number with the old one.
 		m_builtVersion = kInvalidVersion;
+		// Drop the previous world's caches now so the index is inert (no stale
+		// occluders) until the next rebuild -- a null world stays inert, as the
+		// header promises; a non-null world repopulates on the next rebuildIfStale.
+		m_occluders.clear();
+		m_segments.clear();
+		m_openings.clear();
 	}
 
 	void GeometryIndex::rebuildIfStale() {
@@ -62,6 +70,16 @@ namespace ecs {
 			float t1;
 		};
 
+		// Pre-group built openings by host segment so the per-segment loop is
+		// O(segments + openings), not O(segments * openings). (Mirrors how
+		// NavInputBuilder groups its door cuts by segment.)
+		std::unordered_map<cw::SegmentId, std::vector<const cw::Opening*>> openingsBySegment;
+		for (const cw::Opening& op : world.openings()) {
+			if (op.state == cw::FoundationState::Built) {
+				openingsBySegment[op.segment].push_back(&op);
+			}
+		}
+
 		for (const cw::WallSegment& seg : world.segments()) {
 			if (seg.state != cw::FoundationState::Built) {
 				continue; // blueprint walls do not occlude
@@ -87,22 +105,22 @@ namespace ecs {
 			// The half-extent formula matches NavInputBuilder::extractWalls exactly, so
 			// a given opening's sight gap and nav gap span the same centerline range.
 			std::vector<Gap> gaps;
-			for (const cw::Opening& op : world.openings()) {
-				if (op.segment != seg.id || op.state != cw::FoundationState::Built) {
-					continue;
-				}
-				const engine::assets::OpeningTypeDef* type = reg.getOpeningType(op.type);
-				if (type == nullptr) {
-					continue;
-				}
-				const float halfExtent = static_cast<float>((static_cast<double>(type->widthMm) * 0.5) / lengthMm);
-				const float t0		   = std::clamp(op.t - halfExtent, 0.0F, 1.0F);
-				const float t1		   = std::clamp(op.t + halfExtent, 0.0F, 1.0F);
+			auto			 openIt = openingsBySegment.find(seg.id);
+			if (openIt != openingsBySegment.end()) {
+				for (const cw::Opening* op : openIt->second) {
+					const engine::assets::OpeningTypeDef* type = reg.getOpeningType(op->type);
+					if (type == nullptr) {
+						continue;
+					}
+					const float halfExtent = static_cast<float>((static_cast<double>(type->widthMm) * 0.5) / lengthMm);
+					const float t0		   = std::clamp(op->t - halfExtent, 0.0F, 1.0F);
+					const float t1		   = std::clamp(op->t + halfExtent, 0.0F, 1.0F);
 
-				m_openings.push_back({op.id, seg.id, op.type, lerp(a, b, t0), lerp(a, b, t1), type->transparentToSight});
+					m_openings.push_back({op->id, seg.id, op->type, lerp(a, b, t0), lerp(a, b, t1), type->transparentToSight});
 
-				if (type->transparentToSight) {
-					gaps.push_back({t0, t1});
+					if (type->transparentToSight) {
+						gaps.push_back({t0, t1});
+					}
 				}
 			}
 
@@ -127,6 +145,9 @@ namespace ecs {
 	void GeometryIndex::queryOccluders(geometry::Vec2i64 center, std::int64_t radiusMm,
 									   std::vector<geometry::OccluderSegment>& out) const {
 		out.clear();
+		if (radiusMm <= 0) {
+			return; // non-positive radius sees nothing
+		}
 		for (const OccluderRecord& rec : m_occluders) {
 			// Exact integer range test: keep an occluder if any part of it lies within
 			// the sight radius of the observer.
