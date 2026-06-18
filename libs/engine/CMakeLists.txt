@@ -40,6 +40,7 @@ add_library(engine
     construction/RoomHitTest.cpp
     construction/SnapEngine.cpp
     nav/NavInputBuilder.cpp
+    vision/GeometryIndex.cpp
 )
 
 target_include_directories(engine

@@ -122,7 +122,9 @@
     a door is a door regardless of the wall it sits in. material references a
     real <Foundation>/<Wall> material (Wood here; Stone omitted for the same
     reason walls omit it — no item asset / source). pathable says whether
-    colonists can walk through the finished opening (doors yes, windows no).
+    colonists can walk through the finished opening (doors yes, windows no);
+    transparentToSight says whether sight passes through (doors AND windows yes,
+    independent of pathable — a window blocks movement but not vision).
 
     NOTE: All values are starter estimates pending design tuning.
       widthMeters - clear width of the opening along the wall centerline
@@ -136,6 +138,8 @@
       <!-- 0.9 m clear width: a standard single-leaf doorway a colonist walks through. -->
       <widthMeters>0.9</widthMeters>
       <pathable>true</pathable>
+      <!-- An open doorway passes sight as well as movement. -->
+      <transparentToSight>true</transparentToSight>
       <!-- A door leaf + frame: a few planks, a modest constant build. -->
       <costItems>3.0</costItems>
       <workUnits>60.0</workUnits>
@@ -146,6 +150,8 @@
       <!-- 0.6 m clear width: narrower than a door; light, not passage. -->
       <widthMeters>0.6</widthMeters>
       <pathable>false</pathable>
+      <!-- A window blocks passage but glass passes sight: transparent, not pathable. -->
+      <transparentToSight>true</transparentToSight>
       <!-- Cheaper and quicker than a door: a frame and sash, no leaf. -->
       <costItems>2.0</costItems>
       <workUnits>40.0</workUnits>

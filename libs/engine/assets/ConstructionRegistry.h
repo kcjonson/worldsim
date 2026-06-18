@@ -105,6 +105,10 @@ namespace engine::assets {
 		int64_t widthMm = 0;
 		/// Whether colonists can walk through the finished opening (doors yes, windows no).
 		bool pathable = false;
+		/// Whether sight passes through the finished opening (doors AND windows yes).
+		/// Independent of pathable: a window blocks movement but not sight. The Vision
+		/// System treats a transparent opening as a gap in the wall's occluder line.
+		bool transparentToSight = false;
 		/// Fixed material items consumed to build the opening (constant per type).
 		float costItems = 0.0F;
 		/// Fixed work units to build the opening (constant per type, drives build time).

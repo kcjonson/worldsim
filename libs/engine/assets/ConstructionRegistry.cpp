@@ -211,6 +211,7 @@ namespace engine::assets {
 				type.widthMeters = typeNode.child("widthMeters").text().as_float(0.0F);
 				type.widthMm = toMm(type.widthMeters);
 				type.pathable = typeNode.child("pathable").text().as_bool(false);
+				type.transparentToSight = typeNode.child("transparentToSight").text().as_bool(false);
 				type.costItems = typeNode.child("costItems").text().as_float(0.0F);
 				type.workUnits = typeNode.child("workUnits").text().as_float(0.0F);
 
