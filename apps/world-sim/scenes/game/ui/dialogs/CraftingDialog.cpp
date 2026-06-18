@@ -1,17 +1,14 @@
 #include "CraftingDialog.h"
 
+#include <components/list/ListRow.h>
 #include <components/progress/ProgressBar.h>
-#include <font/FontRenderer.h>
 #include <input/InputTypes.h>
 #include <primitives/Primitives.h>
-#include <shapes/Shapes.h>
 #include <theme/Tokens.h>
 
 namespace {
-// Recipe list item dimensions
-constexpr float kRecipeItemHeight = 24.0F;
-constexpr float kRecipeItemPadding = 8.0F;
-constexpr float kRecipeHeaderHeight = 20.0F;
+// Recipe list row height.
+constexpr float kRecipeItemHeight = 26.0F;
 } // anonymous namespace
 
 namespace world_sim {
@@ -150,6 +147,7 @@ void CraftingDialog::update(const ecs::World& world,
 			recipeSelectedIndex = 0;
 			model.selectRecipe(model.recipes()[0].defName);
 		}
+		rebuildRecipeColumn();
 		rebuildCenterColumn();
 		rebuildQueueColumn();
 	} else {
@@ -158,6 +156,16 @@ void CraftingDialog::update(const ecs::World& world,
 		    updateType == CraftingDialogModel::UpdateType::Full) {
 			rebuildQueueColumn();
 		}
+		// A full refresh can flip recipe availability, so refresh the row dimming
+		if (updateType == CraftingDialogModel::UpdateType::Full) {
+			rebuildRecipeColumn();
+		}
+	}
+
+	// Rebuild recipe column after a selection change (to move the highlight)
+	if (needsRecipeRebuild) {
+		needsRecipeRebuild = false;
+		rebuildRecipeColumn();
 	}
 
 	// Rebuild center column after selection changed (model now has updated details)
@@ -181,15 +189,12 @@ void CraftingDialog::render() {
 		return;
 	}
 
-	// Render dialog (includes overlay and content children)
+	// Dialog renders its chrome plus all content children (the recipe ListRows,
+	// the center detail column, and the queue column).
 	auto* dialog = getChild<UI::Dialog>(dialogHandle);
 	if (dialog != nullptr) {
 		dialog->render();
 	}
-
-	// Render recipe list primitives (direct rendering like TabBar)
-	// This is rendered AFTER Dialog so it appears on top of the scroll container
-	renderRecipeList();
 }
 
 bool CraftingDialog::handleEvent(UI::InputEvent& event) {
@@ -197,29 +202,11 @@ bool CraftingDialog::handleEvent(UI::InputEvent& event) {
 		return false;
 	}
 
-	// Recipe list - direct hit testing for primitives (like TabBar)
-	// Must be checked BEFORE Dialog handles events
-	if (event.type == UI::InputEvent::Type::MouseMove) {
-		recipeHoveredIndex = getRecipeIndexAtPosition(event.position);
-		// Don't consume mouse move - let Dialog handle it
-	} else if (event.type == UI::InputEvent::Type::MouseDown &&
-	           event.button == engine::MouseButton::Left) {
-		int index = getRecipeIndexAtPosition(event.position);
-		if (index >= 0) {
-			// Clicked on a recipe - select it immediately
-			handleRecipeClick(index);
-			event.consume();
-			return true;
-		}
-	}
-
-	// Let Dialog handle all other events (content children, chrome, modal)
+	// The recipe ListRows are content children of the Dialog, so the Dialog's
+	// dispatch reaches them (with the content-offset transform) and they handle
+	// their own hover/click.
 	auto* dialog = getChild<UI::Dialog>(dialogHandle);
-	if (dialog != nullptr && dialog->handleEvent(event)) {
-		return true;
-	}
-
-	return false;
+	return dialog != nullptr && dialog->handleEvent(event);
 }
 
 bool CraftingDialog::containsPoint(Foundation::Vec2 point) const {
@@ -230,60 +217,7 @@ bool CraftingDialog::containsPoint(Foundation::Vec2 point) const {
 	return dialog != nullptr && dialog->containsPoint(point);
 }
 
-// Recipe list bounds calculation (like TabBar::getTabBounds)
-Foundation::Rect CraftingDialog::getRecipeItemBounds(int index) const {
-	if (index < 0 || index >= static_cast<int>(model.recipes().size())) {
-		return {0.0F, 0.0F, 0.0F, 0.0F};
-	}
-
-	// Get dialog content bounds directly (more reliable than scroll container position
-	// which may not be updated on first frame after dialog opens)
-	auto* dialog = getChild<UI::Dialog>(dialogHandle);
-	if (dialog == nullptr) {
-		return {0.0F, 0.0F, 0.0F, 0.0F};
-	}
-
-	auto bounds = dialog->getContentBounds();
-	float leftX = bounds.x;
-	float leftY = bounds.y;
-
-	// Get scroll offset from the scroll container (now a child of content layout)
-	float scrollOffset = 0.0F;
-	auto* contentLayout = const_cast<CraftingDialog*>(this)->getContentLayout();
-	if (contentLayout != nullptr) {
-		auto* leftCol = contentLayout->getChild<UI::ScrollContainer>(leftColumnHandle);
-		if (leftCol != nullptr) {
-			scrollOffset = leftCol->getScrollPosition();
-		}
-	}
-
-	// Calculate item Y position (header + items above)
-	float itemY = leftY + kRecipeHeaderHeight + (static_cast<float>(index) * kRecipeItemHeight) - scrollOffset;
-
-	return {
-		leftX + kRecipeItemPadding,
-		itemY,
-		kLeftColumnWidth - (kRecipeItemPadding * 2.0F),
-		kRecipeItemHeight
-	};
-}
-
-// Hit testing for recipe list (like TabBar::getTabIndexAtPosition)
-int CraftingDialog::getRecipeIndexAtPosition(Foundation::Vec2 pos) const {
-	const auto& recipes = model.recipes();
-	for (size_t i = 0; i < recipes.size(); ++i) {
-		Foundation::Rect bounds = getRecipeItemBounds(static_cast<int>(i));
-		// Use exclusive check on bottom/right to avoid boundary overlap
-		if (pos.x >= bounds.x && pos.x < bounds.x + bounds.width &&
-		    pos.y >= bounds.y && pos.y < bounds.y + bounds.height) {
-			return static_cast<int>(i);
-		}
-	}
-	return -1;
-}
-
-// Direct rendering of recipe list (like TabBar::render)
-void CraftingDialog::renderRecipeList() {
+void CraftingDialog::rebuildRecipeColumn() {
 	auto* contentLayout = getContentLayout();
 	if (contentLayout == nullptr) {
 		return;
@@ -293,98 +227,37 @@ void CraftingDialog::renderRecipeList() {
 		return;
 	}
 
-	// Get dialog content bounds (same source as getRecipeItemBounds for consistency)
-	auto* dialog = getChild<UI::Dialog>(dialogHandle);
-	if (dialog == nullptr) {
-		return;
-	}
-	auto dialogBounds = dialog->getContentBounds();
-	float leftX = dialogBounds.x;
-	float leftY = dialogBounds.y;
-	float scrollOffset = leftCol->getScrollPosition();
+	leftCol->clearChildren();
 
-	// Render the scroll container (handles clipping, scrollbar, etc.)
-	leftCol->render();
+	// Vertical list: a header followed by one selectable ListRow per recipe.
+	auto listLayout = UI::LayoutContainer(UI::LayoutContainer::Args{
+		.position = {0, 0},
+		.size = {kLeftColumnWidth, 0},  // Height auto-computed from children
+		.direction = UI::Direction::Vertical,
+		.hAlign = UI::HAlign::Left,
+		.vAlign = UI::VAlign::Top
+	});
 
-	// Calculate viewport bounds for culling
-	Foundation::Rect viewBounds{leftX, leftY, kLeftColumnWidth, dialogBounds.height};
+	listLayout.addChild(UI::Text(UI::Text::Args{
+		.text = "RECIPES",
+		.style = {.color = UI::text_dim, .fontSize = 11},
+		.margin = 4.0F
+	}));
 
-	// Draw header
-	float headerY = leftY + 4.0F - scrollOffset;
-	if (headerY + kRecipeHeaderHeight > viewBounds.y && headerY < viewBounds.y + viewBounds.height) {
-		Renderer::Primitives::drawText({
-			.text = "RECIPES",
-			.position = {leftX + kRecipeItemPadding, headerY},
-			.scale = 11.0F / 16.0F,  // 11px font
-			.color = UI::text_dim,
-			.id = "recipe-header"
-		});
-	}
-
-	// Colors for list items
-	auto transparentBg = Foundation::Color{0.0F, 0.0F, 0.0F, 0.0F};
-	auto hoverBg = Foundation::Color{1.0F, 1.0F, 1.0F, 0.08F};
-	auto selectedBg = Foundation::Color{0.0F, 0.0F, 0.0F, 0.2F};
-	auto borderColor = Foundation::Color{1.0F, 1.0F, 1.0F, 0.1F};
-
-	// Draw each recipe item
 	const auto& recipes = model.recipes();
 	for (size_t i = 0; i < recipes.size(); ++i) {
-		const auto& recipe = recipes[i];
 		int idx = static_cast<int>(i);
-		Foundation::Rect bounds = getRecipeItemBounds(idx);
-
-		// Skip items that are completely outside the scroll viewport
-		if (bounds.y + bounds.height < viewBounds.y || bounds.y > viewBounds.y + viewBounds.height) {
-			continue;
-		}
-
-		// Determine background color based on state
-		Foundation::Color bgColor = transparentBg;
-		if (idx == recipeSelectedIndex) {
-			bgColor = selectedBg;
-		} else if (idx == recipeHoveredIndex) {
-			bgColor = hoverBg;
-		}
-
-		// Draw background
-		Renderer::Primitives::drawRect({
-			.bounds = bounds,
-			.style = {.fill = bgColor},
-			.id = "recipe-item"
-		});
-
-		// Draw bottom border (1px)
-		Renderer::Primitives::drawRect({
-			.bounds = {bounds.x, bounds.y + bounds.height - 1.0F, bounds.width, 1.0F},
-			.style = {.fill = borderColor},
-			.id = "recipe-border"
-		});
-
-		// Build label with craftability indicator
-		std::string label = recipe.label;
-		if (!recipe.canCraft) {
-			label = "(!) " + label;
-		}
-
-		// Text color
-		Foundation::Color textColor = recipe.canCraft
-			? UI::text
-			: UI::text_dim;
-
-		// Draw text (vertically centered in item)
-		Renderer::Primitives::drawText({
-			.text = label,
-			.position = {bounds.x + 4.0F, bounds.y + (kRecipeItemHeight - 12.0F) / 2.0F},
-			.scale = 12.0F / 16.0F,  // 12px font
-			.color = textColor,
-			.id = "recipe-text"
-		});
+		listLayout.addChild(UI::ListRow(UI::ListRow::Args{
+			.label = recipes[i].label,
+			.size = {kLeftColumnWidth, kRecipeItemHeight},
+			.selected = (idx == recipeSelectedIndex),
+			.dim = !recipes[i].canCraft,
+			.onClick = [this, idx]() { handleRecipeClick(idx); }
+		}));
 	}
 
-	// Update scroll container content height
-	float totalHeight = kRecipeHeaderHeight + (static_cast<float>(recipes.size()) * kRecipeItemHeight) + 10.0F;
-	leftCol->setContentHeight(totalHeight);
+	leftCol->setContentHeight(listLayout.getHeight() + 10.0F);
+	leftCol->addChild(std::move(listLayout));
 }
 
 void CraftingDialog::rebuildCenterColumn() {
@@ -670,14 +543,14 @@ void CraftingDialog::handleRecipeClick(int recipeIndex) {
 		return;
 	}
 
-	// Update selection index (direct rendering will use this immediately)
 	recipeSelectedIndex = recipeIndex;
 
 	// Update model selection
 	model.selectRecipe(recipes[static_cast<size_t>(recipeIndex)].defName);
 
-	// Schedule center column rebuild after next model.refresh()
-	// (model needs to call extractSelectedDetails with the registry first)
+	// Move the row highlight, and rebuild the center column after the next
+	// model.refresh() (it calls extractSelectedDetails with the registry first).
+	needsRecipeRebuild = true;
 	needsCenterRebuild = true;
 }
 

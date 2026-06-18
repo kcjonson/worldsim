@@ -91,9 +91,8 @@ class CraftingDialog : public UI::Component {
 	UI::LayerHandle dialogHandle;
 	UI::LayerHandle contentLayoutHandle;  // Horizontal layout for columns
 
-	// Left column - recipe list (rendered directly like TabBar)
+	// Left column - recipe list (composed ListRow children)
 	UI::LayerHandle leftColumnHandle;
-	int recipeHoveredIndex = -1;   // Which recipe is hovered (-1 = none)
 	int recipeSelectedIndex = -1;  // Which recipe is selected (-1 = none)
 
 	// Center column - recipe details
@@ -108,17 +107,14 @@ class CraftingDialog : public UI::Component {
 	bool contentCreated = false;
 	bool needsInitialRebuild = false;
 	bool needsCenterRebuild = false;  // Set when selection changes, cleared after rebuild
+	bool needsRecipeRebuild = false;  // Set when selection/availability changes
 
 	// Internal methods
 	void createDialog();
 	void createColumns();
+	void rebuildRecipeColumn();
 	void rebuildCenterColumn();
 	void rebuildQueueColumn();
-
-	// Recipe list rendering (TabBar-style direct rendering)
-	void renderRecipeList();
-	[[nodiscard]] int getRecipeIndexAtPosition(Foundation::Vec2 pos) const;
-	[[nodiscard]] Foundation::Rect getRecipeItemBounds(int index) const;
 
 	void handleRecipeClick(int recipeIndex);
 	void handleQuantityChange(int delta);
