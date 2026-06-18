@@ -560,9 +560,16 @@ TEST_F(VisionSystemTest, ShoreTileNeverReconciled) {
 	AssetRegistry&						reg = AssetRegistry::Get();
 	PlacementExecutor					executor(reg);
 	std::unordered_set<ChunkCoordinate> processed;
-	// Mark chunk (0,0) processed so reconciliation's index path is live, but it holds
-	// no entities -- a placement entity here would be forgotten; a shore entry must not.
-	processed.insert(ChunkCoordinate{0, 0});
+	// Store an EMPTY placement index for chunk (0,0) so reconciliation's index path is
+	// genuinely live (getChunkIndex returns non-null). A placement entity here would
+	// be forgotten; the shore entry must survive via the shore-tile exemption, not
+	// merely because no index exists.
+	{
+		engine::assets::AsyncChunkPlacementResult emptyChunk;
+		emptyChunk.coord = ChunkCoordinate{0, 0};
+		executor.storeChunkResult(std::move(emptyChunk));
+		processed.insert(ChunkCoordinate{0, 0});
+	}
 
 	World		  world;
 	VisionSystem& sys = world.registerSystem<VisionSystem>();

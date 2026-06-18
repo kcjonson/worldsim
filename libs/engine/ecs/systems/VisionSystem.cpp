@@ -302,13 +302,14 @@ namespace ecs {
 					}
 
 					constexpr float kPresenceEpsilon = 0.2F; // tiles; covers the 0.1m memory quantization
-					const auto present = chunkIndex->queryRadius(known.position, kPresenceEpsilon, defName);
-					if (present.empty()) {
+					// hasNearby is the allocation-free presence check (queryRadius would
+					// build a vector just to test emptiness).
+					if (!chunkIndex->hasNearby(known.position, kPresenceEpsilon, defName)) {
 						stale.emplace_back(known.position, known.defNameId); // gone -> forget
 					}
 				}
-				for (const auto& [pos, defNameId] : stale) {
-					memory.forgetWorldEntity(pos, defNameId);
+				for (const auto& [stalePos, defNameId] : stale) {
+					memory.forgetWorldEntity(stalePos, defNameId);
 				}
 			}
 
