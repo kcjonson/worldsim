@@ -6,11 +6,18 @@
 // See /docs/design/game-systems/colonists/memory.md for design details.
 
 #include "../ISystem.h"
+#include "../EntityID.h"
+
+#include <vision/GeometryIndex.h>
 
 #include <world/chunk/ChunkCoordinate.h>
 
+#include <glm/vec2.hpp>
+
+#include <cstdint>
 #include <functional>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 
 namespace engine::assets {
@@ -58,6 +65,31 @@ class VisionSystem : public ISystem {
 	using RecipeDiscoveryCallback = std::function<void(const std::string& recipeLabel)>;
 	void setRecipeDiscoveryCallback(RecipeDiscoveryCallback callback) { m_onRecipeDiscovery = std::move(callback); }
 
+	/// Wire the construction topology that walls block sight from. Forwards to the
+	/// owned GeometryIndex. Null leaves the index inert (zero occluders), so every
+	/// observer takes the outdoor fast path -- vision then behaves exactly as before
+	/// walls existed.
+	void setConstructionWorld(const engine::construction::ConstructionWorld* world) {
+		m_geometry.setConstructionWorld(world);
+	}
+
+	/// Test-only: how many visibility polygons were actually rebuilt so far. A
+	/// stationary indoor observer should not bump this every tick (cache reuse).
+	[[nodiscard]] uint64_t polygonBuildCount() const { return m_polygonBuildCount; }
+
+	/// Returns the cached visibility polygon for `observer`, or nullptr if the
+	/// entity has no cache entry or took the outdoor (no-occluder) fast path.
+	[[nodiscard]] const geometry::Ring* visibilityPolygon(EntityID observer) const {
+		auto it = m_visibilityCache.find(observer);
+		if (it == m_visibilityCache.end() || !it->second.hadOccluders) {
+			return nullptr;
+		}
+		return &it->second.polygon;
+	}
+
+	/// Read-only access to the occluder geometry (walls) for overlay drawing.
+	[[nodiscard]] const GeometryIndex& geometry() const { return m_geometry; }
+
   private:
 	/// Ensure synthetic terrain definitions are registered (called once on first update)
 	void ensureTerrainDefinitionsRegistered();
@@ -73,6 +105,29 @@ class VisionSystem : public ISystem {
 
 	// Callback for recipe discovery notifications
 	RecipeDiscoveryCallback m_onRecipeDiscovery = nullptr;
+
+	// --- Occlusion gate ---
+
+	// Source of opaque wall occluders (built from the construction graph). Inert
+	// until setConstructionWorld() wires a world; rebuilt (version-gated) at the
+	// top of each throttled tick.
+	GeometryIndex m_geometry;
+
+	// Per-observer visibility polygon cache. A stationary colonist indoors builds
+	// its star-shaped sight polygon once, then reuses it every tick. The polygon is
+	// in integer mm (same frame as the occluders); builtPos is the observer's
+	// meters position the polygon was built from.
+	struct VisibilityCache {
+		glm::vec2	   builtPos{0.0F, 0.0F};
+		std::uint64_t  builtVersion = 0; // GeometryIndex generation the polygon was built against
+		geometry::Ring polygon;			 // empty when hadOccluders == false (fast path)
+		bool		   hadOccluders = false;
+		bool		   seenThisTick = false; // mark-and-sweep prune flag
+	};
+	std::unordered_map<EntityID, VisibilityCache> m_visibilityCache;
+
+	// Test-only diagnostic: incremented on each actual polygon (re)build.
+	uint64_t m_polygonBuildCount = 0;
 
 	// Throttling: only update every N frames to reduce CPU overhead
 	// Initialize to interval so first update() call executes immediately
