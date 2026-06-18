@@ -1,16 +1,15 @@
 #pragma once
 
-// TopBar - Top bar with date/time display and speed controls.
+// TopBar - the colony command strip across the top of the screen (Salvage look).
 //
-// Layout:
-// ┌─────────────────────────────────────────────────────────────────┐
-// │ Day 15, Summer | 14:32    [⏸][▶][▶▶][▶▶▶]              [Menu] │
-// └─────────────────────────────────────────────────────────────────┘
+// Left:   colony identity (name + "N survivors / Sol D" sub-line)
+// Center: clock (Day D / season / HH:MM) followed by the speed-control pill
+// Right:  Menu button
 //
-// Positioned at the top of the screen, full width.
-// Extends UI::Component to use the Layer system for child management.
+// The bar paints its own background, identity text, and clock inline via the
+// Primitives API; the speed buttons and the menu button are child components.
+// Full width, anchored to the top of the viewport.
 
-#include "scenes/game/ui/components/DateTimeDisplay.h"
 #include "scenes/game/ui/components/SpeedButton.h"
 #include "scenes/game/ui/models/TimeModel.h"
 
@@ -20,19 +19,20 @@
 #include <graphics/Rect.h>
 #include <input/InputEvent.h>
 #include <layer/Layer.h>
-#include <shapes/Shapes.h>
 
 #include <functional>
+#include <string>
 
 namespace world_sim {
 
-/// Top bar containing time display and speed controls.
+/// Top command strip: colony identity, clock + speed controls, menu.
 class TopBar : public UI::Component {
   public:
 	struct Args {
 		std::function<void()> onPause = nullptr;
 		std::function<void(ecs::GameSpeed)> onSpeedChange = nullptr;
 		std::function<void()> onMenuClick = nullptr;
+		std::string colonyName = "Hollow Reach";
 		std::string id = "top_bar";
 	};
 
@@ -41,26 +41,28 @@ class TopBar : public UI::Component {
 	/// Layout the top bar within viewport bounds
 	void layout(const Foundation::Rect& bounds) override;
 
-	/// Update from time model (call each frame)
-	void updateData(const TimeModel& timeModel);
+	/// Refresh from the time model and current survivor count (call each frame)
+	void updateData(const TimeModel& timeModel, int survivorCount);
 
 	/// Handle input events - delegates to children via dispatchEvent
 	bool handleEvent(UI::InputEvent& event) override;
 
-	// render() inherited from Component - auto-renders children
+	/// Paint the bar background, identity, and clock, then the child controls
+	void render() override;
 
 	/// Get height of the top bar
 	[[nodiscard]] float getHeight() const override { return kBarHeight; }
 
   private:
 	// Layout constants
-	static constexpr float kBarHeight = 32.0F;
-	static constexpr float kLeftPadding = 12.0F;
-	static constexpr float kButtonSpacing = 4.0F;
+	static constexpr float kBarHeight = 52.0F;
+	static constexpr float kPadH = 12.0F;	   // horizontal edge padding
+	static constexpr float kSpeedSpacing = 2.0F;
+	static constexpr float kPillPadding = 4.0F;
+	static constexpr float kMenuWidth = 64.0F;
+	static constexpr float kMenuHeight = 28.0F;
 
-	// Child handles
-	UI::LayerHandle backgroundHandle;
-	UI::LayerHandle dateTimeDisplayHandle;
+	// Child handles (interactive controls only)
 	UI::LayerHandle pauseButtonHandle;
 	UI::LayerHandle speed1ButtonHandle;
 	UI::LayerHandle speed2ButtonHandle;
@@ -72,10 +74,26 @@ class TopBar : public UI::Component {
 	std::function<void(ecs::GameSpeed)> onSpeedChange;
 	std::function<void()> onMenuClick;
 
-	/// Update speed button active states
+	// Cached display data (built in updateData, drawn in render)
+	std::string colonyName;
+	std::string dayStr;			// "Day 14"
+	std::string seasonStr;		// "SPRING" (uppercased)
+	std::string timeStr;		// "09:42"
+	std::string survivorPart;	// "3 survivors"
+	std::string solPart;		// "Sol 14"
+
+	// Computed layout (set by positionElements)
+	float rowY = 0.0F;		   // vertical center of the bar
+	float dayX = 0.0F;
+	float seasonX = 0.0F;
+	float timeX = 0.0F;
+	float subDotX = 0.0F;	   // middot separator x in the sub-line
+	float subSolX = 0.0F;	   // "Sol D" run x in the sub-line
+	Foundation::Rect pillRect{};
+
 	void updateSpeedButtonStates(ecs::GameSpeed currentSpeed);
 
-	/// Position all elements
+	/// Measure widths and place the clock cluster, speed pill, and menu button
 	void positionElements();
 };
 

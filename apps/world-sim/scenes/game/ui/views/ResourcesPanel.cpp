@@ -1,7 +1,7 @@
 #include "ResourcesPanel.h"
 
 #include <primitives/Primitives.h>
-#include <theme/Theme.h>
+#include <theme/Tokens.h>
 
 #include <string>
 
@@ -40,10 +40,11 @@ ResourcesPanel::ResourcesPanel(const Args& args)
 		.position = {0.0F, kHeaderHeight},
 		.size = {panelWidth, kExpandedHeight - kHeaderHeight},
 		.style = {
-			.fill = UI::Theme::Colors::panelBackground,
+			.fill = UI::bg_panel,
 			.border = Foundation::BorderStyle{
-				.color = UI::Theme::Colors::panelBorder,
-				.width = 1.0F
+				.color = UI::line_edge,
+				.width = UI::bw,
+				.cornerRadius = UI::r_md
 			}
 		},
 		.id = "resources_content_bg",
@@ -55,7 +56,7 @@ ResourcesPanel::ResourcesPanel(const Args& args)
 		.position = {kPadding, kHeaderHeight + kPadding},
 		.text = "No stockpiles built.\nCreate one to track\ncolony resources.",
 		.style = {
-			.color = UI::Theme::Colors::textMuted,
+			.color = UI::text_dim,
 			.fontSize = 12.0F
 		},
 		.id = "resources_empty_msg",

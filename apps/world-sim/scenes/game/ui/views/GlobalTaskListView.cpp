@@ -3,7 +3,7 @@
 #include "scenes/game/ui/components/GlobalTaskRow.h"
 
 #include <primitives/Primitives.h>
-#include <theme/Theme.h>
+#include <theme/Tokens.h>
 
 #include <format>
 
@@ -42,10 +42,11 @@ GlobalTaskListView::GlobalTaskListView(const Args& args)
 		.position = {0.0F, kHeaderHeight},
 		.size = {panelWidth, kExpandedMaxHeight - kHeaderHeight},
 		.style = {
-			.fill = UI::Theme::Colors::panelBackground,
+			.fill = UI::bg_panel,
 			.border = Foundation::BorderStyle{
-				.color = UI::Theme::Colors::panelBorder,
-				.width = 1.0F
+				.color = UI::line_edge,
+				.width = UI::bw,
+				.cornerRadius = UI::r_md
 			}
 		},
 		.id = "tasks_content_bg",

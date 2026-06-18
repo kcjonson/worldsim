@@ -19,7 +19,6 @@ add_executable(world-sim
     scenes/game/ui/components/GlobalTaskRow.cpp
     scenes/game/ui/components/NeedBar.cpp
     scenes/game/ui/components/ZoomControl.cpp
-    scenes/game/ui/components/DateTimeDisplay.cpp
     scenes/game/ui/components/SpeedButton.cpp
     # Game scene UI - adapters
     scenes/game/ui/adapters/ColonistAdapter.cpp

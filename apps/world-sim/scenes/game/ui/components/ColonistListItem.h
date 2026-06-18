@@ -1,38 +1,31 @@
 #pragma once
 
-// ColonistListItem - A selectable item in the colonist list panel.
+// ColonistListItem - a selectable colonist card in the roster (Salvage look).
 //
-// Displays a single colonist with:
-// - Portrait (mesh rendered with clipping)
-// - Name text (centered)
-// - Mood bar (horizontal bar with color gradient)
-// - Selection highlight when selected
-//
-// Implements IComponent for use in LayoutContainer.
+// A mood-tinted Avatar, the colonist's first name with a mood percentage, and a
+// mood meter. The active card raises its background and shows an amber left edge.
+// Drawn entirely inline via the Primitives/Avatar APIs (no child components).
 
 #include "scenes/game/ui/adapters/ColonistAdapter.h"
 
 #include <component/Component.h>
-#include <ecs/World.h>
-#include <graphics/Color.h>
-#include <layer/Layer.h>
-#include <shapes/Shapes.h>
+#include <ecs/EntityID.h>
+#include <input/InputEvent.h>
 
 #include <functional>
 #include <string>
-#include <vector>
 
 namespace world_sim {
 
-/// A single colonist item for list display
+/// A single colonist card for the roster.
 class ColonistListItem : public UI::Component {
   public:
 	using SelectCallback = std::function<void(ecs::EntityID)>;
 
 	struct Args {
 		adapters::ColonistData colonist;
-		float width = 60.0F;
-		float height = 50.0F;
+		float width = 184.0F;
+		float height = 46.0F;
 		bool isSelected = false;
 		float itemMargin = 0.0F;
 		SelectCallback onSelect = nullptr;
@@ -43,13 +36,12 @@ class ColonistListItem : public UI::Component {
 
 	// IComponent overrides
 	void render() override;
-	void setPosition(float x, float y) override;
 	bool handleEvent(UI::InputEvent& event) override;
 	bool containsPoint(Foundation::Vec2 point) const override;
 
 	// Data updates
-	void setSelected(bool selected);
-	void setMood(float mood);
+	void setSelected(bool newSelected) { selected = newSelected; }
+	void setMood(float newMood) { mood = newMood; }
 	void setColonistData(const adapters::ColonistData& data);
 
 	// Accessors
@@ -57,44 +49,14 @@ class ColonistListItem : public UI::Component {
 	[[nodiscard]] bool isSelected() const { return selected; }
 
   private:
-	void updateBackgroundStyle();
-	void updateMoodBar();
-	void renderPortrait();
-	[[nodiscard]] Foundation::Color getMoodTintedBackground() const;
+	static std::string firstNameOf(const std::string& full);
 
-	// Cached mesh data for portrait rendering
-	struct CachedMeshData {
-		float minX = 0.0F;
-		float maxX = 0.0F;
-		float minY = 0.0F;
-		float maxY = 0.0F;
-		float width = 0.0F;
-		float height = 0.0F;
-		float scale = 0.0F;
-		bool valid = false;
-	};
-
-	// State
 	ecs::EntityID entityId;
 	std::string name;
+	std::string firstName;
 	float mood = 100.0F;
 	bool selected = false;
 	SelectCallback onSelect;
-
-	// Child handles
-	UI::LayerHandle backgroundHandle;
-	UI::LayerHandle nameTextHandle;
-	UI::LayerHandle moodBarHandle;
-
-	// Cached data for portrait rendering
-	static CachedMeshData cachedMesh;
-	std::vector<Foundation::Vec2> screenVerts;
-
-	// Layout constants
-	static constexpr float kPortraitSize = 32.0F;
-	static constexpr float kPortraitMargin = 4.0F;
-	static constexpr float kMoodBarHeight = 4.0F;
-	static constexpr float kMoodBarOffset = 6.0F;
 };
 
-} // namespace world_sim
+}  // namespace world_sim
