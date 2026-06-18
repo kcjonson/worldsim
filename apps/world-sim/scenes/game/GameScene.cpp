@@ -322,6 +322,11 @@ namespace {
 				// its navmesh input; wired here for the same reason ConstructionSystem is.
 				ecsWorld->getSystem<ecs::NavigationSystem>().setConstructionWorld(&m_drawingSystem->world());
 
+				// VisionSystem reads the same ConstructionWorld so walls occlude sight:
+				// its GeometryIndex turns built walls into opaque occluders and gates
+				// discovery by a per-observer visibility polygon.
+				ecsWorld->getSystem<ecs::VisionSystem>().setConstructionWorld(&m_drawingSystem->world());
+
 				// WallCollisionSystem reads the same store for its built-wall safety net.
 				ecsWorld->getSystem<ecs::WallCollisionSystem>().setConstructionWorld(&m_drawingSystem->world());
 

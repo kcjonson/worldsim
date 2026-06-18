@@ -80,6 +80,13 @@ namespace ecs {
 		[[nodiscard]] std::size_t occluderCount() const { return m_occluders.size(); }
 		[[nodiscard]] bool		  hasWorld() const { return m_world != nullptr; }
 
+		// Monotonic counter bumped on each actual rebuild() (not on no-op
+		// rebuildIfStale calls). A consumer caching anything derived from the
+		// occluder set (e.g. the Vision System's per-observer visibility polygons)
+		// invalidates its cache when this moves. Starts at 0; the first rebuild
+		// makes it 1, so a never-built index (generation 0) is distinguishable.
+		[[nodiscard]] std::uint64_t generation() const { return m_generation; }
+
 		// Accessors for the V3 structure-as-observable pass.
 		[[nodiscard]] const std::vector<OccluderRecord>& occluders() const { return m_occluders; }
 		[[nodiscard]] const std::vector<SegmentRecord>&	 builtSegments() const { return m_segments; }
@@ -95,6 +102,9 @@ namespace ecs {
 		// match and wrongly skip).
 		static constexpr std::uint64_t kInvalidVersion = ~0ULL;
 		std::uint64_t				   m_builtVersion = kInvalidVersion;
+
+		// Bumped by rebuild(); see generation().
+		std::uint64_t m_generation = 0;
 
 		std::vector<OccluderRecord> m_occluders;
 		std::vector<SegmentRecord>	m_segments;

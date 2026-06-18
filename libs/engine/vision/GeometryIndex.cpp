@@ -57,6 +57,7 @@ namespace ecs {
 	}
 
 	void GeometryIndex::rebuild() {
+		++m_generation; // every actual rebuild moves the generation a cache can gate on
 		m_occluders.clear();
 		m_segments.clear();
 		m_openings.clear();

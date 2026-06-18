@@ -13,6 +13,10 @@
 #include "world/chunk/Chunk.h"
 #include "world/chunk/ChunkManager.h"
 
+#include "nav/NavCoords.h"
+
+#include <predicates/Predicates.h>
+
 #include <utils/Log.h>
 
 #include <cmath>
@@ -94,9 +98,11 @@ namespace ecs {
 		}
 		m_frameCounter = 0;
 
-		if (m_placementExecutor == nullptr || m_processedChunks == nullptr) {
-			return;
-		}
+		// Refresh the wall-occluder cache before any observer reads it (version-gated,
+		// so this is a no-op when the construction graph hasn't changed). With no
+		// construction world wired the index stays empty and every observer below
+		// takes the outdoor fast path.
+		m_geometry.rebuildIfStale();
 
 		// Register terrain definitions on first update
 		ensureTerrainDefinitionsRegistered();
@@ -106,6 +112,9 @@ namespace ecs {
 
 		auto& registry = engine::assets::AssetRegistry::Get();
 		auto& recipeRegistry = engine::assets::RecipeRegistry::Get();
+
+		// Scratch reused across observers to avoid per-observer allocation.
+		std::vector<geometry::OccluderSegment> occluderScratch;
 
 		// Iterate all entities with Position and Memory components
 		for (auto [entity, pos, memory] : world->view<Position, Memory>()) {
@@ -126,50 +135,107 @@ namespace ecs {
 
 			float sightRadiusSq = memory.sightRadius * memory.sightRadius;
 
-			// Query each potentially visible chunk for placed entities
-			for (int32_t cy = chunkMinY; cy <= chunkMaxY; ++cy) {
-				for (int32_t cx = chunkMinX; cx <= chunkMaxX; ++cx) {
-					engine::world::ChunkCoordinate coord{cx, cy};
+			// --- Occlusion gate setup (per observer) ---
+			//
+			// Find the opaque wall occluders within this observer's sight radius. The
+			// meters->mm boundary is crossed here (and only here) via NavCoords.
+			const std::int64_t	   radiusMm = std::llround(static_cast<double>(memory.sightRadius) * 1000.0);
+			const geometry::Vec2i64 observerMm = engine::nav::toMm(pos.value);
+			m_geometry.queryOccluders(observerMm, radiusMm, occluderScratch);
+			const bool outdoors = occluderScratch.empty();
 
-					// Only query processed chunks for placed entities
-					if (m_processedChunks->find(coord) == m_processedChunks->end()) {
-						continue;
-					}
+			// Outdoor fast path: no occluder anywhere in range means no polygon and no
+			// gate -- the radius test alone decides visibility, exactly as before walls
+			// existed. This is the common case and must stay as cheap as the (already
+			// cheap) occluder query. Only when a wall is nearby do we build/lookup a
+			// visibility polygon and gate candidates against it.
+			VisibilityCache* cache = nullptr;
+			if (!outdoors) {
+				VisibilityCache& entry = m_visibilityCache[entity];
+				entry.seenThisTick = true;
 
-					const auto* chunkIndex = m_placementExecutor->getChunkIndex(coord);
-					if (chunkIndex == nullptr) {
-						continue;
-					}
+				// Rebuild conditions (D3): no usable polygon yet, the wall set changed
+				// (GeometryIndex generation moved), or the observer moved more than ~0.5 m
+				// from where the polygon was built. A stationary indoor colonist hits none
+				// of these and reuses last tick's polygon.
+				const float	  dxc = pos.value.x - entry.builtPos.x;
+				const float	  dyc = pos.value.y - entry.builtPos.y;
+				const bool	  moved = (dxc * dxc + dyc * dyc) > (0.5F * 0.5F);
+				const bool	  staleGen = entry.builtVersion != m_geometry.generation();
+				const bool	  noPolygon = !entry.hadOccluders;
+				if (moved || staleGen || noPolygon) {
+					entry.polygon = geometry::computeVisibilityPolygon(observerMm, radiusMm, occluderScratch);
+					entry.builtPos = pos.value;
+					entry.builtVersion = m_geometry.generation();
+					entry.hadOccluders = true;
+					++m_polygonBuildCount;
+				}
+				cache = &entry;
+			}
 
-					// Query entities within sight radius from this chunk
-					auto nearbyEntities = chunkIndex->queryRadius(pos.value, memory.sightRadius);
+			// A candidate already inside the sight radius is visible iff it is not
+			// strictly outside the visibility polygon (Inside or OnBoundary count as
+			// seen). Outdoors there is no polygon, so everything in radius is visible.
+			auto visible = [&](const glm::vec2& candidatePos) -> bool {
+				if (cache == nullptr) {
+					return true;
+				}
+				return geometry::pointInPolygon(engine::nav::toMm(candidatePos), cache->polygon)
+					   != geometry::PointInPolygon::Outside;
+			};
 
-					// Remember each discovered entity
-					for (const auto* placedEntity : nearbyEntities) {
-						// Get defNameId and capability mask for registry notification
-						uint32_t defNameId = registry.getDefNameId(placedEntity->defName);
-						if (defNameId == 0) {
+			// Pass 1: placed entities from world generation (needs placement data wired).
+			if (m_placementExecutor != nullptr && m_processedChunks != nullptr) {
+				// Query each potentially visible chunk for placed entities
+				for (int32_t cy = chunkMinY; cy <= chunkMaxY; ++cy) {
+					for (int32_t cx = chunkMinX; cx <= chunkMaxX; ++cx) {
+						engine::world::ChunkCoordinate coord{cx, cy};
+
+						// Only query processed chunks for placed entities
+						if (m_processedChunks->find(coord) == m_processedChunks->end()) {
 							continue;
 						}
-						uint8_t capabilityMask = registry.getCapabilityMask(defNameId);
 
-						// Remember in colonist's memory (returns true only for NEW discoveries)
-						bool isNewDiscovery = memory.rememberWorldEntity(placedEntity->position, defNameId, capabilityMask);
+						const auto* chunkIndex = m_placementExecutor->getChunkIndex(coord);
+						if (chunkIndex == nullptr) {
+							continue;
+						}
 
-						// Update permanent knowledge if Knowledge component exists
-						if (isNewDiscovery && knowledge != nullptr && knowledge->learn(defNameId)) {
-							// New discovery - check for recipe unlocks
-							std::string unlockedRecipe = checkForRecipeUnlock(*knowledge, defNameId, registry, recipeRegistry);
-							if (!unlockedRecipe.empty() && m_onRecipeDiscovery) {
-								m_onRecipeDiscovery(unlockedRecipe);
+						// Query entities within sight radius from this chunk
+						auto nearbyEntities = chunkIndex->queryRadius(pos.value, memory.sightRadius);
+
+						// Remember each discovered entity
+						for (const auto* placedEntity : nearbyEntities) {
+							// Occlusion gate: skip entities a wall hides.
+							if (!visible(placedEntity->position)) {
+								continue;
+							}
+
+							// Get defNameId and capability mask for registry notification
+							uint32_t defNameId = registry.getDefNameId(placedEntity->defName);
+							if (defNameId == 0) {
+								continue;
+							}
+							uint8_t capabilityMask = registry.getCapabilityMask(defNameId);
+
+							// Remember in colonist's memory (returns true only for NEW discoveries)
+							bool isNewDiscovery = memory.rememberWorldEntity(placedEntity->position, defNameId, capabilityMask);
+
+							// Update permanent knowledge if Knowledge component exists
+							if (isNewDiscovery && knowledge != nullptr && knowledge->learn(defNameId)) {
+								// New discovery - check for recipe unlocks
+								std::string unlockedRecipe = checkForRecipeUnlock(*knowledge, defNameId, registry, recipeRegistry);
+								if (!unlockedRecipe.empty() && m_onRecipeDiscovery) {
+									m_onRecipeDiscovery(unlockedRecipe);
+								}
 							}
 						}
 					}
 				}
 			}
 
-			// Scan for ECS entities with Appearance (e.g., bio piles created by ActionSystem)
-			// These are runtime-spawned entities, as opposed to those placed during world generation
+			// Pass 2: ECS entities with Appearance (e.g., bio piles created by ActionSystem).
+			// These are runtime-spawned entities, as opposed to those placed during world generation.
 			for (auto [otherEntity, otherPos, appearance] : world->view<Position, Appearance>()) {
 				// Don't "see" yourself
 				if (otherEntity == entity) {
@@ -180,6 +246,11 @@ namespace ecs {
 				float dx = otherPos.value.x - pos.value.x;
 				float dy = otherPos.value.y - pos.value.y;
 				if (dx * dx + dy * dy <= sightRadiusSq) {
+					// Occlusion gate: skip entities a wall hides.
+					if (!visible(otherPos.value)) {
+						continue;
+					}
+
 					// Get defNameId and capability mask from registry
 					uint32_t defNameId = registry.getDefNameId(appearance.defName);
 					if (defNameId != 0) {
@@ -200,9 +271,9 @@ namespace ecs {
 				}
 			}
 
-			// Scan for shore tiles using pre-cached shore tile positions
+			// Pass 3: shore tiles using pre-cached shore tile positions.
 			// Shore tiles are pre-computed during chunk generation for O(N) lookup
-			// instead of iterating all ~3600 tiles in vision range every frame
+			// instead of iterating all ~3600 tiles in vision range every frame.
 			if (m_chunkManager != nullptr && m_shoreTileDefNameId != 0) {
 				for (int32_t cy = chunkMinY; cy <= chunkMaxY; ++cy) {
 					for (int32_t cx = chunkMinX; cx <= chunkMaxX; ++cx) {
@@ -225,6 +296,11 @@ namespace ecs {
 							float dx = shoreWorldPos.x - pos.value.x;
 							float dy = shoreWorldPos.y - pos.value.y;
 							if (dx * dx + dy * dy <= sightRadiusSq) {
+								// Occlusion gate: skip shore a wall hides.
+								if (!visible(shoreWorldPos)) {
+									continue;
+								}
+
 								memory.rememberWorldEntity(shoreWorldPos, m_shoreTileDefNameId, m_shoreTileCapabilityMask);
 
 								// Update permanent knowledge for shore tiles
@@ -239,6 +315,17 @@ namespace ecs {
 						}
 					}
 				}
+			}
+		}
+
+		// Prune cache entries for observers not seen this tick (dead/despawned, or moved
+		// outdoors so no longer carry an entry). Mark-and-sweep keeps the map bounded.
+		for (auto it = m_visibilityCache.begin(); it != m_visibilityCache.end();) {
+			if (it->second.seenThisTick) {
+				it->second.seenThisTick = false; // reset for next tick
+				++it;
+			} else {
+				it = m_visibilityCache.erase(it);
 			}
 		}
 	}
