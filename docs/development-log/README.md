@@ -64,6 +64,7 @@ Development log entries are **immutable history**. Don't update old entries — 
 
 #### June 2026
 
+- [2026-06-18 - Dialogs de-hand-rolled with a ListRow primitive](./entries/2026-06-18-dialog-listrow-migration.md)
 - [2026-06-18 - Salvage UI cutover complete](./entries/2026-06-18-salvage-ui-cutover.md)
 - [2026-06-16 - Navigation v1: colonists path the world](./entries/2026-06-16-navigation-v1.md)
 - [2026-06-15 - Fluvial erosion (stream-power valley carving)](./entries/2026-06-15-worldgen-fluvial-erosion.md)
