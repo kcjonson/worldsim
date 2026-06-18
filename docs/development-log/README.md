@@ -64,6 +64,7 @@ Development log entries are **immutable history**. Don't update old entries — 
 
 #### June 2026
 
+- [2026-06-18 - Vision System: honest sight and belief](./entries/2026-06-18-vision-system.md)
 - [2026-06-18 - Salvage UI cutover complete](./entries/2026-06-18-salvage-ui-cutover.md)
 - [2026-06-16 - Navigation v1: colonists path the world](./entries/2026-06-16-navigation-v1.md)
 - [2026-06-15 - Fluvial erosion (stream-power valley carving)](./entries/2026-06-15-worldgen-fluvial-erosion.md)
@@ -104,9 +105,10 @@ Development log entries are **immutable history**. Don't update old entries — 
 
 ## Quick Stats
 
-- **Total Entries:** 72 (entry files; the Major Milestones list below highlights notable ones)
-- **Latest Entry:** 2026-06-16
+- **Total Entries:** 74 (entry files; the Major Milestones list below highlights notable ones)
+- **Latest Entry:** 2026-06-18
 - **Major Milestones:**
+  - Vision System: honest sight (walls occlude, doors/windows pass) + honest belief (remember what's seen, forget what's gone) (2026-06-18)
   - Navigation v1: colonists path around walls/water/trees on a dynamic navmesh, through doors (2026-06-16)
   - Fluvial erosion: stream-power valley carving so rivers land in valleys (2026-06-15)
   - Water availability + plate-boundary realism: real drainage, landing water signal, curved rift cuts (2026-06-15)
