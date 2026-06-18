@@ -250,11 +250,11 @@ Dossier anatomy:
 
 ![Colonist dossier regions](../mocks/colonist-dossier-anatomy.svg)
 
-Opened by double-clicking a colonist card (roster or info panel eye button). A `Modal` (size `lg`) using the design-system Modal primitive.
+Opened by double-clicking a colonist card (roster or info panel eye button). A `Dialog` (size `lg`, modal) using the design-system Dialog primitive.
 
 ### Header area
 
-Avatar (72px, mood-tinted) beside a 2×2 `Stat` grid: Role, Origin, Age (unit "yrs"), Mood (percentage, tone crit if < 0.4, else ok). Modal kicker: "Personnel File · {role}". Modal title: colonist name.
+Avatar (72px, mood-tinted) beside a 2×2 `Stat` grid: Role, Origin, Age (unit "yrs"), Mood (percentage, tone crit if < 0.4, else ok). Dialog kicker: "Personnel File · {role}". Dialog title: colonist name.
 
 ### Tabs (6)
 
@@ -309,7 +309,7 @@ Chronological mono log entries (`--fs-xs`, `--text-dim`). Mock entries (newest f
 - 07:55 — Woke up (slept on the ground, −4 mood)
 - 06:10 — Finished repairing the salvage cutter
 
-### Modal footer
+### Dialog footer
 
 Three buttons: Close (ghost, sm), Work Priorities (secondary, sm, icon `list`), Draft (primary, sm, icon `bolt`).
 

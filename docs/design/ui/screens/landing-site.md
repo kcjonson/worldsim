@@ -107,7 +107,7 @@ The screen itself has no phases (unlike WorldGen). The only state change is the 
 - Stage hint: "Click the surface to set your descent vector"
 - Footer note: "You can land anywhere on solid ground. Choose well — there is no second descent."
 - "Confirm Landing Site" button
-- Modal title: `Commit to Descent`
-- Modal kicker: `Confirm`
-- Modal body: "Your colony will begin at **{coords}** — {biome}. Once you commit, there is no turning back."
+- Dialog title: `Commit to Descent`
+- Dialog kicker: `Confirm`
+- Dialog body: "Your colony will begin at **{coords}** — {biome}. Once you commit, there is no turning back."
 - "Begin Descent" button

@@ -446,7 +446,7 @@ TEST(FocusManagerTest, MixedExplicitAndAutoTabIndex) {
 }
 
 // ============================================================================
-// Focus Scope Tests (Modals)
+// Focus Scope Tests (modal dialogs)
 // ============================================================================
 
 TEST(FocusManagerTest, PushFocusScope) {

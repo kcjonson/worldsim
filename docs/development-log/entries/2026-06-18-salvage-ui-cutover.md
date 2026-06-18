@@ -23,5 +23,5 @@ A few decisions worth recording. Symbols that were drawn from the font atlas (mi
 
 ## Next Steps
 
-- **Dialog redesign (deferred).** `CraftingDialog` and `StorageConfigDialog` were color-tokenized, not rebuilt. The prototype's tabbed colonist dossier (Modal `lg`) and a fuller dialog treatment remain; the two crafting/storage dialogs are still hand-rolled rather than built on the `Modal` primitive.
+- **Dialog redesign (deferred).** `CraftingDialog` and `StorageConfigDialog` were color-tokenized, not rebuilt. The prototype's tabbed colonist dossier (a `Dialog`, size `lg`) and a fuller dialog treatment remain; the two crafting/storage dialogs are still hand-rolled rather than built on the `Dialog` component.
 - **Dead `TaskListView`.** It has no open path in the current UI (the info-panel details button opens the colonist dossier instead). Either re-wire it or delete it.
