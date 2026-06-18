@@ -5,7 +5,7 @@
 #include <input/InputTypes.h>
 #include <primitives/Primitives.h>
 #include <shapes/Shapes.h>
-#include <theme/Theme.h>
+#include <theme/Tokens.h>
 
 namespace {
 	// Item list dimensions
@@ -366,7 +366,7 @@ namespace world_sim {
 					{.text = indicator + group.label,
 					 .position = {bounds.x + 4.0F, bounds.y + (kCategoryHeaderHeight - 14.0F) / 2.0F},
 					 .scale = 13.0F / 16.0F,
-					 .color = UI::Theme::Colors::textTitle,
+					 .color = UI::text_bright,
 					 .id = "category-text"}
 				);
 
@@ -409,7 +409,7 @@ namespace world_sim {
 				}
 
 				// Text color based on rules
-				Foundation::Color textColor = item.hasRules ? UI::Theme::Colors::textBody : UI::Theme::Colors::textMuted;
+				Foundation::Color textColor = item.hasRules ? UI::text : UI::text_dim;
 
 				// Draw item label
 				Renderer::Primitives::drawText(
@@ -426,7 +426,7 @@ namespace world_sim {
 					{.text = countStr,
 					 .position = {bounds.x + bounds.width - countWidth, bounds.y + (kItemHeight - 11.0F) / 2.0F},
 					 .scale = 11.0F / 16.0F,
-					 .color = UI::Theme::Colors::textMuted,
+					 .color = UI::text_dim,
 					 .id = "item-count"}
 				);
 			}
@@ -502,7 +502,7 @@ namespace world_sim {
 				UI::Text(
 					UI::Text::Args{
 						.text = "Select an item to configure",
-						.style = {.color = UI::Theme::Colors::textMuted, .fontSize = 14},
+						.style = {.color = UI::text_dim, .fontSize = 14},
 						.margin = 8.0F
 					}
 				)
@@ -514,14 +514,14 @@ namespace world_sim {
 		centerCol->addChild(
 			UI::Text(
 				UI::Text::Args{
-					.text = selectedData->label, .style = {.color = UI::Theme::Colors::textTitle, .fontSize = 16}, .margin = 8.0F
+					.text = selectedData->label, .style = {.color = UI::text_bright, .fontSize = 16}, .margin = 8.0F
 				}
 			)
 		);
 
 		// ADD RULE section header
 		centerCol->addChild(
-			UI::Text(UI::Text::Args{.text = "ADD RULE", .style = {.color = UI::Theme::Colors::textMuted, .fontSize = 11}, .margin = 6.0F})
+			UI::Text(UI::Text::Args{.text = "ADD RULE", .style = {.color = UI::text_dim, .fontSize = 11}, .margin = 6.0F})
 		);
 
 		// Priority dropdown
@@ -538,7 +538,7 @@ namespace world_sim {
 		priorityRow.addChild(
 			UI::Text(
 				UI::Text::Args{
-					.width = 80, .text = "Priority:", .style = {.color = UI::Theme::Colors::textBody, .fontSize = 12}, .margin = 4.0F
+					.width = 80, .text = "Priority:", .style = {.color = UI::text, .fontSize = 12}, .margin = 4.0F
 				}
 			)
 		);
@@ -587,7 +587,7 @@ namespace world_sim {
 
 		minRow.addChild(
 			UI::Text(
-				UI::Text::Args{.width = 80, .text = "Min:", .style = {.color = UI::Theme::Colors::textBody, .fontSize = 12}, .margin = 4.0F}
+				UI::Text::Args{.width = 80, .text = "Min:", .style = {.color = UI::text, .fontSize = 12}, .margin = 4.0F}
 			)
 		);
 
@@ -620,7 +620,7 @@ namespace world_sim {
 
 		maxRow.addChild(
 			UI::Text(
-				UI::Text::Args{.width = 80, .text = "Max:", .style = {.color = UI::Theme::Colors::textBody, .fontSize = 12}, .margin = 4.0F}
+				UI::Text::Args{.width = 80, .text = "Max:", .style = {.color = UI::text, .fontSize = 12}, .margin = 4.0F}
 			)
 		);
 
@@ -666,7 +666,7 @@ namespace world_sim {
 		// Quality dropdowns (disabled for now)
 		centerCol->addChild(
 			UI::Text(
-				UI::Text::Args{.text = "Min Quality:", .style = {.color = UI::Theme::Colors::textMuted, .fontSize = 12}, .margin = 6.0F}
+				UI::Text::Args{.text = "Min Quality:", .style = {.color = UI::text_dim, .fontSize = 12}, .margin = 6.0F}
 			)
 		);
 
@@ -676,7 +676,7 @@ namespace world_sim {
 
 		centerCol->addChild(
 			UI::Text(
-				UI::Text::Args{.text = "Max Quality:", .style = {.color = UI::Theme::Colors::textMuted, .fontSize = 12}, .margin = 6.0F}
+				UI::Text::Args{.text = "Max Quality:", .style = {.color = UI::text_dim, .fontSize = 12}, .margin = 6.0F}
 			)
 		);
 
@@ -748,13 +748,13 @@ namespace world_sim {
 		const auto* selectedData = model.selectedItemData();
 		if (selectedData == nullptr) {
 			rulesLayout.addChild(
-				UI::Text(UI::Text::Args{.text = "RULES", .style = {.color = UI::Theme::Colors::textMuted, .fontSize = 11}, .margin = 4.0F})
+				UI::Text(UI::Text::Args{.text = "RULES", .style = {.color = UI::text_dim, .fontSize = 11}, .margin = 4.0F})
 			);
 
 			rulesLayout.addChild(
 				UI::Text(
 					UI::Text::Args{
-						.text = "Select an item", .style = {.color = UI::Theme::Colors::textMuted, .fontSize = 12}, .margin = 4.0F
+						.text = "Select an item", .style = {.color = UI::text_dim, .fontSize = 12}, .margin = 4.0F
 					}
 				)
 			);
@@ -764,7 +764,7 @@ namespace world_sim {
 				UI::Text(
 					UI::Text::Args{
 						.text = selectedData->label + " RULES",
-						.style = {.color = UI::Theme::Colors::textMuted, .fontSize = 11},
+						.style = {.color = UI::text_dim, .fontSize = 11},
 						.margin = 4.0F
 					}
 				)
@@ -775,7 +775,7 @@ namespace world_sim {
 				rulesLayout.addChild(
 					UI::Text(
 						UI::Text::Args{
-							.text = "No rules configured", .style = {.color = UI::Theme::Colors::textMuted, .fontSize = 12}, .margin = 4.0F
+							.text = "No rules configured", .style = {.color = UI::text_dim, .fontSize = 12}, .margin = 4.0F
 						}
 					)
 				);
@@ -815,14 +815,14 @@ namespace world_sim {
 
 					ruleRow.addChild(
 						UI::Text(
-							UI::Text::Args{.text = summary, .style = {.color = UI::Theme::Colors::textBody, .fontSize = 12}, .margin = 1.0F}
+							UI::Text::Args{.text = summary, .style = {.color = UI::text, .fontSize = 12}, .margin = 1.0F}
 						)
 					);
 
 					ruleRow.addChild(
 						UI::Text(
 							UI::Text::Args{
-								.text = details, .style = {.color = UI::Theme::Colors::textMuted, .fontSize = 10}, .margin = 1.0F
+								.text = details, .style = {.color = UI::text_dim, .fontSize = 10}, .margin = 1.0F
 							}
 						)
 					);
