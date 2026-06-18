@@ -2,7 +2,6 @@
 
 #include <layout/LayoutContainer.h>
 #include <shapes/Shapes.h>
-#include <theme/Theme.h>
 
 namespace world_sim {
 
