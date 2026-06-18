@@ -8,7 +8,12 @@
 #include <assets/AssetRegistry.h>
 #include <assets/ConstructionRegistry.h>
 #include <assets/RecipeRegistry.h>
+#include <assets/placement/PlacementExecutor.h>
+#include <assets/placement/SpatialIndex.h>
 #include <construction/ConstructionWorld.h>
+#include <world/chunk/ChunkCoordinate.h>
+
+#include <unordered_set>
 
 #include <glm/vec2.hpp>
 
@@ -21,6 +26,10 @@ using namespace ecs;
 using engine::assets::AssetRegistry;
 using engine::assets::CapabilityType;
 using engine::assets::ConstructionRegistry;
+using engine::assets::PlacedEntity;
+using engine::assets::PlacementExecutor;
+using engine::assets::SpatialIndex;
+using engine::world::ChunkCoordinate;
 using engine::construction::ConstructionWorld;
 using engine::construction::FoundationState;
 using engine::construction::kInvalidFoundation;
@@ -88,6 +97,31 @@ namespace {
 	bool remembers(World& world, EntityID observer, glm::vec2 at) {
 		const Memory* mem = world.getComponent<Memory>(observer);
 		return mem != nullptr && mem->knowsWorldEntity(at, kTargetDefName);
+	}
+
+	// A minimal pass-1 placement setup: a PlacementExecutor holding one chunk index
+	// with a single placed `kTargetDefName` entity at `at`, plus the processed-chunks
+	// set VisionSystem gates on. Built without world-gen by stuffing a SpatialIndex
+	// into the executor via storeChunkResult (synthetic def => no resource init).
+	// Owns the executor; the set is returned alive in `outProcessed`.
+	void placeTarget(
+		PlacementExecutor&				 executor,
+		std::unordered_set<ChunkCoordinate>& outProcessed,
+		glm::vec2						 at) {
+		const ChunkCoordinate coord = engine::world::worldToChunk({at.x, at.y});
+
+		SpatialIndex index;
+		PlacedEntity pe;
+		pe.defName = kTargetDefName;
+		pe.position = at;
+		index.insert(pe);
+
+		engine::assets::AsyncChunkPlacementResult result;
+		result.coord = coord;
+		result.spatialIndex = std::move(index);
+		executor.storeChunkResult(std::move(result));
+
+		outProcessed.insert(coord);
 	}
 
 	class VisionSystemTest : public ::testing::Test {
@@ -391,4 +425,169 @@ TEST_F(VisionSystemTest, RememberSegmentReturnsTrueOnce) {
 	EXPECT_FALSE(mem.rememberSegment(42));
 	EXPECT_TRUE(mem.knowsSegment(42));
 	EXPECT_EQ(mem.knownSegmentCount(), 1u);
+}
+
+// --- Stale-memory reconciliation (Pass: continuous away-from-target corrector) -
+
+// Observer discovers a placed entity via a normal tick, the entity is then removed
+// from the placement index (destructive harvest / pickup), and on the next tick --
+// with the spot still in view -- the observer forgets it.
+TEST_F(VisionSystemTest, RemovedEntityInViewIsForgotten) {
+	AssetRegistry&						reg = AssetRegistry::Get();
+	PlacementExecutor					executor(reg);
+	std::unordered_set<ChunkCoordinate> processed;
+
+	const glm::vec2 targetPos{3.0F, 0.0F};
+	placeTarget(executor, processed, targetPos);
+
+	World		  world;
+	VisionSystem& sys = world.registerSystem<VisionSystem>();
+	sys.setPlacementData(&executor, &processed);
+
+	EntityID observer = spawnObserver(world, {0.0F, 0.0F});
+
+	tick(sys);
+	ASSERT_TRUE(remembers(world, observer, targetPos)) << "precondition: observer discovers the placed entity";
+
+	// Destructive removal: gone from the index.
+	const ChunkCoordinate coord = engine::world::worldToChunk({targetPos.x, targetPos.y});
+	ASSERT_TRUE(executor.removeEntity(coord, targetPos, kTargetDefName));
+
+	tick(sys);
+	EXPECT_FALSE(remembers(world, observer, targetPos)) << "seeing the empty spot must forget the stale entry";
+}
+
+// An entity still present in the index (e.g. on a regrowth cooldown -- cooldown
+// lives in a separate map, the entity stays indexed) is NOT forgotten.
+TEST_F(VisionSystemTest, PresentEntityInViewIsKept) {
+	AssetRegistry&						reg = AssetRegistry::Get();
+	PlacementExecutor					executor(reg);
+	std::unordered_set<ChunkCoordinate> processed;
+
+	const glm::vec2 targetPos{3.0F, 0.0F};
+	placeTarget(executor, processed, targetPos);
+
+	World		  world;
+	VisionSystem& sys = world.registerSystem<VisionSystem>();
+	sys.setPlacementData(&executor, &processed);
+
+	EntityID observer = spawnObserver(world, {0.0F, 0.0F});
+
+	tick(sys);
+	ASSERT_TRUE(remembers(world, observer, targetPos));
+
+	// Put it on cooldown: still in the index, just not harvestable -> must be kept.
+	const ChunkCoordinate coord = engine::world::worldToChunk({targetPos.x, targetPos.y});
+	executor.setEntityCooldown(coord, targetPos, kTargetDefName, 30.0F);
+	ASSERT_TRUE(executor.isEntityOnCooldown(coord, targetPos, kTargetDefName));
+
+	tick(sys);
+	EXPECT_TRUE(remembers(world, observer, targetPos)) << "a cooldowned (still-indexed) entity must not be forgotten";
+}
+
+// An entity the observer cannot currently see is NOT forgotten even after removal:
+// here a solid wall stands between observer and the (removed) spot. You only forget
+// what you can see is gone.
+TEST_F(VisionSystemTest, RemovedButOccludedEntityIsKept) {
+	ConstructionWorld cw;
+	buildWall(cw, {1500, 0}, {1500, 3000}); // vertical wall at x=1.5m, y in [0,3]
+
+	AssetRegistry&						reg = AssetRegistry::Get();
+	PlacementExecutor					executor(reg);
+	std::unordered_set<ChunkCoordinate> processed;
+
+	// Target east of the wall, directly behind it from the observer's view.
+	const glm::vec2 targetPos{2.5F, 1.5F};
+	placeTarget(executor, processed, targetPos);
+
+	World		  world;
+	VisionSystem& sys = world.registerSystem<VisionSystem>();
+	sys.setPlacementData(&executor, &processed);
+	sys.setConstructionWorld(&cw);
+
+	EntityID observer = spawnObserver(world, {0.5F, 1.5F}); // west of wall
+
+	tick(sys);
+	// The wall hides it from discovery in the first place, so seed memory directly:
+	// the colonist remembers it from before the wall (or from a different vantage).
+	Memory* mem = world.getComponent<Memory>(observer);
+	ASSERT_NE(mem, nullptr);
+	mem->rememberWorldEntity(
+		targetPos, reg.getDefNameId(kTargetDefName),
+		reg.getCapabilityMask(reg.getDefNameId(kTargetDefName)));
+	ASSERT_TRUE(remembers(world, observer, targetPos));
+
+	// Remove it from the world. The observer still can't SEE the spot (wall).
+	const ChunkCoordinate coord = engine::world::worldToChunk({targetPos.x, targetPos.y});
+	ASSERT_TRUE(executor.removeEntity(coord, targetPos, kTargetDefName));
+
+	tick(sys);
+	EXPECT_TRUE(remembers(world, observer, targetPos)) << "can't see behind the wall -> must not forget";
+}
+
+// An entity outside the sight radius is NOT forgotten even after removal.
+TEST_F(VisionSystemTest, RemovedButOutOfRadiusEntityIsKept) {
+	AssetRegistry&						reg = AssetRegistry::Get();
+	PlacementExecutor					executor(reg);
+	std::unordered_set<ChunkCoordinate> processed;
+
+	// Well beyond the default 30m sight radius.
+	const glm::vec2 targetPos{100.0F, 0.0F};
+	placeTarget(executor, processed, targetPos);
+
+	World		  world;
+	VisionSystem& sys = world.registerSystem<VisionSystem>();
+	sys.setPlacementData(&executor, &processed);
+
+	EntityID observer = spawnObserver(world, {0.0F, 0.0F});
+	Memory*	 mem = world.getComponent<Memory>(observer);
+	ASSERT_NE(mem, nullptr);
+	mem->rememberWorldEntity(
+		targetPos, reg.getDefNameId(kTargetDefName),
+		reg.getCapabilityMask(reg.getDefNameId(kTargetDefName)));
+	ASSERT_TRUE(remembers(world, observer, targetPos));
+
+	const ChunkCoordinate coord = engine::world::worldToChunk({targetPos.x, targetPos.y});
+	ASSERT_TRUE(executor.removeEntity(coord, targetPos, kTargetDefName));
+
+	tick(sys);
+	EXPECT_TRUE(remembers(world, observer, targetPos)) << "out of sight radius -> must not forget";
+}
+
+// Shore-tile memory entries are synthetic terrain, never reconciled away: even with
+// placement data wired and the spot in view, the shore entry survives.
+TEST_F(VisionSystemTest, ShoreTileNeverReconciled) {
+	AssetRegistry&						reg = AssetRegistry::Get();
+	PlacementExecutor					executor(reg);
+	std::unordered_set<ChunkCoordinate> processed;
+	// Store an EMPTY placement index for chunk (0,0) so reconciliation's index path is
+	// genuinely live (getChunkIndex returns non-null). A placement entity here would
+	// be forgotten; the shore entry must survive via the shore-tile exemption, not
+	// merely because no index exists.
+	{
+		engine::assets::AsyncChunkPlacementResult emptyChunk;
+		emptyChunk.coord = ChunkCoordinate{0, 0};
+		executor.storeChunkResult(std::move(emptyChunk));
+		processed.insert(ChunkCoordinate{0, 0});
+	}
+
+	World		  world;
+	VisionSystem& sys = world.registerSystem<VisionSystem>();
+	sys.setPlacementData(&executor, &processed);
+
+	EntityID observer = spawnObserver(world, {0.0F, 0.0F});
+
+	// Run a tick so the system registers its synthetic shore def and we can look up id.
+	tick(sys);
+
+	const uint32_t shoreId = reg.getDefNameId("Terrain_Shore");
+	ASSERT_NE(shoreId, 0u);
+	const glm::vec2 shorePos{2.0F, 0.0F}; // in view, in the (empty) processed chunk
+	Memory*			mem = world.getComponent<Memory>(observer);
+	ASSERT_NE(mem, nullptr);
+	mem->rememberWorldEntity(shorePos, shoreId, reg.getCapabilityMask(shoreId));
+	ASSERT_TRUE(mem->knowsWorldEntity(shorePos, shoreId));
+
+	tick(sys);
+	EXPECT_TRUE(mem->knowsWorldEntity(shorePos, shoreId)) << "shore tiles are terrain, never reconciled away";
 }
