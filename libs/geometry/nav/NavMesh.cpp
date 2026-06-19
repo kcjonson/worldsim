@@ -28,12 +28,18 @@ namespace geometry::nav {
 			return (static_cast<std::uint64_t>(a) << 32) | static_cast<std::uint64_t>(b);
 		}
 
-		// A walkable face awaiting triangulation: its CCW outer ring (vertex
-		// indices into mesh.vertices) plus the CW hole rings nested inside it.
+		// A bounded face awaiting triangulation: its CCW outer ring (vertex indices
+		// into mesh.vertices) plus the CW hole rings nested inside it. `blocker` and
+		// `opening` carry the per-face belief tags onto every triangle the face emits:
+		// floor faces get kNoBlocker/kNoOpening, faces inside a blocked ring get that
+		// ring's provenanceId/openingId. Wall interiors are kept (not discarded) so a
+		// belief query can optimistically path through an unseen wall.
 		struct WalkableFace {
 			std::vector<std::uint32_t>				outer;
 			std::vector<std::vector<std::uint32_t>> holes;
 			Int128									areaDoubled; // positive (CCW); innermost-container key
+			std::int64_t							blocker = kNoBlocker;
+			std::int64_t							opening = kNoOpening;
 		};
 
 		std::vector<std::uint32_t> faceRingIndices(const HalfEdgeMesh& mesh, const Face& f) {
@@ -54,6 +60,17 @@ namespace geometry::nav {
 			return pts;
 		}
 
+		// |2*area| of a polygon ring (shoelace), exact in 128-bit. Used only to rank
+		// containing blocked rings by size (smallest-containing wins); sign irrelevant.
+		Int128 signedAreaDoubledAbs(const std::vector<Vec2i64>& ring) {
+			Int128 acc(0);
+			const std::size_t n = ring.size();
+			for (std::size_t i = 0; i < n; ++i) {
+				acc = acc + cross(ring[i], ring[(i + 1) % n]);
+			}
+			return acc.sign() < 0 ? Int128(0) - acc : acc;
+		}
+
 	} // namespace
 
 	NavMesh buildNavMesh(const NavMeshInput& input) {
@@ -61,15 +78,25 @@ namespace geometry::nav {
 
 		// Gather the walkable-bounds (unblocked) rings and the blocked rings. One
 		// border is the common case, but multiple disjoint walkable regions are
-		// supported: a face is walkable iff it lies inside ANY unblocked bound.
+		// supported: a face is in-bounds iff it lies inside ANY unblocked bound. Each
+		// blocked ring carries its belief tags (provenanceId/openingId) so a face
+		// landing inside it inherits them.
+		struct BlockedRing {
+			const std::vector<Vec2i64>* ring		  = nullptr;
+			std::int64_t				provenance	  = kNoProvenance;
+			std::int64_t				opening		  = kNoOpening;
+			Int128						areaDoubledAbs = Int128(0); // |2*area|, cached for smallest-containing ranking
+		};
 		std::vector<const std::vector<Vec2i64>*> borderRings;
-		std::vector<const std::vector<Vec2i64>*> blockedRings;
+		std::vector<BlockedRing>				 blockedRings;
 		for (const NavInputPolygon& poly : input.polygons) {
 			if (poly.ring.size() < 3) {
 				continue;
 			}
 			if (poly.blocked) {
-				blockedRings.push_back(&poly.ring);
+				// Cache the ring's |2*area| now (static input) so the per-face
+				// smallest-containing-ring search below is a compare, not a reshoelace.
+				blockedRings.push_back({&poly.ring, poly.provenanceId, poly.openingId, signedAreaDoubledAbs(poly.ring)});
 			} else {
 				borderRings.push_back(&poly.ring);
 			}
@@ -95,12 +122,14 @@ namespace geometry::nav {
 		const HalfEdgeMesh	mesh		= extractFaces(arrangement);
 		result.vertices					= mesh.vertices;
 
-		// 2-3. Classify bounded CCW faces. A face is walkable iff its representative
-		// point lies inside ANY unblocked border ring and inside no blocked ring.
-		// Faces whose rep is outside every border (exterior) or inside a blocked
-		// obstacle are discarded. We keep, per surviving face, its index plus its
-		// CCW ring.
-		std::vector<std::size_t>	walkableFaceIndex; // -> mesh.faces index
+		// 2-3. Classify bounded CCW faces. A face is IN-BOUNDS iff its representative
+		// point lies inside ANY unblocked border ring; faces outside every border
+		// (exterior) are discarded. In-bounds faces are KEPT whether or not they sit
+		// inside a blocked ring -- the whole region is triangulated, wall interiors
+		// included, so a belief query can optimistically path through an unseen wall.
+		// A face inside a blocked ring is tagged with that ring's belief data (the
+		// SMALLEST-area containing ring, so a door-span sub-region wins over an
+		// enclosing wall band); a floor face keeps kNoBlocker/kNoOpening.
 		std::vector<WalkableFace>	walkable;
 		for (std::size_t fi = 0; fi < mesh.faces.size(); ++fi) {
 			const Face& f = mesh.faces[fi];
@@ -118,21 +147,28 @@ namespace geometry::nav {
 			if (!insideBorder) {
 				continue; // outside every walkable bound
 			}
-			bool insideBlocked = false;
-			for (const std::vector<Vec2i64>* ring : blockedRings) {
-				if (pointInPolygon(rep, *ring) == PointInPolygon::Inside) {
-					insideBlocked = true;
-					break;
-				}
-			}
-			if (insideBlocked) {
-				continue; // interior of a blocked obstacle
-			}
 
 			WalkableFace wf;
 			wf.outer	   = faceRingIndices(mesh, f);
 			wf.areaDoubled = f.signedAreaDoubled;
-			walkableFaceIndex.push_back(fi);
+			// Pick the smallest blocked ring containing the rep, by polygon area. The
+			// door-span footprint is strictly smaller than (and abuts, never nests in)
+			// the flank bands, so this is unambiguous; the rule also degrades sanely if
+			// obstacles ever nest. Floor faces match nothing and stay kNoBlocker.
+			Int128 bestArea(0);
+			bool   tagged = false;
+			for (const BlockedRing& br : blockedRings) {
+				if (pointInPolygon(rep, *br.ring) != PointInPolygon::Inside) {
+					continue;
+				}
+				const Int128& area = br.areaDoubledAbs;
+				if (!tagged || area < bestArea) {
+					bestArea	= area;
+					wf.blocker	= br.provenance;
+					wf.opening	= br.opening;
+					tagged		= true;
+				}
+			}
 			walkable.push_back(std::move(wf));
 		}
 
@@ -178,9 +214,10 @@ namespace geometry::nav {
 			}
 		}
 
-		// 5. Triangulate each walkable face with its holes. A degenerate result for
-		// one face is skipped (its triangles omitted) rather than aborting the whole
-		// mesh -- a single bad region yields a partial mesh.
+		// 5. Triangulate each face (floor AND wall interiors) with its holes, copying
+		// the face's belief tags onto every triangle. A degenerate result for one face
+		// is skipped (its triangles omitted) rather than aborting the whole mesh -- a
+		// single bad region yields a partial mesh.
 		for (const WalkableFace& wf : walkable) {
 			std::vector<std::array<std::uint32_t, 3>> tris =
 				triangulateWithHoles(mesh.vertices, wf.outer, wf.holes);
@@ -190,6 +227,8 @@ namespace geometry::nav {
 				nt.neighbor		 = {-1, -1, -1};
 				nt.edgeProvenance = {kNoProvenance, kNoProvenance, kNoProvenance};
 				nt.edgeOpening	 = {kNoOpening, kNoOpening, kNoOpening};
+				nt.faceBlocker	 = wf.blocker;
+				nt.faceOpening	 = wf.opening;
 				// triangulateWithHoles guarantees CCW; assert the invariant cheaply
 				// by reorienting any stray triangle so downstream queries can rely on
 				// it unconditionally.
@@ -202,9 +241,11 @@ namespace geometry::nav {
 		}
 
 		// 6. Adjacency. Hash every triangle's three edges; an undirected edge shared
-		// by two triangles links them as neighbors. Walkable faces share no edges
-		// across blocked bands, so this only links intra-face neighbors and across
-		// door gaps (which are interior to a single face).
+		// by two triangles links them as neighbors. Because wall interiors are now
+		// triangulated too, floor and wall faces share their band edges and so get
+		// linked here -- that link is what lets a belief query traverse INTO an unseen
+		// wall. Truth/belief gating then happens in the path query, not the topology:
+		// the mesh is one connected graph, the filter decides which edges to cross.
 		std::unordered_map<EdgeKey, std::pair<std::int32_t, int>> firstOwner;
 		firstOwner.reserve(result.triangles.size() * 3);
 		for (std::size_t ti = 0; ti < result.triangles.size(); ++ti) {

@@ -78,6 +78,34 @@ namespace geometry::nav {
 			return {static_cast<std::int64_t>(std::llround(p.x)), static_cast<std::int64_t>(std::llround(p.y))};
 		}
 
+		// Is triangle `t` crossable for this belief? The truth-vs-belief predicate from
+		// pathfinding-architecture section 5; the door-span trick (a pathable door's
+		// footprint is a blocked face carrying faceOpening) is what makes a truth query
+		// reproduce v1: solid wall blocks, door passes.
+		bool traversable(const NavTriangle& t, const BeliefFilter& belief) {
+			if (t.faceBlocker == kNoBlocker) {
+				return true; // real floor
+			}
+			if (t.faceBlocker < 0) {
+				return false; // negative sentinel: common-knowledge terrain (or a junction
+							   // with no incident-wall id) -- always blocks, filter or not
+			}
+			// faceBlocker > 0: a wall segment id (a junction tagged with an incident wall
+			// lands here too, so it is belief-gated like that wall).
+			const std::uint64_t segment = static_cast<std::uint64_t>(t.faceBlocker);
+			if (belief.knownSegments == nullptr) {
+				// TRUTH: the wall is known solid unless this face is a door span.
+				return t.faceOpening != kNoOpening;
+			}
+			// BELIEF: an unseen wall is absent (walkable); a seen wall blocks unless the
+			// agent also knows a door through it on this very face.
+			if (belief.knownSegments->count(segment) == 0) {
+				return true;
+			}
+			return t.faceOpening != kNoOpening && belief.knownOpenings != nullptr &&
+				   belief.knownOpenings->count(static_cast<std::uint64_t>(t.faceOpening)) != 0;
+		}
+
 		// Collapse consecutive duplicate points and points collinear with their
 		// neighbours (the middle of three collinear points carries no information).
 		void appendTaut(std::vector<Vec2i64>& out, const Vec2i64& p) {
@@ -115,13 +143,21 @@ namespace geometry::nav {
 		return -1;
 	}
 
-	PathResult pathThrough(const NavMesh& mesh, const Vec2i64& start, const Vec2i64& goal, std::int64_t agentRadiusMm) {
+	PathResult pathThrough(const NavMesh& mesh, const Vec2i64& start, const Vec2i64& goal, std::int64_t agentRadiusMm,
+						   BeliefFilter belief) {
 		PathResult result;
 
 		const std::int32_t startTri = locateTriangle(mesh, start);
 		const std::int32_t goalTri	= locateTriangle(mesh, goal);
 		if (startTri < 0 || goalTri < 0) {
 			return result; // off-mesh
+		}
+
+		// Reject a query whose endpoints sit on an untraversable face for this belief
+		// (e.g. start inside a wall the agent knows blocks): no path. Without this, A*
+		// could exit a blocked start through a floor neighbor and "escape" a wall.
+		if (!traversable(mesh.triangles[startTri], belief) || !traversable(mesh.triangles[goalTri], belief)) {
+			return result;
 		}
 
 		if (startTri == goalTri) {
@@ -181,6 +217,11 @@ namespace geometry::nav {
 			const Vec2d ci = toD(centroidI(mesh, mesh.triangles[ti]));
 			for (std::int32_t nb : mesh.triangles[ti].neighbor) {
 				if (nb < 0 || closed[nb]) {
+					continue;
+				}
+				// Belief gate: skip a neighbor this agent may not cross. This is the
+				// only place truth/belief changes routing; the funnel below is untouched.
+				if (!traversable(mesh.triangles[nb], belief)) {
 					continue;
 				}
 				// Cost: centroid-to-centroid distance. Integer mesh, double cost; the

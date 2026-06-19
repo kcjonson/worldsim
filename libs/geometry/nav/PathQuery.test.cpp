@@ -5,6 +5,7 @@
 
 #include <array>
 #include <cstdint>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 #include <gtest/gtest.h>
@@ -20,6 +21,12 @@ namespace {
 
 	NavInputPolygon blocked(std::vector<Vec2i64> ring, std::int64_t id) {
 		return {std::move(ring), true, id};
+	}
+
+	// A blocked ring that is a pathable door's footprint: provenance = segment id,
+	// openingId = the door. Truth-walkable; belief-gated by knowing both.
+	NavInputPolygon doorSpan(std::vector<Vec2i64> ring, std::int64_t segId, std::int64_t openingId) {
+		return {std::move(ring), true, segId, openingId};
 	}
 
 	// True if segment [a,b] properly crosses or touches any edge of `ring`.
@@ -291,4 +298,162 @@ TEST(PathQuery, Deterministic) {
 	for (std::size_t i = 0; i < a.points.size(); ++i) {
 		EXPECT_EQ(a.points[i], b.points[i]);
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Belief filtering: the full footprint is triangulated and tagged, so the same
+// truth mesh routes differently per agent (pathfinding-architecture section 5).
+// ---------------------------------------------------------------------------
+
+namespace {
+
+	// Wall segment ids for the four walls of a 2000x2000 box room (walls at the
+	// border edges, 200 mm thick, inward). Each wall is its own belief-gated segment.
+	constexpr std::int64_t kSegS = 100; // south
+	constexpr std::int64_t kSegN = 101; // north
+	constexpr std::int64_t kSegW = 102; // west
+	constexpr std::int64_t kSegE = 103; // east
+	constexpr std::int64_t kDoorOp = 7; // a door in the south wall
+
+	const Vec2i64 kOutside{1000, -500}; // below the south wall, outside the box
+	const Vec2i64 kInside{1000, 1000};	// box centre
+
+	// A 2000x2000 box room, walls 200 mm thick inset from the border (the interior is
+	// [200,1800]^2). The border is padded so `kOutside` is on-mesh outside the box.
+	// Each wall ring is tagged with its own segment id; nothing is physically cut, so
+	// the box is SEALED under truth. With `withDoor`, the south wall's middle span
+	// [800,1200] is a pathable door span instead of solid.
+	NavMeshInput buildBoxRoom(bool withDoor) {
+		NavMeshInput in;
+		in.polygons.push_back(border({{-2000, -2000}, {4000, -2000}, {4000, 4000}, {-2000, 4000}}));
+		// North wall (top), west, east: solid full spans.
+		in.polygons.push_back(blocked({{0, 1800}, {2000, 1800}, {2000, 2000}, {0, 2000}}, kSegN));
+		in.polygons.push_back(blocked({{0, 0}, {200, 0}, {200, 2000}, {0, 2000}}, kSegW));
+		in.polygons.push_back(blocked({{1800, 0}, {2000, 0}, {2000, 2000}, {1800, 2000}}, kSegE));
+		// South wall (bottom), y in [0,200]: solid, or split into flanks + door span.
+		if (withDoor) {
+			in.polygons.push_back(blocked({{0, 0}, {800, 0}, {800, 200}, {0, 200}}, kSegS));					// left flank
+			in.polygons.push_back(doorSpan({{800, 0}, {1200, 0}, {1200, 200}, {800, 200}}, kSegS, kDoorOp));	// door span
+			in.polygons.push_back(blocked({{1200, 0}, {2000, 0}, {2000, 200}, {1200, 200}}, kSegS));			// right flank
+		} else {
+			in.polygons.push_back(blocked({{0, 0}, {2000, 0}, {2000, 200}, {0, 200}}, kSegS)); // solid south
+		}
+		return in;
+	}
+
+	// The wall centre line crossing point (used to assert a path threads the band).
+	const Vec2i64 kWallA{0, 100};
+	const Vec2i64 kWallB{2000, 100};
+
+	bool crossesWallLine(const PathResult& path) {
+		for (std::size_t i = 0; i + 1 < path.points.size(); ++i) {
+			const SegmentRelation rel = intersectSegments(path.points[i], path.points[i + 1], kWallA, kWallB).relation;
+			if (rel == SegmentRelation::ProperCrossing || rel == SegmentRelation::EndpointTouch) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+} // namespace
+
+TEST(PathQuery, TruthSealedRoomUnreachable) {
+	// A sealed box (no door) is unreachable under truth: the four solid walls block.
+	// (Confirms truth still routes as v1: a closed room has no path in.)
+	NavMesh m = buildNavMesh(buildBoxRoom(/*withDoor=*/false));
+	EXPECT_FALSE(pathThrough(m, kOutside, kInside, 0).reachable);
+}
+
+TEST(PathQuery, BeliefEmptyWalksStraightThroughUnseenWall) {
+	// Same sealed box, but the agent has seen NOTHING: every wall is absent, so the
+	// interior is reachable and the route crosses the south wall line where the wall
+	// physically sits. This is the optimistic freespace assumption: plan through the
+	// unseen wall.
+	NavMesh m = buildNavMesh(buildBoxRoom(/*withDoor=*/false));
+
+	std::unordered_set<std::uint64_t> noSegs;
+	std::unordered_set<std::uint64_t> noOps;
+	BeliefFilter belief{&noSegs, &noOps};
+
+	PathResult path = pathThrough(m, kOutside, kInside, 0, belief);
+	ASSERT_TRUE(path.reachable) << "an unseen wall is absent: the sealed room is reachable in belief";
+	EXPECT_EQ(path.points.front(), kOutside);
+	EXPECT_EQ(path.points.back(), kInside);
+	EXPECT_TRUE(crossesWallLine(path)) << "the path passes through where the (unseen) south wall sits";
+}
+
+TEST(PathQuery, BeliefKnowsWallsIsBlocked) {
+	// Same sealed box; the agent now knows all four wall segments. No door exists, so
+	// every wall blocks: no believed route in, exactly as truth.
+	NavMesh m = buildNavMesh(buildBoxRoom(/*withDoor=*/false));
+
+	std::unordered_set<std::uint64_t> segs{
+		static_cast<std::uint64_t>(kSegS), static_cast<std::uint64_t>(kSegN),
+		static_cast<std::uint64_t>(kSegW), static_cast<std::uint64_t>(kSegE)};
+	std::unordered_set<std::uint64_t> noOps;
+	BeliefFilter belief{&segs, &noOps};
+
+	PathResult path = pathThrough(m, kOutside, kInside, 0, belief);
+	EXPECT_FALSE(path.reachable);
+	EXPECT_TRUE(path.points.empty());
+}
+
+TEST(PathQuery, BeliefKnowsWallButNotItsDoorIsBlocked) {
+	// Box WITH a door in the south wall, but the agent knows the south wall and has
+	// not discovered the door: the known wall blocks and the undiscovered door does
+	// not help. (Knows all four walls, knows no openings.)
+	NavMesh m = buildNavMesh(buildBoxRoom(/*withDoor=*/true));
+
+	std::unordered_set<std::uint64_t> segs{
+		static_cast<std::uint64_t>(kSegS), static_cast<std::uint64_t>(kSegN),
+		static_cast<std::uint64_t>(kSegW), static_cast<std::uint64_t>(kSegE)};
+	std::unordered_set<std::uint64_t> noOps;
+	BeliefFilter belief{&segs, &noOps};
+
+	EXPECT_FALSE(pathThrough(m, kOutside, kInside, 0, belief).reachable);
+}
+
+TEST(PathQuery, BeliefKnowsWallAndDoorRoutesThroughDoor) {
+	// Box WITH a door; the agent knows the walls AND the south door. It routes in
+	// through the door span (x in [800,1200]), like a truth query would.
+	NavMesh m = buildNavMesh(buildBoxRoom(/*withDoor=*/true));
+
+	std::unordered_set<std::uint64_t> segs{
+		static_cast<std::uint64_t>(kSegS), static_cast<std::uint64_t>(kSegN),
+		static_cast<std::uint64_t>(kSegW), static_cast<std::uint64_t>(kSegE)};
+	std::unordered_set<std::uint64_t> ops{static_cast<std::uint64_t>(kDoorOp)};
+	BeliefFilter belief{&segs, &ops};
+
+	PathResult path = pathThrough(m, kOutside, kInside, 0, belief);
+	ASSERT_TRUE(path.reachable);
+	ASSERT_TRUE(crossesWallLine(path));
+	for (std::size_t i = 0; i + 1 < path.points.size(); ++i) {
+		SegmentIntersection si = intersectSegments(path.points[i], path.points[i + 1], kWallA, kWallB);
+		if (si.relation == SegmentRelation::ProperCrossing) {
+			EXPECT_GE(si.point.x, 800);
+			EXPECT_LE(si.point.x, 1200) << "known door: must thread the door span, not the solid flank";
+		}
+	}
+
+	// And a truth query routes the same way (door passes, walls block).
+	EXPECT_TRUE(pathThrough(m, kOutside, kInside, 0).reachable);
+}
+
+TEST(PathQuery, TerrainSentinelBlocksEvenWithEmptyBelief) {
+	// A terrain obstacle (negative provenance sentinel, like water/tree) always
+	// blocks: belief does not apply to common-knowledge terrain. A full-width water
+	// band partitions the border; no route across under empty belief OR truth.
+	NavMeshInput in;
+	in.polygons.push_back(border({{0, 0}, {2000, 0}, {2000, 2000}, {0, 2000}}));
+	in.polygons.push_back(blocked({{0, 900}, {2000, 900}, {2000, 1100}, {0, 1100}}, -1)); // water sentinel
+	NavMesh m = buildNavMesh(in);
+
+	const Vec2i64 below{1000, 300};
+	const Vec2i64 above{1000, 1700};
+	std::unordered_set<std::uint64_t> noSegs;
+	std::unordered_set<std::uint64_t> noOps;
+	BeliefFilter belief{&noSegs, &noOps};
+
+	EXPECT_FALSE(pathThrough(m, below, above, 0, belief).reachable);
+	EXPECT_FALSE(pathThrough(m, below, above, 0).reachable);
 }

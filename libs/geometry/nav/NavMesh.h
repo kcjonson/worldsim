@@ -29,16 +29,26 @@ namespace geometry::nav {
 
 	constexpr std::int64_t kNoProvenance = INT64_MIN;
 	constexpr std::int64_t kNoOpening	 = -1;
+	// Floor sentinel for NavTriangle::faceBlocker: a triangle on real floor, always
+	// walkable regardless of belief. Distinct from kNoProvenance only conceptually;
+	// shares the same INT64_MIN bit pattern (no provenance == real floor).
+	constexpr std::int64_t kNoBlocker = INT64_MIN;
 
 	// One tagged input ring. One or more polygons in NavMeshInput have blocked=false:
 	// the walkable bounds (the chunk/region border, or several disjoint regions).
 	// All others are blocked obstacles. `ring` is a simple closed ring (no repeated
 	// closing vertex); winding is normalized internally, callers need not pre-orient
 	// it.
+	//
+	// `openingId` tags a blocked ring that is a pathable door's footprint sub-region:
+	// in a truth query the triangles inside it are walkable (the door passes), in a
+	// belief query they are walkable only if the agent knows both the wall segment
+	// and that opening. A solid wall ring leaves it kNoOpening.
 	struct NavInputPolygon {
 		std::vector<Vec2i64> ring;
 		bool				 blocked	  = false;
 		std::int64_t		 provenanceId = kNoProvenance;
+		std::int64_t		 openingId	  = kNoOpening;
 	};
 
 	// A door portal: an open gap in a blocked band that agents may cross. (a, b)
@@ -60,6 +70,17 @@ namespace geometry::nav {
 		std::array<std::int32_t, 3>	 neighbor;		 // triangle across edge (v[i],v[(i+1)%3]); -1 = boundary
 		std::array<std::int64_t, 3>	 edgeProvenance; // provenance of constraint edge i, else kNoProvenance
 		std::array<std::int64_t, 3>	 edgeOpening;	 // door openingId if edge i is a portal, else kNoOpening
+
+		// Per-face blocker tag, the belief filter's hook. The whole region (wall
+		// interiors included) is triangulated; this says what each triangle sits on:
+		//   kNoBlocker (== INT64_MIN) -> real floor, always walkable.
+		//   > 0  -> a wall segment id; belief-gated (truth: walkable iff faceOpening
+		//           is set, i.e. a door passes and solid wall blocks).
+		//   < 0  -> a terrain/common-knowledge sentinel (water/tree); always blocks.
+		std::int64_t faceBlocker = kNoBlocker;
+		// Pathable door's openingId when this triangle is inside that door's footprint
+		// (faceBlocker is then the hosting segment id); else kNoOpening.
+		std::int64_t faceOpening = kNoOpening;
 	};
 
 	struct NavMesh {

@@ -371,9 +371,15 @@ namespace engine::nav {
 				continue;
 			}
 
-			// Door(s) on this segment: replace the solid band with flanking bands.
-			// Collect the gap spans, sort by t, and emit the solid sub-spans between
-			// them as bands. This handles one or several doors on one wall.
+			// Door(s) on this segment: emit the FULL band footprint, split into solid
+			// sub-spans and door-span sub-spans, all tagged with this segment's id.
+			// Belief gating happens at query time, not here: the door span is a blocked
+			// face carrying its openingId (truth -> walkable, belief -> gated), the
+			// solid spans carry no opening (always block when the wall is known). The
+			// gap is no longer physically cut, so an agent who has not seen this wall
+			// can path straight through its whole footprint. Sub-bands share the exact
+			// rounded jamb cross-edges (same centerline direction + half-thickness), so
+			// they tile the segment band with no gap and no overlap.
 			std::vector<DoorCut> cuts = cutIt->second;
 			std::sort(cuts.begin(), cuts.end(), [](const DoorCut& l, const DoorCut& r) { return l.t0 < r.t0; });
 
@@ -386,29 +392,48 @@ namespace engine::nav {
 						static_cast<std::int64_t>(std::llround(ay + (by - ay) * t))};
 			};
 
+			auto emitSpan = [&](float ta, float tb, std::int64_t openingId) {
+				if (tb <= ta + 1e-6F) {
+					return;
+				}
+				geometry::Ring ring = geometry::band(lerp(ta), lerp(tb), gs.halfThicknessMm);
+				if (ring.size() >= 3 && geometry::windingOrder(ring) != geometry::Winding::Degenerate) {
+					outPolys.push_back({std::move(ring), true, prov, openingId});
+				}
+			};
+
 			float cursor = 0.0F;
 			for (const DoorCut& cut : cuts) {
-				if (cut.t0 > cursor + 1e-6F) {
-					geometry::Ring flank = geometry::band(lerp(cursor), lerp(cut.t0), gs.halfThicknessMm);
-					if (flank.size() >= 3 && geometry::windingOrder(flank) != geometry::Winding::Degenerate) {
-						outPolys.push_back({std::move(flank), true, prov});
-					}
-				}
+				emitSpan(cursor, cut.t0, gnav::kNoOpening);						// solid flank/between-door span
+				emitSpan(cut.t0, cut.t1, static_cast<std::int64_t>(cut.openingId)); // pathable door span
 				cursor = std::max(cursor, cut.t1);
 			}
-			if (cursor < 1.0F - 1e-6F) {
-				geometry::Ring flank = geometry::band(lerp(cursor), lerp(1.0F), gs.halfThicknessMm);
-				if (flank.size() >= 3 && geometry::windingOrder(flank) != geometry::Winding::Degenerate) {
-					outPolys.push_back({std::move(flank), true, prov});
-				}
-			}
+			emitSpan(cursor, 1.0F, gnav::kNoOpening); // trailing solid span
 		}
 
 		if (bandsOk) {
-			for (const geometry::Ring& j : bands.junctions) {
-				if (j.size() >= 3) {
-					outPolys.push_back({j, true, kProvenanceJunction});
+			// Tag each junction with a representative INCIDENT wall segment id (the
+			// smallest, chosen deterministically) so belief gates the junction by
+			// knowing one of its walls -- a junction the agent has not seen is then
+			// absent like its walls, consistent with the wall rule. junctionSegments[i]
+			// is aligned with junctions[i] and holds caller indices into segmentIds.
+			for (std::size_t ji = 0; ji < bands.junctions.size(); ++ji) {
+				const geometry::Ring& j = bands.junctions[ji];
+				if (j.size() < 3) {
+					continue;
 				}
+				std::int64_t prov = kProvenanceJunction; // fallback: always-block sentinel
+				if (ji < bands.junctionSegments.size()) {
+					for (std::size_t segIdx : bands.junctionSegments[ji]) {
+						if (segIdx < segmentIds.size()) {
+							const std::int64_t id = static_cast<std::int64_t>(segmentIds[segIdx]);
+							if (prov == kProvenanceJunction || id < prov) {
+								prov = id;
+							}
+						}
+					}
+				}
+				outPolys.push_back({j, true, prov, gnav::kNoOpening});
 			}
 		}
 	}

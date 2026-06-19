@@ -250,28 +250,36 @@ TEST_F(NavWallTest, SingleHorizontalSegment_OneBandWithSegmentProvenance) {
 
 TEST_F(NavWallTest, LShape_TwoBandsPlusJunction_AreasSumToUnion) {
 	ConstructionWorld cw;
-	buildWall(cw, {0, 0}, {4000, 0});
-	buildWall(cw, {4000, 0}, {4000, 3000});
+	SegmentId a = buildWall(cw, {0, 0}, {4000, 0});
+	SegmentId b = buildWall(cw, {4000, 0}, {4000, 3000});
 
 	std::vector<NavInputPolygon> polys;
 	std::vector<DoorPortal>		 doors;
 	extractWalls(cw, ConstructionRegistry::Get(), polys, doors);
 
-	int bands = 0;
-	int junctions = 0;
+	// Two trimmed wall bands plus one junction polygon. For belief, the junction is
+	// now tagged with a representative INCIDENT segment id (the smaller of its two
+	// walls), NOT the old always-block kProvenanceJunction sentinel -- so a junction
+	// is gated by knowing one of its walls, consistent with the wall rule. Every
+	// polygon therefore carries a positive segment id; identify the junction as the
+	// smallest-area piece.
+	ASSERT_EQ(polys.size(), 3u);
 	double total = 0.0;
+	double smallestArea = 1e30;
+	std::int64_t junctionProv = 0;
 	for (const auto& p : polys) {
 		EXPECT_TRUE(p.blocked);
-		total += areaSqMeters(p.ring);
-		if (p.provenanceId == kProvenanceJunction) {
-			++junctions;
-		} else {
-			EXPECT_GT(p.provenanceId, 0); // a real segment id
-			++bands;
+		EXPECT_GT(p.provenanceId, 0) << "bands and junction all carry a wall segment id";
+		EXPECT_EQ(p.openingId, geometry::nav::kNoOpening);
+		const double area = areaSqMeters(p.ring);
+		total += area;
+		if (area < smallestArea) {
+			smallestArea = area;
+			junctionProv = p.provenanceId;
 		}
 	}
-	EXPECT_EQ(bands, 2);
-	EXPECT_EQ(junctions, 1);
+	const std::int64_t smallerSeg = std::min(static_cast<std::int64_t>(a), static_cast<std::int64_t>(b));
+	EXPECT_EQ(junctionProv, smallerSeg) << "junction is tagged with the smaller incident segment id";
 	// 4 m and 3 m walls at 0.2 m thick: 0.8 + 0.6 = 1.4 m^2. resolveWallBands trims
 	// each band back from the shared corner and fills the gap with the junction
 	// polygon so the pieces tile with no overlap and no gap; the total therefore
@@ -297,7 +305,7 @@ TEST_F(NavWallTest, BlueprintSegment_EmitsNothing) {
 // Doors / windows
 // ---------------------------------------------------------------------------
 
-TEST_F(NavWallTest, Door_SplitsBandIntoTwoFlanksAndEmitsPortal) {
+TEST_F(NavWallTest, Door_EmitsFullFootprintWithTaggedDoorSpan) {
 	ConstructionWorld cw;
 	SegmentId id = buildWall(cw, {0, 0}, {4000, 0});
 	OpeningId op = cw.addOpening(id, 0.5F, "Door", "Wood");
@@ -308,14 +316,26 @@ TEST_F(NavWallTest, Door_SplitsBandIntoTwoFlanksAndEmitsPortal) {
 	std::vector<DoorPortal>		 doors;
 	extractWalls(cw, ConstructionRegistry::Get(), polys, doors);
 
-	// The solid band is gone; two flanking rings remain for this segment.
-	int flanks = 0;
+	// The gap is no longer physically cut: the wall is now its FULL band footprint,
+	// split into two SOLID flank spans (openingId == kNoOpening) and one PATHABLE door
+	// span (openingId == op). Belief gating happens at query time, not here. The
+	// solid spans block when the wall is known; the door span passes in truth and when
+	// the agent knows the opening.
+	int solid = 0;
+	int doorSpans = 0;
 	for (const auto& p : polys) {
-		if (p.provenanceId == static_cast<std::int64_t>(id)) {
-			++flanks;
+		if (p.provenanceId != static_cast<std::int64_t>(id)) {
+			continue;
+		}
+		if (p.openingId == static_cast<std::int64_t>(op)) {
+			++doorSpans;
+		} else {
+			EXPECT_EQ(p.openingId, geometry::nav::kNoOpening);
+			++solid;
 		}
 	}
-	EXPECT_EQ(flanks, 2);
+	EXPECT_EQ(solid, 2) << "two solid flanks flank the door";
+	EXPECT_EQ(doorSpans, 1) << "one door-span sub-polygon tagged with the opening";
 
 	ASSERT_EQ(doors.size(), 1u);
 	EXPECT_EQ(doors[0].openingId, static_cast<std::int64_t>(op));

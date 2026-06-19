@@ -4,6 +4,7 @@
 #include "NavMesh.h"
 
 #include <cstdint>
+#include <unordered_set>
 #include <vector>
 
 // Path queries over a built NavMesh: locate the triangle containing a point,
@@ -27,13 +28,34 @@ namespace geometry::nav {
 		std::vector<Vec2i64> points;			// taut polyline start..goal in mm; empty when !reachable
 	};
 
+	// Per-agent belief overlay on the shared truth mesh (see pathfinding-architecture
+	// section 5). The mesh triangulates the whole region, wall interiors included, and
+	// each triangle carries a faceBlocker/faceOpening tag; this filter decides, per
+	// agent, which blocked faces that agent may cross:
+	//   knownSegments == nullptr  -> TRUTH query: knows everything, reproduces v1
+	//                                routing exactly (doors pass, solid walls block).
+	//   knownSegments != nullptr  -> BELIEF query: a wall segment the agent has not
+	//                                seen is treated as ABSENT (path goes straight
+	//                                through it); a seen wall blocks unless the agent
+	//                                also knows a door through it.
+	// A negative faceBlocker is a common-knowledge terrain sentinel (water/tree, or a
+	// junction with no incident-wall id) and always blocks, filter or not. A junction
+	// tagged with a positive incident-wall segment id is belief-gated like that wall.
+	struct BeliefFilter {
+		const std::unordered_set<std::uint64_t>* knownSegments = nullptr;
+		const std::unordered_set<std::uint64_t>* knownOpenings = nullptr;
+	};
+
 	// Triangle containing p (CCW point-in-triangle, on-edge counts as inside);
 	// -1 if p is outside every triangle. Linear scan (walking-locate is a later
 	// optimization behind the same signature).
 	std::int32_t locateTriangle(const NavMesh& mesh, const Vec2i64& p);
 
 	// Path for a disc of radius agentRadiusMm from start to goal. Triangle A* over
-	// the dual graph, then a funnel (string-pulling) shrunk by the agent radius.
-	PathResult pathThrough(const NavMesh& mesh, const Vec2i64& start, const Vec2i64& goal, std::int64_t agentRadiusMm);
+	// the dual graph, then a funnel (string-pulling) shrunk by the agent radius. The
+	// A* expansion (and the start/goal triangles) are gated by `belief`: a default
+	// (empty) BeliefFilter is a truth query that routes exactly as v1 did.
+	PathResult pathThrough(const NavMesh& mesh, const Vec2i64& start, const Vec2i64& goal, std::int64_t agentRadiusMm,
+						   BeliefFilter belief = {});
 
 } // namespace geometry::nav
