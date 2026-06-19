@@ -1,7 +1,9 @@
 add_executable(asset-manager
     Main.cpp
     SceneTypes.cpp
-    AssetGridView.cpp
+    AssetThumbnail.cpp
+    AssetRow.cpp
+    AssetDetailView.cpp
     scenes/BrowserScene.cpp
 )
 
