@@ -73,6 +73,7 @@ namespace ecs {
 		if (m_future.valid()) {
 			if (m_future.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
 				m_mesh = m_future.get(); // swap the new mesh in; old mesh is dropped
+				++m_generation;			 // a new mesh: any path stamped to the prior generation is stale
 				m_future = {};
 			} else {
 				return; // build still running: keep serving the old mesh, no new launch
@@ -165,7 +166,8 @@ namespace ecs {
 	}
 
 	std::optional<std::vector<glm::vec2>>
-	NavigationSystem::requestPath(glm::vec2 startMeters, glm::vec2 goalMeters, float agentRadiusMeters) const {
+	NavigationSystem::requestPath(glm::vec2 startMeters, glm::vec2 goalMeters, float agentRadiusMeters,
+								  gnav::BeliefFilter belief) const {
 		if (m_mesh.triangles.empty()) {
 			return std::nullopt;
 		}
@@ -177,7 +179,11 @@ namespace ecs {
 		const std::int64_t radiusMm =
 			static_cast<std::int64_t>(std::llround(static_cast<double>(agentRadiusMeters) * 1000.0));
 
-		const gnav::PathResult result = gnav::pathThrough(m_mesh, startMm, goalMm, radiusMm);
+		// belief is applied at query time, not via a second mesh: a default (empty)
+		// filter reproduces the truth query; a colonist's known-structures filter routes
+		// over its remembered geometry. Consumed synchronously, so the pointers it holds
+		// stay valid for the call.
+		const gnav::PathResult result = gnav::pathThrough(m_mesh, startMm, goalMm, radiusMm, belief);
 		if (!result.reachable) {
 			return std::nullopt;
 		}
@@ -190,8 +196,9 @@ namespace ecs {
 		return waypoints;
 	}
 
-	bool NavigationSystem::isReachable(glm::vec2 startMeters, glm::vec2 goalMeters, float agentRadiusMeters) const {
-		return requestPath(startMeters, goalMeters, agentRadiusMeters).has_value();
+	bool NavigationSystem::isReachable(glm::vec2 startMeters, glm::vec2 goalMeters, float agentRadiusMeters,
+									   gnav::BeliefFilter belief) const {
+		return requestPath(startMeters, goalMeters, agentRadiusMeters, belief).has_value();
 	}
 
 } // namespace ecs

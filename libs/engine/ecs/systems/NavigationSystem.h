@@ -18,6 +18,7 @@
 #include "../ISystem.h"
 
 #include <nav/NavMesh.h>
+#include <nav/PathQuery.h>
 
 #include <world/chunk/ChunkCoordinate.h>
 
@@ -81,15 +82,29 @@ class NavigationSystem : public ISystem {
 	// given radius, or nullopt when there is no mesh yet or the goal is unreachable
 	// (off-mesh or disconnected). Agent clearance is honored: the radius is passed
 	// straight through to geometry::nav::pathThrough.
+	//
+	// `belief` is applied at query time against the single shared truth mesh (not a
+	// second mesh): a default (empty) BeliefFilter is a TRUTH query that routes exactly
+	// as before, while a filter built from a colonist's known segments/openings routes
+	// over what that colonist REMEMBERS (unseen walls absent, seen walls blocking). The
+	// filter holds pointers into the caller's sets and is consumed synchronously, so
+	// there is no lifetime hazard.
 	[[nodiscard]] std::optional<std::vector<glm::vec2>>
-	requestPath(glm::vec2 startMeters, glm::vec2 goalMeters, float agentRadiusMeters) const;
+	requestPath(glm::vec2 startMeters, glm::vec2 goalMeters, float agentRadiusMeters,
+				geometry::nav::BeliefFilter belief = {}) const;
 
-	// True if a path of the given clearance exists from start to goal.
-	[[nodiscard]] bool isReachable(glm::vec2 startMeters, glm::vec2 goalMeters, float agentRadiusMeters) const;
+	// True if a path of the given clearance exists from start to goal under `belief`.
+	[[nodiscard]] bool isReachable(glm::vec2 startMeters, glm::vec2 goalMeters, float agentRadiusMeters,
+								   geometry::nav::BeliefFilter belief = {}) const;
 
 	// The current cached mesh (for the later debug overlay). Empty until hasMesh().
 	[[nodiscard]] const geometry::nav::NavMesh& mesh() const { return m_mesh; }
 	[[nodiscard]] bool						  hasMesh() const { return !m_mesh.triangles.empty(); }
+
+	// Monotonic counter bumped each time a freshly built mesh is swapped in. A stored
+	// NavPath stamps this at plan time so the replan loop can detect "the world rebuilt
+	// under me" without inspecting the mesh. Stays 0 until the first mesh lands.
+	[[nodiscard]] std::uint64_t generation() const { return m_generation; }
 
   private:
 	// True if the snapshotted inputs differ from what the current mesh was built
@@ -116,6 +131,11 @@ class NavigationSystem : public ISystem {
 	std::uint64_t									   m_builtVersion = UINT64_MAX;
 	std::unordered_set<engine::world::ChunkCoordinate> m_builtChunks;
 	bool											   m_haveBuiltOnce = false;
+
+	// Bumped on every mesh swap-in (see generation()). Drives NavPath staleness for the
+	// replan loop independently of ConstructionWorld::version() (which the system doesn't
+	// expose and which a query-side consumer shouldn't depend on).
+	std::uint64_t m_generation = 0;
 };
 
 } // namespace ecs

@@ -1,15 +1,21 @@
 #include "NavigationSystem.h"
 
 #include "../World.h"
+#include "../components/Memory.h"
+#include "../components/NavPath.h"
 
 #include <assets/ConstructionRegistry.h>
 #include <construction/ConstructionWorld.h>
 
+#include <nav/PathQuery.h>
+
 #include <chrono>
+#include <cstdint>
 #include <filesystem>
 #include <optional>
 #include <string>
 #include <thread>
+#include <unordered_set>
 #include <vector>
 
 #include <gtest/gtest.h>
@@ -244,4 +250,157 @@ TEST_F(NavigationSystemTest, ConstructionWorldWiredAfterUpdatesStillBuilds) {
 	sys.setConstructionWorld(&cw);
 	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built after deferred wiring";
 	EXPECT_TRUE(sys.requestPath(kOutside, kInside, kAgentRadius).has_value());
+}
+
+// --- Belief-filtered queries -------------------------------------------------
+//
+// Belief is applied at query time against the one shared truth mesh. A colonist
+// that knows nothing routes optimistically (unseen walls absent, path goes
+// straight through); a colonist that knows the enclosing walls (but not a door)
+// is blocked. Both queries hit the SAME mesh -- only the filter differs.
+
+namespace {
+	// Every wall segment id currently in the world, for seeding a "knows the walls"
+	// belief filter.
+	std::unordered_set<std::uint64_t> allSegmentIds(const ConstructionWorld& cw) {
+		std::unordered_set<std::uint64_t> ids;
+		for (const auto& seg : cw.segments()) {
+			ids.insert(static_cast<std::uint64_t>(seg.id));
+		}
+		return ids;
+	}
+} // namespace
+
+// Empty belief (knows nothing) routes through where the wall is; a belief that
+// knows the enclosing walls (no door known) blocks the same query.
+TEST_F(NavigationSystemTest, BeliefFilterGatesQueryVsTruth) {
+	ConstructionWorld cw;
+	buildRoom(cw, /*withOpening=*/true, /*pathableOpening=*/true);
+
+	World world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	sys.setConstructionWorld(&cw);
+	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
+
+	// Truth query (default filter) routes through the actual door: a path exists.
+	EXPECT_TRUE(sys.requestPath(kOutside, kInside, kAgentRadius).has_value())
+		<< "truth query should route through the real door";
+
+	// Belief: knows NOTHING. Empty sets => every wall is treated as unseen/absent, so
+	// the optimistic route punches straight through where the south wall is.
+	const std::unordered_set<std::uint64_t> noSegments;
+	const std::unordered_set<std::uint64_t> noOpenings;
+	const geometry::nav::BeliefFilter		blindBelief{&noSegments, &noOpenings};
+	EXPECT_TRUE(sys.requestPath(kOutside, kInside, kAgentRadius, blindBelief).has_value())
+		<< "blind belief should optimistically route through the unseen wall";
+
+	// Belief: knows the enclosing walls but NOT the door opening. The seen walls block
+	// and the door is unknown, so there is no believed route in.
+	const std::unordered_set<std::uint64_t> knownWalls = allSegmentIds(cw);
+	const geometry::nav::BeliefFilter		walledBelief{&knownWalls, &noOpenings};
+	EXPECT_FALSE(sys.requestPath(kOutside, kInside, kAgentRadius, walledBelief).has_value())
+		<< "knowing the walls (but not the door) should block the route";
+
+	// Belief: knows the walls AND the door opening => the route opens back up, matching
+	// truth. Confirms a known opening passes through a known wall.
+	std::unordered_set<std::uint64_t> knownDoors;
+	for (const auto& op : cw.openings()) {
+		knownDoors.insert(static_cast<std::uint64_t>(op.id));
+	}
+	ASSERT_FALSE(knownDoors.empty());
+	const geometry::nav::BeliefFilter doorBelief{&knownWalls, &knownDoors};
+	EXPECT_TRUE(sys.requestPath(kOutside, kInside, kAgentRadius, doorBelief).has_value())
+		<< "knowing the walls and the door should route through it";
+}
+
+// generation() bumps each time a freshly built mesh is swapped in.
+TEST_F(NavigationSystemTest, GenerationBumpsOnMeshSwap) {
+	ConstructionWorld cw;
+	SegmentId south = buildRoom(cw, /*withOpening=*/false, /*pathableOpening=*/false);
+
+	World world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	sys.setConstructionWorld(&cw);
+
+	EXPECT_EQ(sys.generation(), 0u) << "no mesh yet => generation 0";
+	ASSERT_TRUE(pumpUntilMesh(sys)) << "initial navmesh never built";
+	const std::uint64_t afterFirst = sys.generation();
+	EXPECT_GT(afterFirst, 0u) << "first mesh swap should bump generation";
+
+	// A geometry change forces a rebuild; the swap-in bumps generation again.
+	OpeningId op = cw.addOpening(south, 0.5F, "Door", "Wood");
+	ASSERT_NE(op, kInvalidOpening);
+	ASSERT_TRUE(cw.setOpeningState(op, FoundationState::Built));
+	for (int i = 0; i < 500 && sys.generation() == afterFirst; ++i) {
+		sys.update(0.0F);
+		std::this_thread::sleep_for(std::chrono::milliseconds(2));
+	}
+	EXPECT_GT(sys.generation(), afterFirst) << "rebuild swap should bump generation again";
+}
+
+// --- Memory::beliefVersion bump semantics ------------------------------------
+
+// rememberSegment bumps beliefVersion only on a NEW id; re-remembering does not;
+// forgetSegment bumps when it actually erases.
+TEST(MemoryBeliefVersionTest, RememberAndForgetBumpVersion) {
+	Memory mem;
+	const std::uint64_t v0 = mem.beliefVersion;
+
+	EXPECT_TRUE(mem.rememberSegment(7));
+	const std::uint64_t v1 = mem.beliefVersion;
+	EXPECT_GT(v1, v0) << "first discovery should bump";
+
+	EXPECT_FALSE(mem.rememberSegment(7));
+	EXPECT_EQ(mem.beliefVersion, v1) << "re-remembering a known id must not bump";
+
+	EXPECT_TRUE(mem.rememberOpening(3));
+	const std::uint64_t v2 = mem.beliefVersion;
+	EXPECT_GT(v2, v1) << "opening discovery should bump";
+
+	EXPECT_FALSE(mem.rememberOpening(3));
+	EXPECT_EQ(mem.beliefVersion, v2) << "re-remembering a known opening must not bump";
+
+	mem.forgetSegment(7);
+	const std::uint64_t v3 = mem.beliefVersion;
+	EXPECT_GT(v3, v2) << "forgetting a known segment should bump";
+
+	mem.forgetSegment(7);
+	EXPECT_EQ(mem.beliefVersion, v3) << "forgetting an absent id must not bump";
+
+	mem.clear();
+	EXPECT_GT(mem.beliefVersion, v3) << "clear() should bump (monotonic), never reset";
+}
+
+// --- NavPath staleness predicate ---------------------------------------------
+//
+// The replan-on-discovery loop fires when the stored stamps drift from the
+// colonist's current beliefVersion or the NavigationSystem generation. This
+// exercises the version-compare predicate directly (the full AIDecisionSystem
+// wiring -- task assignment, vision discovery, movement -- is exercised in the
+// sandbox, not here).
+
+namespace {
+	// Mirror of the predicate in AIDecisionSystem::update's replan-on-discovery loop.
+	bool navPathStale(const NavPath& path, std::uint64_t beliefVersion, std::uint64_t navGeneration) {
+		return path.builtBeliefVersion != beliefVersion || path.builtNavVersion != navGeneration;
+	}
+} // namespace
+
+TEST(NavPathStalenessTest, DetectsBeliefAndNavDrift) {
+	NavPath path;
+	path.valid = true;
+	path.builtBeliefVersion = 5;
+	path.builtNavVersion = 2;
+
+	// Same stamps => fresh, no repath.
+	EXPECT_FALSE(navPathStale(path, 5, 2));
+
+	// Belief advanced (a wall discovered) => stale.
+	EXPECT_TRUE(navPathStale(path, 6, 2));
+
+	// Mesh rebuilt under the colonist => stale.
+	EXPECT_TRUE(navPathStale(path, 5, 3));
+
+	// Both moved => stale.
+	EXPECT_TRUE(navPathStale(path, 6, 3));
 }

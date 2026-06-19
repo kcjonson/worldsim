@@ -91,10 +91,16 @@ private:
 		const struct DecisionTrace& trace,
 		const struct Position& position);
 
-	/// Resolve a navmesh path to `goal` for `entity` and attach it as a NavPath, or
-	/// invalidate any existing NavPath and fall back to beeline movement when no path
-	/// exists (no mesh yet, or unreachable). No-op effect on MovementTarget either way.
-	void requestNavPath(EntityID entity, const glm::vec2& goal, const struct Position& position);
+	/// Resolve a navmesh path to `goal` for `entity` and attach it as a NavPath, planning
+	/// over the colonist's structural belief (its known segments/openings). On success the
+	/// NavPath is stamped with the belief/nav versions so the replan loop can detect
+	/// staleness. Behavior when no path is found splits by cause: with no mesh yet (startup
+	/// / outdoor) it invalidates the NavPath and lets the beeline MovementTarget carry the
+	/// colonist; with a mesh present (a believed-route denial) it instead STOPS movement
+	/// (clears movementTarget.active) so the colonist doesn't dishonestly beeline through a
+	/// wall it believes is there.
+	void requestNavPath(EntityID entity, const glm::vec2& goal, const struct Position& position,
+						const struct Memory& memory, struct MovementTarget& movementTarget);
 
 	/// Format a human-readable reason for an option
 	[[nodiscard]] static std::string formatOptionReason(

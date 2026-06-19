@@ -671,6 +671,29 @@ namespace ecs {
 			// Get optional Action component (may be nullptr if entity doesn't have one)
 			auto* action = world->getComponent<Action>(entity);
 
+			// Replan-on-discovery: this is the free-space-assumption loop. A colonist
+			// plans over what it remembers, walks, and when vision reveals a wall that
+			// cuts its corridor (Memory::beliefVersion moves) or the navmesh rebuilds
+			// under it (NavigationSystem::generation() moves), re-request the SAME goal
+			// with current belief. Not a re-task -- the destination is unchanged. Runs
+			// before the shouldReEvaluate gate so it isn't skipped between re-evals, and
+			// only when a version actually changed, so it can't thrash. Vision bumps
+			// beliefVersion at most ~12 Hz while this runs per frame, so the version
+			// compare naturally coalesces many idle frames into at most one repath per
+			// discovery. Gate on a still-pursued goal: a valid route on a Moving task.
+			if (auto* navPath = world->getComponent<NavPath>(entity);
+				navPath != nullptr && navPath->valid && task.state == TaskState::Moving) {
+				const bool beliefMoved = memory.beliefVersion != navPath->builtBeliefVersion;
+				const bool navMoved =
+					(m_navSystem != nullptr) && (m_navSystem->generation() != navPath->builtNavVersion);
+				if (beliefMoved || navMoved) {
+					// requestNavPath re-stamps the path on success, or (on a believed-route
+					// denial) invalidates it and clears movementTarget.active to stop the
+					// colonist instead of beelining through the believed wall.
+					requestNavPath(entity, task.targetPosition, position, memory, movementTarget);
+				}
+			}
+
 			// Check if we should re-evaluate (uses current timer value)
 			if (!shouldReEvaluate(task, needs, action)) {
 				// Only increment timer when NOT re-evaluating (timer tracks time since last eval)
@@ -1361,14 +1384,22 @@ namespace ecs {
 		} else {
 			movementTarget.active = true;
 			task.state = TaskState::Moving;
-			requestNavPath(entity, task.targetPosition, position);
+			// Memory is a required component on every AI entity (it's in update()'s view),
+			// so it's always present here; plan the route over the colonist's belief.
+			const Memory* memory = world->getComponent<Memory>(entity);
+			if (memory != nullptr) {
+				requestNavPath(entity, task.targetPosition, position, *memory, movementTarget);
+			}
 		}
 	}
 
-	void AIDecisionSystem::requestNavPath(EntityID entity, const glm::vec2& goal, const Position& position) {
+	void AIDecisionSystem::requestNavPath(
+		EntityID entity, const glm::vec2& goal, const Position& position, const Memory& memory,
+		MovementTarget& movementTarget) {
 		// No nav system wired, or no mesh built yet: fall back to the straight-line
-		// beeline MovementSystem already set up via MovementTarget. Invalidate any
-		// route left over from a previous task so a stale path isn't followed.
+		// beeline MovementSystem already set up via MovementTarget. This is the outdoor /
+		// pre-mesh startup case, NOT a belief denial -- don't stop the colonist. Invalidate
+		// any route left over from a previous task so a stale path isn't followed.
 		if (m_navSystem == nullptr || !m_navSystem->hasMesh()) {
 			if (auto* navPath = world->getComponent<NavPath>(entity)) {
 				navPath->valid = false;
@@ -1384,15 +1415,24 @@ namespace ecs {
 			radius = agentRadius->radiusMeters;
 		}
 
-		auto path = m_navSystem->requestPath(position.value, goal, radius);
+		// Plan over what THIS colonist remembers, not ground truth: unseen walls are
+		// absent (the optimistic free-space assumption), seen walls block, known doors
+		// pass. The filter holds pointers into the colonist's Memory sets and is consumed
+		// synchronously inside requestPath, so there's no lifetime hazard.
+		const geometry::nav::BeliefFilter belief{&memory.knownSegments, &memory.knownOpenings};
+
+		auto path = m_navSystem->requestPath(position.value, goal, radius, belief);
 		if (!path.has_value()) {
-			// Off-mesh or unreachable goal: invalidate the route and let the beeline
-			// MovementTarget carry the colonist (v1 still beelines an unreachable goal;
-			// the wall-collision safety net is a later task).
+			// A mesh exists but the colonist's belief admits no route: a believed wall
+			// cuts the corridor. STOP rather than beeline dishonestly through that wall --
+			// clear movementTarget.active so MovementSystem doesn't carry the colonist
+			// straight at the geometry it believes is solid. (The "Can't find a way" UI
+			// state is the next phase; here we just halt the dishonest beeline.)
 			if (auto* navPath = world->getComponent<NavPath>(entity)) {
 				navPath->valid = false;
 			}
-			LOG_DEBUG(Engine, "[Nav] Entity %llu: no path to (%.2f, %.2f), beeline fallback",
+			movementTarget.active = false;
+			LOG_DEBUG(Engine, "[Nav] Entity %llu: no believed route to (%.2f, %.2f), stopping",
 				static_cast<unsigned long long>(entity), goal.x, goal.y);
 			return;
 		}
@@ -1403,6 +1443,10 @@ namespace ecs {
 		navPath.waypoints = std::move(*path);
 		navPath.current = navPath.waypoints.size() >= 2 ? 1 : 0;
 		navPath.valid = true;
+		// Stamp the belief/nav versions this route was planned against, so the replan
+		// loop can detect staleness with a cheap compare (no re-query).
+		navPath.builtBeliefVersion = memory.beliefVersion;
+		navPath.builtNavVersion = m_navSystem->generation();
 
 		const std::size_t count = navPath.waypoints.size();
 		if (auto* existing = world->getComponent<NavPath>(entity)) {
