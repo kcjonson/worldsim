@@ -63,9 +63,9 @@ class GameplayBar : public UI::Component {
 
   private:
 	// Layout constants
-	static constexpr float kBarHeight = 40.0F;
+	static constexpr float kBarHeight = 48.0F;
 	static constexpr float kButtonWidth = 100.0F;
-	static constexpr float kButtonHeight = 28.0F;
+	static constexpr float kButtonHeight = 36.0F;
 	static constexpr float kButtonSpacing = 8.0F;
 	static constexpr float kBottomMargin = 12.0F;
 	static constexpr float kHorizontalPadding = 12.0F;  // Padding on each side of buttons

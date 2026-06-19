@@ -58,7 +58,7 @@ void ColonistListItem::render() {
 					  .color = UI::line_hairline, .width = UI::bw, .cornerRadius = UI::r_md, .position = Foundation::BorderPosition::Inside}}});
 	if (selected) {
 		drawRect(Renderer::Primitives::RectArgs{
-			.bounds = {p.x, p.y + 2.0F, 3.0F, h - 4.0F},
+			.bounds = {p.x, p.y + 2.0F, 2.0F, h - 4.0F},
 			.style = {.fill = UI::accent}});
 	}
 

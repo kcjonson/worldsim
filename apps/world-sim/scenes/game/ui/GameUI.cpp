@@ -6,7 +6,7 @@ namespace world_sim {
 
 	namespace {
 		// Layout constants
-		constexpr float kPanelWidth = 340.0F;	 // Per plan: 340px for two-column colonist layout
+		constexpr float kPanelWidth = 320.0F;	 // Prototype .infoPanel { width: 320px }
 		constexpr float kTaskListWidth = 360.0F; // 2x info panel
 		constexpr float kPanelPadding = 10.0F;
 		constexpr float kPanelHeight = 148.0F;
@@ -118,10 +118,10 @@ namespace world_sim {
 		});
 
 		// Create resources panel (top-right, below where minimap will be)
-		resourcesPanel = std::make_unique<ResourcesPanel>(ResourcesPanel::Args{.width = 160.0F, .id = "resources_panel"});
+		resourcesPanel = std::make_unique<ResourcesPanel>(ResourcesPanel::Args{.width = 232.0F, .id = "resources_panel"});
 
 		// Create global task list panel (top-right, below resources panel)
-		globalTaskList = std::make_unique<GlobalTaskListView>(GlobalTaskListView::Args{.width = 300.0F});
+		globalTaskList = std::make_unique<GlobalTaskListView>(GlobalTaskListView::Args{.width = 232.0F});
 
 		// Create toast stack for notifications (bottom-right)
 		toastStack = std::make_unique<UI::ToastStack>(UI::ToastStack::Args{
@@ -189,8 +189,8 @@ namespace world_sim {
 			colonistList->setPosition(12.0F, topBarHeight + 12.0F);
 		}
 
-		// Position info panel in bottom-left corner (flush with edges)
-		float panelX = 0.0F;
+		// Position info panel in bottom-left corner (12px from edges per prototype)
+		float panelX = 12.0F;
 
 		// Update panel position with bottom-left alignment (panel computes Y from viewport height)
 		if (infoPanel) {
@@ -227,14 +227,14 @@ namespace world_sim {
 		// Position resources panel in top-right corner, below zoom controls
 		// Zoom controls are at Y=80, height=28, so start at Y=120
 		if (resourcesPanel) {
-			float rightMargin = 20.0F; // Match zoom control margin
+			float rightMargin = 12.0F; // Match prototype --space-3
 			float topMargin = 120.0F;  // Below zoom controls (80 + 28 + 12 margin)
 			resourcesPanel->setAnchorPosition(newBounds.width - rightMargin, topMargin);
 		}
 
 		// Position global task list below resources panel
 		if (globalTaskList) {
-			float rightMargin = 20.0F;
+			float rightMargin = 12.0F;
 			float taskListY = 120.0F; // Start at resources panel position
 			if (resourcesPanel) {
 				// Position below resources panel bounds

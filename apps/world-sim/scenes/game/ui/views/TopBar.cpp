@@ -175,7 +175,7 @@ void TopBar::render() {
 	// Bar background + bottom hairline.
 	drawRect(Renderer::Primitives::RectArgs{
 		.bounds = {bounds.x, bounds.y, bounds.width, kBarHeight},
-		.style = {.fill = UI::bg_panel}});
+		.style = {.fill = UI::bg_base}});
 	drawRect(Renderer::Primitives::RectArgs{
 		.bounds = {bounds.x, bounds.y + kBarHeight - 1.0F, bounds.width, 1.0F},
 		.style = {.fill = UI::line_hairline}});
