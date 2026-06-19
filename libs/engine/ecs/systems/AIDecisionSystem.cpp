@@ -1432,6 +1432,12 @@ namespace ecs {
 				navPath->valid = false;
 			}
 			movementTarget.active = false;
+			// MovementSystem skips entities with an inactive target, so it won't zero the
+			// velocity for us -- do it here, or the colonist coasts on its last velocity
+			// straight into the wall it just refused to path through.
+			if (auto* velocity = world->getComponent<Velocity>(entity)) {
+				velocity->value = {0.0F, 0.0F};
+			}
 			LOG_DEBUG(Engine, "[Nav] Entity %llu: no believed route to (%.2f, %.2f), stopping",
 				static_cast<unsigned long long>(entity), goal.x, goal.y);
 			return;
