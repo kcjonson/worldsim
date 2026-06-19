@@ -87,9 +87,11 @@ namespace geometry::nav {
 				return true; // real floor
 			}
 			if (t.faceBlocker < 0) {
-				return false; // terrain/junction sentinel: common-knowledge, always blocks
+				return false; // negative sentinel: common-knowledge terrain (or a junction
+							   // with no incident-wall id) -- always blocks, filter or not
 			}
-			// faceBlocker > 0: a wall segment id.
+			// faceBlocker > 0: a wall segment id (a junction tagged with an incident wall
+			// lands here too, so it is belief-gated like that wall).
 			const std::uint64_t segment = static_cast<std::uint64_t>(t.faceBlocker);
 			if (belief.knownSegments == nullptr) {
 				// TRUTH: the wall is known solid unless this face is a door span.

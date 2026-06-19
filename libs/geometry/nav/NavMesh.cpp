@@ -82,9 +82,10 @@ namespace geometry::nav {
 		// blocked ring carries its belief tags (provenanceId/openingId) so a face
 		// landing inside it inherits them.
 		struct BlockedRing {
-			const std::vector<Vec2i64>* ring	   = nullptr;
-			std::int64_t				provenance = kNoProvenance;
-			std::int64_t				opening	   = kNoOpening;
+			const std::vector<Vec2i64>* ring		  = nullptr;
+			std::int64_t				provenance	  = kNoProvenance;
+			std::int64_t				opening		  = kNoOpening;
+			Int128						areaDoubledAbs = Int128(0); // |2*area|, cached for smallest-containing ranking
 		};
 		std::vector<const std::vector<Vec2i64>*> borderRings;
 		std::vector<BlockedRing>				 blockedRings;
@@ -93,7 +94,9 @@ namespace geometry::nav {
 				continue;
 			}
 			if (poly.blocked) {
-				blockedRings.push_back({&poly.ring, poly.provenanceId, poly.openingId});
+				// Cache the ring's |2*area| now (static input) so the per-face
+				// smallest-containing-ring search below is a compare, not a reshoelace.
+				blockedRings.push_back({&poly.ring, poly.provenanceId, poly.openingId, signedAreaDoubledAbs(poly.ring)});
 			} else {
 				borderRings.push_back(&poly.ring);
 			}
@@ -158,7 +161,7 @@ namespace geometry::nav {
 				if (pointInPolygon(rep, *br.ring) != PointInPolygon::Inside) {
 					continue;
 				}
-				const Int128 area = signedAreaDoubledAbs(*br.ring);
+				const Int128& area = br.areaDoubledAbs;
 				if (!tagged || area < bestArea) {
 					bestArea	= area;
 					wf.blocker	= br.provenance;

@@ -38,7 +38,9 @@ namespace geometry::nav {
 	//                                seen is treated as ABSENT (path goes straight
 	//                                through it); a seen wall blocks unless the agent
 	//                                also knows a door through it.
-	// Terrain/junction blockers (faceBlocker < 0) ignore the filter and always block.
+	// A negative faceBlocker is a common-knowledge terrain sentinel (water/tree, or a
+	// junction with no incident-wall id) and always blocks, filter or not. A junction
+	// tagged with a positive incident-wall segment id is belief-gated like that wall.
 	struct BeliefFilter {
 		const std::unordered_set<std::uint64_t>* knownSegments = nullptr;
 		const std::unordered_set<std::uint64_t>* knownOpenings = nullptr;
