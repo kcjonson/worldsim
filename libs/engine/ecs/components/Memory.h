@@ -214,6 +214,10 @@ namespace ecs {
 			lruMap.clear();
 			knownSegments.clear();
 			knownOpenings.clear();
+			// Clearing structural belief is a belief change: bump so any path planned
+			// against the old belief is detected as stale. Bump (not reset to 0) keeps
+			// the stamp monotonic, so an old NavPath stamp can never accidentally match.
+			++beliefVersion;
 		}
 
 		// --- Capability Query Methods ---
@@ -271,21 +275,50 @@ namespace ecs {
 		std::unordered_set<std::uint64_t> knownSegments;
 		std::unordered_set<std::uint64_t> knownOpenings;
 
+		// Monotonic "my structural belief changed" stamp. Bumped whenever a segment or
+		// opening is actually discovered or forgotten (not on a no-op re-remember). A
+		// stored NavPath records the beliefVersion it was planned against, so the AI can
+		// detect that the route is stale by a cheap integer compare instead of re-querying
+		// the mesh every tick (see AIDecisionSystem's replan-on-discovery loop).
+		std::uint64_t beliefVersion = 0;
+
 		/// Record a seen wall segment. Returns true on first discovery (like
-		/// rememberWorldEntity), false if already known.
-		bool rememberSegment(std::uint64_t id) { return knownSegments.insert(id).second; }
+		/// rememberWorldEntity), false if already known. Bumps beliefVersion on discovery.
+		bool rememberSegment(std::uint64_t id) {
+			if (knownSegments.insert(id).second) {
+				++beliefVersion;
+				return true;
+			}
+			return false;
+		}
 
 		/// Record a seen opening. Returns true on first discovery, false if known.
-		bool rememberOpening(std::uint64_t id) { return knownOpenings.insert(id).second; }
+		/// Bumps beliefVersion on discovery.
+		bool rememberOpening(std::uint64_t id) {
+			if (knownOpenings.insert(id).second) {
+				++beliefVersion;
+				return true;
+			}
+			return false;
+		}
 
 		[[nodiscard]] bool knowsSegment(std::uint64_t id) const { return knownSegments.count(id) != 0; }
 
 		[[nodiscard]] bool knowsOpening(std::uint64_t id) const { return knownOpenings.count(id) != 0; }
 
-		// Wired for future demolish-reconciliation (a removed structure leaves memory);
-		// no caller yet.
-		void forgetSegment(std::uint64_t id) { knownSegments.erase(id); }
-		void forgetOpening(std::uint64_t id) { knownOpenings.erase(id); }
+		// Wired for future demolish-reconciliation (a removed structure leaves memory).
+		// Bump beliefVersion only when something was actually erased, so a repath is
+		// triggered just like a discovery.
+		void forgetSegment(std::uint64_t id) {
+			if (knownSegments.erase(id) != 0) {
+				++beliefVersion;
+			}
+		}
+		void forgetOpening(std::uint64_t id) {
+			if (knownOpenings.erase(id) != 0) {
+				++beliefVersion;
+			}
+		}
 
 		[[nodiscard]] size_t knownSegmentCount() const { return knownSegments.size(); }
 		[[nodiscard]] size_t knownOpeningCount() const { return knownOpenings.size(); }
