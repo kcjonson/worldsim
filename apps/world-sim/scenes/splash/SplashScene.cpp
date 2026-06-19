@@ -3,6 +3,7 @@
 // the library loads cleanly, or blocks with an error summary on validation errors.
 
 #include "SceneTypes.h"
+#include "scenes/shared/Starfield.h"
 #include <assets/AssetRegistry.h>
 #include <graphics/PrimitiveStyles.h>
 #include <primitives/Primitives.h>
@@ -95,24 +96,25 @@ namespace {
 
 			const float screenW = Renderer::Primitives::PercentWidth(100.0F);
 			const float screenH = Renderer::Primitives::PercentHeight(100.0F);
+			world_sim::renderStarfield(static_cast<int>(screenW), static_cast<int>(screenH), 3U);
 			const float cx = screenW * 0.5F;
-			const float cy = screenH * 0.45F;
+			const float cy = screenH * 0.5F;
 
 			// Identity block, centered.
-			drawDiamond(cx, cy - 84.0F, 14.0F, accent);
+			drawDiamond(cx, cy - 66.0F, 18.0F, accent);
 			drawText(Renderer::Primitives::TextArgs{
 				.text = "WORLD-SIM",
 				.position = {0.0F, cy},
-				.scale = textScale(fs_4xl),
+				.scale = textScale(fs_5xl),
 				.color = text_bright,
 				.font = fontDisplay,
 				.hAlign = Foundation::HorizontalAlign::Center,
 				.vAlign = Foundation::VerticalAlign::Middle,
 				.boxWidth = screenW,
-				.letterSpacing = fs_4xl * ls_wide});
+				.letterSpacing = fs_5xl * ls_widest});
 			drawText(Renderer::Primitives::TextArgs{
 				.text = "PROSPECTING EXPEDITION 28-B",
-				.position = {0.0F, cy + 62.0F},
+				.position = {0.0F, cy + 70.0F},
 				.scale = textScale(fs_sm),
 				.color = accent,
 				.font = fontMono,

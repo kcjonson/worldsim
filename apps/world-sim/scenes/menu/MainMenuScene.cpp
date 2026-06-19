@@ -7,6 +7,7 @@
 
 #include "GameStartConfig.h"
 #include "SceneTypes.h"
+#include "scenes/shared/Starfield.h"
 #include <GL/glew.h>
 
 #include <graphics/PrimitiveStyles.h>
@@ -82,6 +83,7 @@ namespace {
 
 			const float screenW = Renderer::Primitives::PercentWidth(100.0F);
 			const float screenH = Renderer::Primitives::PercentHeight(100.0F);
+			world_sim::renderStarfield(static_cast<int>(screenW), static_cast<int>(screenH), 11U);
 
 			// Identity: diamond glyph + WORLD-SIM + tagline.
 			const float diaR = 11.0F;
@@ -89,16 +91,16 @@ namespace {
 			drawText(Renderer::Primitives::TextArgs{
 				.text = "WORLD-SIM",
 				.position = {colX + diaR * 2.0F + 16.0F, headerY},
-				.scale = textScale(fs_3xl),
+				.scale = textScale(fs_4xl),
 				.color = text_bright,
 				.font = fontDisplay,
 				.vAlign = Foundation::VerticalAlign::Top,
-				.letterSpacing = fs_3xl * ls_wide});
+				.letterSpacing = fs_4xl * ls_wider});
 			drawText(Renderer::Primitives::TextArgs{
 				.text = "Prospecting Expedition 28-B",
 				.position = {colX, headerY + 52.0F},
 				.scale = textScale(fs_sm),
-				.color = text_dim,
+				.color = accent,
 				.font = fontMono,
 				.vAlign = Foundation::VerticalAlign::Top});
 
@@ -133,7 +135,7 @@ namespace {
 				drawText(Renderer::Primitives::TextArgs{
 					.text = item.label,
 					.position = {labelX, rect.y},
-					.scale = textScale(fs_lg),
+					.scale = textScale(fs_xl),
 					.color = labelColor,
 					.font = fontDisplay,
 					.vAlign = Foundation::VerticalAlign::Middle,
