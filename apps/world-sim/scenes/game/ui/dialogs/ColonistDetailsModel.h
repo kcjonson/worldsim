@@ -15,6 +15,7 @@
 
 #include <ecs/EntityID.h>
 #include <ecs/World.h>
+#include <ecs/components/Task.h>
 
 #include <array>
 
@@ -88,6 +89,7 @@ namespace world_sim {
 		size_t				 prevInventorySize = 0;
 		size_t				 prevMemoryCount = 0;
 		size_t				 prevTaskCount = 0;
+		ecs::NavState		 prevNavState = ecs::NavState::Traveling;
 	};
 
 } // namespace world_sim

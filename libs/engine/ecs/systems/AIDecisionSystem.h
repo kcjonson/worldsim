@@ -99,8 +99,15 @@ private:
 	/// colonist; with a mesh present (a believed-route denial) it instead STOPS movement
 	/// (clears movementTarget.active) so the colonist doesn't dishonestly beeline through a
 	/// wall it believes is there.
-	void requestNavPath(EntityID entity, const glm::vec2& goal, const struct Position& position,
-						const struct Memory& memory, struct MovementTarget& movementTarget);
+	/// The outcome lets callers pick the right nav state: only Blocked is "can't find a way";
+	/// Beelined (no mesh yet) is still ordinary travel, not a stuck colonist.
+	enum class NavRequestOutcome {
+		Routed,	  // a believed route was found and attached
+		Beelined, // no nav system / no mesh yet: straight-line fallback, not stuck
+		Blocked,  // mesh exists but belief admits no route: colonist stopped
+	};
+	NavRequestOutcome requestNavPath(EntityID entity, const glm::vec2& goal, const struct Position& position,
+									 const struct Memory& memory, struct MovementTarget& movementTarget);
 
 	/// Format a human-readable reason for an option
 	[[nodiscard]] static std::string formatOptionReason(

@@ -10,6 +10,8 @@
 #include <ecs/components/Task.h>
 #include <ecs/components/Transform.h>
 
+#include <theme/Tokens.h>
+
 #include <cmath>
 
 namespace world_sim {
@@ -37,6 +39,9 @@ ColonistDetailsModel::UpdateType ColonistDetailsModel::refresh(ecs::World& world
 	extractTasksData(world, colonistId);
 
 	// Detect what changed
+	const auto* task = world.getComponent<ecs::Task>(colonistId);
+	ecs::NavState curNavState = (task != nullptr) ? task->navState : ecs::NavState::Traveling;
+
 	if (colonistChanged) {
 		// Save current values for next comparison
 		prevNeedValues = healthData.needValues;
@@ -44,6 +49,7 @@ ColonistDetailsModel::UpdateType ColonistDetailsModel::refresh(ecs::World& world
 		prevInventorySize = gearData.items.size();
 		prevMemoryCount = memoryData.totalKnown;
 		prevTaskCount = tasksData.totalCount;
+		prevNavState = curNavState;
 		return UpdateType::Structure;
 	}
 
@@ -78,12 +84,18 @@ ColonistDetailsModel::UpdateType ColonistDetailsModel::refresh(ecs::World& world
 		valuesChanged = true;
 	}
 
+	// Check nav state (drives bio panel vocabulary/color)
+	if (curNavState != prevNavState) {
+		valuesChanged = true;
+	}
+
 	// Update previous values
 	prevNeedValues = healthData.needValues;
 	prevMood = healthData.mood;
 	prevInventorySize = gearData.items.size();
 	prevMemoryCount = memoryData.totalKnown;
 	prevTaskCount = tasksData.totalCount;
+	prevNavState = curNavState;
 
 	return valuesChanged ? UpdateType::Values : UpdateType::None;
 }
@@ -114,29 +126,116 @@ void ColonistDetailsModel::extractBioData(const ecs::World& world, ecs::EntityID
 	// Get current task
 	const auto* task = world.getComponent<ecs::Task>(colonistId);
 	if (task != nullptr && task->isActive()) {
-		switch (task->type) {
-			case ecs::TaskType::FulfillNeed:
-				if (task->needToFulfill != ecs::NeedType::Count) {
-					bioData.currentTask = std::string("Fulfilling ") + ecs::needLabel(task->needToFulfill);
-				} else {
-					bioData.currentTask = "Fulfilling need";
+		// For moving tasks, prefer the nav-state vocabulary so the player understands
+		// belief-driven navigation ("Re-routing", "Can't find a way") as intent, not bug.
+		if (task->state == ecs::TaskState::Moving) {
+			switch (task->navState) {
+				case ecs::NavState::ReRouting:
+					bioData.currentTask = "Re-routing";
+					bioData.currentTaskColor = UI::text;
+					break;
+				case ecs::NavState::CantFindWayTo:
+					bioData.currentTask = "Can't find a way to target";
+					bioData.currentTaskColor = UI::status_crit;
+					break;
+				case ecs::NavState::SearchingLKP:
+					bioData.currentTask = "Searching for target";
+					bioData.currentTaskColor = UI::status_warn;
+					break;
+				case ecs::NavState::LookingForWayIn:
+					bioData.currentTask = "Looking for a way in";
+					bioData.currentTaskColor = UI::status_warn;
+					break;
+				case ecs::NavState::Traveling:
+				default: {
+					// Build a destination label from the task type
+					std::string dest;
+					switch (task->type) {
+						case ecs::TaskType::FulfillNeed:
+							dest = (task->needToFulfill != ecs::NeedType::Count)
+								? ecs::needLabel(task->needToFulfill)
+								: "need";
+							break;
+						case ecs::TaskType::Gather:
+							dest = task->gatherItemDefName.empty() ? "item" : task->gatherItemDefName;
+							break;
+						case ecs::TaskType::Craft:
+							dest = "crafting station";
+							break;
+						case ecs::TaskType::Haul:
+							dest = task->haulItemDefName.empty() ? "storage" : task->haulItemDefName;
+							break;
+						case ecs::TaskType::Build:
+							dest = "build site";
+							break;
+						case ecs::TaskType::Deconstruct:
+							dest = "structure";
+							break;
+						case ecs::TaskType::PlacePackaged:
+							dest = "placement";
+							break;
+						case ecs::TaskType::Harvest:
+							dest = "resource";
+							break;
+						default:
+							dest = "target";
+							break;
+					}
+					bioData.currentTask = "Going to " + dest;
+					bioData.currentTaskColor = UI::status_ok;
+					break;
 				}
-				break;
-			case ecs::TaskType::Gather:
-				bioData.currentTask = "Gathering " + task->gatherItemDefName;
-				break;
-			case ecs::TaskType::Craft:
-				bioData.currentTask = "Crafting " + task->craftRecipeDefName;
-				break;
-			case ecs::TaskType::Wander:
-				bioData.currentTask = "Wandering";
-				break;
-			default:
-				bioData.currentTask = "Idle";
-				break;
+			}
+		} else {
+			// Not moving (Pending/Arrived or non-nav tasks)
+			switch (task->type) {
+				case ecs::TaskType::FulfillNeed:
+					bioData.currentTask = (task->needToFulfill != ecs::NeedType::Count)
+						? std::string("Fulfilling ") + ecs::needLabel(task->needToFulfill)
+						: "Fulfilling need";
+					bioData.currentTaskColor = UI::status_ok;
+					break;
+				case ecs::TaskType::Gather:
+					bioData.currentTask = "Gathering " + task->gatherItemDefName;
+					bioData.currentTaskColor = UI::status_ok;
+					break;
+				case ecs::TaskType::Craft:
+					bioData.currentTask = "Crafting " + task->craftRecipeDefName;
+					bioData.currentTaskColor = UI::status_ok;
+					break;
+				case ecs::TaskType::Haul:
+					bioData.currentTask = "Hauling " + (task->haulItemDefName.empty() ? "item" : task->haulItemDefName);
+					bioData.currentTaskColor = UI::status_ok;
+					break;
+				case ecs::TaskType::Build:
+					bioData.currentTask = "Building";
+					bioData.currentTaskColor = UI::status_ok;
+					break;
+				case ecs::TaskType::Deconstruct:
+					bioData.currentTask = "Deconstructing";
+					bioData.currentTaskColor = UI::status_ok;
+					break;
+				case ecs::TaskType::PlacePackaged:
+					bioData.currentTask = "Placing item";
+					bioData.currentTaskColor = UI::status_ok;
+					break;
+				case ecs::TaskType::Harvest:
+					bioData.currentTask = "Harvesting";
+					bioData.currentTaskColor = UI::status_ok;
+					break;
+				case ecs::TaskType::Wander:
+					bioData.currentTask = "Wandering";
+					bioData.currentTaskColor = UI::text_dim;
+					break;
+				default:
+					bioData.currentTask = "Idle";
+					bioData.currentTaskColor = UI::text_dim;
+					break;
+			}
 		}
 	} else {
 		bioData.currentTask = "Idle";
+		bioData.currentTaskColor = UI::text_dim;
 	}
 }
 

@@ -120,6 +120,7 @@ void BioTabView::update(const BioData& bio) {
 	if (idx < children.size()) {
 		if (auto* text = dynamic_cast<UI::Text*>(children[idx])) {
 			text->text = "Current: " + bio.currentTask;
+			text->style.color = bio.currentTaskColor;
 		}
 		++idx;
 	}

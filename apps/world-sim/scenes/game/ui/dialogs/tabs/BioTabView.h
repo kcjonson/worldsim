@@ -1,6 +1,7 @@
 #pragma once
 
 #include <component/Container.h>
+#include <graphics/Color.h>
 #include <graphics/Rect.h>
 #include <layer/Layer.h>
 
@@ -17,7 +18,8 @@ namespace world_sim {
 		std::string				 background = "No background"; // Placeholder
 		float					 mood = 100.0F;				   // 0-100
 		std::string				 moodLabel;					   // "Happy", "Content", etc.
-		std::string				 currentTask;				   // e.g., "Eating", "Wandering"
+		std::string				 currentTask;				   // e.g., "Going to food", "Re-routing"
+		Foundation::Color		 currentTaskColor{0.80F, 0.80F, 0.85F, 1.0F}; // default matches bodyColor()
 	};
 
 	/// Bio tab content for ColonistDetailsDialog

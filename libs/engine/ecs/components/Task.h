@@ -35,10 +35,26 @@ enum class TaskState : uint8_t {
 	Arrived	 // Reached target (ready for Actions System)
 };
 
+/// Navigation belief state - what the colonist believes about its route.
+/// Drives the info panel vocabulary ("Going to", "Re-routing", "Can't find a way").
+/// SearchingLKP and LookingForWayIn are reserved for deferred search behaviors.
+enum class NavState : uint8_t {
+	Traveling,      // Route planned and being followed
+	ReRouting,      // Replanning because a new wall/opening was discovered
+	SearchingLKP,   // (reserved) searching last-known position
+	LookingForWayIn, // (reserved) searching for an entrance to a building
+	CantFindWayTo   // Believed route denied; colonist is stopped
+};
+
 /// Task component - tracks a colonist's current activity
 struct Task {
 	TaskType  type = TaskType::None;
 	TaskState state = TaskState::Pending;
+	NavState  navState = NavState::Traveling;
+	// ReRouting is momentary: set to ~30 ticks when a repath fires so the player sees a brief
+	// "Re-routing" beat before the panel reverts to "Going to". Decremented each update tick;
+	// zero means the ReRouting display window has elapsed (revert to Traveling).
+	std::uint8_t navStateHold = 0;
 
 	/// Target position to move to
 	glm::vec2 targetPosition{0.0F, 0.0F};
@@ -105,6 +121,8 @@ struct Task {
 	void clear() {
 		type = TaskType::None;
 		state = TaskState::Pending;
+		navState = NavState::Traveling;
+		navStateHold = 0;
 		targetPosition = glm::vec2{0.0F, 0.0F};
 		needToFulfill = NeedType::Count;
 		harvestTargetEntityId = 0;
