@@ -690,7 +690,31 @@ namespace ecs {
 					// requestNavPath re-stamps the path on success, or (on a believed-route
 					// denial) invalidates it and clears movementTarget.active to stop the
 					// colonist instead of beelining through the believed wall.
-					requestNavPath(entity, task.targetPosition, position, memory, movementTarget);
+					const NavRequestOutcome outcome = requestNavPath(entity, task.targetPosition, position, memory, movementTarget);
+					if (outcome == NavRequestOutcome::Routed) {
+						// Show "Re-routing" for ~30 ticks so the player sees the colonist react
+						// to a newly-discovered wall before the panel reverts to "Going to".
+						// navStateHold counts down each update tick; the panel reads Rerouting
+						// while it's >0, then Traveling once it hits zero.
+						task.navState = NavState::Rerouting;
+						task.navStateHold = 30;
+					} else if (outcome == NavRequestOutcome::Blocked) {
+						task.navState = NavState::CantFindWayTo;
+						task.navStateHold = 0;
+					} else {
+						task.navState = NavState::Traveling; // beelining (no mesh) -- not stuck
+						task.navStateHold = 0;
+					}
+				}
+			}
+
+			// Drain the Rerouting hold counter so "Re-routing" is a brief visible beat.
+			// Once it reaches zero the info panel maps navState to the display string,
+			// so the colonist naturally shows "Going to" again without any extra set.
+			if (task.navState == NavState::Rerouting && task.navStateHold > 0) {
+				--task.navStateHold;
+				if (task.navStateHold == 0) {
+					task.navState = NavState::Traveling;
 				}
 			}
 
@@ -1388,12 +1412,16 @@ namespace ecs {
 			// so it's always present here; plan the route over the colonist's belief.
 			const Memory* memory = world->getComponent<Memory>(entity);
 			if (memory != nullptr) {
-				requestNavPath(entity, task.targetPosition, position, *memory, movementTarget);
+				const NavRequestOutcome outcome = requestNavPath(entity, task.targetPosition, position, *memory, movementTarget);
+				// Only a belief denial (mesh present, no route) is "can't find a way"; a
+				// no-mesh beeline is ordinary travel.
+				task.navState = (outcome == NavRequestOutcome::Blocked) ? NavState::CantFindWayTo : NavState::Traveling;
+				task.navStateHold = 0;
 			}
 		}
 	}
 
-	void AIDecisionSystem::requestNavPath(
+	AIDecisionSystem::NavRequestOutcome AIDecisionSystem::requestNavPath(
 		EntityID entity, const glm::vec2& goal, const Position& position, const Memory& memory,
 		MovementTarget& movementTarget) {
 		// No nav system wired, or no mesh built yet: fall back to the straight-line
@@ -1406,7 +1434,7 @@ namespace ecs {
 			}
 			LOG_DEBUG(Engine, "[Nav] Entity %llu: no mesh, beeline to (%.2f, %.2f)",
 				static_cast<unsigned long long>(entity), goal.x, goal.y);
-			return;
+			return NavRequestOutcome::Beelined;
 		}
 
 		// Agent footprint feeds the disc-clearance query; default if the entity has none.
@@ -1426,8 +1454,7 @@ namespace ecs {
 			// A mesh exists but the colonist's belief admits no route: a believed wall
 			// cuts the corridor. STOP rather than beeline dishonestly through that wall --
 			// clear movementTarget.active so MovementSystem doesn't carry the colonist
-			// straight at the geometry it believes is solid. (The "Can't find a way" UI
-			// state is the next phase; here we just halt the dishonest beeline.)
+			// straight at the geometry it believes is solid.
 			if (auto* navPath = world->getComponent<NavPath>(entity)) {
 				navPath->valid = false;
 			}
@@ -1440,7 +1467,7 @@ namespace ecs {
 			}
 			LOG_DEBUG(Engine, "[Nav] Entity %llu: no believed route to (%.2f, %.2f), stopping",
 				static_cast<unsigned long long>(entity), goal.x, goal.y);
-			return;
+			return NavRequestOutcome::Blocked;
 		}
 
 		// Attach or overwrite the route. waypoints[0] is ~the start, so steer toward
@@ -1463,6 +1490,7 @@ namespace ecs {
 
 		LOG_DEBUG(Engine, "[Nav] Entity %llu: path to (%.2f, %.2f), %zu waypoints",
 			static_cast<unsigned long long>(entity), goal.x, goal.y, count);
+		return NavRequestOutcome::Routed;
 	}
 
 	std::string AIDecisionSystem::formatOptionReason(const EvaluatedOption& option, const char* needName) {

@@ -15,6 +15,7 @@
 
 #include <ecs/EntityID.h>
 #include <ecs/World.h>
+#include <ecs/components/Task.h>
 
 #include <array>
 
@@ -88,6 +89,9 @@ namespace world_sim {
 		size_t				 prevInventorySize = 0;
 		size_t				 prevMemoryCount = 0;
 		size_t				 prevTaskCount = 0;
+		// The bio "Current:" line is derived from task type + state + navState + labels;
+		// diffing the rendered string catches every change to it without enumerating inputs.
+		std::string			 prevBioTask;
 	};
 
 } // namespace world_sim
