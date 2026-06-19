@@ -39,9 +39,6 @@ ColonistDetailsModel::UpdateType ColonistDetailsModel::refresh(ecs::World& world
 	extractTasksData(world, colonistId);
 
 	// Detect what changed
-	const auto* task = world.getComponent<ecs::Task>(colonistId);
-	ecs::NavState curNavState = (task != nullptr) ? task->navState : ecs::NavState::Traveling;
-
 	if (colonistChanged) {
 		// Save current values for next comparison
 		prevNeedValues = healthData.needValues;
@@ -49,7 +46,7 @@ ColonistDetailsModel::UpdateType ColonistDetailsModel::refresh(ecs::World& world
 		prevInventorySize = gearData.items.size();
 		prevMemoryCount = memoryData.totalKnown;
 		prevTaskCount = tasksData.totalCount;
-		prevNavState = curNavState;
+		prevBioTask = bioData.currentTask;
 		return UpdateType::Structure;
 	}
 
@@ -84,8 +81,9 @@ ColonistDetailsModel::UpdateType ColonistDetailsModel::refresh(ecs::World& world
 		valuesChanged = true;
 	}
 
-	// Check nav state (drives bio panel vocabulary/color)
-	if (curNavState != prevNavState) {
+	// Check the rendered bio task line (driven by task type/state/navState + labels).
+	// extractBioData ran above, so bioData.currentTask reflects this frame's task.
+	if (bioData.currentTask != prevBioTask) {
 		valuesChanged = true;
 	}
 
@@ -95,7 +93,7 @@ ColonistDetailsModel::UpdateType ColonistDetailsModel::refresh(ecs::World& world
 	prevInventorySize = gearData.items.size();
 	prevMemoryCount = memoryData.totalKnown;
 	prevTaskCount = tasksData.totalCount;
-	prevNavState = curNavState;
+	prevBioTask = bioData.currentTask;
 
 	return valuesChanged ? UpdateType::Values : UpdateType::None;
 }
@@ -130,7 +128,7 @@ void ColonistDetailsModel::extractBioData(const ecs::World& world, ecs::EntityID
 		// belief-driven navigation ("Re-routing", "Can't find a way") as intent, not bug.
 		if (task->state == ecs::TaskState::Moving) {
 			switch (task->navState) {
-				case ecs::NavState::ReRouting:
+				case ecs::NavState::Rerouting:
 					bioData.currentTask = "Re-routing";
 					bioData.currentTaskColor = UI::text;
 					break;

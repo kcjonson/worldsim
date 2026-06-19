@@ -694,9 +694,9 @@ namespace ecs {
 					if (outcome == NavRequestOutcome::Routed) {
 						// Show "Re-routing" for ~30 ticks so the player sees the colonist react
 						// to a newly-discovered wall before the panel reverts to "Going to".
-						// navStateHold counts down each update tick; the panel reads ReRouting
+						// navStateHold counts down each update tick; the panel reads Rerouting
 						// while it's >0, then Traveling once it hits zero.
-						task.navState = NavState::ReRouting;
+						task.navState = NavState::Rerouting;
 						task.navStateHold = 30;
 					} else if (outcome == NavRequestOutcome::Blocked) {
 						task.navState = NavState::CantFindWayTo;
@@ -708,10 +708,10 @@ namespace ecs {
 				}
 			}
 
-			// Drain the ReRouting hold counter so "Re-routing" is a brief visible beat.
+			// Drain the Rerouting hold counter so "Re-routing" is a brief visible beat.
 			// Once it reaches zero the info panel maps navState to the display string,
 			// so the colonist naturally shows "Going to" again without any extra set.
-			if (task.navState == NavState::ReRouting && task.navStateHold > 0) {
+			if (task.navState == NavState::Rerouting && task.navStateHold > 0) {
 				--task.navStateHold;
 				if (task.navStateHold == 0) {
 					task.navState = NavState::Traveling;

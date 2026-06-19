@@ -40,7 +40,7 @@ enum class TaskState : uint8_t {
 /// SearchingLKP and LookingForWayIn are reserved for deferred search behaviors.
 enum class NavState : uint8_t {
 	Traveling,      // Route planned and being followed
-	ReRouting,      // Replanning because a new wall/opening was discovered
+	Rerouting,      // Replanning because a new wall/opening was discovered
 	SearchingLKP,   // (reserved) searching last-known position
 	LookingForWayIn, // (reserved) searching for an entrance to a building
 	CantFindWayTo   // Believed route denied; colonist is stopped
@@ -51,9 +51,9 @@ struct Task {
 	TaskType  type = TaskType::None;
 	TaskState state = TaskState::Pending;
 	NavState  navState = NavState::Traveling;
-	// ReRouting is momentary: set to ~30 ticks when a repath fires so the player sees a brief
+	// Rerouting is momentary: set to ~30 ticks when a repath fires so the player sees a brief
 	// "Re-routing" beat before the panel reverts to "Going to". Decremented each update tick;
-	// zero means the ReRouting display window has elapsed (revert to Traveling).
+	// zero means the Rerouting display window has elapsed (revert to Traveling).
 	std::uint8_t navStateHold = 0;
 
 	/// Target position to move to
