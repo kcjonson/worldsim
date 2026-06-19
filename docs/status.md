@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2026-06-18 (Dialogs de-hand-rolled: new `ListRow` primitive backs the crafting recipe list #187 and storage item/category list #188; "Modal" renamed to "Dialog" (modal is a property) #186 — see dev log 2026-06-18-dialog-listrow-migration.md. No hand-rolled selectable lists or hardcoded washes remain. Earlier on main: Salvage UI cutover complete (tokens + theme deleted) #176-181, Navigation v1 #161-169, Dev/Test Tools #157, Fluvial Erosion #149, Asset Manager #156)
+Last Updated: 2026-06-19 (Navigation P4 belief filtering complete: colonists path against what they've personally seen, not the live truth #189/#191/#194 — see dev log 2026-06-19-navigation-belief-filtering.md. Built on the Vision System #172-185, now marked complete. Earlier on main: Dialogs de-hand-rolled with `ListRow` #186-188, Salvage UI cutover #176-181, Navigation v1 #161-169, Dev/Test Tools #157, Fluvial Erosion #149)
 
 ## Epic/Story/Task Template
 
@@ -1094,22 +1094,22 @@ The following MVP epics have all been completed. Detailed task breakdowns are pr
 ### Vision System: Occlusion & Discovery
 **Spec/Documentation:** `/docs/technical/vision-architecture.md`
 **Dependencies:** Geometry Foundations (libs/geometry); consumes Building & Construction's structure publication for occluders
-**Status:** planned
+**Status:** complete — shipped #172/#173/#179/#183/#184/#185, landed just before Navigation P4's belief filtering (its honest write path into memory). NOTE: needs a development-log entry (none written yet).
 
 **Goal:** Honest sight: GeometryIndex shared with navigation, visibility polygons with an outdoor fast path, discovery/witnessing/stale-memory reconciliation through visibility, windows pass sight while blocking movement, structures discoverable per segment. Must land with or before Navigation P4 (belief filtering is hollow without it). **Fog of war explicitly excluded** — separate later epic alongside the overlay system; the polygon data it needs comes free from this work.
 
 **Tasks:**
-- [ ] GeometryIndex (segment store + transparency flags + version counter, shared with nav obstacle publication)
-- [ ] Visibility polygons (rotational sweep, outdoor fast path, per-observer caching)
-- [ ] Rewire discovery, witnessing, and stale-memory reconciliation through visibility
-- [ ] Structure-as-observable discovery + window transparency
+- [x] GeometryIndex (segment store + transparency flags + version counter, shared with nav obstacle publication)
+- [x] Visibility polygons (rotational sweep, outdoor fast path, per-observer caching)
+- [x] Rewire discovery, witnessing, and stale-memory reconciliation through visibility
+- [x] Structure-as-observable discovery + window transparency
 
 ---
 
 ### Navigation & Pathfinding
 **Spec/Documentation:** `/docs/technical/pathfinding-architecture.md`
 **Dependencies:** Geometry Foundations (shared integer-coordinate substrate, libs/geometry); consumes the construction obstacle/portal contract
-**Status:** in progress — local navigation v1 shipped (P1, P2, and the static-obstacle slice of P4); see dev log 2026-06-16-navigation-v1.md
+**Status:** in progress — navigation v1 shipped (P1, P2); belief filtering complete (P4, #189/#191/#194); P3/P5/P6 remain. See dev logs 2026-06-16-navigation-v1.md and 2026-06-19-navigation-belief-filtering.md
 
 **Goal:** Four-tier vector-native navigation: planet hex graph for cross-globe abstract parties, chunk connectivity components for reachability, dynamic CDT navmesh for exact local paths, collision circles + velocity-obstacle steering so agents take up space. Must land (through P4) before walls ship as player-facing gameplay; P6 unlocks raids.
 
@@ -1117,10 +1117,10 @@ The following MVP epics have all been completed. Detailed task breakdowns are pr
 - [x] P1: Agents become physical (radius component, dynamic spatial hash, circle collision, separation)
 - [x] P2: Local navmesh, static world (exact CDT over the loaded area from terrain/water/flora/wall contours, triangle A* + corridor width + funnel, waypoint following). Shipped as one merged loaded-area mesh, off-thread rebuild on world change; integrated into MovementSystem + AIDecisionSystem; NavOverlay debug draw.
 - [ ] P3: Regional layer (components, traversal-class reachability API, RRA* heuristic)
-- [~] P4: Dynamic world + belief — construction obstacles/portals (walls/doors/windows) + water + tree footprints + wall-collision safety net are DONE (NavInputBuilder + NavigationSystem version-triggered rebuild); door permission costs, memory-filtered planning, discovery replans, and search primitives remain (need Vision System: Occlusion & Discovery)
+- [x] P4: Dynamic world + belief — DONE. Static slice (construction obstacles/portals, water, tree footprints, wall-collision safety net) plus belief filtering: one full-triangulation navmesh with per-face blocker tags, a per-colonist `BeliefFilter` consulted at query time (unseen walls treated as absent), `beliefVersion`-driven replans coalesced against vision, and nav-state readability in the colonist panel ("Going to" / "Re-routing" / "Can't find a way to"). Deferred: active search behaviors (door-discovery wall-follow, LKP search — `NavState` reserves their labels) and stale-demolished-wall pessimism.
 - [ ] P5: Crowds (velocity-obstacle avoidance + mitigations, occupancy costs, door slot queues, regression rig)
 - [ ] P6: Global tier + raids (hex-graph A*, abstract party records, attention bubbles, materialization handoffs, raider belief seeding + scouting)
-- [ ] Optional polish: brighter debug overlay, waypoint substepping for fast movers, nav-state line in colonist info panel
+- [ ] Optional polish: brighter debug overlay, waypoint substepping for fast movers (nav-state line in colonist info panel DONE #194)
 
 ---
 
