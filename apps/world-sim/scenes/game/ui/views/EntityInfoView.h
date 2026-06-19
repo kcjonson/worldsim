@@ -245,7 +245,7 @@ class EntityInfoView : public UI::Component {
 	static constexpr float kPadding = 12.0F;		  // Outer padding
 	static constexpr float kSectionGap = 12.0F;		  // Gap between sections
 	static constexpr float kItemGap = 4.0F;			  // Gap between items
-	static constexpr float kNameFontSize = 14.0F;	  // Entity name (colonist name can be bigger)
+	static constexpr float kNameFontSize = 15.0F;	  // Entity name (colonist name can be bigger)
 	static constexpr float kLabelFontSize = 12.0F;	  // Property labels (match NeedBar)
 	static constexpr float kHeaderFontSize = 12.0F;	  // Section headers
 	static constexpr float kNeedBarHeight = 16.0F;	  // Need bars (slightly taller)
