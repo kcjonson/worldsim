@@ -44,8 +44,9 @@ class ZoomControlPanel : public UI::Component {
 	UI::LayerHandle zoomControlHandle;
 
 	// Layout constants
-	static constexpr float kRightMargin = 20.0F;
-	static constexpr float kTopMargin = 80.0F;  // Below where TopBar will be
+	static constexpr float kRightMargin = 12.0F;
+	static constexpr float kBottomMargin = 12.0F;  // Bottom-right per prototype
+	static constexpr float kControlHeight = 28.0F;
 	static constexpr float kControlWidth = 146.0F;  // 28+4+50+4+28+4+28
 };
 
