@@ -256,17 +256,25 @@ Opened by double-clicking a colonist card (roster or info panel eye button). A `
 
 Avatar (72px, mood-tinted) beside a 2×2 `Stat` grid: Role, Origin, Age (unit "yrs"), Mood (percentage, tone crit if < 0.4, else ok). Dialog kicker: "Personnel File · {role}". Dialog title: colonist name.
 
-### Tabs (6)
+### Tabs (8)
 
-Bio (user), Needs (heart), Skills (hammer), Social (users), Gear (box), Log (list).
+Bio (user), Health (heart), Skills (hammer), Social (users), Gear (box), Memory (eye), Tasks (list), Log (clock).
+
+The tab set mirrors the real colonist systems (see the data notes in the prototype's `mock.ts`). Health folds in the former "Needs" tab, since in-engine health *is* the needs + mood system.
 
 #### Bio tab
 
 Backstory paragraph (`--fs-md`, `--lh-loose`). `Divider` "Traits." Trait `Badge` chips (same tone logic as party selection). Current task note: hammer icon + "Currently: {task}" in amber.
 
-#### Needs tab
+#### Health tab
 
-Full-width `Meter` for Mood (tone `auto`) at the top. `Divider`. Then one need row per need: icon (14px, `--text-dim`) + full-width `Meter` (label, tone `auto`, percentage valueText). Needs: Food, Rest, Water, Recreation.
+![Health tab](../mocks/in-game-dossier-health.png)
+
+The colonist's Needs + Mood system. A full-width `Meter` for Mood (tone `auto`) at the top, captioned that mood is computed from the needs below. Then the eight needs in a 2-column grid; each row is an icon (14px, `--text-dim`) + `Meter` (size `sm`) colored against that need's *own* thresholds: `crit` below its critical threshold, `warn` below its seek threshold, else `ok`.
+
+Two groups: **Vital Needs** (Hunger, Thirst, Energy, Bladder, Digestion — the five the AI acts on today) and **Comfort** (Hygiene, Recreation, Temperature — tracked but not yet pursued, rendered slightly dimmed), with a note that colonists don't act on comfort needs yet.
+
+A **Body & Ailments** divider closes the tab over a dashed empty-state panel ("No injuries or ailments / Wounds, illness, and treatment arrive with the medical update") — the injury/medical system isn't built yet.
 
 #### Skills tab
 
@@ -299,6 +307,22 @@ Empty slots use a dashed `--line-hairline` border. Filled slots use a solid `--l
 **Belt section** — titled with belt item name (e.g. "Tool Belt"), slot readout "X / 4 slots · X.X kg" right. Caption: "Quick-draw slots · one-hand tools only." Then a 40×40px grid of belt cells. Filled cells: icon (18px, amber). Empty cells: dashed border, plus icon (`--text-faint`).
 
 **Total carry load** — full-width `Meter` at the bottom (label "Carry load," value = total/cap, tone `data` below 85%, `warn` above, valueText "X.X / 35 kg").
+
+#### Memory tab
+
+![Memory tab](../mocks/in-game-dossier-memory.png)
+
+The colonist's personal, line-of-sight knowledge (the `Memory` component, populated by the vision system). A summary row at top shows two metrics: locations known (total) and sight range (meters). Below, a 2-column grid of capability categories — **Food Sources**, **Water Sources**, **Resources**, **Colonists**, **Threats** — each with an icon, name, and count `Badge`. Under each category, a sample of known entities: name + distance (mono, `--data-bright`) + last-seen freshness (mono, `--text-faint`; stale entries read "may be gone" in `--status-warn`), with a "+N more" line when the list is truncated. Empty categories read "None sighted."
+
+Trailing muted note: memory is personal (not the colony's shared map) and goes stale until revisited.
+
+#### Tasks tab
+
+![Tasks tab](../mocks/in-game-dossier-tasks.png)
+
+The colonist's work, drawn from the colony goal registry. A prominent **Currently** panel (amber left border) shows the active, self-assigned task: type (Chakra Petch), target, nav state + distance (mono), and a progress `Meter`. Below a "Known Work" `Divider`, a list of known goal-tasks — each row: icon, label + status detail (e.g. "0/2 metal"), distance, and a status `Badge`: Available (`ok`), In Progress (`data`), Blocked (`crit`), Waiting (`warn`).
+
+Trailing muted note: colonists pick the highest-priority job they know about on their own; per-colonist preferences live under Work Priorities (the planned control wired to the footer button).
 
 #### Log tab
 
