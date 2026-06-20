@@ -74,9 +74,16 @@ constexpr double kInteriorSaturationKm = 2000.0;
 // long polar night (Antarctica's coast ~-25 C and interior below -50 C, versus the
 // Arctic ocean's ~-15 C). Without this the model gives polar land an ocean-mild
 // mean, so its summers stay above freezing and no land ice can form. The cooling
-// grows with latitude (sin^2) and toward continental interiors (distNorm); ocean
-// keeps its mild, heat-buffered polar mean. Calibrated so deep polar interiors
+// grows with latitude (sin^4, below) and toward continental interiors (distNorm);
+// ocean keeps its mild, heat-buffered polar mean. Calibrated so deep polar interiors
 // reach Antarctic-like annual means and their summers fall below freezing.
+//
+// The latitude weight is sin^4(lat), not sin^2: the polar-night radiative decoupling
+// that drives this contrast runs away only once the sun barely rises, so it must stay
+// concentrated poleward of ~60 deg. sin^2 bled ~8 C into 45-deg continental interiors
+// and dragged the tundra belt far equatorward of Earth's; sin^4 holds full strength at
+// the pole (sin^4(90)=1) while halving it by 60 deg and quartering it by 45 deg, so the
+// caps still grow ice without over-cooling the mid-latitudes.
 constexpr double kPolarLandCoolC     = 16.0; // C at the pole, deep interior
 constexpr double kPolarCoolCoastFrac = 0.4;  // fraction of the cooling a coast still gets
 
@@ -182,8 +189,9 @@ void AtmosphereStage::run(StageContext& ctx) {
         if (dn > 1.0) dn = 1.0;
         distNorm[t] = static_cast<float>(dn);
         landDistSum += static_cast<double>(distNorm[t]); // sum from stored float, not intermediate double
-        const double zc = ctx.grid.tileCenter(t).z; // sin(lat)
-        polarCoolSum += kPolarLandCoolC * (zc * zc) *
+        const double zc = ctx.grid.tileCenter(t).z;  // sin(lat)
+        const double polarWeight = zc * zc * zc * zc; // sin^4(lat), see kPolarLandCoolC
+        polarCoolSum += kPolarLandCoolC * polarWeight *
             (kPolarCoolCoastFrac + (1.0 - kPolarCoolCoastFrac) *
                                        static_cast<double>(distNorm[t]));
         ++landCount;
@@ -260,7 +268,8 @@ void AtmosphereStage::run(StageContext& ctx) {
             // keep the global mean (the energy balance) unchanged.
             tempC += polarCoolComp;
             if (!isOcean) {
-                tempC -= kPolarLandCoolC * sin2Lat *
+                const double polarWeight = sin2Lat * sin2Lat; // sin^4(lat)
+                tempC -= kPolarLandCoolC * polarWeight *
                          (kPolarCoolCoastFrac + (1.0 - kPolarCoolCoastFrac) *
                                                     static_cast<double>(distNorm[t]));
             }

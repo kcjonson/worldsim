@@ -135,12 +135,19 @@ interiors (Antarctica, Siberia) radiate hard through the polar night and run far
 colder.
 
 `AtmosphereStage` now cools high-latitude land below same-latitude ocean:
-`dT = -kPolarLandCoolC · sin²lat · (kPolarCoolCoastFrac + (1-kPolarCoolCoastFrac)·distNorm)`
+`dT = -kPolarLandCoolC · sin⁴lat · (kPolarCoolCoastFrac + (1-kPolarCoolCoastFrac)·distNorm)`
 (`kPolarLandCoolC = 16 C` at the pole interior, `kPolarCoolCoastFrac = 0.4`). This
 is **heat redistribution, not net cooling**: the total is summed serially and added
 back uniformly (`polarCoolComp`) so the global mean (the energy balance) is
 unchanged. A side effect is that polar oceans stay warmer than polar land and so
 carry a slightly smaller sea-ice cap, which is realistic (the Southern Ocean).
+
+The latitude weight is `sin⁴`, not `sin²`: the polar-night radiative decoupling is a
+genuinely high-latitude effect, so the cooling must stay concentrated poleward of
+~60°. `sin²` bled ~8 C into 45° continental interiors and dragged the tundra belt far
+equatorward of Earth's (the EarthLike across-seed mean ArcticTundra rose to ~19%);
+`sin⁴` holds full strength at the pole while halving the cooling by 60° and quartering
+it by 45°, so the caps still grow ice and the tundra belt pulls back to ~17.6%.
 
 This is what makes polar continental summers fall below freezing so ice sheets form
 where Earth has them; the feedback above then consolidates them.
