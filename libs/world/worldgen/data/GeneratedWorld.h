@@ -40,13 +40,17 @@ struct WorldSummary {
 //   that bit is set; stages only write the arrays for fields they introduce.
 //
 //   Exception — the optional ice->climate feedback re-runs the temperature-
-//   dependent tail (Atmosphere..Glacier) a second time to rewrite those
-//   climate-tail arrays in place. To stay within the contract the pipeline first
-//   CLEARS those fields' validFields bits (and publishes a snapshot) so readers
-//   skip the arrays while they are mid-rewrite; each pass-2 stage re-sets its bit
-//   as it finishes, so no valid array is ever observed being overwritten.
-//   Tectonic/terrain/ocean fields are written exactly once and stay valid and
-//   immutable across both passes.
+//   dependent tail a second time to rewrite those climate-tail arrays in place.
+//   The tail is the contiguous stage range Atmosphere, Precipitation, Ocean,
+//   Biome, Snow, Glacier, so the rewritten fields include the ocean fields
+//   (WaterDepth, the ocean flag): OceanStage runs inside the tail, and waterDepth
+//   is co-owned with PrecipitationStage's lakes, which do shift under the colder
+//   feedback climate. To stay within the contract the pipeline first CLEARS those
+//   fields' validFields bits (and publishes a snapshot) so readers skip the arrays
+//   while they are mid-rewrite; each pass-2 stage re-sets its bit as it finishes,
+//   so no valid array is ever observed being overwritten. Only the pre-tail fields
+//   (tectonics, crust, terrain, erosion, sea-level selection) are written exactly
+//   once and stay valid and immutable across both passes.
 struct GeneratedWorld {
     PlanetParams         params;
     DerivedPlanetValues  derived;

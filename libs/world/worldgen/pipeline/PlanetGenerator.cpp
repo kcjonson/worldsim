@@ -182,6 +182,30 @@ void PlanetGenerator::runPipeline(PlanetParams params) {
         world->grid    = std::make_shared<SphereGrid>(params.gridSubdivision);
         world->data.allocate(world->grid->tileCount());
 
+        // The climate tail (temperature-dependent stages) begins at AtmosphereStage;
+        // everything before it (tectonics, terrain, sea-level selection) is unaffected
+        // by ice and never re-runs. The tail is the contiguous index range
+        // [tailStart, end): Atmosphere, Precipitation, Ocean, Biome, Snow, Glacier.
+        // OceanStage sits inside the tail and so re-runs too. It is a pure function of
+        // elevation and sea level, so it reproduces identical ocean tiles, but it has to
+        // re-run because it co-owns waterDepth with PrecipitationStage's lakes, which DO
+        // change under the colder feedback climate.
+        size_t tailStart = stages.size();
+        for (size_t i = 0; i < stages.size(); ++i) {
+            if (std::strcmp(stages[i]->name(), "Atmosphere") == 0) {
+                tailStart = i;
+                break;
+            }
+        }
+
+        // Progress reserves a band for the optional feedback pass so the bar reflects
+        // pass-2 work instead of pinning at 100% while it runs. The feedback re-runs the
+        // tail, so the planned work is the full pipeline plus one more tail; pass 1 tops
+        // out at totalWeight/plannedTotalWeight and pass 2 fills the rest. A glacier-free
+        // world skips pass 2, and the final store (at Complete) advances the bar to 1.0.
+        const float reRunTailWeight    = totalWeight - weightPrefixSum[tailStart];
+        const float plannedTotalWeight = totalWeight + reRunTailWeight;
+
         // Run one stage by index, optionally with the ice-feedback flag set (used
         // only on the second pass). Reuses deriveSeed(seed, i) so re-running a stage
         // is bit-identical apart from the feedback it reads.
@@ -190,18 +214,23 @@ void PlanetGenerator::runPipeline(PlanetParams params) {
             atomicStageFraction.store(0.0f, std::memory_order_release);
 
             float stageWeightBase = weightPrefixSum[i];
+            // Pass 2 (iceFeedback) re-runs the tail, so its completed-work baseline is
+            // the whole first pass beyond the pre-tail prefix already in stageWeightBase:
+            // reRunTailWeight = totalWeight - weightPrefixSum[tailStart].
+            const float passBase = iceFeedback ? reRunTailWeight : 0.0f;
 
             // reportProgress lambda: maps [0,1] within stage to totalFraction. Both
             // stores are monotonic max via CAS loop so out-of-order slab completions
-            // never push progress backwards (and so the second pass re-running the
-            // tail never rewinds the bar).
-            auto reportProgress = [&, i, stageWeightBase](float frac) {
+            // never push progress backwards. Pass 2 continues forward from where pass 1
+            // stopped into the reserved tail band; it never rewinds.
+            auto reportProgress = [&, i, stageWeightBase, passBase](float frac) {
                 float cur = atomicStageFraction.load(std::memory_order_relaxed);
                 while (frac > cur &&
                        !atomicStageFraction.compare_exchange_weak(
                            cur, frac, std::memory_order_relaxed)) {}
 
-                float total = (stageWeightBase + stages[i]->weight() * frac) / totalWeight;
+                float total = (passBase + stageWeightBase + stages[i]->weight() * frac)
+                              / plannedTotalWeight;
                 cur = atomicTotalFraction.load(std::memory_order_relaxed);
                 while (total > cur &&
                        !atomicTotalFraction.compare_exchange_weak(
@@ -226,17 +255,6 @@ void PlanetGenerator::runPipeline(PlanetParams params) {
             stages[i]->run(ctx);
             publishSnapshot(world);
         };
-
-        // The climate tail (temperature-dependent stages) begins at AtmosphereStage;
-        // everything before it (tectonics, terrain, ocean level) is unaffected by ice
-        // and is never re-run.
-        size_t tailStart = stages.size();
-        for (size_t i = 0; i < stages.size(); ++i) {
-            if (std::strcmp(stages[i]->name(), "Atmosphere") == 0) {
-                tailStart = i;
-                break;
-            }
-        }
 
         // Pass 1: the full pipeline, no ice feedback. Capture the validFields set just
         // before the climate tail so the feedback pass can invalidate exactly the

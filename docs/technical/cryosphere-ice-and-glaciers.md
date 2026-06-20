@@ -107,10 +107,13 @@ convergence loop, which would oscillate at the snowball-Earth tipping point):
 
 1. Run the full pipeline (`PlanetGenerator::runPipeline`, pass 1, `iceFeedback=false`).
 2. If pass 1 grew land ice (`worldHasLandIce`), re-run the temperature-dependent
-   tail (Atmosphere → Precipitation → Biome → Snow → Glacier) once with
+   tail (Atmosphere → Precipitation → Ocean → Biome → Snow → Glacier) once with
    `StageContext::iceFeedback=true`, **reusing each stage's `deriveSeed(seed, i)`**
    so the re-run is bit-identical apart from the feedback. A glacier-free world
-   skips pass 2 and pays nothing.
+   skips pass 2 and pays nothing. OceanStage is part of the contiguous tail and so
+   re-runs too: it reproduces identical ocean tiles (a pure function of elevation
+   and sea level) but must re-run because it co-owns `waterDepth` with the lakes
+   `PrecipitationStage` recomputes under the colder feedback climate.
 
 Two feedbacks fire in pass-2 `AtmosphereStage`:
 - **Elevation lapse:** the lapse rate acts on the ICE SURFACE (`elevation +
