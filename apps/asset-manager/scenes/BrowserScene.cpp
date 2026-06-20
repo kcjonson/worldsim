@@ -2,6 +2,7 @@
 #include "AssetRow.h"
 #include "AssetThumbnail.h"
 #include "SceneTypes.h"
+#include "Theme.h"
 
 #include <assets/AssetDefinition.h>
 #include <assets/AssetRegistry.h>
@@ -27,6 +28,8 @@
 
 namespace {
 
+namespace theme = asset_manager::theme;
+
 constexpr const char* kSceneName = "browser";
 constexpr float		  kTopBar = 56.0F;
 constexpr float		  kTreeWidth = 300.0F;
@@ -34,6 +37,11 @@ constexpr float		  kTreeWidth = 300.0F;
 std::string toLower(std::string s) {
 	std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
 	return s;
+}
+
+void fillRect(float x, float y, float w, float h, const Foundation::Color& color) {
+	UI::Rectangle rect(UI::Rectangle::Args{.position = {x, y}, .size = {w, h}, .style = {.fill = color}, .id = "am_fill"});
+	rect.render();
 }
 
 class BrowserScene : public engine::IScene {
@@ -65,6 +73,7 @@ class BrowserScene : public engine::IScene {
 			.label = "Reload",
 			.position = {kTreeWidth + 24.0F, 12.0F},
 			.size = {92.0F, 32.0F},
+			.type = UI::Button::Type::Secondary,
 			.onClick = [this]() { reload(); },
 			.id = "am_reload",
 		});
@@ -119,9 +128,28 @@ class BrowserScene : public engine::IScene {
 	}
 
 	void render() override {
-		glClearColor(0.09F, 0.09F, 0.11F, 1.0F);
+		glClearColor(theme::bgVoid.r, theme::bgVoid.g, theme::bgVoid.b, 1.0F);
 		glClear(GL_COLOR_BUFFER_BIT);
 
+		int viewportW = 0;
+		int viewportH = 0;
+		Renderer::Primitives::getLogicalViewport(viewportW, viewportH);
+		const float vw = static_cast<float>(viewportW);
+		const float vh = static_cast<float>(viewportH);
+		const float treeRight = kTreeWidth + 24.0F;
+
+		// Left sidebar panel + hairline divider.
+		fillRect(0.0F, kTopBar, treeRight, vh - kTopBar, theme::bgPanel);
+		fillRect(treeRight - 1.0F, kTopBar, 1.0F, vh - kTopBar, theme::lineHairline);
+		// Top bar panel + hairline bottom border.
+		fillRect(0.0F, 0.0F, vw, kTopBar, theme::bgPanel);
+		fillRect(0.0F, kTopBar - 1.0F, vw, 1.0F, theme::lineHairline);
+
+		if (m_treeScroll) {
+			m_treeScroll->render();
+		}
+		m_detail.render();
+		// Top-bar controls last so they sit above the bar surface.
 		if (m_search) {
 			m_search->render();
 		}
@@ -131,10 +159,6 @@ class BrowserScene : public engine::IScene {
 		if (m_summary) {
 			m_summary->render();
 		}
-		if (m_treeScroll) {
-			m_treeScroll->render();
-		}
-		m_detail.render();
 	}
 
 	void onExit() override {
@@ -157,9 +181,9 @@ class BrowserScene : public engine::IScene {
 	void updateSummary() {
 		const engine::assets::ValidationReport& report = engine::assets::AssetRegistry::Get().getValidationReport();
 		const int errors = report.errorCount();
-		m_summary->text = std::to_string(m_allNames.size()) + " assets   -   " + std::to_string(errors) + " errors, " +
+		m_summary->text = std::to_string(m_allNames.size()) + " assets    -    " + std::to_string(errors) + " errors, " +
 						  std::to_string(report.warningCount()) + " warnings";
-		m_summary->style.color = errors > 0 ? Foundation::Color(0.9F, 0.45F, 0.45F, 1.0F) : Foundation::Color(0.6F, 0.62F, 0.68F, 1.0F);
+		m_summary->style.color = errors > 0 ? theme::statusCrit : theme::textDim;
 	}
 
 	void layout() {

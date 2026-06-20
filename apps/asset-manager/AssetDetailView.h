@@ -1,12 +1,14 @@
 #pragma once
 
-// The right-hand detail pane: a large preview of the selected asset, its parsed
-// metadata, and the source XML in a scrollable text block. Composed from libs/ui
-// components plus the AssetThumbnail leaf.
+// The right-hand detail pane: a framed preview, a header (category kicker, name,
+// type badge, metadata), per-asset validation warnings, and the source XML in a
+// code well. Styled to the prototype tokens (see Theme.h). Content is stacked
+// with measured heights so nothing overlaps.
 
 #include "AssetThumbnail.h"
 
 #include <components/scroll/ScrollContainer.h>
+#include <graphics/Color.h>
 #include <graphics/Rect.h>
 #include <input/InputEvent.h>
 #include <shapes/Shapes.h>
@@ -32,15 +34,21 @@ namespace asset_manager {
 		Foundation::Rect					 m_bounds{0.0F, 0.0F, 0.0F, 0.0F};
 		bool								 m_hasAsset = false;
 		AssetThumbnail						 m_preview;
+		UI::Text							 m_kicker;
 		UI::Text							 m_name;
+		UI::Text							 m_badge;
+		Foundation::Color					 m_badgeFill{0.0F, 0.0F, 0.0F, 0.0F};
+		Foundation::Color					 m_badgeBorder{0.0F, 0.0F, 0.0F, 0.0F};
+		Foundation::Rect					 m_badgeRect{0.0F, 0.0F, 0.0F, 0.0F};
 		UI::Text							 m_meta;
 		UI::Text							 m_warnings;
 		UI::Text							 m_xmlHeader;
 		UI::Text							 m_placeholder;
 		std::unique_ptr<UI::ScrollContainer> m_xmlScroll;
+		float								 m_dividerY = 0.0F;
 
 		static constexpr float kPad = 16.0F;
-		static constexpr float kPreview = 180.0F;
+		static constexpr float kPreview = 160.0F;
 	};
 
 } // namespace asset_manager

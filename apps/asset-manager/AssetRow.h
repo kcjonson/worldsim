@@ -42,10 +42,11 @@ namespace asset_manager {
 		Foundation::Vec2						m_pos{0.0F, 0.0F};
 		float									m_width = 250.0F;
 		bool									m_selected = false;
+		bool									m_hovered = false;
 
-		static constexpr float kRowHeight = 36.0F;
+		static constexpr float kRowHeight = 34.0F;
 		static constexpr float kThumbSize = 26.0F;
-		static constexpr float kIndent = 24.0F;
+		static constexpr float kIndent = 22.0F;
 	};
 
 	class GroupHeaderRow : public UI::IComponent {
@@ -70,8 +71,9 @@ namespace asset_manager {
 		UI::Text			  m_label;
 		Foundation::Vec2	  m_pos{0.0F, 0.0F};
 		float				  m_width = 250.0F;
+		bool				  m_expanded = true;
 
-		static constexpr float kRowHeight = 26.0F;
+		static constexpr float kRowHeight = 34.0F;
 	};
 
 } // namespace asset_manager
