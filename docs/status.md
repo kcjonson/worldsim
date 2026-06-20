@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2026-06-19 (Navigation P4 belief filtering complete: colonists path against what they've personally seen, not the live truth #189/#191/#194 — see dev log 2026-06-19-navigation-belief-filtering.md. Built on the Vision System #172-185, now marked complete. Earlier on main: Dialogs de-hand-rolled with `ListRow` #186-188, Salvage UI cutover #176-181, Navigation v1 #161-169, Dev/Test Tools #157, Fluvial Erosion #149)
+Last Updated: 2026-06-19 (Navigation P4 belief filtering complete: colonists path against what they've personally seen, not the live truth #189/#191/#194 — see dev log 2026-06-19-navigation-belief-filtering.md. Built on the Vision System #172-184 (now documented in dev log 2026-06-18-vision-system.md). Earlier on main: Dialogs de-hand-rolled with `ListRow` #186-188, Salvage UI cutover #176-181, Navigation v1 #161-169, Dev/Test Tools #157, Fluvial Erosion #149)
 
 ## Epic/Story/Task Template
 
@@ -1094,7 +1094,7 @@ The following MVP epics have all been completed. Detailed task breakdowns are pr
 ### Vision System: Occlusion & Discovery
 **Spec/Documentation:** `/docs/technical/vision-architecture.md`
 **Dependencies:** Geometry Foundations (libs/geometry); consumes Building & Construction's structure publication for occluders
-**Status:** complete — shipped #172/#173/#179/#183/#184/#185, landed just before Navigation P4's belief filtering (its honest write path into memory). NOTE: needs a development-log entry (none written yet).
+**Status:** complete — shipped #172/#173/#179/#183/#184, landed just before Navigation P4's belief filtering (its honest write path into memory). See dev log 2026-06-18-vision-system.md
 
 **Goal:** Honest sight: GeometryIndex shared with navigation, visibility polygons with an outdoor fast path, discovery/witnessing/stale-memory reconciliation through visibility, windows pass sight while blocking movement, structures discoverable per segment. Must land with or before Navigation P4 (belief filtering is hollow without it). **Fog of war explicitly excluded** — separate later epic alongside the overlay system; the polygon data it needs comes free from this work.
 
