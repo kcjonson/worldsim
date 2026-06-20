@@ -27,7 +27,8 @@ enum class ColorMode : int {
     Snow         = 5,
     Combined     = 6, // Biome + snow whitening + ocean depth shading
     Hydrology    = 7, // Drainage network: rivers bright blue, lakes cyan, land tinted by log(flowAccum)
-    Count        = 8
+    Ice          = 8, // Cryosphere: sea-ice + glacier thickness (analyst view)
+    Count        = 9
 };
 
 const char* colorModeName(ColorMode m);

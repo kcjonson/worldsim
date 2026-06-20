@@ -4,6 +4,7 @@
 #include "worldgen/stages/BiomeStage.h"
 #include "worldgen/stages/CrustStage.h"
 #include "worldgen/stages/ErosionStage.h"
+#include "worldgen/stages/GlacierStage.h"
 #include "worldgen/stages/OceanStage.h"
 #include "worldgen/stages/PrecipitationStage.h"
 #include "worldgen/stages/SnowStage.h"
@@ -43,6 +44,15 @@ float habitabilityWeight(Biome b) {
     }
 }
 
+// True if pass 1 produced any land ice (glacier) — the trigger for the optional
+// ice->climate feedback re-run of the temperature-dependent tail.
+bool worldHasLandIce(const GeneratedWorld& w) {
+    for (uint8_t f : w.data.flags) {
+        if (f & kFlagGlacier) return true;
+    }
+    return false;
+}
+
 } // namespace
 
 // ============================================================================
@@ -60,6 +70,7 @@ PlanetGenerator::PlanetGenerator(unsigned threadCount)
     stages.push_back(std::make_unique<OceanStage>());
     stages.push_back(std::make_unique<BiomeStage>());
     stages.push_back(std::make_unique<SnowStage>());
+    stages.push_back(std::make_unique<GlacierStage>());
 
     // Compute prefix sums for totalFraction calculation
     totalWeight = 0.0f;
@@ -171,30 +182,25 @@ void PlanetGenerator::runPipeline(PlanetParams params) {
         world->grid    = std::make_shared<SphereGrid>(params.gridSubdivision);
         world->data.allocate(world->grid->tileCount());
 
-        for (size_t i = 0; i < stages.size(); ++i) {
-            if (cancelFlag.load(std::memory_order_acquire)) {
-                atomicState.store(
-                    static_cast<int>(GenerationProgress::State::Cancelled),
-                    std::memory_order_release);
-                return;
-            }
-
+        // Run one stage by index, optionally with the ice-feedback flag set (used
+        // only on the second pass). Reuses deriveSeed(seed, i) so re-running a stage
+        // is bit-identical apart from the feedback it reads.
+        auto runStage = [&](size_t i, bool iceFeedback) {
             atomicStageIndex.store(static_cast<int>(i), std::memory_order_release);
             atomicStageFraction.store(0.0f, std::memory_order_release);
 
             float stageWeightBase = weightPrefixSum[i];
 
-            // reportProgress lambda: maps [0,1] within stage to totalFraction.
-            // Both stores are monotonic max via CAS loop so out-of-order slab
-            // completions from the thread pool never push progress backwards.
+            // reportProgress lambda: maps [0,1] within stage to totalFraction. Both
+            // stores are monotonic max via CAS loop so out-of-order slab completions
+            // never push progress backwards (and so the second pass re-running the
+            // tail never rewinds the bar).
             auto reportProgress = [&, i, stageWeightBase](float frac) {
-                // Monotonic-max store for stageFraction
                 float cur = atomicStageFraction.load(std::memory_order_relaxed);
                 while (frac > cur &&
                        !atomicStageFraction.compare_exchange_weak(
                            cur, frac, std::memory_order_relaxed)) {}
 
-                // Monotonic-max store for totalFraction
                 float total = (stageWeightBase + stages[i]->weight() * frac) / totalWeight;
                 cur = atomicTotalFraction.load(std::memory_order_relaxed);
                 while (total > cur &&
@@ -213,13 +219,48 @@ void PlanetGenerator::runPipeline(PlanetParams params) {
                 pool,
                 stageSeed,
                 reportProgress,
-                cancelFlag
+                cancelFlag,
+                iceFeedback
             };
 
             stages[i]->run(ctx);
-
-            // Publish snapshot after stage completes
             publishSnapshot(world);
+        };
+
+        // Pass 1: the full pipeline, no ice feedback.
+        for (size_t i = 0; i < stages.size(); ++i) {
+            if (cancelFlag.load(std::memory_order_acquire)) {
+                atomicState.store(
+                    static_cast<int>(GenerationProgress::State::Cancelled),
+                    std::memory_order_release);
+                return;
+            }
+            runStage(i, /*iceFeedback=*/false);
+        }
+
+        // Ice -> climate feedback. If pass 1 grew land ice, re-run the temperature-
+        // dependent tail once (a fixed two passes, not a convergence loop): the ice
+        // cools its own surface (elevation lapse + albedo) so temperature, precip,
+        // biomes, snow, and ice re-derive in equilibrium with it. A glacier-free
+        // world skips this and pays nothing. Everything before AtmosphereStage
+        // (tectonics, terrain, ocean level) is unaffected by ice, so it is not re-run.
+        if (worldHasLandIce(*world)) {
+            size_t tailStart = stages.size();
+            for (size_t i = 0; i < stages.size(); ++i) {
+                if (std::strcmp(stages[i]->name(), "Atmosphere") == 0) {
+                    tailStart = i;
+                    break;
+                }
+            }
+            for (size_t i = tailStart; i < stages.size(); ++i) {
+                if (cancelFlag.load(std::memory_order_acquire)) {
+                    atomicState.store(
+                        static_cast<int>(GenerationProgress::State::Cancelled),
+                        std::memory_order_release);
+                    return;
+                }
+                runStage(i, /*iceFeedback=*/true);
+            }
         }
 
         // Compute WorldSummary

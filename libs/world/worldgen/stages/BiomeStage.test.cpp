@@ -574,8 +574,8 @@ TEST(BiomeStage, ValidFieldsExactness) {
     w.runSnow();
     EXPECT_EQ(w.world.validFields,
               fieldBit(WorldField::WaterDepth) | fieldBit(WorldField::Biome) |
-              fieldBit(WorldField::Flags) | fieldBit(WorldField::SnowCover))
-        << "SnowStage must add only Flags and SnowCover";
+              fieldBit(WorldField::SnowCover))
+        << "SnowStage adds only SnowCover (Flags / IceThickness are owned by GlacierStage)";
 }
 
 // ============================================================================

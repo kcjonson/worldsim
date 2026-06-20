@@ -1,6 +1,6 @@
 #pragma once
 
-// Binary planet file format ("WSPL"), version 3.
+// Binary planet file format ("WSPL"), version 4.
 //
 // Version history:
 //   1 — initial format (quad-cell grid, 8-neighbor downhill index, tile count 10*n*n)
@@ -10,6 +10,9 @@
 //   3 — WorldData adds crustAge (uint16, Myr) and orogenyAge (uint16, Myr);
 //       WorldField bits 15/16 (CrustAge, OrogenyAge). Version 2 files are
 //       rejected; caller auto-regenerates (existing path).
+//   4 — WorldData adds iceThickness (uint16, m) and iceFlow (uint8, dir);
+//       WorldField bits 17/18 (IceThickness, IceFlow). Version 3 files are
+//       rejected; caller auto-regenerates (existing path).
 //
 // All multi-byte values are little-endian. Every target platform is
 // little-endian; this is asserted at compile time in PlanetIO.cpp.
@@ -18,7 +21,7 @@
 //
 // Layout (offsets in bytes, sequential):
 //   magic               char[4]   "WSPL"
-//   formatVersion       uint32    = 3
+//   formatVersion       uint32    = 4
 //   --- PlanetParams ---
 //   starMass            float64
 //   starRadius          float64
@@ -60,7 +63,7 @@
 //     precipitation u16, windDir u8, windSpeed u8, plateId u8,
 //     boundaryType u8, boundaryDistance u16, biome u8, flags u8,
 //     waterDepth u16, flowAccum f32, downhill u8, snowCover u8,
-//     crustAge u16, orogenyAge u16)
+//     crustAge u16, orogenyAge u16, iceThickness u16, iceFlow u8)
 //
 // Not serialized, rebuilt on load:
 //   DerivedPlanetValues  — recomputed via derive(params)

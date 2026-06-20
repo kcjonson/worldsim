@@ -68,7 +68,7 @@ TEST(PlanetGenerator, ProgressMonotone) {
 }
 
 // ============================================================================
-// All 8 stages reported in order
+// All stages reported in order
 // ============================================================================
 
 TEST(PlanetGenerator, AllStagesReported) {
@@ -87,7 +87,7 @@ TEST(PlanetGenerator, AllStagesReported) {
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
 
-    EXPECT_EQ(maxStageIndex, 8) << "Expected 9 stages (indices 0..8)";
+    EXPECT_EQ(maxStageIndex, 9) << "Expected 10 stages (indices 0..9)";
 }
 
 // ============================================================================

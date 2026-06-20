@@ -115,6 +115,28 @@ LandingSiteDetails buildLandingSiteDetails(
 		if (!s.rows.empty()) out.sections.push_back(std::move(s));
 	}
 
+	// Ice & snow: only shown when the tile carries some cryosphere.
+	if (hasField(world, worldgen::WorldField::Flags) && tile < world.data.flags.size()) {
+		const uint8_t fl = world.data.flags[tile];
+		const bool hasThick = hasField(world, worldgen::WorldField::IceThickness) &&
+		                      tile < world.data.iceThickness.size();
+		const uint16_t thickM = hasThick ? world.data.iceThickness[tile] : uint16_t{0};
+		const Foundation::Color kIce{0.72F, 0.85F, 0.95F, 1.0F};
+
+		DetailSection s;
+		s.header = "Ice & snow";
+		if (fl & worldgen::kFlagGlacier) {
+			s.rows.push_back({"Ice sheet", std::format("{} m thick", thickM), kIce});
+		} else if (fl & worldgen::kFlagSeaIce) {
+			s.rows.push_back({"Sea ice",
+				thickM > 0 ? std::format("{} m thick", thickM) : std::string("Yes"), kIce});
+		}
+		if ((fl & worldgen::kFlagPermanentSnow) && !(fl & worldgen::kFlagGlacier)) {
+			s.rows.push_back({"Snow", "Permanent", kIce});
+		}
+		if (!s.rows.empty()) out.sections.push_back(std::move(s));
+	}
+
 	// Climate section: mean temp, seasonal swing, rainfall.
 	{
 		DetailSection s;

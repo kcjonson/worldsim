@@ -102,6 +102,14 @@ struct WorldStats {
     float meanBeltCrestElevM{};          // mean elevation of mountain-belt tiles
                                          // (land tiles with elev > meanLand + 1500 m, component >= 32);
                                          // erosion guard: must not flatten mountains; 0 if no belts
+
+    // Cryosphere stats (full-ice epic).
+    float    seaIceFractionOfOcean{};    // kFlagSeaIce tiles / ocean tiles (-> 1.0 = whole ocean frozen)
+    float    frozenOceanFraction{};      // kFlagSeaIce tiles / all tiles (surface fraction)
+    float    iceCapMinLatitudeDeg{};     // lowest |lat| of any sea-ice tile (frozen-ocean cap edge); 90 if none
+    uint32_t maxIceThicknessM{};         // max iceThickness over all tiles, meters
+    float    glacierLandFraction{};      // kFlagGlacier land tiles / land tiles
+    float    iceSheetLandFraction{};     // glacier tiles >= 300 m thick / land tiles
 };
 
 // Compute WorldStats from a completed GeneratedWorld.

@@ -252,7 +252,7 @@ TEST_F(PlanetIOTest, BadMagicReturnsNull) {
 TEST_F(PlanetIOTest, UnsupportedVersionReturnsNull) {
 	GeneratedWorld world = makeTestWorld();
 	ASSERT_TRUE(savePlanet(world, filePath));
-	flipByteAt(filePath, 4); // corrupts low byte of the uint32 format version to a non-3 value
+	flipByteAt(filePath, 4); // corrupts low byte of the uint32 format version to a non-4 value
 	EXPECT_EQ(loadPlanet(filePath), nullptr);
 }
 
@@ -286,6 +286,24 @@ TEST_F(PlanetIOTest, VersionTwoFileReturnsNull) {
 	f.seekp(4);
 	const uint8_t v2[4] = {2, 0, 0, 0};
 	f.write(reinterpret_cast<const char*>(v2), 4);
+	ASSERT_TRUE(f.good());
+	f.close();
+
+	EXPECT_EQ(loadPlanet(filePath), nullptr);
+}
+
+// Version 3 files (pre-iceThickness/iceFlow) must be rejected — callers rely on
+// the auto-regenerate path that fires when loadPlanet returns nullptr.
+TEST_F(PlanetIOTest, VersionThreeFileReturnsNull) {
+	GeneratedWorld world = makeTestWorld();
+	ASSERT_TRUE(savePlanet(world, filePath));
+
+	// Overwrite the format version field (offset 4, uint32 LE) with 3.
+	std::fstream f(filePath, std::ios::binary | std::ios::in | std::ios::out);
+	ASSERT_TRUE(f.is_open());
+	f.seekp(4);
+	const uint8_t v3[4] = {3, 0, 0, 0};
+	f.write(reinterpret_cast<const char*>(v3), 4);
 	ASSERT_TRUE(f.good());
 	f.close();
 

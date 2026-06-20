@@ -789,6 +789,22 @@ The following MVP epics have all been completed. Detailed task breakdowns are pr
 
 ## Planned Epics
 
+### Season System (season slider + dynamic seasonal snow)
+**Spec/Documentation:** needs spec (background in `docs/technical/cryosphere-ice-and-glaciers.md` → "Season system")
+**Dependencies:** Cryosphere / ice (landed)
+**Status:** needs spec
+
+**Goal:** Let the player view and select the time of year via a season slider, driven by real orbit mechanics (axial tilt + orbital position → per-tile insolation by date). Seasonal snow cover ("how much snow is on the ground right now") is DYNAMIC, computed at sim/view time from the date, NOT baked into worldgen — so changing the season must NOT require a full planet regeneration. Glaciers and the permanent-snow baseline stay in worldgen; seasonal snow is the thin, see-through layer on top of them.
+
+**Tasks:**
+- [ ] Spec: orbit + axial-tilt model → per-tile insolation / temperature by date; how the date maps to the slider
+- [ ] Spec: dynamic seasonal snow (accumulate/melt from the date's temperature), separate from worldgen permanent snow + glaciers; where it lives (sim vs render), what is cached
+- [ ] Spec: how the globe and the 2D chunk views consume it without a planet regen
+- [ ] Season slider UI (view + select); recompute season without regenerating the planet
+- [ ] Seasonal snow render (the thin see-through layer the cryosphere doc defers)
+
+---
+
 ### 2D Render Performance Overhaul
 **Spec/Documentation:** `.claude/plans/render-performance-overhaul.md`, `/docs/development-log/entries/2026-06-09-render-performance-analysis.md`
 **Dependencies:** None

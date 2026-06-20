@@ -14,6 +14,7 @@ add_library(world
     worldgen/stages/OceanStage.cpp
     worldgen/stages/BiomeStage.cpp
     worldgen/stages/SnowStage.cpp
+    worldgen/stages/GlacierStage.cpp
     worldgen/sampling/SphericalProjection.cpp
     worldgen/sampling/PlanetSampler.cpp
     worldgen/sampling/LandingSite.cpp

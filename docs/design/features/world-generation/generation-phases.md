@@ -281,6 +281,12 @@ The -10 C arctic/boreal cutoff (rather than -5 C) is what keeps the boreal band 
 
 ## Phase 8: Snow & Glacier Formation
 
+> **Implemented** (and superseded in detail) by the real cryosphere model — see
+> [Cryosphere: Sea Ice, Snow & Glaciers](/docs/technical/cryosphere-ice-and-glaciers.md)
+> (PDD surface mass balance, perfect-plastic ice sheets, the ice→climate two-pass
+> feedback, and the land/ocean thermal contrast). The conceptual notes below remain
+> for design intent.
+
 **Purpose**: Calculate snow coverage and glacier formation based on climate
 
 **Conceptual Process**:

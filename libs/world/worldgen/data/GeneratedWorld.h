@@ -35,12 +35,12 @@ struct WorldSummary {
 // The complete output of a generation run.
 //
 // Snapshot immutability contract:
-//   Once a GeneratedWorld is published via PlanetGenerator::snapshot(), the
-//   arrays for all fields marked valid in validFields MUST NOT be written by
-//   any stage. Stages only write arrays for fields they are introducing (not
-//   yet valid), and never touch already-valid arrays.
-//   In debug builds, PlanetGenerator records per-field checksums at publication
-//   and asserts they are unchanged before the next publication.
+//   Within a generation pass, once a field is marked valid in validFields its
+//   array MUST NOT be rewritten by a later stage; stages only write the arrays
+//   for fields they introduce. Exception: the optional ice->climate feedback
+//   re-runs the temperature-dependent tail (Atmosphere..Glacier) a second time,
+//   so those climate-tail arrays are written once per pass. Tectonic/terrain/
+//   ocean fields are written exactly once and stay immutable across both passes.
 struct GeneratedWorld {
     PlanetParams         params;
     DerivedPlanetValues  derived;
