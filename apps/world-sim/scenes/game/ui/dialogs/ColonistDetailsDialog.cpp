@@ -70,9 +70,9 @@ namespace world_sim {
 			}
 		));
 
-		// Tab content bounds (below TabBar)
+		// Tab content bounds: anchored BELOW the tab bar (y=0 would overlap it).
 		Foundation::Rect tabContentBounds{
-			0, 0,  // Relative positions
+			0, kTabBarHeight + kContentPadding,
 			contentBounds.width,
 			contentBounds.height - kTabBarHeight - kContentPadding
 		};

@@ -79,10 +79,10 @@ class ColonistDetailsDialog : public UI::Component {
 	static constexpr const char* kTabTasks = "tasks";
 
 	// Dialog dimensions
-	static constexpr float kDialogWidth = 600.0F;
-	static constexpr float kDialogHeight = 500.0F;
+	static constexpr float kDialogWidth = 760.0F;
+	static constexpr float kDialogHeight = 560.0F;
 	static constexpr float kTabBarHeight = 36.0F;
-	static constexpr float kContentPadding = 16.0F;
+	static constexpr float kContentPadding = 20.0F;
 
 	// Callbacks
 	std::function<void()> onCloseCallback;
