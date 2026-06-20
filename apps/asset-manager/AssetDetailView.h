@@ -34,6 +34,7 @@ namespace asset_manager {
 		AssetThumbnail						 m_preview;
 		UI::Text							 m_name;
 		UI::Text							 m_meta;
+		UI::Text							 m_warnings;
 		UI::Text							 m_xmlHeader;
 		UI::Text							 m_placeholder;
 		std::unique_ptr<UI::ScrollContainer> m_xmlScroll;

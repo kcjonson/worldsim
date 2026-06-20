@@ -19,6 +19,9 @@ namespace asset_manager {
 		void setAsset(std::string defName, uint32_t seed = 42U);
 		void setSize(float width, float height);
 
+		// Drop all cached meshes (call after an asset reload so thumbnails rebuild).
+		static void clearCache();
+
 		void			   render() override;
 		[[nodiscard]] float getWidth() const override { return m_size.x + margin; }
 		[[nodiscard]] float getHeight() const override { return m_size.y + margin; }

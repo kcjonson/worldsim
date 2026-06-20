@@ -21,7 +21,11 @@ namespace asset_manager {
 			}
 			std::ostringstream ss;
 			ss << file.rdbuf();
-			return ss.str();
+			std::string content = ss.str();
+			// Strip CR: the text renderer only breaks on '\n', so a CRLF file would
+			// render a stray glyph at each line end.
+			content.erase(std::remove(content.begin(), content.end(), '\r'), content.end());
+			return content;
 		}
 
 		std::string fmtFloat(float v) {
@@ -44,8 +48,13 @@ namespace asset_manager {
 		});
 		m_meta = UI::Text(UI::Text::Args{
 			.text = "",
-			.style = {.color = Foundation::Color(0.70F, 0.72F, 0.78F, 1.0F), .fontSize = 13.0F},
+			.style = {.color = Foundation::Color(0.70F, 0.72F, 0.78F, 1.0F), .fontSize = 13.0F, .wordWrap = true},
 			.id = "am_detail_meta",
+		});
+		m_warnings = UI::Text(UI::Text::Args{
+			.text = "",
+			.style = {.color = Foundation::Color(0.92F, 0.72F, 0.35F, 1.0F), .fontSize = 12.0F, .wordWrap = true},
+			.id = "am_detail_warnings",
 		});
 		m_xmlHeader = UI::Text(UI::Text::Args{
 			.text = "Definition",
@@ -105,6 +114,24 @@ namespace asset_manager {
 		}
 		m_meta.text = meta;
 
+		std::string									   warnings;
+		const engine::assets::ValidationReport&		   report = engine::assets::AssetRegistry::Get().getValidationReport();
+		int											   shown = 0;
+		for (const auto& issue : report.issues) {
+			if (issue.defName != defName) {
+				continue;
+			}
+			if (shown++ > 0) {
+				warnings += "\n";
+			}
+			warnings += (issue.severity == engine::assets::Severity::Error ? "[error] " : "[warning] ");
+			if (!issue.field.empty()) {
+				warnings += issue.field + ": ";
+			}
+			warnings += issue.message;
+		}
+		m_warnings.text = warnings;
+
 		const std::filesystem::path xmlPath = def->baseFolder / (def->baseFolder.filename().string() + ".xml");
 		m_xmlHeader.text = "Definition - " + xmlPath.filename().string();
 
@@ -132,8 +159,13 @@ namespace asset_manager {
 
 		m_placeholder.position = {bx + kPad, by + kPad};
 		m_preview.setPosition(bx + kPad, by + kPad);
-		m_name.position = {bx + kPad + kPreview + 20.0F, by + kPad + 6.0F};
-		m_meta.position = {bx + kPad + kPreview + 20.0F, by + kPad + 40.0F};
+		const float rightColX = bx + kPad + kPreview + 20.0F;
+		const float rightColW = std::max(80.0F, (m_bounds.x + m_bounds.width - kPad) - rightColX);
+		m_name.position = {rightColX, by + kPad + 6.0F};
+		m_meta.position = {rightColX, by + kPad + 40.0F};
+		m_meta.width = rightColW;
+		m_warnings.position = {rightColX, by + kPad + 120.0F};
+		m_warnings.width = rightColW;
 
 		const float xmlTop = by + kPad + kPreview + 18.0F;
 		m_xmlHeader.position = {bx + kPad, xmlTop};
@@ -152,6 +184,7 @@ namespace asset_manager {
 		m_preview.render();
 		m_name.render();
 		m_meta.render();
+		m_warnings.render();
 		m_xmlHeader.render();
 		if (m_xmlScroll) {
 			m_xmlScroll->render();

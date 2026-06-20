@@ -11,6 +11,18 @@
 
 namespace asset_manager {
 
+	namespace {
+		// Shared across all thumbnails so rebuilt rows reuse meshes (no re-tessellation).
+		std::unordered_map<std::string, renderer::TessellatedMesh>& meshCache() {
+			static std::unordered_map<std::string, renderer::TessellatedMesh> cache;
+			return cache;
+		}
+	} // namespace
+
+	void AssetThumbnail::clearCache() {
+		meshCache().clear();
+	}
+
 	void AssetThumbnail::setAsset(std::string defName, uint32_t seed) {
 		if (defName != m_defName || seed != m_seed) {
 			m_defName = std::move(defName);
@@ -36,14 +48,13 @@ namespace asset_manager {
 			return;
 		}
 
-		// Shared across all thumbnails so rebuilt rows reuse meshes (no re-tessellation).
-		static std::unordered_map<std::string, renderer::TessellatedMesh> s_cache;
 		const std::string key = m_defName + "@" + std::to_string(static_cast<int>(m_size.x)) + "x" +
 								std::to_string(static_cast<int>(m_size.y)) + "#" + std::to_string(m_seed);
-		auto it = s_cache.find(key);
-		if (it == s_cache.end()) {
+		auto& cache = meshCache();
+		auto  it = cache.find(key);
+		if (it == cache.end()) {
 			engine::assets::PreparedAsset prepared = engine::assets::prepareAsset(m_defName, {0.0F, 0.0F, m_size.x, m_size.y}, m_seed);
-			it = s_cache.emplace(key, std::move(prepared.mesh)).first;
+			it = cache.emplace(key, std::move(prepared.mesh)).first;
 		}
 		m_mesh = &it->second;
 	}
