@@ -7,6 +7,7 @@
 #include "components/slider/Slider.h"
 #include "input/InputEvent.h"
 #include "math/Types.h"
+#include "primitives/Primitives.h"
 #include "shapes/Shapes.h"
 
 #include <cstdint>
@@ -111,14 +112,14 @@ class ParameterPanel {
 	std::unique_ptr<UI::Button>	   cancelButton;
 
 	// Section labels
-	std::vector<UI::Text> sectionLabels;
+	std::vector<Renderer::Primitives::TextArgs> sectionLabels;
 
 	void buildWidgets();
 	void onSeedTextChanged(const std::string& text);
 	void applyGenerateEnabled();
 	float nextY{0.0F}; // layout cursor
 
-	UI::Text makeLabel(const std::string& text, float y);
+	Renderer::Primitives::TextArgs makeLabel(const std::string& text, float y);
 	float addLabel(const std::string& text);
 	float addSlider(std::unique_ptr<UI::Slider>& out,
 	                double min, double max, double step, double value,
