@@ -38,21 +38,6 @@
 	color: var(--accent);
 }
 
-.needs {
-	display: flex;
-	flex-direction: column;
-	gap: var(--space-3);
-}
-.needRow {
-	display: flex;
-	align-items: center;
-	gap: var(--space-3);
-}
-.needIcon {
-	color: var(--text-dim);
-	flex-shrink: 0;
-}
-
 .skills {
 	display: grid;
 	grid-template-columns: 1fr 1fr;

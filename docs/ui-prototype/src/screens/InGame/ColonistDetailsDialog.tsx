@@ -2,15 +2,20 @@ import { useState } from "react";
 import { Modal, Tabs, Avatar, Meter, Stat, Badge, Button, Icon, Divider, type TabItem } from "../../design-system";
 import { COLONISTS, type GameColonist } from "../../data/mock";
 import { GearTab } from "./GearTab";
+import { HealthTab } from "./HealthTab";
+import { MemoryTab } from "./MemoryTab";
+import { TasksTab } from "./TasksTab";
 import styles from "./ColonistDetailsDialog.module.css";
 
 const TABS: TabItem<string>[] = [
 	{ value: "bio", label: "Bio", icon: "user" },
-	{ value: "needs", label: "Needs", icon: "heart" },
+	{ value: "health", label: "Health", icon: "heart" },
 	{ value: "skills", label: "Skills", icon: "hammer" },
 	{ value: "social", label: "Social", icon: "users" },
 	{ value: "gear", label: "Gear", icon: "box" },
-	{ value: "log", label: "Log", icon: "list" },
+	{ value: "memory", label: "Memory", icon: "eye" },
+	{ value: "tasks", label: "Tasks", icon: "list" },
+	{ value: "log", label: "Log", icon: "clock" },
 ];
 
 export interface ColonistDetailsDialogProps {
@@ -68,18 +73,7 @@ export function ColonistDetailsDialog({ open, onClose, colonist }: ColonistDetai
 					</>
 				)}
 
-				{tab === "needs" && (
-					<div className={styles.needs}>
-						<Meter label="Mood" value={colonist.mood} valueText={`${Math.round(colonist.mood * 100)}%`} tone="auto" />
-						<Divider />
-						{colonist.needs.map((n) => (
-							<div key={n.name} className={styles.needRow}>
-								<Icon name={n.icon} size={14} className={styles.needIcon} />
-								<Meter label={n.name} value={n.value} valueText={`${Math.round(n.value * 100)}%`} tone="auto" />
-							</div>
-						))}
-					</div>
-				)}
+				{tab === "health" && <HealthTab />}
 
 				{tab === "skills" && (
 					<div className={styles.skills}>
@@ -116,6 +110,10 @@ export function ColonistDetailsDialog({ open, onClose, colonist }: ColonistDetai
 				)}
 
 				{tab === "gear" && <GearTab />}
+
+				{tab === "memory" && <MemoryTab />}
+
+				{tab === "tasks" && <TasksTab />}
 
 				{tab === "log" && (
 					<div className={styles.log}>

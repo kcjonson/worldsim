@@ -1,0 +1,112 @@
+.memory {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-4);
+}
+
+/* summary metrics */
+.summary {
+	display: flex;
+	gap: var(--space-6);
+	padding-bottom: var(--space-3);
+	border-bottom: var(--border-width) solid var(--line-hairline);
+}
+.metric {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+}
+.mVal {
+	font-family: var(--font-display);
+	font-size: var(--fs-xl);
+	color: var(--text-bright);
+	line-height: 1;
+}
+.mLabel {
+	font-family: var(--label-font);
+	font-size: var(--fs-2xs);
+	letter-spacing: var(--ls-wide);
+	text-transform: var(--label-transform);
+	color: var(--text-faint);
+}
+
+/* categories — two columns of capability groups */
+.cats {
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	gap: var(--space-3) var(--space-5);
+}
+.cat {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-1);
+}
+.catHead {
+	display: flex;
+	align-items: center;
+	gap: var(--space-2);
+}
+.catIcon {
+	color: var(--text-dim);
+	flex-shrink: 0;
+}
+.catName {
+	flex: 1;
+	font-family: var(--font-display);
+	font-size: var(--fs-sm);
+	letter-spacing: var(--ls-wide);
+	text-transform: uppercase;
+	color: var(--text-bright);
+}
+
+.things {
+	display: flex;
+	flex-direction: column;
+}
+.thing {
+	display: flex;
+	align-items: baseline;
+	gap: var(--space-2);
+	padding: 2px 0;
+	font-size: var(--fs-xs);
+}
+.thingName {
+	flex: 1;
+	min-width: 0;
+	color: var(--text);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+.thingDist {
+	font-family: var(--font-mono);
+	color: var(--data-bright);
+	min-width: 36px;
+	text-align: right;
+}
+.thingSeen {
+	font-family: var(--font-mono);
+	font-size: var(--fs-2xs);
+	color: var(--text-faint);
+	min-width: 64px;
+	text-align: right;
+}
+.stale {
+	color: var(--status-warn);
+}
+.none {
+	font-size: var(--fs-xs);
+	color: var(--text-faint);
+}
+.more {
+	font-size: var(--fs-2xs);
+	color: var(--text-faint);
+	padding-top: 2px;
+}
+
+.muted {
+	margin: 0;
+	font-size: var(--fs-xs);
+	color: var(--text-faint);
+	line-height: var(--lh);
+}
