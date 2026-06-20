@@ -221,6 +221,24 @@ namespace world_sim {
 		/// failures as a toast. Returns to an empty Drawing state on success.
 		void commitShape();
 
+		/// Screen pixels per world meter at the current zoom (mirrors the render path:
+		/// kPixelsPerMeter * camera zoom). 1.0 fallback if no camera.
+		[[nodiscard]] float pixelsPerWorldMeter() const;
+
+		/// Origin-close catch radius in world meters, floored so it never shrinks below
+		/// the on-screen origin halo: what you can click to close matches what you see,
+		/// at any zoom. Drives both the snap() override and (x scale) the halo radius.
+		[[nodiscard]] float effectiveOriginCloseRadiusMeters() const;
+
+		/// Radius (world meters) around the start vertex within which a click that would
+		/// otherwise be rejected closes the shape instead (the "snap not block" rescue).
+		/// Covers the non-adjacent edge-clearance dead-zone; never below the close radius.
+		[[nodiscard]] float closeRescueRadiusMeters() const;
+
+		/// Whether `p` (world meters) is within `radiusMeters` of the first placed point.
+		/// False when no points are placed.
+		[[nodiscard]] bool nearStartVertex(Foundation::Vec2 p, float radiusMeters) const;
+
 		/// Build the ECS blueprint entity for a committed foundation.
 		ecs::EntityID spawnBlueprintEntity(engine::construction::FoundationId id);
 
@@ -297,6 +315,13 @@ namespace world_sim {
 		Foundation::Vec2					   cursor_{0.0F, 0.0F}; // snapped cursor
 		engine::construction::SnapResult	   lastSnap_;
 		engine::construction::ValidationResult lastValidation_;
+
+		// Foundation tool: true when the next click will CLOSE the shape rather than
+		// place a vertex -- either the explicit origin-close (lastSnap_ Origin) or the
+		// near-start "snap not block" rescue (a would-be-rejected vertex near the start
+		// whose closed ring is valid). Recomputed every move; drives the closing-halo
+		// feedback and suppresses the invalid highlight.
+		bool willClose_ = false;
 
 		// Wall chain host: the foundation the first chain point landed on. Every
 		// segment of the chain hosts here; a later point leaving it is rejected.

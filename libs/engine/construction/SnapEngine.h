@@ -123,7 +123,12 @@ namespace engine::construction {
 
 		// Snap `cursor` given the points already placed (`points`, world meters) and
 		// whether the user is holding the freeform modifier (suppresses angle snap).
-		[[nodiscard]] SnapResult snap(const std::vector<::Foundation::Vec2>& points, ::Foundation::Vec2 cursor, bool freeform) const;
+		// `originCloseRadiusMeters` overrides the configured origin-close radius when
+		// non-negative; the foundation tool passes a zoom-stable radius so the close
+		// gesture stays reachable when zoomed out. A negative value uses the config.
+		[[nodiscard]] SnapResult
+		snap(const std::vector<::Foundation::Vec2>& points, ::Foundation::Vec2 cursor, bool freeform,
+			 float originCloseRadiusMeters = -1.0F) const;
 
 		// Wall-chain snap. `points` is the in-progress open polyline (world meters);
 		// `freeform` suppresses angle snap (Alt). Priority: wall endpoint > foundation
