@@ -126,7 +126,11 @@ LandingSiteDetails buildLandingSiteDetails(
 		DetailSection s;
 		s.header = "Ice & snow";
 		if (fl & worldgen::kFlagGlacier) {
-			s.rows.push_back({"Ice sheet", std::format("{} m thick", thickM), kIce});
+			// Thin land ice is an alpine/valley glacier; a continental-scale dome
+			// (>= 300 m, the WorldStats ice-sheet threshold) is an ice sheet.
+			constexpr uint16_t kIceSheetThickM = 300;
+			const char* label = thickM >= kIceSheetThickM ? "Ice sheet" : "Glacier";
+			s.rows.push_back({label, std::format("{} m thick", thickM), kIce});
 		} else if (fl & worldgen::kFlagSeaIce) {
 			s.rows.push_back({"Sea ice",
 				thickM > 0 ? std::format("{} m thick", thickM) : std::string("Yes"), kIce});

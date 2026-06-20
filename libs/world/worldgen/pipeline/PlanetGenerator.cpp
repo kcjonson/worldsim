@@ -227,7 +227,21 @@ void PlanetGenerator::runPipeline(PlanetParams params) {
             publishSnapshot(world);
         };
 
-        // Pass 1: the full pipeline, no ice feedback.
+        // The climate tail (temperature-dependent stages) begins at AtmosphereStage;
+        // everything before it (tectonics, terrain, ocean level) is unaffected by ice
+        // and is never re-run.
+        size_t tailStart = stages.size();
+        for (size_t i = 0; i < stages.size(); ++i) {
+            if (std::strcmp(stages[i]->name(), "Atmosphere") == 0) {
+                tailStart = i;
+                break;
+            }
+        }
+
+        // Pass 1: the full pipeline, no ice feedback. Capture the validFields set just
+        // before the climate tail so the feedback pass can invalidate exactly the
+        // fields it rewrites.
+        uint32_t preTailValid = 0;
         for (size_t i = 0; i < stages.size(); ++i) {
             if (cancelFlag.load(std::memory_order_acquire)) {
                 atomicState.store(
@@ -235,23 +249,25 @@ void PlanetGenerator::runPipeline(PlanetParams params) {
                     std::memory_order_release);
                 return;
             }
+            if (i == tailStart) preTailValid = world->validFields;
             runStage(i, /*iceFeedback=*/false);
         }
 
         // Ice -> climate feedback. If pass 1 grew land ice, re-run the temperature-
         // dependent tail once (a fixed two passes, not a convergence loop): the ice
         // cools its own surface (elevation lapse + albedo) so temperature, precip,
-        // biomes, snow, and ice re-derive in equilibrium with it. A glacier-free
-        // world skips this and pays nothing. Everything before AtmosphereStage
-        // (tectonics, terrain, ocean level) is unaffected by ice, so it is not re-run.
+        // biomes, snow, and ice re-derive in equilibrium with it. A glacier-free world
+        // skips this and pays nothing.
+        //
+        // Snapshot safety: pass 2 rewrites the climate-tail arrays IN PLACE on the
+        // shared GeneratedWorld. Clear those fields' validFields bits first (and
+        // publish) so concurrent snapshot readers — which treat validFields as the
+        // sole authority for which arrays are safe to read at any instant — skip them
+        // while they are being rewritten; each pass-2 stage re-validates its fields as
+        // it finishes, restoring the full set by the end of the tail.
         if (worldHasLandIce(*world)) {
-            size_t tailStart = stages.size();
-            for (size_t i = 0; i < stages.size(); ++i) {
-                if (std::strcmp(stages[i]->name(), "Atmosphere") == 0) {
-                    tailStart = i;
-                    break;
-                }
-            }
+            world->validFields = preTailValid;
+            publishSnapshot(world);
             for (size_t i = tailStart; i < stages.size(); ++i) {
                 if (cancelFlag.load(std::memory_order_acquire)) {
                     atomicState.store(

@@ -193,6 +193,29 @@ TEST(GlacierStage, PerfectPlasticDomeProfile) {
 }
 
 // ============================================================================
+// Fully glaciated world (no ocean, all land above the ELA): the ice region has
+// no margin, so every tile falls back to the maximum thickness instead of bare
+// ground. Guards the degenerate distance-transform branch.
+// ============================================================================
+
+TEST(GlacierStage, FullyGlaciatedWorldNoMarginFallsBackToMaxThickness) {
+    TestWorld w;
+    w.setElevation([](double, double) { return 100.0; }); // all land, no ocean
+    w.fillTemp(-300, 100); // cold everywhere -> every land tile accumulates
+    w.fillPrecip(800);
+    // Deliberately skip runOcean(): no kFlagOcean, so no margin seeds exist.
+    w.runGlacier();
+
+    EXPECT_EQ(glacierCount(w), w.grid.tileCount())
+        << "with no margin every tile is interior ice";
+    for (TileId t = 0; t < w.grid.tileCount(); ++t) {
+        ASSERT_TRUE(hasGlacier(w, t)) << "tile " << t;
+        // Marginless ice caps at the maximum thickness (kMaxIceM = 4000 m).
+        EXPECT_EQ(w.world.data.iceThickness[t], 4000u) << "tile " << t;
+    }
+}
+
+// ============================================================================
 // Polar ice sheet emerges at the cold poles, not the warm equator (real climate)
 // ============================================================================
 

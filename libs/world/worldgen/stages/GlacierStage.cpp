@@ -201,10 +201,19 @@ void GlacierStage::run(StageContext& ctx) {
         for (size_t t = begin; t < end; ++t) {
             if (!isIce(static_cast<TileId>(t))) continue;
             const float d = dist[t];
-            if (!(d < kInf)) continue; // ice with no reachable margin (degenerate)
-            double H = foundation::det_math::sqrt(
-                2.0 * kYieldStressPa * static_cast<double>(d) / (kRhoIce * g));
-            if (H > kMaxIceM) H = kMaxIceM;
+            double H;
+            if (d < kInf) {
+                H = foundation::det_math::sqrt(
+                    2.0 * kYieldStressPa * static_cast<double>(d) / (kRhoIce * g));
+                if (H > kMaxIceM) H = kMaxIceM;
+            } else {
+                // No reachable margin: the ice region has no edge at all (a fully
+                // glaciated world with no ocean and no below-ELA land). It is the
+                // unbounded interior of an ice sheet, so cap it at the maximum
+                // thickness rather than leaving it bare (the perfect-plastic profile
+                // only thins toward a margin, and here there is none).
+                H = kMaxIceM;
+            }
             if (H >= kGlacierMinThickM) {
                 ctx.data.iceThickness[t] = static_cast<uint16_t>(H);
                 ctx.data.flags[t] |= kFlagGlacier;

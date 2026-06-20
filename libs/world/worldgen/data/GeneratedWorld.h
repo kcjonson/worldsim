@@ -35,12 +35,18 @@ struct WorldSummary {
 // The complete output of a generation run.
 //
 // Snapshot immutability contract:
-//   Within a generation pass, once a field is marked valid in validFields its
-//   array MUST NOT be rewritten by a later stage; stages only write the arrays
-//   for fields they introduce. Exception: the optional ice->climate feedback
-//   re-runs the temperature-dependent tail (Atmosphere..Glacier) a second time,
-//   so those climate-tail arrays are written once per pass. Tectonic/terrain/
-//   ocean fields are written exactly once and stay immutable across both passes.
+//   validFields is the sole authority for which arrays a snapshot reader may
+//   read. Once a field is marked valid its array MUST NOT be rewritten while
+//   that bit is set; stages only write the arrays for fields they introduce.
+//
+//   Exception — the optional ice->climate feedback re-runs the temperature-
+//   dependent tail (Atmosphere..Glacier) a second time to rewrite those
+//   climate-tail arrays in place. To stay within the contract the pipeline first
+//   CLEARS those fields' validFields bits (and publishes a snapshot) so readers
+//   skip the arrays while they are mid-rewrite; each pass-2 stage re-sets its bit
+//   as it finishes, so no valid array is ever observed being overwritten.
+//   Tectonic/terrain/ocean fields are written exactly once and stay valid and
+//   immutable across both passes.
 struct GeneratedWorld {
     PlanetParams         params;
     DerivedPlanetValues  derived;
