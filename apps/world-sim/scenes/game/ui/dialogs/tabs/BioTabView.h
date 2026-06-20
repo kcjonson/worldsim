@@ -3,7 +3,6 @@
 #include <component/Container.h>
 #include <graphics/Color.h>
 #include <graphics/Rect.h>
-#include <layer/Layer.h>
 
 #include <string>
 #include <vector>
@@ -22,8 +21,12 @@ namespace world_sim {
 		Foundation::Color		 currentTaskColor{0.80F, 0.80F, 0.85F, 1.0F}; // default matches bodyColor()
 	};
 
-	/// Bio tab content for ColonistDetailsDialog
-	/// Shows: name, age, mood, current task, traits, background
+	/// Bio tab content for ColonistDetailsDialog.
+	///
+	/// Mirrors the Salvage prototype's Bio panel: an Avatar + compact 2x2 Stat
+	/// grid header, then a Background paragraph, a Traits row, and the
+	/// current-task note. Rendered with explicit manual positioning relative to
+	/// the view's content origin - no nested layout, no adapter wrappers.
 	class BioTabView : public UI::Container {
 	  public:
 		/// Create the tab view with content bounds from parent dialog
@@ -32,8 +35,12 @@ namespace world_sim {
 		/// Update content from model data
 		void update(const BioData& data);
 
+		/// Draw the Bio panel at the view's content origin.
+		void render() override;
+
 	  private:
-		UI::LayerHandle layoutHandle;
+		Foundation::Rect contentBounds{};
+		BioData			 data_{};
 	};
 
 } // namespace world_sim
