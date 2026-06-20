@@ -1,6 +1,8 @@
 #include "ParameterPanel.h"
 
 #include "primitives/Primitives.h"
+#include <theme/Tokens.h>
+#include <theme/Variants.h>
 
 #include <focus/FocusManager.h>
 
@@ -23,17 +25,17 @@ ParameterPanel::ParameterPanel(Foundation::Vec2 pos, ParameterPanelCallbacks cbs
 	buildWidgets();
 }
 
-UI::Text ParameterPanel::makeLabel(const std::string& text, float y) {
-	return UI::Text(UI::Text::Args{
-		.position = {position.x + kSliderX, y},
+Renderer::Primitives::TextArgs ParameterPanel::makeLabel(const std::string& text, float y) {
+	return Renderer::Primitives::TextArgs{
 		.text = text,
-		.style = {
-			.color = Foundation::Color{0.65F, 0.65F, 0.65F, 1.0F},
-			.fontSize = 11.0F,
-			.hAlign = Foundation::HorizontalAlign::Left,
-			.vAlign = Foundation::VerticalAlign::Top,
-		},
-	});
+		.position = {position.x + kSliderX, y},
+		.scale = UI::fs_2xs / 16.0F,
+		.color = UI::text_dim,
+		.font = UI::fontMono,
+		.vAlign = Foundation::VerticalAlign::Top,
+		.letterSpacing = UI::fs_2xs * UI::ls_wider,
+		.transform = Foundation::TextTransform::Uppercase,
+	};
 }
 
 float ParameterPanel::addLabel(const std::string& text) {
@@ -92,7 +94,7 @@ void ParameterPanel::buildWidgets() {
 	nextY += 30.0F + kSectionSpacing;
 
 	// Planet Properties
-	addLabel("-- Planet Properties --");
+	addLabel("Planet Properties");
 	addSlider(waterSlider, 0.0, 100.0, 1.0, 70.0, false,
 		"Water %",
 		[](double v) { return std::format("{:.0f}%", v); },
@@ -129,7 +131,7 @@ void ParameterPanel::buildWidgets() {
 	nextY += kSectionSpacing;
 
 	// Star / Orbital
-	addLabel("-- Star & Orbit --");
+	addLabel("Star & Orbit");
 	addSlider(starTempSlider, 2000.0, 50000.0, 0.0, 5778.0, true,
 		"Star Temp (K)",
 		[](double v) { return std::format("{:.0f}K", v); },
@@ -148,7 +150,7 @@ void ParameterPanel::buildWidgets() {
 	nextY += kSectionSpacing;
 
 	// Generator settings
-	addLabel("-- Generator --");
+	addLabel("Generator");
 	float resY = position.y + nextY;
 	std::vector<UI::SelectOption> resOptions{
 		{"Preview 256",  "256"},
@@ -329,9 +331,9 @@ void ParameterPanel::render() {
 	Renderer::Primitives::drawRect({
 		.bounds = {position.x, position.y, kPanelWidth, 700.0F},
 		.style = {
-			.fill = Foundation::Color{0.1F, 0.1F, 0.13F, 1.0F},
+			.fill = UI::bg_panel,
 			.border = Foundation::BorderStyle{
-				.color = Foundation::Color{0.25F, 0.25F, 0.3F, 1.0F},
+				.color = UI::line_edge,
 				.width = 1.0F,
 			},
 		},
@@ -339,8 +341,8 @@ void ParameterPanel::render() {
 	});
 
 	// Section labels
-	for (auto& label : sectionLabels) {
-		label.render();
+	for (const auto& label : sectionLabels) {
+		Renderer::Primitives::drawText(label);
 	}
 
 	if (waterSlider)        { waterSlider->render(); }

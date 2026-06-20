@@ -27,6 +27,7 @@
 #include <scene/SceneManager.h>
 #include <shapes/Shapes.h>
 #include <theme/Tokens.h>
+#include <theme/Variants.h>
 #include <utils/Log.h>
 
 #include <format>
@@ -251,7 +252,7 @@ class WorldCreatorScene : public engine::IScene {
 	// holds the progress bar / stage text / stats.
 	Foundation::Rect mainRect() const {
 		float x = kPanelWidth + 20.0F;
-		return {x, 40.0F, viewportW - x - 20.0F, viewportH - 120.0F};
+		return {x, 76.0F, viewportW - x - 20.0F, viewportH - 156.0F};
 	}
 
 	void buildUI() {
@@ -297,7 +298,7 @@ class WorldCreatorScene : public engine::IScene {
 		};
 
 		panel = std::make_unique<world_sim::ParameterPanel>(
-			Foundation::Vec2{0.0F, 30.0F}, std::move(cbs));
+			Foundation::Vec2{0.0F, 76.0F}, std::move(cbs));
 		model.setGridSubdivision(kInitialSubdivision);
 
 		// Progress bar (hidden until Generating)
@@ -518,17 +519,27 @@ class WorldCreatorScene : public engine::IScene {
 	}
 
 	void renderTitle() {
-		UI::Text title(UI::Text::Args{
-			.position = {kPanelWidth + (viewportW - kPanelWidth) * 0.5F, 14.0F},
-			.text = "World Creator",
-			.style = {
-				.color = UI::text_bright,
-				.fontSize = 20.0F,
-				.hAlign = Foundation::HorizontalAlign::Center,
-				.vAlign = Foundation::VerticalAlign::Middle,
-			},
+		constexpr float kTitleX = 10.0F;
+		constexpr float kKickerY = 14.0F;
+		constexpr float kTitleY = kKickerY + UI::fs_2xs + 4.0F;
+		Renderer::Primitives::drawText({
+			.text = "// NEW GAME    STEP 03 / 03",
+			.position = {kTitleX, kKickerY},
+			.scale = UI::fs_2xs / 16.0F,
+			.color = UI::text_faint,
+			.font = UI::fontMono,
+			.vAlign = Foundation::VerticalAlign::Top,
+			.letterSpacing = UI::fs_2xs * UI::ls_wider,
 		});
-		title.render();
+		Renderer::Primitives::drawText({
+			.text = "Generate Planet",
+			.position = {kTitleX, kTitleY},
+			.scale = UI::fs_3xl / 16.0F,
+			.color = UI::text_bright,
+			.font = UI::fontDisplay,
+			.vAlign = Foundation::VerticalAlign::Top,
+			.letterSpacing = UI::fs_3xl * UI::ls_wide,
+		});
 	}
 
 	void renderEscHint() {
@@ -613,7 +624,7 @@ class WorldCreatorScene : public engine::IScene {
 				.position = {rect.x + rect.width * 0.5F, rect.y + rect.height + 20.0F},
 				.text = statsStr,
 				.style = {
-					.color = Foundation::Color{0.75F, 0.75F, 0.75F, 1.0F},
+					.color = UI::text_dim,
 					.fontSize = 15.0F,
 					.hAlign = Foundation::HorizontalAlign::Center,
 					.vAlign = Foundation::VerticalAlign::Middle,
