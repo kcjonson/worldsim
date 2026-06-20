@@ -228,7 +228,7 @@ namespace world_sim {
 		// Zoom controls are at Y=80, height=28, so start at Y=120
 		if (resourcesPanel) {
 			float rightMargin = 12.0F; // Match prototype --space-3
-			float topMargin = 120.0F;  // Below zoom controls (80 + 28 + 12 margin)
+			float topMargin = 60.0F;  // Right stack top per prototype (just below the 52px top bar)
 			resourcesPanel->setAnchorPosition(newBounds.width - rightMargin, topMargin);
 		}
 

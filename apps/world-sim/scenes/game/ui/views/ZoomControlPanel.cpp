@@ -17,7 +17,7 @@ void ZoomControlPanel::layout(const Foundation::Rect& newBounds) {
 	if (auto* control = getChild<ZoomControl>(zoomControlHandle)) {
 		// Position on right side of viewport
 		float zoomX = newBounds.x + newBounds.width - kRightMargin - kControlWidth;
-		float zoomY = newBounds.y + kTopMargin;
+		float zoomY = newBounds.y + newBounds.height - kBottomMargin - kControlHeight;
 		control->setPosition(zoomX, zoomY);
 	}
 }
