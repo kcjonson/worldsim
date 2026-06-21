@@ -28,7 +28,7 @@ target_link_libraries(planet-view
 # ── Shader deployment ──
 # Mirror the renderer's pattern: copy planet-view shaders to the shared build
 # shaders/ directory so both ui-sandbox and world-sim find them at runtime.
-file(GLOB_RECURSE PLANET_VIEW_SHADER_SOURCES
+file(GLOB_RECURSE PLANET_VIEW_SHADER_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/*"
 )
 
@@ -51,11 +51,11 @@ add_dependencies(planet-view planet-view-shaders)
 
 # ── Tests ──
 if(BUILD_TESTING)
-    file(GLOB_RECURSE PLANET_VIEW_TEST_SOURCES
+    file(GLOB_RECURSE PLANET_VIEW_TEST_SOURCES CONFIGURE_DEPENDS
         "${CMAKE_CURRENT_SOURCE_DIR}/*.test.cpp"
     )
 
-    file(GLOB_RECURSE PLANET_VIEW_BENCHMARK_SOURCES
+    file(GLOB_RECURSE PLANET_VIEW_BENCHMARK_SOURCES CONFIGURE_DEPENDS
         "${CMAKE_CURRENT_SOURCE_DIR}/*.bench.cpp"
     )
 

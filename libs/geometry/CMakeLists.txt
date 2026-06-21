@@ -26,7 +26,7 @@ target_link_libraries(geometry
 
 # Tests
 if(BUILD_TESTING)
-    file(GLOB_RECURSE GEOMETRY_TEST_SOURCES
+    file(GLOB_RECURSE GEOMETRY_TEST_SOURCES CONFIGURE_DEPENDS
         "${CMAKE_CURRENT_SOURCE_DIR}/*.test.cpp"
     )
 
