@@ -22,13 +22,9 @@
                    destructive="false" regrowthTime="60.0"/>
     </capabilities>
 
-    <!-- Per-biome placement configuration.
-         The early food source. Richest in temperate and boreal forest/grassland (classic berry
-         country), present across most temperate and tropical land in patches, sparse in
-         shrubland and at cold/alpine margins (tundra berries are real and matter), and absent in
-         true desert and polar ice. "clumped" - berries grow in patches. -->
+    <!-- Per-biome placement configuration -->
     <placement>
-      <!-- Temperate / boreal: abundant, the staple -->
+      <!-- Forest: Moderate density in clearings -->
       <biome name="TemperateDeciduousForest">
         <spawnChance>0.03</spawnChance>
         <distribution>clumped</distribution>
@@ -38,24 +34,8 @@
           <clumpSpacing>8.0,15.0</clumpSpacing>
         </clumping>
       </biome>
-      <biome name="TemperateRainforest">
-        <spawnChance>0.025</spawnChance>
-        <distribution>clumped</distribution>
-        <clumping>
-          <clumpSize>2,5</clumpSize>
-          <clumpRadius>1.0,2.0</clumpRadius>
-          <clumpSpacing>8.0,15.0</clumpSpacing>
-        </clumping>
-      </biome>
-      <biome name="BorealForest">
-        <spawnChance>0.03</spawnChance>
-        <distribution>clumped</distribution>
-        <clumping>
-          <clumpSize>2,6</clumpSize>
-          <clumpRadius>1.0,2.0</clumpRadius>
-          <clumpSpacing>8.0,15.0</clumpSpacing>
-        </clumping>
-      </biome>
+
+      <!-- Grassland: Scattered patches -->
       <biome name="TemperateGrassland">
         <spawnChance>0.02</spawnChance>
         <distribution>clumped</distribution>
@@ -66,122 +46,16 @@
         </clumping>
       </biome>
 
-      <!-- Montane / alpine grassland: patchy -->
-      <biome name="MontaneForest">
-        <spawnChance>0.015</spawnChance>
-        <distribution>clumped</distribution>
-        <clumping>
-          <clumpSize>2,4</clumpSize>
-          <clumpRadius>1.0,2.0</clumpRadius>
-          <clumpSpacing>10.0,18.0</clumpSpacing>
-        </clumping>
-      </biome>
-      <biome name="AlpineGrassland">
-        <spawnChance>0.012</spawnChance>
-        <distribution>clumped</distribution>
-        <clumping>
-          <clumpSize>2,4</clumpSize>
-          <clumpRadius>1.0,2.0</clumpRadius>
-          <clumpSpacing>12.0,22.0</clumpSpacing>
-        </clumping>
-      </biome>
-
-      <!-- Tropical: some berry-like fruit in patches -->
-      <biome name="TropicalRainforest">
-        <spawnChance>0.012</spawnChance>
-        <distribution>clumped</distribution>
-        <clumping>
-          <clumpSize>2,4</clumpSize>
-          <clumpRadius>1.0,2.0</clumpRadius>
-          <clumpSpacing>10.0,18.0</clumpSpacing>
-        </clumping>
-      </biome>
-      <biome name="TropicalSeasonalForest">
-        <spawnChance>0.012</spawnChance>
-        <distribution>clumped</distribution>
-        <clumping>
-          <clumpSize>2,4</clumpSize>
-          <clumpRadius>1.0,2.0</clumpRadius>
-          <clumpSpacing>10.0,18.0</clumpSpacing>
-        </clumping>
-      </biome>
-      <biome name="TropicalSavanna">
-        <spawnChance>0.01</spawnChance>
-        <distribution>clumped</distribution>
-        <clumping>
-          <clumpSize>2,4</clumpSize>
-          <clumpRadius>1.0,2.0</clumpRadius>
-          <clumpSpacing>12.0,22.0</clumpSpacing>
-        </clumping>
-      </biome>
-
-      <!-- Wetland: bog berries -->
-      <biome name="TemperateWetland">
-        <spawnChance>0.015</spawnChance>
+      <!-- Temperate rainforest: berries in the damp understory -->
+      <biome name="TemperateRainforest">
+        <spawnChance>0.025</spawnChance>
         <distribution>clumped</distribution>
         <clumping>
           <clumpSize>2,5</clumpSize>
           <clumpRadius>1.0,2.0</clumpRadius>
-          <clumpSpacing>10.0,18.0</clumpSpacing>
+          <clumpSpacing>8.0,15.0</clumpSpacing>
         </clumping>
       </biome>
-      <biome name="TropicalWetland">
-        <spawnChance>0.01</spawnChance>
-        <distribution>clumped</distribution>
-        <clumping>
-          <clumpSize>2,4</clumpSize>
-          <clumpRadius>1.0,2.0</clumpRadius>
-          <clumpSpacing>12.0,20.0</clumpSpacing>
-        </clumping>
-      </biome>
-
-      <!-- Marginal: sparse but present -->
-      <biome name="XericShrubland">
-        <spawnChance>0.008</spawnChance>
-        <distribution>clumped</distribution>
-        <clumping>
-          <clumpSize>1,3</clumpSize>
-          <clumpRadius>1.0,2.0</clumpRadius>
-          <clumpSpacing>15.0,25.0</clumpSpacing>
-        </clumping>
-      </biome>
-      <biome name="SemiDesert">
-        <spawnChance>0.004</spawnChance>
-        <distribution>clumped</distribution>
-        <clumping>
-          <clumpSize>1,2</clumpSize>
-          <clumpRadius>1.0,2.0</clumpRadius>
-          <clumpSpacing>20.0,32.0</clumpSpacing>
-        </clumping>
-      </biome>
-      <biome name="ArcticTundra">
-        <spawnChance>0.01</spawnChance>
-        <distribution>clumped</distribution>
-        <clumping>
-          <clumpSize>2,5</clumpSize>
-          <clumpRadius>1.0,2.5</clumpRadius>
-          <clumpSpacing>12.0,22.0</clumpSpacing>
-        </clumping>
-      </biome>
-      <biome name="AlpineTundra">
-        <spawnChance>0.006</spawnChance>
-        <distribution>clumped</distribution>
-        <clumping>
-          <clumpSize>1,3</clumpSize>
-          <clumpRadius>1.0,2.0</clumpRadius>
-          <clumpSpacing>15.0,25.0</clumpSpacing>
-        </clumping>
-      </biome>
-      <biome name="Beach">
-        <spawnChance>0.006</spawnChance>
-        <distribution>clumped</distribution>
-        <clumping>
-          <clumpSize>1,3</clumpSize>
-          <clumpRadius>1.0,2.0</clumpRadius>
-          <clumpSpacing>15.0,25.0</clumpSpacing>
-        </clumping>
-      </biome>
-      <!-- HotDesert, ColdDesert, PolarDesert omitted: too dry/cold for berry shrubs -->
 
       <!-- Groups this asset belongs to -->
       <groups>

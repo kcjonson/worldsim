@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100">
+  <!-- Sea Buckthorn - Top-down view, spiny silvery grey-green shrub with orange berries -->
+
+  <!-- Shadow -->
+  <ellipse cx="52" cy="62" rx="36" ry="18" fill="#2a2a18" opacity="0.25"/>
+
+  <!-- Main shrub body - silvery grey-green rounded mass.
+       Smooth simple outline; the spiny silhouette is suggested by the
+       branch strokes and berry dots rather than a self-crossing path. -->
+  <path d="M50,16
+           C64,16 78,24 82,38
+           C86,50 82,64 70,72
+           C58,80 42,80 30,72
+           C18,64 14,50 18,38
+           C22,24 36,16 50,16 Z"
+        fill="#8a9470"/>
+
+  <!-- Lighter silvery grey-green mid layer -->
+  <path d="M50,24
+           C62,24 73,31 76,42
+           C79,52 74,63 64,69
+           C54,75 42,73 33,66
+           C24,59 22,47 27,37
+           C32,28 40,24 50,24 Z"
+        fill="#a0aa84"/>
+
+  <!-- Silvery leaf sheen patches (the grey-silver tone sea buckthorn is known for) -->
+  <ellipse cx="40" cy="36" rx="11" ry="8" fill="#b8c0a0" opacity="0.8"/>
+  <ellipse cx="62" cy="34" rx="10" ry="7" fill="#b0b896" opacity="0.8"/>
+  <ellipse cx="68" cy="56" rx="9" ry="7" fill="#b8c0a0" opacity="0.75"/>
+  <ellipse cx="42" cy="62" rx="10" ry="7" fill="#b0b896" opacity="0.75"/>
+  <ellipse cx="50" cy="46" rx="8" ry="7" fill="#bcc4a4" opacity="0.8"/>
+
+  <!-- Spiny branch lines radiating from center -->
+  <path d="M50,46 L38,26" stroke="#6a7458" stroke-width="1.0" fill="none" opacity="0.7"/>
+  <path d="M50,46 L70,28" stroke="#6a7458" stroke-width="1.0" fill="none" opacity="0.7"/>
+  <path d="M50,46 L78,46" stroke="#6a7458" stroke-width="1.0" fill="none" opacity="0.7"/>
+  <path d="M50,46 L72,68" stroke="#6a7458" stroke-width="1.0" fill="none" opacity="0.7"/>
+  <path d="M50,46 L28,66" stroke="#6a7458" stroke-width="1.0" fill="none" opacity="0.7"/>
+  <path d="M50,46 L20,44" stroke="#6a7458" stroke-width="1.0" fill="none" opacity="0.7"/>
+
+  <!-- Orange berries - small bright dots clustered along branches -->
+  <circle cx="40" cy="28" r="3.2" fill="#e8720a"/>
+  <circle cx="46" cy="24" r="2.8" fill="#f08020"/>
+  <circle cx="34" cy="32" r="2.6" fill="#e8720a"/>
+  <circle cx="66" cy="26" r="3.0" fill="#f08020"/>
+  <circle cx="72" cy="32" r="2.8" fill="#e8720a"/>
+  <circle cx="76" cy="44" r="2.6" fill="#f08020"/>
+  <circle cx="74" cy="52" r="3.0" fill="#e8720a"/>
+  <circle cx="70" cy="64" r="2.8" fill="#f08020"/>
+  <circle cx="60" cy="70" r="2.6" fill="#e8720a"/>
+  <circle cx="46" cy="68" r="3.0" fill="#f08020"/>
+  <circle cx="30" cy="62" r="2.8" fill="#e8720a"/>
+  <circle cx="22" cy="50" r="2.6" fill="#f08020"/>
+  <circle cx="26" cy="38" r="3.0" fill="#e8720a"/>
+  <circle cx="32" cy="26" r="2.6" fill="#f08020"/>
+  <!-- A few inner berries -->
+  <circle cx="56" cy="36" r="2.4" fill="#e8720a"/>
+  <circle cx="44" cy="54" r="2.4" fill="#f08020"/>
+  <circle cx="60" cy="58" r="2.4" fill="#e8720a"/>
+</svg>

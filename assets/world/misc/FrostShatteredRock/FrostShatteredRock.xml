@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- FrostShatteredRock - Angular frost-split stone fragments (felsenmeer).
+     Cold blue-grey shards yielding SmallStone; common in arctic and alpine tundra. -->
+<AssetDefinitions>
+  <AssetDef>
+    <defName>FrostShatteredRock</defName>
+    <label>Frost-Shattered Rock</label>
+    <assetType>simple</assetType>
+    <svgPath>frost_shattered_rock.svg</svgPath>
+    <worldHeight>0.3</worldHeight>
+
+    <rendering>
+      <complexity>simple</complexity>
+      <tier>instanced</tier>
+    </rendering>
+
+    <!-- No animation - rock doesn't sway -->
+
+    <!-- Knapped/gathered for loose stone -->
+    <capabilities>
+      <harvestable yield="SmallStone" amountMin="2" amountMax="3" duration="3.0" destructive="true"/>
+    </capabilities>
+
+    <placement>
+      <biome name="ArcticTundra">
+        <spawnChance>0.018</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>1,4</clumpSize>
+          <clumpRadius>1.0,2.5</clumpRadius>
+          <clumpSpacing>12.0,22.0</clumpSpacing>
+        </clumping>
+      </biome>
+      <biome name="AlpineTundra">
+        <spawnChance>0.025</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>1,4</clumpSize>
+          <clumpRadius>1.0,2.5</clumpRadius>
+          <clumpSpacing>10.0,20.0</clumpSpacing>
+        </clumping>
+      </biome>
+      <biome name="PolarDesert">
+        <spawnChance>0.01</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>1,3</clumpSize>
+          <clumpRadius>1.0,2.0</clumpRadius>
+          <clumpSpacing>15.0,28.0</clumpSpacing>
+        </clumping>
+      </biome>
+
+      <groups>
+        <group>ground_scatter</group>
+        <group>stone_sources</group>
+      </groups>
+
+      <relationships>
+        <avoids type="same" distance="2.0" penalty="0.3"/>
+      </relationships>
+    </placement>
+
+    <variantCount>1</variantCount>
+  </AssetDef>
+</AssetDefinitions>

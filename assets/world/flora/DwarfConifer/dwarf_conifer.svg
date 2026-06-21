@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100">
+  <!-- Dwarf Conifer - Top-down view (~0.8m spruce/fir sapling) -->
+  <!-- Concentric tiers of needled branches radiating from a central tip -->
+
+  <!-- Soft ground shadow -->
+  <ellipse cx="52" cy="55" rx="36" ry="28" fill="#3a4a30" opacity="0.25"/>
+
+  <!-- Outermost tier - widest ring of branch tips, darkest -->
+  <path d="M50,18
+           C58,15 72,22 80,32
+           C88,42 88,58 80,68
+           C72,78 58,84 50,84
+           C42,84 28,78 20,68
+           C12,58 12,42 20,32
+           C28,22 42,15 50,18 Z"
+        fill="#25472e"/>
+
+  <!-- Notched star outline simulating branch tip gaps on outer ring -->
+  <path d="M50,22 L54,30 L62,24 L62,34 L72,30 L68,40
+           L78,40 L70,48 L78,56 L68,56 L70,66
+           L60,62 L56,72 L50,64 L44,72 L40,62
+           L30,66 L32,56 L22,56 L30,48 L22,40
+           L32,40 L28,30 L38,34 L38,24 L46,30 Z"
+        fill="#2f5a3c"/>
+
+  <!-- Middle tier - slightly smaller, mid-green -->
+  <path d="M50,28
+           C58,26 68,32 74,42
+           C80,52 78,64 70,70
+           C62,76 50,78 42,74
+           C32,70 26,60 28,48
+           C30,36 40,28 50,28 Z"
+        fill="#2f5a3c"/>
+
+  <!-- Inner tier - more compact, lighter blue-green showing depth -->
+  <path d="M50,36
+           C56,34 64,40 68,48
+           C72,56 68,66 60,68
+           C52,70 42,66 38,58
+           C34,50 38,38 50,36 Z"
+        fill="#3a6e48"/>
+
+  <!-- Innermost core - dense central foliage -->
+  <ellipse cx="50" cy="52" rx="13" ry="13" fill="#3a6e48"/>
+
+  <!-- Central tip dot - the growing apex seen from above -->
+  <circle cx="50" cy="50" r="4" fill="#1e3d28"/>
+
+  <!-- A few lighter needle-cluster highlights on middle tier -->
+  <ellipse cx="50" cy="32" rx="5" ry="3" fill="#4a7a58" opacity="0.6"/>
+  <ellipse cx="68" cy="44" rx="3" ry="5" fill="#4a7a58" opacity="0.6"/>
+  <ellipse cx="66" cy="64" rx="3" ry="4" fill="#4a7a58" opacity="0.6"/>
+  <ellipse cx="50" cy="72" rx="5" ry="3" fill="#4a7a58" opacity="0.6"/>
+  <ellipse cx="32" cy="62" rx="3" ry="4" fill="#4a7a58" opacity="0.6"/>
+  <ellipse cx="32" cy="42" rx="3" ry="5" fill="#4a7a58" opacity="0.6"/>
+</svg>

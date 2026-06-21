@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100">
+  <!-- Tropical Berry - Top-down view (~0.8m leafy fruit shrub) -->
+  <!-- Rounded green foliage mass with bright red/orange berry clusters -->
+
+  <!-- Shadow -->
+  <ellipse cx="52" cy="64" rx="34" ry="20" fill="#1e3010" opacity="0.28"/>
+
+  <!-- Main foliage body (rounded, lush green) -->
+  <path d="M50,16
+           C66,18 80,28 84,46
+           C88,64 76,80 56,86
+           C38,90 20,80 16,60
+           C12,42 28,20 50,16 Z"
+        fill="#2e6028"/>
+
+  <!-- Inner foliage variation (slightly different green, gives depth) -->
+  <path d="M50,24
+           C62,26 74,34 76,50
+           C78,64 68,74 52,78
+           C38,80 26,72 24,56
+           C22,42 34,26 50,24 Z"
+        fill="#346a2c"/>
+
+  <!-- Foliage highlight lobes (glossy top-lit) -->
+  <ellipse cx="36" cy="34" rx="12" ry="10" fill="#3a7630" opacity="0.8"/>
+  <ellipse cx="64" cy="34" rx="11" ry="10" fill="#3a7630" opacity="0.8"/>
+  <ellipse cx="72" cy="56" rx="10" ry="11" fill="#3a7630" opacity="0.75"/>
+  <ellipse cx="50" cy="72" rx="12" ry="9" fill="#3a7630" opacity="0.75"/>
+  <ellipse cx="28" cy="58" rx="10" ry="11" fill="#3a7630" opacity="0.75"/>
+  <ellipse cx="50" cy="44" rx="13" ry="12" fill="#3e7c34" opacity="0.7"/>
+
+  <!-- Berry cluster 1 - upper left, bright red-orange -->
+  <circle cx="34" cy="38" r="4.5" fill="#c03020"/>
+  <circle cx="40" cy="32" r="3.5" fill="#cc3818"/>
+  <circle cx="30" cy="44" r="3.0" fill="#c82820"/>
+  <!-- Small highlight on berries -->
+  <circle cx="33" cy="36" r="1.2" fill="#e05040" opacity="0.7"/>
+  <circle cx="39" cy="31" r="1.0" fill="#e05040" opacity="0.6"/>
+
+  <!-- Berry cluster 2 - upper right -->
+  <circle cx="66" cy="36" r="4.0" fill="#c83018"/>
+  <circle cx="72" cy="30" r="3.0" fill="#cc3820"/>
+  <circle cx="62" cy="42" r="3.5" fill="#c02818"/>
+  <circle cx="71" cy="29" r="1.0" fill="#e05040" opacity="0.6"/>
+
+  <!-- Berry cluster 3 - right side -->
+  <circle cx="74" cy="56" r="3.5" fill="#d03420"/>
+  <circle cx="78" cy="50" r="3.0" fill="#c83020"/>
+  <circle cx="77" cy="49" r="0.9" fill="#e05040" opacity="0.6"/>
+
+  <!-- Berry cluster 4 - lower, smaller -->
+  <circle cx="52" cy="76" r="3.0" fill="#c82820"/>
+  <circle cx="46" cy="72" r="2.5" fill="#cc3018"/>
+  <circle cx="58" cy="72" r="2.5" fill="#c83020"/>
+</svg>

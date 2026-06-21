@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Granite - Angular boulder cluster common in boreal, montane, and alpine country.
+     Harder and blockier than sandstone; yields the same universal SmallStone item. -->
+<AssetDefinitions>
+  <AssetDef>
+    <defName>Granite</defName>
+    <label>Granite</label>
+    <assetType>simple</assetType>
+    <svgPath>granite.svg</svgPath>
+    <worldHeight>0.45</worldHeight>
+
+    <rendering>
+      <complexity>simple</complexity>
+      <tier>instanced</tier>
+    </rendering>
+
+    <!-- No animation - rock doesn't sway -->
+
+    <!-- Entity capabilities - broken/gathered for loose stone, then depleted -->
+    <capabilities>
+      <harvestable yield="SmallStone" amountMin="2" amountMax="3" duration="3.0" destructive="true"/>
+    </capabilities>
+
+    <!-- Per-biome placement: boreal, montane, and alpine zones -->
+    <placement>
+      <biome name="BorealForest">
+        <spawnChance>0.02</spawnChance>
+        <distribution>uniform</distribution>
+      </biome>
+      <biome name="MontaneForest">
+        <spawnChance>0.03</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>1,3</clumpSize>
+          <clumpRadius>1.0,2.5</clumpRadius>
+          <clumpSpacing>10.0,20.0</clumpSpacing>
+        </clumping>
+      </biome>
+      <biome name="AlpineGrassland">
+        <spawnChance>0.03</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>1,3</clumpSize>
+          <clumpRadius>1.0,2.5</clumpRadius>
+          <clumpSpacing>10.0,20.0</clumpSpacing>
+        </clumping>
+      </biome>
+      <biome name="AlpineTundra">
+        <spawnChance>0.028</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>1,3</clumpSize>
+          <clumpRadius>1.0,2.5</clumpRadius>
+          <clumpSpacing>10.0,20.0</clumpSpacing>
+        </clumping>
+      </biome>
+
+      <groups>
+        <group>ground_scatter</group>
+        <group>stone_sources</group>
+      </groups>
+
+      <relationships>
+        <avoids type="same" distance="2.0" penalty="0.3"/>
+      </relationships>
+    </placement>
+
+    <variantCount>1</variantCount>
+  </AssetDef>
+</AssetDefinitions>

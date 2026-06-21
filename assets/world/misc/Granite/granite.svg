@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100">
+  <!-- Granite - Top-down view (~0.45m angular boulder cluster) -->
+
+  <!-- Cast shadow (cooler grey for granite, not warm tan) -->
+  <ellipse cx="55" cy="67" rx="33" ry="18" fill="#505058" opacity="0.3"/>
+
+  <!-- Rear block - large angular slab, medium grey (#7d7e82) -->
+  <path d="M22,34
+           L38,22 L68,24 L80,36
+           L82,58 L68,70 L36,72
+           L20,58 Z"
+        fill="#7d7e82"/>
+
+  <!-- Sunlit upper face - slightly lighter grey -->
+  <path d="M30,34
+           L44,26 L66,28 L74,38
+           L72,52 L60,58 L38,56
+           L26,46 Z"
+        fill="#92939a"/>
+
+  <!-- Front lower block - overlapping, slightly darker -->
+  <path d="M38,56
+           L58,52 L74,60 L76,74
+           L62,82 L40,80 L28,70
+           L30,58 Z"
+        fill="#6e6f74"/>
+
+  <!-- Highlight on front block top edge -->
+  <path d="M40,56 L58,52 L72,60 L60,64 L38,62 Z"
+        fill="#83848a" opacity="0.7"/>
+
+  <!-- Feldspar/quartz flecks - pale specks on main slab -->
+  <ellipse cx="46" cy="36" rx="2.5" ry="1.8" fill="#c4c2c8" opacity="0.6"/>
+  <ellipse cx="60" cy="40" rx="2.0" ry="1.5" fill="#bfc0c6" opacity="0.55"/>
+  <ellipse cx="52" cy="46" rx="1.8" ry="1.4" fill="#d0cece" opacity="0.5"/>
+  <ellipse cx="38" cy="44" rx="1.5" ry="1.2" fill="#c8c6cc" opacity="0.5"/>
+  <ellipse cx="64" cy="34" rx="1.6" ry="1.3" fill="#ccc8d0" opacity="0.5"/>
+
+  <!-- A fractured chip to the side -->
+  <path d="M18,56 L24,50 L28,58 L22,64 Z"
+        fill="#7a7b80"/>
+
+  <!-- Crack line across main slab -->
+  <path d="M36,30 L60,36 L68,52" stroke="#5a5b60" stroke-width="1.2" fill="none" opacity="0.5"/>
+</svg>

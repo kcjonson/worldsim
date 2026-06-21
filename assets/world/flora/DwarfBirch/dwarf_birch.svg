@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100">
+  <!-- DwarfBirch - Top-down view (~0.4m low tangled arctic birch shrub) -->
+
+  <!-- Shadow -->
+  <ellipse cx="52" cy="60" rx="32" ry="18" fill="#3a3020" opacity="0.22"/>
+
+  <!-- Ground-hugging base (dark brown woody mass, irregular) -->
+  <path d="M30,55
+           C28,42 32,30 42,24
+           C52,18 64,20 72,30
+           C80,40 78,56 70,64
+           C60,72 40,72 30,62 Z"
+        fill="#4a3520"/>
+
+  <!-- Wiry branch radiating left -->
+  <path d="M42,50 C34,44 26,40 20,36" stroke="#6a4a28" stroke-width="1.5" fill="none"/>
+  <path d="M38,44 C30,36 24,28 22,20" stroke="#5a3c20" stroke-width="1.2" fill="none"/>
+
+  <!-- Branch radiating right -->
+  <path d="M62,48 C70,42 78,38 84,32" stroke="#6a4a28" stroke-width="1.5" fill="none"/>
+  <path d="M66,54 C76,50 82,46 88,42" stroke="#5a3c20" stroke-width="1.2" fill="none"/>
+
+  <!-- Branch upward-left -->
+  <path d="M46,38 C42,30 38,22 36,14" stroke="#6a4a28" stroke-width="1.2" fill="none"/>
+
+  <!-- Branch upward-right -->
+  <path d="M58,36 C62,28 66,20 70,14" stroke="#5a3c20" stroke-width="1.2" fill="none"/>
+
+  <!-- Small round leaves dotted along branches - left side -->
+  <circle cx="28" cy="38" r="4" fill="#4a6030"/>
+  <circle cx="22" cy="30" r="3" fill="#566a38"/>
+  <circle cx="32" cy="32" r="3.5" fill="#4a6030"/>
+  <circle cx="24" cy="22" r="3" fill="#566a38"/>
+
+  <!-- Leaves along right branches -->
+  <circle cx="76" cy="36" r="4" fill="#4a6030"/>
+  <circle cx="84" cy="30" r="3" fill="#566a38"/>
+  <circle cx="80" cy="44" r="3.5" fill="#4a6030"/>
+  <circle cx="88" cy="40" r="3" fill="#566a38"/>
+
+  <!-- Leaves on upward branches -->
+  <circle cx="38" cy="18" r="3.5" fill="#4a6030"/>
+  <circle cx="34" cy="12" r="2.5" fill="#566a38"/>
+  <circle cx="68" cy="16" r="3.5" fill="#4a6030"/>
+  <circle cx="72" cy="10" r="2.5" fill="#566a38"/>
+
+  <!-- Central leaf cluster over the woody base -->
+  <circle cx="44" cy="44" r="5" fill="#4a6030"/>
+  <circle cx="56" cy="40" r="5" fill="#566a38"/>
+  <circle cx="50" cy="52" r="4.5" fill="#4a6030"/>
+  <circle cx="62" cy="56" r="4" fill="#566a38"/>
+  <circle cx="38" cy="56" r="4" fill="#4a6030"/>
+
+  <!-- Leaf highlights (lighter green) -->
+  <circle cx="44" cy="43" r="2" fill="#6a8048" opacity="0.7"/>
+  <circle cx="57" cy="39" r="2" fill="#6a8048" opacity="0.7"/>
+</svg>

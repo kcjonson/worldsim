@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Mossy Boulder - Rounded grey boulder cloaked in green moss.
+     Found in wet temperate and tropical forest; colonists chip stone from it
+     (yields SmallStone) but the moss makes it recognizable as a wetland rock. -->
+<AssetDefinitions>
+  <AssetDef>
+    <defName>MossyBoulder</defName>
+    <label>Mossy Boulder</label>
+    <assetType>simple</assetType>
+    <svgPath>mossy_boulder.svg</svgPath>
+    <worldHeight>0.4</worldHeight>
+
+    <rendering>
+      <complexity>simple</complexity>
+      <tier>instanced</tier>
+    </rendering>
+
+    <capabilities>
+      <harvestable yield="SmallStone" amountMin="2" amountMax="3" duration="3.0" destructive="true"/>
+    </capabilities>
+
+    <placement>
+      <biome name="TemperateRainforest">
+        <spawnChance>0.018</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>1,2</clumpSize>
+          <clumpRadius>1.0,2.0</clumpRadius>
+          <clumpSpacing>12.0,22.0</clumpSpacing>
+        </clumping>
+      </biome>
+      <biome name="TemperateWetland">
+        <spawnChance>0.012</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>1,2</clumpSize>
+          <clumpRadius>1.0,2.0</clumpRadius>
+          <clumpSpacing>12.0,22.0</clumpSpacing>
+        </clumping>
+      </biome>
+      <biome name="TropicalWetland">
+        <spawnChance>0.012</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>1,2</clumpSize>
+          <clumpRadius>1.0,2.0</clumpRadius>
+          <clumpSpacing>12.0,22.0</clumpSpacing>
+        </clumping>
+      </biome>
+
+      <groups>
+        <group>ground_scatter</group>
+        <group>stone_sources</group>
+      </groups>
+
+      <relationships>
+        <avoids type="same" distance="2.0" penalty="0.3"/>
+      </relationships>
+    </placement>
+
+    <variantCount>1</variantCount>
+  </AssetDef>
+</AssetDefinitions>

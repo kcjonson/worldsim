@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Sea Buckthorn - Spiny silvery grey-green coastal shrub with orange berries.
+     Beach wood source; yields Stick when harvested (non-destructive).
+     Orange berries are decorative flavor — harvest yields Stick not Berry. -->
+<AssetDefinitions>
+  <AssetDef>
+    <defName>Flora_SeaBuckthorn</defName>
+    <label>Sea Buckthorn</label>
+    <assetType>simple</assetType>
+    <svgPath>sea_buckthorn.svg</svgPath>
+    <worldHeight>0.7</worldHeight>
+
+    <rendering>
+      <complexity>simple</complexity>
+      <tier>instanced</tier>
+    </rendering>
+
+    <animation>
+      <type>parametric</type>
+      <windResponse>0.2</windResponse>
+      <swayFrequency>0.4,0.7</swayFrequency>
+    </animation>
+
+    <capabilities>
+      <harvestable yield="Stick" amountMin="1" amountMax="1" duration="4.0"
+                   destructive="false" totalResourceMin="3" totalResourceMax="5"/>
+    </capabilities>
+
+    <placement>
+      <biome name="Beach">
+        <spawnChance>0.012</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>2,5</clumpSize>
+          <clumpRadius>1.5,3.0</clumpRadius>
+          <clumpSpacing>10.0,20.0</clumpSpacing>
+        </clumping>
+      </biome>
+
+      <groups>
+        <group>bushes</group>
+        <group>wood_sources</group>
+        <group>small_flora</group>
+      </groups>
+
+      <relationships>
+        <avoids type="same" distance="2.0" penalty="0.3"/>
+      </relationships>
+    </placement>
+
+    <variantCount>1</variantCount>
+  </AssetDef>
+</AssetDefinitions>
