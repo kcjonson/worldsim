@@ -101,9 +101,9 @@ WorldPos2d tilePos(const GeneratedWorld& world, const SphericalProjection& proj,
 } // namespace
 
 TEST(RiverNetwork2DWidth, MonotonicAndClamped) {
-    EXPECT_FLOAT_EQ(RiverNetwork2D::channelWidthMeters(0.0f), 3.0f);   // clamped to min
-    EXPECT_GE(RiverNetwork2D::channelWidthMeters(10.0f), 3.0f);
-    EXPECT_LE(RiverNetwork2D::channelWidthMeters(1e9f), 140.0f);       // clamped to max
+    EXPECT_FLOAT_EQ(RiverNetwork2D::channelWidthMeters(0.0f), 1.5f);   // clamped to min
+    EXPECT_GE(RiverNetwork2D::channelWidthMeters(10.0f), 1.5f);
+    EXPECT_LE(RiverNetwork2D::channelWidthMeters(1e9f), 150.0f);       // clamped to max
     // Strictly increasing in the unclamped band.
     EXPECT_LT(RiverNetwork2D::channelWidthMeters(10.0f),
               RiverNetwork2D::channelWidthMeters(100.0f));

@@ -9,7 +9,8 @@
 #include <algorithm>
 #include <array>
 #include <cassert>
-#include <cmath>  // std::floor, std::round on integer-valued doubles only
+#include <cmath>  // std::floor, std::ceil
+#include <limits>
 #include <unordered_set>
 
 namespace worldgen {
@@ -18,24 +19,33 @@ namespace {
 
 constexpr double kPi = 3.14159265358979323846;
 
-// Meander: lateral wander is a fraction of segment length, capped so it stays in
-// the valley. The displacement is a sum of half-period sines, each of which
-// vanishes at t=0 and t=1, so consecutive segments meet exactly at shared tile
-// centers — the channel is continuous across chunk seams with no stitching.
-constexpr double kMeanderFrac      = 0.18;
-constexpr double kMaxMeanderMeters = 600.0;
+// Meander scales with channel width, as real rivers do: wavelength ~ 11x width,
+// amplitude ~ 1.4x width. A broad river makes long, gentle bends; a narrow stream
+// wiggles tightly -- both read as wander within a single 512 m chunk. The
+// displacement is tapered to zero at the segment ends (tile centers) by an
+// envelope, so consecutive segments meet there and seams stay continuous.
+// Amplitude is also capped to keep the channel inside the coarse drainage corridor.
+constexpr double kMeanderWavelenMult = 11.0;
+constexpr double kMeanderWavelenMin  = 120.0;
+constexpr double kMeanderWavelenMax  = 5000.0;
+constexpr double kMeanderAmpMult     = 1.4;
+constexpr double kMaxMeanderMeters   = 600.0; // corridor cap + collect-tiles reach
 
-// Polyline density: aim for ~150 m straight pieces, bounded so tiny and huge
-// tiles both stay sane.
-constexpr double kTargetSubLen = 150.0;
-constexpr int    kMinSub       = 4;
-constexpr int    kMaxSub       = 32;
+// Channel width varies along its length (riffles and pools).
+constexpr double kWidthWavelen   = 260.0;
+constexpr double kWidthVariation = 0.18; // +/- fraction of the hydraulic width
 
-// Hydraulic geometry: channel width ~ sqrt(discharge), clamped to a realistic
-// band. flowAccum is rain-seeded upstream drainage (precip/1000 per tile).
-constexpr float kWidthCoef = 2.0f;
-constexpr float kMinWidth  = 3.0f;
-constexpr float kMaxWidth  = 140.0f;
+// Polyline density near the query box: ~20 m straight pieces resolve the wander.
+// Sampled on a GLOBAL arc-length grid (multiples of kStepMeters from the segment
+// source) so adjacent chunks emit identical points where they overlap -> seamless.
+constexpr double kStepMeters = 20.0;
+
+// Hydraulic geometry: channel width ~ sqrt(discharge), clamped. Headwater streams
+// start narrow and broaden downstream as flow accumulates. flowAccum is rain-
+// seeded upstream drainage (precip/1000 per tile).
+constexpr float kWidthCoef = 1.4f;
+constexpr float kMinWidth  = 1.5f;
+constexpr float kMaxWidth  = 150.0f;
 
 // How far upstream of the query box a tile can sit and still have its downstream
 // segment cross it: one tile step plus the meander and channel headroom.
@@ -44,9 +54,6 @@ constexpr double kReachTileFactor = 1.25;
 // FNV hash -> double in [0,1) using the top 53 bits (the double mantissa).
 double hashUnit(uint64_t h) {
     return static_cast<double>(h >> 11) * (1.0 / 9007199254740992.0);
-}
-double hashSigned(uint64_t base, uint64_t salt) {
-    return 2.0 * hashUnit(foundation::hashCombine(base, salt)) - 1.0;
 }
 
 // Distance from point p to segment [a,b]; outT is the clamped projection
@@ -169,50 +176,96 @@ void RiverNetwork2D::emitSegment(TileId tile, double minX, double minY, double m
     const double length = foundation::det_math::sqrt(dx * dx + dy * dy);
     if (length < 1e-6) return;
 
-    const double perpx = -dy / length;
-    const double perpy = dx / length;
+    const double ux = dx / length;
+    const double uy = dy / length;
+    const double perpx = -uy;
+    const double perpy = ux;
 
     const float flowA = world->data.flowAccum[tile];
     // Do not taper to zero at the mouth: ocean tiles carry no flow.
     const float flowB = isOceanTile(down) ? flowA : world->data.flowAccum[down];
-    const float hwA = 0.5f * channelWidthMeters(flowA);
-    const float hwB = 0.5f * channelWidthMeters(flowB);
 
+    // Deterministic meander phases for this segment.
     const uint64_t base = foundation::hashCombine(
         foundation::hashCombine(world->params.seed, tile), down);
-    const double c1 = hashSigned(base, 0x11);
-    const double c2 = hashSigned(base, 0x22);
-    const double c3 = hashSigned(base, 0x33);
-    const double amp = std::min(kMeanderFrac * length, kMaxMeanderMeters);
+    const double phaseA = 2.0 * kPi * hashUnit(foundation::hashCombine(base, 0x41));
+    const double phaseB = 2.0 * kPi * hashUnit(foundation::hashCombine(base, 0x42));
+    const double phaseW = 2.0 * kPi * hashUnit(foundation::hashCombine(base, 0x43));
 
-    int sub = static_cast<int>(std::lround(length / kTargetSubLen));
-    sub = std::clamp(sub, kMinSub, kMaxSub);
+    // Meander geometry scales with the segment's representative channel width.
+    const double segWidth = static_cast<double>(channelWidthMeters(0.5f * (flowA + flowB)));
+    const double meanderWavelen =
+        std::clamp(kMeanderWavelenMult * segWidth, kMeanderWavelenMin, kMeanderWavelenMax);
+    const double meanderAmp =
+        std::min({kMeanderAmpMult * segWidth, 0.3 * length, kMaxMeanderMeters});
+    // Taper the meander to zero only within a short arc-length of each tile center
+    // (a joint between coarse segments), so the channel stays continuous there but
+    // still meanders everywhere else -- including right where the player lands, at
+    // a tile center. A t-based envelope would flatten a third of a multi-km segment.
+    const double meanderTaper = std::clamp(meanderWavelen * 0.35, 120.0, 800.0);
 
-    double prevX = pa.x;
-    double prevY = pa.y;
-    float  prevHW = hwA;
-    for (int k = 1; k <= sub; ++k) {
-        const double t = static_cast<double>(k) / static_cast<double>(sub);
-        const double off = amp * (c1 * foundation::det_math::sin(kPi * t) +
-                                  c2 * foundation::det_math::sin(2.0 * kPi * t) +
-                                  c3 * foundation::det_math::sin(3.0 * kPi * t));
-        const double tx = pa.x + dx * t + perpx * off;
-        const double ty = pa.y + dy * t + perpy * off;
-        const float  hwHere = hwA + (hwB - hwA) * static_cast<float>(t);
+    // Centerline point + channel half-width at arc length s along the segment.
+    auto eval = [&](double s, double& ox, double& oy, float& ohw) {
+        const double t = s / length;
+        const double distEnd = std::min(s, length - s);
+        double e = distEnd / meanderTaper;
+        e = e <= 0.0 ? 0.0 : (e >= 1.0 ? 1.0 : e * e * (3.0 - 2.0 * e)); // smoothstep
+        const double env = e;
+        const double wander =
+            0.7 * foundation::det_math::sin(2.0 * kPi * s / meanderWavelen + phaseA) +
+            0.3 * foundation::det_math::sin(4.0 * kPi * s / meanderWavelen + phaseB);
+        const double offset = env * meanderAmp * wander;
+        ox = pa.x + ux * s + perpx * offset;
+        oy = pa.y + uy * s + perpy * offset;
 
-        // Cull sub-segments whose footprint cannot touch the query box.
-        const double pad = static_cast<double>(std::max(prevHW, hwHere));
-        const double sMinX = std::min(prevX, tx) - pad;
-        const double sMaxX = std::max(prevX, tx) + pad;
-        const double sMinY = std::min(prevY, ty) - pad;
-        const double sMaxY = std::max(prevY, ty) + pad;
-        if (sMaxX >= minX && sMinX <= maxX && sMaxY >= minY && sMinY <= maxY) {
-            out.push_back({prevX, prevY, tx, ty, prevHW, hwHere});
+        const float flow = flowA + (flowB - flowA) * static_cast<float>(t);
+        const double baseHalf = 0.5 * static_cast<double>(channelWidthMeters(flow));
+        const double wv = 1.0 + kWidthVariation *
+                                    foundation::det_math::sin(2.0 * kPi * s / kWidthWavelen + phaseW);
+        ohw = static_cast<float>(baseHalf * wv);
+    };
+
+    // Restrict to the stretch of the segment near the query box: project the box
+    // onto the segment axis, pad for the channel half-width. Lateral wander does
+    // not move a point along the axis, so the box's axis-projection bounds it.
+    const double margin = 0.5 * static_cast<double>(kMaxWidth) + kStepMeters;
+    double sBoxLo = std::numeric_limits<double>::max();
+    double sBoxHi = std::numeric_limits<double>::lowest();
+    const double cornersX[4] = {minX, maxX, minX, maxX};
+    const double cornersY[4] = {minY, minY, maxY, maxY};
+    for (int i = 0; i < 4; ++i) {
+        const double s = (cornersX[i] - pa.x) * ux + (cornersY[i] - pa.y) * uy;
+        sBoxLo = std::min(sBoxLo, s);
+        sBoxHi = std::max(sBoxHi, s);
+    }
+    const double sLo = std::clamp(sBoxLo - margin, 0.0, length);
+    const double sHi = std::clamp(sBoxHi + margin, 0.0, length);
+    if (sLo >= sHi) return;
+
+    // Sample on a global arc-length grid so neighbouring chunks share points.
+    const long kFirst = static_cast<long>(std::floor(sLo / kStepMeters));
+    const long kLast = static_cast<long>(std::ceil(sHi / kStepMeters));
+    double prevX = 0.0;
+    double prevY = 0.0;
+    float  prevHW = 0.0f;
+    bool   havePrev = false;
+    for (long k = kFirst; k <= kLast; ++k) {
+        const double s = std::clamp(static_cast<double>(k) * kStepMeters, 0.0, length);
+        double cx = 0.0;
+        double cy = 0.0;
+        float  hw = 0.0f;
+        eval(s, cx, cy, hw);
+        if (havePrev) {
+            const double pad = static_cast<double>(std::max(prevHW, hw));
+            if (std::max(prevX, cx) + pad >= minX && std::min(prevX, cx) - pad <= maxX &&
+                std::max(prevY, cy) + pad >= minY && std::min(prevY, cy) - pad <= maxY) {
+                out.push_back({prevX, prevY, cx, cy, prevHW, hw});
+            }
         }
-
-        prevX = tx;
-        prevY = ty;
-        prevHW = hwHere;
+        prevX = cx;
+        prevY = cy;
+        prevHW = hw;
+        havePrev = true;
     }
 }
 
