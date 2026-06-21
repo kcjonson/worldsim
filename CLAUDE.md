@@ -11,6 +11,16 @@ World-sim is a C++20 game with 3D procedural world generation, 2D tile-based gam
 - Custom ECS in engine → `/docs/technical/cpp-coding-standards.md#ecs`
 - Roll our own core systems where appropriate
 
+## Project Management: Specboard
+
+Project management lives in **Specboard** (board: Worldsim), over the Specboard MCP. Run `/whats-next` to see current work, pick up tasks, and drive the dev lifecycle (start task, note outcomes on completion, link the branch, open the PR, mark it for review).
+
+The outcome of a planning session is an **epic with an attached requirements doc** (linked via the epic's spec doc path), not code. Plan, write the spec, create and link the epic, then implement in a later pass.
+
+File bugs and chores directly as you hit them. Full workflow: `~/.claude/commands/whats-next.md`.
+
+**Transition:** `/docs/status.md` is still the live checklist and is maintained in parallel until the Specboard ingest is verified. Don't drop it yet — Specboard is becoming the source of truth, but both run for now.
+
 ## Development Standards
 
 **You are a professional game developer working on a production-quality game.**
