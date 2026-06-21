@@ -64,6 +64,7 @@ Development log entries are **immutable history**. Don't update old entries — 
 
 #### June 2026
 
+- [2026-06-20 - Cryosphere: sea ice, snow, and physical glaciers with ice-climate feedback](./entries/2026-06-20-cryosphere-ice-and-glaciers.md)
 - [2026-06-19 - Navigation P4: belief-filtered navigation](./entries/2026-06-19-navigation-belief-filtering.md)
 - [2026-06-18 - Dialogs de-hand-rolled with a ListRow primitive](./entries/2026-06-18-dialog-listrow-migration.md)
 - [2026-06-18 - Salvage UI cutover complete](./entries/2026-06-18-salvage-ui-cutover.md)
@@ -107,9 +108,10 @@ Development log entries are **immutable history**. Don't update old entries — 
 
 ## Quick Stats
 
-- **Total Entries:** 74 (entry files; the Major Milestones list below highlights notable ones)
-- **Latest Entry:** 2026-06-19
+- **Total Entries:** 75 (entry files; the Major Milestones list below highlights notable ones)
+- **Latest Entry:** 2026-06-20
 - **Major Milestones:**
+  - Cryosphere: physical sea ice, snow, and glaciers (PDD + perfect-plastic) with a two-pass ice-climate feedback (2026-06-20)
   - Navigation P4: belief-filtered navigation, colonists path against what they've personally seen, not the live truth (2026-06-19)
   - Vision System: honest occluded sight + per-colonist memory of what's been seen, the write path belief filtering reads (2026-06-18)
   - Navigation v1: colonists path around walls/water/trees on a dynamic navmesh, through doors (2026-06-16)

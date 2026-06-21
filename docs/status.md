@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2026-06-19 (Navigation P4 belief filtering complete: colonists path against what they've personally seen, not the live truth #189/#191/#194 — see dev log 2026-06-19-navigation-belief-filtering.md. Built on the Vision System #172-184 (now documented in dev log 2026-06-18-vision-system.md). Earlier on main: Dialogs de-hand-rolled with `ListRow` #186-188, Salvage UI cutover #176-181, Navigation v1 #161-169, Dev/Test Tools #157, Fluvial Erosion #149)
+Last Updated: 2026-06-20 (Cryosphere complete: physical sea ice, snow, and glaciers (PDD surface mass balance + perfect-plastic profile) with a two-pass ice->climate feedback and sin^4 polar-land cooling #199 — see dev log 2026-06-20-cryosphere-ice-and-glaciers.md. Earlier on main: Navigation P4 belief filtering #189/#191/#194 (dev log 2026-06-19-navigation-belief-filtering.md), Vision System #172-184 (dev log 2026-06-18-vision-system.md), Dialogs de-hand-rolled with `ListRow` #186-188, Salvage UI cutover #176-181)
 
 ## Epic/Story/Task Template
 
@@ -27,6 +27,25 @@ Use this template for all work items:
 ---
 
 ## Recently Completed Epics (Last 4)
+
+### ✅ Cryosphere (sea ice, snow, physical glaciers, ice-climate feedback)
+**Spec/Documentation:** `/docs/technical/cryosphere-ice-and-glaciers.md`, `/docs/development-log/entries/2026-06-20-cryosphere-ice-and-glaciers.md`
+**Dependencies:** Climate, Biome & Shelf Realism Retune
+**Status:** complete (merged PR #199)
+
+**Goal:** Give Earth-like worlds polar ice caps and let a cold-enough world freeze its whole ocean, all physically derived: sea ice (frozen ocean), a thin permanent-snow land layer, and glaciers with real thickness and flow, with ice cooling its own climate so the caps sit where the physics puts them.
+
+**Completed Tasks:**
+- [x] Data model: ice flags + `iceThickness`/`iceFlow` fields + PlanetIO v4
+- [x] SnowStage sea ice (frozen ocean as solid thickness-based ice, land-only snow)
+- [x] GlacierStage rewritten to physical model: PDD (Calov-Greve) surface mass balance + perfect-plastic (Nye) thickness via deterministic distance-to-margin Dijkstra + steepest-descent flow
+- [x] Ice -> climate two-pass feedback: elevation-lapse-on-ice-surface + ice/snow albedo cooling; snapshot-safe in-place tail rewrite
+- [x] High-latitude land/ocean thermal contrast (sin^4 polar-land cooling, zero-sum) so polar summers fall below freezing
+- [x] Rendering: opaque hard-edged ice + thickness shading, `Ice` color mode, ice stats (WorldStats/CLI), landing-details ice rows
+- [x] Reserved progress band for the conditional feedback pass
+- [x] Three review rounds cleared (Copilot snapshot/marginless/labels; heavy-bucket biome gate -> sin^4 + gate 0.20; progress-bar + ocean-stage doc accuracy)
+
+**Result:** Three physically-derived ice surfaces with an ice-climate feedback loop; EarthLike land ice ~4% of land, mean ArcticTundra ~17.6%, determinism preserved across thread counts. Glaciers come from sourced glaciology (PDD + perfect-plastic, tau0 validated to Greenland), not a heuristic. The season slider + dynamic seasonal snow it motivated are a separate planned epic. ✅
 
 ### ✅ Dev/Test Tools (HTTP verbs + developer-client tab)
 **Spec/Documentation:** `/docs/development-log/entries/2026-06-16-dev-tools-api-and-tab.md`, `/docs/development-log/plans/2026-06-16-dev-tools-api-and-tab.md`
