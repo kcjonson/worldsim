@@ -69,7 +69,7 @@ constexpr float kMaxWidth  = 110.0f;
 // (a natural acute confluence), and climbs the valley side to a spring, tapering
 // from the parent down to a trickle.
 constexpr double kFeederMinParentWidth = 3.0;   // along-channel feeders need a real channel
-constexpr double kFeederSpacing        = 220.0; // confluence spacing along the parent
+constexpr double kFeederSpacing        = 440.0; // confluence spacing along the parent
 constexpr double kFeederSpawnProb      = 0.55;
 constexpr double kFeederLenMin         = 90.0;
 constexpr double kFeederLenMax         = 480.0;
