@@ -72,6 +72,10 @@ namespace ecs {
 		/// Maximum quantity per item stack in backpack
 		uint32_t maxStackSize = 99;
 
+		/// Max cargo weight this entity can carry, kilograms. Tools (equipment) don't count
+		/// against it; see ecs::carriedCargoMassKg. Caps how much a colonist hauls per trip.
+		float carryCapacityKg = 35.0F;
+
 		// ============================================================================
 		// Query Methods
 		// ============================================================================
@@ -177,6 +181,9 @@ namespace ecs {
 		/// @param quantity Amount to add
 		/// @return Amount actually added (may be less if stack is full)
 		uint32_t addItem(const std::string& defName, uint32_t quantity) {
+			if (quantity == 0) {
+				return 0; // adding nothing is a no-op (never create a zero-quantity slot)
+			}
 			auto iter = items.find(defName);
 
 			if (iter != items.end()) {
@@ -371,6 +378,7 @@ namespace ecs {
 			Inventory inv;
 			inv.maxCapacity = 10;
 			inv.maxStackSize = 99;
+			inv.carryCapacityKg = 35.0F;
 			return inv;
 		}
 
@@ -379,6 +387,7 @@ namespace ecs {
 			Inventory inv;
 			inv.maxCapacity = 30;
 			inv.maxStackSize = 99;
+			inv.carryCapacityKg = 120.0F;
 			return inv;
 		}
 
@@ -387,14 +396,16 @@ namespace ecs {
 			Inventory inv;
 			inv.maxCapacity = 100;
 			inv.maxStackSize = 999;
+			inv.carryCapacityKg = 500.0F;
 			return inv;
 		}
 
-		/// Create inventory for a storage container
+		/// Create inventory for a storage container (static; weight is effectively unbounded)
 		static Inventory createForStorage() {
 			Inventory inv;
 			inv.maxCapacity = 50;
 			inv.maxStackSize = 999;
+			inv.carryCapacityKg = 1.0e9F;
 			return inv;
 		}
 	};

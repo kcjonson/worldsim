@@ -2,6 +2,7 @@
 
 #include <assets/AssetRegistry.h>
 #include <assets/RecipeRegistry.h>
+#include <assets/placement/PlacementExecutor.h>
 #include <ecs/components/Appearance.h>
 #include <ecs/components/Inventory.h>
 #include <ecs/components/Packaged.h>
@@ -10,12 +11,16 @@
 #include <ecs/components/WorkQueue.h>
 #include <primitives/Primitives.h>
 #include <utils/Log.h>
+#include <world/chunk/ChunkCoordinate.h>
+
+#include <random>
 
 namespace world_sim {
 
 	PlacementSystem::PlacementSystem(const Args& args)
 		: ecsWorld(args.world),
 		  camera(args.camera),
+		  placementExecutor(args.placementExecutor),
 		  callbacks(args.callbacks) {
 		// Initialize placement mode with callback to handle placement
 		placementMode = PlacementMode{PlacementMode::Args{.onPlace = [this](const std::string& defName, Foundation::Vec2 worldPos) {
@@ -229,6 +234,23 @@ namespace world_sim {
 			);
 		} else {
 			LOG_INFO(Game, "Spawned '%s' at (%.1f, %.1f)", defName.c_str(), worldPos.x, worldPos.y);
+		}
+
+		// Harvestables with a resource pool need that pool seeded, exactly like the chunk
+		// placement path does (PlacementExecutor::storeChunkResult). Without this a dev- or
+		// tool-placed tree has no wood to give and a chop withdraws nothing.
+		if (placementExecutor != nullptr && assetDef != nullptr && assetDef->capabilities.harvestable.has_value()) {
+			const auto& harv = assetDef->capabilities.harvestable.value();
+			if (harv.totalResourceMin > 0 && harv.totalResourceMax > 0) {
+				// Position-seeded so a given spot rolls the same amount across runs, without
+				// reaching for a shared RNG.
+				const auto	 seed = static_cast<uint32_t>(std::hash<float>{}(worldPos.x) * 31U ^ std::hash<float>{}(worldPos.y));
+				std::mt19937 rng(seed);
+				std::uniform_int_distribution<uint32_t> dist(harv.totalResourceMin, harv.totalResourceMax);
+				const uint32_t initialCount = dist(rng);
+				const auto	   coord = engine::world::worldToChunk({worldPos.x, worldPos.y});
+				placementExecutor->initResourceCount(coord, {worldPos.x, worldPos.y}, defName, initialCount);
+			}
 		}
 
 		return entity;

@@ -50,9 +50,17 @@ public:
 	using SetCooldownCallback = std::function<void(const std::string& defName, float x, float y, float cooldownSeconds)>;
 	void setEntityCooldownCallback(SetCooldownCallback callback) { m_onSetCooldown = std::move(callback); }
 
-	/// Set callback for decrementing entity resource count
-	/// Called when harvesting an entity with resource pool. Returns true if resources remain.
-	using DecrementResourceCallback = std::function<bool(const std::string& defName, float x, float y)>;
+	/// Result of withdrawing from a harvestable's resource pool.
+	struct ResourceDraw {
+		uint32_t removed = 0;	  // Units actually taken (clamped to what the pool held)
+		bool	 depleted = false; // True if the pool is now empty (entity should be removed)
+	};
+
+	/// Set callback for withdrawing from an entity's resource pool.
+	/// Called when harvesting an entity with a resource pool. `requested` is how many yield
+	/// units the colonist wants this chop; the callback removes up to that from the pool and
+	/// reports how many it actually took plus whether the pool is now empty.
+	using DecrementResourceCallback = std::function<ResourceDraw(const std::string& defName, float x, float y, uint32_t requested)>;
 	void setDecrementResourceCallback(DecrementResourceCallback callback) { m_onDecrementResource = std::move(callback); }
 
 	/// Set callback fired when a Build action completes a structure (workDone reached workTotal).
@@ -140,7 +148,8 @@ private:
 		struct Task& task,
 		struct Action& action,
 		const struct Position& position,
-		struct Memory& memory
+		struct Memory& memory,
+		const struct Inventory& inventory
 	);
 
 	/// Start a haul action (pickup from source, then deposit to storage)

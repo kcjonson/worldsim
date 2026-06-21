@@ -1,6 +1,7 @@
 #include "AIDecisionSystem.h"
 
 #include "../GoalTaskRegistry.h"
+#include "../InventoryMass.h"
 #include "../World.h"
 #include "../components/Action.h"
 #include "../components/AgentRadius.h"
@@ -432,6 +433,7 @@ namespace ecs {
 		void evaluateHarvestOptions(
 			const engine::assets::AssetRegistry& registry,
 			const Memory&						 memory,
+			const Inventory&					 inventory,
 			const glm::vec2&					 position,
 			const Skills*						 skills,
 			DecisionTrace&						 trace
@@ -477,6 +479,13 @@ namespace ecs {
 						continue; // Yields different item than what goal needs
 					}
 
+					// Tool gate: chopping a tree needs the colonist to already hold the right
+					// tool (e.g. an axe). Colonists never fetch or equip tools on their own, so
+					// a tool-less colonist simply never sees this harvest as an option.
+					if (!ecs::inventoryHoldsToolType(inventory, registry, def->capabilities.harvestable->requiredToolType)) {
+						continue;
+					}
+
 					// Calculate distance to harvestable
 					float distanceToHarvestable = glm::distance(position, knownEntity.position);
 
@@ -502,9 +511,14 @@ namespace ecs {
 					harvestOption.skillLevel = farmSkillLevel;
 					harvestOption.skillBonus = farmSkillBonus;
 
-					// Build reason string
-					const auto& yieldDefName = registry.getDefName(goal->yieldDefNameId);
-					harvestOption.reason = "Harvesting " + defName + " for " + yieldDefName;
+					// Build reason string from friendly labels, not raw defNames ("Oak Tree", not
+					// "Flora_TreeOak"). Falls back to the defName if a label is missing.
+					const auto&		  yieldDefName = registry.getDefName(goal->yieldDefNameId);
+					const auto*		  yieldDef = registry.getDefinition(yieldDefName);
+					const std::string srcLabel = !def->label.empty() ? def->label : defName;
+					const std::string yieldLabel =
+						(yieldDef != nullptr && !yieldDef->label.empty()) ? yieldDef->label : yieldDefName;
+					harvestOption.reason = "Cutting " + srcLabel + " for " + yieldLabel;
 
 					trace.options.push_back(harvestOption);
 				}
@@ -1250,7 +1264,7 @@ namespace ecs {
 		evaluateHaulOptions(m_registry, memory, inventory, position.value, trace);
 
 		// Tier 6.7: Harvest resources for crafting (goal-driven)
-		evaluateHarvestOptions(m_registry, memory, position.value, skills, trace);
+		evaluateHarvestOptions(m_registry, memory, inventory, position.value, skills, trace);
 
 		// Tier 6.45: Build staged construction blueprints (goal-driven, priority 41)
 		evaluateBuildOptions(world, position.value, skills, trace);

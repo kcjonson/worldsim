@@ -139,6 +139,13 @@ namespace engine::assets {
 		/// Check if a defName ID has a specific capability
 		[[nodiscard]] bool hasCapability(uint32_t id, CapabilityType capability) const;
 
+		/// Mass of one unit of an item, in kilograms. Returns 1.0 for unknown/non-item defs
+		/// so carry-weight math always has a sane positive divisor.
+		[[nodiscard]] float getItemMassKg(const std::string& defName) const;
+
+		/// Tool type an item provides (e.g. "Axe"), or empty if it is not a tool.
+		[[nodiscard]] const std::string& getToolType(uint32_t id) const;
+
 		/// Register a synthetic definition for terrain features (water tiles, etc.)
 		/// These don't have XML definitions but need to participate in the capability system.
 		/// @param defName The definition name (e.g., "Terrain_Water")

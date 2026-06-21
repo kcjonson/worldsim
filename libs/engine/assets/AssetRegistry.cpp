@@ -510,11 +510,15 @@ namespace engine::assets {
 			// Hands required to carry (default 1, use 2 for large items like furniture)
 			def.handsRequired = static_cast<uint8_t>(defNode.child("handsRequired").text().as_uint(1));
 
+			// Tool type this item provides (e.g. "Axe" enables chopping); empty = not a tool
+			def.toolType = defNode.child_value("toolType");
+
 			// Item properties (for entities that can be carried/stored)
 			pugi::xml_node itemNode = defNode.child("item");
 			if (itemNode) {
 				ItemProperties itemProps;
 				itemProps.stackSize = itemNode.child("stackSize").text().as_uint(1);
+				itemProps.massKg = itemNode.child("mass").text().as_float(1.0F);
 
 				// Parse edible capability within item
 				pugi::xml_node edibleNode = itemNode.child("edible");
@@ -615,6 +619,7 @@ namespace engine::assets {
 						harvestable.regrowthTime = harvestableNode.attribute("regrowthTime").as_float(0.0F);
 						harvestable.totalResourceMin = harvestableNode.attribute("totalResourceMin").as_uint(0);
 						harvestable.totalResourceMax = harvestableNode.attribute("totalResourceMax").as_uint(0);
+						harvestable.requiredToolType = harvestableNode.attribute("requiresTool").as_string("");
 
 						// Validate totalResourceMax >= totalResourceMin
 						if (harvestable.totalResourceMax < harvestable.totalResourceMin) {
@@ -1216,6 +1221,24 @@ namespace engine::assets {
 	bool AssetRegistry::hasCapability(uint32_t id, CapabilityType capability) const {
 		uint8_t mask = getCapabilityMask(id);
 		return (mask & (1 << static_cast<uint8_t>(capability))) != 0;
+	}
+
+	float AssetRegistry::getItemMassKg(const std::string& defName) const {
+		const auto* def = getDefinition(defName);
+		if (def != nullptr && def->itemProperties.has_value()) {
+			return def->itemProperties->massKg;
+		}
+		return 1.0F;
+	}
+
+	const std::string& AssetRegistry::getToolType(uint32_t id) const {
+		const auto& defName = getDefName(id);
+		const auto* def = getDefinition(defName);
+		if (def != nullptr) {
+			return def->toolType;
+		}
+		static const std::string kEmptyString;
+		return kEmptyString;
 	}
 
 	uint32_t AssetRegistry::registerSyntheticDefinition(const std::string& defName, uint8_t capabilityMask) {

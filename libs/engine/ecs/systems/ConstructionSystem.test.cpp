@@ -161,11 +161,15 @@ namespace {
 			assets.clearDefinitions();
 
 			// Two distinct materials so the multi-material collision is exercised. Both must have
-			// non-zero defNameIds or emitMaterialGoals skips them.
+			// non-zero defNameIds or emitMaterialGoals skips them. Wood carries the real 2.5 kg
+			// mass so the per-trip harvest bound (carryCapacityKg / mass) is the game's 14.
 			for (const char* name : {"Wood", "Stone"}) {
 				engine::assets::AssetDefinition def;
 				def.defName = name;
 				def.label = name;
+				engine::assets::ItemProperties item;
+				item.massKg = std::string(name) == "Wood" ? 2.5F : 1.0F;
+				def.itemProperties = item;
 				assets.registerTestDefinition(std::move(def));
 			}
 
@@ -411,7 +415,8 @@ TEST_F(ConstructionGoalEmissionTest, GoalsAreCleanedUpWhenBlueprintCompletes) {
 
 TEST_F(ConstructionGoalEmissionTest, LargeManifestHarvestGoalIsBoundedToOneTrip) {
 	// 313 Wood needed, an empty-handed colonist: the Harvest goal must ask for one trip's
-	// worth (99), NOT 313. Asking for 313 is what kept it Available after the stack filled.
+	// worth, NOT 313. One trip is the carry weight (35 kg) divided by Wood's mass (2.5 kg) =
+	// 14. Asking for 313 is what kept it Available after the load filled.
 	auto foundation = createLargeWoodFoundation(/*woodNeeded=*/313);
 	createColonistCarryingWood(/*woodCarried=*/0);
 	auto& registry = GoalTaskRegistry::Get();
@@ -424,14 +429,14 @@ TEST_F(ConstructionGoalEmissionTest, LargeManifestHarvestGoalIsBoundedToOneTrip)
 	const auto* haul = findChild(umbrella->id, TaskType::Haul);
 	ASSERT_NE(harvest, nullptr) << "empty-handed colonist + outstanding manifest must have a Harvest goal";
 	ASSERT_NE(haul, nullptr);
-	EXPECT_EQ(harvest->targetAmount, 99U) << "Harvest demand must cap at one carry stack, not the full 313";
+	EXPECT_EQ(harvest->targetAmount, 14U) << "Harvest demand must cap at one carry trip (35 kg / 2.5 kg), not the full 313";
 	EXPECT_EQ(haul->targetAmount, 313U) << "Haul targets the whole site shortfall";
 }
 
 TEST_F(ConstructionGoalEmissionTest, FullStackRetiresHarvestSoHaulWinsForLargeManifest) {
-	// 313 Wood needed, a colonist carrying a FULL stack (addItem clamps 200 -> 99): the
-	// Harvest goal must retire (demand 0) while the Haul stays open. Before the fix the
-	// Harvest stayed Available (313 - 99 = 214 > 0) and the colonist hoarded forever.
+	// 313 Wood needed, a colonist carrying far more than one trip (99 >> the 14-unit trip):
+	// the Harvest goal must retire (demand 0) while the Haul stays open. Before the trip
+	// bound the Harvest stayed Available (313 - carried > 0) and the colonist hoarded forever.
 	auto foundation = createLargeWoodFoundation(/*woodNeeded=*/313);
 	createColonistCarryingWood(/*woodCarried=*/200); // clamps to the 99 stack cap
 	auto& registry = GoalTaskRegistry::Get();

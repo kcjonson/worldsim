@@ -111,6 +111,11 @@ namespace ecs {
 				return static_cast<float>(distanceBonus + skillBonus + chainBonus + inProgressBonus + taskAgeBonus);
 			};
 
+			// A work task keeps its full tier priority whether it's merely Available or already
+			// Selected (the in-progress one). Without this the selected task would fall through
+			// to 0 below, corrupting task.priority and the switch-threshold gap against Wander.
+			const bool actionable = (status == OptionStatus::Available || status == OptionStatus::Selected);
+
 			// Tier 3: Critical needs get highest priority (300-310)
 			// Needs only apply distance bonus (skill, chain, age bonuses don't apply to survival needs)
 			if (needValue < 10.0F && status != OptionStatus::Satisfied) {
@@ -122,13 +127,13 @@ namespace ecs {
 			}
 			// Tier 6: Work tasks (Gather Food, Crafting, etc.) - when needValue=100 and threshold=0
 			// This indicates a work task, not a real need - priority 50 + all bonuses
-			if (taskType == TaskType::FulfillNeed && needValue >= 100.0F && threshold == 0.0F && status == OptionStatus::Available) {
+			if (taskType == TaskType::FulfillNeed && needValue >= 100.0F && threshold == 0.0F && actionable) {
 				return 50.0F + workBonus();
 			}
 			// Placing packaged items at target locations (priority 38 + distance/in-progress/chain)
 			// If colonist is already carrying (needValue > 100), use needValue directly
 			// as priority (typically 150) to ensure delivery completes before other tasks
-			if (taskType == TaskType::PlacePackaged && status == OptionStatus::Available) {
+			if (taskType == TaskType::PlacePackaged && actionable) {
 				if (needValue > 100.0F) {
 					// In-progress delivery - use high priority plus bonuses
 					// Note: taskAgeBonus excluded since it's already claimed (in progress)
@@ -137,29 +142,29 @@ namespace ecs {
 				return 38.0F + static_cast<float>(distanceBonus + chainBonus + inProgressBonus + taskAgeBonus);
 			}
 			// Tier 6.4: Hauling loose items to storage - priority 37 + bonuses (no skill bonus)
-			if (taskType == TaskType::Haul && status == OptionStatus::Available) {
+			if (taskType == TaskType::Haul && actionable) {
 				return 37.0F + static_cast<float>(distanceBonus + chainBonus + inProgressBonus + taskAgeBonus);
 			}
 			// Tier 6.45: Construction build work - priority 41 + all bonuses. Sits just above
 			// crafting (40) so staged build sites get finished; Construction skill feeds workBonus.
-			if (taskType == TaskType::Build && status == OptionStatus::Available) {
+			if (taskType == TaskType::Build && actionable) {
 				return 41.0F + workBonus();
 			}
 			// Tier 6.45: Deconstruct work - same priority as Build (both are Construction work);
 			// Construction skill feeds workBonus identically.
-			if (taskType == TaskType::Deconstruct && status == OptionStatus::Available) {
+			if (taskType == TaskType::Deconstruct && actionable) {
 				return 41.0F + workBonus();
 			}
 			// Tier 6.5: Crafting work - priority 40 + all bonuses
-			if (taskType == TaskType::Craft && status == OptionStatus::Available) {
+			if (taskType == TaskType::Craft && actionable) {
 				return 40.0F + workBonus();
 			}
 			// Tier 6.6: Gathering materials for crafting - priority 35 + all bonuses
-			if (taskType == TaskType::Gather && status == OptionStatus::Available) {
+			if (taskType == TaskType::Gather && actionable) {
 				return 35.0F + workBonus();
 			}
 			// Tier 6.7: Harvesting resources (cutting trees, etc.) - priority 36 + all bonuses
-			if (taskType == TaskType::Harvest && status == OptionStatus::Available) {
+			if (taskType == TaskType::Harvest && actionable) {
 				return 36.0F + workBonus();
 			}
 			// Tier 7: Wander (lowest priority among active options - no bonuses)

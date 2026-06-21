@@ -100,8 +100,8 @@ TEST_F(ConstructionRegistryTest, Rendering_RealFileValues) {
 	ASSERT_TRUE(ConstructionRegistry::Get().renderingLoaded());
 
 	const auto& r = ConstructionRegistry::Get().rendering();
-	EXPECT_FLOAT_EQ(r.foundation.progressAlphaMin, 0.15F);
-	EXPECT_FLOAT_EQ(r.foundation.progressAlphaMax, 0.85F);
+	EXPECT_FLOAT_EQ(r.foundation.progressAlphaMin, 0.4F);
+	EXPECT_FLOAT_EQ(r.foundation.progressAlphaMax, 0.9F);
 	EXPECT_FLOAT_EQ(r.foundation.outlineWidthBuilt, 2.0F);
 	EXPECT_FLOAT_EQ(r.foundation.builtEdgeDarken, 0.55F);
 	EXPECT_FLOAT_EQ(r.wall.junctionAlphaBuilt, 0.97F);

@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100">
+  <!-- Primitive axe - top-down view: a stone head lashed to a wooden haft -->
+
+  <!-- Haft (handle) -->
+  <rect x="46" y="30" width="8" height="58" rx="3" ry="3" fill="#8B5A2B"/>
+  <path d="M50,32 L50,86" stroke="#6B4218" stroke-width="1" fill="none" opacity="0.6"/>
+
+  <!-- Lashing (plant fiber binding the head to the haft) -->
+  <rect x="44" y="34" width="12" height="3" fill="#C9A66B"/>
+  <rect x="44" y="39" width="12" height="3" fill="#C9A66B"/>
+
+  <!-- Stone head -->
+  <path d="M40,24 L60,24 L66,34 L58,40 L42,40 L34,34 Z" fill="#9A9A98"/>
+  <path d="M40,24 L60,24 L66,34 L58,40 L42,40 L34,34 Z" fill="none" stroke="#6E6E6C" stroke-width="1.2"/>
+  <!-- Cutting edge highlight -->
+  <path d="M34,34 L42,40" stroke="#D8D8D6" stroke-width="2" fill="none" opacity="0.8"/>
+  <path d="M66,34 L58,40" stroke="#D8D8D6" stroke-width="2" fill="none" opacity="0.8"/>
+</svg>

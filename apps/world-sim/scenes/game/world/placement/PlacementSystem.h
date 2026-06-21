@@ -19,6 +19,10 @@
 #include <string>
 #include <vector>
 
+namespace engine::assets {
+	class PlacementExecutor;
+}
+
 namespace world_sim {
 
 /// PlacementSystem - Coordinates entity placement workflow.
@@ -42,9 +46,10 @@ class PlacementSystem {
 	};
 
 	struct Args {
-		ecs::World*					   world;
-		engine::world::WorldCamera*	   camera;
-		Callbacks					   callbacks;
+		ecs::World*						 world;
+		engine::world::WorldCamera*		 camera;
+		engine::assets::PlacementExecutor* placementExecutor; // owns harvestable resource pools
+		Callbacks						 callbacks;
 	};
 
 	PlacementSystem() = default;
@@ -97,9 +102,10 @@ class PlacementSystem {
 	ecs::EntityID spawnEntity(const std::string& defName, Foundation::Vec2 worldPos);
 
   private:
-	ecs::World*					 ecsWorld = nullptr;
-	engine::world::WorldCamera*	 camera = nullptr;
-	Callbacks					 callbacks;
+	ecs::World*						   ecsWorld = nullptr;
+	engine::world::WorldCamera*		   camera = nullptr;
+	engine::assets::PlacementExecutor* placementExecutor = nullptr;
+	Callbacks						   callbacks;
 
 	PlacementMode placementMode;
 	GhostRenderer ghostRenderer;

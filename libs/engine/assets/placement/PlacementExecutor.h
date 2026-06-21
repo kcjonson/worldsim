@@ -186,9 +186,11 @@ namespace engine::assets {
 		/// @return Resource count, or nullopt if entity has no resource tracking
 		[[nodiscard]] std::optional<uint32_t> getResourceCount(world::ChunkCoordinate coord, glm::vec2 position, const std::string& defName) const;
 
-		/// Decrement resource count for an entity after harvest
-		/// @return true if resources remain, false if depleted (should destroy entity)
-		bool decrementResourceCount(world::ChunkCoordinate coord, glm::vec2 position, const std::string& defName);
+		/// Withdraw up to `requested` units from an entity's resource pool after a harvest.
+		/// @return The number of units actually removed (clamped to what the pool held; 0 if
+		///         the entity has no resource tracking). When this empties the pool the entry
+		///         is erased, so a following getResourceCount() returns nullopt (= depleted).
+		uint32_t decrementResourceCount(world::ChunkCoordinate coord, glm::vec2 position, const std::string& defName, uint32_t requested);
 
 		/// Get spawn order (for debugging/testing)
 		[[nodiscard]] const std::vector<std::string>& getSpawnOrder() const { return m_spawnOrder; }

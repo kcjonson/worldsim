@@ -15,6 +15,10 @@
 #include <string>
 #include <vector>
 
+namespace ecs {
+	class World;
+}
+
 namespace world_sim::adapters {
 
 /// Display data for a single task
@@ -35,9 +39,11 @@ struct GlobalTaskDisplayData {
 };
 
 /// Query all goals from GoalTaskRegistry (for colony-wide view)
+/// @param world ECS world, used to surface which colonist is working each goal + build progress
 /// @param cameraCenter Position to calculate distances from
 /// @return Vector of task display data, unsorted
 [[nodiscard]] std::vector<GlobalTaskDisplayData> getGlobalTasks(
+	ecs::World&		 world,
 	const glm::vec2& cameraCenter
 );
 

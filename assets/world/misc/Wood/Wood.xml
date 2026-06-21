@@ -22,6 +22,8 @@
     <!-- Item properties (when in inventory) -->
     <item>
       <stackSize>25</stackSize>
+      <!-- A short log/billet; mass drives how much a colonist can haul per trip -->
+      <mass>2.5</mass>
     </item>
 
     <!-- Entity capabilities -->
