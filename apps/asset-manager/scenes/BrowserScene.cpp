@@ -111,6 +111,14 @@ class BrowserScene : public engine::IScene {
 	}
 
 	void update(float dt) override {
+		// Window is resizable; re-layout when the viewport changes so scroll/detail bounds
+		// don't desync from the panels (which read the live viewport each frame).
+		int viewportW = 0;
+		int viewportH = 0;
+		Renderer::Primitives::getLogicalViewport(viewportW, viewportH);
+		if (viewportW != m_lastViewportW || viewportH != m_lastViewportH) {
+			layout();
+		}
 		if (m_pendingRebuild) {
 			rebuildTree();
 			m_pendingRebuild = false;
@@ -190,6 +198,8 @@ class BrowserScene : public engine::IScene {
 		int viewportW = 0;
 		int viewportH = 0;
 		Renderer::Primitives::getLogicalViewport(viewportW, viewportH);
+		m_lastViewportW = viewportW;
+		m_lastViewportH = viewportH;
 		const float vw = static_cast<float>(viewportW);
 		const float vh = static_cast<float>(viewportH);
 
@@ -307,6 +317,8 @@ class BrowserScene : public engine::IScene {
 	std::string				 m_selected;
 	std::set<std::string>	 m_collapsed;
 	bool					 m_pendingRebuild = false;
+	int						 m_lastViewportW = 0;
+	int						 m_lastViewportH = 0;
 };
 
 } // namespace

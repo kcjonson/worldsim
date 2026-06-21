@@ -131,6 +131,7 @@ namespace asset_manager {
 		std::string warnings;
 		const engine::assets::ValidationReport& report = engine::assets::AssetRegistry::Get().getValidationReport();
 		int										shown = 0;
+		bool									anyError = false;
 		for (const auto& issue : report.issues) {
 			if (issue.defName != defName) {
 				continue;
@@ -138,14 +139,17 @@ namespace asset_manager {
 			if (shown++ > 0) {
 				warnings += "\n";
 			}
-			warnings += (issue.severity == engine::assets::Severity::Error ? "[error] " : "[warning] ");
+			const bool isError = issue.severity == engine::assets::Severity::Error;
+			anyError = anyError || isError;
+			warnings += (isError ? "[error] " : "[warning] ");
 			if (!issue.field.empty()) {
 				warnings += issue.field + ": ";
 			}
 			warnings += issue.message;
 		}
 		m_warnings.text = warnings;
-		m_warnings.style.color = (report.errorCount() > 0) ? theme::statusCrit : theme::statusWarn;
+		// Color by the highest severity shown for THIS asset, not the registry-wide error count.
+		m_warnings.style.color = anyError ? theme::statusCrit : theme::statusWarn;
 
 		const std::filesystem::path xmlPath = def->baseFolder / (def->baseFolder.filename().string() + ".xml");
 		m_xmlHeader.text = toUpper("Definition  -  " + xmlPath.filename().string());

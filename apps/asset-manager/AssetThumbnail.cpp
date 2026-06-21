@@ -68,7 +68,9 @@ namespace asset_manager {
 			return;
 		}
 
-		std::vector<Foundation::Vec2> verts = m_mesh->vertices;
+		// Reused across frames/instances so translating verts to m_pos doesn't allocate each frame.
+		thread_local std::vector<Foundation::Vec2> verts;
+		verts.assign(m_mesh->vertices.begin(), m_mesh->vertices.end());
 		for (auto& v : verts) {
 			v.x += m_pos.x;
 			v.y += m_pos.y;
