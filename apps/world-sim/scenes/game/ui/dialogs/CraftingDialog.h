@@ -58,7 +58,7 @@ class CraftingDialog : public UI::Component {
 	[[nodiscard]] ecs::EntityID getStationId() const { return model.stationId(); }
 
 	// Per-frame update with ECS world for live queue data
-	void update(const ecs::World& world,
+	void update(ecs::World& world,
 	            const engine::assets::RecipeRegistry& registry,
 	            float deltaTime);
 

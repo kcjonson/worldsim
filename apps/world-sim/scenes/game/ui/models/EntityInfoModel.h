@@ -96,7 +96,7 @@ class EntityInfoModel {
 	/// @return Type of update the panel should perform
 	[[nodiscard]] UpdateType refresh(
 		const Selection&							   selection,
-		const ecs::World&							   world,
+		ecs::World&									   world,
 		const engine::assets::AssetRegistry&		   assetRegistry,
 		const engine::assets::RecipeRegistry&		   recipeRegistry,
 		const Callbacks&							   callbacks,
@@ -123,7 +123,7 @@ class EntityInfoModel {
 
 	/// Generate content for crafting station (status + "Open Crafting Menu" button)
 	[[nodiscard]] PanelContent getCraftingStationContent(
-		const ecs::World& world,
+		ecs::World& world,
 		ecs::EntityID entityId,
 		const std::string& stationDefName,
 		const OpenCraftingDialogCallback& onOpenCraftingDialog

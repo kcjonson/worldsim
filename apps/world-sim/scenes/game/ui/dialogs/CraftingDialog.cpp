@@ -121,7 +121,7 @@ bool CraftingDialog::isOpen() const {
 	return dialog != nullptr && dialog->isOpen();
 }
 
-void CraftingDialog::update(const ecs::World& world,
+void CraftingDialog::update(ecs::World& world,
                             const engine::assets::RecipeRegistry& registry,
                             float deltaTime) {
 	if (!isOpen()) {

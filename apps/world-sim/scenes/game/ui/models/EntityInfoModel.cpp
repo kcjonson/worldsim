@@ -98,7 +98,7 @@ void CachedSelection::update(const Selection& selection) {
 
 EntityInfoModel::UpdateType EntityInfoModel::refresh(
 	const Selection&							   selection,
-	const ecs::World&							   world,
+	ecs::World&									   world,
 	const engine::assets::AssetRegistry&		   assetRegistry,
 	const engine::assets::RecipeRegistry&		   recipeRegistry,
 	const Callbacks&							   callbacks,
@@ -264,7 +264,7 @@ PanelContent EntityInfoModel::getColonistContent(
 }
 
 PanelContent EntityInfoModel::getCraftingStationContent(
-	const ecs::World& world,
+	ecs::World& world,
 	ecs::EntityID entityId,
 	const std::string& stationDefName,
 	const OpenCraftingDialogCallback& onOpenCraftingDialog
