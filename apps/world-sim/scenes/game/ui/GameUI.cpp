@@ -432,7 +432,7 @@ namespace world_sim {
 		if (globalTaskList) {
 			globalTaskList->update(deltaTime);
 			glm::vec2 cameraCenter{camera.position().x, camera.position().y};
-			if (globalTaskListModel.refresh(cameraCenter, deltaTime)) {
+			if (globalTaskListModel.refresh(ecsWorld, cameraCenter, deltaTime)) {
 				globalTaskList->setTasks(globalTaskListModel.tasks());
 			}
 			globalTaskList->setTaskCount(globalTaskListModel.taskCount());

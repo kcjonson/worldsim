@@ -554,10 +554,12 @@ namespace world_sim {
 		// Fixed panel height for all entity types - ensures visual consistency
 		// Header: kPadding(12) + kPortraitSize(64) + kSectionGap(12) = 88px
 		//         Name text and mood bar are positioned within the portrait band
+		// Task lines (full width, above the columns): Current + Next + Spacer
+		//         = 2 * (kLabelFontSize(12) + kItemGap(4)) + 8 = 40px
 		// Column: kHeaderFontSize(12) + kItemGap(4) + 8 needs * (kNeedBarHeight(16) + kItemGap(4)) = 16 + 160 = 176px
 		// Bottom: kPadding(12) = 12px
-		// Total = 88 + 176 + 12 = 276px, plus 4px extra padding for breathing room -> 280px
-		constexpr float kFixedPanelHeight = 280.0F;
+		// Total = 88 + 40 + 176 + 12 = 316px, plus 4px extra padding for breathing room -> 320px
+		constexpr float kFixedPanelHeight = 320.0F;
 		float			totalHeight = kFixedPanelHeight;
 
 		panelHeight = totalHeight;
@@ -732,14 +734,30 @@ namespace world_sim {
 		float rightColumnWidth = contentWidth - kLeftColumnWidth - kColumnGap;
 		float rightColumnX = kLeftColumnWidth + kColumnGap;
 
-		// LEFT COLUMN: Current task, Next task, Gear list (may be empty for world entities)
-		float leftY = columnsY;
-		for (const auto& slot : content.leftColumn) {
-			leftY += renderSlot(slot, leftY, 0.0F, kLeftColumnWidth);
+		// The task lines (Current/Next) render at FULL width so a long task description doesn't
+		// collide with the needs column; the Gear list and the needs sit side-by-side BELOW
+		// them. The adapter's SpacerSlot between the task lines and the gear marks the boundary.
+		float  leftY = columnsY;
+		size_t slotIdx = 0;
+		for (; slotIdx < content.leftColumn.size(); ++slotIdx) {
+			const auto& slot = content.leftColumn[slotIdx];
+			leftY += renderSlot(slot, leftY, 0.0F, contentWidth);
+			if (std::holds_alternative<SpacerSlot>(slot)) {
+				++slotIdx; // consume the spacer; the rest is the (narrow) gear column
+				break;
+			}
+		}
+
+		// Both the Gear list and the needs begin below the full-width task lines.
+		const float columnsBeginY = leftY;
+
+		// LEFT COLUMN (below task lines): Gear list at the narrow left width.
+		for (; slotIdx < content.leftColumn.size(); ++slotIdx) {
+			leftY += renderSlot(content.leftColumn[slotIdx], leftY, 0.0F, kLeftColumnWidth);
 		}
 
 		// RIGHT COLUMN: "Needs:" header + need bars (only if has content)
-		float rightY = columnsY;
+		float rightY = columnsBeginY;
 		bool  hasNeedsContent = !content.rightColumn.empty();
 
 		// "Needs:" section header (only show if we have needs)

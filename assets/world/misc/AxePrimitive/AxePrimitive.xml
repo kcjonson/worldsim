@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Primitive Axe - first tool in the progression. Required to chop trees for wood.
+     Crafted via Recipe_AxePrimitive (2 SmallStone, 1 Stick, 1 PlantFiber).
+     Colonists never craft or equip this on their own; the player provisions it.
+-->
+<AssetDefinitions>
+  <AssetDef>
+    <defName>AxePrimitive</defName>
+    <label>Primitive Axe</label>
+    <assetType>simple</assetType>
+    <svgPath>axe.svg</svgPath>
+    <worldHeight>0.6</worldHeight>
+
+    <rendering>
+      <complexity>simple</complexity>
+      <tier>instanced</tier>
+    </rendering>
+
+    <!-- Item category: tool (equipment, not cargo - excluded from carry weight) -->
+    <category>Tool</category>
+
+    <!-- The work this tool enables; harvestables with requiresTool="Axe" need it held -->
+    <toolType>Axe</toolType>
+
+    <!-- Item properties (when in inventory) -->
+    <item>
+      <stackSize>1</stackSize>
+      <mass>1.5</mass>
+    </item>
+
+    <!-- Entity capabilities -->
+    <capabilities>
+      <carryable quantity="1"/>
+    </capabilities>
+
+    <!-- No placement - axes don't spawn naturally, they're crafted -->
+  </AssetDef>
+</AssetDefinitions>

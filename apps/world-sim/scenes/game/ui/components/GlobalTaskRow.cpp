@@ -34,10 +34,10 @@ GlobalTaskRow::GlobalTaskRow(const Args& args)
 	// Line 2: "Available • Known by: Bob, Alice" or "Blocked • 0/11 materials"
 	std::string line2Text = args.task.status;
 	if (!args.task.statusDetail.empty()) {
-		line2Text += " \xE2\x80\xA2 " + args.task.statusDetail;
+		line2Text += " - " + args.task.statusDetail;
 	}
 	if (showKnownBy && !args.task.knownBy.empty()) {
-		line2Text += " \xE2\x80\xA2 Known by: " + args.task.knownBy;
+		line2Text += " - Known by: " + args.task.knownBy;
 	}
 
 	line2Handle = addChild(UI::Text(UI::Text::Args{
@@ -75,10 +75,10 @@ void GlobalTaskRow::setTaskData(const adapters::GlobalTaskDisplayData& task) {
 	if (auto* text2 = getChild<UI::Text>(line2Handle)) {
 		std::string line2Text = task.status;
 		if (!task.statusDetail.empty()) {
-			line2Text += " \xE2\x80\xA2 " + task.statusDetail;
+			line2Text += " - " + task.statusDetail;
 		}
 		if (showKnownBy && !task.knownBy.empty()) {
-			line2Text += " \xE2\x80\xA2 Known by: " + task.knownBy;
+			line2Text += " - Known by: " + task.knownBy;
 		}
 		text2->text = line2Text;
 		text2->style.color = getStatusColor(task);

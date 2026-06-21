@@ -16,6 +16,7 @@
 
 #include <debug/DebugServer.h> // Foundation::DevCommand
 
+#include <ecs/InventoryMass.h>
 #include <ecs/World.h>
 #include <ecs/components/Action.h>
 #include <ecs/components/Appearance.h>
@@ -640,6 +641,31 @@ namespace world_sim {
 			out << "}";
 			if (const auto* action = m_ctx.world->getComponent<ecs::Action>(entity)) {
 				out << ",\"action\":\"" << ecs::actionTypeName(action->type) << "\"";
+			}
+			if (const auto* inv = m_ctx.world->getComponent<ecs::Inventory>(entity)) {
+				// Aggregate hands + backpack so each defName appears once (no duplicate keys).
+				std::unordered_map<std::string, uint32_t> totals;
+				auto add = [&](const std::optional<ecs::ItemStack>& hand) {
+					if (hand.has_value()) {
+						totals[hand->defName] += hand->quantity;
+					}
+				};
+				add(inv->leftHand);
+				// Two-handed items mirror in both hands; don't double-count.
+				if (!(inv->leftHand.has_value() && inv->rightHand.has_value() && inv->leftHand->defName == inv->rightHand->defName)) {
+					add(inv->rightHand);
+				}
+				for (const auto& [defName, qty] : inv->items) {
+					totals[defName] += qty;
+				}
+				out << ",\"inventory\":{";
+				bool firstItem = true;
+				for (const auto& [defName, qty] : totals) {
+					out << (firstItem ? "" : ",") << "\"" << jsonEscape(defName) << "\":" << qty;
+					firstItem = false;
+				}
+				out << "},\"cargoKg\":" << ecs::carriedCargoMassKg(*inv, engine::assets::AssetRegistry::Get())
+					<< ",\"carryCapacityKg\":" << inv->carryCapacityKg;
 			}
 			out << "}";
 		}

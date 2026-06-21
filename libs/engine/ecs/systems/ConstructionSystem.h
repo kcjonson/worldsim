@@ -252,11 +252,11 @@ namespace ecs {
 		/// already carries enough delivers it instead of chopping more.
 		[[nodiscard]] uint32_t carriedAmount(EntityID buildSite, const std::string& defName) const;
 
-		/// The most a single colonist can carry of a material in one trip: the largest
-		/// inventory stack size among colonists (a deterministic max, not iteration-order
-		/// dependent). Used as the per-trip harvest target so a manifest larger than one
-		/// stack still gets delivered in repeated trips rather than hoarded at the cap.
-		[[nodiscard]] uint32_t colonistCarryCapacity(EntityID buildSite) const;
+		/// The most a single colonist can carry in one trip, in kilograms: the largest carry
+		/// weight among colonists (a deterministic max, not iteration-order dependent). Divided
+		/// by a material's per-unit mass to get the per-trip harvest target, so a manifest
+		/// heavier than one load gets delivered in repeated trips rather than hoarded.
+		[[nodiscard]] float colonistCarryCapacityKg(EntityID buildSite) const;
 
 		/// Shared by the free-build flag path and forceCompleteBlueprint: stage materials,
 		/// finish work, flip phase, fire the completion callback. `blueprint` and `structure`

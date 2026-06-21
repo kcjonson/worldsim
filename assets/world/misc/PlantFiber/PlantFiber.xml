@@ -22,6 +22,7 @@
     <!-- Item properties (when in inventory) -->
     <item>
       <stackSize>20</stackSize>
+      <mass>0.1</mass>
       <!-- Not edible -->
     </item>
 

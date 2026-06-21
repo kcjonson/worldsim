@@ -2,14 +2,17 @@
 
 #include <assets/ConstructionRegistry.h>
 #include <core/Vec2i64.h>
+#include <ecs/GoalTaskRegistry.h>
 #include <ecs/components/Action.h>
 #include <ecs/components/Colonist.h>
 #include <ecs/components/Inventory.h>
 #include <ecs/components/Mood.h>
 #include <ecs/components/Needs.h>
 #include <ecs/components/Room.h>
+#include <ecs/components/StorageConfiguration.h>
 #include <ecs/components/StructureBlueprint.h>
 #include <ecs/components/Task.h>
+#include <ecs/components/WorkQueue.h>
 
 #include <cmath>
 #include <iomanip>
@@ -36,22 +39,6 @@ namespace world_sim {
 				return "Stressed";
 			}
 			return "Miserable";
-		}
-
-		// Format action description with progress
-		std::string formatAction(const ecs::Action& action) {
-			if (!action.isActive()) {
-				return "Idle";
-			}
-
-			std::ostringstream oss;
-			oss << ecs::actionTypeName(action.type);
-
-			// Add progress percentage
-			int progressPercent = static_cast<int>(action.progress() * 100.0F);
-			oss << " (" << progressPercent << "%)";
-
-			return oss.str();
 		}
 
 		// Format task description
@@ -82,6 +69,64 @@ namespace world_sim {
 					return "Wandering";
 			}
 			return "Unknown";
+		}
+
+		// Classify a chain's destination entity so the "Next" line can name what comes after
+		// the current step (deliver to a build site vs a crafting station vs storage).
+		enum class NextDest { Build, Craft, Storage, Unknown };
+
+		NextDest classifyDestination(const ecs::World& world, ecs::EntityID dest) {
+			if (dest == ecs::EntityID{0}) {
+				return NextDest::Unknown;
+			}
+			if (world.getComponent<ecs::StructureBlueprint>(dest) != nullptr) {
+				return NextDest::Build;
+			}
+			if (world.getComponent<ecs::WorkQueue>(dest) != nullptr) {
+				return NextDest::Craft;
+			}
+			if (world.getComponent<ecs::StorageConfiguration>(dest) != nullptr) {
+				return NextDest::Storage;
+			}
+			return NextDest::Unknown;
+		}
+
+		// The next step in the colonist's current chain (Harvest -> Haul -> Build/Craft), for
+		// the info panel's "Next" line. "--" when there is no meaningful next step.
+		std::string formatNextStep(const ecs::World& world, const ecs::Task& task) {
+			switch (task.type) {
+				case ecs::TaskType::Harvest: {
+					if (!task.chainId.has_value()) {
+						return "--"; // a one-off harvest (e.g. food) has no chained follow-up
+					}
+					// A chained harvest feeds a haul to the goal's destination.
+					ecs::EntityID dest{0};
+					if (const auto* goal = ecs::GoalTaskRegistry::Get().getGoal(task.harvestGoalId)) {
+						dest = static_cast<ecs::EntityID>(goal->destinationEntity);
+					}
+					switch (classifyDestination(world, dest)) {
+						case NextDest::Build:
+							return "Haul to build site";
+						case NextDest::Craft:
+							return "Haul to station";
+						default:
+							return "Haul the load";
+					}
+				}
+				case ecs::TaskType::Gather:
+					return task.chainId.has_value() ? "Haul to station" : "--";
+				case ecs::TaskType::Haul:
+					switch (classifyDestination(world, static_cast<ecs::EntityID>(task.haulTargetStorageId))) {
+						case NextDest::Build:
+							return "Build structure";
+						case NextDest::Craft:
+							return "Craft item";
+						default:
+							return "--"; // delivering to storage is the end of the chain
+					}
+				default:
+					return "--";
+			}
 		}
 
 		// Format position for display
@@ -185,6 +230,16 @@ namespace world_sim {
 		std::string currentTask = "Idle";
 		if (auto* task = world.getComponent<ecs::Task>(entityId)) {
 			currentTask = formatTask(*task);
+			// Build/Deconstruct advance the blueprint's workDone continuously (the colonist
+			// stands in place). Append the percent so a long build reads as progressing rather
+			// than frozen.
+			if ((task->type == ecs::TaskType::Build || task->type == ecs::TaskType::Deconstruct) &&
+				task->buildBlueprintEntityId != 0) {
+				if (const auto* bp =
+						world.getComponent<ecs::StructureBlueprint>(static_cast<ecs::EntityID>(task->buildBlueprintEntityId))) {
+					currentTask += " (" + std::to_string(static_cast<int>(bp->progress() * 100.0F)) + "%)";
+				}
+			}
 		}
 		content.leftColumn.push_back(
 			TextSlot{
@@ -193,11 +248,12 @@ namespace world_sim {
 			}
 		);
 
-		// Next task (placeholder - would need task queue to implement properly)
+		// Next task: the upcoming step in the current chain (Harvest -> Haul -> Build/Craft),
+		// so the panel shows where the colonist is headed, not just what they're doing now.
 		std::string nextTask = "--";
-		if (auto* action = world.getComponent<ecs::Action>(entityId)) {
-			if (action->isActive()) {
-				nextTask = formatAction(*action);
+		if (auto* task = world.getComponent<ecs::Task>(entityId)) {
+			if (task->isActive()) {
+				nextTask = formatNextStep(world, *task);
 			}
 		}
 		content.leftColumn.push_back(

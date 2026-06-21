@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2026-06-20 (Asset Manager epic complete, merged PR #205: master-detail browser GUI over the shared render path, the last of five phases; see dev log 2026-06-20-asset-manager.md. Earlier on main: Cryosphere complete: physical sea ice, snow, and glaciers (PDD surface mass balance + perfect-plastic profile) with a two-pass ice->climate feedback and sin^4 polar-land cooling #199 — see dev log 2026-06-20-cryosphere-ice-and-glaciers.md. Earlier on main: Navigation P4 belief filtering #189/#191/#194 (dev log 2026-06-19-navigation-belief-filtering.md), Vision System #172-184 (dev log 2026-06-18-vision-system.md), Dialogs de-hand-rolled with `ListRow` #186-188, Salvage UI cutover #176-181)
+Last Updated: 2026-06-20 (Realistic chained build loop: mass-based carry weight + axe-gated chopping + wood-unit tree harvesting; the colonist chops to its carry cap, hauls, repeats, then builds. Plus the task-chaining UI/AI fixes found verifying it (in-progress-work priority calc, friendly labels, full-width info-panel task lines, "Next" chain step, build-progress percent + on-map fill, global task list Build umbrella + who's-working-it) — see dev log 2026-06-20-carry-weight-axe-gated-harvest.md. Earlier on main: Asset Manager epic #205 (dev log 2026-06-20-asset-manager.md), Cryosphere #199, Navigation P4 belief filtering #189/#191/#194, Vision System #172-184, Salvage UI cutover #176-181)
 
 ## Epic/Story/Task Template
 
@@ -630,7 +630,8 @@ while (running) {
   - [x] ConstructionSystem lifecycle (Clearing→AwaitingMaterials→UnderConstruction→Complete; clear/haul/build goals; blueprint-inventory delivery; build-progress render ramp)
   - [x] Choppable palm trees added to the Beach biome (Wood source at spawn) so the loop is exercisable
   - [x] End-to-end proof of chop→haul→build in a live world — verified in sandbox (foundation built to completion, ~1 min sim time). Fixed a goal-thrashing bug found in the process (harvest demand now bounded by carried Wood; harvest→haul chained for delivery stickiness).
-  - [ ] Polish (deferred): baked element-emitter index-prefix progress render (D8), ConstructionProgressSlot in the info panel (D11), N discrete builder work slots from builderCap, deconstruct material refund + cascade, mining/haul-away clearing of non-harvestable obstructions
+  - [x] Realistic harvest loop + task-chaining UI: mass-based per-trip carry cap (35 kg → 14 wood/trip), axe required to chop (player-provisioned, no auto-equip), wood-unit tree pools clamped to carry weight; chained Cut→Haul→Build verified live on a dedicated port. Plus the UI/AI fixes from verifying it: `calculatePriority()` for in-progress (Selected) work tasks, friendly task labels, full-width info-panel task lines, "Next" chain step, build-progress percent + on-map fill, and the global task list now showing the Build umbrella + who's working each task. See dev log 2026-06-20-carry-weight-axe-gated-harvest.md.
+  - [ ] Polish (deferred): baked element-emitter index-prefix progress render (D8; the alpha-ramp progress fill + the info-panel build percent (D11) now cover basic feedback), N discrete builder work slots from builderCap, deconstruct material refund + cascade, mining/haul-away clearing of non-harvestable obstructions
 - [x] Epic D: Walls — draw/build/select/demolish, verified in sandbox (draft PR #138). Polyline wall chains on a foundation, T-junction split, band+junction rendering, build via the shared lifecycle (gated on host-foundation-built), per-segment selection/panel/demolish.
   - [x] Wall topology in ConstructionWorld (vertices/segments/openings, T-junction split + opening re-attach, X-crossing rejection, atomic commit); 18 tests
   - [x] Wall config (thickness presets Light/Standard/Heavy, wall constraints) + validation; 30 tests
@@ -698,7 +699,8 @@ while (running) {
   - [x] Colonist filtering by what they know (AIDecisionSystem matches goals against colonist Memory)
 - [ ] Phase 5: UI Updates
   - [x] Task list shows goal-level tasks with parent/child hierarchy
-  - [ ] "Blocked" status when no fulfillment options known
+  - [x] Global task list shows the full construction chain (Cut → Haul → Build umbrella) and who is actively working each task (status reads "Working - Bob" / "Building - Bob (16%)" instead of "Unassigned")
+  - [ ] "Blocked" status when no fulfillment options known (construction shows "Needs materials"; the general no-known-source case still pending)
   - [ ] Sub-demand display for multi-type storage
 
 ---
@@ -1238,6 +1240,14 @@ The following MVP epics have all been completed. Detailed task breakdowns are pr
 ---
 
 ## Blockers & Issues
+
+### Known limitations — chained build loop (non-blocking)
+From the realistic-harvest work (dev log 2026-06-20-carry-weight-axe-gated-harvest.md):
+- **Multi-colonist carry accounting is coarse.** `ConstructionSystem::carriedAmount` sums Wood across all colonists, while the per-trip bound is a single colonist's. Fine for the single-cutter case; revisit when balancing load across colonists.
+- **Dev/tool-placed entities don't survive chunk unload.** If a colonist roams far with no work and the origin chunks unload, dev-spawned trees and committed foundations are lost, leaving the colonist idle. World-gen flora regenerate on chunk reload, so this is mainly a dev-test artifact; a colonist with genuinely no reachable work also wanders far (cosmetic).
+- **Builds are slow-ish.** ~30s of a colonist standing in place for a 36 m² foundation at normal speed (work scales 12 units/m²). Now legible via the percent + on-map fill; lower `workRatePerSquareMeter` if a snappier feel is wanted (balance dial, not a bug).
+- **"Next" chain step verified live only for the construction chain.** Craft/storage chains are handled in code (destination classification) but not yet exercised live.
+- **Per-item `stackSize` is advisory.** `Inventory::addItem` caps on the inventory's `maxStackSize`, not the item's own `stackSize` (e.g. dev-giving 3 axes stacks them despite Axe stackSize=1).
 
 ### ✅ RESOLVED: SVG Ellipse/Circle Tessellation Bug
 **Impact:** Berry Bush and other assets using `<ellipse>` or `<circle>` SVG elements fail to render

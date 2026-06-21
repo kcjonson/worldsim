@@ -415,3 +415,53 @@ TEST(InventoryTests, FillToExactCapacity) {
 	EXPECT_FALSE(inv.hasSpace());
 	EXPECT_EQ(inv.getSlotCount(), 3);
 }
+
+// ============================================================================
+// addableCount: how much addItem() will actually accept (stack + slot bounded).
+// Harvest withdrawal clamps by this so a finite source pool is never over-debited.
+// ============================================================================
+
+TEST(InventoryTests, AddableCount_NewItemIsAFullStack) {
+	Inventory inv;
+	inv.maxStackSize = 50;
+	EXPECT_EQ(inv.addableCount("Wood"), 50U);
+}
+
+TEST(InventoryTests, AddableCount_ExistingStackIsTheRemainder) {
+	Inventory inv;
+	inv.maxStackSize = 50;
+	inv.addItem("Wood", 30);
+	EXPECT_EQ(inv.addableCount("Wood"), 20U);
+}
+
+TEST(InventoryTests, AddableCount_FullStackIsZero) {
+	Inventory inv;
+	inv.maxStackSize = 50;
+	inv.addItem("Wood", 50);
+	EXPECT_EQ(inv.addableCount("Wood"), 0U);
+}
+
+TEST(InventoryTests, AddableCount_NoFreeSlotForNewItemIsZero) {
+	Inventory inv;
+	inv.maxCapacity = 1;
+	inv.addItem("Wood", 1);
+	EXPECT_EQ(inv.addableCount("Stone"), 0U); // no slot left for a new type
+}
+
+TEST(InventoryTests, AddableCount_BoundsActualAdd) {
+	// Clamping the requested amount by addableCount guarantees addItem takes all of it,
+	// so a withdrawal from a finite pool is conserved.
+	Inventory inv;
+	inv.maxStackSize = 50;
+	inv.addItem("Wood", 45);
+	const uint32_t want = std::min(20U, inv.addableCount("Wood")); // 5
+	EXPECT_EQ(want, 5U);
+	EXPECT_EQ(inv.addItem("Wood", want), want); // nothing lost
+}
+
+TEST(InventoryTests, AddItemZeroIsNoOp) {
+	Inventory inv;
+	EXPECT_EQ(inv.addItem("Wood", 0), 0U);
+	EXPECT_FALSE(inv.hasItem("Wood")); // no zero-quantity slot created
+	EXPECT_EQ(inv.getSlotCount(), 0U);
+}

@@ -2,6 +2,10 @@
 
 #include <assets/AssetRegistry.h>
 #include <ecs/GoalTaskRegistry.h>
+#include <ecs/World.h>
+#include <ecs/components/Colonist.h>
+#include <ecs/components/StructureBlueprint.h>
+#include <ecs/components/Task.h>
 
 #include <algorithm>
 #include <cmath>
@@ -23,12 +27,14 @@ namespace world_sim::adapters {
 					return 2;
 				case ecs::TaskType::Haul:
 					return 3;
+				case ecs::TaskType::Build:
+					return 4; // reads Cut -> Haul -> Build for a site
 				case ecs::TaskType::PlacePackaged:
-					return 4;
-				case ecs::TaskType::Gather:
 					return 5;
-				case ecs::TaskType::Wander:
+				case ecs::TaskType::Gather:
 					return 6;
+				case ecs::TaskType::Wander:
+					return 7;
 				case ecs::TaskType::None:
 				default:
 					return 255;
@@ -44,6 +50,8 @@ namespace world_sim::adapters {
 					return "Gather";
 				case ecs::TaskType::Haul:
 					return "Haul";
+				case ecs::TaskType::Build:
+					return "Build";
 				case ecs::TaskType::Craft:
 					return "Craft";
 				case ecs::TaskType::PlacePackaged:
@@ -138,6 +146,11 @@ namespace world_sim::adapters {
 				return prefix + context;
 			}
 
+			// Build umbrella: the whole structure (its children are the Cut/Haul rows).
+			if (goal.type == ecs::TaskType::Build) {
+				return "Build structure";
+			}
+
 			// For Craft goals, show crafting
 			if (goal.type == ecs::TaskType::Craft) {
 				return "Craft";
@@ -156,11 +169,44 @@ namespace world_sim::adapters {
 			return prefix;
 		}
 
+		/// Name of a colonist actively working this goal, or "" if none. Goals are global
+		/// (claimed implicitly when a colonist selects the matching task), so we recover the
+		/// assignment by scanning colonist tasks for the goal they're servicing.
+		std::string colonistWorkingGoal(ecs::World& world, const ecs::GoalTask& goal) {
+			for (auto [entity, colonist, task] : world.view<ecs::Colonist, ecs::Task>()) {
+				if (!task.isActive()) {
+					continue;
+				}
+				bool match = false;
+				switch (goal.type) {
+					case ecs::TaskType::Harvest:
+						match = (task.type == ecs::TaskType::Harvest && task.harvestGoalId == goal.id);
+						break;
+					case ecs::TaskType::Haul:
+						match = (task.type == ecs::TaskType::Haul && task.haulGoalId == goal.id);
+						break;
+					case ecs::TaskType::Build:
+						// The Build task carries the blueprint entity, which is the umbrella's
+						// destination.
+						match = (task.type == ecs::TaskType::Build &&
+								 task.buildBlueprintEntityId == static_cast<uint64_t>(goal.destinationEntity));
+						break;
+					default:
+						break;
+				}
+				if (match) {
+					return colonist.name;
+				}
+			}
+			return "";
+		}
+
 		/// Convert goal to display data
 		GlobalTaskDisplayData goalToDisplayData(
 			const ecs::GoalTaskRegistry& goalRegistry,
 			const ecs::GoalTask&		  goal,
-			const glm::vec2&			  referencePosition
+			const glm::vec2&			  referencePosition,
+			ecs::World*					  world // optional: enables "who's working it" + build progress
 		) {
 			GlobalTaskDisplayData data;
 			data.id = goal.id;
@@ -179,22 +225,49 @@ namespace world_sim::adapters {
 			data.distanceValue = std::sqrt(dx * dx + dy * dy);
 			data.distance = std::format("{}m", static_cast<int>(data.distanceValue));
 
+			// Who, if anyone, is actively working this goal right now.
+			const std::string worker = (world != nullptr) ? colonistWorkingGoal(*world, goal) : std::string{};
+
+			// Build umbrella: its material counters are unused (targetAmount is just a marker);
+			// the real progress lives on the blueprint's workDone. Surface that plus the worker.
+			if (goal.type == ecs::TaskType::Build) {
+				int	 pct = 0;
+				bool underConstruction = false;
+				if (world != nullptr) {
+					if (const auto* bp = world->getComponent<ecs::StructureBlueprint>(goal.destinationEntity)) {
+						pct = static_cast<int>(bp->progress() * 100.0F);
+						underConstruction = (bp->phase == ecs::StructureBlueprint::BuildPhase::UnderConstruction);
+					}
+				}
+				if (!underConstruction) {
+					data.status = "Needs materials";
+					data.isBlocked = true;
+				} else if (!worker.empty()) {
+					data.status = "Building";
+					data.statusDetail = std::format("{} ({}%)", worker, pct);
+				} else {
+					data.status = "Ready to build";
+					data.statusDetail = std::format("{}%", pct);
+				}
+			}
 			// Status based on GoalStatus (only goals with capacity reach here; callers filter
-			// out completed ones)
-			if (goal.status == ecs::GoalStatus::Blocked) {
+			// out completed ones).
+			else if (goal.status == ecs::GoalStatus::Blocked) {
 				data.status = "Blocked";
 				data.statusDetail = std::format("{}/{} materials", goal.deliveredAmount, goal.targetAmount);
 				data.isBlocked = true;
 			} else if (goal.status == ecs::GoalStatus::WaitingForItems) {
 				data.status = "Waiting for harvest";
-				data.statusDetail = "";
 				data.isBlocked = true;
+			} else if (!worker.empty()) {
+				// A colonist is actively servicing this goal (claimed implicitly).
+				data.status = "Working";
+				data.statusDetail = worker;
 			} else if (data.distanceValue > 50.0F) {
 				data.status = "Available";
 				data.statusDetail = "far";
 			} else {
 				data.status = "Unassigned";
-				data.statusDetail = "";
 				data.isUnassigned = true;
 			}
 
@@ -208,30 +281,20 @@ namespace world_sim::adapters {
 
 	} // anonymous namespace
 
-	std::vector<GlobalTaskDisplayData> getGlobalTasks(const glm::vec2& cameraCenter) {
+	std::vector<GlobalTaskDisplayData> getGlobalTasks(ecs::World& world, const glm::vec2& cameraCenter) {
 		auto& registry = ecs::GoalTaskRegistry::Get();
 
 		std::vector<GlobalTaskDisplayData> result;
 
-		// Get all goals (Harvest, Haul, Craft, PlacePackaged) - skip completed ones
-		for (const auto* goal : registry.getGoalsOfType(ecs::TaskType::Harvest)) {
-			if (goal->availableCapacity() > 0) {
-				result.push_back(goalToDisplayData(registry, *goal, cameraCenter));
-			}
-		}
-		for (const auto* goal : registry.getGoalsOfType(ecs::TaskType::Haul)) {
-			if (goal->availableCapacity() > 0) {
-				result.push_back(goalToDisplayData(registry, *goal, cameraCenter));
-			}
-		}
-		for (const auto* goal : registry.getGoalsOfType(ecs::TaskType::Craft)) {
-			if (goal->availableCapacity() > 0) {
-				result.push_back(goalToDisplayData(registry, *goal, cameraCenter));
-			}
-		}
-		for (const auto* goal : registry.getGoalsOfType(ecs::TaskType::PlacePackaged)) {
-			if (goal->availableCapacity() > 0) {
-				result.push_back(goalToDisplayData(registry, *goal, cameraCenter));
+		// Cut/Haul/Build read as a chain per site; Craft/PlacePackaged round it out. Build is the
+		// umbrella goal (the destination holder) so a site shows its build step, not just the
+		// material children. Skip completed ones (no remaining capacity).
+		for (ecs::TaskType type : {ecs::TaskType::Harvest, ecs::TaskType::Haul, ecs::TaskType::Build, ecs::TaskType::Craft,
+								   ecs::TaskType::PlacePackaged}) {
+			for (const auto* goal : registry.getGoalsOfType(type)) {
+				if (goal->availableCapacity() > 0) {
+					result.push_back(goalToDisplayData(registry, *goal, cameraCenter, &world));
+				}
 			}
 		}
 
@@ -245,19 +308,19 @@ namespace world_sim::adapters {
 
 		for (const auto* goal : registry.getGoalsOfType(ecs::TaskType::Harvest)) {
 			if (goal->availableCapacity() == 0) continue;
-			result.push_back(goalToDisplayData(registry, *goal, colonistPosition));
+			result.push_back(goalToDisplayData(registry, *goal, colonistPosition, nullptr));
 		}
 		for (const auto* goal : registry.getGoalsOfType(ecs::TaskType::Haul)) {
 			if (goal->availableCapacity() == 0) continue;
-			result.push_back(goalToDisplayData(registry, *goal, colonistPosition));
+			result.push_back(goalToDisplayData(registry, *goal, colonistPosition, nullptr));
 		}
 		for (const auto* goal : registry.getGoalsOfType(ecs::TaskType::Craft)) {
 			if (goal->availableCapacity() == 0) continue;
-			result.push_back(goalToDisplayData(registry, *goal, colonistPosition));
+			result.push_back(goalToDisplayData(registry, *goal, colonistPosition, nullptr));
 		}
 		for (const auto* goal : registry.getGoalsOfType(ecs::TaskType::PlacePackaged)) {
 			if (goal->availableCapacity() == 0) continue;
-			result.push_back(goalToDisplayData(registry, *goal, colonistPosition));
+			result.push_back(goalToDisplayData(registry, *goal, colonistPosition, nullptr));
 		}
 
 		return result;

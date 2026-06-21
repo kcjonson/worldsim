@@ -7,6 +7,7 @@
 
 #include <glm/vec2.hpp>
 
+#include <algorithm>
 #include <cmath>
 
 namespace engine::assets {
@@ -710,39 +711,35 @@ namespace engine::assets {
 		return std::nullopt;
 	}
 
-	bool PlacementExecutor::decrementResourceCount(world::ChunkCoordinate coord, glm::vec2 position,
-												   const std::string& defName) {
+	uint32_t PlacementExecutor::decrementResourceCount(world::ChunkCoordinate coord, glm::vec2 position,
+													   const std::string& defName, uint32_t requested) {
 		auto key = makeCooldownKey(coord, position, defName);
 		auto it = m_resourceCounts.find(key);
 		if (it == m_resourceCounts.end()) {
-			// No resource tracking for this entity - treat as single-harvest
-			return false;
+			// No resource tracking for this entity - nothing to withdraw
+			return 0;
 		}
 
-		if (it->second <= 1) {
-			// Last resource - remove tracking and signal depletion
+		const uint32_t removed = std::min(requested, it->second);
+		it->second -= removed;
+
+		if (it->second == 0) {
 			m_resourceCounts.erase(it);
 			LOG_DEBUG(
+				Engine, "PlacementExecutor: Resource depleted for %s at (%.1f, %.1f)", defName.c_str(), position.x, position.y
+			);
+		} else {
+			LOG_DEBUG(
 				Engine,
-				"PlacementExecutor: Resource depleted for %s at (%.1f, %.1f)",
+				"PlacementExecutor: Withdrew %u from %s at (%.1f, %.1f), remaining = %u",
+				removed,
 				defName.c_str(),
 				position.x,
-				position.y
+				position.y,
+				it->second
 			);
-			return false;  // Depleted - caller should destroy entity
 		}
-
-		// Decrement and keep tracking
-		it->second--;
-		LOG_DEBUG(
-			Engine,
-			"PlacementExecutor: Resource decremented for %s at (%.1f, %.1f), remaining = %u",
-			defName.c_str(),
-			position.x,
-			position.y,
-			it->second
-		);
-		return true;  // Resources remain
+		return removed;
 	}
 
 } // namespace engine::assets

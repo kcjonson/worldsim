@@ -286,6 +286,7 @@ namespace {
 			m_placementSystem = std::make_unique<world_sim::PlacementSystem>(world_sim::PlacementSystem::Args{
 				.world = ecsWorld.get(),
 				.camera = m_camera.get(),
+				.placementExecutor = m_placementExecutor.get(),
 				.callbacks = {
 					.onBuildMenuVisibility = [this](bool active) { gameUI->setBuildModeActive(active); },
 					.onShowBuildMenu = [this](const std::vector<world_sim::BuildMenuItem>& items) { gameUI->showBuildMenu(items); },
@@ -979,8 +980,29 @@ namespace {
 			// Wire up ActionSystem to remove harvested entities (destructive harvest)
 			actionSystem.setRemoveEntityCallback([this](const std::string& defName, float x, float y) {
 				auto coord = engine::world::worldToChunk({x, y});
-				bool removed = m_placementExecutor->removeEntity(coord, {x, y}, defName);
-				if (!removed) {
+				bool removedFromIndex = m_placementExecutor->removeEntity(coord, {x, y}, defName);
+
+				// World-gen flora live only in the placement index (above). Runtime-spawned
+				// harvestables (dev spawns, future saplings) are ECS entities that VisionSystem
+				// Pass 2 sees by Appearance; the index removal misses them, so a depleted one
+				// would linger and get re-discovered forever. Find the matching ECS entity and
+				// queue it for the deferred drain (never destroy mid-view-iteration).
+				bool			queuedEcs = false;
+				constexpr float kMatchEps = 0.25F;
+				for (auto [ent, entPos, appearance] : ecsWorld->view<ecs::Position, ecs::Appearance>()) {
+					if (appearance.defName != defName) {
+						continue;
+					}
+					const float ddx = entPos.value.x - x;
+					const float ddy = entPos.value.y - y;
+					if (ddx * ddx + ddy * ddy <= kMatchEps * kMatchEps) {
+						m_pendingEntityRemoval.push_back(ent);
+						queuedEcs = true;
+						break;
+					}
+				}
+
+				if (!removedFromIndex && !queuedEcs) {
 					LOG_WARNING(Game, "Failed to remove harvested entity %s at (%.1f, %.1f)", defName.c_str(), x, y);
 				}
 			});
@@ -991,11 +1013,16 @@ namespace {
 				m_placementExecutor->setEntityCooldown(coord, {x, y}, defName, cooldownSeconds);
 			});
 
-			// Wire up ActionSystem to decrement resource count for harvestable entities with resource pools
-			actionSystem.setDecrementResourceCallback([this](const std::string& defName, float x, float y) -> bool {
-				auto coord = engine::world::worldToChunk({x, y});
-				return m_placementExecutor->decrementResourceCount(coord, {x, y}, defName);
-			});
+			// Wire up ActionSystem to withdraw from harvestable resource pools. Returns how much
+			// was actually taken plus whether the pool is now empty (so the tree gets removed).
+			actionSystem.setDecrementResourceCallback(
+				[this](const std::string& defName, float x, float y, uint32_t requested) -> ecs::ActionSystem::ResourceDraw {
+					auto		   coord = engine::world::worldToChunk({x, y});
+					const uint32_t removed = m_placementExecutor->decrementResourceCount(coord, {x, y}, defName, requested);
+					const bool	   depleted = !m_placementExecutor->getResourceCount(coord, {x, y}, defName).has_value();
+					return {removed, depleted};
+				}
+			);
 
 			// Spawn initial colonist at map center (0, 0)
 			spawnColonist({0.0F, 0.0F}, "Bob");

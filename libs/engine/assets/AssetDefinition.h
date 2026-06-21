@@ -105,8 +105,9 @@ namespace engine::assets {
 		float		duration = 4.0F;	 // Seconds to complete harvest action
 		bool		destructive = true;	 // If true, entity is removed after harvest
 		float		regrowthTime = 0.0F; // Seconds until harvestable again (0 = never, only if not destructive)
-		uint32_t	totalResourceMin = 0; // Min initial resource pool (0 = single harvest, use destructive flag)
-		uint32_t	totalResourceMax = 0; // Max initial resource pool (0 = single harvest, use destructive flag)
+		uint32_t	totalResourceMin = 0; // Min initial resource pool, in yield units (0 = single harvest)
+		uint32_t	totalResourceMax = 0; // Max initial resource pool, in yield units (0 = single harvest)
+		std::string requiredToolType;	 // Tool type a colonist must hold to harvest (empty = none, e.g. "Axe")
 	};
 
 	/// Craftable capability - entity is a crafting station
@@ -132,7 +133,8 @@ namespace engine::assets {
 	/// Item properties for entities that can be carried/stored in inventory
 	/// If an entity has ItemProperties, it can exist in inventory.
 	struct ItemProperties {
-		uint32_t stackSize = 1; // Max stack size in inventory
+		uint32_t stackSize = 1;	   // Max stack size in inventory
+		float	 massKg = 1.0F;	   // Mass of one unit, kilograms (drives carry-weight limits)
 
 		/// Edible properties (if item can be eaten from inventory)
 		std::optional<EdibleCapability> edible;
@@ -359,6 +361,7 @@ namespace engine::assets {
 		// Item category and carrying
 		ItemCategory category = ItemCategory::None; // What type of item (for storage matching, UI grouping)
 		uint8_t		 handsRequired = 1;				// Hands needed to carry (1 or 2). 2-hand items can't fit in backpack.
+		std::string	 toolType;						// If a tool, the work it enables (e.g. "Axe"); empty = not a tool
 
 		/// Check if this entity can exist in inventory
 		[[nodiscard]] bool isCarryable() const { return itemProperties.has_value(); }

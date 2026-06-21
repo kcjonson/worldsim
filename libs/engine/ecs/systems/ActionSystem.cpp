@@ -1,6 +1,7 @@
 #include "ActionSystem.h"
 
 #include "../GoalTaskRegistry.h"
+#include "../InventoryMass.h"
 #include "../World.h"
 #include "../components/Action.h"
 #include "../components/Appearance.h"
@@ -164,7 +165,7 @@ namespace ecs {
 
 		// Handle Harvest tasks (goal-driven harvesting for crafting materials)
 		if (task.type == TaskType::Harvest) {
-			startHarvestAction(task, action, position, memory);
+			startHarvestAction(task, action, position, memory, inventory);
 			return;
 		}
 
@@ -361,29 +362,19 @@ namespace ecs {
 		if (action.hasCollectionEffect()) {
 			const auto& collEff = action.collectionEffect();
 
-			// Add items to inventory
-			uint32_t added = inventory.addItem(collEff.itemDefName, collEff.quantity);
-
-			// Warn if not all items could be stored (inventory full or stack limit)
-			if (added < collEff.quantity) {
-				uint32_t lost = collEff.quantity - added;
-				LOG_WARNING(
-					Engine,
-					"[Action] Inventory full: collected %u x %s but only %u added, %u lost",
-					collEff.quantity,
-					collEff.itemDefName.c_str(),
-					added,
-					lost
-				);
-			} else {
-				LOG_INFO(
-					Engine, "[Action] Collected %u x %s (added %u to inventory)", collEff.quantity, collEff.itemDefName.c_str(), added
-				);
-			}
-
-			// Handle entity removal or cooldown for harvested sources
-			// Check if entity has a resource pool (totalResourceMin > 0)
 			auto& harvestRegistry = engine::assets::AssetRegistry::Get();
+
+			// Cap this withdrawal by what the colonist can actually take this action: the carry
+			// weight (tools are equipment and don't count) AND the backpack's stack/slot headroom.
+			// Clamping by both means the pool below is only debited by what truly lands in the
+			// inventory, so a tree's wood is conserved. At the limit `wanted` is 0: take nothing
+			// and leave the source for the next trip rather than dropping items on the floor.
+			const uint32_t massFit = ecs::cargoUnitsThatFit(inventory, harvestRegistry, collEff.itemDefName);
+			const uint32_t slotFit = inventory.addableCount(collEff.itemDefName);
+			const uint32_t wanted = std::min({collEff.quantity, massFit, slotFit});
+
+			// Does the source hold a finite resource pool (trees) or is it single-shot
+			// (ground pickup, regrowth bush)?
 			const auto* sourceDef = harvestRegistry.getDefinition(collEff.sourceDefName);
 			bool hasResourcePool = false;
 			if (sourceDef != nullptr && sourceDef->capabilities.harvestable.has_value()) {
@@ -391,69 +382,92 @@ namespace ecs {
 				hasResourcePool = harv.totalResourceMin > 0 && harv.totalResourceMax > 0;
 			}
 
+			uint32_t added = 0;
+
 			if (hasResourcePool && m_onDecrementResource) {
-				// Entity has resource pool - decrement and check if depleted
-				bool resourcesRemain = m_onDecrementResource(
-					collEff.sourceDefName, collEff.sourcePosition.x, collEff.sourcePosition.y
-				);
-				if (resourcesRemain) {
+				if (wanted > 0) {
+					// Withdraw only what the colonist can carry; the pool clamps to its own
+					// contents and reports depletion. Items added == removed (we sized `wanted`
+					// to fit by both weight and slots), so the tree's wood is conserved.
+					const ResourceDraw draw =
+						m_onDecrementResource(collEff.sourceDefName, collEff.sourcePosition.x, collEff.sourcePosition.y, wanted);
+					added = inventory.addItem(collEff.itemDefName, draw.removed);
+					LOG_INFO(
+						Engine,
+						"[Action] Chopped %u x %s (now carrying %u)",
+						added,
+						collEff.itemDefName.c_str(),
+						inventory.getQuantity(collEff.itemDefName)
+					);
+					if (draw.depleted) {
+						if (m_onRemoveEntity) {
+							m_onRemoveEntity(collEff.sourceDefName, collEff.sourcePosition.x, collEff.sourcePosition.y);
+						}
+						uint32_t defNameId = harvestRegistry.getDefNameId(collEff.sourceDefName);
+						memory.forgetWorldEntity({collEff.sourcePosition.x, collEff.sourcePosition.y}, defNameId);
+						LOG_DEBUG(
+							Engine,
+							"[Action] Resource depleted - removed %s at (%.1f, %.1f)",
+							collEff.sourceDefName.c_str(),
+							collEff.sourcePosition.x,
+							collEff.sourcePosition.y
+						);
+					}
+				} else {
 					LOG_DEBUG(
 						Engine,
-						"[Action] Harvested %s at (%.1f, %.1f) - resources remain",
+						"[Action] Colonist at carry limit - leaving %s at (%.1f, %.1f) for next trip",
 						collEff.sourceDefName.c_str(),
 						collEff.sourcePosition.x,
 						collEff.sourcePosition.y
 					);
+				}
+			} else {
+				// Single-shot source: take what fits, then remove it (destructive) or start its
+				// regrowth cooldown. Only act on the source if the colonist actually collected.
+				added = inventory.addItem(collEff.itemDefName, wanted);
+				if (added < collEff.quantity) {
+					// Carry/slot-limited below the full yield -- expected, not an error.
+					LOG_INFO(
+						Engine, "[Action] Collected %u of %u x %s (carry-limited)", added, collEff.quantity, collEff.itemDefName.c_str()
+					);
 				} else {
-					// Depleted - remove the entity from world AND colonist's memory
+					LOG_INFO(Engine, "[Action] Collected %u x %s", added, collEff.itemDefName.c_str());
+				}
+
+				if (added > 0 && collEff.destroySource) {
 					if (m_onRemoveEntity) {
 						m_onRemoveEntity(collEff.sourceDefName, collEff.sourcePosition.x, collEff.sourcePosition.y);
 					}
-					// Forget the entity so AI doesn't try to interact with it again
 					uint32_t defNameId = harvestRegistry.getDefNameId(collEff.sourceDefName);
 					memory.forgetWorldEntity({collEff.sourcePosition.x, collEff.sourcePosition.y}, defNameId);
 					LOG_DEBUG(
 						Engine,
-						"[Action] Resource depleted - removed %s at (%.1f, %.1f)",
+						"[Action] Removed source entity %s at (%.1f, %.1f)",
 						collEff.sourceDefName.c_str(),
 						collEff.sourcePosition.x,
 						collEff.sourcePosition.y
 					);
-				}
-			} else if (collEff.destroySource) {
-				// No resource pool - use destructive flag (e.g., picking up a ground item)
-				if (m_onRemoveEntity) {
-					m_onRemoveEntity(collEff.sourceDefName, collEff.sourcePosition.x, collEff.sourcePosition.y);
-				}
-				// Forget the entity so AI doesn't try to interact with it again
-				uint32_t defNameId = harvestRegistry.getDefNameId(collEff.sourceDefName);
-				memory.forgetWorldEntity({collEff.sourcePosition.x, collEff.sourcePosition.y}, defNameId);
-				LOG_DEBUG(
-					Engine,
-					"[Action] Removed source entity %s at (%.1f, %.1f)",
-					collEff.sourceDefName.c_str(),
-					collEff.sourcePosition.x,
-					collEff.sourcePosition.y
-				);
-			} else if (collEff.regrowthTime > 0.0F) {
-				if (m_onSetCooldown) {
-					m_onSetCooldown(collEff.sourceDefName, collEff.sourcePosition.x, collEff.sourcePosition.y, collEff.regrowthTime);
-					LOG_DEBUG(
-						Engine,
-						"[Action] Set cooldown on %s at (%.1f, %.1f) for %.1fs",
-						collEff.sourceDefName.c_str(),
-						collEff.sourcePosition.x,
-						collEff.sourcePosition.y,
-						collEff.regrowthTime
-					);
-				} else {
-					LOG_WARNING(
-						Engine,
-						"[Action] No cooldown callback set - source entity %s at (%.1f, %.1f) cooldown NOT applied",
-						collEff.sourceDefName.c_str(),
-						collEff.sourcePosition.x,
-						collEff.sourcePosition.y
-					);
+				} else if (added > 0 && collEff.regrowthTime > 0.0F) {
+					if (m_onSetCooldown) {
+						m_onSetCooldown(collEff.sourceDefName, collEff.sourcePosition.x, collEff.sourcePosition.y, collEff.regrowthTime);
+						LOG_DEBUG(
+							Engine,
+							"[Action] Set cooldown on %s at (%.1f, %.1f) for %.1fs",
+							collEff.sourceDefName.c_str(),
+							collEff.sourcePosition.x,
+							collEff.sourcePosition.y,
+							collEff.regrowthTime
+						);
+					} else {
+						LOG_WARNING(
+							Engine,
+							"[Action] No cooldown callback set - source entity %s at (%.1f, %.1f) cooldown NOT applied",
+							collEff.sourceDefName.c_str(),
+							collEff.sourcePosition.x,
+							collEff.sourcePosition.y
+						);
+					}
 				}
 			}
 
@@ -1082,7 +1096,7 @@ namespace ecs {
 		action.clear();
 	}
 
-	void ActionSystem::startHarvestAction(Task& task, Action& action, const Position& position, Memory& memory) {
+	void ActionSystem::startHarvestAction(Task& task, Action& action, const Position& position, Memory& memory, const Inventory& inventory) {
 		auto& registry = engine::assets::AssetRegistry::Get();
 
 		// Goal-driven harvest: Find a harvestable entity at the target position that yields
@@ -1121,6 +1135,16 @@ namespace ecs {
 			uint32_t yieldDefNameId = registry.getDefNameId(harvestCap.yieldDefName);
 			if (yieldDefNameId != task.harvestYieldDefNameId) {
 				continue; // Wrong yield type
+			}
+
+			// Chopping a tree needs the right tool. The decision layer already filters these
+			// out for tool-less colonists; this guards against a stale task producing a chop
+			// the colonist can't actually perform.
+			if (!ecs::inventoryHoldsToolType(inventory, registry, harvestCap.requiredToolType)) {
+				LOG_DEBUG(
+					Engine, "[Action] Cannot harvest %s without a %s tool", defName.c_str(), harvestCap.requiredToolType.c_str()
+				);
+				continue;
 			}
 
 			// Calculate yield amount

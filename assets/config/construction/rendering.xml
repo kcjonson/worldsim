@@ -21,8 +21,8 @@
     <blueprintFill>#80A6E62E</blueprintFill>   <!-- faint always-on base under the progress fill -->
     <fallbackColor>#80A6E6FF</fallbackColor>   <!-- fill when the material palette is empty -->
     <outlineColor>#8CB8FFFF</outlineColor>     <!-- blueprint edge; rgb only, alpha from the ramp -->
-    <progressAlphaMin>0.15</progressAlphaMin>
-    <progressAlphaMax>0.85</progressAlphaMax>
+    <progressAlphaMin>0.4</progressAlphaMin>   <!-- floor raised so an early build reads on-map, not invisible -->
+    <progressAlphaMax>0.9</progressAlphaMax>
     <outlineAlphaMin>0.6</outlineAlphaMin>
     <outlineAlphaMax>1.0</outlineAlphaMax>
     <outlineWidthBlueprint>1.5</outlineWidthBlueprint>

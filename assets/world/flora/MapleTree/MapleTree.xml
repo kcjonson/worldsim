@@ -35,11 +35,11 @@
     <!-- Trunk-base collision (half trunkWidth=0.15 -> radius 0.075m); not the canopy -->
     <collision><circle radius="0.075"/></collision>
 
-    <!-- Entity capabilities - chopped for wood; removed when resource pool is exhausted -->
-    <!-- Starter values: 4-7 wood per chop action, pool of 14-22 total (maple is smaller than oak) -->
+    <!-- Entity capabilities - chopped for wood with an axe; removed when the pool is exhausted -->
+    <!-- 4-7 wood per chop (clamped by carry weight), pool of 14-22 wood units (smaller than oak) -->
     <capabilities>
       <harvestable yield="Wood" amountMin="4" amountMax="7" duration="7.0"
-                   destructive="false" totalResourceMin="14" totalResourceMax="22"/>
+                   destructive="false" totalResourceMin="14" totalResourceMax="22" requiresTool="Axe"/>
     </capabilities>
 
     <!-- Per-biome placement configuration -->
