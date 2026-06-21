@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2026-06-20 (Asset Manager Phase 5 GUI close-out, PR open: master-detail browser app over the shared render path, completes the Asset Manager epic pending merge. Earlier on main: Cryosphere complete: physical sea ice, snow, and glaciers (PDD surface mass balance + perfect-plastic profile) with a two-pass ice->climate feedback and sin^4 polar-land cooling #199 — see dev log 2026-06-20-cryosphere-ice-and-glaciers.md. Earlier on main: Navigation P4 belief filtering #189/#191/#194 (dev log 2026-06-19-navigation-belief-filtering.md), Vision System #172-184 (dev log 2026-06-18-vision-system.md), Dialogs de-hand-rolled with `ListRow` #186-188, Salvage UI cutover #176-181)
+Last Updated: 2026-06-20 (Asset Manager epic complete, merged PR #205: master-detail browser GUI over the shared render path, the last of five phases; see dev log 2026-06-20-asset-manager.md. Earlier on main: Cryosphere complete: physical sea ice, snow, and glaciers (PDD surface mass balance + perfect-plastic profile) with a two-pass ice->climate feedback and sin^4 polar-land cooling #199 — see dev log 2026-06-20-cryosphere-ice-and-glaciers.md. Earlier on main: Navigation P4 belief filtering #189/#191/#194 (dev log 2026-06-19-navigation-belief-filtering.md), Vision System #172-184 (dev log 2026-06-18-vision-system.md), Dialogs de-hand-rolled with `ListRow` #186-188, Salvage UI cutover #176-181)
 
 ## Epic/Story/Task Template
 
@@ -27,6 +27,22 @@ Use this template for all work items:
 ---
 
 ## Recently Completed Epics (Last 4)
+
+### ✅ Asset Manager (shared render path, validation, CLI, async splash, designer GUI)
+**Spec/Documentation:** `/docs/design/features/asset-manager/`, `/docs/technical/asset-manager/`, `/docs/development-log/entries/2026-06-20-asset-manager.md`
+**Dependencies:** None
+**Status:** complete (merged PR #205; Phases 1-4 merged earlier)
+
+**Goal:** Standalone tool to browse, inspect, validate, and render the asset library through the game's own render path, with a designer GUI and a headless CLI over one shared core.
+
+**Completed Tasks:**
+- [x] Phase 1: Shared render path (renderer MeshBounds computeBounds/fitToRect; AssetRegistry::buildMesh; assets AssetRenderer prepare + renderToPixels/Png; foundation PngEncoder + DebugServer refactor; determinism + fidelity tests)
+- [x] Phase 2: Load-time validation (AssetValidator + ValidationReport: missing refs, duplicate defNames, name/folder mismatch, ignored fields, variantCount drift, bad assetType, orphan SVGs; validates on load via getValidationReport; full GL render smoke deferred to the CLI)
+- [x] Phase 3: Headless CLI (apps/asset-cli: list/search/inspect/validate/render; --json; exit codes; server-less for parallel runs; render via hidden GL context; getExecutableDir implemented on Windows so resources resolve regardless of cwd)
+- [x] Phase 4: Async loading + splash (AssetRegistry::beginLoadAsync worker thread + LoadProgress; AppConfig.loadAssetsAsync, async only on the default splash path, synchronous on a --scene override; splash polls progress, transitions to the menu on clean load, or blocks with an error summary on validation errors)
+- [x] Phase 5: GUI (apps/asset-manager: master-detail browser, category tree with per-row thumbnails on the left, detail pane on the right showing the faithful preview, metadata, per-asset validation warnings, and the asset's XML config; search filter, collapsible groups, reload; built from libs/ui components against scoped prototype design tokens; sandbox/asset-manager moved to their own debug ports 8090/8070)
+
+**Result:** One shared defName+seed render path (tessellator + BatchRenderer, never the CPU rasterizer) under a headless CLI and a dogfooded libs/ui designer GUI; assets validate on load and the splash gates on errors. Follow-ups: procedural sample-and-refresh strip, SDF font atlases for the prototype typefaces. ✅
 
 ### ✅ Cryosphere (sea ice, snow, physical glaciers, ice-climate feedback)
 **Spec/Documentation:** `/docs/technical/cryosphere-ice-and-glaciers.md`, `/docs/development-log/entries/2026-06-20-cryosphere-ice-and-glaciers.md`
@@ -541,20 +557,6 @@ while (running) {
 - [x] De-hand-roll the dialog lists: new `ListRow` primitive; CraftingDialog recipe list (#187) and StorageConfigDialog item/category list (#188) rebuilt on it. No hand-rolled selectable lists or hardcoded washes remain; the colonist dossier + tabs were already composed.
 - [ ] Optional polish: full prototype-fidelity pass on the dialogs (tabbed dossier treatment, footers)
 - [ ] Re-wire or delete the orphaned per-colonist `TaskListView` (no open path in the current UI)
-
-### Asset Manager
-**Spec/Documentation:** `/docs/design/features/asset-manager/`, `/docs/technical/asset-manager/`
-**Dependencies:** None
-**Status:** complete, PR open (pending merge)
-
-**Goal:** Standalone tool to browse, inspect, validate, and render the asset library through the game's own render path, with a designer GUI and a headless CLI over one shared core.
-
-**Tasks:**
-- [x] Phase 1: Shared render path (renderer MeshBounds computeBounds/fitToRect; AssetRegistry::buildMesh; assets AssetRenderer prepare + renderToPixels/Png; foundation PngEncoder + DebugServer refactor; determinism + fidelity tests)
-- [x] Phase 2: Load-time validation (AssetValidator + ValidationReport: missing refs, duplicate defNames, name/folder mismatch, ignored fields, variantCount drift, bad assetType, orphan SVGs; validates on load via getValidationReport; full GL render smoke deferred to the CLI)
-- [x] Phase 3: Headless CLI (apps/asset-cli: list/search/inspect/validate/render; --json; exit codes; server-less for parallel runs; render via hidden GL context; getExecutableDir implemented on Windows so resources resolve regardless of cwd)
-- [x] Phase 4: Async loading + splash (AssetRegistry::beginLoadAsync worker thread + LoadProgress; AppConfig.loadAssetsAsync, async only on the default splash path, synchronous on a --scene override; splash polls progress, transitions to the menu on clean load, or blocks with an error summary on validation errors)
-- [x] Phase 5: GUI (apps/asset-manager: master-detail browser — category tree with per-row thumbnails on the left, detail pane on the right showing the faithful preview, metadata, per-asset validation warnings, and the asset's XML config; search filter, collapsible groups, reload; built from libs/ui components against scoped prototype design tokens; sandbox/asset-manager moved to their own debug ports 8090/8070)
 
 ### Fluvial Erosion (worldgen)
 **Spec/Documentation:** `.claude/plans/erosion.md`, `/docs/development-log/entries/2026-06-15-worldgen-fluvial-erosion.md`
