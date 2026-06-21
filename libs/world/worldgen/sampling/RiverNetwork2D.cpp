@@ -19,18 +19,19 @@ namespace {
 
 constexpr double kPi = 3.14159265358979323846;
 
-// Channel meander: a continuously winding centerline (many small bends), not one
-// broad arc. Three octaves of sine in global arc length give a sinuous, irregular
-// path; the wavelength scales with width (big rivers swing wider) but has a floor
-// so even a thin stream visibly snakes, and the amplitude is a large fraction of
-// the wavelength for real sinuosity. The whole meander tapers to zero within a
-// short arc length of each coarse-tile joint so segments meet at the tile centers
-// (cross-segment continuity).
-constexpr double kMeanderWavelenMult = 9.0;
-constexpr double kMeanderWavelenMin  = 240.0;
-constexpr double kMeanderWavelenMax  = 2200.0;
-constexpr double kMeanderSinuosity   = 0.36;  // amplitude as a fraction of wavelength
-constexpr double kMeanderAmpCap      = 900.0; // meters
+// Channel meander: a smooth, wandering centerline driven by a 1D value-noise
+// lateral offset. Value noise has a bounded gradient (quintic interpolation, C2),
+// so the path drifts in gentle curves and never forms the hard zig-zag a
+// high-amplitude sum of sines produces. The feature length is the dominant bend
+// spacing (scales with width so big rivers swing wider); the amplitude is a
+// fraction of it, small enough that the bounded slope stays gentle. The offset is
+// tapered to zero within a short arc length of each coarse-tile joint so segments
+// meet at the tile centers (cross-segment continuity).
+constexpr double kMeanderFeatureMult = 9.0;
+constexpr double kMeanderFeatureMin  = 380.0;
+constexpr double kMeanderFeatureMax  = 2600.0;
+constexpr double kMeanderAmpFrac     = 0.30;   // lateral excursion as a fraction of feature length
+constexpr double kMeanderAmpCap      = 1000.0; // meters
 
 // Channel width varies along its length: quick riffles plus occasional pools
 // (local widenings where the current slows). Pools are asymmetric -- short crests
@@ -78,8 +79,8 @@ constexpr double kFeederMouthFrac      = 0.45;  // mouth half-width vs parent ha
 constexpr double kFeederMouthMaxHalf   = 3.0;
 constexpr double kFeederStepMeters     = 11.0;  // fine enough to resolve the tight wiggle
 constexpr double kFeederBankInset      = 0.6;   // start inside the bank so the mouth meets parent water
-constexpr double kFeederMeanderWavelen = 45.0;  // tight bends -> windy, not one broad arc
-constexpr double kFeederMeanderAmp     = 11.0;  // lateral wiggle (meters)
+constexpr double kFeederMeanderFeature = 60.0;  // bend spacing -> windy but smooth
+constexpr double kFeederMeanderAmp     = 14.0;  // lateral wander (meters)
 constexpr int    kHeadwaterFeederMin   = 2;     // a source is a convergence of 2-3 trickles
 constexpr int    kHeadwaterFeederMax   = 3;
 constexpr double kHeadwaterFanDeg      = 55.0;  // springs spread +/- this around upstream so they diverge
@@ -91,6 +92,32 @@ constexpr double kReachTileFactor = 1.25;
 // FNV hash -> double in [0,1) using the top 53 bits (the double mantissa).
 double hashUnit(uint64_t h) {
     return static_cast<double>(h >> 11) * (1.0 / 9007199254740992.0);
+}
+
+// Smooth 1D value noise in [-1,1]: hashed lattice values interpolated with a
+// quintic (C2), so the curve and its slope are continuous -- no kinks. floor is
+// exact in IEEE, so this is deterministic and cross-platform like the det_math
+// trig used elsewhere.
+double valueNoise1D(double x, uint64_t salt) {
+    const double xf = std::floor(x);
+    const auto   i0 = static_cast<int64_t>(xf);
+    const double f = x - xf;
+    const double u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0); // quintic smoothstep
+    auto lat = [&](int64_t i) {
+        return 2.0 * hashUnit(foundation::hashCombine(salt, static_cast<uint64_t>(i))) - 1.0;
+    };
+    const double a = lat(i0);
+    const double b = lat(i0 + 1);
+    return a + (b - a) * u;
+}
+
+// Two octaves of value noise (~[-1,1]): one dominant smooth bend plus a little
+// finer wander. The detail octave stays small so the gradient -- and therefore the
+// meander's sharpness -- stays gentle.
+double meanderNoise(double x, uint64_t salt) {
+    const double o0 = valueNoise1D(x, salt);
+    const double o1 = valueNoise1D(x * 2.6 + 17.0, foundation::hashCombine(salt, 0xA1u));
+    return (o0 + 0.4 * o1) / 1.4;
 }
 
 // Width multiplier at arc length s: gentle riffles plus rare wider pools. The
@@ -247,24 +274,21 @@ void RiverNetwork2D::emitSegment(TileId tile, double minX, double minY, double m
     // Do not taper to zero at the mouth: ocean tiles carry no flow.
     const float flowB = isOceanTile(down) ? flowA : world->data.flowAccum[down];
 
-    // Deterministic meander phases for this segment.
+    // Deterministic per-segment hash; phases for the width riffles/pools.
     const uint64_t base = foundation::hashCombine(
         foundation::hashCombine(world->params.seed, tile), down);
-    const double phaseA = 2.0 * kPi * hashUnit(foundation::hashCombine(base, 0x41));
-    const double phaseB = 2.0 * kPi * hashUnit(foundation::hashCombine(base, 0x42));
-    const double phaseC = 2.0 * kPi * hashUnit(foundation::hashCombine(base, 0x45));
     const double phaseW = 2.0 * kPi * hashUnit(foundation::hashCombine(base, 0x43));
     const double phaseP = 2.0 * kPi * hashUnit(foundation::hashCombine(base, 0x44));
 
     // Meander geometry scales with the segment's representative width.
     const double segWidth = static_cast<double>(channelWidthMeters(0.5f * (flowA + flowB)));
-    const double meanderWavelen =
-        std::clamp(kMeanderWavelenMult * segWidth, kMeanderWavelenMin, kMeanderWavelenMax);
+    const double meanderFeature =
+        std::clamp(kMeanderFeatureMult * segWidth, kMeanderFeatureMin, kMeanderFeatureMax);
     const double meanderAmp =
-        std::min({kMeanderSinuosity * meanderWavelen, 0.22 * length, kMeanderAmpCap});
+        std::min({kMeanderAmpFrac * meanderFeature, 0.22 * length, kMeanderAmpCap});
     // Taper the meander to zero within a short arc-length of each tile-center joint
     // so adjacent segments meet exactly at the tile centers (continuity).
-    const double meanderTaper = std::clamp(meanderWavelen * 0.12, 60.0, 200.0);
+    const double meanderTaper = std::clamp(meanderFeature * 0.15, 80.0, 250.0);
 
     // Centerline point + channel half-width at arc length s along the segment.
     auto eval = [&](double s, double& ox, double& oy, float& ohw) {
@@ -273,14 +297,10 @@ void RiverNetwork2D::emitSegment(TileId tile, double minX, double minY, double m
         double e = distEnd / meanderTaper;
         e = e <= 0.0 ? 0.0 : (e >= 1.0 ? 1.0 : e * e * (3.0 - 2.0 * e)); // smoothstep
         const double env = e;
-        // Three octaves of sine in global arc length: a sinuous, irregular winding
-        // path rather than one broad arc. Keyed on s (not t) so neighbouring chunks
-        // emit identical points where they overlap.
-        const double w = 2.0 * kPi * s / meanderWavelen;
-        const double wander = 0.6 * foundation::det_math::sin(w + phaseA) +
-                              0.3 * foundation::det_math::sin(2.0 * w + phaseB) +
-                              0.15 * foundation::det_math::sin(3.3 * w + phaseC);
-        const double offset = env * meanderAmp * wander;
+        // Smooth value-noise offset in global arc length: gentle wandering curves,
+        // never a hard zig-zag. Keyed on s (not t) so neighbouring chunks emit
+        // identical points where they overlap.
+        const double offset = env * meanderAmp * meanderNoise(s / meanderFeature, base);
         ox = pa.x + ux * s + perpx * offset;
         oy = pa.y + uy * s + perpy * offset;
 
@@ -355,8 +375,6 @@ void RiverNetwork2D::emitSegment(TileId tile, double minX, double minY, double m
         const double sy = cy0 + bankSign * perpy * (parentHalfHere * kFeederBankInset);
         const double mouthHalf = std::clamp(parentHalfHere * kFeederMouthFrac,
                                             static_cast<double>(kRenderMinHalf), kFeederMouthMaxHalf);
-        const double phaseM1 = 2.0 * kPi * hashUnit(foundation::hashCombine(fh, 0x7));
-        const double phaseM2 = 2.0 * kPi * hashUnit(foundation::hashCombine(fh, 0x8));
         const double phaseFP = 2.0 * kPi * hashUnit(foundation::hashCombine(fh, 0x9));
         const int fSteps = std::clamp(static_cast<int>(std::lround(len / kFeederStepMeters)), 3, 60);
 
@@ -366,13 +384,10 @@ void RiverNetwork2D::emitSegment(TileId tile, double minX, double minY, double m
         for (int i = 1; i <= fSteps; ++i) {
             const double f = static_cast<double>(i) / static_cast<double>(fSteps);
             const double along = len * f;
-            // Tight, irregular winding tapered to zero at both ends (so the mouth
-            // sits on the bank and the spring is a point).
+            // Smooth value-noise wander, tapered to zero at both ends (so the mouth
+            // sits on the bank and the spring is a point) -- windy but never kinked.
             const double env = foundation::det_math::sin(kPi * f);
-            const double wander =
-                0.7 * foundation::det_math::sin(2.0 * kPi * along / kFeederMeanderWavelen + phaseM1) +
-                0.3 * foundation::det_math::sin(4.0 * kPi * along / kFeederMeanderWavelen + phaseM2);
-            const double moff = kFeederMeanderAmp * env * wander;
+            const double moff = kFeederMeanderAmp * env * meanderNoise(along / kFeederMeanderFeature, fh);
             const double fx = sx + dux * along + fpx * moff;
             const double fy = sy + duy * along + fpy * moff;
             // Taper mouth -> trickle (render floor), with riffle/pool play.

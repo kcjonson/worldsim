@@ -64,22 +64,26 @@ Playtest feedback on the first feeder pass drove a second set of changes, all in
 New tests: `HeadwaterSproutsConvergingSprings` (springs enter from both banks),
 plus `FeedersTaperToTrickle` updated to assert the contiguity floor.
 
-### Windier streams (second feedback pass)
+### Smooth, wandering streams (second feedback pass)
 
-Zoomed out, the channels still read as smooth broad arcs (a basin-scale sweep
-dominated the meander) and feeders bowed as a single arc. Reworked:
+Zoomed out, the channels read as smooth broad arcs (a basin-scale sweep dominated
+the meander). A first retry cranked a sum of sines, which only traded the arc for
+a hard zig-zag -- sums of sines at high amplitude have steep, kinked slopes, which
+is not how water moves. The fix is the right tool: drive the lateral offset from
+**1D value noise** (quintic interpolation, C2), whose bounded gradient gives gentle
+curves that wander and never kink.
 
-- **Channels wind continuously.** Dropped the basin sweep; the meander is now
-  three octaves of sine in global arc length with the amplitude a large fraction
-  of the wavelength (`kMeanderSinuosity` 0.36), so the centerline snakes in many
-  bends rather than one arc. Still pinned to zero at the coarse-tile joints.
-- **Feeders are wiggly, not a bow.** Replaced the single `sin(pi*f)` arc with a
-  tight multi-bend wiggle (`kFeederMeanderWavelen` ~45 m) enveloped to zero at
-  both ends.
-- **Streams stay apart.** Headwater springs fan across distinct angles spanning
-  the upstream semicircle (`kHeadwaterFanDeg`); along-channel feeders alternate
-  banks by index so neighbours sit on opposite sides. `emitFeeder` now takes an
-  explicit direction to support both.
+- **Channels.** `offset(s) = env(s) * amp * meanderNoise(s / featureLength)`, a
+  two-octave value noise keyed on global arc length (so chunks agree), tapered to
+  zero within a short arc length of each coarse-tile joint for continuity. Feature
+  length scales with width (`kMeanderFeature*`); amplitude is a fraction of it
+  (`kMeanderAmpFrac`) so the slope stays gentle. Dropped the basin sweep.
+- **Feeders** use the same smooth noise for their wander, enveloped to zero at the
+  mouth and spring.
+- **Streams stay apart.** Headwater springs fan across distinct angles spanning the
+  upstream semicircle (`kHeadwaterFanDeg`); along-channel feeders alternate banks
+  by index so neighbours sit on opposite sides. `emitFeeder` takes an explicit
+  direction to support both.
 
 ## Related Documentation
 
