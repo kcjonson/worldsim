@@ -21,9 +21,17 @@
   <!-- Snap radius for cursor-to-edge snapping (T-junction on an existing segment). -->
   <edgeSnapRadiusMeters>0.3</edgeSnapRadiusMeters>
 
-  <!-- Range at which smart guides are computed. Parallel/perpendicular hints are
-       shown for existing edges within this distance of the cursor. -->
+  <!-- Range within which committed-foundation corners are considered as alignment-
+       guide targets (the in-progress shape's own nodes are always considered). -->
   <smartGuideRangeMeters>8.0</smartGuideRangeMeters>
+
+  <!-- Perpendicular tolerance for an axis-alignment lock: the cursor snaps to a
+       reference node's X (or Y) when within this distance, drawing a guide line. -->
+  <axisGuideToleranceMeters>0.3</axisGuideToleranceMeters>
+
+  <!-- Default for the user-facing "align to existing foundations" setting (settings
+       screen toggles it at runtime; in-progress-shape alignment is always on). -->
+  <alignToExistingDefault>true</alignToExistingDefault>
 
   <!-- Cursor distance from the origin point at which the "click here to close"
        halo appears and snapping locks to the origin. Generous to make closing easy. -->

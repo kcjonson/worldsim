@@ -58,16 +58,25 @@ namespace engine::construction {
 		Origin,		  // within originClose radius of the first point: closes the shape
 		WallEndpoint, // snapped onto an existing wall vertex (endpoint/junction)
 		WallSegment,  // snapped onto the nearest point along an existing wall segment (a T-junction)
+		AxisGuide,	  // aligned to the X and/or Y of an existing node (alignment guide)
 	};
 
 	struct SnapResult {
 		::Foundation::Vec2 point{0.0F, 0.0F};
 		SnapKind		   kind = SnapKind::None;
 
-		// For Angle snaps: the guide ray from the previous vertex through the
-		// snapped point, so the tool can draw the faint guide line. Zero otherwise.
+		// Guide line the tool draws faintly. For Angle snaps: the ray from the previous
+		// vertex through the snapped point. For AxisGuide snaps: the alignment line
+		// through the reference node the cursor locked onto (the primary axis). Zero
+		// (from == to) when there is no guide.
 		::Foundation::Vec2 guideFrom{0.0F, 0.0F};
 		::Foundation::Vec2 guideTo{0.0F, 0.0F};
+
+		// Second guide line, used by AxisGuide when BOTH axes align at once (e.g. the
+		// new corner lines up with one node in X and another in Y): guideFrom/guideTo
+		// is one axis, this pair the other. Zero (from == to) when only one axis aligns.
+		::Foundation::Vec2 guideFromAlt{0.0F, 0.0F};
+		::Foundation::Vec2 guideToAlt{0.0F, 0.0F};
 
 		// Wall hit target, read by the WallTool to commit into ConstructionWorld:
 		//   kind == WallEndpoint -> hitVertex is the existing vertex the chain
@@ -126,9 +135,12 @@ namespace engine::construction {
 		// `originCloseRadiusMeters` overrides the configured origin-close radius when
 		// non-negative; the foundation tool passes a zoom-stable radius so the close
 		// gesture stays reachable when zoomed out. A negative value uses the config.
+		// `alignToExisting` lets the axis-alignment guides target committed-foundation
+		// nodes in addition to the in-progress shape's own placed nodes (which are always
+		// targets); the DrawingSystem passes the user setting.
 		[[nodiscard]] SnapResult
 		snap(const std::vector<::Foundation::Vec2>& points, ::Foundation::Vec2 cursor, bool freeform,
-			 float originCloseRadiusMeters = -1.0F) const;
+			 float originCloseRadiusMeters = -1.0F, bool alignToExisting = false) const;
 
 		// Wall-chain snap. `points` is the in-progress open polyline (world meters);
 		// `freeform` suppresses angle snap (Alt). Priority: wall endpoint > foundation
@@ -140,11 +152,14 @@ namespace engine::construction {
 		// (see outerFaceFlushCorner), so a wall traced along the perimeter sits ON the
 		// foundation. Wall-endpoint and T-junction hits snap to the existing wall graph
 		// exactly and are never inset. Pass 0 to disable the inset (zero-thickness).
+		// `alignToExisting`: as in snap(), let axis-alignment guides also target
+		// committed-foundation nodes (in-progress chain nodes are always targets).
 		[[nodiscard]] SnapResult snapWall(
 			const std::vector<::Foundation::Vec2>& points,
 			::Foundation::Vec2					   cursor,
 			bool								   freeform,
-			std::int64_t						   wallHalfThicknessMm
+			std::int64_t						   wallHalfThicknessMm,
+			bool								   alignToExisting = false
 		) const;
 
 		// Opening snap (Epic F). Find the nearest BUILT wall segment whose centerline
@@ -185,6 +200,15 @@ namespace engine::construction {
 		// exists, else relative to the world +x axis. Distance along the ray is
 		// preserved.
 		[[nodiscard]] SnapResult snapAngle(const std::vector<::Foundation::Vec2>& points, ::Foundation::Vec2 cursor) const;
+
+		// Axis alignment: if the cursor lines up (within axisGuideTolerance) on X and/or
+		// Y with a reference node, snap that axis onto the node and report a guide line
+		// through it. Reference nodes are the in-progress `points` plus, when
+		// `alignToExisting`, committed-foundation vertices within smartGuideRange of the
+		// cursor. Returns a SnapResult of kind AxisGuide when at least one axis aligns
+		// (the un-aligned axis keeps the raw cursor), else kind None.
+		[[nodiscard]] SnapResult
+		axisAlign(const std::vector<::Foundation::Vec2>& points, ::Foundation::Vec2 cursor, bool alignToExisting) const;
 
 		const engine::assets::SnappingConfig* snapping_;
 		const ConstructionWorld*			  world_;

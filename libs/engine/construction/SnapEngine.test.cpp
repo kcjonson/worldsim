@@ -59,9 +59,12 @@ TEST(SnapEngine, AngleSnapRelativeToPreviousSegment) {
 	ConstructionWorld world;
 	SnapEngine		  engine(cfg, world);
 	// Previous segment goes straight up (+y). A cursor heading +x but a few
-	// degrees off snaps to a 90 deg turn: pure +x from the corner.
+	// degrees off snaps to a 90 deg turn: pure +x from the corner. The 0.8 m
+	// perpendicular offset stays inside the 15 deg increment (atan2(0.8,8)=5.7 deg)
+	// yet exceeds the 0.3 m axis-guide tolerance, so this exercises angle snap, not
+	// axis alignment to the previous node.
 	std::vector<Vec2> points = {{0.0F, 0.0F}, {0.0F, 5.0F}};
-	Vec2			  cursor{points.back().x + 4.0F, points.back().y + 0.25F};
+	Vec2			  cursor{points.back().x + 8.0F, points.back().y + 0.8F};
 	auto			  r = engine.snap(points, cursor, /*freeform=*/false);
 	EXPECT_EQ(r.kind, SnapKind::Angle);
 	EXPECT_NEAR(r.point.y, points.back().y, 1e-3F); // snapped flat off the corner
@@ -154,6 +157,104 @@ TEST(SnapEngine, SnapsToExistingEdge) {
 	EXPECT_NEAR(r.point.y, 0.0F, 1e-4F);
 	EXPECT_NEAR(r.point.x, 2.5F, 1e-4F);
 	EXPECT_LT(dist(r.point, {2.5F, 0.0F}), 1e-3F);
+}
+
+// --- Axis-alignment guides ------------------------------------------------
+// Default axisGuideTolerance is 0.3 m, smartGuideRange 8.0 m (struct defaults).
+
+TEST(SnapEngine, AxisAlignsXToInProgressNode) {
+	SnappingConfig	  cfg = defaults();
+	ConstructionWorld world;
+	SnapEngine		  engine(cfg, world);
+	// One placed node at the origin; cursor 0.15 m off its X (inside 0.3 m tol) and
+	// 3 m up. The X locks to the node, Y stays free.
+	std::vector<Vec2> points = {{0.0F, 0.0F}};
+	auto			  r = engine.snap(points, {0.15F, 3.0F}, /*freeform=*/false);
+	EXPECT_EQ(r.kind, SnapKind::AxisGuide);
+	EXPECT_NEAR(r.point.x, 0.0F, 1e-4F);
+	EXPECT_NEAR(r.point.y, 3.0F, 1e-4F);
+}
+
+TEST(SnapEngine, AxisAlignsYToInProgressNode) {
+	SnappingConfig	  cfg = defaults();
+	ConstructionWorld world;
+	SnapEngine		  engine(cfg, world);
+	std::vector<Vec2> points = {{0.0F, 0.0F}};
+	auto			  r = engine.snap(points, {4.0F, 0.2F}, /*freeform=*/false);
+	EXPECT_EQ(r.kind, SnapKind::AxisGuide);
+	EXPECT_NEAR(r.point.x, 4.0F, 1e-4F);
+	EXPECT_NEAR(r.point.y, 0.0F, 1e-4F);
+}
+
+TEST(SnapEngine, AxisAlignsBothAxesToTwoNodes) {
+	SnappingConfig	  cfg = defaults();
+	ConstructionWorld world;
+	SnapEngine		  engine(cfg, world);
+	// Three corners of a square placed; drawing the 4th near (0,6). X lines up with
+	// the (0,0) corner, Y with the (6,6) corner -> snaps exactly to (0,6) with two
+	// guide lines (different reference nodes per axis).
+	std::vector<Vec2> points = {{0.0F, 0.0F}, {6.0F, 0.0F}, {6.0F, 6.0F}};
+	auto			  r = engine.snap(points, {0.2F, 5.85F}, /*freeform=*/false);
+	EXPECT_EQ(r.kind, SnapKind::AxisGuide);
+	EXPECT_NEAR(r.point.x, 0.0F, 1e-4F);
+	EXPECT_NEAR(r.point.y, 6.0F, 1e-4F);
+	// Both guide pairs present (a non-degenerate from->to) when both axes lock.
+	EXPECT_TRUE(r.guideFrom.x != r.guideTo.x || r.guideFrom.y != r.guideTo.y);
+	EXPECT_TRUE(r.guideFromAlt.x != r.guideToAlt.x || r.guideFromAlt.y != r.guideToAlt.y);
+}
+
+TEST(SnapEngine, AxisAlignToleranceBoundary) {
+	SnappingConfig	  cfg = defaults(); // tol 0.3 m
+	ConstructionWorld world;
+	SnapEngine		  engine(cfg, world);
+	std::vector<Vec2> points = {{0.0F, 0.0F}};
+	// 0.25 m off the node's X (inside tol) locks; 0.35 m (outside tol) does not.
+	EXPECT_EQ(engine.snap(points, {0.25F, 3.0F}, /*freeform=*/false).kind, SnapKind::AxisGuide);
+	EXPECT_NE(engine.snap(points, {0.35F, 3.0F}, /*freeform=*/false).kind, SnapKind::AxisGuide);
+}
+
+TEST(SnapEngine, AxisAlignFreeformSuppresses) {
+	SnappingConfig	  cfg = defaults();
+	ConstructionWorld world;
+	SnapEngine		  engine(cfg, world);
+	std::vector<Vec2> points = {{0.0F, 0.0F}};
+	// Same aligned cursor as AxisAlignsXToInProgressNode, but freeform (Alt) off-switches
+	// all inference snapping including axis guides.
+	auto r = engine.snap(points, {0.15F, 3.0F}, /*freeform=*/true);
+	EXPECT_NE(r.kind, SnapKind::AxisGuide);
+}
+
+TEST(SnapEngine, AxisAlignTogglesCommittedFoundationTargets) {
+	SnappingConfig	  cfg = defaults();
+	ConstructionWorld world;
+	// A committed square near the cursor; one far-away in-progress node so the cursor
+	// can't align to the shape itself.
+	std::vector<Vec2> sq = {{0.0F, 0.0F}, {5.0F, 0.0F}, {5.0F, 5.0F}, {0.0F, 5.0F}};
+	ASSERT_TRUE(world.commitFoundation(sq, "Wood").ok());
+	SnapEngine		  engine(cfg, world);
+	std::vector<Vec2> points = {{10.0F, 10.0F}};
+	// Cursor 0.15 m off the committed corner's X (5) and 6 m up (within range, clear of
+	// vertex/edge snap radii). Disabled: no committed targets -> not an axis guide.
+	EXPECT_NE(engine.snap(points, {5.15F, 6.0F}, /*freeform=*/false, /*originRadius=*/-1.0F, /*alignToExisting=*/false).kind,
+			  SnapKind::AxisGuide);
+	// Enabled: the committed corner's X is a target -> axis guide locks to x=5.
+	auto r = engine.snap(points, {5.15F, 6.0F}, /*freeform=*/false, /*originRadius=*/-1.0F, /*alignToExisting=*/true);
+	EXPECT_EQ(r.kind, SnapKind::AxisGuide);
+	EXPECT_NEAR(r.point.x, 5.0F, 1e-4F);
+}
+
+TEST(SnapEngine, AxisAlignCommittedRespectsRange) {
+	SnappingConfig	  cfg = defaults(); // smartGuideRange 8.0 m
+	ConstructionWorld world;
+	std::vector<Vec2> sq = {{0.0F, 0.0F}, {5.0F, 0.0F}, {5.0F, 5.0F}, {0.0F, 5.0F}};
+	ASSERT_TRUE(world.commitFoundation(sq, "Wood").ok());
+	SnapEngine engine(cfg, world);
+	// alignToExisting on, no in-progress nodes. Far cursor (nearest x=5 corner > 8 m
+	// away) ignores the committed node; near cursor (within range) locks to it.
+	EXPECT_NE(engine.snap({}, {5.2F, 20.0F}, /*freeform=*/false, -1.0F, /*alignToExisting=*/true).kind,
+			  SnapKind::AxisGuide);
+	EXPECT_EQ(engine.snap({}, {5.2F, 6.0F}, /*freeform=*/false, -1.0F, /*alignToExisting=*/true).kind,
+			  SnapKind::AxisGuide);
 }
 
 // --- Wall snapping --------------------------------------------------------
@@ -314,9 +415,11 @@ TEST(SnapEngine, WallAngleSnapOffPreviousChainPoint) {
 	ConstructionWorld world; // empty: no geometry to snap to, only angle snap
 	SnapEngine		  engine(cfg, world);
 	// Chain heading +y; cursor heading +x but a few degrees off snaps to a 90 deg
-	// turn flat off the corner.
+	// turn flat off the corner. The 0.8 m perpendicular offset stays inside the 15 deg
+	// increment yet exceeds the 0.3 m axis-guide tolerance, so this exercises angle
+	// snap, not axis alignment to the previous node.
 	std::vector<Vec2> points = {{1.0F, 1.0F}, {1.0F, 6.0F}};
-	auto			  r = engine.snapWall(points, {5.0F, 6.25F}, /*freeform=*/false, /*wallHalfThicknessMm=*/100);
+	auto			  r = engine.snapWall(points, {9.0F, 6.8F}, /*freeform=*/false, /*wallHalfThicknessMm=*/100);
 	EXPECT_EQ(r.kind, SnapKind::Angle);
 	EXPECT_NEAR(r.point.y, points.back().y, 1e-3F);
 }

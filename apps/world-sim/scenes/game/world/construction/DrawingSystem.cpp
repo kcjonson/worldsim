@@ -1,5 +1,7 @@
 #include "DrawingSystem.h"
 
+#include "UserSettings.h"
+
 #include <assets/ConstructionRegistry.h>
 #include <construction/OpeningGeometry.h>
 #include <ecs/components/Inventory.h>
@@ -223,7 +225,8 @@ namespace world_sim {
 
 		auto&		   registry = ConstructionRegistry::Get();
 		ec::SnapEngine snap(registry.snapping(), constructionWorld_);
-		lastSnap_ = snap.snap(points_, {world.x, world.y}, freeform, effectiveOriginCloseRadiusMeters());
+		lastSnap_ = snap.snap(points_, {world.x, world.y}, freeform, effectiveOriginCloseRadiusMeters(),
+							  UserSettings::Get().alignSnapToExistingFoundations);
 		cursor_ = lastSnap_.point;
 
 		ec::ConstructionValidator validator(registry.constraints(), constructionWorld_);
@@ -515,7 +518,7 @@ namespace world_sim {
 		// inset and skip validation below.
 		const auto*		   preset = activePreset();
 		const std::int64_t halfThick = preset != nullptr ? preset->halfThicknessMm : 0;
-		lastSnap_ = snap.snapWall(points_, world, freeform, halfThick);
+		lastSnap_ = snap.snapWall(points_, world, freeform, halfThick, UserSettings::Get().alignSnapToExistingFoundations);
 		cursor_ = lastSnap_.point;
 
 		if (preset == nullptr) {
@@ -1365,8 +1368,12 @@ namespace world_sim {
 			});
 		}
 
-		// Angle-snap guide line (faint) when the cursor is angle-snapped.
-		if (lastSnap_.kind == engine::construction::SnapKind::Angle) {
+		// Guide line(s) (faint): the angle-snap ray, or the axis-alignment line(s)
+		// through the reference node(s). An AxisGuide can show two lines at once (an X
+		// lock and a Y lock to two different nodes); the alt pair is zero when only one
+		// axis aligned.
+		if (lastSnap_.kind == engine::construction::SnapKind::Angle ||
+			lastSnap_.kind == engine::construction::SnapKind::AxisGuide) {
 			Renderer::Primitives::drawLine({
 				.start = toScreen(lastSnap_.guideFrom),
 				.end = toScreen(lastSnap_.guideTo),
@@ -1374,6 +1381,17 @@ namespace world_sim {
 				.id = "drawing_guide",
 				.zIndex = 899,
 			});
+			if (lastSnap_.kind == engine::construction::SnapKind::AxisGuide &&
+				(lastSnap_.guideFromAlt.x != lastSnap_.guideToAlt.x ||
+				 lastSnap_.guideFromAlt.y != lastSnap_.guideToAlt.y)) {
+				Renderer::Primitives::drawLine({
+					.start = toScreen(lastSnap_.guideFromAlt),
+					.end = toScreen(lastSnap_.guideToAlt),
+					.style = {.color = toColor(ps.guideColor), .width = ps.guideWidth},
+					.id = "drawing_guide_alt",
+					.zIndex = 899,
+				});
+			}
 		}
 
 		// Vertex dots.
@@ -2024,8 +2042,12 @@ namespace world_sim {
 			});
 		}
 
-		// Angle-snap guide line (faint) when the cursor is angle-snapped.
-		if (lastSnap_.kind == engine::construction::SnapKind::Angle) {
+		// Guide line(s) (faint): the angle-snap ray, or the axis-alignment line(s)
+		// through the reference node(s). An AxisGuide can show two lines at once (an X
+		// lock and a Y lock to two different nodes); the alt pair is zero when only one
+		// axis aligned.
+		if (lastSnap_.kind == engine::construction::SnapKind::Angle ||
+			lastSnap_.kind == engine::construction::SnapKind::AxisGuide) {
 			Renderer::Primitives::drawLine({
 				.start = toScreen(lastSnap_.guideFrom),
 				.end = toScreen(lastSnap_.guideTo),
@@ -2033,6 +2055,17 @@ namespace world_sim {
 				.id = "wall_guide",
 				.zIndex = 905,
 			});
+			if (lastSnap_.kind == engine::construction::SnapKind::AxisGuide &&
+				(lastSnap_.guideFromAlt.x != lastSnap_.guideToAlt.x ||
+				 lastSnap_.guideFromAlt.y != lastSnap_.guideToAlt.y)) {
+				Renderer::Primitives::drawLine({
+					.start = toScreen(lastSnap_.guideFromAlt),
+					.end = toScreen(lastSnap_.guideToAlt),
+					.style = {.color = toColor(ps.guideColor), .width = ps.guideWidth},
+					.id = "wall_guide_alt",
+					.zIndex = 905,
+				});
+			}
 		}
 
 		// Vertex dots, plus a snap-target ring colored by the snap kind so the player

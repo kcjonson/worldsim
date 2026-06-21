@@ -310,6 +310,11 @@ namespace engine::assets {
 		cfg.smartGuideRangeMeters = root.child("smartGuideRangeMeters").text().as_float(8.0F);
 		cfg.smartGuideRangeMm = toMm(cfg.smartGuideRangeMeters);
 
+		cfg.axisGuideToleranceMeters = root.child("axisGuideToleranceMeters").text().as_float(0.3F);
+		cfg.axisGuideToleranceMm = toMm(cfg.axisGuideToleranceMeters);
+
+		cfg.alignToExistingDefault = root.child("alignToExistingDefault").text().as_bool(true);
+
 		cfg.originCloseRadiusMeters = root.child("originCloseRadiusMeters").text().as_float(0.5F);
 		cfg.originCloseRadiusMm = toMm(cfg.originCloseRadiusMeters);
 
