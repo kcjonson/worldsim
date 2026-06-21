@@ -143,9 +143,10 @@ namespace engine::construction {
 			 float originCloseRadiusMeters = -1.0F, bool alignToExisting = false) const;
 
 		// Wall-chain snap. `points` is the in-progress open polyline (world meters);
-		// `freeform` suppresses angle snap (Alt). Priority: wall endpoint > foundation
-		// vertex > point-on-wall-segment (T-junction) > foundation edge > angle snap
-		// off the previous chain point > raw. No origin-close (the chain is open). The
+		// `freeform` suppresses angle + axis-align snap (Alt). Priority: wall endpoint >
+		// foundation vertex > point-on-wall-segment (T-junction) > foundation edge >
+		// axis-align guide > angle snap off the previous chain point > raw. No
+		// origin-close (the chain is open). The
 		// result's hitVertex/hitSegment tell the WallTool what to commit against.
 		// `wallHalfThicknessMm` is the active wall's half-thickness: foundation-vertex
 		// and foundation-edge hits are inset by it for outer-face-flush alignment

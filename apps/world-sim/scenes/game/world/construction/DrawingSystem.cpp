@@ -1374,13 +1374,17 @@ namespace world_sim {
 		// axis aligned.
 		if (lastSnap_.kind == engine::construction::SnapKind::Angle ||
 			lastSnap_.kind == engine::construction::SnapKind::AxisGuide) {
-			Renderer::Primitives::drawLine({
-				.start = toScreen(lastSnap_.guideFrom),
-				.end = toScreen(lastSnap_.guideTo),
-				.style = {.color = toColor(ps.guideColor), .width = ps.guideWidth},
-				.id = "drawing_guide",
-				.zIndex = 899,
-			});
+			// Each pair is skipped when degenerate (from == to): an AxisGuide whose
+			// cursor sits exactly on a node collapses the primary line to zero length.
+			if (lastSnap_.guideFrom.x != lastSnap_.guideTo.x || lastSnap_.guideFrom.y != lastSnap_.guideTo.y) {
+				Renderer::Primitives::drawLine({
+					.start = toScreen(lastSnap_.guideFrom),
+					.end = toScreen(lastSnap_.guideTo),
+					.style = {.color = toColor(ps.guideColor), .width = ps.guideWidth},
+					.id = "drawing_guide",
+					.zIndex = 899,
+				});
+			}
 			if (lastSnap_.kind == engine::construction::SnapKind::AxisGuide &&
 				(lastSnap_.guideFromAlt.x != lastSnap_.guideToAlt.x ||
 				 lastSnap_.guideFromAlt.y != lastSnap_.guideToAlt.y)) {
@@ -2048,13 +2052,17 @@ namespace world_sim {
 		// axis aligned.
 		if (lastSnap_.kind == engine::construction::SnapKind::Angle ||
 			lastSnap_.kind == engine::construction::SnapKind::AxisGuide) {
-			Renderer::Primitives::drawLine({
-				.start = toScreen(lastSnap_.guideFrom),
-				.end = toScreen(lastSnap_.guideTo),
-				.style = {.color = toColor(ps.guideColor), .width = ps.guideWidth},
-				.id = "wall_guide",
-				.zIndex = 905,
-			});
+			// Skip a degenerate pair (from == to): an AxisGuide whose cursor sits exactly
+			// on a node collapses the primary line to zero length.
+			if (lastSnap_.guideFrom.x != lastSnap_.guideTo.x || lastSnap_.guideFrom.y != lastSnap_.guideTo.y) {
+				Renderer::Primitives::drawLine({
+					.start = toScreen(lastSnap_.guideFrom),
+					.end = toScreen(lastSnap_.guideTo),
+					.style = {.color = toColor(ps.guideColor), .width = ps.guideWidth},
+					.id = "wall_guide",
+					.zIndex = 905,
+				});
+			}
 			if (lastSnap_.kind == engine::construction::SnapKind::AxisGuide &&
 				(lastSnap_.guideFromAlt.x != lastSnap_.guideToAlt.x ||
 				 lastSnap_.guideFromAlt.y != lastSnap_.guideToAlt.y)) {

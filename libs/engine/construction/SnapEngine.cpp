@@ -328,10 +328,13 @@ namespace engine::construction {
 		// Committed-foundation vertices within smartGuideRange of the cursor, opt-in.
 		if (alignToExisting) {
 			const float range = snapping_->smartGuideRangeMeters;
+			const float rangeSq = range * range; // squared compare avoids a per-vertex sqrt
 			for (const Foundation& f : world_->foundations()) {
 				for (const geometry::Vec2i64& vq : f.ring) {
 					const ::Foundation::Vec2 v = geometry::dequantize(vq);
-					if (distanceMeters(cursor, v) <= range) {
+					const float				 dxv = cursor.x - v.x;
+					const float				 dyv = cursor.y - v.y;
+					if (dxv * dxv + dyv * dyv <= rangeSq) {
 						consider(v);
 					}
 				}
