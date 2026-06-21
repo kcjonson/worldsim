@@ -364,11 +364,14 @@ namespace ecs {
 
 			auto& harvestRegistry = engine::assets::AssetRegistry::Get();
 
-			// Cap this withdrawal by what the colonist can still carry by weight (tools are
-			// equipment and don't count). At the carry limit `wanted` is 0: take nothing and
-			// leave the source for the next trip rather than dropping items on the floor.
+			// Cap this withdrawal by what the colonist can actually take this action: the carry
+			// weight (tools are equipment and don't count) AND the backpack's stack/slot headroom.
+			// Clamping by both means the pool below is only debited by what truly lands in the
+			// inventory, so a tree's wood is conserved. At the limit `wanted` is 0: take nothing
+			// and leave the source for the next trip rather than dropping items on the floor.
 			const uint32_t massFit = ecs::cargoUnitsThatFit(inventory, harvestRegistry, collEff.itemDefName);
-			const uint32_t wanted = std::min(collEff.quantity, massFit);
+			const uint32_t slotFit = inventory.addableCount(collEff.itemDefName);
+			const uint32_t wanted = std::min({collEff.quantity, massFit, slotFit});
 
 			// Does the source hold a finite resource pool (trees) or is it single-shot
 			// (ground pickup, regrowth bush)?
@@ -424,12 +427,9 @@ namespace ecs {
 				// regrowth cooldown. Only act on the source if the colonist actually collected.
 				added = inventory.addItem(collEff.itemDefName, wanted);
 				if (added < collEff.quantity) {
-					LOG_WARNING(
-						Engine,
-						"[Action] Collected only %u of %u x %s (carry limit / inventory full)",
-						added,
-						collEff.quantity,
-						collEff.itemDefName.c_str()
+					// Carry/slot-limited below the full yield -- expected, not an error.
+					LOG_INFO(
+						Engine, "[Action] Collected %u of %u x %s (carry-limited)", added, collEff.quantity, collEff.itemDefName.c_str()
 					);
 				} else {
 					LOG_INFO(Engine, "[Action] Collected %u x %s", added, collEff.itemDefName.c_str());

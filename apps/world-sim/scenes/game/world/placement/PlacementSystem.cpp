@@ -13,6 +13,7 @@
 #include <utils/Log.h>
 #include <world/chunk/ChunkCoordinate.h>
 
+#include <bit>
 #include <random>
 
 namespace world_sim {
@@ -242,10 +243,13 @@ namespace world_sim {
 		if (placementExecutor != nullptr && assetDef != nullptr && assetDef->capabilities.harvestable.has_value()) {
 			const auto& harv = assetDef->capabilities.harvestable.value();
 			if (harv.totalResourceMin > 0 && harv.totalResourceMax > 0) {
-				// Position-seeded so a given spot rolls the same amount across runs, without
-				// reaching for a shared RNG.
-				const auto	 seed = static_cast<uint32_t>(std::hash<float>{}(worldPos.x) * 31U ^ std::hash<float>{}(worldPos.y));
-				std::mt19937 rng(seed);
+				// Position-seeded so a given spot rolls the same amount across runs, without a
+				// shared RNG. Mix the raw IEEE-754 bits (std::hash<float> is implementation-defined
+				// and not stable across platforms); a deterministic bit mix keeps it reproducible.
+				const uint32_t bx = std::bit_cast<uint32_t>(worldPos.x);
+				const uint32_t by = std::bit_cast<uint32_t>(worldPos.y);
+				const uint32_t seed = (bx * 0x9E3779B9U) ^ (by + 0x85EBCA6BU + (bx << 6) + (bx >> 2));
+				std::mt19937   rng(seed);
 				std::uniform_int_distribution<uint32_t> dist(harv.totalResourceMin, harv.totalResourceMax);
 				const uint32_t initialCount = dist(rng);
 				const auto	   coord = engine::world::worldToChunk({worldPos.x, worldPos.y});

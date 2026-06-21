@@ -100,6 +100,17 @@ namespace ecs {
 			return hasSpace();
 		}
 
+		/// How many of `defName` addItem() would actually accept right now, bounded by stack
+		/// headroom and slot availability. Callers that withdraw from a finite source (a tree's
+		/// resource pool) must clamp by this so they never pull more than the backpack can hold.
+		[[nodiscard]] uint32_t addableCount(const std::string& defName) const {
+			auto iter = items.find(defName);
+			if (iter != items.end()) {
+				return maxStackSize - iter->second; // room left in the existing stack
+			}
+			return hasSpace() ? maxStackSize : 0U; // a free slot holds a full stack, else none
+		}
+
 		/// Check if inventory contains an item
 		[[nodiscard]] bool hasItem(const std::string& defName) const { return items.find(defName) != items.end(); }
 
