@@ -72,10 +72,19 @@ for (const [id, name] of screens) {
 			await sleep(600);
 			await page.screenshot({ path: resolve(outDir, "in-game-dossier.png") });
 			console.log("captured in-game-dossier");
-			await page.getByText("Gear", { exact: true }).last().click({ timeout: 3000 });
-			await sleep(400);
-			await page.screenshot({ path: resolve(outDir, "in-game-dossier-gear.png") });
-			console.log("captured in-game-dossier-gear");
+			// One shot per data-bearing tab. getByRole scopes to the dialog's tabs;
+			// .last() avoids the compact info-panel tabs behind the modal.
+			for (const [tab, file] of [
+				["Health", "in-game-dossier-health"],
+				["Memory", "in-game-dossier-memory"],
+				["Tasks", "in-game-dossier-tasks"],
+				["Gear", "in-game-dossier-gear"],
+			]) {
+				await page.getByRole("tab", { name: tab, exact: true }).last().click({ timeout: 3000 });
+				await sleep(400);
+				await page.screenshot({ path: resolve(outDir, `${file}.png`) });
+				console.log("captured", file);
+			}
 			await page.keyboard.press("Escape"); // close modal (handler stops propagation, won't toggle chrome)
 			await sleep(300);
 		} catch (e) {

@@ -16,8 +16,11 @@ Regenerate after any look change in the prototype: from `docs/ui-prototype/`, ru
 ## In-game
 
 ![In-game HUD](./in-game.png)
-![Colonist dossier](./in-game-dossier.png)
-![Gear paper-doll](./in-game-dossier-gear.png)
+![Colonist dossier — Bio](./in-game-dossier.png)
+![Colonist dossier — Health](./in-game-dossier-health.png)
+![Colonist dossier — Memory](./in-game-dossier-memory.png)
+![Colonist dossier — Tasks](./in-game-dossier-tasks.png)
+![Colonist dossier — Gear paper-doll](./in-game-dossier-gear.png)
 
 ## Design-system gallery
 

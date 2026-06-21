@@ -479,3 +479,165 @@ export const OFFMAP_COLONISTS: OffmapColonist[] = [
 	{ name: "Joon", bearing: 118, dist: "95m" },
 	{ name: "Vale", bearing: 318, dist: "240m" },
 ];
+
+/* ===== Colonist dossier: Health / Memory / Tasks =====
+ * These mirror the real game systems so the prototype drives a faithful in-game
+ * dialog (see docs/design/game-systems digests):
+ *  - Health is the Needs + Mood system. Eight needs (0..1), each with a "seek"
+ *    threshold (below it the colonist goes to fulfill it) and a "critical"
+ *    threshold (emergency). Mood is COMPUTED from the needs, not stored. Five
+ *    needs are AI-actionable today; Hygiene, Recreation and Temperature are
+ *    tracked but not yet pursued. Injuries and ailments are not simulated yet.
+ *  - Memory is per-colonist, line-of-sight knowledge grouped by capability
+ *    (Food / Water / Resources / Colonists / Threats); each entry is a last-seen
+ *    location that goes stale until the colonist revisits it.
+ *  - Tasks are the colony goal registry seen from this colonist. They self-pick
+ *    the highest-priority known job every half-second; there are no manual
+ *    orders yet (Work Priorities is the planned per-colonist control). */
+
+export type NeedTier = "vital" | "comfort";
+export interface ColonistNeed {
+	name: string;
+	icon: IconName;
+	value: number; // 0..1
+	seekAt: number; // below this, the colonist seeks to fulfill it
+	critAt: number; // below this, it is an emergency
+	tier: NeedTier; // vital = AI acts on it today; comfort = tracked only
+}
+export const DOSSIER_NEEDS: ColonistNeed[] = [
+	{ name: "Hunger", icon: "food", value: 0.62, seekAt: 0.5, critAt: 0.1, tier: "vital" },
+	{ name: "Thirst", icon: "water", value: 0.8, seekAt: 0.5, critAt: 0.1, tier: "vital" },
+	{ name: "Energy", icon: "energy", value: 0.24, seekAt: 0.3, critAt: 0.1, tier: "vital" },
+	{ name: "Bladder", icon: "rain", value: 0.55, seekAt: 0.3, critAt: 0.1, tier: "vital" },
+	{ name: "Digestion", icon: "leaf", value: 0.71, seekAt: 0.3, critAt: 0.1, tier: "vital" },
+	{ name: "Hygiene", icon: "sprout", value: 0.48, seekAt: 0.4, critAt: 0.15, tier: "comfort" },
+	{ name: "Recreation", icon: "heart", value: 0.4, seekAt: 0.3, critAt: 0.1, tier: "comfort" },
+	{ name: "Temperature", icon: "temp", value: 0.66, seekAt: 0.4, critAt: 0.15, tier: "comfort" },
+];
+
+/* Mood is derived from needs in-engine; this is a representative precomputed value.
+ * Labels: Happy >=80, Content 60-79, Neutral 40-59, Stressed 20-39, Miserable <20. */
+export const DOSSIER_MOOD = 0.72;
+export function moodLabel(mood: number): string {
+	const m = mood * 100;
+	if (m >= 80) return "Happy";
+	if (m >= 60) return "Content";
+	if (m >= 40) return "Neutral";
+	if (m >= 20) return "Stressed";
+	return "Miserable";
+}
+/* a need's standing against its own thresholds -> meter tone */
+export function needTone(n: ColonistNeed): "ok" | "warn" | "crit" {
+	if (n.value < n.critAt) return "crit";
+	if (n.value < n.seekAt) return "warn";
+	return "ok";
+}
+
+/* ----- Memory ----- */
+export interface KnownThing {
+	name: string;
+	dist: string; // distance from the colonist, e.g. "12m"
+	seen: string; // how long since last observed, e.g. "just now", "2m"
+	stale?: boolean; // snapshot may be wrong; not revisited recently
+}
+export interface MemoryCategory {
+	name: string;
+	icon: IconName;
+	tone: "ok" | "data" | "accent" | "warn" | "crit" | "default";
+	count: number; // total known in this category
+	things: KnownThing[]; // a sample; the real list can run to hundreds
+}
+export const DOSSIER_SIGHT_M = 30;
+export const MEMORY_CATEGORIES: MemoryCategory[] = [
+	{
+		name: "Food Sources",
+		icon: "food",
+		tone: "ok",
+		count: 9,
+		things: [
+			{ name: "Berry Bush", dist: "12m", seen: "just now" },
+			{ name: "Berry Bush", dist: "18m", seen: "30s" },
+			{ name: "Cloudfruit Tree", dist: "44m", seen: "2m", stale: true },
+		],
+	},
+	{
+		name: "Water Sources",
+		icon: "water",
+		tone: "data",
+		count: 3,
+		things: [
+			{ name: "River Shore", dist: "26m", seen: "just now" },
+			{ name: "Rain Cistern", dist: "8m", seen: "1m" },
+		],
+	},
+	{
+		name: "Resources",
+		icon: "box",
+		tone: "accent",
+		count: 21,
+		things: [
+			{ name: "Oak (sticks)", dist: "15m", seen: "just now" },
+			{ name: "Stone Outcrop", dist: "33m", seen: "4m", stale: true },
+			{ name: "Reed Cluster", dist: "52m", seen: "6m", stale: true },
+		],
+	},
+	{
+		name: "Colonists",
+		icon: "users",
+		tone: "default",
+		count: 4,
+		things: [
+			{ name: "Idris Okonkwo", dist: "9m", seen: "just now" },
+			{ name: "Rin Calloway", dist: "40m", seen: "1m" },
+		],
+	},
+	{ name: "Threats", icon: "skull", tone: "crit", count: 0, things: [] },
+];
+export const MEMORY_TOTAL = MEMORY_CATEGORIES.reduce((s, c) => s + c.count, 0);
+
+/* ----- Tasks ----- */
+export type TaskRunState = "available" | "active" | "blocked" | "waiting";
+export interface KnownTask {
+	label: string;
+	icon: IconName;
+	state: TaskRunState;
+	detail: string; // status detail, e.g. "wood ready", "0/2 metal"
+	dist: string;
+}
+export interface CurrentTask {
+	type: string; // "Building", "Hauling", ...
+	label: string; // target, e.g. "Foundation · Sector 4"
+	icon: IconName;
+	dist: string;
+	nav: string; // "On site", "Going to", "Re-routing", "Can't find a way"
+	progress: number; // 0..1
+}
+export const CURRENT_TASK: CurrentTask = {
+	type: "Building",
+	label: "Foundation · Sector 4",
+	icon: "hammer",
+	dist: "6m",
+	nav: "On site",
+	progress: 0.62,
+};
+export const KNOWN_TASKS: KnownTask[] = [
+	{ label: "Haul Wood ×6 → Stockpile A", icon: "box", state: "available", detail: "wood ready", dist: "8m" },
+	{ label: "Harvest Berry Bush", icon: "leaf", state: "available", detail: "ripe", dist: "12m" },
+	{ label: "Craft Hatchet", icon: "gear", state: "blocked", detail: "0/2 metal", dist: "15m" },
+	{ label: "Cook Meals ×4", icon: "food", state: "blocked", detail: "needs campfire", dist: "22m" },
+	{ label: "Haul Stone ×12 → Stockpile A", icon: "box", state: "waiting", detail: "awaiting mining", dist: "33m" },
+	{ label: "Mine Stone Outcrop", icon: "mountain", state: "available", detail: "exposed", dist: "33m" },
+	{ label: "Deconstruct Pod Wreck", icon: "layers", state: "available", detail: "salvage", dist: "48m" },
+];
+export function taskStateMeta(s: TaskRunState): { label: string; tone: "ok" | "data" | "warn" | "crit" | "default" } {
+	switch (s) {
+		case "active":
+			return { label: "In Progress", tone: "data" };
+		case "available":
+			return { label: "Available", tone: "ok" };
+		case "blocked":
+			return { label: "Blocked", tone: "crit" };
+		case "waiting":
+			return { label: "Waiting", tone: "warn" };
+	}
+}

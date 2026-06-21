@@ -1,0 +1,79 @@
+.health {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-3);
+}
+
+.derived {
+	margin: 0;
+	font-size: var(--fs-xs);
+	color: var(--text-faint);
+	line-height: var(--lh);
+}
+
+/* needs on the left, body & ailments on the right */
+.cols {
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	gap: var(--space-3) var(--space-6);
+	align-items: start;
+}
+.col {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-3);
+}
+
+.needs {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-2);
+}
+.needRow {
+	display: flex;
+	align-items: center;
+	gap: var(--space-2);
+}
+.needIcon {
+	color: var(--text-dim);
+	flex-shrink: 0;
+}
+.needMeter {
+	flex: 1;
+	min-width: 0;
+}
+/* comfort needs are tracked but not yet acted on — dim them a touch */
+.comfort {
+	opacity: 0.7;
+}
+
+.muted {
+	margin: 0;
+	font-size: var(--fs-xs);
+	color: var(--text-faint);
+	line-height: var(--lh);
+}
+
+.empty {
+	display: flex;
+	align-items: flex-start;
+	gap: var(--space-3);
+	padding: var(--space-3);
+	border: var(--border-width) dashed var(--line-hairline);
+	border-radius: var(--radius-sm);
+	background: var(--bg-inset);
+}
+.emptyIcon {
+	color: var(--text-dim);
+	flex-shrink: 0;
+	margin-top: 1px;
+}
+.emptyTitle {
+	font-size: var(--fs-sm);
+	color: var(--text);
+}
+.emptySub {
+	margin-top: 2px;
+	font-size: var(--fs-xs);
+	color: var(--text-faint);
+}
