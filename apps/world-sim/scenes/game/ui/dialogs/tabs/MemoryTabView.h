@@ -2,7 +2,6 @@
 
 #include <component/Container.h>
 #include <graphics/Rect.h>
-#include <layer/Layer.h>
 
 #include <string>
 #include <vector>
@@ -27,23 +26,23 @@ struct MemoryCategory {
 struct MemoryData {
 	std::vector<MemoryCategory> categories;
 	size_t totalKnown = 0;
+	float sightRadius = 30.0F;
 };
 
-/// Memory tab content for ColonistDetailsDialog
-/// Shows: Known entities grouped by category in a scrollable TreeView
+/// Memory tab content for ColonistDetailsDialog.
+///
+/// Mirrors the Salvage prototype's Memory panel: a summary row (locations known +
+/// sight range) over a 2-column grid of capability categories, each a name + count
+/// badge with a few sample entity rows. Manual-render, like the other dossier tabs.
 class MemoryTabView : public UI::Container {
   public:
-	/// Create the tab view with content bounds from parent dialog
 	void create(const Foundation::Rect& contentBounds);
-
-	/// Update content from model data
 	void update(const MemoryData& data);
+	void render() override;
 
   private:
-	UI::LayerHandle layoutHandle;
-	UI::LayerHandle headerTextHandle;	   // "Known Entities: X total"
-	UI::LayerHandle scrollContainerHandle; // ScrollContainer
-	UI::LayerHandle treeViewHandle;		   // TreeView inside ScrollContainer
+	Foundation::Rect contentBounds{};
+	MemoryData		 data_{};
 };
 
 } // namespace world_sim

@@ -810,6 +810,43 @@ The following MVP epics have all been completed. Detailed task breakdowns are pr
 
 ## Planned Epics
 
+### UI Scale setting
+**Spec/Documentation:** `docs/design/ui/ui-scale-setting.md`
+**Dependencies:** Settings screen
+**Status:** needs spec
+
+**Goal:** One user-facing setting that scales the entire UI uniformly. The game renders the UI denser than the Salvage prototype (the logical viewport is ~2.5x the prototype's reference, so token-built elements come out ~19% of screen width where the mock is ~47%). A single global UI-scale factor applied at the logical-viewport level lets players size the UI to match the prototype's proportions, instead of hand-enlarging individual screens.
+
+**Tasks:**
+- [ ] Calibration pass: measure current logical viewport vs the prototype's 1600x1000 reference; pick a default scale
+- [ ] Apply a single UI-scale factor at `getLogicalViewport()` derivation (layout, not bitmap post-scale); confirm DPI isn't already folded in
+- [ ] Verify pointer hit-testing stays aligned with the scaled draw space
+- [ ] Live re-layout on change (open dialogs/screens reflow, no reload)
+- [ ] Settings-screen control (slider/stepped) + persistence + reset; confirm MSDF text + tessellated icons stay crisp at the extremes
+
+---
+
+### In-game dossier fidelity (remaining)
+**Spec/Documentation:** `docs/design/ui/screens/in-game.md` ("Colonist details dialog"), prototype at `docs/ui-prototype/src/screens/InGame/`, mocks `docs/design/ui/mocks/in-game-dossier*.png`
+**Dependencies:** UI Scale setting (for absolute size); colonist systems below (for the data-backed tabs)
+**Status:** in progress (shell + Bio/Health/Memory/Tasks built; see PR #204)
+
+**Goal:** Bring the in-game C++ `ColonistDetailsDialog` to full parity with the prototype. The dialog shell, persistent header, kicker/footer, 8-tab bar, and Bio/Health/Memory/Tasks layouts are built and match at the element level. Remaining:
+
+**Tasks:**
+- [ ] **Gear tab — build the prototype paper-doll** (biggest gap; currently a sparse hands + inventory readout). 3-column worn slots + center figure + hand slots; weight-based pack with item stacks; belt slot grid; carry-load meter. See prototype `GearTab.tsx` / `GearTab.module.css` and `in-game-dossier-gear.png`.
+- [ ] Bio traits as `Badge` chips (tone by good/bad/neutral), not a plain comma list
+- [ ] Tasks: richer current-task panel (type + target + nav state + distance + progress meter) once the data is surfaced
+- [ ] Memory: distance-from-colonist on entity rows (have x,y; need colonist position) instead of raw coords; real Threats category when a threat system exists
+- [ ] Skills tab: real content when a skills/proficiency system exists (placeholder today)
+- [ ] Social tab: real content when relationships are tracked (placeholder today)
+- [ ] Log tab: real content when an activity/event log exists (placeholder today)
+- [ ] Footer: wire Work Priorities (needs the work-priorities system) and Draft (needs drafting); visual-only today
+- [ ] Text-overflow pass with a **data-rich colonist** (long backstory, full gear, many known entities/tasks) — only placeholder data exercised so far
+- [ ] Root-cause the rare first-open crash seen once during testing (did not reproduce; PR #204 notes it)
+
+---
+
 ### Season System (season slider + dynamic seasonal snow)
 **Spec/Documentation:** needs spec (background in `docs/technical/cryosphere-ice-and-glaciers.md` → "Season system")
 **Dependencies:** Cryosphere / ice (landed)

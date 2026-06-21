@@ -2,7 +2,6 @@
 
 #include <component/Container.h>
 #include <graphics/Rect.h>
-#include <layer/Layer.h>
 
 #include <array>
 #include <string>
@@ -24,10 +23,12 @@ struct HealthData {
 	std::string moodLabel;
 };
 
-/// Health tab content for ColonistDetailsDialog
-/// Two-column layout:
-/// - Left: Mood + Need bars + Mood modifiers
-/// - Right: Body parts & ailments
+/// Health tab content for ColonistDetailsDialog.
+///
+/// Mirrors the Salvage prototype's Health panel: a full-width Mood meter, then a
+/// two-column body. Left column lists Vital Needs and (dimmed) Comfort needs as
+/// meter rows; right column holds a Body & Ailments empty-state. Rendered with
+/// explicit manual positioning relative to the view's content origin.
 class HealthTabView : public UI::Container {
   public:
 	/// Create the tab view with content bounds from parent dialog
@@ -36,11 +37,12 @@ class HealthTabView : public UI::Container {
 	/// Update content from model data
 	void update(const HealthData& data);
 
+	/// Draw the Health panel at the view's content origin.
+	void render() override;
+
   private:
-	UI::LayerHandle layoutHandle;
-	UI::LayerHandle leftColumnHandle;					  // Left column container
-	UI::LayerHandle moodHeaderHandle;					  // "Mood: X% (label)"
-	std::array<UI::LayerHandle, 8> needBarHandles{};	  // One per need type
+	Foundation::Rect contentBounds{};
+	HealthData		 data_{};
 };
 
 } // namespace world_sim

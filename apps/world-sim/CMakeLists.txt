@@ -40,10 +40,12 @@ add_executable(world-sim
     scenes/game/ui/dialogs/StorageConfigDialogModel.cpp
     scenes/game/ui/dialogs/tabs/BioTabView.cpp
     scenes/game/ui/dialogs/tabs/HealthTabView.cpp
+    scenes/game/ui/dialogs/tabs/SkillsTabView.cpp
     scenes/game/ui/dialogs/tabs/SocialTabView.cpp
     scenes/game/ui/dialogs/tabs/GearTabView.cpp
     scenes/game/ui/dialogs/tabs/MemoryTabView.cpp
     scenes/game/ui/dialogs/tabs/TasksTabView.cpp
+    scenes/game/ui/dialogs/tabs/LogTabView.cpp
     # Game scene UI - main container
     scenes/game/ui/GameUI.cpp
     # Game scene - world subsystems

@@ -1,132 +1,132 @@
 #include "TasksTabView.h"
+#include "MeterDraw.h"
 #include "TabStyles.h"
 
-#include "scenes/game/ui/components/GlobalTaskRow.h"
+#include <components/badge/Badge.h>
+#include <primitives/Primitives.h>
+#include <theme/Tokens.h>
+#include <theme/Variants.h>
 
-#include <components/scroll/ScrollContainer.h>
-#include <layout/LayoutContainer.h>
-#include <shapes/Shapes.h>
-
-#include <format>
+#include <algorithm>
+#include <cctype>
+#include <string>
 
 namespace world_sim {
 
 namespace {
 
-// Layout constants
-constexpr float kRowHeight = 36.0F;
+using namespace UI;
+using namespace tabs;
 
-} // anonymous namespace
+constexpr float kRowH		 = 28.0F; // known-work row height
+constexpr float kCurrentH	 = 56.0F; // "Currently" panel height
+constexpr float kSectionGap	 = 16.0F;
 
-void TasksTabView::create(const Foundation::Rect& contentBounds) {
-	using namespace tabs;
+std::string toLower(std::string s) {
+	std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+	return s;
+}
 
-	tabWidth = contentBounds.width;
-	float headerHeight = kLabelSize + 8.0F;
-	float scrollHeight = contentBounds.height - headerHeight;
+// Map a status string to a Badge tone. Available->ok, blocked->crit,
+// waiting->warn, in-progress->data; anything else stays default.
+UI::Tone statusTone(const std::string& status) {
+	const std::string s = toLower(status);
+	if (s.find("block") != std::string::npos) return UI::Tone::Crit;
+	if (s.find("wait") != std::string::npos) return UI::Tone::Warn;
+	if (s.find("progress") != std::string::npos || s.find("working") != std::string::npos) return UI::Tone::Data;
+	if (s.find("avail") != std::string::npos) return UI::Tone::Ok;
+	return UI::Tone::Default;
+}
 
-	auto layout = UI::LayoutContainer(UI::LayoutContainer::Args{
-		.position = {contentBounds.x, contentBounds.y},
-		.size = {contentBounds.width, contentBounds.height},
-		.direction = UI::Direction::Vertical,
-		.id = "tasks_content"
-	});
+} // namespace
 
-	// Header - "Known Tasks: N"
-	auto headerText = UI::Text(UI::Text::Args{
-		.height = kLabelSize,
-		.text = "Known Tasks: 0",
-		.style = {.color = labelColor(), .fontSize = kLabelSize},
-		.margin = 4.0F
-	});
-	headerTextHandle = layout.addChild(std::move(headerText));
-
-	// ScrollContainer with LayoutContainer for task rows
-	float scrollWidth = contentBounds.width - 8.0F;
-	auto scrollContainer = UI::ScrollContainer(UI::ScrollContainer::Args{
-		.size = {scrollWidth, scrollHeight},
-		.id = "tasks_scroll"
-	});
-
-	// Inner layout for vertical stacking of task rows
-	auto taskLayout = UI::LayoutContainer(UI::LayoutContainer::Args{
-		.position = {0.0F, 0.0F},
-		.size = {scrollWidth - 16.0F, 0.0F},  // Width fixed, height auto
-		.direction = UI::Direction::Vertical,
-		.id = "tasks_layout"
-	});
-	taskLayoutHandle = scrollContainer.addChild(std::move(taskLayout));
-
-	scrollContainerHandle = layout.addChild(std::move(scrollContainer));
-
-	layoutHandle = addChild(std::move(layout));
+void TasksTabView::create(const Foundation::Rect& bounds) {
+	contentBounds = bounds;
 }
 
 void TasksTabView::update(const TasksTabData& data) {
-	auto* layout = getChild<UI::LayoutContainer>(layoutHandle);
-	if (layout == nullptr) return;
-
-	// Update header
-	if (auto* text = layout->getChild<UI::Text>(headerTextHandle)) {
-		text->text = std::format("Known Tasks: {}", data.totalCount);
-	}
-
-	// Rebuild or update task rows based on count change
-	if (taskRowHandles.size() != data.tasks.size()) {
-		rebuildTaskRows(data);
-	} else {
-		updateTaskRows(data);
-	}
+	data_ = data;
 }
 
-void TasksTabView::rebuildTaskRows(const TasksTabData& data) {
-	auto* layout = getChild<UI::LayoutContainer>(layoutHandle);
-	if (layout == nullptr) return;
+void TasksTabView::render() {
+	using namespace tabs;
+	using namespace UI;
 
-	auto* scroll = layout->getChild<UI::ScrollContainer>(scrollContainerHandle);
-	if (scroll == nullptr) return;
+	if (!visible) return;
 
-	auto* taskLayout = scroll->getChild<UI::LayoutContainer>(taskLayoutHandle);
-	if (taskLayout == nullptr) return;
+	const Foundation::Vec2 o	 = getContentPosition();
+	const float			   width = contentBounds.width;
+	float				   y	 = o.y;
 
-	// Clear existing rows
-	taskLayout->clearChildren();
-	taskRowHandles.clear();
+	// ---- "Currently" panel with amber left border ----
+	const Foundation::Rect panel{o.x, y, width, kCurrentH};
+	Renderer::Primitives::drawRect({
+		.bounds = panel,
+		.style	= {.fill = UI::withAlpha(UI::accent, 0.06F), .border = Foundation::BorderStyle{.color = UI::line_edge, .width = UI::bw, .cornerRadius = UI::r_md, .position = Foundation::BorderPosition::Inside}},
+	});
+	// Amber left accent bar.
+	Renderer::Primitives::drawRect({.bounds = {o.x, y, 3.0F, kCurrentH}, .style = {.fill = UI::accent}});
 
-	// Create new rows using GlobalTaskRow component
-	// showKnownBy=false for colonist-specific view (no "Known by: X" line)
-	float rowWidth = tabWidth - 32.0F;  // Account for padding and scrollbar
-	for (size_t i = 0; i < data.tasks.size(); ++i) {
-		auto handle = taskLayout->addChild(GlobalTaskRow(GlobalTaskRow::Args{
-			.task = data.tasks[i],
-			.width = rowWidth,
-			.showKnownBy = false,  // Colonist view doesn't show "Known by"
-			.id = std::format("colonist_task_row_{}", i)
-		}));
-		taskRowHandles.push_back(handle);
+	const float px = o.x + space_3;
+	Renderer::Primitives::drawText({
+		.text		   = "CURRENTLY",
+		.position	   = {px, y + space_2},
+		.scale		   = fs_2xs / 16.0F,
+		.color		   = UI::accent,
+		.font		   = UI::fontMono,
+		.letterSpacing = fs_2xs * UI::ls_wider,
+		.transform	   = Foundation::TextTransform::Uppercase,
+	});
+	const std::string current = data_.currentTask.empty() ? "Idle" : data_.currentTask;
+	drawText(current, {px, y + space_2 + fs_2xs + 6.0F}, fs_md, UI::text_bright);
+	y += kCurrentH + kSectionGap;
+
+	// ---- Known Work ----
+	y = drawDivider(o.x, y, width, "KNOWN WORK");
+	y += 8.0F;
+
+	if (data_.tasks.empty()) {
+		drawText("No known work nearby.", {o.x, y}, fs_xs, UI::text_faint);
+		return;
 	}
 
-	// Update scroll content height
-	float contentHeight = static_cast<float>(data.tasks.size()) * kRowHeight;
-	scroll->setContentHeight(contentHeight);
-}
+	// Cap rows to what fits the content area, showing "+N more" if any are clipped.
+	const float maxY = o.y + contentBounds.height;
+	for (int i = 0; i < static_cast<int>(data_.tasks.size()); ++i) {
+		const auto& task	  = data_.tasks[static_cast<size_t>(i)];
+		const int	remaining = static_cast<int>(data_.tasks.size()) - i;
 
-void TasksTabView::updateTaskRows(const TasksTabData& data) {
-	auto* layout = getChild<UI::LayoutContainer>(layoutHandle);
-	if (layout == nullptr) return;
-
-	auto* scroll = layout->getChild<UI::ScrollContainer>(scrollContainerHandle);
-	if (scroll == nullptr) return;
-
-	auto* taskLayout = scroll->getChild<UI::LayoutContainer>(taskLayoutHandle);
-	if (taskLayout == nullptr) return;
-
-	// Update each row's data using GlobalTaskRow::setTaskData()
-	for (size_t i = 0; i < data.tasks.size() && i < taskRowHandles.size(); ++i) {
-		auto* row = taskLayout->getChild<GlobalTaskRow>(taskRowHandles[i]);
-		if (row != nullptr) {
-			row->setTaskData(data.tasks[i]);
+		// If this row (or a "+N more" line in its place) won't fit, stop.
+		if (y + kRowH > maxY) {
+			break;
 		}
+
+		// If there are more tasks after this one and no room for both this row and the
+		// next, reserve this slot for a "+N more" summary instead.
+		if (remaining > 1 && y + kRowH * 2.0F > maxY) {
+			drawText("+" + std::to_string(remaining) + " more", {o.x, y}, fs_2xs, UI::text_faint);
+			break;
+		}
+
+		drawText(task.description, {o.x, y}, fs_sm, UI::text);
+
+		// Detail under the label (status detail like "0/2 metal" or worker name).
+		if (!task.statusDetail.empty()) {
+			drawText(task.statusDetail, {o.x, y + fs_sm + 1.0F}, fs_2xs, UI::text_faint);
+		}
+
+		// Status badge, right-aligned.
+		const UI::Tone	  tone	 = statusTone(task.status);
+		const std::string label	 = task.status.empty() ? "Available" : task.status;
+		const float		  badgeW = (space_2 * 2.0F) + measureText(label, fs_2xs, UI::fontMono);
+		UI::Badge({.position = {o.x + width - badgeW, y}, .label = label, .tone = tone}).render();
+
+		// Distance, just left of the badge.
+		if (!task.distance.empty()) {
+			Renderer::Primitives::drawText({.text = task.distance, .position = {o.x, y}, .scale = fs_2xs / 16.0F, .color = UI::data_bright, .font = UI::fontMono, .hAlign = Foundation::HorizontalAlign::Right, .boxWidth = width - badgeW - space_2});
+		}
+
+		y += kRowH;
 	}
 }
 

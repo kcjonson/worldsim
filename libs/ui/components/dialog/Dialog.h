@@ -28,16 +28,19 @@ namespace UI {
 inline constexpr float kDialogDefaultWidth = 600.0F;
 inline constexpr float kDialogDefaultHeight = 400.0F;
 inline constexpr float kDialogTitleBarHeight = 40.0F;
+inline constexpr float kDialogKickerTitleHeight = 58.0F; ///< Title area height when a kicker is set
 inline constexpr float kDialogContentPadding = 16.0F;
 
 class Dialog : public Container, public FocusableBase<Dialog> {
   public:
 	struct Args {
 		std::string			  title;
+		std::string			  kicker;		   ///< Optional eyebrow line above the title (mono, faint, uppercase)
 		Foundation::Vec2	  size{kDialogDefaultWidth, kDialogDefaultHeight};
 		std::function<void()> onClose;
 		int					  tabIndex = -1;
-		bool				  modal = true; ///< When false, no overlay and clicks inside don't auto-consume
+		bool				  modal = true;	   ///< When false, no overlay and clicks inside don't auto-consume
+		float				  footerHeight = 0.0F; ///< Reserved footer band height (0 = no footer)
 	};
 
 	explicit Dialog(const Args& args);
@@ -69,8 +72,11 @@ class Dialog : public Container, public FocusableBase<Dialog> {
 	// Dialog panel size (not including overlay)
 	[[nodiscard]] const Foundation::Vec2& getDialogSize() const { return dialogSize; }
 
-	// Get content area bounds (inside dialog, below title bar)
+	// Get content area bounds (inside dialog, below title bar, above footer)
 	[[nodiscard]] Foundation::Rect getContentBounds() const;
+
+	// Get footer band bounds (empty rect if no footer reserved)
+	[[nodiscard]] Foundation::Rect getFooterBounds() const;
 
 	// IComponent overrides
 	void render() override;
@@ -97,9 +103,14 @@ class Dialog : public Container, public FocusableBase<Dialog> {
 	};
 
 	std::string			  title;
+	std::string			  kicker;
 	Foundation::Vec2	  dialogSize;
 	std::function<void()> onClose;
 	bool				  modal{true};
+	float				  footerHeight{0.0F};
+
+	// Title region height: taller when a kicker is shown above the title.
+	[[nodiscard]] float titleAreaHeight() const { return kicker.empty() ? kDialogTitleBarHeight : kDialogKickerTitleHeight; }
 
 	State				  state{State::Closed};
 	float				  opacity{0.0F};
