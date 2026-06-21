@@ -232,7 +232,9 @@ TEST(RiverNetwork2D, WideRiverGrowsFeeders) {
         << "a wide river should sprout many feeder segments a thin one does not";
 }
 
-// Feeders taper from the parent width at the confluence to a trickle at the spring.
+// Feeders taper from the parent width at the confluence to a thin trickle, but
+// never below the render contiguity floor (so thin water is not broken on the
+// 1 m tile grid). The wide trunk stays wide.
 TEST(RiverNetwork2D, FeedersTaperToTrickle) {
     auto world = makeLandWorld();
     auto chain = buildRiver(*world, 0.0, -30.0, 0.0, 30.0, 400.0f, 0.0f);
@@ -252,8 +254,39 @@ TEST(RiverNetwork2D, FeedersTaperToTrickle) {
         minHalf = std::min({minHalf, s.halfWidth0, s.halfWidth1});
         maxHalf = std::max({maxHalf, s.halfWidth0, s.halfWidth1});
     }
-    EXPECT_LE(minHalf, 0.4f) << "feeder spring ends should taper to a trickle";
+    EXPECT_GE(minHalf, 0.75f) << "no emitted channel may drop below the contiguity floor (~0.8 m half)";
+    EXPECT_LE(minHalf, 1.2f) << "feeder spring ends should still taper to a thin trickle";
     EXPECT_GE(maxHalf, 5.0f) << "the wide trunk should remain wide";
+}
+
+// A river's headwater is a convergence of springs: even a thin head (below the
+// along-channel feeder gate) sprouts streams that enter from both banks.
+TEST(RiverNetwork2D, HeadwaterSproutsConvergingSprings) {
+    auto world = makeLandWorld();
+    auto chain = buildRiver(*world, 0.0, -30.0, 0.0, 30.0); // default thin flow
+    ASSERT_GE(chain.size(), 5u);
+    RiverNetwork2D net(world, 0.0, 0.0);
+    SphericalProjection proj(world->derived.planetRadiusMeters, 0.0, 0.0);
+
+    // The chain runs west->east along the equator, so the channel through the
+    // source has y ~ 0; springs fan to the +y and -y banks. The thin channel's
+    // own meander is < ~10 m, well under the 30 m bank threshold, so both-sign
+    // excursions can only come from the source springs.
+    const WorldPos2d src = tilePos(*world, proj, chain.front());
+    const double r = 1500.0;
+    std::vector<RiverNetwork2D::Segment> segs;
+    net.gatherSegments(src.x - r, src.y - r, src.x + r, src.y + r, segs);
+    ASSERT_FALSE(segs.empty());
+
+    bool above = false;
+    bool below = false;
+    for (const auto& s : segs) {
+        for (double y : {s.y0, s.y1}) {
+            if (y > src.y + 30.0) above = true;
+            if (y < src.y - 30.0) below = true;
+        }
+    }
+    EXPECT_TRUE(above && below) << "a headwater should be fed by streams from both banks";
 }
 
 // The local per-point query (which gathers only a small box, as a chunk does)

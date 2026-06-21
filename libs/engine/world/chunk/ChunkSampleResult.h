@@ -24,13 +24,16 @@ struct ChunkSampleResult {
 
     // River channel segments (2D world meters) whose footprint touches this
     // chunk, synthesized from the coarse 3D drainage graph by RiverNetwork2D.
-    // Empty for the vast majority of chunks. Consumed per tile by isRiverAt().
+    // Empty for the vast majority of chunks. Consumed per tile by riverHalfWidthAt().
     std::vector<worldgen::RiverNetwork2D::Segment> riverSegments;
 
-    // True when (worldXMeters, worldYMeters) falls inside a gathered river
-    // channel. Linear scan with a cheap AABB reject before the distance/sqrt, so
-    // the many short feeder segments stay affordable per tile.
-    [[nodiscard]] bool isRiverAt(double worldXMeters, double worldYMeters) const {
+    // Channel half-width (meters) covering (worldXMeters, worldYMeters), or 0 if
+    // the point is outside every gathered channel. The widest covering channel
+    // wins (so confluences read as the larger river). Width drives both the water
+    // override and its rendered depth. Linear scan with a cheap AABB reject before
+    // the distance/sqrt, so the many short feeder segments stay affordable per tile.
+    [[nodiscard]] float riverHalfWidthAt(double worldXMeters, double worldYMeters) const {
+        float best = 0.0f;
         for (const auto& s : riverSegments) {
             const float hwMax = std::max(s.halfWidth0, s.halfWidth1);
             if (worldXMeters < std::min(s.x0, s.x1) - hwMax ||
@@ -51,12 +54,15 @@ struct ChunkSampleResult {
             const double cy = s.y0 + dy * t;
             const double ex = worldXMeters - cx;
             const double ey = worldYMeters - cy;
-            const double halfWidth =
-                static_cast<double>(s.halfWidth0) +
-                (static_cast<double>(s.halfWidth1) - static_cast<double>(s.halfWidth0)) * t;
-            if (ex * ex + ey * ey <= halfWidth * halfWidth) return true;
+            const float halfWidth =
+                static_cast<float>(static_cast<double>(s.halfWidth0) +
+                                   (static_cast<double>(s.halfWidth1) - static_cast<double>(s.halfWidth0)) * t);
+            if (ex * ex + ey * ey <= static_cast<double>(halfWidth) * static_cast<double>(halfWidth) &&
+                halfWidth > best) {
+                best = halfWidth;
+            }
         }
-        return false;
+        return best;
     }
 
     void computeSectorGrid() {

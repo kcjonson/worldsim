@@ -104,7 +104,8 @@ struct TileRenderData {
 	uint8_t neighborNE;    ///< Northeast neighbor surface ID
 	uint8_t neighborSE;    ///< Southeast neighbor surface ID
 	uint8_t neighborSW;    ///< Southwest neighbor surface ID
-	uint8_t padding[4];    ///< Pad to 16 bytes for cache alignment
+	uint8_t waterDepth;    ///< 0=land/shallowest, 255=deepest; shader tints water by this (texel 'a' low byte)
+	uint8_t padding[3];    ///< Pad to 16 bytes for cache alignment
 };
 
 /// A 512×512 region of the world.
