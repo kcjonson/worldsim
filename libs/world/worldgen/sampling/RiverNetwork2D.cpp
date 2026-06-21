@@ -63,20 +63,20 @@ constexpr float kMinWidth  = 0.6f;
 constexpr float kMaxWidth  = 110.0f;
 
 // Procedural short feeders (springs/streams) branching off rendered river
-// channels. SHORT (under ~0.5 km, never the ~50 km coarse-tile span): the coarse
-// 3D graph supplies real rivers; sub-river streams are synthesized here. Each
+// channels. SHORT relative to the ~50 km coarse-tile span (the coarse 3D graph
+// supplies real rivers; sub-river streams are synthesized here), but with a wide
+// spread of sizes -- most are little stubs, a few run a couple of chunks. Each
 // leaves the bank almost perpendicular to the channel, tilted a little downstream
 // (a natural acute confluence), and climbs the valley side to a spring, tapering
 // from the parent down to a trickle.
-constexpr double kFeederMinParentWidth = 3.0;   // along-channel feeders need a real channel
-constexpr double kFeederSpacing        = 440.0; // confluence spacing along the parent
+constexpr double kFeederMinParentWidth = 3.0;    // along-channel feeders need a real channel
+constexpr double kFeederSpacing        = 440.0;  // confluence spacing along the parent
 constexpr double kFeederSpawnProb      = 0.55;
-constexpr double kFeederLenMin         = 90.0;
-constexpr double kFeederLenMax         = 480.0;
-constexpr double kFeederPerpTiltMinDeg = 18.0;  // tilt from perpendicular, opening downstream
+constexpr double kFeederLenMin         = 30.0;   // stubby
+constexpr double kFeederLenMax         = 1300.0; // a couple of chunks
+constexpr double kFeederPerpTiltMinDeg = 18.0;   // tilt from perpendicular, opening downstream
 constexpr double kFeederPerpTiltMaxDeg = 42.0;
-constexpr double kFeederMouthFrac      = 0.45;  // mouth half-width vs parent half-width
-constexpr double kFeederMouthMaxHalf   = 3.0;
+constexpr double kFeederMouthMaxHalf   = 3.0;    // widest feeder mouth half-width
 constexpr double kFeederStepMeters     = 11.0;  // fine enough to resolve the tight wiggle
 constexpr double kFeederBankInset      = 0.6;   // start inside the bank so the mouth meets parent water
 constexpr double kFeederMeanderFeature = 60.0;  // bend spacing -> windy but smooth
@@ -372,10 +372,16 @@ void RiverNetwork2D::emitSegment(TileId tile, double minX, double minY, double m
         bankSign = bankSign >= 0.0 ? 1.0 : -1.0;
         const double sx = cx0 + bankSign * perpx * (parentHalfHere * kFeederBankInset);
         const double sy = cy0 + bankSign * perpy * (parentHalfHere * kFeederBankInset);
-        const double mouthHalf = std::clamp(parentHalfHere * kFeederMouthFrac,
+        // Mouth width grows with length (a longer stream drains more): stubs stay a
+        // trickle, the longest run wide -- but never wider than the parent it joins.
+        const double lenFrac = std::clamp((len - kFeederLenMin) / (kFeederLenMax - kFeederLenMin), 0.0, 1.0);
+        const double widthTarget = static_cast<double>(kRenderMinHalf) +
+                                   foundation::det_math::sqrt(lenFrac) *
+                                       (kFeederMouthMaxHalf - static_cast<double>(kRenderMinHalf));
+        const double mouthHalf = std::clamp(std::min(widthTarget, parentHalfHere * 0.8),
                                             static_cast<double>(kRenderMinHalf), kFeederMouthMaxHalf);
         const double phaseFP = 2.0 * kPi * hashUnit(foundation::hashCombine(fh, 0x9));
-        const int fSteps = std::clamp(static_cast<int>(std::lround(len / kFeederStepMeters)), 3, 60);
+        const int fSteps = std::clamp(static_cast<int>(std::lround(len / kFeederStepMeters)), 3, 100);
 
         double pfx = sx;
         double pfy = sy;
@@ -405,8 +411,10 @@ void RiverNetwork2D::emitSegment(TileId tile, double minX, double minY, double m
     };
 
     auto feederLen = [&](uint64_t fh) {
-        return kFeederLenMin +
-               (kFeederLenMax - kFeederLenMin) * hashUnit(foundation::hashCombine(fh, 0x4));
+        // Square the uniform draw to skew toward short: most feeders are stubs, a
+        // few run the full length. (Exact and deterministic, unlike pow.)
+        const double r = hashUnit(foundation::hashCombine(fh, 0x4));
+        return kFeederLenMin + (kFeederLenMax - kFeederLenMin) * r * r;
     };
 
     // Headwater source: two trickles converge at the river's birth (s ~ 0),

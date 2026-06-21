@@ -295,9 +295,9 @@ TEST(RiverNetwork2D, HeadwaterSproutsConvergingSprings) {
         for (int i = 0; i < 2; ++i) {
             const double along = (xs[i] - src.x) * (-ux) + (ys[i] - src.y) * (-uy);
             const double lateral = (xs[i] - src.x) * perpx + (ys[i] - src.y) * perpy;
-            if (along > 30.0) { // upstream of the source: only a spring can be here
-                if (lateral > 20.0) leftBank = true;
-                if (lateral < -20.0) rightBank = true;
+            if (along > 8.0) { // upstream of the source: only a spring can be here
+                if (lateral > 12.0) leftBank = true;
+                if (lateral < -12.0) rightBank = true;
             }
         }
     }
