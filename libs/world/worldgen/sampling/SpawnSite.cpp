@@ -65,10 +65,15 @@ SpawnSite findRiverbankSpawn(const std::shared_ptr<const GeneratedWorld>& world,
         return best;
     };
 
-    double bestFresh = std::numeric_limits<double>::max();
-    SpawnSite fresh{};
-    double bestSalt = std::numeric_limits<double>::max();
-    SpawnSite salt{};
+    // Track the three water kinds separately so the documented preference order
+    // (riverbank > lake shore > salt coast) holds regardless of which is closest:
+    // a riverbank anywhere in range outranks even a nearer lake shore.
+    double bestBank = std::numeric_limits<double>::max();
+    SpawnSite bank{};
+    double bestLake = std::numeric_limits<double>::max();
+    SpawnSite lake{};
+    double bestCoast = std::numeric_limits<double>::max();
+    SpawnSite coast{};
 
     const double offs[4][2] = {{bankDistanceMeters, 0.0}, {-bankDistanceMeters, 0.0},
                                {0.0, bankDistanceMeters}, {0.0, -bankDistanceMeters}};
@@ -85,7 +90,7 @@ SpawnSite findRiverbankSpawn(const std::shared_ptr<const GeneratedWorld>& world,
             const double d0 = foundation::det_math::sqrt(x * x + y * y);
 
             if (ch <= bankDistanceMeters) { // dry land on a riverbank
-                if (d0 < bestFresh) { bestFresh = d0; fresh = {x, y, true, true}; }
+                if (d0 < bestBank) { bestBank = d0; bank = {x, y, true, true}; }
                 continue;
             }
 
@@ -99,15 +104,16 @@ SpawnSite findRiverbankSpawn(const std::shared_ptr<const GeneratedWorld>& world,
                 else oceanNear = true;
             }
             if (lakeNear) {
-                if (d0 < bestFresh) { bestFresh = d0; fresh = {x, y, true, true}; }
+                if (d0 < bestLake) { bestLake = d0; lake = {x, y, true, true}; }
             } else if (oceanNear) {
-                if (d0 < bestSalt) { bestSalt = d0; salt = {x, y, true, false}; }
+                if (d0 < bestCoast) { bestCoast = d0; coast = {x, y, true, false}; }
             }
         }
     }
 
-    if (bestFresh < std::numeric_limits<double>::max()) return fresh;
-    if (bestSalt < std::numeric_limits<double>::max()) return salt;
+    if (bestBank < std::numeric_limits<double>::max()) return bank;
+    if (bestLake < std::numeric_limits<double>::max()) return lake;
+    if (bestCoast < std::numeric_limits<double>::max()) return coast;
     return SpawnSite{0.0, 0.0, false, false};
 }
 

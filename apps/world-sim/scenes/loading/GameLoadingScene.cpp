@@ -351,9 +351,9 @@ namespace {
 			worldgen::SpawnSite spawn = worldgen::findRiverbankSpawn(
 				startConfig->world, startConfig->landingLatDeg, startConfig->landingLonDeg);
 			worldState->spawnPosition = {static_cast<float>(spawn.xMeters), static_cast<float>(spawn.yMeters)};
-			LOG_INFO(Game, "GameLoadingScene - Spawn (%.1f, %.1f) nearWater=%d fresh=%d",
-			         worldState->spawnPosition.x, worldState->spawnPosition.y,
-			         spawn.nearWater ? 1 : 0, spawn.freshWater ? 1 : 0);
+			LOG_DEBUG(Game, "GameLoadingScene - Spawn (%.1f, %.1f) nearWater=%d fresh=%d",
+			          worldState->spawnPosition.x, worldState->spawnPosition.y,
+			          spawn.nearWater ? 1 : 0, spawn.freshWater ? 1 : 0);
 
 			// Create camera centered on the spawn point
 			worldState->camera = std::make_unique<engine::world::WorldCamera>();

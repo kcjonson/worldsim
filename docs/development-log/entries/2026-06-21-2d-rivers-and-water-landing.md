@@ -14,7 +14,7 @@ it can survive. Three pieces:
    chunk time. Realism: the channel meanders with geometry that scales with width
    (wavelength ~11x, amplitude ~1.4x), so broad rivers make long gentle bends and
    narrow streams wiggle tightly; width grows downstream with flow (hydraulic
-   geometry, ~1.5-150 m) and varies along the channel (riffles/pools). The meander
+   geometry, ~1.5-110 m) and varies along the channel (riffles/pools). The meander
    tapers to zero only within a short arc-length of each coarse-tile joint, so it
    wanders even where the player lands (a tile center) yet stays seam-continuous.
    Only the box-adjacent stretch is finely sampled, on a global arc-length grid so
