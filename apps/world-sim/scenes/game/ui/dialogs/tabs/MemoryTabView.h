@@ -26,6 +26,7 @@ struct MemoryCategory {
 struct MemoryData {
 	std::vector<MemoryCategory> categories;
 	size_t totalKnown = 0;
+	float sightRadius = 30.0F;
 };
 
 /// Memory tab content for ColonistDetailsDialog.

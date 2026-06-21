@@ -90,10 +90,23 @@ void TasksTabView::render() {
 		return;
 	}
 
-	// Cap rows to what fits the content area.
-	const float		maxY = o.y + contentBounds.height - kRowH;
-	for (const auto& task : data_.tasks) {
-		if (y > maxY) break;
+	// Cap rows to what fits the content area, showing "+N more" if any are clipped.
+	const float maxY = o.y + contentBounds.height;
+	for (int i = 0; i < static_cast<int>(data_.tasks.size()); ++i) {
+		const auto& task	  = data_.tasks[static_cast<size_t>(i)];
+		const int	remaining = static_cast<int>(data_.tasks.size()) - i;
+
+		// If this row (or a "+N more" line in its place) won't fit, stop.
+		if (y + kRowH > maxY) {
+			break;
+		}
+
+		// If there are more tasks after this one and no room for both this row and the
+		// next, reserve this slot for a "+N more" summary instead.
+		if (remaining > 1 && y + kRowH * 2.0F > maxY) {
+			drawText("+" + std::to_string(remaining) + " more", {o.x, y}, fs_2xs, UI::text_faint);
+			break;
+		}
 
 		drawText(task.description, {o.x, y}, fs_sm, UI::text);
 

@@ -26,9 +26,9 @@ inline void drawText(const std::string& text, Foundation::Vec2 pos, float fontSi
 }
 
 // Measure text width in pixels (0 if no font renderer is available).
-inline float measureText(const std::string& text, float fontSize, Renderer::FontFamily font = UI::fontUi) {
+inline float measureText(const std::string& text, float fontSize, Renderer::FontFamily font = UI::fontUi, float letterSpacing = 0.0F) {
 	if (const ui::FontRenderer* fonts = Renderer::Primitives::getFontRenderer(); fonts != nullptr) {
-		return fonts->MeasureText(text, fontSize / 16.0F, font).x;
+		return fonts->MeasureText(text, fontSize / 16.0F, font, letterSpacing).x;
 	}
 	return 0.0F;
 }
@@ -157,7 +157,7 @@ inline float drawMeter(
 // right edge. Mirrors Divider.tsx. Returns the y past the divider.
 inline float drawDivider(float x, float y, float width, const std::string& label) {
 	constexpr float kLabelPx = UI::fs_2xs;
-	const float		labelW	 = measureText(label, kLabelPx, UI::fontMono) + (label.empty() ? 0.0F : UI::space_2);
+	const float		labelW	 = measureText(label, kLabelPx, UI::fontMono, kLabelPx * UI::ls_wider) + (label.empty() ? 0.0F : UI::space_2);
 
 	Renderer::Primitives::drawText({
 		.text		   = label,

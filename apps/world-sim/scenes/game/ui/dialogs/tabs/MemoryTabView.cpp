@@ -16,8 +16,6 @@ namespace {
 using namespace UI;
 using namespace tabs;
 
-// Sight range is a vision-system constant; not yet exposed in MemoryData.
-constexpr const char* kSightRange = "30m";
 
 constexpr size_t kMaxRowsPerCategory = 3;
 constexpr float	 kColumnGap			 = 24.0F;
@@ -40,7 +38,7 @@ float drawCategory(float x, float y, float colWidth, const MemoryCategory& cat) 
 	// Head: name (left) + count badge (right).
 	drawText(cat.name, {x, y + 2.0F}, fs_sm, UI::text_bright);
 	const std::string countStr = std::to_string(cat.count);
-	const float		  badgeW   = (space_2 * 2.0F) + measureText(countStr, fs_2xs, UI::fontMono);
+	const float		  badgeW   = (space_2 * 2.0F) + measureText(countStr, fs_2xs, UI::fontMono, fs_2xs * ls_wider);
 	UI::Badge({.position = {x + colWidth - badgeW, y}, .label = countStr, .tone = categoryTone(cat.name, cat.count)}).render();
 	y += 22.0F + kHeadGap;
 
@@ -91,7 +89,7 @@ void MemoryTabView::render() {
 		drawText(label, {x, o.y + fs_xl + 2.0F}, fs_2xs, UI::text_dim);
 	};
 	metric(o.x, std::to_string(data_.totalKnown), "Locations known");
-	metric(o.x + 140.0F, kSightRange, "Sight range");
+	metric(o.x + 140.0F, std::to_string(static_cast<int>(data_.sightRadius)) + "m", "Sight range");
 
 	float y = o.y + fs_xl + fs_2xs + kSummaryGap + 8.0F;
 

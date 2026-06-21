@@ -288,8 +288,11 @@ void ColonistDetailsModel::extractMemoryData(const ecs::World& world, ecs::Entit
 
 	const auto* memory = world.getComponent<ecs::Memory>(colonistId);
 	if (memory == nullptr) {
+		memoryData.sightRadius = ecs::kDefaultSightRadius;
 		return;
 	}
+
+	memoryData.sightRadius = memory->sightRadius;
 
 	auto& assetRegistry = engine::assets::AssetRegistry::Get();
 

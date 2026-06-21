@@ -113,8 +113,8 @@ namespace UI {
 		return {
 			pos.x + kDialogContentPadding,
 			contentY + kDialogContentPadding,
-			dialogSize.x - kDialogContentPadding * 2,
-			contentHeight - kDialogContentPadding * 2
+			std::max(0.0F, dialogSize.x - kDialogContentPadding * 2),
+			std::max(0.0F, contentHeight - kDialogContentPadding * 2)
 		};
 	}
 
