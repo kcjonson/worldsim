@@ -256,6 +256,12 @@ If tests fail, fix the new code—don't revert to keeping both versions.
 - **IMPORTANT: Only ONE instance can run at a time** - the app has built-in port conflict detection. Do not assume multiple instances exist.
 - **IMPORTANT: Close the game as soon as your task is done** - this is a native game rendering every frame, not a web app; an idle instance burns GPU/CPU continuously. When you finish verifying, immediately shut it down: `curl "http://127.0.0.1:8081/api/control?action=exit"`. Only leave it running if the user asked to test it themselves.
 
+**Asset Manager (use this to test/preview world assets):**
+- A designer GUI (`apps/asset-manager`) that renders every asset through the game's real pipeline. Use it to verify new/edited flora, rocks, and other assets instead of dev-spawning them in world-sim.
+- Build: `cmake --build build --config Debug --target asset-manager`. Run: `build/apps/asset-manager/Debug/asset-manager.exe` (debug server on port **8070**, same `/api/ui/screenshot`, `/api/input`, `/api/control` as the game).
+- Shows a searchable category tree of asset thumbnails, a header with total count + validation error/warning counts, a per-asset detail pane (large preview + full XML + that asset's validation issues), and a **Reload** button to hot-reload after editing assets (no restart).
+- Surfaces SVG tessellation/validation problems and lets you eyeball art far faster than spawning + cropping screenshots. Close it when done (`curl "http://127.0.0.1:8070/api/control?action=exit"`).
+
 **CRITICAL: Testing Visual Changes**
 When you make code changes and need to verify visually:
 1. **Kill old instance** (if running): `curl "http://127.0.0.1:8081/api/control?action=exit"`
