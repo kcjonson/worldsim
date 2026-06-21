@@ -252,6 +252,14 @@ Dossier anatomy:
 
 Opened by double-clicking a colonist card (roster or info panel eye button). A `Dialog` (size `lg`, modal) using the design-system Dialog primitive.
 
+> **Implementation status (in-game C++ dossier).** The dialog shell, persistent header, kicker/footer, 8-tab bar, and the Bio / Health / Memory / Tasks tab layouts are built and match the prototype at the element level. Remaining gaps are tracked under the **In-game dossier fidelity** epic in `/docs/status.md`:
+> - **Gear tab — not implemented to the prototype.** The in-game tab is a sparse hands + inventory readout; the full paper-doll (3-column worn slots + figure + hand slots, weight-based pack, belt slots, carry meter) is **not built**. This is the biggest remaining gap.
+> - **Skills, Social, Log — placeholders.** Rendered as honest "not yet simulated" empty states; no backing systems exist yet (no skills, relationships, or activity-log systems).
+> - **Bio traits** render as plain text, not `Badge` chips. **Tasks** current-task panel is simpler than the prototype (no progress bar / type / distance breakdown). **Memory** entity rows show map coordinates, not distance-from-colonist, and "Threats" is a placeholder category.
+> - **Footer:** Close works; **Work Priorities** and **Draft** are visual-only (no backing systems).
+> - The whole dialog renders small relative to the prototype — see the **UI Scale setting** epic, not a dossier bug.
+> - Not yet stress-tested for text overflow with a **data-rich colonist** (long backstory, full gear, many known entities/tasks); only placeholder data has been exercised.
+
 ### Header area
 
 Avatar (72px, mood-tinted) beside a 2×2 `Stat` grid: Role, Origin, Age (unit "yrs"), Mood (percentage, tone crit if < 0.4, else ok). Dialog kicker: "Personnel File · {role}". Dialog title: colonist name.
