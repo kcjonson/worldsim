@@ -100,6 +100,30 @@ TEST(SnapEngine, NoOriginCloseBeforeThreePoints) {
 	EXPECT_NE(r.kind, SnapKind::Origin);
 }
 
+TEST(SnapEngine, OriginCloseRadiusOverrideEnlargesCatchRange) {
+	SnappingConfig	  cfg = defaults(); // originCloseRadius 0.5 m
+	ConstructionWorld world;
+	SnapEngine		  engine(cfg, world);
+	std::vector<Vec2> points = {{0.0F, 0.0F}, {5.0F, 0.0F}, {5.0F, 5.0F}};
+	// 0.7 m from origin: outside the 0.5 m default, inside a 1.5 m override (the
+	// zoom-stable radius the foundation tool passes so closing stays reachable when
+	// zoomed out).
+	auto r = engine.snap(points, {0.7F, 0.0F}, /*freeform=*/false, /*originCloseRadiusMeters=*/1.5F);
+	EXPECT_EQ(r.kind, SnapKind::Origin);
+	EXPECT_TRUE(r.closesShape());
+}
+
+TEST(SnapEngine, OriginCloseRadiusDefaultIgnoresOverride) {
+	SnappingConfig	  cfg = defaults();
+	ConstructionWorld world;
+	SnapEngine		  engine(cfg, world);
+	std::vector<Vec2> points = {{0.0F, 0.0F}, {5.0F, 0.0F}, {5.0F, 5.0F}};
+	// Same 0.7 m cursor with no override (negative -> config 0.5 m): no close. Proves
+	// the wider radius is an explicit per-call override, not a silent global change.
+	auto r = engine.snap(points, {0.7F, 0.0F}, /*freeform=*/false);
+	EXPECT_NE(r.kind, SnapKind::Origin);
+}
+
 TEST(SnapEngine, SnapsToExistingVertex) {
 	SnappingConfig	  cfg = defaults();
 	ConstructionWorld world;

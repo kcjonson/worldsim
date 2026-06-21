@@ -173,6 +173,36 @@ TEST(ConstructionValidator, EdgeClearanceJustBelowThresholdFails) {
 	EXPECT_EQ(validator.validateRing(tooClose).code, ValidationCode::EdgeClearanceTooSmall);
 }
 
+// --- Snap-to-close routing (the foundation tool's dead-zone fix) -----------
+// The DrawingSystem fix routes a near-start blocked click to a close instead of
+// erroring. These two pin the validator halves it relies on: the imperfect hand-
+// drawn square is a VALID closed ring (so the rescue commits a real foundation),
+// while the same near-origin point placed as a 5th OPEN-chain vertex is still
+// rejected (so the fix lives in click-routing, not in loosening checkShape).
+
+TEST(ConstructionValidator, SlightlyLongSquareClosesClean) {
+	ConstraintConfig	  cfg = defaults();
+	ConstructionWorld	  world;
+	ConstructionValidator validator(cfg, world);
+	// A hand-drawn "square" whose third segment overshoots a little (top edge 5.3 m
+	// vs the 5.0 m bottom): still a clean closed quad -- right-ish angles, edges far
+	// apart, area ~26 m^2.
+	std::vector<Vec2> imperfect = {{0.0F, 0.0F}, {5.0F, 0.0F}, {5.3F, 5.0F}, {0.0F, 5.0F}};
+	EXPECT_TRUE(validator.validateRing(imperfect).ok());
+}
+
+TEST(ConstructionValidator, NearOriginClosingVertexStillRejectedAsOpenChain) {
+	ConstraintConfig	  cfg = defaults(); // segmentClearance 1.0 m
+	ConstructionWorld	  world;
+	ConstructionValidator validator(cfg, world);
+	// Three sides of a square placed; a candidate near the start (0.2, 0.5) is ~0.5 m
+	// from the first edge, so as a 5th open-chain vertex its closing edge violates the
+	// 1.0 m edge clearance -- the very "too close" block the rescue sidesteps by
+	// closing instead. checkShape must still reject it here.
+	std::vector<Vec2> chain = {{0.0F, 0.0F}, {5.0F, 0.0F}, {5.0F, 5.0F}, {0.0F, 5.0F}};
+	EXPECT_EQ(validator.validatePoint(chain, {0.2F, 0.5F}).code, ValidationCode::EdgeClearanceTooSmall);
+}
+
 TEST(ConstructionValidator, DisjointFoundationOk) {
 	ConstraintConfig  cfg = defaults();
 	ConstructionWorld world;

@@ -289,12 +289,16 @@ namespace engine::construction {
 		return result;
 	}
 
-	SnapResult SnapEngine::snap(const std::vector<::Foundation::Vec2>& points, ::Foundation::Vec2 cursor, bool freeform) const {
+	SnapResult SnapEngine::snap(const std::vector<::Foundation::Vec2>& points, ::Foundation::Vec2 cursor, bool freeform,
+								float originCloseRadiusMeters) const {
 		// Origin-close: once a closeable shape exists (>= 3 points), being within
-		// the origin radius snaps onto the first point and signals a close.
+		// the origin radius snaps onto the first point and signals a close. The
+		// caller may pass a zoom-stable radius; a negative value uses the config.
 		if (points.size() >= 3) {
+			const float originRadius =
+				originCloseRadiusMeters >= 0.0F ? originCloseRadiusMeters : snapping_->originCloseRadiusMeters;
 			const float d = distanceMeters(cursor, points.front());
-			if (d <= snapping_->originCloseRadiusMeters) {
+			if (d <= originRadius) {
 				return {points.front(), SnapKind::Origin};
 			}
 		}

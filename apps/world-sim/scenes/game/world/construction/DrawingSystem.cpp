@@ -149,6 +149,7 @@ namespace world_sim {
 		points_.clear();
 		lastSnap_ = {};
 		lastValidation_ = {};
+		willClose_ = false;
 		wallHost_ = ec::kInvalidFoundation;
 		if (callbacks_.onToolActive) {
 			callbacks_.onToolActive(true);
@@ -162,6 +163,7 @@ namespace world_sim {
 		points_.clear();
 		lastSnap_ = {};
 		lastValidation_ = {};
+		willClose_ = false;
 		wallHost_ = ec::kInvalidFoundation;
 		if (callbacks_.onToolActive) {
 			callbacks_.onToolActive(true);
@@ -176,6 +178,7 @@ namespace world_sim {
 		points_.clear();
 		lastSnap_ = {};
 		lastValidation_ = {};
+		willClose_ = false;
 		wallHost_ = ec::kInvalidFoundation;
 		openingSnap_ = {};
 		openingValidation_ = {};
@@ -190,6 +193,7 @@ namespace world_sim {
 		points_.clear();
 		lastSnap_ = {};
 		lastValidation_ = {};
+		willClose_ = false;
 		wallHost_ = ec::kInvalidFoundation;
 		openingSnap_ = {};
 		openingValidation_ = {};
@@ -219,11 +223,25 @@ namespace world_sim {
 
 		auto&		   registry = ConstructionRegistry::Get();
 		ec::SnapEngine snap(registry.snapping(), constructionWorld_);
-		lastSnap_ = snap.snap(points_, {world.x, world.y}, freeform);
+		lastSnap_ = snap.snap(points_, {world.x, world.y}, freeform, effectiveOriginCloseRadiusMeters());
 		cursor_ = lastSnap_.point;
 
 		ec::ConstructionValidator validator(registry.constraints(), constructionWorld_);
 		lastValidation_ = validator.validatePoint(points_, cursor_);
+
+		// "Snap not block": with a closeable shape, a click near the start that would
+		// otherwise be rejected closes instead of erroring -- but only when the closed
+		// ring is itself valid (never rescue-close into a bad foundation). The explicit
+		// origin-close is the SnapKind::Origin case and needs no validity check.
+		willClose_ = false;
+		if (points_.size() >= 3) {
+			if (lastSnap_.closesShape()) {
+				willClose_ = true;
+			} else if (!lastValidation_.ok() && nearStartVertex(cursor_, closeRescueRadiusMeters()) &&
+					   validator.validateRing(points_).ok()) {
+				willClose_ = true;
+			}
+		}
 	}
 
 	bool DrawingSystem::handleClick(float screenX, float screenY, int viewportW, int viewportH, bool freeform, bool ctrl) {
@@ -244,8 +262,11 @@ namespace world_sim {
 			return handleOpeningClick({world.x, world.y});
 		}
 
-		// Origin-close (>= 3 points) commits the shape.
-		if (lastSnap_.closesShape() && points_.size() >= 3) {
+		// Close the shape (>= 3 points) when the click resolves to a close: the explicit
+		// origin-close, or the near-start "snap not block" rescue. willClose_ was set by
+		// handleMouseMove (called above) and already requires a valid closed ring for the
+		// rescue case, so this never closes into an invalid foundation.
+		if (points_.size() >= 3 && willClose_) {
 			commitShape();
 			return true;
 		}
@@ -326,12 +347,47 @@ namespace world_sim {
 		}
 		points_.pop_back();
 		lastValidation_ = {};
+		willClose_ = false; // recomputed on the next move; don't leave a stale closing halo
 		if (points_.empty()) {
 			// The chain's host is determined by its first point; once empty, the next
 			// first click re-picks it.
 			wallHost_ = ec::kInvalidFoundation;
 		}
 		return true;
+	}
+
+	float DrawingSystem::pixelsPerWorldMeter() const {
+		const float zoom = (camera_ != nullptr) ? camera_->zoom() : 1.0F;
+		return kPixelsPerMeter * (zoom > 0.0F ? zoom : 1.0F);
+	}
+
+	float DrawingSystem::effectiveOriginCloseRadiusMeters() const {
+		auto&		registry = ConstructionRegistry::Get();
+		const float configMeters = registry.snapping().originCloseRadiusMeters;
+		// Floor to the same screen-px minimum the origin halo is drawn at, so the
+		// catch radius and the visible halo agree at every zoom.
+		const float floorPx = registry.rendering().preview.originHaloMinRadiusPx;
+		const float scale = pixelsPerWorldMeter();
+		const float floorMeters = (scale > 0.0F) ? floorPx / scale : 0.0F;
+		return std::max(configMeters, floorMeters);
+	}
+
+	float DrawingSystem::closeRescueRadiusMeters() const {
+		// Cover the non-adjacent edge-clearance dead-zone around the start (a near-start
+		// closing edge within segmentClearance of the first edge is what gets rejected),
+		// but never smaller than the zoom-stable origin-close radius.
+		const float clearance = ConstructionRegistry::Get().constraints().segmentClearanceMeters;
+		return std::max(clearance, effectiveOriginCloseRadiusMeters());
+	}
+
+	bool DrawingSystem::nearStartVertex(Foundation::Vec2 p, float radiusMeters) const {
+		if (points_.empty()) {
+			return false;
+		}
+		const Foundation::Vec2 o = points_.front();
+		const float			   dx = p.x - o.x;
+		const float			   dy = p.y - o.y;
+		return (dx * dx + dy * dy) <= radiusMeters * radiusMeters;
 	}
 
 	void DrawingSystem::commitShape() {
@@ -364,6 +420,7 @@ namespace world_sim {
 		// Stay in the tool, ready for the next shape.
 		points_.clear();
 		lastValidation_ = {};
+		willClose_ = false;
 	}
 
 	ecs::EntityID DrawingSystem::spawnBlueprintEntity(ec::FoundationId id) {
@@ -1333,7 +1390,9 @@ namespace world_sim {
 		// Origin halo when the shape can close.
 		if (points_.size() >= 3) {
 			const float originRadius = ConstructionRegistry::Get().snapping().originCloseRadiusMeters * scale;
-			const bool	closing = lastSnap_.closesShape();
+			// Closing reflects whatever the next click will do: the explicit origin snap
+			// or the near-start "snap not block" rescue.
+			const bool	closing = willClose_;
 			Renderer::Primitives::drawCircle({
 				.center = screen.front(),
 				.radius = std::max(ps.originHaloMinRadiusPx, originRadius),
@@ -1346,8 +1405,11 @@ namespace world_sim {
 			});
 		}
 
-		// Red highlight on the offending edge/vertex when invalid.
-		if (!valid && !screen.empty()) {
+		// Red highlight on the offending edge/vertex when invalid -- but not when the
+		// click will close (willClose_: the explicit origin snap, or the near-start
+		// rescue of a would-be-blocked vertex). A pending close reads as "closing", not
+		// "error".
+		if (!valid && !willClose_ && !screen.empty()) {
 			const std::size_t vi = std::min(lastValidation_.vertexIndex, screen.size() - 1);
 			Renderer::Primitives::drawCircle({
 				.center = screen[vi],
