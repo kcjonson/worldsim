@@ -40,6 +40,7 @@
 #include <worldgen/io/PlanetIO.h>
 #include <worldgen/pipeline/PlanetGenerator.h>
 #include <worldgen/sampling/LandingSite.h>
+#include <worldgen/sampling/SpawnSite.h>
 
 #include <algorithm>
 #include <filesystem>
@@ -345,9 +346,19 @@ namespace {
 			worldState->chunkManager->setLoadRadius(1);
 			worldState->chunkManager->setUnloadRadius(2);
 
-			// Create camera at origin
+			// Drop the colony beside clean water (riverbank > lake shore > coast);
+			// a colony dies without it. Falls back to the origin when none is near.
+			worldgen::SpawnSite spawn = worldgen::findRiverbankSpawn(
+				startConfig->world, startConfig->landingLatDeg, startConfig->landingLonDeg);
+			worldState->spawnPosition = {static_cast<float>(spawn.xMeters), static_cast<float>(spawn.yMeters)};
+			LOG_INFO(Game, "GameLoadingScene - Spawn (%.1f, %.1f) nearWater=%d fresh=%d",
+			         worldState->spawnPosition.x, worldState->spawnPosition.y,
+			         spawn.nearWater ? 1 : 0, spawn.freshWater ? 1 : 0);
+
+			// Create camera centered on the spawn point
 			worldState->camera = std::make_unique<engine::world::WorldCamera>();
 			worldState->camera->setPanSpeed(200.0F);
+			worldState->camera->setPosition({worldState->spawnPosition.x, worldState->spawnPosition.y});
 
 			// Create renderers
 			worldState->renderer = std::make_unique<engine::world::ChunkRenderer>(kPixelsPerMeter);

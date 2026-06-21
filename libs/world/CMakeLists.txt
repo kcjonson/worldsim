@@ -17,6 +17,8 @@ add_library(world
     worldgen/stages/GlacierStage.cpp
     worldgen/sampling/SphericalProjection.cpp
     worldgen/sampling/PlanetSampler.cpp
+    worldgen/sampling/RiverNetwork2D.cpp
+    worldgen/sampling/SpawnSite.cpp
     worldgen/sampling/LandingSite.cpp
     worldgen/io/PlanetIO.cpp
     worldgen/debug/DebugImageExporter.cpp

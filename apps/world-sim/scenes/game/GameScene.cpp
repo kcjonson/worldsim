@@ -119,6 +119,7 @@ namespace {
 				m_entityRenderer = std::move(preloadedState->entityRenderer);
 				m_placementExecutor = std::move(preloadedState->placementExecutor);
 				m_processedChunks = std::move(preloadedState->processedChunks);
+				m_spawnPosition = preloadedState->spawnPosition;
 
 				LOG_INFO(Game, "Pre-loaded state: %zu chunks, %zu processed", m_chunkManager->loadedChunkCount(), m_processedChunks.size());
 			} else {
@@ -1024,8 +1025,9 @@ namespace {
 				}
 			);
 
-			// Spawn initial colonist at map center (0, 0)
-			spawnColonist({0.0F, 0.0F}, "Bob");
+			// Spawn the initial colonist at the chosen water-adjacent drop point
+			// (riverbank/shore from GameLoadingScene; origin when none was near).
+			spawnColonist(m_spawnPosition, "Bob");
 
 			LOG_INFO(Game, "ECS initialized with 1 colonist");
 		}
@@ -1450,6 +1452,7 @@ namespace {
 
 		std::unique_ptr<engine::world::ChunkManager>	   m_chunkManager;
 		std::unique_ptr<engine::world::WorldCamera>		   m_camera;
+		glm::vec2										   m_spawnPosition{0.0F, 0.0F};
 		std::unique_ptr<engine::world::ChunkRenderer>	   m_renderer;
 		std::unique_ptr<engine::world::EntityRenderer>	   m_entityRenderer;
 		std::unique_ptr<engine::assets::PlacementExecutor> m_placementExecutor;

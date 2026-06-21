@@ -4,7 +4,16 @@ namespace engine::world {
 
 	GeneratedWorldSampler::GeneratedWorldSampler(std::shared_ptr<const worldgen::GeneratedWorld> world,
 	                                             double landingLatDeg, double landingLonDeg)
-		: sampler(std::move(world), landingLatDeg, landingLonDeg) {}
+		: sampler(world, landingLatDeg, landingLonDeg) {
+		// Build the river network only when the world carries drainage data, so
+		// older saves (pre-hydrology) degrade to no rivers rather than asserting.
+		constexpr uint32_t kRiverFields =
+			static_cast<uint32_t>(worldgen::WorldField::FlowAccum) |
+			static_cast<uint32_t>(worldgen::WorldField::Downhill);
+		if ((world->validFields & kRiverFields) == kRiverFields) {
+			riverNetwork.emplace(world, landingLatDeg, landingLonDeg);
+		}
+	}
 
 	ChunkSampleResult GeneratedWorldSampler::sampleChunk(ChunkCoordinate coord) const {
 		ChunkSampleResult result;
@@ -20,6 +29,17 @@ namespace engine::world {
 		result.cornerElevations[3] = sampleElevation(coord.corner(ChunkCorner::SouthEast));
 
 		result.computeSectorGrid();
+
+		// Gather any river channels crossing this chunk from the coarse drainage graph.
+		if (riverNetwork) {
+			const WorldPosition origin = coord.origin();
+			const double minX = static_cast<double>(origin.x);
+			const double minY = static_cast<double>(origin.y);
+			const double maxX = minX + static_cast<double>(kChunkSize) * static_cast<double>(kTileSize);
+			const double maxY = minY + static_cast<double>(kChunkSize) * static_cast<double>(kTileSize);
+			riverNetwork->gatherSegments(minX, minY, maxX, maxY, result.riverSegments);
+		}
+
 		return result;
 	}
 
