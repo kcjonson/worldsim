@@ -811,7 +811,7 @@ The following MVP epics have all been completed. Detailed task breakdowns are pr
 ## Planned Epics
 
 ### Season System (season slider + dynamic seasonal snow)
-**Spec/Documentation:** needs spec (background in `docs/technical/cryosphere-ice-and-glaciers.md` → "Season system")
+**Spec/Documentation:** `/docs/design/features/season-system.md` (draft stub; background in `docs/technical/cryosphere-ice-and-glaciers.md` → "Season system")
 **Dependencies:** Cryosphere / ice (landed)
 **Status:** needs spec
 
