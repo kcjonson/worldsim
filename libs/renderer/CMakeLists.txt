@@ -46,7 +46,7 @@ target_link_libraries(renderer
 )
 
 # Copy shaders to build and runtime directories whenever shader sources change.
-file(GLOB_RECURSE RENDERER_SHADER_SOURCES
+file(GLOB_RECURSE RENDERER_SHADER_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/*"
 )
 
@@ -75,12 +75,12 @@ add_dependencies(renderer renderer-shaders)
 # Tests
 if(BUILD_TESTING)
     # Discover test files using naming pattern
-    file(GLOB_RECURSE RENDERER_TEST_SOURCES
+    file(GLOB_RECURSE RENDERER_TEST_SOURCES CONFIGURE_DEPENDS
         "${CMAKE_CURRENT_SOURCE_DIR}/*.test.cpp"
     )
 
     # Discover benchmark files using naming pattern
-    file(GLOB_RECURSE RENDERER_BENCHMARK_SOURCES
+    file(GLOB_RECURSE RENDERER_BENCHMARK_SOURCES CONFIGURE_DEPENDS
         "${CMAKE_CURRENT_SOURCE_DIR}/*.bench.cpp"
     )
 

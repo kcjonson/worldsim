@@ -52,7 +52,7 @@ target_include_directories(assets
 
 # Tests
 if(BUILD_TESTING)
-    file(GLOB_RECURSE ASSETS_TEST_SOURCES
+    file(GLOB_RECURSE ASSETS_TEST_SOURCES CONFIGURE_DEPENDS
         "${CMAKE_CURRENT_SOURCE_DIR}/*.test.cpp"
     )
 

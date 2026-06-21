@@ -72,12 +72,12 @@ endif()
 # Tests
 if(BUILD_TESTING)
     # Discover test files using naming pattern
-    file(GLOB_RECURSE ENGINE_TEST_SOURCES
+    file(GLOB_RECURSE ENGINE_TEST_SOURCES CONFIGURE_DEPENDS
         "${CMAKE_CURRENT_SOURCE_DIR}/*.test.cpp"
     )
 
     # Discover benchmark files using naming pattern
-    file(GLOB_RECURSE ENGINE_BENCHMARK_SOURCES
+    file(GLOB_RECURSE ENGINE_BENCHMARK_SOURCES CONFIGURE_DEPENDS
         "${CMAKE_CURRENT_SOURCE_DIR}/*.bench.cpp"
     )
 
