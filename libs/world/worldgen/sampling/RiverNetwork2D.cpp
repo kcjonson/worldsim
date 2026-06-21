@@ -19,26 +19,18 @@ namespace {
 
 constexpr double kPi = 3.14159265358979323846;
 
-// Two meander scales keep the channel from reading as a straight line at any zoom:
-//
-//   - A basin-scale sweep, amplitude a fraction of the (multi-km) coarse segment,
-//     as a sum of half-period sines that vanish at the segment ends so the path
-//     curves broadly across the whole reach. This is what bends the river when you
-//     zoom out past a single chunk.
-//   - A channel-scale meander whose geometry scales with width (wavelength ~10x,
-//     amplitude ~3x width): a broad river snakes in big loops, a stream wiggles
-//     tightly. Amplitude well above the width so even a wide river visibly bends.
-//
-// The channel-scale term is tapered to zero within a short arc-length of each
-// coarse-tile joint (continuity); the basin sweep vanishes there on its own.
-constexpr double kMeanderWavelenMult = 10.0;
-constexpr double kMeanderWavelenMin  = 120.0;
-constexpr double kMeanderWavelenMax  = 6000.0;
-constexpr double kMeanderAmpMult     = 3.0;
-constexpr double kMaxMeanderMeters   = 800.0; // channel-scale amplitude cap
-
-constexpr double kBasinSweepFrac = 0.08;   // sweep amplitude as a fraction of segment length
-constexpr double kBasinSweepCap  = 3000.0; // meters
+// Channel meander: a continuously winding centerline (many small bends), not one
+// broad arc. Three octaves of sine in global arc length give a sinuous, irregular
+// path; the wavelength scales with width (big rivers swing wider) but has a floor
+// so even a thin stream visibly snakes, and the amplitude is a large fraction of
+// the wavelength for real sinuosity. The whole meander tapers to zero within a
+// short arc length of each coarse-tile joint so segments meet at the tile centers
+// (cross-segment continuity).
+constexpr double kMeanderWavelenMult = 9.0;
+constexpr double kMeanderWavelenMin  = 240.0;
+constexpr double kMeanderWavelenMax  = 2200.0;
+constexpr double kMeanderSinuosity   = 0.36;  // amplitude as a fraction of wavelength
+constexpr double kMeanderAmpCap      = 900.0; // meters
 
 // Channel width varies along its length: quick riffles plus occasional pools
 // (local widenings where the current slows). Pools are asymmetric -- short crests
@@ -84,11 +76,13 @@ constexpr double kFeederPerpTiltMinDeg = 18.0;  // tilt from perpendicular, open
 constexpr double kFeederPerpTiltMaxDeg = 42.0;
 constexpr double kFeederMouthFrac      = 0.45;  // mouth half-width vs parent half-width
 constexpr double kFeederMouthMaxHalf   = 3.0;
-constexpr double kFeederMeanderFrac    = 0.10;
-constexpr double kFeederStepMeters     = 22.0;
+constexpr double kFeederStepMeters     = 11.0;  // fine enough to resolve the tight wiggle
 constexpr double kFeederBankInset      = 0.6;   // start inside the bank so the mouth meets parent water
+constexpr double kFeederMeanderWavelen = 45.0;  // tight bends -> windy, not one broad arc
+constexpr double kFeederMeanderAmp     = 11.0;  // lateral wiggle (meters)
 constexpr int    kHeadwaterFeederMin   = 2;     // a source is a convergence of 2-3 trickles
 constexpr int    kHeadwaterFeederMax   = 3;
+constexpr double kHeadwaterFanDeg      = 55.0;  // springs spread +/- this around upstream so they diverge
 
 // How far upstream of the query box a tile can sit and still have its downstream
 // segment cross it: one tile step plus the meander, feeder, and channel headroom.
@@ -97,9 +91,6 @@ constexpr double kReachTileFactor = 1.25;
 // FNV hash -> double in [0,1) using the top 53 bits (the double mantissa).
 double hashUnit(uint64_t h) {
     return static_cast<double>(h >> 11) * (1.0 / 9007199254740992.0);
-}
-double hashSigned(uint64_t base, uint64_t salt) {
-    return 2.0 * hashUnit(foundation::hashCombine(base, salt)) - 1.0;
 }
 
 // Width multiplier at arc length s: gentle riffles plus rare wider pools. The
@@ -203,7 +194,7 @@ void RiverNetwork2D::collectRiverTiles(double minX, double minY, double maxX, do
     // into it; include the worst-case lateral excursion in the reach.
     const double reach =
         grid.tileWidthMeters(seed, world->derived.planetRadiusMeters) * kReachTileFactor +
-        kBasinSweepCap + kMaxMeanderMeters + kFeederLenMax + static_cast<double>(kMaxWidth);
+        kMeanderAmpCap + kFeederLenMax + static_cast<double>(kMaxWidth);
     const double exMinX = minX - reach;
     const double exMinY = minY - reach;
     const double exMaxX = maxX + reach;
@@ -256,30 +247,24 @@ void RiverNetwork2D::emitSegment(TileId tile, double minX, double minY, double m
     // Do not taper to zero at the mouth: ocean tiles carry no flow.
     const float flowB = isOceanTile(down) ? flowA : world->data.flowAccum[down];
 
-    // Deterministic meander phases and basin-sweep coefficients for this segment.
+    // Deterministic meander phases for this segment.
     const uint64_t base = foundation::hashCombine(
         foundation::hashCombine(world->params.seed, tile), down);
     const double phaseA = 2.0 * kPi * hashUnit(foundation::hashCombine(base, 0x41));
     const double phaseB = 2.0 * kPi * hashUnit(foundation::hashCombine(base, 0x42));
+    const double phaseC = 2.0 * kPi * hashUnit(foundation::hashCombine(base, 0x45));
     const double phaseW = 2.0 * kPi * hashUnit(foundation::hashCombine(base, 0x43));
     const double phaseP = 2.0 * kPi * hashUnit(foundation::hashCombine(base, 0x44));
-    const double c1 = hashSigned(base, 0x11);
-    const double c2 = hashSigned(base, 0x22);
-    const double c3 = hashSigned(base, 0x33);
 
-    // Channel-scale meander geometry scales with the segment's representative width.
+    // Meander geometry scales with the segment's representative width.
     const double segWidth = static_cast<double>(channelWidthMeters(0.5f * (flowA + flowB)));
     const double meanderWavelen =
         std::clamp(kMeanderWavelenMult * segWidth, kMeanderWavelenMin, kMeanderWavelenMax);
     const double meanderAmp =
-        std::min({kMeanderAmpMult * segWidth, 0.3 * length, kMaxMeanderMeters});
-    // Taper the channel-scale meander to zero only within a very short arc-length of
-    // each tile-center joint -- just enough for continuity there. The player lands at
-    // a joint, so keeping this short is what lets the river wander right at the colony
-    // instead of arriving as a long straight reach.
-    const double meanderTaper = std::clamp(meanderWavelen * 0.08, 40.0, 120.0);
-    // Basin-scale sweep amplitude (fraction of the coarse segment length).
-    const double basinAmp = std::min(kBasinSweepFrac * length, kBasinSweepCap);
+        std::min({kMeanderSinuosity * meanderWavelen, 0.22 * length, kMeanderAmpCap});
+    // Taper the meander to zero within a short arc-length of each tile-center joint
+    // so adjacent segments meet exactly at the tile centers (continuity).
+    const double meanderTaper = std::clamp(meanderWavelen * 0.12, 60.0, 200.0);
 
     // Centerline point + channel half-width at arc length s along the segment.
     auto eval = [&](double s, double& ox, double& oy, float& ohw) {
@@ -288,14 +273,14 @@ void RiverNetwork2D::emitSegment(TileId tile, double minX, double minY, double m
         double e = distEnd / meanderTaper;
         e = e <= 0.0 ? 0.0 : (e >= 1.0 ? 1.0 : e * e * (3.0 - 2.0 * e)); // smoothstep
         const double env = e;
-        // Basin sweep: half-period sines that vanish at the segment ends (t=0,1).
-        const double sweep = c1 * foundation::det_math::sin(kPi * t) +
-                             0.6 * c2 * foundation::det_math::sin(2.0 * kPi * t) +
-                             0.4 * c3 * foundation::det_math::sin(3.0 * kPi * t);
-        const double wander =
-            0.7 * foundation::det_math::sin(2.0 * kPi * s / meanderWavelen + phaseA) +
-            0.3 * foundation::det_math::sin(4.0 * kPi * s / meanderWavelen + phaseB);
-        const double offset = basinAmp * sweep + env * meanderAmp * wander;
+        // Three octaves of sine in global arc length: a sinuous, irregular winding
+        // path rather than one broad arc. Keyed on s (not t) so neighbouring chunks
+        // emit identical points where they overlap.
+        const double w = 2.0 * kPi * s / meanderWavelen;
+        const double wander = 0.6 * foundation::det_math::sin(w + phaseA) +
+                              0.3 * foundation::det_math::sin(2.0 * w + phaseB) +
+                              0.15 * foundation::det_math::sin(3.3 * w + phaseC);
+        const double offset = env * meanderAmp * wander;
         ox = pa.x + ux * s + perpx * offset;
         oy = pa.y + uy * s + perpy * offset;
 
@@ -352,27 +337,28 @@ void RiverNetwork2D::emitSegment(TileId tile, double minX, double minY, double m
     // --- Procedural short feeders: springs and streams flowing into this channel.
     // Each is fully determined by the parent tile-pair + a confluence key, so any
     // chunk that gathers this parent emits identical feeders (seamless across
-    // seams). A feeder leaves the bank near-perpendicular, tilted downstream so the
-    // confluence opens like a real tributary, and climbs to a spring.
-    auto emitFeeder = [&](double cx0, double cy0, double parentHalfHere, double side,
-                          double tilt, double len, double meanderC, uint64_t fh) {
-        const double cosT = foundation::det_math::cos(tilt);
-        const double sinT = foundation::det_math::sin(tilt);
-        // Out from the chosen bank (perp), leaning upstream (-u) so flow enters the
-        // parent heading downstream -- the natural acute confluence.
-        const double dux = side * perpx * cosT + (-ux) * sinT;
-        const double duy = side * perpy * cosT + (-uy) * sinT;
-        const double fpx = -duy;
+    // seams). A feeder runs out along an explicit direction to a spring, winding
+    // tightly along the way (windy, not one broad arc).
+    auto emitFeeder = [&](double cx0, double cy0, double parentHalfHere,
+                          double dirx, double diry, double len, uint64_t fh) {
+        const double dlen = foundation::det_math::sqrt(dirx * dirx + diry * diry);
+        if (dlen < 1e-9) return;
+        const double dux = dirx / dlen;
+        const double duy = diry / dlen;
+        const double fpx = -duy; // wiggle axis, perpendicular to the feeder's run
         const double fpy = dux;
-        // Anchor a little inside the bank so the mouth overlaps the parent water and
-        // the feeder never reaches across to the far bank.
-        const double sx = cx0 + side * perpx * (parentHalfHere * kFeederBankInset);
-        const double sy = cy0 + side * perpy * (parentHalfHere * kFeederBankInset);
+        // Anchor a little inside the bank (toward the side the feeder leaves on) so
+        // the mouth overlaps the parent water and never reaches the far bank.
+        double bankSign = dux * perpx + duy * perpy;
+        bankSign = bankSign >= 0.0 ? 1.0 : -1.0;
+        const double sx = cx0 + bankSign * perpx * (parentHalfHere * kFeederBankInset);
+        const double sy = cy0 + bankSign * perpy * (parentHalfHere * kFeederBankInset);
         const double mouthHalf = std::clamp(parentHalfHere * kFeederMouthFrac,
                                             static_cast<double>(kRenderMinHalf), kFeederMouthMaxHalf);
-        const double fAmp = kFeederMeanderFrac * len;
-        const double phaseFP = 2.0 * kPi * hashUnit(foundation::hashCombine(fh, 0x7));
-        const int fSteps = std::clamp(static_cast<int>(std::lround(len / kFeederStepMeters)), 3, 40);
+        const double phaseM1 = 2.0 * kPi * hashUnit(foundation::hashCombine(fh, 0x7));
+        const double phaseM2 = 2.0 * kPi * hashUnit(foundation::hashCombine(fh, 0x8));
+        const double phaseFP = 2.0 * kPi * hashUnit(foundation::hashCombine(fh, 0x9));
+        const int fSteps = std::clamp(static_cast<int>(std::lround(len / kFeederStepMeters)), 3, 60);
 
         double pfx = sx;
         double pfy = sy;
@@ -380,10 +366,16 @@ void RiverNetwork2D::emitSegment(TileId tile, double minX, double minY, double m
         for (int i = 1; i <= fSteps; ++i) {
             const double f = static_cast<double>(i) / static_cast<double>(fSteps);
             const double along = len * f;
-            const double moff = fAmp * meanderC * foundation::det_math::sin(kPi * f); // 0 at both ends
+            // Tight, irregular winding tapered to zero at both ends (so the mouth
+            // sits on the bank and the spring is a point).
+            const double env = foundation::det_math::sin(kPi * f);
+            const double wander =
+                0.7 * foundation::det_math::sin(2.0 * kPi * along / kFeederMeanderWavelen + phaseM1) +
+                0.3 * foundation::det_math::sin(4.0 * kPi * along / kFeederMeanderWavelen + phaseM2);
+            const double moff = kFeederMeanderAmp * env * wander;
             const double fx = sx + dux * along + fpx * moff;
             const double fy = sy + duy * along + fpy * moff;
-            // Taper mouth -> trickle (render floor), with the same riffle/pool play.
+            // Taper mouth -> trickle (render floor), with riffle/pool play.
             const double taper = mouthHalf + (static_cast<double>(kRenderMinHalf) - mouthHalf) * f;
             const float fhw = std::max(kRenderMinHalf,
                                        static_cast<float>(taper * widthVariation(along, phaseFP, phaseFP * 1.7)));
@@ -398,19 +390,16 @@ void RiverNetwork2D::emitSegment(TileId tile, double minX, double minY, double m
         }
     };
 
-    auto feederGeometry = [&](uint64_t fh, double& tilt, double& len, double& meanderC) {
-        tilt = (kFeederPerpTiltMinDeg + (kFeederPerpTiltMaxDeg - kFeederPerpTiltMinDeg) *
-                                            hashUnit(foundation::hashCombine(fh, 0x3))) *
-               (kPi / 180.0);
-        len = kFeederLenMin +
-              (kFeederLenMax - kFeederLenMin) * hashUnit(foundation::hashCombine(fh, 0x4));
-        meanderC = 2.0 * hashUnit(foundation::hashCombine(fh, 0x5)) - 1.0;
+    auto feederLen = [&](uint64_t fh) {
+        return kFeederLenMin +
+               (kFeederLenMax - kFeederLenMin) * hashUnit(foundation::hashCombine(fh, 0x4));
     };
 
     // Headwater source: 2-3 trickles converge at the river's birth (s ~ 0),
     // regardless of how thin the head is -- this is what makes a source read as a
-    // gathering of springs rather than an abrupt start. Only when the source is
-    // within feeder reach of the query box.
+    // gathering of springs rather than an abrupt start. The springs fan across the
+    // upstream semicircle at distinct angles so they diverge and stay apart. Only
+    // when the source is within feeder reach of the query box.
     if (isHeadwaterRiverTile(tile)) {
         double scx = 0.0;
         double scy = 0.0;
@@ -423,17 +412,19 @@ void RiverNetwork2D::emitSegment(TileId tile, double minX, double minY, double m
             const int count = kHeadwaterFeederMin +
                               static_cast<int>(hashUnit(foundation::hashCombine(hh, 0x0)) *
                                                (kHeadwaterFeederMax - kHeadwaterFeederMin + 1));
+            const double parentHalfHere = std::max(static_cast<double>(srcHalf), 1.2);
             for (int j = 0; j < count; ++j) {
                 const uint64_t fh = foundation::hashCombine(hh, static_cast<uint64_t>(j + 1));
-                const double side = (j % 2 == 0) ? -1.0 : 1.0; // fan to alternating banks
-                double tilt = 0.0;
-                double len = 0.0;
-                double meanderC = 0.0;
-                feederGeometry(fh, tilt, len, meanderC);
-                // At a head the parent is barely a trickle; give the source streams a
-                // small but real mouth so they read as converging tributaries.
-                const double parentHalfHere = std::max(static_cast<double>(srcHalf), 1.2);
-                emitFeeder(scx, scy, parentHalfHere, side, tilt, len, meanderC, fh);
+                // Spread evenly across [-fan, +fan] around straight-upstream (-u),
+                // plus a little jitter, so springs point in clearly distinct directions.
+                const double spread = count > 1 ? (-1.0 + 2.0 * j / (count - 1)) : 0.0;
+                const double jitter = 0.2 * (2.0 * hashUnit(foundation::hashCombine(fh, 0x6)) - 1.0);
+                const double theta = (spread + jitter) * kHeadwaterFanDeg * (kPi / 180.0);
+                const double cosA = foundation::det_math::cos(theta);
+                const double sinA = foundation::det_math::sin(theta);
+                const double dux = (-ux) * cosA - (-uy) * sinA;
+                const double duy = (-ux) * sinA + (-uy) * cosA;
+                emitFeeder(scx, scy, parentHalfHere, dux, duy, feederLen(fh), fh);
             }
         }
     }
@@ -460,12 +451,18 @@ void RiverNetwork2D::emitSegment(TileId tile, double minX, double minY, double m
         float  parentHalf = 0.0f;
         eval(sc, ccx, ccy, parentHalf);
 
-        const double side = hashUnit(foundation::hashCombine(fh, 0x2)) < 0.5 ? -1.0 : 1.0;
-        double tilt = 0.0;
-        double len = 0.0;
-        double meanderC = 0.0;
-        feederGeometry(fh, tilt, len, meanderC);
-        emitFeeder(ccx, ccy, static_cast<double>(parentHalf), side, tilt, len, meanderC, fh);
+        // Alternate banks by index so consecutive feeders sit on opposite sides and
+        // stay clear of one another, leaving the bank near-perpendicular with a
+        // downstream tilt (an acute, natural confluence).
+        const double side = (kf % 2 == 0) ? -1.0 : 1.0;
+        const double tilt = (kFeederPerpTiltMinDeg + (kFeederPerpTiltMaxDeg - kFeederPerpTiltMinDeg) *
+                                                          hashUnit(foundation::hashCombine(fh, 0x3))) *
+                            (kPi / 180.0);
+        const double cosT = foundation::det_math::cos(tilt);
+        const double sinT = foundation::det_math::sin(tilt);
+        const double dux = side * perpx * cosT + (-ux) * sinT;
+        const double duy = side * perpy * cosT + (-uy) * sinT;
+        emitFeeder(ccx, ccy, static_cast<double>(parentHalf), dux, duy, feederLen(fh), fh);
     }
 }
 

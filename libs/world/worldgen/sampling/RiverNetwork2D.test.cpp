@@ -260,7 +260,10 @@ TEST(RiverNetwork2D, FeedersTaperToTrickle) {
 }
 
 // A river's headwater is a convergence of springs: even a thin head (below the
-// along-channel feeder gate) sprouts streams that enter from both banks.
+// along-channel feeder gate) sprouts streams that run into the upstream hemisphere
+// and fan to both banks. The channel flows *downstream* from the source, so any
+// water upstream of it can only be a spring -- a clean discriminator independent
+// of the channel's own meander.
 TEST(RiverNetwork2D, HeadwaterSproutsConvergingSprings) {
     auto world = makeLandWorld();
     auto chain = buildRiver(*world, 0.0, -30.0, 0.0, 30.0); // default thin flow
@@ -268,25 +271,38 @@ TEST(RiverNetwork2D, HeadwaterSproutsConvergingSprings) {
     RiverNetwork2D net(world, 0.0, 0.0);
     SphericalProjection proj(world->derived.planetRadiusMeters, 0.0, 0.0);
 
-    // The chain runs west->east along the equator, so the channel through the
-    // source has y ~ 0; springs fan to the +y and -y banks. The thin channel's
-    // own meander is < ~10 m, well under the 30 m bank threshold, so both-sign
-    // excursions can only come from the source springs.
     const WorldPos2d src = tilePos(*world, proj, chain.front());
+    const WorldPos2d nxt = tilePos(*world, proj, chain[1]);
+    double ux = nxt.x - src.x;
+    double uy = nxt.y - src.y;
+    const double ulen = std::sqrt(ux * ux + uy * uy);
+    ASSERT_GT(ulen, 0.0);
+    ux /= ulen;
+    uy /= ulen;
+    const double perpx = -uy;
+    const double perpy = ux;
+
     const double r = 1500.0;
     std::vector<RiverNetwork2D::Segment> segs;
     net.gatherSegments(src.x - r, src.y - r, src.x + r, src.y + r, segs);
     ASSERT_FALSE(segs.empty());
 
-    bool above = false;
-    bool below = false;
+    bool leftBank = false;
+    bool rightBank = false;
     for (const auto& s : segs) {
-        for (double y : {s.y0, s.y1}) {
-            if (y > src.y + 30.0) above = true;
-            if (y < src.y - 30.0) below = true;
+        const double xs[2] = {s.x0, s.x1};
+        const double ys[2] = {s.y0, s.y1};
+        for (int i = 0; i < 2; ++i) {
+            const double along = (xs[i] - src.x) * (-ux) + (ys[i] - src.y) * (-uy);
+            const double lateral = (xs[i] - src.x) * perpx + (ys[i] - src.y) * perpy;
+            if (along > 30.0) { // upstream of the source: only a spring can be here
+                if (lateral > 20.0) leftBank = true;
+                if (lateral < -20.0) rightBank = true;
+            }
         }
     }
-    EXPECT_TRUE(above && below) << "a headwater should be fed by streams from both banks";
+    EXPECT_TRUE(leftBank && rightBank)
+        << "a headwater should be fed by springs from both banks, upstream of the source";
 }
 
 // The local per-point query (which gathers only a small box, as a chunk does)

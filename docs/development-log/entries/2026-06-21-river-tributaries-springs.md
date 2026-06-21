@@ -64,6 +64,23 @@ Playtest feedback on the first feeder pass drove a second set of changes, all in
 New tests: `HeadwaterSproutsConvergingSprings` (springs enter from both banks),
 plus `FeedersTaperToTrickle` updated to assert the contiguity floor.
 
+### Windier streams (second feedback pass)
+
+Zoomed out, the channels still read as smooth broad arcs (a basin-scale sweep
+dominated the meander) and feeders bowed as a single arc. Reworked:
+
+- **Channels wind continuously.** Dropped the basin sweep; the meander is now
+  three octaves of sine in global arc length with the amplitude a large fraction
+  of the wavelength (`kMeanderSinuosity` 0.36), so the centerline snakes in many
+  bends rather than one arc. Still pinned to zero at the coarse-tile joints.
+- **Feeders are wiggly, not a bow.** Replaced the single `sin(pi*f)` arc with a
+  tight multi-bend wiggle (`kFeederMeanderWavelen` ~45 m) enveloped to zero at
+  both ends.
+- **Streams stay apart.** Headwater springs fan across distinct angles spanning
+  the upstream semicircle (`kHeadwaterFanDeg`); along-channel feeders alternate
+  banks by index so neighbours sit on opposite sides. `emitFeeder` now takes an
+  explicit direction to support both.
+
 ## Related Documentation
 
 - `docs/development-log/entries/2026-06-21-2d-rivers-and-water-landing.md` — the
