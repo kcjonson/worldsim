@@ -789,6 +789,22 @@ The following MVP epics have all been completed. Detailed task breakdowns are pr
 
 ## Planned Epics
 
+### UI Scale setting
+**Spec/Documentation:** `docs/design/ui/ui-scale-setting.md`
+**Dependencies:** Settings screen
+**Status:** needs spec
+
+**Goal:** One user-facing setting that scales the entire UI uniformly. The game renders the UI denser than the Salvage prototype (the logical viewport is ~2.5x the prototype's reference, so token-built elements come out ~19% of screen width where the mock is ~47%). A single global UI-scale factor applied at the logical-viewport level lets players size the UI to match the prototype's proportions, instead of hand-enlarging individual screens.
+
+**Tasks:**
+- [ ] Calibration pass: measure current logical viewport vs the prototype's 1600x1000 reference; pick a default scale
+- [ ] Apply a single UI-scale factor at `getLogicalViewport()` derivation (layout, not bitmap post-scale); confirm DPI isn't already folded in
+- [ ] Verify pointer hit-testing stays aligned with the scaled draw space
+- [ ] Live re-layout on change (open dialogs/screens reflow, no reload)
+- [ ] Settings-screen control (slider/stepped) + persistence + reset; confirm MSDF text + tessellated icons stay crisp at the extremes
+
+---
+
 ### Season System (season slider + dynamic seasonal snow)
 **Spec/Documentation:** needs spec (background in `docs/technical/cryosphere-ice-and-glaciers.md` → "Season system")
 **Dependencies:** Cryosphere / ice (landed)
