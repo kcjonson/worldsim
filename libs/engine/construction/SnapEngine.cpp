@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <numbers>
 
 namespace engine::construction {
@@ -289,8 +290,85 @@ namespace engine::construction {
 		return result;
 	}
 
+	SnapResult SnapEngine::axisAlign(const std::vector<::Foundation::Vec2>& points, ::Foundation::Vec2 cursor,
+									 bool alignToExisting) const {
+		const float tol = snapping_->axisGuideToleranceMeters;
+		if (tol <= 0.0F) {
+			return {cursor, SnapKind::None};
+		}
+
+		// Track the strictly-nearest reference node (within tolerance) for each axis,
+		// independently: the X lock and the Y lock can be two different nodes.
+		bool			   haveX = false;
+		bool			   haveY = false;
+		float			   bestDX = std::numeric_limits<float>::max();
+		float			   bestDY = std::numeric_limits<float>::max();
+		::Foundation::Vec2 refX{};
+		::Foundation::Vec2 refY{};
+
+		auto consider = [&](::Foundation::Vec2 node) {
+			const float dX = std::abs(cursor.x - node.x);
+			if (dX <= tol && dX < bestDX) {
+				bestDX = dX;
+				refX = node;
+				haveX = true;
+			}
+			const float dY = std::abs(cursor.y - node.y);
+			if (dY <= tol && dY < bestDY) {
+				bestDY = dY;
+				refY = node;
+				haveY = true;
+			}
+		};
+
+		// In-progress shape's own placed nodes are always alignment targets.
+		for (const ::Foundation::Vec2& p : points) {
+			consider(p);
+		}
+		// Committed-foundation vertices within smartGuideRange of the cursor, opt-in.
+		if (alignToExisting) {
+			const float range = snapping_->smartGuideRangeMeters;
+			const float rangeSq = range * range; // squared compare avoids a per-vertex sqrt
+			for (const Foundation& f : world_->foundations()) {
+				for (const geometry::Vec2i64& vq : f.ring) {
+					const ::Foundation::Vec2 v = geometry::dequantize(vq);
+					const float				 dxv = cursor.x - v.x;
+					const float				 dyv = cursor.y - v.y;
+					if (dxv * dxv + dyv * dyv <= rangeSq) {
+						consider(v);
+					}
+				}
+			}
+		}
+
+		if (!haveX && !haveY) {
+			return {cursor, SnapKind::None};
+		}
+
+		SnapResult r;
+		r.kind = SnapKind::AxisGuide;
+		r.point = {haveX ? refX.x : cursor.x, haveY ? refY.y : cursor.y};
+		// Guide line(s) from the reference node to the snapped point: vertical for an X
+		// lock, horizontal for a Y lock. Primary pair holds the first lock, the alt pair
+		// the second when both axes align at once.
+		if (haveX) {
+			r.guideFrom = refX;
+			r.guideTo = r.point;
+		}
+		if (haveY) {
+			if (haveX) {
+				r.guideFromAlt = refY;
+				r.guideToAlt = r.point;
+			} else {
+				r.guideFrom = refY;
+				r.guideTo = r.point;
+			}
+		}
+		return r;
+	}
+
 	SnapResult SnapEngine::snap(const std::vector<::Foundation::Vec2>& points, ::Foundation::Vec2 cursor, bool freeform,
-								float originCloseRadiusMeters) const {
+								float originCloseRadiusMeters, bool alignToExisting) const {
 		// Origin-close: once a closeable shape exists (>= 3 points), being within
 		// the origin radius snaps onto the first point and signals a close. The
 		// caller may pass a zoom-stable radius; a negative value uses the config.
@@ -311,6 +389,16 @@ namespace engine::construction {
 		::Foundation::Vec2 e{};
 		if (snapToEdge(cursor, e)) {
 			return {e, SnapKind::Edge};
+		}
+
+		// Axis-alignment guides: line up with an existing node's X and/or Y. Suppressed
+		// by freeform (Alt), like angle snap; beats the generic angle increment because
+		// aligning to a real node is more intentional than a fixed increment.
+		if (!freeform) {
+			const SnapResult axis = axisAlign(points, cursor, alignToExisting);
+			if (axis.kind == SnapKind::AxisGuide) {
+				return axis;
+			}
 		}
 
 		// Angle snap relative to the previous segment, unless freeform or there is
@@ -378,7 +466,8 @@ namespace engine::construction {
 		const std::vector<::Foundation::Vec2>& points,
 		::Foundation::Vec2					   cursor,
 		bool								   freeform,
-		std::int64_t						   wallHalfThicknessMm
+		std::int64_t						   wallHalfThicknessMm,
+		bool								   alignToExisting
 	) const {
 		// Priority, most specific first (design Walls > Drawing). No origin-close:
 		// the chain is open and never closes onto its first point.
@@ -413,6 +502,17 @@ namespace engine::construction {
 		::Foundation::Vec2 e{};
 		if (snapToEdge(cursor, e, wallHalfThicknessMm)) {
 			return {e, SnapKind::Edge};
+		}
+
+		// Axis-alignment guides (suppressed by freeform), below the wall/foundation
+		// snaps but above the generic angle increment. Note: a wall axis-align point is
+		// NOT inset for outer-face-flush -- it lines up with a node's coordinate, not a
+		// foundation face, so the wall centerline lands on the alignment line.
+		if (!freeform) {
+			const SnapResult axis = axisAlign(points, cursor, alignToExisting);
+			if (axis.kind == SnapKind::AxisGuide) {
+				return axis;
+			}
 		}
 
 		if (!freeform && !points.empty()) {

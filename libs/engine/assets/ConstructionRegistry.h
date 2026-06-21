@@ -179,8 +179,19 @@ namespace engine::assets {
 		float	edgeSnapRadiusMeters = 0.3F;
 		int64_t edgeSnapRadiusMm = 300;
 
+		// Search radius for committed-foundation reference nodes that axis-alignment
+		// guides can lock onto (the in-progress shape's own nodes are always considered).
 		float	smartGuideRangeMeters = 8.0F;
 		int64_t smartGuideRangeMm = 8000;
+
+		// Perpendicular tolerance for an axis-alignment lock: the cursor snaps to a
+		// reference node's X (or Y) when it is within this distance of it.
+		float	axisGuideToleranceMeters = 0.3F;
+		int64_t axisGuideToleranceMm = 300;
+
+		// Default for the user-facing "align to existing foundations" setting (the
+		// in-progress-shape alignment is always on regardless). Seeds UserSettings.
+		bool	alignToExistingDefault = true;
 
 		float	originCloseRadiusMeters = 0.5F;
 		int64_t originCloseRadiusMm = 500;
