@@ -5,16 +5,29 @@
 }
 
 .derived {
-	margin: 0 0 var(--space-1);
+	margin: 0;
 	font-size: var(--fs-xs);
 	color: var(--text-faint);
 	line-height: var(--lh);
 }
 
-.needs {
+/* needs on the left, body & ailments on the right */
+.cols {
 	display: grid;
 	grid-template-columns: 1fr 1fr;
-	gap: var(--space-2) var(--space-5);
+	gap: var(--space-3) var(--space-6);
+	align-items: start;
+}
+.col {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-3);
+}
+
+.needs {
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-2);
 }
 .needRow {
 	display: flex;
@@ -43,7 +56,7 @@
 
 .empty {
 	display: flex;
-	align-items: center;
+	align-items: flex-start;
 	gap: var(--space-3);
 	padding: var(--space-3);
 	border: var(--border-width) dashed var(--line-hairline);
@@ -53,6 +66,7 @@
 .emptyIcon {
 	color: var(--text-dim);
 	flex-shrink: 0;
+	margin-top: 1px;
 }
 .emptyTitle {
 	font-size: var(--fs-sm);

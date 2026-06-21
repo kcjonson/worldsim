@@ -28,27 +28,32 @@ export function HealthTab() {
 			<Meter label="Mood" value={mood} valueText={`${Math.round(mood * 100)}% · ${moodLabel(mood)}`} tone="auto" />
 			<p className={styles.derived}>Mood is computed from the needs below; it sinks as they go unmet.</p>
 
-			<Divider label="Vital Needs" />
-			<div className={styles.needs}>
-				{vital.map((n) => (
-					<NeedRow key={n.name} n={n} />
-				))}
-			</div>
+			<div className={styles.cols}>
+				<div className={styles.col}>
+					<Divider label="Vital Needs" />
+					<div className={styles.needs}>
+						{vital.map((n) => (
+							<NeedRow key={n.name} n={n} />
+						))}
+					</div>
+					<Divider label="Comfort" />
+					<div className={styles.needs}>
+						{comfort.map((n) => (
+							<NeedRow key={n.name} n={n} />
+						))}
+					</div>
+					<p className={styles.muted}>Comfort needs are tracked, but colonists don't act on them yet.</p>
+				</div>
 
-			<Divider label="Comfort" />
-			<div className={styles.needs}>
-				{comfort.map((n) => (
-					<NeedRow key={n.name} n={n} />
-				))}
-			</div>
-			<p className={styles.muted}>Comfort needs are tracked, but colonists don't act on them yet.</p>
-
-			<Divider label="Body & Ailments" />
-			<div className={styles.empty}>
-				<Icon name="heart" size={16} className={styles.emptyIcon} />
-				<div>
-					<div className={styles.emptyTitle}>No injuries or ailments</div>
-					<div className={styles.emptySub}>Wounds, illness, and treatment arrive with the medical update.</div>
+				<div className={styles.col}>
+					<Divider label="Body & Ailments" />
+					<div className={styles.empty}>
+						<Icon name="heart" size={16} className={styles.emptyIcon} />
+						<div>
+							<div className={styles.emptyTitle}>No injuries or ailments</div>
+							<div className={styles.emptySub}>Wounds, illness, and treatment arrive with the medical update.</div>
+						</div>
+					</div>
 				</div>
 			</div>
 		</div>
