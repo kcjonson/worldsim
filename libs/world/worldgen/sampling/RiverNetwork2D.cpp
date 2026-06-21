@@ -19,17 +19,26 @@ namespace {
 
 constexpr double kPi = 3.14159265358979323846;
 
-// Meander scales with channel width, as real rivers do: wavelength ~ 11x width,
-// amplitude ~ 1.4x width. A broad river makes long, gentle bends; a narrow stream
-// wiggles tightly -- both read as wander within a single 512 m chunk. The
-// displacement is tapered to zero at the segment ends (tile centers) by an
-// envelope, so consecutive segments meet there and seams stay continuous.
-// Amplitude is also capped to keep the channel inside the coarse drainage corridor.
-constexpr double kMeanderWavelenMult = 11.0;
+// Two meander scales keep the channel from reading as a straight line at any zoom:
+//
+//   - A basin-scale sweep, amplitude a fraction of the (multi-km) coarse segment,
+//     as a sum of half-period sines that vanish at the segment ends so the path
+//     curves broadly across the whole reach. This is what bends the river when you
+//     zoom out past a single chunk.
+//   - A channel-scale meander whose geometry scales with width (wavelength ~10x,
+//     amplitude ~3x width): a broad river snakes in big loops, a stream wiggles
+//     tightly. Amplitude well above the width so even a wide river visibly bends.
+//
+// The channel-scale term is tapered to zero within a short arc-length of each
+// coarse-tile joint (continuity); the basin sweep vanishes there on its own.
+constexpr double kMeanderWavelenMult = 10.0;
 constexpr double kMeanderWavelenMin  = 120.0;
-constexpr double kMeanderWavelenMax  = 5000.0;
-constexpr double kMeanderAmpMult     = 1.4;
-constexpr double kMaxMeanderMeters   = 600.0; // corridor cap + collect-tiles reach
+constexpr double kMeanderWavelenMax  = 6000.0;
+constexpr double kMeanderAmpMult     = 3.0;
+constexpr double kMaxMeanderMeters   = 800.0; // channel-scale amplitude cap
+
+constexpr double kBasinSweepFrac = 0.08;   // sweep amplitude as a fraction of segment length
+constexpr double kBasinSweepCap  = 3000.0; // meters
 
 // Channel width varies along its length (riffles and pools).
 constexpr double kWidthWavelen   = 260.0;
@@ -43,9 +52,9 @@ constexpr double kStepMeters = 20.0;
 // Hydraulic geometry: channel width ~ sqrt(discharge), clamped. Headwater streams
 // start narrow and broaden downstream as flow accumulates. flowAccum is rain-
 // seeded upstream drainage (precip/1000 per tile).
-constexpr float kWidthCoef = 1.4f;
+constexpr float kWidthCoef = 1.1f;
 constexpr float kMinWidth  = 1.5f;
-constexpr float kMaxWidth  = 150.0f;
+constexpr float kMaxWidth  = 110.0f;
 
 // How far upstream of the query box a tile can sit and still have its downstream
 // segment cross it: one tile step plus the meander and channel headroom.
@@ -54,6 +63,9 @@ constexpr double kReachTileFactor = 1.25;
 // FNV hash -> double in [0,1) using the top 53 bits (the double mantissa).
 double hashUnit(uint64_t h) {
     return static_cast<double>(h >> 11) * (1.0 / 9007199254740992.0);
+}
+double hashSigned(uint64_t base, uint64_t salt) {
+    return 2.0 * hashUnit(foundation::hashCombine(base, salt)) - 1.0;
 }
 
 // Distance from point p to segment [a,b]; outT is the clamped projection
@@ -130,9 +142,11 @@ void RiverNetwork2D::collectRiverTiles(double minX, double minY, double maxX, do
     const double cy = 0.5 * (minY + maxY);
     const TileId seed = grid.fromUnitVector(projection.worldToUnitVector(cx, cy));
 
+    // A segment whose straight axis lies outside the box can still sweep/meander
+    // into it; include the worst-case lateral excursion in the reach.
     const double reach =
         grid.tileWidthMeters(seed, world->derived.planetRadiusMeters) * kReachTileFactor +
-        kMaxMeanderMeters + static_cast<double>(kMaxWidth);
+        kBasinSweepCap + kMaxMeanderMeters + static_cast<double>(kMaxWidth);
     const double exMinX = minX - reach;
     const double exMinY = minY - reach;
     const double exMaxX = maxX + reach;
@@ -185,24 +199,29 @@ void RiverNetwork2D::emitSegment(TileId tile, double minX, double minY, double m
     // Do not taper to zero at the mouth: ocean tiles carry no flow.
     const float flowB = isOceanTile(down) ? flowA : world->data.flowAccum[down];
 
-    // Deterministic meander phases for this segment.
+    // Deterministic meander phases and basin-sweep coefficients for this segment.
     const uint64_t base = foundation::hashCombine(
         foundation::hashCombine(world->params.seed, tile), down);
     const double phaseA = 2.0 * kPi * hashUnit(foundation::hashCombine(base, 0x41));
     const double phaseB = 2.0 * kPi * hashUnit(foundation::hashCombine(base, 0x42));
     const double phaseW = 2.0 * kPi * hashUnit(foundation::hashCombine(base, 0x43));
+    const double c1 = hashSigned(base, 0x11);
+    const double c2 = hashSigned(base, 0x22);
+    const double c3 = hashSigned(base, 0x33);
 
-    // Meander geometry scales with the segment's representative channel width.
+    // Channel-scale meander geometry scales with the segment's representative width.
     const double segWidth = static_cast<double>(channelWidthMeters(0.5f * (flowA + flowB)));
     const double meanderWavelen =
         std::clamp(kMeanderWavelenMult * segWidth, kMeanderWavelenMin, kMeanderWavelenMax);
     const double meanderAmp =
         std::min({kMeanderAmpMult * segWidth, 0.3 * length, kMaxMeanderMeters});
-    // Taper the meander to zero only within a short arc-length of each tile center
-    // (a joint between coarse segments), so the channel stays continuous there but
-    // still meanders everywhere else -- including right where the player lands, at
-    // a tile center. A t-based envelope would flatten a third of a multi-km segment.
-    const double meanderTaper = std::clamp(meanderWavelen * 0.35, 120.0, 800.0);
+    // Taper the channel-scale meander to zero only within a very short arc-length of
+    // each tile-center joint -- just enough for continuity there. The player lands at
+    // a joint, so keeping this short is what lets the river wander right at the colony
+    // instead of arriving as a long straight reach.
+    const double meanderTaper = std::clamp(meanderWavelen * 0.08, 40.0, 120.0);
+    // Basin-scale sweep amplitude (fraction of the coarse segment length).
+    const double basinAmp = std::min(kBasinSweepFrac * length, kBasinSweepCap);
 
     // Centerline point + channel half-width at arc length s along the segment.
     auto eval = [&](double s, double& ox, double& oy, float& ohw) {
@@ -211,10 +230,14 @@ void RiverNetwork2D::emitSegment(TileId tile, double minX, double minY, double m
         double e = distEnd / meanderTaper;
         e = e <= 0.0 ? 0.0 : (e >= 1.0 ? 1.0 : e * e * (3.0 - 2.0 * e)); // smoothstep
         const double env = e;
+        // Basin sweep: half-period sines that vanish at the segment ends (t=0,1).
+        const double sweep = c1 * foundation::det_math::sin(kPi * t) +
+                             0.6 * c2 * foundation::det_math::sin(2.0 * kPi * t) +
+                             0.4 * c3 * foundation::det_math::sin(3.0 * kPi * t);
         const double wander =
             0.7 * foundation::det_math::sin(2.0 * kPi * s / meanderWavelen + phaseA) +
             0.3 * foundation::det_math::sin(4.0 * kPi * s / meanderWavelen + phaseB);
-        const double offset = env * meanderAmp * wander;
+        const double offset = basinAmp * sweep + env * meanderAmp * wander;
         ox = pa.x + ux * s + perpx * offset;
         oy = pa.y + uy * s + perpy * offset;
 
