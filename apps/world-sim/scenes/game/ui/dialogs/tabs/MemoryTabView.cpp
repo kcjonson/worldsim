@@ -1,128 +1,114 @@
 #include "MemoryTabView.h"
+#include "MeterDraw.h"
 #include "TabStyles.h"
 
-#include <components/scroll/ScrollContainer.h>
-#include <components/treeview/TreeView.h>
-#include <layout/LayoutContainer.h>
-#include <shapes/Shapes.h>
+#include <components/badge/Badge.h>
+#include <primitives/Primitives.h>
+#include <theme/Tokens.h>
+#include <theme/Variants.h>
 
-#include <sstream>
-#include <unordered_map>
+#include <string>
 
 namespace world_sim {
 
-void MemoryTabView::create(const Foundation::Rect& contentBounds) {
-	using namespace tabs;
+namespace {
 
-	constexpr float kCompactRowHeight = 18.0F;
-	float headerHeight = kLabelSize + 8.0F;
-	float treeViewHeight = contentBounds.height - headerHeight;
+using namespace UI;
+using namespace tabs;
 
-	auto layout = UI::LayoutContainer(UI::LayoutContainer::Args{
-		.position = {contentBounds.x, contentBounds.y},
-		.size = {contentBounds.width, contentBounds.height},
-		.direction = UI::Direction::Vertical,
-		.id = "memory_content"
-	});
+// Sight range is a vision-system constant; not yet exposed in MemoryData.
+constexpr const char* kSightRange = "30m";
 
-	// Header - store handle for dynamic updates
-	auto headerText = UI::Text(UI::Text::Args{
-		.height = kLabelSize,
-		.text = "Known Entities: 0 total",
-		.style = {.color = labelColor(), .fontSize = kLabelSize},
-		.margin = 4.0F
-	});
-	headerTextHandle = layout.addChild(std::move(headerText));
+constexpr size_t kMaxRowsPerCategory = 3;
+constexpr float	 kColumnGap			 = 24.0F;
+constexpr float	 kSummaryGap		 = 16.0F;
+constexpr float	 kCatGap			 = 16.0F;	// vertical gap between category blocks
+constexpr float	 kRowH				 = 16.0F;	// entity row height
+constexpr float	 kHeadGap			 = 6.0F;	// below category head
 
-	// ScrollContainer with TreeView - store handles for dynamic updates
-	float scrollWidth = contentBounds.width - 8.0F;
-	auto scrollContainer = UI::ScrollContainer(UI::ScrollContainer::Args{
-		.size = {scrollWidth, treeViewHeight},
-		.id = "memory_scroll"
-	});
-
-	auto treeView = UI::TreeView(UI::TreeView::Args{
-		.position = {0.0F, 0.0F},
-		.size = {scrollWidth - 8.0F, 0.0F},  // Auto-height
-		.rowHeight = kCompactRowHeight,
-		.id = "memory_tree"
-	});
-	treeViewHandle = scrollContainer.addChild(std::move(treeView));
-
-	scrollContainerHandle = layout.addChild(std::move(scrollContainer));
-
-	layoutHandle = addChild(std::move(layout));
+// Tone for a category by name (food/water/resources informative, threats hot).
+UI::Tone categoryTone(const std::string& name, size_t count) {
+	if (count == 0) return UI::Tone::Default;
+	if (name == "Threats") return UI::Tone::Crit;
+	return UI::Tone::Data;
 }
 
-void MemoryTabView::update(const MemoryData& memory) {
-	auto* layout = getChild<UI::LayoutContainer>(layoutHandle);
-	if (layout == nullptr) return;
+// Draw one category block at (x,y) within colWidth. Returns the y past the block.
+float drawCategory(float x, float y, float colWidth, const MemoryCategory& cat) {
+	using namespace tabs;
 
-	// Update header using stored handle
-	if (auto* text = layout->getChild<UI::Text>(headerTextHandle)) {
-		std::ostringstream ss;
-		ss << "Known Entities: " << memory.totalKnown << " total";
-		text->text = ss.str();
+	// Head: name (left) + count badge (right).
+	drawText(cat.name, {x, y + 2.0F}, fs_sm, UI::text_bright);
+	const std::string countStr = std::to_string(cat.count);
+	const float		  badgeW   = (space_2 * 2.0F) + measureText(countStr, fs_2xs, UI::fontMono);
+	UI::Badge({.position = {x + colWidth - badgeW, y}, .label = countStr, .tone = categoryTone(cat.name, cat.count)}).render();
+	y += 22.0F + kHeadGap;
+
+	if (cat.entities.empty()) {
+		drawText("None sighted", {x, y}, fs_xs, UI::text_faint);
+		return y + fs_xs;
 	}
 
-	// Get ScrollContainer and TreeView using stored handles
-	auto* scrollContainer = layout->getChild<UI::ScrollContainer>(scrollContainerHandle);
-	if (scrollContainer == nullptr) return;
-
-	auto* treeView = scrollContainer->getChild<UI::TreeView>(treeViewHandle);
-	if (treeView == nullptr) return;
-
-	// Preserve expanded state (categories and type groups)
-	std::unordered_map<std::string, bool> expandedState;
-	for (const auto& categoryNode : treeView->getRootNodes()) {
-		expandedState[categoryNode.label] = categoryNode.expanded;
-		for (const auto& typeNode : categoryNode.children) {
-			expandedState[categoryNode.label + "/" + typeNode.label] = typeNode.expanded;
-		}
+	const size_t shown = cat.entities.size() < kMaxRowsPerCategory ? cat.entities.size() : kMaxRowsPerCategory;
+	for (size_t i = 0; i < shown; ++i) {
+		const auto&		  e	  = cat.entities[i];
+		drawText(e.name, {x, y}, fs_xs, UI::text);
+		const std::string pos = "(" + std::to_string(static_cast<int>(e.x)) + ", " + std::to_string(static_cast<int>(e.y)) + ")";
+		Renderer::Primitives::drawText({.text = pos, .position = {x, y}, .scale = fs_2xs / 16.0F, .color = UI::data_bright, .font = UI::fontMono, .hAlign = Foundation::HorizontalAlign::Right, .boxWidth = colWidth});
+		y += kRowH;
 	}
 
-	std::vector<UI::TreeNode> nodes;
-
-	for (const auto& category : memory.categories) {
-		UI::TreeNode categoryNode;
-		categoryNode.label = category.name;
-		categoryNode.count = static_cast<int>(category.count);
-
-		auto catIt = expandedState.find(category.name);
-		categoryNode.expanded = (catIt != expandedState.end()) ? catIt->second : false;
-
-		// Group entities by type
-		std::unordered_map<std::string, std::vector<const MemoryEntity*>> byType;
-		for (const auto& entity : category.entities) {
-			byType[entity.name].push_back(&entity);
-		}
-
-		// Create child node for each type
-		for (const auto& [typeName, entities] : byType) {
-			UI::TreeNode typeNode;
-			typeNode.label = typeName;
-			typeNode.count = static_cast<int>(entities.size());
-
-			std::string typeKey = category.name + "/" + typeName;
-			auto typeIt = expandedState.find(typeKey);
-			typeNode.expanded = (typeIt != expandedState.end()) ? typeIt->second : false;
-
-			// Add location children
-			for (const auto* entity : entities) {
-				UI::TreeNode locationNode;
-				std::ostringstream ss;
-				ss << "at (" << static_cast<int>(entity->x) << ", " << static_cast<int>(entity->y) << ")";
-				locationNode.label = ss.str();
-				typeNode.children.push_back(locationNode);
-			}
-
-			categoryNode.children.push_back(typeNode);
-		}
-
-		nodes.push_back(categoryNode);
+	if (cat.count > shown) {
+		drawText("+" + std::to_string(cat.count - shown) + " more", {x, y}, fs_2xs, UI::text_faint);
+		y += kRowH;
 	}
 
-	treeView->setRootNodes(std::move(nodes));
+	return y;
+}
+
+} // namespace
+
+void MemoryTabView::create(const Foundation::Rect& bounds) {
+	contentBounds = bounds;
+}
+
+void MemoryTabView::update(const MemoryData& data) {
+	data_ = data;
+}
+
+void MemoryTabView::render() {
+	using namespace tabs;
+	using namespace UI;
+
+	if (!visible) return;
+
+	const Foundation::Vec2 o	 = getContentPosition();
+	const float			   width = contentBounds.width;
+
+	// ---- Summary row: two metrics ----
+	const auto metric = [&](float x, const std::string& value, const std::string& label) {
+		Renderer::Primitives::drawText({.text = value, .position = {x, o.y}, .scale = fs_xl / 16.0F, .color = UI::text_bright, .font = UI::fontDisplay});
+		drawText(label, {x, o.y + fs_xl + 2.0F}, fs_2xs, UI::text_dim);
+	};
+	metric(o.x, std::to_string(data_.totalKnown), "Locations known");
+	metric(o.x + 140.0F, kSightRange, "Sight range");
+
+	float y = o.y + fs_xl + fs_2xs + kSummaryGap + 8.0F;
+
+	// ---- 2-column category grid ----
+	const float colWidth = (width - kColumnGap) / 2.0F;
+	const float leftX	 = o.x;
+	const float rightX	 = o.x + colWidth + kColumnGap;
+
+	float leftY	 = y;
+	float rightY = y;
+	for (size_t i = 0; i < data_.categories.size(); ++i) {
+		const bool	left = (i % 2 == 0);
+		const float cx	 = left ? leftX : rightX;
+		float&		cy	 = left ? leftY : rightY;
+		cy = drawCategory(cx, cy, colWidth, data_.categories[i]);
+		cy += kCatGap;
+	}
 }
 
 } // namespace world_sim

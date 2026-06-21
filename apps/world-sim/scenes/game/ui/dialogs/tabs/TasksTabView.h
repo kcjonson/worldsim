@@ -1,19 +1,18 @@
 #pragma once
 
-// TasksTabView - Tab showing tasks known by a specific colonist
+// TasksTabView - Tab showing tasks known by a specific colonist.
 //
-// Displays a scrollable list of tasks that this colonist knows about.
-// Unlike the global task list, this shows tasks from the colonist's perspective
-// (distance from colonist, "In Progress" for their own tasks).
-//
-// Reuses GlobalTaskRow component (with showKnownBy=false) for consistent layout.
+// Mirrors the Salvage prototype's Tasks panel: a prominent "Currently" panel
+// (amber left border) for the active task, then a "Known Work" divider and a
+// list of known goal-tasks, each with a status Badge. Manual-render, like the
+// other dossier tabs.
 
 #include "scenes/game/ui/adapters/GlobalTaskAdapter.h"
 
 #include <component/Container.h>
 #include <graphics/Rect.h>
-#include <layer/Layer.h>
 
+#include <string>
 #include <vector>
 
 namespace world_sim {
@@ -22,33 +21,20 @@ namespace world_sim {
 struct TasksTabData {
 	std::vector<adapters::GlobalTaskDisplayData> tasks;
 	size_t totalCount = 0;
+
+	// Current self-assigned task (from BioData), shown in the "Currently" panel.
+	std::string currentTask;
 };
 
-/// Tasks tab content for ColonistDetailsDialog
-/// Shows: Scrollable list of tasks this colonist knows about
 class TasksTabView : public UI::Container {
   public:
-	/// Create the tab view with content bounds from parent dialog
 	void create(const Foundation::Rect& contentBounds);
-
-	/// Update content from model data
 	void update(const TasksTabData& data);
+	void render() override;
 
   private:
-	float tabWidth = 0.0F;
-	UI::LayerHandle layoutHandle;
-	UI::LayerHandle headerTextHandle;       // "Known Tasks: X"
-	UI::LayerHandle scrollContainerHandle;  // ScrollContainer
-	UI::LayerHandle taskLayoutHandle;       // LayoutContainer inside scroll
-
-	// Cached task row handles for efficient updates
-	std::vector<UI::LayerHandle> taskRowHandles;
-
-	/// Rebuild task rows when count changes
-	void rebuildTaskRows(const TasksTabData& data);
-
-	/// Update existing task rows when data changes
-	void updateTaskRows(const TasksTabData& data);
+	Foundation::Rect contentBounds{};
+	TasksTabData	 data_{};
 };
 
 } // namespace world_sim

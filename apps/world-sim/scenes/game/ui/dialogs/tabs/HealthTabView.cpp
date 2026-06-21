@@ -1,151 +1,109 @@
 #include "HealthTabView.h"
+#include "MeterDraw.h"
 #include "TabStyles.h"
 
-#include <components/progress/ProgressBar.h>
 #include <ecs/components/Needs.h>
-#include <layout/LayoutContainer.h>
-#include <shapes/Shapes.h>
+#include <primitives/Primitives.h>
+#include <theme/Tokens.h>
+#include <theme/Variants.h>
 
-#include <sstream>
+#include <string>
 
 namespace world_sim {
 
-void HealthTabView::create(const Foundation::Rect& contentBounds) {
-	using namespace tabs;
+namespace {
 
-	float columnGap = 16.0F;
-	float columnWidth = (contentBounds.width - columnGap) / 2.0F;
-	float needBarWidth = columnWidth - 4.0F;
-	float needBarHeight = 12.0F;
+// Need ordering (NeedType): 0 Hunger,1 Thirst,2 Energy,3 Bladder,4 Digestion,
+// 5 Hygiene,6 Recreation,7 Temperature. Vitals are 0-4, comfort 5-7.
+constexpr size_t kVitalCount   = 5;
+constexpr size_t kComfortStart = 5;
+constexpr size_t kComfortCount = 3;
 
-	// Outer horizontal container for two columns
-	auto layout = UI::LayoutContainer(UI::LayoutContainer::Args{
-		.position = {contentBounds.x, contentBounds.y},
-		.size = {contentBounds.width, contentBounds.height},
-		.direction = UI::Direction::Horizontal,
-		.id = "health_content"
-	});
+constexpr float kMoodGap	= 8.0F;	 // below mood meter
+constexpr float kCaptionGap = 12.0F; // below caption
+constexpr float kColumnGap	= 24.0F;
+constexpr float kRowGap		= 14.0F; // between meter rows
+constexpr float kSectionGap = 12.0F; // between sections within a column
 
-	// LEFT COLUMN: Mood + Needs + Modifiers
-	auto leftColumn = UI::LayoutContainer(UI::LayoutContainer::Args{
-		.size = {columnWidth, contentBounds.height},
-		.direction = UI::Direction::Vertical,
-		.id = "health_left"
-	});
-
-	// Mood header - store handle for dynamic updates
-	auto moodHeader = UI::Text(UI::Text::Args{
-		.height = kTitleSize,
-		.text = "Mood: -- (Unknown)",
-		.style = {.color = titleColor(), .fontSize = kTitleSize},
-		.margin = 2.0F
-	});
-	moodHeaderHandle = leftColumn.addChild(std::move(moodHeader));
-
-	// Needs section header
-	leftColumn.addChild(UI::Text(UI::Text::Args{
-		.height = kLabelSize,
-		.text = "Needs",
-		.style = {.color = labelColor(), .fontSize = kLabelSize},
-		.margin = 4.0F
-	}));
-
-	// Need bars - store handles for dynamic updates
-	for (size_t i = 0; i < static_cast<size_t>(ecs::NeedType::Count); ++i) {
-		auto bar = UI::ProgressBar(UI::ProgressBar::Args{
-			.width = needBarWidth,
-			.value = 1.0F,
-			.tone = UI::Tone::Auto,
-			.label = ecs::kNeedLabels[i],
-			.inlineLabel = true,
-			.margin = 1.0F
-		});
-		needBarHandles[i] = leftColumn.addChild(std::move(bar));
-	}
-
-	// Mood modifiers section
-	leftColumn.addChild(UI::Text(UI::Text::Args{
-		.height = kLabelSize,
-		.text = "Mood Modifiers",
-		.style = {.color = labelColor(), .fontSize = kLabelSize},
-		.margin = 6.0F
-	}));
-
-	leftColumn.addChild(UI::Text(UI::Text::Args{
-		.height = kSmallSize,
-		.text = "No active modifiers",
-		.style = {.color = mutedColor(), .fontSize = kSmallSize},
-		.margin = 2.0F
-	}));
-
-	leftColumnHandle = layout.addChild(std::move(leftColumn));
-
-	// RIGHT COLUMN: Body & Ailments
-	auto rightColumn = UI::LayoutContainer(UI::LayoutContainer::Args{
-		.size = {columnWidth, contentBounds.height},
-		.direction = UI::Direction::Vertical,
-		.id = "health_right"
-	});
-
-	rightColumn.addChild(UI::Text(UI::Text::Args{
-		.height = kLabelSize,
-		.text = "Body & Ailments",
-		.style = {.color = labelColor(), .fontSize = kLabelSize},
-		.margin = 4.0F
-	}));
-
-	rightColumn.addChild(UI::Text(UI::Text::Args{
-		.height = kSmallSize,
-		.text = "No ailments",
-		.style = {.color = mutedColor(), .fontSize = kSmallSize},
-		.margin = 2.0F
-	}));
-
-	// Body part placeholders
-	const char* bodyParts[] = {"Head", "Torso", "Left Arm", "Right Arm", "Left Leg", "Right Leg"};
-	for (const char* part : bodyParts) {
-		rightColumn.addChild(UI::Text(UI::Text::Args{
-			.height = kSmallSize,
-			.text = std::string(part) + ": Healthy",
-			.style = {.color = bodyColor(), .fontSize = kSmallSize},
-			.margin = 1.0F
-		}));
-	}
-
-	layout.addChild(std::move(rightColumn));
-
-	layoutHandle = addChild(std::move(layout));
+const char* needLabel(size_t i) {
+	return (i < ecs::kNeedLabels.size()) ? ecs::kNeedLabels[i] : "Need";
 }
 
-void HealthTabView::update(const HealthData& health) {
-	auto* layout = getChild<UI::LayoutContainer>(layoutHandle);
-	if (layout == nullptr) return;
+} // namespace
 
-	// Get left column using stored handle
-	auto* leftColumn = layout->getChild<UI::LayoutContainer>(leftColumnHandle);
-	if (leftColumn == nullptr) return;
+void HealthTabView::create(const Foundation::Rect& bounds) {
+	contentBounds = bounds;
+}
 
-	// Update mood header using stored handle
-	if (auto* text = leftColumn->getChild<UI::Text>(moodHeaderHandle)) {
-		std::ostringstream ss;
-		ss << "Mood: " << static_cast<int>(health.mood) << "% (" << health.moodLabel << ")";
-		text->text = ss.str();
+void HealthTabView::update(const HealthData& data) {
+	data_ = data;
+}
+
+void HealthTabView::render() {
+	using namespace tabs;
+	using namespace UI;
+
+	if (!visible) return;
+
+	const Foundation::Vec2 o	 = getContentPosition();
+	const float			   width = contentBounds.width;
+
+	// ---- Full-width Mood meter ----
+	const float		  mood01 = data_.mood / 100.0F;
+	const UI::Tone	  moodTone = data_.mood < 25.0F ? UI::Tone::Crit : (data_.mood < 50.0F ? UI::Tone::Warn : UI::Tone::Ok);
+	const std::string moodValue = std::to_string(static_cast<int>(data_.mood)) + "% \xC2\xB7 " + (data_.moodLabel.empty() ? "Mood" : data_.moodLabel);
+
+	float y = drawMeter(o.x, o.y, width, "MOOD", mood01, moodValue, UI::toneColor(moodTone));
+	y += kMoodGap;
+
+	drawText("Mood is computed from the needs below; it sinks as they go unmet.", {o.x, y}, fs_xs, UI::text_faint);
+	y += fs_xs + kCaptionGap;
+
+	// ---- Two columns ----
+	const float colWidth = (width - kColumnGap) / 2.0F;
+	const float leftX	 = o.x;
+	const float rightX	 = o.x + colWidth + kColumnGap;
+	const float colTop	 = y;
+
+	// LEFT: Vital Needs + Comfort
+	{
+		float ly = colTop;
+		ly = drawDivider(leftX, ly, colWidth, "VITAL NEEDS");
+		ly += 6.0F;
+
+		for (size_t i = 0; i < kVitalCount; ++i) {
+			const UI::Tone tone = data_.isCritical[i] ? UI::Tone::Crit : (data_.needsAttention[i] ? UI::Tone::Warn : UI::Tone::Ok);
+			const float	   v	= data_.needValues[i] / 100.0F;
+			const std::string valueText = std::to_string(static_cast<int>(data_.needValues[i])) + "%";
+			ly = drawMeter(leftX, ly, colWidth, needLabel(i), v, valueText, UI::toneColor(tone));
+			ly += kRowGap;
+		}
+
+		ly += kSectionGap;
+		ly = drawDivider(leftX, ly, colWidth, "COMFORT");
+		ly += 6.0F;
+
+		for (size_t k = 0; k < kComfortCount; ++k) {
+			const size_t	  i			= kComfortStart + k;
+			const UI::Tone	  tone		= data_.isCritical[i] ? UI::Tone::Crit : (data_.needsAttention[i] ? UI::Tone::Warn : UI::Tone::Ok);
+			const float		  v			= data_.needValues[i] / 100.0F;
+			const std::string valueText = std::to_string(static_cast<int>(data_.needValues[i])) + "%";
+			// Comfort needs are dimmed: colonists don't act on them yet.
+			ly = drawMeter(leftX, ly, colWidth, needLabel(i), v, valueText, UI::toneColor(tone), 0.7F);
+			ly += kRowGap;
+		}
+
+		drawText("Comfort needs are tracked, but colonists don't act on them yet.", {leftX, ly}, fs_2xs, UI::text_faint);
 	}
 
-	// Update need bars using stored handles
-	for (size_t i = 0; i < static_cast<size_t>(ecs::NeedType::Count); ++i) {
-		if (auto* bar = leftColumn->getChild<UI::ProgressBar>(needBarHandles[i])) {
-			bar->setValue(health.needValues[i] / 100.0F);
+	// RIGHT: Body & Ailments empty state
+	{
+		float ry = colTop;
+		ry = drawDivider(rightX, ry, colWidth, "BODY & AILMENTS");
+		ry += 6.0F;
 
-			// Color based on status
-			if (health.isCritical[i]) {
-				bar->setTone(UI::Tone::Crit);
-			} else if (health.needsAttention[i]) {
-				bar->setTone(UI::Tone::Warn);
-			} else {
-				bar->setTone(UI::Tone::Ok);
-			}
-		}
+		const Foundation::Rect panel{rightX, ry, colWidth, 58.0F};
+		drawEmptyState(panel, "No injuries or ailments", "Wounds, illness, and treatment arrive with the medical update.");
 	}
 }
 

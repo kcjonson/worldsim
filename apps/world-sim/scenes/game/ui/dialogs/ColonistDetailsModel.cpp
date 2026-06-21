@@ -385,11 +385,13 @@ void ColonistDetailsModel::extractTasksData(ecs::World& world, ecs::EntityID col
 		colonistPosition = position->value;
 	}
 
-	// Get tasks known by this colonist via the adapter
-	// Uses GlobalTaskDisplayData directly for consistency with GlobalTaskRow
+	// Get tasks known by this colonist via the adapter.
 	tasksData.tasks = adapters::getTasksForColonist(colonistPosition);
 	adapters::sortTasksForDisplay(tasksData.tasks);
 	tasksData.totalCount = tasksData.tasks.size();
+
+	// The "Currently" panel mirrors the bio task line (extractBioData ran first).
+	tasksData.currentTask = bioData.currentTask;
 }
 
 } // namespace world_sim

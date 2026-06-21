@@ -2,13 +2,9 @@
 
 // ColonistDetailsDialog - Full-screen dialog showing detailed colonist information
 //
-// Displays 6 tabs:
-// - Bio: name, placeholder age/traits/background, current task
-// - Health: all 8 needs as progress bars, mood
-// - Social: placeholder for future relationships
-// - Gear: inventory items
-// - Memory: TreeView of known entities by category
-// - Tasks: tasks known by this colonist
+// Displays 8 tabs: Bio, Health, Skills, Social, Gear, Memory, Tasks, Log.
+// A persistent header band (Avatar + 2x2 Stat grid) sits above the tab bar,
+// shared across all tabs. A footer holds Close / Work Priorities / Draft.
 //
 // Game continues running while dialog is open - data refreshes per-frame.
 
@@ -16,14 +12,15 @@
 #include "tabs/BioTabView.h"
 #include "tabs/GearTabView.h"
 #include "tabs/HealthTabView.h"
+#include "tabs/LogTabView.h"
 #include "tabs/MemoryTabView.h"
+#include "tabs/SkillsTabView.h"
 #include "tabs/SocialTabView.h"
 #include "tabs/TasksTabView.h"
 
 #include <component/Component.h>
 #include <components/dialog/Dialog.h>
 #include <components/tabbar/TabBar.h>
-#include <layout/LayoutContainer.h>
 #include <ecs/EntityID.h>
 #include <ecs/World.h>
 
@@ -73,16 +70,20 @@ class ColonistDetailsDialog : public UI::Component {
 	// Tab IDs
 	static constexpr const char* kTabBio = "bio";
 	static constexpr const char* kTabHealth = "health";
+	static constexpr const char* kTabSkills = "skills";
 	static constexpr const char* kTabSocial = "social";
 	static constexpr const char* kTabGear = "gear";
 	static constexpr const char* kTabMemory = "memory";
 	static constexpr const char* kTabTasks = "tasks";
+	static constexpr const char* kTabLog = "log";
 
 	// Dialog dimensions
 	static constexpr float kDialogWidth = 760.0F;
-	static constexpr float kDialogHeight = 560.0F;
+	static constexpr float kDialogHeight = 600.0F;
+	static constexpr float kFooterHeight = 52.0F;
+	static constexpr float kHeaderBandHeight = 92.0F; // Avatar + stat grid band
 	static constexpr float kTabBarHeight = 36.0F;
-	static constexpr float kContentPadding = 20.0F;
+	static constexpr float kContentPadding = 16.0F;
 
 	// Callbacks
 	std::function<void()> onCloseCallback;
@@ -94,27 +95,30 @@ class ColonistDetailsDialog : public UI::Component {
 	// Model (extracts ECS data)
 	ColonistDetailsModel model;
 
-	// Child components
+	// Child components (TabBar + tab views are direct children of the dialog)
 	UI::LayerHandle dialogHandle;
-	UI::LayerHandle contentLayoutHandle;  // Vertical layout: TabBar + tabs
 	UI::LayerHandle tabBarHandle;
 
 	// Tab views (children of content layout)
 	UI::LayerHandle bioTabHandle;
 	UI::LayerHandle healthTabHandle;
+	UI::LayerHandle skillsTabHandle;
 	UI::LayerHandle socialTabHandle;
 	UI::LayerHandle gearTabHandle;
 	UI::LayerHandle memoryTabHandle;
 	UI::LayerHandle tasksTabHandle;
+	UI::LayerHandle logTabHandle;
 
 	// Internal methods
 	void createDialog();
 	void createContent();  // Creates TabBar and tab views
 	void switchToTab(const std::string& tabId);
 	void updateTabContent();
+	void renderHeaderBand();  // Persistent Avatar + Stat grid above the tabs
+	void renderFooter();	  // Close / Work Priorities / Draft buttons
 
-	// Helper to access content layout
-	UI::LayoutContainer* getContentLayout();
+	// Footer button hit-testing (footer buttons are drawn, not child components).
+	[[nodiscard]] Foundation::Rect closeButtonBounds() const;
 };
 
 } // namespace world_sim

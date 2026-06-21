@@ -12,9 +12,11 @@ namespace UI {
 	Dialog::Dialog(const Args& args)
 		: FocusableBase<Dialog>(args.tabIndex),
 		  title(args.title),
+		  kicker(args.kicker),
 		  dialogSize(args.size),
 		  onClose(args.onClose),
-		  modal(args.modal) {
+		  modal(args.modal),
+		  footerHeight(args.footerHeight) {
 		// Dialog covers entire screen when open
 		position = {0.0F, 0.0F};
 		size = {0.0F, 0.0F}; // Set properly when open() is called
@@ -93,26 +95,35 @@ namespace UI {
 
 	Foundation::Rect Dialog::getTitleBarBounds() const {
 		Foundation::Vec2 pos = getPanelPosition();
-		return {pos.x, pos.y, dialogSize.x, kDialogTitleBarHeight};
+		return {pos.x, pos.y, dialogSize.x, titleAreaHeight()};
 	}
 
 	Foundation::Rect Dialog::getCloseButtonBounds() const {
 		Foundation::Vec2 pos = getPanelPosition();
 		float			 buttonX = pos.x + dialogSize.x - kCloseButtonMargin - kCloseButtonSize;
+		// Pin the close button to the top of the title area (kicker pushes title down).
 		float			 buttonY = pos.y + (kDialogTitleBarHeight - kCloseButtonSize) / 2.0F;
 		return {buttonX, buttonY, kCloseButtonSize, kCloseButtonSize};
 	}
 
 	Foundation::Rect Dialog::getContentBounds() const {
 		Foundation::Vec2 pos = getPanelPosition();
-		float			 contentY = pos.y + kDialogTitleBarHeight;
-		float			 contentHeight = dialogSize.y - kDialogTitleBarHeight;
+		float			 contentY = pos.y + titleAreaHeight();
+		float			 contentHeight = dialogSize.y - titleAreaHeight() - footerHeight;
 		return {
 			pos.x + kDialogContentPadding,
 			contentY + kDialogContentPadding,
 			dialogSize.x - kDialogContentPadding * 2,
 			contentHeight - kDialogContentPadding * 2
 		};
+	}
+
+	Foundation::Rect Dialog::getFooterBounds() const {
+		if (footerHeight <= 0.0F) {
+			return {};
+		}
+		Foundation::Vec2 pos = getPanelPosition();
+		return {pos.x, pos.y + dialogSize.y - footerHeight, dialogSize.x, footerHeight};
 	}
 
 	bool Dialog::isPointInPanel(Foundation::Vec2 point) const {
@@ -283,7 +294,7 @@ namespace UI {
 		}
 
 		const Foundation::Rect panel = getPanelBounds();
-		const float			   titleH = kDialogTitleBarHeight;
+		const float			   titleH = titleAreaHeight();
 
 		// Raised, bracketed Salvage surface with an edge border and a soft accent glow.
 		drawRect({.bounds = panel,
@@ -292,10 +303,24 @@ namespace UI {
 								.color = fade(line_edge), .width = bw, .cornerRadius = r_sm, .position = Foundation::BorderPosition::Inside},
 							.boxShadow = Foundation::BoxShadow{.color = fade(withAlpha(accent, 0.4F)), .blur = 24.0F, .spread = 2.0F, .offset = {0.0F, 0.0F}}}});
 
+		// Optional kicker eyebrow above the title: mono, faint, uppercase, wide tracking.
+		float titleY = panel.y + ((titleH - fs_md) * 0.5F);
+		if (!kicker.empty()) {
+			const float kickerY = panel.y + space_2;
+			drawText({.text = kicker,
+					  .position = {panel.x + kDialogContentPadding, kickerY},
+					  .scale = fs_2xs / 16.0F,
+					  .color = fade(text_faint),
+					  .font = fontMono,
+					  .letterSpacing = fs_2xs * ls_wider,
+					  .transform = Foundation::TextTransform::Uppercase});
+			titleY = kickerY + fs_2xs + space_1_5;
+		}
+
 		// Title: display font, uppercase, letter-spaced.
 		if (!title.empty()) {
 			drawText({.text = title,
-					  .position = {panel.x + kDialogContentPadding, panel.y + ((titleH - fs_md) * 0.5F)},
+					  .position = {panel.x + kDialogContentPadding, titleY},
 					  .scale = fs_md / 16.0F,
 					  .color = fade(text_bright),
 					  .font = fontDisplay,
@@ -305,6 +330,12 @@ namespace UI {
 
 		// Hairline divider under the title.
 		drawLine({.start = {panel.x, panel.y + titleH}, .end = {panel.x + panel.width, panel.y + titleH}, .style = {.color = fade(line_hairline), .width = bw}});
+
+		// Footer hairline (when a footer band is reserved).
+		if (footerHeight > 0.0F) {
+			const float footerY = panel.y + dialogSize.y - footerHeight;
+			drawLine({.start = {panel.x, footerY}, .end = {panel.x + panel.width, footerY}, .style = {.color = fade(line_hairline), .width = bw}});
+		}
 
 		// Close button: hover wash + a mono "X".
 		const Foundation::Rect closeBounds = getCloseButtonBounds();
