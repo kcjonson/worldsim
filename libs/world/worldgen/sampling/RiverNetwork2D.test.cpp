@@ -13,6 +13,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <memory>
@@ -52,7 +53,8 @@ std::shared_ptr<GeneratedWorld> makeLandWorld() {
 // as a river with increasing flow. Returns the ordered chain of river tiles
 // (mouth excluded). The mouth tile is set to ocean.
 std::vector<TileId> buildRiver(GeneratedWorld& world, double srcLat, double srcLon,
-                               double mouthLat, double mouthLon) {
+                               double mouthLat, double mouthLon,
+                               float startFlow = 6.0f, float flowStep = 4.0f) {
     const SphereGrid& grid = *world.grid;
     const TileId mouth = grid.fromLatLon(mouthLat, mouthLon);
     world.data.elevation[mouth] = kOcean;
@@ -64,7 +66,7 @@ std::vector<TileId> buildRiver(GeneratedWorld& world, double srcLat, double srcL
     std::unordered_set<TileId> visited;
 
     TileId cur = grid.fromLatLon(srcLat, srcLon);
-    float flow = 6.0f;  // just above the river threshold (5.0)
+    float flow = startFlow;  // >= ~7.4 makes a channel wide enough (>3 m) to grow feeders
     for (int guard = 0; guard < 10000; ++guard) {
         if (cur == mouth || !visited.insert(cur).second) break;
 
@@ -84,7 +86,7 @@ std::vector<TileId> buildRiver(GeneratedWorld& world, double srcLat, double srcL
         world.data.flowAccum[cur] = flow;
         world.data.downhill[cur] = static_cast<uint8_t>(bestIdx);
         chain.push_back(cur);
-        flow += 4.0f;
+        flow += flowStep;
 
         cur = nbrs[bestIdx];
     }
@@ -101,8 +103,8 @@ WorldPos2d tilePos(const GeneratedWorld& world, const SphericalProjection& proj,
 } // namespace
 
 TEST(RiverNetwork2DWidth, MonotonicAndClamped) {
-    EXPECT_FLOAT_EQ(RiverNetwork2D::channelWidthMeters(0.0f), 1.5f);   // clamped to min
-    EXPECT_GE(RiverNetwork2D::channelWidthMeters(10.0f), 1.5f);
+    EXPECT_FLOAT_EQ(RiverNetwork2D::channelWidthMeters(0.0f), 0.6f);   // clamped to min (trickle)
+    EXPECT_GE(RiverNetwork2D::channelWidthMeters(10.0f), 0.6f);
     EXPECT_LE(RiverNetwork2D::channelWidthMeters(1e9f), 150.0f);       // clamped to max
     // Strictly increasing in the unclamped band.
     EXPECT_LT(RiverNetwork2D::channelWidthMeters(10.0f),
@@ -201,6 +203,94 @@ TEST(RiverNetwork2D, GatherIsDeterministic) {
         EXPECT_EQ(a[i].y1, b[i].y1);
         EXPECT_EQ(a[i].halfWidth0, b[i].halfWidth0);
         EXPECT_EQ(a[i].halfWidth1, b[i].halfWidth1);
+    }
+}
+
+// A wide river sprouts procedural feeder streams; a thin one (below the feeder
+// width gate) does not, so the wide gather has many more segments.
+TEST(RiverNetwork2D, WideRiverGrowsFeeders) {
+    auto wide = makeLandWorld();
+    auto wchain = buildRiver(*wide, 0.0, -30.0, 0.0, 30.0, 400.0f, 0.0f);
+    auto thin = makeLandWorld();
+    auto tchain = buildRiver(*thin, 0.0, -30.0, 0.0, 30.0, 6.0f, 0.0f);
+    ASSERT_GE(wchain.size(), 5u);
+    ASSERT_EQ(wchain.size(), tchain.size());
+
+    RiverNetwork2D wnet(wide, 0.0, 0.0);
+    RiverNetwork2D tnet(thin, 0.0, 0.0);
+    SphericalProjection proj(wide->derived.planetRadiusMeters, 0.0, 0.0);
+    const WorldPos2d c = tilePos(*wide, proj, wchain[wchain.size() / 2]);
+    const double r = 2000.0;
+
+    std::vector<RiverNetwork2D::Segment> ws;
+    std::vector<RiverNetwork2D::Segment> ts;
+    wnet.gatherSegments(c.x - r, c.y - r, c.x + r, c.y + r, ws);
+    tnet.gatherSegments(c.x - r, c.y - r, c.x + r, c.y + r, ts);
+
+    EXPECT_GT(ts.size(), 0u) << "the river channel itself should render";
+    EXPECT_GT(ws.size(), ts.size() + 50)
+        << "a wide river should sprout many feeder segments a thin one does not";
+}
+
+// Feeders taper from the parent width at the confluence to a trickle at the spring.
+TEST(RiverNetwork2D, FeedersTaperToTrickle) {
+    auto world = makeLandWorld();
+    auto chain = buildRiver(*world, 0.0, -30.0, 0.0, 30.0, 400.0f, 0.0f);
+    ASSERT_GE(chain.size(), 5u);
+    RiverNetwork2D net(world, 0.0, 0.0);
+    SphericalProjection proj(world->derived.planetRadiusMeters, 0.0, 0.0);
+    const WorldPos2d c = tilePos(*world, proj, chain[chain.size() / 2]);
+    const double r = 2000.0;
+
+    std::vector<RiverNetwork2D::Segment> segs;
+    net.gatherSegments(c.x - r, c.y - r, c.x + r, c.y + r, segs);
+    ASSERT_FALSE(segs.empty());
+
+    float minHalf = 1e9f;
+    float maxHalf = 0.0f;
+    for (const auto& s : segs) {
+        minHalf = std::min({minHalf, s.halfWidth0, s.halfWidth1});
+        maxHalf = std::max({maxHalf, s.halfWidth0, s.halfWidth1});
+    }
+    EXPECT_LE(minHalf, 0.4f) << "feeder spring ends should taper to a trickle";
+    EXPECT_GE(maxHalf, 5.0f) << "the wide trunk should remain wide";
+}
+
+// The local per-point query (which gathers only a small box, as a chunk does)
+// must agree with a single large gather, proving feeders are not dropped by
+// chunk-local gathering -- i.e. they are continuous across chunk seams.
+TEST(RiverNetwork2D, FeederGatherIsLocallyConsistent) {
+    auto world = makeLandWorld();
+    auto chain = buildRiver(*world, 0.0, -30.0, 0.0, 30.0, 400.0f, 0.0f);
+    ASSERT_GE(chain.size(), 5u);
+    RiverNetwork2D net(world, 0.0, 0.0);
+    SphericalProjection proj(world->derived.planetRadiusMeters, 0.0, 0.0);
+    const WorldPos2d c = tilePos(*world, proj, chain[chain.size() / 2]);
+
+    std::vector<RiverNetwork2D::Segment> big;
+    net.gatherSegments(c.x - 3000.0, c.y - 3000.0, c.x + 3000.0, c.y + 3000.0, big);
+    auto coveredByBig = [&](double x, double y) {
+        for (const auto& s : big) {
+            const double dx = s.x1 - s.x0;
+            const double dy = s.y1 - s.y0;
+            const double len2 = dx * dx + dy * dy;
+            double t = 0.0;
+            if (len2 > 0.0) t = std::clamp(((x - s.x0) * dx + (y - s.y0) * dy) / len2, 0.0, 1.0);
+            const double ex = x - (s.x0 + dx * t);
+            const double ey = y - (s.y0 + dy * t);
+            const float hw = s.halfWidth0 + (s.halfWidth1 - s.halfWidth0) * static_cast<float>(t);
+            if (ex * ex + ey * ey <= static_cast<double>(hw) * static_cast<double>(hw)) return true;
+        }
+        return false;
+    };
+
+    for (double dy = -500.0; dy <= 500.0; dy += 60.0) {
+        for (double dx = -500.0; dx <= 500.0; dx += 60.0) {
+            const double x = c.x + dx;
+            const double y = c.y + dy;
+            EXPECT_EQ(net.sampleAt(x, y).isRiver, coveredByBig(x, y))
+                << "mismatch at offset (" << dx << ", " << dy << ")";
+        }
     }
 }
 

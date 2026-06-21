@@ -28,9 +28,17 @@ struct ChunkSampleResult {
     std::vector<worldgen::RiverNetwork2D::Segment> riverSegments;
 
     // True when (worldXMeters, worldYMeters) falls inside a gathered river
-    // channel. Linear scan; cheap because riverSegments is empty or tiny.
+    // channel. Linear scan with a cheap AABB reject before the distance/sqrt, so
+    // the many short feeder segments stay affordable per tile.
     [[nodiscard]] bool isRiverAt(double worldXMeters, double worldYMeters) const {
         for (const auto& s : riverSegments) {
+            const float hwMax = std::max(s.halfWidth0, s.halfWidth1);
+            if (worldXMeters < std::min(s.x0, s.x1) - hwMax ||
+                worldXMeters > std::max(s.x0, s.x1) + hwMax ||
+                worldYMeters < std::min(s.y0, s.y1) - hwMax ||
+                worldYMeters > std::max(s.y0, s.y1) + hwMax) {
+                continue;
+            }
             const double dx = s.x1 - s.x0;
             const double dy = s.y1 - s.y0;
             const double len2 = dx * dx + dy * dy;
