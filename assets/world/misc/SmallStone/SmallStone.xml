@@ -33,17 +33,99 @@
       <carryable quantity="1"/>
     </capabilities>
 
-    <!-- Per-biome placement configuration -->
+    <!-- Per-biome placement configuration.
+         Loose stone is near-universal: scattered wherever there's exposed ground, denser on
+         rocky/dry/high terrain (deserts, montane, alpine, beaches), thinner under wet/forest
+         cover, and barely present on polar ice. It's a basic early crafting material, so every
+         land biome carries at least a little. -->
     <placement>
-      <!-- Forest: Sparse scatter in clearings -->
+      <!-- Temperate -->
       <biome name="TemperateDeciduousForest">
         <spawnChance>0.015</spawnChance>
         <distribution>uniform</distribution>
       </biome>
-
-      <!-- Grassland: Very sparse, scattered naturally -->
+      <biome name="TemperateRainforest">
+        <spawnChance>0.012</spawnChance>
+        <distribution>uniform</distribution>
+      </biome>
       <biome name="TemperateGrassland">
         <spawnChance>0.02</spawnChance>
+        <distribution>uniform</distribution>
+      </biome>
+
+      <!-- Boreal / montane / alpine: rocky, stone-rich -->
+      <biome name="BorealForest">
+        <spawnChance>0.018</spawnChance>
+        <distribution>uniform</distribution>
+      </biome>
+      <biome name="MontaneForest">
+        <spawnChance>0.035</spawnChance>
+        <distribution>uniform</distribution>
+      </biome>
+      <biome name="AlpineGrassland">
+        <spawnChance>0.035</spawnChance>
+        <distribution>uniform</distribution>
+      </biome>
+      <biome name="AlpineTundra">
+        <spawnChance>0.03</spawnChance>
+        <distribution>uniform</distribution>
+      </biome>
+
+      <!-- Tropical -->
+      <biome name="TropicalRainforest">
+        <spawnChance>0.01</spawnChance>
+        <distribution>uniform</distribution>
+      </biome>
+      <biome name="TropicalSeasonalForest">
+        <spawnChance>0.012</spawnChance>
+        <distribution>uniform</distribution>
+      </biome>
+      <biome name="TropicalSavanna">
+        <spawnChance>0.018</spawnChance>
+        <distribution>uniform</distribution>
+      </biome>
+
+      <!-- Dry: stony ground, abundant surface rock -->
+      <biome name="HotDesert">
+        <spawnChance>0.035</spawnChance>
+        <distribution>uniform</distribution>
+      </biome>
+      <biome name="ColdDesert">
+        <spawnChance>0.035</spawnChance>
+        <distribution>uniform</distribution>
+      </biome>
+      <biome name="SemiDesert">
+        <spawnChance>0.03</spawnChance>
+        <distribution>uniform</distribution>
+      </biome>
+      <biome name="XericShrubland">
+        <spawnChance>0.03</spawnChance>
+        <distribution>uniform</distribution>
+      </biome>
+
+      <!-- Cold / polar: thin, mostly snow and ice -->
+      <biome name="ArcticTundra">
+        <spawnChance>0.012</spawnChance>
+        <distribution>uniform</distribution>
+      </biome>
+      <biome name="PolarDesert">
+        <spawnChance>0.005</spawnChance>
+        <distribution>uniform</distribution>
+      </biome>
+
+      <!-- Wet ground holds fewer loose stones -->
+      <biome name="TemperateWetland">
+        <spawnChance>0.008</spawnChance>
+        <distribution>uniform</distribution>
+      </biome>
+      <biome name="TropicalWetland">
+        <spawnChance>0.008</spawnChance>
+        <distribution>uniform</distribution>
+      </biome>
+
+      <!-- Beaches: pebbles and shingle -->
+      <biome name="Beach">
+        <spawnChance>0.03</spawnChance>
         <distribution>uniform</distribution>
       </biome>
 

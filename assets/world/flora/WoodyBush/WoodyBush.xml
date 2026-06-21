@@ -28,9 +28,14 @@
                    destructive="false" totalResourceMin="3" totalResourceMax="5"/>
     </capabilities>
 
-    <!-- Per-biome placement configuration -->
+    <!-- Per-biome placement configuration.
+         Woody shrubs are the basic stick (wood) source, so they grow across most land: common
+         in forests, grasslands, savanna and shrubland; sparse at wet edges, alpine and beaches;
+         very scarce in true desert and tundra; absent only on polar ice. "clumped" everywhere -
+         shrubs grow in thickets - with tighter, denser clumps in productive biomes and small,
+         widely-spaced groups where it's marginal. -->
     <placement>
-      <!-- Forest: Moderate density, prefers edges and clearings -->
+      <!-- Temperate / boreal forest: thickets at edges and clearings -->
       <biome name="TemperateDeciduousForest">
         <spawnChance>0.02</spawnChance>
         <distribution>clumped</distribution>
@@ -40,8 +45,64 @@
           <clumpSpacing>10.0,18.0</clumpSpacing>
         </clumping>
       </biome>
+      <biome name="TemperateRainforest">
+        <spawnChance>0.018</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>1,3</clumpSize>
+          <clumpRadius>0.8,1.5</clumpRadius>
+          <clumpSpacing>10.0,18.0</clumpSpacing>
+        </clumping>
+      </biome>
+      <biome name="BorealForest">
+        <spawnChance>0.02</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>1,3</clumpSize>
+          <clumpRadius>0.8,1.5</clumpRadius>
+          <clumpSpacing>10.0,18.0</clumpSpacing>
+        </clumping>
+      </biome>
+      <biome name="MontaneForest">
+        <spawnChance>0.015</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>1,2</clumpSize>
+          <clumpRadius>0.6,1.2</clumpRadius>
+          <clumpSpacing>12.0,20.0</clumpSpacing>
+        </clumping>
+      </biome>
 
-      <!-- Grassland: Sparse, isolated or small groups -->
+      <!-- Tropical: forest understory and savanna scrub -->
+      <biome name="TropicalRainforest">
+        <spawnChance>0.015</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>1,3</clumpSize>
+          <clumpRadius>0.8,1.5</clumpRadius>
+          <clumpSpacing>10.0,18.0</clumpSpacing>
+        </clumping>
+      </biome>
+      <biome name="TropicalSeasonalForest">
+        <spawnChance>0.018</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>1,3</clumpSize>
+          <clumpRadius>0.8,1.5</clumpRadius>
+          <clumpSpacing>10.0,18.0</clumpSpacing>
+        </clumping>
+      </biome>
+      <biome name="TropicalSavanna">
+        <spawnChance>0.02</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>1,3</clumpSize>
+          <clumpRadius>0.8,1.5</clumpRadius>
+          <clumpSpacing>12.0,20.0</clumpSpacing>
+        </clumping>
+      </biome>
+
+      <!-- Grassland / shrubland: scattered groups; shrubland is bush country -->
       <biome name="TemperateGrassland">
         <spawnChance>0.012</spawnChance>
         <distribution>clumped</distribution>
@@ -51,6 +112,101 @@
           <clumpSpacing>15.0,25.0</clumpSpacing>
         </clumping>
       </biome>
+      <biome name="XericShrubland">
+        <spawnChance>0.018</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>1,3</clumpSize>
+          <clumpRadius>0.8,1.5</clumpRadius>
+          <clumpSpacing>10.0,18.0</clumpSpacing>
+        </clumping>
+      </biome>
+      <biome name="AlpineGrassland">
+        <spawnChance>0.008</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>1,2</clumpSize>
+          <clumpRadius>0.5,1.0</clumpRadius>
+          <clumpSpacing>18.0,28.0</clumpSpacing>
+        </clumping>
+      </biome>
+
+      <!-- Wet edges: a few woody shrubs at the margins -->
+      <biome name="TemperateWetland">
+        <spawnChance>0.01</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>1,2</clumpSize>
+          <clumpRadius>0.5,1.0</clumpRadius>
+          <clumpSpacing>15.0,25.0</clumpSpacing>
+        </clumping>
+      </biome>
+      <biome name="TropicalWetland">
+        <spawnChance>0.01</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>1,2</clumpSize>
+          <clumpRadius>0.5,1.0</clumpRadius>
+          <clumpSpacing>15.0,25.0</clumpSpacing>
+        </clumping>
+      </biome>
+
+      <!-- Marginal: very scarce, small isolated groups -->
+      <biome name="SemiDesert">
+        <spawnChance>0.008</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>1,2</clumpSize>
+          <clumpRadius>0.5,1.0</clumpRadius>
+          <clumpSpacing>20.0,32.0</clumpSpacing>
+        </clumping>
+      </biome>
+      <biome name="ColdDesert">
+        <spawnChance>0.004</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>1,1</clumpSize>
+          <clumpRadius>0.5,1.0</clumpRadius>
+          <clumpSpacing>25.0,40.0</clumpSpacing>
+        </clumping>
+      </biome>
+      <biome name="HotDesert">
+        <spawnChance>0.002</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>1,1</clumpSize>
+          <clumpRadius>0.5,1.0</clumpRadius>
+          <clumpSpacing>30.0,48.0</clumpSpacing>
+        </clumping>
+      </biome>
+      <biome name="ArcticTundra">
+        <spawnChance>0.004</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>1,2</clumpSize>
+          <clumpRadius>0.5,1.0</clumpRadius>
+          <clumpSpacing>22.0,35.0</clumpSpacing>
+        </clumping>
+      </biome>
+      <biome name="AlpineTundra">
+        <spawnChance>0.004</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>1,2</clumpSize>
+          <clumpRadius>0.5,1.0</clumpRadius>
+          <clumpSpacing>22.0,35.0</clumpSpacing>
+        </clumping>
+      </biome>
+      <biome name="Beach">
+        <spawnChance>0.006</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>1,2</clumpSize>
+          <clumpRadius>0.5,1.0</clumpRadius>
+          <clumpSpacing>18.0,30.0</clumpSpacing>
+        </clumping>
+      </biome>
+      <!-- PolarDesert omitted: bare ice, no woody growth -->
 
       <!-- Groups this asset belongs to -->
       <groups>

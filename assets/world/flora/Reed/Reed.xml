@@ -27,9 +27,14 @@
       <harvestable yield="PlantFiber" amountMin="1" amountMax="3" duration="2.0" destructive="true"/>
     </capabilities>
 
-    <!-- Per-biome placement configuration -->
+    <!-- Per-biome placement configuration.
+         Reeds are the PlantFiber source and grow at the water's edge in essentially any
+         non-frozen biome (all blocks keep near="Water"): dense in wetlands, moderate at
+         grassland/savanna/shrubland ponds and desert oases, sparse along forest streams and
+         brackish beaches. Absent only where surface water is frozen (tundra/polar). This keeps
+         fiber - and so early tools like the axe - reachable wherever a colony lands near water. -->
     <placement>
-      <!-- Wetland: Dense clumps near water -->
+      <!-- Wetlands: dense stands -->
       <biome name="TemperateWetland" near="Water" distance="3">
         <spawnChance>0.30</spawnChance>
         <distribution>clumped</distribution>
@@ -39,8 +44,17 @@
           <clumpSpacing>6.0,12.0</clumpSpacing>
         </clumping>
       </biome>
+      <biome name="TropicalWetland" near="Water" distance="3">
+        <spawnChance>0.25</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>8,16</clumpSize>
+          <clumpRadius>1.0,2.0</clumpRadius>
+          <clumpSpacing>6.0,12.0</clumpSpacing>
+        </clumping>
+      </biome>
 
-      <!-- Grassland ponds: Moderate patches -->
+      <!-- Grassland / savanna / shrubland ponds: moderate patches -->
       <biome name="TemperateGrassland" near="Water" distance="3">
         <spawnChance>0.15</spawnChance>
         <distribution>clumped</distribution>
@@ -50,8 +64,64 @@
           <clumpSpacing>8.0,15.0</clumpSpacing>
         </clumping>
       </biome>
+      <biome name="TropicalSavanna" near="Water" distance="3">
+        <spawnChance>0.12</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>5,10</clumpSize>
+          <clumpRadius>0.8,1.5</clumpRadius>
+          <clumpSpacing>8.0,15.0</clumpSpacing>
+        </clumping>
+      </biome>
+      <biome name="XericShrubland" near="Water" distance="3">
+        <spawnChance>0.15</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>5,10</clumpSize>
+          <clumpRadius>0.8,1.5</clumpRadius>
+          <clumpSpacing>8.0,15.0</clumpSpacing>
+        </clumping>
+      </biome>
+      <biome name="AlpineGrassland" near="Water" distance="3">
+        <spawnChance>0.06</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>3,6</clumpSize>
+          <clumpRadius>0.5,1.0</clumpRadius>
+          <clumpSpacing>12.0,20.0</clumpSpacing>
+        </clumping>
+      </biome>
 
-      <!-- Forest ponds: Sparse patches -->
+      <!-- Desert oases: small but reliable stands at the water -->
+      <biome name="SemiDesert" near="Water" distance="3">
+        <spawnChance>0.12</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>4,8</clumpSize>
+          <clumpRadius>0.8,1.5</clumpRadius>
+          <clumpSpacing>8.0,15.0</clumpSpacing>
+        </clumping>
+      </biome>
+      <biome name="HotDesert" near="Water" distance="3">
+        <spawnChance>0.10</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>4,8</clumpSize>
+          <clumpRadius>0.8,1.5</clumpRadius>
+          <clumpSpacing>8.0,15.0</clumpSpacing>
+        </clumping>
+      </biome>
+      <biome name="ColdDesert" near="Water" distance="3">
+        <spawnChance>0.06</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>3,6</clumpSize>
+          <clumpRadius>0.5,1.0</clumpRadius>
+          <clumpSpacing>12.0,20.0</clumpSpacing>
+        </clumping>
+      </biome>
+
+      <!-- Forest streams and brackish beaches: sparse patches -->
       <biome name="TemperateDeciduousForest" near="Water" distance="3">
         <spawnChance>0.08</spawnChance>
         <distribution>clumped</distribution>
@@ -61,6 +131,61 @@
           <clumpSpacing>12.0,20.0</clumpSpacing>
         </clumping>
       </biome>
+      <biome name="TemperateRainforest" near="Water" distance="3">
+        <spawnChance>0.10</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>3,6</clumpSize>
+          <clumpRadius>0.5,1.0</clumpRadius>
+          <clumpSpacing>12.0,20.0</clumpSpacing>
+        </clumping>
+      </biome>
+      <biome name="BorealForest" near="Water" distance="3">
+        <spawnChance>0.08</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>3,6</clumpSize>
+          <clumpRadius>0.5,1.0</clumpRadius>
+          <clumpSpacing>12.0,20.0</clumpSpacing>
+        </clumping>
+      </biome>
+      <biome name="MontaneForest" near="Water" distance="3">
+        <spawnChance>0.05</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>3,6</clumpSize>
+          <clumpRadius>0.5,1.0</clumpRadius>
+          <clumpSpacing>12.0,20.0</clumpSpacing>
+        </clumping>
+      </biome>
+      <biome name="TropicalSeasonalForest" near="Water" distance="3">
+        <spawnChance>0.08</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>3,6</clumpSize>
+          <clumpRadius>0.5,1.0</clumpRadius>
+          <clumpSpacing>12.0,20.0</clumpSpacing>
+        </clumping>
+      </biome>
+      <biome name="TropicalRainforest" near="Water" distance="3">
+        <spawnChance>0.06</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>3,6</clumpSize>
+          <clumpRadius>0.5,1.0</clumpRadius>
+          <clumpSpacing>12.0,20.0</clumpSpacing>
+        </clumping>
+      </biome>
+      <biome name="Beach" near="Water" distance="3">
+        <spawnChance>0.08</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>3,6</clumpSize>
+          <clumpRadius>0.5,1.0</clumpRadius>
+          <clumpSpacing>12.0,20.0</clumpSpacing>
+        </clumping>
+      </biome>
+      <!-- ArcticTundra, AlpineTundra, PolarDesert omitted: surface water is frozen -->
 
       <!-- Groups this asset belongs to -->
       <groups>
