@@ -33,6 +33,69 @@ inline float measureText(const std::string& text, float fontSize, Renderer::Font
 	return 0.0F;
 }
 
+// The C++ text renderer lays glyphs slightly wider than MeasureText reports, so wrap
+// and fit decisions inflate the measured width to stay clear of the box edge.
+inline constexpr float kRenderWidthFudge = 1.12F;
+inline constexpr float kWrapLineGap		 = 4.0F; // added to fontSize for line height
+
+// Number of lines `text` wraps into at maxWidth (always >= 1).
+inline int wrappedLineCount(const std::string& text, float fontSize, float maxWidth, Renderer::FontFamily font = UI::fontUi) {
+	const ui::FontRenderer* fonts = Renderer::Primitives::getFontRenderer();
+	if (fonts == nullptr || text.empty()) return 1;
+	int			lines = 0;
+	std::string line;
+	size_t		i = 0;
+	while (i < text.size()) {
+		const size_t start = i;
+		while (i < text.size() && text[i] != ' ') ++i;
+		std::string word = text.substr(start, i - start);
+		while (i < text.size() && text[i] == ' ') ++i;
+		std::string candidate = line.empty() ? word : line + " " + word;
+		if (fonts->MeasureText(candidate, fontSize / 16.0F, font).x * kRenderWidthFudge > maxWidth && !line.empty()) {
+			++lines;
+			line = word;
+		} else {
+			line = candidate;
+		}
+	}
+	if (!line.empty()) ++lines;
+	return lines < 1 ? 1 : lines;
+}
+
+// Word-wrap text to maxWidth, drawing each line; returns the y past the last line.
+inline float drawWrapped(const std::string& text, Foundation::Vec2 pos, float fontSize, float maxWidth, const Foundation::Color& color, Renderer::FontFamily font = UI::fontUi) {
+	const float lineH = fontSize + kWrapLineGap;
+	const ui::FontRenderer* fonts = Renderer::Primitives::getFontRenderer();
+	if (fonts == nullptr || text.empty()) {
+		drawText(text, pos, fontSize, color, font);
+		return pos.y + lineH;
+	}
+
+	std::string line;
+	float		y = pos.y;
+	size_t		i = 0;
+	while (i < text.size()) {
+		const size_t start = i;
+		while (i < text.size() && text[i] != ' ') ++i;
+		std::string word = text.substr(start, i - start);
+		while (i < text.size() && text[i] == ' ') ++i; // consume separators
+
+		std::string candidate = line.empty() ? word : line + " " + word;
+		if (fonts->MeasureText(candidate, fontSize / 16.0F, font).x * kRenderWidthFudge > maxWidth && !line.empty()) {
+			drawText(line, {pos.x, y}, fontSize, color, font);
+			y += lineH;
+			line = word;
+		} else {
+			line = candidate;
+		}
+	}
+	if (!line.empty()) {
+		drawText(line, {pos.x, y}, fontSize, color, font);
+		y += lineH;
+	}
+	return y;
+}
+
 // A Salvage Meter: a label (upper-left) + value text (upper-right) over a rounded
 // track with a tone-colored fill. Mirrors Meter.tsx. Returns the y past the meter.
 inline float drawMeter(
@@ -117,17 +180,27 @@ inline float drawDivider(float x, float y, float width, const std::string& label
 // A dashed empty-state panel: a bg_inset rounded rect with a hairline border, a
 // title, and a subtitle. Mirrors the dossier empty states. (Borders are solid;
 // the renderer has no dashed stroke, so a faint hairline stands in.)
-inline void drawEmptyState(const Foundation::Rect& bounds, const std::string& title, const std::string& subtitle) {
+// Returns the y past the panel. The box auto-grows to fit the wrapped subtitle, so
+// callers only need to supply a width and top-left (bounds.height is a minimum).
+inline float drawEmptyState(const Foundation::Rect& bounds, const std::string& title, const std::string& subtitle) {
+	const float pad		= UI::space_3;
+	const float innerW	= bounds.width - pad * 2.0F;
+	const float subLineH = UI::fs_xs + kWrapLineGap;
+	const int	subLines = wrappedLineCount(subtitle, UI::fs_xs, innerW);
+	const float needed	= pad + UI::fs_sm + 4.0F + static_cast<float>(subLines) * subLineH + pad;
+	const float boxH	= needed > bounds.height ? needed : bounds.height;
+
 	Renderer::Primitives::drawRect({
-		.bounds = bounds,
+		.bounds = {bounds.x, bounds.y, bounds.width, boxH},
 		.style	= {.fill = UI::withAlpha(UI::bg_inset, 0.5F), .border = Foundation::BorderStyle{.color = UI::line_hairline, .width = UI::bw, .cornerRadius = UI::r_md, .position = Foundation::BorderPosition::Inside}},
 	});
 
-	const float pad = UI::space_3;
-	float		ty	= bounds.y + pad;
+	float ty = bounds.y + pad;
 	Renderer::Primitives::drawText({.text = title, .position = {bounds.x + pad, ty}, .scale = UI::fs_sm / 16.0F, .color = UI::text, .font = UI::fontUi});
 	ty += UI::fs_sm + 4.0F;
-	Renderer::Primitives::drawText({.text = subtitle, .position = {bounds.x + pad, ty}, .scale = UI::fs_xs / 16.0F, .color = UI::text_faint, .font = UI::fontUi});
+	// Wrap the subtitle within the panel so it never runs past the edge.
+	drawWrapped(subtitle, {bounds.x + pad, ty}, UI::fs_xs, innerW, UI::text_faint);
+	return bounds.y + boxH;
 }
 
 } // namespace world_sim::tabs

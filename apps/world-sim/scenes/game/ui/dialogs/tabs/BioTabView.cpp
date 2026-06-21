@@ -16,43 +16,6 @@ namespace {
 
 constexpr float kRowGap = 10.0F; // gap between stacked sections
 
-// Word-wrap a paragraph to boxWidth and draw it, returning the y past the last
-// line. Falls back to a single line if no font renderer is available to measure.
-float drawWrapped(const std::string& text, Foundation::Vec2 pos, float fontSize, float boxWidth, const Foundation::Color& color) {
-	const float lineHeight = fontSize + 6.0F;
-	auto*		fonts	   = Renderer::Primitives::getFontRenderer();
-
-	if (fonts == nullptr || text.empty()) {
-		tabs::drawText(text, pos, fontSize, color);
-		return pos.y + lineHeight;
-	}
-
-	const float scale = fontSize / 16.0F;
-	std::string line;
-	float		y = pos.y;
-	size_t		i = 0;
-	while (i < text.size()) {
-		size_t start = i;
-		while (i < text.size() && text[i] != ' ') ++i;
-		std::string word = text.substr(start, i - start);
-		while (i < text.size() && text[i] == ' ') ++i;
-
-		std::string candidate = line.empty() ? word : line + " " + word;
-		if (fonts->MeasureText(candidate, scale, UI::fontUi).x > boxWidth && !line.empty()) {
-			tabs::drawText(line, {pos.x, y}, fontSize, color);
-			y += lineHeight;
-			line = word;
-		} else {
-			line = candidate;
-		}
-	}
-	if (!line.empty()) {
-		tabs::drawText(line, {pos.x, y}, fontSize, color);
-		y += lineHeight;
-	}
-	return y;
-}
-
 } // namespace
 
 void BioTabView::create(const Foundation::Rect& bounds) {

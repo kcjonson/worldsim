@@ -257,19 +257,19 @@ namespace world_sim {
 		constexpr float kAvatarSize = 72.0F;
 		UI::Avatar({.position = {ox, oy}, .size = kAvatarSize, .seed = bio.name, .mood = bio.mood / 100.0F}).render();
 
-		// 2x2 Stat grid to the right of the avatar.
-		constexpr float kGap	= 20.0F;
-		constexpr float kStatCol = 200.0F;
+		// 2x2 Stat grid filling the width right of the avatar (prototype: 1fr 1fr).
+		constexpr float kGap	 = 20.0F;
 		constexpr float kStatRow = 40.0F;
-		const float		gx		= ox + kAvatarSize + kGap;
+		const float		gx		 = ox + kAvatarSize + kGap;
+		const float		statCol	 = (content.width - kAvatarSize - kGap) / 2.0F;
 
 		const std::string moodValue = std::to_string(static_cast<int>(bio.mood)) + "%";
 		const UI::Tone	  moodTone	= bio.mood < 40.0F ? UI::Tone::Crit : UI::Tone::Ok;
 
 		UI::Stat({.position = {gx, oy}, .label = "ROLE", .value = "--", .size = UI::Size::Sm}).render();
-		UI::Stat({.position = {gx + kStatCol, oy}, .label = "ORIGIN", .value = "--", .size = UI::Size::Sm}).render();
+		UI::Stat({.position = {gx + statCol, oy}, .label = "ORIGIN", .value = "--", .size = UI::Size::Sm}).render();
 		UI::Stat({.position = {gx, oy + kStatRow}, .label = "AGE", .value = bio.age, .unit = "yrs", .size = UI::Size::Sm}).render();
-		UI::Stat({.position = {gx + kStatCol, oy + kStatRow}, .label = "MOOD", .value = moodValue, .tone = moodTone, .size = UI::Size::Sm}).render();
+		UI::Stat({.position = {gx + statCol, oy + kStatRow}, .label = "MOOD", .value = moodValue, .tone = moodTone, .size = UI::Size::Sm}).render();
 	}
 
 	Foundation::Rect ColonistDetailsDialog::closeButtonBounds() const {
