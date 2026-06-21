@@ -63,6 +63,18 @@ void runStage(GeneratedWorld& w, uint64_t stageSeed = 0x5EEDA70123456789ULL) {
     stage.run(ctx);
 }
 
+void runStageFeedback(GeneratedWorld& w, bool iceFeedback,
+                      uint64_t stageSeed = 0x5EEDA70123456789ULL) {
+    foundation::TaskPool pool(2);
+    std::atomic<bool> cancel{false};
+    StageContext ctx{
+        w.params, w.derived, *w.grid, w.data, w, pool, stageSeed,
+        [](float) {}, cancel, iceFeedback
+    };
+    AtmosphereStage stage;
+    stage.run(ctx);
+}
+
 PlanetParams earthParams(uint32_t n = kN) {
     PlanetParams p = PlanetParams::preset(Preset::EarthLike);
     p.gridSubdivision = n;
@@ -89,6 +101,38 @@ TEST(AtmosphereStage, EarthLikeGlobalMean) {
     double mean = sum / N;
     EXPECT_GE(mean, 13.0) << "Global mean " << mean << " C too cold";
     EXPECT_LE(mean, 17.0) << "Global mean " << mean << " C too hot";
+}
+
+// The ice-feedback pass cools an ice-covered tile (lapse on the raised ice surface
+// + albedo) while leaving ice-free tiles unchanged (the feedback is local to ice).
+TEST(AtmosphereStage, IceFeedbackCoolsIcedTile) {
+    auto w = makeSyntheticWorld(earthParams());
+    runStage(w); // pass 1, no feedback
+
+    // Two flat (0 m) land tiles: one will be glaciated, the other stays bare.
+    uint32_t iced = 0, bare = 0;
+    int picked = 0;
+    for (uint32_t t = 0; t < w.grid->tileCount() && picked < 2; ++t) {
+        double lat{}, lon{};
+        w.grid->latLonOf(t, lat, lon);
+        if (lon >= 0.0 && w.data.elevation[t] == 0.0f) {
+            if (picked == 0) iced = t; else bare = t;
+            ++picked;
+        }
+    }
+    ASSERT_EQ(picked, 2);
+    const double  icedBefore = tempC(w, iced);
+    const int16_t bareBefore = w.data.temperatureMean[bare];
+
+    // Put a 2 km ice sheet on `iced` and re-run with the feedback active.
+    w.data.iceThickness[iced] = 2000;
+    w.data.flags[iced] |= kFlagGlacier;
+    runStageFeedback(w, /*iceFeedback=*/true);
+
+    EXPECT_LT(tempC(w, iced), icedBefore - 10.0)
+        << "iced tile should be much colder under feedback (lapse ~13 C + albedo)";
+    EXPECT_EQ(w.data.temperatureMean[bare], bareBefore)
+        << "ice-free tile must be unchanged (feedback is local to ice/snow)";
 }
 
 TEST(AtmosphereStage, EquatorHotterThanPoles) {

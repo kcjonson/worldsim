@@ -1,7 +1,7 @@
 // OceanStage (pipeline phase P6): flag tiles below sea level as ocean and
 // record water depth. seaLevelMeters was chosen by TerrainStage to hit the
 // requested water fraction; this stage just materializes it per tile.
-// Claims only WaterDepth — the Flags valid bit is owned by SnowStage.
+// Claims only WaterDepth — the Flags valid bit is owned by GlacierStage (last writer).
 
 #include "worldgen/stages/OceanStage.h"
 

@@ -12,12 +12,15 @@ namespace worldgen {
 inline constexpr uint8_t kFlagOcean           = 0x01;
 inline constexpr uint8_t kFlagLake            = 0x02;
 inline constexpr uint8_t kFlagRiver           = 0x04;
-// 0x08: reserved (was kFlagCoast — removed; BiomeStage computes coastness locally)
+// Land ice (glacier / ice sheet), set by GlacierStage. Reuses the old kFlagCoast bit.
+inline constexpr uint8_t kFlagGlacier         = 0x08;
 inline constexpr uint8_t kFlagPermanentSnow   = 0x10;
-// 0x20: reserved (was kFlagGlacier — removed; glacier modeling is a future epic)
+// Frozen ocean (sea ice), set by SnowStage. Reuses the old kFlagGlacier reservation.
+inline constexpr uint8_t kFlagSeaIce          = 0x20;
 // Set by CrustStage on tiles with continental crust (including shelves).
 // Driven by the simulated TectonicHistory crustType field; oceanic tiles never carry this.
 inline constexpr uint8_t kFlagContinentalCrust = 0x40;
+// 0x80 still free.
 
 // Fraction of LAND tiles flagged as river (kFlagRiver). PrecipitationStage
 // computes the flowAccum quantile at (1 - kRiverLandFraction) over land tiles
@@ -64,11 +67,14 @@ enum class WorldField : uint32_t {
     // Tectonic-history fields (M-T3). Appended last to keep IO layout append-only.
     CrustAge          = 1u << 15, // oceanic seafloor age or continental crust age, Myr
     OrogenyAge        = 1u << 16, // Myr since last orogeny (65535 = never)
+    // Ice fields (full-ice epic). Appended last to keep IO layout append-only.
+    IceThickness      = 1u << 17, // meters of land/sea ice; 0 = ice-free
+    IceFlow           = 1u << 18, // neighbor index 0..5 of downslope ice-surface flow; 0xFF = none
 };
 
-inline constexpr uint32_t kAllWorldFields = 0x1FFFFu; // bits 0..16
+inline constexpr uint32_t kAllWorldFields = 0x7FFFFu; // bits 0..18
 
-// SoA world data storage — 30 bytes per tile.
+// SoA world data storage — 33 bytes per tile.
 // All arrays allocated together via allocate(); never resized after that.
 //
 // Units:
@@ -89,9 +95,12 @@ inline constexpr uint32_t kAllWorldFields = 0x1FFFFu; // bits 0..16
 //   waterDepth:        uint16, meters (0 = land or dry)
 //   flowAccum:         float, accumulated upstream drainage area (tile count)
 //   downhill:          uint8, neighbor direction index 0..5 (0xFF = none/sink)
-//   snowCover:         uint8, 0..255 (0 = bare, 255 = full permanent snow)
+//   snowCover:         uint8, 0..255 — permanent snow on LAND only (snow does not
+//                      accumulate on water; frozen ocean is iceThickness + kFlagSeaIce)
 //   crustAge:          uint16, Myr — oceanic = seafloor age; continental = crust age; 65534 = max cap
 //   orogenyAge:        uint16, Myr since last orogeny; 65535 = never
+//   iceThickness:      uint16, meters of solid ice — sea ice (~1-3 m) and ice sheets (thousands)
+//   iceFlow:           uint8, neighbor dir 0..5 of ice-surface descent; 0xFF = none/no flow
 struct WorldData {
     std::vector<float>    elevation;
     std::vector<int16_t>  temperatureMean;
@@ -111,6 +120,9 @@ struct WorldData {
     // Tectonic-history fields — appended last (defines IO layout; append-only).
     std::vector<uint16_t> crustAge;   // Myr, cap 65534; 65534 = maximum stored age
     std::vector<uint16_t> orogenyAge; // Myr since last orogeny; 65535 = never
+    // Ice fields — appended last (defines IO layout; append-only).
+    std::vector<uint16_t> iceThickness; // meters of ice
+    std::vector<uint8_t>  iceFlow;      // neighbor dir 0..5 of ice-surface descent; 0xFF = none
 
     void allocate(uint32_t tileCount) {
         elevation.assign(tileCount, 0.0f);
@@ -130,6 +142,8 @@ struct WorldData {
         snowCover.assign(tileCount, 0);
         crustAge.assign(tileCount, 0);
         orogenyAge.assign(tileCount, 65535u);
+        iceThickness.assign(tileCount, 0);
+        iceFlow.assign(tileCount, 0xFFu);
     }
 };
 
@@ -158,6 +172,9 @@ void forEachFieldArray(WorldDataT& d, Fn&& fn) {
     // Tectonic-history fields appended last — IO layout is defined by this order.
     fn(WorldField::CrustAge, d.crustAge);
     fn(WorldField::OrogenyAge, d.orogenyAge);
+    // Ice fields appended last — IO layout is defined by this order.
+    fn(WorldField::IceThickness, d.iceThickness);
+    fn(WorldField::IceFlow, d.iceFlow);
 }
 
 // worldHash: FNV-1a over each valid array in WorldField bit order, folded

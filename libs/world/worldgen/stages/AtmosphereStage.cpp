@@ -68,6 +68,35 @@ constexpr double kContinentalityRangeC = 20.0;
 // continental interiors (Siberia, central Africa) decouple from maritime influence.
 constexpr double kInteriorSaturationKm = 2000.0;
 
+// --- High-latitude land/ocean thermal contrast ---
+// Polar LAND runs far colder than same-latitude ocean: low heat capacity and no
+// ocean heat transport let polar continental interiors radiate away through the
+// long polar night (Antarctica's coast ~-25 C and interior below -50 C, versus the
+// Arctic ocean's ~-15 C). Without this the model gives polar land an ocean-mild
+// mean, so its summers stay above freezing and no land ice can form. The cooling
+// grows with latitude (sin^4, below) and toward continental interiors (distNorm);
+// ocean keeps its mild, heat-buffered polar mean. Calibrated so deep polar interiors
+// reach Antarctic-like annual means and their summers fall below freezing.
+//
+// The latitude weight is sin^4(lat), not sin^2: the polar-night radiative decoupling
+// that drives this contrast runs away only once the sun barely rises, so it must stay
+// concentrated poleward of ~60 deg. sin^2 bled ~8 C into 45-deg continental interiors
+// and dragged the tundra belt far equatorward of Earth's; sin^4 holds full strength at
+// the pole (sin^4(90)=1) while halving it by 60 deg and quartering it by 45 deg, so the
+// caps still grow ice without over-cooling the mid-latitudes.
+constexpr double kPolarLandCoolC     = 16.0; // C at the pole, deep interior
+constexpr double kPolarCoolCoastFrac = 0.4;  // fraction of the cooling a coast still gets
+
+// --- Ice/snow albedo feedback (ice-feedback pass only) ---
+// A reflective ice/snow surface absorbs less sunlight and runs colder. Modeled as
+// a damped Stefan-Boltzmann response: dT = -kAlbedoDamp * T/(4*(1-a0)) * (a - a0).
+// The damping stands in for the horizontal heat transport this per-tile balance
+// omits; the cap keeps the fixed two-pass bounded (no snowball runaway).
+constexpr double kBaseAlbedo     = 0.30; // ice-free land/ocean
+constexpr double kIceAlbedo      = 0.65; // fresh ice/snow
+constexpr double kAlbedoDamp     = 0.40;
+constexpr double kMaxAlbedoCoolC = 20.0;
+
 double clampd(double v, double lo, double hi) {
     return v < lo ? lo : (v > hi ? hi : v);
 }
@@ -147,6 +176,11 @@ void AtmosphereStage::run(StageContext& ctx) {
         computeDistanceToOcean(ctx.grid, ctx.data.elevation, seaLevel);
     std::vector<float> distNorm(totalTiles, 0.0f);
     double landDistSum = 0.0;
+    // Total high-latitude land cooling, summed serially (bit-reproducible) so it can
+    // be added back uniformly below: the land/ocean thermal contrast REDISTRIBUTES
+    // heat, it does not change the planetary energy balance, so the global mean is
+    // preserved.
+    double polarCoolSum = 0.0;
     uint32_t landCount = 0;
     for (uint32_t t = 0; t < totalTiles; ++t) {
         if (static_cast<double>(ctx.data.elevation[t]) < seaLevel) continue; // ocean
@@ -155,10 +189,18 @@ void AtmosphereStage::run(StageContext& ctx) {
         if (dn > 1.0) dn = 1.0;
         distNorm[t] = static_cast<float>(dn);
         landDistSum += static_cast<double>(distNorm[t]); // sum from stored float, not intermediate double
+        const double zc = ctx.grid.tileCenter(t).z;  // sin(lat)
+        const double polarWeight = zc * zc * zc * zc; // sin^4(lat), see kPolarLandCoolC
+        polarCoolSum += kPolarLandCoolC * polarWeight *
+            (kPolarCoolCoastFrac + (1.0 - kPolarCoolCoastFrac) *
+                                       static_cast<double>(distNorm[t]));
         ++landCount;
     }
     const double meanLandDistNorm = landCount > 0
         ? landDistSum / static_cast<double>(landCount) : 0.0;
+    // Spread the redistributed heat uniformly over all tiles (keeps the mean fixed).
+    const double polarCoolComp = totalTiles > 0
+        ? polarCoolSum / static_cast<double>(totalTiles) : 0.0;
 
     ctx.pool.parallelFor(0, totalTiles, kGrainSize, [&](size_t begin, size_t end) {
         throwIfCancelled(ctx);
@@ -179,8 +221,36 @@ void AtmosphereStage::run(StageContext& ctx) {
             double tempC = globalMeanC + contrastA * (cos2Lat - 2.0 / 3.0);
 
             // Lapse rate on land above sea level only; depressions clamp at 0 km.
+            // On the ice-feedback pass the lapse acts on the ICE SURFACE (bedrock +
+            // ice thickness): a thick ice sheet stands kilometers higher and so reads
+            // much colder — the elevation-mass-balance feedback that lets ice grow.
             if (!isOcean && elev > seaLevel) {
-                tempC -= lapseRate * (elev - seaLevel) / 1000.0;
+                double surfaceElev = elev;
+                if (ctx.iceFeedback) {
+                    surfaceElev += static_cast<double>(ctx.data.iceThickness[t]);
+                }
+                tempC -= lapseRate * (surfaceElev - seaLevel) / 1000.0;
+            }
+
+            // Ice/snow albedo cooling (feedback pass only): reflective surfaces
+            // absorb less sunlight and run colder. This cools snowy/icy tiles that
+            // are not yet glaciers, which is what lets the ice sheet EXPAND on the
+            // second pass (the lapse term only cools tiles that already carry ice).
+            if (ctx.iceFeedback) {
+                const uint8_t fl = ctx.data.flags[t];
+                float iceCover = 0.0f;
+                if (fl & (kFlagGlacier | kFlagSeaIce)) {
+                    iceCover = 1.0f;
+                } else if (fl & kFlagPermanentSnow) {
+                    iceCover = static_cast<float>(ctx.data.snowCover[t]) / 255.0f;
+                }
+                if (iceCover > 0.0f) {
+                    const double albedoExcess = (kIceAlbedo - kBaseAlbedo) * iceCover;
+                    const double tK = tempC + 273.15;
+                    double dT = kAlbedoDamp * tK / (4.0 * (1.0 - kBaseAlbedo)) * albedoExcess;
+                    if (dT > kMaxAlbedoCoolC) dT = kMaxAlbedoCoolC;
+                    tempC -= dT;
+                }
             }
 
             // Continentality mean nudge (land only, zero-sum). distNorm is 0 on
@@ -189,6 +259,19 @@ void AtmosphereStage::run(StageContext& ctx) {
             if (!isOcean) {
                 tempC += kContinentalityMeanC *
                          (static_cast<double>(distNorm[t]) - meanLandDistNorm);
+            }
+
+            // High-latitude land/ocean thermal contrast: polar land radiates colder
+            // than same-latitude ocean, deepening toward continental interiors. This
+            // is what makes polar land summers fall below freezing so ice can form.
+            // Heat redistribution, so the compensation is added back to every tile to
+            // keep the global mean (the energy balance) unchanged.
+            tempC += polarCoolComp;
+            if (!isOcean) {
+                const double polarWeight = sin2Lat * sin2Lat; // sin^4(lat)
+                tempC -= kPolarLandCoolC * polarWeight *
+                         (kPolarCoolCoastFrac + (1.0 - kPolarCoolCoastFrac) *
+                                                    static_cast<double>(distNorm[t]));
             }
 
             // Small seeded perturbation (+/-1.5 C) for texture.

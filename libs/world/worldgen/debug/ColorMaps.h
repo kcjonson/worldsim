@@ -30,8 +30,8 @@ inline constexpr std::array<Rgb, static_cast<size_t>(Biome::Count)> kBiomeColors
     {160, 140, 110},  // ColdDesert
     {200, 170, 110},  // SemiDesert
     {170, 150,  90},  // XericShrubland
-    {150, 160, 140},  // ArcticTundra
-    {130, 140, 130},  // AlpineTundra
+    {205, 214, 214},  // ArcticTundra  — pale snow-dusted tundra
+    {198, 206, 210},  // AlpineTundra  — pale grey-blue rock and snow
     {240, 240, 250},  // PolarDesert
     { 60, 120, 100},  // TemperateWetland
     { 30,  80,  60},  // TropicalWetland

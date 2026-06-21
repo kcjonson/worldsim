@@ -1027,6 +1027,48 @@ WorldStats computeWorldStats(const GeneratedWorld& world) {
         }
     }
 
+    // ---- Cryosphere (sea ice, permanent snow, glaciers) ----
+    {
+        constexpr double kPi = 3.14159265358979323846;
+        constexpr uint16_t kIceSheetThickM = 300;
+        uint32_t seaIceCount = 0;
+        uint32_t maxThick    = 0;
+        uint32_t landCount   = 0;
+        uint32_t glacierCount = 0;
+        uint32_t iceSheetCount = 0;
+        float    capMinAbsLatDeg = 90.0f; // 90 = no sea ice anywhere
+        for (uint32_t t = 0; t < N; ++t) {
+            const uint8_t f = world.data.flags[t];
+            const uint16_t thick = world.data.iceThickness[t];
+            if (thick > maxThick) maxThick = thick;
+            // Cap edge is the frozen-ocean boundary; high-latitude land snow and
+            // equatorial summit snow are not "the ice cap" in this metric.
+            if (f & kFlagSeaIce) {
+                ++seaIceCount;
+                const double z = std::clamp(grid.tileCenter(t).z, -1.0, 1.0); // sin(lat)
+                const auto absLat = static_cast<float>(std::abs(std::asin(z)) * 180.0 / kPi);
+                if (absLat < capMinAbsLatDeg) capMinAbsLatDeg = absLat;
+            }
+            if ((f & kFlagOcean) == 0) {
+                ++landCount;
+                if (f & kFlagGlacier) {
+                    ++glacierCount;
+                    if (thick >= kIceSheetThickM) ++iceSheetCount;
+                }
+            }
+        }
+        s.seaIceFractionOfOcean = (oceanCount > 0)
+            ? static_cast<float>(seaIceCount) / static_cast<float>(oceanCount)
+            : 0.0f;
+        s.frozenOceanFraction  = static_cast<float>(seaIceCount) / static_cast<float>(N);
+        s.iceCapMinLatitudeDeg = capMinAbsLatDeg;
+        s.maxIceThicknessM     = maxThick;
+        s.glacierLandFraction  = (landCount > 0)
+            ? static_cast<float>(glacierCount) / static_cast<float>(landCount) : 0.0f;
+        s.iceSheetLandFraction = (landCount > 0)
+            ? static_cast<float>(iceSheetCount) / static_cast<float>(landCount) : 0.0f;
+    }
+
     return s;
 }
 

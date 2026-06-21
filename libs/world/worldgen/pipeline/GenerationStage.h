@@ -25,6 +25,10 @@ struct StageContext {
     uint64_t                  stageSeed;
     std::function<void(float)> reportProgress;
     const std::atomic<bool>&  cancelRequested;
+    // True only on the optional second (ice-feedback) pass. Stages that read it
+    // recompute the temperature-dependent climate with pass-1 ice cooling its own
+    // surface (elevation lapse + albedo). False on the normal first pass.
+    bool                      iceFeedback = false;
 };
 
 inline void throwIfCancelled(const StageContext& ctx) {

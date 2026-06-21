@@ -24,7 +24,7 @@ namespace worldgen {
 namespace {
 
 constexpr char kMagic[4] = {'W', 'S', 'P', 'L'};
-constexpr uint32_t kFormatVersion = 3;
+constexpr uint32_t kFormatVersion = 4;
 // loadPlanet allocates every WorldData array at tileCount (10*n^2 + 2) elements,
 // so the cap is bounded by what fits in memory today: 2048 is ~42M tiles
 // (~1.1 GB) and is also the UI maximum ("Ultra 2048"). Raise only once the

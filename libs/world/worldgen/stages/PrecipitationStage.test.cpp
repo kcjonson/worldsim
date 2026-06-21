@@ -478,9 +478,8 @@ TEST(PrecipitationStage, ValidFieldsOwnership) {
     snow.run(ctx);
     EXPECT_EQ(w.world.validFields,
               beforeSnow |
-              fieldBit(WorldField::Flags) |
               fieldBit(WorldField::SnowCover))
-        << "SnowStage must add only Flags and SnowCover";
+        << "SnowStage adds only SnowCover (Flags / IceThickness are owned by GlacierStage)";
 }
 
 } // namespace worldgen

@@ -69,12 +69,24 @@ struct TestWorld {
     void runAtmosphere() { AtmosphereStage s; auto ctx = makeContext(kAtmoSeed);  s.run(ctx); }
     void runOcean()      { OceanStage s;      auto ctx = makeContext(kOceanSeed); s.run(ctx); }
     void runSnow()       { SnowStage s;       auto ctx = makeContext(kSnowSeed);  s.run(ctx); }
+
+    void usePreset(Preset p) {
+        const uint32_t n = params.gridSubdivision;
+        params = PlanetParams::preset(p);
+        params.gridSubdivision = n;
+        world.params  = params;
+        world.derived = derive(params);
+    }
 };
 
 uint32_t fieldBit(WorldField f) { return static_cast<uint32_t>(f); }
 
 bool hasSnow(const TestWorld& w, TileId t) {
     return (w.world.data.flags[t] & kFlagPermanentSnow) != 0;
+}
+
+bool hasSeaIce(const TestWorld& w, TileId t) {
+    return (w.world.data.flags[t] & kFlagSeaIce) != 0;
 }
 
 // Western hemisphere ocean; eastern land at 0 m with a 7000 m equatorial
@@ -105,7 +117,8 @@ TEST(SnowStage, SummitAndPolarSnowNotOcean) {
         const double absLat = lat < 0.0 ? -lat : lat;
 
         if ((w.world.data.flags[t] & kFlagOcean) != 0) {
-            EXPECT_EQ(w.world.data.snowCover[t], 0u) << "ocean tile " << t;
+            // Ocean never carries land permanent-snow; sea ice is a separate
+            // flag, tested in the sea-ice cases below.
             EXPECT_FALSE(hasSnow(w, t)) << "ocean tile " << t;
             ++oceanTiles;
             continue;
@@ -197,7 +210,8 @@ TEST(SnowStage, CoverageRampsBelowThreshold) {
 }
 
 // ============================================================================
-// validFields: exactly Flags | SnowCover
+// validFields: SnowStage claims only SnowCover (GlacierStage, the last writer of
+// flags + iceThickness, owns those bits).
 // ============================================================================
 
 TEST(SnowStage, ValidFieldsExactness) {
@@ -206,8 +220,7 @@ TEST(SnowStage, ValidFieldsExactness) {
     w.fillTemperature(-300);
     ASSERT_EQ(w.world.validFields, 0u);
     w.runSnow();
-    EXPECT_EQ(w.world.validFields,
-              fieldBit(WorldField::Flags) | fieldBit(WorldField::SnowCover));
+    EXPECT_EQ(w.world.validFields, fieldBit(WorldField::SnowCover));
 }
 
 // ============================================================================
@@ -223,8 +236,75 @@ TEST(SnowStage, DeterministicAcrossThreadCounts) {
         w->runOcean();
         w->runSnow();
     }
-    EXPECT_EQ(w1.world.data.snowCover, w2.world.data.snowCover);
-    EXPECT_EQ(w1.world.data.flags,     w2.world.data.flags);
+    EXPECT_EQ(w1.world.data.snowCover,    w2.world.data.snowCover);
+    EXPECT_EQ(w1.world.data.flags,        w2.world.data.flags);
+    EXPECT_EQ(w1.world.data.iceThickness, w2.world.data.iceThickness);
+}
+
+// ============================================================================
+// Sea ice: cold polar ocean freezes, warm equatorial ocean does not, and an
+// Earth-like world freezes only a high-latitude cap (not the whole ocean).
+// ============================================================================
+
+TEST(SnowStage, SeaIcePolarOceanNotEquator) {
+    TestWorld w;
+    w.setElevation(summitElevation); // western hemisphere (lon < 0) is ocean
+    w.runAtmosphere();
+    w.runOcean();
+    w.runSnow();
+
+    uint32_t equatorOcean = 0, oceanTiles = 0, frozenOcean = 0;
+    double lowestFrozenAbsLat = 90.0;
+    for (TileId t = 0; t < w.grid.tileCount(); ++t) {
+        if ((w.world.data.flags[t] & kFlagOcean) == 0) continue;
+        ++oceanTiles;
+
+        double lat{}, lon{};
+        w.grid.latLonOf(t, lat, lon);
+        const double absLat = lat < 0.0 ? -lat : lat;
+
+        if (hasSeaIce(w, t)) {
+            ++frozenOcean;
+            EXPECT_GT(w.world.data.iceThickness[t], 0u);
+            EXPECT_EQ(w.world.data.snowCover[t], 0u) << "no snow on water, tile " << t;
+            if (absLat < lowestFrozenAbsLat) lowestFrozenAbsLat = absLat;
+        }
+        if (absLat < 30.0) {
+            EXPECT_FALSE(hasSeaIce(w, t)) << "equatorial ocean tile " << t << " lat " << lat;
+            ++equatorOcean;
+        }
+    }
+    EXPECT_GT(equatorOcean, 20u);
+
+    // A polar cap exists and is confined to high latitudes (warmer polar oceans,
+    // from the land/ocean thermal contrast, push the cap edge poleward but it is
+    // still unmistakably polar).
+    EXPECT_GT(frozenOcean, 5u) << "expected a polar sea-ice cap";
+    EXPECT_GT(lowestFrozenAbsLat, 50.0) << "sea ice should be confined to high latitudes";
+
+    // A cap, not the whole ocean: some frozen, but well under half.
+    const float frac = static_cast<float>(frozenOcean) / static_cast<float>(oceanTiles);
+    EXPECT_LT(frac, 0.5f);
+}
+
+TEST(SnowStage, FrozenWorldFreezesWholeOcean) {
+    TestWorld w;
+    w.usePreset(Preset::FrozenWorld);
+    w.setElevation([](double, double) { return -1000.0; }); // all ocean
+    w.runAtmosphere();
+    w.runOcean();
+    w.runSnow();
+
+    uint32_t oceanTiles = 0, frozen = 0;
+    for (TileId t = 0; t < w.grid.tileCount(); ++t) {
+        if ((w.world.data.flags[t] & kFlagOcean) == 0) continue;
+        ++oceanTiles;
+        if (hasSeaIce(w, t)) ++frozen;
+    }
+    ASSERT_GT(oceanTiles, 0u);
+    // Essentially the entire ocean freezes on a cold world.
+    const float frac = static_cast<float>(frozen) / static_cast<float>(oceanTiles);
+    EXPECT_GT(frac, 0.99f) << frozen << " / " << oceanTiles << " ocean tiles frozen";
 }
 
 } // namespace worldgen

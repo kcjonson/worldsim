@@ -348,6 +348,21 @@ static void writeStatsJson(const std::string& path,
                  static_cast<double>(s.landWithWaterNearbyFraction));
     std::fprintf(fp, "  },\n");
 
+    // Cryosphere stats.
+    std::fprintf(fp, "  \"ice\": {\n");
+    std::fprintf(fp, "    \"seaIceFractionOfOcean\": %.6f,\n",
+                 static_cast<double>(s.seaIceFractionOfOcean));
+    std::fprintf(fp, "    \"frozenOceanFraction\": %.6f,\n",
+                 static_cast<double>(s.frozenOceanFraction));
+    std::fprintf(fp, "    \"iceCapMinLatitudeDeg\": %.2f,\n",
+                 static_cast<double>(s.iceCapMinLatitudeDeg));
+    std::fprintf(fp, "    \"maxIceThicknessM\": %u,\n", s.maxIceThicknessM);
+    std::fprintf(fp, "    \"glacierLandFraction\": %.6f,\n",
+                 static_cast<double>(s.glacierLandFraction));
+    std::fprintf(fp, "    \"iceSheetLandFraction\": %.6f\n",
+                 static_cast<double>(s.iceSheetLandFraction));
+    std::fprintf(fp, "  },\n");
+
     // Terrain dissection metrics (of the fully-generated world).
     std::fprintf(fp, "  \"dissection\": {\n");
     std::fprintf(fp, "    \"hypsometricIntegral\": %.6f,\n",
@@ -438,6 +453,11 @@ static void printSummary(const worldgen::WorldStats& s,
                 static_cast<double>(s.endorheicSinkFraction) * 100.0,
                 static_cast<double>(s.lakeTileFraction) * 100.0,
                 static_cast<double>(s.landWithWaterNearbyFraction) * 100.0);
+    std::printf("  Ice                : sea ice %.2f%% of ocean (cap to %.1f deg), glaciers %.2f%% of land, max ice %u m\n",
+                static_cast<double>(s.seaIceFractionOfOcean) * 100.0,
+                static_cast<double>(s.iceCapMinLatitudeDeg),
+                static_cast<double>(s.glacierLandFraction) * 100.0,
+                s.maxIceThicknessM);
     std::printf("  Dissection         : HI=%.4f  localRelief=%.0f m  drainDens=%.4f km/km2  "
                 "chanDist2=%.2f%%  beltCrest=%.0f m\n",
                 static_cast<double>(s.hypsometricIntegral),

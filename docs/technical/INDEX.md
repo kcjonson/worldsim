@@ -127,6 +127,7 @@ Applications:
 | [World Generation Architecture](./world-generation-architecture.md) | Pluggable world generators |
 | [World Generation Implementation](./world-generation-implementation.md) | SphereGrid (Goldberg hex), pipeline, frozen contracts |
 | [Planet-view Rendering](./planet-view-rendering.md) | Two-tier globe renderer: base mips + detail page cache |
+| [Cryosphere: Sea Ice, Snow & Glaciers](./cryosphere-ice-and-glaciers.md) | Physical ice model: PDD mass balance, perfect-plastic ice sheets, ice→climate two-pass feedback, land/ocean contrast, rendering |
 | [Chunk Management System](./chunk-management-system.md) | Infinite 2D world from 3D sphere |
 | [3D to 2D Sampling](./3d-to-2d-sampling.md) | Converting spherical world to tiles (locateHex) |
 | [Flat Tile Storage Refactor](./flat-tile-storage-refactor.md) | Proposed: Replace layered tiles with flat array |

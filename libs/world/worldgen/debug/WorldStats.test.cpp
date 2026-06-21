@@ -276,9 +276,16 @@ TEST(WorldStats, BiomeFractionsSumToOne) {
 // MEAN lands in Earth-like ranges. The set includes the documented calibration
 // seeds (7, 42, 1337) plus a 1..3 prefix; seed 42 stays in so the guard is not
 // dodging its own hardest case. Measured across-seed MEANs at n=64:
-//   ArcticTundra ~11.8%   HotDesert ~7.1%   total forest >>15%
+//   ArcticTundra ~17.6%   HotDesert ~7%   total forest >>15%
 // The gates sit outside that mean with margin: a genuine regression guard that
 // catches a systematic climate skew (which would move ALL seeds), not seed luck.
+//
+// The ArcticTundra mean rose from ~11.8% to ~17.6% with the cryosphere epic: the
+// high-latitude land/ocean thermal contrast cools polar land enough to hold ice,
+// which also widens the tundra belt behind the ice margin. That cooling is
+// concentrated at the true poles (sin^4 latitude weight), so the rise is driven by
+// the two ocean-dominated cold worlds in the set (seeds 42, 1337, whose land sits
+// mostly poleward); the temperate-arrangement seeds stay ~12-15%.
 // ============================================================================
 TEST(WorldStatsHeavy, EarthLikeBiomeFractionsAcceptance) {
     constexpr uint64_t kSeeds[] = {7ull, 42ull, 1337ull, 1ull, 2ull, 3ull};
@@ -303,9 +310,12 @@ TEST(WorldStatsHeavy, EarthLikeBiomeFractionsAcceptance) {
         return static_cast<float>(sumFrac[static_cast<size_t>(b)] / static_cast<double>(kSeedCount));
     };
 
-    // ArcticTundra must not dominate the land (baseline before C-4 was ~47%,
-    // then ~22% pre-rebalance). Earth is ~10%.
-    EXPECT_LE(frac(Biome::ArcticTundra), 0.18f)
+    // ArcticTundra must not dominate the land (baseline before C-4 was ~47%, then
+    // ~22% pre-rebalance, ~11.8% post-rebalance). The cryosphere epic's polar-land
+    // cooling lifts the cold-world seeds, raising the mean to ~17.6%; the gate sits
+    // at 0.20 to track that intended shift while still catching a real cold skew
+    // (which would push every seed, not just the polar-land ones, well past it).
+    EXPECT_LE(frac(Biome::ArcticTundra), 0.20f)
         << "mean ArcticTundra " << frac(Biome::ArcticTundra) * 100.0f << "% too dominant";
 
     // Hot deserts must return to the subtropical interiors (baseline ~0.1-2.7%).
