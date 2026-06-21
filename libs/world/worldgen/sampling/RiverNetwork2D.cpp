@@ -81,8 +81,7 @@ constexpr double kFeederStepMeters     = 11.0;  // fine enough to resolve the ti
 constexpr double kFeederBankInset      = 0.6;   // start inside the bank so the mouth meets parent water
 constexpr double kFeederMeanderFeature = 60.0;  // bend spacing -> windy but smooth
 constexpr double kFeederMeanderAmp     = 14.0;  // lateral wander (meters)
-constexpr int    kHeadwaterFeederMin   = 2;     // a source is a convergence of 2-3 trickles
-constexpr int    kHeadwaterFeederMax   = 3;
+constexpr int    kHeadwaterFeederCount = 2;     // a source is fed by two trickles, one per bank
 constexpr double kHeadwaterFanDeg      = 55.0;  // springs spread +/- this around upstream so they diverge
 
 // How far upstream of the query box a tile can sit and still have its downstream
@@ -410,11 +409,11 @@ void RiverNetwork2D::emitSegment(TileId tile, double minX, double minY, double m
                (kFeederLenMax - kFeederLenMin) * hashUnit(foundation::hashCombine(fh, 0x4));
     };
 
-    // Headwater source: 2-3 trickles converge at the river's birth (s ~ 0),
+    // Headwater source: two trickles converge at the river's birth (s ~ 0),
     // regardless of how thin the head is -- this is what makes a source read as a
     // gathering of springs rather than an abrupt start. The springs fan across the
-    // upstream semicircle at distinct angles so they diverge and stay apart. Only
-    // when the source is within feeder reach of the query box.
+    // upstream semicircle (one per bank) so they diverge and stay apart. Only when
+    // the source is within feeder reach of the query box.
     if (isHeadwaterRiverTile(tile)) {
         double scx = 0.0;
         double scy = 0.0;
@@ -424,9 +423,7 @@ void RiverNetwork2D::emitSegment(TileId tile, double minX, double minY, double m
         if (scx + reach >= minX && scx - reach <= maxX &&
             scy + reach >= minY && scy - reach <= maxY) {
             const uint64_t hh = foundation::hashCombine(base, 0x6000u);
-            const int count = kHeadwaterFeederMin +
-                              static_cast<int>(hashUnit(foundation::hashCombine(hh, 0x0)) *
-                                               (kHeadwaterFeederMax - kHeadwaterFeederMin + 1));
+            const int count = kHeadwaterFeederCount;
             const double parentHalfHere = std::max(static_cast<double>(srcHalf), 1.2);
             for (int j = 0; j < count; ++j) {
                 const uint64_t fh = foundation::hashCombine(hh, static_cast<uint64_t>(j + 1));
