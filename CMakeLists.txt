@@ -70,6 +70,7 @@ add_subdirectory(apps/world-sim)
 add_subdirectory(apps/ui-sandbox)
 add_subdirectory(apps/worldgen-cli)
 add_subdirectory(apps/asset-cli)
+add_subdirectory(apps/asset-manager)
 
 # Build tools (atlas generator, etc.)
 add_subdirectory(tools/generate_sdf_atlas)
@@ -113,6 +114,7 @@ endforeach()
 add_custom_target(font-atlas DEPENDS ${SDF_ATLAS_OUTPUTS})
 add_dependencies(world-sim font-atlas)
 add_dependencies(ui-sandbox font-atlas)
+add_dependencies(asset-manager font-atlas)
 
 # Developer client (web app)
 # Multi-config generators (Visual Studio) have no CMAKE_BUILD_TYPE at configure

@@ -19,7 +19,7 @@ int main(int argc, char* argv[]) {
 		.windowTitle = "UI Sandbox",
 		.windowSizePercent = 0.8F,
 		.enableDebugServer = true,
-		.debugServerPort = 8081,
+		.debugServerPort = 8090,
 		.enableMetrics = true,
 		.initializeScenes = ui_sandbox::initializeSceneManager,
 		.getDefaultSceneKey =
