@@ -1406,8 +1406,9 @@ namespace world_sim {
 		}
 
 		// Red highlight on the offending edge/vertex when invalid -- but not when the
-		// click will rescue-close (a near-start blocked vertex reads as "closing", not
-		// "error").
+		// click will close (willClose_: the explicit origin snap, or the near-start
+		// rescue of a would-be-blocked vertex). A pending close reads as "closing", not
+		// "error".
 		if (!valid && !willClose_ && !screen.empty()) {
 			const std::size_t vi = std::min(lastValidation_.vertexIndex, screen.size() - 1);
 			Renderer::Primitives::drawCircle({
