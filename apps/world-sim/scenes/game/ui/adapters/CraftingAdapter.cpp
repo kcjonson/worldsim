@@ -29,7 +29,9 @@ std::unordered_set<uint32_t> collectObtainableMaterials(ecs::World& world) {
 	auto&						 registry = engine::assets::AssetRegistry::Get();
 	std::unordered_set<uint32_t> obtainable;
 
-	// Already-held stock: items in any inventory (storage or colonist backpack).
+	// Already-held stock: items in any inventory (storage or colonist backpack), plus items
+	// actively held in hand (unless the hands carry a packaged entity, which is furniture in
+	// transit, not a raw material).
 	for (auto [entity, inventory] : world.view<ecs::Inventory>()) {
 		(void)entity;
 		for (const auto& [defName, quantity] : inventory.items) {
@@ -41,26 +43,41 @@ std::unordered_set<uint32_t> collectObtainableMaterials(ecs::World& world) {
 				obtainable.insert(id);
 			}
 		}
+		if (!inventory.carryingPackagedEntity.has_value()) {
+			for (const ecs::ItemStack* hand : {inventory.getLeftHand(), inventory.getRightHand()}) {
+				if (hand != nullptr && hand->quantity > 0) {
+					const uint32_t id = registry.getDefNameId(hand->defName);
+					if (id != 0) {
+						obtainable.insert(id);
+					}
+				}
+			}
+		}
 	}
 
 	// Known sources in any colonist's Memory: a discovered loose carryable of a type, or a
-	// discovered harvestable whose yield is that type. One pass over every colonist's Memory
-	// (which can hold thousands of entries) - the whole reason to build this set once.
+	// discovered harvestable whose yield is that type. Iterate the per-capability index sets
+	// (small) rather than every remembered entity (up to kMaxWorldEntities each) - the union
+	// across all colonists is what the colony "knows".
 	for (auto [entity, memory] : world.view<ecs::Memory>()) {
 		(void)entity;
-		for (const auto& [key, known] : memory.knownWorldEntities) {
-			(void)key;
-			if (registry.hasCapability(known.defNameId, engine::assets::CapabilityType::Carryable)) {
-				obtainable.insert(known.defNameId);
+		for (uint64_t key : memory.getEntitiesWithCapability(engine::assets::CapabilityType::Carryable)) {
+			auto it = memory.knownWorldEntities.find(key);
+			if (it != memory.knownWorldEntities.end()) {
+				obtainable.insert(it->second.defNameId);
 			}
-			if (registry.hasCapability(known.defNameId, engine::assets::CapabilityType::Harvestable)) {
-				const auto& defName = registry.getDefName(known.defNameId);
-				const auto* def = registry.getDefinition(defName);
-				if (def != nullptr && def->capabilities.harvestable.has_value()) {
-					const uint32_t yieldId = registry.getDefNameId(def->capabilities.harvestable->yieldDefName);
-					if (yieldId != 0) {
-						obtainable.insert(yieldId);
-					}
+		}
+		for (uint64_t key : memory.getEntitiesWithCapability(engine::assets::CapabilityType::Harvestable)) {
+			auto it = memory.knownWorldEntities.find(key);
+			if (it == memory.knownWorldEntities.end()) {
+				continue;
+			}
+			const auto& defName = registry.getDefName(it->second.defNameId);
+			const auto* def = registry.getDefinition(defName);
+			if (def != nullptr && def->capabilities.harvestable.has_value()) {
+				const uint32_t yieldId = registry.getDefNameId(def->capabilities.harvestable->yieldDefName);
+				if (yieldId != 0) {
+					obtainable.insert(yieldId);
 				}
 			}
 		}

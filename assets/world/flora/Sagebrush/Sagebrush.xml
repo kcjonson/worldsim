@@ -65,8 +65,8 @@
       </groups>
 
       <relationships>
+        <!-- Sagebrush forms loose stands; cluster, don't repel. -->
         <affinity type="same" distance="2.0" strength="1.2"/>
-        <avoids type="same" distance="2.0" penalty="0.3"/>
       </relationships>
     </placement>
 
