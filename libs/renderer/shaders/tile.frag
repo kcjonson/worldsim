@@ -14,7 +14,7 @@ out vec4 FragColor;
 //   r: surfaceId | edgeMask<<8 | cornerMask<<16 | hardEdgeMask<<24
 //   g: neighborN | neighborE<<8 | neighborS<<16 | neighborW<<24
 //   b: neighborNW | neighborNE<<8 | neighborSE<<16 | neighborSW<<24
-//   a: padding
+//   a: waterDepth | (padding<<8)
 uniform usampler2D u_tileData;
 uniform vec2 u_chunkOrigin;      // chunk origin in world meters
 uniform ivec2 u_chunkTileOrigin; // chunk origin in world tile coordinates
@@ -34,6 +34,17 @@ vec4 sampleTileColor(vec2 uv, uint surfaceId) {
 		return texture(u_tileAtlas, atlasUV);
 	}
 	return vec4(1.0);
+}
+
+/// Tint water by its rendered depth byte: shallow streams pale, deep rivers and
+/// lakes dark. A little procedural shimmer keeps large bodies from reading flat.
+vec3 waterColorByDepth(uint depthByte, vec2 worldPos) {
+	float d = float(depthByte) / 255.0;
+	vec3 shallow = vec3(0.40, 0.62, 0.66); // pale teal
+	vec3 deep    = vec3(0.07, 0.24, 0.42); // deep blue
+	vec3 c = mix(shallow, deep, d);
+	float ripple = tileNoise2D(worldPos * 0.6);
+	return c * (0.92 + 0.12 * ripple);
 }
 
 void main() {
@@ -56,6 +67,7 @@ void main() {
 	uint neighborNE   = (data.b >> 8u)  & 0xFFu;
 	uint neighborSE   = (data.b >> 16u) & 0xFFu;
 	uint neighborSW   = (data.b >> 24u) & 0xFFu;
+	uint waterDepth   =  data.a         & 0xFFu;
 
 	// PERF: Early-out for INTERIOR TILES (no edge transitions at all).
 	// A tile is truly interior only if ALL 8 neighbors have the same surface.
@@ -65,7 +77,11 @@ void main() {
 		neighborNW == surfaceId && neighborNE == surfaceId &&
 		neighborSE == surfaceId && neighborSW == surfaceId);
 	if (isInteriorTile) {
-		FragColor = sampleTileColor(uv, surfaceId);
+		vec4 interiorColor = sampleTileColor(uv, surfaceId);
+		if (surfaceId == 4u) {
+			interiorColor.rgb = waterColorByDepth(waterDepth, v_worldPos);
+		}
+		FragColor = interiorColor;
 		return;
 	}
 
@@ -73,6 +89,9 @@ void main() {
 	int tileY = u_chunkTileOrigin.y + tileCoord.y;
 
 	vec4 color = sampleTileColor(uv, surfaceId);
+	if (surfaceId == 4u) {
+		color.rgb = waterColorByDepth(waterDepth, v_worldPos);
+	}
 
 	// PERF: Early-out for interior pixels (~31% of tile area).
 	// Blend width is 0.20, corner radius 0.18, edge darkening ~0.12.

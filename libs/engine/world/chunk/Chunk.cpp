@@ -4,9 +4,29 @@
 #include "world/chunk/TilePostProcessor.h"
 #include "world/generation/BiomeDispatcher.h"
 
+#include <algorithm>
 #include <cmath>
 
 namespace engine::world {
+
+	namespace {
+		// Rendered water depth (cosmetic) packed into TileData::attributes and read
+		// by the tile shader. 255 = deepest.
+		constexpr uint8_t kDeepWaterDepth = 255;
+
+		// Map a channel's full width (meters) to a depth byte: narrow streams read
+		// shallow (light), wide rivers deep. A floor keeps even the thinnest stream
+		// visually distinct from a shallow lake edge.
+		uint8_t waterDepthFromWidth(float fullWidthMeters) {
+			constexpr float kShallowAt = 1.5F;   // <= this is fully shallow (a trickle)
+			constexpr float kDeepAt = 14.0F;     // >= this reads fully deep; keeps stream-vs-river contrast
+			constexpr float kMinDepth = 80.0F;   // shallowest stream still distinct from land
+			float t = std::clamp((fullWidthMeters - kShallowAt) / (kDeepAt - kShallowAt), 0.0F, 1.0F);
+			t = t * t * (3.0F - 2.0F * t); // smoothstep
+			float d = kMinDepth + t * (255.0F - kMinDepth);
+			return static_cast<uint8_t>(std::clamp(d, 0.0F, 255.0F));
+		}
+	} // namespace
 
 	Chunk::Chunk(ChunkCoordinate coord, ChunkSampleResult biomeData, uint64_t worldSeed)
 		: m_coord(coord),
@@ -78,6 +98,7 @@ namespace engine::world {
 
 				uint8_t surfaceId = static_cast<uint8_t>(tile.surface);
 				render.surfaceId = surfaceId;
+				render.waterDepth = tile.waterDepth; // cosmetic depth for the water shader
 
 				// Pre-compute edge and corner masks
 				render.edgeMask = TileAdjacency::getEdgeMaskByStack(tile.adjacency, surfaceId);
@@ -111,6 +132,7 @@ namespace engine::world {
 		uint8_t		surfaceId = static_cast<uint8_t>(tile.surface);
 
 		render.surfaceId = surfaceId;
+		render.waterDepth = tile.waterDepth; // keep cosmetic depth in sync
 		render.edgeMask = TileAdjacency::getEdgeMaskByStack(adjacency, surfaceId);
 		render.cornerMask = TileAdjacency::getCornerMaskByStack(adjacency, surfaceId);
 		render.hardEdgeMask = TileAdjacency::getHardEdgeMaskByFamily(adjacency, surfaceId);
@@ -148,6 +170,11 @@ namespace engine::world {
 		// Select surface type based on primary biome (uses spatial clustering)
 		tile.surface = selectSurface(tile.primaryBiome, localX, localY);
 
+		// Water depth byte (cosmetic; the shader tints water by it). Biome water
+		// (ocean/lake/wetland) reads deep; river channels set depth from their width
+		// below so streams render shallow and trunks deep.
+		uint8_t depth = (tile.surface == Surface::Water) ? kDeepWaterDepth : 0;
+
 		// River channels from the coarse 3D drainage graph override the biome
 		// surface. Continuous across chunk seams: the channel geometry is a
 		// deterministic function of world position, gathered per chunk.
@@ -155,8 +182,10 @@ namespace engine::world {
 			const WorldPosition origin = m_coord.origin();
 			const double worldXMeters = static_cast<double>(origin.x) + static_cast<double>(localX) * static_cast<double>(kTileSize);
 			const double worldYMeters = static_cast<double>(origin.y) + static_cast<double>(localY) * static_cast<double>(kTileSize);
-			if (m_biomeData.isRiverAt(worldXMeters, worldYMeters)) {
+			const float halfWidth = m_biomeData.riverHalfWidthAt(worldXMeters, worldYMeters);
+			if (halfWidth > 0.0F) {
 				tile.surface = Surface::Water;
+				depth = waterDepthFromWidth(2.0F * halfWidth);
 			}
 		}
 
@@ -178,7 +207,7 @@ namespace engine::world {
 		// Convert to uint8_t (0-255)
 		tile.moisture = static_cast<uint8_t>(std::min(255.0F, moistureBase * 255.0F));
 
-		tile.attributes = 0; // Reserved for future use
+		tile.waterDepth = depth;
 		tile.adjacency = 0;	 // Computed by TilePostProcessor after all tiles generated
 
 		return tile;

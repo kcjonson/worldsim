@@ -72,7 +72,7 @@ struct TileData {
 	uint8_t biomeBlend = 255;           ///< 1 byte - weight of primary (255 = 100% primary)
 	uint16_t elevation = 0;             ///< 2 bytes - centimeters above sea level
 	uint8_t moisture = 128;             ///< 1 byte - normalized 0-255
-	uint8_t attributes = 0;             ///< 1 byte - reserved for future non-adjacency flags
+	uint8_t waterDepth = 0;             ///< 1 byte - cosmetic water depth (0=land/shallowest, 255=deepest); shader tints water by this
 	uint64_t adjacency = 0;             ///< 8 bytes - neighbor surface types (8 dirs × 6 bits)
 
 	/// Get biome weights as BiomeWeights (for compatibility during migration)
@@ -104,7 +104,8 @@ struct TileRenderData {
 	uint8_t neighborNE;    ///< Northeast neighbor surface ID
 	uint8_t neighborSE;    ///< Southeast neighbor surface ID
 	uint8_t neighborSW;    ///< Southwest neighbor surface ID
-	uint8_t padding[4];    ///< Pad to 16 bytes for cache alignment
+	uint8_t waterDepth;    ///< 0=land/shallowest, 255=deepest; shader tints water by this (texel 'a' low byte)
+	uint8_t padding[3];    ///< Pad to 16 bytes for cache alignment
 };
 
 /// A 512×512 region of the world.

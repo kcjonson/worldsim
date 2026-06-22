@@ -121,6 +121,40 @@ TEST(GeneratedWorldSamplerRivers, RiverChainProducesWaterInChunk) {
     EXPECT_GT(countWater(*chunk), 0u) << "the river should paint water tiles in the chunk";
 }
 
+TEST(GeneratedWorldSamplerRivers, RiverWaterCarriesDepthFromWidth) {
+    using namespace worldgen;
+    auto world = makeSemiDesertWorld();
+
+    const TileId source = world->grid->fromLatLon(0.0, 0.0);
+    const TileId mouth = world->grid->fromLatLon(0.0, 40.0);
+    carveRiver(*world, source, mouth); // flow 80, widening downstream
+
+    double lat = 0.0;
+    double lon = 0.0;
+    world->grid->latLonOf(source, lat, lon);
+
+    GeneratedWorldSampler sampler(world, lat, lon);
+    ChunkSampleResult result = sampler.sampleChunk(ChunkCoordinate(0, 0));
+    auto chunk = generateChunk(ChunkCoordinate(0, 0), std::move(result), sampler.getWorldSeed());
+
+    // The carved river is wide (flow >= 80), so its water tiles must render deeper
+    // than the shallow-stream floor, and the render copy must match the tile field.
+    uint8_t maxDepth = 0;
+    bool anyWater = false;
+    for (uint16_t y = 0; y < kChunkSize; ++y) {
+        for (uint16_t x = 0; x < kChunkSize; ++x) {
+            const auto& tile = chunk->getTile(x, y);
+            if (tile.surface != Surface::Water) continue;
+            anyWater = true;
+            EXPECT_EQ(chunk->getTileRenderData(x, y).waterDepth, tile.waterDepth)
+                << "render depth must mirror the tile depth";
+            maxDepth = std::max(maxDepth, tile.waterDepth);
+        }
+    }
+    ASSERT_TRUE(anyWater);
+    EXPECT_GT(maxDepth, 120) << "a wide carved river should render well below the deepest, not at the shallow floor";
+}
+
 TEST(GeneratedWorldSamplerRivers, NoDrainageMeansNoWater) {
     using namespace worldgen;
     auto world = makeSemiDesertWorld();

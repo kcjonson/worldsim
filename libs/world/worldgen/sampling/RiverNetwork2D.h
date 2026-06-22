@@ -62,9 +62,12 @@ class RiverNetwork2D {
     [[nodiscard]] TileId     downstreamTile(TileId t) const;
     [[nodiscard]] bool       isOceanTile(TileId t) const;
     [[nodiscard]] bool       isRiverTile(TileId t) const;
+    // A river tile with no upstream river neighbor: the source, where the river
+    // should read as a convergence of trickle springs rather than an abrupt start.
+    [[nodiscard]] bool       isHeadwaterRiverTile(TileId t) const;
 
     // Collect river tiles whose downstream segment may reach the box, by a small
-    // bounded BFS over the grid from the box-center tile.
+    // bounded flood fill over the grid from the box-center tile.
     void collectRiverTiles(double minX, double minY, double maxX, double maxY,
                            std::vector<TileId>& out) const;
 
