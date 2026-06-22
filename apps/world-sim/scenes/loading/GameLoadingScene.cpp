@@ -318,8 +318,8 @@ namespace {
 			startConfig->world = std::move(planet);
 			startConfig->landingLatDeg = site.latDeg;
 			startConfig->landingLonDeg = site.lonDeg;
-			LOG_INFO(Game, "GameLoadingScene - Quickstart landing site lat=%.2f lon=%.2f",
-			         site.latDeg, site.lonDeg);
+			LOG_DEBUG(Game, "GameLoadingScene - Quickstart landing site lat=%.2f lon=%.2f",
+			          site.latDeg, site.lonDeg);
 			phase = LoadingPhase::Initializing;
 			progress = 0.3F;
 		}
