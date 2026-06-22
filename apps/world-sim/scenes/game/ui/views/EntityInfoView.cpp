@@ -474,7 +474,7 @@ namespace world_sim {
 	}
 
 	void EntityInfoView::update(
-		const ecs::World&							   world,
+		ecs::World&									   world,
 		const engine::assets::AssetRegistry&		   assetRegistry,
 		const engine::assets::RecipeRegistry&		   recipeRegistry,
 		const Selection&							   selection,

@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Sea Grape - Rounded coastal shrub with broad leathery leaves and purple berry clusters.
+     Beach food source; yields Berry when harvested (non-destructive, regrows). -->
+<AssetDefinitions>
+  <AssetDef>
+    <defName>Flora_SeaGrape</defName>
+    <label>Sea Grape</label>
+    <assetType>simple</assetType>
+    <svgPath>sea_grape.svg</svgPath>
+    <worldHeight>0.8</worldHeight>
+
+    <rendering>
+      <complexity>simple</complexity>
+      <tier>instanced</tier>
+    </rendering>
+
+    <animation>
+      <type>parametric</type>
+      <windResponse>0.2</windResponse>
+      <swayFrequency>0.3,0.6</swayFrequency>
+    </animation>
+
+    <capabilities>
+      <harvestable yield="Berry" amountMin="2" amountMax="5" duration="2.0"
+                   destructive="false" regrowthTime="60.0"/>
+    </capabilities>
+
+    <placement>
+      <biome name="Beach">
+        <spawnChance>0.01</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>2,5</clumpSize>
+          <clumpRadius>1.5,3.0</clumpRadius>
+          <clumpSpacing>10.0,20.0</clumpSpacing>
+        </clumping>
+      </biome>
+
+      <groups>
+        <group>bushes</group>
+        <group>food_sources</group>
+        <group>small_flora</group>
+      </groups>
+
+      <relationships>
+        <avoids type="same" distance="2.0" penalty="0.3"/>
+      </relationships>
+    </placement>
+
+    <variantCount>1</variantCount>
+  </AssetDef>
+</AssetDefinitions>

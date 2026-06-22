@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Bilberry - Low spreading mat of leaves with dark blue-purple berries.
+     Found across boreal, montane, and arctic/alpine zones; regrows after harvest. -->
+<AssetDefinitions>
+  <AssetDef>
+    <defName>Flora_Bilberry</defName>
+    <label>Bilberry</label>
+    <assetType>simple</assetType>
+    <svgPath>bilberry.svg</svgPath>
+    <worldHeight>0.3</worldHeight>
+
+    <rendering>
+      <complexity>simple</complexity>
+      <tier>instanced</tier>
+    </rendering>
+
+    <animation>
+      <type>parametric</type>
+      <windResponse>0.1</windResponse>
+      <swayFrequency>0.3,0.7</swayFrequency>
+    </animation>
+
+    <!-- Entity capabilities - harvested for berries (non-destructive, regrows) -->
+    <capabilities>
+      <harvestable yield="Berry" amountMin="2" amountMax="5" duration="2.0"
+                   destructive="false" regrowthTime="60.0"/>
+    </capabilities>
+
+    <!-- Per-biome placement: boreal, montane, arctic tundra, alpine grassland -->
+    <placement>
+      <biome name="BorealForest">
+        <spawnChance>0.03</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>2,6</clumpSize>
+          <clumpRadius>1.0,2.0</clumpRadius>
+          <clumpSpacing>8.0,15.0</clumpSpacing>
+        </clumping>
+      </biome>
+      <biome name="MontaneForest">
+        <spawnChance>0.015</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>2,4</clumpSize>
+          <clumpRadius>1.0,2.0</clumpRadius>
+          <clumpSpacing>10.0,18.0</clumpSpacing>
+        </clumping>
+      </biome>
+      <biome name="ArcticTundra">
+        <spawnChance>0.01</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>2,5</clumpSize>
+          <clumpRadius>1.0,2.5</clumpRadius>
+          <clumpSpacing>12.0,22.0</clumpSpacing>
+        </clumping>
+      </biome>
+      <biome name="AlpineGrassland">
+        <spawnChance>0.012</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>2,4</clumpSize>
+          <clumpRadius>1.0,2.0</clumpRadius>
+          <clumpSpacing>12.0,22.0</clumpSpacing>
+        </clumping>
+      </biome>
+      <biome name="AlpineTundra">
+        <spawnChance>0.008</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>1,3</clumpSize>
+          <clumpRadius>1.0,2.0</clumpRadius>
+          <clumpSpacing>15.0,25.0</clumpSpacing>
+        </clumping>
+      </biome>
+
+      <groups>
+        <group>bushes</group>
+        <group>food_sources</group>
+        <group>small_flora</group>
+      </groups>
+
+      <relationships>
+        <avoids type="same" distance="2.0" penalty="0.3"/>
+      </relationships>
+    </placement>
+
+    <variantCount>1</variantCount>
+  </AssetDef>
+</AssetDefinitions>

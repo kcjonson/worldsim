@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Prickly Pear Asset Definition
+     Opuntia cactus — a clump of flat oval blue-green pads stacked and spreading from
+     a base. Bears fruit (tunas) along pad edges; harvested for berries. Regrows.
+-->
+<AssetDefinitions>
+  <AssetDef>
+    <defName>Flora_PricklyPear</defName>
+    <label>Prickly Pear</label>
+    <assetType>simple</assetType>
+    <svgPath>prickly_pear.svg</svgPath>
+    <worldHeight>0.5</worldHeight>
+
+    <rendering>
+      <complexity>simple</complexity>
+      <tier>instanced</tier>
+    </rendering>
+
+    <!-- No wind animation — rigid cactus pads don't sway -->
+
+    <!-- Harvested for fruit (berry); non-destructive, regrows -->
+    <capabilities>
+      <harvestable yield="Berry" amountMin="2" amountMax="5" duration="2.0"
+                   destructive="false" regrowthTime="60.0"/>
+    </capabilities>
+
+    <placement>
+      <biome name="HotDesert">
+        <spawnChance>0.010</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>1,3</clumpSize>
+          <clumpRadius>1.0,2.0</clumpRadius>
+          <clumpSpacing>12.0,22.0</clumpSpacing>
+        </clumping>
+      </biome>
+      <biome name="SemiDesert">
+        <spawnChance>0.008</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>1,3</clumpSize>
+          <clumpRadius>1.0,2.0</clumpRadius>
+          <clumpSpacing>12.0,22.0</clumpSpacing>
+        </clumping>
+      </biome>
+      <biome name="XericShrubland">
+        <spawnChance>0.010</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>1,3</clumpSize>
+          <clumpRadius>1.0,2.0</clumpRadius>
+          <clumpSpacing>12.0,22.0</clumpSpacing>
+        </clumping>
+      </biome>
+
+      <groups>
+        <group>bushes</group>
+        <group>food_sources</group>
+        <group>small_flora</group>
+      </groups>
+
+      <relationships>
+        <avoids type="same" distance="2.0" penalty="0.3"/>
+      </relationships>
+    </placement>
+
+    <variantCount>1</variantCount>
+  </AssetDef>
+</AssetDefinitions>

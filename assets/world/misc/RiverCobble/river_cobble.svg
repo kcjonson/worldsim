@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100">
+  <!-- River Cobble - Top-down cluster of 8 smooth rounded pebbles -->
+
+  <!-- Shadow beneath cluster -->
+  <ellipse cx="52" cy="62" rx="38" ry="22" fill="#5a5040" opacity="0.28"/>
+
+  <!-- Pebble 1 - large grey, upper left -->
+  <ellipse cx="34" cy="38" rx="16" ry="13" fill="#7c7c78"/>
+  <ellipse cx="30" cy="34" rx="7" ry="5" fill="#9a9a96" opacity="0.7"/>
+
+  <!-- Pebble 2 - medium brown, upper right -->
+  <ellipse cx="62" cy="34" rx="13" ry="11" fill="#8a7a68"/>
+  <ellipse cx="58" cy="31" rx="5" ry="4" fill="#a0907e" opacity="0.7"/>
+
+  <!-- Pebble 3 - pale grey, top centre -->
+  <ellipse cx="48" cy="28" rx="10" ry="8" fill="#b0aeaa"/>
+  <ellipse cx="46" cy="26" rx="4" ry="3" fill="#c8c6c2" opacity="0.75"/>
+
+  <!-- Pebble 4 - dark grey, left -->
+  <ellipse cx="22" cy="54" rx="13" ry="11" fill="#686864"/>
+  <ellipse cx="19" cy="50" rx="5" ry="4" fill="#828280" opacity="0.65"/>
+
+  <!-- Pebble 5 - medium warm brown, centre -->
+  <ellipse cx="50" cy="50" rx="14" ry="12" fill="#9a8870"/>
+  <ellipse cx="46" cy="46" rx="6" ry="4" fill="#b0a080" opacity="0.7"/>
+
+  <!-- Pebble 6 - light grey, right -->
+  <ellipse cx="72" cy="52" rx="13" ry="11" fill="#8e8e8a"/>
+  <ellipse cx="68" cy="48" rx="5" ry="4" fill="#aaaaa6" opacity="0.7"/>
+
+  <!-- Pebble 7 - dark brown, lower left -->
+  <ellipse cx="32" cy="66" rx="12" ry="10" fill="#786050"/>
+  <ellipse cx="29" cy="63" rx="5" ry="3" fill="#8e7864" opacity="0.65"/>
+
+  <!-- Pebble 8 - pale, lower right -->
+  <ellipse cx="64" cy="68" rx="11" ry="9" fill="#b4b0a8"/>
+  <ellipse cx="61" cy="65" rx="4" ry="3" fill="#cac8c2" opacity="0.7"/>
+</svg>

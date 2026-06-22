@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Basalt - Dense dark volcanic rock found in tropical biomes and beaches.
+     Angular blocky near-black stone; yields SmallStone when knapped. -->
+<AssetDefinitions>
+  <AssetDef>
+    <defName>Basalt</defName>
+    <label>Basalt</label>
+    <assetType>simple</assetType>
+    <svgPath>basalt.svg</svgPath>
+    <worldHeight>0.45</worldHeight>
+
+    <rendering>
+      <complexity>simple</complexity>
+      <tier>instanced</tier>
+    </rendering>
+
+    <capabilities>
+      <harvestable yield="SmallStone" amountMin="2" amountMax="3" duration="3.0" destructive="true"/>
+    </capabilities>
+
+    <placement>
+      <biome name="TropicalRainforest">
+        <spawnChance>0.012</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>1,3</clumpSize>
+          <clumpRadius>1.0,2.5</clumpRadius>
+          <clumpSpacing>12.0,22.0</clumpSpacing>
+        </clumping>
+      </biome>
+      <biome name="TropicalSeasonalForest">
+        <spawnChance>0.014</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>1,3</clumpSize>
+          <clumpRadius>1.0,2.5</clumpRadius>
+          <clumpSpacing>12.0,22.0</clumpSpacing>
+        </clumping>
+      </biome>
+      <biome name="TropicalSavanna">
+        <spawnChance>0.018</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>1,3</clumpSize>
+          <clumpRadius>1.0,2.5</clumpRadius>
+          <clumpSpacing>10.0,20.0</clumpSpacing>
+        </clumping>
+      </biome>
+      <biome name="Beach">
+        <spawnChance>0.025</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>1,4</clumpSize>
+          <clumpRadius>1.0,3.0</clumpRadius>
+          <clumpSpacing>8.0,18.0</clumpSpacing>
+        </clumping>
+      </biome>
+
+      <groups>
+        <group>ground_scatter</group>
+        <group>stone_sources</group>
+      </groups>
+
+      <relationships>
+        <avoids type="same" distance="2.0" penalty="0.3"/>
+      </relationships>
+    </placement>
+
+    <variantCount>1</variantCount>
+  </AssetDef>
+</AssetDefinitions>

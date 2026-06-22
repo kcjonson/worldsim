@@ -46,6 +46,17 @@
         </clumping>
       </biome>
 
+      <!-- Temperate rainforest: berries in the damp understory -->
+      <biome name="TemperateRainforest">
+        <spawnChance>0.025</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>2,5</clumpSize>
+          <clumpRadius>1.0,2.0</clumpRadius>
+          <clumpSpacing>8.0,15.0</clumpSpacing>
+        </clumping>
+      </biome>
+
       <!-- Groups this asset belongs to -->
       <groups>
         <group>bushes</group>

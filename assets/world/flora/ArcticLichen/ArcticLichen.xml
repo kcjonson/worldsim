@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- ArcticLichen - Flat crusty reindeer lichen patch spreading over polar/tundra ground.
+     Pale grey-green branching blobs; destructive harvest for plant fiber. -->
+<AssetDefinitions>
+  <AssetDef>
+    <defName>Flora_ArcticLichen</defName>
+    <label>Arctic Lichen</label>
+    <assetType>simple</assetType>
+    <svgPath>arctic_lichen.svg</svgPath>
+    <worldHeight>0.1</worldHeight>
+
+    <rendering>
+      <complexity>simple</complexity>
+      <tier>instanced</tier>
+    </rendering>
+
+    <!-- No animation - lichen is flat and doesn't sway -->
+
+    <capabilities>
+      <harvestable yield="PlantFiber" amountMin="1" amountMax="3" duration="2.0" destructive="true"/>
+    </capabilities>
+
+    <placement>
+      <biome name="PolarDesert">
+        <spawnChance>0.02</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>2,6</clumpSize>
+          <clumpRadius>1.0,2.5</clumpRadius>
+          <clumpSpacing>8.0,16.0</clumpSpacing>
+        </clumping>
+      </biome>
+      <biome name="ArcticTundra">
+        <spawnChance>0.012</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>2,6</clumpSize>
+          <clumpRadius>1.0,2.5</clumpRadius>
+          <clumpSpacing>8.0,16.0</clumpSpacing>
+        </clumping>
+      </biome>
+
+      <groups>
+        <group>fiber_sources</group>
+        <group>small_flora</group>
+      </groups>
+
+      <relationships>
+        <avoids type="same" distance="2.0" penalty="0.3"/>
+      </relationships>
+    </placement>
+
+    <variantCount>1</variantCount>
+  </AssetDef>
+</AssetDefinitions>

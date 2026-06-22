@@ -72,7 +72,7 @@ class EntityInfoView : public UI::Component {
 	/// @param recipeRegistry Recipe registry (for crafting stations)
 	/// @param selection Current selection state
 	void update(
-		const ecs::World&							   world,
+		ecs::World&									   world,
 		const engine::assets::AssetRegistry&		   assetRegistry,
 		const engine::assets::RecipeRegistry&		   recipeRegistry,
 		const Selection&							   selection,

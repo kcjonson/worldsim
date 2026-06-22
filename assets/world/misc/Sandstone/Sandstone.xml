@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Sandstone - Weathered sedimentary rock of arid country.
+     Harvested for loose stone (yields the universal SmallStone crafting item), so colonists
+     gather building/tool stone from biome-appropriate rock instead of generic pebbles. -->
+<AssetDefinitions>
+  <AssetDef>
+    <defName>Sandstone</defName>
+    <label>Sandstone</label>
+    <assetType>simple</assetType>
+    <svgPath>sandstone.svg</svgPath>
+    <worldHeight>0.4</worldHeight>
+
+    <rendering>
+      <complexity>simple</complexity>
+      <tier>instanced</tier>
+    </rendering>
+
+    <!-- No animation - rock doesn't sway -->
+
+    <!-- Entity capabilities - knapped/gathered for loose stone, then depleted -->
+    <capabilities>
+      <harvestable yield="SmallStone" amountMin="2" amountMax="3" duration="3.0" destructive="true"/>
+    </capabilities>
+
+    <!-- Per-biome placement: arid and semi-arid country -->
+    <placement>
+      <biome name="HotDesert">
+        <spawnChance>0.025</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>1,3</clumpSize>
+          <clumpRadius>1.0,2.5</clumpRadius>
+          <clumpSpacing>10.0,20.0</clumpSpacing>
+        </clumping>
+      </biome>
+      <biome name="ColdDesert">
+        <spawnChance>0.022</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>1,3</clumpSize>
+          <clumpRadius>1.0,2.5</clumpRadius>
+          <clumpSpacing>10.0,20.0</clumpSpacing>
+        </clumping>
+      </biome>
+      <biome name="SemiDesert">
+        <spawnChance>0.022</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>1,3</clumpSize>
+          <clumpRadius>1.0,2.5</clumpRadius>
+          <clumpSpacing>10.0,20.0</clumpSpacing>
+        </clumping>
+      </biome>
+      <biome name="XericShrubland">
+        <spawnChance>0.02</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>1,3</clumpSize>
+          <clumpRadius>1.0,2.5</clumpRadius>
+          <clumpSpacing>10.0,20.0</clumpSpacing>
+        </clumping>
+      </biome>
+
+      <groups>
+        <group>ground_scatter</group>
+        <group>stone_sources</group>
+      </groups>
+
+      <relationships>
+        <!-- Rock outcrops keep their distance from one another -->
+        <avoids type="same" distance="2.5" penalty="0.3"/>
+      </relationships>
+    </placement>
+
+    <variantCount>1</variantCount>
+  </AssetDef>
+</AssetDefinitions>

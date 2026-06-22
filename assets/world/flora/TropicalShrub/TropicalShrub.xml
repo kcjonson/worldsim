@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Tropical Shrub - Lush broad-leaved understory shrub of tropical forest floors.
+     Dense glossy foliage; harvested for sticks. -->
+<AssetDefinitions>
+  <AssetDef>
+    <defName>Flora_TropicalShrub</defName>
+    <label>Tropical Shrub</label>
+    <assetType>simple</assetType>
+    <svgPath>tropical_shrub.svg</svgPath>
+    <worldHeight>0.9</worldHeight>
+
+    <rendering>
+      <complexity>simple</complexity>
+      <tier>instanced</tier>
+    </rendering>
+
+    <animation>
+      <type>parametric</type>
+      <windResponse>0.2</windResponse>
+      <swayFrequency>0.3,0.6</swayFrequency>
+    </animation>
+
+    <capabilities>
+      <harvestable yield="Stick" amountMin="1" amountMax="1" duration="4.0"
+                   destructive="false" totalResourceMin="3" totalResourceMax="5"/>
+    </capabilities>
+
+    <placement>
+      <biome name="TropicalRainforest">
+        <spawnChance>0.016</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>1,4</clumpSize>
+          <clumpRadius>0.8,1.8</clumpRadius>
+          <clumpSpacing>8.0,16.0</clumpSpacing>
+        </clumping>
+      </biome>
+      <biome name="TropicalSeasonalForest">
+        <spawnChance>0.018</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>1,4</clumpSize>
+          <clumpRadius>0.8,1.8</clumpRadius>
+          <clumpSpacing>8.0,16.0</clumpSpacing>
+        </clumping>
+      </biome>
+
+      <groups>
+        <group>bushes</group>
+        <group>wood_sources</group>
+        <group>small_flora</group>
+      </groups>
+
+      <relationships>
+        <avoids type="same" distance="2.0" penalty="0.3"/>
+        <avoids group="trees" distance="2.5" penalty="0.4"/>
+        <avoids group="food_sources" distance="2.0" penalty="0.5"/>
+      </relationships>
+    </placement>
+
+    <variantCount>1</variantCount>
+  </AssetDef>
+</AssetDefinitions>

@@ -1,5 +1,7 @@
 #include "CraftingDialogModel.h"
 
+#include "scenes/game/ui/adapters/CraftingAdapter.h"
+
 #include <ecs/components/WorkQueue.h>
 
 #include <algorithm>
@@ -55,7 +57,7 @@ void CraftingDialogModel::clear() {
 }
 
 CraftingDialogModel::UpdateType CraftingDialogModel::refresh(
-	const ecs::World& world,
+	ecs::World& world,
 	const engine::assets::RecipeRegistry& registry
 ) {
 	if (currentStationId == 0) {
@@ -66,15 +68,19 @@ CraftingDialogModel::UpdateType CraftingDialogModel::refresh(
 	bool wasValid = valid;
 	valid = true;
 
+	// Build the colony's obtainable-material set once; reused by every availability check below
+	// instead of re-scanning all inventories + memories per recipe input.
+	const auto obtainable = collectObtainableMaterials(world);
+
 	// Extract all data
-	extractRecipeList(registry);
-	extractSelectedDetails(registry);
+	extractRecipeList(obtainable, registry);
+	extractSelectedDetails(obtainable, registry);
 	extractQueue(world, registry);
 
 	// Auto-select first recipe if none selected
 	if (selectedRecipe.empty() && !recipeList.empty()) {
 		selectedRecipe = recipeList[0].defName;
-		extractSelectedDetails(registry);
+		extractSelectedDetails(obtainable, registry);
 		return UpdateType::Full;
 	}
 
@@ -125,7 +131,7 @@ void CraftingDialogModel::adjustQuantity(int delta) {
 	currentQuantity = static_cast<uint32_t>(std::max(1, newQty));
 }
 
-void CraftingDialogModel::extractRecipeList(const engine::assets::RecipeRegistry& registry) {
+void CraftingDialogModel::extractRecipeList(const std::unordered_set<uint32_t>& obtainable, const engine::assets::RecipeRegistry& registry) {
 	recipeList.clear();
 
 	auto recipes = registry.getRecipesForStation(currentStationDefName);
@@ -135,7 +141,7 @@ void CraftingDialogModel::extractRecipeList(const engine::assets::RecipeRegistry
 		RecipeListItem item;
 		item.defName = recipe->defName;
 		item.label = recipe->label;
-		item.canCraft = checkMaterialAvailability(*recipe);
+		item.canCraft = checkMaterialAvailability(obtainable, *recipe);
 		recipeList.push_back(item);
 	}
 
@@ -148,7 +154,7 @@ void CraftingDialogModel::extractRecipeList(const engine::assets::RecipeRegistry
 	});
 }
 
-void CraftingDialogModel::extractSelectedDetails(const engine::assets::RecipeRegistry& registry) {
+void CraftingDialogModel::extractSelectedDetails(const std::unordered_set<uint32_t>& obtainable, const engine::assets::RecipeRegistry& registry) {
 	details = {};
 
 	if (selectedRecipe.empty()) {
@@ -162,22 +168,24 @@ void CraftingDialogModel::extractSelectedDetails(const engine::assets::RecipeReg
 
 	details.name = recipe->label;
 	details.description = recipe->description;
-	details.canCraft = checkMaterialAvailability(*recipe);
+	details.canCraft = checkMaterialAvailability(obtainable, *recipe);
 
 	// Work time in seconds (workAmount / assumed work rate)
 	// Assume ~100 work units per second as baseline
 	constexpr float kWorkUnitsPerSecond = 100.0F;
 	details.workTime = recipe->workAmount / kWorkUnitsPerSecond;
 
-	// Materials
+	// Materials. hasEnough here means "the colony can source this input" (known loose item,
+	// known harvestable, or existing stock), not a counted stockpile - colonists only act on
+	// materials they've discovered, so an unsourced input is what actually blocks the craft.
 	details.materials.reserve(recipe->inputs.size());
 	for (const auto& input : recipe->inputs) {
 		MaterialRequirement mat;
 		mat.defName = input.defName;
 		mat.label = input.defName;  // Could look up display name from asset registry
 		mat.required = input.count;
-		mat.available = 0;  // TODO: Query inventory when available
-		mat.hasEnough = true;  // Placeholder: assume available for now
+		mat.available = 0;  // Not a counted stockpile yet; availability is presence-based.
+		mat.hasEnough = isMaterialObtainable(obtainable, input.defName);
 		details.materials.push_back(mat);
 	}
 
@@ -223,11 +231,10 @@ void CraftingDialogModel::extractQueue(const ecs::World& world, const engine::as
 	}
 }
 
-bool CraftingDialogModel::checkMaterialAvailability(const engine::assets::RecipeDef& recipe) const {
-	// TODO: When inventory/stockpile system is available, query actual availability
-	// For now, always return true (player can queue anything)
-	(void)recipe;
-	return true;
+bool CraftingDialogModel::checkMaterialAvailability(
+	const std::unordered_set<uint32_t>& obtainable, const engine::assets::RecipeDef& recipe
+) const {
+	return unobtainableInputs(obtainable, recipe).empty();
 }
 
 } // namespace world_sim

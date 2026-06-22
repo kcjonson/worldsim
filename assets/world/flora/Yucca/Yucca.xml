@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Yucca Asset Definition
+     Yucca (Yucca baccata / Y. glauca) — a stiff rosette of sword-like leaves radiating
+     from a central base. Fibrous leaves are the yield. Grows across all arid biomes
+     including cold desert.
+-->
+<AssetDefinitions>
+  <AssetDef>
+    <defName>Flora_Yucca</defName>
+    <label>Yucca</label>
+    <assetType>simple</assetType>
+    <svgPath>yucca.svg</svgPath>
+    <worldHeight>0.9</worldHeight>
+
+    <rendering>
+      <complexity>simple</complexity>
+      <tier>instanced</tier>
+    </rendering>
+
+    <!-- No wind sway — rigid leaves don't bend -->
+
+    <!-- Harvested for plant fiber (destructive) -->
+    <capabilities>
+      <harvestable yield="PlantFiber" amountMin="1" amountMax="3" duration="2.0" destructive="true"/>
+    </capabilities>
+
+    <placement>
+      <biome name="HotDesert">
+        <spawnChance>0.012</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>1,2</clumpSize>
+          <clumpRadius>1.0,2.0</clumpRadius>
+          <clumpSpacing>14.0,24.0</clumpSpacing>
+        </clumping>
+      </biome>
+      <biome name="SemiDesert">
+        <spawnChance>0.012</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>1,2</clumpSize>
+          <clumpRadius>1.0,2.0</clumpRadius>
+          <clumpSpacing>14.0,24.0</clumpSpacing>
+        </clumping>
+      </biome>
+      <biome name="XericShrubland">
+        <spawnChance>0.014</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>1,3</clumpSize>
+          <clumpRadius>1.0,2.5</clumpRadius>
+          <clumpSpacing>12.0,22.0</clumpSpacing>
+        </clumping>
+      </biome>
+      <biome name="ColdDesert">
+        <spawnChance>0.008</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>1,2</clumpSize>
+          <clumpRadius>1.0,2.0</clumpRadius>
+          <clumpSpacing>16.0,28.0</clumpSpacing>
+        </clumping>
+      </biome>
+
+      <groups>
+        <group>fiber_sources</group>
+        <group>small_flora</group>
+      </groups>
+
+      <relationships>
+        <avoids type="same" distance="2.0" penalty="0.3"/>
+      </relationships>
+    </placement>
+
+    <variantCount>1</variantCount>
+  </AssetDef>
+</AssetDefinitions>

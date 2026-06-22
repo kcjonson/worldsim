@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100">
+  <!-- Prickly Pear - Top-down view (~0.5m spread)
+       Clump of flat oval blue-green pads seen from above. Lower pads partially
+       visible beneath upper ones. Magenta/red fruit dots along pad edges.
+       Tiny white spine-cluster dots scattered across pad faces. -->
+
+  <!-- Ground shadow -->
+  <ellipse cx="52" cy="60" rx="34" ry="20" fill="#8a7040" opacity="0.22"/>
+
+  <!-- Rear/lower pads (darker, partly occluded) -->
+  <!-- Rear-left pad -->
+  <path d="M28,54
+           C22,44 24,30 34,24
+           C42,18 52,22 56,32
+           C60,42 56,56 46,60
+           C36,64 32,62 28,54 Z"
+        fill="#4d7a58"/>
+  <!-- Rear-right pad -->
+  <path d="M54,50
+           C50,38 56,24 66,20
+           C76,16 84,24 84,36
+           C84,48 76,58 66,60
+           C58,62 56,58 54,50 Z"
+        fill="#4d7a58"/>
+
+  <!-- Mid-layer pads -->
+  <!-- Left pad -->
+  <path d="M18,68
+           C14,56 18,42 28,36
+           C38,30 50,36 52,48
+           C54,60 46,72 36,76
+           C26,78 20,76 18,68 Z"
+        fill="#5d8e68"/>
+  <!-- Right pad -->
+  <path d="M52,66
+           C50,54 58,40 70,36
+           C80,32 88,40 88,52
+           C88,64 80,74 70,78
+           C60,80 54,74 52,66 Z"
+        fill="#5d8e68"/>
+
+  <!-- Front/top central pad (largest, most visible) -->
+  <path d="M32,78
+           C28,66 32,50 44,42
+           C56,34 70,40 72,54
+           C74,66 66,80 54,84
+           C42,88 34,86 32,78 Z"
+        fill="#6fa07a"/>
+
+  <!-- Sunlit highlight on front pad -->
+  <path d="M40,68
+           C38,60 42,52 50,48
+           C58,44 66,48 66,56
+           C66,64 60,72 52,74
+           C44,76 40,74 40,68 Z"
+        fill="#82b48a" opacity="0.8"/>
+
+  <!-- Spine cluster dots (tiny white dots across pads) -->
+  <circle cx="44" cy="56" r="1.2" fill="#e8e0c8" opacity="0.9"/>
+  <circle cx="52" cy="52" r="1.2" fill="#e8e0c8" opacity="0.9"/>
+  <circle cx="58" cy="60" r="1.2" fill="#e8e0c8" opacity="0.9"/>
+  <circle cx="48" cy="68" r="1.2" fill="#e8e0c8" opacity="0.9"/>
+  <circle cx="60" cy="68" r="1.2" fill="#e8e0c8" opacity="0.9"/>
+  <circle cx="38" cy="52" r="1.0" fill="#e8e0c8" opacity="0.8"/>
+  <circle cx="64" cy="54" r="1.0" fill="#e8e0c8" opacity="0.8"/>
+  <!-- Spine dots on rear pads -->
+  <circle cx="40" cy="36" r="1.0" fill="#e8e0c8" opacity="0.6"/>
+  <circle cx="48" cy="32" r="1.0" fill="#e8e0c8" opacity="0.6"/>
+  <circle cx="68" cy="34" r="1.0" fill="#e8e0c8" opacity="0.6"/>
+  <circle cx="76" cy="40" r="1.0" fill="#e8e0c8" opacity="0.6"/>
+
+  <!-- Magenta/red fruit (tunas) along pad edges -->
+  <circle cx="34" cy="74" r="4.0" fill="#c0304a"/>
+  <circle cx="66" cy="76" r="3.5" fill="#c0304a"/>
+  <circle cx="72" cy="58" r="3.0" fill="#b83046"/>
+  <circle cx="30" cy="60" r="3.0" fill="#c0304a"/>
+  <circle cx="56" cy="82" r="3.5" fill="#c83850"/>
+  <!-- Fruit highlights -->
+  <circle cx="33" cy="73" r="1.5" fill="#e05070" opacity="0.7"/>
+  <circle cx="65" cy="75" r="1.3" fill="#e05070" opacity="0.7"/>
+</svg>

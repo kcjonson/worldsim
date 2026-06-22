@@ -52,6 +52,17 @@
         </clumping>
       </biome>
 
+      <!-- Temperate rainforest: damp understory thickets -->
+      <biome name="TemperateRainforest">
+        <spawnChance>0.018</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>1,3</clumpSize>
+          <clumpRadius>0.8,1.5</clumpRadius>
+          <clumpSpacing>10.0,18.0</clumpSpacing>
+        </clumping>
+      </biome>
+
       <!-- Groups this asset belongs to -->
       <groups>
         <group>bushes</group>

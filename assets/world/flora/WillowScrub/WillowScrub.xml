@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Willow Scrub (Withies) - Clump of slender willow shoots with drooping narrow leaves.
+     Wetland wood source; yields Stick when harvested (non-destructive). -->
+<AssetDefinitions>
+  <AssetDef>
+    <defName>Flora_WillowScrub</defName>
+    <label>Willow Scrub</label>
+    <assetType>simple</assetType>
+    <svgPath>willow_scrub.svg</svgPath>
+    <worldHeight>0.9</worldHeight>
+
+    <rendering>
+      <complexity>simple</complexity>
+      <tier>instanced</tier>
+    </rendering>
+
+    <animation>
+      <type>parametric</type>
+      <windResponse>0.35</windResponse>
+      <swayFrequency>0.3,0.6</swayFrequency>
+    </animation>
+
+    <capabilities>
+      <harvestable yield="Stick" amountMin="1" amountMax="1" duration="4.0"
+                   destructive="false" totalResourceMin="3" totalResourceMax="5"/>
+    </capabilities>
+
+    <placement>
+      <biome name="TemperateWetland">
+        <spawnChance>0.012</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>2,5</clumpSize>
+          <clumpRadius>1.5,3.0</clumpRadius>
+          <clumpSpacing>8.0,16.0</clumpSpacing>
+        </clumping>
+      </biome>
+      <biome name="TropicalWetland">
+        <spawnChance>0.01</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>2,4</clumpSize>
+          <clumpRadius>1.5,3.0</clumpRadius>
+          <clumpSpacing>8.0,16.0</clumpSpacing>
+        </clumping>
+      </biome>
+
+      <groups>
+        <group>bushes</group>
+        <group>wood_sources</group>
+        <group>small_flora</group>
+      </groups>
+
+      <relationships>
+        <avoids type="same" distance="2.0" penalty="0.3"/>
+      </relationships>
+    </placement>
+
+    <variantCount>1</variantCount>
+  </AssetDef>
+</AssetDefinitions>

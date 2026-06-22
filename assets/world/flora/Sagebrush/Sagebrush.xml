@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Sagebrush Asset Definition
+     Big sagebrush (Artemisia tridentata) — a rounded, densely-mounded shrub with
+     fine silvery grey-green foliage. The dominant shrub of cold semi-arid basins.
+     Harvested for woody stems (sticks).
+-->
+<AssetDefinitions>
+  <AssetDef>
+    <defName>Flora_Sagebrush</defName>
+    <label>Sagebrush</label>
+    <assetType>simple</assetType>
+    <svgPath>sagebrush.svg</svgPath>
+    <worldHeight>0.5</worldHeight>
+
+    <rendering>
+      <complexity>simple</complexity>
+      <tier>instanced</tier>
+    </rendering>
+
+    <animation>
+      <type>parametric</type>
+      <windResponse>0.2</windResponse>
+      <swayFrequency>0.3,0.7</swayFrequency>
+    </animation>
+
+    <!-- Harvested for sticks; non-destructive with a small resource pool -->
+    <capabilities>
+      <harvestable yield="Stick" amountMin="1" amountMax="1" duration="4.0"
+                   destructive="false" totalResourceMin="3" totalResourceMax="5"/>
+    </capabilities>
+
+    <placement>
+      <biome name="XericShrubland">
+        <spawnChance>0.018</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>1,4</clumpSize>
+          <clumpRadius>1.0,2.5</clumpRadius>
+          <clumpSpacing>10.0,20.0</clumpSpacing>
+        </clumping>
+      </biome>
+      <biome name="SemiDesert">
+        <spawnChance>0.010</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>1,3</clumpSize>
+          <clumpRadius>1.0,2.0</clumpRadius>
+          <clumpSpacing>12.0,22.0</clumpSpacing>
+        </clumping>
+      </biome>
+      <biome name="ColdDesert">
+        <spawnChance>0.006</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>1,3</clumpSize>
+          <clumpRadius>1.0,2.0</clumpRadius>
+          <clumpSpacing>14.0,26.0</clumpSpacing>
+        </clumping>
+      </biome>
+
+      <groups>
+        <group>bushes</group>
+        <group>wood_sources</group>
+        <group>small_flora</group>
+      </groups>
+
+      <relationships>
+        <!-- Sagebrush forms loose stands; cluster, don't repel. -->
+        <affinity type="same" distance="2.0" strength="1.2"/>
+      </relationships>
+    </placement>
+
+    <variantCount>1</variantCount>
+  </AssetDef>
+</AssetDefinitions>

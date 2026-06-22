@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100">
+  <!-- ArcticLichen - Top-down view (~0.1m flat reindeer lichen patch) -->
+  <!-- Flat crusty irregular blobs of pale grey-green/cream on a darker base -->
+
+  <!-- Base patch (slightly darker, the lichen mat underlayer) -->
+  <ellipse cx="50" cy="55" rx="38" ry="26" fill="#5a6650"/>
+
+  <!-- Main lobing blobs - irregular grey-green shapes spreading outward -->
+  <path d="M50,36
+           C58,32 68,34 72,42
+           C76,50 72,60 64,64
+           C56,68 44,68 36,62
+           C28,56 26,44 32,38
+           C38,32 44,30 50,36 Z"
+        fill="#7a8c6c"/>
+
+  <!-- Outer lobe top-left -->
+  <path d="M28,46
+           C24,40 26,32 32,28
+           C38,24 46,26 48,34
+           C50,40 46,46 40,48
+           C34,50 30,52 28,46 Z"
+        fill="#8a9c7a"/>
+
+  <!-- Outer lobe top-right -->
+  <path d="M54,34
+           C58,28 66,26 72,30
+           C78,34 78,44 74,48
+           C70,52 62,52 58,46
+           C54,42 52,38 54,34 Z"
+        fill="#8a9c7a"/>
+
+  <!-- Outer lobe bottom-left -->
+  <path d="M28,56
+           C22,58 22,66 28,70
+           C34,76 44,76 48,70
+           C52,64 50,56 44,54
+           C38,52 33,53 28,56 Z"
+        fill="#7a8c6c"/>
+
+  <!-- Outer lobe bottom-right -->
+  <path d="M56,64
+           C58,58 66,56 72,60
+           C78,64 78,74 72,78
+           C66,82 56,80 52,74
+           C50,70 52,66 56,64 Z"
+        fill="#8a9c7a"/>
+
+  <!-- Cream/pale branching highlight blobs (the surface texture of reindeer lichen) -->
+  <ellipse cx="50" cy="46" rx="10" ry="7" fill="#c8d4b4" opacity="0.85"/>
+  <ellipse cx="36" cy="38" rx="7" ry="5" fill="#c8d4b4" opacity="0.8"/>
+  <ellipse cx="65" cy="40" rx="7" ry="5" fill="#c8d4b4" opacity="0.8"/>
+  <ellipse cx="34" cy="64" rx="7" ry="5" fill="#c8d4b4" opacity="0.75"/>
+  <ellipse cx="64" cy="68" rx="7" ry="5" fill="#c8d4b4" opacity="0.75"/>
+  <ellipse cx="50" cy="66" rx="8" ry="5" fill="#c8d4b4" opacity="0.7"/>
+
+  <!-- Lighter cream tips (the distinctive pale grey-white branch tips) -->
+  <ellipse cx="50" cy="44" rx="5" ry="3" fill="#dce8cc" opacity="0.9"/>
+  <ellipse cx="35" cy="37" rx="4" ry="3" fill="#dce8cc" opacity="0.85"/>
+  <ellipse cx="66" cy="39" rx="4" ry="3" fill="#dce8cc" opacity="0.85"/>
+  <ellipse cx="33" cy="63" rx="4" ry="3" fill="#dce8cc" opacity="0.8"/>
+  <ellipse cx="65" cy="67" rx="4" ry="3" fill="#dce8cc" opacity="0.8"/>
+</svg>
