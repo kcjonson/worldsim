@@ -12,15 +12,16 @@ namespace engine::world::generation {
 /// Grassland surface generator with moisture-based grass variants.
 ///
 /// Surfaces (in priority order):
-/// - Water: Ponds (moistureNoise > 0.82)
-/// - GrassTall: Wet zones near water (moistureNoise > 0.70)
-/// - GrassShort: Dry zones far from water (moistureNoise < 0.35)
+/// - GrassTall: Wet zones (moistureNoise > 0.70)
+/// - GrassShort: Dry zones (moistureNoise < 0.35)
 /// - GrassMeadow: Fertile patches in mid-zone (fertilityNoise > 0.80)
 /// - Grass: Default grassland
 /// - Dirt: Sparse exposed soil patches (overlay, ~2-3%)
 ///
-/// Key design: Using the same moisture noise for ponds AND grass variants
-/// creates natural terrain flow - tall grass rings ponds, short grass in dry areas.
+/// Standing water is NOT produced here: it comes from the 3D hydrology
+/// (RiverNetwork2D channels and PondNetwork2D ponds/oases), so the moisture
+/// gradient only shapes the grass variants -- wet grass still naturally rings
+/// real water.
 class GrasslandGenerator {
 public:
 	[[nodiscard]] static GenerationResult generate(const GenerationContext& ctx) {
@@ -38,15 +39,6 @@ public:
             ctx.worldSeed + 100000,
             2, 0.5F
         );
-
-		// ===== WATER (PONDS) =====
-		// Highest moisture = standing water
-		constexpr float kWaterThreshold = 0.82F;
-		if (moistureNoise > kWaterThreshold) {
-			result.surface = Surface::Water;
-			result.moisture = 255; // Maximum moisture
-			return result;
-		}
 
 		// ===== DIRT PATCHES =====
 		// Separate high-frequency noise for sparse exposed soil
@@ -68,7 +60,7 @@ public:
 
 		// ===== GRASS VARIANTS BASED ON MOISTURE =====
 
-		// GrassTall: Wet zones (high moisture, near ponds)
+		// GrassTall: Wet zones (high moisture, near water)
 		constexpr float kTallGrassThreshold = 0.70F;
 		if (moistureNoise > kTallGrassThreshold) {
 			result.surface = Surface::GrassTall;

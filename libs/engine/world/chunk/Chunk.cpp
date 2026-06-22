@@ -175,17 +175,30 @@ namespace engine::world {
 		// below so streams render shallow and trunks deep.
 		uint8_t depth = (tile.surface == Surface::Water) ? kDeepWaterDepth : 0;
 
+		// World position of this tile (meters), shared by the water overrides.
+		const WorldPosition origin = m_coord.origin();
+		const double worldXMeters = static_cast<double>(origin.x) + static_cast<double>(localX) * static_cast<double>(kTileSize);
+		const double worldYMeters = static_cast<double>(origin.y) + static_cast<double>(localY) * static_cast<double>(kTileSize);
+
 		// River channels from the coarse 3D drainage graph override the biome
 		// surface. Continuous across chunk seams: the channel geometry is a
 		// deterministic function of world position, gathered per chunk.
 		if (!m_biomeData.riverSegments.empty()) {
-			const WorldPosition origin = m_coord.origin();
-			const double worldXMeters = static_cast<double>(origin.x) + static_cast<double>(localX) * static_cast<double>(kTileSize);
-			const double worldYMeters = static_cast<double>(origin.y) + static_cast<double>(localY) * static_cast<double>(kTileSize);
 			const float halfWidth = m_biomeData.riverHalfWidthAt(worldXMeters, worldYMeters);
 			if (halfWidth > 0.0F) {
 				tile.surface = Surface::Water;
 				depth = waterDepthFromWidth(2.0F * halfWidth);
+			}
+		}
+
+		// Sparse hydrology-driven ponds (and desert oases) turn land to water, after
+		// rivers so a channel crossing a pond cell keeps its river; existing water
+		// (river/ocean/lake) is left untouched.
+		if (!m_biomeData.pondBlobs.empty() && tile.surface != Surface::Water) {
+			const uint8_t pondDepth = m_biomeData.pondDepthAt(worldXMeters, worldYMeters);
+			if (pondDepth > 0) {
+				tile.surface = Surface::Water;
+				depth = pondDepth;
 			}
 		}
 

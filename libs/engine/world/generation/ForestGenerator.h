@@ -19,17 +19,11 @@ namespace engine::world::generation {
 			float			 worldX = ctx.worldX();
 			float			 worldY = ctx.worldY();
 
-			// Moisture noise for water and grass variants
+			// Moisture noise shapes the grass variants. Standing water is NOT made
+			// here -- it comes from the 3D hydrology (RiverNetwork2D / PondNetwork2D).
 			constexpr float kMoistureScale = 0.08F;
 			float			moistureNoise =
 				NoiseUtils::fractalNoise(worldX * kMoistureScale, worldY * kMoistureScale, ctx.worldSeed + 100000, 2, 0.5F);
-
-			// Water ponds (slightly less common than grassland)
-			if (moistureNoise > 0.85F) {
-				result.surface = Surface::Water;
-				result.moisture = 255;
-				return result;
-			}
 
 			// Dirt patches (forest floor)
 			constexpr float kDirtScale = 0.15F;

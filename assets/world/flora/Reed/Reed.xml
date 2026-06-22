@@ -28,14 +28,16 @@
     </capabilities>
 
     <!-- Per-biome placement configuration.
-         Reeds are the PlantFiber source and grow at the water's edge in essentially any
-         non-frozen biome (all blocks keep near="Water"): dense in wetlands, moderate at
-         grassland/savanna/shrubland ponds and desert oases, sparse along forest streams and
-         brackish beaches. Absent only where surface water is frozen (tundra/polar). This keeps
-         fiber - and so early tools like the axe - reachable wherever a colony lands near water. -->
+         Reeds are the PlantFiber source and grow right at the water's edge in essentially
+         any non-frozen biome. Every block uses near="Mud" distance="1" so reeds sit on the
+         muddy bank the post-processor lays down around water, not out on dry grass: dense in
+         wetlands, moderate at grassland/savanna/shrubland ponds and desert oases, lining
+         forest streams and brackish beaches. Absent only where surface water is frozen
+         (tundra/polar). This keeps fiber - and so early tools like the axe - reachable
+         wherever a colony lands near water. -->
     <placement>
       <!-- Wetlands: dense stands -->
-      <biome name="TemperateWetland" near="Water" distance="3">
+      <biome name="TemperateWetland" near="Mud" distance="1">
         <spawnChance>0.30</spawnChance>
         <distribution>clumped</distribution>
         <clumping>
@@ -44,7 +46,7 @@
           <clumpSpacing>6.0,12.0</clumpSpacing>
         </clumping>
       </biome>
-      <biome name="TropicalWetland" near="Water" distance="3">
+      <biome name="TropicalWetland" near="Mud" distance="1">
         <spawnChance>0.25</spawnChance>
         <distribution>clumped</distribution>
         <clumping>
@@ -55,7 +57,7 @@
       </biome>
 
       <!-- Grassland / savanna / shrubland ponds: moderate patches -->
-      <biome name="TemperateGrassland" near="Water" distance="3">
+      <biome name="TemperateGrassland" near="Mud" distance="1">
         <spawnChance>0.15</spawnChance>
         <distribution>clumped</distribution>
         <clumping>
@@ -64,7 +66,7 @@
           <clumpSpacing>8.0,15.0</clumpSpacing>
         </clumping>
       </biome>
-      <biome name="TropicalSavanna" near="Water" distance="3">
+      <biome name="TropicalSavanna" near="Mud" distance="1">
         <spawnChance>0.12</spawnChance>
         <distribution>clumped</distribution>
         <clumping>
@@ -73,7 +75,7 @@
           <clumpSpacing>8.0,15.0</clumpSpacing>
         </clumping>
       </biome>
-      <biome name="XericShrubland" near="Water" distance="3">
+      <biome name="XericShrubland" near="Mud" distance="1">
         <spawnChance>0.15</spawnChance>
         <distribution>clumped</distribution>
         <clumping>
@@ -82,7 +84,7 @@
           <clumpSpacing>8.0,15.0</clumpSpacing>
         </clumping>
       </biome>
-      <biome name="AlpineGrassland" near="Water" distance="3">
+      <biome name="AlpineGrassland" near="Mud" distance="1">
         <spawnChance>0.06</spawnChance>
         <distribution>clumped</distribution>
         <clumping>
@@ -93,7 +95,7 @@
       </biome>
 
       <!-- Desert oases: small but reliable stands at the water -->
-      <biome name="SemiDesert" near="Water" distance="3">
+      <biome name="SemiDesert" near="Mud" distance="1">
         <spawnChance>0.12</spawnChance>
         <distribution>clumped</distribution>
         <clumping>
@@ -102,7 +104,7 @@
           <clumpSpacing>8.0,15.0</clumpSpacing>
         </clumping>
       </biome>
-      <biome name="HotDesert" near="Water" distance="3">
+      <biome name="HotDesert" near="Mud" distance="1">
         <spawnChance>0.10</spawnChance>
         <distribution>clumped</distribution>
         <clumping>
@@ -111,7 +113,7 @@
           <clumpSpacing>8.0,15.0</clumpSpacing>
         </clumping>
       </biome>
-      <biome name="ColdDesert" near="Water" distance="3">
+      <biome name="ColdDesert" near="Mud" distance="1">
         <spawnChance>0.06</spawnChance>
         <distribution>clumped</distribution>
         <clumping>
@@ -121,9 +123,9 @@
         </clumping>
       </biome>
 
-      <!-- Forest streams and brackish beaches: sparse patches -->
-      <biome name="TemperateDeciduousForest" near="Water" distance="3">
-        <spawnChance>0.08</spawnChance>
+      <!-- Forest streams and brackish beaches: reed-lined banks -->
+      <biome name="TemperateDeciduousForest" near="Mud" distance="1">
+        <spawnChance>0.25</spawnChance>
         <distribution>clumped</distribution>
         <clumping>
           <clumpSize>3,6</clumpSize>
@@ -131,8 +133,8 @@
           <clumpSpacing>12.0,20.0</clumpSpacing>
         </clumping>
       </biome>
-      <biome name="TemperateRainforest" near="Water" distance="3">
-        <spawnChance>0.10</spawnChance>
+      <biome name="TemperateRainforest" near="Mud" distance="1">
+        <spawnChance>0.25</spawnChance>
         <distribution>clumped</distribution>
         <clumping>
           <clumpSize>3,6</clumpSize>
@@ -140,8 +142,8 @@
           <clumpSpacing>12.0,20.0</clumpSpacing>
         </clumping>
       </biome>
-      <biome name="BorealForest" near="Water" distance="3">
-        <spawnChance>0.08</spawnChance>
+      <biome name="BorealForest" near="Mud" distance="1">
+        <spawnChance>0.25</spawnChance>
         <distribution>clumped</distribution>
         <clumping>
           <clumpSize>3,6</clumpSize>
@@ -149,8 +151,8 @@
           <clumpSpacing>12.0,20.0</clumpSpacing>
         </clumping>
       </biome>
-      <biome name="MontaneForest" near="Water" distance="3">
-        <spawnChance>0.05</spawnChance>
+      <biome name="MontaneForest" near="Mud" distance="1">
+        <spawnChance>0.20</spawnChance>
         <distribution>clumped</distribution>
         <clumping>
           <clumpSize>3,6</clumpSize>
@@ -158,8 +160,8 @@
           <clumpSpacing>12.0,20.0</clumpSpacing>
         </clumping>
       </biome>
-      <biome name="TropicalSeasonalForest" near="Water" distance="3">
-        <spawnChance>0.08</spawnChance>
+      <biome name="TropicalSeasonalForest" near="Mud" distance="1">
+        <spawnChance>0.25</spawnChance>
         <distribution>clumped</distribution>
         <clumping>
           <clumpSize>3,6</clumpSize>
@@ -167,8 +169,8 @@
           <clumpSpacing>12.0,20.0</clumpSpacing>
         </clumping>
       </biome>
-      <biome name="TropicalRainforest" near="Water" distance="3">
-        <spawnChance>0.06</spawnChance>
+      <biome name="TropicalRainforest" near="Mud" distance="1">
+        <spawnChance>0.22</spawnChance>
         <distribution>clumped</distribution>
         <clumping>
           <clumpSize>3,6</clumpSize>
@@ -176,8 +178,8 @@
           <clumpSpacing>12.0,20.0</clumpSpacing>
         </clumping>
       </biome>
-      <biome name="Beach" near="Water" distance="3">
-        <spawnChance>0.08</spawnChance>
+      <biome name="Beach" near="Mud" distance="1">
+        <spawnChance>0.20</spawnChance>
         <distribution>clumped</distribution>
         <clumping>
           <clumpSize>3,6</clumpSize>

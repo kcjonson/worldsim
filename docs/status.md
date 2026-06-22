@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2026-06-20 (Realistic chained build loop: mass-based carry weight + axe-gated chopping + wood-unit tree harvesting; the colonist chops to its carry cap, hauls, repeats, then builds. Plus the task-chaining UI/AI fixes found verifying it (in-progress-work priority calc, friendly labels, full-width info-panel task lines, "Next" chain step, build-progress percent + on-map fill, global task list Build umbrella + who's-working-it) — see dev log 2026-06-20-carry-weight-axe-gated-harvest.md. Earlier on main: Asset Manager epic #205 (dev log 2026-06-20-asset-manager.md), Cryosphere #199, Navigation P4 belief filtering #189/#191/#194, Vision System #172-184, Salvage UI cutover #176-181)
+Last Updated: 2026-06-22 (2D landscape from 3D hydrology: replaced the noise-flood ponds with sparse biome/precip-weighted ponds + desert oases, implemented Distribution::Spaced with grove/glade/thicket clustering for denser natural forests, and fixed riparian plants (reeds on the mud bank + bankside bushes); follows the merged 2D rivers #208 and tributaries/springs #210. See dev log 2026-06-22-hydrology-ponds-and-proper-forests.md. Earlier: Realistic chained build loop: mass-based carry weight + axe-gated chopping + wood-unit tree harvesting; the colonist chops to its carry cap, hauls, repeats, then builds. Plus the task-chaining UI/AI fixes found verifying it (in-progress-work priority calc, friendly labels, full-width info-panel task lines, "Next" chain step, build-progress percent + on-map fill, global task list Build umbrella + who's-working-it) — see dev log 2026-06-20-carry-weight-axe-gated-harvest.md. Earlier on main: Asset Manager epic #205 (dev log 2026-06-20-asset-manager.md), Cryosphere #199, Navigation P4 belief filtering #189/#191/#194, Vision System #172-184, Salvage UI cutover #176-181)
 
 ## Epic/Story/Task Template
 
@@ -535,6 +535,22 @@ while (running) {
 ---
 
 ## In Progress Epics
+
+### 2D Landscape from 3D Hydrology (rivers, ponds, forests)
+**Spec/Documentation:** `.claude/plans/we-ve-got-another-big-composed-falcon.md`, dev logs `2026-06-21-2d-rivers-and-water-landing.md`, `2026-06-21-river-tributaries-springs.md`, `2026-06-22-hydrology-ponds-and-proper-forests.md`
+**Dependencies:** Water Availability (3D drainage), World Generation & Creator
+**Status:** in progress (ponds/forests/riparian in draft PR; rivers + tributaries merged #208/#210)
+
+**Goal:** Render the 3D planet's hydrology into the 2D landing world at the right scale and make the surrounding landscape read as real -- followable rivers, sparse hydrology-driven ponds with desert oases, and dense naturally-clustered forests with working waterside plants.
+
+**Tasks:**
+- [x] 2D rivers from 3D drainage (RiverNetwork2D: meandered flow-sized polylines, seam-safe) + water-biased landing (#208)
+- [x] River tributaries, springs, and trickle headwaters (#210)
+- [x] Hydrology ponds: remove noise-flood ponds; sparse biome/precip-weighted PondNetwork2D; desert oasis via distance-to-water
+- [x] Proper forests: implement `Distribution::Spaced`; grove/glade/thicket density field; denser forest trees
+- [x] Riparian plants: reeds on the mud bank (`near="Mud"`); bankside berry/woody bushes in forest biomes
+- [ ] Open the ponds/forests/riparian draft PR; clear CI + review; merge
+- [ ] Deferred: cross-chunk Spaced spacing, pond inlet/outlet streams, water-loving riparian trees
 
 ### Salvage UI Cutover (one unified UI library)
 **Spec/Documentation:** `/docs/design/ui/`

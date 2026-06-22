@@ -12,6 +12,72 @@
 
 namespace engine::assets {
 
+	namespace {
+
+		// Grove-density noise: a low-frequency, domain-warped value-noise field in [0,1]
+		// that varies "spaced" flora (trees) so a forest reads as dense stands with both
+		// rare open glades and rare extra-dense thickets, rather than an even orchard. A
+		// pure function of world position + seed, so it is continuous across chunk seams.
+		// The low tail thins to glades (via spawn chance); the high tail tightens spacing
+		// into thickets (via minDistance). The broad middle is normal dense forest.
+		constexpr float kGroveFeatureMeters = 105.0F; // grove/glade/thicket scale
+		constexpr float kGladeSpawnMin = 0.12F;		  // glade floor: fraction of base spawn chance
+		constexpr float kGladeBandLo = 0.20F;		  // raw noise below this -> full glade
+		constexpr float kGladeBandHi = 0.42F;		  // above this -> normal forest density
+		constexpr float kThicketBandLo = 0.70F;		  // raw noise above this -> thickets begin
+		constexpr float kThicketBandHi = 0.90F;		  // ...fully a thicket core here (rare)
+		constexpr float kThicketTighten = 0.45F;	  // thicket cores pack to (1 - this) of base minDistance
+
+		float smooth01(float a, float b, float v) {
+			const float t = std::clamp((v - a) / (b - a), 0.0F, 1.0F);
+			return t * t * (3.0F - 2.0F * t);
+		}
+
+		float groveHash01(int64_t ix, int64_t iy, uint64_t seed) {
+			uint64_t h = seed;
+			h ^= static_cast<uint64_t>(ix) * 0x9E3779B97F4A7C15ull;
+			h ^= static_cast<uint64_t>(iy) * 0xC2B2AE3D27D4EB4Full;
+			h ^= h >> 29;
+			h *= 0xBF58476D1CE4E5B9ull;
+			h ^= h >> 32;
+			return static_cast<float>(static_cast<double>(h >> 11) * (1.0 / 9007199254740992.0));
+		}
+
+		// Smooth bilinear value noise in [0,1] at lattice coords (x,y).
+		float groveValueNoise(float x, float y, uint64_t seed) {
+			const auto	x0 = static_cast<int64_t>(std::floor(x));
+			const auto	y0 = static_cast<int64_t>(std::floor(y));
+			const float fx = x - static_cast<float>(x0);
+			const float fy = y - static_cast<float>(y0);
+			const float sx = fx * fx * (3.0F - 2.0F * fx); // smoothstep
+			const float sy = fy * fy * (3.0F - 2.0F * fy);
+			const float n00 = groveHash01(x0, y0, seed);
+			const float n10 = groveHash01(x0 + 1, y0, seed);
+			const float n01 = groveHash01(x0, y0 + 1, seed);
+			const float n11 = groveHash01(x0 + 1, y0 + 1, seed);
+			const float nx0 = n00 + (n10 - n00) * sx;
+			const float nx1 = n01 + (n11 - n01) * sx;
+			return nx0 + (nx1 - nx0) * sy; // [0,1]
+		}
+
+		// Raw grove field in [0,1]: domain-warped two-octave value noise. The callers
+		// map its tails to glades (low) and thickets (high).
+		float groveValue(float worldX, float worldY, uint64_t seed) {
+			float x = worldX / kGroveFeatureMeters;
+			float y = worldY / kGroveFeatureMeters;
+			// Domain-warp the sample point so the outlines are organic rather than
+			// aligned to the noise lattice (which reads as square patches).
+			const float wx = groveValueNoise(x * 0.6F + 3.1F, y * 0.6F + 1.7F, seed ^ 0x51u) - 0.5F;
+			const float wy = groveValueNoise(x * 0.6F + 5.2F, y * 0.6F + 9.3F, seed ^ 0x52u) - 0.5F;
+			x += wx * 1.1F;
+			y += wy * 1.1F;
+			// Two octaves so shapes aren't a single grid frequency.
+			return 0.65F * groveValueNoise(x, y, seed) +
+				   0.35F * groveValueNoise(x * 2.1F + 11.0F, y * 2.1F + 7.0F, seed ^ 0xA3u);
+		}
+
+	} // namespace
+
 	PlacementExecutor::PlacementExecutor(const AssetRegistry& registry)
 		: m_registry(registry) {}
 
@@ -150,10 +216,9 @@ namespace engine::assets {
 		std::uniform_real_distribution<float> scaleDist(0.8F, 1.2F);
 		std::uniform_real_distribution<float> colorDist(-0.08F, 0.08F);
 
-		// Tile stride optimization: with 512x512 chunks, sampling every 4th tile
-		// Spawn point stride - samples one tile every N tiles in each dimension.
-		// At stride 4: 4096 spawn points per chunk (128×128 tiles / 4² = 1024, then ×4 for jitter)
-		// This reduces iterations from 262K to ~16K per chunk while maintaining coverage
+		// Spawn-point stride: sample one tile every N in each dimension. At stride 4
+		// over a 512x512 chunk that's (512/4)^2 = 16,384 candidate tiles (each
+		// jittered within its 4x4 block), down from 262K, while keeping coverage.
 		constexpr uint16_t kTileStride = 4;
 
 		// Jitter distribution to break up grid pattern (random offset 0 to stride-1)
@@ -221,8 +286,18 @@ namespace engine::assets {
 				float tileWorldX = origin.x + static_cast<float>(localX);
 				float tileWorldY = origin.y + static_cast<float>(localY);
 
-				// Roll for spawn based on distribution type
-				if (chanceDist(rng) >= bp->spawnChance) {
+				// Roll for spawn. Spaced flora (trees) sample the grove field: its low tail
+				// thins out into open glades here (via spawn chance); its high tail tightens
+				// spacing into denser thickets below (via minDistance). The middle is normal
+				// dense forest.
+				float groveG = 0.0F;
+				float effectiveChance = bp->spawnChance;
+				if (bp->distribution == Distribution::Spaced) {
+					groveG = groveValue(tileWorldX, tileWorldY, context.worldSeed);
+					const float gladeT = smooth01(kGladeBandLo, kGladeBandHi, groveG);
+					effectiveChance *= kGladeSpawnMin + (1.0F - kGladeSpawnMin) * gladeT;
+				}
+				if (chanceDist(rng) >= effectiveChance) {
 					continue; // Spawn chance failed
 				}
 
@@ -295,9 +370,59 @@ namespace engine::assets {
 					}
 
 					case Distribution::Spaced: {
-						// TODO: Implement Poisson disk sampling
-						// For now, fall through to uniform
-						[[fallthrough]];
+						// Poisson-style spacing: a single candidate per sampled tile,
+						// rejected if another of the same type already sits within
+						// minDistance. (Previously this fell through to Uniform, so
+						// minDistance did nothing and "spaced" forests placed randomly.)
+						glm::vec2 position{tileWorldX + offsetDist(rng), tileWorldY + offsetDist(rng)};
+
+						// Skip water / out-of-chunk, same as Uniform.
+						if (context.getSurface) {
+							int entityLocalX = static_cast<int>(std::floor(position.x - origin.x));
+							int entityLocalY = static_cast<int>(std::floor(position.y - origin.y));
+							if (entityLocalX < 0 || entityLocalX >= world::kChunkSize ||
+								entityLocalY < 0 || entityLocalY >= world::kChunkSize) {
+								break;
+							}
+							std::string surface = context.getSurface(
+								static_cast<uint16_t>(entityLocalX), static_cast<uint16_t>(entityLocalY));
+							if (surface == "Water") {
+								break;
+							}
+						}
+
+						// Enforce minimum spacing against already-placed instances of this
+						// type in the chunk (makes a "spaced" stand pack to a natural canopy
+						// instead of random clumps). In thicket cores (grove field high tail)
+						// the spacing tightens so small patches read denser than the forest.
+						float effMinDist = bp->spacing.minDistance;
+						if (effMinDist > 0.0F) {
+							const float thicketT = smooth01(kThicketBandLo, kThicketBandHi, groveG);
+							effMinDist *= 1.0F - kThicketTighten * thicketT;
+							if (chunkIndex.hasNearby(position, effMinDist, defName)) {
+								break;
+							}
+						}
+
+						// Relationship modifiers (cross-species avoidance/affinity).
+						float modifier = calculateRelationshipModifier(*def, position, chunkIndex, adjacentProvider);
+						if (modifier <= 0.0F) {
+							break;
+						}
+
+						float brightnessVar = colorDist(rng);
+						float brightness = 0.9F + brightnessVar;
+
+						PlacedEntity entity;
+						entity.defName = defName;
+						entity.position = position;
+						entity.rotation = rotationDist(rng);
+						entity.scale = scaleDist(rng);
+						entity.colorTint = glm::vec4(brightness, brightness, brightness, 1.0F);
+
+						chunkIndex.insert(entity);
+						outEntities.push_back(entity);
+						break;
 					}
 
 					case Distribution::Uniform:

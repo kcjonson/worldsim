@@ -522,6 +522,88 @@ TEST(PlacementExecutorTests, ZeroCooldownExpiresOnFirstUpdate) {
 	EXPECT_FALSE(executor.isEntityOnCooldown({0, 0}, {10.0F, 20.0F}, "BerryBush"));
 }
 
+// ============================================================================
+// Distribution::Spaced + riparian placement (forests-and-ponds PR)
+// ============================================================================
+
+namespace {
+	AssetDefinition makeFloraDef(const std::string& name, engine::world::Biome biome,
+								 Distribution dist, float spawnChance, float minDist,
+								 const std::string& nearType = "", float nearDist = 0.0F) {
+		AssetDefinition d;
+		d.defName = name;
+		d.assetType = AssetType::Procedural;
+		BiomePlacement bp;
+		bp.biomeName = engine::world::biomeToString(biome);
+		bp.spawnChance = spawnChance;
+		bp.distribution = dist;
+		bp.spacing.minDistance = minDist;
+		bp.nearTileType = nearType;
+		bp.nearDistance = nearDist;
+		d.placement.biomes.push_back(bp);
+		return d;
+	}
+} // namespace
+
+// Spaced placement must honor minDistance: no two placed instances closer than it.
+// (Before this PR, Spaced fell through to Uniform and minDistance did nothing.)
+TEST(PlacementExecutorTests, SpacedRespectsMinDistance) {
+	auto& registry = AssetRegistry::Get();
+	registry.clear();
+	constexpr float kMinDist = 20.0F;
+	registry.registerTestDefinition(makeFloraDef("Flora_TestSpaced", engine::world::Biome::TemperateGrassland,
+												 Distribution::Spaced, 0.4F, kMinDist));
+
+	PlacementExecutor executor(registry);
+	executor.initialize();
+	auto ctx = createTestContext({0, 0}, 777, engine::world::Biome::TemperateGrassland); // getSurface = Grass
+	auto result = executor.processChunk(ctx);
+
+	ASSERT_GT(result.entities.size(), 1u) << "spaced stand should place many instances";
+	// Spaced enforces minDistance, except thicket cores (grove-field high tail) tighten
+	// it; the hard floor is (1 - kThicketTighten) * minDistance ~= 0.55 * minDistance.
+	// Assert no pair beats that floor (proving spacing is enforced, unlike Uniform).
+	const float floorDist = 0.5F * kMinDist;
+	for (size_t i = 0; i < result.entities.size(); ++i) {
+		for (size_t j = i + 1; j < result.entities.size(); ++j) {
+			const float dx = result.entities[i].position.x - result.entities[j].position.x;
+			const float dy = result.entities[i].position.y - result.entities[j].position.y;
+			EXPECT_GE(dx * dx + dy * dy, floorDist * floorDist - 0.01F)
+				<< "two spaced instances closer than the thicket spacing floor";
+		}
+	}
+}
+
+// Riparian flora (near="Water") must actually cluster at a waterline. Diagnoses the
+// "waterside plants don't appear" report: a Water stripe with land around it should
+// grow near-water flora, all within near.distance (+ clump spread) of the stripe.
+TEST(PlacementExecutorTests, RiparianFloraSpawnsNearWater) {
+	auto& registry = AssetRegistry::Get();
+	registry.clear();
+	registry.registerTestDefinition(makeFloraDef("Flora_TestReed", engine::world::Biome::BorealForest,
+												 Distribution::Clumped, 0.6F, 0.0F, "Water", 3.0F));
+
+	PlacementExecutor executor(registry);
+	executor.initialize();
+
+	ChunkPlacementContext ctx;
+	ctx.coord = {0, 0};
+	ctx.worldSeed = 999;
+	ctx.getBiome = [](uint16_t, uint16_t) { return engine::world::Biome::BorealForest; };
+	// A vertical Water stripe at localX in [250,252]; land (Grass) elsewhere.
+	ctx.getSurface = [](uint16_t x, uint16_t /*y*/) {
+		return std::string((x >= 250 && x <= 252) ? "Water" : "Grass");
+	};
+
+	auto result = executor.processChunk(ctx);
+	ASSERT_GT(result.entities.size(), 0u) << "near-water flora should appear at the waterline";
+	for (const auto& e : result.entities) {
+		const float lx = e.position.x; // chunk origin is (0,0), so world == local
+		const float dist = lx < 250.0F ? (250.0F - lx) : (lx > 252.0F ? lx - 252.0F : 0.0F);
+		EXPECT_LE(dist, 8.0F) << "near-water flora spawned far from the water (x=" << lx << ")";
+	}
+}
+
 TEST(PlacementExecutorTests, NegativeChunkCooldowns) {
 	auto& registry = AssetRegistry::Get();
 	registry.clear();

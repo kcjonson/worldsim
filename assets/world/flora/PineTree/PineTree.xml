@@ -43,7 +43,7 @@
         <spawnChance>0.8</spawnChance>
         <distribution>spaced</distribution>
         <spacing>
-          <minDistance>3.0</minDistance>
+          <minDistance>2.4</minDistance>
         </spacing>
       </biome>
 
@@ -52,16 +52,16 @@
         <spawnChance>0.8</spawnChance>
         <distribution>spaced</distribution>
         <spacing>
-          <minDistance>3.0</minDistance>
+          <minDistance>2.4</minDistance>
         </spacing>
       </biome>
 
       <!-- Montane forest: conifers, a touch sparser on slopes -->
       <biome name="MontaneForest">
-        <spawnChance>0.6</spawnChance>
+        <spawnChance>0.7</spawnChance>
         <distribution>spaced</distribution>
         <spacing>
-          <minDistance>3.5</minDistance>
+          <minDistance>3.0</minDistance>
         </spacing>
       </biome>
 

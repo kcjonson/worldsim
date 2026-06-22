@@ -18,6 +18,7 @@ add_library(world
     worldgen/sampling/SphericalProjection.cpp
     worldgen/sampling/PlanetSampler.cpp
     worldgen/sampling/RiverNetwork2D.cpp
+    worldgen/sampling/PondNetwork2D.cpp
     worldgen/sampling/SpawnSite.cpp
     worldgen/sampling/LandingSite.cpp
     worldgen/io/PlanetIO.cpp

@@ -46,10 +46,10 @@
     <placement>
       <!-- Forest: Common, spaced out -->
       <biome name="TemperateDeciduousForest">
-        <spawnChance>0.05</spawnChance>
+        <spawnChance>0.22</spawnChance>
         <distribution>spaced</distribution>
         <spacing>
-          <minDistance>5.0</minDistance>
+          <minDistance>2.8</minDistance>
         </spacing>
       </biome>
 
@@ -74,10 +74,9 @@
 
       <!-- Relationships with other entities -->
       <relationships>
-        <!-- Maples avoid spawning too close to other maples -->
-        <avoids type="same" distance="4.0" penalty="0.1"/>
-        <!-- Maples slightly avoid other tree types for variety -->
-        <avoids group="trees" distance="3.0" penalty="0.5"/>
+        <!-- minDistance (spaced) owns maple-to-maple spacing; keep only a mild
+             cross-tree avoid so a mixed canopy intermixes without overlapping trunks. -->
+        <avoids group="trees" distance="2.5" penalty="0.7"/>
       </relationships>
     </placement>
 
