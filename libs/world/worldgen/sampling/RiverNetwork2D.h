@@ -67,7 +67,7 @@ class RiverNetwork2D {
     [[nodiscard]] bool       isHeadwaterRiverTile(TileId t) const;
 
     // Collect river tiles whose downstream segment may reach the box, by a small
-    // bounded BFS over the grid from the box-center tile.
+    // bounded flood fill over the grid from the box-center tile.
     void collectRiverTiles(double minX, double minY, double maxX, double maxY,
                            std::vector<TileId>& out) const;
 

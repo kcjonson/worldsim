@@ -98,7 +98,7 @@ namespace engine::world {
 
 				uint8_t surfaceId = static_cast<uint8_t>(tile.surface);
 				render.surfaceId = surfaceId;
-				render.waterDepth = tile.attributes; // cosmetic depth for the water shader
+				render.waterDepth = tile.waterDepth; // cosmetic depth for the water shader
 
 				// Pre-compute edge and corner masks
 				render.edgeMask = TileAdjacency::getEdgeMaskByStack(tile.adjacency, surfaceId);
@@ -132,7 +132,7 @@ namespace engine::world {
 		uint8_t		surfaceId = static_cast<uint8_t>(tile.surface);
 
 		render.surfaceId = surfaceId;
-		render.waterDepth = tile.attributes; // keep cosmetic depth in sync
+		render.waterDepth = tile.waterDepth; // keep cosmetic depth in sync
 		render.edgeMask = TileAdjacency::getEdgeMaskByStack(adjacency, surfaceId);
 		render.cornerMask = TileAdjacency::getCornerMaskByStack(adjacency, surfaceId);
 		render.hardEdgeMask = TileAdjacency::getHardEdgeMaskByFamily(adjacency, surfaceId);
@@ -173,7 +173,7 @@ namespace engine::world {
 		// Water depth byte (cosmetic; the shader tints water by it). Biome water
 		// (ocean/lake/wetland) reads deep; river channels set depth from their width
 		// below so streams render shallow and trunks deep.
-		uint8_t waterDepth = (tile.surface == Surface::Water) ? kDeepWaterDepth : 0;
+		uint8_t depth = (tile.surface == Surface::Water) ? kDeepWaterDepth : 0;
 
 		// River channels from the coarse 3D drainage graph override the biome
 		// surface. Continuous across chunk seams: the channel geometry is a
@@ -185,7 +185,7 @@ namespace engine::world {
 			const float halfWidth = m_biomeData.riverHalfWidthAt(worldXMeters, worldYMeters);
 			if (halfWidth > 0.0F) {
 				tile.surface = Surface::Water;
-				waterDepth = waterDepthFromWidth(2.0F * halfWidth);
+				depth = waterDepthFromWidth(2.0F * halfWidth);
 			}
 		}
 
@@ -207,7 +207,7 @@ namespace engine::world {
 		// Convert to uint8_t (0-255)
 		tile.moisture = static_cast<uint8_t>(std::min(255.0F, moistureBase * 255.0F));
 
-		tile.attributes = waterDepth; // low byte = rendered water depth
+		tile.waterDepth = depth;
 		tile.adjacency = 0;	 // Computed by TilePostProcessor after all tiles generated
 
 		return tile;

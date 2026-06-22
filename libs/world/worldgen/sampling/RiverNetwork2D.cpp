@@ -248,7 +248,7 @@ void RiverNetwork2D::collectRiverTiles(double minX, double minY, double maxX, do
         }
     }
 
-    // Deterministic emission order regardless of BFS traversal.
+    // Deterministic emission order regardless of traversal order.
     std::sort(out.begin(), out.end());
 }
 
@@ -305,7 +305,11 @@ void RiverNetwork2D::emitSegment(TileId tile, double minX, double minY, double m
 
         const float flow = flowA + (flowB - flowA) * static_cast<float>(t);
         const double baseHalf = 0.5 * static_cast<double>(channelWidthMeters(flow));
-        const double wv = widthVariation(s, phaseW, phaseP);
+        // Taper the width variation to zero at the joints (reusing the meander
+        // envelope) so adjacent segments meet at the shared tile center on the same
+        // base width -- no width step at the seam. Flow (hence baseHalf) already
+        // matches there because both segments read the shared tile's flowAccum.
+        const double wv = 1.0 + env * (widthVariation(s, phaseW, phaseP) - 1.0);
         ohw = std::max(kRenderMinHalf, static_cast<float>(baseHalf * wv));
     };
 

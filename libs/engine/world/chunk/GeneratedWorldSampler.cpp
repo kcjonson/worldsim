@@ -7,7 +7,11 @@ namespace engine::world {
 		: sampler(world, landingLatDeg, landingLonDeg) {
 		// Build the river network only when the world carries drainage data, so
 		// older saves (pre-hydrology) degrade to no rivers rather than asserting.
+		// Must match RiverNetwork2D's constructor contract (it reads elevation and
+		// flags too), or this guard would let through a world that then asserts.
 		constexpr uint32_t kRiverFields =
+			static_cast<uint32_t>(worldgen::WorldField::Elevation) |
+			static_cast<uint32_t>(worldgen::WorldField::Flags) |
 			static_cast<uint32_t>(worldgen::WorldField::FlowAccum) |
 			static_cast<uint32_t>(worldgen::WorldField::Downhill);
 		if ((world->validFields & kRiverFields) == kRiverFields) {

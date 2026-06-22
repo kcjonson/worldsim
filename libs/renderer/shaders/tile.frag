@@ -14,7 +14,7 @@ out vec4 FragColor;
 //   r: surfaceId | edgeMask<<8 | cornerMask<<16 | hardEdgeMask<<24
 //   g: neighborN | neighborE<<8 | neighborS<<16 | neighborW<<24
 //   b: neighborNW | neighborNE<<8 | neighborSE<<16 | neighborSW<<24
-//   a: padding
+//   a: waterDepth | (padding<<8)
 uniform usampler2D u_tileData;
 uniform vec2 u_chunkOrigin;      // chunk origin in world meters
 uniform ivec2 u_chunkTileOrigin; // chunk origin in world tile coordinates

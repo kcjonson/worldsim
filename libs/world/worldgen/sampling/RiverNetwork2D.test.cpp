@@ -105,7 +105,7 @@ WorldPos2d tilePos(const GeneratedWorld& world, const SphericalProjection& proj,
 TEST(RiverNetwork2DWidth, MonotonicAndClamped) {
     EXPECT_FLOAT_EQ(RiverNetwork2D::channelWidthMeters(0.0f), 0.6f);   // clamped to min (trickle)
     EXPECT_GE(RiverNetwork2D::channelWidthMeters(10.0f), 0.6f);
-    EXPECT_LE(RiverNetwork2D::channelWidthMeters(1e9f), 150.0f);       // clamped to max
+    EXPECT_FLOAT_EQ(RiverNetwork2D::channelWidthMeters(1e9f), 110.0f); // clamped to max (kMaxWidth)
     // Strictly increasing in the unclamped band.
     EXPECT_LT(RiverNetwork2D::channelWidthMeters(10.0f),
               RiverNetwork2D::channelWidthMeters(100.0f));
@@ -177,6 +177,52 @@ TEST(RiverNetwork2D, DryGroundFarFromRiverIsNotRiver) {
     WorldPos2d p = tilePos(*world, proj, chain[chain.size() / 2]);
     auto s = net.sampleAt(p.x, p.y + 100000.0);
     EXPECT_FALSE(s.isRiver);
+}
+
+// The headline seamlessness invariant: geometry is identical where two different
+// query boxes overlap, so adjacent chunks render a continuous river. Every segment
+// lying fully inside the overlap of two offset boxes must appear bit-for-bit in
+// both gathers (box-culling may only DROP segments, never alter their geometry).
+TEST(RiverNetwork2D, OverlappingBoxesAgreeOnGeometry) {
+    auto world = makeLandWorld();
+    auto chain = buildRiver(*world, 0.0, -30.0, 0.0, 30.0, 400.0f, 0.0f); // wide -> feeders too
+    ASSERT_GE(chain.size(), 5u);
+    RiverNetwork2D net(world, 0.0, 0.0);
+    SphericalProjection proj(world->derived.planetRadiusMeters, 0.0, 0.0);
+    const WorldPos2d c = tilePos(*world, proj, chain[chain.size() / 2]);
+
+    std::vector<RiverNetwork2D::Segment> a;
+    std::vector<RiverNetwork2D::Segment> b;
+    net.gatherSegments(c.x - 3000.0, c.y - 3000.0, c.x + 1000.0, c.y + 1000.0, a);
+    net.gatherSegments(c.x - 1000.0, c.y - 1000.0, c.x + 3000.0, c.y + 3000.0, b);
+    ASSERT_FALSE(a.empty());
+    ASSERT_FALSE(b.empty());
+
+    // Region common to both boxes.
+    const double oMinX = c.x - 1000.0;
+    const double oMinY = c.y - 1000.0;
+    const double oMaxX = c.x + 1000.0;
+    const double oMaxY = c.y + 1000.0;
+    auto fullyInsideOverlap = [&](const RiverNetwork2D::Segment& s) {
+        return std::min(s.x0, s.x1) >= oMinX && std::max(s.x0, s.x1) <= oMaxX &&
+               std::min(s.y0, s.y1) >= oMinY && std::max(s.y0, s.y1) <= oMaxY;
+    };
+    auto sameSeg = [](const RiverNetwork2D::Segment& p, const RiverNetwork2D::Segment& q) {
+        return p.x0 == q.x0 && p.y0 == q.y0 && p.x1 == q.x1 && p.y1 == q.y1 &&
+               p.halfWidth0 == q.halfWidth0 && p.halfWidth1 == q.halfWidth1;
+    };
+
+    int matched = 0;
+    for (const auto& s : a) {
+        if (!fullyInsideOverlap(s)) continue;
+        bool found = false;
+        for (const auto& t : b) {
+            if (sameSeg(s, t)) { found = true; break; }
+        }
+        EXPECT_TRUE(found) << "a segment inside the overlap is missing or differs in the other box's gather";
+        if (found) ++matched;
+    }
+    EXPECT_GT(matched, 0) << "expected shared channel/feeder geometry in the overlap region";
 }
 
 TEST(RiverNetwork2D, GatherIsDeterministic) {
