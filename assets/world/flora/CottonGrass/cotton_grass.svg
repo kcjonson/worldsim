@@ -24,6 +24,11 @@
   <path d="M48,72 C36,68 24,66 16,62" stroke="#3a5828" stroke-width="1.5" fill="none"/>
   <path d="M52,72 C64,70 76,68 84,64" stroke="#3a5828" stroke-width="1.5" fill="none"/>
 
+  <!-- Forward blades draping toward the viewer (fill the lower tile) -->
+  <path d="M49,73 C44,80 38,85 30,88" stroke="#3a5828" stroke-width="2.0" fill="none"/>
+  <path d="M50,74 C50,82 50,88 50,92" stroke="#445e30" stroke-width="2.0" fill="none"/>
+  <path d="M51,73 C56,80 62,85 70,88" stroke="#3a5828" stroke-width="2.0" fill="none"/>
+
   <!-- Cotton seed heads - fluffy white tufts on stem tips -->
   <!-- Left stem tuft -->
   <ellipse cx="27" cy="31" rx="7" ry="9" fill="#e8e8e0"/>

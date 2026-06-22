@@ -207,6 +207,15 @@ EntityInfoModel::UpdateType EntityInfoModel::refresh(
 	// Determine update type (structure update if selection changed or layout mode changed)
 	bool needsStructure = selectionChanged || wasColonist != isColonistFlag;
 
+	// Capture the previous content shape before regenerating. A Values update only rewrites
+	// existing slots in place; it can't add or remove them. So when the slot count changes
+	// for the same selection - e.g. a station's "no materials found" warning appearing or
+	// clearing while it stays selected - force a Structure rebuild instead, or the new slots
+	// never render (and stale ones linger).
+	const size_t prevSlotCount = contentData.slots.size();
+	const size_t prevLeftCount = contentData.leftColumn.size();
+	const size_t prevRightCount = contentData.rightColumn.size();
+
 	// Generate content
 	if (isColonist) {
 		contentData = getColonistContent(world, colonistId, callbacks.onDetails);
@@ -242,6 +251,12 @@ EntityInfoModel::UpdateType EntityInfoModel::refresh(
 		if (worldContent.has_value()) {
 			contentData = std::move(worldContent.value());
 		}
+	}
+
+	// A change in slot composition (not just values) needs a full relayout.
+	if (contentData.slots.size() != prevSlotCount || contentData.leftColumn.size() != prevLeftCount ||
+		contentData.rightColumn.size() != prevRightCount) {
+		needsStructure = true;
 	}
 
 	// Return appropriate update type

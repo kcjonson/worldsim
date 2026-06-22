@@ -25,49 +25,61 @@ namespace {
 	}
 } // namespace
 
-bool isMaterialObtainable(ecs::World& world, const std::string& itemDefName) {
-	auto&		   registry = engine::assets::AssetRegistry::Get();
-	const uint32_t targetId = registry.getDefNameId(itemDefName);
-	if (targetId == 0) {
-		return false;
-	}
+std::unordered_set<uint32_t> collectObtainableMaterials(ecs::World& world) {
+	auto&						 registry = engine::assets::AssetRegistry::Get();
+	std::unordered_set<uint32_t> obtainable;
 
-	// Already-held stock counts: any storage or colonist inventory carrying the item.
+	// Already-held stock: items in any inventory (storage or colonist backpack).
 	for (auto [entity, inventory] : world.view<ecs::Inventory>()) {
 		(void)entity;
-		if (inventory.getQuantity(itemDefName) > 0) {
-			return true;
+		for (const auto& [defName, quantity] : inventory.items) {
+			if (quantity == 0) {
+				continue;
+			}
+			const uint32_t id = registry.getDefNameId(defName);
+			if (id != 0) {
+				obtainable.insert(id);
+			}
 		}
 	}
 
-	// Otherwise a colonist must know where to get it: a discovered loose carryable of that type,
-	// or a discovered harvestable that yields it. Knowledge is per-colonist, so the union across
-	// all colonists' Memory is what the colony "knows".
+	// Known sources in any colonist's Memory: a discovered loose carryable of a type, or a
+	// discovered harvestable whose yield is that type. One pass over every colonist's Memory
+	// (which can hold thousands of entries) - the whole reason to build this set once.
 	for (auto [entity, memory] : world.view<ecs::Memory>()) {
 		(void)entity;
 		for (const auto& [key, known] : memory.knownWorldEntities) {
-			if (known.defNameId == targetId &&
-				registry.hasCapability(known.defNameId, engine::assets::CapabilityType::Carryable)) {
-				return true;
+			(void)key;
+			if (registry.hasCapability(known.defNameId, engine::assets::CapabilityType::Carryable)) {
+				obtainable.insert(known.defNameId);
 			}
 			if (registry.hasCapability(known.defNameId, engine::assets::CapabilityType::Harvestable)) {
 				const auto& defName = registry.getDefName(known.defNameId);
 				const auto* def = registry.getDefinition(defName);
-				if (def != nullptr && def->capabilities.harvestable.has_value() &&
-					def->capabilities.harvestable->yieldDefName == itemDefName) {
-					return true;
+				if (def != nullptr && def->capabilities.harvestable.has_value()) {
+					const uint32_t yieldId = registry.getDefNameId(def->capabilities.harvestable->yieldDefName);
+					if (yieldId != 0) {
+						obtainable.insert(yieldId);
+					}
 				}
 			}
 		}
 	}
 
-	return false;
+	return obtainable;
 }
 
-std::vector<std::string> unobtainableInputs(ecs::World& world, const engine::assets::RecipeDef& recipe) {
+bool isMaterialObtainable(const std::unordered_set<uint32_t>& obtainable, const std::string& itemDefName) {
+	const uint32_t id = engine::assets::AssetRegistry::Get().getDefNameId(itemDefName);
+	return id != 0 && obtainable.count(id) > 0;
+}
+
+std::vector<std::string> unobtainableInputs(
+	const std::unordered_set<uint32_t>& obtainable, const engine::assets::RecipeDef& recipe
+) {
 	std::vector<std::string> missing;
 	for (const auto& input : recipe.inputs) {
-		if (!isMaterialObtainable(world, input.defName)) {
+		if (!isMaterialObtainable(obtainable, input.defName)) {
 			missing.push_back(input.defName);
 		}
 	}
@@ -165,7 +177,7 @@ PanelContent adaptCraftingStatus(ecs::World& world, ecs::EntityID entityId, cons
 	if (const auto* currentJob = workQueue->getNextJob(); currentJob != nullptr) {
 		const auto* recipe = engine::assets::RecipeRegistry::Get().getRecipe(currentJob->recipeDefName);
 		if (recipe != nullptr) {
-			const auto missing = unobtainableInputs(world, *recipe);
+			const auto missing = unobtainableInputs(collectObtainableMaterials(world), *recipe);
 			if (!missing.empty()) {
 				std::vector<std::string> labels;
 				labels.reserve(missing.size());

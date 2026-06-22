@@ -68,15 +68,19 @@ CraftingDialogModel::UpdateType CraftingDialogModel::refresh(
 	bool wasValid = valid;
 	valid = true;
 
+	// Build the colony's obtainable-material set once; reused by every availability check below
+	// instead of re-scanning all inventories + memories per recipe input.
+	const auto obtainable = collectObtainableMaterials(world);
+
 	// Extract all data
-	extractRecipeList(world, registry);
-	extractSelectedDetails(world, registry);
+	extractRecipeList(obtainable, registry);
+	extractSelectedDetails(obtainable, registry);
 	extractQueue(world, registry);
 
 	// Auto-select first recipe if none selected
 	if (selectedRecipe.empty() && !recipeList.empty()) {
 		selectedRecipe = recipeList[0].defName;
-		extractSelectedDetails(world, registry);
+		extractSelectedDetails(obtainable, registry);
 		return UpdateType::Full;
 	}
 
@@ -127,7 +131,7 @@ void CraftingDialogModel::adjustQuantity(int delta) {
 	currentQuantity = static_cast<uint32_t>(std::max(1, newQty));
 }
 
-void CraftingDialogModel::extractRecipeList(ecs::World& world, const engine::assets::RecipeRegistry& registry) {
+void CraftingDialogModel::extractRecipeList(const std::unordered_set<uint32_t>& obtainable, const engine::assets::RecipeRegistry& registry) {
 	recipeList.clear();
 
 	auto recipes = registry.getRecipesForStation(currentStationDefName);
@@ -137,7 +141,7 @@ void CraftingDialogModel::extractRecipeList(ecs::World& world, const engine::ass
 		RecipeListItem item;
 		item.defName = recipe->defName;
 		item.label = recipe->label;
-		item.canCraft = checkMaterialAvailability(world, *recipe);
+		item.canCraft = checkMaterialAvailability(obtainable, *recipe);
 		recipeList.push_back(item);
 	}
 
@@ -150,7 +154,7 @@ void CraftingDialogModel::extractRecipeList(ecs::World& world, const engine::ass
 	});
 }
 
-void CraftingDialogModel::extractSelectedDetails(ecs::World& world, const engine::assets::RecipeRegistry& registry) {
+void CraftingDialogModel::extractSelectedDetails(const std::unordered_set<uint32_t>& obtainable, const engine::assets::RecipeRegistry& registry) {
 	details = {};
 
 	if (selectedRecipe.empty()) {
@@ -164,7 +168,7 @@ void CraftingDialogModel::extractSelectedDetails(ecs::World& world, const engine
 
 	details.name = recipe->label;
 	details.description = recipe->description;
-	details.canCraft = checkMaterialAvailability(world, *recipe);
+	details.canCraft = checkMaterialAvailability(obtainable, *recipe);
 
 	// Work time in seconds (workAmount / assumed work rate)
 	// Assume ~100 work units per second as baseline
@@ -181,7 +185,7 @@ void CraftingDialogModel::extractSelectedDetails(ecs::World& world, const engine
 		mat.label = input.defName;  // Could look up display name from asset registry
 		mat.required = input.count;
 		mat.available = 0;  // Not a counted stockpile yet; availability is presence-based.
-		mat.hasEnough = isMaterialObtainable(world, input.defName);
+		mat.hasEnough = isMaterialObtainable(obtainable, input.defName);
 		details.materials.push_back(mat);
 	}
 
@@ -227,8 +231,10 @@ void CraftingDialogModel::extractQueue(const ecs::World& world, const engine::as
 	}
 }
 
-bool CraftingDialogModel::checkMaterialAvailability(ecs::World& world, const engine::assets::RecipeDef& recipe) const {
-	return unobtainableInputs(world, recipe).empty();
+bool CraftingDialogModel::checkMaterialAvailability(
+	const std::unordered_set<uint32_t>& obtainable, const engine::assets::RecipeDef& recipe
+) const {
+	return unobtainableInputs(obtainable, recipe).empty();
 }
 
 } // namespace world_sim

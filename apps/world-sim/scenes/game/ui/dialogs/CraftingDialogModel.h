@@ -14,7 +14,9 @@
 #include <ecs/EntityID.h>
 #include <ecs/World.h>
 
+#include <cstdint>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 namespace world_sim {
@@ -112,19 +114,21 @@ class CraftingDialogModel {
 	[[nodiscard]] bool hasQueuedJobs() const { return !queueItems.empty(); }
 
   private:
-	/// Extract recipe list from registry
-	void extractRecipeList(ecs::World& world, const engine::assets::RecipeRegistry& registry);
+	/// Extract recipe list from registry (obtainable = colony material set, built once per refresh)
+	void extractRecipeList(const std::unordered_set<uint32_t>& obtainable, const engine::assets::RecipeRegistry& registry);
 
-	/// Extract selected recipe details
-	void extractSelectedDetails(ecs::World& world, const engine::assets::RecipeRegistry& registry);
+	/// Extract selected recipe details (obtainable = colony material set, built once per refresh)
+	void extractSelectedDetails(const std::unordered_set<uint32_t>& obtainable, const engine::assets::RecipeRegistry& registry);
 
 	/// Extract queue from WorkQueue component
 	void extractQueue(const ecs::World& world, const engine::assets::RecipeRegistry& registry);
 
-	/// True when every recipe input has a known/obtainable source in the colony (see
-	/// CraftingAdapter::isMaterialObtainable). false marks the recipe as un-craftable so the
-	/// dialog dims it and flags the missing inputs.
-	[[nodiscard]] bool checkMaterialAvailability(ecs::World& world, const engine::assets::RecipeDef& recipe) const;
+	/// True when every recipe input is in the colony's obtainable-material set (see
+	/// CraftingAdapter::collectObtainableMaterials/isMaterialObtainable). false marks the recipe
+	/// un-craftable so the dialog dims it and flags the missing inputs.
+	[[nodiscard]] bool checkMaterialAvailability(
+		const std::unordered_set<uint32_t>& obtainable, const engine::assets::RecipeDef& recipe
+	) const;
 
 	// State
 	ecs::EntityID currentStationId{0};
