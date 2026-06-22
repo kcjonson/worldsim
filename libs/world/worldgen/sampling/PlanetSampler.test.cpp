@@ -477,4 +477,74 @@ TEST(LandingSite, PrefersFreshwaterOverBareCoast) {
         << "default site should land on freshwater when available";
 }
 
+// A river running THROUGH a tile outranks a mere freshwater neighbor, even when
+// the neighbor tile has a lower TileId: the river-through tile puts the channel
+// at the 2D origin, so the colonist can spawn on its bank.
+TEST(LandingSite, PrefersRiverThroughTileOverLakeNeighbor) {
+    auto world = makeWorld(0.0f);
+    world->validFields |= static_cast<uint32_t>(WorldField::FlowAccum);
+
+    // Lowest-TileId temperate land tile: give it a lake NEIGHBOR (freshwater-nearby).
+    TileId lakeAdj = kInvalidTile;
+    TileId river = kInvalidTile;
+    for (TileId t = 0; t < world->grid->tileCount(); ++t) {
+        if ((world->data.flags[t] & (kFlagOcean | kFlagLake)) != 0) continue;
+        double latDeg = 0.0;
+        double lonDeg = 0.0;
+        world->grid->latLonOf(t, latDeg, lonDeg);
+        if (std::abs(latDeg) > 45.0) continue;
+        if (lakeAdj == kInvalidTile) { lakeAdj = t; continue; }
+        river = t;  // a higher-TileId temperate land tile
+        break;
+    }
+    ASSERT_NE(lakeAdj, kInvalidTile);
+    ASSERT_NE(river, kInvalidTile);
+    ASSERT_LT(lakeAdj, river);
+
+    std::array<TileId, 6> nbrs{};
+    uint32_t count = world->grid->neighbors(lakeAdj, nbrs);
+    ASSERT_GT(count, 0u);
+    world->data.flags[nbrs[0]] |= kFlagLake;  // lakeAdj now has freshwater nearby
+    world->data.flags[river] |= kFlagRiver;   // river runs through this (higher) tile
+
+    LatLon site = findDefaultLandingSite(*world);
+    TileId chosen = world->grid->fromLatLon(site.latDeg, site.lonDeg);
+    EXPECT_EQ(chosen, river) << "river-through tile should win over a lower-TileId lake neighbor";
+    EXPECT_NE(world->data.flags[chosen] & kFlagRiver, 0);
+}
+
+// The default site is never a desert, even one with a river: a desert river tile
+// with a LOWER TileId must lose to a habitable grassland river tile.
+TEST(LandingSite, AvoidsDesertLandingEvenWithRiver) {
+    auto world = makeWorld(0.0f);
+    world->validFields |= static_cast<uint32_t>(WorldField::FlowAccum);
+
+    TileId desert = kInvalidTile;
+    TileId grass = kInvalidTile;
+    for (TileId t = 0; t < world->grid->tileCount(); ++t) {
+        if ((world->data.flags[t] & (kFlagOcean | kFlagLake)) != 0) continue;
+        double latDeg = 0.0;
+        double lonDeg = 0.0;
+        world->grid->latLonOf(t, latDeg, lonDeg);
+        if (std::abs(latDeg) > 45.0) continue;
+        if (desert == kInvalidTile) { desert = t; continue; }
+        grass = t;
+        break;
+    }
+    ASSERT_NE(desert, kInvalidTile);
+    ASSERT_NE(grass, kInvalidTile);
+    ASSERT_LT(desert, grass);
+
+    // Lower-TileId desert river (the tempting-but-bad start) vs higher grassland river.
+    world->data.biome[desert] = static_cast<uint8_t>(Biome::HotDesert);
+    world->data.flags[desert] |= kFlagRiver;
+    world->data.biome[grass] = static_cast<uint8_t>(Biome::TemperateGrassland);
+    world->data.flags[grass] |= kFlagRiver;
+
+    LatLon site = findDefaultLandingSite(*world);
+    TileId chosen = world->grid->fromLatLon(site.latDeg, site.lonDeg);
+    EXPECT_EQ(chosen, grass) << "should skip the desert river for the grassland river";
+    EXPECT_NE(chosen, desert);
+}
+
 } // namespace worldgen

@@ -8,9 +8,11 @@
 
 #include <worldgen/data/GeneratedWorld.h>
 #include <worldgen/sampling/PlanetSampler.h>
+#include <worldgen/sampling/RiverNetwork2D.h>
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 
 namespace engine::world {
 
@@ -32,6 +34,9 @@ class GeneratedWorldSampler : public IWorldSampler {
 	[[nodiscard]] BiomeWeights sampleBiomeAt(WorldPosition pos) const;
 
 	worldgen::PlanetSampler sampler;
+	// Present only when the world carries drainage data (FlowAccum + Downhill).
+	// Worlds saved before the hydrology epic lack it; rivers are then absent.
+	std::optional<worldgen::RiverNetwork2D> riverNetwork;
 };
 
 }  // namespace engine::world

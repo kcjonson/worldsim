@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Pine/Spruce Tree Asset Definition
+     Procedural conifer using the shared conifer Lua generator. Fills the
+     conifer-forest biomes (boreal, montane, temperate rainforest) that had no
+     trees configured.
+-->
+<AssetDefinitions>
+  <AssetDef>
+    <defName>Flora_TreePine</defName>
+    <label>Pine Tree</label>
+    <assetType>procedural</assetType>
+
+    <generator>
+      <scriptPath>@shared/conifer.lua</scriptPath>
+      <params>
+        <!-- Dimensions in meters (top-down footprint), scaled per-tree in the script -->
+        <trunkHeight>1.7</trunkHeight>
+        <trunkWidth>0.18</trunkWidth>
+        <canopyRadius>0.6</canopyRadius>
+        <!-- Stacked needle tiers -->
+        <tiers>4</tiers>
+      </params>
+    </generator>
+
+    <rendering>
+      <complexity>complex</complexity>
+      <tier>batched</tier>
+    </rendering>
+
+    <!-- Trunk-base collision (half trunkWidth=0.18 -> radius 0.09m); not the canopy -->
+    <collision><circle radius="0.09"/></collision>
+
+    <!-- Chopped for wood with an axe; removed when the pool is exhausted. -->
+    <!-- 5-9 wood per chop (clamped by carry weight), pool of 16-26 wood units -->
+    <capabilities>
+      <harvestable yield="Wood" amountMin="5" amountMax="9" duration="7.5"
+                   destructive="false" totalResourceMin="16" totalResourceMax="26" requiresTool="Axe"/>
+    </capabilities>
+
+    <placement>
+      <!-- Boreal forest: dense conifer stands -->
+      <biome name="BorealForest">
+        <spawnChance>0.8</spawnChance>
+        <distribution>spaced</distribution>
+        <spacing>
+          <minDistance>3.0</minDistance>
+        </spacing>
+      </biome>
+
+      <!-- Temperate rainforest: dense conifers (Pacific-NW style) -->
+      <biome name="TemperateRainforest">
+        <spawnChance>0.8</spawnChance>
+        <distribution>spaced</distribution>
+        <spacing>
+          <minDistance>3.0</minDistance>
+        </spacing>
+      </biome>
+
+      <!-- Montane forest: conifers, a touch sparser on slopes -->
+      <biome name="MontaneForest">
+        <spawnChance>0.6</spawnChance>
+        <distribution>spaced</distribution>
+        <spacing>
+          <minDistance>3.5</minDistance>
+        </spacing>
+      </biome>
+
+      <!-- Groups this asset belongs to -->
+      <groups>
+        <group>trees</group>
+        <group>conifer_trees</group>
+        <group>large_flora</group>
+        <group>wild_plants</group>
+        <group>wood_sources</group>
+      </groups>
+
+      <!-- Relationships with other entities -->
+      <relationships>
+        <!-- Keep some breathing room between pines -->
+        <avoids type="same" distance="2.5" penalty="0.3"/>
+        <!-- Mild avoidance of other trees for a natural mix -->
+        <avoids group="trees" distance="2.0" penalty="0.6"/>
+      </relationships>
+    </placement>
+
+    <variantCount>15</variantCount>
+  </AssetDef>
+</AssetDefinitions>

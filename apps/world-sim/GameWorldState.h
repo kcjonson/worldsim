@@ -11,6 +11,8 @@
 #include <world/rendering/ChunkRenderer.h>
 #include <world/rendering/EntityRenderer.h>
 
+#include <glm/vec2.hpp>
+
 #include <memory>
 #include <unordered_set>
 
@@ -29,6 +31,10 @@ namespace world_sim {
 		std::unordered_set<engine::world::ChunkCoordinate> processedChunks;
 
 		uint64_t worldSeed = 0;
+
+		/// Colonist drop point (2D world meters): dry land beside clean water,
+		/// chosen by findRiverbankSpawn. Defaults to the landing origin.
+		glm::vec2 spawnPosition{0.0F, 0.0F};
 
 		/// Store pending state (call from GameLoadingScene when done)
 		static void SetPending(std::unique_ptr<GameWorldState> state);

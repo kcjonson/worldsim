@@ -7,8 +7,11 @@
 #include "world/BiomeWeights.h"
 #include "world/chunk/ChunkCoordinate.h"
 
+#include <worldgen/sampling/RiverNetwork2D.h>
+
 #include <array>
 #include <cstdint>
+#include <vector>
 
 namespace engine::world {
 
@@ -18,6 +21,35 @@ struct ChunkSampleResult {
     std::array<BiomeWeights, 4> cornerBiomes{};
     std::array<float, 4>        cornerElevations{};
     std::array<BiomeWeights, kSectorGridSize * kSectorGridSize> sectorGrid{};
+
+    // River channel segments (2D world meters) whose footprint touches this
+    // chunk, synthesized from the coarse 3D drainage graph by RiverNetwork2D.
+    // Empty for the vast majority of chunks. Consumed per tile by isRiverAt().
+    std::vector<worldgen::RiverNetwork2D::Segment> riverSegments;
+
+    // True when (worldXMeters, worldYMeters) falls inside a gathered river
+    // channel. Linear scan; cheap because riverSegments is empty or tiny.
+    [[nodiscard]] bool isRiverAt(double worldXMeters, double worldYMeters) const {
+        for (const auto& s : riverSegments) {
+            const double dx = s.x1 - s.x0;
+            const double dy = s.y1 - s.y0;
+            const double len2 = dx * dx + dy * dy;
+            double t = 0.0;
+            if (len2 > 0.0) {
+                t = ((worldXMeters - s.x0) * dx + (worldYMeters - s.y0) * dy) / len2;
+                t = t < 0.0 ? 0.0 : (t > 1.0 ? 1.0 : t);
+            }
+            const double cx = s.x0 + dx * t;
+            const double cy = s.y0 + dy * t;
+            const double ex = worldXMeters - cx;
+            const double ey = worldYMeters - cy;
+            const double halfWidth =
+                static_cast<double>(s.halfWidth0) +
+                (static_cast<double>(s.halfWidth1) - static_cast<double>(s.halfWidth0)) * t;
+            if (ex * ex + ey * ey <= halfWidth * halfWidth) return true;
+        }
+        return false;
+    }
 
     void computeSectorGrid() {
         for (int32_t sy = 0; sy < kSectorGridSize; ++sy) {

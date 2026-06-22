@@ -5,6 +5,7 @@
 #include <array>
 #include <cassert>
 #include <cmath>
+#include <limits>
 
 namespace worldgen {
 
@@ -36,15 +37,51 @@ bool hasOceanNeighbor(const GeneratedWorld& world, TileId t) {
     return false;
 }
 
-// Coast in the old, lake-inclusive sense: any water neighbor. Kept for
-// findDefaultLandingSite's coastal tier (lake shores are good starts too).
-bool isCoastTile(const GeneratedWorld& world, TileId t) {
-    std::array<TileId, 6> nbrs{};
-    uint32_t count = world.grid->neighbors(t, nbrs);
-    for (uint32_t i = 0; i < count; ++i) {
-        if (isWaterTile(world, nbrs[i])) return true;
+// Green, livable biomes the default site lands in: forests, grasslands, savanna,
+// and wetlands. Excludes deserts, beach (coastal sand), tundra, and ice/snow --
+// arid or barren starts a colony can't live off of. The default scan considers
+// only these; everything else is a fallback when no green tile exists.
+bool isPreferredLandingBiome(Biome b) {
+    switch (b) {
+        case Biome::TropicalRainforest:
+        case Biome::TropicalSeasonalForest:
+        case Biome::TemperateDeciduousForest:
+        case Biome::TemperateRainforest:
+        case Biome::BorealForest:
+        case Biome::MontaneForest:
+        case Biome::TropicalSavanna:
+        case Biome::TemperateGrassland:
+        case Biome::AlpineGrassland:
+        case Biome::TemperateWetland:
+        case Biome::TropicalWetland:
+            return true;
+        default:
+            return false;
     }
-    return false;
+}
+
+// How close clean water is, for ranking landing tiles. A river running THROUGH
+// the tile scores highest: that tile's center is the 2D origin, so the channel
+// passes through spawn and the colonist drops on the bank (see findRiverbankSpawn).
+int waterScore(const GeneratedWorld& world, TileId t, WaterClass wc) {
+    if ((world.data.flags[t] & kFlagRiver) != 0) return 6; // channel through the origin
+    switch (wc) {
+        case WaterClass::River: return 4; // river on a neighbor
+        case WaterClass::Lake:  return 4; // lake on/near the tile
+        case WaterClass::Coastal: return 2; // saltwater (needs work to drink)
+        case WaterClass::RainFed: return 0;
+    }
+    return 0;
+}
+
+int habitabilityScore(Habitability h) {
+    switch (h) {
+        case Habitability::Easy:     return 4;
+        case Habitability::Moderate: return 2;
+        case Habitability::Hard:     return 0;
+        case Habitability::Harsh:    return -4;
+    }
+    return 0;
 }
 
 // True if the tile itself or any neighbor carries the given flag.
@@ -56,12 +93,6 @@ bool tileOrNeighborHasFlag(const GeneratedWorld& world, TileId t, uint8_t flag) 
         if ((world.data.flags[nbrs[i]] & flag) != 0) return true;
     }
     return false;
-}
-
-// Land tile that sits on, or one tile away from, fresh water (river or lake).
-bool hasFreshwaterNearby(const GeneratedWorld& world, TileId t) {
-    return tileOrNeighborHasFlag(world, t, kFlagRiver) ||
-           tileOrNeighborHasFlag(world, t, kFlagLake);
 }
 
 } // namespace
@@ -150,20 +181,19 @@ LatLon findDefaultLandingSite(const GeneratedWorld& world) {
     const SphereGrid& grid = *world.grid;
     const uint32_t tileCount = grid.tileCount();
 
-    // Tiers, all first-match by ascending TileId for determinism:
-    // 1. temperate freshwater: land, |lat| <= 45, river/lake on tile or neighbor
-    // 2. temperate coast:      land, |lat| <= 45, water neighbor
-    // 3. temperate inland:     land, |lat| <= 45
-    // 4. any land
-    // 5. (0,0) on an all-water world
-    //
-    // Freshwater outranks a bare coast: a colony wants drinkable water, and the
-    // landing signal reports the same fact, so the suggested start should match
-    // what the pane calls the best site. One pass records the first match for
-    // each lower tier and returns immediately on the first freshwater tile.
+    // Score temperate, GREEN land tiles by clean-water proximity plus a
+    // habitability rating (water class + climate + rainfall). A river running
+    // THROUGH the tile scores highest: the tile center is the 2D origin, so the
+    // channel passes through spawn and the colonist drops on the bank (see
+    // findRiverbankSpawn). Only vegetated biomes are considered -- deserts, beach,
+    // and tundra all read as barren and starve a colony. Highest score wins; ties
+    // break to the lowest TileId (strict >) for determinism. Fallbacks keep a
+    // result for barren or all-water worlds.
+    const bool haveBiome = hasField(world, WorldField::Biome);
     TileId firstLand = kInvalidTile;
     TileId firstTemperate = kInvalidTile;
-    TileId firstTemperateCoast = kInvalidTile;
+    TileId best = kInvalidTile;
+    int bestScore = std::numeric_limits<int>::min();
     for (TileId t = 0; t < tileCount; ++t) {
         if (isWaterTile(world, t)) continue;
         if (firstLand == kInvalidTile) firstLand = t;
@@ -174,15 +204,20 @@ LatLon findDefaultLandingSite(const GeneratedWorld& world) {
         if (std::abs(latDeg) > kMaxPreferredLatDeg) continue;
         if (firstTemperate == kInvalidTile) firstTemperate = t;
 
-        if (hasFreshwaterNearby(world, t)) return {latDeg, lonDeg};
-        if (firstTemperateCoast == kInvalidTile && isCoastTile(world, t)) {
-            firstTemperateCoast = t;
+        if (haveBiome && !isPreferredLandingBiome(static_cast<Biome>(world.data.biome[t]))) continue;
+
+        const WaterClass wc = classifyWater(world, t);
+        const int score = waterScore(world, t, wc) +
+                          habitabilityScore(rateHabitability(world, t, wc));
+        if (score > bestScore) {
+            bestScore = score;
+            best = t;
         }
     }
 
-    TileId chosen = firstTemperateCoast != kInvalidTile ? firstTemperateCoast
-                  : firstTemperate != kInvalidTile      ? firstTemperate
-                                                        : firstLand;
+    TileId chosen = best != kInvalidTile           ? best
+                  : firstTemperate != kInvalidTile ? firstTemperate
+                                                   : firstLand;
     if (chosen != kInvalidTile) {
         double latDeg = 0.0;
         double lonDeg = 0.0;

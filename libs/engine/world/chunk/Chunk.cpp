@@ -148,6 +148,18 @@ namespace engine::world {
 		// Select surface type based on primary biome (uses spatial clustering)
 		tile.surface = selectSurface(tile.primaryBiome, localX, localY);
 
+		// River channels from the coarse 3D drainage graph override the biome
+		// surface. Continuous across chunk seams: the channel geometry is a
+		// deterministic function of world position, gathered per chunk.
+		if (!m_biomeData.riverSegments.empty()) {
+			const WorldPosition origin = m_coord.origin();
+			const double worldXMeters = static_cast<double>(origin.x) + static_cast<double>(localX) * static_cast<double>(kTileSize);
+			const double worldYMeters = static_cast<double>(origin.y) + static_cast<double>(localY) * static_cast<double>(kTileSize);
+			if (m_biomeData.isRiverAt(worldXMeters, worldYMeters)) {
+				tile.surface = Surface::Water;
+			}
+		}
+
 		// Generate deterministic moisture from hash
 		uint32_t		hash = tileHash(m_coord, localX, localY, m_worldSeed);
 		constexpr float kNormalize = 1.0F / static_cast<float>(UINT32_MAX);

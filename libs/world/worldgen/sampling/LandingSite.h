@@ -59,17 +59,18 @@ const char* waterClassToString(WaterClass w);
 // and Precipitation when valid; degrades gracefully when they are not.
 Habitability rateHabitability(const GeneratedWorld& world, TileId tile, WaterClass water);
 
-// Deterministically pick a landing site for the 2D gameplay world.
-// Preference order (lowest TileId wins within each tier, no RNG):
-//   1. temperate freshwater: land, |lat| <= 45 deg, river/lake on tile or neighbor
-//   2. temperate coast: land, |lat| <= 45 deg, at least one water neighbor
-//   3. temperate inland: land, |lat| <= 45 deg
-//   4. any land tile
-//   5. (0, 0)
-// Land = not ocean/lake-flagged and elevation >= sea level. Coast is
-// computed from grid neighbors rather than kFlagCoast (the flag marks ocean
-// coasts only; this also counts lake shores).
-// Requires Elevation and Flags valid in world.validFields.
+// Deterministically pick a landing site for the 2D gameplay world: a green,
+// watered spot, never a desert, beach, or tundra. Among temperate (|lat| <= 45)
+// vegetated land tiles (forest/grassland/savanna/wetland), scores by clean-water
+// proximity plus a habitability rating (water class + climate + rainfall) and
+// takes the highest (ties to lowest TileId, no RNG). A
+// river running THROUGH the tile scores best: the tile center is the 2D origin,
+// so the channel passes through spawn and the colonist drops on the bank (see
+// findRiverbankSpawn). Falls back to any temperate land, then any land, then
+// (0, 0) on a desert/water-only world.
+// Land = not ocean/lake-flagged and elevation >= sea level.
+// Requires Elevation and Flags valid; uses Biome (desert skip), TemperatureMean,
+// and Precipitation (habitability) when present.
 LatLon findDefaultLandingSite(const GeneratedWorld& world);
 
 } // namespace worldgen
