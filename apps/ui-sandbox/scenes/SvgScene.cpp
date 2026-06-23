@@ -1,7 +1,11 @@
-// SVG Scene - Demonstrates loading and rendering SVG files
-// Uses NanoSVG for parsing, then our own tessellation and rendering pipeline
+// SVG Scene - Comprehensive vector/SVG capability showcase for the ui-sandbox.
+// Renders assets/svg/showcase.svg (solid + gradient fills incl. transparency, shape primitives,
+// opacity, document-order layering) through our NanoSVG -> tessellation -> gradient-baking ->
+// render pipeline, plus a few Primitives drawRect examples for fills and borders. Consolidates
+// the former "shapes" and "vector-star" scenes.
 
 #include <graphics/Color.h>
+#include <graphics/Rect.h>
 #include <primitives/Primitives.h>
 #include <scene/Scene.h>
 #include <scene/SceneManager.h>
@@ -9,54 +13,61 @@
 #include <utils/Log.h>
 #include <utils/ResourcePath.h>
 #include <vector/SVGLoader.h>
-#include <vector/Tessellator.h>
 #include <vector/Types.h>
 
 #include <GL/glew.h>
-#include <chrono>
 
 namespace {
 
-constexpr const char* kSceneName = "svg";
-
-/// Holds a tessellated SVG shape ready for rendering
-	struct TessellatedShape {
-		renderer::TessellatedMesh mesh;
-		Foundation::Color		  color;
-	};
+	constexpr const char* kSceneName = "svg";
 
 	class SvgScene : public engine::IScene {
 	  public:
 		void onEnter() override {
-			LOG_INFO(UI, "SVG Scene - SVG File Loading Demo");
-
+			LOG_INFO(UI, "SVG Scene - vector/SVG capability showcase");
 			loadAndTessellate();
 		}
 
 		void update(float /*dt*/) override {
-			// No update logic needed - static display
+			// Static display
 		}
 
 		void render() override {
-			// Clear background to dark gray
+			using namespace Foundation;
+
 			glClearColor(0.15F, 0.15F, 0.2F, 1.0F);
 			glClear(GL_COLOR_BUFFER_BIT);
 
-			// Draw each pre-transformed shape (vertices already scaled and centered during load)
-			for (const auto& shape : m_shapes) {
-				if (shape.mesh.vertices.empty()) {
-					continue;
-				}
-
+			// SVG showcase mesh: gradients (incl. transparency), primitives, opacity, layering.
+			if (!m_mesh.vertices.empty()) {
 				Renderer::Primitives::drawTriangles(
-					{.vertices = shape.mesh.vertices.data(),
-					 .indices = shape.mesh.indices.data(),
-					 .vertexCount = shape.mesh.vertices.size(),
-					 .indexCount = shape.mesh.indices.size(),
-					 .color = shape.color,
-					 .id = "svg_shape"}
+					{.vertices = m_mesh.vertices.data(),
+					 .indices = m_mesh.indices.data(),
+					 .vertexCount = m_mesh.vertices.size(),
+					 .indexCount = m_mesh.indices.size(),
+					 .colors = m_mesh.colors.data(),
+					 .id = "svg_showcase"}
 				);
 			}
+
+			// Primitive rects with borders (folded in from the former "shapes" scene): fill,
+			// border-only, and fill+border. SVG strokes are dropped by the loader, so borders are
+			// drawn via Primitives. NOTE: drawRect bounds are in native-pixel window coordinates,
+			// a different space from the local coords the SVG mesh is built in, so these are placed
+			// to the right of the SVG grid in window space.
+			Renderer::Primitives::drawRect(
+				{.bounds = {1100, 150, 260, 150}, .style = {.fill = Color(0.31F, 0.46F, 0.21F, 1.0F)}, .id = "rect_fill"}
+			);
+			Renderer::Primitives::drawRect(
+				{.bounds = {1100, 360, 260, 150},
+				 .style = {.fill = Color::transparent(), .border = BorderStyle{.color = Color(0.88F, 0.64F, 0.24F, 1.0F), .width = 5.0F}},
+				 .id = "rect_border"}
+			);
+			Renderer::Primitives::drawRect(
+				{.bounds = {1100, 570, 260, 150},
+				 .style = {.fill = Color(0.42F, 0.29F, 0.54F, 1.0F), .border = BorderStyle{.color = Color::white(), .width = 4.0F}},
+				 .id = "rect_fill_border"}
+			);
 		}
 
 		void onExit() override { LOG_INFO(UI, "Exiting SVG Scene"); }
@@ -68,80 +79,49 @@ constexpr const char* kSceneName = "svg";
 		const char* getName() const override { return kSceneName; }
 
 	  private:
-		// Transform constants for centering and scaling the SVG on screen
+		// The showcase SVG is authored centered on the origin, so origin maps to (kCenterX, kCenterY).
 		static constexpr float kScale = 1.5F;
 		static constexpr float kCenterX = 400.0F;
 		static constexpr float kCenterY = 300.0F;
 
 		void loadAndTessellate() {
-			// Path to test SVG file - use findResourceString for portable paths
-			const std::string kRelativePath = "assets/svg/test_shape.svg";
-			const float		  kCurveTolerance = 0.5F; // Half-pixel tolerance for smooth curves
+			const std::string kRelativePath = "assets/svg/showcase.svg";
+			const float		  kCurveTolerance = 0.5F;
 
-			// Use findResource to handle different working directories (IDE vs terminal)
 			std::string svgPath = Foundation::findResourceString(kRelativePath);
 			if (svgPath.empty()) {
 				LOG_ERROR(UI, "Could not find SVG: %s", kRelativePath.c_str());
 				return;
 			}
 
-			LOG_INFO(UI, "Loading SVG: %s", svgPath.c_str());
-
-			auto startTime = std::chrono::high_resolution_clock::now();
-
-			// Load the SVG file
 			std::vector<renderer::LoadedSVGShape> loadedShapes;
 			if (!renderer::loadSVG(svgPath, kCurveTolerance, loadedShapes)) {
 				LOG_ERROR(UI, "Failed to load SVG file: %s", svgPath.c_str());
 				return;
 			}
 
-			auto loadEndTime = std::chrono::high_resolution_clock::now();
-			auto loadDuration = std::chrono::duration_cast<std::chrono::microseconds>(loadEndTime - startTime);
-
-			LOG_INFO(UI, "SVG loaded: %zu shapes in %.3f ms", loadedShapes.size(), loadDuration.count() / 1000.0F);
-
-			// Tessellate each shape
-			renderer::Tessellator tessellator;
-			size_t				  totalTriangles = 0;
-
-			for (const auto& loadedShape : loadedShapes) {
-				// Tessellate each path in the shape
-				for (const auto& path : loadedShape.paths) {
-					TessellatedShape shape;
-					shape.color = loadedShape.fillColor;
-
-					if (tessellator.Tessellate(path, shape.mesh)) {
-						// Pre-transform vertices for display (scale and center)
-						for (auto& v : shape.mesh.vertices) {
-							v.x = v.x * kScale + kCenterX;
-							v.y = v.y * kScale + kCenterY;
-						}
-
-						totalTriangles += shape.mesh.getTriangleCount();
-						m_shapes.push_back(std::move(shape));
-						LOG_DEBUG(
-							UI, "Tessellated path: %zu vertices -> %zu triangles", path.vertices.size(), shape.mesh.getTriangleCount()
-						);
-					} else {
-						LOG_WARNING(UI, "Failed to tessellate path with %zu vertices", path.vertices.size());
-					}
-				}
+			// Tessellate + bake per-vertex colors (solid or gradient) via the shared helper.
+			m_mesh.clear();
+			for (const auto& shape : loadedShapes) {
+				renderer::appendShapeMesh(shape, m_mesh);
 			}
 
-			auto tessEndTime = std::chrono::high_resolution_clock::now();
-			auto totalDuration = std::chrono::duration_cast<std::chrono::microseconds>(tessEndTime - startTime);
+			// Scale + center for display; gradient colors are already baked per vertex.
+			for (auto& v : m_mesh.vertices) {
+				v.x = (v.x * kScale) + kCenterX;
+				v.y = (v.y * kScale) + kCenterY;
+			}
 
 			LOG_INFO(
 				UI,
-				"SVG processing complete: %zu shapes, %zu triangles in %.3f ms",
-				m_shapes.size(),
-				totalTriangles,
-				totalDuration.count() / 1000.0F
+				"SVG showcase: %zu shapes -> %zu vertices, %zu triangles",
+				loadedShapes.size(),
+				m_mesh.getVertexCount(),
+				m_mesh.getTriangleCount()
 			);
 		}
 
-		std::vector<TessellatedShape> m_shapes;
+		renderer::TessellatedMesh m_mesh;
 	};
 
 } // anonymous namespace

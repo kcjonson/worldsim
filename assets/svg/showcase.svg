@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SVG capability showcase for the ui-sandbox "svg" scene. Origin-centered grid:
+     Row 1 fills: solid, linear, radial, multi-stop.
+     Row 2 shapes: rect, ellipse, star polygon (concave), bezier blob.
+     Row 3: opacity, document-order layering, gradient on a polygon, gradient on an organic blob.
+     Row 4 transparency: a fade-to-transparent linear and radial gradient over solid shapes.
+     Gradients use userSpaceOnUse (objectBoundingBox is not supported by the loader). -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-180 -165 360 330" width="360" height="330">
+  <defs>
+    <linearGradient id="linV" x1="-45" y1="-150" x2="-45" y2="-90" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#cfe89a"/>
+      <stop offset="1" stop-color="#264a1e"/>
+    </linearGradient>
+    <radialGradient id="rad1" cx="45" cy="-123" r="32" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffe39a"/>
+      <stop offset="1" stop-color="#5e3210"/>
+    </radialGradient>
+    <linearGradient id="linH" x1="105" y1="-120" x2="165" y2="-120" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#2a6cc4"/>
+      <stop offset="0.5" stop-color="#9a5cc0"/>
+      <stop offset="1" stop-color="#c43a3a"/>
+    </linearGradient>
+    <radialGradient id="radP" cx="45" cy="40" r="32" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffe39a"/>
+      <stop offset="1" stop-color="#5e3210"/>
+    </radialGradient>
+    <linearGradient id="linB" x1="135" y1="12" x2="135" y2="72" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#cfe89a"/>
+      <stop offset="1" stop-color="#264a1e"/>
+    </linearGradient>
+    <linearGradient id="fadeH" x1="-110" y1="120" x2="-50" y2="120" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#d23a3a" stop-opacity="1"/>
+      <stop offset="1" stop-color="#d23a3a" stop-opacity="0"/>
+    </linearGradient>
+    <radialGradient id="fadeR" cx="110" cy="120" r="30" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#2a6cc4" stop-opacity="1"/>
+      <stop offset="1" stop-color="#2a6cc4" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <!-- Row 1: fills -->
+  <circle cx="-135" cy="-120" r="30" fill="#4f7536"/>
+  <circle cx="-45"  cy="-120" r="30" fill="url(#linV)"/>
+  <circle cx="45"   cy="-120" r="30" fill="url(#rad1)"/>
+  <circle cx="135"  cy="-120" r="30" fill="url(#linH)"/>
+
+  <!-- Row 2: shape primitives (solid) -->
+  <rect x="-165" y="-65" width="60" height="50" fill="#7a5a34"/>
+  <ellipse cx="-45" cy="-40" rx="32" ry="22" fill="#3a6a8a"/>
+  <polygon points="45,-70 52.6,-50.5 73.5,-49.3 57.4,-36 62.6,-15.7 45,-27 27.4,-15.7 32.6,-36 16.5,-49.3 37.4,-50.5" fill="#b08a2a"/>
+  <path d="M135,-68 C160,-68 166,-40 156,-22 C147,-8 123,-8 114,-22 C104,-40 110,-68 135,-68 Z" fill="#6a4a8a"/>
+
+  <!-- Row 3: opacity, layering, gradients on non-circle shapes -->
+  <circle cx="-143" cy="40" r="24" fill="#c43a3a" opacity="0.6"/>
+  <circle cx="-127" cy="40" r="24" fill="#2a6cc4" opacity="0.6"/>
+
+  <circle cx="-45" cy="44" r="30" fill="#264a1e"/>
+  <circle cx="-48" cy="39" r="23" fill="#3e6a2c"/>
+  <circle cx="-52" cy="34" r="14" fill="#6f9a4a"/>
+
+  <polygon points="45,12 73.5,32.7 62.6,66.3 27.4,66.3 16.5,32.7" fill="url(#radP)"/>
+
+  <path d="M135,12 C160,12 166,40 156,58 C147,72 123,72 114,58 C104,40 110,12 135,12 Z" fill="url(#linB)"/>
+
+  <!-- Row 4: gradient transparency (overlay fades to reveal the solid shape behind it) -->
+  <circle cx="-110" cy="120" r="30" fill="#3a8a3a"/>
+  <circle cx="-80"  cy="120" r="30" fill="url(#fadeH)"/>
+
+  <circle cx="80"  cy="120" r="30" fill="#b08a2a"/>
+  <circle cx="110" cy="120" r="30" fill="url(#fadeR)"/>
+</svg>

@@ -44,6 +44,35 @@ namespace renderer {
 			return true;
 		}
 
+		/// Fan tessellation from an inserted centroid vertex. Adds the centroid at index 0 and
+		/// fans to each polygon edge, giving one interior sample point (needed so per-vertex
+		/// gradient fills can render a center, not just the perimeter). Only valid for convex
+		/// (or star-convex-from-centroid) polygons.
+		void tessellateCentroidFan(const std::vector<Foundation::Vec2>& vertices, TessellatedMesh& outMesh) {
+			const size_t n = vertices.size();
+
+			Foundation::Vec2 centroid{0.0F, 0.0F};
+			for (const auto& v : vertices) {
+				centroid.x += v.x;
+				centroid.y += v.y;
+			}
+			centroid.x /= static_cast<float>(n);
+			centroid.y /= static_cast<float>(n);
+
+			outMesh.vertices.reserve(n + 1);
+			outMesh.vertices.push_back(centroid);
+			for (const auto& v : vertices) {
+				outMesh.vertices.push_back(v);
+			}
+
+			outMesh.indices.reserve(n * 3);
+			for (size_t i = 0; i < n; ++i) {
+				outMesh.indices.push_back(0);
+				outMesh.indices.push_back(static_cast<uint16_t>(1 + i));
+				outMesh.indices.push_back(static_cast<uint16_t>(1 + ((i + 1) % n)));
+			}
+		}
+
 		/// Fan tessellation for convex polygons - O(n) and always works.
 		/// Creates triangles from vertex 0 to each pair of consecutive vertices.
 		void tessellateConvexFan(const std::vector<Foundation::Vec2>& vertices, TessellatedMesh& outMesh) {
@@ -109,6 +138,15 @@ namespace renderer {
 
 		if (!path.isClosed) {
 			LOG_WARNING(Renderer, "Tessellator: Path is not closed, closing it automatically");
+		}
+
+		// Gradient fills want an interior sample point: fan from an inserted centroid (convex only).
+		if (options.fanFromCentroid && isConvexPolygon(path.vertices)) {
+			tessellateCentroidFan(path.vertices, outMesh);
+			LOG_DEBUG(
+				Renderer, "Tessellated convex polygon: %zu vertices -> %zu triangles (centroid fan)", path.vertices.size(), outMesh.getTriangleCount()
+			);
+			return true;
 		}
 
 		// Fast path for convex polygons (like circles and ellipses from SVG)
