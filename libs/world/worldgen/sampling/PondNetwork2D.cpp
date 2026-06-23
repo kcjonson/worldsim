@@ -111,6 +111,13 @@ double oasisThreshold(Biome b) {
 
 } // namespace
 
+// Reused across every cell in one gather so the ring BFS allocates once, not per cell.
+struct PondWaterSearch {
+    std::unordered_set<TileId> visited;
+    std::vector<TileId>        frontier;
+    std::vector<TileId>        next;
+};
+
 PondNetwork2D::PondNetwork2D(std::shared_ptr<const GeneratedWorld> generatedWorld,
                              double landingLatDeg, double landingLonDeg)
     : world(std::move(generatedWorld)),
@@ -137,33 +144,44 @@ bool PondNetwork2D::isWaterTile(TileId t) const {
            world->data.elevation[t] < seaLevelMeters;
 }
 
-double PondNetwork2D::nearestWaterMeters(TileId from) const {
+double PondNetwork2D::nearestWaterMeters(TileId from, PondWaterSearch& scratch) const {
     const SphereGrid& grid = *world->grid;
-    const double tileW = grid.tileWidthMeters(from, world->derived.planetRadiusMeters);
+    const double      planetRadius = world->derived.planetRadiusMeters;
+    const Vec3d       cf = grid.tileCenter(from);
 
-    std::unordered_set<TileId> visited;
-    visited.insert(from);
-    std::vector<TileId> frontier{from};
+    scratch.visited.clear();
+    scratch.frontier.clear();
+    scratch.visited.insert(from);
+    scratch.frontier.push_back(from);
 
     for (int ring = 0; ring <= kMaxWaterRings; ++ring) {
-        for (TileId t : frontier) {
-            if (isWaterTile(t)) return static_cast<double>(ring) * tileW;
+        for (TileId t : scratch.frontier) {
+            if (!isWaterTile(t)) continue;
+            // True great-circle distance from `from` to this water tile center, so the
+            // oasis threshold isn't skewed by tile-width variation across the grid.
+            const Vec3d  ct = grid.tileCenter(t);
+            const double dot = std::clamp(cf.x * ct.x + cf.y * ct.y + cf.z * ct.z, -1.0, 1.0);
+            const double crx = cf.y * ct.z - cf.z * ct.y;
+            const double cry = cf.z * ct.x - cf.x * ct.z;
+            const double crz = cf.x * ct.y - cf.y * ct.x;
+            const double crossMag = foundation::det_math::sqrt(crx * crx + cry * cry + crz * crz);
+            return planetRadius * foundation::det_math::atan2(crossMag, dot);
         }
-        std::vector<TileId> next;
-        for (TileId t : frontier) {
+        scratch.next.clear();
+        for (TileId t : scratch.frontier) {
             std::array<TileId, 6> nbrs{};
             const uint32_t count = grid.neighbors(t, nbrs);
             for (uint32_t i = 0; i < count; ++i) {
-                if (visited.insert(nbrs[i]).second) next.push_back(nbrs[i]);
+                if (scratch.visited.insert(nbrs[i]).second) scratch.next.push_back(nbrs[i]);
             }
         }
-        if (next.empty()) break;
-        frontier = std::move(next);
+        if (scratch.next.empty()) break;
+        scratch.frontier.swap(scratch.next);
     }
-    return static_cast<double>(kMaxWaterRings) * tileW; // none within cap: treat as very far
+    return planetRadius; // none within cap: ~1 radian, definitively far (saturates the ramp)
 }
 
-bool PondNetwork2D::cellPond(long i, long j, Pond& out) const {
+bool PondNetwork2D::cellPond(long i, long j, Pond& out, PondWaterSearch& scratch) const {
     const uint64_t h = foundation::hashCombine(
         foundation::hashCombine(world->params.seed ^ kPondSalt, static_cast<uint64_t>(i)),
         static_cast<uint64_t>(j));
@@ -190,7 +208,7 @@ bool PondNetwork2D::cellPond(long i, long j, Pond& out) const {
     if (!spawn) {
         const double thr = oasisThreshold(biome);
         if (thr < 0.0) return false; // already-wet biomes / open water never need a spring
-        const double d = nearestWaterMeters(t);
+        const double d = nearestWaterMeters(t, scratch);
         if (d <= thr) return false;
         const double ramp = std::clamp((d - thr) / kOasisRampMeters, 0.0, 1.0);
         spawn = hashUnit(foundation::hashCombine(h, 0x22)) < kOasisProb * ramp;
@@ -219,10 +237,11 @@ void PondNetwork2D::gatherPonds(double minX, double minY, double maxX, double ma
     const long j0 = static_cast<long>(std::floor((minY - maxFootprint) / kCellMeters));
     const long j1 = static_cast<long>(std::floor((maxY + maxFootprint) / kCellMeters));
 
+    PondWaterSearch scratch;
     for (long j = j0; j <= j1; ++j) {
         for (long i = i0; i <= i1; ++i) {
             Pond p;
-            if (!cellPond(i, j, p)) continue;
+            if (!cellPond(i, j, p, scratch)) continue;
             const double pr = static_cast<double>(p.radius) * (1.0 + kRimAmp);
             if (p.cx + pr < minX || p.cx - pr > maxX || p.cy + pr < minY || p.cy - pr > maxY) continue;
             out.push_back(p);

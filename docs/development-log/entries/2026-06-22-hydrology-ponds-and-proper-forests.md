@@ -52,8 +52,11 @@ plants so reeds line the mud bank and bushes line forest riverbanks.
   into `Surface::Mud` before placement reads surfaces, and `near="Water" distance="3"`
   let reeds sit up to 3 tiles out on grass.
 - Fix: all reed blocks now use **`near="Mud" distance="1"`** so reeds hug the muddy
-  waterline, with forest chances bumped. Mud forms around rivers, ponds, and oases alike,
-  so reeds ring all of them.
+  waterline, with forest chances bumped. For this to hold in deserts/beaches, the mud
+  whitelist in `TilePostProcessor` had to grow to include **`Surface::Sand`** -- otherwise
+  a sand-bottomed oasis/pond got no bank and grew nothing, which would have made the oasis
+  (the whole point) barren. Mud now forms around rivers, ponds, and oases on grass, dirt,
+  and sand alike, so reeds ring all of them.
 - Added bankside **bushes**: BerryBush and WoodyBush gained `near="Mud"` bank blocks in
   BorealForest, MontaneForest, and the tropical forests (biomes where they had no upland
   presence), so forest riverbanks/pond shores grow berries and woody bushes set a step
@@ -71,7 +74,9 @@ near water). Full suite green: 167 world-tests, 714 engine-tests.
 - The 3D drainage grid is coarse (~tens of km/tile), so literal per-sink ponds would be
   far too sparse for 0-2/chunk; the lattice weighted by sampled biome/precipitation is the
   scale-appropriate way to stay hydrology-influenced. The oasis distance BFS is ring-capped
-  and only runs for dry cells that produced no natural pond.
+  and only runs for dry cells that produced no natural pond; it returns the true great-circle
+  distance to the found water tile (not ring-hops x source-tile-width, which skews near the
+  grid's pentagons) and reuses one scratch buffer across all cells in a gather.
 - Not in scope: cross-chunk Spaced spacing (per-chunk for now), pond inlet/outlet streams,
   water-loving riparian trees, strictly-on-mud reeds (a tile of grass adjacent to mud can
   still grow one).

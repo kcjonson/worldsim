@@ -561,9 +561,9 @@ TEST(PlacementExecutorTests, SpacedRespectsMinDistance) {
 
 	ASSERT_GT(result.entities.size(), 1u) << "spaced stand should place many instances";
 	// Spaced enforces minDistance, except thicket cores (grove-field high tail) tighten
-	// it; the hard floor is (1 - kThicketTighten) * minDistance ~= 0.55 * minDistance.
+	// it; the hard floor is (1 - kThicketTighten) * minDistance = 0.55 * minDistance.
 	// Assert no pair beats that floor (proving spacing is enforced, unlike Uniform).
-	const float floorDist = 0.5F * kMinDist;
+	const float floorDist = 0.55F * kMinDist;
 	for (size_t i = 0; i < result.entities.size(); ++i) {
 		for (size_t j = i + 1; j < result.entities.size(); ++j) {
 			const float dx = result.entities[i].position.x - result.entities[j].position.x;

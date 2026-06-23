@@ -31,8 +31,10 @@ void TilePostProcessor::generateMud(std::array<TileData, kChunkSize * kChunkSize
 			return false;  // Already mud
 		}
 		Surface s = tiles[idx].surface;
-		// Mud can form on any grass variant or dirt
-		return s == Surface::Grass || s == Surface::Dirt ||
+		// Mud forms on any grass variant, dirt, or sand. Sand matters for ponds and
+		// oases in deserts/beaches: without it those water bodies get no bank, and
+		// the riparian flora keyed on near="Mud" (reeds, bankside bushes) can't seat.
+		return s == Surface::Grass || s == Surface::Dirt || s == Surface::Sand ||
 		       s == Surface::GrassTall || s == Surface::GrassShort || s == Surface::GrassMeadow;
 	};
 

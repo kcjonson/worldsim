@@ -23,6 +23,10 @@
 
 namespace worldgen {
 
+// Reusable scratch for the distance-to-water ring BFS, owned by a gather so the
+// per-cell searches don't each allocate. Defined in the .cpp.
+struct PondWaterSearch;
+
 class PondNetwork2D {
   public:
     // A pond as a wobble-edged blob in 2D world meters. The rim is a closed loop:
@@ -58,11 +62,12 @@ class PondNetwork2D {
   private:
     [[nodiscard]] TileId tileAt(double xMeters, double yMeters) const;
     [[nodiscard]] bool   isWaterTile(TileId t) const;
-    // Great-circle-ish distance (meters) to the nearest 3D water tile via a bounded
-    // ring BFS over the grid; capped (returns the cap distance if none is near).
-    [[nodiscard]] double nearestWaterMeters(TileId from) const;
+    // Great-circle distance (meters) from `from`'s center to the nearest 3D water
+    // tile, via a bounded ring BFS over the grid (returns a definitively-far value
+    // if none is within the ring cap). `scratch` is cleared and reused per call.
+    [[nodiscard]] double nearestWaterMeters(TileId from, PondWaterSearch& scratch) const;
     // Decide and build the pond for lattice cell (i,j); false if no pond there.
-    [[nodiscard]] bool   cellPond(long i, long j, Pond& out) const;
+    [[nodiscard]] bool   cellPond(long i, long j, Pond& out, PondWaterSearch& scratch) const;
 
     std::shared_ptr<const GeneratedWorld> world;
     SphericalProjection projection;
