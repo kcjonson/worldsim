@@ -133,7 +133,7 @@ class NavigationSystem : public ISystem {
 		std::int64_t  lastPeakOpenSet	= 0;
 	};
 	[[nodiscard]] const NavQueryStats& navQueryStats() const { return m_navStats; }
-	void						   resetNavQueryStats() const { m_navStats = {}; }
+	void						   resetNavQueryStats() { m_navStats = {}; }
 
 	// Number of live RRA* reverse-search caches (one per distinct goal triangle). For
 	// tests/overlay: confirms the cap and the generation-bump invalidation. Bounded by

@@ -123,7 +123,12 @@ namespace geometry::nav {
 				return 0;
 			}
 			std::int64_t lo = 0;
-			std::int64_t hi = 3037000499; // floor(sqrt(INT64_MAX)); k*k stays in int64 range as Int128
+			// hi = floor(sqrt(INT64_MAX)); k*k stays in int64 range as Int128. Safe because
+			// the only inputs are squared distances between mesh vertices, i.e. coordinate
+			// DELTAS bounded by the loaded-region span (a few chunks, a few million mm),
+			// squared ~1e13, far under INT64_MAX -- not because coordinates are small (they
+			// are world-absolute mm). A navmesh spanning >~2,000 km would break this.
+			std::int64_t hi = 3037000499;
 			while (lo < hi) {
 				const std::int64_t mid = lo + (hi - lo + 1) / 2;
 				if (Int128::product(mid, mid) <= s) {
@@ -441,8 +446,9 @@ namespace geometry::nav {
 			}
 
 			// depth[]: roots have depth 0; a child is parent depth + 1. Processing nodes
-			// in ascending id is a valid topological order because every internal node
-			// has a HIGHER id than both its children (created after them).
+			// in DESCENDING id is a valid topological order because every internal node
+			// has a HIGHER id than both its children (created after them), so a parent's
+			// depth is finalized before any child reads it.
 			forest.depth.assign(nodeCount, 0);
 			for (std::int32_t i = nodeCount - 1; i >= 0; --i) {
 				if (nodeParent[i] != i) {

@@ -523,13 +523,19 @@ namespace geometry::nav {
 					const Vec2d unit = dir * (1.0 / len);
 					double		off	 = static_cast<double>(agentRadiusMm);
 					// Clamp so the two inward offsets do not cross: each may move at most
-					// half the portal width. The width-filtered A* now guarantees any
-					// portal bounded by an obstacle vertex has edge length >= 2*radius
-					// (its Demyen edge-pair width, <= that length, already cleared the
-					// gate), so this clamp can only bite a portal whose endpoints are both
-					// open-floor (a CDT sliver edge) -- there it harmlessly threads the
-					// midpoint, with no obstacle nearby to clip. It never degrades an
-					// obstacle gap to a clipping path.
+					// half the portal width. The width filter already rejected any corridor
+					// too narrow for the disc, so the clamp only bites open-floor CDT sliver
+					// portals (it threads their midpoint harmlessly).
+					//
+					// CLEARANCE CAVEAT: this per-endpoint inset along the portal edge is an
+					// APPROXIMATION of the true radius-offset (Minkowski) shortest path. When
+					// a leg rounds an obstacle vertex at an oblique angle, the emitted
+					// polyline can under-clear that vertex by a few percent of the radius
+					// (measured ~2-4%, growing slightly with radius). The routing/passability
+					// DECISION is sound (the width filter never routes a disc through a gap
+					// narrower than its diameter); only the emitted geometry is approximate
+					// near oblique corners. Exact corner clearance (arc-rounding the vertex
+					// against its two incident obstacle edges) is a tracked follow-up.
 					if (off > len * 0.5) {
 						off = len * 0.5;
 					}
