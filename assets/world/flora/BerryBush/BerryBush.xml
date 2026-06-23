@@ -57,6 +57,46 @@
         </clumping>
       </biome>
 
+      <!-- Riverbank/pond-shore berries in forests with no upland block: berry bushes
+           favor the damp, sunlit water's edge. near="Mud" keys on the muddy bank the
+           post-processor lays down around water. -->
+      <biome name="BorealForest" near="Mud" distance="2">
+        <spawnChance>0.10</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>2,5</clumpSize>
+          <clumpRadius>1.0,2.0</clumpRadius>
+          <clumpSpacing>8.0,15.0</clumpSpacing>
+        </clumping>
+      </biome>
+      <biome name="MontaneForest" near="Mud" distance="2">
+        <spawnChance>0.08</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>2,5</clumpSize>
+          <clumpRadius>1.0,2.0</clumpRadius>
+          <clumpSpacing>8.0,15.0</clumpSpacing>
+        </clumping>
+      </biome>
+      <biome name="TropicalSeasonalForest" near="Mud" distance="2">
+        <spawnChance>0.10</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>2,5</clumpSize>
+          <clumpRadius>1.0,2.0</clumpRadius>
+          <clumpSpacing>8.0,15.0</clumpSpacing>
+        </clumping>
+      </biome>
+      <biome name="TropicalRainforest" near="Mud" distance="2">
+        <spawnChance>0.10</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>2,5</clumpSize>
+          <clumpRadius>1.0,2.0</clumpRadius>
+          <clumpSpacing>8.0,15.0</clumpSpacing>
+        </clumping>
+      </biome>
+
       <!-- Groups this asset belongs to -->
       <groups>
         <group>bushes</group>

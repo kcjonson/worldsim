@@ -17,6 +17,15 @@ namespace engine::world {
 		if ((world->validFields & kRiverFields) == kRiverFields) {
 			riverNetwork.emplace(world, landingLatDeg, landingLonDeg);
 		}
+
+		// Ponds additionally need precipitation + biome to weight placement.
+		constexpr uint32_t kPondFields =
+			kRiverFields |
+			static_cast<uint32_t>(worldgen::WorldField::Precipitation) |
+			static_cast<uint32_t>(worldgen::WorldField::Biome);
+		if ((world->validFields & kPondFields) == kPondFields) {
+			pondNetwork.emplace(world, landingLatDeg, landingLonDeg);
+		}
 	}
 
 	ChunkSampleResult GeneratedWorldSampler::sampleChunk(ChunkCoordinate coord) const {
@@ -34,14 +43,15 @@ namespace engine::world {
 
 		result.computeSectorGrid();
 
-		// Gather any river channels crossing this chunk from the coarse drainage graph.
-		if (riverNetwork) {
+		// Gather any river channels and ponds touching this chunk.
+		if (riverNetwork || pondNetwork) {
 			const WorldPosition origin = coord.origin();
 			const double minX = static_cast<double>(origin.x);
 			const double minY = static_cast<double>(origin.y);
 			const double maxX = minX + static_cast<double>(kChunkSize) * static_cast<double>(kTileSize);
 			const double maxY = minY + static_cast<double>(kChunkSize) * static_cast<double>(kTileSize);
-			riverNetwork->gatherSegments(minX, minY, maxX, maxY, result.riverSegments);
+			if (riverNetwork) riverNetwork->gatherSegments(minX, minY, maxX, maxY, result.riverSegments);
+			if (pondNetwork) pondNetwork->gatherPonds(minX, minY, maxX, maxY, result.pondBlobs);
 		}
 
 		return result;

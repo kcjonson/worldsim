@@ -63,6 +63,46 @@
         </clumping>
       </biome>
 
+      <!-- Riverbank/pond-shore thickets in forests with no upland block: woody bushes
+           line the water's edge (set back a step behind the reeds) -- it's where most
+           plants grow. near="Mud" keys on the muddy bank the post-processor lays down. -->
+      <biome name="BorealForest" near="Mud" distance="2">
+        <spawnChance>0.11</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>1,3</clumpSize>
+          <clumpRadius>0.8,1.5</clumpRadius>
+          <clumpSpacing>8.0,16.0</clumpSpacing>
+        </clumping>
+      </biome>
+      <biome name="MontaneForest" near="Mud" distance="2">
+        <spawnChance>0.09</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>1,3</clumpSize>
+          <clumpRadius>0.8,1.5</clumpRadius>
+          <clumpSpacing>8.0,16.0</clumpSpacing>
+        </clumping>
+      </biome>
+      <biome name="TropicalSeasonalForest" near="Mud" distance="2">
+        <spawnChance>0.11</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>1,3</clumpSize>
+          <clumpRadius>0.8,1.5</clumpRadius>
+          <clumpSpacing>8.0,16.0</clumpSpacing>
+        </clumping>
+      </biome>
+      <biome name="TropicalRainforest" near="Mud" distance="2">
+        <spawnChance>0.10</spawnChance>
+        <distribution>clumped</distribution>
+        <clumping>
+          <clumpSize>1,3</clumpSize>
+          <clumpRadius>0.8,1.5</clumpRadius>
+          <clumpSpacing>8.0,16.0</clumpSpacing>
+        </clumping>
+      </biome>
+
       <!-- Groups this asset belongs to -->
       <groups>
         <group>bushes</group>

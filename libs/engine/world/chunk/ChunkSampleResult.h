@@ -7,6 +7,7 @@
 #include "world/BiomeWeights.h"
 #include "world/chunk/ChunkCoordinate.h"
 
+#include <worldgen/sampling/PondNetwork2D.h>
 #include <worldgen/sampling/RiverNetwork2D.h>
 
 #include <array>
@@ -61,6 +62,21 @@ struct ChunkSampleResult {
                 halfWidth > best) {
                 best = halfWidth;
             }
+        }
+        return best;
+    }
+
+    // Sparse standing-water ponds whose footprint touches this chunk, from
+    // PondNetwork2D. Empty for most chunks. Consumed per tile by pondDepthAt().
+    std::vector<worldgen::PondNetwork2D::Pond> pondBlobs;
+
+    // Cosmetic water-depth byte at (worldXMeters, worldYMeters) if inside a pond,
+    // else 0 (deepest covering pond wins). Each Pond::sampleDepth AABB-rejects
+    // before any trig, so the handful of ponds stays affordable per tile.
+    [[nodiscard]] uint8_t pondDepthAt(double worldXMeters, double worldYMeters) const {
+        uint8_t best = 0;
+        for (const auto& p : pondBlobs) {
+            best = std::max(best, worldgen::PondNetwork2D::sampleDepth(p, worldXMeters, worldYMeters));
         }
         return best;
     }

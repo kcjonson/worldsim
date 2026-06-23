@@ -40,10 +40,10 @@
 
     <placement>
       <biome name="TemperateDeciduousForest">
-        <spawnChance>0.03</spawnChance>
+        <spawnChance>0.25</spawnChance>
         <distribution>spaced</distribution>
         <spacing>
-          <minDistance>6.0</minDistance>
+          <minDistance>3.0</minDistance>
         </spacing>
       </biome>
 
@@ -59,10 +59,9 @@
 
       <!-- Relationships with other entities -->
       <relationships>
-        <!-- Oaks need more space due to their size -->
-        <avoids type="same" distance="6.0" penalty="0.1"/>
-        <!-- Oaks avoid other trees for variety -->
-        <avoids group="trees" distance="4.0" penalty="0.5"/>
+        <!-- minDistance (spaced) owns oak-to-oak spacing now; keep only a mild
+             cross-tree avoid so a mixed canopy intermixes without overlapping trunks. -->
+        <avoids group="trees" distance="2.5" penalty="0.7"/>
       </relationships>
     </placement>
 
