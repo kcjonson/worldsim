@@ -178,25 +178,41 @@ void appendShapeMesh(const LoadedSVGShape& shape, TessellatedMesh& outMesh) {
 	TessellatorOptions options;
 	options.fanFromCentroid = hasGradient; // interior sample point so radial fills show a center
 
-	for (const auto& path : shape.paths) {
-		if (path.vertices.size() < 3) {
-			continue;
+	// Tessellate all of a shape's subpaths together so the nonzero fill rule carves holes where
+	// subpaths overlap (the SVG hole convention), instead of filling each subpath solid. The
+	// common single-subpath case stays a direct, allocation-free call (and keeps the fast path).
+	TessellatedMesh shapeMesh;
+	bool			ok = false;
+	if (shape.paths.size() == 1) {
+		if (shape.paths[0].vertices.size() < 3) {
+			return;
 		}
+		ok = tessellator.Tessellate(shape.paths[0], shapeMesh, options);
+	} else {
+		std::vector<VectorPath> contours;
+		contours.reserve(shape.paths.size());
+		for (const auto& path : shape.paths) {
+			if (path.vertices.size() >= 3) {
+				contours.push_back(path);
+			}
+		}
+		if (contours.empty()) {
+			return;
+		}
+		ok = tessellator.Tessellate(contours, shapeMesh, options);
+	}
+	if (!ok) {
+		LOG_WARNING(Renderer, "appendShapeMesh: failed to tessellate shape (%zu subpaths)", shape.paths.size());
+		return;
+	}
 
-		TessellatedMesh pathMesh;
-		if (!tessellator.Tessellate(path, pathMesh, options)) {
-			LOG_WARNING(Renderer, "appendShapeMesh: failed to tessellate path with %zu vertices", path.vertices.size());
-			continue;
-		}
-
-		const auto baseIndex = static_cast<uint16_t>(outMesh.vertices.size());
-		for (const auto& v : pathMesh.vertices) {
-			outMesh.vertices.push_back(v);
-			outMesh.colors.push_back(hasGradient ? shape.gradient.colorAt(v) : shape.fillColor);
-		}
-		for (const auto idx : pathMesh.indices) {
-			outMesh.indices.push_back(static_cast<uint16_t>(baseIndex + idx));
-		}
+	const auto baseIndex = static_cast<uint16_t>(outMesh.vertices.size());
+	for (const auto& v : shapeMesh.vertices) {
+		outMesh.vertices.push_back(v);
+		outMesh.colors.push_back(hasGradient ? shape.gradient.colorAt(v) : shape.fillColor);
+	}
+	for (const auto idx : shapeMesh.indices) {
+		outMesh.indices.push_back(static_cast<uint16_t>(baseIndex + idx));
 	}
 }
 

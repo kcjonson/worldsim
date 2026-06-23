@@ -1,56 +1,51 @@
 #include "Tessellator.h"
+
+#include "tess/Mesh.h"
+#include "tess/Sweep.h"
+#include "tess/Triangulate.h"
 #include "utils/Log.h"
+
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 
 namespace renderer {
 
 	namespace {
 
-		/// Check if a polygon is convex by verifying all cross products have the same sign.
-		/// Returns true for convex polygons (including circles converted to polygon approximations).
-		/// This allows us to use simple fan tessellation which is O(n) and always works.
+		constexpr size_t kMaxOutputVertices = 65535; // index type is uint16_t
+
+		// Convex test: all edge cross products share a sign. Convex shapes can use an O(n) fan.
 		bool isConvexPolygon(const std::vector<Foundation::Vec2>& vertices) {
 			if (vertices.size() < 3) {
 				return false;
 			}
-
-			// Track the sign of cross products - all should be same for convex polygon
-			int	   sign = 0;
-			size_t n = vertices.size();
-
+			int			 sign = 0;
+			const size_t n = vertices.size();
 			for (size_t i = 0; i < n; ++i) {
-				const auto& p0 = vertices[i];
-				const auto& p1 = vertices[(i + 1) % n];
-				const auto& p2 = vertices[(i + 2) % n];
-
+				const auto&		 p0 = vertices[i];
+				const auto&		 p1 = vertices[(i + 1) % n];
+				const auto&		 p2 = vertices[(i + 2) % n];
 				Foundation::Vec2 edge1 = p1 - p0;
 				Foundation::Vec2 edge2 = p2 - p1;
-				float			 cross = (edge1.x * edge2.y) - (edge1.y * edge2.x);
-
-				// Skip nearly-zero cross products (collinear points)
+				const float		 cross = (edge1.x * edge2.y) - (edge1.y * edge2.x);
 				if (std::abs(cross) < 1e-6F) {
-					continue;
+					continue; // collinear
 				}
-
-				int currentSign = (cross > 0) ? 1 : -1;
+				const int currentSign = (cross > 0) ? 1 : -1;
 				if (sign == 0) {
 					sign = currentSign;
 				} else if (sign != currentSign) {
-					return false; // Sign change means concave
+					return false;
 				}
 			}
-
 			return true;
 		}
 
-		/// Fan tessellation from an inserted centroid vertex. Adds the centroid at index 0 and
-		/// fans to each polygon edge, giving one interior sample point (needed so per-vertex
-		/// gradient fills can render a center, not just the perimeter). Only valid for convex
-		/// (or star-convex-from-centroid) polygons.
+		// Fan from an inserted centroid: one interior sample point so per-vertex gradient fills
+		// can render a center. Convex (or star-convex) only.
 		void tessellateCentroidFan(const std::vector<Foundation::Vec2>& vertices, TessellatedMesh& outMesh) {
-			const size_t n = vertices.size();
-
+			const size_t	 n = vertices.size();
 			Foundation::Vec2 centroid{0.0F, 0.0F};
 			for (const auto& v : vertices) {
 				centroid.x += v.x;
@@ -64,7 +59,6 @@ namespace renderer {
 			for (const auto& v : vertices) {
 				outMesh.vertices.push_back(v);
 			}
-
 			outMesh.indices.reserve(n * 3);
 			for (size_t i = 0; i < n; ++i) {
 				outMesh.indices.push_back(0);
@@ -73,13 +67,10 @@ namespace renderer {
 			}
 		}
 
-		/// Fan tessellation for convex polygons - O(n) and always works.
-		/// Creates triangles from vertex 0 to each pair of consecutive vertices.
+		// Fan from vertex 0. O(n), convex only.
 		void tessellateConvexFan(const std::vector<Foundation::Vec2>& vertices, TessellatedMesh& outMesh) {
 			outMesh.vertices = vertices;
 			outMesh.indices.reserve((vertices.size() - 2) * 3);
-
-			// Fan from vertex 0: triangles (0, 1, 2), (0, 2, 3), (0, 3, 4), ...
 			for (size_t i = 1; i + 1 < vertices.size(); ++i) {
 				outMesh.indices.push_back(0);
 				outMesh.indices.push_back(static_cast<uint16_t>(i));
@@ -87,55 +78,139 @@ namespace renderer {
 			}
 		}
 
-	} // anonymous namespace
-
-	// Internal vertex structure for tessellation
-	struct Tessellator::Vertex {
-		Foundation::Vec2 position;
-		size_t			 originalIndex;
-		bool			 isEar = false; // For ear clipping
-		bool			 isProcessed = false;
-	};
-
-	// Internal edge structure
-	struct Tessellator::Edge {
-		size_t startIndex{};
-		size_t endIndex{};
-	};
-
-	// Internal event structure for sweep line
-	struct Tessellator::Event {
-		Foundation::Vec2 position;
-		size_t			 vertexIndex{};
-		VertexType		 type{};
-
-		// Sort events by Y (top to bottom), then X (left to right)
-		bool operator<(const Event& other) const {
-			if (std::abs(position.y - other.position.y) < 1e-6F) {
-				return position.x < other.position.x;
+		// Net signed area (shoelace) over all contours. Sign tells overall orientation.
+		double netSignedArea(std::span<const VectorPath> contours) {
+			double area = 0.0;
+			for (const auto& c : contours) {
+				const auto&	 vs = c.vertices;
+				const size_t n = vs.size();
+				if (n < 3) {
+					continue;
+				}
+				for (size_t i = 0; i < n; ++i) {
+					const auto& a = vs[i];
+					const auto& b = vs[(i + 1) % n];
+					area += (static_cast<double>(a.x) * b.y) - (static_cast<double>(b.x) * a.y);
+				}
 			}
-			return position.y < other.position.y;
+			return area;
 		}
-	};
 
-	Tessellator::Tessellator() = default; // NOLINT(cppcoreguidelines-pro-type-member-init)
+		// Sweep-line tessellation of one or more contours. Handles concavity, holes, and
+		// self-intersection; resolves the interior by winding rule and triangulates it.
+		bool sweepTessellate(std::span<const VectorPath> contours, TessellatedMesh& outMesh,
+							 const TessellatorOptions& options) {
+			using namespace renderer::tess;
 
-	Tessellator::~Tessellator() = default; // NOLINT(performance-trivially-destructible)
+			// libtess assumes inside faces wind CCW in sweep space; flip t when the input's net
+			// orientation is clockwise, then un-flip y on output.
+			const bool flipT = netSignedArea(contours) < 0.0;
 
-	bool Tessellator::Tessellate( // NOLINT(readability-convert-member-functions-to-static)
-		const VectorPath&		  path,
-		TessellatedMesh&		  outMesh,
-		const TessellatorOptions& options
-	) {
-		// Clear output
+			Mesh mesh;
+			bool built = false;
+			for (const auto& c : contours) {
+				const auto& vs = c.vertices;
+				if (vs.size() < 3) {
+					continue;
+				}
+				HalfEdge* e = nullptr;
+				for (const auto& p : vs) {
+					if (e == nullptr) {
+						e = mesh.makeEdge();
+						mesh.splice(e, e->sym);
+					} else {
+						mesh.splitEdge(e);
+						e = e->lnext;
+					}
+					e->org->s = p.x;
+					e->org->t = flipT ? -p.y : p.y;
+					e->winding = 1;
+					e->sym->winding = -1;
+				}
+				built = true;
+			}
+			if (!built) {
+				LOG_ERROR(Renderer, "Tessellator: no contour with >= 3 vertices");
+				return false;
+			}
+
+			// Bounds in sweep space, for the sentinel edges.
+			float bmin[2] = {0.0F, 0.0F};
+			float bmax[2] = {0.0F, 0.0F};
+			bool  first = true;
+			for (Vertex* v = mesh.vHead.next; v != &mesh.vHead; v = v->next) {
+				if (first) {
+					bmin[0] = bmax[0] = v->s;
+					bmin[1] = bmax[1] = v->t;
+					first = false;
+				} else {
+					bmin[0] = std::min(bmin[0], v->s);
+					bmax[0] = std::max(bmax[0], v->s);
+					bmin[1] = std::min(bmin[1], v->t);
+					bmax[1] = std::max(bmax[1], v->t);
+				}
+			}
+
+			const WindingRule rule =
+				options.useNonZeroFillRule ? WindingRule::NonZero : WindingRule::Odd;
+			Sweep sweep(mesh, rule, bmin, bmax);
+			sweep.computeInterior();
+			tessellateInterior(mesh);
+
+			// Emit unique vertices used by interior faces, then triangle indices.
+			outMesh.clear();
+			for (Vertex* v = mesh.vHead.next; v != &mesh.vHead; v = v->next) {
+				v->idx = -1;
+			}
+			for (Face* f = mesh.fHead.next; f != &mesh.fHead; f = f->next) {
+				if (!f->inside) {
+					continue;
+				}
+				HalfEdge* e = f->anEdge;
+				do {
+					Vertex* v = e->org;
+					if (v->idx < 0) {
+						v->idx = static_cast<int>(outMesh.vertices.size());
+						outMesh.vertices.push_back(Foundation::Vec2{v->s, flipT ? -v->t : v->t});
+					}
+					e = e->lnext;
+				} while (e != f->anEdge);
+			}
+
+			if (outMesh.vertices.size() > kMaxOutputVertices) {
+				LOG_ERROR(Renderer, "Tessellator: output exceeds %zu vertices (%zu)", kMaxOutputVertices,
+						  outMesh.vertices.size());
+				outMesh.clear();
+				return false;
+			}
+
+			for (Face* f = mesh.fHead.next; f != &mesh.fHead; f = f->next) {
+				if (!f->inside) {
+					continue;
+				}
+				HalfEdge*	   e = f->anEdge;
+				const uint16_t i0 = static_cast<uint16_t>(e->org->idx);
+				HalfEdge*	   e1 = e->lnext;
+				HalfEdge*	   e2 = e1->lnext;
+				for (; e2 != f->anEdge; e1 = e2, e2 = e2->lnext) {
+					outMesh.indices.push_back(i0);
+					outMesh.indices.push_back(static_cast<uint16_t>(e1->org->idx));
+					outMesh.indices.push_back(static_cast<uint16_t>(e2->org->idx));
+				}
+			}
+			return true;
+		}
+
+	} // namespace
+
+	bool Tessellator::Tessellate(const VectorPath& path, TessellatedMesh& outMesh,
+								 const TessellatorOptions& options) {
 		outMesh.clear();
 
-		// Validate input
 		if (path.vertices.size() < 3) {
 			LOG_ERROR(Renderer, "Tessellator: Path must have at least 3 vertices");
 			return false;
 		}
-
 		if (!path.isClosed) {
 			LOG_WARNING(Renderer, "Tessellator: Path is not closed, closing it automatically");
 		}
@@ -143,171 +218,29 @@ namespace renderer {
 		// Gradient fills want an interior sample point: fan from an inserted centroid (convex only).
 		if (options.fanFromCentroid && isConvexPolygon(path.vertices)) {
 			tessellateCentroidFan(path.vertices, outMesh);
-			LOG_DEBUG(
-				Renderer, "Tessellated convex polygon: %zu vertices -> %zu triangles (centroid fan)", path.vertices.size(), outMesh.getTriangleCount()
-			);
 			return true;
 		}
-
-		// Fast path for convex polygons (like circles and ellipses from SVG)
-		// Fan tessellation is O(n) and avoids ear-clipping issues with nearly-collinear vertices
+		// Convex fast path (circles, ellipses, simple shapes): O(n) fan.
 		if (isConvexPolygon(path.vertices)) {
 			tessellateConvexFan(path.vertices, outMesh);
-			LOG_DEBUG(
-				Renderer, "Tessellated convex polygon: %zu vertices → %zu triangles (fan)", path.vertices.size(), outMesh.getTriangleCount()
-			);
 			return true;
 		}
-
-		// For Phase 0: Use simple ear clipping algorithm
-		// This is O(n²) but simple and works for all simple polygons
-		// We'll replace with monotone decomposition for Phase 1
-
-		// Compute signed area using the shoelace formula to determine winding order
-		// In screen coordinates (Y increases downward): Positive = CW, Negative = CCW
-		// We treat positive as CCW for consistent ear clipping (works for either convention)
-		float signedArea = 0.0F;
-		for (size_t i = 0; i < path.vertices.size(); ++i) {
-			size_t j = (i + 1) % path.vertices.size();
-			signedArea += (path.vertices[i].x * path.vertices[j].y) - (path.vertices[j].x * path.vertices[i].y);
-		}
-		signedArea *= 0.5F;
-		bool isCCW = (signedArea > 0);
-
-		// Copy vertices to mesh (tessellation doesn't add new vertices for simple polygons)
-		// If winding is CW, reverse the order to make it CCW for consistent ear clipping
-		if (isCCW) {
-			outMesh.vertices = path.vertices;
-		} else {
-			outMesh.vertices.assign(path.vertices.rbegin(), path.vertices.rend());
-		}
-
-		// Build internal vertex list from the (possibly reversed) mesh vertices
-		tessVertices.clear();
-		tessVertices.reserve(outMesh.vertices.size());
-		for (size_t i = 0; i < outMesh.vertices.size(); ++i) {
-			Vertex v;
-			v.position = outMesh.vertices[i];
-			v.originalIndex = i;
-			v.isProcessed = false;
-			tessVertices.push_back(v);
-		}
-
-		// Ear clipping algorithm
-		std::vector<size_t> remainingVertices;
-		for (size_t i = 0; i < tessVertices.size(); ++i) {
-			remainingVertices.push_back(i);
-		}
-
-		// Reserve space for indices (n-2 triangles, 3 indices each)
-		outMesh.indices.reserve((tessVertices.size() - 2) * 3);
-
-		// Keep clipping ears until we have a triangle
-		while (remainingVertices.size() > 3) {
-			bool earFound = false;
-
-			for (size_t i = 0; i < remainingVertices.size(); ++i) {
-				size_t prevIdx = (i == 0) ? remainingVertices.size() - 1 : i - 1;
-				size_t nextIdx = (i + 1) % remainingVertices.size();
-
-				size_t v0 = remainingVertices[prevIdx];
-				size_t v1 = remainingVertices[i];
-				size_t v2 = remainingVertices[nextIdx];
-
-				Foundation::Vec2 p0 = tessVertices[v0].position;
-				Foundation::Vec2 p1 = tessVertices[v1].position;
-				Foundation::Vec2 p2 = tessVertices[v2].position;
-
-				// Check if this forms a valid ear
-				// 1. Must be a convex vertex (interior angle < 180°)
-				Foundation::Vec2 edge1 = p1 - p0;
-				Foundation::Vec2 edge2 = p2 - p1;
-				float			 cross = (edge1.x * edge2.y) - (edge1.y * edge2.x);
-
-				if (cross <= 0) {
-					// Concave vertex, skip
-					continue;
-				}
-
-				// 2. No other vertices should be inside this triangle
-				bool hasInteriorVertex = false;
-				for (size_t j = 0; j < remainingVertices.size(); ++j) {
-					if (j == prevIdx || j == i || j == nextIdx) {
-						continue;
-					}
-
-					Foundation::Vec2 p = tessVertices[remainingVertices[j]].position;
-
-					// Point-in-triangle test using barycentric coordinates
-					float denom = (((p1.y - p2.y) * (p0.x - p2.x)) + ((p2.x - p1.x) * (p0.y - p2.y)));
-					if (std::abs(denom) < 1e-6F) {
-						continue; // Degenerate triangle
-					}
-
-					float a = ((p1.y - p2.y) * (p.x - p2.x) + (p2.x - p1.x) * (p.y - p2.y)) / denom;
-					float b = ((p2.y - p0.y) * (p.x - p2.x) + (p0.x - p2.x) * (p.y - p2.y)) / denom;
-					float c = 1.0F - a - b;
-
-					if (a >= 0 && b >= 0 && c >= 0) {
-						hasInteriorVertex = true;
-						break;
-					}
-				}
-
-				if (!hasInteriorVertex) {
-					// Found an ear! Add triangle
-					outMesh.indices.push_back(static_cast<uint16_t>(v0));
-					outMesh.indices.push_back(static_cast<uint16_t>(v1));
-					outMesh.indices.push_back(static_cast<uint16_t>(v2));
-
-					// Remove this vertex from the remaining list
-					remainingVertices.erase(remainingVertices.begin() + i);
-					earFound = true;
-					break;
-				}
-			}
-
-			if (!earFound) {
-				LOG_ERROR(Renderer, "Tessellator: Failed to find ear (possible degenerate or self-intersecting polygon)");
-				return false;
-			}
-		}
-
-		// Add the final triangle
-		if (remainingVertices.size() == 3) {
-			outMesh.indices.push_back(static_cast<uint16_t>(remainingVertices[0]));
-			outMesh.indices.push_back(static_cast<uint16_t>(remainingVertices[1]));
-			outMesh.indices.push_back(static_cast<uint16_t>(remainingVertices[2]));
-		}
-
-		LOG_DEBUG(Renderer, "Tessellated polygon: %zu vertices → %zu triangles", path.vertices.size(), outMesh.getTriangleCount());
-		return true;
+		// Concave / self-intersecting: sweep-line over a single contour.
+		return sweepTessellate(std::span<const VectorPath>(&path, 1), outMesh, options);
 	}
 
-	void Tessellator::buildEvents(const VectorPath& path) {
-		// Placeholder for monotone decomposition (Phase 1+)
-		// Will classify vertices and build sorted event queue
-	}
-
-	void Tessellator::processEvents(TessellatedMesh& outMesh) {
-		// Placeholder for monotone decomposition (Phase 1+)
-		// Will process events with sweep line algorithm
-	}
-
-	Tessellator::VertexType Tessellator::ClassifyVertex( // NOLINT(readability-convert-member-functions-to-static)
-		size_t vertexIndex
-	) const {
-		// Placeholder for monotone decomposition (Phase 1+)
-		// Will classify vertex as Start, End, Split, Merge, or Regular
-		return VertexType::Regular;
-	}
-
-	bool Tessellator::compareVertices(const Foundation::Vec2& a, const Foundation::Vec2& b) {
-		// Sort by Y (top to bottom), then X (left to right)
-		if (std::abs(a.y - b.y) < 1e-6F) {
-			return a.x < b.x;
+	bool Tessellator::Tessellate(std::span<const VectorPath> contours, TessellatedMesh& outMesh,
+								 const TessellatorOptions& options) {
+		outMesh.clear();
+		if (contours.size() == 1) {
+			// Single contour can use the convex fast path.
+			return Tessellate(contours[0], outMesh, options);
 		}
-		return a.y < b.y;
+		if (contours.empty()) {
+			LOG_ERROR(Renderer, "Tessellator: no contours");
+			return false;
+		}
+		return sweepTessellate(contours, outMesh, options);
 	}
 
 } // namespace renderer
