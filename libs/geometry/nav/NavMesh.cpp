@@ -292,7 +292,250 @@ namespace geometry::nav {
 			return searchWidth(mesh, scratch, c, ti, cEdge, d);
 		}
 
+		// --- Width-aware reachability forest (P3.3) ----------------------------------
+		// Two max-spanning-forests over the triangle dual graph, sharing one set of
+		// geometric edge capacities; they differ only in which triangles are nodes (the
+		// traversability predicate). See NavMesh.h ReachabilityForest for the contract.
+
+		// A portal between two triangles, with its sound disc-diameter capacity. Built
+		// once over all interior edges, then filtered per forest by the node predicate.
+		struct PortalEdge {
+			std::int32_t triA = -1; // lower triangle index (canonical owner of the edge)
+			std::int32_t triB = -1; // higher triangle index
+			std::int64_t cap  = kUnconstrainedWidth;
+		};
+
+		// T-side capacity of portal edge `e` in triangle `ti`: the widest disc that can
+		// cross the portal THROUGH ti. The disc enters via one of ti's OTHER two edges
+		// and pivots about one of the portal's two endpoints (local vertices e and
+		// (e+1)%3), so it may use the wider of the two apex widths; the max is the sound
+		// upper bound (Demyen edge-pair width is keyed by apex).
+		std::int64_t portalSideCap(const NavMesh& mesh, std::int32_t ti, int e) {
+			const NavTriangle& t  = mesh.triangles[ti];
+			const std::int64_t w0 = t.edgePairWidthMm[e];
+			const std::int64_t w1 = t.edgePairWidthMm[(e + 1) % 3];
+			return w0 > w1 ? w0 : w1;
+		}
+
+		// Capacity of the portal shared by T1 (edge eInT1) and T2: the min of each
+		// side's capacity and the door clear width when the edge is a door portal. A
+		// door span has unconstrained Demyen widths (walls are not common-knowledge
+		// obstacles), so the door clear width is what binds there -- hence in the min.
+		std::int64_t portalCapacity(const NavMesh& mesh, std::int32_t t1, int eInT1, std::int32_t t2) {
+			const NavTriangle& tri1	   = mesh.triangles[t1];
+			const std::int32_t backEdge = [&]() {
+				for (int k = 0; k < 3; ++k) {
+					if (mesh.triangles[t2].neighbor[k] == t1) {
+						return k;
+					}
+				}
+				return -1;
+			}();
+			std::int64_t cap = portalSideCap(mesh, t1, eInT1);
+			if (backEdge >= 0) {
+				cap = std::min(cap, portalSideCap(mesh, t2, backEdge));
+			}
+			if (tri1.edgeOpening[eInT1] != kNoOpening) {
+				cap = std::min(cap, tri1.edgeClearWidthMm[eInT1]);
+			}
+			return cap;
+		}
+
+		// Union-find over triangle leaves, with the merge-tree node id carried on each
+		// set so a union can wire the new internal node's children. find() uses path
+		// compression; union is by the caller's deterministic edge order (no rank), so
+		// the tree shape is reproducible.
+		struct ForestBuilder {
+			std::vector<std::int32_t> parent;	 // DSU parent over leaves [0,n)
+			std::vector<std::int32_t> setNode;	 // current merge-tree root node for each DSU set
+			std::vector<std::int64_t> nodeCap;	 // capacity stored at each merge-tree node
+			std::vector<std::int32_t> nodeLeft;	 // left child of each internal node (-1 for leaves)
+			std::vector<std::int32_t> nodeRight; // right child of each internal node (-1 for leaves)
+
+			std::int32_t find(std::int32_t x) {
+				while (parent[x] != x) {
+					parent[x] = parent[parent[x]];
+					x		  = parent[x];
+				}
+				return x;
+			}
+		};
+
+		// Build one forest from the node predicate and the shared portal list. Edges are
+		// processed in DESCENDING capacity (Kruskal max-spanning-forest); ties break by
+		// (cap desc, lower triA, lower triB) for a reproducible tree. Only edges whose
+		// BOTH endpoints are nodes participate. Returns the populated ReachabilityForest.
+		template <typename NodePredicate>
+		ReachabilityForest buildForest(
+			const NavMesh& mesh, const std::vector<PortalEdge>& portals, NodePredicate isNode) {
+			const std::int32_t n = static_cast<std::int32_t>(mesh.triangles.size());
+
+			ForestBuilder fb;
+			fb.parent.resize(n);
+			fb.setNode.resize(n);
+			// Leaves first; internal nodes appended on each union. At most n-1 unions, so
+			// reserve 2n-1 to avoid reallocation invalidating nothing (we store indices).
+			fb.nodeCap.assign(n, kUnconstrainedWidth);
+			fb.nodeLeft.assign(n, -1);
+			fb.nodeRight.assign(n, -1);
+			fb.nodeCap.reserve(static_cast<std::size_t>(2) * n);
+			fb.nodeLeft.reserve(static_cast<std::size_t>(2) * n);
+			fb.nodeRight.reserve(static_cast<std::size_t>(2) * n);
+			for (std::int32_t i = 0; i < n; ++i) {
+				fb.parent[i]  = i;
+				fb.setNode[i] = i; // each traversable leaf starts as its own merge-tree root
+			}
+
+			// Filter to participating edges (both endpoints are nodes), then sort by the
+			// deterministic Kruskal order. Non-node triangles never appear, so they stay
+			// singleton sets and get component -1 below.
+			std::vector<PortalEdge> edges;
+			edges.reserve(portals.size());
+			for (const PortalEdge& pe : portals) {
+				if (isNode(mesh.triangles[pe.triA]) && isNode(mesh.triangles[pe.triB])) {
+					edges.push_back(pe);
+				}
+			}
+			std::sort(edges.begin(), edges.end(), [](const PortalEdge& a, const PortalEdge& b) {
+				if (a.cap != b.cap) {
+					return a.cap > b.cap; // descending capacity
+				}
+				if (a.triA != b.triA) {
+					return a.triA < b.triA; // then lower triangle index
+				}
+				return a.triB < b.triB; // then lower neighbor index
+			});
+
+			for (const PortalEdge& pe : edges) {
+				const std::int32_t ra = fb.find(pe.triA);
+				const std::int32_t rb = fb.find(pe.triB);
+				if (ra == rb) {
+					continue; // already connected; this edge closes a cycle
+				}
+				// New internal node merging the two subtree roots at this edge's capacity.
+				const std::int32_t node = static_cast<std::int32_t>(fb.nodeCap.size());
+				fb.nodeCap.push_back(pe.cap);
+				fb.nodeLeft.push_back(fb.setNode[ra]);
+				fb.nodeRight.push_back(fb.setNode[rb]);
+				// Union (attach rb's set under ra) and route the set's merge-tree root to
+				// the new internal node.
+				fb.parent[rb]  = ra;
+				fb.setNode[ra] = node;
+			}
+
+			// Assemble the ReachabilityForest: node capacities, then component ids and
+			// binary-lifting LCA tables over the reconstruction-tree forest.
+			ReachabilityForest forest;
+			forest.nodeCap = std::move(fb.nodeCap);
+			const std::int32_t nodeCount = static_cast<std::int32_t>(forest.nodeCap.size());
+
+			// Parent of each merge-tree node (roots point to themselves), from the
+			// child links recorded during the unions. depth via a root-down pass.
+			std::vector<std::int32_t> nodeParent(nodeCount);
+			for (std::int32_t i = 0; i < nodeCount; ++i) {
+				nodeParent[i] = i; // default: root
+			}
+			for (std::int32_t i = n; i < nodeCount; ++i) {
+				nodeParent[fb.nodeLeft[i]]  = i;
+				nodeParent[fb.nodeRight[i]] = i;
+			}
+
+			// depth[]: roots have depth 0; a child is parent depth + 1. Processing nodes
+			// in ascending id is a valid topological order because every internal node
+			// has a HIGHER id than both its children (created after them).
+			forest.depth.assign(nodeCount, 0);
+			for (std::int32_t i = nodeCount - 1; i >= 0; --i) {
+				if (nodeParent[i] != i) {
+					forest.depth[i] = forest.depth[nodeParent[i]] + 1;
+				}
+			}
+
+			// Binary-lifting table. levels = ceil(log2(maxDepth+1)); at least 1 so up[0]
+			// always exists. up[0] is the direct parent (root -> itself).
+			std::int32_t maxDepth = 0;
+			for (std::int32_t i = 0; i < nodeCount; ++i) {
+				maxDepth = std::max(maxDepth, forest.depth[i]);
+			}
+			std::int32_t levels = 1;
+			while ((1 << levels) <= maxDepth) {
+				++levels;
+			}
+			forest.levels = levels;
+			forest.up.assign(static_cast<std::size_t>(levels), std::vector<std::int32_t>(nodeCount));
+			for (std::int32_t i = 0; i < nodeCount; ++i) {
+				forest.up[0][i] = nodeParent[i];
+			}
+			for (std::int32_t k = 1; k < levels; ++k) {
+				for (std::int32_t i = 0; i < nodeCount; ++i) {
+					forest.up[k][i] = forest.up[k - 1][forest.up[k - 1][i]];
+				}
+			}
+
+			// component[]: a traversable leaf's component is its reconstruction-tree
+			// root; a non-traversable leaf (never a node) is -1 (isolated/unreachable).
+			forest.component.assign(n, -1);
+			for (std::int32_t i = 0; i < n; ++i) {
+				if (!isNode(mesh.triangles[i])) {
+					continue;
+				}
+				std::int32_t r = i;
+				for (std::int32_t k = levels - 1; k >= 0; --k) {
+					r = forest.up[k][r]; // climb to the root (overshoot stops at root via self-loop)
+				}
+				forest.component[i] = r;
+			}
+
+			return forest;
+		}
+
 	} // namespace
+
+	// LCA of two reconstruction-tree nodes a, b. Caller guarantees both are in the
+	// SAME tree (same root); otherwise the climb meets at a shared root only if one
+	// exists, so callers must check components first. Lift the deeper node up to the
+	// shallower's depth, then climb both together.
+	static std::int32_t forestLca(const ReachabilityForest& f, std::int32_t a, std::int32_t b) {
+		if (f.depth[a] < f.depth[b]) {
+			std::swap(a, b);
+		}
+		std::int32_t diff = f.depth[a] - f.depth[b];
+		for (std::int32_t k = 0; k < f.levels; ++k) {
+			if ((diff >> k) & 1) {
+				a = f.up[k][a];
+			}
+		}
+		if (a == b) {
+			return a;
+		}
+		for (std::int32_t k = f.levels - 1; k >= 0; --k) {
+			if (f.up[k][a] != f.up[k][b]) {
+				a = f.up[k][a];
+				b = f.up[k][b];
+			}
+		}
+		return f.up[0][a]; // common parent
+	}
+
+	bool reachableInForest(const ReachabilityForest& f, std::int32_t triA, std::int32_t triB) {
+		if (triA < 0 || triB < 0 || triA >= static_cast<std::int32_t>(f.component.size()) ||
+			triB >= static_cast<std::int32_t>(f.component.size())) {
+			return false;
+		}
+		if (f.component[triA] < 0 || f.component[triB] < 0) {
+			return false; // a non-node endpoint is unreachable for this predicate
+		}
+		return f.component[triA] == f.component[triB];
+	}
+
+	std::int64_t bottleneckInForest(const ReachabilityForest& f, std::int32_t triA, std::int32_t triB) {
+		if (!reachableInForest(f, triA, triB)) {
+			return 0; // disconnected (or a non-node endpoint): admits no disc
+		}
+		if (triA == triB) {
+			return kUnconstrainedWidth; // a triangle reaches itself with no squeeze
+		}
+		return f.nodeCap[forestLca(f, triA, triB)];
+	}
 
 	NavMesh buildNavMesh(const NavMeshInput& input) {
 		NavMesh result;
@@ -635,6 +878,32 @@ namespace geometry::nav {
 					g.cellStart[static_cast<std::size_t>(ci)] + static_cast<std::int32_t>(cell.size());
 				g.candidates.insert(g.candidates.end(), cell.begin(), cell.end());
 			}
+		}
+
+		// 10. Width-aware reachability forests. Collect every interior portal edge once
+		// (canonical owner = the lower triangle index, so each shared edge is listed a
+		// single time) with its sound disc-diameter capacity, then build the truth and
+		// terrain forests over that one capacity set. This needs finished adjacency,
+		// widths, and door tags, so it runs last.
+		{
+			std::vector<PortalEdge> portals;
+			portals.reserve(result.triangles.size() * 3 / 2);
+			for (std::int32_t ti = 0; ti < static_cast<std::int32_t>(result.triangles.size()); ++ti) {
+				const NavTriangle& tri = result.triangles[ti];
+				for (int e = 0; e < 3; ++e) {
+					const std::int32_t nb = tri.neighbor[e];
+					if (nb < 0 || nb <= ti) {
+						continue; // boundary, or already listed from the lower-index side
+					}
+					PortalEdge pe;
+					pe.triA = ti;
+					pe.triB = nb;
+					pe.cap	= portalCapacity(result, ti, e, nb);
+					portals.push_back(pe);
+				}
+			}
+			result.truthForest	 = buildForest(result, portals, truthTraversable);
+			result.terrainForest = buildForest(result, portals, terrainTraversable);
 		}
 
 		return result;

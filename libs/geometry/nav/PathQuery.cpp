@@ -104,10 +104,10 @@ namespace geometry::nav {
 		// footprint is a blocked face carrying faceOpening) is what makes a truth query
 		// reproduce v1: solid wall blocks, door passes.
 		bool traversable(const NavTriangle& t, const BeliefFilter& belief) {
-			if (t.faceBlocker == kNoBlocker) {
+			if (isFloorFace(t)) {
 				return true; // real floor
 			}
-			if (t.faceBlocker < 0) {
+			if (isCommonKnowledgeTerrainFace(t)) {
 				return false; // negative sentinel: common-knowledge terrain (or a junction
 							   // with no incident-wall id) -- always blocks, filter or not
 			}
@@ -125,6 +125,28 @@ namespace geometry::nav {
 			}
 			return t.faceOpening != kNoOpening && belief.knownOpenings != nullptr &&
 				   belief.knownOpenings->count(static_cast<std::uint64_t>(t.faceOpening)) != 0;
+		}
+
+		// The reachability forest the belief selects: truth (AI goal validity) when the
+		// agent knows everything, else terrain (the sound reject for every belief). A
+		// belief query never uses the truth forest, because an agent optimistically
+		// routing through unseen walls can reach triangles the truth forest walls off.
+		const ReachabilityForest& forestFor(const NavMesh& mesh, const BeliefFilter& belief) {
+			return belief.knownSegments == nullptr ? mesh.truthForest : mesh.terrainForest;
+		}
+
+		// The sound reject shared by reachable() and pathThrough()'s short-circuit. Both
+		// triangles are already located and known traversable. Returns true when the
+		// forest PROVES no disc of `diameterMm` can get from startTri to goalTri:
+		// different component (any diameter), or the path bottleneck < the diameter.
+		bool reachabilityRejects(
+			const NavMesh& mesh, std::int32_t startTri, std::int32_t goalTri, std::int64_t diameterMm,
+			const BeliefFilter& belief) {
+			const ReachabilityForest& forest = forestFor(mesh, belief);
+			if (!reachableInForest(forest, startTri, goalTri)) {
+				return true; // different component (or a non-node endpoint): unreachable
+			}
+			return bottleneckInForest(forest, startTri, goalTri) < diameterMm; // too narrow for the disc
 		}
 
 		// Collapse consecutive duplicate points and points collinear with their
@@ -185,6 +207,26 @@ namespace geometry::nav {
 		return -1;
 	}
 
+	bool reachable(const NavMesh& mesh, const Vec2i64& start, const Vec2i64& goal, std::int64_t agentRadiusMm,
+				   BeliefFilter belief) {
+		const std::int32_t startTri = locateTriangle(mesh, start);
+		const std::int32_t goalTri	= locateTriangle(mesh, goal);
+		if (startTri < 0 || goalTri < 0) {
+			return false; // off-mesh: not reachable
+		}
+		// An endpoint on a face this belief cannot stand on is unreachable, same as
+		// pathThrough's endpoint gate (e.g. start inside a wall the agent knows blocks).
+		if (!traversable(mesh.triangles[startTri], belief) || !traversable(mesh.triangles[goalTri], belief)) {
+			return false;
+		}
+		if (startTri == goalTri) {
+			return true; // same triangle: trivially reachable
+		}
+		const std::int64_t diameterMm = (agentRadiusMm > 0) ? agentRadiusMm * 2 : 0;
+		// `false` = the forest proves unreachability (sound); otherwise "maybe".
+		return !reachabilityRejects(mesh, startTri, goalTri, diameterMm, belief);
+	}
+
 	PathResult pathThrough(const NavMesh& mesh, const Vec2i64& start, const Vec2i64& goal, std::int64_t agentRadiusMm,
 						   BeliefFilter belief) {
 		PathResult result;
@@ -208,6 +250,19 @@ namespace geometry::nav {
 			return result;
 		}
 
+		// Disc diameter the width gates compare against. Computed once; both the
+		// reachability short-circuit and the A* width filter use this exact value, so
+		// they never disagree on the threshold.
+		const std::int64_t diameterMm = (agentRadiusMm > 0) ? agentRadiusMm * 2 : 0;
+
+		// Width-aware reachability short-circuit (P3.3): reject a provably-unreachable
+		// goal before paying for the A* allocation + search. Sound: a `true` from the
+		// forest is "maybe" and falls through to the A* (which decides for real); a
+		// reject is a proof no path admits this disc.
+		if (reachabilityRejects(mesh, startTri, goalTri, diameterMm, belief)) {
+			return result; // empty PathResult: definitely unreachable
+		}
+
 		// --- Triangle A* over the dual graph, width-filtered -------------------
 		// Search state is (triangle, entry-edge): the squeeze the agent must clear to
 		// LEAVE a triangle depends on which edge it ENTERED by (Demyen edge-pair width
@@ -216,7 +271,6 @@ namespace geometry::nav {
 		// squeeze). At most 4 states per triangle.
 		const std::int32_t n	= static_cast<std::int32_t>(mesh.triangles.size());
 		const double	   kInf = std::numeric_limits<double>::infinity();
-		const std::int64_t diameterMm = (agentRadiusMm > 0) ? agentRadiusMm * 2 : 0;
 
 		const int kStartEntry = 3;
 		auto stateId = [](std::int32_t tri, int entry) { return tri * 4 + entry; };

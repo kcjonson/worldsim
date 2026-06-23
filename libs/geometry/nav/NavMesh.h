@@ -110,6 +110,42 @@ namespace geometry::nav {
 		std::int64_t faceOpening = kNoOpening;
 	};
 
+	// --- Face-walkable predicates (shared truth/terrain/belief logic) ------------
+	// The three queries (truth reachability, terrain reachability, per-belief A*)
+	// classify a triangle's faceBlocker the same way; only the faceBlocker>0 (wall)
+	// branch differs. These free functions isolate the two belief-FREE branches so
+	// PathQuery::traversable reuses them and never duplicates the floor/terrain logic.
+
+	// Real floor: always walkable, every query agrees.
+	inline bool isFloorFace(const NavTriangle& t) {
+		return t.faceBlocker == kNoBlocker;
+	}
+	// Common-knowledge terrain sentinel (water/tree, or a junction with no incident
+	// wall id): always blocks, belief or not. (faceBlocker < 0 and != kNoBlocker.)
+	inline bool isCommonKnowledgeTerrainFace(const NavTriangle& t) {
+		return t.faceBlocker < 0 && t.faceBlocker != kNoBlocker;
+	}
+
+	// TRUTH: floor, or a wall face that a door passes through (faceBlocker>0 with an
+	// opening). Solid walls block. This is AI goal validity (does a real route exist).
+	inline bool truthTraversable(const NavTriangle& t) {
+		if (isFloorFace(t)) {
+			return true;
+		}
+		if (isCommonKnowledgeTerrainFace(t)) {
+			return false;
+		}
+		return t.faceOpening != kNoOpening; // faceBlocker > 0: wall, walkable iff a door spans it
+	}
+
+	// TERRAIN (most-optimistic belief): floor, or ANY wall face treated as OPEN; only
+	// common-knowledge terrain blocks. The belief reject uses this because the most
+	// optimistic agent (knows nothing) routes through every unseen wall, so a terrain
+	// disconnect is unreachable for EVERY belief.
+	inline bool terrainTraversable(const NavTriangle& t) {
+		return !isCommonKnowledgeTerrainFace(t); // floor or any wall is open
+	}
+
 	// Uniform-grid spatial index over the triangle set, built by buildNavMesh.
 	// Each cell stores the indices of candidate triangles whose AABBs overlap it,
 	// in ascending order so locateTriangle reproduces the linear scan's lowest-index
@@ -126,15 +162,79 @@ namespace geometry::nav {
 		std::vector<std::int32_t> candidates;	// triangle indices, ascending within each cell
 	};
 
+	// Width-aware reachability over the triangle dual graph (P3.3). A Kruskal
+	// max-spanning-forest + reconstruction tree (a.k.a. min-max / merge tree) that
+	// answers two queries online: which component a triangle is in, and the
+	// bottleneck (the widest disc that any path between two triangles admits = the
+	// max over paths of the min edge capacity). Edge capacity is the floored mm
+	// disc DIAMETER a portal admits (see NavMesh.cpp step 10).
+	//
+	// The reconstruction tree has the mesh's triangles as leaves [0, triangleCount):
+	// each Kruskal union (processing portal edges in DESCENDING capacity) creates an
+	// internal node storing that edge's capacity, with the two merged subtree roots
+	// as children. Then bottleneck(a, b) = the capacity stored at LCA(a, b), because
+	// the union that first joined a and b used the smallest capacity on the widest
+	// path between them. "Different tree" (different root) => disconnected for every
+	// diameter. Triangles not traversable for this forest's predicate are not nodes;
+	// they get component == -1 and any bottleneck query touching them is unreachable.
+	//
+	// SOUNDNESS (the only direction we rely on): a disc of diameter D crossing a path
+	// uses, at each portal, an apex passage <= that portal's capacity, so D <=
+	// min-cap of the path <= bottleneck(a, b). Hence D > bottleneck(a, b) => no path
+	// admits the disc => unreachable. This is an UPPER bound; it can over-approximate
+	// (bottleneck high but the funnel still fails), never the reverse.
+	struct ReachabilityForest {
+		// Per leaf-triangle component id (root of its reconstruction tree), or -1 if
+		// the triangle is not traversable for this forest's predicate. Length ==
+		// triangleCount. Two traversable triangles are connected (ignoring width) iff
+		// they share a component id.
+		std::vector<std::int32_t> component;
+
+		// Reconstruction-tree node capacities. Leaf nodes [0, triangleCount) store
+		// kUnconstrainedWidth (a triangle is unconstrained with itself); internal
+		// nodes [triangleCount, nodeCount) store the merge capacity. Disconnected
+		// (non-node) leaves still occupy their slot but are never reached by a query.
+		std::vector<std::int64_t> nodeCap;
+
+		// Binary-lifting LCA tables over the reconstruction-tree forest. up[k][i] is
+		// the 2^k-th ancestor of node i (i when it runs past a root). depth[i] is the
+		// node's depth from its root. parent (up[0]) of a root is itself.
+		std::vector<std::int32_t>			   depth;
+		std::vector<std::vector<std::int32_t>> up; // up[level][node]
+		std::int32_t						   levels = 0; // number of lifting levels
+	};
+
 	struct NavMesh {
 		std::vector<Vec2i64>	 vertices;
 		std::vector<NavTriangle> triangles;
 		NavGrid					 grid;
+		// Two forests over the SAME geometric edge capacities, differing only in which
+		// triangles are nodes (the traversability predicate):
+		//   truthForest:   nodes = truth-traversable triangles (floor or a door span).
+		//                  Answers AI goal validity (truth reachability).
+		//   terrainForest: nodes = terrain-traversable triangles (floor or ANY wall
+		//                  face treated as OPEN; only common-knowledge terrain blocks).
+		//                  Answers the BELIEF reject -- sound for every possible belief,
+		//                  since the most optimistic belief routes through unseen walls.
+		ReachabilityForest truthForest;
+		ReachabilityForest terrainForest;
 	};
 
 	// Build the navmesh from tagged input. A walkable face whose triangulation
 	// degenerates is skipped (its triangles are omitted) rather than aborting the
 	// whole mesh, so a single bad region yields a partial mesh, not an empty one.
 	NavMesh buildNavMesh(const NavMeshInput& input);
+
+	// Are triangles triA and triB in the same component of `forest` (connected
+	// ignoring width)? False if either index is out of range or is a non-node for
+	// the forest's predicate. O(1).
+	bool reachableInForest(const ReachabilityForest& forest, std::int32_t triA, std::int32_t triB);
+
+	// The bottleneck between triA and triB in `forest`: the max over paths of the min
+	// edge capacity (the widest disc DIAMETER any path between them admits). Returns 0
+	// when disconnected (or an endpoint is a non-node), kUnconstrainedWidth when
+	// triA == triB. The sound reject is `diameter > bottleneck => unreachable`.
+	// O(log n) via binary-lifting LCA over the reconstruction tree.
+	std::int64_t bottleneckInForest(const ReachabilityForest& forest, std::int32_t triA, std::int32_t triB);
 
 } // namespace geometry::nav

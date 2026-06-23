@@ -58,4 +58,21 @@ namespace geometry::nav {
 	PathResult pathThrough(const NavMesh& mesh, const Vec2i64& start, const Vec2i64& goal, std::int64_t agentRadiusMm,
 						   BeliefFilter belief = {});
 
+	// Sound, cheap reachability test (P3.3): can a disc of radius agentRadiusMm
+	// POSSIBLY get from start to goal under `belief`? Uses the precomputed
+	// reachability forest (component + bottleneck via LCA), so it rejects a
+	// provably-unreachable goal in O(log n) without running the full A*.
+	//
+	// Semantics are asymmetric and that asymmetry is the point:
+	//   false => DEFINITELY unreachable (off-mesh, an untraversable endpoint, a
+	//            different component, or the path's widest bottleneck < the disc
+	//            diameter). A `false` never hides a real path -- it is sound.
+	//   true  => MAYBE reachable. The forest over-approximates (bottleneck is an
+	//            upper bound), so the caller must still run pathThrough for certainty.
+	//
+	// belief.knownSegments == nullptr selects the truth forest (AI goal validity);
+	// otherwise the terrain forest, whose disconnect is sound for every belief.
+	bool reachable(const NavMesh& mesh, const Vec2i64& start, const Vec2i64& goal, std::int64_t agentRadiusMm,
+				   BeliefFilter belief = {});
+
 } // namespace geometry::nav
