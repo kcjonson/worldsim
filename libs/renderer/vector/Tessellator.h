@@ -2,70 +2,47 @@
 
 #include "Types.h"
 
+#include <span>
+
 namespace renderer {
 
-	// Tessellator options
 	struct TessellatorOptions {
-		// Fill rule: true = non-zero, false = even-odd
+		// Fill rule: true = nonzero, false = even-odd.
 		bool useNonZeroFillRule = true;
 
-		// Tolerance for curve flattening (smaller = more vertices)
-		// Not used in Phase 0 (no curves yet), but planned for future
+		// Tolerance for curve flattening (smaller = more vertices). Reserved; curves are
+		// flattened before tessellation today.
 		float curveFlatteningTolerance = 0.5F;
 
-		// For convex shapes, insert a centroid vertex and fan from it. This gives an interior
-		// sample point so per-vertex gradient fills (esp. radial) can show their center, instead
-		// of fanning from a perimeter vertex where every vertex is the same edge color.
+		// For a single convex contour, insert a centroid vertex and fan from it. This gives an
+		// interior sample point so per-vertex gradient fills (especially radial) can show their
+		// center, instead of fanning from a perimeter vertex where every vertex is the edge color.
+		// Ignored for concave or multi-contour input (those go through the sweep).
 		bool fanFromCentroid = false;
 	};
 
-	// Tessellator class - converts VectorPath to TessellatedMesh
-	// Currently implements simplified monotone decomposition for Phase 0
-	// Based on Lyon's approach but simplified for simple polygons
-	class Tessellator { // NOLINT(cppcoreguidelines-special-member-functions)
+	// Converts vector contours into a triangle mesh. Convex single contours take an O(n) fan
+	// fast path; everything else (concave, self-intersecting, holes) goes through a sweep-line
+	// tessellator over a half-edge mesh (libtess-style), so winding rules and intersections
+	// are handled. Output positions may include new vertices (intersection/Steiner points);
+	// callers that bake per-vertex data should do so per output vertex.
+	class Tessellator {
 	  public:
-		Tessellator();
-		~Tessellator(); // NOLINT(performance-trivially-destructible) - Defined in .cpp (needs complete types for vectors)
+		Tessellator() = default;
+		~Tessellator() = default;
 
-		// Delete copy/move operations (Rule of 5)
 		Tessellator(const Tessellator&) = delete;
 		Tessellator& operator=(const Tessellator&) = delete;
 		Tessellator(Tessellator&&) = delete;
 		Tessellator& operator=(Tessellator&&) = delete;
 
-		// Tessellate a path into triangles
-		// Returns true on success, false on error
+		// Tessellate a single closed contour. Returns false on error.
 		bool Tessellate(const VectorPath& path, TessellatedMesh& outMesh, const TessellatorOptions& options = {});
 
-	  private:
-		// Internal structures for sweep line algorithm
-		struct Vertex;
-		struct Edge;
-		struct Event;
-
-		// Phase 1: Build events from path vertices
-		void buildEvents(const VectorPath& path);
-
-		// Phase 2: Process events with sweep line
-		void processEvents(TessellatedMesh& outMesh);
-
-		// Helper: Determine vertex type (start, end, split, merge, regular)
-		enum class VertexType : std::uint8_t { // NOLINT(performance-enum-size)
-			Start,
-			End,
-			Split,
-			Merge,
-			Regular
-		};
-		VertexType ClassifyVertex(size_t vertexIndex) const; // NOLINT(readability-convert-member-functions-to-static)
-
-		// Helper: Compare vertices by Y coordinate (primary), then X (secondary)
-		static bool compareVertices(const Foundation::Vec2& a, const Foundation::Vec2& b);
-
-		// Working data (cleared between tessellations)
-		std::vector<Event>	events;
-		std::vector<Vertex> tessVertices;
-		std::vector<Edge>	edges;
+		// Tessellate multiple contours resolved together by the winding rule (outer boundary
+		// plus holes). Returns false on error.
+		bool Tessellate(std::span<const VectorPath> contours, TessellatedMesh& outMesh,
+						const TessellatorOptions& options = {});
 	};
 
 } // namespace renderer

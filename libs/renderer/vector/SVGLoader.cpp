@@ -176,27 +176,52 @@ void appendShapeMesh(const LoadedSVGShape& shape, TessellatedMesh& outMesh) {
 	const bool hasGradient = (shape.gradient.type != GradientFill::Type::None);
 
 	TessellatorOptions options;
-	options.fanFromCentroid = hasGradient; // interior sample point so radial fills show a center
+	// Only honored for a single subpath (where a convex fan may apply); multi-subpath shapes go
+	// through the sweep, which ignores it. Setting it there would be an accepted-but-dropped option.
+	options.fanFromCentroid = hasGradient && shape.paths.size() == 1;
 
-	for (const auto& path : shape.paths) {
-		if (path.vertices.size() < 3) {
-			continue;
+	// Tessellate all of a shape's subpaths together so the nonzero fill rule carves holes where
+	// subpaths overlap (the SVG hole convention), instead of filling each subpath solid. The
+	// common single-subpath case stays a direct, allocation-free call (and keeps the fast path).
+	TessellatedMesh shapeMesh;
+	bool			ok = false;
+	if (shape.paths.size() == 1) {
+		if (shape.paths[0].vertices.size() < 3) {
+			return;
 		}
+		ok = tessellator.Tessellate(shape.paths[0], shapeMesh, options);
+	} else {
+		std::vector<VectorPath> contours;
+		contours.reserve(shape.paths.size());
+		for (const auto& path : shape.paths) {
+			if (path.vertices.size() >= 3) {
+				contours.push_back(path);
+			}
+		}
+		if (contours.empty()) {
+			return;
+		}
+		ok = tessellator.Tessellate(contours, shapeMesh, options);
+	}
+	if (!ok) {
+		LOG_WARNING(Renderer, "appendShapeMesh: failed to tessellate shape (%zu subpaths)", shape.paths.size());
+		return;
+	}
 
-		TessellatedMesh pathMesh;
-		if (!tessellator.Tessellate(path, pathMesh, options)) {
-			LOG_WARNING(Renderer, "appendShapeMesh: failed to tessellate path with %zu vertices", path.vertices.size());
-			continue;
-		}
+	// Indices are 16-bit and accumulate across every shape appended to this mesh.
+	constexpr size_t kMaxMeshVertices = 65535;
+	if (outMesh.vertices.size() + shapeMesh.vertices.size() > kMaxMeshVertices) {
+		LOG_WARNING(Renderer, "appendShapeMesh: mesh would exceed %zu vertices; dropping shape", kMaxMeshVertices);
+		return;
+	}
 
-		const auto baseIndex = static_cast<uint16_t>(outMesh.vertices.size());
-		for (const auto& v : pathMesh.vertices) {
-			outMesh.vertices.push_back(v);
-			outMesh.colors.push_back(hasGradient ? shape.gradient.colorAt(v) : shape.fillColor);
-		}
-		for (const auto idx : pathMesh.indices) {
-			outMesh.indices.push_back(static_cast<uint16_t>(baseIndex + idx));
-		}
+	const auto baseIndex = static_cast<uint16_t>(outMesh.vertices.size());
+	for (const auto& v : shapeMesh.vertices) {
+		outMesh.vertices.push_back(v);
+		outMesh.colors.push_back(hasGradient ? shape.gradient.colorAt(v) : shape.fillColor);
+	}
+	for (const auto idx : shapeMesh.indices) {
+		outMesh.indices.push_back(static_cast<uint16_t>(baseIndex + idx));
 	}
 }
 
