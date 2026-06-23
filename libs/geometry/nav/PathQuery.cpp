@@ -3,6 +3,7 @@
 #include "../core/Vec2i64.h"
 #include "../predicates/Predicates.h"
 #include "NavMesh.h"
+#include "RraCache.h"
 
 #include <algorithm>
 #include <array>
@@ -171,6 +172,81 @@ namespace geometry::nav {
 
 	} // namespace
 
+	double rraHeuristic(RraCache& cache, const NavMesh& mesh, std::int32_t tri) {
+		const std::int32_t n	= static_cast<std::int32_t>(mesh.triangles.size());
+		const double	   kInf = std::numeric_limits<double>::infinity();
+
+		if (tri < 0 || tri >= n) {
+			return kInf; // out of range: not a node
+		}
+
+		// First touch for this goal: size the tables and seed the reverse search with
+		// g[goalTri] = 0. Done lazily so constructing an RraCache is free; the work
+		// happens on the first heuristic query and persists (resumes) afterward.
+		if (!cache.initialized) {
+			cache.g.assign(static_cast<std::size_t>(n), kInf);
+			cache.settled.assign(static_cast<std::size_t>(n), 0);
+			cache.open = {};
+			if (cache.goalTri >= 0 && cache.goalTri < n) {
+				cache.g[static_cast<std::size_t>(cache.goalTri)] = 0.0;
+				cache.open.push({0.0, cache.goalTri});
+			}
+			cache.initialized = true;
+		}
+
+		// Already finalized (a prior expansion settled it, or it is the goal): table read.
+		if (cache.settled[static_cast<std::size_t>(tri)]) {
+			return cache.g[static_cast<std::size_t>(tri)];
+		}
+
+		// Resume the backward Dijkstra until `tri` settles or the open-set drains. Classic
+		// lazy-deletion Dijkstra: we push duplicates on relax and discard stale pops. The
+		// reverse search runs on the TERRAIN graph (terrainTraversable neighbors),
+		// WIDTH-UNFILTERED (every terrain adjacency is an edge), with the SAME
+		// centroid-to-centroid `distanceD` cost the forward search uses -- the basis for
+		// admissibility across every belief and radius.
+		while (!cache.open.empty()) {
+			const RraCache::Node cur = cache.open.top();
+			cache.open.pop();
+			const std::int32_t ct = cur.tri;
+			if (cache.settled[static_cast<std::size_t>(ct)]) {
+				continue; // stale duplicate (already finalized at a shorter distance)
+			}
+			cache.settled[static_cast<std::size_t>(ct)] = 1;
+
+			const Vec2d cc = toD(centroidI(mesh, mesh.triangles[ct]));
+			const NavTriangle& t = mesh.triangles[ct];
+			for (int e = 0; e < 3; ++e) {
+				const std::int32_t nb = t.neighbor[e];
+				if (nb < 0) {
+					continue;
+				}
+				// Terrain-graph membership only: floor or ANY wall face counts as open;
+				// only common-knowledge terrain (water/tree) is excluded. No width gate --
+				// the reverse search ignores edge widths so it serves every disc size.
+				if (!terrainTraversable(mesh.triangles[nb])) {
+					continue;
+				}
+				if (cache.settled[static_cast<std::size_t>(nb)]) {
+					continue;
+				}
+				const double tentative = cache.g[static_cast<std::size_t>(ct)] +
+										 distanceD(cc, toD(centroidI(mesh, mesh.triangles[nb])));
+				if (tentative < cache.g[static_cast<std::size_t>(nb)]) {
+					cache.g[static_cast<std::size_t>(nb)] = tentative;
+					cache.open.push({tentative, nb});
+				}
+			}
+
+			if (ct == tri) {
+				return cache.g[static_cast<std::size_t>(tri)]; // queried node just settled
+			}
+		}
+
+		// Open-set drained without settling `tri`: terrain-disconnected from the goal.
+		return cache.g[static_cast<std::size_t>(tri)]; // still +inf
+	}
+
 	std::int32_t locateTriangle(const NavMesh& mesh, const Vec2i64& p) {
 		const NavGrid& g = mesh.grid;
 		// Empty mesh or grid not built (no triangles): off-mesh.
@@ -228,7 +304,7 @@ namespace geometry::nav {
 	}
 
 	PathResult pathThrough(const NavMesh& mesh, const Vec2i64& start, const Vec2i64& goal, std::int64_t agentRadiusMm,
-						   BeliefFilter belief) {
+						   BeliefFilter belief, RraCache* rra) {
 		PathResult result;
 
 		const std::int32_t startTri = locateTriangle(mesh, start);
@@ -281,7 +357,16 @@ namespace geometry::nav {
 
 		const Vec2d goalC = toD(centroidI(mesh, mesh.triangles[goalTri]));
 
-		auto heuristic = [&](std::int32_t ti) {
+		// RRA* applies only when a cache is supplied AND it targets THIS goal triangle;
+		// otherwise fall back to the straight-line centroid estimate (the pure free
+		// function and every no-cache caller take this branch). Same admissible family,
+		// the RRA* values are just tighter.
+		const bool useRra = (rra != nullptr) && (rra->goalTri == goalTri);
+
+		auto heuristic = [&](std::int32_t ti) -> double {
+			if (useRra) {
+				return rraHeuristic(*rra, mesh, ti);
+			}
 			return distanceD(toD(centroidI(mesh, mesh.triangles[ti])), goalC);
 		};
 
@@ -305,6 +390,7 @@ namespace geometry::nav {
 		const std::int32_t startState = stateId(startTri, kStartEntry);
 		g[startState]				  = 0.0;
 		open.push({heuristic(startTri), startState});
+		result.peakOpenSet = static_cast<std::int64_t>(open.size());
 
 		std::int32_t goalState = -1;
 		while (!open.empty()) {
@@ -315,6 +401,7 @@ namespace geometry::nav {
 				continue; // stale entry (we push duplicates instead of decrease-key)
 			}
 			closed[s] = 1;
+			++result.nodesExpanded; // a state closed exactly once: one real expansion
 			const std::int32_t ti	 = s / 4;
 			const int		   entry = s % 4;
 			if (ti == goalTri) {
@@ -368,6 +455,10 @@ namespace geometry::nav {
 					g[ns]		 = tentative;
 					cameFrom[ns] = s;
 					open.push({tentative + heuristic(nb), ns});
+					const std::int64_t sz = static_cast<std::int64_t>(open.size());
+					if (sz > result.peakOpenSet) {
+						result.peakOpenSet = sz;
+					}
 				}
 			}
 		}

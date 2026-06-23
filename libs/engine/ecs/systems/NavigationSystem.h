@@ -19,6 +19,7 @@
 
 #include <nav/NavMesh.h>
 #include <nav/PathQuery.h>
+#include <nav/RraCache.h>
 
 #include <world/chunk/ChunkCoordinate.h>
 
@@ -26,6 +27,7 @@
 #include <future>
 #include <glm/vec2.hpp>
 #include <optional>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -118,6 +120,26 @@ class NavigationSystem : public ISystem {
 	// under me" without inspecting the mesh. Stays 0 until the first mesh lands.
 	[[nodiscard]] std::uint64_t generation() const { return m_generation; }
 
+	// Cumulative A* instrumentation since the last resetNavQueryStats() (P3.5). Lets a
+	// dev overlay / HTTP endpoint VERIFY the RRA* heuristic cuts expansions at runtime.
+	// totalQueries counts requestPath calls that actually ran the A* (a mesh existed and
+	// the result was reachable -- where nodesExpanded is meaningful); lastNodesExpanded
+	// / lastPeakOpenSet are the most recent such query's counts. A full NavOverlay/HTTP
+	// surface is a follow-up; this accessor is the read hook for it.
+	struct NavQueryStats {
+		std::uint64_t totalQueries		= 0;
+		std::uint64_t totalNodesExpanded = 0;
+		std::int64_t  lastNodesExpanded = 0;
+		std::int64_t  lastPeakOpenSet	= 0;
+	};
+	[[nodiscard]] const NavQueryStats& navQueryStats() const { return m_navStats; }
+	void						   resetNavQueryStats() const { m_navStats = {}; }
+
+	// Number of live RRA* reverse-search caches (one per distinct goal triangle). For
+	// tests/overlay: confirms the cap and the generation-bump invalidation. Bounded by
+	// kMaxRraCaches.
+	[[nodiscard]] std::size_t rraCacheCount() const { return m_rraCaches.size(); }
+
   private:
 	// True if the snapshotted inputs differ from what the current mesh was built
 	// from (version moved, or the processed-and-loaded chunk set changed).
@@ -148,6 +170,27 @@ class NavigationSystem : public ISystem {
 	// replan loop independently of ConstructionWorld::version() (which the system doesn't
 	// expose and which a query-side consumer shouldn't depend on).
 	std::uint64_t m_generation = 0;
+
+	// Resumable RRA* reverse-search caches, keyed by GOAL TRIANGLE index. One reverse
+	// search per goal serves every agent (belief- and radius-agnostic, built on the
+	// width-unfiltered terrain graph), so many colonists heading to the same goal share
+	// one search. Mutable because requestPath is const but lazily fills/resumes the cache.
+	//
+	// LIFECYCLE. Key: the goal triangle id in the CURRENT mesh. Triangle indices are
+	// invalidated by a mesh rebuild, so the whole map is CLEARED wherever m_generation
+	// bumps (the mesh swap in update()). BOUND: a churn of distinct goals must not grow
+	// the map without limit, so when it would exceed kMaxRraCaches we clear it wholesale
+	// (simplest sound policy -- the caches are cheap to rebuild on demand, and a flat
+	// clear keeps no stale entry; a smarter LRU is a possible later refinement).
+	//
+	// THREADING: NavigationSystem queries run on the single-threaded main loop, so the
+	// mutable cache map and stats need no locking. (The async work is the MESH BUILD,
+	// which produces a value the main thread swaps in under update(); queries never touch
+	// the in-flight build.)
+	static constexpr std::size_t				   kMaxRraCaches = 64;
+	mutable std::unordered_map<std::int32_t, geometry::nav::RraCache> m_rraCaches;
+
+	mutable NavQueryStats m_navStats;
 };
 
 } // namespace ecs

@@ -10,6 +10,8 @@
 
 #include <nav/PathQuery.h>
 
+#include <utils/Log.h>
+
 #include <world/chunk/Chunk.h>
 #include <world/chunk/ChunkManager.h>
 
@@ -74,6 +76,9 @@ namespace ecs {
 			if (m_future.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
 				m_mesh = m_future.get(); // swap the new mesh in; old mesh is dropped
 				++m_generation;			 // a new mesh: any path stamped to the prior generation is stale
+				// Triangle indices are stale after a rebuild, so the goal-triangle-keyed
+				// RRA* caches must be dropped (a stale key would target the wrong triangle).
+				m_rraCaches.clear();
 				m_future = {};
 			} else {
 				return; // build still running: keep serving the old mesh, no new launch
@@ -179,11 +184,44 @@ namespace ecs {
 		const std::int64_t radiusMm =
 			static_cast<std::int64_t>(std::llround(static_cast<double>(agentRadiusMeters) * 1000.0));
 
+		// RRA* heuristic: locate the goal triangle and hand pathThrough the resumable
+		// reverse-search cache for it (one per goal serves every agent; it resumes across
+		// queries). When the goal is off-mesh, locate returns -1 and we pass no cache, so
+		// pathThrough falls back to the straight-line heuristic and routes exactly as
+		// before. The cache map is goal-triangle-keyed and is cleared on every mesh swap.
+		gnav::RraCache*	   rra	   = nullptr;
+		const std::int32_t goalTri = gnav::locateTriangle(m_mesh, goalMm);
+		if (goalTri >= 0) {
+			// Bound the map: a churn of distinct goals must not grow it without limit.
+			// When a NEW goal would push past the cap, drop the whole map (cheap to
+			// rebuild lazily); an already-cached goal reuses its entry and never grows it.
+			if (m_rraCaches.size() >= kMaxRraCaches && m_rraCaches.find(goalTri) == m_rraCaches.end()) {
+				m_rraCaches.clear();
+			}
+			gnav::RraCache& cache = m_rraCaches[goalTri];
+			cache.goalTri		  = goalTri; // freshly default-constructed entries start at -1
+			rra					  = &cache;
+		}
+
 		// belief is applied at query time, not via a second mesh: a default (empty)
 		// filter reproduces the truth query; a colonist's known-structures filter routes
 		// over its remembered geometry. Consumed synchronously, so the pointers it holds
 		// stay valid for the call.
-		const gnav::PathResult result = gnav::pathThrough(m_mesh, startMm, goalMm, radiusMm, belief);
+		const gnav::PathResult result = gnav::pathThrough(m_mesh, startMm, goalMm, radiusMm, belief, rra);
+
+		// Aggregate A* instrumentation for a reachable solve (where the counts are
+		// meaningful). LOG_DEBUG per query is fine; it compiles out in release.
+		if (result.reachable) {
+			++m_navStats.totalQueries;
+			m_navStats.totalNodesExpanded += static_cast<std::uint64_t>(result.nodesExpanded);
+			m_navStats.lastNodesExpanded = result.nodesExpanded;
+			m_navStats.lastPeakOpenSet	 = result.peakOpenSet;
+			LOG_DEBUG(Engine, "[Nav] path query expanded=%lld peakOpen=%lld (cumulative queries=%llu nodes=%llu)",
+					  static_cast<long long>(result.nodesExpanded), static_cast<long long>(result.peakOpenSet),
+					  static_cast<unsigned long long>(m_navStats.totalQueries),
+					  static_cast<unsigned long long>(m_navStats.totalNodesExpanded));
+		}
+
 		if (!result.reachable) {
 			return std::nullopt;
 		}
