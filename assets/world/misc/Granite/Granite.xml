@@ -18,7 +18,7 @@
 
     <!-- Entity capabilities - broken/gathered for loose stone, then depleted -->
     <capabilities>
-      <harvestable yield="SmallStone" amountMin="2" amountMax="3" duration="3.0" destructive="true"/>
+      <harvestable yield="SmallStone" amountMin="2" amountMax="3" durability="30" destructive="true"/>
     </capabilities>
 
     <!-- Per-biome placement: boreal, montane, and alpine zones -->

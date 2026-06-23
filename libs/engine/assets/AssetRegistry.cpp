@@ -614,7 +614,7 @@ namespace engine::assets {
 							std::swap(harvestable.amountMin, harvestable.amountMax);
 						}
 
-						harvestable.duration = harvestableNode.attribute("duration").as_float(4.0F);
+						harvestable.durability = harvestableNode.attribute("durability").as_float(40.0F);
 						harvestable.destructive = harvestableNode.attribute("destructive").as_bool(true);
 						harvestable.regrowthTime = harvestableNode.attribute("regrowthTime").as_float(0.0F);
 						harvestable.totalResourceMin = harvestableNode.attribute("totalResourceMin").as_uint(0);

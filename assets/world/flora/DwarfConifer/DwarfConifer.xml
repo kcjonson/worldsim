@@ -22,7 +22,7 @@
 
     <!-- Entity capabilities - snapped branches for sticks, tree remains -->
     <capabilities>
-      <harvestable yield="Stick" amountMin="1" amountMax="1" duration="4.0"
+      <harvestable yield="Stick" amountMin="1" amountMax="1" durability="40"
                    destructive="false" totalResourceMin="3" totalResourceMax="5"/>
     </capabilities>
 

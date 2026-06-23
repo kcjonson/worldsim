@@ -94,6 +94,20 @@ namespace ecs {
 				} else {
 					startAction(task, action, position, memory, needs, inventory);
 				}
+
+				// Harvest is work-based, not a fixed time: the action is created with the
+				// harvestable's `durability` (work units) in `duration`, which we convert to
+				// seconds here using the colonist's Harvesting skill (time = durability / rate).
+				// A skilled chopper fells a tree faster. Sampled once per chop; other action
+				// types keep their authored seconds.
+				if (action.type == ActionType::Harvest) {
+					float harvestSkill = 0.0F;
+					if (const auto* skills = world->getComponent<Skills>(entity)) {
+						harvestSkill = skills->getLevel("Harvesting");
+					}
+					action.duration /= harvestWorkRate(harvestSkill);
+				}
+
 				LOG_INFO(
 					Engine,
 					"[Action] Entity %llu: Started %s action (%.1fs duration)",
@@ -246,7 +260,7 @@ namespace ecs {
 						action = Action::Harvest(
 							harvestCap.yieldDefName,
 							yield,
-							harvestCap.duration,
+							harvestCap.durability,
 							entity.position,
 							def->defName,
 							harvestCap.destructive,
@@ -1077,7 +1091,7 @@ namespace ecs {
 					action = Action::Harvest(
 						harvestCap.yieldDefName,
 						yieldAmount,
-						harvestCap.duration,
+						harvestCap.durability,
 						entity.position,
 						defName,
 						harvestCap.destructive,
@@ -1085,10 +1099,10 @@ namespace ecs {
 					);
 					LOG_DEBUG(
 						Engine,
-						"[Action] Starting Harvest action for %s from %s (duration %.1fs)",
+						"[Action] Starting Harvest action for %s from %s (durability %.0f)",
 						harvestCap.yieldDefName.c_str(),
 						defName.c_str(),
-						harvestCap.duration
+						harvestCap.durability
 					);
 					return;
 				}
@@ -1167,7 +1181,7 @@ namespace ecs {
 			action = Action::Harvest(
 				harvestCap.yieldDefName,
 				yieldAmount,
-				harvestCap.duration,
+				harvestCap.durability,
 				entity.position,
 				defName,
 				harvestCap.destructive,
@@ -1175,10 +1189,10 @@ namespace ecs {
 			);
 			LOG_DEBUG(
 				Engine,
-				"[Action] Starting goal-driven Harvest action for %s from %s (duration %.1fs, goal %llu)",
+				"[Action] Starting goal-driven Harvest action for %s from %s (durability %.0f, goal %llu)",
 				harvestCap.yieldDefName.c_str(),
 				defName.c_str(),
-				harvestCap.duration,
+				harvestCap.durability,
 				static_cast<unsigned long long>(task.harvestGoalId)
 			);
 			return;

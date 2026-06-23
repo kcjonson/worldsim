@@ -21,6 +21,28 @@
 namespace ecs::test {
 
 // =============================================================================
+// harvestWorkRate (pure helper)
+// =============================================================================
+// Harvest time is work-based: chop seconds = harvestable durability / harvestWorkRate(skill).
+// Mirrors constructionWorkRate, but driven by the Harvesting skill.
+
+TEST(HarvestWorkRateTest, UntrainedForagerWorksAtBaseRate) {
+	// Level-0 chops at the base rate (not zero), so a durability-40 bush takes ~4s.
+	EXPECT_FLOAT_EQ(harvestWorkRate(0.0F), 10.0F);
+}
+
+TEST(HarvestWorkRateTest, RateScalesWithSkill) {
+	// Higher Harvesting skill chops faster: base * (1 + 0.08 * level).
+	EXPECT_FLOAT_EQ(harvestWorkRate(10.0F), 10.0F * 1.8F);
+	EXPECT_FLOAT_EQ(harvestWorkRate(20.0F), 10.0F * 2.6F);
+}
+
+TEST(HarvestWorkRateTest, SkillClampedToValidRange) {
+	EXPECT_FLOAT_EQ(harvestWorkRate(-5.0F), harvestWorkRate(0.0F));
+	EXPECT_FLOAT_EQ(harvestWorkRate(99.0F), harvestWorkRate(20.0F));
+}
+
+// =============================================================================
 // Action Factory Tests (Unit tests for Action struct)
 // =============================================================================
 

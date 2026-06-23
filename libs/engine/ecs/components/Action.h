@@ -91,6 +91,21 @@ namespace ecs {
 		return kBaseWorkRate * (1.0F + kPerLevelBonus * clamped);
 	}
 
+	/// Harvest work units produced per second at a given Harvesting skill level.
+	///
+	/// Mirrors constructionWorkRate (same base rate and per-level shape, shared tuning) but is
+	/// driven by the Harvesting skill and applied to a harvestable's `durability`: chop time =
+	/// durability / harvestWorkRate(skill). An untrained forager works at the base rate; a master
+	/// is ~2.6x faster. Kept separate from construction so the two activities can tune apart.
+	/// @param skillLevel Harvesting skill in [0, 20]; clamped if out of range.
+	[[nodiscard]] inline float harvestWorkRate(float skillLevel) {
+		constexpr float kBaseWorkRate = 10.0F;	 // work units/second for an untrained forager
+		constexpr float kPerLevelBonus = 0.08F;	 // +8% per skill level (master = 1 + 20*0.08 = 2.6x)
+		constexpr float kMaxSkillLevel = 20.0F;
+		float			clamped = skillLevel < 0.0F ? 0.0F : (skillLevel > kMaxSkillLevel ? kMaxSkillLevel : skillLevel);
+		return kBaseWorkRate * (1.0F + kPerLevelBonus * clamped);
+	}
+
 	// ============================================================================
 	// Effect Types (what happens when the action completes)
 	// ============================================================================

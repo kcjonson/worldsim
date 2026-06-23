@@ -20,7 +20,7 @@
 
     <!-- Harvested for fruit (berry); non-destructive, regrows -->
     <capabilities>
-      <harvestable yield="Berry" amountMin="2" amountMax="5" duration="2.0"
+      <harvestable yield="Berry" amountMin="2" amountMax="5" durability="20"
                    destructive="false" regrowthTime="60.0"/>
     </capabilities>
 

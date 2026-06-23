@@ -102,7 +102,7 @@ namespace engine::assets {
 		std::string yieldDefName;		 // Item definition name to yield (e.g., "Stick", "Berry")
 		uint32_t	amountMin = 1;		 // Minimum items yielded per harvest
 		uint32_t	amountMax = 3;		 // Maximum items yielded per harvest
-		float		duration = 4.0F;	 // Seconds to complete harvest action
+		float		durability = 40.0F;	 // Work units to harvest through; chop time = durability / skill-scaled work rate (~10 units/s untrained, so 40 ~= 4s)
 		bool		destructive = true;	 // If true, entity is removed after harvest
 		float		regrowthTime = 0.0F; // Seconds until harvestable again (0 = never, only if not destructive)
 		uint32_t	totalResourceMin = 0; // Min initial resource pool, in yield units (0 = single harvest)

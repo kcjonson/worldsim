@@ -24,7 +24,7 @@
 
     <!-- Entity capabilities - harvested for plant fiber (destructive) -->
     <capabilities>
-      <harvestable yield="PlantFiber" amountMin="1" amountMax="3" duration="2.0" destructive="true"/>
+      <harvestable yield="PlantFiber" amountMin="1" amountMax="3" durability="20" destructive="true"/>
     </capabilities>
 
     <!-- Per-biome placement configuration.
