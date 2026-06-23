@@ -4,6 +4,8 @@
 #include "../components/Memory.h"
 #include "../components/NavPath.h"
 
+#include "nav/NavCoords.h"
+
 #include <assets/ConstructionRegistry.h>
 #include <construction/ConstructionWorld.h>
 
@@ -100,13 +102,16 @@ namespace {
 } // namespace
 
 // A query before any mesh is built returns nullopt (no inputs wired / first frame).
+// isReachable returns true when there is no mesh: "can't prove unreachable."
+// requestPath still returns nullopt because there is nothing to path over.
 TEST_F(NavigationSystemTest, NoMeshBeforeBuildReturnsNullopt) {
 	World world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
 
 	EXPECT_FALSE(sys.hasMesh());
 	EXPECT_FALSE(sys.requestPath(kOutside, kInside, kAgentRadius).has_value());
-	EXPECT_FALSE(sys.isReachable(kOutside, kInside, kAgentRadius));
+	// No-mesh policy: isReachable cannot prove unreachable, so it returns true.
+	EXPECT_TRUE(sys.isReachable(kOutside, kInside, kAgentRadius));
 }
 
 // update() with nothing wired is a safe no-op, and a query still returns nullopt.
@@ -313,6 +318,53 @@ TEST_F(NavigationSystemTest, BeliefFilterGatesQueryVsTruth) {
 		<< "knowing the walls and the door should route through it";
 }
 
+// --- isReachable semantics ---------------------------------------------------
+//
+// isReachable uses geometry::nav::reachable (O(log n)) rather than building a
+// full path. Semantics: false = DEFINITELY unreachable (sound), true = MAYBE
+// reachable (over-approximation). No-mesh => always true.
+
+// Reachable goal agrees with requestPath (both true).
+TEST_F(NavigationSystemTest, IsReachableTrueForReachableGoal) {
+	ConstructionWorld cw;
+	buildRoom(cw, /*withOpening=*/true, /*pathableOpening=*/true);
+
+	World world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	sys.setConstructionWorld(&cw);
+	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
+
+	EXPECT_TRUE(sys.isReachable(kOutside, kInside, kAgentRadius));
+	EXPECT_TRUE(sys.requestPath(kOutside, kInside, kAgentRadius).has_value());
+}
+
+// Walled-off goal: isReachable returns false, requestPath returns nullopt.
+TEST_F(NavigationSystemTest, IsReachableFalseForWalledOffGoal) {
+	ConstructionWorld cw;
+	buildRoom(cw, /*withOpening=*/false, /*pathableOpening=*/false);
+
+	World world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	sys.setConstructionWorld(&cw);
+	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
+
+	// reachable() should detect the disconnected component and return false.
+	EXPECT_FALSE(sys.isReachable(kOutside, kInside, kAgentRadius));
+	// requestPath must also return nullopt (short-circuit already there via pathThrough).
+	EXPECT_FALSE(sys.requestPath(kOutside, kInside, kAgentRadius).has_value());
+}
+
+// No-mesh: isReachable returns true regardless of endpoints (can't prove unreachable).
+TEST_F(NavigationSystemTest, IsReachableTrueWhenNoMesh) {
+	World world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+
+	ASSERT_FALSE(sys.hasMesh());
+	EXPECT_TRUE(sys.isReachable(kOutside, kInside, kAgentRadius));
+	// requestPath is still nullopt with no mesh.
+	EXPECT_FALSE(sys.requestPath(kOutside, kInside, kAgentRadius).has_value());
+}
+
 // generation() bumps each time a freshly built mesh is swapped in.
 TEST_F(NavigationSystemTest, GenerationBumpsOnMeshSwap) {
 	ConstructionWorld cw;
@@ -336,6 +388,131 @@ TEST_F(NavigationSystemTest, GenerationBumpsOnMeshSwap) {
 		std::this_thread::sleep_for(std::chrono::milliseconds(2));
 	}
 	EXPECT_GT(sys.generation(), afterFirst) << "rebuild swap should bump generation again";
+}
+
+// --- RRA* heuristic wiring + instrumentation (P3.5) --------------------------
+//
+// NavigationSystem owns the resumable RRA* caches (keyed by goal triangle) and
+// passes them into pathThrough. The reverse search is belief-/radius-agnostic, so
+// one cache per goal serves every query; the map is cleared on every mesh swap
+// (triangle indices go stale) and bounded so a goal churn can't grow it forever.
+
+// A reachable query populates the A* instrumentation, and the cumulative accessor
+// advances. nodesExpanded must be > 0 for a real (non-trivial) solve.
+TEST_F(NavigationSystemTest, NavQueryStatsPopulatedOnPath) {
+	ConstructionWorld cw;
+	buildRoom(cw, /*withOpening=*/true, /*pathableOpening=*/true);
+
+	World world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	sys.setConstructionWorld(&cw);
+	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
+
+	sys.resetNavQueryStats();
+	EXPECT_EQ(sys.navQueryStats().totalQueries, 0u);
+
+	ASSERT_TRUE(sys.requestPath(kOutside, kInside, kAgentRadius).has_value());
+
+	const NavigationSystem::NavQueryStats& s = sys.navQueryStats();
+	EXPECT_EQ(s.totalQueries, 1u) << "one reachable solve recorded";
+	EXPECT_GT(s.lastNodesExpanded, 0) << "a real solve expands at least one node";
+	EXPECT_EQ(s.totalNodesExpanded, static_cast<std::uint64_t>(s.lastNodesExpanded));
+	EXPECT_GT(s.lastPeakOpenSet, 0);
+
+	// A second reachable query advances the cumulative counters.
+	ASSERT_TRUE(sys.requestPath(kOutside, kInside, kAgentRadius).has_value());
+	EXPECT_EQ(sys.navQueryStats().totalQueries, 2u) << "cumulative query count moves";
+	EXPECT_GE(sys.navQueryStats().totalNodesExpanded, s.totalNodesExpanded);
+}
+
+// A query creates a goal-keyed RRA* cache; a mesh rebuild (generation bump) clears
+// the caches because triangle indices are stale, and queries stay correct across it.
+TEST_F(NavigationSystemTest, MeshRebuildClearsRraCaches) {
+	ConstructionWorld cw;
+	SegmentId south = buildRoom(cw, /*withOpening=*/false, /*pathableOpening=*/false);
+
+	World world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	sys.setConstructionWorld(&cw);
+	ASSERT_TRUE(pumpUntilMesh(sys)) << "initial navmesh never built";
+
+	// Before: sealed room. A query that locates a goal triangle creates a cache for it
+	// (even though the path itself is unreachable -- locate succeeds on the floor goal).
+	EXPECT_FALSE(sys.requestPath(kOutside, kInside, kAgentRadius).has_value())
+		<< "closed room blocks the path";
+	EXPECT_GT(sys.rraCacheCount(), 0u) << "locating the goal triangle creates its cache";
+
+	const std::uint64_t genBefore = sys.generation();
+
+	// Cut a door: bumps version() -> async rebuild -> mesh swap clears the caches.
+	OpeningId op = cw.addOpening(south, 0.5F, "Door", "Wood");
+	ASSERT_NE(op, kInvalidOpening);
+	ASSERT_TRUE(cw.setOpeningState(op, FoundationState::Built));
+
+	bool opened = false;
+	for (int i = 0; i < 500 && !opened; ++i) {
+		sys.update(0.0F);
+		opened = sys.generation() != genBefore && sys.requestPath(kOutside, kInside, kAgentRadius).has_value();
+		std::this_thread::sleep_for(std::chrono::milliseconds(2));
+	}
+	ASSERT_TRUE(opened) << "door rebuild never opened the path";
+	EXPECT_GT(sys.generation(), genBefore) << "mesh swapped";
+
+	// After the swap the path is reachable AND correct. The cache map was cleared on the
+	// swap; the just-issued reachable query re-created exactly one entry for the goal.
+	EXPECT_EQ(sys.rraCacheCount(), 1u)
+		<< "rebuild clears the stale caches; the post-rebuild query re-created one";
+}
+
+// The cache map is bounded: many DISTINCT goal triangles must not grow it past the
+// cap. A grid of pillars fragments the mesh into many triangles so a spread of goal
+// points lands on > 64 distinct triangles, genuinely exercising the cap.
+TEST_F(NavigationSystemTest, RraCacheMapIsBounded) {
+	// 14x14 m room with a 5x5 grid of small wall-pillars: the interior triangulates into
+	// many triangles, so a grid of goal points maps to many distinct goal triangles.
+	ConstructionWorld cw;
+	buildWall(cw, {0, 0}, {14000, 0});
+	buildWall(cw, {14000, 0}, {14000, 14000});
+	buildWall(cw, {14000, 14000}, {0, 14000});
+	buildWall(cw, {0, 14000}, {0, 0});
+	for (int px = 0; px < 5; ++px) {
+		for (int py = 0; py < 5; ++py) {
+			const std::int64_t cx = 2500 + px * 2200;
+			const std::int64_t cy = 2500 + py * 2200;
+			// A tiny square pillar (each wall segment built) -- an obstacle that splits the
+			// surrounding floor into extra triangles.
+			buildWall(cw, {cx, cy}, {cx + 400, cy});
+			buildWall(cw, {cx + 400, cy}, {cx + 400, cy + 400});
+			buildWall(cw, {cx + 400, cy + 400}, {cx, cy + 400});
+			buildWall(cw, {cx, cy + 400}, {cx, cy});
+		}
+	}
+
+	World world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	sys.setConstructionWorld(&cw);
+	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
+
+	// Collect the distinct goal triangles a fine grid of goal points maps to; this is the
+	// number of cache entries an UNBOUNDED map would create.
+	const glm::vec2					   start{1.0F, 1.0F};
+	std::unordered_set<std::int32_t>   distinctGoalTris;
+	for (int gx = 0; gx < 13; ++gx) {
+		for (int gy = 0; gy < 13; ++gy) {
+			const glm::vec2 goal{0.7F + static_cast<float>(gx), 0.7F + static_cast<float>(gy)};
+			const std::int32_t t = geometry::nav::locateTriangle(sys.mesh(), engine::nav::toMm(goal));
+			if (t >= 0) {
+				distinctGoalTris.insert(t);
+			}
+			sys.requestPath(start, goal, kAgentRadius);
+		}
+	}
+
+	// The bound must hold regardless.
+	EXPECT_LE(sys.rraCacheCount(), 64u) << "the cache map must stay within its cap under goal churn";
+	// And the scenario must actually push past the cap (otherwise the bound is untested).
+	EXPECT_GT(distinctGoalTris.size(), 64u)
+		<< "test setup must produce > 64 distinct goal triangles to exercise the cap";
 }
 
 // --- Memory::beliefVersion bump semantics ------------------------------------

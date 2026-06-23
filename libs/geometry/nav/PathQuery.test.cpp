@@ -439,6 +439,151 @@ TEST(PathQuery, BeliefKnowsWallAndDoorRoutesThroughDoor) {
 	EXPECT_TRUE(pathThrough(m, kOutside, kInside, 0).reachable);
 }
 
+// ---------------------------------------------------------------------------
+// Corridor-width filtering: a too-narrow gap yields no path (not a clipping
+// path). Gaps are bounded by common-knowledge terrain; doors by their clear
+// width. Thresholds are exact (floored mm diameter vs 2*radius).
+// ---------------------------------------------------------------------------
+
+namespace {
+
+	NavInputPolygon water(std::vector<Vec2i64> ring, std::int64_t id) {
+		return {std::move(ring), true, id};
+	}
+
+	// A full-width water band split by a single 400 mm gap (x in [1800,2200]); the
+	// only way from below to above is through that gap.
+	NavMeshInput buildGappedBand() {
+		NavMeshInput in;
+		in.polygons.push_back(border({{0, 0}, {4000, 0}, {4000, 2000}, {0, 2000}}));
+		in.polygons.push_back(water({{0, 900}, {1800, 900}, {1800, 1100}, {0, 1100}}, -10));
+		in.polygons.push_back(water({{2200, 900}, {4000, 900}, {4000, 1100}, {2200, 1100}}, -11));
+		return in;
+	}
+
+} // namespace
+
+TEST(PathQuery, NarrowGapAdmitsAgentThatFits) {
+	// Gap is 400 mm. An agent of radius 150 (diameter 300 <= 400) fits and routes
+	// through; the same query at radius 0 also routes (sanity).
+	NavMesh m = buildNavMesh(buildGappedBand());
+	const Vec2i64 below{2000, 300};
+	const Vec2i64 above{2000, 1700};
+
+	PathResult fits = pathThrough(m, below, above, 150);
+	ASSERT_TRUE(fits.reachable) << "an agent narrower than the gap must pass";
+	EXPECT_EQ(fits.points.front(), below);
+	EXPECT_EQ(fits.points.back(), above);
+	// The route threads the gap: some segment crosses the gap mouth line x in
+	// [1800,2200] at the band's centre y=1000.
+	bool throughGap = false;
+	for (std::size_t i = 0; i + 1 < fits.points.size(); ++i) {
+		SegmentIntersection si =
+			intersectSegments(fits.points[i], fits.points[i + 1], Vec2i64{1800, 1000}, Vec2i64{2200, 1000});
+		if (si.relation == SegmentRelation::ProperCrossing || si.relation == SegmentRelation::EndpointTouch) {
+			throughGap = true;
+		}
+	}
+	EXPECT_TRUE(throughGap) << "the path must thread the 400 mm gap";
+}
+
+TEST(PathQuery, NarrowGapRejectsAgentTooWide) {
+	// Same 400 mm gap. An agent of radius 201 (diameter 402 > 400) does not fit:
+	// no path, and crucially NOT a clipping path through the gap.
+	NavMesh m = buildNavMesh(buildGappedBand());
+	const Vec2i64 below{2000, 300};
+	const Vec2i64 above{2000, 1700};
+
+	PathResult tooWide = pathThrough(m, below, above, 201);
+	EXPECT_FALSE(tooWide.reachable) << "an agent wider than the gap must be rejected";
+	EXPECT_TRUE(tooWide.points.empty());
+}
+
+TEST(PathQuery, GapWidthThresholdIsExact) {
+	// Gap is exactly 400 mm. Diameter == width passes (radius 200), diameter one mm
+	// over fails (radius 201): the integer threshold is exact, no float slack.
+	NavMesh m = buildNavMesh(buildGappedBand());
+	const Vec2i64 below{2000, 300};
+	const Vec2i64 above{2000, 1700};
+
+	EXPECT_TRUE(pathThrough(m, below, above, 200).reachable) << "diameter 400 == gap 400 must pass";
+	EXPECT_FALSE(pathThrough(m, below, above, 201).reachable) << "diameter 402 > gap 400 must fail";
+}
+
+TEST(PathQuery, SliverInOpenFloorDoesNotBlock) {
+	// A long thin open strip triangulates into high-aspect slivers with no obstacle
+	// edges. An agent must route end to end across them; the sliver altitude must not
+	// be mistaken for a narrow corridor.
+	NavMeshInput in;
+	in.polygons.push_back(border({{0, 0}, {6000, 0}, {6000, 40}, {0, 40}}));
+	NavMesh m = buildNavMesh(in);
+
+	const Vec2i64 a{200, 20};
+	const Vec2i64 b{5800, 20};
+	PathResult	  p = pathThrough(m, a, b, 15); // diameter 30, well inside the 40 mm strip
+	ASSERT_TRUE(p.reachable) << "open-floor slivers must not block an agent that fits the strip";
+	EXPECT_EQ(p.points.front(), a);
+	EXPECT_EQ(p.points.back(), b);
+}
+
+TEST(PathQuery, DoorRejectsAgentWiderThanClearWidth) {
+	// Closed room with a 200 mm-clear-width door in the bottom wall. An agent of
+	// radius 150 (diameter 300 > 200) cannot fit the door; radius 80 (diameter 160 <
+	// 200) can. Clear width drives the gate.
+	NavMeshInput in;
+	in.polygons.push_back(border({{0, 0}, {3000, 0}, {3000, 3000}, {0, 3000}}));
+	std::vector<Vec2i64> bottomLeft	 = {{1000, 1000}, {1400, 1000}, {1400, 1100}, {1000, 1100}};
+	std::vector<Vec2i64> bottomRight = {{1600, 1000}, {2000, 1000}, {2000, 1100}, {1600, 1100}};
+	std::vector<Vec2i64> top		 = {{1000, 1900}, {2000, 1900}, {2000, 2000}, {1000, 2000}};
+	std::vector<Vec2i64> left		 = {{1000, 1100}, {1100, 1100}, {1100, 1900}, {1000, 1900}};
+	std::vector<Vec2i64> right		 = {{1900, 1100}, {2000, 1100}, {2000, 1900}, {1900, 1900}};
+	in.polygons.push_back(blocked(bottomLeft, 20));
+	in.polygons.push_back(blocked(bottomRight, 24));
+	in.polygons.push_back(blocked(top, 21));
+	in.polygons.push_back(blocked(left, 22));
+	in.polygons.push_back(blocked(right, 23));
+
+	DoorPortal door;
+	door.openingId	  = 99;
+	door.a			  = {1400, 1100};
+	door.b			  = {1600, 1100};
+	door.clearWidthMm = 200; // doorway is 200 mm clear
+	in.doors.push_back(door);
+
+	NavMesh m = buildNavMesh(in);
+	const Vec2i64 start{1500, 500};	 // exterior
+	const Vec2i64 goal{1500, 1500};	 // room interior
+
+	EXPECT_TRUE(pathThrough(m, start, goal, 80).reachable) << "agent narrower than the door passes";
+	PathResult tooWide = pathThrough(m, start, goal, 150);
+	EXPECT_FALSE(tooWide.reachable) << "agent wider than the 200 mm door is rejected";
+	EXPECT_TRUE(tooWide.points.empty());
+}
+
+TEST(PathQuery, ObtuseVertexPinchIsRespected) {
+	// Two triangular obstacles (CK) with tips facing each other across the channel,
+	// tips at (1700,1000) and (2300,1000). The binding constriction is the 600 mm
+	// distance between those two obstacle VERTICES (Demyen Case 1, an obtuse squeeze:
+	// the perpendicular foot from one tip onto the other obstacle's edges lies outside
+	// them, so a vertex is the closest feature). It is the only way from below to above.
+	NavMeshInput in;
+	in.polygons.push_back(border({{0, 0}, {4000, 0}, {4000, 2000}, {0, 2000}}));
+	// Left wedge spanning top-to-bottom with its tip poking right to (1700,1000).
+	in.polygons.push_back(water({{0, -10}, {1700, 1000}, {0, 2010}, {-10, 2010}, {-10, -10}}, -10));
+	// Right wedge with its tip poking left to (2300,1000).
+	in.polygons.push_back(water({{4000, -10}, {4010, -10}, {4010, 2010}, {4000, 2010}, {2300, 1000}}, -11));
+	NavMesh m = buildNavMesh(in);
+
+	const Vec2i64 below{2000, 200};
+	const Vec2i64 above{2000, 1800};
+
+	// An agent with diameter == the 600 mm vertex gap fits; one mm wider does not.
+	EXPECT_TRUE(pathThrough(m, below, above, 300).reachable) << "diameter 600 == vertex gap must pass";
+	PathResult tooWide = pathThrough(m, below, above, 301);
+	EXPECT_FALSE(tooWide.reachable) << "diameter 602 > vertex gap must be rejected";
+	EXPECT_TRUE(tooWide.points.empty());
+}
+
 TEST(PathQuery, TerrainSentinelBlocksEvenWithEmptyBelief) {
 	// A terrain obstacle (negative provenance sentinel, like water/tree) always
 	// blocks: belief does not apply to common-knowledge terrain. A full-width water
@@ -456,4 +601,134 @@ TEST(PathQuery, TerrainSentinelBlocksEvenWithEmptyBelief) {
 
 	EXPECT_FALSE(pathThrough(m, below, above, 0, belief).reachable);
 	EXPECT_FALSE(pathThrough(m, below, above, 0).reachable);
+}
+
+// ---------------------------------------------------------------------------
+// Grid-accelerated locateTriangle: correctness vs brute-force linear scan.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+	// Brute-force linear scan over all triangles; returns the lowest-index match.
+	std::int32_t locateLinear(const NavMesh& mesh, const Vec2i64& p) {
+		for (std::int32_t ti = 0; ti < static_cast<std::int32_t>(mesh.triangles.size()); ++ti) {
+			const NavTriangle& t  = mesh.triangles[ti];
+			const Vec2i64&	   v0 = mesh.vertices[t.v[0]];
+			const Vec2i64&	   v1 = mesh.vertices[t.v[1]];
+			const Vec2i64&	   v2 = mesh.vertices[t.v[2]];
+			if (orientation(v0, v1, p) != Orientation::Clockwise &&
+				orientation(v1, v2, p) != Orientation::Clockwise &&
+				orientation(v2, v0, p) != Orientation::Clockwise) {
+				return ti;
+			}
+		}
+		return -1;
+	}
+
+	// Simple LCG (Knuth multiplicative): deterministic pseudo-random int64 sequence.
+	// Seeded with a constant so tests are reproducible.
+	struct LCG {
+		std::uint64_t state;
+		explicit LCG(std::uint64_t seed) : state(seed) {}
+		std::int64_t next(std::int64_t lo, std::int64_t hi) {
+			// LCG parameters from Knuth MMIX.
+			state = state * UINT64_C(6364136223846793005) + UINT64_C(1442695040888963407);
+			// Map the high 32 bits to [lo, hi].
+			const std::uint64_t range = static_cast<std::uint64_t>(hi - lo) + 1;
+			return lo + static_cast<std::int64_t>((state >> 32) % range);
+		}
+	};
+
+} // namespace
+
+TEST(LocateGrid, EmptyMeshReturnsMinusOne) {
+	// An empty NavMesh (no polygons -> no triangles) must return -1 for any point.
+	NavMesh empty;
+	EXPECT_EQ(locateTriangle(empty, Vec2i64{0, 0}), -1);
+	EXPECT_EQ(locateTriangle(empty, Vec2i64{500, 500}), -1);
+	EXPECT_EQ(locateTriangle(empty, Vec2i64{-1000, 999}), -1);
+}
+
+TEST(LocateGrid, GridMatchesLinearScanFuzzed) {
+	// Over a mesh with a central obstacle, compare grid locate vs brute-force linear
+	// scan for 500 deterministically-generated points spanning and surrounding the
+	// mesh AABB. The grid must agree for every point, including off-mesh (-1).
+	NavMeshInput in;
+	in.polygons.push_back(border({{0, 0}, {3000, 0}, {3000, 3000}, {0, 3000}}));
+	in.polygons.push_back(blocked({{1000, 1000}, {2000, 1000}, {2000, 2000}, {1000, 2000}}, 5));
+	NavMesh m = buildNavMesh(in);
+	ASSERT_FALSE(m.triangles.empty());
+
+	LCG rng(0xDEADBEEF42ULL);
+	// Points drawn from a range wider than the mesh AABB to include off-mesh points.
+	for (int i = 0; i < 500; ++i) {
+		const Vec2i64 p{rng.next(-500, 3500), rng.next(-500, 3500)};
+		EXPECT_EQ(locateTriangle(m, p), locateLinear(m, p))
+			<< "mismatch at p=(" << p.x << "," << p.y << ") i=" << i;
+	}
+}
+
+TEST(LocateGrid, SharedEdgeTieBreakMatchesLinearScan) {
+	// A point exactly on a shared edge between two triangles must resolve to the
+	// same (lowest-index) triangle as the linear scan.
+	NavMeshInput in;
+	in.polygons.push_back(border({{0, 0}, {2000, 0}, {2000, 2000}, {0, 2000}}));
+	NavMesh m = buildNavMesh(in);
+	ASSERT_GE(m.triangles.size(), 2u);
+
+	// Find a point on a shared interior edge by using a triangle's centroid of its
+	// shared edge.  Walk all triangles, find one with a neighbor, use the midpoint
+	// of their shared edge (which lies exactly on both triangles).
+	bool foundShared = false;
+	for (std::int32_t ti = 0; ti < static_cast<std::int32_t>(m.triangles.size()); ++ti) {
+		const NavTriangle& t = m.triangles[ti];
+		for (int e = 0; e < 3; ++e) {
+			if (t.neighbor[e] < 0) continue;
+			// Midpoint of shared edge (v[e], v[(e+1)%3]).
+			const Vec2i64& a = m.vertices[t.v[e]];
+			const Vec2i64& b = m.vertices[t.v[(e + 1) % 3]];
+			Vec2i64 mid{(a.x + b.x) / 2, (a.y + b.y) / 2};
+			const std::int32_t grid   = locateTriangle(m, mid);
+			const std::int32_t linear = locateLinear(m, mid);
+			EXPECT_EQ(grid, linear)
+				<< "shared-edge midpoint (" << mid.x << "," << mid.y
+				<< "): grid=" << grid << " linear=" << linear;
+			foundShared = true;
+			// Test one shared edge; the property must hold for all, but one is enough
+			// for this targeted test (the fuzz test covers the rest).
+			break;
+		}
+		if (foundShared) break;
+	}
+	EXPECT_TRUE(foundShared) << "expected at least one shared interior edge";
+}
+
+TEST(LocateGrid, SharedVertexTieBreakMatchesLinearScan) {
+	// A point exactly at a mesh vertex (shared by multiple triangles) must also
+	// agree with the linear scan's lowest-index result.
+	NavMeshInput in;
+	in.polygons.push_back(border({{0, 0}, {2000, 0}, {2000, 2000}, {0, 2000}}));
+	NavMesh m = buildNavMesh(in);
+	ASSERT_FALSE(m.vertices.empty());
+
+	// Test each vertex.
+	for (std::size_t vi = 0; vi < m.vertices.size(); ++vi) {
+		const Vec2i64& v = m.vertices[vi];
+		const std::int32_t grid   = locateTriangle(m, v);
+		const std::int32_t linear = locateLinear(m, v);
+		EXPECT_EQ(grid, linear)
+			<< "vertex[" << vi << "]=(" << v.x << "," << v.y
+			<< "): grid=" << grid << " linear=" << linear;
+	}
+}
+
+TEST(LocateGrid, OffMeshPointsReturnMinusOne) {
+	NavMeshInput in;
+	in.polygons.push_back(border({{0, 0}, {1000, 0}, {1000, 1000}, {0, 1000}}));
+	NavMesh m = buildNavMesh(in);
+
+	EXPECT_EQ(locateTriangle(m, Vec2i64{-1, 500}), -1);
+	EXPECT_EQ(locateTriangle(m, Vec2i64{500, -1}), -1);
+	EXPECT_EQ(locateTriangle(m, Vec2i64{1001, 500}), -1);
+	EXPECT_EQ(locateTriangle(m, Vec2i64{500, 1001}), -1);
 }
