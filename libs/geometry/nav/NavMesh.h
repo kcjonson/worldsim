@@ -19,11 +19,22 @@
 // This library is pure: no ECS, no engine dependencies. Coordinates are the
 // region-local integer millimeter frame shared by the rest of geometry/.
 //
-// DEFERRED (not implemented): per-portal corridor-width (Demyen) filtering. v1
-// assumes one agent size (0.3 m radius, 0.6 m diameter) and the construction
-// clearance constant guarantees walkable gaps >= 0.7 m, so every agent fits
-// through any walkable portal. Width filtering is a later enhancement for
-// variable agent sizes.
+// CORRIDOR-WIDTH FILTERING. Each triangle carries Demyen-Buro corridor widths
+// (Efficient Triangulation-Based Pathfinding, 2006, sec. 4.1) so the path query
+// can reject a corridor too narrow for a given agent diameter. edgePairWidthMm[i]
+// is the widest disc DIAMETER that fits passing the two edges meeting at vertex
+// v[i] (the apex), measured as the exact distance from that apex to the nearest
+// COMMON-KNOWLEDGE obstacle feature in the wedge; edgeClearWidthMm[i] is a door
+// gap's clear width on a portal edge. See NavMesh.cpp for the exact-integer
+// adaptation (no bare point obstacles; clearance is distance-to-feature, never
+// edge length, so an open-floor sliver stays unconstrained).
+//
+// DEFERRED (still not implemented): clearance against BELIEF-DEPENDENT walls
+// (faceBlocker > 0). Those widths vary per agent belief and only bite oversized
+// agents in built corridors; construction guarantees walkable wall gaps >= 0.7 m,
+// so for the one shipped agent size (0.3 m radius, 0.6 m diameter) every wall
+// portal fits. Width filtering here covers common-knowledge terrain/flora and
+// door gaps only.
 
 namespace geometry::nav {
 
@@ -33,6 +44,11 @@ namespace geometry::nav {
 	// walkable regardless of belief. Distinct from kNoProvenance only conceptually;
 	// shares the same INT64_MIN bit pattern (no provenance == real floor).
 	constexpr std::int64_t kNoBlocker = INT64_MIN;
+
+	// Corridor-width sentinel: a passage no common-knowledge obstacle constrains
+	// (e.g. an open-floor sliver). Larger than any real millimeter width, so the
+	// "< 2*radius" reject test always admits it.
+	constexpr std::int64_t kUnconstrainedWidth = INT64_MAX;
 
 	// One tagged input ring. One or more polygons in NavMeshInput have blocked=false:
 	// the walkable bounds (the chunk/region border, or several disjoint regions).
@@ -70,6 +86,17 @@ namespace geometry::nav {
 		std::array<std::int32_t, 3>	 neighbor;		 // triangle across edge (v[i],v[(i+1)%3]); -1 = boundary
 		std::array<std::int64_t, 3>	 edgeProvenance; // provenance of constraint edge i, else kNoProvenance
 		std::array<std::int64_t, 3>	 edgeOpening;	 // door openingId if edge i is a portal, else kNoOpening
+
+		// Demyen corridor width keyed by APEX vertex: edgePairWidthMm[i] is the max
+		// disc diameter (mm) that fits passing the two edges meeting at vertex v[i]
+		// -- edges i and (i+2)%3, whose shared vertex is v[i] -- against common-
+		// knowledge obstacles. kUnconstrainedWidth when no such obstacle pinches it.
+		std::array<std::int64_t, 3> edgePairWidthMm = {kUnconstrainedWidth, kUnconstrainedWidth,
+													   kUnconstrainedWidth};
+		// Door clear width (mm) when edge i is a door portal, else kUnconstrainedWidth.
+		// Threaded from DoorPortal::clearWidthMm; the A* gates a door crossing by it.
+		std::array<std::int64_t, 3> edgeClearWidthMm = {kUnconstrainedWidth, kUnconstrainedWidth,
+														kUnconstrainedWidth};
 
 		// Per-face blocker tag, the belief filter's hook. The whole region (wall
 		// interiors included) is triangulated; this says what each triangle sits on:

@@ -439,6 +439,151 @@ TEST(PathQuery, BeliefKnowsWallAndDoorRoutesThroughDoor) {
 	EXPECT_TRUE(pathThrough(m, kOutside, kInside, 0).reachable);
 }
 
+// ---------------------------------------------------------------------------
+// Corridor-width filtering: a too-narrow gap yields no path (not a clipping
+// path). Gaps are bounded by common-knowledge terrain; doors by their clear
+// width. Thresholds are exact (floored mm diameter vs 2*radius).
+// ---------------------------------------------------------------------------
+
+namespace {
+
+	NavInputPolygon water(std::vector<Vec2i64> ring, std::int64_t id) {
+		return {std::move(ring), true, id};
+	}
+
+	// A full-width water band split by a single 400 mm gap (x in [1800,2200]); the
+	// only way from below to above is through that gap.
+	NavMeshInput buildGappedBand() {
+		NavMeshInput in;
+		in.polygons.push_back(border({{0, 0}, {4000, 0}, {4000, 2000}, {0, 2000}}));
+		in.polygons.push_back(water({{0, 900}, {1800, 900}, {1800, 1100}, {0, 1100}}, -10));
+		in.polygons.push_back(water({{2200, 900}, {4000, 900}, {4000, 1100}, {2200, 1100}}, -11));
+		return in;
+	}
+
+} // namespace
+
+TEST(PathQuery, NarrowGapAdmitsAgentThatFits) {
+	// Gap is 400 mm. An agent of radius 150 (diameter 300 <= 400) fits and routes
+	// through; the same query at radius 0 also routes (sanity).
+	NavMesh m = buildNavMesh(buildGappedBand());
+	const Vec2i64 below{2000, 300};
+	const Vec2i64 above{2000, 1700};
+
+	PathResult fits = pathThrough(m, below, above, 150);
+	ASSERT_TRUE(fits.reachable) << "an agent narrower than the gap must pass";
+	EXPECT_EQ(fits.points.front(), below);
+	EXPECT_EQ(fits.points.back(), above);
+	// The route threads the gap: some segment crosses the gap mouth line x in
+	// [1800,2200] at the band's centre y=1000.
+	bool throughGap = false;
+	for (std::size_t i = 0; i + 1 < fits.points.size(); ++i) {
+		SegmentIntersection si =
+			intersectSegments(fits.points[i], fits.points[i + 1], Vec2i64{1800, 1000}, Vec2i64{2200, 1000});
+		if (si.relation == SegmentRelation::ProperCrossing || si.relation == SegmentRelation::EndpointTouch) {
+			throughGap = true;
+		}
+	}
+	EXPECT_TRUE(throughGap) << "the path must thread the 400 mm gap";
+}
+
+TEST(PathQuery, NarrowGapRejectsAgentTooWide) {
+	// Same 400 mm gap. An agent of radius 201 (diameter 402 > 400) does not fit:
+	// no path, and crucially NOT a clipping path through the gap.
+	NavMesh m = buildNavMesh(buildGappedBand());
+	const Vec2i64 below{2000, 300};
+	const Vec2i64 above{2000, 1700};
+
+	PathResult tooWide = pathThrough(m, below, above, 201);
+	EXPECT_FALSE(tooWide.reachable) << "an agent wider than the gap must be rejected";
+	EXPECT_TRUE(tooWide.points.empty());
+}
+
+TEST(PathQuery, GapWidthThresholdIsExact) {
+	// Gap is exactly 400 mm. Diameter == width passes (radius 200), diameter one mm
+	// over fails (radius 201): the integer threshold is exact, no float slack.
+	NavMesh m = buildNavMesh(buildGappedBand());
+	const Vec2i64 below{2000, 300};
+	const Vec2i64 above{2000, 1700};
+
+	EXPECT_TRUE(pathThrough(m, below, above, 200).reachable) << "diameter 400 == gap 400 must pass";
+	EXPECT_FALSE(pathThrough(m, below, above, 201).reachable) << "diameter 402 > gap 400 must fail";
+}
+
+TEST(PathQuery, SliverInOpenFloorDoesNotBlock) {
+	// A long thin open strip triangulates into high-aspect slivers with no obstacle
+	// edges. An agent must route end to end across them; the sliver altitude must not
+	// be mistaken for a narrow corridor.
+	NavMeshInput in;
+	in.polygons.push_back(border({{0, 0}, {6000, 0}, {6000, 40}, {0, 40}}));
+	NavMesh m = buildNavMesh(in);
+
+	const Vec2i64 a{200, 20};
+	const Vec2i64 b{5800, 20};
+	PathResult	  p = pathThrough(m, a, b, 15); // diameter 30, well inside the 40 mm strip
+	ASSERT_TRUE(p.reachable) << "open-floor slivers must not block an agent that fits the strip";
+	EXPECT_EQ(p.points.front(), a);
+	EXPECT_EQ(p.points.back(), b);
+}
+
+TEST(PathQuery, DoorRejectsAgentWiderThanClearWidth) {
+	// Closed room with a 200 mm-clear-width door in the bottom wall. An agent of
+	// radius 150 (diameter 300 > 200) cannot fit the door; radius 80 (diameter 160 <
+	// 200) can. Clear width drives the gate.
+	NavMeshInput in;
+	in.polygons.push_back(border({{0, 0}, {3000, 0}, {3000, 3000}, {0, 3000}}));
+	std::vector<Vec2i64> bottomLeft	 = {{1000, 1000}, {1400, 1000}, {1400, 1100}, {1000, 1100}};
+	std::vector<Vec2i64> bottomRight = {{1600, 1000}, {2000, 1000}, {2000, 1100}, {1600, 1100}};
+	std::vector<Vec2i64> top		 = {{1000, 1900}, {2000, 1900}, {2000, 2000}, {1000, 2000}};
+	std::vector<Vec2i64> left		 = {{1000, 1100}, {1100, 1100}, {1100, 1900}, {1000, 1900}};
+	std::vector<Vec2i64> right		 = {{1900, 1100}, {2000, 1100}, {2000, 1900}, {1900, 1900}};
+	in.polygons.push_back(blocked(bottomLeft, 20));
+	in.polygons.push_back(blocked(bottomRight, 24));
+	in.polygons.push_back(blocked(top, 21));
+	in.polygons.push_back(blocked(left, 22));
+	in.polygons.push_back(blocked(right, 23));
+
+	DoorPortal door;
+	door.openingId	  = 99;
+	door.a			  = {1400, 1100};
+	door.b			  = {1600, 1100};
+	door.clearWidthMm = 200; // doorway is 200 mm clear
+	in.doors.push_back(door);
+
+	NavMesh m = buildNavMesh(in);
+	const Vec2i64 start{1500, 500};	 // exterior
+	const Vec2i64 goal{1500, 1500};	 // room interior
+
+	EXPECT_TRUE(pathThrough(m, start, goal, 80).reachable) << "agent narrower than the door passes";
+	PathResult tooWide = pathThrough(m, start, goal, 150);
+	EXPECT_FALSE(tooWide.reachable) << "agent wider than the 200 mm door is rejected";
+	EXPECT_TRUE(tooWide.points.empty());
+}
+
+TEST(PathQuery, ObtuseVertexPinchIsRespected) {
+	// Two triangular obstacles (CK) with tips facing each other across the channel,
+	// tips at (1700,1000) and (2300,1000). The binding constriction is the 600 mm
+	// distance between those two obstacle VERTICES (Demyen Case 1, an obtuse squeeze:
+	// the perpendicular foot from one tip onto the other obstacle's edges lies outside
+	// them, so a vertex is the closest feature). It is the only way from below to above.
+	NavMeshInput in;
+	in.polygons.push_back(border({{0, 0}, {4000, 0}, {4000, 2000}, {0, 2000}}));
+	// Left wedge spanning top-to-bottom with its tip poking right to (1700,1000).
+	in.polygons.push_back(water({{0, -10}, {1700, 1000}, {0, 2010}, {-10, 2010}, {-10, -10}}, -10));
+	// Right wedge with its tip poking left to (2300,1000).
+	in.polygons.push_back(water({{4000, -10}, {4010, -10}, {4010, 2010}, {4000, 2010}, {2300, 1000}}, -11));
+	NavMesh m = buildNavMesh(in);
+
+	const Vec2i64 below{2000, 200};
+	const Vec2i64 above{2000, 1800};
+
+	// An agent with diameter == the 600 mm vertex gap fits; one mm wider does not.
+	EXPECT_TRUE(pathThrough(m, below, above, 300).reachable) << "diameter 600 == vertex gap must pass";
+	PathResult tooWide = pathThrough(m, below, above, 301);
+	EXPECT_FALSE(tooWide.reachable) << "diameter 602 > vertex gap must be rejected";
+	EXPECT_TRUE(tooWide.points.empty());
+}
+
 TEST(PathQuery, TerrainSentinelBlocksEvenWithEmptyBelief) {
 	// A terrain obstacle (negative provenance sentinel, like water/tree) always
 	// blocks: belief does not apply to common-knowledge terrain. A full-width water

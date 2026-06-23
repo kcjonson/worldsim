@@ -74,6 +74,27 @@ namespace geometry::nav {
 			return -1;
 		}
 
+		// The apex (local vertex index) shared by two edges of a triangle: the vertex
+		// common to edge e1 = (v[e1],v[e1+1]) and e2 = (v[e2],v[e2+1]). For two distinct
+		// edges of a triangle exactly one vertex is shared; that vertex keys the Demyen
+		// edge-pair width for the passage that enters one edge and leaves the other.
+		int apexVertexOfEdgePair(int e1, int e2) {
+			const int a0 = e1, a1 = (e1 + 1) % 3;
+			const int b0 = e2, b1 = (e2 + 1) % 3;
+			if (a0 == b0 || a0 == b1) {
+				return a0;
+			}
+			return a1; // a1 must be the shared vertex (distinct edges share one vertex)
+		}
+
+		// Does triangle `t` admit a disc of diameter `2*radius` passing between the edges
+		// meeting at apex `apexLocal`? Demyen edge-pair width vs common-knowledge
+		// obstacles. kUnconstrainedWidth always admits. Exact: width is the floored mm
+		// clearance, and floor(width) >= 2r iff width >= 2r for the integer threshold.
+		bool widthAdmits(const NavTriangle& t, int apexLocal, std::int64_t diameterMm) {
+			return t.edgePairWidthMm[apexLocal] >= diameterMm;
+		}
+
 		Vec2i64 roundToMm(const Vec2d& p) {
 			return {static_cast<std::int64_t>(std::llround(p.x)), static_cast<std::int64_t>(std::llround(p.y))};
 		}
@@ -166,13 +187,22 @@ namespace geometry::nav {
 			return result;
 		}
 
-		// --- Triangle A* over the dual graph ----------------------------------
-		const std::int32_t n = static_cast<std::int32_t>(mesh.triangles.size());
+		// --- Triangle A* over the dual graph, width-filtered -------------------
+		// Search state is (triangle, entry-edge): the squeeze the agent must clear to
+		// LEAVE a triangle depends on which edge it ENTERED by (Demyen edge-pair width
+		// keyed by the apex shared by the entry and exit edges), so the same triangle is
+		// distinct per entry edge. entry == 3 is the start triangle (no entry edge, no
+		// squeeze). At most 4 states per triangle.
+		const std::int32_t n	= static_cast<std::int32_t>(mesh.triangles.size());
 		const double	   kInf = std::numeric_limits<double>::infinity();
+		const std::int64_t diameterMm = (agentRadiusMm > 0) ? agentRadiusMm * 2 : 0;
 
-		std::vector<double>		  g(n, kInf);
-		std::vector<std::int32_t> cameFrom(n, -1);
-		std::vector<char>		  closed(n, 0);
+		const int kStartEntry = 3;
+		auto stateId = [](std::int32_t tri, int entry) { return tri * 4 + entry; };
+
+		std::vector<double>		  g(static_cast<std::size_t>(n) * 4, kInf);
+		std::vector<std::int32_t> cameFrom(static_cast<std::size_t>(n) * 4, -1);
+		std::vector<char>		  closed(static_cast<std::size_t>(n) * 4, 0);
 
 		const Vec2d goalC = toD(centroidI(mesh, mesh.triangles[goalTri]));
 
@@ -180,69 +210,101 @@ namespace geometry::nav {
 			return distanceD(toD(centroidI(mesh, mesh.triangles[ti])), goalC);
 		};
 
-		// Open-set node: f-score plus triangle id. The comparator orders by f, then
-		// by triangle id, so equal f-scores resolve deterministically (smaller id
-		// first); std::priority_queue is a max-heap, hence the reversed comparisons.
+		// Open-set node: f-score plus state id. The comparator orders by f, then by
+		// state id, so equal f-scores resolve deterministically (smaller id first);
+		// std::priority_queue is a max-heap, hence the reversed comparisons.
 		struct Node {
 			double		 f;
-			std::int32_t tri;
+			std::int32_t state;
 		};
 		struct NodeWorse {
 			bool operator()(const Node& a, const Node& b) const {
 				if (a.f != b.f) {
 					return a.f > b.f; // larger f is "worse" -> lower priority
 				}
-				return a.tri > b.tri; // tie-break: larger id is "worse"
+				return a.state > b.state; // tie-break: larger id is "worse"
 			}
 		};
 		std::priority_queue<Node, std::vector<Node>, NodeWorse> open;
 
-		g[startTri] = 0.0;
-		open.push({heuristic(startTri), startTri});
+		const std::int32_t startState = stateId(startTri, kStartEntry);
+		g[startState]				  = 0.0;
+		open.push({heuristic(startTri), startState});
 
-		bool found = false;
+		std::int32_t goalState = -1;
 		while (!open.empty()) {
 			const Node cur = open.top();
 			open.pop();
-			const std::int32_t ti = cur.tri;
-			if (closed[ti]) {
+			const std::int32_t s = cur.state;
+			if (closed[s]) {
 				continue; // stale entry (we push duplicates instead of decrease-key)
 			}
-			closed[ti] = 1;
+			closed[s] = 1;
+			const std::int32_t ti	 = s / 4;
+			const int		   entry = s % 4;
 			if (ti == goalTri) {
-				found = true;
+				goalState = s;
 				break;
 			}
 
 			const Vec2d ci = toD(centroidI(mesh, mesh.triangles[ti]));
-			for (std::int32_t nb : mesh.triangles[ti].neighbor) {
-				if (nb < 0 || closed[nb]) {
+			const NavTriangle& tri = mesh.triangles[ti];
+			for (int e = 0; e < 3; ++e) {
+				if (e == entry) {
+					continue; // U-turn back through the entry edge: never on a taut path
+				}
+				const std::int32_t nb = tri.neighbor[e];
+				if (nb < 0) {
 					continue;
 				}
-				// Belief gate: skip a neighbor this agent may not cross. This is the
-				// only place truth/belief changes routing; the funnel below is untouched.
+				// Belief gate: skip a neighbor this agent may not cross. The only place
+				// truth/belief changes routing; the funnel below is untouched.
 				if (!traversable(mesh.triangles[nb], belief)) {
+					continue;
+				}
+				// Width gate (intra-triangle squeeze): to leave `ti` via edge e having
+				// entered by `entry`, the disc must clear the Demyen width of the edge
+				// pair meeting at their shared apex. The start state has no entry edge,
+				// so nothing to clear inside the start triangle.
+				if (entry != kStartEntry) {
+					const int apex = apexVertexOfEdgePair(entry, e);
+					if (!widthAdmits(tri, apex, diameterMm)) {
+						continue;
+					}
+				}
+				// Width gate (door portal): a door edge is gated by its clear width.
+				if (tri.edgeOpening[e] != kNoOpening && tri.edgeClearWidthMm[e] < diameterMm) {
+					continue;
+				}
+
+				// The edge of `nb` that faces `ti` is nb's entry edge for this step.
+				const int back = sharedEdgeIndex(mesh.triangles[nb], ti);
+				if (back < 0) {
+					continue; // adjacency inconsistency; skip safely
+				}
+				const std::int32_t ns = stateId(nb, back);
+				if (closed[ns]) {
 					continue;
 				}
 				// Cost: centroid-to-centroid distance. Integer mesh, double cost; the
 				// metric only orders the search, the funnel decides the real shape.
-				const double tentative = g[ti] + distanceD(ci, toD(centroidI(mesh, mesh.triangles[nb])));
-				if (tentative < g[nb]) {
-					g[nb]		= tentative;
-					cameFrom[nb] = ti;
-					open.push({tentative + heuristic(nb), nb});
+				const double tentative = g[s] + distanceD(ci, toD(centroidI(mesh, mesh.triangles[nb])));
+				if (tentative < g[ns]) {
+					g[ns]		 = tentative;
+					cameFrom[ns] = s;
+					open.push({tentative + heuristic(nb), ns});
 				}
 			}
 		}
 
-		if (!found) {
-			return result; // disconnected
+		if (goalState < 0) {
+			return result; // disconnected (or every corridor too narrow for the agent)
 		}
 
-		// Reconstruct the triangle corridor start..goal.
+		// Reconstruct the triangle corridor start..goal (project states to triangles).
 		std::vector<std::int32_t> corridor;
-		for (std::int32_t t = goalTri; t != -1; t = cameFrom[t]) {
-			corridor.push_back(t);
+		for (std::int32_t s = goalState; s != -1; s = cameFrom[s]) {
+			corridor.push_back(s / 4);
 		}
 		std::reverse(corridor.begin(), corridor.end());
 
@@ -294,10 +356,14 @@ namespace geometry::nav {
 				if (len > 0.0) {
 					const Vec2d unit = dir * (1.0 / len);
 					double		off	 = static_cast<double>(agentRadiusMm);
-					// Clamp so the two inward offsets do not cross: each may move at
-					// most half the portal width. A portal narrower than 2*radius
-					// degrades to both points meeting at the midpoint (path threads the
-					// middle) rather than inverting.
+					// Clamp so the two inward offsets do not cross: each may move at most
+					// half the portal width. The width-filtered A* now guarantees any
+					// portal bounded by an obstacle vertex has edge length >= 2*radius
+					// (its Demyen edge-pair width, <= that length, already cleared the
+					// gate), so this clamp can only bite a portal whose endpoints are both
+					// open-floor (a CDT sliver edge) -- there it harmlessly threads the
+					// midpoint, with no obstacle nearby to clip. It never degrades an
+					// obstacle gap to a clipping path.
 					if (off > len * 0.5) {
 						off = len * 0.5;
 					}
