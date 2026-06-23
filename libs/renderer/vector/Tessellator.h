@@ -12,6 +12,11 @@ namespace renderer {
 		// Tolerance for curve flattening (smaller = more vertices)
 		// Not used in Phase 0 (no curves yet), but planned for future
 		float curveFlatteningTolerance = 0.5F;
+
+		// For convex shapes, insert a centroid vertex and fan from it. This gives an interior
+		// sample point so per-vertex gradient fills (esp. radial) can show their center, instead
+		// of fanning from a perimeter vertex where every vertex is the same edge color.
+		bool fanFromCentroid = false;
 	};
 
 	// Tessellator class - converts VectorPath to TessellatedMesh
