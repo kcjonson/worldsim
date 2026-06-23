@@ -24,6 +24,8 @@ struct TasksTabData {
 
 	// Current self-assigned task (from BioData), shown in the "Currently" panel.
 	std::string currentTask;
+	// Progress of the running action, 0..1; <0 when idle / still traveling (no meter).
+	float currentProgress = -1.0F;
 };
 
 class TasksTabView : public UI::Container {

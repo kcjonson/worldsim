@@ -19,7 +19,25 @@ struct ColonistData {
 	ecs::EntityID id;
 	std::string name;
 	float mood;  // 0-100, computed from needs
+
+	// Current activity, for the roster tile's task meter. `activity` is a concise verb
+	// ("Harvesting"), empty when idle. `activityProgress` is 0..1 once the action is
+	// running, or <0 while the colonist is still traveling to it (tile shows an empty
+	// track in that case).
+	std::string activity;
+	float activityProgress = -1.0F;
 };
+
+/// A colonist's current activity: a concise label and the running action's progress.
+struct ColonistActivity {
+	std::string label;	  // "" when idle
+	float		progress;  // 0..1 while the action runs; <0 before it starts / idle
+};
+
+/// Current activity + action progress for one colonist. Shared by the roster tile and
+/// the dossier so both read progress the same way (construction reads the blueprint's
+/// workDone; everything else reads the action clock).
+[[nodiscard]] ColonistActivity getColonistActivity(ecs::World& world, ecs::EntityID colonist);
 
 /// Query all colonists from the ECS world
 /// @param world The ECS world to query

@@ -19,20 +19,14 @@ namespace world_sim {
 	bool ColonistListModel::refresh(ecs::World& world) {
 		auto newData = adapters::getColonists(world);
 
-		// First refresh always triggers rebuild
-		if (isFirstRefresh) {
-			isFirstRefresh = false;
-			colonistsData = std::move(newData);
-			return true;
-		}
-
-		// Check for changes
-		if (hasChanged(newData)) {
-			colonistsData = std::move(newData);
-			return true;
-		}
-
-		return false;
+		// `changed` gates a full tile rebuild (roster size / identity / mood crossing the
+		// flicker threshold). Activity progress, however, ticks every frame: store the
+		// fresh data unconditionally so the always-run value pass animates the meters,
+		// while only signalling a rebuild on a structural change.
+		const bool changed = isFirstRefresh || hasChanged(newData);
+		isFirstRefresh = false;
+		colonistsData = std::move(newData);
+		return changed;
 	}
 
 	bool ColonistListModel::hasChanged(const std::vector<ColonistData>& newData) const {

@@ -70,8 +70,9 @@ void ColonistListView::update(ColonistListModel& model, ecs::World& world) {
 		updateSelectionHighlight(selectedId);
 	}
 
-	// Always update mood bars (values may change even if structure doesn't)
-	updateMoodBars(model.colonists());
+	// Always push per-frame values (mood + activity progress) even when the structure
+	// didn't change, so the task meters animate smoothly without a rebuild.
+	updateItemValues(model.colonists());
 }
 
 void ColonistListView::rebuildUI(const std::vector<adapters::ColonistData>& colonists) {
@@ -119,7 +120,7 @@ void ColonistListView::updateSelectionHighlight(ecs::EntityID newSelectedId) {
 	}
 }
 
-void ColonistListView::updateMoodBars(const std::vector<adapters::ColonistData>& colonists) {
+void ColonistListView::updateItemValues(const std::vector<adapters::ColonistData>& colonists) {
 	if (!itemLayout) {
 		return;
 	}
@@ -127,6 +128,7 @@ void ColonistListView::updateMoodBars(const std::vector<adapters::ColonistData>&
 	for (size_t i = 0; i < colonists.size() && i < itemHandles.size(); ++i) {
 		if (auto* item = itemLayout->getChild<ColonistListItem>(itemHandles[i])) {
 			item->setMood(colonists[i].mood);
+			item->setActivity(colonists[i].activity, colonists[i].activityProgress);
 		}
 	}
 }

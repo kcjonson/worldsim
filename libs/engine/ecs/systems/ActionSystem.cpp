@@ -3,6 +3,7 @@
 #include "../GoalTaskRegistry.h"
 #include "../InventoryMass.h"
 #include "../World.h"
+#include "TimeSystem.h"
 #include "../components/Action.h"
 #include "../components/Appearance.h"
 #include "../components/Inventory.h"
@@ -49,6 +50,15 @@ namespace ecs {
 	} // namespace
 
 	void ActionSystem::update(float deltaTime) {
+		// Actions advance on game time, so fast-forward (3x/10x) speeds up work and pause
+		// freezes it. TimeSystem is always registered in-game; unit tools/tests that omit it
+		// fall back to real time (scale 1.0), keeping action durations equal to seconds there.
+		float timeScale = 1.0F;
+		if (auto* timeSystem = world->tryGetSystem<TimeSystem>()) {
+			timeScale = timeSystem->effectiveTimeScale();
+		}
+		const float scaledDt = deltaTime * timeScale;
+
 		// Process all colonists with the required components.
 		//
 		// Action Interruption Policy: Once an action starts, it runs to completion.
@@ -96,10 +106,10 @@ namespace ecs {
 			// Construction actions advance continuously by workDone, not by elapsed/duration.
 			// A failed start (e.g. blueprint gone) clears the action, so guard on the effect.
 			if (action.hasProgressEffect()) {
-				advanceConstructionWork(deltaTime, action);
+				advanceConstructionWork(scaledDt, action);
 			} else {
 				// Process the action
-				processAction(deltaTime, action, needs, task);
+				processAction(scaledDt, action, needs, task);
 			}
 
 			// Update WorkQueue progress for craft actions (for UI progress bar)

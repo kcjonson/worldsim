@@ -22,6 +22,8 @@ ColonistListItem::ColonistListItem(const Args& args)
 	, name(args.colonist.name)
 	, firstName(firstNameOf(args.colonist.name))
 	, mood(args.colonist.mood)
+	, activity(args.colonist.activity)
+	, activityProgress(args.colonist.activityProgress)
 	, selected(args.isSelected)
 	, onSelect(args.onSelect) {
 	size = {args.width, args.height};
@@ -38,6 +40,8 @@ void ColonistListItem::setColonistData(const adapters::ColonistData& data) {
 	name = data.name;
 	firstName = firstNameOf(data.name);
 	mood = data.mood;
+	activity = data.activity;
+	activityProgress = data.activityProgress;
 }
 
 void ColonistListItem::render() {
@@ -94,21 +98,22 @@ void ColonistListItem::render() {
 		.vAlign = Foundation::VerticalAlign::Top,
 		.boxWidth = infoW});
 
-	// Mood meter (track + tone-colored fill).
-	constexpr float kBarH = 4.0F;
-	const float barY = p.y + h - kPad - kBarH;
-	drawRect(Renderer::Primitives::RectArgs{
-		.bounds = {infoX, barY, infoW, kBarH},
-		.style = {.fill = UI::bg_inset,
-				  .border = Foundation::BorderStyle{
-					  .color = UI::line_hairline, .width = UI::bw, .cornerRadius = UI::r_sm, .position = Foundation::BorderPosition::Inside}}});
-	if (moodRatio > 0.0F) {
-		drawRect(Renderer::Primitives::RectArgs{
-			.bounds = {infoX, barY, infoW * moodRatio, kBarH},
-			.style = {.fill = moodCol,
-					  .border = Foundation::BorderStyle{
-						  .color = moodCol, .width = 0.0F, .cornerRadius = UI::r_sm, .position = Foundation::BorderPosition::Inside}}});
-	}
+	// Activity meter: current task label + progress. Mood now reads from the avatar
+	// tint and the percentage above (matching the roster mock), so the bottom bar is
+	// free to carry the task. Empty track while idle or still walking to the work.
+	constexpr float kMeterH = 16.0F;  // UI::Size::Sm inline height
+	const bool idle = activity.empty();
+	const bool acting = activityProgress >= 0.0F;
+	UI::ProgressBar(UI::ProgressBar::Args{
+		.position = {infoX, p.y + h - kPad - kMeterH},
+		.width = infoW,
+		.value = acting ? activityProgress : 0.0F,
+		.tone = idle ? UI::Tone::Default : UI::Tone::Accent,
+		.label = idle ? "Idle" : activity,
+		.valueText = acting ? std::to_string(static_cast<int>(activityProgress * 100.0F)) + "%" : "",
+		.size = UI::Size::Sm,
+		.inlineLabel = true,
+	}).render();
 }
 
 bool ColonistListItem::handleEvent(UI::InputEvent& event) {
