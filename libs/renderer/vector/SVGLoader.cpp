@@ -176,7 +176,9 @@ void appendShapeMesh(const LoadedSVGShape& shape, TessellatedMesh& outMesh) {
 	const bool hasGradient = (shape.gradient.type != GradientFill::Type::None);
 
 	TessellatorOptions options;
-	options.fanFromCentroid = hasGradient; // interior sample point so radial fills show a center
+	// Only honored for a single subpath (where a convex fan may apply); multi-subpath shapes go
+	// through the sweep, which ignores it. Setting it there would be an accepted-but-dropped option.
+	options.fanFromCentroid = hasGradient && shape.paths.size() == 1;
 
 	// Tessellate all of a shape's subpaths together so the nonzero fill rule carves holes where
 	// subpaths overlap (the SVG hole convention), instead of filling each subpath solid. The
@@ -203,6 +205,13 @@ void appendShapeMesh(const LoadedSVGShape& shape, TessellatedMesh& outMesh) {
 	}
 	if (!ok) {
 		LOG_WARNING(Renderer, "appendShapeMesh: failed to tessellate shape (%zu subpaths)", shape.paths.size());
+		return;
+	}
+
+	// Indices are 16-bit and accumulate across every shape appended to this mesh.
+	constexpr size_t kMaxMeshVertices = 65535;
+	if (outMesh.vertices.size() + shapeMesh.vertices.size() > kMaxMeshVertices) {
+		LOG_WARNING(Renderer, "appendShapeMesh: mesh would exceed %zu vertices; dropping shape", kMaxMeshVertices);
 		return;
 	}
 

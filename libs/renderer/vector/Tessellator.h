@@ -14,9 +14,10 @@ namespace renderer {
 		// flattened before tessellation today.
 		float curveFlatteningTolerance = 0.5F;
 
-		// For convex shapes, insert a centroid vertex and fan from it. This gives an interior
-		// sample point so per-vertex gradient fills (especially radial) can show their center,
-		// instead of fanning from a perimeter vertex where every vertex is the same edge color.
+		// For a single convex contour, insert a centroid vertex and fan from it. This gives an
+		// interior sample point so per-vertex gradient fills (especially radial) can show their
+		// center, instead of fanning from a perimeter vertex where every vertex is the edge color.
+		// Ignored for concave or multi-contour input (those go through the sweep).
 		bool fanFromCentroid = false;
 	};
 

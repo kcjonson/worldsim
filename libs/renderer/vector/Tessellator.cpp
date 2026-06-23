@@ -45,7 +45,10 @@ namespace renderer {
 		// Fan from an inserted centroid: one interior sample point so per-vertex gradient fills
 		// can render a center. Convex (or star-convex) only.
 		void tessellateCentroidFan(const std::vector<Foundation::Vec2>& vertices, TessellatedMesh& outMesh) {
-			const size_t	 n = vertices.size();
+			const size_t n = vertices.size();
+			// Polygon centroid: an approximation of a radial gradient's center (exact only when
+			// the gradient origin sits at the centroid). Good enough for the symmetric fills this
+			// path serves; off-center radials get an interpolated, not placed, bright spot.
 			Foundation::Vec2 centroid{0.0F, 0.0F};
 			for (const auto& v : vertices) {
 				centroid.x += v.x;
@@ -209,6 +212,14 @@ namespace renderer {
 
 		if (path.vertices.size() < 3) {
 			LOG_ERROR(Renderer, "Tessellator: Path must have at least 3 vertices");
+			return false;
+		}
+		// Output indices are 16-bit; cap the input here so all three paths (both fans and the
+		// sweep) are covered. The sweep can still add intersection vertices, so it keeps its own
+		// post-tessellation backstop.
+		if (path.vertices.size() > kMaxOutputVertices) {
+			LOG_ERROR(Renderer, "Tessellator: input exceeds %zu vertices (%zu)", kMaxOutputVertices,
+					  path.vertices.size());
 			return false;
 		}
 		if (!path.isClosed) {
