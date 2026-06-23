@@ -100,13 +100,16 @@ namespace {
 } // namespace
 
 // A query before any mesh is built returns nullopt (no inputs wired / first frame).
+// isReachable returns true when there is no mesh: "can't prove unreachable."
+// requestPath still returns nullopt because there is nothing to path over.
 TEST_F(NavigationSystemTest, NoMeshBeforeBuildReturnsNullopt) {
 	World world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
 
 	EXPECT_FALSE(sys.hasMesh());
 	EXPECT_FALSE(sys.requestPath(kOutside, kInside, kAgentRadius).has_value());
-	EXPECT_FALSE(sys.isReachable(kOutside, kInside, kAgentRadius));
+	// No-mesh policy: isReachable cannot prove unreachable, so it returns true.
+	EXPECT_TRUE(sys.isReachable(kOutside, kInside, kAgentRadius));
 }
 
 // update() with nothing wired is a safe no-op, and a query still returns nullopt.
@@ -311,6 +314,53 @@ TEST_F(NavigationSystemTest, BeliefFilterGatesQueryVsTruth) {
 	const geometry::nav::BeliefFilter doorBelief{&knownWalls, &knownDoors};
 	EXPECT_TRUE(sys.requestPath(kOutside, kInside, kAgentRadius, doorBelief).has_value())
 		<< "knowing the walls and the door should route through it";
+}
+
+// --- isReachable semantics ---------------------------------------------------
+//
+// isReachable uses geometry::nav::reachable (O(log n)) rather than building a
+// full path. Semantics: false = DEFINITELY unreachable (sound), true = MAYBE
+// reachable (over-approximation). No-mesh => always true.
+
+// Reachable goal agrees with requestPath (both true).
+TEST_F(NavigationSystemTest, IsReachableTrueForReachableGoal) {
+	ConstructionWorld cw;
+	buildRoom(cw, /*withOpening=*/true, /*pathableOpening=*/true);
+
+	World world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	sys.setConstructionWorld(&cw);
+	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
+
+	EXPECT_TRUE(sys.isReachable(kOutside, kInside, kAgentRadius));
+	EXPECT_TRUE(sys.requestPath(kOutside, kInside, kAgentRadius).has_value());
+}
+
+// Walled-off goal: isReachable returns false, requestPath returns nullopt.
+TEST_F(NavigationSystemTest, IsReachableFalseForWalledOffGoal) {
+	ConstructionWorld cw;
+	buildRoom(cw, /*withOpening=*/false, /*pathableOpening=*/false);
+
+	World world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	sys.setConstructionWorld(&cw);
+	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
+
+	// reachable() should detect the disconnected component and return false.
+	EXPECT_FALSE(sys.isReachable(kOutside, kInside, kAgentRadius));
+	// requestPath must also return nullopt (short-circuit already there via pathThrough).
+	EXPECT_FALSE(sys.requestPath(kOutside, kInside, kAgentRadius).has_value());
+}
+
+// No-mesh: isReachable returns true regardless of endpoints (can't prove unreachable).
+TEST_F(NavigationSystemTest, IsReachableTrueWhenNoMesh) {
+	World world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+
+	ASSERT_FALSE(sys.hasMesh());
+	EXPECT_TRUE(sys.isReachable(kOutside, kInside, kAgentRadius));
+	// requestPath is still nullopt with no mesh.
+	EXPECT_FALSE(sys.requestPath(kOutside, kInside, kAgentRadius).has_value());
 }
 
 // generation() bumps each time a freshly built mesh is swapped in.

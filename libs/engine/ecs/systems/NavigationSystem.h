@@ -93,7 +93,19 @@ class NavigationSystem : public ISystem {
 	requestPath(glm::vec2 startMeters, glm::vec2 goalMeters, float agentRadiusMeters,
 				geometry::nav::BeliefFilter belief = {}) const;
 
-	// True if a path of the given clearance exists from start to goal under `belief`.
+	// Sound reachability pre-filter: delegates to geometry::nav::reachable (O(log n)
+	// component + bottleneck check) rather than building a full path.
+	//
+	// Semantics are asymmetric by design:
+	//   false => DEFINITELY unreachable (off-mesh endpoint, disconnected component, or
+	//            widest bottleneck < disc diameter). A false never hides a real path.
+	//   true  => MAYBE reachable (over-approximation). Caller must run requestPath for
+	//            certainty if it needs the actual polyline.
+	//
+	// No-mesh policy: when hasMesh() is false this returns true ("can't prove
+	// unreachable"). Colonists legitimately beeline while the mesh is building or
+	// when operating outdoors; a goal-validity pre-filter must not reject everything
+	// during that window.
 	[[nodiscard]] bool isReachable(glm::vec2 startMeters, glm::vec2 goalMeters, float agentRadiusMeters,
 								   geometry::nav::BeliefFilter belief = {}) const;
 

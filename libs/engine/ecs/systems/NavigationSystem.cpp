@@ -198,7 +198,20 @@ namespace ecs {
 
 	bool NavigationSystem::isReachable(glm::vec2 startMeters, glm::vec2 goalMeters, float agentRadiusMeters,
 									   gnav::BeliefFilter belief) const {
-		return requestPath(startMeters, goalMeters, agentRadiusMeters, belief).has_value();
+		// No mesh yet: can't prove unreachable, so don't reject. Colonists beeline
+		// legitimately during startup/outdoor play; blocking everything until the first
+		// mesh lands would starve them of any movement. Callers that need certainty
+		// can check hasMesh() first.
+		if (m_mesh.triangles.empty()) {
+			return true;
+		}
+
+		const geometry::Vec2i64 startMm = engine::nav::toMm(startMeters);
+		const geometry::Vec2i64 goalMm  = engine::nav::toMm(goalMeters);
+		const std::int64_t radiusMm =
+			static_cast<std::int64_t>(std::llround(static_cast<double>(agentRadiusMeters) * 1000.0));
+
+		return gnav::reachable(m_mesh, startMm, goalMm, radiusMm, belief);
 	}
 
 } // namespace ecs
