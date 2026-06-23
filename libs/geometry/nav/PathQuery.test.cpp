@@ -602,3 +602,133 @@ TEST(PathQuery, TerrainSentinelBlocksEvenWithEmptyBelief) {
 	EXPECT_FALSE(pathThrough(m, below, above, 0, belief).reachable);
 	EXPECT_FALSE(pathThrough(m, below, above, 0).reachable);
 }
+
+// ---------------------------------------------------------------------------
+// Grid-accelerated locateTriangle: correctness vs brute-force linear scan.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+	// Brute-force linear scan over all triangles; returns the lowest-index match.
+	std::int32_t locateLinear(const NavMesh& mesh, const Vec2i64& p) {
+		for (std::int32_t ti = 0; ti < static_cast<std::int32_t>(mesh.triangles.size()); ++ti) {
+			const NavTriangle& t  = mesh.triangles[ti];
+			const Vec2i64&	   v0 = mesh.vertices[t.v[0]];
+			const Vec2i64&	   v1 = mesh.vertices[t.v[1]];
+			const Vec2i64&	   v2 = mesh.vertices[t.v[2]];
+			if (orientation(v0, v1, p) != Orientation::Clockwise &&
+				orientation(v1, v2, p) != Orientation::Clockwise &&
+				orientation(v2, v0, p) != Orientation::Clockwise) {
+				return ti;
+			}
+		}
+		return -1;
+	}
+
+	// Simple LCG (Knuth multiplicative): deterministic pseudo-random int64 sequence.
+	// Seeded with a constant so tests are reproducible.
+	struct LCG {
+		std::uint64_t state;
+		explicit LCG(std::uint64_t seed) : state(seed) {}
+		std::int64_t next(std::int64_t lo, std::int64_t hi) {
+			// LCG parameters from Knuth MMIX.
+			state = state * UINT64_C(6364136223846793005) + UINT64_C(1442695040888963407);
+			// Map the high 32 bits to [lo, hi].
+			const std::uint64_t range = static_cast<std::uint64_t>(hi - lo) + 1;
+			return lo + static_cast<std::int64_t>((state >> 32) % range);
+		}
+	};
+
+} // namespace
+
+TEST(LocateGrid, EmptyMeshReturnsMinusOne) {
+	// An empty NavMesh (no polygons -> no triangles) must return -1 for any point.
+	NavMesh empty;
+	EXPECT_EQ(locateTriangle(empty, Vec2i64{0, 0}), -1);
+	EXPECT_EQ(locateTriangle(empty, Vec2i64{500, 500}), -1);
+	EXPECT_EQ(locateTriangle(empty, Vec2i64{-1000, 999}), -1);
+}
+
+TEST(LocateGrid, GridMatchesLinearScanFuzzed) {
+	// Over a mesh with a central obstacle, compare grid locate vs brute-force linear
+	// scan for 500 deterministically-generated points spanning and surrounding the
+	// mesh AABB. The grid must agree for every point, including off-mesh (-1).
+	NavMeshInput in;
+	in.polygons.push_back(border({{0, 0}, {3000, 0}, {3000, 3000}, {0, 3000}}));
+	in.polygons.push_back(blocked({{1000, 1000}, {2000, 1000}, {2000, 2000}, {1000, 2000}}, 5));
+	NavMesh m = buildNavMesh(in);
+	ASSERT_FALSE(m.triangles.empty());
+
+	LCG rng(0xDEADBEEF42ULL);
+	// Points drawn from a range wider than the mesh AABB to include off-mesh points.
+	for (int i = 0; i < 500; ++i) {
+		const Vec2i64 p{rng.next(-500, 3500), rng.next(-500, 3500)};
+		EXPECT_EQ(locateTriangle(m, p), locateLinear(m, p))
+			<< "mismatch at p=(" << p.x << "," << p.y << ") i=" << i;
+	}
+}
+
+TEST(LocateGrid, SharedEdgeTieBreakMatchesLinearScan) {
+	// A point exactly on a shared edge between two triangles must resolve to the
+	// same (lowest-index) triangle as the linear scan.
+	NavMeshInput in;
+	in.polygons.push_back(border({{0, 0}, {2000, 0}, {2000, 2000}, {0, 2000}}));
+	NavMesh m = buildNavMesh(in);
+	ASSERT_GE(m.triangles.size(), 2u);
+
+	// Find a point on a shared interior edge by using a triangle's centroid of its
+	// shared edge.  Walk all triangles, find one with a neighbor, use the midpoint
+	// of their shared edge (which lies exactly on both triangles).
+	bool foundShared = false;
+	for (std::int32_t ti = 0; ti < static_cast<std::int32_t>(m.triangles.size()); ++ti) {
+		const NavTriangle& t = m.triangles[ti];
+		for (int e = 0; e < 3; ++e) {
+			if (t.neighbor[e] < 0) continue;
+			// Midpoint of shared edge (v[e], v[(e+1)%3]).
+			const Vec2i64& a = m.vertices[t.v[e]];
+			const Vec2i64& b = m.vertices[t.v[(e + 1) % 3]];
+			Vec2i64 mid{(a.x + b.x) / 2, (a.y + b.y) / 2};
+			const std::int32_t grid   = locateTriangle(m, mid);
+			const std::int32_t linear = locateLinear(m, mid);
+			EXPECT_EQ(grid, linear)
+				<< "shared-edge midpoint (" << mid.x << "," << mid.y
+				<< "): grid=" << grid << " linear=" << linear;
+			foundShared = true;
+			// Test one shared edge; the property must hold for all, but one is enough
+			// for this targeted test (the fuzz test covers the rest).
+			break;
+		}
+		if (foundShared) break;
+	}
+	EXPECT_TRUE(foundShared) << "expected at least one shared interior edge";
+}
+
+TEST(LocateGrid, SharedVertexTieBreakMatchesLinearScan) {
+	// A point exactly at a mesh vertex (shared by multiple triangles) must also
+	// agree with the linear scan's lowest-index result.
+	NavMeshInput in;
+	in.polygons.push_back(border({{0, 0}, {2000, 0}, {2000, 2000}, {0, 2000}}));
+	NavMesh m = buildNavMesh(in);
+	ASSERT_FALSE(m.vertices.empty());
+
+	// Test each vertex.
+	for (std::size_t vi = 0; vi < m.vertices.size(); ++vi) {
+		const Vec2i64& v = m.vertices[vi];
+		const std::int32_t grid   = locateTriangle(m, v);
+		const std::int32_t linear = locateLinear(m, v);
+		EXPECT_EQ(grid, linear)
+			<< "vertex[" << vi << "]=(" << v.x << "," << v.y
+			<< "): grid=" << grid << " linear=" << linear;
+	}
+}
+
+TEST(LocateGrid, OffMeshPointsReturnMinusOne) {
+	NavMeshInput in;
+	in.polygons.push_back(border({{0, 0}, {1000, 0}, {1000, 1000}, {0, 1000}}));
+	NavMesh m = buildNavMesh(in);
+
+	EXPECT_EQ(locateTriangle(m, Vec2i64{-1, 500}), -1);
+	EXPECT_EQ(locateTriangle(m, Vec2i64{500, -1}), -1);
+	EXPECT_EQ(locateTriangle(m, Vec2i64{1001, 500}), -1);
+	EXPECT_EQ(locateTriangle(m, Vec2i64{500, 1001}), -1);
+}

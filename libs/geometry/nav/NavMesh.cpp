@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <map>
 #include <unordered_map>
@@ -555,6 +556,84 @@ namespace geometry::nav {
 		for (std::int32_t ti = 0; ti < static_cast<std::int32_t>(result.triangles.size()); ++ti) {
 			for (int apex = 0; apex < 3; ++apex) {
 				result.triangles[ti].edgePairWidthMm[apex] = calculateEdgePairWidth(result, widthScratch, ti, apex);
+			}
+		}
+
+		// 9. Uniform-grid spatial index for locateTriangle.
+		// Cell size heuristic: target roughly one triangle per cell by setting
+		//   cellSize = max(1, floor(sqrt(area / max(1, triangleCount))))
+		// where area = AABB area of the whole mesh. This keeps the grid from being
+		// either too coarse (many candidates per cell) or so fine it wastes memory.
+		// Clamped to [1, 1e9] so the cell count stays sane for any reasonable mesh.
+		if (!result.triangles.empty()) {
+			// Compute mesh AABB over all vertices.
+			Vec2i64 mn = result.vertices[0];
+			Vec2i64 mx = result.vertices[0];
+			for (const Vec2i64& v : result.vertices) {
+				if (v.x < mn.x) mn.x = v.x;
+				if (v.y < mn.y) mn.y = v.y;
+				if (v.x > mx.x) mx.x = v.x;
+				if (v.y > mx.y) mx.y = v.y;
+			}
+
+			const std::int64_t spanX = mx.x - mn.x;
+			const std::int64_t spanY = mx.y - mn.y;
+			// Area as double; exact int would overflow for large mm coordinates.
+			const double area = static_cast<double>(spanX) * static_cast<double>(spanY);
+			const double n	  = static_cast<double>(result.triangles.size());
+			// cellSize >= 1 (integer mm), <= 1e9 (avoids grid of 1 cell being enormous).
+			const std::int64_t cellSize = static_cast<std::int64_t>(
+				std::max(1.0, std::min(1.0e9, std::floor(std::sqrt(area / std::max(1.0, n))))));
+
+			const std::int32_t cols = static_cast<std::int32_t>((spanX + cellSize - 1) / cellSize) + 1;
+			const std::int32_t rows = static_cast<std::int32_t>((spanY + cellSize - 1) / cellSize) + 1;
+
+			// For each cell collect overlapping triangle indices, then sort ascending
+			// (so within a cell the linear-scan tie-break is reproduced: lowest index wins).
+			const std::int64_t ncells = static_cast<std::int64_t>(cols) * rows;
+			std::vector<std::vector<std::int32_t>> perCell(static_cast<std::size_t>(ncells));
+
+			for (std::int32_t ti = 0; ti < static_cast<std::int32_t>(result.triangles.size()); ++ti) {
+				const NavTriangle& tri = result.triangles[ti];
+				// Triangle AABB in vertex-space.
+				std::int64_t txMin = result.vertices[tri.v[0]].x;
+				std::int64_t txMax = txMin;
+				std::int64_t tyMin = result.vertices[tri.v[0]].y;
+				std::int64_t tyMax = tyMin;
+				for (int k = 1; k < 3; ++k) {
+					const Vec2i64& vk = result.vertices[tri.v[k]];
+					if (vk.x < txMin) txMin = vk.x;
+					if (vk.x > txMax) txMax = vk.x;
+					if (vk.y < tyMin) tyMin = vk.y;
+					if (vk.y > tyMax) tyMax = vk.y;
+				}
+				// Map to cell range (clamp to grid bounds).
+				const std::int32_t c0 = static_cast<std::int32_t>((txMin - mn.x) / cellSize);
+				const std::int32_t c1 = static_cast<std::int32_t>((txMax - mn.x) / cellSize);
+				const std::int32_t r0 = static_cast<std::int32_t>((tyMin - mn.y) / cellSize);
+				const std::int32_t r1 = static_cast<std::int32_t>((tyMax - mn.y) / cellSize);
+				for (std::int32_t r = r0; r <= r1 && r < rows; ++r) {
+					for (std::int32_t c = c0; c <= c1 && c < cols; ++c) {
+						perCell[static_cast<std::size_t>(r * cols + c)].push_back(ti);
+					}
+				}
+			}
+
+			// Sort each cell's candidates ascending and build CSR.
+			NavGrid& g = result.grid;
+			g.minPt	   = mn;
+			g.maxPt	   = mx;
+			g.cellSize = cellSize;
+			g.cols	   = cols;
+			g.rows	   = rows;
+			g.cellStart.resize(static_cast<std::size_t>(ncells) + 1);
+			g.cellStart[0] = 0;
+			for (std::int64_t ci = 0; ci < ncells; ++ci) {
+				std::vector<std::int32_t>& cell = perCell[static_cast<std::size_t>(ci)];
+				std::sort(cell.begin(), cell.end());
+				g.cellStart[static_cast<std::size_t>(ci) + 1] =
+					g.cellStart[static_cast<std::size_t>(ci)] + static_cast<std::int32_t>(cell.size());
+				g.candidates.insert(g.candidates.end(), cell.begin(), cell.end());
 			}
 		}
 

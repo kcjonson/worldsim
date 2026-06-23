@@ -110,9 +110,26 @@ namespace geometry::nav {
 		std::int64_t faceOpening = kNoOpening;
 	};
 
+	// Uniform-grid spatial index over the triangle set, built by buildNavMesh.
+	// Each cell stores the indices of candidate triangles whose AABBs overlap it,
+	// in ascending order so locateTriangle reproduces the linear scan's lowest-index
+	// tie-break for points on shared edges.
+	struct NavGrid {
+		Vec2i64					 minPt;			// AABB min of all vertices (mm)
+		Vec2i64					 maxPt;			// AABB max of all vertices (mm)
+		std::int64_t			 cellSize = 1;	// cell side length (mm)
+		std::int32_t			 cols	  = 0;	// number of cells along X
+		std::int32_t			 rows	  = 0;	// number of cells along Y
+		// CSR-style: candidates for cell (r*cols+c) are cells[cellStart[r*cols+c] ..
+		// cellStart[r*cols+c+1]).  Length == cols*rows+1.
+		std::vector<std::int32_t> cellStart;	// prefix sums into candidates
+		std::vector<std::int32_t> candidates;	// triangle indices, ascending within each cell
+	};
+
 	struct NavMesh {
 		std::vector<Vec2i64>	 vertices;
 		std::vector<NavTriangle> triangles;
+		NavGrid					 grid;
 	};
 
 	// Build the navmesh from tagged input. A walkable face whose triangulation

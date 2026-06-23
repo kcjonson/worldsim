@@ -150,8 +150,29 @@ namespace geometry::nav {
 	} // namespace
 
 	std::int32_t locateTriangle(const NavMesh& mesh, const Vec2i64& p) {
-		for (std::int32_t ti = 0; ti < static_cast<std::int32_t>(mesh.triangles.size()); ++ti) {
-			const NavTriangle& t  = mesh.triangles[ti];
+		const NavGrid& g = mesh.grid;
+		// Empty mesh or grid not built (no triangles): off-mesh.
+		if (g.cols == 0 || g.rows == 0) {
+			return -1;
+		}
+		// Reject p outside the mesh AABB immediately.
+		if (p.x < g.minPt.x || p.y < g.minPt.y || p.x > g.maxPt.x || p.y > g.maxPt.y) {
+			return -1;
+		}
+		// Map p to its grid cell (safe: p is within [minPt, maxPt]).
+		const std::int32_t col = static_cast<std::int32_t>((p.x - g.minPt.x) / g.cellSize);
+		const std::int32_t row = static_cast<std::int32_t>((p.y - g.minPt.y) / g.cellSize);
+		// Clamp to valid cell range (can happen when p == maxPt exactly).
+		const std::int32_t c = col < g.cols ? col : g.cols - 1;
+		const std::int32_t r = row < g.rows ? row : g.rows - 1;
+		const std::int32_t cellIdx = r * g.cols + c;
+		const std::int32_t begin   = g.cellStart[static_cast<std::size_t>(cellIdx)];
+		const std::int32_t end	   = g.cellStart[static_cast<std::size_t>(cellIdx) + 1];
+		// Candidates are stored in ascending triangle-index order; first match reproduces
+		// the linear scan's lowest-index tie-break for points on shared edges.
+		for (std::int32_t i = begin; i < end; ++i) {
+			const std::int32_t ti = g.candidates[static_cast<std::size_t>(i)];
+			const NavTriangle& t  = mesh.triangles[static_cast<std::size_t>(ti)];
 			const Vec2i64&	   v0 = mesh.vertices[t.v[0]];
 			const Vec2i64&	   v1 = mesh.vertices[t.v[1]];
 			const Vec2i64&	   v2 = mesh.vertices[t.v[2]];
