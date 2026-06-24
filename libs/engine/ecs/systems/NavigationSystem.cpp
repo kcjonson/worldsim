@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <functional>
 
 namespace ecs {
 
@@ -51,6 +52,44 @@ namespace ecs {
 		return clamped;
 	}
 
+	std::uint64_t NavigationSystem::areaChunkSignature(geometry::Vec2i64 center, std::int64_t halfExtent) const {
+		if (processedChunks == nullptr) {
+			return 0; // headless / construction-only: this trigger is inert
+		}
+
+		// Derive the chunk-coordinate range overlapping the area AABB the SAME way
+		// buildInput does: floor/ceil the area bounds to tiles (+/-1 margin), then map the
+		// corner tiles to chunk coords. The area covers at most ~2x2 chunks at 64 m, so the
+		// loop below is trivially cheap.
+		const geometry::Vec2i64 minMm{center.x - halfExtent, center.y - halfExtent};
+		const geometry::Vec2i64 maxMm{center.x + halfExtent, center.y + halfExtent};
+		const double	   tileMm	= static_cast<double>(engine::world::kTileSize) * 1000.0;
+		const std::int64_t tileMinX = static_cast<std::int64_t>(std::floor(static_cast<double>(minMm.x) / tileMm)) - 1;
+		const std::int64_t tileMinY = static_cast<std::int64_t>(std::floor(static_cast<double>(minMm.y) / tileMm)) - 1;
+		const std::int64_t tileMaxX = static_cast<std::int64_t>(std::ceil(static_cast<double>(maxMm.x) / tileMm)) + 1;
+		const std::int64_t tileMaxY = static_cast<std::int64_t>(std::ceil(static_cast<double>(maxMm.y) / tileMm)) + 1;
+		const engine::world::ChunkCoordinate cMin =
+			engine::world::worldToChunk({static_cast<float>(tileMinX), static_cast<float>(tileMinY)});
+		const engine::world::ChunkCoordinate cMax =
+			engine::world::worldToChunk({static_cast<float>(tileMaxX), static_cast<float>(tileMaxY)});
+
+		// XOR-fold a per-coord hash over the in-area coords PRESENT in the processed set.
+		// XOR is order-independent (the loop order can't perturb the result) and a coord
+		// joining/leaving the set flips its term, so the signature changes iff the in-area
+		// processed set changes.
+		std::uint64_t sig = 0;
+		const std::hash<engine::world::ChunkCoordinate> coordHash;
+		for (std::int32_t cy = cMin.y; cy <= cMax.y; ++cy) {
+			for (std::int32_t cx = cMin.x; cx <= cMax.x; ++cx) {
+				const engine::world::ChunkCoordinate coord{cx, cy};
+				if (processedChunks->find(coord) != processedChunks->end()) {
+					sig ^= static_cast<std::uint64_t>(coordHash(coord));
+				}
+			}
+		}
+		return sig;
+	}
+
 	bool NavigationSystem::needsRebuild(std::int64_t clampedHalfExtent) const {
 		if (!haveBuiltOnce) {
 			return true;
@@ -76,6 +115,13 @@ namespace ecs {
 			}
 		} else if (clampedHalfExtent > 0) {
 			return true; // first real extent after a zero-extent build
+		}
+		// In-area placement changed: a chunk overlapping the current clamped area joined or
+		// left the processed set since the build. Without this, a stationary player whose
+		// spawn-ring chunks finish placement after the first build would keep a mesh missing
+		// every obstacle from those chunks until they panned/zoomed. Inert when headless.
+		if (areaChunkSignature(requestedCenter, clampedHalfExtent) != builtAreaChunkSignature) {
+			return true;
 		}
 		return false;
 	}
@@ -156,10 +202,13 @@ namespace ecs {
 		}
 
 		// Record what we snapshotted so the next frame's needsRebuild compares
-		// against THIS input's version, not a later-mutated world.
+		// against THIS input's version, not a later-mutated world. The chunk signature is
+		// computed over the SAME (center, clampedHalfExtent) the check uses, so an unchanged
+		// world won't spuriously retrigger; a later in-area placement flips it and rebuilds.
 		builtVersion = constructionWorld->version();
 		builtCenter = requestedCenter;
 		builtHalfExtent = clampedHalfExtent;
+		builtAreaChunkSignature = areaChunkSignature(requestedCenter, clampedHalfExtent);
 		haveBuiltOnce = true;
 
 		// Heavy triangulation off the main thread; the lambda owns `input` by value

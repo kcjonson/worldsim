@@ -96,10 +96,13 @@ class NavigationSystem : public ISystem {
 		haveRequestedArea = true;
 	}
 
-	// Only fully-placed chunks feed the build; same signature VisionSystem uses. The
-	// processed-chunks set gates which chunks are queried for flora/water during the
-	// area sweep (a half-placed chunk in the area contributes nothing rather than a
-	// partial obstacle set).
+	// Same signature VisionSystem uses. `processed` is the set of chunks that have
+	// finished entity placement; it grows as spawn-ring chunks complete after the
+	// first build. It does NOT gate the gather (the area sweep reads chunk readiness
+	// directly through the ChunkManager); instead it drives needsRebuild -- when a
+	// chunk overlapping the BUILT area joins (or leaves) this set, the in-area
+	// obstacle set changed and the mesh must rebuild, so newly-placed flora/water from
+	// late-finishing chunks get carved in even while the camera holds still.
 	void setPlacementData(
 		engine::assets::PlacementExecutor*						  executor,
 		const std::unordered_set<engine::world::ChunkCoordinate>* processed) {
@@ -202,12 +205,21 @@ class NavigationSystem : public ISystem {
 	static constexpr float kViewportMargin = 1.3F;
 
   private:
-	// True if a rebuild is due: first build, world version change, or the built area
-	// has drifted far enough from the requested area.
+	// True if a rebuild is due: first build, world version change, the built area has
+	// drifted far enough from the requested area, OR the set of PROCESSED chunks
+	// overlapping the (clamped) area changed since the build (a late-finishing chunk
+	// inside the area, or an evicted one).
 	[[nodiscard]] bool needsRebuild(std::int64_t clampedHalfExtent) const;
 
 	// Clamp the requested half-extent to [min, max] and to the loaded-chunk extent.
 	[[nodiscard]] std::int64_t clampHalfExtent(std::int64_t requested) const;
+
+	// Order-independent hash of the processed chunks overlapping the square AABB
+	// centered at `center` with the given half-extent. Mirrors how buildInput derives
+	// the chunk-coordinate range from the area AABB, then XOR-folds a per-coord hash of
+	// each in-area coord present in *processedChunks. Returns 0 when processedChunks is
+	// null (headless / construction-only path: this rebuild trigger is then inert).
+	[[nodiscard]] std::uint64_t areaChunkSignature(geometry::Vec2i64 center, std::int64_t halfExtent) const;
 
 	// Half-extent fractional change that triggers a rebuild (0.20 = 20%).
 	static constexpr double kSizeChangeThreshold = 0.20;
@@ -238,6 +250,12 @@ class NavigationSystem : public ISystem {
 	// frame to decide whether the drift is large enough to warrant a new build.
 	geometry::Vec2i64 builtCenter{0, 0};
 	std::int64_t	  builtHalfExtent = 0;
+
+	// Signature of the processed chunks overlapping the BUILT area at launch. needsRebuild
+	// recomputes it for the current clamped area and rebuilds on a mismatch, so flora/water
+	// from chunks that finish placement after the first build still get carved in (the
+	// regression fix for a stationary player whose spawn-ring chunks place late).
+	std::uint64_t builtAreaChunkSignature = 0;
 
 	// Bumped on every mesh swap-in (see generation()). Drives NavPath staleness for the
 	// replan loop independently of ConstructionWorld::version() (which the system doesn't

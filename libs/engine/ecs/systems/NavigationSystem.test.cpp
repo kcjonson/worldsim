@@ -6,7 +6,10 @@
 
 #include "nav/NavCoords.h"
 
+#include <assets/AssetRegistry.h>
 #include <assets/ConstructionRegistry.h>
+#include <assets/placement/PlacementExecutor.h>
+#include <assets/placement/SpatialIndex.h>
 #include <construction/ConstructionWorld.h>
 
 #include <nav/PathQuery.h>
@@ -37,7 +40,14 @@ using engine::construction::kInvalidOpening;
 using engine::construction::OpeningId;
 using engine::construction::SegmentCommitResult;
 using engine::construction::SegmentId;
+using engine::assets::AssetDefinition;
+using engine::assets::AssetRegistry;
+using engine::assets::CollisionShapeType;
 using engine::assets::ConstructionRegistry;
+using engine::assets::PlacedEntity;
+using engine::assets::PlacementExecutor;
+using engine::assets::SpatialIndex;
+using engine::world::ChunkCoordinate;
 using geometry::Vec2i64;
 
 namespace {
@@ -753,7 +763,7 @@ TEST_F(NavigationSystemTest, HalfExtentClampedToMax) {
 	sys.setChunkManager(m_chunks.get());
 	sys.setConstructionWorld(&cw);
 
-	// Request 2000 m (2 000 000 mm): should be clamped to kMaxSimHalfExtentMm (200 m).
+	// Request 2000 m (2 000 000 mm): should be clamped to kMaxSimHalfExtentMm (64 m).
 	pushArea(sys, {0, 0}, 2000000);
 	ASSERT_TRUE(pumpUntilMesh(sys)) << "clamped-to-max mesh never built";
 	// The mesh AABB should not exceed kMaxSimHalfExtentMm * 2 on any axis.
@@ -761,6 +771,71 @@ TEST_F(NavigationSystemTest, HalfExtentClampedToMax) {
 	const std::int64_t span = std::max(a.maxX - a.minX, a.maxY - a.minY);
 	EXPECT_LE(span, NavigationSystem::kMaxSimHalfExtentMm * 2 + 2000) // +2 m tolerance for border
 		<< "mesh AABB must not exceed the clamped max extent";
+}
+
+// --- In-area placement-completion rebuild (stationary-load regression) --------
+//
+// The gather reads chunk readiness directly, but a chunk's flora/water can finish
+// placement AFTER the first build. needsRebuild keys off the processed-chunk set so
+// a chunk that joins the set while overlapping the BUILT area forces a rebuild --
+// otherwise a stationary player keeps a mesh missing every obstacle from spawn-ring
+// chunks that placed late, until they pan/zoom. (Regression introduced by scoping
+// the build to the simulation area; this is the fix.)
+TEST_F(NavigationSystemTest, InAreaPlacementCompletionTriggersRebuild) {
+	// A blocking tree def so its placement produces a real obstacle ring in the mesh.
+	AssetRegistry&	reg = AssetRegistry::Get();
+	AssetDefinition tree;
+	tree.defName			   = "Test_NavLatePlaceTree";
+	tree.collision.type		   = CollisionShapeType::Circle;
+	tree.collision.radiusMeters = 0.4F;
+	reg.registerTestDefinition(tree);
+
+	// Empty placement to start: no trees stored, no chunks in the processed set, so the
+	// first build's in-area chunk signature is empty.
+	PlacementExecutor					executor(reg);
+	std::unordered_set<ChunkCoordinate> processed;
+
+	ConstructionWorld cw; // empty: just terrain nav over the origin area
+
+	World			  world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	wireArea(sys); // ChunkManager + 60 m area at origin (clamped to 64 m)
+	sys.setPlacementData(&executor, &processed);
+	sys.setConstructionWorld(&cw);
+
+	ASSERT_TRUE(pumpUntilMesh(sys)) << "initial navmesh never built";
+	const std::uint64_t gen1	  = sys.generation();
+	const std::size_t	triBefore = sys.mesh().triangles.size();
+
+	// Now a spawn-ring chunk finishes placement: a blocking tree well inside the area
+	// (chunk (0,0), tile (10,10)) lands in the index and the chunk joins the processed
+	// set. The camera has NOT moved and the construction version is unchanged, so the
+	// signature flip is the ONLY thing that can trigger the rebuild.
+	const glm::vec2		  treeAt{10.0F, 10.0F};
+	const ChunkCoordinate coord = engine::world::worldToChunk({treeAt.x, treeAt.y});
+	SpatialIndex		  index;
+	PlacedEntity		  pe;
+	pe.defName	= "Test_NavLatePlaceTree";
+	pe.position = treeAt;
+	index.insert(pe);
+	engine::assets::AsyncChunkPlacementResult result;
+	result.coord		= coord;
+	result.spatialIndex = std::move(index);
+	executor.storeChunkResult(std::move(result));
+	processed.insert(coord);
+
+	// Pump until the signature-driven rebuild lands.
+	bool rebuilt = false;
+	for (int i = 0; i < 500 && !rebuilt; ++i) {
+		sys.update(0.0F);
+		rebuilt = sys.generation() != gen1;
+		std::this_thread::sleep_for(std::chrono::milliseconds(2));
+	}
+	ASSERT_TRUE(rebuilt) << "in-area placement completion must trigger a rebuild";
+	EXPECT_GT(sys.generation(), gen1) << "generation must bump on the placement-driven rebuild";
+	// The late tree is now carved in: the obstacle changed the triangulation.
+	EXPECT_NE(sys.mesh().triangles.size(), triBefore)
+		<< "the newly-placed in-area flora must change the mesh triangulation";
 }
 
 // --- Phase C: query LOD seam (inSimArea + isReachable off-area policy) -------

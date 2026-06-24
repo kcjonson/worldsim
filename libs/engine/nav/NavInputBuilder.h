@@ -101,15 +101,6 @@ namespace engine::nav {
 
 	// --- Assembler ---------------------------------------------------------------
 
-	// Assemble a full NavMeshInput from a set of loaded chunks plus the construction
-	// world: border derived from the chunks' combined bounds, then the water/flora/
-	// wall extractors concatenated. Null chunks and not-ready chunks are skipped.
-	// This is the straightforward synchronous assembler and the unit-test entry
-	// point; the async caching service is a separate step.
-	[[nodiscard]] geometry::nav::NavMeshInput buildInput(const std::vector<const world::Chunk*>& chunks,
-														 const assets::PlacementExecutor& placement, const assets::AssetRegistry& assetReg,
-														 const construction::ConstructionWorld& world, const assets::ConstructionRegistry& cfg);
-
 	// Area-scoped assembler: build a NavMeshInput for the square AABB centered at
 	// `areaCenterMm` with half-extent `areaRadiusMm` (both world-absolute mm). Unlike
 	// the chunk-set overload this ingests ONLY the obstacles touching the area, so the

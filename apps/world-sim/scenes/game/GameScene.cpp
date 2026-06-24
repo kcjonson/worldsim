@@ -751,9 +751,11 @@ namespace {
 				int vpH = 0;
 				Renderer::Primitives::getLogicalViewport(vpW, vpH);
 				Foundation::Rect vis = m_camera->getVisibleRect(vpW, vpH, kPixelsPerMeter);
-				// Half-diagonal of the visible rect * margin, converted to mm.
+				// True half-diagonal of the visible rect * margin, converted to mm. Using the
+				// corner distance (not max(w,h)*0.5) keeps the area covering the viewport
+				// corners regardless of aspect ratio. Clamped to kMaxSimHalfExtentMm downstream.
 				const float halfDiagMeters =
-					std::max(vis.width, vis.height) * 0.5F * ecs::NavigationSystem::kViewportMargin;
+					0.5F * std::sqrt(vis.width * vis.width + vis.height * vis.height) * ecs::NavigationSystem::kViewportMargin;
 				const auto halfExtentMm =
 					static_cast<std::int64_t>(std::llround(static_cast<double>(halfDiagMeters) * 1000.0));
 				const engine::world::WorldPosition pos = m_camera->position();

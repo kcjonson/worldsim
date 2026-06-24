@@ -457,58 +457,6 @@ namespace engine::nav {
 		return {std::move(ring), false, kProvenanceBorder};
 	}
 
-	gnav::NavMeshInput buildInput(const std::vector<const world::Chunk*>& chunks, const assets::PlacementExecutor& placement,
-								  const assets::AssetRegistry& assetReg, const construction::ConstructionWorld& world,
-								  const assets::ConstructionRegistry& cfg) {
-		gnav::NavMeshInput input;
-
-		// Border = combined bounds of the loaded chunks, in mm.
-		bool			  haveBounds = false;
-		geometry::Vec2i64 minMm{0, 0};
-		geometry::Vec2i64 maxMm{0, 0};
-		for (const world::Chunk* chunk : chunks) {
-			if (chunk == nullptr || !chunk->isReady()) {
-				continue;
-			}
-			const geometry::Vec2i64 origin = chunkOriginMm(chunk->coordinate());
-			const geometry::Vec2i64 far{origin.x + static_cast<std::int64_t>(world::kChunkSize) * kTileMm,
-										origin.y + static_cast<std::int64_t>(world::kChunkSize) * kTileMm};
-			if (!haveBounds) {
-				minMm	   = origin;
-				maxMm	   = far;
-				haveBounds = true;
-			} else {
-				minMm.x = std::min(minMm.x, origin.x);
-				minMm.y = std::min(minMm.y, origin.y);
-				maxMm.x = std::max(maxMm.x, far.x);
-				maxMm.y = std::max(maxMm.y, far.y);
-			}
-		}
-		if (haveBounds) {
-			input.polygons.push_back(borderRing(minMm, maxMm));
-		}
-
-		for (const world::Chunk* chunk : chunks) {
-			if (chunk == nullptr || !chunk->isReady()) {
-				continue;
-			}
-			std::vector<gnav::NavInputPolygon> waterPolys = extractWaterObstacles(*chunk);
-			for (gnav::NavInputPolygon& p : waterPolys) {
-				input.polygons.push_back(std::move(p));
-			}
-			const assets::SpatialIndex* index = placement.getChunkIndex(chunk->coordinate());
-			if (index != nullptr) {
-				std::vector<gnav::NavInputPolygon> flora = extractFloraObstacles(*index, assetReg);
-				for (gnav::NavInputPolygon& p : flora) {
-					input.polygons.push_back(std::move(p));
-				}
-			}
-		}
-
-		extractWalls(world, cfg, input.polygons, input.doors);
-		return input;
-	}
-
 	namespace {
 
 		// True when every vertex of `ring` lies strictly outside the AABB on the SAME
