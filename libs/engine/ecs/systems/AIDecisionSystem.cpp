@@ -323,7 +323,8 @@ namespace ecs {
 						const bool toBlueprint = goal->owner == GoalOwner::ConstructionGoalSystem;
 						for (uint32_t acceptedId : goal->acceptedDefNameIds) {
 							const auto& itemDefName = registry.getDefName(acceptedId);
-							uint32_t	carried = inventory.getQuantity(itemDefName);
+							// Hand-carried two-hand goods (a wood armful) count too, not just the pack.
+							uint32_t	carried = ecs::availableQuantity(inventory, itemDefName);
 							if (carried == 0) {
 								continue;
 							}
@@ -1133,7 +1134,8 @@ namespace ecs {
 			bool										  hasAllInputs = true;
 			std::vector<std::pair<std::string, uint32_t>> missingInputs; // defName, countNeeded
 			for (const auto& input : recipe->inputs) {
-				uint32_t have = inventory.getQuantity(input.defName);
+				// A colonist holding a wood armful in hand is ready to craft, not just one with a full pack.
+				uint32_t have = ecs::availableQuantity(inventory, input.defName);
 				if (have < input.count) {
 					hasAllInputs = false;
 					missingInputs.emplace_back(input.defName, input.count - have);
