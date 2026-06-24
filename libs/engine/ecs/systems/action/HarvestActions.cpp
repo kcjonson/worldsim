@@ -24,13 +24,21 @@ namespace ecs {
 
 	namespace {
 
+		/// The loose pile found at a position: the matched entity plus the live ResourceStack
+		/// to mutate. `stack` is nullptr (and `entity` kInvalidEntity) when no pile is there.
+		struct LoosePile {
+			EntityID	   entity = kInvalidEntity;
+			ResourceStack* stack = nullptr;
+		};
+
 		/// Find a loose ground pile of `defName` at `pos`: a world entity whose Appearance
 		/// defName matches and which carries a ResourceStack. Matches by position within the
-		/// same epsilon GameScene's remove-callback uses (~0.25 m). Returns the live
-		/// ResourceStack to mutate, or nullptr if no pile is there.
-		[[nodiscard]] ResourceStack* findLoosePile(World* world, const std::string& defName, glm::vec2 pos) {
+		/// same epsilon GameScene's remove-callback uses (~0.25 m). Returns the matched entity
+		/// id and its live ResourceStack, so a drained pile is removed by exact id rather than
+		/// re-scanned by position (two same-material piles inside the epsilon would alias).
+		[[nodiscard]] LoosePile findLoosePile(World* world, const std::string& defName, glm::vec2 pos) {
 			if (world == nullptr) {
-				return nullptr;
+				return {};
 			}
 			constexpr float kMatchEps = 0.25F;
 			for (auto [entity, entPos, appearance, stack] : world->view<Position, Appearance, ResourceStack>()) {
@@ -40,10 +48,10 @@ namespace ecs {
 				const float dx = entPos.value.x - pos.x;
 				const float dy = entPos.value.y - pos.y;
 				if (dx * dx + dy * dy <= kMatchEps * kMatchEps) {
-					return &stack;
+					return {entity, &stack};
 				}
 			}
-			return nullptr;
+			return {};
 		}
 
 		/// Does `sourceDefName` harvest from a finite resource pool (trees) rather than being
@@ -89,22 +97,24 @@ namespace ecs {
 		// Only a ground pickup (sourceDefName == itemDefName, e.g. "Wood" from "Wood") may take the
 		// loose-pile path. A tree-fell yields "Wood" from "Flora_Tree..."; its source differs, so it
 		// must NOT be diverted here -- otherwise a pile sitting on the fell spot would hijack the chop.
-		ResourceStack* pileStack = (collEff.sourceDefName == collEff.itemDefName)
-									   ? findLoosePile(world, collEff.itemDefName, collEff.sourcePosition)
-									   : nullptr;
-		if (pileStack) {
+		const LoosePile pile = (collEff.sourceDefName == collEff.itemDefName)
+								   ? findLoosePile(world, collEff.itemDefName, collEff.sourcePosition)
+								   : LoosePile{};
+		if (pile.stack) {
 			if (ecs::itemIsTwoHand(harvestRegistry, collEff.itemDefName)) {
-				added = ecs::addArmful(inventory, harvestRegistry, collEff.itemDefName, pileStack->quantity);
+				added = ecs::addArmful(inventory, harvestRegistry, collEff.itemDefName, pile.stack->quantity);
 			} else {
 				const uint32_t fit = ecs::cargoUnitsThatFit(inventory, harvestRegistry, collEff.itemDefName);
-				added = inventory.addItem(collEff.itemDefName, std::min(pileStack->quantity, fit));
+				added = inventory.addItem(collEff.itemDefName, std::min(pile.stack->quantity, fit));
 			}
 
-			pileStack->quantity -= added; // mutate the live component so the pile tracks what is left
+			pile.stack->quantity -= added; // mutate the live component so the pile tracks what is left
 
-			if (pileStack->quantity == 0) {
-				if (m_onRemoveEntity) {
-					m_onRemoveEntity(collEff.itemDefName, collEff.sourcePosition.x, collEff.sourcePosition.y);
+			if (pile.stack->quantity == 0) {
+				// Remove the exact entity we drained, not the first pile matching this position:
+				// two same-material piles within the match epsilon would otherwise alias.
+				if (m_onRemoveEntityById) {
+					m_onRemoveEntityById(pile.entity);
 				}
 				uint32_t pileDefNameId = harvestRegistry.getDefNameId(collEff.itemDefName);
 				memory.forgetWorldEntity({collEff.sourcePosition.x, collEff.sourcePosition.y}, pileDefNameId);
@@ -124,7 +134,7 @@ namespace ecs {
 					collEff.itemDefName.c_str(),
 					collEff.sourcePosition.x,
 					collEff.sourcePosition.y,
-					pileStack->quantity
+					pile.stack->quantity
 				);
 			}
 			// Fall through to the shared harvest-goal credit at the end; skip pool/single-shot.

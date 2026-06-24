@@ -819,23 +819,12 @@ class LoosePileHaulTest : public ::testing::Test {
 		engine::assets::AssetRegistry::Get().registerTestDefinition(std::move(woodDef));
 
 		auto& action = world->registerSystem<ActionSystem>();
-		// Mirror GameScene: the remove callback actually destroys the depleted pile entity
-		// (Position-matched), so a later Pickup no longer finds it.
-		action.setRemoveEntityCallback([this](const std::string& defName, float x, float y) {
+		// Mirror GameScene: a drained pile is removed by its exact entity id (not a position
+		// scan), so two same-material piles within the match epsilon can never alias.
+		action.setRemoveEntityByIdCallback([this](EntityID entity) {
 			++removeCalls;
-			lastRemoveDef = defName;
-			constexpr float kEps = 0.25F;
-			for (auto [ent, entPos, appearance] : world->view<Position, Appearance>()) {
-				if (appearance.defName != defName) {
-					continue;
-				}
-				const float dx = entPos.value.x - x;
-				const float dy = entPos.value.y - y;
-				if (dx * dx + dy * dy <= kEps * kEps) {
-					world->destroyEntity(ent);
-					break;
-				}
-			}
+			lastRemovedEntity = entity;
+			world->destroyEntity(entity);
 		});
 	}
 
@@ -884,7 +873,7 @@ class LoosePileHaulTest : public ::testing::Test {
 
 	std::unique_ptr<World> world;
 	int					   removeCalls = 0;
-	std::string			   lastRemoveDef;
+	EntityID			   lastRemovedEntity = kInvalidEntity;
 };
 
 // A 16-unit pile, colonist cap 35: the first Pickup lifts 14 (floor(35/2.5)) into the hands and
@@ -917,8 +906,42 @@ TEST_F(LoosePileHaulTest, ArmfulDrainsPileAcrossTwoPickupsThenRemoves) {
 
 	EXPECT_EQ(handHeldQuantity(*inventory, "Wood"), 2U) << "Last 2 units lifted into the hands";
 	EXPECT_EQ(removeCalls, 1) << "Depleted pile fires the remove callback exactly once";
-	EXPECT_EQ(lastRemoveDef, "Wood") << "Removal keyed by the material/pile defName";
+	EXPECT_EQ(lastRemovedEntity, pile) << "Removal targets the exact drained pile entity";
 	EXPECT_FALSE(world->isAlive(pile)) << "Pile entity destroyed once drained to zero";
+}
+
+// Two same-material piles sit on top of each other (within the 0.25 m match epsilon). Draining
+// ONE to zero must destroy that exact entity and leave the other intact -- a position-keyed
+// removal could orphan the emptied pile or delete the still-loaded one. Both piles here hold a
+// small count (5) so whichever findLoosePile matches first drains fully in one pickup, and the
+// removal must target that exact entity id; the other pile's count stays untouched.
+TEST_F(LoosePileHaulTest, TwoPilesAtSamePositionRemovesOnlyTheDrainedEntity) {
+	const glm::vec2 pilePos{1.0F, 1.0F};
+	// Both within epsilon of each other and the pickup position. 5 < the 14-unit armful cap, so a
+	// single pickup empties whichever pile is matched first (no need to know view order up front).
+	EntityID pileA = spawnPile(5, pilePos);
+	EntityID pileB = spawnPile(5, {pilePos.x + 0.1F, pilePos.y});
+
+	auto colonist = createColonist(pilePos);
+
+	pickUpPile(colonist, pilePos);
+
+	auto* inventory = world->getComponent<Inventory>(colonist);
+	EXPECT_EQ(handHeldQuantity(*inventory, "Wood"), 5U) << "The matched pile's 5 units were lifted in one armful";
+
+	// Exactly one pile drained to zero and was removed by id; the other is fully intact.
+	const bool aDrained = !world->isAlive(pileA);
+	const EntityID drained = aDrained ? pileA : pileB;
+	const EntityID survivor = aDrained ? pileB : pileA;
+
+	EXPECT_EQ(removeCalls, 1) << "Exactly one pile was removed";
+	EXPECT_EQ(lastRemovedEntity, drained) << "The removed entity is the one that drained to zero";
+	EXPECT_FALSE(world->isAlive(drained)) << "Drained pile destroyed";
+
+	ASSERT_TRUE(world->isAlive(survivor)) << "The other pile survives - not aliased by position";
+	auto* survivorStack = world->getComponent<ResourceStack>(survivor);
+	ASSERT_NE(survivorStack, nullptr);
+	EXPECT_EQ(survivorStack->quantity, 5U) << "Survivor's count is untouched";
 }
 
 // =============================================================================

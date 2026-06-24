@@ -52,6 +52,13 @@ public:
 	using RemoveEntityCallback = std::function<void(const std::string& defName, float x, float y)>;
 	void setRemoveEntityCallback(RemoveEntityCallback callback) { m_onRemoveEntity = std::move(callback); }
 
+	/// Set callback for removing a specific world entity by id.
+	/// Used when the system already holds the exact entity to remove (a drained loose pile),
+	/// so the app removes that entity directly instead of re-scanning by position - two
+	/// same-material piles within the match epsilon would otherwise alias each other.
+	using RemoveEntityByIdCallback = std::function<void(EntityID entity)>;
+	void setRemoveEntityByIdCallback(RemoveEntityByIdCallback callback) { m_onRemoveEntityById = std::move(callback); }
+
 	/// Set callback for setting harvest cooldown on entities
 	/// Called when a non-destructive harvest completes (entity enters regrowth)
 	using SetCooldownCallback = std::function<void(const std::string& defName, float x, float y, float cooldownSeconds)>;
@@ -253,6 +260,9 @@ private:
 
 	/// Callback for removing harvested entities from world
 	RemoveEntityCallback m_onRemoveEntity = nullptr;
+
+	/// Callback for removing a specific world entity by id (drained loose pile)
+	RemoveEntityByIdCallback m_onRemoveEntityById = nullptr;
 
 	/// Callback for setting harvest cooldown on entities
 	SetCooldownCallback m_onSetCooldown = nullptr;
