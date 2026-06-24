@@ -21,6 +21,11 @@ add_library(engine
     ecs/systems/VisionSystem.cpp
     ecs/systems/AIDecisionSystem.cpp
     ecs/systems/ActionSystem.cpp
+    ecs/systems/action/NeedActions.cpp
+    ecs/systems/action/HarvestActions.cpp
+    ecs/systems/action/CraftActions.cpp
+    ecs/systems/action/HaulActions.cpp
+    ecs/systems/action/BuildActions.cpp
     ecs/systems/StorageGoalSystem.cpp
     ecs/systems/CraftingGoalSystem.cpp
     ecs/systems/BuildGoalSystem.cpp
