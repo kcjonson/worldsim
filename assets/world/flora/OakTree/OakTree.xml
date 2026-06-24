@@ -28,8 +28,8 @@
       <tier>batched</tier>
     </rendering>
 
-    <!-- Trunk-base collision (half trunkWidth=0.2 -> radius 0.1m); not the canopy -->
-    <collision><circle radius="0.1"/></collision>
+    <!-- Trunk-base collision comes from the generator (asset:setCollisionRect,
+         half-extent = trunkWidth/2 = 0.1m), captured eagerly at load. -->
 
     <!-- Entity capabilities - chopped for wood with an axe; removed when the pool is exhausted -->
     <!-- 6-10 wood per chop (clamped by carry weight), pool of 20-30 wood units (a full tree) -->

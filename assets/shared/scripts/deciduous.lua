@@ -7,6 +7,11 @@ local canopyRadius = getFloat("canopyRadius", 25.0)
 local trunkHeight = getFloat("trunkHeight", 40.0)
 local trunkWidth = getFloat("trunkWidth", 8.0)
 
+-- Trunk-base collision: a square footprint matching the unscaled trunk width
+-- (half-extent = trunkWidth/2 each axis). Captured before per-tree randomization
+-- so the footprint is stable across variants.
+asset:setCollisionRect(trunkWidth / 2, trunkWidth / 2, 0, 0)
+
 -- MUCH more random variation for distinct trees
 canopyRadius = canopyRadius * (0.6 + math.random() * 0.8)  -- 60% to 140% of base
 trunkHeight = trunkHeight * (0.5 + math.random() * 1.0)    -- 50% to 150% of base

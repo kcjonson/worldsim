@@ -786,8 +786,8 @@ TEST_F(NavigationSystemTest, InAreaPlacementCompletionTriggersRebuild) {
 	AssetRegistry&	reg = AssetRegistry::Get();
 	AssetDefinition tree;
 	tree.defName			   = "Test_NavLatePlaceTree";
-	tree.collision.type		   = CollisionShapeType::Circle;
-	tree.collision.radiusMeters = 0.4F;
+	tree.collision.type			   = CollisionShapeType::Rect;
+	tree.collision.halfExtentsMeters = {0.4F, 0.4F};
 	reg.registerTestDefinition(tree);
 
 	// Empty placement to start: no trees stored, no chunks in the processed set, so the

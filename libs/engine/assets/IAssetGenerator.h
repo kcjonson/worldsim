@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <random>
 #include <string>
 #include <unordered_map>
@@ -59,7 +60,15 @@ struct GeneratedPath {
 struct GeneratedAsset {
 	std::vector<GeneratedPath> paths;
 
-	void clear() { paths.clear(); }
+	// Collision footprint emitted by the generator script (asset:setCollisionRect).
+	// Captured eagerly at load so nav/collision see it without running the full
+	// render pipeline. Unset means the generator declared no collision.
+	std::optional<CollisionShape> emittedCollision;
+
+	void clear() {
+		paths.clear();
+		emittedCollision.reset();
+	}
 
 	/// Add a path to the asset
 	void addPath(GeneratedPath&& path) { paths.push_back(std::move(path)); }

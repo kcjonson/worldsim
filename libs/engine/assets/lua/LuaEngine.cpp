@@ -151,6 +151,20 @@ namespace engine::assets {
 			[](GeneratedAsset& asset) -> GeneratedPath& {
 				asset.paths.emplace_back();
 				return asset.paths.back();
+			},
+			// Declare a rectangular collision footprint (local meters). Center
+			// defaults to the asset origin. Captured eagerly at load so nav sees it.
+			"setCollisionRect",
+			[](GeneratedAsset& asset, float halfWidthMeters, float halfHeightMeters, float centerXMeters, float centerYMeters) {
+				if (halfWidthMeters <= 0.0F || halfHeightMeters <= 0.0F) {
+					LOG_WARNING(Engine, "setCollisionRect ignored: non-positive half-extents (%.3f, %.3f)", halfWidthMeters, halfHeightMeters);
+					return;
+				}
+				CollisionShape shape;
+				shape.type			   = CollisionShapeType::Rect;
+				shape.offsetMeters	   = {centerXMeters, centerYMeters};
+				shape.halfExtentsMeters = {halfWidthMeters, halfHeightMeters};
+				asset.emittedCollision = shape;
 			}
 		);
 

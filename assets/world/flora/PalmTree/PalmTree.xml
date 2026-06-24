@@ -27,8 +27,8 @@
       <tier>batched</tier>
     </rendering>
 
-    <!-- Trunk-base collision (half trunkWidth=0.12 -> radius 0.06m); not the frond canopy -->
-    <collision><circle radius="0.06"/></collision>
+    <!-- Trunk-base collision comes from the generator (asset:setCollisionRect,
+         half-extent = trunkWidth/2 = 0.06m), captured eagerly at load. -->
 
     <!-- Harvestable: chopped for wood with an axe; palm yields less than oak (thinner trunk) -->
     <!-- 3-6 wood per chop (clamped by carry weight), pool of 10-18 wood units -->

@@ -203,18 +203,19 @@ namespace engine::nav {
 		};
 
 		geometry::Ring ring;
-		if (def->collision.type == assets::CollisionShapeType::Circle) {
-			// Octagon approximation of the disc, radius padded so the agent clears
-			// the trunk. Built in local space (offset + r*dir) then transformed,
-			// so entity rotation just spins the octagon (harmless, stays a disc).
-			const float rMeters = (def->collision.radiusMeters + static_cast<float>(kFloraCirclePadMm) / static_cast<float>(kTileMm));
-			ring.reserve(8);
-			for (int i = 0; i < 8; ++i) {
-				const float ang = (static_cast<float>(i) + 0.5F) * (2.0F * 3.14159265358979323846F / 8.0F);
-				glm::vec2	p{def->collision.offsetMeters.x + rMeters * std::cos(ang),
-							  def->collision.offsetMeters.y + rMeters * std::sin(ang)};
-				ring.push_back(toWorldMm(p));
-			}
+		if (def->collision.type == assets::CollisionShapeType::Rect) {
+			// The rect's 4 corners (local meters), half-extents inflated outward by
+			// the pad so the agent clears the trunk, then transformed -- so entity
+			// rotation turns it into an oriented quad (OBB) rather than an AABB.
+			const float		padMeters = static_cast<float>(kFloraColliderPadMm) / static_cast<float>(kTileMm);
+			const glm::vec2 c		  = def->collision.offsetMeters;
+			const float		hx		  = def->collision.halfExtentsMeters.x + padMeters;
+			const float		hy		  = def->collision.halfExtentsMeters.y + padMeters;
+			ring.reserve(4);
+			ring.push_back(toWorldMm({c.x - hx, c.y - hy}));
+			ring.push_back(toWorldMm({c.x + hx, c.y - hy}));
+			ring.push_back(toWorldMm({c.x + hx, c.y + hy}));
+			ring.push_back(toWorldMm({c.x - hx, c.y + hy}));
 		} else if (def->collision.type == assets::CollisionShapeType::Polygon) {
 			ring.reserve(def->collision.pointsMeters.size());
 			for (const glm::vec2& p : def->collision.pointsMeters) {

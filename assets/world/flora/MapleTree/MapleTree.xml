@@ -32,8 +32,8 @@
 
     <!-- No animation for now (trees sway is future work) -->
 
-    <!-- Trunk-base collision (half trunkWidth=0.15 -> radius 0.075m); not the canopy -->
-    <collision><circle radius="0.075"/></collision>
+    <!-- Trunk-base collision comes from the generator (asset:setCollisionRect,
+         half-extent = trunkWidth/2 = 0.075m), captured eagerly at load. -->
 
     <!-- Entity capabilities - chopped for wood with an axe; removed when the pool is exhausted -->
     <!-- 4-7 wood per chop (clamped by carry weight), pool of 14-22 wood units (smaller than oak) -->

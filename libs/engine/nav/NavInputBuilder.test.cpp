@@ -19,12 +19,14 @@
 #include <world/chunk/ChunkSampleResult.h>
 #include <world/chunk/IWorldSampler.h>
 
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include <gtest/gtest.h>
@@ -168,12 +170,12 @@ class NavFloraTest : public ::testing::Test {
 	void TearDown() override { AssetRegistry::Get().clearDefinitions(); }
 };
 
-TEST_F(NavFloraTest, CircleEntity_EmitsOctagon) {
+TEST_F(NavFloraTest, RectEntity_EmitsPaddedQuad) {
 	AssetRegistry& reg = AssetRegistry::Get();
 	AssetDefinition tree;
 	tree.defName = "Test_NavTree";
-	tree.collision.type = CollisionShapeType::Circle;
-	tree.collision.radiusMeters = 0.1F;
+	tree.collision.type			   = CollisionShapeType::Rect;
+	tree.collision.halfExtentsMeters = {0.1F, 0.1F};
 	reg.registerTestDefinition(tree);
 
 	SpatialIndex index(4.0F);
@@ -187,10 +189,10 @@ TEST_F(NavFloraTest, CircleEntity_EmitsOctagon) {
 	ASSERT_EQ(polys.size(), 1u);
 	EXPECT_TRUE(polys[0].blocked);
 	EXPECT_EQ(polys[0].provenanceId, kProvenanceTree);
-	EXPECT_EQ(polys[0].ring.size(), 8u);
+	EXPECT_EQ(polys[0].ring.size(), 4u);
 	EXPECT_TRUE(isCcw(polys[0].ring));
 
-	// Centroid near the entity position (10,20) m -> (10000, 20000) mm.
+	// Centroid at the entity position (10,20) m -> (10000, 20000) mm.
 	std::int64_t cx = 0;
 	std::int64_t cy = 0;
 	for (const Vec2i64& v : polys[0].ring) {
@@ -199,17 +201,74 @@ TEST_F(NavFloraTest, CircleEntity_EmitsOctagon) {
 	}
 	cx /= static_cast<std::int64_t>(polys[0].ring.size());
 	cy /= static_cast<std::int64_t>(polys[0].ring.size());
-	EXPECT_NEAR(static_cast<double>(cx), 10000.0, 60.0);
-	EXPECT_NEAR(static_cast<double>(cy), 20000.0, 60.0);
+	EXPECT_NEAR(static_cast<double>(cx), 10000.0, 1.0);
+	EXPECT_NEAR(static_cast<double>(cy), 20000.0, 1.0);
 
-	// Circumradius ~ 0.1 m + 50 mm pad = 150 mm.
-	double maxR = 0.0;
+	// Axis-aligned square: half-extent 0.1 m + 50 mm pad = 150 mm each axis.
 	for (const Vec2i64& v : polys[0].ring) {
-		const double dx = static_cast<double>(v.x - cx);
-		const double dy = static_cast<double>(v.y - cy);
-		maxR = std::max(maxR, std::sqrt(dx * dx + dy * dy));
+		EXPECT_EQ(std::llabs(v.x - cx), 150);
+		EXPECT_EQ(std::llabs(v.y - cy), 150);
 	}
-	EXPECT_NEAR(maxR, 150.0, 5.0);
+}
+
+// A rotated entity turns the rect into an oriented quad (OBB): the 4 corners are
+// the rotated rect, not an axis-aligned box.
+TEST_F(NavFloraTest, RectEntity_RotationProducesOrientedQuad) {
+	AssetRegistry& reg = AssetRegistry::Get();
+	AssetDefinition tree;
+	tree.defName = "Test_NavRotTree";
+	tree.collision.type			   = CollisionShapeType::Rect;
+	tree.collision.halfExtentsMeters = {0.5F, 0.2F}; // non-square so rotation is visible
+	reg.registerTestDefinition(tree);
+
+	SpatialIndex index(4.0F);
+	PlacedEntity e;
+	e.defName  = "Test_NavRotTree";
+	e.position = {10.0F, 20.0F};
+	e.scale	   = 1.0F;
+	e.rotation = 3.14159265358979323846F / 4.0F; // 45 degrees
+	index.insert(e);
+
+	std::vector<NavInputPolygon> polys = extractFloraObstacles(index, reg);
+	ASSERT_EQ(polys.size(), 1u);
+	ASSERT_EQ(polys[0].ring.size(), 4u);
+	EXPECT_TRUE(isCcw(polys[0].ring));
+
+	std::int64_t cx = 0;
+	std::int64_t cy = 0;
+	for (const Vec2i64& v : polys[0].ring) {
+		cx += v.x;
+		cy += v.y;
+	}
+	cx /= 4;
+	cy /= 4;
+
+	// Padded half-extents: hx = 0.55 m, hy = 0.25 m -> 550 mm, 250 mm. Under a 45
+	// degree rotation the local axis-aligned corner offsets map to the rotated
+	// frame; check each emitted corner matches the analytically rotated corner.
+	const double				 padHx = 550.0;
+	const double				 padHy = 250.0;
+	const double				 c45   = std::cos(static_cast<double>(e.rotation));
+	const double				 s45   = std::sin(static_cast<double>(e.rotation));
+	const std::array<std::pair<double, double>, 4> local = {
+		std::make_pair(-padHx, -padHy), {padHx, -padHy}, {padHx, padHy}, {-padHx, padHy}};
+
+	// Not axis-aligned: a rotated non-square rect has corners off both axes.
+	bool anyOffAxis = false;
+	for (const Vec2i64& v : polys[0].ring) {
+		if (std::llabs(v.x - cx) != 0 && std::llabs(v.y - cy) != 0) {
+			anyOffAxis = true;
+		}
+	}
+	EXPECT_TRUE(anyOffAxis) << "rotated rect should not be axis-aligned";
+
+	// Each emitted corner equals some rotated local corner (order preserved).
+	for (std::size_t i = 0; i < 4; ++i) {
+		const double rx = local[i].first * c45 - local[i].second * s45;
+		const double ry = local[i].first * s45 + local[i].second * c45;
+		EXPECT_NEAR(static_cast<double>(polys[0].ring[i].x - cx), rx, 2.0);
+		EXPECT_NEAR(static_cast<double>(polys[0].ring[i].y - cy), ry, 2.0);
+	}
 }
 
 TEST_F(NavFloraTest, NoCollision_EmitsNothing) {
@@ -579,8 +638,8 @@ TEST_F(NavFloraTest, Area_ScopesFloraToInAreaTrees) {
 	AssetRegistry& reg = AssetRegistry::Get();
 	AssetDefinition tree;
 	tree.defName			   = "Test_AreaTree";
-	tree.collision.type		   = CollisionShapeType::Circle;
-	tree.collision.radiusMeters = 0.2F;
+	tree.collision.type			   = CollisionShapeType::Rect;
+	tree.collision.halfExtentsMeters = {0.2F, 0.2F};
 	reg.registerTestDefinition(tree);
 
 	auto mgr = readyChunks(std::make_unique<WaterRegionSampler>(std::vector<ChunkCoordinate>{}));
@@ -676,8 +735,8 @@ TEST_F(NavFloraTest, Area_DeterministicOrdering) {
 	AssetRegistry& reg = AssetRegistry::Get();
 	AssetDefinition tree;
 	tree.defName			   = "Test_DetTree";
-	tree.collision.type		   = CollisionShapeType::Circle;
-	tree.collision.radiusMeters = 0.2F;
+	tree.collision.type			   = CollisionShapeType::Rect;
+	tree.collision.halfExtentsMeters = {0.2F, 0.2F};
 	reg.registerTestDefinition(tree);
 
 	std::vector<ChunkCoordinate> water = {{0, 0}};
