@@ -19,16 +19,22 @@
     <!-- Item category: raw construction material -->
     <category>RawMaterial</category>
 
+    <!-- Bulk material: carried as a strength-limited armful in BOTH hands, never the backpack -->
+    <handsRequired>2</handsRequired>
+
     <!-- Item properties (when in inventory) -->
     <item>
-      <stackSize>25</stackSize>
+      <!-- NOT enforced at runtime yet: addItem caps at the inventory's maxStackSize.
+           Item-driven stack size is a deferred follow-up. -->
+      <stackSize>40</stackSize>
       <!-- A short log/billet; mass drives how much a colonist can haul per trip -->
       <mass>2.5</mass>
     </item>
 
-    <!-- Entity capabilities -->
+    <!-- Entity capabilities. Carryable (without a quantity) keeps VisionSystem discovery;
+         a loose ground pile's count lives in its per-entity ResourceStack, not here. -->
     <capabilities>
-      <carryable quantity="1"/>
+      <carryable/>
     </capabilities>
 
     <!-- No placement - wood doesn't spawn naturally, it's chopped from trees -->

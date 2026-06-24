@@ -40,6 +40,13 @@ public:
 	using DropItemCallback = std::function<void(const std::string& defName, float x, float y)>;
 	void setDropItemCallback(DropItemCallback callback) { m_onDropItem = std::move(callback); }
 
+	/// Set callback for dropping a loose, haulable resource pile of `quantity` units.
+	/// Called when a fell yields more than the colonist could carry off: the remainder lands
+	/// as a single ground entity carrying a ResourceStack, hauled away in later armfuls. Unlike
+	/// DropItemCallback (crafted output awaiting placement), this pile is not Packaged.
+	using DropResourceCallback = std::function<void(const std::string& defName, float x, float y, uint32_t quantity)>;
+	void setDropResourceCallback(DropResourceCallback callback) { m_onDropResource = std::move(callback); }
+
 	/// Set callback for removing harvested entities from the world
 	/// Called when a destructive harvest completes (entity should be removed)
 	using RemoveEntityCallback = std::function<void(const std::string& defName, float x, float y)>;
@@ -92,6 +99,18 @@ private:
 		const struct Inventory& inventory
 	);
 
+	/// Start a need-fulfillment action (Hunger/Thirst/Energy/Bladder/Digestion).
+	/// Extracted from startAction's FulfillNeed switch; handles the inventory-food, harvestable-food,
+	/// drink, sleep, and toilet cases.
+	void startNeedAction(
+		struct Task& task,
+		struct Action& action,
+		const struct Position& position,
+		struct Memory& memory,
+		const struct NeedsComponent& needs,
+		const struct Inventory& inventory
+	);
+
 	/// Process an in-progress action
 	void processAction(
 		float deltaTime,
@@ -109,6 +128,36 @@ private:
 		struct Inventory& inventory,
 		struct Memory& memory
 	);
+
+	/// Apply a completed action's need-restoration effect (primary + side effect).
+	void applyNeedEffect(const struct Action& action, struct NeedsComponent& needs);
+
+	/// Apply a completed collection effect (Pickup/Harvest): pool-withdraw vs single-shot,
+	/// source removal/cooldown, and harvest-goal delivery recording.
+	void applyCollectionEffect(
+		const struct Action& action,
+		struct Task& task,
+		struct Inventory& inventory,
+		struct Memory& memory
+	);
+
+	/// Apply a completed consumption effect (Eat): remove item, restore need + side effect.
+	void applyConsumptionEffect(const struct Action& action, struct NeedsComponent& needs, struct Inventory& inventory);
+
+	/// Apply a completed spawn effect (pooping spawns a Bio Pile).
+	void applySpawnEffect(const struct Action& action);
+
+	/// Apply a completed crafting effect: consume inputs, add/drop outputs, notify, update WorkQueue.
+	void applyCraftingEffect(const struct Action& action, struct Inventory& inventory);
+
+	/// Apply a completed deposit effect (storage deposit or deliver-to-craft-station).
+	void applyDepositEffect(const struct Action& action, struct Task& task, struct Inventory& inventory);
+
+	/// Apply a completed construction progress effect (Build/Deconstruct completion signal).
+	void applyProgressEffect(const struct Action& action);
+
+	/// Apply a completed PlacePackaged effect (phase 2): move the carried entity to target and unpackage.
+	void applyPlacePackagedEffect(const struct Action& action, struct Inventory& inventory);
 
 	/// Start a crafting action based on the task's recipe
 	void startCraftAction(
@@ -198,6 +247,9 @@ private:
 
 	/// Callback for dropping items on the ground (non-backpackable items)
 	DropItemCallback m_onDropItem = nullptr;
+
+	/// Callback for dropping a loose, haulable resource pile (felling remainder)
+	DropResourceCallback m_onDropResource = nullptr;
 
 	/// Callback for removing harvested entities from world
 	RemoveEntityCallback m_onRemoveEntity = nullptr;

@@ -58,6 +58,19 @@ namespace world_sim {
 		);
 		handsTextHandle = layout.addChild(std::move(handsText));
 
+		// Belt section - quick-draw tool slots
+		layout.addChild(
+			UI::Text(
+				UI::Text::Args{
+					.height = kLabelSize, .text = "Belt", .style = {.color = labelColor(), .fontSize = kLabelSize}, .margin = 6.0F
+				}
+			)
+		);
+		auto beltText = UI::Text(
+			UI::Text::Args{.height = kBodySize, .text = "(empty)", .style = {.color = mutedColor(), .fontSize = kBodySize}, .margin = 2.0F}
+		);
+		beltTextHandle = layout.addChild(std::move(beltText));
+
 		// Inventory section - store handle for dynamic updates
 		auto inventoryHeader = UI::Text(
 			UI::Text::Args{
@@ -68,6 +81,12 @@ namespace world_sim {
 			}
 		);
 		inventoryHeaderHandle = layout.addChild(std::move(inventoryHeader));
+
+		// Carry-weight readout (cargo only; held/belted tools don't count)
+		auto carryText = UI::Text(
+			UI::Text::Args{.height = kBodySize, .text = "Carry: 0 / 0 kg", .style = {.color = mutedColor(), .fontSize = kBodySize}, .margin = 2.0F}
+		);
+		carryTextHandle = layout.addChild(std::move(carryText));
 
 		// Empty state / items list - store handle for dynamic updates
 		auto itemsText = UI::Text(
@@ -94,8 +113,8 @@ namespace world_sim {
 				text->text = "(empty)";
 				text->style.color = mutedColor();
 			} else if (hasLeft && hasRight && gear.leftHand->defName == gear.rightHand->defName) {
-				// Same item in both hands (2-handed carry)
-				text->text = gear.leftHand->defName + " (2-handed)";
+				// Same item in both hands: a two-hand armful (counted once)
+				text->text = gear.leftHand->defName + " x" + std::to_string(gear.leftHand->quantity) + " (both hands)";
 				text->style.color = bodyColor();
 			} else {
 				std::ostringstream ss;
@@ -106,10 +125,34 @@ namespace world_sim {
 			}
 		}
 
+		// Update belt display
+		if (auto* text = layout->getChild<UI::Text>(beltTextHandle)) {
+			std::ostringstream ss;
+			bool				any = false;
+			for (const auto& slot : gear.belt) {
+				if (slot.has_value()) {
+					if (any) {
+						ss << ", ";
+					}
+					ss << slot->defName;
+					any = true;
+				}
+			}
+			text->text = any ? ss.str() : "(empty)";
+			text->style.color = any ? bodyColor() : mutedColor();
+		}
+
 		// Update inventory header using stored handle
 		if (auto* text = layout->getChild<UI::Text>(inventoryHeaderHandle)) {
 			std::ostringstream ss;
 			ss << "Inventory: " << gear.slotCount << "/" << gear.maxSlots << " slots";
+			text->text = ss.str();
+		}
+
+		// Update carry-weight readout
+		if (auto* text = layout->getChild<UI::Text>(carryTextHandle)) {
+			std::ostringstream ss;
+			ss << "Carry: " << static_cast<int>(gear.carriedKg + 0.5F) << " / " << static_cast<int>(gear.capacityKg + 0.5F) << " kg";
 			text->text = ss.str();
 		}
 

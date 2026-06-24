@@ -48,6 +48,7 @@
 #include <ecs/World.h>
 #include <ecs/components/Action.h>
 #include <ecs/components/Appearance.h>
+#include <ecs/components/Attributes.h>
 #include <ecs/components/Colonist.h>
 #include <ecs/components/DecisionTrace.h>
 #include <ecs/components/FacingDirection.h>
@@ -59,6 +60,7 @@
 #include <ecs/components/Packaged.h>
 #include <ecs/components/AgentRadius.h>
 #include <ecs/components/Room.h>
+#include <ecs/components/ResourceStack.h>
 #include <ecs/components/Skills.h>
 #include <ecs/components/Structure.h>
 #include <ecs/components/StructureBlueprint.h>
@@ -86,6 +88,7 @@
 
 #include <cstdlib>
 #include <memory>
+#include <random>
 #include <sstream>
 #include <string>
 #include <unordered_set>
@@ -1004,6 +1007,15 @@ namespace {
 				LOG_INFO(Game, "Spawned packaged '%s' - awaiting placement", defName.c_str());
 			});
 
+			// Wire up ActionSystem to drop a loose, haulable resource pile (felling remainder).
+			// Unlike the crafting drop above, this pile is NOT packaged: a per-entity ResourceStack
+			// holds the count and it is immediately haulable in weight-limited armfuls.
+			actionSystem.setDropResourceCallback([this](const std::string& defName, float x, float y, uint32_t quantity) {
+				auto entity = m_placementSystem->spawnEntity(defName, {x, y});
+				ecsWorld->addComponent<ecs::ResourceStack>(entity, ecs::ResourceStack{quantity});
+				LOG_INFO(Game, "Dropped loose pile of %u x '%s' at (%.1f, %.1f)", quantity, defName.c_str(), x, y);
+			});
+
 			// Wire up ActionSystem to remove harvested entities (destructive harvest)
 			actionSystem.setRemoveEntityCallback([this](const std::string& defName, float x, float y) {
 				auto coord = engine::world::worldToChunk({x, y});
@@ -1070,7 +1082,19 @@ namespace {
 			ecsWorld->addComponent<ecs::Appearance>(entity, ecs::Appearance{"Colonist", 1.0F, {1.0F, 1.0F, 1.0F, 1.0F}});
 			ecsWorld->addComponent<ecs::Colonist>(entity, ecs::Colonist{newName});
 			ecsWorld->addComponent<ecs::NeedsComponent>(entity, ecs::NeedsComponent::createDefault());
-			ecsWorld->addComponent<ecs::Inventory>(entity, ecs::Inventory::createForColonist());
+
+			// Roll static attributes (0-20), seeded per-entity so colonists vary
+			// deterministically. Only Strength is consumed today: it sets hand-carry
+			// capacity. The other attributes are placeholders for upcoming systems.
+			ecs::Attributes attributes;
+			std::mt19937   attrRng(static_cast<uint32_t>(entity));
+			attributes.strength = std::uniform_real_distribution<float>(6.0F, 14.0F)(attrRng);
+			ecsWorld->addComponent<ecs::Attributes>(entity, attributes);
+
+			// Carry weight scales with Strength (an average colonist lands at the prior 35kg).
+			auto inventory = ecs::Inventory::createForColonist();
+			inventory.carryCapacityKg = ecs::Attributes::carryCapacityKg(attributes.strength);
+			ecsWorld->addComponent<ecs::Inventory>(entity, std::move(inventory));
 			ecsWorld->addComponent<ecs::Knowledge>(entity, ecs::Knowledge{});
 			ecsWorld->addComponent<ecs::Memory>(entity, ecs::Memory{.owner = entity});
 			ecsWorld->addComponent<ecs::Task>(entity, ecs::Task{});

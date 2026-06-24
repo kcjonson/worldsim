@@ -4,6 +4,7 @@
 #include "ActionSystem.h"
 
 #include "../GoalTaskRegistry.h"
+#include "../InventoryMass.h"
 #include "../World.h"
 #include "TimeSystem.h"
 #include "../components/Action.h"
@@ -12,11 +13,15 @@
 #include "../components/Memory.h"
 #include "../components/Movement.h"
 #include "../components/Needs.h"
+#include "../components/Packaged.h"
+#include "../components/ResourceStack.h"
 #include "../components/Skills.h"
 #include "../components/Task.h"
 #include "../components/Transform.h"
 
 #include "assets/AssetRegistry.h"
+#include "assets/RecipeDef.h"
+#include "assets/RecipeRegistry.h"
 
 #include <gtest/gtest.h>
 
@@ -622,6 +627,499 @@ TEST_F(ActionSystemGoalTest, HarvestThenInventoryHaulDeliversMaterialsAndUnblock
 	    << "Delivery to station credited the parent Craft goal";
 	EXPECT_EQ(registry.getGoal(craftId)->status, GoalStatus::Available)
 	    << "Craft leaves Blocked once all materials delivered";
+}
+
+// =============================================================================
+// Tree felling: a two-hand bulk material (Wood) destructive harvest
+// =============================================================================
+// Felling is one destructive action. The colonist takes a weight-limited armful
+// of Wood into the hands (never the backpack), the remainder drops as a loose,
+// haulable ground pile via the drop-resource callback, and the tree always falls
+// -- even when the colonist's hands were already full, so no wood is lost and no
+// stump lingers.
+
+class FellingTest : public ::testing::Test {
+  protected:
+	void SetUp() override {
+		world = std::make_unique<World>();
+
+		// Wood: a two-hand bulk material at 2.5 kg/unit. handsRequired==2 routes it to the
+		// hands as an armful; mass drives how much fits under the 35 kg colonist cap (14 units).
+		engine::assets::AssetDefinition woodDef;
+		woodDef.defName = "Wood";
+		woodDef.label = "Wood";
+		woodDef.handsRequired = 2;
+		woodDef.category = engine::assets::ItemCategory::RawMaterial;
+		woodDef.itemProperties = engine::assets::ItemProperties{};
+		woodDef.itemProperties->stackSize = 40;
+		woodDef.itemProperties->massKg = 2.5F;
+		engine::assets::AssetRegistry::Get().registerTestDefinition(std::move(woodDef));
+
+		auto& action = world->registerSystem<ActionSystem>();
+		action.setDropResourceCallback(
+			[this](const std::string& defName, float /*x*/, float /*y*/, uint32_t quantity) {
+				++dropCalls;
+				lastDropDef = defName;
+				lastDropQty = quantity;
+			}
+		);
+		action.setRemoveEntityCallback([this](const std::string& defName, float /*x*/, float /*y*/) {
+			++removeCalls;
+			lastRemoveDef = defName;
+		});
+	}
+
+	void TearDown() override {
+		engine::assets::AssetRegistry::Get().clearDefinitions();
+		world.reset();
+	}
+
+	EntityID createColonist(glm::vec2 position = {0.0F, 0.0F}) {
+		auto entity = world->createEntity();
+		world->addComponent<Position>(entity, Position{position});
+		world->addComponent<Velocity>(entity, Velocity{{0.0F, 0.0F}});
+		world->addComponent<MovementTarget>(entity, MovementTarget{{0.0F, 0.0F}, 2.0F, false});
+		world->addComponent<NeedsComponent>(entity, NeedsComponent::createDefault());
+		world->addComponent<Memory>(entity, Memory{});
+		world->addComponent<Inventory>(entity, Inventory::createForColonist());
+		world->addComponent<Task>(entity, Task{});
+		world->addComponent<Action>(entity, Action{});
+		return entity;
+	}
+
+	// Drive a pre-built destructive two-hand Harvest of `yield` Wood to completion.
+	void fell(EntityID colonist, uint32_t yield) {
+		auto* task = world->getComponent<Task>(colonist);
+		task->type = TaskType::Harvest;
+		task->state = TaskState::Arrived;
+		task->targetPosition = {1.0F, 1.0F};
+		// harvestGoalId left 0: no goal bookkeeping, just the collection effect.
+
+		auto* action = world->getComponent<Action>(colonist);
+		*action = Action::Harvest("Wood", yield, 1.0F, {1.0F, 1.0F}, "Flora_TreeOak",
+								  /*destructive=*/true, /*regrowthTime=*/0.0F);
+
+		world->update(0.1F); // start
+		world->update(2.0F); // complete (duration 1s)
+	}
+
+	std::unique_ptr<World> world;
+	int					   dropCalls = 0;
+	int					   removeCalls = 0;
+	uint32_t			   lastDropQty = 0;
+	std::string			   lastDropDef;
+	std::string			   lastRemoveDef;
+};
+
+// Empty hands, yield 30, cap 35 -> 14 to hands (floor(35/2.5)), 16 dropped, tree removed.
+TEST_F(FellingTest, ArmfulToHandsRemainderDroppedTreeRemoved) {
+	auto colonist = createColonist({1.0F, 1.0F});
+	fell(colonist, 30);
+
+	auto* inventory = world->getComponent<Inventory>(colonist);
+	EXPECT_EQ(handHeldQuantity(*inventory, "Wood"), 14U) << "Armful clamped to the 35 kg carry cap";
+	EXPECT_EQ(inventory->getQuantity("Wood"), 0U) << "Wood never enters the backpack";
+
+	EXPECT_EQ(dropCalls, 1) << "Remainder dropped exactly once";
+	EXPECT_EQ(lastDropDef, "Wood");
+	EXPECT_EQ(lastDropQty, 16U) << "30 yield - 14 carried = 16 dropped";
+
+	EXPECT_EQ(removeCalls, 1) << "The tree falls in one action";
+	EXPECT_EQ(lastRemoveDef, "Flora_TreeOak");
+}
+
+// Hands pre-filled to capacity (added == 0): the whole yield still drops and the
+// tree still falls. The destroy is NOT gated on having collected, so no wood is
+// lost and no stump remains even when the colonist couldn't carry any.
+TEST_F(FellingTest, HandsFullStillDropsWholeYieldAndRemovesTree) {
+	auto  colonist = createColonist({1.0F, 1.0F});
+	auto* inventory = world->getComponent<Inventory>(colonist);
+	// Seat a full 14-unit armful first, mirrored across both hands.
+	inventory->leftHand = ItemStack{"Wood", 14};
+	inventory->rightHand = ItemStack{"Wood", 14};
+	ASSERT_EQ(handHeldQuantity(*inventory, "Wood"), 14U);
+
+	fell(colonist, 30);
+
+	EXPECT_EQ(handHeldQuantity(*inventory, "Wood"), 14U) << "No room for more; armful unchanged";
+	EXPECT_EQ(dropCalls, 1) << "Whole yield dropped as a pile";
+	EXPECT_EQ(lastDropQty, 30U) << "added == 0, so all 30 drop";
+	EXPECT_EQ(removeCalls, 1) << "Tree removed despite full hands";
+}
+
+// Regression: a wood-carrying colonist tasked with a PlacePackaged (no empty-hands
+// precondition) must not duplicate the armful. clearHandsForTwoHandedPickup once dropped
+// each hand independently, so a 14-Wood armful (same stack mirrored across both hands)
+// dropped 28 -- and as per-unit packaged items, not a single loose pile. The mirror-aware
+// path now drops the armful ONCE, as one haulable resource pile of exactly 14.
+TEST_F(FellingTest, PickupPackagedDropsHeldWoodArmfulOnceNotTwice) {
+	auto  colonist = createColonist({1.0F, 1.0F});
+	auto* inventory = world->getComponent<Inventory>(colonist);
+	// Hands hold a 14-unit Wood armful, mirrored across both hands.
+	inventory->leftHand = ItemStack{"Wood", 14};
+	inventory->rightHand = ItemStack{"Wood", 14};
+	ASSERT_EQ(handHeldQuantity(*inventory, "Wood"), 14U);
+
+	// A packaged shelf to pick up at the colonist's position.
+	auto packaged = world->createEntity();
+	world->addComponent<Position>(packaged, Position{{1.0F, 1.0F}});
+	world->addComponent<Appearance>(packaged, Appearance{"BasicShelf", 1.0F, {1.0F, 1.0F, 1.0F, 1.0F}});
+	world->addComponent<Packaged>(packaged, Packaged{glm::vec2{5.0F, 5.0F}, false});
+
+	auto* task = world->getComponent<Task>(colonist);
+	task->type = TaskType::PlacePackaged;
+	task->state = TaskState::Arrived;
+	task->placePackagedEntityId = static_cast<uint64_t>(packaged);
+	task->placeSourcePosition = {1.0F, 1.0F};
+	task->placeTargetPosition = {5.0F, 5.0F};
+	task->targetPosition = {1.0F, 1.0F};
+
+	auto* action = world->getComponent<Action>(colonist);
+	*action = Action::PickupPackaged(static_cast<uint64_t>(packaged), {1.0F, 1.0F});
+
+	world->update(0.1F); // start
+	world->update(2.0F); // complete (PickupPackaged duration 1.5s) -> clears hands, picks up shelf
+
+	// The held Wood dropped exactly once, as a single loose pile of all 14 units.
+	EXPECT_EQ(dropCalls, 1) << "Armful dropped once, not once per hand";
+	EXPECT_EQ(lastDropDef, "Wood");
+	EXPECT_EQ(lastDropQty, 14U) << "Exactly 14 dropped (not 28 from double-clearing the mirror)";
+
+	// Hands now hold the packaged shelf for display, the Wood is gone from them.
+	EXPECT_EQ(handHeldQuantity(*inventory, "Wood"), 0U) << "Wood cleared from both hands";
+	ASSERT_TRUE(inventory->carryingPackagedEntity.has_value());
+	EXPECT_EQ(inventory->carryingPackagedEntity.value(), static_cast<uint64_t>(packaged));
+}
+
+// =============================================================================
+// Loose ground pile haul: per-entity ResourceStack drains across armfuls
+// =============================================================================
+// The remainder a fell drops is a single ground entity (Appearance defName == the
+// material + a ResourceStack count), spawned WITHOUT Packaged so it is immediately
+// haulable. A Pickup lifts a weight-limited armful from the LIVE ResourceStack and
+// decrements it; the entity is removed only when the count hits zero. A Pickup's
+// CollectionEffect carries destroySource=true, but the loose-pile branch must
+// intercept and decrement instead of full-destroying a still-loaded pile.
+
+class LoosePileHaulTest : public ::testing::Test {
+  protected:
+	void SetUp() override {
+		world = std::make_unique<World>();
+
+		// Wood: two-hand bulk material, 2.5 kg/unit. At the 35 kg colonist cap an armful is
+		// floor(35/2.5) = 14 units, so a 16-unit pile drains in 14 + 2.
+		engine::assets::AssetDefinition woodDef;
+		woodDef.defName = "Wood";
+		woodDef.label = "Wood";
+		woodDef.handsRequired = 2;
+		woodDef.category = engine::assets::ItemCategory::RawMaterial;
+		woodDef.itemProperties = engine::assets::ItemProperties{};
+		woodDef.itemProperties->stackSize = 40;
+		woodDef.itemProperties->massKg = 2.5F;
+		engine::assets::AssetRegistry::Get().registerTestDefinition(std::move(woodDef));
+
+		auto& action = world->registerSystem<ActionSystem>();
+		// Mirror GameScene: the remove callback actually destroys the depleted pile entity
+		// (Position-matched), so a later Pickup no longer finds it.
+		action.setRemoveEntityCallback([this](const std::string& defName, float x, float y) {
+			++removeCalls;
+			lastRemoveDef = defName;
+			constexpr float kEps = 0.25F;
+			for (auto [ent, entPos, appearance] : world->view<Position, Appearance>()) {
+				if (appearance.defName != defName) {
+					continue;
+				}
+				const float dx = entPos.value.x - x;
+				const float dy = entPos.value.y - y;
+				if (dx * dx + dy * dy <= kEps * kEps) {
+					world->destroyEntity(ent);
+					break;
+				}
+			}
+		});
+	}
+
+	void TearDown() override {
+		engine::assets::AssetRegistry::Get().clearDefinitions();
+		world.reset();
+	}
+
+	EntityID createColonist(glm::vec2 position = {0.0F, 0.0F}) {
+		auto entity = world->createEntity();
+		world->addComponent<Position>(entity, Position{position});
+		world->addComponent<Velocity>(entity, Velocity{{0.0F, 0.0F}});
+		world->addComponent<MovementTarget>(entity, MovementTarget{{0.0F, 0.0F}, 2.0F, false});
+		world->addComponent<NeedsComponent>(entity, NeedsComponent::createDefault());
+		world->addComponent<Memory>(entity, Memory{});
+		world->addComponent<Inventory>(entity, Inventory::createForColonist());
+		world->addComponent<Task>(entity, Task{});
+		world->addComponent<Action>(entity, Action{});
+		return entity;
+	}
+
+	// A loose Wood pile of `count` units at `pos`: Appearance defName == material + a
+	// ResourceStack, no Packaged (immediately haulable). Mirrors the drop-resource callback.
+	EntityID spawnPile(uint32_t count, glm::vec2 pos) {
+		auto entity = world->createEntity();
+		world->addComponent<Position>(entity, Position{pos});
+		world->addComponent<Appearance>(entity, Appearance{"Wood", 1.0F, {1.0F, 1.0F, 1.0F, 1.0F}});
+		world->addComponent<ResourceStack>(entity, ResourceStack{count});
+		return entity;
+	}
+
+	// Drive one Pickup of the loose pile at `pilePos` to completion. The Pickup's quantity (1)
+	// and destroySource flag are ignored by the loose-pile branch.
+	void pickUpPile(EntityID colonist, glm::vec2 pilePos) {
+		auto* task = world->getComponent<Task>(colonist);
+		task->type = TaskType::Harvest; // generic collection task; no harvest goal bookkeeping
+		task->state = TaskState::Arrived;
+		task->targetPosition = pilePos;
+
+		auto* action = world->getComponent<Action>(colonist);
+		*action = Action::Pickup("Wood", 1, pilePos, "Wood");
+
+		world->update(0.1F); // start
+		world->update(1.0F); // complete (Pickup duration 0.5s)
+	}
+
+	std::unique_ptr<World> world;
+	int					   removeCalls = 0;
+	std::string			   lastRemoveDef;
+};
+
+// A 16-unit pile, colonist cap 35: the first Pickup lifts 14 (floor(35/2.5)) into the hands and
+// the pile drops to 2 with the entity still present; a second Pickup lifts the last 2, the stack
+// hits 0, and the pile entity is removed.
+TEST_F(LoosePileHaulTest, ArmfulDrainsPileAcrossTwoPickupsThenRemoves) {
+	const glm::vec2 pilePos{1.0F, 1.0F};
+	EntityID		pile = spawnPile(16, pilePos);
+	auto			colonist = createColonist(pilePos);
+
+	// --- First pickup: an armful of 14, pile drops to 2, entity stays ---
+	pickUpPile(colonist, pilePos);
+
+	auto* inventory = world->getComponent<Inventory>(colonist);
+	EXPECT_EQ(handHeldQuantity(*inventory, "Wood"), 14U) << "Armful clamped to the 35 kg carry cap";
+	EXPECT_EQ(inventory->getQuantity("Wood"), 0U) << "Two-hand Wood never enters the backpack";
+
+	ASSERT_TRUE(world->isAlive(pile)) << "Pile remains while it still holds wood";
+	auto* stack = world->getComponent<ResourceStack>(pile);
+	ASSERT_NE(stack, nullptr);
+	EXPECT_EQ(stack->quantity, 2U) << "16 - 14 carried = 2 left in the pile";
+	EXPECT_EQ(removeCalls, 0) << "A partially-emptied pile is not removed";
+
+	// Clear the hands so the second pickup can seat a fresh armful.
+	inventory->leftHand.reset();
+	inventory->rightHand.reset();
+
+	// --- Second pickup: lift the last 2, stack hits 0, entity removed ---
+	pickUpPile(colonist, pilePos);
+
+	EXPECT_EQ(handHeldQuantity(*inventory, "Wood"), 2U) << "Last 2 units lifted into the hands";
+	EXPECT_EQ(removeCalls, 1) << "Depleted pile fires the remove callback exactly once";
+	EXPECT_EQ(lastRemoveDef, "Wood") << "Removal keyed by the material/pile defName";
+	EXPECT_FALSE(world->isAlive(pile)) << "Pile entity destroyed once drained to zero";
+}
+
+// =============================================================================
+// Hand-aware deposit and craft seams for two-hand bulk material (Wood)
+// =============================================================================
+// Wood rides in BOTH hands as a mirrored armful, never the backpack. A deposit must
+// pull from the hands, bounce any storage-full or destroyed-storage remainder back to
+// the hands (mirror intact), and credit the haul goal only by what actually landed in
+// storage. A craft must consume its Wood input from the hands too.
+
+class HandMaterialActionTest : public ::testing::Test {
+  protected:
+	void SetUp() override {
+		GoalTaskRegistry::Get().clear();
+		world = std::make_unique<World>();
+
+		// Wood: two-hand bulk material, 2.5 kg/unit -> an empty colonist's 35 kg cap holds 14.
+		engine::assets::AssetDefinition woodDef;
+		woodDef.defName = "Wood";
+		woodDef.label = "Wood";
+		woodDef.handsRequired = 2;
+		woodDef.category = engine::assets::ItemCategory::RawMaterial;
+		woodDef.itemProperties = engine::assets::ItemProperties{};
+		woodDef.itemProperties->stackSize = 40;
+		woodDef.itemProperties->massKg = 2.5F;
+		engine::assets::AssetRegistry::Get().registerTestDefinition(std::move(woodDef));
+
+		// Plank: a one-hand craft output so the produced item lands in the backpack.
+		engine::assets::AssetDefinition plankDef;
+		plankDef.defName = "Plank";
+		plankDef.label = "Plank";
+		plankDef.handsRequired = 1;
+		plankDef.category = engine::assets::ItemCategory::RawMaterial;
+		plankDef.itemProperties = engine::assets::ItemProperties{};
+		plankDef.itemProperties->stackSize = 40;
+		plankDef.itemProperties->massKg = 0.5F;
+		engine::assets::AssetRegistry::Get().registerTestDefinition(std::move(plankDef));
+
+		world->registerSystem<ActionSystem>();
+	}
+
+	void TearDown() override {
+		GoalTaskRegistry::Get().clear();
+		engine::assets::RecipeRegistry::Get().clear();
+		engine::assets::AssetRegistry::Get().clearDefinitions();
+		world.reset();
+	}
+
+	EntityID createColonist(glm::vec2 position = {0.0F, 0.0F}) {
+		auto entity = world->createEntity();
+		world->addComponent<Position>(entity, Position{position});
+		world->addComponent<Velocity>(entity, Velocity{{0.0F, 0.0F}});
+		world->addComponent<MovementTarget>(entity, MovementTarget{{0.0F, 0.0F}, 2.0F, false});
+		world->addComponent<NeedsComponent>(entity, NeedsComponent::createDefault());
+		world->addComponent<Memory>(entity, Memory{});
+		world->addComponent<Inventory>(entity, Inventory::createForColonist());
+		world->addComponent<Task>(entity, Task{});
+		world->addComponent<Action>(entity, Action{});
+		return entity;
+	}
+
+	// Seat a mirrored two-hand Wood armful of `count` units in both hands.
+	static void seatArmful(Inventory& inventory, uint32_t count) {
+		inventory.leftHand = ItemStack{"Wood", count};
+		inventory.rightHand = ItemStack{"Wood", count};
+	}
+
+	std::unique_ptr<World> world;
+};
+
+// 14-Wood armful deposited into storage that can take only 8: 8 land in storage, the
+// other 6 bounce back mirrored across both hands, the haul goal is credited 8 (not 14),
+// and no wood is lost (8 stored + 6 held == 14).
+TEST_F(HandMaterialActionTest, DepositFromHandsBouncesStorageFullRemainderToBothHands) {
+	auto&	 registry = GoalTaskRegistry::Get();
+
+	// Storage that accepts exactly 8 Wood: one slot capped at 8.
+	auto storage = world->createEntity();
+	Inventory storageInv;
+	storageInv.maxCapacity = 1;
+	storageInv.maxStackSize = 8;
+	world->addComponent<Inventory>(storage, storageInv);
+
+	// Haul goal wants 14 (stays open after a partial 8 so we can read the credit).
+	GoalTask haul;
+	haul.type = TaskType::Haul;
+	haul.owner = GoalOwner::CraftingGoalSystem;
+	haul.destinationEntity = storage;
+	haul.targetAmount = 14;
+	haul.status = GoalStatus::Available;
+	uint64_t haulId = registry.createGoal(std::move(haul));
+
+	auto  colonist = createColonist({0.0F, 0.0F});
+	auto* inventory = world->getComponent<Inventory>(colonist);
+	seatArmful(*inventory, 14);
+
+	auto* task = world->getComponent<Task>(colonist);
+	task->type = TaskType::Haul;
+	task->state = TaskState::Arrived;
+	task->haulGoalId = haulId;
+	task->targetPosition = {0.0F, 0.0F};
+
+	auto* action = world->getComponent<Action>(colonist);
+	*action = Action::Deposit("Wood", 14, static_cast<uint64_t>(storage), {0.0F, 0.0F});
+
+	world->update(0.1F); // start
+	world->update(2.0F); // complete (deposit duration 1s)
+
+	auto* storedInv = world->getComponent<Inventory>(storage);
+	EXPECT_EQ(storedInv->getQuantity("Wood"), 8U) << "Storage took only what its 8-cap slot allows";
+
+	// The 6-unit remainder bounced back as a mirrored armful.
+	ASSERT_TRUE(inventory->leftHand.has_value());
+	ASSERT_TRUE(inventory->rightHand.has_value());
+	EXPECT_EQ(inventory->leftHand->quantity, 6U);
+	EXPECT_EQ(inventory->rightHand->quantity, 6U) << "Remainder stays mirrored across both hands";
+	EXPECT_EQ(handHeldQuantity(*inventory, "Wood"), 6U);
+	EXPECT_EQ(inventory->getQuantity("Wood"), 0U) << "Two-hand Wood never bounces into the backpack";
+
+	EXPECT_EQ(registry.getGoal(haulId)->deliveredAmount, 8U) << "Goal credited only the 8 that landed";
+
+	EXPECT_EQ(storedInv->getQuantity("Wood") + handHeldQuantity(*inventory, "Wood"), 14U)
+	    << "No wood lost: stored + held == the original armful";
+}
+
+// Deposit targeting a non-existent storage entity: all 14 bounce back to the hands
+// (mirrored), the goal is credited 0, and nothing is lost.
+TEST_F(HandMaterialActionTest, DepositFromHandsToMissingStorageReturnsAllToBothHands) {
+	auto& registry = GoalTaskRegistry::Get();
+
+	constexpr uint64_t kMissingStorage = 999999ULL;
+	ASSERT_FALSE(world->isAlive(static_cast<EntityID>(kMissingStorage)));
+
+	GoalTask haul;
+	haul.type = TaskType::Haul;
+	haul.owner = GoalOwner::CraftingGoalSystem;
+	haul.targetAmount = 14;
+	haul.status = GoalStatus::Available;
+	uint64_t haulId = registry.createGoal(std::move(haul));
+
+	auto  colonist = createColonist({0.0F, 0.0F});
+	auto* inventory = world->getComponent<Inventory>(colonist);
+	seatArmful(*inventory, 14);
+
+	auto* task = world->getComponent<Task>(colonist);
+	task->type = TaskType::Haul;
+	task->state = TaskState::Arrived;
+	task->haulGoalId = haulId;
+	task->targetPosition = {0.0F, 0.0F};
+
+	auto* action = world->getComponent<Action>(colonist);
+	*action = Action::Deposit("Wood", 14, kMissingStorage, {0.0F, 0.0F});
+
+	world->update(0.1F);
+	world->update(2.0F);
+
+	ASSERT_TRUE(inventory->leftHand.has_value());
+	ASSERT_TRUE(inventory->rightHand.has_value());
+	EXPECT_EQ(inventory->leftHand->quantity, 14U);
+	EXPECT_EQ(inventory->rightHand->quantity, 14U) << "All 14 return mirrored across both hands";
+	EXPECT_EQ(handHeldQuantity(*inventory, "Wood"), 14U) << "Nothing lost when storage is gone";
+	EXPECT_EQ(registry.getGoal(haulId)->deliveredAmount, 0U) << "Destroyed storage credits nothing";
+}
+
+// A craft whose only input is two-hand Wood consumes it straight from the hands: the
+// hands decrement by the input count (mirror stays synced) and the output is produced.
+TEST_F(HandMaterialActionTest, CraftConsumesWoodFromHandsAndProducesOutput) {
+	engine::assets::RecipeDef recipe;
+	recipe.defName = "Recipe_Plank";
+	recipe.label = "Plank";
+	recipe.stationDefName = "CraftingSpot";
+	recipe.workAmount = 50.0F; // -> 0.5s craft
+	recipe.inputs.push_back({"Wood", 0, 4});
+	recipe.outputs.push_back({"Plank", 0, 1});
+	engine::assets::RecipeRegistry::Get().registerTestRecipe(recipe);
+
+	EntityID station = static_cast<EntityID>(555);
+
+	auto  colonist = createColonist({0.0F, 0.0F});
+	auto* inventory = world->getComponent<Inventory>(colonist);
+	seatArmful(*inventory, 10); // 10 Wood in hands, empty backpack
+	ASSERT_EQ(inventory->getQuantity("Wood"), 0U);
+
+	auto* task = world->getComponent<Task>(colonist);
+	task->type = TaskType::Craft;
+	task->state = TaskState::Arrived;
+	task->craftRecipeDefName = "Recipe_Plank";
+	task->targetStationId = static_cast<uint64_t>(station);
+	task->targetPosition = {0.0F, 0.0F};
+
+	world->update(0.1F); // startCraftAction builds the Craft action (readiness gate sees hand Wood)
+	auto* action = world->getComponent<Action>(colonist);
+	ASSERT_TRUE(action->hasCraftingEffect()) << "Hand-carried Wood satisfies the craft readiness gate";
+
+	world->update(1.0F); // complete the 0.5s craft
+
+	EXPECT_EQ(handHeldQuantity(*inventory, "Wood"), 6U) << "4 Wood consumed from the hands (10 - 4)";
+	ASSERT_TRUE(inventory->leftHand.has_value());
+	ASSERT_TRUE(inventory->rightHand.has_value());
+	EXPECT_EQ(inventory->leftHand->quantity, inventory->rightHand->quantity) << "Hand mirror stays synced";
+	EXPECT_EQ(inventory->getQuantity("Plank"), 1U) << "Craft produced its output";
 }
 
 // =============================================================================

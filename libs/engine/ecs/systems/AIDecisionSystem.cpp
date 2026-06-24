@@ -323,7 +323,8 @@ namespace ecs {
 						const bool toBlueprint = goal->owner == GoalOwner::ConstructionGoalSystem;
 						for (uint32_t acceptedId : goal->acceptedDefNameIds) {
 							const auto& itemDefName = registry.getDefName(acceptedId);
-							uint32_t	carried = inventory.getQuantity(itemDefName);
+							// Hand-carried two-hand goods (a wood armful) count too, not just the pack.
+							uint32_t	carried = ecs::availableQuantity(inventory, itemDefName);
 							if (carried == 0) {
 								continue;
 							}
@@ -406,9 +407,11 @@ namespace ecs {
 					haulOption.targetDefNameId = looseItem.defNameId;
 					haulOption.distanceToTarget = tripDistance;
 					haulOption.haulItemDefName = itemDefName;
-					if (itemDef->capabilities.carryable.has_value()) {
-						haulOption.haulQuantity = itemDef->capabilities.carryable.value().quantity;
-					}
+					// Memory has no per-pile count; size the trip by carry weight and over-propose
+					// an armful. The pickup (applyCollectionEffect's loose-pile branch) clamps to
+					// the live ResourceStack and the colonist's remaining capacity -- same
+					// over-propose-then-clamp pattern as harvest's `wanted`.
+					haulOption.haulQuantity = ecs::cargoUnitsPerTrip(registry, itemDefName, inventory.carryCapacityKg);
 					haulOption.haulSourcePosition = looseItem.position;
 					haulOption.haulTargetStorageId = static_cast<uint64_t>(goal->destinationEntity);
 					haulOption.haulTargetPosition = goal->destinationPosition;
@@ -1131,7 +1134,8 @@ namespace ecs {
 			bool										  hasAllInputs = true;
 			std::vector<std::pair<std::string, uint32_t>> missingInputs; // defName, countNeeded
 			for (const auto& input : recipe->inputs) {
-				uint32_t have = inventory.getQuantity(input.defName);
+				// A colonist holding a wood armful in hand is ready to craft, not just one with a full pack.
+				uint32_t have = ecs::availableQuantity(inventory, input.defName);
 				if (have < input.count) {
 					hasAllInputs = false;
 					missingInputs.emplace_back(input.defName, input.count - have);
@@ -1578,14 +1582,20 @@ namespace ecs {
 			uint8_t		handsRequired = (assetDef != nullptr) ? assetDef->handsRequired : 1;
 
 			if (handsRequired == 1) {
-				// 1-handed item: try to stow to backpack
+				// 1-handed item: try the belt (quick-draw slot) first, then the backpack. The item is
+				// in hand, so a belt stow seats a copy on the belt and clears the hand.
+				if (inventory.stowToBelt(task.haulItemDefName)) {
+					inventory.putDown(task.haulItemDefName);
+					LOG_INFO(Engine, "[AI] Entity %llu: chain interrupted, stowed %s to belt", entityId, task.haulItemDefName.c_str());
+					return;
+				}
 				if (inventory.stowToBackpack(task.haulItemDefName)) {
 					LOG_INFO(Engine, "[AI] Entity %llu: chain interrupted, stowed %s to backpack", entityId, task.haulItemDefName.c_str());
 					return;
 				}
-				// Backpack full - fall through to drop
+				// Belt and backpack full - fall through to drop
 				LOG_INFO(
-					Engine, "[AI] Entity %llu: chain interrupted, dropping %s (backpack full)", entityId, task.haulItemDefName.c_str()
+					Engine, "[AI] Entity %llu: chain interrupted, dropping %s (belt and backpack full)", entityId, task.haulItemDefName.c_str()
 				);
 			} else {
 				LOG_INFO(Engine, "[AI] Entity %llu: chain interrupted, dropping %s (2-handed)", entityId, task.haulItemDefName.c_str());

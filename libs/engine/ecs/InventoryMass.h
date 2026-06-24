@@ -79,9 +79,9 @@ namespace ecs {
 		return massUnitsThatFit(remaining, registry.getItemMassKg(defName), inv.maxStackSize);
 	}
 
-	/// Does the inventory hold an item that provides `toolType` (e.g. "Axe")? Checks both
-	/// hands and the backpack; a held-or-stowed tool counts. Empty toolType always passes
-	/// (the work needs no tool).
+	/// Does the inventory hold an item that provides `toolType` (e.g. "Axe")? Checks the
+	/// hands, belt, and backpack; a held, belted, or stowed tool counts. Empty toolType
+	/// always passes (the work needs no tool).
 	[[nodiscard]] inline bool inventoryHoldsToolType(const Inventory& inv, const engine::assets::AssetRegistry& registry, const std::string& toolType) {
 		if (toolType.empty()) {
 			return true;
@@ -95,6 +95,11 @@ namespace ecs {
 		if (inv.rightHand.has_value() && matches(inv.rightHand->defName)) {
 			return true;
 		}
+		for (const auto& slot : inv.belt) {
+			if (slot.has_value() && matches(slot->defName)) {
+				return true;
+			}
+		}
 		for (const auto& [defName, quantity] : inv.items) {
 			if (quantity > 0 && matches(defName)) {
 				return true;
@@ -106,6 +111,87 @@ namespace ecs {
 	/// How many units of `defName` an empty colonist with `carryCapacityKg` carries in one trip.
 	[[nodiscard]] inline uint32_t cargoUnitsPerTrip(const engine::assets::AssetRegistry& registry, const std::string& defName, float carryCapacityKg) {
 		return massUnitsPerTrip(carryCapacityKg, registry.getItemMassKg(defName));
+	}
+
+	// ── Hand-carried bulk materials ─────────────────────────────────────────────
+	// Two-hand items (handsRequired >= 2, e.g. Wood) live in the hands as a weight-limited
+	// armful and never enter the backpack, so anything that reads or consumes materials must
+	// look at the hands, not just `items`. A two-hand armful occupies BOTH hands as the same
+	// logical stack (equal quantity, same defName); these helpers preserve that mirror.
+
+	/// True if `defName` must be carried in both hands (so it lives in the hands, not the pack).
+	[[nodiscard]] inline bool itemIsTwoHand(const engine::assets::AssetRegistry& registry, const std::string& defName) {
+		const auto* def = registry.getDefinition(defName);
+		return def != nullptr && def->handsRequired >= 2;
+	}
+
+	/// Quantity of `defName` held in the hands. A two-hand item mirrors across both hands; it is
+	/// counted once (right skipped when it mirrors the left), matching carriedCargoMassKg.
+	[[nodiscard]] inline uint32_t handHeldQuantity(const Inventory& inv, const std::string& defName) {
+		uint32_t qty = 0;
+		if (inv.leftHand.has_value() && inv.leftHand->defName == defName) {
+			qty += inv.leftHand->quantity;
+		}
+		if (inv.rightHand.has_value() && inv.rightHand->defName == defName &&
+			!(inv.leftHand.has_value() && inv.leftHand->defName == inv.rightHand->defName)) {
+			qty += inv.rightHand->quantity;
+		}
+		return qty;
+	}
+
+	/// Total `defName` a colonist can draw on: backpack plus hands. Callers that read materials
+	/// (craft input, haul, deposit) must use this so hand-carried two-hand goods are seen.
+	[[nodiscard]] inline uint32_t availableQuantity(const Inventory& inv, const std::string& defName) {
+		return inv.getQuantity(defName) + handHeldQuantity(inv, defName);
+	}
+
+	/// Remove up to `quantity` of `defName` from the hands, keeping the two-hand mirror in sync
+	/// (both hands decrement together and clear together). Returns the amount removed.
+	inline uint32_t removeFromHands(Inventory& inv, const std::string& defName, uint32_t quantity) {
+		const bool inLeft = inv.leftHand.has_value() && inv.leftHand->defName == defName;
+		const bool inRight = inv.rightHand.has_value() && inv.rightHand->defName == defName;
+		if (!inLeft && !inRight) {
+			return 0;
+		}
+		const bool mirrored = inLeft && inRight; // a two-hand item occupies both hands
+		ItemStack& primary = inLeft ? inv.leftHand.value() : inv.rightHand.value();
+		const uint32_t toRemove = std::min(quantity, primary.quantity);
+		primary.quantity -= toRemove;
+		if (mirrored) {
+			(inLeft ? inv.rightHand : inv.leftHand)->quantity = primary.quantity; // stay mirrored
+		}
+		if (primary.quantity == 0) {
+			if (inLeft) {
+				inv.leftHand.reset();
+			}
+			if (inRight) {
+				inv.rightHand.reset();
+			}
+		}
+		return toRemove;
+	}
+
+	/// Add a weight-limited armful of a two-hand material to the hands: grow an armful of the
+	/// same material already held, or seat a new one (which needs both hands free). Clamps to
+	/// the carry-weight cap and keeps the two-hand mirror in sync. Returns the amount lifted.
+	inline uint32_t addArmful(Inventory& inv, const engine::assets::AssetRegistry& registry, const std::string& defName, uint32_t quantity) {
+		const uint32_t lifted = std::min(quantity, cargoUnitsThatFit(inv, registry, defName));
+		if (lifted == 0) {
+			return 0;
+		}
+		if (inv.leftHand.has_value() && inv.leftHand->defName == defName) {
+			inv.leftHand->quantity += lifted;
+			if (inv.rightHand.has_value() && inv.rightHand->defName == defName) {
+				inv.rightHand->quantity += lifted;
+			}
+			return lifted;
+		}
+		if (!inv.hasHandsFree(2)) {
+			return 0;
+		}
+		inv.leftHand = ItemStack{defName, lifted};
+		inv.rightHand = ItemStack{defName, lifted};
+		return lifted;
 	}
 
 } // namespace ecs

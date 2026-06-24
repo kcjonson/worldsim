@@ -65,3 +65,64 @@ TEST(InventoryMassTests, PerTrip_DrivesMultipleTripsForLargeManifest) {
 	}
 	EXPECT_EQ(trips, 3);
 }
+
+// ============================================================================
+// Hand-carried bulk materials: a two-hand armful occupies BOTH hands as one
+// logical stack, so it must be counted once and the mirror kept in sync. These
+// are registry-free (pure inventory ops); the weight-clamped addArmful is
+// exercised end-to-end once Wood becomes two-hand.
+// ============================================================================
+
+TEST(InventoryMassTests, HandHeldQuantity_TwoHandMirrorCountsOnce) {
+	Inventory inv;
+	inv.leftHand = ItemStack{"Wood", 12};
+	inv.rightHand = ItemStack{"Wood", 12}; // same stack mirrored across both hands
+	EXPECT_EQ(handHeldQuantity(inv, "Wood"), 12U);
+}
+
+TEST(InventoryMassTests, HandHeldQuantity_DistinctOneHandItemsCountPerHand) {
+	Inventory inv;
+	inv.leftHand = ItemStack{"Knife", 1};
+	inv.rightHand = ItemStack{"Torch", 1};
+	EXPECT_EQ(handHeldQuantity(inv, "Knife"), 1U);
+	EXPECT_EQ(handHeldQuantity(inv, "Torch"), 1U);
+	EXPECT_EQ(handHeldQuantity(inv, "Wood"), 0U);
+}
+
+TEST(InventoryMassTests, AvailableQuantity_SumsBackpackAndHands) {
+	Inventory inv;
+	inv.items["Stone"] = 5;
+	inv.leftHand = ItemStack{"Wood", 10};
+	inv.rightHand = ItemStack{"Wood", 10};
+	EXPECT_EQ(availableQuantity(inv, "Wood"), 10U); // hands, counted once
+	EXPECT_EQ(availableQuantity(inv, "Stone"), 5U); // backpack
+}
+
+TEST(InventoryMassTests, RemoveFromHands_DecrementsMirrorInSync) {
+	Inventory inv;
+	inv.leftHand = ItemStack{"Wood", 10};
+	inv.rightHand = ItemStack{"Wood", 10};
+	EXPECT_EQ(removeFromHands(inv, "Wood", 4), 4U);
+	ASSERT_TRUE(inv.leftHand.has_value());
+	ASSERT_TRUE(inv.rightHand.has_value());
+	EXPECT_EQ(inv.leftHand->quantity, 6U);
+	EXPECT_EQ(inv.rightHand->quantity, 6U); // both hands stay equal
+}
+
+TEST(InventoryMassTests, RemoveFromHands_ClearsBothHandsWhenEmptied) {
+	Inventory inv;
+	inv.leftHand = ItemStack{"Wood", 8};
+	inv.rightHand = ItemStack{"Wood", 8};
+	EXPECT_EQ(removeFromHands(inv, "Wood", 99), 8U); // clamped to held
+	EXPECT_FALSE(inv.leftHand.has_value());
+	EXPECT_FALSE(inv.rightHand.has_value());
+}
+
+TEST(InventoryMassTests, RemoveFromHands_MissingItemRemovesNothing) {
+	Inventory inv;
+	inv.leftHand = ItemStack{"Wood", 5};
+	inv.rightHand = ItemStack{"Wood", 5};
+	EXPECT_EQ(removeFromHands(inv, "Stone", 3), 0U);
+	ASSERT_TRUE(inv.leftHand.has_value());
+	EXPECT_EQ(inv.leftHand->quantity, 5U); // untouched
+}
