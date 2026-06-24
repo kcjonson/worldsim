@@ -48,6 +48,7 @@
 #include <ecs/World.h>
 #include <ecs/components/Action.h>
 #include <ecs/components/Appearance.h>
+#include <ecs/components/Attributes.h>
 #include <ecs/components/Colonist.h>
 #include <ecs/components/DecisionTrace.h>
 #include <ecs/components/FacingDirection.h>
@@ -85,6 +86,7 @@
 
 #include <cstdlib>
 #include <memory>
+#include <random>
 #include <sstream>
 #include <string>
 #include <unordered_set>
@@ -1044,7 +1046,19 @@ namespace {
 			ecsWorld->addComponent<ecs::Appearance>(entity, ecs::Appearance{"Colonist", 1.0F, {1.0F, 1.0F, 1.0F, 1.0F}});
 			ecsWorld->addComponent<ecs::Colonist>(entity, ecs::Colonist{newName});
 			ecsWorld->addComponent<ecs::NeedsComponent>(entity, ecs::NeedsComponent::createDefault());
-			ecsWorld->addComponent<ecs::Inventory>(entity, ecs::Inventory::createForColonist());
+
+			// Roll static attributes (0-20), seeded per-entity so colonists vary
+			// deterministically. Only Strength is consumed today: it sets hand-carry
+			// capacity. The other attributes are placeholders for upcoming systems.
+			ecs::Attributes attributes;
+			std::mt19937   attrRng(static_cast<uint32_t>(entity));
+			attributes.strength = std::uniform_real_distribution<float>(6.0F, 14.0F)(attrRng);
+			ecsWorld->addComponent<ecs::Attributes>(entity, attributes);
+
+			// Carry weight scales with Strength (an average colonist lands at the prior 35kg).
+			auto inventory = ecs::Inventory::createForColonist();
+			inventory.carryCapacityKg = ecs::Attributes::carryCapacityKg(attributes.strength);
+			ecsWorld->addComponent<ecs::Inventory>(entity, std::move(inventory));
 			ecsWorld->addComponent<ecs::Knowledge>(entity, ecs::Knowledge{});
 			ecsWorld->addComponent<ecs::Memory>(entity, ecs::Memory{.owner = entity});
 			ecsWorld->addComponent<ecs::Task>(entity, ecs::Task{});
