@@ -5,6 +5,7 @@
 #include <graphics/Rect.h>
 #include <layer/Layer.h>
 
+#include <array>
 #include <optional>
 #include <vector>
 
@@ -12,14 +13,21 @@ namespace world_sim {
 
 /// Data for Gear tab
 struct GearData {
-	// Hand items (what colonist is holding)
+	// Hand items (what colonist is holding; a two-hand armful mirrors across both hands)
 	std::optional<ecs::ItemStack> leftHand;
 	std::optional<ecs::ItemStack> rightHand;
+
+	// Belt quick-draw tool slots
+	std::array<std::optional<ecs::ItemStack>, 2> belt;
 
 	// Backpack items
 	std::vector<ecs::ItemStack> items;
 	uint32_t					slotCount = 0;
 	uint32_t					maxSlots = 0;
+
+	// Cargo weight: current vs strength-derived capacity (tools excluded)
+	float carriedKg = 0.0F;
+	float capacityKg = 0.0F;
 };
 
 /// Gear tab content for ColonistDetailsDialog
@@ -34,8 +42,10 @@ class GearTabView : public UI::Container {
 
   private:
 	UI::LayerHandle layoutHandle;
-	UI::LayerHandle handsTextHandle;		// "Left: X, Right: Y" or "(empty)"
+	UI::LayerHandle handsTextHandle;		// armful / per-hand items or "(empty)"
+	UI::LayerHandle beltTextHandle;			// belt tools or "(empty)"
 	UI::LayerHandle inventoryHeaderHandle;	// "Inventory: X/Y slots"
+	UI::LayerHandle carryTextHandle;		// "Carry: X / Y kg"
 	UI::LayerHandle itemsTextHandle;		// Items list or "Empty"
 };
 

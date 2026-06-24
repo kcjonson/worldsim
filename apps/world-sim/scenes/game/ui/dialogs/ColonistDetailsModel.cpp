@@ -11,6 +11,8 @@
 #include <ecs/components/Task.h>
 #include <ecs/components/Transform.h>
 
+#include <ecs/InventoryMass.h>
+
 #include <theme/Tokens.h>
 
 #include <cmath>
@@ -273,20 +275,30 @@ void ColonistDetailsModel::extractSocialData() {
 void ColonistDetailsModel::extractGearData(const ecs::World& world, ecs::EntityID colonistId) {
 	const auto* inventory = world.getComponent<ecs::Inventory>(colonistId);
 	if (inventory != nullptr) {
-		// Hand items
+		// Hand items (a two-hand armful mirrors across both hands)
 		gearData.leftHand = inventory->leftHand;
 		gearData.rightHand = inventory->rightHand;
+
+		// Belt tool slots
+		gearData.belt = inventory->belt;
 
 		// Backpack items
 		gearData.items = inventory->getAllItems();
 		gearData.slotCount = inventory->getSlotCount();
 		gearData.maxSlots = inventory->maxCapacity;
+
+		// Cargo weight (tools excluded) vs the colonist's strength-derived capacity
+		gearData.carriedKg = ecs::carriedCargoMassKg(*inventory, engine::assets::AssetRegistry::Get());
+		gearData.capacityKg = inventory->carryCapacityKg;
 	} else {
 		gearData.leftHand.reset();
 		gearData.rightHand.reset();
+		gearData.belt = {};
 		gearData.items.clear();
 		gearData.slotCount = 0;
 		gearData.maxSlots = 0;
+		gearData.carriedKg = 0.0F;
+		gearData.capacityKg = 0.0F;
 	}
 }
 
