@@ -4,6 +4,7 @@
 
 #include <assets/AssetRegistry.h>
 #include <assets/ConstructionRegistry.h>
+#include <assets/placement/PlacementExecutor.h>
 #include <assets/placement/SpatialIndex.h>
 #include <construction/ConstructionWorld.h>
 
@@ -12,10 +13,18 @@
 #include <nav/PathQuery.h>
 #include <polygon/Polygon.h>
 
+#include <world/Biome.h>
+#include <world/BiomeWeights.h>
+#include <world/chunk/ChunkManager.h>
+#include <world/chunk/ChunkSampleResult.h>
+#include <world/chunk/IWorldSampler.h>
+
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
+#include <memory>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include <gtest/gtest.h>
@@ -447,4 +456,299 @@ TEST_F(NavEndToEndTest, NoOpeningBlocksPath) {
 	const Vec2i64 inside{2000, 1500};
 	geometry::nav::PathResult path = geometry::nav::pathThrough(mesh, outside, inside, 300);
 	EXPECT_FALSE(path.reachable);
+}
+
+// ---------------------------------------------------------------------------
+// Area-scoped buildInput (Phase A: simulation-area nav build)
+// ---------------------------------------------------------------------------
+
+namespace {
+
+	using engine::assets::AsyncChunkPlacementResult;
+	using engine::assets::PlacementExecutor;
+	using engine::world::Biome;
+	using engine::world::BiomeWeights;
+	using engine::world::ChunkCoordinate;
+	using engine::world::ChunkManager;
+	using engine::world::ChunkSampleResult;
+	using engine::world::IWorldSampler;
+	using engine::world::kChunkSize;
+	using engine::world::WorldPosition;
+
+	// A sampler whose tiles are all Lake (water) inside a chosen set of chunk
+	// coordinates and land (TemperateGrassland) everywhere else. Drives the area
+	// build's water predicate deterministically without leaning on noise.
+	class WaterRegionSampler : public IWorldSampler {
+	  public:
+		explicit WaterRegionSampler(std::vector<ChunkCoordinate> waterChunks)
+			: m_waterChunks(std::move(waterChunks)) {}
+
+		[[nodiscard]] ChunkSampleResult sampleChunk(ChunkCoordinate coord) const override {
+			const Biome b = isWaterChunk(coord) ? Biome::Lake : Biome::TemperateGrassland;
+			ChunkSampleResult r;
+			for (auto& cb : r.cornerBiomes) {
+				cb = BiomeWeights::single(b);
+			}
+			r.cornerElevations = {1.0F, 1.0F, 1.0F, 1.0F};
+			r.computeSectorGrid();
+			return r;
+		}
+
+		[[nodiscard]] float	   sampleElevation(WorldPosition) const override { return 1.0F; }
+		[[nodiscard]] uint64_t getWorldSeed() const override { return 99u; }
+
+	  private:
+		[[nodiscard]] bool isWaterChunk(ChunkCoordinate coord) const {
+			for (const ChunkCoordinate& c : m_waterChunks) {
+				if (c == coord) {
+					return true;
+				}
+			}
+			return false;
+		}
+		std::vector<ChunkCoordinate> m_waterChunks;
+	};
+
+	// Stand up a ChunkManager with the given sampler, load+finish a generous radius
+	// around the origin so every chunk the area touches is ready.
+	std::unique_ptr<ChunkManager> readyChunks(std::unique_ptr<IWorldSampler> sampler, int loadRadius = 3) {
+		auto mgr = std::make_unique<ChunkManager>(std::move(sampler));
+		mgr->setLoadRadius(loadRadius);
+		mgr->setUnloadRadius(loadRadius + 2);
+		mgr->update({0.0F, 0.0F});
+		mgr->finishPendingGeneration();
+		return mgr;
+	}
+
+	// Count the blocked flora rings (provenance tree) in an input.
+	int countFlora(const NavMeshInput& input) {
+		int n = 0;
+		for (const NavInputPolygon& p : input.polygons) {
+			if (p.provenanceId == kProvenanceTree) {
+				++n;
+			}
+		}
+		return n;
+	}
+
+	// The single unblocked border ring.
+	const NavInputPolygon* findBorder(const NavMeshInput& input) {
+		for (const NavInputPolygon& p : input.polygons) {
+			if (!p.blocked && p.provenanceId == kProvenanceBorder) {
+				return &p;
+			}
+		}
+		return nullptr;
+	}
+
+} // namespace
+
+// The border ring exactly matches the requested area AABB.
+TEST_F(NavFloraTest, Area_BorderEqualsAreaBounds) {
+	auto mgr = readyChunks(std::make_unique<WaterRegionSampler>(std::vector<ChunkCoordinate>{}));
+	PlacementExecutor placement(AssetRegistry::Get());
+	ConstructionWorld cw;
+
+	const Vec2i64	   center{100000, 100000};
+	const std::int64_t radius = 60000;
+	NavMeshInput	   input  = buildInput(center, radius, *mgr, placement, AssetRegistry::Get(), cw,
+										   ConstructionRegistry::Get());
+
+	const NavInputPolygon* border = findBorder(input);
+	ASSERT_NE(border, nullptr);
+	ASSERT_EQ(border->ring.size(), 4u);
+	std::int64_t minX = border->ring[0].x;
+	std::int64_t minY = border->ring[0].y;
+	std::int64_t maxX = border->ring[0].x;
+	std::int64_t maxY = border->ring[0].y;
+	for (const Vec2i64& v : border->ring) {
+		minX = std::min(minX, v.x);
+		minY = std::min(minY, v.y);
+		maxX = std::max(maxX, v.x);
+		maxY = std::max(maxY, v.y);
+	}
+	EXPECT_EQ(minX, center.x - radius);
+	EXPECT_EQ(minY, center.y - radius);
+	EXPECT_EQ(maxX, center.x + radius);
+	EXPECT_EQ(maxY, center.y + radius);
+}
+
+// The area scopes flora: trees are placed across several chunks, most far outside
+// the area; the build emits rings ONLY for the in-area trees, bounded (not all).
+TEST_F(NavFloraTest, Area_ScopesFloraToInAreaTrees) {
+	AssetRegistry& reg = AssetRegistry::Get();
+	AssetDefinition tree;
+	tree.defName			   = "Test_AreaTree";
+	tree.collision.type		   = CollisionShapeType::Circle;
+	tree.collision.radiusMeters = 0.2F;
+	reg.registerTestDefinition(tree);
+
+	auto mgr = readyChunks(std::make_unique<WaterRegionSampler>(std::vector<ChunkCoordinate>{}));
+	PlacementExecutor placement(reg);
+
+	// Lay a grid of trees over chunks (0,0) and (1,0): one every 8 m across a wide
+	// span (covers x in [0, 1024) m, y in [0, 512) m). The area is a small box, so
+	// only a handful fall inside it. Trees are split into their owning chunk's index.
+	int totalTrees = 0;
+	std::unordered_map<ChunkCoordinate, AsyncChunkPlacementResult> byChunk;
+	for (int ty = 0; ty < 512; ty += 8) {
+		for (int tx = 0; tx < 1024; tx += 8) {
+			const WorldPosition wp{static_cast<float>(tx), static_cast<float>(ty)};
+			const ChunkCoordinate coord = engine::world::worldToChunk(wp);
+			AsyncChunkPlacementResult& r = byChunk[coord];
+			r.coord = coord;
+			PlacedEntity e;
+			e.defName  = "Test_AreaTree";
+			e.position = {wp.x, wp.y};
+			r.spatialIndex.insert(e);
+			++totalTrees;
+		}
+	}
+	for (auto& [coord, result] : byChunk) {
+		placement.storeChunkResult(std::move(result));
+	}
+	ASSERT_GT(totalTrees, 1000) << "scenario must place many trees so scoping is meaningful";
+
+	ConstructionWorld cw;
+	// Small area centered at (256, 256) m: a 20 m half-extent box [236, 276] m on each
+	// axis -> a 40 m square holds ~ (40/8)^2 = 25 trees, far below the total.
+	const Vec2i64	   center{256000, 256000};
+	const std::int64_t radius = 20000;
+	NavMeshInput	   input  = buildInput(center, radius, *mgr, placement, reg, cw, ConstructionRegistry::Get());
+
+	const int flora = countFlora(input);
+	EXPECT_GT(flora, 0) << "in-area trees must be emitted";
+	EXPECT_LT(flora, totalTrees / 4) << "the area must NOT ingest all loaded trees";
+
+	// Every emitted flora ring centroid sits within a tile of the area (queryRect can
+	// return entities slightly outside its bounds since cells are 4 m, but never far).
+	for (const NavInputPolygon& p : input.polygons) {
+		if (p.provenanceId != kProvenanceTree) {
+			continue;
+		}
+		std::int64_t cx = 0;
+		std::int64_t cy = 0;
+		for (const Vec2i64& v : p.ring) {
+			cx += v.x;
+			cy += v.y;
+		}
+		cx /= static_cast<std::int64_t>(p.ring.size());
+		cy /= static_cast<std::int64_t>(p.ring.size());
+		EXPECT_GE(cx, center.x - radius - 8000);
+		EXPECT_LE(cx, center.x + radius + 8000);
+		EXPECT_GE(cy, center.y - radius - 8000);
+		EXPECT_LE(cy, center.y + radius + 8000);
+	}
+}
+
+// Water spanning a chunk seam comes out as ONE continuous loop, not two stitched at
+// the boundary. Chunks (0,0) and (1,0) are fully water, the surrounding land closes
+// the loop; the area straddles the x=512 m seam.
+TEST_F(NavFloraTest, Area_WaterSpansChunkSeamAsOneLoop) {
+	std::vector<ChunkCoordinate> water = {{0, 0}, {1, 0}};
+	auto mgr = readyChunks(std::make_unique<WaterRegionSampler>(water));
+	PlacementExecutor placement(AssetRegistry::Get());
+	ConstructionWorld cw;
+
+	// Center on the seam (x = 512 m) with a 200 m half-extent so the box reaches into
+	// both water chunks and the land chunks above/below, so the water loop closes.
+	const Vec2i64	   center{512000, 256000};
+	const std::int64_t radius = 200000;
+	NavMeshInput	   input  = buildInput(center, radius, *mgr, placement, AssetRegistry::Get(), cw,
+										   ConstructionRegistry::Get());
+
+	int waterLoops = 0;
+	for (const NavInputPolygon& p : input.polygons) {
+		if (p.provenanceId == kProvenanceWater) {
+			++waterLoops;
+		}
+	}
+	// One continuous water boundary across the seam (no per-chunk fragments). The
+	// two-water-chunk block is a single rectangle of water bounded by land, so the
+	// marching-squares pass yields exactly one outer loop.
+	EXPECT_EQ(waterLoops, 1) << "water across the chunk seam must be a single loop";
+}
+
+// Two builds of an unchanged world produce byte-identical inputs (deterministic
+// ordering: border, water, flora (chunks (x,y) sorted, entities (pos,defName)
+// sorted), walls).
+TEST_F(NavFloraTest, Area_DeterministicOrdering) {
+	AssetRegistry& reg = AssetRegistry::Get();
+	AssetDefinition tree;
+	tree.defName			   = "Test_DetTree";
+	tree.collision.type		   = CollisionShapeType::Circle;
+	tree.collision.radiusMeters = 0.2F;
+	reg.registerTestDefinition(tree);
+
+	std::vector<ChunkCoordinate> water = {{0, 0}};
+	auto mgr = readyChunks(std::make_unique<WaterRegionSampler>(water));
+	PlacementExecutor placement(reg);
+
+	std::unordered_map<ChunkCoordinate, AsyncChunkPlacementResult> byChunk;
+	for (int ty = 100; ty < 400; ty += 10) {
+		for (int tx = 100; tx < 400; tx += 10) {
+			const WorldPosition wp{static_cast<float>(tx), static_cast<float>(ty)};
+			const ChunkCoordinate coord = engine::world::worldToChunk(wp);
+			AsyncChunkPlacementResult& r = byChunk[coord];
+			r.coord = coord;
+			PlacedEntity e;
+			e.defName  = "Test_DetTree";
+			e.position = {wp.x, wp.y};
+			r.spatialIndex.insert(e);
+		}
+	}
+	for (auto& [coord, result] : byChunk) {
+		placement.storeChunkResult(std::move(result));
+	}
+
+	ConstructionWorld cw;
+	const Vec2i64	   center{256000, 256000};
+	const std::int64_t radius = 200000;
+	NavMeshInput a = buildInput(center, radius, *mgr, placement, reg, cw, ConstructionRegistry::Get());
+	NavMeshInput b = buildInput(center, radius, *mgr, placement, reg, cw, ConstructionRegistry::Get());
+
+	ASSERT_EQ(a.polygons.size(), b.polygons.size());
+	for (std::size_t i = 0; i < a.polygons.size(); ++i) {
+		EXPECT_EQ(a.polygons[i].blocked, b.polygons[i].blocked);
+		EXPECT_EQ(a.polygons[i].provenanceId, b.polygons[i].provenanceId);
+		ASSERT_EQ(a.polygons[i].ring.size(), b.polygons[i].ring.size()) << "ring " << i;
+		for (std::size_t k = 0; k < a.polygons[i].ring.size(); ++k) {
+			EXPECT_EQ(a.polygons[i].ring[k].x, b.polygons[i].ring[k].x);
+			EXPECT_EQ(a.polygons[i].ring[k].y, b.polygons[i].ring[k].y);
+		}
+	}
+}
+
+// Walls entirely outside the area are dropped; a wall crossing into the area is kept.
+TEST_F(NavWallTest, Area_DropsWallsOutsideArea) {
+	auto mgr = readyChunks(std::make_unique<WaterRegionSampler>(std::vector<ChunkCoordinate>{}));
+	PlacementExecutor placement(AssetRegistry::Get());
+
+	ConstructionWorld cw;
+	// One wall inside the area, one far outside it.
+	buildWall(cw, {250000, 256000}, {262000, 256000}); // inside
+	buildWall(cw, {800000, 800000}, {812000, 800000}); // far outside
+
+	const Vec2i64	   center{256000, 256000};
+	const std::int64_t radius = 20000;
+	NavMeshInput	   input  = buildInput(center, radius, *mgr, placement, AssetRegistry::Get(), cw,
+										   ConstructionRegistry::Get());
+
+	const Vec2i64 minMm{center.x - radius, center.y - radius};
+	const Vec2i64 maxMm{center.x + radius, center.y + radius};
+	for (const NavInputPolygon& p : input.polygons) {
+		if (p.provenanceId <= 0) {
+			continue; // skip border/water/flora; walls carry positive segment ids
+		}
+		// Every kept wall ring must have at least one vertex within (or straddling) the
+		// area on each axis -- i.e. it is not entirely on one outside side.
+		bool allLeft = true, allRight = true, allBelow = true, allAbove = true;
+		for (const Vec2i64& v : p.ring) {
+			allLeft	 = allLeft && (v.x < minMm.x);
+			allRight = allRight && (v.x > maxMm.x);
+			allBelow = allBelow && (v.y < minMm.y);
+			allAbove = allAbove && (v.y > maxMm.y);
+		}
+		EXPECT_FALSE(allLeft || allRight || allBelow || allAbove) << "an out-of-area wall ring was kept";
+	}
 }

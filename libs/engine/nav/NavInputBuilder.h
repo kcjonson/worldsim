@@ -15,6 +15,7 @@
 
 #include "world/chunk/Chunk.h"
 #include "world/chunk/ChunkCoordinate.h"
+#include "world/chunk/ChunkManager.h"
 
 #include <assets/AssetRegistry.h>
 #include <assets/ConstructionRegistry.h>
@@ -26,6 +27,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <vector>
 
 namespace engine::nav {
@@ -58,6 +60,16 @@ namespace engine::nav {
 	[[nodiscard]] std::vector<geometry::nav::NavInputPolygon> extractWaterObstacles(const world::Chunk& chunk);
 
 	// --- Flora -------------------------------------------------------------------
+
+	// One blocked ring for a single placed entity whose AssetDefinition has a
+	// blocking collision shape, transformed into world mm by the entity's position
+	// (tiles), rotation, and scale. Circle -> a padded octagon; Polygon -> its
+	// points transformed. Returns nullopt when the entity has no blocking collision
+	// (most flora) or the resulting ring is degenerate. This is the single per-entity
+	// code path shared by both the legacy index sweep and the area-scoped build, so
+	// rounding/winding/pad stay identical between them.
+	[[nodiscard]] std::optional<geometry::nav::NavInputPolygon>
+	floraRingFor(const assets::PlacedEntity& entity, const assets::AssetRegistry& registry);
 
 	// One blocked ring per placed entity whose AssetDefinition has a blocking
 	// collision shape, transformed into world mm by the entity's position (tiles),
@@ -97,5 +109,28 @@ namespace engine::nav {
 	[[nodiscard]] geometry::nav::NavMeshInput buildInput(const std::vector<const world::Chunk*>& chunks,
 														 const assets::PlacementExecutor& placement, const assets::AssetRegistry& assetReg,
 														 const construction::ConstructionWorld& world, const assets::ConstructionRegistry& cfg);
+
+	// Area-scoped assembler: build a NavMeshInput for the square AABB centered at
+	// `areaCenterMm` with half-extent `areaRadiusMm` (both world-absolute mm). Unlike
+	// the chunk-set overload this ingests ONLY the obstacles touching the area, so the
+	// triangulation cost is bounded by area size, not by the loaded region (a forested
+	// world has tens of thousands of trees loaded but only ~1-2k inside a 120 m box).
+	//
+	// Emission order is fixed for determinism (two builds of an unchanged world are
+	// byte-identical): border, then water, then flora, then walls.
+	//  - Border: the single unblocked rectangle [center-r, center+r].
+	//  - Water: marching squares over the area's tile span (+1 tile margin so loops
+	//    close against land at the boundary); each tile maps through ChunkManager to
+	//    its chunk, missing/not-ready chunks read as land.
+	//  - Flora: only the chunks overlapping the area AABB are visited, and within each
+	//    only entities returned by queryRect over the area's tile bounds; chunks are
+	//    visited in (x,y) order and the per-chunk entities are sorted by (position,
+	//    defName) so the order is stable regardless of queryRect's internal layout.
+	//  - Walls: extractWalls over the whole construction world, then rings entirely
+	//    outside the area AABB are dropped (door portals touching the area are kept).
+	[[nodiscard]] geometry::nav::NavMeshInput buildInput(geometry::Vec2i64 areaCenterMm, std::int64_t areaRadiusMm,
+														 engine::world::ChunkManager& chunks, const assets::PlacementExecutor& placement,
+														 const assets::AssetRegistry& assetReg, const construction::ConstructionWorld& world,
+														 const assets::ConstructionRegistry& cfg);
 
 } // namespace engine::nav

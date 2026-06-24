@@ -2,20 +2,30 @@
 
 // NavigationSystem - owns the cached navmesh and answers path queries (Nav B3).
 //
-// One mesh for the whole loaded region. Each frame the system decides whether the
-// world changed (a construction edit bumped ConstructionWorld::version(), or the
-// set of fully-placed loaded chunks moved) and, if so, rebuilds the mesh OFF the
-// main thread. The expensive triangulation (geometry::nav::buildNavMesh) runs on a
-// std::async worker; the cheap-but-not-thread-safe extraction that reads live game
-// state (engine::nav::buildInput, which walks ConstructionWorld -- NOT thread-safe)
-// runs ON the main thread, producing a self-contained NavMeshInput the worker owns
-// by value. While a rebuild is in flight the OLD mesh keeps serving queries, so a
-// path query never blocks on a build and never races the extraction.
+// One mesh for a SIMULATION AREA: a fixed-size square AABB in world-absolute mm,
+// anchored at the camera position on the first build. The build ingests only the
+// obstacles inside that area, so a forested world (tens of thousands of loaded
+// trees) still builds fast because the area holds only ~1-2k. Building over every
+// loaded+processed chunk hung the off-thread triangulation; scoping to the area is
+// the fix. (Snap-on-scroll -- re-centering the area as the camera moves -- is a
+// later phase; for now the area is anchored once on the first build.)
+//
+// Each frame the system decides whether the world changed (a construction edit
+// bumped ConstructionWorld::version(), or this is the first build) and, if so,
+// rebuilds the mesh OFF the main thread. The expensive triangulation
+// (geometry::nav::buildNavMesh) runs on a std::async worker; the cheap-but-not-
+// thread-safe extraction that reads live game state (engine::nav::buildInput, which
+// walks ConstructionWorld -- NOT thread-safe) runs ON the main thread, producing a
+// self-contained NavMeshInput the worker owns by value. While a rebuild is in flight
+// the OLD mesh keeps serving queries, so a path query never blocks on a build and
+// never races the extraction.
 //
 // Queries (requestPath / isReachable) are synchronous against the current cached
 // mesh and honor the agent's disc radius through geometry::nav::pathThrough.
 
 #include "../ISystem.h"
+
+#include <core/Vec2i64.h>
 
 #include <nav/NavMesh.h>
 #include <nav/PathQuery.h>
@@ -41,6 +51,7 @@ namespace engine::construction {
 
 namespace engine::world {
 	class ChunkManager;
+	class WorldCamera;
 }
 
 namespace ecs {
@@ -66,17 +77,24 @@ class NavigationSystem : public ISystem {
 
 	// --- Resource injection (setter style; no heavy ctor deps) ----------------
 
-	void setChunkManager(engine::world::ChunkManager* chunkManager) { m_chunkManager = chunkManager; }
+	void setChunkManager(engine::world::ChunkManager* manager) { chunkManager = manager; }
 
-	// Only fully-placed chunks feed the build; same signature VisionSystem uses.
+	// The camera supplies the simulation-area center. The area is anchored at the
+	// camera position on the FIRST build; without a camera no build runs.
+	void setCamera(const engine::world::WorldCamera* cam) { camera = cam; }
+
+	// Only fully-placed chunks feed the build; same signature VisionSystem uses. The
+	// processed-chunks set gates which chunks are queried for flora/water during the
+	// area sweep (a half-placed chunk in the area contributes nothing rather than a
+	// partial obstacle set).
 	void setPlacementData(
 		engine::assets::PlacementExecutor*						  executor,
-		const std::unordered_set<engine::world::ChunkCoordinate>* processedChunks) {
-		m_placement = executor;
-		m_processedChunks = processedChunks;
+		const std::unordered_set<engine::world::ChunkCoordinate>* processed) {
+		placement = executor;
+		processedChunks = processed;
 	}
 
-	void setConstructionWorld(const engine::construction::ConstructionWorld* world) { m_constructionWorld = world; }
+	void setConstructionWorld(const engine::construction::ConstructionWorld* world) { constructionWorld = world; }
 
 	// --- Queries (synchronous, against the current cached mesh) ---------------
 
@@ -112,13 +130,13 @@ class NavigationSystem : public ISystem {
 								   geometry::nav::BeliefFilter belief = {}) const;
 
 	// The current cached mesh (for the later debug overlay). Empty until hasMesh().
-	[[nodiscard]] const geometry::nav::NavMesh& mesh() const { return m_mesh; }
-	[[nodiscard]] bool						  hasMesh() const { return !m_mesh.triangles.empty(); }
+	[[nodiscard]] const geometry::nav::NavMesh& mesh() const { return navMesh; }
+	[[nodiscard]] bool						  hasMesh() const { return !navMesh.triangles.empty(); }
 
 	// Monotonic counter bumped each time a freshly built mesh is swapped in. A stored
 	// NavPath stamps this at plan time so the replan loop can detect "the world rebuilt
 	// under me" without inspecting the mesh. Stays 0 until the first mesh lands.
-	[[nodiscard]] std::uint64_t generation() const { return m_generation; }
+	[[nodiscard]] std::uint64_t generation() const { return meshGeneration; }
 
 	// Cumulative A* instrumentation since the last resetNavQueryStats() (P3.5). Lets a
 	// dev overlay / HTTP endpoint VERIFY the RRA* heuristic cuts expansions at runtime.
@@ -132,44 +150,56 @@ class NavigationSystem : public ISystem {
 		std::int64_t  lastNodesExpanded = 0;
 		std::int64_t  lastPeakOpenSet	= 0;
 	};
-	[[nodiscard]] const NavQueryStats& navQueryStats() const { return m_navStats; }
-	void						   resetNavQueryStats() { m_navStats = {}; }
+	[[nodiscard]] const NavQueryStats& navQueryStats() const { return navStats; }
+	void						   resetNavQueryStats() { navStats = {}; }
 
 	// Number of live RRA* reverse-search caches (one per distinct goal triangle). For
 	// tests/overlay: confirms the cap and the generation-bump invalidation. Bounded by
 	// kMaxRraCaches.
-	[[nodiscard]] std::size_t rraCacheCount() const { return m_rraCaches.size(); }
+	[[nodiscard]] std::size_t rraCacheCount() const { return rraCaches.size(); }
 
   private:
-	// True if the snapshotted inputs differ from what the current mesh was built
-	// from (version moved, or the processed-and-loaded chunk set changed).
-	[[nodiscard]] bool needsRebuild(const std::unordered_set<engine::world::ChunkCoordinate>& currentChunks) const;
+	// True if a rebuild is due: the first build, or a ConstructionWorld::version()
+	// change since the last build. (Re-centering the area on camera movement is a
+	// later phase and is NOT a trigger here.)
+	[[nodiscard]] bool needsRebuild() const;
 
-	// The chunk coords that are both loaded AND fully placed -- the set the build
-	// actually consumes.
-	[[nodiscard]] std::unordered_set<engine::world::ChunkCoordinate> currentBuildableChunks() const;
+	// Half-extent of the simulation-area square, in mm (60 m -> a 120 m box). The
+	// build is bounded by this, not by the loaded region. update() clamps the value
+	// it actually uses so the area never reaches past the loaded-chunk extent.
+	static constexpr std::int64_t kSimAreaRadiusMm = 60000;
 
-	engine::world::ChunkManager*							  m_chunkManager = nullptr;
-	engine::assets::PlacementExecutor*						  m_placement = nullptr;
-	const std::unordered_set<engine::world::ChunkCoordinate>* m_processedChunks = nullptr;
-	const engine::construction::ConstructionWorld*			  m_constructionWorld = nullptr;
+	// Camera travel (mm) that will trigger an area re-center in the snap-on-scroll
+	// phase. Defined now; unused in Phase A (the area is anchored once).
+	static constexpr std::int64_t kRecenterThresholdMm = 20000;
 
-	geometry::nav::NavMesh m_mesh; // the current queryable mesh (empty = none yet)
+	engine::world::ChunkManager*							  chunkManager = nullptr;
+	const engine::world::WorldCamera*						  camera = nullptr;
+	engine::assets::PlacementExecutor*						  placement = nullptr;
+	const std::unordered_set<engine::world::ChunkCoordinate>* processedChunks = nullptr;
+	const engine::construction::ConstructionWorld*			  constructionWorld = nullptr;
+
+	geometry::nav::NavMesh navMesh; // the current queryable mesh (empty = none yet)
 
 	// In-flight async build. Valid only while a rebuild is running.
-	std::future<geometry::nav::NavMesh> m_future;
+	std::future<geometry::nav::NavMesh> future;
 
-	// What the in-flight build (or, when no build is in flight, the current mesh)
-	// was snapshotted from. A sentinel of UINT64_MAX means "nothing built yet" so
+	// The ConstructionWorld::version() the in-flight build (or, when none is running,
+	// the current mesh) was snapshotted from. UINT64_MAX means "nothing built yet" so
 	// the first real version (0 on a fresh ConstructionWorld) triggers a build.
-	std::uint64_t									   m_builtVersion = UINT64_MAX;
-	std::unordered_set<engine::world::ChunkCoordinate> m_builtChunks;
-	bool											   m_haveBuiltOnce = false;
+	std::uint64_t builtVersion = UINT64_MAX;
+	bool		  haveBuiltOnce = false;
+
+	// The anchored simulation-area center (world mm) and whether it has been set. The
+	// area is anchored at the camera position on the first build and held there for
+	// Phase A; the snap-on-scroll phase will move it.
+	geometry::Vec2i64 simAreaCenter{0, 0};
+	bool			  haveSimArea = false;
 
 	// Bumped on every mesh swap-in (see generation()). Drives NavPath staleness for the
 	// replan loop independently of ConstructionWorld::version() (which the system doesn't
 	// expose and which a query-side consumer shouldn't depend on).
-	std::uint64_t m_generation = 0;
+	std::uint64_t meshGeneration = 0;
 
 	// Resumable RRA* reverse-search caches, keyed by GOAL TRIANGLE index. One reverse
 	// search per goal serves every agent (belief- and radius-agnostic, built on the
@@ -177,7 +207,7 @@ class NavigationSystem : public ISystem {
 	// one search. Mutable because requestPath is const but lazily fills/resumes the cache.
 	//
 	// LIFECYCLE. Key: the goal triangle id in the CURRENT mesh. Triangle indices are
-	// invalidated by a mesh rebuild, so the whole map is CLEARED wherever m_generation
+	// invalidated by a mesh rebuild, so the whole map is CLEARED wherever meshGeneration
 	// bumps (the mesh swap in update()). BOUND: a churn of distinct goals must not grow
 	// the map without limit, so when it would exceed kMaxRraCaches we clear it wholesale
 	// (simplest sound policy -- the caches are cheap to rebuild on demand, and a flat
@@ -188,9 +218,9 @@ class NavigationSystem : public ISystem {
 	// which produces a value the main thread swaps in under update(); queries never touch
 	// the in-flight build.)
 	static constexpr std::size_t				   kMaxRraCaches = 64;
-	mutable std::unordered_map<std::int32_t, geometry::nav::RraCache> m_rraCaches;
+	mutable std::unordered_map<std::int32_t, geometry::nav::RraCache> rraCaches;
 
-	mutable NavQueryStats m_navStats;
+	mutable NavQueryStats navStats;
 };
 
 } // namespace ecs

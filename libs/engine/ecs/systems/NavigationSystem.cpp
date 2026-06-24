@@ -12,6 +12,7 @@
 
 #include <utils/Log.h>
 
+#include <world/camera/WorldCamera.h>
 #include <world/chunk/Chunk.h>
 #include <world/chunk/ChunkManager.h>
 
@@ -33,53 +34,30 @@ namespace ecs {
 	NavigationSystem::~NavigationSystem() {
 		// Block on any in-flight build so the worker can't outlive this object and
 		// touch the moved-in (now-destroyed) input or write into a dead future.
-		if (m_future.valid()) {
-			m_future.wait();
+		if (future.valid()) {
+			future.wait();
 		}
 	}
 
-	std::unordered_set<engine::world::ChunkCoordinate> NavigationSystem::currentBuildableChunks() const {
-		std::unordered_set<engine::world::ChunkCoordinate> out;
-		if (m_chunkManager == nullptr) {
-			return out;
-		}
-		// A chunk feeds the build only if it is loaded AND fully placed (its
-		// entities exist), so obstacles aren't missing from a half-built region.
-		for (const engine::world::Chunk* chunk : m_chunkManager->getLoadedChunks()) {
-			if (chunk == nullptr || !chunk->isReady()) {
-				continue;
-			}
-			const engine::world::ChunkCoordinate coord = chunk->coordinate();
-			if (m_processedChunks != nullptr && m_processedChunks->find(coord) == m_processedChunks->end()) {
-				continue;
-			}
-			out.insert(coord);
-		}
-		return out;
-	}
-
-	bool NavigationSystem::needsRebuild(const std::unordered_set<engine::world::ChunkCoordinate>& currentChunks) const {
-		if (!m_haveBuiltOnce) {
+	bool NavigationSystem::needsRebuild() const {
+		if (!haveBuiltOnce) {
 			return true;
 		}
-		const std::uint64_t version = (m_constructionWorld != nullptr) ? m_constructionWorld->version() : 0;
-		if (version != m_builtVersion) {
-			return true;
-		}
-		return currentChunks != m_builtChunks;
+		const std::uint64_t version = (constructionWorld != nullptr) ? constructionWorld->version() : 0;
+		return version != builtVersion;
 	}
 
 	void NavigationSystem::update(float /*deltaTime*/) {
 		// Drain a finished build first so a mesh completed last frame is queryable
 		// this frame (and a fresh rebuild can be launched on top of it below).
-		if (m_future.valid()) {
-			if (m_future.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
-				m_mesh = m_future.get(); // swap the new mesh in; old mesh is dropped
-				++m_generation;			 // a new mesh: any path stamped to the prior generation is stale
+		if (future.valid()) {
+			if (future.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
+				navMesh = future.get(); // swap the new mesh in; old mesh is dropped
+				++meshGeneration;		// a new mesh: any path stamped to the prior generation is stale
 				// Triangle indices are stale after a rebuild, so the goal-triangle-keyed
 				// RRA* caches must be dropped (a stale key would target the wrong triangle).
-				m_rraCaches.clear();
-				m_future = {};
+				rraCaches.clear();
+				future = {};
 			} else {
 				return; // build still running: keep serving the old mesh, no new launch
 			}
@@ -87,64 +65,63 @@ namespace ecs {
 
 		// buildInput needs the (non-thread-safe) ConstructionWorld for the walls and
 		// the fallback border, so there is nothing meaningful to build without it.
-		// Return WITHOUT latching m_haveBuiltOnce, so the first real build happens once
+		// Return WITHOUT latching haveBuiltOnce, so the first real build happens once
 		// the world is wired -- otherwise an empty mesh would stick and no later
-		// version/chunk change would trigger a rebuild.
-		if (m_constructionWorld == nullptr) {
+		// version change would trigger a rebuild.
+		if (constructionWorld == nullptr) {
 			return;
 		}
 
-		const std::unordered_set<engine::world::ChunkCoordinate> currentChunks = currentBuildableChunks();
-		if (!needsRebuild(currentChunks)) {
+		if (!needsRebuild()) {
 			return;
 		}
 
 		// Snapshot the input ON THE MAIN THREAD: buildInput reads ConstructionWorld
 		// (NOT thread-safe) and the per-chunk placement/tile data, so the extraction
 		// must run here. The worker then owns a self-contained NavMeshInput by value.
-		std::vector<const engine::world::Chunk*> chunks;
-		if (m_chunkManager != nullptr) {
-			for (const engine::world::Chunk* chunk : m_chunkManager->getLoadedChunks()) {
-				if (chunk == nullptr || !chunk->isReady()) {
-					continue;
-				}
-				if (m_processedChunks != nullptr &&
-					m_processedChunks->find(chunk->coordinate()) == m_processedChunks->end()) {
-					continue;
-				}
-				chunks.push_back(chunk);
-			}
-		}
-
 		gnav::NavMeshInput input;
-		if (m_constructionWorld != nullptr) {
-			// buildInput needs a PlacementExecutor for per-chunk flora obstacles. When
-			// none is wired (construction-only path, e.g. before placement streams in
-			// or in a headless test) a default-constructed executor returns no chunk
-			// index for any coord, so the build cleanly skips flora rather than crashing.
-			engine::assets::PlacementExecutor  emptyPlacement(engine::assets::AssetRegistry::Get());
-			engine::assets::PlacementExecutor& placement = (m_placement != nullptr) ? *m_placement : emptyPlacement;
-			input = engine::nav::buildInput(chunks, placement, engine::assets::AssetRegistry::Get(),
-											*m_constructionWorld, engine::assets::ConstructionRegistry::Get());
 
-			// buildInput only emits the walkable border when at least one ready chunk
-			// supplied bounds. With no chunks (construction-only, e.g. headless tests
-			// or before terrain streams in) the input would have no unblocked polygon
-			// and buildNavMesh would yield an empty mesh. Synthesize one walkable
-			// border from the construction-world vertex bounds so the walls are still
-			// navigable. This is the only border source when chunks are absent; with
-			// chunks present buildInput's border already covers the region.
-			bool haveBorder = false;
-			for (const gnav::NavInputPolygon& p : input.polygons) {
-				if (!p.blocked) {
-					haveBorder = true;
-					break;
-				}
+		// The area path needs a ChunkManager AND a camera to anchor the area. With a
+		// camera, build over the simulation area; without one, fall back to the
+		// construction-only path (headless tests, before the camera is wired) so the
+		// walls are still navigable. We must NOT latch haveBuiltOnce when we cannot
+		// produce a real build, or no later change would retrigger it.
+		const bool canBuildArea = (chunkManager != nullptr) && (camera != nullptr);
+
+		if (canBuildArea) {
+			// Anchor the area at the camera on the first build and hold it there (Phase A;
+			// snap-on-scroll re-centers it later).
+			if (!haveSimArea) {
+				const engine::world::WorldPosition pos = camera->position();
+				simAreaCenter = engine::nav::toMm(glm::vec2{pos.x, pos.y});
+				haveSimArea = true;
 			}
-			if (!haveBorder && !m_constructionWorld->vertices().empty()) {
-				geometry::Vec2i64 minMm = m_constructionWorld->vertices().front().pos;
+
+			// Clamp the half-extent so the area never reaches past the loaded-chunk
+			// extent: chunks load in a radius around the camera, so the farthest in-bounds
+			// point is loadRadius full chunks out plus the half-chunk the camera sits in.
+			// A request beyond that would sweep tiles in never-loaded chunks (read as land
+			// -- harmless, but wasted work).
+			const std::int64_t chunkMm	  = static_cast<std::int64_t>(engine::world::kChunkSize) * 1000;
+			const std::int64_t loadRadius = static_cast<std::int64_t>(chunkManager->loadRadius());
+			const std::int64_t maxRadius  = loadRadius * chunkMm - chunkMm / 2;
+			const std::int64_t radius	  = std::max<std::int64_t>(0, std::min(kSimAreaRadiusMm, maxRadius));
+
+			engine::assets::PlacementExecutor  emptyPlacement(engine::assets::AssetRegistry::Get());
+			engine::assets::PlacementExecutor& exec = (placement != nullptr) ? *placement : emptyPlacement;
+			input = engine::nav::buildInput(simAreaCenter, radius, *chunkManager, exec, engine::assets::AssetRegistry::Get(),
+											*constructionWorld, engine::assets::ConstructionRegistry::Get());
+		} else {
+			// Construction-only fallback: no chunks/camera, so there is no terrain border.
+			// extractWalls alone has no unblocked polygon and buildNavMesh would yield an
+			// empty mesh, so synthesize one walkable border from the construction-world
+			// vertex bounds and let the wall bands tile inside it.
+			engine::nav::extractWalls(*constructionWorld, engine::assets::ConstructionRegistry::Get(), input.polygons,
+									  input.doors);
+			if (!constructionWorld->vertices().empty()) {
+				geometry::Vec2i64 minMm = constructionWorld->vertices().front().pos;
 				geometry::Vec2i64 maxMm = minMm;
-				for (const engine::construction::Vertex& v : m_constructionWorld->vertices()) {
+				for (const engine::construction::Vertex& v : constructionWorld->vertices()) {
 					minMm.x = std::min(minMm.x, v.pos.x);
 					minMm.y = std::min(minMm.y, v.pos.y);
 					maxMm.x = std::max(maxMm.x, v.pos.x);
@@ -159,21 +136,20 @@ namespace ecs {
 		}
 
 		// Record what we snapshotted so the next frame's needsRebuild compares
-		// against THIS input, not a later-mutated world.
-		m_builtVersion = (m_constructionWorld != nullptr) ? m_constructionWorld->version() : 0;
-		m_builtChunks = currentChunks;
-		m_haveBuiltOnce = true;
+		// against THIS input's version, not a later-mutated world.
+		builtVersion = constructionWorld->version();
+		haveBuiltOnce = true;
 
 		// Heavy triangulation off the main thread; the lambda owns `input` by value
 		// (moved) so there's no dangling reference to main-thread state.
-		m_future = std::async(std::launch::async,
-							   [input = std::move(input)]() { return gnav::buildNavMesh(input); });
+		future = std::async(std::launch::async,
+							[input = std::move(input)]() { return gnav::buildNavMesh(input); });
 	}
 
 	std::optional<std::vector<glm::vec2>>
 	NavigationSystem::requestPath(glm::vec2 startMeters, glm::vec2 goalMeters, float agentRadiusMeters,
 								  gnav::BeliefFilter belief) const {
-		if (m_mesh.triangles.empty()) {
+		if (navMesh.triangles.empty()) {
 			return std::nullopt;
 		}
 
@@ -190,15 +166,15 @@ namespace ecs {
 		// pathThrough falls back to the straight-line heuristic and routes exactly as
 		// before. The cache map is goal-triangle-keyed and is cleared on every mesh swap.
 		gnav::RraCache*	   rra	   = nullptr;
-		const std::int32_t goalTri = gnav::locateTriangle(m_mesh, goalMm);
+		const std::int32_t goalTri = gnav::locateTriangle(navMesh, goalMm);
 		if (goalTri >= 0) {
 			// Bound the map: a churn of distinct goals must not grow it without limit.
 			// When a NEW goal would push past the cap, drop the whole map (cheap to
 			// rebuild lazily); an already-cached goal reuses its entry and never grows it.
-			if (m_rraCaches.size() >= kMaxRraCaches && m_rraCaches.find(goalTri) == m_rraCaches.end()) {
-				m_rraCaches.clear();
+			if (rraCaches.size() >= kMaxRraCaches && rraCaches.find(goalTri) == rraCaches.end()) {
+				rraCaches.clear();
 			}
-			gnav::RraCache& cache = m_rraCaches[goalTri];
+			gnav::RraCache& cache = rraCaches[goalTri];
 			cache.goalTri		  = goalTri; // freshly default-constructed entries start at -1
 			rra					  = &cache;
 		}
@@ -207,19 +183,19 @@ namespace ecs {
 		// filter reproduces the truth query; a colonist's known-structures filter routes
 		// over its remembered geometry. Consumed synchronously, so the pointers it holds
 		// stay valid for the call.
-		const gnav::PathResult result = gnav::pathThrough(m_mesh, startMm, goalMm, radiusMm, belief, rra);
+		const gnav::PathResult result = gnav::pathThrough(navMesh, startMm, goalMm, radiusMm, belief, rra);
 
 		// Aggregate A* instrumentation for a reachable solve (where the counts are
 		// meaningful). LOG_DEBUG per query is fine; it compiles out in release.
 		if (result.reachable) {
-			++m_navStats.totalQueries;
-			m_navStats.totalNodesExpanded += static_cast<std::uint64_t>(result.nodesExpanded);
-			m_navStats.lastNodesExpanded = result.nodesExpanded;
-			m_navStats.lastPeakOpenSet	 = result.peakOpenSet;
+			++navStats.totalQueries;
+			navStats.totalNodesExpanded += static_cast<std::uint64_t>(result.nodesExpanded);
+			navStats.lastNodesExpanded = result.nodesExpanded;
+			navStats.lastPeakOpenSet   = result.peakOpenSet;
 			LOG_DEBUG(Engine, "[Nav] path query expanded=%lld peakOpen=%lld (cumulative queries=%llu nodes=%llu)",
 					  static_cast<long long>(result.nodesExpanded), static_cast<long long>(result.peakOpenSet),
-					  static_cast<unsigned long long>(m_navStats.totalQueries),
-					  static_cast<unsigned long long>(m_navStats.totalNodesExpanded));
+					  static_cast<unsigned long long>(navStats.totalQueries),
+					  static_cast<unsigned long long>(navStats.totalNodesExpanded));
 		}
 
 		if (!result.reachable) {
@@ -240,7 +216,7 @@ namespace ecs {
 		// legitimately during startup/outdoor play; blocking everything until the first
 		// mesh lands would starve them of any movement. Callers that need certainty
 		// can check hasMesh() first.
-		if (m_mesh.triangles.empty()) {
+		if (navMesh.triangles.empty()) {
 			return true;
 		}
 
@@ -249,7 +225,7 @@ namespace ecs {
 		const std::int64_t radiusMm =
 			static_cast<std::int64_t>(std::llround(static_cast<double>(agentRadiusMeters) * 1000.0));
 
-		return gnav::reachable(m_mesh, startMm, goalMm, radiusMm, belief);
+		return gnav::reachable(navMesh, startMm, goalMm, radiusMm, belief);
 	}
 
 } // namespace ecs

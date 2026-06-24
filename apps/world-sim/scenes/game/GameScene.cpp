@@ -946,6 +946,7 @@ namespace {
 			auto& navSystem = ecsWorld->getSystem<ecs::NavigationSystem>();
 			navSystem.setChunkManager(m_chunkManager.get());
 			navSystem.setPlacementData(m_placementExecutor.get(), &m_processedChunks);
+			navSystem.setCamera(m_camera.get());
 
 			// Wire up AIDecisionSystem with chunk manager for toilet location queries
 			auto& aiDecisionSystem = ecsWorld->getSystem<ecs::AIDecisionSystem>();

@@ -11,9 +11,17 @@
 
 #include <nav/PathQuery.h>
 
+#include <world/Biome.h>
+#include <world/BiomeWeights.h>
+#include <world/camera/WorldCamera.h>
+#include <world/chunk/ChunkManager.h>
+#include <world/chunk/ChunkSampleResult.h>
+#include <world/chunk/IWorldSampler.h>
+
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
+#include <memory>
 #include <optional>
 #include <string>
 #include <thread>
@@ -90,13 +98,51 @@ namespace {
 	const glm::vec2 kInside{2.0F, 1.5F};
 	constexpr float kAgentRadius = 0.3F; // 0.3 m radius fits the 0.9 m door
 
+	// All-land sampler: every tile is grassland, so the area build never invents water
+	// obstacles around the origin room. (The area water predicate keys off Lake/Ocean.)
+	class LandSampler : public engine::world::IWorldSampler {
+	  public:
+		[[nodiscard]] engine::world::ChunkSampleResult sampleChunk(engine::world::ChunkCoordinate) const override {
+			engine::world::ChunkSampleResult r;
+			for (auto& cb : r.cornerBiomes) {
+				cb = engine::world::BiomeWeights::single(engine::world::Biome::TemperateGrassland);
+			}
+			r.cornerElevations = {1.0F, 1.0F, 1.0F, 1.0F};
+			r.computeSectorGrid();
+			return r;
+		}
+		[[nodiscard]] float	   sampleElevation(engine::world::WorldPosition) const override { return 1.0F; }
+		[[nodiscard]] uint64_t getWorldSeed() const override { return 7u; }
+	};
+
 	class NavigationSystemTest : public ::testing::Test {
 	  protected:
 		void SetUp() override {
 			ConstructionRegistry::Get().clear();
 			ASSERT_TRUE(ConstructionRegistry::Get().load(constructionConfigFolder()));
+
+			// A ready chunk region (all land) and a camera at the origin, so the
+			// NavigationSystem build runs through the SIMULATION-AREA path. The origin
+			// room (0..4 m x 0..3 m) sits well inside the 120 m area.
+			m_chunks = std::make_unique<engine::world::ChunkManager>(std::make_unique<LandSampler>());
+			m_chunks->setLoadRadius(2);
+			m_chunks->setUnloadRadius(4);
+			m_chunks->update({0.0F, 0.0F});
+			m_chunks->finishPendingGeneration();
+			m_camera = std::make_unique<engine::world::WorldCamera>();
+			m_camera->setPosition({0.0F, 0.0F});
 		}
 		void TearDown() override { ConstructionRegistry::Get().clear(); }
+
+		// Wire the area build (chunks + camera) onto a system in addition to its
+		// ConstructionWorld, so the test exercises the real simulation-area path.
+		void wireArea(NavigationSystem& sys) {
+			sys.setChunkManager(m_chunks.get());
+			sys.setCamera(m_camera.get());
+		}
+
+		std::unique_ptr<engine::world::ChunkManager> m_chunks;
+		std::unique_ptr<engine::world::WorldCamera>	 m_camera;
 	};
 
 } // namespace
@@ -133,6 +179,7 @@ TEST_F(NavigationSystemTest, PathThroughDoorSucceeds) {
 
 	World world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	wireArea(sys);
 	sys.setConstructionWorld(&cw);
 
 	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
@@ -150,6 +197,7 @@ TEST_F(NavigationSystemTest, WindowBlocksPath) {
 
 	World world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	wireArea(sys);
 	sys.setConstructionWorld(&cw);
 
 	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
@@ -163,6 +211,7 @@ TEST_F(NavigationSystemTest, NoOpeningBlocksPath) {
 
 	World world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	wireArea(sys);
 	sys.setConstructionWorld(&cw);
 
 	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
@@ -177,6 +226,7 @@ TEST_F(NavigationSystemTest, RebuildOnVersionChangeOpensPath) {
 
 	World world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	wireArea(sys);
 	sys.setConstructionWorld(&cw);
 
 	ASSERT_TRUE(pumpUntilMesh(sys)) << "initial navmesh never built";
@@ -210,6 +260,7 @@ TEST_F(NavigationSystemTest, RebuildSealsRoomWhenDoorRemoved) {
 
 	World world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	wireArea(sys);
 	sys.setConstructionWorld(&cw);
 
 	ASSERT_TRUE(pumpUntilMesh(sys)) << "initial navmesh never built";
@@ -236,7 +287,7 @@ TEST_F(NavigationSystemTest, RebuildSealsRoomWhenDoorRemoved) {
 
 // Deferred wiring: pumping update() before the ConstructionWorld is set must NOT
 // latch a mesh. Once the world is wired the first real build still happens.
-// (Regression: an empty build used to latch m_haveBuiltOnce, after which no later
+// (Regression: an empty build used to latch haveBuiltOnce, after which no later
 // version/chunk change would trigger the real build.)
 TEST_F(NavigationSystemTest, ConstructionWorldWiredAfterUpdatesStillBuilds) {
 	ConstructionWorld cw;
@@ -252,6 +303,7 @@ TEST_F(NavigationSystemTest, ConstructionWorldWiredAfterUpdatesStillBuilds) {
 	ASSERT_FALSE(sys.hasMesh());
 
 	// Wiring the world now must still trigger the first build and a path solve.
+	wireArea(sys);
 	sys.setConstructionWorld(&cw);
 	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built after deferred wiring";
 	EXPECT_TRUE(sys.requestPath(kOutside, kInside, kAgentRadius).has_value());
@@ -284,6 +336,7 @@ TEST_F(NavigationSystemTest, BeliefFilterGatesQueryVsTruth) {
 
 	World world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	wireArea(sys);
 	sys.setConstructionWorld(&cw);
 	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
 
@@ -331,6 +384,7 @@ TEST_F(NavigationSystemTest, IsReachableTrueForReachableGoal) {
 
 	World world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	wireArea(sys);
 	sys.setConstructionWorld(&cw);
 	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
 
@@ -345,6 +399,7 @@ TEST_F(NavigationSystemTest, IsReachableFalseForWalledOffGoal) {
 
 	World world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	wireArea(sys);
 	sys.setConstructionWorld(&cw);
 	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
 
@@ -372,6 +427,7 @@ TEST_F(NavigationSystemTest, GenerationBumpsOnMeshSwap) {
 
 	World world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	wireArea(sys);
 	sys.setConstructionWorld(&cw);
 
 	EXPECT_EQ(sys.generation(), 0u) << "no mesh yet => generation 0";
@@ -405,6 +461,7 @@ TEST_F(NavigationSystemTest, NavQueryStatsPopulatedOnPath) {
 
 	World world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	wireArea(sys);
 	sys.setConstructionWorld(&cw);
 	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
 
@@ -433,6 +490,7 @@ TEST_F(NavigationSystemTest, MeshRebuildClearsRraCaches) {
 
 	World world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	wireArea(sys);
 	sys.setConstructionWorld(&cw);
 	ASSERT_TRUE(pumpUntilMesh(sys)) << "initial navmesh never built";
 
@@ -490,6 +548,7 @@ TEST_F(NavigationSystemTest, RraCacheMapIsBounded) {
 
 	World world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	wireArea(sys);
 	sys.setConstructionWorld(&cw);
 	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
 
