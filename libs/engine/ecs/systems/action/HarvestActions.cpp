@@ -2,9 +2,12 @@
 
 #include "../../GoalTaskRegistry.h"
 #include "../../InventoryMass.h"
+#include "../../World.h"
 #include "../../components/Action.h"
+#include "../../components/Appearance.h"
 #include "../../components/Inventory.h"
 #include "../../components/Memory.h"
+#include "../../components/ResourceStack.h"
 #include "../../components/Task.h"
 #include "../../components/Transform.h"
 
@@ -18,6 +21,43 @@
 #include <vector>
 
 namespace ecs {
+
+	namespace {
+
+		/// Find a loose ground pile of `defName` at `pos`: a world entity whose Appearance
+		/// defName matches and which carries a ResourceStack. Matches by position within the
+		/// same epsilon GameScene's remove-callback uses (~0.25 m). Returns the live
+		/// ResourceStack to mutate, or nullptr if no pile is there.
+		[[nodiscard]] ResourceStack* findLoosePile(World* world, const std::string& defName, glm::vec2 pos) {
+			if (world == nullptr) {
+				return nullptr;
+			}
+			constexpr float kMatchEps = 0.25F;
+			for (auto [entity, entPos, appearance, stack] : world->view<Position, Appearance, ResourceStack>()) {
+				if (appearance.defName != defName) {
+					continue;
+				}
+				const float dx = entPos.value.x - pos.x;
+				const float dy = entPos.value.y - pos.y;
+				if (dx * dx + dy * dy <= kMatchEps * kMatchEps) {
+					return &stack;
+				}
+			}
+			return nullptr;
+		}
+
+		/// Does `sourceDefName` harvest from a finite resource pool (trees) rather than being
+		/// single-shot (ground pickup, regrowth bush)?
+		[[nodiscard]] bool sourceHasResourcePool(const engine::assets::AssetRegistry& registry, const std::string& sourceDefName) {
+			const auto* sourceDef = registry.getDefinition(sourceDefName);
+			if (sourceDef == nullptr || !sourceDef->capabilities.harvestable.has_value()) {
+				return false;
+			}
+			const auto& harv = sourceDef->capabilities.harvestable.value();
+			return harv.totalResourceMin > 0 && harv.totalResourceMax > 0;
+		}
+
+	} // namespace
 
 	void ActionSystem::applyCollectionEffect(
 		const Action& action,
@@ -38,18 +78,51 @@ namespace ecs {
 		const uint32_t slotFit = inventory.addableCount(collEff.itemDefName);
 		const uint32_t wanted = std::min({collEff.quantity, massFit, slotFit});
 
-		// Does the source hold a finite resource pool (trees) or is it single-shot
-		// (ground pickup, regrowth bush)?
-		const auto* sourceDef = harvestRegistry.getDefinition(collEff.sourceDefName);
-		bool hasResourcePool = false;
-		if (sourceDef != nullptr && sourceDef->capabilities.harvestable.has_value()) {
-			const auto& harv = sourceDef->capabilities.harvestable.value();
-			hasResourcePool = harv.totalResourceMin > 0 && harv.totalResourceMax > 0;
-		}
-
 		uint32_t added = 0;
 
-		if (hasResourcePool && m_onDecrementResource) {
+		// A loose ground pile: one world entity whose Appearance defName IS the material and
+		// which carries a per-entity ResourceStack (the haulable remainder a fell left behind).
+		// Hauling it must lift a weight-limited armful and decrement the LIVE stack, removing
+		// the entity only when it empties -- never the full-destroy a Pickup's CollectionEffect
+		// requests (destroySource=true), which would delete a still-loaded pile. This branch
+		// intercepts before the pool/single-shot logic so a pile never reaches that destroy.
+		if (auto* pileStack = findLoosePile(world, collEff.itemDefName, collEff.sourcePosition)) {
+			if (ecs::itemIsTwoHand(harvestRegistry, collEff.itemDefName)) {
+				added = ecs::addArmful(inventory, harvestRegistry, collEff.itemDefName, pileStack->quantity);
+			} else {
+				const uint32_t fit = ecs::cargoUnitsThatFit(inventory, harvestRegistry, collEff.itemDefName);
+				added = inventory.addItem(collEff.itemDefName, std::min(pileStack->quantity, fit));
+			}
+
+			pileStack->quantity -= added; // mutate the live component so the pile tracks what is left
+
+			if (pileStack->quantity == 0) {
+				if (m_onRemoveEntity) {
+					m_onRemoveEntity(collEff.itemDefName, collEff.sourcePosition.x, collEff.sourcePosition.y);
+				}
+				uint32_t pileDefNameId = harvestRegistry.getDefNameId(collEff.itemDefName);
+				memory.forgetWorldEntity({collEff.sourcePosition.x, collEff.sourcePosition.y}, pileDefNameId);
+				LOG_INFO(
+					Engine,
+					"[Action] Hauled last %u x %s from loose pile at (%.1f, %.1f) - pile removed",
+					added,
+					collEff.itemDefName.c_str(),
+					collEff.sourcePosition.x,
+					collEff.sourcePosition.y
+				);
+			} else {
+				LOG_INFO(
+					Engine,
+					"[Action] Hauled %u x %s from loose pile at (%.1f, %.1f) - %u left",
+					added,
+					collEff.itemDefName.c_str(),
+					collEff.sourcePosition.x,
+					collEff.sourcePosition.y,
+					pileStack->quantity
+				);
+			}
+			// Fall through to the shared harvest-goal credit at the end; skip pool/single-shot.
+		} else if (sourceHasResourcePool(harvestRegistry, collEff.sourceDefName) && m_onDecrementResource) {
 			if (wanted > 0) {
 				// Withdraw only what the colonist can carry; the pool clamps to its own
 				// contents and reports depletion. Items added == removed (we sized `wanted`

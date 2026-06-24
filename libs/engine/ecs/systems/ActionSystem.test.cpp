@@ -12,6 +12,7 @@
 #include "../components/Memory.h"
 #include "../components/Movement.h"
 #include "../components/Needs.h"
+#include "../components/ResourceStack.h"
 #include "../components/Task.h"
 #include "../components/Transform.h"
 
@@ -739,6 +740,136 @@ TEST_F(FellingTest, HandsFullStillDropsWholeYieldAndRemovesTree) {
 	EXPECT_EQ(dropCalls, 1) << "Whole yield dropped as a pile";
 	EXPECT_EQ(lastDropQty, 30U) << "added == 0, so all 30 drop";
 	EXPECT_EQ(removeCalls, 1) << "Tree removed despite full hands";
+}
+
+// =============================================================================
+// Loose ground pile haul: per-entity ResourceStack drains across armfuls
+// =============================================================================
+// The remainder a fell drops is a single ground entity (Appearance defName == the
+// material + a ResourceStack count), spawned WITHOUT Packaged so it is immediately
+// haulable. A Pickup lifts a weight-limited armful from the LIVE ResourceStack and
+// decrements it; the entity is removed only when the count hits zero. A Pickup's
+// CollectionEffect carries destroySource=true, but the loose-pile branch must
+// intercept and decrement instead of full-destroying a still-loaded pile.
+
+class LoosePileHaulTest : public ::testing::Test {
+  protected:
+	void SetUp() override {
+		world = std::make_unique<World>();
+
+		// Wood: two-hand bulk material, 2.5 kg/unit. At the 35 kg colonist cap an armful is
+		// floor(35/2.5) = 14 units, so a 16-unit pile drains in 14 + 2.
+		engine::assets::AssetDefinition woodDef;
+		woodDef.defName = "Wood";
+		woodDef.label = "Wood";
+		woodDef.handsRequired = 2;
+		woodDef.category = engine::assets::ItemCategory::RawMaterial;
+		woodDef.itemProperties = engine::assets::ItemProperties{};
+		woodDef.itemProperties->stackSize = 40;
+		woodDef.itemProperties->massKg = 2.5F;
+		engine::assets::AssetRegistry::Get().registerTestDefinition(std::move(woodDef));
+
+		auto& action = world->registerSystem<ActionSystem>();
+		// Mirror GameScene: the remove callback actually destroys the depleted pile entity
+		// (Position-matched), so a later Pickup no longer finds it.
+		action.setRemoveEntityCallback([this](const std::string& defName, float x, float y) {
+			++removeCalls;
+			lastRemoveDef = defName;
+			constexpr float kEps = 0.25F;
+			for (auto [ent, entPos, appearance] : world->view<Position, Appearance>()) {
+				if (appearance.defName != defName) {
+					continue;
+				}
+				const float dx = entPos.value.x - x;
+				const float dy = entPos.value.y - y;
+				if (dx * dx + dy * dy <= kEps * kEps) {
+					world->destroyEntity(ent);
+					break;
+				}
+			}
+		});
+	}
+
+	void TearDown() override {
+		engine::assets::AssetRegistry::Get().clearDefinitions();
+		world.reset();
+	}
+
+	EntityID createColonist(glm::vec2 position = {0.0F, 0.0F}) {
+		auto entity = world->createEntity();
+		world->addComponent<Position>(entity, Position{position});
+		world->addComponent<Velocity>(entity, Velocity{{0.0F, 0.0F}});
+		world->addComponent<MovementTarget>(entity, MovementTarget{{0.0F, 0.0F}, 2.0F, false});
+		world->addComponent<NeedsComponent>(entity, NeedsComponent::createDefault());
+		world->addComponent<Memory>(entity, Memory{});
+		world->addComponent<Inventory>(entity, Inventory::createForColonist());
+		world->addComponent<Task>(entity, Task{});
+		world->addComponent<Action>(entity, Action{});
+		return entity;
+	}
+
+	// A loose Wood pile of `count` units at `pos`: Appearance defName == material + a
+	// ResourceStack, no Packaged (immediately haulable). Mirrors the drop-resource callback.
+	EntityID spawnPile(uint32_t count, glm::vec2 pos) {
+		auto entity = world->createEntity();
+		world->addComponent<Position>(entity, Position{pos});
+		world->addComponent<Appearance>(entity, Appearance{"Wood", 1.0F, {1.0F, 1.0F, 1.0F, 1.0F}});
+		world->addComponent<ResourceStack>(entity, ResourceStack{count});
+		return entity;
+	}
+
+	// Drive one Pickup of the loose pile at `pilePos` to completion. The Pickup's quantity (1)
+	// and destroySource flag are ignored by the loose-pile branch.
+	void pickUpPile(EntityID colonist, glm::vec2 pilePos) {
+		auto* task = world->getComponent<Task>(colonist);
+		task->type = TaskType::Harvest; // generic collection task; no harvest goal bookkeeping
+		task->state = TaskState::Arrived;
+		task->targetPosition = pilePos;
+
+		auto* action = world->getComponent<Action>(colonist);
+		*action = Action::Pickup("Wood", 1, pilePos, "Wood");
+
+		world->update(0.1F); // start
+		world->update(1.0F); // complete (Pickup duration 0.5s)
+	}
+
+	std::unique_ptr<World> world;
+	int					   removeCalls = 0;
+	std::string			   lastRemoveDef;
+};
+
+// A 16-unit pile, colonist cap 35: the first Pickup lifts 14 (floor(35/2.5)) into the hands and
+// the pile drops to 2 with the entity still present; a second Pickup lifts the last 2, the stack
+// hits 0, and the pile entity is removed.
+TEST_F(LoosePileHaulTest, ArmfulDrainsPileAcrossTwoPickupsThenRemoves) {
+	const glm::vec2 pilePos{1.0F, 1.0F};
+	EntityID		pile = spawnPile(16, pilePos);
+	auto			colonist = createColonist(pilePos);
+
+	// --- First pickup: an armful of 14, pile drops to 2, entity stays ---
+	pickUpPile(colonist, pilePos);
+
+	auto* inventory = world->getComponent<Inventory>(colonist);
+	EXPECT_EQ(handHeldQuantity(*inventory, "Wood"), 14U) << "Armful clamped to the 35 kg carry cap";
+	EXPECT_EQ(inventory->getQuantity("Wood"), 0U) << "Two-hand Wood never enters the backpack";
+
+	ASSERT_TRUE(world->isAlive(pile)) << "Pile remains while it still holds wood";
+	auto* stack = world->getComponent<ResourceStack>(pile);
+	ASSERT_NE(stack, nullptr);
+	EXPECT_EQ(stack->quantity, 2U) << "16 - 14 carried = 2 left in the pile";
+	EXPECT_EQ(removeCalls, 0) << "A partially-emptied pile is not removed";
+
+	// Clear the hands so the second pickup can seat a fresh armful.
+	inventory->leftHand.reset();
+	inventory->rightHand.reset();
+
+	// --- Second pickup: lift the last 2, stack hits 0, entity removed ---
+	pickUpPile(colonist, pilePos);
+
+	EXPECT_EQ(handHeldQuantity(*inventory, "Wood"), 2U) << "Last 2 units lifted into the hands";
+	EXPECT_EQ(removeCalls, 1) << "Depleted pile fires the remove callback exactly once";
+	EXPECT_EQ(lastRemoveDef, "Wood") << "Removal keyed by the material/pile defName";
+	EXPECT_FALSE(world->isAlive(pile)) << "Pile entity destroyed once drained to zero";
 }
 
 } // namespace ecs::test

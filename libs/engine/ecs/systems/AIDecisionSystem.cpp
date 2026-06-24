@@ -406,9 +406,11 @@ namespace ecs {
 					haulOption.targetDefNameId = looseItem.defNameId;
 					haulOption.distanceToTarget = tripDistance;
 					haulOption.haulItemDefName = itemDefName;
-					if (itemDef->capabilities.carryable.has_value()) {
-						haulOption.haulQuantity = itemDef->capabilities.carryable.value().quantity;
-					}
+					// Memory has no per-pile count; size the trip by carry weight and over-propose
+					// an armful. The pickup (applyCollectionEffect's loose-pile branch) clamps to
+					// the live ResourceStack and the colonist's remaining capacity -- same
+					// over-propose-then-clamp pattern as harvest's `wanted`.
+					haulOption.haulQuantity = ecs::cargoUnitsPerTrip(registry, itemDefName, inventory.carryCapacityKg);
 					haulOption.haulSourcePosition = looseItem.position;
 					haulOption.haulTargetStorageId = static_cast<uint64_t>(goal->destinationEntity);
 					haulOption.haulTargetPosition = goal->destinationPosition;
