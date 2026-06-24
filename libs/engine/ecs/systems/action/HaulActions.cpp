@@ -374,6 +374,14 @@ namespace ecs {
 		bool		canBackpack = (itemDef == nullptr) || (itemDef->handsRequired < kTwoHandedThreshold);
 
 		if (canBackpack) {
+			// One-hand item: try the belt first (quick-draw tool slot), then the backpack, then drop.
+			// A single belt slot holds one item; only attempt it for the common quantity-1 hand stack.
+			if (quantity == 1 && inventory.stowToBelt(itemName)) {
+				LOG_DEBUG(Engine, "[Action] Stowed %s from %s hand to belt", itemName.c_str(), handName);
+				handSlot.reset();
+				return;
+			}
+
 			// Try to stow in backpack
 			uint32_t added = inventory.addItem(itemName, quantity);
 			if (added == quantity) {

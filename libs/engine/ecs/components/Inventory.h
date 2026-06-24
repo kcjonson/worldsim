@@ -15,6 +15,7 @@
 // Related docs:
 // - Inventory documentation to be added when inventory system matures
 
+#include <array>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -48,6 +49,15 @@ namespace ecs {
 
 		/// Right hand - holds one item (quantity usually 1)
 		std::optional<ItemStack> rightHand;
+
+		// ============================================================================
+		// Belt (quick-draw tool slots)
+		// ============================================================================
+
+		/// Belt - fixed quick-draw slots, each holding exactly one one-hand item (a tool
+		/// or sidearm), quantity 1. Two-hand "bulky" items never fit here. Inventory has no
+		/// asset registry, so callers must guarantee what they stow is one-hand.
+		std::array<std::optional<ItemStack>, 2> belt;
 
 		// ============================================================================
 		// Large Entity Carrying
@@ -148,9 +158,11 @@ namespace ecs {
 		/// Check if backpack is empty
 		[[nodiscard]] bool isEmpty() const { return items.empty(); }
 
-		/// Check if completely empty (no items in hands, backpack, or carrying entity)
+		/// Check if completely empty (no items in hands, belt, backpack, or carrying entity)
 		[[nodiscard]] bool isCompletelyEmpty() const {
-			return items.empty() && !leftHand.has_value() && !rightHand.has_value() && !carryingPackagedEntity.has_value();
+			const bool beltEmpty = !belt[0].has_value() && !belt[1].has_value();
+			return items.empty() && !leftHand.has_value() && !rightHand.has_value() && beltEmpty &&
+				   !carryingPackagedEntity.has_value();
 		}
 
 		// ============================================================================
@@ -242,11 +254,13 @@ namespace ecs {
 		/// Clear all items from inventory (backpack only)
 		void clear() { items.clear(); }
 
-		/// Clear everything including hands and carried entity
+		/// Clear everything including hands, belt, and carried entity
 		void clearAll() {
 			items.clear();
 			leftHand.reset();
 			rightHand.reset();
+			belt[0].reset();
+			belt[1].reset();
 			carryingPackagedEntity.reset();
 		}
 
@@ -378,6 +392,41 @@ namespace ecs {
 			// Remove from backpack
 			removeItem(defName, 1);
 			return true;
+		}
+
+		// ============================================================================
+		// Belt Mutation Methods
+		// ============================================================================
+
+		/// Check if the belt has a free quick-draw slot
+		[[nodiscard]] bool beltHasFreeSlot() const { return !belt[0].has_value() || !belt[1].has_value(); }
+
+		/// Stow a one-hand item into the first free belt slot
+		/// @param defName Item to stow (one slot holds exactly one, quantity 1)
+		/// @return true if seated, false if the belt is full
+		/// @note The belt only accepts one-hand items, but Inventory has no asset registry to
+		///       verify hand class - the CALLER must guarantee `defName` is one-hand.
+		bool stowToBelt(const std::string& defName) {
+			for (auto& slot : belt) {
+				if (!slot.has_value()) {
+					slot = ItemStack{defName, 1};
+					return true;
+				}
+			}
+			return false; // No free belt slot
+		}
+
+		/// Take an item off the belt by defName (first matching slot)
+		/// @param defName Item to remove
+		/// @return true if a matching belt item was removed
+		bool takeFromBelt(const std::string& defName) {
+			for (auto& slot : belt) {
+				if (slot.has_value() && slot->defName == defName) {
+					slot.reset();
+					return true;
+				}
+			}
+			return false; // Not on the belt
 		}
 
 		// ============================================================================

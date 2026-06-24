@@ -1561,14 +1561,20 @@ namespace ecs {
 			uint8_t		handsRequired = (assetDef != nullptr) ? assetDef->handsRequired : 1;
 
 			if (handsRequired == 1) {
-				// 1-handed item: try to stow to backpack
+				// 1-handed item: try the belt (quick-draw slot) first, then the backpack. The item is
+				// in hand, so a belt stow seats a copy on the belt and clears the hand.
+				if (inventory.stowToBelt(task.haulItemDefName)) {
+					inventory.putDown(task.haulItemDefName);
+					LOG_INFO(Engine, "[AI] Entity %llu: chain interrupted, stowed %s to belt", entityId, task.haulItemDefName.c_str());
+					return;
+				}
 				if (inventory.stowToBackpack(task.haulItemDefName)) {
 					LOG_INFO(Engine, "[AI] Entity %llu: chain interrupted, stowed %s to backpack", entityId, task.haulItemDefName.c_str());
 					return;
 				}
-				// Backpack full - fall through to drop
+				// Belt and backpack full - fall through to drop
 				LOG_INFO(
-					Engine, "[AI] Entity %llu: chain interrupted, dropping %s (backpack full)", entityId, task.haulItemDefName.c_str()
+					Engine, "[AI] Entity %llu: chain interrupted, dropping %s (belt and backpack full)", entityId, task.haulItemDefName.c_str()
 				);
 			} else {
 				LOG_INFO(Engine, "[AI] Entity %llu: chain interrupted, dropping %s (2-handed)", entityId, task.haulItemDefName.c_str());

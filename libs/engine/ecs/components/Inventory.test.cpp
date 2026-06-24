@@ -465,3 +465,76 @@ TEST(InventoryTests, AddItemZeroIsNoOp) {
 	EXPECT_FALSE(inv.hasItem("Wood")); // no zero-quantity slot created
 	EXPECT_EQ(inv.getSlotCount(), 0U);
 }
+
+// ============================================================================
+// Belt: two quick-draw slots for one-hand tools. Belt ops are pure inventory
+// (no asset registry); the caller guarantees the item is one-hand.
+// ============================================================================
+
+TEST(InventoryTests, BeltEmptyByDefault) {
+	Inventory inv;
+	EXPECT_TRUE(inv.beltHasFreeSlot());
+	EXPECT_FALSE(inv.belt[0].has_value());
+	EXPECT_FALSE(inv.belt[1].has_value());
+}
+
+TEST(InventoryTests, BeltStowSeatsQuantityOne) {
+	Inventory inv;
+	EXPECT_TRUE(inv.stowToBelt("Axe"));
+	EXPECT_TRUE(inv.belt[0].has_value());
+	EXPECT_EQ(inv.belt[0]->defName, "Axe");
+	EXPECT_EQ(inv.belt[0]->quantity, 1U);
+}
+
+TEST(InventoryTests, BeltFillsBothSlotsThenRejectsThird) {
+	Inventory inv;
+	EXPECT_TRUE(inv.stowToBelt("Axe"));
+	EXPECT_TRUE(inv.stowToBelt("Hammer"));
+	EXPECT_FALSE(inv.beltHasFreeSlot());
+	EXPECT_FALSE(inv.stowToBelt("Knife")); // no free slot left
+}
+
+TEST(InventoryTests, BeltTakeRoundTrips) {
+	Inventory inv;
+	inv.stowToBelt("Axe");
+	EXPECT_TRUE(inv.takeFromBelt("Axe"));
+	EXPECT_TRUE(inv.beltHasFreeSlot());
+	EXPECT_FALSE(inv.belt[0].has_value());
+	EXPECT_FALSE(inv.belt[1].has_value());
+}
+
+TEST(InventoryTests, BeltTakeMissingItemReturnsFalse) {
+	Inventory inv;
+	inv.stowToBelt("Axe");
+	EXPECT_FALSE(inv.takeFromBelt("Hammer")); // not on the belt
+	EXPECT_TRUE(inv.belt[0].has_value());	   // Axe untouched
+}
+
+TEST(InventoryTests, BeltTakeRemovesFirstMatch) {
+	Inventory inv;
+	inv.stowToBelt("Axe");
+	inv.stowToBelt("Axe");
+	EXPECT_TRUE(inv.takeFromBelt("Axe"));
+	EXPECT_FALSE(inv.belt[0].has_value()); // first slot cleared
+	EXPECT_TRUE(inv.belt[1].has_value());  // second still held
+}
+
+TEST(InventoryTests, BeltCountsTowardCompletelyEmpty) {
+	Inventory inv;
+	EXPECT_TRUE(inv.isCompletelyEmpty());
+	inv.stowToBelt("Axe");
+	EXPECT_FALSE(inv.isCompletelyEmpty()); // belted item is not empty
+	inv.takeFromBelt("Axe");
+	EXPECT_TRUE(inv.isCompletelyEmpty());
+}
+
+TEST(InventoryTests, ClearAllEmptiesBelt) {
+	Inventory inv;
+	inv.stowToBelt("Axe");
+	inv.stowToBelt("Hammer");
+	inv.clearAll();
+	EXPECT_FALSE(inv.belt[0].has_value());
+	EXPECT_FALSE(inv.belt[1].has_value());
+	EXPECT_TRUE(inv.beltHasFreeSlot());
+	EXPECT_TRUE(inv.isCompletelyEmpty());
+}

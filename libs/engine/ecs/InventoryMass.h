@@ -79,9 +79,9 @@ namespace ecs {
 		return massUnitsThatFit(remaining, registry.getItemMassKg(defName), inv.maxStackSize);
 	}
 
-	/// Does the inventory hold an item that provides `toolType` (e.g. "Axe")? Checks both
-	/// hands and the backpack; a held-or-stowed tool counts. Empty toolType always passes
-	/// (the work needs no tool).
+	/// Does the inventory hold an item that provides `toolType` (e.g. "Axe")? Checks the
+	/// hands, belt, and backpack; a held, belted, or stowed tool counts. Empty toolType
+	/// always passes (the work needs no tool).
 	[[nodiscard]] inline bool inventoryHoldsToolType(const Inventory& inv, const engine::assets::AssetRegistry& registry, const std::string& toolType) {
 		if (toolType.empty()) {
 			return true;
@@ -94,6 +94,11 @@ namespace ecs {
 		}
 		if (inv.rightHand.has_value() && matches(inv.rightHand->defName)) {
 			return true;
+		}
+		for (const auto& slot : inv.belt) {
+			if (slot.has_value() && matches(slot->defName)) {
+				return true;
+			}
 		}
 		for (const auto& [defName, quantity] : inv.items) {
 			if (quantity > 0 && matches(defName)) {
