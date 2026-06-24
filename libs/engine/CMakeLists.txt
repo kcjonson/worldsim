@@ -33,6 +33,7 @@ add_library(engine
     ecs/systems/RoomDetectionSystem.cpp
     ecs/systems/CollisionSystem.cpp
     ecs/systems/WallCollisionSystem.cpp
+    ecs/systems/StaticRectCollisionSystem.cpp
     ecs/systems/NavigationSystem.cpp
     ecs/spatial/AgentSpatialHash.cpp
     ecs/GoalTaskRegistry.cpp

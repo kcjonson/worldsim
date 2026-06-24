@@ -278,8 +278,7 @@ namespace engine::assets {
 
 		[[nodiscard]] bool blocks() const { return type != CollisionShapeType::None; }
 
-		// The rect's 4 corners in CCW order (local meters). The single source of
-		// truth for the rect quad: nav and Tier-3 collision both build from this.
+		// The 4 local corners (CCW), available to consumers that want the corner form.
 		[[nodiscard]] std::array<glm::vec2, 4> rectCornersLocal() const {
 			const glm::vec2 c  = offsetMeters;
 			const float     hx = halfExtentsMeters.x;
