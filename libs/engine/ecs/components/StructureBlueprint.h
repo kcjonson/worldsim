@@ -120,6 +120,13 @@ namespace ecs {
 			return std::clamp(workDone / workTotal, 0.0F, 1.0F);
 		}
 
+		/// Fraction to SHOW on a work meter, in [0, 1]. Build fills up (raw progress);
+		/// Deconstruct counts workDone back down from workTotal, so its meter must be the
+		/// complement -- 1 at the start of demolition draining to 0 -- not the raw progress.
+		[[nodiscard]] float displayProgress(bool deconstruct) const {
+			return deconstruct ? 1.0F - progress() : progress();
+		}
+
 	  private:
 		[[nodiscard]] uint32_t deliveredQuantity(const std::string& defName) const {
 			for (const auto& [name, qty] : delivered) {

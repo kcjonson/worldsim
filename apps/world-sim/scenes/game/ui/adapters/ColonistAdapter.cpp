@@ -41,9 +41,11 @@ namespace world_sim::adapters {
 		if (const auto* action = world.getComponent<ecs::Action>(colonist); action != nullptr && action->isActive()) {
 			if (action->hasProgressEffect()) {
 				// Build/Deconstruct advance the blueprint's workDone, not the action clock.
+				// Deconstruct counts workDone DOWN, so its meter is the complement (see
+				// StructureBlueprint::displayProgress) -- raw progress() would run backwards.
 				if (task->buildBlueprintEntityId != 0) {
 					if (const auto* bp = world.getComponent<ecs::StructureBlueprint>(static_cast<ecs::EntityID>(task->buildBlueprintEntityId))) {
-						progress = bp->progress();
+						progress = bp->displayProgress(task->type == ecs::TaskType::Deconstruct);
 					}
 				}
 			} else {

@@ -232,12 +232,14 @@ namespace world_sim {
 			currentTask = formatTask(*task);
 			// Build/Deconstruct advance the blueprint's workDone continuously (the colonist
 			// stands in place). Append the percent so a long build reads as progressing rather
-			// than frozen.
+			// than frozen. Deconstruct counts workDone DOWN, so show the complement (see
+			// StructureBlueprint::displayProgress) -- raw progress() would run backwards.
 			if ((task->type == ecs::TaskType::Build || task->type == ecs::TaskType::Deconstruct) &&
 				task->buildBlueprintEntityId != 0) {
 				if (const auto* bp =
 						world.getComponent<ecs::StructureBlueprint>(static_cast<ecs::EntityID>(task->buildBlueprintEntityId))) {
-					currentTask += " (" + std::to_string(static_cast<int>(bp->progress() * 100.0F)) + "%)";
+					const float shown = bp->displayProgress(task->type == ecs::TaskType::Deconstruct);
+					currentTask += " (" + std::to_string(static_cast<int>(shown * 100.0F)) + "%)";
 				}
 			}
 		}
@@ -530,7 +532,7 @@ namespace world_sim {
 		if (!built && blueprint != nullptr) {
 			content.slots.push_back(TextSlot{"State", buildPhaseLabel(blueprint->phase, blueprint->demolishing)});
 			content.slots.push_back(TextSlot{"Materials", materialsSummary(*blueprint)});
-			content.slots.push_back(ProgressBarSlot{.label = "Work", .value = blueprint->progress() * 100.0F});
+			content.slots.push_back(ProgressBarSlot{.label = "Work", .value = blueprint->displayProgress(blueprint->demolishing) * 100.0F});
 		}
 
 		// Demolish action. A foundation that still hosts walls can't be removed on
@@ -614,7 +616,7 @@ namespace world_sim {
 		if (!built && blueprint != nullptr) {
 			content.slots.push_back(TextSlot{"State", buildPhaseLabel(blueprint->phase, blueprint->demolishing)});
 			content.slots.push_back(TextSlot{"Materials", materialsSummary(*blueprint)});
-			content.slots.push_back(ProgressBarSlot{.label = "Work", .value = blueprint->progress() * 100.0F});
+			content.slots.push_back(ProgressBarSlot{.label = "Work", .value = blueprint->displayProgress(blueprint->demolishing) * 100.0F});
 		}
 
 		// Demolish action. Per-segment removal is the design's wall demolition unit;
@@ -671,7 +673,7 @@ namespace world_sim {
 		if (!built && blueprint != nullptr) {
 			content.slots.push_back(TextSlot{"State", buildPhaseLabel(blueprint->phase, blueprint->demolishing)});
 			content.slots.push_back(TextSlot{"Materials", materialsSummary(*blueprint)});
-			content.slots.push_back(ProgressBarSlot{.label = "Work", .value = blueprint->progress() * 100.0F});
+			content.slots.push_back(ProgressBarSlot{.label = "Work", .value = blueprint->displayProgress(blueprint->demolishing) * 100.0F});
 		}
 
 		// Demolish action. The opening is its own demolition unit (independent of the
