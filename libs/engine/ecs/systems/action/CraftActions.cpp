@@ -1,5 +1,6 @@
 #include "../ActionSystem.h"
 
+#include "../../InventoryMass.h"
 #include "../../World.h"
 #include "../../components/Action.h"
 #include "../../components/Inventory.h"
@@ -28,16 +29,20 @@ namespace ecs {
 	void ActionSystem::applyCraftingEffect(const Action& action, Inventory& inventory) {
 		const auto& craftEff = action.craftingEffect();
 
-		// Consume inputs from inventory
+		auto& assetRegistry = engine::assets::AssetRegistry::Get();
+
+		// Consume inputs. Two-hand materials (e.g. wood) ride in the hands, not the backpack,
+		// so pull them from there; everything else comes from the pack.
 		for (const auto& [itemName, count] : craftEff.inputs) {
-			uint32_t removed = inventory.removeItem(itemName, count);
+			uint32_t removed = ecs::itemIsTwoHand(assetRegistry, itemName)
+								   ? ecs::removeFromHands(inventory, itemName, count)
+								   : inventory.removeItem(itemName, count);
 			if (removed < count) {
 				LOG_WARNING(Engine, "[Action] Craft failed to consume %u x %s (only had %u)", count, itemName.c_str(), removed);
 			}
 		}
 
 		// Add outputs to inventory (or drop on ground if non-backpackable)
-		auto& assetRegistry = engine::assets::AssetRegistry::Get();
 		for (const auto& [itemName, count] : craftEff.outputs) {
 			const auto* itemDef = assetRegistry.getDefinition(itemName);
 			bool canBackpack = (itemDef == nullptr) || (itemDef->handsRequired < kTwoHandedThreshold);
@@ -101,9 +106,9 @@ namespace ecs {
 			return;
 		}
 
-		// Verify colonist has all required inputs
+		// Verify colonist has all required inputs (backpack or, for two-hand goods, the hands)
 		for (const auto& input : recipe->inputs) {
-			if (!inventory.hasQuantity(input.defName, input.count)) {
+			if (ecs::availableQuantity(inventory, input.defName) < input.count) {
 				LOG_WARNING(
 					Engine, "[Action] Cannot craft %s - missing %u x %s", recipe->label.c_str(), input.count, input.defName.c_str()
 				);

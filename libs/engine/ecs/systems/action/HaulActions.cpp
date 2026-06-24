@@ -1,6 +1,7 @@
 #include "../ActionSystem.h"
 
 #include "../../GoalTaskRegistry.h"
+#include "../../InventoryMass.h"
 #include "../../World.h"
 #include "../../components/Action.h"
 #include "../../components/Appearance.h"
@@ -30,12 +31,15 @@ namespace ecs {
 	void ActionSystem::applyDepositEffect(const Action& action, Task& task, Inventory& inventory) {
 		const auto& depEff = action.depositEffect();
 
+		auto&	   registry = engine::assets::AssetRegistry::Get();
+		const bool twoHand	= ecs::itemIsTwoHand(registry, depEff.itemDefName);
+
 		// Craft-material delivery: the target is a crafting station with no storage
 		// container. The harvested materials stay in the colonist's inventory (the Craft
 		// action consumes them from there); arriving here just marks them delivered so the
 		// parent Craft goal advances out of Blocked.
 		if (depEff.deliverToCraftStation) {
-			uint32_t carried = inventory.getQuantity(depEff.itemDefName);
+			uint32_t carried = ecs::availableQuantity(inventory, depEff.itemDefName);
 			uint32_t delivered = std::min(carried, depEff.quantity);
 			if (delivered > 0 && task.type == TaskType::Haul && task.haulGoalId != 0) {
 				auto& goalRegistry = GoalTaskRegistry::Get();
@@ -62,8 +66,9 @@ namespace ecs {
 			}
 		} else {
 
-		// Remove item from colonist inventory
-		uint32_t removed = inventory.removeItem(depEff.itemDefName, depEff.quantity);
+		// Remove item from the colonist: two-hand goods come out of the hands, the rest the pack.
+		uint32_t removed = twoHand ? ecs::removeFromHands(inventory, depEff.itemDefName, depEff.quantity)
+								   : inventory.removeItem(depEff.itemDefName, depEff.quantity);
 		if (removed > 0) {
 			// Add to storage container's inventory
 			auto* storageInv = world->getComponent<Inventory>(static_cast<EntityID>(depEff.storageEntityId));
@@ -72,7 +77,11 @@ namespace ecs {
 				if (added < removed) {
 					// Storage full - put remaining back in colonist inventory
 					uint32_t leftover = removed - added;
-					inventory.addItem(depEff.itemDefName, leftover);
+					if (twoHand) {
+						ecs::addArmful(inventory, registry, depEff.itemDefName, leftover);
+					} else {
+						inventory.addItem(depEff.itemDefName, leftover);
+					}
 					LOG_WARNING(Engine, "[Action] Storage full: deposited %u of %u x %s", added, removed, depEff.itemDefName.c_str());
 				} else {
 					LOG_INFO(
@@ -99,7 +108,11 @@ namespace ecs {
 				}
 			} else {
 				// Storage entity not found - put items back, credit nothing
-				inventory.addItem(depEff.itemDefName, removed);
+				if (twoHand) {
+					ecs::addArmful(inventory, registry, depEff.itemDefName, removed);
+				} else {
+					inventory.addItem(depEff.itemDefName, removed);
+				}
 				LOG_WARNING(
 					Engine,
 					"[Action] Storage entity %llu not found, items returned to inventory",

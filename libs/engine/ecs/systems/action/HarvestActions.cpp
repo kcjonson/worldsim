@@ -90,7 +90,13 @@ namespace ecs {
 		} else {
 			// Single-shot source: take what fits, then remove it (destructive) or start its
 			// regrowth cooldown. Only act on the source if the colonist actually collected.
-			added = inventory.addItem(collEff.itemDefName, wanted);
+			// Two-hand bulk goods (e.g. felled wood) ride in the hands as a weight-limited
+			// armful, never the backpack; everything else stacks into the pack.
+			if (ecs::itemIsTwoHand(harvestRegistry, collEff.itemDefName)) {
+				added = ecs::addArmful(inventory, harvestRegistry, collEff.itemDefName, collEff.quantity);
+			} else {
+				added = inventory.addItem(collEff.itemDefName, wanted);
+			}
 			if (added < collEff.quantity) {
 				// Carry/slot-limited below the full yield -- expected, not an error.
 				LOG_INFO(
