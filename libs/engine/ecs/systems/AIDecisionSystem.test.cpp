@@ -103,6 +103,17 @@ namespace ecs::test {
 		/// Get the current task for an entity
 		Task* getTask(EntityID entity) { return world->getComponent<Task>(entity); }
 
+		/// Drive the private chain-interruption handler directly. This fixture is a friend of
+		/// AIDecisionSystem (derived fixtures are not), so the seam lives here.
+		void callHandleChainInterruption(
+			EntityID entity, const Task& task, Inventory& inventory, const Position& position,
+			TaskType newTaskType, NeedType newNeedType
+		) {
+			world->getSystem<AIDecisionSystem>().handleChainInterruption(
+				entity, task, inventory, position, newTaskType, newNeedType
+			);
+		}
+
 		/// Get the movement target for an entity
 		MovementTarget* getMovementTarget(EntityID entity) { return world->getComponent<MovementTarget>(entity); }
 
@@ -1399,79 +1410,127 @@ namespace ecs::test {
 		EXPECT_EQ(task->chainStep, 2);
 	}
 
-	TEST_F(AIDecisionSystemTest, ChainInterruptionStowsOneHandedItem) {
-		// Unit test: Verify Inventory component supports stowing 1-handed items.
-		// In the full system, handleChainInterruption() calls stowToBackpack() for 1-handed
-		// items when a chain is interrupted by a higher-priority task that needs hands.
-		// This test verifies the underlying Inventory behavior that the handler relies on.
-		auto colonist = createColonist({5.0F, 5.0F});
+	// Chain-interruption stowing drives the real AIDecisionSystem::handleChainInterruption,
+	// not a stand-in. A freed one-hand tool goes belt -> backpack -> drop, in that order. The
+	// handler only proceeds when the NEW task's first action needs hands, so each test seeds the
+	// ActionTypeRegistry with a hands-needing action and drives a Harvest interruption.
+	class ChainInterruptionFixture : public AIDecisionSystemTest {
+	  protected:
+		// Register a 1-hand Axe tool and ensure the new task's first action (Harvest) needs hands.
+		void SetUp() override {
+			AIDecisionSystemTest::SetUp();
 
-		auto* task = getTask(colonist);
+			auto& registry = engine::assets::AssetRegistry::Get();
+			engine::assets::AssetDefinition axeDef;
+			axeDef.defName = "Axe";
+			axeDef.label = "Axe";
+			axeDef.handsRequired = 1;
+			axeDef.category = engine::assets::ItemCategory::Tool;
+			axeDef.itemProperties = engine::assets::ItemProperties{};
+			axeDef.itemProperties->stackSize = 1;
+			axeDef.itemProperties->massKg = 1.0F;
+			registry.registerTestDefinition(std::move(axeDef));
+
+			engine::assets::ActionTypeDef harvestAction;
+			harvestAction.defName = "Harvest";
+			harvestAction.needsHands = true;
+			engine::assets::ActionTypeRegistry::Get().registerTestAction(std::move(harvestAction));
+		}
+
+		void TearDown() override {
+			engine::assets::ActionTypeRegistry::Get().clear();
+			AIDecisionSystemTest::TearDown();
+		}
+
+		// Put the colonist mid-Haul, holding the Axe in one hand (chainStep=1).
+		Task* armMidHaulCarryingAxe(EntityID colonist) {
+			auto* task = getTask(colonist);
+			task->type = TaskType::Haul;
+			task->chainId = 100ULL;
+			task->chainStep = 1;
+			task->haulItemDefName = "Axe";
+			task->state = TaskState::Moving;
+			return task;
+		}
+
+		// Drive the real handler for a switch to a hands-needing Harvest task.
+		void interruptForHarvest(EntityID colonist, const Task& task) {
+			auto* inventory = world->getComponent<Inventory>(colonist);
+			auto* position = world->getComponent<Position>(colonist);
+			callHandleChainInterruption(colonist, task, *inventory, *position, TaskType::Harvest, NeedType::Count);
+		}
+	};
+
+	TEST_F(ChainInterruptionFixture, FreedOneHandToolStowsToBeltFirst) {
+		auto  colonist = createColonist({5.0F, 5.0F});
 		auto* inventory = world->getComponent<Inventory>(colonist);
-		ASSERT_NE(task, nullptr);
 		ASSERT_NE(inventory, nullptr);
 
-		// Set up colonist mid-Haul chain (chainStep=1 means holding item)
-		task->type = TaskType::Haul;
-		task->chainId = 100ULL;
-		task->chainStep = 1; // Mid-chain: has picked up item
-		task->haulItemDefName = "Berry";
-		task->targetPosition = {10.0F, 10.0F};
-		task->state = TaskState::Moving;
+		inventory->pickUp("Axe", 1);
+		ASSERT_TRUE(inventory->isHolding("Axe"));
 
-		// Put Berry in hand (simulating what Pickup action does)
-		inventory->pickUp("Berry", 1); // 1-handed item
+		auto* task = armMidHaulCarryingAxe(colonist);
+		interruptForHarvest(colonist, *task);
 
-		// Verify setup: Berry is in hand, not backpack
-		EXPECT_TRUE(inventory->isHolding("Berry"));
-		EXPECT_FALSE(inventory->hasItem("Berry"));
-
-		// Verify stowToBackpack works for 1-handed items (used by handleChainInterruption)
-		bool stowed = inventory->stowToBackpack("Berry");
-		EXPECT_TRUE(stowed) << "1-handed item should be stowable to backpack";
-		EXPECT_FALSE(inventory->isHolding("Berry")) << "Item should no longer be in hands";
-		EXPECT_TRUE(inventory->hasItem("Berry")) << "Item should be in backpack";
+		// Belt is the first stow target: the Axe lands in a belt slot, the hand is freed,
+		// and nothing fell through to the backpack.
+		EXPECT_TRUE(inventory->belt[0].has_value()) << "Axe stows to the first belt slot";
+		EXPECT_EQ(inventory->belt[0]->defName, "Axe");
+		EXPECT_FALSE(inventory->isHolding("Axe")) << "Hand freed for the new task";
+		EXPECT_FALSE(inventory->hasItem("Axe")) << "Belt stow does not also hit the backpack";
 	}
 
-	TEST_F(AIDecisionSystemTest, ChainInterruptionDropsTwoHandedItem) {
-		// Unit test: Verify Inventory component behavior for 2-handed items.
-		// In the full system, handleChainInterruption() tries stowToBackpack() first,
-		// and when that fails for 2-handed items, it calls putDown() + m_onDropItem callback.
-		// This test verifies the underlying Inventory behavior that the handler relies on.
-		auto colonist = createColonist({5.0F, 5.0F});
-
-		auto* task = getTask(colonist);
+	TEST_F(ChainInterruptionFixture, FreedOneHandToolFallsBackToBackpackWhenBeltFull) {
+		auto  colonist = createColonist({5.0F, 5.0F});
 		auto* inventory = world->getComponent<Inventory>(colonist);
-		ASSERT_NE(task, nullptr);
 		ASSERT_NE(inventory, nullptr);
 
-		// Set up colonist mid-Haul chain with 2-handed item
-		task->type = TaskType::Haul;
-		task->chainId = 101ULL;
-		task->chainStep = 1;
-		task->haulItemDefName = "LargeRock"; // 2-handed item
-		task->targetPosition = {10.0F, 10.0F};
-		task->state = TaskState::Moving;
+		// Belt full: both quick-draw slots taken, so the Axe must fall back to the backpack.
+		inventory->belt[0] = ItemStack{"Knife", 1};
+		inventory->belt[1] = ItemStack{"Hammer", 1};
+		inventory->pickUp("Axe", 1);
+		ASSERT_TRUE(inventory->isHolding("Axe"));
 
-		// Put 2-handed item in hands (both hands occupied)
-		inventory->pickUp("LargeRock", 2);
+		auto* task = armMidHaulCarryingAxe(colonist);
+		interruptForHarvest(colonist, *task);
 
-		// Verify setup: item is in both hands
-		EXPECT_TRUE(inventory->leftHand.has_value());
-		EXPECT_TRUE(inventory->rightHand.has_value());
-		EXPECT_EQ(inventory->leftHand->defName, "LargeRock");
-		EXPECT_EQ(inventory->rightHand->defName, "LargeRock");
+		EXPECT_FALSE(inventory->isHolding("Axe")) << "Hand freed for the new task";
+		EXPECT_TRUE(inventory->hasItem("Axe")) << "Belt full -> Axe goes to the backpack";
+		EXPECT_EQ(inventory->getQuantity("Axe"), 1U);
+	}
 
-		// 2-handed items cannot be stowed to backpack (this is what handleChainInterruption checks)
-		bool stowed = inventory->stowToBackpack("LargeRock");
-		EXPECT_FALSE(stowed) << "2-handed items cannot be stowed to backpack";
+	TEST_F(ChainInterruptionFixture, FreedOneHandToolDroppedWhenBeltAndBackpackFull) {
+		auto  colonist = createColonist({5.0F, 5.0F});
+		auto* inventory = world->getComponent<Inventory>(colonist);
+		ASSERT_NE(inventory, nullptr);
 
-		// Must use putDown (which handleChainInterruption falls back to)
-		auto dropped = inventory->putDown("LargeRock");
-		EXPECT_TRUE(dropped.has_value()) << "Item should be put down";
-		EXPECT_EQ(dropped->defName, "LargeRock");
-		EXPECT_FALSE(inventory->leftHand.has_value()) << "Left hand should be empty";
-		EXPECT_FALSE(inventory->rightHand.has_value()) << "Right hand should be empty";
+		// Capture drops through the real callback the handler fires.
+		std::string droppedDef;
+		int			dropCalls = 0;
+		world->getSystem<AIDecisionSystem>().setDropItemCallback(
+			[&](const std::string& defName, float /*x*/, float /*y*/) {
+				++dropCalls;
+				droppedDef = defName;
+			}
+		);
+
+		// Belt full and backpack saturated to its slot capacity: no stow target remains.
+		inventory->belt[0] = ItemStack{"Knife", 1};
+		inventory->belt[1] = ItemStack{"Hammer", 1};
+		inventory->maxCapacity = 1;
+		inventory->addItem("Berry", 1); // fills the only backpack slot with a different type
+		ASSERT_FALSE(inventory->canAdd("Axe", 1));
+
+		inventory->pickUp("Axe", 1);
+		ASSERT_TRUE(inventory->isHolding("Axe"));
+
+		auto* task = armMidHaulCarryingAxe(colonist);
+		interruptForHarvest(colonist, *task);
+
+		EXPECT_FALSE(inventory->isHolding("Axe")) << "Hand freed even when nowhere to stow";
+		EXPECT_FALSE(inventory->hasItem("Axe")) << "Backpack was full, Axe not stowed";
+		EXPECT_EQ(dropCalls, 1) << "Axe dropped via the drop callback";
+		EXPECT_EQ(droppedDef, "Axe");
 	}
 
 	TEST_F(AIDecisionSystemTest, TaskFirstActionNeedsHandsMapping) {

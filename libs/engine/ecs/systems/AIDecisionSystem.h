@@ -33,7 +33,15 @@ namespace ecs {
 
 class NavigationSystem;
 
+namespace test {
+class AIDecisionSystemTest;
+}
+
 class AIDecisionSystem : public ISystem {
+	// Tests drive the private chain-interruption handler directly to assert the real
+	// belt -> backpack -> drop ordering, not a stand-in for it.
+	friend class test::AIDecisionSystemTest;
+
 public:
 	/// Construct with optional RNG seed (defaults to random_device for non-determinism)
 	explicit AIDecisionSystem(

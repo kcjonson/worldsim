@@ -59,6 +59,12 @@ class ActionTypeRegistry {
     /// Get count of loaded action types
     [[nodiscard]] size_t size() const;
 
+    // --- Test Support ---
+
+    /// Register an action type directly (for unit tests), bypassing XML loading.
+    /// @param action The action type to register
+    void registerTestAction(ActionTypeDef action);
+
   private:
     ActionTypeRegistry() = default;
 

@@ -19,13 +19,6 @@
 
 namespace ecs {
 
-	namespace {
-
-		/// Threshold for items requiring two hands (items with handsRequired >= this are two-handed)
-		constexpr uint8_t kTwoHandedThreshold = 2;
-
-	} // namespace
-
 	void ActionSystem::applyCraftingEffect(const Action& action, Inventory& inventory) {
 		const auto& craftEff = action.craftingEffect();
 
@@ -44,8 +37,7 @@ namespace ecs {
 
 		// Add outputs to inventory (or drop on ground if non-backpackable)
 		for (const auto& [itemName, count] : craftEff.outputs) {
-			const auto* itemDef = assetRegistry.getDefinition(itemName);
-			bool canBackpack = (itemDef == nullptr) || (itemDef->handsRequired < kTwoHandedThreshold);
+			bool canBackpack = !ecs::itemIsTwoHand(assetRegistry, itemName);
 
 			if (canBackpack) {
 				uint32_t added = inventory.addItem(itemName, count);

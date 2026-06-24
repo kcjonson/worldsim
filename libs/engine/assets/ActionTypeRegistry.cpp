@@ -95,6 +95,11 @@ namespace engine::assets {
 		return actions.size();
 	}
 
+	void ActionTypeRegistry::registerTestAction(ActionTypeDef action) {
+		const std::string defName = action.defName;
+		actions.insert_or_assign(defName, std::move(action));
+	}
+
 	bool ActionTypeRegistry::parseActionFromNode(const void* nodePtr) {
 		const pugi::xml_node& node = *static_cast<const pugi::xml_node*>(nodePtr);
 

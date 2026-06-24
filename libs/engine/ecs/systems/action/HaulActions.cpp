@@ -21,13 +21,6 @@
 
 namespace ecs {
 
-	namespace {
-
-		/// Threshold for items requiring two hands (items with handsRequired >= this are two-handed)
-		constexpr uint8_t kTwoHandedThreshold = 2;
-
-	} // namespace
-
 	void ActionSystem::applyDepositEffect(const Action& action, Task& task, Inventory& inventory) {
 		const auto& depEff = action.depositEffect();
 
@@ -364,14 +357,11 @@ namespace ecs {
 			return;
 		}
 
-		auto& assetRegistry = engine::assets::AssetRegistry::Get();
-
 		const auto& itemName = handSlot->defName;
 		uint32_t	quantity = handSlot->quantity;
 
 		// Check if item can go in backpack (1-handed items only)
-		const auto* itemDef = assetRegistry.getDefinition(itemName);
-		bool		canBackpack = (itemDef == nullptr) || (itemDef->handsRequired < kTwoHandedThreshold);
+		bool canBackpack = !ecs::itemIsTwoHand(engine::assets::AssetRegistry::Get(), itemName);
 
 		if (canBackpack) {
 			// One-hand item: try the belt first (quick-draw tool slot), then the backpack, then drop.
@@ -426,6 +416,25 @@ namespace ecs {
 	}
 
 	void ActionSystem::clearHandsForTwoHandedPickup(Inventory& inventory, glm::vec2 dropPosition) {
+		// A two-hand armful mirrors one stack across both hands; clearing each hand
+		// independently would drop it twice. Handle the mirror once: drop the whole
+		// armful as a single loose pile (haulable, not per-unit packaged), free both hands.
+		if (inventory.leftHand.has_value() && inventory.rightHand.has_value()
+			&& inventory.leftHand->defName == inventory.rightHand->defName
+			&& ecs::itemIsTwoHand(engine::assets::AssetRegistry::Get(), inventory.leftHand->defName)) {
+			const std::string defName  = inventory.leftHand->defName;
+			const uint32_t	  quantity = inventory.leftHand->quantity;
+			if (m_onDropResource) {
+				m_onDropResource(defName, dropPosition.x, dropPosition.y, quantity);
+			} else if (m_onDropItem) {
+				for (uint32_t i = 0; i < quantity; ++i) {
+					m_onDropItem(defName, dropPosition.x, dropPosition.y);
+				}
+			}
+			inventory.leftHand.reset();
+			inventory.rightHand.reset();
+			return;
+		}
 		clearHandItem(inventory.leftHand, inventory, dropPosition, "left");
 		clearHandItem(inventory.rightHand, inventory, dropPosition, "right");
 	}

@@ -24,6 +24,8 @@
 
     <!-- Item properties (when in inventory) -->
     <item>
+      <!-- NOT enforced at runtime yet: addItem caps at the inventory's maxStackSize.
+           Item-driven stack size is a deferred follow-up. -->
       <stackSize>40</stackSize>
       <!-- A short log/billet; mass drives how much a colonist can haul per trip -->
       <mass>2.5</mass>

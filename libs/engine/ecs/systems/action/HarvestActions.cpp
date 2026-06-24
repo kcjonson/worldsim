@@ -86,7 +86,13 @@ namespace ecs {
 		// the entity only when it empties -- never the full-destroy a Pickup's CollectionEffect
 		// requests (destroySource=true), which would delete a still-loaded pile. This branch
 		// intercepts before the pool/single-shot logic so a pile never reaches that destroy.
-		if (auto* pileStack = findLoosePile(world, collEff.itemDefName, collEff.sourcePosition)) {
+		// Only a ground pickup (sourceDefName == itemDefName, e.g. "Wood" from "Wood") may take the
+		// loose-pile path. A tree-fell yields "Wood" from "Flora_Tree..."; its source differs, so it
+		// must NOT be diverted here -- otherwise a pile sitting on the fell spot would hijack the chop.
+		ResourceStack* pileStack = (collEff.sourceDefName == collEff.itemDefName)
+									   ? findLoosePile(world, collEff.itemDefName, collEff.sourcePosition)
+									   : nullptr;
+		if (pileStack) {
 			if (ecs::itemIsTwoHand(harvestRegistry, collEff.itemDefName)) {
 				added = ecs::addArmful(inventory, harvestRegistry, collEff.itemDefName, pileStack->quantity);
 			} else {
