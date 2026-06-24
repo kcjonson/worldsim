@@ -12,7 +12,6 @@
 
 #include <utils/Log.h>
 
-#include <world/camera/WorldCamera.h>
 #include <world/chunk/Chunk.h>
 #include <world/chunk/ChunkManager.h>
 
@@ -39,12 +38,46 @@ namespace ecs {
 		}
 	}
 
-	bool NavigationSystem::needsRebuild() const {
+	std::int64_t NavigationSystem::clampHalfExtent(std::int64_t requested) const {
+		// Bound to [min, max] first.
+		std::int64_t clamped = std::max(kMinSimHalfExtentMm, std::min(kMaxSimHalfExtentMm, requested));
+		// Then to the loaded-chunk extent so we never sweep never-loaded tiles.
+		if (chunkManager != nullptr) {
+			const std::int64_t chunkMm	  = static_cast<std::int64_t>(engine::world::kChunkSize) * 1000;
+			const std::int64_t loadRadius = static_cast<std::int64_t>(chunkManager->loadRadius());
+			const std::int64_t maxRadius  = loadRadius * chunkMm - chunkMm / 2;
+			clamped = std::max<std::int64_t>(0, std::min(clamped, maxRadius));
+		}
+		return clamped;
+	}
+
+	bool NavigationSystem::needsRebuild(std::int64_t clampedHalfExtent) const {
 		if (!haveBuiltOnce) {
 			return true;
 		}
 		const std::uint64_t version = (constructionWorld != nullptr) ? constructionWorld->version() : 0;
-		return version != builtVersion;
+		if (version != builtVersion) {
+			return true;
+		}
+		// Re-center: camera panned far enough from the built center.
+		const std::int64_t dx = requestedCenter.x - builtCenter.x;
+		const std::int64_t dy = requestedCenter.y - builtCenter.y;
+		const std::int64_t distSq = dx * dx + dy * dy;
+		const std::int64_t threshSq = kRecenterThresholdMm * kRecenterThresholdMm;
+		if (distSq > threshSq) {
+			return true;
+		}
+		// Resize: clamped half-extent changed by more than kSizeChangeThreshold.
+		if (builtHalfExtent > 0) {
+			const double ratio = static_cast<double>(clampedHalfExtent) / static_cast<double>(builtHalfExtent);
+			const double delta = (ratio > 1.0) ? (ratio - 1.0) : (1.0 - ratio);
+			if (delta > kSizeChangeThreshold) {
+				return true;
+			}
+		} else if (clampedHalfExtent > 0) {
+			return true; // first real extent after a zero-extent build
+		}
+		return false;
 	}
 
 	void NavigationSystem::update(float /*deltaTime*/) {
@@ -72,7 +105,18 @@ namespace ecs {
 			return;
 		}
 
-		if (!needsRebuild()) {
+		// The area path needs a ChunkManager AND a pushed area. With both, build over
+		// the simulation area; without them, fall back to the construction-only path
+		// (headless tests, before the area is wired) so walls are still navigable. We
+		// must NOT latch haveBuiltOnce when we cannot produce a real build, or no later
+		// change would retrigger it.
+		const bool canBuildArea = (chunkManager != nullptr) && haveRequestedArea;
+
+		// Clamp the requested half-extent now (used for both the rebuild check and the
+		// actual build). In the fallback path this is unused but harmless.
+		const std::int64_t clampedHalfExtent = canBuildArea ? clampHalfExtent(requestedHalfExtent) : 0;
+
+		if (!needsRebuild(clampedHalfExtent)) {
 			return;
 		}
 
@@ -81,38 +125,14 @@ namespace ecs {
 		// must run here. The worker then owns a self-contained NavMeshInput by value.
 		gnav::NavMeshInput input;
 
-		// The area path needs a ChunkManager AND a camera to anchor the area. With a
-		// camera, build over the simulation area; without one, fall back to the
-		// construction-only path (headless tests, before the camera is wired) so the
-		// walls are still navigable. We must NOT latch haveBuiltOnce when we cannot
-		// produce a real build, or no later change would retrigger it.
-		const bool canBuildArea = (chunkManager != nullptr) && (camera != nullptr);
-
 		if (canBuildArea) {
-			// Anchor the area at the camera on the first build and hold it there (Phase A;
-			// snap-on-scroll re-centers it later).
-			if (!haveSimArea) {
-				const engine::world::WorldPosition pos = camera->position();
-				simAreaCenter = engine::nav::toMm(glm::vec2{pos.x, pos.y});
-				haveSimArea = true;
-			}
-
-			// Clamp the half-extent so the area never reaches past the loaded-chunk
-			// extent: chunks load in a radius around the camera, so the farthest in-bounds
-			// point is loadRadius full chunks out plus the half-chunk the camera sits in.
-			// A request beyond that would sweep tiles in never-loaded chunks (read as land
-			// -- harmless, but wasted work).
-			const std::int64_t chunkMm	  = static_cast<std::int64_t>(engine::world::kChunkSize) * 1000;
-			const std::int64_t loadRadius = static_cast<std::int64_t>(chunkManager->loadRadius());
-			const std::int64_t maxRadius  = loadRadius * chunkMm - chunkMm / 2;
-			const std::int64_t radius	  = std::max<std::int64_t>(0, std::min(kSimAreaRadiusMm, maxRadius));
-
 			engine::assets::PlacementExecutor  emptyPlacement(engine::assets::AssetRegistry::Get());
 			engine::assets::PlacementExecutor& exec = (placement != nullptr) ? *placement : emptyPlacement;
-			input = engine::nav::buildInput(simAreaCenter, radius, *chunkManager, exec, engine::assets::AssetRegistry::Get(),
-											*constructionWorld, engine::assets::ConstructionRegistry::Get());
+			input = engine::nav::buildInput(requestedCenter, clampedHalfExtent, *chunkManager, exec,
+											engine::assets::AssetRegistry::Get(), *constructionWorld,
+											engine::assets::ConstructionRegistry::Get());
 		} else {
-			// Construction-only fallback: no chunks/camera, so there is no terrain border.
+			// Construction-only fallback: no chunks/area, so there is no terrain border.
 			// extractWalls alone has no unblocked polygon and buildNavMesh would yield an
 			// empty mesh, so synthesize one walkable border from the construction-world
 			// vertex bounds and let the wall bands tile inside it.
@@ -138,6 +158,8 @@ namespace ecs {
 		// Record what we snapshotted so the next frame's needsRebuild compares
 		// against THIS input's version, not a later-mutated world.
 		builtVersion = constructionWorld->version();
+		builtCenter = requestedCenter;
+		builtHalfExtent = clampedHalfExtent;
 		haveBuiltOnce = true;
 
 		// Heavy triangulation off the main thread; the lambda owns `input` by value

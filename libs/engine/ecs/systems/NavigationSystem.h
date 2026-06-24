@@ -2,13 +2,20 @@
 
 // NavigationSystem - owns the cached navmesh and answers path queries (Nav B3).
 //
-// One mesh for a SIMULATION AREA: a fixed-size square AABB in world-absolute mm,
-// anchored at the camera position on the first build. The build ingests only the
-// obstacles inside that area, so a forested world (tens of thousands of loaded
-// trees) still builds fast because the area holds only ~1-2k. Building over every
-// loaded+processed chunk hung the off-thread triangulation; scoping to the area is
-// the fix. (Snap-on-scroll -- re-centering the area as the camera moves -- is a
-// later phase; for now the area is anchored once on the first build.)
+// One mesh for a SIMULATION AREA: a square AABB in world-absolute mm that tracks
+// the camera viewport. The build ingests only the obstacles inside that area, so a
+// forested world (tens of thousands of loaded trees) still builds fast because the
+// area holds only ~1-2k. Building over every loaded+processed chunk hung the
+// off-thread triangulation; scoping to the area is the fix.
+//
+// The caller (GameScene) owns the camera and viewport dimensions and pushes the
+// desired area each frame via setSimulationArea(centerMm, halfExtentMm). The half-
+// extent is the camera's visible half-diagonal expanded by a margin (~1.3x) for
+// scroll/zoom headroom. NavigationSystem clamps the half-extent to
+// [kMinSimHalfExtentMm, kMaxSimHalfExtentMm] and to the loaded-chunk extent, then
+// rebuilds when the BUILT area drifts: center moved > kRecenterThresholdMm OR
+// clamped half-extent changed by > kSizeChangeThreshold (20%). Per-frame camera-
+// lerp deltas stay well under those thresholds so no thrash occurs.
 //
 // Each frame the system decides whether the world changed (a construction edit
 // bumped ConstructionWorld::version(), or this is the first build) and, if so,
@@ -51,7 +58,6 @@ namespace engine::construction {
 
 namespace engine::world {
 	class ChunkManager;
-	class WorldCamera;
 }
 
 namespace ecs {
@@ -79,9 +85,16 @@ class NavigationSystem : public ISystem {
 
 	void setChunkManager(engine::world::ChunkManager* manager) { chunkManager = manager; }
 
-	// The camera supplies the simulation-area center. The area is anchored at the
-	// camera position on the FIRST build; without a camera no build runs.
-	void setCamera(const engine::world::WorldCamera* cam) { camera = cam; }
+	// Push the desired simulation area for this frame. GameScene calls this every
+	// frame after camera->update() using the camera's visible rect expanded by
+	// kViewportMargin. NavigationSystem clamps the half-extent and rebuilds when the
+	// built area has drifted far enough (center > kRecenterThresholdMm or size
+	// changed > kSizeChangeThreshold). Without a pushed area no build runs.
+	void setSimulationArea(geometry::Vec2i64 centerMm, std::int64_t halfExtentMm) {
+		requestedCenter = centerMm;
+		requestedHalfExtent = halfExtentMm;
+		haveRequestedArea = true;
+	}
 
 	// Only fully-placed chunks feed the build; same signature VisionSystem uses. The
 	// processed-chunks set gates which chunks are queried for flora/water during the
@@ -158,23 +171,35 @@ class NavigationSystem : public ISystem {
 	// kMaxRraCaches.
 	[[nodiscard]] std::size_t rraCacheCount() const { return rraCaches.size(); }
 
+	// Public constants referenced by GameScene (viewport margin) and tests (clamp bounds).
+	//
+	// Minimum half-extent: large enough to cover typical indoor rooms and short outdoor
+	// paths even at maximum zoom-in.
+	static constexpr std::int64_t kMinSimHalfExtentMm = 30000; // 30 m
+	// Maximum half-extent: bounds the build cost. Kept small for now because a 200 m
+	// area in a dense forest is thousands of trees and stalls the off-thread build
+	// (zoom-out pegged CPU). The planned visual-size obstacle LOD -- cull sub-pixel
+	// obstacles when zoomed out -- will let this grow again while staying cheap; until
+	// then, zoom-out beyond this caps the fine mesh (beeline beyond).
+	static constexpr std::int64_t kMaxSimHalfExtentMm = 64000; // 64 m
+	// Camera travel (mm) that triggers an area re-center.
+	static constexpr std::int64_t kRecenterThresholdMm = 20000; // 20 m
+	// Margin applied to the camera's visible half-diagonal for scroll/zoom headroom.
+	// GameScene multiplies the half-diagonal by this before calling setSimulationArea.
+	static constexpr float kViewportMargin = 1.3F;
+
   private:
-	// True if a rebuild is due: the first build, or a ConstructionWorld::version()
-	// change since the last build. (Re-centering the area on camera movement is a
-	// later phase and is NOT a trigger here.)
-	[[nodiscard]] bool needsRebuild() const;
+	// True if a rebuild is due: first build, world version change, or the built area
+	// has drifted far enough from the requested area.
+	[[nodiscard]] bool needsRebuild(std::int64_t clampedHalfExtent) const;
 
-	// Half-extent of the simulation-area square, in mm (60 m -> a 120 m box). The
-	// build is bounded by this, not by the loaded region. update() clamps the value
-	// it actually uses so the area never reaches past the loaded-chunk extent.
-	static constexpr std::int64_t kSimAreaRadiusMm = 60000;
+	// Clamp the requested half-extent to [min, max] and to the loaded-chunk extent.
+	[[nodiscard]] std::int64_t clampHalfExtent(std::int64_t requested) const;
 
-	// Camera travel (mm) that will trigger an area re-center in the snap-on-scroll
-	// phase. Defined now; unused in Phase A (the area is anchored once).
-	static constexpr std::int64_t kRecenterThresholdMm = 20000;
+	// Half-extent fractional change that triggers a rebuild (0.20 = 20%).
+	static constexpr double kSizeChangeThreshold = 0.20;
 
 	engine::world::ChunkManager*							  chunkManager = nullptr;
-	const engine::world::WorldCamera*						  camera = nullptr;
 	engine::assets::PlacementExecutor*						  placement = nullptr;
 	const std::unordered_set<engine::world::ChunkCoordinate>* processedChunks = nullptr;
 	const engine::construction::ConstructionWorld*			  constructionWorld = nullptr;
@@ -190,11 +215,16 @@ class NavigationSystem : public ISystem {
 	std::uint64_t builtVersion = UINT64_MAX;
 	bool		  haveBuiltOnce = false;
 
-	// The anchored simulation-area center (world mm) and whether it has been set. The
-	// area is anchored at the camera position on the first build and held there for
-	// Phase A; the snap-on-scroll phase will move it.
-	geometry::Vec2i64 simAreaCenter{0, 0};
-	bool			  haveSimArea = false;
+	// The requested simulation area pushed by the caller this frame. haveRequestedArea
+	// is false until the first setSimulationArea call.
+	geometry::Vec2i64 requestedCenter{0, 0};
+	std::int64_t	  requestedHalfExtent = 0;
+	bool			  haveRequestedArea = false;
+
+	// The area the most-recently-launched build was snapshotted from. Compared each
+	// frame to decide whether the drift is large enough to warrant a new build.
+	geometry::Vec2i64 builtCenter{0, 0};
+	std::int64_t	  builtHalfExtent = 0;
 
 	// Bumped on every mesh swap-in (see generation()). Drives NavPath staleness for the
 	// replan loop independently of ConstructionWorld::version() (which the system doesn't

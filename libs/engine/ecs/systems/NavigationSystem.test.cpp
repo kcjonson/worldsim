@@ -13,7 +13,6 @@
 
 #include <world/Biome.h>
 #include <world/BiomeWeights.h>
-#include <world/camera/WorldCamera.h>
 #include <world/chunk/ChunkManager.h>
 #include <world/chunk/ChunkSampleResult.h>
 #include <world/chunk/IWorldSampler.h>
@@ -121,28 +120,34 @@ namespace {
 			ConstructionRegistry::Get().clear();
 			ASSERT_TRUE(ConstructionRegistry::Get().load(constructionConfigFolder()));
 
-			// A ready chunk region (all land) and a camera at the origin, so the
-			// NavigationSystem build runs through the SIMULATION-AREA path. The origin
-			// room (0..4 m x 0..3 m) sits well inside the 120 m area.
+			// A ready chunk region (all land) and a 60 m simulation area at the origin, so
+			// the NavigationSystem build runs through the SIMULATION-AREA path. The origin
+			// room (0..4 m x 0..3 m) sits well inside the area.
 			m_chunks = std::make_unique<engine::world::ChunkManager>(std::make_unique<LandSampler>());
 			m_chunks->setLoadRadius(2);
 			m_chunks->setUnloadRadius(4);
 			m_chunks->update({0.0F, 0.0F});
 			m_chunks->finishPendingGeneration();
-			m_camera = std::make_unique<engine::world::WorldCamera>();
-			m_camera->setPosition({0.0F, 0.0F});
 		}
 		void TearDown() override { ConstructionRegistry::Get().clear(); }
 
-		// Wire the area build (chunks + camera) onto a system in addition to its
-		// ConstructionWorld, so the test exercises the real simulation-area path.
+		// Wire the area build (chunks + a 1920x1080 viewport at origin) onto a system
+		// in addition to its ConstructionWorld, so the test exercises the simulation-
+		// area path. The half-extent is kViewportMargin * max(halfW, halfH) at zoom=3:
+		// max(1920,1080)/(2*8*3)*1.3 ~= 52 m -> 52000 mm; clamped to kMinSimHalfExtentMm
+		// (30 m) isn't reached since 52000 > 30000. Either way the 3x5 m origin room
+		// sits well inside the area.
 		void wireArea(NavigationSystem& sys) {
 			sys.setChunkManager(m_chunks.get());
-			sys.setCamera(m_camera.get());
+			pushArea(sys, {0, 0}, 60000); // 60 m -- covers the origin room comfortably
+		}
+
+		// Push an explicit area (used by viewport-tracking tests).
+		static void pushArea(NavigationSystem& sys, geometry::Vec2i64 centerMm, std::int64_t halfExtentMm) {
+			sys.setSimulationArea(centerMm, halfExtentMm);
 		}
 
 		std::unique_ptr<engine::world::ChunkManager> m_chunks;
-		std::unique_ptr<engine::world::WorldCamera>	 m_camera;
 	};
 
 } // namespace
@@ -572,6 +577,190 @@ TEST_F(NavigationSystemTest, RraCacheMapIsBounded) {
 	// And the scenario must actually push past the cap (otherwise the bound is untested).
 	EXPECT_GT(distinctGoalTris.size(), 64u)
 		<< "test setup must produce > 64 distinct goal triangles to exercise the cap";
+}
+
+// --- Phase B: viewport-tracking simulation area (snap-on-scroll) -------------
+//
+// These tests drive setSimulationArea directly (GameScene does the camera->area
+// math in production). Each test verifies that the rebuild trigger fires (or not)
+// on the exact conditions described in the Phase B design:
+//
+//  * first push (no built area) -> rebuild
+//  * zoom-out (larger half-extent, >20% change) -> rebuild, AABB grows
+//  * zoom-in (smaller half-extent, >20% change) -> rebuild, AABB shrinks
+//  * pan past kRecenterThresholdMm -> rebuild, center moves
+//  * tiny delta below both thresholds -> NO rebuild (hysteresis)
+//  * half-extent clamped to [kMinSimHalfExtentMm, kMaxSimHalfExtentMm]
+
+// Helper: AABB of a mesh (min/max over the vertex list).
+namespace {
+	struct Aabb { std::int64_t minX, minY, maxX, maxY; };
+	Aabb meshAabb(const geometry::nav::NavMesh& m) {
+		Aabb a{INT64_MAX, INT64_MAX, INT64_MIN, INT64_MIN};
+		for (const geometry::Vec2i64& v : m.vertices) {
+			a.minX = std::min(a.minX, v.x);
+			a.minY = std::min(a.minY, v.y);
+			a.maxX = std::max(a.maxX, v.x);
+			a.maxY = std::max(a.maxY, v.y);
+		}
+		return a;
+	}
+} // namespace
+
+// Zoom-out: pushing a larger half-extent (well above 20% change) causes a
+// rebuild and the resulting mesh AABB is strictly larger.
+TEST_F(NavigationSystemTest, ZoomOutRebuildExpandsArea) {
+	ConstructionWorld cw;
+	buildRoom(cw, /*withOpening=*/true, /*pathableOpening=*/true);
+
+	World world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	sys.setChunkManager(m_chunks.get());
+	sys.setConstructionWorld(&cw);
+
+	// First push: 30 m (min clamp, covers origin room).
+	pushArea(sys, {0, 0}, 30000);
+	ASSERT_TRUE(pumpUntilMesh(sys)) << "initial mesh never built";
+	const std::uint64_t gen1 = sys.generation();
+	const Aabb aabb1 = meshAabb(sys.mesh());
+
+	// Zoom out: 100 m (> 20% bigger than 30 m after clamping stays 100 m).
+	pushArea(sys, {0, 0}, 100000);
+	bool grew = false;
+	for (int i = 0; i < 500 && !grew; ++i) {
+		sys.update(0.0F);
+		if (sys.generation() != gen1) {
+			const Aabb aabb2 = meshAabb(sys.mesh());
+			grew = (aabb2.maxX - aabb2.minX) > (aabb1.maxX - aabb1.minX)
+				|| (aabb2.maxY - aabb2.minY) > (aabb1.maxY - aabb1.minY);
+		}
+		std::this_thread::sleep_for(std::chrono::milliseconds(2));
+	}
+	EXPECT_TRUE(grew) << "zoom-out rebuild should produce a larger mesh AABB";
+	EXPECT_GT(sys.generation(), gen1) << "generation must bump on zoom-out rebuild";
+}
+
+// Zoom-in: pushing a smaller half-extent (>20% smaller) causes a rebuild and
+// the mesh AABB shrinks.
+TEST_F(NavigationSystemTest, ZoomInRebuildShrinksArea) {
+	ConstructionWorld cw;
+	buildRoom(cw, /*withOpening=*/true, /*pathableOpening=*/true);
+
+	World world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	sys.setChunkManager(m_chunks.get());
+	sys.setConstructionWorld(&cw);
+
+	// First push: 100 m.
+	pushArea(sys, {0, 0}, 100000);
+	ASSERT_TRUE(pumpUntilMesh(sys)) << "initial mesh never built";
+	const std::uint64_t gen1 = sys.generation();
+	const Aabb aabb1 = meshAabb(sys.mesh());
+
+	// Zoom in: 50 m (50% of 100 m -> delta 50% > 20% threshold).
+	pushArea(sys, {0, 0}, 50000);
+	bool shrank = false;
+	for (int i = 0; i < 500 && !shrank; ++i) {
+		sys.update(0.0F);
+		if (sys.generation() != gen1) {
+			const Aabb aabb2 = meshAabb(sys.mesh());
+			shrank = (aabb2.maxX - aabb2.minX) < (aabb1.maxX - aabb1.minX)
+				  || (aabb2.maxY - aabb2.minY) < (aabb1.maxY - aabb1.minY);
+		}
+		std::this_thread::sleep_for(std::chrono::milliseconds(2));
+	}
+	EXPECT_TRUE(shrank) << "zoom-in rebuild should produce a smaller mesh AABB";
+	EXPECT_GT(sys.generation(), gen1) << "generation must bump on zoom-in rebuild";
+}
+
+// Pan past kRecenterThresholdMm: a center shift of 25 km (> 20 km threshold)
+// triggers a rebuild. The test uses a large room and center so both old and new
+// centers are inside the loaded chunk extent.
+TEST_F(NavigationSystemTest, PanPastThresholdTriggersRebuild) {
+	ConstructionWorld cw; // empty: just terrain nav, origin area
+
+	World world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	sys.setChunkManager(m_chunks.get());
+	sys.setConstructionWorld(&cw);
+
+	// First build centered at origin with 60 m radius.
+	pushArea(sys, {0, 0}, 60000);
+	ASSERT_TRUE(pumpUntilMesh(sys)) << "initial mesh never built";
+	const std::uint64_t gen1 = sys.generation();
+
+	// Pan 25 km (25000 mm) -- past the 20 km threshold.
+	pushArea(sys, {25000, 0}, 60000);
+	bool recentered = false;
+	for (int i = 0; i < 500 && !recentered; ++i) {
+		sys.update(0.0F);
+		recentered = sys.generation() != gen1;
+		std::this_thread::sleep_for(std::chrono::milliseconds(2));
+	}
+	EXPECT_TRUE(recentered) << "pan past threshold must trigger a rebuild";
+}
+
+// Tiny delta: a center shift of 5 km (< 20 km) and a size change of 5% (< 20%)
+// must NOT trigger a rebuild (hysteresis catches per-frame lerp noise).
+TEST_F(NavigationSystemTest, TinyDeltaNoRebuild) {
+	ConstructionWorld cw;
+
+	World world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	sys.setChunkManager(m_chunks.get());
+	sys.setConstructionWorld(&cw);
+
+	pushArea(sys, {0, 0}, 60000);
+	ASSERT_TRUE(pumpUntilMesh(sys)) << "initial mesh never built";
+	const std::uint64_t gen1 = sys.generation();
+
+	// Small pan (5 km < 20 km threshold) and small size change (5% < 20% threshold).
+	pushArea(sys, {5000, 0}, 63000); // 63/60 = 1.05 -> 5% delta
+	for (int i = 0; i < 50; ++i) {
+		sys.update(0.0F);
+		std::this_thread::sleep_for(std::chrono::milliseconds(2));
+	}
+	EXPECT_EQ(sys.generation(), gen1) << "tiny delta must NOT trigger a rebuild";
+}
+
+// Half-extent clamped to kMinSimHalfExtentMm: requesting 1 m (below min) builds
+// with the minimum extent and a mesh still lands.
+TEST_F(NavigationSystemTest, HalfExtentClampedToMin) {
+	ConstructionWorld cw;
+	buildRoom(cw, /*withOpening=*/true, /*pathableOpening=*/true);
+
+	World world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	sys.setChunkManager(m_chunks.get());
+	sys.setConstructionWorld(&cw);
+
+	// Request 1 m: should be clamped to kMinSimHalfExtentMm (30 m).
+	pushArea(sys, {0, 0}, 1000);
+	ASSERT_TRUE(pumpUntilMesh(sys)) << "clamped-to-min mesh never built";
+	// The mesh should span at least the minimum area (30 m each side).
+	const Aabb a = meshAabb(sys.mesh());
+	EXPECT_GE(a.maxX - a.minX, NavigationSystem::kMinSimHalfExtentMm)
+		<< "mesh should span at least kMinSimHalfExtentMm";
+}
+
+// Half-extent clamped to kMaxSimHalfExtentMm: requesting 2000 m (above max) builds
+// with the maximum extent, not the absurd request.
+TEST_F(NavigationSystemTest, HalfExtentClampedToMax) {
+	ConstructionWorld cw;
+
+	World world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	sys.setChunkManager(m_chunks.get());
+	sys.setConstructionWorld(&cw);
+
+	// Request 2000 m (2 000 000 mm): should be clamped to kMaxSimHalfExtentMm (200 m).
+	pushArea(sys, {0, 0}, 2000000);
+	ASSERT_TRUE(pumpUntilMesh(sys)) << "clamped-to-max mesh never built";
+	// The mesh AABB should not exceed kMaxSimHalfExtentMm * 2 on any axis.
+	const Aabb a = meshAabb(sys.mesh());
+	const std::int64_t span = std::max(a.maxX - a.minX, a.maxY - a.minY);
+	EXPECT_LE(span, NavigationSystem::kMaxSimHalfExtentMm * 2 + 2000) // +2 m tolerance for border
+		<< "mesh AABB must not exceed the clamped max extent";
 }
 
 // --- Memory::beliefVersion bump semantics ------------------------------------

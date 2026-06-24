@@ -75,6 +75,7 @@
 #include <ecs/systems/DynamicEntityRenderSystem.h>
 #include <ecs/systems/MovementSystem.h>
 #include <ecs/systems/NavigationSystem.h>
+#include <nav/NavCoords.h>
 #include <ecs/systems/NeedsDecaySystem.h>
 #include <ecs/systems/PhysicsSystem.h>
 #include <ecs/systems/RoomDetectionSystem.h>
@@ -739,6 +740,27 @@ namespace {
 			m_camera->update(dt);
 			m_chunkManager->update(m_camera->position());
 
+			// Push the simulation area to NavigationSystem each frame. The visible
+			// rect gives the exact extent the player sees at the current zoom; we
+			// expand it by kViewportMargin for scroll/zoom headroom. NavigationSystem
+			// clamps to [kMinSimHalfExtentMm, kMaxSimHalfExtentMm] and to the loaded-
+			// chunk extent, then rebuilds only when the area drifts past its thresholds
+			// -- the per-frame camera lerp stays well under them.
+			{
+				int vpW = 0;
+				int vpH = 0;
+				Renderer::Primitives::getLogicalViewport(vpW, vpH);
+				Foundation::Rect vis = m_camera->getVisibleRect(vpW, vpH, kPixelsPerMeter);
+				// Half-diagonal of the visible rect * margin, converted to mm.
+				const float halfDiagMeters =
+					std::max(vis.width, vis.height) * 0.5F * ecs::NavigationSystem::kViewportMargin;
+				const auto halfExtentMm =
+					static_cast<std::int64_t>(std::llround(static_cast<double>(halfDiagMeters) * 1000.0));
+				const engine::world::WorldPosition pos = m_camera->position();
+				const geometry::Vec2i64 centerMm = engine::nav::toMm(glm::vec2{pos.x, pos.y});
+				ecsWorld->getSystem<ecs::NavigationSystem>().setSimulationArea(centerMm, halfExtentMm);
+			}
+
 			// Process newly loaded chunks for entity placement
 			processNewChunks();
 
@@ -942,11 +964,12 @@ namespace {
 
 			// Wire NavigationSystem resources (same data VisionSystem consumes). The
 			// ConstructionWorld pointer is wired after DrawingSystem is created, back in
-			// initialize(), exactly like ConstructionSystem.
+			// initialize(), exactly like ConstructionSystem. The simulation area itself
+			// is pushed per-frame in update() via setSimulationArea (GameScene owns the
+			// camera and viewport dimensions needed to compute it).
 			auto& navSystem = ecsWorld->getSystem<ecs::NavigationSystem>();
 			navSystem.setChunkManager(m_chunkManager.get());
 			navSystem.setPlacementData(m_placementExecutor.get(), &m_processedChunks);
-			navSystem.setCamera(m_camera.get());
 
 			// Wire up AIDecisionSystem with chunk manager for toilet location queries
 			auto& aiDecisionSystem = ecsWorld->getSystem<ecs::AIDecisionSystem>();
