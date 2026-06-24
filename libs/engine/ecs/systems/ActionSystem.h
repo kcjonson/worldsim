@@ -40,6 +40,13 @@ public:
 	using DropItemCallback = std::function<void(const std::string& defName, float x, float y)>;
 	void setDropItemCallback(DropItemCallback callback) { m_onDropItem = std::move(callback); }
 
+	/// Set callback for dropping a loose, haulable resource pile of `quantity` units.
+	/// Called when a fell yields more than the colonist could carry off: the remainder lands
+	/// as a single ground entity carrying a ResourceStack, hauled away in later armfuls. Unlike
+	/// DropItemCallback (crafted output awaiting placement), this pile is not Packaged.
+	using DropResourceCallback = std::function<void(const std::string& defName, float x, float y, uint32_t quantity)>;
+	void setDropResourceCallback(DropResourceCallback callback) { m_onDropResource = std::move(callback); }
+
 	/// Set callback for removing harvested entities from the world
 	/// Called when a destructive harvest completes (entity should be removed)
 	using RemoveEntityCallback = std::function<void(const std::string& defName, float x, float y)>;
@@ -240,6 +247,9 @@ private:
 
 	/// Callback for dropping items on the ground (non-backpackable items)
 	DropItemCallback m_onDropItem = nullptr;
+
+	/// Callback for dropping a loose, haulable resource pile (felling remainder)
+	DropResourceCallback m_onDropResource = nullptr;
 
 	/// Callback for removing harvested entities from world
 	RemoveEntityCallback m_onRemoveEntity = nullptr;

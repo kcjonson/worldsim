@@ -35,11 +35,12 @@
     <!-- Trunk-base collision (half trunkWidth=0.15 -> radius 0.075m); not the canopy -->
     <collision><circle radius="0.075"/></collision>
 
-    <!-- Entity capabilities - chopped for wood with an axe; removed when the pool is exhausted -->
-    <!-- 4-7 wood per chop (clamped by carry weight), pool of 14-22 wood units (smaller than oak) -->
+    <!-- Entity capabilities - felled for wood with an axe in one destructive action -->
+    <!-- Whole-tree yield 14-22 wood (the old pool total, smaller than oak); the colonist takes a -->
+    <!-- weight-limited armful and the remainder drops as a loose, haulable ground pile. -->
     <capabilities>
-      <harvestable yield="Wood" amountMin="4" amountMax="7" durability="45"
-                   destructive="false" totalResourceMin="14" totalResourceMax="22" requiresTool="Axe"/>
+      <harvestable yield="Wood" amountMin="14" amountMax="22" durability="150"
+                   destructive="true" requiresTool="Axe"/>
     </capabilities>
 
     <!-- Per-biome placement configuration -->

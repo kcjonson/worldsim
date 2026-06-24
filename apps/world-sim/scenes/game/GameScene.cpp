@@ -60,6 +60,7 @@
 #include <ecs/components/Packaged.h>
 #include <ecs/components/AgentRadius.h>
 #include <ecs/components/Room.h>
+#include <ecs/components/ResourceStack.h>
 #include <ecs/components/Skills.h>
 #include <ecs/components/Structure.h>
 #include <ecs/components/StructureBlueprint.h>
@@ -978,6 +979,15 @@ namespace {
 				// Mark as packaged - player needs to place it via ghost preview
 				ecsWorld->addComponent<ecs::Packaged>(entity, ecs::Packaged{});
 				LOG_INFO(Game, "Spawned packaged '%s' - awaiting placement", defName.c_str());
+			});
+
+			// Wire up ActionSystem to drop a loose, haulable resource pile (felling remainder).
+			// Unlike the crafting drop above, this pile is NOT packaged: a per-entity ResourceStack
+			// holds the count and it is immediately haulable in weight-limited armfuls.
+			actionSystem.setDropResourceCallback([this](const std::string& defName, float x, float y, uint32_t quantity) {
+				auto entity = m_placementSystem->spawnEntity(defName, {x, y});
+				ecsWorld->addComponent<ecs::ResourceStack>(entity, ecs::ResourceStack{quantity});
+				LOG_INFO(Game, "Dropped loose pile of %u x '%s' at (%.1f, %.1f)", quantity, defName.c_str(), x, y);
 			});
 
 			// Wire up ActionSystem to remove harvested entities (destructive harvest)

@@ -4,6 +4,7 @@
 #include "ActionSystem.h"
 
 #include "../GoalTaskRegistry.h"
+#include "../InventoryMass.h"
 #include "../World.h"
 #include "../components/Action.h"
 #include "../components/Appearance.h"
@@ -620,6 +621,124 @@ TEST_F(ActionSystemGoalTest, HarvestThenInventoryHaulDeliversMaterialsAndUnblock
 	    << "Delivery to station credited the parent Craft goal";
 	EXPECT_EQ(registry.getGoal(craftId)->status, GoalStatus::Available)
 	    << "Craft leaves Blocked once all materials delivered";
+}
+
+// =============================================================================
+// Tree felling: a two-hand bulk material (Wood) destructive harvest
+// =============================================================================
+// Felling is one destructive action. The colonist takes a weight-limited armful
+// of Wood into the hands (never the backpack), the remainder drops as a loose,
+// haulable ground pile via the drop-resource callback, and the tree always falls
+// -- even when the colonist's hands were already full, so no wood is lost and no
+// stump lingers.
+
+class FellingTest : public ::testing::Test {
+  protected:
+	void SetUp() override {
+		world = std::make_unique<World>();
+
+		// Wood: a two-hand bulk material at 2.5 kg/unit. handsRequired==2 routes it to the
+		// hands as an armful; mass drives how much fits under the 35 kg colonist cap (14 units).
+		engine::assets::AssetDefinition woodDef;
+		woodDef.defName = "Wood";
+		woodDef.label = "Wood";
+		woodDef.handsRequired = 2;
+		woodDef.category = engine::assets::ItemCategory::RawMaterial;
+		woodDef.itemProperties = engine::assets::ItemProperties{};
+		woodDef.itemProperties->stackSize = 40;
+		woodDef.itemProperties->massKg = 2.5F;
+		engine::assets::AssetRegistry::Get().registerTestDefinition(std::move(woodDef));
+
+		auto& action = world->registerSystem<ActionSystem>();
+		action.setDropResourceCallback(
+			[this](const std::string& defName, float /*x*/, float /*y*/, uint32_t quantity) {
+				++dropCalls;
+				lastDropDef = defName;
+				lastDropQty = quantity;
+			}
+		);
+		action.setRemoveEntityCallback([this](const std::string& defName, float /*x*/, float /*y*/) {
+			++removeCalls;
+			lastRemoveDef = defName;
+		});
+	}
+
+	void TearDown() override {
+		engine::assets::AssetRegistry::Get().clearDefinitions();
+		world.reset();
+	}
+
+	EntityID createColonist(glm::vec2 position = {0.0F, 0.0F}) {
+		auto entity = world->createEntity();
+		world->addComponent<Position>(entity, Position{position});
+		world->addComponent<Velocity>(entity, Velocity{{0.0F, 0.0F}});
+		world->addComponent<MovementTarget>(entity, MovementTarget{{0.0F, 0.0F}, 2.0F, false});
+		world->addComponent<NeedsComponent>(entity, NeedsComponent::createDefault());
+		world->addComponent<Memory>(entity, Memory{});
+		world->addComponent<Inventory>(entity, Inventory::createForColonist());
+		world->addComponent<Task>(entity, Task{});
+		world->addComponent<Action>(entity, Action{});
+		return entity;
+	}
+
+	// Drive a pre-built destructive two-hand Harvest of `yield` Wood to completion.
+	void fell(EntityID colonist, uint32_t yield) {
+		auto* task = world->getComponent<Task>(colonist);
+		task->type = TaskType::Harvest;
+		task->state = TaskState::Arrived;
+		task->targetPosition = {1.0F, 1.0F};
+		// harvestGoalId left 0: no goal bookkeeping, just the collection effect.
+
+		auto* action = world->getComponent<Action>(colonist);
+		*action = Action::Harvest("Wood", yield, 1.0F, {1.0F, 1.0F}, "Flora_TreeOak",
+								  /*destructive=*/true, /*regrowthTime=*/0.0F);
+
+		world->update(0.1F); // start
+		world->update(2.0F); // complete (duration 1s)
+	}
+
+	std::unique_ptr<World> world;
+	int					   dropCalls = 0;
+	int					   removeCalls = 0;
+	uint32_t			   lastDropQty = 0;
+	std::string			   lastDropDef;
+	std::string			   lastRemoveDef;
+};
+
+// Empty hands, yield 30, cap 35 -> 14 to hands (floor(35/2.5)), 16 dropped, tree removed.
+TEST_F(FellingTest, ArmfulToHandsRemainderDroppedTreeRemoved) {
+	auto colonist = createColonist({1.0F, 1.0F});
+	fell(colonist, 30);
+
+	auto* inventory = world->getComponent<Inventory>(colonist);
+	EXPECT_EQ(handHeldQuantity(*inventory, "Wood"), 14U) << "Armful clamped to the 35 kg carry cap";
+	EXPECT_EQ(inventory->getQuantity("Wood"), 0U) << "Wood never enters the backpack";
+
+	EXPECT_EQ(dropCalls, 1) << "Remainder dropped exactly once";
+	EXPECT_EQ(lastDropDef, "Wood");
+	EXPECT_EQ(lastDropQty, 16U) << "30 yield - 14 carried = 16 dropped";
+
+	EXPECT_EQ(removeCalls, 1) << "The tree falls in one action";
+	EXPECT_EQ(lastRemoveDef, "Flora_TreeOak");
+}
+
+// Hands pre-filled to capacity (added == 0): the whole yield still drops and the
+// tree still falls. The destroy is NOT gated on having collected, so no wood is
+// lost and no stump remains even when the colonist couldn't carry any.
+TEST_F(FellingTest, HandsFullStillDropsWholeYieldAndRemovesTree) {
+	auto  colonist = createColonist({1.0F, 1.0F});
+	auto* inventory = world->getComponent<Inventory>(colonist);
+	// Seat a full 14-unit armful first, mirrored across both hands.
+	inventory->leftHand = ItemStack{"Wood", 14};
+	inventory->rightHand = ItemStack{"Wood", 14};
+	ASSERT_EQ(handHeldQuantity(*inventory, "Wood"), 14U);
+
+	fell(colonist, 30);
+
+	EXPECT_EQ(handHeldQuantity(*inventory, "Wood"), 14U) << "No room for more; armful unchanged";
+	EXPECT_EQ(dropCalls, 1) << "Whole yield dropped as a pile";
+	EXPECT_EQ(lastDropQty, 30U) << "added == 0, so all 30 drop";
+	EXPECT_EQ(removeCalls, 1) << "Tree removed despite full hands";
 }
 
 } // namespace ecs::test

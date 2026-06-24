@@ -30,11 +30,12 @@
     <!-- Trunk-base collision (half trunkWidth=0.12 -> radius 0.06m); not the frond canopy -->
     <collision><circle radius="0.06"/></collision>
 
-    <!-- Harvestable: chopped for wood with an axe; palm yields less than oak (thinner trunk) -->
-    <!-- 3-6 wood per chop (clamped by carry weight), pool of 10-18 wood units -->
+    <!-- Harvestable: felled for wood with an axe in one destructive action (thinner trunk) -->
+    <!-- Whole-tree yield 10-18 wood (the old pool total, less than oak); the colonist takes a -->
+    <!-- weight-limited armful and the remainder drops as a loose, haulable ground pile. -->
     <capabilities>
-      <harvestable yield="Wood" amountMin="3" amountMax="6" durability="40"
-                   destructive="false" totalResourceMin="10" totalResourceMax="18" requiresTool="Axe"/>
+      <harvestable yield="Wood" amountMin="10" amountMax="18" durability="150"
+                   destructive="true" requiresTool="Axe"/>
     </capabilities>
 
     <placement>

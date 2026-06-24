@@ -89,14 +89,43 @@ namespace ecs {
 			}
 		} else {
 			// Single-shot source: take what fits, then remove it (destructive) or start its
-			// regrowth cooldown. Only act on the source if the colonist actually collected.
-			// Two-hand bulk goods (e.g. felled wood) ride in the hands as a weight-limited
-			// armful, never the backpack; everything else stacks into the pack.
-			if (ecs::itemIsTwoHand(harvestRegistry, collEff.itemDefName)) {
+			// regrowth cooldown.
+			//
+			// Two-hand bulk goods (a felled tree's wood) ride in the hands as a weight-limited
+			// armful, never the backpack. Felling is one destructive action: whatever the
+			// colonist can't carry off drops as a loose, haulable ground pile, and the tree
+			// always falls -- even if the colonist's hands were already full (added == 0), the
+			// whole yield still drops and the source is removed, so no wood is lost and no stump
+			// lingers. Everything else (one-hand) stacks into the pack and only touches the
+			// source when something was actually collected.
+			const bool isTwoHand = ecs::itemIsTwoHand(harvestRegistry, collEff.itemDefName);
+
+			bool destroySource = false;
+			bool regrowSource = false;
+
+			if (isTwoHand) {
 				added = ecs::addArmful(inventory, harvestRegistry, collEff.itemDefName, collEff.quantity);
+
+				const uint32_t remainder = collEff.quantity - added;
+				if (remainder > 0 && m_onDropResource) {
+					m_onDropResource(collEff.itemDefName, collEff.sourcePosition.x, collEff.sourcePosition.y, remainder);
+					LOG_INFO(
+						Engine,
+						"[Action] Dropped loose pile of %u x %s at (%.1f, %.1f)",
+						remainder,
+						collEff.itemDefName.c_str(),
+						collEff.sourcePosition.x,
+						collEff.sourcePosition.y
+					);
+				}
+				// A fell completes regardless of how much landed in hands; bulk goods never regrow.
+				destroySource = collEff.destroySource;
 			} else {
 				added = inventory.addItem(collEff.itemDefName, wanted);
+				destroySource = added > 0 && collEff.destroySource;
+				regrowSource = added > 0 && !collEff.destroySource && collEff.regrowthTime > 0.0F;
 			}
+
 			if (added < collEff.quantity) {
 				// Carry/slot-limited below the full yield -- expected, not an error.
 				LOG_INFO(
@@ -106,7 +135,7 @@ namespace ecs {
 				LOG_INFO(Engine, "[Action] Collected %u x %s", added, collEff.itemDefName.c_str());
 			}
 
-			if (added > 0 && collEff.destroySource) {
+			if (destroySource) {
 				if (m_onRemoveEntity) {
 					m_onRemoveEntity(collEff.sourceDefName, collEff.sourcePosition.x, collEff.sourcePosition.y);
 				}
@@ -119,7 +148,7 @@ namespace ecs {
 					collEff.sourcePosition.x,
 					collEff.sourcePosition.y
 				);
-			} else if (added > 0 && collEff.regrowthTime > 0.0F) {
+			} else if (regrowSource) {
 				if (m_onSetCooldown) {
 					m_onSetCooldown(collEff.sourceDefName, collEff.sourcePosition.x, collEff.sourcePosition.y, collEff.regrowthTime);
 					LOG_DEBUG(
