@@ -4,6 +4,7 @@
 
 #include "SVGLoader.h"
 #include "Bezier.h"
+#include "Tessellator.h"
 #include "utils/Log.h"
 #include <memory>
 
@@ -30,6 +31,29 @@ Foundation::Color convertColor(unsigned int nsvgColor, float opacity) {
 	float		blue = static_cast<float>((nsvgColor >> 16) & 0xFF) * kColorScale;
 	float		alpha = static_cast<float>((nsvgColor >> 24) & 0xFF) * kColorScale * opacity;
 	return Foundation::Color(red, green, blue, alpha);
+}
+
+/// Convert a NanoSVG gradient to our GradientFill (stops converted to Foundation::Color).
+/// NanoSVG precomputes grad->xform as the shape-space -> gradient-space transform, so we keep
+/// it verbatim and evaluate per vertex later.
+GradientFill convertGradient(char paintType, const NSVGgradient* grad, float opacity) {
+	GradientFill out;
+	if (grad == nullptr) {
+		return out;
+	}
+	out.type = (paintType == NSVG_PAINT_RADIAL_GRADIENT) ? GradientFill::Type::Radial : GradientFill::Type::Linear;
+	out.spread = grad->spread;
+	for (int i = 0; i < 6; ++i) {
+		out.xform[i] = grad->xform[i];
+	}
+	out.stops.reserve(static_cast<size_t>(grad->nstops));
+	for (int i = 0; i < grad->nstops; ++i) {
+		GradientStop stop;
+		stop.offset = grad->stops[i].offset;
+		stop.color = convertColor(grad->stops[i].color, opacity);
+		out.stops.push_back(stop);
+	}
+	return out;
 }
 
 /// Process a single NSVGpath into a VectorPath
@@ -114,13 +138,16 @@ bool loadSVG(const std::string& filepath, float curveTolerance, std::vector<Load
 		loadedShape.width = image->width;
 		loadedShape.height = image->height;
 
-		// Extract fill color
+		// Extract fill: solid color, or a linear/radial gradient (evaluated per vertex downstream)
 		if (shape->fill.type == NSVG_PAINT_COLOR) {
 			loadedShape.fillColor = convertColor(shape->fill.color, shape->opacity);
+		} else if (shape->fill.type == NSVG_PAINT_LINEAR_GRADIENT || shape->fill.type == NSVG_PAINT_RADIAL_GRADIENT) {
+			loadedShape.gradient = convertGradient(shape->fill.type, shape->fill.gradient, shape->opacity);
+			// Solid fallback (first stop) for any consumer that ignores the gradient.
+			loadedShape.fillColor =
+				loadedShape.gradient.stops.empty() ? Foundation::Color::white() : loadedShape.gradient.stops.front().color;
 		} else {
-			// Gradients not supported yet - use white as fallback
 			loadedShape.fillColor = Foundation::Color::white();
-			LOG_DEBUG(Renderer, "SVG shape uses gradient fill (not supported), using white");
 		}
 
 		// Process each path in the shape
@@ -141,6 +168,61 @@ bool loadSVG(const std::string& filepath, float curveTolerance, std::vector<Load
 	// NSVGImagePtr automatically cleans up when going out of scope
 	LOG_INFO(Renderer, "Loaded SVG: %s (%zu shapes)", filepath.c_str(), outShapes.size());
 	return !outShapes.empty();
+}
+
+void appendShapeMesh(const LoadedSVGShape& shape, TessellatedMesh& outMesh) {
+	Tessellator tessellator;
+
+	const bool hasGradient = (shape.gradient.type != GradientFill::Type::None);
+
+	TessellatorOptions options;
+	// Only honored for a single subpath (where a convex fan may apply); multi-subpath shapes go
+	// through the sweep, which ignores it. Setting it there would be an accepted-but-dropped option.
+	options.fanFromCentroid = hasGradient && shape.paths.size() == 1;
+
+	// Tessellate all of a shape's subpaths together so the nonzero fill rule carves holes where
+	// subpaths overlap (the SVG hole convention), instead of filling each subpath solid. The
+	// common single-subpath case stays a direct, allocation-free call (and keeps the fast path).
+	TessellatedMesh shapeMesh;
+	bool			ok = false;
+	if (shape.paths.size() == 1) {
+		if (shape.paths[0].vertices.size() < 3) {
+			return;
+		}
+		ok = tessellator.Tessellate(shape.paths[0], shapeMesh, options);
+	} else {
+		std::vector<VectorPath> contours;
+		contours.reserve(shape.paths.size());
+		for (const auto& path : shape.paths) {
+			if (path.vertices.size() >= 3) {
+				contours.push_back(path);
+			}
+		}
+		if (contours.empty()) {
+			return;
+		}
+		ok = tessellator.Tessellate(contours, shapeMesh, options);
+	}
+	if (!ok) {
+		LOG_WARNING(Renderer, "appendShapeMesh: failed to tessellate shape (%zu subpaths)", shape.paths.size());
+		return;
+	}
+
+	// Indices are 16-bit and accumulate across every shape appended to this mesh.
+	constexpr size_t kMaxMeshVertices = 65535;
+	if (outMesh.vertices.size() + shapeMesh.vertices.size() > kMaxMeshVertices) {
+		LOG_WARNING(Renderer, "appendShapeMesh: mesh would exceed %zu vertices; dropping shape", kMaxMeshVertices);
+		return;
+	}
+
+	const auto baseIndex = static_cast<uint16_t>(outMesh.vertices.size());
+	for (const auto& v : shapeMesh.vertices) {
+		outMesh.vertices.push_back(v);
+		outMesh.colors.push_back(hasGradient ? shape.gradient.colorAt(v) : shape.fillColor);
+	}
+	for (const auto idx : shapeMesh.indices) {
+		outMesh.indices.push_back(static_cast<uint16_t>(baseIndex + idx));
+	}
 }
 
 } // namespace renderer

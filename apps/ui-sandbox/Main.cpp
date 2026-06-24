@@ -24,7 +24,7 @@ int main(int argc, char* argv[]) {
 		.initializeScenes = ui_sandbox::initializeSceneManager,
 		.getDefaultSceneKey =
 			[]() {
-				return ui_sandbox::toKey(ui_sandbox::SceneType::Shapes);
+				return ui_sandbox::toKey(ui_sandbox::SceneType::Svg);
 			}
 		// Uses default assetsRootPath = "assets/world"
 	};

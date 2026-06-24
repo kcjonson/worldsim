@@ -12,6 +12,7 @@
 #include <cmath>
 #include <cstdint>
 #include <map>
+#include <optional>
 #include <unordered_map>
 #include <utility>
 
@@ -181,61 +182,68 @@ namespace engine::nav {
 		return extractWaterObstacles(world::kChunkSize, world::kChunkSize, isWater, originMm);
 	}
 
+	std::optional<gnav::NavInputPolygon> floraRingFor(const assets::PlacedEntity& e, const assets::AssetRegistry& registry) {
+		const assets::AssetDefinition* def = registry.getDefinition(e.defName);
+		if (def == nullptr || !def->collision.blocks()) {
+			return std::nullopt;
+		}
+
+		const float c  = std::cos(e.rotation);
+		const float s  = std::sin(e.rotation);
+		const float sc = e.scale;
+		// Local-space point (meters) -> world mm: scale, rotate, translate by the
+		// entity position (which is in tiles == meters). The single trig step is
+		// rounded to mm at the boundary, matching the module's rounding policy.
+		auto toWorldMm = [&](glm::vec2 local) -> geometry::Vec2i64 {
+			const float lx = local.x * sc;
+			const float ly = local.y * sc;
+			const float wx = e.position.x + (lx * c - ly * s);
+			const float wy = e.position.y + (lx * s + ly * c);
+			return toMm({wx, wy});
+		};
+
+		geometry::Ring ring;
+		if (def->collision.type == assets::CollisionShapeType::Circle) {
+			// Octagon approximation of the disc, radius padded so the agent clears
+			// the trunk. Built in local space (offset + r*dir) then transformed,
+			// so entity rotation just spins the octagon (harmless, stays a disc).
+			const float rMeters = (def->collision.radiusMeters + static_cast<float>(kFloraCirclePadMm) / static_cast<float>(kTileMm));
+			ring.reserve(8);
+			for (int i = 0; i < 8; ++i) {
+				const float ang = (static_cast<float>(i) + 0.5F) * (2.0F * 3.14159265358979323846F / 8.0F);
+				glm::vec2	p{def->collision.offsetMeters.x + rMeters * std::cos(ang),
+							  def->collision.offsetMeters.y + rMeters * std::sin(ang)};
+				ring.push_back(toWorldMm(p));
+			}
+		} else if (def->collision.type == assets::CollisionShapeType::Polygon) {
+			ring.reserve(def->collision.pointsMeters.size());
+			for (const glm::vec2& p : def->collision.pointsMeters) {
+				ring.push_back(toWorldMm(p));
+			}
+		}
+
+		// A negative entity scale would flip winding; normalize so blocked rings
+		// are CCW like the rest, and drop anything degenerate.
+		if (ring.size() < 3) {
+			return std::nullopt;
+		}
+		geometry::ensureCounterClockwise(ring);
+		if (geometry::windingOrder(ring) == geometry::Winding::Degenerate) {
+			return std::nullopt;
+		}
+		return gnav::NavInputPolygon{std::move(ring), true, kProvenanceTree};
+	}
+
 	std::vector<gnav::NavInputPolygon> extractFloraObstacles(const assets::SpatialIndex& index, const assets::AssetRegistry& registry) {
 		std::vector<gnav::NavInputPolygon> out;
 
 		// allEntities() returns copies; iterate in its stable order for determinism.
 		std::vector<assets::PlacedEntity> entities = index.allEntities();
 		for (const assets::PlacedEntity& e : entities) {
-			const assets::AssetDefinition* def = registry.getDefinition(e.defName);
-			if (def == nullptr || !def->collision.blocks()) {
-				continue;
+			std::optional<gnav::NavInputPolygon> poly = floraRingFor(e, registry);
+			if (poly.has_value()) {
+				out.push_back(std::move(*poly));
 			}
-
-			const float	 c	  = std::cos(e.rotation);
-			const float	 s	  = std::sin(e.rotation);
-			const float	 sc	  = e.scale;
-			// Local-space point (meters) -> world mm: scale, rotate, translate by the
-			// entity position (which is in tiles == meters). The single trig step is
-			// rounded to mm at the boundary, matching the module's rounding policy.
-			auto toWorldMm = [&](glm::vec2 local) -> geometry::Vec2i64 {
-				const float lx = local.x * sc;
-				const float ly = local.y * sc;
-				const float wx = e.position.x + (lx * c - ly * s);
-				const float wy = e.position.y + (lx * s + ly * c);
-				return toMm({wx, wy});
-			};
-
-			geometry::Ring ring;
-			if (def->collision.type == assets::CollisionShapeType::Circle) {
-				// Octagon approximation of the disc, radius padded so the agent clears
-				// the trunk. Built in local space (offset + r*dir) then transformed,
-				// so entity rotation just spins the octagon (harmless, stays a disc).
-				const float rMeters = (def->collision.radiusMeters + static_cast<float>(kFloraCirclePadMm) / static_cast<float>(kTileMm));
-				ring.reserve(8);
-				for (int i = 0; i < 8; ++i) {
-					const float ang = (static_cast<float>(i) + 0.5F) * (2.0F * 3.14159265358979323846F / 8.0F);
-					glm::vec2	p{def->collision.offsetMeters.x + rMeters * std::cos(ang),
-								  def->collision.offsetMeters.y + rMeters * std::sin(ang)};
-					ring.push_back(toWorldMm(p));
-				}
-			} else if (def->collision.type == assets::CollisionShapeType::Polygon) {
-				ring.reserve(def->collision.pointsMeters.size());
-				for (const glm::vec2& p : def->collision.pointsMeters) {
-					ring.push_back(toWorldMm(p));
-				}
-			}
-
-			// A negative entity scale would flip winding; normalize so blocked rings
-			// are CCW like the rest, and drop anything degenerate.
-			if (ring.size() < 3) {
-				continue;
-			}
-			geometry::ensureCounterClockwise(ring);
-			if (geometry::windingOrder(ring) == geometry::Winding::Degenerate) {
-				continue;
-			}
-			out.push_back({std::move(ring), true, kProvenanceTree});
 		}
 		return out;
 	}
@@ -449,55 +457,126 @@ namespace engine::nav {
 		return {std::move(ring), false, kProvenanceBorder};
 	}
 
-	gnav::NavMeshInput buildInput(const std::vector<const world::Chunk*>& chunks, const assets::PlacementExecutor& placement,
-								  const assets::AssetRegistry& assetReg, const construction::ConstructionWorld& world,
-								  const assets::ConstructionRegistry& cfg) {
+	namespace {
+
+		// True when every vertex of `ring` lies strictly outside the AABB on the SAME
+		// side (all left of minMm.x, or all right of maxMm.x, or all below, or all
+		// above). That is a sufficient (not exact) separation test: a ring crossing a
+		// corner without any vertex inside still has vertices on both sides of an axis,
+		// so it is kept. Cheap and never drops a ring that touches the area.
+		bool ringEntirelyOutside(const geometry::Ring& ring, geometry::Vec2i64 minMm, geometry::Vec2i64 maxMm) {
+			bool allLeft  = true;
+			bool allRight = true;
+			bool allBelow = true;
+			bool allAbove = true;
+			for (const geometry::Vec2i64& p : ring) {
+				allLeft	 = allLeft && (p.x < minMm.x);
+				allRight = allRight && (p.x > maxMm.x);
+				allBelow = allBelow && (p.y < minMm.y);
+				allAbove = allAbove && (p.y > maxMm.y);
+			}
+			return allLeft || allRight || allBelow || allAbove;
+		}
+
+	} // namespace
+
+	gnav::NavMeshInput buildInput(geometry::Vec2i64 areaCenterMm, std::int64_t areaRadiusMm, engine::world::ChunkManager& chunks,
+								  const assets::PlacementExecutor& placement, const assets::AssetRegistry& assetReg,
+								  const construction::ConstructionWorld& world, const assets::ConstructionRegistry& cfg) {
 		gnav::NavMeshInput input;
 
-		// Border = combined bounds of the loaded chunks, in mm.
-		bool			  haveBounds = false;
-		geometry::Vec2i64 minMm{0, 0};
-		geometry::Vec2i64 maxMm{0, 0};
-		for (const world::Chunk* chunk : chunks) {
-			if (chunk == nullptr || !chunk->isReady()) {
-				continue;
-			}
-			const geometry::Vec2i64 origin = chunkOriginMm(chunk->coordinate());
-			const geometry::Vec2i64 far{origin.x + static_cast<std::int64_t>(world::kChunkSize) * kTileMm,
-										origin.y + static_cast<std::int64_t>(world::kChunkSize) * kTileMm};
-			if (!haveBounds) {
-				minMm	   = origin;
-				maxMm	   = far;
-				haveBounds = true;
-			} else {
-				minMm.x = std::min(minMm.x, origin.x);
-				minMm.y = std::min(minMm.y, origin.y);
-				maxMm.x = std::max(maxMm.x, far.x);
-				maxMm.y = std::max(maxMm.y, far.y);
-			}
-		}
-		if (haveBounds) {
-			input.polygons.push_back(borderRing(minMm, maxMm));
-		}
+		const geometry::Vec2i64 minMm{areaCenterMm.x - areaRadiusMm, areaCenterMm.y - areaRadiusMm};
+		const geometry::Vec2i64 maxMm{areaCenterMm.x + areaRadiusMm, areaCenterMm.y + areaRadiusMm};
 
-		for (const world::Chunk* chunk : chunks) {
-			if (chunk == nullptr || !chunk->isReady()) {
-				continue;
-			}
-			std::vector<gnav::NavInputPolygon> waterPolys = extractWaterObstacles(*chunk);
+		// 1) Border: the one unblocked rectangle covering the whole area.
+		input.polygons.push_back(borderRing(minMm, maxMm));
+
+		// Area tile span (mm -> tiles, floor min / ceil max). The marching-squares pass
+		// runs over [tileMin-1, tileMax+1) so water touching the area edge still closes
+		// its loop against the land just outside (out-of-grid reads as land).
+		const std::int64_t tileMinX = static_cast<std::int64_t>(std::floor(static_cast<double>(minMm.x) / static_cast<double>(kTileMm))) - 1;
+		const std::int64_t tileMinY = static_cast<std::int64_t>(std::floor(static_cast<double>(minMm.y) / static_cast<double>(kTileMm))) - 1;
+		const std::int64_t tileMaxX = static_cast<std::int64_t>(std::ceil(static_cast<double>(maxMm.x) / static_cast<double>(kTileMm))) + 1;
+		const std::int64_t tileMaxY = static_cast<std::int64_t>(std::ceil(static_cast<double>(maxMm.y) / static_cast<double>(kTileMm))) + 1;
+		const int width	 = static_cast<int>(tileMaxX - tileMinX);
+		const int height = static_cast<int>(tileMaxY - tileMinY);
+
+		// 2) Water: drive the area-generic marching-squares extractor over the tile
+		// span. The predicate maps a local (x,y) into a GLOBAL tile, finds its chunk via
+		// worldToChunk, and reads the tile; a missing or not-ready chunk reads as land so
+		// the loop still closes (no obstacle invented over unloaded terrain).
+		if (width > 0 && height > 0) {
+			auto isWater = [&](int x, int y) -> bool {
+				const std::int64_t gx = tileMinX + static_cast<std::int64_t>(x);
+				const std::int64_t gy = tileMinY + static_cast<std::int64_t>(y);
+				const engine::world::WorldPosition wp{static_cast<float>(gx), static_cast<float>(gy)};
+				const engine::world::ChunkCoordinate coord = engine::world::worldToChunk(wp);
+				const engine::world::Chunk*			 chunk = chunks.getChunk(coord);
+				if (chunk == nullptr || !chunk->isReady()) {
+					return false;
+				}
+				const auto [lx, ly] = engine::world::worldToLocalTile(wp);
+				const engine::world::TileData& tile = chunk->getTile(lx, ly);
+				return tile.surface == engine::world::Surface::Water || engine::world::isWater(tile.primaryBiome);
+			};
+			const geometry::Vec2i64 originMm{tileMinX * kTileMm, tileMinY * kTileMm};
+			std::vector<gnav::NavInputPolygon> waterPolys = extractWaterObstacles(width, height, isWater, originMm);
 			for (gnav::NavInputPolygon& p : waterPolys) {
 				input.polygons.push_back(std::move(p));
 			}
-			const assets::SpatialIndex* index = placement.getChunkIndex(chunk->coordinate());
-			if (index != nullptr) {
-				std::vector<gnav::NavInputPolygon> flora = extractFloraObstacles(*index, assetReg);
-				for (gnav::NavInputPolygon& p : flora) {
-					input.polygons.push_back(std::move(p));
+		}
+
+		// 3) Flora: only the chunks overlapping the area AABB are visited (the few coords
+		// covering the corner-to-corner tile span), and within each only the entities
+		// queryRect returns for the area's tile bounds -- never allEntities(). Chunks are
+		// visited in (x,y) order and the per-chunk entities are sorted by (position,
+		// defName) so the emission order is stable regardless of queryRect's layout.
+		const engine::world::ChunkCoordinate cMin =
+			engine::world::worldToChunk({static_cast<float>(tileMinX), static_cast<float>(tileMinY)});
+		const engine::world::ChunkCoordinate cMax =
+			engine::world::worldToChunk({static_cast<float>(tileMaxX), static_cast<float>(tileMaxY)});
+		const float areaTileMinX = static_cast<float>(minMm.x) / static_cast<float>(kTileMm);
+		const float areaTileMinY = static_cast<float>(minMm.y) / static_cast<float>(kTileMm);
+		const float areaTileMaxX = static_cast<float>(maxMm.x) / static_cast<float>(kTileMm);
+		const float areaTileMaxY = static_cast<float>(maxMm.y) / static_cast<float>(kTileMm);
+		for (std::int32_t cy = cMin.y; cy <= cMax.y; ++cy) {
+			for (std::int32_t cx = cMin.x; cx <= cMax.x; ++cx) {
+				const assets::SpatialIndex* index = placement.getChunkIndex({cx, cy});
+				if (index == nullptr) {
+					continue;
+				}
+				std::vector<const assets::PlacedEntity*> hits =
+					index->queryRect(areaTileMinX, areaTileMinY, areaTileMaxX, areaTileMaxY);
+				std::sort(hits.begin(), hits.end(), [](const assets::PlacedEntity* l, const assets::PlacedEntity* r) {
+					if (l->position.x != r->position.x) {
+						return l->position.x < r->position.x;
+					}
+					if (l->position.y != r->position.y) {
+						return l->position.y < r->position.y;
+					}
+					return l->defName < r->defName;
+				});
+				for (const assets::PlacedEntity* e : hits) {
+					std::optional<gnav::NavInputPolygon> poly = floraRingFor(*e, assetReg);
+					if (poly.has_value()) {
+						input.polygons.push_back(std::move(*poly));
+					}
 				}
 			}
 		}
 
-		extractWalls(world, cfg, input.polygons, input.doors);
+		// 4) Walls: extract over the whole construction world, then drop bands/junctions
+		// whose ring is entirely outside the area AABB. Door portals are kept as-is: the
+		// later vision pass needs every opening it can see, and the portal list is small.
+		std::vector<gnav::NavInputPolygon> wallPolys;
+		extractWalls(world, cfg, wallPolys, input.doors);
+		for (gnav::NavInputPolygon& p : wallPolys) {
+			if (ringEntirelyOutside(p.ring, minMm, maxMm)) {
+				continue;
+			}
+			input.polygons.push_back(std::move(p));
+		}
+
 		return input;
 	}
 

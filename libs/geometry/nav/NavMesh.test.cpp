@@ -490,3 +490,190 @@ TEST(NavMesh, Deterministic) {
 		EXPECT_EQ(a.triangles[i].edgeOpening, b.triangles[i].edgeOpening);
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Corridor-width computation (Demyen-Buro, sec. 4.1) against common-knowledge
+// obstacles. Widths are floored mm disc DIAMETERS; kUnconstrainedWidth means no
+// such obstacle pinches the passage.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+	bool isCkBlocked(std::int64_t b) {
+		return b < 0 && b != kNoBlocker;
+	}
+
+	// Is edge e of triangle ti an obstacle edge (one incident face common-knowledge
+	// blocked, the other not)? Mirrors NavMesh.cpp's isObstacleEdge.
+	bool obstacleEdge(const NavMesh& m, std::int32_t ti, int e) {
+		bool		 self  = isCkBlocked(m.triangles[ti].faceBlocker);
+		std::int32_t nb	   = m.triangles[ti].neighbor[e];
+		bool		 other = nb < 0 ? false : isCkBlocked(m.triangles[nb].faceBlocker);
+		return self != other;
+	}
+
+	// Smallest finite edge-pair width over genuinely TRAVERSABLE squeezes: a floor
+	// triangle apex whose two incident edges are both non-obstacle (the agent can
+	// enter one and leave the other). This excludes edge pairs that abut an obstacle
+	// face -- those widths are computed but never gate a real crossing (the A* never
+	// exits into a blocked face), so they would otherwise pollute the minimum.
+	std::int64_t minTraversableWidth(const NavMesh& m) {
+		std::int64_t best = kUnconstrainedWidth;
+		for (std::int32_t ti = 0; ti < static_cast<std::int32_t>(m.triangles.size()); ++ti) {
+			const NavTriangle& t = m.triangles[ti];
+			if (t.faceBlocker != kNoBlocker) {
+				continue; // floor only
+			}
+			for (int apex = 0; apex < 3; ++apex) {
+				// Edges incident to vertex v[apex] are edge `apex` and edge `(apex+2)%3`.
+				if (obstacleEdge(m, ti, apex) || obstacleEdge(m, ti, (apex + 2) % 3)) {
+					continue; // squeeze abuts an obstacle face: not a real crossing
+				}
+				if (t.edgePairWidthMm[apex] < best) {
+					best = t.edgePairWidthMm[apex];
+				}
+			}
+		}
+		return best;
+	}
+
+	// A CK terrain ring (water/flora): negative provenance, always blocks.
+	NavInputPolygon water(std::vector<Vec2i64> ring, std::int64_t id) {
+		return {std::move(ring), true, id};
+	}
+
+} // namespace
+
+TEST(NavMesh, CorridorWidthMatchesGapDistance) {
+	// A full-width water band with a single 400 mm gap (x in [1800,2200]). The
+	// tightest floor corridor width must be exactly that gap distance, measured as
+	// the distance between the two gap-facing obstacle edges, not an edge length.
+	NavMeshInput in;
+	in.polygons.push_back(border({{0, 0}, {4000, 0}, {4000, 2000}, {0, 2000}}));
+	in.polygons.push_back(water({{0, 900}, {1800, 900}, {1800, 1100}, {0, 1100}}, -10));
+	in.polygons.push_back(water({{2200, 900}, {4000, 900}, {4000, 1100}, {2200, 1100}}, -11));
+
+	NavMesh m = buildNavMesh(in);
+	ASSERT_FALSE(m.triangles.empty());
+	EXPECT_EQ(minTraversableWidth(m), 400) << "tightest traversable corridor width must equal the 400 mm gap";
+
+	// A wide-open floor triangle far from both obstacles stays unconstrained.
+	bool sawUnconstrained = false;
+	for (const NavTriangle& t : m.triangles) {
+		if (t.faceBlocker != kNoBlocker) {
+			continue;
+		}
+		Vec2i64 c = centroid(m.vertices, t.v);
+		if (c.y < 400) { // well below the band
+			for (int a = 0; a < 3; ++a) {
+				if (t.edgePairWidthMm[a] == kUnconstrainedWidth) {
+					sawUnconstrained = true;
+				}
+			}
+		}
+	}
+	EXPECT_TRUE(sawUnconstrained) << "open floor away from obstacles must be unconstrained";
+}
+
+TEST(NavMesh, CorridorWidthPerpendicularChannel) {
+	// Two parallel water bands leaving a 400 mm channel between y=800 and y=1200.
+	// A floor triangle spanning the channel has long (~2000 mm) edges but its width
+	// is the 400 mm perpendicular gap (Demyen Case 2), proving width != edge length.
+	NavMeshInput in;
+	in.polygons.push_back(border({{0, 0}, {4000, 0}, {4000, 2000}, {0, 2000}}));
+	in.polygons.push_back(water({{1000, 0}, {3000, 0}, {3000, 800}, {1000, 800}}, -10));
+	in.polygons.push_back(water({{1000, 1200}, {3000, 1200}, {3000, 2000}, {1000, 2000}}, -11));
+
+	NavMesh m = buildNavMesh(in);
+	ASSERT_FALSE(m.triangles.empty());
+	EXPECT_EQ(minTraversableWidth(m), 400) << "channel width is the 400 mm perpendicular gap";
+}
+
+TEST(NavMesh, CorridorWidthObtuseSqueeze) {
+	// An obstacle nub rises from the bottom band (top at y=1100) toward a top band at
+	// y=1500. Two constrictions: (a) the 400 mm vertical gap directly above the nub
+	// (Case 2, perpendicular to the top band), and (b) an obtuse intra-triangle
+	// squeeze from the top band corner past the nub's top corner. Both are distances
+	// to obstacle features, never edge lengths.
+	NavMeshInput in;
+	in.polygons.push_back(border({{0, 0}, {4000, 0}, {4000, 2000}, {0, 2000}}));
+	in.polygons.push_back(water({{0, 0}, {4000, 0}, {4000, 600}, {0, 600}}, -10));
+	in.polygons.push_back(water({{0, 1500}, {4000, 1500}, {4000, 2000}, {0, 2000}}, -11));
+	in.polygons.push_back(water({{1900, 600}, {2100, 600}, {2100, 1100}, {1900, 1100}}, -12)); // nub
+
+	NavMesh m = buildNavMesh(in);
+	ASSERT_FALSE(m.triangles.empty());
+
+	// The floor triangle [(4000,1500),(0,1500),(1900,1100)] spans from the top band to
+	// the nub's top-left corner; its apex at (1900,1100) measures the 400 mm gap to the
+	// top band (Case 2). Find it and check that apex width is 400.
+	bool found400 = false;
+	// And the obtuse case: triangle [(4000,1500),(1900,1100),(2100,1100)] has an apex at
+	// (4000,1500) whose nearest in-wedge obstacle is the nub corner (2100,1100): an
+	// obtuse squeeze = floor(sqrt(1900^2 + 400^2)) = 1941 mm (Case 1).
+	bool found1941 = false;
+	for (const NavTriangle& t : m.triangles) {
+		if (t.faceBlocker != kNoBlocker) {
+			continue;
+		}
+		for (int a = 0; a < 3; ++a) {
+			Vec2i64 apex = m.vertices[t.v[a]];
+			if (apex == Vec2i64{1900, 1100} && t.edgePairWidthMm[a] == 400) {
+				found400 = true;
+			}
+			if (apex == Vec2i64{4000, 1500} && t.edgePairWidthMm[a] == 1941) {
+				found1941 = true;
+			}
+		}
+	}
+	EXPECT_TRUE(found400) << "vertical gap above the nub must be the 400 mm perpendicular width";
+	EXPECT_TRUE(found1941) << "obtuse squeeze to the nub corner must be floor(sqrt(1900^2+400^2))=1941";
+}
+
+TEST(NavMesh, SliverInOpenFloorIsUnconstrained) {
+	// A long thin open strip: the CDT emits high-aspect sliver triangles with no
+	// incident obstacle edge. Their tiny altitude must NOT register as a narrow
+	// corridor; every edge-pair width must be unconstrained.
+	NavMeshInput in;
+	in.polygons.push_back(border({{0, 0}, {6000, 0}, {6000, 40}, {0, 40}}));
+
+	NavMesh m = buildNavMesh(in);
+	ASSERT_FALSE(m.triangles.empty());
+	for (const NavTriangle& t : m.triangles) {
+		for (int a = 0; a < 3; ++a) {
+			EXPECT_EQ(t.edgePairWidthMm[a], kUnconstrainedWidth)
+				<< "an open-floor sliver has no obstacle, so it must be unconstrained";
+		}
+	}
+}
+
+TEST(NavMesh, DoorClearWidthThreadedOntoPortalEdge) {
+	// A door span in a wall: DoorPortal::clearWidthMm must land on the portal edge's
+	// edgeClearWidthMm for both triangles sharing it (the A* gates a door by it).
+	NavMeshInput in;
+	in.polygons.push_back(border({{-2000, -2000}, {4000, -2000}, {4000, 4000}, {-2000, 4000}}));
+	in.polygons.push_back(blocked({{0, 0}, {800, 0}, {800, 200}, {0, 200}}, 50));
+	in.polygons.push_back(NavInputPolygon{{{800, 0}, {1200, 0}, {1200, 200}, {800, 200}}, true, 50, 9}); // door span
+	in.polygons.push_back(blocked({{1200, 0}, {2000, 0}, {2000, 200}, {1200, 200}}, 50));
+	DoorPortal d;
+	d.openingId	   = 9;
+	d.a		   = {800, 0};
+	d.b		   = {1200, 0};
+	d.clearWidthMm = 400;
+	in.doors.push_back(d);
+
+	NavMesh m = buildNavMesh(in);
+	int tagged = 0;
+	for (const NavTriangle& t : m.triangles) {
+		for (int e = 0; e < 3; ++e) {
+			Vec2i64 a = m.vertices[t.v[e]];
+			Vec2i64 b = m.vertices[t.v[(e + 1) % 3]];
+			if ((a == Vec2i64{800, 0} && b == Vec2i64{1200, 0}) || (a == Vec2i64{1200, 0} && b == Vec2i64{800, 0})) {
+				EXPECT_EQ(t.edgeOpening[e], 9);
+				EXPECT_EQ(t.edgeClearWidthMm[e], 400) << "door clear width must thread onto the portal edge";
+				++tagged;
+			}
+		}
+	}
+	EXPECT_EQ(tagged, 2) << "both triangles sharing the door edge carry the clear width";
+}

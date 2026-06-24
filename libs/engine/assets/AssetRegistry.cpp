@@ -921,22 +921,17 @@ namespace engine::assets {
 				scaleFactor
 			);
 
-			// Convert SVG shapes to GeneratedAsset with normalization
-			GeneratedAsset asset;
+			// Tessellate each shape (baking solid/gradient per-vertex colors) in SVG space, then
+			// normalize the whole mesh to worldHeight.
 			for (const auto& shape : shapes) {
-				for (const auto& svgPath : shape.paths) {
-					GeneratedPath genPath;
-					genPath.vertices.reserve(svgPath.vertices.size());
-					for (const auto& v : svgPath.vertices) {
-						genPath.vertices.push_back({v.x * scaleFactor, v.y * scaleFactor});
-					}
-					genPath.fillColor = shape.fillColor;
-					genPath.isClosed = svgPath.isClosed;
-					asset.addPath(std::move(genPath));
-				}
+				renderer::appendShapeMesh(shape, mesh);
+			}
+			for (auto& v : mesh.vertices) {
+				v.x *= scaleFactor;
+				v.y *= scaleFactor;
 			}
 
-			if (!tessellateAsset(asset, mesh)) {
+			if (mesh.vertices.empty()) {
 				LOG_ERROR(Engine, "Failed to tessellate SVG asset: %s", defName.c_str());
 				return nullptr;
 			}

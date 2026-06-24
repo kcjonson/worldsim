@@ -1201,14 +1201,14 @@ The following MVP epics have all been completed. Detailed task breakdowns are pr
 ### Navigation & Pathfinding
 **Spec/Documentation:** `/docs/technical/pathfinding-architecture.md`
 **Dependencies:** Geometry Foundations (shared integer-coordinate substrate, libs/geometry); consumes the construction obstacle/portal contract
-**Status:** in progress — navigation v1 shipped (P1, P2); belief filtering complete (P4, #189/#191/#194); P3/P5/P6 remain. See dev logs 2026-06-16-navigation-v1.md and 2026-06-19-navigation-belief-filtering.md
+**Status:** in progress — navigation v1 shipped (P1, P2); belief filtering complete (P4, #189/#191/#194); regional layer complete (P3, 2026-06-23); P5/P6 remain. See dev logs 2026-06-16-navigation-v1.md, 2026-06-19-navigation-belief-filtering.md, and 2026-06-23-navigation-p3-regional-layer.md
 
 **Goal:** Four-tier vector-native navigation: planet hex graph for cross-globe abstract parties, chunk connectivity components for reachability, dynamic CDT navmesh for exact local paths, collision circles + velocity-obstacle steering so agents take up space. Must land (through P4) before walls ship as player-facing gameplay; P6 unlocks raids.
 
 **Tasks:**
 - [x] P1: Agents become physical (radius component, dynamic spatial hash, circle collision, separation)
 - [x] P2: Local navmesh, static world (exact CDT over the loaded area from terrain/water/flora/wall contours, triangle A* + corridor width + funnel, waypoint following). Shipped as one merged loaded-area mesh, off-thread rebuild on world change; integrated into MovementSystem + AIDecisionSystem; NavOverlay debug draw.
-- [ ] P3: Regional layer (components, traversal-class reachability API, RRA* heuristic)
+- [x] P3: Regional layer — DONE (2026-06-23). Width-aware reachability over the merged navmesh: connected components + Kruskal max-spanning reconstruction tree giving bottleneck(a,b) by LCA, in a truth forest (goal validity) and a terrain forest (belief-sound reject); the cheap reject (diameter > bottleneck, or different component) short-circuits the A* so failed searches vanish. Un-deferred Demyen corridor-width filtering (any agent size), grid point location, RRA* heuristic on the terrain graph (one resumable reverse search per goal serves every agent), A* instrumentation. Articulated narrow-cross-section routing model settled. Deferred: belief-dependent wall clearance, local dirty-section invalidation, NavOverlay/HTTP stats surface.
 - [x] P4: Dynamic world + belief — DONE. Static slice (construction obstacles/portals, water, tree footprints, wall-collision safety net) plus belief filtering: one full-triangulation navmesh with per-face blocker tags, a per-colonist `BeliefFilter` consulted at query time (unseen walls treated as absent), `beliefVersion`-driven replans coalesced against vision, and nav-state readability in the colonist panel ("Going to" / "Re-routing" / "Can't find a way to"). Deferred: active search behaviors (door-discovery wall-follow, LKP search — `NavState` reserves their labels) and stale-demolished-wall pessimism.
 - [ ] P5: Crowds (velocity-obstacle avoidance + mitigations, occupancy costs, door slot queues, regression rig)
 - [ ] P6: Global tier + raids (hex-graph A*, abstract party records, attention bubbles, materialization handoffs, raider belief seeding + scouting)

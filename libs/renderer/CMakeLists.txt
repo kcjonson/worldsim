@@ -9,6 +9,12 @@ add_library(renderer
     vector/Bezier.cpp
     vector/SVGLoader.cpp
     vector/MeshBounds.cpp
+    vector/tess/Predicates.cpp
+    vector/tess/Mesh.cpp
+    vector/tess/PriorityQueue.cpp
+    vector/tess/Dict.cpp
+    vector/tess/Sweep.cpp
+    vector/tess/Triangulate.cpp
     shader/Shader.cpp
     shader/ShaderLoader.cpp
     shader/ShaderPreprocessor.cpp

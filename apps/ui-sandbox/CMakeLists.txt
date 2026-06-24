@@ -2,10 +2,8 @@ add_executable(ui-sandbox
     Main.cpp
     NavigationMenu.cpp
     SceneTypes.cpp
-    scenes/ShapesScene.cpp
     scenes/ArenaScene.cpp
     scenes/HandleScene.cpp
-    scenes/VectorStarScene.cpp
     scenes/VectorPerfScene.cpp
     scenes/GrassScene.cpp
     scenes/TreeScene.cpp

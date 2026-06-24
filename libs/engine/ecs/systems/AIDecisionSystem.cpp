@@ -1455,6 +1455,23 @@ namespace ecs {
 			return NavRequestOutcome::Beelined;
 		}
 
+		// LOD seam: if either endpoint is outside the simulation area the exact mesh
+		// can't answer the query (the off-area leg is beyond LOD0). Treat it the same as
+		// the no-mesh case -- invalidate any stale NavPath and keep movementTarget active
+		// so the colonist beelines toward the area (or toward the goal directly).
+		//
+		// FUTURE LOD1: path to the area edge via LOD0, hand off to a coarse regional
+		// graph for the long-haul leg, re-enter LOD0 near the goal; for now the whole
+		// off-area leg is a beeline.
+		if (!m_navSystem->inSimArea(position.value) || !m_navSystem->inSimArea(goal)) {
+			if (auto* navPath = world->getComponent<NavPath>(entity)) {
+				navPath->valid = false;
+			}
+			LOG_DEBUG(Engine, "[Nav] Entity %llu: off-area endpoint, beeline to (%.2f, %.2f)",
+				static_cast<unsigned long long>(entity), goal.x, goal.y);
+			return NavRequestOutcome::Beelined;
+		}
+
 		// Agent footprint feeds the disc-clearance query; default if the entity has none.
 		float radius = 0.3F;
 		if (const auto* agentRadius = world->getComponent<AgentRadius>(entity)) {

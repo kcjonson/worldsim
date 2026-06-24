@@ -2,23 +2,41 @@
 
 // NavigationSystem - owns the cached navmesh and answers path queries (Nav B3).
 //
-// One mesh for the whole loaded region. Each frame the system decides whether the
-// world changed (a construction edit bumped ConstructionWorld::version(), or the
-// set of fully-placed loaded chunks moved) and, if so, rebuilds the mesh OFF the
-// main thread. The expensive triangulation (geometry::nav::buildNavMesh) runs on a
-// std::async worker; the cheap-but-not-thread-safe extraction that reads live game
-// state (engine::nav::buildInput, which walks ConstructionWorld -- NOT thread-safe)
-// runs ON the main thread, producing a self-contained NavMeshInput the worker owns
-// by value. While a rebuild is in flight the OLD mesh keeps serving queries, so a
-// path query never blocks on a build and never races the extraction.
+// One mesh for a SIMULATION AREA: a square AABB in world-absolute mm that tracks
+// the camera viewport. The build ingests only the obstacles inside that area, so a
+// forested world (tens of thousands of loaded trees) still builds fast because the
+// area holds only ~1-2k. Building over every loaded+processed chunk hung the
+// off-thread triangulation; scoping to the area is the fix.
+//
+// The caller (GameScene) owns the camera and viewport dimensions and pushes the
+// desired area each frame via setSimulationArea(centerMm, halfExtentMm). The half-
+// extent is the camera's visible half-diagonal expanded by a margin (~1.3x) for
+// scroll/zoom headroom. NavigationSystem clamps the half-extent to
+// [kMinSimHalfExtentMm, kMaxSimHalfExtentMm] and to the loaded-chunk extent, then
+// rebuilds when the BUILT area drifts: center moved > kRecenterThresholdMm OR
+// clamped half-extent changed by > kSizeChangeThreshold (20%). Per-frame camera-
+// lerp deltas stay well under those thresholds so no thrash occurs.
+//
+// Each frame the system decides whether the world changed (a construction edit
+// bumped ConstructionWorld::version(), or this is the first build) and, if so,
+// rebuilds the mesh OFF the main thread. The expensive triangulation
+// (geometry::nav::buildNavMesh) runs on a std::async worker; the cheap-but-not-
+// thread-safe extraction that reads live game state (engine::nav::buildInput, which
+// walks ConstructionWorld -- NOT thread-safe) runs ON the main thread, producing a
+// self-contained NavMeshInput the worker owns by value. While a rebuild is in flight
+// the OLD mesh keeps serving queries, so a path query never blocks on a build and
+// never races the extraction.
 //
 // Queries (requestPath / isReachable) are synchronous against the current cached
 // mesh and honor the agent's disc radius through geometry::nav::pathThrough.
 
 #include "../ISystem.h"
 
+#include <core/Vec2i64.h>
+
 #include <nav/NavMesh.h>
 #include <nav/PathQuery.h>
+#include <nav/RraCache.h>
 
 #include <world/chunk/ChunkCoordinate.h>
 
@@ -26,6 +44,7 @@
 #include <future>
 #include <glm/vec2.hpp>
 #include <optional>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -64,17 +83,34 @@ class NavigationSystem : public ISystem {
 
 	// --- Resource injection (setter style; no heavy ctor deps) ----------------
 
-	void setChunkManager(engine::world::ChunkManager* chunkManager) { m_chunkManager = chunkManager; }
+	void setChunkManager(engine::world::ChunkManager* manager) { chunkManager = manager; }
 
-	// Only fully-placed chunks feed the build; same signature VisionSystem uses.
-	void setPlacementData(
-		engine::assets::PlacementExecutor*						  executor,
-		const std::unordered_set<engine::world::ChunkCoordinate>* processedChunks) {
-		m_placement = executor;
-		m_processedChunks = processedChunks;
+	// Push the desired simulation area for this frame. GameScene calls this every
+	// frame after camera->update() using the camera's visible rect expanded by
+	// kViewportMargin. NavigationSystem clamps the half-extent and rebuilds when the
+	// built area has drifted far enough (center > kRecenterThresholdMm or size
+	// changed > kSizeChangeThreshold). Without a pushed area no build runs.
+	void setSimulationArea(geometry::Vec2i64 centerMm, std::int64_t halfExtentMm) {
+		requestedCenter = centerMm;
+		requestedHalfExtent = halfExtentMm;
+		haveRequestedArea = true;
 	}
 
-	void setConstructionWorld(const engine::construction::ConstructionWorld* world) { m_constructionWorld = world; }
+	// Same signature VisionSystem uses. `processed` is the set of chunks that have
+	// finished entity placement; it grows as spawn-ring chunks complete after the
+	// first build. It does NOT gate the gather (the area sweep reads chunk readiness
+	// directly through the ChunkManager); instead it drives needsRebuild -- when a
+	// chunk overlapping the BUILT area joins (or leaves) this set, the in-area
+	// obstacle set changed and the mesh must rebuild, so newly-placed flora/water from
+	// late-finishing chunks get carved in even while the camera holds still.
+	void setPlacementData(
+		engine::assets::PlacementExecutor*						  executor,
+		const std::unordered_set<engine::world::ChunkCoordinate>* processed) {
+		placement = executor;
+		processedChunks = processed;
+	}
+
+	void setConstructionWorld(const engine::construction::ConstructionWorld* world) { constructionWorld = world; }
 
 	// --- Queries (synchronous, against the current cached mesh) ---------------
 
@@ -93,49 +129,159 @@ class NavigationSystem : public ISystem {
 	requestPath(glm::vec2 startMeters, glm::vec2 goalMeters, float agentRadiusMeters,
 				geometry::nav::BeliefFilter belief = {}) const;
 
-	// True if a path of the given clearance exists from start to goal under `belief`.
+	// Sound reachability pre-filter: delegates to geometry::nav::reachable (O(log n)
+	// component + bottleneck check) rather than building a full path.
+	//
+	// Semantics are asymmetric by design:
+	//   false => DEFINITELY unreachable (off-mesh endpoint, disconnected component, or
+	//            widest bottleneck < disc diameter). A false never hides a real path.
+	//   true  => MAYBE reachable (over-approximation). Caller must run requestPath for
+	//            certainty if it needs the actual polyline.
+	//
+	// No-mesh policy: when hasMesh() is false this returns true ("can't prove
+	// unreachable"). Colonists legitimately beeline while the mesh is building or
+	// when operating outdoors; a goal-validity pre-filter must not reject everything
+	// during that window.
 	[[nodiscard]] bool isReachable(glm::vec2 startMeters, glm::vec2 goalMeters, float agentRadiusMeters,
 								   geometry::nav::BeliefFilter belief = {}) const;
 
+	// LOD seam predicate: true when `meters` falls inside the BUILT simulation area.
+	//
+	// LOD contract:
+	//   LOD0 = exact navmesh, covers the BUILT simulation area (builtCenter ± builtHalfExtent).
+	//   Outside LOD0 = beeline now (cheap far-field approximation).
+	//   LOD1 = FUTURE: a coarse regional graph for the long-haul leg; the plan is to path
+	//          to the area edge via LOD0, hand off to the coarse graph, and re-enter LOD0
+	//          near the goal. Until LOD1 exists the entire off-area leg is a beeline.
+	//
+	// Returns false when no mesh has been built yet (no BUILT area to test against);
+	// callers treat that the same as the no-mesh beeline path, which is correct.
+	[[nodiscard]] bool inSimArea(glm::vec2 meters) const;
+
 	// The current cached mesh (for the later debug overlay). Empty until hasMesh().
-	[[nodiscard]] const geometry::nav::NavMesh& mesh() const { return m_mesh; }
-	[[nodiscard]] bool						  hasMesh() const { return !m_mesh.triangles.empty(); }
+	[[nodiscard]] const geometry::nav::NavMesh& mesh() const { return navMesh; }
+	[[nodiscard]] bool						  hasMesh() const { return !navMesh.triangles.empty(); }
 
 	// Monotonic counter bumped each time a freshly built mesh is swapped in. A stored
 	// NavPath stamps this at plan time so the replan loop can detect "the world rebuilt
 	// under me" without inspecting the mesh. Stays 0 until the first mesh lands.
-	[[nodiscard]] std::uint64_t generation() const { return m_generation; }
+	[[nodiscard]] std::uint64_t generation() const { return meshGeneration; }
+
+	// Cumulative A* instrumentation since the last resetNavQueryStats() (P3.5). Lets a
+	// dev overlay / HTTP endpoint VERIFY the RRA* heuristic cuts expansions at runtime.
+	// totalQueries counts requestPath calls that actually ran the A* (a mesh existed and
+	// the result was reachable -- where nodesExpanded is meaningful); lastNodesExpanded
+	// / lastPeakOpenSet are the most recent such query's counts. A full NavOverlay/HTTP
+	// surface is a follow-up; this accessor is the read hook for it.
+	struct NavQueryStats {
+		std::uint64_t totalQueries		= 0;
+		std::uint64_t totalNodesExpanded = 0;
+		std::int64_t  lastNodesExpanded = 0;
+		std::int64_t  lastPeakOpenSet	= 0;
+	};
+	[[nodiscard]] const NavQueryStats& navQueryStats() const { return navStats; }
+	void						   resetNavQueryStats() { navStats = {}; }
+
+	// Number of live RRA* reverse-search caches (one per distinct goal triangle). For
+	// tests/overlay: confirms the cap and the generation-bump invalidation. Bounded by
+	// kMaxRraCaches.
+	[[nodiscard]] std::size_t rraCacheCount() const { return rraCaches.size(); }
+
+	// Public constants referenced by GameScene (viewport margin) and tests (clamp bounds).
+	//
+	// Minimum half-extent: large enough to cover typical indoor rooms and short outdoor
+	// paths even at maximum zoom-in.
+	static constexpr std::int64_t kMinSimHalfExtentMm = 30000; // 30 m
+	// Maximum half-extent: bounds the build cost. Kept small for now because a 200 m
+	// area in a dense forest is thousands of trees and stalls the off-thread build
+	// (zoom-out pegged CPU). The planned visual-size obstacle LOD -- cull sub-pixel
+	// obstacles when zoomed out -- will let this grow again while staying cheap; until
+	// then, zoom-out beyond this caps the fine mesh (beeline beyond).
+	static constexpr std::int64_t kMaxSimHalfExtentMm = 64000; // 64 m
+	// Camera travel (mm) that triggers an area re-center.
+	static constexpr std::int64_t kRecenterThresholdMm = 20000; // 20 m
+	// Margin applied to the camera's visible half-diagonal for scroll/zoom headroom.
+	// GameScene multiplies the half-diagonal by this before calling setSimulationArea.
+	static constexpr float kViewportMargin = 1.3F;
 
   private:
-	// True if the snapshotted inputs differ from what the current mesh was built
-	// from (version moved, or the processed-and-loaded chunk set changed).
-	[[nodiscard]] bool needsRebuild(const std::unordered_set<engine::world::ChunkCoordinate>& currentChunks) const;
+	// True if a rebuild is due: first build, world version change, the built area has
+	// drifted far enough from the requested area, OR the set of PROCESSED chunks
+	// overlapping the (clamped) area changed since the build (a late-finishing chunk
+	// inside the area, or an evicted one).
+	[[nodiscard]] bool needsRebuild(std::int64_t clampedHalfExtent) const;
 
-	// The chunk coords that are both loaded AND fully placed -- the set the build
-	// actually consumes.
-	[[nodiscard]] std::unordered_set<engine::world::ChunkCoordinate> currentBuildableChunks() const;
+	// Clamp the requested half-extent to [min, max] and to the loaded-chunk extent.
+	[[nodiscard]] std::int64_t clampHalfExtent(std::int64_t requested) const;
 
-	engine::world::ChunkManager*							  m_chunkManager = nullptr;
-	engine::assets::PlacementExecutor*						  m_placement = nullptr;
-	const std::unordered_set<engine::world::ChunkCoordinate>* m_processedChunks = nullptr;
-	const engine::construction::ConstructionWorld*			  m_constructionWorld = nullptr;
+	// Order-independent hash of the processed chunks overlapping the square AABB
+	// centered at `center` with the given half-extent. Mirrors how buildInput derives
+	// the chunk-coordinate range from the area AABB, then XOR-folds a per-coord hash of
+	// each in-area coord present in *processedChunks. Returns 0 when processedChunks is
+	// null (headless / construction-only path: this rebuild trigger is then inert).
+	[[nodiscard]] std::uint64_t areaChunkSignature(geometry::Vec2i64 center, std::int64_t halfExtent) const;
 
-	geometry::nav::NavMesh m_mesh; // the current queryable mesh (empty = none yet)
+	// Half-extent fractional change that triggers a rebuild (0.20 = 20%).
+	static constexpr double kSizeChangeThreshold = 0.20;
+
+	engine::world::ChunkManager*							  chunkManager = nullptr;
+	engine::assets::PlacementExecutor*						  placement = nullptr;
+	const std::unordered_set<engine::world::ChunkCoordinate>* processedChunks = nullptr;
+	const engine::construction::ConstructionWorld*			  constructionWorld = nullptr;
+
+	geometry::nav::NavMesh navMesh; // the current queryable mesh (empty = none yet)
 
 	// In-flight async build. Valid only while a rebuild is running.
-	std::future<geometry::nav::NavMesh> m_future;
+	std::future<geometry::nav::NavMesh> future;
 
-	// What the in-flight build (or, when no build is in flight, the current mesh)
-	// was snapshotted from. A sentinel of UINT64_MAX means "nothing built yet" so
+	// The ConstructionWorld::version() the in-flight build (or, when none is running,
+	// the current mesh) was snapshotted from. UINT64_MAX means "nothing built yet" so
 	// the first real version (0 on a fresh ConstructionWorld) triggers a build.
-	std::uint64_t									   m_builtVersion = UINT64_MAX;
-	std::unordered_set<engine::world::ChunkCoordinate> m_builtChunks;
-	bool											   m_haveBuiltOnce = false;
+	std::uint64_t builtVersion = UINT64_MAX;
+	bool		  haveBuiltOnce = false;
+
+	// The requested simulation area pushed by the caller this frame. haveRequestedArea
+	// is false until the first setSimulationArea call.
+	geometry::Vec2i64 requestedCenter{0, 0};
+	std::int64_t	  requestedHalfExtent = 0;
+	bool			  haveRequestedArea = false;
+
+	// The area the most-recently-launched build was snapshotted from. Compared each
+	// frame to decide whether the drift is large enough to warrant a new build.
+	geometry::Vec2i64 builtCenter{0, 0};
+	std::int64_t	  builtHalfExtent = 0;
+
+	// Signature of the processed chunks overlapping the BUILT area at launch. needsRebuild
+	// recomputes it for the current clamped area and rebuilds on a mismatch, so flora/water
+	// from chunks that finish placement after the first build still get carved in (the
+	// regression fix for a stationary player whose spawn-ring chunks place late).
+	std::uint64_t builtAreaChunkSignature = 0;
 
 	// Bumped on every mesh swap-in (see generation()). Drives NavPath staleness for the
 	// replan loop independently of ConstructionWorld::version() (which the system doesn't
 	// expose and which a query-side consumer shouldn't depend on).
-	std::uint64_t m_generation = 0;
+	std::uint64_t meshGeneration = 0;
+
+	// Resumable RRA* reverse-search caches, keyed by GOAL TRIANGLE index. One reverse
+	// search per goal serves every agent (belief- and radius-agnostic, built on the
+	// width-unfiltered terrain graph), so many colonists heading to the same goal share
+	// one search. Mutable because requestPath is const but lazily fills/resumes the cache.
+	//
+	// LIFECYCLE. Key: the goal triangle id in the CURRENT mesh. Triangle indices are
+	// invalidated by a mesh rebuild, so the whole map is CLEARED wherever meshGeneration
+	// bumps (the mesh swap in update()). BOUND: a churn of distinct goals must not grow
+	// the map without limit, so when it would exceed kMaxRraCaches we clear it wholesale
+	// (simplest sound policy -- the caches are cheap to rebuild on demand, and a flat
+	// clear keeps no stale entry; a smarter LRU is a possible later refinement).
+	//
+	// THREADING: NavigationSystem queries run on the single-threaded main loop, so the
+	// mutable cache map and stats need no locking. (The async work is the MESH BUILD,
+	// which produces a value the main thread swaps in under update(); queries never touch
+	// the in-flight build.)
+	static constexpr std::size_t				   kMaxRraCaches = 64;
+	mutable std::unordered_map<std::int32_t, geometry::nav::RraCache> rraCaches;
+
+	mutable NavQueryStats navStats;
 };
 
 } // namespace ecs

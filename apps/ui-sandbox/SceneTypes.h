@@ -16,7 +16,6 @@ namespace ui_sandbox {
 // ============================================================================
 // clang-format off
 #define UI_SANDBOX_SCENES(X) \
-	X(Shapes)      \
 	X(Arena)       \
 	X(Handle)      \
 	X(Button)      \
@@ -24,7 +23,6 @@ namespace ui_sandbox {
 	X(TextInput)   \
 	X(Grass)       \
 	X(VectorPerf)  \
-	X(VectorStar)  \
 	X(Svg)         \
 	X(Clip)        \
 	X(Layer)       \
