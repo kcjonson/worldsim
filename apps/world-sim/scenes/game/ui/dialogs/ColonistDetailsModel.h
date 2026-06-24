@@ -92,6 +92,7 @@ namespace world_sim {
 		// The bio "Current:" line is derived from task type + state + navState + labels;
 		// diffing the rendered string catches every change to it without enumerating inputs.
 		std::string			 prevBioTask;
+		float				 prevCurrentProgress = -1.0F;
 	};
 
 } // namespace world_sim

@@ -38,7 +38,7 @@
     <!-- Entity capabilities - chopped for wood with an axe; removed when the pool is exhausted -->
     <!-- 4-7 wood per chop (clamped by carry weight), pool of 14-22 wood units (smaller than oak) -->
     <capabilities>
-      <harvestable yield="Wood" amountMin="4" amountMax="7" duration="7.0"
+      <harvestable yield="Wood" amountMin="4" amountMax="7" durability="45"
                    destructive="false" totalResourceMin="14" totalResourceMax="22" requiresTool="Axe"/>
     </capabilities>
 

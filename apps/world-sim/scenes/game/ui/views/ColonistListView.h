@@ -60,8 +60,8 @@ class ColonistListView {
 	/// Update only the selection highlight (cheap operation)
 	void updateSelectionHighlight(ecs::EntityID selectedId);
 
-	/// Update mood bars from current model data
-	void updateMoodBars(const std::vector<adapters::ColonistData>& colonists);
+	/// Push per-frame item values (mood + activity progress) without a rebuild
+	void updateItemValues(const std::vector<adapters::ColonistData>& colonists);
 
 	// Configuration
 	float panelWidth;

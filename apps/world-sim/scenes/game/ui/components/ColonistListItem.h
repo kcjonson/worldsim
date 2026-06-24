@@ -2,13 +2,15 @@
 
 // ColonistListItem - a selectable colonist card in the roster (Salvage look).
 //
-// A mood-tinted Avatar, the colonist's first name with a mood percentage, and a
-// mood meter. The active card raises its background and shows an amber left edge.
-// Drawn entirely inline via the Primitives/Avatar APIs (no child components).
+// A mood-tinted Avatar, the colonist's first name with a mood percentage, and an
+// activity meter (current task label + progress). The active card raises its
+// background and shows an amber left edge. Drawn inline via the Primitives/Avatar/
+// ProgressBar APIs.
 
 #include "scenes/game/ui/adapters/ColonistAdapter.h"
 
 #include <component/Component.h>
+#include <components/progress/ProgressBar.h>
 #include <ecs/EntityID.h>
 #include <input/InputEvent.h>
 
@@ -42,6 +44,10 @@ class ColonistListItem : public UI::Component {
 	// Data updates
 	void setSelected(bool newSelected) { selected = newSelected; }
 	void setMood(float newMood) { mood = newMood; }
+	void setActivity(const std::string& label, float progress) {
+		activity = label;
+		activityProgress = progress;
+	}
 	void setColonistData(const adapters::ColonistData& data);
 
 	// Accessors
@@ -55,6 +61,8 @@ class ColonistListItem : public UI::Component {
 	std::string name;
 	std::string firstName;
 	float mood = 100.0F;
+	std::string activity;             // current task label, empty when idle
+	float activityProgress = -1.0F;   // 0..1 while acting; <0 = traveling / idle
 	bool selected = false;
 	SelectCallback onSelect;
 };

@@ -5,12 +5,14 @@
 
 #include "../GoalTaskRegistry.h"
 #include "../World.h"
+#include "TimeSystem.h"
 #include "../components/Action.h"
 #include "../components/Appearance.h"
 #include "../components/Inventory.h"
 #include "../components/Memory.h"
 #include "../components/Movement.h"
 #include "../components/Needs.h"
+#include "../components/Skills.h"
 #include "../components/Task.h"
 #include "../components/Transform.h"
 
@@ -19,6 +21,28 @@
 #include <gtest/gtest.h>
 
 namespace ecs::test {
+
+// =============================================================================
+// harvestWorkRate (pure helper)
+// =============================================================================
+// Harvest time is work-based: chop seconds = harvestable durability / harvestWorkRate(skill).
+// Mirrors constructionWorkRate, but driven by the Harvesting skill.
+
+TEST(HarvestWorkRateTest, UntrainedForagerWorksAtBaseRate) {
+	// Level-0 chops at the base rate (not zero), so a durability-40 bush takes ~4s.
+	EXPECT_FLOAT_EQ(harvestWorkRate(0.0F), 10.0F);
+}
+
+TEST(HarvestWorkRateTest, RateScalesWithSkill) {
+	// Higher Harvesting skill chops faster: base * (1 + 0.08 * level).
+	EXPECT_FLOAT_EQ(harvestWorkRate(10.0F), 10.0F * 1.8F);
+	EXPECT_FLOAT_EQ(harvestWorkRate(20.0F), 10.0F * 2.6F);
+}
+
+TEST(HarvestWorkRateTest, SkillClampedToValidRange) {
+	EXPECT_FLOAT_EQ(harvestWorkRate(-5.0F), harvestWorkRate(0.0F));
+	EXPECT_FLOAT_EQ(harvestWorkRate(99.0F), harvestWorkRate(20.0F));
+}
 
 // =============================================================================
 // Action Factory Tests (Unit tests for Action struct)
@@ -598,6 +622,254 @@ TEST_F(ActionSystemGoalTest, HarvestThenInventoryHaulDeliversMaterialsAndUnblock
 	    << "Delivery to station credited the parent Craft goal";
 	EXPECT_EQ(registry.getGoal(craftId)->status, GoalStatus::Available)
 	    << "Craft leaves Blocked once all materials delivered";
+}
+
+// =============================================================================
+// Game-speed scaling (ActionSystem reads TimeSystem::effectiveTimeScale)
+// =============================================================================
+
+// Fixture that registers BOTH TimeSystem and ActionSystem so action timing can be
+// driven at different game speeds. World::update sorts systems by priority, so
+// TimeSystem (10) always runs before ActionSystem (350) regardless of registration
+// order - effectiveTimeScale() is up to date when the action system reads it.
+class ActionSystemTimeTest : public ::testing::Test {
+  protected:
+	void SetUp() override {
+		world = std::make_unique<World>();
+
+		engine::assets::AssetDefinition berryDef;
+		berryDef.defName = "Berry";
+		berryDef.label = "Berry";
+		berryDef.itemProperties = engine::assets::ItemProperties{};
+		berryDef.itemProperties->stackSize = 20;
+		berryDef.itemProperties->edible = engine::assets::EdibleCapability{0.3F, engine::assets::CapabilityQuality::Normal, true};
+		engine::assets::AssetRegistry::Get().registerTestDefinition(std::move(berryDef));
+
+		timeSystem = &world->registerSystem<TimeSystem>();
+		world->registerSystem<ActionSystem>();
+	}
+
+	void TearDown() override {
+		engine::assets::AssetRegistry::Get().clearDefinitions();
+		world.reset();
+	}
+
+	EntityID createColonist(glm::vec2 position = {0.0F, 0.0F}) {
+		auto entity = world->createEntity();
+		world->addComponent<Position>(entity, Position{position});
+		world->addComponent<Velocity>(entity, Velocity{{0.0F, 0.0F}});
+		world->addComponent<MovementTarget>(entity, MovementTarget{{0.0F, 0.0F}, 2.0F, false});
+		world->addComponent<NeedsComponent>(entity, NeedsComponent::createDefault());
+		world->addComponent<Memory>(entity, Memory{});
+		world->addComponent<Inventory>(entity, Inventory::createForColonist());
+		world->addComponent<Task>(entity, Task{});
+		world->addComponent<Action>(entity, Action{});
+		return entity;
+	}
+
+	/// A colonist arrived at a berry, hunger pre-set low, ready to start an Eat action.
+	EntityID createHungryEater(float hungerValue) {
+		auto colonist = createColonist();
+		auto* task = world->getComponent<Task>(colonist);
+		task->type = TaskType::FulfillNeed;
+		task->state = TaskState::Arrived;
+		task->needToFulfill = NeedType::Hunger;
+		task->targetPosition = {5.0F, 5.0F};
+		world->getComponent<Inventory>(colonist)->addItem("Berry", 3);
+		world->getComponent<NeedsComponent>(colonist)->get(NeedType::Hunger).value = hungerValue;
+		return colonist;
+	}
+
+	std::unique_ptr<World> world;
+	TimeSystem*			   timeSystem = nullptr;
+};
+
+// Paused freezes actions: an Eat starts (the start block isn't gated on dt) but never
+// progresses, because scaledDt = deltaTime * effectiveTimeScale() and the pause scale is 0.
+// The hunger need stays exactly where it was even after a huge real-time step.
+TEST_F(ActionSystemTimeTest, PausedFreezesActionProgress) {
+	timeSystem->setSpeed(GameSpeed::Paused);
+	ASSERT_FLOAT_EQ(timeSystem->effectiveTimeScale(), 0.0F);
+
+	auto  colonist = createHungryEater(30.0F);
+	auto* action = world->getComponent<Action>(colonist);
+	auto* needs = world->getComponent<NeedsComponent>(colonist);
+
+	world->update(100.0F); // a giant step that would finish any action at normal speed
+
+	EXPECT_TRUE(action->isActive()) << "Action starts even while paused";
+	EXPECT_EQ(action->type, ActionType::Eat);
+	EXPECT_FLOAT_EQ(action->elapsed, 0.0F) << "Paused scaledDt is 0, so no progress accrues";
+	EXPECT_LT(action->progress(), 1.0F);
+	EXPECT_FLOAT_EQ(needs->hunger().value, 30.0F) << "Need not restored - action never completed";
+}
+
+// Resuming from pause lets a frozen action progress again.
+TEST_F(ActionSystemTimeTest, ResumeUnfreezesActionProgress) {
+	timeSystem->setSpeed(GameSpeed::Paused);
+	auto  colonist = createHungryEater(30.0F);
+	auto* action = world->getComponent<Action>(colonist);
+
+	world->update(1.0F); // starts but frozen
+	ASSERT_FLOAT_EQ(action->elapsed, 0.0F);
+
+	timeSystem->setSpeed(GameSpeed::Normal);
+	world->update(0.5F);
+	EXPECT_GT(action->elapsed, 0.0F) << "Progress resumes once unpaused";
+}
+
+// A faster game speed completes the same action in proportionally fewer real seconds.
+// Eat is authored at 2.0s of game time; the real seconds needed scale by 1/effectiveTimeScale.
+// We assert the boundary on both sides of the threshold rather than a fixed frame count, and
+// confirm the faster tier needs strictly less real time than Normal.
+TEST_F(ActionSystemTimeTest, FasterSpeedCompletesActionInLessRealTime) {
+	constexpr float kEatDuration = 2.0F; // Action::Eat authored duration (game seconds)
+	constexpr float kEps = 0.01F;
+
+	// --- Normal (1x): needs ~kEatDuration real seconds ---
+	timeSystem->setSpeed(GameSpeed::Normal);
+	const float normalScale = timeSystem->effectiveTimeScale();
+	ASSERT_GT(normalScale, 0.0F);
+	const float normalRealSeconds = kEatDuration / normalScale;
+
+	{
+		auto  colonist = createHungryEater(30.0F);
+		auto* action = world->getComponent<Action>(colonist);
+		world->update(0.0F);							 // start the action (no progress)
+		world->update(normalRealSeconds - kEps);		 // just shy of completion
+		EXPECT_TRUE(action->isActive()) << "Not done before its (scaled) duration at Normal";
+		world->update(2.0F * kEps);						 // cross the threshold
+		EXPECT_FALSE(action->isActive()) << "Completed once scaled elapsed reached duration";
+	}
+
+	// --- Fastest tier: needs strictly fewer real seconds ---
+	timeSystem->setSpeed(GameSpeed::VeryFast);
+	const float fastScale = timeSystem->effectiveTimeScale();
+	ASSERT_GT(fastScale, normalScale) << "VeryFast must be a higher multiplier than Normal";
+	const float fastRealSeconds = kEatDuration / fastScale;
+	EXPECT_LT(fastRealSeconds, normalRealSeconds) << "Faster speed => fewer real seconds to finish";
+
+	{
+		auto  colonist = createHungryEater(30.0F);
+		auto* action = world->getComponent<Action>(colonist);
+		world->update(0.0F);						   // start
+		world->update(fastRealSeconds - kEps);		   // just shy
+		EXPECT_TRUE(action->isActive()) << "Not done before its (scaled) duration at VeryFast";
+		world->update(2.0F * kEps);					   // cross
+		EXPECT_FALSE(action->isActive()) << "Completed at the faster speed too";
+	}
+}
+
+// =============================================================================
+// Harvest durability -> seconds conversion (driven through ActionSystem's start path)
+// =============================================================================
+
+// The conversion `action.duration /= harvestWorkRate(skill)` only runs when a Harvest action
+// is freshly STARTED from a task (the `if (!action.isActive())` block). A pre-built
+// Action::Harvest has type != None, so isActive() is true and the start block - and the
+// divide - is skipped (that's why HarvestThenInventoryHaul, which pre-builds the action,
+// doesn't exercise it). To hit the real path we set up a Harvest TASK plus the world memory
+// and capability data startHarvestAction needs, then update once and assert the converted
+// seconds equal durability / harvestWorkRate(skill).
+class ActionSystemHarvestTimeTest : public ::testing::Test {
+  protected:
+	void SetUp() override {
+		world = std::make_unique<World>();
+
+		// Yield item (so getDefNameId("TestWood") resolves and matches the harvestable's yield).
+		engine::assets::AssetDefinition wood;
+		wood.defName = "TestWood";
+		wood.label = "Test Wood";
+		wood.itemProperties = engine::assets::ItemProperties{};
+		wood.itemProperties->stackSize = 50;
+		engine::assets::AssetRegistry::Get().registerTestDefinition(std::move(wood));
+
+		// Harvestable tree. The capability must be set BEFORE registering so the registry's
+		// capability mask (built in registerTestDefinition) marks it Harvestable; otherwise
+		// startHarvestAction's hasCapability() gate rejects it. durability 60 with the work
+		// rates (10/18 units per second at skill 0/10) gives clean expected seconds: 6.0 and 3.333.
+		engine::assets::AssetDefinition tree;
+		tree.defName = "Flora_TestTree";
+		tree.label = "Test Tree";
+		engine::assets::HarvestableCapability cap;
+		cap.yieldDefName = "TestWood";
+		cap.amountMin = 1; // amountMin == amountMax => deterministic yield, no RNG
+		cap.amountMax = 1;
+		cap.durability = 60.0F;
+		cap.destructive = true;
+		cap.regrowthTime = 0.0F;
+		cap.requiredToolType = ""; // empty => inventoryHoldsToolType passes for a tool-less colonist
+		tree.capabilities.harvestable = cap;
+		engine::assets::AssetRegistry::Get().registerTestDefinition(std::move(tree));
+
+		world->registerSystem<ActionSystem>();
+	}
+
+	void TearDown() override {
+		engine::assets::AssetRegistry::Get().clearDefinitions();
+		world.reset();
+	}
+
+	/// Create a colonist set up to start harvesting Flora_TestTree at `treePos`, with the
+	/// given Harvesting skill. Seeds memory with the tree (startHarvestAction scans memory,
+	/// not live world entities) and an Arrived Harvest task targeting it.
+	EntityID createHarvester(glm::vec2 treePos, float harvestingSkill) {
+		auto& registry = engine::assets::AssetRegistry::Get();
+
+		auto entity = world->createEntity();
+		world->addComponent<Position>(entity, Position{treePos});
+		world->addComponent<Velocity>(entity, Velocity{{0.0F, 0.0F}});
+		world->addComponent<MovementTarget>(entity, MovementTarget{{0.0F, 0.0F}, 2.0F, false});
+		world->addComponent<NeedsComponent>(entity, NeedsComponent::createDefault());
+		world->addComponent<Inventory>(entity, Inventory::createForColonist());
+		world->addComponent<Action>(entity, Action{});
+
+		Skills skills;
+		skills.setLevel("Harvesting", harvestingSkill);
+		world->addComponent<Skills>(entity, std::move(skills));
+
+		Memory memory;
+		memory.rememberWorldEntity(treePos, "Flora_TestTree"); // string overload interns + masks
+		world->addComponent<Memory>(entity, std::move(memory));
+
+		Task task;
+		task.type = TaskType::Harvest;
+		task.state = TaskState::Arrived;
+		task.targetPosition = treePos;
+		task.harvestYieldDefNameId = registry.getDefNameId("TestWood");
+		world->addComponent<Task>(entity, std::move(task));
+
+		return entity;
+	}
+
+	std::unique_ptr<World> world;
+};
+
+// Untrained forager: 60 work units / 10 units-per-second = 6.0s.
+TEST_F(ActionSystemHarvestTimeTest, ConvertsDurabilityToSecondsAtSkillZero) {
+	const glm::vec2 treePos{3.0F, 4.0F};
+	auto			harvester = createHarvester(treePos, 0.0F);
+
+	world->update(0.1F); // triggers startHarvestAction + the duration conversion
+
+	auto* action = world->getComponent<Action>(harvester);
+	ASSERT_EQ(action->type, ActionType::Harvest) << "Harvest action started from the task";
+	EXPECT_NEAR(action->duration, 60.0F / harvestWorkRate(0.0F), 0.001F);
+	EXPECT_NEAR(action->duration, 6.0F, 0.001F);
+}
+
+// Skilled forager: 60 / harvestWorkRate(10) = 60 / 18 = 3.333s. Proves the divide samples the
+// colonist's Harvesting skill, not a constant.
+TEST_F(ActionSystemHarvestTimeTest, ConvertsDurabilityToSecondsAtSkillTen) {
+	const glm::vec2 treePos{3.0F, 4.0F};
+	auto			harvester = createHarvester(treePos, 10.0F);
+
+	world->update(0.1F);
+
+	auto* action = world->getComponent<Action>(harvester);
+	ASSERT_EQ(action->type, ActionType::Harvest);
+	EXPECT_NEAR(action->duration, 60.0F / harvestWorkRate(10.0F), 0.001F);
+	EXPECT_NEAR(action->duration, 60.0F / 18.0F, 0.001F);
 }
 
 } // namespace ecs::test

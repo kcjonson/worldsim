@@ -1,5 +1,6 @@
 #include "ColonistDetailsModel.h"
 
+#include "scenes/game/ui/adapters/ColonistAdapter.h"
 #include "scenes/game/ui/adapters/GlobalTaskAdapter.h"
 
 #include <ecs/components/Colonist.h>
@@ -47,6 +48,7 @@ ColonistDetailsModel::UpdateType ColonistDetailsModel::refresh(ecs::World& world
 		prevMemoryCount = memoryData.totalKnown;
 		prevTaskCount = tasksData.totalCount;
 		prevBioTask = bioData.currentTask;
+		prevCurrentProgress = tasksData.currentProgress;
 		return UpdateType::Structure;
 	}
 
@@ -87,6 +89,11 @@ ColonistDetailsModel::UpdateType ColonistDetailsModel::refresh(ecs::World& world
 		valuesChanged = true;
 	}
 
+	// Check the running action's progress so the "Currently" meter animates as it fills.
+	if (std::abs(tasksData.currentProgress - prevCurrentProgress) > 0.01F) {
+		valuesChanged = true;
+	}
+
 	// Update previous values
 	prevNeedValues = healthData.needValues;
 	prevMood = healthData.mood;
@@ -94,6 +101,7 @@ ColonistDetailsModel::UpdateType ColonistDetailsModel::refresh(ecs::World& world
 	prevMemoryCount = memoryData.totalKnown;
 	prevTaskCount = tasksData.totalCount;
 	prevBioTask = bioData.currentTask;
+	prevCurrentProgress = tasksData.currentProgress;
 
 	return valuesChanged ? UpdateType::Values : UpdateType::None;
 }
@@ -393,8 +401,10 @@ void ColonistDetailsModel::extractTasksData(ecs::World& world, ecs::EntityID col
 	adapters::sortTasksForDisplay(tasksData.tasks);
 	tasksData.totalCount = tasksData.tasks.size();
 
-	// The "Currently" panel mirrors the bio task line (extractBioData ran first).
+	// The "Currently" panel mirrors the bio task line (extractBioData ran first) and
+	// adds the running action's progress for the meter.
 	tasksData.currentTask = bioData.currentTask;
+	tasksData.currentProgress = adapters::getColonistActivity(world, colonistId).progress;
 }
 
 } // namespace world_sim

@@ -19,7 +19,7 @@ using namespace UI;
 using namespace tabs;
 
 constexpr float kRowH		 = 28.0F; // known-work row height
-constexpr float kCurrentH	 = 56.0F; // "Currently" panel height
+constexpr float kCurrentH	 = 72.0F; // "Currently" panel height (kicker + task + meter)
 constexpr float kSectionGap	 = 16.0F;
 
 std::string toLower(std::string s) {
@@ -78,7 +78,14 @@ void TasksTabView::render() {
 		.transform	   = Foundation::TextTransform::Uppercase,
 	});
 	const std::string current = data_.currentTask.empty() ? "Idle" : data_.currentTask;
-	drawText(current, {px, y + space_2 + fs_2xs + 6.0F}, fs_md, UI::text_bright);
+	const float taskY = y + space_2 + fs_2xs + 6.0F;
+	drawText(current, {px, taskY}, fs_md, UI::text_bright);
+	// Progress meter for the running action (chopping, crafting, building, ...). Hidden
+	// when idle or still walking to the work (currentProgress < 0).
+	if (data_.currentProgress >= 0.0F) {
+		const std::string pctText = std::to_string(static_cast<int>(data_.currentProgress * 100.0F)) + "%";
+		drawMeter(px, taskY + fs_md + 6.0F, width - space_3 * 2.0F, "", data_.currentProgress, pctText, UI::accent);
+	}
 	y += kCurrentH + kSectionGap;
 
 	// ---- Known Work ----

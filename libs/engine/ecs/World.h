@@ -141,6 +141,16 @@ public:
         return *static_cast<const T*>(it->second);
     }
 
+    /// Get a registered system by type, or nullptr if it isn't registered.
+    /// For optional collaborators: a system can consult another (e.g. the game-speed
+    /// scale from TimeSystem) while still running in unit tests or tools that don't
+    /// register that collaborator.
+    template <typename T>
+    [[nodiscard]] T* tryGetSystem() {
+        auto it = systemMap.find(std::type_index(typeid(T)));
+        return it == systemMap.end() ? nullptr : static_cast<T*>(it->second);
+    }
+
     /// Update all systems in priority order
     void update(float deltaTime) {
         sortSystemsIfNeeded();
