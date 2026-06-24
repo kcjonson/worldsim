@@ -142,6 +142,19 @@ class NavigationSystem : public ISystem {
 	[[nodiscard]] bool isReachable(glm::vec2 startMeters, glm::vec2 goalMeters, float agentRadiusMeters,
 								   geometry::nav::BeliefFilter belief = {}) const;
 
+	// LOD seam predicate: true when `meters` falls inside the BUILT simulation area.
+	//
+	// LOD contract:
+	//   LOD0 = exact navmesh, covers the BUILT simulation area (builtCenter ± builtHalfExtent).
+	//   Outside LOD0 = beeline now (cheap far-field approximation).
+	//   LOD1 = FUTURE: a coarse regional graph for the long-haul leg; the plan is to path
+	//          to the area edge via LOD0, hand off to the coarse graph, and re-enter LOD0
+	//          near the goal. Until LOD1 exists the entire off-area leg is a beeline.
+	//
+	// Returns false when no mesh has been built yet (no BUILT area to test against);
+	// callers treat that the same as the no-mesh beeline path, which is correct.
+	[[nodiscard]] bool inSimArea(glm::vec2 meters) const;
+
 	// The current cached mesh (for the later debug overlay). Empty until hasMesh().
 	[[nodiscard]] const geometry::nav::NavMesh& mesh() const { return navMesh; }
 	[[nodiscard]] bool						  hasMesh() const { return !navMesh.triangles.empty(); }

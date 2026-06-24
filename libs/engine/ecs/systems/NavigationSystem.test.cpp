@@ -763,6 +763,81 @@ TEST_F(NavigationSystemTest, HalfExtentClampedToMax) {
 		<< "mesh AABB must not exceed the clamped max extent";
 }
 
+// --- Phase C: query LOD seam (inSimArea + isReachable off-area policy) -------
+//
+// inSimArea returns true for a point inside the BUILT area, false for a point
+// outside, and false when no mesh has been built yet (no built area to test
+// against). isReachable must return true ("can't prove unreachable") when either
+// endpoint is outside the area, even when a mesh is present that would otherwise
+// report the goal as disconnected.
+
+// inSimArea returns false before any mesh is built.
+TEST_F(NavigationSystemTest, InSimAreaFalseBeforeBuild) {
+	ConstructionWorld cw;
+
+	World world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	sys.setChunkManager(m_chunks.get());
+	sys.setConstructionWorld(&cw);
+	// Push an area but don't pump -- no mesh built yet.
+	pushArea(sys, {0, 0}, 60000);
+
+	ASSERT_FALSE(sys.hasMesh());
+	// Origin is inside the requested area but the built area doesn't exist yet.
+	EXPECT_FALSE(sys.inSimArea({0.0F, 0.0F}));
+}
+
+// inSimArea returns true for a point inside the built area, false outside it.
+TEST_F(NavigationSystemTest, InSimAreaTrueInsideFalseOutside) {
+	ConstructionWorld cw;
+
+	World world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	sys.setChunkManager(m_chunks.get());
+	sys.setConstructionWorld(&cw);
+
+	// 60 m area at origin: covers roughly (-60 m, -60 m) to (+60 m, +60 m).
+	pushArea(sys, {0, 0}, 60000);
+	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
+
+	// A point well inside the area.
+	EXPECT_TRUE(sys.inSimArea({0.0F, 0.0F}));
+	EXPECT_TRUE(sys.inSimArea({30.0F, 30.0F}));  // exactly on the edge is <=, so inside
+	// A point clearly outside the area (100 m from center, area half-extent is 60 m
+	// but the system clamps that to kMaxSimHalfExtentMm = 64 m, so 100 m is outside).
+	EXPECT_FALSE(sys.inSimArea({100.0F, 0.0F}));
+	EXPECT_FALSE(sys.inSimArea({0.0F, 100.0F}));
+}
+
+// isReachable returns true for an off-area goal even when a mesh is present and
+// the goal would be disconnected inside the area (because the mesh doesn't cover
+// the goal's location -- a false negative must not occur).
+TEST_F(NavigationSystemTest, IsReachableTrueForOffAreaGoal) {
+	ConstructionWorld cw;
+	// Closed room at origin: an in-area goal inside would return false (disconnected).
+	buildRoom(cw, /*withOpening=*/false, /*pathableOpening=*/false);
+
+	World world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	wireArea(sys);
+	sys.setConstructionWorld(&cw);
+	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
+
+	// Confirm in-area walled-off goal IS false (baseline: the closed room blocks it).
+	EXPECT_FALSE(sys.isReachable(kOutside, kInside, kAgentRadius))
+		<< "in-area closed-room goal should be false (baseline for this test)";
+
+	// Now try a goal far outside the built area: must return true ("can't prove unreachable").
+	const glm::vec2 offAreaGoal{200.0F, 200.0F}; // well outside 60 m area
+	EXPECT_TRUE(sys.isReachable(kOutside, offAreaGoal, kAgentRadius))
+		<< "off-area goal must return true (can't prove unreachable)";
+
+	// Also true when START is off-area.
+	const glm::vec2 offAreaStart{200.0F, 0.0F};
+	EXPECT_TRUE(sys.isReachable(offAreaStart, kInside, kAgentRadius))
+		<< "off-area start must return true (can't prove unreachable)";
+}
+
 // --- Memory::beliefVersion bump semantics ------------------------------------
 
 // rememberSegment bumps beliefVersion only on a NEW id; re-remembering does not;

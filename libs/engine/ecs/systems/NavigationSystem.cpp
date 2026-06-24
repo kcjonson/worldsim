@@ -168,6 +168,16 @@ namespace ecs {
 							[input = std::move(input)]() { return gnav::buildNavMesh(input); });
 	}
 
+	bool NavigationSystem::inSimArea(glm::vec2 meters) const {
+		// No built area yet: return false so callers fall through to the no-mesh beeline.
+		if (!haveBuiltOnce) {
+			return false;
+		}
+		const geometry::Vec2i64 pMm = engine::nav::toMm(meters);
+		return std::abs(pMm.x - builtCenter.x) <= builtHalfExtent
+			&& std::abs(pMm.y - builtCenter.y) <= builtHalfExtent;
+	}
+
 	std::optional<std::vector<glm::vec2>>
 	NavigationSystem::requestPath(glm::vec2 startMeters, glm::vec2 goalMeters, float agentRadiusMeters,
 								  gnav::BeliefFilter belief) const {
@@ -239,6 +249,14 @@ namespace ecs {
 		// mesh lands would starve them of any movement. Callers that need certainty
 		// can check hasMesh() first.
 		if (navMesh.triangles.empty()) {
+			return true;
+		}
+
+		// Off-area endpoint: the mesh covers only the simulation area. A goal (or start)
+		// outside that area lies off-mesh, so the exact component/bottleneck check would
+		// produce a false negative. Return true ("can't prove unreachable") -- the agent
+		// will beeline toward the area, then switch to LOD0 routing once it enters.
+		if (!inSimArea(startMeters) || !inSimArea(goalMeters)) {
 			return true;
 		}
 
