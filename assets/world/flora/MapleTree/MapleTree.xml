@@ -32,8 +32,8 @@
 
     <!-- No animation for now (trees sway is future work) -->
 
-    <!-- Trunk-base collision (half trunkWidth=0.15 -> radius 0.075m); not the canopy -->
-    <collision><circle radius="0.075"/></collision>
+    <!-- Trunk-base collision comes from the generator (asset:setCollisionRect,
+         half-extent = trunkWidth/2 = 0.075m), captured eagerly at load. -->
 
     <!-- Entity capabilities - felled for wood with an axe in one destructive action -->
     <!-- Whole-tree yield 14-22 wood (the old pool total, smaller than oak); the colonist takes a -->

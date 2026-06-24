@@ -4,6 +4,7 @@
 // Data structures for asset definitions parsed from XML.
 // Designed for C++ generators now with Lua drop-in compatibility later.
 
+#include <array>
 #include <cstdint>
 #include <filesystem>
 #include <optional>
@@ -267,15 +268,25 @@ namespace engine::assets {
 	// Most flora (grass, bushes) leave this at None and don't block movement.
 	// ─────────────────────────────────────────────────────────────────────────
 
-	enum class CollisionShapeType { None, Circle, Polygon };
+	enum class CollisionShapeType { None, Rect, Polygon };
 
 	struct CollisionShape {
 		CollisionShapeType     type = CollisionShapeType::None;
-		float                  radiusMeters = 0.0F;          // Circle
-		glm::vec2              offsetMeters{0.0F, 0.0F};     // Circle center offset from asset origin
+		glm::vec2              offsetMeters{0.0F, 0.0F};     // Rect center (local meters)
+		glm::vec2              halfExtentsMeters{0.0F, 0.0F};// Rect half width/height (local meters)
 		std::vector<glm::vec2> pointsMeters;                 // Polygon vertices (local space, CCW)
 
 		[[nodiscard]] bool blocks() const { return type != CollisionShapeType::None; }
+
+		// The rect's 4 corners in CCW order (local meters). The single source of
+		// truth for the rect quad: nav and Tier-3 collision both build from this.
+		[[nodiscard]] std::array<glm::vec2, 4> rectCornersLocal() const {
+			const glm::vec2 c  = offsetMeters;
+			const float     hx = halfExtentsMeters.x;
+			const float     hy = halfExtentsMeters.y;
+			return {glm::vec2{c.x - hx, c.y - hy}, glm::vec2{c.x + hx, c.y - hy},
+					glm::vec2{c.x + hx, c.y + hy}, glm::vec2{c.x - hx, c.y + hy}};
+		}
 	};
 
 	/// Animation parameters parsed from asset definition

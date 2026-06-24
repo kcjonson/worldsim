@@ -325,6 +325,7 @@ namespace engine::assets {
 		}
 
 		int loadedCount = 0;
+		std::vector<std::string> loadedNames;
 		for (pugi::xml_node defNode : root.children("AssetDef")) {
 			AssetDefinition def;
 
@@ -691,18 +692,20 @@ namespace engine::assets {
 			// Collision shape - optional physical footprint for navmesh/collision
 			pugi::xml_node collisionNode = defNode.child("collision");
 			if (collisionNode) {
-				pugi::xml_node circleNode = collisionNode.child("circle");
+				pugi::xml_node rectNode = collisionNode.child("rect");
 				pugi::xml_node polygonNode = collisionNode.child("polygon");
 
-				if (circleNode) {
-					float r = circleNode.attribute("radius").as_float(0.0F);
-					if (r <= 0.0F) {
-						LOG_WARNING(Engine, "AssetDef '%s' <collision><circle> has radius <= 0; ignoring", def.defName.c_str());
+				if (rectNode) {
+					const float minX = rectNode.attribute("minX").as_float(0.0F);
+					const float minY = rectNode.attribute("minY").as_float(0.0F);
+					const float maxX = rectNode.attribute("maxX").as_float(0.0F);
+					const float maxY = rectNode.attribute("maxY").as_float(0.0F);
+					if (maxX > minX && maxY > minY) {
+						def.collision.type			   = CollisionShapeType::Rect;
+						def.collision.offsetMeters	   = {(minX + maxX) * 0.5F, (minY + maxY) * 0.5F};
+						def.collision.halfExtentsMeters = {(maxX - minX) * 0.5F, (maxY - minY) * 0.5F};
 					} else {
-						def.collision.type = CollisionShapeType::Circle;
-						def.collision.radiusMeters = r;
-						def.collision.offsetMeters.x = circleNode.attribute("offsetX").as_float(0.0F);
-						def.collision.offsetMeters.y = circleNode.attribute("offsetY").as_float(0.0F);
+						LOG_WARNING(Engine, "AssetDef '%s' <collision><rect> is degenerate (max <= min); ignoring", def.defName.c_str());
 					}
 				} else if (polygonNode) {
 					for (pugi::xml_node ptNode : polygonNode.children("point")) {
@@ -723,7 +726,7 @@ namespace engine::assets {
 						def.collision.type = CollisionShapeType::Polygon;
 					}
 				} else {
-					LOG_WARNING(Engine, "AssetDef '%s' has <collision> with no valid <circle> or <polygon>; ignoring", def.defName.c_str());
+					LOG_WARNING(Engine, "AssetDef '%s' has <collision> with no valid <rect> or <polygon>; ignoring", def.defName.c_str());
 				}
 			}
 
@@ -731,8 +734,33 @@ namespace engine::assets {
 			def.baseFolder = baseFolder;
 
 			// Store definition
+			loadedNames.push_back(def.defName);
 			definitions[def.defName] = std::move(def);
 			loadedCount++;
+		}
+
+		// Eager collision capture: procedural generators can emit their collision
+		// footprint via asset:setCollisionRect, which only surfaces when the script
+		// runs. Run each such script once now (generateAsset does NOT tessellate, so
+		// this is cheap) so nav/collision see the rect at load instead of racing the
+		// first lazy render. XML <collision> always wins; skip capture when set.
+		for (const std::string& name : loadedNames) {
+			auto it = definitions.find(name);
+			if (it == definitions.end()) {
+				continue;
+			}
+			AssetDefinition& def = it->second;
+			if (def.collision.blocks() || def.assetType != AssetType::Procedural) {
+				continue;
+			}
+			GeneratedAsset tmp;
+			if (!generateAsset(name, 0, tmp)) {
+				LOG_WARNING(Engine, "Eager collision capture: generateAsset failed for '%s'; leaving collision None", name.c_str());
+				continue;
+			}
+			if (tmp.emittedCollision.has_value()) {
+				def.collision = *tmp.emittedCollision;
+			}
 		}
 
 		LOG_DEBUG(Engine, "Loaded %d asset definitions from %s", loadedCount, xmlPath.c_str());

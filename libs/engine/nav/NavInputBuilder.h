@@ -40,10 +40,9 @@ namespace engine::nav {
 	constexpr std::int64_t kProvenanceBorder   = -3;
 	constexpr std::int64_t kProvenanceJunction = -4;
 
-	// Pad added around a circle collision shape's radius before octagon-izing it, in
-	// mm. A small inflation keeps the agent's disc clear of the trunk rather than
-	// grazing it.
-	constexpr std::int64_t kFloraCirclePadMm = 50;
+	// Pad added outward around a flora collider before emitting its ring, in mm. A
+	// small inflation keeps the agent clear of the trunk rather than grazing it.
+	constexpr std::int64_t kFloraColliderPadMm = 50;
 
 	// --- Water -------------------------------------------------------------------
 
@@ -63,7 +62,7 @@ namespace engine::nav {
 
 	// One blocked ring for a single placed entity whose AssetDefinition has a
 	// blocking collision shape, transformed into world mm by the entity's position
-	// (tiles), rotation, and scale. Circle -> a padded octagon; Polygon -> its
+	// (tiles), rotation, and scale. Rect -> a padded oriented quad; Polygon -> its
 	// points transformed. Returns nullopt when the entity has no blocking collision
 	// (most flora) or the resulting ring is degenerate. This is the single per-entity
 	// code path shared by both the legacy index sweep and the area-scoped build, so
@@ -73,7 +72,7 @@ namespace engine::nav {
 
 	// One blocked ring per placed entity whose AssetDefinition has a blocking
 	// collision shape, transformed into world mm by the entity's position (tiles),
-	// rotation, and scale. Circle -> a padded octagon; Polygon -> its points
+	// rotation, and scale. Rect -> a padded oriented quad; Polygon -> its points
 	// transformed. Entities with no collision shape (most flora) emit nothing.
 	[[nodiscard]] std::vector<geometry::nav::NavInputPolygon>
 	extractFloraObstacles(const assets::SpatialIndex& index, const assets::AssetRegistry& registry);

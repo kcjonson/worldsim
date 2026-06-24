@@ -7,6 +7,10 @@ local trunkWidth  = getFloat("trunkWidth",  5.0)
 local frondCount  = getInt("frondCount",    7)
 local frondLength = getFloat("frondLength", 22.0)
 
+-- Trunk-base collision: a square footprint (half-extent = trunkWidth/2 each
+-- axis), captured before per-tree randomization so it is stable across variants.
+asset:setCollisionRect(trunkWidth / 2, trunkWidth / 2, 0, 0)
+
 -- Per-tree variation
 trunkHeight = trunkHeight * (0.7 + math.random() * 0.6)
 trunkWidth  = trunkWidth  * (0.7 + math.random() * 0.6)

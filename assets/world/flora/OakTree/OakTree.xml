@@ -28,8 +28,8 @@
       <tier>batched</tier>
     </rendering>
 
-    <!-- Trunk-base collision (half trunkWidth=0.2 -> radius 0.1m); not the canopy -->
-    <collision><circle radius="0.1"/></collision>
+    <!-- Trunk-base collision comes from the generator (asset:setCollisionRect,
+         half-extent = trunkWidth/2 = 0.1m), captured eagerly at load. -->
 
     <!-- Entity capabilities - felled for wood with an axe in one destructive action -->
     <!-- Whole-tree yield 20-30 wood (the old pool total); the colonist takes a weight-limited -->
