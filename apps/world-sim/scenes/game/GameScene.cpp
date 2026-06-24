@@ -83,6 +83,7 @@
 #include <ecs/systems/RoomDetectionSystem.h>
 #include <ecs/systems/StorageGoalSystem.h>
 #include <ecs/systems/TimeSystem.h>
+#include <ecs/systems/StaticRectCollisionSystem.h>
 #include <ecs/systems/VisionSystem.h>
 #include <ecs/systems/WallCollisionSystem.h>
 
@@ -953,6 +954,7 @@ namespace {
 			ecsWorld->registerSystem<ecs::PhysicsSystem>();									// Priority 200
 			ecsWorld->registerSystem<ecs::CollisionSystem>();								// Priority 250 - positional separation after physics
 			ecsWorld->registerSystem<ecs::WallCollisionSystem>();							// Priority 260 - wall safety-net after agent separation
+			ecsWorld->registerSystem<ecs::StaticRectCollisionSystem>();						// Priority 270 - flora-rect safety-net after wall collision
 			ecsWorld->registerSystem<ecs::ActionSystem>();									// Priority 350
 			ecsWorld->registerSystem<ecs::DynamicEntityRenderSystem>();						// Priority 900
 
@@ -975,6 +977,10 @@ namespace {
 			auto& navSystem = ecsWorld->getSystem<ecs::NavigationSystem>();
 			navSystem.setChunkManager(m_chunkManager.get());
 			navSystem.setPlacementData(m_placementExecutor.get(), &m_processedChunks);
+
+			// Tier-3 flora-rect safety net gathers placed rects locally each frame.
+			auto& staticRectCollisionSystem = ecsWorld->getSystem<ecs::StaticRectCollisionSystem>();
+			staticRectCollisionSystem.setPlacementData(m_placementExecutor.get());
 
 			// Wire up AIDecisionSystem with chunk manager for toilet location queries
 			auto& aiDecisionSystem = ecsWorld->getSystem<ecs::AIDecisionSystem>();
