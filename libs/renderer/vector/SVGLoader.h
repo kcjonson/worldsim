@@ -11,8 +11,12 @@ namespace renderer {
 /// A loaded SVG shape with flattened paths ready for tessellation
 struct LoadedSVGShape {
 	std::vector<VectorPath> paths;		 ///< Flattened polygon paths (Beziers already linearized)
+	bool					hasFill{true};	  ///< Whether the shape has a fill (false for stroke-only)
 	Foundation::Color		fillColor;	 ///< Solid fill color (and fallback when a gradient is ignored)
 	GradientFill			gradient;	 ///< Gradient fill; type == None for solid-color shapes
+	bool					hasStroke{false}; ///< Whether the shape has a stroke outline
+	Foundation::Color		strokeColor;	  ///< Stroke color (solid)
+	float					strokeWidth{0.0F}; ///< Stroke width in SVG user units
 	float					width{0.0F}; ///< Original SVG width
 	float					height{0.0F}; ///< Original SVG height
 };

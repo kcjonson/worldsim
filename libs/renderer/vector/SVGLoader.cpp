@@ -6,6 +6,7 @@
 #include "Bezier.h"
 #include "Tessellator.h"
 #include "utils/Log.h"
+#include <cmath>
 #include <memory>
 
 namespace renderer {
@@ -107,6 +108,92 @@ void processPath(NSVGpath* nsvgPath, float tolerance, VectorPath& outPath) {
 	}
 }
 
+constexpr size_t kMaxMeshVertices = 65535; // indices are 16-bit
+
+/// Append a centered stroke band of `width` along a polyline, with bevel joins. Closed polylines
+/// stroke all the way around; open ones get butt ends. The stroke color is baked per vertex. The
+/// join's outer wedge is picked from the local turn direction, so this is winding-independent.
+void appendStrokeBand(const std::vector<Foundation::Vec2>& pts, bool closed, float width,
+					  const Foundation::Color& color, TessellatedMesh& outMesh) {
+	const size_t n = pts.size();
+	if (n < 2 || width <= 0.0F) {
+		return;
+	}
+	const float hw = width * 0.5F;
+
+	auto addVert = [&](float x, float y) -> uint16_t {
+		const auto idx = static_cast<uint16_t>(outMesh.vertices.size());
+		outMesh.vertices.push_back(Foundation::Vec2{x, y});
+		outMesh.colors.push_back(color);
+		return idx;
+	};
+	auto addTri = [&](uint16_t a, uint16_t b, uint16_t c) {
+		outMesh.indices.push_back(a);
+		outMesh.indices.push_back(b);
+		outMesh.indices.push_back(c);
+	};
+
+	const size_t segCount = closed ? n : n - 1;
+	for (size_t i = 0; i < segCount; ++i) {
+		if (outMesh.vertices.size() + 4 > kMaxMeshVertices) {
+			return;
+		}
+		const Foundation::Vec2& a = pts[i];
+		const Foundation::Vec2& b = pts[(i + 1) % n];
+		const float				dx = b.x - a.x;
+		const float				dy = b.y - a.y;
+		const float				len = std::sqrt((dx * dx) + (dy * dy));
+		if (len < 1e-6F) {
+			continue;
+		}
+		const float	   nx = (-dy / len) * hw; // left normal * half-width
+		const float	   ny = (dx / len) * hw;
+		const uint16_t a0 = addVert(a.x + nx, a.y + ny);
+		const uint16_t a1 = addVert(a.x - nx, a.y - ny);
+		const uint16_t b0 = addVert(b.x + nx, b.y + ny);
+		const uint16_t b1 = addVert(b.x - nx, b.y - ny);
+		addTri(a0, b0, b1);
+		addTri(a0, b1, a1);
+	}
+
+	const size_t firstJoin = closed ? 0 : 1;
+	const size_t lastJoin = closed ? n : n - 1;
+	for (size_t k = firstJoin; k < lastJoin; ++k) {
+		if (outMesh.vertices.size() + 3 > kMaxMeshVertices) {
+			return;
+		}
+		const Foundation::Vec2& prev = pts[(k + n - 1) % n];
+		const Foundation::Vec2& cur = pts[k];
+		const Foundation::Vec2& next = pts[(k + 1) % n];
+		float					d0x = cur.x - prev.x;
+		float					d0y = cur.y - prev.y;
+		float					d1x = next.x - cur.x;
+		float					d1y = next.y - cur.y;
+		const float				l0 = std::sqrt((d0x * d0x) + (d0y * d0y));
+		const float				l1 = std::sqrt((d1x * d1x) + (d1y * d1y));
+		if (l0 < 1e-6F || l1 < 1e-6F) {
+			continue;
+		}
+		d0x /= l0;
+		d0y /= l0;
+		d1x /= l1;
+		d1y /= l1;
+		const float cross = (d0x * d1y) - (d0y * d1x);
+		if (std::abs(cross) < 1e-4F) {
+			continue; // nearly straight; the segment quads already meet
+		}
+		const float	   n0x = -d0y * hw;
+		const float	   n0y = d0x * hw;
+		const float	   n1x = -d1y * hw;
+		const float	   n1y = d1x * hw;
+		const float	   s = (cross > 0.0F) ? -1.0F : 1.0F; // outer wedge side
+		const uint16_t c = addVert(cur.x, cur.y);
+		const uint16_t p0 = addVert(cur.x + (s * n0x), cur.y + (s * n0y));
+		const uint16_t p1 = addVert(cur.x + (s * n1x), cur.y + (s * n1y));
+		addTri(c, p0, p1);
+	}
+}
+
 } // anonymous namespace
 
 bool loadSVG(const std::string& filepath, float curveTolerance, std::vector<LoadedSVGShape>& outShapes) {
@@ -129,14 +216,17 @@ bool loadSVG(const std::string& filepath, float curveTolerance, std::vector<Load
 			continue;
 		}
 
-		// Only handle filled shapes for now (strokes would require different handling)
-		if (shape->fill.type == NSVG_PAINT_NONE) {
+		// Skip only shapes that have neither a fill nor a stroke.
+		const bool fillNone = (shape->fill.type == NSVG_PAINT_NONE);
+		const bool strokeNone = (shape->stroke.type == NSVG_PAINT_NONE) || (shape->strokeWidth <= 0.0F);
+		if (fillNone && strokeNone) {
 			continue;
 		}
 
 		LoadedSVGShape loadedShape;
 		loadedShape.width = image->width;
 		loadedShape.height = image->height;
+		loadedShape.hasFill = !fillNone;
 
 		// Extract fill: solid color, or a linear/radial gradient (evaluated per vertex downstream)
 		if (shape->fill.type == NSVG_PAINT_COLOR) {
@@ -146,8 +236,22 @@ bool loadSVG(const std::string& filepath, float curveTolerance, std::vector<Load
 			// Solid fallback (first stop) for any consumer that ignores the gradient.
 			loadedShape.fillColor =
 				loadedShape.gradient.stops.empty() ? Foundation::Color::white() : loadedShape.gradient.stops.front().color;
-		} else {
+		} else if (!fillNone) {
 			loadedShape.fillColor = Foundation::Color::white();
+		}
+
+		// Extract stroke (solid color; gradient strokes fall back to their first stop).
+		if (!strokeNone) {
+			loadedShape.hasStroke = true;
+			loadedShape.strokeWidth = shape->strokeWidth;
+			if (shape->stroke.type == NSVG_PAINT_COLOR) {
+				loadedShape.strokeColor = convertColor(shape->stroke.color, shape->opacity);
+			} else if (shape->stroke.type == NSVG_PAINT_LINEAR_GRADIENT || shape->stroke.type == NSVG_PAINT_RADIAL_GRADIENT) {
+				const GradientFill sg = convertGradient(shape->stroke.type, shape->stroke.gradient, shape->opacity);
+				loadedShape.strokeColor = sg.stops.empty() ? Foundation::Color::white() : sg.stops.front().color;
+			} else {
+				loadedShape.strokeColor = Foundation::Color::white();
+			}
 		}
 
 		// Process each path in the shape
@@ -171,57 +275,58 @@ bool loadSVG(const std::string& filepath, float curveTolerance, std::vector<Load
 }
 
 void appendShapeMesh(const LoadedSVGShape& shape, TessellatedMesh& outMesh) {
-	Tessellator tessellator;
+	// --- Fill ---
+	if (shape.hasFill) {
+		Tessellator tessellator;
+		const bool	hasGradient = (shape.gradient.type != GradientFill::Type::None);
 
-	const bool hasGradient = (shape.gradient.type != GradientFill::Type::None);
+		TessellatorOptions options;
+		// Only honored for a single subpath (where a convex fan may apply); multi-subpath shapes go
+		// through the sweep, which ignores it. Setting it there would be an accepted-but-dropped option.
+		options.fanFromCentroid = hasGradient && shape.paths.size() == 1;
 
-	TessellatorOptions options;
-	// Only honored for a single subpath (where a convex fan may apply); multi-subpath shapes go
-	// through the sweep, which ignores it. Setting it there would be an accepted-but-dropped option.
-	options.fanFromCentroid = hasGradient && shape.paths.size() == 1;
-
-	// Tessellate all of a shape's subpaths together so the nonzero fill rule carves holes where
-	// subpaths overlap (the SVG hole convention), instead of filling each subpath solid. The
-	// common single-subpath case stays a direct, allocation-free call (and keeps the fast path).
-	TessellatedMesh shapeMesh;
-	bool			ok = false;
-	if (shape.paths.size() == 1) {
-		if (shape.paths[0].vertices.size() < 3) {
-			return;
-		}
-		ok = tessellator.Tessellate(shape.paths[0], shapeMesh, options);
-	} else {
-		std::vector<VectorPath> contours;
-		contours.reserve(shape.paths.size());
-		for (const auto& path : shape.paths) {
-			if (path.vertices.size() >= 3) {
-				contours.push_back(path);
+		// Tessellate all of a shape's subpaths together so the nonzero fill rule carves holes where
+		// subpaths overlap (the SVG hole convention), instead of filling each subpath solid.
+		TessellatedMesh shapeMesh;
+		bool			ok = false;
+		if (shape.paths.size() == 1) {
+			if (shape.paths[0].vertices.size() >= 3) {
+				ok = tessellator.Tessellate(shape.paths[0], shapeMesh, options);
+			}
+		} else {
+			std::vector<VectorPath> contours;
+			contours.reserve(shape.paths.size());
+			for (const auto& path : shape.paths) {
+				if (path.vertices.size() >= 3) {
+					contours.push_back(path);
+				}
+			}
+			if (!contours.empty()) {
+				ok = tessellator.Tessellate(contours, shapeMesh, options);
 			}
 		}
-		if (contours.empty()) {
-			return;
+
+		if (!ok) {
+			LOG_WARNING(Renderer, "appendShapeMesh: failed to tessellate fill (%zu subpaths)", shape.paths.size());
+		} else if (outMesh.vertices.size() + shapeMesh.vertices.size() > kMaxMeshVertices) {
+			LOG_WARNING(Renderer, "appendShapeMesh: mesh would exceed %zu vertices; dropping fill", kMaxMeshVertices);
+		} else {
+			const auto baseIndex = static_cast<uint16_t>(outMesh.vertices.size());
+			for (const auto& v : shapeMesh.vertices) {
+				outMesh.vertices.push_back(v);
+				outMesh.colors.push_back(hasGradient ? shape.gradient.colorAt(v) : shape.fillColor);
+			}
+			for (const auto idx : shapeMesh.indices) {
+				outMesh.indices.push_back(static_cast<uint16_t>(baseIndex + idx));
+			}
 		}
-		ok = tessellator.Tessellate(contours, shapeMesh, options);
-	}
-	if (!ok) {
-		LOG_WARNING(Renderer, "appendShapeMesh: failed to tessellate shape (%zu subpaths)", shape.paths.size());
-		return;
 	}
 
-	// Indices are 16-bit and accumulate across every shape appended to this mesh.
-	constexpr size_t kMaxMeshVertices = 65535;
-	if (outMesh.vertices.size() + shapeMesh.vertices.size() > kMaxMeshVertices) {
-		LOG_WARNING(Renderer, "appendShapeMesh: mesh would exceed %zu vertices; dropping shape", kMaxMeshVertices);
-		return;
-	}
-
-	const auto baseIndex = static_cast<uint16_t>(outMesh.vertices.size());
-	for (const auto& v : shapeMesh.vertices) {
-		outMesh.vertices.push_back(v);
-		outMesh.colors.push_back(hasGradient ? shape.gradient.colorAt(v) : shape.fillColor);
-	}
-	for (const auto idx : shapeMesh.indices) {
-		outMesh.indices.push_back(static_cast<uint16_t>(baseIndex + idx));
+	// --- Stroke (on top of the fill, matching SVG paint order) ---
+	if (shape.hasStroke && shape.strokeWidth > 0.0F) {
+		for (const auto& sub : shape.paths) {
+			appendStrokeBand(sub.vertices, sub.isClosed, shape.strokeWidth, shape.strokeColor, outMesh);
+		}
 	}
 }
 
