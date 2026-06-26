@@ -1017,9 +1017,19 @@ namespace {
 			// Unlike the crafting drop above, this pile is NOT packaged: a per-entity ResourceStack
 			// holds the count and it is immediately haulable in weight-limited armfuls.
 			actionSystem.setDropResourceCallback([this](const std::string& defName, float x, float y, uint32_t quantity) {
-				auto entity = m_placementSystem->spawnEntity(defName, {x, y});
-				ecsWorld->addComponent<ecs::ResourceStack>(entity, ecs::ResourceStack{quantity});
-				LOG_INFO(Game, "Dropped loose pile of %u x '%s' at (%.1f, %.1f)", quantity, defName.c_str(), x, y);
+				// A pile is capped at the item's own stackSize, so an over-cap drop splits into
+				// several piles scattered to distinct spots (within the 0.25 m pickup epsilon two
+				// piles would alias). No def / no itemProperties means unbounded -> a single pile.
+				const auto*	   def = engine::assets::AssetRegistry::Get().getDefinition(defName);
+				const uint32_t cap =
+					(def != nullptr && def->itemProperties.has_value()) ? def->itemProperties->stackSize : UINT32_MAX;
+				const auto piles = ecs::resourcePileDrops(cap, quantity, {x, y});
+				for (const auto& [pos, qty] : piles) {
+					auto entity = m_placementSystem->spawnEntity(defName, {pos.x, pos.y});
+					ecsWorld->addComponent<ecs::ResourceStack>(entity, ecs::ResourceStack{qty});
+				}
+				LOG_INFO(Game, "Dropped %u x '%s' as %zu stacks at (%.1f, %.1f)", quantity, defName.c_str(),
+						 piles.size(), x, y);
 			});
 
 			// Wire up ActionSystem to remove harvested entities (destructive harvest)

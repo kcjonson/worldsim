@@ -597,12 +597,8 @@ namespace world_sim {
 			blueprint.required.emplace_back(material, requiredQty);
 		}
 		blueprint.workTotal = area * workRate;
-		// Size the delivery slots to the manifest so the whole material order fits across stacks.
-		const uint32_t deliverySlots = ecs::Inventory::slotsForManifest(blueprint.required);
+		auto deliveryInv = ecs::Inventory::createForBuildSite(blueprint.required);
 		m_ctx.world->addComponent<ecs::StructureBlueprint>(entity, std::move(blueprint));
-
-		ecs::Inventory deliveryInv;
-		deliveryInv.maxCapacity = deliverySlots;
 		m_ctx.world->addComponent<ecs::Inventory>(entity, std::move(deliveryInv));
 
 		const float maxHp = area * hpRate;
