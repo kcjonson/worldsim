@@ -12,13 +12,12 @@
     <generator>
       <scriptPath>@shared/palm.lua</scriptPath>
       <params>
-        <!-- Trunk narrower and taller than oak (palms are slender) -->
-        <trunkHeight>1.4</trunkHeight>
+        <!-- Slender palm trunk; the script scales + varies these per-tree -->
         <trunkWidth>0.12</trunkWidth>
         <!-- Frond reach in meters -->
         <frondLength>0.7</frondLength>
-        <!-- Number of fronds radiating from crown -->
-        <frondCount>7</frondCount>
+        <!-- Base frond count; the script jitters it to ~7-13 -->
+        <frondCount>9</frondCount>
       </params>
     </generator>
 
