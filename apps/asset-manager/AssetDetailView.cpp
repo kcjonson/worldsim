@@ -278,9 +278,10 @@ namespace asset_manager {
 			return;
 		}
 
-		// Collision points live in the asset's local meter space, the same space as the
-		// raw mesh the preview was built from. localToScreen replays the preview's exact
-		// fitToRect math, so the outline lands on the art. ONE transform source.
+		// Collision points are in the asset's local meter space; how they map to the
+		// preview depends on the collider's frame (procedural = mesh coords, simple SVG =
+		// bbox-centered), handled in the draw loop below. Both reuse the preview's own
+		// fitToRect math so the outline lands on the art.
 		std::vector<glm::vec2> local;
 		if (m_def->collision.type == engine::assets::CollisionShapeType::Rect) {
 			const std::array<glm::vec2, 4> corners = m_def->collision.rectCornersLocal();
@@ -294,8 +295,12 @@ namespace asset_manager {
 
 		std::vector<Foundation::Vec2> screen;
 		screen.reserve(local.size());
+		// Simple (SVG) assets author the collider in SVG <metadata>, converted to the
+		// bbox-CENTERED frame (relative to the entity origin), so it maps from the preview
+		// center; procedural colliders are in the generator's mesh-coord frame.
+		const bool centered = m_def->assetType == engine::assets::AssetType::Simple;
 		for (const glm::vec2& p : local) {
-			screen.push_back(m_preview.localToScreen(p));
+			screen.push_back(centered ? m_preview.centeredToScreen(p) : m_preview.localToScreen(p));
 		}
 
 		const Foundation::Color outline{0.0F, 1.0F, 1.0F, 1.0F}; // bright cyan, high contrast on art

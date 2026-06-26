@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 156 122" width="156" height="122">
+  <!-- Big Rock - tree-sized boulder, top-down, cel-shaded gray. Squat and
+       broad with an angular, asymmetric silhouette (straight faceted edges),
+       light from the upper-left split across a diagonal into a lit dome and a
+       shaded lower-right plane. Closed filled polygons only (straight segments,
+       so the loaded-vertex bbox equals the authored coords exactly -- no Bezier
+       bowing), no strokes-as-fills, tessellation-safe.
+
+       Collision: an AABB over the solid footprint. The rim polygon below sets
+       the loaded-vertex bbox to x:[20,136] y:[16,106] -> center (78,61). The
+       aabb is centered on that, so the resulting Rect lands on the entity. -->
+  <metadata>
+    <collision>
+      <shape type="aabb" min="36,30" max="120,94"/>
+    </collision>
+  </metadata>
+
+  <!-- Dark rim / silhouette (darkest). Angular asymmetric outline; sets bbox. -->
+  <path d="M40,26 L72,16 L104,22 L128,42 L136,70 L122,96 L92,106 L58,104 L32,90 L20,62 L26,40 Z" fill="#3c3c3c"/>
+
+  <!-- Base tone (inset so the dark rim reads as an outline). -->
+  <path d="M44,33 L72,24 L101,30 L122,46 L129,70 L116,91 L90,100 L60,98 L37,85 L28,62 L33,44 Z" fill="#6a6a6a"/>
+
+  <!-- Shaded lower-right plane (darker than base; the off-light facet). -->
+  <path d="M122,46 L129,70 L116,91 L90,100 L60,98 L37,85 Z" fill="#565656"/>
+
+  <!-- Lit dome facet (upper-left of the diagonal; lighter than base). -->
+  <path d="M28,62 L33,44 L72,24 L101,30 L122,46 L37,85 Z" fill="#7a7a7a"/>
+
+  <!-- Highlight facet (upper-left, where the light lands). -->
+  <path d="M44,40 L72,30 L96,38 L84,58 L58,62 L36,52 Z" fill="#8a8a8a"/>
+
+  <!-- Bright cap (smallest, brightest, upper-left). -->
+  <path d="M52,44 L72,38 L86,48 L78,58 L60,58 L48,50 Z" fill="#9a9a9a"/>
+
+  <!-- Dark seams for stone texture (thin slivers on the shaded side). -->
+  <path d="M96,52 L101,53 L110,86 L104,86 Z" fill="#4c4c4c"/>
+  <path d="M74,76 L78,76 L82,99 L77,99 Z" fill="#4c4c4c"/>
+</svg>

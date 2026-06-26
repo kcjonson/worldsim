@@ -15,6 +15,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
 #include <unordered_map>
@@ -74,6 +75,22 @@ namespace engine::assets {
 		/// This is the single shared "defName + seed -> mesh" entry point.
 		/// @return true if a non-empty mesh was produced
 		bool buildMesh(const std::string& defName, uint32_t seed, renderer::TessellatedMesh& outMesh);
+
+		/// Parse a collision shape from an SVG file's <metadata><collision> block.
+		/// Simple (SVG-backed) assets can author a collider directly in the SVG; the
+		/// authored points are in SVG user units and are converted to the local-meter
+		/// frame using the SAME scaleFactor (worldHeight / svgHeight) and centering
+		/// (svg center -> origin) the render mesh uses in getTemplate +
+		/// DynamicEntityRenderSystem, so the collider lands on the rendered art.
+		///
+		/// Returns nullopt (without loading the SVG) when the file carries no
+		/// collision metadata, and nullopt + a warning when the authored shape is
+		/// degenerate.
+		/// @param absoluteSvgPath Absolute path to the .svg file
+		/// @param worldHeight     The asset's worldHeight in meters (for normalization)
+		[[nodiscard]] static std::optional<CollisionShape> loadCollisionFromSvgMetadata(
+			const std::string& absoluteSvgPath, float worldHeight
+		);
 
 		/// Clear all loaded definitions and cached templates
 		void clear();

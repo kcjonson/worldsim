@@ -100,6 +100,23 @@ namespace asset_manager {
 		return {fitX + m_pos.x, fitY + m_pos.y};
 	}
 
+	Foundation::Vec2 AssetThumbnail::centeredToScreen(const glm::vec2& local) {
+		ensureMesh();
+		const Foundation::Rect& src = m_sourceBounds;
+		const Foundation::Rect& dst = m_targetRect;
+		// Degenerate source: match localToScreen (raw local + draw offset, no centering).
+		if (src.width <= 0.0F || src.height <= 0.0F) {
+			return {local.x + m_pos.x, local.y + m_pos.y};
+		}
+		const float scale	   = std::min(dst.width / src.width, dst.height / src.height);
+		const float dstCenterX = dst.x + (dst.width * 0.5F);
+		const float dstCenterY = dst.y + (dst.height * 0.5F);
+		// `local` is already relative to the mesh bbox center, which fitToRect maps to the
+		// target-rect center -- so scale straight from there (no srcCenter subtraction,
+		// which localToScreen does for raw mesh coords).
+		return {dstCenterX + (local.x * scale) + m_pos.x, dstCenterY + (local.y * scale) + m_pos.y};
+	}
+
 	void AssetThumbnail::render() {
 		if (!visible) {
 			return;

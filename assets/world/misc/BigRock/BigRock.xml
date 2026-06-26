@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Big Rock - tree-sized boulder that blocks movement.
+     Pure obstacle: not collectible, not harvestable. Its collider lives in the
+     SVG <metadata> (an AABB -> Rect) so nav routes around it and Tier-3 static
+     collision pushes agents out, exactly like a tree trunk. -->
+<AssetDefinitions>
+  <AssetDef>
+    <defName>BigRock</defName>
+    <label>Big Rock</label>
+    <assetType>simple</assetType>
+    <svgPath>big_rock.svg</svgPath>
+    <worldHeight>1.5</worldHeight>
+
+    <rendering>
+      <complexity>simple</complexity>
+      <tier>instanced</tier>
+    </rendering>
+
+    <!-- No item, no capabilities: this is a fixed obstacle, not loot. -->
+
+    <!-- Sparse, spaced scatter across a few temperate/montane biomes. -->
+    <placement>
+      <biome name="TemperateDeciduousForest">
+        <spawnChance>0.004</spawnChance>
+        <distribution>spaced</distribution>
+        <spacing>
+          <minDistance>15</minDistance>
+        </spacing>
+      </biome>
+
+      <biome name="TemperateGrassland">
+        <spawnChance>0.003</spawnChance>
+        <distribution>spaced</distribution>
+        <spacing>
+          <minDistance>18</minDistance>
+        </spacing>
+      </biome>
+
+      <biome name="MontaneForest">
+        <spawnChance>0.008</spawnChance>
+        <distribution>spaced</distribution>
+        <spacing>
+          <minDistance>12</minDistance>
+        </spacing>
+      </biome>
+
+      <biome name="AlpineGrassland">
+        <spawnChance>0.012</spawnChance>
+        <distribution>spaced</distribution>
+        <spacing>
+          <minDistance>10</minDistance>
+        </spacing>
+      </biome>
+
+      <groups>
+        <group>obstacles</group>
+        <group>landmarks</group>
+      </groups>
+
+      <relationships>
+        <!-- Boulders keep their distance from each other so they read as
+             standalone landmarks, not rubble fields. -->
+        <avoids type="same" distance="15" penalty="0.5"/>
+      </relationships>
+    </placement>
+
+    <variantCount>1</variantCount>
+  </AssetDef>
+</AssetDefinitions>
