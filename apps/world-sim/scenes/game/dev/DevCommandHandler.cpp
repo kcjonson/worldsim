@@ -597,9 +597,7 @@ namespace world_sim {
 			blueprint.required.emplace_back(material, requiredQty);
 		}
 		blueprint.workTotal = area * workRate;
-		auto deliveryInv = ecs::Inventory::createForBuildSite(blueprint.required);
 		m_ctx.world->addComponent<ecs::StructureBlueprint>(entity, std::move(blueprint));
-		m_ctx.world->addComponent<ecs::Inventory>(entity, std::move(deliveryInv));
 
 		const float maxHp = area * hpRate;
 		m_ctx.world->addComponent<ecs::StructureHealth>(entity, ecs::StructureHealth{maxHp, maxHp});

@@ -4,7 +4,6 @@
 
 #include <assets/ConstructionRegistry.h>
 #include <construction/OpeningGeometry.h>
-#include <ecs/components/Inventory.h>
 #include <ecs/components/Structure.h>
 #include <ecs/components/StructureBlueprint.h>
 #include <ecs/components/StructureHealth.h>
@@ -468,9 +467,7 @@ namespace world_sim {
 			blueprint.required.emplace_back(activeMaterial_, requiredQty);
 		}
 		blueprint.workTotal = area * workRate;
-		auto deliveryInv = ecs::Inventory::createForBuildSite(blueprint.required);
 		ecsWorld_->addComponent<ecs::StructureBlueprint>(entity, std::move(blueprint));
-		ecsWorld_->addComponent<ecs::Inventory>(entity, std::move(deliveryInv));
 
 		// HP scales with area; full HP is only meaningful once built but the
 		// component exists from creation (architecture: avoid a later migration).
@@ -843,9 +840,7 @@ namespace world_sim {
 				blueprint.required.emplace_back(segment->material, requiredQty);
 			}
 		}
-		auto deliveryInv = ecs::Inventory::createForBuildSite(blueprint.required);
 		ecsWorld_->addComponent<ecs::StructureBlueprint>(entity, std::move(blueprint));
-		ecsWorld_->addComponent<ecs::Inventory>(entity, std::move(deliveryInv));
 
 		const float maxHp = areaEquivalent * hpRate;
 		ecsWorld_->addComponent<ecs::StructureHealth>(entity, ecs::StructureHealth{maxHp, maxHp});
@@ -1055,9 +1050,7 @@ namespace world_sim {
 				blueprint.required.emplace_back(type->material, requiredQty);
 			}
 		}
-		auto deliveryInv = ecs::Inventory::createForBuildSite(blueprint.required);
 		ecsWorld_->addComponent<ecs::StructureBlueprint>(entity, std::move(blueprint));
-		ecsWorld_->addComponent<ecs::Inventory>(entity, std::move(deliveryInv));
 
 		// Openings are not area-derived, so HP is a small fixed value scaled by the
 		// material's per-m^2 hp (a door/window is roughly a square meter of structure).

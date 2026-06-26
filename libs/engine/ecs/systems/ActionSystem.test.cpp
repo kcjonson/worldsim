@@ -16,6 +16,8 @@
 #include "../components/Packaged.h"
 #include "../components/ResourceStack.h"
 #include "../components/Skills.h"
+#include "../components/Structure.h"
+#include "../components/StructureBlueprint.h"
 #include "../components/Task.h"
 #include "../components/Transform.h"
 
@@ -1104,6 +1106,113 @@ TEST_F(HandMaterialActionTest, DepositFromHandsToMissingStorageReturnsAllToBothH
 	EXPECT_EQ(inventory->rightHand->quantity, 14U) << "All 14 return mirrored across both hands";
 	EXPECT_EQ(handHeldQuantity(*inventory, "Wood"), 14U) << "Nothing lost when storage is gone";
 	EXPECT_EQ(registry.getGoal(haulId)->deliveredAmount, 0U) << "Destroyed storage credits nothing";
+}
+
+// A build site holds NO Inventory: a deposit records straight onto the blueprint's delivered[]
+// manifest, capped at its requirement. A 14-Wood armful onto a site needing only 10 records 10,
+// bounces the 4-unit surplus back mirrored across both hands, and credits the haul goal 10.
+TEST_F(HandMaterialActionTest, DepositToBuildSiteRecordsOnManifestAndBouncesOverDelivery) {
+	auto& registry = GoalTaskRegistry::Get();
+
+	// A build site: Structure + StructureBlueprint requiring 10 Wood, no Inventory component.
+	auto buildSite = world->createEntity();
+	world->addComponent<Structure>(buildSite, Structure{StructureKind::Foundation, /*graphId=*/0});
+	StructureBlueprint bp;
+	bp.phase = StructureBlueprint::BuildPhase::AwaitingMaterials;
+	bp.required = {{"Wood", 10}};
+	bp.workTotal = 20.0F;
+	world->addComponent<StructureBlueprint>(buildSite, bp);
+	ASSERT_FALSE(world->hasComponent<Inventory>(buildSite)) << "a build site carries no Inventory";
+
+	GoalTask haul;
+	haul.type = TaskType::Haul;
+	haul.owner = GoalOwner::ConstructionGoalSystem;
+	haul.destinationEntity = buildSite;
+	haul.targetAmount = 14;
+	haul.status = GoalStatus::Available;
+	uint64_t haulId = registry.createGoal(std::move(haul));
+
+	auto  colonist = createColonist({0.0F, 0.0F});
+	auto* inventory = world->getComponent<Inventory>(colonist);
+	seatArmful(*inventory, 14);
+
+	auto* task = world->getComponent<Task>(colonist);
+	task->type = TaskType::Haul;
+	task->state = TaskState::Arrived;
+	task->haulGoalId = haulId;
+	task->targetPosition = {0.0F, 0.0F};
+
+	auto* action = world->getComponent<Action>(colonist);
+	*action = Action::Deposit("Wood", 14, static_cast<uint64_t>(buildSite), {0.0F, 0.0F});
+
+	world->update(0.1F); // start
+	world->update(2.0F); // complete (deposit duration 1s)
+
+	const auto* recorded = world->getComponent<StructureBlueprint>(buildSite);
+	ASSERT_NE(recorded, nullptr);
+	EXPECT_EQ(recorded->remaining("Wood"), 0U) << "manifest filled to its 10 requirement";
+	EXPECT_TRUE(recorded->materialsComplete()) << "10 recorded >= 10 required";
+
+	// The 4-unit surplus bounced back as a mirrored armful (two-hand Wood never enters the backpack).
+	ASSERT_TRUE(inventory->leftHand.has_value());
+	ASSERT_TRUE(inventory->rightHand.has_value());
+	EXPECT_EQ(inventory->leftHand->quantity, 4U);
+	EXPECT_EQ(inventory->rightHand->quantity, 4U) << "surplus stays mirrored across both hands";
+	EXPECT_EQ(handHeldQuantity(*inventory, "Wood"), 4U);
+	EXPECT_EQ(inventory->getQuantity("Wood"), 0U) << "no surplus spilled into the backpack";
+
+	// The haul goal is credited only the 10 recorded and SURVIVES with leftover capacity (target 14,
+	// 10 delivered): the deposit retires a build-site haul goal only at availableCapacity() == 0, so
+	// the over-delivered surplus the colonist still carries can land on another open site next trip.
+	const auto* survivingGoal = registry.getGoal(haulId);
+	ASSERT_NE(survivingGoal, nullptr) << "an over-delivered haul goal keeps its leftover capacity, not removed";
+	EXPECT_EQ(survivingGoal->deliveredAmount, 10U) << "goal credited only the 10 recorded";
+	EXPECT_EQ(survivingGoal->availableCapacity(), 4U) << "14 target - 10 recorded = 4 capacity still open";
+}
+
+// The mirror of the over-delivery case: an EXACT delivery (haul goal target == the site's
+// requirement) fills the manifest and drains the goal to availableCapacity() == 0, so the deposit
+// removes it. Confirms the build-site deposit retires a satisfied haul goal rather than leaking it.
+TEST_F(HandMaterialActionTest, DepositToBuildSiteRemovesHaulGoalOnExactDelivery) {
+	auto& registry = GoalTaskRegistry::Get();
+
+	auto buildSite = world->createEntity();
+	world->addComponent<Structure>(buildSite, Structure{StructureKind::Foundation, /*graphId=*/0});
+	StructureBlueprint bp;
+	bp.phase = StructureBlueprint::BuildPhase::AwaitingMaterials;
+	bp.required = {{"Wood", 10}};
+	bp.workTotal = 20.0F;
+	world->addComponent<StructureBlueprint>(buildSite, bp);
+
+	GoalTask haul;
+	haul.type = TaskType::Haul;
+	haul.owner = GoalOwner::ConstructionGoalSystem;
+	haul.destinationEntity = buildSite;
+	haul.targetAmount = 10; // exactly the requirement
+	haul.status = GoalStatus::Available;
+	uint64_t haulId = registry.createGoal(std::move(haul));
+
+	auto  colonist = createColonist({0.0F, 0.0F});
+	auto* inventory = world->getComponent<Inventory>(colonist);
+	seatArmful(*inventory, 10);
+
+	auto* task = world->getComponent<Task>(colonist);
+	task->type = TaskType::Haul;
+	task->state = TaskState::Arrived;
+	task->haulGoalId = haulId;
+	task->targetPosition = {0.0F, 0.0F};
+
+	auto* action = world->getComponent<Action>(colonist);
+	*action = Action::Deposit("Wood", 10, static_cast<uint64_t>(buildSite), {0.0F, 0.0F});
+
+	world->update(0.1F); // start
+	world->update(2.0F); // complete
+
+	const auto* recorded = world->getComponent<StructureBlueprint>(buildSite);
+	ASSERT_NE(recorded, nullptr);
+	EXPECT_TRUE(recorded->materialsComplete()) << "10 recorded == 10 required";
+	EXPECT_EQ(handHeldQuantity(*inventory, "Wood"), 0U) << "the whole armful was deposited, no bounce";
+	EXPECT_EQ(registry.getGoal(haulId), nullptr) << "an exactly-filled haul goal (capacity 0) is removed";
 }
 
 // A craft whose only input is two-hand Wood consumes it straight from the hands: the

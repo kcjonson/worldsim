@@ -111,6 +111,27 @@ namespace ecs {
 			return (have >= need) ? 0 : (need - have);
 		}
 
+		/// Record a delivery of `qty` units of `defName` onto the site, capped so delivered
+		/// never exceeds the requirement for that material. delivered[] is the authoritative
+		/// tracker (a build site holds no Inventory): haul deposits call this, and the material
+		/// gate reads it. Over-target deliveries are recorded only up to remaining; the surplus
+		/// is the caller's to bounce back. Returns the amount actually recorded (<= qty).
+		uint32_t recordDelivery(const std::string& defName, uint32_t qty) {
+			const uint32_t room = remaining(defName);
+			if (room == 0 || qty == 0) {
+				return 0; // material not required, already satisfied, or nothing to record
+			}
+			const uint32_t recorded = std::min(qty, room);
+			for (auto& [name, have] : delivered) {
+				if (name == defName) {
+					have += recorded;
+					return recorded;
+				}
+			}
+			delivered.emplace_back(defName, recorded);
+			return recorded;
+		}
+
 		/// Build progress in [0, 1]. Returns 0 when workTotal == 0 (blueprint
 		/// freshly created; total has not been computed yet).
 		[[nodiscard]] float progress() const {

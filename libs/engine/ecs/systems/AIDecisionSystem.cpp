@@ -310,7 +310,7 @@ namespace ecs {
 				//  - Craft-material hauls (Haul is a child of a Craft goal): deliver to the
 				//    crafting station (items stay in inventory for the Craft action).
 				//  - Construction-material hauls (owner ConstructionGoalSystem): deliver to the
-				//    blueprint, which has a delivery Inventory the deposit lands in.
+				//    blueprint, where the deposit records the material onto the blueprint's delivered[] manifest.
 				// Both skip the memory scan and emit only once the dependency completed (status
 				// Available) and the colonist actually carries the material.
 				bool inventorySourceHaul = goal->owner == GoalOwner::ConstructionGoalSystem;

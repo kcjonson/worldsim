@@ -302,4 +302,54 @@ namespace ecs::test {
 		EXPECT_EQ(notified, blueprint);
 	}
 
+	// A BUILT structure's salvage is dropped at tear-down COMPLETION, not at the demolish-order
+	// tick. The drop itself is GameScene's job (dropResourcePiles lives there), but it reads the
+	// blueprint's delivered[] inside the structure-deconstructed callback. This test pins the
+	// engine-side contract that makes that possible: when the Deconstruct WORK completes, the
+	// callback fires exactly once and delivered[] is still intact at that moment, so refundPercent%
+	// of the manifest is computable THEN (the salvage timing the GameScene hook depends on). No
+	// salvage is computed mid-teardown -- only once, at completion.
+	TEST_F(BuildActionSystemTest, DeconstructSalvagesRefundPercentAtCompletion) {
+		constexpr float kRefundPercent = 50.0F;
+
+		// Model the GameScene salvage: read delivered[] in the callback and compute refundPercent%.
+		std::vector<std::pair<std::string, uint32_t>> salvaged;
+		int											callbackCount = 0;
+		actionSystem->setStructureDeconstructedCallback([&](EntityID e) {
+			++callbackCount;
+			const auto* bp = world->getComponent<StructureBlueprint>(e);
+			ASSERT_NE(bp, nullptr) << "the entity is still alive when the callback fires";
+			for (const auto& [defName, qty] : bp->delivered) {
+				const auto salvageQty =
+					static_cast<uint32_t>(static_cast<float>(qty) * kRefundPercent / 100.0F);
+				if (salvageQty > 0) {
+					salvaged.emplace_back(defName, salvageQty);
+				}
+			}
+		});
+
+		auto  builder = createBuilder(0.0F);
+		auto  blueprint = createBlueprint(20.0F);
+		auto* bp = world->getComponent<StructureBlueprint>(blueprint);
+		bp->phase = StructureBlueprint::BuildPhase::Complete;
+		bp->workDone = 20.0F;				// a fully built structure being torn down
+		bp->delivered = {{"Wood", 30}};		// built: delivered == required, the salvage source
+		assignDeconstructTask(builder, blueprint);
+
+		world->update(1.0F); // 10 of 20 removed: mid-teardown, NOT complete
+		EXPECT_FLOAT_EQ(world->getComponent<StructureBlueprint>(blueprint)->workDone, 10.0F);
+		EXPECT_EQ(callbackCount, 0) << "no salvage until the tear-down work completes";
+		EXPECT_TRUE(salvaged.empty());
+
+		world->update(5.0F); // finish teardown
+		EXPECT_FLOAT_EQ(world->getComponent<StructureBlueprint>(blueprint)->workDone, 0.0F);
+
+		// Completion fired the callback once; delivered[] was intact, so refundPercent 50 of 30
+		// Wood = 15 salvaged THEN.
+		EXPECT_EQ(callbackCount, 1) << "the salvage fires once, at tear-down completion";
+		ASSERT_EQ(salvaged.size(), 1U) << "one salvaged material";
+		EXPECT_EQ(salvaged.front().first, "Wood");
+		EXPECT_EQ(salvaged.front().second, 15U) << "refundPercent 50 of 30 Wood = 15";
+	}
+
 } // namespace ecs::test

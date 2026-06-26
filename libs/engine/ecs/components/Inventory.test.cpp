@@ -554,21 +554,6 @@ TEST_F(InventoryStackTest, GetAllItemsAggregatesStacksPerType) {
 	EXPECT_EQ(stone, 15U);
 }
 
-TEST_F(InventoryStackTest, ManifestSlotSizingCoversMultiStackMaterials) {
-	// sum_i ceil(required_i / stackSize_i) + headroom: 200 Wood (5) + 25 Stone (3) + 2.
-	const std::vector<std::pair<std::string, uint32_t>> manifest = {{"Wood", 200}, {"Stone", 25}};
-	const uint32_t slots = Inventory::slotsForManifest(manifest);
-	EXPECT_EQ(slots, 5U + 3U + Inventory::kManifestSlotHeadroom);
-
-	// A delivery inventory sized this way holds the whole manifest with room to spare.
-	Inventory inv;
-	inv.maxCapacity = slots;
-	EXPECT_EQ(inv.addItem("Wood", 200), 200U);
-	EXPECT_EQ(inv.addItem("Stone", 25), 25U);
-	EXPECT_EQ(inv.getQuantity("Wood"), 200U);
-	EXPECT_EQ(inv.getQuantity("Stone"), 25U);
-}
-
 TEST_F(InventoryStackTest, UnregisteredMaterialStaysUnbounded) {
 	// A defName with no asset def is not stack-limited: one slot, arbitrary quantity.
 	Inventory inv;

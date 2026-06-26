@@ -8,6 +8,7 @@
 #include "../../components/Inventory.h"
 #include "../../components/Memory.h"
 #include "../../components/Packaged.h"
+#include "../../components/StructureBlueprint.h"
 #include "../../components/Task.h"
 #include "../../components/Transform.h"
 
@@ -63,9 +64,41 @@ namespace ecs {
 		uint32_t removed = twoHand ? ecs::removeFromHands(inventory, depEff.itemDefName, depEff.quantity)
 								   : inventory.removeItem(depEff.itemDefName, depEff.quantity);
 		if (removed > 0) {
-			// Add to storage container's inventory
-			auto* storageInv = world->getComponent<Inventory>(static_cast<EntityID>(depEff.storageEntityId));
-			if (storageInv != nullptr) {
+			const auto storageEntity = static_cast<EntityID>(depEff.storageEntityId);
+
+			// A build site (blueprint) holds no Inventory: the material is recorded straight onto
+			// the blueprint's delivered[] manifest, capped at its requirement. A storage container
+			// owns an Inventory and the goods land there. These are the only two deposit targets.
+			if (auto* blueprint = world->getComponent<StructureBlueprint>(storageEntity)) {
+				uint32_t recorded = blueprint->recordDelivery(depEff.itemDefName, removed);
+				if (recorded < removed) {
+					// Over the requirement: bounce the surplus back to the colonist (mirrored armful
+					// for two-hand goods, backpack otherwise) rather than overfilling the manifest.
+					uint32_t leftover = removed - recorded;
+					if (twoHand) {
+						ecs::addArmful(inventory, registry, depEff.itemDefName, leftover);
+					} else {
+						inventory.addItem(depEff.itemDefName, leftover);
+					}
+				}
+				LOG_INFO(
+					Engine,
+					"[Action] Delivered %u x %s to build site %llu (recorded on manifest)",
+					recorded,
+					depEff.itemDefName.c_str(),
+					static_cast<unsigned long long>(depEff.storageEntityId)
+				);
+
+				if (recorded > 0 && task.type == TaskType::Haul && task.haulGoalId != 0) {
+					auto& goalRegistry = GoalTaskRegistry::Get();
+					goalRegistry.recordDelivery(task.haulGoalId, recorded);
+
+					const auto* goal = goalRegistry.getGoal(task.haulGoalId);
+					if (goal != nullptr && goal->availableCapacity() == 0) {
+						goalRegistry.removeGoal(task.haulGoalId);
+					}
+				}
+			} else if (auto* storageInv = world->getComponent<Inventory>(storageEntity)) {
 				uint32_t added = storageInv->addItem(depEff.itemDefName, removed);
 				if (added < removed) {
 					// Storage full - put remaining back in colonist inventory
@@ -87,8 +120,7 @@ namespace ecs {
 				}
 
 				// Record delivery only for items that actually landed in storage. If the
-				// store was full (partial add) or destroyed (no storageInv, items bounced
-				// back), nothing is credited - the goal stays open.
+				// store was full (partial add), nothing more is credited - the goal stays open.
 				if (added > 0 && task.type == TaskType::Haul && task.haulGoalId != 0) {
 					auto& goalRegistry = GoalTaskRegistry::Get();
 					goalRegistry.recordDelivery(task.haulGoalId, added);
@@ -100,7 +132,8 @@ namespace ecs {
 					}
 				}
 			} else {
-				// Storage entity not found - put items back, credit nothing
+				// Target is neither a build site nor a storage container (destroyed/gone) - put
+				// items back, credit nothing.
 				if (twoHand) {
 					ecs::addArmful(inventory, registry, depEff.itemDefName, removed);
 				} else {
@@ -108,7 +141,7 @@ namespace ecs {
 				}
 				LOG_WARNING(
 					Engine,
-					"[Action] Storage entity %llu not found, items returned to inventory",
+					"[Action] Deposit target %llu not found, items returned to inventory",
 					static_cast<unsigned long long>(depEff.storageEntityId)
 				);
 			}
@@ -169,25 +202,25 @@ namespace ecs {
 
 		// Inventory-source haul: the colonist already carries the harvested items, so there is
 		// no ground pickup. It walks to the destination and deposits. Single-phase. The deposit
-		// mode depends on the destination: a build site (blueprint) has a delivery Inventory the
-		// Wood lands in for real; a crafting station has none, so "delivery" just credits the
+		// mode depends on the destination: a build site (blueprint) records the material onto its
+		// manifest for real; a crafting station has no blueprint, so "delivery" just credits the
 		// goal and the items stay in inventory for the Craft action to consume.
 		if (task.haulFromInventory) {
-			const bool targetHasInventory =
-				world->hasComponent<Inventory>(static_cast<EntityID>(task.haulTargetStorageId));
+			const bool targetIsBuildSite =
+				world->hasComponent<StructureBlueprint>(static_cast<EntityID>(task.haulTargetStorageId));
 			action = Action::Deposit(
 				task.haulItemDefName,
 				task.haulQuantity,
 				task.haulTargetStorageId,
 				task.haulTargetPosition,
-				/*deliverToCraftStation=*/!targetHasInventory
+				/*deliverToCraftStation=*/!targetIsBuildSite
 			);
 			LOG_DEBUG(
 				Engine,
 				"[Action] Haul-from-inventory: deliver %u x %s to %s %llu",
 				task.haulQuantity,
 				task.haulItemDefName.c_str(),
-				targetHasInventory ? "build site" : "crafting station",
+				targetIsBuildSite ? "build site" : "crafting station",
 				static_cast<unsigned long long>(task.haulTargetStorageId)
 			);
 			return;

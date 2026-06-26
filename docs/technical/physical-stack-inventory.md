@@ -55,10 +55,10 @@ Becomes an ordered slot collection (`std::vector<ItemStack>`), each entry one st
 - `getAllItems()` for display aggregates per type (show "Wood x46", not two rows).
 
 ### `StructureBlueprint.delivered/required`
-Stay as totals; `reconcileDelivered` reads `getQuantity` (now summed across stacks), so material accounting holds with no schema change. `materialsComplete()` unchanged.
+Stay as totals. **Superseded:** a later refactor made `delivered[]` the authoritative tracker (`StructureBlueprint::recordDelivery`); build sites carry no Inventory and `reconcileDelivered` is gone. `materialsComplete()` unchanged.
 
 ### Build-site delivery inventory
-`DrawingSystem.cpp` (3 sites) + `DevCommandHandler`: drop `maxStackSize = 100000` / `maxCapacity = 8`; size slots from the manifest. `applyDepositEffect` spills wood across slots; the bounce-back-to-hands path only fires when the container is genuinely full.
+**Superseded:** build sites no longer carry a delivery Inventory. `applyDepositEffect` records straight onto `delivered[]` via `recordDelivery` (capped at the requirement; the surplus bounces back to the colonist's hands); `slotsForManifest`/`createForBuildSite` were deleted.
 
 ### Ground-pile drop
 `GameScene` drop-resource callback splits a `> stackSize` quantity into multiple `ResourceStack` entities on nearby tiles.
