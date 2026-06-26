@@ -22,7 +22,7 @@ assets/world/flora/<Name>/<name>.svg      <- for simple assets, referenced by <s
 - `worldHeight` (simple) — meters; SVG is scaled so its bounding-box height maps to this. Procedural geometry is already in meters, so procedural defs omit it.
 - `rendering` — `<complexity>` `simple` | `complex`; `<tier>` `instanced` | `batched`; `<variantCount>` (also valid as a top-level element) number of pre-generated mesh variants.
 - `animation` (optional) — `<type>parametric</type>`, `<windResponse>` 0..1, `<swayFrequency>min,max</swayFrequency>`.
-- `collision` (optional) — e.g. `<circle radius="0.1"/>` (trunk-base footprint, not the canopy).
+- `collision` (optional) — physical footprint for nav + Tier-3 collision, separate from the render mesh. **Procedural assets emit it from the generator** (`asset:setCollisionRect(halfW, halfH, cx, cy)`; the shared tree scripts already emit a trunk rect from `trunkWidth`), so a procedural def usually needs no `<collision>` element. For a manual override (or a simple asset), declare `<collision><rect minX="" minY="" maxX="" maxY=""/></collision>` (a trunk-base footprint, not the canopy) or `<collision><polygon><point x="" y=""/>...</polygon></collision>` (>= 3 CCW points). XML wins over a generator emit. Rect or polygon only — there is no `<circle>`.
 - `capabilities` (optional) — `<harvestable .../>`, attrs: `yield`, `amountMin`, `amountMax`, `duration`, `destructive`, `totalResourceMin`, `totalResourceMax`, `requiresTool`, `regrowthTime`.
 - `placement` — one `<biome name="...">` per biome with `<spawnChance>` and a `<distribution>` (`uniform` | `clumped` | `spaced`) plus its params (`<clumping>` or `<spacing><minDistance>`). Plus `<groups>` and optional `<relationships>` (`<affinity .../>`, `<avoids .../>`).
 
@@ -53,7 +53,8 @@ Biome names must match the worldgen biome ids (e.g. `TemperateDeciduousForest`, 
       <tier>batched</tier>
     </rendering>
 
-    <collision><circle radius="0.08"/></collision>
+    <!-- No <collision>: @shared/deciduous.lua emits the trunk rect from trunkWidth via asset:setCollisionRect. -->
+
 
     <capabilities>
       <harvestable yield="Wood" amountMin="5" amountMax="8" duration="7.0"

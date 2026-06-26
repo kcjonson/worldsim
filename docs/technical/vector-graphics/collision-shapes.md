@@ -1,313 +1,110 @@
-# Collision Shapes - Dual Representation Design
+# Collision Shapes
 
 Created: 2025-10-24
-Status: Design
+Status: Implemented (2026-06-24)
 
-## Overview
+An asset's collision geometry is separate from its render geometry. The render
+mesh is hundreds of triangles for visuals; the collider is one simple shape, so
+nav and physics stay cheap. A tree's canopy is ~500 triangles to draw and a
+single trunk rect to collide with.
 
-Vector graphics entities have **two separate geometric representations**:
-1. **Render Geometry**: Complex, detailed, many triangles (for visuals)
-2. **Collision Geometry**: Simplified, few shapes (for physics)
+## The shape
 
-This separation optimizes both rendering and physics performance.
+`AssetDefinition::collision` is a `CollisionShape` (`libs/engine/assets/AssetDefinition.h`):
 
-## Rationale
-
-**Rendering Needs**:
-- High detail for visual quality
-- Smooth curves (many triangles)
-- Can have 100-500 triangles per entity
-
-**Physics Needs**:
-- Fast collision detection (simple shapes)
-- Convex shapes preferred (faster algorithms)
-- Typically 1-10 shapes per entity
-
-**Example - Tree**:
-- Render: 500 triangles (trunk + leaves)
-- Collision: 1 AABB for trunk (4 vertices)
-- **100× simpler collision geometry**
-
-## Collision Shape Types
-
-### 1. Axis-Aligned Bounding Box (AABB)
-
-**Simplest, fastest**:
 ```cpp
-struct AABB {
-    vec2 min, max;
-};
+enum class CollisionShapeType { None, Rect, Polygon };
 
-bool Collides(const AABB& a, const AABB& b) {
-    return a.min.x < b.max.x && a.max.x > b.min.x &&
-           a.min.y < b.max.y && a.max.y > b.min.y;
-}
-```
+struct CollisionShape {
+    CollisionShapeType     type = None;
+    glm::vec2              offsetMeters{0, 0};       // Rect center, local meters
+    glm::vec2              halfExtentsMeters{0, 0};  // Rect half width/height, local meters
+    std::vector<glm::vec2> pointsMeters;             // Polygon vertices, local meters, CCW
 
-**Use For**: Trees, buildings, simple objects
-**Pros**: Extremely fast, trivial to compute
-**Cons**: Poor fit for rotated objects
-
-### 2. Oriented Bounding Box (OBB)
-
-**AABB with rotation**:
-```cpp
-struct OBB {
-    vec2 center;
-    vec2 halfExtents;
-    float rotation;
+    bool blocks() const { return type != None; }
+    std::array<glm::vec2, 4> rectCornersLocal() const; // 4 CCW corners, center +/- half-extents
 };
 ```
 
-**Use For**: Walls, fences, rectangular structures
-**Pros**: Better fit than AABB, still fast
-**Cons**: More complex collision detection (SAT)
+Rect or polygon, nothing else. A **Rect** is the default (a trunk-base rect for
+trees); a **Polygon** is the rare complex case. There is no Circle and no
+compound shape; an asset never carries more than one collider.
 
-### 3. Circle
+The rect is authored axis-aligned in local meters (`offsetMeters` center +
+`halfExtentsMeters`). It is **not** a world-space AABB: entities rotate, so at
+runtime the 4 local corners (`rectCornersLocal()`) are transformed by the
+entity's scale, rotation, and position into a world-space **oriented quad**
+(OBB). `rectCornersLocal()` is the single source of the corner set. There is no
+world-AABB fast path.
 
-**Simple, rotation-invariant**:
-```cpp
-struct Circle {
-    vec2 center;
-    float radius;
-};
+## Authoring (three homes, by asset type)
 
-bool Collides(const Circle& a, const Circle& b) {
-    float dist = Distance(a.center, b.center);
-    return dist < (a.radius + b.radius);
-}
-```
+1. **Procedural (Lua) assets emit it from the generator.** A generator script
+   calls `asset:setCollisionRect(halfWidthMeters, halfHeightMeters, centerXMeters,
+   centerYMeters)` (`libs/engine/assets/lua/LuaEngine.cpp`). The trees emit a
+   trunk rect from `trunkWidth`: `asset:setCollisionRect(trunkWidth/2,
+   trunkWidth/2, 0, 0)` in the shared `deciduous.lua` / `conifer.lua` /
+   `palm.lua`. Coordinates are in the script's `(0,0)`-centered meter frame (see
+   the flora-asset skill's lua-api reference). Non-positive extents are ignored.
 
-**Use For**: Barrels, boulders, round objects
-**Pros**: Fastest collision check, rotation-free
-**Cons**: Poor fit for elongated shapes
+   Because the navmesh reads collision eagerly but a generator otherwise runs
+   lazily at first render, `AssetRegistry::loadDefinitions` runs a post-pass that
+   executes each procedural generator once at load (cheap; no tessellation) to
+   capture the emitted rect, so nav sees the collider before the first render
+   instead of racing it.
 
-### 4. Convex Polygon
+2. **XML manual override.** `<collision><rect minX="" minY="" maxX="" maxY=""/></collision>`
+   parses to center + half-extents (degenerate `max <= min` is rejected to
+   `None`); `<collision><polygon><point x="" y=""/>...</polygon></collision>`
+   needs >= 3 points. Parsed in `AssetRegistry.cpp`. **XML wins over a Lua emit**
+   when both are present.
 
-**Flexible, accurate**:
-```cpp
-struct ConvexPolygon {
-    std::vector<vec2> vertices; // Must be convex, CCW order
-};
+3. **SVG `<metadata>` for simple (SVG-backed) assets** — `<metadata><collision>
+   <shape type="aabb" min="x,y" max="x,y"/></collision></metadata>`, read via a
+   pugixml second pass over the .svg (NanoSVG ignores `<metadata>`). **Not yet
+   implemented** (tracked as Phase D2): no SVG-backed asset declares a collider
+   today, and the subtlety is converting SVG user units to meters with the *same*
+   `scaleFactor` (worldHeight / svgHeight) and Y convention the render mesh uses,
+   computed lazily in `getTemplate`. When it lands, SVG metadata wins over XML
+   for SVG assets.
 
-// Collision via Separating Axis Theorem (SAT)
-```
+## Consumers (the collider feeds two systems at the same clearance)
 
-**Use For**: Complex shapes needing accuracy
-**Pros**: Better fit than primitives
-**Cons**: Slower (SAT is O(n))
+- **Navigation.** `NavInputBuilder` (`libs/engine/nav/`) carves the rect into the
+  viewport-anchored simulation-area navmesh as an obstacle ring, inflated outward
+  by the flora pad `kFloraColliderPadMm` (0.05 m) so a routed agent clears the
+  trunk. Polygon and rect both transform through the same scale/rotate/translate.
+  Agents route around the obstacle.
 
-### 5. Compound Shapes
+- **Tier-3 static collision.** `StaticRectCollisionSystem` (priority 270) pushes
+  an agent **center** out of the rect inflated by the **same** 0.05 m pad (a
+  point-vs-oriented-OBB push-out), so an agent shoved into a trunk by other
+  forces can't walk through it. It does not use the agent's disc radius as the
+  clearance.
 
-**Multiple primitives combined**:
-```cpp
-struct CompoundShape {
-    std::vector<CollisionShape> shapes; // Mix of AABBs, circles, etc.
-};
-```
+The two boundaries coincide on purpose: the pad is applied in local space
+*before* the entity scale in both (`scale * (halfExtent + pad)`), so nav and
+Tier-3 agree at every entity scale and never fight (no boundary jitter). Keep any
+future Tier-3 clearance `<=` the nav pad.
 
-**Example**: Character = circle (body) + AABB (weapon)
-**Pros**: Flexibility, accuracy
-**Cons**: Multiple collision checks
+## Tooling
 
-## Generating Collision Shapes from Vector Paths
+The asset-manager detail pane draws the collider as a cyan outline over the
+preview (aligned via the preview's own `fitToRect` transform), with a "no
+collider" label when `type == None`, so an author can confirm a trunk rect sits
+on the trunk. See `apps/asset-manager/AssetDetailView.cpp`.
 
-### Method 1: Bounding Box (Simplest)
+## Not built (and intentionally so)
 
-```cpp
-AABB ComputeBoundingBox(const VectorPath& path) {
-    vec2 min = vec2(FLT_MAX);
-    vec2 max = vec2(-FLT_MAX);
+The original 2025-10-24 design (in git history) sketched a broader menu --
+Circle, compound shapes, and automatic collider generation from the render path
+(bounding box, Graham-scan convex hull, Douglas-Peucker simplification). None of
+that shipped. Colliders are **authored**, not auto-derived, and the runtime
+shape set is just Rect + Polygon. Circle was dropped outright (a "super long
+snake needs a long skinny rectangle, not a disc"). Revisit only if a real asset
+needs a shape the rect/polygon pair can't express.
 
-    for (const BezierCurve& curve : path.curves) {
-        // Sample curve points
-        for (float t = 0.0f; t <= 1.0f; t += 0.1f) {
-            vec2 p = EvaluateBezier(curve, t);
-            min = Min(min, p);
-            max = Max(max, p);
-        }
-    }
+## Related
 
-    return {min, max};
-}
-```
-
-### Method 2: Convex Hull
-
-**Generate minimal convex polygon containing all points**:
-
-```cpp
-ConvexPolygon ComputeConvexHull(const VectorPath& path) {
-    std::vector<vec2> points = SamplePath(path, 0.05f);
-    return GrahamScan(points); // O(n log n) convex hull algorithm
-}
-```
-
-**Algorithms**:
-- Graham Scan: O(n log n)
-- Jarvis March: O(nh) where h = hull points
-- QuickHull: O(n log n) average
-
-### Method 3: Manual Definition in SVG
-
-**Artist-defined collision shapes** (recommended):
-
-```xml
-<metadata>
-    <collision>
-        <shape type="aabb">
-            <min x="10" y="90"/>
-            <max x="20" y="100"/>
-        </shape>
-    </collision>
-</metadata>
-```
-
-**Pros**: Perfect control, optimal performance
-**Cons**: Manual work for artists
-
-### Method 4: Simplified Polygon
-
-**Tessellate then simplify** (Douglas-Peucker algorithm):
-
-```cpp
-std::vector<vec2> SimplifyPolygon(const std::vector<vec2>& points, float epsilon) {
-    // Douglas-Peucker: recursively remove points within epsilon distance
-    return DouglasPeucker(points, epsilon);
-}
-```
-
-## Storage Format
-
-### In-Memory Representation
-
-```cpp
-struct VectorEntity {
-    // Rendering
-    AssetID assetID;
-    TessellatedMesh renderMesh;  // Hundreds of triangles
-
-    // Collision
-    CollisionShapeType collisionType;
-    union {
-        AABB aabb;
-        Circle circle;
-        OBB obb;
-        ConvexPolygon* polygon; // Heap-allocated if complex
-    } collisionShape;
-};
-```
-
-### In SVG File
-
-```xml
-<svg>
-    <metadata>
-        <collision>
-            <shape type="aabb" min="10,90" max="20,100"/>
-            <!-- or -->
-            <shape type="circle" center="15,50" radius="5"/>
-            <!-- or -->
-            <shape type="polygon" vertices="0,0 10,0 10,10 0,10"/>
-            <!-- or compound -->
-            <shapes>
-                <shape type="circle" center="15,30" radius="8"/>
-                <shape type="aabb" min="10,90" max="20,100"/>
-            </shapes>
-        </collision>
-    </metadata>
-
-    <!-- Render paths -->
-    <path d="..." fill="#..."/>
-</svg>
-```
-
-## Integration with Physics/ECS
-
-```cpp
-// Components
-struct RenderComponent {
-    TessellatedMesh mesh;
-};
-
-struct CollisionComponent {
-    CollisionShape shape;
-    CollisionLayer layer;  // What this collides with
-};
-
-// Collision System (separate from rendering)
-class CollisionSystem : public System {
-    void Update(float deltaTime) {
-        auto view = registry.view<CollisionComponent, TransformComponent>();
-
-        // Broad phase: spatial grid
-        SpatialGrid grid(chunkSize);
-        for (auto entity : view) {
-            auto& collision = view.get<CollisionComponent>(entity);
-            auto& transform = view.get<TransformComponent>(entity);
-            grid.Insert(entity, GetBounds(collision.shape, transform));
-        }
-
-        // Narrow phase: actual collision checks
-        for (auto entity : view) {
-            auto nearby = grid.Query(GetBounds(entity));
-            for (auto other : nearby) {
-                if (Collides(entity, other)) {
-                    HandleCollision(entity, other);
-                }
-            }
-        }
-    }
-};
-```
-
-## Performance Considerations
-
-### Collision Check Complexity
-
-| Shape Type | vs AABB | vs Circle | vs Polygon (n vertices) |
-|------------|---------|-----------|-------------------------|
-| AABB | O(1) | O(1) | O(n) |
-| Circle | O(1) | O(1) | O(n) |
-| Polygon | O(n+m) | O(n) | O(n×m) |
-
-**Recommendation**: Use simple shapes (AABB, Circle) whenever possible.
-
-### Spatial Partitioning
-
-**Grid-based** (recommended for tile-based game):
-```cpp
-class SpatialGrid {
-    float cellSize;
-    std::unordered_map<ivec2, std::vector<EntityID>> cells;
-
-    void Insert(EntityID entity, AABB bounds) {
-        ivec2 minCell = WorldToCell(bounds.min);
-        ivec2 maxCell = WorldToCell(bounds.max);
-
-        for (int y = minCell.y; y <= maxCell.y; y++) {
-            for (int x = minCell.x; x <= maxCell.x; x++) {
-                cells[{x, y}].push_back(entity);
-            }
-        }
-    }
-
-    std::vector<EntityID> Query(AABB bounds) {
-        // Return all entities in overlapping cells
-    }
-};
-```
-
-**Benefit**: O(1) broad-phase queries instead of O(n²) all-pairs
-
-## Related Documentation
-
-- [architecture.md](./architecture.md) - Dual representation in tiers
-- [svg-parsing-options.md](./svg-parsing-options.md) - Parsing collision metadata
-- [/docs/design/features/vector-graphics/environmental-interactions.md](../../../design/features/vector-graphics/environmental-interactions.md) - Gameplay interactions
-
-## References
-
-- Separating Axis Theorem: https://www.gamedev.net/tutorials/programming/general-and-gameplay-programming/2d-rotated-rectangle-collision-r2604/
-- Convex Hull Algorithms: https://en.wikipedia.org/wiki/Convex_hull_algorithms
-- Spatial Hashing: https://www.gamedev.net/tutorials/programming/general-and-gameplay-programming/spatial-hashing-r2697/
+- [/docs/technical/pathfinding-architecture.md](../pathfinding-architecture.md) — the simulation-area navmesh that consumes the collider
+- The flora-asset skill (`.claude/skills/flora-asset/`) — how authors declare collision on flora

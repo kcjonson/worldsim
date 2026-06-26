@@ -66,6 +66,9 @@ asset:addPath(p)            -- add a finished path
 asset:createPath()          -- returns a new Path& already attached to the asset
 asset:clear()
 asset.paths
+asset:setCollisionRect(halfW, halfH, cx, cy)  -- declare a rect collider in local meters (this
+                            -- script's (0,0)-centered frame). The navmesh + Tier-3 collision use it.
+                            -- Trees: setCollisionRect(trunkWidth/2, trunkWidth/2, 0, 0). Non-positive ignored.
 ```
 
 ## Coordinate system
