@@ -1,6 +1,6 @@
 # Project Status
 
-Last Updated: 2026-06-23 (2D landscape from 3D hydrology epic complete and merged (#212) -- replaced the noise-flood ponds with sparse biome/precip-weighted ponds + desert oases, implemented Distribution::Spaced with grove/glade/thicket clustering for denser natural forests, and fixed riparian plants (reeds on the mud bank + bankside bushes); follows the merged 2D rivers #208 and tributaries/springs #210. See dev log 2026-06-22-hydrology-ponds-and-proper-forests.md. Earlier: Realistic chained build loop: mass-based carry weight + axe-gated chopping + wood-unit tree harvesting; the colonist chops to its carry cap, hauls, repeats, then builds. Plus the task-chaining UI/AI fixes found verifying it (in-progress-work priority calc, friendly labels, full-width info-panel task lines, "Next" chain step, build-progress percent + on-map fill, global task list Build umbrella + who's-working-it) — see dev log 2026-06-20-carry-weight-axe-gated-harvest.md. Earlier on main: Asset Manager epic #205 (dev log 2026-06-20-asset-manager.md), Cryosphere #199, Navigation P4 belief filtering #189/#191/#194, Vision System #172-184, Salvage UI cutover #176-181)
+Last Updated: 2026-06-26 (Physical carry & stacks epics complete and merged (#218/#219/#224/#228/#230/#232/#233): two-hand wood armfuls + strength-derived carry, then a universal physical "stack" model -- one material capped at its own stackSize everywhere -- plus construction sites that hold their required materials directly and dump to the ground on demolish. See dev log 2026-06-26-physical-stack-inventory.md and plan 2026-06-26-bulk-material-carry-felling.md. Earlier: 2D landscape from 3D hydrology epic complete and merged (#212) -- replaced the noise-flood ponds with sparse biome/precip-weighted ponds + desert oases, implemented Distribution::Spaced with grove/glade/thicket clustering for denser natural forests, and fixed riparian plants (reeds on the mud bank + bankside bushes); follows the merged 2D rivers #208 and tributaries/springs #210. See dev log 2026-06-22-hydrology-ponds-and-proper-forests.md. Earlier: Realistic chained build loop: mass-based carry weight + axe-gated chopping + wood-unit tree harvesting; the colonist chops to its carry cap, hauls, repeats, then builds. Plus the task-chaining UI/AI fixes found verifying it (in-progress-work priority calc, friendly labels, full-width info-panel task lines, "Next" chain step, build-progress percent + on-map fill, global task list Build umbrella + who's-working-it) — see dev log 2026-06-20-carry-weight-axe-gated-harvest.md. Earlier on main: Asset Manager epic #205 (dev log 2026-06-20-asset-manager.md), Cryosphere #199, Navigation P4 belief filtering #189/#191/#194, Vision System #172-184, Salvage UI cutover #176-181)
 
 ## Epic/Story/Task Template
 
@@ -27,6 +27,19 @@ Use this template for all work items:
 ---
 
 ## Recently Completed Epics (Last 4)
+
+### ✅ Physical carry & stacks (two-hand armfuls, universal stacks, construction-direct materials)
+**Spec/Documentation:** dev log `2026-06-26-physical-stack-inventory.md`, plan `2026-06-26-bulk-material-carry-felling.md`; specs `/docs/technical/bulk-materials-carry-and-felling.md`, `/docs/technical/physical-stack-inventory.md`
+**Dependencies:** Realistic chained build loop (carry weight + axe-gated harvest)
+**Status:** complete (merged #218, #219, #224, #228, #230, #232, #233)
+
+**Goal:** Make wood a two-hand bulky item carried as a strength-limited armful (felling is one destructive action that drops a loose pile), then make a "stack" a universal physical unit -- one material, quantity in [1, stackSize] -- everywhere from hands to boxes to build sites, with carry bound by weight or count, whichever comes first.
+
+**Tasks:**
+- [x] Bulk carry & felling (epic `de719237`, #218 + follow-ups #219): two-hand wood armful, Strength -> carry capacity, one-shot destructive felling, loose ground stacks, hand-aware haul/craft/deposit, HUD carry surfaces
+- [x] Physical stacks (epic `0db82dab`, #224/#228/#230/#232/#233): slot-based multi-stack Inventory, per-material stackSize (Wood 40, Berry 200, Stick 100), ground-pile split + scatter, construction sites hold materials directly (no Inventory; demolish drops salvage at tear-down completion), storage hauls sized by item capacity, armful clamped to stackSize
+
+**Result:** A stack is one material in [1, stackSize] everywhere -- hands, pack, shelf, box, build site, ground; carry binds on weight or count, whichever comes first; build sites hold their manifest directly and dump to the ground on demolish. Deferred: per-stack container UI (`88dc9e90`), DrawingSystem rename (`7d785fc6`). ✅
 
 ### ✅ 2D Landscape from 3D Hydrology (rivers, ponds, forests)
 **Spec/Documentation:** dev logs `2026-06-21-2d-rivers-and-water-landing.md`, `2026-06-21-river-tributaries-springs.md`, `2026-06-22-hydrology-ponds-and-proper-forests.md`
