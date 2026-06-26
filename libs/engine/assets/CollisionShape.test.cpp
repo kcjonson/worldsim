@@ -41,6 +41,13 @@ namespace {
 			fs::create_directories(dir);
 			std::ofstream(dir / (folder + ".xml")) << body;
 		}
+
+		// Write an arbitrary file into <root>/<folder>/ (e.g. a sibling .svg).
+		void writeFile(const std::string& folder, const std::string& filename, const std::string& body) {
+			const fs::path dir = root / folder;
+			fs::create_directories(dir);
+			std::ofstream(dir / filename) << body;
+		}
 	};
 
 	std::string wrapDef(const std::string& inner) {
@@ -50,6 +57,34 @@ namespace {
 			   "<generator><name>Stub</name></generator>"
 			   + inner
 			   + "</AssetDef></AssetDefinitions>";
+	}
+
+	// A simple (SVG-backed) asset def with a known worldHeight and svgPath, plus
+	// optional extra inner XML (e.g. a competing <collision>).
+	std::string wrapSimpleDef(const std::string& svgFile, float worldHeight, const std::string& extraInner = "") {
+		return "<?xml version=\"1.0\"?><AssetDefinitions><AssetDef>"
+			   "<defName>TestAsset</defName>"
+			   "<assetType>simple</assetType>"
+			   "<svgPath>" + svgFile + "</svgPath>"
+			   "<worldHeight>" + std::to_string(worldHeight) + "</worldHeight>"
+			   + extraInner
+			   + "</AssetDef></AssetDefinitions>";
+	}
+
+	// An SVG whose single straight-line path spans a known bbox, so the loaded
+	// vertex bbox equals the declared corners exactly (no curve flattening drift).
+	// Coords go from (x0,y0) to (x1,y1). Optional collision metadata is injected raw.
+	std::string svgRect(float x0, float y0, float x1, float y1, const std::string& metadata = "") {
+		auto n = [](float f) { return std::to_string(f); };
+		return "<?xml version=\"1.0\"?>"
+			   "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 200 200\" width=\"200\" height=\"200\">"
+			   + metadata
+			   + "<path d=\"M" + n(x0) + "," + n(y0)
+			   + " L" + n(x1) + "," + n(y0)
+			   + " L" + n(x1) + "," + n(y1)
+			   + " L" + n(x0) + "," + n(y1)
+			   + " Z\" fill=\"#777777\"/>"
+			   + "</svg>";
 	}
 
 } // namespace
@@ -397,4 +432,176 @@ TEST(CollisionShapeTest, BerryBushHasNoCollision) {
 	ASSERT_NE(def, nullptr);
 	EXPECT_EQ(def->collision.type, CollisionShapeType::None);
 	EXPECT_FALSE(def->collision.blocks());
+}
+
+// SVG <metadata> collision: an aabb authored in SVG user units converts to a
+// Rect in local meters via localMeters = (pt - svgCenter) * scaleFactor, where
+// scaleFactor = worldHeight / bboxHeight and svgCenter is the loaded-vertex bbox
+// center -- the SAME transform getTemplate + DynamicEntityRenderSystem apply.
+TEST(CollisionShapeTest, SvgMetadataAabbToRect) {
+	auto&	   reg = AssetRegistry::Get();
+	TempAssets t;
+
+	// Path bbox 0..100 on both axes -> center (50,50), height 100.
+	// worldHeight 1.0 -> scaleFactor 0.01.
+	// aabb min=(20,30) max=(80,90):
+	//   localMin = (20-50, 30-50)*0.01 = (-0.3, -0.2)
+	//   localMax = (80-50, 90-50)*0.01 = ( 0.3,  0.4)
+	//   offset = (0.0, 0.1), halfExtents = (0.3, 0.3)
+	const std::string meta = "<metadata><collision><shape type=\"aabb\" min=\"20,30\" max=\"80,90\"/></collision></metadata>";
+	t.writeFile("Aabb", "shape.svg", svgRect(0, 0, 100, 100, meta));
+	t.writeXml("Aabb", wrapSimpleDef("shape.svg", 1.0F));
+
+	reg.clearDefinitions();
+	reg.loadDefinitionsFromFolder(t.root.string());
+	const AssetDefinition* def = reg.getDefinition("TestAsset");
+	ASSERT_NE(def, nullptr);
+
+	EXPECT_EQ(def->collision.type, CollisionShapeType::Rect);
+	EXPECT_FLOAT_EQ(def->collision.offsetMeters.x, 0.0F);
+	EXPECT_FLOAT_EQ(def->collision.offsetMeters.y, 0.1F);
+	EXPECT_FLOAT_EQ(def->collision.halfExtentsMeters.x, 0.3F);
+	EXPECT_FLOAT_EQ(def->collision.halfExtentsMeters.y, 0.3F);
+	EXPECT_TRUE(def->collision.blocks());
+}
+
+// SVG metadata wins over an XML <collision> for simple assets.
+TEST(CollisionShapeTest, SvgMetadataWinsOverXml) {
+	auto&	   reg = AssetRegistry::Get();
+	TempAssets t;
+
+	// SVG aabb centered on bbox -> Rect offset (0,0), half-extents (0.5,0.5)
+	// (bbox 0..100, worldHeight 1.0, scaleFactor 0.01, aabb 0..100).
+	const std::string meta = "<metadata><collision><shape type=\"aabb\" min=\"0,0\" max=\"100,100\"/></collision></metadata>";
+	t.writeFile("SvgWins", "shape.svg", svgRect(0, 0, 100, 100, meta));
+	// Competing XML collision with different half-extents; SVG must win.
+	t.writeXml("SvgWins", wrapSimpleDef("shape.svg", 1.0F, "<collision><rect minX=\"-0.05\" minY=\"-0.05\" maxX=\"0.05\" maxY=\"0.05\"/></collision>"));
+
+	reg.clearDefinitions();
+	reg.loadDefinitionsFromFolder(t.root.string());
+	const AssetDefinition* def = reg.getDefinition("TestAsset");
+	ASSERT_NE(def, nullptr);
+
+	EXPECT_EQ(def->collision.type, CollisionShapeType::Rect);
+	// SVG-derived half-extents (0.5), not the XML's 0.05.
+	EXPECT_FLOAT_EQ(def->collision.halfExtentsMeters.x, 0.5F);
+	EXPECT_FLOAT_EQ(def->collision.halfExtentsMeters.y, 0.5F);
+}
+
+// A degenerate SVG aabb (zero extent) yields no collider.
+TEST(CollisionShapeTest, SvgMetadataDegenerateIsNone) {
+	auto&	   reg = AssetRegistry::Get();
+	TempAssets t;
+
+	// min == max on Y -> zero height -> rejected.
+	const std::string meta = "<metadata><collision><shape type=\"aabb\" min=\"20,50\" max=\"80,50\"/></collision></metadata>";
+	t.writeFile("DegAabb", "shape.svg", svgRect(0, 0, 100, 100, meta));
+	t.writeXml("DegAabb", wrapSimpleDef("shape.svg", 1.0F));
+
+	reg.clearDefinitions();
+	reg.loadDefinitionsFromFolder(t.root.string());
+	const AssetDefinition* def = reg.getDefinition("TestAsset");
+	ASSERT_NE(def, nullptr);
+
+	EXPECT_EQ(def->collision.type, CollisionShapeType::None);
+	EXPECT_FALSE(def->collision.blocks());
+}
+
+// SVG polygon metadata -> Polygon collider with each vertex in local meters.
+TEST(CollisionShapeTest, SvgMetadataPolygon) {
+	auto&	   reg = AssetRegistry::Get();
+	TempAssets t;
+
+	// bbox 0..100, center (50,50), scaleFactor 0.01.
+	// (50,0)  -> (0, -0.5)
+	// (100,100) -> (0.5, 0.5)
+	// (0,100) -> (-0.5, 0.5)
+	const std::string meta =
+		"<metadata><collision><shape type=\"polygon\" vertices=\"50,0 100,100 0,100\"/></collision></metadata>";
+	t.writeFile("Poly", "shape.svg", svgRect(0, 0, 100, 100, meta));
+	t.writeXml("Poly", wrapSimpleDef("shape.svg", 1.0F));
+
+	reg.clearDefinitions();
+	reg.loadDefinitionsFromFolder(t.root.string());
+	const AssetDefinition* def = reg.getDefinition("TestAsset");
+	ASSERT_NE(def, nullptr);
+
+	EXPECT_EQ(def->collision.type, CollisionShapeType::Polygon);
+	ASSERT_EQ(def->collision.pointsMeters.size(), 3U);
+	EXPECT_FLOAT_EQ(def->collision.pointsMeters[0].x, 0.0F);
+	EXPECT_FLOAT_EQ(def->collision.pointsMeters[0].y, -0.5F);
+	EXPECT_FLOAT_EQ(def->collision.pointsMeters[1].x, 0.5F);
+	EXPECT_FLOAT_EQ(def->collision.pointsMeters[1].y, 0.5F);
+	EXPECT_FLOAT_EQ(def->collision.pointsMeters[2].x, -0.5F);
+	EXPECT_TRUE(def->collision.blocks());
+}
+
+// Real-asset smoke: the shipped BigRock declares its collider in SVG metadata,
+// so it should load as a blocking Rect end-to-end.
+TEST(CollisionShapeTest, BigRockHasRectFromSvgMetadata) {
+	namespace fs = std::filesystem;
+
+	auto&	 reg = AssetRegistry::Get();
+	fs::path p	 = fs::path(__FILE__).parent_path().parent_path().parent_path().parent_path();
+	fs::path rock = p / "assets" / "world" / "misc" / "BigRock";
+	if (!fs::exists(rock)) {
+		GTEST_SKIP() << "assets/world not found";
+	}
+
+	reg.clearDefinitions();
+	reg.loadDefinitions((rock / "BigRock.xml").string());
+
+	const AssetDefinition* def = reg.getDefinition("BigRock");
+	ASSERT_NE(def, nullptr);
+	EXPECT_EQ(def->collision.type, CollisionShapeType::Rect);
+	EXPECT_TRUE(def->collision.blocks());
+	// A tree-sized footprint: non-trivial half-extents, well under the 1.5 m height.
+	EXPECT_GT(def->collision.halfExtentsMeters.x, 0.1F);
+	EXPECT_GT(def->collision.halfExtentsMeters.y, 0.1F);
+	EXPECT_LT(def->collision.halfExtentsMeters.x, 0.75F);
+	EXPECT_LT(def->collision.halfExtentsMeters.y, 0.9F);
+	// The aabb is authored symmetric about the silhouette bbox center, so the Rect
+	// lands centered on the entity (offset ~ origin). This is what makes the
+	// cyan asset-manager overlay sit on the boulder.
+	EXPECT_NEAR(def->collision.offsetMeters.x, 0.0F, 0.1F);
+	EXPECT_NEAR(def->collision.offsetMeters.y, 0.0F, 0.1F);
+}
+
+// A simple (SVG-backed) asset with no <metadata> block in its SVG but a <collision>
+// in the XML must keep the XML collider. The SVG-metadata eager pass returns nullopt
+// when there's no metadata node, so it must not clobber an already-parsed XML collision.
+TEST(CollisionShapeTest, SvgNoMetadataKeepsXmlCollision) {
+	auto&	   reg = AssetRegistry::Get();
+	TempAssets t;
+
+	// Plain SVG with no <metadata> at all.
+	const std::string plainSvg =
+		"<?xml version=\"1.0\"?>"
+		"<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 100 100\" width=\"100\" height=\"100\">"
+		"<rect x=\"10\" y=\"10\" width=\"80\" height=\"80\" fill=\"#888888\"/>"
+		"</svg>";
+	t.writeFile("NoMeta", "shape.svg", plainSvg);
+
+	// XML supplies a known rect; this should survive unchanged.
+	t.writeXml(
+		"NoMeta",
+		wrapSimpleDef(
+			"shape.svg",
+			1.0F,
+			"<collision><rect minX=\"-0.3\" minY=\"-0.2\" maxX=\"0.3\" maxY=\"0.2\"/></collision>"
+		)
+	);
+
+	reg.clearDefinitions();
+	reg.loadDefinitionsFromFolder(t.root.string());
+	const AssetDefinition* def = reg.getDefinition("TestAsset");
+	ASSERT_NE(def, nullptr);
+
+	// XML rect must still be present -- SVG eager pass must not have cleared it.
+	EXPECT_EQ(def->collision.type, CollisionShapeType::Rect);
+	EXPECT_FLOAT_EQ(def->collision.offsetMeters.x, 0.0F);
+	EXPECT_FLOAT_EQ(def->collision.offsetMeters.y, 0.0F);
+	EXPECT_FLOAT_EQ(def->collision.halfExtentsMeters.x, 0.3F);
+	EXPECT_FLOAT_EQ(def->collision.halfExtentsMeters.y, 0.2F);
+	EXPECT_TRUE(def->collision.blocks());
 }

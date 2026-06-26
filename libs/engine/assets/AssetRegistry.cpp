@@ -296,7 +296,156 @@ namespace engine::assets {
 			}
 		}
 
+		/// Parse a "x,y" pair into a glm::vec2. Returns false on malformed input.
+		bool parseVec2(const std::string& str, glm::vec2& out) {
+			auto commaPos = str.find(',');
+			if (commaPos == std::string::npos) {
+				return false;
+			}
+			try {
+				out.x = std::stof(str.substr(0, commaPos));
+				out.y = std::stof(str.substr(commaPos + 1));
+			} catch (...) {
+				return false;
+			}
+			return true;
+		}
+
+		/// SVG curve-flattening tolerance. Shared by every loadSVG call so the render
+		/// path and the collision path flatten identically.
+		constexpr float kSvgCurveTolerance = 0.5F;
+
+		/// The SVG-unit -> world-meter frame shared by the render path (getTemplate
+		/// scales the mesh by scaleFactor) and the collision path
+		/// (loadCollisionFromSvgMetadata maps metadata points into the local-meter
+		/// frame). They MUST agree or the collider drifts off the sprite, so the vertex
+		/// bbox, scaleFactor (height-normalized), and center live here once. `center` is
+		/// the full vertex-bbox center -- DynamicEntityRenderSystem centers the sprite on
+		/// the entity using it, so the collision frame's origin matches. NB: the bbox is
+		/// over path vertices; an asymmetric stroked outline could shift the render center
+		/// by up to half the stroke width, so keep colliders fill-only.
+		struct SvgMeterFrame {
+			bool	  valid		  = false;
+			float	  scaleFactor = 1.0F;
+			glm::vec2 center{0.0F, 0.0F};
+		};
+
+		SvgMeterFrame computeSvgMeterFrame(const std::vector<renderer::LoadedSVGShape>& shapes, float worldHeight) {
+			float minX = std::numeric_limits<float>::max();
+			float maxX = std::numeric_limits<float>::lowest();
+			float minY = std::numeric_limits<float>::max();
+			float maxY = std::numeric_limits<float>::lowest();
+			for (const auto& shape : shapes) {
+				for (const auto& svgPath : shape.paths) {
+					for (const auto& v : svgPath.vertices) {
+						minX = std::min(minX, v.x);
+						maxX = std::max(maxX, v.x);
+						minY = std::min(minY, v.y);
+						maxY = std::max(maxY, v.y);
+					}
+				}
+			}
+			const float svgHeight = maxY - minY;
+			if (svgHeight <= 0.001F) {
+				return {};
+			}
+			SvgMeterFrame frame;
+			frame.valid		  = true;
+			frame.scaleFactor = worldHeight / svgHeight;
+			frame.center	  = {(minX + maxX) * 0.5F, (minY + maxY) * 0.5F};
+			return frame;
+		}
+
 	} // namespace
+
+	std::optional<CollisionShape> AssetRegistry::loadCollisionFromSvgMetadata(const std::string& absoluteSvgPath, float worldHeight) {
+		// Cheap first pass: NanoSVG ignores <metadata>, so read it ourselves with
+		// pugixml. Bail before the (relatively costly) loadSVG when there's nothing
+		// to convert.
+		pugi::xml_document	   svgDoc;
+		pugi::xml_parse_result svgResult = svgDoc.load_file(absoluteSvgPath.c_str());
+		if (!svgResult) {
+			return std::nullopt;
+		}
+
+		pugi::xml_node collisionNode = svgDoc.child("svg").child("metadata").child("collision");
+		if (!collisionNode) {
+			return std::nullopt;
+		}
+
+		pugi::xml_node shapeNode = collisionNode.child("shape");
+		if (!shapeNode) {
+			LOG_WARNING(Engine, "SVG collision metadata in '%s' has no <shape>; ignoring", absoluteSvgPath.c_str());
+			return std::nullopt;
+		}
+
+		// Metadata is present: now load the SVG to derive the same vertex bbox the
+		// render path uses, so SVG user units convert to meters identically.
+		std::vector<renderer::LoadedSVGShape> shapes;
+		if (!renderer::loadSVG(absoluteSvgPath, kSvgCurveTolerance, shapes)) {
+			LOG_WARNING(Engine, "SVG collision metadata present but loadSVG failed for '%s'; ignoring", absoluteSvgPath.c_str());
+			return std::nullopt;
+		}
+
+		const SvgMeterFrame frame = computeSvgMeterFrame(shapes, worldHeight);
+		if (!frame.valid) {
+			LOG_WARNING(Engine, "SVG '%s' has zero-height vertex bbox; ignoring collision metadata", absoluteSvgPath.c_str());
+			return std::nullopt;
+		}
+
+		// Convert an authored SVG point into the collision local-meter frame, the same
+		// frame the procedural collider uses (entity.position == scaled-mesh bbox center).
+		auto toLocalMeters = [&](const glm::vec2& p) -> glm::vec2 { return (p - frame.center) * frame.scaleFactor; };
+
+		const std::string type = shapeNode.attribute("type").as_string();
+
+		if (type == "aabb") {
+			glm::vec2 svgMin;
+			glm::vec2 svgMax;
+			if (!parseVec2(shapeNode.attribute("min").as_string(), svgMin) ||
+				!parseVec2(shapeNode.attribute("max").as_string(), svgMax)) {
+				LOG_WARNING(Engine, "SVG collision <shape type=\"aabb\"> in '%s' has malformed min/max; ignoring", absoluteSvgPath.c_str());
+				return std::nullopt;
+			}
+
+			const glm::vec2 localMin = toLocalMeters(svgMin);
+			const glm::vec2 localMax = toLocalMeters(svgMax);
+
+			CollisionShape shape;
+			shape.type			   = CollisionShapeType::Rect;
+			shape.offsetMeters	   = (localMin + localMax) * 0.5F;
+			shape.halfExtentsMeters = {std::abs(localMax.x - localMin.x) * 0.5F, std::abs(localMax.y - localMin.y) * 0.5F};
+
+			if (shape.halfExtentsMeters.x <= 0.0F || shape.halfExtentsMeters.y <= 0.0F) {
+				LOG_WARNING(Engine, "SVG collision aabb in '%s' is degenerate (zero extent); ignoring", absoluteSvgPath.c_str());
+				return std::nullopt;
+			}
+			return shape;
+		}
+
+		if (type == "polygon") {
+			CollisionShape	  shape;
+			std::stringstream ss(shapeNode.attribute("vertices").as_string());
+			std::string		  token;
+			while (ss >> token) {
+				glm::vec2 pt;
+				if (!parseVec2(token, pt)) {
+					LOG_WARNING(Engine, "SVG collision polygon in '%s' has malformed vertex '%s'; ignoring", absoluteSvgPath.c_str(), token.c_str());
+					return std::nullopt;
+				}
+				shape.pointsMeters.push_back(toLocalMeters(pt));
+			}
+			if (shape.pointsMeters.size() < 3) {
+				LOG_WARNING(Engine, "SVG collision polygon in '%s' has fewer than 3 points; ignoring", absoluteSvgPath.c_str());
+				return std::nullopt;
+			}
+			shape.type = CollisionShapeType::Polygon;
+			return shape;
+		}
+
+		LOG_WARNING(Engine, "SVG collision <shape> in '%s' has unknown type '%s'; ignoring", absoluteSvgPath.c_str(), type.c_str());
+		return std::nullopt;
+	}
 
 	void AssetRegistry::setSharedScriptsPath(const std::filesystem::path& path) {
 		m_sharedScriptsPath = path;
@@ -763,6 +912,28 @@ namespace engine::assets {
 			}
 		}
 
+		// SVG-metadata collision capture (simple assets). An SVG-backed asset may
+		// author its collider in <metadata>; this wins over any XML <collision> for
+		// simple assets (documented precedence: SVG metadata is the authoritative
+		// home for SVG assets). Runs eagerly at load so nav, which reads collision
+		// without forcing a render, sees the collider before the first lazy
+		// getTemplate. loadCollisionFromSvgMetadata bails cheaply when there's no
+		// metadata, so assets without a collider pay only a file open + parse.
+		for (const std::string& name : loadedNames) {
+			auto it = definitions.find(name);
+			if (it == definitions.end()) {
+				continue;
+			}
+			AssetDefinition& def = it->second;
+			if (def.assetType != AssetType::Simple || def.svgPath.empty()) {
+				continue;
+			}
+			std::string resolvedSvgPath = def.resolvePath(def.svgPath).string();
+			if (auto shape = loadCollisionFromSvgMetadata(resolvedSvgPath, def.worldHeight)) {
+				def.collision = *shape;
+			}
+		}
+
 		LOG_DEBUG(Engine, "Loaded %d asset definitions from %s", loadedCount, xmlPath.c_str());
 		return loadedCount > 0;
 	}
@@ -919,32 +1090,17 @@ namespace engine::assets {
 			LOG_DEBUG(Engine, "Resolved SVG path: %s -> %s", def->svgPath.c_str(), resolvedSvgPath.c_str());
 
 			std::vector<renderer::LoadedSVGShape> shapes;
-			constexpr float						  kCurveTolerance = 0.5F;
-			if (!renderer::loadSVG(resolvedSvgPath, kCurveTolerance, shapes)) {
+			if (!renderer::loadSVG(resolvedSvgPath, kSvgCurveTolerance, shapes)) {
 				LOG_ERROR(Engine, "Failed to load SVG: %s (resolved from %s)", resolvedSvgPath.c_str(), def->svgPath.c_str());
 				return nullptr;
 			}
 
-			// Calculate SVG bounding box for normalization
-			float minY = std::numeric_limits<float>::max();
-			float maxY = std::numeric_limits<float>::lowest();
-			for (const auto& shape : shapes) {
-				for (const auto& svgPath : shape.paths) {
-					for (const auto& v : svgPath.vertices) {
-						minY = std::min(minY, v.y);
-						maxY = std::max(maxY, v.y);
-					}
-				}
-			}
-			float svgHeight = maxY - minY;
-			float scaleFactor = (svgHeight > 0.001F) ? (def->worldHeight / svgHeight) : 1.0F;
+			const SvgMeterFrame frame		= computeSvgMeterFrame(shapes, def->worldHeight);
+			const float			scaleFactor = frame.valid ? frame.scaleFactor : 1.0F;
 			LOG_INFO(
 				Engine,
-				"SVG '%s': minY=%.2f, maxY=%.2f, svgHeight=%.2f, worldHeight=%.2f, scaleFactor=%.4f",
+				"SVG '%s': worldHeight=%.2f, scaleFactor=%.4f",
 				defName.c_str(),
-				minY,
-				maxY,
-				svgHeight,
 				def->worldHeight,
 				scaleFactor
 			);

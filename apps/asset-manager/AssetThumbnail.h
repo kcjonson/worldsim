@@ -33,10 +33,17 @@ namespace asset_manager {
 		// True once a mesh has been built and its fit transform is known.
 		[[nodiscard]] bool hasMesh();
 
-		// Map a point in asset-local space (the same space as the raw asset mesh and
-		// the collision shape) to on-screen pixels, reusing the exact fitToRect math
-		// the preview applied to the mesh. Call only when hasMesh() is true.
+		// Map a point in raw asset-mesh space to on-screen pixels, reusing the exact
+		// fitToRect math the preview applied to the mesh (subtracts the source bbox
+		// center). Use for colliders in the mesh-coord frame (procedural assets). Call
+		// only when hasMesh() is true.
 		[[nodiscard]] Foundation::Vec2 localToScreen(const glm::vec2& local);
+
+		// Map a point expressed RELATIVE TO the asset's bbox center (the entity origin)
+		// to on-screen pixels. fitToRect maps that center to the target-rect center, so
+		// this just scales from there -- no source-bbox subtraction. Use for colliders
+		// in the centered frame (simple SVG-metadata assets). Call only when hasMesh().
+		[[nodiscard]] Foundation::Vec2 centeredToScreen(const glm::vec2& local);
 
 	  private:
 		void ensureMesh();
