@@ -116,6 +116,41 @@ add_dependencies(world-sim font-atlas)
 add_dependencies(ui-sandbox font-atlas)
 add_dependencies(asset-manager font-atlas)
 
+# Quickstart planet — the prebuilt planet that ships with the game. Players never
+# generate it; the main menu disables Quick Start when it is absent. This is an
+# EXPLICIT target (deliberately NOT part of ALL): generating the n=2048 planet
+# takes minutes, so it is not imposed on routine builds. Run it once (CI and
+# packaging do too) with an optimized config:
+#   cmake --build build --config RelWithDebInfo --target quickstart-planet
+# It generates the planet (only if missing) and stages it next to the world-sim
+# exe at assets/planets/, where findResource locates it. The seed/n here are the
+# single source of truth for the shipped planet.
+set(QUICKSTART_PLANET_SRC ${CMAKE_SOURCE_DIR}/planets/quickstart.wsplanet)
+
+# Generate the source planet once (OUTPUT-gated: only runs if the file is absent).
+add_custom_command(
+    OUTPUT ${QUICKSTART_PLANET_SRC}
+    COMMAND $<TARGET_FILE:worldgen-cli>
+        --n 2048 --seed 424242 --save-planet ${QUICKSTART_PLANET_SRC}
+    DEPENDS worldgen-cli
+    COMMENT "Generating quickstart planet (n=2048, seed 424242) — one-time, several minutes"
+    VERBATIM
+)
+
+# Stage it next to the world-sim exe. The genex path is per-config, so it lands
+# beside whichever config the target is built in. copy_if_different skips when
+# unchanged, so re-running the target is cheap.
+add_custom_target(quickstart-planet
+    DEPENDS ${QUICKSTART_PLANET_SRC}
+    COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:world-sim>/assets/planets
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        ${QUICKSTART_PLANET_SRC}
+        $<TARGET_FILE_DIR:world-sim>/assets/planets/quickstart.wsplanet
+    COMMENT "Staging quickstart planet next to world-sim"
+    VERBATIM
+)
+add_dependencies(quickstart-planet world-sim)
+
 # Developer client (web app)
 # Multi-config generators (Visual Studio) have no CMAKE_BUILD_TYPE at configure
 # time, so Windows/VS users opt in with -DBUILD_DEVELOPER_CLIENT=ON; single-config

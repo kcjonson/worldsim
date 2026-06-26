@@ -18,6 +18,7 @@
 #include <theme/Tokens.h>
 #include <theme/Variants.h>
 #include <utils/Log.h>
+#include <utils/ResourcePath.h>
 
 #include <array>
 #include <functional>
@@ -40,12 +41,22 @@ namespace {
 			items.push_back({"New Game", "Begin a new expedition", [this]() {
 								 sceneManager->switchTo(world_sim::toKey(world_sim::SceneType::WorldCreator));
 							 }, true});
-			items.push_back({"Quick Start", "Jump in on the cached planet", [this]() {
+
+			// Quick Start needs the prebuilt planet shipped next to the exe; if
+			// the build step that bakes it hasn't run, disable the entry rather
+			// than drop the player into a dead loading screen.
+			const bool quickstartReady =
+				Foundation::findResource(world_sim::kQuickstartPlanetResource).has_value();
+			items.push_back({"Quick Start",
+							 quickstartReady ? "Jump in on the prebuilt planet"
+											 : "Unavailable - run the quickstart-planet build target",
+							 [this]() {
 								 auto config = std::make_unique<world_sim::GameStartConfig>();
 								 config->source = world_sim::GameStartConfig::Source::QuickStart;
 								 world_sim::GameStartConfig::SetPending(std::move(config));
 								 sceneManager->switchTo(world_sim::toKey(world_sim::SceneType::GameLoading));
-							 }, false});
+							 },
+							 false, quickstartReady});
 			items.push_back({"Settings", "Graphics, audio, controls", [this]() {
 								 sceneManager->switchTo(world_sim::toKey(world_sim::SceneType::Settings));
 							 }, false});
@@ -62,7 +73,8 @@ namespace {
 			}
 			if (event.type == InputEvent::Type::MouseUp && event.button == engine::MouseButton::Left) {
 				const int idx = itemAtPoint(event.position);
-				if (idx >= 0 && items[static_cast<size_t>(idx)].action) {
+				if (idx >= 0 && items[static_cast<size_t>(idx)].enabled &&
+				    items[static_cast<size_t>(idx)].action) {
 					items[static_cast<size_t>(idx)].action();
 					event.consume();
 					return true;
@@ -119,7 +131,7 @@ namespace {
 				const MenuItem&		   item = items[i];
 				const Foundation::Rect rect = itemRects[i];
 				const bool			   hovered = static_cast<int>(i) == hoveredIndex;
-				const bool			   armed = hovered || item.primary;
+				const bool			   armed = item.enabled && (hovered || item.primary);
 
 				if (hovered) {
 					drawRect(Renderer::Primitives::RectArgs{.bounds = rect, .style = {.fill = bg_hover}});
@@ -130,7 +142,9 @@ namespace {
 						.style = {.fill = accent}});
 				}
 
-				const Foundation::Color labelColor = item.primary ? accent_bright : (hovered ? text_bright : text_dim);
+				const Foundation::Color labelColor =
+					!item.enabled ? text_faint
+								  : (item.primary ? accent_bright : (hovered ? text_bright : text_dim));
 				const float				labelX = rect.x + (hovered ? space_6 : space_4);
 				drawText(Renderer::Primitives::TextArgs{
 					.text = item.label,
@@ -190,6 +204,7 @@ namespace {
 			std::string			  hint;
 			std::function<void()> action;
 			bool				  primary = false;
+			bool				  enabled = true;
 		};
 
 		static void drawDiamond(float cx, float cy, float r, Foundation::Color color) {
