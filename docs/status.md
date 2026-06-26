@@ -1219,7 +1219,7 @@ The following MVP epics have all been completed. Detailed task breakdowns are pr
 ### Simulation-Area Navigation LOD + Per-Asset Collision Geometry
 **Spec/Documentation:** `/docs/technical/vector-graphics/collision-shapes.md`, `/docs/technical/pathfinding-architecture.md`, `/docs/development-log/entries/2026-06-24-sim-area-nav-lod-and-collision-geometry.md`
 **Dependencies:** Navigation & Pathfinding (P3 regional layer)
-**Status:** in progress (A-G shipped; D2 remains)
+**Status:** complete (A-G + F + D2 shipped: #217, #220, #221, #225, #226, #227)
 
 **Why:** nav-v1 never built the navmesh in a forested world (every loaded tree carved into one ~88k-poly mesh; the off-thread build never finished, colonists beelined). Fixed architecturally with a viewport-anchored simulation-area LOD; the long-specced per-asset collision geometry landed alongside.
 
@@ -1229,8 +1229,8 @@ The following MVP epics have all been completed. Detailed task breakdowns are pr
 - [x] E: Tier-3 static-rect collision — StaticRectCollisionSystem pushes agents out of trunk rects at the nav-pad clearance (#221)
 - [x] G: Asset-manager collision overlay + larger preview (#225)
 - [x] F: Spec → Implemented + dev-log + flora-skill collision docs
-- [ ] D2: SVG-metadata collision authoring for simple assets (no consumer yet; lazy SVG→meter scaleFactor)
-- [ ] Follow-up: visual-size obstacle LOD (lift the 64m cap); coarse far-field nav layer (LOD1)
+- [x] D2: SVG-metadata collision authoring + BigRock obstacle (simple assets author the collider in SVG `<metadata>`) (#227)
+- [ ] Follow-ups (filed): visual-size obstacle LOD (lift the 64m cap); unify procedural collider frame; coarse far-field nav layer (LOD1)
 
 ---
 
