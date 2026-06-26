@@ -6,6 +6,7 @@
 #include "Bezier.h"
 #include "Tessellator.h"
 #include "utils/Log.h"
+
 #include <cmath>
 #include <memory>
 
@@ -109,10 +110,14 @@ void processPath(NSVGpath* nsvgPath, float tolerance, VectorPath& outPath) {
 }
 
 constexpr size_t kMaxMeshVertices = 65535; // indices are 16-bit
+constexpr float	 kMinSegmentLength = 1e-6F; // degenerate / zero-length stroke segment cutoff
+constexpr float	 kMinTurnCross = 1e-4F;	   // below this the join is ~straight (segment quads meet)
 
 /// Append a centered stroke band of `width` along a polyline, with bevel joins. Closed polylines
 /// stroke all the way around; open ones get butt ends. The stroke color is baked per vertex. The
 /// join's outer wedge is picked from the local turn direction, so this is winding-independent.
+/// Inner-join quads overlap slightly: harmless for opaque strokes, but double-blends translucent
+/// ones (revisit with miter/round joins if translucent strokes ever matter).
 void appendStrokeBand(const std::vector<Foundation::Vec2>& pts, bool closed, float width,
 					  const Foundation::Color& color, TessellatedMesh& outMesh) {
 	const size_t n = pts.size();
@@ -134,16 +139,25 @@ void appendStrokeBand(const std::vector<Foundation::Vec2>& pts, bool closed, flo
 	};
 
 	const size_t segCount = closed ? n : n - 1;
+	const size_t joinCount = closed ? n : n - 2; // interior vertices that get a bevel wedge
+	// Drop the whole band atomically (like the fill path) rather than emit a torn outline if it
+	// would overflow the 16-bit index space. Upper bound: 4 verts per segment quad + 3 per join.
+	const size_t maxVerts = (segCount * 4) + (joinCount * 3);
+	if (outMesh.vertices.size() + maxVerts > kMaxMeshVertices) {
+		LOG_WARNING(Renderer, "appendStrokeBand: mesh would exceed %zu vertices; dropping stroke", kMaxMeshVertices);
+		return;
+	}
+	outMesh.vertices.reserve(outMesh.vertices.size() + maxVerts);
+	outMesh.colors.reserve(outMesh.colors.size() + maxVerts);
+	outMesh.indices.reserve(outMesh.indices.size() + (segCount * 6) + (joinCount * 3));
+
 	for (size_t i = 0; i < segCount; ++i) {
-		if (outMesh.vertices.size() + 4 > kMaxMeshVertices) {
-			return;
-		}
 		const Foundation::Vec2& a = pts[i];
 		const Foundation::Vec2& b = pts[(i + 1) % n];
 		const float				dx = b.x - a.x;
 		const float				dy = b.y - a.y;
 		const float				len = std::sqrt((dx * dx) + (dy * dy));
-		if (len < 1e-6F) {
+		if (len < kMinSegmentLength) {
 			continue;
 		}
 		const float	   nx = (-dy / len) * hw; // left normal * half-width
@@ -159,9 +173,6 @@ void appendStrokeBand(const std::vector<Foundation::Vec2>& pts, bool closed, flo
 	const size_t firstJoin = closed ? 0 : 1;
 	const size_t lastJoin = closed ? n : n - 1;
 	for (size_t k = firstJoin; k < lastJoin; ++k) {
-		if (outMesh.vertices.size() + 3 > kMaxMeshVertices) {
-			return;
-		}
 		const Foundation::Vec2& prev = pts[(k + n - 1) % n];
 		const Foundation::Vec2& cur = pts[k];
 		const Foundation::Vec2& next = pts[(k + 1) % n];
@@ -171,7 +182,7 @@ void appendStrokeBand(const std::vector<Foundation::Vec2>& pts, bool closed, flo
 		float					d1y = next.y - cur.y;
 		const float				l0 = std::sqrt((d0x * d0x) + (d0y * d0y));
 		const float				l1 = std::sqrt((d1x * d1x) + (d1y * d1y));
-		if (l0 < 1e-6F || l1 < 1e-6F) {
+		if (l0 < kMinSegmentLength || l1 < kMinSegmentLength) {
 			continue;
 		}
 		d0x /= l0;
@@ -179,7 +190,7 @@ void appendStrokeBand(const std::vector<Foundation::Vec2>& pts, bool closed, flo
 		d1x /= l1;
 		d1y /= l1;
 		const float cross = (d0x * d1y) - (d0y * d1x);
-		if (std::abs(cross) < 1e-4F) {
+		if (std::abs(cross) < kMinTurnCross) {
 			continue; // nearly straight; the segment quads already meet
 		}
 		const float	   n0x = -d0y * hw;
@@ -259,7 +270,12 @@ bool loadSVG(const std::string& filepath, float curveTolerance, std::vector<Load
 			VectorPath vectorPath;
 			processPath(path, curveTolerance, vectorPath);
 
-			if (vectorPath.vertices.size() >= 3) {
+			// Keep a path that can fill (>=3 verts) OR stroke (a 2-vertex straight segment strokes
+			// fine). The fill side re-checks >=3 internally, so a retained 2-vertex stroke-only path
+			// is harmless to the tessellator.
+			const bool canFill = vectorPath.vertices.size() >= 3;
+			const bool canStroke = loadedShape.hasStroke && vectorPath.vertices.size() >= 2;
+			if (canFill || canStroke) {
 				loadedShape.paths.push_back(std::move(vectorPath));
 			}
 		}
