@@ -1263,6 +1263,11 @@ namespace engine::assets {
 		definitions.clear();
 		templateCache.clear();
 		groupIndex.clear();
+		// Reset the string-interning index too (mirrors clearDefinitions); otherwise name<->id
+		// and capability lookups return stale mappings for now-destroyed defs until a reload.
+		m_defNameToId.clear();
+		m_idToDefName.clear();
+		m_capabilityMasks.clear();
 		m_validationReport.issues.clear();
 		m_loadProgress.started.store(false);
 		m_loadProgress.done.store(false);
