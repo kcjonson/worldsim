@@ -4,6 +4,7 @@
 #include <graphics/Color.h>
 #include <primitives/Primitives.h>
 
+#include <algorithm>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -12,9 +13,16 @@
 namespace asset_manager {
 
 	namespace {
+		// Mesh plus the raw (pre-fit) bounds it was built from, so the same fit
+		// transform can be replayed for overlays (e.g. collision outlines).
+		struct CachedMesh {
+			renderer::TessellatedMesh mesh;
+			Foundation::Rect		  sourceBounds{0.0F, 0.0F, 0.0F, 0.0F};
+		};
+
 		// Shared across all thumbnails so rebuilt rows reuse meshes (no re-tessellation).
-		std::unordered_map<std::string, renderer::TessellatedMesh>& meshCache() {
-			static std::unordered_map<std::string, renderer::TessellatedMesh> cache;
+		std::unordered_map<std::string, CachedMesh>& meshCache() {
+			static std::unordered_map<std::string, CachedMesh> cache;
 			return cache;
 		}
 	} // namespace
@@ -44,6 +52,8 @@ namespace asset_manager {
 		}
 		m_dirty = false;
 		m_mesh = nullptr;
+		m_sourceBounds = {0.0F, 0.0F, 0.0F, 0.0F};
+		m_targetRect = {0.0F, 0.0F, m_size.x, m_size.y};
 		if (m_defName.empty()) {
 			return;
 		}
@@ -53,10 +63,41 @@ namespace asset_manager {
 		auto& cache = meshCache();
 		auto  it = cache.find(key);
 		if (it == cache.end()) {
-			engine::assets::PreparedAsset prepared = engine::assets::prepareAsset(m_defName, {0.0F, 0.0F, m_size.x, m_size.y}, m_seed);
-			it = cache.emplace(key, std::move(prepared.mesh)).first;
+			engine::assets::PreparedAsset prepared = engine::assets::prepareAsset(m_defName, m_targetRect, m_seed);
+			CachedMesh					  entry;
+			entry.mesh = std::move(prepared.mesh);
+			entry.sourceBounds = prepared.sourceBounds;
+			it = cache.emplace(key, std::move(entry)).first;
 		}
-		m_mesh = &it->second;
+		m_mesh = &it->second.mesh;
+		m_sourceBounds = it->second.sourceBounds;
+	}
+
+	bool AssetThumbnail::hasMesh() {
+		ensureMesh();
+		return m_mesh != nullptr && !m_mesh->vertices.empty();
+	}
+
+	Foundation::Vec2 AssetThumbnail::localToScreen(const glm::vec2& local) {
+		ensureMesh();
+		// Replay fitToRect (see renderer::fitToRect): scale to fit source bounds into
+		// the target rect preserving aspect, center, then translate by the draw offset.
+		const Foundation::Rect& src = m_sourceBounds;
+		const Foundation::Rect& dst = m_targetRect;
+		// Degenerate source: fitToRect leaves verts untransformed, so the overlay
+		// must too -- raw local plus the draw offset, matching render().
+		if (src.width <= 0.0F || src.height <= 0.0F) {
+			return {local.x + m_pos.x, local.y + m_pos.y};
+		}
+		const float scale = std::min(dst.width / src.width, dst.height / src.height);
+		const float srcCenterX = src.x + (src.width * 0.5F);
+		const float srcCenterY = src.y + (src.height * 0.5F);
+		const float dstCenterX = dst.x + (dst.width * 0.5F);
+		const float dstCenterY = dst.y + (dst.height * 0.5F);
+		const float fitX = dstCenterX + ((local.x - srcCenterX) * scale);
+		const float fitY = dstCenterY + ((local.y - srcCenterY) * scale);
+		// Mesh verts are translated by m_pos at draw; the overlay must match.
+		return {fitX + m_pos.x, fitY + m_pos.y};
 	}
 
 	void AssetThumbnail::render() {

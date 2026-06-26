@@ -5,10 +5,13 @@
 // of custom rendering in the asset manager; everything else uses libs/ui.
 
 #include <component/Component.h>
+#include <graphics/Rect.h>
 #include <vector/Types.h>
 
 #include <cstdint>
 #include <string>
+
+#include <glm/vec2.hpp>
 
 namespace asset_manager {
 
@@ -27,6 +30,14 @@ namespace asset_manager {
 		[[nodiscard]] float getHeight() const override { return m_size.y + margin; }
 		void				setPosition(float x, float y) override { m_pos = {x + margin, y + margin}; }
 
+		// True once a mesh has been built and its fit transform is known.
+		[[nodiscard]] bool hasMesh();
+
+		// Map a point in asset-local space (the same space as the raw asset mesh and
+		// the collision shape) to on-screen pixels, reusing the exact fitToRect math
+		// the preview applied to the mesh. Call only when hasMesh() is true.
+		[[nodiscard]] Foundation::Vec2 localToScreen(const glm::vec2& local);
+
 	  private:
 		void ensureMesh();
 
@@ -35,6 +46,8 @@ namespace asset_manager {
 		Foundation::Vec2				 m_pos{0.0F, 0.0F};
 		Foundation::Vec2				 m_size{32.0F, 32.0F};
 		const renderer::TessellatedMesh* m_mesh = nullptr; // points into a shared cache; translated at draw
+		Foundation::Rect				 m_sourceBounds{0.0F, 0.0F, 0.0F, 0.0F}; // raw mesh bounds for the current asset
+		Foundation::Rect				 m_targetRect{0.0F, 0.0F, 0.0F, 0.0F};	 // fit target rect (pixel space)
 		bool							 m_dirty = true;
 	};
 
