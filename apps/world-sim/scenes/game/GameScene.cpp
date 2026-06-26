@@ -326,6 +326,11 @@ namespace {
 				auto& constructionSystem = ecsWorld->getSystem<ecs::ConstructionSystem>();
 				constructionSystem.setConstructionWorld(&m_drawingSystem->world());
 
+				// Salvage cut returned when a worked/built structure is demolished, from the
+				// construction config (constraints.xml refundPercent). ConstructionSystem dumps this
+				// fraction of the structure's delivered[] manifest to the ground on teardown.
+				constructionSystem.setRefundPercent(engine::assets::ConstructionRegistry::Get().constraints().refundPercent);
+
 				// NavigationSystem reads the same ConstructionWorld (walls/doors) to build
 				// its navmesh input; wired here for the same reason ConstructionSystem is.
 				ecsWorld->getSystem<ecs::NavigationSystem>().setConstructionWorld(&m_drawingSystem->world());
@@ -377,15 +382,17 @@ namespace {
 				constructionSystem.setStructureCompletedCallback(structureCompleted);
 
 				// Deconstruct complete: drop the topology record now (the Structure kind selects
-				// which mutator; a wall surfaces its openings' entities too), refund a percentage
-				// of the structure's materials as ground items, and DEFER the entity destruction.
-				// This callback fires from inside ActionSystem::update's live view iteration;
-				// destroying here would swap-and-pop the shared component pools and corrupt that
-				// iteration, so entities go on the queue drained after ecsWorld->update() (see
+				// which mutator; a wall surfaces its openings' entities too) and DEFER the entity
+				// destruction. This callback fires from inside ActionSystem::update's live view
+				// iteration; destroying here would swap-and-pop the shared component pools and corrupt
+				// that iteration, so entities go on the queue drained after ecsWorld->update() (see
 				// update()). This is the SINGLE removal path: the demolish buttons only mark
 				// structures; the work-driven deconstruct lands here. The SAME lambda is wired to
 				// ConstructionSystem for the no-work edge case (a marked blueprint with workDone <= 0
-				// is removed immediately through here).
+				// is removed immediately through here). Material return on cancel is ConstructionSystem's
+				// job (it dumps a partially-delivered site's staged delivered[] to the ground before
+				// firing this); a fully-built structure torn down has its materials baked in and
+				// returns nothing.
 				auto structureDeconstructed = [this](ecs::EntityID blueprintEntity) {
 					const auto* structure = ecsWorld->getComponent<ecs::Structure>(blueprintEntity);
 					if (structure != nullptr && structure->graphId != 0) {
@@ -429,7 +436,6 @@ namespace {
 								break;
 						}
 					}
-					refundDeconstructedMaterials(blueprintEntity);
 					m_pendingEntityRemoval.push_back(blueprintEntity);
 				};
 				actionSys.setStructureDeconstructedCallback(structureDeconstructed);
@@ -1013,24 +1019,15 @@ namespace {
 				LOG_INFO(Game, "Spawned packaged '%s' - awaiting placement", defName.c_str());
 			});
 
-			// Wire up ActionSystem to drop a loose, haulable resource pile (felling remainder).
-			// Unlike the crafting drop above, this pile is NOT packaged: a per-entity ResourceStack
-			// holds the count and it is immediately haulable in weight-limited armfuls.
-			actionSystem.setDropResourceCallback([this](const std::string& defName, float x, float y, uint32_t quantity) {
-				// A pile is capped at the item's own stackSize, so an over-cap drop splits into
-				// several piles scattered to distinct spots (within the 0.25 m pickup epsilon two
-				// piles would alias). No def / no itemProperties means unbounded -> a single pile.
-				const auto*	   def = engine::assets::AssetRegistry::Get().getDefinition(defName);
-				const uint32_t cap =
-					(def != nullptr && def->itemProperties.has_value()) ? def->itemProperties->stackSize : UINT32_MAX;
-				const auto piles = ecs::resourcePileDrops(cap, quantity, {x, y});
-				for (const auto& [pos, qty] : piles) {
-					auto entity = m_placementSystem->spawnEntity(defName, {pos.x, pos.y});
-					ecsWorld->addComponent<ecs::ResourceStack>(entity, ecs::ResourceStack{qty});
-				}
-				LOG_INFO(Game, "Dropped %u x '%s' as %zu stacks at (%.1f, %.1f)", quantity, defName.c_str(),
-						 piles.size(), x, y);
-			});
+			// Drop a loose, haulable resource pile (felling remainder, or a cancelled build site's
+			// staged materials). Unlike the crafting drop above, this pile is NOT packaged: a
+			// per-entity ResourceStack holds the count and it is immediately haulable. ActionSystem
+			// and ConstructionSystem share this single spawn path (dropResourcePiles).
+			auto dropResource = [this](const std::string& defName, float x, float y, uint32_t quantity) {
+				dropResourcePiles(defName, x, y, quantity);
+			};
+			actionSystem.setDropResourceCallback(dropResource);
+			constructionSystem.setDropResourceCallback(dropResource);
 
 			// Wire up ActionSystem to remove harvested entities (destructive harvest)
 			actionSystem.setRemoveEntityCallback([this](const std::string& defName, float x, float y) {
@@ -1261,48 +1258,28 @@ namespace {
 			LOG_INFO(Game, "Canceled job '%s' at station '%s'", recipeDefName.c_str(), stationSel->defName.c_str());
 		}
 
-		/// Refund a percentage of a deconstructed structure's materials as ground items at its
-		/// position. Uses the structure's `delivered` manifest (what was actually invested: a built
-		/// structure delivered its full `required`, so the common case refunds against the whole
-		/// manifest, while a never-built blueprint torn down with no work invested refunds nothing)
-		/// and the config refundPercent, flooring per material so a partial unit is not refunded.
-		/// Spawns through the same packaged-item path crafted/dropped items use; a no-op if the
-		/// entity lacks a blueprint or nothing was delivered. Toasts the dominant refunded material.
-		void refundDeconstructedMaterials(ecs::EntityID blueprintEntity) {
-			const auto* blueprint = ecsWorld->getComponent<ecs::StructureBlueprint>(blueprintEntity);
-			if (blueprint == nullptr || blueprint->delivered.empty()) {
-				return;
+		/// Spawn a loose, haulable resource pile of `quantity` x `defName` at (x, y). A pile is capped
+		/// at the item's own stackSize, so an over-cap drop splits into several piles scattered to
+		/// distinct spots (within the 0.25 m pickup epsilon two piles would alias). No def / no
+		/// itemProperties means unbounded -> a single pile. Each pile is a ResourceStack entity (not
+		/// Packaged): immediately haulable. The SINGLE ground-pile drop path; ActionSystem (felling
+		/// remainder) and ConstructionSystem (cancelled-site materials) both route through it.
+		void dropResourcePiles(const std::string& defName, float x, float y, uint32_t quantity) {
+			const auto*	   def = engine::assets::AssetRegistry::Get().getDefinition(defName);
+			const uint32_t cap =
+				(def != nullptr && def->itemProperties.has_value()) ? def->itemProperties->stackSize : UINT32_MAX;
+			const auto piles = ecs::resourcePileDrops(cap, quantity, {x, y});
+			for (const auto& [pos, qty] : piles) {
+				auto entity = m_placementSystem->spawnEntity(defName, {pos.x, pos.y});
+				ecsWorld->addComponent<ecs::ResourceStack>(entity, ecs::ResourceStack{qty});
 			}
-			const auto*		position = ecsWorld->getComponent<ecs::Position>(blueprintEntity);
-			const glm::vec2 dropPos = position != nullptr ? position->value : glm::vec2{0.0F, 0.0F};
-
-			const float refundPercent = engine::assets::ConstructionRegistry::Get().constraints().refundPercent;
-
-			std::string topMaterial;
-			uint32_t	topQty = 0;
-			for (const auto& [defName, qty] : blueprint->delivered) {
-				const auto refundQty = static_cast<uint32_t>(std::floor(static_cast<float>(qty) * refundPercent / 100.0F));
-				for (uint32_t i = 0; i < refundQty; ++i) {
-					auto entity = m_placementSystem->spawnEntity(defName, {dropPos.x, dropPos.y});
-					ecsWorld->addComponent<ecs::Packaged>(entity, ecs::Packaged{});
-				}
-				if (refundQty > topQty) {
-					topQty = refundQty;
-					topMaterial = defName;
-				}
-			}
-
-			if (topQty > 0) {
-				gameUI->pushNotification("Demolished", "Refunded " + std::to_string(topQty) + " " + topMaterial, UI::ToastSeverity::Info);
-				LOG_INFO(
-					Game, "Refunded %u %s from deconstructed entity %u", topQty, topMaterial.c_str(), static_cast<uint32_t>(blueprintEntity)
-				);
-			}
+			LOG_INFO(Game, "Dropped %u x '%s' as %zu stacks at (%.1f, %.1f)", quantity, defName.c_str(), piles.size(), x, y);
 		}
 
 		/// Mark a structure's ECS blueprint for deconstruction. ConstructionSystem then emits a
-		/// Deconstruct goal a colonist works down, and the deconstructed-completion callback does
-		/// the topology removal + material refund. Returns false if the entity has no blueprint.
+		/// Deconstruct goal a colonist works down (or, for a not-yet-built site, removes it
+		/// immediately and dumps its staged materials), and the deconstructed-completion callback
+		/// does the topology removal. Returns false if the entity has no blueprint.
 		bool markForDemolition(ecs::EntityID entity) {
 			if (entity == ecs::kInvalidEntity) {
 				return false;
@@ -1341,7 +1318,7 @@ namespace {
 
 		/// Handle Demolish request from a foundation's info panel. Marks the foundation for
 		/// deconstruction; a colonist tears it down over time (work-driven), and the
-		/// deconstructed-completion callback removes the topology and refunds materials.
+		/// deconstructed-completion callback removes the topology.
 		void handleDemolishFoundation() {
 			const auto& sel = m_selectionSystem->current();
 			auto*		foundationSel = std::get_if<world_sim::FoundationSelection>(&sel);
@@ -1454,7 +1431,7 @@ namespace {
 		/// is the demolition unit (design D6): a multi-segment wall keeps its other segments.
 		/// Marks the segment for deconstruction; ConstructionSystem gates it behind any openings
 		/// on it (those must deconstruct first), and the deconstructed-completion callback removes
-		/// the topology (surfacing any opening entities) and refunds materials.
+		/// the topology (surfacing any opening entities).
 		void handleDemolishWallSegment() {
 			const auto& sel = m_selectionSystem->current();
 			auto*		wallSel = std::get_if<world_sim::WallSegmentSelection>(&sel);
@@ -1496,7 +1473,7 @@ namespace {
 
 		/// Handle Demolish request from an opening's info panel. The opening is its own demolition
 		/// unit (independent of the host wall). Marks it for deconstruction; the
-		/// deconstructed-completion callback removes the topology and refunds materials.
+		/// deconstructed-completion callback removes the topology.
 		void handleDemolishOpening() {
 			const auto& sel = m_selectionSystem->current();
 			auto*		openingSel = std::get_if<world_sim::OpeningSelection>(&sel);

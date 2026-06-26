@@ -113,13 +113,6 @@ namespace ecs {
 			// goals and drive its Deconstruct goal (gated by the cascade order). Keep it OUT of the
 			// stale set so the cleanup pass doesn't tear down the Deconstruct goal we just emitted.
 			if (blueprint.demolishing) {
-				// Refresh delivered[] from on-site inventory so the refund matches what is physically
-				// present (an in-progress site may have in-flight hauls). Only for non-Complete
-				// blueprints: a Built structure has delivered == required, and its delivery inventory
-				// may already be cleared, so reconciling it would zero the refund.
-				if (blueprint.phase != StructureBlueprint::BuildPhase::Complete) {
-					reconcileDelivered(entity, blueprint);
-				}
 				decideDeconstruct(entity, structure, blueprint);
 				entitiesWithGoals.erase(entity);
 				m_activeBlueprintCount++;
@@ -153,9 +146,6 @@ namespace ecs {
 				m_activeBlueprintCount++;
 				continue;
 			}
-
-			// Reconcile delivered[] from the on-site inventory before gating on materials.
-			reconcileDelivered(entity, blueprint);
 
 			// Walls and openings have no clear phase: they sit on a cleared, built host, so
 			// the footprint is clear by construction. Foundations query their footprint.
@@ -285,23 +275,6 @@ namespace ecs {
 		return segment->state == engine::construction::FoundationState::Built;
 	}
 
-	void ConstructionSystem::reconcileDelivered(EntityID blueprintEntity, StructureBlueprint& blueprint) {
-		const auto* inventory = world->getComponent<Inventory>(blueprintEntity);
-		if (inventory == nullptr) {
-			return; // no delivery inventory yet; delivered[] stays as-is
-		}
-
-		// delivered[] mirrors the on-site inventory exactly: it is derived, never the source
-		// of truth, so rebuild it from the inventory each tick. Only required materials matter.
-		blueprint.delivered.clear();
-		for (const auto& [defName, qty] : blueprint.required) {
-			const uint32_t have = inventory->getQuantity(defName);
-			if (have > 0) {
-				blueprint.delivered.emplace_back(defName, have);
-			}
-		}
-	}
-
 	void ConstructionSystem::emitClearGoals(EntityID blueprintEntity, uint64_t foundationId, uint64_t umbrellaGoalId) {
 		if (m_constructionWorld == nullptr || m_placementExecutor == nullptr || m_processedChunks == nullptr) {
 			return;
@@ -403,9 +376,9 @@ namespace ecs {
 		//
 		// Model: one Harvest goal and one Haul goal per material, BOTH Available, NO dependency.
 		// The colonist chops a tree (Wood into inventory), then the inventory-source Haul (which
-		// AIDecision only surfaces while carrying) brings it to the site and deposits into the
-		// blueprint Inventory. Yields are random, so a strict harvest-all-then-haul gate would
-		// make colonists hoard; the open chain lets each trip deliver.
+		// AIDecision only surfaces while carrying) brings it to the site and the deposit records it
+		// onto the blueprint's delivered[]. Yields are random, so a strict harvest-all-then-haul gate
+		// would make colonists hoard; the open chain lets each trip deliver.
 		//
 		// Two corrections over a naive refresh:
 		//  - Harvest demand is bounded by what colonists already CARRY toward the site AND by one
@@ -436,7 +409,7 @@ namespace ecs {
 
 		// One trip's carry weight for this site, shared across all of its materials. Each
 		// material's per-trip unit count is then this weight divided by that material's mass.
-		const float carryCapacityKg = colonistCarryCapacityKg(blueprintEntity);
+		const float carryCapacityKg = colonistCarryCapacityKg();
 
 		for (const auto& [defName, requiredQty] : blueprint.required) {
 			const uint32_t remaining = blueprint.remaining(defName);
@@ -470,7 +443,7 @@ namespace ecs {
 				chainId = generateChainId();
 			}
 
-			const uint32_t carried = carriedAmount(blueprintEntity, defName);
+			const uint32_t carried = carriedAmount(defName);
 			const uint32_t perTrip = ecs::cargoUnitsPerTrip(assetRegistry, defName, carryCapacityKg);
 			const uint32_t harvestDemand = constructionHarvestDemand(remaining, carried, perTrip);
 
@@ -535,30 +508,25 @@ namespace ecs {
 		}
 	}
 
-	uint32_t ConstructionSystem::carriedAmount(EntityID buildSite, const std::string& defName) const {
-		// Sum the material carried by colonists (NeedsComponent distinguishes a colonist from the
-		// build site, which also owns an Inventory). Goals are global with no in-flight accounting,
-		// so this is how the system learns how much material is already en route to the site.
+	uint32_t ConstructionSystem::carriedAmount(const std::string& defName) const {
+		// Sum the material colonists carry (NeedsComponent + Inventory marks a colonist). Goals are
+		// global with no in-flight accounting, so this is how the system learns how much material is
+		// already en route to the site. A build site has neither component, so it never matches this
+		// view and is excluded by construction.
 		uint32_t total = 0;
 		for (auto [entity, needs, inventory] : world->view<NeedsComponent, Inventory>()) {
-			if (entity == buildSite) {
-				continue; // the delivery inventory is on-site, not in flight
-			}
 			total += inventory.getQuantity(defName);
 		}
 		return total;
 	}
 
-	float ConstructionSystem::colonistCarryCapacityKg(EntityID buildSite) const {
+	float ConstructionSystem::colonistCarryCapacityKg() const {
 		// Largest carry weight among colonists: how much one of them can haul in one trip. A
 		// max (not a sum or the first hit) keeps this independent of view iteration order, so
 		// the harvest-demand bound stays deterministic. Falls back to the colonist default if
 		// no colonist exists yet (headless/unit context).
 		float capacity = 0.0F;
 		for (auto [entity, needs, inventory] : world->view<NeedsComponent, Inventory>()) {
-			if (entity == buildSite) {
-				continue;
-			}
 			capacity = std::max(capacity, inventory.carryCapacityKg);
 		}
 		return capacity > 0.0F ? capacity : Inventory::createForColonist().carryCapacityKg;
@@ -632,14 +600,41 @@ namespace ecs {
 		return true;
 	}
 
+	void ConstructionSystem::dumpDeliveredToGround(EntityID blueprintEntity, StructureBlueprint& blueprint, float fraction) {
+		if (blueprint.delivered.empty()) {
+			return;
+		}
+		const auto*		position = world->getComponent<Position>(blueprintEntity);
+		const glm::vec2 dropPos = position != nullptr ? position->value : glm::vec2{0.0F, 0.0F};
+
+		// Drop floor(qty * fraction) of each staged material. fraction is 1.0 for a no-work cancel
+		// (return everything) and refundPercent/100 for a worked/built teardown (return the salvage
+		// cut; a built structure has delivered == required, so this is refundPercent% of the
+		// manifest). The drop callback already splits each quantity into stacks <= stackSize and
+		// scatters them, so one call per material is enough. Clear delivered[] afterward: the
+		// materials are now loose on the ground, no longer staged on this (about-to-be-removed) blueprint.
+		if (m_onDropResource) {
+			for (const auto& [defName, qty] : blueprint.delivered) {
+				const auto dropQty = static_cast<uint32_t>(std::floor(static_cast<float>(qty) * fraction));
+				if (dropQty > 0) {
+					m_onDropResource(defName, dropPos.x, dropPos.y, dropQty);
+				}
+			}
+		}
+		blueprint.delivered.clear();
+	}
+
 	void ConstructionSystem::decideDeconstruct(EntityID blueprintEntity, const Structure& structure, StructureBlueprint& blueprint) {
 		auto& registry = GoalTaskRegistry::Get();
 
 		// A demolishing structure with no work to undo can't be work-deconstructed (startBuildAction
-		// rejects workDone <= 0). Remove it immediately through the SAME removal+refund callback a
-		// worked deconstruct fires, and retire any goals it owned. Common case is demolishing a BUILT
-		// structure (workDone == workTotal), which takes the worked path below instead.
+		// rejects workDone <= 0). Remove it immediately through the SAME removal callback a worked
+		// deconstruct fires, and retire any goals it owned. This is the cancel-a-blueprint case
+		// (Clearing/AwaitingMaterials, workDone == 0): nothing was built, so ALL staged delivered[]
+		// material is returned to the ground (fraction 1.0). A worked/built structure takes the path
+		// below and returns only the salvage cut.
 		if (blueprint.workDone <= 0.0F) {
+			dumpDeliveredToGround(blueprintEntity, blueprint, /*fraction=*/1.0F);
 			const auto* goal = registry.getGoalByDestination(blueprintEntity);
 			while (goal != nullptr) {
 				registry.removeGoalWithChildren(goal->id);
@@ -658,6 +653,12 @@ namespace ecs {
 			}
 			return;
 		}
+
+		// Worked/built teardown: return the salvage cut (refundPercent% of what was invested) as loose
+		// piles. A built structure has delivered == required, so this returns refundPercent% of the
+		// whole manifest. dumpDeliveredToGround clears delivered[], so this fires once at the demolish
+		// order and the repeated per-tick calls below it (while the colonist works it down) no-op.
+		dumpDeliveredToGround(blueprintEntity, blueprint, /*fraction=*/m_refundPercent / 100.0F);
 
 		const auto*		position = world->getComponent<Position>(blueprintEntity);
 		const glm::vec2 sitePos = position != nullptr ? position->value : glm::vec2{0.0F, 0.0F};
@@ -704,18 +705,8 @@ namespace ecs {
 	}
 
 	void ConstructionSystem::completeBlueprintNow(EntityID entity, StructureBlueprint& blueprint) {
-		// Satisfy the manifest on the delivery inventory so delivered[] reconciles full and the
-		// build site genuinely holds its materials (matching a normally-built structure, and
-		// surviving a later reconcile if free-build is toggled off). Inventory is the source of
-		// truth; delivered[] is its mirror, so mirror it here too.
-		if (auto* inventory = world->getComponent<Inventory>(entity)) {
-			for (const auto& [defName, qty] : blueprint.required) {
-				const uint32_t have = inventory->getQuantity(defName);
-				if (have < qty) {
-					inventory->addItem(defName, qty - have);
-				}
-			}
-		}
+		// Satisfy the manifest directly: delivered[] is the authoritative tracker (a build site
+		// holds no Inventory), so a full build means delivered == required.
 		blueprint.delivered = blueprint.required;
 
 		// Finish the work and flip the phase exactly as the last Build tick would.
@@ -779,16 +770,12 @@ namespace ecs {
 			if (need == 0) {
 				continue;
 			}
-			auto* inventory = world->getComponent<Inventory>(entity);
-			if (inventory == nullptr) {
-				continue;
-			}
 			// Fill only this site's outstanding need, never more than we have left to hand out.
-			// remaining() already encodes the manifest math, so this never re-derives it.
+			// recordDelivery caps at the requirement, so this never over-fills the manifest.
 			const uint32_t give = std::min(need, amount);
-			const uint32_t added = inventory->addItem(defName, give);
-			credited += added;
-			amount -= added;
+			const uint32_t recorded = blueprint.recordDelivery(defName, give);
+			credited += recorded;
+			amount -= recorded;
 		}
 		return credited;
 	}

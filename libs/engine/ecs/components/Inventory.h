@@ -467,38 +467,6 @@ namespace ecs {
 		// Factory Methods
 		// ============================================================================
 
-		/// Slots a build-site delivery inventory needs to hold a whole manifest at once:
-		/// sum over required materials of ceil(required_i / stackSize_i), plus headroom. A
-		/// build site must never bounce a haul for lack of slots (that stalls construction),
-		/// so the count is computed from the manifest, not a fixed cap. Unbounded materials
-		/// (no def / no itemProperties) need exactly one slot.
-		[[nodiscard]] static uint32_t slotsForManifest(const std::vector<std::pair<std::string, uint32_t>>& required) {
-			uint32_t slots = 0;
-			for (const auto& [defName, qty] : required) {
-				if (qty == 0) {
-					continue;
-				}
-				const uint32_t cap = itemStackSize(defName);
-				slots += (cap == 0 || cap == UINT32_MAX) ? 1U : ((qty + cap - 1U) / cap);
-			}
-			return slots + kManifestSlotHeadroom;
-		}
-
-		/// Spare slots beyond the manifest minimum, so a slightly over-delivered haul still lands.
-		static constexpr uint32_t kManifestSlotHeadroom = 2;
-
-		/// Create the delivery inventory for a build site (foundation, wall, opening). A build site's
-		/// delivery inventory must hold its whole material manifest at once: hauled materials land
-		/// here, and ConstructionSystem reconciles the blueprint's delivered[] from it. Size the slots
-		/// to the manifest (slotsForManifest) so a material that spans several stacks spills across as
-		/// many slots as it needs and a haul never bounces for lack of a slot (which would stall the
-		/// build). carryCapacityKg is left at default; a static site doesn't carry.
-		static Inventory createForBuildSite(const std::vector<std::pair<std::string, uint32_t>>& manifest) {
-			Inventory inv;
-			inv.maxCapacity = slotsForManifest(manifest);
-			return inv;
-		}
-
 		/// Create inventory for a colonist (standard slot count)
 		static Inventory createForColonist() {
 			Inventory inv;

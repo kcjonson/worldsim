@@ -19,6 +19,9 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <string>
+#include <tuple>
+#include <vector>
 
 using namespace ecs;
 
@@ -220,7 +223,6 @@ namespace {
 			auto entity = world->createEntity();
 			world->addComponent<Position>(entity, Position{pos});
 			world->addComponent<Structure>(entity, Structure{StructureKind::Opening, openingId});
-			world->addComponent<Inventory>(entity, Inventory{});
 			StructureBlueprint bp;
 			bp.phase = StructureBlueprint::BuildPhase::AwaitingMaterials;
 			bp.required = {{"Wood", 10}};
@@ -454,35 +456,134 @@ TEST_F(ConstructionGoalEmissionTest, FullStackRetiresHarvestSoHaulWinsForLargeMa
 	EXPECT_EQ(haul->targetAmount, 313U);
 }
 
-// The regression the reverted chore caused: a LARGE single-material foundation (200 Wood, far
-// more than one 40-stack) must accumulate its wood across delivery slots and COMPLETE its
-// material gate, reaching UnderConstruction. Capping a delivery slot at the stack size (the old
-// naive fix) stalled this at AwaitingMaterials forever.
-TEST_F(ConstructionGoalEmissionTest, LargeFoundationAccumulatesWoodAcrossSlotsAndBuilds) {
+// A LARGE single-material foundation (200 Wood, far more than one 40-stack) must record its
+// whole delivery onto delivered[] and COMPLETE its material gate, reaching UnderConstruction.
+// delivered[] is the authoritative tracker now (no on-site Inventory); recordDelivery is the
+// single accumulation path a real Deposit drives.
+TEST_F(ConstructionGoalEmissionTest, LargeFoundationAccumulatesWoodAndBuilds) {
 	auto foundation = createLargeWoodFoundation(/*woodNeeded=*/200);
 
-	// Size the delivery inventory from the manifest exactly as the build sites do, then stage all
-	// 200 Wood: it spills into 5 stacks of 40 (ceil(200/40) = 5 slots, well under the sized count).
+	// Record all 200 Wood directly onto the manifest, as a real haul deposit would (one trip's
+	// worth at a time sums to the same total). The whole 200 is required, so it all records.
 	StructureBlueprint* bp = world->getComponent<StructureBlueprint>(foundation);
 	ASSERT_NE(bp, nullptr);
-	auto deliveryInv = Inventory::createForBuildSite(bp->required);
-	world->addComponent<Inventory>(foundation, deliveryInv);
-
-	auto* onSite = world->getComponent<Inventory>(foundation);
-	const uint32_t staged = onSite->addItem("Wood", 200);
-	ASSERT_EQ(staged, 200U) << "the manifest-sized delivery inventory must hold the whole 200";
-	EXPECT_EQ(onSite->getSlotCount(), 5U) << "200 Wood at a 40 stack size is 5 stacks";
-	EXPECT_EQ(onSite->getQuantity("Wood"), 200U) << "getQuantity sums across the 5 stacks";
+	const uint32_t recorded = bp->recordDelivery("Wood", 200);
+	ASSERT_EQ(recorded, 200U) << "the whole 200 is required, so the whole delivery records";
+	EXPECT_EQ(bp->remaining("Wood"), 0U) << "manifest satisfied";
 
 	refresh();
 
-	// ConstructionSystem reconciled delivered[] from the on-site inventory: materials complete,
-	// so the blueprint advanced to UnderConstruction (the build gate opened).
+	// Materials complete -> the blueprint advanced to UnderConstruction (the build gate opened).
 	bp = world->getComponent<StructureBlueprint>(foundation);
 	ASSERT_NE(bp, nullptr);
 	EXPECT_TRUE(bp->materialsComplete()) << "200 delivered >= 200 required";
 	EXPECT_EQ(bp->phase, StructureBlueprint::BuildPhase::UnderConstruction)
 		<< "a large foundation must leave AwaitingMaterials once its wood is staged";
+}
+
+// Cancelling a partially-delivered blueprint (no build work done) dumps the materials already
+// hauled to the site to the ground via the drop callback, then clears delivered[]. This is the
+// no-work deconstruct branch: the materials are loose at the site, not baked into a built structure.
+TEST_F(ConstructionGoalEmissionTest, CancelledPartiallyDeliveredSiteDumpsDeliveredToGround) {
+	auto foundation = createLargeWoodFoundation(/*woodNeeded=*/200);
+
+	// Stage a partial delivery (50 of 200) onto the manifest, as in-flight hauls would have, then
+	// cancel: workDone is still 0, so this takes the no-work removal path that dumps + clears.
+	auto* bp = world->getComponent<StructureBlueprint>(foundation);
+	ASSERT_NE(bp, nullptr);
+	ASSERT_EQ(bp->recordDelivery("Wood", 50), 50U);
+	bp->demolishing = true;
+
+	// Capture ground-pile drops the system requests, and accept the no-work removal so the branch
+	// runs to completion (a null deconstructed callback would only warn).
+	std::vector<std::tuple<std::string, float, float, uint32_t>> drops;
+	construction->setDropResourceCallback([&](const std::string& defName, float x, float y, uint32_t qty) {
+		drops.emplace_back(defName, x, y, qty);
+	});
+	bool removed = false;
+	construction->setStructureDeconstructedCallback([&](EntityID e) {
+		if (e == foundation) {
+			removed = true;
+		}
+	});
+
+	refresh();
+
+	// The 50 staged Wood was dumped at the site (one call per material; the GameScene helper splits
+	// it into stacks), and the removal callback fired.
+	ASSERT_EQ(drops.size(), 1U) << "one drop call for the single staged material";
+	EXPECT_EQ(std::get<0>(drops.front()), "Wood");
+	EXPECT_EQ(std::get<3>(drops.front()), 50U) << "the whole staged quantity is dumped";
+	EXPECT_TRUE(removed) << "the no-work blueprint was removed";
+
+	// delivered[] is cleared so the manifest never re-dumps on a later tick.
+	bp = world->getComponent<StructureBlueprint>(foundation);
+	ASSERT_NE(bp, nullptr);
+	EXPECT_TRUE(bp->delivered.empty()) << "delivered[] cleared after the dump";
+}
+
+// A two-material site completes its material gate only once BOTH manifests are filled. Recording a
+// partial Wood delivery leaves it incomplete; recording the Stone plus the rest of the Wood fills
+// it, and the next refresh advances the blueprint out of AwaitingMaterials into UnderConstruction.
+// recordDelivery is the single accumulation path a real deposit drives, one trip at a time.
+TEST_F(ConstructionGoalEmissionTest, MultiMaterialSiteCompletesViaDeposits) {
+	auto foundation = createTwoMaterialFoundation(); // requires Wood 30, Stone 20
+
+	auto* bp = world->getComponent<StructureBlueprint>(foundation);
+	ASSERT_NE(bp, nullptr);
+
+	// Partial Wood only: the Stone manifest is untouched and Wood is short, so the gate is open.
+	ASSERT_EQ(bp->recordDelivery("Wood", 18), 18U);
+	EXPECT_FALSE(bp->materialsComplete()) << "Wood still short and no Stone delivered yet";
+	EXPECT_GT(bp->remaining("Wood"), 0U);
+	EXPECT_EQ(bp->remaining("Stone"), 20U);
+
+	// Deliver all the Stone and the rest of the Wood: every manifest is now satisfied.
+	ASSERT_EQ(bp->recordDelivery("Stone", 20), 20U);
+	ASSERT_EQ(bp->recordDelivery("Wood", 12), 12U) << "12 finishes the 30 Wood (18 + 12)";
+	EXPECT_TRUE(bp->materialsComplete()) << "both Wood (30/30) and Stone (20/20) delivered";
+
+	refresh();
+
+	// Materials complete + clear footprint -> the blueprint leaves AwaitingMaterials for
+	// UnderConstruction (the build gate opens).
+	bp = world->getComponent<StructureBlueprint>(foundation);
+	ASSERT_NE(bp, nullptr);
+	EXPECT_EQ(bp->phase, StructureBlueprint::BuildPhase::UnderConstruction)
+		<< "a multi-material site advances to UnderConstruction once every manifest is filled";
+}
+
+// Demolishing a BUILT structure (workDone == workTotal, delivered == required) returns the salvage
+// cut: refundPercent% of each delivered material is dumped as loose ground piles via the drop
+// callback. With refundPercent 50 and 30 Wood invested, 15 Wood comes back. This is the worked
+// deconstruct branch (contrast with the no-work cancel above, which returns 100%).
+TEST_F(ConstructionGoalEmissionTest, BuiltStructureDemolishReturnsRefundPercentSalvage) {
+	auto foundation = createBuiltDemolishing(StructureKind::Foundation); // built, delivered Wood 30
+
+	construction->setRefundPercent(50.0F);
+
+	std::vector<std::tuple<std::string, float, float, uint32_t>> drops;
+	construction->setDropResourceCallback([&](const std::string& defName, float x, float y, uint32_t qty) {
+		drops.emplace_back(defName, x, y, qty);
+	});
+
+	refresh();
+
+	// 50% of the 30 delivered Wood = 15 dumped (one drop call for the single material; the GameScene
+	// helper splits the 15 into stacks).
+	ASSERT_EQ(drops.size(), 1U) << "one drop call for the single salvaged material";
+	EXPECT_EQ(std::get<0>(drops.front()), "Wood");
+	EXPECT_EQ(std::get<3>(drops.front()), 15U) << "refundPercent 50 of 30 Wood = 15 salvaged";
+
+	// delivered[] is cleared so the salvage never re-dumps on the per-tick Deconstruct refreshes.
+	const auto* bp = world->getComponent<StructureBlueprint>(foundation);
+	ASSERT_NE(bp, nullptr);
+	EXPECT_TRUE(bp->delivered.empty()) << "delivered[] cleared after the salvage dump";
+
+	// A worked/built teardown still emits a Deconstruct goal for a colonist to work down.
+	const auto* goal = GoalTaskRegistry::Get().getGoalByDestination(foundation);
+	ASSERT_NE(goal, nullptr);
+	EXPECT_EQ(goal->type, TaskType::Deconstruct) << "the built structure is torn down by work, salvage aside";
 }
 
 // ============================================================================
@@ -578,7 +679,6 @@ namespace {
 			auto entity = world->createEntity();
 			world->addComponent<Position>(entity, Position{pos});
 			world->addComponent<Structure>(entity, Structure{StructureKind::Opening, openingId});
-			world->addComponent<Inventory>(entity, Inventory{});
 			StructureBlueprint bp;
 			bp.phase = StructureBlueprint::BuildPhase::AwaitingMaterials;
 			bp.required = {{"Wood", 10}};
@@ -657,9 +757,9 @@ TEST_F(OpeningHostGateTest, BuiltSegmentReleasesOpeningToHaulThenBuild) {
 	EXPECT_EQ(countOfType(children, TaskType::Harvest), 1U);
 	EXPECT_EQ(countOfType(children, TaskType::Haul), 1U);
 
-	// Stage the materials on the blueprint's delivery inventory, then refresh: the opening
-	// advances to UnderConstruction and the umbrella flips Available (the Build goal).
-	world->getComponent<Inventory>(blueprint)->addItem("Wood", 10);
+	// Record the materials onto the blueprint's manifest, then refresh: the opening advances
+	// to UnderConstruction and the umbrella flips Available (the Build goal).
+	world->getComponent<StructureBlueprint>(blueprint)->recordDelivery("Wood", 10);
 	refresh();
 
 	const auto* bp = world->getComponent<StructureBlueprint>(blueprint);
