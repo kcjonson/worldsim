@@ -13,12 +13,11 @@
     <generator>
       <scriptPath>@shared/conifer.lua</scriptPath>
       <params>
-        <!-- Dimensions in meters (top-down footprint), scaled per-tree in the script -->
-        <trunkHeight>1.7</trunkHeight>
+        <!-- Top-down footprint; the script scales + varies these per-tree -->
         <trunkWidth>0.18</trunkWidth>
         <canopyRadius>0.6</canopyRadius>
-        <!-- Stacked needle tiers -->
-        <tiers>4</tiers>
+        <!-- Base needle-tier count; the script jitters it to ~4-8 -->
+        <tiers>6</tiers>
       </params>
     </generator>
 

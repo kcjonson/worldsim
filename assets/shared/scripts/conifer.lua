@@ -1,84 +1,122 @@
--- Conifer Tree Generator (3/4 Top-Down View - Rimworld Style)
--- A spruce/pine seen from above: a short trunk under a stack of pointed,
--- star-shaped needle tiers, darkest and widest at the base, lighter and smaller
--- toward the tip. Narrower and darker than the deciduous generator.
+-- Conifer (pine/spruce) generator -- 3/4 top-down, converged recipe.
+-- A cohesive PEAKED evergreen: stacked spiky needle tiers, widest/darkest at the
+-- base, narrowing to a lit peak. Dark blue-green. One dark outline (expanded tier
+-- copies behind) + a dark backing fill so gaps between tiers read as shadow, not
+-- sky. Canopy mass above the origin; a SHORT cel-shaded, bark-textured trunk stub
+-- peeks below. NO ground shadow. Light from upper-left. Strong per-instance
+-- variation (aspect, taper, lean, tier count, raggedness, colour) + growth.
 
-local canopyRadius = getFloat("canopyRadius", 0.6)
-local trunkHeight = getFloat("trunkHeight", 1.6)
-local trunkWidth = getFloat("trunkWidth", 0.18)
-local tiers = getInt("tiers", 4)
+local canopyR = getFloat("canopyRadius", 0.6)
+local trunkW  = getFloat("trunkWidth", 0.18)
+local tiers   = getInt("tiers", 6)
+local growth  = getFloat("growthStage", 1.0)   -- 0.3 sapling .. 1.0 mature
 
--- Trunk-base collision: a square footprint (half-extent = trunkWidth/2 each
--- axis), captured before per-tree randomization so it is stable across variants.
-asset:setCollisionRect(trunkWidth / 2, trunkWidth / 2, 0, 0)
+-- Trunk-base collision (half-extent = trunkW/2), captured before per-tree jitter.
+asset:setCollisionRect(trunkW / 2, trunkW / 2, 0, 0)
 
--- Per-tree variation
-canopyRadius = canopyRadius * (0.7 + math.random() * 0.6)
-trunkHeight = trunkHeight * (0.7 + math.random() * 0.6)
-trunkWidth = trunkWidth * (0.7 + math.random() * 0.5)
+-- ---- per-instance variation: this is what makes each tree read as distinct ----
+local g        = clamp(growth, 0.3, 1.0)
+canopyR        = canopyR * g * (0.72 + math.random() * 0.56)        -- 0.72..1.28 size
+tiers          = math.max(4, math.floor(tiers * (0.7 + math.random() * 0.7)))  -- ~4..8
+local points   = 7 + math.floor(math.random() * 5)                 -- 7..11 spikes / tier
+local peakRise = canopyR * (1.05 + math.random() * 0.95)            -- aspect: squat .. tall-pointed
+local falloff  = 0.58 + math.random() * 0.30                        -- columnar .. sharply tapered
+local lean     = (math.random() - 0.5) * canopyR * 0.45            -- slight sideways lean
+local spike    = 0.44 + math.random() * 0.18                        -- needle spikiness (inner ratio)
+local trunkWv  = trunkW * (0.8 + math.random() * 0.5)              -- visual trunk thickness
 
--- Trunk: dark red-brown
-local trunkR = 0.4 + (math.random() - 0.5) * 0.08
-local trunkG = 0.26 + (math.random() - 0.5) * 0.06
-local trunkB = 0.16 + (math.random() - 0.5) * 0.04
+-- Raggedness: a FIXED per-tier width wobble (sampled once) so the dark rim copies
+-- stay aligned with the tiers they outline.
+local tierJit = {}
+for i = 0, tiers - 1 do tierJit[i] = 1.0 + (math.random() - 0.5) * 0.20 end
 
--- Needles: dark blue-green (spruce)
-local needleR = 0.16 + (math.random() - 0.5) * 0.05
-local needleG = 0.34 + (math.random() - 0.5) * 0.08
-local needleB = 0.24 + (math.random() - 0.5) * 0.05
+-- Palette: dark blue-green spruce, varied per instance in brightness + warm/cool.
+local light = 0.78 + math.random() * 0.42        -- overall brightness
+local temp  = (math.random() - 0.5) * 0.13       -- + greener/warmer, - cooler/bluer
+local nR = 0.17 * light
+local nG = (0.29 + temp) * light
+local nB = (0.21 - temp * 0.6) * light
+local function tone(m) return nR * m, nG * m, nB * m end
+local barkR = 0.26 * (0.85 + math.random() * 0.3)
+local barkG, barkB = 0.18, 0.11
 
-local shadowR, shadowG, shadowB, shadowA = 0.12, 0.12, 0.08, 0.3
-
--- A pointed (star) ring: 2*points vertices alternating between outerR and
--- outerR*innerRatio, giving the spiky needle silhouette from above.
-local function createStar(cx, cy, outerR, innerRatio, points, r, g, b, a)
+-- A spiky star ring (one needle tier seen from above): 2*points verts alternating
+-- outer/inner radius. sin is flattened by 0.7 to foreshorten the tier (top-down).
+-- Monotonic angle sweep + always-positive radius, so it never self-intersects.
+local function star(cx, cy, outerR, innerRatio, r, g, b, a)
     a = a or 1.0
-    local path = Path()
-    local startAngle = math.random() * math.pi  -- rotate each tier a little
+    local p = Path()
+    local startA = math.random() * math.pi
     for i = 0, points * 2 - 1 do
-        local angle = startAngle + (i / (points * 2)) * 2 * math.pi
-        local radius = (i % 2 == 0) and outerR or (outerR * innerRatio)
-        radius = radius * (1.0 + (math.random() - 0.5) * 0.12)
-        path:addVertex(cx + radius * math.cos(angle), cy + radius * math.sin(angle))
+        local ang = startA + (i / (points * 2)) * 2 * math.pi
+        local rr  = ((i % 2 == 0) and outerR or outerR * innerRatio) * (1.0 + (math.random() - 0.5) * 0.10)
+        p:addVertex(cx + rr * math.cos(ang), cy + rr * math.sin(ang) * 0.7)
     end
-    path:setColor(r, g, b, a)
-    path:close()
-    asset:addPath(path)
+    p:setColor(r, g, b, a); p:close(); asset:addPath(p)
 end
 
-local function createTrunk(cx, topY, bottomY, topWidth, bottomWidth, r, g, b)
-    local path = Path()
-    path:addVertex(cx - topWidth / 2, topY)
-    path:addVertex(cx + topWidth / 2, topY)
-    path:addVertex(cx + bottomWidth / 2, bottomY)
-    path:addVertex(cx - bottomWidth / 2, bottomY)
-    path:setColor(r, g, b, 1.0)
-    path:close()
-    asset:addPath(path)
+local function quad(x0, y0, x1, y1, x2, y2, x3, y3, r, g, b)
+    local p = Path()
+    p:addVertex(x0, y0); p:addVertex(x1, y1); p:addVertex(x2, y2); p:addVertex(x3, y3)
+    p:setColor(r, g, b, 1.0); p:close(); asset:addPath(p)
 end
 
--- Canopy sits above center; trunk drops below it (+Y is toward the viewer).
-local canopyCenterY = -canopyRadius * 1.1
-local pointCount = 7 + math.floor(math.random() * 4) -- 7-10 needle points
-
--- 1. Shadow
-createStar(canopyRadius * 0.18, canopyCenterY + canopyRadius * 0.4, canopyRadius * 0.95,
-           0.6, pointCount, shadowR, shadowG, shadowB, shadowA)
-
--- 2. Trunk (mostly hidden, grounds the tree)
-createTrunk(0, canopyRadius * 0.1, trunkHeight * 0.5, trunkWidth * 0.7, trunkWidth, trunkR, trunkG, trunkB)
-
--- 3. Stacked needle tiers: largest/darkest at the base, smaller/lighter upward.
-tiers = math.max(3, tiers)
-for tier = 0, tiers - 1 do
-    local t = tier / (tiers - 1)               -- 0 at base, 1 at tip
-    local scale = 1.0 - t * 0.62               -- shrink toward the tip
-    local cy = canopyCenterY - t * canopyRadius * 0.95  -- stack upward
-    local lighten = 0.78 + t * 0.5             -- base darker, tip lighter
-    createStar(0, cy, canopyRadius * scale, 0.52, pointCount,
-               needleR * lighten, needleG * lighten, needleB * lighten, 0.96)
+-- Short cel-shaded trunk: a slightly tapered cylinder = mid base + lit left band +
+-- shadow right edge + one dark vertical bark crack. Reads as bark, not a flat stick.
+local function texturedTrunk(topY, botY, topW, botW)
+    -- x at side fraction f in [-0.5, 0.5], interpolating top->bot width at height t (0=top,1=bot)
+    local function edge(f, t) return f * (topW + (botW - topW) * t) end
+    local function yAt(t) return topY + (botY - topY) * t end
+    quad(edge(-0.5, 0), topY, edge(0.5, 0), topY, edge(0.5, 1), botY, edge(-0.5, 1), botY, barkR, barkG, barkB)
+    quad(edge(-0.5, 0), topY, edge(-0.1, 0), topY, edge(-0.1, 1), botY, edge(-0.5, 1), botY,
+         barkR * 1.38, barkG * 1.38, barkB * 1.32)                       -- lit left band
+    quad(edge(0.24, 0), topY, edge(0.5, 0), topY, edge(0.5, 1), botY, edge(0.24, 1), botY,
+         barkR * 0.6, barkG * 0.6, barkB * 0.58)                         -- shadow right edge
+    local cf = -0.12 + (math.random() - 0.5) * 0.2                       -- crack offset
+    quad(edge(cf - 0.1, 0.12), yAt(0.12), edge(cf + 0.1, 0.12), yAt(0.12),
+         edge(cf + 0.1, 1), botY, edge(cf - 0.1, 1), botY,
+         barkR * 0.48, barkG * 0.48, barkB * 0.45)                       -- vertical bark crack
 end
 
--- 4. Bright tip highlight
-createStar(0, canopyCenterY - canopyRadius * 0.95, canopyRadius * 0.22, 0.55, pointCount,
-           needleR * 1.5, needleG * 1.35, needleB * 1.3, 0.95)
+-- trunk base sits AT the origin (= the collision point / ground contact); canopy above
+local trunkLen =  canopyR * (0.5 + math.random() * 0.5)                 -- SHORT stub, proportional
+local trunkBot =  0.0                                                   -- BASE at the origin
+local trunkTop = -trunkLen                                              -- trunk rises from the base
+local baseY    =  trunkTop - canopyR * 0.35                             -- bottom tier centered above the trunk top
+
+-- tier i: 0 = base (widest, lowest), tiers-1 = tip (smallest, highest); leans + wobbles
+local function tierAt(i)
+    local t = (tiers <= 1) and 0.0 or i / (tiers - 1)
+    return lean * t, baseY - t * peakRise, canopyR * (1.0 - t * falloff) * tierJit[i]
+end
+
+-- 1. trunk stub (short, textured) -- drawn first so the lowest tier overlaps its top
+texturedTrunk(trunkTop, trunkBot, trunkWv * 0.82, trunkWv)
+
+-- 2. RIM: an expanded dark copy of every tier -> their union is one dark outline
+for i = 0, tiers - 1 do
+    local cx, cy, rr = tierAt(i)
+    star(cx, cy, rr * 1.12, spike + 0.08, tone(0.42))
+end
+
+-- 3. BACKING fallback: a solid dark wedge over the interior so any gap reads as shadow
+do
+    local br, bg, bb = tone(0.58)
+    local p = Path()
+    p:addVertex(-canopyR * 0.8, baseY + canopyR * 0.3)
+    p:addVertex(canopyR * 0.8, baseY + canopyR * 0.3)
+    p:addVertex(lean, baseY - peakRise - canopyR * 0.1)
+    p:setColor(br, bg, bb, 1.0); p:close(); asset:addPath(p)
+end
+
+-- 4. TIERS base-to-tip: dark base star + a smaller lit cap offset up-left
+for i = 0, tiers - 1 do
+    local cx, cy, rr = tierAt(i)
+    local t = (tiers <= 1) and 0.0 or i / (tiers - 1)
+    star(cx, cy, rr, spike, tone(1.0))
+    star(cx - rr * 0.12, cy - rr * 0.10, rr * 0.66, spike, tone(1.22 + 0.28 * t))  -- lit cap, brighter up
+end
+
+-- 5. PEAK: small bright tip highlight at the top
+local px, py, pr = tierAt(tiers - 1)
+star(px - pr * 0.1, py - pr * 0.12, pr * 0.5, spike, tone(1.6))
