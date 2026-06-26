@@ -21,6 +21,8 @@ namespace engine::assets {
 		}
 		const Foundation::Rect bounds = renderer::computeBounds(result.mesh);
 		renderer::fitToRect(result.mesh, bounds, target);
+		result.sourceBounds = bounds;
+		result.targetRect = target;
 		return result;
 	}
 

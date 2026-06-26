@@ -8,12 +8,16 @@
 #include <primitives/Primitives.h>
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
 #include <utility>
+#include <vector>
+
+#include <glm/vec2.hpp>
 
 namespace asset_manager {
 
@@ -86,14 +90,17 @@ namespace asset_manager {
 	void AssetDetailView::setAsset(const std::string& defName) {
 		if (defName.empty()) {
 			m_hasAsset = false;
+			m_def = nullptr;
 			return;
 		}
 		const engine::assets::AssetDefinition* def = engine::assets::AssetRegistry::Get().getDefinition(defName);
 		if (def == nullptr) {
 			m_hasAsset = false;
+			m_def = nullptr;
 			return;
 		}
 		m_hasAsset = true;
+		m_def = def;
 
 		m_preview.setAsset(defName);
 		m_preview.setSize(kPreview - (2.0F * theme::s2), kPreview - (2.0F * theme::s2));
@@ -219,8 +226,10 @@ namespace asset_manager {
 		}
 
 		// Preview card.
-		panel({m_bounds.x + kPad, m_bounds.y + kPad, kPreview, kPreview}, theme::bgInset, theme::lineHairline);
+		const Foundation::Rect previewCard{m_bounds.x + kPad, m_bounds.y + kPad, kPreview, kPreview};
+		panel(previewCard, theme::bgInset, theme::lineHairline);
 		m_preview.render();
+		drawCollisionOverlay(previewCard);
 
 		m_kicker.render();
 		m_name.render();
@@ -245,6 +254,61 @@ namespace asset_manager {
 		panel({m_bounds.x + kPad, wellY, m_bounds.width - (2.0F * kPad), wellH}, theme::bgInset, theme::lineHairline);
 		if (m_xmlScroll) {
 			m_xmlScroll->render();
+		}
+	}
+
+	void AssetDetailView::drawCollisionOverlay(const Foundation::Rect& previewCard) {
+		if (m_def == nullptr) {
+			return;
+		}
+
+		// No collider: make the absence explicit with a corner label.
+		if (!m_def->collision.blocks()) {
+			Renderer::Primitives::drawText({
+				.text = "no collider",
+				.position = {previewCard.x + theme::s2, previewCard.y + theme::s2},
+				.scale = theme::fsSmall / 16.0F,
+				.color = theme::textFaint,
+				.id = "am_no_collider",
+			});
+			return;
+		}
+
+		if (!m_preview.hasMesh()) {
+			return;
+		}
+
+		// Collision points live in the asset's local meter space, the same space as the
+		// raw mesh the preview was built from. localToScreen replays the preview's exact
+		// fitToRect math, so the outline lands on the art. ONE transform source.
+		std::vector<glm::vec2> local;
+		if (m_def->collision.type == engine::assets::CollisionShapeType::Rect) {
+			const std::array<glm::vec2, 4> corners = m_def->collision.rectCornersLocal();
+			local.assign(corners.begin(), corners.end());
+		} else { // Polygon
+			local = m_def->collision.pointsMeters;
+		}
+		if (local.size() < 2) {
+			return;
+		}
+
+		std::vector<Foundation::Vec2> screen;
+		screen.reserve(local.size());
+		for (const glm::vec2& p : local) {
+			screen.push_back(m_preview.localToScreen(p));
+		}
+
+		const Foundation::Color outline{0.0F, 1.0F, 1.0F, 1.0F}; // bright cyan, high contrast on art
+		constexpr float			thickness = 2.0F;
+		for (size_t i = 0; i < screen.size(); ++i) {
+			const Foundation::Vec2& a = screen[i];
+			const Foundation::Vec2& b = screen[(i + 1) % screen.size()];
+			Renderer::Primitives::drawLine({
+				.start = a,
+				.end = b,
+				.style = {.color = outline, .width = thickness},
+				.id = "am_collision_edge",
+			});
 		}
 	}
 

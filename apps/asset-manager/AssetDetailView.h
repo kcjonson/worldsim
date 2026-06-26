@@ -16,6 +16,10 @@
 #include <memory>
 #include <string>
 
+namespace engine::assets {
+	struct AssetDefinition;
+}
+
 namespace asset_manager {
 
 	class AssetDetailView {
@@ -30,9 +34,12 @@ namespace asset_manager {
 
 	  private:
 		void relayout();
+		// Draw the selected asset's collision shape over the preview, aligned to the art.
+		void drawCollisionOverlay(const Foundation::Rect& previewCard);
 
 		Foundation::Rect					 m_bounds{0.0F, 0.0F, 0.0F, 0.0F};
 		bool								 m_hasAsset = false;
+		const engine::assets::AssetDefinition* m_def = nullptr; // current asset (for the collision overlay)
 		AssetThumbnail						 m_preview;
 		UI::Text							 m_kicker;
 		UI::Text							 m_name;
@@ -48,7 +55,7 @@ namespace asset_manager {
 		float								 m_dividerY = 0.0F;
 
 		static constexpr float kPad = 16.0F;
-		static constexpr float kPreview = 160.0F;
+		static constexpr float kPreview = 300.0F;
 	};
 
 } // namespace asset_manager

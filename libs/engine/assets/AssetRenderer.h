@@ -16,6 +16,8 @@ namespace engine::assets {
 
 	struct PreparedAsset {
 		renderer::TessellatedMesh mesh;		   // vertices in target-rect pixel space
+		Foundation::Rect		  sourceBounds{0.0F, 0.0F, 0.0F, 0.0F}; // raw mesh bounds (asset-local space) before fit
+		Foundation::Rect		  targetRect{0.0F, 0.0F, 0.0F, 0.0F};	// rect the mesh was fit into (pixel space)
 		bool					  hasOutput = true; // false if the asset produced no geometry
 	};
 
