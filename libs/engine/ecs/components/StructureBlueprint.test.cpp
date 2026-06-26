@@ -143,6 +143,41 @@ TEST(StructureBlueprintTests, ProgressClampedBelowZero) {
 }
 
 // ============================================================================
+// displayProgress(): Build shows raw progress; Deconstruct shows the complement
+// because its workDone counts DOWN from workTotal toward 0.
+// ============================================================================
+
+TEST(StructureBlueprintTests, DisplayProgressBuildMatchesRawProgress) {
+	StructureBlueprint bp;
+	bp.workTotal = 100.0F;
+	bp.workDone = 25.0F;
+	EXPECT_FLOAT_EQ(bp.displayProgress(false), 0.25F);
+}
+
+// A deconstruct starts at workDone == workTotal (raw progress 1.0) and the meter must read 0%,
+// rising toward 100% as workDone drains to 0.
+TEST(StructureBlueprintTests, DisplayProgressDeconstructStartsEmpty) {
+	StructureBlueprint bp;
+	bp.workTotal = 100.0F;
+	bp.workDone = 100.0F; // demolition just began
+	EXPECT_FLOAT_EQ(bp.displayProgress(true), 0.0F);
+}
+
+TEST(StructureBlueprintTests, DisplayProgressDeconstructHalfway) {
+	StructureBlueprint bp;
+	bp.workTotal = 100.0F;
+	bp.workDone = 75.0F; // a quarter torn down
+	EXPECT_FLOAT_EQ(bp.displayProgress(true), 0.25F);
+}
+
+TEST(StructureBlueprintTests, DisplayProgressDeconstructNearlyDoneReadsFull) {
+	StructureBlueprint bp;
+	bp.workTotal = 100.0F;
+	bp.workDone = 0.0F; // fully torn down
+	EXPECT_FLOAT_EQ(bp.displayProgress(true), 1.0F);
+}
+
+// ============================================================================
 // Default state
 // ============================================================================
 

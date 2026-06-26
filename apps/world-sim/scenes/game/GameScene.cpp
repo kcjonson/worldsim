@@ -1052,6 +1052,13 @@ namespace {
 				}
 			});
 
+			// Wire up ActionSystem to remove a specific entity by id (a loose pile drained to
+			// zero). The system already holds the exact entity, so there is no position scan to
+			// alias between two same-material piles. Queue for the deferred drain like the others.
+			actionSystem.setRemoveEntityByIdCallback([this](ecs::EntityID entity) {
+				m_pendingEntityRemoval.push_back(entity);
+			});
+
 			// Wire up ActionSystem to set cooldown on harvested entities (regrowth)
 			actionSystem.setEntityCooldownCallback([this](const std::string& defName, float x, float y, float cooldownSeconds) {
 				auto coord = engine::world::worldToChunk({x, y});
