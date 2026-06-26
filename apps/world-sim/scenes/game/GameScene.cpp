@@ -326,11 +326,6 @@ namespace {
 				auto& constructionSystem = ecsWorld->getSystem<ecs::ConstructionSystem>();
 				constructionSystem.setConstructionWorld(&m_drawingSystem->world());
 
-				// Salvage cut returned when a worked/built structure is demolished, from the
-				// construction config (constraints.xml refundPercent). ConstructionSystem dumps this
-				// fraction of the structure's delivered[] manifest to the ground on teardown.
-				constructionSystem.setRefundPercent(engine::assets::ConstructionRegistry::Get().constraints().refundPercent);
-
 				// NavigationSystem reads the same ConstructionWorld (walls/doors) to build
 				// its navmesh input; wired here for the same reason ConstructionSystem is.
 				ecsWorld->getSystem<ecs::NavigationSystem>().setConstructionWorld(&m_drawingSystem->world());
@@ -389,11 +384,31 @@ namespace {
 				// update()). This is the SINGLE removal path: the demolish buttons only mark
 				// structures; the work-driven deconstruct lands here. The SAME lambda is wired to
 				// ConstructionSystem for the no-work edge case (a marked blueprint with workDone <= 0
-				// is removed immediately through here). Material return on cancel is ConstructionSystem's
-				// job (it dumps a partially-delivered site's staged delivered[] to the ground before
-				// firing this); a fully-built structure torn down has its materials baked in and
-				// returns nothing.
+				// is removed immediately through here). Material return splits by path: a built teardown
+				// salvages refundPercent% of its delivered[] HERE at completion (below); a no-work cancel
+				// dumps 100% at order-time inside ConstructionSystem and clears delivered[] (so the salvage
+				// below reads empty for it).
 				auto structureDeconstructed = [this](ecs::EntityID blueprintEntity) {
+					// Salvage refundPercent% of a BUILT structure's delivered[] manifest as loose piles HERE,
+					// at tear-down completion (the structure is gone), not at the demolish-order tick when it
+					// was still standing. The entity is still alive (destruction is deferred to the queue), so
+					// delivered[] and Position read fine. A no-work cancel already dumped 100% and cleared
+					// delivered[] at order-time in ConstructionSystem, so this reads empty for it and drops
+					// nothing -- no double-dump.
+					if (const auto* blueprint = ecsWorld->getComponent<ecs::StructureBlueprint>(blueprintEntity);
+						blueprint != nullptr && !blueprint->delivered.empty()) {
+						const float		refundPercent = engine::assets::ConstructionRegistry::Get().constraints().refundPercent;
+						const auto*		position = ecsWorld->getComponent<ecs::Position>(blueprintEntity);
+						const glm::vec2 dropPos = position != nullptr ? position->value : glm::vec2{0.0F, 0.0F};
+						for (const auto& [defName, qty] : blueprint->delivered) {
+							const auto salvageQty =
+								static_cast<uint32_t>(std::floor(static_cast<float>(qty) * refundPercent / 100.0F));
+							if (salvageQty > 0) {
+								dropResourcePiles(defName, dropPos.x, dropPos.y, salvageQty);
+							}
+						}
+					}
+
 					const auto* structure = ecsWorld->getComponent<ecs::Structure>(blueprintEntity);
 					if (structure != nullptr && structure->graphId != 0) {
 						auto& constructionWorld = m_drawingSystem->world();

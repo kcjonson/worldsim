@@ -182,12 +182,6 @@ namespace ecs {
 		using DropResourceCallback = std::function<void(const std::string&, float, float, uint32_t)>;
 		void setDropResourceCallback(DropResourceCallback callback) { m_onDropResource = std::move(callback); }
 
-		/// Salvage fraction returned when a worked/built structure is demolished, as a percentage
-		/// (config `refundPercent`, default 50). GameScene sets it from the construction config at
-		/// startup so the value is live, not hardcoded. A cancelled-but-unbuilt blueprint (no work
-		/// done) returns 100% regardless; this governs only the worked path.
-		void setRefundPercent(float percent) { m_refundPercent = percent; }
-
 		/// DEV/TEST ONLY. Credit `amount` of `defName` onto the delivered[] manifests of all
 		/// active (non-Complete) build sites, capped at each site's outstanding need so no
 		/// site is over-filled, and stops once `amount` is exhausted. Returns the total
@@ -228,19 +222,22 @@ namespace ecs {
 		///
 		/// Edge case: a blueprint with workDone <= 0 has no work to undo (startBuildAction would
 		/// reject it), so there is nothing for a colonist to deconstruct. Such a structure is
-		/// removed immediately via the deconstructed-completion callback (the SAME removal+refund
-		/// path a worked deconstruct fires), instead of emitting an un-actionable goal.
+		/// removed immediately via the deconstructed-completion callback (the SAME removal path a
+		/// worked deconstruct fires on completion), instead of emitting an un-actionable goal. Its
+		/// staged materials are dumped here at order-time (100%, delivered[] cleared) rather than at
+		/// the callback, since the site vanishes at once.
 		void decideDeconstruct(EntityID blueprintEntity, const Structure& structure, StructureBlueprint& blueprint);
 
-		/// Dump `fraction` of a demolished blueprint's staged delivered[] materials to the ground as
-		/// loose, haulable piles at its position (via the drop-resource callback, which splits each
-		/// quantity into stacks and scatters them), then clear delivered[]. Per material the dumped
-		/// count is floor(qty * fraction), skipped when 0. Both deconstruct branches call it: the
-		/// no-work cancel returns everything (fraction 1.0); a worked/built teardown returns the
-		/// salvage cut (fraction = refundPercent/100, and delivered == required for a built structure,
-		/// so it returns refundPercent% of the manifest). No-op when delivered[] is empty or no drop
-		/// callback is wired (headless); delivered[] is cleared regardless so the manifest never re-dumps.
-		void dumpDeliveredToGround(EntityID blueprintEntity, StructureBlueprint& blueprint, float fraction);
+		/// Dump ALL of a demolished blueprint's staged delivered[] materials to the ground as loose,
+		/// haulable piles at its position (via the drop-resource callback, which splits each quantity
+		/// into stacks and scatters them), then clear delivered[]. Only the no-work cancel branch calls
+		/// it: there's no structure to tear down, so the site is removed promptly and its in-flight
+		/// materials go loose at once. A worked/built teardown does NOT call this; its salvage drop
+		/// happens at deconstruct-COMPLETION (the structure is removed) via GameScene's deconstructed
+		/// callback, which reads the still-intact delivered[] and returns only the refundPercent% cut.
+		/// No-op when delivered[] is empty or no drop callback is wired (headless); delivered[] is
+		/// cleared regardless so the manifest never re-dumps.
+		void dumpDeliveredToGround(EntityID blueprintEntity, StructureBlueprint& blueprint);
 
 		/// Cascade gate: true once a demolishing structure's dependents are gone, so its
 		/// Deconstruct goal may go Available. A foundation waits until no wall is hosted on it; a
@@ -296,11 +293,6 @@ namespace ecs {
 		// Spawns loose ground piles for a cancelled blueprint's staged materials. Null in headless
 		// contexts (the dump is then skipped; the manifest is cleared regardless).
 		DropResourceCallback m_onDropResource = nullptr;
-
-		// Salvage fraction (as a percent) returned when a worked/built structure is demolished. Set
-		// from the construction config (constraints.xml refundPercent) by GameScene; the struct
-		// default mirrors the config default so headless/test contexts behave without wiring.
-		float m_refundPercent = 50.0F;
 
 		// Entities already warned about a missing deconstructed callback. Without the callback the
 		// blueprint can't be removed, so it re-enters the no-work branch every tick; this throttles

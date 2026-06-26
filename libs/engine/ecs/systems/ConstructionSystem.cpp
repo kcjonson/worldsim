@@ -600,24 +600,22 @@ namespace ecs {
 		return true;
 	}
 
-	void ConstructionSystem::dumpDeliveredToGround(EntityID blueprintEntity, StructureBlueprint& blueprint, float fraction) {
+	void ConstructionSystem::dumpDeliveredToGround(EntityID blueprintEntity, StructureBlueprint& blueprint) {
 		if (blueprint.delivered.empty()) {
 			return;
 		}
 		const auto*		position = world->getComponent<Position>(blueprintEntity);
 		const glm::vec2 dropPos = position != nullptr ? position->value : glm::vec2{0.0F, 0.0F};
 
-		// Drop floor(qty * fraction) of each staged material. fraction is 1.0 for a no-work cancel
-		// (return everything) and refundPercent/100 for a worked/built teardown (return the salvage
-		// cut; a built structure has delivered == required, so this is refundPercent% of the
-		// manifest). The drop callback already splits each quantity into stacks <= stackSize and
-		// scatters them, so one call per material is enough. Clear delivered[] afterward: the
-		// materials are now loose on the ground, no longer staged on this (about-to-be-removed) blueprint.
+		// Drop every staged material in full. The only caller is the no-work cancel: nothing was
+		// built, so all in-flight material returns to the ground. The drop callback splits each
+		// quantity into stacks <= stackSize and scatters them, so one call per material is enough.
+		// Clear delivered[] afterward: the materials are now loose on the ground, no longer staged on
+		// this (about-to-be-removed) blueprint.
 		if (m_onDropResource) {
 			for (const auto& [defName, qty] : blueprint.delivered) {
-				const auto dropQty = static_cast<uint32_t>(std::floor(static_cast<float>(qty) * fraction));
-				if (dropQty > 0) {
-					m_onDropResource(defName, dropPos.x, dropPos.y, dropQty);
+				if (qty > 0) {
+					m_onDropResource(defName, dropPos.x, dropPos.y, qty);
 				}
 			}
 		}
@@ -631,10 +629,11 @@ namespace ecs {
 		// rejects workDone <= 0). Remove it immediately through the SAME removal callback a worked
 		// deconstruct fires, and retire any goals it owned. This is the cancel-a-blueprint case
 		// (Clearing/AwaitingMaterials, workDone == 0): nothing was built, so ALL staged delivered[]
-		// material is returned to the ground (fraction 1.0). A worked/built structure takes the path
-		// below and returns only the salvage cut.
+		// material is returned to the ground (fraction 1.0) at order-time, since the site is removed
+		// promptly. A worked/built structure takes the path below; its salvage cut is dropped later,
+		// when the tear-down work completes (the deconstructed-completion callback in GameScene).
 		if (blueprint.workDone <= 0.0F) {
-			dumpDeliveredToGround(blueprintEntity, blueprint, /*fraction=*/1.0F);
+			dumpDeliveredToGround(blueprintEntity, blueprint);
 			const auto* goal = registry.getGoalByDestination(blueprintEntity);
 			while (goal != nullptr) {
 				registry.removeGoalWithChildren(goal->id);
@@ -654,11 +653,10 @@ namespace ecs {
 			return;
 		}
 
-		// Worked/built teardown: return the salvage cut (refundPercent% of what was invested) as loose
-		// piles. A built structure has delivered == required, so this returns refundPercent% of the
-		// whole manifest. dumpDeliveredToGround clears delivered[], so this fires once at the demolish
-		// order and the repeated per-tick calls below it (while the colonist works it down) no-op.
-		dumpDeliveredToGround(blueprintEntity, blueprint, /*fraction=*/m_refundPercent / 100.0F);
+		// Worked/built teardown: leave delivered[] intact. The salvage drop (refundPercent% of the
+		// manifest) happens when the tear-down WORK completes and the structure is actually removed,
+		// via the deconstructed-completion callback in GameScene, NOT here at the order tick while the
+		// structure is still standing.
 
 		const auto*		position = world->getComponent<Position>(blueprintEntity);
 		const glm::vec2 sitePos = position != nullptr ? position->value : glm::vec2{0.0F, 0.0F};

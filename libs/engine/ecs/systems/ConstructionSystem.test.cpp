@@ -553,14 +553,15 @@ TEST_F(ConstructionGoalEmissionTest, MultiMaterialSiteCompletesViaDeposits) {
 		<< "a multi-material site advances to UnderConstruction once every manifest is filled";
 }
 
-// Demolishing a BUILT structure (workDone == workTotal, delivered == required) returns the salvage
-// cut: refundPercent% of each delivered material is dumped as loose ground piles via the drop
-// callback. With refundPercent 50 and 30 Wood invested, 15 Wood comes back. This is the worked
-// deconstruct branch (contrast with the no-work cancel above, which returns 100%).
-TEST_F(ConstructionGoalEmissionTest, BuiltStructureDemolishReturnsRefundPercentSalvage) {
+// Demolishing a BUILT structure must NOT drop its salvage at the demolish-order tick: the structure
+// is still standing then, and its tear-down is work a colonist drives down. The worked branch leaves
+// delivered[] intact (no drop, no clear) so the deconstructed-COMPLETION hook (GameScene, fired when
+// the work finishes and the structure is removed) can read it and dump refundPercent% then. This
+// fixture has no ActionSystem/colonist to drive the work to completion, so the completion-side drop
+// is proved at the BuildAction layer (DeconstructSalvagesRefundPercentAtCompletion); here we pin the
+// engine half: no order-tick drop, delivered[] preserved for the hook.
+TEST_F(ConstructionGoalEmissionTest, BuiltStructureDemolishDoesNotDropSalvageAtOrderTick) {
 	auto foundation = createBuiltDemolishing(StructureKind::Foundation); // built, delivered Wood 30
-
-	construction->setRefundPercent(50.0F);
 
 	std::vector<std::tuple<std::string, float, float, uint32_t>> drops;
 	construction->setDropResourceCallback([&](const std::string& defName, float x, float y, uint32_t qty) {
@@ -569,16 +570,16 @@ TEST_F(ConstructionGoalEmissionTest, BuiltStructureDemolishReturnsRefundPercentS
 
 	refresh();
 
-	// 50% of the 30 delivered Wood = 15 dumped (one drop call for the single material; the GameScene
-	// helper splits the 15 into stacks).
-	ASSERT_EQ(drops.size(), 1U) << "one drop call for the single salvaged material";
-	EXPECT_EQ(std::get<0>(drops.front()), "Wood");
-	EXPECT_EQ(std::get<3>(drops.front()), 15U) << "refundPercent 50 of 30 Wood = 15 salvaged";
+	// No drop at the demolish-order tick (the salvage waits for tear-down completion), even across the
+	// per-tick Deconstruct refreshes while the goal sits Available.
+	EXPECT_TRUE(drops.empty()) << "a built structure salvages on tear-down completion, NOT at the order tick";
 
-	// delivered[] is cleared so the salvage never re-dumps on the per-tick Deconstruct refreshes.
+	// delivered[] is left intact so the completion hook can read the manifest and salvage from it.
 	const auto* bp = world->getComponent<StructureBlueprint>(foundation);
 	ASSERT_NE(bp, nullptr);
-	EXPECT_TRUE(bp->delivered.empty()) << "delivered[] cleared after the salvage dump";
+	ASSERT_EQ(bp->delivered.size(), 1U) << "delivered[] preserved for the completion hook";
+	EXPECT_EQ(bp->delivered.front().first, "Wood");
+	EXPECT_EQ(bp->delivered.front().second, 30U) << "the full manifest is still recorded";
 
 	// A worked/built teardown still emits a Deconstruct goal for a colonist to work down.
 	const auto* goal = GoalTaskRegistry::Get().getGoalByDestination(foundation);
