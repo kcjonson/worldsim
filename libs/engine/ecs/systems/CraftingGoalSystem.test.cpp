@@ -640,8 +640,7 @@ class GoalHierarchyTest : public ::testing::Test {
 		haul.destinationEntity = station;
 		haul.targetAmount = 1;
 		haul.parentGoalId = craftId;
-		haul.dependsOnGoalId = harvestId;
-		haul.status = GoalStatus::WaitingForItems;
+		haul.status = GoalStatus::Available;
 		uint64_t haulId = registry.createGoal(std::move(haul));
 
 		return {craftId, harvestId, haulId};
@@ -699,20 +698,6 @@ TEST_F(CraftingGoalSystemTest, JobRemovedReapsChildGoals) {
 	EXPECT_EQ(registry.goalCount(), 0U) << "All goals reaped when job removed";
 
 	engine::assets::AssetRegistry::Get().clearDefinitions();
-}
-
-// (b) Dependency unlock: completing a Harvest flips its dependent Haul to Available
-TEST_F(GoalHierarchyTest, NotifyGoalCompletedUnlocksDependents) {
-	auto& registry = GoalTaskRegistry::Get();
-	auto  h = buildCraftHierarchy(static_cast<EntityID>(7));
-
-	ASSERT_EQ(registry.getGoal(h.haulId)->status, GoalStatus::WaitingForItems);
-	ASSERT_EQ(registry.getDependentGoals(h.harvestId).size(), 1U);
-
-	registry.notifyGoalCompleted(h.harvestId);
-
-	EXPECT_EQ(registry.getGoal(h.haulId)->status, GoalStatus::Available)
-	    << "Haul should unblock once its Harvest dependency completes";
 }
 
 // (c) Delivery completion: recordDelivery increments deliveredAmount and completes at target

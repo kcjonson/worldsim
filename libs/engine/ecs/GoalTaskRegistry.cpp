@@ -13,7 +13,6 @@ namespace ecs {
 		typeToGoals.clear();
 		ownerToGoals.clear();
 		parentToChildren.clear();
-		goalToDependents.clear();
 		nextGoalId = 1;
 	}
 
@@ -238,11 +237,6 @@ namespace ecs {
 		if (goal.parentGoalId.has_value()) {
 			parentToChildren[goal.parentGoalId.value()].insert(goal.id);
 		}
-
-		// Dependency index
-		if (goal.dependsOnGoalId.has_value()) {
-			goalToDependents[goal.dependsOnGoalId.value()].insert(goal.id);
-		}
 	}
 
 	void GoalTaskRegistry::removeFromIndices(const GoalTask& goal) {
@@ -281,17 +275,6 @@ namespace ecs {
 				}
 			}
 		}
-
-		// Dependency index
-		if (goal.dependsOnGoalId.has_value()) {
-			auto depIt = goalToDependents.find(goal.dependsOnGoalId.value());
-			if (depIt != goalToDependents.end()) {
-				depIt->second.erase(goal.id);
-				if (depIt->second.empty()) {
-					goalToDependents.erase(depIt);
-				}
-			}
-		}
 	}
 
 	std::vector<const GoalTask*> GoalTaskRegistry::getChildGoals(uint64_t parentId) const {
@@ -302,23 +285,6 @@ namespace ecs {
 			result.reserve(it->second.size());
 			for (uint64_t childId : it->second) {
 				auto goalIt = goals.find(childId);
-				if (goalIt != goals.end()) {
-					result.push_back(&goalIt->second);
-				}
-			}
-		}
-
-		return result;
-	}
-
-	std::vector<const GoalTask*> GoalTaskRegistry::getDependentGoals(uint64_t goalId) const {
-		std::vector<const GoalTask*> result;
-
-		auto it = goalToDependents.find(goalId);
-		if (it != goalToDependents.end()) {
-			result.reserve(it->second.size());
-			for (uint64_t depId : it->second) {
-				auto goalIt = goals.find(depId);
 				if (goalIt != goals.end()) {
 					result.push_back(&goalIt->second);
 				}
@@ -348,22 +314,6 @@ namespace ecs {
 
 		for (uint64_t id : toRemove) {
 			removeGoal(id);
-		}
-	}
-
-	void GoalTaskRegistry::notifyGoalCompleted(uint64_t completedGoalId) {
-		// Find all goals that depend on this one
-		auto depIt = goalToDependents.find(completedGoalId);
-		if (depIt == goalToDependents.end()) {
-			return;
-		}
-
-		// Update status of dependent goals
-		for (uint64_t dependentId : depIt->second) {
-			auto goalIt = goals.find(dependentId);
-			if (goalIt != goals.end() && goalIt->second.status == GoalStatus::WaitingForItems) {
-				goalIt->second.status = GoalStatus::Available;
-			}
 		}
 	}
 

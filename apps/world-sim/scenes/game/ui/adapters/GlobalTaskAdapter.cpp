@@ -256,8 +256,8 @@ namespace world_sim::adapters {
 				data.status = "Blocked";
 				data.statusDetail = std::format("{}/{} materials", goal.deliveredAmount, goal.targetAmount);
 				data.isBlocked = true;
-			} else if (goal.status == ecs::GoalStatus::WaitingForItems) {
-				data.status = "Waiting for harvest";
+			} else if (goal.status == ecs::GoalStatus::NoSource) {
+				data.status = "Waiting (no source found)";
 				data.isBlocked = true;
 			} else if (!worker.empty()) {
 				// A colonist is actively servicing this goal (claimed implicitly).

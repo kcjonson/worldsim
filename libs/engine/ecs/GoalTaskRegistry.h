@@ -29,7 +29,6 @@ namespace ecs {
 	enum class GoalStatus : uint8_t {
 		Available,		 // Can be worked on now
 		InProgress,		 // Colonist(s) actively working
-		WaitingForItems, // Haul waiting for harvest to create items
 		Blocked,		 // Craft waiting for all materials to be delivered
 		NoSource,		 // Need known, but no source (stock or harvestable) is known yet
 		Complete		 // Done
@@ -75,7 +74,6 @@ namespace ecs {
 
 		// Parent-child hierarchy (for craft → harvest/haul relationships)
 		std::optional<uint64_t> parentGoalId;	 // Parent goal (e.g., Harvest/Haul → Craft)
-		std::optional<uint64_t> dependsOnGoalId; // Must complete before this can start (Haul → Harvest)
 		GoalStatus				status = GoalStatus::Available;
 
 		// For Harvest goals: what item type is yielded when harvesting completes
@@ -130,7 +128,7 @@ namespace ecs {
 		/// CONTRACT: the updater may only mutate amount/accepted-type fields
 		/// (targetAmount, deliveredAmount, acceptedDefNameIds, acceptedCategory, status, ...).
 		/// It must NOT change indexed identity fields (type, owner, destinationEntity,
-		/// parentGoalId, dependsOnGoalId); only the type index is reconciled here. To change
+		/// parentGoalId); only the type index is reconciled here. To change
 		/// identity, remove and recreate the goal.
 		///
 		/// @param goalId The goal to update
@@ -194,15 +192,8 @@ namespace ecs {
 		/// Get all child goals of a parent goal
 		[[nodiscard]] std::vector<const GoalTask*> getChildGoals(uint64_t parentId) const;
 
-		/// Get all goals that depend on a given goal
-		[[nodiscard]] std::vector<const GoalTask*> getDependentGoals(uint64_t goalId) const;
-
 		/// Remove a goal and all its children (cascade delete)
 		void removeGoalWithChildren(uint64_t goalId);
-
-		/// Update status of dependent goals when a goal completes
-		/// (e.g., Haul becomes Available when its Harvest dependency completes)
-		void notifyGoalCompleted(uint64_t completedGoalId);
 
 		/// Spawn the Haul that carries a just-completed Harvest's yield to the station. The cut
 		/// material now sits in the colonist's inventory, so the Haul is created Available and
@@ -228,9 +219,6 @@ namespace ecs {
 
 		// Index: parentGoalId → set of child goalIds
 		std::unordered_map<uint64_t, std::unordered_set<uint64_t>> parentToChildren;
-
-		// Index: dependsOnGoalId → set of dependent goalIds
-		std::unordered_map<uint64_t, std::unordered_set<uint64_t>> goalToDependents;
 
 		// Next goal ID
 		uint64_t nextGoalId = 1;

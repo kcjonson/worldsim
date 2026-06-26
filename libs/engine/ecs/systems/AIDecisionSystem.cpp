@@ -516,8 +516,8 @@ namespace ecs {
 					continue; // Goal is full or null
 				}
 
-				// Skip goals that are waiting on dependencies
-				if (goal->status == GoalStatus::WaitingForItems || goal->status == GoalStatus::Blocked) {
+				// Skip goals that aren't workable yet.
+				if (goal->status == GoalStatus::Blocked) {
 					continue;
 				}
 
