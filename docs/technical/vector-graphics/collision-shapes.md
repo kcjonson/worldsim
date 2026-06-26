@@ -60,13 +60,15 @@ world-AABB fast path.
    when both are present.
 
 3. **SVG `<metadata>` for simple (SVG-backed) assets** — `<metadata><collision>
-   <shape type="aabb" min="x,y" max="x,y"/></collision></metadata>`, read via a
-   pugixml second pass over the .svg (NanoSVG ignores `<metadata>`). **Not yet
-   implemented** (tracked as Phase D2): no SVG-backed asset declares a collider
-   today, and the subtlety is converting SVG user units to meters with the *same*
-   `scaleFactor` (worldHeight / svgHeight) and Y convention the render mesh uses,
-   computed lazily in `getTemplate`. When it lands, SVG metadata wins over XML
-   for SVG assets.
+   <shape type="aabb" min="x,y" max="x,y"/></collision></metadata>` (or a
+   `type="polygon" vertices="x1,y1 ..."`), read via a pugixml second pass over the
+   .svg (NanoSVG ignores `<metadata>`) at load. The coords convert to the *same*
+   local-meter frame the render mesh uses — `(svgPoint - svgBboxCenter) *
+   scaleFactor`, where `scaleFactor = worldHeight / svgHeight` over the loaded
+   path-vertex bbox — via the shared `computeSvgMeterFrame` helper that
+   `getTemplate` also uses, so the collider can't drift off the sprite. SVG
+   metadata wins over XML for simple assets. First consumer:
+   `assets/world/misc/BigRock` (a tree-sized boulder you can't walk through).
 
 ## Consumers (the collider feeds two systems at the same clearance)
 

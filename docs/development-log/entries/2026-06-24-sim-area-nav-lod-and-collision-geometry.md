@@ -14,7 +14,8 @@ instead of pathfinding. The world is infinite, so the fix is architectural, not
 the viewport. Alongside it, the long-specced per-asset collision geometry landed.
 
 Shipped as a new epic (separate from the merged P3 regional layer, which is what
-makes the small area mesh fast and correct). Five merged PRs.
+makes the small area mesh fast and correct). Six merged PRs (#217, #220, #221,
+#225, #226, #227).
 
 ## What shipped
 
@@ -34,7 +35,7 @@ makes the small area mesh fast and correct). Five merged PRs.
   quad at runtime (`rectCornersLocal()`). Three authoring homes: procedural
   generators emit it via `asset:setCollisionRect` (captured eagerly at load so
   nav sees it before first render); XML `<collision><rect>`; SVG `<metadata>`
-  (deferred, Phase D2). Oak/Maple/Palm/Pine migrated off XML circles to
+  (shipped in D2, below). Oak/Maple/Palm/Pine migrated off XML circles to
   Lua-emitted trunk rects. See [collision-shapes.md](../../technical/vector-graphics/collision-shapes.md).
 
 - **Tier-3 static-rect collision** (PR #221). `StaticRectCollisionSystem`
@@ -49,6 +50,16 @@ makes the small area mesh fast and correct). Five merged PRs.
   `fitToRect` transform — single source, no drift), with a "no collider" label
   for `None`; preview enlarged. An author can now confirm a trunk rect sits on
   the trunk.
+
+- **SVG-metadata collision authoring** (PR #227). Simple (SVG-backed) assets
+  declare their collider in SVG `<metadata><collision>` (aabb or polygon), read
+  via a pugixml second pass at load and converted to the same local-meter frame
+  the render mesh uses (a shared `computeSvgMeterFrame` helper, so collision and
+  render can't drift). First consumer: **BigRock**, a tree-sized angular cel-shaded
+  boulder with an AABB collider — a Rect, so it blocks nav + Tier-3 with no extra
+  wiring. Fixed a Phase-G overlay bug the rock surfaced: simple colliders are in
+  the bbox-centered frame (vs procedural's mesh-coord frame), so the overlay maps
+  them from the preview center.
 
 ## Technical decisions
 
@@ -82,24 +93,26 @@ Each phase went through adversarial multi-agent review:
 - `libs/engine/ecs/systems/NavigationSystem.{h,cpp}` — simulation area, rebuild triggers, inSimArea
 - `libs/engine/ecs/systems/AIDecisionSystem.cpp` — off-area beeline gate
 - `libs/engine/assets/AssetDefinition.h` — CollisionShape (Rect), rectCornersLocal
-- `libs/engine/assets/AssetRegistry.cpp` — XML rect parse + eager Lua capture
+- `libs/engine/assets/AssetRegistry.cpp` — XML rect parse, eager Lua + SVG-metadata capture, `computeSvgMeterFrame`
 - `libs/engine/assets/lua/LuaEngine.cpp` — setCollisionRect binding
 - `libs/engine/ecs/systems/StaticRectCollisionSystem.{h,cpp}` — Tier-3 push-out
 - `apps/world-sim/scenes/game/GameScene.cpp` — area push + system wiring
-- `apps/asset-manager/{AssetDetailView,AssetThumbnail}.{h,cpp}`, `libs/engine/assets/AssetRenderer.{h,cpp}` — overlay
+- `apps/asset-manager/{AssetDetailView,AssetThumbnail}.{h,cpp}`, `libs/engine/assets/AssetRenderer.{h,cpp}` — overlay (incl. simple-asset centered mapping)
 - `assets/shared/scripts/{deciduous,conifer,palm}.lua`, the four tree XMLs — trunk rects
+- `assets/world/misc/BigRock/{BigRock.xml,big_rock.svg}` — the boulder consumer (SVG-metadata collider)
 
-## Next steps
+## Next steps (follow-ups, all filed)
 
-- **D2 — SVG-metadata collision authoring** for simple assets (no consumer yet;
-  the subtlety is the lazy SVG->meter scaleFactor).
-- **Visual-size obstacle LOD** (filed) to lift the 64 m cap so zoom-out covers
-  the full view cheaply — the remaining zoom-out cost is rendering thousands of
-  sprites, a render-LOD concern.
+- **Visual-size obstacle LOD** to lift the 64 m cap so zoom-out covers the full
+  view cheaply — the remaining zoom-out cost is rendering thousands of sprites, a
+  render-LOD concern.
+- **Unify the procedural collider frame** (bbox-center-relative, like
+  SVG-metadata) so trees stop sitting "a touch high" and the asset-manager
+  overlay can drop its asset-type branch.
 - A future coarse far-field nav layer (LOD1) for off-area long-haul routing.
 
 ## Related
 
 - [collision-shapes.md](../../technical/vector-graphics/collision-shapes.md)
 - [pathfinding-architecture.md](../../technical/pathfinding-architecture.md)
-- PRs #217, #220, #221, #225
+- PRs #217, #220, #221, #225, #226, #227
