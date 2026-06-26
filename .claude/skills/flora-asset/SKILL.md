@@ -7,7 +7,7 @@ description: Generate engine-ready world flora assets (trees, bushes, plants, gr
 
 Authors a complete, drop-in world asset for world-sim: the art (procedural Lua generator or static SVG) plus its `AssetDef` XML, in the right folder, conforming to what the engine actually parses.
 
-The art target is the game's own established look: cel-shaded, limited muted-earthy palette, strong readable silhouette, layered tones (dark rim -> base -> mid -> highlight). Match the existing assets, not generic flat-vector clip art.
+The art target is one locked recipe in `references/style-and-view.md`: cel-shaded, muted-earthy palette, a canopy/mass COMPOSED of overlapping organic cluster shapes (never a smooth background blob with detail painted on it), one thin dark outline, a dark backing fallback, dome shading, no ground shadow. The SAME recipe drives both modes, a procedural Lua tree and a static SVG tree should look identical; the medium only changes how the geometry is emitted. Match the recipe, not the current weak generators or generic flat-vector clip art.
 
 ## Source of truth
 
@@ -51,12 +51,14 @@ Trees especially are usually **just an XML file**. The shared generators are par
 2. If an existing shared generator (`deciduous`, `conifer`, `palm`, or any new one) fits the growth form, write only the `AssetDef` XML pointing at `@shared/<script>.lua` with tuned `<params>`. No new code.
 3. Only write a NEW shared generator when the growth form is genuinely new (e.g. a rounded shrub, a rosette, a cactus). Put it in `assets/shared/scripts/<form>.lua` so other assets can reuse it.
 
+Caveat: the current `deciduous` / `conifer` / `palm` scripts still produce the pre-convergence look (background blob + ground shadow). They're slated to be rewritten to the recipe in `lua-api.md`. Reuse them for the FORM and params, but the construction you're matching is `style-and-view.md` + `lua-api.md`, not their current output.
+
 ## Step 2 — author the art
 
-Follow `references/style-and-view.md` for the palette, the per-subject view rules (trees = 3/4 top-down with trunk visible below the canopy; shrubs = mound seen slightly from above; ground plants/crops = top-down rosette), and the layered cel-shade construction.
+Follow `references/style-and-view.md` for the palette, the per-subject view rules (trees = 3/4 top-down foreshortened dome with a short trunk stub below; shrubs = low flat mound; ground plants/crops = top-down rosette), and the cluster-composition construction (compose the mass from overlapping cel-shaded cluster shapes, one dark outline, a dark backing fallback, no shadow). The construction is identical for both modes.
 
-- Procedural: write/extend the Lua generator per `references/lua-api.md` (exact API, coordinate system, blob/trunk/branch helpers, a complete template). Centered at origin, +Y is screen-down, units are meters. Colors are 0..1 floats. RNG is pre-seeded; just call `math.random()`.
-- Simple: write the SVG per the layered template in `references/style-and-view.md`. Closed paths, ≥3 vertices, no self-intersection, solid fills, semantic groups (`#shadow`, `#trunk`, `#canopy`/`#body`).
+- Procedural: write/extend the Lua generator per `references/lua-api.md` (exact API, coordinate system, the `cluster`/`trunk`/`limb` helpers, a complete cluster-composed tree template, plus per-instance jitter and growth stages). Centered at origin, +Y is screen-down, units are meters. Colors are 0..1 floats. RNG is pre-seeded; just call `math.random()`.
+- Simple: write the SVG per `references/style-and-view.md`. Closed paths, ≥3 vertices, no self-intersection, solid fills, semantic groups (`#trunk`, `#rim`, `#canopy`/`#body`). No `#shadow` group, the look has no ground shadow.
 
 ## Step 3 — write the AssetDef XML
 

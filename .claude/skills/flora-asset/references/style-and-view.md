@@ -1,6 +1,6 @@
 # Style and view
 
-Match the game's existing flora, not generic flat-vector art. The look: cel-shaded, limited muted-earthy palette, strong readable silhouette, organic (not geometric) edges, layered tones for depth.
+This is the one locked recipe for the game's flora look, and it is MEDIUM-AGNOSTIC: a procedural Lua tree and a static SVG tree are built the same way and should look identical. Only the emission differs (Lua draw calls vs SVG paths; see `lua-api.md` for the Lua how-to). The look: cel-shaded, muted-earthy palette, strong readable silhouette, organic (not geometric) edges. Match this recipe, not the current weak generators or generic flat-vector art.
 
 ## Style statement (the target — keep this in spirit on every asset)
 
@@ -102,8 +102,6 @@ Variants (swap the foliage hue, keep structure):
 - Arid sage: edge `#4a5237` base `#5e6845` mid `#76805a` hi `#94a075`
 
 Fruit/berry accents: red `#c41e1e` / `0.77,0.12,0.12`, blue `#3a5a8a`, orange `#d4762a`.
-
-Ground shadow: `#1d2616` at ~0.22-0.30 alpha (slightly green-black, not pure grey).
 
 ## Life stages
 
