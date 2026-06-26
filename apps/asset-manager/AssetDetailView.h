@@ -21,10 +21,6 @@
 #include <memory>
 #include <string>
 
-namespace engine::assets {
-	struct AssetDefinition;
-}
-
 namespace asset_manager {
 
 	class AssetDetailView {
@@ -47,7 +43,6 @@ namespace asset_manager {
 		Foundation::Rect					   m_bounds{0.0F, 0.0F, 0.0F, 0.0F};
 		bool								   m_hasAsset = false;
 		bool								   m_procedural = false;
-		const engine::assets::AssetDefinition* m_def = nullptr; // current asset (for the collision overlay)
 		std::string							   m_defName;
 		uint32_t							   m_variantBase = 1U;
 

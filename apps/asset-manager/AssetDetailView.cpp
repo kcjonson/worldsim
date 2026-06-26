@@ -114,17 +114,14 @@ namespace asset_manager {
 	void AssetDetailView::setAsset(const std::string& defName) {
 		if (defName.empty()) {
 			m_hasAsset = false;
-			m_def = nullptr;
 			return;
 		}
 		const engine::assets::AssetDefinition* def = engine::assets::AssetRegistry::Get().getDefinition(defName);
 		if (def == nullptr) {
 			m_hasAsset = false;
-			m_def = nullptr;
 			return;
 		}
 		m_hasAsset = true;
-		m_def = def;
 		m_defName = defName;
 
 		const bool simple = def->assetType == engine::assets::AssetType::Simple;
@@ -315,12 +312,15 @@ namespace asset_manager {
 	}
 
 	void AssetDetailView::drawCollisionOverlay(AssetThumbnail& thumb, const Foundation::Rect& card) {
-		if (m_def == nullptr) {
+		// Re-resolve from the name each frame instead of caching a raw AssetDefinition*: a reload
+		// clears the registry, so a stored pointer would dangle until the next setAsset.
+		const engine::assets::AssetDefinition* def = engine::assets::AssetRegistry::Get().getDefinition(m_defName);
+		if (def == nullptr) {
 			return;
 		}
 
 		// No collider: make the absence explicit with a corner label.
-		if (!m_def->collision.blocks()) {
+		if (!def->collision.blocks()) {
 			Renderer::Primitives::drawText({
 				.text = "no collider",
 				.position = {card.x + theme::s2, card.y + theme::s2},
@@ -340,11 +340,11 @@ namespace asset_manager {
 		// bbox-centered), handled in the draw loop below. Both reuse the preview's own
 		// fitToRect math so the outline lands on the art.
 		std::vector<glm::vec2> local;
-		if (m_def->collision.type == engine::assets::CollisionShapeType::Rect) {
-			const std::array<glm::vec2, 4> corners = m_def->collision.rectCornersLocal();
+		if (def->collision.type == engine::assets::CollisionShapeType::Rect) {
+			const std::array<glm::vec2, 4> corners = def->collision.rectCornersLocal();
 			local.assign(corners.begin(), corners.end());
 		} else { // Polygon
-			local = m_def->collision.pointsMeters;
+			local = def->collision.pointsMeters;
 		}
 		if (local.size() < 2) {
 			return;
@@ -355,7 +355,7 @@ namespace asset_manager {
 		// Simple (SVG) assets author the collider in SVG <metadata>, converted to the
 		// bbox-CENTERED frame (relative to the entity origin), so it maps from the preview
 		// center; procedural colliders are in the generator's mesh-coord frame.
-		const bool centered = m_def->assetType == engine::assets::AssetType::Simple;
+		const bool centered = def->assetType == engine::assets::AssetType::Simple;
 		for (const glm::vec2& p : local) {
 			screen.push_back(centered ? thumb.centeredToScreen(p) : thumb.localToScreen(p));
 		}

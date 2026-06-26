@@ -20,6 +20,7 @@
 #include <GL/glew.h>
 #include <algorithm>
 #include <cctype>
+#include <filesystem>
 #include <map>
 #include <memory>
 #include <set>
@@ -44,13 +45,54 @@ void fillRect(float x, float y, float w, float h, const Foundation::Color& color
 	rect.render();
 }
 
+// The asset-manager is always run from a build tree, but authors edit the SOURCE
+// assets/. Walk up from the executable (then cwd) to the repo root -- the first
+// ancestor carrying assets/world plus a repo marker -- and return its assets/ dir,
+// so Reload re-reads the files being edited, not the build-time copy beside the
+// exe (which lacks a repo marker and is therefore skipped). Empty when run outside
+// a source tree (a shipped build), where the caller falls back to findResource.
+std::filesystem::path findSourceAssetsRoot() {
+	namespace fs = std::filesystem;
+	std::vector<fs::path> starts;
+	if (auto exeDir = Foundation::getExecutableDir(); !exeDir.empty()) {
+		starts.push_back(std::move(exeDir));
+	}
+	try {
+		starts.push_back(fs::current_path());
+	} catch (const fs::filesystem_error&) {
+		// cwd was deleted (common in IDE terminals); the exe-dir start still covers us.
+	}
+	for (const auto& start : starts) {
+		std::error_code ec;
+		for (fs::path dir = start; !dir.empty(); dir = dir.parent_path()) {
+			const bool hasAssets = fs::exists(dir / "assets" / "world", ec);
+			const bool isRepo = fs::exists(dir / ".git", ec) || fs::exists(dir / "CMakeLists.txt", ec);
+			if (hasAssets && isRepo) {
+				return dir / "assets";
+			}
+			if (dir == dir.root_path()) {
+				break;
+			}
+		}
+	}
+	return {};
+}
+
 class BrowserScene : public engine::IScene {
   public:
 	void onEnter() override {
 		LOG_INFO(Engine, "AssetManager BrowserScene - Entering");
 
-		m_assetsRoot = Foundation::findResourceString("assets/world");
-		m_sharedScripts = Foundation::findResourceString("assets/shared/scripts");
+		// Prefer the SOURCE assets/ -- this is a live authoring tool, so Reload should
+		// re-read the files being edited, not the build-time copy beside the exe.
+		if (const std::filesystem::path src = findSourceAssetsRoot(); !src.empty()) {
+			m_assetsRoot = (src / "world").string();
+			m_sharedScripts = (src / "shared" / "scripts").string();
+			LOG_INFO(Engine, "AssetManager: live source assets at %s", m_assetsRoot.c_str());
+		} else {
+			m_assetsRoot = Foundation::findResourceString("assets/world");
+			m_sharedScripts = Foundation::findResourceString("assets/shared/scripts");
+		}
 
 		refreshNames();
 

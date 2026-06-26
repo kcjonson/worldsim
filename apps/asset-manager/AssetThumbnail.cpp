@@ -20,15 +20,26 @@ namespace asset_manager {
 			Foundation::Rect		  sourceBounds{0.0F, 0.0F, 0.0F, 0.0F};
 		};
 
-		// Shared across all thumbnails so rebuilt rows reuse meshes (no re-tessellation).
+		// Shared across all thumbnails so rebuilt rows reuse meshes (no re-tessellation). The
+		// asset-manager is single-threaded -- reload runs synchronously on the UI loop, never
+		// concurrent with render -- so this map and cacheGeneration() need no locking.
 		std::unordered_map<std::string, CachedMesh>& meshCache() {
 			static std::unordered_map<std::string, CachedMesh> cache;
 			return cache;
+		}
+
+		// Bumped whenever meshCache is cleared. A thumbnail that fetched m_mesh at an older
+		// generation must refetch before use -- the CachedMesh it points into is destroyed by
+		// clearCache(), so drawing through the stale pointer is a use-after-free.
+		uint64_t& cacheGeneration() {
+			static uint64_t gen = 0;
+			return gen;
 		}
 	} // namespace
 
 	void AssetThumbnail::clearCache() {
 		meshCache().clear();
+		++cacheGeneration();
 	}
 
 	void AssetThumbnail::setAsset(std::string defName, uint32_t seed) {
@@ -47,10 +58,14 @@ namespace asset_manager {
 	}
 
 	void AssetThumbnail::ensureMesh() {
-		if (!m_dirty) {
+		// Refetch when dirty OR when the cache was cleared since our last fetch: clearCache()
+		// frees the CachedMesh m_mesh points into, so a stale pointer is a use-after-free.
+		const uint64_t gen = cacheGeneration();
+		if (!m_dirty && m_cacheGen == gen) {
 			return;
 		}
 		m_dirty = false;
+		m_cacheGen = gen;
 		m_mesh = nullptr;
 		m_sourceBounds = {0.0F, 0.0F, 0.0F, 0.0F};
 		m_targetRect = {0.0F, 0.0F, m_size.x, m_size.y};
