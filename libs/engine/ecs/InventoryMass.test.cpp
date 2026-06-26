@@ -1,5 +1,8 @@
 #include "InventoryMass.h"
 
+#include "assets/AssetDefinition.h"
+#include "assets/AssetRegistry.h"
+
 #include <gtest/gtest.h>
 
 using namespace ecs;
@@ -125,4 +128,59 @@ TEST(InventoryMassTests, RemoveFromHands_MissingItemRemovesNothing) {
 	EXPECT_EQ(removeFromHands(inv, "Stone", 3), 0U);
 	ASSERT_TRUE(inv.leftHand.has_value());
 	EXPECT_EQ(inv.leftHand->quantity, 5U); // untouched
+}
+
+// ============================================================================
+// addArmful stack-size clamp: an armful is one stack, bounded by carry weight AND
+// the item's stackSize (weight or count, whichever binds first). Registry-backed.
+// ============================================================================
+
+class ArmfulStackClampTest : public ::testing::Test {
+  protected:
+	void SetUp() override {
+		auto& reg = engine::assets::AssetRegistry::Get();
+		// Featherweight: stackSize 5 binds long before weight (0.01 kg -> 3500 fit at 35 kg).
+		engine::assets::AssetDefinition feather;
+		feather.defName = "Feather";
+		feather.handsRequired = 2;
+		feather.itemProperties = engine::assets::ItemProperties{};
+		feather.itemProperties->stackSize = 5;
+		feather.itemProperties->massKg = 0.01F;
+		reg.registerTestDefinition(std::move(feather));
+		// Wood: weight (14 at 35 kg / 2.5 kg) binds well below stackSize 40.
+		engine::assets::AssetDefinition wood;
+		wood.defName = "Wood";
+		wood.handsRequired = 2;
+		wood.itemProperties = engine::assets::ItemProperties{};
+		wood.itemProperties->stackSize = 40;
+		wood.itemProperties->massKg = 2.5F;
+		reg.registerTestDefinition(std::move(wood));
+	}
+	void TearDown() override { engine::assets::AssetRegistry::Get().clearDefinitions(); }
+};
+
+TEST_F(ArmfulStackClampTest, CappedByStackSizeWhenWeightAllowsMore) {
+	Inventory inv = Inventory::createForColonist(); // 35 kg cap
+	auto&	  reg = engine::assets::AssetRegistry::Get();
+	// Weight would allow ~3500 feathers; the stackSize of 5 is the binding cap.
+	EXPECT_EQ(addArmful(inv, reg, "Feather", 100), 5U);
+	ASSERT_TRUE(inv.leftHand.has_value());
+	ASSERT_TRUE(inv.rightHand.has_value());
+	EXPECT_EQ(inv.leftHand->quantity, 5U);
+	EXPECT_EQ(inv.rightHand->quantity, 5U); // mirror in sync
+}
+
+TEST_F(ArmfulStackClampTest, CappedByWeightWhenStackAllowsMore) {
+	Inventory inv = Inventory::createForColonist();
+	auto&	  reg = engine::assets::AssetRegistry::Get();
+	// stackSize 40 exceeds the 14 wood that 35 kg allows -> weight still binds (unchanged).
+	EXPECT_EQ(addArmful(inv, reg, "Wood", 100), 14U);
+}
+
+TEST_F(ArmfulStackClampTest, GrowsOnlyUpToStackCap) {
+	Inventory inv = Inventory::createForColonist();
+	auto&	  reg = engine::assets::AssetRegistry::Get();
+	EXPECT_EQ(addArmful(inv, reg, "Feather", 3), 3U); // seat 3
+	EXPECT_EQ(addArmful(inv, reg, "Feather", 5), 2U); // grow toward the 5 cap: only 2 more fit
+	EXPECT_EQ(handHeldQuantity(inv, "Feather"), 5U);
 }

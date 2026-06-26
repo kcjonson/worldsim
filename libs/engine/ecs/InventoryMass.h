@@ -177,7 +177,14 @@ namespace ecs {
 	/// same material already held, or seat a new one (which needs both hands free). Clamps to
 	/// the carry-weight cap and keeps the two-hand mirror in sync. Returns the amount lifted.
 	inline uint32_t addArmful(Inventory& inv, const engine::assets::AssetRegistry& registry, const std::string& defName, uint32_t quantity) {
-		const uint32_t lifted = std::min(quantity, cargoUnitsThatFit(inv, registry, defName));
+		// An armful is one stack: bounded by carry weight AND the item's stackSize (the carry rule
+		// is weight-or-count, whichever binds first). For wood weight binds well below 40, so the
+		// stack cap only bites for lighter materials. Unknown/unbounded items fall back to weight.
+		const auto*	   def		 = registry.getDefinition(defName);
+		const uint32_t stackCap	 = (def != nullptr && def->itemProperties.has_value()) ? def->itemProperties->stackSize : UINT32_MAX;
+		const uint32_t held		 = handHeldQuantity(inv, defName);
+		const uint32_t stackRoom = (held >= stackCap) ? 0U : stackCap - held;
+		const uint32_t lifted	 = std::min({quantity, cargoUnitsThatFit(inv, registry, defName), stackRoom});
 		if (lifted == 0) {
 			return 0;
 		}
