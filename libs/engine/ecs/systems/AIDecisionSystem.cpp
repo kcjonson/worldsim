@@ -111,9 +111,8 @@ namespace ecs {
 					return "Pickup"; // Both start with picking something up
 				case TaskType::Craft:
 					return "Craft";
-				case TaskType::Gather:
 				case TaskType::Harvest:
-					return "Harvest"; // Both gather and harvest use the Harvest action
+					return "Harvest";
 				case TaskType::Deconstruct:
 					// Config-driven like Build: the Deconstruct action is defined in
 					// action-types.xml (needsHands=true), so actionNeedsHands reads it.
@@ -211,8 +210,6 @@ namespace ecs {
 				case TaskType::Craft:
 					return option.craftRecipeDefName == currentTask.craftRecipeDefName &&
 						   option.stationEntityId == currentTask.targetStationId;
-				case TaskType::Gather:
-					return option.gatherTargetEntityId == currentTask.gatherTargetEntityId;
 				case TaskType::Haul:
 					return option.haulItemDefName == currentTask.haulItemDefName &&
 						   option.haulTargetStorageId == currentTask.haulTargetStorageId;
@@ -847,18 +844,6 @@ namespace ecs {
 								sameTarget = (dist < 0.5F);
 							}
 						}
-						// For gather tasks, also check if targeting same entity
-						bool sameGatherTarget = true;
-						if (selected->taskType == TaskType::Gather) {
-							// Both IDs must be valid (non-zero) to compare
-							if (task.gatherTargetEntityId != 0U && selected->gatherTargetEntityId != 0U) {
-								sameGatherTarget = (task.gatherTargetEntityId == selected->gatherTargetEntityId);
-							} else {
-								// At least one gather target is invalid/unset; treat as different targets
-								sameGatherTarget = false;
-							}
-						}
-
 						// For PlacePackaged tasks, check entity ID instead of position
 						// (position changes mid-task from source to target after phase 1)
 						bool samePlaceTarget = true;
@@ -874,7 +859,7 @@ namespace ecs {
 							}
 						}
 
-						isSameTask = sameType && sameTarget && sameGatherTarget && samePlaceTarget;
+						isSameTask = sameType && sameTarget && samePlaceTarget;
 					}
 				}
 
@@ -1195,74 +1180,15 @@ namespace ecs {
 				continue;
 			}
 
-			// Check if colonist has all required inputs and track missing ones
-			bool										  hasAllInputs = true;
-			std::vector<std::pair<std::string, uint32_t>> missingInputs; // defName, countNeeded
+			// Does the colonist already hold every input? (A wood armful in hand counts, not just the pack.)
+			bool hasAllInputs = true;
 			for (const auto& input : recipe->inputs) {
-				// A colonist holding a wood armful in hand is ready to craft, not just one with a full pack.
-				uint32_t have = ecs::availableQuantity(inventory, input.defName);
-				if (have < input.count) {
+				if (ecs::availableQuantity(inventory, input.defName) < input.count) {
 					hasAllInputs = false;
-					missingInputs.emplace_back(input.defName, input.count - have);
+					break;
 				}
 			}
 
-			// PHASE 6.2: Input Validation using Memory
-			// Before adding gather options, verify ALL missing inputs have known sources in memory.
-			// Colonist should only "know" they can craft if they've seen sources for everything.
-			struct GatherSource {
-				std::string		 inputDefName;
-				KnownWorldEntity source;
-				bool			 isHarvestable; // true = harvest, false = pickup
-			};
-			std::vector<GatherSource> gatherSources;
-			bool					  allInputsObtainable = true;
-
-			if (!hasAllInputs) {
-				for (const auto& [inputDefName, countNeeded] : missingInputs) {
-					bool	 foundSource = false;
-					uint32_t inputDefNameId = m_registry.getDefNameId(inputDefName);
-
-					// Look for Carryable sources (e.g., SmallStone on ground)
-					// Optimize for total trip: colonist -> resource -> crafting station
-					auto matchingCarryable =
-						findOptimalForTrip(memory, position.value, stationPos.value, [&](const KnownWorldEntity& entity) {
-							return entity.defNameId == inputDefNameId &&
-								   m_registry.hasCapability(entity.defNameId, engine::assets::CapabilityType::Carryable);
-						});
-
-					if (matchingCarryable.has_value()) {
-						gatherSources.push_back({inputDefName, *matchingCarryable, false});
-						foundSource = true;
-					} else {
-						// Look for Harvestable sources that yield this item
-						// Optimize for total trip: colonist -> resource -> crafting station
-						auto harvestableSource =
-							findOptimalForTrip(memory, position.value, stationPos.value, [&](const KnownWorldEntity& entity) {
-								if (!m_registry.hasCapability(entity.defNameId, engine::assets::CapabilityType::Harvestable)) {
-									return false;
-								}
-								const auto& defName = m_registry.getDefName(entity.defNameId);
-								const auto* def = m_registry.getDefinition(defName);
-								if (def == nullptr || !def->capabilities.harvestable.has_value()) {
-									return false;
-								}
-								return def->capabilities.harvestable->yieldDefName == inputDefName;
-							});
-
-						if (harvestableSource.has_value()) {
-							gatherSources.push_back({inputDefName, *harvestableSource, true});
-							foundSource = true;
-						}
-					}
-
-					if (!foundSource) {
-						// This input has no known source - colonist can't obtain it
-						allInputsObtainable = false;
-						break; // No need to check further
-					}
-				}
-			}
 
 			// Add craft option with skill bonus
 			EvaluatedOption craftOption;
@@ -1281,51 +1207,18 @@ namespace ecs {
 			craftOption.skillLevel = craftSkillLevel;
 			craftOption.skillBonus = craftSkillBonus;
 
+			// Provisioning the materials is the goal-driven Harvest/Haul options' job; the Craft
+			// option is the crafting WORK, workable only once the colonist holds every input.
 			if (hasAllInputs) {
 				craftOption.status = OptionStatus::Available;
 				craftOption.reason = "Crafting " + recipe->label;
-			} else if (allInputsObtainable) {
-				// Missing materials but colonist knows where to get them all
-				craftOption.status = OptionStatus::NoSource;
-				craftOption.reason = "Crafting " + recipe->label + " (gathering materials)";
 			} else {
-				// Missing materials and colonist doesn't know where to find some
 				craftOption.status = OptionStatus::NoSource;
-				craftOption.reason = "Crafting " + recipe->label + " (unknown sources)";
+				craftOption.reason = "Crafting " + recipe->label + " (awaiting materials)";
 			}
 
 			trace.options.push_back(craftOption);
 
-			// Only add gather options if ALL inputs are obtainable
-			// This prevents partial gathering when colonist can't complete the recipe
-			if (!hasAllInputs && allInputsObtainable) {
-				for (const auto& gatherSource : gatherSources) {
-					EvaluatedOption gatherOption;
-					gatherOption.taskType = TaskType::Gather;
-					gatherOption.needType = NeedType::Count;
-					gatherOption.needValue = 100.0F;
-					gatherOption.threshold = 0.0F;
-					gatherOption.targetPosition = gatherSource.source.position;
-					gatherOption.targetDefNameId = gatherSource.source.defNameId;
-					gatherOption.distanceToTarget = glm::distance(position.value, gatherSource.source.position);
-					gatherOption.gatherItemDefName = gatherSource.inputDefName;
-					// Tiebreak on the source's stable world-entity hash (quantized position + def),
-					// which is sim state, so equal-priority gather sources resolve deterministically.
-					gatherOption.tiebreakId = static_cast<uint64_t>(stationEntity) ^
-						hashWorldEntity(gatherSource.source.position, gatherSource.source.defNameId);
-					gatherOption.status = OptionStatus::Available;
-					gatherOption.reason = "Gathering " + gatherSource.inputDefName + " for crafting";
-
-					// For harvestable sources, use Farming skill; pickups don't need skill
-					if (gatherSource.isHarvestable) {
-						auto [gatherSkillLevel, gatherSkillBonus] = calculateSkillBonus(skills, kSkillFarming);
-						gatherOption.skillLevel = gatherSkillLevel;
-						gatherOption.skillBonus = gatherSkillBonus;
-					}
-
-					trace.options.push_back(gatherOption);
-				}
-			}
 		}
 
 		// Tier 6.4: Haul loose items to storage containers (goal-driven), and deliver
@@ -1411,11 +1304,6 @@ namespace ecs {
 			task.targetStationId = selected->stationEntityId;
 		}
 
-		// Copy gathering-specific fields for Gather tasks
-		if (selected->taskType == TaskType::Gather) {
-			task.gatherItemDefName = selected->gatherItemDefName;
-			task.gatherTargetEntityId = selected->gatherTargetEntityId;
-		}
 
 		// Copy harvest-specific fields for Harvest tasks
 		// Harvest is part of a Harvest→Haul chain: colonist harvests, then linked haul becomes available

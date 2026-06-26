@@ -31,8 +31,6 @@ namespace world_sim::adapters {
 					return 4; // reads Cut -> Haul -> Build for a site
 				case ecs::TaskType::PlacePackaged:
 					return 5;
-				case ecs::TaskType::Gather:
-					return 6;
 				case ecs::TaskType::Wander:
 					return 7;
 				case ecs::TaskType::None:
@@ -46,8 +44,6 @@ namespace world_sim::adapters {
 			switch (type) {
 				case ecs::TaskType::Harvest:
 					return "Cut"; // "Cut Tree", "Harvest Bush"
-				case ecs::TaskType::Gather:
-					return "Gather";
 				case ecs::TaskType::Haul:
 					return "Haul";
 				case ecs::TaskType::Build:

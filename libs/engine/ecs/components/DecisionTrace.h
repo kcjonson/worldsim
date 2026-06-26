@@ -44,9 +44,6 @@ namespace ecs {
 		std::optional<uint32_t>	 targetDefNameId; // For display name lookup
 		float					 distanceToTarget = 0.0F;
 
-		// Gathering-specific fields (for Gather tasks)
-		std::string gatherItemDefName;
-		uint64_t	gatherTargetEntityId = 0;
 
 		// Crafting-specific fields (for Craft tasks)
 		std::string craftRecipeDefName;
@@ -158,10 +155,6 @@ namespace ecs {
 			// Tier 6.5: Crafting work - priority 40 + all bonuses
 			if (taskType == TaskType::Craft && actionable) {
 				return 40.0F + workBonus();
-			}
-			// Tier 6.6: Gathering materials for crafting - priority 35 + all bonuses
-			if (taskType == TaskType::Gather && actionable) {
-				return 35.0F + workBonus();
 			}
 			// Tier 6.7: Harvesting resources (cutting trees, etc.) - priority 36 + all bonuses
 			if (taskType == TaskType::Harvest && actionable) {
