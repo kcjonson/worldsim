@@ -1263,7 +1263,6 @@ From the realistic-harvest work (dev log 2026-06-20-carry-weight-axe-gated-harve
 - **Dev/tool-placed entities don't survive chunk unload.** If a colonist roams far with no work and the origin chunks unload, dev-spawned trees and committed foundations are lost, leaving the colonist idle. World-gen flora regenerate on chunk reload, so this is mainly a dev-test artifact; a colonist with genuinely no reachable work also wanders far (cosmetic).
 - **Builds are slow-ish.** ~30s of a colonist standing in place for a 36 m² foundation at normal speed (work scales 12 units/m²). Now legible via the percent + on-map fill; lower `workRatePerSquareMeter` if a snappier feel is wanted (balance dial, not a bug).
 - **"Next" chain step verified live only for the construction chain.** Craft/storage chains are handled in code (destination classification) but not yet exercised live.
-- **Per-item `stackSize` is advisory.** `Inventory::addItem` caps on the inventory's `maxStackSize`, not the item's own `stackSize` (e.g. dev-giving 3 axes stacks them despite Axe stackSize=1).
 
 ### ✅ RESOLVED: SVG Ellipse/Circle Tessellation Bug
 **Impact:** Berry Bush and other assets using `<ellipse>` or `<circle>` SVG elements fail to render

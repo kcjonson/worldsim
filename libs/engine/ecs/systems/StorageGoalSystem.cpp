@@ -47,8 +47,8 @@ namespace ecs {
 			}
 
 			// Check available capacity
-			// Storage capacity is based on maxCapacity (distinct item types)
-			uint32_t usedSlots = static_cast<uint32_t>(inventory.items.size());
+			// Storage capacity is a slot count; each stack occupies one slot.
+			uint32_t usedSlots = inventory.getSlotCount();
 			uint32_t availableSlots = 0;
 			if (usedSlots < inventory.maxCapacity) {
 				availableSlots = inventory.maxCapacity - usedSlots;

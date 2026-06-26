@@ -665,7 +665,6 @@ namespace engine::assets {
 				if (storageNode) {
 					StorageCapability storage;
 					storage.maxCapacity = storageNode.child("capacity").text().as_uint(50);
-					storage.maxStackSize = storageNode.child("stackSize").text().as_uint(999);
 
 					// Parse accepted categories
 					pugi::xml_node acceptsNode = storageNode.child("acceptsCategories");

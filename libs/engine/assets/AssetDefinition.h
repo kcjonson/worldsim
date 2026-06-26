@@ -123,7 +123,6 @@ namespace engine::assets {
 	struct StorageCapability {
 		std::vector<ItemCategory> acceptedCategories; // Empty = accepts all categories
 		uint32_t				  maxCapacity = 50;	  // Max distinct item types
-		uint32_t				  maxStackSize = 999; // Max quantity per stack
 	};
 
 	// ─────────────────────────────────────────────────────────────────────────

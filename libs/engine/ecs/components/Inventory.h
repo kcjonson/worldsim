@@ -3,38 +3,44 @@
 // Inventory Component for Item Storage
 //
 // Generic inventory component that can be attached to any entity (colonists,
-// pack animals, carts, storage containers). Stores items by defName with
-// stack quantities.
+// pack animals, carts, storage containers). Stores items as a list of physical
+// stacks: one material per stack, quantity in [1, material.stackSize].
 //
 // Design notes:
-// - Slot-based: maxCapacity limits distinct item types, not total items
-// - Stack-based: each slot can hold up to maxStackSize of one item type
-// - Future: equipment can modify maxCapacity (e.g., backpack adds +5)
-// - Future: weight-based capacity can replace slot-based if needed
+// - Slot-based: maxCapacity is the number of slots; each slot holds one stack.
+// - Per-material cap: a stack never exceeds the item's own stackSize (from the
+//   asset def). Multiple stacks of the same material may coexist across slots.
+// - There is no per-container stack cap; the item's stackSize is the only bound.
+// - A defName with no asset def / no itemProperties is unbounded (no stack cap):
+//   bare-defName unit tests run without a registry and must not be capped at 1.
 //
 // Related docs:
-// - Inventory documentation to be added when inventory system matures
+// - /docs/technical/physical-stack-inventory.md
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <optional>
 #include <string>
-#include <unordered_map>
+#include <utility>
 #include <vector>
+
+#include "assets/AssetDefinition.h"
+#include "assets/AssetRegistry.h"
 
 namespace ecs {
 
-	/// Represents a stack of items for serialization/display
+	/// One physical stack: a single material, quantity in [1, stackSize].
 	struct ItemStack {
 		std::string defName;
 		uint32_t	quantity = 0;
 	};
 
-	/// Inventory component - stores items with hand slots and backpack
+	/// Inventory component - stores items as physical stacks, with hand slots and a belt.
 	///
 	/// Colonists have:
 	/// - 2 hand slots (leftHand, rightHand) for actively held items
-	/// - Backpack (items map) for stored items
+	/// - Backpack (items list) for stored stacks
 	///
 	/// Carrying rules:
 	/// - 1-hand items: can be held in hand OR stored in backpack
@@ -73,89 +79,108 @@ namespace ecs {
 		// Backpack Storage
 		// ============================================================================
 
-		/// Items stored in backpack: defName -> quantity
-		std::unordered_map<std::string, uint32_t> items;
+		/// Stored stacks. Each entry is one physical stack (defName + quantity in
+		/// [1, stackSize]); the same material may appear in several entries (slots).
+		std::vector<ItemStack> items;
 
-		/// Maximum number of distinct item types in backpack
+		/// Number of slots: how many distinct stacks the backpack can hold.
 		uint32_t maxCapacity = 10;
-
-		/// Maximum quantity per item stack in backpack
-		uint32_t maxStackSize = 99;
 
 		/// Max cargo weight this entity can carry, kilograms. Tools (equipment) don't count
 		/// against it; see ecs::carriedCargoMassKg. Caps how much a colonist hauls per trip.
 		float carryCapacityKg = 35.0F;
 
+	  private:
+		/// Per-stack cap for `defName`: the item's stackSize, or unbounded (UINT32_MAX) when
+		/// the def is unknown or carries no itemProperties. Unbounded (not 1) is intentional:
+		/// entities and unregistered defNames aren't stack-limited, and registry-free tests
+		/// rely on bare defNames staying uncapped.
+		[[nodiscard]] static uint32_t itemStackSize(const std::string& defName) {
+			const auto* def = engine::assets::AssetRegistry::Get().getDefinition(defName);
+			if (def != nullptr && def->itemProperties.has_value()) {
+				return def->itemProperties->stackSize;
+			}
+			return UINT32_MAX;
+		}
+
+		/// Slots currently holding a stack.
+		[[nodiscard]] uint32_t usedSlots() const { return static_cast<uint32_t>(items.size()); }
+
+		/// Free slots remaining (never negative).
+		[[nodiscard]] uint32_t freeSlots() const {
+			const uint32_t used = usedSlots();
+			return used < maxCapacity ? maxCapacity - used : 0U;
+		}
+
+	  public:
 		// ============================================================================
 		// Query Methods
 		// ============================================================================
 
-		/// Check if there's room for at least one more item type
-		[[nodiscard]] bool hasSpace() const { return items.size() < maxCapacity; }
+		/// Check if there's a free slot for one more stack.
+		[[nodiscard]] bool hasSpace() const { return usedSlots() < maxCapacity; }
 
-		/// Check if there's room for a specific item (existing stack or new slot)
+		/// Check if `quantity` of `defName` fits: existing-stack headroom plus free-slot capacity.
 		[[nodiscard]] bool canAdd(const std::string& defName, uint32_t quantity = 1) const {
-			// First check if quantity alone exceeds max stack (prevents underflow in later checks)
-			if (quantity > maxStackSize) {
-				return false;
-			}
-
-			auto iter = items.find(defName);
-			if (iter != items.end()) {
-				// Item exists - check if stack has room
-				// Safe from underflow since quantity <= maxStackSize
-				return iter->second <= maxStackSize - quantity;
-			}
-			// New item - check if we have a free slot
-			return hasSpace();
+			return quantity <= addableCount(defName);
 		}
 
-		/// How many of `defName` addItem() would actually accept right now, bounded by stack
-		/// headroom and slot availability. Callers that withdraw from a finite source (a tree's
-		/// resource pool) must clamp by this so they never pull more than the backpack can hold.
+		/// How many of `defName` addItem() would actually accept right now: the sum of headroom
+		/// left in every existing stack of that material, plus a full stack for each free slot.
+		/// Callers that withdraw from a finite source (a tree's resource pool) must clamp by this
+		/// so they never pull more than the backpack can hold.
 		[[nodiscard]] uint32_t addableCount(const std::string& defName) const {
-			auto iter = items.find(defName);
-			if (iter != items.end()) {
-				return maxStackSize - iter->second; // room left in the existing stack
+			const uint32_t cap = itemStackSize(defName);
+			uint64_t	   total = 0; // 64-bit accumulate: the freeSlots * cap term overflows uint32 for an unbounded cap (existing-stack headroom can't)
+			for (const auto& stack : items) {
+				if (stack.defName == defName && stack.quantity < cap) {
+					total += cap - stack.quantity;
+				}
 			}
-			return hasSpace() ? maxStackSize : 0U; // a free slot holds a full stack, else none
+			total += static_cast<uint64_t>(freeSlots()) * cap;
+			return total > UINT32_MAX ? UINT32_MAX : static_cast<uint32_t>(total);
 		}
 
-		/// Check if inventory contains an item
-		[[nodiscard]] bool hasItem(const std::string& defName) const { return items.find(defName) != items.end(); }
+		/// Check if inventory contains any stack of an item.
+		[[nodiscard]] bool hasItem(const std::string& defName) const {
+			return std::any_of(items.begin(), items.end(), [&](const ItemStack& s) { return s.defName == defName; });
+		}
 
-		/// Check if inventory has at least the specified quantity
+		/// Check if inventory has at least the specified quantity (summed across stacks).
 		[[nodiscard]] bool hasQuantity(const std::string& defName, uint32_t quantity) const {
-			auto iter = items.find(defName);
-			if (iter == items.end()) {
-				return false;
-			}
-			return iter->second >= quantity;
+			return getQuantity(defName) >= quantity;
 		}
 
-		/// Get quantity of an item (0 if not present)
+		/// Get total quantity of an item across all its stacks (0 if not present).
 		[[nodiscard]] uint32_t getQuantity(const std::string& defName) const {
-			auto iter = items.find(defName);
-			if (iter == items.end()) {
-				return 0;
+			uint64_t total = 0;
+			for (const auto& stack : items) {
+				if (stack.defName == defName) {
+					total += stack.quantity;
+				}
 			}
-			return iter->second;
+			return total > UINT32_MAX ? UINT32_MAX : static_cast<uint32_t>(total);
 		}
 
-		/// Get all items as a vector of ItemStack (for UI display)
+		/// Get all items for UI display, aggregated to ONE ItemStack per material (summed),
+		/// so the gear panel shows "Wood x46" rather than one row per slot.
 		[[nodiscard]] std::vector<ItemStack> getAllItems() const {
 			std::vector<ItemStack> result;
-			result.reserve(items.size());
-			for (const auto& [defName, quantity] : items) {
-				result.push_back({defName, quantity});
+			for (const auto& stack : items) {
+				auto existing = std::find_if(result.begin(), result.end(), [&](const ItemStack& s) { return s.defName == stack.defName; });
+				if (existing != result.end()) {
+					existing->quantity += stack.quantity;
+				} else {
+					result.push_back(stack);
+				}
 			}
 			return result;
 		}
 
-		/// Get total number of distinct item types stored
-		[[nodiscard]] uint32_t getSlotCount() const { return static_cast<uint32_t>(items.size()); }
+		/// Number of slots in use (one per stack).
+		[[nodiscard]] uint32_t getSlotCount() const { return usedSlots(); }
 
-		/// Check if backpack is empty
+		/// Check if backpack is empty.
 		[[nodiscard]] bool isEmpty() const { return items.empty(); }
 
 		/// Check if completely empty (no items in hands, belt, backpack, or carrying entity)
@@ -199,56 +224,65 @@ namespace ecs {
 		// Mutation Methods
 		// ============================================================================
 
-		/// Add items to inventory
-		/// @param defName Item definition name
-		/// @param quantity Amount to add
-		/// @return Amount actually added (may be less if stack is full)
+		/// Add items to inventory: top up existing non-full stacks of `defName` to its stackSize,
+		/// then open new slots (each a stack <= stackSize) while a free slot remains.
+		/// @return Amount actually added (may be < quantity when out of slots).
 		uint32_t addItem(const std::string& defName, uint32_t quantity) {
 			if (quantity == 0) {
 				return 0; // adding nothing is a no-op (never create a zero-quantity slot)
 			}
-			auto iter = items.find(defName);
+			const uint32_t cap = itemStackSize(defName);
+			if (cap == 0) {
+				return 0; // an unstackable-at-zero item can never be held
+			}
+			uint32_t remaining = quantity;
 
-			if (iter != items.end()) {
-				// Item exists - add to stack (capped at maxStackSize)
-				uint32_t currentQty = iter->second;
-				uint32_t spaceInStack = maxStackSize - currentQty;
-				uint32_t toAdd = (quantity < spaceInStack) ? quantity : spaceInStack;
-				iter->second += toAdd;
-				return toAdd;
+			// Top up existing stacks of this material first.
+			for (auto& stack : items) {
+				if (remaining == 0) {
+					break;
+				}
+				if (stack.defName == defName && stack.quantity < cap) {
+					const uint32_t room = cap - stack.quantity;
+					const uint32_t toAdd = std::min(remaining, room);
+					stack.quantity += toAdd;
+					remaining -= toAdd;
+				}
 			}
 
-			// New item - check if we have a free slot
-			if (items.size() >= maxCapacity) {
-				return 0; // No room for new item type
+			// Spill the rest into new slots.
+			while (remaining > 0 && hasSpace()) {
+				const uint32_t toAdd = std::min(remaining, cap);
+				items.push_back(ItemStack{defName, toAdd});
+				remaining -= toAdd;
 			}
 
-			// Add new item stack (capped at maxStackSize)
-			uint32_t toAdd = (quantity < maxStackSize) ? quantity : maxStackSize;
-			items[defName] = toAdd;
-			return toAdd;
+			return quantity - remaining;
 		}
 
-		/// Remove items from inventory
-		/// @param defName Item definition name
-		/// @param quantity Amount to remove
-		/// @return Amount actually removed (may be less if not enough)
+		/// Remove items from inventory, draining across this material's stacks (last slot first)
+		/// and erasing emptied slots.
+		/// @return Amount actually removed (may be less if not enough).
 		uint32_t removeItem(const std::string& defName, uint32_t quantity) {
-			auto iter = items.find(defName);
-			if (iter == items.end()) {
-				return 0; // Item not in inventory
+			if (quantity == 0) {
+				return 0;
 			}
-
-			uint32_t currentQty = iter->second;
-			uint32_t toRemove = (quantity < currentQty) ? quantity : currentQty;
-			iter->second -= toRemove;
-
-			// Remove entry if quantity reaches 0
-			if (iter->second == 0) {
-				items.erase(iter);
+			uint32_t remaining = quantity;
+			// Drain from the back so erasing emptied slots doesn't disturb the iteration.
+			for (auto it = items.rbegin(); it != items.rend() && remaining > 0;) {
+				if (it->defName == defName) {
+					const uint32_t toRemove = std::min(remaining, it->quantity);
+					it->quantity -= toRemove;
+					remaining -= toRemove;
+					if (it->quantity == 0) {
+						// Convert reverse iterator to the forward iterator it refers to, then erase.
+						it = std::reverse_iterator(items.erase(std::next(it).base()));
+						continue;
+					}
+				}
+				++it;
 			}
-
-			return toRemove;
+			return quantity - remaining;
 		}
 
 		/// Clear all items from inventory (backpack only)
@@ -433,29 +467,46 @@ namespace ecs {
 		// Factory Methods
 		// ============================================================================
 
-		/// Create inventory for a colonist (standard capacity)
+		/// Slots a build-site delivery inventory needs to hold a whole manifest at once:
+		/// sum over required materials of ceil(required_i / stackSize_i), plus headroom. A
+		/// build site must never bounce a haul for lack of slots (that stalls construction),
+		/// so the count is computed from the manifest, not a fixed cap. Unbounded materials
+		/// (no def / no itemProperties) need exactly one slot.
+		[[nodiscard]] static uint32_t slotsForManifest(const std::vector<std::pair<std::string, uint32_t>>& required) {
+			uint32_t slots = 0;
+			for (const auto& [defName, qty] : required) {
+				if (qty == 0) {
+					continue;
+				}
+				const uint32_t cap = itemStackSize(defName);
+				slots += (cap == 0 || cap == UINT32_MAX) ? 1U : ((qty + cap - 1U) / cap);
+			}
+			return slots + kManifestSlotHeadroom;
+		}
+
+		/// Spare slots beyond the manifest minimum, so a slightly over-delivered haul still lands.
+		static constexpr uint32_t kManifestSlotHeadroom = 2;
+
+		/// Create inventory for a colonist (standard slot count)
 		static Inventory createForColonist() {
 			Inventory inv;
 			inv.maxCapacity = 10;
-			inv.maxStackSize = 99;
 			inv.carryCapacityKg = 35.0F;
 			return inv;
 		}
 
-		/// Create inventory for a pack animal (larger capacity)
+		/// Create inventory for a pack animal (more slots)
 		static Inventory createForPackAnimal() {
 			Inventory inv;
 			inv.maxCapacity = 30;
-			inv.maxStackSize = 99;
 			inv.carryCapacityKg = 120.0F;
 			return inv;
 		}
 
-		/// Create inventory for a cart/wagon (largest capacity)
+		/// Create inventory for a cart/wagon (most slots)
 		static Inventory createForCart() {
 			Inventory inv;
 			inv.maxCapacity = 100;
-			inv.maxStackSize = 999;
 			inv.carryCapacityKg = 500.0F;
 			return inv;
 		}
@@ -464,7 +515,6 @@ namespace ecs {
 		static Inventory createForStorage() {
 			Inventory inv;
 			inv.maxCapacity = 50;
-			inv.maxStackSize = 999;
 			inv.carryCapacityKg = 1.0e9F;
 			return inv;
 		}

@@ -107,8 +107,8 @@ StorageConfigDialogModel::UpdateType StorageConfigDialogModel::refresh(
 	const auto* inventory = world.getComponent<ecs::Inventory>(currentContainerId);
 	if (inventory != nullptr) {
 		uint32_t totalItems = 0;
-		for (const auto& [defName, count] : inventory->items) {
-			totalItems += count;
+		for (const auto& stack : inventory->items) {
+			totalItems += stack.quantity;
 		}
 		if (totalItems != prevTotalItems) {
 			prevTotalItems = totalItems;
@@ -333,10 +333,10 @@ void StorageConfigDialogModel::updateInventoryCounts(const ecs::World& world) {
 	// Update current counts from Inventory
 	const auto* inventory = world.getComponent<ecs::Inventory>(currentContainerId);
 	if (inventory != nullptr) {
-		for (const auto& [defName, count] : inventory->items) {
+		for (const auto& stack : inventory->items) {
 			for (auto& item : items) {
-				if (item.defName == defName) {
-					item.currentCount = count;
+				if (item.defName == stack.defName) {
+					item.currentCount = stack.quantity;
 					break;
 				}
 			}

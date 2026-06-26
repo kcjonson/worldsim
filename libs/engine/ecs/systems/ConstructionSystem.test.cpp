@@ -162,13 +162,15 @@ namespace {
 
 			// Two distinct materials so the multi-material collision is exercised. Both must have
 			// non-zero defNameIds or emitMaterialGoals skips them. Wood carries the real 2.5 kg
-			// mass so the per-trip harvest bound (carryCapacityKg / mass) is the game's 14.
+			// mass so the per-trip harvest bound (carryCapacityKg / mass) is the game's 14, and a
+			// 40 stack size so a colonist's backpack holds more than one trip's worth.
 			for (const char* name : {"Wood", "Stone"}) {
 				engine::assets::AssetDefinition def;
 				def.defName = name;
 				def.label = name;
 				engine::assets::ItemProperties item;
 				item.massKg = std::string(name) == "Wood" ? 2.5F : 1.0F;
+				item.stackSize = 40;
 				def.itemProperties = item;
 				assets.registerTestDefinition(std::move(def));
 			}
@@ -245,13 +247,13 @@ namespace {
 			return entity;
 		}
 
-		/// A colonist carrying `woodCarried` Wood in its backpack (capped at the stack size).
+		/// A colonist carrying `woodCarried` Wood in its backpack (spilled across 40-unit stacks).
 		/// NeedsComponent marks it a colonist so carriedAmount/colonistCarryCapacity see it.
 		EntityID createColonistCarryingWood(uint32_t woodCarried) {
 			auto entity = world->createEntity();
 			world->addComponent<NeedsComponent>(entity, NeedsComponent::createDefault());
 			auto inv = Inventory::createForColonist();
-			inv.addItem("Wood", woodCarried); // clamps to maxStackSize
+			inv.addItem("Wood", woodCarried); // 10 slots x 40 stack holds well over one trip's worth
 			world->addComponent<Inventory>(entity, std::move(inv));
 			return entity;
 		}
@@ -434,11 +436,11 @@ TEST_F(ConstructionGoalEmissionTest, LargeManifestHarvestGoalIsBoundedToOneTrip)
 }
 
 TEST_F(ConstructionGoalEmissionTest, FullStackRetiresHarvestSoHaulWinsForLargeManifest) {
-	// 313 Wood needed, a colonist carrying far more than one trip (99 >> the 14-unit trip):
+	// 313 Wood needed, a colonist carrying far more than one trip (200 >> the 14-unit trip):
 	// the Harvest goal must retire (demand 0) while the Haul stays open. Before the trip
 	// bound the Harvest stayed Available (313 - carried > 0) and the colonist hoarded forever.
 	auto foundation = createLargeWoodFoundation(/*woodNeeded=*/313);
-	createColonistCarryingWood(/*woodCarried=*/200); // clamps to the 99 stack cap
+	createColonistCarryingWood(/*woodCarried=*/200); // spills across 5 of the 10 backpack slots
 	auto& registry = GoalTaskRegistry::Get();
 
 	refresh();
@@ -450,6 +452,38 @@ TEST_F(ConstructionGoalEmissionTest, FullStackRetiresHarvestSoHaulWinsForLargeMa
 	const auto* haul = findChild(umbrella->id, TaskType::Haul);
 	ASSERT_NE(haul, nullptr) << "the Haul goal must remain so the carried load gets delivered";
 	EXPECT_EQ(haul->targetAmount, 313U);
+}
+
+// The regression the reverted chore caused: a LARGE single-material foundation (200 Wood, far
+// more than one 40-stack) must accumulate its wood across delivery slots and COMPLETE its
+// material gate, reaching UnderConstruction. Capping a delivery slot at the stack size (the old
+// naive fix) stalled this at AwaitingMaterials forever.
+TEST_F(ConstructionGoalEmissionTest, LargeFoundationAccumulatesWoodAcrossSlotsAndBuilds) {
+	auto foundation = createLargeWoodFoundation(/*woodNeeded=*/200);
+
+	// Size the delivery inventory from the manifest exactly as the build sites do, then stage all
+	// 200 Wood: it spills into 5 stacks of 40 (ceil(200/40) = 5 slots, well under the sized count).
+	StructureBlueprint* bp = world->getComponent<StructureBlueprint>(foundation);
+	ASSERT_NE(bp, nullptr);
+	Inventory deliveryInv;
+	deliveryInv.maxCapacity = Inventory::slotsForManifest(bp->required);
+	world->addComponent<Inventory>(foundation, deliveryInv);
+
+	auto* onSite = world->getComponent<Inventory>(foundation);
+	const uint32_t staged = onSite->addItem("Wood", 200);
+	ASSERT_EQ(staged, 200U) << "the manifest-sized delivery inventory must hold the whole 200";
+	EXPECT_EQ(onSite->getSlotCount(), 5U) << "200 Wood at a 40 stack size is 5 stacks";
+	EXPECT_EQ(onSite->getQuantity("Wood"), 200U) << "getQuantity sums across the 5 stacks";
+
+	refresh();
+
+	// ConstructionSystem reconciled delivered[] from the on-site inventory: materials complete,
+	// so the blueprint advanced to UnderConstruction (the build gate opened).
+	bp = world->getComponent<StructureBlueprint>(foundation);
+	ASSERT_NE(bp, nullptr);
+	EXPECT_TRUE(bp->materialsComplete()) << "200 delivered >= 200 required";
+	EXPECT_EQ(bp->phase, StructureBlueprint::BuildPhase::UnderConstruction)
+		<< "a large foundation must leave AwaitingMaterials once its wood is staged";
 }
 
 // ============================================================================

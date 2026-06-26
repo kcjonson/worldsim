@@ -67,16 +67,18 @@ namespace ecs {
 		if (inv.rightHand.has_value() && !(inv.leftHand.has_value() && inv.leftHand->defName == inv.rightHand->defName)) {
 			addStack(inv.rightHand->defName, inv.rightHand->quantity);
 		}
-		for (const auto& [defName, quantity] : inv.items) {
-			addStack(defName, quantity);
+		for (const auto& stack : inv.items) {
+			addStack(stack.defName, stack.quantity);
 		}
 		return total;
 	}
 
-	/// How many more units of `defName` fit before hitting the cargo weight cap.
+	/// How many more units of `defName` fit before hitting the cargo weight cap. Weight is the
+	/// only bound here; per-stack count limits live in Inventory (addableCount), and a hand
+	/// armful is weight-limited by design, so a massless item is unbounded.
 	[[nodiscard]] inline uint32_t cargoUnitsThatFit(const Inventory& inv, const engine::assets::AssetRegistry& registry, const std::string& defName) {
 		const float remaining = inv.carryCapacityKg - carriedCargoMassKg(inv, registry);
-		return massUnitsThatFit(remaining, registry.getItemMassKg(defName), inv.maxStackSize);
+		return massUnitsThatFit(remaining, registry.getItemMassKg(defName), UINT32_MAX);
 	}
 
 	/// Does the inventory hold an item that provides `toolType` (e.g. "Axe")? Checks the
@@ -100,8 +102,8 @@ namespace ecs {
 				return true;
 			}
 		}
-		for (const auto& [defName, quantity] : inv.items) {
-			if (quantity > 0 && matches(defName)) {
+		for (const auto& stack : inv.items) {
+			if (stack.quantity > 0 && matches(stack.defName)) {
 				return true;
 			}
 		}
