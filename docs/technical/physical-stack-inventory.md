@@ -1,6 +1,6 @@
 # Physical Stack Inventory
 
-**Status:** spec / ready to implement
+**Status:** implemented 2026-06-26 (phases 0-5; PRs #224/#228/#230/#232/#233). Phase 6 (per-stack container UI) deferred — see dev-log `entries/2026-06-26-physical-stack-inventory.md`.
 **Supersedes:** the reverted "honor item stackSize in Inventory.addItem" chore (PR #219), which capped a *container's* total at the item stackSize and stalled construction. This does it as a structural model change instead.
 
 ## Goal

@@ -64,6 +64,7 @@ Development log entries are **immutable history**. Don't update old entries — 
 
 #### June 2026
 
+- [2026-06-26 - Physical stack inventory: universal stacks + construction-direct materials](./entries/2026-06-26-physical-stack-inventory.md)
 - [2026-06-22 - Hydrology ponds + oasis, proper forests, riparian plants](./entries/2026-06-22-hydrology-ponds-and-proper-forests.md)
 - [2026-06-21 - River tributaries, springs, and trickle headwaters](./entries/2026-06-21-river-tributaries-springs.md)
 - [2026-06-21 - 2D rivers from 3D drainage + water-biased landing](./entries/2026-06-21-2d-rivers-and-water-landing.md)
@@ -111,8 +112,8 @@ Development log entries are **immutable history**. Don't update old entries — 
 
 ## Quick Stats
 
-- **Total Entries:** 75 (entry files; the Major Milestones list below highlights notable ones)
-- **Latest Entry:** 2026-06-22
+- **Total Entries:** 76 (entry files; the Major Milestones list below highlights notable ones)
+- **Latest Entry:** 2026-06-26
 - **Major Milestones:**
   - Cryosphere: physical sea ice, snow, and glaciers (PDD + perfect-plastic) with a two-pass ice-climate feedback (2026-06-20)
   - Navigation P4: belief-filtered navigation, colonists path against what they've personally seen, not the live truth (2026-06-19)
