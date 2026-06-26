@@ -283,12 +283,14 @@ namespace ecs {
 		///   harvest -> haul -> craft chain actually connect.
 		/// - Storage hauls: the source is a loose ground item the colonist knows about.
 		///
+		/// @param world ECS world (to read a destination storage's live inventory for haul sizing)
 		/// @param registry Asset registry for capability lookups
 		/// @param memory Colonist memory (known entities)
 		/// @param inventory Colonist inventory (for craft-material hauls)
 		/// @param position Colonist position
 		/// @param trace Output decision trace
 		void evaluateHaulOptions(
+			World*								 world,
 			const engine::assets::AssetRegistry& registry,
 			const Memory&						 memory,
 			const Inventory&					 inventory,
@@ -301,8 +303,15 @@ namespace ecs {
 			auto haulGoals = goalRegistry.getGoalsOfType(TaskType::Haul);
 
 			for (const auto* goal : haulGoals) {
-				if (goal == nullptr || goal->availableCapacity() == 0) {
-					continue; // Goal is full or null
+				if (goal == nullptr) {
+					continue;
+				}
+				// A storage goal's slot-count targetAmount makes availableCapacity() a poor "full"
+				// signal (it goes 0 after one stack); its real headroom is the destination's
+				// per-item addableCount, checked below in the loose-pile path. Only gate the
+				// counter-driven goals (craft/construction) here.
+				if (goal->owner != GoalOwner::StorageGoalSystem && goal->availableCapacity() == 0) {
+					continue; // Goal is full
 				}
 
 				// Inventory-source haul: the colonist already carries the harvested material, so
@@ -407,11 +416,22 @@ namespace ecs {
 					haulOption.targetDefNameId = looseItem.defNameId;
 					haulOption.distanceToTarget = tripDistance;
 					haulOption.haulItemDefName = itemDefName;
-					// Memory has no per-pile count; size the trip by carry weight and over-propose
-					// an armful. The pickup (applyCollectionEffect's loose-pile branch) clamps to
-					// the live ResourceStack and the colonist's remaining capacity -- same
-					// over-propose-then-clamp pattern as harvest's `wanted`.
-					haulOption.haulQuantity = ecs::cargoUnitsPerTrip(registry, itemDefName, inventory.carryCapacityKg);
+					// Size the trip by what the DESTINATION storage can actually accept of this
+					// specific item -- its stack headroom plus free-slot * stackSize
+					// (addableCount), not the goal's slot count. A storage with 3 free slots takes
+					// up to 3 full stacks of wood (~120), not 3 wood. Then over-propose only as far
+					// as the colonist can carry (weight); the pickup clamps to the live
+					// ResourceStack and remaining carry capacity, and the deposit clamps to the
+					// storage again, so nothing overfills.
+					uint32_t storageHeadroom = UINT32_MAX;
+					if (const auto* destInv = world != nullptr ? world->getComponent<Inventory>(goal->destinationEntity) : nullptr) {
+						storageHeadroom = destInv->addableCount(itemDefName);
+					}
+					if (storageHeadroom == 0) {
+						continue; // storage can't take any more of this item, skip it
+					}
+					haulOption.haulQuantity =
+						std::min(storageHeadroom, ecs::cargoUnitsPerTrip(registry, itemDefName, inventory.carryCapacityKg));
 					haulOption.haulSourcePosition = looseItem.position;
 					haulOption.haulTargetStorageId = static_cast<uint64_t>(goal->destinationEntity);
 					haulOption.haulTargetPosition = goal->destinationPosition;
@@ -1265,7 +1285,7 @@ namespace ecs {
 
 		// Tier 6.4: Haul loose items to storage containers (goal-driven), and deliver
 		// harvested craft materials from inventory to crafting stations
-		evaluateHaulOptions(m_registry, memory, inventory, position.value, trace);
+		evaluateHaulOptions(world, m_registry, memory, inventory, position.value, trace);
 
 		// Tier 6.7: Harvest resources for crafting (goal-driven)
 		evaluateHarvestOptions(m_registry, memory, inventory, position.value, skills, trace);

@@ -46,15 +46,20 @@ namespace ecs {
 				continue;
 			}
 
-			// Check available capacity
-			// Storage capacity is a slot count; each stack occupies one slot.
+			// Existence/full gate: a storage wants items as long as it has a free slot. Storage
+			// capacity is a slot count; each stack occupies one slot. This is the authoritative
+			// "is there any room" check -- it creates the goal while a slot is free and removes it
+			// when the storage is slot-full. How MUCH a single haul carries is sized elsewhere,
+			// per item, from the destination's addableCount (stack headroom + freeSlots *
+			// stackSize); it is not the slot count. targetAmount below mirrors the free-slot count
+			// purely as a "still wants items" signal (availableCapacity() > 0) for the task UI and
+			// the decision layer; it is NOT a haul-size or a delivery quota.
 			uint32_t usedSlots = inventory.getSlotCount();
 			uint32_t availableSlots = 0;
 			if (usedSlots < inventory.maxCapacity) {
 				availableSlots = inventory.maxCapacity - usedSlots;
 			}
 
-			// Check if storage is full
 			if (availableSlots == 0) {
 				// Full - remove goal if exists
 				registry.removeGoalByDestination(entity);
@@ -83,12 +88,10 @@ namespace ecs {
 			// Check if goal already exists
 			const auto* existingGoal = registry.getGoalByDestination(entity);
 			if (existingGoal != nullptr) {
-				// Update existing goal. availableSlots already reflects everything deposited so
-				// far (the storage inventory grew with each delivery), so it IS the current
-				// available capacity. Reset deliveredAmount to 0 and absorb it into the freshly
-				// computed target - otherwise availableCapacity() = target - delivered would
-				// subtract the deposits twice (once via the shrunken slot count, once via the
-				// running deliveredAmount).
+				// Refresh the "wants items" signal from the live free-slot count (deposits shrank
+				// it). deliveredAmount resets to 0 each refresh: it isn't a real quota for storage
+				// (a haul's true clamp is the destination's per-item addableCount at deposit
+				// time), just bookkeeping so availableCapacity() == targetAmount == free slots.
 				registry.updateGoal(existingGoal->id, [&](GoalTask& goal) {
 					goal.targetAmount = availableSlots;
 					goal.deliveredAmount = 0;

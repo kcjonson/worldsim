@@ -1215,6 +1215,96 @@ TEST_F(HandMaterialActionTest, DepositToBuildSiteRemovesHaulGoalOnExactDelivery)
 	EXPECT_EQ(registry.getGoal(haulId), nullptr) << "an exactly-filled haul goal (capacity 0) is removed";
 }
 
+// A storage haul is item-sized, not slot-count-capped. A 5-slot storage accepting
+// RawMaterial gets a 50-Wood armful (Wood stackSize 40): all 50 land, spilling across two
+// slots (40 + 10), NOT a 5-item trickle. Three slots stay free, so the storage-owned goal
+// stays open (its slot-count targetAmount of 5 must not retire it after one stack). This is
+// the regression the slot model exposed: storage badly under-filled because targetAmount was
+// the slot count, and availableCapacity() retired the goal after a single deposit.
+TEST_F(HandMaterialActionTest, StorageHaulFillsAcrossStacksAndGoalSurvivesWhileSlotsFree) {
+	auto& registry = GoalTaskRegistry::Get();
+
+	auto	  storage = world->createEntity();
+	Inventory storageInv;
+	storageInv.maxCapacity = 5; // five slots, empty
+	world->addComponent<Inventory>(storage, storageInv);
+
+	// A storage-owned haul goal. Its targetAmount mirrors the free-slot count (5) -- the
+	// signal under test is that this slot count does NOT cap the deposit or retire the goal.
+	GoalTask haul;
+	haul.type = TaskType::Haul;
+	haul.owner = GoalOwner::StorageGoalSystem;
+	haul.destinationEntity = storage;
+	haul.targetAmount = 5;
+	haul.status = GoalStatus::Available;
+	uint64_t haulId = registry.createGoal(std::move(haul));
+
+	auto  colonist = createColonist({0.0F, 0.0F});
+	auto* inventory = world->getComponent<Inventory>(colonist);
+	seatArmful(*inventory, 50); // 50 Wood in hands (more than one 40-stack)
+
+	auto* task = world->getComponent<Task>(colonist);
+	task->type = TaskType::Haul;
+	task->state = TaskState::Arrived;
+	task->haulGoalId = haulId;
+	task->targetPosition = {0.0F, 0.0F};
+
+	auto* action = world->getComponent<Action>(colonist);
+	*action = Action::Deposit("Wood", 50, static_cast<uint64_t>(storage), {0.0F, 0.0F});
+
+	world->update(0.1F); // start
+	world->update(2.0F); // complete (deposit duration 1s)
+
+	auto* storedInv = world->getComponent<Inventory>(storage);
+	EXPECT_EQ(storedInv->getQuantity("Wood"), 50U) << "All 50 landed -- item capacity, not a 5-item slot cap";
+	EXPECT_EQ(storedInv->getSlotCount(), 2U) << "50 Wood spilled across two slots (40 + 10)";
+	EXPECT_EQ(handHeldQuantity(*inventory, "Wood"), 0U) << "Nothing bounced -- the storage had room";
+	ASSERT_NE(registry.getGoal(haulId), nullptr) << "Goal stays open: three slots are still free";
+}
+
+// A genuinely full storage retires its haul goal and accepts nothing more. The last slot here
+// is filled to Wood's 40 cap (5 slots x 40 = 200 already stored), so addItem accepts 0, the
+// whole armful bounces back, and the storage-owned goal is removed (no free slot remains).
+TEST_F(HandMaterialActionTest, FullStorageRetiresHaulGoalAndAcceptsNothing) {
+	auto& registry = GoalTaskRegistry::Get();
+
+	auto	  storage = world->createEntity();
+	Inventory storageInv;
+	storageInv.maxCapacity = 5;
+	storageInv.addItem("Wood", 200); // 5 slots x 40 = exactly full, no headroom
+	ASSERT_FALSE(storageInv.hasSpace());
+	world->addComponent<Inventory>(storage, storageInv);
+
+	GoalTask haul;
+	haul.type = TaskType::Haul;
+	haul.owner = GoalOwner::StorageGoalSystem;
+	haul.destinationEntity = storage;
+	haul.targetAmount = 5;
+	haul.status = GoalStatus::Available;
+	uint64_t haulId = registry.createGoal(std::move(haul));
+
+	auto  colonist = createColonist({0.0F, 0.0F});
+	auto* inventory = world->getComponent<Inventory>(colonist);
+	seatArmful(*inventory, 14);
+
+	auto* task = world->getComponent<Task>(colonist);
+	task->type = TaskType::Haul;
+	task->state = TaskState::Arrived;
+	task->haulGoalId = haulId;
+	task->targetPosition = {0.0F, 0.0F};
+
+	auto* action = world->getComponent<Action>(colonist);
+	*action = Action::Deposit("Wood", 14, static_cast<uint64_t>(storage), {0.0F, 0.0F});
+
+	world->update(0.1F);
+	world->update(2.0F);
+
+	auto* storedInv = world->getComponent<Inventory>(storage);
+	EXPECT_EQ(storedInv->getQuantity("Wood"), 200U) << "Full storage took nothing";
+	EXPECT_EQ(handHeldQuantity(*inventory, "Wood"), 14U) << "The whole armful bounced back, nothing lost";
+	EXPECT_EQ(registry.getGoal(haulId), nullptr) << "A genuinely full storage's goal is retired";
+}
+
 // A craft whose only input is two-hand Wood consumes it straight from the hands: the
 // hands decrement by the input count (mirror stays synced) and the output is produced.
 TEST_F(HandMaterialActionTest, CraftConsumesWoodFromHandsAndProducesOutput) {

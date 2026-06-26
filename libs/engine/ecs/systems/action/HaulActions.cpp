@@ -119,15 +119,25 @@ namespace ecs {
 					);
 				}
 
-				// Record delivery only for items that actually landed in storage. If the
-				// store was full (partial add), nothing more is credited - the goal stays open.
-				if (added > 0 && task.type == TaskType::Haul && task.haulGoalId != 0) {
+				if (task.type == TaskType::Haul && task.haulGoalId != 0) {
 					auto& goalRegistry = GoalTaskRegistry::Get();
-					goalRegistry.recordDelivery(task.haulGoalId, added);
+					// Credit only what actually landed. A full storage (partial or zero add) credits
+					// nothing more.
+					if (added > 0) {
+						goalRegistry.recordDelivery(task.haulGoalId, added);
+					}
 
 					const auto* goal = goalRegistry.getGoal(task.haulGoalId);
-					if (goal != nullptr && goal->availableCapacity() == 0) {
-						// Haul goal complete - remove it
+					// A storage goal's targetAmount is a slot count and its deliveredAmount sums
+					// across item types, so availableCapacity() is the wrong "done" signal -- it
+					// would retire after a single stack. Retire it on the storage's LIVE state
+					// instead: done once no free slot remains, whether or not this deposit landed
+					// anything (StorageGoalSystem re-confirms each tick). Other goals that deposit
+					// into a storage Inventory keep using their counter.
+					const bool done = (goal != nullptr) &&
+									  (goal->owner == GoalOwner::StorageGoalSystem ? !storageInv->hasSpace()
+																				   : goal->availableCapacity() == 0);
+					if (done) {
 						goalRegistry.removeGoal(task.haulGoalId);
 					}
 				}
