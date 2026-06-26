@@ -108,9 +108,8 @@ first). Not code — engine touch-points are named so the work is concrete.
 - Wood (`assets/world/misc/Wood/Wood.xml`): `handsRequired=2`, item `stackSize=40`, keep
   `mass=2.5`. Remove the `<carryable quantity="1"/>` flat quantity; loose piles carry their own
   count (see §6).
-- Make `addItem`/stack logic respect the **item's** `stackSize` (40) where it currently leans on
-  the inventory's `maxStackSize`. Stacks of a bulk material cap at 40 in storage and on the
-  ground.
+- Done: `addItem`/stack logic caps each stack at the **item's** `stackSize` (40); the per-container
+  `maxStackSize` is gone. Stacks of a bulk material cap at 40 in storage and on the ground.
 - Acceptance: Wood reports as two-hand; cannot be added to a backpack; a storage stack of wood
   caps at 40.
 

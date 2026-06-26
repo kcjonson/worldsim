@@ -21,7 +21,7 @@
 
     <!-- Item properties (when in inventory) -->
     <item>
-      <stackSize>20</stackSize>
+      <stackSize>200</stackSize>
       <mass>0.15</mass>
       <edible nutrition="0.3" quality="normal" spoilable="true"/>
     </item>

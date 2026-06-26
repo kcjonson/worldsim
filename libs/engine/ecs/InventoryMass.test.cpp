@@ -91,7 +91,7 @@ TEST(InventoryMassTests, HandHeldQuantity_DistinctOneHandItemsCountPerHand) {
 
 TEST(InventoryMassTests, AvailableQuantity_SumsBackpackAndHands) {
 	Inventory inv;
-	inv.items["Stone"] = 5;
+	inv.addItem("Stone", 5);
 	inv.leftHand = ItemStack{"Wood", 10};
 	inv.rightHand = ItemStack{"Wood", 10};
 	EXPECT_EQ(availableQuantity(inv, "Wood"), 10U); // hands, counted once

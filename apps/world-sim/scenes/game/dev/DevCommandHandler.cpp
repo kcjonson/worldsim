@@ -597,11 +597,12 @@ namespace world_sim {
 			blueprint.required.emplace_back(material, requiredQty);
 		}
 		blueprint.workTotal = area * workRate;
+		// Size the delivery slots to the manifest so the whole material order fits across stacks.
+		const uint32_t deliverySlots = ecs::Inventory::slotsForManifest(blueprint.required);
 		m_ctx.world->addComponent<ecs::StructureBlueprint>(entity, std::move(blueprint));
 
 		ecs::Inventory deliveryInv;
-		deliveryInv.maxCapacity = 8;
-		deliveryInv.maxStackSize = 100000;
+		deliveryInv.maxCapacity = deliverySlots;
 		m_ctx.world->addComponent<ecs::Inventory>(entity, std::move(deliveryInv));
 
 		const float maxHp = area * hpRate;
@@ -655,8 +656,8 @@ namespace world_sim {
 				if (!(inv->leftHand.has_value() && inv->rightHand.has_value() && inv->leftHand->defName == inv->rightHand->defName)) {
 					add(inv->rightHand);
 				}
-				for (const auto& [defName, qty] : inv->items) {
-					totals[defName] += qty;
+				for (const auto& stack : inv->items) {
+					totals[stack.defName] += stack.quantity;
 				}
 				out << ",\"inventory\":{";
 				bool firstItem = true;

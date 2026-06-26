@@ -122,8 +122,7 @@ namespace engine::assets {
 	/// Used for shelves, boxes, stockpiles that hold items
 	struct StorageCapability {
 		std::vector<ItemCategory> acceptedCategories; // Empty = accepts all categories
-		uint32_t				  maxCapacity = 50;	  // Max distinct item types
-		uint32_t				  maxStackSize = 999; // Max quantity per stack
+		uint32_t				  maxCapacity = 50;	  // Number of stack slots (each holds one stack)
 	};
 
 	// ─────────────────────────────────────────────────────────────────────────

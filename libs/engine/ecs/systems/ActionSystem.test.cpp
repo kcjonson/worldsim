@@ -1012,17 +1012,18 @@ class HandMaterialActionTest : public ::testing::Test {
 	std::unique_ptr<World> world;
 };
 
-// 14-Wood armful deposited into storage that can take only 8: 8 land in storage, the
-// other 6 bounce back mirrored across both hands, the haul goal is credited 8 (not 14),
-// and no wood is lost (8 stored + 6 held == 14).
+// 14-Wood armful deposited into a single-slot storage already holding 32 Wood (Wood's stack
+// size is 40, so only 8 headroom remains): 8 land, the other 6 bounce back mirrored across both
+// hands, the haul goal is credited 8 (not 14), and no wood is lost. This drives the slot-cap
+// overflow path: addItem tops the lone stack to 40 and returns 8, the rest bounces.
 TEST_F(HandMaterialActionTest, DepositFromHandsBouncesStorageFullRemainderToBothHands) {
 	auto&	 registry = GoalTaskRegistry::Get();
 
-	// Storage that accepts exactly 8 Wood: one slot capped at 8.
+	// One slot, pre-seeded to 8-below Wood's 40 stack cap, so it can take exactly 8 more.
 	auto storage = world->createEntity();
 	Inventory storageInv;
 	storageInv.maxCapacity = 1;
-	storageInv.maxStackSize = 8;
+	storageInv.addItem("Wood", 32);
 	world->addComponent<Inventory>(storage, storageInv);
 
 	// Haul goal wants 14 (stays open after a partial 8 so we can read the credit).
@@ -1051,7 +1052,7 @@ TEST_F(HandMaterialActionTest, DepositFromHandsBouncesStorageFullRemainderToBoth
 	world->update(2.0F); // complete (deposit duration 1s)
 
 	auto* storedInv = world->getComponent<Inventory>(storage);
-	EXPECT_EQ(storedInv->getQuantity("Wood"), 8U) << "Storage took only what its 8-cap slot allows";
+	EXPECT_EQ(storedInv->getQuantity("Wood"), 40U) << "Storage's lone slot filled to Wood's 40 stack cap (32 + 8)";
 
 	// The 6-unit remainder bounced back as a mirrored armful.
 	ASSERT_TRUE(inventory->leftHand.has_value());
@@ -1063,8 +1064,7 @@ TEST_F(HandMaterialActionTest, DepositFromHandsBouncesStorageFullRemainderToBoth
 
 	EXPECT_EQ(registry.getGoal(haulId)->deliveredAmount, 8U) << "Goal credited only the 8 that landed";
 
-	EXPECT_EQ(storedInv->getQuantity("Wood") + handHeldQuantity(*inventory, "Wood"), 14U)
-	    << "No wood lost: stored + held == the original armful";
+	EXPECT_EQ(handHeldQuantity(*inventory, "Wood"), 14U - 8U) << "No wood lost: 8 landed + 6 held == the original 14";
 }
 
 // Deposit targeting a non-existent storage entity: all 14 bounce back to the hands

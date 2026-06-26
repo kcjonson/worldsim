@@ -34,11 +34,11 @@ std::unordered_set<uint32_t> collectObtainableMaterials(ecs::World& world) {
 	// transit, not a raw material).
 	for (auto [entity, inventory] : world.view<ecs::Inventory>()) {
 		(void)entity;
-		for (const auto& [defName, quantity] : inventory.items) {
-			if (quantity == 0) {
+		for (const auto& stack : inventory.items) {
+			if (stack.quantity == 0) {
 				continue;
 			}
-			const uint32_t id = registry.getDefNameId(defName);
+			const uint32_t id = registry.getDefNameId(stack.defName);
 			if (id != 0) {
 				obtainable.insert(id);
 			}

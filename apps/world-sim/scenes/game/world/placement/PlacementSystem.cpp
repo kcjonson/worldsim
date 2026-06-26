@@ -209,8 +209,7 @@ namespace world_sim {
 			// Storage container - add Inventory configured from StorageCapability
 			const auto&	   storageCap = assetDef->capabilities.storage.value();
 			ecs::Inventory inventory{};
-			inventory.maxCapacity = storageCap.maxCapacity;
-			inventory.maxStackSize = storageCap.maxStackSize;
+			inventory.maxCapacity = storageCap.maxCapacity; // slot count; per-stack cap is each item's own stackSize
 			ecsWorld->addComponent<ecs::Inventory>(entity, inventory);
 
 			// Add StorageConfiguration - default to accepting all categories the container supports
