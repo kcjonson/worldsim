@@ -1623,4 +1623,122 @@ namespace ecs::test {
 		EXPECT_EQ(task->buildBlueprintEntityId, static_cast<uint64_t>(blueprint));
 	}
 
+	// =============================================================================
+	// Storage-haul sizing: a haul to a storage is sized by what the destination can ACCEPT
+	// of the specific item (Inventory::addableCount = stack headroom + freeSlots * stackSize),
+	// NOT the storage's free-slot count. A 5-slot storage accepting RawMaterial proposes a haul
+	// of up to 5 * 40 = 200 of a 40-stack material, not 5. This is the headline bug the physical-
+	// stack model exposed: storage badly under-filled because the goal's slot-count drove the size.
+	// =============================================================================
+
+	TEST_F(AIDecisionSystemTest, StorageHaulSizedByAddableCountNotSlotCount) {
+		auto& registry = engine::assets::AssetRegistry::Get();
+
+		// A light, one-hand, carryable RawMaterial with a 40 stack. Light enough (0.1 kg) that
+		// carry weight (350/trip at 35 kg) never binds, so the destination's addableCount is the
+		// sole cap and the slot-vs-item distinction is unambiguous.
+		engine::assets::AssetDefinition pelletDef;
+		pelletDef.defName = "Pellet";
+		pelletDef.label = "Pellet";
+		pelletDef.handsRequired = 1;
+		pelletDef.category = engine::assets::ItemCategory::RawMaterial;
+		pelletDef.capabilities.carryable = engine::assets::CarryableCapability{1};
+		pelletDef.itemProperties = engine::assets::ItemProperties{};
+		pelletDef.itemProperties->stackSize = 40;
+		pelletDef.itemProperties->massKg = 0.1F;
+		registry.registerTestDefinition(std::move(pelletDef));
+		const uint32_t pelletId = registry.getDefNameId("Pellet");
+
+		auto colonist = createColonist({0.0F, 0.0F});
+		setNeedValue(colonist, NeedType::Hunger, 100.0F);
+		setNeedValue(colonist, NeedType::Thirst, 100.0F);
+		setNeedValue(colonist, NeedType::Energy, 100.0F);
+		setNeedValue(colonist, NeedType::Bladder, 100.0F);
+
+		// A loose ground pile of Pellet the colonist knows about (the haul source).
+		addKnownEntity(colonist, {2.0F, 0.0F}, pelletId, engine::assets::CapabilityType::Carryable);
+
+		// A 5-slot storage with an empty Inventory, plus the StorageGoalSystem-style Haul goal
+		// pointing at it. Its targetAmount mirrors the free-slot count (5) -- the value under test
+		// is that the PROPOSED haul is sized by addableCount (200), not this 5.
+		auto	  storage = world->createEntity();
+		world->addComponent<Position>(storage, Position{{4.0F, 0.0F}});
+		Inventory storageInv;
+		storageInv.maxCapacity = 5;
+		world->addComponent<Inventory>(storage, storageInv);
+
+		GoalTask goal;
+		goal.type = TaskType::Haul;
+		goal.owner = GoalOwner::StorageGoalSystem;
+		goal.destinationEntity = storage;
+		goal.destinationPosition = {4.0F, 0.0F};
+		goal.acceptedCategory = engine::assets::ItemCategory::RawMaterial;
+		goal.targetAmount = 5; // free-slot count, must NOT cap the haul
+		goal.status = GoalStatus::Available;
+		GoalTaskRegistry::Get().createGoal(std::move(goal));
+
+		world->update(0.016F);
+
+		auto* task = getTask(colonist);
+		ASSERT_NE(task, nullptr);
+		ASSERT_EQ(task->type, TaskType::Haul) << "colonist takes the storage haul when all needs are met";
+		EXPECT_EQ(task->haulItemDefName, "Pellet");
+		EXPECT_EQ(task->haulTargetStorageId, static_cast<uint64_t>(storage));
+		EXPECT_EQ(task->haulQuantity, 200U)
+			<< "sized by the storage's addableCount (5 slots x 40 stack = 200), not the 5-slot count";
+		EXPECT_GT(task->haulQuantity, 5U) << "not capped at the free-slot count";
+	}
+
+	// A storage that is genuinely full (no free slot AND every stack at its cap) offers no haul:
+	// addableCount is 0, so evaluateHaulOptions emits no option for it and the colonist falls
+	// through to another task (here, Wander).
+	TEST_F(AIDecisionSystemTest, FullStorageOffersNoHaulOption) {
+		auto& registry = engine::assets::AssetRegistry::Get();
+
+		engine::assets::AssetDefinition pelletDef;
+		pelletDef.defName = "Pellet";
+		pelletDef.label = "Pellet";
+		pelletDef.handsRequired = 1;
+		pelletDef.category = engine::assets::ItemCategory::RawMaterial;
+		pelletDef.capabilities.carryable = engine::assets::CarryableCapability{1};
+		pelletDef.itemProperties = engine::assets::ItemProperties{};
+		pelletDef.itemProperties->stackSize = 40;
+		pelletDef.itemProperties->massKg = 0.1F;
+		registry.registerTestDefinition(std::move(pelletDef));
+		const uint32_t pelletId = registry.getDefNameId("Pellet");
+
+		auto colonist = createColonist({0.0F, 0.0F});
+		setNeedValue(colonist, NeedType::Hunger, 100.0F);
+		setNeedValue(colonist, NeedType::Thirst, 100.0F);
+		setNeedValue(colonist, NeedType::Energy, 100.0F);
+		setNeedValue(colonist, NeedType::Bladder, 100.0F);
+
+		addKnownEntity(colonist, {2.0F, 0.0F}, pelletId, engine::assets::CapabilityType::Carryable);
+
+		// 2-slot storage filled to its 40 cap on both slots: no free slot, no stack headroom.
+		auto	  storage = world->createEntity();
+		world->addComponent<Position>(storage, Position{{4.0F, 0.0F}});
+		Inventory storageInv;
+		storageInv.maxCapacity = 2;
+		storageInv.addItem("Pellet", 80);
+		ASSERT_EQ(storageInv.addableCount("Pellet"), 0U);
+		world->addComponent<Inventory>(storage, storageInv);
+
+		GoalTask goal;
+		goal.type = TaskType::Haul;
+		goal.owner = GoalOwner::StorageGoalSystem;
+		goal.destinationEntity = storage;
+		goal.destinationPosition = {4.0F, 0.0F};
+		goal.acceptedCategory = engine::assets::ItemCategory::RawMaterial;
+		goal.targetAmount = 0;
+		goal.status = GoalStatus::Available;
+		GoalTaskRegistry::Get().createGoal(std::move(goal));
+
+		world->update(0.016F);
+
+		auto* task = getTask(colonist);
+		ASSERT_NE(task, nullptr);
+		EXPECT_NE(task->type, TaskType::Haul) << "a full storage offers no haul; addableCount is 0";
+	}
+
 } // namespace ecs::test
