@@ -465,8 +465,7 @@ TEST_F(ConstructionGoalEmissionTest, LargeFoundationAccumulatesWoodAcrossSlotsAn
 	// 200 Wood: it spills into 5 stacks of 40 (ceil(200/40) = 5 slots, well under the sized count).
 	StructureBlueprint* bp = world->getComponent<StructureBlueprint>(foundation);
 	ASSERT_NE(bp, nullptr);
-	Inventory deliveryInv;
-	deliveryInv.maxCapacity = Inventory::slotsForManifest(bp->required);
+	auto deliveryInv = Inventory::createForBuildSite(bp->required);
 	world->addComponent<Inventory>(foundation, deliveryInv);
 
 	auto* onSite = world->getComponent<Inventory>(foundation);

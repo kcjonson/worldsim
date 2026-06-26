@@ -468,14 +468,8 @@ namespace world_sim {
 			blueprint.required.emplace_back(activeMaterial_, requiredQty);
 		}
 		blueprint.workTotal = area * workRate;
-		// Delivery inventory: hauled materials land here, and ConstructionSystem reconciles the
-		// blueprint's delivered[] manifest from it. Size the slots to the whole manifest so a
-		// foundation's Wood spills across as many stacks as it needs and never bounces a haul.
-		const uint32_t deliverySlots = ecs::Inventory::slotsForManifest(blueprint.required);
+		auto deliveryInv = ecs::Inventory::createForBuildSite(blueprint.required);
 		ecsWorld_->addComponent<ecs::StructureBlueprint>(entity, std::move(blueprint));
-
-		ecs::Inventory deliveryInv;
-		deliveryInv.maxCapacity = deliverySlots;
 		ecsWorld_->addComponent<ecs::Inventory>(entity, std::move(deliveryInv));
 
 		// HP scales with area; full HP is only meaningful once built but the
@@ -849,11 +843,8 @@ namespace world_sim {
 				blueprint.required.emplace_back(segment->material, requiredQty);
 			}
 		}
-		const uint32_t deliverySlots = ecs::Inventory::slotsForManifest(blueprint.required);
+		auto deliveryInv = ecs::Inventory::createForBuildSite(blueprint.required);
 		ecsWorld_->addComponent<ecs::StructureBlueprint>(entity, std::move(blueprint));
-
-		ecs::Inventory deliveryInv;
-		deliveryInv.maxCapacity = deliverySlots;
 		ecsWorld_->addComponent<ecs::Inventory>(entity, std::move(deliveryInv));
 
 		const float maxHp = areaEquivalent * hpRate;
@@ -1064,11 +1055,8 @@ namespace world_sim {
 				blueprint.required.emplace_back(type->material, requiredQty);
 			}
 		}
-		const uint32_t deliverySlots = ecs::Inventory::slotsForManifest(blueprint.required);
+		auto deliveryInv = ecs::Inventory::createForBuildSite(blueprint.required);
 		ecsWorld_->addComponent<ecs::StructureBlueprint>(entity, std::move(blueprint));
-
-		ecs::Inventory deliveryInv;
-		deliveryInv.maxCapacity = deliverySlots;
 		ecsWorld_->addComponent<ecs::Inventory>(entity, std::move(deliveryInv));
 
 		// Openings are not area-derived, so HP is a small fixed value scaled by the
