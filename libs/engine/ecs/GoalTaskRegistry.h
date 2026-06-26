@@ -31,6 +31,7 @@ namespace ecs {
 		InProgress,		 // Colonist(s) actively working
 		WaitingForItems, // Haul waiting for harvest to create items
 		Blocked,		 // Craft waiting for all materials to be delivered
+		NoSource,		 // Need known, but no source (stock or harvestable) is known yet
 		Complete		 // Done
 	};
 
@@ -202,6 +203,13 @@ namespace ecs {
 		/// Update status of dependent goals when a goal completes
 		/// (e.g., Haul becomes Available when its Harvest dependency completes)
 		void notifyGoalCompleted(uint64_t completedGoalId);
+
+		/// Spawn the Haul that carries a just-completed Harvest's yield to the station. The cut
+		/// material now sits in the colonist's inventory, so the Haul is created Available and
+		/// inherits the Harvest's destination, accepted items, parent Craft goal, and chain id.
+		/// Call before removing the Harvest goal. Returns the new Haul's id, or 0 if `harvestGoalId`
+		/// is not a Harvest goal.
+		uint64_t createHaulForCompletedHarvest(uint64_t harvestGoalId);
 
 	  private:
 		GoalTaskRegistry() = default;

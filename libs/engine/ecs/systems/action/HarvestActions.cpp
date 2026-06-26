@@ -271,9 +271,9 @@ namespace ecs {
 			// Check if goal is now complete
 			const auto* goal = goalRegistry.getGoal(task.harvestGoalId);
 			if (goal != nullptr && goal->availableCapacity() == 0) {
-				// Harvest goal complete - notify dependent goals (the Haul that carries
-				// these items to the station unblocks) then remove the harvest goal.
-				goalRegistry.notifyGoalCompleted(task.harvestGoalId);
+				// Harvest done: the material is in the colonist's inventory now, so the Haul that
+				// carries it to the station can be created here (not up front), then the goal is retired.
+				goalRegistry.createHaulForCompletedHarvest(task.harvestGoalId);
 				goalRegistry.removeGoal(task.harvestGoalId);
 			}
 		}

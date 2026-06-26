@@ -322,11 +322,13 @@ namespace ecs {
 				//    blueprint, where the deposit records the material onto the blueprint's delivered[] manifest.
 				// Both skip the memory scan and emit only once the dependency completed (status
 				// Available) and the colonist actually carries the material.
-				bool inventorySourceHaul = goal->owner == GoalOwner::ConstructionGoalSystem;
-				if (!inventorySourceHaul && goal->parentGoalId.has_value()) {
+				const bool isConstructionHaul = goal->owner == GoalOwner::ConstructionGoalSystem;
+				bool isCraftHaul = false;
+				if (!isConstructionHaul && goal->parentGoalId.has_value()) {
 					const auto* parent = goalRegistry.getGoal(goal->parentGoalId.value());
-					inventorySourceHaul = parent != nullptr && parent->type == TaskType::Craft;
+					isCraftHaul = parent != nullptr && parent->type == TaskType::Craft;
 				}
+				const bool inventorySourceHaul = isConstructionHaul || isCraftHaul;
 				if (inventorySourceHaul) {
 					if (goal->status == GoalStatus::Available) {
 						const bool toBlueprint = goal->owner == GoalOwner::ConstructionGoalSystem;
@@ -358,6 +360,49 @@ namespace ecs {
 							haulOption.reason = toBlueprint ? "Delivering " + itemDefName + " to build site"
 															: "Delivering " + itemDefName + " to crafting station";
 							trace.options.push_back(haulOption);
+						}
+					}
+
+					// Craft-only fetch: the colonist isn't carrying the material, so bring a remembered
+					// loose stock to the station (two-phase pickup -> deposit; the deposit keeps it in
+					// inventory for the Craft action). Construction never fetches; its goods come from a cut.
+					if (isCraftHaul && goal->status == GoalStatus::Available) {
+						for (const auto& [key, looseItem] : memory.knownWorldEntities) {
+							const bool accepted = std::find(goal->acceptedDefNameIds.begin(), goal->acceptedDefNameIds.end(), looseItem.defNameId) != goal->acceptedDefNameIds.end();
+							if (!accepted || !registry.hasCapability(looseItem.defNameId, engine::assets::CapabilityType::Carryable)) {
+								continue;
+							}
+							const auto& itemDefName = registry.getDefName(looseItem.defNameId);
+							// Already carrying some? The inventory-source option above is cheaper, so skip.
+							if (ecs::availableQuantity(inventory, itemDefName) > 0) {
+								continue;
+							}
+							const auto* itemDef = registry.getDefinition(itemDefName);
+							if (itemDef == nullptr || !itemDef->capabilities.carryable.has_value()) {
+								continue;
+							}
+
+							float tripDistance = glm::distance(position, looseItem.position) + glm::distance(looseItem.position, goal->destinationPosition);
+
+							EvaluatedOption fetchOption;
+							fetchOption.taskType = TaskType::Haul;
+							fetchOption.needType = NeedType::Count;
+							fetchOption.needValue = 100.0F;
+							fetchOption.threshold = 0.0F;
+							fetchOption.targetPosition = looseItem.position;
+							fetchOption.targetDefNameId = looseItem.defNameId;
+							fetchOption.distanceToTarget = tripDistance;
+							fetchOption.haulItemDefName = itemDefName;
+							fetchOption.haulQuantity = std::min(itemDef->capabilities.carryable.value().quantity, goal->availableCapacity());
+							fetchOption.haulSourcePosition = looseItem.position;
+							fetchOption.haulTargetStorageId = static_cast<uint64_t>(goal->destinationEntity);
+							fetchOption.haulTargetPosition = goal->destinationPosition;
+							fetchOption.haulGoalId = goal->id;
+							fetchOption.haulFromInventory = false;
+							fetchOption.tiebreakId = goal->id ^ (key << 1);
+							fetchOption.status = OptionStatus::Available;
+							fetchOption.reason = "Fetching " + itemDefName + " for crafting";
+							trace.options.push_back(fetchOption);
 						}
 					}
 					continue;

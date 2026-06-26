@@ -367,4 +367,29 @@ namespace ecs {
 		}
 	}
 
+	uint64_t GoalTaskRegistry::createHaulForCompletedHarvest(uint64_t harvestGoalId) {
+		auto it = goals.find(harvestGoalId);
+		if (it == goals.end() || it->second.type != TaskType::Harvest) {
+			return 0;
+		}
+
+		const GoalTask& harvest = it->second;
+		GoalTask		haul;
+		haul.type = TaskType::Haul;
+		haul.owner = harvest.owner;
+		haul.destinationEntity = harvest.destinationEntity;
+		haul.destinationPosition = harvest.destinationPosition;
+		haul.destinationDefNameId = harvest.destinationDefNameId;
+		haul.acceptedDefNameIds = harvest.acceptedDefNameIds;
+		haul.acceptedCategory = harvest.acceptedCategory;
+		haul.targetAmount = harvest.targetAmount;
+		haul.deliveredAmount = 0;
+		haul.createdAt = harvest.createdAt;
+		haul.parentGoalId = harvest.parentGoalId;
+		haul.status = GoalStatus::Available;
+		haul.chainId = harvest.chainId;
+
+		return createGoal(std::move(haul));
+	}
+
 } // namespace ecs
