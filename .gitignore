@@ -40,9 +40,10 @@ tests/diffs/
 # Logs
 *.log
 
-# Claude Code local files (settings, plans, sessions). Shared commands stay tracked.
+# Claude Code local files (settings, plans, sessions). Shared commands and skills stay tracked.
 .claude/*
 !.claude/commands/
+!.claude/skills/
 docs/development-log/plans/
 build-asan/
 
