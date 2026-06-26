@@ -130,8 +130,8 @@ namespace {
 			for (size_t i = 0; i < items.size(); ++i) {
 				const MenuItem&		   item = items[i];
 				const Foundation::Rect rect = itemRects[i];
-				const bool			   hovered = static_cast<int>(i) == hoveredIndex;
-				const bool			   armed = item.enabled && (hovered || item.primary);
+				const bool			   hovered = item.enabled && static_cast<int>(i) == hoveredIndex;
+				const bool			   armed = hovered || item.primary;
 
 				if (hovered) {
 					drawRect(Renderer::Primitives::RectArgs{.bounds = rect, .style = {.fill = bg_hover}});

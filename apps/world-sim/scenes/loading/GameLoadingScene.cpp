@@ -43,7 +43,6 @@
 #include <worldgen/sampling/SpawnSite.h>
 
 #include <algorithm>
-#include <filesystem>
 #include <memory>
 #include <sstream>
 #include <vector>
