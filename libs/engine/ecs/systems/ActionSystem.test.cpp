@@ -566,16 +566,8 @@ TEST_F(ActionSystemGoalTest, HarvestThenInventoryHaulDeliversMaterialsAndUnblock
 	harvest.status = GoalStatus::Available;
 	uint64_t harvestId = registry.createGoal(std::move(harvest));
 
-	GoalTask haul;
-	haul.type = TaskType::Haul;
-	haul.owner = GoalOwner::CraftingGoalSystem;
-	haul.destinationEntity = station;
-	haul.destinationPosition = {5.0F, 0.0F};
-	haul.targetAmount = 2;
-	haul.parentGoalId = craftId;
-	haul.dependsOnGoalId = harvestId;
-	haul.status = GoalStatus::WaitingForItems;
-	uint64_t haulId = registry.createGoal(std::move(haul));
+	// No pre-made Haul: the carrying Haul is spawned lazily when the harvest below completes.
+	// haulId is bound from that goal in Phase 1.
 
 	// --- Phase 1: drive a Harvest action that yields 2 Sticks ---
 	auto colonist = createColonist({1.0F, 1.0F});
@@ -594,12 +586,23 @@ TEST_F(ActionSystemGoalTest, HarvestThenInventoryHaulDeliversMaterialsAndUnblock
 
 	auto* inventory = world->getComponent<Inventory>(colonist);
 	EXPECT_EQ(inventory->getQuantity("Stick"), 2U) << "Harvest yield should be in inventory";
-	// Harvest goal credited by the real yield (2), so it completed and was removed; the
-	// dependent Haul flipped to Available.
+	// Harvest goal credited by the real yield (2), so it completed and was removed; the carrying
+	// Haul was created lazily in its place.
 	EXPECT_EQ(registry.getGoal(harvestId), nullptr) << "Completed harvest goal removed";
-	ASSERT_NE(registry.getGoal(haulId), nullptr);
-	EXPECT_EQ(registry.getGoal(haulId)->status, GoalStatus::Available)
-	    << "Dependent Haul unblocked once harvest completed";
+
+	// The lazily-created Haul is the only Haul child of the Craft: Available, targeting the yield.
+	const GoalTask* lazyHaul = nullptr;
+	for (const auto* child : registry.getChildGoals(craftId)) {
+		if (child->type == TaskType::Haul) {
+			lazyHaul = child;
+			break;
+		}
+	}
+	ASSERT_NE(lazyHaul, nullptr) << "Completing the harvest creates the carrying Haul";
+	EXPECT_EQ(lazyHaul->status, GoalStatus::Available) << "Lazily-created Haul starts available";
+	EXPECT_EQ(lazyHaul->targetAmount, 2U);
+	uint64_t haulId = lazyHaul->id;
+
 	EXPECT_EQ(registry.getGoal(craftId)->deliveredAmount, 0U)
 	    << "Harvest must NOT credit the Craft - materials are only in inventory, not at station";
 

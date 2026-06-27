@@ -19,7 +19,6 @@ enum class TaskType : uint8_t {
 	None = 0,
 	FulfillNeed,   // Tier 3/5: Moving to target for need fulfillment
 	Harvest,	   // Tier 6.7: Harvesting resources (cutting trees, harvesting bushes)
-	Gather,		   // Tier 6.6: Gathering materials for crafting
 	Craft,		   // Tier 6.5: Crafting at a station
 	Haul,		   // Tier 6.4: Moving loose items to storage containers
 	PlacePackaged, // Tier 6.35: Carrying packaged items to placement locations
@@ -66,10 +65,6 @@ struct Task {
 	uint64_t harvestTargetEntityId = 0;	   // Entity ID of the harvestable (tree, bush, etc.)
 	uint64_t harvestGoalId = 0;			   // Goal ID this harvest is contributing to
 	uint32_t harvestYieldDefNameId = 0;	   // What item type will be yielded
-
-	/// For Gather tasks: item to collect and target entity
-	std::string gatherItemDefName;
-	uint64_t gatherTargetEntityId = 0;
 
 	/// For Craft tasks: recipe to craft and station entity ID
 	std::string craftRecipeDefName;
@@ -128,8 +123,6 @@ struct Task {
 		harvestTargetEntityId = 0;
 		harvestGoalId = 0;
 		harvestYieldDefNameId = 0;
-		gatherItemDefName.clear();
-		gatherTargetEntityId = 0;
 		craftRecipeDefName.clear();
 		targetStationId = 0;
 		haulItemDefName.clear();

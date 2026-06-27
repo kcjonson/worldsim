@@ -57,8 +57,6 @@ namespace world_sim {
 					return "None";
 				case ecs::TaskType::FulfillNeed:
 					return "Fulfilling need";
-				case ecs::TaskType::Gather:
-					return "Gathering";
 				case ecs::TaskType::Craft:
 					return "Crafting";
 				case ecs::TaskType::Haul:
@@ -113,8 +111,6 @@ namespace world_sim {
 							return "Haul the load";
 					}
 				}
-				case ecs::TaskType::Gather:
-					return task.chainId.has_value() ? "Haul to station" : "--";
 				case ecs::TaskType::Haul:
 					switch (classifyDestination(world, static_cast<ecs::EntityID>(task.haulTargetStorageId))) {
 						case NextDest::Build:

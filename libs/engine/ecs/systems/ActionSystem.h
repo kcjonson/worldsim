@@ -189,14 +189,6 @@ private:
 	/// not elapsed time. @return true if the action reached completion this tick.
 	bool advanceConstructionWork(float deltaTime, struct Action& action);
 
-	/// Start a gather action (pickup or harvest) for crafting materials
-	void startGatherAction(
-		struct Task& task,
-		struct Action& action,
-		const struct Position& position,
-		const struct Memory& memory
-	);
-
 	/// Start a harvest action for goal-driven harvesting (crafting materials)
 	/// Finds harvestable at target position that yields the required item type.
 	/// Memory is mutable so a vanished target can be forgotten (prevents re-selection).

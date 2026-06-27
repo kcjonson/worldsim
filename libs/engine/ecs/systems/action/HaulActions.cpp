@@ -315,7 +315,18 @@ namespace ecs {
 				return;
 			}
 
-			action = Action::Deposit(task.haulItemDefName, task.haulQuantity, task.haulTargetStorageId, task.haulTargetPosition);
+			// A crafting-station target has no blueprint and no Inventory: deliver-to-craft-station
+			// keeps the items in inventory for the Craft action and just credits the goal. A build
+			// site (blueprint) or a storage container takes the goods for real.
+			const bool toBuildSite = world->hasComponent<StructureBlueprint>(storageEntity);
+			const bool toStorage = world->hasComponent<Inventory>(storageEntity);
+			action = Action::Deposit(
+				task.haulItemDefName,
+				task.haulQuantity,
+				task.haulTargetStorageId,
+				task.haulTargetPosition,
+				/*deliverToCraftStation=*/!toBuildSite && !toStorage
+			);
 			LOG_DEBUG(
 				Engine,
 				"[Action] Haul phase 2: Deposit %u x %s into storage %llu",

@@ -45,9 +45,9 @@ namespace ecs {
 				continue;
 			}
 
-			// Only process actionable tasks (FulfillNeed, Gather, Craft, Haul, PlacePackaged,
+			// Only process actionable tasks (FulfillNeed, Craft, Haul, PlacePackaged,
 			// Harvest, Build, Deconstruct)
-			if (task.type != TaskType::FulfillNeed && task.type != TaskType::Gather && task.type != TaskType::Craft &&
+			if (task.type != TaskType::FulfillNeed && task.type != TaskType::Craft &&
 				task.type != TaskType::Haul && task.type != TaskType::PlacePackaged && task.type != TaskType::Harvest &&
 				task.type != TaskType::Build && task.type != TaskType::Deconstruct) {
 				// For non-actionable tasks like Wander, just clear when arrived
@@ -133,12 +133,6 @@ namespace ecs {
 		// Handle Craft tasks separately
 		if (task.type == TaskType::Craft) {
 			startCraftAction(task, action, inventory);
-			return;
-		}
-
-		// Handle Gather tasks - pickup or harvest materials for crafting
-		if (task.type == TaskType::Gather) {
-			startGatherAction(task, action, position, memory);
 			return;
 		}
 
