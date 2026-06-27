@@ -271,84 +271,12 @@ namespace ecs {
 			// Check if goal is now complete
 			const auto* goal = goalRegistry.getGoal(task.harvestGoalId);
 			if (goal != nullptr && goal->availableCapacity() == 0) {
-				// Harvest goal complete - notify dependent goals (the Haul that carries
-				// these items to the station unblocks) then remove the harvest goal.
-				goalRegistry.notifyGoalCompleted(task.harvestGoalId);
+				// Harvest done: the material is in the colonist's inventory now, so the Haul that
+				// carries it to the station can be created here (not up front), then the goal is retired.
+				goalRegistry.createHaulForCompletedHarvest(task.harvestGoalId);
 				goalRegistry.removeGoal(task.harvestGoalId);
 			}
 		}
-	}
-
-	void ActionSystem::startGatherAction(Task& task, Action& action, const Position& position, const Memory& memory) {
-		auto& registry = engine::assets::AssetRegistry::Get();
-
-		// Find the entity at the target position that we want to gather from
-		constexpr float kPositionTolerance = 0.5F;
-
-		for (const auto& [key, entity] : memory.knownWorldEntities) {
-			// Check if entity is at target position
-			glm::vec2 diff = entity.position - task.targetPosition;
-			float	  distSq = diff.x * diff.x + diff.y * diff.y;
-			if (distSq > kPositionTolerance * kPositionTolerance) {
-				continue;
-			}
-
-			// Check if entity has Carryable capability (direct pickup)
-			if (registry.hasCapability(entity.defNameId, engine::assets::CapabilityType::Carryable)) {
-				const auto& defName = registry.getDefName(entity.defNameId);
-				const auto* def = registry.getDefinition(defName);
-				if (def != nullptr && def->capabilities.carryable.has_value()) {
-					const auto& carryableCap = def->capabilities.carryable.value();
-					action = Action::Pickup(defName, carryableCap.quantity, entity.position, defName);
-					LOG_DEBUG(Engine, "[Action] Starting Pickup action for %s (qty %u)", defName.c_str(), carryableCap.quantity);
-					return;
-				}
-			}
-
-			// Check if entity has Harvestable capability
-			if (registry.hasCapability(entity.defNameId, engine::assets::CapabilityType::Harvestable)) {
-				const auto& defName = registry.getDefName(entity.defNameId);
-				const auto* def = registry.getDefinition(defName);
-				if (def != nullptr && def->capabilities.harvestable.has_value()) {
-					const auto& harvestCap = def->capabilities.harvestable.value();
-
-					// Calculate yield amount (skip RNG if range is single value)
-					uint32_t yieldAmount = harvestCap.amountMin;
-					if (harvestCap.amountMax > harvestCap.amountMin) {
-						std::uniform_int_distribution<uint32_t> yieldDist(harvestCap.amountMin, harvestCap.amountMax);
-						yieldAmount = yieldDist(m_rng);
-					}
-
-					action = Action::Harvest(
-						harvestCap.yieldDefName,
-						yieldAmount,
-						harvestCap.durability,
-						entity.position,
-						defName,
-						harvestCap.destructive,
-						harvestCap.regrowthTime
-					);
-					LOG_DEBUG(
-						Engine,
-						"[Action] Starting Harvest action for %s from %s (durability %.0f)",
-						harvestCap.yieldDefName.c_str(),
-						defName.c_str(),
-						harvestCap.durability
-					);
-					return;
-				}
-			}
-		}
-
-		// No valid entity found at target - clear action
-		LOG_WARNING(
-			Engine,
-			"[Action] No gatherable entity found at (%.1f, %.1f) for item %s",
-			task.targetPosition.x,
-			task.targetPosition.y,
-			task.gatherItemDefName.c_str()
-		);
-		action.clear();
 	}
 
 	void ActionSystem::startHarvestAction(Task& task, Action& action, const Position& position, Memory& memory, const Inventory& inventory) {

@@ -11,8 +11,11 @@
 namespace world_sim {
 
 	namespace {
-		// Faint cyan mesh wireframe; bright magenta routes so they read over it.
-		constexpr Foundation::Color kMeshEdge{0.3F, 0.8F, 0.9F, 0.45F};
+		// Mesh wireframe color-coded by walkability: green = walkable ground, red = blocked
+		// (water / tree / wall). A glance confirms whether the navmesh classifies land vs water
+		// correctly. Bright magenta routes read over both.
+		constexpr Foundation::Color kWalkableEdge{1.0F, 0.95F, 0.15F, 0.75F}; // bright yellow: reads on grass AND water
+		constexpr Foundation::Color kBlockedEdge{0.95F, 0.2F, 0.2F, 0.6F};	  // red
 		constexpr Foundation::Color kPathLine{1.0F, 0.2F, 0.8F, 0.95F};
 		constexpr Foundation::Color kWaypointMarker{1.0F, 0.9F, 0.2F, 1.0F};
 
@@ -40,6 +43,8 @@ namespace world_sim {
 		// neighbors, so this overdraws once per interior edge; fine for a debug layer.
 		for (std::size_t t = 0; t < mesh.triangles.size(); ++t) {
 			const auto& tri = mesh.triangles[t];
+			const Foundation::Color edgeColor =
+				geometry::nav::terrainTraversable(tri) ? kWalkableEdge : kBlockedEdge;
 
 			std::array<Foundation::Vec2, 3> screen;
 			for (int i = 0; i < 3; ++i) {
@@ -59,7 +64,7 @@ namespace world_sim {
 						.end = screen[(i + 1) % 3],
 						.style =
 							Foundation::LineStyle{
-								.color = kMeshEdge,
+								.color = edgeColor,
 								.width = 1.0F,
 							},
 						.id = edgeId.c_str(),

@@ -39,6 +39,7 @@ namespace geometry::nav {
 			std::vector<std::uint32_t>				outer;
 			std::vector<std::vector<std::uint32_t>> holes;
 			Int128									areaDoubled; // positive (CCW); innermost-container key
+			Vec2i64									repPoint;	 // interior point used to classify the face
 			std::int64_t							blocker = kNoBlocker;
 			std::int64_t							opening = kNoOpening;
 		};
@@ -59,6 +60,74 @@ namespace geometry::nav {
 				pts.push_back(mesh.vertices[idx]);
 			}
 			return pts;
+		}
+
+		// True when `p` lies inside the outer ring and strictly outside every hole, i.e.
+		// in the face's actual (annular) interior.
+		bool inFaceInterior(const Vec2i64& p, const std::vector<Vec2i64>& outerPts,
+							const std::vector<std::vector<Vec2i64>>& holePts) {
+			if (pointInPolygon(p, outerPts) != PointInPolygon::Inside) {
+				return false;
+			}
+			for (const std::vector<Vec2i64>& h : holePts) {
+				if (pointInPolygon(p, h) != PointInPolygon::Outside) {
+					return false; // inside or on the boundary of a hole
+				}
+			}
+			return true;
+		}
+
+		// A representative point in the face's TRUE interior (inside `outer`, strictly
+		// outside every hole). The face-extraction rep point only considers the outer
+		// cycle, so for a face with holes it can land in a hole; classifying from there
+		// reads the hole region's depth, not the face's. We keep that point when it is
+		// already hole-free, else search for one that clears all holes.
+		//
+		// The search samples points near the OUTER boundary, where the annular interior
+		// is always present (the holes are strict sub-regions, so the band just inside
+		// the outer cycle is hole-free). For each outer vertex we step a short way toward
+		// the outer centroid at a few fractions; a point hugging the boundary lands in
+		// the annulus even when the outer-cycle ear centroids all cluster inside a
+		// central hole (e.g. a square area whose dry land is a centered island). Falls
+		// back to the original rep point if no integer sample lands clear, leaving prior
+		// behavior unchanged.
+		Vec2i64 representativeOutsideHoles(const HalfEdgeMesh& mesh, const std::vector<std::uint32_t>& outer,
+										   const std::vector<std::vector<std::uint32_t>>& holes, const Vec2i64& fallback) {
+			const std::vector<Vec2i64> outerPts = ringPoints(mesh, outer);
+			std::vector<std::vector<Vec2i64>> holePts;
+			holePts.reserve(holes.size());
+			for (const std::vector<std::uint32_t>& h : holes) {
+				holePts.push_back(ringPoints(mesh, h));
+			}
+			if (holePts.empty() || inFaceInterior(fallback, outerPts, holePts)) {
+				return fallback;
+			}
+
+			const std::size_t n = outerPts.size();
+			if (n == 0) {
+				return fallback;
+			}
+			Vec2i64 c{0, 0};
+			for (const Vec2i64& p : outerPts) {
+				c.x += p.x;
+				c.y += p.y;
+			}
+			c.x /= static_cast<std::int64_t>(n);
+			c.y /= static_cast<std::int64_t>(n);
+
+			// Step each outer vertex toward the centroid by num/den; small fractions hug
+			// the boundary (hole-free band), larger ones reach a centered interior if the
+			// boundary band is itself blocked. Numerators chosen low-to-high.
+			constexpr std::int64_t den = 16;
+			for (std::int64_t num : {1, 2, 3, 4, 6, 8}) {
+				for (const Vec2i64& v : outerPts) {
+					const Vec2i64 sample{v.x + (c.x - v.x) * num / den, v.y + (c.y - v.y) * num / den};
+					if (inFaceInterior(sample, outerPts, holePts)) {
+						return sample;
+					}
+				}
+			}
+			return fallback;
 		}
 
 		// |2*area| of a polygon ring (shoelace), exact in 128-bit. Used only to rank
@@ -555,6 +624,7 @@ namespace geometry::nav {
 			const std::vector<Vec2i64>* ring		  = nullptr;
 			std::int64_t				provenance	  = kNoProvenance;
 			std::int64_t				opening		  = kNoOpening;
+			bool						holeCapable	  = false;	  // water: even-odd containment parity
 			Int128						areaDoubledAbs = Int128(0); // |2*area|, cached for smallest-containing ranking
 		};
 		std::vector<const std::vector<Vec2i64>*> borderRings;
@@ -566,7 +636,8 @@ namespace geometry::nav {
 			if (poly.blocked) {
 				// Cache the ring's |2*area| now (static input) so the per-face
 				// smallest-containing-ring search below is a compare, not a reshoelace.
-				blockedRings.push_back({&poly.ring, poly.provenanceId, poly.openingId, signedAreaDoubledAbs(poly.ring)});
+				blockedRings.push_back(
+					{&poly.ring, poly.provenanceId, poly.openingId, poly.holeCapable, signedAreaDoubledAbs(poly.ring)});
 			} else {
 				borderRings.push_back(&poly.ring);
 			}
@@ -592,14 +663,15 @@ namespace geometry::nav {
 		const HalfEdgeMesh	mesh		= extractFaces(arrangement);
 		result.vertices					= mesh.vertices;
 
-		// 2-3. Classify bounded CCW faces. A face is IN-BOUNDS iff its representative
-		// point lies inside ANY unblocked border ring; faces outside every border
-		// (exterior) are discarded. In-bounds faces are KEPT whether or not they sit
-		// inside a blocked ring -- the whole region is triangulated, wall interiors
-		// included, so a belief query can optimistically path through an unseen wall.
-		// A face inside a blocked ring is tagged with that ring's belief data (the
-		// SMALLEST-area containing ring, so a door-span sub-region wins over an
-		// enclosing wall band); a floor face keeps kNoBlocker/kNoOpening.
+		// 2. Collect bounded CCW faces that are IN-BOUNDS (rep point inside ANY
+		// unblocked border ring); faces outside every border (exterior) are discarded.
+		// In-bounds faces are KEPT whether or not they sit inside a blocked ring -- the
+		// whole region is triangulated, wall interiors included, so a belief query can
+		// optimistically path through an unseen wall. Classification (which blocked ring
+		// tags the face) is DEFERRED to step 4b, after holes are attached: a face that
+		// has holes spans more than one even-odd water-depth region, and its outer-cycle
+		// representative point can fall inside a hole, so we must classify from a point
+		// that lies in the face's actual interior (outer minus holes).
 		std::vector<WalkableFace>	walkable;
 		for (std::size_t fi = 0; fi < mesh.faces.size(); ++fi) {
 			const Face& f = mesh.faces[fi];
@@ -621,24 +693,7 @@ namespace geometry::nav {
 			WalkableFace wf;
 			wf.outer	   = faceRingIndices(mesh, f);
 			wf.areaDoubled = f.signedAreaDoubled;
-			// Pick the smallest blocked ring containing the rep, by polygon area. The
-			// door-span footprint is strictly smaller than (and abuts, never nests in)
-			// the flank bands, so this is unambiguous; the rule also degrades sanely if
-			// obstacles ever nest. Floor faces match nothing and stay kNoBlocker.
-			Int128 bestArea(0);
-			bool   tagged = false;
-			for (const BlockedRing& br : blockedRings) {
-				if (pointInPolygon(rep, *br.ring) != PointInPolygon::Inside) {
-					continue;
-				}
-				const Int128& area = br.areaDoubledAbs;
-				if (!tagged || area < bestArea) {
-					bestArea	= area;
-					wf.blocker	= br.provenance;
-					wf.opening	= br.opening;
-					tagged		= true;
-				}
-			}
+			wf.repPoint	   = rep; // outer-cycle rep; replaced by a hole-aware point in 4b
 			walkable.push_back(std::move(wf));
 		}
 
@@ -682,6 +737,73 @@ namespace geometry::nav {
 				// contract of triangulateWithHoles directly.
 				walkable[best].holes.push_back(cwRing);
 			}
+		}
+
+		// 4b. Classify each in-bounds face against the blocked rings, using a
+		// representative point in the face's TRUE interior (inside its outer cycle and
+		// OUTSIDE all of its holes). The outer-cycle rep point from face extraction can
+		// land inside a hole -- e.g. a water body whose outer boundary surrounds the
+		// whole area (a river exiting on every side) leaves the dry land as a CW hole
+		// ring, and the surrounding water face's outer-cycle centroid falls in that
+		// land hole. Classifying from the hole-unaware point then reads the hole's
+		// even-odd depth (land) for the whole water face, mistagging the water as floor.
+		// A hole-aware point gets the annular region's own depth.
+		//
+		// Splits SOLID rings (flora, walls: solid containment) from HOLE-CAPABLE rings
+		// (water: even-odd containment parity):
+		//   SOLID: the smallest-area containing ring wins (a door-span footprint is
+		//   strictly smaller than its flank bands, so it wins over the enclosing wall).
+		//   HOLE-CAPABLE: count how many contain the point (depth). A water body emits a
+		//   CCW outer boundary plus CW land-island holes as SEPARATE blocked rings; a
+		//   point inside an even number of them is land (outer+island = 2), inside an odd
+		//   number is genuine water (open water = 1, a pond on the island = 3). Disjoint
+		//   water bodies never nest, so only one body's rings ever contain a given point.
+		//   A solid obstacle always blocks, even sitting over water.
+		for (WalkableFace& wf : walkable) {
+			const Vec2i64 rep = representativeOutsideHoles(mesh, wf.outer, wf.holes, wf.repPoint);
+
+			Int128 bestSolidArea(0);
+			bool   solidTagged = false;
+			std::int64_t solidBlocker = kNoBlocker;
+			std::int64_t solidOpening = kNoOpening;
+
+			Int128 bestWaterArea(0);
+			bool   waterTagged = false;
+			int	   waterDepth  = 0;
+			std::int64_t waterBlocker = kNoBlocker;
+			std::int64_t waterOpening = kNoOpening;
+
+			for (const BlockedRing& br : blockedRings) {
+				if (pointInPolygon(rep, *br.ring) != PointInPolygon::Inside) {
+					continue;
+				}
+				const Int128& area = br.areaDoubledAbs;
+				if (br.holeCapable) {
+					++waterDepth;
+					if (!waterTagged || area < bestWaterArea) {
+						bestWaterArea = area;
+						waterBlocker  = br.provenance;
+						waterOpening  = br.opening;
+						waterTagged	  = true;
+					}
+				} else {
+					if (!solidTagged || area < bestSolidArea) {
+						bestSolidArea = area;
+						solidBlocker  = br.provenance;
+						solidOpening  = br.opening;
+						solidTagged	  = true;
+					}
+				}
+			}
+
+			if (solidTagged) {
+				wf.blocker = solidBlocker; // a real obstacle always blocks, even over water
+				wf.opening = solidOpening;
+			} else if (waterDepth % 2 == 1) {
+				wf.blocker = waterBlocker; // odd depth: genuine water
+				wf.opening = waterOpening;
+			}
+			// else even depth (incl. 0): floor -- leave kNoBlocker/kNoOpening.
 		}
 
 		// 5. Triangulate each face (floor AND wall interiors) with its holes, copying

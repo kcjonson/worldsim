@@ -15,7 +15,6 @@ namespace world_sim::adapters {
 		std::string taskLabel(ecs::TaskType type) {
 			switch (type) {
 				case ecs::TaskType::FulfillNeed:   return "Tending need";
-				case ecs::TaskType::Gather:        return "Gathering";
 				case ecs::TaskType::Craft:         return "Crafting";
 				case ecs::TaskType::Haul:          return "Hauling";
 				case ecs::TaskType::PlacePackaged: return "Placing";

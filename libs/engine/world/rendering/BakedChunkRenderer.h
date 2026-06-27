@@ -35,6 +35,10 @@ class BakedChunkRenderer {
 	/// chunks arrive pre-baked via uploadBakedChunk.
 	void buildBakedChunkMesh(const assets::PlacementExecutor& executor, const ChunkCoordinate& coord, uint64_t frameCounter);
 
+	/// Release a chunk's baked mesh GPU resources so it re-bakes on next render
+	/// (used when the placement index changed, e.g. entities were cleared).
+	void releaseBakedChunkCache(const ChunkCoordinate& coord);
+
 	/// Upload a CPU-baked chunk mesh (from a worker thread bake) to the GPU.
 	/// Call on the render thread; replaces any existing baked data for the chunk.
 	void uploadBakedChunk(const ChunkCoordinate& coord, BakedChunkCPUData&& cpuData, uint64_t frameCounter);
@@ -114,9 +118,6 @@ class BakedChunkRenderer {
 	/// Upload a single sub-chunk's buffers into an existing cache entry.
 	/// @return Bytes of vertex+index data uploaded
 	size_t uploadSubChunk(BakedChunkData& bakedData, BakedSubChunkCPUData& cpu, int subIndex);
-
-	/// Release baked mesh GPU resources for a chunk.
-	void releaseBakedChunkCache(const ChunkCoordinate& coord);
 };
 
 }  // namespace engine::world

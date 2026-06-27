@@ -19,9 +19,10 @@ namespace ecs {
 void MovementSystem::update(float deltaTime) {
     (void)deltaTime;  // Not used directly - we set velocity, PhysicsSystem applies it
 
-    // Final-waypoint / beeline arrival threshold - stop when close enough. Matched to
-    // the legacy value so navmesh-following tasks complete at the same distance the
-    // direct-movement tasks always have, keeping ActionSystem hand-offs unchanged.
+    // Final-waypoint arrival threshold - stop when close enough. The same value gates arrival
+    // whether the colonist is following a NavPath (the in-game route) or moving directly (only
+    // the headless no-NavigationSystem case), so ActionSystem's arrival hand-offs fire at the
+    // same distance either way.
     constexpr float kArrivalThreshold = 0.1f;
 
     // Intermediate-waypoint advance radius: a colonist need only get near a corner
@@ -35,9 +36,11 @@ void MovementSystem::update(float deltaTime) {
             continue;
         }
 
-        // Navmesh path-following: when the entity carries a valid route, steer along
-        // its waypoints instead of beelining straight at the goal. Entities without a
-        // valid NavPath keep the exact direct-movement behavior below.
+        // Navmesh path-following is THE way a colonist moves in the running game: steer along
+        // the NavPath waypoints the AI planned. The direct-movement block below runs only when
+        // no valid NavPath is present, which in-game cannot happen for a Moving task (the AI
+        // requests a route, or HOLDS, before this system runs). It is exercised solely by the
+        // headless test harness, which wires no NavigationSystem and so builds no mesh.
         auto* navPath = world->getComponent<NavPath>(entity);
         if (navPath != nullptr && navPath->valid && !navPath->done()) {
             glm::vec2 waypoint = navPath->waypoints[navPath->current];
@@ -50,7 +53,7 @@ void MovementSystem::update(float deltaTime) {
             if (distance < threshold) {
                 ++navPath->current;
                 if (navPath->done()) {
-                    // Reached the goal: same hand-off the beeline path performs.
+                    // Reached the goal: same arrival hand-off the direct-movement block performs.
                     vel.value = {0.0f, 0.0f};
                     target.active = false;
                     navPath->valid = false;

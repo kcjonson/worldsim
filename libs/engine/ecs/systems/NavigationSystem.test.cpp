@@ -1,8 +1,17 @@
 #include "NavigationSystem.h"
 
+#include "AIDecisionSystem.h"
 #include "../World.h"
+#include "../components/DecisionTrace.h"
+#include "../components/Inventory.h"
 #include "../components/Memory.h"
+#include "../components/Movement.h"
 #include "../components/NavPath.h"
+#include "../components/Needs.h"
+#include "../components/Task.h"
+#include "../components/Transform.h"
+
+#include <assets/RecipeRegistry.h>
 
 #include "nav/NavCoords.h"
 
@@ -978,4 +987,52 @@ TEST(NavPathStalenessTest, DetectsBeliefAndNavDrift) {
 
 	// Both moved => stale.
 	EXPECT_TRUE(navPathStale(path, 6, 3));
+}
+
+// --- Off-mesh recovery: AIDecisionSystem snaps a stranded colonist onto the mesh ---
+//
+// End-to-end exercise of the recovery at the top of AIDecisionSystem::update against a
+// REAL NavigationSystem mesh: a colonist standing off the walkable mesh is snapped to the
+// nearest walkable face. This is the common recovery branch (nearestPathablePoint succeeds);
+// the last-resort landing-coords branch (nearestPathablePoint returns nullopt) is covered as
+// a pure predicate in AIDecisionSystem.test.cpp's OffMeshRecoveryResolutionTest, since a
+// non-empty mesh with zero walkable faces can't be produced through the public build path.
+TEST_F(NavigationSystemTest, OffMeshColonistSnappedOntoMesh) {
+	ConstructionWorld cw;
+	buildRoom(cw, /*withOpening=*/true, /*pathableOpening=*/true);
+
+	World world;
+	NavigationSystem& nav = world.registerSystem<NavigationSystem>();
+	wireArea(nav);
+	nav.setConstructionWorld(&cw);
+	ASSERT_TRUE(pumpUntilMesh(nav)) << "navmesh never built";
+
+	AIDecisionSystem& ai = world.registerSystem<AIDecisionSystem>(
+		engine::assets::AssetRegistry::Get(), engine::assets::RecipeRegistry::Get(), 1234u);
+	ai.setNavigationSystem(&nav);
+	const glm::vec2 origin{2.0F, 1.5F}; // inside the room (kInside), a known-walkable spot
+	ai.setColonyOrigin(origin);
+
+	// Place a colonist FAR outside the built sim area: locateTriangle returns -1 there, so
+	// isOnMesh is false and the recovery must fire. nearestPathablePoint finds the nearest
+	// walkable face, so the colonist snaps ONTO the mesh (not to the landing fallback).
+	const glm::vec2 offMesh{500.0F, 500.0F};
+	EXPECT_FALSE(nav.isOnMesh(offMesh)) << "test point must start off the mesh";
+
+	EntityID colonist = world.createEntity();
+	world.addComponent<Position>(colonist, Position{offMesh});
+	world.addComponent<Velocity>(colonist, Velocity{{0.0F, 0.0F}});
+	world.addComponent<MovementTarget>(colonist, MovementTarget{{0.0F, 0.0F}, 2.0F, false});
+	world.addComponent<NeedsComponent>(colonist, NeedsComponent::createDefault());
+	world.addComponent<Memory>(colonist, Memory{});
+	world.addComponent<Inventory>(colonist, Inventory::createForColonist());
+	world.addComponent<Task>(colonist, Task{});
+	world.addComponent<DecisionTrace>(colonist, DecisionTrace{});
+
+	ai.update(0.016F);
+
+	const auto* pos = world.getComponent<Position>(colonist);
+	ASSERT_NE(pos, nullptr);
+	EXPECT_NE(pos->value, offMesh) << "recovery must move the off-mesh colonist";
+	EXPECT_TRUE(nav.isOnMesh(pos->value)) << "the colonist must land on a walkable mesh face";
 }
