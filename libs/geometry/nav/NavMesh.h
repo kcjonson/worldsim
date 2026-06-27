@@ -65,6 +65,12 @@ namespace geometry::nav {
 		bool				 blocked	  = false;
 		std::int64_t		 provenanceId = kNoProvenance;
 		std::int64_t		 openingId	  = kNoOpening;
+		// A water body is emitted as separate marching-squares loops (a CCW outer
+		// boundary plus CW land-island holes), all blocked. holeCapable marks those
+		// rings so face classification uses even-odd containment parity (a point
+		// inside an even number of nested water rings is land = floor; odd = water).
+		// Flora, walls, and the border leave this false and use solid containment.
+		bool				 holeCapable  = false;
 	};
 
 	// A door portal: an open gap in a blocked band that agents may cross. (a, b)

@@ -168,7 +168,10 @@ namespace engine::nav {
 			if (ring.size() < 3) {
 				continue;
 			}
-			out.push_back({std::move(ring), true, kProvenanceWater});
+			// holeCapable: water bodies emit a CCW outer boundary plus CW land-island
+			// holes as separate blocked rings; face classification uses even-odd
+			// containment parity so a land island inside water stays walkable floor.
+			out.push_back({std::move(ring), true, kProvenanceWater, gnav::kNoOpening, true});
 		}
 		return out;
 	}

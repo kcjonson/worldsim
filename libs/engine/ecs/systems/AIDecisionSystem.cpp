@@ -758,12 +758,14 @@ namespace ecs {
 				const auto* navPath		 = world->getComponent<NavPath>(entity);
 				const bool	onFreshRoute = navPath != nullptr && navPath->valid &&
 										   navPath->builtNavVersion == m_navSystem->generation();
-				if (!onFreshRoute && !m_navSystem->isOnMesh(position.value)) {
-					if (const auto snapped = m_navSystem->nearestPathablePoint(position.value)) {
-						LOG_DEBUG(Engine,
-							"[Nav] Entity %llu: stranded off-mesh at (%.2f, %.2f), snapping to (%.2f, %.2f)",
-							static_cast<unsigned long long>(entity), position.value.x, position.value.y,
-							snapped->x, snapped->y);
+				if (!m_navSystem->isOnMesh(position.value)) {
+					const auto snapped = m_navSystem->nearestPathablePoint(position.value);
+					LOG_DEBUG(Engine,
+						"[NavDiag] reconcile %llu offMesh at (%.2f, %.2f): freshRoute=%d nearestFloor=%d (%.2f, %.2f)",
+						static_cast<unsigned long long>(entity), position.value.x, position.value.y,
+						onFreshRoute ? 1 : 0, snapped.has_value() ? 1 : 0, snapped.has_value() ? snapped->x : -999.0F,
+						snapped.has_value() ? snapped->y : -999.0F);
+					if (!onFreshRoute && snapped) {
 						position.value = *snapped;
 						if (auto* np = world->getComponent<NavPath>(entity)) {
 							np->valid = false;
@@ -1284,29 +1286,49 @@ namespace ecs {
 		const geometry::nav::BeliefFilter belief{&memory.knownSegments, &memory.knownOpenings};
 		const bool						  haveMesh = (m_navSystem != nullptr) && m_navSystem->hasMesh();
 
-		// Add wander option. Prefer a target the colonist can actually reach, so "explore" steers
-		// it along walkable ground instead of committing to a point across water (nav would stop it
-		// there). If no probe is reachable -- exactly what a stranded, off-mesh colonist sees, since
-		// every probe reads unreachable -- keep the first candidate as a real point to head toward:
-		// a beeline then walks it back onto the mesh (requestNavPath's off-mesh recovery), whereas
-		// staying put would strand it for good. No mesh -> isReachable returns true, first try wins.
-		EvaluatedOption wanderOption;
-		wanderOption.taskType = TaskType::Wander;
-		wanderOption.needType = NeedType::Count; // N/A
-		wanderOption.status = OptionStatus::Available;
-		wanderOption.reason = "All needs satisfied";
-		glm::vec2 wanderTarget = generateWanderTarget(position.value);
-		if (haveMesh && !m_navSystem->isReachable(position.value, wanderTarget, agentRadius, belief)) {
-			for (int attempt = 0; attempt < 5; ++attempt) {
+		// Firm "can I actually navigate right now?" gate. An idle wander dead-reckons toward a
+		// random point; with no navmesh yet (the costly startup window) the colonist has no idea
+		// what's walkable, and isReachable can't help -- it returns true ("can't prove unreachable")
+		// when there's no mesh, so the old check was leaky and the colonist committed to a wander it
+		// couldn't follow, then stalled. So only OFFER the wander when navigation is genuinely
+		// possible: a mesh exists, or there's no nav system at all (headless/tests, where
+		// straight-line movement is intended). With a nav system but no mesh, emit no idle option;
+		// the colonist holds (see the no-option hold in selectTaskFromTrace) until the mesh lands.
+		// Needs and work keep their own options and still beeline to known targets; only the aimless
+		// idle walk waits. (Off-mesh stranding is handled separately by the snap-to-mesh recovery at
+		// the top of update().)
+		const bool canNavigate = (m_navSystem == nullptr) || haveMesh;
+		if (canNavigate) {
+			// Only offer a wander we can ACTUALLY reach. Probe a few random points; if none are
+			// reachable -- a colonist hemmed in by water/obstacles where every point lands somewhere
+			// it can't path to -- emit no idle option at all. The no-option hold then makes it stand
+			// and look around instead of committing to an unreachable point and thrashing on it.
+			glm::vec2 wanderTarget	= generateWanderTarget(position.value);
+			bool	  foundReachable = !haveMesh || m_navSystem->isReachable(position.value, wanderTarget, agentRadius, belief);
+			for (int attempt = 0; !foundReachable && attempt < 5; ++attempt) {
 				const glm::vec2 candidate = generateWanderTarget(position.value);
 				if (m_navSystem->isReachable(position.value, candidate, agentRadius, belief)) {
-					wanderTarget = candidate;
-					break;
+					wanderTarget   = candidate;
+					foundReachable = true;
 				}
 			}
+			if (foundReachable) {
+				EvaluatedOption wanderOption;
+				wanderOption.taskType		= TaskType::Wander;
+				wanderOption.needType		= NeedType::Count; // N/A
+				wanderOption.status			= OptionStatus::Available;
+				wanderOption.reason			= "All needs satisfied";
+				wanderOption.targetPosition = wanderTarget;
+				trace.options.push_back(wanderOption);
+			} else if (haveMesh) {
+				// DIAGNOSTIC (temporary): nowhere reachable to wander. Log what the mesh thinks here
+				// so we can tell a genuinely hemmed-in spot from a mesh that's wrong/incomplete.
+				LOG_DEBUG(Engine,
+					"[NavDiag] Entity %llu at (%.2f, %.2f): 0/6 wander probes reachable; onMesh=%d meshTris=%zu",
+					static_cast<unsigned long long>(entity), position.value.x, position.value.y,
+					m_navSystem->isOnMesh(position.value) ? 1 : 0, m_navSystem->mesh().triangles.size());
+			}
 		}
-		wanderOption.targetPosition = wanderTarget;
-		trace.options.push_back(wanderOption);
 
 		// Populate priority bonuses for all options using PriorityConfig
 		// This includes: distance bonus, in-progress bonus, task age bonus (from GoalTaskRegistry)
@@ -1362,9 +1384,20 @@ namespace ecs {
 	) {
 		const auto* selected = trace.getSelected();
 		if (selected == nullptr) {
-			// No actionable option - shouldn't happen, but fallback to wander
-			task.type = TaskType::Wander;
-			task.reason = "No actionable options";
+			// Nothing to navigate to right now -- typically all needs are met and the navmesh isn't
+			// built yet, so the idle wander was withheld on purpose (can't navigate). Hold: stand in
+			// place, movement off, velocity zeroed. state=Moving (not Arrived) keeps shouldReEvaluate
+			// from re-deciding every frame; the periodic re-eval still fires, so the colonist picks
+			// up a real wander within a tick of the mesh landing.
+			task.type			  = TaskType::Wander;
+			task.state			  = TaskState::Moving;
+			task.navState		  = NavState::Traveling;
+			task.targetPosition	  = position.value;
+			task.reason			  = "Waiting for the area to settle";
+			movementTarget.active = false;
+			if (auto* velocity = world->getComponent<Velocity>(entity)) {
+				velocity->value = {0.0F, 0.0F};
+			}
 			return;
 		}
 
@@ -1470,17 +1503,32 @@ namespace ecs {
 	AIDecisionSystem::NavRequestOutcome AIDecisionSystem::requestNavPath(
 		EntityID entity, const glm::vec2& goal, const Position& position, const Memory& memory,
 		MovementTarget& movementTarget) {
-		// No nav system wired, or no mesh built yet: fall back to the straight-line
-		// beeline MovementSystem already set up via MovementTarget. This is the outdoor /
-		// pre-mesh startup case, NOT a belief denial -- don't stop the colonist. Invalidate
-		// any route left over from a previous task so a stale path isn't followed.
-		if (m_navSystem == nullptr || !m_navSystem->hasMesh()) {
+		// No nav system wired at all (headless / tests): straight-line beeline is the intended
+		// fallback. Invalidate any route left over from a previous task so a stale path isn't
+		// followed, and leave movementTarget active so MovementSystem carries the colonist.
+		if (m_navSystem == nullptr) {
 			if (auto* navPath = world->getComponent<NavPath>(entity)) {
 				navPath->valid = false;
 			}
-			LOG_DEBUG(Engine, "[Nav] Entity %llu: no mesh, beeline to (%.2f, %.2f)",
-				static_cast<unsigned long long>(entity), goal.x, goal.y);
 			return NavRequestOutcome::Beelined;
+		}
+
+		// A navmesh exists as a system but hasn't finished building yet -- the costly startup
+		// window while chunks stream in. NOTHING moves without a navmesh: dead-reckoning toward a
+		// goal with no idea what's walkable is exactly what stranded and stalled colonists. HOLD
+		// here -- deactivate movement and zero velocity -- instead of beelining blind. The task
+		// stays; the periodic re-evaluation picks it back up the moment the mesh lands.
+		if (!m_navSystem->hasMesh()) {
+			if (auto* navPath = world->getComponent<NavPath>(entity)) {
+				navPath->valid = false;
+			}
+			movementTarget.active = false;
+			if (auto* velocity = world->getComponent<Velocity>(entity)) {
+				velocity->value = {0.0F, 0.0F};
+			}
+			LOG_DEBUG(Engine, "[Nav] Entity %llu: no mesh yet, holding (nothing moves without a navmesh)",
+				static_cast<unsigned long long>(entity));
+			return NavRequestOutcome::Waiting;
 		}
 
 		// LOD seam: if either endpoint is outside the simulation area the exact mesh

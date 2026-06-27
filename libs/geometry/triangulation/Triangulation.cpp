@@ -278,6 +278,77 @@ namespace geometry {
 			return best;
 		}
 
+		// Is the bridge segment from hole-apex M to loop position `target` clear of the
+		// current loop boundary? A valid bridge touches the loop only at its two
+		// endpoints (M, which is about to be spliced in, and loop[target]); it must not
+		// properly cross any loop edge nor pass through any other loop vertex. The
+		// Eberly +x-ray bridge picks a horizontally-visible target, but once several
+		// holes are merged the chosen target sits OFF the ray, and that slanted bridge
+		// can slice through a hole the horizontal ray never straddled. We validate
+		// exactly here so mergeHoles can reject a fouled target and pick another.
+		bool bridgeIsClear(const std::vector<Vec2i64>& vertices, const std::vector<std::uint32_t>& loop,
+						   const Vec2i64& M, std::size_t target) {
+			const std::size_t n = loop.size();
+			const Vec2i64&	  T = vertices[loop[target]];
+			if (M == T) {
+				return false;
+			}
+			for (std::size_t i = 0; i < n; ++i) {
+				const Vec2i64& e0 = vertices[loop[i]];
+				const Vec2i64& e1 = vertices[loop[(i + 1) % n]];
+				const SegmentIntersection r = intersectSegments(M, T, e0, e1);
+				if (r.relation == SegmentRelation::Disjoint) {
+					continue;
+				}
+				if (r.relation == SegmentRelation::ProperCrossing || r.relation == SegmentRelation::CollinearOverlap) {
+					return false;
+				}
+				// An endpoint touch is allowed ONLY at the bridge's own endpoint T (the
+				// edges incident to loop[target]); any other touch means the bridge grazes
+				// the boundary, which would foul the merged simple polygon.
+				const bool incidentToTarget = (i == target) || ((i + 1) % n == target);
+				if (!incidentToTarget) {
+					return false;
+				}
+			}
+			return true;
+		}
+
+		// Squared length of M->loop[target], for choosing the nearest valid bridge.
+		Int128 bridgeLenSq(const std::vector<Vec2i64>& vertices, const std::vector<std::uint32_t>& loop, const Vec2i64& M,
+						   std::size_t target) {
+			const Vec2i64 d = vertices[loop[target]] - M;
+			return dot(d, d);
+		}
+
+		// Does the bridge segment (M, T) cross or touch any edge of `hole`? M is a vertex
+		// of the hole being bridged, so its incident hole edges are allowed to share M;
+		// any other contact (a proper crossing, a collinear overlap, or an endpoint touch
+		// elsewhere) fouls the bridge. Used to keep a bridge from slicing through a hole
+		// that has not been merged into the loop yet -- Eberly's right-to-left order makes
+		// the +x ray safe, but the brute-force fallback can aim in any direction.
+		bool bridgeHitsHole(const std::vector<Vec2i64>& vertices, const std::vector<std::uint32_t>& hole,
+							const Vec2i64& M, const Vec2i64& T) {
+			const std::size_t n = hole.size();
+			for (std::size_t i = 0; i < n; ++i) {
+				const Vec2i64& e0 = vertices[hole[i]];
+				const Vec2i64& e1 = vertices[hole[(i + 1) % n]];
+				const SegmentIntersection r = intersectSegments(M, T, e0, e1);
+				if (r.relation == SegmentRelation::Disjoint) {
+					continue;
+				}
+				if (r.relation != SegmentRelation::EndpointTouch) {
+					return true; // proper crossing or collinear overlap
+				}
+				// Endpoint touch is fine only where the bridge starts at M on M's own
+				// incident hole edges; a touch at any other hole vertex fouls it.
+				if (!(e0 == M || e1 == M)) {
+					return true;
+				}
+			}
+			return false;
+		}
+
 		// Merge holes into the outer ring, returning a single index loop. Holes are
 		// processed by descending rightmost-x. Returns empty on failure.
 		std::vector<std::uint32_t> mergeHoles(const std::vector<Vec2i64>& vertices,
@@ -314,13 +385,66 @@ namespace geometry {
 				return a.holeIndex < b.holeIndex; // deterministic tie-break
 			});
 
-			for (const HoleInfo& hi : order) {
+			for (std::size_t oi = 0; oi < order.size(); ++oi) {
+				const HoleInfo&					  hi   = order[oi];
 				const std::vector<std::uint32_t>& hole = holes[hi.holeIndex];
 				const Vec2i64&					  M	   = vertices[hole[hi.maxXVert]];
 
-				const std::size_t bridgePos = findBridgePosition(vertices, loop, M);
+				// A candidate bridge to loop position `t` is acceptable iff it is clear of
+				// the current loop, of every not-yet-merged hole, AND of THIS hole's own
+				// body. The +x ray bridges rightward from the hole's rightmost vertex, so
+				// it never re-enters the hole; but the brute-force fallback may aim in any
+				// direction, and a leftward bridge from the rightmost vertex can slice back
+				// across the hole's own (possibly non-convex) outline -- that self-crossing
+				// is what was leaving a non-simple merged loop.
+				auto acceptable = [&](std::size_t t) -> bool {
+					if (!bridgeIsClear(vertices, loop, M, t)) {
+						return false;
+					}
+					const Vec2i64& T = vertices[loop[t]];
+					if (bridgeHitsHole(vertices, hole, M, T)) {
+						return false; // bridge re-crosses the hole it is merging
+					}
+					for (std::size_t oj = oi + 1; oj < order.size(); ++oj) {
+						if (bridgeHitsHole(vertices, holes[order[oj].holeIndex], M, T)) {
+							return false;
+						}
+					}
+					return true;
+				};
+
+				// Fast path: the Eberly +x-ray bridge. Validate it does not foul the
+				// current loop or an unmerged hole (a slanted bridge can slice a hole the
+				// horizontal ray never straddled).
+				std::size_t bridgePos = findBridgePosition(vertices, loop, M);
+				if (bridgePos != SIZE_MAX && !acceptable(bridgePos)) {
+					bridgePos = SIZE_MAX; // fouled: fall through to the exact search
+				}
+				// Robust fallback: bridge to the NEAREST loop vertex the bridge can reach
+				// without crossing the loop, this hole, or any unmerged hole. Guarantees a
+				// valid bridge whenever the hole is genuinely interior (inputIsValid already
+				// verified containment and disjointness), so a many-hole face never strands
+				// a hole and leaves earClip a non-simple polygon. Candidates are tried in
+				// ascending distance and we stop at the first acceptable one, so the
+				// expensive unmerged-hole scan runs only until a valid bridge is found
+				// rather than for every loop vertex.
 				if (bridgePos == SIZE_MAX) {
-					return {}; // no visible bridge: invalid containment
+					std::vector<std::size_t> cand(loop.size());
+					for (std::size_t i = 0; i < loop.size(); ++i) {
+						cand[i] = i;
+					}
+					std::sort(cand.begin(), cand.end(), [&](std::size_t a, std::size_t b) {
+						return bridgeLenSq(vertices, loop, M, a) < bridgeLenSq(vertices, loop, M, b);
+					});
+					for (std::size_t i : cand) {
+						if (acceptable(i)) {
+							bridgePos = i;
+							break;
+						}
+					}
+					if (bridgePos == SIZE_MAX) {
+						return {}; // no visible bridge at all: invalid containment
+					}
 				}
 
 				// Splice: outer[..bridgePos], then the hole starting at its rightmost

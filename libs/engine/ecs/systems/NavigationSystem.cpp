@@ -148,6 +148,21 @@ namespace ecs {
 			if (future.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
 				navMesh = future.get(); // swap the new mesh in; old mesh is dropped
 				++meshGeneration;		// a new mesh: any path stamped to the prior generation is stale
+				// Diagnostic: how much of the built mesh is actually WALKABLE. walkable==0 means the
+				// build produced no navigable ground at all (the symptom we are chasing).
+				std::size_t walkable = 0;
+				std::size_t floor	 = 0;
+				for (const gnav::NavTriangle& t : navMesh.triangles) {
+					if (gnav::isFloorFace(t)) {
+						++floor;
+					}
+					if (gnav::terrainTraversable(t)) {
+						++walkable;
+					}
+				}
+				LOG_INFO(Engine, "[NavBuild] mesh swapped gen=%llu tris=%zu walkable=%zu floor=%zu blocked=%zu",
+						 static_cast<unsigned long long>(meshGeneration), navMesh.triangles.size(), walkable, floor,
+						 navMesh.triangles.size() - walkable);
 				// Triangle indices are stale after a rebuild, so the goal-triangle-keyed
 				// RRA* caches must be dropped (a stale key would target the wrong triangle).
 				rraCaches.clear();
@@ -185,6 +200,7 @@ namespace ecs {
 		// (NOT thread-safe) and the per-chunk placement/tile data, so the extraction
 		// must run here. The worker then owns a self-contained NavMeshInput by value.
 		gnav::NavMeshInput input;
+		const auto		   inputStart = std::chrono::steady_clock::now();
 
 		if (canBuildArea) {
 			engine::assets::PlacementExecutor  emptyPlacement(engine::assets::AssetRegistry::Get());
@@ -226,10 +242,29 @@ namespace ecs {
 		builtAreaChunkSignature = areaChunkSignature(requestedCenter, clampedHalfExtent);
 		haveBuiltOnce = true;
 
-		// Heavy triangulation off the main thread; the lambda owns `input` by value
-		// (moved) so there's no dangling reference to main-thread state.
-		future = std::async(std::launch::async,
-							[input = std::move(input)]() { return gnav::buildNavMesh(input); });
+		const double inputMs =
+			std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - inputStart).count();
+		std::size_t walkableBorders = 0;
+		for (const gnav::NavInputPolygon& p : input.polygons) {
+			if (!p.blocked) {
+				++walkableBorders;
+			}
+		}
+		LOG_INFO(Engine, "[NavBuild] buildInput %.2f ms: polys=%zu walkableBorders=%zu blockedRings=%zu",
+				 inputMs, input.polygons.size(), walkableBorders, input.polygons.size() - walkableBorders);
+
+		// Heavy triangulation off the main thread; the lambda owns `input` by value (moved) so
+		// there's no dangling reference to main-thread state. Time the build so we can see whether
+		// it finishes and how costly it is.
+		future = std::async(std::launch::async, [input = std::move(input)]() {
+			const auto			   buildStart = std::chrono::steady_clock::now();
+			geometry::nav::NavMesh m		  = gnav::buildNavMesh(input);
+			const double		   buildMs =
+				std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - buildStart).count();
+			LOG_INFO(Engine, "[NavBuild] buildNavMesh %.2f ms: tris=%zu verts=%zu", buildMs, m.triangles.size(),
+					 m.vertices.size());
+			return m;
+		});
 	}
 
 	bool NavigationSystem::inSimArea(glm::vec2 meters) const {
@@ -336,7 +371,14 @@ namespace ecs {
 		if (navMesh.triangles.empty()) {
 			return false;
 		}
-		return gnav::locateTriangle(navMesh, engine::nav::toMm(meters)) >= 0;
+		// "On the mesh" means standing on WALKABLE ground, not merely inside some triangle. Water and
+		// tree obstacles are triangulated too, as blocking faces, and a colonist standing on one
+		// can't path anywhere -- counting those as on-mesh is what stranded a colonist dropped onto a
+		// water/tree tile. Use terrainTraversable (anything that isn't a common-knowledge terrain
+		// blocker): outdoor ground is NOT a kNoBlocker "floor" face (that's constructed indoor floor),
+		// so isFloorFace would reject all open terrain.
+		const std::int32_t tri = gnav::locateTriangle(navMesh, engine::nav::toMm(meters));
+		return tri >= 0 && gnav::terrainTraversable(navMesh.triangles[static_cast<std::size_t>(tri)]);
 	}
 
 	std::optional<glm::vec2> NavigationSystem::nearestPathablePoint(glm::vec2 meters) const {
@@ -344,8 +386,8 @@ namespace ecs {
 		float	  bestD2 = 0.0F;
 		glm::vec2 best{0.0F, 0.0F};
 		for (const gnav::NavTriangle& t : navMesh.triangles) {
-			if (!gnav::isFloorFace(t)) {
-				continue; // never snap into water/wall interiors -- only real walkable floor
+			if (!gnav::terrainTraversable(t)) {
+				continue; // skip common-knowledge blockers (water/tree); snap only onto walkable ground
 			}
 			const glm::vec2 a = engine::nav::toMeters(navMesh.vertices[t.v[0]]);
 			const glm::vec2 b = engine::nav::toMeters(navMesh.vertices[t.v[1]]);

@@ -108,10 +108,11 @@ private:
 	/// (clears movementTarget.active) so the colonist doesn't dishonestly beeline through a
 	/// wall it believes is there.
 	/// The outcome lets callers pick the right nav state: only Blocked is "can't find a way";
-	/// Beelined (no mesh yet) is still ordinary travel, not a stuck colonist.
+	/// Beelined and Waiting are not stuck (no belief denial).
 	enum class NavRequestOutcome {
 		Routed,	  // a believed route was found and attached
-		Beelined, // no nav system / no mesh yet: straight-line fallback, not stuck
+		Beelined, // no nav system at all (headless/tests): straight-line fallback, not stuck
+		Waiting,  // a navmesh exists as a system but hasn't built yet: hold in place, don't move
 		Blocked,  // mesh exists but belief admits no route: colonist stopped
 	};
 	NavRequestOutcome requestNavPath(EntityID entity, const glm::vec2& goal, const struct Position& position,

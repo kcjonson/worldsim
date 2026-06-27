@@ -2,6 +2,7 @@
 #include "../core/Int128.h"
 #include "../core/Vec2i64.h"
 #include "../predicates/Predicates.h"
+#include "NavMeshRealRings.test.h"
 
 #include <array>
 #include <cstdint>
@@ -676,4 +677,366 @@ TEST(NavMesh, DoorClearWidthThreadedOntoPortalEdge) {
 		}
 	}
 	EXPECT_EQ(tagged, 2) << "both triangles sharing the door edge carry the clear width";
+}
+
+// ---------------------------------------------------------------------------
+// Localizing test for the "zero walkable faces" navmesh bug: a clearly walkable
+// input (one large border ring + one small interior water ring) must yield at
+// least one walkable floor face. Models the real buildInput shape, where the
+// border carries kProvenanceBorder (-3) and water carries kProvenanceWater (-1)
+// -- both NEGATIVE provenance. If buildNavMesh tags the in-bounds floor faces as
+// common-knowledge blockers (faceBlocker < 0 && != kNoBlocker), the mesh has no
+// walkable face and pathing dies. The provenance values here match
+// engine::nav::kProvenanceBorder / kProvenanceWater exactly.
+TEST(NavMesh, WalkableBorderWithInteriorWaterHasFloor) {
+	constexpr std::int64_t kProvenanceWater	 = -1;
+	constexpr std::int64_t kProvenanceBorder = -3;
+
+	NavMeshInput in;
+	// Large walkable border ring (blocked=false), provenance = border sentinel.
+	in.polygons.push_back(
+		NavInputPolygon{{{0, 0}, {10000, 0}, {10000, 10000}, {0, 10000}}, false, kProvenanceBorder});
+	// Small blocked water ring well inside it, provenance = water sentinel.
+	in.polygons.push_back(
+		NavInputPolygon{{{4000, 4000}, {6000, 4000}, {6000, 6000}, {4000, 6000}}, true, kProvenanceWater});
+
+	NavMesh m = buildNavMesh(in);
+	ASSERT_FALSE(m.triangles.empty()) << "buildNavMesh produced no triangles for a walkable square";
+
+	// Count floor (walkable) faces vs. common-knowledge terrain blockers.
+	int floorFaces	 = 0;
+	int terrainFaces = 0;
+	for (const NavTriangle& t : m.triangles) {
+		if (isFloorFace(t)) {
+			++floorFaces;
+		}
+		if (isCommonKnowledgeTerrainFace(t)) {
+			++terrainFaces;
+		}
+	}
+
+	// The water interior is correctly a terrain blocker.
+	EXPECT_GT(terrainFaces, 0) << "the interior water ring must be tagged as a terrain blocker";
+	// The bug: every face is a terrain blocker, leaving ZERO walkable floor. A
+	// clearly walkable square MUST yield at least one floor face.
+	EXPECT_GT(floorFaces, 0)
+		<< "a walkable border with an interior obstacle must leave walkable floor faces; "
+		<< "got " << floorFaces << " floor / " << terrainFaces << " terrain out of " << m.triangles.size();
+
+	// And the floor must be terrain-traversable (the predicate the runtime scan used).
+	int traversable = 0;
+	for (const NavTriangle& t : m.triangles) {
+		if (terrainTraversable(t)) {
+			++traversable;
+		}
+	}
+	EXPECT_GT(traversable, 0) << "at least one triangle must be terrain-traversable (walkable)";
+}
+
+// The real "land island surrounded by water" topology that buildInput hands to
+// buildNavMesh. extractWaterObstacles emits a water body as SEPARATE rings: a CCW
+// OUTER water boundary plus a CW land-island HOLE, both pushed as independent
+// BLOCKED, holeCapable water rings (it never pairs outer+hole into one polygon-
+// with-hole). With even-odd containment parity, a point inside an even number of
+// nested water rings (outer + island = 2) is land = floor; the island is walkable.
+TEST(NavMesh, LandIslandInsideWater_HasFloor) {
+	constexpr std::int64_t kProvenanceWater = -1;
+	constexpr std::int64_t kProvenanceBorder = -3;
+
+	NavMeshInput in;
+	// Walkable border covering the whole area.
+	in.polygons.push_back(
+		NavInputPolygon{{{0, 0}, {10000, 0}, {10000, 10000}, {0, 10000}}, false, kProvenanceBorder});
+	// Water OUTER boundary (the big ring) -- holeCapable water.
+	in.polygons.push_back(
+		NavInputPolygon{{{1000, 1000}, {9000, 1000}, {9000, 9000}, {1000, 9000}}, true, kProvenanceWater, kNoOpening, true});
+	// Land-island HOLE -- its OWN separate holeCapable water ring (the land the
+	// colonist stands on).
+	in.polygons.push_back(
+		NavInputPolygon{{{4000, 4000}, {6000, 4000}, {6000, 6000}, {4000, 6000}}, true, kProvenanceWater, kNoOpening, true});
+
+	NavMesh m = buildNavMesh(in);
+
+	int floorFaces = 0;
+	for (const NavTriangle& t : m.triangles) {
+		if (isFloorFace(t)) {
+			++floorFaces;
+		}
+	}
+	// The land island between the two water rings is walkable floor (even depth = 2).
+	EXPECT_GT(floorFaces, 0)
+		<< "land island surrounded by water must be walkable floor under even-odd parity "
+		<< "(floor=" << floorFaces << " of " << m.triangles.size() << " triangles)";
+
+	// The island interior specifically must contain walkable floor.
+	std::vector<Vec2i64> island = {{4000, 4000}, {6000, 4000}, {6000, 6000}, {4000, 6000}};
+	EXPECT_GE(findFloorTriangleInside(m, island), 0) << "the island interior must be walkable floor";
+
+	// Open water between the two rings (odd depth = 1) must NOT be floor.
+	std::vector<Vec2i64> openWater = {{1000, 1000}, {9000, 1000}, {9000, 9000}, {1000, 9000}};
+	for (const NavTriangle& t : m.triangles) {
+		Vec2i64 c = centroid(m.vertices, t.v);
+		if (pointInPolygon(c, openWater) == PointInPolygon::Inside &&
+			pointInPolygon(c, island) == PointInPolygon::Outside) {
+			EXPECT_FALSE(isFloorFace(t)) << "open water (odd containment depth) must not be walkable floor";
+		}
+	}
+}
+
+// NESTED: water outer (holeCapable) > land island > pond, all holeCapable water
+// rings. Even-odd parity: a point on the island sits in {outer, island} = depth 2
+// = land; a point in the pond sits in {outer, island, pond} = depth 3 = water. The
+// island ring must be walkable, the pond interior must not.
+TEST(NavMesh, NestedWaterIslandPondParity) {
+	constexpr std::int64_t kProvenanceWater = -1;
+	constexpr std::int64_t kProvenanceBorder = -3;
+
+	NavMeshInput in;
+	in.polygons.push_back(
+		NavInputPolygon{{{0, 0}, {12000, 0}, {12000, 12000}, {0, 12000}}, false, kProvenanceBorder});
+	// Outer water body.
+	in.polygons.push_back(
+		NavInputPolygon{{{1000, 1000}, {11000, 1000}, {11000, 11000}, {1000, 11000}}, true, kProvenanceWater, kNoOpening, true});
+	// Land island inside the water.
+	in.polygons.push_back(
+		NavInputPolygon{{{3000, 3000}, {9000, 3000}, {9000, 9000}, {3000, 9000}}, true, kProvenanceWater, kNoOpening, true});
+	// Pond on the island.
+	in.polygons.push_back(
+		NavInputPolygon{{{5000, 5000}, {7000, 5000}, {7000, 7000}, {5000, 7000}}, true, kProvenanceWater, kNoOpening, true});
+
+	NavMesh m = buildNavMesh(in);
+	ASSERT_FALSE(m.triangles.empty());
+
+	// Island band (inside island ring, outside pond) = depth 2 = walkable floor.
+	std::vector<Vec2i64> island = {{3000, 3000}, {9000, 3000}, {9000, 9000}, {3000, 9000}};
+	std::vector<Vec2i64> pond	= {{5000, 5000}, {7000, 5000}, {7000, 7000}, {5000, 7000}};
+	bool sawIslandFloor = false;
+	for (const NavTriangle& t : m.triangles) {
+		Vec2i64 c = centroid(m.vertices, t.v);
+		if (pointInPolygon(c, island) == PointInPolygon::Inside &&
+			pointInPolygon(c, pond) == PointInPolygon::Outside) {
+			if (isFloorFace(t)) {
+				sawIslandFloor = true;
+			}
+		}
+		if (pointInPolygon(c, pond) == PointInPolygon::Inside) {
+			EXPECT_FALSE(isFloorFace(t)) << "pond (depth 3, odd) must be water, not floor";
+		}
+	}
+	EXPECT_TRUE(sawIslandFloor) << "the island band (depth 2, even) must be walkable floor";
+}
+
+// DISJOINT: two separate water bodies, each holeCapable. Disjoint bodies never
+// contain each other, so a point counts only the rings of the one body it sits in.
+// Land between and outside both bodies (depth 0) and land on a hole island in each
+// body (depth 2) must be walkable; open water in each body (depth 1) must not.
+TEST(NavMesh, DisjointWaterBodiesParity) {
+	constexpr std::int64_t kProvenanceWater = -1;
+	constexpr std::int64_t kProvenanceBorder = -3;
+
+	NavMeshInput in;
+	in.polygons.push_back(
+		NavInputPolygon{{{0, 0}, {12000, 0}, {12000, 6000}, {0, 6000}}, false, kProvenanceBorder});
+	// Body A: outer + island hole.
+	in.polygons.push_back(
+		NavInputPolygon{{{1000, 1000}, {4000, 1000}, {4000, 5000}, {1000, 5000}}, true, kProvenanceWater, kNoOpening, true});
+	in.polygons.push_back(
+		NavInputPolygon{{{2000, 2000}, {3000, 2000}, {3000, 4000}, {2000, 4000}}, true, kProvenanceWater, kNoOpening, true});
+	// Body B: outer + island hole, disjoint from A.
+	in.polygons.push_back(
+		NavInputPolygon{{{8000, 1000}, {11000, 1000}, {11000, 5000}, {8000, 5000}}, true, kProvenanceWater, kNoOpening, true});
+	in.polygons.push_back(
+		NavInputPolygon{{{9000, 2000}, {10000, 2000}, {10000, 4000}, {9000, 4000}}, true, kProvenanceWater, kNoOpening, true});
+
+	NavMesh m = buildNavMesh(in);
+	ASSERT_FALSE(m.triangles.empty());
+
+	// Land between the two bodies (depth 0) is walkable.
+	std::vector<Vec2i64> between = {{5000, 1000}, {7000, 1000}, {7000, 5000}, {5000, 5000}};
+	EXPECT_GE(findFloorTriangleInside(m, between), 0) << "land between disjoint water bodies must be walkable";
+
+	// Island in each body (depth 2) is walkable.
+	std::vector<Vec2i64> islandA = {{2000, 2000}, {3000, 2000}, {3000, 4000}, {2000, 4000}};
+	std::vector<Vec2i64> islandB = {{9000, 2000}, {10000, 2000}, {10000, 4000}, {9000, 4000}};
+	EXPECT_GE(findFloorTriangleInside(m, islandA), 0) << "island in body A must be walkable";
+	EXPECT_GE(findFloorTriangleInside(m, islandB), 0) << "island in body B must be walkable";
+
+	// Open water in each body (depth 1, between outer and island) must not be floor.
+	std::vector<Vec2i64> outerA = {{1000, 1000}, {4000, 1000}, {4000, 5000}, {1000, 5000}};
+	std::vector<Vec2i64> outerB = {{8000, 1000}, {11000, 1000}, {11000, 5000}, {8000, 5000}};
+	for (const NavTriangle& t : m.triangles) {
+		Vec2i64 c = centroid(m.vertices, t.v);
+		bool inWaterA = pointInPolygon(c, outerA) == PointInPolygon::Inside &&
+						pointInPolygon(c, islandA) == PointInPolygon::Outside;
+		bool inWaterB = pointInPolygon(c, outerB) == PointInPolygon::Inside &&
+						pointInPolygon(c, islandB) == PointInPolygon::Outside;
+		if (inWaterA || inWaterB) {
+			EXPECT_FALSE(isFloorFace(t)) << "open water (depth 1) in a disjoint body must not be floor";
+		}
+	}
+}
+
+// SOLID PRIORITY: a solid flora ring overlapping a water outer ring stays blocked.
+// A point inside both the (even-depth-walkable) water region and a solid obstacle
+// must be tagged by the solid ring, never left as floor.
+TEST(NavMesh, SolidObstacleOverWaterStaysBlocked) {
+	constexpr std::int64_t kProvenanceWater = -1;
+	constexpr std::int64_t kProvenanceBorder = -3;
+	constexpr std::int64_t kProvenanceTree	= -2;
+
+	NavMeshInput in;
+	in.polygons.push_back(
+		NavInputPolygon{{{0, 0}, {10000, 0}, {10000, 10000}, {0, 10000}}, false, kProvenanceBorder});
+	// Water outer + land island (island interior is even depth = walkable floor).
+	in.polygons.push_back(
+		NavInputPolygon{{{1000, 1000}, {9000, 1000}, {9000, 9000}, {1000, 9000}}, true, kProvenanceWater, kNoOpening, true});
+	in.polygons.push_back(
+		NavInputPolygon{{{3000, 3000}, {7000, 3000}, {7000, 7000}, {3000, 7000}}, true, kProvenanceWater, kNoOpening, true});
+	// Solid flora (NOT holeCapable) on the island.
+	in.polygons.push_back(
+		NavInputPolygon{{{4500, 4500}, {5500, 4500}, {5500, 5500}, {4500, 5500}}, true, kProvenanceTree});
+
+	NavMesh m = buildNavMesh(in);
+	ASSERT_FALSE(m.triangles.empty());
+
+	std::vector<Vec2i64> tree = {{4500, 4500}, {5500, 4500}, {5500, 5500}, {4500, 5500}};
+	int inTree = 0;
+	for (const NavTriangle& t : m.triangles) {
+		if (pointInPolygon(centroid(m.vertices, t.v), tree) == PointInPolygon::Inside) {
+			EXPECT_EQ(t.faceBlocker, kProvenanceTree) << "a solid obstacle over walkable water-island land must stay blocked";
+			++inTree;
+		}
+	}
+	EXPECT_GT(inTree, 0) << "the solid obstacle interior must be triangulated and tagged";
+}
+
+// RIVER EXITS THE AREA: the topology buildInput hands to buildNavMesh when water
+// touches the marching grid on every side (a river/confluence flowing OUT of the
+// simulation area). extractWaterObstacles then emits a water OUTER ring that
+// SURROUNDS the whole border (its boundary is the grid perimeter, beyond the area),
+// plus the dry land the colonist stands on as a CW hole ring strictly inside the
+// border. Both are holeCapable water rings.
+//
+// The surrounding water face is annular (border minus the land hole): genuine water
+// at even-odd depth 1. Its outer cycle is the border square, whose extraction
+// representative point lands at the square's centre -- INSIDE the land hole, where
+// the depth is 2 (outer water + land = even = land). Classifying the whole water
+// face from that hole-bound point mistags the water as floor (and, in the in-game
+// case, can leave zero genuine floor). The fix classifies each face from a point in
+// its true interior (inside the outer cycle, outside its holes). Regression guard:
+// the dry land must be floor and the surrounding water must block.
+TEST(NavMesh, RiverExitsArea_OuterWaterSurroundsBorder_LandHasFloor) {
+	constexpr std::int64_t kProvenanceWater	 = -1;
+	constexpr std::int64_t kProvenanceBorder = -3;
+
+	NavMeshInput in;
+	// Border = the simulation area.
+	in.polygons.push_back(
+		NavInputPolygon{{{0, 0}, {9000, 0}, {9000, 9000}, {0, 9000}}, false, kProvenanceBorder});
+	// Outer water ring SURROUNDING the border (the river exits the area on every side,
+	// so the marching boundary closes against land outside the grid: a perimeter ring
+	// larger than the border). CCW, holeCapable.
+	in.polygons.push_back(NavInputPolygon{
+		{{-1000, -1000}, {10000, -1000}, {10000, 10000}, {-1000, 10000}}, true, kProvenanceWater, kNoOpening, true});
+	// Dry land as a CW hole ring strictly inside the border -- the land beside the river.
+	in.polygons.push_back(
+		NavInputPolygon{{{2000, 2000}, {2000, 7000}, {7000, 7000}, {7000, 2000}}, true, kProvenanceWater, kNoOpening, true});
+
+	NavMesh m = buildNavMesh(in);
+	ASSERT_FALSE(m.triangles.empty());
+
+	int floorFaces = 0;
+	for (const NavTriangle& t : m.triangles) {
+		if (isFloorFace(t)) {
+			++floorFaces;
+		}
+	}
+	EXPECT_GT(floorFaces, 0) << "land beside a river that exits the area must be walkable floor; got 0 "
+							 << "(the zero-walkable navmesh symptom)";
+
+	// The dry land block (inside the inner ring) must be walkable floor.
+	std::vector<Vec2i64> land = {{2000, 2000}, {7000, 2000}, {7000, 7000}, {2000, 7000}};
+	EXPECT_GE(findFloorTriangleInside(m, land), 0) << "the dry land interior must be walkable floor";
+
+	// The surrounding water frame (inside the border, outside the land block) must block.
+	std::vector<Vec2i64> border = {{0, 0}, {9000, 0}, {9000, 9000}, {0, 9000}};
+	bool sawFrameWater = false;
+	for (const NavTriangle& t : m.triangles) {
+		Vec2i64 c = centroid(m.vertices, t.v);
+		if (pointInPolygon(c, border) == PointInPolygon::Inside && pointInPolygon(c, land) == PointInPolygon::Outside) {
+			EXPECT_FALSE(isFloorFace(t)) << "the river water surrounding the land must block, not be floor";
+			if (isCommonKnowledgeTerrainFace(t)) {
+				sawFrameWater = true;
+			}
+		}
+	}
+	EXPECT_TRUE(sawFrameWater) << "the surrounding river water must be tagged a terrain blocker";
+}
+
+// THE REAL IN-GAME GEOMETRY. The quickstart area is a Y-shaped river confluence:
+// three branches meet in the middle and each exits the 128 m area at a different
+// edge. extractWaterObstacles emits the whole water region as ONE CCW holeCapable
+// ring (a thin, highly non-convex loop occupying ~6% of the area); the open grass
+// the colonist stands on, including the spawn at (1000, 4000), is the ~94% OUTSIDE
+// that ring. The border is the area rectangle. Captured from the in-game dump (see
+// NavMeshRealRings.test.h); trees are omitted as they do not bear on whether the
+// open grass between them is floor.
+//
+// This reproduces the walkable=0 symptom: the land (depth 0, outside the single
+// water ring) must be floor, and only the thin water loop interior (depth 1) must
+// block. The point-in-water classification of the INPUT ring is correct (the
+// colonist spawn is outside the ring); the bug is downstream in buildNavMesh.
+TEST(NavMesh, RealYConfluence_OpenGrassIsFloor) {
+	constexpr std::int64_t kProvenanceWater	 = -1;
+	constexpr std::int64_t kProvenanceBorder = -3;
+
+	constexpr std::int64_t kProvenanceTree = -2;
+
+	NavMeshInput in;
+	in.polygons.push_back(NavInputPolygon{testdata::realBorderRing(), false, kProvenanceBorder});
+	in.polygons.push_back(
+		NavInputPolygon{testdata::realWaterRing(), true, kProvenanceWater, kNoOpening, true});
+	// The 637 scattered tree colliders on the open grass -- solid (not holeCapable).
+	for (const std::vector<Vec2i64>& tree : testdata::realTreeRings()) {
+		in.polygons.push_back(NavInputPolygon{tree, true, kProvenanceTree});
+	}
+
+	NavMesh m = buildNavMesh(in);
+	ASSERT_FALSE(m.triangles.empty()) << "the real Y-confluence produced no triangles at all";
+
+	int floorFaces	 = 0;
+	int terrainFaces = 0;
+	for (const NavTriangle& t : m.triangles) {
+		if (isFloorFace(t)) {
+			++floorFaces;
+		}
+		if (isCommonKnowledgeTerrainFace(t)) {
+			++terrainFaces;
+		}
+	}
+
+	// The water loop interior must still block.
+	EXPECT_GT(terrainFaces, 0) << "the river water loop must be tagged a terrain blocker";
+	// The bug: every face is tagged water, leaving ZERO floor (the in-game symptom).
+	// The vast open grass outside the thin water loop MUST be walkable floor.
+	EXPECT_GT(floorFaces, 0)
+		<< "open grass beside the river must be walkable floor; got " << floorFaces << " floor / " << terrainFaces
+		<< " terrain out of " << m.triangles.size() << " (the walkable=0 navmesh symptom)";
+
+	// A point in the open grass just beside the colonist spawn, OUTSIDE the water
+	// ring (offset off the 1000 mm marching grid so it is strictly interior, not on
+	// a ring vertex). The triangle under it must be floor.
+	const Vec2i64 grass{1500, 4500};
+	ASSERT_EQ(pointInPolygon(grass, testdata::realWaterRing()), PointInPolygon::Outside)
+		<< "sanity: the grass point must be outside the water ring (open grass)";
+	bool grassOnFloor = false;
+	for (const NavTriangle& t : m.triangles) {
+		const std::array<Vec2i64, 3> tri = {m.vertices[t.v[0]], m.vertices[t.v[1]], m.vertices[t.v[2]]};
+		const std::vector<Vec2i64>	 triRing(tri.begin(), tri.end());
+		if (pointInPolygon(grass, triRing) == PointInPolygon::Inside) {
+			EXPECT_TRUE(isFloorFace(t)) << "the triangle under the open grass beside the spawn must be walkable floor";
+			grassOnFloor = isFloorFace(t);
+		}
+	}
+	EXPECT_TRUE(grassOnFloor) << "no floor triangle covers the open grass at (1500, 4500)";
 }

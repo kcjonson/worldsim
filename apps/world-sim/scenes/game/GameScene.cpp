@@ -21,6 +21,7 @@
 #include <debug/DebugServer.h>
 #include <chrono>
 #include <cmath>
+#include <limits>
 #include <graphics/Rect.h>
 #include <input/InputEvent.h>
 #include <input/InputManager.h>
@@ -1098,11 +1099,89 @@ namespace {
 				}
 			);
 
+			// The drop point picked in GameLoadingScene comes from the 2D river-channel
+			// model, which can disagree with the runtime tile classification the navmesh
+			// reads. A colonist dropped on a water tile is stranded (water is non-walkable),
+			// so validate against the real tiles and nudge to the nearest walkable land.
+			if (isWaterAt(m_spawnPosition)) {
+				const glm::vec2 corrected = nearestWalkable(m_spawnPosition);
+				if (corrected != m_spawnPosition) {
+					LOG_INFO(Game, "Spawn on water: nudged colonist from (%.1f, %.1f) to (%.1f, %.1f)",
+							 m_spawnPosition.x, m_spawnPosition.y, corrected.x, corrected.y);
+					m_spawnPosition = corrected;
+					// Keep the camera (set from the spawn in GameLoadingScene) in sync.
+					m_camera->setPosition({m_spawnPosition.x, m_spawnPosition.y});
+				} else {
+					LOG_WARNING(Game, "Spawn on water at (%.1f, %.1f) but no walkable tile within range; leaving as-is",
+								m_spawnPosition.x, m_spawnPosition.y);
+				}
+			}
+
 			// Spawn the initial colonist at the chosen water-adjacent drop point
 			// (riverbank/shore from GameLoadingScene; origin when none was near).
 			spawnColonist(m_spawnPosition, "Bob");
 
 			LOG_INFO(Game, "ECS initialized with 1 colonist");
+		}
+
+		/// Test whether a world-meter position sits on a water tile, using the SAME
+		/// classification the navmesh reads (NavInputBuilder::extractWaterObstacles):
+		/// a tile is water iff its surface is Water or its primary biome is water.
+		/// An unloaded containing chunk is treated as water so callers keep searching
+		/// for known-good land rather than dropping onto unknown ground.
+		[[nodiscard]] bool isWaterAt(glm::vec2 worldMeters) const {
+			const engine::world::WorldPosition pos{worldMeters.x, worldMeters.y};
+			const engine::world::ChunkCoordinate coord = engine::world::worldToChunk(pos);
+			const engine::world::Chunk*			chunk = m_chunkManager->getChunk(coord);
+			if (chunk == nullptr || !chunk->isReady()) {
+				return true;
+			}
+			const auto [localX, localY] = engine::world::worldToLocalTile(pos);
+			const engine::world::TileData& tile = chunk->getTile(localX, localY);
+			return tile.surface == engine::world::Surface::Water || engine::world::isWater(tile.primaryBiome);
+		}
+
+		/// Return the input position if it is already non-water; otherwise ring-search
+		/// outward in tile-sized steps (up to ~64 m) and return the nearest non-water
+		/// tile center. Falls back to the input unchanged when nothing walkable is
+		/// found in range, so the caller can decide how to degrade.
+		[[nodiscard]] glm::vec2 nearestWalkable(glm::vec2 worldMeters) const {
+			if (!isWaterAt(worldMeters)) {
+				return worldMeters;
+			}
+
+			constexpr float kStep	   = engine::world::kTileSize; // meters per tile
+			constexpr int	kMaxRings  = 64;					  // ~64 m search radius
+			for (int ring = 1; ring <= kMaxRings; ++ring) {
+				glm::vec2 best{0.0F, 0.0F};
+				float	  bestDistSq = std::numeric_limits<float>::max();
+				bool	  found		 = false;
+				for (int dy = -ring; dy <= ring; ++dy) {
+					for (int dx = -ring; dx <= ring; ++dx) {
+						// Only the perimeter of this ring; interior was covered earlier.
+						if (std::abs(dx) != ring && std::abs(dy) != ring) {
+							continue;
+						}
+						const glm::vec2 candidate{worldMeters.x + static_cast<float>(dx) * kStep,
+												  worldMeters.y + static_cast<float>(dy) * kStep};
+						if (isWaterAt(candidate)) {
+							continue;
+						}
+						const float ddx	   = candidate.x - worldMeters.x;
+						const float ddy	   = candidate.y - worldMeters.y;
+						const float distSq = ddx * ddx + ddy * ddy;
+						if (distSq < bestDistSq) {
+							bestDistSq = distSq;
+							best	   = candidate;
+							found	   = true;
+						}
+					}
+				}
+				if (found) {
+					return best;
+				}
+			}
+			return worldMeters;
 		}
 
 		/// Spawn a new colonist entity at the given position.

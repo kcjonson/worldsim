@@ -1,16 +1,14 @@
 #pragma once
 
-// Lock-free ring buffer for performance-critical data streaming.
+// Lock-free ring buffer for streaming game data to the debug server.
 //
-// Design from docs/technical/observability/developer-server.md:
-// - Game thread writes (never blocks, no mutex)
-// - Server thread reads latest (discards intermediate samples)
-// - Atomic operations only, zero contention
-//
-// Use for metrics streaming where:
-// - Writer is high-frequency (60 Hz game loop)
-// - Reader is low-frequency (10 Hz HTTP stream)
-// - Latest value is sufficient (intermediate samples can be discarded)
+// Single game-thread WRITER (never blocks, no mutex, overwrites the oldest entry when full).
+// Server-thread READERS never contend:
+//   - readLatest(): newest value only (metrics -- intermediate samples are discardable).
+//   - writeCursor() + peekAt(): each reader keeps its OWN absolute position and reads forward, so
+//     MANY readers (e.g. several log-stream clients) each receive every item independently -- there
+//     is no shared read cursor for them to fight over and starve each other.
+// Atomic operations only, zero contention.
 
 #include <array>
 #include <atomic>
@@ -23,64 +21,51 @@ namespace Foundation { // NOLINT(readability-identifier-naming)
 	  public:
 		LockFreeRingBuffer() // NOLINT(cppcoreguidelines-pro-type-member-init,modernize-use-equals-default)
 			: buffer{},
-			  writeIndex(0),
-			  readIndex(0) {}
+			  writeIndex(0) {}
 
-		// Write item to buffer (called by game thread)
-		// Never blocks, always succeeds
-		// Overwrites oldest data if buffer is full
+		static constexpr size_t capacity() {
+			return N;
+		}
+
+		// Write item (game thread). Never blocks; overwrites the oldest item when full.
 		void write(const T& item) {
 			size_t writeIdx = writeIndex.load(std::memory_order_relaxed);
 			buffer[writeIdx % N] = item;
 			writeIndex.store(writeIdx + 1, std::memory_order_release);
 		}
 
-		// Read latest item from buffer (called by server thread)
-		// Returns false if buffer is empty
-		// Discards all intermediate samples - only returns most recent
+		// Most recent item -- for metrics, where the latest value is sufficient and intermediate
+		// samples can be discarded. False if nothing has been written yet.
 		bool readLatest(T& item) const {
 			size_t writeIdx = writeIndex.load(std::memory_order_acquire);
 			if (writeIdx == 0) {
-				return false; // Buffer never written // NOLINT(readability-simplify-boolean-expr)
+				return false; // NOLINT(readability-simplify-boolean-expr)
 			}
-
-			// Read most recent item
 			item = buffer[(writeIdx - 1) % N];
-
-			// Update read index to latest write (mutable in const method is intentional for lock-free)
-			readIndex.store(writeIdx, std::memory_order_release);
-
 			return true; // NOLINT(readability-simplify-boolean-expr)
 		}
 
-		// Read oldest unread item from buffer (for logs/events)
-		// Returns false if no unread items
-		// Preserves all items (no discarding)
-		bool read(T& item) {
-			size_t readIdx = readIndex.load(std::memory_order_relaxed);
-			size_t writeIdx = writeIndex.load(std::memory_order_acquire);
+		// Total number of items ever written = the absolute write cursor. A reader tracks its own
+		// position and reads forward to this via peekAt, so readers don't share a cursor. Entries
+		// more than N behind the cursor have been overwritten; the caller skips ahead past them.
+		size_t writeCursor() const {
+			return writeIndex.load(std::memory_order_acquire);
+		}
 
-			if (readIdx == writeIdx) {
-				return false; // No unread items // NOLINT(readability-simplify-boolean-expr)
+		// Non-consuming read of absolute index `idx` (0-based across all writes ever). False when
+		// idx has not been written yet (idx >= writeCursor()). The caller must not pass an idx more
+		// than N behind writeCursor() -- those slots are already overwritten; skip to writeCursor()-N.
+		bool peekAt(size_t idx, T& item) const {
+			if (idx >= writeIndex.load(std::memory_order_acquire)) {
+				return false; // NOLINT(readability-simplify-boolean-expr)
 			}
-
-			item = buffer[readIdx % N];
-			readIndex.store(readIdx + 1, std::memory_order_release);
-
+			item = buffer[idx % N];
 			return true; // NOLINT(readability-simplify-boolean-expr)
-		}
-
-		// Check if buffer has unread items
-		bool hasData() const {
-			size_t readIdx = readIndex.load(std::memory_order_relaxed);
-			size_t writeIdx = writeIndex.load(std::memory_order_acquire);
-			return readIdx != writeIdx;
 		}
 
 	  private:
 		mutable std::array<T, N>	buffer; // Mutable for lock-free const reads
 		mutable std::atomic<size_t> writeIndex;
-		mutable std::atomic<size_t> readIndex;
 	};
 
 } // namespace Foundation
