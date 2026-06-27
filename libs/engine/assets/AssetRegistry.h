@@ -7,6 +7,7 @@
 #include "assets/AssetDefinition.h"
 #include "assets/AssetValidator.h"
 #include "assets/IAssetGenerator.h"
+#include "assets/MotionDef.h"
 
 #include <vector/Types.h>
 
@@ -61,6 +62,12 @@ namespace engine::assets {
 		/// @param defName The definition name
 		/// @return Pointer to tessellated mesh, or nullptr if not found/failed
 		const renderer::TessellatedMesh* getTemplate(const std::string& defName);
+
+		/// Get the resolved motion (animation clips) for a def, or nullptr if it declares none.
+		/// Driver pivots are resolved against the def's SVG nodes (find_node, by authored node
+		/// index) into the mesh's scaled meter frame, so a part rotates about the right joint.
+		/// Rotation amps are returned in radians, posX/posY amps in meters. Lazily loaded + cached.
+		const MotionDef* getMotion(const std::string& defName);
 
 		/// Generate an asset directly (does not cache)
 		/// @param defName The definition name
@@ -197,6 +204,10 @@ namespace engine::assets {
 
 		std::unordered_map<std::string, AssetDefinition>		   definitions;
 		std::unordered_map<std::string, renderer::TessellatedMesh> templateCache;
+
+		// Resolved motion per def (empty MotionDef = "resolved, has none"). Guarded separately.
+		std::unordered_map<std::string, MotionDef> m_motionCache;
+		mutable std::mutex						   m_motionCacheMutex;
 
 		// getTemplate lazily tessellates into templateCache and is called from
 		// chunk worker threads (entity mesh baking) as well as the render thread

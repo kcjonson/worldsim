@@ -354,6 +354,7 @@ namespace engine::assets {
 		std::string			  generatorName;	  // Generator to use (e.g., "GrassBlade") - C++ generators
 		std::string			  scriptPath;		  // For Lua generators: path to Lua script (relative to assets/)
 		std::string			  svgPath;			  // For Simple assets: path to SVG file
+		std::string			  motionPath;		  // Optional motion (animation clips) file; @shared/ or relative to baseFolder
 		std::filesystem::path baseFolder;		  // Folder containing this asset's definition (for relative path resolution)
 		float				  worldHeight = 1.0F; // World height in meters (for SVG normalization)
 		GeneratorParams		  params;			  // Parameters for generator

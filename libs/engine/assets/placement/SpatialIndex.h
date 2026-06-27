@@ -36,6 +36,8 @@
 #include <glm/vec2.hpp>
 #include <glm/vec4.hpp>
 
+#include "assets/MotionDef.h"
+
 namespace engine::assets {
 
 	/// A placed entity in the world
@@ -45,6 +47,12 @@ namespace engine::assets {
 		float		rotation = 0.0F; // Rotation in radians
 		float		scale = 1.0F;	// Scale factor
 		glm::vec4	colorTint{1.0F, 1.0F, 1.0F, 1.0F}; // RGBA color tint
+
+		// Optional per-part animation transforms (meter/template space), one entry per MeshPart
+		// of this entity's template, by index (identity where a part isn't driven). Null = not
+		// animated; such entities render through the fast instanced path. The pointee is owned by
+		// the producer (DynamicEntityRenderSystem) for the frame; PlacedEntity only references it.
+		const std::vector<PartTransform>* partTransforms = nullptr;
 	};
 
 	/// Grid-based spatial index for efficient neighbor queries.

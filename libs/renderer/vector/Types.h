@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <string>
 #include <vector>
 
 namespace renderer {
@@ -102,11 +103,23 @@ namespace renderer {
 		}
 	};
 
+	// A named sub-range of a TessellatedMesh, one per source SVG shape. `name` is the shape's
+	// SVG `id` ("" when untagged). Lets the animation layer transform a single part (vertex
+	// range) without disturbing the rest. Empty `parts` means the whole mesh is one implicit part.
+	struct MeshPart {
+		std::string name;
+		uint32_t	vertexStart{0};
+		uint32_t	vertexCount{0};
+		uint32_t	indexStart{0};
+		uint32_t	indexCount{0};
+	};
+
 	// TessellatedMesh represents the triangulated output of tessellation
 	struct TessellatedMesh {
 		std::vector<Foundation::Vec2>  vertices; // Position data (x, y)
 		std::vector<uint16_t>		   indices;	 // Triangle indices (3 per triangle)
 		std::vector<Foundation::Color> colors;	 // Per-vertex colors (parallel to vertices)
+		std::vector<MeshPart>		   parts;	 // Named sub-ranges (one per SVG shape); may be empty
 
 		TessellatedMesh() = default;
 
@@ -124,6 +137,7 @@ namespace renderer {
 			vertices.clear();
 			indices.clear();
 			colors.clear();
+			parts.clear();
 		}
 
 		// Reserve memory for vertices, indices, and colors

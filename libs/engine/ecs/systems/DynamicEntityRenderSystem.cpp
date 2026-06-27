@@ -1,12 +1,18 @@
 #include "DynamicEntityRenderSystem.h"
 
 #include "../World.h"
+#include "../components/AnimationState.h"
 #include "../components/Appearance.h"
 #include "../components/FacingDirection.h"
+#include "../components/Movement.h"
 #include "../components/Packaged.h"
 #include "../components/Transform.h"
 
 #include "assets/AssetRegistry.h"
+#include "assets/MotionEval.h"
+
+#include <cmath>
+#include <unordered_map>
 
 namespace ecs {
 
@@ -25,8 +31,9 @@ const char* getDirectionSuffix(CardinalDirection dir) {
 
 }  // namespace
 
-void DynamicEntityRenderSystem::update(float /*deltaTime*/) {
+void DynamicEntityRenderSystem::update(float deltaTime) {
     renderData.clear();
+    m_partXformStore.clear();
 
     // Constants for packaged item rendering
     constexpr float kPackagedScaleFactor = 0.85F;  // Scale packaged items to 85% of tile size
@@ -123,6 +130,45 @@ void DynamicEntityRenderSystem::update(float /*deltaTime*/) {
         placed.rotation = 0.0F;  // Dynamic entities don't rotate - use FacingDirection for sprites
         placed.scale = appearance.scale;
         placed.colorTint = appearance.colorTint;
+
+        // Walk animation: advance this entity's phase from its movement speed and evaluate its
+        // motion clip into per-part transforms (aligned to the template's MeshParts). Only entities
+        // with an AnimationState + a resolved motion + a parted mesh animate; when standing they
+        // reset to the rest pose and fall back to the fast instanced render path.
+        if (auto* anim = world->getComponent<AnimationState>(entity);
+            anim != nullptr && mesh != nullptr && !mesh->parts.empty()) {
+            const engine::assets::MotionDef* motion = assetRegistry.getMotion(defName);
+            if (motion != nullptr && !motion->clips.empty()) {
+                float speed = 0.0F;
+                if (auto* vel = world->getComponent<Velocity>(entity)) {
+                    speed = std::sqrt(vel->value.x * vel->value.x + vel->value.y * vel->value.y);
+                }
+                const engine::assets::MotionClip* walk = motion->findClip("walk");
+                const engine::assets::MotionClip* clip = (walk != nullptr) ? walk : &motion->clips.front();
+                constexpr float kMoveEps = 0.05F; // m/s below which the colonist is "standing"
+                if (speed > kMoveEps) {
+                    const float stride = (clip->stride > 0.01F) ? clip->stride : 0.85F;
+                    anim->phase += speed * deltaTime / stride;
+                    anim->phase -= std::floor(anim->phase);
+
+                    std::unordered_map<std::string, engine::assets::PartTransform> xforms;
+                    engine::assets::evaluateClip(*clip, anim->phase, xforms);
+                    if (!xforms.empty()) {
+                        std::vector<engine::assets::PartTransform> aligned(mesh->parts.size());
+                        for (size_t k = 0; k < mesh->parts.size(); ++k) {
+                            auto it = xforms.find(mesh->parts[k].name);
+                            if (it != xforms.end()) {
+                                aligned[k] = it->second;
+                            }
+                        }
+                        m_partXformStore.push_back(std::move(aligned));
+                        placed.partTransforms = &m_partXformStore.back();
+                    }
+                } else {
+                    anim->phase = 0.0F; // stand at rest
+                }
+            }
+        }
 
         renderData.push_back(std::move(placed));
     }
