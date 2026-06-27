@@ -20,12 +20,12 @@ uniform vec2 u_viewportSize;     // Viewport dimensions in pixels
 uniform int u_instanced;         // Flag: 1 for instanced rendering path, 0 otherwise
 
 // Groundcover deform (all default 0 → no-op for normal instanced entities like trees).
-// When u_grassMode == 1, a clump is compact by default (scaled by u_grassOpenness, so
+// When u_groundcoverMode == 1, a clump is compact by default (scaled by u_groundcoverOpenness, so
 // top-down it reads small) and reveals — expands toward full size and bends away — within
-// u_cursorRadius of u_cursorWorld, like grass parting around a colonist.
-uniform int   u_grassMode;       // 1 = apply the groundcover deform
-uniform float u_grassOpenness;   // resting clump scale 0..1 (1.0 = full size)
-uniform float u_grassReach;      // max local vertex distance from a clump's base (meters)
+// u_cursorRadius of u_cursorWorld, like groundcover parting as a colonist walks through.
+uniform int   u_groundcoverMode;       // 1 = apply the groundcover deform
+uniform float u_groundcoverOpenness;   // resting clump scale 0..1 (1.0 = full size)
+uniform float u_groundcoverReach;      // max local vertex distance from a clump's base (meters)
 uniform vec2  u_cursorWorld;     // interaction center, world space
 uniform float u_cursorRadius;    // interaction radius, world space
 uniform float u_cursorStrength;  // push distance at the clump's outer tips, world space
@@ -43,12 +43,12 @@ vec2 instanceToScreen(vec2 localPos) {
     float reachFrac = 0.0; // 0 at the clump base, 1 at the outer tips
     float infl = 0.0;      // cursor influence, 0 far → 1 at center
 
-    if (u_grassMode == 1) {
-        reachFrac = clamp(length(localPos) / max(u_grassReach, 0.0001), 0.0, 1.0);
+    if (u_groundcoverMode == 1) {
+        reachFrac = clamp(length(localPos) / max(u_groundcoverReach, 0.0001), 0.0, 1.0);
         float dC = distance(worldPos, u_cursorWorld);
         infl = 1.0 - smoothstep(0.0, max(u_cursorRadius, 0.0001), dC);
         // Compact at rest, full size where the cursor reveals it.
-        float openness = mix(u_grassOpenness, 1.0, infl);
+        float openness = mix(u_groundcoverOpenness, 1.0, infl);
         lp *= openness;
     }
 
@@ -63,7 +63,7 @@ vec2 instanceToScreen(vec2 localPos) {
     // Apply scale and translate to world position
     vec2 worldVertex = rotated * scale + worldPos;
 
-    if (u_grassMode == 1 && infl > 0.0) {
+    if (u_groundcoverMode == 1 && infl > 0.0) {
         // Bend away from the cursor: outer tips move most, the rooted base not at all.
         vec2  away = worldVertex - u_cursorWorld;
         float d = length(away);
