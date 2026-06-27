@@ -747,6 +747,32 @@ namespace ecs {
 		for (auto [entity, position, needs, memory, task, movementTarget, inventory] :
 			 world->view<Position, NeedsComponent, Memory, Task, MovementTarget, Inventory>()) {
 
+			// Stranded-colonist recovery. A colonist standing off the walkable mesh -- it beelined
+			// into a water hole before the async mesh finished building, spawned somewhere bad, or
+			// terrain shifted under it -- can never plan a route from where it stands, and freezes.
+			// Snap it to the nearest pathable point and clear its task so it re-decides from solid
+			// ground. Colonists on a fresh route are provably on-mesh, so skip them: this keeps the
+			// check off the hot path, effectively running only at startup (the mesh finally lands
+			// under colonists that beelined into water meanwhile) and right after a mesh rebuild.
+			if (m_navSystem != nullptr && m_navSystem->hasMesh()) {
+				const auto* navPath		 = world->getComponent<NavPath>(entity);
+				const bool	onFreshRoute = navPath != nullptr && navPath->valid &&
+										   navPath->builtNavVersion == m_navSystem->generation();
+				if (!onFreshRoute && !m_navSystem->isOnMesh(position.value)) {
+					if (const auto snapped = m_navSystem->nearestPathablePoint(position.value)) {
+						LOG_DEBUG(Engine,
+							"[Nav] Entity %llu: stranded off-mesh at (%.2f, %.2f), snapping to (%.2f, %.2f)",
+							static_cast<unsigned long long>(entity), position.value.x, position.value.y,
+							snapped->x, snapped->y);
+						position.value = *snapped;
+						if (auto* np = world->getComponent<NavPath>(entity)) {
+							np->valid = false;
+						}
+						task.clear();
+					}
+				}
+			}
+
 			// Get optional Action component (may be nullptr if entity doesn't have one)
 			auto* action = world->getComponent<Action>(entity);
 
@@ -828,8 +854,11 @@ namespace ecs {
 					// Compare task type
 					bool sameType = (task.type == selected->taskType);
 
-					// For wander tasks, same type is enough - don't interrupt just because target changed
-					if (sameType && task.type == TaskType::Wander) {
+					// For wander tasks, same type is enough - don't interrupt just because target
+					// changed. EXCEPT when nav has stopped this wander (no believed route to its
+					// point): it MUST then be free to pick a fresh, reachable target, or it stays
+					// pinned to the unreachable one forever -- a permanent freeze.
+					if (sameType && task.type == TaskType::Wander && task.navState != NavState::CantFindWayTo) {
 						isSameTask = true;
 					} else {
 						bool sameTarget = false;
@@ -931,6 +960,15 @@ namespace ecs {
 		// Note: We still re-evaluate even with action in progress to update DecisionTrace for UI
 		// The actual task switch decision is made AFTER re-evaluation based on priority gap
 		if (task.state == TaskState::Arrived) {
+			return true;
+		}
+
+		// Nav has stopped the colonist: no believed route to its target (a wander point or work
+		// site across water, or a route the freshly-built mesh invalidated). Re-evaluate so it
+		// picks a reachable target instead of standing frozen -- a Wander would otherwise never
+		// re-eval while "Moving". selectTaskFromTrace re-stamps navState from the new route, so this
+		// clears as soon as a reachable target is chosen (no thrash).
+		if (task.navState == NavState::CantFindWayTo) {
 			return true;
 		}
 
@@ -1237,13 +1275,37 @@ namespace ecs {
 		// Tier 6.35: Place packaged items at target locations
 		evaluatePlacePackagedOptions(world, position.value, inventory, trace);
 
-		// Add wander option
+		// Agent footprint + belief for the reachability checks below (reachable-wander generation
+		// and the option filter). Defined once here so both uses share them.
+		float agentRadius = 0.3F;
+		if (const auto* ar = world->getComponent<AgentRadius>(entity)) {
+			agentRadius = ar->radiusMeters;
+		}
+		const geometry::nav::BeliefFilter belief{&memory.knownSegments, &memory.knownOpenings};
+		const bool						  haveMesh = (m_navSystem != nullptr) && m_navSystem->hasMesh();
+
+		// Add wander option. Prefer a target the colonist can actually reach, so "explore" steers
+		// it along walkable ground instead of committing to a point across water (nav would stop it
+		// there). If no probe is reachable -- exactly what a stranded, off-mesh colonist sees, since
+		// every probe reads unreachable -- keep the first candidate as a real point to head toward:
+		// a beeline then walks it back onto the mesh (requestNavPath's off-mesh recovery), whereas
+		// staying put would strand it for good. No mesh -> isReachable returns true, first try wins.
 		EvaluatedOption wanderOption;
 		wanderOption.taskType = TaskType::Wander;
 		wanderOption.needType = NeedType::Count; // N/A
 		wanderOption.status = OptionStatus::Available;
 		wanderOption.reason = "All needs satisfied";
-		wanderOption.targetPosition = generateWanderTarget(position.value);
+		glm::vec2 wanderTarget = generateWanderTarget(position.value);
+		if (haveMesh && !m_navSystem->isReachable(position.value, wanderTarget, agentRadius, belief)) {
+			for (int attempt = 0; attempt < 5; ++attempt) {
+				const glm::vec2 candidate = generateWanderTarget(position.value);
+				if (m_navSystem->isReachable(position.value, candidate, agentRadius, belief)) {
+					wanderTarget = candidate;
+					break;
+				}
+			}
+		}
+		wanderOption.targetPosition = wanderTarget;
 		trace.options.push_back(wanderOption);
 
 		// Populate priority bonuses for all options using PriorityConfig
@@ -1268,13 +1330,26 @@ namespace ecs {
 			return a.tiebreakId < b.tiebreakId;
 		});
 
-		// Mark the first actionable option as Selected
+		// Select the first actionable option the colonist can actually REACH, scanning in priority
+		// order. isReachable is a sound, cheap pre-filter: false means DEFINITELY unreachable
+		// (off-mesh, or a disconnected component -- e.g. a reed or water across a river with no land
+		// bridge). Probing in priority order means we only test down to the best reachable option,
+		// not the whole list. An unreachable higher-priority option drops to NoSource so the colonist
+		// won't commit to it and freeze at the bank; Wander is never filtered, so there is always a
+		// fallback that keeps it moving and exploring for new sources. No mesh yet -> isReachable
+		// returns true, so startup / outdoor beelining is unaffected.
 		for (auto& option : trace.options) {
-			if (option.status == OptionStatus::Available) {
-				option.status = OptionStatus::Selected;
-				trace.selectionSummary = "Selected: " + option.reason;
-				break;
+			if (option.status != OptionStatus::Available) {
+				continue;
 			}
+			if (haveMesh && option.taskType != TaskType::Wander && option.targetPosition.has_value() &&
+				!m_navSystem->isReachable(position.value, option.targetPosition.value(), agentRadius, belief)) {
+				option.status = OptionStatus::NoSource; // unreachable: skip it rather than freeze on it
+				continue;
+			}
+			option.status = OptionStatus::Selected;
+			trace.selectionSummary = "Selected: " + option.reason;
+			break;
 		}
 	}
 
@@ -1439,10 +1514,11 @@ namespace ecs {
 
 		auto path = m_navSystem->requestPath(position.value, goal, radius, belief);
 		if (!path.has_value()) {
-			// A mesh exists but the colonist's belief admits no route: a believed wall
-			// cuts the corridor. STOP rather than beeline dishonestly through that wall --
-			// clear movementTarget.active so MovementSystem doesn't carry the colonist
-			// straight at the geometry it believes is solid.
+			// A mesh exists but the colonist's belief admits no route: a believed wall cuts the
+			// corridor. STOP rather than beeline dishonestly through that wall -- clear
+			// movementTarget.active so MovementSystem doesn't carry the colonist straight at the
+			// geometry it believes is solid. (An OFF-mesh start can't happen here: the per-colonist
+			// loop snaps stranded colonists back onto the mesh before any path request.)
 			if (auto* navPath = world->getComponent<NavPath>(entity)) {
 				navPath->valid = false;
 			}

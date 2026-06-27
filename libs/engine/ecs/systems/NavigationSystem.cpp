@@ -29,6 +29,21 @@ namespace ecs {
 		// fallback walkable border. The border must enclose the wall bands with a
 		// margin, otherwise an outside-the-room query point lands off-mesh.
 		constexpr std::int64_t kConstructionBorderPadMm = 2000;
+
+		// Squared distance and closest-point-on-segment, in meters. Used by
+		// nearestPathablePoint; kept local and free of glm free functions.
+		float dist2(glm::vec2 a, glm::vec2 b) {
+			const float dx = a.x - b.x;
+			const float dy = a.y - b.y;
+			return dx * dx + dy * dy;
+		}
+		glm::vec2 closestOnSegment(glm::vec2 p, glm::vec2 a, glm::vec2 b) {
+			const glm::vec2 ab	  = b - a;
+			const float		denom = ab.x * ab.x + ab.y * ab.y;
+			float			t	  = denom > 1e-9F ? ((p.x - a.x) * ab.x + (p.y - a.y) * ab.y) / denom : 0.0F;
+			t					  = t < 0.0F ? 0.0F : (t > 1.0F ? 1.0F : t);
+			return glm::vec2{a.x + t * ab.x, a.y + t * ab.y};
+		}
 	} // namespace
 
 	NavigationSystem::~NavigationSystem() {
@@ -315,6 +330,50 @@ namespace ecs {
 			static_cast<std::int64_t>(std::llround(static_cast<double>(agentRadiusMeters) * 1000.0));
 
 		return gnav::reachable(navMesh, startMm, goalMm, radiusMm, belief);
+	}
+
+	bool NavigationSystem::isOnMesh(glm::vec2 meters) const {
+		if (navMesh.triangles.empty()) {
+			return false;
+		}
+		return gnav::locateTriangle(navMesh, engine::nav::toMm(meters)) >= 0;
+	}
+
+	std::optional<glm::vec2> NavigationSystem::nearestPathablePoint(glm::vec2 meters) const {
+		bool	  found	 = false;
+		float	  bestD2 = 0.0F;
+		glm::vec2 best{0.0F, 0.0F};
+		for (const gnav::NavTriangle& t : navMesh.triangles) {
+			if (!gnav::isFloorFace(t)) {
+				continue; // never snap into water/wall interiors -- only real walkable floor
+			}
+			const glm::vec2 a = engine::nav::toMeters(navMesh.vertices[t.v[0]]);
+			const glm::vec2 b = engine::nav::toMeters(navMesh.vertices[t.v[1]]);
+			const glm::vec2 c = engine::nav::toMeters(navMesh.vertices[t.v[2]]);
+			// The query point is off-mesh, so the closest point on this triangle lies on one of
+			// its three edges. Take the nearest of the three.
+			glm::vec2 cand = closestOnSegment(meters, a, b);
+			float	  cd2  = dist2(meters, cand);
+			const glm::vec2 p2 = closestOnSegment(meters, b, c);
+			if (const float d2 = dist2(meters, p2); d2 < cd2) {
+				cd2	 = d2;
+				cand = p2;
+			}
+			const glm::vec2 p3 = closestOnSegment(meters, c, a);
+			if (const float d2 = dist2(meters, p3); d2 < cd2) {
+				cd2	 = d2;
+				cand = p3;
+			}
+			if (!found || cd2 < bestD2) {
+				// Nudge a hair toward the centroid so the snapped point sits unambiguously inside
+				// this walkable triangle, not exactly on a boundary edge where locate is ambiguous.
+				const glm::vec2 centroid = (a + b + c) / 3.0F;
+				best					 = cand + (centroid - cand) * 0.05F;
+				bestD2					 = cd2;
+				found					 = true;
+			}
+		}
+		return found ? std::optional<glm::vec2>(best) : std::nullopt;
 	}
 
 } // namespace ecs

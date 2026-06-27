@@ -158,6 +158,18 @@ class NavigationSystem : public ISystem {
 	// callers treat that the same as the no-mesh beeline path, which is correct.
 	[[nodiscard]] bool inSimArea(glm::vec2 meters) const;
 
+	// True when `meters` lies on the walkable mesh (inside some triangle). False when off-mesh
+	// (e.g. a colonist that beelined into a water hole during the pre-mesh window, now stranded
+	// under a freshly built mesh) or when no mesh exists yet. Lets a path failure tell a stranded
+	// colonist (recover by beelining back onto land) from one merely walled off from its goal.
+	[[nodiscard]] bool isOnMesh(glm::vec2 meters) const;
+
+	// Nearest point on the walkable mesh (closest floor triangle) to `meters`, or nullopt when no
+	// mesh / no walkable floor exists. Used to snap a stranded (off-mesh) colonist -- one that
+	// beelined into a water hole before the mesh built, or spawned somewhere bad -- back onto
+	// pathable ground. Linear scan over floor triangles; fine for the rare recovery call.
+	[[nodiscard]] std::optional<glm::vec2> nearestPathablePoint(glm::vec2 meters) const;
+
 	// The current cached mesh (for the later debug overlay). Empty until hasMesh().
 	[[nodiscard]] const geometry::nav::NavMesh& mesh() const { return navMesh; }
 	[[nodiscard]] bool						  hasMesh() const { return !navMesh.triangles.empty(); }
